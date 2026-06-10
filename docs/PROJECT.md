@@ -24,6 +24,7 @@
 | 譜面 runtime | Canonical Chart（SM / osu / GN import） |
 | 計分 | Classic：SDO 原版；Enhanced：[hybrid 1e8](architecture/scoring-hybrid.md) |
 | 產品變體 | 兩個獨立 exe（Classic / Enhanced），共用 core DLL — [dual-variant.md](architecture/dual-variant.md) |
+| 多語系 | **文字 i18n**（非原版圖片語系）— [systems/localization.md](systems/localization.md)（對齊 osu LocalisableString + resx） |
 
 見 [architecture/stack.md](architecture/stack.md)。
 

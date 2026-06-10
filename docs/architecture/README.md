@@ -13,3 +13,9 @@
 | [personal-room-gogh.md](personal-room-gogh.md) | 個人房咕盒風 |
 
 入口：[STEP1.md](../STEP1.md) · [PHASE1.md](../PHASE1.md) · [MVP.md](../MVP.md)
+
+## Systems 索引
+
+| 文件 | 內容 |
+|------|------|
+| [localization.md](../systems/localization.md) | 文字 i18n（非原版 bitmap 語系） |

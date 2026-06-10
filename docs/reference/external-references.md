@@ -4,7 +4,7 @@
 
 | 專案 | 連結 | 借鑑範圍 |
 |------|------|----------|
-| **osu lazer** | [github.com/ppy/osu](https://github.com/ppy/osu) | Ruleset、mania 譜、skin、1e8 計分 |
+| **osu lazer** | [github.com/ppy/osu](https://github.com/ppy/osu) | Ruleset、mania 譜、skin、1e8 計分、**LocalisableString + resx 多語系** |
 | **SM 3.9 YHANIKI** | [github.com/Yhaniki/SM-YHANIKI](https://github.com/Yhaniki/SM-YHANIKI) | NoteSkin、`.sm`、逆流 scroll、總按鍵數、連線 |
 | **咕盒 gogh** | [gogh.gg/zh-sc](https://gogh.gg/zh-sc) | 個人房：虛擬形象、小房間、氛圍 |
 

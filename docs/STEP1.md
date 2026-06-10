@@ -29,7 +29,7 @@ flowchart LR
 | Scroll | 向上、固定速度（osu `SliderMultiplier` + 簡化 timing） |
 | 操作 | ↑↓←→ |
 | 判定 | P / C / B / Miss；窗口可先 osu 預設比例 |
-| UI | 4 軌 + 判定線 + 判定字；**無選單** |
+| UI | 4 軌 + 判定線 + 判定字；**無選單**；判定用 `JudgmentResult` + `LocalisableString`（[localization.md](../systems/localization.md)） |
 | 執行 | Unity **單場景** Play |
 
 ---

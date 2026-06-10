@@ -1,12 +1,13 @@
 # 文案語氣（Copy & Tone）
 
-> 遊戲內所有文字的风格指南。
+> 遊戲內所有 **文字** 的风格指南。  
+> 文案走 **i18n key**，不用各語言 UI 圖 — [localization.md](../systems/localization.md)
 
 ## 語氣
 
 - **輕鬆活潑** — 符合跳舞遊戲的歡樂感
 - **簡短直接** — 不寫長段落，按鈕 2～4 字
-- **繁體中文** — 全站統一
+- **繁體中文** — 預設 locale `zh-TW`；其它語系靠翻譯表，不靠換圖
 - **不用敬語** — 「你」而非「您」
 
 ## 按鈕文案
@@ -54,14 +55,16 @@
 
 ## 判定文字
 
-| 判定 | 顯示 | 備註 |
-|------|------|------|
-| Perfect | Perfect | 原版英文 ✅ |
-| Cool | Cool | 原版英文 ✅（非 Great） |
-| Bad | Bad | 原版英文 ✅ |
-| Miss | Miss | 原版英文 ✅ |
+對齊 osu：**enum + `LocalisableDescription` + `.resx`**（[localization.md](../systems/localization.md)）
 
-> 原版結算用英文判定名。重製可維持英文或改繁中（完美/酷/差/Miss），待決。
+| 判定 | fallback（en） | zh-TW 範例（.resx 決定） |
+|------|----------------|-------------------------|
+| Perfect | Perfect | Perfect 或 完美 |
+| Cool | Cool | Cool 或 酷 |
+| Bad | Bad | Bad 或 差 |
+| Miss | Miss | Miss |
+
+程式只引用 `JudgmentResult.Perfect.GetLocalisableDescription()`，不在 code 寫死顯示語言。
 
 ## 禁止
 
@@ -71,5 +74,4 @@
 
 ## 待確認
 
-- [ ] 判定維持英文還是改繁中？
 - [ ] 「恭喜 您获得」要不要保留？

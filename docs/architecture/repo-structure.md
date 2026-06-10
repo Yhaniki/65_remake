@@ -11,6 +11,8 @@ g:\65_remake\
 ├── tools/
 └── src/
     ├── Remake.sln
+    ├── Remake.Localisation/         # LocalisableString、Manager（osu-framework 概念 port）
+    ├── Remake.Resources/            # .resx 翻譯（對標 osu-resources）
     ├── Remake.Osu/                  # Step 1：純 .osu 解析
     ├── Remake.Chart/                # Phase 1：osu → Canonical
     ├── Remake.Ruleset/              # Step 1：Tap 判定
@@ -32,6 +34,8 @@ g:\65_remake\
 
 | 專案 | Step 1 | Phase 1 | MVP+ |
 |------|--------|---------|------|
+| Remake.Localisation | stub | ✅ | ✅ |
+| Remake.Resources | — | ✅ resx | + Crowdin |
 | Remake.Osu | ✅ | ✅ | ✅ |
 | Remake.Chart | — | ✅ | + SM/GN |
 | Remake.Ruleset | ✅ Tap | + Hold/計分 | + 模式 |
