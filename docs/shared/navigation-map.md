@@ -50,7 +50,7 @@ flowchart LR
 | 入口 | 出現在 | MVP |
 |------|--------|-----|
 | 登出 | 大廳 | ✅ |
-| 設定 | 大廳（待確認） | P1 |
+| 設定 | 大廳 / 房間 | P1 → [game-settings.md](../systems/game-settings.md) |
 | 返回 | 各子頁 | ✅ |
 
 ## 異常跳轉

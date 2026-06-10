@@ -78,6 +78,9 @@ flowchart TB
 | **譜面** | GN / StepFile 優先 | Canonical + osu/SM import |
 | **Skin** | GN NoteSkin | osu / SM-YHANIKI |
 | **自由模式 best** | 不記 | [replay-local.md](../systems/replay-local.md) |
+| **Scroll** | **BPM 制**（锁死，无开关） | 定速/BPM 可选 — [game-settings.md](../systems/game-settings.md) |
+| **键数** | **4K only**；6K 模式与设定 **不做** | 4K + 6K（post-MVP） |
+| **判定線** | 原版左/中面板 | playfield **中央** + osu 式 — [game-settings.md](../systems/game-settings.md) |
 | **FishNet** | Classic server | Enhanced server |
 
 **共用 DLL（不拆兩份）**

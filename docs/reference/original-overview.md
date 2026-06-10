@@ -52,8 +52,9 @@
 ## 待補考據
 
 - [x] 結算畫面 UI — 見 [result-screen.md](../screens/05-game-arena/result-screen.md) 與 `assets/wireframes/05-game-arena/`
-- [ ] 各 screen 其他 UI 截圖或錄影
-- [ ] 原版按鍵映射（方向鍵 vs WASD vs 數字鍵）
+- [x] **OPTION 設定三頁** — [game-settings.md](../systems/game-settings.md) 与 `ref-official-settings-*.png`
+- [x] **6K 键位考据**（原版有；**Classic 不做**，Enhanced post-MVP）— [ref-official-settings-keyboard-6k.png](../../assets/wireframes/ref-official-settings-keyboard-6k.png)
+- [x] 原版 4K 主/辅键位 — A S W D / 4 5 8 6
 - [x] 原版判定名稱：Perfect / Cool / Bad / Miss
 - [ ] 原版判定分數公式 → 見 [architecture/scoring-hybrid.md](../architecture/scoring-hybrid.md)
 - [x] 結算房間至少支援 6 人位（截圖可見 6 列）

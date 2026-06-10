@@ -15,7 +15,7 @@
 |------|------|--------|
 | `ref-arcaea-result.jpg` | Arcaea | 大分數、等級 EX、PURE/FAR/LOST、獎勵區 |
 | `ref-iidx-result.jpg` | beatmania IIDX 風 | 等級 A+、判定細分、準確度、折線圖 |
-| `ref-osu-result.jpg` | osu! | 大等級字母、判定統計、performance 圖 |
+| `ref-osu-result.jpg` | osu! | 大等級字母、**譜面標題**、判定統計、performance 圖 |
 | `ref-arcaea-song-update.jpg` | Arcaea | 歌曲更新頁（非結算，UI 風格參考） |
 
 ## 規劃文件

@@ -54,7 +54,7 @@
 - [ ] 自由模式 **本地 best + 回放**（osu 風 `.rpl`）— [replay-local.md](systems/replay-local.md)
 - [ ] SM `.sm` import
 - [ ] 預設 skin + 切換
-- [ ] 大廳聊天（極簡）
+- [ ] 大廳 **設定**（OPTION：鍵位、音效含 global offset、視窗/流速）— [game-settings.md](systems/game-settings.md)
 - [ ] Hold Marvelous 白光（SM 風）
 
 ---

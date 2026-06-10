@@ -14,7 +14,7 @@
 ## 2. 原版行為（Reference）
 
 - 3D 場景，多個玩家角色同時跳舞
-- 音符從畫面下方（向上模式）飛入判定線
+- 音符從畫面下方（向上模式）飛入 **判定線**（Enhanced：**playfield 中央**，osu mania 式 — [game-settings.md](../../systems/game-settings.md#判定線hit-line)）
 - 玩家按對應方向鍵（↑↓←→）命中音符
 - 判定等級：**Perfect / Cool / Bad / Miss**（四級，見 [result-screen.md](./result-screen.md) 考據）
 - 連擊 Combo 計數

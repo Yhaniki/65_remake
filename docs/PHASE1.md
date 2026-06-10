@@ -62,6 +62,7 @@ flowchart LR
 - [ ] Step 1 Done 清單全勾
 - [ ] 選歌 ≥1 首、≥1 難度；顯示 totalNotes
 - [ ] Hold 可打；P+C+B+M = totalNotes
+- [ ] 結算顯示 **歌名 + 難度**
 - [ ] 結算 0～100,000,000；重玩 / 回選歌
 
 ---

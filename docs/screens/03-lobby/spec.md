@@ -39,7 +39,7 @@
 | 快速加入 | 可選 | P1 | 方便配對 |
 | 房間篩選/搜尋 | 不做 | P2 | MVP 房少 |
 | 商場/家族/個人房入口 | 隱藏或灰掉 | post-MVP | 見 06/07/08 |
-| 3D 大廳場景 | 2D 列表即可 | P2 | 降低成本 |
+| 設定入口 | 大廳「設定」→ OPTION 三頁 | MVP 簡版；完整见 [game-settings.md](../../systems/game-settings.md) |
 | 玩家虛擬形象走動 | 不做 | post-MVP | 非 MVP |
 
 ## 5. UI 草稿

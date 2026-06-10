@@ -32,6 +32,8 @@ DifficultySlot {
 }
 ```
 
+> **時間 / BPM / SV** 詳見 [scroll-timing.md](scroll-timing.md)。原版 GN 小節制 import 時轉 `TimeMs` + `TimingPoints`。
+
 ## totalNotes
 
 ```text
@@ -77,5 +79,6 @@ flowchart LR
 
 ## 相關
 
+- [scroll-timing.md](scroll-timing.md)
 - [scoring-hybrid.md](scoring-hybrid.md)
 - [repo-structure.md](repo-structure.md)
