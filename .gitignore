@@ -1,0 +1,71 @@
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE / Editor
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userprefs
+*.sln.docstates
+*.csproj.user
+
+# Cursor（本地設定）
+.cursor/
+
+# .NET build output
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+*.dll
+*.exe
+*.pdb
+*.cache
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nupkg
+
+# Unity（任意子目錄下的 Unity 專案）
+[Ll]ibrary/
+[Tt]emp/
+[Bb]uild/
+[Bb]uilds/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+sysinfo.txt
+InitTestScene*.unity*
+*.apk
+*.aab
+*.unitypackage
+*.app
+*.pidb
+*.booproj
+*.svd
+*.mdb
+*.opendb
+*.VC.db
+
+# Python（tools/）
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+
+# 秘密檔
+.env
+.env.*
+*.pem
+credentials.json
+secrets.json
+
+# 可選：本地測譜音檔過大時取消註解
+# StreamingAssets/**/*.ogg
+# StreamingAssets/**/*.mp3
+# StreamingAssets/**/*.wav

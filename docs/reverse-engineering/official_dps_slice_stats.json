@@ -1,0 +1,2107 @@
+{
+  "dance_dir": "D:\\program\\閉撰敃氪\\DatasSDO\\DANCE",
+  "songlist": "D:\\program\\閉撰敃氪\\music\\SongList.dat",
+  "songlist_rec_size": 756,
+  "files_total": 1860,
+  "parsed_standard_pas": 1619,
+  "failed": 241,
+  "fail_reasons": {
+    "bad magic": 34,
+    "no sentinel": 207
+  },
+  "songlist_matched_files": 846,
+  "chain_bad_files": 0,
+  "dance_rows_total": 51694,
+  "idle_rows_total": 2933,
+  "sub_items_total": 62765,
+  "sub_items_with_songlist_timing": 33429,
+  "pc_count": {
+    "0": 2933,
+    "1": 41121,
+    "2": 10108,
+    "3": 441,
+    "4": 18,
+    "5": 4,
+    "6": 1,
+    "7": 1
+  },
+  "row_pre_b_top": [
+    {
+      "beats": 8,
+      "count": 15609,
+      "pct": 30.19
+    },
+    {
+      "beats": 7,
+      "count": 6707,
+      "pct": 12.97
+    },
+    {
+      "beats": 9,
+      "count": 6643,
+      "pct": 12.85
+    },
+    {
+      "beats": 10,
+      "count": 5830,
+      "pct": 11.28
+    },
+    {
+      "beats": 6,
+      "count": 4613,
+      "pct": 8.92
+    },
+    {
+      "beats": 5,
+      "count": 3335,
+      "pct": 6.45
+    },
+    {
+      "beats": 11,
+      "count": 2993,
+      "pct": 5.79
+    },
+    {
+      "beats": 4,
+      "count": 1901,
+      "pct": 3.68
+    },
+    {
+      "beats": 12,
+      "count": 1417,
+      "pct": 2.74
+    },
+    {
+      "beats": 13,
+      "count": 1020,
+      "pct": 1.97
+    },
+    {
+      "beats": 3,
+      "count": 688,
+      "pct": 1.33
+    },
+    {
+      "beats": 14,
+      "count": 376,
+      "pct": 0.73
+    },
+    {
+      "beats": 2,
+      "count": 174,
+      "pct": 0.34
+    },
+    {
+      "beats": 15,
+      "count": 114,
+      "pct": 0.22
+    },
+    {
+      "beats": 16,
+      "count": 103,
+      "pct": 0.2
+    },
+    {
+      "beats": 19,
+      "count": 39,
+      "pct": 0.08
+    },
+    {
+      "beats": 17,
+      "count": 27,
+      "pct": 0.05
+    },
+    {
+      "beats": 18,
+      "count": 22,
+      "pct": 0.04
+    },
+    {
+      "beats": 1,
+      "count": 21,
+      "pct": 0.04
+    },
+    {
+      "beats": 20,
+      "count": 11,
+      "pct": 0.02
+    },
+    {
+      "beats": 21,
+      "count": 8,
+      "pct": 0.02
+    },
+    {
+      "beats": 23,
+      "count": 7,
+      "pct": 0.01
+    },
+    {
+      "beats": 22,
+      "count": 5,
+      "pct": 0.01
+    },
+    {
+      "beats": 24,
+      "count": 5,
+      "pct": 0.01
+    },
+    {
+      "beats": 28,
+      "count": 5,
+      "pct": 0.01
+    }
+  ],
+  "idle_pre_b_top": [
+    {
+      "beats": 3,
+      "count": 541,
+      "pct": 18.45
+    },
+    {
+      "beats": 4,
+      "count": 384,
+      "pct": 13.09
+    },
+    {
+      "beats": 8,
+      "count": 314,
+      "pct": 10.71
+    },
+    {
+      "beats": 7,
+      "count": 242,
+      "pct": 8.25
+    },
+    {
+      "beats": 6,
+      "count": 195,
+      "pct": 6.65
+    },
+    {
+      "beats": 5,
+      "count": 189,
+      "pct": 6.44
+    },
+    {
+      "beats": 10,
+      "count": 147,
+      "pct": 5.01
+    },
+    {
+      "beats": 9,
+      "count": 146,
+      "pct": 4.98
+    },
+    {
+      "beats": 2,
+      "count": 138,
+      "pct": 4.71
+    },
+    {
+      "beats": 11,
+      "count": 111,
+      "pct": 3.78
+    },
+    {
+      "beats": 1,
+      "count": 74,
+      "pct": 2.52
+    },
+    {
+      "beats": 12,
+      "count": 71,
+      "pct": 2.42
+    },
+    {
+      "beats": 14,
+      "count": 59,
+      "pct": 2.01
+    },
+    {
+      "beats": 13,
+      "count": 53,
+      "pct": 1.81
+    },
+    {
+      "beats": 19,
+      "count": 53,
+      "pct": 1.81
+    }
+  ],
+  "file_mode_pre_b_top": [
+    {
+      "beats": 8,
+      "count": 642,
+      "pct": 39.65
+    },
+    {
+      "beats": 10,
+      "count": 219,
+      "pct": 13.53
+    },
+    {
+      "beats": 9,
+      "count": 206,
+      "pct": 12.72
+    },
+    {
+      "beats": 7,
+      "count": 162,
+      "pct": 10.01
+    },
+    {
+      "beats": 11,
+      "count": 116,
+      "pct": 7.16
+    },
+    {
+      "beats": 6,
+      "count": 91,
+      "pct": 5.62
+    },
+    {
+      "beats": 5,
+      "count": 54,
+      "pct": 3.34
+    },
+    {
+      "beats": 12,
+      "count": 49,
+      "pct": 3.03
+    },
+    {
+      "beats": 13,
+      "count": 40,
+      "pct": 2.47
+    },
+    {
+      "beats": 4,
+      "count": 16,
+      "pct": 0.99
+    },
+    {
+      "beats": 14,
+      "count": 8,
+      "pct": 0.49
+    },
+    {
+      "beats": 15,
+      "count": 6,
+      "pct": 0.37
+    },
+    {
+      "beats": 16,
+      "count": 3,
+      "pct": 0.19
+    },
+    {
+      "beats": 3,
+      "count": 3,
+      "pct": 0.19
+    },
+    {
+      "beats": 17,
+      "count": 1,
+      "pct": 0.06
+    },
+    {
+      "beats": 19,
+      "count": 1,
+      "pct": 0.06
+    },
+    {
+      "beats": 34,
+      "count": 1,
+      "pct": 0.06
+    },
+    {
+      "beats": 211,
+      "count": 1,
+      "pct": 0.06
+    }
+  ],
+  "file_mode_examples": {
+    "6": [
+      "10006.DPS",
+      "10094.DPS",
+      "10097.DPS",
+      "10102.DPS",
+      "10143.DPS",
+      "10148.DPS"
+    ],
+    "8": [
+      "10008.DPS",
+      "10009.DPS",
+      "10011.DPS",
+      "10012.DPS",
+      "10013.DPS",
+      "10014.DPS"
+    ],
+    "7": [
+      "10054.DPS",
+      "10065.DPS",
+      "10129.DPS",
+      "10132.DPS",
+      "10139.DPS",
+      "10140.DPS"
+    ],
+    "12": [
+      "10059.DPS",
+      "10183.DPS",
+      "10204.DPS",
+      "10406.DPS",
+      "10987.DPS",
+      "11055.DPS"
+    ],
+    "10": [
+      "10071.DPS",
+      "10113.DPS",
+      "10114.DPS",
+      "10170.DPS",
+      "10187.DPS",
+      "10211.DPS"
+    ],
+    "11": [
+      "10088.DPS",
+      "10131.DPS",
+      "10439.DPS",
+      "10447.DPS",
+      "10452.DPS",
+      "10460.DPS"
+    ],
+    "13": [
+      "10096.DPS",
+      "10475.DPS",
+      "11219.DPS",
+      "11220.DPS",
+      "11227.DPS",
+      "11238.DPS"
+    ],
+    "15": [
+      "10137.DPS",
+      "10992.DPS",
+      "11833.DPS",
+      "12255.DPS",
+      "12447.DPS",
+      "12759.DPS"
+    ],
+    "17": [
+      "10146.DPS"
+    ],
+    "5": [
+      "10153.DPS",
+      "10175.DPS",
+      "10200.DPS",
+      "10356.DPS",
+      "10399.DPS",
+      "10413.DPS"
+    ],
+    "16": [
+      "10172.DPS",
+      "10182.DPS",
+      "11221.DPS"
+    ],
+    "9": [
+      "10184.DPS",
+      "10414.DPS",
+      "10435.DPS",
+      "10446.DPS",
+      "10453.DPS",
+      "10478.DPS"
+    ],
+    "4": [
+      "10283.DPS",
+      "10310.DPS",
+      "10354.DPS",
+      "10469.DPS",
+      "10566.DPS",
+      "10984.DPS"
+    ],
+    "3": [
+      "10349.DPS",
+      "10400.DPS",
+      "10410.DPS"
+    ],
+    "14": [
+      "11068.DPS",
+      "11222.DPS",
+      "11474.DPS",
+      "11774.DPS",
+      "12195.DPS",
+      "12278.DPS"
+    ],
+    "19": [
+      "12072.DPS"
+    ],
+    "34": [
+      "12875.DPS"
+    ],
+    "211": [
+      "12951.DPS"
+    ]
+  },
+  "pc1_pre_b_top": [
+    {
+      "beats": 8,
+      "count": 12501,
+      "pct": 30.4
+    },
+    {
+      "beats": 7,
+      "count": 5665,
+      "pct": 13.78
+    },
+    {
+      "beats": 9,
+      "count": 4691,
+      "pct": 11.41
+    },
+    {
+      "beats": 6,
+      "count": 4158,
+      "pct": 10.11
+    },
+    {
+      "beats": 10,
+      "count": 3894,
+      "pct": 9.47
+    },
+    {
+      "beats": 5,
+      "count": 3047,
+      "pct": 7.41
+    },
+    {
+      "beats": 11,
+      "count": 2233,
+      "pct": 5.43
+    },
+    {
+      "beats": 4,
+      "count": 1763,
+      "pct": 4.29
+    },
+    {
+      "beats": 12,
+      "count": 1032,
+      "pct": 2.51
+    },
+    {
+      "beats": 13,
+      "count": 727,
+      "pct": 1.77
+    },
+    {
+      "beats": 3,
+      "count": 669,
+      "pct": 1.63
+    },
+    {
+      "beats": 14,
+      "count": 276,
+      "pct": 0.67
+    },
+    {
+      "beats": 2,
+      "count": 171,
+      "pct": 0.42
+    },
+    {
+      "beats": 15,
+      "count": 88,
+      "pct": 0.21
+    },
+    {
+      "beats": 16,
+      "count": 81,
+      "pct": 0.2
+    }
+  ],
+  "pc2_pre_b_top": [
+    {
+      "beats": 8,
+      "count": 3015,
+      "pct": 29.83
+    },
+    {
+      "beats": 9,
+      "count": 1855,
+      "pct": 18.35
+    },
+    {
+      "beats": 10,
+      "count": 1813,
+      "pct": 17.94
+    },
+    {
+      "beats": 7,
+      "count": 1014,
+      "pct": 10.03
+    },
+    {
+      "beats": 11,
+      "count": 722,
+      "pct": 7.14
+    },
+    {
+      "beats": 6,
+      "count": 449,
+      "pct": 4.44
+    },
+    {
+      "beats": 12,
+      "count": 349,
+      "pct": 3.45
+    },
+    {
+      "beats": 5,
+      "count": 286,
+      "pct": 2.83
+    },
+    {
+      "beats": 13,
+      "count": 268,
+      "pct": 2.65
+    },
+    {
+      "beats": 4,
+      "count": 137,
+      "pct": 1.36
+    },
+    {
+      "beats": 14,
+      "count": 95,
+      "pct": 0.94
+    },
+    {
+      "beats": 15,
+      "count": 25,
+      "pct": 0.25
+    },
+    {
+      "beats": 3,
+      "count": 19,
+      "pct": 0.19
+    },
+    {
+      "beats": 16,
+      "count": 17,
+      "pct": 0.17
+    },
+    {
+      "beats": 19,
+      "count": 8,
+      "pct": 0.08
+    }
+  ],
+  "sub_item_estimated_beats_top": [
+    {
+      "beats": 8,
+      "count": 5152,
+      "pct": 15.41
+    },
+    {
+      "beats": 7,
+      "count": 4431,
+      "pct": 13.25
+    },
+    {
+      "beats": 6,
+      "count": 3820,
+      "pct": 11.43
+    },
+    {
+      "beats": 9,
+      "count": 3481,
+      "pct": 10.41
+    },
+    {
+      "beats": 5,
+      "count": 3029,
+      "pct": 9.06
+    },
+    {
+      "beats": 10,
+      "count": 2945,
+      "pct": 8.81
+    },
+    {
+      "beats": 4,
+      "count": 2336,
+      "pct": 6.99
+    },
+    {
+      "beats": 3,
+      "count": 2112,
+      "pct": 6.32
+    },
+    {
+      "beats": 2,
+      "count": 1848,
+      "pct": 5.53
+    },
+    {
+      "beats": 11,
+      "count": 1817,
+      "pct": 5.44
+    },
+    {
+      "beats": 12,
+      "count": 814,
+      "pct": 2.44
+    },
+    {
+      "beats": 1,
+      "count": 621,
+      "pct": 1.86
+    },
+    {
+      "beats": 13,
+      "count": 591,
+      "pct": 1.77
+    },
+    {
+      "beats": 14,
+      "count": 222,
+      "pct": 0.66
+    },
+    {
+      "beats": 15,
+      "count": 64,
+      "pct": 0.19
+    },
+    {
+      "beats": 16,
+      "count": 59,
+      "pct": 0.18
+    },
+    {
+      "beats": 17,
+      "count": 30,
+      "pct": 0.09
+    },
+    {
+      "beats": 19,
+      "count": 28,
+      "pct": 0.08
+    },
+    {
+      "beats": 0,
+      "count": 8,
+      "pct": 0.02
+    },
+    {
+      "beats": 18,
+      "count": 4,
+      "pct": 0.01
+    },
+    {
+      "beats": 32,
+      "count": 4,
+      "pct": 0.01
+    },
+    {
+      "beats": 34,
+      "count": 4,
+      "pct": 0.01
+    },
+    {
+      "beats": 21,
+      "count": 3,
+      "pct": 0.01
+    },
+    {
+      "beats": 26,
+      "count": 1,
+      "pct": 0.0
+    },
+    {
+      "beats": 23,
+      "count": 1,
+      "pct": 0.0
+    }
+  ],
+  "sub_item_estimated_beats_stats": {
+    "count": 33429,
+    "median": 7.04,
+    "mean": 7.057,
+    "p10": 2.971,
+    "p90": 11.01
+  },
+  "no_songlist_examples": [
+    "10008.DPS",
+    "10009.DPS",
+    "10011.DPS",
+    "10012.DPS",
+    "10013.DPS",
+    "10014.DPS",
+    "10015.DPS",
+    "10016.DPS",
+    "10017.DPS",
+    "10018.DPS",
+    "10027.DPS",
+    "10033.DPS",
+    "10036.DPS",
+    "10040.DPS",
+    "10045.DPS",
+    "10046.DPS",
+    "10048.DPS",
+    "10053.DPS",
+    "10054.DPS",
+    "10057.DPS",
+    "10058.DPS",
+    "10059.DPS",
+    "10060.DPS",
+    "10061.DPS",
+    "10062.DPS",
+    "10064.DPS",
+    "10065.DPS",
+    "10066.DPS",
+    "10067.DPS",
+    "10068.DPS",
+    "10069.DPS",
+    "10070.DPS",
+    "10071.DPS",
+    "10072.DPS",
+    "10074.DPS",
+    "10075.DPS",
+    "10076.DPS",
+    "10077.DPS",
+    "10078.DPS",
+    "10079.DPS",
+    "10080.DPS",
+    "10081.DPS",
+    "10083.DPS",
+    "10084.DPS",
+    "10086.DPS",
+    "10088.DPS",
+    "10089.DPS",
+    "10090.DPS",
+    "10091.DPS",
+    "10092.DPS"
+  ],
+  "per_file_sample": [
+    {
+      "file": "10006.DPS",
+      "gn": "sdom0006K.gn",
+      "rows": 47,
+      "dance_rows": 45,
+      "idle_rows": 2,
+      "mode_pb": [
+        6,
+        30
+      ],
+      "unique_pb": [
+        4,
+        5,
+        6
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          45
+        ]
+      ],
+      "songlist": true,
+      "timing": [
+        78.87323943661971,
+        213,
+        70,
+        [
+          213,
+          213,
+          213
+        ]
+      ]
+    },
+    {
+      "file": "10008.DPS",
+      "gn": "sdom0008T.gn",
+      "rows": 39,
+      "dance_rows": 34,
+      "idle_rows": 5,
+      "mode_pb": [
+        8,
+        34
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          33
+        ],
+        [
+          3,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10009.DPS",
+      "gn": "sdom0009K.gn",
+      "rows": 33,
+      "dance_rows": 29,
+      "idle_rows": 4,
+      "mode_pb": [
+        8,
+        27
+      ],
+      "unique_pb": [
+        6,
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          28
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10011.DPS",
+      "gn": "sdom0011K.gn",
+      "rows": 30,
+      "dance_rows": 28,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        28
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          26
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10012.DPS",
+      "gn": "sdom0012K.gn",
+      "rows": 39,
+      "dance_rows": 38,
+      "idle_rows": 1,
+      "mode_pb": [
+        8,
+        33
+      ],
+      "unique_pb": [
+        4,
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          34
+        ],
+        [
+          2,
+          4
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10013.DPS",
+      "gn": "sdom0013T.gn",
+      "rows": 34,
+      "dance_rows": 32,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        31
+      ],
+      "unique_pb": [
+        5,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          31
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10014.DPS",
+      "gn": "sdom0014K.gn",
+      "rows": 25,
+      "dance_rows": 20,
+      "idle_rows": 5,
+      "mode_pb": [
+        8,
+        20
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          18
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10015.DPS",
+      "gn": "sdom0015K.gn",
+      "rows": 29,
+      "dance_rows": 25,
+      "idle_rows": 4,
+      "mode_pb": [
+        8,
+        25
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          21
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          4,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10016.DPS",
+      "gn": "sdom0016T.gn",
+      "rows": 23,
+      "dance_rows": 22,
+      "idle_rows": 1,
+      "mode_pb": [
+        8,
+        19
+      ],
+      "unique_pb": [
+        6,
+        7,
+        8,
+        9
+      ],
+      "pc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          22
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10017.DPS",
+      "gn": "sdom0017T.gn",
+      "rows": 28,
+      "dance_rows": 26,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        25
+      ],
+      "unique_pb": [
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          23
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10018.DPS",
+      "gn": "sdom0018K.gn",
+      "rows": 26,
+      "dance_rows": 24,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        22
+      ],
+      "unique_pb": [
+        4,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          22
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10027.DPS",
+      "gn": "sdom0027K.gn",
+      "rows": 39,
+      "dance_rows": 38,
+      "idle_rows": 1,
+      "mode_pb": [
+        8,
+        22
+      ],
+      "unique_pb": [
+        8,
+        9,
+        10,
+        11,
+        14
+      ],
+      "pc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          37
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10033.DPS",
+      "gn": "sdom0033K.gn",
+      "rows": 33,
+      "dance_rows": 28,
+      "idle_rows": 5,
+      "mode_pb": [
+        8,
+        24
+      ],
+      "unique_pb": [
+        7,
+        8,
+        16
+      ],
+      "pc": [
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          24
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          3,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10036.DPS",
+      "gn": "sdom0036T.gn",
+      "rows": 33,
+      "dance_rows": 29,
+      "idle_rows": 4,
+      "mode_pb": [
+        8,
+        27
+      ],
+      "unique_pb": [
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          26
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10040.DPS",
+      "gn": "sdom0040K.gn",
+      "rows": 33,
+      "dance_rows": 32,
+      "idle_rows": 1,
+      "mode_pb": [
+        8,
+        24
+      ],
+      "unique_pb": [
+        4,
+        6,
+        7,
+        8,
+        10
+      ],
+      "pc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          30
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10043.DPS",
+      "gn": "sdom0043K.gn",
+      "rows": 33,
+      "dance_rows": 32,
+      "idle_rows": 1,
+      "mode_pb": [
+        8,
+        29
+      ],
+      "unique_pb": [
+        8,
+        10,
+        11
+      ],
+      "pc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          28
+        ],
+        [
+          2,
+          4
+        ]
+      ],
+      "songlist": true,
+      "timing": [
+        135.12605042016807,
+        119,
+        67,
+        [
+          119,
+          119,
+          119
+        ]
+      ]
+    },
+    {
+      "file": "10045.DPS",
+      "gn": "sdom0045T.gn",
+      "rows": 33,
+      "dance_rows": 31,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        25
+      ],
+      "unique_pb": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          31
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10046.DPS",
+      "gn": "sdom0046K.gn",
+      "rows": 32,
+      "dance_rows": 29,
+      "idle_rows": 3,
+      "mode_pb": [
+        8,
+        29
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          26
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10047.DPS",
+      "gn": "sdom0047T.gn",
+      "rows": 34,
+      "dance_rows": 32,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        25
+      ],
+      "unique_pb": [
+        2,
+        4,
+        5,
+        6,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          28
+        ],
+        [
+          2,
+          4
+        ]
+      ],
+      "songlist": true,
+      "timing": [
+        97.6,
+        150,
+        61,
+        [
+          150,
+          150,
+          150
+        ]
+      ]
+    },
+    {
+      "file": "10048.DPS",
+      "gn": "sdom0048T.gn",
+      "rows": 38,
+      "dance_rows": 35,
+      "idle_rows": 3,
+      "mode_pb": [
+        8,
+        29
+      ],
+      "unique_pb": [
+        4,
+        5,
+        7,
+        8,
+        10
+      ],
+      "pc": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          33
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10053.DPS",
+      "gn": "sdom0053K.gn",
+      "rows": 38,
+      "dance_rows": 36,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        33
+      ],
+      "unique_pb": [
+        6,
+        7,
+        8,
+        10
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          35
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10054.DPS",
+      "gn": "sdom0054K.gn",
+      "rows": 35,
+      "dance_rows": 34,
+      "idle_rows": 1,
+      "mode_pb": [
+        7,
+        21
+      ],
+      "unique_pb": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "pc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          32
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10057.DPS",
+      "gn": "sdom0057K.gn",
+      "rows": 18,
+      "dance_rows": 16,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        16
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          11
+        ],
+        [
+          2,
+          5
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10058.DPS",
+      "gn": "sdom0058K.gn",
+      "rows": 32,
+      "dance_rows": 29,
+      "idle_rows": 3,
+      "mode_pb": [
+        8,
+        29
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          24
+        ],
+        [
+          2,
+          5
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10059.DPS",
+      "gn": "sdom0059K.gn",
+      "rows": 21,
+      "dance_rows": 19,
+      "idle_rows": 2,
+      "mode_pb": [
+        12,
+        13
+      ],
+      "unique_pb": [
+        11,
+        12
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          17
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10060.DPS",
+      "gn": "sdom0060K.gn",
+      "rows": 21,
+      "dance_rows": 18,
+      "idle_rows": 3,
+      "mode_pb": [
+        8,
+        15
+      ],
+      "unique_pb": [
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          17
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10061.DPS",
+      "gn": "sdom0061T.gn",
+      "rows": 40,
+      "dance_rows": 38,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        29
+      ],
+      "unique_pb": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          35
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10062.DPS",
+      "gn": "sdom0062K.gn",
+      "rows": 39,
+      "dance_rows": 33,
+      "idle_rows": 6,
+      "mode_pb": [
+        8,
+        33
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          6
+        ],
+        [
+          1,
+          28
+        ],
+        [
+          2,
+          5
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10063.DPS",
+      "gn": "sdom0063T.gn",
+      "rows": 24,
+      "dance_rows": 22,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        20
+      ],
+      "unique_pb": [
+        5,
+        8,
+        10
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          21
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": true,
+      "timing": [
+        134.6341463414634,
+        82,
+        46,
+        [
+          82,
+          82,
+          82
+        ]
+      ]
+    },
+    {
+      "file": "10064.DPS",
+      "gn": "sdom0064T.gn",
+      "rows": 26,
+      "dance_rows": 23,
+      "idle_rows": 3,
+      "mode_pb": [
+        8,
+        15
+      ],
+      "unique_pb": [
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "pc": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          21
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10065.DPS",
+      "gn": "sdom0065K.gn",
+      "rows": 32,
+      "dance_rows": 28,
+      "idle_rows": 4,
+      "mode_pb": [
+        7,
+        10
+      ],
+      "unique_pb": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          25
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10066.DPS",
+      "gn": "sdom0066T.gn",
+      "rows": 27,
+      "dance_rows": 22,
+      "idle_rows": 5,
+      "mode_pb": [
+        8,
+        20
+      ],
+      "unique_pb": [
+        4,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          18
+        ],
+        [
+          2,
+          4
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10067.DPS",
+      "gn": "sdom0067K.gn",
+      "rows": 26,
+      "dance_rows": 24,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        22
+      ],
+      "unique_pb": [
+        4,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          20
+        ],
+        [
+          2,
+          4
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10068.DPS",
+      "gn": "sdom0068K.gn",
+      "rows": 19,
+      "dance_rows": 15,
+      "idle_rows": 4,
+      "mode_pb": [
+        8,
+        15
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          3,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10069.DPS",
+      "gn": "sdom0069T.gn",
+      "rows": 26,
+      "dance_rows": 24,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        24
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          5,
+          3
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10070.DPS",
+      "gn": "sdom0070K.gn",
+      "rows": 25,
+      "dance_rows": 25,
+      "idle_rows": 0,
+      "mode_pb": [
+        8,
+        24
+      ],
+      "unique_pb": [
+        4,
+        8
+      ],
+      "pc": [
+        [
+          1,
+          18
+        ],
+        [
+          2,
+          7
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10071.DPS",
+      "gn": "sdom0071T.gn",
+      "rows": 33,
+      "dance_rows": 29,
+      "idle_rows": 4,
+      "mode_pb": [
+        10,
+        11
+      ],
+      "unique_pb": [
+        3,
+        5,
+        8,
+        9,
+        10
+      ],
+      "pc": [
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          29
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10072.DPS",
+      "gn": "sdom0072T.gn",
+      "rows": 48,
+      "dance_rows": 41,
+      "idle_rows": 7,
+      "mode_pb": [
+        8,
+        40
+      ],
+      "unique_pb": [
+        4,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          7
+        ],
+        [
+          1,
+          37
+        ],
+        [
+          2,
+          4
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    },
+    {
+      "file": "10073.DPS",
+      "gn": "sdom0073K.gn",
+      "rows": 26,
+      "dance_rows": 21,
+      "idle_rows": 5,
+      "mode_pb": [
+        8,
+        21
+      ],
+      "unique_pb": [
+        8
+      ],
+      "pc": [
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          20
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": true,
+      "timing": [
+        83.40425531914893,
+        141,
+        49,
+        [
+          141,
+          141,
+          141
+        ]
+      ]
+    },
+    {
+      "file": "10074.DPS",
+      "gn": "sdom0074K.gn",
+      "rows": 30,
+      "dance_rows": 28,
+      "idle_rows": 2,
+      "mode_pb": [
+        8,
+        23
+      ],
+      "unique_pb": [
+        4,
+        5,
+        7,
+        8
+      ],
+      "pc": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          27
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "songlist": false,
+      "timing": null
+    }
+  ]
+}

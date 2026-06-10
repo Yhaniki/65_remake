@@ -1,0 +1,15 @@
+# Architecture 文件索引
+
+| 文件 | 內容 |
+|------|------|
+| [stack.md](stack.md) | Unity / FishNet / Steam / PlayFab / osu |
+| [dual-variant.md](dual-variant.md) | Classic 原版向 + Enhanced 改良版（共用 core） |
+| [repo-structure.md](repo-structure.md) | `src/`、`tools/` 目錄樹 |
+| [chart-format.md](chart-format.md) | Canonical Chart |
+| [scoring-hybrid.md](scoring-hybrid.md) | 1e8 + SDO combo + Hold 合併 |
+| [skin-system.md](skin-system.md) | osu / SM NoteSkin |
+| [dance-vmd.md](dance-vmd.md) | VMD 舞蹈 |
+| [online-services.md](online-services.md) | Steam / PlayFab / FishNet |
+| [personal-room-gogh.md](personal-room-gogh.md) | 個人房咕盒風 |
+
+入口：[STEP1.md](../STEP1.md) · [PHASE1.md](../PHASE1.md) · [MVP.md](../MVP.md)
