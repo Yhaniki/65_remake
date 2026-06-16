@@ -1,0 +1,17 @@
+{
+    "name": "Sdo.Game",
+    "rootNamespace": "Sdo.Game",
+    "references": [
+        "Sdo.Osu",
+        "Sdo.Ruleset"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

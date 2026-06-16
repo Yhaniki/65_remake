@@ -1,0 +1,16 @@
+{
+    "name": "Sdo.Ruleset",
+    "rootNamespace": "Sdo.Ruleset",
+    "references": [
+        "Sdo.Osu"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}
