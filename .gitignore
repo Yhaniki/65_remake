@@ -30,6 +30,12 @@ project.fragment.lock.json
 artifacts/
 *.nupkg
 
+# Unity 自動產生的方案/專案檔（重開 Unity 會重建）
+*.sln
+*.csproj
+*.unityproj
+*.csproj.AssemblyInfo.cs
+
 # Unity（任意子目錄下的 Unity 專案）
 [Ll]ibrary/
 [Tt]emp/
@@ -64,6 +70,21 @@ venv/
 *.pem
 credentials.json
 secrets.json
+
+# 大型素材原始檔放 assets/ 但不入庫；保留 wireframes 參考圖
+assets/*
+!assets/wireframes/
+
+# Claude Code 本地設定
+.claude/
+
+# 逆向／截圖／擷取的暫存產物（放在 repo 根目錄）
+/*.png
+/*.log
+/eft_log.txt
+/eft_online_log*.txt
+/test-results.xml
+/tr.xml
 
 # 可選：本地測譜音檔過大時取消註解
 # StreamingAssets/**/*.ogg
