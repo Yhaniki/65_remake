@@ -55,6 +55,7 @@
 - [ ] SM `.sm` import
 - [ ] 預設 skin + 切換
 - [ ] 大廳 **設定**（OPTION：鍵位、音效含 global offset、視窗/流速）— [game-settings.md](systems/game-settings.md)
+- [ ] **Debug Overlay**（FPS、Ping、Loss 等可開關）— [debug-overlay.md](systems/debug-overlay.md)
 - [ ] Hold Marvelous 白光（SM 風）
 
 ---

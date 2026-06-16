@@ -10,6 +10,7 @@
 |------|------|
 | 自由模式 | [free-mode.md](../screens/05-game-arena/modes/free-mode.md) |
 | 普通模式 | [normal-mode.md](../screens/05-game-arena/modes/normal-mode.md) |
+| 情侶模式 | [lover-mode.md](../screens/05-game-arena/modes/lover-mode.md) |
 | 方向 | [scroll-directions.md](../screens/05-game-arena/modes/scroll-directions.md) |
 
 ## 重製優先（自由 + 普通）
@@ -34,7 +35,8 @@
 |------|------|--------|
 | 反鍵 | 三向 | P2 |
 | 六鍵 | 三向 | P2（**Enhanced only**；Classic 不做） |
-| 情侶 / 天舞 / 寵舞 / 炫彩 / ShowTime | 三向 | P2 |
+| 情侶 | 三向 | P2 — [lover-mode.md](../screens/05-game-arena/modes/lover-mode.md) |
+| 天舞 / 寵舞 / 炫彩 / ShowTime | 三向 | P2 |
 | 怪物狩獵 / 寶石 / 徽章 | 三向 | P2 |
 
 完整列表見維基；實作時在 `modes/` 新增文件。

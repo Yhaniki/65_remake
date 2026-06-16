@@ -1,5 +1,77 @@
 # SDO 單機版算分公式說明
 
+> ⚠️ **2026-06 更新（反組譯實證，取代舊推測）**：分數公式其實**寫在 exe 裡**（不是只在 Lua）。
+> 已用 capstone 反組譯 `assets/sdo_stand_alone.exe` 核對。下面第 0 節是確定版；
+> 舊的第 3、4 節（Lua/Arrowgene 推測、(combo+1)/2）保留作參考，但**單機 FREE 分以第 0 節為準**。
+> 另：舊文件把 **Cool 與 Bad 標反了**，已於第 0 節更正。
+
+## 0. 確定版（單機 FREE 分，反組譯實證）
+
+判定內部代碼與正確名稱（由**血量增減**反推：grade3 加血 = Cool，grade2 扣血 = Bad）：
+
+| 代碼 grade | 名稱 | 計數器 | HP delta(lv0) | FREE 分/顆 |
+|---|---|---|---|---|
+| 4 | **Perfect** | `+0x830` | +6 | **+50** |
+| 3 | **Cool** | `+0x834` | +4 | **+40** |
+| 2 | **Bad** | `+0x838` | −10 | **+20** |
+| 0/1 | **Miss** | `+0x83c` | −50 | **−10** |
+
+**exe 內兩條分數路徑：**
+
+1. 基礎累加 `0xcc4`（行 85641-85645，每批計數歸零再累加）：
+   ```c
+   batch = Perfect*5 + (Bad + Cool*2)*2 - Miss;  // = P*5 + Cool*4 + Bad*2 - Miss
+   0xcc4 += batch * 10;  if (0xcc4 < 0) 0xcc4 = 0;
+   ```
+   即每顆平比：Perfect 50 / Cool 40 / Bad 20 / Miss −10。
+
+2. **魔法加成分 `0x840`**（行 85825-85826，模式 `0xb4c!=0`）：
+   ```c
+   0x840 += (magicLv + 1) * batch * 10;          // magicLv = 0x408, 0~5
+   ```
+   `magicLv` 由魔法量表 `0xb54` 集滿門檻(`0xb5c`=8000) 而升；量表增量 ∝ 連擊（行 84132-84146，
+   `FUN_00407610(combo+1) * player[300]`）。**∴ combo 越高 → 魔法等級越高 → 分數倍率越高(1~6×)。**
+
+### 採用模型（私服 `GameStatsData.getPoints` + 封包實測，權威）
+
+```text
+C = clamp(maxCombo, 10, 68)
+score = Perfects × C + Cools × (C − 10)
+```
+
+封包實測證明（`server/.../game/GameStatsData.java` 註解）：
+
+| Points | Perfects | Cools | Bad | Miss |
+|--------|----------|-------|-----|------|
+| 5546   | 79       | 3     | 0   | 0    |
+
+→ `79×68 + 3×(68−10) = 5372 + 174 = 5546` ✔（C=68）
+
+- **Bad / Miss 不直接給分**：getPoints 完全沒有 bad/miss 項；它們只透過**斷 combo 拉低 C** 間接扣分。
+- **combo 倍率**：C 隨 combo 上升（上限 68）→ 每顆 Perfect/Cool 分數變大。
+- **每 cool −10**：Perfect−Cool = C−(C−10) = 10，與 C 無關。
+- Combo：**Perfect/Cool 續；Bad/Miss 斷**。
+- server 程式碼寫成 `getCools()*C - 10`（−10 只減一次）是 **bug**，封包實測應為 `Cools×(C−10)`。
+- 「關卡分」`cLevelScore{600,750,…}` 與 `cLevelGajoong{1…2}`：是 **LUA 逐顆即時**算法的關卡基底/高難度×2 倍率
+  （見下方第 3 節），但**最終/傳輸分數**的 getPoints 已簡化為上式、不含關卡分，基底就是 combo(C)。
+
+**Combo 中斷**（`FUN_00497500`，grade 對照同上）：
+
+| 判定 | combo |
+|---|---|
+| Perfect (4) | 續 |
+| Cool (3) | 續 |
+| Bad (2) | **斷** |
+| Miss (0/1) | **斷** |
+
+> 即 **Perfect / Cool 續 combo；Bad / Miss 斷 combo**。（舊第 2 節寫成 Cool 斷是錯的。）
+
+> PK 模式另有 combo 倍率分（`+0x840 += (0x408+1) * batch * 10`，行 85825），FREE 分不受影響。
+
+---
+
+## （以下為舊版推測，僅供參考）
+
 本文依 `tools/sdo_stand_alone.exe.c`（Ghidra 反編譯）與 Dance! Online 伺服器逆向註解（`thirdparty/net.arrowgene.dance/.../GameStatsData.java`）整理，說明 **Perfect / Cool / Bad / Miss** 判定與分數、Combo 的關係。
 
 ---

@@ -110,6 +110,30 @@ pixelPerMs = baseScroll(scroll_speed, scale_with_bpm, currentBpm, sliderMultipli
 | Runtime | 影響 **視覺 scroll**，**不改** 判定 `TimeMs` |
 | Classic | 可選不渲染 SV 或簡化（待決） |
 
+### 與其他流速欄位分層
+
+Canonical Chart 把「流速」拆成四層；**皆不改判定**（詳見 [chart-format.md](chart-format.md)）：
+
+| 層 | 欄位 | 作用域 | 參考 |
+|----|------|--------|------|
+| 1 | `SliderMultiplier` + `TimingPoint.SliderVelocity` | 時間軸整段 | osu 綠線 |
+| 2 | `ScrollSectionEvent` | 時間區間方向 / 負速 / **整段停** | CHUNITHM 倒退、SM 逆流、STOP |
+| 3 | `NoteEvent.ScrollMultiplier` / `ScrollStop` | **單顆** note 流速或停 | 太鼓達人、單 note 定住 |
+| 4 | 使用者 `scroll_speed` + BPM scale | 玩家 / 房間 | [game-settings.md](../systems/game-settings.md) |
+
+```text
+if inStopSection(t) OR noteFrozen(note, t):
+  approachSpeed = 0                    // 整段停 or 單 note 停
+else:
+  approachSpeed =
+      ScrollSpeedCalculator(t)         // 層 1 + 4
+    × sectionFactor(ScrollSections, t) // 層 2（Reverse / MirrorSpeed）
+    × (note.ScrollMultiplier ?? 1)     // 層 3
+```
+
+Hold：層 3 取 **HoldHead** 的 `ScrollMultiplier` / `ScrollStop`，body / release 共用。  
+停拍語意詳見 [chart-format.md §5](chart-format.md#5-停拍--chunithm-stop--太鼓單-note-定住)。
+
 ---
 
 ## Global offset（使用者）
@@ -174,7 +198,8 @@ Remake.Unity.Enhanced/
 |------|------|
 | Step 1 | `.osu` 時間 + 固定 scroll；無 SV 編輯 |
 | Phase 1 | SV 讀取、定速預設、global offset |
-| MVP | 完整 osu 流速設定 + 房間 SPEED UI |
+| MVP | 完整 osu 流速設定 + 房間 SPEED UI + `ScrollSection.Reverse` |
+| Enhanced+ | 單 note 流速 / 停拍、整段 `Stop`、`ScrollSection.MirrorSpeed` |
 | Classic | GN import + **BPM 制 scroll**（无定速开关） |
 
 ---

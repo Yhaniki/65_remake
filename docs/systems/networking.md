@@ -20,7 +20,23 @@
 
 單機 offline。
 
+## 診斷指標（Debug Overlay）
+
+MVP 起 FishNet Transport 暴露給 [debug-overlay.md](debug-overlay.md)：
+
+| 指標 | 計算 |
+|------|------|
+| **Ping** | RTT / 2（ms） |
+| **RTT** | 最近 heartbeat 往返（ms） |
+| **Jitter** | 最近 20 次 RTT 標準差 |
+| **Loss %** | `(sent − acked) / sent` 最近 5s |
+| **Tick** | Server `TimeManager.TickRate` |
+| **Role** | Host / Client / Offline |
+
+Phase 1 無連線；overlay 只顯示 FPS（見 debug-overlay）。
+
 ## 相關
 
 - [room-matchmaking.md](room-matchmaking.md)
+- [debug-overlay.md](debug-overlay.md)
 - [architecture/online-services.md](../architecture/online-services.md)

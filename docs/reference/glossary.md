@@ -35,6 +35,8 @@
 | 家族 / 公會 | 玩家組織，有等級與專屬功能 | post-MVP |
 | 個人房 | 玩家私人空間，可裝飾、邀請好友 | post-MVP |
 | 情侶 | 配對關係，情侶模式需兩人 | post-MVP |
+| Charm | 情侶模式勝利獎勵的「愛的能量」，累積填心心 | post-MVP |
+| 心心 | 情侶進度條；1,000 charm = 半顆、2,000 = 1 顆，上限 12 顆 | post-MVP |
 
 ## 經濟相關
 
@@ -53,6 +55,7 @@
 | Flow | 跨多個 screen 的使用者路徑 |
 | System | 跨 screen 共用的能力（聊天、判定等） |
 | MVP | 最小可玩版本 |
+| Debug Overlay | 畫面角落可開關的 FPS／網路診斷疊層 | 見 [debug-overlay.md](../systems/debug-overlay.md) |
 
 ## 待新增
 

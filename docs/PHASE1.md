@@ -43,6 +43,7 @@ flowchart LR
 | 判定 | P / C / B / Miss |
 | 操作 | ↑↓←→ |
 | UI | 預設 skin；2D 音符 + 靜態背景 |
+| 除錯 | **F12** 開關 FPS 疊層（見 [debug-overlay.md](systems/debug-overlay.md)） |
 | 平台 | Unity 單機 |
 
 ---

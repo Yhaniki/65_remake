@@ -2,7 +2,7 @@
 
 > 優先級：**P0 MVP**
 > 相關 flow：[docs/flows/02-login-to-game.md](../../flows/02-login-to-game.md)
-> 相關 system：[docs/systems/scoring-judgment.md](../../systems/scoring-judgment.md), [docs/systems/audio-bgm.md](../../systems/audio-bgm.md)
+> 相關 system：[docs/systems/scoring-judgment.md](../../systems/scoring-judgment.md), [docs/systems/audio-bgm.md](../../systems/audio-bgm.md), [docs/systems/debug-overlay.md](../../systems/debug-overlay.md)
 
 ## 1. 目的
 
@@ -48,6 +48,7 @@
 | 音符皮膚 | 預設 | P2 | 非核心 |
 | ShowTime 段落 | 不做 | P2 | 簡化 |
 | 回放 | Phase 1 不做 | P1 自由模式本地 `.rpl` | 參考 osu；見 [replay-local.md](../../systems/replay-local.md) |
+| Debug Overlay | Phase 1 FPS | MVP + 網路欄 | 見 [debug-overlay.md](../../systems/debug-overlay.md)；預設關 |
 
 ## 5. UI 草稿
 

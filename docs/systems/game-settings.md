@@ -35,6 +35,7 @@ flowchart TB
 | 游戏特效 | 人物特效 / 场景特效 |
 | 游戏视角 | 固定 / 默认 |
 | 面板透明度 | MIN～MAX 滑桿 |
+| **顯示除錯資訊** | 開 / 關 — FPS、網路延遲等疊層；見 [debug-overlay.md](debug-overlay.md) |
 
 ### 房間側欄（非 OPTION 內，同屏可見）
 
@@ -235,7 +236,7 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 | 視窗解析度 / 全屏 | 使用者勾選 | 換機常要 |
 | 語系 `culture` | 使用者勾選 | 與 [localization.md](localization.md) 連動 |
 
-**不同步**（僅本地或根本不存）：單局房間暫存、除錯 flag、本機路徑。
+**不同步**（僅本地或根本不存）：單局房間暫存、**`show_debug_overlay`**、本機路徑。
 
 ### 設定 UI（OPTION 或獨立「同步」區）
 
@@ -269,8 +270,8 @@ Phase 1 / Step 1：**僅本地**，無 Steam。
 | 階段 | 設定 |
 |------|------|
 | Step 1 | 硬編碼鍵位；無設定 UI |
-| Phase 1 | Global offset + scroll_speed（定速預設）；簡化選項 |
-| MVP | 完整三頁 OPTION + 多解析度 + keymap UI + **Steam 設定同步（可選）** |
+| Phase 1 | Global offset + scroll_speed（定速預設）；簡化選項；**F12 Debug Overlay（FPS）** |
+| MVP | 完整三頁 OPTION + 多解析度 + keymap UI + **Debug Overlay 網路欄** + **Steam 設定同步（可選）** |
 | Classic exe | 原版 OPTION 子集 + 800×600；**无流速模式开关** |
 
 ---
@@ -286,3 +287,4 @@ Phase 1 / Step 1：**僅本地**，無 Steam。
 - [scroll-timing.md](../architecture/scroll-timing.md)
 - [localization.md](localization.md)
 - [screens/03-lobby/spec.md](../screens/03-lobby/spec.md) — 大廳「設定」入口
+- [debug-overlay.md](debug-overlay.md) — FPS／網路除錯疊層

@@ -6,6 +6,7 @@
 |------|------|
 | [free-mode.md](./free-mode.md) | 自由模式（難度、勝負、用途） |
 | [normal-mode.md](./normal-mode.md) | 普通模式（房主難度、PlayFab 勝負） |
+| [lover-mode.md](./lover-mode.md) | 情侶模式（Charm、心心，P2） |
 | [scroll-directions.md](./scroll-directions.md) | 向上 / 向下 / 傾斜（各模式共用） |
 
 **模式 × 方向** 正交組合，不再拆成 `free-up`、`normal-tilt` 等獨立檔。
