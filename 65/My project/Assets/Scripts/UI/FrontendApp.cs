@@ -1,6 +1,9 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Sdo.Game;
 using Sdo.Localization;
 using Sdo.Settings;
@@ -24,7 +27,17 @@ namespace Sdo.UI
         private readonly Dictionary<ScreenId, UIScreenBase> _screens = new Dictionary<ScreenId, UIScreenBase>();
         private SettingsModal _settings;
         private NoteSkinPicker _notePicker;
+        private ResultsModal _results;
         private int _killGuardFrames = 3;
+        private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
+        private Step1Game _activeGame;                // the running gameplay instance (null = in the front-end)
+        private HashSet<GameObject> _preGameRoots;    // scene roots that existed before launch -> kept on exit
+
+        // Suppress the play screen's self-boot before any scene script runs (BeforeSceneLoad always precedes
+        // Step1Game's AfterSceneLoad Boot). The front-end is the entry point and launches gameplay on demand, so a
+        // stray auto-booted Step1Game (and the orphan avatar it would leave behind) must never come into being.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void SuppressGameplayAutoBoot() => Step1Game.AutoBootSuppressed = true;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
@@ -45,6 +58,7 @@ namespace Sdo.UI
             _ctx = AppContext.CreateMock();
 
             var canvas = UIKit.CreateCanvas("FrontendCanvas", new Vector2(1280, 720), 0);
+            _canvasGo = canvas.gameObject;
             var root = (RectTransform)canvas.transform;
             UIKit.Stretch(UIKit.AddImage(root, "AppBg", UITheme.Bg).rectTransform);
 
@@ -64,11 +78,14 @@ namespace Sdo.UI
             _notePicker = new GameObject("NotePicker").AddComponent<NoteSkinPicker>();
             _notePicker.transform.SetParent(modalLayer, false);
             _notePicker.Build(modalLayer, _ctx.Session);
+            _results = new GameObject("Results").AddComponent<ResultsModal>();
+            _results.transform.SetParent(modalLayer, false);
+            _results.Build(modalLayer);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _settings.Open();
             Nav.OpenNoteSkinPicker = () => _notePicker.Open();
-            Nav.StartGameStub = () => Toast.Show(LocalizationManager.Get("room.start_stub"));
+            Nav.StartGame = StartGameplay;
 
             WarmupFont();
             ShowOnly(_ctx.Flow.Current);
@@ -77,7 +94,80 @@ namespace Sdo.UI
         private void Update()
         {
             _ctx?.Chat?.Tick();
-            if (_killGuardFrames > 0) { _killGuardFrames--; KillStrayGameplay(); }
+            if (_killGuardFrames > 0 && _activeGame == null) { _killGuardFrames--; KillStrayGameplay(); }
+            if (_activeGame != null)
+            {
+                if (Input.GetKeyDown(KeyCode.Escape)) AbortGameplay();   // quit early, no settlement
+                else if (_activeGame.Finished) FinishGameplay();        // song played out / failed -> show results
+            }
+        }
+
+        // ---- gameplay hand-off (host pressed Start in the room) ----
+
+        // Spawn the faithful play screen (Step1Game) configured from the session selection, and hide the whole
+        // front-end while it runs. The session carries everything Step1Game needs; the only mapping is resolving the
+        // chart/audio paths in the music tree (sibling of SdoExtracted.Root) and the per-song choreography by fileId.
+        private void StartGameplay()
+        {
+            if (_activeGame != null) return;
+            var s = _ctx.Session;
+            if (!s.HasSong) { Toast.Show(LocalizationManager.Get("room.need_song")); return; }
+
+            string musicDir = Path.Combine(Path.GetDirectoryName(SdoExtracted.Root) ?? SdoExtracted.Root, "music");
+            string gnPath = Path.Combine(musicDir, s.SongGn);                           // e.g. .../music/sdom1197k.gn
+            string oggBase = Regex.Match(s.SongGn ?? "", @"sdom\d+").Value;             // chart letter (k/t) dropped: sdom1197k -> sdom1197
+            string oggPath = oggBase.Length > 0 ? Path.Combine(musicDir, oggBase + ".ogg") : null;
+
+            // Snapshot the current scene roots (canvas, EventSystem, Main Camera, …) so TeardownGameplay can destroy
+            // exactly what Step1Game spawns (it parents nothing to us — every board/avatar/scene object is a new root).
+            _preGameRoots = new HashSet<GameObject>(SceneManager.GetActiveScene().GetRootGameObjects());
+
+            _ctx.Flow.GoTo(ScreenId.Gameplay);
+            if (_canvasGo != null) _canvasGo.SetActive(false);
+
+            var game = new GameObject("Step1Game").AddComponent<Step1Game>();   // fields read in its Start() next frame
+            game.gnPath = gnPath;
+            game.oggPath = oggPath;
+            game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
+            game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
+            game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
+            game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
+            _activeGame = game;
+        }
+
+        // Song finished (or HP failed): settle the run. Grab the score off the gameplay instance BEFORE tearing it
+        // down (ScoreProcessor is plain managed state, so it survives the GameObject destruction once referenced),
+        // then show the results modal; dismissing it returns to the room.
+        private void FinishGameplay()
+        {
+            var score = _activeGame.Score;
+            bool failed = _activeGame.Failed;
+            TeardownGameplay();
+            _results.Open(score, failed, () => _ctx.Flow.GoTo(ScreenId.Room));
+        }
+
+        // Esc during play: abandon the run with no settlement and go straight back to the room.
+        private void AbortGameplay()
+        {
+            TeardownGameplay();
+            _ctx.Flow.GoTo(ScreenId.Room);
+        }
+
+        // Tear the gameplay session down and restore the front-end. Step1Game owns the scene and never reparents into
+        // us, so we destroy every root it added (diff against the pre-launch snapshot) and reset the time scale its
+        // debug pause/speed keys may have changed, then re-show the front-end canvas. Does NOT change the flow state —
+        // the caller decides where to go next (room directly, or via the results modal).
+        private void TeardownGameplay()
+        {
+            _activeGame = null;
+            Time.timeScale = 1f;
+            if (_preGameRoots != null)
+            {
+                foreach (var go in SceneManager.GetActiveScene().GetRootGameObjects())
+                    if (!_preGameRoots.Contains(go)) Destroy(go);
+                _preGameRoots = null;
+            }
+            if (_canvasGo != null) _canvasGo.SetActive(true);
         }
 
         private void Make<T>(RectTransform parent) where T : UIScreenBase
@@ -97,8 +187,8 @@ namespace Sdo.UI
 
         private static void KillStrayGameplay()
         {
-            // The committed Step1Game self-boots into any scene; the front-end is the entry point in
-            // this build, so remove it. (Gameplay hand-off is added in M5, after the burst-opt merge.)
+            // The committed Step1Game self-boots into any scene; the front-end is the entry point, so remove the
+            // auto-booted one. Gameplay is launched on demand from StartGameplay() (host pressed Start), never here.
             foreach (var g in FindObjectsByType<Step1Game>(FindObjectsSortMode.None))
                 Destroy(g.gameObject);
         }

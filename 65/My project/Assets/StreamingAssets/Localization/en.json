@@ -144,8 +144,24 @@
    "v": "Please select a song first"
   },
   {
-   "k": "room.start_stub",
-   "v": "Gameplay hand-off pending (this milestone)"
+   "k": "result.clear",
+   "v": "Clear!"
+  },
+  {
+   "k": "result.failed",
+   "v": "Failed"
+  },
+  {
+   "k": "result.score",
+   "v": "Score"
+  },
+  {
+   "k": "result.max_combo",
+   "v": "Max Combo"
+  },
+  {
+   "k": "result.back",
+   "v": "Back to Room"
   },
   {
    "k": "mode.free",

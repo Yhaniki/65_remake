@@ -144,8 +144,24 @@
    "v": "请先选择歌曲"
   },
   {
-   "k": "room.start_stub",
-   "v": "游戏衔接待整合（本阶段）"
+   "k": "result.clear",
+   "v": "完成!"
+  },
+  {
+   "k": "result.failed",
+   "v": "失败"
+  },
+  {
+   "k": "result.score",
+   "v": "分数"
+  },
+  {
+   "k": "result.max_combo",
+   "v": "最大连段"
+  },
+  {
+   "k": "result.back",
+   "v": "返回房间"
   },
   {
    "k": "mode.free",

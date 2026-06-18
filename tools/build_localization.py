@@ -58,7 +58,12 @@ STR = {
     "room.host":            ["Host", "房主", "房主", "ホスト"],
     "room.waiting_players": ["Some players are not ready", "尚有玩家未準備", "还有玩家未准备", "未準備のプレイヤーがいます"],
     "room.need_song":       ["Please select a song first", "請先選擇歌曲", "请先选择歌曲", "先に曲を選択してください"],
-    "room.start_stub":      ["Gameplay hand-off pending (this milestone)", "遊戲銜接待整合（本階段）", "游戏衔接待整合（本阶段）", "ゲーム連携は未実装（本段階）"],
+
+    "result.clear":     ["Clear!", "完成!", "完成!", "クリア!"],
+    "result.failed":    ["Failed", "失敗", "失败", "失敗"],
+    "result.score":     ["Score", "分數", "分数", "スコア"],
+    "result.max_combo": ["Max Combo", "最大連段", "最大连段", "最大コンボ"],
+    "result.back":      ["Back to Room", "返回房間", "返回房间", "ルームに戻る"],
 
     "mode.free":   ["Free", "自由", "自由", "フリー"],
     "mode.normal": ["Normal", "普通", "普通", "ノーマル"],

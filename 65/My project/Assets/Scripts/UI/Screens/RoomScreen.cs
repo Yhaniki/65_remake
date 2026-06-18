@@ -197,7 +197,7 @@ namespace Sdo.UI.Screens
                 Toast.Show(L(room != null && string.IsNullOrEmpty(room.SongTitle) ? "room.need_song" : "room.waiting_players"));
                 return;
             }
-            Nav.StartGameStub?.Invoke();
+            Nav.StartGame?.Invoke();
         }
 
         private void OnLeave()

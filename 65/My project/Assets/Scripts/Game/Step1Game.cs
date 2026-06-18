@@ -208,9 +208,17 @@ namespace Sdo.Game
         private bool _scoreCommitPop;                        // a commit just happened -> pop all currently-visible digits
         private bool _scoreArmed;                            // no digit pops until the score first changes (initial "0" is static)
 
+        // Set by the front-end (FrontendApp, BeforeSceneLoad — always runs before this AfterSceneLoad Boot) so the
+        // play screen never self-boots a stray instance: the front-end owns startup and launches gameplay on demand.
+        // Without this, the auto-booted instance's Start() spawns a root-level Avatar3D (+ board/scene) that survives
+        // the front-end's kill — the kill only destroys the Step1Game object, not the separate roots it created — so a
+        // leftover dancer lingers and the real launch then doubles it (two avatars on the dance-spot).
+        public static bool AutoBootSuppressed;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
+            if (AutoBootSuppressed) return;
             if (FindObjectOfType<Step1Game>() != null) return;
             new GameObject("Step1Game").AddComponent<Step1Game>();
         }
@@ -819,6 +827,12 @@ namespace Sdo.Game
                 _dirShotStart = Time.time;
             }
         }
+        // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
+        // stays readable after this GameObject is destroyed as long as the caller grabs the reference first.
+        public bool Finished => _ended;          // song played out (or failed) — time to settle
+        public bool Failed => _failed;           // HP ran out
+        public ScoreProcessor Score => _score;   // final judgement tallies + score (null only if Start() bailed early)
+
         // Test hooks for the re-entry assertion (CameraReentryTest): drive the real cycle + observe state.
         public int CamModeForTest => _camMode;
         public int DirShotForTest { get => _dirShot; set => _dirShot = value; }

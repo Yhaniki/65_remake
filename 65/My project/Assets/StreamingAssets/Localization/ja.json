@@ -144,8 +144,24 @@
    "v": "先に曲を選択してください"
   },
   {
-   "k": "room.start_stub",
-   "v": "ゲーム連携は未実装（本段階）"
+   "k": "result.clear",
+   "v": "クリア!"
+  },
+  {
+   "k": "result.failed",
+   "v": "失敗"
+  },
+  {
+   "k": "result.score",
+   "v": "スコア"
+  },
+  {
+   "k": "result.max_combo",
+   "v": "最大コンボ"
+  },
+  {
+   "k": "result.back",
+   "v": "ルームに戻る"
   },
   {
    "k": "mode.free",

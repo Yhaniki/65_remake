@@ -7,6 +7,6 @@ namespace Sdo.UI.Core
     {
         public static Action OpenSettings;
         public static Action OpenNoteSkinPicker;
-        public static Action StartGameStub;   // host pressed Start (gameplay hand-off is deferred to M5)
+        public static Action StartGame;   // host pressed Start -> hand off to gameplay (Step1Game) with the session selection
     }
 }
