@@ -747,7 +747,7 @@ namespace Sdo.Game
         // no note board / notes / receptors / HP bar, no music, fixed camera (cam 0). Fire bursts with keys 1-5
         // (=100..500COMBO), 0 = FINISHED, or the F4 panel; SLOW-MOTION with [ (slower) / ] (faster), \ = pause toggle,
         // = (equals) = reset to 1×. Set false in the Inspector for normal gameplay.
-        public bool observeBurstMode = true;
+        public bool observeBurstMode = false;
         private float _timeScale = 1f;   // current (non-paused) slow-motion factor for burst observation
         private const int SceneLayer = 4;             // the perspective stage layer
         // The default camera is the AUTO-DIRECTOR (decompiled CameraSeq, a CAMERA/*.CDT shot list): a sequence of
