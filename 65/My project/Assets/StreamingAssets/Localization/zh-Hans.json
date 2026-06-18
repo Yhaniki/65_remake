@@ -1,0 +1,299 @@
+{
+ "language": "zh-Hans",
+ "name": "简体中文",
+ "culture": "zh-CN",
+ "entries": [
+  {
+   "k": "common.apply",
+   "v": "应用"
+  },
+  {
+   "k": "common.back",
+   "v": "返回"
+  },
+  {
+   "k": "common.cancel",
+   "v": "取消"
+  },
+  {
+   "k": "common.close",
+   "v": "关闭"
+  },
+  {
+   "k": "common.confirm",
+   "v": "确定"
+  },
+  {
+   "k": "common.off",
+   "v": "关"
+  },
+  {
+   "k": "common.on",
+   "v": "开"
+  },
+  {
+   "k": "app.title",
+   "v": "热舞 Online"
+  },
+  {
+   "k": "lobby.create_room",
+   "v": "创建房间"
+  },
+  {
+   "k": "lobby.rooms",
+   "v": "房间列表"
+  },
+  {
+   "k": "lobby.online_players",
+   "v": "在线玩家"
+  },
+  {
+   "k": "lobby.chat",
+   "v": "聊天"
+  },
+  {
+   "k": "lobby.chat_hint",
+   "v": "输入消息后按 Enter…"
+  },
+  {
+   "k": "lobby.send",
+   "v": "发送"
+  },
+  {
+   "k": "lobby.settings",
+   "v": "设置"
+  },
+  {
+   "k": "lobby.logout",
+   "v": "登出"
+  },
+  {
+   "k": "lobby.select_note",
+   "v": "选择音符"
+  },
+  {
+   "k": "lobby.empty",
+   "v": "目前没有房间，来建一个吧！"
+  },
+  {
+   "k": "lobby.col_room",
+   "v": "房号"
+  },
+  {
+   "k": "lobby.col_host",
+   "v": "房主"
+  },
+  {
+   "k": "lobby.col_count",
+   "v": "人数"
+  },
+  {
+   "k": "lobby.col_mode",
+   "v": "模式"
+  },
+  {
+   "k": "lobby.col_status",
+   "v": "状态"
+  },
+  {
+   "k": "room.title",
+   "v": "房间 {0}"
+  },
+  {
+   "k": "room.leave",
+   "v": "离开房间"
+  },
+  {
+   "k": "room.ready",
+   "v": "准备"
+  },
+  {
+   "k": "room.cancel_ready",
+   "v": "取消准备"
+  },
+  {
+   "k": "room.start",
+   "v": "开始"
+  },
+  {
+   "k": "room.select_song",
+   "v": "选择歌曲"
+  },
+  {
+   "k": "room.no_song",
+   "v": "（尚未选歌）"
+  },
+  {
+   "k": "room.mode",
+   "v": "模式"
+  },
+  {
+   "k": "room.empty_seat",
+   "v": "空位"
+  },
+  {
+   "k": "room.host",
+   "v": "房主"
+  },
+  {
+   "k": "room.waiting_players",
+   "v": "还有玩家未准备"
+  },
+  {
+   "k": "room.need_song",
+   "v": "请先选择歌曲"
+  },
+  {
+   "k": "room.start_stub",
+   "v": "游戏衔接待整合（本阶段）"
+  },
+  {
+   "k": "mode.free",
+   "v": "自由"
+  },
+  {
+   "k": "mode.normal",
+   "v": "普通"
+  },
+  {
+   "k": "status.waiting",
+   "v": "等待中"
+  },
+  {
+   "k": "status.ingame",
+   "v": "游戏中"
+  },
+  {
+   "k": "songselect.title",
+   "v": "选择歌曲"
+  },
+  {
+   "k": "songselect.random",
+   "v": "随机"
+  },
+  {
+   "k": "songselect.stage",
+   "v": "舞台"
+  },
+  {
+   "k": "songselect.search",
+   "v": "搜索歌曲 / 歌手…"
+  },
+  {
+   "k": "songselect.bpm",
+   "v": "BPM {0}"
+  },
+  {
+   "k": "songselect.level",
+   "v": "Lv {0}"
+  },
+  {
+   "k": "songselect.page",
+   "v": "第 {0}/{1} 页"
+  },
+  {
+   "k": "songselect.prev",
+   "v": "上一页"
+  },
+  {
+   "k": "songselect.next",
+   "v": "下一页"
+  },
+  {
+   "k": "songselect.no_songs",
+   "v": "找不到歌曲"
+  },
+  {
+   "k": "songselect.confirm",
+   "v": "选定"
+  },
+  {
+   "k": "songselect.need_pick",
+   "v": "请先选择歌曲"
+  },
+  {
+   "k": "difficulty.easy",
+   "v": "简单"
+  },
+  {
+   "k": "difficulty.normal",
+   "v": "普通"
+  },
+  {
+   "k": "difficulty.hard",
+   "v": "困难"
+  },
+  {
+   "k": "note.title",
+   "v": "选择音符"
+  },
+  {
+   "k": "settings.title",
+   "v": "设置"
+  },
+  {
+   "k": "settings.tab.video",
+   "v": "画面"
+  },
+  {
+   "k": "settings.tab.audio",
+   "v": "音效"
+  },
+  {
+   "k": "settings.tab.language",
+   "v": "语言"
+  },
+  {
+   "k": "settings.resolution",
+   "v": "窗口大小"
+  },
+  {
+   "k": "settings.display_mode",
+   "v": "显示模式"
+  },
+  {
+   "k": "settings.vsync",
+   "v": "垂直同步"
+  },
+  {
+   "k": "settings.bgm",
+   "v": "背景音乐"
+  },
+  {
+   "k": "settings.game_music",
+   "v": "游戏音乐"
+  },
+  {
+   "k": "settings.sfx",
+   "v": "音效"
+  },
+  {
+   "k": "settings.language",
+   "v": "语言"
+  },
+  {
+   "k": "display.windowed",
+   "v": "窗口"
+  },
+  {
+   "k": "display.fullscreen",
+   "v": "全屏"
+  },
+  {
+   "k": "display.borderless",
+   "v": "无边框全屏"
+  },
+  {
+   "k": "join.full",
+   "v": "这个房间已满了"
+  },
+  {
+   "k": "join.ingame",
+   "v": "这个房间正在游戏中"
+  },
+  {
+   "k": "join.notfound",
+   "v": "房间不存在"
+  }
+ ]
+}

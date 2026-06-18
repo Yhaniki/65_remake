@@ -1,0 +1,299 @@
+{
+ "language": "en",
+ "name": "English",
+ "culture": "en-US",
+ "entries": [
+  {
+   "k": "common.apply",
+   "v": "Apply"
+  },
+  {
+   "k": "common.back",
+   "v": "Back"
+  },
+  {
+   "k": "common.cancel",
+   "v": "Cancel"
+  },
+  {
+   "k": "common.close",
+   "v": "Close"
+  },
+  {
+   "k": "common.confirm",
+   "v": "Confirm"
+  },
+  {
+   "k": "common.off",
+   "v": "Off"
+  },
+  {
+   "k": "common.on",
+   "v": "On"
+  },
+  {
+   "k": "app.title",
+   "v": "Dance Online"
+  },
+  {
+   "k": "lobby.create_room",
+   "v": "Create Room"
+  },
+  {
+   "k": "lobby.rooms",
+   "v": "Rooms"
+  },
+  {
+   "k": "lobby.online_players",
+   "v": "Online Players"
+  },
+  {
+   "k": "lobby.chat",
+   "v": "Chat"
+  },
+  {
+   "k": "lobby.chat_hint",
+   "v": "Type a message and press Enter…"
+  },
+  {
+   "k": "lobby.send",
+   "v": "Send"
+  },
+  {
+   "k": "lobby.settings",
+   "v": "Settings"
+  },
+  {
+   "k": "lobby.logout",
+   "v": "Logout"
+  },
+  {
+   "k": "lobby.select_note",
+   "v": "Notes"
+  },
+  {
+   "k": "lobby.empty",
+   "v": "No rooms yet — create one!"
+  },
+  {
+   "k": "lobby.col_room",
+   "v": "Room"
+  },
+  {
+   "k": "lobby.col_host",
+   "v": "Host"
+  },
+  {
+   "k": "lobby.col_count",
+   "v": "Players"
+  },
+  {
+   "k": "lobby.col_mode",
+   "v": "Mode"
+  },
+  {
+   "k": "lobby.col_status",
+   "v": "Status"
+  },
+  {
+   "k": "room.title",
+   "v": "Room {0}"
+  },
+  {
+   "k": "room.leave",
+   "v": "Leave Room"
+  },
+  {
+   "k": "room.ready",
+   "v": "Ready"
+  },
+  {
+   "k": "room.cancel_ready",
+   "v": "Cancel"
+  },
+  {
+   "k": "room.start",
+   "v": "Start"
+  },
+  {
+   "k": "room.select_song",
+   "v": "Select Song"
+  },
+  {
+   "k": "room.no_song",
+   "v": "(No song selected)"
+  },
+  {
+   "k": "room.mode",
+   "v": "Mode"
+  },
+  {
+   "k": "room.empty_seat",
+   "v": "Empty"
+  },
+  {
+   "k": "room.host",
+   "v": "Host"
+  },
+  {
+   "k": "room.waiting_players",
+   "v": "Some players are not ready"
+  },
+  {
+   "k": "room.need_song",
+   "v": "Please select a song first"
+  },
+  {
+   "k": "room.start_stub",
+   "v": "Gameplay hand-off pending (this milestone)"
+  },
+  {
+   "k": "mode.free",
+   "v": "Free"
+  },
+  {
+   "k": "mode.normal",
+   "v": "Normal"
+  },
+  {
+   "k": "status.waiting",
+   "v": "Waiting"
+  },
+  {
+   "k": "status.ingame",
+   "v": "In Game"
+  },
+  {
+   "k": "songselect.title",
+   "v": "Select Song"
+  },
+  {
+   "k": "songselect.random",
+   "v": "Random"
+  },
+  {
+   "k": "songselect.stage",
+   "v": "Stage"
+  },
+  {
+   "k": "songselect.search",
+   "v": "Search song / artist…"
+  },
+  {
+   "k": "songselect.bpm",
+   "v": "BPM {0}"
+  },
+  {
+   "k": "songselect.level",
+   "v": "Lv {0}"
+  },
+  {
+   "k": "songselect.page",
+   "v": "Page {0}/{1}"
+  },
+  {
+   "k": "songselect.prev",
+   "v": "Prev"
+  },
+  {
+   "k": "songselect.next",
+   "v": "Next"
+  },
+  {
+   "k": "songselect.no_songs",
+   "v": "No songs found"
+  },
+  {
+   "k": "songselect.confirm",
+   "v": "Confirm"
+  },
+  {
+   "k": "songselect.need_pick",
+   "v": "Please pick a song first"
+  },
+  {
+   "k": "difficulty.easy",
+   "v": "Easy"
+  },
+  {
+   "k": "difficulty.normal",
+   "v": "Normal"
+  },
+  {
+   "k": "difficulty.hard",
+   "v": "Hard"
+  },
+  {
+   "k": "note.title",
+   "v": "Select Notes"
+  },
+  {
+   "k": "settings.title",
+   "v": "Settings"
+  },
+  {
+   "k": "settings.tab.video",
+   "v": "Video"
+  },
+  {
+   "k": "settings.tab.audio",
+   "v": "Audio"
+  },
+  {
+   "k": "settings.tab.language",
+   "v": "Language"
+  },
+  {
+   "k": "settings.resolution",
+   "v": "Window Size"
+  },
+  {
+   "k": "settings.display_mode",
+   "v": "Display Mode"
+  },
+  {
+   "k": "settings.vsync",
+   "v": "VSync"
+  },
+  {
+   "k": "settings.bgm",
+   "v": "BGM Volume"
+  },
+  {
+   "k": "settings.game_music",
+   "v": "Game Music"
+  },
+  {
+   "k": "settings.sfx",
+   "v": "SFX"
+  },
+  {
+   "k": "settings.language",
+   "v": "Language"
+  },
+  {
+   "k": "display.windowed",
+   "v": "Windowed"
+  },
+  {
+   "k": "display.fullscreen",
+   "v": "Fullscreen"
+  },
+  {
+   "k": "display.borderless",
+   "v": "Borderless"
+  },
+  {
+   "k": "join.full",
+   "v": "This room is full"
+  },
+  {
+   "k": "join.ingame",
+   "v": "This room is in game"
+  },
+  {
+   "k": "join.notfound",
+   "v": "Room not found"
+  }
+ ]
+}

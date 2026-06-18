@@ -19,11 +19,28 @@ namespace Sdo.Game
     /// </summary>
     public static class SongCatalog
     {
-        [Serializable] public class Entry { public string gn; public int fileId; public string title; public string artist; }
+        [Serializable] public class Entry
+        {
+            public string gn; public int fileId; public string title; public string artist;
+            // Optional metadata (emitted by build_song_catalog.py; absent in older catalogs -> defaults).
+            public float bpm = -1f;
+            public int diffEasy = -1, diffNormal = -1, diffHard = -1;
+            public int notesEasy, notesNormal, notesHard;
+            public int durEasy, durNormal, durHard;   // seconds per difficulty
+
+            /// <summary>Difficulty level for d (0=easy,1=normal,2=hard); -1 if unknown.</summary>
+            public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
+            public int NoteCount(int d) => d <= 0 ? notesEasy : (d == 1 ? notesNormal : notesHard);
+            public int DurationSec(int d) => d <= 0 ? durEasy : (d == 1 ? durNormal : durHard);
+        }
         [Serializable] private class Catalog { public Entry[] songs; }
 
         private const string FileName = "song_catalog.json";
         private static Dictionary<string, Entry> _byGn;   // key = lowercase .gn filename
+        private static List<Entry> _all;                  // in file order
+
+        /// <summary>All catalog entries in file order (empty if no catalog).</summary>
+        public static IReadOnlyList<Entry> All { get { EnsureLoaded(); return _all; } }
 
         /// <summary>Look up by a .gn path or filename (case-insensitive). Null if absent / no catalog.</summary>
         public static Entry Get(string gnPathOrName)
@@ -41,6 +58,7 @@ namespace Sdo.Game
         {
             if (_byGn != null) return;
             _byGn = new Dictionary<string, Entry>(StringComparer.Ordinal);
+            _all = new List<Entry>();
 
             var path = Path.Combine(Application.streamingAssetsPath, FileName);
             // NOTE: direct File IO from StreamingAssets works in Editor / standalone. On Android the
@@ -58,7 +76,7 @@ namespace Sdo.Game
                 var cat = JsonUtility.FromJson<Catalog>(File.ReadAllText(path, Encoding.UTF8));
                 if (cat?.songs == null) return;
                 foreach (var e in cat.songs)
-                    if (!string.IsNullOrEmpty(e?.gn)) _byGn[e.gn.ToLowerInvariant()] = e;
+                    if (!string.IsNullOrEmpty(e?.gn)) { _byGn[e.gn.ToLowerInvariant()] = e; _all.Add(e); }
             }
             catch (Exception ex)
             {
