@@ -222,7 +222,7 @@ namespace Sdo.Game
             LoadArt();
             if (!LoadChart()) return;
             BuildBoard();
-            SpawnNotes();
+            if (!observeBurstMode) SpawnNotes();   // observe mode: no notes (clean stage to watch the burst)
             foreach (var n in _notes) { double t = n.Note.EndTimeMs ?? n.Note.StartTimeMs; if (t > _totalMs) _totalMs = t; }
             BuildHud();
             TryLoadAvatar();
@@ -235,6 +235,7 @@ namespace Sdo.Game
             // Enter on the crane with no note board: hold the track hidden while the opening shot flies in, then
             // OpeningSequence() reveals it with READY. Only when there's actually a 3D crane to watch.
             if (use3dCamera && _camReady && openingIntroSec > 0f) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
+            if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f; }   // idle dancer, fixed cam, hidden track
             StartCoroutine(LoadAndPlayAudio());
         }
 
@@ -324,6 +325,13 @@ namespace Sdo.Game
 
         private IEnumerator LoadAndPlayAudio()
         {
+            if (observeBurstMode)
+            {
+                // no music, no READY/GO opening: park the gameplay clock far ahead so the song timer stays "-:-" and
+                // the dancer holds its standby idle (negative dance time). Bursts are fired manually (keys 1-5 / F4).
+                _clockStart = Time.timeAsDouble + 1e9; _started = true;
+                yield break;
+            }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
                 ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
             var type = path.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) ? AudioType.OGGVORBIS : AudioType.MPEG;
@@ -735,6 +743,12 @@ namespace Sdo.Game
         public bool use3dCamera = true;               // render avatar+stage in the .cv perspective camera (faithful)
         // DEBUG: isolate the avatar — hide the stage scene, lock a fixed front camera. Off = full stage + cameras.
         public bool avatarDebug = false;
+        // BURST OBSERVE MODE: a clean stage for studying the combo-burst EFTs — dancer stands idle (no DPS dance),
+        // no note board / notes / receptors / HP bar, no music, fixed camera (cam 0). Fire bursts with keys 1-5
+        // (=100..500COMBO), 0 = FINISHED, or the F4 panel; SLOW-MOTION with [ (slower) / ] (faster), \ = pause toggle,
+        // = (equals) = reset to 1×. Set false in the Inspector for normal gameplay.
+        public bool observeBurstMode = true;
+        private float _timeScale = 1f;   // current (non-paused) slow-motion factor for burst observation
         private const int SceneLayer = 4;             // the perspective stage layer
         // The default camera is the AUTO-DIRECTOR (decompiled CameraSeq, a CAMERA/*.CDT shot list): a sequence of
         // shots, each a moving .cv dolly shown for its own durationMs, auto-cutting to the next and looping. F2
@@ -773,6 +787,19 @@ namespace Sdo.Game
         public void SetCamModeForTest(int m) { _camMode = m; _camSwitchTime = Time.time; }   // headless capture hook
         public void SpawnComboBurstForTest(int tier) => SpawnComboBurst(tier);               // headless combo-burst capture hook
         public Transform AvatarRootForTest => _avatarRoot;                                    // for framing the capture camera on the dancer
+        // Hide the bright stage geometry (palace walls/floor + mapobj props + ground star-ring) so a headless capture
+        // shows the ADDITIVE combo burst on the SceneCam's black background — the only way to verify the effect's true
+        // colour/brightness/height (on the lit palace the additive glow washes out, exactly like the official's dark
+        // night scene makes it pop). Keeps the avatar (for height reference) and the eft effects.
+        public void HideStageForTest()
+        {
+            var s = GameObject.Find("StageScene"); if (s != null) s.SetActive(false);
+            foreach (var mr in FindObjectsOfType<Renderer>())
+            {
+                string n = mr.gameObject.name;
+                if (n.EndsWith("_mesh") || n == "GroundStarRing" || n.StartsWith("Star")) mr.enabled = false;
+            }
+        }
 
         // F2 (decompiled gameplay cmd 0x3c): AUTO(-1) -> fixed 0..n-1 -> AUTO. Returning to AUTO RESUMES the
         // current director shot (only restarts that shot's timer) — matching CameraSeq_SetPlaying(0)->AdvanceA,
@@ -1264,12 +1291,26 @@ namespace Sdo.Game
 
         // ---------- loop ----------
 
+        // Slow-motion for burst observation: scales Time.timeScale (so the 50Hz EFT sim + everything slows together).
+        private void SetTimeScale(float s) { _timeScale = Mathf.Clamp(s, 0.03f, 2f); Time.timeScale = _timeScale; }
+
         private void Update()
         {
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
+            // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
+            if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
+            if (Input.GetKeyDown(KeyCode.Alpha2)) SpawnComboBurst(1);
+            if (Input.GetKeyDown(KeyCode.Alpha3)) SpawnComboBurst(2);
+            if (Input.GetKeyDown(KeyCode.Alpha4)) SpawnComboBurst(3);
+            if (Input.GetKeyDown(KeyCode.Alpha5)) SpawnComboBurst(4);
+            if (Input.GetKeyDown(KeyCode.Alpha0)) SpawnNamedEft("FINISHED", 5f);
+            if (Input.GetKeyDown(KeyCode.LeftBracket)) SetTimeScale(_timeScale * 0.5f);    // [ slower
+            if (Input.GetKeyDown(KeyCode.RightBracket)) SetTimeScale(_timeScale * 2f);     // ] faster
+            if (Input.GetKeyDown(KeyCode.Backslash)) { if (Time.timeScale > 0f) Time.timeScale = 0f; else SetTimeScale(_timeScale); }  // \ pause/resume
+            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) SetTimeScale(1f);   // = reset 1×
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); SdoLayout.PlaceTopLeft(_board, boardX, 0f, 10f); }   // live board opacity + X nudge
             // F9: toggle the stage backdrop V-flip (safety net — the RenderTexture vertical convention is auto-gated
@@ -1521,6 +1562,21 @@ namespace Sdo.Game
             GUILayout.Label($"Force hit grade: {(forcedJudge < 0 ? "Real (timing)" : ForceJudgeLabels[forcedJudge + 1])}");
             forcedJudge = GUILayout.Toolbar(forcedJudge + 1, ForceJudgeLabels) - 1;   // 0=Real(-1), 1..4=Perfect..Miss
 
+            // BURST OBSERVE mode status + slow-motion control (no dance/notes/music, fixed cam).
+            if (observeBurstMode)
+            {
+                bool paused = Time.timeScale <= 0f;
+                GUILayout.Label("== OBSERVE MODE ==  cam0, no dance/notes/music");
+                GUILayout.Label($"Time: {(paused ? "PAUSED" : _timeScale.ToString("0.00") + "×")}   keys [ ] = slow/fast, \\ pause, = reset");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("0.1×")) SetTimeScale(0.1f);
+                if (GUILayout.Button("0.25×")) SetTimeScale(0.25f);
+                if (GUILayout.Button("0.5×")) SetTimeScale(0.5f);
+                if (GUILayout.Button("1×")) SetTimeScale(1f);
+                if (GUILayout.Button(paused ? "▶" : "❚❚")) { if (paused) SetTimeScale(_timeScale); else Time.timeScale = 0f; }
+                GUILayout.EndHorizontal();
+                GUILayout.Space(4);
+            }
             // fire a specific combo burst on demand (tier 0..4 = 100..500COMBO). Pinned so it's always reachable.
             GUILayout.BeginHorizontal();
             GUILayout.Label("Fire combo:", GUILayout.Width(66));
@@ -1576,6 +1632,28 @@ namespace Sdo.Game
             comboGlow = GUILayout.HorizontalSlider(comboGlow, 0f, 3f);
             GUILayout.Label($"Outer-glow spread: {comboGlowSpread:F2}× bigger than particle");
             comboGlowSpread = GUILayout.HorizontalSlider(comboGlowSpread, 0f, 3f);
+            GUILayout.Label($"Combo spawn exposure: {EftEffect.BallCoreIntensity:F1}× (200/300 white-hot at birth; 1=off)");
+            EftEffect.BallCoreIntensity = GUILayout.HorizontalSlider(EftEffect.BallCoreIntensity, 1f, 10f);
+            GUILayout.Label($"Combo exposure fade: {EftEffect.BallCoreExpoFrac:F2} of life (→real colour; lower=colour sooner)");
+            EftEffect.BallCoreExpoFrac = GUILayout.HorizontalSlider(EftEffect.BallCoreExpoFrac, 0.05f, 0.8f);
+            GUILayout.Label($"Combo blue mesh intensity: {EftEffect.MeshIntensity:F1}× (AEF_3_00 visibility; 1=raw/drowned)");
+            EftEffect.MeshIntensity = GUILayout.HorizontalSlider(EftEffect.MeshIntensity, 1f, 8f);
+            GUILayout.Label($"Combo blue mesh width: {EftEffect.MeshWidthMatch:F2}× (300 AEF_3_00 width vs ball; tracks ball rate)");
+            EftEffect.MeshWidthMatch = GUILayout.HorizontalSlider(EftEffect.MeshWidthMatch, 0.1f, 1.2f);
+            GUILayout.Label($"Combo 200 mesh count: {EftEffect.MeshMax200} (AEF_3_00 count cap; official ~5-6)");
+            EftEffect.MeshMax200 = Mathf.RoundToInt(GUILayout.HorizontalSlider(EftEffect.MeshMax200, 1f, 15f));
+            GUILayout.Label($"Combo 300 mesh shrink: {EftEffect.MeshShrinkEnd:F2} end (lower=shrinks smaller/faster)");
+            EftEffect.MeshShrinkEnd = GUILayout.HorizontalSlider(EftEffect.MeshShrinkEnd, 0.05f, 1f);
+            GUILayout.Label($"Combo 300 mesh spawn W×{EftEffect.MeshStartW:F1} / H×{EftEffect.MeshStartH:F1} (→1 by end), opacity {EftEffect.MeshAlpha:F2}");
+            EftEffect.MeshStartW = GUILayout.HorizontalSlider(EftEffect.MeshStartW, 1f, 4f);
+            EftEffect.MeshStartH = GUILayout.HorizontalSlider(EftEffect.MeshStartH, 1f, 8f);
+            EftEffect.MeshAlpha = GUILayout.HorizontalSlider(EftEffect.MeshAlpha, 0.2f, 1f);
+            GUILayout.Label($"Combo 300 mesh drop: {EftEffect.MeshDropFrac:F2} (0=on ball/keeps up, 1=at ball bottom)");
+            EftEffect.MeshDropFrac = GUILayout.HorizontalSlider(EftEffect.MeshDropFrac, 0f, 1.5f);
+            // combo TRAIL streaks (200/300's light flares = engine 0x20000 = a unit quad stretched by animScale.y, NOT a
+            // swept band; length is the scaleY channel, so only the WIDTH is tunable here — 1× = faithful)
+            GUILayout.Label($"Combo trail width: {EftEffect.TrailWidthMul:F2}×  (200/300 light streaks, 1=faithful)");
+            EftEffect.TrailWidthMul = GUILayout.HorizontalSlider(EftEffect.TrailWidthMul, 0.2f, 3f);
             GUILayout.Label($"Hand-trail width: {handTrailWidth:F2}×");
             handTrailWidth = GUILayout.HorizontalSlider(handTrailWidth, 0.1f, 3f);
             GUILayout.Label($"Hand-trail time: {handTrailTime:F2}s");
@@ -1719,9 +1797,12 @@ namespace Sdo.Game
             // pelvis projected to floor (Dancer_SpawnDirEffect: Bip01_Pelvis x/z, y≈0.1); the yuanpan ground ring
             // already tracks the pelvis-on-floor, so reuse its transform as the follow anchor.
             go.transform.position = _ringTr != null ? _ringTr.position : new Vector3(_avatarChest.x, 0.6f, _avatarChest.z);
+            // Render on the STAGE layer/camera so the burst shares the scene depth → it rises FROM THE GROUND and is
+            // occluded by the dancer's body (a 2D composite drew it flat in front of everything). The white-hot core
+            // is enlarged in this depth-correct linear-additive path via EftEffect.BallCoreIntensity (F4 slider).
             int layer = use3dCamera ? SceneLayer : 0;
             float effScale = ComboTierScale[tier] * comboBurstSize;   // .eft uniform spawn scale (× F4 size tuning)
-            go.AddComponent<EftEffect>().Init(file, effScale, _ringTr, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread);
+            go.AddComponent<EftEffect>().Init(file, effScale, _ringTr, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
             if (use3dCamera) SetLayerRecursive(go, SceneLayer);
         }
 
@@ -1743,7 +1824,7 @@ namespace Sdo.Game
             go.transform.position = _ringTr != null ? _ringTr.position : new Vector3(_avatarChest.x, 0.6f, _avatarChest.z);
             int layer = use3dCamera ? SceneLayer : 0;
             float effScale = baseScale * comboBurstSize;
-            go.AddComponent<EftEffect>().Init(file, effScale, _ringTr, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread);
+            go.AddComponent<EftEffect>().Init(file, effScale, _ringTr, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
             if (use3dCamera) SetLayerRecursive(go, SceneLayer);
         }
 
@@ -1778,6 +1859,117 @@ namespace Sdo.Game
             }
             _eftTexCache[idx] = tex;
             return tex;
+        }
+
+        // EFT 3D-mesh list (Extracted/3DEFT/XMESH/LIST.TXT): the SECOND texture pipeline the texture-only port missed.
+        // The engine (Effect_LoadTextureLists_004be540 first loop) increments an index per parsed line and loads
+        // <path>.msh/.hrc via Avatar_LoadHrc into AvatarScene; a particle's word[6] indexes it. Here: sequential
+        // line index → .MSH parsed by LoadEffectMesh (FVF-0x112 effect-mesh path) → Unity mesh + its DDS texture.
+        // idx 32 = adol_x\aef03_00 = the 200/300COMBO slot0 blue mesh (textured AEF_3_00.DDS); 100/101 = column_00/01.
+        private static string[] _eftMeshList;
+        private static readonly Dictionary<int, EftMeshData> _eftMeshCache = new Dictionary<int, EftMeshData>();
+        private static EftMeshData ResolveEftMesh(int idx)
+        {
+            if (_eftMeshCache.TryGetValue(idx, out var cached)) return cached;
+            if (_eftMeshList == null)
+            {
+                var list = new List<string>();
+                var lp = Path.Combine(SdoExtracted.Root, "3DEFT", "XMESH", "LIST.TXT");
+                if (File.Exists(lp))
+                    foreach (var raw in File.ReadAllLines(lp))
+                    {
+                        if (string.IsNullOrWhiteSpace(raw)) continue;   // engine: sscanf==0 on a blank line ⇒ no index bump
+                        int bar = raw.IndexOf('|');
+                        var body = (bar >= 0 ? raw.Substring(bar + 1) : raw).Trim();
+                        var toks = body.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        string path = toks.Length > 0 ? toks[0] : null;   // path token (2nd sscanf field)
+                        if (path != null && path.Replace('/', '\\').TrimEnd('\\').ToLowerInvariant() == "xmesh") path = null;
+                        list.Add(path);   // sequential index = position over non-blank lines (the engine's counter)
+                    }
+                _eftMeshList = list.ToArray();
+            }
+            EftMeshData md = null;
+            if (idx >= 0 && idx < _eftMeshList.Length && _eftMeshList[idx] != null)
+            {
+                var rel = _eftMeshList[idx].Replace("xmesh\\", "").Replace("xmesh/", "").Replace('/', '\\');
+                var xdir = Path.Combine(SdoExtracted.Root, "3DEFT", "XMESH");
+                // the extraction keeps meshes both under their subfolder (adol_x\AEF03_00.MSH) AND flattened in XMESH\;
+                // try the listed subpath first, then the bare basename.
+                var mshPath = Path.Combine(xdir, rel + ".MSH");
+                if (!File.Exists(mshPath)) mshPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".MSH");
+                if (File.Exists(mshPath))
+                {
+                    try { md = LoadEffectMesh(File.ReadAllBytes(mshPath), xdir, idx, rel); }
+                    catch (Exception e) { Debug.LogWarning("[eft-mesh] load error idx " + idx + ": " + e.Message); }
+                }
+                if (md == null) Debug.LogWarning("[eft-mesh] missing/failed mesh idx " + idx + " (" + rel + ")");
+            }
+            _eftMeshCache[idx] = md;
+            return md;
+        }
+
+        // Parse an SDO effect-mesh (.MSH, FVF 0x112 = pos+normal+uv, stride 32) into a Unity mesh + its texture.
+        // This variant differs from SCENE.MSH (its post-vertex material block is laid out differently, so SceneLoader
+        // mis-reads numMat), but the geometry header is identical: magic "Mesh00000030", submeshCount, then
+        // [fvf, idxBytes, opt, indices, vertBytes, stride, verts]. We parse block 0 (aef03_00 = 15 verts / 16 tris)
+        // and texture it with the mesh's own DDS — preferring the distinctively-coloured "aef_3*" material (the blue
+        // the user identified) over the generic image/aef_0_* parts. Verbatim verts (D3D9 & Unity share LH).
+        private static EftMeshData LoadEffectMesh(byte[] d, string xdir, int idx, string rel)
+        {
+            if (d == null || d.Length < 32 || System.Text.Encoding.ASCII.GetString(d, 0, 4) != "Mesh") return null;
+            int p = 12;
+            uint U() { uint v = (uint)(d[p] | (d[p + 1] << 8) | (d[p + 2] << 16) | (d[p + 3] << 24)); p += 4; return v; }
+            float F(int o) => BitConverter.ToSingle(d, o);
+            U();                                  // submeshCount (block 0 only)
+            U();                                  // fvf (0x112)
+            int idxBytes = (int)U(); U();         // index bytes, options
+            int idxCount = idxBytes / 2;
+            if (idxCount <= 0 || p + idxBytes > d.Length) return null;
+            var tris = new int[idxCount];
+            for (int i = 0; i < idxCount; i++) { tris[i] = (ushort)(d[p] | (d[p + 1] << 8)); p += 2; }
+            int vertBytes = (int)U(); int stride = (int)U();
+            if (stride < 16 || vertBytes <= 0 || p + vertBytes > d.Length) return null;
+            int vcount = vertBytes / stride, uvOff = stride - 8;
+            var verts = new Vector3[vcount]; var uvs = new Vector2[vcount];
+            for (int i = 0; i < vcount; i++)
+            {
+                int b = p + i * stride;
+                verts[i] = new Vector3(F(b), F(b + 4), F(b + 8));      // verbatim (D3D9 & Unity both LH)
+                uvs[i] = new Vector2(F(b + uvOff), F(b + uvOff + 4));  // V not flipped (same as scene/avatar)
+            }
+            var mesh = new Mesh { name = "eft-mesh-" + idx };
+            mesh.vertices = verts; mesh.uv = uvs; mesh.triangles = tris; mesh.RecalculateBounds();
+
+            // pick the texture: scan the file's embedded .dds names, prefer an "aef_3*" (the coloured part), else the
+            // first non-"image" material, else the first. Then resolve the file in XMESH\ (NTFS case-insensitive).
+            var names = new List<string>();
+            for (int o = 0; o + 4 < d.Length; o++)
+                if (d[o] == '.' && d[o + 1] == 'd' && d[o + 2] == 'd' && d[o + 3] == 's')
+                {
+                    int s = o; while (s > 0 && d[s - 1] > 32 && d[s - 1] < 127) s--;
+                    names.Add(System.Text.Encoding.ASCII.GetString(d, s, o - s + 4));
+                }
+            string pick = null;
+            foreach (var n in names) if (n.ToLowerInvariant().Contains("aef_3")) { pick = n; break; }
+            if (pick == null) foreach (var n in names) if (!n.ToLowerInvariant().Contains("image")) { pick = n; break; }
+            if (pick == null && names.Count > 0) pick = names[0];
+            Texture2D tex = pick != null ? LoadXmeshDds(xdir, pick) : null;
+            Debug.Log($"[eft-mesh] idx {idx} '{rel}': {vcount}v/{idxCount / 3}t, dds=[{string.Join(",", names)}] picked '{pick}' tex={(tex != null)}");
+            return new EftMeshData { Mesh = mesh, SubTex = new[] { tex } };
+        }
+
+        // Resolve a DDS referenced inside a .MSH: the stored name may carry leading binary/junk bytes (e.g. "LBaef_3_00.dds"),
+        // so try progressively-trimmed suffixes until one names a real file under XMESH\ (case-insensitive on Windows).
+        private static Texture2D LoadXmeshDds(string xdir, string rawName)
+        {
+            for (int s = 0; s < rawName.Length; s++)
+            {
+                var cand = Path.GetFileName(rawName.Substring(s));
+                if (cand.Length < 5) continue;
+                var fp = Path.Combine(xdir, cand);
+                if (File.Exists(fp)) { try { return DdsLoader.Load(File.ReadAllBytes(fp)); } catch { return null; } }
+            }
+            return null;
         }
 
         private void UpdateScoreDigits()
