@@ -88,8 +88,8 @@ namespace Sdo.Game
         public static float MeshShrinkEnd = 0.15f;
         // 300 AEF_3_00 spec: at SPAWN it's MeshStartW× wider and MeshStartH× longer (tall vertical flame), easing to the
         // shrunk end size over life. Bottom anchored to the ball's bottom, fully vertical (no tilt). MeshAlpha dims it.
-        public static float MeshStartW = 2f;    // start width multiplier (→1 by end)
-        public static float MeshStartH = 4f;    // start length/height multiplier (→1 by end)
+        public static float MeshStartW = 1.5f;    // start width multiplier (→1 by end)
+        public static float MeshStartH = 3f;       // start length/height multiplier (→1 by end)
         public static float MeshAlpha = 0.8f;   // AEF_3_00 opacity vs the raw alpha curve
         public static float MeshDropFrac = 0.33f;  // 300 mesh vertical anchor: 0 = on the ball (keeps up), 1 = at ball bottom
 
