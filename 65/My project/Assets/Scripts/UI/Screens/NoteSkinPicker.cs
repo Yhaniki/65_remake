@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 using Sdo.Localization;
 using Sdo.UI.Catalog;
 using Sdo.UI.Core;

@@ -51,6 +51,10 @@ namespace Sdo.UI.Util
             return rt;
         }
 
+        // convenience: stretch a UGUI graphic (e.g. a TextMeshProUGUI label) by its own RectTransform.
+        public static RectTransform Stretch(Graphic g, float l = 0, float b = 0, float r = 0, float t = 0)
+            => Stretch(g.rectTransform, l, b, r, t);
+
         public static RectTransform Anchor(RectTransform rt, Vector2 min, Vector2 max, Vector2 pivot)
         {
             rt.anchorMin = min; rt.anchorMax = max; rt.pivot = pivot; return rt;
