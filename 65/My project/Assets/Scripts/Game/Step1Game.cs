@@ -164,6 +164,11 @@ namespace Sdo.Game
         private SpriteRenderer _readyGo;   // opening READY/GO overlay (centre screen)
         private readonly List<BurstFx> _fx = new List<BurstFx>();    // all live bursts: taps overlap freely (no gating)
         private readonly List<HandRibbon> _handTrails = new List<HandRibbon>();  // hand glow ribbons (world-space palm ribbons) for live tuning
+        // Head emoji cut-ins (UI/PLAYINGEXP): combo milestones / consecutive misses / low HP pop a 4s camera-facing
+        // billboard at the dancer's head front-right. See PlayingEmoji.cs + LoadEmojiArt/CreateHeadEmoji/ShowEmoji.
+        private PlayingEmoji _emoji;
+        private Sprite[] _emHH, _emSHSH, _emJRKL, _emKJ, _emHE, _emH, _emY, _emJS, _emGTH;
+        private readonly EmojiTriggers _emojiState = new EmojiTriggers();   // pure trigger logic (combo / miss-run / low-HP)
         private readonly BurstFx[] _holdBurst = new BurstFx[Keys];   // the looping hold burst per lane (gated: 1 round at a time)
         private readonly Stack<Material> _matPool = new Stack<Material>();  // reuse burst material instances (no per-hit GC)
         private SpriteRenderer _board;          // framed note-board (NOTES_BOARD1, chamfered), drawn 1:1 native
@@ -185,6 +190,14 @@ namespace Sdo.Game
         public float handTrailTime = 0.24f; // lifetime (s); original = 8 segments × 30ms
         private bool _showDebugUI = true;
         private Vector2 _dbgScroll;          // scroll for the tuning sliders so they never push the playtest controls off-panel
+        private int _dbgTab;                 // F4 panel tab: 0=Play, 1=Combo, 2=Stage — keeps each group's sliders roomy
+        private static readonly string[] DbgTabs = { "Play", "Combo", "Stage", "Emoji" };
+        private static readonly (string label, EmojiKind kind)[] EmojiTestButtons =
+        {
+            ("50→HH", EmojiKind.HH), ("150→SHSH", EmojiKind.SHSH), ("350→JRKL", EmojiKind.JRKL), ("550→KJ", EmojiKind.KJ),
+            ("800→HE", EmojiKind.HE),
+            ("miss10→H", EmojiKind.H), ("miss30→Y", EmojiKind.Y), ("miss50→JS", EmojiKind.JS), ("lowHP→GTH", EmojiKind.GTH),
+        };
         private TextMesh _musicName, _lvText, _timeText, _info, _fpsText;
         private float _fps;
         private double _totalMs;
@@ -300,6 +313,7 @@ namespace Sdo.Game
             _readyFrames = new List<Sprite>().ToArray();
             var rf = new List<Sprite>(); for (int i = 0; i < 10; i++) { var s = SdoExtracted.Eft("READY0" + i + ".PNG"); if (s != null) rf.Add(s); } _readyFrames = rf.ToArray();
             var gf = new List<Sprite>(); for (int i = 1; i <= 6; i++) { var s = SdoExtracted.Eft("GO0" + i + ".PNG"); if (s != null) gf.Add(s); } _goFrames = gf.ToArray(); // GO01..GO06 only
+            LoadEmojiArt();   // head-emoji cut-in PNG sequences (UI/PLAYINGEXP)
             // EFT_HIT bursts are opaque-on-black -> additive blending so black reads as transparent glow.
             // The Particles/Additive shader's _MainTex is NOT [PerRendererData], so SpriteRenderers SHARING one
             // material all sample the last-written sprite -> bursts cross-bleed & jitter. Each burst clones its
@@ -722,6 +736,9 @@ namespace Sdo.Game
                     }
                     catch (System.Exception e) { Debug.LogError("[handtrail] creation failed (non-fatal): " + e); }
                 CreateGroundStarRing(_avatarChest.x, _avatarChest.z, 0.6f, avatar, parent.transform);   // follows the dancer's pelvis
+                if (avatar != null)
+                    try { CreateHeadEmoji(avatar); }   // head-emoji billboard at the dancer's head front-right
+                    catch (System.Exception e) { Debug.LogError("[emoji] creation failed (non-fatal): " + e); }
                 SetLayerRecursive(parent, SceneLayer);
             }
             else
@@ -1235,6 +1252,100 @@ namespace Sdo.Game
             _handTrails.Add(rib);
         }
 
+        // ---- head emoji cut-ins (UI/PLAYINGEXP) -------------------------------------------------------------------
+        private static readonly string PlayingExpDir = Path.Combine(SdoExtracted.Root, "UI", "PLAYINGEXP");
+
+        // Load a <prefix>NNN.PNG sequence (000..count-1) as sprites. Cut-ins hold each frame 50ms and last ~4s, so the
+        // short sequence loops (PlayingEmoji does the looping); we just load the frames once here.
+        private static Sprite[] LoadEmojiSeq(string prefix, int count)
+        {
+            var arr = new List<Sprite>(count);
+            for (int i = 0; i < count; i++)
+            {
+                var s = SdoExtracted.LoadImage(PlayingExpDir, $"{prefix}{i:D3}.PNG");
+                if (s != null) arr.Add(s);
+            }
+            return arr.Count > 0 ? arr.ToArray() : null;
+        }
+
+        private void LoadEmojiArt()
+        {
+            _emHH = LoadEmojiSeq("HH", 7);       // 50 combo
+            _emSHSH = LoadEmojiSeq("SHSH", 16);  // 150 combo
+            _emJRKL = LoadEmojiSeq("JRKL", 8);   // 350 combo
+            _emKJ = LoadEmojiSeq("KJ", 14);      // 550 combo
+            _emHE = LoadEmojiSeq("HE", 8);       // 800 combo
+            _emH = LoadEmojiSeq("H", 10);        // 10 consecutive bad/miss
+            _emY = LoadEmojiSeq("Y", 4);         // 30 consecutive bad/miss
+            _emJS = LoadEmojiSeq("JS", 6);       // 50 consecutive bad/miss
+            _emGTH = LoadEmojiSeq("GTH", 8);     // low HP (<30% bar)
+        }
+
+        // Build the emoji billboard. It anchors to the dancer's formation SLOT in world space (the dance-spot the
+        // dancer stands on) rather than the bobbing skeleton, so it's stable while dancing and follows smoothly if a
+        // formation later relocates the dancer to a new slot. PlayingEmoji rotates it to face the camera each frame.
+        private void CreateHeadEmoji(SdoAvatar avatar)
+        {
+            var go = new GameObject("HeadEmoji");
+            if (use3dCamera) go.layer = SceneLayer;
+            var sr = go.AddComponent<SpriteRenderer>();   // default Sprites/Default material = alpha blend (faithful)
+            sr.sortingOrder = 50;                          // above the ground ring / bursts
+            sr.enabled = false;
+            var em = go.AddComponent<PlayingEmoji>();
+            em.sr = sr;
+            // current slot world coordinate: the dancer's root (placed on its dance-spot; future formations move it).
+            em.SlotGetter = () => _avatarRoot != null ? _avatarRoot.position : _danceSpot;
+            em.CamGetter = () => _sceneCam != null ? _sceneCam : _cam;
+            _emoji = em;
+        }
+
+        // Map an EmojiKind to its loaded PNG sequence.
+        private Sprite[] FramesFor(EmojiKind k)
+        {
+            switch (k)
+            {
+                case EmojiKind.HH: return _emHH;
+                case EmojiKind.SHSH: return _emSHSH;
+                case EmojiKind.JRKL: return _emJRKL;
+                case EmojiKind.KJ: return _emKJ;
+                case EmojiKind.HE: return _emHE;
+                case EmojiKind.H: return _emH;
+                case EmojiKind.Y: return _emY;
+                case EmojiKind.JS: return _emJS;
+                case EmojiKind.GTH: return _emGTH;
+                default: return null;
+            }
+        }
+
+        // Per-emoji loop count (how many times the short sequence repeats before it stops).
+        private static int EmojiLoops(EmojiKind k)
+        {
+            switch (k)
+            {
+                case EmojiKind.HH: return 3;
+                case EmojiKind.SHSH: return 1;
+                case EmojiKind.JRKL: return 3;
+                case EmojiKind.KJ: return 2;
+                case EmojiKind.HE: return 3;
+                case EmojiKind.H: return 2;
+                case EmojiKind.Y: return 5;
+                case EmojiKind.JS: return 3;   // (not specified by spec — default)
+                case EmojiKind.GTH: return 3;
+                default: return 1;
+            }
+        }
+
+        // Single emoji slot: the latest trigger replaces whatever is playing (restarts the cut-in).
+        private void ShowEmoji(EmojiKind kind)
+        {
+            if (kind == EmojiKind.None || _emoji == null) return;
+            var frames = FramesFor(kind);
+            if (frames != null && frames.Length > 0) _emoji.Play(frames, EmojiLoops(kind));
+        }
+
+        // Combo milestones / consecutive-miss cut-ins — pure decision in EmojiTriggers (unit-tested).
+        private void UpdateEmojiOnJudge(Judgment j) => ShowEmoji(_emojiState.OnJudge(j, _score.Combo));
+
         // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/).
         private MotLoader ResolveMot(string name)
         {
@@ -1497,6 +1608,7 @@ namespace Sdo.Game
         private void ApplyEvent(Judgment j, int lane = -1)
         {
             _score.Apply(j); _health.Apply(j);
+            UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins
             _blockHadNote = true;                                                // a note was judged this block (-> not an empty block)
             if (j == Judgment.Bad || j == Judgment.Miss) _blockHadBreak = true;   // break -> NOT stopped now; the dancer is re-decided at the next 8-beat settlement
             _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;
@@ -1553,21 +1665,17 @@ namespace Sdo.Game
             float h = Mathf.Min(560f, Screen.height - 16f);
             GUILayout.BeginArea(new Rect(Screen.width - 280, 8, 270, h), GUI.skin.box);
 
-            // --- playtest controls: PINNED at the top so they're never clipped by the (growing) slider list below.
-            // (They used to live at the bottom; once enough tuning sliders accumulated they overflowed the box and
-            // got clipped away — that's why auto-play / manual / Cool-Miss "disappeared".) ---
-            GUILayout.Label("[F4 hide]   Playtest");
-            autoPlay = GUILayout.Toggle(autoPlay, autoPlay ? " Auto-play: ON" : " Auto-play: OFF — manual");
-            GUILayout.Label("Manual keys  L/D/U/R = A S W D  or  Num 4 5 8 6");
-            GUILayout.Label($"Force hit grade: {(forcedJudge < 0 ? "Real (timing)" : ForceJudgeLabels[forcedJudge + 1])}");
-            forcedJudge = GUILayout.Toolbar(forcedJudge + 1, ForceJudgeLabels) - 1;   // 0=Real(-1), 1..4=Perfect..Miss
+            // --- TABS: pinned header (F4-hide + tab bar) is tiny; ALL controls live inside the scroll view per tab, so
+            // each group (Play / Combo / Stage) gets the full panel height instead of fighting one growing slider list. ---
+            GUILayout.Label("[F4 hide]   Debug");
+            _dbgTab = GUILayout.Toolbar(_dbgTab, DbgTabs);
 
-            // BURST OBSERVE mode status + slow-motion control (no dance/notes/music, fixed cam).
+            // slow-mo time control is mode-level (observation) — keep it reachable on every tab while observing.
             if (observeBurstMode)
             {
                 bool paused = Time.timeScale <= 0f;
-                GUILayout.Label("== OBSERVE MODE ==  cam0, no dance/notes/music");
-                GUILayout.Label($"Time: {(paused ? "PAUSED" : _timeScale.ToString("0.00") + "×")}   keys [ ] = slow/fast, \\ pause, = reset");
+                GUILayout.Label("== OBSERVE ==  cam0, no dance/notes/music");
+                GUILayout.Label($"Time: {(paused ? "PAUSED" : _timeScale.ToString("0.00") + "×")}   [ ] slow/fast, \\ pause, = reset");
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button("0.1×")) SetTimeScale(0.1f);
                 if (GUILayout.Button("0.25×")) SetTimeScale(0.25f);
@@ -1577,88 +1685,150 @@ namespace Sdo.Game
                 GUILayout.EndHorizontal();
                 GUILayout.Space(4);
             }
-            // fire a specific combo burst on demand (tier 0..4 = 100..500COMBO). Pinned so it's always reachable.
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Fire combo:", GUILayout.Width(66));
-            for (int t = 0; t < 5; t++) if (GUILayout.Button(((t + 1) * 100).ToString())) SpawnComboBurst(t);
-            GUILayout.EndHorizontal();
-            // end-of-song result burst (FINISHED.EFT — the 結算 firework). effScale≈5 is the data-derived value
-            // (bumping it just raises the spawn point); the burst RANGE comes from the up-cone velocity, not size.
-            if (GUILayout.Button("Fire FINISHED (result firework)")) SpawnNamedEft("FINISHED", 5f);
-            GUILayout.Space(6);
 
-            // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — both re-shape the dancer LIVE.
-            GUILayout.Label($"Body shape (thin..fat): B={_bodyShapeB:F3}  (1.00 = standard)");
-            GUILayout.BeginHorizontal();
-            for (int i = 0; i < BodyShapeLabels.Length; i++)
-                if (GUILayout.Button(BodyShapeLabels[i]))
-                { _bodyShapeB = SdoBodyShape.WeightFromIndex(i, maleBody); if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
-            GUILayout.EndHorizontal();
-            float newB = GUILayout.HorizontalSlider(_bodyShapeB, 0.7f, 1.4f);   // fine override (continuous)
-            if (Mathf.Abs(newB - _bodyShapeB) > 1e-4f) { _bodyShapeB = newB; if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
-            GUILayout.Space(6);
-
-            // --- visual tuning sliders (scroll so any number of them can be added without hiding the controls above) ---
             _dbgScroll = GUILayout.BeginScrollView(_dbgScroll);
-            GUILayout.Label($"Opening intro: {openingIntroSec:F1}s {(_trackVisible ? "(shown)" : "(holding — camera only)")}");
-            openingIntroSec = GUILayout.HorizontalSlider(openingIntroSec, 0f, 15f);   // board+HP+READY appear after this; tunable live during the hold
-            GUILayout.Label($"Board opacity: {boardAlpha:F2}× (1=native, ~1.4=official, ~2.6=opaque)");
-            boardAlpha = GUILayout.HorizontalSlider(boardAlpha, 0f, 2.6f);
-            GUILayout.Label($"Board X nudge: {boardX:F0}px");
-            boardX = GUILayout.HorizontalSlider(boardX, -40f, 40f);
-            GUILayout.Label($"Burst size: {burstSize:F2}×");
-            burstSize = GUILayout.HorizontalSlider(burstSize, 0.3f, 3f);
-            GUILayout.Label($"Burst brightness: {burstBright:F2}×");
-            burstBright = GUILayout.HorizontalSlider(burstBright, 0.3f, 3f);
-            GUILayout.Label($"Click-flash brightness: {clickFlashBright:F2}×");
-            clickFlashBright = GUILayout.HorizontalSlider(clickFlashBright, 0f, 1.5f);
-            GUILayout.Label($"Keydown burst: {recKeydownStepSec*1000f:F0}ms/frame ({recKeydownStepSec*5f*1000f:F0}ms total, 5 frames)");
-            recKeydownStepSec = GUILayout.HorizontalSlider(recKeydownStepSec, 0.005f, 0.1f);
-            GUILayout.Label($"HP-glow brightness: {hpGlowBright:F2}× (~1=old dim, 2.5=official)");
-            hpGlowBright = GUILayout.HorizontalSlider(hpGlowBright, 0.3f, 5f);
-            GUILayout.Label($"HP-glow X offset: {hpGlowOffsetX:F0}px (− = left toward bar)");
-            hpGlowOffsetX = GUILayout.HorizontalSlider(hpGlowOffsetX, -48f, 8f);
-            GUILayout.Label($"Floor-ring spread (radius): {ringOuterRadius:F0}");
-            ringOuterRadius = GUILayout.HorizontalSlider(ringOuterRadius, 4f, 60f);
-            GUILayout.Label($"Floor-ring brightness: {ringBrightness:F2}× (0=off)");
-            ringBrightness = GUILayout.HorizontalSlider(ringBrightness, 0f, 2f);
-            GUILayout.Label($"Floor-ring spin: {ringSpinDeg:F0}°/s");
-            ringSpinDeg = GUILayout.HorizontalSlider(ringSpinDeg, -120f, 120f);
-            GUILayout.Label($"Combo-burst size: {comboBurstSize:F2}×  (press B to test)");
-            comboBurstSize = GUILayout.HorizontalSlider(comboBurstSize, 0.3f, 3f);
-            GUILayout.Label($"Combo-burst brightness: {comboBurstBright:F2}× (1.0=faithful)");
-            comboBurstBright = GUILayout.HorizontalSlider(comboBurstBright, 0.2f, 2.5f);
-            GUILayout.Label($"Outer-glow intensity: {comboGlow:F2}× (0=off/faithful)");
-            comboGlow = GUILayout.HorizontalSlider(comboGlow, 0f, 3f);
-            GUILayout.Label($"Outer-glow spread: {comboGlowSpread:F2}× bigger than particle");
-            comboGlowSpread = GUILayout.HorizontalSlider(comboGlowSpread, 0f, 3f);
-            GUILayout.Label($"Combo spawn exposure: {EftEffect.BallCoreIntensity:F1}× (200/300 white-hot at birth; 1=off)");
-            EftEffect.BallCoreIntensity = GUILayout.HorizontalSlider(EftEffect.BallCoreIntensity, 1f, 10f);
-            GUILayout.Label($"Combo exposure fade: {EftEffect.BallCoreExpoFrac:F2} of life (→real colour; lower=colour sooner)");
-            EftEffect.BallCoreExpoFrac = GUILayout.HorizontalSlider(EftEffect.BallCoreExpoFrac, 0.05f, 0.8f);
-            GUILayout.Label($"Combo blue mesh intensity: {EftEffect.MeshIntensity:F1}× (AEF_3_00 visibility; 1=raw/drowned)");
-            EftEffect.MeshIntensity = GUILayout.HorizontalSlider(EftEffect.MeshIntensity, 1f, 8f);
-            GUILayout.Label($"Combo blue mesh width: {EftEffect.MeshWidthMatch:F2}× (300 AEF_3_00 width vs ball; tracks ball rate)");
-            EftEffect.MeshWidthMatch = GUILayout.HorizontalSlider(EftEffect.MeshWidthMatch, 0.1f, 1.2f);
-            GUILayout.Label($"Combo 200 mesh count: {EftEffect.MeshMax200} (AEF_3_00 count cap; official ~5-6)");
-            EftEffect.MeshMax200 = Mathf.RoundToInt(GUILayout.HorizontalSlider(EftEffect.MeshMax200, 1f, 15f));
-            GUILayout.Label($"Combo 300 mesh shrink: {EftEffect.MeshShrinkEnd:F2} end (lower=shrinks smaller/faster)");
-            EftEffect.MeshShrinkEnd = GUILayout.HorizontalSlider(EftEffect.MeshShrinkEnd, 0.05f, 1f);
-            GUILayout.Label($"Combo 300 mesh spawn W×{EftEffect.MeshStartW:F1} / H×{EftEffect.MeshStartH:F1} (→1 by end), opacity {EftEffect.MeshAlpha:F2}");
-            EftEffect.MeshStartW = GUILayout.HorizontalSlider(EftEffect.MeshStartW, 1f, 4f);
-            EftEffect.MeshStartH = GUILayout.HorizontalSlider(EftEffect.MeshStartH, 1f, 8f);
-            EftEffect.MeshAlpha = GUILayout.HorizontalSlider(EftEffect.MeshAlpha, 0.2f, 1f);
-            GUILayout.Label($"Combo 300 mesh drop: {EftEffect.MeshDropFrac:F2} (0=on ball/keeps up, 1=at ball bottom)");
-            EftEffect.MeshDropFrac = GUILayout.HorizontalSlider(EftEffect.MeshDropFrac, 0f, 1.5f);
-            // combo TRAIL streaks (200/300's light flares = engine 0x20000 = a unit quad stretched by animScale.y, NOT a
-            // swept band; length is the scaleY channel, so only the WIDTH is tunable here — 1× = faithful)
-            GUILayout.Label($"Combo trail width: {EftEffect.TrailWidthMul:F2}×  (200/300 light streaks, 1=faithful)");
-            EftEffect.TrailWidthMul = GUILayout.HorizontalSlider(EftEffect.TrailWidthMul, 0.2f, 3f);
-            GUILayout.Label($"Hand-trail width: {handTrailWidth:F2}×");
-            handTrailWidth = GUILayout.HorizontalSlider(handTrailWidth, 0.1f, 3f);
-            GUILayout.Label($"Hand-trail time: {handTrailTime:F2}s");
-            handTrailTime = GUILayout.HorizontalSlider(handTrailTime, 0.05f, 1.2f);
-            foreach (var rib in _handTrails) if (rib) { rib.widthMul = handTrailWidth; rib.life = handTrailTime; }
+            if (_dbgTab == 0)        // ===== PLAY: playtest + body shape =====
+            {
+                autoPlay = GUILayout.Toggle(autoPlay, autoPlay ? " Auto-play: ON" : " Auto-play: OFF — manual");
+                GUILayout.Label("Manual keys  L/D/U/R = A S W D  or  Num 4 5 8 6");
+                GUILayout.Label($"Force hit grade: {(forcedJudge < 0 ? "Real (timing)" : ForceJudgeLabels[forcedJudge + 1])}");
+                forcedJudge = GUILayout.Toolbar(forcedJudge + 1, ForceJudgeLabels) - 1;   // 0=Real(-1), 1..4=Perfect..Miss
+                GUILayout.Space(6);
+                // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — re-shape the dancer LIVE.
+                GUILayout.Label($"Body shape (thin..fat): B={_bodyShapeB:F3}  (1.00 = standard)");
+                GUILayout.BeginHorizontal();
+                for (int i = 0; i < BodyShapeLabels.Length; i++)
+                    if (GUILayout.Button(BodyShapeLabels[i]))
+                    { _bodyShapeB = SdoBodyShape.WeightFromIndex(i, maleBody); if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
+                GUILayout.EndHorizontal();
+                float newB = GUILayout.HorizontalSlider(_bodyShapeB, 0.7f, 1.4f);   // fine override (continuous)
+                if (Mathf.Abs(newB - _bodyShapeB) > 1e-4f) { _bodyShapeB = newB; if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
+            }
+            else if (_dbgTab == 1)   // ===== COMBO: fire bursts + combo/mesh/trail tuning =====
+            {
+                // fire a specific combo burst on demand (tier 0..4 = 100..500COMBO).
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Fire combo:", GUILayout.Width(66));
+                for (int t = 0; t < 5; t++) if (GUILayout.Button(((t + 1) * 100).ToString())) SpawnComboBurst(t);
+                GUILayout.EndHorizontal();
+                if (GUILayout.Button("Fire FINISHED (result firework)")) SpawnNamedEft("FINISHED", 5f);
+
+                // ── 300 AEF_3_00 (blue flame) — pinned FIRST so it's the easiest group to find/tune ──
+                GUILayout.Space(6);
+                GUILayout.Label("══ 300 AEF_3_00 藍焰 ══");
+                GUILayout.Label($"300 AEF_3_00 透明度 opacity: {EftEffect.Mesh300Alpha:F2} (低=透明/淡)");
+                EftEffect.Mesh300Alpha = GUILayout.HorizontalSlider(EftEffect.Mesh300Alpha, 0.05f, 1f);
+                GUILayout.Label($"300 AEF_3_00 亮度 intensity: {EftEffect.Mesh300Intensity:F1}× (1=raw/drowned)");
+                EftEffect.Mesh300Intensity = GUILayout.HorizontalSlider(EftEffect.Mesh300Intensity, 1f, 8f);
+                GUILayout.Label($"300 AEF_3_00 前後 Z: {EftEffect.Mesh300Z:F2} (− 往後不擋球 / + 往前)");
+                EftEffect.Mesh300Z = GUILayout.HorizontalSlider(EftEffect.Mesh300Z, -2f, 2f);
+                EftEffect.Mesh300Straight = GUILayout.Toggle(EftEffect.Mesh300Straight, " 300 AEF_3_00 拉直 straighten (de-lean)");
+                GUILayout.Label($"300 AEF_3_00 寬度 width: {EftEffect.MeshWidthMatch:F2}× (vs ball)");
+                EftEffect.MeshWidthMatch = GUILayout.HorizontalSlider(EftEffect.MeshWidthMatch, 0.1f, 1.2f);
+                GUILayout.Label($"300 AEF_3_00 收縮 shrink: {EftEffect.MeshShrinkEnd:F2} end (低=更小更快)");
+                EftEffect.MeshShrinkEnd = GUILayout.HorizontalSlider(EftEffect.MeshShrinkEnd, 0.05f, 1f);
+                GUILayout.Label($"300 AEF_3_00 出生 W×{EftEffect.MeshStartW:F1} / H×{EftEffect.MeshStartH:F1} (→1 by end)");
+                EftEffect.MeshStartW = GUILayout.HorizontalSlider(EftEffect.MeshStartW, 1f, 4f);
+                EftEffect.MeshStartH = GUILayout.HorizontalSlider(EftEffect.MeshStartH, 1f, 8f);
+                GUILayout.Label($"300 AEF_3_00 下降錨點 drop: {EftEffect.MeshDropFrac:F2} (0=貼球/跟上, 1=球底)");
+                EftEffect.MeshDropFrac = GUILayout.HorizontalSlider(EftEffect.MeshDropFrac, 0f, 1.5f);
+
+                // ── 200 AEF_3_00 (ground curtain) ──
+                GUILayout.Space(6);
+                GUILayout.Label("══ 200 AEF_3_00 地面 ══");
+                GUILayout.Label($"200 AEF_3_00 亮度 intensity: {EftEffect.MeshIntensity:F1}× (1=raw/drowned)");
+                EftEffect.MeshIntensity = GUILayout.HorizontalSlider(EftEffect.MeshIntensity, 1f, 8f);
+                GUILayout.Label($"200 AEF_3_00 透明度 opacity: {EftEffect.MeshAlpha:F2}");
+                EftEffect.MeshAlpha = GUILayout.HorizontalSlider(EftEffect.MeshAlpha, 0.2f, 1f);
+                GUILayout.Label($"200 AEF_3_00 數量 count: {EftEffect.MeshMax200} (official ~5-6)");
+                EftEffect.MeshMax200 = Mathf.RoundToInt(GUILayout.HorizontalSlider(EftEffect.MeshMax200, 1f, 15f));
+
+                // ── burst / glow / exposure (200+300 common) ──
+                GUILayout.Space(6);
+                GUILayout.Label("══ Burst / glow ══");
+                GUILayout.Label($"Combo-burst size: {comboBurstSize:F2}×  (press B to test)");
+                comboBurstSize = GUILayout.HorizontalSlider(comboBurstSize, 0.3f, 3f);
+                GUILayout.Label($"Combo-burst brightness: {comboBurstBright:F2}× (1.0=faithful)");
+                comboBurstBright = GUILayout.HorizontalSlider(comboBurstBright, 0.2f, 2.5f);
+                GUILayout.Label($"Outer-glow intensity: {comboGlow:F2}× (0=off/faithful)");
+                comboGlow = GUILayout.HorizontalSlider(comboGlow, 0f, 3f);
+                GUILayout.Label($"Outer-glow spread: {comboGlowSpread:F2}× bigger than particle");
+                comboGlowSpread = GUILayout.HorizontalSlider(comboGlowSpread, 0f, 3f);
+                GUILayout.Label($"Combo spawn exposure: {EftEffect.BallCoreIntensity:F1}× (200/300 white-hot at birth; 1=off)");
+                EftEffect.BallCoreIntensity = GUILayout.HorizontalSlider(EftEffect.BallCoreIntensity, 1f, 10f);
+                GUILayout.Label($"Combo exposure fade: {EftEffect.BallCoreExpoFrac:F2} of life (→real colour; lower=colour sooner)");
+                EftEffect.BallCoreExpoFrac = GUILayout.HorizontalSlider(EftEffect.BallCoreExpoFrac, 0.05f, 0.8f);
+                // combo TRAIL streaks (200/300's light flares = engine 0x20000 = a unit quad stretched by animScale.y, NOT a
+                // swept band; length is the scaleY channel, so only the WIDTH is tunable here — 1× = faithful)
+                GUILayout.Label($"Combo trail width: {EftEffect.TrailWidthMul:F2}×  (200/300 light streaks, 1=faithful)");
+                EftEffect.TrailWidthMul = GUILayout.HorizontalSlider(EftEffect.TrailWidthMul, 0.2f, 3f);
+            }
+            else if (_dbgTab == 2)    // ===== STAGE: board / hit-burst / HP / floor-ring / hand-trail =====
+            {
+                GUILayout.Label($"Opening intro: {openingIntroSec:F1}s {(_trackVisible ? "(shown)" : "(holding — camera only)")}");
+                openingIntroSec = GUILayout.HorizontalSlider(openingIntroSec, 0f, 15f);   // board+HP+READY appear after this; tunable live during the hold
+                GUILayout.Label($"Board opacity: {boardAlpha:F2}× (1=native, ~1.4=official, ~2.6=opaque)");
+                boardAlpha = GUILayout.HorizontalSlider(boardAlpha, 0f, 2.6f);
+                GUILayout.Label($"Board X nudge: {boardX:F0}px");
+                boardX = GUILayout.HorizontalSlider(boardX, -40f, 40f);
+                GUILayout.Label($"Burst size: {burstSize:F2}×");
+                burstSize = GUILayout.HorizontalSlider(burstSize, 0.3f, 3f);
+                GUILayout.Label($"Burst brightness: {burstBright:F2}×");
+                burstBright = GUILayout.HorizontalSlider(burstBright, 0.3f, 3f);
+                GUILayout.Label($"Click-flash brightness: {clickFlashBright:F2}×");
+                clickFlashBright = GUILayout.HorizontalSlider(clickFlashBright, 0f, 1.5f);
+                GUILayout.Label($"Keydown burst: {recKeydownStepSec*1000f:F0}ms/frame ({recKeydownStepSec*5f*1000f:F0}ms total, 5 frames)");
+                recKeydownStepSec = GUILayout.HorizontalSlider(recKeydownStepSec, 0.005f, 0.1f);
+                GUILayout.Label($"HP-glow brightness: {hpGlowBright:F2}× (~1=old dim, 2.5=official)");
+                hpGlowBright = GUILayout.HorizontalSlider(hpGlowBright, 0.3f, 5f);
+                GUILayout.Label($"HP-glow X offset: {hpGlowOffsetX:F0}px (− = left toward bar)");
+                hpGlowOffsetX = GUILayout.HorizontalSlider(hpGlowOffsetX, -48f, 8f);
+                GUILayout.Label($"Floor-ring spread (radius): {ringOuterRadius:F0}");
+                ringOuterRadius = GUILayout.HorizontalSlider(ringOuterRadius, 4f, 60f);
+                GUILayout.Label($"Floor-ring brightness: {ringBrightness:F2}× (0=off)");
+                ringBrightness = GUILayout.HorizontalSlider(ringBrightness, 0f, 2f);
+                GUILayout.Label($"Floor-ring spin: {ringSpinDeg:F0}°/s");
+                ringSpinDeg = GUILayout.HorizontalSlider(ringSpinDeg, -120f, 120f);
+                GUILayout.Label($"Hand-trail width: {handTrailWidth:F2}×");
+                handTrailWidth = GUILayout.HorizontalSlider(handTrailWidth, 0.1f, 3f);
+                GUILayout.Label($"Hand-trail time: {handTrailTime:F2}s");
+                handTrailTime = GUILayout.HorizontalSlider(handTrailTime, 0.05f, 1.2f);
+                foreach (var rib in _handTrails) if (rib) { rib.widthMul = handTrailWidth; rib.life = handTrailTime; }
+            }
+            else                      // ===== EMOJI: trigger each head-emoji + tune its position live =====
+            {
+                GUILayout.Label("══ 表情測試 Head emoji ══");
+                if (_emoji == null) GUILayout.Label("(emoji 尚未就緒：需載入舞者 avatar)");
+                else
+                {
+                    GUILayout.Label("點擊直接觸發（取當下人物位置後凍結）：");
+                    for (int i = 0; i < EmojiTestButtons.Length; i += 2)
+                    {
+                        GUILayout.BeginHorizontal();
+                        if (GUILayout.Button(EmojiTestButtons[i].label)) ShowEmoji(EmojiTestButtons[i].kind);
+                        if (i + 1 < EmojiTestButtons.Length && GUILayout.Button(EmojiTestButtons[i + 1].label)) ShowEmoji(EmojiTestButtons[i + 1].kind);
+                        GUILayout.EndHorizontal();
+                    }
+                    if (GUILayout.Button("Stop / 清除")) _emoji.Stop();
+
+                    GUILayout.Space(6);
+                    GUILayout.Label("位置 XYZ（槽位 world 座標 + 世界偏移）— 即時套用：");
+                    GUILayout.Label($"X: {_emoji.xOff:F1}");
+                    _emoji.xOff = GUILayout.HorizontalSlider(_emoji.xOff, -60f, 60f);
+                    GUILayout.Label($"Y: {_emoji.yOff:F1}");
+                    _emoji.yOff = GUILayout.HorizontalSlider(_emoji.yOff, -20f, 80f);
+                    GUILayout.Label($"Z: {_emoji.zOff:F1}");
+                    _emoji.zOff = GUILayout.HorizontalSlider(_emoji.zOff, -60f, 60f);
+
+                    GUILayout.Space(4);
+                    GUILayout.Label($"大小 scale: {_emoji.worldScale:F2}");
+                    _emoji.worldScale = GUILayout.HorizontalSlider(_emoji.worldScale, 0.05f, 1.5f);
+                    GUILayout.Label($"每幀 frame: {_emoji.frameMs:F0}ms");
+                    _emoji.frameMs = GUILayout.HorizontalSlider(_emoji.frameMs, 50f, 1000f);
+                    GUILayout.Label($"跟隨平滑 follow: {_emoji.followLerp:F1} (大=瞬移, 小=慢慢移)");
+                    _emoji.followLerp = GUILayout.HorizontalSlider(_emoji.followLerp, 1f, 30f);
+                }
+            }
             GUILayout.EndScrollView();
 
             GUILayout.EndArea();
@@ -2053,6 +2223,7 @@ namespace Sdo.Game
             if (!_trackVisible) return;   // hidden during the opening intro; SetTrackVisible(true) re-shows it
             double hp = _health?.Health ?? HealthProcessor.MaxHealth;
             float frac = Mathf.Clamp01((float)((hp - HealthProcessor.FloorHealth) / (HealthProcessor.MaxHealth - HealthProcessor.FloorHealth)));
+            ShowEmoji(_emojiState.OnHp(frac));   // low-HP emoji (GTH): <30% bar fires once, re-arms above 40%
             // official MyHp fill clipped to (HP+150)/1150 (no overlay -> uniform red, no banding).
             if (_hpTex) SdoLayout.PlaceBarFill(_hpTex, HpPos.x, HpPos.y, HpSize.x, HpSize.y, frac, -0.1f);
             if (_hpGlow && _hpGlowFrames != null && _hpGlowFrames.Length > 0)

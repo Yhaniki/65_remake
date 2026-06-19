@@ -4,6 +4,7 @@
     "references": [
         "Sdo.Osu",
         "Sdo.Ruleset",
+        "Sdo.Game",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
