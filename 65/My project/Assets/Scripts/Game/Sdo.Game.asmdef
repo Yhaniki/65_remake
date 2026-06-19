@@ -3,7 +3,8 @@
     "rootNamespace": "Sdo.Game",
     "references": [
         "Sdo.Osu",
-        "Sdo.Ruleset"
+        "Sdo.Ruleset",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

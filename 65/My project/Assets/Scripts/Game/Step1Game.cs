@@ -204,6 +204,28 @@ namespace Sdo.Game
         private int _lastMilestone;       // last combo milestone (50/100/150…) already celebrated
         private long _shownScore, _scoreFrom, _scoreTarget;  // (8) score commits every 8 beats, then counts up + zooms
         private double _nextScoreCommitMs; private float _scoreAnimAt = -10f;
+
+        // ---- ranking UI (head nameplate + centre rank N/M + right-side roster list) ----
+        // The remake renders ONE dancer; opponents are a configurable mock roster so the rank/list read
+        // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
+        public bool mockOpponents = true;            // seed simulated opponents (default) vs. solo (rank 1/1, list of 1)
+        public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
+        private static readonly string[] OpponentNames =
+            { "炫炎輪火", "Polaris晴天坊", "小醜麵具", "奶茶布丁", "醉小蛇" };
+        private const int RosterRows = 6;            // PKSCORE digits only cover 0..6, so the room caps at 6 players
+        private readonly List<PlayerEntry> _roster = new List<PlayerEntry>();
+        private long _finalEst = 100000;             // estimated strong final score; scales the mock opponents
+        private Label3D[] _rosterName, _rosterScore;              // right-side list rows (name + score)
+        private readonly Sprite[] _pkDigits = new Sprite[7];      // PKSCORE 0..6 (pink rank glyphs)
+        private SpriteRenderer _rankCurD, _rankSlash, _rankTotD;  // centre "N / M": current digit, slash, total digit
+        private HeadMarker _headMarker;
+        private Sprite[] _arrowFrames;               // UI/ARROW 000..008 (animated rainbow downward arrow)
+        private Sprite _slashSprite;                 // GAMEPLAY61.PNG (the "/" between rank digits, 25×29 like PKSCORE)
+        // layout tunables (design px, 800×600 top-left; DdrGamePlay.xml nick=577 / score=717..781), Inspector/F4-tunable
+        public float rosterFirstY = 108f, rosterRowStep = 18f, rosterNameX = 577f, rosterScoreX = 781f, rosterFontWorld = 24f;
+        // rank "N / M": laid out on the SCORE's column pitch so M (total) sits under the score's tens digit.
+        // slash x = ScorePos.x + 5*pitch + 14 = 429 → N at col4 (404), M at col6/tens (454). rankY below the score.
+        public float rankCenterX = 429f, rankY = 74f, rankDigitW = 25f, rankPitch = 26f;
         // dancer dance/stop gate. The decision is made ONLY at the 8-beat settlement (same cadence as the score
         // commit) — a break NO LONGER stops the dancer mid-block, it just records the flag and is judged at the
         // next boundary. At each settlement we re-decide dance-vs-stop for the upcoming block (two conditions):
@@ -243,6 +265,7 @@ namespace Sdo.Game
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromSdoBpm(_map.Bpm));
             _score = new ScoreProcessor(_map.TotalNotes);
             _health = new HealthProcessor(healthLevel);
+            RefreshRanking();   // initial roster/rank (rank 1/N) before the first score commit
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
             // Enter on the crane with no note board: hold the track hidden while the opening shot flies in, then
@@ -524,6 +547,7 @@ namespace Sdo.Game
                 if (_receptors[c]) _receptors[c].enabled = on;
                 if (!on && _clickFlashSr[c] != null) _clickFlashSr[c].enabled = false;
             }
+            SetRankingVisible(on);   // hide the roster list + rank during the opening hold / observe mode
         }
 
         private GameObject CreateHoldBody(int col)
@@ -605,6 +629,7 @@ namespace Sdo.Game
             _info = NewText("Info", 610, 8, 10, Color.white);
             _fpsText = NewText("Fps", 6, 9, 11, new Color(0.5f, 1f, 0.5f, 1f));   // debug FPS (top-left)
             _readyGo = NewSR("ReadyGo", null, 50); _readyGo.enabled = false;
+            BuildRankingUi();
             UpdateHpBar();
         }
 
@@ -739,6 +764,9 @@ namespace Sdo.Game
                 if (avatar != null)
                     try { CreateHeadEmoji(avatar); }   // head-emoji billboard at the dancer's head front-right
                     catch (System.Exception e) { Debug.LogError("[emoji] creation failed (non-fatal): " + e); }
+                if (avatar != null)
+                    try { CreateHeadMarker(avatar); }  // local player's nameplate (arrow + name) above the head
+                    catch (System.Exception e) { Debug.LogError("[headmarker] creation failed (non-fatal): " + e); }
                 SetLayerRecursive(parent, SceneLayer);
             }
             else
@@ -1797,6 +1825,39 @@ namespace Sdo.Game
             }
             else                      // ===== EMOJI: trigger each head-emoji + tune its position live =====
             {
+                GUILayout.Label("══ 頭頂名牌 Head marker（螢幕空間，對官方圖微調）══");
+                if (_headMarker == null) GUILayout.Label("(name marker 尚未就緒：需載入舞者 avatar)");
+                else
+                {
+                    GUILayout.Label($"名字字級 font(px): {_headMarker.nameFontPx:F0}");
+                    _headMarker.nameFontPx = GUILayout.HorizontalSlider(_headMarker.nameFontPx, 8f, 64f);
+                    GUILayout.Label($"箭頭寬度 arrow(px): {_headMarker.arrowDesignW:F0}");
+                    _headMarker.arrowDesignW = GUILayout.HorizontalSlider(_headMarker.arrowDesignW, 6f, 64f);
+                    GUILayout.Label($"離頭距離 up(世界): {_headMarker.upWorld:F1}");
+                    _headMarker.upWorld = GUILayout.HorizontalSlider(_headMarker.upWorld, 0f, 50f);
+                    GUILayout.Label($"箭頭/名字間距 gap(px): {_headMarker.arrowGapPx:F0}");
+                    _headMarker.arrowGapPx = GUILayout.HorizontalSlider(_headMarker.arrowGapPx, 0f, 30f);
+                    GUILayout.Label($"箭頭換幀 frame: {_headMarker.frameMs:F0}ms");
+                    _headMarker.frameMs = GUILayout.HorizontalSlider(_headMarker.frameMs, 50f, 600f);
+                }
+
+                GUILayout.Space(8);
+                GUILayout.Label("══ 排名/清單 Rank & roster（即時微調）══");
+                GUILayout.Label($"清單字級 list font(px): {rosterFontWorld:F0}");
+                rosterFontWorld = GUILayout.HorizontalSlider(rosterFontWorld, 10f, 48f);
+                GUILayout.Label($"清單起始 firstY: {rosterFirstY:F0}");
+                rosterFirstY = GUILayout.HorizontalSlider(rosterFirstY, 40f, 300f);
+                GUILayout.Label($"清單列距 rowStep: {rosterRowStep:F0}");
+                rosterRowStep = GUILayout.HorizontalSlider(rosterRowStep, 12f, 44f);
+                GUILayout.Label($"名次數字寬 rankW(px): {rankDigitW:F0}  間距 pitch: {rankPitch:F0}");
+                rankDigitW = GUILayout.HorizontalSlider(rankDigitW, 12f, 48f);
+                rankPitch = GUILayout.HorizontalSlider(rankPitch, 14f, 48f);
+                GUILayout.Label($"名次中心X / Y: {rankCenterX:F0} / {rankY:F0}");
+                rankCenterX = GUILayout.HorizontalSlider(rankCenterX, 280f, 520f);
+                rankY = GUILayout.HorizontalSlider(rankY, 36f, 130f);
+                if (GUILayout.Button("套用清單版面 / re-layout list")) RelayoutRoster();
+
+                GUILayout.Space(8);
                 GUILayout.Label("══ 表情測試 Head emoji ══");
                 if (_emoji == null) GUILayout.Label("(emoji 尚未就緒：需載入舞者 avatar)");
                 else
@@ -2152,6 +2213,7 @@ namespace Sdo.Game
             {
                 if (_score.Score != _scoreTarget) { _scoreFrom = _shownScore; _scoreTarget = _score.Score; _scoreAnimAt = Time.time; _scoreCommitPop = true; _scoreArmed = true; }
                 _nextScoreCommitMs += 8 * beatMs;
+                RefreshRanking();   // re-sort + redraw the roster list and rank on the same 8-beat cadence
             }
             // decompiled CtlNumLabel (FUN_0043dac0): NOT a smooth per-frame lerp. It adds a fixed
             // step = delta/20 (0x21c = (target-cur)/0x14) only once every ~50ms (0x31<elapsed, /0x32),
@@ -2216,6 +2278,159 @@ namespace Sdo.Game
                 if (spr != null) { float dx = TrackCenterX + (startX + i * ComboDigitStep - TrackCenterX) * pop; PlaceAspect(d, dx, ComboDigitY, ComboDigitW, -2); d.transform.localScale *= pop; }
             }
             if (_comboWord && _comboWord.sprite != null) { _comboWord.enabled = true; PlaceAspect(_comboWord, TrackCenterX, ComboWordY, ComboWordW); _comboWord.transform.localScale *= pop; }
+        }
+
+        // ==== ranking UI: head nameplate, centre rank N/M, right-side roster list ====
+
+        private void BuildRankingUi()
+        {
+            _finalEst = Math.Max(20000L, (long)_map.TotalNotes * 68L);   // ≈ all-perfect ServerScore ceiling
+            var arrowDir = Path.Combine(SdoExtracted.Root, "UI", "ARROW");
+            _arrowFrames = new Sprite[9];
+            for (int i = 0; i < 9; i++) _arrowFrames[i] = SdoExtracted.LoadImage(arrowDir, i.ToString("D3") + ".PNG");
+            var gpDir = SdoExtracted.GameplayUiDir;
+            _slashSprite = SdoExtracted.LoadImage(gpDir, "GAMEPLAY61.PNG");   // the "/" glyph (25×29, matches PKSCORE)
+            var pkDir = Path.Combine(gpDir, "PKSCORE");
+            for (int i = 0; i < _pkDigits.Length; i++) _pkDigits[i] = SdoExtracted.LoadImage(pkDir, i + ".PNG");
+
+            // centre "N / M": two pink PKSCORE digits + the GAMEPLAY61 slash glyph between them.
+            _rankCurD = NewSR("RankCur", null, 26); _rankCurD.enabled = false;
+            _rankTotD = NewSR("RankTot", null, 26); _rankTotD.enabled = false;
+            _rankSlash = NewSR("RankSlash", _slashSprite, 26); _rankSlash.enabled = false;
+
+            // right-side roster list: RosterRows × (name [left] + score [right]), fixed positions on the HUD layer.
+            _rosterName = new Label3D[RosterRows];
+            _rosterScore = new Label3D[RosterRows];
+            for (int row = 0; row < RosterRows; row++)
+            {
+                float y = rosterFirstY + row * rosterRowStep;
+                _rosterName[row] = TextStyles.NewLabel("RosterName" + row, TextStyles.Style.ListOther, 45, rosterFontWorld, TextAnchor.MiddleLeft);
+                _rosterName[row].Position = SdoLayout.ToWorld(rosterNameX, y, -3f);
+                _rosterScore[row] = TextStyles.NewLabel("RosterScore" + row, TextStyles.Style.ListOther, 45, rosterFontWorld, TextAnchor.MiddleRight);
+                _rosterScore[row].Position = SdoLayout.ToWorld(rosterScoreX, y, -3f);
+            }
+        }
+
+        // re-apply the (live-tunable) roster font/positions + rank size, then redraw. Hooked to the F4 button.
+        private void RelayoutRoster()
+        {
+            if (_rosterName == null) return;
+            for (int row = 0; row < RosterRows; row++)
+            {
+                float y = rosterFirstY + row * rosterRowStep;
+                _rosterName[row].PxSize = rosterFontWorld;
+                _rosterName[row].Position = SdoLayout.ToWorld(rosterNameX, y, -3f);
+                _rosterScore[row].PxSize = rosterFontWorld;
+                _rosterScore[row].Position = SdoLayout.ToWorld(rosterScoreX, y, -3f);
+            }
+            if (_roster.Count == 0) RebuildRoster();
+            UpdateRosterList();
+            UpdateRankDisplay();
+        }
+
+        // the local dancer's nameplate (animated arrow + name). It is a SCREEN-SPACE label (on the HUD
+        // layer, not the scene layer): HeadMarker projects the head bone through the scene cam each frame
+        // and draws a fixed pixel distance above it — so it floats over the head from any angle and never
+        // occludes it. Only the local player is rendered, so there is exactly one.
+        private void CreateHeadMarker(SdoAvatar avatar)
+        {
+            int headIdx = avatar.BoneIndex("Bip01_Head");
+            if (headIdx < 0) headIdx = avatar.BoneIndex("Bip01_Neck");
+            Transform anchor = null;
+            if (headIdx >= 0 && _avatarRoot != null)
+            {
+                var ag = new GameObject("HeadMarkerAnchor");
+                if (use3dCamera) ag.layer = SceneLayer;
+                ag.transform.SetParent(_avatarRoot, false);
+                avatar.AddAnchor(headIdx, ag.transform);
+                anchor = ag.transform;
+            }
+            var go = new GameObject("HeadMarker");   // HUD layer (default) — children draw in the main ortho cam
+            var hm = go.AddComponent<HeadMarker>();
+            hm.Init(_arrowFrames, localPlayerName);
+            Transform a = anchor;
+            hm.AnchorGetter = () => a != null ? a.position
+                : ((_avatarRoot != null ? _avatarRoot.position : _danceSpot) + new Vector3(0f, 59f, 0f));
+            hm.CamGetter = () => _sceneCam != null ? _sceneCam : _cam;
+            _headMarker = hm;
+        }
+
+        // rebuild + redraw the roster (called at each 8-beat score commit and once at startup).
+        private void RefreshRanking()
+        {
+            if (_rosterName == null || !_trackVisible) return;   // not built / hidden during the opening hold
+            RebuildRoster();
+            UpdateRosterList();
+            UpdateRankDisplay();
+        }
+
+        private void RebuildRoster()
+        {
+            _roster.Clear();
+            _roster.Add(new PlayerEntry(localPlayerName, _score != null ? _score.Score : 0L, true));
+            if (mockOpponents)
+            {
+                double now = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : 0.0;
+                double progress = _totalMs > 1.0 ? Math.Min(1.0, Math.Max(0.0, now / _totalMs)) : 0.0;
+                int n = Math.Min(OpponentNames.Length, RosterRows - 1);
+                for (int i = 0; i < n; i++)
+                    _roster.Add(new PlayerEntry(OpponentNames[i], SimOpponentScore(i, progress), false));
+            }
+        }
+
+        // deterministic mock score: skill × smoothstep(progress) × (1 ± small oscillation). The oscillation
+        // lets opponents trade places over the song so the rank moves; result is clamped ≥ 0.
+        private long SimOpponentScore(int i, double progress)
+        {
+            float skill = 0.72f + 0.11f * ((i * 7 + 3) % 5);                 // ≈ 0.72..1.16 spread
+            double curve = progress * progress * (3.0 - 2.0 * progress);     // smoothstep, monotonic 0→1
+            double jitter = 0.05 * Math.Sin(i * 1.7 + progress * (6.0 + i)); // ±5% lead changes
+            double v = _finalEst * skill * curve * (1.0 + jitter);
+            return v < 0 ? 0 : (long)v;
+        }
+
+        private void UpdateRosterList()
+        {
+            var order = RankingBoard.SortedIndices(_roster);
+            for (int row = 0; row < RosterRows; row++)
+            {
+                if (row < order.Length)
+                {
+                    var p = _roster[order[row]];
+                    var (face, edge) = TextStyles.Colors(p.IsLocal ? TextStyles.Style.ListLocal : TextStyles.Style.ListOther);
+                    _rosterName[row].SetColors(face, edge); _rosterName[row].SetActive(true); _rosterName[row].Text = p.Name;
+                    _rosterScore[row].SetColors(face, edge); _rosterScore[row].SetActive(true); _rosterScore[row].Text = p.Score.ToString();
+                }
+                else { _rosterName[row].SetActive(false); _rosterScore[row].SetActive(false); }
+            }
+        }
+
+        private void UpdateRankDisplay()
+        {
+            var (rank, total) = RankingBoard.LocalRank(_roster);
+            rank = Mathf.Clamp(rank, 0, 6);    // PKSCORE digits only go 0..6
+            total = Mathf.Clamp(total, 0, 6);
+            var cur = _pkDigits[rank]; var tot = _pkDigits[total];
+            _rankCurD.sprite = cur; _rankCurD.enabled = cur != null;
+            _rankTotD.sprite = tot; _rankTotD.enabled = tot != null;
+            // N (current) — slash — M (total), spaced on the score's column pitch (M lands under the tens digit).
+            if (cur != null) PlaceAspect(_rankCurD, rankCenterX - rankPitch, rankY, rankDigitW, -2f);
+            _rankSlash.enabled = _rankSlash.sprite != null;
+            if (_rankSlash.sprite != null) PlaceAspect(_rankSlash, rankCenterX, rankY, rankDigitW, -2f);  // GAMEPLAY61 "/"
+            if (tot != null) PlaceAspect(_rankTotD, rankCenterX + rankPitch, rankY, rankDigitW, -2f);
+        }
+
+        private void SetRankingVisible(bool on)
+        {
+            if (_rosterName != null)
+                for (int i = 0; i < RosterRows; i++)
+                {
+                    if (_rosterName[i] != null) _rosterName[i].SetActive(on);
+                    if (_rosterScore[i] != null) _rosterScore[i].SetActive(on);
+                }
+            if (_rankCurD) _rankCurD.enabled = on && _rankCurD.sprite != null;
+            if (_rankTotD) _rankTotD.enabled = on && _rankTotD.sprite != null;
+            if (_rankSlash) _rankSlash.enabled = on;
         }
 
         private void UpdateHpBar()
