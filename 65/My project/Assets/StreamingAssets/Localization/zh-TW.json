@@ -1,0 +1,315 @@
+{
+ "language": "zh-TW",
+ "name": "繁體中文",
+ "culture": "zh-TW",
+ "entries": [
+  {
+   "k": "common.apply",
+   "v": "套用"
+  },
+  {
+   "k": "common.back",
+   "v": "返回"
+  },
+  {
+   "k": "common.cancel",
+   "v": "取消"
+  },
+  {
+   "k": "common.close",
+   "v": "關閉"
+  },
+  {
+   "k": "common.confirm",
+   "v": "確定"
+  },
+  {
+   "k": "common.off",
+   "v": "關"
+  },
+  {
+   "k": "common.on",
+   "v": "開"
+  },
+  {
+   "k": "app.title",
+   "v": "熱舞 Online"
+  },
+  {
+   "k": "lobby.create_room",
+   "v": "建立房間"
+  },
+  {
+   "k": "lobby.rooms",
+   "v": "房間列表"
+  },
+  {
+   "k": "lobby.online_players",
+   "v": "線上玩家"
+  },
+  {
+   "k": "lobby.chat",
+   "v": "聊天"
+  },
+  {
+   "k": "lobby.chat_hint",
+   "v": "輸入訊息後按 Enter…"
+  },
+  {
+   "k": "lobby.send",
+   "v": "送出"
+  },
+  {
+   "k": "lobby.settings",
+   "v": "設定"
+  },
+  {
+   "k": "lobby.logout",
+   "v": "登出"
+  },
+  {
+   "k": "lobby.select_note",
+   "v": "選擇音符"
+  },
+  {
+   "k": "lobby.empty",
+   "v": "目前沒有房間，來建立一間吧！"
+  },
+  {
+   "k": "lobby.col_room",
+   "v": "房號"
+  },
+  {
+   "k": "lobby.col_host",
+   "v": "房主"
+  },
+  {
+   "k": "lobby.col_count",
+   "v": "人數"
+  },
+  {
+   "k": "lobby.col_mode",
+   "v": "模式"
+  },
+  {
+   "k": "lobby.col_status",
+   "v": "狀態"
+  },
+  {
+   "k": "room.title",
+   "v": "房間 {0}"
+  },
+  {
+   "k": "room.leave",
+   "v": "離開房間"
+  },
+  {
+   "k": "room.ready",
+   "v": "準備"
+  },
+  {
+   "k": "room.cancel_ready",
+   "v": "取消準備"
+  },
+  {
+   "k": "room.start",
+   "v": "開始"
+  },
+  {
+   "k": "room.select_song",
+   "v": "選擇歌曲"
+  },
+  {
+   "k": "room.no_song",
+   "v": "（尚未選歌）"
+  },
+  {
+   "k": "room.mode",
+   "v": "模式"
+  },
+  {
+   "k": "room.empty_seat",
+   "v": "空位"
+  },
+  {
+   "k": "room.host",
+   "v": "房主"
+  },
+  {
+   "k": "room.waiting_players",
+   "v": "尚有玩家未準備"
+  },
+  {
+   "k": "room.need_song",
+   "v": "請先選擇歌曲"
+  },
+  {
+   "k": "result.clear",
+   "v": "完成!"
+  },
+  {
+   "k": "result.failed",
+   "v": "失敗"
+  },
+  {
+   "k": "result.score",
+   "v": "分數"
+  },
+  {
+   "k": "result.max_combo",
+   "v": "最大連段"
+  },
+  {
+   "k": "result.back",
+   "v": "返回房間"
+  },
+  {
+   "k": "mode.free",
+   "v": "自由"
+  },
+  {
+   "k": "mode.normal",
+   "v": "普通"
+  },
+  {
+   "k": "status.waiting",
+   "v": "等待中"
+  },
+  {
+   "k": "status.ingame",
+   "v": "遊戲中"
+  },
+  {
+   "k": "songselect.title",
+   "v": "選擇歌曲"
+  },
+  {
+   "k": "songselect.random",
+   "v": "隨機"
+  },
+  {
+   "k": "songselect.stage",
+   "v": "舞台"
+  },
+  {
+   "k": "songselect.search",
+   "v": "搜尋歌曲 / 歌手…"
+  },
+  {
+   "k": "songselect.bpm",
+   "v": "BPM {0}"
+  },
+  {
+   "k": "songselect.level",
+   "v": "Lv {0}"
+  },
+  {
+   "k": "songselect.page",
+   "v": "第 {0}/{1} 頁"
+  },
+  {
+   "k": "songselect.prev",
+   "v": "上一頁"
+  },
+  {
+   "k": "songselect.next",
+   "v": "下一頁"
+  },
+  {
+   "k": "songselect.no_songs",
+   "v": "找不到歌曲"
+  },
+  {
+   "k": "songselect.confirm",
+   "v": "選定"
+  },
+  {
+   "k": "songselect.need_pick",
+   "v": "請先選擇歌曲"
+  },
+  {
+   "k": "difficulty.easy",
+   "v": "簡單"
+  },
+  {
+   "k": "difficulty.normal",
+   "v": "普通"
+  },
+  {
+   "k": "difficulty.hard",
+   "v": "困難"
+  },
+  {
+   "k": "note.title",
+   "v": "選擇音符"
+  },
+  {
+   "k": "settings.title",
+   "v": "設定"
+  },
+  {
+   "k": "settings.tab.video",
+   "v": "畫面"
+  },
+  {
+   "k": "settings.tab.audio",
+   "v": "音效"
+  },
+  {
+   "k": "settings.tab.language",
+   "v": "語言"
+  },
+  {
+   "k": "settings.resolution",
+   "v": "視窗大小"
+  },
+  {
+   "k": "settings.display_mode",
+   "v": "顯示模式"
+  },
+  {
+   "k": "settings.vsync",
+   "v": "垂直同步"
+  },
+  {
+   "k": "settings.bgm",
+   "v": "背景音樂"
+  },
+  {
+   "k": "settings.game_music",
+   "v": "遊戲音樂"
+  },
+  {
+   "k": "settings.sfx",
+   "v": "音效"
+  },
+  {
+   "k": "settings.language",
+   "v": "語言"
+  },
+  {
+   "k": "display.windowed",
+   "v": "視窗"
+  },
+  {
+   "k": "display.fullscreen",
+   "v": "全螢幕"
+  },
+  {
+   "k": "display.borderless",
+   "v": "無邊框全螢幕"
+  },
+  {
+   "k": "join.full",
+   "v": "這個房間已滿了"
+  },
+  {
+   "k": "join.ingame",
+   "v": "這個房間正在遊戲中"
+  },
+  {
+   "k": "join.notfound",
+   "v": "房間不存在"
+  }
+ ]
+}

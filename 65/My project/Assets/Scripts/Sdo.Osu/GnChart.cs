@@ -8,7 +8,7 @@ namespace Sdo.Osu
     /// so the existing gameplay code can consume it. Ported + verified from the decompilation:
     ///   decrypt: LCG  state*=0x3D09; plain = cipher - (state>>16)   (recompile/sdo_gn.c)
     ///   StepFile: 300-byte header (bpm@16, addresses@284) + StepFrames per difficulty
-    ///   frame_type -> lane: 2=Left(0) 4=Down(1) 3=Up(2) 5=Right(3); note_type 2=holdStart 3=holdEnd
+    ///   frame_type -> lane: lane = frameType-2 -> 2=Left(0) 3=Down(1) 4=Up(2) 5=Right(3); note_type 2=holdStart 3=holdEnd
     ///   note time: beat = measurement*4 + 4*slot/interval ;  ms = beat*60000/BPM
     ///
     /// Three on-disk encryptions are handled (see doc/GN_加解密說明.md):
@@ -38,10 +38,10 @@ namespace Sdo.Osu
             for (int i = 0; i < len; i++) { st *= 0x3D09u; buf[off + i] = (byte)(buf[off + i] - (byte)(st >> 16)); }
         }
 
-        private static int Lane(int frameType)
-        {
-            switch (frameType) { case 2: return 0; case 4: return 1; case 3: return 2; case 5: return 3; default: return -1; }
-        }
+        // lane = stepFrameType - 2 (decompiled 024_note_0048ba80.c:636/2294/2490 all compute `frameType - 2`):
+        // 2=Left(0) 3=Down(1) 4=Up(2) 5=Right(3). (Earlier this had 3/4 swapped per a wrong doc table; the exe and
+        // SDOM_STEPFILE_HEADER.md agree on the sequential order, so Down/Up notes were rendering reversed.)
+        private static int Lane(int frameType) => (frameType >= 2 && frameType <= 5) ? frameType - 2 : -1;
 
         /// <summary>Legacy entry point: handles DDRM/plain (no SDOM seeds available).</summary>
         public static OsuBeatmap Load(byte[] raw, int difficulty = 0) => Load(raw, difficulty, null);

@@ -1,0 +1,315 @@
+{
+ "language": "ja",
+ "name": "日本語",
+ "culture": "ja-JP",
+ "entries": [
+  {
+   "k": "common.apply",
+   "v": "適用"
+  },
+  {
+   "k": "common.back",
+   "v": "戻る"
+  },
+  {
+   "k": "common.cancel",
+   "v": "キャンセル"
+  },
+  {
+   "k": "common.close",
+   "v": "閉じる"
+  },
+  {
+   "k": "common.confirm",
+   "v": "確定"
+  },
+  {
+   "k": "common.off",
+   "v": "オフ"
+  },
+  {
+   "k": "common.on",
+   "v": "オン"
+  },
+  {
+   "k": "app.title",
+   "v": "ダンス Online"
+  },
+  {
+   "k": "lobby.create_room",
+   "v": "ルーム作成"
+  },
+  {
+   "k": "lobby.rooms",
+   "v": "ルーム一覧"
+  },
+  {
+   "k": "lobby.online_players",
+   "v": "オンラインプレイヤー"
+  },
+  {
+   "k": "lobby.chat",
+   "v": "チャット"
+  },
+  {
+   "k": "lobby.chat_hint",
+   "v": "メッセージを入力して Enter…"
+  },
+  {
+   "k": "lobby.send",
+   "v": "送信"
+  },
+  {
+   "k": "lobby.settings",
+   "v": "設定"
+  },
+  {
+   "k": "lobby.logout",
+   "v": "ログアウト"
+  },
+  {
+   "k": "lobby.select_note",
+   "v": "ノーツ選択"
+  },
+  {
+   "k": "lobby.empty",
+   "v": "ルームがありません。作成しましょう！"
+  },
+  {
+   "k": "lobby.col_room",
+   "v": "番号"
+  },
+  {
+   "k": "lobby.col_host",
+   "v": "ホスト"
+  },
+  {
+   "k": "lobby.col_count",
+   "v": "人数"
+  },
+  {
+   "k": "lobby.col_mode",
+   "v": "モード"
+  },
+  {
+   "k": "lobby.col_status",
+   "v": "状態"
+  },
+  {
+   "k": "room.title",
+   "v": "ルーム {0}"
+  },
+  {
+   "k": "room.leave",
+   "v": "ルーム退出"
+  },
+  {
+   "k": "room.ready",
+   "v": "準備"
+  },
+  {
+   "k": "room.cancel_ready",
+   "v": "準備解除"
+  },
+  {
+   "k": "room.start",
+   "v": "開始"
+  },
+  {
+   "k": "room.select_song",
+   "v": "曲を選択"
+  },
+  {
+   "k": "room.no_song",
+   "v": "（曲未選択）"
+  },
+  {
+   "k": "room.mode",
+   "v": "モード"
+  },
+  {
+   "k": "room.empty_seat",
+   "v": "空席"
+  },
+  {
+   "k": "room.host",
+   "v": "ホスト"
+  },
+  {
+   "k": "room.waiting_players",
+   "v": "未準備のプレイヤーがいます"
+  },
+  {
+   "k": "room.need_song",
+   "v": "先に曲を選択してください"
+  },
+  {
+   "k": "result.clear",
+   "v": "クリア!"
+  },
+  {
+   "k": "result.failed",
+   "v": "失敗"
+  },
+  {
+   "k": "result.score",
+   "v": "スコア"
+  },
+  {
+   "k": "result.max_combo",
+   "v": "最大コンボ"
+  },
+  {
+   "k": "result.back",
+   "v": "ルームに戻る"
+  },
+  {
+   "k": "mode.free",
+   "v": "フリー"
+  },
+  {
+   "k": "mode.normal",
+   "v": "ノーマル"
+  },
+  {
+   "k": "status.waiting",
+   "v": "待機中"
+  },
+  {
+   "k": "status.ingame",
+   "v": "ゲーム中"
+  },
+  {
+   "k": "songselect.title",
+   "v": "曲を選択"
+  },
+  {
+   "k": "songselect.random",
+   "v": "ランダム"
+  },
+  {
+   "k": "songselect.stage",
+   "v": "ステージ"
+  },
+  {
+   "k": "songselect.search",
+   "v": "曲 / アーティスト検索…"
+  },
+  {
+   "k": "songselect.bpm",
+   "v": "BPM {0}"
+  },
+  {
+   "k": "songselect.level",
+   "v": "Lv {0}"
+  },
+  {
+   "k": "songselect.page",
+   "v": "{0}/{1} ページ"
+  },
+  {
+   "k": "songselect.prev",
+   "v": "前へ"
+  },
+  {
+   "k": "songselect.next",
+   "v": "次へ"
+  },
+  {
+   "k": "songselect.no_songs",
+   "v": "曲が見つかりません"
+  },
+  {
+   "k": "songselect.confirm",
+   "v": "決定"
+  },
+  {
+   "k": "songselect.need_pick",
+   "v": "先に曲を選んでください"
+  },
+  {
+   "k": "difficulty.easy",
+   "v": "かんたん"
+  },
+  {
+   "k": "difficulty.normal",
+   "v": "ふつう"
+  },
+  {
+   "k": "difficulty.hard",
+   "v": "むずかしい"
+  },
+  {
+   "k": "note.title",
+   "v": "ノーツ選択"
+  },
+  {
+   "k": "settings.title",
+   "v": "設定"
+  },
+  {
+   "k": "settings.tab.video",
+   "v": "画面"
+  },
+  {
+   "k": "settings.tab.audio",
+   "v": "オーディオ"
+  },
+  {
+   "k": "settings.tab.language",
+   "v": "言語"
+  },
+  {
+   "k": "settings.resolution",
+   "v": "ウィンドウサイズ"
+  },
+  {
+   "k": "settings.display_mode",
+   "v": "表示モード"
+  },
+  {
+   "k": "settings.vsync",
+   "v": "垂直同期"
+  },
+  {
+   "k": "settings.bgm",
+   "v": "BGM 音量"
+  },
+  {
+   "k": "settings.game_music",
+   "v": "ゲーム音楽"
+  },
+  {
+   "k": "settings.sfx",
+   "v": "効果音"
+  },
+  {
+   "k": "settings.language",
+   "v": "言語"
+  },
+  {
+   "k": "display.windowed",
+   "v": "ウィンドウ"
+  },
+  {
+   "k": "display.fullscreen",
+   "v": "フルスクリーン"
+  },
+  {
+   "k": "display.borderless",
+   "v": "ボーダーレス"
+  },
+  {
+   "k": "join.full",
+   "v": "このルームは満員です"
+  },
+  {
+   "k": "join.ingame",
+   "v": "このルームはゲーム中です"
+  },
+  {
+   "k": "join.notfound",
+   "v": "ルームが見つかりません"
+  }
+ ]
+}

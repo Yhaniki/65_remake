@@ -5,6 +5,11 @@
         "Sdo.Osu",
         "Sdo.Ruleset",
         "Sdo.Game",
+        "Sdo.UI",
+        "Sdo.Localization",
+        "Sdo.Settings",
+        "Unity.TextMeshPro",
+        "UnityEngine.UI",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

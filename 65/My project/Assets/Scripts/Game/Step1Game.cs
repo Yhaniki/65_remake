@@ -287,9 +287,17 @@ namespace Sdo.Game
         private bool _scoreCommitPop;                        // a commit just happened -> pop all currently-visible digits
         private bool _scoreArmed;                            // no digit pops until the score first changes (initial "0" is static)
 
+        // Set by the front-end (FrontendApp, BeforeSceneLoad — always runs before this AfterSceneLoad Boot) so the
+        // play screen never self-boots a stray instance: the front-end owns startup and launches gameplay on demand.
+        // Without this, the auto-booted instance's Start() spawns a root-level Avatar3D (+ board/scene) that survives
+        // the front-end's kill — the kill only destroys the Step1Game object, not the separate roots it created — so a
+        // leftover dancer lingers and the real launch then doubles it (two avatars on the dance-spot).
+        public static bool AutoBootSuppressed;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
+            if (AutoBootSuppressed) return;
             if (FindAnyObjectByType<Step1Game>() != null) return;
             new GameObject("Step1Game").AddComponent<Step1Game>();
         }
@@ -914,6 +922,16 @@ namespace Sdo.Game
                 _dirShotStart = Time.time;
             }
         }
+        // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
+        // stays readable after this GameObject is destroyed as long as the caller grabs the reference first.
+        public bool Finished => _ended;          // song played out (or failed) — time to settle
+        public bool Failed => _failed;           // HP ran out
+        public ScoreProcessor Score => _score;   // final judgement tallies + score (null only if Start() bailed early)
+        // Set when the player confirms (OK / Enter / Esc) on the STATIS result panel. The front-end (FrontendApp)
+        // polls this to know the run is fully done — Finished alone fires at song-end, BEFORE the win/lose pose +
+        // result panel play out, so tearing down on Finished would cut the whole settle sequence short.
+        public bool ResultConfirmed { get; private set; }
+
         // Test hooks for the re-entry assertion (CameraReentryTest): drive the real cycle + observe state.
         public int CamModeForTest => _camMode;
         public int DirShotForTest { get => _dirShot; set => _dirShot = value; }
@@ -1662,8 +1680,13 @@ namespace Sdo.Game
                 _result = new ResultScreen();
                 _result.Build(_cam);
                 _result.OnConfirm = () =>
-                    UnityEngine.SceneManagement.SceneManager.LoadScene(
+                {
+                    // Hosted by the front-end (lobby/room flow) → just flag it; FrontendApp tears gameplay down and
+                    // returns to the room. Standalone (self-boot) → reload the scene to replay.
+                    if (AutoBootSuppressed) ResultConfirmed = true;
+                    else UnityEngine.SceneManagement.SceneManager.LoadScene(
                         UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);   // 確定 → 重玩 (reload)
+                };
             }
             string diff = _map != null ? "Lv " + _map.Level : "";
             var rows = BuildResultRows();   // also rebuilds _roster so the rank/total below are current
