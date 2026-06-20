@@ -250,19 +250,8 @@ namespace Sdo.UI.Screens
 
         // ---------- actions ----------
 
-        // 登出 = 暫時直接結束程式 (尚無帳號/登入流程)。
-        private void Quit()
-        {
-#if UNITY_EDITOR
-            UnityEditor.EditorApplication.isPlaying = false;
-#else
-            Application.Quit();
-            // Hard-kill: on PCs with many HID devices the new Input System stalls Unity's shutdown for several
-            // seconds, leaving the borderless-fullscreen frame frozen ("按了登出卡住，離不開遊戲"). Terminate the
-            // process now so quit is instant. Safe here — settings persist on change, there is no unsaved state.
-            System.Diagnostics.Process.GetCurrentProcess().Kill();
-#endif
-        }
+        // 登出 = 暫時直接結束程式 (尚無帳號/登入流程)。走 AppQuit 即時 hard-kill，避開 Unity shutdown 卡死。
+        private void Quit() => Sdo.Game.AppQuit.Now();
 
         private void OnCreate()
         {
