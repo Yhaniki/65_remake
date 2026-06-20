@@ -15,14 +15,15 @@ namespace Sdo.Game
     /// </summary>
     public static class TextStyles
     {
-        public enum Style { HeadName, ListLocal, ListOther }
+        public enum Style { HeadName, ListLocal, ListOther, Looker }
 
         // Colours eyedropped from the official screenshots (20151030 / 20151208):
         public static readonly Color FaceCream  = new Color(1.000f, 0.984f, 0.808f, 1f); // 頭頂名(粗體)   = RGB(255,251,206)
         public static readonly Color FaceYellow = new Color(1.000f, 1.000f, 0.580f, 1f); // 清單-本機       = RGB(255,255,148)
         public static readonly Color FaceOrange = new Color(1.000f, 0.682f, 0.063f, 1f); // 清單-其他       = RGB(255,174,16)
         private static readonly Color EdgeRed   = new Color(0.643f, 0.110f, 0.000f, 1f); // 清單陰影         = RGB(164,28,0)
-        private static readonly Color EdgeBlack = new Color(0f, 0f, 0f, 1f);             // 頭頂黑邊
+        private static readonly Color EdgeBlack = new Color(0f, 0f, 0f, 1f);             // 頭頂黑邊 / 旁觀陰影
+        public static readonly Color FaceLookerBlue = new Color(0.612f, 0.792f, 1.000f, 1f); // 旁觀玩家       = RGB(156,202,255)
 
         private static Font _cjk;
 
@@ -49,9 +50,10 @@ namespace Sdo.Game
             Color face, edge; Vector2[] offsets; bool bold;
             switch (style)
             {
-                case Style.ListLocal:  face = FaceYellow; edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
-                case Style.ListOther:  face = FaceOrange; edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
-                default: /* HeadName */ face = FaceCream;  edge = EdgeBlack; offsets = Outline8(1.4f); bold = true; break;
+                case Style.ListLocal:  face = FaceYellow;     edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
+                case Style.ListOther:  face = FaceOrange;     edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
+                case Style.Looker:     face = FaceLookerBlue; edge = EdgeBlack; offsets = new[] { new Vector2(1f, -1f) };     bold = false; break;
+                default: /* HeadName */ face = FaceCream;     edge = EdgeBlack; offsets = Outline8(1.4f); bold = true; break;
             }
             return new Label3D(name, CjkFont(), face, edge, offsets, order, pxSize, anchor, layer, -3f, bold);
         }

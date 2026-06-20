@@ -20,7 +20,7 @@ namespace Sdo.Game
     public static class SongCatalog
     {
         [Serializable] public class Entry { public string gn; public int fileId; public string title; public string artist; }
-        [Serializable] private class Catalog { public Entry[] songs; }
+        [Serializable] private class Catalog { public Entry[] songs = new Entry[0]; }   // populated by JsonUtility; init to silence CS0649
 
         private const string FileName = "song_catalog.json";
         private static Dictionary<string, Entry> _byGn;   // key = lowercase .gn filename

@@ -19,7 +19,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_Gameplay()
         {
             yield return new WaitForSecondsRealtime(1.7f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             if (game != null) game.SetCamModeForTest(0);   // fixed front cam0 to inspect hair + note board
             yield return new WaitForSecondsRealtime(6.0f);
             Cap("H:/65_remake/play-capture.png");

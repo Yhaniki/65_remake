@@ -25,6 +25,14 @@ namespace Sdo.Game
         /// <summary>EFFECT/EFT_&lt;skin&gt; folder holding judgment words + combo digits + bursts.</summary>
         public static string EftDir(int skin = 2) => Path.Combine(Root, "EFFECT", "EFT_" + skin);
 
+        /// <summary>UI/STATIS folder: result-screen (結算) panel art, digits, rank badges, win/lose banner.</summary>
+        public static string StatisDir => Path.Combine(Root, "UI", "STATIS");
+
+        /// <summary>UI/STATIS/ITEMSTATISTIC: the ONLINE (Audition/Dance!Online) result screen art — DDRITEMSTATISTIC.XML
+        /// layout. Background tiles (StatisItem0..7), the BALANCE.png sheet (win/lose banner + OK/save buttons),
+        /// sliding rank rows, and the bottom G幣/EXP digit strips (score_num / score_numS / Num8 / Num3).</summary>
+        public static string ItemStatisDir => Path.Combine(StatisDir, "ITEMSTATISTIC");
+
         /// <summary>Shipped sound-effects folder (sdox_offline/SE), sibling of Extracted.</summary>
         public static string SeDir => Path.Combine(Path.GetDirectoryName(Root) ?? Root, "SE");
 

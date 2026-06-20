@@ -48,6 +48,38 @@ namespace Sdo.Game
         public MotLoader RestMot;                            // standby idle clip, looped before the DPS dance starts and after it ends (rest cat 0x15)
         public System.Func<bool> DanceEnabled;               // returns false -> hold the standby idle even inside the DPS window (8-beat dance-gate stop)
 
+        // one-shot motion (結算 win/lose 定格 pose, decompiled cat5/cat4): play a single clip once from t=0; when
+        // hold, clamp on the last frame (定格). Takes priority over DPS/idle/override while active. Set via
+        // PlayOneShot, cleared via ClearOneShot (e.g. when the background replay resumes the DPS dance).
+        private MotLoader _oneShot; private float _oneShotStart = -1f; private bool _oneShotHold;
+        /// <summary>True once a held one-shot pose has reached its last frame (定格完成).</summary>
+        public bool OneShotHeld => _oneShot != null && _oneShotHold && _oneShotStart >= 0f
+            && (Time.time - _oneShotStart) * Fps >= _oneShot.MaxTime;
+
+        /// <summary>Play a single motion clip once from t=0. When <paramref name="hold"/> it clamps on the last
+        /// frame; otherwise it loops. Takes priority over DPS/idle until <see cref="ClearOneShot"/>.</summary>
+        public void PlayOneShot(MotLoader mot, bool hold)
+        {
+            if (mot == null) return;
+            _oneShot = mot; _oneShotHold = hold; _oneShotStart = Time.time;
+        }
+        public void ClearOneShot() { _oneShot = null; _oneShotStart = -1f; }
+
+        /// <summary>
+        /// Pose the standby idle ONCE on creation and arm it as the active clip, so the first LateUpdate continues
+        /// the idle with NO crossfade. Without this, the feet/chest measurement pose (frame 0 of the fallback clip,
+        /// which is near the bind/T-pose) becomes the blend source, and the first idle visibly crossfades FROM a
+        /// T-pose ("剛進去看到 T-pose 一下"). Call after Setup + RestMot + AddPart. No-op without an idle clip.
+        /// </summary>
+        public void PoseInitialIdle()
+        {
+            if (_hrc == null || RestMot == null) return;
+            _mot = RestMot;
+            _lastMot = RestMot;     // frame 1's _mot == _lastMot → MaybeStartBlend skips (no crossfade on the first idle)
+            _blendStart = -1f;      // cancel any blend primed by the earlier measurement poses
+            Pose(0f);               // display the idle now so the mesh is never left at the bind/T-pose
+        }
+
         public void Setup(HrcLoader hrc, MotLoader mot)
         {
             _hrc = hrc; _mot = mot;
@@ -161,6 +193,12 @@ namespace Sdo.Game
         {
             if (_hrc == null) return;
             float t;
+            if (_oneShot != null && _oneShot.MaxTime > 0f)   // 結算 win/lose 定格 pose — highest priority
+            {
+                float f = (Time.time - _oneShotStart) * Fps;
+                f = _oneShotHold ? Mathf.Min(f, _oneShot.MaxTime) : f % (_oneShot.MaxTime + 1f);
+                _mot = _oneShot; MaybeStartBlend(); Pose(f); return;
+            }
             if (Dps != null && Dps.Rows != null && Dps.Rows.Length > 0 && MotResolver != null && DanceTimeSec != null)
             {
                 float dt = DanceTimeSec();

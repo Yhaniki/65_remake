@@ -115,6 +115,26 @@ namespace Sdo.Game
         private float _introStartRt = -1f;     // realtime the intro began; <0 = no intro (track shown immediately)
         private bool _trackVisible = true;     // false during the opening hold (board + HP bar hidden, see SetTrackVisible)
 
+        // ---- result / finish sequence (歌曲結束 → 輸贏定格動作 → 結算面板; decompiled FinishSequenceTick phase4..6) ----
+        private enum ResultPhase { None, FinishPose, Settle, Replay }
+        private ResultPhase _resultPhase = ResultPhase.None;
+        private float _resultPhaseStart;          // Time.time the current result phase began
+        private bool _localWon;                   // local player is the round winner (rank 1) — drives win/lose pose + FINISHED
+        public string winMot = "WWIN0002.MOT";    // winner 定格 pose (cat5); male = MWIN0001.MOT
+        public string loseMot = "WLOST0003.MOT";  // loser 定格 pose (cat4); male = MREST0004.MOT
+        public float finishPoseSec = 2.5f;        // hold the win/lose 定格 pose this long before the panel settles
+        public float settleSec = 0.6f;            // brief beat between the pose and the background replay starting
+        public bool enableResultSfx = true;       // play SE_0014(win)/SE_0015(lose) jingle + the SE_0020/0022 tally chimes
+        // 打擊紀錄 (osu-style key-frame replay) + dance-gate track. Recorded during play; the gate track drives the
+        // result-screen BACKGROUND dance loop (hits hidden); the key frames are the groundwork for replay viewing
+        // (P1, hits shown). See Sdo.Ruleset.Replay and docs/systems/replay-local.md.
+        private readonly Sdo.Ruleset.Replay _replay = new Sdo.Ruleset.Replay();
+        private readonly List<(double tMs, bool on)> _danceTrack = new List<(double, bool)>();
+        private double _replayLoopStart;          // Time.timeAsDouble the background replay loop began
+        private double _replayLenMs;              // background replay loop length (song length)
+        private ResultScreen _result;             // 結算面板 (STATIS panel) — built lazily, shown at the settle beat
+        private string _songTitle = "song";       // resolved song title (captured when the HUD song label is built)
+
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
         private readonly RuntimeNote[] _holding = new RuntimeNote[Keys];
         private readonly Sprite[][] _noteFrames = new Sprite[Keys][];
@@ -199,6 +219,7 @@ namespace Sdo.Game
             ("miss10→H", EmojiKind.H), ("miss30→Y", EmojiKind.Y), ("miss50→JS", EmojiKind.JS), ("lowHP→GTH", EmojiKind.GTH),
         };
         private TextMesh _musicName, _lvText, _timeText, _info, _fpsText;
+        private SpriteRenderer _lblSong, _lblAttr;   // bottom "歌曲名:" / "LV: 时间:" labels (hidden at result)
         private float _fps;
         private double _totalMs;
         private int _lastMilestone;       // last combo milestone (50/100/150…) already celebrated
@@ -210,6 +231,7 @@ namespace Sdo.Game
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
         public bool mockOpponents = true;            // seed simulated opponents (default) vs. solo (rank 1/1, list of 1)
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
+        public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
         private static readonly string[] OpponentNames =
             { "炫炎輪火", "Polaris晴天坊", "小醜麵具", "奶茶布丁", "醉小蛇" };
         private const int RosterRows = 6;            // PKSCORE digits only cover 0..6, so the room caps at 6 players
@@ -226,6 +248,12 @@ namespace Sdo.Game
         // rank "N / M": laid out on the SCORE's column pitch so M (total) sits under the score's tens digit.
         // slash x = ScorePos.x + 5*pitch + 14 = 429 → N at col4 (404), M at col6/tens (454). rankY below the score.
         public float rankCenterX = 429f, rankY = 74f, rankDigitW = 25f, rankPitch = 26f;
+        // spectators (旁觀玩家): GAMEPLAY18 title sprite + fake light-blue names below the roster. DdrGamePlay.xml
+        // had lookerTitle@(696,190) + looker rows@(696,212..) step13 colour 0xff9DCBFF — we use fake names.
+        private static readonly string[] SpectatorNames = { "酷", "美麗", "悲晴吉克", "路過旅人", "小幫手" };
+        private SpriteRenderer _lookerTitle;
+        private Label3D[] _lookerRows;
+        public float lookerTitleX = 694f, lookerTitleY = 214f, lookerX = 698f, lookerFirstY = 236f, lookerRowStep = 16f, lookerFontWorld = 18f;
         // dancer dance/stop gate. The decision is made ONLY at the 8-beat settlement (same cadence as the score
         // commit) — a break NO LONGER stops the dancer mid-block, it just records the flag and is judged at the
         // next boundary. At each settlement we re-decide dance-vs-stop for the upcoming block (two conditions):
@@ -246,7 +274,7 @@ namespace Sdo.Game
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
-            if (FindObjectOfType<Step1Game>() != null) return;
+            if (FindAnyObjectByType<Step1Game>() != null) return;
             new GameObject("Step1Game").AddComponent<Step1Game>();
         }
 
@@ -613,8 +641,8 @@ namespace Sdo.Game
             _comboWord = NewSR("ComboWord", SdoExtracted.Eft("COMBO.PNG"), 40); _comboWord.enabled = false;
 
             // bottom song info — official label graphics + value text (DdrGamePlay.xml positions)
-            var lblSong = NewSR("LblSong", SdoExtracted.Hud("GamePlay1.an"), 30); SdoLayout.PlaceTopLeft(lblSong, 11, 575);   // "歌曲名:"
-            var lblAttr = NewSR("LblAttr", SdoExtracted.Hud("GamePlay2.an"), 30); SdoLayout.PlaceTopLeft(lblAttr, 204, 575);   // "LV: 时间:"
+            _lblSong = NewSR("LblSong", SdoExtracted.Hud("GamePlay1.an"), 30); SdoLayout.PlaceTopLeft(_lblSong, 11, 575);   // "歌曲名:"
+            _lblAttr = NewSR("LblAttr", SdoExtracted.Hud("GamePlay2.an"), 30); SdoLayout.PlaceTopLeft(_lblAttr, 204, 575);   // "LV: 时间:"
             // values sit at x per DdrGamePlay.xml, but y = the label graphics' vertical centre (575+~20/2 ≈ 585),
             // MiddleLeft-anchored so they're vertically centred with "歌曲名:" / "LV: 时间:".
             // Title from the import-time UTF-8 catalog (keyed by .gn filename); GB2312 is never
@@ -623,6 +651,7 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(songTitle)) songTitle = _map.Title;
             if (string.IsNullOrEmpty(songTitle)) songTitle = "song";
             _musicName = NewText("MusicName", 80, 585, 13, Color.white); _musicName.text = songTitle;
+            _songTitle = songTitle;   // keep for the result panel
             _lvText = NewText("MusicLev", 240, 585, 13, Color.white); _lvText.text = _map.Level.ToString();
             int tot0 = (int)Math.Round(_totalMs / 1000.0);   // initial: "--:--  [total]"
             _timeText = NewText("MusicTime", 336, 585, 13, Color.white); _timeText.text = FullWidth($"- : -    {tot0 / 60} : {tot0 % 60:00}");
@@ -753,6 +782,7 @@ namespace Sdo.Game
                 Vector3 chestLocal = avatar != null ? avatar.BoneModelPos("Bip01_Spine1") : new Vector3(0f, 38f, 0f);
                 _avatarChest = parent.transform.position + chestLocal;   // star-ring / bounds / debug framing only
                 _avatarRoot = parent.transform;
+                if (avatar != null) avatar.PoseInitialIdle();   // arm the idle so the first frame doesn't crossfade from the measurement T-pose
                 if (!avatarDebug && avatar != null)
                     try   // never let a hand-glow hiccup abort scene/audio setup (which run AFTER TryLoadAvatar)
                     {
@@ -839,7 +869,11 @@ namespace Sdo.Game
         public void HideStageForTest()
         {
             var s = GameObject.Find("StageScene"); if (s != null) s.SetActive(false);
+            // FindObjectsByType(FindObjectSortMode.None) doesn't resolve in this project's engine reference set
+            // (the monolithic UnityEngine.dll shadows CoreModule), so keep the legacy call and suppress the warning.
+#pragma warning disable 0618
             foreach (var mr in FindObjectsOfType<Renderer>())
+#pragma warning restore 0618
             {
                 string n = mr.gameObject.name;
                 if (n.EndsWith("_mesh") || n == "GroundStarRing" || n.StartsWith("Star")) mr.enabled = false;
@@ -1446,6 +1480,7 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.Alpha4)) SpawnComboBurst(3);
             if (Input.GetKeyDown(KeyCode.Alpha5)) SpawnComboBurst(4);
             if (Input.GetKeyDown(KeyCode.Alpha0)) SpawnNamedEft("FINISHED", 5f);
+            if (Input.GetKeyDown(KeyCode.F5) && _started && !_ended) { _ended = true; EnterResult(); }   // DEBUG F5: cut the song short → jump to the result sequence
             if (Input.GetKeyDown(KeyCode.LeftBracket)) SetTimeScale(_timeScale * 0.5f);    // [ slower
             if (Input.GetKeyDown(KeyCode.RightBracket)) SetTimeScale(_timeScale * 2f);     // ] faster
             if (Input.GetKeyDown(KeyCode.Backslash)) { if (Time.timeScale > 0f) Time.timeScale = 0f; else SetTimeScale(_timeScale); }  // \ pause/resume
@@ -1488,9 +1523,11 @@ namespace Sdo.Game
             if (!_started) return;
             double now = (Time.timeAsDouble - _clockStart) * 1000.0;
             _clock.SetAudioSeconds(now / 1000.0);
+            if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             if (!_failed) { if (autoPlay) AutoPlay(now); else { HandleInput(now); AutoMiss(now); } }
             UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
+            RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
             // hold case waits for the round to finish; taps fire freely above.
             for (int lane = 0; lane < Keys; lane++)
@@ -1498,7 +1535,156 @@ namespace Sdo.Game
             UpdateClickFlash();
             UpdateFx(); UpdateHud();
             if (_health != null && _health.IsFailed) _failed = true;
-            if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; } // ending/fail sfx removed (wrong clips — to re-add later)
+            if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; EnterResult(); }
+        }
+
+        // Song finished (or HP-out): freeze gameplay, hide the note board, play the win/lose 定格 pose on the
+        // winning dancer, and fire the FINISHED burst on the winner. Mirrors decompiled FinishSequenceTick phase4
+        // (021_gameplay:2674) — the winner (top score) plays cat5, everyone else cat4.
+        private void EnterResult()
+        {
+            if (_audio) _audio.Stop();                        // stop the song (natural end already silent; matters for F5 mid-song cut)
+            RebuildRoster();                                  // finalize scores so the rank/winner is current
+            var (rank, _) = RankingBoard.LocalRank(_roster);
+            _localWon = rank <= 1;                            // rank 1 = highest score = winner
+            // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
+            // The top score, centre rank and right-side roster STAY visible until the result panel appears.
+            SetTrackVisible(false);                           // note board + HP + receptors + click strips
+            HideComboAndJudge();                              // combo number + judgment word (part of the play board)
+            ClearGameplayFx();                                // tear down in-flight bursts/holds (F5 mid-song leaves a hold burst looping)
+            foreach (var n in _notes)                         // also kill any note sprites still in flight
+            { if (n.Head) n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; }
+            if (_avatar != null)                              // win/lose 定格 pose (cat5/cat4), held on its last frame
+            {
+                var mot = ResolveMot(_localWon ? winMot : loseMot);
+                if (mot != null) _avatar.PlayOneShot(mot, true);
+            }
+            // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
+            // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
+            if (_localWon) SpawnNamedEft("FINISHED", 5f);
+            if (enableResultSfx) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
+            _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
+        }
+
+        // STAGE 1: combo number + judgment word (these belong to the note board, gone during the win/lose pose).
+        private void HideComboAndJudge()
+        {
+            foreach (var d in _comboDigits) if (d) d.enabled = false;
+            if (_comboWord) _comboWord.enabled = false;
+            if (_judgeWord) _judgeWord.enabled = false;
+        }
+
+        // STAGE 2 (result panel appears): hide the remaining gameplay HUD — top score, centre rank + right-side
+        // roster, bottom song-info labels, and the head nameplate ("玩家" under the arrow) — so only the panel +
+        // background dance show.
+        private void HideHudForPanel()
+        {
+            SetRankingVisible(false);                          // centre rank readout + right-side roster list
+            if (_scoreDigits != null) foreach (var d in _scoreDigits) if (d) d.enabled = false;
+            if (_lblSong) _lblSong.enabled = false;
+            if (_lblAttr) _lblAttr.enabled = false;
+            if (_musicName) _musicName.gameObject.SetActive(false);
+            if (_lvText) _lvText.gameObject.SetActive(false);
+            if (_timeText) _timeText.gameObject.SetActive(false);
+            if (_info) _info.gameObject.SetActive(false);
+            if (_headMarker) _headMarker.Hide();               // arrow + the "玩家" name label (separate root object)
+        }
+
+        // Drive the post-song sequence: hold the win/lose pose, then settle the panel, then loop the background
+        // replay. Phase A implements FinishPose; Settle/Replay are filled in by later phases.
+        private void ResultTick()
+        {
+            float el = Time.time - _resultPhaseStart;
+            switch (_resultPhase)
+            {
+                case ResultPhase.FinishPose:
+                    if (el >= finishPoseSec) { ShowResultPanel(); _resultPhase = ResultPhase.Settle; _resultPhaseStart = Time.time; }
+                    break;
+                case ResultPhase.Settle:
+                    _result?.Tick();   // slide rows in / scale the banner / poll the OK button
+                    // After a brief beat start the background replay loop (decompiled phase6 → dance engine state 4).
+                    if (el >= settleSec) { StartBackgroundReplay(); _resultPhase = ResultPhase.Replay; _resultPhaseStart = Time.time; }
+                    break;
+                case ResultPhase.Replay:
+                    _result?.Tick();   // panel stays interactive; the avatar's delegates (below) loop the recorded dance
+                    break;
+            }
+        }
+
+        // Begin the result-screen BACKGROUND replay: drop the win/lose pose and re-drive the avatar's DPS dance
+        // from a LOOPING song clock, replaying the recorded dance-gate so the original stop/start gaps come back.
+        // Notes/board stay hidden (SetTrackVisible(false) already in effect); only the lit stage + dancer show.
+        private void StartBackgroundReplay()
+        {
+            if (_avatar == null) return;
+            _avatar.ClearOneShot();                                   // resume the DPS dance path
+            _replayLenMs = _totalMs > 1.0 ? _totalMs : Math.Max(1.0, _replay.LengthMs);
+            _replayLoopStart = Time.timeAsDouble;
+            _avatar.DanceTimeSec = () => (float)((LoopMs() ) / 1000.0);
+            _avatar.DanceEnabled = () => GateAt(LoopMs());
+        }
+
+        // Current position within the looping background replay (ms, 0.._replayLenMs).
+        private double LoopMs()
+        {
+            double t = (Time.timeAsDouble - _replayLoopStart) * 1000.0;
+            return _replayLenMs > 1.0 ? (t % _replayLenMs) : t;
+        }
+
+        // Build + show the STATIS result panel with this round's ranked rows (decompiled phase6).
+        private void ShowResultPanel()
+        {
+            HideHudForPanel();   // stage 2: now hide the score / rank / roster / song-info / nameplate
+            if (_result == null)
+            {
+                _result = new ResultScreen();
+                _result.Build(_cam);
+                _result.OnConfirm = () =>
+                    UnityEngine.SceneManagement.SceneManager.LoadScene(
+                        UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);   // 確定 → 重玩 (reload)
+            }
+            string diff = _map != null ? "Lv " + _map.Level : "";
+            var rows = BuildResultRows();   // also rebuilds _roster so the rank/total below are current
+            // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
+            var (place, players) = RankingBoard.LocalRank(_roster);
+            int bad = _score != null ? _score.BadCount : 0, miss = _score != null ? _score.MissCount : 0;
+            int expGained = Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
+            int coinsGained = Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
+            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, PlaySe);
+        }
+
+        // Turn the final roster + score into ranked result rows. The local player uses real judgment counts;
+        // mock opponents get plausible counts synthesised from their score (no real per-opponent judging).
+        private ResultScreen.Row[] BuildResultRows()
+        {
+            RebuildRoster();
+            var order = RankingBoard.SortedIndices(_roster);
+            int total = Math.Max(1, _notes.Count);
+            long top = order.Length > 0 ? Math.Max(1L, _roster[order[0]].Score) : 1L;
+            var rows = new ResultScreen.Row[order.Length];
+            for (int i = 0; i < order.Length; i++)
+            {
+                var p = _roster[order[i]];
+                ResultScreen.Row r;
+                if (p.IsLocal && _score != null)
+                {
+                    int P = _score.PerfectCount, C = _score.CoolCount, B = _score.BadCount, M = _score.MissCount;
+                    int judged = Math.Max(1, P + C + B + M);
+                    r = new ResultScreen.Row { Perfect = P, Cool = C, Bad = B, Miss = M, MaxCombo = _score.MaxCombo, Accuracy = (P + C) * 100.0 / judged, Score = _score.Score };
+                }
+                else
+                {
+                    double accFrac = Mathf.Clamp01((float)(p.Score / (double)top) * 0.97f);
+                    int hits = (int)Math.Round(total * accFrac);
+                    int P = (int)Math.Round(hits * 0.85), C = hits - P, M = total - hits;
+                    r = new ResultScreen.Row { Perfect = P, Cool = C, Bad = 0, Miss = Math.Max(0, M), MaxCombo = M == 0 ? hits : (int)Math.Round(hits * 0.6), Accuracy = accFrac * 100.0, Score = p.Score };
+                }
+                r.Rank = i + 1; r.Name = p.Name; r.IsLocal = p.IsLocal;
+                r.FullCombo = (r.Bad + r.Miss) == 0;
+                r.Grade = Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
+                rows[i] = r;
+            }
+            return rows;
         }
 
         // UPSCROLL (matches the official screen): future notes are below the hit line and RISE to it.
@@ -1559,14 +1745,34 @@ namespace Sdo.Game
 
         private void HandleInput(double now)
         {
+            int mask = 0;
             for (int lane = 0; lane < Keys; lane++)
             {
                 bool down = false, anyHeld = false, anyUp = false;
                 foreach (var k in LaneKeys[lane])
                 { if (Input.GetKeyDown(k)) down = true; if (Input.GetKey(k)) anyHeld = true; if (Input.GetKeyUp(k)) anyUp = true; }
+                if (anyHeld) mask |= 1 << lane;
                 if (down) { PressLane(lane, now); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
                 if (anyUp && !anyHeld) ReleaseLane(lane, now);   // released only when no set key is still held
             }
+            _replay.Record(now, mask);   // osu-style 打擊紀錄 (appends only when the held-key bitmask changes)
+        }
+
+        // Record dance-gate transitions (the effective _dancing && !_failed each frame). Tiny: only changes at the
+        // 8-beat settle or on HP-out. Drives the result-screen BACKGROUND replay so the looped dance reproduces the
+        // original performance's stop/start gaps (the DPS choreography itself is deterministic from time).
+        private void RecordGate(double now)
+        {
+            bool g = _dancing && !_failed;
+            if (_danceTrack.Count == 0 || _danceTrack[_danceTrack.Count - 1].on != g) _danceTrack.Add((now, g));
+        }
+
+        // The dance gate that was in effect at song-relative time tMs (default dancing before the first event).
+        private bool GateAt(double tMs)
+        {
+            bool on = true;
+            for (int i = 0; i < _danceTrack.Count; i++) { if (_danceTrack[i].tMs > tMs) break; on = _danceTrack[i].on; }
+            return on;
         }
 
         private void AutoPlay(double now)
@@ -1855,6 +2061,14 @@ namespace Sdo.Game
                 GUILayout.Label($"名次中心X / Y: {rankCenterX:F0} / {rankY:F0}");
                 rankCenterX = GUILayout.HorizontalSlider(rankCenterX, 280f, 520f);
                 rankY = GUILayout.HorizontalSlider(rankY, 36f, 130f);
+                GUILayout.Label($"旁觀標題X/Y: {lookerTitleX:F0}/{lookerTitleY:F0}  字級:{lookerFontWorld:F0}");
+                lookerTitleX = GUILayout.HorizontalSlider(lookerTitleX, 560f, 780f);
+                lookerTitleY = GUILayout.HorizontalSlider(lookerTitleY, 150f, 320f);
+                lookerFontWorld = GUILayout.HorizontalSlider(lookerFontWorld, 8f, 32f);
+                GUILayout.Label($"旁觀名 X/起始Y/列距: {lookerX:F0}/{lookerFirstY:F0}/{lookerRowStep:F0}");
+                lookerX = GUILayout.HorizontalSlider(lookerX, 560f, 780f);
+                lookerFirstY = GUILayout.HorizontalSlider(lookerFirstY, 160f, 380f);
+                lookerRowStep = GUILayout.HorizontalSlider(lookerRowStep, 10f, 30f);
                 if (GUILayout.Button("套用清單版面 / re-layout list")) RelayoutRoster();
 
                 GUILayout.Space(8);
@@ -1916,6 +2130,20 @@ namespace Sdo.Game
         }
 
         private void DestroyBurst(BurstFx fx) { if (fx.Sr) Destroy(fx.Sr.gameObject); if (fx.Mat) _matPool.Push(fx.Mat); }
+
+        // Tear down every in-flight gameplay burst / hold / click-flash. Needed when the result is entered MID-song
+        // (F5, or HP-out while holding): a hold burst loops forever while its lane stays "held", so without this it
+        // freezes on screen behind the result panel.
+        private void ClearGameplayFx()
+        {
+            for (int i = _fx.Count - 1; i >= 0; i--) DestroyBurst(_fx[i]);
+            _fx.Clear();
+            for (int lane = 0; lane < Keys; lane++)
+            {
+                _holdBurst[lane] = null; _holding[lane] = null;
+                if (_clickFlashSr[lane]) _clickFlashSr[lane].enabled = false; _clickFlashStart[lane] = -1f;
+            }
+        }
 
         private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public int Lane; public float Start; public bool IsHold; }
 
@@ -2309,6 +2537,17 @@ namespace Sdo.Game
                 _rosterScore[row] = TextStyles.NewLabel("RosterScore" + row, TextStyles.Style.ListOther, 45, rosterFontWorld, TextAnchor.MiddleRight);
                 _rosterScore[row].Position = SdoLayout.ToWorld(rosterScoreX, y, -3f);
             }
+
+            // spectators (旁觀玩家): GAMEPLAY18 title + fake light-blue names (static; never re-sorted).
+            _lookerTitle = NewSR("LookerTitle", SdoExtracted.LoadImage(gpDir, "GAMEPLAY18.PNG"), 45);
+            SdoLayout.PlaceTopLeft(_lookerTitle, lookerTitleX, lookerTitleY, -3f);
+            _lookerRows = new Label3D[SpectatorNames.Length];
+            for (int i = 0; i < SpectatorNames.Length; i++)
+            {
+                _lookerRows[i] = TextStyles.NewLabel("Looker" + i, TextStyles.Style.Looker, 45, lookerFontWorld, TextAnchor.MiddleLeft);
+                _lookerRows[i].Position = SdoLayout.ToWorld(lookerX, lookerFirstY + i * lookerRowStep, -3f);
+                _lookerRows[i].Text = SpectatorNames[i];
+            }
         }
 
         // re-apply the (live-tunable) roster font/positions + rank size, then redraw. Hooked to the F4 button.
@@ -2323,6 +2562,13 @@ namespace Sdo.Game
                 _rosterScore[row].PxSize = rosterFontWorld;
                 _rosterScore[row].Position = SdoLayout.ToWorld(rosterScoreX, y, -3f);
             }
+            if (_lookerTitle != null) SdoLayout.PlaceTopLeft(_lookerTitle, lookerTitleX, lookerTitleY, -3f);
+            if (_lookerRows != null)
+                for (int i = 0; i < _lookerRows.Length; i++)
+                {
+                    _lookerRows[i].PxSize = lookerFontWorld;
+                    _lookerRows[i].Position = SdoLayout.ToWorld(lookerX, lookerFirstY + i * lookerRowStep, -3f);
+                }
             if (_roster.Count == 0) RebuildRoster();
             UpdateRosterList();
             UpdateRankDisplay();
@@ -2431,6 +2677,10 @@ namespace Sdo.Game
             if (_rankCurD) _rankCurD.enabled = on && _rankCurD.sprite != null;
             if (_rankTotD) _rankTotD.enabled = on && _rankTotD.sprite != null;
             if (_rankSlash) _rankSlash.enabled = on;
+            if (_lookerTitle) _lookerTitle.enabled = on && _lookerTitle.sprite != null;
+            if (_lookerRows != null)
+                for (int i = 0; i < _lookerRows.Length; i++)
+                    if (_lookerRows[i] != null) _lookerRows[i].SetActive(on);
         }
 
         private void UpdateHpBar()

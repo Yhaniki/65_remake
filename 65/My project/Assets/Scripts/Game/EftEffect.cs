@@ -75,23 +75,42 @@ namespace Sdo.Game
         public static float BallCoreExpoFrac = 0.3f;   // fraction of life over which exposure decays back to 1 (real colour)
         // The 200/300 slot0 AEF_3_00 blue MESH that rides each ball has a DIM texture, so at 1× it's drowned by the
         // bright fountain (the user couldn't see it). Boost its additive so the blue mesh shows once the balls' spawn
-        // exposure fades. trails/ring/disk untouched. F4-tunable.
+        // exposure fades. trails/ring/disk untouched. F4-tunable. NOTE: now 200-ONLY (300 uses Mesh300Intensity).
         public static float MeshIntensity = 5f;
+
+        // ── 300-ONLY AEF_3_00 controls (fully decoupled from 200 so tuning 300 never touches the 200 ground curtain). ──
+        // 200 = the mesh rides a STATIONARY ground external (non-orient parent); 300 = it rides a RISING ball (orient
+        // parent). The runtime tells them apart by parent.E.Orient (see P.mesh300, set at spawn). 200 keeps the legacy
+        // MeshIntensity/MeshAlpha path verbatim; 300 takes the fields below.
+        public static float Mesh300Intensity = 3.2f;   // 300 additive boost (user-tuned)
+        // 300 OPACITY — applied to the additive RGB ENERGY, not the alpha channel. The old code multiplied the ALPHA by
+        // MeshAlpha, but with the intensity boost the result `rgb×intensity×alpha` stayed > 1 across the whole 0.2–1.0
+        // slider range → hard-clipped to white → "調整透明度沒變". Scaling the RGB energy makes the slider visibly fade
+        // the flame (energy = Mesh300Intensity×Mesh300Alpha, so 0.2 brings a 5× boost down to ~1× = real translucency).
+        public static float Mesh300Alpha = 0.6f;   // user-tuned
+        // 300 flame is STRAIGHTENED at load: the AEF_3_00 mesh geometry itself curves forward (+Z lean grows with Y);
+        // 200 wants that curve (it's correct), but 300 wants a perfectly vertical flame. StraightenMesh() removes the
+        // per-height-level mean-Z lean while keeping the V cross-section + width/height. Toggle off to compare raw.
+        public static bool Mesh300Straight = true;
+        // 300 flame FRONT/BACK offset (effect-local Z, ×effScale into world). Straightening recentred the flame on the
+        // ball (z≈0) so it sits ON the orb and covers it; a NEGATIVE value pushes the flame BEHIND the ball so the orb
+        // reads in front of it ("稍微往後,不要擋到球"). Positive = in front. F4-tunable; only the 300 mesh uses it.
+        public static float Mesh300Z = 0.07f;   // user-tuned (slightly forward)
         // The 300 AEF_3_00 mesh rides a ball but its OWN scale channels change at a different RATE than the ball (too
         // thin at spawn, balloons tall mid-life), so its width never matches the ball. Instead it's driven by the
         // PARENT BALL's width curve (same big→small rate); MeshWidthMatch scales that to the ball's absolute width.
-        public static float MeshWidthMatch = 0.3f;
+        public static float MeshWidthMatch = 0.18f;   // user-tuned
         // 200 spawns 15 AEF_3_00 meshes (slot1 external emit 15) but the official shows only ~5-6 → cap the count.
         public static int MeshMax200 = 6;
         // 300's mesh tracks the ball width (slow shrink); the official shrinks it FASTER and SMALLER, so multiply the
         // tracked size by lerp(1 → MeshShrinkEnd) over life. Lower = shrinks smaller. (300 only; 200 uses own curve.)
-        public static float MeshShrinkEnd = 0.15f;
+        public static float MeshShrinkEnd = 0.05f;   // user-tuned
         // 300 AEF_3_00 spec: at SPAWN it's MeshStartW× wider and MeshStartH× longer (tall vertical flame), easing to the
         // shrunk end size over life. Bottom anchored to the ball's bottom, fully vertical (no tilt). MeshAlpha dims it.
-        public static float MeshStartW = 1.5f;    // start width multiplier (→1 by end)
-        public static float MeshStartH = 3f;       // start length/height multiplier (→1 by end)
-        public static float MeshAlpha = 0.8f;   // AEF_3_00 opacity vs the raw alpha curve
-        public static float MeshDropFrac = 0.33f;  // 300 mesh vertical anchor: 0 = on the ball (keeps up), 1 = at ball bottom
+        public static float MeshStartW = 2.1f;    // start width multiplier (→1 by end) — user-tuned
+        public static float MeshStartH = 6.4f;     // start length/height multiplier (→1 by end) — user-tuned
+        public static float MeshAlpha = 0.8f;   // 200-ONLY AEF_3_00 opacity vs the raw alpha curve (300 uses Mesh300Alpha)
+        public static float MeshDropFrac = 0.22f;  // 300 mesh vertical anchor: 0 = on the ball (keeps up), 1 = at ball bottom — user-tuned
 
         // TRAJECTORY DUMP (verification): when on, every particle logs its effect-relative WORLD position over its
         // full life in the SAME format as the Frida hook (eft_online_log.txt) so my sim can be diffed against the
@@ -130,6 +149,7 @@ namespace Sdo.Game
             public Material[] meshMats;   // 3D-mesh submesh materials (non-null only for mesh particles); tinted as a group
             public Transform glowTr; public Material glowMat;   // outer-glow halo child (null when glow off)
             public bool ring, orient, started, invisible, isTrail, isMesh;
+            public bool mesh300;   // AEF_3_00 mesh riding a RISING ball (orient parent) = the 300 case → 300-only params
             public bool isBallCore;   // 200/300 burst ball billboard (tex30/31) → optional BallCoreIntensity boost in StepParticle
             // ATTACH-TO-PARENT (engine word[0x37]): when attach!=0 this particle RIDES `parent` — each frame its world
             // position = parent.pos + (parent.rot × its own local drift). 200/300 slot0 mesh locks to its parent this way.
@@ -267,6 +287,10 @@ namespace Sdo.Game
             // wrong column meshes — i.e. the regression that broke 100/400/500. Only AEF_3_00 (32) is wanted for now.
             EftMeshData md = (EnableMesh && em.MeshIdx == 32 && _meshResolver != null) ? _meshResolver(em.MeshIdx) : null;
             bool isMesh = md != null && md.Mesh != null;
+            // 300 = the AEF_3_00 mesh rides a RISING ball (orient parent); 200 = it rides a stationary ground external.
+            // This is the single switch that keeps the two tiers' tuning fully independent (straighten + intensity +
+            // opacity all branch on it), so changing 300 never touches the 200 ground curtain.
+            bool mesh300 = isMesh && em.MeshIdx == 32 && parentP != null && parentP.E.Orient;
             // 200's AEF_3_00 meshes ride a NON-orient ground EXTERNAL (slot1 emit 15 → 15 meshes), but the official
             // shows only ~5-6. Cap the count for the non-orient (200) case; the excess render nothing. 300's meshes
             // ride orient BALLS (12) and are NOT capped.
@@ -320,6 +344,7 @@ namespace Sdo.Game
                 invisible = (em.Flags & 0x40000) != 0 || capMesh,   // capped excess 200 meshes render nothing
                 isTrail = isTrail,
                 isMesh = isMesh,
+                mesh300 = mesh300,
                 // billboards (0x10000) face the camera via their world matrix (rotation from the template initRot +
                 // channels — e.g. aef_1_07's 90° = flat). TRAILS are world-quads oriented by their euler channels and
                 // are NOT billboarded (the flag lacks 0x10000), so force orient off for them too.
@@ -350,10 +375,13 @@ namespace Sdo.Game
                 // localPosition/Rotation/Scale below reproduce the engine's S·R·T·Owner). One additive material per
                 // material submesh (clone of the combo additive mat + that submesh's DDS), so aef03_00's blue
                 // textures show and fade by the trail's alpha channel. NOT billboarded (trail flag lacks 0x10000).
-                go.AddComponent<MeshFilter>().mesh = md.Mesh;
+                // 300 uses a STRAIGHTENED clone (forward-lean removed) so its flame is perfectly vertical; 200 keeps the
+                // raw curved mesh (the user confirmed 200 is correct). Cached per source mesh so it's built once.
+                Mesh useMesh = (p.mesh300 && Mesh300Straight) ? StraightenMesh(md.Mesh) : md.Mesh;
+                go.AddComponent<MeshFilter>().mesh = useMesh;
                 var mr = go.AddComponent<MeshRenderer>();
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; mr.receiveShadows = false;
-                int subN = Mathf.Max(1, md.Mesh.subMeshCount);
+                int subN = Mathf.Max(1, useMesh.subMeshCount);
                 var mats = new Material[subN];
                 for (int s = 0; s < subN; s++)
                 {
@@ -609,7 +637,8 @@ namespace Sdo.Game
                     // UP as the ball rises (an earlier −ballHalfH drop left the shrinking flame below the risen ball =
                     // "沒跟上球"). MeshDropFrac×ballHalfH optionally drops it toward the ball's bottom (0 = on the ball).
                     float ballHalfH = 0.5f * p.parent.baseSize.y * p.parent.E.Ch[0xf].Scale(t);
-                    p.tr.localPosition = p.parent.pos + new Vector3(0f, -ballHalfH * MeshDropFrac, 0f);
+                    // Mesh300Z pushes the flame fore/aft of the orb (− = behind, so the ball reads in front of it).
+                    p.tr.localPosition = p.parent.pos + new Vector3(0f, -ballHalfH * MeshDropFrac, Mesh300Z);
                     p.tr.localRotation = Quaternion.identity;
                 }
                 else
@@ -632,12 +661,23 @@ namespace Sdo.Game
             // billboards (p.orient): oriented to camera in LateUpdate
             if (p.meshMats != null)   // 3D mesh (AEF_3_00 blue mesh): tint every submesh as a group; alpha fades it
             {
-                // MeshIntensity boosts ONLY the AEF_3_00 blue mesh (MeshIdx 32, 200/300) so it isn't drowned by the
-                // bright balls — its texture is dim. Other tiers' meshes (100/400/500 column_00/01) stay at 1× so they
-                // are NOT broken. (DebugMeshOnly isolates the mesh at a fixed 5×.)
-                float mci = DebugMeshOnly ? 5f : (em.MeshIdx == 32 ? MeshIntensity : 1f);
-                float ma = em.MeshIdx == 32 ? MeshAlpha : 1f;   // AEF_3_00 opacity = 80% of the raw alpha curve
-                for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], r * mci, g * mci, b * mci, a * ma);
+                // Three independent paths so 200 and 300 never share a knob:
+                //  • 300 (mesh300): boost = Mesh300Intensity, and OPACITY (Mesh300Alpha) scales the additive RGB ENERGY
+                //    — NOT the alpha — because with the boost `rgb×intensity×alpha` stayed clipped to white across the
+                //    whole opacity range (the "透明度沒變" bug). Scaling RGB makes the slider visibly fade the flame.
+                //  • 200 (MeshIdx 32, non-300): the legacy MeshIntensity(rgb)+MeshAlpha(alpha) path, verbatim (correct).
+                //  • other tiers' meshes (100/400/500 columns): 1×, untouched. DebugMeshOnly isolates at a fixed 5×.
+                if (DebugMeshOnly)
+                    for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], r * 5f, g * 5f, b * 5f, a);
+                else if (p.mesh300)
+                {
+                    float e = Mesh300Intensity * Mesh300Alpha;   // opacity dims the additive energy (visible at any blend)
+                    for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], r * e, g * e, b * e, a);
+                }
+                else if (em.MeshIdx == 32)   // 200 — unchanged
+                    for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], r * MeshIntensity, g * MeshIntensity, b * MeshIntensity, a * MeshAlpha);
+                else                          // 100/400/500 column meshes — 1×
+                    for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], r, g, b, a);
             }
             else if (DebugMeshOnly && p.mat != null)   // isolate the mesh: hide all non-mesh particles (additive a=0)
             {
@@ -793,6 +833,41 @@ namespace Sdo.Game
             }
             var m = new Mesh { name = "eft-ring" };
             m.vertices = verts; m.uv = uv; m.colors32 = col; m.triangles = tris; m.RecalculateBounds();
+            return m;
+        }
+
+        // De-lean a curved effect mesh into a perfectly vertical one (300 AEF_3_00). The AEF_3_00 geometry curves
+        // FORWARD (+Z grows with height Y) — the "彎彎的" the user reported. Removing the per-height-level MEAN Z makes
+        // every level's spine sit at z=0 (no forward lean) while preserving the V cross-section thickness (center vs
+        // sides) AND the width/height/UVs, so the flame keeps its silhouette and volume but rises straight up. Verified
+        // against AEF03_00.MSH (15 verts, 5 height levels: sides x=±0.22 z≈lean, centre x=0 z≈lean+0.045). 200 keeps the
+        // raw mesh (its curve is correct). Cached per source so the clone is built once.
+        static readonly Dictionary<Mesh, Mesh> _straightCache = new Dictionary<Mesh, Mesh>();
+        static Mesh StraightenMesh(Mesh src)
+        {
+            if (src == null) return null;
+            if (_straightCache.TryGetValue(src, out var cached)) return cached;
+            var verts = src.vertices;
+            var nv = (Vector3[])verts.Clone();
+            var done = new bool[verts.Length];
+            for (int i = 0; i < verts.Length; i++)
+            {
+                if (done[i]) continue;
+                float y = verts[i].y, sumZ = 0f; int cnt = 0;
+                for (int j = 0; j < verts.Length; j++)
+                    if (Mathf.Abs(verts[j].y - y) < 1e-3f) { sumZ += verts[j].z; cnt++; }
+                float meanZ = sumZ / cnt;   // the forward lean at this height
+                for (int j = 0; j < verts.Length; j++)
+                    if (Mathf.Abs(verts[j].y - y) < 1e-3f) { nv[j].z = verts[j].z - meanZ; done[j] = true; }
+            }
+            var m = new Mesh { name = src.name + "-straight" };
+            m.vertices = nv;
+            m.uv = src.uv;
+            if (src.colors32 != null && src.colors32.Length == nv.Length) m.colors32 = src.colors32;
+            m.subMeshCount = src.subMeshCount;
+            for (int s = 0; s < src.subMeshCount; s++) m.SetTriangles(src.GetTriangles(s), s);
+            m.RecalculateBounds(); m.RecalculateNormals();
+            _straightCache[src] = m;
             return m;
         }
 

@@ -19,7 +19,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_ComboBurst()
         {
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -63,7 +63,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_200_300()
         {
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -92,7 +92,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_ComboDark()
         {
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -122,7 +122,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_MeshOnly()
         {
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -153,7 +153,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_200Slots()
         {
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -186,7 +186,7 @@ namespace Sdo.Tests
             // unhandled error log. We only need the particle SIM (Debug.Log trajectory), not rendering → ignore them.
             LogAssert.ignoreFailingMessages = true;
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -219,7 +219,7 @@ namespace Sdo.Tests
         {
             LogAssert.ignoreFailingMessages = true;
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
@@ -238,7 +238,7 @@ namespace Sdo.Tests
         {
             LogAssert.ignoreFailingMessages = true;
             yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not found");
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);

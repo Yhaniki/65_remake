@@ -18,7 +18,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_Default_Director()
         {
             yield return new WaitForSecondsRealtime(2.5f);
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not booted");
             Assert.Greater(game.FixedCamCountForTest, 0, "cameras not loaded");
 

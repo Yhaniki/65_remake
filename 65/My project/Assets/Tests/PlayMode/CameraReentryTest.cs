@@ -16,7 +16,7 @@ namespace Sdo.Tests
         public IEnumerator Reentry_To_Auto_Resumes_Current_Shot_Not_Zero()
         {
             yield return new WaitForSecondsRealtime(2.5f);   // let the self-booting game load avatar + cameras
-            var game = Object.FindObjectOfType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
             Assert.IsNotNull(game, "Step1Game not booted");
             Assert.Greater(game.FixedCamCountForTest, 0, "fixed F2 cameras failed to load (CAMERA/* missing?)");
 

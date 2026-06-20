@@ -53,6 +53,15 @@ namespace Sdo.Game
 
         public void SetName(string playerName) { if (_name != null) _name.Text = playerName ?? string.Empty; }
 
+        /// <summary>Hide the arrow + name and STOP tracking (the name label is a separate root object that LateUpdate
+        /// re-shows every frame, so disabling this component alone wouldn't hide it). Used when the result panel opens.</summary>
+        public void Hide()
+        {
+            if (_arrow != null) _arrow.enabled = false;
+            if (_name != null) _name.SetActive(false);
+            enabled = false;   // stop LateUpdate from re-enabling them
+        }
+
         private void LateUpdate()
         {
             Camera cam = CamGetter != null ? CamGetter() : null;
