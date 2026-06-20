@@ -52,7 +52,7 @@ namespace Sdo.UI.Screens
             _seatGrid = UIKit.NewRect(seatPanel, "SeatGrid");
             UIKit.Stretch(_seatGrid, 12, 12, 12, 12);
             var glg = _seatGrid.gameObject.AddComponent<GridLayoutGroup>();
-            glg.cellSize = new Vector2(396, 128);
+            glg.cellSize = new Vector2(240, 124);          // 3 cols fit the 800-wide (4:3) frame: 240*3 + 14*2 + pad ≈ 752
             glg.spacing = new Vector2(14, 14);
             glg.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
             glg.constraintCount = 3;

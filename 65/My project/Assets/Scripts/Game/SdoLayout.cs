@@ -22,6 +22,10 @@ namespace Sdo.Game
             cam.transform.position = new Vector3(0, 0, -100f);
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Color.black;
+            // Present the 800×600 frame at a fixed 4:3 (stretched to fill, or pillarboxed) regardless of window aspect,
+            // so the play screen and the front-end UI share one consistent 4:3 frame. (Vertical stays locked to 600;
+            // the controller drives the horizontal via Camera.aspect/rect.)
+            AspectController.Register(cam);
         }
 
         // pure mapping (top-left design px -> world)

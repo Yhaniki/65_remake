@@ -30,6 +30,7 @@ namespace Sdo.UI
         private ResultsModal _results;
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
+        private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
         private Step1Game _activeGame;                // the running gameplay instance (null = in the front-end)
         private HashSet<GameObject> _preGameRoots;    // scene roots that existed before launch -> kept on exit
 
@@ -57,7 +58,9 @@ namespace Sdo.UI
 
             _ctx = AppContext.CreateMock();
 
-            var canvas = UIKit.CreateCanvas("FrontendCanvas", new Vector2(1280, 720), 0);
+            // Fixed 800×600 (4:3) world-space canvas, framed by a camera the AspectController fits to the window
+            // (stretched to fill by default) — same 4:3 frame as the play screen, so the whole app is consistent 4:3.
+            var canvas = UIKit.CreateWorldCanvas("FrontendCanvas", new Vector2(800, 600), out _uiCam, 0);
             _canvasGo = canvas.gameObject;
             var root = (RectTransform)canvas.transform;
             UIKit.Stretch(UIKit.AddImage(root, "AppBg", UITheme.Bg).rectTransform);
@@ -130,6 +133,7 @@ namespace Sdo.UI
 
             _ctx.Flow.GoTo(ScreenId.Gameplay);
             if (_canvasGo != null) _canvasGo.SetActive(false);
+            if (_uiCam != null) _uiCam.enabled = false;   // stop the UI cam clearing over the play screen
 
             var game = new GameObject("Step1Game").AddComponent<Step1Game>();   // fields read in its Start() next frame
             game.gnPath = gnPath;
@@ -172,6 +176,7 @@ namespace Sdo.UI
                 _preGameRoots = null;
             }
             if (_canvasGo != null) _canvasGo.SetActive(true);
+            if (_uiCam != null) _uiCam.enabled = true;
         }
 
         private void Make<T>(RectTransform parent) where T : UIScreenBase

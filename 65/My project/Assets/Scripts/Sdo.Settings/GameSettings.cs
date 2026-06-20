@@ -5,9 +5,9 @@ namespace Sdo.Settings
     [Serializable]
     public class DisplaySettings
     {
-        public int width = 1280;
-        public int height = 720;
-        public string displayMode = "Windowed"; // Windowed | Fullscreen | Borderless
+        public int width = 1024;                // windowed size (4:3, matches the 800×600 design aspect)
+        public int height = 768;
+        public string displayMode = "Borderless"; // 預設全螢幕視窗化。Windowed | Fullscreen | Borderless
         public bool vsync = true;
         public float uiScale = 1f;              // 1.0 / 1.25 / 1.5
     }

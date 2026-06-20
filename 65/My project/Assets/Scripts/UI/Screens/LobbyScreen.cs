@@ -37,26 +37,26 @@ namespace Sdo.UI.Screens
             title.rectTransform.offsetMin = new Vector2(18, 0); title.rectTransform.offsetMax = new Vector2(0, 0);
             title.alignment = TextAlignmentOptions.Left;
 
-            var pname = UIKit.AddText(header, "Player", "👤 " + Ctx.Session.LocalPlayerName, 16, UITheme.TextDim, TextAlignmentOptions.Center);
-            UIKit.Anchor(pname.rectTransform, new Vector2(0.4f, 0), new Vector2(0.66f, 1), new Vector2(0.5f, 0.5f));
+            var pname = UIKit.AddText(header, "Player", Ctx.Session.LocalPlayerName, 15, UITheme.TextDim, TextAlignmentOptions.Center);
+            UIKit.Anchor(pname.rectTransform, new Vector2(0.33f, 0), new Vector2(0.55f, 1), new Vector2(0.5f, 0.5f));
 
-            // right-side buttons
-            var note = UIKit.AddLocButton(header, "NoteBtn", "lobby.select_note", UITheme.Secondary, UITheme.Text, 15);
-            PlaceTopRight(note.GetComponent<RectTransform>(), 120, -276);
+            // right-side buttons (fit the 800-wide 4:3 header: span ≈ 540..790)
+            var note = UIKit.AddLocButton(header, "NoteBtn", "lobby.select_note", UITheme.Secondary, UITheme.Text, 14);
+            PlaceTopRight(note.GetComponent<RectTransform>(), 96, -166);
             note.onClick.AddListener(() => Nav.OpenNoteSkinPicker?.Invoke());
 
-            var settings = UIKit.AddLocButton(header, "SettingsBtn", "lobby.settings", UITheme.Secondary, UITheme.Text, 15);
-            PlaceTopRight(settings.GetComponent<RectTransform>(), 96, -150);
+            var settings = UIKit.AddLocButton(header, "SettingsBtn", "lobby.settings", UITheme.Secondary, UITheme.Text, 14);
+            PlaceTopRight(settings.GetComponent<RectTransform>(), 64, -96);
             settings.onClick.AddListener(() => Nav.OpenSettings?.Invoke());
 
-            var logout = UIKit.AddLocButton(header, "LogoutBtn", "lobby.logout", UITheme.Danger, UITheme.OnPrimary, 15);
-            PlaceTopRight(logout.GetComponent<RectTransform>(), 80, -52);
-            logout.onClick.AddListener(() => Toast.Show(L("lobby.logout")));
+            var logout = UIKit.AddLocButton(header, "LogoutBtn", "lobby.logout", UITheme.Danger, UITheme.OnPrimary, 14);
+            PlaceTopRight(logout.GetComponent<RectTransform>(), 64, -12);
+            logout.onClick.AddListener(Quit);   // 登出 → 直接關閉遊戲 (暫定)
 
             // ---- left column (room list + chat) ----
             var left = UIKit.NewRect(Root, "Left");
             left.anchorMin = new Vector2(0, 0); left.anchorMax = new Vector2(1, 1);
-            left.offsetMin = new Vector2(12, 12); left.offsetMax = new Vector2(-(320 + 12), -(56 + 8));
+            left.offsetMin = new Vector2(12, 12); left.offsetMax = new Vector2(-(228 + 12), -(56 + 8));
 
             // room list panel (above chat)
             var roomPanel = UIKit.AddImage(left, "RoomPanel", UITheme.Panel).rectTransform;
@@ -117,7 +117,7 @@ namespace Sdo.UI.Screens
             var playerPanel = UIKit.AddImage(Root, "PlayerPanel", UITheme.Panel).rectTransform;
             playerPanel.anchorMin = new Vector2(1, 0); playerPanel.anchorMax = new Vector2(1, 1);
             playerPanel.pivot = new Vector2(1, 0.5f);
-            playerPanel.sizeDelta = new Vector2(320, -(56 + 8 + 12));
+            playerPanel.sizeDelta = new Vector2(228, -(56 + 8 + 12));
             playerPanel.anchoredPosition = new Vector2(-12, -((56 + 8) - 12) * 0.5f);
 
             var ptitle = UIKit.AddLocText(playerPanel, "PlayersTitle", "lobby.online_players", 18, UITheme.Text);
@@ -249,6 +249,20 @@ namespace Sdo.UI.Screens
         }
 
         // ---------- actions ----------
+
+        // 登出 = 暫時直接結束程式 (尚無帳號/登入流程)。
+        private void Quit()
+        {
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+            // Hard-kill: on PCs with many HID devices the new Input System stalls Unity's shutdown for several
+            // seconds, leaving the borderless-fullscreen frame frozen ("按了登出卡住，離不開遊戲"). Terminate the
+            // process now so quit is instant. Safe here — settings persist on change, there is no unsaved state.
+            System.Diagnostics.Process.GetCurrentProcess().Kill();
+#endif
+        }
 
         private void OnCreate()
         {

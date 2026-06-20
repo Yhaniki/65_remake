@@ -68,7 +68,7 @@ namespace Sdo.Settings
             s.display.height = c.Height;
             if (s.display.uiScale <= 0f) s.display.uiScale = 1f;
             s.display.uiScale = Mathf.Clamp(s.display.uiScale, 0.5f, 3f);
-            if (string.IsNullOrEmpty(s.display.displayMode)) s.display.displayMode = "Windowed";
+            if (string.IsNullOrEmpty(s.display.displayMode)) s.display.displayMode = "Borderless";
 
             s.audio.bgm = Mathf.Clamp01(s.audio.bgm);
             s.audio.gameMusic = Mathf.Clamp01(s.audio.gameMusic);
@@ -96,7 +96,18 @@ namespace Sdo.Settings
         public static void ApplyDisplay()
         {
             var d = Settings.display;
-            Screen.SetResolution(d.width, d.height, ToMode(d.displayMode));
+            var mode = ToMode(d.displayMode);
+            if (mode == FullScreenMode.FullScreenWindow || mode == FullScreenMode.ExclusiveFullScreen)
+            {
+                // Fullscreen / borderless: use the NATIVE desktop resolution so the 4:3 frame (AspectController)
+                // stretches to fill the whole display. The stored width/height only applies to Windowed mode.
+                var r = Screen.currentResolution;
+                Screen.SetResolution(r.width, r.height, mode);
+            }
+            else
+            {
+                Screen.SetResolution(d.width, d.height, mode);
+            }
             QualitySettings.vSyncCount = d.vsync ? 1 : 0;
             SettingsChanged?.Invoke();
         }

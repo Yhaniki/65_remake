@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Localization;
+using Sdo.Game;
 
 namespace Sdo.UI.Util
 {
@@ -23,6 +24,45 @@ namespace Sdo.UI.Util
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             scaler.matchWidthOrHeight = 0.5f;
             EnsureEventSystem();
+            return canvas;
+        }
+
+        /// <summary>
+        /// A fixed <paramref name="designSize"/> (e.g. 800×600) WORLD-SPACE canvas framed exactly by a dedicated
+        /// orthographic camera that <see cref="AspectController"/> drives to a consistent 4:3 (stretched to fill, or
+        /// pillarboxed) — the SAME 4:3 frame as the play screen. World-space (not CanvasScaler) so the UI logical
+        /// space is a hard <paramref name="designSize"/> regardless of the real window/screen resolution; the camera
+        /// alone does the 4:3 fit. Raycasting works because the canvas event camera = <paramref name="uiCam"/>.
+        /// 1 design px = 1 world unit, origin centred (so children lay out in 0..W / 0..H via anchors as usual).
+        /// </summary>
+        public static Canvas CreateWorldCanvas(string name, Vector2 designSize, out Camera uiCam, int sortOrder = 0)
+        {
+            var camGo = new GameObject(name + "Cam");
+            uiCam = camGo.AddComponent<Camera>();
+            uiCam.orthographic = true;
+            uiCam.orthographicSize = designSize.y / 2f;          // 300 -> vertical = 600 design units
+            uiCam.transform.position = new Vector3(0f, 0f, -10f);
+            uiCam.nearClipPlane = 0.1f;
+            uiCam.farClipPlane = 100f;
+            uiCam.clearFlags = CameraClearFlags.SolidColor;
+            uiCam.backgroundColor = Color.black;
+            uiCam.cullingMask = ~0;                              // only the front-end is alive while this cam is enabled
+
+            var go = new GameObject(name, typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            var canvas = go.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.worldCamera = uiCam;
+            canvas.sortingOrder = sortOrder;
+            var rt = (RectTransform)canvas.transform;
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = designSize;                           // hard 800×600 logical rect (centred at origin)
+            rt.position = Vector3.zero;
+            rt.localScale = Vector3.one;                         // 1 design px = 1 world unit
+            var scaler = go.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+            scaler.dynamicPixelsPerUnit = 3f;                    // crisp TMP text at world scale
+            EnsureEventSystem();
+            AspectController.Register(uiCam);
             return canvas;
         }
 

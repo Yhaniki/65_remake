@@ -55,7 +55,7 @@ namespace Sdo.UI.Screens
             // ---- right preview panel ----
             var right = UIKit.AddImage(Root, "Preview", UITheme.Panel).rectTransform;
             right.anchorMin = new Vector2(1, 0); right.anchorMax = new Vector2(1, 1); right.pivot = new Vector2(1, 0.5f);
-            right.sizeDelta = new Vector2(348, -(56 + 12 + 12));
+            right.sizeDelta = new Vector2(296, -(56 + 12 + 12));
             right.anchoredPosition = new Vector2(-12, -((56 + 12) - 12) * 0.5f);
 
             _prevTitle = UIKit.AddText(right, "PTitle", "-", 22, UITheme.Text, TextAlignmentOptions.Center, true);
@@ -97,7 +97,7 @@ namespace Sdo.UI.Screens
             // ---- left list panel ----
             var left = UIKit.AddImage(Root, "ListPanel", UITheme.Panel).rectTransform;
             left.anchorMin = new Vector2(0, 0); left.anchorMax = new Vector2(1, 1);
-            left.offsetMin = new Vector2(12, 12); left.offsetMax = new Vector2(-(348 + 24), -(56 + 12));
+            left.offsetMin = new Vector2(12, 12); left.offsetMax = new Vector2(-(296 + 20), -(56 + 12));
 
             // difficulty tabs
             string[] tabKeys = { "difficulty.easy", "difficulty.normal", "difficulty.hard" };
@@ -108,7 +108,7 @@ namespace Sdo.UI.Screens
                 var tab = UIKit.AddLocButton(left, "Tab" + i, tabKeys[i], UITheme.Secondary, UITheme.Text, 16);
                 var trt = tab.GetComponent<RectTransform>();
                 UIKit.Anchor(trt, new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1));
-                trt.sizeDelta = new Vector2(120, 36); trt.anchoredPosition = new Vector2(12 + i * 128, -10);
+                trt.sizeDelta = new Vector2(96, 34); trt.anchoredPosition = new Vector2(12 + i * 102, -10);
                 tab.onClick.AddListener(() => SetDifficulty(idx));
                 _tabs[i] = tab;
             }
@@ -116,7 +116,7 @@ namespace Sdo.UI.Screens
             _search = UIKit.AddInputField(left, "Search", L("songselect.search"), 15);
             var sert = _search.GetComponent<RectTransform>();
             UIKit.Anchor(sert, new Vector2(1, 1), new Vector2(1, 1), new Vector2(1, 1));
-            sert.sizeDelta = new Vector2(240, 34); sert.anchoredPosition = new Vector2(-12, -11);
+            sert.sizeDelta = new Vector2(128, 34); sert.anchoredPosition = new Vector2(-12, -11);
             _search.onValueChanged.AddListener(_ => { _page = 0; ApplyFilter(); });
 
             var listScroll = UIKit.AddVerticalScroll(left, "ListScroll", out _listContent, 3f, 6);
