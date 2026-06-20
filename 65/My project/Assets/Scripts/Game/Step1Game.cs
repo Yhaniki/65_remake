@@ -120,6 +120,7 @@ namespace Sdo.Game
         private ResultPhase _resultPhase = ResultPhase.None;
         private float _resultPhaseStart;          // Time.time the current result phase began
         private bool _localWon;                   // local player is the round winner (rank 1) — drives win/lose pose + FINISHED
+        private bool _gameOver;                   // HP ran out (failed) — result shows GAME OVER instead of YouWin/Lose
         public string winMot = "WWIN0002.MOT";    // winner 定格 pose (cat5); male = MWIN0001.MOT
         public string loseMot = "WLOST0003.MOT";  // loser 定格 pose (cat4); male = MREST0004.MOT
         public float finishPoseSec = 2.5f;        // hold the win/lose 定格 pose this long before the panel settles
@@ -134,6 +135,20 @@ namespace Sdo.Game
         private double _replayLenMs;              // background replay loop length (song length)
         private ResultScreen _result;             // 結算面板 (STATIS panel) — built lazily, shown at the settle beat
         private string _songTitle = "song";       // resolved song title (captured when the HUD song label is built)
+
+        // 結算頭像: render the LOCAL avatar's head into a RenderTexture for its result row (45° 3/4 view, idle moves).
+        public bool resultHeadPortrait = true;
+        public int headPortraitLayer = 11;        // dedicated layer for the ISOLATED idle head avatar (head cam renders only this)
+        // The cam FOLLOWS the avatar's head bone (so the head is ALWAYS framed); the avatar is yawed/scaled for the 3/4
+        // angle. Tune yaw (angle) + dist/fov (zoom) + a small aim offset (centre the face). All F4-tunable (Result tab).
+        public float headPortraitDist = 23f;      // cam distance from the head (zoom) — tuned
+        public float headPortraitFov = 35f;
+        public Vector3 headAimOffset = new Vector3(-2.1f, 4.4f, 0f);   // look-target offset from the head BONE (centre the FACE) — tuned
+        public float headAvatarScale = 1.05f;     // idle avatar uniform scale — tuned
+        public float headAvatarYaw = 28f;         // idle avatar Y rotation (3/4 view angle; faces the cam) — tuned
+        private Camera _headCam; private RenderTexture _headRt; private SdoAvatar _headAvatar;
+        private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);   // head bone REST pos (model space) — cam targets this so it stays FIXED (no per-frame bob chase)
+        private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
 
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
         private readonly RuntimeNote[] _holding = new RuntimeNote[Keys];
@@ -211,7 +226,7 @@ namespace Sdo.Game
         private bool _showDebugUI = true;
         private Vector2 _dbgScroll;          // scroll for the tuning sliders so they never push the playtest controls off-panel
         private int _dbgTab;                 // F4 panel tab: 0=Play, 1=Combo, 2=Stage — keeps each group's sliders roomy
-        private static readonly string[] DbgTabs = { "Play", "Combo", "Stage", "Emoji" };
+        private static readonly string[] DbgTabs = { "Play", "Combo", "Stage", "Emoji", "Result", "Banner" };
         private static readonly (string label, EmojiKind kind)[] EmojiTestButtons =
         {
             ("50→HH", EmojiKind.HH), ("150→SHSH", EmojiKind.SHSH), ("350→JRKL", EmojiKind.JRKL), ("550→KJ", EmojiKind.KJ),
@@ -230,6 +245,7 @@ namespace Sdo.Game
         // The remake renders ONE dancer; opponents are a configurable mock roster so the rank/list read
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
         public bool mockOpponents = true;            // seed simulated opponents (default) vs. solo (rank 1/1, list of 1)
+        public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
         public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
         private static readonly string[] OpponentNames =
@@ -1547,11 +1563,16 @@ namespace Sdo.Game
             RebuildRoster();                                  // finalize scores so the rank/winner is current
             var (rank, _) = RankingBoard.LocalRank(_roster);
             _localWon = rank <= 1;                            // rank 1 = highest score = winner
+            _gameOver = _failed;                              // HP-out → GAME OVER (overrides win/lose banner)
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
             SetTrackVisible(false);                           // note board + HP + receptors + click strips
+            // SetTrackVisible(false) also hid the ranking — but it must STAY up through the win/lose pose (final
+            // standings). Re-show it here with the final order; only HideHudForPanel (result panel) hides it.
+            if (_rosterName != null) { UpdateRosterList(); UpdateRankDisplay(); SetRankingVisible(true); }
             HideComboAndJudge();                              // combo number + judgment word (part of the play board)
             ClearGameplayFx();                                // tear down in-flight bursts/holds (F5 mid-song leaves a hold burst looping)
+            if (_emoji != null) _emoji.Stop();                // clear any head emoji cut-in so it doesn't linger into the result
             foreach (var n in _notes)                         // also kill any note sprites still in flight
             { if (n.Head) n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; }
             if (_avatar != null)                              // win/lose 定格 pose (cat5/cat4), held on its last frame
@@ -1594,6 +1615,7 @@ namespace Sdo.Game
         // replay. Phase A implements FinishPose; Settle/Replay are filled in by later phases.
         private void ResultTick()
         {
+            UpdateHeadPortraitCam();   // keep the local head-portrait cam tracking the (moving) head each frame
             float el = Time.time - _resultPhaseStart;
             switch (_resultPhase)
             {
@@ -1648,9 +1670,11 @@ namespace Sdo.Game
             // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
             var (place, players) = RankingBoard.LocalRank(_roster);
             int bad = _score != null ? _score.BadCount : 0, miss = _score != null ? _score.MissCount : 0;
-            int expGained = Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
-            int coinsGained = Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
-            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, PlaySe);
+            // 自由模式不加 G幣/EXP
+            int expGained = freeMode ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
+            int coinsGained = freeMode ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
+            Texture head = BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
+            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe);
         }
 
         // Turn the final roster + score into ranked result rows. The local player uses real judgment counts;
@@ -2029,7 +2053,7 @@ namespace Sdo.Game
                 handTrailTime = GUILayout.HorizontalSlider(handTrailTime, 0.05f, 1.2f);
                 foreach (var rib in _handTrails) if (rib) { rib.widthMul = handTrailWidth; rib.life = handTrailTime; }
             }
-            else                      // ===== EMOJI: trigger each head-emoji + tune its position live =====
+            else if (_dbgTab == 3)    // ===== EMOJI: head marker + rank/roster + head-emoji test =====
             {
                 GUILayout.Label("══ 頭頂名牌 Head marker（螢幕空間，對官方圖微調）══");
                 if (_headMarker == null) GUILayout.Label("(name marker 尚未就緒：需載入舞者 avatar)");
@@ -2102,6 +2126,80 @@ namespace Sdo.Game
                     _emoji.frameMs = GUILayout.HorizontalSlider(_emoji.frameMs, 50f, 1000f);
                     GUILayout.Label($"跟隨平滑 follow: {_emoji.followLerp:F1} (大=瞬移, 小=慢慢移)");
                     _emoji.followLerp = GUILayout.HorizontalSlider(_emoji.followLerp, 1f, 30f);
+                }
+            }
+            if (_dbgTab == 4)    // ===== RESULT: 結算面板微調 (名字 / 頭框 / 頭像 AvtShow) =====
+            {
+                freeMode = GUILayout.Toggle(freeMode, freeMode ? " 自由模式: ON（無排名/無G·經驗，死亡=GAME OVER）" : " 自由模式: OFF");
+                GUILayout.Space(6);
+                GUILayout.Label("══ 結算名字 & 頭框（進結算後即時套用）══");
+                if (_result == null) GUILayout.Label("(尚未進結算畫面)");
+                else
+                {
+                    GUILayout.Label($"名字 X: {_result.nickX:F0}");
+                    _result.nickX = GUILayout.HorizontalSlider(_result.nickX, 60f, 320f);
+                    GUILayout.Label($"名字 Y偏移: {_result.nickYOff:F0}");
+                    _result.nickYOff = GUILayout.HorizontalSlider(_result.nickYOff, -10f, 30f);
+                    GUILayout.Label($"名字 大小 size: {_result.nickSize:F0}");
+                    _result.nickSize = GUILayout.HorizontalSlider(_result.nickSize, 10f, 36f);
+                    GUILayout.Space(6);
+                    GUILayout.Label($"頭框 X: {_result.headBoxX:F0}");
+                    _result.headBoxX = GUILayout.HorizontalSlider(_result.headBoxX, 0f, 90f);
+                    GUILayout.Label($"頭框 Y偏移: {_result.headBoxYOff:F0}");
+                    _result.headBoxYOff = GUILayout.HorizontalSlider(_result.headBoxYOff, -10f, 50f);
+                    GUILayout.Label($"頭框 正方形大小 size: {_result.headBoxSize:F0}");
+                    _result.headBoxSize = GUILayout.HorizontalSlider(_result.headBoxSize, 20f, 96f);
+                }
+                GUILayout.Space(8);
+                GUILayout.Label("══ 頭像 AvtShow（idle 人物）即時套用 ══");
+                GUILayout.Label("相機自動跟頭骨→頭一定在框；調 yaw 角度、dist/fov 遠近、偏移對準臉");
+                GUILayout.Label($"旋轉 yaw: {headAvatarYaw:F0}°（轉到面向正確）");
+                headAvatarYaw = GUILayout.HorizontalSlider(headAvatarYaw, 0f, 360f);
+                GUILayout.Label($"縮放 scale: {headAvatarScale:F2}");
+                headAvatarScale = GUILayout.HorizontalSlider(headAvatarScale, 0.2f, 6f);
+                GUILayout.Label($"相機 距離 dist: {headPortraitDist:F0}（小=放大）");
+                headPortraitDist = GUILayout.HorizontalSlider(headPortraitDist, 5f, 120f);
+                GUILayout.Label($"相機 FOV: {headPortraitFov:F0}");
+                headPortraitFov = GUILayout.HorizontalSlider(headPortraitFov, 10f, 60f);
+                GUILayout.Space(4);
+                GUILayout.Label($"瞄準偏移 X: {headAimOffset.x:F1}");
+                headAimOffset.x = GUILayout.HorizontalSlider(headAimOffset.x, -40f, 40f);
+                GUILayout.Label($"瞄準偏移 Y: {headAimOffset.y:F1}（+往上對到臉）");
+                headAimOffset.y = GUILayout.HorizontalSlider(headAimOffset.y, -40f, 40f);
+                GUILayout.Label($"瞄準偏移 Z: {headAimOffset.z:F1}");
+                headAimOffset.z = GUILayout.HorizontalSlider(headAimOffset.z, -40f, 40f);
+            }
+            if (_dbgTab == 5)    // ===== BANNER: YOU WIN/LOSE 位置 / 大小 / 動畫時間 + 預覽/播放測試 =====
+            {
+                GUILayout.Label("══ YOU WIN/LOSE 橫幅動畫（進結算畫面後即時套用）══");
+                GUILayout.Label("只調動畫『起始位置』；結束位置與大小固定(官方)。可先按 F5 跳到結算畫面。");
+                if (_result == null) GUILayout.Label("(尚未進結算畫面)");
+                else
+                {
+                    GUILayout.Label($"起始位置 X(中心): {_result.bannerStartX:F0}");
+                    _result.bannerStartX = GUILayout.HorizontalSlider(_result.bannerStartX, -100f, 900f);
+                    GUILayout.Label($"起始位置 Y(中心): {_result.bannerStartY:F0}");
+                    _result.bannerStartY = GUILayout.HorizontalSlider(_result.bannerStartY, -100f, 400f);
+                    GUILayout.Label($"起始大小 scale: {_result.bannerStartScale:F2}");
+                    _result.bannerStartScale = GUILayout.HorizontalSlider(_result.bannerStartScale, 0.5f, 6f);
+                    GUILayout.Label($"動畫時間 sec: {_result.bannerAnimSec:F2}");
+                    _result.bannerAnimSec = GUILayout.HorizontalSlider(_result.bannerAnimSec, 0.05f, 2f);
+                    GUILayout.Space(6);
+                    GUILayout.Label("預覽『起始』（定格在起始點+畫面寬，拖上面 X/Y 即時看）：");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("預覽起始 WIN")) _result.PreviewBanner(true, true);
+                    if (GUILayout.Button("預覽起始 LOSE")) _result.PreviewBanner(false, true);
+                    GUILayout.EndHorizontal();
+                    GUILayout.Label("預覽『結束』（定格在固定結束點/大小）：");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("預覽結束 WIN")) _result.PreviewBanner(true, false);
+                    if (GUILayout.Button("預覽結束 LOSE")) _result.PreviewBanner(false, false);
+                    GUILayout.EndHorizontal();
+                    GUILayout.Label("播放動畫（起始→結束）：");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("播放 WIN")) _result.PlayBannerTest(true);
+                    if (GUILayout.Button("播放 LOSE")) _result.PlayBannerTest(false);
+                    GUILayout.EndHorizontal();
                 }
             }
             GUILayout.EndScrollView();
@@ -2601,10 +2699,104 @@ namespace Sdo.Game
             _headMarker = hm;
         }
 
+        // Build (once) a SEPARATE idle avatar (decompiled: each result row has its own AvtShow avatar playing a wait/
+        // idle clip — NOT the background dancer), isolated on its own layer far from the stage, and a camera that
+        // renders just its head into a RenderTexture for the local row. Returns the RT, or null if unavailable.
+        private Texture BuildLocalHeadPortrait()
+        {
+            if (!resultHeadPortrait) return null;
+            if (_headRt != null) { UpdateHeadPortraitCam(); return _headRt; }
+            BuildIdleHeadAvatar();
+            if (_headAvatar == null) return null;
+
+            _headRt = new RenderTexture(192, 224, 16, RenderTextureFormat.ARGB32) { name = "HeadPortraitRT" };
+            var camGo = new GameObject("HeadPortraitCam");
+            _headCam = camGo.AddComponent<Camera>();
+            _headCam.orthographic = false;
+            _headCam.fieldOfView = headPortraitFov;
+            _headCam.nearClipPlane = 0.5f; _headCam.farClipPlane = 500f;
+            _headCam.cullingMask = 1 << headPortraitLayer;   // ONLY the isolated idle avatar
+            _headCam.clearFlags = CameraClearFlags.SolidColor;
+            _headCam.backgroundColor = new Color(0f, 0f, 0f, 0f);   // TRANSPARENT → no black box; the panel/stage shows through
+            _headCam.targetTexture = _headRt;
+            _headCam.depth = -10;
+            UpdateHeadPortraitCam();
+            return _headRt;
+        }
+
+        // The isolated idle avatar (a second skinned instance, parked far from the stage on headPortraitLayer so only
+        // the head cam sees it). DanceEnabled=false → it holds the standby idle (RestMot). Simplified material setup
+        // (single texture per submesh) — it's only ever seen as a small head portrait.
+        private void BuildIdleHeadAvatar()
+        {
+            if (_headAvatar != null) return;
+            var hrc = LoadAsset(skeletonHrc, b => HrcLoader.Load(b));
+            if (hrc == null) return;
+            var parent = new GameObject("HeadIdleAvatar");
+            parent.transform.position = HeadAvatarSpot;   // far from the stage; isolated for the head cam
+            var av = parent.AddComponent<SdoAvatar>();
+            av.Setup(hrc, LoadAsset(danceMot, b => MotLoader.Load(b)));
+            av.SetBodyShape(SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody));
+            av.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));
+            av.DanceEnabled = () => false;     // always hold the standby idle clip
+            av.DanceTimeSec = () => -1f;
+            foreach (var rel in avatarParts)
+            {
+                var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
+                if (!File.Exists(path)) continue;
+                var r = MshLoader.Load(File.ReadAllBytes(path));
+                if (r == null || r.Submeshes.Count == 0) continue;
+                var dir = Path.GetDirectoryName(path);
+                // PortraitOpaque: forces drawn pixels fully opaque (no semi-transparent hair) + cutout gaps + two-sided.
+                var sh = Shader.Find("Sdo/PortraitOpaque") ?? Shader.Find("Unlit/Texture");
+                int si = 0;
+                foreach (var sub in r.Submeshes)
+                {
+                    var go = new GameObject("h_" + Path.GetFileNameWithoutExtension(rel) + "_" + si++);
+                    go.transform.SetParent(parent.transform, false);
+                    go.AddComponent<MeshFilter>().mesh = sub.Mesh;
+                    var mr = go.AddComponent<MeshRenderer>();
+                    var tex = ResolveDds(dir, sub.Dds);
+                    mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex }
+                                                    : new Material(Shader.Find("Unlit/Color")) { color = PartColor(rel) };
+                    if (sub.BindVerts != null && sub.BoneHrc != null)
+                        av.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
+                }
+            }
+            av.PoseInitialIdle();
+            SetLayerRecursive(parent, headPortraitLayer);
+            _headAvatar = av;
+            // cache the head bone's REST (bind) model-space position — the cam targets this (NOT the live animated bone),
+            // so the camera stays FIXED and the idle head-bob plays out inside the frame instead of being chased.
+            Vector3 hp = av.BoneModelPos("Bip01_Head");
+            if (hp == Vector3.zero) hp = av.BoneModelPos("Bip01_Neck");
+            if (hp != Vector3.zero) _headModelPos = hp;
+        }
+
+        // FIXED head cam: targets the head bone's REST position (stable; only moves when the F4 sliders change), sitting a
+        // fixed distance in front (world -Z). The avatar is scaled/yawed for the 3/4 angle; its idle bob plays in-frame.
+        private void UpdateHeadPortraitCam()
+        {
+            if (_headAvatar != null)
+            {
+                var t = _headAvatar.transform;
+                t.position = HeadAvatarSpot;
+                t.localScale = Vector3.one * Mathf.Max(0.01f, headAvatarScale);
+                t.localRotation = Quaternion.Euler(0f, headAvatarYaw, 0f);
+            }
+            if (_headCam == null || _headAvatar == null) return;
+            Vector3 restHead = _headAvatar.transform.TransformPoint(_headModelPos);   // rest head world pos (no bob)
+            Vector3 target = restHead + headAimOffset;
+            _headCam.fieldOfView = headPortraitFov;
+            _headCam.transform.position = target + new Vector3(0f, 0f, -headPortraitDist);
+            _headCam.transform.LookAt(target, Vector3.up);
+        }
+
         // rebuild + redraw the roster (called at each 8-beat score commit and once at startup).
         private void RefreshRanking()
         {
             if (_rosterName == null || !_trackVisible) return;   // not built / hidden during the opening hold
+            if (freeMode) { SetRankingVisible(false); return; }  // 自由模式: no ranking display during play
             RebuildRoster();
             UpdateRosterList();
             UpdateRankDisplay();
@@ -2614,7 +2806,7 @@ namespace Sdo.Game
         {
             _roster.Clear();
             _roster.Add(new PlayerEntry(localPlayerName, _score != null ? _score.Score : 0L, true));
-            if (mockOpponents)
+            if (mockOpponents && !freeMode)   // 自由模式 = solo (no opponents)
             {
                 double now = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : 0.0;
                 double progress = _totalMs > 1.0 ? Math.Min(1.0, Math.Max(0.0, now / _totalMs)) : 0.0;
@@ -2668,6 +2860,7 @@ namespace Sdo.Game
 
         private void SetRankingVisible(bool on)
         {
+            if (freeMode) on = false;   // 自由模式: ranking (rank N/M + roster list) never shows during play
             if (_rosterName != null)
                 for (int i = 0; i < RosterRows; i++)
                 {

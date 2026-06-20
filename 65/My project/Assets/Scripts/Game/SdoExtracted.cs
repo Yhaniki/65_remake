@@ -28,10 +28,10 @@ namespace Sdo.Game
         /// <summary>UI/STATIS folder: result-screen (結算) panel art, digits, rank badges, win/lose banner.</summary>
         public static string StatisDir => Path.Combine(Root, "UI", "STATIS");
 
-        /// <summary>UI/STATIS/ITEMSTATISTIC: the ONLINE (Audition/Dance!Online) result screen art — DDRITEMSTATISTIC.XML
-        /// layout. Background tiles (StatisItem0..7), the BALANCE.png sheet (win/lose banner + OK/save buttons),
-        /// sliding rank rows, and the bottom G幣/EXP digit strips (score_num / score_numS / Num8 / Num3).</summary>
-        public static string ItemStatisDir => Path.Combine(StatisDir, "ITEMSTATISTIC");
+        /// <summary>UI/STATIS/STATISTIC: the ONLINE result screen art — DDRSTATISTIC.XML layout. Background tiles
+        /// (Statis0..11), the BALANCE.png sheet (win/lose banner + OK/save buttons), sliding rank rows, head frames,
+        /// and the bottom G幣/EXP digit strips (score_num / score_numS / Num8 / Num3).</summary>
+        public static string ResultStatisDir => Path.Combine(StatisDir, "STATISTIC");
 
         /// <summary>Shipped sound-effects folder (sdox_offline/SE), sibling of Extracted.</summary>
         public static string SeDir => Path.Combine(Path.GetDirectoryName(Root) ?? Root, "SE");
