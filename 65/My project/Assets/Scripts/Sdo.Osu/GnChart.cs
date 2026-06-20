@@ -10,10 +10,24 @@ namespace Sdo.Osu
     ///   StepFile: 300-byte header (bpm@16, addresses@284) + StepFrames per difficulty
     ///   frame_type -> lane: 2=Left(0) 4=Down(1) 3=Up(2) 5=Right(3); note_type 2=holdStart 3=holdEnd
     ///   note time: beat = measurement*4 + 4*slot/interval ;  ms = beat*60000/BPM
-    /// See doc/GN_加解密說明.md and doc/SM_GN_NOTE_FORMAT.md.
+    ///
+    /// Three on-disk encryptions are handled (see doc/GN_加解密說明.md):
+    ///   ddrm  : DDRM container ('drmd' magic) — seed1/seed2 live in the header, decrypt in place.
+    ///   plain : file already starts with a StepFile ('gn' @4, address_easy==300 @284).
+    ///   sdom  : SDOM (Malaysia stand-alone) — a resource-name prefix then an inner StepFile whose
+    ///           body is LCG-encrypted. The seed is NOT in the file; it must be supplied. This runtime
+    ///           keeps NO UnityEngine dependency (Sdo.Osu has noEngineReferences), so the seed list is
+    ///           passed in by the caller from the precomputed key table (tools/gn_keytable.py ->
+    ///           StreamingAssets/gn_keytable.json, loaded by Sdo.Game.GnKeyTable). Because the LCG
+    ///           keystream depends only on the low 24 bits of state, the whole corpus uses only ~148
+    ///           distinct seeds; trying them all and validating the doubled header is microseconds.
+    /// See doc/SM_GN_NOTE_FORMAT.md.
     /// </summary>
     public static class GnChart
     {
+        private const uint MagicDdrm = 0x6D726464u; // 'drmd' little-endian
+        private const int StepHeader = 300;
+
         private static uint U32(byte[] d, int o) => (uint)(d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24));
         private static short I16(byte[] d, int o) => (short)(d[o] | (d[o + 1] << 8));
 
@@ -29,20 +43,94 @@ namespace Sdo.Osu
             switch (frameType) { case 2: return 0; case 4: return 1; case 3: return 2; case 5: return 3; default: return -1; }
         }
 
-        /// <summary>difficulty: 0=easy 1=normal 2=hard.</summary>
-        public static OsuBeatmap Load(byte[] raw, int difficulty = 0)
+        /// <summary>Legacy entry point: handles DDRM/plain (no SDOM seeds available).</summary>
+        public static OsuBeatmap Load(byte[] raw, int difficulty = 0) => Load(raw, difficulty, null);
+
+        /// <summary>
+        /// difficulty: 0=easy 1=normal 2=hard. <paramref name="sdomSeeds"/> are candidate LCG seeds
+        /// for SDOM files (per-file seed first is fine); ignored for DDRM/plain. Pass
+        /// Sdo.Game.GnKeyTable.SeedsFor(gnPath).
+        /// </summary>
+        public static OsuBeatmap Load(byte[] raw, int difficulty, uint[] sdomSeeds)
         {
-            if (raw == null || raw.Length < 0x54) return new OsuBeatmap();
+            if (raw == null || raw.Length < StepHeader) return new OsuBeatmap();
             if (difficulty < 0) difficulty = 0; if (difficulty > 2) difficulty = 2;
 
-            // --- decrypt ---
-            uint seed1 = U32(raw, 0x0c);
-            var block1 = new byte[32]; Array.Copy(raw, 0x20, block1, 0, 32); Lcg(seed1, block1, 0, 32);
-            uint seed2 = U32(block1, 4);
-            int bodyLen = raw.Length - 0x54;
-            var body = new byte[bodyLen]; Array.Copy(raw, 0x54, body, 0, bodyLen); Lcg(seed2, body, 0, bodyLen);
+            byte[] body = Decrypt(raw, sdomSeeds);
+            if (body == null || body.Length < StepHeader) return new OsuBeatmap();
+            return ParseStepFile(body, difficulty);
+        }
 
-            // --- StepFile header ---
+        /// <summary>Detect the on-disk encryption and return the plaintext StepFile body, or null.</summary>
+        private static byte[] Decrypt(byte[] raw, uint[] sdomSeeds)
+        {
+            // --- DDRM container: seeds in header ---
+            if (raw.Length >= 0x54 && U32(raw, 0) == MagicDdrm)
+            {
+                uint seed1 = U32(raw, 0x0c);
+                var block1 = new byte[32]; Array.Copy(raw, 0x20, block1, 0, 32); Lcg(seed1, block1, 0, 32);
+                uint seed2 = U32(block1, 4);
+                int bodyLen = raw.Length - 0x54;
+                var body = new byte[bodyLen]; Array.Copy(raw, 0x54, body, 0, bodyLen); Lcg(seed2, body, 0, bodyLen);
+                return body;
+            }
+
+            // --- plain: the file IS the StepFile ---
+            if (raw.Length >= StepHeader && raw[4] == (byte)'g' && raw[5] == (byte)'n' && U32(raw, 284) == 300)
+                return raw;
+
+            // --- SDOM: resource prefix + inner StepFile with LCG-encrypted (doubled-header) body ---
+            int off = FindSdomInnerOffset(raw);
+            if (off >= 0 && sdomSeeds != null && sdomSeeds.Length > 0)
+            {
+                int encLen = raw.Length - off - StepHeader;            // encrypted region length
+                if (encLen >= StepHeader)
+                {
+                    var probe = new byte[StepHeader];
+                    foreach (var seed in sdomSeeds)
+                    {
+                        Array.Copy(raw, off + StepHeader, probe, 0, StepHeader);
+                        Lcg(seed, probe, 0, StepHeader);
+                        if (HeaderMatches(probe, raw, off))            // decrypted header == plaintext doubled header
+                        {
+                            var body = new byte[encLen];
+                            Array.Copy(raw, off + StepHeader, body, 0, encLen);
+                            Lcg(seed, body, 0, encLen);
+                            return body;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>probe[0..300] == raw[off..off+300] ?</summary>
+        private static bool HeaderMatches(byte[] probe, byte[] raw, int off)
+        {
+            for (int i = 0; i < StepHeader; i++) if (probe[i] != raw[off + i]) return false;
+            return true;
+        }
+
+        /// <summary>First offset where an inner StepFile starts ('gn'\0\0 @+4, address_easy==300 @+284), or -1.</summary>
+        private static int FindSdomInnerOffset(byte[] raw, int scanMax = 0x4000)
+        {
+            int n = raw.Length;
+            if (n < StepHeader + 8) return -1;
+            int limit = Math.Min(scanMax, n - StepHeader);
+            for (int off = 0; off < limit; off++)
+            {
+                if (raw[off + 4] != (byte)'g' || raw[off + 5] != (byte)'n' || raw[off + 6] != 0 || raw[off + 7] != 0) continue;
+                uint ae = U32(raw, off + 284), an = U32(raw, off + 288), ah = U32(raw, off + 292), aend = U32(raw, off + 296);
+                if (ae != 300) continue;
+                if (!(300 <= an && an <= ah && ah <= aend && aend <= (uint)(n - off))) continue;
+                return off;
+            }
+            return -1;
+        }
+
+        private static OsuBeatmap ParseStepFile(byte[] body, int difficulty)
+        {
+            int bodyLen = body.Length;
             var map = new OsuBeatmap { Keys = 4 };
             map.Bpm = BitConverter.ToSingle(BitConverter.GetBytes(U32(body, 16)), 0);
             map.Level = I16(body, 20 + difficulty * 2);   // levels[3] @ offset 20 (easy/normal/hard)

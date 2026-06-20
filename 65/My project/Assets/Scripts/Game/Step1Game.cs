@@ -395,7 +395,7 @@ namespace Sdo.Game
             // (3) official .gn chart first
             if (!string.IsNullOrEmpty(gnPath) && File.Exists(gnPath))
             {
-                _map = GnChart.Load(File.ReadAllBytes(gnPath), difficulty);
+                _map = GnChart.Load(File.ReadAllBytes(gnPath), difficulty, GnKeyTable.SeedsFor(gnPath));
                 if (_map.HitObjects.Count > 0) { Debug.Log($"[Step1] loaded {Path.GetFileName(gnPath)}: {_map.HitObjects.Count} notes, bpm {_map.Bpm}"); return true; }
             }
             var path = Path.Combine(Application.streamingAssetsPath, "Step1", "chart.osu");
