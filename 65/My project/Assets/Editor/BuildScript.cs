@@ -1,10 +1,12 @@
 #if UNITY_EDITOR
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 // Headless Windows player build, invoked via:
 //   Unity.exe -batchmode -nographics -quit -projectPath "<proj>" -executeMethod BuildScript.BuildWindows
@@ -16,12 +18,34 @@ public static class BuildScript
     private const string ExeName = "dance.exe";
     private const string IconAsset = "Assets/AppIcon.png";
 
+    // Shaders the gameplay/effect/avatar/scene code resolves at RUNTIME via Shader.Find(). Because nothing in a built
+    // scene references them, Unity strips them from the player → Shader.Find returns null → `new Material(null)` throws
+    // (e.g. the 3D dancer + stage backdrop vanish). Force them into the build via Always Included Shaders.
+    private static readonly string[] RequiredShaders =
+    {
+        // built-in
+        "Sprites/Default",
+        "Unlit/Texture",
+        "Unlit/Color",
+        "Unlit/Transparent",
+        "Unlit/Transparent Cutout",
+        "Legacy Shaders/Particles/Additive",
+        "Particles/Standard Unlit",
+        // project (Assets/**/*.shader)
+        "Sdo/EftAdditiveLum",
+        "Sdo/HpGlowClip",
+        "Sdo/PortraitOpaque",
+        "Sdo/UnlitDoubleSided",
+        "Sdo/UnlitInstanced",
+    };
+
     public static void BuildWindows()
     {
         string outDir = ArgValue("-buildOut") ?? RepoPath("Build", "Windows");
         Directory.CreateDirectory(outDir);
 
         ApplyAppIcon();
+        EnsureShadersIncluded();
 
         var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
         if (scenes.Length == 0) scenes = new[] { "Assets/Scenes/SampleScene.unity" };
@@ -52,6 +76,34 @@ public static class BuildScript
 
         PackageData(outDir);
         EditorApplication.Exit(0);
+    }
+
+    // Append every RequiredShaders entry to GraphicsSettings' "Always Included Shaders" list (idempotent) so the
+    // runtime Shader.Find() calls resolve in the built player. Persists to ProjectSettings/GraphicsSettings.asset.
+    private static void EnsureShadersIncluded()
+    {
+        var so = new SerializedObject(GraphicsSettings.GetGraphicsSettings());
+        var arr = so.FindProperty("m_AlwaysIncludedShaders");
+        if (arr == null) { Debug.LogWarning("[Build] m_AlwaysIncludedShaders not found — skipping shader inclusion."); return; }
+
+        var present = new HashSet<Shader>();
+        for (int i = 0; i < arr.arraySize; i++)
+            if (arr.GetArrayElementAtIndex(i).objectReferenceValue is Shader s && s != null) present.Add(s);
+
+        bool changed = false;
+        foreach (var name in RequiredShaders)
+        {
+            var sh = Shader.Find(name);
+            if (sh == null) { Debug.LogWarning($"[Build] shader not found (cannot include): {name}"); continue; }
+            if (present.Contains(sh)) continue;
+            arr.arraySize++;
+            arr.GetArrayElementAtIndex(arr.arraySize - 1).objectReferenceValue = sh;
+            present.Add(sh);
+            changed = true;
+            Debug.Log($"[Build] +always-included shader: {name}");
+        }
+        if (changed) { so.ApplyModifiedProperties(); AssetDatabase.SaveAssets(); }
+        Debug.Log($"[Build] always-included shaders total = {arr.arraySize}");
     }
 
     // Set the standalone player icon from Assets/AppIcon.png (converted from Icon3.ico). The texture must be
