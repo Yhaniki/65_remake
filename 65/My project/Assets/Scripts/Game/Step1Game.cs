@@ -18,15 +18,21 @@ namespace Sdo.Game
     public sealed class Step1Game : MonoBehaviour
     {
         // ---- tunables ----
-        public int healthLevel = 0;
+        // HP system level 0/1/2 (DAT_00674f04+0x75; NOT the chart difficulty). Deltas per SDO_HP_FORMULA.md:
+        // L0 miss -50 (dies in 23), L1 -40 (29), L2 -30 (39). Official observed = 39 misses → level 2
+        // (Perfect +2 / Cool +1 / Bad -5 / Miss -30): lighter miss AND proportionally lighter Bad drain.
+        public int healthLevel = 2;
         public bool autoPlay = true;
         // DEBUG: force a grade on every manual hit (-1 = real timing window). F4 panel selects it.
         public int forcedJudge = -1;
         private static readonly string[] ForceJudgeLabels = { "Real", "Perfect", "Cool", "Bad", "Miss" };
         public float scrollPxPerSec = 320f;
         public float judgeLineY = 70f;        // receptor / hit line Y (design px). UPSCROLL: notes rise to it.
-        public string gnPath = @"H:\65_remake\assets\sdox_offline\music\sdom1435K.gn"; // official chart
-        public string oggPath = @"H:\65_remake\assets\sdox_offline\music\sdom1435.ogg"; // matching song audio
+        // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
+        // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
+        // SdoExtracted.MusicDir (see ResolveDevDefaults).
+        public string gnPath = "";   // official chart (e.g. <MusicDir>/sdom1435K.gn)
+        public string oggPath = "";  // matching song audio (e.g. <MusicDir>/sdom1435.ogg)
         public int difficulty = 2;            // 0=easy 1=normal 2=hard
         // (2) 3D avatar — WOMAN default outfit: body-part .msh files (relative to Extracted/),
         // assembled in shared model space (bind pose). Skeleton/skinning/motion come next.
@@ -97,8 +103,13 @@ namespace Sdo.Game
         private ScoreProcessor _score;
         private HealthProcessor _health;
         private readonly GameplayClock _clock = new GameplayClock();
-        private AudioSource _audio, _sfx;
+        private AudioSource _audio, _sfx, _ambient;
         private readonly Dictionary<string, AudioClip> _seCache = new Dictionary<string, AudioClip>();
+        // Per-scene ambient SE (decompiled SeMgr_PlayVoiceTimed, gated on scene id in Gameplay_Update): only a few
+        // scenes carry an intermittent ambience (sea waves / stadium crowd / underwater bubbles / garden); see
+        // AmbientSeName + TickAmbient. Most scenes are BGM/song-only.
+        private AudioClip _ambientClip;          // loaded ambient clip (null = this scene has no ambience)
+        private float _nextAmbientAt = -1f;      // realtime when the next ambient one-shot may fire (<0 = not armed yet)
         private bool _started, _failed, _ended;
         private double _songStartDspTime, _clockStart = -1;
         // Opening lead-in. While the READY->GO animation plays, _clockStart is parked this far in the future so the
@@ -223,7 +234,7 @@ namespace Sdo.Game
         // hand glow (original = ribbon off Hand+Finger0 bones, decomp FUN_004c2130/004c1ea0).
         public float handTrailWidth = 0.5f; // width multiplier (1 = faithful 2×|Hand→Finger0|); 0.5 tuned to match the original on-screen
         public float handTrailTime = 0.24f; // lifetime (s); original = 8 segments × 30ms
-        private bool _showDebugUI = true;
+        private bool _showDebugUI = false;   // F4 toggles the tuning panel; hidden by default
         private Vector2 _dbgScroll;          // scroll for the tuning sliders so they never push the playtest controls off-panel
         private int _dbgTab;                 // F4 panel tab: 0=Play, 1=Combo, 2=Stage — keeps each group's sliders roomy
         private static readonly string[] DbgTabs = { "Play", "Combo", "Stage", "Emoji", "Result", "Banner" };
@@ -304,6 +315,7 @@ namespace Sdo.Game
 
         private void Start()
         {
+            ResolveDevDefaults();
             _cam = Camera.main ?? new GameObject("Main Camera") { tag = "MainCamera" }.AddComponent<Camera>();
             SdoLayout.SetupCamera(_cam);
             LoadArt();
@@ -320,11 +332,24 @@ namespace Sdo.Game
             RefreshRanking();   // initial roster/rank (rank 1/N) before the first score commit
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
+            _ambient = gameObject.AddComponent<AudioSource>();
+            var ambName = AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
+            if (!string.IsNullOrEmpty(ambName)) StartCoroutine(LoadAmbientCo(ambName));
             // Enter on the crane with no note board: hold the track hidden while the opening shot flies in, then
             // OpeningSequence() reveals it with READY. Only when there's actually a 3D crane to watch.
             if (use3dCamera && _camReady && openingIntroSec > 0f) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
             if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f; }   // idle dancer, fixed cam, hidden track
             StartCoroutine(LoadAndPlayAudio());
+        }
+
+        // Standalone-dev convenience: if no chart/audio was assigned (i.e. not launched via FrontendApp), point at a
+        // default song under the resolved music tree. No-op once FrontendApp has set gnPath. Keeps absolute paths out.
+        private void ResolveDevDefaults()
+        {
+            if (!string.IsNullOrEmpty(gnPath)) return;
+            var music = SdoExtracted.MusicDir;
+            gnPath = Path.Combine(music, "sdom1435K.gn");
+            oggPath = Path.Combine(music, "sdom1435.ogg");
         }
 
         // ---- SE playback (shipped SE/*.wav) ----
@@ -343,6 +368,50 @@ namespace Sdo.Game
                 _seCache[name] = clip;
             }
             if (clip != null && _sfx != null) _sfx.PlayOneShot(clip);
+        }
+
+        // ---- per-scene ambient SE (decompiled Gameplay_Update PlayVoiceTimed switch on scene id) ----
+        // Faithful to SeMgr_PlayVoiceTimed: the ambience is NOT a loop — it plays ONCE when the gap timer elapses
+        // and the channel is free, then re-arms the next gap = clip length + rand(0..29)s. Only these five scene ids
+        // carry an ambience; every other scene is BGM/song-only. (See memory sdo-se-soundbank.)
+        private static string AmbientSeName(int mapId)
+        {
+            switch (mapId)
+            {
+                case 4:  return "SE_0030";     // scn0004 sea/beach — waves (~15s)
+                case 12: return "VOICE_0017";  // scn0012 fifa stadium (day)   — crowd cheer
+                case 13: return "VOICE_0017";  // scn0013 fifa stadium (night) — crowd cheer
+                case 14: return "SE_0031";     // scn0014 haidi/underwater — bubbles (~8.6s)
+                case 15: return "SE_0033";     // scn0015 garden — nature
+                default: return null;
+            }
+        }
+
+        private IEnumerator LoadAmbientCo(string name)
+        {
+            var path = Path.Combine(SdoExtracted.SeDir, name + ".wav");
+            if (!File.Exists(path)) { Debug.LogWarning("[ambient] missing " + path); yield break; }
+            using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.WAV))
+            {
+                yield return req.SendWebRequest();
+                if (req.result == UnityWebRequest.Result.Success) _ambientClip = DownloadHandlerAudioClip.GetContent(req);
+                else Debug.LogWarning("[ambient] load fail: " + req.error);
+            }
+            // Arm the first play after a short random gap (the engine's timer first fires once an interval elapses, so
+            // it never blasts the moment the scene opens; the READY/GO intro gets a clear beat first).
+            if (_ambientClip != null) _nextAmbientAt = Time.realtimeSinceStartup + UnityEngine.Random.Range(3f, 12f);
+        }
+
+        // One frame of the intermittent ambience. Runs only during live play — not in observe / avatar-debug, and not
+        // once the song has ended (the result sequence is silent except its own jingles). Uses wall-clock (realtime),
+        // matching the original's ms-paced HUD/effect timers.
+        private void TickAmbient()
+        {
+            if (_ambientClip == null || _ambient == null) return;
+            if (!_started || _ended || observeBurstMode || avatarDebug) return;
+            if (_nextAmbientAt < 0f || Time.realtimeSinceStartup < _nextAmbientAt || _ambient.isPlaying) return;
+            _ambient.PlayOneShot(_ambientClip);
+            _nextAmbientAt = Time.realtimeSinceStartup + _ambientClip.length + UnityEngine.Random.Range(0f, 29f);
         }
 
         // ---------- art (from Extracted) ----------
@@ -395,7 +464,9 @@ namespace Sdo.Game
             // OWN instance of this template (see SpawnBurst) so every burst animates independently.
             var sh = Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Sprites/Default");
             _addMat = new Material(sh);
-            _hpGlowMat = new Material(sh);  // HP glow gets its own additive instance (tint driven by hpGlowBright; never shared so its _MainTex stays this glow's frame)
+            // HP glow gets its OWN clip-capable additive instance: same look as Particles/Additive, plus a world-X
+            // scissor (Sdo/HpGlowClip) so a low-HP flash can't spill past the bar frame. Falls back to plain additive.
+            _hpGlowMat = new Material(Shader.Find("Sdo/HpGlowClip") ?? sh);
         }
 
         private bool LoadChart()
@@ -674,11 +745,12 @@ namespace Sdo.Game
             var songTitle = SongCatalog.Title(gnPath);
             if (string.IsNullOrEmpty(songTitle)) songTitle = _map.Title;
             if (string.IsNullOrEmpty(songTitle)) songTitle = "song";
-            _musicName = NewText("MusicName", 80, 585, 13, Color.white); _musicName.text = songTitle;
+            // song name / LV / time value text — white, two sizes smaller (13 -> 11) per request.
+            _musicName = NewText("MusicName", 80, 585, 11, Color.white); _musicName.text = songTitle;
             _songTitle = songTitle;   // keep for the result panel
-            _lvText = NewText("MusicLev", 240, 585, 13, Color.white); _lvText.text = _map.Level.ToString();
+            _lvText = NewText("MusicLev", 240, 585, 11, Color.white); _lvText.text = _map.Level.ToString();
             int tot0 = (int)Math.Round(_totalMs / 1000.0);   // initial: "--:--  [total]"
-            _timeText = NewText("MusicTime", 336, 585, 13, Color.white); _timeText.text = FullWidth($"- : -    {tot0 / 60} : {tot0 % 60:00}");
+            _timeText = NewText("MusicTime", 336, 585, 11, Color.white); _timeText.text = FullWidth($"- : -    {tot0 / 60} : {tot0 % 60:00}");
             _info = NewText("Info", 610, 8, 10, Color.white);
             _fpsText = NewText("Fps", 6, 9, 11, new Color(0.5f, 1f, 0.5f, 1f));   // debug FPS (top-left)
             _readyGo = NewSR("ReadyGo", null, 50); _readyGo.enabled = false;
@@ -1027,76 +1099,137 @@ namespace Sdo.Game
         }
 
         // An SDO "mapobj": a stage prop (HRC skeleton + MSH skin + MOT motion, exactly like an avatar) placed at
-        // fixed transforms. SCN0009's switch-case loads GUATAN x4 — positions/scales from the decompiled
-        // Scene_LoadBackground (case 9); see docs/reverse-engineering/SDO_SCENE_MAPOBJ_TABLE.json.
+        // fixed transforms. WHICH props a scene mounts (and where) is the decompiled Scene_LoadBackground table,
+        // keyed by scene folder — see SceneMapobjCatalog (generated from SDO_SCENE_MAPOBJ_TABLE.json). Switching the
+        // selected stage now switches its props too: e.g. SCN0009 -> GUATAN x4, SCN0004 -> sea/beach/boat group.
         private struct MapobjInstance { public Vector3 Pos; public float Scale; }
+
+        // "SCENE/SCN0009" -> "SCN0009" (the catalog key); tolerates trailing or back slashes.
+        private string SceneFolder()
+        {
+            var p = (scenePath ?? "").Replace('\\', '/').TrimEnd('/');
+            int slash = p.LastIndexOf('/');
+            return slash >= 0 ? p.Substring(slash + 1) : p;
+        }
 
         private void TryLoadMapobjs()
         {
-            var guatan = new[]
+            foreach (var g in SceneMapobjCatalog.ForFolder(SceneFolder()))
             {
-                new MapobjInstance { Pos = new Vector3(-45.79f, 0f,   0f), Scale = 1f },
-                new MapobjInstance { Pos = new Vector3(129.21f, 0f, -83f), Scale = 1f },
-                new MapobjInstance { Pos = new Vector3(-95.79f, 0f,  50f), Scale = 0.65f },
-                new MapobjInstance { Pos = new Vector3(179.21f, 0f, -83f), Scale = 0.65f },
-            };
-            AddMapobj("SCENE/MAPOBJ/GUATAN", "GUATAN", guatan);
+                var insts = new MapobjInstance[g.Instances.Length];
+                for (int i = 0; i < insts.Length; i++)
+                {
+                    var p = g.Instances[i];
+                    insts[i] = new MapobjInstance { Pos = new Vector3(p.X, p.Y, p.Z), Scale = p.Scale };
+                }
+                AddMapobj("SCENE/MAPOBJ/" + g.Folder, g.Msh, g.Hrc, g.Mot, insts);
+            }
         }
 
-        // Build one mapobj group: load HRC+MOT once (read-only, shared) and re-parse the MSH per instance so each
-        // gets its own Mesh to CPU-skin into. Animation auto-loops the .mot (no DPS). Placed on the stage layer at
-        // native SDO coords (the loaders keep verbatim coords, same as the stage mesh + avatar).
-        private void AddMapobj(string relDir, string baseName, MapobjInstance[] instances)
+        // Build one mapobj group ONCE, then place it at every instance transform. The MSH is parsed a single time
+        // and the skinned meshes are SHARED across instances: a STATIC prop (no .mot) is skinned to its bind pose
+        // once and then frozen (its SdoAvatar disables itself — zero per-frame work); an ANIMATED prop is driven by
+        // ONE SdoAvatar (instance 0) whose looping .mot updates the shared meshes, and the other instances simply
+        // render those same meshes at their own transform. So N copies cost 1 parse + (1 or 0) skin/frame + N draws,
+        // not N×everything — this is what keeps the dense scenes cheap (box ×256, deng ×72, the room/saloon prop
+        // walls). Lockstep copies look identical to the original (every instance plays the same clip in phase).
+        // Materials/textures are read-only, so one set per submesh is shared too. Stage layer, native SDO coords.
+        private void AddMapobj(string relDir, string mshFile, string hrcFile, string motFile, MapobjInstance[] instances)
         {
+            if (instances == null || instances.Length == 0) return;
             var dir = Path.Combine(SdoExtracted.Root, relDir.Replace('/', Path.DirectorySeparatorChar));
-            var mshPath = Path.Combine(dir, baseName + ".MSH");
+            var mshPath = Path.Combine(dir, mshFile);
             if (!File.Exists(mshPath)) { Debug.LogWarning("[mapobj] missing " + mshPath); return; }
-            var mshBytes = File.ReadAllBytes(mshPath);
-            HrcLoader hrc = LoadAsset(relDir + "/" + baseName + ".HRC", b => HrcLoader.Load(b));
-            MotLoader mot = LoadAsset(relDir + "/" + baseName + ".MOT", b => MotLoader.Load(b));
+            string baseName = Path.GetFileNameWithoutExtension(mshFile);   // GameObject-name / log label
+            var r = MshLoader.Load(File.ReadAllBytes(mshPath));            // parse ONCE; every instance shares these meshes
+            if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[mapobj] parse fail " + baseName); return; }
+            HrcLoader hrc = LoadAsset(relDir + "/" + hrcFile, b => HrcLoader.Load(b));
+            // motFile may be null (static prop — e.g. SCN0010 house): skinned to the bind pose once, then frozen.
+            MotLoader mot = string.IsNullOrEmpty(motFile) ? null : LoadAsset(relDir + "/" + motFile, b => MotLoader.Load(b));
             var fallbackCol = new Color(0.72f, 0.70f, 0.66f);
-            int n = 0;
-            foreach (var inst in instances)
+
+            // shared materials, one set per submesh (built once; reused by every instance). GPU-instancing
+            // capable (Sdo/UnlitInstanced) so a group's copies batch into instanced draws on the GPU.
+            var subMats = new List<Material[]>(r.Submeshes.Count);
+            foreach (var sub in r.Submeshes)
             {
-                var r = MshLoader.Load(mshBytes);
-                if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[mapobj] parse fail " + baseName); return; }
-                var parent = new GameObject($"{baseName}_{n++}");
-                parent.transform.position = inst.Pos;
-                parent.transform.localScale = Vector3.one * inst.Scale;
-                SdoAvatar avatar = null;
-                if (hrc != null) { avatar = parent.AddComponent<SdoAvatar>(); avatar.Setup(hrc, mot); }   // null DPS -> auto-loops .mot
-                foreach (var sub in r.Submeshes)
+                Material[] mats;
+                // per-submesh material (cloth/skin split like the avatar): multi-range submesh -> one material per range
+                if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
                 {
-                    var go = new GameObject(baseName + "_mesh");
-                    go.transform.SetParent(parent.transform, false);
-                    go.AddComponent<MeshFilter>().mesh = sub.Mesh;
-                    var mr = go.AddComponent<MeshRenderer>();
-                    // per-submesh material (cloth/skin split like the avatar): multi-range submesh -> one material per range
-                    if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
+                    mats = new Material[sub.Ranges.Count];
+                    for (int s = 0; s < sub.Ranges.Count; s++)
                     {
-                        var mats = new Material[sub.Ranges.Count];
-                        for (int s = 0; s < sub.Ranges.Count; s++)
-                        {
-                            int a = sub.Ranges[s].Attrib;
-                            string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                            Texture2D t = ResolveDds(dir, nm);
-                            mats[s] = t != null ? new Material(Shader.Find("Unlit/Texture")) { mainTexture = t }
-                                                : new Material(Shader.Find("Unlit/Color")) { color = fallbackCol };
-                        }
-                        mr.sharedMaterials = mats;
+                        int a = sub.Ranges[s].Attrib;
+                        string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
+                        mats[s] = NewMapobjMat(ResolveDds(dir, nm), fallbackCol);
                     }
-                    else
+                }
+                else
+                {
+                    mats = new[] { NewMapobjMat(ResolveDds(dir, sub.Dds), fallbackCol) };
+                }
+                subMats.Add(mats);
+            }
+
+            bool animated = hrc != null && mot != null;
+            for (int idx = 0; idx < instances.Length; idx++)
+            {
+                var parent = new GameObject($"{baseName}_{idx}");
+                parent.transform.position = instances[idx].Pos;
+                parent.transform.localScale = Vector3.one * instances[idx].Scale;
+                if (idx == 0)
+                {
+                    // driver: owns the skinned meshes (+ the SdoAvatar that animates them, null DPS -> auto-loops .mot)
+                    SdoAvatar avatar = hrc != null ? parent.AddComponent<SdoAvatar>() : null;
+                    if (avatar != null) avatar.Setup(hrc, mot);
+                    int si = 0;
+                    foreach (var sub in r.Submeshes)
                     {
-                        Texture2D tex = ResolveDds(dir, sub.Dds);
-                        mr.sharedMaterial = tex != null ? new Material(Shader.Find("Unlit/Texture")) { mainTexture = tex }
-                                                        : new Material(Shader.Find("Unlit/Color")) { color = fallbackCol };
+                        AddMapobjMeshChild(parent.transform, baseName + "_mesh", sub.Mesh, subMats[si++]);
+                        if (avatar != null && sub.BindVerts != null && sub.BoneHrc != null)
+                            avatar.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
                     }
-                    if (avatar != null && sub.BindVerts != null && sub.BoneHrc != null)
-                        avatar.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
+                    // static prop: pose the bind frame once, then stop updating (clones share the frozen result).
+                    if (avatar != null && !animated) { avatar.FeetYAt(0f); avatar.enabled = false; }
+                }
+                else
+                {
+                    // clone: render the SAME (driver-skinned) meshes at this transform — no avatar, no extra skinning
+                    int si = 0;
+                    foreach (var sub in r.Submeshes) AddMapobjMeshChild(parent.transform, baseName + "_mesh", sub.Mesh, subMats[si++]);
                 }
                 SetLayerRecursive(parent, SceneLayer);
             }
-            Debug.Log($"[mapobj] {baseName}: {instances.Length} instances, {(hrc != null ? hrc.Names.Length + " bones" : "static")}, mot={(mot != null ? "yes" : "no")}");
+            Debug.Log($"[mapobj] {baseName}: {instances.Length}× {(animated ? "animated(shared)" : hrc != null ? "static-skinned" : "static")}, {(hrc != null ? hrc.Names.Length + " bones" : "no skel")}");
+        }
+
+        // One GPU-instancing-capable unlit material for a mapobj submesh (Cull Back, texture × tint), so a group's
+        // shared-mesh copies batch into instanced GPU draws. Falls back to the built-in Unlit shaders if the custom
+        // one isn't present (then no instancing, but identical look). tex==null -> flat fallback colour.
+        private static Material NewMapobjMat(Texture2D tex, Color fallbackCol)
+        {
+            var inst = Shader.Find("Sdo/UnlitInstanced");
+            if (inst != null)
+            {
+                var m = new Material(inst) { enableInstancing = true };
+                if (tex != null) m.mainTexture = tex; else m.color = fallbackCol;   // _MainTex defaults to white -> tint shows
+                return m;
+            }
+            return tex != null ? new Material(Shader.Find("Unlit/Texture")) { mainTexture = tex }
+                               : new Material(Shader.Find("Unlit/Color")) { color = fallbackCol };
+        }
+
+        // One renderer for a mapobj submesh: a child GameObject with a MeshFilter pointing at the (possibly shared)
+        // mesh and a MeshRenderer with the shared material set. Used for both the driver and its clone instances.
+        private static void AddMapobjMeshChild(Transform parent, string name, Mesh mesh, Material[] mats)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.AddComponent<MeshFilter>().mesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            if (mats != null && mats.Length == 1) mr.sharedMaterial = mats[0];
+            else if (mats != null && mats.Length > 1) mr.sharedMaterials = mats;
         }
 
         private void TryLoadScene()
@@ -1520,6 +1653,7 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.Backslash)) { if (Time.timeScale > 0f) Time.timeScale = 0f; else SetTimeScale(_timeScale); }  // \ pause/resume
             if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) SetTimeScale(1f);   // = reset 1×
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
+            TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); SdoLayout.PlaceTopLeft(_board, boardX, 0f, 10f); }   // live board opacity + X nudge
             // F9: toggle the stage backdrop V-flip (safety net — the RenderTexture vertical convention is auto-gated
             // on graphicsUVStartsAtTop, but if the stage still shows upside-down on this machine, F9 flips it).
@@ -1728,7 +1862,8 @@ namespace Sdo.Game
                 }
                 r.Rank = i + 1; r.Name = p.Name; r.IsLocal = p.IsLocal;
                 r.FullCombo = (r.Bad + r.Miss) == 0;
-                r.Grade = Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
+                // HP-out (failed) → 評分 F for the local player; everyone else by accuracy band.
+                r.Grade = (p.IsLocal && _failed) ? "F" : Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
                 rows[i] = r;
             }
             return rows;
@@ -2917,6 +3052,12 @@ namespace Sdo.Game
                 {
                     float t = 0.5f * hpGlowBright;   // 0.5 = old stock; rgb keeps brightening past 1 (additive, unclamped)
                     if (_hpGlowMat.HasProperty("_TintColor")) _hpGlowMat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t)));
+                    // Scissor the glow to the bar's frame (world X) so the low-HP flash is CUT at either end, not spilled.
+                    if (_hpGlowMat.HasProperty("_ClipMinX"))
+                    {
+                        _hpGlowMat.SetFloat("_ClipMinX", SdoLayout.WorldX(HpPos.x));
+                        _hpGlowMat.SetFloat("_ClipMaxX", SdoLayout.WorldX(HpPos.x + HpSize.x));
+                    }
                     _hpGlow.sharedMaterial = _hpGlowMat;
                 }
                 // HpEft sits at the HP fill's LEADING EDGE (decompiled HpEft.x = (HP+150)/1150 * barW + base), native
