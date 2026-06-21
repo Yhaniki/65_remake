@@ -39,7 +39,7 @@ namespace Sdo.Game
 
         private Camera _cam;
         private GameObject _root;
-        private GameObject _bannerWin, _bannerLose, _bannerOver;   // _bannerOver = GAME OVER (RANK/7.png) on HP-out
+        private GameObject _bannerWin, _bannerLose;
         private readonly List<GameObject> _rowRoots = new List<GameObject>();
         private SpriteRenderer _okBtn, _saveBtn;
         private float _showStart = -1f;
@@ -47,8 +47,10 @@ namespace Sdo.Game
         private bool[] _rowSnd;
         // result sequence flags/timers: rows (SE_0020, 500ms apart) → EXP/G roll (SE_0021) → win/lose banner zoom (SE_0022)
         private bool _expSnd, _bannerShown, _bannerLocalWon, _gameOver;
-        private float _bannerStart, _overImgW = 50f;
-        public float gameOverScale = 4f, gameOverY = 230f;   // GAME OVER: final scale + centre Y (zoom from screen-width)
+        private float _bannerStart;
+        // GAME OVER (RANK/7.png) sprite — drawn IN the failed (local) player's rank column as a normal row child, so it
+        // slides in with that row (no separate banner / animation) and replaces their rank number.
+        private Sprite _overSprite;
 
         // digit strips + badges (loaded once)
         private Sprite[] _num8, _num3, _scoreNum, _scoreNumS;
@@ -111,14 +113,13 @@ namespace Sdo.Game
             _gradeSprites["B"]  = SdoExtracted.LoadImage(dir, "02/B2.PNG");
             _gradeSprites["C"]  = SdoExtracted.LoadImage(dir, "02/C2.PNG");
             _gradeSprites["D"]  = SdoExtracted.LoadImage(dir, "02/D2.PNG");
+            _gradeSprites["F"]  = SdoExtracted.LoadImage(dir, "02/F0.PNG");   // HP-out fail grade
 
             // win/lose banners — single sprites cropped from BALANCE.png (Statis28 = win @ design (487,38), Statis30 = lose @ (488,38)).
             _bannerWin = BuildBanner("BannerWin", dir, "Statis28.an", 487, 38);
             _bannerLose = BuildBanner("BannerLose", dir, "Statis30.an", 488, 38);
-            // GAME OVER (RANK/7.png) — shown CENTRED when HP runs out, instead of the win/lose banner.
-            var overSpr = SdoExtracted.LoadImage(dir, "RANK/7.PNG");
-            _bannerOver = BuildBannerCentered("BannerOver", overSpr, 400f, gameOverY);
-            if (overSpr) _overImgW = overSpr.bounds.size.x;
+            // GAME OVER (RANK/7.png) — drawn in the failed player's rank column (see BuildRow), not a separate banner.
+            _overSprite = SdoExtracted.LoadImage(dir, "RANK/7.PNG");
 
             // buttons (OK = Statis25, save-record = Statis22), bottom-right.
             _okBtn = NewSR("OkBtn", SdoExtracted.LoadAn1(dir, "Statis25.an"), OrderBtn); Place(_okBtn, 694, 493);
@@ -140,18 +141,6 @@ namespace Sdo.Game
             Place(sr, x, y);
             go.transform.position = sr.transform.position;        // root at the banner centre
             sr.transform.SetParent(go.transform, true);
-            go.SetActive(false);
-            return go;
-        }
-
-        // A banner whose CENTRE sits at design (cx,cy) — used for the centred GAME OVER image. Scale pivots at the centre.
-        private GameObject BuildBannerCentered(string name, Sprite spr, float cx, float cy)
-        {
-            var go = new GameObject(name); go.transform.SetParent(_root.transform, false);
-            go.transform.position = SdoLayout.ToWorld(cx, cy, 0f);
-            var sr = NewSR(name + "Img", spr, OrderBanner);
-            sr.transform.SetParent(go.transform, false);
-            sr.transform.localPosition = Vector3.zero;            // sprite (centre-pivot) sits at the go origin = (cx,cy)
             go.SetActive(false);
             return go;
         }
@@ -181,11 +170,11 @@ namespace Sdo.Game
             // bottom reward block (local player): 經驗 EXP and G幣 coins.
             BuildRewardBlock(dir, expGained, coinsGained);
 
-            // banner is the LAST beat (after rows + EXP) — keep all hidden for now; Tick reveals the right one.
+            // win/lose banner is the LAST beat (after rows + EXP) — hidden now; Tick reveals it. GAME OVER has no banner:
+            // it rides along inside the failed player's row (drawn in BuildRow), so there's nothing to reveal here.
             _bannerLocalWon = localWon;
             if (_bannerWin) _bannerWin.SetActive(false);
             if (_bannerLose) _bannerLose.SetActive(false);
-            if (_bannerOver) _bannerOver.SetActive(false);
 
             _root.SetActive(true);
             Visible = true;
@@ -201,10 +190,18 @@ namespace Sdo.Game
             var rowRoot = new GameObject("Row" + r.Rank); rowRoot.transform.SetParent(_root.transform, false);
             _rowRoots.Add(rowRoot);
 
-            // rank badge (rank/<n>.png) at (0, y-8) — STATISTIC rank NumLabel y=-8
-            if (_rankBadge.TryGetValue(r.Rank, out var badge) == false)
-            { badge = SdoExtracted.LoadImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG"); _rankBadge[r.Rank] = badge; }
-            if (badge) Child(rowRoot, NewSR("Rank", badge, OrderRow), 0, y - 8);
+            // rank badge (rank/<n>.png) at (0, y-8) — STATISTIC rank NumLabel y=-8. The failed (local) player shows the
+            // GAME OVER graphic in this slot instead of their rank number; either way it's a row child → slides in with the row.
+            if (r.IsLocal && _gameOver)
+            {
+                if (_overSprite) Child(rowRoot, NewSR("GameOver", _overSprite, OrderRow), 0, y - 8);
+            }
+            else
+            {
+                if (_rankBadge.TryGetValue(r.Rank, out var badge) == false)
+                { badge = SdoExtracted.LoadImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG"); _rankBadge[r.Rank] = badge; }
+                if (badge) Child(rowRoot, NewSR("Rank", badge, OrderRow), 0, y - 8);
+            }
 
             // nick — BOLD PURE WHITE, NO shadow/outline, vertically CENTRED on the stat numbers (官方). F4-tunable.
             var nick = TextStyles.NewLabel("Nick", TextStyles.Style.HeadName, OrderRowText, nickSize, TextAnchor.MiddleLeft);
@@ -344,16 +341,19 @@ namespace Sdo.Game
             if (!_expSnd && el >= rowsInAt) { _expSnd = true; _playSe?.Invoke("SE_0021"); }
             if (_rewardArmed) { _expTotal?.Tick(Time.time); _gTotal?.Tick(Time.time); }
 
-            // (3) LAST: reveal the result banner — GAME OVER (centred) if HP failed, else YouWin/YouLose — zooming from
-            // ~screen-width down to its size (SE_0022).
-            float bannerAt = rowsInAt + ExpHoldSec;
-            var banner = _gameOver ? _bannerOver : (_bannerLocalWon ? _bannerWin : _bannerLose);
-            if (!_bannerShown && el >= bannerAt)
+            // (3) LAST: reveal the YouWin / YouLose banner, zooming from ~screen-width down to its size (SE_0022).
+            // GAME OVER has NO banner beat — it already slid in with the failed player's row (BuildRow), so skip this.
+            if (!_gameOver)
             {
-                _bannerShown = true; _bannerStart = Time.time; _bannerStatic = false; _playSe?.Invoke("SE_0022");
-                if (banner) banner.SetActive(true);
+                float bannerAt = rowsInAt + ExpHoldSec;
+                var banner = _bannerLocalWon ? _bannerWin : _bannerLose;
+                if (!_bannerShown && el >= bannerAt)
+                {
+                    _bannerShown = true; _bannerStart = Time.time; _bannerStatic = false; _playSe?.Invoke("SE_0022");
+                    if (banner) banner.SetActive(true);
+                }
+                if (_bannerShown) UpdateBanner(banner);
             }
-            if (_bannerShown) UpdateBanner(banner);
 
             // OK (Enter / click) confirms; save-record is a P1 stub (no-op for now)
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Escape)) { OnConfirm?.Invoke(); return; }
@@ -364,19 +364,12 @@ namespace Sdo.Game
             }
         }
 
-        // Position + scale the active result banner. Win/Lose use the F4 bannerX/Y/finalScale/animSec (live);
-        // GAME OVER keeps its centred build position + gameOverScale. Zooms from ~screen-width unless held static (preview).
+        // Position + scale the active WIN/LOSE banner (live F4 bannerX/Y/finalScale/animSec). Zooms from ~screen-width
+        // unless held static (preview). GAME OVER no longer uses this — it's a plain row child now.
         private void UpdateBanner(GameObject banner)
         {
             if (!banner) return;
             float t = _bannerStatic ? _bannerStaticT : EaseOut(Mathf.Clamp01((Time.time - _bannerStart) / Mathf.Max(0.01f, bannerAnimSec)));
-            if (_gameOver)
-            {
-                // GAME OVER: centred (build position), zoom screen-width → gameOverScale.
-                float ovStart = SdoLayout.Width / Mathf.Max(1f, _overImgW);
-                banner.transform.localScale = Vector3.one * Mathf.Lerp(ovStart, gameOverScale, t);
-                return;
-            }
             // WIN/LOSE: slide the (tunable) START centre → FIXED END centre, scaling the (tunable) START size → 1.
             banner.transform.position = Vector3.Lerp(SdoLayout.ToWorld(bannerStartX, bannerStartY, 0f),
                                                      SdoLayout.ToWorld(BannerEndX, BannerEndY, 0f), t);
@@ -393,7 +386,6 @@ namespace Sdo.Game
             _gameOver = false; _bannerLocalWon = win; _bannerShown = true;
             if (_bannerWin) _bannerWin.SetActive(win);
             if (_bannerLose) _bannerLose.SetActive(!win);
-            if (_bannerOver) _bannerOver.SetActive(false);
         }
 
         public void Hide() { if (_root) _root.SetActive(false); Visible = false; }

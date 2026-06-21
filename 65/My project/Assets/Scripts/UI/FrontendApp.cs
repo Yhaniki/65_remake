@@ -122,8 +122,8 @@ namespace Sdo.UI
             var s = _ctx.Session;
             if (!s.HasSong) { Toast.Show(LocalizationManager.Get("room.need_song")); return; }
 
-            string musicDir = Path.Combine(Path.GetDirectoryName(SdoExtracted.Root) ?? SdoExtracted.Root, "music");
-            string gnPath = Path.Combine(musicDir, s.SongGn);                           // e.g. .../music/sdom1197k.gn
+            string musicDir = SdoExtracted.MusicDir;                                    // built: DATA/MUSIC; dev: sdox_offline/music
+            string gnPath = Path.Combine(musicDir, s.SongGn);                           // e.g. .../MUSIC/sdom1197k.gn
             string oggBase = Regex.Match(s.SongGn ?? "", @"sdom\d+").Value;             // chart letter (k/t) dropped: sdom1197k -> sdom1197
             string oggPath = oggBase.Length > 0 ? Path.Combine(musicDir, oggBase + ".ogg") : null;
 

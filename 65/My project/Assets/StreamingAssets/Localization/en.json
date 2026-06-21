@@ -204,6 +204,10 @@
    "v": "Lv {0}"
   },
   {
+   "k": "songselect.length",
+   "v": "Length {0}"
+  },
+  {
    "k": "songselect.page",
    "v": "Page {0}/{1}"
   },

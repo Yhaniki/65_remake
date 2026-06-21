@@ -5,8 +5,9 @@ using UnityEngine;
 namespace Sdo.Game
 {
     /// <summary>
-    /// Loads original SDO art straight from the extracted game tree at runtime
-    /// (H:\...\sdox_offline\Extracted). Understands the ".an" container format:
+    /// Loads original SDO art straight from the game data tree at runtime (see <see cref="Root"/> for how the
+    /// tree is located: DATA beside the built exe, or the repo-relative extracted tree in the editor).
+    /// Understands the ".an" container format:
     /// plain text, one line = one animation frame = a .png filename relative to the
     /// .an's own folder, with an optional trailing " (x,y,w,h)" sub-rectangle crop.
     /// See doc/GAMEPLAY_SCREEN_ANATOMY.md.
@@ -16,8 +17,61 @@ namespace Sdo.Game
     /// </summary>
     public static class SdoExtracted
     {
-        /// <summary>Absolute root of the extracted SDO assets (override before first use if needed).</summary>
-        public static string Root = @"H:\65_remake\assets\sdox_offline\Extracted";
+        // ---- root resolution (NO hardcoded absolute path) ----
+        // Two on-disk layouts are supported transparently:
+        //   • Built player:  <exeDir>/DATA   (all game data lives under one DATA folder beside the exe).
+        //                    Application.dataPath == <exeDir>/<exe>_Data, so the exe dir is its parent.
+        //   • Editor / dev:  <repo>/assets/sdox_offline/Extracted  (derived repo-relative from Application.dataPath,
+        //                    which is <repo>/65/My project/Assets — three levels up = repo root).
+        private static string _root;
+
+        /// <summary>Root of the SDO game data tree. Resolves lazily on first use; settable for tests/overrides.</summary>
+        public static string Root
+        {
+            get { return _root ?? (_root = ResolveRoot()); }
+            set { _root = value; }
+        }
+
+        private static string ResolveRoot()
+        {
+            // 1) Built player: a DATA folder beside the exe.
+            try
+            {
+                var exeDir = Directory.GetParent(Application.dataPath)?.FullName;
+                if (exeDir != null)
+                {
+                    var data = Path.Combine(exeDir, "DATA");
+                    if (Directory.Exists(data)) return data;
+                }
+            }
+            catch { /* Application.dataPath unavailable in some contexts — fall through */ }
+
+            // 2) Editor / dev: repo-relative extracted tree.
+            try
+            {
+                var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
+                var ex = Path.Combine(repo, "assets", "sdox_offline", "Extracted");
+                if (Directory.Exists(ex)) return ex;
+            }
+            catch { /* ignore */ }
+
+            // 3) Last resort: assume the built layout even if not present yet.
+            try { return Path.Combine(Directory.GetParent(Application.dataPath)?.FullName ?? ".", "DATA"); }
+            catch { return "DATA"; }
+        }
+
+        /// <summary>Directory of the (built) exe — parent of Application.dataPath; "." if unavailable.</summary>
+        private static string ExeDir
+        {
+            get { try { return Directory.GetParent(Application.dataPath)?.FullName ?? "."; } catch { return "."; } }
+        }
+
+        /// <summary>First of <paramref name="candidates"/> that exists on disk, else the first candidate.</summary>
+        private static string FirstDir(params string[] candidates)
+        {
+            foreach (var c in candidates) { try { if (Directory.Exists(c)) return c; } catch { } }
+            return candidates.Length > 0 ? candidates[0] : Root;
+        }
 
         /// <summary>UI/GAMEPLAY folder holding the gameplay HUD .an files.</summary>
         public static string GameplayUiDir => Path.Combine(Root, "UI", "GAMEPLAY");
@@ -33,8 +87,20 @@ namespace Sdo.Game
         /// and the bottom G幣/EXP digit strips (score_num / score_numS / Num8 / Num3).</summary>
         public static string ResultStatisDir => Path.Combine(StatisDir, "STATISTIC");
 
-        /// <summary>Shipped sound-effects folder (sdox_offline/SE), sibling of Extracted.</summary>
-        public static string SeDir => Path.Combine(Path.GetDirectoryName(Root) ?? Root, "SE");
+        /// <summary>Sound-effects folder. Built: DATA/SE; dev: sdox_offline/SE (sibling of Extracted).</summary>
+        public static string SeDir => FirstDir(Path.Combine(Root, "SE"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "SE"));
+
+        /// <summary>Song chart/audio folder. Built: DATA/MUSIC (uppercase); dev: sdox_offline/music (sibling).</summary>
+        public static string MusicDir => FirstDir(Path.Combine(Root, "MUSIC"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "music"));
+
+        /// <summary>Background-music folder. Built: DATA/BGM; dev: sdox_offline/BGM (sibling).</summary>
+        public static string BgmDir => FirstDir(Path.Combine(Root, "BGM"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "BGM"));
+
+        /// <summary>Replay save folder (under DATA). Created on demand by callers.</summary>
+        public static string ReplayDir => Path.Combine(Root, "REPLAY");
+
+        /// <summary>Screenshot output folder, kept beside the exe (NOT under DATA). Editor: repo-root/screensave.</summary>
+        public static string ScreensaveDir => Path.Combine(ExeDir, "screensave");
 
         // ---- .an parsing (pure; testable without Unity) ----
 

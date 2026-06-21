@@ -60,5 +60,35 @@ namespace Sdo.Tests
         [Test]
         public void Entry_Missing_Bpm_Defaults_Negative()
             => Assert.Less(Sample()[1].bpm, 0f);
+
+        // ---- Curate: the browse list shows only the 'k' chart of each sdomNNNNk/t.gn pair ----
+
+        private static List<SongCatalog.Entry> Paired() => new List<SongCatalog.Entry>
+        {
+            new SongCatalog.Entry { gn = "sdom1197k.gn", fileId = 11197, title = "危險的演出" },
+            new SongCatalog.Entry { gn = "sdom1197t.gn", fileId = 1197,  title = "危險的演出" },
+            new SongCatalog.Entry { gn = "sdom1198k.gn", fileId = 11198, title = "Cross" },
+            new SongCatalog.Entry { gn = "sdom1198t.gn", fileId = 1198,  title = "Cross" },
+        };
+
+        [Test]
+        public void Curate_Drops_T_Variant_Keeps_K()
+        {
+            var r = SongListModel.Curate(Paired());
+            Assert.AreEqual(2, r.Count);
+            CollectionAssert.AreEquivalent(new[] { "sdom1198k.gn", "sdom1197k.gn" }, r.ConvertAll(e => e.gn));
+        }
+
+        [Test]
+        public void Curate_Orders_By_FileId_Descending()
+        {
+            var r = SongListModel.Curate(Paired());
+            Assert.AreEqual(11198, r[0].fileId);
+            Assert.AreEqual(11197, r[1].fileId);
+        }
+
+        [Test]
+        public void Curate_Null_Safe()
+            => Assert.AreEqual(0, SongListModel.Curate(null).Count);
     }
 }

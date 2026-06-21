@@ -124,7 +124,7 @@ namespace Sdo.Game
         // survives even if the PlayMode test is marked Failed by an unrelated render-error log.
         public static void DumpLog(string s)
         {
-            if (_trajW == null) { _trajW = new System.IO.StreamWriter("H:/65_remake/mysim-traj.log", false) { AutoFlush = true }; }
+            if (_trajW == null) { _trajW = new System.IO.StreamWriter(System.IO.Path.Combine(UnityEngine.Application.persistentDataPath, "mysim-traj.log"), false) { AutoFlush = true }; }
             _trajW.WriteLine(s);
         }
 

@@ -204,6 +204,10 @@
    "v": "Lv {0}"
   },
   {
+   "k": "songselect.length",
+   "v": "長度 {0}"
+  },
+  {
    "k": "songselect.page",
    "v": "第 {0}/{1} 頁"
   },

@@ -15,7 +15,7 @@ namespace Sdo.UI.Core
         public int SongFileId;
         public string SongTitle;
         public string SongArtist;
-        public Difficulty Difficulty = Difficulty.Normal;
+        public Difficulty Difficulty = Difficulty.Easy;
 
         public string StageFolder = "SCN0009";
         public int StageId = 9;

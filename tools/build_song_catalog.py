@@ -55,12 +55,25 @@ def parse_songlist(path, encoding):
         gn = decode(d, 0, 32, encoding).strip()
         if not gn:
             continue
-        songs.append({
+        rec = {
             "gn": gn.lower(),                       # 以小寫檔名當 key（runtime 不分大小寫查）
             "fileId": struct.unpack("<I", d[fo:fo + 4])[0],
             "title": decode(d, no, 64, encoding),
             "artist": decode(d, no + 64, 32, encoding),
-        })
+        }
+        # 難度等級三難度（兩種格式皆在 fo+20，見 SONGLIST_FORMAT.md 讀取範例）
+        e, n, h = struct.unpack("<3H", d[fo + 20:fo + 26])
+        rec["diffEasy"], rec["diffNormal"], rec["diffHard"] = e, n, h
+        # bpm / note 數 / 長度(秒)只在 756（線上版完整表）內，752 單機版無此欄位。
+        if rec_size == 756:
+            rec["bpm"] = round(struct.unpack("<f", d[472:476])[0], 3)
+            ne, nn, nh = struct.unpack("<3I", d[496:508])
+            rec["notesEasy"], rec["notesNormal"], rec["notesHard"] = ne, nn, nh
+            de, dn, dh = struct.unpack("<3I", d[728:740])
+            # 防呆：壞值（負/超過一小時）視為未知(0)，避免 UI 顯示亂數長度。
+            clamp = lambda s: s if 0 < s < 3600 else 0
+            rec["durEasy"], rec["durNormal"], rec["durHard"] = clamp(de), clamp(dn), clamp(dh)
+        songs.append(rec)
     return songs, rec_size, count
 
 

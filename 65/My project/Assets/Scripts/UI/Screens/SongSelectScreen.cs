@@ -14,12 +14,12 @@ namespace Sdo.UI.Screens
     public sealed class SongSelectScreen : UIScreenBase
     {
         public override ScreenId Id => ScreenId.SongSelect;
-        private const int PageSize = 100;
+        private const int PageSize = 12;
 
         private SongListModel _model;
         private List<SongCatalog.Entry> _filtered = new List<SongCatalog.Entry>();
         private SongCatalog.Entry _selected;
-        private int _difficulty = 1;
+        private int _difficulty = 0;   // default Easy (overwritten by Session in OnShow)
         private int _page;
 
         private RectTransform _listContent;
@@ -119,8 +119,9 @@ namespace Sdo.UI.Screens
             sert.sizeDelta = new Vector2(128, 34); sert.anchoredPosition = new Vector2(-12, -11);
             _search.onValueChanged.AddListener(_ => { _page = 0; ApplyFilter(); });
 
-            var listScroll = UIKit.AddVerticalScroll(left, "ListScroll", out _listContent, 3f, 6);
-            UIKit.Stretch(listScroll.GetComponent<RectTransform>(), 8, 44, 8, 56);
+            // Tight rows + a taller viewport so a full page (PageSize) shows at once — no scrolling needed.
+            var listScroll = UIKit.AddVerticalScroll(left, "ListScroll", out _listContent, 2f, 4);
+            UIKit.Stretch(listScroll.GetComponent<RectTransform>(), 8, 44, 8, 50);
 
             // paging bar
             var prev = UIKit.AddLocButton(left, "Prev", "songselect.prev", UITheme.Secondary, UITheme.Text, 15);
@@ -179,8 +180,9 @@ namespace Sdo.UI.Screens
 
         private void ChangePage(int delta)
         {
-            int maxPage = Mathf.Max(0, (_filtered.Count - 1) / PageSize);
-            _page = Mathf.Clamp(_page + delta, 0, maxPage);
+            // wrap around: prev on the first page -> last page, next on the last page -> first page.
+            int pages = Mathf.Max(1, (_filtered.Count + PageSize - 1) / PageSize);
+            _page = ((_page + delta) % pages + pages) % pages;
             RenderPage();
         }
 
@@ -201,7 +203,7 @@ namespace Sdo.UI.Screens
         {
             bool sel = ReferenceEquals(e, _selected);
             var rowImg = UIKit.AddImage(_listContent, "S" + e.fileId, sel ? UITheme.RowSelected : UITheme.Row, true);
-            UIKit.Layout(rowImg.gameObject, 40);
+            UIKit.Layout(rowImg.gameObject, 32);   // 12 rows fit the viewport without scrolling
             var btn = rowImg.gameObject.AddComponent<Button>();
             btn.targetGraphic = rowImg;
             btn.onClick.AddListener(() => Select(e));
@@ -209,25 +211,25 @@ namespace Sdo.UI.Screens
             // icon (best effort) or placeholder
             var iconRt = UIKit.AddImage(rowImg.transform, "Icon", new Color(0.3f, 0.24f, 0.42f, 1f)).rectTransform;
             UIKit.Anchor(iconRt, new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f));
-            iconRt.sizeDelta = new Vector2(32, 32); iconRt.anchoredPosition = new Vector2(22, 0);
+            iconRt.sizeDelta = new Vector2(28, 28); iconRt.anchoredPosition = new Vector2(20, 0);
             var sprite = SongIcons.Load(e.fileId);
             if (sprite != null) iconRt.GetComponent<Image>().sprite = sprite;
             else
             {
-                var ic = UIKit.AddText(iconRt, "i", string.IsNullOrEmpty(e.title) ? "?" : e.title.Substring(0, 1), 16, UITheme.Text, TextAlignmentOptions.Center);
+                var ic = UIKit.AddText(iconRt, "i", string.IsNullOrEmpty(e.title) ? "?" : e.title.Substring(0, 1), 15, UITheme.Text, TextAlignmentOptions.Center);
                 UIKit.Stretch(ic.rectTransform);
             }
 
-            var titleT = UIKit.AddText(rowImg.transform, "T", e.title ?? e.gn, 16, UITheme.Text, TextAlignmentOptions.Left);
+            var titleT = UIKit.AddText(rowImg.transform, "T", e.title ?? e.gn, 15, UITheme.Text, TextAlignmentOptions.Left);
             UIKit.Anchor(titleT.rectTransform, new Vector2(0, 0.5f), new Vector2(0.62f, 1), new Vector2(0, 0.5f));
-            titleT.rectTransform.offsetMin = new Vector2(46, 0); titleT.rectTransform.offsetMax = new Vector2(0, 0);
+            titleT.rectTransform.offsetMin = new Vector2(44, 0); titleT.rectTransform.offsetMax = new Vector2(0, 0);
 
-            var artistT = UIKit.AddText(rowImg.transform, "A", e.artist ?? "", 13, UITheme.TextDim, TextAlignmentOptions.Left);
+            var artistT = UIKit.AddText(rowImg.transform, "A", e.artist ?? "", 12, UITheme.TextDim, TextAlignmentOptions.Left);
             UIKit.Anchor(artistT.rectTransform, new Vector2(0, 0), new Vector2(0.62f, 0.5f), new Vector2(0, 0.5f));
-            artistT.rectTransform.offsetMin = new Vector2(46, 0); artistT.rectTransform.offsetMax = new Vector2(0, 0);
+            artistT.rectTransform.offsetMin = new Vector2(44, 0); artistT.rectTransform.offsetMax = new Vector2(0, 0);
 
             int lvl = e.Diff(_difficulty);
-            var info = UIKit.AddText(rowImg.transform, "L", InfoText(e, lvl), 14, UITheme.Accent, TextAlignmentOptions.Right);
+            var info = UIKit.AddText(rowImg.transform, "L", InfoText(e, lvl), 13, UITheme.Accent, TextAlignmentOptions.Right);
             UIKit.Anchor(info.rectTransform, new Vector2(0.62f, 0), new Vector2(1, 1), new Vector2(1, 0.5f));
             info.rectTransform.offsetMin = new Vector2(0, 0); info.rectTransform.offsetMax = new Vector2(-12, 0);
         }
@@ -236,9 +238,14 @@ namespace Sdo.UI.Screens
         {
             var parts = new List<string>();
             if (lvl >= 0) parts.Add(L("songselect.level").Replace("{0}", lvl.ToString()));
-            if (e.bpm > 0) parts.Add(L("songselect.bpm").Replace("{0}", Mathf.RoundToInt(e.bpm).ToString()));
+            int dur = e.DurationSec(_difficulty);
+            if (dur > 0) parts.Add(L("songselect.length").Replace("{0}", FormatDuration(dur)));
             return string.Join("   ", parts);
         }
+
+        /// <summary>Seconds -> m:ss (e.g. 146 -> "2:26").</summary>
+        private static string FormatDuration(int sec)
+            => (sec / 60) + ":" + (sec % 60).ToString("00");
 
         private void Select(SongCatalog.Entry e)
         {

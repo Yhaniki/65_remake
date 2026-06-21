@@ -15,7 +15,33 @@ namespace Sdo.UI.Catalog
         public SongListModel(IEnumerable<SongCatalog.Entry> entries)
             => _all = entries == null ? new List<SongCatalog.Entry>() : new List<SongCatalog.Entry>(entries);
 
-        public static SongListModel FromCatalog() => new SongListModel(SongCatalog.All);
+        public static SongListModel FromCatalog() => new SongListModel(Curate(SongCatalog.All));
+
+        /// <summary>
+        /// Browse-list curation. The original data ships a paired chart per song —
+        /// sdomNNNN<b>k</b>.gn and sdomNNNN<b>t</b>.gn share one title — which made every song appear
+        /// twice in the list. Keep only the 'k' variant, then order by fileId descending so the
+        /// highest-numbered (newest) songs come first. (SongCatalog.All stays unfiltered: gn-based
+        /// title/artist lookups and font warmup still need both variants.)
+        /// </summary>
+        public static List<SongCatalog.Entry> Curate(IEnumerable<SongCatalog.Entry> entries)
+        {
+            var res = new List<SongCatalog.Entry>();
+            if (entries == null) return res;
+            foreach (var e in entries)
+                if (e != null && IsPrimaryVariant(e.gn)) res.Add(e);
+            res.Sort((a, b) => b.fileId.CompareTo(a.fileId));
+            return res;
+        }
+
+        /// <summary>True for the 'k' chart of a sdomNNNNk/t.gn pair (the one we list); false for 't'.</summary>
+        private static bool IsPrimaryVariant(string gn)
+        {
+            if (string.IsNullOrEmpty(gn)) return false;
+            var name = gn.ToLowerInvariant();
+            if (name.EndsWith(".gn")) name = name.Substring(0, name.Length - 3);
+            return name.Length > 0 && name[name.Length - 1] == 'k';
+        }
 
         public int Count => _all.Count;
         public IReadOnlyList<SongCatalog.Entry> All => _all;

@@ -5,41 +5,51 @@ using Sdo.Game;
 namespace Sdo.UI.Util
 {
     /// <summary>
-    /// Best-effort song-icon loader. Resolves the ICONS folder by SCANNING assets/ for any subfolder
-    /// containing DatasSDO/UI/MUSIC/ICONS (so the oddly-encoded asset folder name need not be hardcoded).
+    /// Best-effort song-icon loader. Looks in two places, in order:
+    ///   1. Root/UI/MUSIC/ICONS — the built layout, where packaging overlays the FULL online icon set into DATA;
+    ///   2. the dev fallback: SCAN assets/ for any subfolder holding DatasSDO/UI/MUSIC/ICONS (the online client),
+    ///      so the editor still shows the complete icon set without hardcoding the oddly-encoded folder name.
     /// Returns null when unavailable; callers fall back to a placeholder.
     /// </summary>
     public static class SongIcons
     {
-        private static string _dir;
-        private static bool _resolved;
+        private static string[] _dirs;
 
-        private static string Dir()
+        private static string[] Dirs()
         {
-            if (_resolved) return _dir;
-            _resolved = true;
+            if (_dirs != null) return _dirs;
+            var list = new System.Collections.Generic.List<string>();
             try
             {
-                // SdoExtracted.Root = .../assets/sdox_offline/Extracted  ->  assets/
+                // 1) built/overlaid icons under the data root.
+                var inData = Path.Combine(SdoExtracted.Root, "UI", "MUSIC", "ICONS");
+                if (Directory.Exists(inData)) list.Add(inData);
+
+                // 2) dev fallback: scan assets/ siblings for the online DatasSDO icons.
+                //    SdoExtracted.Root = .../assets/sdox_offline/Extracted  ->  assets/
                 var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
                 if (assets != null && Directory.Exists(assets))
                 {
                     foreach (var d in Directory.GetDirectories(assets))
                     {
                         var cand = Path.Combine(d, "DatasSDO", "UI", "MUSIC", "ICONS");
-                        if (Directory.Exists(cand)) { _dir = cand; break; }
+                        if (Directory.Exists(cand) && !list.Contains(cand)) list.Add(cand);
                     }
                 }
             }
             catch { /* best effort */ }
-            return _dir;
+            _dirs = list.ToArray();
+            return _dirs;
         }
 
         public static Sprite Load(int fileId)
         {
-            var dir = Dir();
-            if (dir == null) return null;
-            return SdoExtracted.LoadImage(dir, fileId + ".PNG") ?? SdoExtracted.LoadImage(dir, fileId + ".png");
+            foreach (var dir in Dirs())
+            {
+                var s = SdoExtracted.LoadImage(dir, fileId + ".PNG") ?? SdoExtracted.LoadImage(dir, fileId + ".png");
+                if (s != null) return s;
+            }
+            return null;
         }
     }
 }
