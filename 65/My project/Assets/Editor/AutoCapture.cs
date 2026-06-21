@@ -13,7 +13,6 @@ namespace Sdo.EditorTools
     public static class AutoCapture
     {
         private const string OutPath = "H:/65_remake/play-capture.png";
-        private const int W = 800, H = 600;
         private static double _captureAt = -1;
 
         static AutoCapture()
@@ -28,28 +27,48 @@ namespace Sdo.EditorTools
 
         private static void Tick()
         {
+            if (!EditorApplication.isPlaying) { _captureAt = -1; return; }
             if (_captureAt > 0 && EditorApplication.timeSinceStartup >= _captureAt)
             {
-                _captureAt = -1;
                 Capture();
+                // Keep refreshing so play-capture.png is always the latest on-screen frame: the 6s lead-in usually
+                // lands on the song-select menu while you navigate, so re-capture every few seconds — whatever you're
+                // looking at when you check the file (e.g. mid-gameplay in stage 14) is what gets saved.
+                _captureAt = EditorApplication.timeSinceStartup + 3.0;
             }
         }
 
         [MenuItem("Tools/Capture Gameplay Now")]
         private static void Capture()
         {
-            var cam = Camera.main;
-            if (cam == null) { Debug.LogWarning("[AutoCapture] no Camera.main"); return; }
-            var rt = new RenderTexture(W, H, 24);
-            var prevT = cam.targetTexture; var prevA = RenderTexture.active;
-            cam.targetTexture = rt; cam.Render();
-            RenderTexture.active = rt;
-            var tex = new Texture2D(W, H, TextureFormat.RGB24, false);
-            tex.ReadPixels(new Rect(0, 0, W, H), 0, 0); tex.Apply();
-            System.IO.File.WriteAllBytes(OutPath, tex.EncodeToPNG());
-            cam.targetTexture = prevT; RenderTexture.active = prevA;
-            Object.DestroyImmediate(tex); rt.Release(); Object.DestroyImmediate(rt);
-            Debug.Log("[AutoCapture] saved " + OutPath);
+            // Prefer rendering the 3D stage camera ("SceneCam") directly to a texture — that's the camera that draws
+            // the dancer / scene / mapobj props (corals, crowd…). It's reliable from an editor-update callback, unlike
+            // ScreenCapture of the composited game view (which grabbed blank/white frames mid-gameplay). Fall back to
+            // a full-screen grab (e.g. on menus, where there is no SceneCam).
+            Camera cam = null;
+#pragma warning disable 0618
+            foreach (var c in Object.FindObjectsOfType<Camera>()) if (c.name == "SceneCam") { cam = c; break; }
+#pragma warning restore 0618
+            if (cam != null)
+            {
+                const int w = 960, h = 720;   // 4:3 stage view
+                var rt = new RenderTexture(w, h, 24);
+                var prevT = cam.targetTexture; var prevA = RenderTexture.active;
+                cam.targetTexture = rt; cam.Render();
+                RenderTexture.active = rt;
+                var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, w, h), 0, 0); tex.Apply();
+                System.IO.File.WriteAllBytes(OutPath, tex.EncodeToPNG());
+                cam.targetTexture = prevT; RenderTexture.active = prevA;
+                Object.DestroyImmediate(tex); rt.Release(); Object.DestroyImmediate(rt);
+                Debug.Log("[AutoCapture] saved (SceneCam) " + OutPath);
+                return;
+            }
+            var stex = ScreenCapture.CaptureScreenshotAsTexture();
+            if (stex == null) { Debug.LogWarning("[AutoCapture] capture failed"); return; }
+            System.IO.File.WriteAllBytes(OutPath, stex.EncodeToPNG());
+            Object.DestroyImmediate(stex);
+            Debug.Log("[AutoCapture] saved (screen) " + OutPath);
         }
     }
 }

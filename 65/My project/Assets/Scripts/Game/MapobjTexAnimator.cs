@@ -1,0 +1,47 @@
+using UnityEngine;
+
+namespace Sdo.Game
+{
+    /// <summary>
+    /// Cycles a set of shared materials' main texture through an ordered frame sequence — the faithful remake of the
+    /// original FIFA crowd / spotlight effect. In sdo_stand_alone, Scene_LoadBackground (FUN_004b43c0 cases 0xc/0xd)
+    /// loads N texture frames per prop (crowd renqun = 9, spotlight shanguang = 4) into a side array, and the per-frame
+    /// draw (FUN_004ad250) advances the frame index on a 300 ms timer: DAT_00678510=(idx+1)%9 for the crowd and
+    /// DAT_0067850c=(idx+1)&amp;3 for the lights. The mesh geometry is static (no .mot); ONLY the bound texture changes,
+    /// so the crowd appears to wave and the lights to flash. The frame index is derived from the wall clock so several
+    /// independent animators (crowd + lights) stay aligned to the same 300 ms boundaries without a shared counter.
+    /// </summary>
+    public sealed class MapobjTexAnimator : MonoBehaviour
+    {
+        private Material[] _mats;
+        private Texture[] _frames;
+        private float _interval;     // seconds per frame
+        private int _last = -1;
+
+        /// <param name="mats">shared submesh materials whose _MainTex to drive (all set to the same frame)</param>
+        /// <param name="frames">ordered frame textures (already loaded); cycled round-robin</param>
+        /// <param name="intervalMs">ms between frames (300 in the original)</param>
+        public void Init(Material[] mats, Texture[] frames, float intervalMs)
+        {
+            _mats = mats;
+            _frames = frames;
+            _interval = Mathf.Max(0.001f, intervalMs / 1000f);
+            Apply(0);   // start on frame 0 so the MSH's embedded (possibly wrong/white) material never shows
+        }
+
+        private void Update()
+        {
+            if (_frames == null || _frames.Length == 0) return;
+            int idx = (int)(Time.time / _interval) % _frames.Length;
+            if (idx != _last) Apply(idx);
+        }
+
+        private void Apply(int idx)
+        {
+            _last = idx;
+            if (_mats == null || _frames == null || idx < 0 || idx >= _frames.Length) return;
+            var t = _frames[idx];
+            for (int i = 0; i < _mats.Length; i++) if (_mats[i] != null) _mats[i].mainTexture = t;
+        }
+    }
+}

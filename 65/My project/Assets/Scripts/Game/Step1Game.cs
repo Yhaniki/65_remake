@@ -1104,6 +1104,15 @@ namespace Sdo.Game
         // selected stage now switches its props too: e.g. SCN0009 -> GUATAN x4, SCN0004 -> sea/beach/boat group.
         private struct MapobjInstance { public Vector3 Pos; public float Scale; }
 
+        // EXPERIMENT: GPU-skin the animated mapobj props (SkinnedMeshRenderer) instead of CPU-skinning one shared
+        // mesh per group. Each animated copy then GPU-skins itself (no per-vertex CPU work, no mesh upload) at the
+        // cost of losing the shared-mesh draw batching. Static props are unaffected (they stay frozen + instanced).
+        // Set false to fall back to the committed CPU+instancing path. The dancer is NOT affected (CPU path).
+        // DISABLED: the GPU-skin path inflates animated props (SCN0009 GUATAN, SCN0012/13 FIFA_QIUBEI render
+        // oversized). Until the bindpose/bone-scale reconstruction is matched to the CPU path, animated mapobjs use
+        // the proven CPU driver+clones path. Flip back to true only to debug the GPU-skin scale regression.
+        public bool mapobjGpuSkin = false;
+
         // "SCENE/SCN0009" -> "SCN0009" (the catalog key); tolerates trailing or back slashes.
         private string SceneFolder()
         {
@@ -1148,6 +1157,45 @@ namespace Sdo.Game
             MotLoader mot = string.IsNullOrEmpty(motFile) ? null : LoadAsset(relDir + "/" + motFile, b => MotLoader.Load(b));
             var fallbackCol = new Color(0.72f, 0.70f, 0.66f);
 
+            // DIAG (mapobj placement): the parsed mesh bounds (verbatim/baked world coords) + where we place it. For a
+            // world-baked prop the bounds center is its real spot and we place at (0,0,0); a model-centered prop has a
+            // ~origin center and relies on its placement. Helps spot mis-placed props (e.g. SCN0014 corals).
+            {
+                Bounds bb = r.Submeshes[0].Mesh.bounds;
+                for (int s = 1; s < r.Submeshes.Count; s++) bb.Encapsulate(r.Submeshes[s].Mesh.bounds);
+                Debug.Log($"[mapobj.diag] {baseName}: bakedCenter={bb.center} size={bb.size} | inst0.pos={instances[0].Pos} scale={instances[0].Scale} | hrc={(hrc != null ? hrc.Names.Length + "b" : "none")} mot={(mot != null ? "yes" : "no")} subs={r.Submeshes.Count}");
+            }
+
+            bool animated = hrc != null && mot != null;
+
+            // RIGID ATTACH (no per-vertex weights): the original binds the whole mesh to ONE HRC bone whose transform
+            // positions / orients / scales it. These stage meshes are authored in that bone's LOCAL space — notably
+            // 3ds-Max Z-up, so the 'LineXX' bone rotates local-Z -> world-Y to STAND THEM UP. We don't per-vertex-skin
+            // a no-weight mesh, so a STATIC prop bakes the leaf bone's bind-world into the verts once (SCN0014 corals
+            // lay flat at the origin without this; FIFA_GUANGGAO's bone is identity -> no-op). An ANIMATED prop instead
+            // bone-FOLLOWS the leaf bone each frame (below) so its .mot plays — e.g. the SEA_SCREEN video wall spins
+            // 360° yaw. Weighted props (GUATAN, the avatar) keep BoneHrc and are skinned normally, so they're skipped.
+            bool rigidNoWeights = hrc != null && hrc.BindWorld != null;
+            if (rigidNoWeights)
+                foreach (var sub in r.Submeshes) if (sub.BoneHrc != null) { rigidNoWeights = false; break; }
+            int[] leafBones = rigidNoWeights ? HrcLeafBones(hrc) : System.Array.Empty<int>();
+            // STATIC rigid prop: bake each submesh's leaf-bone bind-world into its verts once (submesh i -> leaf i;
+            // multi-part props like the trophy put each part on its own bone — but the trophy is animated, below).
+            if (rigidNoWeights && !animated && leafBones.Length > 0)
+            {
+                for (int s = 0; s < r.Submeshes.Count; s++)
+                {
+                    int bone = leafBones[System.Math.Min(s, leafBones.Length - 1)];
+                    Matrix4x4 m = hrc.BindWorld[bone];
+                    if (m.isIdentity) continue;
+                    var sub = r.Submeshes[s];
+                    var vts = sub.Mesh.vertices;
+                    for (int i = 0; i < vts.Length; i++) vts[i] = m.MultiplyPoint3x4(vts[i]);
+                    sub.Mesh.vertices = vts; sub.Mesh.RecalculateBounds();
+                }
+                Debug.Log($"[mapobj] {baseName}: rigid-bind {r.Submeshes.Count} submesh(es) to {leafBones.Length} leaf bone(s)");
+            }
+
             // shared materials, one set per submesh (built once; reused by every instance). GPU-instancing
             // capable (Sdo/UnlitInstanced) so a group's copies batch into instanced draws on the GPU.
             var subMats = new List<Material[]>(r.Submeshes.Count);
@@ -1172,7 +1220,114 @@ namespace Sdo.Game
                 subMats.Add(mats);
             }
 
-            bool animated = hrc != null && mot != null;
+            // Animated texture overlay (faithful to the original's UIPicMap frame-swap): a few static props — the FIFA
+            // crowd (renqun) and spotlights (shanguang) — are textured by a per-frame DDS sequence cycled every 300 ms,
+            // NOT by their MSH material. Drive the shared submesh materials through that sequence. The geometry stays
+            // frozen; only the bound texture changes. Critical for SCN0013 night, whose crowd frames are renamed on
+            // disk (fifanight_renqun001..009.dds) and so are unreachable by the MSH-material path (rendered white).
+            var texAnim = SceneMapobjTexAnimCatalog.Find(SceneFolder(), baseName);
+            if (texAnim != null)
+            {
+                var frames = new List<Texture2D>(texAnim.Frames.Length);
+                foreach (var fn in texAnim.Frames) { var t = ResolveDds(dir, fn); if (t != null) frames.Add(t); }
+                if (frames.Count > 0)
+                {
+                    var animMats = new List<Material>();
+                    foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) animMats.Add(m);
+                    // The MSH material is a placeholder (often unresolved -> NewMapobjMat tinted it the fallback beige
+                    // with no texture). Reset _Color to white so the swapped frame shows true-colour, not tinted.
+                    foreach (var m in animMats) m.color = Color.white;
+                    // Transparent props (FIFA crowd / spotlights) are alpha-cutout sprites — the opaque mapobj shader
+                    // paints their transparent regions solid (stands read empty/black). Switch those to the two-sided
+                    // alpha-blended overlay so only the sprite shows. Opaque props (the sea video wall) keep their
+                    // material. Same Material instances the renderers use, so this applies to the rendered mesh too.
+                    if (texAnim.Transparent)
+                    {
+                        var overlay = Shader.Find("Sdo/UnlitOverlay");
+                        if (overlay != null) foreach (var m in animMats) m.shader = overlay;
+                    }
+                    var holder = new GameObject(baseName + "_texanim");   // root: torn down with the play screen
+                    holder.AddComponent<MapobjTexAnimator>().Init(animMats.ToArray(), frames.ToArray(), texAnim.IntervalMs);
+                    Debug.Log($"[mapobj] {baseName}: texture-anim {frames.Count}/{texAnim.Frames.Length} frames @ {texAnim.IntervalMs}ms, transparent={texAnim.Transparent}");
+                }
+                else Debug.LogWarning($"[mapobj] {baseName}: texture-anim found no frames in {dir}");
+            }
+
+            // UV-scroll (the original streams texture coords on some props): e.g. SCN0014 corals scroll V so their glow
+            // marquees. Drive the shared submesh materials' main-tex offset. Needs Repeat wrap (DdsLoader sets it).
+            Vector2 uvScroll = SceneMapobjUvScrollCatalog.Find(SceneFolder(), baseName);
+            if (uvScroll != Vector2.zero)
+            {
+                var scrollMats = new List<Material>();
+                foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) scrollMats.Add(m);
+                if (scrollMats.Count > 0)
+                {
+                    var holder = new GameObject(baseName + "_uvscroll");
+                    holder.AddComponent<MapobjUvScroll>().Init(scrollMats.ToArray(), uvScroll);
+                    Debug.Log($"[mapobj] {baseName}: uv-scroll {uvScroll}");
+                }
+            }
+
+            // ANIMATED rigid prop (no weights, has .mot): the mesh RIGIDLY FOLLOWS its leaf bone's animated world each
+            // frame, so the .mot plays without per-vertex skinning — e.g. the SCN0014 sea video wall spins 360° yaw
+            // (its .mot is ~550 frames of rotation). The verts stay in bone-local space (NOT baked); one SdoAvatar
+            // drives the bone FK and a follower transform carries the mesh. Texture-anim (if any) still drives the look.
+            if (rigidNoWeights && animated && leafBones.Length > 0)
+            {
+                for (int idx = 0; idx < instances.Length; idx++)
+                {
+                    var parent = new GameObject($"{baseName}_{idx}");
+                    parent.transform.position = instances[idx].Pos;
+                    parent.transform.localScale = Vector3.one * instances[idx].Scale;
+                    var avatar = parent.AddComponent<SdoAvatar>();
+                    avatar.Setup(hrc, mot);                                   // drives the bone FK from the .mot (no parts -> no skin)
+                    // each submesh rides its own leaf bone (trophy: ball on Sphere01, cup on Cylinder01) so the .mot
+                    // spins/animates every part; the verts stay in bone-local space (NOT baked).
+                    for (int s = 0; s < r.Submeshes.Count; s++)
+                    {
+                        int bone = leafBones[System.Math.Min(s, leafBones.Length - 1)];
+                        var follow = new GameObject($"{baseName}_follow{s}");
+                        follow.transform.SetParent(parent.transform, false);
+                        AddMapobjMeshChild(follow.transform, baseName + "_mesh", r.Submeshes[s].Mesh, subMats[s]);
+                        avatar.AddBoneFollower(bone, follow.transform);
+                    }
+                    SetLayerRecursive(parent, SceneLayer);
+                }
+                Debug.Log($"[mapobj] {baseName}: {instances.Length}× rigid bone-follow, {r.Submeshes.Count} submesh(es) on {leafBones.Length} bone(s) (animated .mot)");
+                return;
+            }
+
+            // GPU-skinning experiment: each animated instance is its own GPU-skinned avatar (SMR per skinned part).
+            // The per-vertex blend runs on the GPU; only the bone FK is CPU. Static props skip this (no skinning) and
+            // keep the frozen-shared-mesh + instancing path below.
+            if (animated && mapobjGpuSkin)
+            {
+                foreach (var sub in r.Submeshes)
+                    if (sub.BindVerts != null && sub.BoneHrc != null)
+                        SdoAvatar.PrepareGpuMesh(sub.Mesh, hrc, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);   // bind data once (shared source mesh)
+                for (int idx = 0; idx < instances.Length; idx++)
+                {
+                    var parent = new GameObject($"{baseName}_{idx}");
+                    parent.transform.position = instances[idx].Pos;
+                    parent.transform.localScale = Vector3.one * instances[idx].Scale;
+                    var avatar = parent.AddComponent<SdoAvatar>();
+                    avatar.GpuSkinning = true;
+                    avatar.Setup(hrc, mot);
+                    int si = 0;
+                    foreach (var sub in r.Submeshes)
+                    {
+                        if (sub.BindVerts != null && sub.BoneHrc != null)
+                            avatar.AddGpuSmr(sub.Mesh, baseName + "_smr").sharedMaterials = subMats[si];
+                        else
+                            AddMapobjMeshChild(parent.transform, baseName + "_mesh", sub.Mesh, subMats[si]);   // unskinned submesh
+                        si++;
+                    }
+                    SetLayerRecursive(parent, SceneLayer);
+                }
+                Debug.Log($"[mapobj] {baseName}: {instances.Length}× animated(GPU-skin), {hrc.Names.Length} bones");
+                return;
+            }
+
             for (int idx = 0; idx < instances.Length; idx++)
             {
                 var parent = new GameObject($"{baseName}_{idx}");
@@ -1232,6 +1387,21 @@ namespace Sdo.Game
             else if (mats != null && mats.Length > 1) mr.sharedMaterials = mats;
         }
 
+        // Leaf bones of an HRC (bones that are no one's parent) in index order. A rigid no-weight prop attaches each
+        // submesh to a bone; for a single-part prop there's one leaf (corals, crowd), for a multi-part prop the leaves
+        // line up with the submeshes in order (FIFA_QIUBEI: leaf[0]=under Sphere01 -> the ball submesh, leaf[1]=under
+        // Cylinder01 -> the cup submesh). Each leaf's bind-world is what positions/orients/scales that part.
+        private static int[] HrcLeafBones(HrcLoader hrc)
+        {
+            if (hrc == null || hrc.Names == null) return System.Array.Empty<int>();
+            int bc = hrc.Names.Length;
+            var hasChild = new bool[bc];
+            for (int i = 0; i < bc; i++) { int p = hrc.Parent[i]; if (p >= 0 && p < bc) hasChild[p] = true; }
+            var leaves = new List<int>();
+            for (int i = 0; i < bc; i++) if (!hasChild[i]) leaves.Add(i);
+            return leaves.ToArray();
+        }
+
         private void TryLoadScene()
         {
             const int sceneLayer = SceneLayer;   // builtin "Water" layer, repurposed for the 3D stage
@@ -1257,7 +1427,11 @@ namespace Sdo.Game
 
             // Perspective camera renders the stage(+avatar, same layer) to a RenderTexture; a full-screen background
             // quad in the main ortho cam shows that RT (reliably displays; depth-stacked cameras came out all-black).
-            var sceneRT = new RenderTexture(800, 600, 24) { name = "sceneRT" };
+            // Size the RT to the on-screen 4:3 region (≈1:1 at fullscreen instead of upscaling a flat 800×600) and give
+            // it 4× MSAA, so the 3D avatar/stage edges stay smooth fullscreen rather than jagged.
+            int rtH = Mathf.Clamp(Screen.height, 600, 1600);
+            int rtW = Mathf.RoundToInt(rtH * (4f / 3f));
+            var sceneRT = new RenderTexture(rtW, rtH, 24) { name = "sceneRT", antiAliasing = 4, filterMode = FilterMode.Bilinear };
             var camGo = new GameObject("SceneCam") { layer = sceneLayer };
             var cam = camGo.AddComponent<Camera>();
             cam.orthographic = false; cam.fieldOfView = 45f;

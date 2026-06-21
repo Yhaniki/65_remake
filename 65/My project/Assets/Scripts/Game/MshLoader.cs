@@ -168,7 +168,13 @@ namespace Sdo.Game
             return new SubMesh
             {
                 Mesh = mesh, Dds = dds, DdsNames = ddsNames.ToArray(), Ranges = rangeList,
-                BindVerts = (Vector3[])verts.Clone(), BoneHrc = pal != null ? bHrc : null, BoneWt = bWt,
+                // Only mark a submesh skinnable when it actually carries per-vertex bone weights (stride 44/48/52 ->
+                // nW>0). Rigid stage props (fvf 0x112/0x142, stride 32/24 — corals, the FIFA crowd, sea/TV screens)
+                // have NO weights: their "bone index" bytes alias the normal/diffuse, so skinning them at the bind
+                // pose collapses the mesh to the origin (SCN0014 corals "lay flat at centre"). With BoneHrc=null the
+                // loader renders them VERBATIM (their MSH verts are already the final world geometry). Avatars and
+                // genuinely-deforming props (GUATAN, stride 44) keep weights -> still skinned.
+                BindVerts = (Vector3[])verts.Clone(), BoneHrc = (pal != null && nW > 0) ? bHrc : null, BoneWt = bWt,
                 MshInvBindByHrc = mshInv
             };
         }
@@ -238,7 +244,11 @@ namespace Sdo.Game
             float w = F(d, off + 60); return w > 0.99f && w < 1.01f;
         }
 
-        private static readonly uint[] FvfStrides = { 0x1158, 0x115A, 0x115C };
+        // Submesh-header marker (first u32). Avatar/character meshes use 0x1158/115A/115C; rigid stage props use the
+        // smaller FVFs 0x112 / 0x142 / 0x152 (e.g. FIFA_QIUBEI is two 0x142 submeshes — the trophy's ball + cup). The
+        // opt==101 tag plus the structural check below (a sane vert section right after the index data) make a false
+        // mid-data match effectively impossible, so widening this list is safe for the avatar meshes too.
+        private static readonly uint[] FvfStrides = { 0x1158, 0x115A, 0x115C, 0x112, 0x142, 0x152 };
         private static int ScanNextSubmesh(byte[] d, int start)
         {
             for (int off = start; off + 12 <= d.Length; off += 4)
@@ -247,7 +257,12 @@ namespace Sdo.Game
                 bool valid = false; foreach (var f in FvfStrides) if (fvf == f) { valid = true; break; }
                 if (!valid) continue;
                 int idx = (int)U32At(d, off + 4), opt = (int)U32At(d, off + 8);
-                if (idx > 0 && idx < 10000000 && (idx & 1) == 0 && opt == 101) return off;
+                if (idx <= 0 || idx >= 10000000 || (idx & 1) != 0 || opt != 101) continue;
+                // structural sanity: a real submesh's vertex section (vertSize, stride) follows the index data
+                int vp = off + 12 + idx;
+                if (vp + 8 > d.Length) continue;
+                int vsz = (int)U32At(d, vp), str = (int)U32At(d, vp + 4);
+                if (str >= 16 && str <= 64 && vsz > 0 && vsz % str == 0) return off;
             }
             return d.Length;
         }

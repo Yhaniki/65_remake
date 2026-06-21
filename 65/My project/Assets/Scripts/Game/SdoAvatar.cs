@@ -24,6 +24,10 @@ namespace Sdo.Game
         private MotLoader _mot;
         private readonly List<Part> _parts = new List<Part>();
         private readonly List<(int bone, Transform t)> _anchors = new List<(int, Transform)>();
+        // rigid bone-followers: each frame the target's LOCAL transform = the bone's animated model-space world matrix
+        // (full TRS). Used to carry a rigid (no-weight) mapobj mesh on a single bone so its .mot plays (e.g. a screen
+        // that spins 360° yaw). The target is parented under this avatar's transform, so it picks up the instance pose.
+        private readonly List<(int bone, Transform t)> _boneFollowers = new List<(int, Transform)>();
         private Matrix4x4[] _animWorld, _skinMat;
         // body-shape (體型): per-bone local scale that fattens/thins the dancer's cross-section without changing bone
         // length — faithful port of decompiled AvatarHelper_ScaleBones (see SdoBodyShape). identity until SetBodyShape.
@@ -40,6 +44,19 @@ namespace Sdo.Game
         public float Fps = 30f;          // MOT frame rate (time = integer frame index)
         public bool Animate = true;      // false -> hold bind pose (verification)
         public float FrameOverride = -1; // >=0 -> use this frame instead of the wall clock (DPS sync hook)
+
+        // ---- GPU skinning (experimental) ----
+        // When true, the per-vertex blend is done by Unity's SkinnedMeshRenderer on the GPU instead of the CPU
+        // loop below: each frame we still compute the bone FK (animWorld) on the CPU — cheap, O(bones) — and write
+        // it to a FLAT array of bone Transforms; the SMR's bindposes are the SAME invbind matrices the CPU path
+        // uses, so the GPU reproduces skin[b] = animWorld[b]·(scale)·invbind[b] exactly. No per-vertex CPU work and
+        // no mesh.vertices upload. FeetYAt (CPU vertex read-back) is unavailable in this mode — fine for props that
+        // are placed at explicit positions. The flat bones inherit the avatar root's (uniform) instance scale, and
+        // a bone's body-shape scale rides in its localScale, so both factor through correctly.
+        public bool GpuSkinning = false;
+        private Transform[] _gpuBones;
+        private bool _gpuInit;
+        private readonly List<SkinnedMeshRenderer> _gpuParts = new List<SkinnedMeshRenderer>();
 
         // DPS dance-sync: choreography sequencing motion slices to the song clock
         public DpsLoader Dps;
@@ -121,6 +138,94 @@ namespace Sdo.Game
             _parts.Add(part);
         }
 
+        // ---- GPU skinning setup ----
+
+        // Bake a part's bind data onto its source mesh ONCE (shared across instances of a group): bindposes =
+        // per-HRC-bone invbind (MSH inverse-bind where the part supplies one, else the HRC world inverse-bind —
+        // matching the CPU path's per-bone choice), and 4-bone boneWeights from the part's palette. Idempotent.
+        public static void PrepareGpuMesh(Mesh mesh, HrcLoader hrc, int[] boneIdx, float[] boneWt,
+                                          Dictionary<int, Matrix4x4> mshInvByHrc)
+        {
+            if (mesh == null || hrc == null) return;
+            int bc = hrc.Names.Length;
+            var binds = new Matrix4x4[bc];
+            for (int b = 0; b < bc; b++) binds[b] = hrc.InvBindWorld[b];
+            if (mshInvByHrc != null)
+                foreach (var kv in mshInvByHrc) if (kv.Key >= 0 && kv.Key < bc) binds[kv.Key] = kv.Value;  // MSH retarget invbind
+            mesh.bindposes = binds;
+            int vc = mesh.vertexCount;
+            var bw = new BoneWeight[vc];
+            for (int v = 0; v < vc; v++)
+            {
+                SetInfluence(ref bw[v], 0, boneIdx, boneWt, v, bc);
+                SetInfluence(ref bw[v], 1, boneIdx, boneWt, v, bc);
+                SetInfluence(ref bw[v], 2, boneIdx, boneWt, v, bc);
+                SetInfluence(ref bw[v], 3, boneIdx, boneWt, v, bc);
+            }
+            mesh.boneWeights = bw;
+        }
+
+        private static void SetInfluence(ref BoneWeight w, int k, int[] bi, float[] bw, int v, int bc)
+        {
+            int idx = bi[v * 4 + k]; float wt = bw[v * 4 + k];
+            if (idx < 0 || idx >= bc) { idx = 0; wt = 0f; }   // invalid influence -> zero weight (matches the CPU skip)
+            switch (k)
+            {
+                case 0: w.boneIndex0 = idx; w.weight0 = wt; break;
+                case 1: w.boneIndex1 = idx; w.weight1 = wt; break;
+                case 2: w.boneIndex2 = idx; w.weight2 = wt; break;
+                default: w.boneIndex3 = idx; w.weight3 = wt; break;
+            }
+        }
+
+        private void EnsureGpuBones()
+        {
+            if (_gpuInit) return;
+            _gpuInit = true;
+            int bc = _hrc.Names.Length;
+            _gpuBones = new Transform[bc];
+            for (int b = 0; b < bc; b++)
+            {
+                var go = new GameObject("b" + b);
+                go.transform.SetParent(transform, false);   // flat (no nesting): each holds the full model-space bone world
+                _gpuBones[b] = go.transform;
+            }
+        }
+
+        // Create a SkinnedMeshRenderer for an already-prepared mesh, sharing this avatar's flat bone array. The
+        // caller assigns materials on the returned renderer. The mesh's bindposes/boneWeights must be set first
+        // (PrepareGpuMesh). Drives on the GPU each frame from the bones written by WriteGpuBones.
+        public SkinnedMeshRenderer AddGpuSmr(Mesh mesh, string name)
+        {
+            EnsureGpuBones();
+            var go = new GameObject(name);
+            go.transform.SetParent(transform, false);
+            var smr = go.AddComponent<SkinnedMeshRenderer>();
+            smr.sharedMesh = mesh;
+            smr.bones = _gpuBones;
+            smr.rootBone = transform;
+            smr.updateWhenOffscreen = true;   // bones are external; recompute bounds so it isn't wrongly culled
+            _gpuParts.Add(smr);
+            return smr;
+        }
+
+        // Push the current frame's bone FK to the SMR bone Transforms. animWorld is the bone's model-space world
+        // (root = identity in the FK), so the flat bone's LOCAL transform = animWorld; the avatar root then applies
+        // the instance position/scale. Body-shape scale (if any) rides in the bone's localScale.
+        private void WriteGpuBones()
+        {
+            if (_gpuBones == null) return;
+            int bc = _hrc.Names.Length;
+            for (int b = 0; b < bc; b++)
+            {
+                var tb = _gpuBones[b]; if (tb == null) continue;
+                Matrix4x4 m = _animWorld[b];
+                tb.localPosition = m.GetColumn(3);
+                tb.localRotation = m.rotation;
+                tb.localScale = _hasBodyScale ? new Vector3(_scaleMat[b].m00, _scaleMat[b].m11, _scaleMat[b].m22) : Vector3.one;
+            }
+        }
+
         private float _lastMinY;
         /// <summary>Pose at <paramref name="frame"/> and return the lowest skinned vertex Y (model space) — the feet
         /// height for that pose. Used to rest the avatar's feet on the floor (honours the actual skin mode + pose).</summary>
@@ -137,6 +242,26 @@ namespace Sdo.Game
 
         /// <summary>Register a child transform that tracks a bone's animated (model-space) position each frame.</summary>
         public void AddAnchor(int bone, Transform t) { if (bone >= 0) _anchors.Add((bone, t)); }
+
+        /// <summary>Make <paramref name="t"/> rigidly follow a bone's animated world transform each frame (full TRS) —
+        /// for a no-weight mapobj mesh attached to one bone (its .mot then plays as rigid motion, e.g. a yaw spin).</summary>
+        public void AddBoneFollower(int bone, Transform t) { if (bone >= 0 && t != null) _boneFollowers.Add((bone, t)); }
+
+        // Drive every rigid bone-follower from the just-computed _animWorld (model space; root = identity). Called from
+        // Pose after the FK loop, on both the CPU and GPU paths.
+        private void UpdateBoneFollowers()
+        {
+            if (_boneFollowers.Count == 0 || _animWorld == null) return;
+            for (int k = 0; k < _boneFollowers.Count; k++)
+            {
+                var (bone, t) = _boneFollowers[k];
+                if (t == null || bone < 0 || bone >= _animWorld.Length) continue;
+                Matrix4x4 m = _animWorld[bone];
+                t.localPosition = m.GetColumn(3);
+                t.localRotation = m.rotation;
+                t.localScale = m.lossyScale;
+            }
+        }
 
         /// <summary>
         /// The .msh per-vertex bone indices are a per-PART palette, not direct HRC indices. The palette
@@ -290,6 +415,10 @@ namespace Sdo.Game
                 _skinMat[i] = _hasBodyScale ? _animWorld[i] * _scaleMat[i] * _hrc.InvBindWorld[i]
                                             : _animWorld[i] * _hrc.InvBindWorld[i];
             }
+            UpdateBoneFollowers();   // rigid mapobj props carried on a single bone (e.g. the spinning sea screen)
+            if (GpuSkinning) { WriteGpuBones(); _haveDisp = true;   // GPU: drive the SMR bones; the GPU does the vertex blend
+                foreach (var (bone, at) in _anchors) if (at) at.position = transform.TransformPoint((Vector3)_animWorld[bone].GetColumn(3));
+                return; }
             float minY = float.PositiveInfinity;
             foreach (var pt in _parts)
             {

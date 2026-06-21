@@ -31,7 +31,7 @@ namespace Sdo.Game
             int baseSize = Math.Max(1, (width + 3) / 4) * Math.Max(1, (height + 3) / 4) * blockBytes;
             if (128 + baseSize > d.Length) return null;
             var raw = new byte[baseSize]; Array.Copy(d, 128, raw, 0, baseSize);
-            var tex = new Texture2D(width, height, fmt, false) { wrapMode = TextureWrapMode.Clamp };
+            var tex = new Texture2D(width, height, fmt, false) { wrapMode = TextureWrapMode.Repeat };   // D3D default is WRAP; tiling UVs (FIFA crowd u=-7.75..7.32, floors) need it
             tex.LoadRawTextureData(raw); tex.Apply(false, true);
             return tex;
         }
@@ -62,7 +62,7 @@ namespace Sdo.Game
                         px[y * w + x] = new Color32(col.r, col.g, col.b, (byte)((nib * 255 + 7) / 15));
                     }
                 }
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };   // D3D default is WRAP; tiling UVs (FIFA crowd u=-7.75..7.32, floors) need it
             tex.SetPixels32(px); tex.Apply(false, true);
             return tex;
         }
