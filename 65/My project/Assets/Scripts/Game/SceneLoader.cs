@@ -34,12 +34,21 @@ namespace Sdo.Game
             int stride = (int)U32(d, ref p); if (stride < 16) return null;
             int vcount = vertBytes / stride;
             int uvOff = stride - 8;
+            bool hasDiffuse = uvOff >= 16;   // FVF 0x142: pos(12) + DIFFUSE(4) + uv(8) -> diffuse sits at offset 12
             var verts = new Vector3[vcount]; var uvs = new Vector2[vcount];
+            var cols = hasDiffuse ? new Color32[vcount] : null;
             for (int i = 0; i < vcount; i++)
             {
                 int b = p + i * stride;
                 verts[i] = new Vector3(F(d, b), F(d, b + 4), F(d, b + 8));   // verbatim (D3D9 & Unity both LH); same as avatar
                 uvs[i] = new Vector2(F(d, b + uvOff), F(d, b + uvOff + 4));   // V NOT flipped (same convention as the avatar)
+                if (hasDiffuse)
+                {
+                    // per-vertex DIFFUSE = baked scene lighting/tint (D3DCOLOR 0xAARRGGBB). Keep RGB (the darkening);
+                    // alpha stays 255 (cut-out comes from the texture, not the vertex). Ignored before -> scenes too bright.
+                    uint c = (uint)(d[b + 12] | (d[b + 13] << 8) | (d[b + 14] << 16) | (d[b + 15] << 24));
+                    cols[i] = new Color32((byte)((c >> 16) & 0xff), (byte)((c >> 8) & 0xff), (byte)(c & 0xff), 255);
+                }
             }
             p += vertBytes;
             p += 24;                                          // reserved[6]
@@ -69,10 +78,13 @@ namespace Sdo.Game
             var mesh = new Mesh { name = "scene" };
             if (vcount > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             mesh.vertices = verts; mesh.uv = uvs;
+            if (cols != null) mesh.colors32 = cols;   // baked vertex lighting -> the shader multiplies it in
             mesh.subMeshCount = subsets.Count;
             var mats = new Material[subsets.Count];
-            // cutout: walls (no alpha) stay opaque; DXT3 audience billboards discard their transparent background
-            var shader = Shader.Find("Unlit/Transparent Cutout") ?? Shader.Find("Unlit/Texture");
+            // cutout × VERTEX COLOUR: walls stay opaque, DXT3 audience billboards discard their transparent
+            // background, and the per-vertex baked lighting/tint darkens the scene (e.g. SCN0008 night). Falls back
+            // to the colourless built-in cutout if the custom shader is stripped.
+            var shader = Shader.Find("Sdo/SceneVertexCutout") ?? Shader.Find("Unlit/Transparent Cutout") ?? Shader.Find("Unlit/Texture");
             for (int s = 0; s < subsets.Count; s++)
             {
                 var (matId, fStart, fCount) = subsets[s];
@@ -86,10 +98,15 @@ namespace Sdo.Game
                     sub[w] = tris[o]; sub[w + 1] = tris[o + 1]; sub[w + 2] = tris[o + 2];
                 }
                 mesh.SetTriangles(sub, s);
-                Texture2D tex = null;
+                Texture2D tex = null; bool hasAlpha = false;
                 var ddsPath = Path.Combine(sceneDir, ddsNames[matId]);
-                if (File.Exists(ddsPath)) tex = DdsLoader.Load(File.ReadAllBytes(ddsPath));
+                if (File.Exists(ddsPath)) { var bytes = File.ReadAllBytes(ddsPath); tex = DdsLoader.Load(bytes); hasAlpha = DdsLoader.HasAlpha(bytes); }
                 mats[s] = tex != null ? new Material(shader) { mainTexture = tex } : new Material(shader) { color = new Color(0.3f, 0.3f, 0.35f) };
+                // CUTOFF only for materials that genuinely carry alpha (DXT3/DXT5 去背 audience billboards / decals).
+                // OPAQUE materials are DXT1 (floor dimian1, sky, columns, lanterns) — Unity's TextureFormat.DXT1 has NO
+                // alpha channel and samples a=0, so clip(a−0.5) would DISCARD THE WHOLE MATERIAL (the floor/sky/columns
+                // vanished to black — only the DXT3 props survived). Disable the clip for them (cutoff −1 = never clips).
+                mats[s].SetFloat("_Cutoff", hasAlpha ? 0.5f : -1f);
             }
             mesh.RecalculateBounds();
             return new Result { Mesh = mesh, Materials = mats };

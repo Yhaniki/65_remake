@@ -141,6 +141,7 @@ namespace Sdo.Game
         // ---- sprite loading (Unity) ----
 
         private static readonly Dictionary<string, Texture2D> _texCache = new Dictionary<string, Texture2D>();
+        private static readonly HashSet<Texture2D> _bled = new HashSet<Texture2D>();
 
         private static Texture2D LoadTexture(string path)
         {
@@ -154,10 +155,20 @@ namespace Sdo.Game
             return tex;
         }
 
-        private static Sprite SpriteFromFrame(string folder, AnFrame fr)
+        // As LoadTexture, but dilate opaque RGB into the transparent matte ONCE per cached texture (see AlphaBleed):
+        // most SDO art stores (255,255,255,0) in the empty area, so bilinear filtering drags that white into the glyph
+        // edges (a white halo). Bleeding kills it; alpha is untouched, so it's purely cosmetic + safe to share.
+        private static Texture2D LoadTextureBled(string path)
+        {
+            var tex = LoadTexture(path);
+            if (tex != null && _bled.Add(tex)) AlphaBleed(tex);
+            return tex;
+        }
+
+        private static Sprite SpriteFromFrame(string folder, AnFrame fr, bool bleed = false)
         {
             // .an frames reference a png in the same folder; fall back to the named image directly.
-            var tex = LoadTexture(Path.Combine(folder, fr.Image));
+            var tex = bleed ? LoadTextureBled(Path.Combine(folder, fr.Image)) : LoadTexture(Path.Combine(folder, fr.Image));
             if (tex == null) return null;
             Rect rect = fr.HasCrop
                 ? new Rect(fr.X, tex.height - fr.Y - fr.H, fr.W, fr.H)  // flip Y (top-left -> bottom-left)
@@ -165,8 +176,9 @@ namespace Sdo.Game
             return Sprite.Create(tex, rect, new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
-        /// <summary>Load every frame of an .an file (in <paramref name="folder"/>) as sprites.</summary>
-        public static Sprite[] LoadAn(string folder, string anName)
+        /// <summary>Load every frame of an .an file (in <paramref name="folder"/>) as sprites.
+        /// <paramref name="bleed"/> dilates the transparent-white matte to remove the bilinear white halo on edges.</summary>
+        public static Sprite[] LoadAn(string folder, string anName, bool bleed = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
             if (!File.Exists(anPath)) return new Sprite[0];
@@ -174,23 +186,24 @@ namespace Sdo.Game
             var sprites = new List<Sprite>(frames.Count);
             foreach (var fr in frames)
             {
-                var s = SpriteFromFrame(folder, fr);
+                var s = SpriteFromFrame(folder, fr, bleed);
                 if (s != null) sprites.Add(s);
             }
             return sprites.ToArray();
         }
 
         /// <summary>First frame of an .an (most HUD .an files are single-frame).</summary>
-        public static Sprite LoadAn1(string folder, string anName)
+        public static Sprite LoadAn1(string folder, string anName, bool bleed = false)
         {
-            var all = LoadAn(folder, anName);
+            var all = LoadAn(folder, anName, bleed);
             return all.Length > 0 ? all[0] : null;
         }
 
-        /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.</summary>
-        public static Sprite LoadImage(string folder, string imageName)
+        /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.
+        /// <paramref name="bleed"/> dilates the transparent-white matte to remove the bilinear white halo on edges.</summary>
+        public static Sprite LoadImage(string folder, string imageName, bool bleed = false)
         {
-            var tex = LoadTexture(Path.Combine(folder, imageName));
+            var tex = bleed ? LoadTextureBled(Path.Combine(folder, imageName)) : LoadTexture(Path.Combine(folder, imageName));
             return tex == null ? null
                 : Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
                                 new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);

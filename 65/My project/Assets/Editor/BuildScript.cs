@@ -37,6 +37,10 @@ public static class BuildScript
         "Sdo/PortraitOpaque",
         "Sdo/UnlitDoubleSided",
         "Sdo/UnlitInstanced",
+        "Sdo/UnlitInstancedAlpha",   // alpha-blended mapobj props ("去背"); stripped -> alpha stage props go magenta
+        "Sdo/UnlitOverlay",          // animated transparent overlays (FIFA crowd, texanim cut-outs)
+        "Sdo/SceneVertexCutout",     // base SCENE.MSH × baked vertex lighting (scene darkening/tint)
+        "Sdo/UnlitInstancedCutout",  // solid/volumetric alpha mapobj props (SCN0006 carousel — no see-through)
     };
 
     public static void BuildWindows()

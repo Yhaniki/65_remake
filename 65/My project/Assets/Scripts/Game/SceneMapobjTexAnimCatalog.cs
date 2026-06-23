@@ -42,9 +42,34 @@ namespace Sdo.Game
         private static readonly MapobjTexAnim Shanguang =
             new MapobjTexAnim("FIFA_SHANGUANG", new[] { "s001_.dds", "s002_.dds", "s003_.dds", "s004_.dds" }, 300f, true);
 
+        // The frame lists / intervals / transparency below are decompiled from Scene_LoadBackground (load) +
+        // Scene_UpdateSceneObjects (timers) and grounded against the on-disk DDS sequences; Transparent matches each
+        // sequence's measured alpha (opaque screens/water vs alpha cut-outs). See SDO_SCENE_MAPOBJ docs.
         private static readonly Dictionary<string, MapobjTexAnim[]> ByFolder =
             new Dictionary<string, MapobjTexAnim[]>
             {
+                // SCN0003 disco floor is NOT here — its 256 tiles animate as a per-tile moving formation
+                // (BoxFloorPattern / BoxFloorAnimator), not a single shared-material cycle.
+                ["SCN0004"] = new[]
+                {
+                    // 海灘 water surface waves: sea_up = B001..B032, sea_down = A001..A032 @100ms, opaque.
+                    new MapobjTexAnim("SEA_UP", Seq("B", 32), 100f, false),
+                    new MapobjTexAnim("SEA_DOWN", Seq("A", 32), 100f, false),
+                },
+                ["SCN0005"] = new[]
+                {
+                    // Christmas reindeer billboard + the ground "Merry Christmas" decal: the MSH materials are
+                    // placeholders (xunlu.dds / 001.dds, absent) so without these they rendered as beige boxes
+                    // ("奇怪方塊在天上飛"). Frames CHRISTMAS001..004 / MERRYCHRISTMAS001..004 @500ms, alpha cut-outs.
+                    new MapobjTexAnim("CHRISTMAS", Seq("CHRISTMAS", 4), 500f, true),
+                    new MapobjTexAnim("MERRYCHRISTMAS", Seq("MERRYCHRISTMAS", 4), 500f, true),
+                },
+                ["SCN0011"] = new[]
+                {
+                    new MapobjTexAnim("JIGUANG", new[] { "01_.dds", "02_.dds", "03_.dds", "04_.dds", "05_.dds", "06_.dds", "07_.dds", "08_.dds", "09_.dds" }, 300f, true),
+                    new MapobjTexAnim("DIDENG", new[] { "343.dds", "344.dds", "345.dds", "346.dds" }, 300f, false),   // opaque floor light
+                    new MapobjTexAnim("DENGGUANG", new[] { "guangx1_.dds", "guangx11.dds" }, 300f, true),
+                },
                 ["SCN0012"] = new[]
                 {
                     new MapobjTexAnim("FIFA_RENQUN", Seq("", 9), 300f, true),   // 001.dds..009.dds
@@ -58,6 +83,17 @@ namespace Sdo.Game
                 ["SCN0014"] = new[]
                 {
                     new MapobjTexAnim("SEA_SCREEN", Seq("sea_screen", 28), 250f, false),   // opaque video wall
+                },
+                ["SCN0017"] = new[]
+                {
+                    new MapobjTexAnim("DIANSHI", Seq("DIANSHI", 30), 150f, false),   // opaque subway TV wall
+                },
+                ["SCN0018"] = new[]
+                {
+                    new MapobjTexAnim("NIHONG", Seq("NIHONG", 12), 500f, true),         // neon, alpha
+                    new MapobjTexAnim("BOAT_SCREEN", Seq("BOAT_SCREEN", 4), 500f, false),// opaque screen
+                    new MapobjTexAnim("SHUIMO", Seq("SHUIMO", 5), 125f, true),          // water-ink ripple, alpha
+                    new MapobjTexAnim("WATER", Seq("WATER", 10), 150f, false),          // river surface, opaque
                 },
             };
 

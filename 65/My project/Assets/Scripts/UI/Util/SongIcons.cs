@@ -51,5 +51,17 @@ namespace Sdo.UI.Util
             }
             return null;
         }
+
+        /// <summary>Load a named icon from the same ICONS folder (e.g. RANDOM.PNG / NONE.PNG). Null if unavailable.</summary>
+        public static Sprite LoadNamed(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return null;
+            foreach (var dir in Dirs())
+            {
+                var s = SdoExtracted.LoadImage(dir, fileName);
+                if (s != null) return s;
+            }
+            return null;
+        }
     }
 }

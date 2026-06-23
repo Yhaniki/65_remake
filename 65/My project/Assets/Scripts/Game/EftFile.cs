@@ -59,7 +59,14 @@ namespace Sdo.Game
         //   (engine FUN_004bee20: param_1[500] = 1.0 + tri(±ScaleJit); UPDATE integrates pos += vel × param_1[500] × ch0).
         //   0 = no jitter (×1). NOT a global multiplier — the AVERAGE is 1.0, but the per-particle SPREAD is what makes
         //   a fountain reach MANY heights (tex96 ScaleJit 0.8 → some sparks ×1.8 = the official's tall risers).
-        public float ConeInner, ConeMag;   // word[0x1f2]/[0x1f3]: spawn scatter on a horizontal annulus [inner,outer]
+        public float ConeInner, ConeMag;   // word[0x1f2]/[0x1f3]: spawn-scatter magnitude range [inner,outer]
+        // SPAWN-SCATTER ANGULAR SPREAD (engine Particle_RandomConeVelocity_004bebc0 args = word[0x1ef],[0x1f0],[0x1f1]
+        // + the [0x1f2]/[0x1f3] magnitude): random rotation ±deg/2 about X / Y / Z applied to the cone axis, scaled by
+        // the magnitude. This makes the scatter 3-D, NOT a flat ring: e.g. SCN0010 confetti = (360,360,0) → a SPHERICAL
+        // shell (radius [inner,outer]) so pieces spawn HIGH and LOW; combo sprays = (0,360,0) → a horizontal ring (Y
+        // only). The old code hard-coded the horizontal ring (only ConeMag) and dropped ConeAngX → confetti lost their
+        // vertical spread (all stuck in one mid band). Degrees.
+        public float ConeAngX, ConeAngY, ConeAngZ;
         // VELOCITY TURBULENCE / "crackle" (engine UPDATE @~004bd5xx): periodically + randomly ROTATE the velocity
         // vector → the FINISHED firework's flicker (sparks dart). Gated by (life & TurbMask)!=0 && rand%100<TurbProb;
         // per-axis angle = rand(TurbRndA,TurbRndB) clamped ±TurbClamp; TurbMode 1 = one-shot (self-disables), 0 = forever.
@@ -73,6 +80,11 @@ namespace Sdo.Game
         // The Particle_Update frame-advance (030_scene:6963) cycles the frame every `Hold` ticks and wraps if Loop.
         // FINISHED's sparks cycle naga00⇄ring_l⇄aef_1_01 every 1-2 ticks = the on/off FLICKER (一下看到一下看不到).
         public int FrameCount, FrameHold; public bool FrameLoop; public int[] FrameTex;
+        // PER-FRAME ATLAS UV (engine billboard draw 030_scene:~5660 reads word[0x57 + frame*4] as the quad's tu/tv).
+        // A multi-CELL sprite-sheet animates by sub-rect, NOT by swapping the texture: e.g. the SCN0010 confetti
+        // (ZIPIANZ/ZIPIANZ1) is 16 frames whose texidx are ALL the same texture but whose UVs are a 4×4 cell grid.
+        // Without this the quad shows the WHOLE sheet (16 pieces at once) — "整張貼圖貼上去". null unless FrameCount>1.
+        public Vector4[] FrameUv;   // per frame: (uMin, vTop, uMax, vBot), V=0 at top (D3D convention)
         public int TrigType, Slot, NumTrig;   // TrigType word[0x36] (as a child); NumTrig word[3] = #child triggers this emitter fires
         // SUB-EMIT INHERITANCE (engine SpawnChildEffect→ApplyVelocity 030_scene:6669): a child ADDS its parent's
         // position (flag word[0x38]) and/or VELOCITY (flag word[0x39]) at spawn. The velocity one is why 400's
@@ -135,6 +147,7 @@ namespace Sdo.Game
                     HasTex = W(0x45) != 0,
                     ScaleJit = Wf(0x1f4),
                     ConeInner = Wf(0x1f2), ConeMag = Wf(0x1f3),
+                    ConeAngX = Wf(0x1ef), ConeAngY = Wf(0x1f0), ConeAngZ = Wf(0x1f1),
                     GravBase = Wf(0x21b), GravAccel = Wf(0x21c),
                     TurbProb = W(0x1fb), TurbMode = W(0x1fc), TurbMask = W(0x1fd),
                     TurbRndA = new Vector3(Wf(0x1fe), Wf(0x1ff), Wf(0x200)),
@@ -159,6 +172,17 @@ namespace Sdo.Game
                 em.FrameLoop = W(0x42) != 0;
                 em.FrameTex = new int[em.FrameCount];
                 for (int fr = 0; fr < em.FrameCount; fr++) em.FrameTex[fr] = W(0x47 + fr);
+                // The cell UVs sit right after the 16-entry texidx region (0x47..0x56) at word[0x57 + frame*4].
+                // Only a real flipbook (FrameCount>1) carries them; single-frame quads keep the full-mesh UV.
+                if (em.FrameCount > 1)
+                {
+                    em.FrameUv = new Vector4[em.FrameCount];
+                    for (int fr = 0; fr < em.FrameCount; fr++)
+                    {
+                        int ub = 0x57 + fr * 4;
+                        em.FrameUv[fr] = new Vector4(Wf(ub), Wf(ub + 1), Wf(ub + 2), Wf(ub + 3));
+                    }
+                }
 
                 for (int ch = 0; ch < 17; ch++)
                 {

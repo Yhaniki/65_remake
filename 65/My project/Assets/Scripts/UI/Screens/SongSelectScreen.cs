@@ -1,6 +1,9 @@
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.UI;
 using Sdo.Game;
 using Sdo.Localization;
@@ -10,279 +13,826 @@ using Sdo.UI.Util;
 
 namespace Sdo.UI.Screens
 {
-    /// <summary>選歌：難度分頁 + 分頁歌曲列表 + 搜尋 + RANDOM + 舞台選擇 + 確定。</summary>
+    /// <summary>
+    /// 選歌（ROOMDLG / MUSICSELDLG）忠實重製：原版美術依 RoomDlg/MusicSelDlg.xml 的 800×600 座標佈局
+    /// （9 宮格底圖、可換唱片封面、難度三態頁籤、6 音樂分類頁籤、12 列歌單 + time/level 欄 + NEW 標籤、
+    /// 搜尋、翻頁、歌曲資訊(演唱者/BPM/音符數)、場景預覽(真實名稱+縮圖)、模式/隊形/旁觀人數下拉、
+    /// OK/Cancel/Close）。選歌會試聽 exper/&lt;fileId&gt;.ogg。資料流沿用 SongListModel→SongCatalog→GameSession。
+    /// </summary>
     public sealed class SongSelectScreen : UIScreenBase
     {
         public override ScreenId Id => ScreenId.SongSelect;
         private const int PageSize = 12;
+        private const int NewBadgeCount = 5;          // 最大編號的 N 首歌掛 NEW 標籤
+        private const float NewBadgeFps = 12f;        // NEWSIGN.an colour-cycle speed (14 frames ≈ 1.2s loop)
+        private const float PreviewVolume = 0.55f;
 
+        // ---- row layout (from MusicSelDlg.xml) ----
+        // The 435-wide highlight strip (MusicSelDlg95/73) spans the whole row from x≈299. The NEW badge sits flush
+        // at the strip's left edge; the song name is indented past it (same indent on every row). RowTop0 is paired
+        // with the header band (difficulty y84 / category y138) so the first row tucks under the category tabs with
+        // no visible gap (the category sprite has ~12px transparent bottom padding).
+        private const float RowTop0 = 165f, RowPitch = 21f;
+        private const float HiX = 299f, BadgeX = 301f, NameX = 362f, NameW = 252f;
+        private const float TimeX = 622f, TimeW = 72f, LevelX = 700f, LevelW = 36f, RowH = 19f;
+        private const float BadgeW = 56f, BadgeH = 23f;
+        // The animated NEWSIGN "New" sits in FRONT; the static new.an "★NEW!" sits BEHIND as a glow/backing (托襯).
+        // Offset the animated "New" right past the backing's star and 1px up so it centres on the backing glow.
+        private const float NewAnimDX = 18f, NewAnimDY = -1f;
+
+        private static readonly Color ColComboList = FromArgb(0xff018194); // green-box dropdown list text (RGB 1,129,148)
+        private static readonly Color ColRow = FromArgb(0xffc94bb3);    // song name / level / time — unified (issue #9)
+        private static readonly Color ColInfo = FromArgb(0xff82e6e2);   // left info block (演唱者/BPM/音符數)
+        private static readonly Color ColPage = FromArgb(0xff842200);   // page counter
+        private static readonly Color ColCaption = FromArgb(0xffffffff); // scene caption
+
+        // data (unchanged flow)
         private SongListModel _model;
         private List<SongCatalog.Entry> _filtered = new List<SongCatalog.Entry>();
         private SongCatalog.Entry _selected;
-        private int _difficulty = 0;   // default Easy (overwritten by Session in OnShow)
+        private int _difficulty;   // 0=easy/1=normal/2=hard; set from Session in OnShow
         private int _page;
+        private HashSet<int> _newIds = new HashSet<int>();   // fileIds that get a NEW badge (top-N newest)
 
-        private RectTransform _listContent;
+        // disk (song jacket, swapped per selection; jacket is circular-masked so a square cover can't sweep out)
+        private RectTransform _diskRoot;
+        private Image _diskJacket;
+        private Spinner _diskSpin;
+        private Sprite _iconRandom, _iconNone;   // ICONS/RANDOM.PNG (隨機) and ICONS/NONE.PNG (no cover) — both static (no spin)
+
+        // difficulty tabs
+        private Image[] _diffImg;
+        private Sprite[] _diffNormal, _diffPushed;
+
+        // category tabs (全部/隨機/收藏/最新/勁樂/懷舊) — toggle: the selected tab stays pushed
+        private const int CatAll = 0, CatRandom = 1, CatFav = 2, CatNewest = 3, CatJam = 4, CatNostalgia = 5;
+        private Image[] _catImg;
+        private Sprite[] _catNormal, _catPushed;
+        private int _category = CatAll;
+
+        // 隨機 difficulty ranges — shown AS the list rows when the 隨機 tab is active; OK picks a random song from the pool.
+        private struct RandRange { public string Key; public int Min, Max; }
+        private static readonly RandRange[] RandRanges =
+        {
+            new RandRange { Key = "songselect.rand_1_5",  Min = 1,  Max = 5 },
+            new RandRange { Key = "songselect.rand_1_9",  Min = 1,  Max = 9 },
+            new RandRange { Key = "songselect.rand_5_9",  Min = 5,  Max = 9 },
+            new RandRange { Key = "songselect.rand_all",  Min = 0,  Max = 99 },
+            new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = 99 },
+            new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = 99 },
+            new RandRange { Key = "songselect.rand_13up", Min = 13, Max = 99 },
+        };
+        private int _randRange = 3;   // default = 全部
+
+        // list rows
+        private Image[] _rowHi, _rowNew, _rowNewBg;
+        private Button[] _rowBtn;
+        private TextMeshProUGUI[] _rowName, _rowTime, _rowLevel;
+        private Sprite _hiNormal, _hiPushed;
+        private Sprite[] _newFrames = new Sprite[0];   // NEWSIGN.an animation frames (colour-cycling NEW tag)
+        private bool _newBadgeArt;                     // any NEW badge art (animation and/or new.an backing) loaded
+
+        // misc widgets
         private TMP_InputField _search;
         private TextMeshProUGUI _pageLabel;
-        private Button[] _tabs;
-        private TextMeshProUGUI _prevTitle, _prevArtist, _prevInfo;
-        private Cycler _stageCycler;
+        private TextMeshProUGUI _infoArtist, _infoBpm, _infoNotes;
+
+        // scene preview (real names + thumbnails; selector covers scene ids 0..30)
         private List<StageInfo> _stages;
+        private int _sceneIndex;
+        private Image _sceneBig;
+        private TextMeshProUGUI _sceneName;
+
+        // music preview (exper/<fileId>.ogg)
+        private AudioSource _preview;
+        private Coroutine _previewCo;
+        private int _previewId = -1;
+        private float _previewGateTime;   // unscaled time before which previews hold (set on entry so the open spin settles first)
+
+        // window open/close transition (spin-zoom in, shrink-fade out) — all dialog art lives under _window so it
+        // animates as one piece; the combo popups parent themselves to Root, so they stay clear of the spin.
+        private RectTransform _window;
+        private CanvasGroup _windowCg;
+        private WindowAnim _anim;
+        private bool _closing;
 
         private static string L(string k) => LocalizationManager.Get(k);
 
         protected override void BuildUI()
         {
             _model = SongListModel.FromCatalog();
-            _stages = new List<StageInfo>(StageCatalog.Stages);
+            ComputeNewIds();
+            _stages = new List<StageInfo>();
+            foreach (var s in StageCatalog.Stages)
+                if (s.Id >= 0 && s.Id <= StageCatalog.MaxSelectableId) _stages.Add(s);
 
-            UIKit.AddImage(Root, "Bg", UITheme.Bg);
+            BuildBackground();
+            BuildDisk();
+            BuildDifficultyTabs();
+            BuildCategoryTabs();
+            BuildRows();
+            BuildPaging();
+            BuildSearch();
+            BuildInfoBlock();
+            BuildScenePreview();
+            BuildBottomBar();
+            BuildActionButtons();
+            WrapInWindow();
+        }
 
-            // header
-            var header = UIKit.AddImage(Root, "Header", UITheme.Header).rectTransform;
-            UIKit.Anchor(header, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1));
-            header.sizeDelta = new Vector2(0, 56); header.anchoredPosition = Vector2.zero;
-            var title = UIKit.AddLocText(header, "Title", "songselect.title", 22, UITheme.Text);
-            UIKit.Anchor(title.rectTransform, new Vector2(0, 0), new Vector2(0.5f, 1), new Vector2(0, 0.5f));
-            title.rectTransform.offsetMin = new Vector2(18, 0);
-            var back = UIKit.AddLocButton(header, "Back", "common.back", UITheme.Secondary, UITheme.Text, 15);
-            var brt = back.GetComponent<RectTransform>();
-            UIKit.Anchor(brt, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f));
-            brt.sizeDelta = new Vector2(96, 34); brt.anchoredPosition = new Vector2(-12, 0);
-            back.onClick.AddListener(() => GoTo(ScreenId.Room));
+        // Re-parent everything built above under a single centred, pivot-0.5 window container so the open/close
+        // transition can spin + scale + fade the whole dialog as one piece, then wire the press click (SE_0001)
+        // onto every button under it. The combo popups create themselves under Root afterwards, so they're left out
+        // of the spin (their own row clicks attach SE_0001 in SdoComboBox).
+        private void WrapInWindow()
+        {
+            _window = UIKit.NewRect(Root, "Window");
+            UIKit.Stretch(_window);
+            _window.pivot = new Vector2(0.5f, 0.5f);
+            _windowCg = _window.gameObject.AddComponent<CanvasGroup>();
+            _anim = _window.gameObject.AddComponent<WindowAnim>();
 
-            // ---- right preview panel ----
-            var right = UIKit.AddImage(Root, "Preview", UITheme.Panel).rectTransform;
-            right.anchorMin = new Vector2(1, 0); right.anchorMax = new Vector2(1, 1); right.pivot = new Vector2(1, 0.5f);
-            right.sizeDelta = new Vector2(296, -(56 + 12 + 12));
-            right.anchoredPosition = new Vector2(-12, -((56 + 12) - 12) * 0.5f);
+            var kids = new List<Transform>();
+            foreach (Transform c in Root) if (c != (Transform)_window) kids.Add(c);
+            foreach (var c in kids) c.SetParent(_window, false);
 
-            _prevTitle = UIKit.AddText(right, "PTitle", "-", 22, UITheme.Text, TextAlignmentOptions.Center, true);
-            UIKit.Anchor(_prevTitle.rectTransform, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1));
-            _prevTitle.rectTransform.sizeDelta = new Vector2(-24, 60); _prevTitle.rectTransform.anchoredPosition = new Vector2(0, -16);
-
-            _prevArtist = UIKit.AddText(right, "PArtist", "", 16, UITheme.TextDim, TextAlignmentOptions.Center);
-            UIKit.Anchor(_prevArtist.rectTransform, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1));
-            _prevArtist.rectTransform.sizeDelta = new Vector2(-24, 26); _prevArtist.rectTransform.anchoredPosition = new Vector2(0, -78);
-
-            _prevInfo = UIKit.AddText(right, "PInfo", "", 16, UITheme.Accent, TextAlignmentOptions.Center);
-            UIKit.Anchor(_prevInfo.rectTransform, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1));
-            _prevInfo.rectTransform.sizeDelta = new Vector2(-24, 26); _prevInfo.rectTransform.anchoredPosition = new Vector2(0, -110);
-
-            // stage selector
-            var stageTitle = UIKit.AddLocText(right, "StageTitle", "songselect.stage", 16, UITheme.TextDim);
-            UIKit.Anchor(stageTitle.rectTransform, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 1));
-            stageTitle.rectTransform.sizeDelta = new Vector2(-24, 24); stageTitle.rectTransform.anchoredPosition = new Vector2(16, -168);
-
-            var stageNames = new string[_stages.Count];
-            for (int i = 0; i < _stages.Count; i++) stageNames[i] = _stages[i].NameZh;
-            _stageCycler = UIKit.AddCycler(right, "StageCycler", stageNames, IndexOfStage(Ctx.Session.StageId), out var scrt);
-            UIKit.Anchor(scrt, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1));
-            scrt.sizeDelta = new Vector2(-24, 40); scrt.anchoredPosition = new Vector2(0, -196);
-
-            // random + confirm
-            var random = UIKit.AddLocButton(right, "Random", "songselect.random", UITheme.Accent, UITheme.OnPrimary, 18);
-            var rrt = random.GetComponent<RectTransform>();
-            UIKit.Anchor(rrt, new Vector2(0, 0), new Vector2(1, 0), new Vector2(0.5f, 0));
-            rrt.sizeDelta = new Vector2(-24, 48); rrt.anchoredPosition = new Vector2(0, 76);
-            random.onClick.AddListener(OnRandom);
-
-            var confirm = UIKit.AddLocButton(right, "Confirm", "songselect.confirm", UITheme.Primary, UITheme.OnPrimary, 20);
-            var cfrt = confirm.GetComponent<RectTransform>();
-            UIKit.Anchor(cfrt, new Vector2(0, 0), new Vector2(1, 0), new Vector2(0.5f, 0));
-            cfrt.sizeDelta = new Vector2(-24, 54); cfrt.anchoredPosition = new Vector2(0, 16);
-            confirm.onClick.AddListener(OnConfirm);
-
-            // ---- left list panel ----
-            var left = UIKit.AddImage(Root, "ListPanel", UITheme.Panel).rectTransform;
-            left.anchorMin = new Vector2(0, 0); left.anchorMax = new Vector2(1, 1);
-            left.offsetMin = new Vector2(12, 12); left.offsetMax = new Vector2(-(296 + 20), -(56 + 12));
-
-            // difficulty tabs
-            string[] tabKeys = { "difficulty.easy", "difficulty.normal", "difficulty.hard" };
-            _tabs = new Button[3];
-            for (int i = 0; i < 3; i++)
-            {
-                int idx = i;
-                var tab = UIKit.AddLocButton(left, "Tab" + i, tabKeys[i], UITheme.Secondary, UITheme.Text, 16);
-                var trt = tab.GetComponent<RectTransform>();
-                UIKit.Anchor(trt, new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1));
-                trt.sizeDelta = new Vector2(96, 34); trt.anchoredPosition = new Vector2(12 + i * 102, -10);
-                tab.onClick.AddListener(() => SetDifficulty(idx));
-                _tabs[i] = tab;
-            }
-
-            _search = UIKit.AddInputField(left, "Search", L("songselect.search"), 15);
-            var sert = _search.GetComponent<RectTransform>();
-            UIKit.Anchor(sert, new Vector2(1, 1), new Vector2(1, 1), new Vector2(1, 1));
-            sert.sizeDelta = new Vector2(128, 34); sert.anchoredPosition = new Vector2(-12, -11);
-            _search.onValueChanged.AddListener(_ => { _page = 0; ApplyFilter(); });
-
-            // Tight rows + a taller viewport so a full page (PageSize) shows at once — no scrolling needed.
-            var listScroll = UIKit.AddVerticalScroll(left, "ListScroll", out _listContent, 2f, 4);
-            UIKit.Stretch(listScroll.GetComponent<RectTransform>(), 8, 44, 8, 50);
-
-            // paging bar
-            var prev = UIKit.AddLocButton(left, "Prev", "songselect.prev", UITheme.Secondary, UITheme.Text, 15);
-            var pvrt = prev.GetComponent<RectTransform>();
-            UIKit.Anchor(pvrt, new Vector2(0, 0), new Vector2(0, 0), new Vector2(0, 0));
-            pvrt.sizeDelta = new Vector2(120, 36); pvrt.anchoredPosition = new Vector2(12, 10);
-            prev.onClick.AddListener(() => ChangePage(-1));
-
-            var next = UIKit.AddLocButton(left, "Next", "songselect.next", UITheme.Secondary, UITheme.Text, 15);
-            var nxrt = next.GetComponent<RectTransform>();
-            UIKit.Anchor(nxrt, new Vector2(1, 0), new Vector2(1, 0), new Vector2(1, 0));
-            nxrt.sizeDelta = new Vector2(120, 36); nxrt.anchoredPosition = new Vector2(-12, 10);
-            next.onClick.AddListener(() => ChangePage(1));
-
-            _pageLabel = UIKit.AddText(left, "PageLabel", "", 15, UITheme.TextDim, TextAlignmentOptions.Center);
-            UIKit.Anchor(_pageLabel.rectTransform, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0));
-            _pageLabel.rectTransform.sizeDelta = new Vector2(220, 36); _pageLabel.rectTransform.anchoredPosition = new Vector2(0, 28);
+            foreach (var b in _window.GetComponentsInChildren<Button>(true)) UiSfx.AttachClick(b);
         }
 
         public override void OnShow()
         {
+            // open whoosh + fast spin-zoom in (Frameround.wav; ~0.2s)
+            _closing = false;
+            if (_windowCg != null) _windowCg.blocksRaycasts = true;
+            if (_anim != null) { _anim.ResetOpen(); _anim.PlayIn(); }
+            UiSfx.Play(UiSfx.FrameRound);
+
+            _previewGateTime = Time.unscaledTime + 1f;   // hold music ~1s until the open spin settles
             _difficulty = (int)Ctx.Session.Difficulty;
-            ApplyFilter();
-            UpdatePreview();
+            // Scene / category / random-range / mode·formation·looker combos PERSIST across visits — the screen is
+            // built once and these fields/widgets are never reset here, so it reopens exactly as it was left.
+            RenderCategoryTabs();
+            UpdateScene();
+
+            if (_category == CatRandom)
+            {
+                // last visit ended on the 隨機 menu -> reopen it (range rows + RANDOM disc), don't jump to a song.
+                RenderDiffTabs();
+                StopPreview();
+                _selected = null;
+                SetDiskJacket(_iconRandom);
+                SetDiskSpinning(false);
+                _page = 0;
+                RenderPage();
+                UpdateInfo();
+            }
+            else
+            {
+                ApplyFilter();          // -> RenderDiffTabs + RenderPage
+                // re-select last time's song if it's in the list (else the first), jumping to its page so it's visible.
+                var prev = FindPreviousSelection();
+                if (prev != null) { _page = _filtered.IndexOf(prev) / PageSize; Select(prev); }
+                else if (_filtered.Count > 0) Select(_filtered[0]);
+                else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }   // empty -> NONE disc, no music
+            }
         }
 
-        private int IndexOfStage(int id)
+        // Close whoosh + shrink-fade out (Frameround.wav; ~0.5s), THEN switch screens. Freezes input on the window
+        // for the duration so a stray click during the fade can't re-trigger selection or navigation.
+        private void CloseTo(ScreenId target)
         {
-            for (int i = 0; i < _stages.Count; i++) if (_stages[i].Id == id) return i;
-            return 0;
+            if (_closing) return;
+            _closing = true;
+            if (_windowCg != null) _windowCg.blocksRaycasts = false;
+            UiSfx.Play(UiSfx.FrameRound);
+            StopPreview();
+            if (_anim != null) _anim.PlayOut(() => GoTo(target));
+            else GoTo(target);
         }
+
+        public override void OnHide() => StopPreview();
+        private void OnDisable() => StopPreview();   // covers canvas SetActive(false) on gameplay hand-off
+
+        private void ComputeNewIds()
+        {
+            // _model.All is curated + sorted by fileId DESC (newest first) -> first N are the newest.
+            _newIds.Clear();
+            var all = _model.All;
+            for (int i = 0; i < all.Count && i < NewBadgeCount; i++) _newIds.Add(all[i].fileId);
+        }
+
+        // ---------------- build helpers ----------------
+
+        private void BuildBackground()
+        {
+            int[] xs = { 27, 283, 539 };
+            int[] ys = { 20, 276, 531 };
+            int n = 0;
+            for (int r = 0; r < 3; r++)
+                for (int c = 0; c < 3; c++)
+                    UIKit.AddSprite(Root, "bg" + n, RoomDlgArt.An("MusicSelDlg" + (n++) + ".an"), xs[c], ys[r]);
+        }
+
+        private void BuildDisk()
+        {
+            // diskwin (44,78,237×237). The vinyl (MusicSelDlg106) is the circular MASK + base; the song jacket is a
+            // child clipped to that circle, so even a SQUARE cover stays a disc and can't sweep into the info block
+            // when spinning. The whole thing rotates (Circumgyrate 360°/1000ms) with a stop-then-spin-up on select.
+            var root = UIKit.NewRect(Root, "disk");
+            root.anchorMin = root.anchorMax = new Vector2(0f, 1f);
+            root.pivot = new Vector2(0.5f, 0.5f);
+            root.sizeDelta = new Vector2(237f, 237f);
+            root.anchoredPosition = new Vector2(44 + 237 / 2f, -(78 + 237 / 2f));
+            _diskRoot = root;
+            _iconRandom = SongIcons.LoadNamed("RANDOM.PNG");   // 隨機 disc (ICONS/RANDOM.PNG)
+            _iconNone = SongIcons.LoadNamed("NONE.PNG");        // "no cover" disc (ICONS/NONE.PNG)
+            var baseImg = root.gameObject.AddComponent<Image>();
+            baseImg.sprite = RoomDlgArt.An("MusicSelDlg106.an");
+            baseImg.raycastTarget = false;
+            var mask = root.gameObject.AddComponent<Mask>();
+            mask.showMaskGraphic = true;   // the vinyl shows as the base; children clip to its circular alpha
+
+            var jr = UIKit.NewRect(root, "jacket");
+            UIKit.Stretch(jr);
+            _diskJacket = jr.gameObject.AddComponent<Image>();
+            _diskJacket.raycastTarget = false;
+            _diskJacket.color = new Color(1f, 1f, 1f, 0f);   // hidden until a song is picked
+
+            _diskSpin = root.gameObject.AddComponent<Spinner>();
+        }
+
+        private void BuildDifficultyTabs()
+        {
+            _diffImg = new Image[3];
+            _diffNormal = new Sprite[3];
+            _diffPushed = new Sprite[3];
+            int[] nrm = { 15, 18, 21 };   // easy / normal / hard normal-state ids
+            int[] psh = { 17, 20, 23 };   // pushed (selected) ids
+            int[] x = { 283, 426, 569 };  // nudged right 1px (was 282/425/568)
+            for (int i = 0; i < 3; i++)
+            {
+                _diffNormal[i] = RoomDlgArt.An("MusicSelDlg" + nrm[i] + ".an");
+                _diffPushed[i] = RoomDlgArt.An("MusicSelDlg" + psh[i] + ".an");
+                var img = UIKit.AddSprite(Root, "diff" + i, _diffNormal[i], x[i], 84, raycast: true);
+                var btn = img.gameObject.AddComponent<Button>();
+                btn.targetGraphic = img;
+                btn.transition = Selectable.Transition.None;
+                int idx = i;
+                btn.onClick.AddListener(() => SetDifficulty(idx));
+                _diffImg[i] = img;
+            }
+        }
+
+        private void BuildCategoryTabs()
+        {
+            // 6 音樂分類頁籤 (全部/隨機/收藏/最新/勁樂/懷舊). Toggle: the selected tab stays PUSHED (like the difficulty
+            // tabs), so we drive the sprite ourselves (Transition.None) instead of UGUI's spring-back SpriteSwap.
+            int[][] ids = {
+                new[]{24,25,26}, new[]{30,31,32}, new[]{33,34,35},
+                new[]{36,37,38}, new[]{42,43,44}, new[]{39,40,41},
+            };
+            // nudged right 1px + up 8px (was x−1 / y138) so the tab row clears the first song name below.
+            int[] x = { 293, 367, 442, 517, 593, 668 };
+            _catImg = new Image[6];
+            _catNormal = new Sprite[6];
+            _catPushed = new Sprite[6];
+            for (int i = 0; i < 6; i++)
+            {
+                _catNormal[i] = RoomDlgArt.An("MusicSelDlg" + ids[i][0] + ".an");
+                _catPushed[i] = RoomDlgArt.An("MusicSelDlg" + ids[i][2] + ".an");
+                var img = UIKit.AddSprite(Root, "musictype" + i, _catNormal[i], x[i], 130, raycast: true);
+                var btn = img.gameObject.AddComponent<Button>();
+                btn.targetGraphic = img;
+                btn.transition = Selectable.Transition.None;
+                int idx = i;
+                btn.onClick.AddListener(() => SetCategory(idx));
+                _catImg[i] = img;
+            }
+        }
+
+        private void RenderCategoryTabs()
+        {
+            for (int i = 0; i < 6; i++)
+                if (_catImg[i] != null)
+                    UIKit.ApplySprite(_catImg[i], i == _category ? _catPushed[i] : _catNormal[i]);
+        }
+
+        private void SetCategory(int c)
+        {
+            _category = Mathf.Clamp(c, 0, 5);
+            RenderCategoryTabs();
+            _page = 0;
+            if (_category == CatRandom)
+            {
+                StopPreview();
+                _selected = null;
+                SetDiskJacket(_iconRandom);   // RANDOM disc, no spin
+                SetDiskSpinning(false);
+                RenderPage();      // -> RenderRandomRows
+                UpdateInfo();      // clears the value block (no song picked)
+            }
+            else
+            {
+                ApplyFilter();     // category + search -> rows
+                if (_filtered.Count > 0) Select(_filtered[0]);
+                else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }   // empty -> NONE disc, no spin, no music
+            }
+        }
+
+        // Show a sprite on the disc jacket (clipped to the vinyl circle); hide if null.
+        private void SetDiskJacket(Sprite s)
+        {
+            if (_diskJacket == null) return;
+            _diskJacket.sprite = s;
+            _diskJacket.color = s != null ? Color.white : new Color(1f, 1f, 1f, 0f);
+        }
+
+        // Spin only for real song covers; the RANDOM / NONE discs stay parked upright.
+        private void SetDiskSpinning(bool on)
+        {
+            if (_diskSpin == null) return;
+            if (on) { _diskSpin.enabled = true; _diskSpin.Restart(); }   // stop, then spin up on cover change
+            else { _diskSpin.enabled = false; if (_diskRoot != null) _diskRoot.localRotation = Quaternion.identity; }
+        }
+
+        private void BuildRows()
+        {
+            _hiNormal = RoomDlgArt.An("MusicSelDlg95.an");   // 435×19 row strip
+            _hiPushed = RoomDlgArt.An("MusicSelDlg73.an");   // selected strip
+            // Animated NEW tag (front layer): NEWSIGN.an cycles 4 colour crops of scene.png (14 frames). The static
+            // new.an "★NEW!" backing is loaded below; if newsign is missing, that backing alone is still a valid badge.
+            _newFrames = RoomDlgArt.AnFrames("newsign.an");
+            _rowHi = new Image[PageSize];
+            _rowNew = new Image[PageSize];
+            _rowNewBg = new Image[PageSize];
+            var newBgSprite = RoomDlgArt.An("new.an");   // static ★NEW! glow plate behind the animation
+            _newBadgeArt = newBgSprite != null || _newFrames.Length > 0;
+            _rowBtn = new Button[PageSize];
+            _rowName = new TextMeshProUGUI[PageSize];
+            _rowTime = new TextMeshProUGUI[PageSize];
+            _rowLevel = new TextMeshProUGUI[PageSize];
+
+            for (int i = 0; i < PageSize; i++)
+            {
+                float top = RowTop0 + RowPitch * i;
+
+                // strip (incl. the purple selected box MusicSelDlg73) nudged right 2px + down 2px (was HiX / top−1).
+                // The pushed (selected) sprite gets an extra 1px drop in ApplyRowHi; here we place the normal strip.
+                var hi = UIKit.AddSprite(Root, "row" + i + "hi", _hiNormal, HiX + 2f, top + 1f, raycast: true);
+                var btn = hi.gameObject.AddComponent<Button>();
+                btn.targetGraphic = hi;
+                btn.transition = Selectable.Transition.None;
+                _rowHi[i] = hi;
+                _rowBtn[i] = btn;
+
+                // song name / time / level nudged down 2px to sit centred in the row strip (was at `top`).
+                float textTop = top + 2f;
+                _rowName[i] = AddRowText("row" + i + "name", NameX, textTop, NameW, ColRow, TextAlignmentOptions.Left);
+                _rowTime[i] = AddRowText("row" + i + "time", TimeX, textTop, TimeW, ColRow, TextAlignmentOptions.Center);
+                _rowLevel[i] = AddRowText("row" + i + "lvl", LevelX, textTop, LevelW, ColRow, TextAlignmentOptions.Center);
+
+                // NEW badge: the original static new.an "★NEW!" plate, flush at the strip's left edge.
+                var nbg = UIKit.AddImage(Root, "row" + i + "newbg", Color.white);
+                UIKit.ApplySprite(nbg, newBgSprite);   // sizes to 63×25, hides if missing
+                float gw = newBgSprite != null ? newBgSprite.rect.width : BadgeW, gh = newBgSprite != null ? newBgSprite.rect.height : BadgeH;
+                Place(nbg.rectTransform, BadgeX, top - 2, gw, gh);
+                nbg.gameObject.SetActive(false);
+                _rowNewBg[i] = nbg;
+
+                // NEW badge foreground (animated NEWSIGN.an "New", offset to sit over the backing glow) — DISABLED:
+                // the colour-cycling overlay didn't read well over the ★NEW! plate, so we show the static badge only.
+                // To re-enable, uncomment this block (SetRowNewActive already toggles _rowNew together with the backing).
+                // var nb = UIKit.AddImage(Root, "row" + i + "new", Color.white);
+                // Sprite nf0 = _newFrames.Length > 0 ? _newFrames[0] : null;
+                // nb.sprite = nf0;
+                // if (nf0 == null) nb.color = new Color(1f, 1f, 1f, 0f);
+                // float bw = nf0 != null ? nf0.rect.width : BadgeW, bh = nf0 != null ? nf0.rect.height : BadgeH;
+                // Place(nb.rectTransform, BadgeX + NewAnimDX, top - 2 + NewAnimDY, bw, bh);
+                // if (_newFrames.Length > 1)
+                // {
+                //     var anim = nb.gameObject.AddComponent<SpriteSeqAnim>();
+                //     anim.Frames = _newFrames;
+                //     anim.Fps = NewBadgeFps;
+                // }
+                // nb.gameObject.SetActive(false);
+                // _rowNew[i] = nb;
+            }
+        }
+
+        private TextMeshProUGUI AddRowText(string name, float x, float y, float w, Color col, TextAlignmentOptions align)
+        {
+            var t = UIKit.AddText(Root, name, "", 14, col, align, false);
+            Place(t.rectTransform, x, y, w, RowH);
+            return t;
+        }
+
+        // Show/hide a row's NEW badge — the animated "New" foreground and its static new.an glow backing together.
+        private void SetRowNewActive(int i, bool on)
+        {
+            if (_rowNew[i] != null) _rowNew[i].gameObject.SetActive(on);
+            if (_rowNewBg[i] != null) _rowNewBg[i].gameObject.SetActive(on);
+        }
+
+        // Apply a row's strip sprite. The purple SELECTED box (MusicSelDlg73) sits 1px lower than the normal strip
+        // (MusicSelDlg95), so re-anchor the rect down 1px while it's shown and back to the strip baseline otherwise.
+        private void ApplyRowHi(int i, bool selected)
+        {
+            var img = _rowHi[i];
+            if (img == null) return;
+            UIKit.ApplySprite(img, selected ? _hiPushed : _hiNormal);
+            float top = RowTop0 + RowPitch * i + 1f;
+            img.rectTransform.anchoredPosition = new Vector2(HiX + 2f, -(top + (selected ? 1f : 0f)));
+        }
+
+        private void BuildPaging()
+        {
+            UIKit.AddSpriteButton(Root, "btleft", RoomDlgArt.An("MusicSelDlg96.an"),
+                RoomDlgArt.An("MusicSelDlg97.an"), RoomDlgArt.An("MusicSelDlg98.an"), 577, 425)
+                .onClick.AddListener(() => ChangePage(-1));
+            UIKit.AddSpriteButton(Root, "btright", RoomDlgArt.An("MusicSelDlg99.an"),
+                RoomDlgArt.An("MusicSelDlg100.an"), RoomDlgArt.An("MusicSelDlg101.an"), 712, 425)
+                .onClick.AddListener(() => ChangePage(1));
+
+            _pageLabel = UIKit.AddText(Root, "pagelabel", "", 14, ColPage, TextAlignmentOptions.Center);
+            Place(_pageLabel.rectTransform, 601, 427, 110, 18);   // nudged down 2px to sit centred in the baked slot
+        }
+
+        private void BuildSearch()
+        {
+            _search = UIKit.AddInputField(Root, "SearchBox", L("songselect.search"), 13);   // issue #8 (localized)
+            Place(_search.GetComponent<RectTransform>(), 368, 427, 180, 20);
+            _search.characterLimit = 32;
+            _search.onValueChanged.AddListener(_ => { _page = 0; ApplyFilter(); });
+            // Hide the hint the moment the field gains focus (caret shows); restore it on blur if still empty (#7).
+            var ph = _search.placeholder;
+            if (ph != null)
+            {
+                _search.onSelect.AddListener(_ => ph.gameObject.SetActive(false));
+                _search.onDeselect.AddListener(_ => ph.gameObject.SetActive(string.IsNullOrEmpty(_search.text)));
+            }
+        }
+
+        private void BuildInfoBlock()
+        {
+            // The 演唱者 / BPM labels are BAKED into the dialog art (MusicSelDlg3.an); their rows are centred at
+            // y≈315 / y≈333 and the baked colon ends ~x104 — so we draw VALUES ONLY, left-aligned just past it.
+            // The 音符數 label is NOT baked, so we add it from lbl_notes.an ("音符数：") as the 3rd row (same teal
+            // colour / glyph size as the baked labels), with its value past it too.
+            _infoArtist = MakeInfo("info_artist", 110, 307);   // value after baked "演唱者："
+            _infoBpm = MakeInfo("info_bpm", 110, 325);         // value after baked "BPM："
+            _infoNotes = MakeInfo("info_notes", 110, 343);     // value after the lbl_notes label below
+
+            var notesLbl = UIKit.AddImage(Root, "info_notes_lbl", Color.white);
+            notesLbl.sprite = RoomDlgArt.An("lbl_notes.an");
+            notesLbl.raycastTarget = false;
+            if (notesLbl.sprite == null) notesLbl.color = new Color(1f, 1f, 1f, 0f);
+            Place(notesLbl.rectTransform, 53, 343, 66, 16);    // 音符數 label x (nudged right to line up with 演唱者/BPM)
+        }
+
+        private TextMeshProUGUI MakeInfo(string name, float x, float y)
+        {
+            var t = UIKit.AddText(Root, name, "", 13, ColInfo, TextAlignmentOptions.Left);
+            Place(t.rectTransform, x, y, 160, 16);
+            return t;
+        }
+
+        private void BuildScenePreview()
+        {
+            // "場景選擇" caption is baked into the dialog background art — no text drawn here.
+            _sceneBig = UIKit.AddImage(Root, "scenebigpic", Color.white);
+            Place(_sceneBig.rectTransform, 60, 399, 205, 90);   // explicit size (thumbnail stretched to fit)
+
+            _sceneName = UIKit.AddText(Root, "scenename", "", 12, ColCaption, TextAlignmentOptions.Center);
+            Place(_sceneName.rectTransform, 96, 494, 136, 16);   // (#8) nudged up ~2px
+
+            UIKit.AddSpriteButton(Root, "scenepre", RoomDlgArt.An("MusicSelDlg96.an"),
+                RoomDlgArt.An("MusicSelDlg97.an"), RoomDlgArt.An("MusicSelDlg98.an"), 74, 490)
+                .onClick.AddListener(() => SceneStep(-1));
+            UIKit.AddSpriteButton(Root, "scenenext", RoomDlgArt.An("MusicSelDlg99.an"),
+                RoomDlgArt.An("MusicSelDlg100.an"), RoomDlgArt.An("MusicSelDlg101.an"), 229, 490)
+                .onClick.AddListener(() => SceneStep(1));
+        }
+
+        private void BuildBottomBar()
+        {
+            // 模式 / 隊形 / 旁觀人數 (issues #7/#13). The "模式選擇 / 隊形選擇 / 旁觀人數" captions are BAKED INTO the
+            // dialog background art (the MusicSelDlg0..8 9-grid from MUSICSELDLG.PNG), so we do NOT draw caption text
+            // ourselves — only the green dropdown boxes, placed under the baked captions at the original value slots
+            // (offline xml: lblTeamMode x289 / lblFormation x571 / lookernum x661, all y≈484).
+            Sprite listMode = RoomDlgArt.An("ShopDlg16.an"), listModeH = RoomDlgArt.An("ShopDlg17.an");   // green list rows (mode)
+            Sprite listSm = RoomDlgArt.An("ShopDlg18.an"), listSmH = RoomDlgArt.An("ShopDlg19.an");       // green list rows (formation/looker)
+            Sprite arrow = RoomDlgArt.An("MusicSelDlg196.an");   // orange ▲
+            const float slotY = 488f, slotH = 22f;
+
+            // Collapsed = value centred in the baked slot + ▲; list is green on expand. Mode VALUE uses the original
+            // name slices from LABEL_SDO.an (13 SDO modes, 258×23 each: 自由模式=frame 0, 普通模式=frame 1). The mode
+            // slot is the full 258-wide value area (offline lblTeamMode), arrow at btnTeamMode x522. Formation/looker
+            // use white text (no name-slice art for those values).
+            var sdoModes = RoomDlgArt.AnFrames("LABEL_SDO.an");
+            Sprite[] modeSprites = (sdoModes != null && sdoModes.Length >= 2) ? new[] { sdoModes[0], sdoModes[1] } : null;
+            SdoComboBox.Create(Root, "modeCombo", 289, slotY, 258, slotH, 522, arrow, listMode, listModeH,
+                new[] { L("songselect.mode_free"), L("songselect.mode_normal") }, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 1), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
+                listAsText: true);   // expanded list = green text rows (like formation/looker); collapsed value keeps the LABEL_SDO sprite
+            SdoComboBox.Create(Root, "formCombo", 571, slotY, 56, slotH, 627, arrow, listSm, listSmH,
+                new[] { L("songselect.form_basic"), L("songselect.form_fan"), L("songselect.form_ring"), L("songselect.form_random") }, null, Mathf.Clamp(Ctx.Session.Formation, 0, 3), Color.white, ColComboList, i => Ctx.Session.Formation = i);
+            SdoComboBox.Create(Root, "lookerCombo", 661, slotY, 56, slotH, 717, arrow, listSm, listSmH,
+                LookerOptions(), null, Mathf.Clamp(Ctx.Session.LookerCount, 0, 10), Color.white, ColComboList, i => Ctx.Session.LookerCount = i);
+        }
+
+        private static string[] LookerOptions()
+        {
+            var o = new string[11];
+            for (int i = 0; i <= 10; i++) o[i] = i.ToString();
+            return o;
+        }
+
+        private void BuildActionButtons()
+        {
+            UIKit.AddSpriteButton(Root, "ok", RoomDlgArt.An("MusicSelDlg64.an"),
+                RoomDlgArt.An("MusicSelDlg65.an"), RoomDlgArt.An("MusicSelDlg66.an"), 215, 542)
+                .onClick.AddListener(OnConfirm);
+            UIKit.AddSpriteButton(Root, "cancel", RoomDlgArt.An("MusicSelDlg67.an"),
+                RoomDlgArt.An("MusicSelDlg68.an"), RoomDlgArt.An("MusicSelDlg69.an"), 503, 542)
+                .onClick.AddListener(() => CloseTo(ScreenId.Room));
+            UIKit.AddSpriteButton(Root, "close", RoomDlgArt.An("MusicSelDlg70.an"),
+                RoomDlgArt.An("MusicSelDlg71.an"), RoomDlgArt.An("MusicSelDlg72.an"), 732, 28)
+                .onClick.AddListener(() => CloseTo(ScreenId.Room));
+        }
+
+        // ---------------- data flow ----------------
 
         private void SetDifficulty(int d)
         {
             _difficulty = Mathf.Clamp(d, 0, 2);
-            RenderTabs();
+            RenderDiffTabs();
             RenderPage();
-            UpdatePreview();
+            UpdateInfo();
         }
 
-        private void RenderTabs()
+        private void RenderDiffTabs()
         {
-            for (int i = 0; i < _tabs.Length; i++)
-                if (_tabs[i] != null && _tabs[i].targetGraphic is Image img)
-                    img.color = (i == _difficulty) ? UITheme.Primary : UITheme.Secondary;
+            for (int i = 0; i < 3; i++)
+                if (_diffImg[i] != null)
+                    UIKit.ApplySprite(_diffImg[i], i == _difficulty ? _diffPushed[i] : _diffNormal[i]);
         }
 
         private void ApplyFilter()
         {
-            _filtered = _model.Filter(_search != null ? _search.text : null);
+            _filtered = SongListModel.Filter(CategoryBase(), _search != null ? _search.text : null);
             int maxPage = Mathf.Max(0, (_filtered.Count - 1) / PageSize);
             _page = Mathf.Clamp(_page, 0, maxPage);
-            RenderTabs();
+            RenderDiffTabs();
             RenderPage();
+        }
+
+        // The song subset for the active category. 全部 = all; 最新 = NEW-badge songs; 收藏/勁樂/懷舊 unconfigured = empty.
+        // (隨機 never reaches here — it renders the range rows instead.)
+        private List<SongCatalog.Entry> CategoryBase()
+        {
+            var all = _model.All;
+            var res = new List<SongCatalog.Entry>();
+            if (_category == CatAll) { res.AddRange(all); }
+            else if (_category == CatNewest) { foreach (var e in all) if (_newIds.Contains(e.fileId)) res.Add(e); }
+            return res;
+        }
+
+        // The song confirmed last time (Session), if it's in the current list — used to re-focus it on re-entry.
+        private SongCatalog.Entry FindPreviousSelection()
+        {
+            var s = Ctx.Session;
+            if (s == null) return null;
+            if (s.SongFileId > 0)
+                foreach (var e in _filtered) if (e.fileId == s.SongFileId) return e;
+            if (!string.IsNullOrEmpty(s.SongGn))
+                foreach (var e in _filtered) if (e.gn == s.SongGn) return e;
+            return null;
         }
 
         private void ChangePage(int delta)
         {
-            // wrap around: prev on the first page -> last page, next on the last page -> first page.
+            if (_category == CatRandom) return;   // 隨機 rows are a single fixed page
             int pages = Mathf.Max(1, (_filtered.Count + PageSize - 1) / PageSize);
+            // remember the focused ROW within the page so paging lands on the same row on the next page.
+            int row = _selected != null ? _filtered.IndexOf(_selected) - _page * PageSize : 0;
+            if (row < 0 || row >= PageSize) row = 0;
             _page = ((_page + delta) % pages + pages) % pages;
-            RenderPage();
+            var slice = PageSlice(_filtered, _page, PageSize);
+            if (slice.Count > 0) Select(slice[Mathf.Clamp(row, 0, slice.Count - 1)]);   // re-focus same row (preview + info follow)
+            else RenderPage();
+        }
+
+        /// <summary>Entries shown on the current page (pure slice — keeps the row-fill testable).</summary>
+        public static List<SongCatalog.Entry> PageSlice(IReadOnlyList<SongCatalog.Entry> all, int page, int pageSize)
+        {
+            var res = new List<SongCatalog.Entry>();
+            if (all == null || pageSize <= 0) return res;
+            int start = page * pageSize;
+            int end = Mathf.Min(start + pageSize, all.Count);
+            for (int i = start; i < end; i++) res.Add(all[i]);
+            return res;
         }
 
         private void RenderPage()
         {
-            UIKit.Clear(_listContent);
+            if (_category == CatRandom) { RenderRandomRows(); return; }
+
             int maxPage = Mathf.Max(0, (_filtered.Count - 1) / PageSize);
-            _pageLabel.text = _filtered.Count == 0
-                ? L("songselect.no_songs")
-                : L("songselect.page").Replace("{0}", (_page + 1).ToString()).Replace("{1}", (maxPage + 1).ToString());
+            _pageLabel.text = _filtered.Count == 0 ? "0 / 0" : (_page + 1) + " / " + (maxPage + 1);
 
-            int start = _page * PageSize;
-            int end = Mathf.Min(start + PageSize, _filtered.Count);
-            for (int i = start; i < end; i++) AddSongRow(_filtered[i]);
-        }
-
-        private void AddSongRow(SongCatalog.Entry e)
-        {
-            bool sel = ReferenceEquals(e, _selected);
-            var rowImg = UIKit.AddImage(_listContent, "S" + e.fileId, sel ? UITheme.RowSelected : UITheme.Row, true);
-            UIKit.Layout(rowImg.gameObject, 32);   // 12 rows fit the viewport without scrolling
-            var btn = rowImg.gameObject.AddComponent<Button>();
-            btn.targetGraphic = rowImg;
-            btn.onClick.AddListener(() => Select(e));
-
-            // icon (best effort) or placeholder
-            var iconRt = UIKit.AddImage(rowImg.transform, "Icon", new Color(0.3f, 0.24f, 0.42f, 1f)).rectTransform;
-            UIKit.Anchor(iconRt, new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f));
-            iconRt.sizeDelta = new Vector2(28, 28); iconRt.anchoredPosition = new Vector2(20, 0);
-            var sprite = SongIcons.Load(e.fileId);
-            if (sprite != null) iconRt.GetComponent<Image>().sprite = sprite;
-            else
+            var slice = PageSlice(_filtered, _page, PageSize);
+            for (int i = 0; i < PageSize; i++)
             {
-                var ic = UIKit.AddText(iconRt, "i", string.IsNullOrEmpty(e.title) ? "?" : e.title.Substring(0, 1), 15, UITheme.Text, TextAlignmentOptions.Center);
-                UIKit.Stretch(ic.rectTransform);
+                bool has = i < slice.Count;
+                _rowHi[i].gameObject.SetActive(has);
+                _rowName[i].gameObject.SetActive(has);
+                _rowTime[i].gameObject.SetActive(has);
+                _rowLevel[i].gameObject.SetActive(has);
+                _rowBtn[i].onClick.RemoveAllListeners();
+                if (!has) { SetRowNewActive(i, false); continue; }
+
+                var e = slice[i];
+                bool sel = ReferenceEquals(e, _selected);
+                ApplyRowHi(i, sel);
+                _rowName[i].alignment = TextAlignmentOptions.Left;
+                _rowName[i].text = e.title ?? e.gn;
+                int lvl = e.Diff(_difficulty);
+                _rowLevel[i].text = lvl >= 0 ? lvl.ToString() : "-";
+                int dur = e.DurationSec(_difficulty);
+                _rowTime[i].text = dur > 0 ? FormatDuration(dur) : "";
+                SetRowNewActive(i, _newBadgeArt && _newIds.Contains(e.fileId));
+                _rowBtn[i].onClick.AddListener(() => Select(e));
             }
-
-            var titleT = UIKit.AddText(rowImg.transform, "T", e.title ?? e.gn, 15, UITheme.Text, TextAlignmentOptions.Left);
-            UIKit.Anchor(titleT.rectTransform, new Vector2(0, 0.5f), new Vector2(0.62f, 1), new Vector2(0, 0.5f));
-            titleT.rectTransform.offsetMin = new Vector2(44, 0); titleT.rectTransform.offsetMax = new Vector2(0, 0);
-
-            var artistT = UIKit.AddText(rowImg.transform, "A", e.artist ?? "", 12, UITheme.TextDim, TextAlignmentOptions.Left);
-            UIKit.Anchor(artistT.rectTransform, new Vector2(0, 0), new Vector2(0.62f, 0.5f), new Vector2(0, 0.5f));
-            artistT.rectTransform.offsetMin = new Vector2(44, 0); artistT.rectTransform.offsetMax = new Vector2(0, 0);
-
-            int lvl = e.Diff(_difficulty);
-            var info = UIKit.AddText(rowImg.transform, "L", InfoText(e, lvl), 13, UITheme.Accent, TextAlignmentOptions.Right);
-            UIKit.Anchor(info.rectTransform, new Vector2(0.62f, 0), new Vector2(1, 1), new Vector2(1, 0.5f));
-            info.rectTransform.offsetMin = new Vector2(0, 0); info.rectTransform.offsetMax = new Vector2(-12, 0);
         }
 
-        private string InfoText(SongCatalog.Entry e, int lvl)
+        // 隨機 mode: the row list shows the difficulty-range options instead of songs; OK then picks a random song.
+        private void RenderRandomRows()
         {
-            var parts = new List<string>();
-            if (lvl >= 0) parts.Add(L("songselect.level").Replace("{0}", lvl.ToString()));
-            int dur = e.DurationSec(_difficulty);
-            if (dur > 0) parts.Add(L("songselect.length").Replace("{0}", FormatDuration(dur)));
-            return string.Join("   ", parts);
+            _pageLabel.text = "1 / 1";
+            for (int i = 0; i < PageSize; i++)
+            {
+                bool has = i < RandRanges.Length;
+                _rowHi[i].gameObject.SetActive(has);
+                _rowName[i].gameObject.SetActive(has);
+                _rowTime[i].gameObject.SetActive(false);
+                _rowLevel[i].gameObject.SetActive(false);
+                SetRowNewActive(i, false);
+                _rowBtn[i].onClick.RemoveAllListeners();
+                if (!has) continue;
+
+                ApplyRowHi(i, i == _randRange);
+                _rowName[i].alignment = TextAlignmentOptions.Left;   // same left indent as song names
+                _rowName[i].text = L(RandRanges[i].Key);
+                int idx = i;
+                _rowBtn[i].onClick.AddListener(() => SelectRandRange(idx));
+            }
         }
 
-        /// <summary>Seconds -> m:ss (e.g. 146 -> "2:26").</summary>
-        private static string FormatDuration(int sec)
-            => (sec / 60) + ":" + (sec % 60).ToString("00");
+        private void SelectRandRange(int i)
+        {
+            _randRange = Mathf.Clamp(i, 0, RandRanges.Length - 1);
+            RenderRandomRows();   // re-highlight the picked range
+        }
+
+        // Songs eligible for the current 隨機 range (level at the active difficulty within [min,max]).
+        private List<SongCatalog.Entry> RandomPool()
+        {
+            var r = RandRanges[Mathf.Clamp(_randRange, 0, RandRanges.Length - 1)];
+            return SongListModel.InLevelRange(_model.All, _difficulty, r.Min, r.Max);
+        }
 
         private void Select(SongCatalog.Entry e)
         {
             _selected = e;
             RenderPage();
-            UpdatePreview();
+            UpdateInfo();
+            if (UpdateDisk()) PlayPreview(e);   // cover present -> preview; NONE disc -> no music
+            else StopPreview();
         }
 
-        private void UpdatePreview()
+        private void UpdateInfo()
         {
-            if (_selected == null)
+            // Values only — labels are baked into the art (演唱者/BPM) or drawn as the lbl_notes sprite (音符數).
+            _infoArtist.text = _selected != null ? (_selected.artist ?? "") : "";
+            _infoBpm.text = (_selected != null && _selected.bpm > 0f) ? Mathf.RoundToInt(_selected.bpm).ToString() : "";
+            _infoNotes.text = _selected != null ? _selected.NoteCount(_difficulty).ToString() : "";
+        }
+
+        // Returns true if a real cover is shown (spins); false for the NONE disc (no cover -> static, no music).
+        private bool UpdateDisk()
+        {
+            var jacket = _selected != null ? SongIcons.Load(_selected.fileId) : null;
+            if (jacket != null) { SetDiskJacket(jacket); SetDiskSpinning(true); return true; }   // real cover -> spins
+            SetDiskJacket(_iconNone); SetDiskSpinning(false); return false;                       // no cover -> NONE disc, no spin
+        }
+
+        // ---------------- scene preview ----------------
+
+        // Scene selector positions: 0 = 隨機 (random); 1.._stages.Count = _stages[pos-1].
+        private void SceneStep(int delta)
+        {
+            int n = _stages.Count + 1;   // +1 for the random slot
+            _sceneIndex = ((_sceneIndex + delta) % n + n) % n;
+            UpdateScene();
+        }
+
+        private void UpdateScene()
+        {
+            Sprite thumb;
+            if (_sceneIndex <= 0)
             {
-                _prevTitle.text = "-";
-                _prevArtist.text = "";
-                _prevInfo.text = "";
-                return;
+                if (_sceneName != null) _sceneName.text = L("songselect.random");
+                thumb = RoomDlgArt.An("RandomScene.an") ?? RoomDlgArt.An("Scene1.an");
             }
-            _prevTitle.text = _selected.title ?? _selected.gn;
-            _prevArtist.text = _selected.artist ?? "";
-            _prevInfo.text = InfoText(_selected, _selected.Diff(_difficulty));
+            else
+            {
+                var stage = _stages[Mathf.Clamp(_sceneIndex - 1, 0, _stages.Count - 1)];
+                if (_sceneName != null) _sceneName.text = stage.DisplayName;
+                // thumbnail = Scene{sceneId+1}.an (EXE rule), NOT by list position.
+                thumb = RoomDlgArt.An("Scene" + (stage.Id + 1) + ".an") ?? RoomDlgArt.An("Scene1.an");
+            }
+            if (_sceneBig != null)
+            {
+                _sceneBig.sprite = thumb;
+                _sceneBig.color = thumb != null ? Color.white : new Color(1f, 1f, 1f, 0f);
+            }
         }
 
-        private void OnRandom()
+        // ---------------- music preview (exper/<fileId>.ogg) ----------------
+
+        // Start (or replace) the looping preview for the selected song. Cancels any in-flight load first so rapid
+        // selection never stacks coroutines or leaves a stale clip playing (debounce on fileId).
+        private void PlayPreview(SongCatalog.Entry e)
         {
-            if (_filtered.Count == 0) return;
-            int seed = System.Environment.TickCount;
-            var pick = SongListModel.PickRandomFrom(_filtered, seed);
-            if (pick == null) return;
-            int idx = _filtered.IndexOf(pick);
-            if (idx >= 0) _page = idx / PageSize;
-            _selected = pick;
-            RenderPage();
-            UpdatePreview();
+            if (e == null) return;
+            if (e.fileId == _previewId && _preview != null && _preview.isPlaying) return;
+            StopPreview();
+            _previewId = e.fileId;
+            _previewCo = StartCoroutine(LoadPreviewCo(e.fileId));
         }
+
+        // Mirrors Step1Game.LoadAndPlayAudio: file:// + raw path (no URI escaping — the music tree is ASCII and
+        // every loader in the repo concatenates raw), AudioType.OGGVORBIS, result==Success guard, GetContent,
+        // graceful no-op when the file is missing. Loops at a modest volume so it sits under the UI.
+        private IEnumerator LoadPreviewCo(int fileId)
+        {
+            string path = Path.Combine(SdoExtracted.MusicDir, "exper", fileId + ".ogg");
+            if (!File.Exists(path)) { _previewCo = null; yield break; }
+
+            AudioClip clip = null;
+            using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.OGGVORBIS))
+            {
+                yield return req.SendWebRequest();
+                if (req.result == UnityWebRequest.Result.Success) clip = DownloadHandlerAudioClip.GetContent(req);
+                else Debug.LogWarning("[SongSelect] preview load fail: " + req.error);
+            }
+            // race guard: selection changed (or hidden) while loading -> drop the stale clip.
+            if (clip == null || _previewId != fileId) { _previewCo = null; yield break; }
+
+            // Hold until the entry gate passes (~1s after OnShow) so music starts only once the open spin settles.
+            // After that first second the gate is in the past, so later selections play immediately.
+            while (Time.unscaledTime < _previewGateTime)
+            {
+                if (_previewId != fileId) { _previewCo = null; yield break; }   // superseded while waiting
+                yield return null;
+            }
+            _previewCo = null;
+
+            EnsurePreviewSource();
+            _preview.clip = clip;
+            _preview.Play();
+        }
+
+        private void EnsurePreviewSource()
+        {
+            if (_preview != null) return;
+            // Audio needs a listener; gameplay relies on the scene's. If the front-end has none yet, add one here
+            // (only when truly absent, to avoid Unity's "multiple audio listeners" warning).
+            if (FindAnyObjectByType<AudioListener>() == null) gameObject.AddComponent<AudioListener>();
+            _preview = gameObject.AddComponent<AudioSource>();
+            _preview.playOnAwake = false;
+            _preview.loop = true;
+            _preview.volume = PreviewVolume;
+            _preview.spatialBlend = 0f;
+        }
+
+        private void StopPreview()
+        {
+            if (_previewCo != null) { StopCoroutine(_previewCo); _previewCo = null; }
+            _previewId = -1;
+            if (_preview != null) { _preview.Stop(); _preview.clip = null; }
+        }
+
+        // ---------------- confirm ----------------
 
         private void OnConfirm()
         {
+            // 隨機 mode: pick a random song from the selected difficulty-range pool.
+            if (_category == CatRandom && _selected == null)
+            {
+                var pool = RandomPool();
+                if (pool.Count == 0) { Toast.Show(L("songselect.need_pick")); return; }
+                _selected = pool[Random.Range(0, pool.Count)];
+            }
             if (_selected == null) { Toast.Show(L("songselect.need_pick")); return; }
             var s = Ctx.Session;
             s.SongGn = _selected.gn;
@@ -290,12 +840,39 @@ namespace Sdo.UI.Screens
             s.SongTitle = _selected.title ?? _selected.gn;
             s.SongArtist = _selected.artist;
             s.Difficulty = (Difficulty)_difficulty;
-            var stage = _stages[Mathf.Clamp(_stageCycler.Index, 0, _stages.Count - 1)];
+            // scene: slot 0 = random -> pick an actual scene now; else the chosen stage.
+            var stage = _sceneIndex <= 0 && _stages.Count > 0
+                ? _stages[Random.Range(0, _stages.Count)]
+                : _stages[Mathf.Clamp(_sceneIndex - 1, 0, _stages.Count - 1)];
             s.StageId = stage.Id;
             s.StageFolder = stage.Folder;
+            // mode/formation/looker are written live by the dropdown callbacks.
 
             Ctx.Rooms.SetSong(s.SongTitle);
-            GoTo(ScreenId.Room);
+            CloseTo(ScreenId.Room);
+        }
+
+        // ---------------- small utils ----------------
+
+        /// <summary>Place a rect at MusicSelDlg.xml top-left pixel coords (y-down) at fixed w×h.</summary>
+        private void Place(RectTransform rt, float x, float y, float w, float h)
+        {
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.sizeDelta = new Vector2(w, h);
+            rt.anchoredPosition = new Vector2(x, -y);
+        }
+
+        private static string FormatDuration(int sec) => (sec / 60) + ":" + (sec % 60).ToString("00");
+
+        /// <summary>0xAARRGGBB -> Color.</summary>
+        private static Color FromArgb(uint argb)
+        {
+            return new Color(
+                ((argb >> 16) & 0xFF) / 255f,
+                ((argb >> 8) & 0xFF) / 255f,
+                (argb & 0xFF) / 255f,
+                ((argb >> 24) & 0xFF) / 255f);
         }
     }
 }

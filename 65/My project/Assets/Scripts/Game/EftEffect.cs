@@ -11,6 +11,14 @@ namespace Sdo.Game
     {
         public Mesh Mesh;
         public Texture2D[] SubTex;   // one per mesh.subMeshCount (may contain nulls → drawn untextured/white)
+        // OPTIONAL .mot-driven rigid prop (SCN0008 delta_line): when these are non-null the mesh is NOT drawn as one
+        // static combined mesh — instead each submesh rides its own bone via an SdoAvatar so DELTA_LINE.MOT animates it
+        // (the three colour bars extend via scale.Y). All null for the combo aef03_00 mesh path, which is untouched.
+        public HrcLoader Hrc;            // skeleton for the .mot
+        public MotLoader Mot;            // the embedded motion (e.g. DELTA_LINE.MOT — sequential scale-Y extend)
+        public Mesh[] SubmeshMeshes;     // per-submesh meshes (verts in bone-local space, NOT baked) — one per bone-follower
+        public Texture2D[] SubmeshTex;   // texture per submesh mesh (aka/ao/ki)
+        public int[] SubmeshBone;        // HRC bone each submesh rides (matched by colour name)
     }
 
     /// <summary>
@@ -64,6 +72,27 @@ namespace Sdo.Game
         public static bool LumWorldQuad = false;   // reverted to faithful MODULATE (experiment: tex4 blue burst) per user
         static Shader _lumShader;
         static Shader LumShader() { if (_lumShader == null) _lumShader = Shader.Find("Sdo/EftAdditiveLum"); return _lumShader; }
+        static Shader _alphaShader;
+        // SCN0008 kekkai DISC: render alpha-BLENDED (translucent) so its alpha pulse reads as transparency + 光變亮變暗,
+        // instead of additive (which over-brightens the bright disc until the pulse clips away). Used only for Persistent tex69.
+        static Shader AlphaShader() { if (_alphaShader == null) _alphaShader = Shader.Find("Sdo/EftAlpha"); return _alphaShader; }
+
+        // SPRITE-SHEET FLIPBOOK: a flipbook whose frames are CELLS of one atlas (SCN0010 confetti ZIPIANZ: 16 cells
+        // in a 4×4 grid, all sharing one texture) animates by UV SUB-RECT, not by swapping textures. The EFT cell
+        // rect is (uMin,vTop,uMax,vBot) with V=0 at the TOP (D3D); Unity samples V=0 at the bottom, so the offset's
+        // V is 1−vBot. Full-cell (0,0,1,1) maps to scale(1,1)/offset(0,0) = the identity (a safe no-op).
+        static bool UsableUv(Vector4 r)
+        {
+            if (float.IsNaN(r.x) || float.IsNaN(r.y) || float.IsNaN(r.z) || float.IsNaN(r.w)) return false;
+            if (r.x < -0.01f || r.y < -0.01f || r.z > 1.01f || r.w > 1.01f) return false;
+            return (r.z - r.x) > 0.01f && (r.w - r.y) > 0.01f;
+        }
+        static void ApplyFrameUv(Material m, Vector4 r)
+        {
+            if (m == null) return;
+            m.mainTextureScale = new Vector2(r.z - r.x, r.w - r.y);
+            m.mainTextureOffset = new Vector2(r.x, 1f - r.w);
+        }
 
         // COMBO-BURST EXPOSURE RAMP for the 200/300 fountain balls (tex30/tex31 billboards). The official burst is
         // OVEREXPOSED — a white-hot blob at spawn — then the exposure FALLS so the ball's true colour (cyan/violet) and
@@ -112,6 +141,31 @@ namespace Sdo.Game
         public static float MeshAlpha = 0.8f;   // 200-ONLY AEF_3_00 opacity vs the raw alpha curve (300 uses Mesh300Alpha)
         public static float MeshDropFrac = 0.22f;  // 300 mesh vertical anchor: 0 = on the ball (keeps up), 1 = at ball bottom — user-tuned
 
+        // ── SCN0008 magic-circle CORNER GLOW BALLS (tex42 aef_1_01_01, slot4/5/6) ───────────────────────────────────
+        // The 3 bright glow flares sit at the floor TRIANGLE corners (same as the delta_line colour bars: ki=TOP,
+        // aka=BL, ao=BR). In the raw EFT they are ATTACH children: slot4 rides slot1 (external, initRot 90,0,0) and
+        // slot5/6 ride slot2 (the KEKKAI disc, initRot 90,-60,0). The faithful attach math (parent.pos + Euler(parent.rot)
+        // × localOffset, engine Particle_Update 030_scene:7388-7401 ownSRT×parentWorld) lands slot4 at TOP correctly,
+        // but the disc parent's 90°X tilt rotates slot5/6's +Z(0.5) offset DOWN into the floor (y→-20 world) AND its
+        // -60°Y is a SPIN PHASE that swings their azimuth off the BL/BR corners (computed: slot5→(2,-20,-144),
+        // slot6→(126,-20,62) — exactly the misplaced/below-floor balls the user saw, with BL missing). The official
+        // shows them FIXED on the floor at the triangle corners and PULSING, so for this persistent effect we PIN the
+        // tex42 flares to the corner positions instead of reproducing the disc's tilt/spin. Corners are in effect-LOCAL
+        // EFT units (the effect transform applies its own 180°Y + effScale); y = bar height (≈1.6 world / effScale40).
+        // slot4=TOP (ki), slot5=BL (aka), slot6=BR (ao) — matches the delta_line bar corners 1:1.
+        public static bool PinCornerGlows = true;   // OFF = faithful (disc-tilted, two below floor); ON = fixed floor corners
+        public static Vector3 CornerTop = new Vector3(-0.035f, 0.04f, -3.425f);   // ki  TOP  → world ≈ (1.4, 1.6, 137)
+        public static Vector3 CornerBL  = new Vector3( 3.000f, 0.04f,  1.725f);   // aka BL   → world ≈ (-120, 1.6, -69)
+        public static Vector3 CornerBR  = new Vector3(-3.025f, 0.04f,  1.750f);   // ao  BR   → world ≈ (121, 1.6, -70)
+        // SCN0008 DISC spin: the kekkai disc's rot channels decode to ~0 (no spin) in the EFT, but the user confirms the
+        // official disc visibly ROTATES (and the MW rim runes already self-spin via their 0.52 rotY channel). So spin the
+        // disc quad in its own plane (about local Z = the floor normal after the disc's 90°X tilt; rotY would tumble it).
+        // Persistent + tex69 only → never touches the corner glows (tex42) or runes (tex117). Rate is an estimate (no
+        // channel data for it); tune to taste. 0 = faithful/no spin.
+        public static float DiscSpinDegPerTick = 0f;   // disc does NOT rotate (user-confirmed); leave 0
+        public static float DiscPulseDepth = 1f;        // exponent on the disc alpha pulse: 1=faithful (decompiled ch1 128↔255 = ×2 additive); >1 deepens it (embellishment)
+        public static float LastDiscAlpha;              // DIAG: the disc's current ch1 alpha (0..255), so a phase-aligned screenshot can be picked
+
         // TRAJECTORY DUMP (verification): when on, every particle logs its effect-relative WORLD position over its
         // full life in the SAME format as the Frida hook (eft_online_log.txt) so my sim can be diffed against the
         // ground truth particle-by-particle. effect-relative world = p.pos × effScale (the Frida effect sits at the
@@ -138,6 +192,12 @@ namespace Sdo.Game
         Func<int, Texture2D> _texResolver;
         Func<int, EftMeshData> _meshResolver;   // xmesh index → 3D mesh (null when the host supplies none)
         readonly Dictionary<int, EftEmitter> _slotMap = new Dictionary<int, EftEmitter>();
+        EftFile _file;                  // kept for re-spawning the root tree (persistent scene effects)
+        System.Collections.Generic.HashSet<int> _dbgSlots;   // DIAG: log each scene-effect emitter slot once
+        // Persistent scene background effect (magic circle, snow, aurora…): never auto-destroys; when all particles
+        // die it re-spawns its roots (loops), so the original's "play once in the scene ctor, runs the whole song" is
+        // reproduced. Default false = the one-shot combo-burst behaviour (auto-destroys when spent). Set before Init.
+        public bool Persistent;
         static Texture2D _glow;
 
         sealed class P
@@ -147,6 +207,7 @@ namespace Sdo.Game
             public Vector3 rot, pos, baseSize, vel;   // vel = per-particle velocity, randomly TILTED by posSpread (fan-out)
             public Transform tr; public Material mat;
             public Material[] meshMats;   // 3D-mesh submesh materials (non-null only for mesh particles); tinted as a group
+            public EftMotMesh meshMot; public float meshMotMax;   // .mot-rigid prop (delta_line): drive its .mot ONCE over the particle's life (no auto-loop)
             public Transform glowTr; public Material glowMat;   // outer-glow halo child (null when glow off)
             public bool ring, orient, started, invisible, isTrail, isMesh;
             public bool mesh300;   // AEF_3_00 mesh riding a RISING ball (orient parent) = the 300 case → 300-only params
@@ -157,6 +218,7 @@ namespace Sdo.Game
             // welded to that orb (one ball, one mesh); a STATIONARY parent (200's ground external) keeps the drift so the
             // mesh fans outward into the ground curtain.
             public int attach; public P parent; public bool lockToParent;
+            public bool root;   // a ROOT particle (no parent) — for a Persistent scene effect it loops (never dies)
             public float azim;   // this particle's random cone azimuth (rad); children inherit it to rotate their velocity
             public float velScale;   // per-particle constant velocity-scale jitter = 1.0±word[0x1f4] (engine param_1[500])
             public Vector3 turbAxis;   // fixed-at-birth turbulence rotation axis (perp to initial vel) so kicks accumulate
@@ -176,22 +238,13 @@ namespace Sdo.Game
                          Func<int, EftMeshData> meshResolver = null)
         {
             _effScale = effScale; _follow = follow; _texResolver = texResolver; _meshResolver = meshResolver; _addMat = addMat; _layer = layer; _bright = bright;
-            _glowMul = glow; _glowSpread = glowSpread;
+            _glowMul = glow; _glowSpread = glowSpread; _file = file;
             _spawnPos = transform.position;
-            transform.localScale = Vector3.one * effScale;
+            if (transform.localScale == Vector3.one) transform.localScale = Vector3.one * effScale;   // caller may preset a non-uniform world scale
             if (_glow == null) _glow = MakeGlow();
 
-            // FAITHFUL spawn tree (Particle_InitEmitterInstance): spawn only the ROOT emitters; each particle then
-            // sub-emits ITS OWN children (the DFS tree EftFile parsed via NumTrig) at each child's at-time. The
-            // other populated slots NEVER spawn unless they're in the tree (e.g. 100COMBO's ring_l X-twinkles are
-            // children only in 400COMBO). Verified against the live game (Frida log: 100 = naga00 + 15 rings).
             foreach (var em in file.Emitters) _slotMap[em.Slot] = em;
-            for (int k = 0; k < file.RootSlots.Length; k++)
-                if (_slotMap.TryGetValue(file.RootSlots[k], out var rem))
-                {
-                    if (OnlyRootSlot >= 0 && file.RootSlots[k] != OnlyRootSlot) continue;   // DEBUG slot isolation
-                    SpawnEmitter(rem, file.RootDelays[k], true);
-                }
+            SpawnRoots();
             _maxTicks = 0;
             foreach (var em in file.Emitters) _maxTicks = Mathf.Max(_maxTicks, em.StartDelay + em.SpawnDelay + Mathf.Abs(em.Life0) + 20);
             if (DumpTraj)
@@ -207,6 +260,32 @@ namespace Sdo.Game
                     DumpLog($"      TURB prob={em.TurbProb} mode={em.TurbMode} mask=0x{em.TurbMask:X} " +
                             $"rndA=({em.TurbRndA.x:F1},{em.TurbRndA.y:F1},{em.TurbRndA.z:F1}) rndB=({em.TurbRndB.x:F1},{em.TurbRndB.y:F1},{em.TurbRndB.z:F1})");
                 }
+            Flush();
+        }
+
+        // Spawn the EFT's ROOT emitters; each spawned particle then sub-emits its own children at their at-times.
+        // Factored out of Init so a persistent scene effect can re-spawn its whole tree once it has fully died (loop).
+        private void SpawnRoots()
+        {
+            for (int k = 0; k < _file.RootSlots.Length; k++)
+                if (_slotMap.TryGetValue(_file.RootSlots[k], out var rem))
+                {
+                    if (OnlyRootSlot >= 0 && _file.RootSlots[k] != OnlyRootSlot) continue;   // DEBUG slot isolation
+                    SpawnEmitter(rem, _file.RootDelays[k], true);
+                }
+        }
+
+        // Persistent loop: every particle is dead, so tear their GameObjects down and start the tree over.
+        private void RespawnTree()
+        {
+            foreach (var p in _ps)
+            {
+                if (p.glowTr) Destroy(p.glowTr.gameObject);
+                if (p.tr) Destroy(p.tr.gameObject);
+            }
+            _ps.Clear();
+            _tick = 0;
+            SpawnRoots();
             Flush();
         }
 
@@ -247,17 +326,21 @@ namespace Sdo.Game
                 if (j > 0) life0 = Mathf.Max(1, life0 + UnityEngine.Random.Range(0, j + 1) - UnityEngine.Random.Range(0, j + 1));
             }
             bool isTrail = (em.Flags & 0x20000) != 0;
-            // SPAWN SCATTER (engine: Particle_RandomConeVelocity adds a random offset to pos when word[0x1f3]≠0). A
-            // horizontal annulus radius [ConeInner,ConeMag] at a random angle — so particles DON'T all start dead
-            // centre. 400 tex96 = [0.1,0.4] (×30 ≈ 3-12u off-centre) = why the official X-cross fans wide; 200
-            // externals = [0,0.1]. This is the "初始位置不是全部從中心噴" the user saw.
+            // SPAWN SCATTER (engine Particle_RandomConeVelocity_004bebc0): take the cone axis (+Z), rotate it by random
+            // ±ConeAng{X,Y,Z}/2 degrees about each axis, then scale by a random magnitude in [ConeInner,ConeMag]. The
+            // ANGULAR spread is what makes it 3-D: confetti (360,360,0) → a SPHERICAL shell (pieces high AND low);
+            // combo sprays (0,360,0) → a horizontal ring (Y only) — IDENTICAL to the old hard-coded ring, so combos
+            // don't regress. The old code dropped ConeAngX, so confetti lost their vertical spread (one mid band).
             Vector3 coneOff = Vector3.zero;
             float myAzim = parentAzim;   // default: inherit the parent's cone azimuth
             if (em.ConeMag > 0f)
             {
-                float r = UnityEngine.Random.Range(em.ConeInner, em.ConeMag);
-                myAzim = UnityEngine.Random.Range(0f, 2f * Mathf.PI);   // this particle's OWN random cone azimuth
-                coneOff = new Vector3(r * Mathf.Cos(myAzim), 0f, r * Mathf.Sin(myAzim));
+                float mag = UnityEngine.Random.Range(em.ConeInner, em.ConeMag);
+                float rx = UnityEngine.Random.Range(-em.ConeAngX * 0.5f, em.ConeAngX * 0.5f);
+                float ry = UnityEngine.Random.Range(-em.ConeAngY * 0.5f, em.ConeAngY * 0.5f);
+                float rz = UnityEngine.Random.Range(-em.ConeAngZ * 0.5f, em.ConeAngZ * 0.5f);
+                coneOff = (Quaternion.Euler(rx, ry, rz) * Vector3.forward) * mag;
+                myAzim = ry * Mathf.Deg2Rad;   // the Y rotation IS this particle's cone azimuth (children/velocity inherit it)
             }
             // velocity = posSpread tilt, then (for SPRAYS) ROTATE into the cone azimuth so a fountain fans OUT instead of
             // rising in lockstep. No-op for vertical fountains (rotating a +Y vector around Y does nothing). TRAILS are
@@ -285,8 +368,17 @@ namespace Sdo.Game
             // SCOPE TO idx 32 ONLY: 100/400/500's emitters ALSO carry MeshIdx (100/101 = column_00/01, naga01/naga06)
             // and rendering THOSE replaced their correct billboards (naga00 star / tex96 X-cross / tex20 ring) with
             // wrong column meshes — i.e. the regression that broke 100/400/500. Only AEF_3_00 (32) is wanted for now.
-            EftMeshData md = (EnableMesh && em.MeshIdx == 32 && _meshResolver != null) ? _meshResolver(em.MeshIdx) : null;
+            // Combo bursts keep the MeshIdx==32 (AEF_3_00) scope — rendering their other meshes (column_00/01) broke
+            // 100/400/500. But a PERSISTENT scene effect needs its OWN meshes: the SCN0008 magic circle's three
+            // colour light bars are xmesh 172 (yousei_x\delta_line, aka/ao/ki = red/blue/yellow + a spin .mot), which
+            // were invisible while scoped to 32. Allow any real mesh for Persistent effects.
+            bool meshOk = EnableMesh && _meshResolver != null && (em.MeshIdx == 32 || (Persistent && em.MeshIdx > 0));
+            EftMeshData md = meshOk ? _meshResolver(em.MeshIdx) : null;
             bool isMesh = md != null && md.Mesh != null;
+            // DIAG (persistent scene effects only): one line per emitter slot so the Player.log shows whether each
+            // child (delta_line mesh 172, MW tex 117, the colour bars) actually spawned + resolved its mesh/texture.
+            if (Persistent) { _dbgSlots ??= new System.Collections.Generic.HashSet<int>();
+                if (_dbgSlots.Add(em.Slot)) Debug.Log($"[scene-eft-dbg] slot{em.Slot} root={isRoot} mesh={em.MeshIdx}(isMesh={isMesh}) tex={(em.HasTex ? em.TexIdx : -1)} invisible={((em.Flags & 0x40000) != 0)} life={em.Life0} trig={em.TrigType} kids={em.Children.Count}"); }
             // 300 = the AEF_3_00 mesh rides a RISING ball (orient parent); 200 = it rides a stationary ground external.
             // This is the single switch that keeps the two tiers' tuning fully independent (straighten + intensity +
             // opacity all branch on it), so changing 300 never touches the 200 ground curtain.
@@ -295,7 +387,7 @@ namespace Sdo.Game
             // shows only ~5-6. Cap the count for the non-orient (200) case; the excess render nothing. 300's meshes
             // ride orient BALLS (12) and are NOT capped.
             bool capMesh = false;
-            if (isMesh && (parentP == null || !parentP.E.Orient))
+            if (isMesh && em.MeshIdx == 32 && (parentP == null || !parentP.E.Orient))   // 200COMBO ground cap only; not scene meshes
             {
                 if (_mesh32Count >= MeshMax200) capMesh = true;
                 else _mesh32Count++;
@@ -316,8 +408,14 @@ namespace Sdo.Game
                 // ATTACH-MODE children (200/300 mesh trail, word[0x37]≠0) ride their parent: their `pos` is a LOCAL
                 // offset and the parent's CURRENT position is added every frame in StepParticle. Non-attach children
                 // bake the parent's spawn position in once (the 100/400 InheritPos behaviour), exactly as before.
-                pos = (em.AttachMode != 0 ? em.Pos : em.Pos + parentPos) + coneOff,
-                attach = em.AttachMode,
+                // PERSISTENT scene effects HONOUR the InheritPos flag (word 0x38): the SCN0008 delta_line (slot0,
+                // InheritPos=0) must NOT add its external parent slot1's pos (0,0.5,0)×effScale40 = +20 world, which
+                // floated the 3 colour lines at waist height (Frida: the engine spawns delta_line at world (0,0,0)).
+                // Combos keep the always-inherit remake hack (non-Persistent), so their trails are untouched.
+                pos = (em.AttachMode != 0 ? em.Pos
+                        : (Persistent && !em.InheritPos) ? em.Pos
+                        : em.Pos + parentPos) + coneOff,
+                attach = em.AttachMode, root = isRoot,
                 parent = em.AttachMode != 0 ? parentP : null,
                 // a mesh riding a MOVING parent welds to it (300's rising orb → no drift); riding a STATIONARY parent it
                 // keeps its drift (200's ground external → fans out). parentVel is the parent's spawn velocity.
@@ -360,7 +458,12 @@ namespace Sdo.Game
             // Face the flare the SAME way its head drifts (trailYaw) → quad faces the way it moves, exactly like the
             // engine (head drift ∥ axZ, the quad's local +Z). Spinning about the vertical +Y stretch axis leaves axY
             // untouched, so the streak stays a vertical flare; only its azimuth (axX/axZ) varies per particle.
-            if (isTrail) p.rot.y = trailYaw;
+            // EXCEPT the SCN0008 delta_line: its emitter flags carry 0x20000 (trail) ALONGSIDE MeshIdx=172, so it is
+            // mis-classified as a trail — but it is a .mot-rigid MESH whose azimuth MUST stay the emitter's InitRot.y
+            // (60°/120°) so EftMotMesh's owner (= effect 180° × particle InitRot.y) lands at the captured 240°/300°.
+            // The random trailYaw scattered the 3 colour bars to a new angle every spawn. Combos (non-Persistent) keep
+            // the trail-yaw (their aef03_00 trail relies on it).
+            if (isTrail && !(Persistent && p.isMesh)) p.rot.y = trailYaw;
 
             var go = new GameObject(p.isMesh ? "eft-mesh" : p.isTrail ? "eft-trail" : em.IsRing ? "eft-ring" : "eft-bb");
             go.transform.SetParent(transform, false);
@@ -368,6 +471,45 @@ namespace Sdo.Game
             if (p.invisible)
             {
                 // 0x40000 external carrier: no geometry, exists only to inherit a position + sub-emit its trail child.
+            }
+            else if (p.isMesh && md.Mot != null && md.Hrc != null && md.SubmeshMeshes != null && md.SubmeshMeshes.Length > 0)
+            {
+                // .MOT-DRIVEN RIGID PROP (SCN0008 delta_line, xmesh 172): the 3 colour bars (aka/ao/ki). Posed by
+                // EftMotMesh, which replicates the engine's EXACT FK (D3DX row-major local = R·S·T, world = local·parent;
+                // verified 1:1 against a Frida capture of sdo_stand_alone) and bakes each bar's bone-local verts by its
+                // bone's world matrix per frame. `go` (this particle, under the effect) supplies the OWNER (effect ×
+                // particle world); each bar mesh sits at identity under go. The earlier SdoAvatar/Transform approach
+                // scattered the bars (Unity column-major can't do the engine's rotate-then-scale; its quat→matrix was
+                // also the transpose of D3DX) — that's why this uses a dedicated row-major component.
+                var mm = go.AddComponent<EftMotMesh>();
+                mm.Setup(md.Hrc, md.Mot);
+                int subN = md.SubmeshMeshes.Length;
+                var mats = new Material[subN];
+                for (int s = 0; s < subN; s++)
+                {
+                    var mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
+                    Texture2D st = (md.SubmeshTex != null && s < md.SubmeshTex.Length) ? md.SubmeshTex[s] : null;
+                    mat.mainTexture = st != null ? st : _glow;
+                    mats[s] = mat;
+                    var child = new GameObject("eft-mesh-sub" + s);
+                    child.transform.SetParent(go.transform, false);   // IDENTITY under go — EftMotMesh writes posed verts into the mesh
+                    child.layer = _layer;
+                    var srcMesh = md.SubmeshMeshes[s];
+                    var src = srcMesh.vertices;                         // original bone-local verts (the baker's source)
+                    var bakeMesh = new Mesh { name = "delta-bake" + s };
+                    bakeMesh.vertices = src; bakeMesh.uv = srcMesh.uv; bakeMesh.triangles = srcMesh.triangles; bakeMesh.RecalculateBounds();
+                    child.AddComponent<MeshFilter>().mesh = bakeMesh;
+                    var cmr = child.AddComponent<MeshRenderer>();
+                    cmr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; cmr.receiveShadows = false;
+                    cmr.sharedMaterial = mat;
+                    int bone = (md.SubmeshBone != null && s < md.SubmeshBone.Length) ? md.SubmeshBone[s] : -1;
+                    if (bone >= 0) mm.AddBar(bone, bakeMesh, src);
+                }
+                p.meshMats = mats; p.mat = mats[0];
+                // The sliding window comes from the engine's trigType-3 re-fire (a 2nd instance 40 ticks behind, see
+                // StepParticle), NOT from a per-mesh phase. Each instance just plays its .mot ONCE over its life.
+                p.meshMot = mm; p.meshMotMax = md.Mot.MaxTime;
+                if (!_meshDbgLogged) { _meshDbgLogged = true; Debug.Log($"[mesh-dbg] slot{em.Slot} meshIdx={em.MeshIdx} MOT-rigid(row-major FK) subN={subN} bones=[{string.Join(",", md.SubmeshBone ?? new int[0])}] motMaxTime={md.Mot.MaxTime} effScale={_effScale}"); }
             }
             else if (p.isMesh)
             {
@@ -427,7 +569,8 @@ namespace Sdo.Game
                 // diffuse using the texture only as a shape mask (the orange sprite would otherwise muddy to brown).
                 bool worldQuad = !em.IsRing && !em.Orient;
                 Material mat;
-                if (worldQuad && LumWorldQuad && LumShader() != null) mat = new Material(LumShader());
+                if (Persistent && em.HasTex && em.TexIdx == 69 && AlphaShader() != null) mat = new Material(AlphaShader());   // kekkai DISC: translucent + alpha pulse
+                else if (worldQuad && LumWorldQuad && LumShader() != null) mat = new Material(LumShader());
                 else mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
                 mat.mainTexture = tex != null ? tex : _glow;
                 mr.sharedMaterial = mat;
@@ -450,6 +593,13 @@ namespace Sdo.Game
                     gmr.sharedMaterial = gmat;
                     p.glowMat = gmat; p.glowTr = ggo.transform;
                 }
+            }
+            // sprite-sheet flipbook: crop the material to frame 0's cell now (StepParticle advances it per frame).
+            // Only set for true multi-cell flipbooks (em.FrameUv != null) — single-frame quads keep the full UV.
+            if (em.FrameUv != null && em.FrameUv.Length > 0 && UsableUv(em.FrameUv[0]))
+            {
+                ApplyFrameUv(p.mat, em.FrameUv[0]);
+                if (p.glowMat != null) ApplyFrameUv(p.glowMat, em.FrameUv[0]);
             }
             p.tr = go.transform;
             go.SetActive(false);
@@ -494,17 +644,45 @@ namespace Sdo.Game
                 StepParticle(p);
             }
             Flush();
-            if (_tick > 2 && alive == 0 && _pending.Count == 0) Destroy(gameObject);
-            if (_tick > _maxTicks + 60) Destroy(gameObject);
+            if (Persistent)
+            {
+                // scene background effect: never destroy; loop the tree when it has fully died (continuous emitters
+                // never reach alive==0 so they just keep running — e.g. the magic circle's steady glow).
+                if (_tick > 2 && alive == 0 && _pending.Count == 0) RespawnTree();
+            }
+            else
+            {
+                if (_tick > 2 && alive == 0 && _pending.Count == 0) Destroy(gameObject);
+                if (_tick > _maxTicks + 60) Destroy(gameObject);
+            }
         }
 
         void StepParticle(P p)
         {
             var em = p.E;
             p.life--;
+            // Persistent scene effect: a ROOT particle never dies — it loops back to full life so the base stays put
+            // forever (e.g. the SCN0008 kekkai disc, life 501: without this it died at 501 while its sub-particles
+            // lived to ~600, so RespawnTree waited and the circle blinked out for ~2s). The trigType-3 children keep
+            // re-emitting off the (now everlasting) root. A static disc loops invisibly; nothing disappears ("一直在").
+            if (Persistent && p.root && p.life <= 0)
+            {
+                p.life = p.life0;
+                // re-arm one-shot children (trigType 0/2) so the whole effect RE-BLOOMS each root cycle instead of
+                // dying after one life — e.g. SCN0008's MW glow runes (slot8/9, trigType 0, life 501) vanished ~10s in
+                // because the looping root never re-spawned them. (trigType-3 children re-fire on their own interval.)
+                if (p.kidSpawned != null) System.Array.Clear(p.kidSpawned, 0, p.kidSpawned.Length);
+            }
             int life0 = p.life0;
             int ageTicks = life0 - p.life;
             float t = ageTicks / (float)life0;   // age 0..1
+            // .mot frame timer — EXACT engine replication (decompiled Particle_Update 030:7611-7631):
+            //   frame += speed/60 per 50Hz tick;  speed = emitter word[9] (=0 for delta_line) → defaults to 15.
+            //   ⇒ frame += 15/60 = 0.25 per tick = 12.5 fps. MAX (word[8]) = 240 is never reached in the 120-tick life,
+            //   so over one life frame goes 0→30 (= the .mot's 31 frames) EXACTLY ONCE, then the particle dies. NOT a
+            //   loop and NOT 30fps. The sliding window 紅→紅藍→藍黃→黃 comes from the trigType-3 RE-FIRE below spawning
+            //   a 2nd instance 40 ticks (=10 .mot-frames = one colour window) later — not from any per-mesh phase.
+            if (p.meshMot != null) p.meshMot.FrameOverride = Mathf.Min(ageTicks * 0.25f, p.meshMotMax);
 
             // SUB-EMIT this particle's children at each child's at-time (engine: trigType 2 = at parent age==atTime;
             // 0 = on birth). This is what staggers 100COMBO's rings to ~age 8, and 400's billboards to the rings'
@@ -512,9 +690,27 @@ namespace Sdo.Game
             if (p.kidSpawned != null)
                 for (int i = 0; i < em.Children.Count; i++)
                 {
-                    if (p.kidSpawned[i]) continue;
                     var c = em.Children[i];
-                    int fireAt = c.TrigType == 0 ? 0 : Mathf.RoundToInt(c.AtTime);   // trigType 2/3 use at-time
+                    // trigType 3 = REPEATING (decompiled Particle_Update 030:7714): re-emit the child every AtTime
+                    // ticks while the parent lives — keeps a continuous, moving sub-effect alive (e.g. the SCN0008
+                    // magic circle's 3 colour light bars: life 60, re-fired every 30 → always 2 overlap; without it
+                    // they fired once and vanished). GATED on Persistent so the one-shot combo bursts (100/400/500
+                    // COMBO also have trigType-3 children, validated as fire-once) keep their proven look.
+                    if (c.TrigType == 3 && Persistent)
+                    {
+                        // decompiled (030:7714-7724): the engine fires the child on the parent's BIRTH, then whenever the
+                        // parent's DOWN-COUNTING life counter is a multiple of the child's atTime — i.e. `parentLife % atTime
+                        // == 0`. parentLife = life0 - ageTicks, so the first re-fire is at ageTicks = life0 - atTime, NOT at
+                        // ageTicks == atTime. For SCN0008 delta_line (parent slot1 life0=501, atTime=460) that is ageTicks=41
+                        // — i.e. a 2nd instance 40 ticks (=10 .mot-frames = one colour window) after the first, which is
+                        // EXACTLY what overlaps the colours into the sliding window 紅→紅藍→藍黃→黃. (The old `ageTicks %
+                        // atTime` re-fired at 460 = far too late, so only one instance was ever live → no overlap.)
+                        int interval = Mathf.Max(1, Mathf.RoundToInt(c.AtTime));
+                        if (ageTicks == 1 || (life0 - ageTicks) % interval == 0) SpawnEmitter(c, 0, false, p.pos, p.azim, p.vel, p);
+                        continue;
+                    }
+                    if (p.kidSpawned[i]) continue;
+                    int fireAt = c.TrigType == 0 ? 0 : Mathf.RoundToInt(c.AtTime);   // trigType 2 uses at-time
                     if (c.TrigType != 1 && ageTicks >= fireAt) { p.kidSpawned[i] = true; SpawnEmitter(c, 0, false, p.pos, p.azim, p.vel, p); }
                 }
 
@@ -535,6 +731,13 @@ namespace Sdo.Game
                         p.frame = nf;
                         var ft = p.frameTex[nf];
                         if (ft != null) { p.mat.mainTexture = ft; if (p.glowMat != null) p.glowMat.mainTexture = ft; }
+                        // sprite-sheet flipbook: step to this frame's atlas cell (confetti 4×4). The texidx may be
+                        // identical every frame (ZIPIANZ) — the UV sub-rect is what actually animates the piece.
+                        if (p.E.FrameUv != null && nf < p.E.FrameUv.Length && UsableUv(p.E.FrameUv[nf]))
+                        {
+                            ApplyFrameUv(p.mat, p.E.FrameUv[nf]);
+                            if (p.glowMat != null) ApplyFrameUv(p.glowMat, p.E.FrameUv[nf]);
+                        }
                     }
                 }
                 p.frameCounter++;
@@ -543,6 +746,11 @@ namespace Sdo.Game
             // per-axis scale channels (0xe/0xf/0x10) → animScale, with the 0.5-pivot remap.
             // Verified EXACT vs the live game (Frida): ring X/Z bloom 0.45→1.02→0.30, Y grows 0.31→2.02. No trim.
             Vector3 animScale = new Vector3(em.Ch[0xe].Scale(t), em.Ch[0xf].Scale(t), em.Ch[0x10].Scale(t));
+            // SCN0008 corner glow flares (tex42): the raw channels animate sclH ONLY (slot4: 1.0→~2×), which stretched the
+            // TOP flare into a tall oval AND (taking max) ballooned it into an over-bright burst ("一直變形 / 後面那顆太亮").
+            // Keep the flare a STABLE round star at its base size — the visible "忽大忽小" twinkle comes from its alpha
+            // (ch1: 0→255→0 fade-in/out), not a scale stretch. So ignore the deforming scale channels for these glows.
+            if (Persistent && em.HasTex && em.TexIdx == 42) animScale = Vector3.one;
             // AEF_3_00 blue mesh (MeshIdx 32, ONLY 200/300 — never touch 100/400/500's column meshes). Its own scale
             // channels make it too thin at spawn and stretch it too TALL mid-life (trail Y-bloom). Use a UNIFORM scale
             // (no Y-bloom): 300 rides a BALL → track the ball's width/rate × MeshWidthMatch; 200 rides the ground
@@ -564,6 +772,9 @@ namespace Sdo.Game
             p.rot.x += em.Ch[0xb].RangedMin(t);
             p.rot.y += em.Ch[0xc].RangedMin(t);
             p.rot.z += em.Ch[0xd].RangedMin(t);
+            // SCN0008 kekkai disc (tex69): does NOT rotate (confirmed by the user + decompile: its rot channels are ~0
+            // and no effect-level spin is armed). DiscSpinDegPerTick stays 0 = faithful. (Was briefly set to spin; wrong.)
+            if (Persistent && DiscSpinDegPerTick != 0f && em.HasTex && em.TexIdx == 69) p.rot.z += DiscSpinDegPerTick;
             // position integration: pos += velocity · ch0Scale · velScale. EXACTLY the engine UPDATE (~136220):
             // pos += vel × param_1[500] × param_1[0x33], where param_1[0x33]=ch0 scale and param_1[500]=the per-particle
             // RandScaleJitter of word[0x1f4] (= p.velScale, a CONSTANT 1.0±jitter set at spawn). Earlier I dropped
@@ -609,6 +820,10 @@ namespace Sdo.Game
             float g = em.Ch[3].Ranged(t) + em.Ch[7].Ranged(t);
             float b = em.Ch[4].Ranged(t) + em.Ch[5].Ranged(t);
             float a = em.Ch[1].Ranged(t);
+            // SCN0008 kekkai DISC (tex69): its ch1 alpha only pulses 128↔255 (×2), which on a thin additive line pattern
+            // over the dark floor reads as "always lit" — the user sees no 變暗變亮. DEEPEN the pulse (a²/255: 128→64,
+            // 255→255 = ×4 contrast) so the disc clearly dims then brightens. Tunable; disc-only + Persistent.
+            if (Persistent && em.HasTex && em.TexIdx == 69) { if (DiscPulseDepth != 1f) a = Mathf.Pow(a / 255f, DiscPulseDepth) * 255f; LastDiscAlpha = a; }
             // ground-streak trail: override the pale-pink diffuse with the official's dimmer BLUE (keep the alpha fade).
             if (p.isTrail && TrailOverride)
             {
@@ -639,6 +854,15 @@ namespace Sdo.Game
                     float ballHalfH = 0.5f * p.parent.baseSize.y * p.parent.E.Ch[0xf].Scale(t);
                     // Mesh300Z pushes the flame fore/aft of the orb (− = behind, so the ball reads in front of it).
                     p.tr.localPosition = p.parent.pos + new Vector3(0f, -ballHalfH * MeshDropFrac, Mesh300Z);
+                    p.tr.localRotation = Quaternion.identity;
+                }
+                else if (Persistent && PinCornerGlows && p.E.HasTex && p.E.TexIdx == 42)
+                {
+                    // SCN0008 corner glow balls (slot4/5/6, tex42): pin to the FIXED floor triangle corner instead of
+                    // riding the disc's 90°X tilt (which sinks slot5/6 to y=-20) and -60°Y spin (which swings them off
+                    // the BL/BR corners). slot4=TOP(ki), slot5=BL(aka), slot6=BR(ao) — see CornerTop/BL/BR above.
+                    p.tr.localPosition = p.E.Slot == 5 ? CornerBL : p.E.Slot == 6 ? CornerBR : CornerTop;
+                    // billboards face the camera in LateUpdate; identity local rotation is fine (orient overrides it).
                     p.tr.localRotation = Quaternion.identity;
                 }
                 else
@@ -676,8 +900,18 @@ namespace Sdo.Game
                 }
                 else if (em.MeshIdx == 32)   // 200 — unchanged
                     for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], r * MeshIntensity, g * MeshIntensity, b * MeshIntensity, a * MeshAlpha);
-                else                          // 100/400/500 column meshes — 1×
-                    for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], r, g, b, a);
+                else
+                {
+                    // SCENE .mot-rigid mesh (SCN0008 delta_line): the aka/ao/ki TEXTURES carry the colour and the
+                    // emitter has NO diffuse/alpha channels, so r=g=b=a come out 0 (Ranged of an empty channel) → an
+                    // additive material would be invisible (the "三色線完全沒出現" bug). Render WHITE so the textures
+                    // show; only fade by the alpha channel if it actually has keyframes. Falls back to the raw
+                    // r/g/b/a for any mesh that DOES author colour channels.
+                    bool hasCol = em.Ch[1].Count >= 2 || em.Ch[2].Count >= 2 || em.Ch[3].Count >= 2 || em.Ch[4].Count >= 2;
+                    float mr = hasCol ? r : 255f, mg = hasCol ? g : 255f, mb = hasCol ? b : 255f;
+                    float ma = em.Ch[1].Count >= 2 ? a : 255f;
+                    for (int i = 0; i < p.meshMats.Length; i++) SetCol(p.meshMats[i], mr, mg, mb, ma);
+                }
             }
             else if (DebugMeshOnly && p.mat != null)   // isolate the mesh: hide all non-mesh particles (additive a=0)
             {
@@ -717,7 +951,9 @@ namespace Sdo.Game
             Vector3 ws = Vector3.Scale(Vector3.Scale(p.baseSize, aS), Vector3.one * _effScale);
             int alpha = Mathf.RoundToInt(Mathf.Clamp(em.Ch[1].Ranged(t), 0, 255));
             string kind = p.isTrail ? "trail" : em.IsRing ? "RING" : "bb";
+            Vector3 wpos = p.tr != null ? p.tr.position : Vector3.zero;   // ACTUAL world pos (reveals effect-transform spin/orbit)
             DumpLog($"   traj {kind} tex{tex}#{p.dumpN} t={ageTicks}/{life0} pos=({wp.x:F1},{wp.y:F1},{wp.z:F1})" +
+                    $" WORLD=({wpos.x:F1},{wpos.y:F1},{wpos.z:F1})" +
                     $" scale=({ws.x:F2},{ws.y:F2},{ws.z:F2}) animS=({aS.x:F2},{aS.y:F2},{aS.z:F2})" +
                     $" rotDeg=({p.rot.x:F0},{p.rot.y:F0},{p.rot.z:F0}) born={p.bornTick} a={alpha}");
         }

@@ -69,7 +69,14 @@ namespace Sdo.Game
         private Sprite _placeholderHead;
         // ---- F4-tunable layout (live; see Step1Game "Result" tab) ----
         public float nickX = 109f, nickYOff = 10f, nickSize = 22f;          // nickname: column x / vertical offset from RowY / font px (tuned)
-        public float headBoxX = 30f, headBoxYOff = 12f, headBoxSize = 48f;  // head portrait box: left x / top offset from RowY / SQUARE size (tuned)
+        public float headBoxX = 30f, headBoxYOff = 12f, headBoxSize = 48f;  // head portrait FRAME slot: left x / top offset from RowY / SQUARE size (tuned)
+        // Official AvatarShow draws the full 3D head with NO frame scissor (FUN_0043e2f0 culls only against the SCREEN,
+        // not the slot), so hair / hats / ears spill ABOVE the frame line. We mirror that WITHOUT distortion: the local
+        // head quad keeps the slot WIDTH but is TALLER — extended UPWARD by headOverflowTop px, bottom-anchored to the slot
+        // bottom. The head cam frames the FACE into the slot region and the HAIR into this overflow strip (the RT keeps a
+        // transparent margin above the hair, so it's NEVER cut). The RT aspect (Step1Game) matches w/(slot+overflow).
+        // (Opponents' placeholder stays clamped to the slot.)
+        public float headOverflowTop = 6f;
         private readonly List<(Label3D lbl, float rowY)> _nicks = new List<(Label3D, float)>();
         private struct HeadObj { public GameObject go; public SpriteRenderer sr; public float rowY; public bool placeholder; }
         private readonly List<HeadObj> _headObjs = new List<HeadObj>();
@@ -99,31 +106,33 @@ namespace Sdo.Game
                 if (s != null) Place(NewSR("Bg" + i, s, OrderBg), (i % 4) * 256, (i < 4) ? 115 : 371);
             }
 
-            _num8 = SdoExtracted.LoadAn(dir, "Num8.an");
-            _num3 = SdoExtracted.LoadAn(dir, "Num3.an");
-            _scoreNum = SdoExtracted.LoadAn(dir, "score_num.an");
-            _scoreNumS = SdoExtracted.LoadAn(dir, "score_numS.an");
-            _percent = SdoExtracted.LoadAn1(dir, "percent.an");
-            _dot = SdoExtracted.LoadAn1(dir, "dot.an");
-            _allCombo = SdoExtracted.LoadAn1(dir, "100.an");
+            // bleed: true on every glyph/badge/button below — the source PNGs store transparent-WHITE in the matte, so
+            // bilinear filtering drags that white into the sprite edges (a white fringe). AlphaBleed removes it.
+            _num8 = SdoExtracted.LoadAn(dir, "Num8.an", bleed: true);
+            _num3 = SdoExtracted.LoadAn(dir, "Num3.an", bleed: true);
+            _scoreNum = SdoExtracted.LoadAn(dir, "score_num.an", bleed: true);
+            _scoreNumS = SdoExtracted.LoadAn(dir, "score_numS.an", bleed: true);
+            _percent = SdoExtracted.LoadAn1(dir, "percent.an", bleed: true);
+            _dot = SdoExtracted.LoadAn1(dir, "dot.an", bleed: true);
+            _allCombo = SdoExtracted.LoadAn1(dir, "100.an", bleed: true);
             // 成績 letters (02/): map our grade band → the official sprite (A0=A++, A1=A+, A2=A, …).
-            _gradeSprites["S"]  = SdoExtracted.LoadImage(dir, "02/A0.PNG");
-            _gradeSprites["A+"] = SdoExtracted.LoadImage(dir, "02/A1.PNG");
-            _gradeSprites["A"]  = SdoExtracted.LoadImage(dir, "02/A2.PNG");
-            _gradeSprites["B"]  = SdoExtracted.LoadImage(dir, "02/B2.PNG");
-            _gradeSprites["C"]  = SdoExtracted.LoadImage(dir, "02/C2.PNG");
-            _gradeSprites["D"]  = SdoExtracted.LoadImage(dir, "02/D2.PNG");
-            _gradeSprites["F"]  = SdoExtracted.LoadImage(dir, "02/F0.PNG");   // HP-out fail grade
+            _gradeSprites["S"]  = SdoExtracted.LoadImage(dir, "02/A0.PNG", bleed: true);
+            _gradeSprites["A+"] = SdoExtracted.LoadImage(dir, "02/A1.PNG", bleed: true);
+            _gradeSprites["A"]  = SdoExtracted.LoadImage(dir, "02/A2.PNG", bleed: true);
+            _gradeSprites["B"]  = SdoExtracted.LoadImage(dir, "02/B2.PNG", bleed: true);
+            _gradeSprites["C"]  = SdoExtracted.LoadImage(dir, "02/C2.PNG", bleed: true);
+            _gradeSprites["D"]  = SdoExtracted.LoadImage(dir, "02/D2.PNG", bleed: true);
+            _gradeSprites["F"]  = SdoExtracted.LoadImage(dir, "02/F0.PNG", bleed: true);   // HP-out fail grade
 
             // win/lose banners — single sprites cropped from BALANCE.png (Statis28 = win @ design (487,38), Statis30 = lose @ (488,38)).
             _bannerWin = BuildBanner("BannerWin", dir, "Statis28.an", 487, 38);
             _bannerLose = BuildBanner("BannerLose", dir, "Statis30.an", 488, 38);
             // GAME OVER (RANK/7.png) — drawn in the failed player's rank column (see BuildRow), not a separate banner.
-            _overSprite = SdoExtracted.LoadImage(dir, "RANK/7.PNG");
+            _overSprite = SdoExtracted.LoadImage(dir, "RANK/7.PNG", bleed: true);
 
             // buttons (OK = Statis25, save-record = Statis22), bottom-right.
-            _okBtn = NewSR("OkBtn", SdoExtracted.LoadAn1(dir, "Statis25.an"), OrderBtn); Place(_okBtn, 694, 493);
-            _saveBtn = NewSR("SaveBtn", SdoExtracted.LoadAn1(dir, "Statis22.an"), OrderBtn); Place(_saveBtn, 595, 493);
+            _okBtn = NewSR("OkBtn", SdoExtracted.LoadAn1(dir, "Statis25.an", bleed: true), OrderBtn); Place(_okBtn, 694, 493);
+            _saveBtn = NewSR("SaveBtn", SdoExtracted.LoadAn1(dir, "Statis22.an", bleed: true), OrderBtn); Place(_saveBtn, 595, 493);
 
             // 1×1 white sprite used (tinted) as the placeholder head box for rows without a live portrait.
             var pht = new Texture2D(1, 1); pht.SetPixel(0, 0, Color.white); pht.Apply();
@@ -137,7 +146,7 @@ namespace Sdo.Game
         private GameObject BuildBanner(string name, string dir, string an, float x, float y)
         {
             var go = new GameObject(name); go.transform.SetParent(_root.transform, false);
-            var sr = NewSR(name + "Img", SdoExtracted.LoadAn1(dir, an), OrderBanner);
+            var sr = NewSR(name + "Img", SdoExtracted.LoadAn1(dir, an, bleed: true), OrderBanner);
             Place(sr, x, y);
             go.transform.position = sr.transform.position;        // root at the banner centre
             sr.transform.SetParent(go.transform, true);
@@ -199,7 +208,7 @@ namespace Sdo.Game
             else
             {
                 if (_rankBadge.TryGetValue(r.Rank, out var badge) == false)
-                { badge = SdoExtracted.LoadImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG"); _rankBadge[r.Rank] = badge; }
+                { badge = SdoExtracted.LoadImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG", bleed: true); _rankBadge[r.Rank] = badge; }
                 if (badge) Child(rowRoot, NewSR("Rank", badge, OrderRow), 0, y - 8);
             }
 
@@ -280,9 +289,7 @@ namespace Sdo.Game
                 var mat = new Material(Shader.Find("Unlit/Transparent")) { mainTexture = _localHead };
                 mr.sharedMaterial = mat; mr.sortingOrder = OrderRow;
                 go.transform.SetParent(_root.transform, true);    // static (not in the sliding rows)
-                go.transform.position = new Vector3(SdoLayout.WorldX(headBoxX) + headBoxSize / 2f,
-                                                    SdoLayout.WorldY(topY) - headBoxSize / 2f, -2f);
-                go.transform.localScale = new Vector3(headBoxSize, headBoxSize, 1f);
+                PlaceHeadQuad(go.transform, rowY);                // larger-than-slot, bottom-anchored → hair spills out the top
                 _headObjs.Add(new HeadObj { go = go, rowY = rowY, placeholder = false });
             }
             else
@@ -292,6 +299,22 @@ namespace Sdo.Game
                 SdoLayout.PlaceBox(sr, headBoxX, topY, headBoxSize, headBoxSize, -2f);
                 _headObjs.Add(new HeadObj { sr = sr, rowY = rowY, placeholder = true });
             }
+        }
+
+        // Position the live-head quad: slot WIDTH × (slot + headOverflowTop) tall, anchored so its BOTTOM edge stays on the
+        // frame-slot bottom and its centre-x on the slot centre. The extra height grows UPWARD past the slot top, so the
+        // face sits in the slot and hair/hats spill into the strip above — no width distortion (only the height extends),
+        // matching the official un-clipped AvatarShow. The RT is framed (Step1Game) so the hair lands in this strip with a
+        // transparent margin on top → never cut. headOverflowTop=0 = exactly the slot (clamped).
+        private void PlaceHeadQuad(Transform t, float rowY)
+        {
+            float topY = rowY - headBoxYOff;
+            float w = headBoxSize;
+            float h = headBoxSize + Mathf.Max(0f, headOverflowTop);
+            float cx = SdoLayout.WorldX(headBoxX) + w / 2f;                 // slot centre-x
+            float cy = SdoLayout.WorldY(topY) - headBoxSize + h / 2f;       // bottom pinned to slot bottom; grows up by overflow
+            t.position = new Vector3(cx, cy, -2f);
+            t.localScale = new Vector3(w, h, 1f);
         }
 
         // Live-apply the F4 layout sliders (nick position/size + head-box position/size) to the existing elements.
@@ -308,12 +331,7 @@ namespace Sdo.Game
             {
                 float topY = hb.rowY - headBoxYOff;
                 if (hb.placeholder) { if (hb.sr) SdoLayout.PlaceBox(hb.sr, headBoxX, topY, headBoxSize, headBoxSize, -2f); }
-                else if (hb.go)
-                {
-                    hb.go.transform.position = new Vector3(SdoLayout.WorldX(headBoxX) + headBoxSize / 2f,
-                                                           SdoLayout.WorldY(topY) - headBoxSize / 2f, -2f);
-                    hb.go.transform.localScale = new Vector3(headBoxSize, headBoxSize, 1f);
-                }
+                else if (hb.go) PlaceHeadQuad(hb.go.transform, hb.rowY);
             }
         }
 

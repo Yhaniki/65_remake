@@ -58,6 +58,9 @@ if ($online) {
     Write-Host "[package] online client = $($online.FullName)"
     Copy-Tree (Join-Path $ds 'UI\MUSIC\ICONS')      (Join-Path $Data 'UI\MUSIC\ICONS')      'online ICONS'
     Copy-Tree (Join-Path $ds 'UI\STATIS\STATISTIC') (Join-Path $Data 'UI\STATIS\STATISTIC') 'online STATISTIC'
+    # ROOMDLG song-select (選歌) art: overlay the online MUSICSELDLG atlas + .an on top of the offline set so
+    # the built player resolves the same 閉撰敃氪 look as the editor (RoomDlgArt's DATA/UI/ROOMDLG fallback).
+    Copy-Tree (Join-Path $ds 'UI\ROOMDLG')          (Join-Path $Data 'UI\ROOMDLG')          'online ROOMDLG'
 } else {
     Write-Warning "[package] online DatasSDO not found under $assetsDir — icons fall back to the offline subset."
 }

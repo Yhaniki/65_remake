@@ -30,12 +30,14 @@ Shader "Sdo/UnlitInstanced"
             {
                 float4 vertex : POSITION;
                 float2 uv : TEXCOORD0;
+                fixed4 color : COLOR;           // per-vertex baked scene lighting (D3DCOLOR diffuse, FVF 0x142) — white when none
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             struct v2f
             {
                 float4 pos : SV_POSITION;
                 float2 uv : TEXCOORD0;
+                fixed4 col : COLOR0;
             };
 
             sampler2D _MainTex;
@@ -48,12 +50,13 @@ Shader "Sdo/UnlitInstanced"
                 UNITY_SETUP_INSTANCE_ID(v);     // selects this instance's unity_ObjectToWorld
                 o.pos = UnityObjectToClipPos(v.vertex);
                 o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                o.col = v.color;
                 return o;
             }
 
             fixed4 frag (v2f i) : SV_Target
             {
-                return tex2D(_MainTex, i.uv) * _Color;
+                return tex2D(_MainTex, i.uv) * _Color * i.col;   // × baked vertex lighting (SCN0008 night-dark props)
             }
             ENDCG
         }

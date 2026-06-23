@@ -46,14 +46,36 @@ namespace Sdo.UI.Catalog
         public int Count => _all.Count;
         public IReadOnlyList<SongCatalog.Entry> All => _all;
 
-        public List<SongCatalog.Entry> Filter(string query)
+        public List<SongCatalog.Entry> Filter(string query) => Filter(_all, query);
+
+        /// <summary>Text search (title/artist/gn, case-insensitive) over an arbitrary list — lets the screen
+        /// search WITHIN a category subset. Empty/blank query returns a copy of the whole list.</summary>
+        public static List<SongCatalog.Entry> Filter(IReadOnlyList<SongCatalog.Entry> list, string query)
         {
-            if (string.IsNullOrWhiteSpace(query)) return new List<SongCatalog.Entry>(_all);
-            query = query.Trim();
             var res = new List<SongCatalog.Entry>();
-            foreach (var e in _all)
-                if (Contains(e.title, query) || Contains(e.artist, query) || Contains(e.gn, query))
+            if (list == null) return res;
+            if (string.IsNullOrWhiteSpace(query)) { res.AddRange(list); return res; }
+            query = query.Trim();
+            foreach (var e in list)
+                if (e != null && (Contains(e.title, query) || Contains(e.artist, query) || Contains(e.gn, query)))
                     res.Add(e);
+            return res;
+        }
+
+        /// <summary>Songs whose level at <paramref name="difficulty"/> is within [min,max] — the pool for the
+        /// 隨機 (random) ranges. min&lt;=0 &amp;&amp; max&gt;=99 means "全部" (no level filter; unknown levels included).</summary>
+        public static List<SongCatalog.Entry> InLevelRange(IReadOnlyList<SongCatalog.Entry> list, int difficulty, int min, int max)
+        {
+            var res = new List<SongCatalog.Entry>();
+            if (list == null) return res;
+            bool all = min <= 0 && max >= 99;
+            foreach (var e in list)
+            {
+                if (e == null) continue;
+                if (all) { res.Add(e); continue; }
+                int lvl = e.Diff(difficulty);
+                if (lvl >= min && lvl <= max) res.Add(e);
+            }
             return res;
         }
 

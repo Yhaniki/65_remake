@@ -90,5 +90,39 @@ namespace Sdo.Tests
         [Test]
         public void Curate_Null_Safe()
             => Assert.AreEqual(0, SongListModel.Curate(null).Count);
+
+        // ---- static Filter over an arbitrary subset (category + search) ----
+
+        [Test]
+        public void StaticFilter_Searches_Within_Subset()
+        {
+            var subset = new List<SongCatalog.Entry> { Sample()[0], Sample()[2] };   // Butterfly, Sugar
+            Assert.AreEqual(2, SongListModel.Filter(subset, "").Count);
+            Assert.AreEqual(1, SongListModel.Filter(subset, "sugar").Count);
+            Assert.AreEqual(0, SongListModel.Filter(subset, "蔡妍").Count);   // not in the subset
+        }
+
+        [Test]
+        public void StaticFilter_Null_Safe()
+            => Assert.AreEqual(0, SongListModel.Filter(null, "x").Count);
+
+        // ---- InLevelRange: the 隨機 difficulty-range pool ----
+
+        [Test]
+        public void InLevelRange_Filters_By_Current_Difficulty_Level()
+        {
+            // Sample()[0] is easy3/normal6/hard9; the others have no level data (Diff -> -1).
+            Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 0, 1, 5).Count);   // easy 3 in 1-5
+            Assert.AreEqual(0, SongListModel.InLevelRange(Sample(), 0, 5, 9).Count);   // easy 3 not in 5-9
+            Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 2, 9, 99).Count);  // hard 9 >= 9
+        }
+
+        [Test]
+        public void InLevelRange_All_Includes_Unknown_Levels()
+            => Assert.AreEqual(3, SongListModel.InLevelRange(Sample(), 1, 0, 99).Count);
+
+        [Test]
+        public void InLevelRange_Null_Safe()
+            => Assert.AreEqual(0, SongListModel.InLevelRange(null, 0, 1, 5).Count);
     }
 }

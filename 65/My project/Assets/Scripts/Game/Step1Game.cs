@@ -152,11 +152,22 @@ namespace Sdo.Game
         public int headPortraitLayer = 11;        // dedicated layer for the ISOLATED idle head avatar (head cam renders only this)
         // The cam FOLLOWS the avatar's head bone (so the head is ALWAYS framed); the avatar is yawed/scaled for the 3/4
         // angle. Tune yaw (angle) + dist/fov (zoom) + a small aim offset (centre the face). All F4-tunable (Result tab).
-        public float headPortraitDist = 23f;      // cam distance from the head (zoom) — tuned
-        public float headPortraitFov = 35f;
-        public Vector3 headAimOffset = new Vector3(-2.1f, 4.4f, 0f);   // look-target offset from the head BONE (centre the FACE) — tuned
+        // Camera matched to the official AvatarShow render (RE'd from sdo.bin.c). The shared 3D cam is PerspectiveFovLH
+        // fovY=π/4=45°, LookAtLH eye(-3,46,-181)→at(-2,38,21) up(0,1,0) → +Z view tilted DOWN ~2.27° (Δy −8/202).
+        // Per the OFFICIAL screenshots the result/ranking heads are a 3/4-ANGLED HEAD CLOSE-UP (head ~fills the frame, hair/
+        // accessories spill above the top, only a sliver of shoulder shows) — i.e. the head-closeup mode (mode 7: model yaw
+        // −30°, scale 2.6), NOT a frontal full-body framing. The official zooms via a per-costume scale TABLE (no single
+        // value), so we MEASURE this avatar's hair-top and compute a TIGHT distance: head fills the frame with the hair
+        // captured inside the RT (margin above → never cut). headAutoFrame does that; headZoom fine-tunes. Yaw gives the 3/4.
+        public bool headAutoFrame = true;          // auto distance+aim from the measured head bounds (no magic numbers)
+        public float headZoom = 1f;                // auto-frame fine multiplier: >1 = zoom OUT (smaller head, more top margin)
+        public float headPortraitDist = 28f;       // manual cam distance (used only when headAutoFrame is OFF)
+        public float headPortraitFov = 45f;        // 官方 fovY = π/4 = 45°（已對齊）
+        public float headPitchDeg = 2.3f;          // 官方相機俯角 atan(8/202)≈2.27°（略俯視頭部）
+        public Vector3 headAimOffset = new Vector3(-2.1f, 9f, 0f);     // manual look-target offset (used only when auto OFF; X
+                                                   // is always applied to centre the face horizontally)
         public float headAvatarScale = 1.05f;     // idle avatar uniform scale — tuned
-        public float headAvatarYaw = 28f;         // idle avatar Y rotation (3/4 view angle; faces the cam) — tuned
+        public float headAvatarYaw = 30f;         // 模型 Y 旋轉 = 3/4 斜角（官方頭部近拍 mode7 = −30°；轉模型不轉相機）。可調/翻號
         private Camera _headCam; private RenderTexture _headRt; private SdoAvatar _headAvatar;
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);   // head bone REST pos (model space) — cam targets this so it stays FIXED (no per-frame bob chase)
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
@@ -280,7 +291,7 @@ namespace Sdo.Game
         private static readonly string[] SpectatorNames = { "酷", "美麗", "悲晴吉克", "路過旅人", "小幫手" };
         private SpriteRenderer _lookerTitle;
         private Label3D[] _lookerRows;
-        public float lookerTitleX = 694f, lookerTitleY = 214f, lookerX = 698f, lookerFirstY = 236f, lookerRowStep = 16f, lookerFontWorld = 18f;
+        public float lookerTitleX = 694f, lookerTitleY = 214f, lookerX = 698f, lookerFirstY = 241f, lookerRowStep = 16f, lookerFontWorld = 18f;   // names start 5px lower than before so the list clears the 旁觀玩家 header
         // dancer dance/stop gate. The decision is made ONLY at the 8-beat settlement (same cadence as the score
         // commit) — a break NO LONGER stops the dancer mid-block, it just records the flag and is judged at the
         // next boundary. At each settlement we re-decide dance-vs-stop for the upcoming block (two conditions):
@@ -310,7 +321,30 @@ namespace Sdo.Game
         {
             if (AutoBootSuppressed) return;
             if (FindAnyObjectByType<Step1Game>() != null) return;
-            new GameObject("Step1Game").AddComponent<Step1Game>();
+            var g = new GameObject("Step1Game").AddComponent<Step1Game>();
+            // DEV: SDO_SCENE forces a specific stage (set before Start reads scenePath) for render testing.
+            var fs = DevVar("SDO_SCENE");
+            if (!string.IsNullOrEmpty(fs)) g.scenePath = fs.Contains("/") ? fs : "SCENE/" + fs.ToUpperInvariant();
+            // DEV: SDO_SCENE_ONLY=1 boots straight into a CLEAN stage to iterate on background EFTs (the SCN0008 magic
+            // circle, snow, aurora…). Reuses observe mode's gating (no notes/music, hidden board/HP/receptors/ranking,
+            // idle dancer on the dance spot, fixed cam0) + hides the rest of the gameplay HUD in Start(). The scene and
+            // its persistent EFTs still spawn in TryLoadScene, so only the stage + idle dancer + EFTs are shown.
+            var sceneOnly = DevVar("SDO_SCENE_ONLY");
+            if (!string.IsNullOrEmpty(sceneOnly) && sceneOnly != "0") g.observeBurstMode = true;
+        }
+
+        /// <summary>DEV scene-override config. A player build (dance.exe) reads the OS env var (set in the terminal
+        /// before launch). The editor is launched by Unity Hub and does NOT inherit terminal `$env:` vars, so in the
+        /// editor we fall back to EditorPrefs — set via the <c>Tools/SDO</c> menu (SdoDevBootMenu). Env var wins.</summary>
+        public static string DevVar(string name)
+        {
+            var v = System.Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrEmpty(v)) return v;
+#if UNITY_EDITOR
+            v = UnityEditor.EditorPrefs.GetString(name, "");
+            if (!string.IsNullOrEmpty(v)) return v;
+#endif
+            return null;
         }
 
         private void Start()
@@ -338,7 +372,8 @@ namespace Sdo.Game
             // Enter on the crane with no note board: hold the track hidden while the opening shot flies in, then
             // OpeningSequence() reveals it with READY. Only when there's actually a 3D crane to watch.
             if (use3dCamera && _camReady && openingIntroSec > 0f) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
-            if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f; }   // idle dancer, fixed cam, hidden track
+            if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f;   // idle dancer, fixed cam, hidden track
+                HideComboAndJudge(); HideHudForPanel(); }   // also clear the rest of the gameplay HUD (score/combo/judge/song labels/ranking) for a clean stage
             StartCoroutine(LoadAndPlayAudio());
         }
 
@@ -397,9 +432,10 @@ namespace Sdo.Game
                 if (req.result == UnityWebRequest.Result.Success) _ambientClip = DownloadHandlerAudioClip.GetContent(req);
                 else Debug.LogWarning("[ambient] load fail: " + req.error);
             }
-            // Arm the first play after a short random gap (the engine's timer first fires once an interval elapses, so
-            // it never blasts the moment the scene opens; the READY/GO intro gets a clear beat first).
-            if (_ambientClip != null) _nextAmbientAt = Time.realtimeSinceStartup + UnityEngine.Random.Range(3f, 12f);
+            // Guarantee one play right at the opening: a venue that carries an ambience should always sound it once
+            // the moment you arrive, then fall back to the intermittent gap timer (clip length + rand 0..29s) for
+            // every play after that. Arming at "now" makes TickAmbient fire on the first eligible frame (once _started).
+            if (_ambientClip != null) _nextAmbientAt = Time.realtimeSinceStartup;
         }
 
         // One frame of the intermittent ambience. Runs only during live play — not in observe / avatar-debug, and not
@@ -1153,6 +1189,10 @@ namespace Sdo.Game
             var r = MshLoader.Load(File.ReadAllBytes(mshPath));            // parse ONCE; every instance shares these meshes
             if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[mapobj] parse fail " + baseName); return; }
             HrcLoader hrc = LoadAsset(relDir + "/" + hrcFile, b => HrcLoader.Load(b));
+            // SCN0003 disco floor: 256 tiles, each its OWN material, animated as a moving formation (NOT the shared-
+            // material path — they must NOT pulse in lockstep). See BoxFloorPattern / BoxFloorAnimator.
+            if (instances.Length == BoxFloorPattern.Tiles && baseName.ToUpperInvariant() == "BOX" && SceneFolder().ToUpperInvariant() == "SCN0003")
+            { SpawnBoxFloor(dir, r, hrc, instances); return; }
             // motFile may be null (static prop — e.g. SCN0010 house): skinned to the bind pose once, then frozen.
             MotLoader mot = string.IsNullOrEmpty(motFile) ? null : LoadAsset(relDir + "/" + motFile, b => MotLoader.Load(b));
             var fallbackCol = new Color(0.72f, 0.70f, 0.66f);
@@ -1197,11 +1237,27 @@ namespace Sdo.Game
             }
 
             // shared materials, one set per submesh (built once; reused by every instance). GPU-instancing
-            // capable (Sdo/UnlitInstanced) so a group's copies batch into instanced draws on the GPU.
+            // capable (Sdo/UnlitInstanced) so a group's copies batch into instanced draws on the GPU. A material
+            // whose texture carries real alpha (DXT3/DXT5 cut-out) uses the alpha-blended instanced twin so its
+            // transparent regions "去背" instead of painting solid (faithful to the original's per-material blend).
             var subMats = new List<Material[]>(r.Submeshes.Count);
             foreach (var sub in r.Submeshes)
             {
                 Material[] mats;
+                // Only the rigid no-weight stage props (billboards / decals / glows — corals, lights, banners,
+                // ground decals) take the alpha-blend treatment; SKINNED props (GUATAN platform, MAO cats) keep the
+                // opaque path verbatim so the validated scenes don't regress. (All the reported "沒去背" props are rigid.)
+                // 去背 is driven GENERICALLY by the texture, not by an asset list: any material whose DDS carries
+                // real alpha (DXT3/DXT5 transparent texels — ResolveDds's `a*`) is alpha-cut, whether the prop is
+                // rigid OR skinned. (The old code limited this to rigid props, which left SKINNED cut-outs — SCN0010's
+                // feather plumes MAO/MAO1, the SCN0009 掛毯 GUATAN banner — painting their transparent background
+                // solid. Opaque-texture props are unaffected: a* is false for them.)
+                // VOLUMETRIC 3-D solid (carousel carriage: many verts, thick on all axes) -> alpha uses CUTOUT
+                // (Cull Back + ZWrite On) so it isn't see-through and writes depth; FLAT decals/billboards/glows/
+                // banners/feathers -> alpha-blend (soft 去背). The volumetric test is what keeps a solid prop from
+                // turning see-through, so removing the rigid gate can't regress one.
+                Vector3 bsz = sub.Mesh.bounds.size;
+                bool volumetric = sub.Mesh.vertexCount >= 200 && Mathf.Min(bsz.x, Mathf.Min(bsz.y, bsz.z)) > 20f;
                 // per-submesh material (cloth/skin split like the avatar): multi-range submesh -> one material per range
                 if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
                 {
@@ -1210,12 +1266,12 @@ namespace Sdo.Game
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                        mats[s] = NewMapobjMat(ResolveDds(dir, nm), fallbackCol);
+                        var tex = ResolveDds(dir, nm, out bool a2); mats[s] = NewMapobjMat(tex, fallbackCol, a2, a2 && volumetric);
                     }
                 }
                 else
                 {
-                    mats = new[] { NewMapobjMat(ResolveDds(dir, sub.Dds), fallbackCol) };
+                    var tex = ResolveDds(dir, sub.Dds, out bool a1); mats = new[] { NewMapobjMat(tex, fallbackCol, a1, a1 && volumetric) };
                 }
                 subMats.Add(mats);
             }
@@ -1226,6 +1282,22 @@ namespace Sdo.Game
             // frozen; only the bound texture changes. Critical for SCN0013 night, whose crowd frames are renamed on
             // disk (fifanight_renqun001..009.dds) and so are unreachable by the MSH-material path (rendered white).
             var texAnim = SceneMapobjTexAnimCatalog.Find(SceneFolder(), baseName);
+            // Model-embedded "_TexAnimEx(NAME)interval_..." materials (SCN0016 city buildings): no hand-authored
+            // catalog entry — read the frame list from "<NAME>.an" in the prop's folder and the interval from the
+            // material name. Falls through to the same animator wiring below.
+            if (texAnim == null && r.Submeshes.Count > 0 && TexAnimEx.TryParse(r.Submeshes[0].Dds, out var exSpec))
+            {
+                var anPath = Path.Combine(dir, exSpec.Name + ".an");
+                if (File.Exists(anPath))
+                {
+                    var exFrames = TexAnimEx.ParseAn(File.ReadAllText(anPath));
+                    if (exFrames.Length > 0)
+                    {
+                        ResolveDds(dir, exFrames[0], out bool exAlpha);   // transparent iff the first frame carries alpha
+                        texAnim = new MapobjTexAnim(baseName.ToUpperInvariant(), exFrames, exSpec.IntervalMs > 0f ? exSpec.IntervalMs : 300f, exAlpha);
+                    }
+                }
+            }
             if (texAnim != null)
             {
                 var frames = new List<Texture2D>(texAnim.Frames.Length);
@@ -1359,19 +1431,68 @@ namespace Sdo.Game
             Debug.Log($"[mapobj] {baseName}: {instances.Length}× {(animated ? "animated(shared)" : hrc != null ? "static-skinned" : "static")}, {(hrc != null ? hrc.Names.Length + " bones" : "no skel")}");
         }
 
+        // SCN0003 disco floor: place the box tile mesh at all 256 instance transforms, each with its OWN opaque
+        // material, then drive them as a moving formation (BoxFloorAnimator re-textures each per the decompiled
+        // BoxFloorPattern table every 300 ms). Tile index = instance order (= the table's tile index).
+        private void SpawnBoxFloor(string dir, MshLoader.Result r, HrcLoader hrc, MapobjInstance[] instances)
+        {
+            var fallbackCol = new Color(0.72f, 0.70f, 0.66f);
+            var frames = new Texture2D[6];
+            for (int i = 0; i < 6; i++) frames[i] = ResolveDds(dir, "BOX_" + i + ".dds");
+            var mesh = r.Submeshes[0].Mesh;
+            // The tile mesh is authored at Y=+14.6 (bone-local); its HRC leaf bind-world translates Y−14.6 to seat it
+            // on the floor. Bake that bind-world into the shared mesh once (the rigid-attach the normal path does) —
+            // without it the tiles float at ~ankle height. (BOX bind = pure Y offset, no rotation.)
+            if (hrc != null && hrc.BindWorld != null)
+            {
+                int[] leaves = HrcLeafBones(hrc);
+                if (leaves.Length > 0)
+                {
+                    Matrix4x4 m = hrc.BindWorld[leaves[0]];
+                    if (!m.isIdentity)
+                    {
+                        var vts = mesh.vertices;
+                        for (int i = 0; i < vts.Length; i++) vts[i] = m.MultiplyPoint3x4(vts[i]);
+                        mesh.vertices = vts; mesh.RecalculateBounds();
+                    }
+                }
+            }
+            var mats = new Material[instances.Length];
+            var holder = new GameObject("BOX_floor");
+            for (int idx = 0; idx < instances.Length; idx++)
+            {
+                var go = new GameObject("BOX_" + idx);
+                go.transform.SetParent(holder.transform, false);
+                go.transform.localPosition = instances[idx].Pos;
+                go.transform.localScale = Vector3.one * instances[idx].Scale;
+                go.AddComponent<MeshFilter>().mesh = mesh;
+                var m = NewMapobjMat(frames[0], fallbackCol);   // opaque tile; the animator swaps its texture per the pattern
+                mats[idx] = m;
+                go.AddComponent<MeshRenderer>().sharedMaterial = m;
+            }
+            holder.AddComponent<BoxFloorAnimator>().Init(mats, frames);
+            SetLayerRecursive(holder, SceneLayer);
+            Debug.Log($"[mapobj] BOX disco floor: {instances.Length} tiles, pattern {BoxFloorPattern.Steps} steps");
+        }
+
         // One GPU-instancing-capable unlit material for a mapobj submesh (Cull Back, texture × tint), so a group's
         // shared-mesh copies batch into instanced GPU draws. Falls back to the built-in Unlit shaders if the custom
         // one isn't present (then no instancing, but identical look). tex==null -> flat fallback colour.
-        private static Material NewMapobjMat(Texture2D tex, Color fallbackCol)
+        private static Material NewMapobjMat(Texture2D tex, Color fallbackCol, bool alpha = false, bool cutout = false)
         {
-            var inst = Shader.Find("Sdo/UnlitInstanced");
+            // opaque -> instanced opaque; flat alpha decal/billboard/glow -> alpha-blend (Cull Off, ZWrite Off);
+            // VOLUMETRIC alpha solid (carousel carriage) -> alpha-test cutout (Cull Back, ZWrite On) so it doesn't
+            // render see-through ("穿透").
+            string name = cutout ? "Sdo/UnlitInstancedCutout" : alpha ? "Sdo/UnlitInstancedAlpha" : "Sdo/UnlitInstanced";
+            var inst = Shader.Find(name);
             if (inst != null)
             {
                 var m = new Material(inst) { enableInstancing = true };
                 if (tex != null) m.mainTexture = tex; else m.color = fallbackCol;   // _MainTex defaults to white -> tint shows
                 return m;
             }
-            return tex != null ? new Material(Shader.Find("Unlit/Texture")) { mainTexture = tex }
+            string fb = cutout ? "Unlit/Transparent Cutout" : alpha ? "Unlit/Transparent" : "Unlit/Texture";
+            return tex != null ? new Material(Shader.Find(fb)) { mainTexture = tex }
                                : new Material(Shader.Find("Unlit/Color")) { color = fallbackCol };
         }
 
@@ -1421,8 +1542,9 @@ namespace Sdo.Game
                 b = res.Mesh.bounds;
                 // render at NATIVE SDO world coords (no lift). The .cv cameras + the avatar dance spot (_avatarChest)
                 // are authored in this same space with the dancer standing on the native floor, so they line up.
-                Debug.Log($"[scene] SCN0009: {res.Materials.Length} subsets, bounds c={b.center} s={b.size}");
-                TryLoadMapobjs();   // stage props on the same layer (SCN0009 -> GUATAN x4)
+                Debug.Log($"[scene] {SceneFolder()}: {res.Materials.Length} subsets, bounds c={b.center} s={b.size}");
+                TryLoadMapobjs();   // stage props on the same layer
+                SpawnSceneEffects();   // persistent background EFTs (SCN0008 magic circle, snow, aurora, …)
             }
 
             // Perspective camera renders the stage(+avatar, same layer) to a RenderTexture; a full-screen background
@@ -1765,8 +1887,13 @@ namespace Sdo.Game
         }
 
         // resolve a material's .dds name to a file in the avatar dir (case-insensitive), load it
-        private Texture2D ResolveDds(string dir, string ddsName)
+        private Texture2D ResolveDds(string dir, string ddsName) => ResolveDds(dir, ddsName, out _);
+
+        // Resolve a mapobj texture by material name and report whether it carries real alpha (so the caller can
+        // alpha-blend its "去背" cut-out instead of painting it opaque). Reads the file once for both.
+        private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha)
         {
+            hasAlpha = false;
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
@@ -1778,7 +1905,7 @@ namespace Sdo.Game
                     if (Path.GetExtension(f).ToLowerInvariant() == ".dds" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) { hit = f; break; }
             }
             if (hit == null) return null;
-            try { return DdsLoader.Load(File.ReadAllBytes(hit)); } catch { return null; }
+            try { var bytes = File.ReadAllBytes(hit); hasAlpha = DdsLoader.HasAlpha(bytes); return DdsLoader.Load(bytes); } catch { return null; }
         }
 
         // the original stage/dance camera (CAMERA/1/CAM0000.CV) — extract its up-pitch (eye knee-height -> chest target)
@@ -1813,6 +1940,7 @@ namespace Sdo.Game
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
+            if (Input.GetKeyDown(KeyCode.F8)) { EftEffect.DebugMeshOnly = !EftEffect.DebugMeshOnly; Debug.Log("[dbg] DebugMeshOnly=" + EftEffect.DebugMeshOnly + " (isolate the delta_line 3-colour mesh: hides disc/lightbars/MW, mesh at 5×)"); }
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
             // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
             if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
@@ -2481,18 +2609,30 @@ namespace Sdo.Game
                     _result.headBoxYOff = GUILayout.HorizontalSlider(_result.headBoxYOff, -10f, 50f);
                     GUILayout.Label($"頭框 正方形大小 size: {_result.headBoxSize:F0}");
                     _result.headBoxSize = GUILayout.HorizontalSlider(_result.headBoxSize, 20f, 96f);
+                    GUILayout.Label($"頭像 上方溢出 overflowTop: {_result.headOverflowTop:F0}px（頭髮長出框上緣的高度；底邊固定不變形）");
+                    _result.headOverflowTop = GUILayout.HorizontalSlider(_result.headOverflowTop, 0f, 48f);
                 }
                 GUILayout.Space(8);
                 GUILayout.Label("══ 頭像 AvtShow（idle 人物）即時套用 ══");
-                GUILayout.Label("相機自動跟頭骨→頭一定在框；調 yaw 角度、dist/fov 遠近、偏移對準臉");
-                GUILayout.Label($"旋轉 yaw: {headAvatarYaw:F0}°（轉到面向正確）");
+                headAutoFrame = GUILayout.Toggle(headAutoFrame, headAutoFrame
+                    ? " 自動取景: ON（量測髮頂自動算距離→永不切頂；用 zoom 微調）"
+                    : " 自動取景: OFF（手動 dist/瞄準偏移）");
+                if (headAutoFrame)
+                {
+                    GUILayout.Label($"自動 zoom: {headZoom:F2}（>1 拉遠=頭變小+上方留白更多；<1 放大）");
+                    headZoom = GUILayout.HorizontalSlider(headZoom, 0.5f, 2f);
+                    GUILayout.Label($"（自動算出的 dist≈{headPortraitDist:F0}）");
+                }
+                GUILayout.Label($"旋轉 yaw: {headAvatarYaw:F0}°（官方結算=0 正面）");
                 headAvatarYaw = GUILayout.HorizontalSlider(headAvatarYaw, 0f, 360f);
                 GUILayout.Label($"縮放 scale: {headAvatarScale:F2}");
                 headAvatarScale = GUILayout.HorizontalSlider(headAvatarScale, 0.2f, 6f);
-                GUILayout.Label($"相機 距離 dist: {headPortraitDist:F0}（小=放大）");
+                GUILayout.Label($"相機 距離 dist: {headPortraitDist:F0}（小=放大；自動取景時無效）");
                 headPortraitDist = GUILayout.HorizontalSlider(headPortraitDist, 5f, 120f);
-                GUILayout.Label($"相機 FOV: {headPortraitFov:F0}");
+                GUILayout.Label($"相機 FOV: {headPortraitFov:F0}（官方=45）");
                 headPortraitFov = GUILayout.HorizontalSlider(headPortraitFov, 10f, 60f);
+                GUILayout.Label($"相機 俯角 pitch: {headPitchDeg:F1}°（官方≈2.3 正面略俯）");
+                headPitchDeg = GUILayout.HorizontalSlider(headPitchDeg, -10f, 15f);
                 GUILayout.Space(4);
                 GUILayout.Label($"瞄準偏移 X: {headAimOffset.x:F1}");
                 headAimOffset.x = GUILayout.HorizontalSlider(headAimOffset.x, -40f, 40f);
@@ -2700,6 +2840,35 @@ namespace Sdo.Game
         // Spawn any <name>.EFT (e.g. FINISHED = the end-of-song result burst: a tex103 root that bursts 18+18+30
         // billboards with posSpread 90-122° = a near-spherical firework. effScale≈5: base 0.25 × anim 5.26 × 5 = the
         // captured worldScale 6.57). Same interpreter/anchor as combos; baseScale × the F4 size slider.
+        // Persistent per-scene background EFTs (decompiled from the StageScene controllers): the SCN0008 ground magic
+        // circle (結界), christmas/snow scenes' snow, the sea aurora+bubbles, carnival glows, etc. Spawned once on
+        // scene load and looped for the whole song. Native SDO coords on the stage layer (same as the mapobjs).
+        private void SpawnSceneEffects()
+        {
+            foreach (var e in SceneEftCatalog.ForFolder(SceneFolder()))
+                SpawnSceneEft(e.Eft, new Vector3(e.X, e.Y, e.Z), new Vector3(e.Ex, e.Ey, e.Ez), e.Scale);
+        }
+
+        private void SpawnSceneEft(string name, Vector3 pos, Vector3 euler, float scale)
+        {
+            if (!_namedEftCache.TryGetValue(name, out var file))
+            {
+                var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
+                if (!File.Exists(path)) { Debug.LogWarning("[eft] scene eft missing " + path); return; }
+                file = EftFile.Load(File.ReadAllBytes(path));
+                _namedEftCache[name] = file;
+            }
+            var go = new GameObject("SceneEft_" + name);
+            go.transform.position = pos;
+            go.transform.rotation = Quaternion.Euler(euler);
+            int layer = use3dCamera ? SceneLayer : 0;
+            var eff = go.AddComponent<EftEffect>();
+            eff.Persistent = true;   // never auto-destroy; loops for the whole song
+            eff.Init(file, scale, null, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
+            if (use3dCamera) SetLayerRecursive(go, SceneLayer);
+            Debug.Log($"[eft] scene eft {name} @ {pos} euler {euler} scale {scale}");
+        }
+
         private void SpawnNamedEft(string name, float baseScale)
         {
             if (!_namedEftCache.TryGetValue(name, out var file))
@@ -2806,6 +2975,74 @@ namespace Sdo.Game
         private static EftMeshData LoadEffectMesh(byte[] d, string xdir, int idx, string rel)
         {
             if (d == null || d.Length < 32 || System.Text.Encoding.ASCII.GetString(d, 0, 4) != "Mesh") return null;
+            // MULTI-SUBMESH effect mesh (e.g. SCN0008 delta_line = aka/ao/ki, the 3 colour lines): parse ALL submeshes
+            // via MshLoader and keep each submesh's own material, so every colour renders (the single-block path below
+            // — kept for the combo aef03_00 whose material name needs the aef_3 heuristic — would show only 1 colour).
+            int submeshCount0 = (int)(uint)(d[12] | (d[13] << 8) | (d[14] << 16) | (d[15] << 24));
+            if (submeshCount0 > 1)
+            {
+                var r = MshLoader.Load(d);
+                if (r == null || r.Submeshes.Count == 0) return null;
+                string meshDir = Path.Combine(xdir, Path.GetDirectoryName(rel.Replace('\\', '/')) ?? "");
+                int total = 0; foreach (var s in r.Submeshes) total += s.Mesh.vertexCount;
+                var vv = new Vector3[total]; var uu = new Vector2[total];
+                var subTris = new int[r.Submeshes.Count][]; var subTex2 = new Texture2D[r.Submeshes.Count];
+                int vb = 0;
+                for (int si = 0; si < r.Submeshes.Count; si++)
+                {
+                    var sm = r.Submeshes[si]; var sv = sm.Mesh.vertices; var su = sm.Mesh.uv;
+                    System.Array.Copy(sv, 0, vv, vb, sv.Length);
+                    if (su != null && su.Length == sv.Length) System.Array.Copy(su, 0, uu, vb, su.Length);
+                    var stt = sm.Mesh.triangles; var ot = new int[stt.Length];
+                    for (int t = 0; t < stt.Length; t++) ot[t] = stt[t] + vb;
+                    subTris[si] = ot;
+                    subTex2[si] = !string.IsNullOrEmpty(sm.Dds) ? (LoadXmeshDds(meshDir, sm.Dds) ?? LoadXmeshDds(xdir, sm.Dds)) : null;
+                    vb += sv.Length;
+                }
+                var mm = new Mesh { name = "eft-mesh-" + idx };
+                if (total > 65535) mm.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+                mm.vertices = vv; mm.uv = uu; mm.subMeshCount = r.Submeshes.Count;
+                for (int si = 0; si < r.Submeshes.Count; si++) mm.SetTriangles(subTris[si], si);
+                mm.RecalculateBounds();
+                Debug.Log($"[eft-mesh] idx {idx} '{rel}': MULTI {r.Submeshes.Count} sub, tex=[{string.Join(",", System.Array.ConvertAll(subTex2, x => x != null ? "ok" : "null"))}]");
+                var md2 = new EftMeshData { Mesh = mm, SubTex = subTex2 };
+
+                // .MOT-DRIVEN RIGID PROP (SCN0008 delta_line, xmesh 172): if a sibling .HRC + .MOT exist and the
+                // submeshes are weightless, expose per-submesh meshes + skeleton so EftEffect animates each colour bar
+                // on its OWN bone (DELTA_LINE.MOT extends them via scale.Y). Same rigid-no-weights logic as the mapobj
+                // path (~1184-1196); same dual path resolution as the .MSH (listed subpath, then flattened basename).
+                var hrcPath = Path.Combine(xdir, rel + ".HRC");
+                if (!File.Exists(hrcPath)) hrcPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".HRC");
+                var motPath = Path.Combine(xdir, rel + ".MOT");
+                if (!File.Exists(motPath)) motPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".MOT");
+                if (File.Exists(hrcPath) && File.Exists(motPath))
+                {
+                    HrcLoader hrc = null; MotLoader mot = null;
+                    try { hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath)); } catch (Exception e) { Debug.LogWarning("[eft-mesh] hrc load " + hrcPath + ": " + e.Message); }
+                    try { mot = MotLoader.Load(File.ReadAllBytes(motPath)); } catch (Exception e) { Debug.LogWarning("[eft-mesh] mot load " + motPath + ": " + e.Message); }
+                    bool rigidNoWeights = hrc != null && hrc.BindWorld != null;
+                    if (rigidNoWeights) foreach (var sub in r.Submeshes) if (sub.BoneHrc != null) { rigidNoWeights = false; break; }
+                    if (hrc != null && mot != null && rigidNoWeights)
+                    {
+                        int[] leaves = HrcLeafBones(hrc);
+                        var subMeshes = new Mesh[r.Submeshes.Count];
+                        var subBone = new int[r.Submeshes.Count];
+                        for (int si = 0; si < r.Submeshes.Count; si++)
+                        {
+                            subMeshes[si] = r.Submeshes[si].Mesh;   // verts in bone-local space (NOT baked) — followed by its bone
+                            // EFT particle mesh ≠ scene geometry: it has NO baked vertex lighting (its per-vertex DIFFUSE is
+                            // 0x00000000 = black). MshLoader read that into colors32, and the additive particle shader
+                            // (Legacy Particles/Additive) MULTIPLIES vertex colour → ×0 = the bars vanished. Drop colours so
+                            // they fall back to white (the colour comes from the emitter channels via _TintColor, not vertices).
+                            subMeshes[si].colors32 = null;
+                            subBone[si] = EftSubmeshBone(r.Submeshes[si].Dds, hrc, leaves, si);
+                        }
+                        md2.Hrc = hrc; md2.Mot = mot; md2.SubmeshMeshes = subMeshes; md2.SubmeshTex = subTex2; md2.SubmeshBone = subBone;
+                        Debug.Log($"[eft-mesh] idx {idx} '{rel}': MOT-rigid {r.Submeshes.Count} sub, bones=[{string.Join(",", subBone)}] motMaxTime={mot.MaxTime}");
+                    }
+                }
+                return md2;
+            }
             int p = 12;
             uint U() { uint v = (uint)(d[p] | (d[p + 1] << 8) | (d[p + 2] << 16) | (d[p + 3] << 24)); p += 4; return v; }
             float F(int o) => BitConverter.ToSingle(d, o);
@@ -2845,6 +3082,22 @@ namespace Sdo.Game
             Texture2D tex = pick != null ? LoadXmeshDds(xdir, pick) : null;
             Debug.Log($"[eft-mesh] idx {idx} '{rel}': {vcount}v/{idxCount / 3}t, dds=[{string.Join(",", names)}] picked '{pick}' tex={(tex != null)}");
             return new EftMeshData { Mesh = mesh, SubTex = new[] { tex } };
+        }
+
+        // Map an effect submesh to the HRC bone it rides, by matching the submesh's DDS COLOUR token to the bone name
+        // (SCN0008 delta_line: aka_line→Frame*_aka_*, ao_line→*_ao_*, ki_line→*_ki_*). Falls back to the leaf bones in
+        // order when no colour matches, so a generic multi-part rigid prop still animates.
+        private static int EftSubmeshBone(string dds, HrcLoader hrc, int[] leaves, int si)
+        {
+            if (hrc != null && hrc.Names != null && !string.IsNullOrEmpty(dds))
+            {
+                string low = dds.ToLowerInvariant();
+                foreach (var tok in new[] { "aka", "ao", "ki" })   // distinct substrings (aka/ao/ki) — colour of the bar
+                    if (low.Contains(tok))
+                        for (int b = 0; b < hrc.Names.Length; b++)
+                            if (hrc.Names[b] != null && hrc.Names[b].ToLowerInvariant().Contains(tok)) return b;
+            }
+            return leaves != null && leaves.Length > 0 ? leaves[System.Math.Min(si, leaves.Length - 1)] : -1;
         }
 
         // Resolve a DDS referenced inside a .MSH: the stored name may carry leading binary/junk bytes (e.g. "LBaef_3_00.dds"),
@@ -3041,7 +3294,10 @@ namespace Sdo.Game
             BuildIdleHeadAvatar();
             if (_headAvatar == null) return null;
 
-            _headRt = new RenderTexture(192, 224, 16, RenderTextureFormat.ARGB32) { name = "HeadPortraitRT" };
+            // Aspect matches the result row's overflow quad (slot 48 + overflow ~6 → 48/54 ≈ 0.889) so the head isn't
+            // stretched: the head essentially FILLS the slot with only a hair-tip poking above, plus a transparent margin so
+            // it's never cut. (If headOverflowTop is retuned far from 6, match this RT aspect to avoid vertical stretch.)
+            _headRt = new RenderTexture(192, 216, 16, RenderTextureFormat.ARGB32) { name = "HeadPortraitRT" };
             var camGo = new GameObject("HeadPortraitCam");
             _headCam = camGo.AddComponent<Camera>();
             _headCam.orthographic = false;
@@ -3117,11 +3373,52 @@ namespace Sdo.Game
                 t.localRotation = Quaternion.Euler(0f, headAvatarYaw, 0f);
             }
             if (_headCam == null || _headAvatar == null) return;
-            Vector3 restHead = _headAvatar.transform.TransformPoint(_headModelPos);   // rest head world pos (no bob)
-            Vector3 target = restHead + headAimOffset;
+            Vector3 restHead = _headAvatar.transform.TransformPoint(_headModelPos);   // head bone world pos (rest)
+            // Auto-frame from the MEASURED head (the official frames each costume's head to fill the row via a per-costume
+            // scale table — no single value — so we measure THIS head instead of porting an arbitrary number). We capture
+            // from ~chest up to ~0.15·(hair height) ABOVE the hair top, so the hair always lands inside the RT (never cut),
+            // and target the capture centre. headZoom nudges the framing; auto OFF → manual dist/aimOffset.
+            EnsureHairOffset();
+            float h = _hairOffsetModel * Mathf.Max(0.01f, headAvatarScale);    // hair-top height above the head bone (world)
+            Vector3 target;
+            if (headAutoFrame && h > 0.001f)
+            {
+                // TIGHT head close-up (official look): capture ≈ chin→hair-top + ~10% margin (head fills the frame, only a
+                // sliver of shoulder, hair spills above). dist 1.9·h, aim centred a bit above the bone so the face sits low.
+                headPortraitDist = 1.9f * h * Mathf.Max(0.05f, headZoom);
+                target = restHead + new Vector3(headAimOffset.x, 0.35f * h, 0f);
+            }
+            else target = restHead + headAimOffset;
             _headCam.fieldOfView = headPortraitFov;
-            _headCam.transform.position = target + new Vector3(0f, 0f, -headPortraitDist);
-            _headCam.transform.LookAt(target, Vector3.up);
+            // Frontal (+Z) view tilted DOWN by headPitchDeg, matching the official cam (eye slightly above the head, looking
+            // down ~2.3°). Place the cam back along that tilted forward axis and look at the head target.
+            Vector3 dir = Quaternion.Euler(headPitchDeg, 0f, 0f) * Vector3.forward;   // +Z, pitched down
+            _headCam.transform.position = target - dir * headPortraitDist;
+            _headCam.transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
+        }
+
+        // Measure (once) how far the hair top sits above the head bone, in MODEL units (scale-independent), from the posed
+        // avatar's renderer bounds — bounds are valid after CPU skinning (SdoAvatar recalculates them). Used by the auto-frame
+        // so the cam captures the whole head + hair + a top margin (never cut) regardless of the model's unit scale.
+        private float _hairOffsetModel = -1f;
+        private void EnsureHairOffset()
+        {
+            if (_hairOffsetModel > 0f || _headAvatar == null) return;
+            var rends = _headAvatar.GetComponentsInChildren<Renderer>();
+            if (rends == null || rends.Length == 0) return;
+            float top = float.NegativeInfinity; bool any = false;
+            foreach (var r in rends)
+            {
+                if (r == null) continue;
+                var b = r.bounds;
+                if (b.size.sqrMagnitude < 1e-6f) continue;     // not posed yet
+                top = Mathf.Max(top, b.max.y); any = true;
+            }
+            if (!any) return;
+            float headBoneY = _headAvatar.transform.TransformPoint(_headModelPos).y;
+            float offW = top - headBoneY;                       // world hair height above the bone
+            if (offW <= 0.001f) return;                         // bounds not ready — retry next frame
+            _hairOffsetModel = offW / Mathf.Max(0.01f, headAvatarScale);   // back to model units
         }
 
         // rebuild + redraw the roster (called at each 8-beat score commit and once at startup).

@@ -28,5 +28,6 @@
 
 ## 相關
 
+- [unified-motion-rig.md](./unified-motion-rig.md) — MMD ⇄ 熱舞動作/模型互通設計(canonical rig 中樞)
 - [systems/dance-performance.md](../systems/dance-performance.md)
 - [personal-room-gogh.md](personal-room-gogh.md)

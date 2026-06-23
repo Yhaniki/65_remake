@@ -98,7 +98,15 @@ namespace Sdo.Game
 
             // build geometry + resolve bones
             var verts = new Vector3[vcount]; var uvs = new Vector2[vcount];
+            var cols = new Color32[vcount];
             int uvOff = stride - 8;
+            // Rigid stage props with FVF 0x142 (stride 24) / 0x152 (stride 36) carry a per-vertex D3DCOLOR = BAKED
+            // scene lighting (the SCN0008 night tomb is dark — the floating pyramids etc. are darkened by this, not
+            // full-bright). It sits right before the uv (offset uvOff-4 = stride-12). Read it into colors32 so the
+            // mapobj shader can multiply it in (matching SceneLoader for SCENE.MSH). 0x112 (stride 32) has a NORMAL
+            // there, not a colour, so skip it → white (no darkening). White default keeps non-lit props unchanged.
+            bool hasDiffuse = (stride == 24 || stride == 36);
+            int diffOff = stride - 12;
             int nW = stride == 44 ? 1 : stride == 48 ? 2 : stride == 52 ? 3 : 0;
             int boneOff = 12 + nW * 4;
             int[] mainMap = pal != null ? pal : null;
@@ -109,6 +117,9 @@ namespace Sdo.Game
                 int b = vertOff + i * stride;
                 verts[i] = new Vector3(F(d, b), F(d, b + 4), F(d, b + 8));   // verbatim — D3D9 & Unity are both LH (no -X)
                 uvs[i] = new Vector2(F(d, b + uvOff), F(d, b + uvOff + 4));   // V NOT flipped (reference msh_reader uses v direct)
+                // D3DCOLOR 0xAARRGGBB (LE bytes B,G,R,A); keep RGB (the baked darkening), alpha stays 255 (cut-out is the texture's).
+                cols[i] = hasDiffuse ? new Color32(d[b + diffOff + 2], d[b + diffOff + 1], d[b + diffOff], 255)
+                                     : new Color32(255, 255, 255, 255);
                 // weights
                 float w0, w1, w2, w3;
                 if (stride == 44) { w0 = 1f; w1 = w2 = w3 = 0f; }
@@ -138,7 +149,7 @@ namespace Sdo.Game
 
             var mesh = new Mesh { name = "msh" };
             if (vcount > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-            mesh.vertices = verts; mesh.uv = uvs;
+            mesh.vertices = verts; mesh.uv = uvs; mesh.colors32 = cols;   // colors32 = baked vertex lighting (white when none)
             // split into one Unity submesh per material range so each can take its own texture (faithful to the
             // D3DXATTRIBUTERANGE table — SceneLoader does the same). Single-range meshes use one submesh as before.
             if (ranges.Count > 1)

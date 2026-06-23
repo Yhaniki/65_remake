@@ -11,6 +11,44 @@ namespace Sdo.Game
     /// </summary>
     public static class DdsLoader
     {
+        /// <summary>
+        /// True if a DDS carries non-trivial alpha (transparent or partly-transparent texels) — the signal the
+        /// original used (per-material flag 0x20000) to ALPHA-BLEND a stage prop's "去背" cut-out instead of
+        /// painting it opaque. DXT1 / uncompressed reports opaque; DXT3/DXT5 are sampled and report alpha when any
+        /// texel drops below <paramref name="threshold"/> (default 250 ≈ "not fully solid"). Cheap: early-outs on
+        /// the first transparent block. Pure (byte[] -> bool), so it's unit-tested.
+        /// </summary>
+        public static bool HasAlpha(byte[] d, int threshold = 250)
+        {
+            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
+            string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
+            int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return false;
+            int bw = Math.Max(1, (width + 3) / 4), bh = Math.Max(1, (height + 3) / 4);
+            int bi = 128;
+            if (fourcc == "DXT3")
+            {
+                for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
+                    for (int k = 0; k < 8; k++)
+                    {
+                        int ab = d[bi + k];
+                        if ((ab & 0xF) * 255 / 15 < threshold || ((ab >> 4) & 0xF) * 255 / 15 < threshold) return true;
+                    }
+                return false;
+            }
+            if (fourcc == "DXT5")
+            {
+                for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
+                {
+                    int a0 = d[bi], a1 = d[bi + 1];
+                    // a0<a1 -> the 6-/7-code palette includes 0 and 255 (so 0 is reachable); else min is min(a0,a1).
+                    if (a0 < a1 || Math.Min(a0, a1) < threshold) return true;
+                }
+                return false;
+            }
+            return false;   // DXT1 / uncompressed: treat as opaque (DXT1's 1-bit alpha isn't used by these props)
+        }
+
         public static Texture2D Load(byte[] d)
         {
             if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return null;
@@ -20,11 +58,27 @@ namespace Sdo.Game
             if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return null;
 
             if (fourcc == "DXT3") return DecodeDxt3(d, 128, width, height);
+            // DXT1 is decoded BY HAND to RGBA32 (opaque, alpha 255) — NOT via Unity's native TextureFormat.DXT1.
+            // On this project's d3d12 / Unity 6 path the native BC1 upload sampled with alpha 0, so the scene's
+            // alpha-cutout shader (Sdo/SceneVertexCutout: clip(a-0.5)) discarded EVERY opaque DXT1 material — the
+            // SCN0010 floor / sky / columns / lanterns vanished to black while the DXT3 props (own manual decode)
+            // stayed. Manual decode gives correct RGB + alpha 255 (SDO's stage DXT1 carry no real alpha; see HasAlpha),
+            // same orientation as the native path, so UVs are unchanged and no scene regresses.
+            if (fourcc == "DXT1") return DecodeDxt1(d, 128, width, height);
+
+            // UNCOMPRESSED 32-bit RGB(A): fourcc is empty and DDPF_RGB (0x40) is set. SDO's extracted/packaged
+            // SCN0010 floor `dimian1.dds` is X8R8G8B8 (1 MB, masks R=00ff0000 G=0000ff00 B=000000ff A=0), NOT the
+            // DXT1 copy under assets/Datas — so it hit `default: return null` and the floor rendered untextured/black.
+            uint pf = BitConverter.ToUInt32(d, 80);
+            if ((pf & 0x4u) == 0 && (pf & 0x40u) != 0)
+                return DecodeUncompressed(d, 128, width, height,
+                    BitConverter.ToUInt32(d, 92), BitConverter.ToUInt32(d, 96),
+                    BitConverter.ToUInt32(d, 100), BitConverter.ToUInt32(d, 104),
+                    BitConverter.ToInt32(d, 88));
 
             TextureFormat fmt; int blockBytes;
             switch (fourcc)
             {
-                case "DXT1": fmt = TextureFormat.DXT1; blockBytes = 8; break;
                 case "DXT5": fmt = TextureFormat.DXT5; blockBytes = 16; break;
                 default: return null;
             }
@@ -33,6 +87,67 @@ namespace Sdo.Game
             var raw = new byte[baseSize]; Array.Copy(d, 128, raw, 0, baseSize);
             var tex = new Texture2D(width, height, fmt, false) { wrapMode = TextureWrapMode.Repeat };   // D3D default is WRAP; tiling UVs (FIFA crowd u=-7.75..7.32, floors) need it
             tex.LoadRawTextureData(raw); tex.Apply(false, true);
+            return tex;
+        }
+
+        // Uncompressed 32-bit DDS (D3D A8R8G8B8 / X8R8G8B8 etc.) decoded via the pixel-format channel masks → RGBA32.
+        // Amask 0 → opaque (255). Same row order as the block decoders (DDS top row → texture row 0) so UVs match.
+        private static Texture2D DecodeUncompressed(byte[] d, int off, int w, int h, uint rm, uint gm, uint bm, uint am, int bits)
+        {
+            if (bits != 32) return null;                 // only 32-bit handled (SDO's uncompressed stage textures are all 32-bit)
+            if (off + w * h * 4 > d.Length) return null;
+            int rs = MaskShift(rm), gs = MaskShift(gm), bs = MaskShift(bm), as_ = MaskShift(am);
+            var px = new Color32[w * h];
+            for (int i = 0; i < w * h; i++)
+            {
+                int p = off + i * 4;
+                uint v = (uint)(d[p] | (d[p + 1] << 8) | (d[p + 2] << 16) | (d[p + 3] << 24));
+                px[i] = new Color32((byte)((v & rm) >> rs), (byte)((v & gm) >> gs), (byte)((v & bm) >> bs),
+                                    am != 0 ? (byte)((v & am) >> as_) : (byte)255);
+            }
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };
+            tex.SetPixels32(px); tex.Apply(false, true);
+            return tex;
+        }
+        private static int MaskShift(uint mask) { if (mask == 0) return 0; int s = 0; while ((mask & 1) == 0) { mask >>= 1; s++; } return s; }
+
+        // BC1: 8-byte blocks (c0,c1 565 + 16×2-bit indices). c0>c1 → 4 opaque colours; c0≤c1 → 3 colours + a 4th
+        // index that BC1 treats as transparent-black — but SDO's stage DXT1 textures are OPAQUE (their 1-bit alpha
+        // isn't used; see HasAlpha), so we force alpha 255 for every texel. Decoded to RGBA32 because Unity's native
+        // TextureFormat.DXT1 sampled a=0 on this d3d12 path, which the scene's alpha-cutout shader then clipped away.
+        private static Texture2D DecodeDxt1(byte[] d, int off, int w, int h)
+        {
+            int bw = (w + 3) / 4, bh = (h + 3) / 4;
+            if (off + bw * bh * 8 > d.Length) return null;
+            var px = new Color32[w * h];
+            int bi = off;
+            for (int by = 0; by < bh; by++)
+                for (int bx = 0; bx < bw; bx++, bi += 8)
+                {
+                    ushort c0 = (ushort)(d[bi] | (d[bi + 1] << 8));
+                    ushort c1 = (ushort)(d[bi + 2] | (d[bi + 3] << 8));
+                    uint bits = (uint)(d[bi + 4] | (d[bi + 5] << 8) | (d[bi + 6] << 16) | (d[bi + 7] << 24));
+                    Color32 p0 = From565(c0), p1 = From565(c1), p2, p3;
+                    if (c0 > c1)
+                    {
+                        p2 = new Color32((byte)((2 * p0.r + p1.r) / 3), (byte)((2 * p0.g + p1.g) / 3), (byte)((2 * p0.b + p1.b) / 3), 255);
+                        p3 = new Color32((byte)((p0.r + 2 * p1.r) / 3), (byte)((p0.g + 2 * p1.g) / 3), (byte)((p0.b + 2 * p1.b) / 3), 255);
+                    }
+                    else
+                    {
+                        p2 = new Color32((byte)((p0.r + p1.r) / 2), (byte)((p0.g + p1.g) / 2), (byte)((p0.b + p1.b) / 2), 255);
+                        p3 = new Color32(0, 0, 0, 255);   // BC1 transparent index, forced opaque (stage DXT1 is opaque)
+                    }
+                    for (int i = 0; i < 16; i++)
+                    {
+                        int x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
+                        if (x >= w || y >= h) continue;
+                        int sel = (int)((bits >> (i * 2)) & 3);
+                        px[y * w + x] = sel == 0 ? p0 : sel == 1 ? p1 : sel == 2 ? p2 : p3;
+                    }
+                }
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };   // D3D default WRAP; tiling floor/sky UVs need it
+            tex.SetPixels32(px); tex.Apply(false, true);
             return tex;
         }
 

@@ -29,6 +29,8 @@ namespace Sdo.Game
         // that spins 360° yaw). The target is parented under this avatar's transform, so it picks up the instance pose.
         private readonly List<(int bone, Transform t)> _boneFollowers = new List<(int, Transform)>();
         private Matrix4x4[] _animWorld, _skinMat;
+        private Vector3[] _motScale;   // per-bone MOT scale this frame (Vector3.one unless the bone's scale track varies)
+        private bool[] _motScaleActive;   // per-bone: does the .mot drive this bone's scale? (then USE it, ignore bind scale)
         // body-shape (體型): per-bone local scale that fattens/thins the dancer's cross-section without changing bone
         // length — faithful port of decompiled AvatarHelper_ScaleBones (see SdoBodyShape). identity until SetBodyShape.
         private Matrix4x4[] _scaleMat; private bool _hasBodyScale;
@@ -102,6 +104,8 @@ namespace Sdo.Game
             _hrc = hrc; _mot = mot;
             int bc = hrc.Names.Length;
             _animWorld = new Matrix4x4[bc]; _skinMat = new Matrix4x4[bc];
+            _motScale = new Vector3[bc]; for (int i = 0; i < bc; i++) _motScale[i] = Vector3.one;
+            _motScaleActive = new bool[bc];
             _dispLocal = new Matrix4x4[bc]; _blendFromQ = new Quaternion[bc]; _blendFromP = new Vector3[bc];
             _haveDisp = false; _lastMot = mot; _blendStart = -1f;
             _scaleMat = new Matrix4x4[bc]; for (int i = 0; i < bc; i++) _scaleMat[i] = Matrix4x4.identity; _hasBodyScale = false;
@@ -259,7 +263,21 @@ namespace Sdo.Game
                 Matrix4x4 m = _animWorld[bone];
                 t.localPosition = m.GetColumn(3);
                 t.localRotation = m.rotation;
-                t.localScale = m.lossyScale;
+                // The FK is intentionally scale-free (see Pose), so _animWorld drops the SCALE a rigid prop's bind
+                // chain carries on a parent bone (3ds-Max rigs put the prop's scale on a parent; the leaf is scale 1).
+                // Without it an animated rigid prop renders at full mesh size — SCN0015 trees (bind scale ~0.1)
+                // ballooned ~10×; SCN0011 ceiling props mis-sized. Re-inject the accumulated bind scale (what the
+                // STATIC bake uses via BindWorld). Props whose chain has no scale (e.g. the spinning sea screen,
+                // bind scale 1) are unaffected — so this can only correct the already-wrong, scaled-chain props.
+                Vector3 bindScale = (_hrc != null && _hrc.BindWorld != null && bone < _hrc.BindWorld.Length)
+                    ? _hrc.BindWorld[bone].lossyScale : m.lossyScale;
+                // SCALE: if the .mot drives this bone's scale, USE the MOT scale DIRECTLY — it IS the live scale (the
+                // SCN0008 delta_line bars extend via scale.Y 0→2.028; their HRC BIND scale.Y is 0 = the collapsed rest
+                // state, so bind×mot would zero the bars out → invisible). Bones WITHOUT a MOT scale track keep the
+                // bind-scale re-injection (rigid mapobjs like the SCN0014 sea screen / SCN0015 trees — unchanged).
+                Vector3 ms = (_motScale != null && bone < _motScale.Length) ? _motScale[bone] : Vector3.one;
+                bool motDriven = _motScaleActive != null && bone < _motScaleActive.Length && _motScaleActive[bone];
+                t.localScale = motDriven ? ms : bindScale;
             }
         }
 
@@ -392,12 +410,14 @@ namespace Sdo.Game
             for (int i = 0; i < bc; i++)
             {
                 Matrix4x4 local;     // reference mot_player.compose_local / evaluate_pose (column-vector, no axis flip)
+                if (_motScale != null) { _motScale[i] = Vector3.one; _motScaleActive[i] = false; }
                 if (Animate && _mot != null && _mot.Bones.TryGetValue(i, out var node))
                 {
                     MotLoader.SampleRot(node, t, out float qx, out float qy, out float qz, out float qw);
                     local = QuatToLocal(qx, qy, qz, qw);    // quat_to_matrix then transpose the 3x3 (MOT quat is row-major)
                     Vector3 p = node.Pc >= 1 ? MotLoader.SamplePos(node, t) : (Vector3)_hrc.LocalRest[i].GetColumn(3);
                     local[0, 3] = p.x; local[1, 3] = p.y; local[2, 3] = p.z;   // translation from the MOT pos track
+                    if (_motScale != null && MotLoader.ScaleVaries(node)) { _motScale[i] = MotLoader.SampleScale(node, t); _motScaleActive[i] = true; }
                 }
                 else local = _hrc.LocalRest[i];             // bone not animated -> HRC rest (already column-vector)
                 if (blending)   // ease the local transform from the snapshot toward the live clip (rotation slerp + translation lerp)

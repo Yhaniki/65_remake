@@ -114,6 +114,50 @@ namespace Sdo.UI.Util
             return img;
         }
 
+        // ---------- original-art placement (top-left pixel coords) ----------
+        // The SDO dialog XMLs (e.g. RoomDlg/MusicSelDlg.xml) lay elements out in 800×600, top-left
+        // origin, y-DOWN. Our world canvas is centred & y-UP, so an element placed at XML (x,y) maps to
+        // anchorMin=anchorMax=(0,1), pivot=(0,1), anchoredPosition=(x, -y). Sprites carry their native
+        // (crop) pixel size at 1px=1unit, so sizeDelta = sprite.rect.size reproduces the original art size.
+
+        /// <summary>Place a sprite at XML top-left pixel (x,y) at its native size. Tolerates a null sprite
+        /// (renders nothing). Returns the Image so callers can keep/swap the sprite later.</summary>
+        public static Image AddSprite(Transform parent, string name, Sprite s, float x, float y, bool raycast = false)
+        {
+            var img = AddImage(parent, name, Color.white, raycast);
+            var rt = img.rectTransform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = new Vector2(x, -y);
+            ApplySprite(img, s);
+            return img;
+        }
+
+        /// <summary>Set an Image's sprite and resize to the sprite's native pixel size; hide if null.</summary>
+        public static void ApplySprite(Image img, Sprite s)
+        {
+            if (img == null) return;
+            img.sprite = s;
+            if (s != null) { img.color = Color.white; img.rectTransform.sizeDelta = s.rect.size; }
+            else img.color = new Color(1f, 1f, 1f, 0f);   // missing art -> invisible, no white box
+        }
+
+        /// <summary>A three-state (normal/hover/pushed) sprite button at XML top-left pixel (x,y), sized to
+        /// the normal sprite. Uses UGUI SpriteSwap so hover/press reproduce the original art states.</summary>
+        public static Button AddSpriteButton(Transform parent, string name, Sprite normal, Sprite hover, Sprite pushed, float x, float y)
+        {
+            var img = AddSprite(parent, name, normal, x, y, raycast: true);
+            var btn = img.gameObject.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.transition = Selectable.Transition.SpriteSwap;
+            var st = btn.spriteState;
+            st.highlightedSprite = hover != null ? hover : normal;
+            st.pressedSprite = pushed != null ? pushed : (hover != null ? hover : normal);
+            st.selectedSprite = normal;
+            btn.spriteState = st;
+            return btn;
+        }
+
         public static TextMeshProUGUI AddText(Transform parent, string name, string text, float size, Color color,
             TextAlignmentOptions align = TextAlignmentOptions.Left, bool wrap = false)
         {

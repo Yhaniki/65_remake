@@ -193,7 +193,7 @@
   },
   {
    "k": "songselect.search",
-   "v": "曲 / アーティスト検索…"
+   "v": "キーワードを入力してEnter"
   },
   {
    "k": "songselect.bpm",
@@ -202,10 +202,6 @@
   {
    "k": "songselect.level",
    "v": "Lv {0}"
-  },
-  {
-   "k": "songselect.length",
-   "v": "長さ {0}"
   },
   {
    "k": "songselect.page",
@@ -230,6 +226,210 @@
   {
    "k": "songselect.need_pick",
    "v": "先に曲を選んでください"
+  },
+  {
+   "k": "songselect.mode_free",
+   "v": "フリーモード"
+  },
+  {
+   "k": "songselect.mode_normal",
+   "v": "ノーマルモード"
+  },
+  {
+   "k": "songselect.form_basic",
+   "v": "基本"
+  },
+  {
+   "k": "songselect.form_fan",
+   "v": "扇形"
+  },
+  {
+   "k": "songselect.form_ring",
+   "v": "リング"
+  },
+  {
+   "k": "songselect.form_random",
+   "v": "ランダム"
+  },
+  {
+   "k": "songselect.rand_1_5",
+   "v": "ランダム難易度 1-5"
+  },
+  {
+   "k": "songselect.rand_1_9",
+   "v": "ランダム難易度 1-9"
+  },
+  {
+   "k": "songselect.rand_5_9",
+   "v": "ランダム難易度 5-9"
+  },
+  {
+   "k": "songselect.rand_all",
+   "v": "ランダム難易度 全部"
+  },
+  {
+   "k": "songselect.rand_5up",
+   "v": "ランダム難易度 5以上"
+  },
+  {
+   "k": "songselect.rand_9up",
+   "v": "ランダム難易度 9以上"
+  },
+  {
+   "k": "songselect.rand_13up",
+   "v": "ランダム難易度 13以上"
+  },
+  {
+   "k": "stage.name.0",
+   "v": "歩行者天国"
+  },
+  {
+   "k": "stage.name.1",
+   "v": "新天地"
+  },
+  {
+   "k": "stage.name.2",
+   "v": "ガレージ"
+  },
+  {
+   "k": "stage.name.3",
+   "v": "ステージ"
+  },
+  {
+   "k": "stage.name.4",
+   "v": "ビーチ"
+  },
+  {
+   "k": "stage.name.5",
+   "v": "クリスマスイブ"
+  },
+  {
+   "k": "stage.name.6",
+   "v": "遊園地"
+  },
+  {
+   "k": "stage.name.7",
+   "v": "極地の花園"
+  },
+  {
+   "k": "stage.name.8",
+   "v": "エジプトの墓"
+  },
+  {
+   "k": "stage.name.9",
+   "v": "白黒の舞踏会"
+  },
+  {
+   "k": "stage.name.10",
+   "v": "フロート"
+  },
+  {
+   "k": "stage.name.11",
+   "v": "ダンス大会"
+  },
+  {
+   "k": "stage.name.12",
+   "v": "サッカー場（昼）"
+  },
+  {
+   "k": "stage.name.13",
+   "v": "サッカー場（夜）"
+  },
+  {
+   "k": "stage.name.14",
+   "v": "海底"
+  },
+  {
+   "k": "stage.name.15",
+   "v": "魔法の家"
+  },
+  {
+   "k": "stage.name.16",
+   "v": "繁華街"
+  },
+  {
+   "k": "stage.name.17",
+   "v": "都市の地下鉄"
+  },
+  {
+   "k": "stage.name.18",
+   "v": "豪華客船"
+  },
+  {
+   "k": "stage.name.19",
+   "v": "ダンスバトル闘技場"
+  },
+  {
+   "k": "stage.name.20",
+   "v": "地下鉄駅"
+  },
+  {
+   "k": "stage.name.21",
+   "v": "ダンスバー"
+  },
+  {
+   "k": "stage.name.22",
+   "v": "墓地"
+  },
+  {
+   "k": "stage.name.23",
+   "v": "教室"
+  },
+  {
+   "k": "stage.name.24",
+   "v": "雪景色"
+  },
+  {
+   "k": "stage.name.25",
+   "v": "春"
+  },
+  {
+   "k": "stage.name.26",
+   "v": "バスケットコート"
+  },
+  {
+   "k": "stage.name.27",
+   "v": "NARNIA"
+  },
+  {
+   "k": "stage.name.28",
+   "v": "北京の夜"
+  },
+  {
+   "k": "stage.name.29",
+   "v": "空港"
+  },
+  {
+   "k": "stage.name.30",
+   "v": "カートゥーンロード"
+  },
+  {
+   "k": "stage.name.31",
+   "v": "ウェディングルーム A"
+  },
+  {
+   "k": "stage.name.32",
+   "v": "ウェディングルーム B"
+  },
+  {
+   "k": "stage.name.33",
+   "v": "ウェディングルーム C"
+  },
+  {
+   "k": "stage.name.35",
+   "v": "マイホーム"
+  },
+  {
+   "k": "stage.name.37",
+   "v": "個人ルーム"
+  },
+  {
+   "k": "stage.name.38",
+   "v": "ウェディングホール"
+  },
+  {
+   "k": "stage.name.39",
+   "v": "個人ルーム（夜）"
   },
   {
    "k": "difficulty.easy",

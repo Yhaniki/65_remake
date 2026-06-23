@@ -64,6 +64,34 @@ namespace Sdo.Game
                                n.Pos[a + 2] + (n.Pos[b + 2] - n.Pos[a + 2]) * f);
         }
 
+        // sample the scale (sx,sy,sz) at frame t — LERP, same layout as SamplePos (Scl stride = xyz+time).
+        public static Vector3 SampleScale(Node n, float t)
+        {
+            int c = n.Sc;
+            if (c == 1) return new Vector3(n.Scl[0], n.Scl[1], n.Scl[2]);
+            int i = FindSeg(n.Scl, 4, c, t, out float f);
+            int a = i * 4, b = (i + 1) * 4;
+            return new Vector3(n.Scl[a] + (n.Scl[b] - n.Scl[a]) * f,
+                               n.Scl[a + 1] + (n.Scl[b + 1] - n.Scl[a + 1]) * f,
+                               n.Scl[a + 2] + (n.Scl[b + 2] - n.Scl[a + 2]) * f);
+        }
+
+        // true if this bone's scale track actually animates (more than one distinct keyframe value). Lets callers
+        // (SdoAvatar.UpdateBoneFollowers) apply the MOT scale only for clips that use it — e.g. the SCN0008 delta_line
+        // bars extend via scale.Y 0→2.028 — while leaving the bind-scale path in control for clips whose scale is a
+        // constant 1 (so rigid props like the SCN0014 sea screen are unaffected).
+        public static bool ScaleVaries(Node n)
+        {
+            if (n == null || n.Sc <= 1) return false;
+            float x0 = n.Scl[0], y0 = n.Scl[1], z0 = n.Scl[2];
+            for (int i = 1; i < n.Sc; i++)
+            {
+                int a = i * 4;
+                if (Mathf.Abs(n.Scl[a] - x0) > 1e-4f || Mathf.Abs(n.Scl[a + 1] - y0) > 1e-4f || Mathf.Abs(n.Scl[a + 2] - z0) > 1e-4f) return true;
+            }
+            return false;
+        }
+
         // find the keyframe segment [i, i+1] containing time t; returns i and lerp fraction f. stride = comps incl. time.
         private static int FindSeg(float[] keys, int stride, int count, float t, out float f)
         {

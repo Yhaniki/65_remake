@@ -38,11 +38,19 @@ namespace Sdo.UI
         // Step1Game's AfterSceneLoad Boot). The front-end is the entry point and launches gameplay on demand, so a
         // stray auto-booted Step1Game (and the orphan avatar it would leave behind) must never come into being.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        private static void SuppressGameplayAutoBoot() => Step1Game.AutoBootSuppressed = true;
+        private static void SuppressGameplayAutoBoot()
+        {
+            // DEV: SDO_SCENE → skip the front-end and boot straight into that gameplay scene (for testing a specific
+            // stage's render/effects, e.g. SDO_SCENE=SCN0008). Editor reads it from EditorPrefs (Tools/SDO menu), a
+            // player build from the env var — see Step1Game.DevVar. Leaves AutoBoot un-suppressed so Step1Game.Boot runs.
+            if (!string.IsNullOrEmpty(Step1Game.DevVar("SDO_SCENE"))) return;
+            Step1Game.AutoBootSuppressed = true;
+        }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
+            if (!string.IsNullOrEmpty(Step1Game.DevVar("SDO_SCENE"))) return;   // DEV: no front-end in scene-test mode (env var or Tools/SDO menu)
             if (Instance != null) return;
             var go = new GameObject("FrontendApp");
             Instance = go.AddComponent<FrontendApp>();

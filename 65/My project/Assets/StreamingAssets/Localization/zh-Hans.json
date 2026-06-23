@@ -185,7 +185,7 @@
   },
   {
    "k": "songselect.random",
-   "v": "随机"
+   "v": "随机场景"
   },
   {
    "k": "songselect.stage",
@@ -193,7 +193,7 @@
   },
   {
    "k": "songselect.search",
-   "v": "搜索歌曲 / 歌手…"
+   "v": "输入关键字并回车"
   },
   {
    "k": "songselect.bpm",
@@ -202,10 +202,6 @@
   {
    "k": "songselect.level",
    "v": "Lv {0}"
-  },
-  {
-   "k": "songselect.length",
-   "v": "长度 {0}"
   },
   {
    "k": "songselect.page",
@@ -230,6 +226,210 @@
   {
    "k": "songselect.need_pick",
    "v": "请先选择歌曲"
+  },
+  {
+   "k": "songselect.mode_free",
+   "v": "自由模式"
+  },
+  {
+   "k": "songselect.mode_normal",
+   "v": "普通模式"
+  },
+  {
+   "k": "songselect.form_basic",
+   "v": "基本"
+  },
+  {
+   "k": "songselect.form_fan",
+   "v": "扇形"
+  },
+  {
+   "k": "songselect.form_ring",
+   "v": "环绕"
+  },
+  {
+   "k": "songselect.form_random",
+   "v": "随机"
+  },
+  {
+   "k": "songselect.rand_1_5",
+   "v": "随机难度 1-5"
+  },
+  {
+   "k": "songselect.rand_1_9",
+   "v": "随机难度 1-9"
+  },
+  {
+   "k": "songselect.rand_5_9",
+   "v": "随机难度 5-9"
+  },
+  {
+   "k": "songselect.rand_all",
+   "v": "随机难度 全部"
+  },
+  {
+   "k": "songselect.rand_5up",
+   "v": "随机难度 5级以上"
+  },
+  {
+   "k": "songselect.rand_9up",
+   "v": "随机难度 9级以上"
+  },
+  {
+   "k": "songselect.rand_13up",
+   "v": "随机难度 13级以上"
+  },
+  {
+   "k": "stage.name.0",
+   "v": "步行街"
+  },
+  {
+   "k": "stage.name.1",
+   "v": "新天地"
+  },
+  {
+   "k": "stage.name.2",
+   "v": "车库"
+  },
+  {
+   "k": "stage.name.3",
+   "v": "舞台"
+  },
+  {
+   "k": "stage.name.4",
+   "v": "海滩"
+  },
+  {
+   "k": "stage.name.5",
+   "v": "圣诞夜"
+  },
+  {
+   "k": "stage.name.6",
+   "v": "游乐场"
+  },
+  {
+   "k": "stage.name.7",
+   "v": "极地花园"
+  },
+  {
+   "k": "stage.name.8",
+   "v": "埃及古墓"
+  },
+  {
+   "k": "stage.name.9",
+   "v": "黑白舞会"
+  },
+  {
+   "k": "stage.name.10",
+   "v": "花车"
+  },
+  {
+   "k": "stage.name.11",
+   "v": "舞林大会"
+  },
+  {
+   "k": "stage.name.12",
+   "v": "足球场 (日)"
+  },
+  {
+   "k": "stage.name.13",
+   "v": "足球场 (夜)"
+  },
+  {
+   "k": "stage.name.14",
+   "v": "海底"
+  },
+  {
+   "k": "stage.name.15",
+   "v": "魔法屋"
+  },
+  {
+   "k": "stage.name.16",
+   "v": "繁华街道"
+  },
+  {
+   "k": "stage.name.17",
+   "v": "都市地铁"
+  },
+  {
+   "k": "stage.name.18",
+   "v": "豪华邮轮"
+  },
+  {
+   "k": "stage.name.19",
+   "v": "舞斗竞技场"
+  },
+  {
+   "k": "stage.name.20",
+   "v": "地铁驿站"
+  },
+  {
+   "k": "stage.name.21",
+   "v": "激舞酒吧"
+  },
+  {
+   "k": "stage.name.22",
+   "v": "墓地"
+  },
+  {
+   "k": "stage.name.23",
+   "v": "教室"
+  },
+  {
+   "k": "stage.name.24",
+   "v": "雪景"
+  },
+  {
+   "k": "stage.name.25",
+   "v": "春天"
+  },
+  {
+   "k": "stage.name.26",
+   "v": "篮球场"
+  },
+  {
+   "k": "stage.name.27",
+   "v": "NARNIA"
+  },
+  {
+   "k": "stage.name.28",
+   "v": "北京之夜"
+  },
+  {
+   "k": "stage.name.29",
+   "v": "飞机场"
+  },
+  {
+   "k": "stage.name.30",
+   "v": "卡通公路"
+  },
+  {
+   "k": "stage.name.31",
+   "v": "婚礼房 A"
+  },
+  {
+   "k": "stage.name.32",
+   "v": "婚礼房 B"
+  },
+  {
+   "k": "stage.name.33",
+   "v": "婚礼房 C"
+  },
+  {
+   "k": "stage.name.35",
+   "v": "我的家"
+  },
+  {
+   "k": "stage.name.37",
+   "v": "个人房"
+  },
+  {
+   "k": "stage.name.38",
+   "v": "婚礼大厅"
+  },
+  {
+   "k": "stage.name.39",
+   "v": "个人房（夜）"
   },
   {
    "k": "difficulty.easy",
