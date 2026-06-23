@@ -45,6 +45,8 @@ namespace Sdo.Game
 
         public float Fps = 30f;          // MOT frame rate (time = integer frame index)
         public bool Animate = true;      // false -> hold bind pose (verification)
+        public float PhaseOffsetSec = 0f;  // per-instance start-time offset for the auto-loop, so a crowd of NPCs
+                                           // sharing one clip doesn't move in lockstep (the original staggers them)
         public float FrameOverride = -1; // >=0 -> use this frame instead of the wall clock (DPS sync hook)
 
         // ---- GPU skinning (experimental) ----
@@ -359,7 +361,7 @@ namespace Sdo.Game
                 }
             }
             else if (FrameOverride >= 0f) t = FrameOverride;
-            else if (Animate && _mot != null && _mot.MaxTime > 0f) t = (Time.time * Fps) % (_mot.MaxTime + 1f);
+            else if (Animate && _mot != null && _mot.MaxTime > 0f) t = ((Time.time + PhaseOffsetSec) * Fps) % (_mot.MaxTime + 1f);
             else t = 0f;
             MaybeStartBlend();   // crossfade if the active clip switched this frame
             Pose(t);

@@ -1138,7 +1138,7 @@ namespace Sdo.Game
         // fixed transforms. WHICH props a scene mounts (and where) is the decompiled Scene_LoadBackground table,
         // keyed by scene folder — see SceneMapobjCatalog (generated from SDO_SCENE_MAPOBJ_TABLE.json). Switching the
         // selected stage now switches its props too: e.g. SCN0009 -> GUATAN x4, SCN0004 -> sea/beach/boat group.
-        private struct MapobjInstance { public Vector3 Pos; public float Scale; }
+        private struct MapobjInstance { public Vector3 Pos; public float Scale; public Vector3 EulerDeg; }
 
         // EXPERIMENT: GPU-skin the animated mapobj props (SkinnedMeshRenderer) instead of CPU-skinning one shared
         // mesh per group. Each animated copy then GPU-skins itself (no per-vertex CPU work, no mesh upload) at the
@@ -1171,6 +1171,25 @@ namespace Sdo.Game
             }
         }
 
+        // Scene NPCs ("場景的人"): full skinned avatars placed around the stage (e.g. SCN0017 subway passengers).
+        // The model+skeleton live in AVATAR/, the motion in MOTION/, so AddMapobj is reused with motRelDir="MOTION".
+        // One AddMapobj call per NPC (each has its own model + facing); static NPCs freeze at the bind pose, the DJ
+        // animates its .mot. See SceneAvatarCatalog (decompiled from StageScene_LoadAvatarsAndMotions).
+        private void TryLoadSceneAvatars()
+        {
+            int i = 0;
+            foreach (var a in SceneAvatarCatalog.ForFolder(SceneFolder()))
+            {
+                var inst = new[] { new MapobjInstance { Pos = a.Pos, Scale = 1f, EulerDeg = a.EulerDeg } };
+                // stagger each NPC's loop phase so a crowd sharing one idle clip doesn't move in lockstep (the
+                // original advances them out of sync). A prime-ish step spreads the ~10 NPCs across the clip.
+                // opaque:true — these are CHARACTERS: their skin/face DDS alpha (e.g. the DJ's nanrendj.dds DXT3) is
+                // NOT a 去背 cut-out; the generic alpha path would punch holes in the face. Render them solid.
+                AddMapobj("AVATAR", a.Msh, a.Hrc, a.Mot, inst, motRelDir: "MOTION", phaseOffsetSec: i * 0.83f, opaque: true);
+                i++;
+            }
+        }
+
         // Build one mapobj group ONCE, then place it at every instance transform. The MSH is parsed a single time
         // and the skinned meshes are SHARED across instances: a STATIC prop (no .mot) is skinned to its bind pose
         // once and then frozen (its SdoAvatar disables itself — zero per-frame work); an ANIMATED prop is driven by
@@ -1179,7 +1198,7 @@ namespace Sdo.Game
         // not N×everything — this is what keeps the dense scenes cheap (box ×256, deng ×72, the room/saloon prop
         // walls). Lockstep copies look identical to the original (every instance plays the same clip in phase).
         // Materials/textures are read-only, so one set per submesh is shared too. Stage layer, native SDO coords.
-        private void AddMapobj(string relDir, string mshFile, string hrcFile, string motFile, MapobjInstance[] instances)
+        private void AddMapobj(string relDir, string mshFile, string hrcFile, string motFile, MapobjInstance[] instances, string motRelDir = null, float phaseOffsetSec = 0f, bool opaque = false)
         {
             if (instances == null || instances.Length == 0) return;
             var dir = Path.Combine(SdoExtracted.Root, relDir.Replace('/', Path.DirectorySeparatorChar));
@@ -1194,7 +1213,8 @@ namespace Sdo.Game
             if (instances.Length == BoxFloorPattern.Tiles && baseName.ToUpperInvariant() == "BOX" && SceneFolder().ToUpperInvariant() == "SCN0003")
             { SpawnBoxFloor(dir, r, hrc, instances); return; }
             // motFile may be null (static prop — e.g. SCN0010 house): skinned to the bind pose once, then frozen.
-            MotLoader mot = string.IsNullOrEmpty(motFile) ? null : LoadAsset(relDir + "/" + motFile, b => MotLoader.Load(b));
+            // motRelDir lets the .mot live in a different tree than the mesh (scene NPCs: mesh in AVATAR/, .mot in MOTION/).
+            MotLoader mot = string.IsNullOrEmpty(motFile) ? null : LoadAsset((motRelDir ?? relDir) + "/" + motFile, b => MotLoader.Load(b));
             var fallbackCol = new Color(0.72f, 0.70f, 0.66f);
 
             // DIAG (mapobj placement): the parsed mesh bounds (verbatim/baked world coords) + where we place it. For a
@@ -1266,12 +1286,12 @@ namespace Sdo.Game
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                        var tex = ResolveDds(dir, nm, out bool a2); mats[s] = NewMapobjMat(tex, fallbackCol, a2, a2 && volumetric);
+                        var tex = ResolveDds(dir, nm, out bool a2); mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && volumetric);
                     }
                 }
                 else
                 {
-                    var tex = ResolveDds(dir, sub.Dds, out bool a1); mats = new[] { NewMapobjMat(tex, fallbackCol, a1, a1 && volumetric) };
+                    var tex = ResolveDds(dir, sub.Dds, out bool a1); mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && volumetric) };
                 }
                 subMats.Add(mats);
             }
@@ -1350,6 +1370,7 @@ namespace Sdo.Game
                 {
                     var parent = new GameObject($"{baseName}_{idx}");
                     parent.transform.position = instances[idx].Pos;
+                    parent.transform.rotation = Quaternion.Euler(instances[idx].EulerDeg);
                     parent.transform.localScale = Vector3.one * instances[idx].Scale;
                     var avatar = parent.AddComponent<SdoAvatar>();
                     avatar.Setup(hrc, mot);                                   // drives the bone FK from the .mot (no parts -> no skin)
@@ -1381,6 +1402,7 @@ namespace Sdo.Game
                 {
                     var parent = new GameObject($"{baseName}_{idx}");
                     parent.transform.position = instances[idx].Pos;
+                    parent.transform.rotation = Quaternion.Euler(instances[idx].EulerDeg);
                     parent.transform.localScale = Vector3.one * instances[idx].Scale;
                     var avatar = parent.AddComponent<SdoAvatar>();
                     avatar.GpuSkinning = true;
@@ -1404,12 +1426,13 @@ namespace Sdo.Game
             {
                 var parent = new GameObject($"{baseName}_{idx}");
                 parent.transform.position = instances[idx].Pos;
+                parent.transform.rotation = Quaternion.Euler(instances[idx].EulerDeg);
                 parent.transform.localScale = Vector3.one * instances[idx].Scale;
                 if (idx == 0)
                 {
                     // driver: owns the skinned meshes (+ the SdoAvatar that animates them, null DPS -> auto-loops .mot)
                     SdoAvatar avatar = hrc != null ? parent.AddComponent<SdoAvatar>() : null;
-                    if (avatar != null) avatar.Setup(hrc, mot);
+                    if (avatar != null) { avatar.Setup(hrc, mot); avatar.PhaseOffsetSec = phaseOffsetSec; }
                     int si = 0;
                     foreach (var sub in r.Submeshes)
                     {
@@ -1544,6 +1567,7 @@ namespace Sdo.Game
                 // are authored in this same space with the dancer standing on the native floor, so they line up.
                 Debug.Log($"[scene] {SceneFolder()}: {res.Materials.Length} subsets, bounds c={b.center} s={b.size}");
                 TryLoadMapobjs();   // stage props on the same layer
+                TryLoadSceneAvatars();   // background NPCs ("場景的人" — e.g. SCN0017 subway passengers)
                 SpawnSceneEffects();   // persistent background EFTs (SCN0008 magic circle, snow, aurora, …)
             }
 
