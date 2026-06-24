@@ -31,10 +31,13 @@ namespace Sdo.Game
 
         private static readonly Target[] Targets =
         {
-            // SCN0011 StageScene_UpdateScrollLights: SCREEN mesh (speaker cabinet) UV scroll V += 0.003 per frame
-            // (DAT_0058902c = 0.003). BEIJING.DDS has repeating dot/dash pattern; scroll creates running-light effect.
-            // D3D9 positive V → Unity negative V (DDS raw-load flips V axis; corals confirm the sign flip).
-            new Target("SCN0011", "SCREEN", -1, new Vector2(0f, -0.18f)),  // 0.003 × 60fps = 0.18/s, negated for Unity
+            // SCN0011 StageScene_UpdateScrollLights: UV scroll V += 0.003/frame on Vector_at4b(0) = SCREEN mapobj.
+            // BEIJING.DDS (8192×128) has a repeating blue dot/band pattern; scroll creates the running-light effect on
+            // the speaker side panel. The world position comes from DAT_00677d18 (BSS, runtime-filled) — unknown until
+            // the original game is profiled. At (0,0,0) the mesh appears as a stage-centre wall, not a speaker panel,
+            // so the scroll is held here but NOT activated until the correct world placement is known.
+            // TODO: capture SCN0011 SCREEN position via procmon/Frida and update SceneMapobjCatalog.
+            // new Target("SCN0011", "SCREEN", -1, new Vector2(0f, -0.18f)),
             // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
             new Target(null, "SHANHU-BAI", -1, CoralV),
             new Target(null, "SHANHU-HONG", -1, CoralV),
