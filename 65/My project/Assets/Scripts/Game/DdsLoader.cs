@@ -131,7 +131,11 @@ namespace Sdo.Game
             float visibleRatio = s.Visible / (float)s.Total;
             float softOfVisible = s.Soft / (float)s.Visible;
             float opaqueOfVisible = s.Opaque / (float)s.Visible;
-            if (visibleRatio < 0.03f || meanLum < 180f) return false;
+            if (visibleRatio < 0.03f) return false;
+            // Radial-gradient glow sprite (e.g. GUANG1_): transparent outer border (visibleRatio < 0.95),
+            // entirely soft alpha (no hard edge, no opaque core). Additive blend makes even dim RGB glow.
+            if (visibleRatio < 0.95f && softOfVisible >= 0.95f && opaqueOfVisible < 0.05f && meanLum >= 40f) return true;
+            if (meanLum < 180f) return false;
             return softOfVisible >= 0.45f && opaqueOfVisible <= 0.65f;
         }
 

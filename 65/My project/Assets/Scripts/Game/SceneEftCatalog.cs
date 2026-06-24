@@ -79,9 +79,17 @@ namespace Sdo.Game
                     new SceneEftPlacement("bubble", -555, -90, 200, 0, 0, 0, 40f),
                     new SceneEftPlacement("bubble", 54, -41, 1548, 0, 0, 0, 40f),
                 },
-                ["SCN0015"] = new[]   // 魔法屋: hearth fire
+                ["SCN0015"] = new[]   // 魔法屋: hearth fire + window booklight × 3
                 {
+                    // fire3 = Effect_Play(0x35) at decompiled pos (55.15, 339.83, 1237.664) scale=100
                     new SceneEftPlacement("fire3", 55.15f, 339.83f, 1237.66f, 0, 0, 0, 100f),
+                    // booklight = Effect_Play(0x34) × 4, bone-attached to Plane29/31/33/66 nodes.
+                    // CHUANG.DDS geometry gives 3 window quads on left wall (x=-297, y=[63..490]):
+                    //   Window 1 z=[349..517], Window 2 z=[602..770], Window 3 z=[854..1023].
+                    // Placed at window centres facing inward; scale matched to window span (~168 units).
+                    new SceneEftPlacement("booklight", -297f, 276f, 433f, 0, 0, 0, 100f),
+                    new SceneEftPlacement("booklight", -297f, 276f, 686f, 0, 0, 0, 100f),
+                    new SceneEftPlacement("booklight", -297f, 276f, 938f, 0, 0, 0, 100f),
                 },
                 ["SCN0024"] = new[]   // 雪景: snow
                 {

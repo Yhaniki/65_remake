@@ -102,9 +102,26 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void LooksLikeAdditiveGlow_Detects_SoftRadialGradient_Dxt3()
+        {
+            // Radial-gradient glow sprite: transparent border (pixels 0-7 alpha=0) + soft centre (pixels 8-15 alpha≈136).
+            // visibleRatio=0.5<0.95, softOfVisible=1.0, opaqueOfVisible=0, meanLum=132 → additive path fires.
+            // Models GUANG1_.DDS (86.7% visible, 100% soft, 0% opaque, meanLum=81).
+            var block = new byte[16];
+            // pixels 0-7: alpha nibble=0 (bytes 0-3 stay zero)
+            // pixels 8-15: alpha nibble=8 → alpha=(8*255+7)/15=136 (soft)
+            block[4] = 0x88; block[5] = 0x88; block[6] = 0x88; block[7] = 0x88;
+            BitConverter.GetBytes((ushort)0x8410).CopyTo(block, 8);  // medium gray, MaxLum≈132
+            Assert.IsTrue(DdsLoader.LooksLikeAdditiveGlow(MakeDds("DXT3", block)));
+        }
+
+        [Test]
         public void LooksLikeAdditiveGlow_Rejects_Opaque_Or_Dim_Dxt3()
         {
+            // All-opaque (alpha=255): Soft==0, returns false immediately.
             Assert.IsFalse(DdsLoader.LooksLikeAdditiveGlow(MakeDds("DXT3", MakeDxt3ColorBlock(15, 0xffff))));
+            // Uniform soft alpha (all 16 pixels visible, visibleRatio=1.0): NOT < 0.95, does not hit the radial-gradient
+            // path; meanLum≈66 < 180, so the bright-glow path also fails → false.
             Assert.IsFalse(DdsLoader.LooksLikeAdditiveGlow(MakeDds("DXT3", MakeDxt3ColorBlock(9, 0x4208))));
         }
 
