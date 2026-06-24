@@ -19,6 +19,7 @@ namespace Sdo.UI.Util
     {
         public const string Click = "SE_0001";        // every button press
         public const string FrameRound = "Frameround"; // dialog window open / close
+        public const string Menufloat = "Menufloat";   // pointer slides onto a menu item / dropdown row (hover)
 
         private static UiSfx _inst;
         private AudioSource _src;

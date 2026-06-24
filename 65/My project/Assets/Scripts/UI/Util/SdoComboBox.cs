@@ -153,7 +153,8 @@ namespace Sdo.UI.Util
                 rb.targetGraphic = row; rb.transition = Selectable.Transition.SpriteSwap;
                 var st = rb.spriteState; st.highlightedSprite = _listH; st.pressedSprite = _listH; rb.spriteState = st;
                 rb.onClick.AddListener(() => Pick(idx));
-                UiSfx.AttachClick(rb);   // button press -> SE_0001
+                UiSfx.AttachClick(rb);     // button press -> SE_0001
+                UiHoverSfx.Attach(rb);     // pointer slides onto a row -> Menufloat (original menu hover SE)
             }
         }
 
