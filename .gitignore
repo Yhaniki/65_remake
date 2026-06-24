@@ -80,9 +80,13 @@ assets/*
 
 # 逆向／截圖／擷取的暫存產物（放在 repo 根目錄）
 /*.png
+/*.jpg
 /*.log
+/*-results.xml
 /eft_log.txt
 /eft_online_log*.txt
+/audio_online_log.txt
+/eft_scene_log.txt
 /test-results.xml
 /tr.xml
 
@@ -100,6 +104,9 @@ assets/*
 /build.log
 /play-capture.png
 /cap-results.xml
+
+# Unity auto-recovery snapshots; keep the checked-in baseline scene only.
+65/My project/Assets/_Recovery/0 (*).unity*
 
 # Procmon capture logs (large binaries; keep the scripts, not the runs)
 procmon_tool/runs/
