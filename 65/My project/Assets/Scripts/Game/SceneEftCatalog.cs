@@ -9,8 +9,9 @@ namespace Sdo.Game
         public readonly float X, Y, Z;              // position (native SDO coords)
         public readonly float Ex, Ey, Ez;           // Euler rotation (degrees)
         public readonly float Scale;                // uniform scale (decompiled Effect_SetTransformAnimated)
-        public SceneEftPlacement(string eft, float x, float y, float z, float ex, float ey, float ez, float scale)
-        { Eft = eft; X = x; Y = y; Z = z; Ex = ex; Ey = ey; Ez = ez; Scale = scale; }
+        public readonly int SpawnDelay;             // ms from scene load; 0 = immediate
+        public SceneEftPlacement(string eft, float x, float y, float z, float ex, float ey, float ez, float scale, int spawnDelay = 0)
+        { Eft = eft; X = x; Y = y; Z = z; Ex = ex; Ey = ey; Ez = ez; Scale = scale; SpawnDelay = spawnDelay; }
     }
 
     /// <summary>
@@ -121,35 +122,30 @@ namespace Sdo.Game
             new SceneEftPlacement("stage_3_light",  157.303f, 23.061f, 143.204f, 0, 0, 0, 2f),
             new SceneEftPlacement("stage_3_light",  213.250f, 23.061f,  92.999f, 0, 0, 0, 2f),
 
-            // 24 sweeping spotlights (Effect_Play(7/6), scale 15.0). Euler (0,0,0): carrier InitRot provides the tilt.
-            // Band 1 (z≈342):
+            // 18 sweeping spotlights (Effect_Play(7/6), scale 15.0). Euler (0,0,0): carrier InitRot provides the tilt.
+            // Original spawns 3 waves via FUN_004b2310 (2000ms apart), so bands start their 15s animation cycle
+            // at t=0/2000/4000ms → staggered phase → different brightness/color at any given moment.
+            // Band 1 (z≈342, spawns at t=0):
             new SceneEftPlacement("light_right", -217.764f, 223.500f, 341.680f, 0, 0, 0, 15f),
             new SceneEftPlacement("light_right", -144.458f, 221.015f, 341.680f, 0, 0, 0, 15f),
             new SceneEftPlacement("light_right",  -48.970f, 216.678f, 341.680f, 0, 0, 0, 15f),
             new SceneEftPlacement("light_left",    51.122f, 216.678f, 341.680f, 0, 0, 0, 15f),
             new SceneEftPlacement("light_left",   146.611f, 221.015f, 341.680f, 0, 0, 0, 15f),
             new SceneEftPlacement("light_left",   219.917f, 223.500f, 341.680f, 0, 0, 0, 15f),
-            // Band 2 (z≈335):
-            new SceneEftPlacement("light_right", -187.481f, 170.494f, 335.229f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_right", -118.646f, 171.518f, 335.229f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_right",  -41.664f, 162.398f, 335.229f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",    43.817f, 162.398f, 335.229f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",   120.798f, 171.518f, 335.229f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",   189.634f, 170.494f, 335.229f, 0, 0, 0, 15f),
-            // Band 3 (z≈329):
-            new SceneEftPlacement("light_right", -158.608f, 127.588f, 329.097f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_right",  -91.636f, 123.479f, 329.097f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_right",  -30.072f, 112.305f, 329.097f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",    32.225f, 112.305f, 329.097f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",    93.789f, 123.479f, 329.097f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",   160.761f, 127.588f, 329.097f, 0, 0, 0, 15f),
-            // Band 4 (stage-left cluster, z 168→288):
-            new SceneEftPlacement("light_right", -442.974f, 255.474f, 168.345f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_right", -376.409f, 255.474f, 229.919f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_right", -313.162f, 255.474f, 287.783f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",  -442.974f, 187.373f, 168.345f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",  -376.409f, 187.373f, 229.919f, 0, 0, 0, 15f),
-            new SceneEftPlacement("light_left",  -313.162f, 187.373f, 287.783f, 0, 0, 0, 15f),
+            // Band 2 (z≈335, spawns at t=2000ms):
+            new SceneEftPlacement("light_right", -187.481f, 170.494f, 335.229f, 0, 0, 0, 15f, 2000),
+            new SceneEftPlacement("light_right", -118.646f, 171.518f, 335.229f, 0, 0, 0, 15f, 2000),
+            new SceneEftPlacement("light_right",  -41.664f, 162.398f, 335.229f, 0, 0, 0, 15f, 2000),
+            new SceneEftPlacement("light_left",    43.817f, 162.398f, 335.229f, 0, 0, 0, 15f, 2000),
+            new SceneEftPlacement("light_left",   120.798f, 171.518f, 335.229f, 0, 0, 0, 15f, 2000),
+            new SceneEftPlacement("light_left",   189.634f, 170.494f, 335.229f, 0, 0, 0, 15f, 2000),
+            // Band 3 (z≈329, spawns at t=4000ms):
+            new SceneEftPlacement("light_right", -158.608f, 127.588f, 329.097f, 0, 0, 0, 15f, 4000),
+            new SceneEftPlacement("light_right",  -91.636f, 123.479f, 329.097f, 0, 0, 0, 15f, 4000),
+            new SceneEftPlacement("light_right",  -30.072f, 112.305f, 329.097f, 0, 0, 0, 15f, 4000),
+            new SceneEftPlacement("light_left",    32.225f, 112.305f, 329.097f, 0, 0, 0, 15f, 4000),
+            new SceneEftPlacement("light_left",    93.789f, 123.479f, 329.097f, 0, 0, 0, 15f, 4000),
+            new SceneEftPlacement("light_left",   160.761f, 127.588f, 329.097f, 0, 0, 0, 15f, 4000),
         };
 
         // 個人房 / 婚禮大廳: star light + two pillar glows (StageScene10 ctor)

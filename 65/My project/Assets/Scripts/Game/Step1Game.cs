@@ -2985,8 +2985,10 @@ namespace Sdo.Game
         // scene load and looped for the whole song. Native SDO coords on the stage layer (same as the mapobjs).
         // SCN0003 sweeping spotlights (light_left/light_right): the original oscillates all effect GOs
         // ±10° on Z at 0.5°/tick every 50ms (FUN_004b2310, StageScene_UpdateOscPlanes). This coroutine
-        // replicates that sweep; it is started after SpawnSceneEffects when the scene has such lights.
+        // replicates that sweep. The three bands are spawned at t=0/2000/4000ms so their 15s animation
+        // cycles (Life0=300 ticks) are staggered — different brightness/color per band at any moment.
         List<GameObject> _oscLightGos;
+        bool _oscStarted;
         System.Collections.IEnumerator OscLightZCo()
         {
             float angle = 0f, vel = 0.5f;
@@ -3002,18 +3004,43 @@ namespace Sdo.Game
             }
         }
 
+        void RegisterSceneEft(GameObject go, string eft)
+        {
+            if (go == null) return;
+            if (eft == "light_left" || eft == "light_right")
+            {
+                if (_oscLightGos == null) _oscLightGos = new List<GameObject>();
+                _oscLightGos.Add(go);
+                if (!_oscStarted) { _oscStarted = true; StartCoroutine(OscLightZCo()); }
+            }
+        }
+
+        System.Collections.IEnumerator SpawnDelayedEftCo(IReadOnlyList<SceneEftPlacement> entries)
+        {
+            float elapsedSec = 0f;
+            foreach (var e in entries)
+            {
+                if (e.SpawnDelay <= 0) continue;
+                float wantSec = e.SpawnDelay * 0.001f;
+                if (wantSec > elapsedSec)
+                {
+                    yield return new WaitForSeconds(wantSec - elapsedSec);
+                    elapsedSec = wantSec;
+                }
+                RegisterSceneEft(SpawnSceneEft(e.Eft, new Vector3(e.X, e.Y, e.Z), new Vector3(e.Ex, e.Ey, e.Ez), e.Scale), e.Eft);
+            }
+        }
+
         private void SpawnSceneEffects()
         {
-            foreach (var e in SceneEftCatalog.ForFolder(SceneFolder()))
+            var placements = SceneEftCatalog.ForFolder(SceneFolder());
+            bool hasDelayed = false;
+            foreach (var e in placements)
             {
-                var go = SpawnSceneEft(e.Eft, new Vector3(e.X, e.Y, e.Z), new Vector3(e.Ex, e.Ey, e.Ez), e.Scale);
-                if (go != null && (e.Eft == "light_left" || e.Eft == "light_right"))
-                {
-                    if (_oscLightGos == null) _oscLightGos = new List<GameObject>();
-                    _oscLightGos.Add(go);
-                }
+                if (e.SpawnDelay > 0) { hasDelayed = true; continue; }
+                RegisterSceneEft(SpawnSceneEft(e.Eft, new Vector3(e.X, e.Y, e.Z), new Vector3(e.Ex, e.Ey, e.Ez), e.Scale), e.Eft);
             }
-            if (_oscLightGos != null && _oscLightGos.Count > 0) StartCoroutine(OscLightZCo());
+            if (hasDelayed) StartCoroutine(SpawnDelayedEftCo(placements));
         }
 
         private GameObject SpawnSceneEft(string name, Vector3 pos, Vector3 euler, float scale)
