@@ -362,17 +362,14 @@ namespace Sdo.Game
             // Flag-gated, so 200's trails (off) and FINISHED's sparks (off, else the root's −0.3 would drag them down)
             // are untouched.
             if (em.InheritVel) tiltedVel += parentVel;
-            // 3D-MESH ATTACH (engine particle word[6] → xmesh\list.txt): a non-null resolve makes this particle render
-            // that mesh at its own world matrix (S·R·T) instead of the flat trail/quad — the 200/300COMBO slot0 blue
-            // aef03_00 mesh (MeshIdx 32). The host resolves+caches it; null falls back to the prior quad behaviour.
-            // SCOPE TO idx 32 ONLY: 100/400/500's emitters ALSO carry MeshIdx (100/101 = column_00/01, naga01/naga06)
-            // and rendering THOSE replaced their correct billboards (naga00 star / tex96 X-cross / tex20 ring) with
-            // wrong column meshes — i.e. the regression that broke 100/400/500. Only AEF_3_00 (32) is wanted for now.
-            // Combo bursts keep the MeshIdx==32 (AEF_3_00) scope — rendering their other meshes (column_00/01) broke
-            // 100/400/500. But a PERSISTENT scene effect needs its OWN meshes: the SCN0008 magic circle's three
-            // colour light bars are xmesh 172 (yousei_x\delta_line, aka/ao/ki = red/blue/yellow + a spin .mot), which
-            // were invisible while scoped to 32. Allow any real mesh for Persistent effects.
-            bool meshOk = EnableMesh && _meshResolver != null && (em.MeshIdx == 32 || (Persistent && em.MeshIdx > 0));
+            // 3D-MESH ATTACH — the engine draws the word[6] mesh ONLY when flag 0x20000 is set (decompiled render
+            // FUN @0x4bd...: `if (word[1] & 0x20000) { if (mesh[word6]) drawMesh; else drawStretchedQuad; }`). That same
+            // bit is our `isTrail`, so mesh and stretched-quad are the two outcomes of one flag: mesh if it resolves,
+            // else the trail quad. Confirmed: 200/300COMBO slot0 (mesh 32) flags=0x20001 → mesh; KIKKAI_3 (SCN0008,
+            // mesh 172 delta_line) flags=0x20001 → mesh; but stagelightb/bgl (mesh 101) AND 100/400/500 (mesh 100/101)
+            // have flags WITHOUT 0x20000 → the engine ignores word[6] and draws the flat tex0 BILLBOARD (the real stage
+            // light beam / combo billboard). The old MeshIdx==32 || Persistent heuristic mis-drew the column drums.
+            bool meshOk = EnableMesh && _meshResolver != null && isTrail;
             EftMeshData md = meshOk ? _meshResolver(em.MeshIdx) : null;
             bool isMesh = md != null && md.Mesh != null;
             // DIAG (persistent scene effects only): one line per emitter slot so the Player.log shows whether each
