@@ -38,7 +38,9 @@ public static class BuildScript
         "Sdo/UnlitDoubleSided",
         "Sdo/UnlitInstanced",
         "Sdo/UnlitInstancedAlpha",   // alpha-blended mapobj props ("去背"); stripped -> alpha stage props go magenta
+        "Sdo/UnlitInstancedAlphaCullBack", // mirrored separated alpha planes (SCN0011 DING): single-sided blend
         "Sdo/UnlitOverlay",          // animated transparent overlays (FIFA crowd, texanim cut-outs)
+        "Sdo/SceneVertexAlpha",      // soft-alpha SCENE.MSH materials (glass floors, feathered decals)
         "Sdo/SceneVertexCutout",     // base SCENE.MSH × baked vertex lighting (scene darkening/tint)
         "Sdo/UnlitInstancedCutout",  // solid/volumetric alpha mapobj props (SCN0006 carousel — no see-through)
     };

@@ -68,7 +68,7 @@ namespace Sdo.Game
                 {
                     new MapobjTexAnim("JIGUANG", new[] { "01_.dds", "02_.dds", "03_.dds", "04_.dds", "05_.dds", "06_.dds", "07_.dds", "08_.dds", "09_.dds" }, 300f, true),
                     new MapobjTexAnim("DIDENG", new[] { "343.dds", "344.dds", "345.dds", "346.dds" }, 300f, false),   // opaque floor light
-                    new MapobjTexAnim("DENGGUANG", new[] { "guangx1_.dds", "guangx11.dds" }, 300f, true),
+                    new MapobjTexAnim("DENGGUANG", new[] { "guangx1_.dds", "guangx11.dds" }, 600f, true),
                 },
                 ["SCN0012"] = new[]
                 {

@@ -1,37 +1,60 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace Sdo.Game
 {
     /// <summary>
-    /// Hand-authored UV-scroll speeds for stage props the original animates by streaming texture coordinates (the
-    /// decompiled scene updates in FUN_004ad250 write tex-coord offset 0x58=U / 0x5c=V each tick). Keyed by scene
-    /// FOLDER + mesh base name; speed is in UV units per second.
-    ///
-    /// SCN0014 underwater corals: StageScene_UpdateMultiPlacement_004b0330 scrolls V by _DAT_00589034 (0.004) every
-    /// 50 ms = 0.08 / s, wrapping at 1.0 — the glow streams like a marquee. (Some render states use 2×; we apply the
-    /// base rate uniformly, which reads the same.)
+    /// Data-driven UV-scroll commands for stage render objects the original animates by writing texture-coordinate
+    /// offsets into render states (0x58=U, 0x5c=V). Targets are structural: scene folder is optional, object key is
+    /// SCENE or a mapobj base name, and material id is optional. No target depends on a DDS file name.
     /// </summary>
     public static class SceneMapobjUvScrollCatalog
     {
-        private static readonly Vector2 CoralV = new Vector2(0f, -0.08f);   // V scroll, 0.08 UV/s (decompiled)
+        public const string SceneObject = "SCENE";
 
-        private static readonly Dictionary<string, Dictionary<string, Vector2>> ByFolder =
-            new Dictionary<string, Dictionary<string, Vector2>>
-            {
-                ["SCN0014"] = new Dictionary<string, Vector2>
-                {
-                    ["SHANHU-BAI"] = CoralV, ["SHANHU-HONG"] = CoralV, ["SHANHU-LV"] = CoralV,
-                    ["SHANHUZHI-BAI"] = CoralV, ["SHANHUZHI-HONG"] = CoralV, ["SHANHUZHI-LV"] = CoralV,
-                },
-            };
-
-        /// <summary>UV-scroll speed (UV/s) for a (scene folder, mesh base) pair, or Vector2.zero if it doesn't scroll.</summary>
-        public static Vector2 Find(string folder, string meshBase)
+        public readonly struct Target
         {
-            if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(meshBase)) return Vector2.zero;
-            if (!ByFolder.TryGetValue(folder.ToUpperInvariant(), out var m)) return Vector2.zero;
-            return m.TryGetValue(meshBase.ToUpperInvariant(), out var v) ? v : Vector2.zero;
+            public readonly string Folder;     // null/empty = any scene
+            public readonly string ObjectKey;
+            public readonly int MaterialId;    // -1 = all materials on the object
+            public readonly Vector2 Speed;
+
+            public Target(string folder, string objectKey, int materialId, Vector2 speed)
+            {
+                Folder = folder;
+                ObjectKey = objectKey;
+                MaterialId = materialId;
+                Speed = speed;
+            }
+        }
+
+        private static readonly Vector2 CoralV = new Vector2(0f, -0.08f); // V += 0.004 per 50 ms
+
+        private static readonly Target[] Targets =
+        {
+            // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
+            new Target(null, "SHANHU-BAI", -1, CoralV),
+            new Target(null, "SHANHU-HONG", -1, CoralV),
+            new Target(null, "SHANHU-LV", -1, CoralV),
+            new Target(null, "SHANHUZHI-BAI", -1, CoralV),
+            new Target(null, "SHANHUZHI-HONG", -1, CoralV),
+            new Target(null, "SHANHUZHI-LV", -1, CoralV),
+        };
+
+        /// <summary>UV-scroll speed (UV/s) for a scene object/material slot, or Vector2.zero if it does not scroll.</summary>
+        public static Vector2 Find(string folder, string objectKey, int materialId = -1)
+        {
+            if (string.IsNullOrEmpty(objectKey)) return Vector2.zero;
+            for (int i = 0; i < Targets.Length; i++)
+            {
+                var t = Targets[i];
+                if (!string.IsNullOrEmpty(t.Folder) &&
+                    !string.Equals(t.Folder, folder, System.StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(t.ObjectKey, objectKey, System.StringComparison.OrdinalIgnoreCase)) continue;
+                if (t.MaterialId >= 0 && materialId >= 0 && t.MaterialId != materialId) continue;
+                if (t.MaterialId >= 0 && materialId < 0) continue;
+                return t.Speed;
+            }
+            return Vector2.zero;
         }
     }
 }

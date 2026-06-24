@@ -27,8 +27,12 @@ namespace Sdo.Game
         // rigid bone-followers: each frame the target's LOCAL transform = the bone's animated model-space world matrix
         // (full TRS). Used to carry a rigid (no-weight) mapobj mesh on a single bone so its .mot plays (e.g. a screen
         // that spins 360° yaw). The target is parented under this avatar's transform, so it picks up the instance pose.
-        private readonly List<(int bone, Transform t)> _boneFollowers = new List<(int, Transform)>();
-        private Matrix4x4[] _animWorld, _skinMat;
+        private readonly List<(int bone, Transform t, bool applyBindScale)> _boneFollowers = new List<(int, Transform, bool)>();
+        // Like _boneFollowers, but instead of a TRS Transform (which Unity decomposes into rotation+lossyScale and
+        // CANNOT reconstruct a rotation+non-uniform-scale matrix — a spinning DING wheel sheared/squished each frame),
+        // these BAKE the bone's FULL model-space matrix into the mesh verts every frame (faithful for any matrix).
+        private readonly List<(int bone, Mesh mesh, Vector3[] src, bool applyScale)> _meshBakers = new List<(int, Mesh, Vector3[], bool)>();
+        private Matrix4x4[] _animWorld, _rigidWorld, _skinMat;
         private Vector3[] _motScale;   // per-bone MOT scale this frame (Vector3.one unless the bone's scale track varies)
         private bool[] _motScaleActive;   // per-bone: does the .mot drive this bone's scale? (then USE it, ignore bind scale)
         // body-shape (體型): per-bone local scale that fattens/thins the dancer's cross-section without changing bone
@@ -105,7 +109,7 @@ namespace Sdo.Game
         {
             _hrc = hrc; _mot = mot;
             int bc = hrc.Names.Length;
-            _animWorld = new Matrix4x4[bc]; _skinMat = new Matrix4x4[bc];
+            _animWorld = new Matrix4x4[bc]; _rigidWorld = new Matrix4x4[bc]; _skinMat = new Matrix4x4[bc];
             _motScale = new Vector3[bc]; for (int i = 0; i < bc; i++) _motScale[i] = Vector3.one;
             _motScaleActive = new bool[bc];
             _dispLocal = new Matrix4x4[bc]; _blendFromQ = new Quaternion[bc]; _blendFromP = new Vector3[bc];
@@ -251,7 +255,38 @@ namespace Sdo.Game
 
         /// <summary>Make <paramref name="t"/> rigidly follow a bone's animated world transform each frame (full TRS) —
         /// for a no-weight mapobj mesh attached to one bone (its .mot then plays as rigid motion, e.g. a yaw spin).</summary>
-        public void AddBoneFollower(int bone, Transform t) { if (bone >= 0 && t != null) _boneFollowers.Add((bone, t)); }
+        public void AddBoneFollower(int bone, Transform t, bool applyBindScale = true)
+        {
+            if (bone >= 0 && t != null) _boneFollowers.Add((bone, t, applyBindScale));
+        }
+
+        /// <summary>Rigidly attach a mesh to a bone by BAKING the bone's full model-space matrix into the mesh verts each
+        /// frame (no TRS decomposition) — use for animated rigid props that ROTATE on a scaled chain, where a Transform
+        /// follower would shear/squish (the SCN0011 DING wheel). <paramref name="mesh"/> is a per-instance clone whose
+        /// verts get overwritten; <paramref name="src"/> is its original bone-local verts. The mesh's GameObject must sit
+        /// at IDENTITY under the avatar root (the baked verts are already in model space).</summary>
+        public void AddBoneMeshBaker(int bone, Mesh mesh, Vector3[] src, bool applyScale = true)
+        {
+            if (bone >= 0 && mesh != null && src != null) _meshBakers.Add((bone, mesh, src, applyScale));
+        }
+
+        // Bake each registered mesh from the just-computed bone world matrix (scale-bearing _rigidWorld when the prop's
+        // bind chain carries scale, else the scale-free _animWorld). Called from Pose after the FK, on CPU and GPU paths.
+        private void UpdateMeshBakers()
+        {
+            if (_meshBakers.Count == 0 || _animWorld == null) return;
+            for (int k = 0; k < _meshBakers.Count; k++)
+            {
+                var (bone, mesh, src, applyScale) = _meshBakers[k];
+                if (mesh == null || src == null || bone < 0 || bone >= _animWorld.Length) continue;
+                Matrix4x4 m = (applyScale && _rigidWorld != null && bone < _rigidWorld.Length) ? _rigidWorld[bone] : _animWorld[bone];
+                var dst = mesh.vertices;
+                int n = Mathf.Min(dst.Length, src.Length);
+                for (int i = 0; i < n; i++) dst[i] = m.MultiplyPoint3x4(src[i]);
+                mesh.vertices = dst;
+                mesh.RecalculateBounds();
+            }
+        }
 
         // Drive every rigid bone-follower from the just-computed _animWorld (model space; root = identity). Called from
         // Pose after the FK loop, on both the CPU and GPU paths.
@@ -260,9 +295,9 @@ namespace Sdo.Game
             if (_boneFollowers.Count == 0 || _animWorld == null) return;
             for (int k = 0; k < _boneFollowers.Count; k++)
             {
-                var (bone, t) = _boneFollowers[k];
+                var (bone, t, applyBindScale) = _boneFollowers[k];
                 if (t == null || bone < 0 || bone >= _animWorld.Length) continue;
-                Matrix4x4 m = _animWorld[bone];
+                Matrix4x4 m = (_rigidWorld != null && bone < _rigidWorld.Length) ? _rigidWorld[bone] : _animWorld[bone];
                 t.localPosition = m.GetColumn(3);
                 t.localRotation = m.rotation;
                 // The FK is intentionally scale-free (see Pose), so _animWorld drops the SCALE a rigid prop's bind
@@ -271,15 +306,11 @@ namespace Sdo.Game
                 // ballooned ~10×; SCN0011 ceiling props mis-sized. Re-inject the accumulated bind scale (what the
                 // STATIC bake uses via BindWorld). Props whose chain has no scale (e.g. the spinning sea screen,
                 // bind scale 1) are unaffected — so this can only correct the already-wrong, scaled-chain props.
-                Vector3 bindScale = (_hrc != null && _hrc.BindWorld != null && bone < _hrc.BindWorld.Length)
-                    ? _hrc.BindWorld[bone].lossyScale : m.lossyScale;
                 // SCALE: if the .mot drives this bone's scale, USE the MOT scale DIRECTLY — it IS the live scale (the
                 // SCN0008 delta_line bars extend via scale.Y 0→2.028; their HRC BIND scale.Y is 0 = the collapsed rest
                 // state, so bind×mot would zero the bars out → invisible). Bones WITHOUT a MOT scale track keep the
                 // bind-scale re-injection (rigid mapobjs like the SCN0014 sea screen / SCN0015 trees — unchanged).
-                Vector3 ms = (_motScale != null && bone < _motScale.Length) ? _motScale[bone] : Vector3.one;
-                bool motDriven = _motScaleActive != null && bone < _motScaleActive.Length && _motScaleActive[bone];
-                t.localScale = motDriven ? ms : bindScale;
+                t.localScale = applyBindScale ? m.lossyScale : Vector3.one;
             }
         }
 
@@ -412,6 +443,7 @@ namespace Sdo.Game
             for (int i = 0; i < bc; i++)
             {
                 Matrix4x4 local;     // reference mot_player.compose_local / evaluate_pose (column-vector, no axis flip)
+                Vector3 rigidScale;
                 if (_motScale != null) { _motScale[i] = Vector3.one; _motScaleActive[i] = false; }
                 if (Animate && _mot != null && _mot.Bones.TryGetValue(i, out var node))
                 {
@@ -419,9 +451,14 @@ namespace Sdo.Game
                     local = QuatToLocal(qx, qy, qz, qw);    // quat_to_matrix then transpose the 3x3 (MOT quat is row-major)
                     Vector3 p = node.Pc >= 1 ? MotLoader.SamplePos(node, t) : (Vector3)_hrc.LocalRest[i].GetColumn(3);
                     local[0, 3] = p.x; local[1, 3] = p.y; local[2, 3] = p.z;   // translation from the MOT pos track
+                    rigidScale = node.Sc >= 1 ? MotLoader.SampleScale(node, t) : _hrc.LocalRest[i].lossyScale;
                     if (_motScale != null && MotLoader.ScaleVaries(node)) { _motScale[i] = MotLoader.SampleScale(node, t); _motScaleActive[i] = true; }
                 }
-                else local = _hrc.LocalRest[i];             // bone not animated -> HRC rest (already column-vector)
+                else
+                {
+                    local = _hrc.LocalRest[i];             // bone not animated -> HRC rest (already column-vector)
+                    rigidScale = _hrc.LocalRest[i].lossyScale;
+                }
                 if (blending)   // ease the local transform from the snapshot toward the live clip (rotation slerp + translation lerp)
                 {
                     Quaternion q = Quaternion.Slerp(_blendFromQ[i], local.rotation, blendW);
@@ -434,10 +471,13 @@ namespace Sdo.Game
                 // matrix AFTER recursing children, so a fat neck never balloons the head). The scale enters ONLY each
                 // bone's own skin matrix below — vertices are scaled about the bone's bind origin in its local axes.
                 _animWorld[i] = _hrc.Parent[i] < 0 ? local : _animWorld[_hrc.Parent[i]] * local;
+                Matrix4x4 rigidLocal = Matrix4x4.TRS((Vector3)local.GetColumn(3), local.rotation, rigidScale);
+                _rigidWorld[i] = _hrc.Parent[i] < 0 ? rigidLocal : _rigidWorld[_hrc.Parent[i]] * rigidLocal;
                 _skinMat[i] = _hasBodyScale ? _animWorld[i] * _scaleMat[i] * _hrc.InvBindWorld[i]
                                             : _animWorld[i] * _hrc.InvBindWorld[i];
             }
             UpdateBoneFollowers();   // rigid mapobj props carried on a single bone (e.g. the spinning sea screen)
+            UpdateMeshBakers();      // rotation-on-scaled-chain props (DING wheel) — bake the full matrix, no TRS shear
             if (GpuSkinning) { WriteGpuBones(); _haveDisp = true;   // GPU: drive the SMR bones; the GPU does the vertex blend
                 foreach (var (bone, at) in _anchors) if (at) at.position = transform.TransformPoint((Vector3)_animWorld[bone].GetColumn(3));
                 return; }

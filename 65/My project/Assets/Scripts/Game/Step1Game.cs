@@ -1273,11 +1273,13 @@ namespace Sdo.Game
                 // feather plumes MAO/MAO1, the SCN0009 掛毯 GUATAN banner — painting their transparent background
                 // solid. Opaque-texture props are unaffected: a* is false for them.)
                 // VOLUMETRIC 3-D solid (carousel carriage: many verts, thick on all axes) -> alpha uses CUTOUT
-                // (Cull Back + ZWrite On) so it isn't see-through and writes depth; FLAT decals/billboards/glows/
+                // (alpha-test + ZWrite On) so it isn't see-through and writes depth; FLAT decals/billboards/glows/
                 // banners/feathers -> alpha-blend (soft 去背). The volumetric test is what keeps a solid prop from
                 // turning see-through, so removing the rigid gate can't regress one.
                 Vector3 bsz = sub.Mesh.bounds.size;
+                bool separatedFaces = HasSeparatedOpposingFaces(sub.Mesh);
                 bool volumetric = sub.Mesh.vertexCount >= 200 && Mathf.Min(bsz.x, Mathf.Min(bsz.y, bsz.z)) > 20f;
+                bool singleSidedAlpha = separatedFaces && !volumetric;
                 // per-submesh material (cloth/skin split like the avatar): multi-range submesh -> one material per range
                 if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
                 {
@@ -1286,12 +1288,12 @@ namespace Sdo.Game
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                        var tex = ResolveDds(dir, nm, out bool a2); mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && volumetric);
+                        var tex = ResolveDds(dir, nm, out bool a2); mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && volumetric, a2 && !opaque && singleSidedAlpha);
                     }
                 }
                 else
                 {
-                    var tex = ResolveDds(dir, sub.Dds, out bool a1); mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && volumetric) };
+                    var tex = ResolveDds(dir, sub.Dds, out bool a1); mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && volumetric, a1 && !opaque && singleSidedAlpha) };
                 }
                 subMats.Add(mats);
             }
@@ -1379,10 +1381,16 @@ namespace Sdo.Game
                     for (int s = 0; s < r.Submeshes.Count; s++)
                     {
                         int bone = leafBones[System.Math.Min(s, leafBones.Length - 1)];
-                        var follow = new GameObject($"{baseName}_follow{s}");
-                        follow.transform.SetParent(parent.transform, false);
-                        AddMapobjMeshChild(follow.transform, baseName + "_mesh", r.Submeshes[s].Mesh, subMats[s]);
-                        avatar.AddBoneFollower(bone, follow.transform);
+                        var srcMesh = r.Submeshes[s].Mesh;
+                        var src = srcMesh.vertices;                                   // original bone-local verts (bake source)
+                        var bakeMesh = UnityEngine.Object.Instantiate(srcMesh);      // per-instance clone the baker overwrites
+                        bakeMesh.name = baseName + "_bake" + s;
+                        // IDENTITY child under the avatar root: the baker writes MODEL-space verts (root = identity in the FK),
+                        // i.e. mesh.vert = boneWorld·srcVert each frame. A Transform follower (rotation+lossyScale) shears a
+                        // rotating non-uniform-scale prop (the spinning DING wheel went elliptical/變形); baking the full
+                        // matrix is faithful for any matrix and identical for uniform-scale props (sea screen / trees).
+                        AddMapobjMeshChild(parent.transform, baseName + "_mesh", bakeMesh, subMats[s]);
+                        avatar.AddBoneMeshBaker(bone, bakeMesh, src, ShouldApplyRigidBindScale(srcMesh, hrc.BindWorld[bone].lossyScale));
                     }
                     SetLayerRecursive(parent, SceneLayer);
                 }
@@ -1501,12 +1509,16 @@ namespace Sdo.Game
         // One GPU-instancing-capable unlit material for a mapobj submesh (Cull Back, texture × tint), so a group's
         // shared-mesh copies batch into instanced GPU draws. Falls back to the built-in Unlit shaders if the custom
         // one isn't present (then no instancing, but identical look). tex==null -> flat fallback colour.
-        private static Material NewMapobjMat(Texture2D tex, Color fallbackCol, bool alpha = false, bool cutout = false)
+        private static Material NewMapobjMat(Texture2D tex, Color fallbackCol, bool alpha = false, bool cutout = false, bool singleSidedAlpha = false)
         {
             // opaque -> instanced opaque; flat alpha decal/billboard/glow -> alpha-blend (Cull Off, ZWrite Off);
-            // VOLUMETRIC alpha solid (carousel carriage) -> alpha-test cutout (Cull Back, ZWrite On) so it doesn't
+            // mirrored separated alpha planes -> alpha-blend + Cull Back, so only the facing mirror is visible;
+            // VOLUMETRIC alpha solid (carousel carriage) -> alpha-test cutout (ZWrite On) so it doesn't
             // render see-through ("穿透").
-            string name = cutout ? "Sdo/UnlitInstancedCutout" : alpha ? "Sdo/UnlitInstancedAlpha" : "Sdo/UnlitInstanced";
+            string name = cutout ? "Sdo/UnlitInstancedCutout"
+                        : singleSidedAlpha ? "Sdo/UnlitInstancedAlphaCullBack"
+                        : alpha ? "Sdo/UnlitInstancedAlpha"
+                        : "Sdo/UnlitInstanced";
             var inst = Shader.Find(name);
             if (inst != null)
             {
@@ -1531,6 +1543,56 @@ namespace Sdo.Game
             else if (mats != null && mats.Length > 1) mr.sharedMaterials = mats;
         }
 
+        private static bool ShouldApplyRigidBindScale(Mesh mesh, Vector3 bindScale)
+        {
+            if (mesh == null) return true;
+            if (HasSeparatedOpposingFaces(mesh)) return true;
+
+            float maxScale = Mathf.Max(Mathf.Abs(bindScale.x), Mathf.Max(Mathf.Abs(bindScale.y), Mathf.Abs(bindScale.z)));
+            if (maxScale <= 2f) return true;
+
+            Vector3 size = mesh.bounds.size;
+            float maxSize = Mathf.Max(size.x, Mathf.Max(size.y, size.z));
+            return maxSize < 80f;
+        }
+
+        private static bool HasSeparatedOpposingFaces(Mesh mesh)
+        {
+            if (mesh == null || mesh.vertexCount < 6) return false;
+            var verts = mesh.vertices;
+            var tris = mesh.triangles;
+            int triCount = tris.Length / 3;
+            if (triCount < 2 || triCount > 512) return false;
+
+            var normals = new Vector3[triCount];
+            var centers = new Vector3[triCount];
+            int n = 0;
+            for (int t = 0; t + 2 < tris.Length; t += 3)
+            {
+                int ia = tris[t], ib = tris[t + 1], ic = tris[t + 2];
+                if (ia < 0 || ib < 0 || ic < 0 || ia >= verts.Length || ib >= verts.Length || ic >= verts.Length) continue;
+                Vector3 a = verts[ia], b = verts[ib], c = verts[ic];
+                Vector3 normal = Vector3.Cross(b - a, c - a);
+                float mag = normal.magnitude;
+                if (mag < 1e-4f) continue;
+                normals[n] = normal / mag;
+                centers[n] = (a + b + c) / 3f;
+                n++;
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = i + 1; j < n; j++)
+                {
+                    float dot = Vector3.Dot(normals[i], normals[j]);
+                    if (dot > -0.95f) continue;
+                    float separation = Mathf.Abs(Vector3.Dot(centers[j] - centers[i], normals[i]));
+                    if (separation > 5f) return true;
+                }
+            }
+            return false;
+        }
+
         // Leaf bones of an HRC (bones that are no one's parent) in index order. A rigid no-weight prop attaches each
         // submesh to a bone; for a single-part prop there's one leaf (corals, crowd), for a multi-part prop the leaves
         // line up with the submeshes in order (FIFA_QIUBEI: leaf[0]=under Sphere01 -> the ball submesh, leaf[1]=under
@@ -1544,6 +1606,37 @@ namespace Sdo.Game
             var leaves = new List<int>();
             for (int i = 0; i < bc; i++) if (!hasChild[i]) leaves.Add(i);
             return leaves.ToArray();
+        }
+
+        private void ApplySceneMaterialUvScroll(string folder, Material[] mats, int[] materialIds)
+        {
+            if (mats == null || materialIds == null) return;
+            var speeds = new List<Vector2>();
+            var groups = new List<List<Material>>();
+            for (int i = 0; i < mats.Length && i < materialIds.Length; i++)
+            {
+                Vector2 v = SceneMapobjUvScrollCatalog.Find(folder, SceneMapobjUvScrollCatalog.SceneObject, materialIds[i]);
+                if (v == Vector2.zero || mats[i] == null) continue;
+                int group = -1;
+                for (int g = 0; g < speeds.Count; g++)
+                {
+                    if (speeds[g] == v) { group = g; break; }
+                }
+                if (group < 0)
+                {
+                    group = speeds.Count;
+                    speeds.Add(v);
+                    groups.Add(new List<Material>());
+                }
+                groups[group].Add(mats[i]);
+            }
+
+            for (int g = 0; g < groups.Count; g++)
+            {
+                var holder = new GameObject($"StageScene_uvscroll_{g}");
+                holder.AddComponent<MapobjUvScroll>().Init(groups[g].ToArray(), speeds[g]);
+                Debug.Log($"[scene] {folder}: uv-scroll {groups[g].Count} material(s) @ {speeds[g]}");
+            }
         }
 
         private void TryLoadScene()
@@ -1562,6 +1655,7 @@ namespace Sdo.Game
                 var go = new GameObject("StageScene") { layer = sceneLayer };
                 go.AddComponent<MeshFilter>().mesh = res.Mesh;
                 go.AddComponent<MeshRenderer>().sharedMaterials = res.Materials;
+                ApplySceneMaterialUvScroll(SceneFolder(), res.Materials, res.MaterialIds);
                 b = res.Mesh.bounds;
                 // render at NATIVE SDO world coords (no lift). The .cv cameras + the avatar dance spot (_avatarChest)
                 // are authored in this same space with the dancer standing on the native floor, so they line up.

@@ -60,6 +60,32 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void GetAlphaMode_Dxt3_HardTransparent_IsCutout()
+        {
+            var block = new byte[16];
+            for (int i = 0; i < 8; i++) block[i] = 0xFF;
+            block[0] = 0xF0;   // one 0-alpha nibble, the rest opaque
+            Assert.AreEqual(DdsAlphaMode.Cutout, DdsLoader.GetAlphaMode(MakeDds("DXT3", block)));
+        }
+
+        [Test]
+        public void GetAlphaMode_Dxt3_SoftAlpha_IsBlend()
+        {
+            var block = new byte[16];
+            for (int i = 0; i < 8; i++) block[i] = 0x99;   // alpha 153/255
+            Assert.AreEqual(DdsAlphaMode.Blend, DdsLoader.GetAlphaMode(MakeDds("DXT3", block)));
+        }
+
+        [Test]
+        public void GetAlphaMode_Dxt5_SelectedSoftAlpha_IsBlend()
+        {
+            var block = new byte[16];
+            block[0] = 255; block[1] = 0;
+            block[2] = 0x02;   // first 3-bit selector = code 2 -> interpolated alpha
+            Assert.AreEqual(DdsAlphaMode.Blend, DdsLoader.GetAlphaMode(MakeDds("DXT5", block)));
+        }
+
+        [Test]
         public void HasAlpha_NotDds_IsFalse()
         {
             Assert.IsFalse(DdsLoader.HasAlpha(null));

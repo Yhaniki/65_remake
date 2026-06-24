@@ -13,7 +13,7 @@ namespace Sdo.Game
     /// </summary>
     public static class SceneLoader
     {
-        public sealed class Result { public Mesh Mesh; public Material[] Materials; }
+        public sealed class Result { public Mesh Mesh; public Material[] Materials; public int[] MaterialIds; }
 
         public static Result Load(byte[] d, string sceneDir)
         {
@@ -81,13 +81,16 @@ namespace Sdo.Game
             if (cols != null) mesh.colors32 = cols;   // baked vertex lighting -> the shader multiplies it in
             mesh.subMeshCount = subsets.Count;
             var mats = new Material[subsets.Count];
+            var matIds = new int[subsets.Count];
             // cutout × VERTEX COLOUR: walls stay opaque, DXT3 audience billboards discard their transparent
             // background, and the per-vertex baked lighting/tint darkens the scene (e.g. SCN0008 night). Falls back
             // to the colourless built-in cutout if the custom shader is stripped.
-            var shader = Shader.Find("Sdo/SceneVertexCutout") ?? Shader.Find("Unlit/Transparent Cutout") ?? Shader.Find("Unlit/Texture");
+            var cutoutShader = Shader.Find("Sdo/SceneVertexCutout") ?? Shader.Find("Unlit/Transparent Cutout") ?? Shader.Find("Unlit/Texture");
+            var alphaShader = Shader.Find("Sdo/SceneVertexAlpha") ?? Shader.Find("Unlit/Transparent") ?? cutoutShader;
             for (int s = 0; s < subsets.Count; s++)
             {
                 var (matId, fStart, fCount) = subsets[s];
+                matIds[s] = matId;
                 // SINGLE-SIDED with backface culling, matching the original's D3D cull. The room's walls/columns
                 // face INWARD, so a camera behind one (e.g. fixed cam5 at z=-346, behind the back columns at z=-300)
                 // sees their culled back faces = sees THROUGH them to the dancer — instead of the column blocking.
@@ -98,18 +101,17 @@ namespace Sdo.Game
                     sub[w] = tris[o]; sub[w + 1] = tris[o + 1]; sub[w + 2] = tris[o + 2];
                 }
                 mesh.SetTriangles(sub, s);
-                Texture2D tex = null; bool hasAlpha = false;
+                Texture2D tex = null; DdsAlphaMode alphaMode = DdsAlphaMode.Opaque;
                 var ddsPath = Path.Combine(sceneDir, ddsNames[matId]);
-                if (File.Exists(ddsPath)) { var bytes = File.ReadAllBytes(ddsPath); tex = DdsLoader.Load(bytes); hasAlpha = DdsLoader.HasAlpha(bytes); }
+                if (File.Exists(ddsPath)) { var bytes = File.ReadAllBytes(ddsPath); tex = DdsLoader.Load(bytes); alphaMode = DdsLoader.GetAlphaMode(bytes); }
+                var shader = alphaMode == DdsAlphaMode.Blend ? alphaShader : cutoutShader;
                 mats[s] = tex != null ? new Material(shader) { mainTexture = tex } : new Material(shader) { color = new Color(0.3f, 0.3f, 0.35f) };
-                // CUTOFF only for materials that genuinely carry alpha (DXT3/DXT5 去背 audience billboards / decals).
-                // OPAQUE materials are DXT1 (floor dimian1, sky, columns, lanterns) — Unity's TextureFormat.DXT1 has NO
-                // alpha channel and samples a=0, so clip(a−0.5) would DISCARD THE WHOLE MATERIAL (the floor/sky/columns
-                // vanished to black — only the DXT3 props survived). Disable the clip for them (cutoff −1 = never clips).
-                mats[s].SetFloat("_Cutoff", hasAlpha ? 0.5f : -1f);
+                // Soft DDS alpha is alpha-blended. Pure hard alpha remains a cutout. Opaque DDS disables clipping.
+                if (alphaMode != DdsAlphaMode.Blend)
+                    mats[s].SetFloat("_Cutoff", alphaMode == DdsAlphaMode.Cutout ? 0.5f : -1f);
             }
             mesh.RecalculateBounds();
-            return new Result { Mesh = mesh, Materials = mats };
+            return new Result { Mesh = mesh, Materials = mats, MaterialIds = matIds };
         }
 
         private static uint U32(byte[] d, ref int p) { uint v = (uint)(d[p] | (d[p + 1] << 8) | (d[p + 2] << 16) | (d[p + 3] << 24)); p += 4; return v; }

@@ -3,6 +3,13 @@ using UnityEngine;
 
 namespace Sdo.Game
 {
+    public enum DdsAlphaMode
+    {
+        Opaque,
+        Cutout,
+        Blend,
+    }
+
     /// <summary>
     /// DDS loader for SDO textures. DXT1/DXT5 (BC1/BC3) go straight to a compressed Texture2D; DXT3 (BC2) —
     /// which Unity has no native TextureFormat for — is CPU-decoded to RGBA32 (ported from bms_sdo/dds_codec).
@@ -20,33 +27,87 @@ namespace Sdo.Game
         /// </summary>
         public static bool HasAlpha(byte[] d, int threshold = 250)
         {
-            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
+            return GetAlphaMode(d, threshold) != DdsAlphaMode.Opaque;
+        }
+
+        public static DdsAlphaMode GetAlphaMode(byte[] d, int threshold = 250, int softLow = 8, int softHigh = 247)
+        {
+            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return DdsAlphaMode.Opaque;
             string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
             int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
-            if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return false;
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return DdsAlphaMode.Opaque;
+
             int bw = Math.Max(1, (width + 3) / 4), bh = Math.Max(1, (height + 3) / 4);
             int bi = 128;
+            DdsAlphaMode mode = DdsAlphaMode.Opaque;
             if (fourcc == "DXT3")
             {
                 for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
                     for (int k = 0; k < 8; k++)
                     {
                         int ab = d[bi + k];
-                        if ((ab & 0xF) * 255 / 15 < threshold || ((ab >> 4) & 0xF) * 255 / 15 < threshold) return true;
+                        mode = AccumulateAlphaMode((ab & 0xF) * 255 / 15, mode, threshold, softLow, softHigh);
+                        if (mode == DdsAlphaMode.Blend) return mode;
+                        mode = AccumulateAlphaMode(((ab >> 4) & 0xF) * 255 / 15, mode, threshold, softLow, softHigh);
+                        if (mode == DdsAlphaMode.Blend) return mode;
                     }
-                return false;
+                return mode;
             }
             if (fourcc == "DXT5")
             {
                 for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
                 {
                     int a0 = d[bi], a1 = d[bi + 1];
-                    // a0<a1 -> the 6-/7-code palette includes 0 and 255 (so 0 is reachable); else min is min(a0,a1).
-                    if (a0 < a1 || Math.Min(a0, a1) < threshold) return true;
+                    ulong bits = 0;
+                    for (int k = 0; k < 6; k++) bits |= (ulong)d[bi + 2 + k] << (8 * k);
+                    for (int i = 0; i < 16; i++)
+                    {
+                        int code = (int)((bits >> (i * 3)) & 7);
+                        mode = AccumulateAlphaMode(Dxt5Alpha(a0, a1, code), mode, threshold, softLow, softHigh);
+                        if (mode == DdsAlphaMode.Blend) return mode;
+                    }
                 }
-                return false;
+                return mode;
             }
-            return false;   // DXT1 / uncompressed: treat as opaque (DXT1's 1-bit alpha isn't used by these props)
+
+            uint pf = BitConverter.ToUInt32(d, 80);
+            if ((pf & 0x4u) == 0 && (pf & 0x40u) != 0)
+            {
+                uint am = BitConverter.ToUInt32(d, 104);
+                int bits = BitConverter.ToInt32(d, 88);
+                if (bits == 32 && am != 0)
+                {
+                    int off = 128;
+                    if (off + width * height * 4 > d.Length) return DdsAlphaMode.Opaque;
+                    int shift = MaskShift(am);
+                    uint max = am >> shift;
+                    for (int i = 0; i < width * height; i++)
+                    {
+                        uint px = (uint)(d[off + i * 4] | (d[off + i * 4 + 1] << 8) | (d[off + i * 4 + 2] << 16) | (d[off + i * 4 + 3] << 24));
+                        int alpha = max == 0 ? 255 : (int)(((px & am) >> shift) * 255 / max);
+                        mode = AccumulateAlphaMode(alpha, mode, threshold, softLow, softHigh);
+                        if (mode == DdsAlphaMode.Blend) return mode;
+                    }
+                    return mode;
+                }
+            }
+            return DdsAlphaMode.Opaque;
+        }
+
+        private static DdsAlphaMode AccumulateAlphaMode(int alpha, DdsAlphaMode mode, int threshold, int softLow, int softHigh)
+        {
+            if (alpha > softLow && alpha < softHigh) return DdsAlphaMode.Blend;
+            return alpha < threshold ? DdsAlphaMode.Cutout : mode;
+        }
+
+        private static int Dxt5Alpha(int a0, int a1, int code)
+        {
+            if (code == 0) return a0;
+            if (code == 1) return a1;
+            if (a0 > a1) return ((8 - code) * a0 + (code - 1) * a1) / 7;
+            if (code == 6) return 0;
+            if (code == 7) return 255;
+            return ((6 - code) * a0 + (code - 1) * a1) / 5;
         }
 
         public static Texture2D Load(byte[] d)

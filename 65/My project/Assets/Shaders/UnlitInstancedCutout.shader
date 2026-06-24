@@ -1,8 +1,8 @@
 // Unlit, textured, GPU-INSTANCING capable, ALPHA-TEST (cutout), SOLID. For VOLUMETRIC mapobj props whose alpha is
 // a hard cut-out on a 3-D body (e.g. the SCN0006 carousel carriages): the alpha-BLENDED twin (Sdo/UnlitInstancedAlpha,
 // Cull Off + ZWrite Off) made them see-through — back faces showed through the front and nothing wrote depth
-// ("穿透 / 雙面材質"). This clips transparent texels (no depth-write artefact), Cull Back (drop back faces) and
-// ZWrite On (the solid body occludes itself) — matching the original's solid alpha props. Flat billboards/decals
+// ("穿透 / 雙面材質"). This clips transparent texels (no depth-write artefact) and keeps ZWrite On
+// so the solid body occludes itself. Current pass keeps Cull Off for two-sided hard cutouts.
 // keep the blended shader.
 Shader "Sdo/UnlitInstancedCutout"
 {
