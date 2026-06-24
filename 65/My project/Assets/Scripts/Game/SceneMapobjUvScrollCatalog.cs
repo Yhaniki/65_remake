@@ -36,7 +36,7 @@ namespace Sdo.Game
             // registers it as the UV-scroll target; all others pass 0 and are skipped.
             // caidai.dds (32×128 DXT1) tiles V −1~2 (3× repeat) on the 彩帶 vertical light strip next to the speaker.
             // D3D9 positive V → Unity negative V (DDS raw-load flips V axis, same as CoralV convention).
-            new Target("SCN0011", "CAIDAI", -1, new Vector2(0f, -0.18f)),  // 0.003 × 60fps = 0.18/s, negated
+            new Target("SCN0011", "CAIDAI", -1, new Vector2(0f, 0.54f)),   // 0.003/frame upward; ×3 trial (original uncapped fps runs faster)
             // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
             new Target(null, "SHANHU-BAI", -1, CoralV),
             new Target(null, "SHANHU-HONG", -1, CoralV),
