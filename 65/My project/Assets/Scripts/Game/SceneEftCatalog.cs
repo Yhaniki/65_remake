@@ -65,10 +65,10 @@ namespace Sdo.Game
                     new SceneEftPlacement("bgl", -82, 0, 350, 0, 0, 60, 30f),
                     new SceneEftPlacement("gravcolor_r", -250, 0, 167, 0, 0, 0, 80f),
                     new SceneEftPlacement("gravcolor_b", 250, 0, 167, 0, 0, 0, 80f),
-                    new SceneEftPlacement("stagelightb", 112, 197, 63, 15, 0, 170, 15f),
-                    new SceneEftPlacement("stagelightb", 0, 197, 180, 15, 0, 170, 15f),
-                    new SceneEftPlacement("stagelightb", -120, 197, 65, 15, 0, 170, 15f),
-                    new SceneEftPlacement("stagelightb", 0, 197, -58, 15, 0, 170, 15f),
+                    new SceneEftPlacement("stagelightb", 112, 197, 63, 0, 0, 0, 15f),
+                    new SceneEftPlacement("stagelightb", 0, 197, 180, 0, 0, 0, 15f),
+                    new SceneEftPlacement("stagelightb", -120, 197, 65, 0, 0, 0, 15f),
+                    new SceneEftPlacement("stagelightb", 0, 197, -58, 0, 0, 0, 15f),
                 },
                 ["SCN0014"] = new[]   // 海底: aurora curtain + bubbles
                 {
@@ -101,16 +101,16 @@ namespace Sdo.Game
         // DAT_005882c8) plus the per-frame StageScene_UpdateOscPlanes_004b2310 (24× light_left/light_right, scale 15,
         // table DAT_00588310, spawned in 4 waves and swept ±10° on Z). Because the remake's catalog was built from the
         // StageSceneNN ctors only, SCN0003 had zero effects and the whole stage was dark. We place all 30 statically
-        // here (positions/scales verbatim from the exe); the ±10° Z sway is the only behaviour not yet reproduced.
+        // here (positions/scales verbatim from the exe); the ±10° Z sway is driven by Step1Game.OscLightZCo.
         // light_right = id 7 (the 3 beams on each band's stage-right half), light_left = id 6 (stage-left half).
         //
-        // BEAM ORIENTATION (euler 15,0,170 on the sweep lights): the beam01 texture is a CONE that widens toward its
-        // local +Y. light_left/right's ROOT carrier (emitter slot2) carries InitRot (15°,0,170°) — the 170° Z-flip
-        // points the cone DOWN (spotlight shining onto the stage) + a 15° forward tilt. Our EftEffect does NOT
-        // propagate a parent emitter's rotation to its child beam (children inherit position only), so without baking
-        // this into the placement euler all 24 cones stayed upright (widening UP, into the camera) and the additive
-        // overlap blew out to a white blob. Baking the carrier tilt into the effect-GO euler reproduces it (GO rotation
-        // applies to the child beam). The official ALSO sweeps the root ±10° on Z each frame (still TODO).
+        // BEAM ORIENTATION: EFT emitter slot2 (invisible carrier) has InitRot already baked:
+        //   light_right slot2 InitRot (15°,0°,190°) — 190° Z-flip points cone DOWN + 10° leftward + 15° forward tilt.
+        //   light_left  slot2 InitRot (15°,0°,170°) — 170° Z-flip points cone DOWN + 10° rightward + 15° forward tilt.
+        // The beam (slot0, attach=1) rides the carrier: in EftEffect StepParticle the carrier's p.rot is used as prot
+        // and applied to the beam's localRotation directly. Placement euler must therefore be (0,0,0) — any non-zero
+        // GO rotation stacks on top of carrier's InitRot and double-applies the tilt, flipping the beams back UP.
+        // The official sweeps GO Z rotation ±10° (vel=0.5°/50ms, FUN_004b2310); Step1Game.OscLightZCo replicates that.
         private static SceneEftPlacement[] MainStageLights() => new[]
         {
             // 6 static stage_3_light (Effect_Play(4), scale 2.0) bracketing the dance spot at floor level
@@ -121,34 +121,35 @@ namespace Sdo.Game
             new SceneEftPlacement("stage_3_light",  157.303f, 23.061f, 143.204f, 0, 0, 0, 2f),
             new SceneEftPlacement("stage_3_light",  213.250f, 23.061f,  92.999f, 0, 0, 0, 2f),
 
-            // 24 sweeping spotlights (Effect_Play(7/6), scale 15.0). Band 1 (z≈342):
-            new SceneEftPlacement("light_right", -217.764f, 223.500f, 341.680f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right", -144.458f, 221.015f, 341.680f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right",  -48.970f, 216.678f, 341.680f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",    51.122f, 216.678f, 341.680f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",   146.611f, 221.015f, 341.680f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",   219.917f, 223.500f, 341.680f, 15, 0, 170, 15f),
+            // 24 sweeping spotlights (Effect_Play(7/6), scale 15.0). Euler (0,0,0): carrier InitRot provides the tilt.
+            // Band 1 (z≈342):
+            new SceneEftPlacement("light_right", -217.764f, 223.500f, 341.680f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right", -144.458f, 221.015f, 341.680f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right",  -48.970f, 216.678f, 341.680f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",    51.122f, 216.678f, 341.680f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",   146.611f, 221.015f, 341.680f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",   219.917f, 223.500f, 341.680f, 0, 0, 0, 15f),
             // Band 2 (z≈335):
-            new SceneEftPlacement("light_right", -187.481f, 170.494f, 335.229f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right", -118.646f, 171.518f, 335.229f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right",  -41.664f, 162.398f, 335.229f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",    43.817f, 162.398f, 335.229f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",   120.798f, 171.518f, 335.229f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",   189.634f, 170.494f, 335.229f, 15, 0, 170, 15f),
+            new SceneEftPlacement("light_right", -187.481f, 170.494f, 335.229f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right", -118.646f, 171.518f, 335.229f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right",  -41.664f, 162.398f, 335.229f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",    43.817f, 162.398f, 335.229f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",   120.798f, 171.518f, 335.229f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",   189.634f, 170.494f, 335.229f, 0, 0, 0, 15f),
             // Band 3 (z≈329):
-            new SceneEftPlacement("light_right", -158.608f, 127.588f, 329.097f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right",  -91.636f, 123.479f, 329.097f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right",  -30.072f, 112.305f, 329.097f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",    32.225f, 112.305f, 329.097f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",    93.789f, 123.479f, 329.097f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",   160.761f, 127.588f, 329.097f, 15, 0, 170, 15f),
+            new SceneEftPlacement("light_right", -158.608f, 127.588f, 329.097f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right",  -91.636f, 123.479f, 329.097f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right",  -30.072f, 112.305f, 329.097f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",    32.225f, 112.305f, 329.097f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",    93.789f, 123.479f, 329.097f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",   160.761f, 127.588f, 329.097f, 0, 0, 0, 15f),
             // Band 4 (stage-left cluster, z 168→288):
-            new SceneEftPlacement("light_right", -442.974f, 255.474f, 168.345f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right", -376.409f, 255.474f, 229.919f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_right", -313.162f, 255.474f, 287.783f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",  -442.974f, 187.373f, 168.345f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",  -376.409f, 187.373f, 229.919f, 15, 0, 170, 15f),
-            new SceneEftPlacement("light_left",  -313.162f, 187.373f, 287.783f, 15, 0, 170, 15f),
+            new SceneEftPlacement("light_right", -442.974f, 255.474f, 168.345f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right", -376.409f, 255.474f, 229.919f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_right", -313.162f, 255.474f, 287.783f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",  -442.974f, 187.373f, 168.345f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",  -376.409f, 187.373f, 229.919f, 0, 0, 0, 15f),
+            new SceneEftPlacement("light_left",  -313.162f, 187.373f, 287.783f, 0, 0, 0, 15f),
         };
 
         // 個人房 / 婚禮大廳: star light + two pillar glows (StageScene10 ctor)

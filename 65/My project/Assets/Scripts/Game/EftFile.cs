@@ -85,7 +85,7 @@ namespace Sdo.Game
         // (ZIPIANZ/ZIPIANZ1) is 16 frames whose texidx are ALL the same texture but whose UVs are a 4×4 cell grid.
         // Without this the quad shows the WHOLE sheet (16 pieces at once) — "整張貼圖貼上去". null unless FrameCount>1.
         public Vector4[] FrameUv;   // per frame: (uMin, vTop, uMax, vBot), V=0 at top (D3D convention)
-        public int TrigType, Slot, NumTrig;   // TrigType word[0x36] (as a child); NumTrig word[3] = #child triggers this emitter fires
+        public int TrigType, Slot, NumTrig;   // TrigType word[0x36] (as a child); NumTrig word[3] = loaded trigger-link count
         // SUB-EMIT INHERITANCE (engine SpawnChildEffect→ApplyVelocity 030_scene:6669): a child ADDS its parent's
         // position (flag word[0x38]) and/or VELOCITY (flag word[0x39]) at spawn. The velocity one is why 400's
         // X-cross (tex96, child of a RISING ring vel.y=0.008) rises faster than its own template 0.020/0.035 — the
@@ -93,7 +93,7 @@ namespace Sdo.Game
         // (stationary externals) and FINISHED's sparks have it OFF (so the root's −0.3 downfall doesn't drag them down).
         public bool InheritPos, InheritVel;
         public float AtTime;                  // word[0x3b] ([0xec]): PARENT age (ticks) at which this child sub-emits (trigType 2)
-        public readonly List<EftEmitter> Children = new List<EftEmitter>();   // DFS sub-tree, parsed via NumTrig
+        public readonly List<EftEmitter> Children = new List<EftEmitter>();   // parent->child trigger table from the root block
         public readonly EftChannel[] Ch = new EftChannel[17];
 
         public bool IsRing => (Flags & 8) != 0;        // bit3 → ring geometry
@@ -108,7 +108,7 @@ namespace Sdo.Game
     public sealed class EftFile
     {
         public readonly List<EftEmitter> Emitters = new List<EftEmitter>();
-        public int RootCount; public int[] RootSlots, RootDelays, ChildSlots;
+        public int RootCount; public int[] RootSlots, RootDelays, ChildSlots, TriggerParentSlots;
 
         const int TEMPLATE = 0x8004, STRIDE = 0x8c8, ROOT = 0x19904, SLOTS = 32;
 
@@ -207,24 +207,24 @@ namespace Sdo.Game
             int rc = Mathf.Clamp(f.RootCount, 0, 32);
             f.RootSlots = new int[rc]; f.RootDelays = new int[rc];
             for (int k = 0; k < rc; k++) { f.RootSlots[k] = I(ROOT + (1 + k) * 4); f.RootDelays[k] = I(ROOT + (0x21 + k) * 4); }
-            int cc = Mathf.Clamp(I(ROOT + 0x41 * 4), 0, 32);   // child count word[0x41]; child slot indices at word[0x62+m]
+            // Native FUN_004bc010 reads trigger rows, not a DFS child stream:
+            // word[0x41] row count, word[0x42+i] parent slot, word[0x62+i] child slot.
+            int cc = Mathf.Clamp(I(ROOT + 0x41 * 4), 0, 32);
+            f.TriggerParentSlots = new int[cc];
             f.ChildSlots = new int[cc];
-            for (int m = 0; m < cc; m++) f.ChildSlots[m] = I(ROOT + (0x62 + m) * 4);
+            for (int m = 0; m < cc; m++)
+            {
+                f.TriggerParentSlots[m] = I(ROOT + (0x42 + m) * 4);
+                f.ChildSlots[m] = I(ROOT + (0x62 + m) * 4);
+            }
 
-            // Build the sub-emit TREE: ChildSlots is the DFS flattening of the whole tree; each emitter consumes
-            // NumTrig children (then those consume theirs, depth-first). Verified vs the live game (Frida): for
-            // 100COMBO root0(naga00,numTrig2)→[ring1,ring2]; for 400COMBO each ring(numTrig1)→a billboard.
+            // Build parent->child trigger links exactly as FUN_004bce40 wires them.
             var bySlot = new Dictionary<int, EftEmitter>();
             foreach (var em in f.Emitters) bySlot[em.Slot] = em;
-            int idx = 0;
-            void Build(EftEmitter parent)
-            {
-                for (int i = 0; i < parent.NumTrig && idx < f.ChildSlots.Length; i++)
-                {
-                    if (bySlot.TryGetValue(f.ChildSlots[idx++], out var child)) { parent.Children.Add(child); Build(child); }
-                }
-            }
-            foreach (int rs in f.RootSlots) if (bySlot.TryGetValue(rs, out var rem)) Build(rem);
+            for (int i = 0; i < cc; i++)
+                if (bySlot.TryGetValue(f.TriggerParentSlots[i], out var parent) &&
+                    bySlot.TryGetValue(f.ChildSlots[i], out var child))
+                    parent.Children.Add(child);
             return f;
         }
     }

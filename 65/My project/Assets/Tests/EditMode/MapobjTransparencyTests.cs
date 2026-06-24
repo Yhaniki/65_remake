@@ -22,6 +22,16 @@ namespace Sdo.Tests
             return d;
         }
 
+        private static byte[] MakeDxt3ColorBlock(byte alphaNibble, ushort color565)
+        {
+            var block = new byte[16];
+            byte a = (byte)(alphaNibble | (alphaNibble << 4));
+            for (int i = 0; i < 8; i++) block[i] = a;
+            BitConverter.GetBytes(color565).CopyTo(block, 8);
+            BitConverter.GetBytes((ushort)0).CopyTo(block, 10);
+            return block;
+        }
+
         [Test]
         public void HasAlpha_Dxt3_AllOpaque_IsFalse()
         {
@@ -83,6 +93,19 @@ namespace Sdo.Tests
             block[0] = 255; block[1] = 0;
             block[2] = 0x02;   // first 3-bit selector = code 2 -> interpolated alpha
             Assert.AreEqual(DdsAlphaMode.Blend, DdsLoader.GetAlphaMode(MakeDds("DXT5", block)));
+        }
+
+        [Test]
+        public void LooksLikeAdditiveGlow_Detects_Soft_Bright_Dxt3()
+        {
+            Assert.IsTrue(DdsLoader.LooksLikeAdditiveGlow(MakeDds("DXT3", MakeDxt3ColorBlock(9, 0xffff))));
+        }
+
+        [Test]
+        public void LooksLikeAdditiveGlow_Rejects_Opaque_Or_Dim_Dxt3()
+        {
+            Assert.IsFalse(DdsLoader.LooksLikeAdditiveGlow(MakeDds("DXT3", MakeDxt3ColorBlock(15, 0xffff))));
+            Assert.IsFalse(DdsLoader.LooksLikeAdditiveGlow(MakeDds("DXT3", MakeDxt3ColorBlock(9, 0x4208))));
         }
 
         [Test]
@@ -178,7 +201,14 @@ namespace Sdo.Tests
         [Test]
         public void SceneEft_Multi_And_Empty()
         {
-            Assert.AreEqual(8, SceneEftCatalog.ForFolder("SCN0011").Count);   // 2 bgl + 2 gravcolor + 4 stagelightb
+            var scn0011 = SceneEftCatalog.ForFolder("SCN0011");
+            Assert.AreEqual(8, scn0011.Count);   // 2 bgl + 2 gravcolor + 4 stagelightb
+            for (int i = 4; i < scn0011.Count; i++)
+            {
+                Assert.AreEqual(0f, scn0011[i].Ex, 1e-3f);
+                Assert.AreEqual(0f, scn0011[i].Ey, 1e-3f);
+                Assert.AreEqual(0f, scn0011[i].Ez, 1e-3f);
+            }
             Assert.AreEqual(5, SceneEftCatalog.ForFolder("SCN0014").Count);   // aurora + 4 bubbles
             Assert.AreEqual(0, SceneEftCatalog.ForFolder("SCN0009").Count);   // GUATAN scene has no bg EFT
             Assert.AreEqual(0, SceneEftCatalog.ForFolder(null).Count);

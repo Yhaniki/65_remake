@@ -633,6 +633,7 @@ namespace Sdo.Game
             // alpha curve (inner detail), can exceed native to match the deep official board, keeps the cut-out
             // chamfer transparent — no backing rect. The original texture is cached so the slider can rebake live.
             _boardSrc = SdoExtracted.LoadTextureRaw(Path.Combine(SdoExtracted.Root, "NOTEIMAGE"), "notes_board1.png");
+            if (_boardSrc != null) SdoExtracted.AlphaBleed(_boardSrc);
             if (_boardSrc != null)
             {
                 _board = NewSR("Board", null, -30);
@@ -1288,12 +1289,14 @@ namespace Sdo.Game
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                        var tex = ResolveDds(dir, nm, out bool a2); mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && volumetric, a2 && !opaque && singleSidedAlpha);
+                        var tex = ResolveDds(dir, nm, out bool a2, out bool glow2);
+                        mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && volumetric, a2 && !opaque && singleSidedAlpha, glow2);
                     }
                 }
                 else
                 {
-                    var tex = ResolveDds(dir, sub.Dds, out bool a1); mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && volumetric, a1 && !opaque && singleSidedAlpha) };
+                    var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1);
+                    mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && volumetric, a1 && !opaque && singleSidedAlpha, glow1) };
                 }
                 subMats.Add(mats);
             }
@@ -1323,7 +1326,12 @@ namespace Sdo.Game
             if (texAnim != null)
             {
                 var frames = new List<Texture2D>(texAnim.Frames.Length);
-                foreach (var fn in texAnim.Frames) { var t = ResolveDds(dir, fn); if (t != null) frames.Add(t); }
+                bool texAnimAdditive = false;
+                foreach (var fn in texAnim.Frames)
+                {
+                    var t = ResolveDds(dir, fn, out _, out bool frameGlow);
+                    if (t != null) { frames.Add(t); texAnimAdditive |= frameGlow; }
+                }
                 if (frames.Count > 0)
                 {
                     var animMats = new List<Material>();
@@ -1337,7 +1345,7 @@ namespace Sdo.Game
                     // material. Same Material instances the renderers use, so this applies to the rendered mesh too.
                     if (texAnim.Transparent)
                     {
-                        var overlay = Shader.Find("Sdo/UnlitOverlay");
+                        var overlay = Shader.Find(texAnimAdditive ? "Sdo/UnlitAdditiveOverlay" : "Sdo/UnlitOverlay");
                         if (overlay != null) foreach (var m in animMats) m.shader = overlay;
                     }
                     var holder = new GameObject(baseName + "_texanim");   // root: torn down with the play screen
@@ -1509,13 +1517,14 @@ namespace Sdo.Game
         // One GPU-instancing-capable unlit material for a mapobj submesh (Cull Back, texture × tint), so a group's
         // shared-mesh copies batch into instanced GPU draws. Falls back to the built-in Unlit shaders if the custom
         // one isn't present (then no instancing, but identical look). tex==null -> flat fallback colour.
-        private static Material NewMapobjMat(Texture2D tex, Color fallbackCol, bool alpha = false, bool cutout = false, bool singleSidedAlpha = false)
+        private static Material NewMapobjMat(Texture2D tex, Color fallbackCol, bool alpha = false, bool cutout = false, bool singleSidedAlpha = false, bool additiveGlow = false)
         {
             // opaque -> instanced opaque; flat alpha decal/billboard/glow -> alpha-blend (Cull Off, ZWrite Off);
             // mirrored separated alpha planes -> alpha-blend + Cull Back, so only the facing mirror is visible;
             // VOLUMETRIC alpha solid (carousel carriage) -> alpha-test cutout (ZWrite On) so it doesn't
             // render see-through ("穿透").
-            string name = cutout ? "Sdo/UnlitInstancedCutout"
+            string name = alpha && additiveGlow && !cutout && !singleSidedAlpha ? "Sdo/UnlitAdditiveOverlay"
+                        : cutout ? "Sdo/UnlitInstancedCutout"
                         : singleSidedAlpha ? "Sdo/UnlitInstancedAlphaCullBack"
                         : alpha ? "Sdo/UnlitInstancedAlpha"
                         : "Sdo/UnlitInstanced";
@@ -2011,7 +2020,13 @@ namespace Sdo.Game
         // alpha-blend its "去背" cut-out instead of painting it opaque). Reads the file once for both.
         private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha)
         {
+            return ResolveDds(dir, ddsName, out hasAlpha, out _);
+        }
+
+        private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha, out bool additiveGlow)
+        {
             hasAlpha = false;
+            additiveGlow = false;
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
@@ -2023,7 +2038,14 @@ namespace Sdo.Game
                     if (Path.GetExtension(f).ToLowerInvariant() == ".dds" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) { hit = f; break; }
             }
             if (hit == null) return null;
-            try { var bytes = File.ReadAllBytes(hit); hasAlpha = DdsLoader.HasAlpha(bytes); return DdsLoader.Load(bytes); } catch { return null; }
+            try
+            {
+                var bytes = File.ReadAllBytes(hit);
+                hasAlpha = DdsLoader.HasAlpha(bytes);
+                additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
+                return DdsLoader.Load(bytes);
+            }
+            catch { return null; }
         }
 
         // the original stage/dance camera (CAMERA/1/CAM0000.CV) — extract its up-pitch (eye knee-height -> chest target)
@@ -2961,18 +2983,45 @@ namespace Sdo.Game
         // Persistent per-scene background EFTs (decompiled from the StageScene controllers): the SCN0008 ground magic
         // circle (結界), christmas/snow scenes' snow, the sea aurora+bubbles, carnival glows, etc. Spawned once on
         // scene load and looped for the whole song. Native SDO coords on the stage layer (same as the mapobjs).
+        // SCN0003 sweeping spotlights (light_left/light_right): the original oscillates all effect GOs
+        // ±10° on Z at 0.5°/tick every 50ms (FUN_004b2310, StageScene_UpdateOscPlanes). This coroutine
+        // replicates that sweep; it is started after SpawnSceneEffects when the scene has such lights.
+        List<GameObject> _oscLightGos;
+        System.Collections.IEnumerator OscLightZCo()
+        {
+            float angle = 0f, vel = 0.5f;
+            var wait = new WaitForSeconds(0.05f);
+            while (true)
+            {
+                if (angle > 10f)  { angle = 10f;  vel = -0.5f; }
+                if (angle < -10f) { angle = -10f; vel =  0.5f; }
+                var q = Quaternion.Euler(0f, 0f, angle);
+                foreach (var go in _oscLightGos) if (go != null) go.transform.rotation = q;
+                angle += vel;
+                yield return wait;
+            }
+        }
+
         private void SpawnSceneEffects()
         {
             foreach (var e in SceneEftCatalog.ForFolder(SceneFolder()))
-                SpawnSceneEft(e.Eft, new Vector3(e.X, e.Y, e.Z), new Vector3(e.Ex, e.Ey, e.Ez), e.Scale);
+            {
+                var go = SpawnSceneEft(e.Eft, new Vector3(e.X, e.Y, e.Z), new Vector3(e.Ex, e.Ey, e.Ez), e.Scale);
+                if (go != null && (e.Eft == "light_left" || e.Eft == "light_right"))
+                {
+                    if (_oscLightGos == null) _oscLightGos = new List<GameObject>();
+                    _oscLightGos.Add(go);
+                }
+            }
+            if (_oscLightGos != null && _oscLightGos.Count > 0) StartCoroutine(OscLightZCo());
         }
 
-        private void SpawnSceneEft(string name, Vector3 pos, Vector3 euler, float scale)
+        private GameObject SpawnSceneEft(string name, Vector3 pos, Vector3 euler, float scale)
         {
             if (!_namedEftCache.TryGetValue(name, out var file))
             {
                 var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
-                if (!File.Exists(path)) { Debug.LogWarning("[eft] scene eft missing " + path); return; }
+                if (!File.Exists(path)) { Debug.LogWarning("[eft] scene eft missing " + path); return null; }
                 file = EftFile.Load(File.ReadAllBytes(path));
                 _namedEftCache[name] = file;
             }
@@ -2985,6 +3034,7 @@ namespace Sdo.Game
             eff.Init(file, scale, null, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
             if (use3dCamera) SetLayerRecursive(go, SceneLayer);
             Debug.Log($"[eft] scene eft {name} @ {pos} euler {euler} scale {scale}");
+            return go;
         }
 
         private void SpawnNamedEft(string name, float baseScale)

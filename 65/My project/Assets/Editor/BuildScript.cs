@@ -39,6 +39,7 @@ public static class BuildScript
         "Sdo/UnlitInstanced",
         "Sdo/UnlitInstancedAlpha",   // alpha-blended mapobj props ("去背"); stripped -> alpha stage props go magenta
         "Sdo/UnlitInstancedAlphaCullBack", // mirrored separated alpha planes (SCN0011 DING): single-sided blend
+        "Sdo/UnlitAdditiveOverlay",  // soft-alpha mapobj glow sprites (bulbs, lasers, sweep lights)
         "Sdo/UnlitOverlay",          // animated transparent overlays (FIFA crowd, texanim cut-outs)
         "Sdo/SceneVertexAlpha",      // soft-alpha SCENE.MSH materials (glass floors, feathered decals)
         "Sdo/SceneVertexCutout",     // base SCENE.MSH × baked vertex lighting (scene darkening/tint)

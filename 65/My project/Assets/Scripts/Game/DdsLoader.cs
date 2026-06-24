@@ -94,10 +94,135 @@ namespace Sdo.Game
             return DdsAlphaMode.Opaque;
         }
 
+        /// <summary>
+        /// Heuristic for mapobj textures that are authored as light/glow sprites, not ordinary cut-out art.
+        /// These should be additive: soft alpha dominates, visible pixels are very bright, and there is little
+        /// hard opaque silhouette. This keeps people/sign/billboard alpha blended while stage bulbs, lasers and
+        /// sweeping light decals add energy to the scene like the original fixed-function render path.
+        /// </summary>
+        public static bool LooksLikeAdditiveGlow(byte[] d)
+        {
+            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
+            string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
+            int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return false;
+
+            GlowStats s = new GlowStats { Total = width * height };
+            if (fourcc == "DXT3")
+            {
+                if (!CollectDxtGlowStats(d, 128, width, height, dxt5Alpha: false, ref s)) return false;
+            }
+            else if (fourcc == "DXT5")
+            {
+                if (!CollectDxtGlowStats(d, 128, width, height, dxt5Alpha: true, ref s)) return false;
+            }
+            else
+            {
+                uint pf = BitConverter.ToUInt32(d, 80);
+                if ((pf & 0x4u) != 0 || (pf & 0x40u) == 0) return false;
+                uint rm = BitConverter.ToUInt32(d, 92), gm = BitConverter.ToUInt32(d, 96);
+                uint bm = BitConverter.ToUInt32(d, 100), am = BitConverter.ToUInt32(d, 104);
+                int bits = BitConverter.ToInt32(d, 88);
+                if (bits != 32 || am == 0 || !CollectUncompressedGlowStats(d, 128, width, height, rm, gm, bm, am, ref s)) return false;
+            }
+
+            if (s.Visible == 0 || s.Soft == 0) return false;
+            float meanLum = s.LumSum / (float)s.Visible;
+            float visibleRatio = s.Visible / (float)s.Total;
+            float softOfVisible = s.Soft / (float)s.Visible;
+            float opaqueOfVisible = s.Opaque / (float)s.Visible;
+            if (visibleRatio < 0.03f || meanLum < 180f) return false;
+            return softOfVisible >= 0.45f && opaqueOfVisible <= 0.65f;
+        }
+
         private static DdsAlphaMode AccumulateAlphaMode(int alpha, DdsAlphaMode mode, int threshold, int softLow, int softHigh)
         {
             if (alpha > softLow && alpha < softHigh) return DdsAlphaMode.Blend;
             return alpha < threshold ? DdsAlphaMode.Cutout : mode;
+        }
+
+        private struct GlowStats
+        {
+            public int Total, Visible, Soft, Opaque;
+            public long LumSum;
+        }
+
+        private static void AddGlowPixel(ref GlowStats s, Color32 c, int alpha)
+        {
+            if (alpha <= 8) return;
+            s.Visible++;
+            if (alpha < 240) s.Soft++;
+            if (alpha > 240) s.Opaque++;
+            s.LumSum += Math.Max(c.r, Math.Max(c.g, c.b));
+        }
+
+        private static bool CollectDxtGlowStats(byte[] d, int off, int w, int h, bool dxt5Alpha, ref GlowStats s)
+        {
+            int bw = Math.Max(1, (w + 3) / 4), bh = Math.Max(1, (h + 3) / 4);
+            int blockBytes = dxt5Alpha ? 16 : 16;
+            if (off + bw * bh * blockBytes > d.Length) return false;
+            int bi = off;
+            for (int by = 0; by < bh; by++)
+                for (int bx = 0; bx < bw; bx++, bi += blockBytes)
+                {
+                    int colorOff = dxt5Alpha ? bi + 8 : bi + 8;
+                    ushort c0 = (ushort)(d[colorOff] | (d[colorOff + 1] << 8));
+                    ushort c1 = (ushort)(d[colorOff + 2] | (d[colorOff + 3] << 8));
+                    uint bits = (uint)(d[colorOff + 4] | (d[colorOff + 5] << 8) | (d[colorOff + 6] << 16) | (d[colorOff + 7] << 24));
+                    Color32 p0 = From565(c0), p1 = From565(c1);
+                    Color32 p2 = new Color32((byte)((2 * p0.r + p1.r) / 3), (byte)((2 * p0.g + p1.g) / 3), (byte)((2 * p0.b + p1.b) / 3), 255);
+                    Color32 p3 = new Color32((byte)((p0.r + 2 * p1.r) / 3), (byte)((p0.g + 2 * p1.g) / 3), (byte)((p0.b + 2 * p1.b) / 3), 255);
+
+                    ulong aBits = 0; int a0 = 255, a1 = 255;
+                    if (dxt5Alpha)
+                    {
+                        a0 = d[bi]; a1 = d[bi + 1];
+                        for (int k = 0; k < 6; k++) aBits |= (ulong)d[bi + 2 + k] << (8 * k);
+                    }
+
+                    for (int i = 0; i < 16; i++)
+                    {
+                        int x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
+                        if (x >= w || y >= h) continue;
+                        int sel = (int)((bits >> (i * 2)) & 3);
+                        Color32 col = sel == 0 ? p0 : sel == 1 ? p1 : sel == 2 ? p2 : p3;
+                        int alpha;
+                        if (dxt5Alpha)
+                        {
+                            int code = (int)((aBits >> (i * 3)) & 7);
+                            alpha = Dxt5Alpha(a0, a1, code);
+                        }
+                        else
+                        {
+                            int ab = d[bi + (i >> 1)];
+                            int nib = (i & 1) == 0 ? (ab & 0xF) : ((ab >> 4) & 0xF);
+                            alpha = (nib * 255 + 7) / 15;
+                        }
+                        AddGlowPixel(ref s, col, alpha);
+                    }
+                }
+            return true;
+        }
+
+        private static bool CollectUncompressedGlowStats(byte[] d, int off, int w, int h, uint rm, uint gm, uint bm, uint am, ref GlowStats s)
+        {
+            if (off + w * h * 4 > d.Length) return false;
+            int rs = MaskShift(rm), gs = MaskShift(gm), bs = MaskShift(bm), as_ = MaskShift(am);
+            uint rMax = rm >> rs, gMax = gm >> gs, bMax = bm >> bs, aMax = am >> as_;
+            if (rMax == 0 || gMax == 0 || bMax == 0 || aMax == 0) return false;
+            for (int i = 0; i < w * h; i++)
+            {
+                int p = off + i * 4;
+                uint v = (uint)(d[p] | (d[p + 1] << 8) | (d[p + 2] << 16) | (d[p + 3] << 24));
+                var col = new Color32(
+                    (byte)(((v & rm) >> rs) * 255 / rMax),
+                    (byte)(((v & gm) >> gs) * 255 / gMax),
+                    (byte)(((v & bm) >> bs) * 255 / bMax),
+                    255);
+                int alpha = (int)(((v & am) >> as_) * 255 / aMax);
+                AddGlowPixel(ref s, col, alpha);
+            }
+            return true;
         }
 
         private static int Dxt5Alpha(int a0, int a1, int code)
