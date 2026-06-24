@@ -205,6 +205,7 @@ namespace Sdo.Game
             public EftEmitter E;
             public int life, life0, spawnDelay, startDelay;
             public Vector3 rot, pos, baseSize, vel;   // vel = per-particle velocity, randomly TILTED by posSpread (fan-out)
+            public Vector3 liveScale;                  // baseSize × animScale this tick (cached for children to read in attach)
             public Transform tr; public Material mat;
             public Material[] meshMats;   // 3D-mesh submesh materials (non-null only for mesh particles); tinted as a group
             public EftMotMesh meshMot; public float meshMotMax;   // .mot-rigid prop (delta_line): drive its .mot ONCE over the particle's life (no auto-loop)
@@ -434,7 +435,7 @@ namespace Sdo.Game
                     UnityEngine.Random.Range(-1f, 1f) * em.RotJit.x,
                     UnityEngine.Random.Range(-1f, 1f) * em.RotJit.y,
                     UnityEngine.Random.Range(-1f, 1f) * em.RotJit.z),
-                baseSize = bs,
+                baseSize = bs, liveScale = bs,   // liveScale refreshed each tick; default bs so children see non-zero on first spawn
                 ring = em.IsRing,
                 invisible = (em.Flags & 0x40000) != 0 || capMesh,   // capped excess 200 meshes render nothing
                 isTrail = isTrail,
@@ -865,7 +866,17 @@ namespace Sdo.Game
                 else
                 {
                     Quaternion prot = Quaternion.Euler(p.parent.rot);
-                    p.tr.localPosition = p.parent.pos + prot * p.pos;
+                    // D3D9 engine: child world matrix = parent_world × child_local. Parent scale IS part of parent_world,
+                    // so the child's position and scale are multiplied by the parent emitter's own baseSize×animScale.
+                    // Example: STAGELIGHTB slot2 carrier has baseSize.y=5 → slot0 beam pos×5 and scale×5 → 225 world units
+                    // long instead of 45. Trails and meshes are handled by their own render paths — keep old behavior there.
+                    if (!p.isTrail && !p.isMesh)
+                    {
+                        Vector3 ps = p.parent.liveScale;
+                        p.tr.localPosition = p.parent.pos + prot * Vector3.Scale(ps, p.pos);
+                    }
+                    else
+                        p.tr.localPosition = p.parent.pos + prot * p.pos;
                     p.tr.localRotation = prot * Quaternion.Euler(p.rot.x, p.rot.y, p.rot.z);
                 }
             }
@@ -876,7 +887,11 @@ namespace Sdo.Game
                 // its template 90° X → lies flat; the ring's rotY channel spins it. Billboards (p.orient) face the camera.
                 if (!p.orient) p.tr.localRotation = Quaternion.Euler(p.rot.x, p.rot.y, p.rot.z);
             }
-            p.tr.localScale = Vector3.Scale(p.baseSize, animScale);
+            Vector3 ownScale = Vector3.Scale(p.baseSize, animScale);
+            // D3D9 attach mode 1: parent scale is applied to child scale (part of full matrix multiply).
+            p.tr.localScale = (p.attach != 0 && p.parent != null && !p.isTrail && !p.isMesh)
+                ? Vector3.Scale(p.parent.liveScale, ownScale) : ownScale;
+            p.liveScale = ownScale;  // store OWN scale (without parent) so children can multiply it in next tick
             // trail streak: animScale.y already stretches local +Y into the streak; TrailWidthMul tunes its width (local X).
             if (p.isTrail && TrailWidthMul != 1f) { var s = p.tr.localScale; s.x *= TrailWidthMul; p.tr.localScale = s; }
             // billboards (p.orient): oriented to camera in LateUpdate
