@@ -42,5 +42,44 @@ namespace Sdo.Tests
             CollectionAssert.AreEqual(new[] { 3 }, c400[1].Children.Select(e => e.Slot).ToArray());
             CollectionAssert.AreEqual(new[] { 4 }, c400[2].Children.Select(e => e.Slot).ToArray());
         }
+
+        [Test]
+        public void Fire3_TriggerTree_Is_Slot5_Root_Fanning_To_Slot0_Then_Four_Children()
+        {
+            // ROOT: slot5 (persistent INVIS carrier) → slot0 (repeating carrier) → slot1/2/3/4
+            // slot1 = billboard AEF_1_14 blue flame streaks (tex=84, orient)
+            // slot2 = world-quad AEF_1_14 blue flame streaks (tex=84, no orient)
+            // slot4 = billboard AEF_4_02 cyan orb (tex=30, orient); NOT isBallCore for scene EFTs (Persistent)
+            var eft = LoadEft("FIRE3.EFT");
+            CollectionAssert.AreEqual(new[] { 5 }, eft.RootSlots);
+
+            var bySlot = eft.Emitters.ToDictionary(e => e.Slot);
+            CollectionAssert.AreEqual(new[] { 0 }, bySlot[5].Children.Select(e => e.Slot).ToArray());
+            CollectionAssert.AreEquivalent(new[] { 1, 2, 3, 4 }, bySlot[0].Children.Select(e => e.Slot).ToArray());
+
+            // slot4 is the cyan orb billboard (isBallCore source: orient + tex30)
+            Assert.IsTrue(bySlot[4].Orient, "slot4 is a billboard");
+            Assert.AreEqual(30, bySlot[4].TexIdx, "slot4 = AEF_4_02 cyan orb");
+
+            // slot1/2 are the visible flame streaks (tex84=AEF_1_14)
+            Assert.AreEqual(84, bySlot[1].TexIdx, "slot1 = AEF_1_14 blue flame streak billboard");
+            Assert.AreEqual(84, bySlot[2].TexIdx, "slot2 = AEF_1_14 blue flame streak world-quad");
+        }
+
+        [Test]
+        public void Booklight_TriggerTree_Is_Slot3_Root_Then_Slot0_Then_Orange_Orb()
+        {
+            // ROOT: slot3 (persistent INVIS) → slot0 (repeating INVIS) → slot1(INVIS) + slot2(orange orb billboard)
+            // slot2 = billboard AEF_4_03 orange orb (tex=31) — the visible window-glow
+            var eft = LoadEft("BOOKLIGHT.EFT");
+            CollectionAssert.AreEqual(new[] { 3 }, eft.RootSlots);
+
+            var bySlot = eft.Emitters.ToDictionary(e => e.Slot);
+            CollectionAssert.AreEqual(new[] { 0 }, bySlot[3].Children.Select(e => e.Slot).ToArray());
+            CollectionAssert.AreEquivalent(new[] { 1, 2 }, bySlot[0].Children.Select(e => e.Slot).ToArray());
+
+            Assert.IsTrue(bySlot[2].Orient, "slot2 is a billboard");
+            Assert.AreEqual(31, bySlot[2].TexIdx, "slot2 = AEF_4_03 orange orb");
+        }
     }
 }

@@ -935,7 +935,9 @@ namespace Sdo.Game
                 // EXPOSURE RAMP (200/300 fountain balls only): overexposed white-hot at birth → decays to the real
                 // colour over the first BallCoreExpoFrac of life, so the ball's true cyan/violet and the AEF_3_00 blue
                 // mesh behind it emerge as it rises, then alpha fades it. trails/ring/disk stay at real exposure (1).
-                float ci = p.isBallCore
+                // Scene EFTs (Persistent=true) are gentle ambient glows — NOT combo bursts — so skip the ramp; their
+                // orbs (tex30/31) should be soft halos, not white-hot blasts that overwhelm the flame particles above.
+                float ci = p.isBallCore && !Persistent
                     ? Mathf.Lerp(BallCoreIntensity, 1f, Mathf.Clamp01(t / Mathf.Max(0.01f, BallCoreExpoFrac)))
                     : 1f;
                 SetCol(p.mat, r * ci, g * ci, b * ci, a);

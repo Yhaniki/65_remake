@@ -86,10 +86,11 @@ namespace Sdo.Game
                     // booklight = Effect_Play(0x34) × 4, bone-attached to Plane29/31/33/66 nodes.
                     // CHUANG.DDS geometry gives 3 window quads on left wall (x=-297, y=[63..490]):
                     //   Window 1 z=[349..517], Window 2 z=[602..770], Window 3 z=[854..1023].
-                    // Placed at window centres facing inward; scale matched to window span (~168 units).
-                    new SceneEftPlacement("booklight", -297f, 276f, 433f, 0, 0, 0, 100f),
-                    new SceneEftPlacement("booklight", -297f, 276f, 686f, 0, 0, 0, 100f),
-                    new SceneEftPlacement("booklight", -297f, 276f, 938f, 0, 0, 0, 100f),
+                    // Placed at x=-250 (47 units inside room from wall surface x=-297) so billboard
+                    // centres are clearly in front of the wall and pass the additive depth test.
+                    new SceneEftPlacement("booklight", -250f, 276f, 433f, 0, 0, 0, 100f),
+                    new SceneEftPlacement("booklight", -250f, 276f, 686f, 0, 0, 0, 100f),
+                    new SceneEftPlacement("booklight", -250f, 276f, 938f, 0, 0, 0, 100f),
                 },
                 ["SCN0024"] = new[]   // 雪景: snow
                 {

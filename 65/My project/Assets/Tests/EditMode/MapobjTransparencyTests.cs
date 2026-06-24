@@ -233,5 +233,32 @@ namespace Sdo.Tests
             Assert.AreEqual(3, SceneEftCatalog.ForFolder("SCN0037").Count);
             Assert.AreEqual(SceneEftCatalog.ForFolder("SCN0037").Count, SceneEftCatalog.ForFolder("SCN0038").Count);
         }
+
+        [Test]
+        public void SceneEft_Scn0015_Fire3_And_Booklights()
+        {
+            var fx = SceneEftCatalog.ForFolder("SCN0015");
+            Assert.AreEqual(4, fx.Count);   // fire3 + 3 booklight
+
+            // fire3: from decompiled Effect_Play(0x35) + Effect_SetTransformAnimated coords
+            var fire3 = fx[0];
+            Assert.AreEqual("fire3", fire3.Eft);
+            Assert.AreEqual(55.15f, fire3.X, 0.01f);
+            Assert.AreEqual(339.83f, fire3.Y, 0.01f);
+            Assert.AreEqual(1237.66f, fire3.Z, 0.01f);
+            Assert.AreEqual(100f, fire3.Scale, 1e-3f);
+
+            // booklight: x=-250 (47 units inside room from wall surface x=-297) so billboard is in front of wall
+            for (int i = 1; i <= 3; i++)
+            {
+                Assert.AreEqual("booklight", fx[i].Eft);
+                Assert.AreEqual(-250f, fx[i].X, 1e-3f);
+                Assert.AreEqual(276f, fx[i].Y, 1e-3f);
+            }
+            // z centres at window mid-points
+            Assert.AreEqual(433f, fx[1].Z, 1f);
+            Assert.AreEqual(686f, fx[2].Z, 1f);
+            Assert.AreEqual(938f, fx[3].Z, 1f);
+        }
     }
 }
