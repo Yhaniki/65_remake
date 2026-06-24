@@ -31,13 +31,12 @@ namespace Sdo.Game
 
         private static readonly Target[] Targets =
         {
-            // SCN0011 StageScene_UpdateScrollLights: UV scroll V += 0.003/frame on Vector_at4b(0) = SCREEN mapobj.
-            // BEIJING.DDS (8192×128) has a repeating blue dot/band pattern; scroll creates the running-light effect on
-            // the speaker side panel. The world position comes from DAT_00677d18 (BSS, runtime-filled) — unknown until
-            // the original game is profiled. At (0,0,0) the mesh appears as a stage-centre wall, not a speaker panel,
-            // so the scroll is held here but NOT activated until the correct world placement is known.
-            // TODO: capture SCN0011 SCREEN position via procmon/Frida and update SceneMapobjCatalog.
-            // new Target("SCN0011", "SCREEN", -1, new Vector2(0f, -0.18f)),
+            // SCN0011 StageScene_UpdateScrollLights: UV scroll V += 0.003/frame on Vector_at4b(0).
+            // Vector_at4b[0] = CAIDAI — only uVar13==1 (CAIDAI) calls AvatarScene_Create(..., param3=1) which
+            // registers it as the UV-scroll target; all others pass 0 and are skipped.
+            // caidai.dds (32×128 DXT1) tiles V −1~2 (3× repeat) on the 彩帶 vertical light strip next to the speaker.
+            // D3D9 positive V → Unity negative V (DDS raw-load flips V axis, same as CoralV convention).
+            new Target("SCN0011", "CAIDAI", -1, new Vector2(0f, -0.18f)),  // 0.003 × 60fps = 0.18/s, negated
             // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
             new Target(null, "SHANHU-BAI", -1, CoralV),
             new Target(null, "SHANHU-HONG", -1, CoralV),
