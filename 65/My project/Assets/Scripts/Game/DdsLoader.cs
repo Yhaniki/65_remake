@@ -132,9 +132,12 @@ namespace Sdo.Game
             float softOfVisible = s.Soft / (float)s.Visible;
             float opaqueOfVisible = s.Opaque / (float)s.Visible;
             if (visibleRatio < 0.03f) return false;
-            // Radial-gradient glow sprite (e.g. GUANG1_): transparent outer border (visibleRatio < 0.95),
-            // entirely soft alpha (no hard edge, no opaque core). Additive blend makes even dim RGB glow.
-            if (visibleRatio < 0.95f && softOfVisible >= 0.95f && opaqueOfVisible < 0.05f && meanLum >= 40f) return true;
+            // Radial-gradient glow sprite (e.g. GUANG1_, SCN0016 SS_.DDS floor strips): transparent outer border
+            // (visibleRatio < 0.95), nearly-entirely soft alpha (no hard opaque silhouette). Additive blend makes
+            // even dim RGB glow. Thresholds are intentionally relaxed (~0.90 soft / <0.10 opaque) to capture
+            // gradient-strip textures whose DXT3 quantisation pushes a small fraction of mid-alpha pixels past the
+            // "fully opaque" boundary (SS_.DDS: softOfVisible≈0.939, opaqueOfVisible≈0.061).
+            if (visibleRatio < 0.95f && softOfVisible >= 0.90f && opaqueOfVisible < 0.10f && meanLum >= 40f) return true;
             if (meanLum < 180f) return false;
             return softOfVisible >= 0.45f && opaqueOfVisible <= 0.65f;
         }

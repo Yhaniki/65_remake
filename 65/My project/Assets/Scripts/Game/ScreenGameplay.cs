@@ -1387,6 +1387,7 @@ namespace Sdo.Game
                     parent.transform.localScale = Vector3.one * instances[idx].Scale;
                     var avatar = parent.AddComponent<SdoAvatar>();
                     avatar.Setup(hrc, mot);                                   // drives the bone FK from the .mot (no parts -> no skin)
+                    avatar.PhaseOffsetSec = phaseOffsetSec;
                     AttachSceneEftsToMapobj(baseName, avatar, parent.transform);
                     // each submesh rides its own leaf bone (trophy: ball on Sphere01, cup on Cylinder01) so the .mot
                     // spins/animates every part; the verts stay in bone-local space (NOT baked).
