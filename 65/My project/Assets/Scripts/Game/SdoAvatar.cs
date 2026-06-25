@@ -249,6 +249,13 @@ namespace Sdo.Game
         public Vector3 BoneModelPos(string name)
         { int i = BoneIndex(name); return (i >= 0 && _animWorld != null && i < _animWorld.Length) ? (Vector3)_animWorld[i].GetColumn(3) : Vector3.zero; }
 
+        /// <summary>Evaluate one frame immediately so newly attached props/effects can start from a valid bone pose
+        /// before the first LateUpdate.</summary>
+        public void PoseFrame(float frame)
+        {
+            if (_hrc == null || _animWorld == null) return;
+            Pose(frame);
+        }
 
         /// <summary>Register a child transform that tracks a bone's animated (model-space) position each frame.</summary>
         public void AddAnchor(int bone, Transform t) { if (bone >= 0) _anchors.Add((bone, t)); }

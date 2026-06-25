@@ -11,23 +11,37 @@ namespace Sdo.Game
     {
         public const string SceneObject = "SCENE";
 
+        public enum RenderMode
+        {
+            KeepMaterial,
+            AdditiveOverlay,
+            // Force standard alpha-blend (SrcAlpha,OneMinusSrcAlpha) regardless of what the MSH loader assigned.
+            // Needed when LooksLikeAdditiveGlow() misclassifies a texture that D3D9 confirmed uses DST=INVSRCALPHA.
+            ForceAlphaBlend,
+        }
+
         public readonly struct Target
         {
             public readonly string Folder;     // null/empty = any scene
             public readonly string ObjectKey;
             public readonly int MaterialId;    // -1 = all materials on the object
             public readonly Vector2 Speed;
+            public readonly RenderMode Mode;
 
-            public Target(string folder, string objectKey, int materialId, Vector2 speed)
+            public Target(string folder, string objectKey, int materialId, Vector2 speed, RenderMode mode = RenderMode.KeepMaterial)
             {
                 Folder = folder;
                 ObjectKey = objectKey;
                 MaterialId = materialId;
                 Speed = speed;
+                Mode = mode;
             }
         }
 
         private static readonly Vector2 CoralV = new Vector2(0f, -0.08f); // V += 0.004 per 50 ms
+        // D3D9 V += 0.003/50ms = +0.06/s. Test confirmed positive sign is correct (unlike CoralV).
+        // Angular-edge issue tracked in decomp doc; suspect UV scale transform not yet captured.
+        private static readonly Vector2 Scn0015WindowUv = new Vector2(0f, 0.06f);
 
         private static readonly Target[] Targets =
         {
@@ -37,6 +51,15 @@ namespace Sdo.Game
             // caidai.dds (32×128 DXT1) tiles V −1~2 (3× repeat) on the 彩帶 vertical light strip next to the speaker.
             // D3D9 positive V → Unity negative V (DDS raw-load flips V axis, same as CoralV convention).
             new Target("SCN0011", "CAIDAI", -1, new Vector2(0f, 1.775f)),   // measured: online sdo.bin @ 593fps → 0.003×593 = 1.775 UV/s
+            // SCN0015 FUN_004b0620: every 50 ms set U=0 and V=DAT_00678534, then DAT_00678534 += 0.003.
+            // 15_UV is the only mapobj created with param3=1 in scene-load case 0xf; HUA/SHU1-4 pass 0.
+            // The texture itself is diagonal, so a pure V scroll reads as the window beam sliding diagonally down.
+            // D3D9 capture (hook onLeave after RenderObjPre): ABL=1 SRC=SRCALPHA(5) DST=INVSRCALPHA(6)
+            // = STANDARD alpha blend (NOT additive). ZWrite=1, CULL=3, TTF0=COUNT2(2), ADDR=WRAP, FILTER=LINEAR.
+            // ForceAlphaBlend overrides the MSH loader — LooksLikeAdditiveGlow returns true for GUANG1_.DDS
+            // (it matches the "soft alpha, low opaque, mid lum" heuristic for radial glow sprites), so without
+            // the override the material becomes Sdo/UnlitAdditiveOverlay, producing a hard bright mesh-edge band.
+            new Target("SCN0015", "15_UV", -1, Scn0015WindowUv, RenderMode.ForceAlphaBlend),
             // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
             new Target(null, "SHANHU-BAI", -1, CoralV),
             new Target(null, "SHANHU-HONG", -1, CoralV),
@@ -49,7 +72,23 @@ namespace Sdo.Game
         /// <summary>UV-scroll speed (UV/s) for a scene object/material slot, or Vector2.zero if it does not scroll.</summary>
         public static Vector2 Find(string folder, string objectKey, int materialId = -1)
         {
-            if (string.IsNullOrEmpty(objectKey)) return Vector2.zero;
+            return TryFind(folder, objectKey, materialId, out var target) ? target.Speed : Vector2.zero;
+        }
+
+        public static RenderMode FindRenderMode(string folder, string objectKey, int materialId = -1)
+        {
+            return TryFind(folder, objectKey, materialId, out var target) ? target.Mode : RenderMode.KeepMaterial;
+        }
+
+        public static bool UsesAdditiveOverlay(string folder, string objectKey, int materialId = -1)
+        {
+            return FindRenderMode(folder, objectKey, materialId) == RenderMode.AdditiveOverlay;
+        }
+
+        private static bool TryFind(string folder, string objectKey, int materialId, out Target target)
+        {
+            target = default;
+            if (string.IsNullOrEmpty(objectKey)) return false;
             for (int i = 0; i < Targets.Length; i++)
             {
                 var t = Targets[i];
@@ -58,9 +97,10 @@ namespace Sdo.Game
                 if (!string.Equals(t.ObjectKey, objectKey, System.StringComparison.OrdinalIgnoreCase)) continue;
                 if (t.MaterialId >= 0 && materialId >= 0 && t.MaterialId != materialId) continue;
                 if (t.MaterialId >= 0 && materialId < 0) continue;
-                return t.Speed;
+                target = t;
+                return true;
             }
-            return Vector2.zero;
+            return false;
         }
     }
 }

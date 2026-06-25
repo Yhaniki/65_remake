@@ -238,7 +238,7 @@ namespace Sdo.Tests
         public void SceneEft_Scn0015_Fire3_And_Booklights()
         {
             var fx = SceneEftCatalog.ForFolder("SCN0015");
-            Assert.AreEqual(4, fx.Count);   // fire3 + 3 booklight
+            Assert.AreEqual(1, fx.Count);   // fire3; booklight is bone-attached to SHU1-4
 
             // fire3: from decompiled Effect_Play(0x35) + Effect_SetTransformAnimated coords
             var fire3 = fx[0];
@@ -247,18 +247,64 @@ namespace Sdo.Tests
             Assert.AreEqual(339.83f, fire3.Y, 0.01f);
             Assert.AreEqual(1237.66f, fire3.Z, 0.01f);
             Assert.AreEqual(100f, fire3.Scale, 1e-3f);
+        }
 
-            // booklight: x=-250 (47 units inside room from wall surface x=-297) so billboard is in front of wall
-            for (int i = 1; i <= 3; i++)
+        [Test]
+        public void SceneAttachedEft_Scn0015_Booklights_Follow_Official_Bones()
+        {
+            var map = new[]
             {
-                Assert.AreEqual("booklight", fx[i].Eft);
-                Assert.AreEqual(-250f, fx[i].X, 1e-3f);
-                Assert.AreEqual(276f, fx[i].Y, 1e-3f);
+                ("15_SHU1", "Plane29"),
+                ("15_SHU2", "Plane66"),
+                ("15_SHU3", "Plane33"),
+                ("15_SHU4", "Plane31"),
+            };
+
+            foreach (var (mapobj, bone) in map)
+            {
+                var attached = SceneAttachedEftCatalog.ForMapobj("SCN0015", mapobj);
+                Assert.AreEqual(1, attached.Count);
+                Assert.AreEqual("booklight", attached[0].Eft);
+                Assert.AreEqual(bone, attached[0].Bone);
+                Assert.AreEqual(0f, attached[0].Offset.x, 1e-3f);
+                Assert.AreEqual(-5f, attached[0].Offset.y, 1e-3f);
+                Assert.AreEqual(0f, attached[0].Offset.z, 1e-3f);
+                Assert.AreEqual(20f, attached[0].Scale, 1e-3f);
             }
-            // z centres at window mid-points
-            Assert.AreEqual(433f, fx[1].Z, 1f);
-            Assert.AreEqual(686f, fx[2].Z, 1f);
-            Assert.AreEqual(938f, fx[3].Z, 1f);
+        }
+
+        [Test]
+        public void SceneEftRender_Scn0015_Profiles_Fire_And_Book_Glow()
+        {
+            var flame = SceneEftRenderCatalog.Find("fire3", 2, 84);
+            Assert.Greater(flame.RgbMul, 1f);
+            Assert.Greater(flame.AlphaMul, 1f);
+            Assert.AreEqual(1f, flame.ScaleMul.x, 1e-3f);
+            Assert.AreEqual(1f, flame.ScaleMul.y, 1e-3f);
+
+            var halo = SceneEftRenderCatalog.Find("fire3", 4, 30);
+            Assert.Less(halo.RgbMul, 1f);
+            Assert.Less(halo.AlphaMul, 1f);
+            Assert.Greater(halo.ScaleMul.x, 0.5f);
+            Assert.Greater(halo.ScaleMul.y, 0.5f);
+
+            var book = SceneEftRenderCatalog.Find("booklight", 2, 31);
+            Assert.Less(book.RgbMul, 1f);
+            Assert.Less(book.AlphaMul, 1f);
+            Assert.Greater(book.ScaleMul.x, 1.5f);
+            Assert.Less(book.ScaleMul.x, 2f);
+            Assert.AreEqual(1f, SceneEftRenderCatalog.Find("booklight", 0, 0).ScaleMul.x, 1e-3f);
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0015_WindowBeam_Uses_Mapobj_Target()
+        {
+            var speed = SceneMapobjUvScrollCatalog.Find("SCN0015", "15_UV");
+            Assert.AreEqual(0f, speed.x, 1e-6f);
+            Assert.AreEqual(0.06f, speed.y, 1e-6f);
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0015", "15_UV"));
+            Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0015", "15_HUA").sqrMagnitude, 1e-6f);
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0015", "15_HUA"));
         }
     }
 }

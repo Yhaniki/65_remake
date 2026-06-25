@@ -232,6 +232,27 @@ namespace Sdo.Game
         public static Texture2D LoadTextureRaw(string folder, string imageName)
             => LoadTexture(Path.Combine(folder, imageName));
 
+        // Separate cache for linear-import textures (D3D9-gamma-compatible: no sRGB decode on sampling).
+        // Used for EFT particle textures so their soft gradients match D3D9 gamma appearance: dark edge pixels
+        // (value 0.1 gamma) are kept as 0.1 in Unity linear → display shows 0.35 brightness, same as D3D9.
+        // With sRGB import the same 0.1 would decode to 0.01 linear → display ~0.10 → near-invisible → hard edge.
+        private static readonly Dictionary<string, Texture2D> _texLinearCache = new Dictionary<string, Texture2D>();
+
+        private static Texture2D LoadTextureLinear(string path)
+        {
+            if (_texLinearCache.TryGetValue(path, out var t) && t != null) return t;
+            if (!File.Exists(path)) return null;
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);   // linear=true
+            tex.LoadImage(File.ReadAllBytes(path));
+            tex.filterMode = FilterMode.Bilinear;
+            tex.wrapMode = TextureWrapMode.Clamp;
+            _texLinearCache[path] = tex;
+            return tex;
+        }
+
+        public static Texture2D LoadTextureRawLinear(string folder, string imageName)
+            => LoadTextureLinear(Path.Combine(folder, imageName));
+
         /// <summary>
         /// Build a sprite from <paramref name="src"/> with every per-pixel alpha multiplied by <paramref name="gain"/>
         /// (clamped to 255). gain=1 reproduces the source EXACTLY (its native alpha curve, all detail intact);

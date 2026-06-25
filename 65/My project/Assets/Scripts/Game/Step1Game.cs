@@ -1364,9 +1364,12 @@ namespace Sdo.Game
                 foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) scrollMats.Add(m);
                 if (scrollMats.Count > 0)
                 {
+                    var renderMode = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName);
+                    if (renderMode != SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial)
+                        for (int i = 0; i < scrollMats.Count; i++) ApplyMapobjRenderMode(scrollMats[i], renderMode);
                     var holder = new GameObject(baseName + "_uvscroll");
                     holder.AddComponent<MapobjUvScroll>().Init(scrollMats.ToArray(), uvScroll);
-                    Debug.Log($"[mapobj] {baseName}: uv-scroll {uvScroll}");
+                    Debug.Log($"[mapobj] {baseName}: uv-scroll {uvScroll}, render={renderMode}");
                 }
             }
 
@@ -1384,6 +1387,7 @@ namespace Sdo.Game
                     parent.transform.localScale = Vector3.one * instances[idx].Scale;
                     var avatar = parent.AddComponent<SdoAvatar>();
                     avatar.Setup(hrc, mot);                                   // drives the bone FK from the .mot (no parts -> no skin)
+                    AttachSceneEftsToMapobj(baseName, avatar, parent.transform);
                     // each submesh rides its own leaf bone (trophy: ball on Sphere01, cup on Cylinder01) so the .mot
                     // spins/animates every part; the verts stay in bone-local space (NOT baked).
                     for (int s = 0; s < r.Submeshes.Count; s++)
@@ -1423,6 +1427,7 @@ namespace Sdo.Game
                     var avatar = parent.AddComponent<SdoAvatar>();
                     avatar.GpuSkinning = true;
                     avatar.Setup(hrc, mot);
+                    AttachSceneEftsToMapobj(baseName, avatar, parent.transform);
                     int si = 0;
                     foreach (var sub in r.Submeshes)
                     {
@@ -1448,7 +1453,12 @@ namespace Sdo.Game
                 {
                     // driver: owns the skinned meshes (+ the SdoAvatar that animates them, null DPS -> auto-loops .mot)
                     SdoAvatar avatar = hrc != null ? parent.AddComponent<SdoAvatar>() : null;
-                    if (avatar != null) { avatar.Setup(hrc, mot); avatar.PhaseOffsetSec = phaseOffsetSec; }
+                    if (avatar != null)
+                    {
+                        avatar.Setup(hrc, mot);
+                        avatar.PhaseOffsetSec = phaseOffsetSec;
+                        AttachSceneEftsToMapobj(baseName, avatar, parent.transform);
+                    }
                     int si = 0;
                     foreach (var sub in r.Submeshes)
                     {
@@ -1540,6 +1550,30 @@ namespace Sdo.Game
                                : new Material(Shader.Find("Unlit/Color")) { color = fallbackCol };
         }
 
+        private static void ApplyMapobjRenderMode(Material mat, SceneMapobjUvScrollCatalog.RenderMode mode)
+        {
+            if (mat == null || mode == SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial) return;
+            if (mode == SceneMapobjUvScrollCatalog.RenderMode.AdditiveOverlay)
+            {
+                var shader = Shader.Find("Sdo/UnlitAdditiveOverlay");
+                if (shader != null) mat.shader = shader;
+                if (mat.HasProperty("_Color")) mat.color = Color.white;
+            }
+            else if (mode == SceneMapobjUvScrollCatalog.RenderMode.ForceAlphaBlend)
+            {
+                // Override whatever shader the MSH loader chose with the standard alpha-blend shader.
+                // Required when LooksLikeAdditiveGlow incorrectly classifies a texture that D3D9 uses as
+                // SrcAlpha/InvSrcAlpha (standard blend), not SrcAlpha/One (additive).
+                // D3D9 capture shows CULL=3 (CW = single-sided). Use CullBack variant to match;
+                // Cull Off would render the quad twice (front + back), doubling the effective opacity.
+                var shader = Shader.Find("Sdo/UnlitInstancedAlphaCullBack");
+                if (shader != null) mat.shader = shader;
+                // Alpha multiplier for the window beam. Texture max alpha is 33%; this value scales
+                // it further so the overall opacity can be tuned without touching the DDS asset.
+                if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, 0.2f);
+            }
+        }
+
         // One renderer for a mapobj submesh: a child GameObject with a MeshFilter pointing at the (possibly shared)
         // mesh and a MeshRenderer with the shared material set. Used for both the driver and its clone instances.
         private static void AddMapobjMeshChild(Transform parent, string name, Mesh mesh, Material[] mats)
@@ -1626,6 +1660,7 @@ namespace Sdo.Game
             {
                 Vector2 v = SceneMapobjUvScrollCatalog.Find(folder, SceneMapobjUvScrollCatalog.SceneObject, materialIds[i]);
                 if (v == Vector2.zero || mats[i] == null) continue;
+                ApplyMapobjRenderMode(mats[i], SceneMapobjUvScrollCatalog.FindRenderMode(folder, SceneMapobjUvScrollCatalog.SceneObject, materialIds[i]));
                 int group = -1;
                 for (int g = 0; g < speeds.Count; g++)
                 {
@@ -3043,7 +3078,43 @@ namespace Sdo.Game
             if (hasDelayed) StartCoroutine(SpawnDelayedEftCo(placements));
         }
 
-        private GameObject SpawnSceneEft(string name, Vector3 pos, Vector3 euler, float scale)
+        private void AttachSceneEftsToMapobj(string baseName, SdoAvatar avatar, Transform owner)
+        {
+            if (avatar == null || owner == null) return;
+            var entries = SceneAttachedEftCatalog.ForMapobj(SceneFolder(), baseName);
+            if (entries.Count == 0) return;
+
+            avatar.PoseFrame(0f);
+            foreach (var e in entries)
+            {
+                int bone = avatar.BoneIndex(e.Bone);
+                if (bone < 0)
+                {
+                    Debug.LogWarning($"[eft] attached scene eft {e.Eft}: bone {e.Bone} missing on {baseName}");
+                    continue;
+                }
+
+                var anchorGo = new GameObject($"{baseName}_{e.Bone}_{e.Eft}_anchor");
+                anchorGo.transform.SetParent(owner, false);
+                Transform follow = anchorGo.transform;
+                if (e.Offset != Vector3.zero)
+                {
+                    var offsetGo = new GameObject("offset");
+                    offsetGo.transform.SetParent(anchorGo.transform, false);
+                    offsetGo.transform.localPosition = e.Offset;
+                    follow = offsetGo.transform;
+                }
+
+                avatar.AddAnchor(bone, anchorGo.transform);
+                anchorGo.transform.position = owner.TransformPoint(avatar.BoneModelPos(e.Bone));
+                var go = SpawnSceneEft(e.Eft, follow.position, e.EulerDeg, e.Scale, follow);
+                RegisterSceneEft(go, e.Eft);
+                if (use3dCamera) SetLayerRecursive(anchorGo, SceneLayer);
+                Debug.Log($"[eft] attached scene eft {e.Eft} -> {baseName}/{e.Bone} offset {e.Offset} scale {e.Scale}");
+            }
+        }
+
+        private GameObject SpawnSceneEft(string name, Vector3 pos, Vector3 euler, float scale, Transform follow = null)
         {
             if (!_namedEftCache.TryGetValue(name, out var file))
             {
@@ -3058,7 +3129,8 @@ namespace Sdo.Game
             int layer = use3dCamera ? SceneLayer : 0;
             var eff = go.AddComponent<EftEffect>();
             eff.Persistent = true;   // never auto-destroy; loops for the whole song
-            eff.Init(file, scale, null, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
+            eff.EffectName = name;
+            eff.Init(file, scale, follow, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
             if (use3dCamera) SetLayerRecursive(go, SceneLayer);
             Debug.Log($"[eft] scene eft {name} @ {pos} euler {euler} scale {scale}");
             return go;
@@ -3108,7 +3180,10 @@ namespace Sdo.Game
                 var rel = _eftTexList[idx].Replace("generic\\", "").Replace("generic/", "").Replace('\\', '/');
                 var dir = Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", Path.GetDirectoryName(rel) ?? "");
                 var name = Path.GetFileName(rel).ToUpperInvariant();
-                tex = SdoExtracted.LoadTextureRaw(dir, name + ".png") ?? SdoExtracted.LoadTextureRaw(dir, name + ".BMP");
+                // Linear import: EFT textures are gamma-encoded D3D9 assets. Loading as sRGB would decode dark
+                // edge pixels to near-zero (0.1→0.01 linear), making soft additive gradients appear as hard rings.
+                // Linear import keeps 0.1 as 0.1, so the additive contribution (×display-gamma) matches D3D9.
+                tex = SdoExtracted.LoadTextureRawLinear(dir, name + ".png") ?? SdoExtracted.LoadTextureRawLinear(dir, name + ".BMP");
             }
             _eftTexCache[idx] = tex;
             return tex;

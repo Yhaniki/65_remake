@@ -198,6 +198,7 @@ namespace Sdo.Game
         // die it re-spawns its roots (loops), so the original's "play once in the scene ctor, runs the whole song" is
         // reproduced. Default false = the one-shot combo-burst behaviour (auto-destroys when spent). Set before Init.
         public bool Persistent;
+        public string EffectName;
         static Texture2D _glow;
 
         sealed class P
@@ -213,6 +214,8 @@ namespace Sdo.Game
             public bool ring, orient, started, invisible, isTrail, isMesh;
             public bool mesh300;   // AEF_3_00 mesh riding a RISING ball (orient parent) = the 300 case → 300-only params
             public bool isBallCore;   // 200/300 burst ball billboard (tex30/31) → optional BallCoreIntensity boost in StepParticle
+            public float renderRgbMul = 1f, renderAlphaMul = 1f;
+            public Vector3 renderScaleMul = Vector3.one;
             // ATTACH-TO-PARENT (engine word[0x37]): when attach!=0 this particle RIDES `parent` — each frame its world
             // position = parent.pos + (parent.rot × its own local drift). 200/300 slot0 mesh locks to its parent this way.
             // lockToParent: when the parent itself MOVES (300's rising orb), suppress the own drift so the mesh stays
@@ -303,7 +306,12 @@ namespace Sdo.Game
                 frames = new Texture2D[em.FrameCount];
                 for (int i = 0; i < em.FrameCount; i++) frames[i] = _texResolver(em.FrameTex[i]);
             }
-            int emit = Mathf.Max(1, em.Emit);
+            // Emit=0 means this slot produces no particles in the original engine (FIRE3 slot1: billboard tex84,
+            // Emit=0 → never spawns despite being in the trigger tree). Only carriers (0x40000) keep ≥1 phantom
+            // particle as a position anchor so their children get correct world coordinates.
+            bool isCarrierSlot = (em.Flags & 0x40000) != 0;
+            int emit = em.Emit > 0 ? em.Emit : (isCarrierSlot ? 1 : 0);
+            if (emit == 0) return;
             for (int n = 0; n < emit; n++) Spawn(em, tex, frames, extraDelay, isRoot, parentPos, parentAzim, parentVel, n, emit, parentP);
         }
 
@@ -390,6 +398,7 @@ namespace Sdo.Game
                 if (_mesh32Count >= MeshMax200) capMesh = true;
                 else _mesh32Count++;
             }
+            var renderTuning = Persistent ? SceneEftRenderCatalog.Find(EffectName, em.Slot, em.TexIdx) : SceneEftRenderCatalog.Identity;
             var p = new P
             {
                 E = em,
@@ -417,7 +426,9 @@ namespace Sdo.Game
                 parent = em.AttachMode != 0 ? parentP : null,
                 // a mesh riding a MOVING parent welds to it (300's rising orb → no drift); riding a STATIONARY parent it
                 // keeps its drift (200's ground external → fans out). parentVel is the parent's spawn velocity.
-                lockToParent = em.AttachMode != 0 && parentVel.sqrMagnitude > 1e-8f,
+                // Only MESH particles lock; non-mesh (billboard/world-quad) always integrate their OWN velocity on top of
+                // the parent position — official engine data confirms fire3 slot2 rises at vel.y=0.05 despite attach=1.
+                lockToParent = isMesh && em.AttachMode != 0 && parentVel.sqrMagnitude > 1e-8f,
                 // per-particle velocity, TILTED by a random angle within posSpread (engine: Math_RotateAroundAxis of
                 // vel by rand(±posSpreadX°, ±posSpreadZ°) at spawn). This is what fans a spray OUT into a fountain —
                 // 200/300's billboards (vel up + posSpread 34/38) must scatter, not rise in lockstep. TRAILS use their
@@ -449,6 +460,9 @@ namespace Sdo.Game
                 // BallCoreIntensity boosts (their texture core is near-white, so a brighter additive enlarges the
                 // white-hot blob; the burst camera's gamma-clip is the main mechanism, this is just an extra lever).
                 isBallCore = em.Orient && !isTrail && !isMesh && (em.TexIdx == 30 || em.TexIdx == 31),
+                renderRgbMul = renderTuning.RgbMul,
+                renderAlphaMul = renderTuning.AlphaMul,
+                renderScaleMul = renderTuning.ScaleMul,
                 // texture flipbook (only when this emitter has >1 frame); frame 0 is the initial texture already set
                 frameTex = frames, frameCount = frames != null ? em.FrameCount : 1,
                 frameHold = em.FrameHold, frameLoop = em.FrameLoop,
@@ -829,6 +843,13 @@ namespace Sdo.Game
                 g = TrailTint.g * TrailBright * 255f;
                 b = TrailTint.b * TrailBright * 255f;
             }
+            if (p.renderRgbMul != 1f || p.renderAlphaMul != 1f)
+            {
+                r *= p.renderRgbMul;
+                g *= p.renderRgbMul;
+                b *= p.renderRgbMul;
+                a *= p.renderAlphaMul;
+            }
             // 3D mesh COLOUR: the engine tints the mesh by the particle DIFFUSE (param_1[0x34] → TEXTUREFACTOR/vertex
             // colour, 030_scene:5560/5567), NOT white — so AEF_3_00's raw blue is modulated by slot0's diffuse channels
             // (ch2-4 ≈ 229,195,~240 = a pale lavender-pink), giving the "官方有調過色" adjusted blue-violet rather than
@@ -887,7 +908,7 @@ namespace Sdo.Game
                 // its template 90° X → lies flat; the ring's rotY channel spins it. Billboards (p.orient) face the camera.
                 if (!p.orient) p.tr.localRotation = Quaternion.Euler(p.rot.x, p.rot.y, p.rot.z);
             }
-            Vector3 ownScale = Vector3.Scale(p.baseSize, animScale);
+            Vector3 ownScale = Vector3.Scale(Vector3.Scale(p.baseSize, animScale), p.renderScaleMul);
             // D3D9 attach mode 1: parent scale is applied to child scale (part of full matrix multiply).
             p.tr.localScale = (p.attach != 0 && p.parent != null && !p.isTrail && !p.isMesh)
                 ? Vector3.Scale(p.parent.liveScale, ownScale) : ownScale;
