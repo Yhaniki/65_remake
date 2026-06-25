@@ -19,7 +19,7 @@ namespace Sdo.Game
     /// (029_scene_004ad250.c StageSceneNN_ctor → Effect_Play(id) + Effect_SetTransformAnimated). The original plays
     /// these once when the stage loads and they run the whole song (snow, aurora, the SCN0008 magic circle "結界",
     /// carnival lights, sea bubbles…). Effect ids resolve to names via the exe's effect-name table (id 31 =
-    /// kikkai_3.eft, etc.). Keyed by scene FOLDER (SceneMapobjCatalog's key). Spawned by Step1Game.SpawnSceneEffects
+    /// kikkai_3.eft, etc.). Keyed by scene FOLDER (SceneMapobjCatalog's key). Spawned by ScreenGameplay.SpawnSceneEffects
     /// as persistent placed EftEffects. Bone-attached effects (SCN0015 booklight) live in
     /// <see cref="SceneAttachedEftCatalog"/>; data-table-positioned ones (SCN0028 niaochao, wedding rooms) are
     /// intentionally omitted for now.
@@ -104,7 +104,7 @@ namespace Sdo.Game
         // DAT_005882c8) plus the per-frame StageScene_UpdateOscPlanes_004b2310 (24× light_left/light_right, scale 15,
         // table DAT_00588310, spawned in 4 waves and swept ±10° on Z). Because the remake's catalog was built from the
         // StageSceneNN ctors only, SCN0003 had zero effects and the whole stage was dark. We place all 30 statically
-        // here (positions/scales verbatim from the exe); the ±10° Z sway is driven by Step1Game.OscLightZCo.
+        // here (positions/scales verbatim from the exe); the ±10° Z sway is driven by ScreenGameplay.OscLightZCo.
         // light_right = id 7 (the 3 beams on each band's stage-right half), light_left = id 6 (stage-left half).
         //
         // BEAM ORIENTATION: EFT emitter slot2 (invisible carrier) has InitRot already baked:
@@ -113,7 +113,7 @@ namespace Sdo.Game
         // The beam (slot0, attach=1) rides the carrier: in EftEffect StepParticle the carrier's p.rot is used as prot
         // and applied to the beam's localRotation directly. Placement euler must therefore be (0,0,0) — any non-zero
         // GO rotation stacks on top of carrier's InitRot and double-applies the tilt, flipping the beams back UP.
-        // The official sweeps GO Z rotation ±10° (vel=0.5°/50ms, FUN_004b2310); Step1Game.OscLightZCo replicates that.
+        // The official sweeps GO Z rotation ±10° (vel=0.5°/50ms, FUN_004b2310); ScreenGameplay.OscLightZCo replicates that.
         private static SceneEftPlacement[] MainStageLights() => new[]
         {
             // 6 static stage_3_light (Effect_Play(4), scale 2.0) bracketing the dance spot at floor level

@@ -15,8 +15,8 @@ namespace Sdo.UI
 {
     /// <summary>
     /// Front-end entry point. Self-boots (RuntimeInitialize), takes over from the gameplay scene by
-    /// destroying any auto-spawned Step1Game (runs first via a very low execution order — zero edits
-    /// to Step1Game), builds the canvas + screens + modals procedurally, and drives the flow.
+    /// destroying any auto-spawned ScreenGameplay (runs first via a very low execution order — zero edits
+    /// to ScreenGameplay), builds the canvas + screens + modals procedurally, and drives the flow.
     /// </summary>
     [DefaultExecutionOrder(-10000)]
     public sealed class FrontendApp : MonoBehaviour
@@ -31,26 +31,26 @@ namespace Sdo.UI
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
-        private Step1Game _activeGame;                // the running gameplay instance (null = in the front-end)
+        private ScreenGameplay _activeGame;                // the running gameplay instance (null = in the front-end)
         private HashSet<GameObject> _preGameRoots;    // scene roots that existed before launch -> kept on exit
 
         // Suppress the play screen's self-boot before any scene script runs (BeforeSceneLoad always precedes
-        // Step1Game's AfterSceneLoad Boot). The front-end is the entry point and launches gameplay on demand, so a
-        // stray auto-booted Step1Game (and the orphan avatar it would leave behind) must never come into being.
+        // ScreenGameplay's AfterSceneLoad Boot). The front-end is the entry point and launches gameplay on demand, so a
+        // stray auto-booted ScreenGameplay (and the orphan avatar it would leave behind) must never come into being.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void SuppressGameplayAutoBoot()
         {
             // DEV: SDO_SCENE → skip the front-end and boot straight into that gameplay scene (for testing a specific
             // stage's render/effects, e.g. SDO_SCENE=SCN0008). Editor reads it from EditorPrefs (Tools/SDO menu), a
-            // player build from the env var — see Step1Game.DevVar. Leaves AutoBoot un-suppressed so Step1Game.Boot runs.
-            if (!string.IsNullOrEmpty(Step1Game.DevVar("SDO_SCENE"))) return;
-            Step1Game.AutoBootSuppressed = true;
+            // player build from the env var — see ScreenGameplay.DevVar. Leaves AutoBoot un-suppressed so ScreenGameplay.Boot runs.
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SCENE"))) return;
+            ScreenGameplay.AutoBootSuppressed = true;
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
-            if (!string.IsNullOrEmpty(Step1Game.DevVar("SDO_SCENE"))) return;   // DEV: no front-end in scene-test mode (env var or Tools/SDO menu)
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SCENE"))) return;   // DEV: no front-end in scene-test mode (env var or Tools/SDO menu)
             if (Instance != null) return;
             var go = new GameObject("FrontendApp");
             Instance = go.AddComponent<FrontendApp>();
@@ -112,7 +112,7 @@ namespace Sdo.UI
                 {
                     if (Input.GetKeyDown(KeyCode.Escape)) AbortGameplay();   // quit early during play, no settlement
                 }
-                // Finished: Step1Game owns the win/lose 定格 pose + STATIS result panel itself (its own ResultScreen).
+                // Finished: ScreenGameplay owns the win/lose 定格 pose + STATIS result panel itself (its own ResultScreen).
                 // That sequence plays out AFTER Finished flips at song-end, so we must NOT tear down on Finished — we
                 // wait for the player to confirm the panel (OnConfirm sets ResultConfirmed), then return to the room.
                 else if (_activeGame.ResultConfirmed) ReturnFromGameplay();
@@ -121,8 +121,8 @@ namespace Sdo.UI
 
         // ---- gameplay hand-off (host pressed Start in the room) ----
 
-        // Spawn the faithful play screen (Step1Game) configured from the session selection, and hide the whole
-        // front-end while it runs. The session carries everything Step1Game needs; the only mapping is resolving the
+        // Spawn the faithful play screen (ScreenGameplay) configured from the session selection, and hide the whole
+        // front-end while it runs. The session carries everything ScreenGameplay needs; the only mapping is resolving the
         // chart/audio paths in the music tree (sibling of SdoExtracted.Root) and the per-song choreography by fileId.
         private void StartGameplay()
         {
@@ -136,14 +136,14 @@ namespace Sdo.UI
             string oggPath = oggBase.Length > 0 ? Path.Combine(musicDir, oggBase + ".ogg") : null;
 
             // Snapshot the current scene roots (canvas, EventSystem, Main Camera, …) so TeardownGameplay can destroy
-            // exactly what Step1Game spawns (it parents nothing to us — every board/avatar/scene object is a new root).
+            // exactly what ScreenGameplay spawns (it parents nothing to us — every board/avatar/scene object is a new root).
             _preGameRoots = new HashSet<GameObject>(SceneManager.GetActiveScene().GetRootGameObjects());
 
             _ctx.Flow.GoTo(ScreenId.Gameplay);
             if (_canvasGo != null) _canvasGo.SetActive(false);
             if (_uiCam != null) _uiCam.enabled = false;   // stop the UI cam clearing over the play screen
 
-            var game = new GameObject("Step1Game").AddComponent<Step1Game>();   // fields read in its Start() next frame
+            var game = new GameObject("ScreenGameplay").AddComponent<ScreenGameplay>();   // fields read in its Start() next frame
             game.gnPath = gnPath;
             game.oggPath = oggPath;
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
@@ -153,7 +153,7 @@ namespace Sdo.UI
             _activeGame = game;
         }
 
-        // Result panel confirmed: Step1Game already showed its own STATIS settlement (score / EXP / G幣 / replay),
+        // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),
         // so the front-end just tears the gameplay session down and returns to the room. (The legacy ResultsModal is
         // intentionally unused now that the play screen settles itself; kept built only so older call sites compile.)
         private void ReturnFromGameplay()
@@ -169,7 +169,7 @@ namespace Sdo.UI
             _ctx.Flow.GoTo(ScreenId.Room);
         }
 
-        // Tear the gameplay session down and restore the front-end. Step1Game owns the scene and never reparents into
+        // Tear the gameplay session down and restore the front-end. ScreenGameplay owns the scene and never reparents into
         // us, so we destroy every root it added (diff against the pre-launch snapshot) and reset the time scale its
         // debug pause/speed keys may have changed, then re-show the front-end canvas. Does NOT change the flow state —
         // the caller decides where to go next (room directly, or via the results modal).
@@ -204,9 +204,9 @@ namespace Sdo.UI
 
         private static void KillStrayGameplay()
         {
-            // The committed Step1Game self-boots into any scene; the front-end is the entry point, so remove the
+            // The committed ScreenGameplay self-boots into any scene; the front-end is the entry point, so remove the
             // auto-booted one. Gameplay is launched on demand from StartGameplay() (host pressed Start), never here.
-            foreach (var g in FindObjectsByType<Step1Game>(FindObjectsSortMode.None))
+            foreach (var g in FindObjectsByType<ScreenGameplay>(FindObjectsSortMode.None))
                 Destroy(g.gameObject);
         }
 

@@ -27,7 +27,7 @@ namespace Sdo.Game
     /// <summary>
     /// Per-scene 3D stage props, generated from the decompiled Scene_LoadBackground table and resolved
     /// against the real extracted file tree. Keyed by the scene FOLDER name (last segment of
-    /// Step1Game.scenePath, e.g. "SCN0009"). Scenes with no mapobj — or unknown folders — return an empty
+    /// ScreenGameplay.scenePath, e.g. "SCN0009"). Scenes with no mapobj — or unknown folders — return an empty
     /// list. 2D billboards / lights / particle effects are not included.
     /// </summary>
     public static class SceneMapobjCatalog

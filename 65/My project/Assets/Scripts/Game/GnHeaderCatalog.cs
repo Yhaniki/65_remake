@@ -67,7 +67,7 @@ namespace Sdo.Game
             _byGn = new Dictionary<string, Entry>(StringComparer.Ordinal);
 
             var path = Path.Combine(Application.streamingAssetsPath, FileName);
-            // Editor / standalone read directly; on Android read via UnityWebRequest (see Step1Game ogg).
+            // Editor / standalone read directly; on Android read via UnityWebRequest (see ScreenGameplay ogg).
             if (!File.Exists(path))
             {
                 Debug.LogWarning($"[GnHeaderCatalog] {path} missing — run tools/build_gn_header_catalog.py");

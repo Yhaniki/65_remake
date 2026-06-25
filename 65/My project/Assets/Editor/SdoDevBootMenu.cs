@@ -6,7 +6,7 @@ namespace Sdo.EditorTools
 {
     /// <summary>
     /// Editor convenience: choose what the NEXT Play does. The editor is launched by Unity Hub and does NOT inherit a
-    /// terminal's `$env:SDO_SCENE`, so these menu items write EditorPrefs that Step1Game.DevVar / FrontendApp read at
+    /// terminal's `$env:SDO_SCENE`, so these menu items write EditorPrefs that ScreenGameplay.DevVar / FrontendApp read at
     /// boot (env var still wins in a player build). Pick a mode under Tools ▸ SDO, then press Play.
     /// </summary>
     public static class SdoDevBootMenu

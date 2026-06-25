@@ -20,7 +20,7 @@ namespace Sdo.Game
     ///
     /// Mirrors <see cref="SongCatalog"/>: pure UTF-8 JSON, JsonUtility, keyed by lowercase .gn name.
     /// On Android the file lives compressed in the APK and must be read via UnityWebRequest (wire that
-    /// when packaging, same as the .ogg loader in Step1Game).
+    /// when packaging, same as the .ogg loader in ScreenGameplay).
     /// </summary>
     public static class GnKeyTable
     {

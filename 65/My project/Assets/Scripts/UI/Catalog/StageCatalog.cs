@@ -6,7 +6,7 @@ namespace Sdo.UI.Catalog
     public sealed class StageInfo
     {
         public int Id;
-        public string Folder;     // -> Step1Game scenePath = "SCENE/" + Folder
+        public string Folder;     // -> ScreenGameplay scenePath = "SCENE/" + Folder
         public string NameZh;     // zh-TW fallback (the real EXE name; used if no key or the table lacks it)
         public string NameKey;    // localization key (stage.name.<id>); resolved live so language switches apply
 
@@ -39,7 +39,7 @@ namespace Sdo.UI.Catalog
         /// <summary>Highest scene id that appears in the ROOMDLG scene selector (ids 0..30).</summary>
         public const int MaxSelectableId = 30;
 
-        public const int DefaultId = 9;   // SCN0009, matches Step1Game's default scene
+        public const int DefaultId = 9;   // SCN0009, matches ScreenGameplay's default scene
 
         public static StageInfo Get(int id)
         {

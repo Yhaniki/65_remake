@@ -16,8 +16,8 @@ namespace Sdo.Tests
         public IEnumerator Reentry_To_Auto_Resumes_Current_Shot_Not_Zero()
         {
             yield return new WaitForSecondsRealtime(2.5f);   // let the self-booting game load avatar + cameras
-            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
-            Assert.IsNotNull(game, "Step1Game not booted");
+            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
+            Assert.IsNotNull(game, "ScreenGameplay not booted");
             Assert.Greater(game.FixedCamCountForTest, 0, "fixed F2 cameras failed to load (CAMERA/* missing?)");
 
             Assert.AreEqual(-1, game.CamModeForTest, "should start in AUTO director mode");
@@ -37,7 +37,7 @@ namespace Sdo.Tests
         }
 
         // F2 from AUTO all the way around the fixed cams and back to AUTO.
-        private static void CycleBackToAuto(Sdo.Game.Step1Game game)
+        private static void CycleBackToAuto(Sdo.Game.ScreenGameplay game)
         {
             game.CycleCamModeForTest();                       // AUTO(-1) -> fixed 0
             Assert.AreEqual(0, game.CamModeForTest, "first F2 must leave AUTO for fixed cam 0");

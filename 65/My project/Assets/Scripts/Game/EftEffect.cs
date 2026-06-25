@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Sdo.Game
 {
     /// <summary>A resolved 3D-mesh effect (xmesh\list.txt entry): the Unity mesh + one texture per material submesh.
-    /// Built by the host (Step1Game.ResolveEftMesh) from the .MSH via <see cref="SceneLoader"/>; consumed by
+    /// Built by the host (ScreenGameplay.ResolveEftMesh) from the .MSH via <see cref="SceneLoader"/>; consumed by
     /// <see cref="EftEffect"/> when an emitter has a non-zero <see cref="EftEmitter.MeshIdx"/>.</summary>
     public sealed class EftMeshData
     {

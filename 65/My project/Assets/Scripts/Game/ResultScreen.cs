@@ -14,7 +14,7 @@ namespace Sdo.Game
     ///     nick, combo / perfect / cool / bad / miss, hit-rate (or the 100 all-combo marker) and score,
     ///   • a bottom reward block: 經驗 EXP (current / +earned / total) and G幣 coins, plus the OK / save buttons.
     /// Number columns use the original digit strips (Num8 / Num3 / score_num / score_numS).
-    /// Owned and driven by <see cref="Step1Game"/>: <see cref="Build"/> once, <see cref="Show"/> at the settle
+    /// Owned and driven by <see cref="ScreenGameplay"/>: <see cref="Build"/> once, <see cref="Show"/> at the settle
     /// beat, <see cref="Tick"/> every result frame. <see cref="OnConfirm"/> fires when OK is pressed.
     /// </summary>
     public sealed class ResultScreen
@@ -43,7 +43,7 @@ namespace Sdo.Game
         private readonly List<GameObject> _rowRoots = new List<GameObject>();
         private SpriteRenderer _okBtn, _saveBtn;
         private float _showStart = -1f;
-        private System.Action<string> _playSe;     // SE hook (Step1Game.PlaySe)
+        private System.Action<string> _playSe;     // SE hook (ScreenGameplay.PlaySe)
         private bool[] _rowSnd;
         // result sequence flags/timers: rows (SE_0020, 500ms apart) → EXP/G roll (SE_0021) → win/lose banner zoom (SE_0022)
         private bool _expSnd, _bannerShown, _bannerLocalWon, _gameOver;
@@ -64,17 +64,17 @@ namespace Sdo.Game
         private GameObject _rewardRoot;
         private bool _rewardArmed;            // totals start rolling once the rank rows have slid in
 
-        // per-row avatar head: local player = live RenderTexture (set by Step1Game), others = tinted placeholder box
+        // per-row avatar head: local player = live RenderTexture (set by ScreenGameplay), others = tinted placeholder box
         private Texture _localHead;
         private Sprite _placeholderHead;
-        // ---- F4-tunable layout (live; see Step1Game "Result" tab) ----
+        // ---- F4-tunable layout (live; see ScreenGameplay "Result" tab) ----
         public float nickX = 109f, nickYOff = 10f, nickSize = 22f;          // nickname: column x / vertical offset from RowY / font px (tuned)
         public float headBoxX = 30f, headBoxYOff = 12f, headBoxSize = 48f;  // head portrait FRAME slot: left x / top offset from RowY / SQUARE size (tuned)
         // Official AvatarShow draws the full 3D head with NO frame scissor (FUN_0043e2f0 culls only against the SCREEN,
         // not the slot), so hair / hats / ears spill ABOVE the frame line. We mirror that WITHOUT distortion: the local
         // head quad keeps the slot WIDTH but is TALLER — extended UPWARD by headOverflowTop px, bottom-anchored to the slot
         // bottom. The head cam frames the FACE into the slot region and the HAIR into this overflow strip (the RT keeps a
-        // transparent margin above the hair, so it's NEVER cut). The RT aspect (Step1Game) matches w/(slot+overflow).
+        // transparent margin above the hair, so it's NEVER cut). The RT aspect (ScreenGameplay) matches w/(slot+overflow).
         // (Opponents' placeholder stays clamped to the slot.)
         public float headOverflowTop = 6f;
         private readonly List<(Label3D lbl, float rowY)> _nicks = new List<(Label3D, float)>();
@@ -275,7 +275,7 @@ namespace Sdo.Game
         }
 
         // STATIC head box inside the baked frame for the row at design RowY. Local player → a quad textured with the
-        // live head-portrait RenderTexture (Step1Game renders the avatar as a close-up at a 45° angle, idle moves);
+        // live head-portrait RenderTexture (ScreenGameplay renders the avatar as a close-up at a 45° angle, idle moves);
         // other rows → a tinted placeholder box (opponents have no avatar data, matching the original's placeholder).
         private void BuildHeadBox(bool isLocal, float rowY)
         {
@@ -304,7 +304,7 @@ namespace Sdo.Game
         // Position the live-head quad: slot WIDTH × (slot + headOverflowTop) tall, anchored so its BOTTOM edge stays on the
         // frame-slot bottom and its centre-x on the slot centre. The extra height grows UPWARD past the slot top, so the
         // face sits in the slot and hair/hats spill into the strip above — no width distortion (only the height extends),
-        // matching the official un-clipped AvatarShow. The RT is framed (Step1Game) so the hair lands in this strip with a
+        // matching the official un-clipped AvatarShow. The RT is framed (ScreenGameplay) so the hair lands in this strip with a
         // transparent margin on top → never cut. headOverflowTop=0 = exactly the slot (clamped).
         private void PlaceHeadQuad(Transform t, float rowY)
         {

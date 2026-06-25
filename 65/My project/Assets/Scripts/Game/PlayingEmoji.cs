@@ -4,7 +4,7 @@ namespace Sdo.Game
 {
     /// <summary>
     /// The dancer's emoji cut-in: a camera-facing (billboard) animated sprite that pops up beside the dancer when a
-    /// milestone / failure / low-HP condition fires (see Step1Game's ShowEmoji hooks). Faithful to the original SDO
+    /// milestone / failure / low-HP condition fires (see ScreenGameplay's ShowEmoji hooks). Faithful to the original SDO
     /// PLAYINGEXP cut-ins: each frame holds <see cref="frameMs"/> and the short PNG sequence loops a fixed number of
     /// times (per-emoji, passed to <see cref="Play"/>) — e.g. HH (7 frames) ×3 loops.
     ///

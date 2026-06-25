@@ -7,7 +7,7 @@ using UnityEngine.TestTools;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// Not a real assertion test — drives the self-booting Step1Game for a few seconds and
+    /// Not a real assertion test — drives the self-booting ScreenGameplay for a few seconds and
     /// saves an offscreen render to disk so the gameplay layout can be reviewed.
     /// Run: -runTests -testPlatform PlayMode
     /// </summary>
@@ -19,7 +19,7 @@ namespace Sdo.Tests
         public IEnumerator Capture_Gameplay()
         {
             yield return new WaitForSecondsRealtime(1.7f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
+            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
             if (game != null) game.SetCamModeForTest(0);   // fixed front cam0 to inspect hair + note board
             yield return new WaitForSecondsRealtime(6.0f);
             Cap("H:/65_remake/play-capture.png");

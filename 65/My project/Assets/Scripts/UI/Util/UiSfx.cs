@@ -10,7 +10,7 @@ namespace Sdo.UI.Util
 {
     /// <summary>
     /// Front-end sound-effect player for the shipped SE/*.wav (loaded from <see cref="SdoExtracted.SeDir"/>,
-    /// cached, one-shot). Mirrors Step1Game's SE playback but lives in the front-end so dialogs and buttons can
+    /// cached, one-shot). Mirrors ScreenGameplay's SE playback but lives in the front-end so dialogs and buttons can
     /// play the UI click (<see cref="Click"/>) and the window open/close whoosh (<see cref="FrameRound"/>) with no
     /// running gameplay instance. A lazily-created DontDestroyOnLoad host carries the AudioSource so any screen can
     /// call <see cref="Play"/> from a static context.

@@ -63,7 +63,7 @@ namespace Sdo.Game
             var path = Path.Combine(Application.streamingAssetsPath, FileName);
             // NOTE: direct File IO from StreamingAssets works in Editor / standalone. On Android the
             // catalog lives compressed inside the APK and must be read via UnityWebRequest instead
-            // (same as the .ogg loader in Step1Game). Wire that when packaging for Android.
+            // (same as the .ogg loader in ScreenGameplay). Wire that when packaging for Android.
             if (!File.Exists(path))
             {
                 Debug.LogWarning($"[SongCatalog] {path} missing — run tools/build_song_catalog.py");

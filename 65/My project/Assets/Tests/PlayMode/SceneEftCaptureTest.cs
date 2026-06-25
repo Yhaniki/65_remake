@@ -12,7 +12,7 @@ namespace Sdo.Tests
     /// delta_line EXTEND animation + loop are visible. Not an assertion test; saves PNGs for manual comparison
     /// against the original (sdo_stand_alone.exe SCN0008 screenshot / Frida transform dump).
     ///
-    /// REQUIRES the env vars set BEFORE launching Unity (consumed by Step1Game.Boot at scene load):
+    /// REQUIRES the env vars set BEFORE launching Unity (consumed by ScreenGameplay.Boot at scene load):
     ///   $env:SDO_SCENE='SCN0008'; $env:SDO_SCENE_ONLY='1'
     /// Run: -runTests -batchmode -projectPath "h:\65_remake\65\My project" -testPlatform PlayMode
     ///      -testFilter Sdo.Tests.SceneEftCaptureTest -logFile &lt;log&gt;     (do NOT pass -nographics)
@@ -25,10 +25,10 @@ namespace Sdo.Tests
         [UnityTest]
         public IEnumerator Capture_Scn0008SceneEft()
         {
-            // let Step1Game auto-boot, load the scene (SCENE.MSH + mapobjs) and spawn the persistent EFTs
+            // let ScreenGameplay auto-boot, load the scene (SCENE.MSH + mapobjs) and spawn the persistent EFTs
             yield return new WaitForSecondsRealtime(3.5f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
-            Assert.IsNotNull(game, "Step1Game not found — is the test player auto-booting?");
+            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
+            Assert.IsNotNull(game, "ScreenGameplay not found — is the test player auto-booting?");
             if (!game.observeBurstMode || game.scenePath == null || !game.scenePath.ToUpperInvariant().Contains("SCN0008"))
                 Debug.LogWarning($"[scn0008-cap] NOT a clean SCN0008 scene-only boot (scenePath={game.scenePath}, observe={game.observeBurstMode}). " +
                                  "Set $env:SDO_SCENE='SCN0008' and $env:SDO_SCENE_ONLY='1' before launching, else this captures the wrong scene.");
@@ -54,8 +54,8 @@ namespace Sdo.Tests
             Sdo.Game.EftMotMesh.Dbg = true;
             Sdo.Game.EftEffect.DumpTraj = true;   // also log MW(tex117)/disc(tex69) WORLD pos + alpha → mysim-traj.log
             yield return new WaitForSecondsRealtime(3.5f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.Step1Game>();
-            Assert.IsNotNull(game, "Step1Game not found");
+            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
+            Assert.IsNotNull(game, "ScreenGameplay not found");
             game.SetCamModeForTest(0);
             // dense capture across the whole ~10s disc life; tag each with the disc's current alpha so a phase-aligned
             // (bright vs dim) pair can be diffed to verify the disc pulse renders.

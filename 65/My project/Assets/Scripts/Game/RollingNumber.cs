@@ -3,7 +3,7 @@ using UnityEngine;
 namespace Sdo.Game
 {
     /// <summary>
-    /// Reusable count-up + per-digit "pop" math, shared by the in-game score (Step1Game.UpdateScoreDigits)
+    /// Reusable count-up + per-digit "pop" math, shared by the in-game score (ScreenGameplay.UpdateScoreDigits)
     /// and the result-screen EXP / G幣 totals (<see cref="RollingDigits"/>). Mirrors the decompiled CtlNumLabel
     /// roll (step = delta/20 applied once every ~50ms, snap to target at 999ms — i.e. ~20 discrete updates/s,
     /// so digits don't blur at 60Hz) and the score digit bounce (scale 1.0→1.3→1.0, eased, over the whole roll).

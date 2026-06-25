@@ -6,7 +6,7 @@ namespace Sdo.Game
     public enum EmojiKind { None, HH, SHSH, JRKL, KJ, HE, H, Y, JS, GTH }
 
     /// <summary>
-    /// Pure, Unity-free decision logic for the dancer's head-emoji cut-ins. Step1Game owns one instance, feeds it
+    /// Pure, Unity-free decision logic for the dancer's head-emoji cut-ins. ScreenGameplay owns one instance, feeds it
     /// every judgment (with the resulting combo) and the visible HP-bar fraction, and pops whichever PNG sequence it
     /// returns (<see cref="EmojiKind.None"/> = show nothing). Kept Unity-free so the threshold / hysteresis edge cases
     /// are unit-tested (see EmojiTriggersTests): combo milestones fire once each as a streak climbs and re-fire if the
