@@ -312,6 +312,8 @@ namespace Sdo.Game
         }
 
         // EFT generic texture list (Extracted/3DEFT/GENERIC/LIST.TXT): pipe index → relative path → Texture2D.
+        // sRGB import (linear=false): GPU 硬體 decode sRGB→linear on sample，在 linear-space Unity 裡與
+        // D3D9 raw-byte pipeline 的 monitor-gamma 顯示結果一致（round-trip: 0.1→0.01 linear→0.1 顯示）。
         private static string[] _eftTexList;
         private static readonly Dictionary<int, Texture2D> _eftTexCache = new Dictionary<int, Texture2D>();
         private static Texture2D ResolveEftTex(int idx)
@@ -338,10 +340,7 @@ namespace Sdo.Game
                 var rel = _eftTexList[idx].Replace("generic\\", "").Replace("generic/", "").Replace('\\', '/');
                 var dir = Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", Path.GetDirectoryName(rel) ?? "");
                 var name = Path.GetFileName(rel).ToUpperInvariant();
-                // Linear import: EFT textures are gamma-encoded D3D9 assets. Loading as sRGB would decode dark
-                // edge pixels to near-zero (0.1→0.01 linear), making soft additive gradients appear as hard rings.
-                // Linear import keeps 0.1 as 0.1, so the additive contribution (×display-gamma) matches D3D9.
-                tex = SdoExtracted.LoadTextureRawLinear(dir, name + ".png") ?? SdoExtracted.LoadTextureRawLinear(dir, name + ".BMP");
+                tex = SdoExtracted.LoadTextureRaw(dir, name + ".png") ?? SdoExtracted.LoadTextureRaw(dir, name + ".BMP");
             }
             _eftTexCache[idx] = tex;
             return tex;
