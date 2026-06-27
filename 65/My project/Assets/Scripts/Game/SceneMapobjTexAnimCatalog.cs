@@ -40,6 +40,14 @@ namespace Sdo.Game
             return a;
         }
 
+        // 2-digit "<prefix>NN.dds" sequence, 1..count (e.g. Seq2("19_SUBWAY_VT6",24) -> 19_SUBWAY_VT601.dds..624.dds)
+        private static string[] Seq2(string prefix, int count)
+        {
+            var a = new string[count];
+            for (int i = 0; i < count; i++) a[i] = prefix + (i + 1).ToString("00") + ".dds";
+            return a;
+        }
+
         private static readonly MapobjTexAnim Shanguang =
             new MapobjTexAnim("FIFA_SHANGUANG", new[] { "s001_.dds", "s002_.dds", "s003_.dds", "s004_.dds" }, 300f, true);
 
@@ -88,6 +96,12 @@ namespace Sdo.Game
                 ["SCN0017"] = new[]
                 {
                     new MapobjTexAnim("DIANSHI", Seq("DIANSHI", 30), 150f, false),   // opaque subway TV wall
+                },
+                ["SCN0020"] = new[]
+                {
+                    // 19_subway TV6 video screen: 24 frames 19_SUBWAY_VT601..624 @80 ms, opaque (DXT3 but full alpha,
+                    // a solid video wall like DIANSHI). FUN_004b09a0 cycles param_1[0x4f] every 0x50=80 ms, %0x18=24.
+                    new MapobjTexAnim("TV6", Seq2("19_SUBWAY_VT6", 24), 80f, false),
                 },
                 ["SCN0018"] = new[]
                 {

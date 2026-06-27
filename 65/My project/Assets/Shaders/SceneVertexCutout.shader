@@ -17,12 +17,17 @@ Shader "Sdo/SceneVertexCutout"
         _MainTex ("Texture", 2D) = "white" {}
         _Color ("Color", Color) = (1,1,1,1)
         _Cutoff ("Alpha cutoff", Range(0,1)) = 0.5
+        // Cull mode: 2=Back (single-sided, the default — walls/columns must cull their back faces so a camera behind
+        // an inward-facing wall sees through). 0=Off (DOUBLE-SIDED) for thin FLAT props the original draws on both
+        // sides — e.g. SCN0020's staircase/handrail (loutiA/weilan): a one-quad railing single-side-culled goes
+        // see-through ("破圖") when fixed cam5 (eye z=-346) views it from behind. SceneLoader sets this per material.
+        _Cull ("Cull", Float) = 2
     }
     SubShader
     {
         Tags { "RenderType"="TransparentCutout" "Queue"="AlphaTest" }
         LOD 100
-        Cull Back
+        Cull [_Cull]
 
         Pass
         {

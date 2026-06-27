@@ -54,6 +54,12 @@ namespace Sdo.Game
             p += 24;                                          // reserved[6]
             int numMat = (int)U32(d, ref p);
             if (numMat <= 0 || numMat > 256) return null;
+            // SCN0020 (19_subway): classify scene alpha by DISTRIBUTION so hard-edged structural materials (the truss
+            // GANGJIA, the dance floor WUTAIDIMIAN, the PANGGUAN spectators) render as depth-writing Cutout/Opaque
+            // instead of non-occluding alpha-Blend — otherwise the floor/buildings/lights bleed THROUGH the foreground
+            // truss/handrail under fixed cam5. Scoped to this scene to avoid touching the validated去背 of other maps.
+            bool histoAlpha = string.Equals(Path.GetFileName(sceneDir?.TrimEnd('/', '\\') ?? ""), "SCN0020",
+                                            System.StringComparison.OrdinalIgnoreCase);
             var ddsNames = new string[numMat];
             for (int m = 0; m < numMat; m++)
             {
@@ -103,7 +109,7 @@ namespace Sdo.Game
                 mesh.SetTriangles(sub, s);
                 Texture2D tex = null; DdsAlphaMode alphaMode = DdsAlphaMode.Opaque;
                 var ddsPath = Path.Combine(sceneDir, ddsNames[matId]);
-                if (File.Exists(ddsPath)) { var bytes = File.ReadAllBytes(ddsPath); tex = DdsLoader.Load(bytes); alphaMode = DdsLoader.GetAlphaMode(bytes); }
+                if (File.Exists(ddsPath)) { var bytes = File.ReadAllBytes(ddsPath); tex = DdsLoader.Load(bytes); alphaMode = histoAlpha ? DdsLoader.GetSceneAlphaMode(bytes) : DdsLoader.GetAlphaMode(bytes); }
                 var shader = alphaMode == DdsAlphaMode.Blend ? alphaShader : cutoutShader;
                 mats[s] = tex != null ? new Material(shader) { mainTexture = tex } : new Material(shader) { color = new Color(0.3f, 0.3f, 0.35f) };
                 // Soft DDS alpha is alpha-blended. Pure hard alpha remains a cutout. Opaque DDS disables clipping.

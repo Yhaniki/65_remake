@@ -95,6 +95,86 @@ namespace Sdo.Game
         }
 
         /// <summary>
+        /// Alpha classification for STAGE SCENE.MSH materials, by the alpha DISTRIBUTION rather than "first soft pixel
+        /// wins". <see cref="GetAlphaMode"/> flips to Blend on the very first soft texel, so a hard-edged fence / truss
+        /// / floor that has a few anti-aliased edge texels renders as a non-occluding alpha-BLEND (ZWrite Off) — the
+        /// background then bleeds THROUGH it (SCN0020 fixed cam5: the floor / buildings / lights showed in front of the
+        /// foreground truss + handrail + dance-floor). Buckets:
+        ///   • real holes (hardTransp ≥ 15% of texels) with a solid body (≥25% of visible texels opaque) → Cutout
+        ///     (clip the holes, the bars/wires/silhouette write depth and occlude) — trusses, CHAIN-LINK fences,
+        ///     people billboards. A chain-link railing has thin wires = mostly anti-aliased (soft) edge texels, so the
+        ///     gate is "has an opaque body", not "few soft texels" (the wire cores are ~35% of visible — enough);
+        ///   • mostly soft, almost no opaque core (soft > 75% of visible)                               → Blend
+        ///     (glass, additive glows — their visible texels are an 84–86% soft gradient);
+        ///   • otherwise                                                                                → Opaque
+        ///     (solid surface whose handful of soft texels are just DXT quantisation — e.g. the dance-floor grid).
+        /// Cutout/Opaque both write depth, so the foreground stops being see-through (lights stop bleeding through it).
+        /// </summary>
+        public static DdsAlphaMode GetSceneAlphaMode(byte[] d)
+        {
+            if (!AlphaCounts(d, out int total, out int visible, out int soft, out int hardTransp) || visible == 0)
+                return DdsAlphaMode.Opaque;
+            float softOfVisible = soft / (float)visible;
+            float hardTranspFrac = hardTransp / (float)total;
+            if (hardTranspFrac >= 0.15f && softOfVisible <= 0.75f) return DdsAlphaMode.Cutout;
+            if (softOfVisible >= 0.30f) return DdsAlphaMode.Blend;
+            return DdsAlphaMode.Opaque;
+        }
+
+        // Walk the base-mip alpha and count: total texels, visible (a>8), soft (8<a<247), hardTransp (a<=8).
+        // Mirrors GetAlphaMode's DXT3 / DXT5 / 32-bit-uncompressed decode paths (no early-out). Returns false for
+        // formats with no alpha (DXT1 / unsupported) — caller treats those as Opaque.
+        private static bool AlphaCounts(byte[] d, out int total, out int visible, out int soft, out int hardTransp)
+        {
+            total = visible = soft = hardTransp = 0;
+            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
+            string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
+            int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return false;
+            int bw = Math.Max(1, (width + 3) / 4), bh = Math.Max(1, (height + 3) / 4), bi = 128;
+            int t = 0, v = 0, s = 0, ht = 0;
+            if (fourcc == "DXT3")
+            {
+                for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
+                    for (int k = 0; k < 8; k++)
+                    {
+                        int ab = d[bi + k];
+                        int a0t = (ab & 0xF) * 255 / 15; t++; if (a0t <= 8) ht++; else { v++; if (a0t < 247) s++; }
+                        int a1t = ((ab >> 4) & 0xF) * 255 / 15; t++; if (a1t <= 8) ht++; else { v++; if (a1t < 247) s++; }
+                    }
+            }
+            else if (fourcc == "DXT5")
+            {
+                for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
+                {
+                    int a0 = d[bi], a1 = d[bi + 1]; ulong bits = 0;
+                    for (int k = 0; k < 6; k++) bits |= (ulong)d[bi + 2 + k] << (8 * k);
+                    for (int i = 0; i < 16; i++)
+                    {
+                        int a = Dxt5Alpha(a0, a1, (int)((bits >> (i * 3)) & 7));
+                        t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; }
+                    }
+                }
+            }
+            else
+            {
+                uint pf = BitConverter.ToUInt32(d, 80);
+                uint am = BitConverter.ToUInt32(d, 104);
+                int bitc = BitConverter.ToInt32(d, 88);
+                if ((pf & 0x4u) != 0 || (pf & 0x40u) == 0 || bitc != 32 || am == 0 || 128 + width * height * 4 > d.Length) return false;
+                int off = 128, shift = MaskShift(am); uint max = am >> shift;
+                for (int i = 0; i < width * height; i++)
+                {
+                    uint px = (uint)(d[off + i * 4] | (d[off + i * 4 + 1] << 8) | (d[off + i * 4 + 2] << 16) | (d[off + i * 4 + 3] << 24));
+                    int a = max == 0 ? 255 : (int)(((px & am) >> shift) * 255 / max);
+                    t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; }
+                }
+            }
+            total = t; visible = v; soft = s; hardTransp = ht;
+            return t > 0;
+        }
+
+        /// <summary>
         /// Heuristic for mapobj textures that are authored as light/glow sprites, not ordinary cut-out art.
         /// These should be additive: soft alpha dominates, visible pixels are very bright, and there is little
         /// hard opaque silhouette. This keeps people/sign/billboard alpha blended while stage bulbs, lasers and

@@ -1800,7 +1800,12 @@ namespace Sdo.Game
             cam.orthographic = false; cam.fieldOfView = 45f;
             cam.cullingMask = 1 << sceneLayer; cam.targetTexture = sceneRT;
             cam.clearFlags = CameraClearFlags.SolidColor; cam.backgroundColor = Color.black;
-            cam.nearClipPlane = 1f; cam.farClipPlane = Mathf.Max(4000f, b.size.magnitude * 4f);
+            // EXACT decompiled projection (Camera_ctor 004_camera_0040a420.c: fovY=0x3f490fdb=45°, aspect=0x3faaaaab=4/3,
+            // zNear=0x40a00000=5, zFar=0x45ea6000=7500). The old near=1 / far=bounds×4 wrecked depth precision on big
+            // scenes — SCN0020's ~11.5k-unit ground plane pushed far to ~64000, so the 1:64000 ratio z-fought (破圖),
+            // worst on fixed cam5 (eye z=-346) which spans the whole stage in depth. 5/7500 = ~1:1500, matching the
+            // original; 7500 still reaches every scene's farthest geometry (the original used it for all maps).
+            cam.nearClipPlane = 5f; cam.farClipPlane = 7500f;
             _sceneCam = cam;
             if (avatarDebug)
             {

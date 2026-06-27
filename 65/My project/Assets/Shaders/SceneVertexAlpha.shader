@@ -6,12 +6,13 @@ Shader "Sdo/SceneVertexAlpha"
     {
         _MainTex ("Texture", 2D) = "white" {}
         _Color ("Color", Color) = (1,1,1,1)
+        _Cull ("Cull", Float) = 2   // 2=Back (default single-sided); 0=Off (double-sided thin props). Set by SceneLoader.
     }
     SubShader
     {
         Tags { "RenderType"="Transparent" "Queue"="Transparent" }
         LOD 100
-        Cull Back
+        Cull [_Cull]
         ZWrite Off
         Blend SrcAlpha OneMinusSrcAlpha
 

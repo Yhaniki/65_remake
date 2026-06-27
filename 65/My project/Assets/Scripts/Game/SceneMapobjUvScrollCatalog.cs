@@ -54,6 +54,11 @@ namespace Sdo.Game
             // caidai.dds (32×128 DXT1) tiles V −1~2 (3× repeat) on the 彩帶 vertical light strip next to the speaker.
             // D3D9 positive V → Unity negative V (DDS raw-load flips V axis, same as CoralV convention).
             new Target("SCN0011", "CAIDAI", -1, new Vector2(0f, 1.775f)),   // measured: online sdo.bin @ 593fps → 0.003×593 = 1.775 UV/s
+            // SCN0020 subway FUN_004b09a0: the TV1 filmstrip screen (TV01.dds 256×1024, dancers + "BROADWAY") is the
+            // ONLY object registered with AvatarScene_Create(...,param3=1) → scroll object 0. Every 300 ms the update
+            // sets render state +0x48|=0x10000 (texture transform), U=0, V += _DAT_00589040 (=0.03), wrapping at 1.0
+            // ⇒ 0.1 UV/s in V. Sign confirmed by visual check (BROADWAY filmstrip scrolled the wrong way at -0.1) → +0.1.
+            new Target("SCN0020", "TV1", -1, new Vector2(0f, 0.1f)),
             // SCN0015 FUN_004b0620: every 50 ms set U=0 and V=DAT_00678534, then DAT_00678534 += 0.003.
             // 15_UV is the only mapobj created with param3=1 in scene-load case 0xf; HUA/SHU1-4 pass 0.
             // The texture itself is diagonal, so a pure V scroll reads as the window beam sliding diagonally down.
