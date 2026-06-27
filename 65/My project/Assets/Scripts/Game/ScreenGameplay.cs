@@ -1296,6 +1296,22 @@ namespace Sdo.Game
                 subMats.Add(mats);
             }
 
+            // Per-prop render tuning (SceneMapobjRenderCatalog): brightness/tint multiplier applied to every
+            // material in this prop (e.g. ZIMU rune panels in SCN0008). Identity (Bright=1, ColorMul=white) → no-op.
+            // Bright scales RGB only; ColorMul handles per-channel tint; alpha is left untouched by Bright.
+            var renderTune = SceneMapobjRenderCatalog.Find(SceneFolder(), baseName);
+            if (!renderTune.IsIdentity)
+            {
+                float b = renderTune.Bright;
+                Color cm = renderTune.ColorMul;
+                foreach (var matArr in subMats) if (matArr != null)
+                    foreach (var m in matArr) if (m != null && m.HasProperty("_Color"))
+                    {
+                        Color c = m.color;
+                        m.color = new Color(c.r * cm.r * b, c.g * cm.g * b, c.b * cm.b * b, c.a * cm.a);
+                    }
+            }
+
             // Animated texture overlay (faithful to the original's UIPicMap frame-swap): a few static props — the FIFA
             // crowd (renqun) and spotlights (shanguang) — are textured by a per-frame DDS sequence cycled every 300 ms,
             // NOT by their MSH material. Drive the shared submesh materials through that sequence. The geometry stays
