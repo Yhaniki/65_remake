@@ -18,6 +18,9 @@ namespace Sdo.Game
             // Force standard alpha-blend (SrcAlpha,OneMinusSrcAlpha) regardless of what the MSH loader assigned.
             // Needed when LooksLikeAdditiveGlow() misclassifies a texture that D3D9 confirmed uses DST=INVSRCALPHA.
             ForceAlphaBlend,
+            // Soft searchlight beam: additive, but blur the texture along its width so the light spreads sideways
+            // and the narrow hard alpha edge becomes a gradual soft falloff (SCN0016 JIGUANG spotlights).
+            SpotGlow,
         }
 
         public readonly struct Target
@@ -60,6 +63,12 @@ namespace Sdo.Game
             // (it matches the "soft alpha, low opaque, mid lum" heuristic for radial glow sprites), so without
             // the override the material becomes Sdo/UnlitAdditiveOverlay, producing a hard bright mesh-edge band.
             new Target("SCN0015", "15_UV", -1, Scn0015WindowUv, RenderMode.ForceAlphaBlend),
+            // SCN0016 spotlights (JIGUANG1/2/3): guang1_.dds has a narrow (~3-texel) alpha edge, so a plain additive
+            // beam reads hard at its left/right. SpotGlow blurs the texture along its width to spread the light
+            // sideways into a soft falloff. Speed=0 — these don't UV-scroll; the entry only carries the render mode.
+            new Target("SCN0016", "JIGUANG1", -1, Vector2.zero, RenderMode.SpotGlow),
+            new Target("SCN0016", "JIGUANG2", -1, Vector2.zero, RenderMode.SpotGlow),
+            new Target("SCN0016", "JIGUANG3", -1, Vector2.zero, RenderMode.SpotGlow),
             // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
             new Target(null, "SHANHU-BAI", -1, CoralV),
             new Target(null, "SHANHU-HONG", -1, CoralV),

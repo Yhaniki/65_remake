@@ -1245,11 +1245,7 @@ namespace Sdo.Game
                     for (int i = 0; i < vts.Length; i++) vts[i] = m.MultiplyPoint3x4(vts[i]);
                     sub.Mesh.vertices = vts; sub.Mesh.RecalculateBounds();
                 }
-                {
-                    Bounds bb2 = r.Submeshes[0].Mesh.bounds;
-                    for (int s = 1; s < r.Submeshes.Count; s++) bb2.Encapsulate(r.Submeshes[s].Mesh.bounds);
-                    Debug.Log($"[mapobj] {baseName}: rigid-bind done — world center={bb2.center} size={bb2.size}");
-                }
+                Debug.Log($"[mapobj] {baseName}: rigid-bind {r.Submeshes.Count} submesh(es) to {leafBones.Length} leaf bone(s)");
             }
 
             // shared materials, one set per submesh (built once; reused by every instance). GPU-instancing
@@ -1296,22 +1292,6 @@ namespace Sdo.Game
                 subMats.Add(mats);
             }
 
-            // Per-prop render tuning (SceneMapobjRenderCatalog): brightness/tint multiplier applied to every
-            // material in this prop (e.g. ZIMU rune panels in SCN0008). Identity (Bright=1, ColorMul=white) → no-op.
-            // Bright scales RGB only; ColorMul handles per-channel tint; alpha is left untouched by Bright.
-            var renderTune = SceneMapobjRenderCatalog.Find(SceneFolder(), baseName);
-            if (!renderTune.IsIdentity)
-            {
-                float b = renderTune.Bright;
-                Color cm = renderTune.ColorMul;
-                foreach (var matArr in subMats) if (matArr != null)
-                    foreach (var m in matArr) if (m != null && m.HasProperty("_Color"))
-                    {
-                        Color c = m.color;
-                        m.color = new Color(c.r * cm.r * b, c.g * cm.g * b, c.b * cm.b * b, c.a * cm.a);
-                    }
-            }
-
             // Animated texture overlay (faithful to the original's UIPicMap frame-swap): a few static props — the FIFA
             // crowd (renqun) and spotlights (shanguang) — are textured by a per-frame DDS sequence cycled every 300 ms,
             // NOT by their MSH material. Drive the shared submesh materials through that sequence. The geometry stays
@@ -1352,6 +1332,23 @@ namespace Sdo.Game
                     // The MSH material is a placeholder (often unresolved -> NewMapobjMat tinted it the fallback beige
                     // with no texture). Reset _Color to white so the swapped frame shows true-colour, not tinted.
                     foreach (var m in animMats) m.color = Color.white;
+                    // Self-illuminated light-up props (SCN0016 FANGZI7/8) ship a baked per-vertex DIFFUSE of (0,0,0);
+                    // UnlitInstanced multiplies texture × vertexColor, so a black vertex colour renders the whole
+                    // building black (= invisible against the night sky). Their brightness is the swapped frame, not
+                    // baked scene lighting — neutralise near-black vertex colours to white. Props that already carry
+                    // white/lit vertex colours (FIFA crowd, sea screen, SCN0011 lights) are left untouched.
+                    foreach (var sub in r.Submeshes)
+                    {
+                        var c = sub.Mesh.colors32;
+                        if (c == null || c.Length == 0) continue;
+                        bool anyDark = false;
+                        for (int i = 0; i < c.Length; i++) if (c[i].r < 8 && c[i].g < 8 && c[i].b < 8) { anyDark = true; break; }
+                        if (!anyDark) continue;
+                        var w = new Color32[c.Length];
+                        for (int i = 0; i < w.Length; i++) w[i] = new Color32(255, 255, 255, 255);
+                        sub.Mesh.colors32 = w;
+                        Debug.Log($"[mapobj] {baseName}: neutralised black baked vertex colour ({c.Length} verts) for self-illuminated texanim");
+                    }
                     // Transparent props (FIFA crowd / spotlights) are alpha-cutout sprites — the opaque mapobj shader
                     // paints their transparent regions solid (stands read empty/black). Switch those to the two-sided
                     // alpha-blended overlay so only the sprite shows. Opaque props (the sea video wall) keep their
@@ -1368,6 +1365,15 @@ namespace Sdo.Game
                 else Debug.LogWarning($"[mapobj] {baseName}: texture-anim found no frames in {dir}");
             }
 
+            // Per-scene render-mode override (decoupled from UV-scroll so it also reaches non-scrolling props like
+            // the SCN0016 JIGUANG spotlights). Swaps the shader the MSH loader picked for the catalogued target.
+            var renderMode = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName);
+            if (renderMode != SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial)
+            {
+                foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) ApplyMapobjRenderMode(m, renderMode);
+                Debug.Log($"[mapobj] {baseName}: render-mode {renderMode}");
+            }
+
             // UV-scroll (the original streams texture coords on some props): e.g. SCN0014 corals scroll V so their glow
             // marquees. Drive the shared submesh materials' main-tex offset. Needs Repeat wrap (DdsLoader sets it).
             Vector2 uvScroll = SceneMapobjUvScrollCatalog.Find(SceneFolder(), baseName);
@@ -1377,12 +1383,9 @@ namespace Sdo.Game
                 foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) scrollMats.Add(m);
                 if (scrollMats.Count > 0)
                 {
-                    var renderMode = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName);
-                    if (renderMode != SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial)
-                        for (int i = 0; i < scrollMats.Count; i++) ApplyMapobjRenderMode(scrollMats[i], renderMode);
                     var holder = new GameObject(baseName + "_uvscroll");
                     holder.AddComponent<MapobjUvScroll>().Init(scrollMats.ToArray(), uvScroll);
-                    Debug.Log($"[mapobj] {baseName}: uv-scroll {uvScroll}, render={renderMode}");
+                    Debug.Log($"[mapobj] {baseName}: uv-scroll {uvScroll}");
                 }
             }
 
@@ -1585,6 +1588,14 @@ namespace Sdo.Game
                 // Alpha multiplier for the window beam. Texture max alpha is 33%; this value scales
                 // it further so the overall opacity can be tuned without touching the DDS asset.
                 if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, 0.2f);
+            }
+            else if (mode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow)
+            {
+                // Soft searchlight beam (SCN0016 spotlights): additive shader that blurs the texture along its
+                // width so the light spreads sideways and the narrow hard alpha edge becomes a soft falloff.
+                var shader = Shader.Find("Sdo/UnlitSpotGlow");
+                if (shader != null) mat.shader = shader;
+                if (mat.HasProperty("_Color")) mat.color = Color.white;
             }
         }
 
