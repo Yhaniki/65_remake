@@ -12,8 +12,9 @@ namespace Sdo.Game
         public readonly float IntervalMs;    // ms between frames
         public readonly bool Transparent;    // true -> alpha-blended overlay (cutout sprites: crowd/lights);
                                              // false -> keep the opaque material (a solid video screen)
-        public MapobjTexAnim(string meshBase, string[] frames, float intervalMs, bool transparent)
-        { MeshBase = meshBase; Frames = frames; IntervalMs = intervalMs; Transparent = transparent; }
+        public readonly bool HoldLast;       // true -> play-once: after intervalMs, lock on last frame forever
+        public MapobjTexAnim(string meshBase, string[] frames, float intervalMs, bool transparent, bool holdLast = false)
+        { MeshBase = meshBase; Frames = frames; IntervalMs = intervalMs; Transparent = transparent; HoldLast = holdLast; }
     }
 
     /// <summary>

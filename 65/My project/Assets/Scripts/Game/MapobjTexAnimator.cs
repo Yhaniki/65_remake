@@ -16,23 +16,27 @@ namespace Sdo.Game
         private Material[] _mats;
         private Texture[] _frames;
         private float _interval;     // seconds per frame
+        private bool _holdLast;      // true -> stop at the last frame (play-once, for SCN0016 building lights)
         private int _last = -1;
 
         /// <param name="mats">shared submesh materials whose _MainTex to drive (all set to the same frame)</param>
         /// <param name="frames">ordered frame textures (already loaded); cycled round-robin</param>
         /// <param name="intervalMs">ms between frames (300 in the original)</param>
-        public void Init(Material[] mats, Texture[] frames, float intervalMs)
+        /// <param name="holdLast">when true, advance once then hold the last frame instead of looping</param>
+        public void Init(Material[] mats, Texture[] frames, float intervalMs, bool holdLast = false)
         {
             _mats = mats;
             _frames = frames;
             _interval = Mathf.Max(0.001f, intervalMs / 1000f);
+            _holdLast = holdLast;
             Apply(0);   // start on frame 0 so the MSH's embedded (possibly wrong/white) material never shows
         }
 
         private void Update()
         {
             if (_frames == null || _frames.Length == 0) return;
-            int idx = (int)(Time.time / _interval) % _frames.Length;
+            int raw = (int)(Time.time / _interval);
+            int idx = _holdLast ? Mathf.Min(raw, _frames.Length - 1) : raw % _frames.Length;
             if (idx != _last) Apply(idx);
         }
 

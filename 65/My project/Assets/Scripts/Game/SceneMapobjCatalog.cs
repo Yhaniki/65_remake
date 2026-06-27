@@ -531,6 +531,14 @@ namespace Sdo.Game
                     {
                         new MapobjPlacement(0f, 0f, 0f, 1f),
                     }),
+                    new MapobjGroup("16/FANGZI/DENG1", "DENG1.MSH", "DENG1.HRC", null, new[]
+                    {
+                        new MapobjPlacement(0f, 0f, 0f, 1f),
+                    }),
+                    new MapobjGroup("16/FANGZI/_DENG1", "DENG1.MSH", "DENG1.HRC", null, new[]
+                    {
+                        new MapobjPlacement(0f, 0f, 0f, 1f),
+                    }),
                     new MapobjGroup("16/FANGZI/DENG2", "DENG2.MSH", "DENG2.HRC", null, new[]
                     {
                         new MapobjPlacement(0f, 0f, 0f, 1f),

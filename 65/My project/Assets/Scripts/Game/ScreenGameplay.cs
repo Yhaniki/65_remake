@@ -1091,26 +1091,17 @@ namespace Sdo.Game
             return m.Success ? int.Parse(m.Groups[1].Value) : -1;
         }
 
-        // Resolve the auto-director shot list exactly as the decompiled selector (021_gameplay ~0x4768a9):
-        // switch(mapId) gated by playerCount<=3 / 4..6 / >6, then degrade to the generic numeric lists, then 1.CDT.
+        // mapId 3-18 → CDT stem; solo(n<=3) vs group(n=4-6); fallback chain: map→numeric→1
         private string SelectCdtPath()
         {
             int map = SceneMapId();
-            int n = Mathf.Max(1, playerCount);
-            string name = null;
-            if (n <= 3)
+            int n   = Mathf.Max(1, playerCount);
+            string[] table  = n <= 3 ? SoloCdt : GroupCdt;
+            string fallback = n == 1 ? "1" : n <= 3 ? "3" : "6";
+            string mapped   = map >= 3 && map <= 18 ? table[map - 3] : null;
+            foreach (var c in new[] { mapped, fallback, "1" })
             {
-                if (map >= 3 && map <= 18) name = SoloCdt[map - 3];
-                if (name == null) name = (n == 1) ? "1" : "3";        // fallback (decomp push 6=1.cdt / push 1=3.cdt)
-            }
-            else if (n <= 6)
-            {
-                if (map >= 3 && map <= 18) name = GroupCdt[map - 3];
-                if (name == null) name = "6";
-            }
-            else name = "6";
-            foreach (var c in new[] { name, n == 1 ? "1" : (n <= 3 ? "3" : "6"), "1" })
-            {
+                if (c == null) continue;
                 string rel = "CAMERA/" + c + ".CDT";
                 if (File.Exists(Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar))))
                     return rel;
@@ -1319,7 +1310,9 @@ namespace Sdo.Game
                     if (exFrames.Length > 0)
                     {
                         ResolveDds(dir, exFrames[0], out bool exAlpha);   // transparent iff the first frame carries alpha
-                        texAnim = new MapobjTexAnim(baseName.ToUpperInvariant(), exFrames, exSpec.IntervalMs > 0f ? exSpec.IntervalMs : 300f, exAlpha);
+                        // SCN0016 buildings light up once then stay lit (official: play-once tex-anim, not looping)
+                        bool holdLast = SceneFolder().Equals("SCN0016", System.StringComparison.OrdinalIgnoreCase);
+                        texAnim = new MapobjTexAnim(baseName.ToUpperInvariant(), exFrames, exSpec.IntervalMs > 0f ? exSpec.IntervalMs : 300f, exAlpha, holdLast);
                     }
                 }
             }
@@ -1349,7 +1342,7 @@ namespace Sdo.Game
                         if (overlay != null) foreach (var m in animMats) m.shader = overlay;
                     }
                     var holder = new GameObject(baseName + "_texanim");   // root: torn down with the play screen
-                    holder.AddComponent<MapobjTexAnimator>().Init(animMats.ToArray(), frames.ToArray(), texAnim.IntervalMs);
+                    holder.AddComponent<MapobjTexAnimator>().Init(animMats.ToArray(), frames.ToArray(), texAnim.IntervalMs, texAnim.HoldLast);
                     Debug.Log($"[mapobj] {baseName}: texture-anim {frames.Count}/{texAnim.Frames.Length} frames @ {texAnim.IntervalMs}ms, transparent={texAnim.Transparent}");
                 }
                 else Debug.LogWarning($"[mapobj] {baseName}: texture-anim found no frames in {dir}");
@@ -1534,7 +1527,7 @@ namespace Sdo.Game
             // mirrored separated alpha planes -> alpha-blend + Cull Back, so only the facing mirror is visible;
             // VOLUMETRIC alpha solid (carousel carriage) -> alpha-test cutout (ZWrite On) so it doesn't
             // render see-through ("穿透").
-            string name = alpha && additiveGlow && !cutout && !singleSidedAlpha ? "Sdo/UnlitAdditiveOverlay"
+            string name = alpha && additiveGlow && !cutout ? "Sdo/UnlitAdditiveOverlay"
                         : cutout ? "Sdo/UnlitInstancedCutout"
                         : singleSidedAlpha ? "Sdo/UnlitInstancedAlphaCullBack"
                         : alpha ? "Sdo/UnlitInstancedAlpha"
