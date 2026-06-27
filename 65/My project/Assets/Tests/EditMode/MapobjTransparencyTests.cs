@@ -198,6 +198,35 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void SaloonDeng_Marquee_Pattern_Is_Verbatim()
+        {
+            // SCN0021 ceiling light bars run a shared 198×12 on/off table (DAT_005518e8), NOT per-prop cyclers — so
+            // they're driven by SaloonDengMarquee, not the tex-anim catalog. Verify the embedded table verbatim.
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0021", "DENG1"), "deng is the marquee's job, not the catalog");
+            Assert.IsNotNull(SceneMapobjCatalog.ForFolder("SCN0021"));   // sanity: the scene still mounts the deng meshes
+
+            var lit = SaloonDengPattern.Lit;
+            Assert.AreEqual(198, SaloonDengPattern.Rows);
+            Assert.AreEqual(12, SaloonDengPattern.Bars);
+            Assert.AreEqual(198, lit.Length);
+            Assert.AreEqual(100f, SaloonDengPattern.IntervalMs);
+
+            // rows 0..11 = a single light sweeping bar0 -> bar11 (left -> right across the dome).
+            for (int r = 0; r < 12; r++)
+            {
+                int onCount = 0, onBar = -1;
+                for (int b = 0; b < 12; b++) if (lit[r][b]) { onCount++; onBar = b; }
+                Assert.AreEqual(1, onCount, "row " + r + " lights exactly one bar");
+                Assert.AreEqual(r, onBar, "the lit bar sweeps left->right");
+            }
+            // tail blackout (final rows all off) and total lit-cell count (576 ones in the EXE).
+            for (int b = 0; b < 12; b++) Assert.IsFalse(lit[197][b], "row 197 is full blackout");
+            int total = 0;
+            foreach (var row in lit) foreach (var on in row) if (on) total++;
+            Assert.AreEqual(576, total, "lit-cell count matches DAT_005518e8");
+        }
+
+        [Test]
         public void TexAnim_Lookup_Misses_Are_Null()
         {
             Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0005", "NOT_A_PROP"));

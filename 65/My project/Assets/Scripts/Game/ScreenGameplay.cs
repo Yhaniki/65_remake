@@ -1292,6 +1292,18 @@ namespace Sdo.Game
                 subMats.Add(mats);
             }
 
+            // SCN0021 saloon ceiling light bars: the 12 deng meshes are NOT independently animated — they share ONE
+            // 198×12 on/off marquee driven from saloon/deng/1's 001(dim)/002(lit) (StageScene_UpdatePatternBillboards).
+            // Register each bar's materials with the shared driver instead of the per-prop tex-anim path (which can't
+            // express a cross-bar pattern and reads as random flicker). Static rendering below still draws the meshes.
+            if (SceneFolder().Equals("SCN0021", System.StringComparison.OrdinalIgnoreCase) &&
+                System.Text.RegularExpressions.Regex.IsMatch(baseName, @"^DENG\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                int bar = TrailingInt(baseName) - 1;   // DENG1 -> bar 0 (leftmost across the dome)
+                var marquee = EnsureSaloonDengMarquee();
+                foreach (var ms in subMats) marquee.Register(bar, ms);
+            }
+
             // Animated texture overlay (faithful to the original's UIPicMap frame-swap): a few static props — the FIFA
             // crowd (renqun) and spotlights (shanguang) — are textured by a per-frame DDS sequence cycled every 300 ms,
             // NOT by their MSH material. Drive the shared submesh materials through that sequence. The geometry stays
@@ -1690,6 +1702,32 @@ namespace Sdo.Game
             var leaves = new List<int>();
             for (int i = 0; i < bc; i++) if (!hasChild[i]) leaves.Add(i);
             return leaves.ToArray();
+        }
+
+        // Trailing integer in a name ("DENG12" -> 12, "DENG" -> 0). Used to index a numbered series of props.
+        private static int TrailingInt(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return 0;
+            int i = name.Length; while (i > 0 && char.IsDigit(name[i - 1])) i--;
+            return (i < name.Length && int.TryParse(name.Substring(i), out int n)) ? n : 0;
+        }
+
+        // SCN0021 saloon ceiling-light marquee: one shared driver for all 12 deng bars (lazily created on the first
+        // deng, frames loaded once from saloon/deng/1 — the only deng folder that ships 001/002). See SaloonDengMarquee.
+        private SaloonDengMarquee _saloonDeng;
+        private SaloonDengMarquee EnsureSaloonDengMarquee()
+        {
+            if (_saloonDeng == null)
+            {
+                var go = new GameObject("SALOON_DENG_marquee");   // root: torn down with the play screen
+                _saloonDeng = go.AddComponent<SaloonDengMarquee>();
+                var shared = Path.Combine(SdoExtracted.Root, "SCENE", "MAPOBJ", "SALOON", "DENG", "1");
+                var dim = ResolveDds(shared, "001.dds", out _, out _);
+                var lit = ResolveDds(shared, "002.dds", out _, out _);
+                _saloonDeng.SetFrames(dim, lit);
+                Debug.Log($"[mapobj] SCN0021 deng marquee: dim={(dim != null)} lit={(lit != null)} from {shared}");
+            }
+            return _saloonDeng;
         }
 
         private void ApplySceneMaterialUvScroll(string folder, Material[] mats, int[] materialIds)
