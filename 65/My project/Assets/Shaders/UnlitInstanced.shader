@@ -56,7 +56,21 @@ Shader "Sdo/UnlitInstanced"
 
             fixed4 frag (v2f i) : SV_Target
             {
-                return tex2D(_MainTex, i.uv) * _Color * i.col;   // × baked vertex lighting (SCN0008 night-dark props)
+                // × baked vertex lighting (SCN0008 ZIMU rune A/B 5× contrast, night-dark props). The original D3D9
+                // engine is gamma-unaware: it multiplies the sRGB texture bytes by the sRGB per-vertex diffuse bytes
+                // and writes straight to the (gamma) framebuffer. This project renders LINEAR, so tex2D already returns
+                // LINEAR and the output re-encodes linear→sRGB — which GAMMA-BRIGHTENS the dark baked diffuse and
+                // crushes the A/B contrast (both panels read near-equal/too-bright). Replicate D3D9 exactly: do the
+                // multiply in GAMMA space (tex back to sRGB × vertex × tint) then re-encode to linear. NO-OP for the
+                // white-vertex props (box/deng/walls, i.col=1) so no other scene shifts; only baked-colour props move.
+                fixed4 c = tex2D(_MainTex, i.uv);
+                #ifdef UNITY_COLORSPACE_GAMMA
+                c.rgb *= _Color.rgb * i.col.rgb;
+                #else
+                c.rgb = GammaToLinearSpace(LinearToGammaSpace(c.rgb) * _Color.rgb * i.col.rgb);
+                #endif
+                c.a *= _Color.a * i.col.a;
+                return c;
             }
             ENDCG
         }

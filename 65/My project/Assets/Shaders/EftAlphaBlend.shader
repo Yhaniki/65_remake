@@ -1,9 +1,15 @@
-// ADDITIVE glow with a VISIBLE alpha PULSE for the SCN0008 kekkai DISC (tex69). The faithful Particles/Additive path
-// does `2× tex × _TintColor`, and the kekkai texture is opaque (tex.a=1), so its SrcAlpha = 2×_TintColor.a clamps to 1
-// for the whole pulse → the disc is stuck at full brightness (no "光變亮變暗", looks solid = "沒有透明度"). This shader
-// drops the 2× and derives SrcAlpha from the texture LUMINANCE × the ch1 pulse, so the glow brightness actually rises
-// and falls (dim→bright→dim) and the dark texture background contributes nothing (stays see-through). Still additive
-// (SrcAlpha One) so the disc GLOWS cyan like the official, not a faint flat translucent blend. _TintColor set by SetCol.
+// GAMMA-CORRECT ADDITIVE glow for the SCN0008 kekkai DISC (tex69) + MW runes (tex117). Used ONLY by these two
+// (EftEffect tex69/117 path), so it's safe to make D3D9-faithful here without touching other effects.
+//
+// Root cause of the "太亮/過曝白團": the original D3D9 is gamma-unaware — it adds (sRGB texel × diffuse × ch1) straight
+// into the GAMMA framebuffer. This project renders LINEAR: tex2D returns LINEAR(texel) and `Blend SrcAlpha One` mixes
+// with srcAlpha=ch1 in LINEAR space, then the output re-encodes linear→sRGB — which gamma-BRIGHTENS the mid pulse
+// (ch1=0.5, texel 0.8 → displays 0.58 vs the original's 0.40) and blows the overlapping rings white.
+//
+// Fix: PREMULTIPLIED additive (Blend One One) with the texel×tint×ch1 product done in GAMMA space, then re-encoded to
+// linear. Single layer over black now displays exactly s_gamma×tint×ch1 = the original. The ch1 pulse (128↔255) and the
+// black texture background (→0, stays see-through) behave verbatim; cyan glows, no flat translucent blend. SetCol drives
+// _TintColor (rgb=ch2/3/4, a=ch1). Gamma builds skip the round-trip (already gamma).
 Shader "Sdo/EftAlpha"
 {
     Properties
@@ -14,7 +20,7 @@ Shader "Sdo/EftAlpha"
     SubShader
     {
         Tags { "Queue"="Transparent" "RenderType"="Transparent" "IgnoreProjector"="True" }
-        Blend SrcAlpha One
+        Blend One One          // PREMULTIPLIED additive: ch1 (srcAlpha) is folded into rgb below, in gamma space
         Cull Off
         ZWrite Off
         Lighting Off
@@ -30,12 +36,17 @@ Shader "Sdo/EftAlpha"
             v2f vert (appdata v) { v2f o; o.pos = UnityObjectToClipPos(v.vertex); o.uv = TRANSFORM_TEX(v.uv, _MainTex); return o; }
             fixed4 frag (v2f i) : SV_Target
             {
-                // EXACT engine path (decompiled): COLOR = texture × diffuse(_TintColor.rgb); SRCALPHA = diffuse.a (the
-                // kekkai texture is opaque RGB so tex.a=1 ⇒ alpha = ch1 only). Additive (SrcAlpha One): the contribution
-                // = src.rgb × src.a = (tex × tint.rgb) × tint.a, so the ch1 pulse (128↔255) scales the glow brightness
-                // 2×, and the BLACK background contributes nothing (src.rgb=0) = naturally see-through. No lum, no 2×.
+                // D3D9 path (decompiled): additive contribution = (texel × diffuse.rgb) × srcAlpha, where srcAlpha = ch1
+                // (kekkai/MW textures are opaque RGB, tex.a=1). Premultiply ch1 into rgb and add via Blend One One, doing
+                // the whole product in GAMMA space so it matches the gamma-framebuffer original (no mid-pulse brighten).
                 fixed3 t = tex2D(_MainTex, i.uv).rgb;
-                return fixed4(t * _TintColor.rgb, _TintColor.a);
+                fixed3 o;
+                #ifdef UNITY_COLORSPACE_GAMMA
+                o = t * _TintColor.rgb * _TintColor.a;
+                #else
+                o = GammaToLinearSpace(LinearToGammaSpace(t) * _TintColor.rgb * _TintColor.a);
+                #endif
+                return fixed4(o, _TintColor.a);
             }
             ENDCG
         }
