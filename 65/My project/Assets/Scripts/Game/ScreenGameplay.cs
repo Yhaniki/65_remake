@@ -1245,7 +1245,11 @@ namespace Sdo.Game
                     for (int i = 0; i < vts.Length; i++) vts[i] = m.MultiplyPoint3x4(vts[i]);
                     sub.Mesh.vertices = vts; sub.Mesh.RecalculateBounds();
                 }
-                Debug.Log($"[mapobj] {baseName}: rigid-bind {r.Submeshes.Count} submesh(es) to {leafBones.Length} leaf bone(s)");
+                {
+                    Bounds bb2 = r.Submeshes[0].Mesh.bounds;
+                    for (int s = 1; s < r.Submeshes.Count; s++) bb2.Encapsulate(r.Submeshes[s].Mesh.bounds);
+                    Debug.Log($"[mapobj] {baseName}: rigid-bind done — world center={bb2.center} size={bb2.size}");
+                }
             }
 
             // shared materials, one set per submesh (built once; reused by every instance). GPU-instancing

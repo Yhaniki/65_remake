@@ -531,10 +531,6 @@ namespace Sdo.Game
                     {
                         new MapobjPlacement(0f, 0f, 0f, 1f),
                     }),
-                    new MapobjGroup("16/FANGZI/DENG1", "DENG1.MSH", "DENG1.HRC", null, new[]
-                    {
-                        new MapobjPlacement(0f, 0f, 0f, 1f),
-                    }),
                     new MapobjGroup("16/FANGZI/_DENG1", "DENG1.MSH", "DENG1.HRC", null, new[]
                     {
                         new MapobjPlacement(0f, 0f, 0f, 1f),
@@ -549,7 +545,7 @@ namespace Sdo.Game
                     }),
                     new MapobjGroup("16/FANGZI/XINTIANDI", "XINTIANDI.MSH", "XINTIANDI.HRC", null, new[]
                     {
-                        new MapobjPlacement(0f, -120f, 0f, 1f),
+                        new MapobjPlacement(0f, 0f, 0f, 1f),
                     }),
                     new MapobjGroup("16/SKY", "SKY.MSH", "SKY.HRC", "SKY.MOT", new[]
                     {

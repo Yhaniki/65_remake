@@ -32,6 +32,7 @@ public static class BuildScript
         "Legacy Shaders/Particles/Additive",
         "Particles/Standard Unlit",
         // project (Assets/**/*.shader)
+        "Sdo/EftAlpha",          // kekkai disc + MW runes: 1× additive (no Legacy 2× clip for opaque-alpha textures)
         "Sdo/EftAdditiveLum",
         "Sdo/HpGlowClip",
         "Sdo/PortraitOpaque",

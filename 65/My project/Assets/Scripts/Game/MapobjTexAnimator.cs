@@ -17,6 +17,7 @@ namespace Sdo.Game
         private Texture[] _frames;
         private float _interval;     // seconds per frame
         private bool _holdLast;      // true -> stop at the last frame (play-once, for SCN0016 building lights)
+        private float _startTime;    // Time.time when Init was called; makes intervals relative to scene load
         private int _last = -1;
 
         /// <param name="mats">shared submesh materials whose _MainTex to drive (all set to the same frame)</param>
@@ -29,19 +30,23 @@ namespace Sdo.Game
             _frames = frames;
             _interval = Mathf.Max(0.001f, intervalMs / 1000f);
             _holdLast = holdLast;
+            _startTime = Time.time;
+            Debug.Log($"[texanim] Init: {frames?.Length ?? 0} frames @ {intervalMs}ms, holdLast={holdLast}");
             Apply(0);   // start on frame 0 so the MSH's embedded (possibly wrong/white) material never shows
         }
 
         private void Update()
         {
             if (_frames == null || _frames.Length == 0) return;
-            int raw = (int)(Time.time / _interval);
+            int raw = (int)((Time.time - _startTime) / _interval);
             int idx = _holdLast ? Mathf.Min(raw, _frames.Length - 1) : raw % _frames.Length;
             if (idx != _last) Apply(idx);
         }
 
         private void Apply(int idx)
         {
+            if (_holdLast && idx > 0 && _last == 0)
+                Debug.Log($"[texanim] HoldLast: switched to final frame {idx}/{(_frames?.Length ?? 0) - 1}");
             _last = idx;
             if (_mats == null || _frames == null || idx < 0 || idx >= _frames.Length) return;
             var t = _frames[idx];

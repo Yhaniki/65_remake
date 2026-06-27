@@ -580,6 +580,12 @@ namespace Sdo.Game
                 bool worldQuad = !em.IsRing && !em.Orient;
                 Material mat;
                 if (em.Blend == 1 && AlphaShader() != null) mat = new Material(AlphaShader());
+                // SCN0008 kekkai disc (tex69) + MW runes (tex117): textures have no alpha channel (tex.a=1 everywhere).
+                // Legacy Particles/Additive does 2×tex×_TintColor → SrcAlpha = 2×1×_TintColor.a clips to 1 at all
+                // ch1 values → disc permanently at max brightness regardless of the ch1 pulse = "慘白"/always-on.
+                // Sdo/EftAlpha uses SrcAlpha = _TintColor.a directly (no 2×, no tex.a) → correct fade/pulse.
+                else if (Persistent && em.HasTex && (em.TexIdx == 69 || em.TexIdx == 117) && AlphaShader() != null)
+                    mat = new Material(AlphaShader());
                 else if (worldQuad && LumWorldQuad && LumShader() != null) mat = new Material(LumShader());
                 else mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
                 mat.mainTexture = tex != null ? tex : _glow;
