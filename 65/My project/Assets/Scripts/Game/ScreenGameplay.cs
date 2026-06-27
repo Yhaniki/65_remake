@@ -1403,6 +1403,7 @@ namespace Sdo.Game
                     parent.transform.localScale = Vector3.one * instances[idx].Scale;
                     var avatar = parent.AddComponent<SdoAvatar>();
                     avatar.Setup(hrc, mot);                                   // drives the bone FK from the .mot (no parts -> no skin)
+                    avatar.Fps = MapobjMotionFps(SceneFolder(), baseName);    // SCN0016 floor lights play at half speed
                     avatar.PhaseOffsetSec = phaseOffsetSec;
                     AttachSceneEftsToMapobj(baseName, avatar, parent.transform);
                     // each submesh rides its own leaf bone (trophy: ball on Sphere01, cup on Cylinder01) so the .mot
@@ -1444,6 +1445,7 @@ namespace Sdo.Game
                     var avatar = parent.AddComponent<SdoAvatar>();
                     avatar.GpuSkinning = true;
                     avatar.Setup(hrc, mot);
+                    avatar.Fps = MapobjMotionFps(SceneFolder(), baseName);    // SCN0016 floor lights play at half speed
                     AttachSceneEftsToMapobj(baseName, avatar, parent.transform);
                     int si = 0;
                     foreach (var sub in r.Submeshes)
@@ -1473,6 +1475,7 @@ namespace Sdo.Game
                     if (avatar != null)
                     {
                         avatar.Setup(hrc, mot);
+                        avatar.Fps = MapobjMotionFps(SceneFolder(), baseName);    // SCN0016 floor lights play at half speed
                         avatar.PhaseOffsetSec = phaseOffsetSec;
                         AttachSceneEftsToMapobj(baseName, avatar, parent.transform);
                     }
@@ -1565,6 +1568,19 @@ namespace Sdo.Game
             string fb = cutout ? "Unlit/Transparent Cutout" : alpha ? "Unlit/Transparent" : "Unlit/Texture";
             return tex != null ? new Material(Shader.Find(fb)) { mainTexture = tex }
                                : new Material(Shader.Find("Unlit/Color")) { color = fallbackCol };
+        }
+
+        // .mot playback rate (fps) for an animated mapobj. Default 30. SCN0016 floor lights DI1-21 play at HALF speed
+        // in the original (decompiled motion-speed 0.015 vs the default 0.030 → 15 fps, scene-0x10 init ~line 130258);
+        // at 30 fps their coordinated slow fade plays 2× too fast and reads as fast/chaotic sequential flicker.
+        private static float MapobjMotionFps(string folder, string baseName)
+        {
+            if (string.Equals(folder, "SCN0016", System.StringComparison.OrdinalIgnoreCase) &&
+                baseName != null &&
+                System.Text.RegularExpressions.Regex.IsMatch(baseName, @"^DI\d+$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return 15f;
+            return 30f;
         }
 
         private static void ApplyMapobjRenderMode(Material mat, SceneMapobjUvScrollCatalog.RenderMode mode)
