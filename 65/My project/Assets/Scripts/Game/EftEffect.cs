@@ -73,8 +73,6 @@ namespace Sdo.Game
         static Shader _lumShader;
         static Shader LumShader() { if (_lumShader == null) _lumShader = Shader.Find("Sdo/EftAdditiveLum"); return _lumShader; }
         static Shader _alphaShader;
-        // SCN0008 kekkai DISC: render alpha-BLENDED (translucent) so its alpha pulse reads as transparency + 光變亮變暗,
-        // instead of additive (which over-brightens the bright disc until the pulse clips away). Used only for Persistent tex69.
         static Shader AlphaShader() { if (_alphaShader == null) _alphaShader = Shader.Find("Sdo/EftAlpha"); return _alphaShader; }
 
         // SPRITE-SHEET FLIPBOOK: a flipbook whose frames are CELLS of one atlas (SCN0010 confetti ZIPIANZ: 16 cells
@@ -581,7 +579,7 @@ namespace Sdo.Game
                 // diffuse using the texture only as a shape mask (the orange sprite would otherwise muddy to brown).
                 bool worldQuad = !em.IsRing && !em.Orient;
                 Material mat;
-                if (Persistent && em.HasTex && em.TexIdx == 69 && AlphaShader() != null) mat = new Material(AlphaShader());   // kekkai DISC: translucent + alpha pulse
+                if (em.Blend == 1 && AlphaShader() != null) mat = new Material(AlphaShader());
                 else if (worldQuad && LumWorldQuad && LumShader() != null) mat = new Material(LumShader());
                 else mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
                 mat.mainTexture = tex != null ? tex : _glow;
