@@ -23,6 +23,10 @@ namespace Sdo.UI
     {
         public static FrontendApp Instance { get; private set; }
 
+        /// <summary>The front-end UI camera (frames the 800×600 4:3 world canvas). Exposed so a screen that mounts a 3D
+        /// scene behind its UI (e.g. RoomScreen → RoomScene3D) can mask the 3D layers off this camera while shown.</summary>
+        public Camera UiCam => _uiCam;
+
         private AppContext _ctx;
         private readonly Dictionary<ScreenId, UIScreenBase> _screens = new Dictionary<ScreenId, UIScreenBase>();
         private SettingsModal _settings;
@@ -100,6 +104,19 @@ namespace Sdo.UI
 
             WarmupFont();
             ShowOnly(_ctx.Flow.Current);
+
+            // DEV: SDO_ROOM → boot straight into the waiting room (create a mock room + show it), for inspecting the
+            // 3D room + ROOM UI without clicking through the lobby. Editor reads it from EditorPrefs, a build from env.
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOM"))) EnterRoom();
+        }
+
+        /// <summary>Create a mock room (host = local player) if none, and show the waiting room. Used by the SDO_ROOM
+        /// dev hook and the room capture test.</summary>
+        public void EnterRoom()
+        {
+            if (_ctx == null) return;
+            if (_ctx.Rooms.CurrentRoom == null) _ctx.Rooms.CreateRoom(Sdo.UI.Services.GameMode.Normal);
+            _ctx.Flow.GoTo(ScreenId.Room);
         }
 
         private void Update()

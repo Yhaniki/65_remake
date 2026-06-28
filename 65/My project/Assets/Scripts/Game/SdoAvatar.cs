@@ -90,6 +90,12 @@ namespace Sdo.Game
         }
         public void ClearOneShot() { _oneShot = null; _oneShotStart = -1f; }
 
+        /// <summary>Switch the active LOOPING clip (no DPS): used by the waiting room to flip between the standby idle
+        /// and the walk clip as the local player moves. The change is picked up next LateUpdate, which crossfades from
+        /// the displayed pose via MaybeStartBlend (so idle↔walk is a smooth blend, not a hard cut). No-op if null or
+        /// already the active clip.</summary>
+        public void SetClip(MotLoader mot) { if (mot != null) _mot = mot; }
+
         /// <summary>
         /// Pose the standby idle ONCE on creation and arm it as the active clip, so the first LateUpdate continues
         /// the idle with NO crossfade. Without this, the feet/chest measurement pose (frame 0 of the fallback clip,
