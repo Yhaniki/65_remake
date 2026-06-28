@@ -1,6 +1,7 @@
 using System;
 using NUnit.Framework;
 using Sdo.Game;
+using UnityEngine;
 
 namespace Sdo.Tests
 {
@@ -130,6 +131,47 @@ namespace Sdo.Tests
         {
             Assert.IsFalse(DdsLoader.HasAlpha(null));
             Assert.IsFalse(DdsLoader.HasAlpha(new byte[16]));   // too short / no magic
+        }
+
+        // 5×5: opaque red core, white transparent matte around it (the SCN0026 car-billboard shape in miniature).
+        private static Color32[] RedOnWhiteMatte(int w, int h)
+        {
+            var px = new Color32[w * h];
+            for (int i = 0; i < px.Length; i++) px[i] = new Color32(255, 255, 255, 0);   // white, fully transparent
+            for (int y = 1; y < h - 1; y++)
+                for (int x = 1; x < w - 1; x++)
+                    px[y * w + x] = new Color32(220, 10, 10, 255);                        // opaque red core
+            return px;
+        }
+
+        [Test]
+        public void BleedAlphaEdges_Replaces_White_Matte_With_Prop_Colour()
+        {
+            const int w = 5, h = 5;
+            var px = RedOnWhiteMatte(w, h);
+            DdsLoader.BleedAlphaEdges(px, w, h);
+            // a transparent matte texel adjacent to the red core is now reddish, not white — alpha untouched.
+            var edge = px[0 * w + 1];   // top edge, directly above a core texel
+            Assert.Less(edge.b, 120, "blue channel of the matte should drop (no longer white)");
+            Assert.Greater(edge.r, edge.b, "matte takes on the red prop colour");
+            Assert.AreEqual(0, edge.a, "alpha (the cut-out shape) is unchanged");
+            // the opaque core is left exactly as authored.
+            var core = px[2 * w + 2];
+            Assert.AreEqual(220, core.r); Assert.AreEqual(10, core.g); Assert.AreEqual(255, core.a);
+        }
+
+        [Test]
+        public void BleedAlphaEdges_FullyOpaque_IsNoOp()
+        {
+            var px = new Color32[9];
+            for (int i = 0; i < px.Length; i++) px[i] = new Color32((byte)(i * 10), 5, 5, 255);
+            var copy = (Color32[])px.Clone();
+            DdsLoader.BleedAlphaEdges(px, 3, 3);
+            for (int i = 0; i < px.Length; i++)
+            {
+                Assert.AreEqual(copy[i].r, px[i].r); Assert.AreEqual(copy[i].g, px[i].g);
+                Assert.AreEqual(copy[i].b, px[i].b); Assert.AreEqual(copy[i].a, px[i].a);
+            }
         }
 
         [Test]

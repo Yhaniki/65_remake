@@ -324,7 +324,14 @@ namespace Sdo.Game
             return ((6 - code) * a0 + (code - 1) * a1) / 5;
         }
 
-        public static Texture2D Load(byte[] d)
+        public static Texture2D Load(byte[] d) => Load(d, false);
+
+        /// <param name="bleedAlphaEdges">When true, the decoded RGB is dilated outward into transparent /
+        /// semi-transparent texels (alpha unchanged) so a white/light MATTE behind a cut-out can't bleed a halo
+        /// at the silhouette. Used for alpha-blended mapobj billboards (SCN0026 背景汽車) whose DXT3 art carries a
+        /// white background — straight SrcAlpha blend would otherwise composite that white as a fringe. No-op on
+        /// fully-opaque textures (nothing to bleed into), so it is safe to pass for any mapobj texture.</param>
+        public static Texture2D Load(byte[] d, bool bleedAlphaEdges)
         {
             if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return null;
             int height = BitConverter.ToInt32(d, 12);
@@ -332,13 +339,14 @@ namespace Sdo.Game
             string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
             if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return null;
 
-            if (fourcc == "DXT3") return DecodeDxt3(d, 128, width, height);
+            if (fourcc == "DXT3") return DecodeDxt3(d, 128, width, height, bleedAlphaEdges);
             // DXT1 is decoded BY HAND to RGBA32 (opaque, alpha 255) — NOT via Unity's native TextureFormat.DXT1.
             // On this project's d3d12 / Unity 6 path the native BC1 upload sampled with alpha 0, so the scene's
             // alpha-cutout shader (Sdo/SceneVertexCutout: clip(a-0.5)) discarded EVERY opaque DXT1 material — the
             // SCN0010 floor / sky / columns / lanterns vanished to black while the DXT3 props (own manual decode)
             // stayed. Manual decode gives correct RGB + alpha 255 (SDO's stage DXT1 carry no real alpha; see HasAlpha),
-            // same orientation as the native path, so UVs are unchanged and no scene regresses.
+            // same orientation as the native path, so UVs are unchanged and no scene regresses. (DXT1 is opaque, so
+            // the bleed flag is a no-op for it — passed through for a uniform call site.)
             if (fourcc == "DXT1") return DecodeDxt1(d, 128, width, height);
 
             // UNCOMPRESSED 32-bit RGB(A): fourcc is empty and DDPF_RGB (0x40) is set. SDO's extracted/packaged
@@ -349,7 +357,7 @@ namespace Sdo.Game
                 return DecodeUncompressed(d, 128, width, height,
                     BitConverter.ToUInt32(d, 92), BitConverter.ToUInt32(d, 96),
                     BitConverter.ToUInt32(d, 100), BitConverter.ToUInt32(d, 104),
-                    BitConverter.ToInt32(d, 88));
+                    BitConverter.ToInt32(d, 88), bleedAlphaEdges);
 
             TextureFormat fmt; int blockBytes;
             switch (fourcc)
@@ -367,7 +375,7 @@ namespace Sdo.Game
 
         // Uncompressed 32-bit DDS (D3D A8R8G8B8 / X8R8G8B8 etc.) decoded via the pixel-format channel masks → RGBA32.
         // Amask 0 → opaque (255). Same row order as the block decoders (DDS top row → texture row 0) so UVs match.
-        private static Texture2D DecodeUncompressed(byte[] d, int off, int w, int h, uint rm, uint gm, uint bm, uint am, int bits)
+        private static Texture2D DecodeUncompressed(byte[] d, int off, int w, int h, uint rm, uint gm, uint bm, uint am, int bits, bool bleed = false)
         {
             if (bits != 32) return null;                 // only 32-bit handled (SDO's uncompressed stage textures are all 32-bit)
             if (off + w * h * 4 > d.Length) return null;
@@ -380,6 +388,7 @@ namespace Sdo.Game
                 px[i] = new Color32((byte)((v & rm) >> rs), (byte)((v & gm) >> gs), (byte)((v & bm) >> bs),
                                     am != 0 ? (byte)((v & am) >> as_) : (byte)255);
             }
+            if (bleed) BleedAlphaEdges(px, w, h);
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };
             tex.SetPixels32(px); tex.Apply(false, true);
             return tex;
@@ -427,7 +436,7 @@ namespace Sdo.Game
         }
 
         // BC2: 16-byte blocks = 8 bytes 4-bit alpha + 8 bytes DXT1-style colour (always 4-colour, no 1-bit alpha)
-        private static Texture2D DecodeDxt3(byte[] d, int off, int w, int h)
+        private static Texture2D DecodeDxt3(byte[] d, int off, int w, int h, bool bleed = false)
         {
             int bw = (w + 3) / 4, bh = (h + 3) / 4;
             if (off + bw * bh * 16 > d.Length) return null;
@@ -452,9 +461,55 @@ namespace Sdo.Game
                         px[y * w + x] = new Color32(col.r, col.g, col.b, (byte)((nib * 255 + 7) / 15));
                     }
                 }
+            if (bleed) BleedAlphaEdges(px, w, h);
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };   // D3D default is WRAP; tiling UVs (FIFA crowd u=-7.75..7.32, floors) need it
             tex.SetPixels32(px); tex.Apply(false, true);
             return tex;
+        }
+
+        /// <summary>
+        /// Alpha edge-bleed (a.k.a. RGB dilation / matte expansion). Copies RGB outward from strongly-opaque texels
+        /// (alpha ≥ <paramref name="seedAlpha"/>) into transparent / soft-edge texels over a few passes, leaving the
+        /// alpha channel untouched. The DXT3/DXT1 background behind a cut-out keeps whatever RGB the artist painted
+        /// (often a WHITE matte); under straight SrcAlpha/InvSrcAlpha blending those white texels composite a halo
+        /// at the silhouette (SCN0026 背景汽車). After bleeding, the edge texels carry the prop's own colour instead,
+        /// so the blended edge is clean and the cut-out shape (the alpha) is unchanged. Pure (Color32[] -> mutated),
+        /// so it is unit-tested. No-op when every texel is already opaque, or when nothing is opaque enough to seed.
+        /// </summary>
+        public static void BleedAlphaEdges(Color32[] px, int w, int h, int seedAlpha = 200, int passes = 6)
+        {
+            if (px == null || w <= 0 || h <= 0 || px.Length < w * h) return;
+            var filled = new bool[w * h];
+            int seeds = 0;
+            for (int i = 0; i < w * h; i++) if (px[i].a >= seedAlpha) { filled[i] = true; seeds++; }
+            if (seeds == 0 || seeds == w * h) return;   // nothing to bleed from, or fully opaque -> unchanged
+            var r = new byte[w * h]; var g = new byte[w * h]; var b = new byte[w * h];
+            for (int i = 0; i < w * h; i++) { r[i] = px[i].r; g[i] = px[i].g; b[i] = px[i].b; }
+            var pend = new System.Collections.Generic.List<(int idx, byte r, byte g, byte b)>();
+            for (int pass = 0; pass < passes; pass++)
+            {
+                pend.Clear();
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = y * w + x;
+                        if (filled[i]) continue;
+                        int sr = 0, sg = 0, sb = 0, cnt = 0;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                if (dx == 0 && dy == 0) continue;
+                                int nx = x + dx, ny = y + dy;
+                                if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                                int j = ny * w + nx;
+                                if (filled[j]) { sr += r[j]; sg += g[j]; sb += b[j]; cnt++; }
+                            }
+                        if (cnt > 0) pend.Add((i, (byte)(sr / cnt), (byte)(sg / cnt), (byte)(sb / cnt)));
+                    }
+                if (pend.Count == 0) break;   // fully propagated
+                foreach (var e in pend) { r[e.idx] = e.r; g[e.idx] = e.g; b[e.idx] = e.b; filled[e.idx] = true; }
+            }
+            for (int i = 0; i < w * h; i++) px[i] = new Color32(r[i], g[i], b[i], px[i].a);
         }
 
         private static Color32 From565(ushort c) =>

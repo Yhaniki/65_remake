@@ -2171,7 +2171,11 @@ namespace Sdo.Game
                 var bytes = File.ReadAllBytes(hit);
                 hasAlpha = DdsLoader.HasAlpha(bytes);
                 additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
-                return DdsLoader.Load(bytes);
+                // Alpha-blended cut-out props (e.g. SCN0026 背景汽車 — flat DXT3 billboards on a WHITE matte) bled a
+                // white halo at the silhouette under straight alpha blending. Edge-bleed the decoded RGB so the
+                // transparent matte carries the prop's own colour instead. Additive glows are excluded: their low-
+                // alpha RGB IS the glow and must not be dilated. No-op on opaque textures, so it's safe by default.
+                return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow);
             }
             catch { return null; }
         }
