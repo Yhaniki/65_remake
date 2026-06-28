@@ -58,11 +58,13 @@ namespace Sdo.Game
             new Entry("fire3", 2, 84, new SceneEftRenderTuning(1.65f, 1.30f, 1.00f)),
             new Entry("fire3", 4, 30, new SceneEftRenderTuning(0.55f, 0.70f, 0.80f)),
 
-            // booklight.EFT: slot2 is the visible orange/purple orb (billboard, attach=1 to the carrier).
-            // Native scale 20 (FUN_004addd0); parent liveScale (0.5×1.0) halves it, so scaleMul compensates.
-            // Official at age=8: world Y≈18; scaleMul 1.2 targets that; alphaMul 0.85 keeps the glow bright
-            // enough to read (parent-scale multiplication already brings the quad to ~15 without scaleMul).
-            new Entry("booklight", 2, 31, new SceneEftRenderTuning(0.70f, 0.85f, 1.20f)),
+            // booklight.EFT: slot2 is the visible glowing orb (billboard, attach=1 to the carrier). The carrier's
+            // baseSize (0.3) is multiplied into the orb's world matrix (D3D9 attach = parent_world × child_local),
+            // so the faithful quad is only ~14 world units → it reads "發光太小". scaleMul ENLARGES the orb without
+            // touching effScale (which would also amplify the orb's vel.y drift off the book). A bigger orb also
+            // makes the fixed ~10u rise look proportionally smaller, so it sits ON the book. rgbMul un-dims it.
+            // ScaleMul/RgbMul are the two knobs to nudge for "視覺看起來對"; the round shape is handled in EftEffect.
+            new Entry("booklight", 2, 31, new SceneEftRenderTuning(0.30f, 1.00f, 2.50f)),
         };
 
         public static SceneEftRenderTuning Find(string eft, int slot, int texIdx)

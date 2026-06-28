@@ -53,6 +53,10 @@ namespace Sdo.Game
 
         private static SceneAttachedEft[] OneBooklight(string bone)
         {
+            // effScale = decompiled 20 (FUN_004addd0 passes 0x41a00000). KEEP it faithful: effScale multiplies the
+            // orb's POSITION (its slow vel.y rise) as well as its size, so bumping it here pushed the orb's upward
+            // drift further off the book ("偏離書本"). The orb's apparent SIZE is tuned separately via
+            // SceneEftRenderCatalog ("booklight",2,31).ScaleMul, which scales ONLY the quad — not its drift.
             return new[] { new SceneAttachedEft("booklight", bone, new Vector3(0f, -5f, 0f), Vector3.zero, 20f) };
         }
     }

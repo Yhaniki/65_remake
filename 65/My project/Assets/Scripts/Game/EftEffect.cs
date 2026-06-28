@@ -29,6 +29,11 @@ namespace Sdo.Game
     /// particle is a child whose localScale = baseSize×animScale, localRotation = Euler(accumulated channels),
     /// localPosition = integrated position — which reproduces the engine's S·R·T·Owner world matrix.
     /// </summary>
+    // Run AFTER SdoAvatar.LateUpdate has posed the bones / moved the anchors — same convention as HandRibbon/
+    // HeadMarker/PlayingEmoji. A bone-attached effect (SCN0015 booklight) follows _follow.position in LateUpdate;
+    // at the default order 0 it raced SdoAvatar (also order 0) and frequently read the PREVIOUS frame's anchor,
+    // so the orb lagged a fast-moving prop by one frame ("有時候偏離書本"). Harmless for non-following uses.
+    [DefaultExecutionOrder(100)]
     public sealed class EftEffect : MonoBehaviour
     {
         const float Step = 0.02f;   // 20ms fixed step
@@ -767,6 +772,11 @@ namespace Sdo.Game
             // Keep the flare a STABLE round star at its base size — the visible "忽大忽小" twinkle comes from its alpha
             // (ch1: 0→255→0 fade-in/out), not a scale stretch. So ignore the deforming scale channels for these glows.
             if (Persistent && em.HasTex && em.TexIdx == 42) animScale = Vector3.one;
+            // SCN0015 booklight orb (tex31): the channels grow X/Z to ~1.53 but leave Y at 1.0, so the camera
+            // billboard flattens into a wide OVAL ("變形") — same failure mode as the tex42 flares above. Drive all
+            // axes from the X channel so it stays a ROUND ball that still breathes (1→1.53→1). The orb's overall
+            // size/brightness is tuned in SceneEftRenderCatalog ("booklight",2,31), not here.
+            if (Persistent && EffectName == "booklight") animScale = new Vector3(animScale.x, animScale.x, animScale.x);
             // AEF_3_00 blue mesh (MeshIdx 32, ONLY 200/300 — never touch 100/400/500's column meshes). Its own scale
             // channels make it too thin at spawn and stretch it too TALL mid-life (trail Y-bloom). Use a UNIFORM scale
             // (no Y-bloom): 300 rides a BALL → track the ball's width/rate × MeshWidthMatch; 200 rides the ground
