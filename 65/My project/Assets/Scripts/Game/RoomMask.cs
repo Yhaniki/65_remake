@@ -79,30 +79,6 @@ namespace Sdo.Game
             return n;
         }
 
-        /// <summary>Nearest walkable cell (Chebyshev rings) to a world XZ — used to seat the avatar ON the walkable
-        /// floor at a point near the dance-spot so strict collision never traps it on the non-walkable dais. Returns
-        /// false if none within <paramref name="maxRadius"/> cells.</summary>
-        public bool TryNearestWalkable(float worldX, float worldZ, out Vector3 world, int maxRadius = 256)
-        {
-            int cx = ColumnX(worldX), cz = RowZ(worldZ);
-            for (int r = 0; r <= maxRadius; r++)
-            {
-                for (int dz = -r; dz <= r; dz++)
-                {
-                    int iz = cz + dz; if (iz < 0 || iz >= Height) continue;
-                    int adz = dz < 0 ? -dz : dz;
-                    for (int dx = -r; dx <= r; dx++)
-                    {
-                        int adx = dx < 0 ? -dx : dx;
-                        if (adx != r && adz != r) continue;   // ring perimeter only
-                        int ix = cx + dx; if (ix < 0 || ix >= Width) continue;
-                        if (TestBit(iz * Width + ix)) { world = new Vector3(ix - OriginX, 0f, OriginZ - iz); return true; }
-                    }
-                }
-            }
-            world = Vector3.zero; return false;
-        }
-
         /// <summary>World-space centroid of the walkable region (a safe default spawn that is on the floor, not the
         /// raised dais). Returns false if the mask has no walkable cell.</summary>
         public bool TryWalkableCentroid(out Vector3 world)

@@ -63,15 +63,5 @@ namespace Sdo.Tests
             Assert.IsTrue(m.TryWalkableCentroid(out var c));
             Assert.IsTrue(m.IsWalkable(c.x, c.z), "the walkable centroid should itself be walkable");
         }
-
-        [Test]
-        public void NearestWalkable_To_DanceSpot_Is_Walkable_And_Near_Centre()
-        {
-            var m = Load();
-            Assert.IsTrue(m.TryNearestWalkable(0f, 0f, out var w), "should find a walkable cell near the dance-spot");
-            Assert.IsTrue(m.IsWalkable(w.x, w.z), "the spawn must be on the walkable floor (strict collision needs it)");
-            // the dance-spot is on the dais just off the floor edge → nearest walkable stays near centre (~27 units)
-            Assert.Less(new Vector2(w.x, w.z).magnitude, 40f);
-        }
     }
 }

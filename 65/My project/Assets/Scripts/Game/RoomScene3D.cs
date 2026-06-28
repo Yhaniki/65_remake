@@ -22,16 +22,16 @@ namespace Sdo.Game
         public float floorY = RoomLayout.FloorY;                 // plane the local avatar stands on (EXE looker tables = 0)
         // EXE StateRoom_UpdateCameraTarget: look-target = (avatarX, avatarY+50, avatarZ); eye.x locked to avatarX,
         // eye.y at the same head height → HORIZONTAL line of sight (平視), eye offset purely in Z by the back distance.
-        public float cameraLookHeight = 50f;                     // eye & look height above the floor (EXE avatar+50)
-        public float cameraBackDistance = -180f;                 // eye Z offset from the anchor (signed; X/Y locked)
+        public float cameraLookHeight = 50f;                     // LOOK-target height above the floor (EXE target = avatar+50, the head)
+        public float cameraEyeRise = 20f;                        // eye sits this much ABOVE the head → slight down-tilt (官方 eye 比頭高一點)
+        public float cameraBackDistance = -235f;                 // eye Z offset from the anchor (signed; X locked)
         public float cameraEyeMinZ = -378f;                      // keep the eye in front of the back wall (no clip)
-        // CAMERA follow box = the EXE StateRoom_ClampCameraPos bounds (.data ints @0x583744..50: X[-278,100], Z[-279,100]).
-        // The camera anchor (0x918) is clamped here and the camera looks at it, so the camera STOPS at this box. The
-        // avatar walks a bit FURTHER (avatarWalkMargin past each side), so it keeps moving — drifting toward the frame
-        // edge — after the camera has stopped (官方: 人還能繼續往下/左右走一段, 但 camera 提早停).
-        public Vector2 cameraBoundsMin = new Vector2(RoomLayout.MinX, RoomLayout.MinZ);   // (-278, -279)
-        public Vector2 cameraBoundsMax = new Vector2(RoomLayout.MaxX, RoomLayout.MaxZ);   // ( 100,  100)
-        public float avatarWalkMargin = 60f;                     // how far the avatar may walk PAST the camera box
+        // CAMERA stop box — SEPARATE from the avatar walk (官方: 人還能繼續往下/左右走一段, 但 camera 提早停). The camera
+        // anchor is clamped here and the camera LOOKS at the anchor, so it stops at this box while the avatar keeps
+        // walking via the MASK (furniture collision) and drifts toward the frame edge. Tighter than the mask floor on
+        // purpose (avatar floor ≈ X[-199,178] Z[-234,2.3]); tune to taste — smaller = camera holds the framing sooner.
+        public Vector2 cameraBoundsMin = new Vector2(-120f, -130f);   // anchor min (worldX, worldZ)
+        public Vector2 cameraBoundsMax = new Vector2(100f, 0f);       // anchor max (worldX, worldZ)
         public float walkSpeed = RoomMovement.WalkSpeed;         // free-walk speed mult (3.0); no run in the lobby
         public bool useMask = true;                              // sample MASK.MSK for furniture collision (else box clamp)
 
@@ -101,7 +101,9 @@ namespace Sdo.Game
             _idleMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.IdleMot);
 
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;   // lowest skinned vertex at the bind pose
-            _walkPos = new Vector3(0f, floorY, 0f);                 // EXE 0x918 init = dance-spot origin (0,0,0)
+            // spawn at the dance-spot origin (EXE default) — the room centre, which the camera frames correctly. (Do
+            // NOT spawn at the mask centroid: that sits near the back wall and pushes the follow-cam into the geometry.)
+            _walkPos = new Vector3(0f, floorY, 0f);
             _facing = RoomMovement.FacingDegrees(2);               // face DOWN by default (toward the camera/front)
             ApplyAvatarTransform();
         }
@@ -132,12 +134,15 @@ namespace Sdo.Game
             if (dir >= 0)
             {
                 float dtMs = Time.deltaTime * 1000f;
-                // the avatar walks the camera box EXPANDED by avatarWalkMargin, so it can keep moving a bit after the
-                // camera (clamped to the tighter camera box) has stopped — drifting toward the frame edge.
                 Vector3 cand = RoomMovement.Step(_walkPos, dir, dtMs, walkSpeed);
-                cand.x = Mathf.Clamp(cand.x, cameraBoundsMin.x - avatarWalkMargin, cameraBoundsMax.x + avatarWalkMargin);
-                cand.z = Mathf.Clamp(cand.z, cameraBoundsMin.y - avatarWalkMargin, cameraBoundsMax.y + avatarWalkMargin);
-                _walkPos = cand;
+                if (_mask != null)
+                {
+                    // MASK is the authority (furniture collision): accept the step only if it stays on the walkable
+                    // floor — unless we're already off it (never trap the avatar). No box clamp; the mask is the wall.
+                    if (_mask.IsWalkable(cand.x, cand.z) || !_mask.IsWalkable(_walkPos.x, _walkPos.z))
+                        _walkPos = cand;
+                }
+                else _walkPos = RoomMovement.Clamp(cand);   // no mask → box clamp fallback
                 _walkPos.y = floorY;
                 _facing = RoomMovement.FacingDegrees(dir);   // face the way we're pressing even when blocked
                 if (!_walking) { _walking = true; _avatar.SetClip(_walkMot); }
@@ -176,15 +181,17 @@ namespace Sdo.Game
         private void UpdateCamera()
         {
             if (_cam == null) return;
-            // EXE: the camera tracks the clamped follow-position (StateRoom_ClampCameraPos box), looking at it at head
-            // height (平視). Anchor = avatar clamped to the camera box; eye sits cameraBackDistance behind, kept in front
-            // of the back wall so it never clips. (Avatar is already box-clamped, so the anchor == the avatar.)
+            // EYE = avatar clamped to the camera stop box (so the eye STOPS translating at the box edge), sitting a bit
+            // ABOVE the head (cameraEyeRise) → a slight downward tilt. LOOK = the REAL (unclamped) avatar head, so once
+            // the eye is clamped the camera ROTATES to keep tracking the avatar as it walks a bit further (官方行為:
+            // 相機位置被限制後仍把視角往下/側轉追人).
             float ax = Mathf.Clamp(_walkPos.x, cameraBoundsMin.x, cameraBoundsMax.x);
             float az = Mathf.Clamp(_walkPos.z, cameraBoundsMin.y, cameraBoundsMax.y);
-            float ey = floorY + cameraLookHeight;
             float ez = Mathf.Max(az + cameraBackDistance, cameraEyeMinZ);
-            _cam.transform.position = new Vector3(ax, ey, ez);
-            _cam.transform.LookAt(new Vector3(ax, ey, az), Vector3.up);
+            Vector3 eye = new Vector3(ax, floorY + cameraLookHeight + cameraEyeRise, ez);
+            Vector3 look = new Vector3(_walkPos.x, floorY + cameraLookHeight, _walkPos.z);
+            _cam.transform.position = eye;
+            _cam.transform.LookAt(look, Vector3.up);
         }
 
         private void OnDestroy()

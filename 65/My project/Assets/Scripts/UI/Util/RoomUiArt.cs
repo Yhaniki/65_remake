@@ -54,12 +54,14 @@ namespace Sdo.UI.Util
             }
         }
 
-        /// <summary>First frame of a ROOM .an as a sprite (cached); null if missing.</summary>
+        /// <summary>First frame of a ROOM .an as a sprite (cached); null if missing. Alpha-bleed ON: ROOM art stores
+        /// (255,255,255,0) in transparent areas, so bilinear filtering drags that white into the button/label edges (a
+        /// white halo); dilating the opaque RGB into the matte kills it (alpha untouched — purely cosmetic).</summary>
         public static Sprite An(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;
             if (_cache.TryGetValue(anName, out var s) && s != null) return s;
-            s = SdoExtracted.LoadAn1(Dir, anName);
+            s = SdoExtracted.LoadAn1(Dir, anName, bleed: true);
             _cache[anName] = s;
             return s;
         }
@@ -70,7 +72,7 @@ namespace Sdo.UI.Util
         {
             if (string.IsNullOrEmpty(anName)) return new Sprite[0];
             if (_framesCache.TryGetValue(anName, out var s) && s != null) return s;
-            s = SdoExtracted.LoadAn(Dir, anName);
+            s = SdoExtracted.LoadAn(Dir, anName, bleed: true);   // dilate transparent-white matte → no edge halo
             _framesCache[anName] = s;
             return s;
         }
