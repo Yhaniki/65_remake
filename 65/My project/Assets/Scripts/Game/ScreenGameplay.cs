@@ -1370,6 +1370,15 @@ namespace Sdo.Game
                         var overlay = Shader.Find(texAnimAdditive ? "Sdo/UnlitAdditiveOverlay" : "Sdo/UnlitOverlay");
                         if (overlay != null) foreach (var m in animMats) m.shader = overlay;
                     }
+                    // OPAQUE video screen drawn ON TOP of a coincident base-scene blank-screen placeholder: SCN0020's
+                    // base SCENE.MSH bakes its own TVLITTLE_ blank TV screen at the SAME plane as this TV6 video. That
+                    // placeholder is alpha-Blend (Transparent queue, ZWrite Off), so it draws AFTER the opaque video and
+                    // can't be depth-occluded by it → it overpaints the live frames and the screen looks frozen. Push the
+                    // video's render queue past the base-scene transparent so the video wins (it still depth-tests, so a
+                    // nearer prop/dancer still occludes it). Scoped to SCN0020 (the only scene with a coincident blank-
+                    // screen placeholder); the validated SCN0014/SCN0017 video walls keep their normal opaque order.
+                    if (!texAnim.Transparent && SceneFolder().Equals("SCN0020", System.StringComparison.OrdinalIgnoreCase))
+                        foreach (var m in animMats) if (m != null) m.renderQueue = 3100;   // > Transparent(3000), covers the placeholder
                     var holder = new GameObject(baseName + "_texanim");   // root: torn down with the play screen
                     holder.AddComponent<MapobjTexAnimator>().Init(animMats.ToArray(), frames.ToArray(), texAnim.IntervalMs, texAnim.HoldLast);
                     Debug.Log($"[mapobj] {baseName}: texture-anim {frames.Count}/{texAnim.Frames.Length} frames @ {texAnim.IntervalMs}ms, transparent={texAnim.Transparent}");

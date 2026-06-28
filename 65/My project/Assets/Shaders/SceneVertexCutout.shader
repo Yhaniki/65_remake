@@ -28,6 +28,12 @@ Shader "Sdo/SceneVertexCutout"
         Tags { "RenderType"="TransparentCutout" "Queue"="AlphaTest" }
         LOD 100
         Cull [_Cull]
+        // Feather the alpha-test edge across the MSAA samples (the stage RenderTexture runs 4× MSAA). Without this a
+        // cut-out hole has a hard 1-pixel boundary that reads as a sharp black edge — e.g. SCN0020's DJ-console screen
+        // hole (DALABA) around the live TV6 video. Alpha-to-coverage keeps ZWrite/occlusion (unlike alpha-blend) while
+        // smoothing the silhouette; opaque subsets (_Cutoff=-1, alpha=1) get full coverage so they're unaffected, and
+        // it's a no-op when MSAA is off, so no other scene regresses.
+        AlphaToMask On
 
         Pass
         {

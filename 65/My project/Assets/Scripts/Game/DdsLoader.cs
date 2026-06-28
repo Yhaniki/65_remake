@@ -100,13 +100,15 @@ namespace Sdo.Game
         /// / floor that has a few anti-aliased edge texels renders as a non-occluding alpha-BLEND (ZWrite Off) — the
         /// background then bleeds THROUGH it (SCN0020 fixed cam5: the floor / buildings / lights showed in front of the
         /// foreground truss + handrail + dance-floor). Buckets:
-        ///   • real holes (hardTransp ≥ 15% of texels) with a solid body (≥25% of visible texels opaque) → Cutout
-        ///     (clip the holes, the bars/wires/silhouette write depth and occlude) — trusses, CHAIN-LINK fences,
-        ///     people billboards. A chain-link railing has thin wires = mostly anti-aliased (soft) edge texels, so the
-        ///     gate is "has an opaque body", not "few soft texels" (the wire cores are ~35% of visible — enough);
-        ///   • mostly soft, almost no opaque core (soft > 75% of visible)                               → Blend
+        ///   • ANY real hole (hardTransp ≥ 3% of texels) with a solid body (≤75% of visible soft) → Cutout
+        ///     (clip the holes, the opaque body writes depth and occludes) — trusses, CHAIN-LINK fences, people
+        ///     billboards, AND atlases with a PUNCHED SCREEN HOLE (DALABA = DJ-console UI: a clean alpha-0 rectangle
+        ///     over the small video screen so the TV plays THROUGH it; classing it Opaque would render the artist's
+        ///     reference idol RGB under that hole and cover the video — exactly the SCN0020 "橘色螢幕擋住" bug). The
+        ///     threshold is low (3%, not 15%) because a single screen-hole is only a few % of a big console texture;
+        ///   • mostly soft, almost no opaque core (soft > 75% of visible)                         → Blend
         ///     (glass, additive glows — their visible texels are an 84–86% soft gradient);
-        ///   • otherwise                                                                                → Opaque
+        ///   • otherwise (≈0% hard-transparent)                                                   → Opaque
         ///     (solid surface whose handful of soft texels are just DXT quantisation — e.g. the dance-floor grid).
         /// Cutout/Opaque both write depth, so the foreground stops being see-through (lights stop bleeding through it).
         /// </summary>
@@ -116,7 +118,7 @@ namespace Sdo.Game
                 return DdsAlphaMode.Opaque;
             float softOfVisible = soft / (float)visible;
             float hardTranspFrac = hardTransp / (float)total;
-            if (hardTranspFrac >= 0.15f && softOfVisible <= 0.75f) return DdsAlphaMode.Cutout;
+            if (hardTranspFrac >= 0.03f && softOfVisible <= 0.75f) return DdsAlphaMode.Cutout;
             if (softOfVisible >= 0.30f) return DdsAlphaMode.Blend;
             return DdsAlphaMode.Opaque;
         }

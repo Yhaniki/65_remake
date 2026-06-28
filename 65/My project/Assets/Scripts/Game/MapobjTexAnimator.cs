@@ -31,7 +31,7 @@ namespace Sdo.Game
             _interval = Mathf.Max(0.001f, intervalMs / 1000f);
             _holdLast = holdLast;
             _startTime = Time.time;
-            Debug.Log($"[texanim] Init: {frames?.Length ?? 0} frames @ {intervalMs}ms, holdLast={holdLast}");
+            Debug.Log($"[texanim] {name}: Init {frames?.Length ?? 0} frames × {_mats?.Length ?? 0} mats @ {intervalMs}ms, holdLast={holdLast}");
             Apply(0);   // start on frame 0 so the MSH's embedded (possibly wrong/white) material never shows
         }
 
