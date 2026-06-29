@@ -22,7 +22,8 @@ namespace Sdo.Game
             "AVATAR/900011_WOMAN_HAND.MSH",
         };
         public const string FemaleHrc = "AVATAR/FEMALE.HRC";
-        public const string IdleMot = "MOTION/WREST0072.MOT";   // standby idle (rest cat 0x15) — same as the in-game dancer
+        public const string IdleMot = "MOTION/WREST0056.MOT";   // LOBBY standby idle (motion cat 0) — NOT the in-game
+                                                                 // arena idle WREST0072 (cat 0x15); the room holds standby
         public const string WalkMot = "MOTION/WWALK0001.MOT";   // free-walk clip (StateRoom walk category 6)
 
         /// <summary>

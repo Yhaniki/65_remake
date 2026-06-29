@@ -19,6 +19,7 @@ namespace Sdo.Tests
         {
             var sceneGo = new GameObject("RoomScene3D_cap");
             var scene = sceneGo.AddComponent<RoomScene3D>();
+            scene.overview = true;        // frame the whole room (all 16 slots + mapobjs) for the review capture
             scene.Build();
 
             var headGo = new GameObject("RoomHead_cap");

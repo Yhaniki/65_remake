@@ -27,8 +27,9 @@ namespace Sdo.Game
         {
             public readonly string Folder, Msh, Hrc, Mot, TexPrefix;
             public readonly int TexCount; public readonly float TexMs;
-            public Group(string folder, string msh, string hrc, string mot, string texPrefix = null, int texCount = 0, float texMs = 0f)
-            { Folder = folder; Msh = msh; Hrc = hrc; Mot = mot; TexPrefix = texPrefix; TexCount = texCount; TexMs = texMs; }
+            public readonly int DengLight;   // 0..7 = a GUANG waiting light (marquee column); -1 = not a light
+            public Group(string folder, string msh, string hrc, string mot, string texPrefix = null, int texCount = 0, float texMs = 0f, int dengLight = -1)
+            { Folder = folder; Msh = msh; Hrc = hrc; Mot = mot; TexPrefix = texPrefix; TexCount = texCount; TexMs = texMs; DengLight = dengLight; }
         }
 
         // ScnRoom (id 37) Room_obj set, verbatim from the decompiled case-0x25 mapobj pointer table
@@ -43,14 +44,17 @@ namespace Sdo.Game
             new Group("LABA2",   "LABADH2.MSH", "LABADH2.HRC", "LABADH2.MOT"),
             new Group("LABA3",   "LABADH3.MSH", "LABADH3.HRC", "LABADH3.MOT"),
             new Group("LABA4",   "LABADH4.MSH", "LABADH4.HRC", "LABADH4.MOT"),
-            new Group("GUANG1",  "GUANG1.MSH",  "GUANG1.HRC",  null),
-            new Group("GUANG2",  "GUANG2.MSH",  "GUANG2.HRC",  null),
-            new Group("GUANG3",  "GUANG3.MSH",  "GUANG3.HRC",  null),
-            new Group("GUANG4",  "GUANG4.MSH",  "GUANG4.HRC",  null),
-            new Group("GUANG5",  "GUANG5.MSH",  "GUANG5.HRC",  null),
-            new Group("GUANG6",  "GUANG6.MSH",  "GUANG6.HRC",  null),
-            new Group("GUANG7",  "GUANG7.MSH",  "GUANG7.HRC",  null),
-            new Group("GUANG8",  "GUANG8.MSH",  "GUANG8.HRC",  null),
+            // GUANG1..8 are the eight "DENGDAI" waiting lights — NOT independently animated. They share one 24×8 on/off
+            // marquee (RoomDengPattern) that swaps each light's glow between ROOMOBJ_DENGDAI1_ (dim) and ROOMOBJ_DENGDAI2_
+            // (lit) every 150 ms (dengLight = marquee column, 0 = GUANG1). The two frames ship only in GUANG1's folder.
+            new Group("GUANG1",  "GUANG1.MSH",  "GUANG1.HRC",  null, dengLight: 0),
+            new Group("GUANG2",  "GUANG2.MSH",  "GUANG2.HRC",  null, dengLight: 1),
+            new Group("GUANG3",  "GUANG3.MSH",  "GUANG3.HRC",  null, dengLight: 2),
+            new Group("GUANG4",  "GUANG4.MSH",  "GUANG4.HRC",  null, dengLight: 3),
+            new Group("GUANG5",  "GUANG5.MSH",  "GUANG5.HRC",  null, dengLight: 4),
+            new Group("GUANG6",  "GUANG6.MSH",  "GUANG6.HRC",  null, dengLight: 5),
+            new Group("GUANG7",  "GUANG7.MSH",  "GUANG7.HRC",  null, dengLight: 6),
+            new Group("GUANG8",  "GUANG8.MSH",  "GUANG8.HRC",  null, dengLight: 7),
             // TAIZI (round dais, table index 13) intentionally omitted — detached in the normal room (see note above).
         };
 
@@ -136,6 +140,14 @@ namespace Sdo.Game
                 }
             }
 
+            // GUANG waiting lights: hand this group's materials to the shared marquee instead of leaving them static.
+            // The marquee swaps every light's glow between the two DENGDAI frames on the 24×8 pattern (see RoomDengMarquee).
+            if (g.DengLight >= 0)
+            {
+                var marquee = EnsureDengMarquee();
+                if (marquee != null) marquee.Register(g.DengLight, mats);
+            }
+
             // dianshi screen: cycle the TVDH frame sequence over the shared materials (faithful to the original's
             // per-frame texture swap). The geometry stays frozen; only the bound texture changes.
             if (!string.IsNullOrEmpty(g.TexPrefix) && g.TexCount > 0)
@@ -152,7 +164,34 @@ namespace Sdo.Game
             Debug.Log($"[room-mapobj] {g.Folder}: subs={r.Submeshes.Count} {(animated ? "animated" : "static")} rigid={rigid} leaves={leaves.Length}");
         }
 
+        // The shared GUANG marquee: lazily created on the first waiting light, with the two DENGDAI frames loaded once
+        // from GUANG1's folder (the only GUANG folder that ships ROOMOBJ_DENGDAI1_/2_; the rest carry just dengdai_.dds,
+        // which the marquee replaces). Faithful to the EXE loading a single two-entry texArray for all eight billboards.
+        private RoomDengMarquee _dengMarquee;
+        private RoomDengMarquee EnsureDengMarquee()
+        {
+            if (_dengMarquee == null)
+            {
+                var go = new GameObject("ROOM_DENG_marquee");
+                go.transform.SetParent(transform, false);
+                _dengMarquee = go.AddComponent<RoomDengMarquee>();
+                var frameDir = Path.Combine(SdoExtracted.Root, RoomObjRel.Replace('/', Path.DirectorySeparatorChar), "GUANG1");
+                var dim = LoadDds(frameDir, "ROOMOBJ_DENGDAI1_.DDS");   // texArray[0] -> pattern bit 0 (off/dim)
+                var lit = LoadDds(frameDir, "ROOMOBJ_DENGDAI2_.DDS");   // texArray[1] -> pattern bit 1 (on/lit)
+                _dengMarquee.SetFrames(dim, lit);
+                Debug.Log($"[room-mapobj] deng marquee: dim={(dim != null)} lit={(lit != null)} from {frameDir}");
+            }
+            return _dengMarquee;
+        }
+
         // ---- helpers (room-scoped twins of the gameplay loader's; kept local so gameplay isn't touched) ----
+
+        private static Texture2D LoadDds(string dir, string ddsName)
+        {
+            var hit = ResolveDdsPath(dir, ddsName);
+            if (hit == null) return null;
+            try { return DdsLoader.Load(File.ReadAllBytes(hit)); } catch { return null; }
+        }
 
         private static void AddMeshChild(Transform parent, string name, Mesh mesh, Material mat)
         {

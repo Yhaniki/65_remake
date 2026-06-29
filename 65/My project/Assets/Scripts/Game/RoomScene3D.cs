@@ -10,13 +10,19 @@ namespace Sdo.Game
     /// UI overlay. The scene + avatar live on <see cref="SceneLayer"/>; the camera renders only that layer (its objects
     /// are masked off the front-end UI camera by RoomScreen). Created/destroyed by RoomScreen.OnShow/OnHide.
     ///
-    /// Reuses the validated render path: SceneLoader.Load for the mesh (SCNCHIRSROOM is a single-block 14-material
-    /// scene, fully compatible) and the exact decompiled scene-camera projection (fovY 45, near 5, far 7500).
+    /// Reuses the validated render path: SceneLoader.Load for the mesh (SCNROOM is a single-block 17-material scene,
+    /// fully compatible) and the exact decompiled scene-camera projection (fovY 45, near 5, far 7500). SCNROOM is the
+    /// official "開房間" lobby (Scene_LoadBackground id 37 / 0x25); its animated stage props (the TV/dianshi, the
+    /// speakers/laba, the waiting lights/guang and the tiered dais/taizi) are loaded by <see cref="RoomMapobjs"/>.
     /// </summary>
     public sealed class RoomScene3D : MonoBehaviour
     {
         public const int SceneLayer = 4;   // the perspective stage layer (same as gameplay; the play screen isn't alive here)
-        public const string ScenePath = "SCENE/SCNCHIRSROOM";
+        public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
+
+        public bool loadMapobjs = true;          // load the Room_obj stage props (dianshi/laba/guang/taizi)
+        public bool fillTestAvatars = true;      // drop the same avatar on all 16 slots (6 seats + 10 spectators) to test the RE'd layout
+        public bool overview = false;            // frame the whole room from a fixed high vantage (verification captures)
 
         // ---- tunables (floor height / back distance need one visual calibration pass; see risks) ----
         public float floorY = RoomLayout.FloorY;                 // plane the local avatar stands on (EXE looker tables = 0)
@@ -82,8 +88,98 @@ namespace Sdo.Game
             LoadScene();
             LoadMask();
             LoadAvatar();
+            if (loadMapobjs) LoadMapobjs();
+            if (fillTestAvatars) FillTestAvatars();
             BuildCamera();
             _ready = true;
+        }
+
+        // Load the room's animated stage props (Room_obj mapobjs) the official open-room loads (case 0x25): the TV,
+        // the four speakers, the eight waiting lights and the tiered dais — all geometry-baked at the origin.
+        private void LoadMapobjs()
+        {
+            var go = new GameObject("RoomMapobjs") { layer = SceneLayer };
+            go.transform.SetParent(transform, false);
+            var m = go.AddComponent<RoomMapobjs>();
+            m.layer = SceneLayer;
+            m.BuildScnRoom();
+        }
+
+        // Dance area the random dancers (slots 1-5) cluster in — kept near the MIDDLE of the room (per request), on the
+        // open floor a little in front of the sofa. Tunable in the inspector.
+        public Vector2 dancerAreaCenter = new Vector2(-25f, -75f);
+        public float dancerAreaRadius = 65f;
+        public float dancerSpacing = 24f;
+
+        // TEST scaffold: populate the room. Slot 0 = the local HOST (the separate walkable avatar at HostSpawn, so it's
+        // skipped here). Slots 1-5 = the other dancers: the offline EXE has NO per-dancer formation (all dancers spawn at
+        // HostSpawn and the server spreads them), so we drop them at RANDOM WALKABLE spots clustered near the room middle.
+        // Slots 6-15 = the ten lookers at their RE'd .data positions (af0). All hold their cat-0/cat-0x21 standby motions.
+        private void FillTestAvatars()
+        {
+            var dancerSpots = RandomDancerSpots(RoomLayout.SeatCount - 1);   // slots 1..5
+            int di = 0;
+            for (int slot = 0; slot < RoomLayout.SlotCount; slot++)
+            {
+                if (slot == 0) continue;   // slot 0 = the local host (already spawned as the walkable avatar at HostSpawn)
+                var parent = new GameObject("RoomSlotAvatar" + slot);
+                parent.transform.SetParent(transform, false);
+                var av = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false);
+                if (av == null) { Destroy(parent); continue; }
+
+                // Measure the feet offset from the STANDING idle BEFORE swapping in the slot motion: a bent WAITING pose's
+                // frame-0 lowest vertex isn't the feet, which mis-grounded (sank) some lookers. The model is identical for
+                // all, so this one standing offset grounds every avatar regardless of its looping clip.
+                float feet = av.FeetYAt(0f);
+
+                av.DanceEnabled = () => false;     // hold the standby idle (no DPS in the lobby)
+                av.DanceTimeSec = () => -1f;
+                // dancers 1-5 hold the cat-0 standby idle; lookers 6-15 their distinct cat-0x21 WAITING pose. All female
+                // (default WOMAN). Desync the loop phase so same-clip avatars aren't in lockstep.
+                var slotMot = SdoRoomAvatar.LoadMot("MOTION/" + RoomLayout.SlotMotionName(slot, female: true) + ".MOT");
+                if (slotMot != null) { av.RestMot = slotMot; av.SetClip(slotMot); av.PhaseOffsetSec = slot * 0.31f; }
+
+                Vector3 a = slot < RoomLayout.SeatCount
+                    ? (di < dancerSpots.Length ? dancerSpots[di++] : RoomLayout.HostSpawn)   // dancers 1-5: random walkable
+                    : RoomLayout.SpectatorAnchors[slot - RoomLayout.SeatCount];              // lookers 6-15: af0
+                parent.transform.position = new Vector3(a.x, floorY - feet, a.z);
+                parent.transform.localRotation = Quaternion.Euler(0f, RoomLayout.SlotFacingDegrees(slot), 0f);
+            }
+        }
+
+        // Pick <count> RANDOM WALKABLE spots for the filler dancers, clustered (uniform-in-disk) around the central
+        // dance area, kept apart by dancerSpacing and clear of the host. Rejection-samples the SCNROOM mask so none land
+        // on the sofa/furniture or off-map. Fixed seed → reproducible spread (change the seed for a different layout).
+        private Vector3[] RandomDancerSpots(int count)
+        {
+            var rng = new System.Random(0x5D0);
+            var pts = new System.Collections.Generic.List<Vector3>();
+            var host = new Vector2(RoomLayout.HostSpawn.x, RoomLayout.HostSpawn.z);
+            float sp2 = dancerSpacing * dancerSpacing;
+            for (int guard = 0; guard < 9000 && pts.Count < count; guard++)
+            {
+                double ang = rng.NextDouble() * 6.2831853;
+                double rad = System.Math.Sqrt(rng.NextDouble()) * dancerAreaRadius;
+                float x = dancerAreaCenter.x + (float)(rad * System.Math.Cos(ang));
+                float z = dancerAreaCenter.y + (float)(rad * System.Math.Sin(ang));
+                if (!WalkableRobust(x, z)) continue;
+                var v = new Vector2(x, z);
+                if ((v - host).sqrMagnitude < sp2) continue;
+                bool clash = false;
+                foreach (var p in pts) if ((new Vector2(p.x, p.z) - v).sqrMagnitude < sp2) { clash = true; break; }
+                if (!clash) pts.Add(new Vector3(x, floorY, z));
+            }
+            return pts.ToArray();
+        }
+
+        // walkable at (x,z) AND a small footprint around it (so a dancer isn't on a thin sliver / edge). No mask → true.
+        private bool WalkableRobust(float x, float z)
+        {
+            if (_mask == null) return true;
+            for (int dx = -8; dx <= 8; dx += 8)
+                for (int dz = -8; dz <= 8; dz += 8)
+                    if (!_mask.IsWalkable(x + dx, z + dz)) return false;
+            return true;
         }
 
         // Decode the room's walkable/furniture mask (SCNCHIRSROOM/MASK.MSK). Null on missing/parse-fail → box clamp.
@@ -111,7 +207,7 @@ namespace Sdo.Game
             go.transform.SetParent(transform, false);
             go.AddComponent<MeshFilter>().mesh = res.Mesh;
             go.AddComponent<MeshRenderer>().sharedMaterials = res.Materials;   // native SDO coords (verbatim), no lift
-            Debug.Log($"[room-scene] SCNCHIRSROOM: {res.Materials.Length} subsets, bounds c={res.Mesh.bounds.center} s={res.Mesh.bounds.size}");
+            Debug.Log($"[room-scene] {ScenePath}: {res.Materials.Length} subsets, bounds c={res.Mesh.bounds.center} s={res.Mesh.bounds.size}");
         }
 
         private void LoadAvatar()
@@ -124,9 +220,12 @@ namespace Sdo.Game
             _idleMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.IdleMot);
 
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;   // lowest skinned vertex at the bind pose
-            // spawn at the dance-spot origin (EXE default) — the room centre, which the camera frames correctly. (Do
-            // NOT spawn at the mask centroid: that sits near the back wall and pushes the follow-cam into the geometry.)
-            _walkPos = new Vector3(0f, floorY, 0f);
+            // Host spawn = (-100, 0, -26): the REAL fixed offline spawn, captured via Frida from the running official EXE
+            // (the host avatar slot-0 object position) and then confirmed in the decompile — flat sdo_stand_alone.exe.c
+            // 99644-99660 loops the 6 dancer slots and writes each player +4/+8/+0xc = (-100, 0, -26); offline only the
+            // host (slot 0) exists, so it stays here (the other dancers would be moved by server move-packets). This is
+            // on the walkable floor (mask-validated). NOT origin (origin is on the non-walkable dais).
+            _walkPos = new Vector3(RoomLayout.HostSpawn.x, floorY, RoomLayout.HostSpawn.z);
             _facing = RoomMovement.FacingDegrees(2);               // face DOWN by default (toward the camera/front)
             ApplyAvatarTransform();
         }
@@ -204,6 +303,14 @@ namespace Sdo.Game
         private void UpdateCamera()
         {
             if (_cam == null) return;
+            if (overview)
+            {
+                // fixed high-back vantage that frames the whole room (all 16 slots span ~X[-185,168] Z[-168,110]) for
+                // verification captures — not used in normal play (the follow-cam below tracks the local avatar).
+                _cam.transform.position = new Vector3(0f, 250f, -430f);
+                _cam.transform.LookAt(new Vector3(0f, 10f, -40f), Vector3.up);
+                return;
+            }
             // EYE = avatar clamped to the camera stop box, a bit ABOVE the head (cameraEyeRise → slight down-tilt).
             // RE'd from UpdateCameraTarget: EYE.X == TARGET.X == avatarX, so the view has NO X angle → walking LEFT/RIGHT
             // never YAWs the camera; it only translates in X and stops at the X box edge (人漂到側邊、相機不左右轉). In Z,
