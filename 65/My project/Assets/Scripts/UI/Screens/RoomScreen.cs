@@ -44,6 +44,14 @@ namespace Sdo.UI.Screens
         /// <summary>If the room renders upside-down on a given platform, flip the backdrop V (RT vertical convention).</summary>
         public bool flipBackdropV = false;
 
+        // Head-portrait placement: a SHARED offset from the DDRROOM AvatarView base coords + a size, applied to ALL 6
+        // head slots. Tune LIVE via the F2 panel (sliders + borders + all 6 heads shown). Default y+13 centres the face
+        // (the RT frames head+shoulder, so the face sits high in the slot).
+        public Vector2 headSlotOffset = new Vector2(0f, 13f);
+        public Vector2 headSlotSize = new Vector2(96f, 76f);
+        private bool _debugOpen;            // F2: head-slot tuning panel (all 6 heads + borders + sliders)
+        private static Texture2D _dbgPx;    // 1px texture for the debug borders
+
         private static string L(string k) => LocalizationManager.Get(k);
 
         protected override void BuildUI()
@@ -239,9 +247,70 @@ namespace Sdo.UI.Screens
         // projected Bip01_Head). Runs only while the room is mounted (_scene != null, cleared on OnHide).
         private void Update()
         {
-            if (_scene == null || _floatName == null || !_floatName.gameObject.activeSelf) return;
-            if (!_scene.TryHeadViewport(out var vp)) return;
-            PlaceFollow(_floatName.rectTransform, vp, -8f);                 // name sits just ABOVE the avatar's head
+            if (Input.GetKeyDown(KeyCode.F2)) _debugOpen = !_debugOpen;
+            if (_scene == null) return;
+
+            // place ALL 6 head slots from the shared offset+size (base = DDRROOM AvatarView coords). In the F2 debug
+            // panel every slot shows the head (to check alignment); normally only slot 0 (the local player) does.
+            Texture headTex = _localHead != null ? _localHead.Texture : null;
+            for (int i = 0; i < RoomLayout.SeatCount; i++)
+            {
+                if (_slotHead[i] == null) continue;
+                var rt = _slotHead[i].rectTransform;
+                rt.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x, -(RoomLayout.HeadSlotY + headSlotOffset.y));
+                rt.sizeDelta = headSlotSize;
+                bool occ = (i == 0) || _debugOpen;
+                if (occ && headTex != null) { _slotHead[i].texture = headTex; _slotHead[i].enabled = true; if (_slotClose[i] != null) _slotClose[i].enabled = false; }
+                else { _slotHead[i].enabled = false; if (_slotClose[i] != null) _slotClose[i].enabled = true; }
+            }
+
+            if (_floatName != null && _floatName.gameObject.activeSelf && _scene.TryHeadViewport(out var vp))
+                PlaceFollow(_floatName.rectTransform, vp, -8f);             // name sits just ABOVE the avatar's head
+        }
+
+        // F2 tuning panel: sliders for the shared head-slot offset/size + a green border around each of the 6 slots
+        // (projected from the 800×600 canvas through the UI camera so they land exactly on the slots).
+        private void OnGUI()
+        {
+            if (!_debugOpen) return;
+            GUILayout.BeginArea(new Rect(10, 10, 320, 170), GUI.skin.box);
+            GUILayout.Label("Head-slot tuning (F2). All 6 heads shown.");
+            GUILayout.Label($"left/right  X: {headSlotOffset.x:F0}");
+            headSlotOffset.x = GUILayout.HorizontalSlider(headSlotOffset.x, -100f, 100f);
+            GUILayout.Label($"up/down  Y: {headSlotOffset.y:F0}");
+            headSlotOffset.y = GUILayout.HorizontalSlider(headSlotOffset.y, -60f, 100f);
+            GUILayout.Label($"width  W: {headSlotSize.x:F0}");
+            headSlotSize.x = GUILayout.HorizontalSlider(headSlotSize.x, 40f, 200f);
+            GUILayout.Label($"height  H: {headSlotSize.y:F0}");
+            headSlotSize.y = GUILayout.HorizontalSlider(headSlotSize.y, 40f, 200f);
+            GUILayout.Label($"=> offset=({headSlotOffset.x:F0},{headSlotOffset.y:F0})  size=({headSlotSize.x:F0},{headSlotSize.y:F0})");
+            GUILayout.EndArea();
+
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (cam == null) return;
+            if (_dbgPx == null) { _dbgPx = new Texture2D(1, 1); _dbgPx.SetPixel(0, 0, Color.green); _dbgPx.Apply(); }
+            for (int i = 0; i < RoomLayout.SeatCount; i++)
+                DrawCanvasBorder(cam, RoomLayout.HeadSlotX[i] + headSlotOffset.x, RoomLayout.HeadSlotY + headSlotOffset.y, headSlotSize.x, headSlotSize.y);
+        }
+
+        // draw a 2px green rectangle outline at a canvas rect (top-left x,y; size w,h), projected to screen via the UI cam
+        private static void DrawCanvasBorder(Camera cam, float x, float y, float w, float h)
+        {
+            Vector3 tl = CanvasToGui(cam, x, y), br = CanvasToGui(cam, x + w, y + h);
+            float x0 = Mathf.Min(tl.x, br.x), x1 = Mathf.Max(tl.x, br.x);
+            float y0 = Mathf.Min(tl.y, br.y), y1 = Mathf.Max(tl.y, br.y);
+            const float t = 2f;
+            GUI.DrawTexture(new Rect(x0, y0, x1 - x0, t), _dbgPx);
+            GUI.DrawTexture(new Rect(x0, y1 - t, x1 - x0, t), _dbgPx);
+            GUI.DrawTexture(new Rect(x0, y0, t, y1 - y0), _dbgPx);
+            GUI.DrawTexture(new Rect(x1 - t, y0, t, y1 - y0), _dbgPx);
+        }
+
+        // canvas pixel (x from left, y from top, in the 800×600 world canvas centred at origin) → GUI screen pixel
+        private static Vector3 CanvasToGui(Camera cam, float x, float y)
+        {
+            Vector3 sp = cam.WorldToScreenPoint(new Vector3(x - 400f, 300f - y, 0f));
+            return new Vector3(sp.x, Screen.height - sp.y, 0f);
         }
 
         // viewport (0..1, y-up) → 800×600 canvas, centred on x, rect TOP at the point + topOffset (negative = above).
