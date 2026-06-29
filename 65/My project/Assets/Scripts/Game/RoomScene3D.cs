@@ -21,7 +21,8 @@ namespace Sdo.Game
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
         public bool loadMapobjs = true;          // load the Room_obj stage props (dianshi/laba/guang/taizi)
-        public bool fillTestAvatars = true;      // drop the same avatar on all 16 slots (6 seats + 10 spectators) to test the RE'd layout
+        public bool fillTestAvatars = false;     // OFF: only the local host is shown (matches the offline solo room). Set
+                                                 // true to drop the same avatar on the other 15 slots for layout testing.
         public bool overview = false;            // frame the whole room from a fixed high vantage (verification captures)
 
         // ---- tunables (floor height / back distance need one visual calibration pass; see risks) ----
