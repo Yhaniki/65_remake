@@ -33,6 +33,7 @@ namespace Sdo.UI.Screens
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
         private TextMeshProUGUI _modeLabel, _roomIdLabel, _roomNameLabel, _songLabel;
+        private TextMeshProUGUI _floatName;     // name marker that floats above the avatar in the room (官方頭上名字)
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
 
         private RoomScene3D _scene;
@@ -54,6 +55,14 @@ namespace Sdo.UI.Screens
             _backdrop.color = Color.black;
             _backdrop.raycastTarget = false;
             if (flipBackdropV) _backdrop.uvRect = new Rect(0f, 1f, 1f, -1f);
+
+            // name marker that floats above the avatar's head in the room (positioned each frame in Update)
+            _floatName = UIKit.AddText(Root, "FloatName", "", 14, Color.white, TextAlignmentOptions.Center);
+            _floatName.rectTransform.anchorMin = _floatName.rectTransform.anchorMax = new Vector2(0f, 1f);
+            _floatName.rectTransform.pivot = new Vector2(0f, 1f);
+            _floatName.rectTransform.sizeDelta = new Vector2(160f, 20f);
+            _floatName.outlineWidth = 0.2f; _floatName.outlineColor = new Color32(0, 0, 0, 200);   // readable over the scene
+            _floatName.gameObject.SetActive(false);
 
             // 2) win1 — top head panel frame + 6 head slots + name plates + head-bar buttons + room/mode labels
             Art("WaitingRoomHead", Win1, 0, 0, "Win1Head");
@@ -150,6 +159,8 @@ namespace Sdo.UI.Screens
                 _localHead = headGo.AddComponent<RoomHeadPortrait>();
                 _localHead.layer = HeadLayer;
                 _localHead.Init();
+                _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
+                _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
             }
 
             // mask the room's 3D layers off the front-end UI camera (it renders ~0, so it would otherwise draw them flat)
@@ -190,7 +201,8 @@ namespace Sdo.UI.Screens
                 _songLabel.text = string.IsNullOrEmpty(room.SongTitle) ? L("room.no_song") : room.SongTitle;
             }
 
-            // local player occupies slot 0 (host); other slots are the empty close cover (single-player offline).
+            // Head portrait lives in the FIXED top-left frame slot 0 (官方: 頭貼在頭像框裡), rendering the avatar's head
+            // doing its live motion (RoomHeadPortrait mirrors the room avatar's walk/idle). Slots 1-5 are empty covers.
             for (int i = 0; i < RoomLayout.SeatCount; i++)
             {
                 bool occupied = i == 0;
@@ -211,6 +223,8 @@ namespace Sdo.UI.Screens
                     if (occupied) _slotName[i].text = LocalName(room);
                 }
             }
+            // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
+            if (_floatName != null) { _floatName.text = LocalName(room); _floatName.gameObject.SetActive(true); }
 
             // host sees Start; guest sees Ready/Cancel (single-player host → Start visible)
             bool localReady = LocalReady(room);
@@ -218,6 +232,23 @@ namespace Sdo.UI.Screens
             if (_readyBtn != null) _readyBtn.gameObject.SetActive(!isHost && !localReady);
             if (_cancelReadyBtn != null) _cancelReadyBtn.gameObject.SetActive(!isHost && localReady);
             if (_songSelectBtn != null) _songSelectBtn.gameObject.SetActive(isHost);
+        }
+
+        // Make the local head portrait FOLLOW the avatar: each frame project the avatar's head through the scene camera
+        // and place the floating head (+ name) there (EXE Player_ComputeHeadRect: the looker's head portrait tracks the
+        // projected Bip01_Head). Runs only while the room is mounted (_scene != null, cleared on OnHide).
+        private void Update()
+        {
+            if (_scene == null || _floatName == null || !_floatName.gameObject.activeSelf) return;
+            if (!_scene.TryHeadViewport(out var vp)) return;
+            PlaceFollow(_floatName.rectTransform, vp, -8f);                 // name sits just ABOVE the avatar's head
+        }
+
+        // viewport (0..1, y-up) → 800×600 canvas, centred on x, rect TOP at the point + topOffset (negative = above).
+        private static void PlaceFollow(RectTransform rt, Vector2 vp, float topOffset)
+        {
+            float topFromTop = (1f - vp.y) * 600f + topOffset;
+            rt.anchoredPosition = new Vector2(vp.x * 800f - rt.sizeDelta.x * 0.5f, -topFromTop);
         }
 
         private string LocalName(RoomInfo room)

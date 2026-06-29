@@ -21,7 +21,14 @@ namespace Sdo.Game
         public float zoom = 1f;                                  // auto-frame fine multiplier (>1 = zoom out)
         public int rtWidth = 192, rtHeight = 152;               // matches the ROOM AvatarView slot aspect (96:76 ≈ 1.263)
 
+        /// <summary>Set by the host: returns true while the room avatar is walking, so the framed head mirrors it.</summary>
+        public System.Func<bool> WalkingProvider;
+        /// <summary>Set by the host: the room avatar's facing yaw (deg), so the framed head turns left/right with it.</summary>
+        public System.Func<float> FacingProvider;
+
         private SdoAvatar _avatar;
+        private MotLoader _walkMot, _idleMot;
+        private bool _mirrorWalking;
         private Camera _cam;
         private RenderTexture _rt;
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);
@@ -38,8 +45,12 @@ namespace Sdo.Game
             parent.transform.position = parkSpot;
             _avatar = SdoRoomAvatar.Build(parent, layer, portraitOpaque: true);
             if (_avatar == null) { Destroy(parent); return false; }
-            _avatar.DanceEnabled = () => false;   // always hold the standby idle
+            _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;
+            // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
+            // the avatar's live pose (官方頭像框跟著實際動作做動作).
+            _walkMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.WalkMot);
+            _idleMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.IdleMot);
 
             _rt = new RenderTexture(rtWidth, rtHeight, 16, RenderTextureFormat.ARGB32) { name = "RoomHeadPortraitRT" };
             var camGo = new GameObject("RoomHeadPortraitCam");
@@ -65,19 +76,28 @@ namespace Sdo.Game
 
         private void LateUpdate()
         {
+            if (_avatar != null && WalkingProvider != null)
+            {
+                bool w = WalkingProvider();
+                if (w != _mirrorWalking) { _mirrorWalking = w; _avatar.SetClip(w ? _walkMot : _idleMot); }
+            }
             if (_cam != null && _avatar != null) UpdateCam();
         }
 
-        // FIXED head cam: targets the head bone REST pos; auto-frames from the measured hair-top. (Port of
-        // ScreenGameplay.UpdateHeadPortraitCam, simplified — always auto-frame, frontal +Z pitched down.)
+        // Head cam: tracks the LIVE head bone (so the head stays a STABLE size + centred while the walk/dance motion
+        // moves it — was growing because the walk clip translates the root toward the cam), and yaws the avatar to
+        // MIRROR the room avatar's facing (so the framed head turns left/right with it). Auto-frames from the hair-top.
         private void UpdateCam()
         {
             var t = _avatar.transform;
             t.position = parkSpot;
             t.localScale = Vector3.one * Mathf.Max(0.01f, avatarScale);
-            t.localRotation = Quaternion.Euler(0f, yaw, 0f);
+            float facing = FacingProvider != null ? FacingProvider() : 0f;
+            t.localRotation = Quaternion.Euler(0f, yaw + facing, 0f);
 
-            Vector3 restHead = t.TransformPoint(_headModelPos);
+            Vector3 headModel = _avatar.BoneModelPos("Bip01_Head");   // LIVE (animated) head, not the cached rest
+            if (headModel == Vector3.zero) headModel = _headModelPos;
+            Vector3 restHead = t.TransformPoint(headModel);
             EnsureHairOffset();
             float h = _hairOffsetModel * Mathf.Max(0.01f, avatarScale);   // hair-top height above the head bone (world)
             Vector3 target;

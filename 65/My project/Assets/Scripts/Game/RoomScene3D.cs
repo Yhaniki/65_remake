@@ -47,11 +47,34 @@ namespace Sdo.Game
         private bool _walking;
         private bool _ready;
 
+        public float headMarkerRise = 18f;   // world Y above the head bone for the floating head portrait (EXE +15)
+
         /// <summary>The room render — assign to the RoomScreen backdrop RawImage. Null until Build succeeds.</summary>
         public Texture SceneTexture => _rt;
         public bool Ready => _ready;
         public Camera SceneCamForTest => _cam;          // inspection/capture only
         public SdoAvatar AvatarForTest => _avatar;
+        public bool IsWalking => _walking;              // so the head portrait can MIRROR the avatar's walk/idle motion
+        public float AvatarFacing => _facing;           // so the head portrait can turn with the avatar's facing
+
+        /// <summary>Project the local avatar's head (Bip01_Head + rise) through the scene camera to a viewport point
+        /// [0..1] (x right, y up). The scene camera fills the whole 4:3 backdrop, so this maps straight to the UI
+        /// canvas. Returns false if the avatar/cam are missing or the head is behind the camera. Used so the head
+        /// portrait FOLLOWS the avatar on screen (EXE Player_ComputeHeadRect: the looker's head portrait tracks the
+        /// projected Bip01_Head each frame).</summary>
+        public bool TryHeadViewport(out Vector2 vp)
+        {
+            vp = default;
+            if (_avatar == null || _cam == null || _avatarRoot == null) return false;
+            Vector3 hm = _avatar.BoneModelPos("Bip01_Head");
+            if (hm == Vector3.zero) hm = _avatar.BoneModelPos("Bip01_Neck");
+            if (hm == Vector3.zero) return false;
+            Vector3 hw = _avatarRoot.TransformPoint(hm) + new Vector3(0f, headMarkerRise, 0f);
+            Vector3 v = _cam.WorldToViewportPoint(hw);
+            if (v.z <= 0f) return false;   // behind the camera
+            vp = new Vector2(v.x, v.y);
+            return true;
+        }
 
         public void Build()
         {
@@ -181,15 +204,16 @@ namespace Sdo.Game
         private void UpdateCamera()
         {
             if (_cam == null) return;
-            // EYE = avatar clamped to the camera stop box (so the eye STOPS translating at the box edge), sitting a bit
-            // ABOVE the head (cameraEyeRise) → a slight downward tilt. LOOK = the REAL (unclamped) avatar head, so once
-            // the eye is clamped the camera ROTATES to keep tracking the avatar as it walks a bit further (官方行為:
-            // 相機位置被限制後仍把視角往下/側轉追人).
+            // EYE = avatar clamped to the camera stop box, a bit ABOVE the head (cameraEyeRise → slight down-tilt).
+            // RE'd from UpdateCameraTarget: EYE.X == TARGET.X == avatarX, so the view has NO X angle → walking LEFT/RIGHT
+            // never YAWs the camera; it only translates in X and stops at the X box edge (人漂到側邊、相機不左右轉). In Z,
+            // the eye is clamped but LOOK uses the REAL (unclamped) avatar Z, so walking FRONT/BACK PITCHES the camera
+            // (前後有轉) to keep tracking the avatar past the Z stop. Y looks at the head (50); eye sits above it.
             float ax = Mathf.Clamp(_walkPos.x, cameraBoundsMin.x, cameraBoundsMax.x);
             float az = Mathf.Clamp(_walkPos.z, cameraBoundsMin.y, cameraBoundsMax.y);
             float ez = Mathf.Max(az + cameraBackDistance, cameraEyeMinZ);
             Vector3 eye = new Vector3(ax, floorY + cameraLookHeight + cameraEyeRise, ez);
-            Vector3 look = new Vector3(_walkPos.x, floorY + cameraLookHeight, _walkPos.z);
+            Vector3 look = new Vector3(ax, floorY + cameraLookHeight, _walkPos.z);   // look.X = eye.X → no yaw; look.Z = avatar → pitch
             _cam.transform.position = eye;
             _cam.transform.LookAt(look, Vector3.up);
         }
