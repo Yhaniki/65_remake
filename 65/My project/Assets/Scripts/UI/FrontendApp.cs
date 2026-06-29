@@ -164,6 +164,7 @@ namespace Sdo.UI
             game.gnPath = gnPath;
             game.oggPath = oggPath;
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
+            game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
             game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player

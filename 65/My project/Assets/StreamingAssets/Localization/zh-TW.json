@@ -100,6 +100,18 @@
    "v": "房間 {0}"
   },
   {
+   "k": "room.server_name",
+   "v": "自由練習場{0}"
+  },
+  {
+   "k": "room.channel",
+   "v": "頻道{0}"
+  },
+  {
+   "k": "room.default_name",
+   "v": "{0}的舞蹈室"
+  },
+  {
    "k": "room.leave",
    "v": "離開房間"
   },
@@ -193,7 +205,7 @@
   },
   {
    "k": "songselect.search",
-   "v": "輸入關鍵字並回車"
+   "v": "輸入關鍵字並送出"
   },
   {
    "k": "songselect.bpm",

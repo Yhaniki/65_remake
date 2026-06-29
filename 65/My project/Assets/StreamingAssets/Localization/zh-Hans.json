@@ -100,6 +100,18 @@
    "v": "房间 {0}"
   },
   {
+   "k": "room.server_name",
+   "v": "自由练习场{0}"
+  },
+  {
+   "k": "room.channel",
+   "v": "频道{0}"
+  },
+  {
+   "k": "room.default_name",
+   "v": "{0}的舞蹈室"
+  },
+  {
    "k": "room.leave",
    "v": "离开房间"
   },

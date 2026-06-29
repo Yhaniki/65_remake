@@ -266,7 +266,7 @@ namespace Sdo.Game
         // ---- ranking UI (head nameplate + centre rank N/M + right-side roster list) ----
         // The remake renders ONE dancer; opponents are a configurable mock roster so the rank/list read
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
-        public bool mockOpponents = true;            // seed simulated opponents (default) vs. solo (rank 1/1, list of 1)
+        public bool mockOpponents = false;           // 預設關閉測試對手(離線單人=solo rank 1/1、清單只有本機);真連線時再開
         public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
         public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
@@ -288,6 +288,7 @@ namespace Sdo.Game
         public float rankCenterX = 429f, rankY = 74f, rankDigitW = 25f, rankPitch = 26f;
         // spectators (旁觀玩家): GAMEPLAY18 title sprite + fake light-blue names below the roster. DdrGamePlay.xml
         // had lookerTitle@(696,190) + looker rows@(696,212..) step13 colour 0xff9DCBFF — we use fake names.
+        public bool showSpectators = false;          // 預設關閉測試旁觀名單(全是假名);真連線有觀眾時再開
         private static readonly string[] SpectatorNames = { "酷", "美麗", "悲晴吉克", "路過旅人", "小幫手" };
         private SpriteRenderer _lookerTitle;
         private Label3D[] _lookerRows;

@@ -13,7 +13,9 @@ namespace Sdo.UI.Util
     {
         private static TMP_FontAsset _cjk;
         private static bool _tried;
-        public const string BundledFontResource = "Fonts/SourceHanSansTC-Regular";   // full OTF (繁中+簡中+日+拉丁), under Assets/Resources/
+        // full OTF (繁中+簡中+日+拉丁) under Assets/Resources/ — SAME file the in-game HUD uses (Sdo.Game.TextStyles),
+        // so the room (TMP) and gameplay (legacy TextMesh) share one typeface. Single source = TextStyles.
+        public const string BundledFontResource = Sdo.Game.TextStyles.BundledFontResource;
 
         public static TMP_FontAsset Cjk
         {

@@ -28,6 +28,7 @@ namespace Sdo.UI.Services
     {
         public int Id;
         public string HostName;
+        public string Name;        // 玩家自訂房名；空 → 用「房主名 + 的舞蹈室」預設 (見 RoomLabels.DisplayName)
         public GameMode Mode = GameMode.Normal;
         public RoomStatus Status = RoomStatus.Waiting;
         public int Capacity = 6;

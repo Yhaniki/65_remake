@@ -18,7 +18,7 @@ namespace Sdo.Game
         public enum Style { HeadName, ListLocal, ListOther, Looker }
 
         // Colours eyedropped from the official screenshots (20151030 / 20151208):
-        public static readonly Color FaceCream  = new Color(1.000f, 0.984f, 0.808f, 1f); // 頭頂名(粗體)   = RGB(255,251,206)
+        public static readonly Color FaceCream  = new Color32(250, 252, 214, 255);       // 頭頂名(粗體) 房間+遊戲共用 = RGB(250,252,214)
         public static readonly Color FaceYellow = new Color(1.000f, 1.000f, 0.580f, 1f); // 清單-本機       = RGB(255,255,148)
         public static readonly Color FaceOrange = new Color(1.000f, 0.682f, 0.063f, 1f); // 清單-其他       = RGB(255,174,16)
         private static readonly Color EdgeRed   = new Color(0.643f, 0.110f, 0.000f, 1f); // 清單陰影         = RGB(164,28,0)
@@ -27,12 +27,22 @@ namespace Sdo.Game
 
         private static Font _cjk;
 
-        /// <summary>Lazily build a CJK-capable dynamic OS font (cached).</summary>
+        /// <summary>The bundled CJK font under Assets/Resources. SINGLE SOURCE shared with the front-end UI
+        /// (<c>UIFont.BundledFontResource</c>) so the room (TMP) and the in-game HUD (legacy TextMesh) render the
+        /// SAME typeface — the head-name font must match on both sides.</summary>
+        public const string BundledFontResource = "Fonts/SourceHanSansTC-Regular";
+
+        /// <summary>Lazily load the bundled SourceHanSans font (cached) so the in-game TextMesh labels use the exact
+        /// same typeface as the room UI. The OTF is imported Dynamic (forceTextureCase Dynamic + includeFontData), so
+        /// legacy TextMesh rasterises any CJK glyph on demand from it. Falls back to an OS dynamic font only if the
+        /// bundled resource is missing.</summary>
         public static Font CjkFont()
         {
             if (_cjk != null) return _cjk;
-            _cjk = Font.CreateDynamicFontFromOSFont(
-                new[] { "Microsoft JhengHei", "微軟正黑體", "Microsoft YaHei", "SimHei", "Arial Unicode MS", "PMingLiU" }, 40);
+            _cjk = Resources.Load<Font>(BundledFontResource);   // 跟房間同一個 SourceHanSans → 兩邊字型一致
+            if (_cjk == null)
+                _cjk = Font.CreateDynamicFontFromOSFont(
+                    new[] { "Microsoft JhengHei", "微軟正黑體", "Microsoft YaHei", "SimHei", "Arial Unicode MS", "PMingLiU" }, 40);
             if (_cjk == null) _cjk = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             Debug.Log("[TextStyles] font: " + (_cjk != null ? _cjk.name : "NULL"));
             return _cjk;

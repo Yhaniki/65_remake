@@ -10,6 +10,10 @@ namespace Sdo.UI.Core
 
         public int CurrentRoomId = -1;
 
+        // 房間左上角的所在位置標示 (DDRROOM servername / channelnum)。離線單機固定 1/1，顯示「自由練習場1 頻道1」。
+        public int ServerNumber = 1;   // 自由練習場 N（伺服器/練習場編號）
+        public int Channel = 1;        // 頻道 N
+
         // pending song/stage/noteskin selection
         public string SongGn;       // e.g. "sdom1435k.gn"
         public int SongFileId;

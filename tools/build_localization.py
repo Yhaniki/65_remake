@@ -47,6 +47,9 @@ STR = {
     "lobby.col_status":     ["Status", "狀態", "状态", "状態"],
 
     "room.title":           ["Room {0}", "房間 {0}", "房间 {0}", "ルーム {0}"],
+    "room.server_name":     ["Free Practice {0}", "自由練習場{0}", "自由练习场{0}", "自由練習場{0}"],
+    "room.channel":         ["Channel {0}", "頻道{0}", "频道{0}", "チャンネル{0}"],
+    "room.default_name":    ["{0}'s Dance Room", "{0}的舞蹈室", "{0}的舞蹈室", "{0}のダンスルーム"],
     "room.leave":           ["Leave Room", "離開房間", "离开房间", "ルーム退出"],
     "room.ready":           ["Ready", "準備", "准备", "準備"],
     "room.cancel_ready":    ["Cancel", "取消準備", "取消准备", "準備解除"],
@@ -74,7 +77,7 @@ STR = {
     "songselect.title":     ["Select Song", "選擇歌曲", "选择歌曲", "曲を選択"],
     "songselect.random":    ["Random", "隨機場景", "随机场景", "ランダム"],
     "songselect.stage":     ["Stage", "舞台", "舞台", "ステージ"],
-    "songselect.search":    ["Type a keyword and press Enter", "輸入關鍵字並回車", "输入关键字并回车", "キーワードを入力してEnter"],
+    "songselect.search":    ["Type a keyword and press Enter", "輸入關鍵字並送出", "输入关键字并回车", "キーワードを入力してEnter"],
     "songselect.bpm":       ["BPM {0}", "BPM {0}", "BPM {0}", "BPM {0}"],
     "songselect.level":     ["Lv {0}", "Lv {0}", "Lv {0}", "Lv {0}"],
     "songselect.page":      ["Page {0}/{1}", "第 {0}/{1} 頁", "第 {0}/{1} 页", "{0}/{1} ページ"],

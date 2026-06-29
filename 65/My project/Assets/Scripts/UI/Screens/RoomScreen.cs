@@ -32,8 +32,9 @@ namespace Sdo.UI.Screens
         private readonly Image[] _slotClose = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
-        private TextMeshProUGUI _modeLabel, _roomIdLabel, _roomNameLabel, _songLabel;
-        private TextMeshProUGUI _floatName;     // name marker that floats above the avatar in the room (官方頭上名字)
+        private OutlinedLabel _serverLabel, _channelLabel, _roomIdLabel;   // 白字 + 藍邊 (rgb 70,74,152)
+        private TextMeshProUGUI _roomNameLabel, _songLabel;
+        private OutlinedLabel _floatName;       // name marker that floats above the avatar in the room (官方頭上名字)；字 rgb(250,252,214) 描黑邊
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
 
         private RoomScene3D _scene;
@@ -49,6 +50,9 @@ namespace Sdo.UI.Screens
         // (the RT frames head+shoulder, so the face sits high in the slot).
         public Vector2 headSlotOffset = new Vector2(-10f, 6f);  // dialed in via the F2 panel: centres the head in the frame
         public Vector2 headSlotSize = new Vector2(99f, 76f);    // box (X-10/Y+6 from the AvatarView base, 99×76)
+
+        /// <summary>空位上的「close」禁止圖標(🚫)。預設關閉(離線單人房乾淨呈現,只有本機 host);真連線要顯示關閉座位再開。</summary>
+        public bool showEmptySeatCovers = false;
         private bool _debugOpen;            // F2: head-slot tuning panel (all 6 heads + borders + sliders)
         private static Texture2D _dbgPx;    // 1px texture for the debug borders
 
@@ -64,12 +68,9 @@ namespace Sdo.UI.Screens
             _backdrop.raycastTarget = false;
             if (flipBackdropV) _backdrop.uvRect = new Rect(0f, 1f, 1f, -1f);
 
-            // name marker that floats above the avatar's head in the room (positioned each frame in Update)
-            _floatName = UIKit.AddText(Root, "FloatName", "", 14, Color.white, TextAlignmentOptions.Center);
-            _floatName.rectTransform.anchorMin = _floatName.rectTransform.anchorMax = new Vector2(0f, 1f);
-            _floatName.rectTransform.pivot = new Vector2(0f, 1f);
-            _floatName.rectTransform.sizeDelta = new Vector2(160f, 20f);
-            _floatName.outlineWidth = 0.2f; _floatName.outlineColor = new Color32(0, 0, 0, 200);   // readable over the scene
+            // name marker that floats above the avatar's head in the room (positioned each frame in Update).
+            // 跟遊戲內頭頂名字同款:共用色 TextStyles.FaceCream(rgb 250,252,214)+ 黑邊 + 粗體 + 8 向描邊。
+            _floatName = OutlinedLabel.Create(Root, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true);
             _floatName.gameObject.SetActive(false);
 
             // 2) win1 — top head panel frame + 6 head slots + name plates + head-bar buttons + room/mode labels
@@ -104,11 +105,16 @@ namespace Sdo.UI.Screens
             Btn("setting", "BtnHeadOption_1", "BtnHeadOption_2", "BtnHeadOption_3", Win1, 724, 5, () => Nav.OpenSettings?.Invoke());
             Btn("leaveroom", "BtnHeadReturn_1", "BtnHeadReturn_2", "BtnHeadReturn_3", Win1, 760, 5, OnLeave);
 
-            _modeLabel = UIKit.AddText(Root, "GameMode", "", 16, new Color32(0x52, 0xC0, 0x49, 0xff), TextAlignmentOptions.Center);
-            Place(_modeLabel.rectTransform, 33 + Win1.x, 5, 54, 30);
-            _roomIdLabel = UIKit.AddText(Root, "RoomId", "1", 13, Color.white, TextAlignmentOptions.Center);
-            Place(_roomIdLabel.rectTransform, 170 + Win1.x, 11, 36, 18);
+            // 左上角所在位置：自由練習場 / 頻道 / 房號 (DDRROOM servername/channelnum/roomid) — 白字 + 藍邊(70,74,152) 粗體。
+            // 藍邊用 OutlinedLabel(位移複製)畫，不用 TMP SDF 材質描邊(那條在執行期動態 CJK 字型上畫不出來)。
+            // 三欄都左對齊;初始 x 不重要，Render() 會量實際字寬後左到右排版(ServerX 起、欄間 HeaderGap)。
+            const float align_y = 11f, align_h = 18f;
+            _serverLabel  = OutlinedLabel.Create(Root, "ServerName", ServerX, align_y, 120, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
+            _channelLabel = OutlinedLabel.Create(Root, "ChannelNum", ServerX, align_y, 60, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
+            _roomIdLabel  = OutlinedLabel.Create(Root, "RoomId", ServerX, align_y, 30, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
+            // 中央房名 (DDRROOM roomname) — 粗體白字(無描邊)，文字內容由 RoomLabels.DisplayName 決定。
             _roomNameLabel = UIKit.AddText(Root, "RoomName", "", 12, Color.white, TextAlignmentOptions.Center);
+            _roomNameLabel.fontStyle = FontStyles.Bold;
             Place(_roomNameLabel.rectTransform, 239 + Win1.x, 8, 188, 18);
 
             // 3) win2 — right song/scene/mode panel
@@ -146,7 +152,12 @@ namespace Sdo.UI.Screens
 
         public override void OnShow()
         {
-            if (!_subscribed && Ctx.Rooms != null) { Ctx.Rooms.RoomUpdated += OnRoomUpdated; _subscribed = true; }
+            if (!_subscribed)
+            {
+                if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated += OnRoomUpdated;
+                LocalizationManager.LanguageChanged += Render;   // 切語言時，房號/房名/位置標示即時重譯
+                _subscribed = true;
+            }
 
             if (_scene == null)
             {
@@ -184,7 +195,12 @@ namespace Sdo.UI.Screens
 
         public override void OnHide()
         {
-            if (_subscribed && Ctx.Rooms != null) { Ctx.Rooms.RoomUpdated -= OnRoomUpdated; _subscribed = false; }
+            if (_subscribed)
+            {
+                if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated -= OnRoomUpdated;
+                LocalizationManager.LanguageChanged -= Render;
+                _subscribed = false;
+            }
             if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
             if (_backdrop != null) { _backdrop.texture = null; _backdrop.color = Color.black; }
             for (int i = 0; i < _slotHead.Length; i++) if (_slotHead[i] != null) { _slotHead[i].texture = null; _slotHead[i].enabled = false; }
@@ -203,9 +219,17 @@ namespace Sdo.UI.Screens
 
             if (room != null)
             {
-                _modeLabel.text = L(room.Mode == GameMode.Free ? "mode.free" : "mode.normal");
-                _roomIdLabel.text = room.Id.ToString("000");
-                _roomNameLabel.text = L("room.title").Replace("{0}", room.Id.ToString("000"));
+                int srv = Ctx.Session != null ? Ctx.Session.ServerNumber : 1;
+                int ch = Ctx.Session != null ? Ctx.Session.Channel : 1;
+                _serverLabel.SetText(RoomLabels.ServerName(srv));      // 自由練習場1
+                _channelLabel.SetText(RoomLabels.Channel(ch));         // 頻道1
+                _roomIdLabel.SetText(room.Id.ToString());              // 1
+                // 量實際字寬，左到右自動排版(固定 HeaderGap 間距):不論字長/語言都不會疊、間距一致。
+                float lx = ServerX;
+                _serverLabel.SetX(lx);  lx += _serverLabel.PreferredWidth + HeaderGap;
+                _channelLabel.SetX(lx); lx += _channelLabel.PreferredWidth + HeaderGap;
+                _roomIdLabel.SetX(lx);
+                _roomNameLabel.text = RoomLabels.DisplayName(room.Name, room.HostName);  // 玩家001的舞蹈室 (或自訂)
                 _songLabel.text = string.IsNullOrEmpty(room.SongTitle) ? L("room.no_song") : room.SongTitle;
             }
 
@@ -223,7 +247,7 @@ namespace Sdo.UI.Screens
                     }
                     else _slotHead[i].enabled = false;
                 }
-                if (_slotClose[i] != null) _slotClose[i].enabled = !occupied;
+                if (_slotClose[i] != null) _slotClose[i].enabled = showEmptySeatCovers && !occupied;
                 if (_slotMaster[i] != null) _slotMaster[i].enabled = occupied && isHost;
                 if (_slotName[i] != null)
                 {
@@ -232,7 +256,7 @@ namespace Sdo.UI.Screens
                 }
             }
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
-            if (_floatName != null) { _floatName.text = LocalName(room); _floatName.gameObject.SetActive(true); }
+            if (_floatName != null) { _floatName.SetText(LocalName(room)); _floatName.gameObject.SetActive(true); }
 
             // host sees Start; guest sees Ready/Cancel (single-player host → Start visible)
             bool localReady = LocalReady(room);
@@ -261,11 +285,11 @@ namespace Sdo.UI.Screens
                 rt.sizeDelta = headSlotSize;
                 bool occ = (i == 0) || _debugOpen;
                 if (occ && headTex != null) { _slotHead[i].texture = headTex; _slotHead[i].enabled = true; if (_slotClose[i] != null) _slotClose[i].enabled = false; }
-                else { _slotHead[i].enabled = false; if (_slotClose[i] != null) _slotClose[i].enabled = true; }
+                else { _slotHead[i].enabled = false; if (_slotClose[i] != null) _slotClose[i].enabled = showEmptySeatCovers; }
             }
 
             if (_floatName != null && _floatName.gameObject.activeSelf && _scene.TryHeadViewport(out var vp))
-                PlaceFollow(_floatName.rectTransform, vp, -8f);             // name sits just ABOVE the avatar's head
+                PlaceFollow(_floatName.Rect, vp, -8f);                      // name sits just ABOVE the avatar's head
         }
 
         // F2 tuning panel: sliders for the shared head-slot offset/size + a green border around each of the 6 slots
@@ -361,6 +385,20 @@ namespace Sdo.UI.Screens
         }
 
         // ---- art placement helpers (XML window-target + child offset → top-left pixel) ----
+
+        /// <summary>Blue text edge on the location labels — rgb(70,74,152), per the official 白字藍邊 look.</summary>
+        private static readonly Color32 LeftEdge = new Color32(70, 74, 152, 255);
+
+        /// <summary>How thick (canvas px) the blue edge on 自由練習場/頻道/房號 is. Bump it for a heavier stroke.</summary>
+        private const float HeaderEdgePx = 1.2f;
+
+        // 左上位置標示(自由練習場 / 頻道 / 房號):左對齊,Render() 量實際字寬後左到右自動排版。
+        private const float ServerX = 19f;       // 起始左緣(紫框左邊)
+        private const float HeaderGap = 15f;     // 欄與欄的固定間距(px);調大=更開、調小=更擠
+        private const float HeaderFontSz = 14f;  // 字級(這串比官方「新手一区」長,比 14 小一點才連間距一起塞進紫框)
+
+        /// <summary>頭上漂浮名字的黑邊厚度(canvas px)。字色/粗體跟遊戲內頭頂名字共用 <see cref="Sdo.Game.TextStyles.FaceCream"/>。</summary>
+        private const float HeadNameEdgePx = 1.4f;
 
         private Image Art(string an, Vector2 win, float x, float y, string name)
             => UIKit.AddSprite(Root, name, RoomUiArt.An(an), win.x + x, win.y + y);

@@ -120,14 +120,18 @@ namespace Sdo.Game
             }
 
             // spectators (旁觀玩家): GAMEPLAY18 title + fake light-blue names (static; never re-sorted).
-            _lookerTitle = NewSR("LookerTitle", SdoExtracted.LoadImage(gpDir, "GAMEPLAY18.PNG"), 45);
-            SdoLayout.PlaceTopLeft(_lookerTitle, lookerTitleX, lookerTitleY, -3f);
-            _lookerRows = new Label3D[SpectatorNames.Length];
-            for (int i = 0; i < SpectatorNames.Length; i++)
+            // 預設關閉(showSpectators=false) — 全是測試假名;不建 → _lookerTitle/_lookerRows 留 null，後續都有 null 防護。
+            if (showSpectators)
             {
-                _lookerRows[i] = TextStyles.NewLabel("Looker" + i, TextStyles.Style.Looker, 45, lookerFontWorld, TextAnchor.MiddleLeft);
-                _lookerRows[i].Position = SdoLayout.ToWorld(lookerX, lookerFirstY + i * lookerRowStep, -3f);
-                _lookerRows[i].Text = SpectatorNames[i];
+                _lookerTitle = NewSR("LookerTitle", SdoExtracted.LoadImage(gpDir, "GAMEPLAY18.PNG"), 45);
+                SdoLayout.PlaceTopLeft(_lookerTitle, lookerTitleX, lookerTitleY, -3f);
+                _lookerRows = new Label3D[SpectatorNames.Length];
+                for (int i = 0; i < SpectatorNames.Length; i++)
+                {
+                    _lookerRows[i] = TextStyles.NewLabel("Looker" + i, TextStyles.Style.Looker, 45, lookerFontWorld, TextAnchor.MiddleLeft);
+                    _lookerRows[i].Position = SdoLayout.ToWorld(lookerX, lookerFirstY + i * lookerRowStep, -3f);
+                    _lookerRows[i].Text = SpectatorNames[i];
+                }
             }
         }
 

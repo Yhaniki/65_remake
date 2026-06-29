@@ -100,6 +100,18 @@
    "v": "Room {0}"
   },
   {
+   "k": "room.server_name",
+   "v": "Free Practice {0}"
+  },
+  {
+   "k": "room.channel",
+   "v": "Channel {0}"
+  },
+  {
+   "k": "room.default_name",
+   "v": "{0}'s Dance Room"
+  },
+  {
    "k": "room.leave",
    "v": "Leave Room"
   },
