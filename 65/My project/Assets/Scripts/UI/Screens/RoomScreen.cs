@@ -47,8 +47,8 @@ namespace Sdo.UI.Screens
         // Head-portrait placement: a SHARED offset from the DDRROOM AvatarView base coords + a size, applied to ALL 6
         // head slots. Tune LIVE via the F2 panel (sliders + borders + all 6 heads shown). Default y+13 centres the face
         // (the RT frames head+shoulder, so the face sits high in the slot).
-        public Vector2 headSlotOffset = new Vector2(0f, 0f);   // head is now centred IN the RT (bounds-framed), so the
-        public Vector2 headSlotSize = new Vector2(96f, 76f);   // slot sits at the plain AvatarView base coords
+        public Vector2 headSlotOffset = new Vector2(-10f, 6f);  // dialed in via the F2 panel: centres the head in the frame
+        public Vector2 headSlotSize = new Vector2(99f, 76f);    // box (X-10/Y+6 from the AvatarView base, 99×76)
         private bool _debugOpen;            // F2: head-slot tuning panel (all 6 heads + borders + sliders)
         private static Texture2D _dbgPx;    // 1px texture for the debug borders
 
