@@ -19,6 +19,9 @@ namespace Sdo.Game
         public float yaw = 0f;                                   // 正視: front-facing (NOT the result screen's 30° 3/4)
         public float avatarScale = 1.05f;
         public float zoom = 1f;                                  // auto-frame fine multiplier (>1 = zoom out)
+        public float headFrameDist = 1.9f;                       // cam distance = headFrameDist × head height (size)
+        public float headAimUp = 0.11f;                          // shift aim down by this × head height → head sits centred
+                                                                 // (the FACE+HAIR AABB centre is a bit below the visual centre)
         public int rtWidth = 192, rtHeight = 152;               // matches the ROOM AvatarView slot aspect (96:76 ≈ 1.263)
 
         /// <summary>Set by the host: returns true while the room avatar is walking, so the framed head mirrors it.</summary>
@@ -27,6 +30,7 @@ namespace Sdo.Game
         public System.Func<float> FacingProvider;
 
         private SdoAvatar _avatar;
+        private Renderer[] _headRends;     // FACE + HAIR renderers → the head's VISUAL bounds (for true centering)
         private MotLoader _walkMot, _idleMot;
         private bool _mirrorWalking;
         private Camera _cam;
@@ -65,10 +69,22 @@ namespace Sdo.Game
             _cam.targetTexture = _rt;
             _cam.depth = -20;
 
-            // cache the head bone REST model-space position (cam targets this, not the live bone, so it stays fixed)
+            // cache the head bone REST model-space position (fallback target when bounds aren't ready)
             Vector3 hp = _avatar.BoneModelPos("Bip01_Head");
             if (hp == Vector3.zero) hp = _avatar.BoneModelPos("Bip01_Neck");
             if (hp != Vector3.zero) _headModelPos = hp;
+
+            // collect the FACE + HAIR renderers (named "*_WOMAN_FACE_*" / "*_HAIR_*") → their combined world bounds is
+            // the head's true visual centre, so the cam centres the HEAD (not the head BONE, which is off-centre).
+            var all = _avatar.GetComponentsInChildren<Renderer>();
+            var list = new System.Collections.Generic.List<Renderer>();
+            foreach (var r in all)
+            {
+                if (r == null) continue;
+                string n = r.gameObject.name.ToUpperInvariant();
+                if (n.Contains("FACE") || n.Contains("HAIR")) list.Add(r);
+            }
+            _headRends = list.ToArray();
 
             UpdateCam();
             return true;
@@ -84,9 +100,9 @@ namespace Sdo.Game
             if (_cam != null && _avatar != null) UpdateCam();
         }
 
-        // Head cam: tracks the LIVE head bone (so the head stays a STABLE size + centred while the walk/dance motion
-        // moves it — was growing because the walk clip translates the root toward the cam), and yaws the avatar to
-        // MIRROR the room avatar's facing (so the framed head turns left/right with it). Auto-frames from the hair-top.
+        // Head cam: aim at the head's VISUAL bounds CENTRE (face+hair) so the head is truly centred in the RT — both
+        // horizontally and vertically — regardless of the head-bone offset, the motion (walk root drift) or the facing
+        // yaw. Size = headFrameDist × head height. Yaws the avatar to mirror the room avatar's facing.
         private void UpdateCam()
         {
             var t = _avatar.transform;
@@ -95,27 +111,41 @@ namespace Sdo.Game
             float facing = FacingProvider != null ? FacingProvider() : 0f;
             t.localRotation = Quaternion.Euler(0f, yaw + facing, 0f);
 
-            Vector3 headModel = _avatar.BoneModelPos("Bip01_Head");   // LIVE (animated) head, not the cached rest
-            if (headModel == Vector3.zero) headModel = _headModelPos;
-            Vector3 restHead = t.TransformPoint(headModel);
-            EnsureHairOffset();
-            float h = _hairOffsetModel * Mathf.Max(0.01f, avatarScale);   // hair-top height above the head bone (world)
-            Vector3 target;
-            float dist;
-            if (h > 0.001f)
+            Vector3 target; float dist;
+            if (TryHeadBounds(out var b))
             {
-                dist = 1.9f * h * Mathf.Max(0.05f, zoom);
-                target = restHead + new Vector3(-2.1f, 0.35f * h, 0f);
+                target = b.center;                                    // head visual centre → centred X/Z
+                target.y -= headAimUp * b.size.y;                     // nudge so the FACE (not the neck-biased AABB) centres
+                dist = Mathf.Max(b.size.y, 1f) * headFrameDist * Mathf.Max(0.05f, zoom);
             }
-            else
+            else   // bounds not ready yet → fall back to the head bone + measured hair-top
             {
-                dist = 28f;
-                target = restHead + new Vector3(-2.1f, 9f, 0f);
+                EnsureHairOffset();
+                float h = _hairOffsetModel * Mathf.Max(0.01f, avatarScale);
+                Vector3 restHead = t.TransformPoint(_headModelPos);
+                target = restHead + new Vector3(0f, h > 0.001f ? 0.35f * h : 9f, 0f);
+                dist = (h > 0.001f ? 1.9f * h : 28f) * Mathf.Max(0.05f, zoom);
             }
             _cam.fieldOfView = fov;
-            Vector3 dir = Quaternion.Euler(pitchDeg, 0f, 0f) * Vector3.forward;   // +Z, pitched down
+            Vector3 dir = Quaternion.Euler(pitchDeg, 0f, 0f) * Vector3.forward;   // +Z, (optionally pitched down)
             _cam.transform.position = target - dir * dist;
             _cam.transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
+        }
+
+        // Combined world AABB of the head (FACE+HAIR) renderers, after the avatar has been CPU-skinned this frame. False
+        // until the meshes have valid bounds (first pose).
+        private bool TryHeadBounds(out Bounds b)
+        {
+            b = default; bool any = false;
+            if (_headRends != null)
+                foreach (var r in _headRends)
+                {
+                    if (r == null) continue;
+                    var rb = r.bounds;
+                    if (rb.size.sqrMagnitude < 1e-6f) continue;
+                    if (!any) { b = rb; any = true; } else b.Encapsulate(rb);
+                }
+            return any;
         }
 
         // Measure (once) the hair-top height above the head bone from the posed avatar's renderer bounds (valid after
