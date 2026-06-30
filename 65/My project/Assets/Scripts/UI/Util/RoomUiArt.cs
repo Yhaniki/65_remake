@@ -76,5 +76,16 @@ namespace Sdo.UI.Util
             _framesCache[anName] = s;
             return s;
         }
+
+        /// <summary>A bare PNG/BMP file sitting in the ROOM folder (NOT an .an crop) as one sprite (cached); null if
+        /// missing. Used for standalone room art like FREE.PNG (the "random note-effect" slot icon).</summary>
+        public static Sprite Image(string imageName)
+        {
+            if (string.IsNullOrEmpty(imageName)) return null;
+            if (_cache.TryGetValue(imageName, out var s) && s != null) return s;
+            s = SdoExtracted.LoadImage(Dir, imageName, bleed: true);
+            _cache[imageName] = s;
+            return s;
+        }
     }
 }

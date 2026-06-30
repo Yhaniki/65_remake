@@ -425,11 +425,13 @@ namespace Sdo.Game
                 {
                     float t = 0.5f * hpGlowBright;   // 0.5 = old stock; rgb keeps brightening past 1 (additive, unclamped)
                     if (_hpGlowMat.HasProperty("_TintColor")) _hpGlowMat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t)));
-                    // Scissor the glow to the bar's frame (world X) so the low-HP flash is CUT at either end, not spilled.
+                    // Scissor only the LEFT end (world X): the glow must never spill before the bar's left start, but
+                    // the RIGHT end stays UNCLIPPED so the full-HP leading-edge flash (which pokes a few px past the
+                    // bar's right end) shows bright instead of being chopped off.
                     if (_hpGlowMat.HasProperty("_ClipMinX"))
                     {
                         _hpGlowMat.SetFloat("_ClipMinX", SdoLayout.WorldX(HpPos.x));
-                        _hpGlowMat.SetFloat("_ClipMaxX", SdoLayout.WorldX(HpPos.x + HpSize.x));
+                        _hpGlowMat.SetFloat("_ClipMaxX", 100000f);   // no right clip — let the rightmost flash bleed out
                     }
                     _hpGlow.sharedMaterial = _hpGlowMat;
                 }

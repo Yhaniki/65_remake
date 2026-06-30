@@ -156,6 +156,14 @@
    "v": "Please select a song first"
   },
   {
+   "k": "room.drop_up",
+   "v": "Up"
+  },
+  {
+   "k": "room.drop_down",
+   "v": "Down"
+  },
+  {
    "k": "result.clear",
    "v": "Clear!"
   },

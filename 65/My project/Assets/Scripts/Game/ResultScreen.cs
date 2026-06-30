@@ -165,9 +165,9 @@ namespace Sdo.Game
             _expSnd = false; _bannerShown = false; _bannerStatic = false; _rewardArmed = false; _localHead = localHead; _gameOver = gameOver;
             string dir = SdoExtracted.ResultStatisDir;
 
-            // song info row (yellow), top-left (songname 13,72 / songlevel 176,72)
+            // song info, top-left, on TWO stacked rows (songname row 1 / songlevel row 2 below it, left-aligned).
             NewText("SongName", songTitle ?? "", 16, 13, 72, TextAnchor.UpperLeft, TextStyles.FaceYellow);
-            NewText("SongLevel", difficulty ?? "", 16, 176, 72, TextAnchor.UpperLeft, TextStyles.FaceYellow);
+            NewText("SongLevel", difficulty ?? "", 16, 13, 92, TextAnchor.UpperLeft, TextStyles.FaceYellow);
 
             for (int i = 0; i < rows.Length && i < RowY.Length; i++)
                 BuildRow(dir, rows[i], RowY[i]);

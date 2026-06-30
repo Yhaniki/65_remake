@@ -41,9 +41,13 @@ namespace Sdo.UI.Util
         /// <summary>Build the label under <paramref name="parent"/> at top-left (<paramref name="x"/>,<paramref name="y"/>)
         /// of size (<paramref name="w"/>,<paramref name="h"/>): a <paramref name="face"/>-coloured face over a
         /// <paramref name="edge"/>-coloured edge <paramref name="edgePx"/> pixels thick.</summary>
+        /// <param name="glyphScaleX">Horizontal squash of the glyphs (1 = none). &lt;1 makes the text narrower/taller-looking
+        /// — e.g. 0.75 cancels the 4:3→16:9 stretch. Applied as the holder's localScale, so face + all edges squash together.</param>
+        /// <param name="glyphScaleY">Vertical stretch of the glyphs (1 = none). &gt;1 makes the text taller.</param>
         public static OutlinedLabel Create(Transform parent, string name, float x, float y, float w, float h,
             float size, Color32 face, Color32 edge, float edgePx, bool bold,
-            TextAlignmentOptions align = TextAlignmentOptions.Center)
+            TextAlignmentOptions align = TextAlignmentOptions.Center,
+            float glyphScaleX = 1f, float glyphScaleY = 1f)
         {
             var holder = UIKit.NewRect(parent, name);
             holder.anchorMin = holder.anchorMax = new Vector2(0f, 1f);
@@ -51,15 +55,20 @@ namespace Sdo.UI.Util
             holder.anchoredPosition = new Vector2(x, -y);
             holder.sizeDelta = new Vector2(w, h);
 
+            // Scale the GLYPHS (each face/edge child), NOT the holder: the children stretch-fill the holder with a
+            // centred pivot (0.5,0.5), so localScale squashes around the box CENTRE → a centred label stays centred.
+            // Scaling the holder instead would pivot on its top-left corner and shove the text sideways.
+            var glyphScale = new Vector3(glyphScaleX, glyphScaleY, 1f);
+
             var ol = holder.gameObject.AddComponent<OutlinedLabel>();
             ol._edges = new TextMeshProUGUI[Dirs8.Length];
             for (int i = 0; i < Dirs8.Length; i++)           // edges first → they sit BEHIND the face (UGUI sibling order)
-                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, Dirs8[i] * edgePx, align);
-            ol._face = Make(holder, "Face", size, face, bold, Vector2.zero, align);
+                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, Dirs8[i] * edgePx, align, glyphScale);
+            ol._face = Make(holder, "Face", size, face, bold, Vector2.zero, align, glyphScale);
             return ol;
         }
 
-        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, Vector2 offset, TextAlignmentOptions align)
+        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, Vector2 offset, TextAlignmentOptions align, Vector3 glyphScale)
         {
             var t = UIKit.AddText(parent, name, "", size, color, align);
             if (bold) t.fontStyle = FontStyles.Bold;
@@ -67,6 +76,7 @@ namespace Sdo.UI.Util
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;   // stretch to the holder, then shift by the offset
             rt.offsetMin = offset;
             rt.offsetMax = offset;
+            rt.localScale = glyphScale;                               // squash glyphs around their centre (pivot 0.5,0.5)
             return t;
         }
 

@@ -12,6 +12,9 @@ namespace Sdo.Game
     // F4 in-game debug panel (OnGUI)
     public partial class ScreenGameplay
     {
+        // standard room "速度" steps (matches RoomConfig.speedSteps defaults) — quick-select buttons for live tuning
+        private static readonly float[] ScrollSpeedSteps = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f };
+
         // in-game debug tuning sliders (F4 toggles). Board alpha applies live; burst size/brightness apply to the
         // next bursts (taps fire continuously, so the effect shows within ~0.3s).
         private void OnGUI()
@@ -48,6 +51,20 @@ namespace Sdo.Game
                 GUILayout.Label("Manual keys  L/D/U/R = A S W D  or  Num 4 5 8 6");
                 GUILayout.Label($"Force hit grade: {(forcedJudge < 0 ? "Real (timing)" : ForceJudgeLabels[forcedJudge + 1])}");
                 forcedJudge = GUILayout.Toolbar(forcedJudge + 1, ForceJudgeLabels) - 1;   // 0=Real(-1), 1..4=Perfect..Miss
+                GUILayout.Space(6);
+                // ── note scroll speed (osu-style, fixed base tempo) ──
+                GUILayout.Label($"Scroll 速度: {scrollSpeedMul:F1}×  → {ManiaScroll.BaseVelocityFor(scrollSpeedMul, referenceBpm):F0}px/s base");
+                GUILayout.BeginHorizontal();
+                for (int i = 0; i < ScrollSpeedSteps.Length; i++)
+                    if (GUILayout.Button(ScrollSpeedSteps[i].ToString("0.#"))) { scrollSpeedMul = ScrollSpeedSteps[i]; BuildScroll(); }
+                GUILayout.EndHorizontal();
+                GUILayout.Label($"基準 BPM (固定，不隨歌曲BPM): {referenceBpm:F0}");
+                float nb = GUILayout.HorizontalSlider(referenceBpm, 60f, 240f);
+                if (Mathf.Abs(nb - referenceBpm) > 0.5f) { referenceBpm = nb; BuildScroll(); }
+                bool cs = GUILayout.Toggle(constantScroll, constantScroll
+                    ? " 固定速度 ON：osu Constant，全程不變速（忽略BPM/SV）"
+                    : " 固定速度 OFF：osu 預設，內部仍隨 BPM變速/SV 變速");
+                if (cs != constantScroll) { constantScroll = cs; BuildScroll(); }
                 GUILayout.Space(6);
                 // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — re-shape the dancer LIVE.
                 GUILayout.Label($"Body shape (thin..fat): B={_bodyShapeB:F3}  (1.00 = standard)");
@@ -130,6 +147,18 @@ namespace Sdo.Game
                 burstSize = GUILayout.HorizontalSlider(burstSize, 0.3f, 3f);
                 GUILayout.Label($"Burst brightness: {burstBright:F2}×");
                 burstBright = GUILayout.HorizontalSlider(burstBright, 0.3f, 3f);
+
+                // ── NoteType skin (live test): switches the WHOLE skin — board (NOTEIMAGE) + hit burst + combo/judge. ──
+                int nN = NoteTypeEftSuffix.Length;
+                GUILayout.Label(_eftNoteType < 0 ? "Note skin: stock"
+                    : $"Note skin: {_eftNoteType} → board NOTEIMAGE_{NoteTypeBoardSuffix[_eftNoteType]} / EFT_{NoteTypeEftSuffix[_eftNoteType]}");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("◄ prev")) SetNoteType(((_eftNoteType < 0 ? 0 : _eftNoteType) + nN - 1) % nN);
+                if (GUILayout.Button("next ►")) SetNoteType(_eftNoteType < 0 ? 0 : (_eftNoteType + 1) % nN);
+                GUILayout.EndHorizontal();
+                if (GUILayout.Button("Fire hit-burst (all lanes)") && _burstFrames != null)
+                    for (int l = 0; l < Keys; l++) SpawnBurst(l, false);
+
                 GUILayout.Label($"Click-flash brightness: {clickFlashBright:F2}×");
                 clickFlashBright = GUILayout.HorizontalSlider(clickFlashBright, 0f, 1.5f);
                 GUILayout.Label($"Keydown burst: {recKeydownStepSec*1000f:F0}ms/frame ({recKeydownStepSec*5f*1000f:F0}ms total, 5 frames)");

@@ -61,6 +61,8 @@ STR = {
     "room.host":            ["Host", "房主", "房主", "ホスト"],
     "room.waiting_players": ["Some players are not ready", "尚有玩家未準備", "还有玩家未准备", "未準備のプレイヤーがいます"],
     "room.need_song":       ["Please select a song first", "請先選擇歌曲", "请先选择歌曲", "先に曲を選択してください"],
+    "room.drop_up":         ["Up", "向上", "向上", "上"],
+    "room.drop_down":       ["Down", "向下", "向下", "下"],
 
     "result.clear":     ["Clear!", "完成!", "完成!", "クリア!"],
     "result.failed":    ["Failed", "失敗", "失败", "失敗"],

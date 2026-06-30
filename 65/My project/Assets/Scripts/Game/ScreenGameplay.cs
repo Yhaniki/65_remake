@@ -26,8 +26,16 @@ namespace Sdo.Game
         // DEBUG: force a grade on every manual hit (-1 = real timing window). F4 panel selects it.
         public int forcedJudge = -1;
         private static readonly string[] ForceJudgeLabels = { "Real", "Perfect", "Cool", "Bad", "Miss" };
-        public float scrollPxPerSec = 320f;
+        // Note scroll = osu!mania-style (Sequential + relative beat-length scaling) at a FIXED base tempo:
+        // the base speed is the SAME for every song (NOT scaled by the song's BPM), calibrated with the
+        // official px/s = BPM×speed×1.6 at referenceBpm=140. Mid-song BPM changes / osu SV still vary the
+        // scroll locally (see ManiaScroll). scrollSpeedMul = the room "速度" step (RoomConfig.speedSteps),
+        // set by FrontendApp from the session. constantScroll = osu "Constant Speed" mod (kill all variation).
+        public float scrollSpeedMul = 2.5f;   // 速度 step (1.0..8.0); FrontendApp wires GameSession.Speed in
+        public float referenceBpm = 140f;     // base-tempo anchor for the constant base speed
+        public bool constantScroll = false;   // true = ignore BPM/SV variation (perfectly linear scroll)
         public float judgeLineY = 70f;        // receptor / hit line Y (design px). UPSCROLL: notes rise to it.
+        private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
         // SdoExtracted.MusicDir (see ResolveDevDefaults).
@@ -355,6 +363,7 @@ namespace Sdo.Game
             SdoLayout.SetupCamera(_cam);
             LoadArt();
             if (!LoadChart()) return;
+            BuildScroll();
             BuildBoard();
             if (!observeBurstMode) SpawnNotes();   // observe mode: no notes (clean stage to watch the burst)
             foreach (var n in _notes) { double t = n.Note.EndTimeMs ?? n.Note.StartTimeMs; if (t > _totalMs) _totalMs = t; }
@@ -453,9 +462,25 @@ namespace Sdo.Game
 
         // ---------- art (from Extracted) ----------
 
-        private string NoteDir => Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_5");
+        // Active note-board skin folder (NOTEIMAGE_5 by default). SetNoteBoardSkin() swaps it LIVE for the F4 NoteType
+        // test (the falling-note + receptor SpriteRenderers read the reloaded arrays each frame — see LoadBoardArt).
+        private string _noteDir;
+        private string NoteDir => _noteDir ?? (_noteDir = Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_5"));
 
-        private void LoadArt()
+        /// <summary>Point the board at a different NOTEIMAGE_&lt;suffix&gt; skin and reload its per-lane art live. Active notes
+        /// (n.Head.sprite from _noteFrames) and receptors (UpdateHud from _recIdle/_recDownFrames) re-read the arrays each
+        /// frame, so the swap shows instantly. Click-flash + board background are shared (NOTEIMAGE root) and don't change.</summary>
+        internal void SetNoteBoardSkin(string suffix)
+        {
+            _noteDir = Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_" + suffix);
+            LoadBoardArt();
+            for (int c = 0; c < Keys; c++) _recDownStart[c] = -1f;   // snap receptors to idle (skins differ in keydown frame count)
+        }
+
+        // Load (or RELOAD) the per-lane note-board art from NoteDir: falling-note frames, receptor idle + keydown frames,
+        // hold body/tail. Receptor naming differs per skin — NOTEIMAGE_5/6 use numbered *_judgeline1..6, while
+        // NOTEIMAGE_8/9/10/11/pet use *_judgeline + *_judgeline_f2 — so try the numbered scheme first, then _f2.
+        private void LoadBoardArt()
         {
             for (int c = 0; c < Keys; c++)
             {
@@ -463,21 +488,25 @@ namespace Sdo.Game
                 var fr = new Sprite[4]; bool ok = true;
                 for (int f = 0; f < 4; f++) { fr[f] = SdoExtracted.LoadImage(NoteDir, d + "holdheadactive" + f + ".png"); if (fr[f] == null) ok = false; }
                 if (ok) _noteFrames[c] = fr;
-                _recIdle[c] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline1.png");
-                // keydown burst frames: *_judgeline2..6 in order (KEYDOWN_JUDGELINE.AN); fall back to idle if missing
-                var rdf = new Sprite[5];
-                for (int f = 0; f < 5; f++) rdf[f] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + (f + 2) + ".png") ?? _recIdle[c];
-                _recDownFrames[c] = rdf;
+                _recIdle[c] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline1.png") ?? SdoExtracted.LoadImage(NoteDir, d + "_judgeline.png");
+                var rdf = new List<Sprite>();                         // keydown burst: numbered *_judgeline2..6, else *_judgeline_f2
+                for (int f = 2; f <= 6; f++) { var s = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + f + ".png"); if (s != null) rdf.Add(s); }
+                if (rdf.Count == 0) { var f2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2.png"); if (f2 != null) rdf.Add(f2); }
+                if (rdf.Count == 0 && _recIdle[c] != null) rdf.Add(_recIdle[c]);
+                _recDownFrames[c] = rdf.ToArray();
                 string baseLong = (d == "left" || d == "right") ? "rightleft_long" : "updown_long";
                 var bodySpr = SdoExtracted.LoadImage(NoteDir, baseLong + ".png");
                 if (bodySpr != null) { _holdTex[c] = bodySpr.texture; _holdTex[c].wrapMode = TextureWrapMode.Repeat; SdoExtracted.AlphaBleed(_holdTex[c]); }
-                // end cap = the ORIGINAL per-lane png (rightleft_long_bottom for L/R, updown_long_bottom for U/D), but
-                // copied to a UNIQUE texture per lane (never shares the cache) + de-seamed, so a lane's cap can never
-                // get confused with another lane's. Each tail also gets its own material (SpawnNotes) to stop any
-                // SpriteMask batch cross-bleed.
+                // end cap = the per-lane png, copied to a UNIQUE per-lane texture (never shares the cache) + de-seamed, so a
+                // lane's cap can never get confused with another lane's. Keep the old cap if the new skin lacks one.
                 var capSpr = SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
-                _holdTail[c] = capSpr != null ? SdoExtracted.CleanCapCopy(capSpr) : null;
+                if (capSpr != null) _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr);
             }
+        }
+
+        private void LoadArt()
+        {
+            LoadBoardArt();
             // lane click-flash strips (notes_board_click1..4.png) live in NOTEIMAGE root, not the skin folder
             var boardDir = Path.Combine(SdoExtracted.Root, "NOTEIMAGE");
             for (int c = 0; c < Keys; c++) _clickFlashSpr[c] = SdoExtracted.LoadImage(boardDir, "notes_board_click" + (c + 1) + ".png");
@@ -2444,8 +2473,22 @@ namespace Sdo.Game
             return rows;
         }
 
-        // UPSCROLL (matches the official screen): future notes are below the hit line and RISE to it.
-        private float YForTime(double noteMs, double now) => judgeLineY + (float)((noteMs - now) / 1000.0) * scrollPxPerSec;
+        // Build the scroll positioner from the loaded chart + the selected speed step. Constant base speed
+        // across songs (referenceBpm anchor) with osu-style mid-song BPM/SV variation (or none if constantScroll).
+        private void BuildScroll()
+        {
+            _scroll = ManiaScroll.Build(_map, scrollSpeedMul, constantScroll, referenceBpm);
+            Debug.Log($"[Step1] scroll vBase={_scroll.BaseVelocity:F0}px/s (speed {scrollSpeedMul}× @ {referenceBpm}bpm)"
+                + $", {_map.TimingPoints.Count} timing pts, constant={constantScroll}");
+        }
+
+        // UPSCROLL (matches the official screen): future notes are below the hit line and RISE to it. Distance
+        // comes from ManiaScroll (osu Sequential integration), so mid-song BPM changes / SV vary it locally.
+        private float YForTime(double noteMs, double now)
+        {
+            if (_scroll == null) BuildScroll();
+            return judgeLineY + (float)_scroll.PixelDistance(now, noteMs);
+        }
 
         private void ScrollNotes(double now)
         {
@@ -2628,7 +2671,9 @@ namespace Sdo.Game
             }
         }
 
-        private const float BurstWidth = 235f;            // hit-burst draw size (covers receptor + glow, well beyond the lane)
+        private const float BurstWidth = 235f;            // hit-burst draw size for the REFERENCE skin (EFT_13, 300px native)
+        private const float BurstNativeRef = 300f;        // EFT_13 native px — bursts render native-proportional to this so
+                                                          // a smaller skin (EFT_2=150, EFT_14=128) draws smaller, not stretched up to BurstWidth
         // a TAP burst fires on every hit and may overlap others on the same lane (no gating). A HOLD burst loops,
         // one full round at a time (gated). Each burst gets its OWN material clone so overlapping bursts never bleed.
         private BurstFx SpawnBurst(int lane, bool isHold)
@@ -2639,7 +2684,10 @@ namespace Sdo.Game
             if (mat != null) { float t = 0.5f * burstBright; mat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t))); }
             var sr = NewSR("Burst", _burstFrames[0], 6);
             if (mat != null) sr.sharedMaterial = mat;                   // additive -> black bg becomes transparent glow
-            PlaceAspect(sr, LaneLeftX[lane] + LaneCx0, judgeLineY, BurstWidth * burstSize);
+            // native-proportional: scale by THIS skin's frame size vs the reference, so every skin keeps its true relative
+            // size (the old fixed BurstWidth stretched a small 150px skin up to the 300px skin's footprint -> "too big").
+            float burstNativeW = _burstFrames[0] != null ? _burstFrames[0].bounds.size.x : BurstNativeRef;
+            PlaceAspect(sr, LaneLeftX[lane] + LaneCx0, judgeLineY, BurstWidth * burstSize * (burstNativeW / BurstNativeRef));
             var sr2 = NewSR("Burst+", _burstFrames[0], 6);             // 2nd additive layer -> vivid in-game glow
             if (mat != null) sr2.sharedMaterial = mat;
             sr2.transform.SetParent(sr.transform, false);

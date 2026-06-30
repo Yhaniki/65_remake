@@ -3,6 +3,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using Sdo.Game;
 using Sdo.Localization;
+using Sdo.Settings;
+using Sdo.UI.Catalog;
 using Sdo.UI.Core;
 using Sdo.UI.Services;
 using Sdo.UI.Util;
@@ -21,11 +23,35 @@ namespace Sdo.UI.Screens
     {
         public override ScreenId Id => ScreenId.Room;
 
-        // DDRROOM window resting targets (TransForm targetx/targety); child coords are relative to these.
+        // DDRROOM window resting targets (TransForm targetx/targety); win2 子座標逐字取自「線上」DDRROOM.XML
+        // (閉撰敃氪 那套，RoomUiArt 實際載入的就是這套；它的 win2 target=(649,177)，子座標直接相對 Win2，不要再加 offset)。
         private static readonly Vector2 Win1 = new Vector2(0f, 1f);     // top head panel
         private static readonly Vector2 Win2 = new Vector2(649f, 177f); // right song/scene/mode panel
         private static readonly Vector2 Win3 = new Vector2(0f, 481f);   // bottom chat + ready/start bar
         private const int HeadLayer = 11;
+
+        // win2 文字色（取自線上 DDRROOM.XML）：歌名/難度·BPM字幕 0xff835ce1、難度·BPM數字 0xffc969e3、
+        // 速度值 0xfffff5a4、模式名 0xff9d6ac9。
+        private static readonly Color32 SongNameColor = new Color32(0x83, 0x5c, 0xe1, 0xff);
+        private static readonly Color32 InfoValueColor = new Color32(0xc9, 0x69, 0xe3, 0xff);
+        private static readonly Color32 SpeedColor = new Color32(0xff, 0xf5, 0xa4, 0xff);
+        private static readonly Color32 ModeColor = new Color32(0x9d, 0x6a, 0xc9, 0xff);
+        // 自由模式/歌名/難度/BPM 的白色描邊(位移複製,不靠 SDF) 厚度(canvas px)。要更粗就調大。
+        private const float Win2EdgePx = 1.1f;
+
+        // note 種類(hit-effect)可選預覽圖，取自線上 DDRROOM.XML 的 hiteft 清單（索引 = GameSession.NoteType；-1=隨機）。
+        // 每個 .an 是多幀動畫（如 hiteft2 = jz00..jz07 八幀），預覽框用 SpriteSeqAnim 循環撥放。
+        // 只收「實際可選的特效皮」11 項（index 0..10），循環是 隨機 → 0..10 → 回隨機。
+        // 排除 XML 上另兩項：free_small（=「自由/無」，隨機格已改用靜態 FREE.PNG）、sixhiteft1（六鍵特效不是獨立資料夾，
+        // 是包在各 EFT_N 內的 SIX_*；打六鍵譜時引擎在所選皮裡自動換，不該當成獨立選項）。
+        private static readonly string[] NoteEftArt =
+        {
+            "hiteft2", "hiteft5", "hiteft8", "hiteft9", "hiteft10", "hiteft11", "hiteft12",
+            "hiteft13", "hiteft14", "hiteftpet", "hiteft3D",
+        };
+        // note 預覽動畫速度。hiteft2.an=40幀(10幀爆裂×4)：12fps 一輪3.3s(太慢)、60fps 0.67s(太快)；
+        // 30fps → 一輪1.33s、單次爆裂0.33s，落在合理區間。要快/慢調這個值即可。
+        private const float NoteEftFps = 20f;
 
         private RawImage _backdrop;
         private readonly RawImage[] _slotHead = new RawImage[RoomLayout.SeatCount];
@@ -33,9 +59,24 @@ namespace Sdo.UI.Screens
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
         private OutlinedLabel _serverLabel, _channelLabel, _roomIdLabel;   // 白字 + 藍邊 (rgb 70,74,152)
-        private TextMeshProUGUI _roomNameLabel, _songLabel;
+        private TextMeshProUGUI _roomNameLabel;
+        private OutlinedLabel _songLabel;   // 歌名(白邊)
         private OutlinedLabel _floatName;       // name marker that floats above the avatar in the room (官方頭上名字)；字 rgb(250,252,214) 描黑邊
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
+
+        // ---- win2 右側面板控件（模式/場景/歌曲資訊/速度/note/組隊/掉落）----
+        private OutlinedLabel _modeLabel;  // 自由模式/普通模式（白邊；線上是純文字，沒有 mode 圖）
+        private Image _sceneThumb;         // 第二層場景圖（隨機 → RANDOM；具體 → Scene{id+1}）
+        private Image _diffDisc;           // CD 光碟，依難度換色（Difficult.an 3 幀）
+        private Sprite[] _diffDiscFrames;
+        private OutlinedLabel _levelLabel, _bpmLabel;   // 難度/BPM 數字(白邊)
+        private TextMeshProUGUI _speedLabel, _dropLabel;
+        private Image _noteDisplay;        // note 種類預覽框
+        private SpriteSeqAnim _noteAnim;   // 預覽框的循環動畫驅動
+        private int _speedIndex;
+        private readonly Image[] _teamImg = new Image[4];      // 組隊 A/B/C/自由
+        private readonly Sprite[] _teamNormal = new Sprite[4];
+        private readonly Sprite[] _teamPushed = new Sprite[4];
 
         private RoomScene3D _scene;
         private RoomHeadPortrait _localHead;
@@ -97,7 +138,8 @@ namespace Sdo.UI.Screens
             }
 
             // head-bar buttons (win1)
-            Btn("changeroomname", "Room45", "Room46", "Room47", Win1, 461, 7, () => Toast.Show(L("room.title")));
+            // 修改(房間設定)按鈕：官方按了會跳一條半透明黑底橫幅(Toast) → 依需求拿掉，按了不做事。
+            Btn("changeroomname", "Room45", "Room46", "Room47", Win1, 461, 7, null);
             Btn("help", "BtnHeadHelp_1", "BtnHeadHelp_2", "BtnHeadHelp_3", Win1, 654, 7, null);
             Btn("roomangel", "roomangel_0", "roomangel_1", "roomangel_2", Win1, 616, 5, null);
             Btn("roomexchange", "BtnHeadExchange_1", "BtnHeadExchange_2", "BtnHeadExchange_3", Win1, 652, 5, null);
@@ -115,33 +157,72 @@ namespace Sdo.UI.Screens
             // 中央房名 (DDRROOM roomname) — 粗體白字(無描邊)，文字內容由 RoomLabels.DisplayName 決定。
             _roomNameLabel = UIKit.AddText(Root, "RoomName", "", 12, Color.white, TextAlignmentOptions.Center);
             _roomNameLabel.fontStyle = FontStyles.Bold;
-            Place(_roomNameLabel.rectTransform, 239 + Win1.x, 8, 188, 18);
+            Place(_roomNameLabel.rectTransform, 239 + Win1.x, 10, 188, 18);   // 舞蹈室房名往下 2px
 
-            // 3) win2 — right song/scene/mode panel
-            Art("Room72", Win2, -3, -5, "Win2Panel");
-            Art("scene1", Win2, 7, 28, "SceneThumb");        // selected-stage thumbnail (placeholder default)
-            Art("Difficult", Win2, 7, 109, "SongLevel");
-            _songLabel = UIKit.AddText(Root, "SongName", "", 12, new Color32(0x83, 0x5c, 0xe1, 0xff), TextAlignmentOptions.Center);
-            Place(_songLabel.rectTransform, 12 + Win2.x, 128, 112, 20);
-            // mode-name slot (mode label sits at win2 WinRoomModeSdo (8,-4))
-            // team toggles (decorative in single-player)
-            Art2("Room33", Win2, 69, 207, "TeamA");
-            Art2("Room36", Win2, 96, 206, "TeamB");
+            // 3) win2 — 右側「模式/場景/歌曲資訊/速度/note/組隊/掉落」面板。座標逐字取自線上 DDRROOM.XML，
+            //    直接相對 Win2(649,177)。Room72 面板框(140×343)已把 SPEED/組隊/掉落方式 等字烘進去，程式只擺值/控件。
+            Art("Room72", Win2, -3, -5, "Win2Panel");                       // 面板底框
+
+            // 模式標題（自由模式/普通模式）：線上是純文字(無 mode 圖)，畫在頂端黃條；取代官方的問號佔位。白色描邊。
+            _modeLabel = OutlinedLabel.Create(Root, "ModeLabel", Win2.x + 8, Win2.y - 4, 120, 40, 14, ModeColor, Color.white, Win2EdgePx, true, glyphScaleX: 0.9f);
+
+            // 場景縮圖（對應選歌選到的場景；預設 RANDOM）。實際圖在 RenderWin2 依 session 換。
+            _sceneThumb = Art("randomscene", Win2, 7, 28, "SceneThumb");
+
+            // 歌曲資訊 —— CD 光碟(依難度換色) + 難度字幕/數字 + BPM字幕/數字 + 歌名。
+            _diffDiscFrames = RoomUiArt.AnFrames("Difficult");              // 3 幀：easy/normal/hard
+            _diffDisc = Art("Difficult", Win2, 7, 109, "DiffDisc");
+            MakeCaption("CapLevel", "難度", 32, 112);                       // 線上框沒烘難度/BPM字 → 自己畫
+            MakeCaption("CapBpm", "BPM", 78, 112);
+            _levelLabel = MakeInfoNum("SongLevel", 55, 112);
+            _bpmLabel = MakeInfoNum("SongBpm", 101, 112);
+            _songLabel = OutlinedLabel.Create(Root, "SongName", Win2.x + 12, Win2.y + 128, 112, 20, 12, SongNameColor, Color.white, Win2EdgePx, false);
+
+            // 速度 ◄ 值 ►（檔位清單與預設來自 config.ini，可改）
+            _speedLabel = UIKit.AddText(Root, "SpeedValue", "", 13, SpeedColor, TextAlignmentOptions.Center);
+            PlaceW2(_speedLabel.rectTransform, 86, 166, 19, 14);   // 速度值往上 2px
+            Btn("songpre", "BtnOraSmallLeftArrow_1", "BtnOraSmallLeftArrow_2", "BtnOraSmallLeftArrow_3", Win2, 66, 167, () => StepSpeed(-1));
+            Btn("songnext", "BtnOraSmallRightArrow_1", "BtnOraSmallRightArrow_2", "BtnOraSmallRightArrow_3", Win2, 109, 167, () => StepSpeed(1));
+
+            // note 種類（hit-effect）預覽框 + ◄ ►（預設 random）。hiteft.an 是多幀動畫(hiteft2=40幀) → 用 SpriteSeqAnim 循環撥放。
+            _noteDisplay = Art("hiteft2", Win2, 11, 191, "NoteDisplay");
+            _noteAnim = _noteDisplay.gameObject.AddComponent<SpriteSeqAnim>();
+            _noteAnim.Fps = NoteEftFps;
+            Btn("eftpre", "BtnOraLeftArrow_1", "BtnOraLeftArrow_2", "BtnOraLeftArrow_3", Win2, 8, 242, () => StepNote(-1));
+            Btn("eftnext", "BtnOraRightArrow_1", "BtnOraRightArrow_2", "BtnOraRightArrow_3", Win2, 36, 242, () => StepNote(1));
+
+            // 組隊 A / B / C / 自由（單選；預設自由）
+            BuildTeamToggle(0, "Room33", "Room35", 69, 207);
+            BuildTeamToggle(1, "Room36", "Room38", 96, 206);
+            BuildTeamToggle(2, "Room39", "Room41", 69, 233);
+            BuildTeamToggle(3, "Room42", "Room44", 96, 233);
+
+            // 掉落方式 向上/向下（預設向上）—— 「掉落方式」字烘在框上，這裡只放可點的值 + ▼
+            _dropLabel = AddClickableLabel("DropDir", 78, 266, 56, 16, SpeedColor, StepDrop);
+
+            // 房主設置（= 選歌入口）。線上原版 BtnRoomMaster_1/2/3。
             _songSelectBtn = Btn("songselect", "BtnRoomMaster_1", "BtnRoomMaster_2", "BtnRoomMaster_3", Win2, 14, 296, () => GoTo(ScreenId.SongSelect));
-            // arrow-key walk hint (WinMoveUpHelp rests at win2+(40,0); ButtonMoveUpHelp child (-25,1))
-            Art("moveuphelp0", Win2, 40 + (-25), 0 + 1, "MoveUpHelp");
 
-            // 4) win3 — bottom chat bar + ready/start
+            // 註：官方 WinMoveUpHelp(moveuphelp0.an) 其實是一張「黃底問號」的方向鍵提示圖，靜態擺在面板左上角就變成
+            // 使用者看到的那顆問號 → 依需求移除（要做方向鍵提示應改成floating動畫貼在 3D 場景，不放面板裡）。
+
+            // 4) win3 — bottom chat bar:官方 DDRROOM win3 一整排功能鈕(座標/圖名逐字取自 XML),目前都是裝飾(onClick=null)。
             Art("Room0", Win3, 8, 37, "Win3Panel");
-            Btn("chatmode", "Room4", "Room5", "Room6", Win3, 17, 88, null);
-            Btn("expression1", "BtnExpression_1", "BtnExpression_2", "BtnExpression_3", Win3, 311, 82, null);
-            Btn("ChatSendButton", "BtnSpeaker_1", "BtnSpeaker_2", "BtnSpeaker_3", Win3, 343, 82, null);
-            Btn("RoomPet", "BtnPet_1", "BtnPet_2", "BtnPet_3", Win3, 411, 83, null);
-            Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);
-            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null);
-            Btn("play", "Room92", "Room93", "Room94", Win3, 649, 59, null);
-            var chatEdit = Art("EditBlank", Win3, 72, 92, "ChatEdit");   // (no EditBlank art → invisible placeholder strip)
+            Btn("chatmode", "Room4", "Room5", "Room6", Win3, 17, 88, null);                                   // 聊天模式
+            var chatEdit = Art("EditBlank", Win3, 72, 92, "ChatEdit");   // 聊天輸入框(無 EditBlank 圖 → 透明佔位)
             if (chatEdit != null) chatEdit.color = new Color(1f, 1f, 1f, 0f);
+            Btn("OpenRecord", "OpenRecord_a", "OpenRecord_b", "OpenRecord_c", Win3, 279, 82, null);           // 錄製
+            Btn("expression1", "BtnExpression_1", "BtnExpression_2", "BtnExpression_3", Win3, 311, 82, null); // 表情
+            Btn("ChatSendButton", "BtnSpeaker_1", "BtnSpeaker_2", "BtnSpeaker_3", Win3, 343, 82, null);       // 喇叭/送出
+            Btn("LoudSpeaker", "LoudSpeaker_1", "LoudSpeaker_2", "LoudSpeaker_3", Win3, 376, 82, null);       // 大聲公
+            Btn("RoomPet", "BtnPet_1", "BtnPet_2", "BtnPet_3", Win3, 411, 83, null);                         // 寵物
+            Btn("WingButton", "RoomWing", "RoomWing1", "RoomWing", Win3, 447, 82, null);                     // 翅膀
+            Btn("ClosetButton", "RoomCloset001", "RoomCloset002", "RoomCloset003", Win3, 480, 81, null);     // 衣櫥
+            Btn("BangleButton", "Bangle0", "Bangle1", "Bangle0", Win3, 514, 82, null);                       // 手環
+            Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null);                              // 信件
+            Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包
+            // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
+            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null);
 
             _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart);
             _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle);
@@ -190,7 +271,24 @@ namespace Sdo.UI.Screens
                 ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer));
             }
 
+            SeedDefaultSongIfNeeded();   // 進大廳預設選好 index 最大的歌(easy)，房間一進來就有歌
             Render();
+        }
+
+        // 進房間時，若還沒選過歌就預設選「index(fileId) 最大的那首」easy。玩家之後自己選歌就蓋過去（HasSong 守門只做一次）。
+        private void SeedDefaultSongIfNeeded()
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null || s.HasSong) return;
+            var model = SongListModel.FromCatalog();          // 已按 fileId 由大到小排序
+            if (model.All.Count == 0) return;
+            var e = model.All[0];                              // [0] = index 最大的歌
+            s.SongGn = e.gn;
+            s.SongFileId = e.fileId;
+            s.SongTitle = e.title ?? e.gn;
+            s.SongArtist = e.artist;
+            s.Difficulty = Difficulty.Easy;
+            Ctx.Rooms?.SetSong(s.SongTitle);                  // 同步房間顯示（單機=房主）
         }
 
         public override void OnHide()
@@ -230,8 +328,9 @@ namespace Sdo.UI.Screens
                 _channelLabel.SetX(lx); lx += _channelLabel.PreferredWidth + HeaderGap;
                 _roomIdLabel.SetX(lx);
                 _roomNameLabel.text = RoomLabels.DisplayName(room.Name, room.HostName);  // 玩家001的舞蹈室 (或自訂)
-                _songLabel.text = string.IsNullOrEmpty(room.SongTitle) ? L("room.no_song") : room.SongTitle;
             }
+
+            RenderWin2();   // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落 全部依 session 重畫
 
             // Head portrait lives in the FIXED top-left frame slot 0 (官方: 頭貼在頭像框裡), rendering the avatar's head
             // doing its live motion (RoomHeadPortrait mirrors the room avatar's walk/idle). Slots 1-5 are empty covers.
@@ -264,6 +363,110 @@ namespace Sdo.UI.Screens
             if (_readyBtn != null) _readyBtn.gameObject.SetActive(!isHost && !localReady);
             if (_cancelReadyBtn != null) _cancelReadyBtn.gameObject.SetActive(!isHost && localReady);
             if (_songSelectBtn != null) _songSelectBtn.gameObject.SetActive(isHost);
+        }
+
+        // ---- win2 右側面板：依 GameSession 重畫模式/場景/CD/難度/BPM/速度/note/組隊/掉落 ----
+        private void RenderWin2()
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null) return;
+
+            // 模式標題（自由模式/普通模式…）—— 純文字 + 白邊
+            if (_modeLabel != null)
+                _modeLabel.SetText(L(s.GameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
+
+            // 場景縮圖：隨機 → RANDOM；具體 → Scene{id+1}（官方縮圖編號是 1-based）
+            if (_sceneThumb != null)
+            {
+                Sprite sc = s.StageRandom
+                    ? RoomUiArt.An("randomscene")
+                    : (RoomUiArt.An("scene" + (s.StageId + 1)) ?? RoomUiArt.An("scene1"));
+                UIKit.ApplySprite(_sceneThumb, sc);
+            }
+
+            // CD 光碟依難度換色（Difficult0/1/2）
+            if (_diffDisc != null && _diffDiscFrames != null && _diffDiscFrames.Length > 0)
+                UIKit.ApplySprite(_diffDisc, _diffDiscFrames[Mathf.Clamp((int)s.Difficulty, 0, _diffDiscFrames.Length - 1)]);
+
+            // 歌名 + 難度 + BPM（從歌曲目錄查；沒選歌就空白）。歌名以 session 為準（離線單機 = 房主選的歌）。
+            var entry = s.HasSong ? SongCatalog.Get(s.SongGn) : null;
+            if (_songLabel != null)
+                _songLabel.SetText(s.HasSong ? (s.SongTitle ?? "") : L("room.no_song"));
+            if (_levelLabel != null)
+            {
+                int lvl = entry != null ? entry.Diff((int)s.Difficulty) : -1;
+                _levelLabel.SetText(lvl >= 0 ? lvl.ToString() : "");
+            }
+            if (_bpmLabel != null)
+                _bpmLabel.SetText((entry != null && entry.bpm > 0f) ? Mathf.RoundToInt(entry.bpm).ToString() : "");
+
+            // 速度（對齊到 config 檔位）
+            var steps = SpeedSteps();
+            _speedIndex = IndexOfNearest(steps, s.Speed);
+            if (_speedLabel != null) _speedLabel.text = steps[Mathf.Clamp(_speedIndex, 0, steps.Length - 1)].ToString("0.0");
+
+            // note 種類預覽：-1=隨機 → 靜態 FREE.PNG（官方「隨機」圖示，與 EFT_2 區隔，否則隨機格會借用 hiteft2 的圖
+            // 而跟真正選 EFT_2 撞圖）；>=0 → 對應 hiteft .an 多幀，給 SpriteSeqAnim 循環撥放。
+            if (_noteDisplay != null)
+            {
+                if (s.NoteType < 0)
+                {
+                    if (_noteAnim != null) _noteAnim.Frames = null;   // 停掉循環 → 靜態圖不被覆寫
+                    var free = RoomUiArt.Image("FREE.PNG");
+                    if (free != null) UIKit.ApplySprite(_noteDisplay, free);
+                }
+                else
+                {
+                    int ni = Mathf.Min(s.NoteType, NoteEftArt.Length - 1);
+                    var frames = RoomUiArt.AnFrames(NoteEftArt[ni]);
+                    if (_noteAnim != null) _noteAnim.Frames = frames;
+                    if (frames != null && frames.Length > 0) UIKit.ApplySprite(_noteDisplay, frames[0]);
+                }
+            }
+
+            // 組隊單選：選到的顯示 pushed 圖，其餘顯示 normal
+            for (int i = 0; i < _teamImg.Length; i++)
+                if (_teamImg[i] != null) UIKit.ApplySprite(_teamImg[i], s.Team == i ? _teamPushed[i] : _teamNormal[i]);
+
+            // 掉落方式
+            if (_dropLabel != null)
+                _dropLabel.text = L(s.DropDirection == 0 ? "room.drop_up" : "room.drop_down") + " ▼";
+        }
+
+        /// <summary>速度檔位清單（config.ini → RoomConfig.speedSteps；壞掉就回退內建）。</summary>
+        private static float[] SpeedSteps()
+            => (RoomConfig.speedSteps != null && RoomConfig.speedSteps.Length > 0)
+                ? RoomConfig.speedSteps
+                : new[] { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f };
+
+        private static int IndexOfNearest(float[] steps, float want)
+        {
+            if (steps == null || steps.Length == 0) return 0;
+            int best = 0; float bd = Mathf.Abs(steps[0] - want);
+            for (int i = 1; i < steps.Length; i++) { float d = Mathf.Abs(steps[i] - want); if (d < bd) { bd = d; best = i; } }
+            return best;
+        }
+
+        private void StepSpeed(int d)
+        {
+            var steps = SpeedSteps();
+            _speedIndex = ((IndexOfNearest(steps, Ctx.Session.Speed) + d) % steps.Length + steps.Length) % steps.Length;
+            Ctx.Session.Speed = steps[_speedIndex];
+            RenderWin2();
+        }
+
+        private void StepNote(int d)
+        {
+            int n = NoteEftArt.Length + 1;                 // +1 = 隨機
+            int cur = ((Ctx.Session.NoteType + 1 + d) % n + n) % n;   // 內部索引：0=隨機, 1..n=指定+1
+            Ctx.Session.NoteType = cur - 1;
+            RenderWin2();
+        }
+
+        private void StepDrop()
+        {
+            Ctx.Session.DropDirection = Ctx.Session.DropDirection == 0 ? 1 : 0;
+            RenderWin2();
         }
 
         // Make the local head portrait FOLLOW the avatar: each frame project the avatar's head through the scene camera
@@ -394,7 +597,7 @@ namespace Sdo.UI.Screens
 
         // 左上位置標示(自由練習場 / 頻道 / 房號):左對齊,Render() 量實際字寬後左到右自動排版。
         private const float ServerX = 19f;       // 起始左緣(紫框左邊)
-        private const float HeaderGap = 15f;     // 欄與欄的固定間距(px);調大=更開、調小=更擠
+        private const float HeaderGap = 23f;     // 欄與欄的固定間距(px);調大=更開、調小=更擠
         private const float HeaderFontSz = 14f;  // 字級(這串比官方「新手一区」長,比 14 小一點才連間距一起塞進紫框)
 
         /// <summary>頭上漂浮名字的黑邊厚度(canvas px)。字色/粗體跟遊戲內頭頂名字共用 <see cref="Sdo.Game.TextStyles.FaceCream"/>。</summary>
@@ -403,9 +606,44 @@ namespace Sdo.UI.Screens
         private Image Art(string an, Vector2 win, float x, float y, string name)
             => UIKit.AddSprite(Root, name, RoomUiArt.An(an), win.x + x, win.y + y);
 
-        // raycast-enabled decorative sprite (e.g. team toggles) — same as Art but flagged interactive-looking
-        private Image Art2(string an, Vector2 win, float x, float y, string name)
-            => UIKit.AddSprite(Root, name, RoomUiArt.An(an), win.x + x, win.y + y);
+        // win2 文字定位：把線上 DDRROOM.XML 子座標 (x,y) 換成絕對畫布座標（相對 Win2 視窗原點）
+        private static void PlaceW2(RectTransform rt, float x, float y, float w, float h)
+            => Place(rt, Win2.x + x, Win2.y + y, w, h);
+
+        // win2 難度/BPM 數字（淡紫粗體置中 + 白邊；座標 = Win2 + (x,y)）
+        private OutlinedLabel MakeInfoNum(string name, float x, float y)
+            => OutlinedLabel.Create(Root, name, Win2.x + x, Win2.y + y, 21, 14, 12, InfoValueColor, Color.white, Win2EdgePx, true);
+
+        // win2 難度/BPM 字幕（線上框沒烘這兩個字 → 自己畫；白邊；座標 = Win2 + (x,y)）
+        private void MakeCaption(string name, string text, float x, float y)
+            => OutlinedLabel.Create(Root, name, Win2.x + x, Win2.y + y, 21, 14, 12, SongNameColor, Color.white, Win2EdgePx, false).SetText(text);
+
+        // 組隊單選格：normal/pushed 兩態，點了把 GameSession.Team 設成 idx 並重畫（座標 = Win2 + (x,y)）
+        private void BuildTeamToggle(int idx, string normalAn, string pushedAn, float x, float y)
+        {
+            _teamNormal[idx] = RoomUiArt.An(normalAn);
+            _teamPushed[idx] = RoomUiArt.An(pushedAn);
+            var img = UIKit.AddSprite(Root, "Team" + idx, _teamNormal[idx], Win2.x + x, Win2.y + y, raycast: true);
+            var btn = img.gameObject.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.transition = Selectable.Transition.None;
+            int i = idx;
+            btn.onClick.AddListener(() => { Ctx.Session.Team = i; RenderWin2(); });
+            _teamImg[idx] = img;
+        }
+
+        // 可點的文字值（掉落方式用）：座標 = Win2 + (x,y)，點一下跑 onClick
+        private TextMeshProUGUI AddClickableLabel(string name, float x, float y, float w, float h, Color col, System.Action onClick)
+        {
+            var t = UIKit.AddText(Root, name, "", 12, col, TextAlignmentOptions.Center);
+            t.raycastTarget = true;
+            PlaceW2(t.rectTransform, x, y, w, h);
+            var btn = t.gameObject.AddComponent<Button>();
+            btn.targetGraphic = t;
+            btn.transition = Selectable.Transition.None;
+            if (onClick != null) btn.onClick.AddListener(() => onClick());
+            return t;
+        }
 
         private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y, System.Action onClick)
         {

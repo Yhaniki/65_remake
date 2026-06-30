@@ -30,6 +30,14 @@ namespace Sdo.Osu
 
         public List<OsuHitObject> HitObjects { get; } = new List<OsuHitObject>();
 
+        /// <summary>
+        /// Scroll/timing control points, in MILLISECONDS, sorted by time. Used to drive the note scroll
+        /// (BPM-change segments + osu! SV) the way osu!mania does — see <see cref="ManiaScroll"/>.
+        /// For single-BPM charts this is left empty (the scroll then runs at a constant base velocity).
+        /// .gn charts emit one uninherited point per BPM segment; .osu charts emit every timing + SV point.
+        /// </summary>
+        public List<OsuTimingPoint> TimingPoints { get; } = new List<OsuTimingPoint>();
+
         /// <summary>Total judged events = taps + holdHeads + holdReleases.</summary>
         public int TotalNotes
         {
@@ -41,5 +49,29 @@ namespace Sdo.Osu
                 return total;
             }
         }
+    }
+
+    /// <summary>
+    /// One scroll/timing control point (osu! semantics, time in ms):
+    ///   <see cref="BeatLength"/> &gt; 0 — UNINHERITED point (a tempo / BPM change), ms-per-beat.
+    ///   <see cref="BeatLength"/> &lt; 0 — INHERITED point (osu! green line), an SV multiplier of -100/BeatLength.
+    /// .gn charts only ever produce uninherited points (BPM segments); .osu charts produce both.
+    /// </summary>
+    public readonly struct OsuTimingPoint
+    {
+        public double TimeMs { get; }
+        public double BeatLength { get; }
+
+        public OsuTimingPoint(double timeMs, double beatLength)
+        {
+            TimeMs = timeMs;
+            BeatLength = beatLength;
+        }
+
+        /// <summary>True for a tempo (BPM) point; false for an osu! SV (green) line.</summary>
+        public bool Uninherited => BeatLength > 0.0;
+
+        /// <summary>osu! scroll-velocity multiplier: 1.0 for tempo points, -100/BeatLength for green lines.</summary>
+        public double SpeedMultiplier => BeatLength < 0.0 ? -100.0 / BeatLength : 1.0;
     }
 }

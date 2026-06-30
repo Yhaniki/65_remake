@@ -168,6 +168,7 @@ namespace Sdo.UI
             game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
+            game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準140，osu式內部變速）
             _activeGame = game;
         }
 

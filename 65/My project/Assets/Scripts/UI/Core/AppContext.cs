@@ -24,6 +24,7 @@ namespace Sdo.UI.Core
         public static AppContext CreateMock()
         {
             var session = new GameSession();
+            session.SeedRoomDefaults();   // 房間面板預設值(速度/note/組隊/掉落/模式)從 settings.json 種入
             var flow = new FlowManager();
             var clock = new SystemClock();
             var players = new MockPlayerService();

@@ -156,6 +156,14 @@
    "v": "請先選擇歌曲"
   },
   {
+   "k": "room.drop_up",
+   "v": "向上"
+  },
+  {
+   "k": "room.drop_down",
+   "v": "向下"
+  },
+  {
    "k": "result.clear",
    "v": "完成!"
   },

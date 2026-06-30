@@ -10,6 +10,7 @@ namespace Sdo.Settings
         {
             DisplaySettingsManager.Load();
             DisplaySettingsManager.ApplyDisplay();
+            RoomConfig.Load();   // 開房間面板預設：執行檔同層的 config.ini
         }
     }
 }

@@ -20,7 +20,8 @@ namespace Sdo.Settings
         public float sfx = 1f;
     }
 
-    /// <summary>Serializable user settings persisted to persistentDataPath/settings.json.</summary>
+    /// <summary>Serializable user settings persisted to persistentDataPath/settings.json.
+    /// 註：開房間面板的預設(速度/note/組隊/掉落/模式)不放這，改放執行檔同層的 config.ini，見 <see cref="RoomConfig"/>。</summary>
     [Serializable]
     public class GameSettings
     {

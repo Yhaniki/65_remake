@@ -1,3 +1,5 @@
+using Sdo.Settings;
+
 namespace Sdo.UI.Core
 {
     public enum Difficulty { Easy = 0, Normal = 1, Hard = 2 }
@@ -23,8 +25,17 @@ namespace Sdo.UI.Core
 
         public string StageFolder = "SCN0009";
         public int StageId = 9;
+        // true = 選歌時選的是「隨機場景」→ 房間第二層圖顯示 RANDOM（雖然 gameplay 仍用上面解析出的具體場景）。
+        // 預設 true：一開始還沒選歌，房間就顯示 random 場景。見 SongSelectScreen.OnConfirm / RoomScreen。
+        public bool StageRandom = true;
 
         public string NoteSkin = "NOTEIMAGE_5";
+
+        // ---- 房間右側面板（DDRROOM win2）當下選的值。預設由 RoomDefaults(settings.json) 種入 SeedRoomDefaults()。----
+        public float Speed = 2.5f;       // 下落速度倍率（對齊 RoomDefaults.speedSteps 的某一檔）
+        public int NoteType = -1;        // note 種類(hit-effect)：-1=隨機, >=0=指定
+        public int Team = 3;             // 組隊：0=A,1=B,2=C,3=自由
+        public int DropDirection = 0;    // 掉落方式：0=向上,1=向下
 
         // ROOMDLG room settings (single-player: stored locally; gameplay is always free/normal for now).
         public int GameMode = 0;      // 0=自由模式, 1=普通模式 (only these two enabled for now)
@@ -32,5 +43,30 @@ namespace Sdo.UI.Core
         public int LookerCount = 10;  // 旁觀人數 0..10
 
         public bool HasSong => !string.IsNullOrEmpty(SongGn);
+
+        /// <summary>把房間面板的「當下值」種成 config.ini 的預設（速度/note/組隊/掉落/模式）。
+        /// 在 AppContext 建立 session 時呼叫一次；玩家之後在房間裡改的值就蓋過這些預設。見 <see cref="RoomConfig"/>。</summary>
+        public void SeedRoomDefaults()
+        {
+            Speed = NearestSpeed(RoomConfig.speedSteps, RoomConfig.defaultSpeed);
+            NoteType = RoomConfig.defaultNoteType;
+            Team = RoomConfig.defaultTeam;
+            DropDirection = RoomConfig.defaultDropDirection;
+            GameMode = RoomConfig.defaultGameMode;
+        }
+
+        /// <summary>回傳 steps 裡最接近 want 的檔位（steps 空 → 直接回 want）。</summary>
+        public static float NearestSpeed(float[] steps, float want)
+        {
+            if (steps == null || steps.Length == 0) return want;
+            float best = steps[0];
+            float bestDiff = System.Math.Abs(steps[0] - want);
+            for (int i = 1; i < steps.Length; i++)
+            {
+                float d = System.Math.Abs(steps[i] - want);
+                if (d < bestDiff) { bestDiff = d; best = steps[i]; }
+            }
+            return best;
+        }
     }
 }

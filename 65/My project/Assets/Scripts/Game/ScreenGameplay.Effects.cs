@@ -13,6 +13,66 @@ namespace Sdo.Game
     public partial class ScreenGameplay
     {
         private const float BurstSecPerFrame = 0.03f;     // ~30ms/frame -> 12 frames ≈ 0.36s (quick in-game flash)
+
+        // Official offline note-skin mapping (note_00498bd0.c switch on skin index 0x68 = NoteType+1).
+        //   EFFECT folder (game_eft_{N}.dge → EFT_<suffix>): the per-skin HIT BURST. For the {2,5,11,12,13,14} family the
+        //   combo/judge come from a SHARED PUBLICEFT (so they don't change per skin — faithful); {8,9,10,PET} are self-contained.
+        internal static readonly string[] NoteTypeEftSuffix = { "2", "5", "8", "9", "10", "11", "12", "13", "14", "PET" };
+        //   BOARD folder (note_image{N}.dgn → NOTEIMAGE_<suffix>): coarser — several note-types share one board skin.
+        internal static readonly string[] NoteTypeBoardSuffix = { "6", "6", "8", "9", "10", "6", "5", "5", "11", "PET" };
+        internal int _eftNoteType = -1;                    // -1 = stock init; 0..9 = F4 test override
+
+        /// <summary>Switch the WHOLE note skin for the F4 test: board (NOTEIMAGE falling notes + receptors) + hit burst +
+        /// combo/judge, faithful to the offline note_image/game_eft split. Board + burst always change; combo/judge change
+        /// only for skins whose EFT folder ships them (2/5/8/9/10/PET) — the 11/12/13/14 family shares PUBLICEFT, stays put.</summary>
+        internal void SetNoteType(int noteType)
+        {
+            int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
+            SetNoteBoardSkin(NoteTypeBoardSuffix[t]);                        // falling notes + receptors + hold (live reload)
+            LoadHitEffects(t);                                              // per-skin hit burst (sets _eftNoteType)
+            LoadComboJudgeArt(SdoExtracted.EftDir2(NoteTypeEftSuffix[t]));  // combo digits + word + judgement words (if present)
+        }
+
+        /// <summary>(Re)load the per-skin hit-burst frames. Family skins (2/5/11/12/13/14) store EFT_HIT0..11 (.PNG in
+        /// 11-14, .BMP in 2/5); self-contained skins (8/9/10/PET) carry an Eft_HitPerEft.an frame list instead. Try both.
+        /// Keeps the current burst if the folder yields nothing.</summary>
+        internal void LoadHitEffects(int noteType)
+        {
+            int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
+            _eftNoteType = t;
+            string dir = SdoExtracted.EftDir2(NoteTypeEftSuffix[t]);
+            var bf = new List<Sprite>();
+            for (int i = 0; i < 12; i++)
+            {
+                var s = SdoExtracted.LoadImage(dir, "EFT_HIT" + i + ".PNG") ?? SdoExtracted.LoadImage(dir, "EFT_HIT" + i + ".BMP");
+                if (s != null) bf.Add(s);
+            }
+            Sprite[] frames = bf.Count > 0 ? bf.ToArray() : null;
+            if (frames == null)                                            // self-contained skin: jz*_rl frames listed in Eft_HitPerEft.an
+            {
+                var an = SdoExtracted.LoadAn(dir, "Eft_HitPerEft.an");
+                if (an != null && an.Length > 0) frames = an;
+            }
+            if (frames != null && frames.Length > 0) _burstFrames = frames;
+        }
+
+        /// <summary>Reload combo digits + combo word + judgement words from an EFT_&lt;skin&gt; folder. The flat PNGs exist in
+        /// EFT_2/5/8/9/10/PET; missing ones (EFT_11/12/13/14) are skipped so current art is kept (faithful — that family
+        /// shares PUBLICEFT). _comboWord caches its sprite once at build, so it is reassigned explicitly; _judgeSprites and
+        /// _comboDigitSprites are read fresh every frame.</summary>
+        private void LoadComboJudgeArt(string dir)
+        {
+            AssignSprite(ref _judgeSprites[0], SdoExtracted.LoadImage(dir, "PERFECT.PNG"));
+            AssignSprite(ref _judgeSprites[1], SdoExtracted.LoadImage(dir, "COOL.PNG"));
+            AssignSprite(ref _judgeSprites[2], SdoExtracted.LoadImage(dir, "BAD.PNG"));
+            AssignSprite(ref _judgeSprites[3], SdoExtracted.LoadImage(dir, "MISS.PNG"));
+            for (int i = 0; i < 10; i++) AssignSprite(ref _comboDigitSprites[i], SdoExtracted.LoadImage(dir, "0" + i + ".PNG"));
+            var cw = SdoExtracted.LoadImage(dir, "COMBO.PNG");
+            if (cw != null && _comboWord != null) _comboWord.sprite = cw;
+        }
+
+        private static void AssignSprite(ref Sprite dst, Sprite s) { if (s != null) dst = s; }
+
         private void UpdateFx()
         {
             if (_burstFrames == null) return;

@@ -132,7 +132,8 @@ namespace Sdo.Osu
         {
             int bodyLen = body.Length;
             var map = new OsuBeatmap { Keys = 4 };
-            map.Bpm = BitConverter.ToSingle(BitConverter.GetBytes(U32(body, 16)), 0);
+            float headerBpm = BitConverter.ToSingle(BitConverter.GetBytes(U32(body, 16)), 0);
+            map.Bpm = headerBpm;                          // nominal/initial tempo; BPM changes (type 1) below
             map.Level = I16(body, 20 + difficulty * 2);   // levels[3] @ offset 20 (easy/normal/hard)
             // NOTE: the .gn header carries a song title @108 but it is GB2312 (cp936). This runtime
             // (.NET Standard 2.1 / IL2CPP) has no cp936 codec, so decoding here would only ever produce
@@ -143,8 +144,15 @@ namespace Sdo.Osu
             int start = (int)addr[difficulty], end = (int)addr[difficulty + 1];
             if (start < 300 || end > bodyLen || end <= start) { start = 300; end = bodyLen; }
 
-            // --- StepFrames ---
-            var openHoldMs = new int[4]; for (int i = 0; i < 4; i++) openHoldMs[i] = -1;
+            // --- pass 1: scan StepFrames in BEAT space, collecting BPM-change events (type 1) and
+            // raw note events (type 2..5). Times are resolved to ms in pass 2 so multi-BPM charts
+            // (≈5% of the corpus, e.g. sdom1220/1305/1432: ÷2/×2 gimmicks around the header BPM) stay
+            // synced to the music — previously every note was timed with the single header BPM. ---
+            var bpmBeats = new List<double>();
+            var bpmVals = new List<double>();
+            var noteBeat = new List<double>();
+            var noteLane = new List<int>();
+            var noteType = new List<int>();
             int off = start;
             while (off + 8 <= end)
             {
@@ -155,22 +163,95 @@ namespace Sdo.Osu
                 int lane = Lane(ft);
                 for (int i = 0; i < iv && off + 4 <= end; i++, off += 4)
                 {
+                    double beat = meas * 4.0 + 4.0 * i / Math.Max(1, iv);
+                    if (ft == 1)
+                    {
+                        // BPM change: the 4 slot bytes ARE a little-endian float32 — NOT u0/u1/nt.
+                        // (e.g. 340.0 = 00 00 AA 43, so its u0 int16 is 0; do NOT gate on u0!=0 here.)
+                        float bpm = BitConverter.ToSingle(body, off);
+                        if (!float.IsNaN(bpm) && !float.IsInfinity(bpm) && bpm > 1f && bpm < 100000f)
+                        { bpmBeats.Add(beat); bpmVals.Add(bpm); }
+                        continue;
+                    }
+                    if (lane < 0) continue;
                     short u0 = I16(body, off);
                     byte nt = body[off + 3];
-                    if (lane < 0 || u0 == 0) continue;
-                    double beat = meas * 4.0 + 4.0 * i / Math.Max(1, iv);
-                    int ms = (int)Math.Round(beat * 60000.0 / Math.Max(1f, map.Bpm));
-                    if (nt == 2) openHoldMs[lane] = ms;                 // hold start
-                    else if (nt == 3)                                    // hold end
-                    {
-                        if (openHoldMs[lane] >= 0) { map.HitObjects.Add(new OsuHitObject(lane, openHoldMs[lane], ms)); openHoldMs[lane] = -1; }
-                        else map.HitObjects.Add(new OsuHitObject(lane, ms));
-                    }
-                    else map.HitObjects.Add(new OsuHitObject(lane, ms)); // tap
+                    if (u0 == 0) continue;
+                    noteBeat.Add(beat); noteLane.Add(lane); noteType.Add(nt);
                 }
+            }
+
+            // --- build the piecewise-constant BPM timeline (segment start beat / bpm / cumulative ms) ---
+            BuildBpmTimeline(headerBpm, bpmBeats, bpmVals, out double[] segBeat, out double[] segBpm, out double[] segMs);
+
+            // scroll/timing points (ms): one uninherited point per BPM segment. Single-BPM charts get a
+            // single point at 0; ManiaScroll then runs at a constant base velocity. (.gn has no SV.)
+            for (int s = 0; s < segBeat.Length; s++)
+                map.TimingPoints.Add(new OsuTimingPoint(segMs[s], 60000.0 / Math.Max(1.0, segBpm[s])));
+
+            // --- pass 2: resolve note beats -> ms via the BPM timeline; pair holds (file order = beat order) ---
+            var openHoldMs = new int[4]; for (int i = 0; i < 4; i++) openHoldMs[i] = -1;
+            for (int k = 0; k < noteBeat.Count; k++)
+            {
+                int lane = noteLane[k], nt = noteType[k];
+                int ms = (int)Math.Round(BeatToMs(segBeat, segBpm, segMs, noteBeat[k]));
+                if (nt == 2) openHoldMs[lane] = ms;                 // hold start
+                else if (nt == 3)                                    // hold end
+                {
+                    if (openHoldMs[lane] >= 0) { map.HitObjects.Add(new OsuHitObject(lane, openHoldMs[lane], ms)); openHoldMs[lane] = -1; }
+                    else map.HitObjects.Add(new OsuHitObject(lane, ms));
+                }
+                else map.HitObjects.Add(new OsuHitObject(lane, ms)); // tap
             }
             map.HitObjects.Sort((a, b) => a.StartTimeMs.CompareTo(b.StartTimeMs));
             return map;
+        }
+
+        /// <summary>
+        /// Build a piecewise-constant BPM timeline from the header (initial) BPM + type-1 BPM-change
+        /// events. Output arrays are parallel and sorted by start beat: <paramref name="segBeat"/> =
+        /// segment start (beats), <paramref name="segBpm"/> = its BPM, <paramref name="segMs"/> =
+        /// cumulative milliseconds at that start beat. With no events the result is a single segment
+        /// {beat 0, headerBpm, 0 ms} — identical to the old single-BPM timing. Pure/testable-ish helper.
+        /// </summary>
+        internal static void BuildBpmTimeline(float headerBpm, List<double> beats, List<double> bpms,
+            out double[] segBeat, out double[] segBpm, out double[] segMs)
+        {
+            // order events by (beat, original index) so equal-beat events keep the LAST one in file order.
+            int n = beats?.Count ?? 0;
+            var idx = new int[n];
+            for (int i = 0; i < n; i++) idx[i] = i;
+            Array.Sort(idx, (a, b) =>
+            {
+                int c = beats[a].CompareTo(beats[b]);
+                return c != 0 ? c : a.CompareTo(b);
+            });
+
+            var sb = new List<double> { 0.0 };
+            var sp = new List<double> { Math.Max(1.0, headerBpm) };   // leading segment = header BPM
+            for (int j = 0; j < n; j++)
+            {
+                double b = beats[idx[j]];
+                double v = Math.Max(1.0, bpms[idx[j]]);
+                if (b <= 0.0) { sp[0] = v; continue; }                 // event at/before 0 overrides the lead
+                if (b == sb[sb.Count - 1]) { sp[sp.Count - 1] = v; }    // same beat as last → keep latest
+                else { sb.Add(b); sp.Add(v); }
+            }
+
+            segBeat = sb.ToArray();
+            segBpm = sp.ToArray();
+            segMs = new double[segBeat.Length];
+            segMs[0] = 0.0;
+            for (int s = 1; s < segBeat.Length; s++)
+                segMs[s] = segMs[s - 1] + (segBeat[s] - segBeat[s - 1]) * 60000.0 / segBpm[s - 1];
+        }
+
+        /// <summary>Convert a beat position to ms using the piecewise BPM timeline from <see cref="BuildBpmTimeline"/>.</summary>
+        internal static double BeatToMs(double[] segBeat, double[] segBpm, double[] segMs, double beat)
+        {
+            int lo = 0, hi = segBeat.Length - 1, s = 0;
+            while (lo <= hi) { int mid = (lo + hi) >> 1; if (segBeat[mid] <= beat) { s = mid; lo = mid + 1; } else hi = mid - 1; }
+            return segMs[s] + (beat - segBeat[s]) * 60000.0 / Math.Max(1.0, segBpm[s]);
         }
     }
 }

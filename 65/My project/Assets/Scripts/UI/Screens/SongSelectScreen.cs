@@ -841,11 +841,13 @@ namespace Sdo.UI.Screens
             s.SongArtist = _selected.artist;
             s.Difficulty = (Difficulty)_difficulty;
             // scene: slot 0 = random -> pick an actual scene now; else the chosen stage.
-            var stage = _sceneIndex <= 0 && _stages.Count > 0
+            bool randomScene = _sceneIndex <= 0 && _stages.Count > 0;
+            var stage = randomScene
                 ? _stages[Random.Range(0, _stages.Count)]
                 : _stages[Mathf.Clamp(_sceneIndex - 1, 0, _stages.Count - 1)];
             s.StageId = stage.Id;
             s.StageFolder = stage.Folder;
+            s.StageRandom = randomScene;   // 房間第二層圖：選隨機就顯示 RANDOM，選具體場景就顯示該場景縮圖
             // mode/formation/looker are written live by the dropdown callbacks.
 
             Ctx.Rooms.SetSong(s.SongTitle);

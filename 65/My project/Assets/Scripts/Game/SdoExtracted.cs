@@ -79,6 +79,9 @@ namespace Sdo.Game
         /// <summary>EFFECT/EFT_&lt;skin&gt; folder holding judgment words + combo digits + bursts.</summary>
         public static string EftDir(int skin = 2) => Path.Combine(Root, "EFFECT", "EFT_" + skin);
 
+        /// <summary>EFFECT/EFT_&lt;suffix&gt; where suffix can be non-numeric (e.g. "PET"); for the note-effect skins.</summary>
+        public static string EftDir2(string suffix) => Path.Combine(Root, "EFFECT", "EFT_" + suffix);
+
         /// <summary>UI/STATIS folder: result-screen (結算) panel art, digits, rank badges, win/lose banner.</summary>
         public static string StatisDir => Path.Combine(Root, "UI", "STATIS");
 
@@ -147,11 +150,57 @@ namespace Sdo.Game
         {
             if (_texCache.TryGetValue(path, out var t) && t != null) return t;
             if (!File.Exists(path)) return null;
-            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            tex.LoadImage(File.ReadAllBytes(path));   // PNG/BMP
+            var bytes = File.ReadAllBytes(path);
+            // Unity's Texture2D.LoadImage decodes ONLY PNG/JPG. Several EFT hit-burst skins (EFT_2/5/8/9/10/PET) ship
+            // their Eft_Hit*.bmp as raw 24-bit BMP, so decode those by hand; everything else goes through LoadImage.
+            Texture2D tex;
+            if (path.EndsWith(".bmp", System.StringComparison.OrdinalIgnoreCase))
+            {
+                tex = DecodeBmp(bytes);
+                if (tex == null) return null;
+            }
+            else
+            {
+                tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                tex.LoadImage(bytes);   // PNG/JPG
+            }
             tex.filterMode = FilterMode.Bilinear;
             tex.wrapMode = TextureWrapMode.Clamp;
             _texCache[path] = tex;
+            return tex;
+        }
+
+        /// <summary>Minimal uncompressed-BMP decoder (24/32-bit BI_RGB) → upright RGBA32, matching the PNG path's
+        /// orientation. SDO's Eft_Hit*.bmp are all 24-bit BI_RGB; returns null for anything else (RLE/paletted/etc).</summary>
+        private static Texture2D DecodeBmp(byte[] d)
+        {
+            if (d == null || d.Length < 54 || d[0] != 'B' || d[1] != 'M') return null;
+            int dataOff = System.BitConverter.ToInt32(d, 10);
+            int hdr = System.BitConverter.ToInt32(d, 14);
+            int w = System.BitConverter.ToInt32(d, 18);
+            int h = System.BitConverter.ToInt32(d, 22);
+            int bpp = System.BitConverter.ToUInt16(d, 28);
+            int comp = System.BitConverter.ToInt32(d, 30);
+            if (hdr < 40 || comp != 0 || (bpp != 24 && bpp != 32) || w <= 0 || h == 0) return null;
+            bool topDown = h < 0; int H = Mathf.Abs(h);
+            int bpe = bpp / 8;                                   // bytes per pixel
+            int stride = ((w * bpe + 3) / 4) * 4;               // rows padded to 4 bytes
+            if (dataOff + stride * H > d.Length) return null;
+            var px = new Color32[w * H];
+            for (int y = 0; y < H; y++)                          // y = Unity row (0 = bottom); BMP is bottom-up by default
+            {
+                int srcRow = dataOff + (topDown ? (H - 1 - y) : y) * stride;
+                int dstRow = y * w;
+                for (int x = 0; x < w; x++)
+                {
+                    int s = srcRow + x * bpe;                    // BMP stores BGR(A)
+                    byte a = bpe == 4 ? d[s + 3] : (byte)255;
+                    px[dstRow + x] = new Color32(d[s + 2], d[s + 1], d[s], a);
+                }
+            }
+            var tex = new Texture2D(w, H, TextureFormat.RGBA32, false);
+            tex.SetPixels32(px);
+            tex.Apply(false);
             return tex;
         }
 

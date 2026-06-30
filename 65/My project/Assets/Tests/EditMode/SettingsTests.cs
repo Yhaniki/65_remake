@@ -74,5 +74,6 @@ namespace Sdo.Tests
             Assert.GreaterOrEqual(ResolutionPreset.IndexOf(1280, 720), 0);
             Assert.AreEqual(-1, ResolutionPreset.IndexOf(1234, 567));
         }
+
     }
 }

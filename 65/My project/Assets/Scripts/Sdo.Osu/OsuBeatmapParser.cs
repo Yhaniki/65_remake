@@ -42,9 +42,10 @@ namespace Sdo.Osu
                         ParseKeyValue(line, "CircleSize", v => map.Keys = (int)Math.Round(ParseDouble(v)));
                         break;
                     case "TimingPoints":
-                        // "time,beatLength,meter,...". The first UNINHERITED point (beatLength > 0)
-                        // gives the song tempo: BPM = 60000 / beatLength. Inherited points are negative.
-                        if (map.Bpm <= 0.0) ParseTimingPoint(line, map);
+                        // "time,beatLength,meter,...". Uninherited points (beatLength > 0) are tempo
+                        // changes; inherited points (beatLength < 0) are osu! SV (green) lines. ALL of
+                        // them are kept (for the note scroll); the first uninherited also sets map.Bpm.
+                        ParseTimingPoint(line, map);
                         break;
                     case "HitObjects":
                         var ho = ParseHitObject(line, map.Keys);
@@ -56,14 +57,21 @@ namespace Sdo.Osu
             return map;
         }
 
-        /// <summary>First uninherited timing point (beatLength &gt; 0) sets map.Bpm = 60000/beatLength.</summary>
+        /// <summary>
+        /// Add a timing point (time,beatLength) to <see cref="OsuBeatmap.TimingPoints"/>. The first
+        /// uninherited point (beatLength &gt; 0) also sets map.Bpm = 60000/beatLength. Inherited points
+        /// keep their negative beatLength (osu! SV encoding); see <see cref="OsuTimingPoint"/>.
+        /// </summary>
         private static void ParseTimingPoint(string line, OsuBeatmap map)
         {
             var p = line.Split(',');
             if (p.Length < 2) return;
+            if (!double.TryParse(p[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var time))
+                return;
             if (!double.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var beatLength))
                 return;
-            if (beatLength > 0.0) map.Bpm = 60000.0 / beatLength;
+            map.TimingPoints.Add(new OsuTimingPoint(time, beatLength));
+            if (beatLength > 0.0 && map.Bpm <= 0.0) map.Bpm = 60000.0 / beatLength;
         }
 
         private static void ParseKeyValue(string line, string key, Action<string> set)
