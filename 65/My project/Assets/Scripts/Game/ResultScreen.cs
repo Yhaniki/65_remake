@@ -8,7 +8,8 @@ namespace Sdo.Game
     /// (Extracted/UI/STATIS/ITEMSTATISTIC/DDRITEMSTATISTIC.XML, 800×600 design space). Drawn with
     /// SpriteRenderers on the HUD ortho camera, ON TOP of the live stage backdrop. Layout:
     ///   • background = StatisItem0..7 tiles (4×2 grid at design y=115 / y=371),
-    ///   • a top song-info row (songname/songlevel),
+    ///   • (the song name + level are NOT drawn here — the gameplay HUD's bottom song-info row, 歌曲名 + LV with the
+    ///     time field dropped, is kept visible below the panel instead; see ScreenGameplay.ShowResultSongInfo),
     ///   • a YouWin / YouLose banner cropped from BALANCE.png (Statis28 = win, Statis30 = lose) that scales 3→1,
     ///   • up to 6 rank rows that slide in from the right (x 800→0, 1s, staggered), each showing the rank badge,
     ///     nick, combo / perfect / cool / bad / miss, hit-rate (or the 100 all-combo marker) and score,
@@ -165,9 +166,9 @@ namespace Sdo.Game
             _expSnd = false; _bannerShown = false; _bannerStatic = false; _rewardArmed = false; _localHead = localHead; _gameOver = gameOver;
             string dir = SdoExtracted.ResultStatisDir;
 
-            // song info, top-left, on TWO stacked rows (songname row 1 / songlevel row 2 below it, left-aligned).
-            NewText("SongName", songTitle ?? "", 16, 13, 72, TextAnchor.UpperLeft, TextStyles.FaceYellow);
-            NewText("SongLevel", difficulty ?? "", 16, 13, 92, TextAnchor.UpperLeft, TextStyles.FaceYellow);
+            // Song name + level are no longer drawn at the top of the panel — the gameplay HUD's bottom song-info row
+            // (歌曲名 + LV, time field dropped) is kept visible below the panel by ScreenGameplay.ShowResultSongInfo.
+            // (songTitle / difficulty params are retained for the API; ScreenGameplay supplies the bottom row.)
 
             for (int i = 0; i < rows.Length && i < RowY.Length; i++)
                 BuildRow(dir, rows[i], RowY[i]);
@@ -424,16 +425,6 @@ namespace Sdo.Game
 
         private void Child(GameObject parent, SpriteRenderer sr, float x, float y)
         { Place(sr, x, y); sr.transform.SetParent(parent.transform, true); }
-
-        private Label3D NewText(string name, string text, float px, float x, float y, TextAnchor anchor, Color face)
-        {
-            var lbl = TextStyles.NewLabel(name, TextStyles.Style.ListOther, OrderRowText, px, anchor);
-            lbl.SetColors(face, new Color(0.30f, 0.06f, 0f, 1f));
-            lbl.Text = text;
-            lbl.Position = SdoLayout.ToWorld(x, y, -3f);
-            lbl.root.transform.SetParent(_root.transform, true);
-            return lbl;
-        }
 
         // left-aligned digit run at (x,y); leading zeros hidden when hideZero (value 0 still shows one "0").
         private void DrawNum(GameObject parent, Sprite[] digits, long value, float x, float y, bool hideZero)

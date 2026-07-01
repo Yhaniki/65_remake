@@ -28,7 +28,7 @@ namespace Sdo.Osu
     public sealed class ManiaScroll
     {
         /// <summary>Reference tempo the constant base speed is calibrated to (the user's "base 140 BPM").</summary>
-        public const double DefaultReferenceBpm = 140.0;
+        public const double DefaultReferenceBpm = 130.0;
 
         /// <summary>Official SDO scroll constant: on-screen px/s = BPM × speed × <see cref="OfficialPxPerBpmSpeed"/>.</summary>
         public const double OfficialPxPerBpmSpeed = 1.6;

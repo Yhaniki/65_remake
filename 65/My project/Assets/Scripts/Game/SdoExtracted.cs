@@ -402,6 +402,6 @@ namespace Sdo.Game
 
         // convenience for the gameplay HUD
         public static Sprite Hud(string anName) => LoadAn1(GameplayUiDir, anName);
-        public static Sprite Eft(string imageName, int skin = 2) => LoadImage(EftDir(skin), imageName);
+        public static Sprite Eft(string imageName, int skin = 2, bool bleed = false) => LoadImage(EftDir(skin), imageName, bleed);
     }
 }

@@ -20,6 +20,9 @@ namespace Sdo.Game
         internal static readonly string[] NoteTypeEftSuffix = { "2", "5", "8", "9", "10", "11", "12", "13", "14", "PET" };
         //   BOARD folder (note_image{N}.dgn → NOTEIMAGE_<suffix>): coarser — several note-types share one board skin.
         internal static readonly string[] NoteTypeBoardSuffix = { "6", "6", "8", "9", "10", "6", "5", "5", "11", "PET" };
+        //   COMBO/JUDGE source (game_eft_{N}.dge line refs): {2,5,11}→PUBLICEFT, {12,13,14}→PUBLICEFT2, {8,9,10,pet}→own
+        //   folder. Shared folders use Dsp_* filenames; self-contained use the flat COMBO/00../PERFECT names.
+        internal static readonly string[] NoteTypeComboSource = { "PUBLICEFT", "PUBLICEFT", "EFT_8", "EFT_9", "EFT_10", "PUBLICEFT", "PUBLICEFT2", "PUBLICEFT2", "PUBLICEFT2", "EFT_PET" };
         internal int _eftNoteType = -1;                    // -1 = stock init; 0..9 = F4 test override
 
         /// <summary>Switch the WHOLE note skin for the F4 test: board (NOTEIMAGE falling notes + receptors) + hit burst +
@@ -30,44 +33,60 @@ namespace Sdo.Game
             int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
             SetNoteBoardSkin(NoteTypeBoardSuffix[t]);                        // falling notes + receptors + hold (live reload)
             LoadHitEffects(t);                                              // per-skin hit burst (sets _eftNoteType)
-            LoadComboJudgeArt(SdoExtracted.EftDir2(NoteTypeEftSuffix[t]));  // combo digits + word + judgement words (if present)
+            LoadComboJudgeArt(t);                                          // combo digits + word + judgement words (shared or own folder)
         }
 
-        /// <summary>(Re)load the per-skin hit-burst frames. Family skins (2/5/11/12/13/14) store EFT_HIT0..11 (.PNG in
-        /// 11-14, .BMP in 2/5); self-contained skins (8/9/10/PET) carry an Eft_HitPerEft.an frame list instead. Try both.
-        /// Keeps the current burst if the folder yields nothing.</summary>
+        /// <summary>(Re)load the per-skin hit-burst frames. Family skins (2/5/11/12/13/14) store one non-directional set
+        /// EFT_HIT0..11 (.PNG in 11-14, .BMP in 2/5) used on every lane. Self-contained skins (8/9/10/PET) ship DIRECTIONAL
+        /// frames — jz*_rl for the left/right lanes (0/3) and jz*_ud for the up/down lanes (1/2) — so a paw stays one colour
+        /// per lane instead of cycling rl→ud. Keeps the current burst if the folder yields nothing.</summary>
         internal void LoadHitEffects(int noteType)
         {
             int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
             _eftNoteType = t;
             string dir = SdoExtracted.EftDir2(NoteTypeEftSuffix[t]);
-            var bf = new List<Sprite>();
+            var bf = new List<Sprite>();                                  // family: EFT_HIT0..11 (non-directional)
             for (int i = 0; i < 12; i++)
             {
                 var s = SdoExtracted.LoadImage(dir, "EFT_HIT" + i + ".PNG") ?? SdoExtracted.LoadImage(dir, "EFT_HIT" + i + ".BMP");
                 if (s != null) bf.Add(s);
             }
-            Sprite[] frames = bf.Count > 0 ? bf.ToArray() : null;
-            if (frames == null)                                            // self-contained skin: jz*_rl frames listed in Eft_HitPerEft.an
-            {
-                var an = SdoExtracted.LoadAn(dir, "Eft_HitPerEft.an");
-                if (an != null && an.Length > 0) frames = an;
-            }
-            if (frames != null && frames.Length > 0) _burstFrames = frames;
+            if (bf.Count > 0) { _burstFrames = bf.ToArray(); _burstFramesUD = null; return; }
+            var rl = LoadJzFrames(dir, "rl");                             // self-contained: directional jz*_rl / jz*_ud
+            if (rl != null) { _burstFrames = rl; _burstFramesUD = LoadJzFrames(dir, "ud"); }   // _ud may be null → rl used for all lanes
         }
 
-        /// <summary>Reload combo digits + combo word + judgement words from an EFT_&lt;skin&gt; folder. The flat PNGs exist in
-        /// EFT_2/5/8/9/10/PET; missing ones (EFT_11/12/13/14) are skipped so current art is kept (faithful — that family
-        /// shares PUBLICEFT). _comboWord caches its sprite once at build, so it is reassigned explicitly; _judgeSprites and
-        /// _comboDigitSprites are read fresh every frame.</summary>
-        private void LoadComboJudgeArt(string dir)
+        // Load a directional hit-frame set jz00_<dir>.png, jz01_<dir>.png … until the first gap. null if none.
+        private static Sprite[] LoadJzFrames(string dir, string dirSuffix)
         {
-            AssignSprite(ref _judgeSprites[0], SdoExtracted.LoadImage(dir, "PERFECT.PNG"));
-            AssignSprite(ref _judgeSprites[1], SdoExtracted.LoadImage(dir, "COOL.PNG"));
-            AssignSprite(ref _judgeSprites[2], SdoExtracted.LoadImage(dir, "BAD.PNG"));
-            AssignSprite(ref _judgeSprites[3], SdoExtracted.LoadImage(dir, "MISS.PNG"));
-            for (int i = 0; i < 10; i++) AssignSprite(ref _comboDigitSprites[i], SdoExtracted.LoadImage(dir, "0" + i + ".PNG"));
-            var cw = SdoExtracted.LoadImage(dir, "COMBO.PNG");
+            var list = new List<Sprite>();
+            for (int i = 0; i < 32; i++)
+            {
+                var s = SdoExtracted.LoadImage(dir, "jz" + i.ToString("00") + "_" + dirSuffix + ".png");
+                if (s == null) break;
+                list.Add(s);
+            }
+            return list.Count > 0 ? list.ToArray() : null;
+        }
+
+        /// <summary>Reload combo digits + combo word + judgement words for a NoteType from the source its .dge points at:
+        /// PUBLICEFT/PUBLICEFT2 (shared, Dsp_* names) for the family skins, or the self-contained EFT_8/9/10/PET (flat
+        /// names). Missing files are skipped (current art kept). _comboWord caches its sprite once, so it is reassigned
+        /// explicitly; _judgeSprites/_comboDigitSprites are read fresh every frame.</summary>
+        private void LoadComboJudgeArt(int noteType)
+        {
+            int t = (noteType >= 0 && noteType < NoteTypeComboSource.Length) ? noteType : 0;
+            string src = NoteTypeComboSource[t];
+            string dir = Path.Combine(SdoExtracted.Root, "EFFECT", src);
+            bool shared = src.StartsWith("PUBLICEFT");   // shared families use Dsp_* names; self-contained use flat names
+            // bleed: true → kill the bilinear white halo on the glyph edges (the source PNGs store a transparent-white matte)
+            AssignSprite(ref _judgeSprites[0], SdoExtracted.LoadImage(dir, shared ? "Dsp_1_Perfect.png" : "PERFECT.PNG", bleed: true));
+            AssignSprite(ref _judgeSprites[1], SdoExtracted.LoadImage(dir, shared ? "Dsp_2_Cool.png" : "COOL.PNG", bleed: true));
+            AssignSprite(ref _judgeSprites[2], SdoExtracted.LoadImage(dir, shared ? "Dsp_3_Bad.png" : "BAD.PNG", bleed: true));
+            AssignSprite(ref _judgeSprites[3], SdoExtracted.LoadImage(dir, shared ? "Dsp_4_Miss.png" : "MISS.PNG", bleed: true));
+            for (int i = 0; i < 10; i++)
+                AssignSprite(ref _comboDigitSprites[i], SdoExtracted.LoadImage(dir, shared ? ("Dsp_Num" + i + ".png") : ("0" + i + ".PNG"), bleed: true));
+            var cw = SdoExtracted.LoadImage(dir, shared ? "Dsp_0_Combo.png" : "COMBO.PNG", bleed: true);
             if (cw != null && _comboWord != null) _comboWord.sprite = cw;
         }
 
@@ -75,19 +94,20 @@ namespace Sdo.Game
 
         private void UpdateFx()
         {
-            if (_burstFrames == null) return;
             for (int i = _fx.Count - 1; i >= 0; i--)
             {
                 var fx = _fx[i];
+                var frames = fx.Frames;   // each burst animates ITS OWN (directional) frame set, captured at spawn
+                if (frames == null || frames.Length == 0) { if (fx.IsHold) _holdBurst[fx.Lane] = null; DestroyBurst(fx); _fx.RemoveAt(i); continue; }
                 int step = (int)((Time.time - fx.Start) / BurstSecPerFrame);
-                if (step >= _burstFrames.Length)
+                if (step >= frames.Length)
                 {
                     // HOLD: finished a round, still held -> loop (wait for the full animation before the next round).
                     // TAP (or released hold): one-shot, ends here.
                     if (fx.IsHold && _holding[fx.Lane] != null) { fx.Start = Time.time; step = 0; }
                     else { if (fx.IsHold) _holdBurst[fx.Lane] = null; DestroyBurst(fx); _fx.RemoveAt(i); continue; }
                 }
-                var spr = _burstFrames[step];
+                var spr = frames[step];
                 fx.Sr.sprite = spr; if (fx.Sr2) fx.Sr2.sprite = spr;
             }
         }
@@ -106,32 +126,53 @@ namespace Sdo.Game
                 _holdBurst[lane] = null; _holding[lane] = null;
                 if (_clickFlashSr[lane]) _clickFlashSr[lane].enabled = false; _clickFlashStart[lane] = -1f;
             }
+            _missFlashStart = -1f;
+            if (_missOverlay) _missOverlay.enabled = false;
         }
 
-        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public int Lane; public float Start; public bool IsHold; }
+        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public int Lane; public float Start; public bool IsHold; public Sprite[] Frames; }
 
         // ---------- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----------
 
-        // (re)start the lane's click strip at frame 0 (full alpha). Called on a hit.
+        private float _missFlashStart = -1f;            // miss red flash one-shot (drives the track-wide _missOverlay)
+        public float missFlashAlpha = 1.0f;             // miss red glow strength ×clickFlashBright (1 = exactly the white click flash's
+                                                        // brightness — it now uses the same glow sprite, tiled across the 4 lanes; lower to taste)
+
+        // (re)start the lane's click strip at frame 0 (full alpha). Called ONCE on a key-press / head-hit.
         private void TriggerClickFlash(int lane)
         {
             if (lane < 0 || lane >= Keys || _clickFlashSr[lane] == null) return;
             _clickFlashStart[lane] = Time.time;
         }
 
-        // step the 3-frame white×alpha cycle (255→130→0). A tap plays it once then hides; a held long-note
-        // re-arms each frame so the lane keeps pulsing (matches the decompile drawing it while struck/held).
+        // fire the all-lane RED flash (called on a Miss); re-arms on each miss.
+        private void TriggerMissFlash() { _missFlashStart = Time.time; }
+
+        // ONE-SHOT per press: the 3-frame click-flash cycle (255→130→0) plays once then hides. Holding does NOT re-pulse —
+        // the official plays it once per key-DOWN (time-gated), not continuously while struck. A MISS runs the SAME 3-frame
+        // cycle but on the track-wide _missOverlay, tinted RED — covers all four lanes (the per-lane strips read too faint
+        // over the board's dark edge lanes, so only the middle two showed).
         private void UpdateClickFlash()
         {
+            int missStep = -1;                          // ≥0 = miss frame this tick → red wash over all lanes
+            if (_missFlashStart >= 0f)
+            {
+                int s = (int)((Time.time - _missFlashStart) / Mathf.Max(1e-4f, clickFlashStepSec));
+                if (s >= ClickFlashAlpha.Length - 1) _missFlashStart = -1f;   // last frame is 0-alpha → done
+                else missStep = s;
+            }
+            if (_missOverlay)
+            {
+                bool on = missStep >= 0;
+                if (_missOverlay.enabled != on) _missOverlay.enabled = on;
+                if (on) _missOverlay.color = new Color(1f, 0f, 0f, ClickFlashAlpha[missStep] * clickFlashBright * missFlashAlpha);   // tracks the white flash's brightness
+            }
             for (int lane = 0; lane < Keys; lane++)
             {
                 var sr = _clickFlashSr[lane]; if (sr == null) continue;
-                bool held = _holding[lane] != null;
-                if (held && _clickFlashStart[lane] < 0f) _clickFlashStart[lane] = Time.time;   // keep pulsing while held
                 if (_clickFlashStart[lane] < 0f) { if (sr.enabled) sr.enabled = false; continue; }
                 int step = (int)((Time.time - _clickFlashStart[lane]) / Mathf.Max(1e-4f, clickFlashStepSec));
-                if (held) step %= ClickFlashAlpha.Length;                                       // loop the pulse
-                else if (step >= ClickFlashAlpha.Length - 1) { _clickFlashStart[lane] = -1f; sr.enabled = false; continue; }  // tap ends on the 0-alpha frame
+                if (step >= ClickFlashAlpha.Length - 1) { _clickFlashStart[lane] = -1f; sr.enabled = false; continue; }  // one-shot ends on the 0-alpha frame
                 float a = ClickFlashAlpha[step] * clickFlashBright;   // 0.8 = ~80% brightness
                 sr.enabled = a > 0f;
                 if (sr.enabled) sr.color = new Color(1f, 1f, 1f, a);

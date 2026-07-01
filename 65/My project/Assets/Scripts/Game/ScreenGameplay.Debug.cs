@@ -159,8 +159,10 @@ namespace Sdo.Game
                 if (GUILayout.Button("Fire hit-burst (all lanes)") && _burstFrames != null)
                     for (int l = 0; l < Keys; l++) SpawnBurst(l, false);
 
-                GUILayout.Label($"Click-flash brightness: {clickFlashBright:F2}×");
+                GUILayout.Label($"Click-flash brightness: {clickFlashBright:F2}× (hit=white per lane)");
                 clickFlashBright = GUILayout.HorizontalSlider(clickFlashBright, 0f, 1.5f);
+                GUILayout.Label($"Miss red-flash: {missFlashAlpha:F2}× white (1=match, soft glow, all 4 lanes)");
+                missFlashAlpha = GUILayout.HorizontalSlider(missFlashAlpha, 0f, 1.5f);
                 GUILayout.Label($"Keydown burst: {recKeydownStepSec*1000f:F0}ms/frame ({recKeydownStepSec*5f*1000f:F0}ms total, 5 frames)");
                 recKeydownStepSec = GUILayout.HorizontalSlider(recKeydownStepSec, 0.005f, 0.1f);
                 GUILayout.Label($"HP-glow brightness: {hpGlowBright:F2}× (~1=old dim, 2.5=official)");

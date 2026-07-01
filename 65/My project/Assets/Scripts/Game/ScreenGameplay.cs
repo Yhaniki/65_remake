@@ -99,12 +99,12 @@ namespace Sdo.Game
         private static readonly Vector2 ScorePos = new Vector2(290, 18);
         private const float ScoreDigitPitch = 25f;       // 29 + alt(-4)
         private static readonly Vector2 JudgeWordCenter = new Vector2(TrackCenterX, 216);
-        private const float ComboWordY = 268f;
+        private const float ComboWordY = 275f;
         private const float ComboDigitY = 326f, ComboDigitStep = 42f, ComboDigitW = 48f;
         // The COMBO word and the digits must render at ONE per-pixel scale so the label and the number read as the
         // same font (native COMBO.PNG = 117×33, each digit = 67×72). Deriving the word width from the digit width
         // locks word/number to the source-art ratio; a hardcoded 100 drew the word at 0.855× vs the digits' 0.716×.
-        private const float ComboWordW = ComboDigitW * 117f / 67f;   // ≈ 83.8
+        private const float ComboWordW = ComboDigitW * 2.5f;   // ≈ 83.8, 117/67=1.74
 
         private OsuBeatmap _map;
         private ManiaJudgmentEngine _engine;
@@ -185,6 +185,9 @@ namespace Sdo.Game
         private readonly Sprite[][] _noteFrames = new Sprite[Keys][];
         private readonly Texture2D[] _holdTex = new Texture2D[Keys];
         private readonly Sprite[] _holdTail = new Sprite[Keys];
+        private readonly bool[] _holdTailFlipX = new bool[Keys];   // combined-name skins share one cap across a lane pair → mirror it
+        private readonly bool[] _holdTailFlipY = new bool[Keys];   // (per-lane-name skins like NOTEIMAGE_6 are pre-drawn → no flip)
+        private SpriteRenderer _missOverlay;                       // track-wide red wash flashed on a miss (covers all 4 lanes reliably)
         private readonly Sprite[] _recIdle = new Sprite[Keys];
         // Keydown receptor feedback = a ONE-SHOT 5-frame burst (KEYDOWN_JUDGELINE.AN = *_judgeline 2→3→4→5→6),
         // fired on the key-PRESS transition then resolving back to the idle frame 1 (JUDGELINE.AN = *_judgeline1).
@@ -224,6 +227,7 @@ namespace Sdo.Game
         private SpriteRenderer[] _scoreDigits;
         private readonly Sprite[] _scoreDigitSprites = new Sprite[10];
         private Sprite[] _burstFrames, _readyFrames, _goFrames;
+        private Sprite[] _burstFramesUD;   // self-contained skins' UP/DOWN-lane hit frames (jz*_ud); null = non-directional (use _burstFrames for all lanes)
         private Material _addMat;           // additive material template; each burst clones its own instance
         private Material _hpGlowMat;        // HP-edge glow's OWN additive instance (dedicated so its _TintColor can be driven bright, and no _MainTex cross-bleed with bursts)
         private SpriteRenderer _readyGo;   // opening READY/GO overlay (centre screen)
@@ -264,7 +268,8 @@ namespace Sdo.Game
             ("miss10→H", EmojiKind.H), ("miss30→Y", EmojiKind.Y), ("miss50→JS", EmojiKind.JS), ("lowHP→GTH", EmojiKind.GTH),
         };
         private TextMesh _musicName, _lvText, _timeText, _info, _fpsText;
-        private SpriteRenderer _lblSong, _lblAttr;   // bottom "歌曲名:" / "LV: 时间:" labels (hidden at result)
+        private SpriteRenderer _lblSong, _lblAttr;   // bottom "歌曲名:" / "LV: 时间:" labels
+        private Sprite _lvOnlyLabel;                  // "LV:"-only crop of GAMEPLAY2, shown at result (time field dropped)
         private float _fps;
         private double _totalMs;
         private int _lastMilestone;       // last combo milestone (50/100/150…) already celebrated
@@ -475,6 +480,20 @@ namespace Sdo.Game
             _noteDir = Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_" + suffix);
             LoadBoardArt();
             for (int c = 0; c < Keys; c++) _recDownStart[c] = -1f;   // snap receptors to idle (skins differ in keydown frame count)
+            // Heads re-read _noteFrames each frame, but a hold's Body texture + Tail sprite are bound ONCE at spawn — so
+            // re-point already-spawned holds here, otherwise the long body + bottom cap keep the old skin until respawn.
+            foreach (var n in _notes)
+            {
+                if (n == null || n.Done) continue;
+                int c = n.Note.Lane;
+                if (c < 0 || c >= Keys) continue;
+                if (n.Body && _holdTex[c] != null)
+                {
+                    var mr = n.Body.GetComponent<MeshRenderer>();
+                    if (mr && mr.sharedMaterial) mr.sharedMaterial.mainTexture = _holdTex[c];   // each hold owns its material instance
+                }
+                if (n.Tail && _holdTail[c] != null) { n.Tail.sprite = _holdTail[c]; n.Tail.flipX = _holdTailFlipX[c]; n.Tail.flipY = _holdTailFlipY[c]; }
+            }
         }
 
         // Load (or RELOAD) the per-lane note-board art from NoteDir: falling-note frames, receptor idle + keydown frames,
@@ -497,10 +516,13 @@ namespace Sdo.Game
                 string baseLong = (d == "left" || d == "right") ? "rightleft_long" : "updown_long";
                 var bodySpr = SdoExtracted.LoadImage(NoteDir, baseLong + ".png");
                 if (bodySpr != null) { _holdTex[c] = bodySpr.texture; _holdTex[c].wrapMode = TextureWrapMode.Repeat; SdoExtracted.AlphaBleed(_holdTex[c]); }
-                // end cap = the per-lane png, copied to a UNIQUE per-lane texture (never shares the cache) + de-seamed, so a
-                // lane's cap can never get confused with another lane's. Keep the old cap if the new skin lacks one.
-                var capSpr = SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
-                if (capSpr != null) _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr);
+                // end cap: prefer a PER-LANE cap ({left|right|down|up}_long_bottom — NOTEIMAGE_6, drawn per direction), else
+                // the combined cap (rightleft/updown_long_bottom — NOTEIMAGE_5/8). Caps render correct un-flipped on every
+                // skin EXCEPT NOTEIMAGE_8, whose updown cap is stored upside-down → its up & down lanes need a vertical flip.
+                var capSpr = SdoExtracted.LoadImage(NoteDir, d + "_long_bottom.png")
+                             ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
+                bool flipY = (d == "up" || d == "down") && NoteDir.EndsWith("NOTEIMAGE_8");
+                if (capSpr != null) { _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr); _holdTailFlipX[c] = false; _holdTailFlipY[c] = flipY; }
             }
         }
 
@@ -510,11 +532,13 @@ namespace Sdo.Game
             // lane click-flash strips (notes_board_click1..4.png) live in NOTEIMAGE root, not the skin folder
             var boardDir = Path.Combine(SdoExtracted.Root, "NOTEIMAGE");
             for (int c = 0; c < Keys; c++) _clickFlashSpr[c] = SdoExtracted.LoadImage(boardDir, "notes_board_click" + (c + 1) + ".png");
-            _judgeSprites[0] = SdoExtracted.Eft("PERFECT.PNG");
-            _judgeSprites[1] = SdoExtracted.Eft("COOL.PNG");
-            _judgeSprites[2] = SdoExtracted.Eft("BAD.PNG");
-            _judgeSprites[3] = SdoExtracted.Eft("MISS.PNG");
-            for (int i = 0; i < 10; i++) _comboDigitSprites[i] = SdoExtracted.Eft("0" + i + ".PNG");
+            // bleed: dilate the transparent-white matte so bilinear filtering can't pull white into the glyph
+            // edges (the "white halo" the source PNGs show on PERFECT/COOL/… and the combo digits).
+            _judgeSprites[0] = SdoExtracted.Eft("PERFECT.PNG", bleed: true);
+            _judgeSprites[1] = SdoExtracted.Eft("COOL.PNG", bleed: true);
+            _judgeSprites[2] = SdoExtracted.Eft("BAD.PNG", bleed: true);
+            _judgeSprites[3] = SdoExtracted.Eft("MISS.PNG", bleed: true);
+            for (int i = 0; i < 10; i++) _comboDigitSprites[i] = SdoExtracted.Eft("0" + i + ".PNG", bleed: true);
             var sd = SdoExtracted.LoadAn(SdoExtracted.GameplayUiDir, "teamfree.an");
             for (int i = 0; i < 10 && i < sd.Length; i++) _scoreDigitSprites[i] = sd[i];
             var bf = new List<Sprite>();                 // (6) hit burst = EFT_13/EFT_HIT0..11.PNG
@@ -689,6 +713,15 @@ namespace Sdo.Game
                 SdoLayout.PlaceTopLeft(fsr, LaneLeftX[c] + 1f, ClickStripTopY, 9f);
                 _clickFlashSr[c] = fsr;
             }
+            // miss flash: the click glow sprite TILED across all 4 lanes → the SAME soft glow as the white click flash, just
+            // red and covering every lane (per-lane strips render too faint on the outer lanes). One tiled renderer, so no
+            // outer-lane fade-out. Driven by the same 3-frame click-flash cycle. Above the strips (-20), behind notes (5).
+            var glowSpr = SdoExtracted.LoadImage(Path.Combine(SdoExtracted.Root, "NOTEIMAGE"), "notes_board_click1.png");
+            _missOverlay = NewSR("MissFlash", glowSpr, -19);
+            float trackW = LaneLeftX[Keys - 1] + 69f - LaneLeftX[0];
+            if (glowSpr != null) { _missOverlay.drawMode = SpriteDrawMode.Tiled; _missOverlay.tileMode = SpriteTileMode.Continuous; _missOverlay.size = new Vector2(trackW, 558f); }
+            _missOverlay.transform.position = SdoLayout.ToWorld(LaneLeftX[0] + trackW / 2f, ClickStripTopY + 279f, 9f);
+            _missOverlay.color = new Color(1f, 0f, 0f, 0f); _missOverlay.enabled = false;
             BuildNoteClip();
         }
 
@@ -772,6 +805,7 @@ namespace Sdo.Game
                     if (_holdTail[c] != null)
                     {
                         tail = NewSR("HoldTail", _holdTail[c], 4);
+                        tail.flipX = _holdTailFlipX[c]; tail.flipY = _holdTailFlipY[c];   // mirror the shared combined-skin cap per lane
                         tail.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
                         tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material -> no mask batch cross-bleed
                     }
@@ -800,11 +834,12 @@ namespace Sdo.Game
 
             _judgeWord = NewSR("JudgeWord", null, 41); _judgeWord.color = new Color(1, 1, 1, 0);
             for (int i = 0; i < 7; i++) { var sr = NewSR("ComboD" + i, null, 41); sr.enabled = false; _comboDigits.Add(sr); }
-            _comboWord = NewSR("ComboWord", SdoExtracted.Eft("COMBO.PNG"), 40); _comboWord.enabled = false;
+            _comboWord = NewSR("ComboWord", SdoExtracted.Eft("COMBO.PNG", bleed: true), 40); _comboWord.enabled = false;
 
             // bottom song info — official label graphics + value text (DdrGamePlay.xml positions)
             _lblSong = NewSR("LblSong", SdoExtracted.Hud("GamePlay1.an"), 30); SdoLayout.PlaceTopLeft(_lblSong, 11, 575);   // "歌曲名:"
             _lblAttr = NewSR("LblAttr", SdoExtracted.Hud("GamePlay2.an"), 30); SdoLayout.PlaceTopLeft(_lblAttr, 204, 575);   // "LV: 时间:"
+            _lvOnlyLabel = CropLeftSprite(_lblAttr.sprite, 34);   // GAMEPLAY2 cols 0..28 = "LV:"; the result screen swaps to this so "时间:" disappears with its value
             // values sit at x per DdrGamePlay.xml, but y = the label graphics' vertical centre (575+~20/2 ≈ 585),
             // MiddleLeft-anchored so they're vertically centred with "歌曲名:" / "LV: 时间:".
             // Title from the import-time UTF-8 catalog (keyed by .gn filename); GB2312 is never
@@ -839,6 +874,17 @@ namespace Sdo.Game
         // space on each side) so it sits centred between the digits — the full-width colon glyph was left-biased.
         // Only the placeholder dash is widened to an em dash ("— : —"); digits stay half-width (tight).
         private static string FullWidth(string s) => s.Replace('-', '—');   // U+2014 em dash
+
+        // Crop a label sprite to its left `width` px (same texture, top-left preserved) — used to keep just the "LV:"
+        // half of the combined "LV: 时间:" label when the time field is dropped on the result screen.
+        private static Sprite CropLeftSprite(Sprite src, int width)
+        {
+            if (src == null) return null;
+            var r = src.rect;                                   // pixel rect within the texture
+            float w = Mathf.Min(width, r.width);
+            return Sprite.Create(src.texture, new Rect(r.x, r.y, w, r.height),
+                                 new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
 
         private static Color PartColor(string name)
         {
@@ -2367,6 +2413,23 @@ namespace Sdo.Game
             if (_headMarker) _headMarker.Hide();               // arrow + the "玩家" name label (separate root object)
         }
 
+        // On the result panel, the old top song-name/level row is gone; instead the gameplay HUD's bottom song-info row
+        // (歌曲名 + LV) stays visible just below the panel (it ends at design y≈565, the row sits at y=575). The 時間 field
+        // is dropped: the time value is hidden and the combined "LV: 时间:" label is swapped to the "LV:"-only crop.
+        private void ShowResultSongInfo()
+        {
+            if (_lblSong) _lblSong.enabled = true;                          // "歌曲名:"
+            if (_musicName) _musicName.gameObject.SetActive(true);         // song title value
+            if (_lvText) _lvText.gameObject.SetActive(true);              // LV value
+            if (_lblAttr)
+            {
+                if (_lvOnlyLabel != null) _lblAttr.sprite = _lvOnlyLabel;  // "LV:" only (drop "时间:")
+                SdoLayout.PlaceTopLeft(_lblAttr, 204, 575);                // re-place: cropped sprite has narrower bounds
+                _lblAttr.enabled = true;
+            }
+            if (_timeText) _timeText.gameObject.SetActive(false);         // 時間欄位移除
+        }
+
         // Drive the post-song sequence: hold the win/lose pose, then settle the panel, then loop the background
         // replay. Phase A implements FinishPose; Settle/Replay are filled in by later phases.
         private void ResultTick()
@@ -2413,6 +2476,7 @@ namespace Sdo.Game
         private void ShowResultPanel()
         {
             HideHudForPanel();   // stage 2: now hide the score / rank / roster / song-info / nameplate
+            ShowResultSongInfo();   // ...but keep the bottom 歌名/LV row (time field dropped) as the result's song-info
             if (_result == null)
             {
                 _result = new ResultScreen();
@@ -2648,6 +2712,7 @@ namespace Sdo.Game
             _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;
             if (lane >= 0 && _burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane, false);  // tap: fire immediately, may overlap
             if (lane >= 0 && j != Judgment.Miss) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
+            if (j == Judgment.Miss) TriggerMissFlash();                     // miss: flash ALL four lane strips red once
         }
 
         // Every 8 beats (the score-settlement cadence) re-decide whether the dancer keeps dancing — a break NEVER
@@ -2678,20 +2743,24 @@ namespace Sdo.Game
         // one full round at a time (gated). Each burst gets its OWN material clone so overlapping bursts never bleed.
         private BurstFx SpawnBurst(int lane, bool isHold)
         {
+            // directional skins (PET/8/9/10) ship separate frames for left-right vs up-down lanes; lanes 1(down)/2(up) use
+            // the _ud set, lanes 0(left)/3(right) use _rl (_burstFrames). Non-directional skins leave _burstFramesUD null.
+            var frames = (_burstFramesUD != null && (lane == 1 || lane == 2)) ? _burstFramesUD : _burstFrames;
+            if (frames == null || frames.Length == 0) return null;
             var mat = _matPool.Count > 0 ? _matPool.Pop() : (_addMat != null ? new Material(_addMat) : null);  // own instance, pooled
             // brightness: the additive shader is Blend SrcAlpha One, and its _TintColor defaults to (.5,.5,.5,.5) ->
             // the .5 alpha halves the burst (too dark). Drive _TintColor by burstBright (1.0 = stock, higher = brighter).
             if (mat != null) { float t = 0.5f * burstBright; mat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t))); }
-            var sr = NewSR("Burst", _burstFrames[0], 6);
+            var sr = NewSR("Burst", frames[0], 6);
             if (mat != null) sr.sharedMaterial = mat;                   // additive -> black bg becomes transparent glow
             // native-proportional: scale by THIS skin's frame size vs the reference, so every skin keeps its true relative
             // size (the old fixed BurstWidth stretched a small 150px skin up to the 300px skin's footprint -> "too big").
-            float burstNativeW = _burstFrames[0] != null ? _burstFrames[0].bounds.size.x : BurstNativeRef;
+            float burstNativeW = frames[0] != null ? frames[0].rect.width : BurstNativeRef;   // native px (PPU-independent)
             PlaceAspect(sr, LaneLeftX[lane] + LaneCx0, judgeLineY, BurstWidth * burstSize * (burstNativeW / BurstNativeRef));
-            var sr2 = NewSR("Burst+", _burstFrames[0], 6);             // 2nd additive layer -> vivid in-game glow
+            var sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
             if (mat != null) sr2.sharedMaterial = mat;
             sr2.transform.SetParent(sr.transform, false);
-            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, Start = Time.time, IsHold = isHold };
+            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, Start = Time.time, IsHold = isHold, Frames = frames };
             _fx.Add(fx);
             return fx;
         }
