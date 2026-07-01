@@ -347,7 +347,7 @@ namespace Sdo.Game
             // stayed. Manual decode gives correct RGB + alpha 255 (SDO's stage DXT1 carry no real alpha; see HasAlpha),
             // same orientation as the native path, so UVs are unchanged and no scene regresses. (DXT1 is opaque, so
             // the bleed flag is a no-op for it — passed through for a uniform call site.)
-            if (fourcc == "DXT1") return DecodeDxt1(d, 128, width, height);
+            if (fourcc == "DXT1") return DecodeDxt1(d, 128, width, height, false, bleedAlphaEdges);
 
             // UNCOMPRESSED 32-bit RGB(A): fourcc is empty and DDPF_RGB (0x40) is set. SDO's extracted/packaged
             // SCN0010 floor `dimian1.dds` is X8R8G8B8 (1 MB, masks R=00ff0000 G=0000ff00 B=000000ff A=0), NOT the
@@ -399,7 +399,36 @@ namespace Sdo.Game
         // index that BC1 treats as transparent-black — but SDO's stage DXT1 textures are OPAQUE (their 1-bit alpha
         // isn't used; see HasAlpha), so we force alpha 255 for every texel. Decoded to RGBA32 because Unity's native
         // TextureFormat.DXT1 sampled a=0 on this d3d12 path, which the scene's alpha-cutout shader then clipped away.
-        private static Texture2D DecodeDxt1(byte[] d, int off, int w, int h)
+        /// <summary>Load a DXT1 DDS as an RGBA32 texture that HONORS the BC1 1-bit punch-through alpha (the transparent
+        /// index in c0&lt;=c1 blocks → alpha 0), for textures that actually carry cut-out transparency — e.g. the 3D-note
+        /// glyphs (3DNOTES\NOTES*/JUDGELINE*) whose arrow sits on a transparent background. The stock <see cref="Load(byte[])"/>
+        /// forces DXT1 opaque (SDO's STAGE tiles carry no real alpha and the cutout shader needs alpha 255); this path is
+        /// only for the note glyphs, so their transparent surround doesn't render as a black square. RGB is edge-bled into
+        /// the transparent texels so a bilinear-filtered sprite gets no dark halo at the silhouette.</summary>
+        public static Texture2D LoadDxt1Alpha(byte[] d, bool flipV = true)
+        {
+            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return null;
+            int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
+            if (System.Text.Encoding.ASCII.GetString(d, 84, 4) != "DXT1") return null;
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return null;
+            // The 3D-note glyphs are a glowing arrow on BLACK: only the arrow's anti-aliased edge blocks use BC1
+            // punch-through; the flat surround is stored in the 4-colour OPAQUE mode (black, alpha 255), so a plain
+            // alpha-blended sprite shows a black square ("沒有去背"). lumAlpha derives alpha from luminance (glow-on-black
+            // → the black keys out, the bright arrow stays), matching the official's additive glow look. bleed dilates
+            // RGB into the keyed-out texels (no dark fringe). flipV: a full-rect SPRITE needs the row flip (DDS-top→row0
+            // = Unity bottom); a MESH texture (hold body) passes flipV=false (its UVs already match). In-decode because
+            // the texture uploads non-readable, so a post-hoc GetPixels32 flip/key would throw.
+            return DecodeDxt1(d, 128, width, height, punchAlpha: true, bleed: true, flipV: flipV, keyBg: true);
+        }
+
+        // BC1 decode. punchAlpha=false (default): the transparent index is forced BLACK-OPAQUE — SDO's stage DXT1 carry
+        // no real alpha and the scene cutout shader needs alpha 255 (see the Load() note). punchAlpha=true: the c0<=c1
+        // transparent index becomes alpha 0 (real BC1 punch-through). keyBg: recompute alpha by COLOUR DISTANCE from the
+        // texture's dominant (background) colour — the 3D-note glyphs bake the arrow on a solid surround that is NOT
+        // pure black (NOTES/LONG = (65,49,49); JUDGELINE = black), so a luminance threshold can't key both; keying the
+        // actual bg colour removes the square and keeps the arrow. bleed dilates RGB into transparent texels; flipV
+        // reverses rows so a full-rect sprite shows upright.
+        private static Texture2D DecodeDxt1(byte[] d, int off, int w, int h, bool punchAlpha = false, bool bleed = false, bool flipV = false, bool keyBg = false)
         {
             int bw = (w + 3) / 4, bh = (h + 3) / 4;
             if (off + bw * bh * 8 > d.Length) return null;
@@ -420,7 +449,8 @@ namespace Sdo.Game
                     else
                     {
                         p2 = new Color32((byte)((p0.r + p1.r) / 2), (byte)((p0.g + p1.g) / 2), (byte)((p0.b + p1.b) / 2), 255);
-                        p3 = new Color32(0, 0, 0, 255);   // BC1 transparent index, forced opaque (stage DXT1 is opaque)
+                        p3 = punchAlpha ? new Color32(0, 0, 0, 0)         // real BC1 transparent (note glyphs)
+                                        : new Color32(0, 0, 0, 255);      // stage DXT1: forced opaque
                     }
                     for (int i = 0; i < 16; i++)
                     {
@@ -430,6 +460,32 @@ namespace Sdo.Game
                         px[y * w + x] = sel == 0 ? p0 : sel == 1 ? p1 : sel == 2 ? p2 : p3;
                     }
                 }
+            // background key-out: alpha = colour-distance ramp from the DOMINANT colour (the flat surround, which fills
+            // >half the tile). Found via a coarse 4-bit/channel histogram (no allocations beyond one int[4096]). Distance
+            // ≤36 → transparent, ≥84 → opaque, linear between → the bright arrow stays, the (non-black) surround keys out.
+            if (keyBg)
+            {
+                var hist = new int[4096];
+                for (int i = 0; i < px.Length; i++)
+                    hist[((px[i].r >> 4) << 8) | ((px[i].g >> 4) << 4) | (px[i].b >> 4)]++;
+                int best = 0, bestN = -1;
+                for (int k = 0; k < hist.Length; k++) if (hist[k] > bestN) { bestN = hist[k]; best = k; }
+                int br = ((best >> 8) & 0xf) * 17, bg = ((best >> 4) & 0xf) * 17, bb = (best & 0xf) * 17;
+                Debug.Log($"[dds-key] bg=({br},{bg},{bb}) dominates {bestN * 100 / px.Length}% of {w}x{h}");   // diag: if a note still shows a box, this says what bg it keyed
+                for (int i = 0; i < px.Length; i++)
+                {
+                    int dr = px[i].r - br, dg = px[i].g - bg, db = px[i].b - bb;
+                    double dist = Math.Sqrt(dr * dr + dg * dg + db * db);
+                    px[i].a = (byte)(dist <= 32.0 ? 0 : dist >= 54.0 ? 255 : (int)((dist - 32.0) * 255.0 / 22.0));   // crisp ramp → no dark halo
+                }
+            }
+            if (flipV)
+            {
+                var f = new Color32[px.Length];
+                for (int y = 0; y < h; y++) Array.Copy(px, y * w, f, (h - 1 - y) * w, w);
+                px = f;
+            }
+            if (bleed) BleedAlphaEdges(px, w, h);
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };   // D3D default WRAP; tiling floor/sky UVs need it
             tex.SetPixels32(px); tex.Apply(false, true);
             return tex;

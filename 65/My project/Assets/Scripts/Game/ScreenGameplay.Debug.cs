@@ -149,15 +149,67 @@ namespace Sdo.Game
                 burstBright = GUILayout.HorizontalSlider(burstBright, 0.3f, 3f);
 
                 // ── NoteType skin (live test): switches the WHOLE skin — board (NOTEIMAGE) + hit burst + combo/judge. ──
-                int nN = NoteTypeEftSuffix.Length;
-                GUILayout.Label(_eftNoteType < 0 ? "Note skin: stock"
+                // The cycle runs stock → 0..N-1 (2D sprite skins) → "3D" (hiteft3D = the AU_HIT.EFT 3DEFT hit burst).
+                int nN = NoteTypeEftSuffix.Length;   // 2D sprite skins
+                int total = nN + 1;                  // + the "3D" skin at index nN
+                int cur = _hit3dMode ? nN : _eftNoteType;   // -1 = stock
+                GUILayout.Label(_hit3dMode ? $"Note skin: 3D 立體 (hiteft3D)：音符依節拍上色 洋紅/藍/綠 + {Hit3dEftNames[hit3dEftIdx]}.EFT 命中"
+                    : _eftNoteType < 0 ? "Note skin: stock"
                     : $"Note skin: {_eftNoteType} → board NOTEIMAGE_{NoteTypeBoardSuffix[_eftNoteType]} / EFT_{NoteTypeEftSuffix[_eftNoteType]}");
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button("◄ prev")) SetNoteType(((_eftNoteType < 0 ? 0 : _eftNoteType) + nN - 1) % nN);
-                if (GUILayout.Button("next ►")) SetNoteType(_eftNoteType < 0 ? 0 : (_eftNoteType + 1) % nN);
+                if (GUILayout.Button("◄ prev")) SelectSkin(((cur < 0 ? 0 : cur) + total - 1) % total);
+                if (GUILayout.Button("next ►")) SelectSkin(cur < 0 ? 0 : (cur + 1) % total);
                 GUILayout.EndHorizontal();
-                if (GUILayout.Button("Fire hit-burst (all lanes)") && _burstFrames != null)
-                    for (int l = 0; l < Keys; l++) SpawnBurst(l, false);
+                if (GUILayout.Button(_hit3dMode ? "Fire 3D hit (all lanes)" : "Fire hit-burst (all lanes)"))
+                    for (int l = 0; l < Keys; l++) { if (_hit3dMode) SpawnHit3d(l); else if (_burstFrames != null) SpawnBurst(l, false); }
+                if (_hit3dMode)   // 3D-hit tuning (only when the 3D skin is active)
+                {
+                    note3dMesh = GUILayout.Toggle(note3dMesh, note3dMesh ? " ══ note = 真 3D mesh（貼齊2D位置）: ON ══" : " ══ note = 2D 彩色精靈: OFF ══");
+                    if (note3dMesh && _highway != null && _highway.Ready)
+                    {
+                        var hw = _highway;
+                        GUILayout.Label($"3D note 輝光速度 fps: {hw.noteFrameFps:F0} (0=不閃, 太快就調小)");
+                        hw.noteFrameFps = GUILayout.HorizontalSlider(hw.noteFrameFps, 0f, 30f);
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label($"箭頭翻面 flattenX: {hw.flattenX:F0}", GUILayout.Width(140));
+                        if (GUILayout.Button("+90")) hw.flattenX = 90f;
+                        if (GUILayout.Button("-90")) hw.flattenX = -90f;
+                        GUILayout.EndHorizontal();
+                        GUILayout.Label($"箭頭整體轉向 baseRot: {hw.baseRotZ:F0}° (方向不對就轉90的倍數)");
+                        GUILayout.BeginHorizontal();
+                        if (GUILayout.Button("0")) hw.baseRotZ = 0f;
+                        if (GUILayout.Button("90")) hw.baseRotZ = 90f;
+                        if (GUILayout.Button("180")) hw.baseRotZ = 180f;
+                        if (GUILayout.Button("270")) hw.baseRotZ = 270f;
+                        GUILayout.EndHorizontal();
+                    }
+                    note3dFlip180 = GUILayout.Toggle(note3dFlip180, note3dFlip180 ? " 音符箭頭上下翻轉: ON" : " 音符箭頭上下翻轉: OFF（若箭頭方向相反就打開）");
+                    GUILayout.Label($"打擊區大小 receptor: {receptor3dScale:F2}× (太大就調小)");
+                    { float rs = GUILayout.HorizontalSlider(receptor3dScale, 0.4f, 1.2f); if (Mathf.Abs(rs - receptor3dScale) > 1e-3f) { receptor3dScale = rs; PlaceReceptors(receptor3dScale); } }
+                    GUILayout.Label($"3D hit 特效: {Hit3dEftNames[hit3dEftIdx]}  (官方=HIT 箭頭)");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("◄ eft")) hit3dEftIdx = (hit3dEftIdx + Hit3dEftNames.Length - 1) % Hit3dEftNames.Length;
+                    if (GUILayout.Button("eft ►")) hit3dEftIdx = (hit3dEftIdx + 1) % Hit3dEftNames.Length;
+                    GUILayout.EndHorizontal();
+                    GUILayout.Label("顏色 tint:");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("黃/金")) hit3dTint = new Color(1f, 0.80f, 0.25f);
+                    if (GUILayout.Button("白")) hit3dTint = Color.white;
+                    if (GUILayout.Button("藍")) hit3dTint = new Color(0.4f, 0.7f, 1f);
+                    if (GUILayout.Button("紫")) hit3dTint = new Color(0.8f, 0.4f, 1f);
+                    if (GUILayout.Button("紅")) hit3dTint = new Color(1f, 0.4f, 0.3f);
+                    GUILayout.EndHorizontal();
+                    GUILayout.Label($"tint RGB: {hit3dTint.r:F2}/{hit3dTint.g:F2}/{hit3dTint.b:F2}");
+                    hit3dTint.r = GUILayout.HorizontalSlider(hit3dTint.r, 0f, 1f);
+                    hit3dTint.g = GUILayout.HorizontalSlider(hit3dTint.g, 0f, 1f);
+                    hit3dTint.b = GUILayout.HorizontalSlider(hit3dTint.b, 0f, 1f);
+                    GUILayout.Label($"3D hit 大小 scale: {hit3dScale:F0}px");
+                    hit3dScale = GUILayout.HorizontalSlider(hit3dScale, 20f, 300f);
+                    GUILayout.Label($"3D hit 亮度 bright: {hit3dBright:F2}×");
+                    hit3dBright = GUILayout.HorizontalSlider(hit3dBright, 0.3f, 3f);
+                    GUILayout.Label($"3D hit 上飄 motion: {hit3dMotion:F2} (1=原速, 0=定住)");
+                    hit3dMotion = GUILayout.HorizontalSlider(hit3dMotion, 0f, 1f);
+                }
 
                 GUILayout.Label($"Click-flash brightness: {clickFlashBright:F2}× (hit=white per lane)");
                 clickFlashBright = GUILayout.HorizontalSlider(clickFlashBright, 0f, 1.5f);

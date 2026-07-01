@@ -251,6 +251,35 @@ namespace Sdo.Game
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
         public float burstSize = 1.3f;      // hit-burst size multiplier
         public float burstBright = 1.5f;    // hit-burst brightness (additive _TintColor; 1.0 = stock)
+        // ── hiteft3D: the "3D" note skin's hit effect = a real 3DEFT played at the receptor via the EftEffect particle
+        // engine (instead of the flat sprite flipbook). Selected in the F4 STAGE tab note-skin selector (index past the
+        // 2D skins). The official 3D skin's hit is HIT.EFT — a note-ARROW-shaped flash (the map_g\NOTES textures = "固定
+        // 的note配合") rendered GOLD/yellow (the texture data is white; the yellow is a play-time diffuse tint). AU_HIT
+        // (white sparks) and the colour-band / power variants are also offered so the exact official look can be dialled
+        // in live. See SpawnHit3d / SelectSkin / EnableHit3dSkin.
+        internal bool _hit3dMode;           // true = the 3D hit burst is active (replaces the 2D sprite burst)
+        // candidate 3D hit EFTs (F4-cycled). 0 = HIT (official note-arrow); others for comparison/tuning.
+        internal static readonly string[] Hit3dEftNames = { "HIT", "AU_HIT", "HIT_LONG", "HIT_SUO", "POWER_Y", "HUANGSE" };
+        internal int hit3dEftIdx = 0;       // which of Hit3dEftNames to play
+        public float hit3dScale = 70f;      // effScale in design px (HIT baseSize 1.0 × peak × this ≈ arrow diameter); F4-tunable
+        public float hit3dBright = 1f;      // extra additive brightness on top of burstBright; F4-tunable
+        public float hit3dMotion = 1f;      // velocity damping (HIT doesn't rise; AU_HIT rises ~20× its size → lower it there)
+        public Color hit3dTint = new Color(1f, 0.80f, 0.25f);   // GOLD — the official 3D hit is yellow (tints the white note-arrow)
+        public float hit3dZ = 0f;           // world Z (same plane as the sprite burst — in front of board/notes)
+        // ── 3D-note COLOURED falling notes (the other half of the "3D" skin). The official 3D mode colours each note by
+        // BEAT QUANTIZATION (NoteBeatColor): on-beat = magenta(+gold core), off-8th = blue, 16ths = green — a single
+        // up-arrow glyph (3DNOTES\NOTES_/NOTES1_/NOTES2_, 4 glow frames each) rotated per lane. Enabled alongside the
+        // 3D hit when the F4 "3D" skin is selected; the falling-note SpriteRenderers read _note3dFamily each frame.
+        internal bool _note3dMode;                                   // true = colour falling notes by beat (3D skin)
+        private Sprite[][] _note3dFamily;                            // [family 0..2][glow frame 0..3]; loaded lazily
+        // up-arrow → per-lane rotation (Unity Z, CCW+). Lanes: 0=left(←) 1=down(↓) 2=up(↑) 3=right(→).
+        private static readonly float[] Note3dRot = { 90f, 180f, 0f, -90f };
+        public bool note3dFlip180;                                   // F4 safety: +180° all note rotations if the glyph loads pointing the wrong way
+        public float receptor3dScale = 0.82f;                        // 3D receptor (JUDGELINE) size × ReceptorW; F4-tunable (JUDGELINE fills its tile more than the 2D receptor)
+        // real 3D mesh highway (NOTES_BOARD runway + NOTES arrows + JUDGELINE receptors, meshes under a tilted 3D group).
+        public bool note3dMesh = true;                               // F4: use the real 3D-mesh highway; off = the 2D coloured-sprite fallback
+        private Note3dHighway _highway;
+        private readonly List<Note3dHighway.Item> _highwayItems = new List<Note3dHighway.Item>();
         // HP-bar leading-edge glow (HpEft). Was sharing _addMat's stock (.5,.5,.5,.5) tint -> half-dim; official is much brighter.
         public float hpGlowBright = 1.2f;   // HpEft brightness (additive _TintColor; 1.0 = old stock dim, 1.2 = tuned to official)
         public float hpGlowOffsetX = -20f;  // glow centre X offset from the fill leading edge (design px). HpEft.png's bright/widest core sits at ~0.78 of its 64px width, so -20 lands that core flush ON the fill edge (less negative = core drifts right).
@@ -479,6 +508,7 @@ namespace Sdo.Game
         {
             _noteDir = Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_" + suffix);
             LoadBoardArt();
+            PlaceReceptors(1f);   // re-size receptors for the 2D glyph (undo any 3D-skin receptor scaling)
             for (int c = 0; c < Keys; c++) _recDownStart[c] = -1f;   // snap receptors to idle (skins differ in keydown frame count)
             // Heads re-read _noteFrames each frame, but a hold's Body texture + Tail sprite are bound ONCE at spawn — so
             // re-point already-spawned holds here, otherwise the long body + bottom cap keep the old skin until respawn.
@@ -524,6 +554,92 @@ namespace Sdo.Game
                 bool flipY = (d == "up" || d == "down") && NoteDir.EndsWith("NOTEIMAGE_8");
                 if (capSpr != null) { _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr); _holdTailFlipX[c] = false; _holdTailFlipY[c] = flipY; }
             }
+        }
+
+        // 3D-note skin: load the three beat-colour families (magenta / blue / green) from 3DNOTES\ as 4-frame glow sets.
+        // One up-arrow glyph per family (NOTES_ / NOTES1_ / NOTES2_, frames 0..3), rotated per lane at draw time. Loaded
+        // once and kept for the song; a family that fails to load leaves that slot null (ScrollNotes falls back to 2D).
+        private void LoadNote3dFamilies()
+        {
+            if (_note3dFamily != null && _note3dFamily[0] != null && _note3dFamily[1] != null && _note3dFamily[2] != null) return;   // fully loaded → keep; retry on partial failure
+            string dir = Path.Combine(SdoExtracted.Root, "3DNOTES");
+            string[] prefix = { "NOTES_", "NOTES1_", "NOTES2_" };   // NoteBeatColor: 0=magenta, 1=blue, 2=green
+            var fam = new Sprite[3][];
+            for (int f = 0; f < 3; f++)
+            {
+                var frames = new Sprite[4]; bool ok = true;
+                for (int i = 0; i < 4; i++) { frames[i] = LoadDdsSprite(Path.Combine(dir, prefix[f] + i + ".DDS")); if (frames[i] == null) ok = false; }
+                if (ok) fam[f] = frames; else Debug.LogWarning("[note3d] missing/failed family " + prefix[f] + " under " + dir);
+            }
+            _note3dFamily = fam;
+        }
+
+        // Load a DXT1 note glyph (transparent-background arrow) as an UPRIGHT sprite. DdsLoader.LoadDxt1Alpha honours the
+        // BC1 punch-through alpha AND flips V during decode (the arrow points UP before Note3dRot rotates it per lane) —
+        // the flip is in-decode because the texture is uploaded non-readable, so a GetPixels32 flip here would throw.
+        // ppu 1 to match the play field (1 design px = 1 world unit); the note head keeps its own material (SpawnNotes).
+        private static Sprite LoadDdsSprite(string path)
+        {
+            var tex = LoadDdsTex(path, flipV: true);   // sprites flip V (DDS-top→row0 = upside-down otherwise)
+            return tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect) : null;
+        }
+
+        // Load a keyed DXT1 note/board glyph as a Texture2D. flipV=false for a MESH texture (hold body — its UVs already
+        // match the row-0-at-top convention); flipV=true for a sprite. Background colour is keyed out (LoadDxt1Alpha).
+        private static Texture2D LoadDdsTex(string path, bool flipV)
+        {
+            if (!File.Exists(path)) return null;
+            try { return DdsLoader.LoadDxt1Alpha(File.ReadAllBytes(path), flipV); }
+            catch { return null; }
+        }
+
+        // 3D-note skin board art (the other half of the "3D" skin, beyond the coloured falling notes): swap the RECEPTORS
+        // to the JUDGELINE grey arrow (one glyph, rotated per lane in UpdateHud) and the HOLD BODY to the LONG chevron
+        // strip. Loaded from 3DNOTES\; a failed load leaves the current 2D art in place. Leaving the 3D skin (SetNoteType
+        // → SetNoteBoardSkin) reloads the NOTEIMAGE art, so this is fully reversible.
+        private void LoadBoard3dSkin()
+        {
+            string dir = Path.Combine(SdoExtracted.Root, "3DNOTES");
+            var jl0 = LoadDdsSprite(Path.Combine(dir, "JUDGELINE_0.DDS"));               // receptor idle (grey up-arrow)
+            var jl1 = LoadDdsSprite(Path.Combine(dir, "JUDGELINE_1.DDS"));               // keydown pulse frames
+            var jl2 = LoadDdsSprite(Path.Combine(dir, "JUDGELINE_2.DDS"));
+            var longTex = LoadDdsTex(Path.Combine(dir, "LONG_0_1.DDS"), flipV: false);   // hold body (tileable chevron)
+            if (longTex != null) longTex.wrapMode = TextureWrapMode.Repeat;
+            // hold END cap = the silver arrowhead in the bottom ~48px of LONG_0_0 (flipV upright → cap at texture y 0..48).
+            // Crop the U to the centre (28..99 of 128) so the side rails don't show as edge "白條", like the body.
+            var capTex = LoadDdsTex(Path.Combine(dir, "LONG_0_0.DDS"), flipV: true);
+            var cap = capTex != null ? Sprite.Create(capTex, new Rect(28f, 0f, 71f, 48f), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect) : null;
+            var down = new List<Sprite>(); if (jl1) down.Add(jl1); if (jl2) down.Add(jl2);
+            for (int c = 0; c < Keys; c++)
+            {
+                if (jl0 != null) _recIdle[c] = jl0;
+                if (down.Count > 0) _recDownFrames[c] = down.ToArray();
+                _recDownStart[c] = -1f;                                                  // snap receptors to idle
+                if (longTex != null) _holdTex[c] = longTex;
+                if (cap != null) { _holdTail[c] = cap; _holdTailFlipX[c] = false; _holdTailFlipY[c] = false; }
+            }
+            if (jl0 != null) PlaceReceptors(receptor3dScale);                            // re-size receptors for the 128px JUDGELINE glyph (fixes 太大)
+            // re-point already-spawned holds' body texture + tail cap (heads/receptors re-read their arrays each frame)
+            foreach (var n in _notes)
+            {
+                if (n == null || n.Done) continue;
+                int c = n.Note.Lane; if (c < 0 || c >= Keys) continue;
+                if (n.Body && longTex != null)
+                {
+                    var mr = n.Body.GetComponent<MeshRenderer>();
+                    if (mr && mr.sharedMaterial) mr.sharedMaterial.mainTexture = _holdTex[c];
+                }
+                if (n.Tail && cap != null) { n.Tail.sprite = _holdTail[c]; n.Tail.flipX = false; n.Tail.flipY = false; }
+            }
+        }
+
+        // Re-place the receptor SpriteRenderers at ReceptorW×widthMul with the CURRENT _recIdle sprite. Needed because the
+        // receptors are positioned once in BuildBoard; swapping the sprite (2D↔3D) changes its native size, so the stale
+        // localScale must be recomputed for the new glyph (the 3D JUDGELINE is 128px vs the smaller 2D receptor → 太大).
+        private void PlaceReceptors(float widthMul)
+        {
+            for (int c = 0; c < Keys; c++)
+                if (_receptors[c] != null) { _receptors[c].sprite = _recIdle[c]; PlaceAspect(_receptors[c], LaneLeftX[c] + LaneCx0, judgeLineY, ReceptorW * widthMul); }
         }
 
         private void LoadArt()
@@ -812,7 +928,8 @@ namespace Sdo.Game
                 }
                 if (body) body.SetActive(false);   // hide body+tail too until scrolled in (else they pile at screen centre)
                 if (tail) tail.enabled = false;
-                _notes.Add(new RuntimeNote(h, head, body, tail));
+                // precompute the beat-quantization colour for the 3D skin (cheap; used only when _note3dMode is on)
+                _notes.Add(new RuntimeNote(h, head, body, tail, NoteBeatColor.Family(h.StartTimeMs, _map)));
             }
         }
 
@@ -2349,7 +2466,7 @@ namespace Sdo.Game
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
             // hold case waits for the round to finish; taps fire freely above.
             for (int lane = 0; lane < Keys; lane++)
-                if (_holding[lane] != null && _burstFrames != null && _holdBurst[lane] == null) _holdBurst[lane] = SpawnBurst(lane, true);
+                if (_holding[lane] != null && !_hit3dMode && _burstFrames != null && _holdBurst[lane] == null) _holdBurst[lane] = SpawnBurst(lane, true);  // 3D skin fires only the one-shot head burst
             UpdateClickFlash();
             UpdateFx(); UpdateHud();
             if (_health != null && _health.IsFailed) _failed = true;
@@ -2556,6 +2673,8 @@ namespace Sdo.Game
 
         private void ScrollNotes(double now)
         {
+            bool use3d = _note3dMode && note3dMesh && EnsureHighway();   // real 3D mesh highway (else 2D coloured-sprite path)
+            _highwayItems.Clear();
             foreach (var n in _notes)
             {
                 if (n.Done) { n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; continue; }
@@ -2578,8 +2697,32 @@ namespace Sdo.Game
                 n.Head.enabled = visible;
                 if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; continue; }
                 float y = yRaw;   // NO clamp — notes keep flowing past the receptor (the mask hides them above the HP bar)
-                if (_noteFrames[c] != null) n.Head.sprite = _noteFrames[c][((int)(Time.time * noteAnimFps)) & 3];
-                PlaceAspect(n.Head, LaneLeftX[c] + LaneCx0, y, LaneW, 1f);
+                int frame = ((int)(Time.time * noteAnimFps)) & 3;   // 4-frame glow cycle (= the official _0.._3 frames)
+                if (use3d)
+                {
+                    // 3D-MESH head: draw the real NOTES.MSH arrow FLAT at this note's exact 2D position (same lane + scroll
+                    // Y as the sprite), textured by the beat family, additive. The 2D head sprite is hidden; the hold
+                    // body/tail below stay 2D. RotZ = the per-lane arrow direction.
+                    _highwayItems.Add(new Note3dHighway.Item {
+                        World = SdoLayout.ToWorld(LaneLeftX[c] + LaneCx0, y, -0.5f),
+                        Size = LaneW, RotZ = Note3dRot[c] + (note3dFlip180 ? 180f : 0f), Family = n.ColorFamily });
+                    n.Head.enabled = false;
+                }
+                else
+                {
+                    if (_note3dMode && _note3dFamily != null && _note3dFamily[n.ColorFamily] != null)
+                    {
+                        // 2D fallback skin: colour by beat (magenta/blue/green up-arrow), rotated to point the lane's way.
+                        n.Head.sprite = _note3dFamily[n.ColorFamily][frame];
+                        n.Head.transform.localRotation = Quaternion.Euler(0f, 0f, Note3dRot[c] + (note3dFlip180 ? 180f : 0f));
+                    }
+                    else
+                    {
+                        if (_noteFrames[c] != null) n.Head.sprite = _noteFrames[c][frame];
+                        if (n.Head.transform.localRotation != Quaternion.identity) n.Head.transform.localRotation = Quaternion.identity;   // restore after leaving 3D skin
+                    }
+                    PlaceAspect(n.Head, LaneLeftX[c] + LaneCx0, y, LaneW, 1f);
+                }
 
                 if (n.Note.EndTimeMs.HasValue)
                 {
@@ -2598,11 +2741,30 @@ namespace Sdo.Game
                             // tile the body texture along the length (拼接, not stretch)
                             float tileH = LaneW * (_holdTex[c].height / (float)_holdTex[c].width);
                             float tiles = len / Mathf.Max(tileH, 1e-3f);
-                            var m = n.Body.GetComponent<MeshFilter>().mesh; var uv = m.uv; uv[2].y = tiles; uv[3].y = tiles; m.uv = uv;
+                            // the 3D LONG texture has silver SIDE RAILS at U<0.22 / >0.77 → the official mesh samples only the
+                            // centre chevrons (U 0.22..0.77). Crop to that so the rails don't stretch into edge "白條".
+                            float uL = _note3dMode ? 0.22f : 0f, uR = _note3dMode ? 0.77f : 1f;
+                            var m = n.Body.GetComponent<MeshFilter>().mesh; var uv = m.uv;
+                            uv[0].x = uL; uv[3].x = uL; uv[1].x = uR; uv[2].x = uR;
+                            uv[2].y = tiles; uv[3].y = tiles; m.uv = uv;
                         }
                     }
                 }
             }
+            // 3D-mesh heads: draw the collected note glyphs flat at their 2D positions (the 2D board + receptors + hold
+            // bodies stay as they are — only the note HEAD becomes the real arrow mesh).
+            if (use3d) { _highway.visible = true; _highway.SetItems(_highwayItems); }
+            else if (_highway != null && _highway.visible) _highway.visible = false;
+        }
+
+        // Build the flat 3D-mesh note pool lazily. Draws in the ORTHO play field (layer 0), so it works whether or not
+        // the perspective stage camera is up.
+        private bool EnsureHighway()
+        {
+            if (_highway != null) return _highway.Ready;
+            _highway = new GameObject("Note3dMeshHost").AddComponent<Note3dHighway>();
+            _highway.Build(0);
+            return _highway.Ready;
         }
 
         // ---------- input / judge ----------
@@ -2710,7 +2872,11 @@ namespace Sdo.Game
             _blockHadNote = true;                                                // a note was judged this block (-> not an empty block)
             if (j == Judgment.Bad || j == Judgment.Miss) _blockHadBreak = true;   // break -> NOT stopped now; the dancer is re-decided at the next 8-beat settlement
             _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;
-            if (lane >= 0 && _burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane, false);  // tap: fire immediately, may overlap
+            if (lane >= 0 && (j == Judgment.Perfect || j == Judgment.Cool))   // tap: fire immediately, may overlap
+            {
+                if (_hit3dMode) SpawnHit3d(lane);                              // 3D skin: real AU_HIT.EFT burst at the receptor
+                else if (_burstFrames != null) SpawnBurst(lane, false);       // 2D skins: sprite flipbook burst
+            }
             if (lane >= 0 && j != Judgment.Miss) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
             if (j == Judgment.Miss) TriggerMissFlash();                     // miss: flash ALL four lane strips red once
         }
@@ -2769,8 +2935,9 @@ namespace Sdo.Game
         {
             public readonly OsuHitObject Note; public readonly SpriteRenderer Head, Tail; public readonly GameObject Body;
             public bool HeadJudged, BundledFail, Done;
-            public RuntimeNote(OsuHitObject n, SpriteRenderer head, GameObject body, SpriteRenderer tail)
-            { Note = n; Head = head; Body = body; Tail = tail; }
+            public readonly int ColorFamily;   // 3D-note beat-quantization colour (0=magenta,1=blue,2=green); used only in _note3dMode
+            public RuntimeNote(OsuHitObject n, SpriteRenderer head, GameObject body, SpriteRenderer tail, int colorFamily)
+            { Note = n; Head = head; Body = body; Tail = tail; ColorFamily = colorFamily; }
         }
     }
 }

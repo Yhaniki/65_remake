@@ -202,6 +202,20 @@ namespace Sdo.Game
         // reproduced. Default false = the one-shot combo-burst behaviour (auto-destroys when spent). Set before Init.
         public bool Persistent;
         public string EffectName;
+        // SORTING ORDER for this effect's transparent renderers (0 = engine default / distance-sorted). Combo/scene
+        // effects render on the perspective stage layer where order is irrelevant, but the hiteft3D hit burst is drawn
+        // in the ORTHOGRAPHIC play field alongside the sprite bursts (order 6) — set this so it layers OVER the
+        // board/notes exactly like the 2D burst it replaces. Applied to every particle's renderer(s) as they spawn.
+        public int SortingOrder;
+        // MOTION SCALE (1 = faithful). AU_HIT rises ~20× its own size, so at an effScale big enough to SEE the spark it
+        // would shoot far off-screen. For the hiteft3D burst in the orthographic play field this damps only the
+        // per-particle velocity/gravity integration (not size/rotation/colour), so the burst can be scaled up for a
+        // visible footprint while its rise stays a small flick near the receptor. Combos/scene effects leave it at 1.
+        public float MotionScale = 1f;
+        // RGB TINT multiplied into every particle's additive colour (1,1,1 = faithful). The hiteft3D note-hit (hit.eft)
+        // stores WHITE note-arrow textures; the official 3D skin renders them GOLD/yellow via a play-time diffuse tint,
+        // so the host sets this to gold. Combos/scene effects leave it white (their real per-channel hue is used as-is).
+        public Color Tint = Color.white;
         static Texture2D _glow;
 
         sealed class P
@@ -623,6 +637,10 @@ namespace Sdo.Game
                 if (p.glowMat != null) ApplyFrameUv(p.glowMat, em.FrameUv[0]);
             }
             p.tr = go.transform;
+            // 2D play-field effects (hiteft3D) set SortingOrder so this burst draws OVER the board/notes like the sprite
+            // burst; covers every renderer under `go` (quad/mesh/trail + glow child + mot-rigid submeshes) in one pass.
+            if (SortingOrder != 0)
+                foreach (var r in go.GetComponentsInChildren<Renderer>(true)) r.sortingOrder = SortingOrder;
             go.SetActive(false);
             _pending.Add(p);
         }
@@ -833,9 +851,9 @@ namespace Sdo.Game
             if (!p.lockToParent)
             {
                 float scaleVel = em.Ch[0].Scale(t);
-                p.pos += p.vel * (scaleVel * p.velScale);
+                p.pos += p.vel * (scaleVel * p.velScale * MotionScale);
                 float ageLin = life0 - p.life;
-                p.pos.y -= ageLin * em.GravAccel + em.GravBase;
+                p.pos.y -= (ageLin * em.GravAccel + em.GravBase) * MotionScale;
             }
 
             if (DumpTraj && !p.invisible) DumpTrajectory(p, ageTicks, life0, t);
@@ -1082,7 +1100,7 @@ namespace Sdo.Game
             // default 1.0 = faithful. The glow comes from additive blend + alpha + the 15 overlapping rings, NOT a
             // fudge factor. The ring's rainbow hue-cycle (white→orange→green→magenta) is exactly these channels.
             float k = _bright / 255f;
-            var c = new Color(r * k, g * k, b * k, Mathf.Clamp01(a / 255f));
+            var c = new Color(r * k * Tint.r, g * k * Tint.g, b * k * Tint.b, Mathf.Clamp01(a / 255f));
             if (m.HasProperty("_TintColor")) m.SetColor("_TintColor", c); else m.color = c;
         }
 

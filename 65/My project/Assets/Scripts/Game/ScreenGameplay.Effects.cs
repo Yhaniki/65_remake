@@ -30,10 +30,61 @@ namespace Sdo.Game
         /// only for skins whose EFT folder ships them (2/5/8/9/10/PET) — the 11/12/13/14 family shares PUBLICEFT, stays put.</summary>
         internal void SetNoteType(int noteType)
         {
+            _hit3dMode = false; _note3dMode = false;                        // picking a 2D skin leaves the 3D hit + coloured-note mode
             int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
             SetNoteBoardSkin(NoteTypeBoardSuffix[t]);                        // falling notes + receptors + hold (live reload)
             LoadHitEffects(t);                                              // per-skin hit burst (sets _eftNoteType)
             LoadComboJudgeArt(t);                                          // combo digits + word + judgement words (shared or own folder)
+        }
+
+        /// <summary>F4 note-skin selector index → skin. Indices 0..N-1 are the 2D sprite skins (NoteTypeEftSuffix);
+        /// index N is the "3D" skin (hiteft3D), whose hit effect is the real AU_HIT.EFT 3DEFT via <see cref="SpawnHit3d"/>.</summary>
+        internal void SelectSkin(int idx)
+        {
+            if (idx >= NoteTypeEftSuffix.Length) EnableHit3dSkin();
+            else SetNoteType(idx);
+        }
+
+        /// <summary>Select the "3D" note skin (hiteft3D): (1) colour the falling notes by BEAT quantization — magenta
+        /// (on-beat) / blue (off-8th) / green (16ths) up-arrows from 3DNOTES\, rotated per lane; (2) fire the HIT.EFT
+        /// note-arrow burst at the receptor. Faithful to the official mode, which is a flat board + tilted camera (no
+        /// curved geometry), so the remake reproduces it by colouring the 2D note sprites rather than porting 3D meshes.</summary>
+        internal void EnableHit3dSkin()
+        {
+            _hit3dMode = true; _note3dMode = true;
+            LoadNote3dFamilies(); LoadBoard3dSkin();
+            LoadComboJudgeArt(0);   // the official 3D mode uses the SHARED standard combo/judge (PUBLICEFT) — set it
+                                    // EXPLICITLY (index 0), not inherited from whatever 2D skin was selected before.
+        }
+
+        // hiteft3D hit burst: play the selected 3D hit EFT (default HIT.EFT = the official note-ARROW flash) at the struck
+        // lane's receptor. Rendered in the SAME orthographic play field / layer as the sprite bursts (design-space world
+        // coords via SdoLayout), with SortingOrder over the board/notes and a GOLD Tint (the note-arrow texture is white;
+        // the official 3D hit is yellow via a play-time tint). follow=null → pinned at the receptor for its life.
+        private void SpawnHit3d(int lane)
+        {
+            if (lane < 0 || lane >= Keys) return;
+            string name = Hit3dEftNames[Mathf.Clamp(hit3dEftIdx, 0, Hit3dEftNames.Length - 1)];
+            var file = LoadNamedEft(name);
+            if (file == null) return;
+            var go = new GameObject("Hit3d" + lane);
+            go.transform.position = SdoLayout.ToWorld(LaneLeftX[lane] + LaneCx0, judgeLineY, hit3dZ);
+            var eff = go.AddComponent<EftEffect>();
+            eff.SortingOrder = 6;                                            // over the board (-30) / notes (5), like the 2D burst
+            eff.MotionScale = hit3dMotion;                                   // damp any rise so it stays near the receptor
+            eff.Tint = hit3dTint;                                            // GOLD — official 3D hit is yellow (tints the white note-arrow)
+            eff.Init(file, hit3dScale, null, ResolveEftTex, _addMat, 0, burstBright * hit3dBright, 0f, 0.6f, ResolveEftMesh);
+        }
+
+        // Load (and cache) any 3DEFT/&lt;name&gt;.EFT by name. Shares the SpawnNamedEft cache so a file is parsed once.
+        private static EftFile LoadNamedEft(string name)
+        {
+            if (_namedEftCache.TryGetValue(name, out var file)) return file;
+            var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
+            if (!File.Exists(path)) { Debug.LogWarning("[hit3d] missing " + path); return null; }
+            file = EftFile.Load(File.ReadAllBytes(path));
+            _namedEftCache[name] = file;
+            return file;
         }
 
         /// <summary>(Re)load the per-skin hit-burst frames. Family skins (2/5/11/12/13/14) store one non-directional set
@@ -195,6 +246,10 @@ namespace Sdo.Game
                     else spr = _recDownFrames[c][f];
                 }
                 _receptors[c].sprite = spr;
+                // 3D skin: the JUDGELINE receptor is one up-arrow rotated per lane (like the notes); reset to identity in 2D.
+                _receptors[c].transform.localRotation = _note3dMode
+                    ? Quaternion.Euler(0f, 0f, Note3dRot[c] + (note3dFlip180 ? 180f : 0f))
+                    : Quaternion.identity;
             }
 
             float age = Time.time - _judgeWordAt;
