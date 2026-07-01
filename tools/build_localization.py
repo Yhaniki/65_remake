@@ -63,6 +63,7 @@ STR = {
     "room.need_song":       ["Please select a song first", "請先選擇歌曲", "请先选择歌曲", "先に曲を選択してください"],
     "room.drop_up":         ["Up", "向上", "向上", "上"],
     "room.drop_down":       ["Down", "向下", "向下", "下"],
+    "room.drop_tilt":       ["Tilt", "傾斜", "倾斜", "斜め"],
 
     "result.clear":     ["Clear!", "完成!", "完成!", "クリア!"],
     "result.failed":    ["Failed", "失敗", "失败", "失敗"],

@@ -58,6 +58,18 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Sanitize_Allows_Tilt_And_Clamps_Above()
+        {
+            RoomConfig.defaultDropDirection = 2;   // 傾斜 is a valid third option now
+            RoomConfig.Sanitize();
+            Assert.AreEqual(2, RoomConfig.defaultDropDirection);
+
+            RoomConfig.defaultDropDirection = 3;   // out of range → clamps down to 傾斜(2)
+            RoomConfig.Sanitize();
+            Assert.AreEqual(2, RoomConfig.defaultDropDirection);
+        }
+
+        [Test]
         public void Serialize_Then_ParseInto_RoundTrips()
         {
             RoomConfig.speedSteps = new[] { 1.5f, 3.0f, 6.0f };

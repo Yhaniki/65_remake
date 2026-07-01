@@ -164,6 +164,10 @@
    "v": "Down"
   },
   {
+   "k": "room.drop_tilt",
+   "v": "Tilt"
+  },
+  {
    "k": "result.clear",
    "v": "Clear!"
   },

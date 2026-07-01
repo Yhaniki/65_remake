@@ -6,10 +6,12 @@ using UnityEngine.UI;
 namespace Sdo.UI.Util
 {
     /// <summary>
-    /// ROOMDLG combo dropdown. COLLAPSED = just the current value (white text, or a per-option value sprite)
-    /// centred in the baked-art slot, plus the orange ▲ arrow (MusicSelDlg196) — NO background box. Clicking opens
-    /// a GREEN list (ShopDlg strips) that expands UPWARD; picking updates the value and fires onPick(index);
-    /// outside-click closes. Only one list is open at a time (a full-screen overlay closes it on any outside click).
+    /// ROOMDLG-style combo dropdown. COLLAPSED = just the current value (white text, or a per-option value sprite)
+    /// centred in the baked-art slot, plus a caller-supplied arrow sprite — NO background box. Clicking opens a list
+    /// (caller-supplied row art) that expands UP by default, or DOWN when <c>expandDown</c> is set; picking updates the
+    /// value and fires onPick(index); outside-click closes. Only one list is open at a time (a full-screen overlay
+    /// closes it on any outside click). Callers: song-select (orange ▲ MusicSelDlg196, green ShopDlg rows, up) and the
+    /// room 掉落方式 dropdown (▼ ShopDlg13, green LabUnCheck/LabCheck rows, down).
     /// </summary>
     public sealed class SdoComboBox : MonoBehaviour
     {
@@ -21,10 +23,13 @@ namespace Sdo.UI.Util
         private Sprite _listN, _listH;    // green list-row art (normal / selected)
         private Color _textColor;         // collapsed value text (the baked-slot "default" value)
         private Color _listTextColor;     // expanded green-row text (inside the green box)
+        private bool _expandDown;         // list drops DOWN from the slot bottom (ROOM 掉落方式) instead of UP (song-select)
         private Action<int> _onPick;
         private TextMeshProUGUI _label;   // collapsed value text (text mode)
         private Image _labelImg;          // collapsed value sprite (sprite mode)
         private float _x, _y, _w, _h;     // value slot (xml top-left coords)
+        private float _listW;             // dropdown-list width; 0 = same as the value slot (_w)
+        private float _listX;             // dropdown-list LEFT edge; 0 = same as the value slot (_x)
         private GameObject _popup, _overlay;
 
         // The collapsed value + ▲ arrow sit 2px high vs the baked slot caption; nudge them up to line up.
@@ -40,7 +45,8 @@ namespace Sdo.UI.Util
             float slotX, float slotY, float slotW, float slotH, float arrowX,
             Sprite arrowSprite, Sprite listN, Sprite listH,
             string[] options, Sprite[] valueSprites, int start, Color textColor, Color listTextColor, Action<int> onPick,
-            bool listAsText = false)
+            bool listAsText = false, bool expandDown = false, float listWidth = 0f, float listX = 0f,
+            float valueOffsetY = 0f)
         {
             options = options ?? new string[0];
             start = Mathf.Clamp(start, 0, Mathf.Max(0, options.Length - 1));
@@ -55,27 +61,30 @@ namespace Sdo.UI.Util
             var combo = slot.gameObject.AddComponent<SdoComboBox>();
             combo._root = root; combo._options = options; combo._valueSprites = valueSprites; combo._index = start;
             combo._listN = listN; combo._listH = listH; combo._textColor = textColor; combo._listTextColor = listTextColor; combo._onPick = onPick;
-            combo._listAsText = listAsText;
+            combo._listAsText = listAsText; combo._expandDown = expandDown;
             combo._x = slotX; combo._y = slotY; combo._w = slotW; combo._h = slotH;
+            combo._listW = listWidth; combo._listX = listX;
 
             // value display, centred in the slot — nudged up 2px so it lines up with the baked-slot caption (the
             // popup geometry below still keys off the un-nudged _y, so only the visible value/arrow move).
+            // valueOffsetY nudges ONLY the value text up (positive = up) without moving the arrow.
             float valueY = slotY - ValueNudgeY;
+            float labelY = valueY - valueOffsetY;
             if (valueSprites != null)
             {
                 combo._labelImg = UIKit.AddImage(root, name + "_val", Color.white);
                 combo._labelImg.preserveAspect = true;
                 combo._labelImg.raycastTarget = false;
-                Place(combo._labelImg.rectTransform, slotX, valueY, slotW, slotH);
+                Place(combo._labelImg.rectTransform, slotX, labelY, slotW, slotH);
             }
             else
             {
                 combo._label = UIKit.AddText(root, name + "_val", "", 14, textColor, TextAlignmentOptions.Center);
-                Place(combo._label.rectTransform, slotX, valueY, slotW, slotH);
+                Place(combo._label.rectTransform, slotX, labelY, slotW, slotH);
             }
             combo.RefreshValue();
 
-            // orange ▲ arrow art (static visual; the slot is the click target) — nudged up with the value.
+            // orange ▲ arrow art (static visual; the slot is the click target) — keyed off the un-nudged valueY.
             if (arrowSprite != null)
             {
                 var arrow = UIKit.AddImage(root, name + "_arr", Color.white);
@@ -114,7 +123,10 @@ namespace Sdo.UI.Util
             if (n == 0) return;
             float rowH = _h;
             float panelH = rowH * n;
-            float top = _y - panelH;   // expand up: panel bottom edge == slot top edge
+            float listW = _listW > 0f ? _listW : _w;   // list can be narrower than the value slot (0 = match slot)
+            float listX = _listX != 0f ? _listX : _x;  // list left edge; 0 = align with the value slot left (_x)
+            // expand DOWN: panel top edge == slot bottom edge; expand UP: panel bottom edge == slot top edge.
+            float top = _expandDown ? _y + _h : _y - panelH;
 
             _overlay = UIKit.AddImage(_root, "ComboOverlay", new Color(0f, 0f, 0f, 0.001f), raycast: true).gameObject;
             UIKit.Stretch((RectTransform)_overlay.transform);
@@ -124,7 +136,7 @@ namespace Sdo.UI.Util
             ob.onClick.AddListener(Close);
 
             var panel = UIKit.NewRect(_root, "ComboPopup");
-            Place(panel, _x, top, _w, panelH);
+            Place(panel, listX, top, listW, panelH);
             panel.SetAsLastSibling();
             _popup = panel.gameObject;
 
@@ -135,7 +147,7 @@ namespace Sdo.UI.Util
                 row.sprite = (i == _index) ? _listH : _listN;   // green row (selected uses the hover art)
                 var rt = row.rectTransform;
                 rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0f, 1f);
-                rt.sizeDelta = new Vector2(_w, rowH); rt.anchoredPosition = new Vector2(0f, -rowH * i);
+                rt.sizeDelta = new Vector2(listW, rowH); rt.anchoredPosition = new Vector2(0f, -rowH * i);
 
                 if (!_listAsText && _valueSprites != null && i < _valueSprites.Length && _valueSprites[i] != null)
                 {
@@ -165,6 +177,9 @@ namespace Sdo.UI.Util
             Close();
             _onPick?.Invoke(i);
         }
+
+        /// <summary>Force-close the open list from outside (e.g. when the host panel collapses/slides away).</summary>
+        public void CloseList() => Close();
 
         private void Close()
         {

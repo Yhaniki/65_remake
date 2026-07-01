@@ -18,7 +18,7 @@ namespace Sdo.Settings
         public static float defaultSpeed = 2.5f;     // 預設速度（會對齊到 speedSteps 最近檔位）
         public static int defaultNoteType = -1;      // note 種類(hit-effect)：-1=隨機
         public static int defaultTeam = 3;           // 組隊：0=A,1=B,2=C,3=自由
-        public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下
+        public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
         public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式
 
         public const string FileName = "config.ini";
@@ -105,7 +105,7 @@ namespace Sdo.Settings
             if (defaultSpeed <= 0f) defaultSpeed = 2.5f;
             if (defaultNoteType < -1) defaultNoteType = -1;
             defaultTeam = Mathf.Clamp(defaultTeam, 0, 3);
-            defaultDropDirection = Mathf.Clamp(defaultDropDirection, 0, 1);
+            defaultDropDirection = Mathf.Clamp(defaultDropDirection, 0, 2);
             defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 1);
         }
 
@@ -124,7 +124,7 @@ namespace Sdo.Settings
             sb.Append("defaultNoteType=").Append(defaultNoteType).Append('\n');
             sb.Append("# 預設組隊：0=A 1=B 2=C 3=自由\n");
             sb.Append("defaultTeam=").Append(defaultTeam).Append('\n');
-            sb.Append("# 預設掉落方式：0=向上 1=向下\n");
+            sb.Append("# 預設掉落方式：0=向上 1=向下 2=傾斜\n");
             sb.Append("defaultDropDirection=").Append(defaultDropDirection).Append('\n');
             sb.Append("# 預設模式：0=自由模式 1=普通模式\n");
             sb.Append("defaultGameMode=").Append(defaultGameMode).Append('\n');

@@ -35,7 +35,7 @@ namespace Sdo.UI.Core
         public float Speed = 2.5f;       // 下落速度倍率（對齊 RoomDefaults.speedSteps 的某一檔）
         public int NoteType = -1;        // note 種類(hit-effect)：-1=隨機, >=0=指定
         public int Team = 3;             // 組隊：0=A,1=B,2=C,3=自由
-        public int DropDirection = 0;    // 掉落方式：0=向上,1=向下
+        public int DropDirection = 0;    // 掉落方式：0=向上,1=向下,2=傾斜
 
         // ROOMDLG room settings (single-player: stored locally; gameplay is always free/normal for now).
         public int GameMode = 0;      // 0=自由模式, 1=普通模式 (only these two enabled for now)
