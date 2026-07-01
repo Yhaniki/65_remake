@@ -27,6 +27,10 @@ namespace Sdo.UI
         /// scene behind its UI (e.g. RoomScreen → RoomScene3D) can mask the 3D layers off this camera while shown.</summary>
         public Camera UiCam => _uiCam;
 
+        /// <summary>The built front-end screen for <paramref name="id"/> (null if none). Lets one screen reach another —
+        /// e.g. 選歌 borrows the room's live 3D backdrop to lay (dimmed) behind its dialog.</summary>
+        public UIScreenBase GetScreen(ScreenId id) => _screens.TryGetValue(id, out var s) ? s : null;
+
         private AppContext _ctx;
         private readonly Dictionary<ScreenId, UIScreenBase> _screens = new Dictionary<ScreenId, UIScreenBase>();
         private SettingsModal _settings;

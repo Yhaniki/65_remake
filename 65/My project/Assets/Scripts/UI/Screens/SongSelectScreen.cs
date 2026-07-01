@@ -26,6 +26,7 @@ namespace Sdo.UI.Screens
         private const int NewBadgeCount = 5;          // 最大編號的 N 首歌掛 NEW 標籤
         private const float NewBadgeFps = 12f;        // NEWSIGN.an colour-cycle speed (14 frames ≈ 1.2s loop)
         private const float PreviewVolume = 0.55f;
+        private const float RoomDimBrightness = 0.8f; // 背景房間 render 調暗到 ≈80% 亮度墊在對話框後面(取代原本全黑)
 
         // ---- row layout (from MusicSelDlg.xml) ----
         // The 435-wide highlight strip (MusicSelDlg95/73) spans the whole row from x≈299. The NEW badge sits flush
@@ -116,6 +117,9 @@ namespace Sdo.UI.Screens
         private WindowAnim _anim;
         private bool _closing;
 
+        // dimmed live 3D-room backdrop shown behind the dialog (取代原本全黑) — bound to the room's RenderTexture in OnShow.
+        private RawImage _roomBackdrop;
+
         private static string L(string k) => LocalizationManager.Get(k);
 
         protected override void BuildUI()
@@ -138,6 +142,34 @@ namespace Sdo.UI.Screens
             BuildBottomBar();
             BuildActionButtons();
             WrapInWindow();
+            BuildRoomBackdrop();   // AFTER WrapInWindow so it stays on Root (not inside the spinning _window)
+        }
+
+        // The dimmed live 3D room shown behind the dialog (取代原本全黑) — the SAME RenderTexture RoomScreen shows as its
+        // backdrop. RoomScreen keeps its 3D scene alive across the 房間→選歌 切換 (see RoomScreen.OnHide), so this is a
+        // LIVE render, matching the official MusicSelDlg (a modal drawn over the still-rendering room). Built AFTER
+        // WrapInWindow so it parents to Root (not the spinning _window) and stays a steady full-screen backing; first
+        // sibling → drawn at the very back, under the 9-grid dialog art. The texture is bound in OnShow.
+        private void BuildRoomBackdrop()
+        {
+            var rt = UIKit.NewRect(Root, "RoomBackdrop");
+            UIKit.Stretch(rt);
+            rt.SetAsFirstSibling();
+            _roomBackdrop = rt.gameObject.AddComponent<RawImage>();
+            _roomBackdrop.color = new Color(RoomDimBrightness, RoomDimBrightness, RoomDimBrightness, 1f);
+            _roomBackdrop.raycastTarget = false;
+            _roomBackdrop.enabled = false;   // shown only once bound to the room render (else leave the app bg)
+        }
+
+        // Bind the backdrop to the room's live render (null → hide, leaving the app background). RoomScreen kept the scene
+        // alive for this transition, so BackdropTexture is valid here.
+        private void BindRoomBackdrop()
+        {
+            if (_roomBackdrop == null) return;
+            var room = FrontendApp.Instance != null ? FrontendApp.Instance.GetScreen(ScreenId.Room) as RoomScreen : null;
+            var tex = room != null ? room.BackdropTexture : null;
+            _roomBackdrop.texture = tex;
+            _roomBackdrop.enabled = tex != null;
         }
 
         // Re-parent everything built above under a single centred, pivot-0.5 window container so the open/close
@@ -161,6 +193,8 @@ namespace Sdo.UI.Screens
 
         public override void OnShow()
         {
+            BindRoomBackdrop();   // 房間 3D render(調暗)墊在對話框後面,取代原本全黑
+
             // open whoosh + fast spin-zoom in (Frameround.wav; ~0.2s)
             _closing = false;
             if (_windowCg != null) _windowCg.blocksRaycasts = true;

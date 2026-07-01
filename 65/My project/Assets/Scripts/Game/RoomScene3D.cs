@@ -41,6 +41,9 @@ namespace Sdo.Game
         public Vector2 cameraBoundsMax = new Vector2(100f, 0f);       // anchor max (worldX, worldZ)
         public float walkSpeed = RoomMovement.WalkSpeed;         // free-walk speed mult (3.0); no run in the lobby
         public bool useMask = true;                              // sample MASK.MSK for furniture collision (else box clamp)
+        // Arrow-key walking gate. RoomScreen clears this while the 選歌(MusicSelDlg) modal is open so the room keeps
+        // rendering (dimmed) behind the dialog but the avatar can't be walked around by stray arrow presses.
+        public bool InputEnabled = true;
 
         private RoomMask _mask;
         private SdoAvatar _avatar;
@@ -253,7 +256,7 @@ namespace Sdo.Game
         {
             if (!_ready || _avatar == null) return;
 
-            int dir = CurrentDir();
+            int dir = InputEnabled ? CurrentDir() : -1;   // 選歌 modal 開著時凍結走動(房間仍在後面 render)
             if (dir >= 0)
             {
                 float dtMs = Time.deltaTime * 1000f;
