@@ -28,6 +28,19 @@ namespace Sdo.Game
             GUILayout.Label("[F4 hide]   Debug");
             _dbgTab = GUILayout.Toolbar(_dbgTab, DbgTabs);
 
+            // ── GLOBAL 遊戲內時間流速 (slow-mo / 暫停) — 每個分頁都在，方便觀察音符/特效。也可用鍵盤 [ ] \ = ──
+            // (縮放 Time.timeScale：音符/舞者/特效全部一起變慢；音樂 AudioSource 不隨之變速，是純觀察工具。)
+            {
+                bool paused = Time.timeScale <= 0f;
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"時間流速: {(paused ? "⏸ 暫停" : _timeScale.ToString("0.00") + "×")}", GUILayout.Width(110));
+                if (GUILayout.Button("1×", GUILayout.Width(32))) SetTimeScale(1f);
+                if (GUILayout.Button(paused ? "▶" : "❚❚", GUILayout.Width(32))) { if (paused) SetTimeScale(_timeScale); else Time.timeScale = 0f; }
+                GUILayout.EndHorizontal();
+                float ts = GUILayout.HorizontalSlider(_timeScale, 0.05f, 2f);
+                if (Mathf.Abs(ts - _timeScale) > 1e-3f) SetTimeScale(ts);
+            }
+
             // slow-mo time control is mode-level (observation) — keep it reachable on every tab while observing.
             if (observeBurstMode)
             {
@@ -139,6 +152,8 @@ namespace Sdo.Game
             {
                 GUILayout.Label($"Opening intro: {openingIntroSec:F1}s {(_trackVisible ? "(shown)" : "(holding — camera only)")}");
                 openingIntroSec = GUILayout.HorizontalSlider(openingIntroSec, 0f, 15f);   // board+HP+READY appear after this; tunable live during the hold
+                GUILayout.Label($"相機開場切掉前: {camIntroSkipSec:F1}s (從第N秒的frame開始放；重進歌套用)");
+                camIntroSkipSec = GUILayout.HorizontalSlider(camIntroSkipSec, 0f, 10f);
                 GUILayout.Label($"Board opacity: {boardAlpha:F2}× (1=native, ~1.4=official, ~2.6=opaque)");
                 boardAlpha = GUILayout.HorizontalSlider(boardAlpha, 0f, 2.6f);
                 GUILayout.Label($"Board X nudge: {boardX:F0}px");
@@ -164,10 +179,14 @@ namespace Sdo.Game
                     for (int l = 0; l < Keys; l++) { if (_hit3dMode) SpawnHit3d(l); else if (_burstFrames != null) SpawnBurst(l, false); }
                 if (_hit3dMode)   // 3D-hit tuning (only when the 3D skin is active)
                 {
+                    GUILayout.Label($"★ 整體等比例大小 master: {note3dMaster:F2}× (note+打擊區+long+閃光 一起縮放)");
+                    { float m = GUILayout.HorizontalSlider(note3dMaster, 0.5f, 2f); if (Mathf.Abs(m - note3dMaster) > 1e-3f) { note3dMaster = m; PlaceReceptors(receptor3dScale); } }
                     note3dMesh = GUILayout.Toggle(note3dMesh, note3dMesh ? " ══ note = 真 3D mesh（貼齊2D位置）: ON ══" : " ══ note = 2D 彩色精靈: OFF ══");
                     if (note3dMesh && _highway != null && _highway.Ready)
                     {
                         var hw = _highway;
+                        GUILayout.Label($"3D note 大小: {hw.noteSize:F2}× (太大就調小)");
+                        hw.noteSize = GUILayout.HorizontalSlider(hw.noteSize, 0.2f, 1.5f);
                         GUILayout.Label($"3D note 輝光速度 fps: {hw.noteFrameFps:F0} (0=不閃, 太快就調小)");
                         hw.noteFrameFps = GUILayout.HorizontalSlider(hw.noteFrameFps, 0f, 30f);
                         GUILayout.BeginHorizontal();
@@ -186,6 +205,15 @@ namespace Sdo.Game
                     note3dFlip180 = GUILayout.Toggle(note3dFlip180, note3dFlip180 ? " 音符箭頭上下翻轉: ON" : " 音符箭頭上下翻轉: OFF（若箭頭方向相反就打開）");
                     GUILayout.Label($"打擊區大小 receptor: {receptor3dScale:F2}× (太大就調小)");
                     { float rs = GUILayout.HorizontalSlider(receptor3dScale, 0.4f, 1.2f); if (Mathf.Abs(rs - receptor3dScale) > 1e-3f) { receptor3dScale = rs; PlaceReceptors(receptor3dScale); } }
+                    GUILayout.Label($"打擊區按下放大: {receptorPressAmt:F2} (官方 JUDGELINE_2 會 pop)");
+                    receptorPressAmt = GUILayout.HorizontalSlider(receptorPressAmt, 0f, 0.6f);
+                    GUILayout.Label($"長按寬度 holdWidth: {note3dHoldWidth:F2}× (跟 note 大小配)");
+                    note3dHoldWidth = GUILayout.HorizontalSlider(note3dHoldWidth, 0.2f, 1.2f);
+                    GUILayout.Label($"長按頭部間隙 headGap: {note3dHoldHeadGap:F0}px (long 起點在 note 下方多少)");
+                    note3dHoldHeadGap = GUILayout.HorizontalSlider(note3dHoldHeadGap, -20f, 80f);
+                    GUILayout.Label($"尾蓋微調 capOffset: {note3dCapOffset:F0}px (跟 long 尾端銜接)");
+                    note3dCapOffset = GUILayout.HorizontalSlider(note3dCapOffset, -60f, 60f);
+                    GUILayout.Label("long 貼圖: 官方 LONG.MSH 映射 (U .2243-.7683, V 錨定尾端, 不透明)");
                     GUILayout.Label($"3D hit 特效: {Hit3dEftNames[hit3dEftIdx]}  (官方=HIT 箭頭)");
                     GUILayout.BeginHorizontal();
                     if (GUILayout.Button("◄ eft")) hit3dEftIdx = (hit3dEftIdx + Hit3dEftNames.Length - 1) % Hit3dEftNames.Length;
@@ -193,7 +221,8 @@ namespace Sdo.Game
                     GUILayout.EndHorizontal();
                     GUILayout.Label("顏色 tint:");
                     GUILayout.BeginHorizontal();
-                    if (GUILayout.Button("黃/金")) hit3dTint = new Color(1f, 0.80f, 0.25f);
+                    if (GUILayout.Button("黃")) hit3dTint = new Color(1f, 0.95f, 0.55f);
+                    if (GUILayout.Button("金")) hit3dTint = new Color(1f, 0.80f, 0.25f);
                     if (GUILayout.Button("白")) hit3dTint = Color.white;
                     if (GUILayout.Button("藍")) hit3dTint = new Color(0.4f, 0.7f, 1f);
                     if (GUILayout.Button("紫")) hit3dTint = new Color(0.8f, 0.4f, 1f);

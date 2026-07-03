@@ -20,6 +20,9 @@ namespace Sdo.UI.Util
         public const string Click = "SE_0001";        // every button press
         public const string FrameRound = "Frameround"; // dialog window open / close
         public const string Menufloat = "Menufloat";   // pointer slides onto a menu item / dropdown row (hover)
+        public const string ButtonFloat = "Buttonfloat"; // pointer slides onto a room button (滑過)
+        public const string WindowSlide = "Interfaceout"; // room UI collapse/expand slide (uihide/uidisplay 按下)
+        public const string GameStart = "Start";       // 開始 pressed -> fade to the stage
 
         private static UiSfx _inst;
         private AudioSource _src;
@@ -55,6 +58,13 @@ namespace Sdo.UI.Util
         {
             if (b == null) return;
             b.onClick.AddListener(() => Play(Click));
+        }
+
+        /// <summary>Wire a one-shot SE (by base name) onto a Button's press. No-op if the button or name is missing.</summary>
+        public static void AttachPress(Button b, string sound)
+        {
+            if (b == null || string.IsNullOrEmpty(sound)) return;
+            b.onClick.AddListener(() => Play(sound));
         }
 
         private IEnumerator PlayCo(string name)

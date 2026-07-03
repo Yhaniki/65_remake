@@ -62,6 +62,9 @@ namespace Sdo.Settings
             s ??= new GameSettings();
             s.display ??= new DisplaySettings();
             s.audio ??= new VolumeSettings();
+            s.keys ??= new KeyBindSettings();
+            s.keys.lane4 = KeyBindSettings.SanitizeNames(s.keys.lane4, KeyBindSettings.DefaultPrimary);
+            s.keys.lane4aux = KeyBindSettings.SanitizeNames(s.keys.lane4aux, KeyBindSettings.DefaultAux);
 
             var c = ResolutionPreset.Clamp(s.display.width, s.display.height);
             s.display.width = c.Width;

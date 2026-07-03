@@ -32,20 +32,37 @@ namespace Sdo.Game
         /// SAME typeface — the head-name font must match on both sides.</summary>
         public const string BundledFontResource = "Fonts/SourceHanSansTC-Regular";
 
-        /// <summary>Lazily load the bundled SourceHanSans font (cached) so the in-game TextMesh labels use the exact
-        /// same typeface as the room UI. The OTF is imported Dynamic (forceTextureCase Dynamic + includeFontData), so
-        /// legacy TextMesh rasterises any CJK glyph on demand from it. Falls back to an OS dynamic font only if the
-        /// bundled resource is missing.</summary>
+        /// <summary>Lazily resolve the shared CJK font (cached). PRIMARY = OS SimSun (宋体) — the face the official
+        /// exe hardcodes for all text (FontD3DWin.cpp, GDI CreateFontA "SimSun"); loaded from the player's Windows at
+        /// runtime exactly like the official client (simsun.ttc is not redistributable, so never bundled). Legacy
+        /// TextMesh rasterises OS dynamic fonts on demand, so no tofu probe is needed here (unlike TMP/UIFont).
+        /// FALLBACK = the bundled SourceHanSans OTF (imported Dynamic), then any OS CJK face.</summary>
         public static Font CjkFont()
         {
             if (_cjk != null) return _cjk;
-            _cjk = Resources.Load<Font>(BundledFontResource);   // 跟房間同一個 SourceHanSans → 兩邊字型一致
+            if (OsHasSimSun())
+                _cjk = Font.CreateDynamicFontFromOSFont(new[] { "SimSun", "NSimSun" }, 40);
+            if (_cjk == null)
+                _cjk = Resources.Load<Font>(BundledFontResource);   // 跟房間同一個後備 SourceHanSans → 兩邊字型一致
             if (_cjk == null)
                 _cjk = Font.CreateDynamicFontFromOSFont(
                     new[] { "Microsoft JhengHei", "微軟正黑體", "Microsoft YaHei", "SimHei", "Arial Unicode MS", "PMingLiU" }, 40);
             if (_cjk == null) _cjk = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             Debug.Log("[TextStyles] font: " + (_cjk != null ? _cjk.name : "NULL"));
             return _cjk;
+        }
+
+        /// <summary>CreateDynamicFontFromOSFont silently substitutes a default face when the family is missing,
+        /// so gate on the OS-installed list instead of trusting the returned Font.</summary>
+        private static bool OsHasSimSun()
+        {
+            try
+            {
+                foreach (var n in Font.GetOSInstalledFontNames())
+                    if (n == "SimSun" || n == "NSimSun" || n == "宋体") return true;
+            }
+            catch { }
+            return false;
         }
 
         private static Vector2[] Outline8(float d) => new[]

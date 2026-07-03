@@ -170,6 +170,18 @@ STR = {
     "display.fullscreen": ["Fullscreen", "全螢幕", "全屏", "フルスクリーン"],
     "display.borderless": ["Borderless", "無邊框全螢幕", "无边框全屏", "ボーダーレス"],
 
+    # OPTION dialog (faithful OPTIONDLG rebuild; official pink frame + dynamic text)
+    "option.title":        ["Options", "選項", "选项", "オプション"],
+    "option.tab.video":    ["Display", "畫面", "画面", "画面"],
+    "option.tab.audio":    ["Audio", "音效", "音效", "オーディオ"],
+    "option.tab.keyboard": ["Keyboard", "鍵盤", "键盘", "キーボード"],
+    "option.key.primary":  ["Primary Keys", "主鍵位", "主键位", "メインキー"],
+    "option.key.aux":      ["Auxiliary", "輔助鍵位", "辅助键位", "補助キー"],
+    "option.key.prompt":   ["Press any key…", "請按任意鍵…", "请按任意键…", "キーを押してください…"],
+    "option.save":         ["Save", "儲存", "保存", "保存"],
+    "option.exit":         ["Exit", "離開", "退出", "終了"],
+    "option.default":      ["Default", "預設", "默认", "デフォルト"],
+
     "join.full":     ["This room is full", "這個房間已滿了", "这个房间已满了", "このルームは満員です"],
     "join.ingame":   ["This room is in game", "這個房間正在遊戲中", "这个房间正在游戏中", "このルームはゲーム中です"],
     "join.notfound": ["Room not found", "房間不存在", "房间不存在", "ルームが見つかりません"],

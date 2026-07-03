@@ -37,6 +37,7 @@ namespace Sdo.Game
     public sealed class EftEmitter
     {
         public int Flags, Emit, Life0, SpawnDelay, StartDelay, Blend;
+        public bool Loop;                  // engine: NEGATIVE life0 = loop flag 0x80000 — this emitter re-inits forever (HIT_LONG's sustain)
         public int LifeJit;                // word[0x1ee]: per-particle life jitter (engine: life += rand%j − rand%j)
         public int PosSpreadX, PosSpreadZ;
         public Vector3 Vel, Pos, BaseSize;
@@ -155,7 +156,7 @@ namespace Sdo.Game
                     TurbClamp = new Vector3(Wf(0x204), Wf(0x205), Wf(0x206)),
                     SizeJit = new Vector3(Wf(0x1f8), Wf(0x1f9), Wf(0x1fa)),
                 };
-                if (em.Life0 < 0) em.Life0 = 1 - em.Life0;        // neg-life → 1−v
+                if (em.Life0 < 0) { em.Life0 = 1 - em.Life0; em.Loop = true; }   // neg-life → 1−v AND set the loop flag (engine |0x80000)
                 em.Slot = slot;
                 em.MeshIdx = W(6);              // 3D-mesh attach index (xmesh\list.txt); 0 = none
                 em.AttachMode = W(0x37);        // ride-the-parent mode; 0 = independent, 1 = parent's full matrix

@@ -16,7 +16,7 @@ namespace Sdo.Settings
         // ---- 當下生效的值（欄位＝INI 的 key）----
         public static float[] speedSteps = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f };
         public static float defaultSpeed = 2.5f;     // 預設速度（會對齊到 speedSteps 最近檔位）
-        public static int defaultNoteType = -1;      // note 種類(hit-effect)：-1=隨機
+        public static int defaultNoteType = 6;       // note 種類(hit-effect)：-1=隨機；6 = 自訂「EFT_3」皮(EFT_7 JZ + NOTEIMAGE_5 + EFT_5 combo)為預設
         public static int defaultTeam = 3;           // 組隊：0=A,1=B,2=C,3=自由
         public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
         public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式

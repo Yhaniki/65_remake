@@ -4,10 +4,12 @@ using UnityEngine;
 namespace Sdo.UI.Util
 {
     /// <summary>
-    /// Provides a CJK-capable TMP font. PRIMARY = the bundled Source Han Sans (思源黑體, SIL OFL) at
-    /// Assets/Resources/Fonts — an IMPORTED font file has source data TMP can rasterize into a DYNAMIC atlas, so
-    /// 繁中/漢字/假名/Latin all render (cross-platform). FALLBACK = a dynamic font from an installed OS font
-    /// (best-effort; TMP often cannot rasterize OS dynamic fonts, which is why those alone showed 方塊字).
+    /// Provides a CJK-capable TMP font. PRIMARY = OS-installed SimSun (宋体) — the face the OFFICIAL client
+    /// hardcodes for every string (FontD3DWin.cpp builds all text via GDI CreateFontA "SimSun"; same string in the
+    /// TW online client). We load it from the player's Windows at runtime like the official exe did — simsun.ttc
+    /// ships with all Windows editions but is NOT redistributable, so it must never be bundled. TMP sometimes fails
+    /// to rasterize an OS face (方塊字), so the asset is probed with real CJK glyphs before being accepted.
+    /// FALLBACK = the bundled Source Han Sans (思源黑體, SIL OFL) at Assets/Resources/Fonts (cross-platform safe).
     /// </summary>
     public static class UIFont
     {
@@ -17,31 +19,80 @@ namespace Sdo.UI.Util
         // so the room (TMP) and gameplay (legacy TextMesh) share one typeface. Single source = TextStyles.
         public const string BundledFontResource = Sdo.Game.TextStyles.BundledFontResource;
 
+        // Probe glyphs proving an OS-font asset actually rasterizes (簡/繁/假名/Latin) instead of tofu.
+        private const string ProbeChars = "宋体體測试テスAa1";
+
         public static TMP_FontAsset Cjk
         {
             get
             {
                 if (_tried) return _cjk;
                 _tried = true;
-                // Primary: bundled Source Han Sans (imported → TMP can rasterize a dynamic CJK atlas from it).
-                var bundled = Resources.Load<Font>(BundledFontResource);
-                if (bundled != null)
+                var bundled = BuildBundled();
+                // Primary: OS SimSun, the official client's hardcoded face.
+                var simsun = BuildOs(new[] { "SimSun", "NSimSun", "宋体" });
+                if (simsun != null)
                 {
-                    try { _cjk = TMP_FontAsset.CreateFontAsset(bundled); } catch { _cjk = null; }
-                    if (_cjk != null) { _cjk.name = "SourceHanSansTC"; return _cjk; }
+                    simsun.name = "OS_SimSun";
+                    // Rare glyphs outside SimSun's GBK coverage fall through to the bundled face.
+                    if (bundled != null) AddFallback(simsun, bundled);
+                    _cjk = simsun;
+                    return _cjk;
                 }
-                // Fallback: build from an installed OS font (繁中 face; covers SC + most kanji + Latin).
-                _cjk = Build(new[] { "Microsoft JhengHei", "Microsoft YaHei", "PMingLiU", "SimHei", "Arial" });
+                // Fallback: bundled Source Han Sans (imported → TMP can rasterize a dynamic CJK atlas from it).
+                if (bundled != null) { _cjk = bundled; return _cjk; }
+                // Last resort: any installed OS face that survives the probe.
+                _cjk = BuildOs(new[] { "Microsoft JhengHei", "Microsoft YaHei", "PMingLiU", "SimHei", "Arial" });
                 if (_cjk == null) return null;
                 _cjk.name = "OS_CJK_Primary";
                 // Japanese kana/glyph fallback.
-                var jp = Build(new[] { "Yu Gothic", "Meiryo", "MS Gothic" });
-                if (jp != null) { jp.name = "OS_JP_Fallback"; _cjk.fallbackFontAssetTable.Add(jp); }
+                var jp = BuildOs(new[] { "Yu Gothic", "Meiryo", "MS Gothic" });
+                if (jp != null) { jp.name = "OS_JP_Fallback"; AddFallback(_cjk, jp); }
                 // Simplified Chinese fallback.
-                var sc = Build(new[] { "Microsoft YaHei", "SimSun" });
-                if (sc != null) { sc.name = "OS_SC_Fallback"; _cjk.fallbackFontAssetTable.Add(sc); }
+                var sc = BuildOs(new[] { "Microsoft YaHei", "SimSun" });
+                if (sc != null) { sc.name = "OS_SC_Fallback"; AddFallback(_cjk, sc); }
                 return _cjk;
             }
+        }
+
+        // fallbackFontAssetTable is NULL on runtime-created assets (TMP only allocates it for serialized ones);
+        // .Add() without this guard NREs and aborts whatever screen is mid-build.
+        private static void AddFallback(TMP_FontAsset primary, TMP_FontAsset fallback)
+        {
+            if (primary.fallbackFontAssetTable == null)
+                primary.fallbackFontAssetTable = new System.Collections.Generic.List<TMP_FontAsset>();
+            primary.fallbackFontAssetTable.Add(fallback);
+        }
+
+        private static TMP_FontAsset BuildBundled()
+        {
+            var bundled = Resources.Load<Font>(BundledFontResource);
+            if (bundled == null) return null;
+            TMP_FontAsset fa = null;
+            try { fa = TMP_FontAsset.CreateFontAsset(bundled); } catch { }
+            if (fa != null) fa.name = "SourceHanSansTC";
+            return fa;
+        }
+
+        /// <summary>First face (in order) that both builds a TMP asset AND rasterizes the probe glyphs.</summary>
+        private static TMP_FontAsset BuildOs(string[] names)
+        {
+            foreach (var name in names)
+            {
+                // Family-name path first (resolves through the OS font table, null if absent) …
+                TMP_FontAsset fa = null;
+                try { fa = TMP_FontAsset.CreateFontAsset(name, "Regular"); } catch { }
+                if (fa != null && Probe(fa)) return fa;
+                // … then the legacy dynamic-Font path.
+                fa = Build(new[] { name });
+                if (fa != null && Probe(fa)) return fa;
+            }
+            return null;
+        }
+
+        private static bool Probe(TMP_FontAsset fa)
+        {
+            try { return fa.TryAddCharacters(ProbeChars); } catch { return false; }
         }
 
         private static TMP_FontAsset Build(string[] names)

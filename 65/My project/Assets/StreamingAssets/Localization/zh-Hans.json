@@ -528,6 +528,46 @@
    "v": "无边框全屏"
   },
   {
+   "k": "option.title",
+   "v": "选项"
+  },
+  {
+   "k": "option.tab.video",
+   "v": "画面"
+  },
+  {
+   "k": "option.tab.audio",
+   "v": "音效"
+  },
+  {
+   "k": "option.tab.keyboard",
+   "v": "键盘"
+  },
+  {
+   "k": "option.key.primary",
+   "v": "主键位"
+  },
+  {
+   "k": "option.key.aux",
+   "v": "辅助键位"
+  },
+  {
+   "k": "option.key.prompt",
+   "v": "请按任意键…"
+  },
+  {
+   "k": "option.save",
+   "v": "保存"
+  },
+  {
+   "k": "option.exit",
+   "v": "退出"
+  },
+  {
+   "k": "option.default",
+   "v": "默认"
+  },
+  {
    "k": "join.full",
    "v": "这个房间已满了"
   },

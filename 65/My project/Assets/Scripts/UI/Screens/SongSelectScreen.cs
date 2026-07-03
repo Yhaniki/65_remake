@@ -26,7 +26,7 @@ namespace Sdo.UI.Screens
         private const int NewBadgeCount = 5;          // 最大編號的 N 首歌掛 NEW 標籤
         private const float NewBadgeFps = 12f;        // NEWSIGN.an colour-cycle speed (14 frames ≈ 1.2s loop)
         private const float PreviewVolume = 0.55f;
-        private const float RoomDimBrightness = 0.8f; // 背景房間 render 調暗到 ≈80% 亮度墊在對話框後面(取代原本全黑)
+        private const float RoomDimBrightness = 0.8f; // 底下房間調暗到 ≈80% 亮度(黑幕 alpha = 1−此值);取代原本全黑
 
         // ---- row layout (from MusicSelDlg.xml) ----
         // The 435-wide highlight strip (MusicSelDlg95/73) spans the whole row from x≈299. The NEW badge sits flush
@@ -42,8 +42,8 @@ namespace Sdo.UI.Screens
         private const float NewAnimDX = 18f, NewAnimDY = -1f;
 
         private static readonly Color ColComboList = FromArgb(0xff018194); // green-box dropdown list text (RGB 1,129,148)
-        private static readonly Color ColRow = FromArgb(0xffc94bb3);    // song name / level / time — unified (issue #9)
-        private static readonly Color ColInfo = FromArgb(0xff82e6e2);   // left info block (演唱者/BPM/音符數)
+        private static readonly Color ColRow = FromArgb(0xffc43e94);    // song name / level / time — 亮玫瑰洋紅(藍降,較原 c94bb3 飽和、比 a8318f 亮) + bold in AddRowText
+        private static readonly Color ColInfo = FromArgb(0xff7cddd8);   // left info block (演唱者/BPM/音符數) — 貼近烘死標籤的亮青(僅比原 82e6e2 微深) + bold in MakeInfo
         private static readonly Color ColPage = FromArgb(0xff842200);   // page counter
         private static readonly Color ColCaption = FromArgb(0xffffffff); // scene caption
 
@@ -117,8 +117,9 @@ namespace Sdo.UI.Screens
         private WindowAnim _anim;
         private bool _closing;
 
-        // dimmed live 3D-room backdrop shown behind the dialog (取代原本全黑) — bound to the room's RenderTexture in OnShow.
-        private RawImage _roomBackdrop;
+        // 半透明黑幕：選歌是疊在房間上的 overlay(房間 3D + 整組 UI 都留在底下不隱藏)，這張黑幕把整個房間調暗到
+        // ≈RoomDimBrightness 亮度，並吃掉點擊(raycast)避免點到底下的房間按鈕。full-screen，墊在對話框後面。
+        private Image _dimScrim;
 
         private static string L(string k) => LocalizationManager.Get(k);
 
@@ -142,34 +143,18 @@ namespace Sdo.UI.Screens
             BuildBottomBar();
             BuildActionButtons();
             WrapInWindow();
-            BuildRoomBackdrop();   // AFTER WrapInWindow so it stays on Root (not inside the spinning _window)
+            BuildDimScrim();   // AFTER WrapInWindow so it stays on Root (not inside the spinning _window)
         }
 
-        // The dimmed live 3D room shown behind the dialog (取代原本全黑) — the SAME RenderTexture RoomScreen shows as its
-        // backdrop. RoomScreen keeps its 3D scene alive across the 房間→選歌 切換 (see RoomScreen.OnHide), so this is a
-        // LIVE render, matching the official MusicSelDlg (a modal drawn over the still-rendering room). Built AFTER
-        // WrapInWindow so it parents to Root (not the spinning _window) and stays a steady full-screen backing; first
-        // sibling → drawn at the very back, under the 9-grid dialog art. The texture is bound in OnShow.
-        private void BuildRoomBackdrop()
+        // The dim scrim behind the dialog (取代原本全黑). 選歌不再是取代房間的獨立畫面，而是「疊在房間上」的 overlay：
+        // 房間(3D 場景 + 整組 UI 按鈕)全部留在底下不隱藏，這張全螢幕半透明黑幕把整個房間調暗到 ≈RoomDimBrightness 亮度
+        // (官方 MusicSelDlg 也是房間上的 modal)，同時 raycastTarget=true 吃掉點擊避免點到底下的房間按鈕。建在 WrapInWindow
+        // 之後 → 留在 Root(不進會旋轉縮放的 _window)當穩定的全螢幕背景；設為第一個 sibling → 畫在最底層(房間之上、對話框之下)。
+        private void BuildDimScrim()
         {
-            var rt = UIKit.NewRect(Root, "RoomBackdrop");
-            UIKit.Stretch(rt);
-            rt.SetAsFirstSibling();
-            _roomBackdrop = rt.gameObject.AddComponent<RawImage>();
-            _roomBackdrop.color = new Color(RoomDimBrightness, RoomDimBrightness, RoomDimBrightness, 1f);
-            _roomBackdrop.raycastTarget = false;
-            _roomBackdrop.enabled = false;   // shown only once bound to the room render (else leave the app bg)
-        }
-
-        // Bind the backdrop to the room's live render (null → hide, leaving the app background). RoomScreen kept the scene
-        // alive for this transition, so BackdropTexture is valid here.
-        private void BindRoomBackdrop()
-        {
-            if (_roomBackdrop == null) return;
-            var room = FrontendApp.Instance != null ? FrontendApp.Instance.GetScreen(ScreenId.Room) as RoomScreen : null;
-            var tex = room != null ? room.BackdropTexture : null;
-            _roomBackdrop.texture = tex;
-            _roomBackdrop.enabled = tex != null;
+            _dimScrim = UIKit.AddImage(Root, "DimScrim", new Color(0f, 0f, 0f, 1f - RoomDimBrightness), raycast: true);
+            UIKit.Stretch(_dimScrim.rectTransform);
+            _dimScrim.rectTransform.SetAsFirstSibling();
         }
 
         // Re-parent everything built above under a single centred, pivot-0.5 window container so the open/close
@@ -193,8 +178,6 @@ namespace Sdo.UI.Screens
 
         public override void OnShow()
         {
-            BindRoomBackdrop();   // 房間 3D render(調暗)墊在對話框後面,取代原本全黑
-
             // open whoosh + fast spin-zoom in (Frameround.wav; ~0.2s)
             _closing = false;
             if (_windowCg != null) _windowCg.blocksRaycasts = true;
@@ -429,7 +412,7 @@ namespace Sdo.UI.Screens
                 var nbg = UIKit.AddImage(Root, "row" + i + "newbg", Color.white);
                 UIKit.ApplySprite(nbg, newBgSprite);   // sizes to 63×25, hides if missing
                 float gw = newBgSprite != null ? newBgSprite.rect.width : BadgeW, gh = newBgSprite != null ? newBgSprite.rect.height : BadgeH;
-                Place(nbg.rectTransform, BadgeX, top - 2, gw, gh);
+                Place(nbg.rectTransform, BadgeX - 3f, top - 2, gw, gh);   // NEW 標籤再往左 3px
                 nbg.gameObject.SetActive(false);
                 _rowNewBg[i] = nbg;
 
@@ -456,6 +439,7 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI AddRowText(string name, float x, float y, float w, Color col, TextAlignmentOptions align)
         {
             var t = UIKit.AddText(Root, name, "", 14, col, align, false);
+            t.fontStyle = FontStyles.Bold;   // 官方歌單字偏粗 → 加粗改善「太細」
             Place(t.rectTransform, x, y, w, RowH);
             return t;
         }
@@ -512,9 +496,10 @@ namespace Sdo.UI.Screens
             // y≈315 / y≈333 and the baked colon ends ~x104 — so we draw VALUES ONLY, left-aligned just past it.
             // The 音符數 label is NOT baked, so we add it from lbl_notes.an ("音符数：") as the 3rd row (same teal
             // colour / glyph size as the baked labels), with its value past it too.
-            _infoArtist = MakeInfo("info_artist", 110, 307);   // value after baked "演唱者："
-            _infoBpm = MakeInfo("info_bpm", 110, 325);         // value after baked "BPM："
-            _infoNotes = MakeInfo("info_notes", 110, 343);     // value after the lbl_notes label below
+            // 值往下 3px（青字視覺基線比烘死標籤偏高 → 下移對齊）：307→310 / 325→328 / 343→346
+            _infoArtist = MakeInfo("info_artist", 110, 310);   // value after baked "演唱者："
+            _infoBpm = MakeInfo("info_bpm", 110, 328);         // value after baked "BPM："
+            _infoNotes = MakeInfo("info_notes", 110, 346);     // value after the lbl_notes label below
 
             var notesLbl = UIKit.AddImage(Root, "info_notes_lbl", Color.white);
             notesLbl.sprite = RoomDlgArt.An("lbl_notes.an");
@@ -526,6 +511,7 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI MakeInfo(string name, float x, float y)
         {
             var t = UIKit.AddText(Root, name, "", 13, ColInfo, TextAlignmentOptions.Left);
+            t.fontStyle = FontStyles.Bold;   // 與歌單同步加粗
             Place(t.rectTransform, x, y, 160, 16);
             return t;
         }

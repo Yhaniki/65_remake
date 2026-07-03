@@ -19,7 +19,8 @@ namespace Sdo.Game
     {
         public float noteFrameFps = 6f;    // glow-frame cycle (0 = freeze; exe cycles per render-frame = a fast flicker)
         public float flattenX = 90f;       // rotate the XZ arrow mesh flat into the screen (±90); F4 toggle if it faces away
-        public float baseRotZ = 0f;        // global spin added to every arrow (0/90/180/270) to fix the base direction
+        public float baseRotZ = 180f;      // global spin added to every arrow (0/90/180/270) to fix the base direction (180 = un-reverse)
+        public float noteSize = 0.73f;     // note mesh size × the 2D lane width (the mesh fills its bounds, unlike the padded sprite)
         public bool visible;
 
         // note mesh native half-width (X ±10.98) → the item Size (design px) maps to scale = Size / (2*meshHalfW).
@@ -46,7 +47,8 @@ namespace Sdo.Game
         {
             if (_built) return;
             _layer = layer;
-            _addTemplate = new Material(Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Sprites/Default"));
+            // SOLID cut-out (not additive): the official 3D notes are opaque objects that occlude the long, no glow show-through.
+            _addTemplate = new Material(Shader.Find("Sdo/NoteCutout") ?? Shader.Find("Sprites/Default"));
             if (!LoadAssets()) { Debug.LogWarning("[note3d] mesh assets failed to load"); return; }
             _root = new GameObject("Note3dMeshes_root").transform;
             _built = true;
@@ -95,7 +97,7 @@ namespace Sdo.Game
             go.transform.position = it.World;
             // flat XZ arrow → stood into the screen plane (flattenX about X), then spun per lane about the view normal (Z).
             go.transform.localRotation = Quaternion.Euler(0f, 0f, it.RotZ + baseRotZ) * Quaternion.Euler(flattenX, 0f, 0f);
-            go.transform.localScale = Vector3.one * (it.Size / (2f * MeshHalfW));
+            go.transform.localScale = Vector3.one * (it.Size * noteSize / (2f * MeshHalfW));
             if (!go.activeSelf) go.SetActive(true);
         }
 

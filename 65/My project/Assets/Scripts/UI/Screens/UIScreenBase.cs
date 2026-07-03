@@ -13,6 +13,7 @@ namespace Sdo.UI.Screens
         protected AppContext Ctx;
         protected RectTransform Root;
         private CanvasGroup _cg;
+        private bool _visible;
 
         public abstract ScreenId Id { get; }
 
@@ -37,6 +38,10 @@ namespace Sdo.UI.Screens
             _cg.alpha = on ? 1f : 0f;
             _cg.interactable = on;
             _cg.blocksRaycasts = on;
+            // Fire OnShow/OnHide only on an actual state change: 選歌 overlays the room (both visible at once), so the
+            // room gets SetVisible(true) again while already shown — it must NOT re-run OnShow (rebuild) each time.
+            if (on == _visible) return;
+            _visible = on;
             if (on) OnShow(); else OnHide();
         }
 

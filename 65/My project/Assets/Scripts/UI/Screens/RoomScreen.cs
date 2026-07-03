@@ -1,3 +1,4 @@
+using System.Collections;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -41,13 +42,14 @@ namespace Sdo.UI.Screens
 
         // note 種類(hit-effect)可選預覽圖，取自線上 DDRROOM.XML 的 hiteft 清單（索引 = GameSession.NoteType；-1=隨機）。
         // 每個 .an 是多幀動畫（如 hiteft2 = jz00..jz07 八幀），預覽框用 SpriteSeqAnim 循環撥放。
-        // 只收「實際可選的特效皮」11 項（index 0..10），循環是 隨機 → 0..10 → 回隨機。
+        // 只收「實際可選的特效皮」12 項（index 0..11），循環是 隨機 → 0..11 → 回隨機。
         // 排除 XML 上另兩項：free_small（=「自由/無」，隨機格已改用靜態 FREE.PNG）、sixhiteft1（六鍵特效不是獨立資料夾，
         // 是包在各 EFT_N 內的 SIX_*；打六鍵譜時引擎在所選皮裡自動換，不該當成獨立選項）。
         private static readonly string[] NoteEftArt =
         {
-            "hiteft2", "hiteft5", "hiteft8", "hiteft9", "hiteft10", "hiteft11", "hiteft12",
-            "hiteft13", "hiteft14", "hiteftpet", "hiteft3D",
+            "hiteft2", "hiteft5", "hiteft8", "hiteft9", "hiteft10", "hiteft11",
+            "hiteft3",   // EFT_3: hit burst = EFT_7 JZ0x, board = NOTEIMAGE_5, combo = EFT_5 (room DEFAULT). Inserted after hiteft11.
+            "hiteft12", "hiteft13", "hiteft14", "hiteftpet", "hiteft3D",
         };
         // note 預覽動畫速度。hiteft2.an=40幀(10幀爆裂×4)：12fps 一輪3.3s(太慢)、60fps 0.67s(太快)；
         // 30fps → 一輪1.33s、單次爆裂0.33s，落在合理區間。要快/慢調這個值即可。
@@ -91,6 +93,11 @@ namespace Sdo.UI.Screens
         private float _collapseT;                // 0=完全展開 .. 1=完全收合（Update 內平滑補間）
         private SdoComboBox _dropCombo;          // 掉落方式下拉；收合時要主動關掉它的清單(否則清單跟著容器滑走)
 
+        // 開始 → 全螢幕 1 秒漸暗再切舞台：最上層黑幕(平時停用/透明)，OnStart 觸發後淡入到全黑才交棒給 ScreenGameplay。
+        private Image _startFade;
+        private bool _starting;                  // 進入漸暗切場後鎖住，避免重複觸發
+        private const float StartFadeDuration = 1f;
+
         // 收合位移（anchoredPosition delta，逐字取自 DDRROOM.XML 各 Window 的 show→hide TransForm 目標）：
         // win1 頂部往上滑出(targety 1→-200)、win2 右側往右滑出(targetx 649→900)、win3 底部往下滑出(targety 481→600)。
         private static readonly Vector2 Win1Hidden = new Vector2(0f, 201f);    // 上（Unity y-up：+y = 往上）
@@ -100,10 +107,6 @@ namespace Sdo.UI.Screens
 
         // 掉落方式下拉清單（綠底）的文字色，取自線上 DDRROOM.XML chose_list color=0xff308769。
         private static readonly Color32 DropListColor = new Color32(0x30, 0x87, 0x69, 0xff);
-
-        /// <summary>The live 3D-room render (RenderTexture) shown as the backdrop — so the 選歌(MusicSelDlg) modal can lay
-        /// it, dimmed, behind its dialog (官方: 房間是選歌對話框底下持續 render 的場景). Null when the scene isn't mounted.</summary>
-        public Texture BackdropTexture => _scene != null ? _scene.SceneTexture : null;
 
         /// <summary>If the room renders upside-down on a given platform, flip the backdrop V (RT vertical convention).</summary>
         public bool flipBackdropV = false;
@@ -209,16 +212,16 @@ namespace Sdo.UI.Screens
 
             // 速度 ◄ 值 ►（檔位清單與預設來自 config.ini，可改）
             _speedLabel = UIKit.AddText(_win2Root, "SpeedValue", "", 13, SpeedColor, TextAlignmentOptions.Center);
-            PlaceW2(_speedLabel.rectTransform, 86, 166, 19, 14);   // 速度值往上 2px
-            Btn("songpre", "BtnOraSmallLeftArrow_1", "BtnOraSmallLeftArrow_2", "BtnOraSmallLeftArrow_3", Win2, 66, 167, () => StepSpeed(-1));
-            Btn("songnext", "BtnOraSmallRightArrow_1", "BtnOraSmallRightArrow_2", "BtnOraSmallRightArrow_3", Win2, 109, 167, () => StepSpeed(1));
+            PlaceW2(_speedLabel.rectTransform, 86, 167, 19, 14);
+            Btn("songpre", "BtnOraSmallLeftArrow_1", "BtnOraSmallLeftArrow_2", "BtnOraSmallLeftArrow_3", Win2, 66, 167, () => StepSpeed(-1), hoverSfx: null);
+            Btn("songnext", "BtnOraSmallRightArrow_1", "BtnOraSmallRightArrow_2", "BtnOraSmallRightArrow_3", Win2, 109, 167, () => StepSpeed(1), hoverSfx: null);
 
             // note 種類（hit-effect）預覽框 + ◄ ►（預設 random）。hiteft.an 是多幀動畫(hiteft2=40幀) → 用 SpriteSeqAnim 循環撥放。
             _noteDisplay = Art("hiteft2", Win2, 11, 191, "NoteDisplay");
             _noteAnim = _noteDisplay.gameObject.AddComponent<SpriteSeqAnim>();
             _noteAnim.Fps = NoteEftFps;
-            Btn("eftpre", "BtnOraLeftArrow_1", "BtnOraLeftArrow_2", "BtnOraLeftArrow_3", Win2, 8, 242, () => StepNote(-1));
-            Btn("eftnext", "BtnOraRightArrow_1", "BtnOraRightArrow_2", "BtnOraRightArrow_3", Win2, 36, 242, () => StepNote(1));
+            Btn("eftpre", "BtnOraLeftArrow_1", "BtnOraLeftArrow_2", "BtnOraLeftArrow_3", Win2, 8, 242, () => StepNote(-1), hoverSfx: null);
+            Btn("eftnext", "BtnOraRightArrow_1", "BtnOraRightArrow_2", "BtnOraRightArrow_3", Win2, 36, 242, () => StepNote(1), hoverSfx: null);
 
             // 組隊 A / B / C / 自由（單選；預設自由）
             BuildTeamToggle(0, "Room33", "Room35", 69, 207);
@@ -241,9 +244,11 @@ namespace Sdo.UI.Screens
                 Mathf.Clamp(Ctx.Session.DropDirection, 0, 2), SpeedColor, DropListColor,
                 i => Ctx.Session.DropDirection = i, expandDown: true, listX: Win2.x + 70, listWidth: 38f,
                 valueOffsetY: 2f);   // 只把「向上/向下」值往上 2px，▼ 鈕位置不動
+            // 掉落方式 ▼ 開關鈕按下 → SE_0001（清單列本來就有；此為開關鈕本身。中間設定塊仍不掛滑過音）。
+            UiSfx.AttachClick(_dropCombo.GetComponent<Button>());
 
-            // 房主設置（= 選歌入口）。線上原版 BtnRoomMaster_1/2/3。
-            _songSelectBtn = Btn("songselect", "BtnRoomMaster_1", "BtnRoomMaster_2", "BtnRoomMaster_3", Win2, 14, 296, () => GoTo(ScreenId.SongSelect));
+            // 房主設置（= 選歌入口）。線上原版 BtnRoomMaster_1/2/3。按下音效改 Buttonfloat（非預設 SE_0001）。
+            _songSelectBtn = Btn("songselect", "BtnRoomMaster_1", "BtnRoomMaster_2", "BtnRoomMaster_3", Win2, 14, 296, () => GoTo(ScreenId.SongSelect), UiSfx.ButtonFloat);
 
             // 註：官方 WinMoveUpHelp(moveuphelp0.an) 其實是一張「黃底問號」的方向鍵提示圖，靜態擺在面板左上角就變成
             // 使用者看到的那顆問號 → 依需求移除（要做方向鍵提示應改成floating動畫貼在 3D 場景，不放面板裡）。
@@ -266,19 +271,33 @@ namespace Sdo.UI.Screens
             // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
             Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null);
 
-            _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart);
+            // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
+            _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null);
             _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle);
             _cancelReadyBtn = Btn("cancel_ready", "c_ready0", "c_ready1", "c_ready2", Win3, 706, 43, OnReadyToggle);
 
             // 5) 左上「左拉」收合鈕（官方 uihide/uidisplay，同一位置 11,83）。按 ◄(BtnMaypopLeft) → 三個面板往四周滑出；
             //    收合後原地換成 ►(BtnMaypopRight) 展開鈕。掛在 Root（不隨面板收合），且最後建立 → 疊在最上層永遠可點。
+            // 收合/展開鈕：滑過 Buttonfloat、按下 Interfaceout（官方 uihide/uidisplay 滑動音）。
             _uiHideBtn = UIKit.AddSpriteButton(Root, "uihide",
                 RoomUiArt.An("BtnMaypopLeft_1"), RoomUiArt.An("BtnMaypopLeft_2"), RoomUiArt.An("BtnMaypopLeft_3"), 11, 83);
+            UiHoverSfx.Attach(_uiHideBtn, UiSfx.ButtonFloat);
+            UiSfx.AttachPress(_uiHideBtn, UiSfx.WindowSlide);
             _uiHideBtn.onClick.AddListener(() => SetCollapsed(true));
             _uiShowBtn = UIKit.AddSpriteButton(Root, "uidisplay",
                 RoomUiArt.An("BtnMaypopRight_1"), RoomUiArt.An("BtnMaypopRight_2"), RoomUiArt.An("BtnMaypopRight_3"), 11, 83);
+            UiHoverSfx.Attach(_uiShowBtn, UiSfx.ButtonFloat);
+            UiSfx.AttachPress(_uiShowBtn, UiSfx.WindowSlide);
             _uiShowBtn.onClick.AddListener(() => SetCollapsed(false));
             _uiShowBtn.gameObject.SetActive(false);   // 初始展開 → 只顯示 ◄
+
+            // 開始 → 1 秒漸暗再切舞台：最上層全螢幕黑幕(初始透明/停用)。最後建立 → 疊在所有面板/收合鈕之上。
+            var fadeRt = UIKit.NewRect(Root, "StartFade");
+            UIKit.Stretch(fadeRt);
+            _startFade = fadeRt.gameObject.AddComponent<Image>();
+            _startFade.color = new Color(0f, 0f, 0f, 0f);
+            _startFade.raycastTarget = true;          // 漸暗期間吃掉所有點擊
+            _startFade.gameObject.SetActive(false);
         }
 
         /// <summary>全畫布(800×600) win 容器：錨定左上、pivot 左上、原點 → 子元件座標仍用絕對(win.x+x)，收合只移動容器。</summary>
@@ -356,17 +375,17 @@ namespace Sdo.UI.Screens
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
             }
 
-            // mask the room's 3D layers off the front-end UI camera (it renders ~0, so it would otherwise draw them flat).
-            // Guard on _maskedCam==null so returning from 選歌 (where the scene/mask were kept alive) doesn't re-save the
-            // already-masked value as the "original" — the real mask is restored only by the full teardown in OnHide.
+            // mask the room's 3D layers off the front-end UI camera (it renders ~0, so it would otherwise draw them flat)
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
-            if (ui != null && _maskedCam == null)
+            if (ui != null)
             {
                 _maskedCam = ui; _savedMask = ui.cullingMask;
                 ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer));
             }
 
-            if (_scene != null) _scene.InputEnabled = true;   // 從選歌返回 → 解除走動凍結
+            // 常駐單例：清掉上次「開始」漸暗殘留的黑幕，回房間才不會整片黑。
+            _starting = false;
+            if (_startFade != null) { _startFade.gameObject.SetActive(false); _startFade.color = new Color(0f, 0f, 0f, 0f); }
 
             ResetCollapse();             // 每次進場都從「完全展開」開始（常駐單例，避免上次收合狀態殘留）
             SeedDefaultSongIfNeeded();   // 進大廳預設選好 index 最大的歌(easy)，房間一進來就有歌
@@ -391,15 +410,8 @@ namespace Sdo.UI.Screens
 
         public override void OnHide()
         {
-            // Going to 選歌(SongSelect): the room is the modal's backdrop — keep the whole 3D scene alive so it keeps
-            // rendering (dimmed) behind the dialog; just freeze walking. Full teardown is reserved for every OTHER exit
-            // (回大廳 / 進遊戲). At this point Flow.Current is already the transition TARGET (set before ScreenChanged).
-            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current == ScreenId.SongSelect)
-            {
-                if (_scene != null) _scene.InputEnabled = false;
-                return;
-            }
-
+            // NOTE: 進選歌時房間「不會」走到這裡 —— 選歌是疊在房間上的 overlay，房間仍是 visible（見 FrontendApp.ShowOnly）。
+            // OnHide 只在真正離開房間時觸發（回大廳 / 進遊戲），所以在這裡完整拆除 3D 場景是正確的。
             if (_subscribed)
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated -= OnRoomUpdated;
@@ -585,6 +597,10 @@ namespace Sdo.UI.Screens
 
             if (_scene == null) return;
 
+            // 房間仍在選歌畫面底下即時 render，但選歌疊在上面時要凍結走動（否則方向鍵會把底下的角色走來走去）。
+            // 只有房間是最上層(當前畫面)時才收方向鍵。
+            _scene.InputEnabled = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
+
             // place ALL 6 head slots from the shared offset+size (base = DDRROOM AvatarView coords). In the F2 debug
             // panel every slot shows the head (to check alignment); normally only slot 0 (the local player) does.
             Texture headTex = _localHead != null ? _localHead.Texture : null;
@@ -680,12 +696,30 @@ namespace Sdo.UI.Screens
 
         private void OnStart()
         {
+            if (_starting) return;   // 已在漸暗切場中，忽略重複按
             if (Ctx.Rooms == null || !Ctx.Rooms.CanStart())
             {
                 var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
                 Toast.Show(L(room != null && string.IsNullOrEmpty(room.SongTitle) ? "room.need_song" : "room.waiting_players"));
                 return;
             }
+            _starting = true;
+            UiSfx.Play(UiSfx.GameStart);       // 開始音效
+            StartCoroutine(FadeToStage());     // 全螢幕 1 秒漸暗 → 才 StartGame 切舞台
+        }
+
+        // 全螢幕黑幕淡入(0→1) StartFadeDuration 秒，全黑後才交棒給 ScreenGameplay（避免場景切換的閃爍露餡）。
+        private IEnumerator FadeToStage()
+        {
+            if (_startFade != null) _startFade.gameObject.SetActive(true);
+            float t = 0f;
+            while (t < StartFadeDuration)
+            {
+                t += Time.unscaledDeltaTime;
+                if (_startFade != null) _startFade.color = new Color(0f, 0f, 0f, Mathf.Clamp01(t / StartFadeDuration));
+                yield return null;
+            }
+            if (_startFade != null) _startFade.color = Color.black;
             Nav.StartGame?.Invoke();
         }
 
@@ -739,14 +773,21 @@ namespace Sdo.UI.Screens
             var btn = img.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.transition = Selectable.Transition.None;
+            UiSfx.AttachPress(btn, UiSfx.Click);   // 按下 SE_0001；win2 中間設定塊滑過不出聲 → 不掛 hover
             int i = idx;
             btn.onClick.AddListener(() => { Ctx.Session.Team = i; RenderWin2(); });
             _teamImg[idx] = img;
         }
 
-        private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y, System.Action onClick)
+        // 所有房間按鈕統一：滑過 Buttonfloat(圖1/圖2)、按下 SE_0001(圖3 預設)。少數例外用參數覆寫：
+        //   pressSfx：房主設置→Buttonfloat；開始→null(由 OnStart 播 Start 音 + 漸暗)。
+        //   hoverSfx：win2 中間設定塊(速度/note/組隊/掉落)→null(滑過不出聲)，其餘保留 Buttonfloat。
+        private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y,
+            System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat)
         {
             var b = UIKit.AddSpriteButton(WinRoot(win), objName, RoomUiArt.An(nrm), RoomUiArt.An(hov), RoomUiArt.An(psh), win.x + x, win.y + y);
+            if (hoverSfx != null) UiHoverSfx.Attach(b, hoverSfx);
+            UiSfx.AttachPress(b, pressSfx);
             if (onClick != null) b.onClick.AddListener(() => onClick());
             return b;
         }

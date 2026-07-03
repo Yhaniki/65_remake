@@ -17,12 +17,13 @@ namespace Sdo.Game
         // Official offline note-skin mapping (note_00498bd0.c switch on skin index 0x68 = NoteType+1).
         //   EFFECT folder (game_eft_{N}.dge → EFT_<suffix>): the per-skin HIT BURST. For the {2,5,11,12,13,14} family the
         //   combo/judge come from a SHARED PUBLICEFT (so they don't change per skin — faithful); {8,9,10,PET} are self-contained.
-        internal static readonly string[] NoteTypeEftSuffix = { "2", "5", "8", "9", "10", "11", "12", "13", "14", "PET" };
+        // NOTE: index 6 is the custom "EFT_3" skin (room label hiteft3) = EFT_7's JZ0x burst + NOTEIMAGE_5 board + EFT_5 combo.
+        internal static readonly string[] NoteTypeEftSuffix = { "2", "5", "8", "9", "10", "11", "7", "12", "13", "14", "PET" };
         //   BOARD folder (note_image{N}.dgn → NOTEIMAGE_<suffix>): coarser — several note-types share one board skin.
-        internal static readonly string[] NoteTypeBoardSuffix = { "6", "6", "8", "9", "10", "6", "5", "5", "11", "PET" };
-        //   COMBO/JUDGE source (game_eft_{N}.dge line refs): {2,5,11}→PUBLICEFT, {12,13,14}→PUBLICEFT2, {8,9,10,pet}→own
-        //   folder. Shared folders use Dsp_* filenames; self-contained use the flat COMBO/00../PERFECT names.
-        internal static readonly string[] NoteTypeComboSource = { "PUBLICEFT", "PUBLICEFT", "EFT_8", "EFT_9", "EFT_10", "PUBLICEFT", "PUBLICEFT2", "PUBLICEFT2", "PUBLICEFT2", "EFT_PET" };
+        internal static readonly string[] NoteTypeBoardSuffix = { "6", "6", "8", "9", "10", "6", "5", "5", "5", "11", "PET" };
+        //   COMBO/JUDGE source (game_eft_{N}.dge line refs): {2,5}→PUBLICEFT, {12,13,14}→PUBLICEFT2, {8,9,10,pet}→own
+        //   folder, 11→EFT_5, custom EFT_3 (idx6)→EFT_5. Shared folders use Dsp_* names; self-contained use flat COMBO/00../PERFECT.
+        internal static readonly string[] NoteTypeComboSource = { "PUBLICEFT", "PUBLICEFT", "EFT_8", "EFT_9", "EFT_10", "EFT_5", "EFT_5", "PUBLICEFT2", "PUBLICEFT2", "PUBLICEFT2", "EFT_PET" };
         internal int _eftNoteType = -1;                    // -1 = stock init; 0..9 = F4 test override
 
         /// <summary>Switch the WHOLE note skin for the F4 test: board (NOTEIMAGE falling notes + receptors) + hit burst +
@@ -31,6 +32,7 @@ namespace Sdo.Game
         internal void SetNoteType(int noteType)
         {
             _hit3dMode = false; _note3dMode = false;                        // picking a 2D skin leaves the 3D hit + coloured-note mode
+            for (int l = 0; l < Keys; l++) if (_hit3dLive[l] != null) { Destroy(_hit3dLive[l].gameObject); _hit3dLive[l] = null; }   // don't leak a looping hold burst
             int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
             SetNoteBoardSkin(NoteTypeBoardSuffix[t]);                        // falling notes + receptors + hold (live reload)
             LoadHitEffects(t);                                              // per-skin hit burst (sets _eftNoteType)
@@ -43,6 +45,18 @@ namespace Sdo.Game
         {
             if (idx >= NoteTypeEftSuffix.Length) EnableHit3dSkin();
             else SetNoteType(idx);
+        }
+
+        // Apply the room's win2 "note" selection (roomNoteType = GameSession.NoteType) at boot so gameplay uses the SAME
+        // skin the player picked in the room. The room's NoteEftArt order (hiteft2..pet, then hiteft3D) matches the
+        // SelectSkin index space 1:1 (0..9 = 2D skins, 10 = 3D). -2 = unset (F4/standalone → keep stock); -1 = 隨機.
+        private void ApplyRoomNoteSkin()
+        {
+            if (roomNoteType == -2) return;
+            int total = NoteTypeEftSuffix.Length + 1;                 // 10 2D skins + the 3D skin = 11 (== room NoteEftArt count)
+            int idx = roomNoteType >= 0 ? Mathf.Clamp(roomNoteType, 0, total - 1)
+                                        : UnityEngine.Random.Range(0, total);   // 隨機
+            SelectSkin(idx);
         }
 
         /// <summary>Select the "3D" note skin (hiteft3D): (1) colour the falling notes by BEAT quantization — magenta
@@ -61,19 +75,54 @@ namespace Sdo.Game
         // lane's receptor. Rendered in the SAME orthographic play field / layer as the sprite bursts (design-space world
         // coords via SdoLayout), with SortingOrder over the board/notes and a GOLD Tint (the note-arrow texture is white;
         // the official 3D hit is yellow via a play-time tint). follow=null → pinned at the receptor for its life.
-        private void SpawnHit3d(int lane)
+        // Spawn a 3D hit EFT at the lane's receptor, oriented per-lane like the arrow. loop=true (HIT_LONG) makes it a
+        // self-sustaining continuous burst (negative-life emitters re-init forever) that the host tears down on release.
+        private EftEffect SpawnHit3dEft(int lane, string name, bool loop)
         {
-            if (lane < 0 || lane >= Keys) return;
-            string name = Hit3dEftNames[Mathf.Clamp(hit3dEftIdx, 0, Hit3dEftNames.Length - 1)];
             var file = LoadNamedEft(name);
-            if (file == null) return;
+            if (file == null) return null;
             var go = new GameObject("Hit3d" + lane);
             go.transform.position = SdoLayout.ToWorld(LaneLeftX[lane] + LaneCx0, judgeLineY, hit3dZ);
+            // OFFICIAL: the hit burst is oriented per-lane like the arrow (FUN_004bcba0 rotZ = {90,180,0,-90}° for lanes
+            // 0=left 1=down 2=up 3=right) — NOT always-up. The burst's note-arrow world-quads inherit this host rotation.
+            go.transform.rotation = Quaternion.Euler(0f, 0f, Note3dRot[lane] + (note3dFlip180 ? 180f : 0f));
             var eff = go.AddComponent<EftEffect>();
             eff.SortingOrder = 6;                                            // over the board (-30) / notes (5), like the 2D burst
             eff.MotionScale = hit3dMotion;                                   // damp any rise so it stays near the receptor
-            eff.Tint = hit3dTint;                                            // GOLD — official 3D hit is yellow (tints the white note-arrow)
-            eff.Init(file, hit3dScale, null, ResolveEftTex, _addMat, 0, burstBright * hit3dBright, 0f, 0.6f, ResolveEftMesh);
+            eff.Tint = hit3dTint;                                            // multiplies the white file diffuse → the on-screen colour
+            // FaithfulAlpha + brightness 1×: the official engine adds tex×diffuse×(ch1/255) LINEARLY — the soft look IS
+            // the EFT's authored envelope. The old Legacy-Additive path (2× shader × 1.5 bright, ch1→SrcAlpha) clipped it.
+            eff.FaithfulAlpha = true;
+            eff.Loop = loop;                                                // HIT_LONG: continuous self-sustain for the whole hold
+            eff.Init(file, hit3dScale * note3dMaster, null, ResolveEftTex, _addMat, 0, hit3dBright, 0f, 0.6f, ResolveEftMesh);
+            return eff;
+        }
+
+        // TAP / hold-head flash — the F4-selected hit EFT (default HIT). OFFICIAL: one effect slot per lane, RESET on
+        // every hit (FUN_004c33d0 → FUN_004bcae0) so a new hit restarts the burst instead of stacking brightness.
+        private void SpawnHit3d(int lane)
+        {
+            if (lane < 0 || lane >= Keys) return;
+            if (_hit3dLive[lane] != null) { Destroy(_hit3dLive[lane].gameObject); _hit3dLive[lane] = null; }
+            _hit3dLive[lane] = SpawnHit3dEft(lane, Hit3dEftNames[Mathf.Clamp(hit3dEftIdx, 0, Hit3dEftNames.Length - 1)], false);
+        }
+
+        // HOLD HEAD accepted → replace the lane slot with the CONTINUOUS looping HIT_LONG (official 0x54). It self-
+        // sustains via its negative-life emitters for the whole hold; StopHit3dLong tears it down on release.
+        private void SpawnHit3dLong(int lane)
+        {
+            if (!_hit3dMode || lane < 0 || lane >= Keys) return;
+            if (_hit3dLive[lane] != null) { Destroy(_hit3dLive[lane].gameObject); _hit3dLive[lane] = null; }
+            _hit3dLive[lane] = SpawnHit3dEft(lane, "HIT_LONG", true);
+        }
+
+        // HOLD RELEASE / complete → tear down the looping HIT_LONG and play the one-shot HIT_SUO terminator (official
+        // StopHoldEffect → ClearSlot → 0x55). Not stored: it auto-destroys when spent.
+        private void StopHit3dLong(int lane)
+        {
+            if (!_hit3dMode || lane < 0 || lane >= Keys) return;
+            if (_hit3dLive[lane] != null) { Destroy(_hit3dLive[lane].gameObject); _hit3dLive[lane] = null; }
+            SpawnHit3dEft(lane, "HIT_SUO", false);
         }
 
         // Load (and cache) any 3DEFT/&lt;name&gt;.EFT by name. Shares the SpawnNamedEft cache so a file is parsed once.
@@ -104,7 +153,11 @@ namespace Sdo.Game
             }
             if (bf.Count > 0) { _burstFrames = bf.ToArray(); _burstFramesUD = null; return; }
             var rl = LoadJzFrames(dir, "rl");                             // self-contained: directional jz*_rl / jz*_ud
-            if (rl != null) { _burstFrames = rl; _burstFramesUD = LoadJzFrames(dir, "ud"); }   // _ud may be null → rl used for all lanes
+            if (rl != null) { _burstFrames = rl; _burstFramesUD = LoadJzFrames(dir, "ud"); return; }   // _ud may be null → rl used for all lanes
+            // non-directional UPPERCASE JZ frames (EFT_7 = the custom "EFT_3" skin): JZ00.PNG..JZ0N.PNG, same on every lane
+            var jz = new List<Sprite>();
+            for (int i = 0; i < 32; i++) { var s = SdoExtracted.LoadImage(dir, "JZ" + i.ToString("00") + ".PNG"); if (s == null) break; jz.Add(s); }
+            if (jz.Count > 0) { _burstFrames = jz.ToArray(); _burstFramesUD = null; }
         }
 
         // Load a directional hit-frame set jz00_<dir>.png, jz01_<dir>.png … until the first gap. null if none.
@@ -139,6 +192,23 @@ namespace Sdo.Game
                 AssignSprite(ref _comboDigitSprites[i], SdoExtracted.LoadImage(dir, shared ? ("Dsp_Num" + i + ".png") : ("0" + i + ".PNG"), bleed: true));
             var cw = SdoExtracted.LoadImage(dir, shared ? "Dsp_0_Combo.png" : "COMBO.PNG", bleed: true);
             if (cw != null && _comboWord != null) _comboWord.sprite = cw;
+            // READY/GO opening animation source: PUBLICEFT skins (2/5) use EFT_5's opening (per request — PUBLICEFT stores
+            // its own only under Dsp_A_* names, not the flat READY00 this loads); self-contained skins use their combo
+            // folder; else fall back to the skin's own hit-burst folder (EFT_<suffix>); else keep the LoadArt default.
+            string readyDir = src == "PUBLICEFT" ? SdoExtracted.EftDir2("5") : dir;
+            if (!TryLoadReadyGo(readyDir)) TryLoadReadyGo(SdoExtracted.EftDir2(NoteTypeEftSuffix[t]));
+        }
+
+        // Load READY00..09 / GO01..06 from a folder into _readyFrames/_goFrames. Returns false (leaving them untouched)
+        // if the folder has no READY frames, so callers can fall through to another source.
+        private bool TryLoadReadyGo(string dir)
+        {
+            var rf = new List<Sprite>(); for (int i = 0; i < 10; i++) { var s = SdoExtracted.LoadImage(dir, "READY0" + i + ".PNG", bleed: true); if (s != null) rf.Add(s); }
+            if (rf.Count == 0) return false;
+            _readyFrames = rf.ToArray();
+            var gf = new List<Sprite>(); for (int i = 1; i <= 6; i++) { var s = SdoExtracted.LoadImage(dir, "GO0" + i + ".PNG", bleed: true); if (s != null) gf.Add(s); }
+            if (gf.Count > 0) _goFrames = gf.ToArray();
+            return true;
         }
 
         private static void AssignSprite(ref Sprite dst, Sprite s) { if (s != null) dst = s; }
@@ -250,6 +320,17 @@ namespace Sdo.Game
                 _receptors[c].transform.localRotation = _note3dMode
                     ? Quaternion.Euler(0f, 0f, Note3dRot[c] + (note3dFlip180 ? 180f : 0f))
                     : Quaternion.identity;
+                // 3D skin press-pulse: scale the receptor up on keydown (reproduces the official JUDGELINE_2.MOT pop).
+                if (_recBaseScale[c].sqrMagnitude > 1e-6f)
+                {
+                    float pulse = 1f;
+                    if (_note3dMode && _recDownStart[c] >= 0f)
+                    {
+                        float a = (Time.time - _recDownStart[c]) / Mathf.Max(1e-4f, receptorPressSec);
+                        if (a < 1f) pulse = 1f + receptorPressAmt * Mathf.Sin(Mathf.PI * a);
+                    }
+                    _receptors[c].transform.localScale = _recBaseScale[c] * pulse;
+                }
             }
 
             float age = Time.time - _judgeWordAt;

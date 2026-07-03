@@ -528,6 +528,46 @@
    "v": "無邊框全螢幕"
   },
   {
+   "k": "option.title",
+   "v": "選項"
+  },
+  {
+   "k": "option.tab.video",
+   "v": "畫面"
+  },
+  {
+   "k": "option.tab.audio",
+   "v": "音效"
+  },
+  {
+   "k": "option.tab.keyboard",
+   "v": "鍵盤"
+  },
+  {
+   "k": "option.key.primary",
+   "v": "主鍵位"
+  },
+  {
+   "k": "option.key.aux",
+   "v": "輔助鍵位"
+  },
+  {
+   "k": "option.key.prompt",
+   "v": "請按任意鍵…"
+  },
+  {
+   "k": "option.save",
+   "v": "儲存"
+  },
+  {
+   "k": "option.exit",
+   "v": "離開"
+  },
+  {
+   "k": "option.default",
+   "v": "預設"
+  },
+  {
    "k": "join.full",
    "v": "這個房間已滿了"
   },

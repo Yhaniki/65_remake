@@ -201,6 +201,12 @@ namespace Sdo.Game
         // die it re-spawns its roots (loops), so the original's "play once in the scene ctor, runs the whole song" is
         // reproduced. Default false = the one-shot combo-burst behaviour (auto-destroys when spent). Set before Init.
         public bool Persistent;
+        // LOOP (hiteft3D HOLD burst = HIT_LONG.EFT): like Persistent, this effect self-sustains — but WITHOUT the
+        // scene-effect side-paths (RespawnTree / SceneEftRenderCatalog tuning). It keeps its negative-life emitters
+        // (EftEmitter.Loop) re-initing forever and re-fires their trigType-3 children, so the hold glow is continuous
+        // for the whole (multi-second) hold; it never auto-destroys — the host tears it down on release. The one-shot
+        // head-flash emitter (positive life, Loop=false) still fires exactly once. Set before Init.
+        public bool Loop;
         public string EffectName;
         // SORTING ORDER for this effect's transparent renderers (0 = engine default / distance-sorted). Combo/scene
         // effects render on the perspective stage layer where order is irrelevant, but the hiteft3D hit burst is drawn
@@ -216,6 +222,12 @@ namespace Sdo.Game
         // stores WHITE note-arrow textures; the official 3D skin renders them GOLD/yellow via a play-time diffuse tint,
         // so the host sets this to gold. Combos/scene effects leave it white (their real per-channel hue is used as-is).
         public Color Tint = Color.white;
+        // FAITHFUL ALPHA (hiteft3D hit burst): route EVERY particle through Sdo/EftAlpha (1× premultiplied, linear in
+        // ch1, gamma-space) instead of Legacy Particles/Additive. The legacy shader does 2×tint×tex with SrcAlpha
+        // blending, so srcAlpha = sat(2×ch1/255): any ch1 ≥ 128 clips to identical max brightness — HIT.EFT's authored
+        // 92ms halo ramp-in snaps full in ~18ms and the 45ms fade-out shows only its last ~23ms = the "僵硬快閃".
+        // The official engine adds tex×diffuse×(ch1/255) LINEARLY (TEXTUREFACTOR, SRCALPHA|ONE) — exactly Sdo/EftAlpha.
+        public bool FaithfulAlpha;
         static Texture2D _glow;
 
         sealed class P
@@ -580,7 +592,8 @@ namespace Sdo.Game
                 go.AddComponent<MeshFilter>().mesh = Quad();
                 var mr = go.AddComponent<MeshRenderer>();
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; mr.receiveShadows = false;
-                var mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
+                var mat = FaithfulAlpha && AlphaShader() != null ? new Material(AlphaShader())
+                    : _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
                 mat.mainTexture = tex != null ? tex : _glow;
                 mr.sharedMaterial = mat;
                 p.mat = mat;
@@ -598,7 +611,7 @@ namespace Sdo.Game
                 // diffuse using the texture only as a shape mask (the orange sprite would otherwise muddy to brown).
                 bool worldQuad = !em.IsRing && !em.Orient;
                 Material mat;
-                if (em.Blend == 1 && AlphaShader() != null) mat = new Material(AlphaShader());
+                if ((em.Blend == 1 || FaithfulAlpha) && AlphaShader() != null) mat = new Material(AlphaShader());
                 // SCN0008 kekkai disc (tex69) + MW runes (tex117): textures have no alpha channel (tex.a=1 everywhere).
                 // Legacy Particles/Additive does 2×tex×_TintColor → SrcAlpha = 2×1×_TintColor.a clips to 1 at all
                 // ch1 values → disc permanently at max brightness regardless of the ch1 pulse = "慘白"/always-on.
@@ -689,6 +702,11 @@ namespace Sdo.Game
                 // never reach alive==0 so they just keep running — e.g. the magic circle's steady glow).
                 if (_tick > 2 && alive == 0 && _pending.Count == 0) RespawnTree();
             }
+            else if (Loop)
+            {
+                // HOLD burst: the negative-life emitters keep it alive; the host destroys it on release. NO auto-destroy
+                // and NO _maxTicks hard-kill (a hold can outlast _maxTicks+60 = ~1.6s → it must not self-terminate).
+            }
             else
             {
                 if (_tick > 2 && alive == 0 && _pending.Count == 0) Destroy(gameObject);
@@ -704,7 +722,10 @@ namespace Sdo.Game
             // forever (e.g. the SCN0008 kekkai disc, life 501: without this it died at 501 while its sub-particles
             // lived to ~600, so RespawnTree waited and the circle blinked out for ~2s). The trigType-3 children keep
             // re-emitting off the (now everlasting) root. A static disc loops invisibly; nothing disappears ("一直在").
-            if (Persistent && p.root && p.life <= 0)
+            // Persistent loops EVERY root; Loop (HOLD burst) loops only the emitters the file marked negative-life
+            // (EftEmitter.Loop) — so HIT_LONG's sustain slots 0/2 re-init forever while its one-shot head flash (slot1)
+            // still dies once. Faithful to the engine's per-particle 0x80000 flag.
+            if ((Persistent || (Loop && em.Loop)) && p.root && p.life <= 0)
             {
                 p.life = p.life0;
                 // re-arm one-shot children (trigType 0/2) so the whole effect RE-BLOOMS each root cycle instead of
@@ -735,7 +756,7 @@ namespace Sdo.Game
                     // magic circle's 3 colour light bars: life 60, re-fired every 30 → always 2 overlap; without it
                     // they fired once and vanished). GATED on Persistent so the one-shot combo bursts (100/400/500
                     // COMBO also have trigType-3 children, validated as fire-once) keep their proven look.
-                    if (c.TrigType == 3 && Persistent)
+                    if (c.TrigType == 3 && (Persistent || Loop))
                     {
                         // decompiled (030:7714-7724): the engine fires the child on the parent's BIRTH, then whenever the
                         // parent's DOWN-COUNTING life counter is a multiple of the child's atTime — i.e. `parentLife % atTime

@@ -405,7 +405,7 @@ namespace Sdo.Game
         /// forces DXT1 opaque (SDO's STAGE tiles carry no real alpha and the cutout shader needs alpha 255); this path is
         /// only for the note glyphs, so their transparent surround doesn't render as a black square. RGB is edge-bled into
         /// the transparent texels so a bilinear-filtered sprite gets no dark halo at the silhouette.</summary>
-        public static Texture2D LoadDxt1Alpha(byte[] d, bool flipV = true)
+        public static Texture2D LoadDxt1Alpha(byte[] d, bool flipV = true, bool desilver = false)
         {
             if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return null;
             int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
@@ -418,7 +418,7 @@ namespace Sdo.Game
             // RGB into the keyed-out texels (no dark fringe). flipV: a full-rect SPRITE needs the row flip (DDS-top→row0
             // = Unity bottom); a MESH texture (hold body) passes flipV=false (its UVs already match). In-decode because
             // the texture uploads non-readable, so a post-hoc GetPixels32 flip/key would throw.
-            return DecodeDxt1(d, 128, width, height, punchAlpha: true, bleed: true, flipV: flipV, keyBg: true);
+            return DecodeDxt1(d, 128, width, height, punchAlpha: true, bleed: true, flipV: flipV, keyBg: true, desilver: desilver);
         }
 
         // BC1 decode. punchAlpha=false (default): the transparent index is forced BLACK-OPAQUE — SDO's stage DXT1 carry
@@ -428,7 +428,7 @@ namespace Sdo.Game
         // pure black (NOTES/LONG = (65,49,49); JUDGELINE = black), so a luminance threshold can't key both; keying the
         // actual bg colour removes the square and keeps the arrow. bleed dilates RGB into transparent texels; flipV
         // reverses rows so a full-rect sprite shows upright.
-        private static Texture2D DecodeDxt1(byte[] d, int off, int w, int h, bool punchAlpha = false, bool bleed = false, bool flipV = false, bool keyBg = false)
+        private static Texture2D DecodeDxt1(byte[] d, int off, int w, int h, bool punchAlpha = false, bool bleed = false, bool flipV = false, bool keyBg = false, bool desilver = false)
         {
             int bw = (w + 3) / 4, bh = (h + 3) / 4;
             if (off + bw * bh * 8 > d.Length) return null;
@@ -477,6 +477,17 @@ namespace Sdo.Game
                     int dr = px[i].r - br, dg = px[i].g - bg, db = px[i].b - bb;
                     double dist = Math.Sqrt(dr * dr + dg * dg + db * db);
                     px[i].a = (byte)(dist <= 32.0 ? 0 : dist >= 54.0 ? 255 : (int)((dist - 32.0) * 255.0 / 22.0));   // crisp ramp → no dark halo
+                }
+            }
+            if (desilver)
+            {
+                // The LONG end-cap's OUTER chevron is solid white/silver (opaque → survives the cut-out) = the 白邊.
+                // Drop bright, low-saturation texels so only the coloured (magenta/gold) chevrons of the cap remain.
+                for (int i = 0; i < px.Length; i++)
+                {
+                    if (px[i].a == 0) continue;
+                    int mx = Math.Max(px[i].r, Math.Max(px[i].g, px[i].b)), mn = Math.Min(px[i].r, Math.Min(px[i].g, px[i].b));
+                    if ((px[i].r + px[i].g + px[i].b) / 3 >= 150 && (mx - mn) <= 55) px[i].a = 0;
                 }
             }
             if (flipV)

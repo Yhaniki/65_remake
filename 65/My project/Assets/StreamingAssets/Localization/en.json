@@ -528,6 +528,46 @@
    "v": "Borderless"
   },
   {
+   "k": "option.title",
+   "v": "Options"
+  },
+  {
+   "k": "option.tab.video",
+   "v": "Display"
+  },
+  {
+   "k": "option.tab.audio",
+   "v": "Audio"
+  },
+  {
+   "k": "option.tab.keyboard",
+   "v": "Keyboard"
+  },
+  {
+   "k": "option.key.primary",
+   "v": "Primary Keys"
+  },
+  {
+   "k": "option.key.aux",
+   "v": "Auxiliary"
+  },
+  {
+   "k": "option.key.prompt",
+   "v": "Press any key…"
+  },
+  {
+   "k": "option.save",
+   "v": "Save"
+  },
+  {
+   "k": "option.exit",
+   "v": "Exit"
+  },
+  {
+   "k": "option.default",
+   "v": "Default"
+  },
+  {
    "k": "join.full",
    "v": "This room is full"
   },

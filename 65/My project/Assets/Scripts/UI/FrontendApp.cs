@@ -27,13 +27,9 @@ namespace Sdo.UI
         /// scene behind its UI (e.g. RoomScreen → RoomScene3D) can mask the 3D layers off this camera while shown.</summary>
         public Camera UiCam => _uiCam;
 
-        /// <summary>The built front-end screen for <paramref name="id"/> (null if none). Lets one screen reach another —
-        /// e.g. 選歌 borrows the room's live 3D backdrop to lay (dimmed) behind its dialog.</summary>
-        public UIScreenBase GetScreen(ScreenId id) => _screens.TryGetValue(id, out var s) ? s : null;
-
         private AppContext _ctx;
         private readonly Dictionary<ScreenId, UIScreenBase> _screens = new Dictionary<ScreenId, UIScreenBase>();
-        private SettingsModal _settings;
+        private OptionDlgModal _option;
         private NoteSkinPicker _notePicker;
         private ResultsModal _results;
         private int _killGuardFrames = 3;
@@ -91,9 +87,9 @@ namespace Sdo.UI
 
             var modalLayer = UIKit.NewRect(root, "Modals");
             UIKit.Stretch(modalLayer);
-            _settings = new GameObject("Settings").AddComponent<SettingsModal>();
-            _settings.transform.SetParent(modalLayer, false);
-            _settings.Build(modalLayer);
+            _option = new GameObject("OptionDlg").AddComponent<OptionDlgModal>();
+            _option.transform.SetParent(modalLayer, false);
+            _option.Build(modalLayer);
             _notePicker = new GameObject("NotePicker").AddComponent<NoteSkinPicker>();
             _notePicker.transform.SetParent(modalLayer, false);
             _notePicker.Build(modalLayer, _ctx.Session);
@@ -102,7 +98,7 @@ namespace Sdo.UI
             _results.Build(modalLayer);
             Toast.Init(modalLayer);
 
-            Nav.OpenSettings = () => _settings.Open();
+            Nav.OpenSettings = () => _option.Open();
             Nav.OpenNoteSkinPicker = () => _notePicker.Open();
             Nav.StartGame = StartGameplay;
 
@@ -173,6 +169,8 @@ namespace Sdo.UI
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
             game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準140，osu式內部變速）
+            game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
+            game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
             _activeGame = game;
         }
 
@@ -222,7 +220,12 @@ namespace Sdo.UI
         private void ShowOnly(ScreenId id)
         {
             foreach (var kv in _screens)
-                kv.Value.SetVisible(kv.Key == id);
+            {
+                // 選歌(MusicSelDlg) 是疊在房間上的 modal：顯示選歌時房間留在底下（3D 場景 + 整組 UI 都不隱藏），
+                // 選歌畫面直接壓在上面（它自己有半透明黑幕把房間調暗並吃掉點擊）。其它畫面照常互斥。
+                bool visible = kv.Key == id || (id == ScreenId.SongSelect && kv.Key == ScreenId.Room);
+                kv.Value.SetVisible(visible);
+            }
         }
 
         private static void KillStrayGameplay()

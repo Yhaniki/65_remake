@@ -528,6 +528,46 @@
    "v": "ボーダーレス"
   },
   {
+   "k": "option.title",
+   "v": "オプション"
+  },
+  {
+   "k": "option.tab.video",
+   "v": "画面"
+  },
+  {
+   "k": "option.tab.audio",
+   "v": "オーディオ"
+  },
+  {
+   "k": "option.tab.keyboard",
+   "v": "キーボード"
+  },
+  {
+   "k": "option.key.primary",
+   "v": "メインキー"
+  },
+  {
+   "k": "option.key.aux",
+   "v": "補助キー"
+  },
+  {
+   "k": "option.key.prompt",
+   "v": "キーを押してください…"
+  },
+  {
+   "k": "option.save",
+   "v": "保存"
+  },
+  {
+   "k": "option.exit",
+   "v": "終了"
+  },
+  {
+   "k": "option.default",
+   "v": "デフォルト"
+  },
+  {
    "k": "join.full",
    "v": "このルームは満員です"
   },

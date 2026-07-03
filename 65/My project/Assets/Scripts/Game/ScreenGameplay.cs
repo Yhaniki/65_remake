@@ -32,6 +32,10 @@ namespace Sdo.Game
         // scroll locally (see ManiaScroll). scrollSpeedMul = the room "速度" step (RoomConfig.speedSteps),
         // set by FrontendApp from the session. constantScroll = osu "Constant Speed" mod (kill all variation).
         public float scrollSpeedMul = 2.5f;   // 速度 step (1.0..8.0); FrontendApp wires GameSession.Speed in
+        // Room win2 "note" selection (GameSession.NoteType) → the gameplay skin applied at boot via SelectSkin.
+        // -2 = unset (standalone/F4 boot: keep stock); -1 = 隨機 (random skin); 0..10 = the specific note skin
+        // (0..9 = the 2D skins in NoteTypeEftSuffix order, 10 = the 3D hiteft3D skin) — same order as the room's NoteEftArt.
+        public int roomNoteType = -2;
         public float referenceBpm = 140f;     // base-tempo anchor for the constant base speed
         public bool constantScroll = false;   // true = ignore BPM/SV variation (perfectly linear scroll)
         public float judgeLineY = 70f;        // receptor / hit line Y (design px). UPSCROLL: notes rise to it.
@@ -84,13 +88,19 @@ namespace Sdo.Game
         // DDR lane order: 0=Left 1=Down 2=Up 3=Right (matches NOTEIMAGE_5 + the original).
         private static readonly string[] Dir5 = { "left", "down", "up", "right" };
         // two manual key sets per lane (Left/Down/Up/Right): A S W D, and numpad 4 5 8 6 (right-hand cross).
-        private static readonly KeyCode[][] LaneKeys =
+        // These are the DEFAULTS; the OPTION dialog's keyboard tab can override them per user (persisted in
+        // GameSettings.keys). FrontendApp injects the resolved bindings into laneKeyOverride at launch; when it's
+        // null (e.g. the SDO_SCENE dev boot that spawns gameplay directly) the defaults below are used.
+        private static readonly KeyCode[][] DefaultLaneKeys =
         {
             new[] { KeyCode.A, KeyCode.Keypad4 },   // 0 Left
             new[] { KeyCode.S, KeyCode.Keypad5 },   // 1 Down
             new[] { KeyCode.W, KeyCode.Keypad8 },   // 2 Up
             new[] { KeyCode.D, KeyCode.Keypad6 },   // 3 Right
         };
+        /// <summary>User key bindings resolved from settings (per lane: {primary, aux}); null → DefaultLaneKeys.
+        /// Set by FrontendApp.StartGameplay so the Game assembly stays decoupled from Sdo.Settings.</summary>
+        public KeyCode[][] laneKeyOverride;
 
         // EXACT HUD coords (DdrGamePlay.xml absolute) + EFT positions (decompiled)
         private static readonly Vector2 HpSize = new Vector2(238, 11);
@@ -131,8 +141,29 @@ namespace Sdo.Game
         // that by holding the whole track hidden for openingIntroSec while the director crane runs, then revealing it
         // with the READY/GO overlay. The crane (director shot 0) keeps running across the reveal.
         public float openingIntroSec = 1f;     // camera-only lead before the track + READY appear (tuned to 1s)
+        public float camIntroSkipSec = 0.5f;     // skip the first N seconds of the director's shot 0 (start from the 1s frame, cut the front); F4-tunable
+        private bool _camIntroSkipped;         // one-shot: the skip is applied once when the director first runs (at reveal)
         private float _introStartRt = -1f;     // realtime the intro began; <0 = no intro (track shown immediately)
         private bool _trackVisible = true;     // false during the opening hold (board + HP bar hidden, see SetTrackVisible)
+
+        // Boot / loading screen: a full-screen loading tip image (閉撰敃氪/DatasSDO/LOADING/LOADING_N.PNG, random) + a
+        // "Loading..." badge (LOADINGS_N.PNG, random) in the bottom-right corner, drawn over EVERYTHING on the main
+        // camera from the very first rendered frame. It stays up until (a) the local build is ready AND (b) the online
+        // ReadyGate passes AND (c) a minimum on-screen time — then fades out. This both hides the "crammed in the middle"
+        // startup (follow-effects — ground star-ring / head marker / hand trails — only settle onto their bones in the
+        // first LateUpdate) and gives a proper loading screen. The front-end's own fade-to-black is already gone by the
+        // time Start() runs (StartGameplay hides the whole canvas), so gameplay owns this reveal itself.
+        private SpriteRenderer _bootCover;     // full-screen loading image (or a black fallback if the art is missing)
+        private SpriteRenderer _bootBadge;     // LOADINGS_* "Loading..." corner badge
+        public float loadingMinSec = 1f;       // the loading screen shows for at LEAST this long, then a straight cut (no fade)
+        private bool _sceneBootDone;           // Start() finished the synchronous build (scene/avatar/board/HUD placed)
+        private bool _audioReady;              // the song audio load attempt has finished (clip decoded, or failed)
+        private bool _bootRevealed;            // the loading screen has finished revealing → the opening (READY/GO) may run
+        private float _bootShownRt;            // realtime the loading screen first appeared → base for the minimum display time
+        // Online sync gate: return true only once the scene is loaded AND every connected player is ready, so the synced
+        // song start fires for everyone together. Null = offline/solo (local readiness only). The netcode layer assigns
+        // this; BootRevealCo holds the loading screen until it returns true. See BootRevealCo / LocalBootReady.
+        public System.Func<bool> ReadyGate;
 
         // ---- result / finish sequence (歌曲結束 → 輸贏定格動作 → 結算面板; decompiled FinishSequenceTick phase4..6) ----
         private enum ResultPhase { None, FinishPose, Settle, Replay }
@@ -216,7 +247,7 @@ namespace Sdo.Game
         private const float TrackCenterX = 138f + TrackMarginX;   // centre of the 4-lane track (span 0..276) + left margin
 
         // HUD
-        private SpriteRenderer _hpBg, _hpTex, _hpBackFrame, _hpGlow;
+        private SpriteRenderer _hpBg, _hpTex, _hpBackFrame, _hpGlow, _hpSolidBack;
         private Sprite[] _hpGlowFrames; private float _hpGlowT;
         private SpriteRenderer _judgeWord; private float _judgeWordAt = -10f;
         private readonly Sprite[] _judgeSprites = new Sprite[4];
@@ -261,11 +292,18 @@ namespace Sdo.Game
         // candidate 3D hit EFTs (F4-cycled). 0 = HIT (official note-arrow); others for comparison/tuning.
         internal static readonly string[] Hit3dEftNames = { "HIT", "AU_HIT", "HIT_LONG", "HIT_SUO", "POWER_Y", "HUANGSE" };
         internal int hit3dEftIdx = 0;       // which of Hit3dEftNames to play
-        public float hit3dScale = 70f;      // effScale in design px (HIT baseSize 1.0 × peak × this ≈ arrow diameter); F4-tunable
+        public float hit3dScale = 110f;     // effScale in design px; base is matched to the note so note3dMaster scales all together; F4-tunable
+        // ONE proportional master for the whole 3D skin: multiplies the note mesh, receptors, hold body/cap and hit EFT
+        // TOGETHER so "整體等比例放大" is a single knob (they keep their relative sizes). 1.0 = the matched base sizes below.
+        public float note3dMaster = 1f;
         public float hit3dBright = 1f;      // extra additive brightness on top of burstBright; F4-tunable
         public float hit3dMotion = 1f;      // velocity damping (HIT doesn't rise; AU_HIT rises ~20× its size → lower it there)
-        public Color hit3dTint = new Color(1f, 0.80f, 0.25f);   // GOLD — the official 3D hit is yellow (tints the white note-arrow)
+        // The official hit EFT diffuse is WHITE (no gold in the data); this Tint MULTIPLIES it, so it IS the on-screen
+        // colour. The old (1,0.80,0.25) rendered ORANGE — B=0.25 was the culprit. Warm pale YELLOW keeps R,G high and
+        // B ~0.5 (arrow ≈255,242,140). Set B→1 for the truest-to-file warm-white. F4-tunable.
+        public Color hit3dTint = new Color(1f, 0.95f, 0.55f);
         public float hit3dZ = 0f;           // world Z (same plane as the sprite burst — in front of board/notes)
+        private readonly EftEffect[] _hit3dLive = new EftEffect[Keys];   // official: ONE effect slot per lane, reset on every hit (no additive stacking)
         // ── 3D-note COLOURED falling notes (the other half of the "3D" skin). The official 3D mode colours each note by
         // BEAT QUANTIZATION (NoteBeatColor): on-beat = magenta(+gold core), off-8th = blue, 16ths = green — a single
         // up-arrow glyph (3DNOTES\NOTES_/NOTES1_/NOTES2_, 4 glow frames each) rotated per lane. Enabled alongside the
@@ -275,7 +313,32 @@ namespace Sdo.Game
         // up-arrow → per-lane rotation (Unity Z, CCW+). Lanes: 0=left(←) 1=down(↓) 2=up(↑) 3=right(→).
         private static readonly float[] Note3dRot = { 90f, 180f, 0f, -90f };
         public bool note3dFlip180;                                   // F4 safety: +180° all note rotations if the glyph loads pointing the wrong way
-        public float receptor3dScale = 0.82f;                        // 3D receptor (JUDGELINE) size × ReceptorW; F4-tunable (JUDGELINE fills its tile more than the 2D receptor)
+        public float receptor3dScale = 0.82f;                        // 3D receptor (JUDGELINE) size × ReceptorW — bumped to visually match the note mesh (sprite has more tile margin); × note3dMaster; F4-tunable
+        public float note3dHoldWidth = 0.73f;                        // 3D hold body/cap width × LaneW (matches the 0.73 note mesh)
+        public float note3dHoldHeadGap = 0f;                         // 3D hold body TOP offset from the note head (0 = connect; +px tucks the long lower)
+        public float note3dCapOffset = 0f;                           // 3D tail-cap fine offset (design px) on top of the auto weld at the tail edge
+        // ── OFFICIAL LONG.MSH constants (reverse-engineered — FUN_0041a7e0 body rebuild + the mesh's baked vertices).
+        // The official hold draws the FULLY-OPAQUE LONG textures (ColorKey=0, zero transparent texels — the dark interior
+        // is meant to show; silhouette = geometry, NOT alpha): a body quad sampling ONLY U 0.2243..0.7683 of LONG_0_1
+        // (the fat outer silver rails sit OUTSIDE this band and are never drawn), V = 1 − z·0.03205128 anchored at the
+        // TAIL end (z in mesh units; texture repeats every 31.2 units on a 22.0074-wide strip → wrap addressing), plus a
+        // WELDED cap TRIANGLE (base ±11.0037 at z≈0, tip at z=−10.815) sampling LONG_0_0 v 0.5574→0.8939. The V anchor
+        // makes the chevrons stay glued to the cap; the junction rows of the two textures are identical → seamless.
+        private const float LongU0 = 0.2243f, LongU1 = 0.7683f;      // body U band (official mesh verts)
+        private const float LongVPerUnit = 0.03205128f;              // V per mesh z-unit (1/31.2)
+        private const float LongMeshW = 22.0074f;                    // strip width in mesh units (≈ note width 21.97)
+        private const float LongZBase = 0.0287f;                     // cap/body weld z
+        private const float LongCapLenRatio = 10.844f / 22.0074f;    // cap length ÷ strip width (tip z −10.8154 … base 0.0287)
+        private const float LongCapU0 = 0.2255f, LongCapU1 = 0.7666f, LongCapUTip = 0.4964f;
+        private const float LongCapV0 = 0.5574f, LongCapVTip = 0.8939f;
+        private Texture2D _capTex;                                   // LONG_0_0 (opaque) — the cap triangle's texture
+        private Material _capMeshMat;                                // shared material for all cap triangles (solid, opaque texture)
+        private string _note3dDir;                                   // 3DNOTES dir (body/cap textures loaded from here)
+        // receptor press-pulse: the official 3D mode plays JUDGELINE_2.MOT on keydown = a scale pop (~0.89→1.1→1.0). We
+        // reproduce the visible "變大" as a sine bump on the receptor scale, gated to the 3D skin.
+        public float receptorPressAmt = 0.15f;                       // peak extra scale on press
+        public float receptorPressSec = 0.15f;                       // pulse duration
+        private readonly Vector3[] _recBaseScale = new Vector3[Keys];   // base receptor scale (from PlaceReceptors) the pulse multiplies
         // real 3D mesh highway (NOTES_BOARD runway + NOTES arrows + JUDGELINE receptors, meshes under a tilted 3D group).
         public bool note3dMesh = true;                               // F4: use the real 3D-mesh highway; off = the 2D coloured-sprite fallback
         private Note3dHighway _highway;
@@ -395,13 +458,28 @@ namespace Sdo.Game
             ResolveDevDefaults();
             _cam = Camera.main ?? new GameObject("Main Camera") { tag = "MainCamera" }.AddComponent<Camera>();
             SdoLayout.SetupCamera(_cam);
+            BuildBootCover();               // put the loading screen up FIRST...
+            _bootShownRt = Time.realtimeSinceStartup;
+            StartCoroutine(BootBuildCo());  // ...then build the (heavy) stage behind it — see BootBuildCo
+        }
+
+        // Build the stage AFTER the loading screen has rendered. The scene/avatar/chart load is heavy and fully
+        // synchronous; running it inline in Start() blocks the frame, so the loading image would only appear once the
+        // load already finished (a long black screen before it). Yielding one frame first lets BuildBootCover's sprite
+        // render (< ~30ms, well under 0.5s) — the loading tip shows immediately and the build runs visibly behind it.
+        // Update() no-ops until _sceneBootDone, so nothing drives the half-built stage during the two boot frames.
+        private IEnumerator BootBuildCo()
+        {
+            yield return null;   // let the boot cover render this frame before the heavy synchronous build below
             LoadArt();
-            if (!LoadChart()) return;
+            if (!LoadChart()) yield break;
             BuildScroll();
             BuildBoard();
             if (!observeBurstMode) SpawnNotes();   // observe mode: no notes (clean stage to watch the burst)
             foreach (var n in _notes) { double t = n.Note.EndTimeMs ?? n.Note.StartTimeMs; if (t > _totalMs) _totalMs = t; }
             BuildHud();
+            ApplyRoomNoteSkin();   // AFTER BuildHud so _comboWord exists → LoadComboJudgeArt can assign the skin's COMBO.PNG
+                                   // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
             TryLoadAvatar();
             TryLoadScene();
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromSdoBpm(_map.Bpm));
@@ -418,7 +496,68 @@ namespace Sdo.Game
             if (use3dCamera && _camReady && openingIntroSec > 0f) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
             if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f;   // idle dancer, fixed cam, hidden track
                 HideComboAndJudge(); HideHudForPanel(); }   // also clear the rest of the gameplay HUD (score/combo/judge/song labels/ranking) for a clean stage
+            _sceneBootDone = true;            // the synchronous build above is complete (scene/avatar/board/HUD placed)
             StartCoroutine(LoadAndPlayAudio());
+            StartCoroutine(BootRevealCo());   // hold the loading screen until everything's ready (+ online gate), then reveal
+        }
+
+        // Full-screen loading screen on the main (ortho) camera, drawn above everything (huge sortingOrder, nearest z),
+        // so the boot frames show a proper loading tip instead of the half-placed scene. A random LOADING_N.PNG fills the
+        // frame; a random LOADINGS_N.PNG "Loading..." badge sits bottom-right. Falls back to opaque black if the art is
+        // missing. Removed by BootRevealCo.
+        private void BuildBootCover()
+        {
+            var bg = LoadingArt.RandomBackground();
+            if (bg != null)
+            {
+                _bootCover = NewSR("BootLoadingBg", bg, 32000);   // above HUD/notes/board and the scene backdrop quad
+                _bootCover.color = Color.white;
+                SdoLayout.PlaceBox(_bootCover, 0f, 0f, SdoLayout.Width, SdoLayout.Height, -50f);   // stretch to fill the whole 800×600 frame (no gap)
+            }
+            else   // no loading art found → plain opaque black (still hides the half-placed startup)
+            {
+                var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+                tex.SetPixel(0, 0, Color.black); tex.Apply();
+                var spr = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+                _bootCover = NewSR("BootCover", spr, 32000);
+                _bootCover.color = Color.black;
+                _bootCover.transform.position = SdoLayout.ToWorld(SdoLayout.Width / 2f, SdoLayout.Height / 2f, -50f);
+                _bootCover.transform.localScale = new Vector3(SdoLayout.Width + 200f, SdoLayout.Height + 200f, 1f);
+            }
+
+            var badge = LoadingArt.RandomBadge();
+            if (badge != null)
+            {
+                _bootBadge = NewSR("BootLoadingBadge", badge, 32001);   // above the background image
+                _bootBadge.color = Color.white;
+                const float m = 8f;   // bottom-right corner, small margin (design px, top-left origin)
+                PlaceAspect(_bootBadge, SdoLayout.Width - LoadingArt.BadgeW / 2f - m,
+                                        SdoLayout.Height - LoadingArt.BadgeH / 2f - m, LoadingArt.BadgeW, -51f);
+            }
+        }
+
+        // Is the LOCAL build ready to be shown? The scene/avatar/board/HUD are built synchronously in Start (so
+        // _sceneBootDone covers them + the first LateUpdate that settles the follow-effects onto their bones), and the
+        // song audio has finished loading (_audioReady). This is the "all objects prepared" condition — a real state
+        // check, NOT a fixed frame count. The ONLINE gate (all peers ready + synced start) is layered on top in BootRevealCo.
+        private bool LocalBootReady() => _sceneBootDone && _audioReady;
+
+        // Hold the loading screen until everything is genuinely ready, then reveal the stage INSTANTLY (no fade):
+        //   (1) the local build is ready (scene/avatar/board placed + follow-effects settled + audio decoded);
+        //   (2) the online ReadyGate passes (scene loaded on all peers + everyone ready → synced start); null = offline;
+        //   (3) a minimum on-screen time so the loading art never just flickers past.
+        // Uses realtime throughout so it works while the gameplay clock is parked far ahead. Sets _bootRevealed at the
+        // end so OpeningSequence only plays READY/GO once the stage is actually visible.
+        private IEnumerator BootRevealCo()
+        {
+            float shownAt = _bootShownRt;   // count the minimum display time from when the loading screen appeared (before the build)
+            while (!LocalBootReady()) yield return null;                       // (1) local objects prepared
+            while (ReadyGate != null && !ReadyGate()) yield return null;       // (2) online: all users ready + synced
+            while (Time.realtimeSinceStartup - shownAt < loadingMinSec) yield return null;   // (3) minimum display time
+
+            if (_bootCover != null) { Destroy(_bootCover.gameObject); _bootCover = null; }   // straight cut — no fade
+            if (_bootBadge != null) { Destroy(_bootBadge.gameObject); _bootBadge = null; }
+            _bootRevealed = true;   // release the opening (READY/GO) — the stage is now visible
         }
 
         // Standalone-dev convenience: if no chart/audio was assigned (i.e. not launched via FrontendApp), point at a
@@ -520,9 +659,13 @@ namespace Sdo.Game
                 if (n.Body && _holdTex[c] != null)
                 {
                     var mr = n.Body.GetComponent<MeshRenderer>();
-                    if (mr && mr.sharedMaterial) mr.sharedMaterial.mainTexture = _holdTex[c];   // each hold owns its material instance
+                    if (mr && mr.sharedMaterial) { mr.sharedMaterial.mainTexture = _holdTex[c]; var sd = Shader.Find("Sprites/Default"); if (sd) mr.sharedMaterial.shader = sd; }   // back to 2D alpha-blend
                 }
-                if (n.Tail && _holdTail[c] != null) { n.Tail.sprite = _holdTail[c]; n.Tail.flipX = _holdTailFlipX[c]; n.Tail.flipY = _holdTailFlipY[c]; }
+                if (n.Tail && _holdTail[c] != null)
+                {
+                    n.Tail.sprite = _holdTail[c]; n.Tail.flipX = _holdTailFlipX[c]; n.Tail.flipY = _holdTailFlipY[c];
+                }
+                if (n.Cap3d != null) n.Cap3d.SetActive(false);   // 3D cap triangle off with the 2D skin
             }
         }
 
@@ -586,10 +729,10 @@ namespace Sdo.Game
 
         // Load a keyed DXT1 note/board glyph as a Texture2D. flipV=false for a MESH texture (hold body — its UVs already
         // match the row-0-at-top convention); flipV=true for a sprite. Background colour is keyed out (LoadDxt1Alpha).
-        private static Texture2D LoadDdsTex(string path, bool flipV)
+        private static Texture2D LoadDdsTex(string path, bool flipV, bool desilver = false)
         {
             if (!File.Exists(path)) return null;
-            try { return DdsLoader.LoadDxt1Alpha(File.ReadAllBytes(path), flipV); }
+            try { return DdsLoader.LoadDxt1Alpha(File.ReadAllBytes(path), flipV, desilver); }
             catch { return null; }
         }
 
@@ -600,37 +743,79 @@ namespace Sdo.Game
         private void LoadBoard3dSkin()
         {
             string dir = Path.Combine(SdoExtracted.Root, "3DNOTES");
+            _note3dDir = dir;
             var jl0 = LoadDdsSprite(Path.Combine(dir, "JUDGELINE_0.DDS"));               // receptor idle (grey up-arrow)
             var jl1 = LoadDdsSprite(Path.Combine(dir, "JUDGELINE_1.DDS"));               // keydown pulse frames
             var jl2 = LoadDdsSprite(Path.Combine(dir, "JUDGELINE_2.DDS"));
-            var longTex = LoadDdsTex(Path.Combine(dir, "LONG_0_1.DDS"), flipV: false);   // hold body (tileable chevron)
-            if (longTex != null) longTex.wrapMode = TextureWrapMode.Repeat;
-            // hold END cap = the silver arrowhead in the bottom ~48px of LONG_0_0 (flipV upright → cap at texture y 0..48).
-            // Crop the U to the centre (28..99 of 128) so the side rails don't show as edge "白條", like the body.
-            var capTex = LoadDdsTex(Path.Combine(dir, "LONG_0_0.DDS"), flipV: true);
-            var cap = capTex != null ? Sprite.Create(capTex, new Rect(28f, 0f, 71f, 48f), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect) : null;
+            // Official LONG textures are FULLY OPAQUE (exe loads with ColorKey=0, zero transparent texels): load them
+            // verbatim — NO keying, NO desilver, NO flip (Unity v == D3D v for the unflipped decode, so the official
+            // mesh UVs apply directly). The dark 68,51,51 interior is part of the look; silhouette comes from geometry.
+            _capTex = LoadDdsOpaque(Path.Combine(dir, "LONG_0_0.DDS"));
+            if (_capTex != null)
+            {
+                if (_capMeshMat == null) _capMeshMat = new Material(Shader.Find("Sdo/NoteCutout") ?? Shader.Find("Sprites/Default"));
+                _capMeshMat.mainTexture = _capTex;
+            }
             var down = new List<Sprite>(); if (jl1) down.Add(jl1); if (jl2) down.Add(jl2);
             for (int c = 0; c < Keys; c++)
             {
                 if (jl0 != null) _recIdle[c] = jl0;
                 if (down.Count > 0) _recDownFrames[c] = down.ToArray();
                 _recDownStart[c] = -1f;                                                  // snap receptors to idle
-                if (longTex != null) _holdTex[c] = longTex;
-                if (cap != null) { _holdTail[c] = cap; _holdTailFlipX[c] = false; _holdTailFlipY[c] = false; }
             }
             if (jl0 != null) PlaceReceptors(receptor3dScale);                            // re-size receptors for the 128px JUDGELINE glyph (fixes 太大)
-            // re-point already-spawned holds' body texture + tail cap (heads/receptors re-read their arrays each frame)
+            ReloadHoldBody();   // load LONG_0_1 body (opaque, official) + re-point spawned bodies
+        }
+
+        // Plain opaque DDS decode (official: ColorKey disabled, textures carry no transparency). wrap=Repeat because the
+        // official body V mapping goes negative on long holds (V = 1 − z/31.2, tail-anchored).
+        private static Texture2D LoadDdsOpaque(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return null;
+                var t = DdsLoader.Load(File.ReadAllBytes(path));
+                if (t != null) t.wrapMode = TextureWrapMode.Repeat;
+                return t;
+            }
+            catch { return null; }
+        }
+
+        // (Re)load the LONG body texture (opaque, verbatim — official) and re-point every spawned hold body to it.
+        private void ReloadHoldBody()
+        {
+            if (string.IsNullOrEmpty(_note3dDir)) return;
+            var longTex = LoadDdsOpaque(Path.Combine(_note3dDir, "LONG_0_1.DDS"));
+            if (longTex == null) return;
+            for (int c = 0; c < Keys; c++) _holdTex[c] = longTex;
+            var cs = Shader.Find("Sdo/NoteCutout");
             foreach (var n in _notes)
             {
-                if (n == null || n.Done) continue;
+                if (n == null || n.Done || !n.Body) continue;
                 int c = n.Note.Lane; if (c < 0 || c >= Keys) continue;
-                if (n.Body && longTex != null)
-                {
-                    var mr = n.Body.GetComponent<MeshRenderer>();
-                    if (mr && mr.sharedMaterial) mr.sharedMaterial.mainTexture = _holdTex[c];
-                }
-                if (n.Tail && cap != null) { n.Tail.sprite = _holdTail[c]; n.Tail.flipX = false; n.Tail.flipY = false; }
+                var mr = n.Body.GetComponent<MeshRenderer>();
+                if (mr && mr.sharedMaterial) { mr.sharedMaterial.mainTexture = longTex; if (cs) mr.sharedMaterial.shader = cs; }
             }
+        }
+
+        // Lazily build the official cap TRIANGLE for a hold: base edge (±0.5, 0) welded at the tail end, tip at
+        // (0, −LongCapLenRatio) pointing AWAY from the judge line — real geometry like LONG.MSH (verts 0/1/2), sampling
+        // LONG_0_0 v 0.5574→0.8939. Scaled by holdW on both axes in ScrollNotes. The junction texel rows of LONG_0_0 and
+        // LONG_0_1 are identical, so the butt joint against the body quad is seamless by construction.
+        private GameObject CreateHoldCap()
+        {
+            var go = new GameObject("HoldCap3d");
+            var mf = go.AddComponent<MeshFilter>(); var mr = go.AddComponent<MeshRenderer>();
+            mf.mesh = new Mesh
+            {
+                vertices = new[] { new Vector3(-0.5f, 0f), new Vector3(0.5f, 0f), new Vector3(0f, -LongCapLenRatio) },
+                uv = new[] { new Vector2(LongCapU0, LongCapV0), new Vector2(LongCapU1, LongCapV0), new Vector2(LongCapUTip, LongCapVTip) },
+                triangles = new[] { 0, 2, 1, 0, 1, 2 }   // both windings (no culling worry)
+            };
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; mr.receiveShadows = false;
+            mr.sharedMaterial = _capMeshMat;
+            mr.sortingOrder = 3;   // same plane as the body; the note head (6) covers both
+            return go;
         }
 
         // Re-place the receptor SpriteRenderers at ReceptorW×widthMul with the CURRENT _recIdle sprite. Needed because the
@@ -638,8 +823,14 @@ namespace Sdo.Game
         // localScale must be recomputed for the new glyph (the 3D JUDGELINE is 128px vs the smaller 2D receptor → 太大).
         private void PlaceReceptors(float widthMul)
         {
+            float eff = widthMul * (_note3dMode ? note3dMaster : 1f);   // 3D skin: receptors scale with the proportional master
             for (int c = 0; c < Keys; c++)
-                if (_receptors[c] != null) { _receptors[c].sprite = _recIdle[c]; PlaceAspect(_receptors[c], LaneLeftX[c] + LaneCx0, judgeLineY, ReceptorW * widthMul); }
+                if (_receptors[c] != null)
+                {
+                    _receptors[c].sprite = _recIdle[c];
+                    PlaceAspect(_receptors[c], LaneLeftX[c] + LaneCx0, judgeLineY, ReceptorW * eff);
+                    _recBaseScale[c] = _receptors[c].transform.localScale;   // base for the press-pulse (UpdateHud)
+                }
         }
 
         private void LoadArt()
@@ -696,6 +887,7 @@ namespace Sdo.Game
                 // no music, no READY/GO opening: park the gameplay clock far ahead so the song timer stays "-:-" and
                 // the dancer holds its standby idle (negative dance time). Bursts are fired manually (keys 1-5 / F4).
                 _clockStart = Time.timeAsDouble + 1e9; _started = true;
+                _audioReady = true;   // no song to wait for → the loading screen can reveal
                 yield break;
             }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
@@ -707,6 +899,7 @@ namespace Sdo.Game
                 if (req.result == UnityWebRequest.Result.Success) _audio.clip = DownloadHandlerAudioClip.GetContent(req);
                 else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
             }
+            _audioReady = true;   // song decoded (or failed) → the loading screen may now reveal the stage
             // Park the clock far ahead (song stopped, notes hidden, dancer idle, timer "- : -") and DON'T start the
             // song here. OpeningSequence() starts the song + gameplay clock the instant the GO animation finishes, so
             // they never begin mid-opening (mirrors the original: state-4 AdvancePlayTime fires when the GO anim slot
@@ -720,6 +913,9 @@ namespace Sdo.Game
         // Starts the song + gameplay clock at the very end, once GO has fully played out.
         private IEnumerator OpeningSequence()
         {
+            // Hold the whole opening until the loading screen has revealed the stage (so READY/GO never plays under the
+            // loading cover and gets caught mid-animation on reveal). BootRevealCo sets _bootRevealed once it's faded out.
+            while (!_bootRevealed) yield return null;
             // Camera-only intro: hold the note board hidden while the crane flies in (measured from scene start so the
             // camera always gets its full lead, even if the audio loaded slowly), then reveal the track. The board +
             // receptors appear together with the READY text — decompiled state 3->4 (NoteBoard_Update / StartPlayback).
@@ -820,20 +1016,27 @@ namespace Sdo.Game
             }
             // per-lane click-flash overlays (notes_board_click{c+1}): above the board (-30), behind the receptors
             // (0) + notes (5). Native 1:1 like the board so the 67px strip sits in its 69px lane (1px margin).
+            // Clipped by the NoteClip mask like the notes: the strip art starts at the board surface (y12) which is
+            // BEHIND the HP bar (y18..29) — the glow must stop at the judge area and never light the HP bar row.
             for (int c = 0; c < Keys; c++)
             {
                 _clickFlashStart[c] = -1f;
                 if (_clickFlashSpr[c] == null) continue;
                 var fsr = NewSR("ClickFlash" + c, _clickFlashSpr[c], -20);
                 fsr.color = new Color(1f, 1f, 1f, 0f); fsr.enabled = false;
+                fsr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+                fsr.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
                 SdoLayout.PlaceTopLeft(fsr, LaneLeftX[c] + 1f, ClickStripTopY, 9f);
                 _clickFlashSr[c] = fsr;
             }
             // miss flash: the click glow sprite TILED across all 4 lanes → the SAME soft glow as the white click flash, just
             // red and covering every lane (per-lane strips render too faint on the outer lanes). One tiled renderer, so no
             // outer-lane fade-out. Driven by the same 3-frame click-flash cycle. Above the strips (-20), behind notes (5).
+            // Clipped by the NoteClip mask like the strips — the red wash must not light the HP bar row either.
             var glowSpr = SdoExtracted.LoadImage(Path.Combine(SdoExtracted.Root, "NOTEIMAGE"), "notes_board_click1.png");
             _missOverlay = NewSR("MissFlash", glowSpr, -19);
+            _missOverlay.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+            _missOverlay.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
             float trackW = LaneLeftX[Keys - 1] + 69f - LaneLeftX[0];
             if (glowSpr != null) { _missOverlay.drawMode = SpriteDrawMode.Tiled; _missOverlay.tileMode = SpriteTileMode.Continuous; _missOverlay.size = new Vector2(trackW, 558f); }
             _missOverlay.transform.position = SdoLayout.ToWorld(LaneLeftX[0] + trackW / 2f, ClickStripTopY + 279f, 9f);
@@ -841,8 +1044,9 @@ namespace Sdo.Game
             BuildNoteClip();
         }
 
-        // a SpriteMask spanning the board's play band [NotesClipTop, NotesClipBottom]; note head/tail are flagged
-        // VisibleInsideMask (SpawnNotes) so they're clipped to it — never drawn over the HP bar or below the board.
+        // a SpriteMask spanning the board's play band [NotesClipTop, NotesClipBottom]; note head/tail (SpawnNotes),
+        // the lane click-flash strips and the miss red wash (BuildBoard) are flagged VisibleInsideMask so they're
+        // clipped to it — never drawn over the HP bar or below the board.
         private void BuildNoteClip()
         {
             var go = new GameObject("NoteClip");
@@ -877,6 +1081,7 @@ namespace Sdo.Game
         {
             _trackVisible = on;
             if (_board) _board.enabled = on;
+            if (_hpSolidBack) _hpSolidBack.enabled = on;
             if (_hpBg) _hpBg.enabled = on;
             if (_hpTex) _hpTex.enabled = on;
             if (_hpBackFrame) _hpBackFrame.enabled = on;
@@ -900,7 +1105,9 @@ namespace Sdo.Game
                 triangles = new[] { 0, 1, 2, 0, 2, 3 }
             };
             mf.mesh = m;
-            mr.sharedMaterial = new Material(Shader.Find("Sprites/Default")) { mainTexture = _holdTex[col] };
+            // 3D skin: SOLID cut-out hold body (opaque chevrons, clipped background + edges → no white fringe); else 2D alpha-blend.
+            var bodyShader = Shader.Find(_note3dMode ? "Sdo/NoteCutout" : "Sprites/Default") ?? Shader.Find("Sprites/Default");
+            mr.sharedMaterial = new Material(bodyShader) { mainTexture = _holdTex[col] };
             mr.sortingOrder = 3;
             return go;
         }
@@ -923,7 +1130,8 @@ namespace Sdo.Game
                         tail = NewSR("HoldTail", _holdTail[c], 4);
                         tail.flipX = _holdTailFlipX[c]; tail.flipY = _holdTailFlipY[c];   // mirror the shared combined-skin cap per lane
                         tail.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
-                        tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material -> no mask batch cross-bleed
+                        // own material -> no mask batch cross-bleed. (In 3D mode the sprite tail stays hidden — the cap is real triangle geometry.)
+                        tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
                     }
                 }
                 if (body) body.SetActive(false);   // hide body+tail too until scrolled in (else they pile at screen centre)
@@ -938,6 +1146,12 @@ namespace Sdo.Game
             // HP bar (WinMyHp), official textures only, XML draw order (back->front):
             // bloodBG2 bg, MyHp fill (clipped to HP%), FullHp overlay, MyHpBack frame (black-keyed,
             // so its black centre is transparent and the fill shows through), HpEft glow at the edge.
+            // Solid opaque base UNDER it all: bloodBG2 + the keyed frame are semi-transparent, and the hit bursts
+            // (order 6, ~235px at the receptors) reach this row — without an opaque base they shine through the bar.
+            var hpBaseTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            hpBaseTex.SetPixel(0, 0, Color.black); hpBaseTex.Apply();
+            _hpSolidBack = NewSR("HpSolidBase", Sprite.Create(hpBaseTex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f), 14);
+            SdoLayout.PlaceBox(_hpSolidBack, TrackCenterX - 123f, 15, 246, 18);   // the MyHpBack frame's full rect
             _hpBg = NewSR("HpBg(bloodBG2)", SdoExtracted.Hud("bloodBG2.an"), 15); SdoLayout.PlaceBox(_hpBg, HpPos.x, HpPos.y, HpSize.x, HpSize.y);
             _hpTex = NewSR("HpFill", SdoExtracted.Hud("MyHp.an"), 16); // official MyHp.png (top-bottom gradient)
             // MyHpBack is a dark-gray frame (centre ~24, edges ~65); key out the dark centre (<45) so the
@@ -2006,8 +2220,19 @@ namespace Sdo.Game
             // zNear=0x40a00000=5, zFar=0x45ea6000=7500). The old near=1 / far=bounds×4 wrecked depth precision on big
             // scenes — SCN0020's ~11.5k-unit ground plane pushed far to ~64000, so the 1:64000 ratio z-fought (破圖),
             // worst on fixed cam5 (eye z=-346) which spans the whole stage in depth. 5/7500 = ~1:1500, matching the
-            // original; 7500 still reaches every scene's farthest geometry (the original used it for all maps).
-            cam.nearClipPlane = 5f; cam.farClipPlane = 7500f;
+            // original for most maps. (The gameplay module's own projection — 023_gameplay 0x482340 — actually uses
+            // far=0x47927c00=75000; D3D9's linear W-buffer never z-fought at that range, but Unity's Z-buffer does,
+            // hence the low 7500 compromise.) A handful of venues have a SKY ceiling FAR above the play area — FIFA
+            // day (SCN0012 top Y≈11949) / night (SCN0013≈8157), SCN0018≈16284 — that sits BEYOND 7500 in view-depth,
+            // so at 7500 the sky is clipped and the top of the frame renders as the black clear colour (回報: 足球場
+            // 天空全黑 / 夜晚方形黑塊). Raise far JUST enough to reach that ceiling — ×1.5 covers the extra view-depth
+            // when the camera looks up at a high AND distant sky point (night needs ~10.5k for an 8.2k-high sky) —
+            // capped at 20000 so the near/far ratio stays ≤4000 (well under the z-fight range). Flat venues
+            // (SCN0020 top≈2582, every other map ≤5.1k) clamp back to exactly 7500, so nothing that already works regresses.
+            float sceneTopY = b.max.y;   // b = res.Mesh.bounds, native coords — same space as this camera
+            float sceneFar = Mathf.Clamp(sceneTopY * 1.5f, 7500f, 20000f);
+            cam.nearClipPlane = 5f; cam.farClipPlane = sceneFar;
+            Debug.Log($"[scene] {SceneFolder()}: camera far={sceneFar:F0} (sky top Y={sceneTopY:F0})");
             _sceneCam = cam;
             if (avatarDebug)
             {
@@ -2402,6 +2627,7 @@ namespace Sdo.Game
 
         private void Update()
         {
+            if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
@@ -2437,6 +2663,13 @@ namespace Sdo.Game
                 Vector3 eye, tgt;
                 if (_camMode < 0 && _dirCv != null && _dirCv.Length > 0)
                 {
+                    // Hold the director pinned to the START of shot 0 while the loading screen is still up — the camera
+                    // must only begin its move once we're actually "in" the game (revealed), not run underneath the cover.
+                    // Re-stamping _dirShotStart every hidden frame keeps elapsed ≈ 0, so it starts fresh from shot 0 at reveal.
+                    if (!_bootRevealed) { _dirShot = 0; _dirShotStart = Time.time; }
+                    // Start the opening crane from its camIntroSkipSec frame (cut the first second of shot 0). Applied ONCE,
+                    // the first revealed frame, by shifting the shot-start back so elapsed begins at camIntroSkipSec.
+                    else if (!_camIntroSkipped && camIntroSkipSec > 0f) { _dirShotStart -= camIntroSkipSec; _camIntroSkipped = true; }
                     // AUTO-DIRECTOR: animate the current shot's .cv over its durationMs, then auto-cut to the next.
                     float durSec = Mathf.Max(0.1f, _dirDurMs[_dirShot] / 1000f);
                     float el = Time.time - _dirShotStart;
@@ -2493,7 +2726,7 @@ namespace Sdo.Game
             ClearGameplayFx();                                // tear down in-flight bursts/holds (F5 mid-song leaves a hold burst looping)
             if (_emoji != null) _emoji.Stop();                // clear any head emoji cut-in so it doesn't linger into the result
             foreach (var n in _notes)                         // also kill any note sprites still in flight
-            { if (n.Head) n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; }
+            { if (n.Head) n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); }
             if (_avatar != null)                              // win/lose 定格 pose (cat5/cat4), held on its last frame
             {
                 var mot = ResolveMot(_localWon ? winMot : loseMot);
@@ -2677,7 +2910,7 @@ namespace Sdo.Game
             _highwayItems.Clear();
             foreach (var n in _notes)
             {
-                if (n.Done) { n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; continue; }
+                if (n.Done) { n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
                 int c = n.Note.Lane;
                 bool held = _holding[c] == n;        // a held long-note head stays pinned to the judge line
                 float yRaw = held ? judgeLineY : YForTime(n.Note.StartTimeMs, now);
@@ -2689,13 +2922,13 @@ namespace Sdo.Game
                 // time, then retire it once it's been judged. (disappears at the same spot as before, still scored.)
                 if (!held && Mathf.Max(yRaw, yEnd) < NotesClipTop - 36f)
                 {
-                    n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false;
+                    n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false);
                     if (n.HeadJudged) n.Done = true;   // hit late / auto-missed -> now fully retired
                     continue;
                 }
                 bool visible = held || Mathf.Min(yRaw, yEnd) <= NotesClipBottom + 60f;   // shown once it enters from the bottom; SpriteMask clips it to the board
                 n.Head.enabled = visible;
-                if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; continue; }
+                if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
                 float y = yRaw;   // NO clamp — notes keep flowing past the receptor (the mask hides them above the HP bar)
                 int frame = ((int)(Time.time * noteAnimFps)) & 3;   // 4-frame glow cycle (= the official _0.._3 frames)
                 if (use3d)
@@ -2703,9 +2936,11 @@ namespace Sdo.Game
                     // 3D-MESH head: draw the real NOTES.MSH arrow FLAT at this note's exact 2D position (same lane + scroll
                     // Y as the sprite), textured by the beat family, additive. The 2D head sprite is hidden; the hold
                     // body/tail below stay 2D. RotZ = the per-lane arrow direction.
+                    // HOLD head is forced to family 0 = the on-beat (4th) MAGENTA (洋紅), regardless of its beat position.
                     _highwayItems.Add(new Note3dHighway.Item {
                         World = SdoLayout.ToWorld(LaneLeftX[c] + LaneCx0, y, -0.5f),
-                        Size = LaneW, RotZ = Note3dRot[c] + (note3dFlip180 ? 180f : 0f), Family = n.ColorFamily });
+                        Size = LaneW * note3dMaster, RotZ = Note3dRot[c] + (note3dFlip180 ? 180f : 0f),
+                        Family = n.Note.EndTimeMs.HasValue ? 0 : n.ColorFamily });
                     n.Head.enabled = false;
                 }
                 else
@@ -2726,27 +2961,67 @@ namespace Sdo.Game
 
                 if (n.Note.EndTimeMs.HasValue)
                 {
-                    if (n.Tail) { n.Tail.enabled = true; PlaceAspect(n.Tail, LaneLeftX[c] + 34.5f, yEnd, LaneW, 0.5f); }
+                    float holdW = LaneW * (_note3dMode ? note3dHoldWidth * note3dMaster : 1f);   // 3D skin: hold width matches the note, scaled by the master
+                    float cx = LaneLeftX[c] + 34.5f;
+                    float tailY = Mathf.Max(y, yEnd);                                   // true tail edge (below the head in upscroll)
+                    if (_note3dMode)
+                    {
+                        // OFFICIAL cap = a welded TRIANGLE at the tail end (LONG.MSH verts 0/1/2), pointing away from the
+                        // judge line — real geometry, not a sprite. The 2D sprite tail stays hidden while the 3D skin is on.
+                        if (n.Tail) n.Tail.enabled = false;
+                        if (n.Cap3d == null && _capMeshMat != null) n.Cap3d = CreateHoldCap();
+                        if (n.Cap3d != null)
+                        {
+                            float capBaseY = tailY + note3dCapOffset;
+                            float capLen = holdW * LongCapLenRatio;
+                            bool capVis = capBaseY <= NotesClipBottom && capBaseY + capLen >= NotesClipTop;
+                            n.Cap3d.SetActive(capVis);
+                            if (capVis)
+                            {
+                                n.Cap3d.transform.position = SdoLayout.ToWorld(cx, capBaseY, 0.6f);
+                                n.Cap3d.transform.localScale = new Vector3(holdW, holdW, 1f);
+                            }
+                        }
+                    }
+                    else if (n.Tail)
+                    {
+                        n.Tail.enabled = true;
+                        // 2D cap sits at the tail END (yEnd), its own sprite/aspect.
+                        PlaceAspect(n.Tail, cx, yEnd, holdW, 0.5f);
+                        if (n.Cap3d != null && n.Cap3d.activeSelf) n.Cap3d.SetActive(false);
+                    }
                     if (n.Body)
                     {
-                        float cx = LaneLeftX[c] + 34.5f;
-                        float top = Mathf.Max(Mathf.Min(y, yEnd), NotesClipTop);     // clamp body to the board
+                        float top = Mathf.Max(Mathf.Min(y, yEnd) + (_note3dMode ? note3dHoldHeadGap : 0f), NotesClipTop);
                         float bot = Mathf.Min(Mathf.Max(y, yEnd), NotesClipBottom);
                         float len = Mathf.Max(0f, bot - top), midY = (top + bot) / 2f;
                         n.Body.SetActive(len > 0.5f);
                         if (len > 0.5f)
                         {
                             n.Body.transform.position = SdoLayout.ToWorld(cx, midY, 0.6f);
-                            n.Body.transform.localScale = new Vector3(LaneW, len, 1);
-                            // tile the body texture along the length (拼接, not stretch)
-                            float tileH = LaneW * (_holdTex[c].height / (float)_holdTex[c].width);
-                            float tiles = len / Mathf.Max(tileH, 1e-3f);
-                            // the 3D LONG texture has silver SIDE RAILS at U<0.22 / >0.77 → the official mesh samples only the
-                            // centre chevrons (U 0.22..0.77). Crop to that so the rails don't stretch into edge "白條".
-                            float uL = _note3dMode ? 0.22f : 0f, uR = _note3dMode ? 0.77f : 1f;
+                            n.Body.transform.localScale = new Vector3(holdW, len, 1);
                             var m = n.Body.GetComponent<MeshFilter>().mesh; var uv = m.uv;
-                            uv[0].x = uL; uv[3].x = uL; uv[1].x = uR; uv[2].x = uR;
-                            uv[2].y = tiles; uv[3].y = tiles; m.uv = uv;
+                            if (_note3dMode)
+                            {
+                                // OFFICIAL body mapping (FUN_0041a7e0): sample ONLY U 0.2243..0.7683 of LONG_0_1 (the fat
+                                // outer silver rails are outside the band, never drawn) and V = 1 − z·(1/31.2) with z
+                                // ANCHORED AT THE TAIL (cap weld z=0.0287 → V≈0.999) — the chevrons stay glued to the cap
+                                // no matter how the body is clamped/consumed. z = design px × (22.0074 mesh units / holdW).
+                                float k = LongMeshW / Mathf.Max(holdW, 1e-3f);
+                                float vBot = 1f - (LongZBase + (tailY - bot) * k) * LongVPerUnit;
+                                float vTop = 1f - (LongZBase + (tailY - top) * k) * LongVPerUnit;
+                                uv[0].x = LongU0; uv[3].x = LongU0; uv[1].x = LongU1; uv[2].x = LongU1;
+                                uv[0].y = vBot; uv[1].y = vBot; uv[2].y = vTop; uv[3].y = vTop;
+                            }
+                            else
+                            {
+                                // 2D skin: tile the body texture square along the length (拼接, not stretch)
+                                float tileH = holdW * (_holdTex[c].height / (float)_holdTex[c].width);
+                                float tiles = len / Mathf.Max(tileH, 1e-3f);
+                                uv[0].x = 0f; uv[3].x = 0f; uv[1].x = 1f; uv[2].x = 1f;
+                                uv[0].y = 0f; uv[1].y = 0f; uv[2].y = tiles; uv[3].y = tiles;
+                            }
+                            m.uv = uv;
                         }
                     }
                 }
@@ -2772,10 +3047,11 @@ namespace Sdo.Game
         private void HandleInput(double now)
         {
             int mask = 0;
+            var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
             {
                 bool down = false, anyHeld = false, anyUp = false;
-                foreach (var k in LaneKeys[lane])
+                foreach (var k in laneKeys[lane])
                 { if (Input.GetKeyDown(k)) down = true; if (Input.GetKey(k)) anyHeld = true; if (Input.GetKeyUp(k)) anyUp = true; }
                 if (anyHeld) mask |= 1 << lane;
                 if (down) { PressLane(lane, now); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
@@ -2814,12 +3090,12 @@ namespace Sdo.Game
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
                     _recDownStart[n.Note.Lane] = Time.time;   // auto-press: fire the keydown burst (head only, never the hold tail)
                     if (grade == Judgment.Miss) { /* flows past the receptor, then ScrollNotes removes it */ }
-                    else if (n.Note.IsHold) _holding[n.Note.Lane] = n;
+                    else if (n.Note.IsHold) { _holding[n.Note.Lane] = n; SpawnHit3dLong(n.Note.Lane); }   // 3D: continuous HIT_LONG for the hold
                     else n.Done = true;
                 }
                 if (n.HeadJudged && !n.Done && grade != Judgment.Miss && n.Note.IsHold && _holding[n.Note.Lane] == n
                     && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value)
-                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); n.Done = true; }
+                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); StopHit3dLong(n.Note.Lane); n.Done = true; }
             }
         }
 
@@ -2831,7 +3107,7 @@ namespace Sdo.Game
             else { var j = _engine.JudgeHit(n.Note.StartTimeMs, now); if (j == null) return; jv = j.Value; }
             n.HeadJudged = true; ApplyEvent(jv, lane);
             if (jv == Judgment.Miss) { /* keep flowing past the receptor; ScrollNotes removes it off the top */ }
-            else if (n.Note.IsHold) { if (jv == Judgment.Bad) n.BundledFail = true; else _holding[lane] = n; }
+            else if (n.Note.IsHold) { if (jv == Judgment.Bad) n.BundledFail = true; else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // 3D: continuous HIT_LONG for the hold
             else n.Done = true;
         }
 
@@ -2839,7 +3115,9 @@ namespace Sdo.Game
         {
             var n = _holding[lane]; if (n == null) return;
             _holding[lane] = null;
-            ApplyEvent(_engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss, lane); n.Done = true;
+            ApplyEvent(_engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss, lane);
+            StopHit3dLong(lane);   // 3D: end the looping HIT_LONG → one-shot HIT_SUO terminator
+            n.Done = true;
         }
 
         private RuntimeNote NearestHittable(int lane, double now)
@@ -2861,7 +3139,7 @@ namespace Sdo.Game
                 if (n.Done) continue;
                 if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) ApplyEvent(Judgment.Miss); continue; }   // judged miss, but keeps flowing off the top
                 if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.Done = true; continue; }
-                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Perfect); n.Done = true; }
+                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Perfect); StopHit3dLong(n.Note.Lane); n.Done = true; }
             }
         }
 
@@ -2877,8 +3155,9 @@ namespace Sdo.Game
                 if (_hit3dMode) SpawnHit3d(lane);                              // 3D skin: real AU_HIT.EFT burst at the receptor
                 else if (_burstFrames != null) SpawnBurst(lane, false);       // 2D skins: sprite flipbook burst
             }
-            if (lane >= 0 && j != Judgment.Miss) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
-            if (j == Judgment.Miss) TriggerMissFlash();                     // miss: flash ALL four lane strips red once
+            // 3D skin: the official has NO lane click-strip glow on press and NO red board flash on miss — suppress both.
+            if (lane >= 0 && j != Judgment.Miss && !_note3dMode) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
+            if (j == Judgment.Miss && !_note3dMode) TriggerMissFlash();                     // miss: flash ALL four lane strips red once
         }
 
         // Every 8 beats (the score-settlement cadence) re-decide whether the dancer keeps dancing — a break NEVER
@@ -2934,6 +3213,7 @@ namespace Sdo.Game
         private sealed class RuntimeNote
         {
             public readonly OsuHitObject Note; public readonly SpriteRenderer Head, Tail; public readonly GameObject Body;
+            public GameObject Cap3d;   // 3D skin: the official LONG.MSH cap TRIANGLE (real geometry, welded at the tail end); lazily created
             public bool HeadJudged, BundledFail, Done;
             public readonly int ColorFamily;   // 3D-note beat-quantization colour (0=magenta,1=blue,2=green); used only in _note3dMode
             public RuntimeNote(OsuHitObject n, SpriteRenderer head, GameObject body, SpriteRenderer tail, int colorFamily)

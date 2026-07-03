@@ -61,6 +61,13 @@ if ($online) {
     # ROOMDLG song-select (選歌) art: overlay the online MUSICSELDLG atlas + .an on top of the offline set so
     # the built player resolves the same 閉撰敃氪 look as the editor (RoomDlgArt's DATA/UI/ROOMDLG fallback).
     Copy-Tree (Join-Path $ds 'UI\ROOMDLG')          (Join-Path $Data 'UI\ROOMDLG')          'online ROOMDLG'
+    # OPTION dialog (選項) art: overlay the online OPTIONDLG folder — includes OPTIONDLG.clean.png, the atlas with its
+    # baked Chinese painted out by tools\build_optiondlg_clean.py, so the built player resolves the same faithful pink
+    # frame the editor does (OptionDlgModal + OptionDlgArt's DATA\UI\OPTIONDLG fallback).
+    Copy-Tree (Join-Path $ds 'UI\OPTIONDLG')        (Join-Path $Data 'UI\OPTIONDLG')        'online OPTIONDLG'
+    # LOADING screens: the gameplay boot/loading screen (ScreenGameplay boot cover) picks random LOADING_N.PNG tips +
+    # LOADINGS_N.PNG badges from here; overlay them so the built player resolves the same set (LoadingArt's DATA\LOADING fallback).
+    Copy-Tree (Join-Path $ds 'LOADING')             (Join-Path $Data 'LOADING')             'online LOADING'
 } else {
     Write-Warning "[package] online DatasSDO not found under $assetsDir — icons fall back to the offline subset."
 }
