@@ -105,6 +105,37 @@ namespace Sdo.Game
         // user hit.) Only the balls are exposure-ramped; trails/mesh/ring/glow stay at 1.0 so their real hue shows.
         public static float BallCoreIntensity = 5f;    // peak exposure at spawn (white-hot); 1 = no overexposure
         public static float BallCoreExpoFrac = 0.3f;   // fraction of life over which exposure decays back to 1 (real colour)
+        // ── POWER GAUGE (氣條 ShowTime) — head white-hot + electric-ribbon flow. See docs SDO_SHOWTIME round-4. ──
+        // The online engine (sdo.bin.c FUN_0098d660 @664485/664489) draws the naga00 star + ring_l sparks WHITE-HOT via
+        // additive-accumulation + D3DRS_SPECULARENABLE specular-add hard-clipped at 1.0. Now that the RIBBON renders at
+        // the faithful 1× (energyStripBright 0.5 compensates the Legacy shader's 2×), the blue body no longer washes, so
+        // the WHITE head layers (tex100 naga00 star + tex96 ring_l sparks) can be boosted to pop the flash at the moving
+        // head WITHOUT washing the ribbon body (they overlap only at the tip). Halo (tex30) stays 1× so its colour reads.
+        public static float PowerHeadGlowBright = 1.5f;
+        // aef_4_02 head HALO (POWER slot1) = the BIG soft glow attached at the fill head (官方那顆「大顆的、接著集氣條」).
+        // It was deliberately left "soft" (ci=1 = base 0.5×) so it stayed invisible on the black RT — give it its own
+        // additive boost so the big head glow actually shows. Tunable to match the official size/brightness.
+        public static float PowerHaloBright = 2.5f;
+        // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
+        // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
+        // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
+        // multiplies the WHITE slots' size so they blanket the band = the persistent white-hot core the user wants.
+        // (The GOLD aef_4_02 slot1 is the dancer body-aura material, NOT this — left faithful.)
+        // Optional size nudge for the WHITE head slots (naga00/ring_l) if the core reads too small after the faithful
+        // integer-position fix. 1.0 = faithful (recommended). Stability now comes from the engine-correct INT position
+        // truncation (see StepParticle), NOT a pin — so leave this at 1.0 unless the core needs to be a touch bigger.
+        public static float PowerWhiteSize = 1f;
+        // A/B toggle: engine-accurate 2-point channel sampler for POWER_*.EFT (氣條). ON = official (halo/star stay
+        // concentrated & visible; ribbon scaleY thins monotonically). OFF = full-curve (halo over-blooms to an
+        // invisible wash). Combined with PowerHaloBright, ON is what makes the big head halo appear.
+        public static bool PowerEngineSampler = true;
+        // DIAGNOSTIC (SDO_SHOWTIME_ISO): isolate gauge layers to see which washes the blue band white. 0=all, 1=ribbon
+        // only (hide head glow), 2=head glow only (hide ribbon). Set from ScreenGameplay via the env var.
+        public static int PowerIsolate;
+        static int _renderDbgN;   // DIAG cap for the head-glow world-position dump
+        // NOTE: the engine has NO ribbon UV scroll (FUN_0098d660 @664564 sets D3DTSS_TEXTURETRANSFORMFLAGS=DISABLE;
+        // rai_05 is frameCount=1 = static UV) — the official "電流流動" is purely the overlapping re-spawn crackle +
+        // scaleY pinch. A UV-scroll enhancement was tried and REMOVED per user: 官方沒有的就不要加.
         // The 200/300 slot0 AEF_3_00 blue MESH that rides each ball has a DIM texture, so at 1× it's drowned by the
         // bright fountain (the user couldn't see it). Boost its additive so the blue mesh shows once the balls' spawn
         // exposure fades. trails/ring/disk untouched. F4-tunable. NOTE: now 200-ONLY (300 uses Mesh300Intensity).
@@ -187,6 +218,7 @@ namespace Sdo.Game
 
         Transform _follow; float _effScale; Camera _cam;
         Material _addMat; int _layer; float _bright;
+        bool _isPower;                 // cached EffectName.StartsWith("POWER") — the ShowTime 氣條 gauge effect
         float _glowMul, _glowSpread;   // outer-glow halo: intensity (0=off) + how much bigger than the particle
         float _acc; Vector3 _spawnPos; int _maxTicks; int _tick;
         int _mesh32Count;   // # of non-orient (200 ground) AEF_3_00 meshes spawned this effect — capped at MeshMax200
@@ -202,6 +234,15 @@ namespace Sdo.Game
         // reproduced. Default false = the one-shot combo-burst behaviour (auto-destroys when spent). Set before Init.
         public bool Persistent;
         public string EffectName;
+        // Explicit billboard camera: when set, particles face THIS camera instead of the auto-found perspective scene
+        // camera. The ShowTime board-burst renders through a dedicated near-plane camera (eye z-1000), so its billboards
+        // must orient to that camera, not the stage camera. Must be a PERSPECTIVE camera (the billboard math assumes it).
+        public Camera BillboardCam;
+        // Sprite sortingOrder for every particle renderer. The engine draws the ShowTime board burst in a LATE effect
+        // pass (layer 2) AFTER the scene and both UI passes (sdo.bin FUN_00402d20: burst pass follows the UI passes on a
+        // cleared z-buffer) — i.e. over notes/HUD. MeshRenderers default to order 0 (= behind every sprite ≥1), so the
+        // host must lift them explicitly for overlay-pass effects. 0 = leave untouched.
+        public int SortingOrder;
         static Texture2D _glow;
 
         sealed class P
@@ -246,6 +287,7 @@ namespace Sdo.Game
         {
             _effScale = effScale; _follow = follow; _texResolver = texResolver; _meshResolver = meshResolver; _addMat = addMat; _layer = layer; _bright = bright;
             _glowMul = glow; _glowSpread = glowSpread; _file = file;
+            _isPower = EffectName != null && EffectName.StartsWith("POWER");   // ShowTime 氣條 gauge (head white-hot + ribbon flow)
             _spawnPos = transform.position;
             if (transform.localScale == Vector3.one) transform.localScale = Vector3.one * effScale;   // caller may preset a non-uniform world scale
             if (_glow == null) _glow = MakeGlow();
@@ -387,7 +429,12 @@ namespace Sdo.Game
             // DIAG (persistent scene effects only): one line per emitter slot so the Player.log shows whether each
             // child (delta_line mesh 172, MW tex 117, the colour bars) actually spawned + resolved its mesh/texture.
             if (Persistent) { _dbgSlots ??= new System.Collections.Generic.HashSet<int>();
-                if (_dbgSlots.Add(em.Slot)) Debug.Log($"[scene-eft-dbg] slot{em.Slot} root={isRoot} mesh={em.MeshIdx}(isMesh={isMesh}) tex={(em.HasTex ? em.TexIdx : -1)} invisible={((em.Flags & 0x40000) != 0)} life={em.Life0} trig={em.TrigType} kids={em.Children.Count}"); }
+                if (_dbgSlots.Add(em.Slot)) {
+                    bool texOK = em.HasTex && _texResolver != null && _texResolver(em.TexIdx) != null;
+                    string line = $"[scene-eft-dbg] {EffectName} slot{em.Slot} root={isRoot} mesh={em.MeshIdx}(isMesh={isMesh}) tex={(em.HasTex ? em.TexIdx : -1)} texOK={texOK} isTrail={isTrail} worldQuad={(!em.IsRing && !em.Orient)} orient={em.Orient} flags=0x{em.Flags:X} invisible={((em.Flags & 0x40000) != 0)} base=({em.BaseSize.x:F1},{em.BaseSize.y:F1},{em.BaseSize.z:F1}) cone=(mag{em.ConeMag:F2},{em.ConeAngX:F0}x{em.ConeAngY:F0}) initRot=({em.InitRot.x:F0},{em.InitRot.y:F0},{em.InitRot.z:F0}) life={em.Life0} trig={em.TrigType} kids={em.Children.Count}";
+                    Debug.Log(line);
+                    if (EffectName != null && EffectName.StartsWith("POWER")) { try { System.IO.File.AppendAllText(@"H:/65_remake/gauge_dbg.txt", line + "\n"); } catch { } }
+                } }
             // 300 = the AEF_3_00 mesh rides a RISING ball (orient parent); 200 = it rides a stationary ground external.
             // This is the single switch that keeps the two tiers' tuning fully independent (straighten + intensity +
             // opacity all branch on it), so changing 300 never touches the 200 ground curtain.
@@ -480,6 +527,25 @@ namespace Sdo.Game
             // the trail-yaw (their aef03_00 trail relies on it).
             if (isTrail && !(Persistent && p.isMesh)) p.rot.y = trailYaw;
 
+            // ENGINE-FAITHFUL INT position AT SPAWN (not just per-tick in StepParticle): the engine stores word[0x18/19]
+            // as int, so the sub-unit cone scatter (head glow ±0.8 local = ±64 design px) truncates to 0 on the VERY
+            // FIRST frame. Without this the particle renders one frame at the scattered position before StepParticle
+            // snaps it back = the one-frame flicker on every re-spawn. Also truncate X (local depth): the engine keeps
+            // word[0x17] float, but the head glow has NO X velocity (vel.x=0) so X is only the cone's DEPTH scatter
+            // (±0.8 local ≈ ±80 world depth) — each re-spawn at a new depth reads as size/position jitter = the "前後動".
+            // Pinning all 3 axes clusters every re-spawn at the effect origin (the fill head) = a stable white-hot core.
+            // ring_l sparks (tex96) EXCLUDED: they are the small particles that SHOULD drift OUT around the core.
+            if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
+
+            // DIAGNOSTIC: isolate the POWER gauge layers (still SPAWN so the trigger chain 0→1→4→2/3 is intact, just
+            // render invisible). 1 = ribbon only (hide halo/star/sparks 1/5/6); 2 = head glow only (hide ribbon 2/3).
+            if (_isPower && PowerIsolate != 0)
+            {
+                bool glow = em.Slot == 1 || em.Slot == 5 || em.Slot == 6;
+                bool ribbon = em.Slot == 2 || em.Slot == 3;
+                if ((PowerIsolate == 1 && glow) || (PowerIsolate == 2 && ribbon)) p.invisible = true;
+            }
+
             var go = new GameObject(p.isMesh ? "eft-mesh" : p.isTrail ? "eft-trail" : em.IsRing ? "eft-ring" : "eft-bb");
             go.transform.SetParent(transform, false);
             go.layer = _layer;
@@ -544,6 +610,10 @@ namespace Sdo.Game
                 {
                     var mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
                     Texture2D st = (md.SubTex != null && s < md.SubTex.Length) ? md.SubTex[s] : null;
+                    // a mesh emitter with a REAL texture flipbook (EDGE4's tornado + rai_00..03 lightning) samples the
+                    // EMITTER's animated texture, not the mesh's baked DDS — start submesh 0 on flipbook frame 0; the
+                    // flipbook advance in StepParticle (p.mat = mats[0]) cycles it from there.
+                    if (frames != null && tex != null && s == 0) st = tex;
                     mat.mainTexture = st != null ? st : _glow;
                     mats[s] = mat;
                 }
@@ -622,6 +692,8 @@ namespace Sdo.Game
                 ApplyFrameUv(p.mat, em.FrameUv[0]);
                 if (p.glowMat != null) ApplyFrameUv(p.glowMat, em.FrameUv[0]);
             }
+            if (SortingOrder != 0)
+                foreach (var r in go.GetComponentsInChildren<Renderer>(true)) r.sortingOrder = SortingOrder;
             p.tr = go.transform;
             go.SetActive(false);
             _pending.Add(p);
@@ -634,7 +706,17 @@ namespace Sdo.Game
             // re-pin to the dancer's pelvis-on-floor each frame (engine re-calls SetTransformAnimated)
             transform.position = _follow != null ? _follow.position : _spawnPos;
             transform.localScale = Vector3.one * _effScale;
-            if (_cam == null) foreach (var c in Camera.allCameras) if (!c.orthographic) { _cam = c; break; }
+            if (BillboardCam != null) _cam = BillboardCam;   // dedicated burst camera overrides the auto-found stage camera
+            else if (_cam == null)
+            {
+                // Billboard toward the camera that ACTUALLY RENDERS this effect (its cullingMask includes our layer),
+                // not merely the first perspective camera found. The ShowTime gauge added a 2nd perspective camera
+                // (GaugeCam, eye z-1000, layer 6); the old "first non-ortho camera" grab picked it non-deterministically,
+                // so the stage combo bursts (layer 4, rendered by _sceneCam) billboarded toward the gauge eye and faced
+                // straight up. Prefer the layer-matching camera; fall back to any perspective camera (legacy 2D path).
+                foreach (var c in Camera.allCameras) if (!c.orthographic && (c.cullingMask & (1 << _layer)) != 0) { _cam = c; break; }
+                if (_cam == null) foreach (var c in Camera.allCameras) if (!c.orthographic) { _cam = c; break; }
+            }
 
             _acc += Time.deltaTime;
             while (_acc >= Step) { _acc -= Step; Tick(); }
@@ -647,8 +729,13 @@ namespace Sdo.Game
             if (_cam != null)
                 foreach (var p in _ps)
                     if (p.orient && p.tr.gameObject.activeSelf)
-                        p.tr.rotation = Quaternion.LookRotation(p.tr.position - _cam.transform.position, _cam.transform.up)
+                    {
+                        // face the camera. For an ORTHO billboard camera all particles face flat along the camera's
+                        // forward (their world position is irrelevant); for a perspective camera each faces the eye.
+                        Vector3 fwd = _cam.orthographic ? _cam.transform.forward : (p.tr.position - _cam.transform.position);
+                        p.tr.rotation = Quaternion.LookRotation(fwd, _cam.transform.up)
                                         * Quaternion.Euler(0f, 0f, p.rot.z + p.rot.y);
+                    }
         }
 
         void Tick()
@@ -697,6 +784,14 @@ namespace Sdo.Game
             int life0 = p.life0;
             int ageTicks = life0 - p.life;
             float t = ageTicks / (float)life0;   // age 0..1
+            // FIX1 (ShowTime gauge fidelity): official engine 2-point-samples every non-alpha channel of a flags&1==0
+            // emitter (POWER slots 1/2/3/5/6). Stops the aef_4_02 halo (slot1) & naga00 star (slot5) over-blooming into
+            // an invisible wash (scale key2 pivot ×5 → ×1.5). Scoped to POWER via _isPower; non-POWER (twoPt=false) is
+            // unchanged. SC/RC/RMC dispatch; ch1(alpha) always stays full-curve (engine excludes it).
+            bool twoPt = PowerEngineSampler && _isPower && (em.Flags & 1) == 0;
+            float SC(int ch) => twoPt ? em.Ch[ch].Scale2(t) : em.Ch[ch].Scale(t);
+            float RC(int ch) => twoPt ? em.Ch[ch].Ranged2(t) : em.Ch[ch].Ranged(t);
+            float RMC(int ch) => twoPt ? em.Ch[ch].RangedMin2(t) : em.Ch[ch].RangedMin(t);
             // .mot frame timer — EXACT engine replication (decompiled Particle_Update 030:7611-7631):
             //   frame += speed/60 per 50Hz tick;  speed = emitter word[9] (=0 for delta_line) → defaults to 15.
             //   ⇒ frame += 15/60 = 0.25 per tick = 12.5 fps. MAX (word[8]) = 240 is never reached in the 120-tick life,
@@ -766,7 +861,12 @@ namespace Sdo.Game
 
             // per-axis scale channels (0xe/0xf/0x10) → animScale, with the 0.5-pivot remap.
             // Verified EXACT vs the live game (Frida): ring X/Z bloom 0.45→1.02→0.30, Y grows 0.31→2.02. No trim.
-            Vector3 animScale = new Vector3(em.Ch[0xe].Scale(t), em.Ch[0xf].Scale(t), em.Ch[0x10].Scale(t));
+            Vector3 animScale = new Vector3(SC(0xe), SC(0xf), SC(0x10));   // 2-pt for POWER (halo/star don't over-bloom → visible)
+            // WHITE-HOT head core: enlarge the WHITE head-glow slots (naga00 tex100 + ring_l tex96) so their additive
+            // quads BLANKET the ±9.375 gauge band the whole life (they'd otherwise be ~17-45 world, leave the band, and
+            // read as tiny flickers). This is the RE-verified "oversized additive quad" mechanism that makes the core
+            // persistent white-hot. Only the white slots; the gold aef_4_02 (tex30 = body-aura material) is untouched.
+            if (_isPower && em.HasTex && (em.TexIdx == 100 || em.TexIdx == 96)) animScale *= PowerWhiteSize;
             // SCN0008 corner glow flares (tex42): the raw channels animate sclH ONLY (slot4: 1.0→~2×), which stretched the
             // TOP flare into a tall oval AND (taking max) ballooned it into an over-bright burst ("一直變形 / 後面那顆太亮").
             // Keep the flare a STABLE round star at its base size — the visible "忽大忽小" twinkle comes from its alpha
@@ -795,9 +895,9 @@ namespace Sdo.Game
                     animScale = Vector3.one * em.Ch[0xe].Scale(t);   // 200: own width curve, uniform
             }
             // rotation channels (0xb/0xc/0xd) ACCUMULATE (degrees)
-            p.rot.x += em.Ch[0xb].RangedMin(t);
-            p.rot.y += em.Ch[0xc].RangedMin(t);
-            p.rot.z += em.Ch[0xd].RangedMin(t);
+            p.rot.x += RMC(0xb);
+            p.rot.y += RMC(0xc);
+            p.rot.z += RMC(0xd);
             // SCN0008 kekkai disc (tex69): does NOT rotate (confirmed by the user + decompile: its rot channels are ~0
             // and no effect-level spin is armed). DiscSpinDegPerTick stays 0 = faithful. (Was briefly set to spin; wrong.)
             if (Persistent && DiscSpinDegPerTick != 0f && em.HasTex && em.TexIdx == 69) p.rot.z += DiscSpinDegPerTick;
@@ -832,20 +932,39 @@ namespace Sdo.Game
             // orb EXACTLY (the orb's rise IS the motion) — otherwise its +Z drift slides it off the orb over time.
             if (!p.lockToParent)
             {
-                float scaleVel = em.Ch[0].Scale(t);
+                float scaleVel = SC(0);
                 p.pos += p.vel * (scaleVel * p.velScale);
                 float ageLin = life0 - p.life;
                 p.pos.y -= ageLin * em.GravAccel + em.GravBase;
+                // ENGINE-FAITHFUL INTEGER POSITION (why the official head glow doesn't move): FUN_0098fc80 @666331-332
+                // stores the particle Y/Z position as INT — `pos = (int)(vel + pos)` — TRUNCATING the fraction every
+                // tick. The head glow's per-tick step is only vel.y(0.2)×ch0(≈0.034)≈0.034 local ⟪1, so it truncates to
+                // 0 and the particle NEVER rises (and its sub-unit cone scatter also truncates to 0 → it clusters at the
+                // channel centre). This is what makes the white-hot core a STABLE persistent glow, not a rising blob.
+                // The remake used float pos → it accumulated → rose ~119 world/life → 動來動去. Match the engine here.
+                // (local Y = world vertical, local Z = world along-bar after the effect's yaw-90; local X = depth kept
+                // float as the engine does.) Scoped to POWER so other tuned effects are untouched.
+                // ring_l sparks (tex96) EXCLUDED: they are the small particles that SHOULD drift OUT around the core.
+            if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
             }
 
             if (DumpTraj && !p.invisible) DumpTrajectory(p, ageTicks, life0, t);
 
             // colour = diffuse (ch2/3/4 = R/G/B) + specular (ch6/7/5 = R/G/B), alpha = ch1. D3D adds specular to
             // diffuse; keeping both preserves the real per-particle hue (blue aef_1_07, orange aef_4_03, etc.).
-            float r = em.Ch[2].Ranged(t) + em.Ch[6].Ranged(t);
-            float g = em.Ch[3].Ranged(t) + em.Ch[7].Ranged(t);
-            float b = em.Ch[4].Ranged(t) + em.Ch[5].Ranged(t);
-            float a = em.Ch[1].Ranged(t);
+            float r = RC(2) + RC(6);
+            float g = RC(3) + RC(7);
+            float b = RC(4) + RC(5);
+            float a = em.Ch[1].Ranged(t);   // alpha (ch1) ALWAYS full-curve, even in 2-point mode (engine excludes ch1)
+            // DIAG: dump the head-glow (slot1 halo) vs star (slot5) WORLD position/scale/alpha so we can see if the halo
+            // is cone-scattered out of the thin RT frustum (camera at GaugeOrigin.y=20000, visible ±~9.4 world units).
+            if (_isPower && (em.Slot == 1 || em.Slot == 5) && _renderDbgN < 60)
+            {
+                _renderDbgN++;
+                var wp = transform.TransformPoint(p.pos);
+                try { System.IO.File.AppendAllText(@"H:/65_remake/gauge_render.txt",
+                    $"{EffectName} slot{em.Slot} t={t:F2} wY-20000={(wp.y - 20000f):F1} wX={wp.x:F0} animS=({animScale.x:F1},{animScale.y:F1}) worldSize~={(em.BaseSize.y * animScale.y * _effScale):F0} a={a:F0}\n"); } catch { }
+            }
             // SCN0008 kekkai DISC (tex69): its ch1 alpha only pulses 128↔255 (×2), which on a thin additive line pattern
             // over the dark floor reads as "always lit" — the user sees no 變暗變亮. DEEPEN the pulse (a²/255: 128→64,
             // 255→255 = ×4 contrast) so the disc clearly dims then brightens. Tunable; disc-only + Persistent.
@@ -923,9 +1042,29 @@ namespace Sdo.Game
                 if (!p.orient) p.tr.localRotation = Quaternion.Euler(p.rot.x, p.rot.y, p.rot.z);
             }
             Vector3 ownScale = Vector3.Scale(Vector3.Scale(p.baseSize, animScale), p.renderScaleMul);
-            // D3D9 attach mode 1: parent scale is applied to child scale (part of full matrix multiply).
-            p.tr.localScale = (p.attach != 0 && p.parent != null && !p.isTrail && !p.isMesh)
-                ? Vector3.Scale(p.parent.liveScale, ownScale) : ownScale;
+            // D3D9 attach mode 1: parent scale is applied to child scale (part of the full matrix multiply) — but ONLY
+            // for world-matrix quads. The engine's BILLBOARD branch (sdo.bin.c 664689-664745) rebuilds the render
+            // matrix from the camera basis with the particle's OWN baseSize × anim channels and takes only the
+            // TRANSLATION from the attach-composed matrix — a billboard never inherits the parent's scale. (BOOM slot0
+            // rode its invisible carrier's baseSize (1,5,3) and blew into a 900px vertical sheet that swamped the whole
+            // burst.) Persistent scene effects keep the old behaviour: BOOKLIGHT/FIRE3/AURORA/HONGBAO were eye-validated
+            // WITH the parent multiply, so the engine-faithful rule is applied to one-shot (non-Persistent) effects only.
+            bool inheritParentScale = p.attach != 0 && p.parent != null && !p.isTrail && !p.isMesh
+                                      && !(p.orient && !Persistent);
+            // Engine (sdo.bin.c Particle_Update @666394-666415, attach mode 1) = childLocal · parentWorld (row-major):
+            // the carrier's NON-UNIFORM scale acts AFTER the child's own rotation. The naive per-axis Scale applies it
+            // in the child's PRE-rotation (mesh) frame → the ShowTime POWER strip's ANIMATING carrier Z-scale hit the
+            // quad's Z-thickness (invisible) instead of its WIDTH → the ribbon slid off the gauge frustum (氣條看不見).
+            // Rotate the parent scale into the child's mesh frame by the inverse of the child's rotation so it lands on
+            // the width axis (right edge pins at the head, ribbon grows left = the official electric fill). Scoped to
+            // the POWER_* gauge (used nowhere else) so every already-tuned attach effect (STAGELIGHTB…) is untouched.
+            if (inheritParentScale && EffectName != null && EffectName.StartsWith("POWER"))
+            {
+                Vector3 rp = Quaternion.Inverse(Quaternion.Euler(p.rot)) * p.parent.liveScale;
+                p.tr.localScale = Vector3.Scale(new Vector3(Mathf.Abs(rp.x), Mathf.Abs(rp.y), Mathf.Abs(rp.z)), ownScale);
+            }
+            else
+                p.tr.localScale = inheritParentScale ? Vector3.Scale(p.parent.liveScale, ownScale) : ownScale;
             p.liveScale = ownScale;  // store OWN scale (without parent) so children can multiply it in next tick
             // trail streak: animScale.y already stretches local +Y into the streak; TrailWidthMul tunes its width (local X).
             if (p.isTrail && TrailWidthMul != 1f) { var s = p.tr.localScale; s.x *= TrailWidthMul; p.tr.localScale = s; }
@@ -975,6 +1114,15 @@ namespace Sdo.Game
                 float ci = p.isBallCore && !Persistent
                     ? Mathf.Lerp(BallCoreIntensity, 1f, Mathf.Clamp01(t / Mathf.Max(0.01f, BallCoreExpoFrac)))
                     : 1f;
+                // POWER gauge head layers: boost the additive energy so the layers actually show on the black RT.
+                //   naga00 star (tex100) + ring_l sparks (tex96) → PowerHeadGlowBright (white core clips 爆白);
+                //   aef_4_02 HALO (tex30) → PowerHaloBright — the BIG soft glow at the fill head (官方那顆「大顆的」),
+                //     previously left unboosted ("stays soft") so it never showed.
+                if (_isPower && p.E.HasTex)
+                {
+                    if (p.E.TexIdx == 100 || p.E.TexIdx == 96) ci *= PowerHeadGlowBright;
+                    else if (p.E.TexIdx == 30) ci *= PowerHaloBright;
+                }
                 SetCol(p.mat, r * ci, g * ci, b * ci, a);
                 // outer-glow halo: same hue (NOT boosted), intensity scaled by _glowMul (alpha drives additive brightness)
                 if (p.glowMat != null) SetCol(p.glowMat, r, g, b, a * _glowMul);

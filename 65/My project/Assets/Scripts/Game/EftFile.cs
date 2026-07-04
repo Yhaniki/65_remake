@@ -22,15 +22,30 @@ namespace Sdo.Game
                 if (t <= Time[k]) { float f = (t - Time[k - 1]) / Mathf.Max(1e-6f, Time[k] - Time[k - 1]); return Mathf.Lerp(Val[k - 1], Val[k], f); }
             return Val[Count - 1];
         }
-        // 0.5-pivot remap → size multiplier (channels 0, 0xe, 0xf, 0x10). Neutral 1.0 at v=0.5.
-        public float Scale(float t)
+        // 2-POINT sampler (engine FUN_0098ced0): for a flags&1==0 emitter the official engine samples EVERY channel
+        // EXCEPT ch1(alpha) with a straight lerp of ONLY the first two keyframe values — ignoring keyframe TIMES and
+        // any 3rd+ keyframe. Critical for the ShowTime gauge (POWER_*.EFT slots 1/2/3/5/6, flags=0x2): e.g. slot1's
+        // aef_4_02 halo scaleX key2=0.911 (full-curve → pivot ×5.1, over-blooms to a huge faint wash = invisible) vs
+        // 2-point key1=0.582 (→ pivot ×1.8, a concentrated big glow = the official's 「大顆的」head halo).
+        public float Decoded2(float t)
         {
-            float v = Decoded(t), half = (Max - Min) * 0.5f;
+            if (Count == 0) return 0f;
+            if (Count == 1) return Val[0];
+            return Mathf.Lerp(Val[0], Val[1], t < 0f ? 0f : (t > 1f ? 1f : t));
+        }
+        float Pivot(float v)   // 0.5-pivot size remap; neutral 1.0 at v=0.5
+        {
+            float half = (Max - Min) * 0.5f;
             if (v < 0.5f) { float d = (0.5f - v) * half + 1f; return d != 0f ? 1f / d : v; }
             return (v - 0.5f) * half + 1f;
         }
+        // 0.5-pivot remap → size multiplier (channels 0, 0xe, 0xf, 0x10). Neutral 1.0 at v=0.5.
+        public float Scale(float t) => Pivot(Decoded(t));
+        public float Scale2(float t) => Pivot(Decoded2(t));                  // 2-point variant (engine flags&1==0)
         public float Ranged(float t) => (Max - Min) * Decoded(t);            // colour byte 0..255 (ch1-7)
+        public float Ranged2(float t) => (Max - Min) * Decoded2(t);
         public float RangedMin(float t) => (Max - Min) * Decoded(t) + Min;   // degrees (ch8-0xd)
+        public float RangedMin2(float t) => (Max - Min) * Decoded2(t) + Min;
     }
 
     /// <summary>One EFT emitter template (0x232 words). Only the fields the simulation needs are parsed.</summary>
