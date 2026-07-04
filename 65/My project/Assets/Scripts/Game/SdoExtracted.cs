@@ -222,6 +222,11 @@ namespace Sdo.Game
             Rect rect = fr.HasCrop
                 ? new Rect(fr.X, tex.height - fr.Y - fr.H, fr.W, fr.H)  // flip Y (top-left -> bottom-left)
                 : new Rect(0, 0, tex.width, tex.height);
+            // some .an files declare the ORIGINAL DDS canvas (ENERGY_Y.AN says 128×32) while the extracted PNG is the
+            // trimmed content (85×17) — an out-of-bounds rect makes Sprite.Create THROW (it froze gameplay boot), so
+            // fall back to the full texture.
+            if (rect.x < 0f || rect.y < 0f || rect.xMax > tex.width || rect.yMax > tex.height)
+                rect = new Rect(0, 0, tex.width, tex.height);
             return Sprite.Create(tex, rect, new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
@@ -403,5 +408,18 @@ namespace Sdo.Game
         // convenience for the gameplay HUD
         public static Sprite Hud(string anName) => LoadAn1(GameplayUiDir, anName);
         public static Sprite Eft(string imageName, int skin = 2, bool bleed = false) => LoadImage(EftDir(skin), imageName, bleed);
+
+        /// <summary>ShowTime gameplay UI art (energy meter, banner) — UI/GAMEPLAY/PLAYSHOWTIME.</summary>
+        public static string ShowtimeUiDir => Path.Combine(GameplayUiDir, "PLAYSHOWTIME");
+        public static Sprite ShowtimeArt(string anName, bool bleed = false) => LoadAn1(ShowtimeUiDir, anName, bleed);
+        public static Sprite[] ShowtimeFrames(string anName, bool bleed = false) => LoadAn(ShowtimeUiDir, anName, bleed);
+        /// <summary>Load a 0..9 digit atlas from a PLAYSHOWTIME sub-folder (e.g. "ENERGYBONUS"), or null if incomplete.</summary>
+        public static Sprite[] ShowtimeDigits(string subFolder)
+        {
+            var dir = Path.Combine(ShowtimeUiDir, subFolder);
+            var d = new Sprite[10];
+            for (int i = 0; i < 10; i++) { d[i] = LoadImage(dir, i + ".png"); if (d[i] == null) return null; }
+            return d;
+        }
     }
 }

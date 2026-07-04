@@ -276,6 +276,179 @@ namespace Sdo.Game
         private long _shownScore, _scoreFrom, _scoreTarget;  // (8) score commits every 8 beats, then counts up + zooms
         private double _nextScoreCommitMs; private float _scoreAnimAt = -10f;
 
+        // ---- ShowTime (氣條) mode ----
+        // Good hits fill an energy gauge; SPACE releases a timed auto-PERFECT window whose score bonus stacks
+        // +1 each release. Faithful to the stand-alone exe (docs/reverse-engineering/SDO_SHOWTIME.md); the
+        // gauge/bonus math is the pure, unit-tested Sdo.Ruleset.ShowtimeMeter. In real play the room "模式"=
+        // ShowTime drives showtimeMode; F7 toggles it for dev. Space is free (lanes = ASWD / numpad).
+        public bool showtimeMode = true;
+        // energy meter geometry (design px). Frame = MyEnergy0(256×45)@(8,7) metallic trough + MyEnergy1(100×45)@(264,7)
+        // gauge head with a black status panel (design 297..354) holding the badge cluster. Official ONLINE fill
+        // (sdo.bin FUN_0040dc00/0040e210/0040e0f0): the moving fill is a 3D-EFT electric particle STRIP slid
+        // horizontally inside a scissored viewport over the channel — per band it re-bases empty→full and swaps to a
+        // different band effect (yellow→blue→red). The remake reproduces that look in 2D with the official ENERGY_Y/
+        // ENERGY_B/ENERGY_R 11-frame 85×17 electric-plasma capsules (same PLAYSHOWTIME art family): the capsule is the
+        // sliding strip — its RIGHT (head) end rides the fill tip, the tail is cropped at the channel start, frames
+        // cycle for the live crackle, drawn ADDITIVE so the black background vanishes and the plasma glows.
+        // Channel measured from MYENERGY0.PNG pixels: groove x22..~265 (runs 2px into MyEnergy1), rows y15..27;
+        // official strip viewport top/bottom = y14..29; fill right end tucks to ~272 under the chrome swoosh.
+        public Vector2 energyFramePos = new Vector2(8, 7);     // MyEnergy0 top-left (static rail)
+        public Vector2 energyFillPos = new Vector2(22, 15);    // fill channel top-left (groove starts at design x22)
+        public Vector2 energyFillSize = new Vector2(250, 14);  // channel w×h (22..272 × 15..29, official strip window)
+        public Vector2 energyBadgePos = new Vector2(311, 21);  // EnergyLevel1/2/3 badge (MyEnergy2/3/4 = ×2/×4/×8)
+        public Vector2 energyEftPos = new Vector2(304, 12);    // EnergyEft glow — FIXED in the panel (XML), not tip-riding
+        public Vector2 energyMiniPos = new Vector2(279, 15);   // EnergyProgress mini 14×4 chunk (500ms band-up flash)
+        public float energyMiniFlashMs = 500f;                 // official flash duration (EnergyProgress range 0..500 = elapsed ms)
+        // official strip/glow are engine-tick effects (fast crackle), not the slow ~10fps UI .an tick — and the D3D9
+        // gamma-space additive runs HOT, so the additive materials get a >1 tint boost (same class of fix as the
+        // combo-burst white-hot, see BallCoreIntensity).
+        public float energyFillFps = 40f;                      // ENERGY_* plasma frame cycle (11 frames, fast electric crackle)
+        public float energyGlowFps = 20f;                      // EnergyEft panel glow + tip flare frame cycle
+        public float energyFillBright = 1f;                    // even ribbon already runs bright (overlap-tiled) → neutral tint
+        public float energyGlowBright = 2f;
+        private bool _energyHudOn;                             // last SetEnergyHudVisible state (gates per-frame re-enables)
+        private readonly ShowtimeMeter _showtime = new ShowtimeMeter();
+        // DIAGNOSTIC (SDO_SHOWTIME_DEMO=1): continuously PingPong the gauge fill 0→cap2→0 (~8s) so the yellow/blue/red
+        // bands + their head glow can be captured without waiting for slow autoplay fill. Does not touch meter logic.
+        public static bool DebugGaugeSweep;
+        // ShowTime auto→manual HANDOFF. During the window AutoPlay forces PERFECT and HandleInput is NOT called, so a
+        // real key the player presses INSIDE the window (anticipating a note at the seam) has its GetKeyDown edge
+        // consumed on an auto frame and lost — the boundary tap / hold-head would then MISS when manual resumes. Fix:
+        // ObserveShowtimeInput records, per lane, each in-window press's time (_stPressMs), release time (_stReleaseMs)
+        // and the EXACT note it aimed at (_stPressNote); on the single seam frame ReplayShowtimeSeamPress replays that
+        // press onto THAT note only, graded at the real press time, so the note earns its true grade instead of a MISS —
+        // and a held hold-head keeps going. Precise-targeted on purpose (a re-searched neighbour / any-held-key replay
+        // caused phantom hits + wrong-note misses). [user-reported handoff bug]
+        private bool _stJustEnded;                          // true only on the frame a ShowTime window ended → seam carry-over
+        private readonly double[] _stPressMs = new double[Keys];   // last real DOWN-edge time (ms) seen inside the window, per lane (-1 = none)
+        private readonly RuntimeNote[] _stPressNote = new RuntimeNote[Keys];   // the EXACT note that in-window press aimed at (null = none) → replay onto it precisely, never a re-searched neighbour
+        private readonly double[] _stReleaseMs = new double[Keys];   // last real key-UP time (ms) inside the window (-1 = none) → grade a released hold's tail at the TRUE release, not the seam
+        private double _nowMs;                              // this frame's song time (ms), shared with the HUD tick
+        private SpriteRenderer _energyFrameL, _energyFrameR, _energyFill, _energyBadge;   // official frame + fill + level badge
+        private SpriteRenderer _energyMini;                 // mini band-up flash chunk (EnergyProgress @279,15)
+        private Sprite[] _energyBadgeSpr;                   // MyEnergy2/3/4 (×2/×4/×8 multiplier badges, band 0/1/2)
+        private Sprite[] _energyFillSpr;                    // MyEnergy5/6/7 = official YELLOW/BLUE/RED 14×4 mini chunks (band 0/1/2)
+        private Material _energyFillMat, _energyEftMat;     // own additive instances (never share the sprite default)
+        // THE OFFICIAL GAUGE EFFECTS (POWER_Y/B/R.EFT = online indices 0x2b/0x28/0x2a, byte-walked table): the strip
+        // body (RAI electric ribbons trailing the head), the pulsing head glow (AEF_4_02 + NAGA00 + RING_L origin
+        // emitters, 0.32s re-fire) and all the flicker live INSIDE these files — the remake plays them verbatim
+        // through EftEffect. One instance per band; only the ACTIVE band's head anchor sits at the fill head, the
+        // rest park at x=-10000 (the official hidden-gauge park). Official transform: rot(0,90°,0), scale 100 wu ×
+        // 0.8 px/wu = 80 design px per EFT unit; the value only ever TRANSLATES the effect (FUN_0040e210).
+        // The POWER effects are WORLD-QUAD ribbons designed for the official's dedicated perspective camera; they
+        // cannot render straight onto the flat overlay (edge-on). So the remake mirrors the official EXACTLY: a
+        // dedicated perspective camera (eye z=-1000, PerspectiveLH 488×15 zn800 zf1200) renders the effect on its own
+        // layer into a RenderTexture, which is composited additively onto the bar channel. Only headX translates.
+        private static readonly string[] GaugeStripEft = { "POWER_Y", "POWER_B", "POWER_R" };
+        private const int GaugeLayer = 6;                   // free layer; only _gaugeCam renders it
+        private static readonly Vector3 GaugeOrigin = new Vector3(0f, 20000f, 0f);   // isolated world region for the RT camera
+        private readonly GameObject[] _gaugeStrip = new GameObject[3];
+        private readonly Transform[] _gaugeAnchor = new Transform[3];
+        private Camera _gaugeCam; private RenderTexture _gaugeRT; private MeshRenderer _gaugeComposite;
+        public float energyStripScale = 100f;               // official effect scale (the dedicated cam matches official px/unit)
+        // Legacy Particles/Additive does `2×tex×_TintColor`, but the official EFT draw is plain MODULATE (1×, sdo.bin.c
+        // FUN_0098d660 @664480 COLOROP=D3DTOP_MODULATE, NOT MODULATE2X). SetCol maps diffuse straight through (k=_bright/255),
+        // so _bright=1 renders the gauge 2× TOO BRIGHT → the pale-blue ribbon (0.51,0.51,1.0) clips R,G to white (藍變白) and
+        // the whole strip washes out (no contrast for the head flash). 0.5 = the faithful 1× (2×0.5=1). F4-tunable.
+        public float energyStripBright = 0.5f;              // engine-faithful colour gain (compensates the Legacy shader's built-in 2×)
+        // OFFICIAL fill drive (sdo.bin.c FUN_0040e0f0/e210): the fill is NOT a solid bar — it's the POWER EFT electric
+        // ribbon, positioned by sliding the effect origin (headX) over [-305, 0] world. Three per-band eased POSITIONS
+        // (NOT a smoothed counter) + STATEFUL HYSTERETIC band selection: only re-select when the active band's eased
+        // position leaves (-305, 0], so it can never flicker (the old counter-bucket-per-frame = 前後跳). Only ONE
+        // POWER effect is live at a time (Y/B/R); a band-up cleanly swaps colour + refills from empty (twice, ~500ms).
+        private readonly float[] _gaugeCur = { -305f, -305f, -305f };   // eased head position per band (init empty)
+        private int _gaugeActive = 0;                                   // persistent active band index (hysteresis)
+        private const float GaugeBaseP = -305f, GaugeFullP = 0f;        // empty / full head positions (official +0x8c/+0x90)
+        private float _energyMiniT0 = -1f;                  // realtime the current band-up flash began (<0 = idle)
+        private Sprite[] _showtimeHitFrames;               // EFT_SHOWTIME/EFT_HIT golden hit flipbook (12 frames)
+        public float showtimeHitScale = 1.5f;              // showtime hit burst size ×
+        private SpriteRenderer[] _bannerSr; private Transform _bannerRoot;   // SHOW TIME intro banner (ShowTime0..5 tiles)
+        private float _bannerStart = -1f;                  // realtime the intro began (<0 = idle)
+        private float _bannerDismiss = -1f;                // realtime the slide-out began (<0 = still holding at centre)
+        public float bannerInSec = 1.0f, bannerHoldSec = 1.0f, bannerOutSec = 1.0f, bannerScale = 1.0f;   // XML: 1000ms spiral-in, hold, 1000ms slide-out; native scale
+        // ShowTime SFX — EXACT online SE names (sdo.bin.c: 0x50/0x4e/0x4f/0x52/0x53). Files live in sdox_offline/SE/,
+        // reachable via SeDir's fallback, so these play as-is. electricity.wav (0x51) loops the whole window — that
+        // needs a looping AudioSource (deferred); the one-shots below are wired. There is NO bonus-tally chime.
+        public string seRelease = "showtimeboom";    // 0x50 — one-shot burst on release
+        public string seAnnounce = "showtime";       // 0x4e — "SHOW TIME!" announcer
+        public string seArm = "showtimeactive";      // 0x4f — energy crosses into a new level
+        public string seWarn3s = "showtimewarning";  // 0x52 — 3001 ms remaining
+        public string seWarn07s = "showtimeend";     // 0x53 — 701 ms remaining
+        private Sprite[] _savedBurstFrames; private bool _burstSwapped;   // hit burst deque swap (EFT_SHOWTIME REPLACES normal)
+        private int _lastArmed = -1; private bool _warn3, _warn07;        // arm-cue + one-shot warning latches
+        // official HUD anims (Frida/decompile-confirmed): space.an = 2-image press pulse (s01 hand → s02 fist+flash);
+        // EnergyEft1/2/3.an = 10-frame glow behind the level badge; EnergyBonus.an = digit font with count-up + per-digit
+        // scale-pop (1.0→1.3→1.0, 500ms) via RollingDigits.
+        private SpriteRenderer _spaceSpr; private Sprite[] _spaceFrames;
+        private SpriteRenderer _energyEftSpr; private Sprite[][] _energyEftFrames;   // [level 0/1/2][frame]
+        private SpriteRenderer _bonusIcon;                  // GamePlay44.an — the "+" glyph (static, @544,23)
+        private RollingDigits _bonusRoll;                   // official EnergyBonus digit font (20×26) + pop, @(525,23)
+        private RollingDigits _scoreRoll;                   // official EnergyScore digit font (30×39, BIG) + pop, @(300,10)
+        private long _scoreRollLast = 0, _bonusRollLast = 0;   // last committed value → SetTarget (fire the pop) ONLY on change
+        // breakdance: on release the dancer swaps its choreography to a breaking_{E|N|H}_{n}.dps for the window
+        // (online FUN_0092cd80 swaps the active dance pointer), reverting to the song DPS at window end.
+        private DpsLoader _songDps, _breakDps; private System.Func<float> _songDanceTime; private bool _dpsSwapped;
+        // breakdance chaining: a break DPS is ~10s (E) / ~14s (N) / ~19s (H). Play one; when it ends, if the window
+        // still has room for another full break start a fresh one, otherwise HAND BACK to the song choreography for the
+        // tail (the song clock runs underneath) — user-requested (official parks the dancer in idle rest instead).
+        private double _breakStartMs; private float _breakTotal; private bool _breakHandedToSong;
+        // OFFICIAL breaking selection (FUN_0092d280 @611650: at SONG LOAD each tier's variant is rand-rolled ONCE —
+        // E=rand%6, N=rand&7, H=rand&7 — and stays fixed for the whole song; at release the TIER LETTER = the RELEASED
+        // ENERGY LEVEL (0→E, 1→N, 2→H — FUN_0092d3f0 @611772), NOT the song difficulty). Windows are pas-sized to
+        // ~9.5/13.8/19.6s precisely so ONE break of the matching tier (~10/14/19s) fills the window.
+        private readonly int[] _breakRolls = new int[3];
+        // OFFICIAL window duration (FUN_00643030 @348192-348202): accumulate WHOLE dance segments (pas) of chart time
+        // until the tier budget (WindowDurationsMs = 8000/12000/18000 is a THRESHOLD, not the length) is reached ⇒
+        // windowMs = ceil(budget / pasMs) × pasMs. Typical pas = 8 beats; Frida-measured 11.9s (lv0 @121bpm) and
+        // 16.7s (lv1 @86bpm) both reproduce exactly with 8-beat pas. Tunable if a chart uses 16-beat segments.
+        public float showtimePasBeats = 8f;
+        // dancer aura during the window. online FUN_0092cec0 starts 3D effect index 0x2c on the dancer — and in the
+        // ONLINE client's renumbered 3DEFT table (DAT_00b933c4, byte-verified against 閉撰敃氪/sdo.bin file offset
+        // 0x7933c4) **0x2c = body_star.eft** (star-twinkle billboards + streaks — the tight body glow of the videos),
+        // NOT kuanghuan1 (that name comes from the older offline/TW numbering; kuanghuan1 is a room-wide confetti
+        // field and reads nothing like the official glow).
+        // online FUN_00930e50 (0x169c branch): the aura follows the dancer ROOT (Bip01) X/Z each frame at a FIXED waist
+        // height (Y=40), uniform SCALE 20, rot 0, rendered in the SCENE pass with the normal perspective stage camera.
+        // The old anchor was a child of _ringTr whose localScale=22 multiplied the +8 offset to +176u (3 dancer heights
+        // overhead) — now a free-standing anchor is driven at (pelvis.x, showtimeAuraY, pelvis.z) every frame.
+        public string showtimeAuraEft = "BODY_STAR"; public float showtimeAuraScale = 20f; public float showtimeAuraY = 40f;
+        private GameObject _auraGo, _auraAnchor;
+        // board burst around the note board on SPACE activation. ONLINE table (same renumbering as the aura):
+        // centre **0x2d = boom.eft** @(-90,333,0) rot(90°,0,0) scale 50 — a ~1s ring-of-columns + shockwave flash;
+        // sides **0x27 = edge4.eft** ×2 @(-490,-400,0)/(-130,-400,0) rot 0 scale 70 — spinning tornado meshes textured
+        // with the rai_00..03 lightning flipbook + naga00 sparks rising ~700px: the FULL-HEIGHT blue lightning columns
+        // hugging the board's left/right edges. edge4's root loops (life -45) until the handle is killed at window end.
+        // The official draws them through a dedicated camera (eye z-1000, PerspectiveLH 800×600 zn800 zf1200) in a LATE
+        // pass AFTER the UI ⇒ 0.8 px per world unit at the z=0 plane, over everything. The remake renders them on the
+        // board overlay (main ortho cam, layer 0) at the projected design px with effScale = officialScale×0.8 and
+        // EftEffect.SortingOrder lifting them above notes/HUD; billboards face the ortho cam (BillboardCam).
+        public bool showtimeBoardBurst = true;
+        public string showtimeBurstCenterEft = "BOOM", showtimeBurstSideEft = "EDGE4";
+        public Vector2 showtimeBurstCenterPx = new Vector2(328f, 34f);    // 0x2d BOOM (projected design px)
+        public Vector2 showtimeBurstSide1Px = new Vector2(8f, 620f);      // 0x27 EDGE4 left  (base 20px below screen, grows UP)
+        public Vector2 showtimeBurstSide2Px = new Vector2(296f, 620f);    // 0x27 EDGE4 right
+        public float showtimeBurstCenterScale = 40f, showtimeBurstSideScale = 56f;   // official 50/70 × 0.8 px-per-unit
+        public float showtimeBurstZ = -2f;                                // in front of the note board
+        public int showtimeBurstOrder = 80;                               // official late pass draws OVER notes + HUD
+        private readonly List<GameObject> _boardBurstGos = new List<GameObject>();
+        public float showtimeAnimFps = 10f;                 // .an UI-sprite tick (~100ms/frame; engine default)
+        // energy-bar INTRO animation (online FUN_0040dc00: slide in from off-screen ~500ms, then a 3-stage stepped
+        // fill demo ~1200ms/stage). _energyIntroOffX = live X slide offset; _energyIntroFill = demo fill 0..1 (-1 = live).
+        private float _energyIntroOffX = 0f, _energyIntroFill = -1f;
+        public float energyIntroStageSec = 1.2f;   // official demo tween: 1200ms per band lap (no slide-in)
+        // note colour flash in the last 3001ms of the window (online +0x1bac8 render branch @688456: set at the 3001ms
+        // warning, a sine pulse tints the gold note until the skin reverts). User-observed: the gold note oscillates
+        // RED ↔ YELLOW at ~1 s per full cycle (NOT the old white↔red 200ms).
+        private Color _noteTint = Color.white;
+        public Color showtimeEndRed = new Color(1f, 0.15f, 0.15f, 1f);
+        public Color showtimeEndYellow = new Color(1f, 0.82f, 0.15f, 1f);   // the gold note colour (top of the pulse)
+        public float showtimeEndFlashMs = 3001f, showtimeEndFlashPeriodMs = 1000f;   // ~1 s red→yellow→red
+        public float showtimeNoteScale = 1.15f;             // notes grow a little larger during the auto-hit window
+        private string _preShowtimeNoteDir;                 // note skin to restore when a window ends
+        private static Sprite _solidSprite;                 // 1×1 white fallback sprite (used only if official art missing)
+        // local total for ranking/result = base score + folded ShowTime bonus (exe merges 0x840 at song end).
+        private long TotalScore => (_score?.Score ?? 0L) + (showtimeMode ? _showtime.Bonus : 0L);
+
         // ---- ranking UI (head nameplate + centre rank N/M + right-side roster list) ----
         // The remake renders ONE dancer; opponents are a configurable mock roster so the rank/list read
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
@@ -345,6 +518,10 @@ namespace Sdo.Game
             // its persistent EFTs still spawn in TryLoadScene, so only the stage + idle dancer + EFTs are shown.
             var sceneOnly = DevVar("SDO_SCENE_ONLY");
             if (!string.IsNullOrEmpty(sceneOnly) && sceneOnly != "0") g.observeBurstMode = true;
+            var demoSweep = DevVar("SDO_SHOWTIME_DEMO");
+            if (!string.IsNullOrEmpty(demoSweep) && demoSweep != "0") DebugGaugeSweep = true;
+            var iso = DevVar("SDO_SHOWTIME_ISO");
+            if (!string.IsNullOrEmpty(iso) && int.TryParse(iso, out int isoN)) EftEffect.PowerIsolate = isoN;
         }
 
         /// <summary>DEV scene-override config. A player build (dance.exe) reads the OS env var (set in the terminal
@@ -378,6 +555,14 @@ namespace Sdo.Game
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromSdoBpm(_map.Bpm));
             _score = new ScoreProcessor(_map.TotalNotes);
             _health = new HealthProcessor(healthLevel);
+            _showtime.Reset();   // fresh ShowTime gauge/bonus per song
+            _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; }   // clear the auto→manual handoff latches
+            _gaugeCur[0] = _gaugeCur[1] = _gaugeCur[2] = GaugeBaseP; _gaugeActive = 0;   // gauge positions re-init empty
+            // official FUN_0092d280: breaking variants are rolled ONCE per song load (E=rand%6, N/H=rand&7) and stay
+            // fixed for every release; the tier letter is picked at release time by the released energy level.
+            _breakRolls[0] = UnityEngine.Random.Range(1, 7);
+            _breakRolls[1] = UnityEngine.Random.Range(1, 9);
+            _breakRolls[2] = UnityEngine.Random.Range(1, 9);
             RefreshRanking();   // initial roster/rank (rank 1/N) before the first score commit
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
@@ -476,8 +661,13 @@ namespace Sdo.Game
         /// (n.Head.sprite from _noteFrames) and receptors (UpdateHud from _recIdle/_recDownFrames) re-read the arrays each
         /// frame, so the swap shows instantly. Click-flash + board background are shared (NOTEIMAGE root) and don't change.</summary>
         internal void SetNoteBoardSkin(string suffix)
+            => ApplyNoteDir(Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_" + suffix));
+
+        // Reload the board from note dir <dir> and re-point live notes/holds. Split out of SetNoteBoardSkin so
+        // ShowTime can restore an ARBITRARY previous skin dir (not just a NOTEIMAGE_<suffix>) when a window ends.
+        private void ApplyNoteDir(string dir)
         {
-            _noteDir = Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_" + suffix);
+            _noteDir = dir;
             LoadBoardArt();
             for (int c = 0; c < Keys; c++) _recDownStart[c] = -1f;   // snap receptors to idle (skins differ in keydown frame count)
             // Heads re-read _noteFrames each frame, but a hold's Body texture + Tail sprite are bound ONCE at spawn — so
@@ -610,12 +800,30 @@ namespace Sdo.Game
             if (_introStartRt >= 0f)
             {
                 while (Time.realtimeSinceStartup - _introStartRt < openingIntroSec) yield return null;
-                SetTrackVisible(true);
+                if (!showtimeMode) SetTrackVisible(true);   // non-showtime reveals the board here; showtime reveals it later
+            }
+            // ShowTime opening ORDER (user-confirmed): SHOW TIME banner spirals in + HOLDS → energy-bar 3-stage intro
+            // anim runs under it → +0.5s beat → banner slides out/disappears → note board appears → ready-go. Board +
+            // energy bar stay HIDDEN during the banner spiral-in; the banner does NOT leave until the energy anim is done.
+            if (showtimeMode)
+            {
+                SetTrackVisible(false);                                 // note board hidden during banner + energy anim
+                SetEnergyHudVisible(false);                             // energy bar hidden until the intro anim reveals it
+                PlaySe("showtime");                                     // 0x4e "SHOW TIME!" announce
+                TriggerBanner();                                        // banner spirals in, then holds at centre
+                float bs = Time.realtimeSinceStartup;
+                while (Time.realtimeSinceStartup - bs < bannerInSec) yield return null;   // wait for the spiral-in only
+                PlaySe("showtimeenegy");                                // 0x4d — energy bar appears + 3-stage fill demo
+                yield return EnergyIntroAnim();                         // banner HOLDS at centre through the whole demo
+                yield return new WaitForSecondsRealtime(0.5f);          // beat after the energy anim finishes
+                DismissBanner();                                        // NOW the banner slides out (down)
+                while (!BannerGone) yield return null;                  // wait until it has fully left
+                SetTrackVisible(true);                                  // NOW the note board appears → ready-go next
             }
             if (_readyGo != null)
             {
                 float t0 = Time.realtimeSinceStartup;
-                PlaySe("VOICE_0003");                                   // "ready ... go!" (~2.56s)
+                PlaySe(showtimeMode ? "readygo_showtime" : "VOICE_0003");  // 0x4c readygo_showtime in ShowTime, else the normal ready-go voice
                 _readyGo.enabled = true;
                 yield return PlayFrames(_readyFrames, 1.0f, 360f);      // READY: 10 frames @ 100ms/frame (decompiled StartReadyAnim param=100)
                 while (Time.realtimeSinceStartup - t0 < 2.0f) yield return null;  // HOLD on READY — wait for the voice's "go" cue
@@ -633,6 +841,29 @@ namespace Sdo.Game
             _songStartDspTime = AudioSettings.dspTime + StartLeadSec;
             if (_audio != null && _audio.clip != null) _audio.PlayScheduled(_songStartDspTime);
             _clockStart = Time.timeAsDouble + StartLeadSec;
+        }
+
+        // Energy-bar INTRO (online FUN_0040dc00/0040e210/0040e0f0 + demo blocks @360861-360887): the bar does NOT
+        // slide in — WinMyEnergy is a plain full-screen window simply shown (the old slide-in was a remake invention;
+        // the only XML slide-ins are the SHOWTIME banner and the song-title strip). The official demo tweens the gauge
+        // 0→cap0→cap1→cap2 at 1200ms per stage (each band re-basing = green→yellow→red lap), then snaps to 0 and the
+        // live fill takes over.
+        private IEnumerator EnergyIntroAnim()
+        {
+            SetEnergyHudVisible(true);
+            _energyIntroOffX = 0f;
+            _energyIntroFill = 0f;                                   // demo fill starts empty
+            for (int stage = 1; stage <= 3; stage++)                 // 3-stage stepped fill demo
+            {
+                float from = (stage - 1) / 3f, to = stage / 3f, s0 = Time.realtimeSinceStartup;
+                while (Time.realtimeSinceStartup - s0 < energyIntroStageSec)
+                { _energyIntroFill = Mathf.Lerp(from, to, (Time.realtimeSinceStartup - s0) / energyIntroStageSec); yield return null; }
+                _energyIntroFill = to;
+            }
+            // official (FUN_0040dc00 demo @360861-360868): after the 3-stage sweep the gauge SNAPS to 0 in ~1ms — not a
+            // slow shrink. Hard-reset the eased positions to empty so live tracking starts from 0 instantly.
+            _energyIntroFill = -1f;
+            _gaugeCur[0] = _gaugeCur[1] = _gaugeCur[2] = GaugeBaseP; _gaugeActive = 0;
         }
 
         private IEnumerator PlayFrames(Sprite[] frames, float dur, float widthPx)
@@ -667,6 +898,24 @@ namespace Sdo.Game
             var sr = new GameObject(name).AddComponent<SpriteRenderer>();
             sr.sprite = spr; sr.sortingOrder = order; return sr;
         }
+
+        // shared 1×1 white sprite (pixelsPerUnit 1 → 1 world-unit bounds), tinted per use for the solid energy bar.
+        private static Sprite SolidSprite()
+        {
+            if (_solidSprite == null)
+            {
+                var t = new Texture2D(1, 1) { name = "SolidWhite" };
+                t.SetPixel(0, 0, Color.white); t.Apply();
+                _solidSprite = Sprite.Create(t, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+            }
+            return _solidSprite;
+        }
+
+        // energy-bar colour by level: 0 green, 1 yellow, 2 red (the g/y/r segments of the original meter).
+        private static Color EnergyColor(int level) =>
+            level >= 2 ? new Color(1f, 0.32f, 0.30f) :
+            level == 1 ? new Color(1f, 0.83f, 0.28f) :
+                         new Color(0.38f, 1f, 0.48f);
 
         // place a sprite keeping its native aspect, fitted to a column of width `w`, centered at (cx, cy) design.
         private void PlaceAspect(SpriteRenderer sr, float cx, float cy, float w, float z = 0f)
@@ -761,10 +1010,13 @@ namespace Sdo.Game
         {
             _trackVisible = on;
             if (_board) _board.enabled = on;
-            if (_hpBg) _hpBg.enabled = on;
-            if (_hpTex) _hpTex.enabled = on;
-            if (_hpBackFrame) _hpBackFrame.enabled = on;
-            if (_hpGlow) _hpGlow.enabled = on;           // UpdateHpBar refines this (low HP -> off) once visible again
+            // ShowTime mode has no HP bar (only the 集氣 energy gauge) — keep the whole HP widget hidden even when the
+            // track is shown. UpdateHpBar also early-outs in ShowTime so it can't re-enable _hpGlow.
+            bool hpOn = on && !showtimeMode;
+            if (_hpBg) _hpBg.enabled = hpOn;
+            if (_hpTex) _hpTex.enabled = hpOn;
+            if (_hpBackFrame) _hpBackFrame.enabled = hpOn;
+            if (_hpGlow) _hpGlow.enabled = hpOn;         // UpdateHpBar refines this (low HP -> off) once visible again
             for (int c = 0; c < Keys; c++)
             {
                 if (_receptors[c]) _receptors[c].enabled = on;
@@ -857,7 +1109,243 @@ namespace Sdo.Game
             _fpsText = NewText("Fps", 6, 9, 11, new Color(0.5f, 1f, 0.5f, 1f));   // debug FPS (top-left)
             _readyGo = NewSR("ReadyGo", null, 50); _readyGo.enabled = false;
             BuildRankingUi();
+            BuildEnergyHud();
             UpdateHpBar();
+        }
+
+        // ShowTime energy meter: official frame + an animated electric-plasma fill strip (ENERGY_Y/B/R), the badge
+        // cluster fixed in the right-end panel (mini flash chunk + EnergyEft glow + ×2/×4/×8 badge), a blinking
+        // "SPACE" prompt when releasable, and the ENERGYSCORE/ENERGYBONUS number rolls. Built always (cheap) but
+        // shown only in showtimeMode (F7 dev toggle flips it via SetEnergyHudVisible). Layout authority:
+        // PLAYSHOWTIME/GAMEPLAYSHOWTIME.XML + sdo.bin gauge object (see the field-block comment above).
+        private void BuildEnergyHud()
+        {
+            // official meter frame (MyEnergy0 left trough + MyEnergy1 right end), 1:1 native at the XML coords
+            var frameL = SdoExtracted.ShowtimeArt("MyEnergy0.an");
+            var frameR = SdoExtracted.ShowtimeArt("MyEnergy1.an");
+            _energyFrameL = NewSR("EnergyFrameL", frameL, 24); if (frameL) SdoLayout.PlaceTopLeft(_energyFrameL, energyFramePos.x, energyFramePos.y, -0.05f);
+            _energyFrameR = NewSR("EnergyFrameR", frameR, 24); if (frameR) SdoLayout.PlaceTopLeft(_energyFrameR, energyFramePos.x + 256f, energyFramePos.y, -0.05f);
+            // THE FILL = the actual official gauge particle effects. The official bar is not 2D art at all: it plays
+            // POWER_Y/B/R.EFT (online indices 0x2b/0x28/0x2a) through a dedicated camera clipped to the channel — the
+            // electric ribbon, the pulsing head glow and the sparks are all INSIDE those EFT files. So the remake now
+            // simply runs them through EftEffect (the validated particle engine): one instance per band, world-rect
+            // clip = the channel (Sdo/GlowClipRect template — every particle material clones it), fixed official
+            // geometry (rot Y=90°: the 20-unit RAI ribbon trails LEFT of the head; scale 80 = official 100 × 0.8
+            // px/wu), and ONLY the head anchor translates with the fill — exactly FUN_0040e210 (translation only,
+            // constant scale). Inactive bands park at x=-10000 like the official hidden gauge.
+            // The FILL is the official POWER_Y/B/R.EFT electric ribbon rendered by a dedicated camera into an RT and
+            // composited onto the channel (BuildGaugeStrips) — there is NO solid 2D fill (official has none). A tiny
+            // flat sprite is kept ONLY as a fallback if the EFTs fail to load.
+            _energyFill = NewSR("EnergyFill", SolidSprite(), 25); _energyFill.enabled = false;
+            if (_addMat != null) { _energyFillMat = new Material(_addMat); TintBoost(_energyFillMat, energyFillBright); _energyFill.sharedMaterial = _energyFillMat; }
+            BuildGaugeStrips();
+            // mini EnergyProgress chunk (MyEnergy5/6/7, 14×4 @279,15): the official 500ms band-up flash
+            _energyFillSpr = new[] { SdoExtracted.ShowtimeArt("MyEnergy5.an"), SdoExtracted.ShowtimeArt("MyEnergy6.an"), SdoExtracted.ShowtimeArt("MyEnergy7.an") };
+            _energyMini = NewSR("EnergyMini", null, 25);
+            // level badge (MyEnergy2/3/4 = ×2/×4/×8) — shown for the armed/released tier, over the frame
+            _energyBadgeSpr = new[] { SdoExtracted.ShowtimeArt("MyEnergy2.an"), SdoExtracted.ShowtimeArt("MyEnergy3.an"), SdoExtracted.ShowtimeArt("MyEnergy4.an") };
+            _energyBadge = NewSR("EnergyBadge", null, 26);
+            _showtimeHitFrames = LoadShowtimeHitFrames();   // golden EFT_SHOWTIME/EFT_HIT hit burst
+            BuildBanner();                                  // SHOW TIME intro overlay
+            // official EnergyEft glow (10-frame .an) FIXED behind the badge (@304,12 in the panel). The frames are
+            // opaque black-background electric art → ADDITIVE, so only the crackle glows inside the black panel.
+            _energyEftFrames = new[] { SdoExtracted.ShowtimeFrames("EnergyEft1.an"), SdoExtracted.ShowtimeFrames("EnergyEft2.an"), SdoExtracted.ShowtimeFrames("EnergyEft3.an") };
+            _energyEftSpr = NewSR("EnergyEft", null, 25);   // behind the badge (26)
+            if (_addMat != null) { _energyEftMat = new Material(_addMat); TintBoost(_energyEftMat, energyGlowBright); _energyEftSpr.sharedMaterial = _energyEftMat; }
+            // official SPACE press-prompt: space.an 2-image pulse (s01 hand → s02 fist+flash), @(284,56)
+            _spaceFrames = SdoExtracted.ShowtimeFrames("space.an");
+            _spaceSpr = NewSR("SpacePrompt", (_spaceFrames != null && _spaceFrames.Length > 0) ? _spaceFrames[0] : null, 27);
+            if (_spaceSpr.sprite) SdoLayout.PlaceTopLeft(_spaceSpr, 284f, 56f, -0.2f);
+            // official EnergyBonus number: digit font (ENERGYBONUS 0-9, 20×26) with count-up + per-digit scale-pop (RollingDigits), @(525,23) + static icon GamePlay44 @(544,23)
+            // hidezero + fixed 8-slot field ⇒ the number RIGHT-aligns to the field's right edge (x + labelnum*w).
+            // EnergyBonus: field 525..525+8*20=685 → right edge 685; EnergyScore: 300..300+8*30=540 → right edge 540.
+            var bonusDigits = SdoExtracted.ShowtimeDigits("ENERGYBONUS");
+            if (bonusDigits != null) _bonusRoll = new RollingDigits(transform, bonusDigits, 8, 27, 685f, 23f, 20f, rightAlign: true, z: -0.2f);
+            _bonusIcon = NewSR("EnergyBonusIcon", SdoExtracted.ShowtimeArt("GamePlay44.an"), 27); if (_bonusIcon.sprite) SdoLayout.PlaceTopLeft(_bonusIcon, 544f, 23f, -0.2f);
+            var scoreDigits = SdoExtracted.ShowtimeDigits("ENERGYSCORE");
+            if (scoreDigits != null) _scoreRoll = new RollingDigits(transform, scoreDigits, 8, 27, 540f, 10f, 30f, rightAlign: true, z: -0.2f);
+            _scoreRoll?.SetTarget(0, Time.time); _bonusRoll?.SetTarget(0, Time.time);   // "0 + 0" primed (shown when the HUD reveals)
+            // official: the WHOLE WinMyEnergy cluster stays HIDDEN until the energy-bar intro anim starts (after the
+            // "SHOW TIME!" announce + banner) — EnergyIntroAnim reveals it. F7 dev-toggle still flips it directly.
+            SetEnergyHudVisible(false);
+        }
+
+        // Legacy Particles/Additive tint boost: col = 2·vertex·_TintColor·tex, so _TintColor 0.5 = neutral. k>1 runs
+        // the additive HOT — compensates the original D3D9 gamma-space blending (same fix family as BallCoreIntensity).
+        private static void TintBoost(Material m, float k)
+        {
+            if (m != null && m.HasProperty("_TintColor"))
+                m.SetColor("_TintColor", new Color(0.5f * k, 0.5f * k, 0.5f * k, Mathf.Clamp01(0.5f * k)));
+        }
+
+        // Build the official gauge exactly like the client: a dedicated perspective camera renders the POWER_Y/B/R.EFT
+        // effects (on GaugeLayer, in an isolated world region) into a RenderTexture, which UpdateEnergyBar composites
+        // additively onto the bar channel. The camera reproduces D3DXMatrixPerspectiveLH(488,15,zn800,zf1200) with
+        // eye z=-1000: fovY=2·atan(7.5/800)=1.074°, aspect=488/15, near/far 800/1200. Only the ACTIVE band's head
+        // anchor sits at headX (∈[-305,0] world, official +0x8c/+0x90); the rest park off-frustum.
+        private void BuildGaugeStrips()
+        {
+            // RT sized to the 488×15 viewport aspect (2× supersample); alpha kept for the additive-into-black render
+            // URP render graph requires a camera's target RT to have a depth buffer (depthStencilFormat != None), so 16-bit depth here.
+            _gaugeRT = new RenderTexture(976, 30, 16) { name = "gaugeRT", antiAliasing = 1, filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            var camGo = new GameObject("GaugeCam") { layer = GaugeLayer };
+            camGo.transform.position = GaugeOrigin + new Vector3(0f, 0f, -1000f);   // eye z=-1000, looking +Z at the effects
+            camGo.transform.rotation = Quaternion.identity;                          // forward = +Z
+            _gaugeCam = camGo.AddComponent<Camera>();
+            _gaugeCam.orthographic = false;
+            _gaugeCam.fieldOfView = 2f * Mathf.Atan2(7.5f, 800f) * Mathf.Rad2Deg;    // vertical FOV for a 15-unit near-plane height at zn=800
+            _gaugeCam.aspect = 488f / 15f;
+            _gaugeCam.nearClipPlane = 800f; _gaugeCam.farClipPlane = 1200f;
+            _gaugeCam.cullingMask = 1 << GaugeLayer; _gaugeCam.targetTexture = _gaugeRT;
+            _gaugeCam.clearFlags = CameraClearFlags.SolidColor; _gaugeCam.backgroundColor = new Color(0, 0, 0, 0);
+            _gaugeCam.allowMSAA = false; _gaugeCam.allowHDR = false;
+            if (_cam != null) _cam.cullingMask &= ~(1 << GaugeLayer);               // main cam shows the gauge only via the RT
+            if (_sceneCam != null) _sceneCam.cullingMask &= ~(1 << GaugeLayer);
+
+            for (int b = 0; b < 3; b++)
+            {
+                var path = Path.Combine(SdoExtracted.Root, "3DEFT", GaugeStripEft[b] + ".EFT");
+                if (!File.Exists(path)) { Debug.LogWarning("[showtime] gauge EFT missing " + path); continue; }
+                if (!_namedEftCache.TryGetValue(GaugeStripEft[b], out var file))
+                {
+                    file = EftFile.Load(File.ReadAllBytes(path));
+                    _namedEftCache[GaugeStripEft[b]] = file;
+                }
+                var anchor = new GameObject("GaugeHead" + b).transform;
+                anchor.position = GaugeOrigin + new Vector3(-10000f, 0f, 0f);        // parked off-frustum
+                _gaugeAnchor[b] = anchor;
+                var go = new GameObject("GaugeStrip_" + GaugeStripEft[b]) { layer = GaugeLayer };
+                go.transform.position = anchor.position;
+                go.transform.rotation = Quaternion.Euler(0f, 90f, 0f);              // official rot(0,90°,0)
+                var eff = go.AddComponent<EftEffect>();
+                eff.Persistent = true;                                              // loops (0.32s carrier re-fire)
+                eff.EffectName = GaugeStripEft[b];
+                eff.BillboardCam = _gaugeCam;                                       // head-glow billboards face the dedicated cam
+                eff.Init(file, energyStripScale, anchor, ResolveEftTex, _addMat, GaugeLayer, energyStripBright, 0f, 0.6f, ResolveEftMesh);
+                SetLayerRecursive(go, GaugeLayer);
+                _gaugeStrip[b] = go;
+            }
+
+            // the composite quad on the main overlay (layer 0): additive One-One so the black RT background leaves the
+            // frame untouched. OFFICIAL geometry (round-5 RE): the scissor viewport is the FULL {22,14,488,15} strip
+            // (design x22..510 — the glow may spill right of the channel over the badge area, that's official), and the
+            // projection's _22 is NEGATED (FUN_0040dc00 L21499: gauge+0x134 = proj float[5] = D3D _22) so world +Y
+            // renders DOWNWARD (design +y). So: full RT width u[0..1] (= worldX −305..+305 = design 22..510, the head
+            // sweep −305..0 lands on the 22..266 channel), and V FLIPPED. The old quad cropped u>0.5 → the head glow's
+            // +Z-biased cone scatter (→ world +X ahead of the head) never showed = "頭光不見"; and the unflipped V made
+            // particles drift UP instead of the official sink-down ("平的往上" user report).
+            var addSh = Shader.Find("Sdo/AdditiveRGB") ?? Shader.Find("Sdo/UnlitAdditiveOverlay");
+            var qgo = new GameObject("GaugeComposite");
+            var mf = qgo.AddComponent<MeshFilter>();
+            float x0 = SdoLayout.WorldX(22f), x1 = SdoLayout.WorldX(22f + 488f);   // official viewport {22,14,488,15}
+            float yT = SdoLayout.WorldY(14f), yB = SdoLayout.WorldY(14f + 15f);
+            mf.mesh = new Mesh
+            {
+                vertices = new[] { new Vector3(x0, yB, -0.1f), new Vector3(x1, yB, -0.1f), new Vector3(x1, yT, -0.1f), new Vector3(x0, yT, -0.1f) },
+                uv = new[] { new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(1f, 0f), new Vector2(0f, 0f) },   // full RT, V flipped (official proj _22 < 0)
+                triangles = new[] { 0, 2, 1, 0, 3, 2 }
+            };
+            _gaugeComposite = qgo.AddComponent<MeshRenderer>();
+            _gaugeComposite.sharedMaterial = new Material(addSh) { mainTexture = _gaugeRT };
+            _gaugeComposite.sortingOrder = 26;   // the POWER head glow composites OVER the ENERGY body (25)
+            _gaugeComposite.enabled = false;     // shown with the HUD (SetEnergyHudVisible)
+        }
+
+        private static Sprite[] LoadShowtimeHitFrames()
+        {
+            var dir = SdoExtracted.EftDir2("SHOWTIME");     // EFFECT/EFT_SHOWTIME
+            var fr = new List<Sprite>();
+            for (int i = 0; i < 12; i++) { var s = SdoExtracted.LoadImage(dir, "EFT_HIT" + i + ".PNG"); if (s != null) fr.Add(s); }
+            return fr.Count > 0 ? fr.ToArray() : null;
+        }
+
+        // SHOW TIME intro banner: the 6 ShowTime0..5 tiles assembled into the big logo, parented to a centre root so it
+        // scales/spins/fades as one. Hidden until a release fires it (TriggerBanner → UpdateBanner drives the anim).
+        private void BuildBanner()
+        {
+            var tiles = new[] { "ShowTime0.an", "ShowTime1.an", "ShowTime2.an", "ShowTime3.an", "ShowTime4.an", "ShowTime5.an" };
+            var pos = new[] { new Vector2(91, 78), new Vector2(347, 78), new Vector2(603, 78), new Vector2(91, 334), new Vector2(347, 334), new Vector2(603, 334) };
+            var root = new GameObject("ShowTimeBanner").transform;
+            root.position = SdoLayout.ToWorld(400f, 300f, -3f);   // pivot at screen centre
+            _bannerSr = new SpriteRenderer[6];
+            for (int i = 0; i < 6; i++)
+            {
+                var sr = NewSR("Banner" + i, SdoExtracted.ShowtimeArt(tiles[i]), 60);
+                SdoLayout.PlaceTopLeft(sr, pos[i].x, pos[i].y, -3f);   // absolute, then re-parent keeping world pos
+                sr.transform.SetParent(root, true);
+                _bannerSr[i] = sr;
+            }
+            _bannerRoot = root;
+            _bannerRoot.gameObject.SetActive(false);
+        }
+
+        private void TriggerBanner()
+        {
+            if (_bannerRoot == null) return;
+            _bannerRoot.gameObject.SetActive(true);
+            _bannerStart = Time.time;
+            _bannerDismiss = -1f;                          // spiral in, then HOLD until DismissBanner()
+        }
+
+        // Begin the banner's slide-out (called after the energy-bar intro anim + a 0.5s beat). No-op if already gone.
+        private void DismissBanner()
+        {
+            if (_bannerRoot != null && _bannerStart >= 0f && _bannerDismiss < 0f) _bannerDismiss = Time.time;
+        }
+
+        // True once the banner has fully slid off (or was never shown) — OpeningSequence waits on this before ready-go.
+        private bool BannerGone => _bannerRoot == null || _bannerStart < 0f;
+
+        // Drive the intro banner: spiral in, HOLD at centre indefinitely (until DismissBanner), then slide out. No-op idle.
+        // "SHOW TIME" song-start intro (online WinShowTime). EXACT decompiled composition (Circumgyrate = spin about a
+        // LOCAL pivot, TransForm = linear position lerp; standard parent→child matrix multiply):
+        //   parent Cirwin1 spins +θ about (400,300) · child TransShowTime1 slides y −600→0 · grandchild Cirwin2 spins −θ.
+        // Net on the (upright) tiles = translate by Rz(θ)·(0, slideY): ONE clockwise orbit spiralling in from the top
+        // (top→right→bottom→left→centre) over 1000 ms; the ±θ spins cancel so the letters stay upright the whole way.
+        // Then hold (until the energy anim finishes + 0.5s → DismissBanner), then TransShowTime2 slides down off the bottom.
+        private void UpdateBanner()
+        {
+            if (_bannerRoot == null || _bannerStart < 0f) return;
+            float t = Time.time - _bannerStart;
+            float offX, offY;   // design-px offset of the whole (upright) tile group from screen centre (400,300)
+            if (t < bannerInSec)                            // spiral IN
+            {
+                float p = Mathf.Clamp01(t / bannerInSec);
+                float ang = 2f * Mathf.PI * p;             // Cirwin sweeps 0→360° over the period
+                float slideY = -600f * (1f - p);           // TransShowTime1 slides −600→0
+                offX = -slideY * Mathf.Sin(ang);           // = Rz(θ)·(0, slideY)
+                offY = slideY * Mathf.Cos(ang);
+            }
+            else if (_bannerDismiss < 0f) { offX = 0f; offY = 0f; }   // HOLD at centre until dismissed
+            else                                            // slide OUT (down) once dismissed
+            {
+                float k = (Time.time - _bannerDismiss) / bannerOutSec;
+                if (k >= 1f) { _bannerStart = -1f; _bannerDismiss = -1f; _bannerRoot.gameObject.SetActive(false); return; }
+                offX = 0f; offY = 600f * k;                // TransShowTime2 slide out (down)
+            }
+            _bannerRoot.position = SdoLayout.ToWorld(400f + offX, 300f + offY, -3f);
+            _bannerRoot.localScale = Vector3.one * bannerScale;
+            _bannerRoot.localRotation = Quaternion.identity;   // tiles stay UPRIGHT (Cirwin1 +θ and Cirwin2 −θ cancel)
+        }
+
+        private void SetEnergyHudVisible(bool on)
+        {
+            _energyHudOn = on;                               // gates the per-frame re-enables in UpdateEnergyBar
+            if (_energyFrameL) _energyFrameL.enabled = on;
+            if (_energyFrameR) _energyFrameR.enabled = on;
+            if (_energyFill) _energyFill.enabled = on;                 // ENERGY even-ribbon body (solid fill)
+            if (_gaugeComposite) _gaugeComposite.enabled = on;         // RT composite = the authentic POWER head glow over it
+            if (!on)                                          // park all gauge strips off the RT frustum
+                for (int b = 0; b < 3; b++)
+                    if (_gaugeAnchor[b] != null) _gaugeAnchor[b].position = GaugeOrigin + new Vector3(-10000f, 0f, 0f);
+            if (_energyMini) _energyMini.enabled = false;    // only during the 500ms band-up flash
+            if (_energyBadge) _energyBadge.enabled = on && _showtime.ArmedLevel >= 0;
+            if (_energyEftSpr) _energyEftSpr.enabled = on && _showtime.ArmedLevel >= 0;
+            if (_spaceSpr) _spaceSpr.enabled = on && _showtime.Ready;
+            if (_bonusIcon) _bonusIcon.enabled = on && _showtime.Bonus > 0;
+            // the ShowTime score/bonus rolls are children of the same official WinMyEnergy window → same visibility
+            _scoreRoll?.SetVisible(on);
+            _bonusRoll?.SetVisible(on);
         }
 
         private TextMesh NewText(string name, float x, float y, int px, Color col)
@@ -2289,6 +2777,7 @@ namespace Sdo.Game
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
             if (Input.GetKeyDown(KeyCode.F8)) { EftEffect.DebugMeshOnly = !EftEffect.DebugMeshOnly; Debug.Log("[dbg] DebugMeshOnly=" + EftEffect.DebugMeshOnly + " (isolate the delta_line 3-colour mesh: hides disc/lightbars/MW, mesh at 5×)"); }
+            if (Input.GetKeyDown(KeyCode.F7)) { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // DEBUG F7: toggle ShowTime (氣條) mode — SetTrackVisible refreshes HP-bar visibility for the new mode
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
             // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
             if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
@@ -2340,10 +2829,18 @@ namespace Sdo.Game
             }
             if (!_started) return;
             double now = (Time.timeAsDouble - _clockStart) * 1000.0;
+            _nowMs = now;
             _clock.SetAudioSeconds(now / 1000.0);
+            if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
-            if (!_failed) { if (autoPlay) AutoPlay(now); else { HandleInput(now); AutoMiss(now); } }
+            TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
+            if (!_failed)
+            {
+                if (_showtime.Active) AutoPlay(now, showtime: true);   // ShowTime window: force PERFECT, ignore manual input
+                else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
+                else { HandleInput(now); AutoMiss(now); }
+            }
             UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
@@ -2352,7 +2849,9 @@ namespace Sdo.Game
                 if (_holding[lane] != null && _burstFrames != null && _holdBurst[lane] == null) _holdBurst[lane] = SpawnBurst(lane, true);
             UpdateClickFlash();
             UpdateFx(); UpdateHud();
-            if (_health != null && _health.IsFailed) _failed = true;
+            // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
+            // HP-out; it only ends naturally at the song's end (below). Normal mode still fails on HP-out.
+            if (!showtimeMode && _health != null && _health.IsFailed) _failed = true;
             if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; EnterResult(); }
         }
 
@@ -2362,6 +2861,7 @@ namespace Sdo.Game
         private void EnterResult()
         {
             if (_audio) _audio.Stop();                        // stop the song (natural end already silent; matters for F5 mid-song cut)
+            if (showtimeMode) { SetEnergyHudVisible(false); _scoreRoll?.SetVisible(false); _bonusRoll?.SetVisible(false); }   // hide the gauge AND the big/small ShowTime score at song end (not on the result panel)
             RebuildRoster();                                  // finalize scores so the rank/winner is current
             var (rank, _) = RankingBoard.LocalRank(_roster);
             _localWon = rank <= 1;                            // rank 1 = highest score = winner
@@ -2369,6 +2869,7 @@ namespace Sdo.Game
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
             SetTrackVisible(false);                           // note board + HP + receptors + click strips
+            if (showtimeMode) ClearShowtimeWindowFx();        // song ended mid-window → kill the body_star aura + EDGE4 side lightning (they follow the now-hidden board)
             // SetTrackVisible(false) also hid the ranking — but it must STAY up through the win/lose pose (final
             // standings). Re-show it here with the final order; only HideHudForPanel (result panel) hides it.
             if (_rosterName != null) { UpdateRosterList(); UpdateRankDisplay(); SetRankingVisible(true); }
@@ -2519,7 +3020,7 @@ namespace Sdo.Game
                 {
                     int P = _score.PerfectCount, C = _score.CoolCount, B = _score.BadCount, M = _score.MissCount;
                     int judged = Math.Max(1, P + C + B + M);
-                    r = new ResultScreen.Row { Perfect = P, Cool = C, Bad = B, Miss = M, MaxCombo = _score.MaxCombo, Accuracy = (P + C) * 100.0 / judged, Score = _score.Score };
+                    r = new ResultScreen.Row { Perfect = P, Cool = C, Bad = B, Miss = M, MaxCombo = _score.MaxCombo, Accuracy = (P + C) * 100.0 / judged, Score = TotalScore };
                 }
                 else
                 {
@@ -2579,11 +3080,14 @@ namespace Sdo.Game
                 if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; continue; }
                 float y = yRaw;   // NO clamp — notes keep flowing past the receptor (the mask hides them above the HP bar)
                 if (_noteFrames[c] != null) n.Head.sprite = _noteFrames[c][((int)(Time.time * noteAnimFps)) & 3];
-                PlaceAspect(n.Head, LaneLeftX[c] + LaneCx0, y, LaneW, 1f);
+                bool stWin = showtimeMode && _showtime.Active;
+                float noteW = stWin ? LaneW * showtimeNoteScale : LaneW;   // notes grow a little during the auto-hit window
+                if (showtimeMode) { n.Head.color = _noteTint; if (n.Tail) n.Tail.color = _noteTint; }   // gold→red flash over the window's last 3s
+                PlaceAspect(n.Head, LaneLeftX[c] + LaneCx0, y, noteW, 1f);
 
                 if (n.Note.EndTimeMs.HasValue)
                 {
-                    if (n.Tail) { n.Tail.enabled = true; PlaceAspect(n.Tail, LaneLeftX[c] + 34.5f, yEnd, LaneW, 0.5f); }
+                    if (n.Tail) { n.Tail.enabled = true; PlaceAspect(n.Tail, LaneLeftX[c] + 34.5f, yEnd, noteW, 0.5f); }
                     if (n.Body)
                     {
                         float cx = LaneLeftX[c] + 34.5f;
@@ -2591,10 +3095,11 @@ namespace Sdo.Game
                         float bot = Mathf.Min(Mathf.Max(y, yEnd), NotesClipBottom);
                         float len = Mathf.Max(0f, bot - top), midY = (top + bot) / 2f;
                         n.Body.SetActive(len > 0.5f);
+                        if (showtimeMode) { var bmr = n.Body.GetComponent<MeshRenderer>(); if (bmr && bmr.sharedMaterial) bmr.sharedMaterial.color = _noteTint; }   // long-note body gold→red flash too
                         if (len > 0.5f)
                         {
                             n.Body.transform.position = SdoLayout.ToWorld(cx, midY, 0.6f);
-                            n.Body.transform.localScale = new Vector3(LaneW, len, 1);
+                            n.Body.transform.localScale = new Vector3(noteW, len, 1);
                             // tile the body texture along the length (拼接, not stretch)
                             float tileH = LaneW * (_holdTex[c].height / (float)_holdTex[c].width);
                             float tiles = len / Mathf.Max(tileH, 1e-3f);
@@ -2617,8 +3122,10 @@ namespace Sdo.Game
                 { if (Input.GetKeyDown(k)) down = true; if (Input.GetKey(k)) anyHeld = true; if (Input.GetKeyUp(k)) anyUp = true; }
                 if (anyHeld) mask |= 1 << lane;
                 if (down) { PressLane(lane, now); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
+                else if (_stJustEnded) ReplayShowtimeSeamPress(lane, now, anyHeld);    // ShowTime auto→manual SEAM: replay the in-window press that lost its GetKeyDown edge onto the exact note it aimed at
                 if (anyUp && !anyHeld) ReleaseLane(lane, now);   // released only when no set key is still held
             }
+            if (_stJustEnded) { _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; } }   // seam carry-over is a one-frame event
             _replay.Record(now, mask);   // osu-style 打擊紀錄 (appends only when the held-key bitmask changes)
         }
 
@@ -2639,11 +3146,12 @@ namespace Sdo.Game
             return on;
         }
 
-        private void AutoPlay(double now)
+        private void AutoPlay(double now, bool showtime = false)
         {
             // auto-play applies the F4 "Force hit grade" if one is selected, else Perfect — so picking Cool/Bad/Miss
             // in the panel immediately drives what auto-play hits with. A Miss isn't "held"/removed: it flows off.
-            Judgment grade = forcedJudge >= 0 ? (Judgment)forcedJudge : Judgment.Perfect;
+            // In a ShowTime window every note is a forced PERFECT (exe forces grade 4 via +0x109b0), ignoring forcedJudge.
+            Judgment grade = showtime ? Judgment.Perfect : (forcedJudge >= 0 ? (Judgment)forcedJudge : Judgment.Perfect);
             foreach (var n in _notes)
             {
                 if (n.Done) continue;
@@ -2659,6 +3167,272 @@ namespace Sdo.Game
                     && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value)
                 { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); n.Done = true; }
             }
+        }
+
+        // ShowTime driver: on SPACE (when the gauge is ready) release an auto-PERFECT window; each frame checks
+        // for expiry. Called every gameplay frame after ScrollNotes and before judging. No-op unless showtimeMode.
+        private void TickShowtime(double now)
+        {
+            if (!showtimeMode) return;
+            if (_auraGo != null && _auraAnchor != null)   // official FUN_00930e50: follow dancer root X/Z, Y pinned
+            {
+                var src = _floorRing != null && _floorRing.Follow != null ? _floorRing.Follow.position
+                          : new Vector3(_avatarChest.x, 0f, _avatarChest.z);
+                _auraAnchor.transform.position = new Vector3(src.x, showtimeAuraY, src.z);
+            }
+            if (!_showtime.Active)
+            {
+                int armed = _showtime.ArmedLevel;                              // level-up cue (0x4f showtimeactive) on each new band
+                if (armed > _lastArmed)
+                {
+                    if (!string.IsNullOrEmpty(seArm)) PlaySe(seArm);
+                    _energyMiniT0 = Time.time;                                 // official 500ms EnergyProgress band-up flash
+                }
+                _lastArmed = armed;
+                if (Input.GetKeyDown(KeyCode.Space) && _showtime.TryActivate(now, ComputeShowtimeWindowMs())) OnShowtimeStart();
+            }
+            else
+            {
+                ObserveShowtimeInput(now);                                      // record real key presses for a clean auto→manual handoff
+                double rem = _showtime.RemainingMs(now);                        // pre-end warnings at exact thresholds
+                if (!_warn3 && rem < 3001.0 && !string.IsNullOrEmpty(seWarn3s)) { _warn3 = true; PlaySe(seWarn3s); }
+                if (!_warn07 && rem < 701.0 && !string.IsNullOrEmpty(seWarn07s)) { _warn07 = true; PlaySe(seWarn07s); }
+                // Breakdance chaining: when the current break DPS (~10s E / ~14s N / ~19s H) finishes, if the window has
+                // room for ANOTHER full break start a fresh one; otherwise hand back to the SONG choreography for the
+                // tail (the song clock kept running underneath, so it picks up at the current beat — "銜接原本歌曲動作").
+                if (_dpsSwapped && !_breakHandedToSong && _avatar != null && (_nowMs - _breakStartMs) >= _breakTotal * 1000.0)
+                {
+                    var next = PickBreakDps(_showtime.ReleasedLevel);
+                    if (next != null && rem >= next.Total * 1000.0) StartBreakSegment(next, _nowMs);   // enough time → another break
+                    else { _avatar.Dps = _songDps; _avatar.DanceTimeSec = _songDanceTime; _breakHandedToSong = true; }   // not enough → song dance
+                }
+            }
+            if (_showtime.Tick(now)) OnShowtimeEnd();   // true on the single frame the window ends
+            UpdateBoardPulse(now);                      // board 呼吸閃爍 (first 3s of the window)
+            // note RED flash: the gold showtime note is tinted toward red over the LAST 3001ms of the window (online
+            // +0x1bac8 render branch, fsin ~200ms), then reverts to the normal skin at window end. Applied in ScrollNotes.
+            _noteTint = Color.white;
+            if (_showtime.Active && _showtime.RemainingMs(now) < showtimeEndFlashMs)
+            {
+                // 1s cycle red↔yellow: at the trough (s=0) full red, at the peak (s=1) gold — one red→yellow→red per period
+                float s = 0.5f + 0.5f * Mathf.Sin((float)now * (2f * Mathf.PI / Mathf.Max(1f, showtimeEndFlashPeriodMs)));
+                _noteTint = Color.Lerp(showtimeEndRed, showtimeEndYellow, s);
+            }
+        }
+
+        // Note-board "surround" effect during the auto-hit window (online FUN_009cc620 692184-692195, offline 104764-104822):
+        // NOT an overlay/EFT — the whole board sprite's alpha is driven by a TRIANGLE WAVE 0→255→0 over a 256 ms period for
+        // the FIRST 3001 ms of the window (a ~4 Hz breathe), then back to normal. White, whole board, one modulate.
+        private void UpdateBoardPulse(double now)
+        {
+            if (_board == null) return;
+            float a = 1f;
+            if (_showtime.Active)
+            {
+                double e = _showtime.WindowMs - _showtime.RemainingMs(now);   // ms since the window opened
+                if (e >= 0.0 && e < 3001.0)
+                {
+                    int k = (int)(e % 256.0);
+                    int av = (k * 2 <= 255) ? k * 2 : 510 - k * 2;            // triangle 0→255→0, period 256 ms
+                    a = av / 255f;
+                }
+            }
+            var c = _board.color;
+            if (!Mathf.Approximately(c.a, a)) { c.a = a; _board.color = c; }
+        }
+
+        // Entering the auto-PERFECT window: REPLACE the hit burst with the golden EFT_SHOWTIME flipbook (online: the
+        // shared deque is swapped, not layered), swap the note board to NOTEIMAGE_SHOWTIME (offline-only — online keeps
+        // the base skin; kept here as the requested "showtime note" look), fire the SHOW TIME banner + release SFX.
+        private void OnShowtimeStart()
+        {
+            _preShowtimeNoteDir = NoteDir;   // remember the active skin (F4-selected or default) to restore on exit
+            for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; }   // fresh handoff latches for this window
+            ApplyNoteDir(Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_SHOWTIME"));   // golden showtime notes (online DOES swap)
+            if (_showtimeHitFrames != null) { _savedBurstFrames = _burstFrames; _burstFrames = _showtimeHitFrames; _burstSwapped = true; }
+            // Frida实机: release fires 0x50 showtimeboom + 0x51 electricity(loop) + 0x4e showtime. The big "SHOW TIME"
+            // logo is the song-START intro (see OpeningSequence), NOT here; the release indicator is the corner lean (TODO).
+            _warn3 = _warn07 = false;
+            if (!string.IsNullOrEmpty(seRelease)) PlaySe(seRelease);      // 0x50 showtimeboom
+            PlaySe("electricity");                                        // 0x51 electricity (loops the window in-client; one-shot here for now)
+            if (!string.IsNullOrEmpty(seAnnounce)) PlaySe(seAnnounce);    // 0x4e "SHOW TIME!" voice on release (Frida: exe fires this on space)
+            SwapToBreakdance();                                           // dancer → breaking_{E|N|H}_{n}.dps for the window
+            SpawnShowtimeAura();                                          // star-glow aura on the dancer (online effect 0x2c = body_star)
+            SpawnBoardBurst();                                            // board flash (0x2d BOOM centre + 0x27 EDGE4 lightning columns ×2)
+            Debug.Log($"[showtime] release lv{_showtime.ReleasedLevel} → {_showtime.WindowMs:0}ms window, bonus ×{_showtime.BonusMultiplier}");
+        }
+
+        // Window ended: restore the pre-showtime note skin + hit burst + the song dance (there is NO bonus-tally chime).
+        private void OnShowtimeEnd()
+        {
+            _stJustEnded = true;   // arm the auto→manual seam carry-over for this frame's HandleInput (replay held/just-pressed keys)
+            if (_preShowtimeNoteDir != null) { ApplyNoteDir(_preShowtimeNoteDir); _preShowtimeNoteDir = null; }
+            if (_burstSwapped) { _burstFrames = _savedBurstFrames; _savedBurstFrames = null; _burstSwapped = false; }
+            if (_dpsSwapped && _avatar != null) { _avatar.Dps = _songDps; _avatar.DanceTimeSec = _songDanceTime; _dpsSwapped = false; }
+            _breakHandedToSong = false;   // fresh chaining state for the next release
+            ClearShowtimeWindowFx();      // dancer body_star aura + EDGE4 side lightning columns
+            _lastArmed = _showtime.ArmedLevel;   // re-arm cue can fire again as energy re-climbs
+            Debug.Log($"[showtime] window end — bonus so far +{_showtime.Bonus}");
+        }
+
+        // Tear down the ShowTime window's WORLD EFTs: the dancer's yellow body_star aura (0x2c) + the two EDGE4
+        // side lightning columns (0x27). Called at normal window end AND from EnterResult when the song ends
+        // mid-window — the note board is hidden there, so these must go too (else they linger over the result).
+        private void ClearShowtimeWindowFx()
+        {
+            if (_auraGo != null) { Destroy(_auraGo); _auraGo = null; }   // clear the dancer aura
+            if (_auraAnchor != null) { Destroy(_auraAnchor); _auraAnchor = null; }
+            for (int i = 0; i < _boardBurstGos.Count; i++) if (_boardBurstGos[i] != null) Destroy(_boardBurstGos[i]);   // clear any board-burst survivors
+            _boardBurstGos.Clear();
+        }
+
+        // OFFICIAL break pick (FUN_0092d280/FUN_0092d3f0): tier letter = the RELEASED ENERGY LEVEL (0→E ×2, 1→N ×4,
+        // 2→H ×8 — NOT the song difficulty); the variant number was rand-rolled ONCE at song load (_breakRolls) and
+        // repeats for every release in the song. Break lengths (E≈10s/N≈14s/H≈19s) match the pas-sized windows.
+        private DpsLoader PickBreakDps(int level)
+        {
+            level = Mathf.Clamp(level, 0, 2);
+            string tier = level == 0 ? "E" : level == 1 ? "N" : "H";
+            int n = _breakRolls[level] > 0 ? _breakRolls[level] : 1;
+            var bd = LoadAsset("DANCE/BREAKING_" + tier + "_" + n + ".DPS", b => DpsLoader.Load(b));
+            return (bd != null && bd.Rows != null && bd.Rows.Length > 0) ? bd : null;
+        }
+
+        // OFFICIAL window length (FUN_00643030 @348192-348202): the tier budget (8000/12000/18000ms) rounded UP to
+        // whole dance segments (pas) of chart time — the exe walks the song's pas list accumulating each segment's
+        // milliseconds until the budget is reached. Typical pas = 8 beats (showtimePasBeats): reproduces the Frida
+        // measurements exactly (11.9s lv0 @121bpm, 16.7s lv1 @86bpm).
+        private double ComputeShowtimeWindowMs()
+        {
+            int lvl = _showtime.ArmedLevel;
+            if (lvl < 0) return 0.0;
+            var durs = _showtime.WindowDurationsMs;
+            double budget = durs[Mathf.Clamp(lvl, 0, durs.Length - 1)];
+            double bpm = _map != null && _map.Bpm > 1f ? _map.Bpm : 120.0;
+            double pasMs = showtimePasBeats * 60000.0 / bpm;
+            if (pasMs <= 1.0) return budget;
+            return System.Math.Ceiling(budget / pasMs - 1e-9) * pasMs;
+        }
+
+        // Enter breakdance for the window: swap the dancer to a break DPS (played once from `fromMs`). TickShowtime
+        // chains another break when this one ends if the window has room, else hands control back to the song dance.
+        private void SwapToBreakdance()
+        {
+            if (_avatar == null || _dpsSwapped) return;   // works even if the song had no DPS (falls back on restore)
+            var bd = PickBreakDps(_showtime.ReleasedLevel);
+            if (bd == null) return;
+            _songDps = _avatar.Dps; _songDanceTime = _avatar.DanceTimeSec; _dpsSwapped = true; _breakHandedToSong = false;
+            StartBreakSegment(bd, _nowMs);
+        }
+
+        // Play one break DPS from `fromMs`. DanceTimeSec reads the live fields so re-calling this (chaining) just
+        // re-bases; past the break's Total the DpsLoader clamps to its last frame (a brief bridge until the next chain).
+        private void StartBreakSegment(DpsLoader bd, double fromMs)
+        {
+            _breakDps = bd; _breakStartMs = fromMs; _breakTotal = bd.Total > 0.1f ? bd.Total : 1f;
+            _avatar.Dps = bd;
+            _avatar.DanceTimeSec = () => (float)((_nowMs - _breakStartMs) / 1000.0);
+        }
+
+        // Dancer aura for the window (online effect 0x2c = body_star.eft in this client's 3DEFT table): star twinkles
+        // + streaks hugging the body. Official FUN_00930e50: position = (dancer-root X, 40, dancer-root Z) every frame,
+        // uniform scale 20, scene camera. The follow anchor is FREE-STANDING (never a child of the ×22-scaled _ringTr —
+        // that inherited scale used to lift the old +8 offset to +176u, three dancer-heights overhead) and is driven
+        // from TickShowtime at (pelvis.x, showtimeAuraY, pelvis.z).
+        private void SpawnShowtimeAura()
+        {
+            if (string.IsNullOrEmpty(showtimeAuraEft) || _auraGo != null) return;
+            if (!_namedEftCache.TryGetValue(showtimeAuraEft, out var file))
+            {
+                var path = Path.Combine(SdoExtracted.Root, "3DEFT", showtimeAuraEft + ".EFT");
+                if (!File.Exists(path)) { Debug.LogWarning("[showtime] aura EFT missing " + path); return; }
+                file = EftFile.Load(File.ReadAllBytes(path));
+                _namedEftCache[showtimeAuraEft] = file;
+            }
+            var pelvis = _floorRing != null && _floorRing.Follow != null ? _floorRing.Follow.position
+                         : new Vector3(_avatarChest.x, 0f, _avatarChest.z);
+            _auraAnchor = new GameObject("ShowtimeAuraAnchor");
+            _auraAnchor.transform.position = new Vector3(pelvis.x, showtimeAuraY, pelvis.z);
+            _auraGo = new GameObject("ShowtimeAura");
+            _auraGo.transform.position = _auraAnchor.transform.position;
+            int layer = use3dCamera ? SceneLayer : 0;
+            var eff = _auraGo.AddComponent<EftEffect>();
+            eff.Persistent = true;   // loops for the whole window; destroyed at OnShowtimeEnd
+            eff.Init(file, showtimeAuraScale, _auraAnchor.transform, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
+            if (use3dCamera) SetLayerRecursive(_auraGo, SceneLayer);
+        }
+
+        // Board burst on activation (online 0x2d BOOM centre + 0x27 EDGE4 ×2 sides — this client's table; see the
+        // field-block comment). EDGE4 loops (root life −45) = the full-height lightning columns for the whole window;
+        // BOOM is the ~1s centre ring/shockwave flash. All killed at OnShowtimeEnd (official kills the handles there).
+        // Rendered on the board overlay (main ortho camera, layer 0) at the official projected screen positions with
+        // SortingOrder lifting them over notes/HUD (official draws this pass after the UI). No dedicated camera /
+        // no cullingMask edits (an earlier attempt at that blanked the scene).
+        private void SpawnBoardBurst()
+        {
+            if (!showtimeBoardBurst) return;
+            // centre BOOM = ONE-SHOT (official plays it once on the space press — not looped for the window);
+            // side EDGE4 = PERSISTENT (root loops → the full-height lightning columns stay up the whole window).
+            SpawnOneBoardBurst(showtimeBurstCenterEft, showtimeBurstCenterPx, showtimeBurstCenterScale, Quaternion.Euler(90f, 0f, 0f), persistent: false);
+            SpawnOneBoardBurst(showtimeBurstSideEft, showtimeBurstSide1Px, showtimeBurstSideScale, Quaternion.identity, persistent: true);
+            SpawnOneBoardBurst(showtimeBurstSideEft, showtimeBurstSide2Px, showtimeBurstSideScale, Quaternion.identity, persistent: true);
+        }
+
+        private void SpawnOneBoardBurst(string name, Vector2 px, float scale, Quaternion rot, bool persistent)
+        {
+            if (!_namedEftCache.TryGetValue(name, out var file))
+            {
+                var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
+                if (!File.Exists(path)) { Debug.LogWarning("[showtime] board-burst EFT missing " + path); return; }
+                file = EftFile.Load(File.ReadAllBytes(path));
+                _namedEftCache[name] = file;
+            }
+            var go = new GameObject("ShowtimeBurst_" + name);
+            go.transform.position = SdoLayout.ToWorld(px.x, px.y, showtimeBurstZ);
+            go.transform.rotation = rot;               // effect-space rotation (particles are children; billboards re-orient themselves)
+            var eff = go.AddComponent<EftEffect>();
+            eff.Persistent = persistent;               // false = one-shot BOOM (auto-destroys when spent); true = looping EDGE4 columns
+            eff.EffectName = name;
+            eff.BillboardCam = _cam;                   // billboard toward the ortho overlay camera (layer 0), not the stage cam
+            eff.SortingOrder = showtimeBurstOrder;     // official late pass: over notes + HUD
+            eff.Init(file, scale, null, ResolveEftTex, _addMat, 0, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
+            _boardBurstGos.Add(go);                    // one-shot registers too, so OnShowtimeEnd can null-check the (maybe-gone) GO
+        }
+
+        // Record real key DOWN edges DURING a ShowTime window. HandleInput isn't called here (AutoPlay forces PERFECT),
+        // so Unity's per-frame GetKeyDown edge would otherwise be lost. HandleInput's seam branch replays these on the
+        // frame the window ends, so a note the player pressed for near the handoff is judged instead of missed.
+        private void ObserveShowtimeInput(double now)
+        {
+            for (int lane = 0; lane < Keys; lane++)
+                foreach (var k in LaneKeys[lane])
+                {
+                    if (Input.GetKeyDown(k)) { _stPressMs[lane] = now; _stPressNote[lane] = NearestHittable(lane, now); }   // latch the press time AND the exact note it aimed at, for a precise seam handoff
+                    if (Input.GetKeyUp(k)) _stReleaseMs[lane] = now;                                                        // latch the release time so a released hold's tail is graded at the TRUE let-go, not the seam
+                }
+        }
+
+        // ShowTime auto→manual SEAM replay (one seam frame only). During the window HandleInput isn't called, so a real
+        // press the player made INSIDE the window — aiming at a note near the window's end — lost its GetKeyDown edge on
+        // an auto frame. ObserveShowtimeInput recorded that press's EXACT target note (_stPressNote) + time (_stPressMs);
+        // here we replay it onto THAT note only (never a re-searched neighbour), and only when it is still unjudged and
+        // the real press-time timing is an actual hit. That is what lets the boundary tap / hold-head the player pressed
+        // (and is still holding) earn its grade instead of flowing off into a MISS — without inventing phantom hits.
+        private void ReplayShowtimeSeamPress(int lane, double now, bool held)
+        {
+            if (_holding[lane] != null) return;                    // an auto/pre-window hold is still running this lane → let it finish (don't grab a 2nd note)
+            var n = _stPressNote[lane];                            // the note this in-window press aimed at (null = no real in-window press → no phantom hit from a resting/held-through key)
+            if (n == null || n.Done || n.HeadJudged) return;       // already auto-perfected during the window, or never aimed → nothing to hand off
+            var j = _engine.JudgeHit(n.Note.StartTimeMs, _stPressMs[lane]);   // grade at the player's REAL press time
+            if (j == null || j.Value == Judgment.Miss) return;     // press too far off the aimed note → leave it for normal manual play (a fresh post-seam press), don't force a seam miss
+            n.HeadJudged = true; ApplyEvent(j.Value, lane); _recDownStart[lane] = Time.time;   // keydown burst on the replayed press too
+            if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
+            if (j.Value == Judgment.Bad) { n.BundledFail = true; return; }   // bad hold head → AutoMiss fails the tail later (matches PressLane)
+            if (held) { _holding[lane] = n; return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
+            // player already let go INSIDE the window → judge the tail at the TRUE release time (clamped ≤ seam), not a lingering auto-Perfect and not the over-lenient seam time
+            double relMs = _stReleaseMs[lane] >= 0.0 ? Math.Min(_stReleaseMs[lane], now) : now;
+            ApplyEvent(_engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss, lane);
+            n.Done = true;
         }
 
         private void PressLane(int lane, double now)
@@ -2706,11 +3480,12 @@ namespace Sdo.Game
         private void ApplyEvent(Judgment j, int lane = -1)
         {
             _score.Apply(j); _health.Apply(j);
+            if (showtimeMode) _showtime.OnJudge(j);                               // ShowTime: fill the gauge (normal) or accrue the bonus (in a window)
             UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins
             _blockHadNote = true;                                                // a note was judged this block (-> not an empty block)
             if (j == Judgment.Bad || j == Judgment.Miss) _blockHadBreak = true;   // break -> NOT stopped now; the dancer is re-decided at the next 8-beat settlement
             _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;
-            if (lane >= 0 && _burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane, false);  // tap: fire immediately, may overlap
+            if (lane >= 0 && _burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane, false);  // tap burst (during a window _burstFrames IS the EFT_SHOWTIME set)
             if (lane >= 0 && j != Judgment.Miss) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
             if (j == Judgment.Miss) TriggerMissFlash();                     // miss: flash ALL four lane strips red once
         }

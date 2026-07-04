@@ -208,6 +208,7 @@ namespace Sdo.Game
             else _judgeWord.color = new Color(1, 1, 1, 0);
 
             UpdateComboDigits(); UpdateScoreDigits(); UpdateHpBar();
+            if (showtimeMode) UpdateEnergyBar();   // (UpdateBanner ticks in Update so it survives post-song)
 
             if (_timeText)
             {
