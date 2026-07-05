@@ -494,7 +494,7 @@ namespace Sdo.Game
             if (DebugGaugeSweep) rawV = Mathf.PingPong(Time.time * (cap2 / 4f), cap2);   // diagnostic: cycle all 3 bands ~8s
             rawV = Mathf.Clamp(rawV, 0f, cap2);
             float kk = Mathf.Clamp01(Time.deltaTime / 0.5f);                         // ~500ms exponential ease (official +0xc8)
-            float range = GaugeFullP - GaugeBaseP;                                   // 305
+            float range = GaugeFullP - GaugeBaseP;                                   // 305 + gaugeEmptyHideP (empty parked left of the visible edge)
             float[] tgt =
             {
                 GaugeBaseP + range * (rawV - 0f) / Mathf.Max(1f, cap0 - 0f),         // band0 target (UNCLAMPED — overshoot drives selection)
@@ -507,13 +507,17 @@ namespace Sdo.Game
                     if (GaugeBaseP < _gaugeCur[i] && _gaugeCur[i] <= GaugeFullP) { _gaugeActive = i; break; }
             int level = _gaugeActive;
             float headWorldX = _gaugeCur[_gaugeActive];
+            // At empty (rawV==0, nothing hit yet) draw NOTHING — don't render a head parked off-screen, just don't
+            // draw the POWER effect at all. It starts drawing on the first hit (rawV>0) and slides in from GaugeBaseP.
+            bool drawHead = rawV > 0f;
 
             // Move the ACTIVE POWER effect to headX inside the dedicated RT camera's isolated world; park the others
-            // off-frustum. The effects run continuously (never re-init), so the electric ribbon + head glow keep aging.
+            // (and ALL bands while empty) off-frustum. The effects run continuously (never re-init), so the electric
+            // ribbon + head glow keep aging.
             if (_gaugeCam != null)
                 for (int b = 0; b < 3; b++)
                     if (_gaugeAnchor[b] != null)
-                        _gaugeAnchor[b].position = (_energyHudOn && b == level)
+                        _gaugeAnchor[b].position = (_energyHudOn && b == level && drawHead)
                             ? GaugeOrigin + new Vector3(headWorldX, 0f, 0f)
                             : GaugeOrigin + new Vector3(-10000f, 0f, 0f);
 

@@ -15,7 +15,7 @@ namespace Sdo.Tests
             WindowDurationsMs = new[] { 1000, 2000, 3000 },
         };
 
-        // ---- fill accumulates FORWARD on good hits; Bad/Miss don't reduce it ----
+        // ---- fill accumulates on good hits; Bad/Miss DEDUCT (band-scaled, clamped at 0) ----
 
         [Test]
         public void Perfect_And_Cool_Add_Their_Gains()
@@ -26,12 +26,14 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Bad_And_Miss_Do_Not_Change_Fill()
+        public void Bad_And_Miss_Reduce_Fill_Band_Scaled_And_Clamp_At_Zero()
         {
             var m = Meter();
-            for (int i = 0; i < 5; i++) m.OnJudge(Judgment.Perfect);   // 50
-            m.OnJudge(Judgment.Bad); Assert.AreEqual(50, m.FillCount);
-            m.OnJudge(Judgment.Miss); Assert.AreEqual(50, m.FillCount);
+            for (int i = 0; i < 5; i++) m.OnJudge(Judgment.Perfect);   // 50 (band 0: < BandCaps[0]=100)
+            m.OnJudge(Judgment.Bad); Assert.AreEqual(45, m.FillCount);  // − BadReduce[0]=5
+            m.OnJudge(Judgment.Miss); Assert.AreEqual(30, m.FillCount); // − MissReduce[0]=15
+            for (int i = 0; i < 5; i++) m.OnJudge(Judgment.Miss);       // 30 − 5×15 → clamps at 0, never negative
+            Assert.AreEqual(0, m.FillCount);
         }
 
         [Test]

@@ -148,6 +148,10 @@ namespace Sdo.Game
                 EftEffect.PowerHaloBright = GUILayout.HorizontalSlider(EftEffect.PowerHaloBright, 0.5f, 8f);
                 GUILayout.Label($"白熱核大小 white-core size: {EftEffect.PowerWhiteSize:F2}× (1=忠實; 穩定靠整數位置截斷=引擎正解, 不是pin)");
                 EftEffect.PowerWhiteSize = GUILayout.HorizontalSlider(EftEffect.PowerWhiteSize, 1f, 4f);
+                GUILayout.Label($"藍色斜十字帶 cross-dim: {EftEffect.PowerCrossDim:F2} (slot3 藍色45°交叉帶, 低=更淡不成靜態長條)");
+                EftEffect.PowerCrossDim = GUILayout.HorizontalSlider(EftEffect.PowerCrossDim, 0f, 1f);
+                GUILayout.Label($"0位置左推 empty hide: {gaugeEmptyHideP:F0} wu (氣條=0 時把頭光藏到可視左緣外; 太小=0就露頭光, 太大=打好幾下才冒出來)");
+                gaugeEmptyHideP = GUILayout.HorizontalSlider(gaugeEmptyHideP, 0f, 200f);
             }
             else if (_dbgTab == 2)    // ===== STAGE: board / hit-burst / HP / floor-ring / hand-trail =====
             {

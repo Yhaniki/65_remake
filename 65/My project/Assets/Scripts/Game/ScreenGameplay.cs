@@ -358,7 +358,14 @@ namespace Sdo.Game
         // POWER effect is live at a time (Y/B/R); a band-up cleanly swaps colour + refills from empty (twice, ~500ms).
         private readonly float[] _gaugeCur = { -305f, -305f, -305f };   // eased head position per band (init empty)
         private int _gaugeActive = 0;                                   // persistent active band index (hysteresis)
-        private const float GaugeBaseP = -305f, GaugeFullP = 0f;        // empty / full head positions (official +0x8c/+0x90)
+        private const float GaugeFullP = 0f;                            // full head position (official +0x90)
+        // Official empty was worldX −305 = the RT camera's visible LEFT edge (design x22), so at 0 fill the POWER
+        // head-glow halo half-poked into the channel ("頭光在0就有"). Reference behaviour: at 0 there is NO head glow —
+        // it only slides in after the first note hits. Park the empty head gaugeEmptyHideP world-units LEFT of the
+        // visible window so the whole halo starts off-screen and grows in as the fill climbs (remake-only bias; the
+        // fill still reaches GaugeFullP=0 at full). F4-tunable (Combo tab) — raise until the glow is gone at 0.
+        public float gaugeEmptyHideP = 10f;
+        private float GaugeBaseP => -305f - gaugeEmptyHideP;            // empty head position (a bit left of the visible left edge)
         private float _energyMiniT0 = -1f;                  // realtime the current band-up flash began (<0 = idle)
         private Sprite[] _showtimeHitFrames;               // EFT_SHOWTIME/EFT_HIT golden hit flipbook (12 frames)
         public float showtimeHitScale = 1.5f;              // showtime hit burst size ×
@@ -860,6 +867,13 @@ namespace Sdo.Game
                 { _energyIntroFill = Mathf.Lerp(from, to, (Time.realtimeSinceStartup - s0) / energyIntroStageSec); yield return null; }
                 _energyIntroFill = to;
             }
+            // Hold at FULL until the eased RED head (band 2, ≈500ms ease lag) actually reaches the tip, so stage 3
+            // finishes drawing before the snap. Without this the red cleared mid-slide ("紅色那段沒畫完就直接清空").
+            // Capped so it can never hang if the ease stalls.
+            _energyIntroFill = 1f;
+            float holdS0 = Time.realtimeSinceStartup;
+            while (GaugeFullP - _gaugeCur[2] > 5f && Time.realtimeSinceStartup - holdS0 < 1.2f)
+                yield return null;
             // official (FUN_0040dc00 demo @360861-360868): after the 3-stage sweep the gauge SNAPS to 0 in ~1ms — not a
             // slow shrink. Hard-reset the eased positions to empty so live tracking starts from 0 instantly.
             _energyIntroFill = -1f;

@@ -29,9 +29,15 @@ namespace Sdo.Ruleset
         /// with GainPerfect=1 these hit-counts reproduce the measured official pacing.)</summary>
         public int[] BandCaps = { 130, 237, 410 };
 
-        /// <summary>Per good-hit fill increment (exe = chart note-interval × speed → remake tunable). Bad/Miss add 0.</summary>
+        /// <summary>Per good-hit fill increment (exe = chart note-interval × speed → remake tunable).</summary>
         public int GainPerfect = 1;
         public int GainCool = 1;
+
+        /// <summary>Per Bad/Miss fill DEDUCTION, band-scaled (green/yellow/red). The offline exe reduces the gauge on
+        /// bad/miss (FUN_004a64b0: −1→−10/−15/−20, −2→−30/−40/−50 by band); scaled here to the remake's +1/hit units so
+        /// the deduction feels proportional. Clamped at 0.</summary>
+        public int[] BadReduce = { 5, 8, 10 };
+        public int[] MissReduce = { 15, 20, 25 };
 
         /// <summary>Auto-perfect WINDOW length in ms for a release at band 0/1/2 (exe dur[] 8000/12000/18000). Separate
         /// from the fill counter.</summary>
@@ -133,10 +139,13 @@ namespace Sdo.Ruleset
                 if (Bonus < 0) Bonus = 0;
                 return;
             }
+            int band = DisplayBand; if (band < 0) band = 0; else if (band > 2) band = 2;
             switch (j)
             {
                 case Judgment.Perfect: FillCount += GainPerfect; break;
                 case Judgment.Cool: FillCount += GainCool; break;
+                case Judgment.Bad: FillCount -= BadReduce[band]; break;
+                default: FillCount -= MissReduce[band]; break;   // Miss: band-scaled deduction (official reduces on break)
             }
             if (FillCount < 0) FillCount = 0;
             else if (FillCount > MaxFill) FillCount = MaxFill;

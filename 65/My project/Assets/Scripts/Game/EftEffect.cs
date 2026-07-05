@@ -116,6 +116,10 @@ namespace Sdo.Game
         // It was deliberately left "soft" (ci=1 = base 0.5×) so it stayed invisible on the black RT — give it its own
         // additive boost so the big head glow actually shows. Tunable to match the official size/brightness.
         public static float PowerHaloBright = 2.5f;
+        // POWER slot3 = the blue 45° cross-flash ribbon. Dim so its wired alpha→0 fade dominates (a faint crackle, not a
+        // static strip). 1=full, lower=fainter. Paired with excluding slot3 from carrier-scale inheritance (the height-
+        // inflation root cause). Tune down if the blue cross-strip is still too prominent.
+        public static float PowerCrossDim = 0.4f;
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -661,6 +665,12 @@ namespace Sdo.Game
                 // Sdo/EftAlpha uses SrcAlpha = _TintColor.a directly (no 2×, no tex.a) → correct fade/pulse.
                 else if (Persistent && em.HasTex && (em.TexIdx == 69 || em.TexIdx == 117) && AlphaShader() != null)
                     mat = new Material(AlphaShader());
+                // POWER electric ribbon (slot2/3, rai_04/05/01 textures): the rai PNGs are OPAQUE (alpha=255) — a dark
+                // background + bright lightning bolts. Legacy additive accumulates the DARK BG of the 20u overlapping
+                // ribbons into a SOLID colour band (the "橫軸中間固定色" the user saw, obscuring the flicker). The
+                // luminance shader makes the dark bg transparent (contribution ∝ luminance²), so ONLY the bright bolts
+                // show additively = the official electric ribbon (band-coloured lightning on the empty channel).
+                else if (_isPower && (em.Slot == 2 || em.Slot == 3) && LumShader() != null) mat = new Material(LumShader());
                 else if (worldQuad && LumWorldQuad && LumShader() != null) mat = new Material(LumShader());
                 else mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
                 mat.mainTexture = tex != null ? tex : _glow;
@@ -1050,7 +1060,15 @@ namespace Sdo.Game
             // burst.) Persistent scene effects keep the old behaviour: BOOKLIGHT/FIRE3/AURORA/HONGBAO were eye-validated
             // WITH the parent multiply, so the engine-faithful rule is applied to one-shot (non-Persistent) effects only.
             bool inheritParentScale = p.attach != 0 && p.parent != null && !p.isTrail && !p.isMesh
-                                      && !(p.orient && !Persistent);
+                                      && !(p.orient && !Persistent)
+                                      // POWER slot3 (the blue 45° cross-flash): the inverse-rotate hack below maps the
+                                      // carrier's growing Z-scale to the ribbon WIDTH for slot2 (90°-about-Y, exact), but
+                                      // slot3's 45° X-pitch makes Inverse(Euler)·scale BLEED that growth into slot3's
+                                      // HEIGHT (Abs blocks cancellation), inflating every generation into a constant tall
+                                      // band = the static strip. The engine never puts carrier growth on slot3's height,
+                                      // so exclude it → plain ownScale, letting the wired alpha→0 fade dominate (a faint
+                                      // fading cross-flash, not a persistent band). Verified: RE workflow wf_2e49aa17.
+                                      && !(_isPower && p.E.Slot == 3);
             // Engine (sdo.bin.c Particle_Update @666394-666415, attach mode 1) = childLocal · parentWorld (row-major):
             // the carrier's NON-UNIFORM scale acts AFTER the child's own rotation. The naive per-axis Scale applies it
             // in the child's PRE-rotation (mesh) frame → the ShowTime POWER strip's ANIMATING carrier Z-scale hit the
@@ -1122,6 +1140,9 @@ namespace Sdo.Game
                 {
                     if (p.E.TexIdx == 100 || p.E.TexIdx == 96) ci *= PowerHeadGlowBright;
                     else if (p.E.TexIdx == 30) ci *= PowerHaloBright;
+                    // slot3 = the blue 45° cross-flash: dim it so the alpha→0 fade dominates and the ~3 overlapping
+                    // generations read as a soft center-bright crackle instead of an additively-saturated static strip.
+                    else if (p.E.Slot == 3) ci *= PowerCrossDim;
                 }
                 SetCol(p.mat, r * ci, g * ci, b * ci, a);
                 // outer-glow halo: same hue (NOT boosted), intensity scaled by _glowMul (alpha drives additive brightness)
