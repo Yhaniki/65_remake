@@ -143,11 +143,10 @@ namespace Sdo.Game
         // 5 star(naga00) / 6 sparks(ring_l); 0 & 4 are invisible carriers. Lets the user isolate exactly which slot
         // draws which band. Default all on.
         public static bool[] PowerSlotOn = { true, true, true, true, true, true, true };
-        // POWER ribbon texture TILING. The RAI texture is a mesh of branching CROSSING lightning bolts, but the ribbon
-        // quad is ~108u long with plain 0→1 UV → the texture is STRETCHED into horizontal streaks (= the "straight
-        // lines", the crossing detail smeared away). Tiling it (mainTextureScale.x = length×this) REPEATS the crossing
-        // pattern along the ribbon so it reads as the official's 多條交叉. Higher = more/denser bolts. F4-tunable.
-        public static float PowerRibbonTile = 1f;   // 1 = faithful (no tiling) until the real mechanism is confirmed
+        // POWER ribbon UV. GROUND TRUTH (Frida draw-capture of the LIVE client, gauge_draw_log.txt): the ribbon UV
+        // window is width 1.0 (ONE repeat stretched across the whole ribbon, uMax−uMin=1) and it SCROLLS every tick.
+        // So mainTextureScale.x = PowerRibbonTile (=1 official; raise for more repeats). NOT length-tiled.
+        public static float PowerRibbonTile = 1f;   // 1 = one repeat across the ribbon (official uMax−uMin=1.0)
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -161,13 +160,27 @@ namespace Sdo.Game
         // concentrated & visible; ribbon scaleY thins monotonically). OFF = full-curve (halo over-blooms to an
         // invisible wash). Combined with PowerHaloBright, ON is what makes the big head halo appear.
         public static bool PowerEngineSampler = true;
+        // HEAD-GLOW "由外往中心" convergence. GROUND TRUTH from a Frida trace of the LIVE online client
+        // (assets/閉撰敃氪/hook_headglow_traj.js → headglow_traj_log.txt): every head-glow spark (slot1 halo tex30,
+        // slot5 naga00 tex100, slot6 ring_l tex96) spawns on the cone shell (radius 0..0.8) then, EVERY tick, its
+        // velocity is re-aimed at the effect origin at the template speed (|vel|=0.2) → it flies straight into the
+        // gauge-head centre, reaching it at ~age=life, then overshoots & oscillates. Verified: id4 pos(-0.24,-0.04,
+        // 0.74)→vel(0.06,0.01,-0.19) = -normalize(pos)*0.2 exactly; the post-centre bounce also matches per-tick re-aim.
+        // (The earlier "int-truncate → stationary core / ring_l drifts up" was decoded from H:\sdo_cn\sdo.bin.c, a
+        // DIFFERENT build; the running online build stores y/z as FLOAT — the Frida int column was garbage, float sane.)
+        public static bool PowerHeadSeekCenter = true;
         // DIAGNOSTIC (SDO_SHOWTIME_ISO): isolate gauge layers to see which washes the blue band white. 0=all, 1=ribbon
         // only (hide head glow), 2=head glow only (hide ribbon). Set from ScreenGameplay via the env var.
         public static int PowerIsolate;
         static int _renderDbgN;   // DIAG cap for the head-glow world-position dump
-        // NOTE: the engine has NO ribbon UV scroll (FUN_0098d660 @664564 sets D3DTSS_TEXTURETRANSFORMFLAGS=DISABLE;
-        // rai_05 is frameCount=1 = static UV) — the official "電流流動" is purely the overlapping re-spawn crackle +
-        // scaleY pinch. A UV-scroll enhancement was tried and REMOVED per user: 官方沒有的就不要加.
+        // ★ RIBBON UV SCROLL — the "電流流動". GROUND TRUTH from a Frida draw-capture of the LIVE online client
+        // (assets/閉撰敃氪/hook_gauge_draw.js → gauge_draw_log.txt): the two crossing ribbons DO scroll their UV, at
+        // DIFFERENT rates & OPPOSITE directions — slot2 uMin/uMax −0.1 per tick, slot3 +0.2 per tick (uv width stays
+        // 1.0). That interference IS the flowing current. (The old "engine has NO UV scroll / D3DTSS_TEXTURETRANSFORM
+        // =DISABLE" was decoded from H:\sdo_cn\sdo.bin.c, a DIFFERENT build; the running client scrolls per-tick — the
+        // UV columns in the capture are unmistakable: age1(-0.1,0.9)→age10(-1.0,0.0) etc. Re-added, now proven.)
+        public static float PowerRibbonScroll2 = -0.1f;   // slot2 U scroll per tick (Frida: −0.1)
+        public static float PowerRibbonScroll3 = 0.2f;    // slot3 U scroll per tick (Frida: +0.2)
         // The 200/300 slot0 AEF_3_00 blue MESH that rides each ball has a DIM texture, so at 1× it's drowned by the
         // bright fountain (the user couldn't see it). Boost its additive so the blue mesh shows once the balls' spawn
         // exposure fades. trails/ring/disk untouched. F4-tunable. NOTE: now 200-ONLY (300 uses Mesh300Intensity).
@@ -594,13 +607,11 @@ namespace Sdo.Game
             // the trail-yaw (their aef03_00 trail relies on it).
             if (isTrail && !(Persistent && p.isMesh)) p.rot.y = trailYaw;
 
-            // ENGINE-FAITHFUL INT position AT SPAWN: truncate all 3 axes so every re-spawned head generation clusters at
-            // the SAME spot (the fill head) = a STABLE white-hot core. (A round-6 experiment kept X float to add depth
-            // variety, but the user reported it as "頭光前後跳位置" — the depth scatter reads as the core hopping
-            // forward/back, which is wrong. Reverted: stability wins.) The "many stacked / random flash" look must come
-            // from the OVERLAPPING GENERATIONS at different ages (size 0.17→3.6 + alpha phase) + random startDelay(0..9)
-            // staggering, NOT from position scatter. ring_l sparks (tex96) EXCLUDED: they SHOULD drift OUT around core.
-            if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
+            // HEAD-GLOW (slots 1/5/6) must spawn on the FLOAT cone shell (coneOff above) so it can fly inward — do NOT
+            // truncate them (Frida: the online build keeps y/z float; the head sparks converge on the centre, they do
+            // not cluster there). Other POWER slots (ribbons/carriers) keep the decompiled INT snap (harmless there).
+            if (_isPower && em.Slot != 1 && em.Slot != 5 && em.Slot != 6 && em.TexIdx != 96)
+            { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
 
             // DIAGNOSTIC: isolate the POWER gauge layers (still SPAWN so the trigger chain 0→1→4→2/3 is intact, just
             // render invisible). 1 = ribbon only (hide halo/star/sparks 1/5/6); 2 = head glow only (hide ribbon 2/3).
@@ -1071,11 +1082,20 @@ namespace Sdo.Game
                 p.pos += p.vel * (scaleVel * p.velScale * MotionScale);
                 float ageLin = life0 - p.life;
                 p.pos.y -= (ageLin * em.GravAccel + em.GravBase) * MotionScale;
-                // ENGINE-FAITHFUL INTEGER POSITION (why the official head glow doesn't move): the head's per-tick step
-                // (vel.y0.2×ch0≈0.034 local ⟪1) truncates to 0 so it NEVER rises, and truncating all 3 axes clusters
-                // every re-spawn at the fill head = a STABLE white-hot core. (Round-6 tried keeping X float for depth
-                // variety; user reported "頭光前後跳位置" = the core hopping forward/back → reverted. Stable core.)
-                if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
+                // HEAD-GLOW (slots 1/5/6): SEEK THE ORIGIN — re-aim velocity at the effect centre every tick at the
+                // template speed (Frida ground truth, see PowerHeadSeekCenter). The particle spawned on the cone shell
+                // (coneOff at Spawn) and now flies straight into the gauge-head centre = the 官方「由外往中心」look.
+                if (_isPower && (em.Slot == 1 || em.Slot == 5 || em.Slot == 6))
+                {
+                    if (PowerHeadSeekCenter)
+                    {
+                        float d = p.pos.magnitude;
+                        if (d > 1e-4f) p.vel = (-p.pos / d) * em.Vel.magnitude;   // dir = toward origin, speed = |template|=0.2
+                    }
+                }
+                // Other POWER slots (ribbons 2/3, carriers) keep the decompiled INT position (harmless: their pos is
+                // attach/0-driven, not velocity-driven). Head-glow is now FLOAT (the online build stores y/z as float).
+                else if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
             }
 
             if (DumpTraj && !p.invisible) DumpTrajectory(p, ageTicks, life0, t);
@@ -1274,11 +1294,15 @@ namespace Sdo.Game
                 }
                 // F4 per-slot isolation: force a slot invisible (alpha 0) so you can see which slot draws what.
                 if (_isPower && p.E.Slot >= 0 && p.E.Slot < PowerSlotOn.Length && !PowerSlotOn[p.E.Slot]) a = 0f;
-                // TILE the RAI crossing-bolt texture along the (long) ribbon instead of stretching it into streaks.
+                // RIBBON UV SCROLL = the flowing current (Frida ground truth, see PowerRibbonScroll2/3). Official: UV
+                // window width 1.0 (one repeat across the ribbon) SCROLLING per tick — slot2 −0.1/tick, slot3 +0.2/tick,
+                // opposite directions → the crossing interference reads as electric flow. wrap=Repeat so it wraps.
                 if (_isPower && p.attach != 0 && p.mat != null && p.mat.mainTexture != null)
                 {
                     if (p.mat.mainTexture.wrapMode != TextureWrapMode.Repeat) p.mat.mainTexture.wrapMode = TextureWrapMode.Repeat;
-                    p.mat.mainTextureScale = new Vector2(Mathf.Max(1f, p.tr.localScale.x * PowerRibbonTile), 1f);
+                    float scroll = (p.E.Slot == 3 ? PowerRibbonScroll3 : PowerRibbonScroll2) * ageTicks;
+                    p.mat.mainTextureScale = new Vector2(PowerRibbonTile, 1f);          // 1.0 = one repeat (official uMax−uMin=1)
+                    p.mat.mainTextureOffset = new Vector2(scroll, 0f);                  // per-tick scroll = 電流流動
                 }
                 SetCol(p.mat, r * ci, g * ci, b * ci, a);
                 // outer-glow halo: same hue (NOT boosted), intensity scaled by _glowMul (alpha drives additive brightness)
