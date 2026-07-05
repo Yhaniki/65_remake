@@ -116,12 +116,10 @@ namespace Sdo.Game
         // It was deliberately left "soft" (ci=1 = base 0.5×) so it stayed invisible on the black RT — give it its own
         // additive boost so the big head glow actually shows. Tunable to match the official size/brightness.
         public static float PowerHaloBright = 2.5f;
-        // POWER slot3 = the CROSSING electric ribbon (initRot 90,90,0 in Y/R = perpendicular to slot2, 45° in B). It now
-        // rides slot4's growth correctly (carrier-scale exclusion removed) so it is a proper second ribbon that grows
-        // from the head + fades via its own alpha (255→0), not the old constant full-length band. But at 1.0 the extra
-        // additive blue washed the whole gauge toward WHITE/GREY (user: 藍色集氣條變灰) — additive blue+blue clips. Keep
-        // it DIM so it adds a subtle crossing crackle without desaturating the band. Raise cautiously if too faint.
-        public static float PowerCrossDim = 0.6f;
+        // POWER slot3 = the CROSSING electric ribbon. Now that it's a THIN diagonal line (PowerCrossThick), full
+        // brightness no longer washes the gauge grey (the old wash was the tall BLOCK covering everything additively) —
+        // it only brightens the thin crossing bolt. 1.0 = clearly visible crossing. Lower if the crossing point clips.
+        public static float PowerCrossDim = 1f;
         // POWER slot3's faithful initRot (90,90,0) pitches its quad FLAT (normal → world −Y) = EDGE-ON to the head-on
         // gauge camera → it renders as an invisible thin line, so only slot2 (the horizontal ribbon) shows (user: 只看
         // 到一條). To actually draw the OFFICIAL's two CROSSING ribbons we face slot3 at the camera like slot2 (0,90,·)
