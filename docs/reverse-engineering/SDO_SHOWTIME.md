@@ -497,11 +497,16 @@ Agent re-parse of POWER_Y.EFT bytes + `sdo.bin.c`, cross-checked with a faithful
   when it is cut, while the overlapping young band (spawned +16) is only age 1-3 = ~3% length → **visually always 2
   bands** (user: 只看到兩條; the 19%-of-the-time "4" is microscopic). SpeedMul only scaled dt (spacing stayed 16
   ticks) so it never added density.
-- **Fix (EftEffect.StepParticle): cap ribbon life at `PowerRibbonLife`≈32 ticks (= 2 carrier loops), NOT parent-death.**
-  The old band then rides slot4's FROZEN full length (age 20→32, extended left) while the next grows in at the head →
-  a stable **4 bands** (2 gens × slot2/3). Short alpha fade over the last 4 ticks avoids the cut-pop. F4-tunable
-  (16=one-per-loop … 32≈4 … higher=denser). Combined with slot3's camera-facing PowerCrossAngle = two *visible*
-  crossing bands, each with a young+old generation = the staggered flowing current.
+- **First fix attempt (cap life at 32) was WRONG — reverted.** Keeping a ribbon alive PAST slot4's death (age 20) makes
+  it ride slot4's now-FROZEN liveScale = a STATIC full-length band. User at 0.5× speed saw exactly that: "1 moving
+  lightning (the one young growing ribbon) + 2 straight lines (frozen old ribbons)", and raising the cap just stacked
+  more invisible frozen bands ("no effect").
+- **Correct fix: ribbons die WITH slot4 (parent-death) so they never freeze — every ribbon is always GROWING =
+  animated.** DENSITY is then controlled by slot4's LIFE (`PowerRibbonLife`, default 30): slot4 drives the ribbon's
+  scaleZ growth, and a longer carrier life keeps more *growing* (never-frozen) ribbons overlapping = more visible bands
+  (young-short + old-long, both moving). Independent of `energyStripSpeed` (overall crackle speed). Both F4-tunable.
+  slot3's camera-facing `PowerCrossAngle` now visibly responds too (the visible ribbons are freshly spawned, not the
+  old frozen ones that ignored live tuning).
 
 ### Remake defaults vs exe (documented deviations)
 
