@@ -7,6 +7,7 @@ using UnityEngine.Networking;
 using UnityEngine.UI;
 using Sdo.Game;
 using Sdo.Localization;
+using Sdo.Settings;
 using Sdo.UI.Catalog;
 using Sdo.UI.Core;
 using Sdo.UI.Util;
@@ -130,6 +131,13 @@ namespace Sdo.UI.Screens
             _stages = new List<StageInfo>();
             foreach (var s in StageCatalog.Stages)
                 if (s.Id >= 0 && s.Id <= StageCatalog.MaxSelectableId) _stages.Add(s);
+
+            // 場景選擇器初值：反映 session/config 目前的場景（具體場景 → 對到清單位置+1；隨機 → 0）。這樣重開遊戲後
+            // config 記住的場景會顯示在預覽，且不點場景直接確認也不會把持久化的場景覆蓋回隨機。
+            _sceneIndex = 0;
+            if (!Ctx.Session.StageRandom)
+                for (int i = 0; i < _stages.Count; i++)
+                    if (_stages[i].Id == Ctx.Session.StageId) { _sceneIndex = i + 1; break; }
 
             BuildBackground();
             BuildDisk();
@@ -868,6 +876,8 @@ namespace Sdo.UI.Screens
             s.StageId = stage.Id;
             s.StageFolder = stage.Folder;
             s.StageRandom = randomScene;   // 房間第二層圖：選隨機就顯示 RANDOM，選具體場景就顯示該場景縮圖
+            RoomConfig.defaultScene = randomScene ? -1 : stage.Id;   // 持久化：玩家選的場景寫回 config.ini（隨機→-1；刪檔→回隨機）
+            RoomConfig.Save();
             // mode/formation/looker are written live by the dropdown callbacks.
 
             Ctx.Rooms.SetSong(s.SongTitle);

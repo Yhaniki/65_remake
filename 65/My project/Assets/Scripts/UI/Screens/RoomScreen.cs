@@ -208,10 +208,11 @@ namespace Sdo.UI.Screens
             MakeCaption("CapBpm", "BPM", 78, 112);
             _levelLabel = MakeInfoNum("SongLevel", 55, 112);
             _bpmLabel = MakeInfoNum("SongBpm", 101, 112);
-            _songLabel = OutlinedLabel.Create(_win2Root, "SongName", Win2.x + 12, Win2.y + 128, 112, 20, 12, SongNameColor, Color.white, Win2EdgePx, false);
+            _songLabel = OutlinedLabel.Create(_win2Root, "SongName", Win2.x + 12, Win2.y + 128, 112, 20, 12, SongNameColor, Color.white, Win2EdgePx, true);
 
             // 速度 ◄ 值 ►（檔位清單與預設來自 config.ini，可改）
             _speedLabel = UIKit.AddText(_win2Root, "SpeedValue", "", 13, SpeedColor, TextAlignmentOptions.Center);
+            _speedLabel.fontStyle = FontStyles.Bold;
             PlaceW2(_speedLabel.rectTransform, 86, 167, 19, 14);
             Btn("songpre", "BtnOraSmallLeftArrow_1", "BtnOraSmallLeftArrow_2", "BtnOraSmallLeftArrow_3", Win2, 66, 167, () => StepSpeed(-1), hoverSfx: null);
             Btn("songnext", "BtnOraSmallRightArrow_1", "BtnOraSmallRightArrow_2", "BtnOraSmallRightArrow_3", Win2, 109, 167, () => StepSpeed(1), hoverSfx: null);
@@ -577,6 +578,8 @@ namespace Sdo.UI.Screens
             int n = NoteEftArt.Length + 1;                 // +1 = 隨機
             int cur = ((Ctx.Session.NoteType + 1 + d) % n + n) % n;   // 內部索引：0=隨機, 1..n=指定+1
             Ctx.Session.NoteType = cur - 1;
+            RoomConfig.defaultNoteType = Ctx.Session.NoteType;   // 持久化：玩家選的 note 寫回 config.ini（刪檔 → 回隨機）
+            RoomConfig.Save();
             RenderWin2();
         }
 
@@ -760,9 +763,9 @@ namespace Sdo.UI.Screens
         private OutlinedLabel MakeInfoNum(string name, float x, float y)
             => OutlinedLabel.Create(_win2Root, name, Win2.x + x, Win2.y + y, 21, 14, 12, InfoValueColor, Color.white, Win2EdgePx, true);
 
-        // win2 難度/BPM 字幕（線上框沒烘這兩個字 → 自己畫；白邊；座標 = Win2 + (x,y)）
+        // win2 難度/BPM 字幕（線上框沒烘這兩個字 → 自己畫；白邊；粗體；座標 = Win2 + (x,y)）
         private void MakeCaption(string name, string text, float x, float y)
-            => OutlinedLabel.Create(_win2Root, name, Win2.x + x, Win2.y + y, 21, 14, 12, SongNameColor, Color.white, Win2EdgePx, false).SetText(text);
+            => OutlinedLabel.Create(_win2Root, name, Win2.x + x, Win2.y + y, 21, 14, 12, SongNameColor, Color.white, Win2EdgePx, true).SetText(text);
 
         // 組隊單選格：normal/pushed 兩態，點了把 GameSession.Team 設成 idx 並重畫（座標 = Win2 + (x,y)）
         private void BuildTeamToggle(int idx, string normalAn, string pushedAn, float x, float y)

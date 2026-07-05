@@ -35,6 +35,10 @@ namespace Sdo.UI.Util
         // The collapsed value + ▲ arrow sit 2px high vs the baked slot caption; nudge them up to line up.
         private const float ValueNudgeY = 2f;
 
+        // Expand-UP lists (song-select 模式/隊形/旁觀) lift their whole panel a few px ABOVE the slot's top edge so
+        // the bottom green row clears the baked purple slot frame instead of sitting flush on it. Expand-DOWN stays flush.
+        private const float ExpandUpGap = 3f;
+
         public int Index => _index;
 
         /// <summary>
@@ -80,6 +84,7 @@ namespace Sdo.UI.Util
             else
             {
                 combo._label = UIKit.AddText(root, name + "_val", "", 14, textColor, TextAlignmentOptions.Center);
+                combo._label.fontStyle |= FontStyles.Bold;   // 收合值與清單列同步加粗
                 Place(combo._label.rectTransform, slotX, labelY, slotW, slotH);
             }
             combo.RefreshValue();
@@ -125,8 +130,9 @@ namespace Sdo.UI.Util
             float panelH = rowH * n;
             float listW = _listW > 0f ? _listW : _w;   // list can be narrower than the value slot (0 = match slot)
             float listX = _listX != 0f ? _listX : _x;  // list left edge; 0 = align with the value slot left (_x)
-            // expand DOWN: panel top edge == slot bottom edge; expand UP: panel bottom edge == slot top edge.
-            float top = _expandDown ? _y + _h : _y - panelH;
+            // expand DOWN: panel top edge == slot bottom edge; expand UP: panel bottom edge sits ExpandUpGap px ABOVE
+            // the slot top edge (clears the baked purple slot frame instead of overlapping it).
+            float top = _expandDown ? _y + _h : _y - panelH - ExpandUpGap;
 
             _overlay = UIKit.AddImage(_root, "ComboOverlay", new Color(0f, 0f, 0f, 0.001f), raycast: true).gameObject;
             UIKit.Stretch((RectTransform)_overlay.transform);
@@ -158,6 +164,7 @@ namespace Sdo.UI.Util
                 else
                 {
                     var txt = UIKit.AddText(row.transform, "t", _options[i], 14, _listTextColor, TextAlignmentOptions.Center);
+                    txt.fontStyle |= FontStyles.Bold;   // 官方清單字較粗;faux-bold 加粗提升可讀性
                     UIKit.Stretch(txt.rectTransform, 4, 0, 4, 0);
                 }
 

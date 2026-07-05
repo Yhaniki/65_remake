@@ -1,4 +1,5 @@
 using Sdo.Settings;
+using Sdo.UI.Catalog;
 
 namespace Sdo.UI.Core
 {
@@ -53,6 +54,16 @@ namespace Sdo.UI.Core
             Team = RoomConfig.defaultTeam;
             DropDirection = RoomConfig.defaultDropDirection;
             GameMode = RoomConfig.defaultGameMode;
+            // 場景：config 沒指定（-1，或 config.ini 被刪 → 回退預設 -1）就維持隨機；指定了就套用那個場景。
+            if (RoomConfig.defaultScene < 0)
+            {
+                StageRandom = true;
+            }
+            else
+            {
+                var st = StageCatalog.Get(RoomConfig.defaultScene);
+                StageId = st.Id; StageFolder = st.Folder; StageRandom = false;
+            }
         }
 
         /// <summary>回傳 steps 裡最接近 want 的檔位（steps 空 → 直接回 want）。</summary>

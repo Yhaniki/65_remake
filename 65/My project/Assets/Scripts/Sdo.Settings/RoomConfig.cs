@@ -16,10 +16,11 @@ namespace Sdo.Settings
         // ---- 當下生效的值（欄位＝INI 的 key）----
         public static float[] speedSteps = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f };
         public static float defaultSpeed = 2.5f;     // 預設速度（會對齊到 speedSteps 最近檔位）
-        public static int defaultNoteType = 6;       // note 種類(hit-effect)：-1=隨機；6 = 自訂「EFT_3」皮(EFT_7 JZ + NOTEIMAGE_5 + EFT_5 combo)為預設
+        public static int defaultNoteType = -1;      // note 種類(hit-effect)：-1=隨機(預設)；>=0=指定第幾種。玩家在房間選了會寫回這裡
         public static int defaultTeam = 3;           // 組隊：0=A,1=B,2=C,3=自由
         public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
         public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式,2=ShowTime模式
+        public static int defaultScene = -1;         // 場景：-1=隨機(預設)；0..30=指定場景 id(見 StageCatalog)。玩家在選歌選了會寫回這裡
 
         public const string FileName = "config.ini";
 
@@ -93,6 +94,7 @@ namespace Sdo.Settings
                     case "defaultTeam": defaultTeam = ParseInt(val, defaultTeam); break;
                     case "defaultDropDirection": defaultDropDirection = ParseInt(val, defaultDropDirection); break;
                     case "defaultGameMode": defaultGameMode = ParseInt(val, defaultGameMode); break;
+                    case "defaultScene": defaultScene = ParseInt(val, defaultScene); break;
                 }
             }
         }
@@ -107,6 +109,7 @@ namespace Sdo.Settings
             defaultTeam = Mathf.Clamp(defaultTeam, 0, 3);
             defaultDropDirection = Mathf.Clamp(defaultDropDirection, 0, 2);
             defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 2);
+            if (defaultScene < -1 || defaultScene > 30) defaultScene = -1;   // 只允許 -1(隨機) 或 0..30(可選場景 id)
         }
 
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
@@ -128,6 +131,8 @@ namespace Sdo.Settings
             sb.Append("defaultDropDirection=").Append(defaultDropDirection).Append('\n');
             sb.Append("# 預設模式：0=自由模式 1=普通模式 2=ShowTime模式\n");
             sb.Append("defaultGameMode=").Append(defaultGameMode).Append('\n');
+            sb.Append("# 預設場景：-1=隨機，0..30=指定場景 id（步行街=0 … 卡通公路=30）。玩家在選歌選了會寫回這裡\n");
+            sb.Append("defaultScene=").Append(defaultScene).Append('\n');
             return sb.ToString();
         }
 
