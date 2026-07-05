@@ -121,7 +121,13 @@ namespace Sdo.Game
         // from the head + fades via its own alpha (255→0), not the old constant full-length band. But at 1.0 the extra
         // additive blue washed the whole gauge toward WHITE/GREY (user: 藍色集氣條變灰) — additive blue+blue clips. Keep
         // it DIM so it adds a subtle crossing crackle without desaturating the band. Raise cautiously if too faint.
-        public static float PowerCrossDim = 0.45f;
+        public static float PowerCrossDim = 0.6f;
+        // POWER slot3's faithful initRot (90,90,0) pitches its quad FLAT (normal → world −Y) = EDGE-ON to the head-on
+        // gauge camera → it renders as an invisible thin line, so only slot2 (the horizontal ribbon) shows (user: 只看
+        // 到一條). To actually draw the OFFICIAL's two CROSSING ribbons we face slot3 at the camera like slot2 (0,90,·)
+        // but ROLL it by this angle in the screen plane = a visible diagonal bolt crossing the horizontal slot2. This is
+        // a deliberate deviation from the edge-on data (which can't show in a flat 15px viewport). 0 = flat like slot2.
+        public static float PowerCrossAngle = 32f;
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -526,7 +532,9 @@ namespace Sdo.Game
                 turbAxis = em.TurbMask != 0 ? RandPerp(tiltedVel) : Vector3.zero,   // fixed crackle axis (if turbulent)
                 // rotation starts at the template's initial rotation + jitter; the update accumulates the channels
                 // onto it. This is what makes aef_1_07 lie FLAT (its [0x1a]=90°) and spin randomly (Y jitter 360°).
-                rot = em.InitRot + new Vector3(
+                // POWER slot3: its faithful (90,90,0) pitch renders edge-on/invisible in the flat gauge → re-face it at
+                // the camera like slot2 (0,90,·) but rolled by PowerCrossAngle → a visible diagonal CROSSING ribbon.
+                rot = (_isPower && em.Slot == 3 ? new Vector3(0f, 90f, PowerCrossAngle) : em.InitRot) + new Vector3(
                     UnityEngine.Random.Range(-1f, 1f) * em.RotJit.x,
                     UnityEngine.Random.Range(-1f, 1f) * em.RotJit.y,
                     UnityEngine.Random.Range(-1f, 1f) * em.RotJit.z),
