@@ -490,12 +490,18 @@ Agent re-parse of POWER_Y.EFT bytes + `sdo.bin.c`, cross-checked with a faithful
   when `life==maxLife-1==15`. slot1(trig3)→slot4(trig0)→slot2/3(trig0) ⇒ ribbon pair reborn every 15 ticks.
 - **Ribbons = slot2 + slot3 ONLY** (both the file's single ribbon tex: Y=207, B=27, R=206 — three *colour variants*,
   not three tex in one file), `emit=1` each. Slots 7-31 are dead template padding.
-- **KEY: ribbons are attach=1 and die when their slot4 carrier dies** (FUN_0098fc80 @666401-406: attach child +
-  word0x20f==0 → self-kill on parent death). slot4 life=20, so ribbon EFFECTIVE life ≈ 20 ticks (NOT 50). ⇒
-  simultaneous ribbon quads oscillate **2↔4 (peak 4, avg ~2.5)**, never 8. The user is right it's >2; ceiling is 4.
-  Remake was rendering the full 50-tick life → ~8 mushed bands. **Fixed: `_isPower && attach && parent.life<=0 →
-  life=0`** (EftEffect.StepParticle) = official ≤4 + the sharp 300 ms pop-in/out crackle. Combined with slot3's
-  camera-facing cross-angle (round-7 earlier) = two *visible* crossing bands + their overlapping generations.
+- **Ribbons are attach=1; the engine kills them when slot4 (life20) dies** (FUN_0098fc80 @666401-406). slot2's alpha
+  floors at 127 and never self-fades, so SOME life cap is mandatory or a ribbon lingers its nominal 50 ticks → 6-8
+  mushed bands. BUT a faithful-simulation trace of the remake showed capping at slot4-death (~20) is **too early**:
+  the ribbon LENGTH grows 0→full across slot4's whole 20-tick life, so the old band reaches full extension exactly
+  when it is cut, while the overlapping young band (spawned +16) is only age 1-3 = ~3% length → **visually always 2
+  bands** (user: 只看到兩條; the 19%-of-the-time "4" is microscopic). SpeedMul only scaled dt (spacing stayed 16
+  ticks) so it never added density.
+- **Fix (EftEffect.StepParticle): cap ribbon life at `PowerRibbonLife`≈32 ticks (= 2 carrier loops), NOT parent-death.**
+  The old band then rides slot4's FROZEN full length (age 20→32, extended left) while the next grows in at the head →
+  a stable **4 bands** (2 gens × slot2/3). Short alpha fade over the last 4 ticks avoids the cut-pop. F4-tunable
+  (16=one-per-loop … 32≈4 … higher=denser). Combined with slot3's camera-facing PowerCrossAngle = two *visible*
+  crossing bands, each with a young+old generation = the staggered flowing current.
 
 ### Remake defaults vs exe (documented deviations)
 

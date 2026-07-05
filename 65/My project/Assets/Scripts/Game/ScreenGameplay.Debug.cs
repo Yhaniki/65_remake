@@ -165,6 +165,8 @@ namespace Sdo.Game
                 EftEffect.PowerCrossDim = GUILayout.HorizontalSlider(EftEffect.PowerCrossDim, 0f, 1f);
                 GUILayout.Label($"交叉帶角度 cross-angle: {EftEffect.PowerCrossAngle:F0}° (slot3 斜向角度; 0=與水平帶重疊, 越大越斜)");
                 EftEffect.PowerCrossAngle = GUILayout.HorizontalSlider(EftEffect.PowerCrossAngle, 0f, 90f);
+                GUILayout.Label($"電流帶壽命 ribbon life: {EftEffect.PowerRibbonLife:F0} tick (越大=同時越多條疊加; 16=每loop一條, 32≈4條)");
+                EftEffect.PowerRibbonLife = GUILayout.HorizontalSlider(EftEffect.PowerRibbonLife, 16f, 64f);
                 GUILayout.Label($"集氣條電流速度 gauge speed: {energyStripSpeed:F2}× (crackle 快慢+密度; 1=官方節奏)");
                 energyStripSpeed = GUILayout.HorizontalSlider(energyStripSpeed, 0.5f, 4f);
                 foreach (var g in _gaugeStrip) { var e = g ? g.GetComponent<EftEffect>() : null; if (e) e.SpeedMul = energyStripSpeed; }   // live-apply to the running gauge

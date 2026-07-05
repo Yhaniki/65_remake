@@ -128,6 +128,13 @@ namespace Sdo.Game
         // but ROLL it by this angle in the screen plane = a visible diagonal bolt crossing the horizontal slot2. This is
         // a deliberate deviation from the edge-on data (which can't show in a flat 15px viewport). 0 = flat like slot2.
         public static float PowerCrossAngle = 32f;
+        // POWER ribbon effective LIFE in ticks (slot2/3). The carrier re-spawns a ribbon pair every 16 ticks, but slot2's
+        // alpha only floors at 127 (never self-fades to 0), so an explicit life cap is REQUIRED or ribbons linger their
+        // full 50 ticks → 6-8 mushed bands. Capping at slot4's death (~20) was TOO EARLY: the new generation is only
+        // age 1-3 (≈3% length) during the 3-tick overlap → visually always ~2 bands (user: 只看到兩條). Cap at ~2 carrier
+        // loops (32) so the OLD band rides slot4's frozen FULL length (extended left) while the NEW one grows in at the
+        // head → a stable 4 bands (2 gens × slot2/slot3) = the staggered "short-young + long-old" current. 30-36 to taste.
+        public static float PowerRibbonLife = 32f;
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -842,13 +849,13 @@ namespace Sdo.Game
         {
             var em = p.E;
             p.life--;
-            // ENGINE attach→parent-death KILL (sdo.bin.c FUN_0098fc80 @666401-406): an attach child dies the tick its
-            // parent dies. POWER ribbons (slot2/3, attach=1) ride slot4 (life20), so their EFFECTIVE life is ~20 ticks,
-            // NOT the nominal 50 — this caps simultaneous ribbon quads at ≤4 (2 generations × slot2+slot3), matching the
-            // official; without it they linger 50 ticks → ~8 mushed bands. Also gives the sharp 300ms pop-in/out crackle
-            // (young ribbon short at the head + old one extended left = the flowing directional current). RE-verified:
-            // ribbon respawn = every 15 ticks (300ms), tick = 20ms/50Hz fixed. Scoped to POWER (other attach FX untouched).
-            if (_isPower && p.attach != 0 && p.parent != null && p.parent.life <= 0) { p.life = 0; }
+            // POWER ribbon (slot2/3, attach=1) life cap. The engine kills an attach child when its parent (slot4, life20)
+            // dies, but that is too early to ever show the OLD extended band overlapping the NEW growing one (sim: the
+            // young gen is only ~3% length during the 3-tick overlap → visually always 2 bands). Cap at PowerRibbonLife
+            // (~32 = 2 carrier loops) instead: the old band rides slot4's FROZEN full length (age 20-32) while the next
+            // one grows in → a stable 4 bands (2 gens × slot2/3). Still bounded (slot2 alpha floors at 127, never self-
+            // fades). age = p.life0 - p.life (1-based; p.life-- already ran above). Scoped to POWER (other FX untouched).
+            if (_isPower && p.attach != 0 && (p.life0 - p.life) >= PowerRibbonLife) { p.life = 0; }
             // Persistent scene effect: a ROOT particle never dies — it loops back to full life so the base stays put
             // forever (e.g. the SCN0008 kekkai disc, life 501: without this it died at 501 while its sub-particles
             // lived to ~600, so RespawnTree waited and the circle blinked out for ~2s). The trigType-3 children keep
@@ -1041,6 +1048,9 @@ namespace Sdo.Game
             float g = RC(3) + RC(7);
             float b = RC(4) + RC(5);
             float a = em.Ch[1].Ranged(t);   // alpha (ch1) ALWAYS full-curve, even in 2-point mode (engine excludes ch1)
+            // POWER ribbon: its alpha floors at ~127 (never self-fades), so the PowerRibbonLife cap would cut it as a
+            // hard pop. Fade the last few ticks toward 0 so the old band dissolves smoothly as the next one grows in.
+            if (_isPower && p.attach != 0) { float age = p.life0 - p.life; if (age > PowerRibbonLife - 4f) a *= Mathf.Clamp01((PowerRibbonLife - age) / 4f); }
             // DIAG: dump the head-glow (slot1 halo) vs star (slot5) WORLD position/scale/alpha so we can see if the halo
             // is cone-scattered out of the thin RT frustum (camera at GaugeOrigin.y=20000, visible ±~9.4 world units).
             if (_isPower && (em.Slot == 1 || em.Slot == 5) && _renderDbgN < 60)
