@@ -147,6 +147,24 @@ namespace Sdo.Game
                 // swept band; length is the scaleY channel, so only the WIDTH is tunable here — 1× = faithful)
                 GUILayout.Label($"Combo trail width: {EftEffect.TrailWidthMul:F2}×  (200/300 light streaks, 1=faithful)");
                 EftEffect.TrailWidthMul = GUILayout.HorizontalSlider(EftEffect.TrailWidthMul, 0.2f, 3f);
+
+                // ── 氣條 ShowTime gauge (POWER_*.EFT head glow) — see docs SDO_SHOWTIME round-4 ──
+                GUILayout.Space(6);
+                GUILayout.Label("══ 氣條 Gauge (POWER) ══");
+                GUILayout.Label("隔離顯示 (診斷頭光有沒有畫出來):");
+                EftEffect.PowerIsolate = GUILayout.Toolbar(EftEffect.PowerIsolate, new[] { "全部", "只ribbon", "只頭光" });
+                EftEffect.PowerEngineSampler = GUILayout.Toggle(EftEffect.PowerEngineSampler,
+                    " 引擎2點取樣 (ON=官方:光暈收斂可見/OFF=全曲線膨脹成霧看不到)");
+                GUILayout.Label($"頭光白熱 head white-hot: {EftEffect.PowerHeadGlowBright:F2}× (naga00星+sparks爆白; 1=faithful-soft)");
+                EftEffect.PowerHeadGlowBright = GUILayout.HorizontalSlider(EftEffect.PowerHeadGlowBright, 1f, 6f);
+                GUILayout.Label($"頭光暈(大顆) halo: {EftEffect.PowerHaloBright:F2}× (aef_4_02 接在填充頭的大光暈=官方那顆)");
+                EftEffect.PowerHaloBright = GUILayout.HorizontalSlider(EftEffect.PowerHaloBright, 0.5f, 8f);
+                GUILayout.Label($"白熱核大小 white-core size: {EftEffect.PowerWhiteSize:F2}× (1=忠實; 穩定靠整數位置截斷=引擎正解, 不是pin)");
+                EftEffect.PowerWhiteSize = GUILayout.HorizontalSlider(EftEffect.PowerWhiteSize, 1f, 4f);
+                GUILayout.Label($"藍色斜十字帶 cross-dim: {EftEffect.PowerCrossDim:F2} (slot3 藍色45°交叉帶, 低=更淡不成靜態長條)");
+                EftEffect.PowerCrossDim = GUILayout.HorizontalSlider(EftEffect.PowerCrossDim, 0f, 1f);
+                GUILayout.Label($"0位置左推 empty hide: {gaugeEmptyHideP:F0} wu (氣條=0 時把頭光藏到可視左緣外; 太小=0就露頭光, 太大=打好幾下才冒出來)");
+                gaugeEmptyHideP = GUILayout.HorizontalSlider(gaugeEmptyHideP, 0f, 200f);
             }
             else if (_dbgTab == 2)    // ===== STAGE: board / hit-burst / HP / floor-ring / hand-trail =====
             {

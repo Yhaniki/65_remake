@@ -35,6 +35,8 @@ public static class BuildScript
         "Sdo/EftAlpha",          // kekkai disc + MW runes: 1× additive (no Legacy 2× clip for opaque-alpha textures)
         "Sdo/EftAdditiveLum",
         "Sdo/HpGlowClip",
+        "Sdo/GlowClipRect",      // ShowTime energy-bar head glow (rect-clipped additive = official viewport crop)
+        "Sdo/AdditiveRGB",       // ShowTime gauge RT composite (One-One add of the POWER EFT camera render)
         "Sdo/PortraitOpaque",
         "Sdo/UnlitDoubleSided",
         "Sdo/UnlitInstanced",

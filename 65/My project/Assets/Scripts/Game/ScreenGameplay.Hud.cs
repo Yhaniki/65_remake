@@ -23,6 +23,19 @@ namespace Sdo.Game
                 if (_score.Score != _scoreTarget) { _scoreFrom = _shownScore; _scoreTarget = _score.Score; _scoreAnimAt = Time.time; _scoreCommitPop = true; _scoreArmed = true; }
                 _nextScoreCommitMs += 8 * beatMs;
                 RefreshRanking();   // re-sort + redraw the roster list and rank on the same 8-beat cadence
+                // ShowTime: the EnergyScore + EnergyBonus count-up/pop is BATCHED to this settlement (online commits the
+                // accumulated per-beat delta once, not per hit). SetTarget here; the rolls Tick every frame in UpdateEnergyBar.
+                if (showtimeMode)   // fire the count-up/pop ONLY when the committed value actually changed (no change → no pop)
+                {
+                    if (_scoreRoll != null && _score.Score != _scoreRollLast) { _scoreRoll.SetTarget(_score.Score, Time.time); _scoreRollLast = _score.Score; }
+                    if (_bonusRoll != null && _showtime.Bonus != _bonusRollLast) { _bonusRoll.SetTarget(_showtime.Bonus, Time.time); _bonusRollLast = _showtime.Bonus; }
+                }
+            }
+            // in ShowTime the score is the BIG EnergyScore font (_scoreRoll @300,10) — hide the normal top digits.
+            if (showtimeMode)
+            {
+                if (_scoreDigits != null) foreach (var d in _scoreDigits) if (d) d.enabled = false;
+                return;
             }
             // decompiled CtlNumLabel (FUN_0043dac0): NOT a smooth per-frame lerp. It adds a fixed
             // step = delta/20 (0x21c = (target-cur)/0x14) only once every ~50ms (0x31<elapsed, /0x32),
@@ -349,7 +362,7 @@ namespace Sdo.Game
         private void RebuildRoster()
         {
             _roster.Clear();
-            _roster.Add(new PlayerEntry(localPlayerName, _score != null ? _score.Score : 0L, true));
+            _roster.Add(new PlayerEntry(localPlayerName, TotalScore, true));
             if (mockOpponents && !freeMode)   // 自由模式 = solo (no opponents)
             {
                 double now = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : 0.0;
@@ -422,6 +435,7 @@ namespace Sdo.Game
 
         private void UpdateHpBar()
         {
+            if (showtimeMode) return;     // ShowTime has no HP bar (only the 集氣 energy gauge) — nothing to drive
             if (!_trackVisible) return;   // hidden during the opening intro; SetTrackVisible(true) re-shows it
             double hp = _health?.Health ?? HealthProcessor.MaxHealth;
             float frac = Mathf.Clamp01((float)((hp - HealthProcessor.FloorHealth) / (HealthProcessor.MaxHealth - HealthProcessor.FloorHealth)));
@@ -457,6 +471,129 @@ namespace Sdo.Game
                 PlaceAspect(_hpGlow, cx, HpPos.y + HpSize.y / 2f, HpEftSize.x, -0.2f);
                 _hpGlow.enabled = hp > HealthProcessor.FloorHealth + 1;
             }
+        }
+
+        // ShowTime energy meter tick: fill while charging (or drain over the remaining window when active), colour by
+        // level, blink the SPACE prompt when releasable, and surface the live BONUS number. Called from UpdateHud only
+        // in showtimeMode. See docs/reverse-engineering/SDO_SHOWTIME.md + Sdo.Ruleset.ShowtimeMeter.
+        //
+        // FILL (official online model, sdo.bin gauge object): an electric strip whose bright HEAD rides the fill tip
+        // and whose tail is clipped at the channel start — reproduced by right-anchor-CROPPING the official ENERGY_Y/
+        // B/R 85×17 plasma capsule to the fill fraction (head always at the tip, like the official strip slide),
+        // stretched ~2.9× onto the 250px channel, frames cycling for the crackle, additive. Never X-squash the whole
+        // capsule (smears the streaks) and never stretch the 14×4 MyEnergy chips (the old flat look).
+        private void UpdateEnergyBar()
+        {
+            if (_energyFill == null) return;   // NOTE: not gated on _trackVisible — the bar animates in BEFORE the board reveal
+            var m = _showtime;
+            float ox = _energyIntroOffX;   // intro slide-in offset (design px); 0 once settled
+            if (_energyFrameL) SdoLayout.PlaceTopLeft(_energyFrameL, energyFramePos.x + ox, energyFramePos.y, -0.05f);   // re-placed each frame for the slide
+            if (_energyFrameR) SdoLayout.PlaceTopLeft(_energyFrameR, energyFramePos.x + 256f + ox, energyFramePos.y, -0.05f);
+            // OFFICIAL fill drive (sdo.bin.c FUN_0040e0f0 value-map + FUN_0040e210 ease + band select). Feed the RAW
+            // energy value; ease three per-band POSITIONS; pick the active band by HYSTERESIS (only re-select when the
+            // active band's eased position leaves (-305,0]). NO smoothed counter, NO per-frame re-bucket → no 前後跳.
+            var caps = m.BandCaps;
+            float cap0 = caps[0], cap1 = caps[1], cap2 = caps[Mathf.Min(2, caps.Length - 1)];
+            bool intro = _energyIntroFill >= 0f;
+            float rawV;
+            if (intro) rawV = _energyIntroFill * cap2;                              // demo sweeps 0→cap2 (all 3 bands)
+            else if (m.Active)                                                       // window: drain the released band's colour
+            {
+                int L = Mathf.Clamp(m.ReleasedLevel, 0, 2);
+                float lo = L == 0 ? 0f : caps[L - 1], hi = caps[Mathf.Min(L, caps.Length - 1)];
+                rawV = Mathf.Lerp(lo, hi, m.WindowRemainingFraction(_nowMs));
+            }
+            else rawV = m.FillCount;                                                 // charging: the raw counter, straight in
+            if (DebugGaugeSweep) rawV = Mathf.PingPong(Time.time * (cap2 / 4f), cap2);   // diagnostic: cycle all 3 bands ~8s
+            rawV = Mathf.Clamp(rawV, 0f, cap2);
+            float kk = Mathf.Clamp01(Time.deltaTime / 0.5f);                         // ~500ms exponential ease (official +0xc8)
+            float range = GaugeFullP - GaugeBaseP;                                   // 305 + gaugeEmptyHideP (empty parked left of the visible edge)
+            float[] tgt =
+            {
+                GaugeBaseP + range * (rawV - 0f) / Mathf.Max(1f, cap0 - 0f),         // band0 target (UNCLAMPED — overshoot drives selection)
+                GaugeBaseP + range * (rawV - cap0) / Mathf.Max(1f, cap1 - cap0),     // band1 target
+                GaugeBaseP + range * (rawV - cap1) / Mathf.Max(1f, cap2 - cap1),     // band2 target
+            };
+            for (int i = 0; i < 3; i++) _gaugeCur[i] += (tgt[i] - _gaugeCur[i]) * kk;
+            if (_gaugeCur[_gaugeActive] < GaugeBaseP || _gaugeCur[_gaugeActive] > GaugeFullP)   // active band left the window → re-select
+                for (int i = 0; i < 3; i++)
+                    if (GaugeBaseP < _gaugeCur[i] && _gaugeCur[i] <= GaugeFullP) { _gaugeActive = i; break; }
+            int level = _gaugeActive;
+            float headWorldX = _gaugeCur[_gaugeActive];
+            // At empty (rawV==0, nothing hit yet) draw NOTHING — don't render a head parked off-screen, just don't
+            // draw the POWER effect at all. It starts drawing on the first hit (rawV>0) and slides in from GaugeBaseP.
+            bool drawHead = rawV > 0f;
+
+            // Move the ACTIVE POWER effect to headX inside the dedicated RT camera's isolated world; park the others
+            // (and ALL bands while empty) off-frustum. The effects run continuously (never re-init), so the electric
+            // ribbon + head glow keep aging.
+            if (_gaugeCam != null)
+                for (int b = 0; b < 3; b++)
+                    if (_gaugeAnchor[b] != null)
+                        _gaugeAnchor[b].position = (_energyHudOn && b == level && drawHead)
+                            ? GaugeOrigin + new Vector3(headWorldX, 0f, 0f)
+                            : GaugeOrigin + new Vector3(-10000f, 0f, 0f);
+
+            int animFrame = (int)(Time.time * showtimeAnimFps);   // ~10fps UI-sprite tick (space prompt blink)
+            int glowFrame = (int)(Time.time * energyGlowFps);     // FAST tick for the electric glow (official crackle)
+            // band-up 500ms mini flash (official EnergyProgress widget @279,15: value = elapsed ms 0..500). During the
+            // flash the badge cluster hides; when it completes the armed tier's badge + glow (+ space) show steady.
+            bool flashing = _energyMiniT0 >= 0f;
+            if (flashing)
+            {
+                float el = (Time.time - _energyMiniT0) * 1000f;
+                if (el >= energyMiniFlashMs) { flashing = false; _energyMiniT0 = -1f; if (_energyMini) _energyMini.enabled = false; }
+                else if (_energyMini)
+                {
+                    var chip = _energyFillSpr != null ? _energyFillSpr[Mathf.Clamp(m.ArmedLevel, 0, 2)] : null;
+                    _energyMini.enabled = _energyHudOn && chip != null;
+                    if (chip != null)
+                    {
+                        _energyMini.sprite = chip;
+                        SdoLayout.PlaceBarFill(_energyMini, energyMiniPos.x + ox, energyMiniPos.y, 14f, 4f, el / energyMiniFlashMs, -0.2f);
+                    }
+                }
+            }
+            // level badge (MyEnergy2/3/4 = ×2/×4/×8) + EnergyEft glow — FIXED at their XML panel spots, shown for the
+            // armed (or released) tier once the flash finished; hidden while nothing is armed.
+            int badge = m.Active ? m.ReleasedLevel : m.ArmedLevel;
+            // Keep the ×2/×4/×8 badge + glow VISIBLE through the band-up flash (was hidden on `!flashing`, which left a
+            // black gap during the x2→x4 switch = user "變成黑色"). It just updates to the new tier's sprite.
+            bool showBadge = badge >= 0 && _energyHudOn;
+            if (_energyBadge)
+            {
+                _energyBadge.enabled = showBadge && _energyBadgeSpr != null;
+                if (_energyBadge.enabled)
+                {
+                    _energyBadge.sprite = _energyBadgeSpr[Mathf.Clamp(badge, 0, 2)];
+                    if (_energyBadge.sprite) SdoLayout.PlaceTopLeft(_energyBadge, energyBadgePos.x + ox, energyBadgePos.y, -0.2f);
+                }
+            }
+            if (_energyEftSpr)
+            {
+                var fr = (_energyEftFrames != null && badge >= 0) ? _energyEftFrames[Mathf.Clamp(badge, 0, 2)] : null;
+                bool showEft = showBadge && fr != null && fr.Length > 0;
+                _energyEftSpr.enabled = showEft;
+                if (showEft)
+                {
+                    _energyEftSpr.sprite = fr[glowFrame % fr.Length];                  // 10-frame loop, fast crackle tick
+                    if (_energyEftSpr.sprite) SdoLayout.PlaceTopLeft(_energyEftSpr, energyEftPos.x + ox, energyEftPos.y, -0.15f);
+                }
+            }
+
+            // SPACE press-prompt: the space.an 2-image pulse (hand → fist+flash), shown only when releasable
+            if (_spaceSpr)
+            {
+                bool show = _energyHudOn && m.Ready && _spaceFrames != null && _spaceFrames.Length > 0;
+                if (_spaceSpr.enabled != show) _spaceSpr.enabled = show;
+                if (show) _spaceSpr.sprite = _spaceFrames[animFrame % _spaceFrames.Length];
+            }
+
+            // ShowTime EnergyScore (big) + EnergyBonus (small): SetTarget is BATCHED to the 8-beat settlement in
+            // UpdateScoreDigits; here we just tick the count-up/pop each frame. Bonus stays hidden until it scores.
+            _scoreRoll?.Tick(Time.time);   // pop fires only on a value change (SetTarget); hidden until the HUD reveals
+            _bonusRoll?.Tick(Time.time);
+            if (_bonusIcon) _bonusIcon.enabled = _energyHudOn;   // the "+" (GamePlay44) tracks the WinMyEnergy cluster
         }
 
     }

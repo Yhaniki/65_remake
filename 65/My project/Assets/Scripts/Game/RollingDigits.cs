@@ -18,6 +18,15 @@ namespace Sdo.Game
 
         private long _from, _target, _shown = long.MinValue;
         private float _animAt = -999f;
+        private bool _visible = true;
+
+        /// <summary>Hide/show the whole run. When hidden, all slots are disabled and <see cref="Tick"/> is a no-op
+        /// (so it can't re-enable them) — used to drop the ShowTime score/bonus off the result panel.</summary>
+        public void SetVisible(bool on)
+        {
+            _visible = on;
+            if (!on) for (int i = 0; i < _slots.Length; i++) if (_slots[i]) _slots[i].enabled = false;
+        }
 
         /// <param name="maxDigits">slot count (max value width).</param>
         /// <param name="pitch">design-px advance between digits (≈ digit width).</param>
@@ -46,6 +55,7 @@ namespace Sdo.Game
         /// <summary>Advance the roll and redraw. Safe to call every frame.</summary>
         public void Tick(float now)
         {
+            if (!_visible) return;
             if (_digits == null || _digits.Length < 10) return;
             _shown = RollingNumber.ValueAt(_from, _target, _animAt, now);
             string s = (_shown < 0 ? 0 : _shown).ToString();
