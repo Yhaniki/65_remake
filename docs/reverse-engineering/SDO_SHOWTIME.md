@@ -508,6 +508,21 @@ Agent re-parse of POWER_Y.EFT bytes + `sdo.bin.c`, cross-checked with a faithful
   slot3's camera-facing `PowerCrossAngle` now visibly responds too (the visible ribbons are freshly spawned, not the
   old frozen ones that ignored live tuning).
 
+### ✅ 2026-07-05 round 8: gauge roster dump — ribbons are FULL-WIDTH (density-by-length impossible)
+
+A live F4 roster dump (`EftEffect.DumpRoster`) settled the "only 2 bands / controls do nothing" saga with hard data.
+Per-band the live particles are exactly the RE structure (slot0 carrier, slot1 halo, slot4 ribbon-carrier, slot2/3
+ribbons ×2 generations, slot5/6 head), and **the tunables ARE applied**: slot4 age `/30` = `PowerRibbonLife`; slot3
+`rotZ32` = `PowerCrossAngle`; 2 staggered generations exist (slot2 `scl.x` 162 & 27; slot3 122 & 7). But:
+- **Ribbon LENGTH ≫ viewport.** slot2 `scl.x`=162 (and even the young gen 27) × effScale 100 ≫ the ~6-unit-wide
+  488px gauge → every generation crops to FULL WIDTH → they overlap completely → **length/density staggering is
+  invisible**. This is faithful (official ribbon base.x=20 in a ~6u window is also full-width); "4 staggered bands"
+  is physically impossible — the gauge is fundamentally **2 crossing ribbons** (slot2 horizontal + slot3 diagonal),
+  each thinning + re-spawning. `PowerRibbonLife`/`SpeedMul` change rhythm, not band count.
+- **slot3 was a tall BLOCK, not a line.** Roster `scl.y`≈4.1 (≈20× slot2's 0.2): the 32° tilt bled slot4's Z-growth
+  into slot3's HEIGHT. **Fixed:** map slot3's growth as if un-tilted (0,90,0 → length only, like slot2), apply the
+  tilt ONLY at localRotation, and thin by `PowerCrossThick` → a clean diagonal LINE crossing slot2. F4-tunable.
+
 ### Remake defaults vs exe (documented deviations)
 
 - Single ms-unit gauge (max 18000) with **tunable** per-hit gains (exe fill curve not decoded).

@@ -128,6 +128,11 @@ namespace Sdo.Game
         // but ROLL it by this angle in the screen plane = a visible diagonal bolt crossing the horizontal slot2. This is
         // a deliberate deviation from the edge-on data (which can't show in a flat 15px viewport). 0 = flat like slot2.
         public static float PowerCrossAngle = 32f;
+        // POWER slot3 crossing-ribbon HEIGHT factor. Roster showed slot3 was scl.y≈4 (≈20× slot2) — the tilt bled the
+        // carrier's Z-growth into slot3's HEIGHT, making a tall tilted BLOCK instead of a thin diagonal line. We now map
+        // slot3's growth as if un-tilted (→ length, like slot2) and thin its height by this factor so it reads as a
+        // clean diagonal LINE crossing the horizontal slot2. Lower = thinner. 1 = no thinning.
+        public static float PowerCrossThick = 0.35f;
         // POWER ribbon DENSITY = slot4 (ribbon carrier) LIFE in ticks. Ribbons re-spawn every ~16 ticks and die WITH
         // slot4 (parent-death, so they never freeze into static bands). slot4's life sets how long each ribbon GROWS
         // (scaleZ 0→full) before it dies — a longer life keeps more GROWING (animated) ribbons overlapping = more visible
@@ -1182,8 +1187,15 @@ namespace Sdo.Game
             // the POWER_* gauge (used nowhere else) so every already-tuned attach effect (STAGELIGHTB…) is untouched.
             if (inheritParentScale && EffectName != null && EffectName.StartsWith("POWER"))
             {
-                Vector3 rp = Quaternion.Inverse(Quaternion.Euler(p.rot)) * p.parent.liveScale;
-                p.tr.localScale = Vector3.Scale(new Vector3(Mathf.Abs(rp.x), Mathf.Abs(rp.y), Mathf.Abs(rp.z)), ownScale);
+                // slot3 (the crossing ribbon): compute the carrier-growth mapping as if UN-tilted (0,90,0) so the growth
+                // lands on LENGTH (like slot2), NOT on height — the visible tilt (p.rot.z = PowerCrossAngle) is applied
+                // ONLY at localRotation. Without this the tilt bled the growth into slot3's HEIGHT → a tall tilted BLOCK
+                // (roster scl.y≈4). Then thin it (PowerCrossThick) so it reads as a diagonal LINE, not a block.
+                bool s3 = _isPower && p.E.Slot == 3;
+                Vector3 scaleRot = s3 ? new Vector3(0f, 90f, 0f) : p.rot;
+                Vector3 rp = Quaternion.Inverse(Quaternion.Euler(scaleRot)) * p.parent.liveScale;
+                Vector3 os = s3 ? new Vector3(ownScale.x, ownScale.y * PowerCrossThick, ownScale.z) : ownScale;
+                p.tr.localScale = Vector3.Scale(new Vector3(Mathf.Abs(rp.x), Mathf.Abs(rp.y), Mathf.Abs(rp.z)), os);
             }
             else
                 p.tr.localScale = inheritParentScale ? Vector3.Scale(p.parent.liveScale, ownScale) : ownScale;
