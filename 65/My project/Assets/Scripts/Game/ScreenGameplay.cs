@@ -525,15 +525,16 @@ namespace Sdo.Game
                 _bootCover.transform.localScale = new Vector3(SdoLayout.Width + 200f, SdoLayout.Height + 200f, 1f);
             }
 
-            var badge = LoadingArt.RandomBadge();
-            if (badge != null)
-            {
-                _bootBadge = NewSR("BootLoadingBadge", badge, 32001);   // above the background image
-                _bootBadge.color = Color.white;
-                const float m = 8f;   // bottom-right corner, small margin (design px, top-left origin)
-                PlaceAspect(_bootBadge, SdoLayout.Width - LoadingArt.BadgeW / 2f - m,
-                                        SdoLayout.Height - LoadingArt.BadgeH / 2f - m, LoadingArt.BadgeW, -51f);
-            }
+            // Bottom-right "Loading..." corner badge — disabled for now (keep the logic; may re-enable later).
+            // var badge = LoadingArt.RandomBadge();
+            // if (badge != null)
+            // {
+            //     _bootBadge = NewSR("BootLoadingBadge", badge, 32001);   // above the background image
+            //     _bootBadge.color = Color.white;
+            //     const float m = 8f;   // bottom-right corner, small margin (design px, top-left origin)
+            //     PlaceAspect(_bootBadge, SdoLayout.Width - LoadingArt.BadgeW / 2f - m,
+            //                             SdoLayout.Height - LoadingArt.BadgeH / 2f - m, LoadingArt.BadgeW, -51f);
+            // }
         }
 
         // Is the LOCAL build ready to be shown? The scene/avatar/board/HUD are built synchronously in Start (so
@@ -1168,8 +1169,8 @@ namespace Sdo.Game
             _comboWord = NewSR("ComboWord", SdoExtracted.Eft("COMBO.PNG", bleed: true), 40); _comboWord.enabled = false;
 
             // bottom song info — official label graphics + value text (DdrGamePlay.xml positions)
-            _lblSong = NewSR("LblSong", SdoExtracted.Hud("GamePlay1.an"), 30); SdoLayout.PlaceTopLeft(_lblSong, 11, 575);   // "歌曲名:"
-            _lblAttr = NewSR("LblAttr", SdoExtracted.Hud("GamePlay2.an"), 30); SdoLayout.PlaceTopLeft(_lblAttr, 204, 575);   // "LV: 时间:"
+            _lblSong = NewSR("LblSong", SdoExtracted.Hud("GamePlay1.an", bleed: true), 30); SdoLayout.PlaceTopLeft(_lblSong, 11, 575);   // "歌曲名:" (bleed = kill the transparent-white matte halo)
+            _lblAttr = NewSR("LblAttr", SdoExtracted.Hud("GamePlay2.an", bleed: true), 30); SdoLayout.PlaceTopLeft(_lblAttr, 204, 575);   // "LV: 时间:"
             _lvOnlyLabel = CropLeftSprite(_lblAttr.sprite, 34);   // GAMEPLAY2 cols 0..28 = "LV:"; the result screen swaps to this so "时间:" disappears with its value
             // values sit at x per DdrGamePlay.xml, but y = the label graphics' vertical centre (575+~20/2 ≈ 585),
             // MiddleLeft-anchored so they're vertically centred with "歌曲名:" / "LV: 时间:".
@@ -2455,12 +2456,14 @@ namespace Sdo.Game
 
         // Load a <prefix>NNN.PNG sequence (000..count-1) as sprites. Cut-ins hold each frame 50ms and last ~4s, so the
         // short sequence loops (PlayingEmoji does the looping); we just load the frames once here.
+        // bleed:true dilates the transparent-WHITE matte — these frames store a (255,255,255) matte with HARD binary
+        // alpha, so without it bilinear filtering blends each glyph edge straight into white = the "白邊" halo.
         private static Sprite[] LoadEmojiSeq(string prefix, int count)
         {
             var arr = new List<Sprite>(count);
             for (int i = 0; i < count; i++)
             {
-                var s = SdoExtracted.LoadImage(PlayingExpDir, $"{prefix}{i:D3}.PNG");
+                var s = SdoExtracted.LoadImage(PlayingExpDir, $"{prefix}{i:D3}.PNG", bleed: true);
                 if (s != null) arr.Add(s);
             }
             return arr.Count > 0 ? arr.ToArray() : null;

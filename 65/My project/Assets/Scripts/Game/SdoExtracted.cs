@@ -400,8 +400,9 @@ namespace Sdo.Game
             return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
-        // convenience for the gameplay HUD
-        public static Sprite Hud(string anName) => LoadAn1(GameplayUiDir, anName);
+        // convenience for the gameplay HUD. bleed dilates the transparent-WHITE matte so bilinear filtering can't
+        // pull it into the glyph edges (the "白邊" fuzzy halo) — the designed outline in the art is untouched.
+        public static Sprite Hud(string anName, bool bleed = false) => LoadAn1(GameplayUiDir, anName, bleed);
         public static Sprite Eft(string imageName, int skin = 2, bool bleed = false) => LoadImage(EftDir(skin), imageName, bleed);
     }
 }

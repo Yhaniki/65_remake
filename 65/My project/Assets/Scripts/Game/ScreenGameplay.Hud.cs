@@ -74,6 +74,12 @@ namespace Sdo.Game
             if (combo != _lastComboShown) { _comboPopAt = Time.time; _lastComboShown = combo; }
             float pop = (1f + Mathf.Clamp01(1f - (Time.time - _comboPopAt) * 9f) * 1.0f) * 0.8f;
             string s = combo.ToString();
+            // The COMBO word + the number are ONE rigid group: scale every element's position AND size about a single
+            // shared pivot (TrackCenterX, comboPivotY = the group's centre) by `pop`. Because the word→number gap and
+            // the inter-digit gaps all scale by the same `pop` about the same point, the whole thing grows/shrinks as a
+            // unit and the spacing never drifts. (Previously the word popped about its own centre Y=275 and the digits
+            // about Y=326 — two separate pivots — so glyphs grew while the vertical gap stayed fixed and the rows fought.)
+            const float comboPivotY = (ComboWordY + ComboDigitY) / 2f;
             float startX = TrackCenterX - (s.Length - 1) * ComboDigitStep / 2f;   // centred on the track
             for (int i = 0; i < _comboDigits.Count; i++)
             {
@@ -81,12 +87,19 @@ namespace Sdo.Game
                 if (i >= s.Length) { d.enabled = false; continue; }
                 var spr = _comboDigitSprites[s[i] - '0'];
                 d.enabled = spr != null; d.sprite = spr;
-                // pop scales the WHOLE number as a single group about its centre (TrackCenterX): grow each digit's
-                // offset-from-centre by `pop` too, so the inter-digit gaps expand in step with the digit size and the
-                // places never collide/overlap. (Scaling each digit about its own centre left the gaps fixed -> fight.)
-                if (spr != null) { float dx = TrackCenterX + (startX + i * ComboDigitStep - TrackCenterX) * pop; PlaceAspect(d, dx, ComboDigitY, ComboDigitW, -2); d.transform.localScale *= pop; }
+                if (spr != null)
+                {
+                    float dx = TrackCenterX + (startX + i * ComboDigitStep - TrackCenterX) * pop;
+                    float dy = comboPivotY + (ComboDigitY - comboPivotY) * pop;
+                    PlaceAspect(d, dx, dy, ComboDigitW, -2); d.transform.localScale *= pop;
+                }
             }
-            if (_comboWord && _comboWord.sprite != null) { _comboWord.enabled = true; PlaceAspect(_comboWord, TrackCenterX, ComboWordY, ComboWordW); _comboWord.transform.localScale *= pop; }
+            if (_comboWord && _comboWord.sprite != null)
+            {
+                _comboWord.enabled = true;
+                float wy = comboPivotY + (ComboWordY - comboPivotY) * pop;
+                PlaceAspect(_comboWord, TrackCenterX, wy, ComboWordW); _comboWord.transform.localScale *= pop;
+            }
         }
 
         // ==== ranking UI: head nameplate, centre rank N/M, right-side roster list ====
