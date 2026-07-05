@@ -129,8 +129,10 @@ namespace Sdo.Game
         // POWER slot3 crossing-ribbon HEIGHT factor. Roster showed slot3 was scl.y≈4 (≈20× slot2) — the tilt bled the
         // carrier's Z-growth into slot3's HEIGHT, making a tall tilted BLOCK instead of a thin diagonal line. We now map
         // slot3's growth as if un-tilted (→ length, like slot2) and thin its height by this factor so it reads as a
-        // clean diagonal LINE crossing the horizontal slot2. Lower = thinner. 1 = no thinning.
-        public static float PowerCrossThick = 0.35f;
+        // clean diagonal LINE crossing the horizontal slot2. CRITICAL: the gauge viewport is only ~18.75 world units
+        // tall but slot3 unscaled is ~36 (over-fills → clips to a solid band, so thickness changes were INVISIBLE).
+        // Default 0.12 → ~12 world tall = a real thin line BELOW the viewport height, so thickness/angle finally show.
+        public static float PowerCrossThick = 0.12f;
         // POWER ribbon DENSITY = slot4 (ribbon carrier) LIFE in ticks. Ribbons re-spawn every ~16 ticks and die WITH
         // slot4 (parent-death, so they never freeze into static bands). slot4's life sets how long each ribbon GROWS
         // (scaleZ 0→full) before it dies — a longer life keeps more GROWING (animated) ribbons overlapping = more visible
