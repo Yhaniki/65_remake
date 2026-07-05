@@ -161,8 +161,16 @@ namespace Sdo.Game
                 EftEffect.PowerHaloBright = GUILayout.HorizontalSlider(EftEffect.PowerHaloBright, 0.5f, 8f);
                 GUILayout.Label($"白熱核大小 white-core size: {EftEffect.PowerWhiteSize:F2}× (1=忠實; 穩定靠整數位置截斷=引擎正解, 不是pin)");
                 EftEffect.PowerWhiteSize = GUILayout.HorizontalSlider(EftEffect.PowerWhiteSize, 1f, 4f);
-                GUILayout.Label($"藍色斜十字帶 cross-dim: {EftEffect.PowerCrossDim:F2} (slot3 藍色45°交叉帶, 低=更淡不成靜態長條)");
+                GUILayout.Label($"交叉帶亮度 cross-dim: {EftEffect.PowerCrossDim:F2} (slot3 斜向交叉電流帶亮度, 太亮會洗白)");
                 EftEffect.PowerCrossDim = GUILayout.HorizontalSlider(EftEffect.PowerCrossDim, 0f, 1f);
+                GUILayout.Label($"交叉帶角度 cross-angle: {EftEffect.PowerCrossAngle:F0}° (slot3 斜向角度; 0=與水平帶重疊, 越大越斜)");
+                EftEffect.PowerCrossAngle = GUILayout.HorizontalSlider(EftEffect.PowerCrossAngle, 0f, 90f);
+                GUILayout.Label($"集氣條電流速度 gauge speed: {energyStripSpeed:F2}× (crackle 快慢+密度; 1=官方節奏)");
+                energyStripSpeed = GUILayout.HorizontalSlider(energyStripSpeed, 0.5f, 4f);
+                foreach (var g in _gaugeStrip) { var e = g ? g.GetComponent<EftEffect>() : null; if (e) e.SpeedMul = energyStripSpeed; }   // live-apply to the running gauge
+                GUILayout.Label($"爆發側電流速度 side speed: {showtimeBurstSideSpeed:F2}× (noteboard 左右 EDGE4 柱; 只窗口內有效)");
+                showtimeBurstSideSpeed = GUILayout.HorizontalSlider(showtimeBurstSideSpeed, 0.5f, 4f);
+                foreach (var g in _boardBurstGos) { var e = g ? g.GetComponent<EftEffect>() : null; if (e && e.Persistent) e.SpeedMul = showtimeBurstSideSpeed; }   // live-apply to the looping side columns (skip the one-shot centre BOOM)
                 GUILayout.Label($"0位置左推 empty hide: {gaugeEmptyHideP:F0} wu (氣條=0 時把頭光藏到可視左緣外; 太小=0就露頭光, 太大=打好幾下才冒出來)");
                 gaugeEmptyHideP = GUILayout.HorizontalSlider(gaugeEmptyHideP, 0f, 200f);
             }
