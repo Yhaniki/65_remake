@@ -260,6 +260,10 @@
    "v": "Normal Mode"
   },
   {
+   "k": "songselect.mode_showtime",
+   "v": "ShowTime Mode"
+  },
+  {
    "k": "songselect.form_basic",
    "v": "Basic"
   },

@@ -19,7 +19,7 @@ namespace Sdo.Settings
         public static int defaultNoteType = 6;       // note 種類(hit-effect)：-1=隨機；6 = 自訂「EFT_3」皮(EFT_7 JZ + NOTEIMAGE_5 + EFT_5 combo)為預設
         public static int defaultTeam = 3;           // 組隊：0=A,1=B,2=C,3=自由
         public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
-        public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式
+        public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式,2=ShowTime模式
 
         public const string FileName = "config.ini";
 
@@ -106,7 +106,7 @@ namespace Sdo.Settings
             if (defaultNoteType < -1) defaultNoteType = -1;
             defaultTeam = Mathf.Clamp(defaultTeam, 0, 3);
             defaultDropDirection = Mathf.Clamp(defaultDropDirection, 0, 2);
-            defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 1);
+            defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 2);
         }
 
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
@@ -126,7 +126,7 @@ namespace Sdo.Settings
             sb.Append("defaultTeam=").Append(defaultTeam).Append('\n');
             sb.Append("# 預設掉落方式：0=向上 1=向下 2=傾斜\n");
             sb.Append("defaultDropDirection=").Append(defaultDropDirection).Append('\n');
-            sb.Append("# 預設模式：0=自由模式 1=普通模式\n");
+            sb.Append("# 預設模式：0=自由模式 1=普通模式 2=ShowTime模式\n");
             sb.Append("defaultGameMode=").Append(defaultGameMode).Append('\n');
             return sb.ToString();
         }

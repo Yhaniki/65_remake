@@ -260,6 +260,10 @@
    "v": "ノーマルモード"
   },
   {
+   "k": "songselect.mode_showtime",
+   "v": "ショータイムモード"
+  },
+  {
    "k": "songselect.form_basic",
    "v": "基本"
   },

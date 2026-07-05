@@ -372,8 +372,9 @@ namespace Sdo.Game
         // Good hits fill an energy gauge; SPACE releases a timed auto-PERFECT window whose score bonus stacks
         // +1 each release. Faithful to the stand-alone exe (docs/reverse-engineering/SDO_SHOWTIME.md); the
         // gauge/bonus math is the pure, unit-tested Sdo.Ruleset.ShowtimeMeter. In real play the room "模式"=
-        // ShowTime drives showtimeMode; F7 toggles it for dev. Space is free (lanes = ASWD / numpad).
-        public bool showtimeMode = true;
+        // ShowTime drives showtimeMode (FrontendApp sets it from GameSession.GameMode==2); F7 toggles it for
+        // dev. Space is free (lanes = ASWD / numpad). Default OFF so a direct/scene-test boot is normal play.
+        public bool showtimeMode = false;
         // energy meter geometry (design px). Frame = MyEnergy0(256×45)@(8,7) metallic trough + MyEnergy1(100×45)@(264,7)
         // gauge head with a black status panel (design 297..354) holding the badge cluster. Official ONLINE fill
         // (sdo.bin FUN_0040dc00/0040e210/0040e0f0): the moving fill is a 3D-EFT electric particle STRIP slid
@@ -3860,8 +3861,9 @@ namespace Sdo.Game
         // frame the window ends, so a note the player pressed for near the handoff is judged instead of missed.
         private void ObserveShowtimeInput(double now)
         {
+            var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
-                foreach (var k in LaneKeys[lane])
+                foreach (var k in laneKeys[lane])
                 {
                     if (Input.GetKeyDown(k)) { _stPressMs[lane] = now; _stPressNote[lane] = NearestHittable(lane, now); }   // latch the press time AND the exact note it aimed at, for a precise seam handoff
                     if (Input.GetKeyUp(k)) _stReleaseMs[lane] = now;                                                        // latch the release time so a released hold's tail is graded at the TRUE let-go, not the seam

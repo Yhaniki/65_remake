@@ -545,13 +545,13 @@ namespace Sdo.UI.Screens
             const float slotY = 488f, slotH = 22f;
 
             // Collapsed = value centred in the baked slot + ▲; list is green on expand. Mode VALUE uses the original
-            // name slices from LABEL_SDO.an (13 SDO modes, 258×23 each: 自由模式=frame 0, 普通模式=frame 1). The mode
-            // slot is the full 258-wide value area (offline lblTeamMode), arrow at btnTeamMode x522. Formation/looker
-            // use white text (no name-slice art for those values).
+            // name slices from LABEL_SDO.an (13 SDO modes, 258×23 each: 自由=frame 0, 普通=frame 1, SHOWTIME=frame 5).
+            // The mode slot is the full 258-wide value area (offline lblTeamMode), arrow at btnTeamMode x522.
+            // Formation/looker use white text (no name-slice art for those values).
             var sdoModes = RoomDlgArt.AnFrames("LABEL_SDO.an");
-            Sprite[] modeSprites = (sdoModes != null && sdoModes.Length >= 2) ? new[] { sdoModes[0], sdoModes[1] } : null;
+            Sprite[] modeSprites = (sdoModes != null && sdoModes.Length >= 6) ? new[] { sdoModes[0], sdoModes[1], sdoModes[5] } : null;
             SdoComboBox.Create(Root, "modeCombo", 289, slotY, 258, slotH, 522, arrow, listMode, listModeH,
-                new[] { L("songselect.mode_free"), L("songselect.mode_normal") }, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 1), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
+                new[] { L("songselect.mode_free"), L("songselect.mode_normal"), L("songselect.mode_showtime") }, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 2), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
                 listAsText: true);   // expanded list = green text rows (like formation/looker); collapsed value keeps the LABEL_SDO sprite
             SdoComboBox.Create(Root, "formCombo", 571, slotY, 56, slotH, 627, arrow, listSm, listSmH,
                 new[] { L("songselect.form_basic"), L("songselect.form_fan"), L("songselect.form_ring"), L("songselect.form_random") }, null, Mathf.Clamp(Ctx.Session.Formation, 0, 3), Color.white, ColComboList, i => Ctx.Session.Formation = i);
