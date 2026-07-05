@@ -453,6 +453,32 @@ numpad). Pure logic lives in `Sdo.Ruleset`.
   note-skin swap via `SetNoteBoardSkin` on enter/exit.
 - **Result** — add the folded `Bonus` into the final score / a separate result field.
 
+### ✅ 2026-07-05 round 6: gauge fidelity fixes (user: 藍電流貫穿線 / 電流太少太慢 / 頭光只有一顆且旋轉太固定)
+
+Diagnostic workflow `wf_0c0ba4d2` (3 read-only agents vs `sdo.bin.c` + a ground-truth byte-parse of
+`POWER_Y/B/R.EFT` via `EftFile.cs`). Ground truth (all 3 bands byte-identical bar ribbon tex + slot3 cross-angle
++ tint): slot0 carrier life-15→16-tick loop; slot1 tex30 halo life30 cone ang(360,360) mag[0,0.8]; **slot2 tex207
+ribbon life50 attach1 base(20,0.4,0.8) initRot(0,90,0) scaleY 3-key pinch**; **slot3 ribbon life50 attach1
+base(20,0.8,0.8) initRot(90,90,0)** (B=45° cross), alpha 255→0; slot4 external ribbon-carrier life20 flags 0x40001
+(the ONLY full-curve slot) scaleZ 0→1; slot5 tex100 naga00 star life35 startDelay rand0..9 cone ang(180,180)
+mag[0,0.8] + small rotZ ~3.6°/tick; slot6 tex96 ring_l emit3 life10 startDelay rand0..14. Fixes in `EftEffect.cs`:
+
+1. **藍電流貫穿整條 (slot3 penetrating line)** — the `!(_isPower && Slot==3)` carrier-scale exclusion was a STALE
+   guard from the pre-inverse-rotate direct-multiply path. With the real `initRot=(90,90,0)`,
+   `Inverse(Euler)·(1.5,1.5,1.5f) = Abs(1.5f,1.5,1.5)` puts carrier growth on slot3's LOCAL X (**length**), not
+   height — so removing the exclusion makes slot3 right-anchor at the head and grow left like slot2 (no tall band).
+   Leaving it in stranded slot3 at a constant full 20u **centred** length → a bright line straddling the head into
+   the un-filled zone. **Fix: delete the exclusion.**
+2. **電流太少/太慢 (density)** — the broken slot3 (line, then dimmed to `PowerCrossDim=0.4`) meant only slot2 read
+   as current = half the ribbons. Fixing slot3 makes it the proper second CROSSING ribbon; **`PowerCrossDim`
+   0.4→1.0** so it contributes fully (its alpha 255→0 handles the fade). Tick rate (50 Hz) + 16-tick loop +
+   50-tick ribbon life (≈3 overlapping generations) were already engine-faithful — no non-official additions.
+3. **頭光只有一顆、旋轉太固定 (head glow)** — the INT-position truncation (spawn + per-tick) was truncating **all
+   three** axes; the engine (`FUN_0098fc80` @666331-332) int-stores only Y (0x18) + Z (0x19) and keeps **X (0x17 =
+   depth) float**. Truncating X collapsed every re-spawned naga00 generation onto depth 0 → the 2-3 overlapping
+   stars stacked exactly = one fixed blob. **Fix: truncate only Y/Z, keep X float** → per-generation depth scatter
+   returns = many nested, randomly-flashing stars. Kept the small official rotZ (not a bug; do not remove).
+
 ### Remake defaults vs exe (documented deviations)
 
 - Single ms-unit gauge (max 18000) with **tunable** per-hit gains (exe fill curve not decoded).

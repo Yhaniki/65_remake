@@ -116,10 +116,12 @@ namespace Sdo.Game
         // It was deliberately left "soft" (ci=1 = base 0.5×) so it stayed invisible on the black RT — give it its own
         // additive boost so the big head glow actually shows. Tunable to match the official size/brightness.
         public static float PowerHaloBright = 2.5f;
-        // POWER slot3 = the blue 45° cross-flash ribbon. Dim so its wired alpha→0 fade dominates (a faint crackle, not a
-        // static strip). 1=full, lower=fainter. Paired with excluding slot3 from carrier-scale inheritance (the height-
-        // inflation root cause). Tune down if the blue cross-strip is still too prominent.
-        public static float PowerCrossDim = 0.4f;
+        // POWER slot3 = the CROSSING electric ribbon (initRot 90,90,0 in Y/R = perpendicular to slot2, 45° in B). Now
+        // that slot3 rides slot4's growth correctly (carrier-scale exclusion removed) it is a proper second ribbon that
+        // grows from the head + fades via its own alpha (255→0), NOT the old constant full-length band. So it no longer
+        // needs artificial dimming — 1.0 = full so the current reads as DENSE as the official (官方電流比較多). Lower
+        // only if the crossing ribbon looks too strong. (Was 0.4 to suppress the pre-fix static strip.)
+        public static float PowerCrossDim = 1f;
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -552,15 +554,16 @@ namespace Sdo.Game
             // the trail-yaw (their aef03_00 trail relies on it).
             if (isTrail && !(Persistent && p.isMesh)) p.rot.y = trailYaw;
 
-            // ENGINE-FAITHFUL INT position AT SPAWN (not just per-tick in StepParticle): the engine stores word[0x18/19]
-            // as int, so the sub-unit cone scatter (head glow ±0.8 local = ±64 design px) truncates to 0 on the VERY
-            // FIRST frame. Without this the particle renders one frame at the scattered position before StepParticle
-            // snaps it back = the one-frame flicker on every re-spawn. Also truncate X (local depth): the engine keeps
-            // word[0x17] float, but the head glow has NO X velocity (vel.x=0) so X is only the cone's DEPTH scatter
-            // (±0.8 local ≈ ±80 world depth) — each re-spawn at a new depth reads as size/position jitter = the "前後動".
-            // Pinning all 3 axes clusters every re-spawn at the effect origin (the fill head) = a stable white-hot core.
-            // ring_l sparks (tex96) EXCLUDED: they are the small particles that SHOULD drift OUT around the core.
-            if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
+            // ENGINE-FAITHFUL INT position AT SPAWN: FUN_0098fc80 @666331-332 int-stores ONLY Y (word 0x18) and Z
+            // (word 0x19); X (word 0x17 = depth) stays FLOAT. Truncating Y/Z pins the head vertically + along-bar so it
+            // does not drift/rise. But X must stay float: slot5 naga00's cone DEPTH scatter (±0.8 local) is what gives
+            // each re-spawned generation a different depth = per-star size/parallax variety. Earlier code also truncated
+            // X → every generation snapped to depth 0 → the 2-3 overlapping stars stacked exactly = ONE fixed blob
+            // (官方看起來多顆疊加、我們只有一顆). Keeping X float restores the "many randomly-flashing stars" look.
+            // vel.x=0 for the head slots, so float X neither drifts nor jitters per frame — it just holds the offset.
+            // ring_l sparks (tex96) EXCLUDED entirely: small particles that SHOULD drift OUT around the core.
+            // Verified: RE workflow wf_0c0ba4d2 (issue3, CONFIRMED) + ground-truth EFT parse.
+            if (_isPower && em.TexIdx != 96) { p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
 
             // DIAGNOSTIC: isolate the POWER gauge layers (still SPAWN so the trigger chain 0→1→4→2/3 is intact, just
             // render invisible). 1 = ribbon only (hide halo/star/sparks 1/5/6); 2 = head glow only (hide ribbon 2/3).
@@ -921,6 +924,13 @@ namespace Sdo.Game
             // axes from the X channel so it stays a ROUND ball that still breathes (1→1.53→1). The orb's overall
             // size/brightness is tuned in SceneEftRenderCatalog ("booklight",2,31), not here.
             if (Persistent && EffectName == "booklight") animScale = new Vector3(animScale.x, animScale.x, animScale.x);
+            // SCN0005/24 SNOW flakes (slot0 orient billboard): sclY shrinks 1.0→0.44 over life while sclX/Z stay ~1.0,
+            // so the camera billboard flattens each aging flake into a wide horizontal OVAL — "有些雪是扁的" (young flakes
+            // round, older ones squished). Same non-uniform-scale-on-a-billboard artifact as the tex42 glows / booklight
+            // orb above. The flake's fade is driven ENTIRELY by its ch1 alpha (0→1→0), so the vertical squish serves no
+            // purpose; drive all axes from the (near-constant) X channel so every flake stays ROUND from every camera
+            // angle (使用者回報:每個角度看都應該是圓的). Covers both snow scenes (SCN0005 聖誕夜 + SCN0024 雪景).
+            if (Persistent && EffectName == "snow") animScale = new Vector3(animScale.x, animScale.x, animScale.x);
             // AEF_3_00 blue mesh (MeshIdx 32, ONLY 200/300 — never touch 100/400/500's column meshes). Its own scale
             // channels make it too thin at spawn and stretch it too TALL mid-life (trail Y-bloom). Use a UNIFORM scale
             // (no Y-bloom): 300 rides a BALL → track the ball's width/rate × MeshWidthMatch; 200 rides the ground
@@ -980,16 +990,15 @@ namespace Sdo.Game
                 p.pos += p.vel * (scaleVel * p.velScale * MotionScale);
                 float ageLin = life0 - p.life;
                 p.pos.y -= (ageLin * em.GravAccel + em.GravBase) * MotionScale;
-                // ENGINE-FAITHFUL INTEGER POSITION (why the official head glow doesn't move): FUN_0098fc80 @666331-332
-                // stores the particle Y/Z position as INT — `pos = (int)(vel + pos)` — TRUNCATING the fraction every
-                // tick. The head glow's per-tick step is only vel.y(0.2)×ch0(≈0.034)≈0.034 local ⟪1, so it truncates to
-                // 0 and the particle NEVER rises (and its sub-unit cone scatter also truncates to 0 → it clusters at the
-                // channel centre). This is what makes the white-hot core a STABLE persistent glow, not a rising blob.
-                // The remake used float pos → it accumulated → rose ~119 world/life → 動來動去. Match the engine here.
-                // (local Y = world vertical, local Z = world along-bar after the effect's yaw-90; local X = depth kept
-                // float as the engine does.) Scoped to POWER so other tuned effects are untouched.
-                // ring_l sparks (tex96) EXCLUDED: they are the small particles that SHOULD drift OUT around the core.
-                if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
+                // ENGINE-FAITHFUL INTEGER POSITION (why the official head glow doesn't rise): FUN_0098fc80 @666331-332
+                // int-stores ONLY Y (word 0x18) and Z (word 0x19) — `pos = (int)(vel + pos)` — TRUNCATING the fraction
+                // every tick; X (word 0x17 = depth) stays FLOAT. The head glow's per-tick Y step is only
+                // vel.y(0.2)×ch0(≈0.034)≈0.034 local ⟪1, so Y truncates to 0 and the particle NEVER rises. Z likewise
+                // pins it along the bar. But X is left float exactly as the engine does — otherwise every re-spawned
+                // generation collapses onto depth 0 and the overlapping stars read as one fixed blob (see the spawn-site
+                // note above). vel.x=0 so float X neither drifts nor jitters; it just holds the per-generation depth
+                // scatter = the "many stars" variety. Scoped to POWER; ring_l sparks (tex96) drift freely (excluded).
+                if (_isPower && em.TexIdx != 96) { p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
             }
 
             if (DumpTraj && !p.invisible) DumpTrajectory(p, ageTicks, life0, t);
@@ -1093,16 +1102,17 @@ namespace Sdo.Game
             // rode its invisible carrier's baseSize (1,5,3) and blew into a 900px vertical sheet that swamped the whole
             // burst.) Persistent scene effects keep the old behaviour: BOOKLIGHT/FIRE3/AURORA/HONGBAO were eye-validated
             // WITH the parent multiply, so the engine-faithful rule is applied to one-shot (non-Persistent) effects only.
+            // POWER slot2 AND slot3 both inherit carrier growth via the inverse-rotate hack below (line ~1120). RE
+            // (ground-truth EFT parse) corrected the old assumption: slot3's initRot is (90,90,0), NOT 45°. So
+            // Inverse(Euler(90,90,0))·(1.5,1.5,1.5f) = Abs(1.5f,1.5,1.5) → the growing carrier component (1.5f) lands
+            // on slot3's LOCAL X = the ribbon LENGTH; height/depth stay constant. Right edge pins at the head, ribbon
+            // grows LEFT like slot2, NO vertical band. The old `!(_isPower && Slot==3)` exclusion was for the PRE-hack
+            // direct-multiply path (where slot3's 90° X-pitch sent carrier-Z growth onto its vertical axis = the tall
+            // static strip); the inverse hack made it stale, and leaving it in stranded slot3 at a constant full 20u
+            // CENTERED length → a bright line straddling the head into the un-filled zone (氣條那條貫穿線). Removing
+            // it makes slot3 the proper second (crossing) ribbon. Verified: RE workflow wf_0c0ba4d2 (issue1, CONFIRMED).
             bool inheritParentScale = p.attach != 0 && p.parent != null && !p.isTrail && !p.isMesh
-                                      && !(p.orient && !Persistent)
-                                      // POWER slot3 (the blue 45° cross-flash): the inverse-rotate hack below maps the
-                                      // carrier's growing Z-scale to the ribbon WIDTH for slot2 (90°-about-Y, exact), but
-                                      // slot3's 45° X-pitch makes Inverse(Euler)·scale BLEED that growth into slot3's
-                                      // HEIGHT (Abs blocks cancellation), inflating every generation into a constant tall
-                                      // band = the static strip. The engine never puts carrier growth on slot3's height,
-                                      // so exclude it → plain ownScale, letting the wired alpha→0 fade dominate (a faint
-                                      // fading cross-flash, not a persistent band). Verified: RE workflow wf_2e49aa17.
-                                      && !(_isPower && p.E.Slot == 3);
+                                      && !(p.orient && !Persistent);
             // Engine (sdo.bin.c Particle_Update @666394-666415, attach mode 1) = childLocal · parentWorld (row-major):
             // the carrier's NON-UNIFORM scale acts AFTER the child's own rotation. The naive per-axis Scale applies it
             // in the child's PRE-rotation (mesh) frame → the ShowTime POWER strip's ANIMATING carrier Z-scale hit the
