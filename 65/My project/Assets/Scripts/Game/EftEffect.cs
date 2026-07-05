@@ -147,7 +147,7 @@ namespace Sdo.Game
         // quad is ~108u long with plain 0→1 UV → the texture is STRETCHED into horizontal streaks (= the "straight
         // lines", the crossing detail smeared away). Tiling it (mainTextureScale.x = length×this) REPEATS the crossing
         // pattern along the ribbon so it reads as the official's 多條交叉. Higher = more/denser bolts. F4-tunable.
-        public static float PowerRibbonTile = 2f;
+        public static float PowerRibbonTile = 1f;   // 1 = faithful (no tiling) until the real mechanism is confirmed
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
