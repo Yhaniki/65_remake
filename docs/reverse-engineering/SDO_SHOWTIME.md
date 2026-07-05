@@ -479,6 +479,24 @@ mag[0,0.8] + small rotZ ~3.6°/tick; slot6 tex96 ring_l emit3 life10 startDelay 
    stars stacked exactly = one fixed blob. **Fix: truncate only Y/Z, keep X float** → per-generation depth scatter
    returns = many nested, randomly-flashing stars. Kept the small official rotZ (not a bug; do not remove).
 
+### ✅ 2026-07-05 round 7: gauge ribbon count + frequency + tick↔ms RE-verified (user: 只看到一條 / 感覺不只兩條 / 頻率+tick 確認)
+
+Agent re-parse of POWER_Y.EFT bytes + `sdo.bin.c`, cross-checked with a faithful tick sim:
+
+- **Tick = 20 ms (0x14), 50 Hz, FIXED accumulator on a ms master clock — frame-rate INDEPENDENT.** Driver
+  `FUN_0098c8d0` @663797-806: `steps = (now_ms − last_ms) / 0x14`, each step = one particle update. The remake's
+  `Step=0.02` is correct. (`0.023809524`=1/42 @25629 is a UI sprite-scale constant, NOT the timestep — red herring.)
+- **Ribbon re-spawn = every 15 ticks = 300 ms.** Carrier slot0 `life0=-15`→ maxLife 16, loop flag; re-fires children
+  when `life==maxLife-1==15`. slot1(trig3)→slot4(trig0)→slot2/3(trig0) ⇒ ribbon pair reborn every 15 ticks.
+- **Ribbons = slot2 + slot3 ONLY** (both the file's single ribbon tex: Y=207, B=27, R=206 — three *colour variants*,
+  not three tex in one file), `emit=1` each. Slots 7-31 are dead template padding.
+- **KEY: ribbons are attach=1 and die when their slot4 carrier dies** (FUN_0098fc80 @666401-406: attach child +
+  word0x20f==0 → self-kill on parent death). slot4 life=20, so ribbon EFFECTIVE life ≈ 20 ticks (NOT 50). ⇒
+  simultaneous ribbon quads oscillate **2↔4 (peak 4, avg ~2.5)**, never 8. The user is right it's >2; ceiling is 4.
+  Remake was rendering the full 50-tick life → ~8 mushed bands. **Fixed: `_isPower && attach && parent.life<=0 →
+  life=0`** (EftEffect.StepParticle) = official ≤4 + the sharp 300 ms pop-in/out crackle. Combined with slot3's
+  camera-facing cross-angle (round-7 earlier) = two *visible* crossing bands + their overlapping generations.
+
 ### Remake defaults vs exe (documented deviations)
 
 - Single ms-unit gauge (max 18000) with **tunable** per-hit gains (exe fill curve not decoded).

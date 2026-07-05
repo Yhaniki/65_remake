@@ -842,6 +842,13 @@ namespace Sdo.Game
         {
             var em = p.E;
             p.life--;
+            // ENGINE attach→parent-death KILL (sdo.bin.c FUN_0098fc80 @666401-406): an attach child dies the tick its
+            // parent dies. POWER ribbons (slot2/3, attach=1) ride slot4 (life20), so their EFFECTIVE life is ~20 ticks,
+            // NOT the nominal 50 — this caps simultaneous ribbon quads at ≤4 (2 generations × slot2+slot3), matching the
+            // official; without it they linger 50 ticks → ~8 mushed bands. Also gives the sharp 300ms pop-in/out crackle
+            // (young ribbon short at the head + old one extended left = the flowing directional current). RE-verified:
+            // ribbon respawn = every 15 ticks (300ms), tick = 20ms/50Hz fixed. Scoped to POWER (other attach FX untouched).
+            if (_isPower && p.attach != 0 && p.parent != null && p.parent.life <= 0) { p.life = 0; }
             // Persistent scene effect: a ROOT particle never dies — it loops back to full life so the base stays put
             // forever (e.g. the SCN0008 kekkai disc, life 501: without this it died at 501 while its sub-particles
             // lived to ~600, so RespawnTree waited and the circle blinked out for ~2s). The trigType-3 children keep
