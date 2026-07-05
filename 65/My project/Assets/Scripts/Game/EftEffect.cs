@@ -763,6 +763,23 @@ namespace Sdo.Game
 
         void Flush() { if (_pending.Count > 0) { _ps.AddRange(_pending); _pending.Clear(); } }
 
+        // DIAGNOSTIC: one line per LIVE (started, life>0, not-invisible) particle so we can see what the gauge actually
+        // draws — slot / tex / attach / parent-slot / age / world-scale (length) / roll. Called from the F4 dump button.
+        public string DumpRoster()
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(EffectName).Append(" isPower=").Append(_isPower).Append(" ps=").Append(_ps.Count).Append('\n');
+            foreach (var p in _ps)
+            {
+                if (!p.started || p.life <= 0) continue;
+                var s = p.tr != null ? p.tr.localScale : Vector3.zero;
+                var e = p.tr != null ? p.tr.localEulerAngles : Vector3.zero;
+                sb.Append($"  slot{p.E.Slot} tex{(p.E.HasTex ? p.E.TexIdx : -1)} att{p.attach} par{(p.parent != null ? p.parent.E.Slot : -1)}")
+                  .Append($" age{p.life0 - p.life}/{p.life0} vis{(!p.invisible)} scl({s.x:F0},{s.y:F1},{s.z:F1}) rotZ{e.z:F0}\n");
+            }
+            return sb.ToString();
+        }
+
         void LateUpdate()
         {
             // re-pin to the dancer's pelvis-on-floor each frame (engine re-calls SetTransformAnimated)

@@ -167,6 +167,8 @@ namespace Sdo.Game
                 EftEffect.PowerCrossAngle = GUILayout.HorizontalSlider(EftEffect.PowerCrossAngle, 0f, 90f);
                 GUILayout.Label($"電流帶密度 ribbon density: {EftEffect.PowerRibbonLife:F0} tick (slot4壽命=電流帶生長時間; 越大=同時越多條「會動的」帶疊加; 20=忠實)");
                 EftEffect.PowerRibbonLife = GUILayout.HorizontalSlider(EftEffect.PowerRibbonLife, 16f, 64f);
+                if (GUILayout.Button("▶ dump 集氣條粒子 (Console)"))
+                    foreach (var g in _gaugeStrip) { var e = g ? g.GetComponent<EftEffect>() : null; if (e) Debug.Log("[gauge-roster] " + e.DumpRoster()); }
                 GUILayout.Label($"集氣條電流速度 gauge speed: {energyStripSpeed:F2}× (crackle 快慢+密度; 1=官方節奏)");
                 energyStripSpeed = GUILayout.HorizontalSlider(energyStripSpeed, 0.5f, 4f);
                 foreach (var g in _gaugeStrip) { var e = g ? g.GetComponent<EftEffect>() : null; if (e) e.SpeedMul = energyStripSpeed; }   // live-apply to the running gauge
