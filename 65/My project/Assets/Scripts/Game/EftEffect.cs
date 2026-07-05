@@ -779,8 +779,11 @@ namespace Sdo.Game
                 if (!p.started || p.life <= 0) continue;
                 var s = p.tr != null ? p.tr.localScale : Vector3.zero;
                 var e = p.tr != null ? p.tr.localEulerAngles : Vector3.zero;
+                var wp = p.tr != null ? p.tr.position : Vector3.zero;
+                float alpha = -1f;
+                if (p.mat != null) { Color c = p.mat.HasProperty("_TintColor") ? p.mat.GetColor("_TintColor") : p.mat.color; alpha = c.a; }
                 sb.Append($"  slot{p.E.Slot} tex{(p.E.HasTex ? p.E.TexIdx : -1)} att{p.attach} par{(p.parent != null ? p.parent.E.Slot : -1)}")
-                  .Append($" age{p.life0 - p.life}/{p.life0} vis{(!p.invisible)} scl({s.x:F0},{s.y:F1},{s.z:F1}) rotZ{e.z:F0}\n");
+                  .Append($" age{p.life0 - p.life}/{p.life0} vis{(!p.invisible)} scl({s.x:F0},{s.y:F2},{s.z:F1}) rotZ{e.z:F0} wXY({wp.x:F0},{wp.y:F0}) a{alpha:F2}\n");
             }
             return sb.ToString();
         }
