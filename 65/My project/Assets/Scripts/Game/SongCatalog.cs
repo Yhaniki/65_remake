@@ -35,7 +35,13 @@ namespace Sdo.Game
         }
         [Serializable] private class Catalog { public Entry[] songs = new Entry[0]; }   // populated by JsonUtility; init to silence CS0649
 
+        // Hand-editable name overrides (StreamingAssets/song_name_overrides.json), seeded from the
+        // official songlist.dat open songs. See BuildOverrideMap / tools/build_song_name_overrides.py.
+        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; }   // init to silence CS0649 (JsonUtility fills these)
+        [Serializable] private class OverrideDoc { public Override[] songs = new Override[0]; }
+
         private const string FileName = "song_catalog.json";
+        private const string OverrideFileName = "song_name_overrides.json";
         private static Dictionary<string, Entry> _byGn;   // key = lowercase .gn filename
         private static List<Entry> _all;                  // in file order
 
@@ -82,6 +88,59 @@ namespace Sdo.Game
             {
                 Debug.LogError($"[SongCatalog] failed to load {path}: {ex.Message}");
             }
+
+            ApplyNameOverrides();
+        }
+
+        /// <summary>
+        /// Overlay the hand-editable name list (StreamingAssets/song_name_overrides.json) onto the
+        /// catalog: for every song whose gn-stem (sdomNNNN, without the k/t chart suffix) is listed,
+        /// replace title/artist. Songs absent from the override keep their k.gn-derived names.
+        ///
+        /// Why: some .gn headers carry stale/wrong titles (recycled file slots). The list is a
+        /// full, hand-editable roster (tools/build_song_name_overrides.py): open songs are pre-filled
+        /// from the authoritative official songlist.dat, the rest from k.gn — edit any line to fix a
+        /// name. Only display names are overridden; bpm/levels/note counts stay from the actual
+        /// chart. Missing/blank/malformed file -> catalog unchanged (k.gn names).
+        /// </summary>
+        private static void ApplyNameOverrides()
+        {
+            var path = Path.Combine(Application.streamingAssetsPath, OverrideFileName);
+            if (!File.Exists(path)) return;   // optional: no overrides -> keep k.gn names
+
+            Dictionary<string, Override> byStem;
+            try
+            {
+                var doc = JsonUtility.FromJson<OverrideDoc>(File.ReadAllText(path, Encoding.UTF8));
+                if (doc?.songs == null || doc.songs.Length == 0) return;
+                byStem = new Dictionary<string, Override>(StringComparer.Ordinal);
+                foreach (var o in doc.songs)
+                    if (!string.IsNullOrEmpty(o?.gn)) byStem[Stem(o.gn)] = o;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[SongCatalog] failed to load {path}: {ex.Message}");
+                return;
+            }
+
+            foreach (var e in _all)
+            {
+                if (e == null || string.IsNullOrEmpty(e.gn)) continue;
+                if (!byStem.TryGetValue(Stem(e.gn), out var o)) continue;   // not listed -> keep k.gn name
+                if (!string.IsNullOrEmpty(o.title)) e.title = o.title;
+                if (!string.IsNullOrEmpty(o.artist)) e.artist = o.artist;
+            }
+        }
+
+        /// <summary>gn filename/path -> chart-pair stem, e.g. "sdom0001k.gn" / "SDOM0001T" -> "sdom0001".
+        /// The k/t suffix distinguishes the two charts of one song; both share a title.</summary>
+        private static string Stem(string gnPathOrName)
+        {
+            var name = Path.GetFileName(gnPathOrName ?? string.Empty).ToLowerInvariant();
+            if (name.EndsWith(".gn")) name = name.Substring(0, name.Length - 3);
+            if (name.Length > 0 && (name[name.Length - 1] == 'k' || name[name.Length - 1] == 't'))
+                name = name.Substring(0, name.Length - 1);
+            return name;
         }
     }
 }

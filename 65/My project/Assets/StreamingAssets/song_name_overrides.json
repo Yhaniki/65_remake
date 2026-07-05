@@ -1,0 +1,5287 @@
+{
+ "schema": "song-name-overrides/2",
+ "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist 會覆蓋 k.gn 顯示名。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。fileId/bpm/src 僅供辨識，runtime 不套用。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。",
+ "count": 660,
+ "songs": [
+  {
+   "gn": "sdom1956",
+   "fileId": 11956,
+   "bpm": 165.0,
+   "src": "songname",
+   "title": "WOW",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1955",
+   "fileId": 11955,
+   "bpm": 130.42,
+   "src": "songname",
+   "title": "習慣就好",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1954",
+   "fileId": 11954,
+   "bpm": 123.0,
+   "src": "songname",
+   "title": "不愛請閃開",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1953",
+   "fileId": 11953,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "愛的主題秀",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1952",
+   "fileId": 11952,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "Happy Loving",
+   "artist": "王心凌"
+  },
+  {
+   "gn": "sdom1951",
+   "fileId": 11951,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "閃閃惹人愛",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1950",
+   "fileId": 11950,
+   "bpm": 80.08,
+   "src": "songname",
+   "title": "雨愛",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1949",
+   "fileId": 11949,
+   "bpm": 105.0,
+   "src": "songname",
+   "title": "羅生門",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1948",
+   "fileId": 11948,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "心電心",
+   "artist": "王心凌"
+  },
+  {
+   "gn": "sdom1947",
+   "fileId": 11947,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "有膽你就來",
+   "artist": "張惠妹"
+  },
+  {
+   "gn": "sdom1886",
+   "fileId": 11886,
+   "bpm": 85.0,
+   "src": "songname",
+   "title": "海賊王",
+   "artist": "COLOR"
+  },
+  {
+   "gn": "sdom1885",
+   "fileId": 11885,
+   "bpm": 83.0,
+   "src": "songname",
+   "title": "Hey!",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1884",
+   "fileId": 11884,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "白色謊言",
+   "artist": "戴愛玲"
+  },
+  {
+   "gn": "sdom1883",
+   "fileId": 11883,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "小乖乖",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1882",
+   "fileId": 11882,
+   "bpm": 86.5,
+   "src": "songname",
+   "title": "光速青春",
+   "artist": "COLOR"
+  },
+  {
+   "gn": "sdom1881",
+   "fileId": 11881,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "鑽石糖",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1880",
+   "fileId": 11880,
+   "bpm": 81.5,
+   "src": "songname",
+   "title": "我的寶貝",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1879",
+   "fileId": 11879,
+   "bpm": 73.5,
+   "src": "songname",
+   "title": "暖氣系",
+   "artist": "盧學叡"
+  },
+  {
+   "gn": "sdom1878",
+   "fileId": 11878,
+   "bpm": 70.0,
+   "src": "songname",
+   "title": "可不可以愛我",
+   "artist": "盧學叡"
+  },
+  {
+   "gn": "sdom1877",
+   "fileId": 11877,
+   "bpm": 189.9,
+   "src": "songname",
+   "title": "Rock'n Roll Crazy",
+   "artist": "Richard Myhill"
+  },
+  {
+   "gn": "sdom1815",
+   "fileId": 11815,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "看得最遠地方",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom1811",
+   "fileId": 11811,
+   "bpm": 156.0,
+   "src": "songname",
+   "title": "Kizuna",
+   "artist": "Orange Range"
+  },
+  {
+   "gn": "sdom1810",
+   "fileId": 11810,
+   "bpm": 140.07,
+   "src": "songname",
+   "title": "Ishindenshin",
+   "artist": "Orange Range"
+  },
+  {
+   "gn": "sdom1809",
+   "fileId": 11809,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "Asterisk",
+   "artist": "Orange Range"
+  },
+  {
+   "gn": "sdom1808",
+   "fileId": 11808,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "Shanghai Honey",
+   "artist": "Orange Range"
+  },
+  {
+   "gn": "sdom1806",
+   "fileId": 11806,
+   "bpm": 177.0,
+   "src": "songname",
+   "title": "Walking Through the Rain",
+   "artist": "百代著作權"
+  },
+  {
+   "gn": "sdom1805",
+   "fileId": 11805,
+   "bpm": 175.0,
+   "src": "songname",
+   "title": "Force of Nature",
+   "artist": "百代著作權"
+  },
+  {
+   "gn": "sdom1804",
+   "fileId": 11804,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "Smart Bomb",
+   "artist": "百代著作權"
+  },
+  {
+   "gn": "sdom1803",
+   "fileId": 11803,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "Little Melody",
+   "artist": "百代著作權"
+  },
+  {
+   "gn": "sdom1802",
+   "fileId": 11802,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "讓我愛你",
+   "artist": "周瑜民&徐熙媛"
+  },
+  {
+   "gn": "sdom1770",
+   "fileId": 11770,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "Toontime",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1769",
+   "fileId": 11769,
+   "bpm": 124.02,
+   "src": "songname",
+   "title": "What Makes the World Go Round",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1768",
+   "fileId": 11768,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "The Beauty Inside",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1767",
+   "fileId": 11767,
+   "bpm": 170.0,
+   "src": "songname",
+   "title": "Gravedigger",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1766",
+   "fileId": 11766,
+   "bpm": 135.97,
+   "src": "songname",
+   "title": "Let Yourself Go",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1765",
+   "fileId": 11765,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "Destination Z3",
+   "artist": "火楓紅葉"
+  },
+  {
+   "gn": "sdom1764",
+   "fileId": 11764,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "傻得可以",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1763",
+   "fileId": 11763,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "想知道現在你好不好",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1762",
+   "fileId": 11762,
+   "bpm": 80.0,
+   "src": "songname",
+   "title": "1到10＝我和你",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1761",
+   "fileId": 11761,
+   "bpm": 143.8,
+   "src": "songname",
+   "title": "Supermarket 超級市場",
+   "artist": "曹格"
+  },
+  {
+   "gn": "sdom1760",
+   "fileId": 11760,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "Skin On Skin",
+   "artist": "U.Franke&A.Breitschaft"
+  },
+  {
+   "gn": "sdom1759",
+   "fileId": 11759,
+   "bpm": 83.5,
+   "src": "songname",
+   "title": "和你一起",
+   "artist": "許茹芸"
+  },
+  {
+   "gn": "sdom1758",
+   "fileId": 11758,
+   "bpm": 126.0,
+   "src": "songname",
+   "title": "一有愛就走吧",
+   "artist": "許茹芸"
+  },
+  {
+   "gn": "sdom1757",
+   "fileId": 11757,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "愛上這世界",
+   "artist": "周瑜民"
+  },
+  {
+   "gn": "sdom1736",
+   "fileId": 11736,
+   "bpm": 152.0,
+   "src": "songname",
+   "title": "DNA",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom1733",
+   "fileId": 11733,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "小情歌",
+   "artist": "蘇打綠"
+  },
+  {
+   "gn": "sdom1732",
+   "fileId": 11732,
+   "bpm": 144.0,
+   "src": "songname",
+   "title": "你的歌",
+   "artist": "陶吉吉"
+  },
+  {
+   "gn": "sdom1730",
+   "fileId": 11730,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "花蝴蝶",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1729",
+   "fileId": 11729,
+   "bpm": 54.0,
+   "src": "songname",
+   "title": "無重力",
+   "artist": "潘偉柏"
+  },
+  {
+   "gn": "sdom1728",
+   "fileId": 11728,
+   "bpm": 107.0,
+   "src": "songname",
+   "title": "當你想著我",
+   "artist": "品冠"
+  },
+  {
+   "gn": "sdom1727",
+   "fileId": 11727,
+   "bpm": 127.0,
+   "src": "songname",
+   "title": "王妃",
+   "artist": "蕭敬滕"
+  },
+  {
+   "gn": "sdom1726",
+   "fileId": 11726,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "我會很愛你",
+   "artist": "言承旭"
+  },
+  {
+   "gn": "sdom1725",
+   "fileId": 11725,
+   "bpm": 84.0,
+   "src": "songname",
+   "title": "法克這個人",
+   "artist": "蕭閎仁"
+  },
+  {
+   "gn": "sdom1724",
+   "fileId": 11724,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "相愛後動物感傷",
+   "artist": "張惠妹"
+  },
+  {
+   "gn": "sdom1723",
+   "fileId": 11723,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "我是傳奇",
+   "artist": "棒棒堂"
+  },
+  {
+   "gn": "sdom1722",
+   "fileId": 11722,
+   "bpm": 86.0,
+   "src": "songname",
+   "title": "一切為了愛",
+   "artist": "品冠"
+  },
+  {
+   "gn": "sdom1721",
+   "fileId": 11721,
+   "bpm": 97.0,
+   "src": "songname",
+   "title": "戀愛絕句選",
+   "artist": "黃雅莉"
+  },
+  {
+   "gn": "sdom1720",
+   "fileId": 11720,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "在樹上唱歌",
+   "artist": "郭靜"
+  },
+  {
+   "gn": "sdom1719",
+   "fileId": 11719,
+   "bpm": 123.0,
+   "src": "songname",
+   "title": "把心拉近",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom1718",
+   "fileId": 11718,
+   "bpm": 114.0,
+   "src": "songname",
+   "title": "放開你的頭腦",
+   "artist": "溫嵐"
+  },
+  {
+   "gn": "sdom1717",
+   "fileId": 11717,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "城市",
+   "artist": "張懸"
+  },
+  {
+   "gn": "sdom1716",
+   "fileId": 11716,
+   "bpm": 153.0,
+   "src": "songname",
+   "title": "Beautiful woman",
+   "artist": "張懸"
+  },
+  {
+   "gn": "sdom1715",
+   "fileId": 11715,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "第89鍵",
+   "artist": "蕭閎仁"
+  },
+  {
+   "gn": "sdom1711",
+   "fileId": 11711,
+   "bpm": 74.0,
+   "src": "songname",
+   "title": "雙人舞",
+   "artist": "潘偉柏"
+  },
+  {
+   "gn": "sdom1710",
+   "fileId": 11710,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "親愛的",
+   "artist": "潘偉柏"
+  },
+  {
+   "gn": "sdom1702",
+   "fileId": 11702,
+   "bpm": 145.85,
+   "src": "songname",
+   "title": "funrun",
+   "artist": "胡彥斌"
+  },
+  {
+   "gn": "sdom1695",
+   "fileId": 11695,
+   "bpm": 147.0,
+   "src": "songname",
+   "title": "愛極限",
+   "artist": "許慧欣"
+  },
+  {
+   "gn": "sdom1684",
+   "fileId": 11684,
+   "bpm": 166.0,
+   "src": "songname",
+   "title": "痞子和英雄",
+   "artist": "鄒承恩"
+  },
+  {
+   "gn": "sdom1683",
+   "fileId": 11683,
+   "bpm": 123.0,
+   "src": "songname",
+   "title": "破天荒",
+   "artist": "張芸京"
+  },
+  {
+   "gn": "sdom1682",
+   "fileId": 11682,
+   "bpm": 108.0,
+   "src": "songname",
+   "title": "哪裡怕",
+   "artist": "棒棒堂"
+  },
+  {
+   "gn": "sdom1681",
+   "fileId": 11681,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "我們之間",
+   "artist": "棒棒堂"
+  },
+  {
+   "gn": "sdom1680",
+   "fileId": 11680,
+   "bpm": 142.01,
+   "src": "songname",
+   "title": "夏日初體驗",
+   "artist": "棒棒堂"
+  },
+  {
+   "gn": "sdom1679",
+   "fileId": 11679,
+   "bpm": 174.02,
+   "src": "songname",
+   "title": "天色",
+   "artist": "中川翔子"
+  },
+  {
+   "gn": "sdom1678",
+   "fileId": 11678,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "小姐，請你給我愛",
+   "artist": "橘子新樂園"
+  },
+  {
+   "gn": "sdom1677",
+   "fileId": 11677,
+   "bpm": 114.0,
+   "src": "songname",
+   "title": "愛的大行進",
+   "artist": "橘子新樂園"
+  },
+  {
+   "gn": "sdom1676",
+   "fileId": 11676,
+   "bpm": 92.0,
+   "src": "songname",
+   "title": "Hana 花",
+   "artist": "橘子新樂園"
+  },
+  {
+   "gn": "sdom1675",
+   "fileId": 11675,
+   "bpm": 145.0,
+   "src": "songname",
+   "title": "太陽無用",
+   "artist": "橘子新樂園"
+  },
+  {
+   "gn": "sdom1662",
+   "fileId": 11662,
+   "bpm": 117.0,
+   "src": "songname",
+   "title": "Road Movie",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1661",
+   "fileId": 11661,
+   "bpm": 150.0,
+   "src": "songname",
+   "title": "My Generation",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1660",
+   "fileId": 11660,
+   "bpm": 94.0,
+   "src": "songname",
+   "title": "鐵人",
+   "artist": "CoLoR"
+  },
+  {
+   "gn": "sdom1659",
+   "fileId": 11659,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "Perfect Stranger",
+   "artist": "痞克四 自從+鄒承恩"
+  },
+  {
+   "gn": "sdom1658",
+   "fileId": 11658,
+   "bpm": 188.0,
+   "src": "songname",
+   "title": "無賴正義",
+   "artist": "CoLoR+趙又廷"
+  },
+  {
+   "gn": "sdom1657",
+   "fileId": 11657,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "終極三國",
+   "artist": "曾沛慈+東城衛"
+  },
+  {
+   "gn": "sdom1656",
+   "fileId": 11656,
+   "bpm": 153.0,
+   "src": "songname",
+   "title": "對手",
+   "artist": "強辯樂團+武虎將+東城衛"
+  },
+  {
+   "gn": "sdom1655",
+   "fileId": 11655,
+   "bpm": 170.0,
+   "src": "songname",
+   "title": "大聲唱",
+   "artist": "強辯樂團"
+  },
+  {
+   "gn": "sdom1654",
+   "fileId": 11654,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "Don't go away",
+   "artist": "by2"
+  },
+  {
+   "gn": "sdom1653",
+   "fileId": 11653,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "好好愛^O^(甜蜜真實版)",
+   "artist": "by2"
+  },
+  {
+   "gn": "sdom1652",
+   "fileId": 11652,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "買買買",
+   "artist": "by2"
+  },
+  {
+   "gn": "sdom1651",
+   "fileId": 11651,
+   "bpm": 122.0,
+   "src": "songname",
+   "title": "DNA",
+   "artist": "by2"
+  },
+  {
+   "gn": "sdom1650",
+   "fileId": 11650,
+   "bpm": 150.0,
+   "src": "songname",
+   "title": "怪怪女",
+   "artist": "青鳥飛魚"
+  },
+  {
+   "gn": "sdom1649",
+   "fileId": 11649,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "舞棍",
+   "artist": "青鳥飛魚"
+  },
+  {
+   "gn": "sdom1648",
+   "fileId": 11648,
+   "bpm": 96.0,
+   "src": "songname",
+   "title": "情流感",
+   "artist": "盧學睿"
+  },
+  {
+   "gn": "sdom1647",
+   "fileId": 11647,
+   "bpm": 87.5,
+   "src": "songname",
+   "title": "Fresh DAB",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1646",
+   "fileId": 11646,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "THE GAME IS OVER",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1645",
+   "fileId": 11645,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "Wrap Your Arms",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1644",
+   "fileId": 11644,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "Wink Wink",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1643",
+   "fileId": 11643,
+   "bpm": 170.0,
+   "src": "songname",
+   "title": "Point of no return",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1642",
+   "fileId": 11642,
+   "bpm": 196.0,
+   "src": "songname",
+   "title": "ONLIE",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1641",
+   "fileId": 11641,
+   "bpm": 188.0,
+   "src": "songname",
+   "title": "SKATE PUNK",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1640",
+   "fileId": 11640,
+   "bpm": 151.0,
+   "src": "songname",
+   "title": "LOVERS",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1639",
+   "fileId": 11639,
+   "bpm": 185.0,
+   "src": "songname",
+   "title": "Yeah Yeah Yeah",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1638",
+   "fileId": 11638,
+   "bpm": 158.8,
+   "src": "songname",
+   "title": "One Day",
+   "artist": "柯有綸"
+  },
+  {
+   "gn": "sdom1637",
+   "fileId": 11637,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "玩偶",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom1636",
+   "fileId": 11636,
+   "bpm": 81.0,
+   "src": "songname",
+   "title": "愛靈靈",
+   "artist": "戴愛玲"
+  },
+  {
+   "gn": "sdom1635",
+   "fileId": 11635,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "沒有如果",
+   "artist": "梁靜茹"
+  },
+  {
+   "gn": "sdom1634",
+   "fileId": 11634,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "抓狂",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1633",
+   "fileId": 11633,
+   "bpm": 92.0,
+   "src": "songname",
+   "title": "私奔到月球",
+   "artist": "五月天+陳綺貞"
+  },
+  {
+   "gn": "sdom1630",
+   "fileId": 11630,
+   "bpm": 122.0,
+   "src": "kgn",
+   "title": "DNA",
+   "artist": "by2"
+  },
+  {
+   "gn": "sdom1612",
+   "fileId": 11612,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "I Kissed A Girl",
+   "artist": "Katy Perry"
+  },
+  {
+   "gn": "sdom1611",
+   "fileId": 11611,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "Hot N Cold",
+   "artist": "Katy Perry"
+  },
+  {
+   "gn": "sdom1610",
+   "fileId": 11610,
+   "bpm": 134.0,
+   "src": "songname",
+   "title": "The Fear(沒在怕)(Explicit版本)",
+   "artist": "Lily Allen"
+  },
+  {
+   "gn": "sdom1609",
+   "fileId": 11609,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "F**k You(Clean版本)",
+   "artist": "Lily Allen三小"
+  },
+  {
+   "gn": "sdom1608",
+   "fileId": 11608,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "伊甸園",
+   "artist": "拾參樂團"
+  },
+  {
+   "gn": "sdom1607",
+   "fileId": 11607,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "教練之歌",
+   "artist": "教練+DJ三小"
+  },
+  {
+   "gn": "sdom1606",
+   "fileId": 11606,
+   "bpm": 142.0,
+   "src": "songname",
+   "title": "找一個新世界",
+   "artist": "蕫事長&DJ紅龜"
+  },
+  {
+   "gn": "sdom1605",
+   "fileId": 11605,
+   "bpm": 91.0,
+   "src": "songname",
+   "title": "今天妳要嫁給我",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1604",
+   "fileId": 11604,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "冷暴力",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1603",
+   "fileId": 11603,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "愛無赦",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1602",
+   "fileId": 11602,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "乖乖牌",
+   "artist": "蔡依林&黃立行"
+  },
+  {
+   "gn": "sdom1601",
+   "fileId": 11601,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "耍大牌",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1600",
+   "fileId": 11600,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "VIVI",
+   "artist": "天原神音"
+  },
+  {
+   "gn": "sdom1599",
+   "fileId": 11599,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "Cheryl Deux",
+   "artist": "天原神音"
+  },
+  {
+   "gn": "sdom1598",
+   "fileId": 11598,
+   "bpm": 145.0,
+   "src": "songname",
+   "title": "Unreal Angel",
+   "artist": "神尾奈奈"
+  },
+  {
+   "gn": "sdom1597",
+   "fileId": 11597,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "NANANA",
+   "artist": "吳克群+王心凌"
+  },
+  {
+   "gn": "sdom1596",
+   "fileId": 11596,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "西班牙狂想曲",
+   "artist": "黃湘怡"
+  },
+  {
+   "gn": "sdom1595",
+   "fileId": 11595,
+   "bpm": 90.2,
+   "src": "songname",
+   "title": "騎士精神",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1594",
+   "fileId": 11594,
+   "bpm": 91.96,
+   "src": "songname",
+   "title": "海盜",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1593",
+   "fileId": 11593,
+   "bpm": 85.0,
+   "src": "songname",
+   "title": "媽媽",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom1592",
+   "fileId": 11592,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "VIDEO TEK",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1591",
+   "fileId": 11591,
+   "bpm": 122.05,
+   "src": "songname",
+   "title": "TECHNIC",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1590",
+   "fileId": 11590,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "SUPER FUN",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1589",
+   "fileId": 11589,
+   "bpm": 136.0,
+   "src": "songname",
+   "title": "SPEED AND POWER",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1588",
+   "fileId": 11588,
+   "bpm": 137.0,
+   "src": "songname",
+   "title": "NEW WORLD SYMPHONY",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1587",
+   "fileId": 11587,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "LET'S GO PARTY",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1586",
+   "fileId": 11586,
+   "bpm": 147.0,
+   "src": "songname",
+   "title": "COMPOSITEUR",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1585",
+   "fileId": 11585,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "HEATSEEKERS",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1584",
+   "fileId": 11584,
+   "bpm": 103.0,
+   "src": "songname",
+   "title": "FUNKY BLOCK",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1583",
+   "fileId": 11583,
+   "bpm": 129.0,
+   "src": "songname",
+   "title": "BUBBLE DANCE",
+   "artist": "證聲"
+  },
+  {
+   "gn": "sdom1549",
+   "fileId": 11549,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "國王皇后",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1548",
+   "fileId": 11548,
+   "bpm": 129.0,
+   "src": "songname",
+   "title": "宇宙小姐",
+   "artist": "S.H.E"
+  },
+  {
+   "gn": "sdom1545",
+   "fileId": 11545,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "PP別黏在椅上",
+   "artist": "by2"
+  },
+  {
+   "gn": "sdom1531",
+   "fileId": 11531,
+   "bpm": 123.0,
+   "src": "songname",
+   "title": "拿手絕活",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1530",
+   "fileId": 11530,
+   "bpm": 134.0,
+   "src": "songname",
+   "title": "撐腰",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1529",
+   "fileId": 11529,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "箇中強手",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1528",
+   "fileId": 11528,
+   "bpm": 85.0,
+   "src": "songname",
+   "title": "搖滾怎麼了",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom1527",
+   "fileId": 11527,
+   "bpm": 134.0,
+   "src": "songname",
+   "title": "小心眼",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1526",
+   "fileId": 11526,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "Da Now一場",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1525",
+   "fileId": 11525,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "Lovefool",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1524",
+   "fileId": 11524,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "Lady Marmalade",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1523",
+   "fileId": 11523,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "Kiss Me",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1522",
+   "fileId": 11522,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "Disturbia",
+   "artist": "Rihanna蕾哈娜"
+  },
+  {
+   "gn": "sdom1521",
+   "fileId": 11521,
+   "bpm": 118.51,
+   "src": "songname",
+   "title": "When I Grow Up",
+   "artist": "小野貓"
+  },
+  {
+   "gn": "sdom1520",
+   "fileId": 11520,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "我是你的誰",
+   "artist": "黃立行"
+  },
+  {
+   "gn": "sdom1519",
+   "fileId": 11519,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "想念聖誕節",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1518",
+   "fileId": 11518,
+   "bpm": 102.0,
+   "src": "songname",
+   "title": "男傭",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom1517",
+   "fileId": 11517,
+   "bpm": 98.0,
+   "src": "songname",
+   "title": "殺手",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom1516",
+   "fileId": 11516,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "湘南海鷗",
+   "artist": "南拳媽媽"
+  },
+  {
+   "gn": "sdom1515",
+   "fileId": 11515,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "夜訪吸血鬼",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1514",
+   "fileId": 11514,
+   "bpm": 82.0,
+   "src": "songname",
+   "title": "出頭天",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1513",
+   "fileId": 11513,
+   "bpm": 126.0,
+   "src": "songname",
+   "title": "Closer",
+   "artist": "尼歐"
+  },
+  {
+   "gn": "sdom1512",
+   "fileId": 11512,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "你是壞人",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1502",
+   "fileId": 11502,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "Always Online",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom1499",
+   "fileId": 11499,
+   "bpm": 106.0,
+   "src": "songname",
+   "title": "愛的城堡",
+   "artist": "卓文萱"
+  },
+  {
+   "gn": "sdom1498",
+   "fileId": 11498,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "不說",
+   "artist": "卓文萱"
+  },
+  {
+   "gn": "sdom1497",
+   "fileId": 11497,
+   "bpm": 146.0,
+   "src": "songname",
+   "title": "獨家快樂",
+   "artist": "卓文萱"
+  },
+  {
+   "gn": "sdom1496",
+   "fileId": 11496,
+   "bpm": 142.0,
+   "src": "songname",
+   "title": "超級喜歡",
+   "artist": "卓文萱"
+  },
+  {
+   "gn": "sdom1493",
+   "fileId": 11493,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "滿滿的都是愛",
+   "artist": "梁靜茹"
+  },
+  {
+   "gn": "sdom1492",
+   "fileId": 11492,
+   "bpm": 108.1,
+   "src": "songname",
+   "title": "不敗的戀人",
+   "artist": "徐若瑄"
+  },
+  {
+   "gn": "sdom1491",
+   "fileId": 11491,
+   "bpm": 127.02,
+   "src": "songname",
+   "title": "幸福的節拍",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1490",
+   "fileId": 11490,
+   "bpm": 142.0,
+   "src": "songname",
+   "title": "愛我請shut up",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1489",
+   "fileId": 11489,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "半熟宣言",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1488",
+   "fileId": 11488,
+   "bpm": 92.0,
+   "src": "songname",
+   "title": "太煩惱",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1487",
+   "fileId": 11487,
+   "bpm": 149.63,
+   "src": "songname",
+   "title": "自由REMIX",
+   "artist": "李心潔"
+  },
+  {
+   "gn": "sdom1486",
+   "fileId": 11486,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "笑忘歌",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1485",
+   "fileId": 11485,
+   "bpm": 89.0,
+   "src": "songname",
+   "title": "春天的吶喊",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1484",
+   "fileId": 11484,
+   "bpm": 97.0,
+   "src": "songname",
+   "title": "生存以上生活以下",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1483",
+   "fileId": 11483,
+   "bpm": 84.0,
+   "src": "songname",
+   "title": "噢買尬",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1482",
+   "fileId": 11482,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "爆肝",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom1469",
+   "fileId": 11469,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "藏經閣",
+   "artist": "棒棒堂"
+  },
+  {
+   "gn": "sdom1468",
+   "fileId": 11468,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "乂",
+   "artist": "陳嘉唯"
+  },
+  {
+   "gn": "sdom1467",
+   "fileId": 11467,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "愛的奇蹟",
+   "artist": "陳嘉唯"
+  },
+  {
+   "gn": "sdom1466",
+   "fileId": 11466,
+   "bpm": 102.0,
+   "src": "songname",
+   "title": "RUN",
+   "artist": "朱婧"
+  },
+  {
+   "gn": "sdom1465",
+   "fileId": 11465,
+   "bpm": 83.0,
+   "src": "songname",
+   "title": "香草天空",
+   "artist": "關煒棠"
+  },
+  {
+   "gn": "sdom1464",
+   "fileId": 11464,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "是什麼音樂讓你覺得舒服",
+   "artist": "J.WU feat HotDog&大支"
+  },
+  {
+   "gn": "sdom1463",
+   "fileId": 11463,
+   "bpm": 170.0,
+   "src": "songname",
+   "title": "大暴走",
+   "artist": "Color彩色拼塗"
+  },
+  {
+   "gn": "sdom1462",
+   "fileId": 11462,
+   "bpm": 136.0,
+   "src": "songname",
+   "title": "愛上愛",
+   "artist": "非同小可"
+  },
+  {
+   "gn": "sdom1461",
+   "fileId": 11461,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "不潮不用花錢",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom1460",
+   "fileId": 11460,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "街道",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom1459",
+   "fileId": 11459,
+   "bpm": 94.0,
+   "src": "songname",
+   "title": "主角",
+   "artist": "林俊傑&MACHI"
+  },
+  {
+   "gn": "sdom1458",
+   "fileId": 11458,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "小酒窩",
+   "artist": "林俊傑&阿Sa"
+  },
+  {
+   "gn": "sdom1401",
+   "fileId": 11401,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "honey money",
+   "artist": "張惠春"
+  },
+  {
+   "gn": "sdom1400",
+   "fileId": 11400,
+   "bpm": 85.0,
+   "src": "songname",
+   "title": "期待愛",
+   "artist": "林俊傑&金莎"
+  },
+  {
+   "gn": "sdom1399",
+   "fileId": 11399,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "左邊",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1398",
+   "fileId": 11398,
+   "bpm": 112.56,
+   "src": "songname",
+   "title": "Friend Or Foe",
+   "artist": "T.A.T.U"
+  },
+  {
+   "gn": "sdom1397",
+   "fileId": 11397,
+   "bpm": 122.7,
+   "src": "songname",
+   "title": "Don't Stop The Music",
+   "artist": "Rihanna"
+  },
+  {
+   "gn": "sdom1396",
+   "fileId": 11396,
+   "bpm": 99.0,
+   "src": "songname",
+   "title": "許願池的希臘少女",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1395",
+   "fileId": 11395,
+   "bpm": 84.0,
+   "src": "songname",
+   "title": "獨立",
+   "artist": "蜜雪薇琪"
+  },
+  {
+   "gn": "sdom1394",
+   "fileId": 11394,
+   "bpm": 153.6,
+   "src": "songname",
+   "title": "Pump it",
+   "artist": "黑眼豆豆"
+  },
+  {
+   "gn": "sdom1393",
+   "fileId": 11393,
+   "bpm": 99.0,
+   "src": "songname",
+   "title": "香草吧噗",
+   "artist": "南拳媽媽"
+  },
+  {
+   "gn": "sdom1392",
+   "fileId": 11392,
+   "bpm": 143.0,
+   "src": "songname",
+   "title": "特務J",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1391",
+   "fileId": 11391,
+   "bpm": 152.0,
+   "src": "songname",
+   "title": "Mr.Q(REMIX版)",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1390",
+   "fileId": 11390,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "讓讓",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom1389",
+   "fileId": 11389,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "我秀故我在",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1388",
+   "fileId": 11388,
+   "bpm": 89.0,
+   "src": "songname",
+   "title": "敗給你",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1387",
+   "fileId": 11387,
+   "bpm": 147.0,
+   "src": "songname",
+   "title": "SUPERMAN",
+   "artist": "倪子岡"
+  },
+  {
+   "gn": "sdom1386",
+   "fileId": 11386,
+   "bpm": 84.0,
+   "src": "songname",
+   "title": "絕對無敵",
+   "artist": "倪子岡"
+  },
+  {
+   "gn": "sdom1385",
+   "fileId": 11385,
+   "bpm": 103.0,
+   "src": "songname",
+   "title": "暫停戀愛",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1384",
+   "fileId": 11384,
+   "bpm": 108.0,
+   "src": "songname",
+   "title": "Hey Girl",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1383",
+   "fileId": 11383,
+   "bpm": 139.0,
+   "src": "songname",
+   "title": "More More More",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1382",
+   "fileId": 11382,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "I'll be there",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom1376",
+   "fileId": 11376,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "A(10/24歌舞青春3:畢業季)",
+   "artist": "歌舞青春"
+  },
+  {
+   "gn": "sdom1375",
+   "fileId": 11375,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "T(10/24歌舞青春3:畢業季)",
+   "artist": "歌舞青春"
+  },
+  {
+   "gn": "sdom1374",
+   "fileId": 11374,
+   "bpm": 115.04,
+   "src": "songname",
+   "title": "N(10/24歌舞青春3:畢業季)",
+   "artist": "歌舞青春"
+  },
+  {
+   "gn": "sdom1355",
+   "fileId": 11355,
+   "bpm": 175.0,
+   "src": "songname",
+   "title": "愛戀Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1354",
+   "fileId": 11354,
+   "bpm": 170.0,
+   "src": "songname",
+   "title": "血淚Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1353",
+   "fileId": 11353,
+   "bpm": 175.0,
+   "src": "songname",
+   "title": "地獄之門Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1345",
+   "fileId": 11345,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "臭皮匠",
+   "artist": "陳小春"
+  },
+  {
+   "gn": "sdom1344",
+   "fileId": 11344,
+   "bpm": 93.0,
+   "src": "songname",
+   "title": "不在服務區",
+   "artist": "陳小春"
+  },
+  {
+   "gn": "sdom1343",
+   "fileId": 11343,
+   "bpm": 158.0,
+   "src": "songname",
+   "title": "自我做主",
+   "artist": "陳小春"
+  },
+  {
+   "gn": "sdom1342",
+   "fileId": 11342,
+   "bpm": 81.0,
+   "src": "songname",
+   "title": "回音",
+   "artist": "郭靜"
+  },
+  {
+   "gn": "sdom1341",
+   "fileId": 11341,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "感冒",
+   "artist": "郭靜"
+  },
+  {
+   "gn": "sdom1340",
+   "fileId": 11340,
+   "bpm": 107.0,
+   "src": "songname",
+   "title": "大玩笑",
+   "artist": "郭靜"
+  },
+  {
+   "gn": "sdom1339",
+   "fileId": 11339,
+   "bpm": 122.0,
+   "src": "songname",
+   "title": "下一個天亮",
+   "artist": "郭靜"
+  },
+  {
+   "gn": "sdom1338",
+   "fileId": 11338,
+   "bpm": 164.0,
+   "src": "songname",
+   "title": "放電",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1337",
+   "fileId": 11337,
+   "bpm": 150.0,
+   "src": "songname",
+   "title": "再聯絡",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1336",
+   "fileId": 11336,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "一顆心的距離",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1335",
+   "fileId": 11335,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "尋找茱麗葉",
+   "artist": "吳健豪"
+  },
+  {
+   "gn": "sdom1334",
+   "fileId": 11334,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "自己的節奏",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom1333",
+   "fileId": 11333,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "Lucky Me",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom1332",
+   "fileId": 11332,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "我不是自己",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom1331",
+   "fileId": 11331,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "愛?",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1330",
+   "fileId": 11330,
+   "bpm": 65.0,
+   "src": "songname",
+   "title": "台北21度C",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1329",
+   "fileId": 11329,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "我要用一首Demo跟你告白",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1328",
+   "fileId": 11328,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "希區考特作品152",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1327",
+   "fileId": 11327,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "阿姆斯壯",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1326",
+   "fileId": 11326,
+   "bpm": 96.0,
+   "src": "songname",
+   "title": "我回來了",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom1305",
+   "fileId": 11305,
+   "bpm": 170.0,
+   "src": "songname",
+   "title": "普派進行曲Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1299",
+   "fileId": 11299,
+   "bpm": 162.0,
+   "src": "songname",
+   "title": "卡農Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1283",
+   "fileId": 11283,
+   "bpm": 156.0,
+   "src": "songname",
+   "title": "致命病毒Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1280",
+   "fileId": 11280,
+   "bpm": 121.0,
+   "src": "songname",
+   "title": "好心情",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom1279",
+   "fileId": 11279,
+   "bpm": 164.0,
+   "src": "songname",
+   "title": "冥想愛",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom1278",
+   "fileId": 11278,
+   "bpm": 104.02,
+   "src": "songname",
+   "title": "Do you want my love",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom1277",
+   "fileId": 11277,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "撒哈拉冰室",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom1276",
+   "fileId": 11276,
+   "bpm": 96.0,
+   "src": "songname",
+   "title": "No Doubt",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom1275",
+   "fileId": 11275,
+   "bpm": 150.0,
+   "src": "songname",
+   "title": "刀馬旦",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom1274",
+   "fileId": 11274,
+   "bpm": 141.0,
+   "src": "official",
+   "title": "U + Ur Hand",
+   "artist": "Pink"
+  },
+  {
+   "gn": "sdom1273",
+   "fileId": 11273,
+   "bpm": 99.25,
+   "src": "official",
+   "title": "Crazy in Love",
+   "artist": "Beyonce"
+  },
+  {
+   "gn": "sdom1272",
+   "fileId": 11272,
+   "bpm": 168.0,
+   "src": "official",
+   "title": "Hound Dog",
+   "artist": "Elvis Presley"
+  },
+  {
+   "gn": "sdom1271",
+   "fileId": 11271,
+   "bpm": 161.2,
+   "src": "official",
+   "title": "Survivor",
+   "artist": "Destiny's Child"
+  },
+  {
+   "gn": "sdom1270",
+   "fileId": 11270,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "孤單芭蕾",
+   "artist": "許慧欣"
+  },
+  {
+   "gn": "sdom1269",
+   "fileId": 11269,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "誰是MVP",
+   "artist": "潘瑋柏"
+  },
+  {
+   "gn": "sdom1268",
+   "fileId": 11268,
+   "bpm": 136.0,
+   "src": "songname",
+   "title": "119",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1267",
+   "fileId": 11267,
+   "bpm": 106.0,
+   "src": "songname",
+   "title": "大嘴巴",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1266",
+   "fileId": 11266,
+   "bpm": 92.0,
+   "src": "songname",
+   "title": "我就是喜歡你",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1265",
+   "fileId": 11265,
+   "bpm": 90.2,
+   "src": "songname",
+   "title": "Step On The Beat",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1264",
+   "fileId": 11264,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "結果咧",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1263",
+   "fileId": 11263,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "Get You Back",
+   "artist": "大嘴巴"
+  },
+  {
+   "gn": "sdom1262",
+   "fileId": 11262,
+   "bpm": 125.93,
+   "src": "kgn",
+   "title": "Sway",
+   "artist": "The Pussycat Dolls"
+  },
+  {
+   "gn": "sdom1261",
+   "fileId": 11261,
+   "bpm": 94.06,
+   "src": "songname",
+   "title": "愛上未來的你",
+   "artist": "潘瑋柏"
+  },
+  {
+   "gn": "sdom1260",
+   "fileId": 11260,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "PK賽",
+   "artist": "戴愛玲"
+  },
+  {
+   "gn": "sdom1259",
+   "fileId": 11259,
+   "bpm": 98.0,
+   "src": "songname",
+   "title": "愛自己",
+   "artist": "戴愛玲"
+  },
+  {
+   "gn": "sdom1258",
+   "fileId": 11258,
+   "bpm": 127.05,
+   "src": "songname",
+   "title": "愛的勇氣",
+   "artist": "賴雅妍"
+  },
+  {
+   "gn": "sdom1257",
+   "fileId": 11257,
+   "bpm": 119.93,
+   "src": "songname",
+   "title": "快樂的人請舉手",
+   "artist": "彭佳慧"
+  },
+  {
+   "gn": "sdom1256",
+   "fileId": 11256,
+   "bpm": 125.9,
+   "src": "songname",
+   "title": "敲敲我的頭",
+   "artist": "彭佳慧"
+  },
+  {
+   "gn": "sdom1255",
+   "fileId": 11255,
+   "bpm": 96.0,
+   "src": "songname",
+   "title": "愛的就是你",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom1254",
+   "fileId": 11254,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "愛你喲",
+   "artist": "楊家成&小雅"
+  },
+  {
+   "gn": "sdom1253",
+   "fileId": 11253,
+   "bpm": 143.03,
+   "src": "songname",
+   "title": "就是你",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1252",
+   "fileId": 11252,
+   "bpm": 105.0,
+   "src": "songname",
+   "title": "靠近一點點",
+   "artist": "Lara"
+  },
+  {
+   "gn": "sdom1251",
+   "fileId": 11251,
+   "bpm": 123.0,
+   "src": "songname",
+   "title": "初戀粉色系",
+   "artist": "南拳媽媽"
+  },
+  {
+   "gn": "sdom1250",
+   "fileId": 11250,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "我要的世界",
+   "artist": "王傅一"
+  },
+  {
+   "gn": "sdom1249",
+   "fileId": 11249,
+   "bpm": 176.02,
+   "src": "songname",
+   "title": "臭男人",
+   "artist": "黃義達"
+  },
+  {
+   "gn": "sdom1248",
+   "fileId": 11248,
+   "bpm": 102.0,
+   "src": "songname",
+   "title": "因為你笑了",
+   "artist": "DR.MOON"
+  },
+  {
+   "gn": "sdom1247",
+   "fileId": 11247,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "快點來愛我",
+   "artist": "李玖哲"
+  },
+  {
+   "gn": "sdom1246",
+   "fileId": 11246,
+   "bpm": 162.0,
+   "src": "songname",
+   "title": "不愛拉倒",
+   "artist": "胡靈"
+  },
+  {
+   "gn": "sdom1245",
+   "fileId": 11245,
+   "bpm": 138.0,
+   "src": "songname",
+   "title": "動",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom1244",
+   "fileId": 11244,
+   "bpm": 108.0,
+   "src": "songname",
+   "title": "音樂讓我說",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom1243",
+   "fileId": 11243,
+   "bpm": 102.0,
+   "src": "songname",
+   "title": "什麼東西",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom1242",
+   "fileId": 11242,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "情人節",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom1241",
+   "fileId": 11241,
+   "bpm": 143.0,
+   "src": "songname",
+   "title": "為你寫詩",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom1238",
+   "fileId": 11238,
+   "bpm": 168.0,
+   "src": "songname",
+   "title": "四季Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1236",
+   "fileId": 11236,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "狂潮Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1230",
+   "fileId": 11230,
+   "bpm": 120.63,
+   "src": "songname",
+   "title": "警報Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1226",
+   "fileId": 11226,
+   "bpm": 178.0,
+   "src": "songname",
+   "title": "天空Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1225",
+   "fileId": 11225,
+   "bpm": 175.0,
+   "src": "songname",
+   "title": "舞以倫比Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1224",
+   "fileId": 11224,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "自殺Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1219",
+   "fileId": 11219,
+   "bpm": 163.0,
+   "src": "songname",
+   "title": "永恆Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1216",
+   "fileId": 11216,
+   "bpm": 116.0,
+   "src": "official",
+   "title": "Wrong When You're Gone",
+   "artist": "Jennifer Lopez"
+  },
+  {
+   "gn": "sdom1215",
+   "fileId": 11215,
+   "bpm": 102.0,
+   "src": "official",
+   "title": "Be Mine",
+   "artist": "Jennifer Lopez"
+  },
+  {
+   "gn": "sdom1214",
+   "fileId": 11214,
+   "bpm": 78.0,
+   "src": "official",
+   "title": "I Need Love",
+   "artist": "Jennifer Lopez"
+  },
+  {
+   "gn": "sdom1213",
+   "fileId": 11213,
+   "bpm": 103.0,
+   "src": "official",
+   "title": "Gotta Be There",
+   "artist": "Jennifer Lopez"
+  },
+  {
+   "gn": "sdom1212",
+   "fileId": 11212,
+   "bpm": 115.3,
+   "src": "official",
+   "title": "Hold It Don't Drop It",
+   "artist": "Jennifer Lopez"
+  },
+  {
+   "gn": "sdom1211",
+   "fileId": 11211,
+   "bpm": 111.0,
+   "src": "official",
+   "title": "Brave",
+   "artist": "Jennifer Lopez"
+  },
+  {
+   "gn": "sdom1210",
+   "fileId": 11210,
+   "bpm": 108.02,
+   "src": "official",
+   "title": "Do it well",
+   "artist": "Jennifer Lopez"
+  },
+  {
+   "gn": "sdom1209",
+   "fileId": 11209,
+   "bpm": 109.0,
+   "src": "official",
+   "title": "Any Other Way",
+   "artist": "Backstreet Boys"
+  },
+  {
+   "gn": "sdom1208",
+   "fileId": 11208,
+   "bpm": 130.0,
+   "src": "official",
+   "title": "Everything But Mine",
+   "artist": "Backstreet Boys"
+  },
+  {
+   "gn": "sdom1207",
+   "fileId": 11207,
+   "bpm": 152.0,
+   "src": "official",
+   "title": "Panic",
+   "artist": "Backstreet Boys"
+  },
+  {
+   "gn": "sdom1206",
+   "fileId": 11206,
+   "bpm": 98.22,
+   "src": "official",
+   "title": "As Long As You Love Me",
+   "artist": "Backstreet Boys"
+  },
+  {
+   "gn": "sdom1205",
+   "fileId": 11205,
+   "bpm": 108.0,
+   "src": "official",
+   "title": "Everybody",
+   "artist": "Backstreet Boys"
+  },
+  {
+   "gn": "sdom1204",
+   "fileId": 11204,
+   "bpm": 117.0,
+   "src": "kgn",
+   "title": "Perfect Lover",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1203",
+   "fileId": 11203,
+   "bpm": 128.0,
+   "src": "kgn",
+   "title": "Ooh Ooh Baby",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1202",
+   "fileId": 11202,
+   "bpm": 127.9,
+   "src": "kgn",
+   "title": "Hot as Ice",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1201",
+   "fileId": 11201,
+   "bpm": 117.11,
+   "src": "kgn",
+   "title": "Toy Soldier",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1200",
+   "fileId": 11200,
+   "bpm": 132.0,
+   "src": "kgn",
+   "title": "Freakshow",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1199",
+   "fileId": 11199,
+   "bpm": 116.0,
+   "src": "official",
+   "title": "En Tus Pupilas",
+   "artist": "Shakira"
+  },
+  {
+   "gn": "sdom1191",
+   "fileId": 11191,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "新世界Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom1168",
+   "fileId": 11168,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "Black Trinity",
+   "artist": "天原神音"
+  },
+  {
+   "gn": "sdom1167",
+   "fileId": 11167,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "boys and girls",
+   "artist": "頭號人物"
+  },
+  {
+   "gn": "sdom1166",
+   "fileId": 11166,
+   "bpm": 92.02,
+   "src": "kgn",
+   "title": "One of Those Girls",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1165",
+   "fileId": 11165,
+   "bpm": 165.0,
+   "src": "songname",
+   "title": "小豬搞笑秀",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1164",
+   "fileId": 11164,
+   "bpm": 106.0,
+   "src": "songname",
+   "title": "貓言貓語",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1163",
+   "fileId": 11163,
+   "bpm": 146.0,
+   "src": "songname",
+   "title": "魔法小兔兔",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1162",
+   "fileId": 11162,
+   "bpm": 210.0,
+   "src": "songname",
+   "title": "狐狸的派對",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1161",
+   "fileId": 11161,
+   "bpm": 117.14,
+   "src": "songname",
+   "title": "熊貓蹦蹦跳",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1160",
+   "fileId": 11160,
+   "bpm": 163.0,
+   "src": "songname",
+   "title": "淘氣小浣熊",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1159",
+   "fileId": 11159,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "馬戲團猴子",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1158",
+   "fileId": 11158,
+   "bpm": 119.9,
+   "src": "songname",
+   "title": "神犬水汪汪",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1157",
+   "fileId": 11157,
+   "bpm": 106.0,
+   "src": "kgn",
+   "title": "I Don't Have to Try",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1156",
+   "fileId": 11156,
+   "bpm": 134.0,
+   "src": "songname",
+   "title": "Get High",
+   "artist": "頭號人物"
+  },
+  {
+   "gn": "sdom1155",
+   "fileId": 11155,
+   "bpm": 108.0,
+   "src": "songname",
+   "title": "日場夜場",
+   "artist": "莫文蔚"
+  },
+  {
+   "gn": "sdom1154",
+   "fileId": 11154,
+   "bpm": 114.0,
+   "src": "songname",
+   "title": "VIP",
+   "artist": "頭號人物"
+  },
+  {
+   "gn": "sdom1153",
+   "fileId": 11153,
+   "bpm": 116.0,
+   "src": "songname",
+   "title": "單眼皮",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom1152",
+   "fileId": 11152,
+   "bpm": 131.0,
+   "src": "songname",
+   "title": "養我一輩子",
+   "artist": "川島茉樹代"
+  },
+  {
+   "gn": "sdom1151",
+   "fileId": 11151,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "稍息立正站好",
+   "artist": "范曉萱"
+  },
+  {
+   "gn": "sdom1150",
+   "fileId": 11150,
+   "bpm": 122.0,
+   "src": "songname",
+   "title": "小叮噹",
+   "artist": "范曉萱"
+  },
+  {
+   "gn": "sdom1149",
+   "fileId": 11149,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "健康歌",
+   "artist": "范曉萱"
+  },
+  {
+   "gn": "sdom1137",
+   "fileId": 11137,
+   "bpm": 128.0,
+   "src": "kgn",
+   "title": "Radar",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1136",
+   "fileId": 11136,
+   "bpm": 158.0,
+   "src": "kgn",
+   "title": "Contagious",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1135",
+   "fileId": 11135,
+   "bpm": 145.0,
+   "src": "kgn",
+   "title": "H.O.T",
+   "artist": "Avril"
+  },
+  {
+   "gn": "sdom1134",
+   "fileId": 11134,
+   "bpm": 165.0,
+   "src": "kgn",
+   "title": "The Best Damn Thing",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1133",
+   "fileId": 11133,
+   "bpm": 172.0,
+   "src": "songname",
+   "title": "I can do better",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1132",
+   "fileId": 11132,
+   "bpm": 113.33,
+   "src": "kgn",
+   "title": "Gimme More",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1131",
+   "fileId": 11131,
+   "bpm": 117.5,
+   "src": "kgn",
+   "title": "Break the Ice",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1130",
+   "fileId": 11130,
+   "bpm": 121.0,
+   "src": "kgn",
+   "title": "Lovestoned",
+   "artist": "Justin Timberlake"
+  },
+  {
+   "gn": "sdom1129",
+   "fileId": 11129,
+   "bpm": 120.0,
+   "src": "kgn",
+   "title": "My Love",
+   "artist": "Justin Timberlake"
+  },
+  {
+   "gn": "sdom1128",
+   "fileId": 11128,
+   "bpm": 117.0,
+   "src": "kgn",
+   "title": "SexyBack",
+   "artist": "Justin Timberlake"
+  },
+  {
+   "gn": "sdom1127",
+   "fileId": 11127,
+   "bpm": 115.0,
+   "src": "kgn",
+   "title": "Like I Love You",
+   "artist": "賈斯汀"
+  },
+  {
+   "gn": "sdom1126",
+   "fileId": 11126,
+   "bpm": 95.0,
+   "src": "kgn",
+   "title": "Lucky",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1125",
+   "fileId": 11125,
+   "bpm": 109.9,
+   "src": "kgn",
+   "title": "Everytime",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom1124",
+   "fileId": 11124,
+   "bpm": 142.0,
+   "src": "kgn",
+   "title": "When You're Gone",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1123",
+   "fileId": 11123,
+   "bpm": 144.12,
+   "src": "kgn",
+   "title": "don't tell me",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1122",
+   "fileId": 11122,
+   "bpm": 85.07,
+   "src": "kgn",
+   "title": "my happy ending",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom1119",
+   "fileId": 11119,
+   "bpm": 109.9,
+   "src": "songname",
+   "title": "鬥牛要不要",
+   "artist": "TANK"
+  },
+  {
+   "gn": "sdom1071",
+   "fileId": 11071,
+   "bpm": 86.5,
+   "src": "songname",
+   "title": "幸福氧氣",
+   "artist": "卓文萱"
+  },
+  {
+   "gn": "sdom1067",
+   "fileId": 11067,
+   "bpm": 120.02,
+   "src": "songname",
+   "title": "一支獨秀",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1061",
+   "fileId": 11061,
+   "bpm": 103.0,
+   "src": "songname",
+   "title": "當我們宅一塊",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom1050",
+   "fileId": 11050,
+   "bpm": 134.0,
+   "src": "songname",
+   "title": "誰愛誰",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom1049",
+   "fileId": 11049,
+   "bpm": 105.0,
+   "src": "songname",
+   "title": "樂園",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom1048",
+   "fileId": 11048,
+   "bpm": 146.0,
+   "src": "songname",
+   "title": "頭號甜心",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom1047",
+   "fileId": 11047,
+   "bpm": 114.1,
+   "src": "songname",
+   "title": "不想懂得",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom1046",
+   "fileId": 11046,
+   "bpm": 116.0,
+   "src": "songname",
+   "title": "我戀愛了",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom1045",
+   "fileId": 11045,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "我愛黑澀會",
+   "artist": "黑澀會美眉"
+  },
+  {
+   "gn": "sdom1044",
+   "fileId": 11044,
+   "bpm": 180.0,
+   "src": "songname",
+   "title": "我要愛的好",
+   "artist": "黑澀會美眉"
+  },
+  {
+   "gn": "sdom1043",
+   "fileId": 11043,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "幸福的泡泡",
+   "artist": "黑澀會美眉"
+  },
+  {
+   "gn": "sdom1042",
+   "fileId": 11042,
+   "bpm": 150.18,
+   "src": "songname",
+   "title": "范范之輩",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1041",
+   "fileId": 11041,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "黑暗面",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1040",
+   "fileId": 11040,
+   "bpm": 173.45,
+   "src": "songname",
+   "title": "哲學家",
+   "artist": "范瑋琪"
+  },
+  {
+   "gn": "sdom1039",
+   "fileId": 11039,
+   "bpm": 150.0,
+   "src": "songname",
+   "title": "仨人",
+   "artist": "郭靜&張韶涵&范瑋琪"
+  },
+  {
+   "gn": "sdom1038",
+   "fileId": 11038,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "俄羅斯戀人",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1036",
+   "fileId": 11036,
+   "bpm": 99.0,
+   "src": "songname",
+   "title": "鬥琴",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1035",
+   "fileId": 11035,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "女神變奏曲",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1034",
+   "fileId": 11034,
+   "bpm": 131.0,
+   "src": "songname",
+   "title": "小貓咪圓舞曲",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1033",
+   "fileId": 11033,
+   "bpm": 190.0,
+   "src": "songname",
+   "title": "搗蛋天使",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1032",
+   "fileId": 11032,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "蛻變",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1031",
+   "fileId": 11031,
+   "bpm": 137.5,
+   "src": "songname",
+   "title": "漫步在雲端",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom1017",
+   "fileId": 11017,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "玩酷",
+   "artist": "潘瑋柏"
+  },
+  {
+   "gn": "sdom0997",
+   "fileId": 10997,
+   "bpm": 130.0,
+   "src": "kgn",
+   "title": "Everything Back But You",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom0987",
+   "fileId": 10987,
+   "bpm": 150.0,
+   "src": "songname",
+   "title": "窮開心",
+   "artist": "花兒樂團"
+  },
+  {
+   "gn": "sdom0982",
+   "fileId": 10982,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "日不落",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0975",
+   "fileId": 10975,
+   "bpm": 108.0,
+   "src": "songname",
+   "title": "危險天使",
+   "artist": "陳崴"
+  },
+  {
+   "gn": "sdom0974",
+   "fileId": 10974,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "Waiting for me",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom0973",
+   "fileId": 10973,
+   "bpm": 98.03,
+   "src": "songname",
+   "title": "完美比例",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom0972",
+   "fileId": 10972,
+   "bpm": 97.5,
+   "src": "songname",
+   "title": "第二個自己",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom0971",
+   "fileId": 10971,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "缺氧",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom0970",
+   "fileId": 10970,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "任意門",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom0969",
+   "fileId": 10969,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "愛的鼓動",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0968",
+   "fileId": 10968,
+   "bpm": 91.0,
+   "src": "songname",
+   "title": "你是我心內的一首歌",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0967",
+   "fileId": 10967,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "我們的歌",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0966",
+   "fileId": 10966,
+   "bpm": 139.99,
+   "src": "songname",
+   "title": "迦南美地",
+   "artist": "劉耕宏"
+  },
+  {
+   "gn": "sdom0965",
+   "fileId": 10965,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "甜蜜柏拉圖",
+   "artist": "劉耕宏"
+  },
+  {
+   "gn": "sdom0964",
+   "fileId": 10964,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "江南",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom0963",
+   "fileId": 10963,
+   "bpm": 130.06,
+   "src": "songname",
+   "title": "小手拉大手",
+   "artist": "梁靜茹"
+  },
+  {
+   "gn": "sdom0962",
+   "fileId": 10962,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "雪絨花",
+   "artist": "金莎"
+  },
+  {
+   "gn": "sdom0961",
+   "fileId": 10961,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "亞森羅蘋",
+   "artist": "金莎"
+  },
+  {
+   "gn": "sdom0960",
+   "fileId": 10960,
+   "bpm": 142.05,
+   "src": "songname",
+   "title": "簡簡單單",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom0959",
+   "fileId": 10959,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "豆漿油條",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom0958",
+   "fileId": 10958,
+   "bpm": 93.0,
+   "src": "songname",
+   "title": "就是愛",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0957",
+   "fileId": 10957,
+   "bpm": 102.0,
+   "src": "songname",
+   "title": "說愛你",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0956",
+   "fileId": 10956,
+   "bpm": 122.0,
+   "src": "songname",
+   "title": "愛情36計",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0945",
+   "fileId": 10945,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "進化論",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom0944",
+   "fileId": 10944,
+   "bpm": 143.01,
+   "src": "songname",
+   "title": "WU LA LA",
+   "artist": "金莎"
+  },
+  {
+   "gn": "sdom0943",
+   "fileId": 10943,
+   "bpm": 130.02,
+   "src": "songname",
+   "title": "Came Alone",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0942",
+   "fileId": 10942,
+   "bpm": 104.0,
+   "src": "songname",
+   "title": "Droid Mix",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0941",
+   "fileId": 10941,
+   "bpm": 139.0,
+   "src": "songname",
+   "title": "Destroyer Model",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0940",
+   "fileId": 10940,
+   "bpm": 140.08,
+   "src": "songname",
+   "title": "Ocean Dream 3",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0939",
+   "fileId": 10939,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "KEYWORDS",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0938",
+   "fileId": 10938,
+   "bpm": 138.0,
+   "src": "songname",
+   "title": "Without you",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0937",
+   "fileId": 10937,
+   "bpm": 140.01,
+   "src": "songname",
+   "title": "In Belize",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0936",
+   "fileId": 10936,
+   "bpm": 142.0,
+   "src": "songname",
+   "title": "Snowman",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0935",
+   "fileId": 10935,
+   "bpm": 158.0,
+   "src": "songname",
+   "title": "Dance Prince",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0934",
+   "fileId": 10934,
+   "bpm": 144.0,
+   "src": "songname",
+   "title": "Stars Above",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0933",
+   "fileId": 10933,
+   "bpm": 138.0,
+   "src": "songname",
+   "title": "Das Happy tune",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0932",
+   "fileId": 10932,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "Eurospeed",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0931",
+   "fileId": 10931,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "DJ KID",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0930",
+   "fileId": 10930,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "Happy DJ",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0929",
+   "fileId": 10929,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "Move your body",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0928",
+   "fileId": 10928,
+   "bpm": 135.01,
+   "src": "songname",
+   "title": "Look for love",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0927",
+   "fileId": 10927,
+   "bpm": 143.0,
+   "src": "songname",
+   "title": "Round House",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0926",
+   "fileId": 10926,
+   "bpm": 138.0,
+   "src": "songname",
+   "title": "Generic",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0925",
+   "fileId": 10925,
+   "bpm": 102.0,
+   "src": "songname",
+   "title": "愛在哪裏",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0924",
+   "fileId": 10924,
+   "bpm": 70.0,
+   "src": "songname",
+   "title": "不完整的旋律",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0923",
+   "fileId": 10923,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "Cockney Girl",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0922",
+   "fileId": 10922,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "落葉歸根",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0920",
+   "fileId": 10920,
+   "bpm": 84.0,
+   "src": "songname",
+   "title": "Never Let You Go",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom0919",
+   "fileId": 10919,
+   "bpm": 127.0,
+   "src": "songname",
+   "title": "幻想這愛",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom0918",
+   "fileId": 10918,
+   "bpm": 105.01,
+   "src": "songname",
+   "title": "零時差",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom0917",
+   "fileId": 10917,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "Friday Night",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom0916",
+   "fileId": 10916,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "Just One Dance",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom0915",
+   "fileId": 10915,
+   "bpm": 113.0,
+   "src": "songname",
+   "title": "我的王國",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom0914",
+   "fileId": 10914,
+   "bpm": 160.01,
+   "src": "songname",
+   "title": "I Miss You",
+   "artist": "柯有綸"
+  },
+  {
+   "gn": "sdom0913",
+   "fileId": 10913,
+   "bpm": 105.1,
+   "src": "songname",
+   "title": "welcome to my world",
+   "artist": "柯有綸"
+  },
+  {
+   "gn": "sdom0912",
+   "fileId": 10912,
+   "bpm": 86.85,
+   "src": "songname",
+   "title": "黃皮膚",
+   "artist": "柯有綸"
+  },
+  {
+   "gn": "sdom0911",
+   "fileId": 10911,
+   "bpm": 146.0,
+   "src": "songname",
+   "title": "天使戰將",
+   "artist": "劉耕宏"
+  },
+  {
+   "gn": "sdom0910",
+   "fileId": 10910,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "碎碎念",
+   "artist": "劉耕宏"
+  },
+  {
+   "gn": "sdom0909",
+   "fileId": 10909,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "壞朋友",
+   "artist": "劉耕宏"
+  },
+  {
+   "gn": "sdom0908",
+   "fileId": 10908,
+   "bpm": 164.0,
+   "src": "songname",
+   "title": "編號89757",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom0907",
+   "fileId": 10907,
+   "bpm": 83.01,
+   "src": "songname",
+   "title": "第二天堂",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom0906",
+   "fileId": 10906,
+   "bpm": 114.0,
+   "src": "songname",
+   "title": "無人島",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom0897",
+   "fileId": 10897,
+   "bpm": 135.0,
+   "src": "kgn",
+   "title": "Runaway",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom0896",
+   "fileId": 10896,
+   "bpm": 138.0,
+   "src": "songname",
+   "title": "離開地球表面",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0894",
+   "fileId": 10894,
+   "bpm": 104.5,
+   "src": "songname",
+   "title": "改變自己",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0837",
+   "fileId": 10837,
+   "bpm": 95.04,
+   "src": "kgn",
+   "title": "Watch the trap！Yes Sir",
+   "artist": "5566"
+  },
+  {
+   "gn": "sdom0836",
+   "fileId": 10836,
+   "bpm": 122.0,
+   "src": "songname",
+   "title": "看著我",
+   "artist": "易吉綱"
+  },
+  {
+   "gn": "sdom0835",
+   "fileId": 10835,
+   "bpm": 115.2,
+   "src": "songname",
+   "title": "將你遺忘",
+   "artist": "易吉綱"
+  },
+  {
+   "gn": "sdom0834",
+   "fileId": 10834,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "迷迭香",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0833",
+   "fileId": 10833,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "千里之外",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0832",
+   "fileId": 10832,
+   "bpm": 134.0,
+   "src": "songname",
+   "title": "一路向北",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0831",
+   "fileId": 10831,
+   "bpm": 93.0,
+   "src": "songname",
+   "title": "飄移",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0830",
+   "fileId": 10830,
+   "bpm": 145.98,
+   "src": "songname",
+   "title": "珊瑚海",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0829",
+   "fileId": 10829,
+   "bpm": 85.0,
+   "src": "songname",
+   "title": "浪漫手機",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0828",
+   "fileId": 10828,
+   "bpm": 95.01,
+   "src": "songname",
+   "title": "四面楚歌",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0827",
+   "fileId": 10827,
+   "bpm": 142.02,
+   "src": "songname",
+   "title": "七裏香",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0826",
+   "fileId": 10826,
+   "bpm": 146.01,
+   "src": "songname",
+   "title": "東風破",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0825",
+   "fileId": 10825,
+   "bpm": 89.91,
+   "src": "songname",
+   "title": "三年二班",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0824",
+   "fileId": 10824,
+   "bpm": 85.0,
+   "src": "songname",
+   "title": "爺爺泡的茶",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0823",
+   "fileId": 10823,
+   "bpm": 101.0,
+   "src": "songname",
+   "title": "雙節棍",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0822",
+   "fileId": 10822,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "威廉古堡",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0821",
+   "fileId": 10821,
+   "bpm": 152.0,
+   "src": "songname",
+   "title": "爸我回來了",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0820",
+   "fileId": 10820,
+   "bpm": 126.8,
+   "src": "songname",
+   "title": "愛在西元前",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0819",
+   "fileId": 10819,
+   "bpm": 129.96,
+   "src": "songname",
+   "title": "鬥牛",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0736",
+   "fileId": 10736,
+   "bpm": 102.0,
+   "src": "songname",
+   "title": "人來瘋",
+   "artist": "溫嵐"
+  },
+  {
+   "gn": "sdom0735",
+   "fileId": 10735,
+   "bpm": 124.93,
+   "src": "songname",
+   "title": "一代公主",
+   "artist": "施文彬"
+  },
+  {
+   "gn": "sdom0734",
+   "fileId": 10734,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "你老母卡好",
+   "artist": "康晉榮"
+  },
+  {
+   "gn": "sdom0733",
+   "fileId": 10733,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "快樂鳥日子",
+   "artist": "康晉榮"
+  },
+  {
+   "gn": "sdom0732",
+   "fileId": 10732,
+   "bpm": 112.92,
+   "src": "songname",
+   "title": "恁姐仔住市內",
+   "artist": "康晉榮"
+  },
+  {
+   "gn": "sdom0731",
+   "fileId": 10731,
+   "bpm": 123.5,
+   "src": "songname",
+   "title": "1234",
+   "artist": "強辯"
+  },
+  {
+   "gn": "sdom0730",
+   "fileId": 10730,
+   "bpm": 132.04,
+   "src": "songname",
+   "title": "脫掉",
+   "artist": "杜德偉"
+  },
+  {
+   "gn": "sdom0729",
+   "fileId": 10729,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "裙擺搖搖",
+   "artist": "李心潔"
+  },
+  {
+   "gn": "sdom0728",
+   "fileId": 10728,
+   "bpm": 149.62,
+   "src": "songname",
+   "title": "自由",
+   "artist": "李心潔"
+  },
+  {
+   "gn": "sdom0727",
+   "fileId": 10727,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "老子說",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom0726",
+   "fileId": 10726,
+   "bpm": 146.0,
+   "src": "songname",
+   "title": "天使",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0725",
+   "fileId": 10725,
+   "bpm": 80.0,
+   "src": "songname",
+   "title": "最重要的小事",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0724",
+   "fileId": 10724,
+   "bpm": 164.0,
+   "src": "songname",
+   "title": "為愛而生",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0723",
+   "fileId": 10723,
+   "bpm": 98.0,
+   "src": "songname",
+   "title": "寵上天",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0722",
+   "fileId": 10722,
+   "bpm": 145.23,
+   "src": "songname",
+   "title": "瘋狂世界",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0721",
+   "fileId": 10721,
+   "bpm": 174.26,
+   "src": "songname",
+   "title": "軋車",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0720",
+   "fileId": 10720,
+   "bpm": 149.0,
+   "src": "songname",
+   "title": "我又初戀了",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0719",
+   "fileId": 10719,
+   "bpm": 150.0,
+   "src": "songname",
+   "title": "快樂很偉大",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0718",
+   "fileId": 10718,
+   "bpm": 130.04,
+   "src": "kgn",
+   "title": "Shabu Shabu",
+   "artist": "2moro"
+  },
+  {
+   "gn": "sdom0717",
+   "fileId": 10717,
+   "bpm": 107.0,
+   "src": "songname",
+   "title": "我愛台妹",
+   "artist": "MC HotDog"
+  },
+  {
+   "gn": "sdom0703",
+   "fileId": 10703,
+   "bpm": 113.0,
+   "src": "songname",
+   "title": "My Kingdom",
+   "artist": "吳建豪"
+  },
+  {
+   "gn": "sdom0695",
+   "fileId": 10695,
+   "bpm": 142.0,
+   "src": "songname",
+   "title": "暴風Remix",
+   "artist": "久游"
+  },
+  {
+   "gn": "sdom0665",
+   "fileId": 10665,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "完美的互動",
+   "artist": "王力宏&Rain"
+  },
+  {
+   "gn": "sdom0664",
+   "fileId": 10664,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "要定你",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom0663",
+   "fileId": 10663,
+   "bpm": 135.0,
+   "src": "songname",
+   "title": "招牌動作",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0662",
+   "fileId": 10662,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "看我72變",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0661",
+   "fileId": 10661,
+   "bpm": 124.0,
+   "src": "songname",
+   "title": "被風吹過的夏天",
+   "artist": "林俊傑&金莎"
+  },
+  {
+   "gn": "sdom0660",
+   "fileId": 10660,
+   "bpm": 139.93,
+   "src": "songname",
+   "title": "親親",
+   "artist": "梁靜茹"
+  },
+  {
+   "gn": "sdom0659",
+   "fileId": 10659,
+   "bpm": 98.0,
+   "src": "songname",
+   "title": "戀愛達人",
+   "artist": "羅志祥&小S"
+  },
+  {
+   "gn": "sdom0658",
+   "fileId": 10658,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "垃圾桶",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom0657",
+   "fileId": 10657,
+   "bpm": 125.01,
+   "src": "songname",
+   "title": "肝功能衰竭",
+   "artist": "旺福"
+  },
+  {
+   "gn": "sdom0656",
+   "fileId": 10656,
+   "bpm": 165.0,
+   "src": "songname",
+   "title": "水蜜桃輓歌",
+   "artist": "旺福"
+  },
+  {
+   "gn": "sdom0655",
+   "fileId": 10655,
+   "bpm": 119.98,
+   "src": "songname",
+   "title": "迷你裙",
+   "artist": "旺福"
+  },
+  {
+   "gn": "sdom0654",
+   "fileId": 10654,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "搬家",
+   "artist": "梁詠琪"
+  },
+  {
+   "gn": "sdom0653",
+   "fileId": 10653,
+   "bpm": 96.0,
+   "src": "songname",
+   "title": "在每一秒裏都想見到你",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0652",
+   "fileId": 10652,
+   "bpm": 123.95,
+   "src": "songname",
+   "title": "整晚的音樂",
+   "artist": "庾澄慶"
+  },
+  {
+   "gn": "sdom0651",
+   "fileId": 10651,
+   "bpm": 100.68,
+   "src": "songname",
+   "title": "讓我一次愛個夠",
+   "artist": "庾澄慶"
+  },
+  {
+   "gn": "sdom0650",
+   "fileId": 10650,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "Shining Kiss",
+   "artist": "黑澀會美眉"
+  },
+  {
+   "gn": "sdom0649",
+   "fileId": 10649,
+   "bpm": 107.96,
+   "src": "songname",
+   "title": "TIC TAC TOE",
+   "artist": "徐婕兒"
+  },
+  {
+   "gn": "sdom0648",
+   "fileId": 10648,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "寓言",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0647",
+   "fileId": 10647,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "Mama Mama",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0646",
+   "fileId": 10646,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "喜歡你沒有道理",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0606",
+   "fileId": 10606,
+   "bpm": 160.01,
+   "src": "songname",
+   "title": "乖乖",
+   "artist": "櫻桃幫"
+  },
+  {
+   "gn": "sdom0605",
+   "fileId": 10605,
+   "bpm": 119.0,
+   "src": "songname",
+   "title": "I wanna rock",
+   "artist": "櫻桃幫"
+  },
+  {
+   "gn": "sdom0604",
+   "fileId": 10604,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "再見我的愛",
+   "artist": "櫻桃幫"
+  },
+  {
+   "gn": "sdom0603",
+   "fileId": 10603,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "清新早晨",
+   "artist": "櫻桃幫"
+  },
+  {
+   "gn": "sdom0602",
+   "fileId": 10602,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "Shake it baby",
+   "artist": "黑澀會美眉"
+  },
+  {
+   "gn": "sdom0601",
+   "fileId": 10601,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "潘朵拉",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0600",
+   "fileId": 10600,
+   "bpm": 84.92,
+   "src": "songname",
+   "title": "歐若拉",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0599",
+   "fileId": 10599,
+   "bpm": 106.0,
+   "src": "songname",
+   "title": "尋寶",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0598",
+   "fileId": 10598,
+   "bpm": 170.0,
+   "src": "songname",
+   "title": "小丑世界",
+   "artist": "櫻桃幫"
+  },
+  {
+   "gn": "sdom0597",
+   "fileId": 10597,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "兩隻戀人",
+   "artist": "曹格"
+  },
+  {
+   "gn": "sdom0573",
+   "fileId": 10573,
+   "bpm": 119.0,
+   "src": "songname",
+   "title": "遇上愛",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom0572",
+   "fileId": 10572,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "睜一隻眼閉一隻眼",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0571",
+   "fileId": 10571,
+   "bpm": 122.0,
+   "src": "songname",
+   "title": "甜心咒",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom0570",
+   "fileId": 10570,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "慶祝",
+   "artist": "楊丞琳"
+  },
+  {
+   "gn": "sdom0569",
+   "fileId": 10569,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "夢不落帝國",
+   "artist": "蔡旻佑"
+  },
+  {
+   "gn": "sdom0568",
+   "fileId": 10568,
+   "bpm": 126.0,
+   "src": "songname",
+   "title": "靜靜的",
+   "artist": "庾澄慶"
+  },
+  {
+   "gn": "sdom0567",
+   "fileId": 10567,
+   "bpm": 85.0,
+   "src": "songname",
+   "title": "愛在85度C",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom0566",
+   "fileId": 10566,
+   "bpm": 96.0,
+   "src": "songname",
+   "title": "Hip Hop Tonight",
+   "artist": "李玟"
+  },
+  {
+   "gn": "sdom0489",
+   "fileId": 10489,
+   "bpm": 112.97,
+   "src": "songname",
+   "title": "Shut Up",
+   "artist": "The Black Eyed Peas"
+  },
+  {
+   "gn": "sdom0475",
+   "fileId": 10475,
+   "bpm": 164.0,
+   "src": "songname",
+   "title": "girlfriend",
+   "artist": "Avril Lavigne"
+  },
+  {
+   "gn": "sdom0472",
+   "fileId": 10472,
+   "bpm": 124.0,
+   "src": "kgn",
+   "title": "My Humps",
+   "artist": "The Black Eyed Peas"
+  },
+  {
+   "gn": "sdom0449",
+   "fileId": 10449,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "梁山伯與朱麗葉",
+   "artist": "卓文萱"
+  },
+  {
+   "gn": "sdom0448",
+   "fileId": 10448,
+   "bpm": 100.89,
+   "src": "songname",
+   "title": "本草綱目",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0443",
+   "fileId": 10443,
+   "bpm": 115.0,
+   "src": "songname",
+   "title": "愛上愛的味道",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0442",
+   "fileId": 10442,
+   "bpm": 125.96,
+   "src": "songname",
+   "title": "失憶",
+   "artist": "梁靜茹"
+  },
+  {
+   "gn": "sdom0438",
+   "fileId": 10438,
+   "bpm": 96.0,
+   "src": "songname",
+   "title": "延長比賽",
+   "artist": "TANK"
+  },
+  {
+   "gn": "sdom0413",
+   "fileId": 10413,
+   "bpm": 81.0,
+   "src": "songname",
+   "title": "將軍令",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom0407",
+   "fileId": 10407,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "我有我的young",
+   "artist": "飛輪海"
+  },
+  {
+   "gn": "sdom0405",
+   "fileId": 10405,
+   "bpm": 100.0,
+   "src": "official",
+   "title": "hips don't lie",
+   "artist": "Shakira"
+  },
+  {
+   "gn": "sdom0404",
+   "fileId": 10404,
+   "bpm": 140.0,
+   "src": "official",
+   "title": "animal city",
+   "artist": "shakira"
+  },
+  {
+   "gn": "sdom0371",
+   "fileId": 10371,
+   "bpm": 106.02,
+   "src": "songname",
+   "title": "玩偶",
+   "artist": "璽恩"
+  },
+  {
+   "gn": "sdom0370",
+   "fileId": 10370,
+   "bpm": 80.0,
+   "src": "songname",
+   "title": "棋逢敵手",
+   "artist": "璽恩"
+  },
+  {
+   "gn": "sdom0369",
+   "fileId": 10369,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "時尚工業",
+   "artist": "璽恩"
+  },
+  {
+   "gn": "sdom0368",
+   "fileId": 10368,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "鴛鴦大盜",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0367",
+   "fileId": 10367,
+   "bpm": 99.0,
+   "src": "songname",
+   "title": "澎湃",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0366",
+   "fileId": 10366,
+   "bpm": 103.0,
+   "src": "songname",
+   "title": "我不在乎",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0365",
+   "fileId": 10365,
+   "bpm": 99.0,
+   "src": "songname",
+   "title": "異想天開",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0364",
+   "fileId": 10364,
+   "bpm": 93.0,
+   "src": "songname",
+   "title": "多管閒事",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0363",
+   "fileId": 10363,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "跳一跳",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0362",
+   "fileId": 10362,
+   "bpm": 133.0,
+   "src": "songname",
+   "title": "手帕交",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0361",
+   "fileId": 10361,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "證明你的愛",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0360",
+   "fileId": 10360,
+   "bpm": 105.0,
+   "src": "songname",
+   "title": "藉口",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0359",
+   "fileId": 10359,
+   "bpm": 99.0,
+   "src": "songname",
+   "title": "要讓你知道",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0358",
+   "fileId": 10358,
+   "bpm": 109.0,
+   "src": "songname",
+   "title": "嗚啦啦",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0357",
+   "fileId": 10357,
+   "bpm": 94.0,
+   "src": "songname",
+   "title": "未來式",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0352",
+   "fileId": 10352,
+   "bpm": 148.0,
+   "src": "kgn",
+   "title": "說一聲再見",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0351",
+   "fileId": 10351,
+   "bpm": 145.0,
+   "src": "kgn",
+   "title": "彩鈴王",
+   "artist": "9U"
+  },
+  {
+   "gn": "sdom0350",
+   "fileId": 10350,
+   "bpm": 143.0,
+   "src": "kgn",
+   "title": "咚咚咚痛快",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0329",
+   "fileId": 10329,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "巴不得",
+   "artist": "泳兒"
+  },
+  {
+   "gn": "sdom0328",
+   "fileId": 10328,
+   "bpm": 104.0,
+   "src": "songname",
+   "title": "感應",
+   "artist": "泳兒"
+  },
+  {
+   "gn": "sdom0327",
+   "fileId": 10327,
+   "bpm": 82.0,
+   "src": "songname",
+   "title": "我的驕傲",
+   "artist": "容祖兒"
+  },
+  {
+   "gn": "sdom0326",
+   "fileId": 10326,
+   "bpm": 130.99,
+   "src": "songname",
+   "title": "2001太空漫遊",
+   "artist": "陳奕迅"
+  },
+  {
+   "gn": "sdom0323",
+   "fileId": 10323,
+   "bpm": 132.0,
+   "src": "songname",
+   "title": "感覺蘇豪",
+   "artist": "吳浩康"
+  },
+  {
+   "gn": "sdom0322",
+   "fileId": 10322,
+   "bpm": 160.03,
+   "src": "songname",
+   "title": "打得火熱",
+   "artist": "陳奕迅"
+  },
+  {
+   "gn": "sdom0320",
+   "fileId": 10320,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "八十塊環遊世界",
+   "artist": "Twins"
+  },
+  {
+   "gn": "sdom0319",
+   "fileId": 10319,
+   "bpm": 100.02,
+   "src": "songname",
+   "title": "新奇古巴",
+   "artist": "証聲"
+  },
+  {
+   "gn": "sdom0318",
+   "fileId": 10318,
+   "bpm": 97.5,
+   "src": "songname",
+   "title": "狂熱",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0317",
+   "fileId": 10317,
+   "bpm": 186.0,
+   "src": "songname",
+   "title": "喵的咧！",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0316",
+   "fileId": 10316,
+   "bpm": 136.0,
+   "src": "songname",
+   "title": "王牌大騙子",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0315",
+   "fileId": 10315,
+   "bpm": 108.0,
+   "src": "songname",
+   "title": "你是我的唯一",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0314",
+   "fileId": 10314,
+   "bpm": 124.7,
+   "src": "songname",
+   "title": "絕妙好戲",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0311",
+   "fileId": 10311,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "音浪",
+   "artist": "黃立行"
+  },
+  {
+   "gn": "sdom0304",
+   "fileId": 10304,
+   "bpm": 94.0,
+   "src": "songname",
+   "title": "One kiss from you",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom0290",
+   "fileId": 10290,
+   "bpm": 112.0,
+   "src": "songname",
+   "title": "戀著多喜歡",
+   "artist": "梁靜茹"
+  },
+  {
+   "gn": "sdom0286",
+   "fileId": 10286,
+   "bpm": 93.0,
+   "src": "songname",
+   "title": "聽媽媽的話",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0285",
+   "fileId": 10285,
+   "bpm": 123.0,
+   "src": "songname",
+   "title": "阿拉伯市場",
+   "artist": "鄭希怡"
+  },
+  {
+   "gn": "sdom0283",
+   "fileId": 10283,
+   "bpm": 69.0,
+   "src": "songname",
+   "title": "放生",
+   "artist": "范逸臣"
+  },
+  {
+   "gn": "sdom0280",
+   "fileId": 10280,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "三對三",
+   "artist": "胡彥斌"
+  },
+  {
+   "gn": "sdom0279",
+   "fileId": 10279,
+   "bpm": 98.0,
+   "src": "kgn",
+   "title": "月半灣",
+   "artist": "陳坤"
+  },
+  {
+   "gn": "sdom0273",
+   "fileId": 10273,
+   "bpm": 130.0,
+   "src": "manual",
+   "title": "House",
+   "artist": "9YOU"
+  },
+  {
+   "gn": "sdom0272",
+   "fileId": 10272,
+   "bpm": 126.0,
+   "src": "songname",
+   "title": "第四十號交響曲",
+   "artist": "SOGA"
+  },
+  {
+   "gn": "sdom0271",
+   "fileId": 10271,
+   "bpm": 116.0,
+   "src": "manual",
+   "title": "Pm",
+   "artist": "9YOU"
+  },
+  {
+   "gn": "sdom0270",
+   "fileId": 10270,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "光影",
+   "artist": "Fan"
+  },
+  {
+   "gn": "sdom0269",
+   "fileId": 10269,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "潘多拉之盒",
+   "artist": "Fan"
+  },
+  {
+   "gn": "sdom0268",
+   "fileId": 10268,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "加勒比男孩",
+   "artist": "Fan"
+  },
+  {
+   "gn": "sdom0267",
+   "fileId": 10267,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "淩晨飛行",
+   "artist": "donovan lee"
+  },
+  {
+   "gn": "sdom0266",
+   "fileId": 10266,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "卡通對白",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0265",
+   "fileId": 10265,
+   "bpm": 99.87,
+   "src": "songname",
+   "title": "婚禮進行曲",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0264",
+   "fileId": 10264,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "飛翔",
+   "artist": "PM.TINA"
+  },
+  {
+   "gn": "sdom0263",
+   "fileId": 10263,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "緩慢",
+   "artist": "B6"
+  },
+  {
+   "gn": "sdom0262",
+   "fileId": 10262,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "過往",
+   "artist": "B6"
+  },
+  {
+   "gn": "sdom0261",
+   "fileId": 10261,
+   "bpm": 150.01,
+   "src": "songname",
+   "title": "光速快感",
+   "artist": "LQB"
+  },
+  {
+   "gn": "sdom0260",
+   "fileId": 10260,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "時間引力",
+   "artist": "donovan lee"
+  },
+  {
+   "gn": "sdom0259",
+   "fileId": 10259,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "快樂時光",
+   "artist": "PM"
+  },
+  {
+   "gn": "sdom0250",
+   "fileId": 10250,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "酒後的心聲",
+   "artist": "庾澄慶"
+  },
+  {
+   "gn": "sdom0244",
+   "fileId": 10244,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "花火",
+   "artist": "PM"
+  },
+  {
+   "gn": "sdom0243",
+   "fileId": 10243,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "直到永遠",
+   "artist": "SO GA"
+  },
+  {
+   "gn": "sdom0242",
+   "fileId": 10242,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "淺灘",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0241",
+   "fileId": 10241,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "懶惰蟲",
+   "artist": "puremorning"
+  },
+  {
+   "gn": "sdom0240",
+   "fileId": 10240,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "花黃瘦-Remix",
+   "artist": "puremorning"
+  },
+  {
+   "gn": "sdom0239",
+   "fileId": 10239,
+   "bpm": 120.0,
+   "src": "official",
+   "title": "la la la",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0238",
+   "fileId": 10238,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "新手練習曲",
+   "artist": "danovan lee"
+  },
+  {
+   "gn": "sdom0237",
+   "fileId": 10237,
+   "bpm": 126.0,
+   "src": "songname",
+   "title": "一個人的沙發",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0236",
+   "fileId": 10236,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "藍色女孩",
+   "artist": "PM"
+  },
+  {
+   "gn": "sdom0235",
+   "fileId": 10235,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "六個太陽",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0234",
+   "fileId": 10234,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "花好月圓",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0233",
+   "fileId": 10233,
+   "bpm": 155.0,
+   "src": "official",
+   "title": "1812",
+   "artist": "P.M"
+  },
+  {
+   "gn": "sdom0232",
+   "fileId": 10232,
+   "bpm": 114.0,
+   "src": "songname",
+   "title": "拉德斯基進行曲",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0231",
+   "fileId": 10231,
+   "bpm": 137.0,
+   "src": "official",
+   "title": "L2",
+   "artist": "PM"
+  },
+  {
+   "gn": "sdom0230",
+   "fileId": 10230,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "新大陸",
+   "artist": "donovan lee"
+  },
+  {
+   "gn": "sdom0226",
+   "fileId": 10226,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "Baby是我",
+   "artist": "李玖哲"
+  },
+  {
+   "gn": "sdom0225",
+   "fileId": 10225,
+   "bpm": 110.0,
+   "src": "songname",
+   "title": "Scandal",
+   "artist": "安七炫&吳建豪"
+  },
+  {
+   "gn": "sdom0218",
+   "fileId": 10218,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "你的香氣",
+   "artist": "Claire"
+  },
+  {
+   "gn": "sdom0217",
+   "fileId": 10217,
+   "bpm": 95.0,
+   "src": "songname",
+   "title": "都怪我",
+   "artist": "李玖哲"
+  },
+  {
+   "gn": "sdom0211",
+   "fileId": 10211,
+   "bpm": 122.0,
+   "src": "songname",
+   "title": "Autumn Goodbye",
+   "artist": "Britney Spears"
+  },
+  {
+   "gn": "sdom0209",
+   "fileId": 10209,
+   "bpm": 66.5,
+   "src": "songname",
+   "title": "花田錯",
+   "artist": "王力宏"
+  },
+  {
+   "gn": "sdom0204",
+   "fileId": 10204,
+   "bpm": 152.0,
+   "src": "songname",
+   "title": "三國戀",
+   "artist": "TANK"
+  },
+  {
+   "gn": "sdom0203",
+   "fileId": 10203,
+   "bpm": 125.0,
+   "src": "kgn",
+   "title": "比多更多",
+   "artist": "沙寶亮"
+  },
+  {
+   "gn": "sdom0202",
+   "fileId": 10202,
+   "bpm": 105.0,
+   "src": "kgn",
+   "title": "我的排行榜",
+   "artist": "華少翌"
+  },
+  {
+   "gn": "sdom0200",
+   "fileId": 10200,
+   "bpm": 70.0,
+   "src": "songname",
+   "title": "不可思議",
+   "artist": "金莎"
+  },
+  {
+   "gn": "sdom0198",
+   "fileId": 10198,
+   "bpm": 96.0,
+   "src": "kgn",
+   "title": "女朋友",
+   "artist": "twins"
+  },
+  {
+   "gn": "sdom0197",
+   "fileId": 10197,
+   "bpm": 120.0,
+   "src": "kgn",
+   "title": "這麼晚還沒睡",
+   "artist": "胡彥斌"
+  },
+  {
+   "gn": "sdom0193",
+   "fileId": 10193,
+   "bpm": 88.0,
+   "src": "songname",
+   "title": "生命要繼續",
+   "artist": "黃崇旭"
+  },
+  {
+   "gn": "sdom0188",
+   "fileId": 10188,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "萍聚",
+   "artist": "蕭淑慎"
+  },
+  {
+   "gn": "sdom0187",
+   "fileId": 10187,
+   "bpm": 133.0,
+   "src": "songname",
+   "title": "童話",
+   "artist": "光良"
+  },
+  {
+   "gn": "sdom0185",
+   "fileId": 10185,
+   "bpm": 105.0,
+   "src": "songname",
+   "title": "永不退縮",
+   "artist": "任賢齊"
+  },
+  {
+   "gn": "sdom0182",
+   "fileId": 10182,
+   "bpm": 143.01,
+   "src": "kgn",
+   "title": "toxic",
+   "artist": "britney"
+  },
+  {
+   "gn": "sdom0179",
+   "fileId": 10179,
+   "bpm": 120.0,
+   "src": "songname",
+   "title": "馬德里不思議",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0178",
+   "fileId": 10178,
+   "bpm": 92.0,
+   "src": "songname",
+   "title": "給天使看的戲",
+   "artist": "謝霆鋒"
+  },
+  {
+   "gn": "sdom0172",
+   "fileId": 10172,
+   "bpm": 197.0,
+   "src": "songname",
+   "title": "戀愛ING",
+   "artist": "五月天"
+  },
+  {
+   "gn": "sdom0171",
+   "fileId": 10171,
+   "bpm": 89.0,
+   "src": "kgn",
+   "title": "我想更懂你",
+   "artist": "潘瑋伯"
+  },
+  {
+   "gn": "sdom0170",
+   "fileId": 10170,
+   "bpm": 90.0,
+   "src": "kgn",
+   "title": "反轉地球",
+   "artist": "潘瑋柏"
+  },
+  {
+   "gn": "sdom0169",
+   "fileId": 10169,
+   "bpm": 100.0,
+   "src": "kgn",
+   "title": "戴上我的愛",
+   "artist": "潘瑋柏&王珞丹"
+  },
+  {
+   "gn": "sdom0167",
+   "fileId": 10167,
+   "bpm": 130.0,
+   "src": "official",
+   "title": "do somethin",
+   "artist": "britney spears"
+  },
+  {
+   "gn": "sdom0157",
+   "fileId": 10157,
+   "bpm": 89.0,
+   "src": "kgn",
+   "title": "一夜情人",
+   "artist": "JTL"
+  },
+  {
+   "gn": "sdom0154",
+   "fileId": 10154,
+   "bpm": 90.02,
+   "src": "kgn",
+   "title": "解夏",
+   "artist": "華少翌"
+  },
+  {
+   "gn": "sdom0148",
+   "fileId": 10148,
+   "bpm": 148.0,
+   "src": "songname",
+   "title": "香水百合",
+   "artist": "張韶涵"
+  },
+  {
+   "gn": "sdom0146",
+   "fileId": 10146,
+   "bpm": 140.0,
+   "src": "songname",
+   "title": "月光光",
+   "artist": "關智斌"
+  },
+  {
+   "gn": "sdom0145",
+   "fileId": 10145,
+   "bpm": 123.1,
+   "src": "songname",
+   "title": "爆米花的味道",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom0140",
+   "fileId": 10140,
+   "bpm": 90.0,
+   "src": "kgn",
+   "title": "睫毛彎彎",
+   "artist": "王心凌"
+  },
+  {
+   "gn": "sdom0138",
+   "fileId": 10138,
+   "bpm": 103.0,
+   "src": "songname",
+   "title": "不死之身",
+   "artist": "林俊傑"
+  },
+  {
+   "gn": "sdom0137",
+   "fileId": 10137,
+   "bpm": 160.0,
+   "src": "songname",
+   "title": "水煮魚",
+   "artist": "王蓉"
+  },
+  {
+   "gn": "sdom0133",
+   "fileId": 10133,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "星光遊樂園",
+   "artist": "Twins"
+  },
+  {
+   "gn": "sdom0131",
+   "fileId": 10131,
+   "bpm": 143.9,
+   "src": "kgn",
+   "title": "SHE BANGS",
+   "artist": "瑞奇.馬丁"
+  },
+  {
+   "gn": "sdom0128",
+   "fileId": 10128,
+   "bpm": 105.0,
+   "src": "songname",
+   "title": "let's get it started",
+   "artist": "black eyed peas"
+  },
+  {
+   "gn": "sdom0127",
+   "fileId": 10127,
+   "bpm": 94.1,
+   "src": "kgn",
+   "title": "where is the love",
+   "artist": "black eyed peas"
+  },
+  {
+   "gn": "sdom0125",
+   "fileId": 10125,
+   "bpm": 103.0,
+   "src": "kgn",
+   "title": "愛情輪廓",
+   "artist": "許慧欣"
+  },
+  {
+   "gn": "sdom0114",
+   "fileId": 10114,
+   "bpm": 127.5,
+   "src": "songname",
+   "title": "無敵超人",
+   "artist": "Twins"
+  },
+  {
+   "gn": "sdom0113",
+   "fileId": 10113,
+   "bpm": 130.0,
+   "src": "songname",
+   "title": "願望",
+   "artist": "胡彥斌"
+  },
+  {
+   "gn": "sdom0109",
+   "fileId": 10109,
+   "bpm": 108.0,
+   "src": "songname",
+   "title": "皇帝",
+   "artist": "胡彥斌"
+  },
+  {
+   "gn": "sdom0100",
+   "fileId": 10100,
+   "bpm": 128.0,
+   "src": "songname",
+   "title": "桃花朵朵開",
+   "artist": "阿牛"
+  },
+  {
+   "gn": "sdom0093",
+   "fileId": 10093,
+   "bpm": 98.0,
+   "src": "songname",
+   "title": "霍元甲",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0092",
+   "fileId": 10092,
+   "bpm": 75.15,
+   "src": "songname",
+   "title": "天馬行空",
+   "artist": "林子良"
+  },
+  {
+   "gn": "sdom0086",
+   "fileId": 10086,
+   "bpm": 118.0,
+   "src": "songname",
+   "title": "一時無倆",
+   "artist": "Twins"
+  },
+  {
+   "gn": "sdom0085",
+   "fileId": 10085,
+   "bpm": 99.0,
+   "src": "songname",
+   "title": "星光",
+   "artist": "S.H.E"
+  },
+  {
+   "gn": "sdom0084",
+   "fileId": 10084,
+   "bpm": 93.0,
+   "src": "songname",
+   "title": "不想長大",
+   "artist": "S.H.E"
+  },
+  {
+   "gn": "sdom0076",
+   "fileId": 10076,
+   "bpm": 90.0,
+   "src": "songname",
+   "title": "I never told you",
+   "artist": "陳冠希"
+  },
+  {
+   "gn": "sdom0075",
+   "fileId": 10075,
+   "bpm": 131.0,
+   "src": "kgn",
+   "title": "嗆司嗆司",
+   "artist": "羅志祥"
+  },
+  {
+   "gn": "sdom0071",
+   "fileId": 10071,
+   "bpm": 128.9,
+   "src": "official",
+   "title": "get the party",
+   "artist": "Pink"
+  },
+  {
+   "gn": "sdom0069",
+   "fileId": 10069,
+   "bpm": 81.0,
+   "src": "kgn",
+   "title": "We'll Rock You",
+   "artist": "SDO"
+  },
+  {
+   "gn": "sdom0066",
+   "fileId": 10066,
+   "bpm": 100.0,
+   "src": "songname",
+   "title": "大舌頭",
+   "artist": "吳克群"
+  },
+  {
+   "gn": "sdom0056",
+   "fileId": 10056,
+   "bpm": 143.0,
+   "src": "kgn",
+   "title": "嘻唰唰",
+   "artist": "花兒樂隊"
+  },
+  {
+   "gn": "sdom0055",
+   "fileId": 10055,
+   "bpm": 101.0,
+   "src": "songname",
+   "title": "姐妹",
+   "artist": "張惠妹"
+  },
+  {
+   "gn": "sdom0048",
+   "fileId": 10048,
+   "bpm": 116.0,
+   "src": "songname",
+   "title": "第五街的誘惑",
+   "artist": "李玖哲"
+  },
+  {
+   "gn": "sdom0046",
+   "fileId": 10046,
+   "bpm": 142.0,
+   "src": "kgn",
+   "title": "God is a girl",
+   "artist": "9you"
+  },
+  {
+   "gn": "sdom0041",
+   "fileId": 10041,
+   "bpm": 100.0,
+   "src": "kgn",
+   "title": "心中的HIP-HOP",
+   "artist": "新舞器"
+  },
+  {
+   "gn": "sdom0036",
+   "fileId": 10036,
+   "bpm": 106.0,
+   "src": "kgn",
+   "title": "神話",
+   "artist": "5566"
+  },
+  {
+   "gn": "sdom0027",
+   "fileId": 10027,
+   "bpm": 174.0,
+   "src": "songname",
+   "title": "夜曲",
+   "artist": "周傑倫"
+  },
+  {
+   "gn": "sdom0921",
+   "fileId": 10026,
+   "bpm": 127.0,
+   "src": "kgn",
+   "title": "使者",
+   "artist": "N.R.G"
+  },
+  {
+   "gn": "sdom0010",
+   "fileId": 10010,
+   "bpm": 95.0,
+   "src": "kgn",
+   "title": "不要忘了我",
+   "artist": "潘瑋柏"
+  },
+  {
+   "gn": "sdom0006",
+   "fileId": 10006,
+   "bpm": 80.0,
+   "src": "songname",
+   "title": "不得不愛",
+   "artist": "潘瑋柏"
+  },
+  {
+   "gn": "sdom0005",
+   "fileId": 10005,
+   "bpm": 125.0,
+   "src": "songname",
+   "title": "快樂崇拜",
+   "artist": "潘瑋柏&張韶涵"
+  },
+  {
+   "gn": "sdom0004",
+   "fileId": 10004,
+   "bpm": 130.5,
+   "src": "songname",
+   "title": "寵物男孩",
+   "artist": "COCO"
+  },
+  {
+   "gn": "sdom0002",
+   "fileId": 10002,
+   "bpm": 93.0,
+   "src": "songname",
+   "title": "算你狠",
+   "artist": "陳小春"
+  },
+  {
+   "gn": "sdom0001",
+   "fileId": 10001,
+   "bpm": 139.0,
+   "src": "songname",
+   "title": "野蠻遊戲",
+   "artist": "蔡依林"
+  },
+  {
+   "gn": "sdom2",
+   "fileId": 2,
+   "bpm": 120.0,
+   "src": "kgn",
+   "title": "新手教學",
+   "artist": "DONOVAN"
+  },
+  {
+   "gn": "sdom1",
+   "fileId": 1,
+   "bpm": 120.0,
+   "src": "kgn",
+   "title": "新手教學",
+   "artist": "DONOVAN"
+  },
+  {
+   "gn": "sdom0",
+   "fileId": 0,
+   "bpm": 120.0,
+   "src": "kgn",
+   "title": "新手教學",
+   "artist": "DONOVAN"
+  },
+  {
+   "gn": "sdom3",
+   "fileId": 0,
+   "bpm": 120.0,
+   "src": "kgn",
+   "title": "新手教學",
+   "artist": "DONOVAN"
+  }
+ ]
+}
