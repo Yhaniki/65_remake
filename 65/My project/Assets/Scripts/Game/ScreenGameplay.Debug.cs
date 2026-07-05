@@ -167,6 +167,8 @@ namespace Sdo.Game
                 EftEffect.PowerCrossAngle = GUILayout.HorizontalSlider(EftEffect.PowerCrossAngle, 0f, 90f);
                 GUILayout.Label($"交叉帶粗細 cross-thick: {EftEffect.PowerCrossThick:F2} (slot3 高度; 低=細線, 高=粗塊。roster 顯示原本太粗成塊)");
                 EftEffect.PowerCrossThick = GUILayout.HorizontalSlider(EftEffect.PowerCrossThick, 0.05f, 1f);
+                GUILayout.Label($"電流貼圖平鋪 ribbon tile: {EftEffect.PowerRibbonTile:F1} (RAI閃電沿電流帶重複幾次; 越大=越多條交叉閃電, 1=拉伸成直線)");
+                EftEffect.PowerRibbonTile = GUILayout.HorizontalSlider(EftEffect.PowerRibbonTile, 0.2f, 8f);
                 GUILayout.Label($"電流帶密度 ribbon density: {EftEffect.PowerRibbonLife:F0} tick (slot4壽命=電流帶生長時間; 越大=同時越多條「會動的」帶疊加; 20=忠實)");
                 EftEffect.PowerRibbonLife = GUILayout.HorizontalSlider(EftEffect.PowerRibbonLife, 16f, 64f);
                 if (GUILayout.Button("▶ dump 集氣條粒子 (Console)"))

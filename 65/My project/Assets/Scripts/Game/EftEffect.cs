@@ -125,7 +125,7 @@ namespace Sdo.Game
         // 到一條). To actually draw the OFFICIAL's two CROSSING ribbons we face slot3 at the camera like slot2 (0,90,·)
         // but ROLL it by this angle in the screen plane = a visible diagonal bolt crossing the horizontal slot2. This is
         // a deliberate deviation from the edge-on data (which can't show in a flat 15px viewport). 0 = flat like slot2.
-        public static float PowerCrossAngle = 32f;
+        public static float PowerCrossAngle = 3f;   // small: a long ribbon tilted >~5° flies out of the thin bar. The crossing now comes from texture TILING (PowerRibbonTile), not from tilting the whole ribbon.
         // POWER slot3 crossing-ribbon HEIGHT factor. Roster showed slot3 was scl.y≈4 (≈20× slot2) — the tilt bled the
         // carrier's Z-growth into slot3's HEIGHT, making a tall tilted BLOCK instead of a thin diagonal line. We now map
         // slot3's growth as if un-tilted (→ length, like slot2) and thin its height by this factor so it reads as a
@@ -143,6 +143,11 @@ namespace Sdo.Game
         // 5 star(naga00) / 6 sparks(ring_l); 0 & 4 are invisible carriers. Lets the user isolate exactly which slot
         // draws which band. Default all on.
         public static bool[] PowerSlotOn = { true, true, true, true, true, true, true };
+        // POWER ribbon texture TILING. The RAI texture is a mesh of branching CROSSING lightning bolts, but the ribbon
+        // quad is ~108u long with plain 0→1 UV → the texture is STRETCHED into horizontal streaks (= the "straight
+        // lines", the crossing detail smeared away). Tiling it (mainTextureScale.x = length×this) REPEATS the crossing
+        // pattern along the ribbon so it reads as the official's 多條交叉. Higher = more/denser bolts. F4-tunable.
+        public static float PowerRibbonTile = 2f;
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -1269,6 +1274,12 @@ namespace Sdo.Game
                 }
                 // F4 per-slot isolation: force a slot invisible (alpha 0) so you can see which slot draws what.
                 if (_isPower && p.E.Slot >= 0 && p.E.Slot < PowerSlotOn.Length && !PowerSlotOn[p.E.Slot]) a = 0f;
+                // TILE the RAI crossing-bolt texture along the (long) ribbon instead of stretching it into streaks.
+                if (_isPower && p.attach != 0 && p.mat != null && p.mat.mainTexture != null)
+                {
+                    if (p.mat.mainTexture.wrapMode != TextureWrapMode.Repeat) p.mat.mainTexture.wrapMode = TextureWrapMode.Repeat;
+                    p.mat.mainTextureScale = new Vector2(Mathf.Max(1f, p.tr.localScale.x * PowerRibbonTile), 1f);
+                }
                 SetCol(p.mat, r * ci, g * ci, b * ci, a);
                 // outer-glow halo: same hue (NOT boosted), intensity scaled by _glowMul (alpha drives additive brightness)
                 if (p.glowMat != null) SetCol(p.glowMat, r, g, b, a * _glowMul);
