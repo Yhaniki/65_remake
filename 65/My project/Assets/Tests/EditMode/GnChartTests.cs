@@ -45,6 +45,55 @@ namespace Sdo.Tests
             Assert.AreEqual(4000, map.HitObjects[2].StartTimeMs);
         }
 
+        /// <summary>
+        /// Locks the rewu (熱舞 Online) whole-file-LCG decrypt branch: the ENTIRE .gn is LCG-encrypted
+        /// with a seed that lives only in the key table (not the file). GnChart must, when it finds no
+        /// SDOM inner offset, try the supplied seed pool at offset 0, recognise the decrypted StepFile
+        /// ('gn'\0\0 @4, address_easy==300 @284) and parse it. Guards the branch added for the online set.
+        /// </summary>
+        [Test]
+        public void RewuWholeFileLcg_DecryptsViaSeedPool()
+        {
+            // plaintext StepFile at offset 0: 300-byte header + one Left tap frame.
+            int bodyLen = 312;
+            var body = new byte[bodyLen];
+            body[4] = (byte)'g'; body[5] = (byte)'n';        // fileType 'gn'\0\0 @4
+            PutFloatAbs(body, 16, 120f);                      // bpm @16 -> beat*500ms
+            PutU32Abs(body, 284, 300);                        // address_easy == 300
+            PutU32Abs(body, 288, (uint)bodyLen);              // address_normal (= easy region end)
+            PutU32Abs(body, 292, (uint)bodyLen);              // address_hard
+            PutU32Abs(body, 296, (uint)bodyLen);              // address_end
+            int o = 300;
+            PutU32Abs(body, o, 0);                            // measure 0
+            PutU16Abs(body, o + 4, 2);                        // frameType 2 = Left(0)
+            PutU16Abs(body, o + 6, 1);                        // interval (1 slot)
+            PutU16Abs(body, o + 8, 1);                        // slot u0 != 0 -> a note
+            body[o + 8 + 3] = 0;                              // note_type 0 = tap
+
+            const uint seed = 0x00ABCDEFu;                    // non-zero so LCG actually runs
+            var enc = (byte[])body.Clone();
+            LcgEncrypt(seed, enc);
+            Assert.AreNotEqual((byte)'g', enc[4], "encryption must scramble the fileType so it isn't mistaken for plain/SDOM");
+
+            var map = GnChart.Load(enc, difficulty: 0, sdomSeeds: new[] { seed });
+
+            Assert.AreEqual(1, map.HitObjects.Count, "rewu chart should decrypt+parse to the single tap");
+            Assert.AreEqual(0, map.HitObjects[0].Lane, "frameType 2 -> Left(0)");
+            Assert.AreEqual(0, map.HitObjects[0].StartTimeMs);
+        }
+
+        /// <summary>Whole-file LCG encrypt (inverse of GnChart's decrypt): st*=0x3D09; out = in + (st>>16).</summary>
+        private static void LcgEncrypt(uint seed, byte[] buf)
+        {
+            uint st = seed;
+            for (int i = 0; i < buf.Length; i++) { st *= 0x3D09u; buf[i] = (byte)(buf[i] + (byte)(st >> 16)); }
+        }
+
+        private static void PutU32Abs(byte[] b, int o, uint v)
+        { b[o] = (byte)v; b[o + 1] = (byte)(v >> 8); b[o + 2] = (byte)(v >> 16); b[o + 3] = (byte)(v >> 24); }
+        private static void PutU16Abs(byte[] b, int o, ushort v) { b[o] = (byte)v; b[o + 1] = (byte)(v >> 8); }
+        private static void PutFloatAbs(byte[] b, int o, float v) => Array.Copy(BitConverter.GetBytes(v), 0, b, o, 4);
+
         // one StepFrame carrying a single tap: meas(u32) ft(i16) interval=1(u16) + one 4-byte slot (u0=1, note_type=0).
         private static int WriteTap(byte[] raw, int bodyOff, uint meas, ushort frameType)
         {

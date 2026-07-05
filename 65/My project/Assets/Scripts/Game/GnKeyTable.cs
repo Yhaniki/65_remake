@@ -45,19 +45,19 @@ namespace Sdo.Game
             return _byGn.TryGetValue(Path.GetFileName(gnPathOrName).ToLowerInvariant(), out var e) ? e : null;
         }
 
-        /// <summary>All distinct SDOM seeds (~148). GnChart can decrypt any SDOM .gn by trying these.</summary>
+        /// <summary>All distinct LCG seeds (SDOM + rewu, ~180). GnChart can decrypt any SDOM/rewu .gn by trying these.</summary>
         public static uint[] SdomSeeds { get { EnsureLoaded(); return _sdomSeeds; } }
 
         /// <summary>
         /// Candidate seeds for a given .gn, ready to pass to <see cref="Sdo.Osu.GnChart.Load"/>:
         /// the file's own seed first (fast path) then every other distinct seed (fallback).
-        /// Returns the full distinct set if the file is unknown / not SDOM.
+        /// Returns the full distinct set if the file is unknown / not seed-encrypted (ddrm/plain).
         /// </summary>
         public static uint[] SeedsFor(string gnPathOrName)
         {
             EnsureLoaded();
             var e = Get(gnPathOrName);
-            if (e == null || e.enc != "sdom") return _sdomSeeds;
+            if (e == null || (e.enc != "sdom" && e.enc != "rewu")) return _sdomSeeds;
             uint own = (uint)e.seed;
             var list = new List<uint>(_sdomSeeds.Length + 1) { own };
             foreach (var s in _sdomSeeds) if (s != own) list.Add(s);
@@ -84,7 +84,7 @@ namespace Sdo.Game
                     {
                         if (string.IsNullOrEmpty(e?.gn)) continue;
                         _byGn[e.gn.ToLowerInvariant()] = e;
-                        if (e.enc == "sdom")
+                        if (e.enc == "sdom" || e.enc == "rewu")   // both are LCG-seed encryptions; pool their seeds
                         {
                             uint s = (uint)e.seed;
                             if (seen.Add(s)) seeds.Add(s);

@@ -81,6 +81,12 @@ def header_bytes(raw: bytes, song: Dict[str, Any]) -> Optional[bytes]:
         return dec[0][:STEPFILE_HEADER] if dec else None
     if enc == "plain":
         return raw[:STEPFILE_HEADER]
+    if enc == "rewu":
+        # 熱舞 Online 整檔 LCG：從 offset 0 用存好的 seed 解前 300 bytes 即得明文表頭。
+        seed = int(song.get("seed", 0))
+        if not seed:
+            return None
+        return lcg_transform(seed, raw[:STEPFILE_HEADER], encrypt=False)
     return None
 
 

@@ -19,8 +19,12 @@ namespace Sdo.Osu
     ///           keeps NO UnityEngine dependency (Sdo.Osu has noEngineReferences), so the seed list is
     ///           passed in by the caller from the precomputed key table (tools/gn_keytable.py ->
     ///           StreamingAssets/gn_keytable.json, loaded by Sdo.Game.GnKeyTable). Because the LCG
-    ///           keystream depends only on the low 24 bits of state, the whole corpus uses only ~148
+    ///           keystream depends only on the low 24 bits of state, the whole corpus uses only ~150
     ///           distinct seeds; trying them all and validating the doubled header is microseconds.
+    ///   rewu  : 熱舞 Online online charts — the WHOLE file is LCG-encrypted (0x3D09) with no plaintext
+    ///           prefix. Same story as sdom (seed not in the file → supplied from the key table); the
+    ///           decrypted file IS a StepFile ('gn'\0\0 @4, address_easy==300 @284). Seeds share the
+    ///           SDOM candidate pool.
     /// See doc/SM_GN_NOTE_FORMAT.md.
     /// </summary>
     public static class GnChart
@@ -98,6 +102,30 @@ namespace Sdo.Osu
                             Lcg(seed, body, 0, encLen);
                             return body;
                         }
+                    }
+                }
+                // fall through to rewu on no SDOM match: a random cipher can spuriously satisfy
+                // FindSdomInnerOffset, so never short-circuit to null here.
+            }
+
+            // --- rewu: 熱舞 Online whole-file LCG. The ENTIRE file is LCG-encrypted with no plaintext
+            // resource prefix, so FindSdomInnerOffset misses it. Decrypt from offset 0 with each candidate
+            // seed; the correct one yields a StepFile ('gn'\0\0 @4, address_easy==300 @284). Probe the
+            // 300-byte header first (cheap) before decrypting the whole file. Seeds come from the same
+            // pool as SDOM (GnKeyTable now includes rewu seeds). ---
+            if (sdomSeeds != null && sdomSeeds.Length > 0 && raw.Length >= StepHeader)
+            {
+                var probe = new byte[StepHeader];
+                foreach (var seed in sdomSeeds)
+                {
+                    Array.Copy(raw, 0, probe, 0, StepHeader);
+                    Lcg(seed, probe, 0, StepHeader);
+                    if (probe[4] == (byte)'g' && probe[5] == (byte)'n' && probe[6] == 0 && probe[7] == 0 && U32(probe, 284) == 300)
+                    {
+                        var body = new byte[raw.Length];
+                        Array.Copy(raw, 0, body, 0, raw.Length);
+                        Lcg(seed, body, 0, body.Length);
+                        return body;
                     }
                 }
             }
