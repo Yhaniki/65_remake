@@ -444,6 +444,12 @@ namespace Sdo.Game
         // so _bright=1 renders the gauge 2× TOO BRIGHT → the pale-blue ribbon (0.51,0.51,1.0) clips R,G to white (藍變白) and
         // the whole strip washes out (no contrast for the head flash). 0.5 = the faithful 1× (2×0.5=1). F4-tunable.
         public float energyStripBright = 0.5f;              // engine-faithful colour gain (compensates the Legacy shader's built-in 2×)
+        // Gauge crackle SPEED: >1 ticks the POWER effect faster → ribbons re-spawn more often (denser overlapping
+        // generations = "電流比較多") AND move faster ("動比較快"), and the head glow spawns more overlapping stars
+        // (helps "多顆疊加"). Brightness can't add density (it just clips blue→white); tick-speed can. Head STAYS at the
+        // stable core (all-axis int-trunc), it just flashes faster. Does NOT affect the fill-head position (driven
+        // externally). 1 = faithful cadence; 2 = user-requested livelier current. F4-tunable.
+        public float energyStripSpeed = 2f;
         // OFFICIAL fill drive (sdo.bin.c FUN_0040e0f0/e210): the fill is NOT a solid bar — it's the POWER EFT electric
         // ribbon, positioned by sliding the effect origin (headX) over [-305, 0] world. Three per-band eased POSITIONS
         // (NOT a smoothed counter) + STATEFUL HYSTERETIC band selection: only re-select when the active band's eased
@@ -528,6 +534,7 @@ namespace Sdo.Game
         public Vector2 showtimeBurstSide1Px = new Vector2(8f, 620f);      // 0x27 EDGE4 left  (base 20px below screen, grows UP)
         public Vector2 showtimeBurstSide2Px = new Vector2(296f, 620f);    // 0x27 EDGE4 right
         public float showtimeBurstCenterScale = 40f, showtimeBurstSideScale = 56f;   // official 50/70 × 0.8 px-per-unit
+        public float showtimeBurstSideSpeed = 2f;                         // side EDGE4 lightning runs Nx faster (user: 電流太慢, ≥2×)
         public float showtimeBurstZ = -2f;                                // in front of the note board
         public int showtimeBurstOrder = 80;                               // official late pass draws OVER notes + HUD
         private readonly List<GameObject> _boardBurstGos = new List<GameObject>();
@@ -1568,6 +1575,7 @@ namespace Sdo.Game
                 eff.Persistent = true;                                              // loops (0.32s carrier re-fire)
                 eff.EffectName = GaugeStripEft[b];
                 eff.BillboardCam = _gaugeCam;                                       // head-glow billboards face the dedicated cam
+                eff.SpeedMul = energyStripSpeed;                                    // livelier crackle: faster + denser re-spawn (user: 電流要更多更快)
                 eff.Init(file, energyStripScale, anchor, ResolveEftTex, _addMat, GaugeLayer, energyStripBright, 0f, 0.6f, ResolveEftMesh);
                 SetLayerRecursive(go, GaugeLayer);
                 _gaugeStrip[b] = go;
@@ -3831,11 +3839,11 @@ namespace Sdo.Game
             // centre BOOM = ONE-SHOT (official plays it once on the space press — not looped for the window);
             // side EDGE4 = PERSISTENT (root loops → the full-height lightning columns stay up the whole window).
             SpawnOneBoardBurst(showtimeBurstCenterEft, showtimeBurstCenterPx, showtimeBurstCenterScale, Quaternion.Euler(90f, 0f, 0f), persistent: false);
-            SpawnOneBoardBurst(showtimeBurstSideEft, showtimeBurstSide1Px, showtimeBurstSideScale, Quaternion.identity, persistent: true);
-            SpawnOneBoardBurst(showtimeBurstSideEft, showtimeBurstSide2Px, showtimeBurstSideScale, Quaternion.identity, persistent: true);
+            SpawnOneBoardBurst(showtimeBurstSideEft, showtimeBurstSide1Px, showtimeBurstSideScale, Quaternion.identity, persistent: true, speedMul: showtimeBurstSideSpeed);
+            SpawnOneBoardBurst(showtimeBurstSideEft, showtimeBurstSide2Px, showtimeBurstSideScale, Quaternion.identity, persistent: true, speedMul: showtimeBurstSideSpeed);
         }
 
-        private void SpawnOneBoardBurst(string name, Vector2 px, float scale, Quaternion rot, bool persistent)
+        private void SpawnOneBoardBurst(string name, Vector2 px, float scale, Quaternion rot, bool persistent, float speedMul = 1f)
         {
             if (!_namedEftCache.TryGetValue(name, out var file))
             {
@@ -3849,6 +3857,7 @@ namespace Sdo.Game
             go.transform.rotation = rot;               // effect-space rotation (particles are children; billboards re-orient themselves)
             var eff = go.AddComponent<EftEffect>();
             eff.Persistent = persistent;               // false = one-shot BOOM (auto-destroys when spent); true = looping EDGE4 columns
+            eff.SpeedMul = speedMul;                   // side EDGE4 lightning columns run ≥2× faster (user request); centre BOOM stays 1×
             eff.EffectName = name;
             eff.BillboardCam = _cam;                   // billboard toward the ortho overlay camera (layer 0), not the stage cam
             eff.SortingOrder = showtimeBurstOrder;     // official late pass: over notes + HUD

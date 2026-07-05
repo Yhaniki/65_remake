@@ -116,12 +116,12 @@ namespace Sdo.Game
         // It was deliberately left "soft" (ci=1 = base 0.5×) so it stayed invisible on the black RT — give it its own
         // additive boost so the big head glow actually shows. Tunable to match the official size/brightness.
         public static float PowerHaloBright = 2.5f;
-        // POWER slot3 = the CROSSING electric ribbon (initRot 90,90,0 in Y/R = perpendicular to slot2, 45° in B). Now
-        // that slot3 rides slot4's growth correctly (carrier-scale exclusion removed) it is a proper second ribbon that
-        // grows from the head + fades via its own alpha (255→0), NOT the old constant full-length band. So it no longer
-        // needs artificial dimming — 1.0 = full so the current reads as DENSE as the official (官方電流比較多). Lower
-        // only if the crossing ribbon looks too strong. (Was 0.4 to suppress the pre-fix static strip.)
-        public static float PowerCrossDim = 1f;
+        // POWER slot3 = the CROSSING electric ribbon (initRot 90,90,0 in Y/R = perpendicular to slot2, 45° in B). It now
+        // rides slot4's growth correctly (carrier-scale exclusion removed) so it is a proper second ribbon that grows
+        // from the head + fades via its own alpha (255→0), not the old constant full-length band. But at 1.0 the extra
+        // additive blue washed the whole gauge toward WHITE/GREY (user: 藍色集氣條變灰) — additive blue+blue clips. Keep
+        // it DIM so it adds a subtle crossing crackle without desaturating the band. Raise cautiously if too faint.
+        public static float PowerCrossDim = 0.45f;
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -256,6 +256,10 @@ namespace Sdo.Game
         // per-particle velocity/gravity integration (not size/rotation/colour), so the burst can be scaled up for a
         // visible footprint while its rise stays a small flick near the receptor. Combos/scene effects leave it at 1.
         public float MotionScale = 1f;
+        // TICK-RATE SPEED (1 = faithful). Multiplies the accumulated dt so the ENTIRE effect (life curves, child
+        // re-spawn cadence, particle motion) runs faster/slower. Unlike MotionScale (velocity only) this speeds up the
+        // crackle/flicker too. Used for the ShowTime window's side EDGE4 lightning columns (user: 電流太慢, ×2).
+        public float SpeedMul = 1f;
         // RGB TINT multiplied into every particle's additive colour (1,1,1 = faithful). The hiteft3D note-hit (hit.eft)
         // stores WHITE note-arrow textures; the official 3D skin renders them GOLD/yellow via a play-time diffuse tint,
         // so the host sets this to gold. Combos/scene effects leave it white (their real per-channel hue is used as-is).
@@ -554,16 +558,13 @@ namespace Sdo.Game
             // the trail-yaw (their aef03_00 trail relies on it).
             if (isTrail && !(Persistent && p.isMesh)) p.rot.y = trailYaw;
 
-            // ENGINE-FAITHFUL INT position AT SPAWN: FUN_0098fc80 @666331-332 int-stores ONLY Y (word 0x18) and Z
-            // (word 0x19); X (word 0x17 = depth) stays FLOAT. Truncating Y/Z pins the head vertically + along-bar so it
-            // does not drift/rise. But X must stay float: slot5 naga00's cone DEPTH scatter (±0.8 local) is what gives
-            // each re-spawned generation a different depth = per-star size/parallax variety. Earlier code also truncated
-            // X → every generation snapped to depth 0 → the 2-3 overlapping stars stacked exactly = ONE fixed blob
-            // (官方看起來多顆疊加、我們只有一顆). Keeping X float restores the "many randomly-flashing stars" look.
-            // vel.x=0 for the head slots, so float X neither drifts nor jitters per frame — it just holds the offset.
-            // ring_l sparks (tex96) EXCLUDED entirely: small particles that SHOULD drift OUT around the core.
-            // Verified: RE workflow wf_0c0ba4d2 (issue3, CONFIRMED) + ground-truth EFT parse.
-            if (_isPower && em.TexIdx != 96) { p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
+            // ENGINE-FAITHFUL INT position AT SPAWN: truncate all 3 axes so every re-spawned head generation clusters at
+            // the SAME spot (the fill head) = a STABLE white-hot core. (A round-6 experiment kept X float to add depth
+            // variety, but the user reported it as "頭光前後跳位置" — the depth scatter reads as the core hopping
+            // forward/back, which is wrong. Reverted: stability wins.) The "many stacked / random flash" look must come
+            // from the OVERLAPPING GENERATIONS at different ages (size 0.17→3.6 + alpha phase) + random startDelay(0..9)
+            // staggering, NOT from position scatter. ring_l sparks (tex96) EXCLUDED: they SHOULD drift OUT around core.
+            if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
 
             // DIAGNOSTIC: isolate the POWER gauge layers (still SPAWN so the trigger chain 0→1→4→2/3 is intact, just
             // render invisible). 1 = ribbon only (hide halo/star/sparks 1/5/6); 2 = head glow only (hide ribbon 2/3).
@@ -757,7 +758,7 @@ namespace Sdo.Game
                 if (_cam == null) foreach (var c in Camera.allCameras) if (!c.orthographic) { _cam = c; break; }
             }
 
-            _acc += Time.deltaTime;
+            _acc += Time.deltaTime * SpeedMul;   // SpeedMul>1 runs the WHOLE effect faster (life curves + re-spawn + motion)
             while (_acc >= Step) { _acc -= Step; Tick(); }
 
             // billboards face the camera every frame (engine billboard branch); rings keep their world matrix.
@@ -990,15 +991,11 @@ namespace Sdo.Game
                 p.pos += p.vel * (scaleVel * p.velScale * MotionScale);
                 float ageLin = life0 - p.life;
                 p.pos.y -= (ageLin * em.GravAccel + em.GravBase) * MotionScale;
-                // ENGINE-FAITHFUL INTEGER POSITION (why the official head glow doesn't rise): FUN_0098fc80 @666331-332
-                // int-stores ONLY Y (word 0x18) and Z (word 0x19) — `pos = (int)(vel + pos)` — TRUNCATING the fraction
-                // every tick; X (word 0x17 = depth) stays FLOAT. The head glow's per-tick Y step is only
-                // vel.y(0.2)×ch0(≈0.034)≈0.034 local ⟪1, so Y truncates to 0 and the particle NEVER rises. Z likewise
-                // pins it along the bar. But X is left float exactly as the engine does — otherwise every re-spawned
-                // generation collapses onto depth 0 and the overlapping stars read as one fixed blob (see the spawn-site
-                // note above). vel.x=0 so float X neither drifts nor jitters; it just holds the per-generation depth
-                // scatter = the "many stars" variety. Scoped to POWER; ring_l sparks (tex96) drift freely (excluded).
-                if (_isPower && em.TexIdx != 96) { p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
+                // ENGINE-FAITHFUL INTEGER POSITION (why the official head glow doesn't move): the head's per-tick step
+                // (vel.y0.2×ch0≈0.034 local ⟪1) truncates to 0 so it NEVER rises, and truncating all 3 axes clusters
+                // every re-spawn at the fill head = a STABLE white-hot core. (Round-6 tried keeping X float for depth
+                // variety; user reported "頭光前後跳位置" = the core hopping forward/back → reverted. Stable core.)
+                if (_isPower && em.TexIdx != 96) { p.pos.x = (float)(int)p.pos.x; p.pos.y = (float)(int)p.pos.y; p.pos.z = (float)(int)p.pos.z; }
             }
 
             if (DumpTraj && !p.invisible) DumpTrajectory(p, ageTicks, life0, t);
