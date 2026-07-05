@@ -497,11 +497,17 @@ namespace Sdo.Game
             bool intro = _energyIntroFill >= 0f;
             float rawV;
             if (intro) rawV = _energyIntroFill * cap2;                              // demo sweeps 0→cap2 (all 3 bands)
-            else if (m.Active)                                                       // window: drain the released band's colour
+            else if (m.Active)                                                       // window: drain the WHOLE fill through every band
             {
+                // OFFICIAL (sdo.bin.c X361755-361815): displayedFill = residual + cap[armed]·remaining/duration. The fill
+                // drains from the full pre-release value DOWN THROUGH EVERY BAND to the carried-over residual (red→blue→
+                // yellow), NOT just within the released band. FillCount already holds the residual (TryActivate spent
+                // cap[L]); adding cap[L]·fraction rebuilds the pre-release total at the window start and lands EXACTLY on
+                // FillCount at the window end — so the head reaches empty (or the residual) precisely as the window closes
+                // and the m.Active→charging hand-off is continuous (no snap). The old Lerp(caps[L-1],caps[L]) swept only the
+                // released band's colour once (looked too slow) and ended at caps[L]≠FillCount (the sudden end-snap).
                 int L = Mathf.Clamp(m.ReleasedLevel, 0, 2);
-                float lo = L == 0 ? 0f : caps[L - 1], hi = caps[Mathf.Min(L, caps.Length - 1)];
-                rawV = Mathf.Lerp(lo, hi, m.WindowRemainingFraction(_nowMs));
+                rawV = m.FillCount + caps[L] * m.WindowRemainingFraction(_nowMs);
             }
             else rawV = m.FillCount;                                                 // charging: the raw counter, straight in
             if (DebugGaugeSweep) rawV = Mathf.PingPong(Time.time * (cap2 / 4f), cap2);   // diagnostic: cycle all 3 bands ~8s
@@ -515,14 +521,21 @@ namespace Sdo.Game
                 GaugeBaseP + range * (rawV - cap1) / Mathf.Max(1f, cap2 - cap1),     // band2 target
             };
             for (int i = 0; i < 3; i++) _gaugeCur[i] += (tgt[i] - _gaugeCur[i]) * kk;
-            if (_gaugeCur[_gaugeActive] < GaugeBaseP || _gaugeCur[_gaugeActive] > GaugeFullP)   // active band left the window → re-select
+            if (m.Active)
+                // Window DRAIN: the fill falls monotonically through the bands (red→blue→yellow), so pick the band holding
+                // it DIRECTLY (no jitter risk without hysteresis). The scan-lowest-first hysteresis below is built for the
+                // CHARGING climb and would skip a colour on the way down (band0 also sits at full, so it wins the scan).
+                // On each band swap the head jumps empty→full = the official per-band re-base (FUN_0040e210 strip swap).
+                _gaugeActive = rawV >= cap1 ? 2 : rawV >= cap0 ? 1 : 0;
+            else if (_gaugeCur[_gaugeActive] < GaugeBaseP || _gaugeCur[_gaugeActive] > GaugeFullP)   // charging: active band left the window → re-select
                 for (int i = 0; i < 3; i++)
                     if (GaugeBaseP < _gaugeCur[i] && _gaugeCur[i] <= GaugeFullP) { _gaugeActive = i; break; }
             int level = _gaugeActive;
             float headWorldX = _gaugeCur[_gaugeActive];
-            // At empty (rawV==0, nothing hit yet) draw NOTHING — don't render a head parked off-screen, just don't
-            // draw the POWER effect at all. It starts drawing on the first hit (rawV>0) and slides in from GaugeBaseP.
-            bool drawHead = rawV > 0f;
+            // Once the song is playing (after the 3-stage intro) the head glow stays lit even at 0 fill — user wants it
+            // glowing from song start regardless of key presses (_gaugeGlowFromStart). Before that (intro sweep / pre-start)
+            // it only draws when there's actual fill so nothing shows parked off-screen during the empty pre-roll.
+            bool drawHead = rawV > 0f || _gaugeGlowFromStart;
 
             // Move the ACTIVE POWER effect to headX inside the dedicated RT camera's isolated world; park the others
             // (and ALL bands while empty) off-frustum. The effects run continuously (never re-init), so the electric

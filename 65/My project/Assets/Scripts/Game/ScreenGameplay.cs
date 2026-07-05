@@ -459,12 +459,15 @@ namespace Sdo.Game
         private int _gaugeActive = 0;                                   // persistent active band index (hysteresis)
         private const float GaugeFullP = 0f;                            // full head position (official +0x90)
         // Official empty was worldX −305 = the RT camera's visible LEFT edge (design x22), so at 0 fill the POWER
-        // head-glow halo half-poked into the channel ("頭光在0就有"). Reference behaviour: at 0 there is NO head glow —
-        // it only slides in after the first note hits. Park the empty head gaugeEmptyHideP world-units LEFT of the
-        // visible window so the whole halo starts off-screen and grows in as the fill climbs (remake-only bias; the
-        // fill still reaches GaugeFullP=0 at full). F4-tunable (Combo tab) — raise until the glow is gone at 0.
-        public float gaugeEmptyHideP = 10f;
+        // head-glow halo half-poked into the channel ("頭光在0就有"). User-confirmed behaviour: the head glow is ON from
+        // song start (see _gaugeGlowFromStart), so it sits AT the empty base and only nudges left of the visible edge.
+        // Park the empty head gaugeEmptyHideP world-units LEFT of the visible window (small = glow peeks at the left edge
+        // straight away; the fill still reaches GaugeFullP=0 at full). F4-tunable (Combo tab).
+        public float gaugeEmptyHideP = 5f;
         private float GaugeBaseP => -305f - gaugeEmptyHideP;            // empty head position (a bit left of the visible left edge)
+        // Once the opening 3-stage energy intro has run and the song has started, the head glow stays lit even at 0 fill
+        // (user: "開始歌曲的時候就要開始亮 不管有沒有按鍵"). Reset each opening so a retry re-arms it. See UpdateEnergyBar drawHead.
+        private bool _gaugeGlowFromStart;
         private float _energyMiniT0 = -1f;                  // realtime the current band-up flash began (<0 = idle)
         private Sprite[] _showtimeHitFrames;               // EFT_SHOWTIME/EFT_HIT golden hit flipbook (12 frames)
         public float showtimeHitScale = 1.5f;              // showtime hit burst size ×
@@ -497,7 +500,7 @@ namespace Sdo.Game
         // breakdance chaining: a break DPS is ~10s (E) / ~14s (N) / ~19s (H). Play one; when it ends, if the window
         // still has room for another full break start a fresh one, otherwise HAND BACK to the song choreography for the
         // tail (the song clock runs underneath) — user-requested (official parks the dancer in idle rest instead).
-        private double _breakStartMs; private float _breakTotal; private bool _breakHandedToSong;
+        private double _breakStartMs; private float _breakTotal; private bool _breakIdled;
         // OFFICIAL breaking selection (FUN_0092d280 @611650: at SONG LOAD each tier's variant is rand-rolled ONCE —
         // E=rand%6, N=rand&7, H=rand&7 — and stays fixed for the whole song; at release the TIER LETTER = the RELEASED
         // ENERGY LEVEL (0→E, 1→N, 2→H — FUN_0092d3f0 @611772), NOT the song difficulty). Windows are pas-sized to
@@ -508,6 +511,11 @@ namespace Sdo.Game
         // windowMs = ceil(budget / pasMs) × pasMs. Typical pas = 8 beats; Frida-measured 11.9s (lv0 @121bpm) and
         // 16.7s (lv1 @86bpm) both reproduce exactly with 8-beat pas. Tunable if a chart uses 16-beat segments.
         public float showtimePasBeats = 8f;
+        // Idle tail: the window must outlast the CHOSEN break dance by at least this much so the break always plays to
+        // completion and then parks in RestMot idle before the window closes (official idle tail ≈0.6–2.7s), rather than
+        // being cut off mid-move. Only lengthens the window when break.Total + this exceeds the pas-rounded budget
+        // (remake break DPS run ~6.8–20.1s; the pas window is song-BPM-dependent, so a long break can outrun it).
+        public float showtimeBreakIdleTailMs = 1500f;
         // dancer aura during the window. online FUN_0092cec0 starts 3D effect index 0x2c on the dancer — and in the
         // ONLINE client's renumbered 3DEFT table (DAT_00b933c4, byte-verified against 閉撰敃氪/sdo.bin file offset
         // 0x7933c4) **0x2c = body_star.eft** (star-twinkle billboards + streaks — the tight body glow of the videos),
@@ -1119,6 +1127,7 @@ namespace Sdo.Game
         // Starts the song + gameplay clock at the very end, once GO has fully played out.
         private IEnumerator OpeningSequence()
         {
+            _gaugeGlowFromStart = false;   // re-arm: head glow stays dark until this song's intro finishes and playback starts
             // Hold the whole opening until the loading screen has revealed the stage (so READY/GO never plays under the
             // loading cover and gets caught mid-animation on reveal). BootRevealCo sets _bootRevealed once it's faded out.
             while (!_bootRevealed) yield return null;
@@ -1169,6 +1178,7 @@ namespace Sdo.Game
             _songStartDspTime = AudioSettings.dspTime + StartLeadSec;
             if (_audio != null && _audio.clip != null) _audio.PlayScheduled(_songStartDspTime);
             _clockStart = Time.timeAsDouble + StartLeadSec;
+            if (showtimeMode) _gaugeGlowFromStart = true;   // song is playing → head glow stays lit even at 0 fill (no key needed)
         }
 
         // Energy-bar INTRO (online FUN_0040dc00/0040e210/0040e0f0 + demo blocks @360861-360887): the bar does NOT
@@ -3662,14 +3672,17 @@ namespace Sdo.Game
                 double rem = _showtime.RemainingMs(now);                        // pre-end warnings at exact thresholds
                 if (!_warn3 && rem < 3001.0 && !string.IsNullOrEmpty(seWarn3s)) { _warn3 = true; PlaySe(seWarn3s); }
                 if (!_warn07 && rem < 701.0 && !string.IsNullOrEmpty(seWarn07s)) { _warn07 = true; PlaySe(seWarn07s); }
-                // Breakdance chaining: when the current break DPS (~10s E / ~14s N / ~19s H) finishes, if the window has
-                // room for ANOTHER full break start a fresh one; otherwise hand back to the SONG choreography for the
-                // tail (the song clock kept running underneath, so it picks up at the current beat — "銜接原本歌曲動作").
-                if (_dpsSwapped && !_breakHandedToSong && _avatar != null && (_nowMs - _breakStartMs) >= _breakTotal * 1000.0)
+                // Break ends BEFORE the window closes → park the dancer in IDLE REST until the window's time is up
+                // (official FUN_00930400 @613781 cat 0x15 loop), then hand back to the song dance at window END
+                // (OnShowtimeEnd). We do NOT chain a second break and do NOT hand to the song mid-window: the break DPS
+                // stays assigned with an ever-growing dance time, so once it passes break.Total the avatar auto-plays
+                // RestMot (SdoAvatar @395). The old code instead handed straight back to the song here — which for a
+                // song with NO DPS nulled Dps/DanceTimeSec and left the dancer stuck on the break's last frame
+                // ("卡在breaking舞蹈的最後一frame"). Break lengths ≈ the pas-sized window, so the idle tail is short.
+                if (_dpsSwapped && !_breakIdled && _avatar != null && (_nowMs - _breakStartMs) >= _breakTotal * 1000.0)
                 {
-                    var next = PickBreakDps(_showtime.ReleasedLevel);
-                    if (next != null && rem >= next.Total * 1000.0) StartBreakSegment(next, _nowMs);   // enough time → another break
-                    else { _avatar.Dps = _songDps; _avatar.DanceTimeSec = _songDanceTime; _breakHandedToSong = true; }   // not enough → song dance
+                    _breakIdled = true;   // latch: reached the idle tail (avatar now holds RestMot until the window ends)
+                    Debug.Log("[showtime] break finished mid-window → idle rest until window end");
                 }
             }
             if (_showtime.Tick(now)) OnShowtimeEnd();   // true on the single frame the window ends
@@ -3733,8 +3746,8 @@ namespace Sdo.Game
             _stJustEnded = true;   // arm the auto→manual seam carry-over for this frame's HandleInput (replay held/just-pressed keys)
             if (_preShowtimeNoteDir != null) { ApplyNoteDir(_preShowtimeNoteDir); _preShowtimeNoteDir = null; }
             if (_burstSwapped) { _burstFrames = _savedBurstFrames; _savedBurstFrames = null; _burstSwapped = false; }
-            if (_dpsSwapped && _avatar != null) { _avatar.Dps = _songDps; _avatar.DanceTimeSec = _songDanceTime; _dpsSwapped = false; }
-            _breakHandedToSong = false;   // fresh chaining state for the next release
+            if (_dpsSwapped && _avatar != null) { _avatar.Dps = _songDps; _avatar.DanceTimeSec = _songDanceTime; _dpsSwapped = false; }   // 接回原本歌曲舞蹈
+            _breakIdled = false;   // reset the idle-tail latch for the next release
             ClearShowtimeWindowFx();      // dancer body_star aura + EDGE4 side lightning columns
             _lastArmed = _showtime.ArmedLevel;   // re-arm cue can fire again as energy re-climbs
             Debug.Log($"[showtime] window end — bonus so far +{_showtime.Bonus}");
@@ -3767,6 +3780,10 @@ namespace Sdo.Game
         // whole dance segments (pas) of chart time — the exe walks the song's pas list accumulating each segment's
         // milliseconds until the budget is reached. Typical pas = 8 beats (showtimePasBeats): reproduces the Frida
         // measurements exactly (11.9s lv0 @121bpm, 16.7s lv1 @86bpm).
+        // The official's break DPS ≈ fills the pas window (short idle tail). The remake's break DPS are FIXED-length
+        // (~6.8–20.1s) while the pas window scales with the SONG's BPM, so a long break can outrun a fast-song window
+        // and get cut off ("動作還沒跳完 時間就結束了"). Guard: never return less than break.Total + a short idle tail,
+        // so the chosen break always completes and then idles briefly before the window ends (see SwapToBreakdance).
         private double ComputeShowtimeWindowMs()
         {
             int lvl = _showtime.ArmedLevel;
@@ -3775,23 +3792,26 @@ namespace Sdo.Game
             double budget = durs[Mathf.Clamp(lvl, 0, durs.Length - 1)];
             double bpm = _map != null && _map.Bpm > 1f ? _map.Bpm : 120.0;
             double pasMs = showtimePasBeats * 60000.0 / bpm;
-            if (pasMs <= 1.0) return budget;
-            return System.Math.Ceiling(budget / pasMs - 1e-9) * pasMs;
+            double pasWindow = pasMs <= 1.0 ? budget : System.Math.Ceiling(budget / pasMs - 1e-9) * pasMs;
+            var bd = PickBreakDps(lvl);                                   // same variant SwapToBreakdance will play (_breakRolls fixed at load)
+            double breakWindow = (bd != null ? bd.Total * 1000.0 : 0.0) + showtimeBreakIdleTailMs;
+            return System.Math.Max(pasWindow, breakWindow);
         }
 
-        // Enter breakdance for the window: swap the dancer to a break DPS (played once from `fromMs`). TickShowtime
-        // chains another break when this one ends if the window has room, else hands control back to the song dance.
+        // Enter breakdance for the window: swap the dancer to a break DPS (played once from `fromMs`). When the break
+        // finishes before the window closes, TickShowtime lets it lapse into RestMot idle; the song dance is restored
+        // at window end (OnShowtimeEnd).
         private void SwapToBreakdance()
         {
             if (_avatar == null || _dpsSwapped) return;   // works even if the song had no DPS (falls back on restore)
             var bd = PickBreakDps(_showtime.ReleasedLevel);
             if (bd == null) return;
-            _songDps = _avatar.Dps; _songDanceTime = _avatar.DanceTimeSec; _dpsSwapped = true; _breakHandedToSong = false;
+            _songDps = _avatar.Dps; _songDanceTime = _avatar.DanceTimeSec; _dpsSwapped = true; _breakIdled = false;
             StartBreakSegment(bd, _nowMs);
         }
 
-        // Play one break DPS from `fromMs`. DanceTimeSec reads the live fields so re-calling this (chaining) just
-        // re-bases; past the break's Total the DpsLoader clamps to its last frame (a brief bridge until the next chain).
+        // Play one break DPS from `fromMs`. DanceTimeSec is an unclamped elapsed-seconds function, so once it passes
+        // the break's Total the avatar lapses into RestMot idle (SdoAvatar @395) — the "break ends early → idle" tail.
         private void StartBreakSegment(DpsLoader bd, double fromMs)
         {
             _breakDps = bd; _breakStartMs = fromMs; _breakTotal = bd.Total > 0.1f ? bd.Total : 1f;
