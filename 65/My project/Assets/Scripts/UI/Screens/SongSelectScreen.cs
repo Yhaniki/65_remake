@@ -194,8 +194,17 @@ namespace Sdo.UI.Screens
 
             _previewGateTime = Time.unscaledTime + 1f;   // hold music ~1s until the open spin settles
             _difficulty = (int)Ctx.Session.Difficulty;
-            // Scene / category / random-range / mode·formation·looker combos PERSIST across visits — the screen is
-            // built once and these fields/widgets are never reset here, so it reopens exactly as it was left.
+            // Scene / random-range / mode·formation·looker combos PERSIST across visits — the screen is built once
+            // and those fields/widgets are never reset here, so it reopens exactly as it was left.
+            // EXCEPTIONS reset on every open: the category tab snaps back to 全部, and the search box is cleared —
+            // so re-entering always shows the full list, not a stale filter/tab.
+            _category = CatAll;
+            if (_search != null)
+            {
+                _search.SetTextWithoutNotify(string.Empty);   // no notify: ApplyFilter below re-filters with empty text
+                var searchPh = _search.placeholder;
+                if (searchPh != null) searchPh.gameObject.SetActive(true);   // restore prompt (custom listeners hid it while typing)
+            }
             RenderCategoryTabs();
             UpdateScene();
 
@@ -801,18 +810,27 @@ namespace Sdo.UI.Screens
         // Mirrors ScreenGameplay.LoadAndPlayAudio: file:// + raw path (no URI escaping — the music tree is ASCII and
         // every loader in the repo concatenates raw), AudioType.OGGVORBIS, result==Success guard, GetContent,
         // graceful no-op when the file is missing. Loops at a modest volume so it sits under the UI.
+        //
+        // Every exper/<fileId>.ogg is a real, pre-decoded preview clip (the official preview .sdm are decoded to
+        // valid Vorbis at import time via donor headers — see tools/decode_previews). GetContent is still wrapped
+        // in try/catch so that even a malformed file could never throw out of the coroutine (it just no-ops).
         private IEnumerator LoadPreviewCo(int fileId)
         {
             string path = Path.Combine(SdoExtracted.MusicDir, "exper", fileId + ".ogg");
             if (!File.Exists(path)) { _previewCo = null; yield break; }
 
             AudioClip clip = null;
-            using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.OGGVORBIS))
+            var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.OGGVORBIS);
+            yield return req.SendWebRequest();
+            if (_previewId != fileId) { req.Dispose(); _previewCo = null; yield break; }   // superseded mid-load
+            if (req.result == UnityWebRequest.Result.Success)
             {
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success) clip = DownloadHandlerAudioClip.GetContent(req);
-                else Debug.LogWarning("[SongSelect] preview load fail: " + req.error);
+                try { clip = DownloadHandlerAudioClip.GetContent(req); }
+                catch (System.Exception ex) { clip = null; Debug.LogWarning("[SongSelect] preview decode fail: " + ex.Message); }
             }
+            else Debug.LogWarning("[SongSelect] preview load fail: " + req.error);
+            req.Dispose();
+
             // race guard: selection changed (or hidden) while loading -> drop the stale clip.
             if (clip == null || _previewId != fileId) { _previewCo = null; yield break; }
 
