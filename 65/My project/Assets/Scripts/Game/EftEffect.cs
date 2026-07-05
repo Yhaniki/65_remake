@@ -230,6 +230,8 @@ namespace Sdo.Game
         int _mesh32Count;   // # of non-orient (200 ground) AEF_3_00 meshes spawned this effect — capped at MeshMax200
         readonly List<P> _ps = new List<P>();
         readonly List<P> _pending = new List<P>();   // particles spawned this tick (added after the iteration)
+        bool _reclaimedAny;                          // a dead particle was reclaimed this tick → sweep _ps
+        static readonly System.Predicate<P> _isDead = p => p.dead;   // cached (no per-tick delegate alloc)
         Func<int, Texture2D> _texResolver;
         Func<int, EftMeshData> _meshResolver;   // xmesh index → 3D mesh (null when the host supplies none)
         readonly Dictionary<int, EftEmitter> _slotMap = new Dictionary<int, EftEmitter>();
@@ -298,6 +300,7 @@ namespace Sdo.Game
             // mesh fans outward into the ground curtain.
             public int attach; public P parent; public bool lockToParent;
             public bool root;   // a ROOT particle (no parent) — for a Persistent scene effect it loops (never dies)
+            public bool dead;   // reclaimed (GameObject destroyed, removed from _ps) — the P object lingers only so live children can still read its frozen pos/rot/liveScale
             public float azim;   // this particle's random cone azimuth (rad); children inherit it to rotate their velocity
             public float velScale;   // per-particle constant velocity-scale jitter = 1.0±word[0x1f4] (engine param_1[500])
             public Vector3 turbAxis;   // fixed-at-birth turbulence rotation axis (perp to initial vel) so kicks accumulate
@@ -786,12 +789,29 @@ namespace Sdo.Game
             {
                 if (p.spawnDelay > 0) { p.spawnDelay--; if (p.tr.gameObject.activeSelf) p.tr.gameObject.SetActive(false); alive++; continue; }
                 if (p.startDelay > 0) { p.startDelay--; if (p.tr.gameObject.activeSelf) p.tr.gameObject.SetActive(false); alive++; continue; }
-                if (p.life <= 0) { if (p.tr.gameObject.activeSelf) p.tr.gameObject.SetActive(false); continue; }
+                if (p.life <= 0)
+                {
+                    // LEAK FIX: a looping effect (Persistent/Loop) has an eternal root, so `alive` never hits 0 and
+                    // RespawnTree never runs — dead child particles' GameObjects would pile up forever (thousands over a
+                    // song → FPS 120→2). RECLAIM them here: destroy the GameObjects + drop the P from _ps. Safe because
+                    // children only read parent P-FIELDS (pos/rot/liveScale/baseSize), never parent.tr — so the dead P
+                    // lingers via child refs (frozen) until its children die too. One-shot effects keep the old
+                    // deactivate (they're torn down wholesale at alive==0 / _maxTicks).
+                    if (Persistent || Loop)
+                    {
+                        if (p.glowTr) Destroy(p.glowTr.gameObject);
+                        if (p.tr) Destroy(p.tr.gameObject);
+                        p.dead = true; _reclaimedAny = true;
+                    }
+                    else if (p.tr.gameObject.activeSelf) p.tr.gameObject.SetActive(false);
+                    continue;
+                }
                 if (!p.tr.gameObject.activeSelf) p.tr.gameObject.SetActive(true);
                 p.started = true; alive++;
                 StepParticle(p);
             }
             Flush();
+            if (_reclaimedAny) { _ps.RemoveAll(_isDead); _reclaimedAny = false; }
             if (Persistent)
             {
                 // scene background effect: never destroy; loop the tree when it has fully died (continuous emitters
