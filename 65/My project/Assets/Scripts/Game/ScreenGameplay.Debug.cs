@@ -171,6 +171,16 @@ namespace Sdo.Game
                 EftEffect.PowerRibbonLife = GUILayout.HorizontalSlider(EftEffect.PowerRibbonLife, 16f, 64f);
                 if (GUILayout.Button("▶ dump 集氣條粒子 (Console)"))
                     foreach (var g in _gaugeStrip) { var e = g ? g.GetComponent<EftEffect>() : null; if (e) Debug.Log("[gauge-roster] " + e.DumpRoster()); }
+                GUILayout.Label("各 slot 開關 (看每條是誰畫的):");
+                var slotNames = new[] { "0載體", "1光暈", "2電流帶", "3交叉帶", "4載體", "5白星", "6火花" };
+                GUILayout.BeginHorizontal();
+                for (int si = 0; si < EftEffect.PowerSlotOn.Length; si++)
+                {
+                    bool nv = GUILayout.Toggle(EftEffect.PowerSlotOn[si], slotNames[si]);
+                    EftEffect.PowerSlotOn[si] = nv;
+                    if (si == 3) { GUILayout.EndHorizontal(); GUILayout.BeginHorizontal(); }   // wrap to 2 rows
+                }
+                GUILayout.EndHorizontal();
                 GUILayout.Label($"集氣條電流速度 gauge speed: {energyStripSpeed:F2}× (crackle 快慢+密度; 1=官方節奏)");
                 energyStripSpeed = GUILayout.HorizontalSlider(energyStripSpeed, 0.5f, 4f);
                 foreach (var g in _gaugeStrip) { var e = g ? g.GetComponent<EftEffect>() : null; if (e) e.SpeedMul = energyStripSpeed; }   // live-apply to the running gauge

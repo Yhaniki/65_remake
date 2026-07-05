@@ -139,6 +139,10 @@ namespace Sdo.Game
         // bands (young-short + old-long, both moving). Faithful = 20 (mostly 1-2 bands); higher = denser flowing current.
         // Independent of energyStripSpeed (which sets overall crackle SPEED). F4-tunable.
         public static float PowerRibbonLife = 30f;
+        // F4 per-slot on/off for the POWER gauge (slots 0-6): 1 halo(tex30) / 2 ribbon(rai) / 3 cross-ribbon(rai) /
+        // 5 star(naga00) / 6 sparks(ring_l); 0 & 4 are invisible carriers. Lets the user isolate exactly which slot
+        // draws which band. Default all on.
+        public static bool[] PowerSlotOn = { true, true, true, true, true, true, true };
         // WHITE-HOT head core (RE-verified): official = OVERSIZED white additive quads (naga00 tex100 + ring_l tex96)
         // whose half-height blankets the ±9.375 gauge band its whole life, carrier-loop-overlapped + additive-clipped to
         // white. The remake's white quads are too small (~17-45 world → leave the band → only tiny flickers). This
@@ -1263,6 +1267,8 @@ namespace Sdo.Game
                     // generations read as a soft center-bright crackle instead of an additively-saturated static strip.
                     else if (p.E.Slot == 3) ci *= PowerCrossDim;
                 }
+                // F4 per-slot isolation: force a slot invisible (alpha 0) so you can see which slot draws what.
+                if (_isPower && p.E.Slot >= 0 && p.E.Slot < PowerSlotOn.Length && !PowerSlotOn[p.E.Slot]) a = 0f;
                 SetCol(p.mat, r * ci, g * ci, b * ci, a);
                 // outer-glow halo: same hue (NOT boosted), intensity scaled by _glowMul (alpha drives additive brightness)
                 if (p.glowMat != null) SetCol(p.glowMat, r, g, b, a * _glowMul);
