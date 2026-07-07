@@ -93,10 +93,10 @@ namespace Sdo.Game
         // null (e.g. the SDO_SCENE dev boot that spawns gameplay directly) the defaults below are used.
         private static readonly KeyCode[][] DefaultLaneKeys =
         {
-            new[] { KeyCode.A, KeyCode.Keypad4 },   // 0 Left
-            new[] { KeyCode.S, KeyCode.Keypad5 },   // 1 Down
-            new[] { KeyCode.W, KeyCode.Keypad8 },   // 2 Up
-            new[] { KeyCode.D, KeyCode.Keypad6 },   // 3 Right
+            new[] { KeyCode.A, KeyCode.LeftArrow },   // 0 Left
+            new[] { KeyCode.S, KeyCode.DownArrow },   // 1 Down
+            new[] { KeyCode.W, KeyCode.UpArrow },     // 2 Up
+            new[] { KeyCode.D, KeyCode.RightArrow },  // 3 Right
         };
         /// <summary>User key bindings resolved from settings (per lane: {primary, aux}); null → DefaultLaneKeys.
         /// Set by FrontendApp.StartGameplay so the Game assembly stays decoupled from Sdo.Settings.</summary>
@@ -262,6 +262,12 @@ namespace Sdo.Game
         private Material _addMat;           // additive material template; each burst clones its own instance
         private Material _hpGlowMat;        // HP-edge glow's OWN additive instance (dedicated so its _TintColor can be driven bright, and no _MainTex cross-bleed with bursts)
         private SpriteRenderer _readyGo;   // opening READY/GO overlay (centre screen)
+        private SpriteRenderer _gameOverGo;   // 死亡字幕 GAME OVER overlay (centre screen; HP-out death only)
+        private Sprite[] _gameOverFrames;     // GAMEOVER00/01/02 (EFFECT/GAMEOVER; sequence per GAMEOVER.AN)
+        public float gameOverScale = 1f;      // GAME OVER 字幕以原生像素 × 此係數繪製 (per-skin 圖尺寸差很多:439×249 / 600×150 / 466×76…)
+        public float gameOverFrameSec = 0.12f;// 掃入幀時長 (motion-blur 00→01→定格清晰 02)
+        public float readyGoScale = 1f;        // READY/GO 以「原生像素」尺寸繪製 × 此係數 (官方 .an 逐幀 blit 原尺寸;
+                                               // PET=198px、標準=300px。舊版硬撐 360px → PET 這種小圖被放大到太大)
         private readonly List<BurstFx> _fx = new List<BurstFx>();    // all live bursts: taps overlap freely (no gating)
         private readonly List<HandRibbon> _handTrails = new List<HandRibbon>();  // hand glow ribbons (world-space palm ribbons) for live tuning
         // Head emoji cut-ins (UI/PLAYINGEXP): combo milestones / consecutive misses / low HP pop a 4s camera-facing
@@ -1162,14 +1168,14 @@ namespace Sdo.Game
                 float t0 = Time.realtimeSinceStartup;
                 PlaySe(showtimeMode ? "readygo_showtime" : "VOICE_0003");  // 0x4c readygo_showtime in ShowTime, else the normal ready-go voice
                 _readyGo.enabled = true;
-                yield return PlayFrames(_readyFrames, 1.0f, 360f);      // READY: 10 frames @ 100ms/frame (decompiled StartReadyAnim param=100)
+                yield return PlayFrames(_readyFrames, 1.0f);      // READY: 10 frames @ 100ms/frame (decompiled StartReadyAnim param=100), native size
                 while (Time.realtimeSinceStartup - t0 < 2.0f) yield return null;  // HOLD on READY — wait for the voice's "go" cue
                 // GO frames: 01-03 = "GO!" appearing (G->Go->GO), 04-06 = it blurs/fades out. So play the
                 // appear half, HOLD the sharp full "GO!", then play the disappear half — not all 6 straight.
                 int half = Mathf.Max(1, _goFrames.Length / 2);
-                yield return PlayFrameRange(_goFrames, 0, half, 0.1f, 300f);        // appear
+                yield return PlayFrameRange(_goFrames, 0, half, 0.1f);        // appear (native size)
                 float h0 = Time.realtimeSinceStartup; while (Time.realtimeSinceStartup - h0 < 0.5f) yield return null;  // hold "GO!"
-                yield return PlayFrameRange(_goFrames, half, _goFrames.Length, 0.1f, 300f);  // disappear
+                yield return PlayFrameRange(_goFrames, half, _goFrames.Length, 0.1f);  // disappear
                 _readyGo.enabled = false;
             }
             // GO is done -> start the song and the gameplay clock together. Both use the same StartLeadSec offset on
@@ -1211,7 +1217,12 @@ namespace Sdo.Game
             _gaugeCur[0] = _gaugeCur[1] = _gaugeCur[2] = GaugeBaseP; _gaugeActive = 0;
         }
 
-        private IEnumerator PlayFrames(Sprite[] frames, float dur, float widthPx)
+        // NATIVE pixel size: each READY/GO frame is drawn at its own texture width (×readyGoScale), NOT a fixed width —
+        // the official .an blits each frame at its authored size. A per-skin skin like EFT_PET (198×55) is smaller than
+        // the standard skins (300×100); forcing one width blew the small ones up (PET 太大).
+        private float ReadyGoWidth(Sprite s) => (s != null ? s.rect.width : 300f) * readyGoScale;
+
+        private IEnumerator PlayFrames(Sprite[] frames, float dur)
         {
             if (frames == null || frames.Length == 0) { yield return new WaitForSecondsRealtime(dur); yield break; }
             float t = 0;
@@ -1219,19 +1230,19 @@ namespace Sdo.Game
             {
                 int fi = Mathf.Clamp((int)(t / dur * frames.Length), 0, frames.Length - 1);
                 _readyGo.sprite = frames[fi];
-                PlaceAspect(_readyGo, 400f, 300f, widthPx, -5f);   // centre of screen, over the avatar
+                PlaceAspect(_readyGo, 400f, 300f, ReadyGoWidth(frames[fi]), -5f);   // centre of screen, over the avatar
                 t += Time.deltaTime; yield return null;
             }
         }
 
         // play frames[from..to) holding each for secPerFrame (decompiled 100ms/frame)
-        private IEnumerator PlayFrameRange(Sprite[] frames, int from, int to, float secPerFrame, float widthPx)
+        private IEnumerator PlayFrameRange(Sprite[] frames, int from, int to, float secPerFrame)
         {
             if (frames == null || frames.Length == 0) yield break;
             for (int i = from; i < to && i < frames.Length; i++)
             {
                 _readyGo.sprite = frames[i];
-                PlaceAspect(_readyGo, 400f, 300f, widthPx, -5f);
+                PlaceAspect(_readyGo, 400f, 300f, ReadyGoWidth(frames[i]), -5f);
                 float t = 0; while (t < secPerFrame) { t += Time.deltaTime; yield return null; }
             }
         }
@@ -1472,6 +1483,8 @@ namespace Sdo.Game
             _info = NewText("Info", 610, 8, 10, Color.white);
             _fpsText = NewText("Fps", 6, 9, 11, new Color(0.5f, 1f, 0.5f, 1f));   // debug FPS (top-left)
             _readyGo = NewSR("ReadyGo", null, 50); _readyGo.enabled = false;
+            _gameOverGo = NewSR("GameOverText", null, 55); _gameOverGo.enabled = false;   // above the READY/GO overlay (50)
+            // (死亡字幕的幀在死亡當下才依「當前 note skin」載入 → LoadGameOverFrames;每個 skin 各有一組 GAMEOVER 圖)
             BuildRankingUi();
             BuildEnergyHud();
             UpdateHpBar();
@@ -3000,7 +3013,7 @@ namespace Sdo.Game
             _emH = LoadEmojiSeq("H", 10);        // 10 consecutive bad/miss
             _emY = LoadEmojiSeq("Y", 4);         // 30 consecutive bad/miss
             _emJS = LoadEmojiSeq("JS", 6);       // 50 consecutive bad/miss
-            _emGTH = LoadEmojiSeq("GTH", 8);     // low HP (<30% bar)
+            _emGTH = LoadEmojiSeq("GTH", 8);     // cumulative 100 misses (was low-HP; low HP now only plays VOICE_0012)
         }
 
         // Build the emoji billboard. It anchors to the dancer's formation SLOT in world space (the dance-spot the
@@ -3165,7 +3178,13 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.Alpha4)) SpawnComboBurst(3);
             if (Input.GetKeyDown(KeyCode.Alpha5)) SpawnComboBurst(4);
             if (Input.GetKeyDown(KeyCode.Alpha0)) SpawnNamedEft("FINISHED", 5f);
-            if (Input.GetKeyDown(KeyCode.F5) && _started && !_ended) { _ended = true; EnterResult(); }   // DEBUG F5: cut the song short → jump to the result sequence
+            if (Input.GetKeyDown(KeyCode.F5) && _started && !_ended)
+            {
+                // DEBUG F5: cut the song short → jump to the result sequence. Shift+F5 forces HP-out → the GAME OVER
+                // death flow (Frameextrude + 死亡字幕 + no win/lose pose), for verifying it without grinding HP to zero.
+                if (!showtimeMode && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))) _failed = true;
+                _ended = true; EnterResult();
+            }
             if (Input.GetKeyDown(KeyCode.LeftBracket)) SetTimeScale(_timeScale * 0.5f);    // [ slower
             if (Input.GetKeyDown(KeyCode.RightBracket)) SetTimeScale(_timeScale * 2f);     // ] faster
             if (Input.GetKeyDown(KeyCode.Backslash)) { if (Time.timeScale > 0f) Time.timeScale = 0f; else SetTimeScale(_timeScale); }  // \ pause/resume
@@ -3264,16 +3283,75 @@ namespace Sdo.Game
             if (_emoji != null) _emoji.Stop();                // clear any head emoji cut-in so it doesn't linger into the result
             foreach (var n in _notes)                         // also kill any note sprites still in flight
             { if (n.Head) n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); }
-            if (_avatar != null)                              // win/lose 定格 pose (cat5/cat4), held on its last frame
+            if (_gameOver)
             {
-                var mot = ResolveMot(_localWon ? winMot : loseMot);
-                if (mot != null) _avatar.PlayOneShot(mot, true);
+                // 血條用完死掉 (HP-out): 不放結束勝利/失敗的定格動作與 FINISHED effect;改播死亡字幕 GAME OVER (置中) +
+                // Frameextrude 音效。多人時只有「全員陣亡」才走這條;只要有人沒死,倖存者在歌曲結束照走原本輸贏流程 —
+                // 本重製為單人(mock 對手無 HP、不會死),故 _failed(本人陣亡)== 全員陣亡。
+                PlaySe("Frameextrude");
+                LoadGameOverFrames();                             // 依當前 note skin 選對應的 GAMEOVER 圖 (per-skin)
+                StartCoroutine(GameOverAnim());
             }
-            // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
-            // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
-            if (_localWon) SpawnNamedEft("FINISHED", 5f);
-            if (enableResultSfx) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
+            else
+            {
+                if (_avatar != null)                              // win/lose 定格 pose (cat5/cat4), held on its last frame
+                {
+                    var mot = ResolveMot(_localWon ? winMot : loseMot);
+                    if (mot != null) _avatar.PlayOneShot(mot, true);
+                }
+                // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
+                // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
+                if (_localWon) SpawnNamedEft("FINISHED", 5f);
+                if (enableResultSfx) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
+            }
             _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
+        }
+
+        // 死亡字幕的「哪一組」= 官方由**同一個變體 id S**(DAT_00674f04+0x68)同時決定 note_image 與 gameover
+        // (Gameplay_OnLoadComplete jump table @0x474ed4: S=3→gameover8, 4→gameover9, 5→gameover10, 6→gameover5,
+        // 7/8→gameover2, 其餘→gameover5;而 note_image8/9/10↔S3/4/5、note_image5↔S7/8、note_image6↔S1/2/6、
+        // note_image11↔S9、note_image_pet↔S10)。⇒ gameover 是綁「note-image(board)」不是 EFT 命中特效編號。
+        // 對照 board→gameover:  8→GAMEOVER8 · 9→GAMEOVER9 · 10→GAMEOVER10 · 5→GAMEOVER2 · 6/11/PET→GAMEOVER5。
+        private static string GameOverSuffixForBoard(string board)
+        {
+            switch (board)
+            {
+                case "8":   return "8";
+                case "9":   return "9";
+                case "10":  return "10";
+                case "5":   return "2";     // note_image5 配 gameover2 (官方 S=7/8)
+                case "11":  return "2";     // 使用者指定 EFT_14(board11)→GAMEOVER2 (離線反編譯是 default gameover5,覆寫)
+                case "PET": return "8";     // 使用者指定 PET→GAMEOVER8 (離線反編譯其實是 default gameover5,這裡刻意覆寫)
+                default:    return "5";     // board 6 → gameover5 (官方 S=1/2/6 走 default)
+            }
+        }
+
+        private void LoadGameOverFrames()
+        {
+            // stock(-1)=開機預設 EFT_2(board6);3D skin 無 note_image → 用官方 default gameover5。
+            int t = _hit3dMode ? -1 : (_eftNoteType >= 0 ? _eftNoteType : 0);
+            string board = (t >= 0 && t < NoteTypeBoardSuffix.Length) ? NoteTypeBoardSuffix[t] : "6";
+            string dir = Path.Combine(SdoExtracted.Root, "EFFECT", "GAMEOVER" + GameOverSuffixForBoard(board));
+            if (!Directory.Exists(dir)) dir = Path.Combine(SdoExtracted.Root, "EFFECT", "GAMEOVER");   // 保險退回基本組
+            var gof = new List<Sprite>();
+            foreach (var gn in new[] { "GAMEOVER00.PNG", "GAMEOVER01.PNG", "GAMEOVER02.PNG" })
+            { var gs = SdoExtracted.LoadImage(dir, gn, bleed: true); if (gs != null) gof.Add(gs); }
+            _gameOverFrames = gof.ToArray();
+        }
+
+        // 死亡字幕 GAME OVER: motion-blur 幀掃入 (00→01) 後停在清晰的 02,置中畫面 (400,300)。frame list 取自
+        // GAMEOVER.AN (00,01,02×10 → 定格 02)。定格幀持續顯示,直到結算面板出現 (ShowResultPanel 關掉它)。
+        private IEnumerator GameOverAnim()
+        {
+            if (_gameOverGo == null || _gameOverFrames == null || _gameOverFrames.Length == 0) yield break;
+            _gameOverGo.enabled = true;
+            for (int i = 0; i < _gameOverFrames.Length; i++)
+            {
+                _gameOverGo.sprite = _gameOverFrames[i];
+                PlaceAspect(_gameOverGo, 400f, 300f, _gameOverFrames[i].rect.width * gameOverScale, -6f);   // native size, centre screen, above READY/GO plane
+                float t = 0f; while (t < gameOverFrameSec) { t += Time.deltaTime; yield return null; }
+            }
+            // holds on the last (crisp) frame — already placed above; ShowResultPanel disables the overlay.
         }
 
         // STAGE 1: combo number + judgment word (these belong to the note board, gone during the win/lose pose).
@@ -3362,6 +3440,7 @@ namespace Sdo.Game
         // Build + show the STATIS result panel with this round's ranked rows (decompiled phase6).
         private void ShowResultPanel()
         {
+            if (_gameOverGo) _gameOverGo.enabled = false;   // 死亡字幕收起 — 結算面板要接手
             HideHudForPanel();   // stage 2: now hide the score / rank / roster / song-info / nameplate
             ShowResultSongInfo();   // ...but keep the bottom 歌名/LV row (time field dropped) as the result's song-info
             if (_result == null)
@@ -3386,7 +3465,8 @@ namespace Sdo.Game
             int expGained = freeMode ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
             int coinsGained = freeMode ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
             Texture head = BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
-            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe);
+            // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
+            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe, showBanner: !freeMode);
         }
 
         // Turn the final roster + score into ranked result rows. The local player uses real judgment counts;

@@ -48,6 +48,7 @@ namespace Sdo.Game
         private bool[] _rowSnd;
         // result sequence flags/timers: rows (SE_0020, 500ms apart) → EXP/G roll (SE_0021) → win/lose banner zoom (SE_0022)
         private bool _expSnd, _bannerShown, _bannerLocalWon, _gameOver;
+        private bool _showBanner = true;   // 出 YOU WIN/LOSE 旗? 自由模式=false (仍播 SE_0022);GAME OVER 也不出旗
         private float _bannerStart;
         // GAME OVER (RANK/7.png) sprite — drawn IN the failed (local) player's rank column as a normal row child, so it
         // slides in with that row (no separate banner / animation) and replaces their rank number.
@@ -159,11 +160,12 @@ namespace Sdo.Game
         /// banner scale-in and row slide-in. <paramref name="localWon"/> picks the YouWin / YouLose banner.</summary>
         public void Show(string songTitle, string difficulty, Row[] rows, bool localWon,
                          int expGained, int coinsGained, Texture localHead = null, bool gameOver = false,
-                         System.Action<string> playSe = null)
+                         System.Action<string> playSe = null, bool showBanner = true)
         {
             ClearRows();
             _playSe = playSe; _rowSnd = new bool[rows != null ? rows.Length : 0];
             _expSnd = false; _bannerShown = false; _bannerStatic = false; _rewardArmed = false; _localHead = localHead; _gameOver = gameOver;
+            _showBanner = showBanner;
             string dir = SdoExtracted.ResultStatisDir;
 
             // Song name + level are no longer drawn at the top of the panel — the gameplay HUD's bottom song-info row
@@ -360,19 +362,17 @@ namespace Sdo.Game
             if (!_expSnd && el >= rowsInAt) { _expSnd = true; _playSe?.Invoke("SE_0021"); }
             if (_rewardArmed) { _expTotal?.Tick(Time.time); _gTotal?.Tick(Time.time); }
 
-            // (3) LAST: reveal the YouWin / YouLose banner, zooming from ~screen-width down to its size (SE_0022).
-            // GAME OVER has NO banner beat — it already slid in with the failed player's row (BuildRow), so skip this.
-            if (!_gameOver)
+            // (3) LAST beat (SE_0022): the結算 chime ALWAYS fires — 自由模式 與 GAME OVER 也要有,只是不出 YOU WIN/LOSE 旗
+            // (自由模式無輸贏字幕;GAME OVER 已用死亡字幕交代)。一般排名輸贏才把旗從 ~螢幕寬 zoom 進到定位。
+            float bannerAt = rowsInAt + ExpHoldSec;
+            bool wantBanner = _showBanner && !_gameOver;
+            var banner = _bannerLocalWon ? _bannerWin : _bannerLose;
+            if (!_bannerShown && el >= bannerAt)
             {
-                float bannerAt = rowsInAt + ExpHoldSec;
-                var banner = _bannerLocalWon ? _bannerWin : _bannerLose;
-                if (!_bannerShown && el >= bannerAt)
-                {
-                    _bannerShown = true; _bannerStart = Time.time; _bannerStatic = false; _playSe?.Invoke("SE_0022");
-                    if (banner) banner.SetActive(true);
-                }
-                if (_bannerShown) UpdateBanner(banner);
+                _bannerShown = true; _playSe?.Invoke("SE_0022");
+                if (wantBanner) { _bannerStart = Time.time; _bannerStatic = false; if (banner) banner.SetActive(true); }
             }
+            if (_bannerShown && wantBanner) UpdateBanner(banner);
 
             // OK (Enter / click) confirms; save-record is a P1 stub (no-op for now)
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Escape)) { OnConfirm?.Invoke(); return; }
@@ -402,7 +402,7 @@ namespace Sdo.Game
         public void PlayBannerTest(bool win) { ShowOneBanner(win); _bannerStatic = false; _bannerStart = Time.time; _playSe?.Invoke("SE_0022"); }
         private void ShowOneBanner(bool win)
         {
-            _gameOver = false; _bannerLocalWon = win; _bannerShown = true;
+            _gameOver = false; _showBanner = true; _bannerLocalWon = win; _bannerShown = true;   // F4 preview always animates the banner
             if (_bannerWin) _bannerWin.SetActive(win);
             if (_bannerLose) _bannerLose.SetActive(!win);
         }

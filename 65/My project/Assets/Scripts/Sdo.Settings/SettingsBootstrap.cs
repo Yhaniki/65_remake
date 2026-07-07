@@ -10,7 +10,8 @@ namespace Sdo.Settings
         {
             DisplaySettingsManager.Load();
             DisplaySettingsManager.ApplyDisplay();
-            RoomConfig.Load();   // 開房間面板預設：執行檔同層的 config.ini
+            ProfileManager.Boot();   // 解析/建立 active 使用者(DATA/PROFILE)，載入其收藏 —— 必須在 RoomConfig 之前
+            RoomConfig.Load();       // 開房間面板預設：改成 active 使用者資料夾下的 config.ini
         }
     }
 }

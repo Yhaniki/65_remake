@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.Networking;
 using UnityEngine.UI;
 using Sdo.Game;
@@ -60,6 +61,8 @@ namespace Sdo.UI.Screens
         private RectTransform _diskRoot;
         private Image _diskJacket;
         private Spinner _diskSpin;
+        private bool _diskSpinPaused;   // 使用者點唱片切換的「停止轉動」；停轉時下一首也不轉；跳出再進 reset(OnShow)
+        private bool _diskCanSpin;      // 目前唱片是不是真封面(可轉)；RANDOM/NONE=false
         private Sprite _iconRandom, _iconNone;   // ICONS/RANDOM.PNG (隨機) and ICONS/NONE.PNG (no cover) — both static (no spin)
 
         // difficulty tabs
@@ -89,7 +92,14 @@ namespace Sdo.UI.Screens
         // list rows
         private Image[] _rowHi, _rowNew, _rowNewBg;
         private Button[] _rowBtn;
+        private PointerClickProxy[] _rowCtx;   // per-row right-click → 收藏加/刪彈出選單
         private TextMeshProUGUI[] _rowName, _rowTime, _rowLevel;
+
+        // 收藏右鍵彈出選單（MUSICPOP.XML：Pop_Add=MusicSelDlg124/125/126、Pop_Del=127/128/129），疊在 Root 上、跟著滑鼠。
+        // 不用全螢幕 overlay 擋點擊 → 選單開著時歌曲列仍是活的：右鍵另一首會直接換過去；「點在選單外就關」由 Update 判定。
+        private GameObject _favPopup;
+        private int _favPopupFrame;   // 開選單的幀（同一幀的 mousedown 不判關）
+        private Camera _uiCam;   // 世界空間 canvas 的相機（滑鼠螢幕座標 → 800×600 設計座標用）
         private Sprite _hiNormal, _hiPushed;
         private Sprite[] _newFrames = new Sprite[0];   // NEWSIGN.an animation frames (colour-cycling NEW tag)
         private bool _newBadgeArt;                     // any NEW badge art (animation and/or new.an backing) loaded
@@ -199,6 +209,7 @@ namespace Sdo.UI.Screens
             // EXCEPTIONS reset on every open: the category tab snaps back to 全部, and the search box is cleared —
             // so re-entering always shows the full list, not a stale filter/tab.
             _category = CatAll;
+            _diskSpinPaused = false;   // 跳出再進 → 唱片轉動 reset：預設會轉（下面選歌時 SetDiskSpinning 會轉起來）
             if (_search != null)
             {
                 _search.SetTextWithoutNotify(string.Empty);   // no notify: ApplyFilter below re-filters with empty text
@@ -239,13 +250,14 @@ namespace Sdo.UI.Screens
             _closing = true;
             if (_windowCg != null) _windowCg.blocksRaycasts = false;
             UiSfx.Play(UiSfx.FrameRound);
+            CloseFavPopup();
             StopPreview();
             if (_anim != null) _anim.PlayOut(() => GoTo(target));
             else GoTo(target);
         }
 
-        public override void OnHide() => StopPreview();
-        private void OnDisable() => StopPreview();   // covers canvas SetActive(false) on gameplay hand-off
+        public override void OnHide() { CloseFavPopup(); StopPreview(); }
+        private void OnDisable() { CloseFavPopup(); StopPreview(); }   // covers canvas SetActive(false) on gameplay hand-off
 
         private void ComputeNewIds()
         {
@@ -282,7 +294,7 @@ namespace Sdo.UI.Screens
             _iconNone = SongIcons.LoadNamed("NONE.PNG");        // "no cover" disc (ICONS/NONE.PNG)
             var baseImg = root.gameObject.AddComponent<Image>();
             baseImg.sprite = RoomDlgArt.An("MusicSelDlg106.an");
-            baseImg.raycastTarget = false;
+            baseImg.raycastTarget = true;   // 點唱片區域 → 切換停轉/轉動（ToggleDiskSpin）
             var mask = root.gameObject.AddComponent<Mask>();
             mask.showMaskGraphic = true;   // the vinyl shows as the base; children clip to its circular alpha
 
@@ -293,6 +305,12 @@ namespace Sdo.UI.Screens
             _diskJacket.color = new Color(1f, 1f, 1f, 0f);   // hidden until a song is picked
 
             _diskSpin = root.gameObject.AddComponent<Spinner>();
+
+            // 點唱片：切換停止/轉動（不影響音樂）。透明角落也算唱片區域(矩形命中)，夠用。
+            var spinToggle = root.gameObject.AddComponent<Button>();
+            spinToggle.targetGraphic = baseImg;
+            spinToggle.transition = Selectable.Transition.None;
+            spinToggle.onClick.AddListener(ToggleDiskSpin);
         }
 
         private void BuildDifficultyTabs()
@@ -381,12 +399,24 @@ namespace Sdo.UI.Screens
             _diskJacket.color = s != null ? Color.white : new Color(1f, 1f, 1f, 0f);
         }
 
-        // Spin only for real song covers; the RANDOM / NONE discs stay parked upright.
-        private void SetDiskSpinning(bool on)
+        // Spin only for real song covers; the RANDOM / NONE discs stay parked upright. 使用者可用點唱片全域停轉
+        // (_diskSpinPaused)：停轉時就算換到有封面的下一首也不轉（音樂照播，見 UpdateDisk 仍回 true）。
+        private void SetDiskSpinning(bool canSpin)
         {
+            _diskCanSpin = canSpin;
             if (_diskSpin == null) return;
-            if (on) { _diskSpin.enabled = true; _diskSpin.Restart(); }   // stop, then spin up on cover change
+            if (canSpin && !_diskSpinPaused) { _diskSpin.enabled = true; _diskSpin.Restart(); }   // stop, then spin up on cover change
             else { _diskSpin.enabled = false; if (_diskRoot != null) _diskRoot.localRotation = Quaternion.identity; }
+        }
+
+        // 點唱片區域：切換「停止轉動」。停=原地凍結（完全不碰音樂試聽）；開=真封面才轉、從當前角度接續全速
+        // （RANDOM/NONE 維持不轉）。跳出畫面再進來會 reset 成會轉（見 OnShow）。
+        private void ToggleDiskSpin()
+        {
+            _diskSpinPaused = !_diskSpinPaused;
+            if (_diskSpin == null) return;
+            if (_diskSpinPaused) _diskSpin.enabled = false;          // 停：原地凍結
+            else if (_diskCanSpin) _diskSpin.enabled = true;         // 開：接續轉（真封面才轉）
         }
 
         private void BuildRows()
@@ -402,6 +432,7 @@ namespace Sdo.UI.Screens
             var newBgSprite = RoomDlgArt.An("new.an");   // static ★NEW! glow plate behind the animation
             _newBadgeArt = newBgSprite != null || _newFrames.Length > 0;
             _rowBtn = new Button[PageSize];
+            _rowCtx = new PointerClickProxy[PageSize];
             _rowName = new TextMeshProUGUI[PageSize];
             _rowTime = new TextMeshProUGUI[PageSize];
             _rowLevel = new TextMeshProUGUI[PageSize];
@@ -418,6 +449,9 @@ namespace Sdo.UI.Screens
                 btn.transition = Selectable.Transition.None;
                 _rowHi[i] = hi;
                 _rowBtn[i] = btn;
+
+                // 右鍵處理器（與 Button 左鍵 onClick 並存）：右鍵歌曲列 → 收藏加/刪彈出選單。RenderPage 每頁重接對應歌曲。
+                _rowCtx[i] = hi.gameObject.AddComponent<PointerClickProxy>();
 
                 // song name / time / level nudged down 2px to sit centred in the row strip (was at `top`).
                 float textTop = top + 2f;
@@ -622,13 +656,21 @@ namespace Sdo.UI.Screens
             RenderPage();
         }
 
-        // The song subset for the active category. 全部 = all; 最新 = NEW-badge songs; 收藏/勁樂/懷舊 unconfigured = empty.
-        // (隨機 never reaches here — it renders the range rows instead.)
+        // The song subset for the active category. 全部 = all; 收藏 = 本機 user 收藏的歌; 最新 = NEW-badge songs;
+        // 勁樂/懷舊 unconfigured = empty. (隨機 never reaches here — it renders the range rows instead.)
         private List<SongCatalog.Entry> CategoryBase()
         {
             var all = _model.All;
             var res = new List<SongCatalog.Entry>();
             if (_category == CatAll) { res.AddRange(all); }
+            else if (_category == CatFav)
+            {
+                // 收藏頁：最近加入的排最上面（照收藏加入順序反向），對回歌單條目。
+                var byKey = new Dictionary<string, SongCatalog.Entry>();
+                foreach (var e in all) { var k = Favorites.Key(e.gn); if (!byKey.ContainsKey(k)) byKey[k] = e; }
+                foreach (var k in Favorites.NewestFirst())
+                    if (byKey.TryGetValue(k, out var e)) res.Add(e);
+            }
             else if (_category == CatNewest) { foreach (var e in all) if (_newIds.Contains(e.fileId)) res.Add(e); }
             return res;
         }
@@ -685,6 +727,7 @@ namespace Sdo.UI.Screens
                 _rowTime[i].gameObject.SetActive(has);
                 _rowLevel[i].gameObject.SetActive(has);
                 _rowBtn[i].onClick.RemoveAllListeners();
+                if (_rowCtx[i] != null) _rowCtx[i].Clicked = null;
                 if (!has) { SetRowNewActive(i, false); continue; }
 
                 var e = slice[i];
@@ -697,7 +740,11 @@ namespace Sdo.UI.Screens
                 int dur = e.DurationSec(_difficulty);
                 _rowTime[i].text = dur > 0 ? FormatDuration(dur) : "";
                 SetRowNewActive(i, _newBadgeArt && _newIds.Contains(e.fileId));
-                _rowBtn[i].onClick.AddListener(() => Select(e));
+                // 左鍵選歌：先發 SE_0001 再 focus+試聽。（RenderPage 上面 RemoveAllListeners 會連 WrapInWindow 掛的 click SFX 一起清掉 → 這裡補回）
+                _rowBtn[i].onClick.AddListener(() => { UiSfx.Play(UiSfx.Click); Select(e); });
+                // 右鍵這首歌 → 先 focus+試聽該首（跟左鍵一樣選中並播放），再開收藏加/刪彈出選單（跟著滑鼠）。
+                if (_rowCtx[i] != null)
+                    _rowCtx[i].Clicked = ev => { if (ev.button == PointerEventData.InputButton.Right) { Select(e); ShowFavPopup(e, ev.position); } };
             }
         }
 
@@ -714,6 +761,7 @@ namespace Sdo.UI.Screens
                 _rowLevel[i].gameObject.SetActive(false);
                 SetRowNewActive(i, false);
                 _rowBtn[i].onClick.RemoveAllListeners();
+                if (_rowCtx[i] != null) _rowCtx[i].Clicked = null;   // 隨機難度列不是歌曲 → 無收藏右鍵
                 if (!has) continue;
 
                 ApplyRowHi(i, i == _randRange);
@@ -900,6 +948,79 @@ namespace Sdo.UI.Screens
 
             Ctx.Rooms.SetSong(s.SongTitle);
             CloseTo(ScreenId.Room);
+        }
+
+        // ---------------- 收藏右鍵彈出選單 ----------------
+
+        // 右鍵歌曲列 → 單鈕選單「添加收藏夹 / 从收藏夹删除」(原版 MUSICPOP)：位置跟著滑鼠、夾在畫面內；按下切換收藏
+        // 並收起，點選單外任一處(全螢幕 overlay)也收起。收藏狀態存在 active user 的 favorites.json。
+        private void ShowFavPopup(SongCatalog.Entry e, Vector2 screenPos)
+        {
+            CloseFavPopup();
+            if (e == null || string.IsNullOrEmpty(e.gn)) return;
+            bool isFav = Favorites.IsFav(e.gn);
+            Sprite n = RoomDlgArt.An(isFav ? "MusicSelDlg127.an" : "MusicSelDlg124.an");   // del / add 常態
+            Sprite h = RoomDlgArt.An(isFav ? "MusicSelDlg128.an" : "MusicSelDlg125.an");   // hover
+            Sprite p = RoomDlgArt.An(isFav ? "MusicSelDlg129.an" : "MusicSelDlg126.an");   // pushed
+            float w = n != null ? n.rect.width : 94f, ht = n != null ? n.rect.height : 30f;
+
+            // 位置：滑鼠螢幕座標 → 800×600 設計座標(左上、y-down)，夾進畫面。
+            Vector2 tl = ScreenToDesign(screenPos);
+            float x = Mathf.Clamp(tl.x, 0f, 800f - w);
+            float y = Mathf.Clamp(tl.y, 0f, 600f - ht);
+            var btn = UIKit.AddSpriteButton(Root, "FavBtn", n, h, p, x, y);
+            _favPopup = btn.gameObject;
+            _favPopup.transform.SetAsLastSibling();
+            _favPopupFrame = Time.frameCount;
+            UiSfx.AttachClick(btn);      // 按下 添加/刪除收藏夾 → SE_0001
+            UiHoverSfx.Attach(btn);      // 滑過 添加/刪除收藏夾 → Menufloat
+            var entry = e;
+            btn.onClick.AddListener(() =>
+            {
+                Favorites.Toggle(entry.gn);
+                CloseFavPopup();
+                if (_category == CatFav) RefreshFavCategory();   // 收藏頁下移除 → 該列消失
+                else RenderPage();
+            });
+        }
+
+        private void CloseFavPopup()
+        {
+            if (_favPopup != null) { Destroy(_favPopup); _favPopup = null; }
+        }
+
+        // 收藏選單開著時：點在選單「外」就關掉它。不吃事件（沒有 overlay 擋著）→ 底下的歌曲列照樣收到那個點擊，
+        // 所以右鍵另一首會直接關舊選單並換到那首（Select + 重開選單）；左鍵另一首也會換過去並關選單。
+        private void Update()
+        {
+            if (_favPopup == null) return;
+            if (Time.frameCount == _favPopupFrame) return;   // 剛開的那一幀不判關，避免自我關閉
+            if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;
+            var rt = (RectTransform)_favPopup.transform;
+            if (!RectTransformUtility.RectangleContainsScreenPoint(rt, Input.mousePosition, _uiCam))
+                CloseFavPopup();   // 點到選單按鈕本身則不關（交給按鈕的 onClick 切換收藏後自行收起）
+        }
+
+        // 收藏頁在加/刪後重建清單：保留當前選取(還在的話)，否則選第一首；空了就清資訊/唱片。
+        private void RefreshFavCategory()
+        {
+            var keep = _selected;
+            ApplyFilter();
+            if (keep != null && _filtered.Contains(keep)) { _page = _filtered.IndexOf(keep) / PageSize; Select(keep); }
+            else if (_filtered.Count > 0) { _page = 0; Select(_filtered[0]); }
+            else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); RenderPage(); }
+        }
+
+        // 滑鼠螢幕座標 → 800×600 設計座標(左上原點、y 往下)。用世界空間 canvas 的相機做反投影（與 Place 的 (x,-y) 慣例一致）。
+        private Vector2 ScreenToDesign(Vector2 screenPos)
+        {
+            if (_uiCam == null) { var c = GetComponentInParent<Canvas>(); _uiCam = c != null ? c.worldCamera : null; }
+            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(Root, screenPos, _uiCam, out var lp))
+            {
+                var r = Root.rect;
+                return new Vector2(lp.x - r.xMin, r.yMax - lp.y);
+            }
+            return Vector2.zero;
         }
 
         // ---------------- small utils ----------------

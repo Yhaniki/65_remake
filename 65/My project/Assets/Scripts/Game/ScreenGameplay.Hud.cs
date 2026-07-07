@@ -439,7 +439,7 @@ namespace Sdo.Game
             if (!_trackVisible) return;   // hidden during the opening intro; SetTrackVisible(true) re-shows it
             double hp = _health?.Health ?? HealthProcessor.MaxHealth;
             float frac = Mathf.Clamp01((float)((hp - HealthProcessor.FloorHealth) / (HealthProcessor.MaxHealth - HealthProcessor.FloorHealth)));
-            ShowEmoji(_emojiState.OnHp(frac));   // low-HP emoji (GTH): <30% bar fires once, re-arms above 40%
+            if (_emojiState.OnHp(frac)) PlaySe("VOICE_0012");   // 血剩30% → 警告語音 (低血只播語音;GTH emoji 改成累計100miss,見 OnJudge)
             // official MyHp fill clipped to (HP+150)/1150 (no overlay -> uniform red, no banding).
             if (_hpTex) SdoLayout.PlaceBarFill(_hpTex, HpPos.x, HpPos.y, HpSize.x, HpSize.y, frac, -0.1f);
             if (_hpGlow && _hpGlowFrames != null && _hpGlowFrames.Length > 0)

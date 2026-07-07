@@ -24,7 +24,15 @@ namespace Sdo.UI.Core
         public static AppContext CreateMock()
         {
             var session = new GameSession();
-            session.SeedRoomDefaults();   // 房間面板預設值(速度/note/組隊/掉落/模式)從 settings.json 種入
+            // 本機身分(id/名字/性別)由 active 使用者(DATA/PROFILE)帶入 —— ProfileManager.Boot() 已在開機時跑過。
+            var prof = Sdo.Settings.ProfileManager.Active;
+            if (prof != null)
+            {
+                session.LocalPlayerId = prof.id;
+                session.LocalPlayerName = prof.name;
+                session.Gender = prof.gender;
+            }
+            session.SeedRoomDefaults();   // 房間面板預設值(速度/note/組隊/掉落/模式)從 active user 的 config.ini 種入
             var flow = new FlowManager();
             var clock = new SystemClock();
             var players = new MockPlayerService();

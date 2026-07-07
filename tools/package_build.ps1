@@ -65,6 +65,9 @@ if ($online) {
     # baked Chinese painted out by tools\build_optiondlg_clean.py, so the built player resolves the same faithful pink
     # frame the editor does (OptionDlgModal + OptionDlgArt's DATA\UI\OPTIONDLG fallback).
     Copy-Tree (Join-Path $ds 'UI\OPTIONDLG')        (Join-Path $Data 'UI\OPTIONDLG')        'online OPTIONDLG'
+    # OPTION 鍵盤 tab per-key letter glyphs (A/S/W/D…, blue-fill/white-outline PNGs blitted on each key cap; loaded by
+    # KeysArt with a DATA\UI\LOBBYDLG\KEYS fallback). Not referenced by any .an — the exe loaded them by hardcoded path.
+    Copy-Tree (Join-Path $ds 'UI\LOBBYDLG\KEYS')    (Join-Path $Data 'UI\LOBBYDLG\KEYS')    'online KEYS glyphs'
     # LOADING screens: the gameplay boot/loading screen (ScreenGameplay boot cover) picks random LOADING_N.PNG tips +
     # LOADINGS_N.PNG badges from here; overlay them so the built player resolves the same set (LoadingArt's DATA\LOADING fallback).
     Copy-Tree (Join-Path $ds 'LOADING')             (Join-Path $Data 'LOADING')             'online LOADING'

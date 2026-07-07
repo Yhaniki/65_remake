@@ -16,9 +16,9 @@ namespace Sdo.Settings
     [Serializable]
     public class VolumeSettings
     {
-        public float bgm = 0.8f;
-        public float gameMusic = 0.9f;
-        public float sfx = 1f;
+        public float bgm = 0.5f;
+        public float gameMusic = 0.5f;
+        public float sfx = 0.5f;
     }
 
     /// <summary>
@@ -30,11 +30,11 @@ namespace Sdo.Settings
     [Serializable]
     public class KeyBindSettings
     {
-        public string[] lane4 = { "A", "S", "W", "D" };                          // 主鍵位 (primary)
-        public string[] lane4aux = { "Keypad4", "Keypad5", "Keypad8", "Keypad6" }; // 輔助鍵位 (auxiliary)
+        public string[] lane4 = { "A", "S", "W", "D" };                                   // 主鍵位 (primary): A=Left S=Down W=Up D=Right
+        public string[] lane4aux = { "LeftArrow", "DownArrow", "UpArrow", "RightArrow" };  // 輔助鍵位 (auxiliary): 方向鍵 上下左右
 
         public static readonly KeyCode[] DefaultPrimary = { KeyCode.A, KeyCode.S, KeyCode.W, KeyCode.D };
-        public static readonly KeyCode[] DefaultAux = { KeyCode.Keypad4, KeyCode.Keypad5, KeyCode.Keypad8, KeyCode.Keypad6 };
+        public static readonly KeyCode[] DefaultAux = { KeyCode.LeftArrow, KeyCode.DownArrow, KeyCode.UpArrow, KeyCode.RightArrow };
 
         /// <summary>Per-lane key sets {primary, aux} for the gameplay input loop. Pure; falls back to defaults.</summary>
         public KeyCode[][] ToLaneKeys()
@@ -68,8 +68,9 @@ namespace Sdo.Settings
         private static string At(string[] a, int i) => (a != null && i < a.Length) ? a[i] : null;
     }
 
-    /// <summary>Serializable user settings persisted to persistentDataPath/settings.json.
-    /// 註：開房間面板的預設(速度/note/組隊/掉落/模式)不放這，改放執行檔同層的 config.ini，見 <see cref="RoomConfig"/>。</summary>
+    /// <summary>Serializable user settings persisted to persistentDataPath/settings.json（畫面/音量/按鍵/語言，
+    /// 屬「本機裝置」層級，不隨 user 走）。註：開房間面板的預設(速度/note/組隊/掉落/模式)不放這，改放 per-user 的
+    /// config.ini（DATA/PROFILE/&lt;id&gt;/），見 <see cref="RoomConfig"/> / <see cref="ProfileManager"/>。</summary>
     [Serializable]
     public class GameSettings
     {

@@ -10,6 +10,7 @@ namespace Sdo.UI.Core
     {
         public string LocalPlayerId = "me";
         public string LocalPlayerName = "玩家001";
+        public int Gender = 0;   // 本機角色性別：0=女(WOMAN) 1=男(MAN)。由 active profile 帶入（見 AppContext.CreateMock）。
 
         public int CurrentRoomId = -1;
 

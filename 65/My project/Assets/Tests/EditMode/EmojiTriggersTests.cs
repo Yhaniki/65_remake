@@ -100,26 +100,49 @@ namespace Sdo.Tests
             Assert.AreEqual(EmojiKind.Y, t.OnJudge(Judgment.Miss, 0));  // 30 -> Y
         }
 
-        // ---- low HP hysteresis -------------------------------------------------------------------------------
+        // ---- GTH = cumulative 100 misses (total, not consecutive) --------------------------------------------
 
         [Test]
-        public void Low_Hp_Fires_Once_Below_30_Percent()
+        public void Gth_Fires_Once_At_100_Total_Misses()
         {
             var t = new EmojiTriggers();
-            Assert.AreEqual(EmojiKind.None, t.OnHp(0.5f));
-            Assert.AreEqual(EmojiKind.GTH, t.OnHp(0.29f));
-            Assert.AreEqual(EmojiKind.None, t.OnHp(0.10f));  // still low -> does not re-fire
+            int firedAt = -1;
+            for (int n = 1; n <= 120; n++)
+                if (t.OnJudge(Judgment.Miss, 0) == EmojiKind.GTH) { Assert.AreEqual(-1, firedAt, "GTH fired twice"); firedAt = n; }
+            Assert.AreEqual(100, firedAt);        // fires exactly on the 100th miss
+            Assert.AreEqual(120, t.TotalMiss);
+        }
+
+        [Test]
+        public void Gth_Counts_Total_Misses_Across_Broken_Runs()
+        {
+            var t = new EmojiTriggers();
+            // 99 misses, each broken by a clean hit -> consecutive run never exceeds 1, but the TOTAL climbs to 99.
+            for (int i = 0; i < 99; i++) { t.OnJudge(Judgment.Miss, 0); t.OnJudge(Judgment.Perfect, 1); }
+            Assert.AreEqual(99, t.TotalMiss);
+            Assert.AreEqual(EmojiKind.GTH, t.OnJudge(Judgment.Miss, 0));   // 100th total miss -> GTH (proves cumulative, not consecutive)
+        }
+
+        // ---- low HP → VOICE_0012 signal (no longer shows an emoji) --------------------------------------------
+
+        [Test]
+        public void Low_Hp_Signals_Once_Below_30_Percent()
+        {
+            var t = new EmojiTriggers();
+            Assert.IsFalse(t.OnHp(0.5f));
+            Assert.IsTrue(t.OnHp(0.29f));
+            Assert.IsFalse(t.OnHp(0.10f));  // still low -> does not re-signal
         }
 
         [Test]
         public void Low_Hp_Re_Arms_Only_After_Recovering_Above_40_Percent()
         {
             var t = new EmojiTriggers();
-            Assert.AreEqual(EmojiKind.GTH, t.OnHp(0.2f));
-            Assert.AreEqual(EmojiKind.None, t.OnHp(0.35f));  // between 30 and 40 -> NOT re-armed
-            Assert.AreEqual(EmojiKind.None, t.OnHp(0.25f));  // dipped again but still disarmed -> nothing
-            Assert.AreEqual(EmojiKind.None, t.OnHp(0.45f));  // recovered above 40 -> re-arm (no fire on the way up)
-            Assert.AreEqual(EmojiKind.GTH, t.OnHp(0.29f));   // drops again -> fires
+            Assert.IsTrue(t.OnHp(0.2f));
+            Assert.IsFalse(t.OnHp(0.35f));  // between 30 and 40 -> NOT re-armed
+            Assert.IsFalse(t.OnHp(0.25f));  // dipped again but still disarmed -> nothing
+            Assert.IsFalse(t.OnHp(0.45f));  // recovered above 40 -> re-arm (no signal on the way up)
+            Assert.IsTrue(t.OnHp(0.29f));   // drops again -> signals
         }
 
         [Test]

@@ -71,8 +71,10 @@ namespace Sdo.UI.Util
         public static Sprite FrameTR => Crop(611, 0, 133, 256);
         public static Sprite FrameBL => Crop(355, 256, 256, 120);
         public static Sprite FrameBR => Crop(611, 256, 138, 120);
-        // flat inner board (sunken panel) — reused for every tab
+        // flat inner board (sunken panel) — 畫面 tab (OptScreenBoard); empty, TMP labels overlaid.
         public static Sprite Board => Crop(674, 384, 350, 206);
+        // 音效 tab board (OptVolumeBoard) — labels 背景音樂/遊戲音樂/遊戲音效 + MIN…MAX tracks baked into the art.
+        public static Sprite AudioBoard => Crop(324, 384, 350, 207);
         // action buttons (text removed): normal + pushed
         public static Sprite SaveN => Crop(742, 0, 95, 33);
         public static Sprite SaveP => Crop(743, 36, 95, 33);
@@ -88,7 +90,16 @@ namespace Sdo.UI.Util
         public static Sprite RadioOn => Crop(994, 0, 15, 15);
         // slider handle
         public static Sprite SliderHandle => Crop(951, 0, 43, 23);
-        // key-cap chip (keyboard tab) — magenta chip behind the bound-key text
-        public static Sprite KeyCap => Crop(876, 0, 37, 37);
+        // keyboard sub-tabs (each is a full 322-wide strip carrying one tab; stack them to form the 4鍵|6鍵|激鼓 bar).
+        // 4鍵 = active (lighter pushed state, Option_Game36 @305); 6鍵/激鼓 = inactive normal state (Option_Game37/40).
+        // Only 4鍵 is functional; 6鍵/激鼓 are drawn for fidelity but inert.
+        public static Sprite FourKeyTab => Crop(0, 305, 322, 30);
+        public static Sprite SixKeyTab => Crop(0, 396, 322, 30);
+        public static Sprite DrumTab => Crop(0, 456, 322, 30);
+        // key-cap chips (keyboard tab). Matches the official k4 CheckBox states: bgnormal = gray key.an (@913)
+        // when idle, bgpushed = purple key1/key2.an (@876) when the key is selected for rebinding.
+        // The bound-key LETTER is a separate 27×36 glyph PNG blitted on top (see KeysArt) — NOT baked into the chip.
+        public static Sprite KeyCapNormal => Crop(913, 0, 38, 37);     // gray = idle
+        public static Sprite KeyCapCapturing => Crop(876, 0, 37, 37);  // purple = selected (waiting for a keypress)
     }
 }

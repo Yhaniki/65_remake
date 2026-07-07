@@ -1,0 +1,259 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using UnityEngine;
+
+namespace Sdo.Settings
+{
+    /// <summary>
+    /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），內含
+    /// profile.json + favorites.json + config.ini。目前登入的本機 user 記在 DATA/PROFILE/active.txt。
+    ///
+    /// 單機 v1 首次開機自動種兩個角色 —— 00000000(女) 與 00000001(男) —— 並以 00000000 為 active。刻意先不做
+    /// 登入/選角 UI；<see cref="SetActive"/> + 編號資料夾本身就是多帳號的底層，未來線上版換掉 backing store
+    /// （伺服器帳號 → 同一個 <see cref="UserProfile"/> 形狀）即可，呼叫端不動。
+    ///
+    /// 路徑解析刻意自帶（不引用 Sdo.Game.SdoExtracted），讓 Sdo.Settings 維持 leaf assembly。id 格式/編號/挑選
+    /// 都是純函式（<see cref="FormatId"/> / <see cref="TryParseId"/> / <see cref="NextFreeId"/>），可單元測試。
+    /// </summary>
+    public static class ProfileManager
+    {
+        public const string DirName = "PROFILE";
+        public const string ActiveFileName = "active.txt";
+        public const string ProfileFileName = "profile.json";
+        public const string DefaultId = "00000000";
+
+        private static string _root;          // DATA/PROFILE
+        private static UserProfile _active;
+        private static string _activeDir;     // DATA/PROFILE/<activeId>
+
+        /// <summary>目前登入的本機角色（Boot() 後必非 null；失敗會退成記憶體內預設）。</summary>
+        public static UserProfile Active => _active ?? (_active = new UserProfile());
+
+        /// <summary>active 角色的資料夾（DATA/PROFILE/&lt;id&gt;）；Boot() 前為空字串（表示尚未落地，走 legacy 路徑）。</summary>
+        public static string ActiveDir => _activeDir ?? "";
+
+        /// <summary>切換 active user 後觸發（收藏/房間預設已重載）。</summary>
+        public static event Action ActiveChanged;
+
+        /// <summary>DATA/PROFILE 根目錄（延遲解析；可設值供測試覆寫）。</summary>
+        public static string Root
+        {
+            get => _root ?? (_root = Path.Combine(ResolveDataDir(), DirName));
+            set { _root = value; }
+        }
+
+        // ---------------- boot / activate ----------------
+
+        /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且必須在 <see cref="RoomConfig.Load"/> 之前
+        /// （config.ini 已改成 per-user）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
+        public static void Boot()
+        {
+            try
+            {
+                Directory.CreateDirectory(Root);
+                EnsureSeeded();
+                string id = ReadActiveId();
+                if (id == null || !Directory.Exists(Path.Combine(Root, id)))
+                    id = FirstExistingId() ?? DefaultId;
+                Activate(id, notify: false);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[Profile] boot failed, using in-memory default: {e.Message}");
+                _active = new UserProfile();
+                _activeDir = null;
+                Favorites.Load(null);
+            }
+        }
+
+        /// <summary>切換到指定 id 的 user（載入其 profile.json + 收藏 + 記錄成 active）。id 不存在則忽略。</summary>
+        public static void SetActive(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return;
+            if (!Directory.Exists(Path.Combine(Root, id))) return;
+            Activate(id, notify: true);
+            RoomConfig.Load();   // 房間預設也是 per-user → 換人要重載
+            ActiveChanged?.Invoke();
+        }
+
+        private static void Activate(string id, bool notify)
+        {
+            _activeDir = Path.Combine(Root, id);
+            Directory.CreateDirectory(_activeDir);
+            _active = LoadProfile(_activeDir) ?? new UserProfile(id, DefaultNameForId(id), 0);
+            _active.id = id;                 // 資料夾名是權威 id
+            _active.Sanitize();
+            WriteActiveId(id);
+            Favorites.Load(_activeDir);
+            if (notify) ActiveChanged?.Invoke();
+        }
+
+        /// <summary>把 active 角色寫回 profile.json（更新 lastPlayedAt）。</summary>
+        public static void Save()
+        {
+            if (string.IsNullOrEmpty(_activeDir) || _active == null) return;
+            try
+            {
+                _active.lastPlayedAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+                File.WriteAllText(Path.Combine(_activeDir, ProfileFileName), JsonUtility.ToJson(_active, true), new UTF8Encoding(false));
+            }
+            catch (Exception e) { Debug.LogError($"[Profile] save failed: {e.Message}"); }
+        }
+
+        // ---------------- enumerate / create ----------------
+
+        /// <summary>掃出所有現存 user（依 id 由小到大）。缺 profile.json → 用資料夾名補一個預設。</summary>
+        public static List<UserProfile> List()
+        {
+            var res = new List<UserProfile>();
+            try
+            {
+                if (!Directory.Exists(Root)) return res;
+                var dirs = new List<string>(Directory.GetDirectories(Root));
+                dirs.Sort(StringComparer.Ordinal);
+                foreach (var d in dirs)
+                {
+                    var name = Path.GetFileName(d);
+                    if (!TryParseId(name, out _)) continue;   // 只認 8 位數編號資料夾
+                    var p = LoadProfile(d) ?? new UserProfile(name, DefaultNameForId(name), 0);
+                    p.id = name; p.Sanitize();
+                    res.Add(p);
+                }
+            }
+            catch (Exception e) { Debug.LogWarning($"[Profile] list failed: {e.Message}"); }
+            return res;
+        }
+
+        /// <summary>用下一個空編號建立一個 user 資料夾 + profile.json，回傳新角色。</summary>
+        public static UserProfile Create(string name, int gender)
+        {
+            var ids = new List<string>();
+            foreach (var p in List()) ids.Add(p.id);
+            string id = NextFreeId(ids);
+            var prof = new UserProfile(id, string.IsNullOrEmpty(name) ? DefaultNameForId(id) : name, gender)
+            {
+                createdAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
+            };
+            WriteProfile(Path.Combine(Root, id), prof);
+            return prof;
+        }
+
+        // ---------------- seeding ----------------
+
+        /// <summary>首次開機（沒有任何編號資料夾）時種兩個預設角色：00000000 女、00000001 男。</summary>
+        private static void EnsureSeeded()
+        {
+            if (FirstExistingId() != null) return;   // 已有角色 → 不動
+            string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+            WriteProfile(Path.Combine(Root, "00000000"), new UserProfile("00000000", "玩家001", 0) { createdAt = now });
+            WriteProfile(Path.Combine(Root, "00000001"), new UserProfile("00000001", "玩家002", 1) { createdAt = now });
+            WriteActiveId("00000000");
+        }
+
+        // ---------------- pure helpers (unit-tested) ----------------
+
+        /// <summary>整數 → 8 位數零填 id 字串。負數夾成 0。</summary>
+        public static string FormatId(int n) => Mathf.Max(0, n).ToString("D8", CultureInfo.InvariantCulture);
+
+        /// <summary>把資料夾名（"00000001"）解析成整數 id；非全數字/超界 → false。</summary>
+        public static bool TryParseId(string name, out int value)
+        {
+            value = -1;
+            if (string.IsNullOrEmpty(name)) return false;
+            foreach (var c in name) if (c < '0' || c > '9') return false;
+            return int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out value) && value >= 0;
+        }
+
+        /// <summary>回傳現有 id 中最小的未使用編號（8 位數字串）。空 → "00000000"。</summary>
+        public static string NextFreeId(IEnumerable<string> existing)
+        {
+            var used = new HashSet<int>();
+            if (existing != null)
+                foreach (var e in existing) if (TryParseId(e, out var v)) used.Add(v);
+            int n = 0;
+            while (used.Contains(n)) n++;
+            return FormatId(n);
+        }
+
+        // ---------------- io helpers ----------------
+
+        private static UserProfile LoadProfile(string dir)
+        {
+            try
+            {
+                var path = Path.Combine(dir, ProfileFileName);
+                if (!File.Exists(path)) return null;
+                var p = JsonUtility.FromJson<UserProfile>(File.ReadAllText(path, Encoding.UTF8));
+                return p?.Sanitize();
+            }
+            catch (Exception e) { Debug.LogWarning($"[Profile] read {dir} failed: {e.Message}"); return null; }
+        }
+
+        private static void WriteProfile(string dir, UserProfile p)
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, ProfileFileName), JsonUtility.ToJson(p.Sanitize(), true), new UTF8Encoding(false));
+        }
+
+        private static string ReadActiveId()
+        {
+            try
+            {
+                var path = Path.Combine(Root, ActiveFileName);
+                if (!File.Exists(path)) return null;
+                var id = File.ReadAllText(path, Encoding.UTF8).Trim();
+                return TryParseId(id, out _) ? id : null;
+            }
+            catch { return null; }
+        }
+
+        private static void WriteActiveId(string id)
+        {
+            try { File.WriteAllText(Path.Combine(Root, ActiveFileName), id, new UTF8Encoding(false)); }
+            catch (Exception e) { Debug.LogWarning($"[Profile] write active failed: {e.Message}"); }
+        }
+
+        /// <summary>目前最小編號的現存 user id；沒有任何 → null。</summary>
+        private static string FirstExistingId()
+        {
+            try
+            {
+                if (!Directory.Exists(Root)) return null;
+                string best = null; int bestV = int.MaxValue;
+                foreach (var d in Directory.GetDirectories(Root))
+                {
+                    var name = Path.GetFileName(d);
+                    if (TryParseId(name, out var v) && v < bestV) { bestV = v; best = name; }
+                }
+                return best;
+            }
+            catch { return null; }
+        }
+
+        private static string DefaultNameForId(string id)
+            => TryParseId(id, out var v) ? "玩家" + (v + 1).ToString("000", CultureInfo.InvariantCulture) : "玩家001";
+
+        /// <summary>解析 DATA 目錄（PROFILE 的上一層）。刻意鏡射 Sdo.Game.SdoExtracted.Root 的邏輯，讓本組件不必
+        /// 依賴 Sdo.Game：build 版 → &lt;exe&gt;/DATA；editor/dev → &lt;repo&gt;/assets/sdox_offline/Extracted；退回 &lt;exe&gt;/DATA。</summary>
+        private static string ResolveDataDir()
+        {
+            try
+            {
+                var exeDir = Directory.GetParent(Application.dataPath)?.FullName;
+                if (exeDir != null)
+                {
+                    var data = Path.Combine(exeDir, "DATA");
+                    if (Directory.Exists(data)) return data;
+                }
+                var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
+                var ex = Path.Combine(repo, "assets", "sdox_offline", "Extracted");
+                if (Directory.Exists(ex)) return ex;
+                return exeDir != null ? Path.Combine(exeDir, "DATA") : "DATA";
+            }
+            catch { return "DATA"; }
+        }
+    }
+}

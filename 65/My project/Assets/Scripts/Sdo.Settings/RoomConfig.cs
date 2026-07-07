@@ -7,7 +7,8 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 開房間右側面板的可選清單與預設值，存成「執行檔同一層」的 <c>config.ini</c>（不是 AppData）。
+    /// 開房間右側面板的可選清單與預設值，存成 <c>config.ini</c>。改成 per-user —— 放在 active 使用者資料夾
+    /// （DATA/PROFILE/&lt;id&gt;/config.ini，見 <see cref="ProfileManager"/>）；舊的執行檔同層 config.ini 會一次性遷移進來。
     /// 純文字、好手改：第一次跑會自動寫一份附註解的範本；之後讀檔覆蓋預設。解析/夾值是純函式可單元測試
     /// （<see cref="ParseInto"/> / <see cref="Sanitize"/> 不碰檔案）。
     /// </summary>
@@ -24,8 +25,19 @@ namespace Sdo.Settings
 
         public const string FileName = "config.ini";
 
-        /// <summary>config.ini 的完整路徑：執行檔同一層（Editor 下 = 專案根「My project/」）。</summary>
+        /// <summary>config.ini 的完整路徑：改成 per-user —— active 使用者資料夾（DATA/PROFILE/&lt;id&gt;/config.ini）。
+        /// ProfileManager.Boot() 尚未跑（ActiveDir 空）時退回舊的 exe 同層路徑，見 <see cref="LegacyFilePath"/>。</summary>
         public static string FilePath
+        {
+            get
+            {
+                var dir = ProfileManager.ActiveDir;
+                return string.IsNullOrEmpty(dir) ? LegacyFilePath : Path.Combine(dir, FileName);
+            }
+        }
+
+        /// <summary>舊版位置：執行檔同一層（Editor 下 = 專案根「My project/」）。保留供一次性遷移與 fallback。</summary>
+        public static string LegacyFilePath
         {
             get
             {
@@ -38,7 +50,8 @@ namespace Sdo.Settings
             }
         }
 
-        /// <summary>讀 config.ini（不存在就用內建預設並寫一份範本）。開機時呼叫一次。</summary>
+        /// <summary>讀 config.ini（per-user，不存在就用內建預設並寫一份範本）。在 <see cref="ProfileManager.Boot"/>
+        /// 之後呼叫；換 active user 時 ProfileManager 也會重呼一次。舊的 exe 同層 config.ini 會一次性遷移進來。</summary>
         public static void Load()
         {
             try
@@ -48,10 +61,17 @@ namespace Sdo.Settings
                     ParseInto(File.ReadAllText(FilePath));
                     Sanitize();
                 }
+                else if (FilePath != LegacyFilePath && File.Exists(LegacyFilePath))
+                {
+                    // 一次性遷移：把舊的 exe 同層 config.ini 讀進來，寫成 active user 的一份（不刪原檔）。
+                    ParseInto(File.ReadAllText(LegacyFilePath));
+                    Sanitize();
+                    Save();
+                }
                 else
                 {
                     Sanitize();
-                    Save();   // 第一次：留一份可編輯的範本在 exe 旁
+                    Save();   // 第一次：留一份可編輯的範本在 user 資料夾
                 }
             }
             catch (Exception e)

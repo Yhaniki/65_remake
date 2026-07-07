@@ -47,6 +47,11 @@ namespace Sdo.Game
         /// <summary>Switch fit mode at runtime (Stretch ⇄ Pillarbox). Kept for a future settings toggle.</summary>
         public static void SetMode(AspectMode mode) { Mode = mode; Apply(true); }
 
+        /// <summary>Normalized viewport rect (Unity coords, bottom-left origin) of the actual 4:3 game frame on
+        /// screen: the whole screen in Stretch, the centred pillar/letterbox sub-rect in Pillarbox. Used to crop
+        /// the black bars out of a screenshot so only the game frame is saved.</summary>
+        public static Rect ContentRect => Mode == AspectMode.Pillarbox ? Fit43Rect() : new Rect(0f, 0f, 1f, 1f);
+
         private static void EnsureInstance()
         {
             if (_inst != null) return;

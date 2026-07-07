@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Localization;
 using Sdo.Settings;
@@ -20,23 +21,25 @@ namespace Sdo.UI.Screens
     public sealed class OptionDlgModal : MonoBehaviour
     {
         // ---- palette (dark text reads on the light sunken board; white on the magenta pills/frame) ----
-        private static readonly Color Title = Color.white;
         private static readonly Color BtnText = Color.white;
         private static readonly Color Header = new Color32(0xC0, 0x36, 0x86, 0xFF); // section headers (matches the original magenta pills)
         private static readonly Color LabelC = new Color32(0x7A, 0x2C, 0x5C, 0xFF); // row labels
         private static readonly Color ValueC = new Color32(0x53, 0x2A, 0x48, 0xFF); // selector/percent values
-        private static readonly Color TrackBg = new Color32(0xE7, 0xC2, 0xDA, 0xFF);
-        private static readonly Color TrackFill = new Color32(0xD6, 0x3F, 0x99, 0xFF);
+        private static readonly Color KeyText = new Color32(0x00, 0x00, 0xB0, 0xFF);   // blue text fallback for keys with no glyph (matches the baked glyph blue)
 
         private static readonly string[] ModeIds = { "Windowed", "Fullscreen", "Borderless" };
 
         private CanvasGroup _cg;
+        private RectTransform _window; private CanvasGroup _windowCg; private WindowAnim _anim; // ROOMDLG-style spin-zoom in/out
         private RectTransform _videoTab, _audioTab, _keyTab;
         private MiniSelect _resSel, _modeSel, _langSel;
         private Image _vsyncDot; private TextMeshProUGUI _vsyncTxt;
         private Slider _sBgm, _sMusic, _sSfx;
-        private readonly TextMeshProUGUI[] _pctTxt = new TextMeshProUGUI[3];
-        private readonly TextMeshProUGUI[,] _capLabel = new TextMeshProUGUI[2, 4]; // [slot 0=primary/1=aux, lane]
+        private Image _audioBoard;
+        private readonly TextMeshProUGUI[,] _capLabel = new TextMeshProUGUI[2, 4]; // [slot 0=primary/1=aux, lane] — text fallback for glyphless keys
+        private readonly Image[,] _capImg = new Image[2, 4];                        // key-cap chip sprite (purple idle / silver capturing)
+        private readonly Image[,] _capGlyph = new Image[2, 4];                      // bound-key letter glyph (LOBBYDLG/KEYS/*.PNG)
+        private Image _board;                                                       // generic board (hidden on the keyboard tab so the baked 4-key board shows)
 
         // working copy (committed to settings on Save)
         private int _resIndex, _modeIndex; private bool _vsync;
@@ -64,27 +67,33 @@ namespace Sdo.UI.Screens
             UIKit.AddSprite(root, "FrameBL", OptionDlgArt.FrameBL, 220, 384);
             UIKit.AddSprite(root, "FrameBR", OptionDlgArt.FrameBR, 476, 384);
 
-            LocLabel(root, "Title", "option.title", 240, 133, 300, 26, 18, Title, TextAlignmentOptions.Left);
+            // title "選項 OPTION" is baked into the frame art — no TMP overlay
 
             // close (X)
             var close = UIKit.AddSpriteButton(root, "Close", OptionDlgArt.CloseN, OptionDlgArt.CloseN, OptionDlgArt.CloseP, 561, 134);
             close.onClick.AddListener(Close);
 
-            // tabs (reuse a cleaned button pill as the chip; active = full colour, inactive = dimmed)
+            // tabs (reuse a cleaned button pill as the chip; active = full colour, inactive = dimmed).
+            // Visual left→right = 鍵盤 | 音效 | 畫面; tabX[i] places tab index i (0=video,1=audio,2=keyboard) at
+            // its screen x while indices keep their meaning (ShowTab / boards / bodies unchanged).
             _tabBtns = new Image[3];
             string[] tabKeys = { "option.tab.video", "option.tab.audio", "option.tab.keyboard" };
+            float[] tabX = { 456f, 351f, 246f }; // video→right, audio→middle, keyboard→left
             for (int i = 0; i < 3; i++)
             {
                 int idx = i;
-                var b = UIKit.AddSpriteButton(root, "Tab" + i, OptionDlgArt.SaveN, OptionDlgArt.SaveN, OptionDlgArt.SaveP, 246 + i * 105, 182);
+                var b = UIKit.AddSpriteButton(root, "Tab" + i, OptionDlgArt.SaveN, OptionDlgArt.SaveN, OptionDlgArt.SaveP, tabX[i], 182);
                 _tabBtns[i] = b.targetGraphic as Image;
                 var lab = UIKit.AddLocText(b.transform, "L", tabKeys[i], 15, BtnText, TextAlignmentOptions.Center);
                 UIKit.Stretch(lab);
                 b.onClick.AddListener(() => ShowTab(idx));
             }
 
-            // shared sunken board behind every tab's content
-            UIKit.AddSprite(root, "Board", OptionDlgArt.Board, 236, 225);
+            // per-tab boards (only one shown at a time): 畫面 uses the empty OptScreenBoard + TMP labels;
+            // 音效 uses OptVolumeBoard which has its labels + MIN…MAX tracks baked in; 鍵盤 shows neither
+            // (the 4-key board is baked into the frame art).
+            _board = UIKit.AddSprite(root, "Board", OptionDlgArt.Board, 236, 225);
+            _audioBoard = UIKit.AddSprite(root, "AudioBoard", OptionDlgArt.AudioBoard, 236, 225);
 
             _videoTab = TabBody(root, "VideoTab");
             _audioTab = TabBody(root, "AudioTab");
@@ -93,10 +102,22 @@ namespace Sdo.UI.Screens
             BuildAudio(_audioTab);
             BuildKeyboard(_keyTab);
 
-            // action buttons (cleaned pills + dynamic labels), XML positions
-            SpriteBtn(root, "Default", OptionDlgArt.DefaultN, OptionDlgArt.DefaultP, 261, 448, "option.default", ResetDefaults);
-            SpriteBtn(root, "Save", OptionDlgArt.SaveN, OptionDlgArt.SaveP, 368, 448, "option.save", Apply);
-            SpriteBtn(root, "Exit", OptionDlgArt.ExitN, OptionDlgArt.ExitP, 475, 448, "option.exit", Close);
+            // action buttons — text is baked into the button art (保存/退出/默認設置, both states), so no TMP label
+            SpriteBtn(root, "Default", OptionDlgArt.DefaultN, OptionDlgArt.DefaultP, 261, 448, ResetDefaults);
+            SpriteBtn(root, "Save", OptionDlgArt.SaveN, OptionDlgArt.SaveP, 368, 448, Apply);
+            SpriteBtn(root, "Exit", OptionDlgArt.ExitN, OptionDlgArt.ExitP, 475, 448, Close);
+
+            // Wrap everything except the dim into a centred window so open/close spin-zoom the dialog exactly like the
+            // song-select (MUSICSELDLG) UI (WindowAnim + Frameround whoosh). The dim stays full-screen behind it.
+            _window = UIKit.NewRect(root, "Window");
+            UIKit.Stretch(_window);
+            _window.pivot = new Vector2(0.5f, 0.5f);
+            _windowCg = _window.gameObject.AddComponent<CanvasGroup>();
+            _anim = _window.gameObject.AddComponent<WindowAnim>();
+            var kids = new List<Transform>();
+            foreach (Transform c in root)
+                if (c != (Transform)_window && c.gameObject != dim.gameObject) kids.Add(c);
+            foreach (var c in kids) c.SetParent(_window, false);
 
             SetVisible(false);
         }
@@ -137,58 +158,72 @@ namespace Sdo.UI.Screens
         }
 
         // ---------------------------------------------------------------- 音效 tab
+        // Labels (背景音樂/遊戲音樂/遊戲音效) and MIN…MAX tracks are baked into OptVolumeBoard, so we only drop a
+        // bare handle-slider onto each baked line. Baked line spans screen x 298..519; MIN text ends ~291, MAX
+        // starts ~525. The handle centre range is 315..503 (extended 5px each side per user tuning).
+        // Cy = line centre + 3 (the handle sprite's pill sits ~3px above its box centre) so it rides the line.
+        private const float AudTrackX = 315f, AudTrackW = 188f;
+        private static readonly float[] AudTrackCy = { 282.5f, 339.5f, 396.5f };
+
         private void BuildAudio(RectTransform b)
         {
-            _sBgm = AudioRow(b, "settings.bgm", 260, 0, v => _bgm = v);
-            _sMusic = AudioRow(b, "settings.game_music", 310, 1, v => _music = v);
-            _sSfx = AudioRow(b, "settings.sfx", 360, 2, v => _sfx = v);
+            _sBgm = AddSlider(b, 0, v => _bgm = v);
+            _sMusic = AddSlider(b, 1, v => _music = v);
+            _sSfx = AddSlider(b, 2, v => _sfx = v);
         }
 
-        private Slider AudioRow(RectTransform b, string key, float y, int idx, Action<float> onChange)
-        {
-            LocLabel(b, "AL" + idx, key, 262, y, 100, 24, 15, LabelC, TextAlignmentOptions.Left);
-            var slider = AddSlider(b, 366, y + 3, 150, v =>
-            {
-                onChange(v);
-                if (_pctTxt[idx] != null) _pctTxt[idx].text = Mathf.RoundToInt(v * 100) + "%";
-            });
-            _pctTxt[idx] = Label(b, "AP" + idx, "", 524, y, 44, 24, 14, ValueC, TextAlignmentOptions.Right);
-            return slider;
-        }
-
-        // ---------------------------------------------------------------- 鍵盤 tab
-        private static readonly string[] ArrowGlyph = { "←", "↓", "↑", "→" }; // Left Down Up Right
-        private static readonly float[] LaneCx = { 318f, 386f, 454f, 522f };
+        // ---------------------------------------------------------------- 鍵盤 tab (4-key only)
+        // Faithful to OPTIONDLG.XML Win4key: the 主鍵位設置/輔助鍵位 headers, the 8 colour arrows and the note
+        // text are BAKED into the official frame art (revealed here by hiding the generic board). We overlay only
+        // the single "4鍵" sub-tab chip and the 8 clickable key caps at the exact k4/k42 pixel coords, each showing
+        // its bound key as text (the original draws the char too — there is no letter/number art in the atlas).
+        private static readonly float[] PrimX = { 261f, 298f, 335f, 372f }; // k4-1..4   (主鍵位, top-left px)
+        private static readonly float[] AuxX = { 415f, 452f, 489f, 526f };  // k42-1..4  (輔助鍵位, top-left px)
+        private const float PrimY = 288f, AuxY = 289f;
 
         private void BuildKeyboard(RectTransform b)
         {
-            LocLabel(b, "KP", "option.key.primary", 260, 250, 130, 22, 15, Header, TextAlignmentOptions.Left);
-            for (int lane = 0; lane < 4; lane++)
-                Label(b, "arw" + lane, ArrowGlyph[lane], LaneCx[lane] - 16, 248, 32, 24, 22, Header, TextAlignmentOptions.Center);
-            for (int lane = 0; lane < 4; lane++)
-                _capLabel[0, lane] = KeyCap(b, 0, lane, 278);
-
-            LocLabel(b, "KA", "option.key.aux", 260, 336, 130, 22, 15, Header, TextAlignmentOptions.Left);
-            for (int lane = 0; lane < 4; lane++)
-                _capLabel[1, lane] = KeyCap(b, 1, lane, 364);
+            // sub-tab bar: 6鍵/激鼓 shown for fidelity but INERT (non-interactive sprites, no click handler);
+            // the active 4鍵 chip is drawn last so it sits on top of its neighbours (all at 250,230).
+            UIKit.AddSprite(b, "TabDrum", OptionDlgArt.DrumTab, 250, 230);
+            UIKit.AddSprite(b, "TabSix", OptionDlgArt.SixKeyTab, 250, 230);
+            UIKit.AddSprite(b, "Tab4Key", OptionDlgArt.FourKeyTab, 250, 230);
+            for (int lane = 0; lane < 4; lane++) KeyCap(b, 0, lane, PrimX[lane], PrimY);
+            for (int lane = 0; lane < 4; lane++) KeyCap(b, 1, lane, AuxX[lane], AuxY);
         }
 
-        private TextMeshProUGUI KeyCap(RectTransform b, int slot, int lane, float y)
+        private void KeyCap(RectTransform b, int slot, int lane, float x, float y)
         {
-            float x = LaneCx[lane] - 18f;
-            var img = UIKit.AddSprite(b, "cap" + slot + "_" + lane, OptionDlgArt.KeyCap, x, y, raycast: true);
-            var btn = img.gameObject.AddComponent<Button>();
-            btn.targetGraphic = img;
+            var img = UIKit.AddSprite(b, "cap" + slot + "_" + lane, OptionDlgArt.KeyCapNormal, x, y, raycast: true);
             int s = slot, ln = lane;
-            btn.onClick.AddListener(() => BeginCapture(s, ln));
-            var lab = UIKit.AddText(img.transform, "k", "", 15, Color.white, TextAlignmentOptions.Center);
+            // Select on pointer-DOWN (turns purple immediately, stays purple while held / capturing). No Button →
+            // no ColorTint darkening on press, and the cap can't grab a key press (Space/Enter) during capture.
+            var trigger = img.gameObject.AddComponent<EventTrigger>();
+            var down = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+            down.callback.AddListener(_ => BeginCapture(s, ln));
+            trigger.triggers.Add(down);
+
+            // bound-key letter: a 27×36 blue/white-outline glyph PNG centred on the chip (official look).
+            var glyph = UIKit.AddImage(img.transform, "g", new Color(1f, 1f, 1f, 0f));
+            var grt = glyph.rectTransform;
+            grt.anchorMin = grt.anchorMax = grt.pivot = new Vector2(0.5f, 0.5f);
+            grt.sizeDelta = new Vector2(27f, 36f);
+            grt.anchoredPosition = new Vector2(0f, -1f);   // matches the original's slight downward nudge
+
+            // text fallback (drawn only for keys with no glyph, e.g. a hand-edited binding)
+            var lab = UIKit.AddText(img.transform, "k", "", 16, KeyText, TextAlignmentOptions.Center);
             UIKit.Stretch(lab);
-            return lab;
+
+            _capImg[slot, lane] = img;
+            _capGlyph[slot, lane] = glyph;
+            _capLabel[slot, lane] = lab;
         }
 
         // ---------------------------------------------------------------- key capture (Update)
         private static readonly KeyCode[] Bindable = BuildBindable();
 
+        // Only keys with a glyph in LOBBYDLG/KEYS are bindable — matches the original, whose scan-code→glyph
+        // switch (FUN_00461170) rejects (returns 0 for) anything it can't draw (Shift/Ctrl/Enter/…).
         private static KeyCode[] BuildBindable()
         {
             var l = new List<KeyCode>();
@@ -196,8 +231,9 @@ namespace Sdo.UI.Screens
             for (var k = KeyCode.Alpha0; k <= KeyCode.Alpha9; k++) l.Add(k);
             for (var k = KeyCode.Keypad0; k <= KeyCode.Keypad9; k++) l.Add(k);
             l.AddRange(new[] { KeyCode.LeftArrow, KeyCode.RightArrow, KeyCode.UpArrow, KeyCode.DownArrow,
-                KeyCode.Space, KeyCode.LeftShift, KeyCode.RightShift, KeyCode.LeftControl, KeyCode.RightControl,
-                KeyCode.Comma, KeyCode.Period, KeyCode.Slash, KeyCode.Semicolon, KeyCode.Return, KeyCode.KeypadEnter });
+                KeyCode.Space, KeyCode.Comma, KeyCode.Period, KeyCode.Slash, KeyCode.Semicolon, KeyCode.Quote,
+                KeyCode.LeftBracket, KeyCode.RightBracket,
+                KeyCode.Home, KeyCode.End, KeyCode.PageUp, KeyCode.PageDown, KeyCode.Insert, KeyCode.Delete });
             return l.ToArray();
         }
 
@@ -205,7 +241,8 @@ namespace Sdo.UI.Screens
         {
             CancelCapture();
             _capSlot = slot; _capLane = lane;
-            _capLabel[slot, lane].text = "…";
+            // selected → purple chip; keep the current letter showing (it swaps only when a new key is bound)
+            if (_capImg[slot, lane] != null) UIKit.ApplySprite(_capImg[slot, lane], OptionDlgArt.KeyCapCapturing);
         }
 
         private void CancelCapture()
@@ -252,8 +289,20 @@ namespace Sdo.UI.Screens
             if (_sSfx) _sSfx.value = _sfx;
             RefreshAllCaps();
 
-            ShowTab(0);
+            ShowTab(1);   // open on the 音效 (audio) page by default
             SetVisible(true);
+            if (_windowCg != null) _windowCg.blocksRaycasts = true;
+            if (_anim != null) { _anim.ResetOpen(); _anim.PlayIn(); }   // spin-zoom in (same as song-select)
+            UiSfx.Play(UiSfx.FrameRound);
+        }
+
+        /// <summary>Spin-zoom the dialog out (song-select style), then hide it (dim included).</summary>
+        private void AnimatedHide()
+        {
+            if (_anim == null) { SetVisible(false); return; }
+            if (_windowCg != null) _windowCg.blocksRaycasts = false;   // freeze input during the fade
+            UiSfx.Play(UiSfx.FrameRound);
+            _anim.PlayOut(() => SetVisible(false));
         }
 
         private void Apply()
@@ -273,8 +322,7 @@ namespace Sdo.UI.Screens
             DisplaySettingsManager.ApplyDisplay();
             AudioListener.volume = _music;
             _applied = true; _entryLang = _lang;
-            Toast.Show(L("option.title") + " ✓");
-            SetVisible(false);
+            AnimatedHide();
         }
 
         private void ResetDefaults()
@@ -301,7 +349,7 @@ namespace Sdo.UI.Screens
             CancelCapture();
             if (!_applied && LocalizationManager.Current != _entryLang)
                 LocalizationManager.SetLanguage(_entryLang);            // revert live language preview
-            SetVisible(false);
+            AnimatedHide();
         }
 
         private void ShowTab(int i)
@@ -309,6 +357,8 @@ namespace Sdo.UI.Screens
             _videoTab.gameObject.SetActive(i == 0);
             _audioTab.gameObject.SetActive(i == 1);
             _keyTab.gameObject.SetActive(i == 2);
+            if (_board != null) _board.gameObject.SetActive(i == 0);       // 畫面 board
+            if (_audioBoard != null) _audioBoard.gameObject.SetActive(i == 1); // 音效 board (baked labels); 鍵盤 shows the frame's baked 4-key board
             for (int t = 0; t < 3; t++)
                 if (_tabBtns[t] != null) _tabBtns[t].color = (t == i) ? Color.white : new Color(1, 1, 1, 0.55f);
         }
@@ -334,18 +384,22 @@ namespace Sdo.UI.Screens
 
         private void RefreshCap(int slot, int lane)
         {
-            var lab = _capLabel[slot, lane];
-            if (lab == null) return;
+            if (_capImg[slot, lane] != null) UIKit.ApplySprite(_capImg[slot, lane], OptionDlgArt.KeyCapNormal); // back to purple idle
             var name = (slot == 0 ? _prim : _aux)[lane];
-            lab.text = ShortKeyName(name);
+            var glyph = KeysArt.Glyph(name);
+            if (_capGlyph[slot, lane] != null)
+            {
+                _capGlyph[slot, lane].sprite = glyph;
+                _capGlyph[slot, lane].color = glyph != null ? Color.white : new Color(1f, 1f, 1f, 0f);
+            }
+            if (_capLabel[slot, lane] != null)
+                _capLabel[slot, lane].text = glyph != null ? "" : ShortKeyName(name); // text only when no glyph exists
         }
 
         // ---------------------------------------------------------------- builders / helpers
-        private void SpriteBtn(RectTransform p, string name, Sprite n, Sprite pushed, float x, float y, string key, Action onClick)
+        private void SpriteBtn(RectTransform p, string name, Sprite n, Sprite pushed, float x, float y, Action onClick)
         {
             var b = UIKit.AddSpriteButton(p, name, n, n, pushed, x, y);
-            var lab = UIKit.AddLocText(b.transform, "L", key, 15, BtnText, TextAlignmentOptions.Center);
-            UIKit.Stretch(lab);
             b.onClick.AddListener(() => onClick());
         }
 
@@ -358,26 +412,30 @@ namespace Sdo.UI.Screens
             return img;
         }
 
-        /// <summary>Fill-bar slider (proven layout) with the official handle sprite riding the fill's right edge.</summary>
-        private Slider AddSlider(RectTransform p, float x, float y, float w, Action<float> onChange)
+        /// <summary>A bare handle-slider for the 音效 tab: the MIN…MAX track is baked into OptVolumeBoard, so the
+        /// track/fill are invisible (baked line shows through) and only the official handle sprite rides the value.
+        /// <paramref name="row"/> indexes <see cref="AudTrackCy"/> (handle vertical centre, screen y).</summary>
+        private Slider AddSlider(RectTransform p, int row, Action<float> onChange)
         {
-            var rt = UIKit.NewRect(p, "slider");
+            const float H = 20f;
+            float cy = AudTrackCy[row];
+            var rt = UIKit.NewRect(p, "slider" + row);
             rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0f, 1f);
-            rt.anchoredPosition = new Vector2(x, -y); rt.sizeDelta = new Vector2(w, 14f);
-            var bg = rt.gameObject.AddComponent<Image>(); bg.color = TrackBg; bg.raycastTarget = true;
+            rt.anchoredPosition = new Vector2(AudTrackX, -(cy - H / 2f)); rt.sizeDelta = new Vector2(AudTrackW, H);
+            var bg = rt.gameObject.AddComponent<Image>(); bg.color = new Color(1f, 1f, 1f, 0f); bg.raycastTarget = true; // invisible drag area
             var slider = rt.gameObject.AddComponent<Slider>();
 
             var fillArea = UIKit.NewRect(rt, "FillArea");
             fillArea.anchorMin = Vector2.zero; fillArea.anchorMax = Vector2.one;
             fillArea.offsetMin = new Vector2(1, 1); fillArea.offsetMax = new Vector2(-1, -1);
-            var fill = UIKit.AddImage(fillArea, "Fill", TrackFill).rectTransform;
+            var fill = UIKit.AddImage(fillArea, "Fill", new Color(1f, 1f, 1f, 0f)).rectTransform; // invisible; drives the handle position
             fill.anchorMin = Vector2.zero; fill.anchorMax = Vector2.one; fill.sizeDelta = Vector2.zero;
 
-            // official handle sprite parented to the fill's right edge → follows the value
-            var handle = UIKit.AddImage(fill, "Handle", Color.white); handle.sprite = OptionDlgArt.SliderHandle;
+            // official handle sprite parented to the fill's right edge → follows the value, riding the baked line
+            var handle = UIKit.AddImage(fill, "Handle", Color.white); handle.sprite = OptionDlgArt.SliderHandle; handle.raycastTarget = false;
             handle.rectTransform.anchorMin = handle.rectTransform.anchorMax = new Vector2(1f, 0.5f);
             handle.rectTransform.pivot = new Vector2(0.5f, 0.5f);
-            handle.rectTransform.sizeDelta = OptionDlgArt.SliderHandle != null ? OptionDlgArt.SliderHandle.rect.size : new Vector2(14, 18);
+            handle.rectTransform.sizeDelta = OptionDlgArt.SliderHandle != null ? OptionDlgArt.SliderHandle.rect.size : new Vector2(43, 23);
             handle.rectTransform.anchoredPosition = Vector2.zero;
 
             slider.fillRect = fill; slider.direction = Slider.Direction.LeftToRight;
@@ -452,7 +510,7 @@ namespace Sdo.UI.Screens
         public static string ShortKeyName(string keyName)
         {
             if (string.IsNullOrEmpty(keyName)) return "";
-            if (keyName.StartsWith("Keypad")) return "#" + keyName.Substring(6);
+            if (keyName.StartsWith("Keypad") && keyName.Length == 7) return keyName.Substring(6); // Keypad0-9 -> plain digit (matches official "4 5 8 6")
             if (keyName.StartsWith("Alpha")) return keyName.Substring(5);
             switch (keyName)
             {
