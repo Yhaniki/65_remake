@@ -87,6 +87,7 @@ namespace Sdo.UI.Screens
         private int _expressionPage;
         private RectTransform _chatBubbleRoot;
         private Image _chatBubbleFrame, _chatBubbleAdd, _chatBubbleExpression;
+        private Image _chatBubbleCaret;   // 泡內游標＝獨立疊圖(非 TMP 字元)，避免改字重算 mesh 造成的怪異閃爍
         private TextMeshProUGUI _chatBubbleText;
         private SpriteSeqAnim _chatBubbleFrameAnim, _chatBubbleAddAnim, _chatBubbleExpressionAnim;
         private bool _chatBubbleDragging, _chatBubbleTyping, _chatBubblePendingShow, _chatBubbleInputArmed;
@@ -527,6 +528,13 @@ namespace Sdo.UI.Screens
             _chatBubbleText.textWrappingMode = TextWrappingModes.Normal;
             _chatBubbleText.overflowMode = TextOverflowModes.Overflow;
 
+            // 泡內游標：獨立 Image，掛在文字底下（子物件→畫在字上、跟著文字移動）。位置/閃爍由 UpdateBubbleCaretOverlay 每幀控。
+            _chatBubbleCaret = UIKit.AddImage(_chatBubbleText.rectTransform, "TypingCaret", ChatBubbleTextColor, raycast: false);
+            _chatBubbleCaret.rectTransform.anchorMin = _chatBubbleCaret.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+            _chatBubbleCaret.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            _chatBubbleCaret.rectTransform.sizeDelta = new Vector2(2f, 15f);
+            _chatBubbleCaret.gameObject.SetActive(false);
+
             _chatBubbleExpression = UIKit.AddImage(_chatBubbleRoot, "Expression", Color.white);
             _chatBubbleExpression.raycastTarget = false;
             _chatBubbleExpression.preserveAspect = true;
@@ -931,8 +939,14 @@ namespace Sdo.UI.Screens
             // 中文 IME 還沒選完 / 剛用 Enter 選字：onSubmit 會誤觸，不要送、也不要清 draft。
             if (IsRoomChatImeComposing() || _chatImeComposing) return;
             string txt = _chatInput.text;
-            if (string.IsNullOrWhiteSpace(txt)) return;
-            // bubble 模式送出後續留 bubble-ready(ArmRoomBubbleInput)；輸入框模式送完就收回 focus。
+            if (string.IsNullOrWhiteSpace(txt))
+            {
+                // 空字串按 Enter（或送出鈕）→ 退出打字：bubble 與輸入框模式皆然（取代舊的「空了再按 Backspace 退出」）。
+                if (_chatBubbleTyping || _chatBubbleInputArmed || _chatInput.isFocused)
+                    CancelRoomChatTyping();
+                return;
+            }
+            // bubble 模式送出後續留 bubble-ready(ArmRoomBubbleInput)；輸入框模式送完保持 focus，繼續打下一則不退出。
             bool keepBubbleInput = _chatBubbleTyping || _chatBubbleInputArmed;
             if (_chatBubbleTyping) HideRoomChatBubble();
             else _chatBubbleTyping = false;
@@ -944,7 +958,7 @@ namespace Sdo.UI.Screens
             HideExpressionMenu();
             _chatInput.text = "";
             if (keepBubbleInput) ArmRoomBubbleInput();
-            else EndRoomChatInputFocus();
+            else FocusRoomChatInput();   // 輸入框模式送完保持 focus，不退出
         }
 
         private void ShowRoomChatBubble(ChatMessage m)
@@ -1130,6 +1144,9 @@ namespace Sdo.UI.Screens
             _chatBubblePendingShow = false;
             if (!_chatBubbleInputArmed)
                 SetRoomChatInputEchoVisible(true);
+            if (_chatBubbleCaret != null) _chatBubbleCaret.gameObject.SetActive(false);
+            _bubbleBodyFor = null;   // 下次開始打字時強制重設文字＋重量尺寸
+            _bubbleSizedFor = null;
             if (_chatBubbleRoot != null) _chatBubbleRoot.gameObject.SetActive(false);
             if (_chatBubbleAdd != null) _chatBubbleAdd.gameObject.SetActive(false);
             if (_chatBubbleFrameAnim != null) _chatBubbleFrameAnim.Frames = null;
@@ -1169,6 +1186,8 @@ namespace Sdo.UI.Screens
             HideExpressionMenu();
             _chatBubbleInputArmed = false;
             _chatBubbleTyping = true;
+            _bubbleBodyFor = null;   // 進打字態強制重畫文字＋重量尺寸（preserveDraft 也要重新算一次）
+            _bubbleSizedFor = null;
             _chatBubbleRoot.gameObject.SetActive(true);
             _chatBubbleDragging = false;
             _chatBubbleChainDragging = false;
@@ -1197,12 +1216,26 @@ namespace Sdo.UI.Screens
             if (!_chatBubbleTyping || _chatInput == null || _chatBubbleRoot == null) return;
             if (!_chatBubbleRoot.gameObject.activeSelf) _chatBubbleRoot.gameObject.SetActive(true);
             // 已上屏字 + IME 組字中（拼音／候選還沒寫進 text）都要顯示在 bubble。
-            string draft = (_chatInput.text ?? "") + (Input.compositionString ?? "");
-            SyncRoomBubbleTypingSize(draft);
+            string committed = _chatInput.text ?? "";
+            string composition = Input.compositionString ?? "";
             if (_chatBubbleText == null) return;
             if (_chatBubbleExpression != null) _chatBubbleExpression.gameObject.SetActive(false);
             _chatBubbleText.gameObject.SetActive(true);
-            _chatBubbleText.text = BubbleDraftText(draft);
+
+            // 尺寸只在草稿內容變動時重量（每幀跑 GetPreferredValues 會拖累且是舊版怪閃的來源之一）。
+            string sizeKey = committed + "" + composition;
+            if (sizeKey != _bubbleSizedFor) { _bubbleSizedFor = sizeKey; SyncRoomBubbleTypingSize(committed + composition); }
+
+            // 游標／選取跟著實際輸入位置（方向鍵往回移、中間刪、Shift 選取都要在泡裡看得到）。
+            int caret = Mathf.Clamp(_chatInput.stringPosition, 0, committed.Length);                    // 游標(移動端)
+            int anchor = Mathf.Clamp(_chatInput.selectionStringAnchorPosition, 0, committed.Length);    // 選取固定端
+            string body = BubbleDraftBody(committed, caret, anchor, composition);
+            // 注意：空字時就讓 text=""（cc==0），走 UpdateBubbleCaretOverlay 的 rect 置中 fallback。
+            // 不要塞空白當佔位——空白字元的 ascender/descender 近乎 0，會把游標釘在框頂(pivot=左上)。
+            bool bodyChanged = body != _bubbleBodyFor;
+            if (bodyChanged) { _chatBubbleText.text = body; _bubbleBodyFor = body; }
+            // 游標字元索引 = 游標前的已上屏字數 + 組字串長度（<mark> 不佔字元）。
+            UpdateBubbleCaretOverlay(caret + composition.Length, bodyChanged);
         }
 
         // 空 draft → ADDANI 打字小泡；有字 → TALK_N（下面有棍）依長度變寬，不要用無棍的 Base/ENTER。
@@ -1210,13 +1243,24 @@ namespace Sdo.UI.Screens
         {
             if (string.IsNullOrEmpty(draft))
             {
-                if (!_chatBubbleTypingArt) ApplyRoomBubbleTypingStyle();
+                // 打了字再刪成空：不要跳回 ADDANI 動態圖（換 sprite＋重播動畫＝那個「抖一下」）。維持目前 talk 泡的圖不變。
+                // 但把「文字框」對回初次空字用的 TypingTextRect＋字級11，讓空字游標一律落在同一點——
+                // 這樣你調的 CaretEmptyX/Y 不論初次 focus 或刪成空都對得上（初次 focus 的文字框也是這個 rect）。
+                if (_chatBubbleText != null)
+                {
+                    _chatBubbleText.fontSize = 11f;
+                    var tr = RoomBubbleArt.TypingTextRect();
+                    Place(_chatBubbleText.rectTransform, tr.x, tr.y, tr.width, tr.height);
+                    _bubbleTextRectDirty = true;   // 文字框已移到 TypingTextRect → 下次打字必須重跑 SizedStyle 還原 TextRect/字級13
+                }
                 return;
             }
 
             int style = RoomBubbleStyleForText(draft);
-            if (_chatBubbleTypingArt || style != _chatBubbleStyle)
+            // _bubbleTextRectDirty：即使 style 沒變，只要剛才空字把文字框移走了，也要重跑 SizedStyle 把文字框搬回 TextRect(style)。
+            if (_chatBubbleTypingArt || _bubbleTextRectDirty || style != _chatBubbleStyle)
                 ApplyRoomBubbleTypingSizedStyle(style);
+            _bubbleTextRectDirty = false;
         }
 
         private static bool IsRoomChatImeComposing()
@@ -1327,12 +1371,90 @@ namespace Sdo.UI.Screens
             }
         }
 
-        private static string BubbleDraftText(string draft)
+        // 打字草稿的「本體」：純文字＋選取反白，NOT 含游標。游標改用獨立 Image 疊圖（UpdateBubbleCaretOverlay）：
+        // 早期把 | 塞進 TMP 字串靠改字閃爍 → 每次改字重算 mesh，配上每幀 SyncSize 的 GetPreferredValues 造成怪異閃爍。
+        // 現在字串只在草稿真的變動時才改，游標是圖層靠 alpha 閃 → 乾淨、位置也不頂開字。
+        private static string BubbleDraftBody(string committed, int caret, int anchor, string composition)
         {
-            string text = EscapeTmp(draft ?? "");
-            bool caretVisible = Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
-            string caret = caretVisible ? "|" : "<alpha=#00>|<alpha=#FF>";
-            return text + caret;
+            committed = committed ?? "";
+            caret = Mathf.Clamp(caret, 0, committed.Length);
+            anchor = Mathf.Clamp(anchor, 0, committed.Length);
+
+            // IME 組字中：組字串插在游標處（此時不畫選取）。
+            if (!string.IsNullOrEmpty(composition))
+                return EscapeTmp(committed.Substring(0, caret)) + EscapeTmp(composition) + EscapeTmp(committed.Substring(caret));
+
+            int selStart = Mathf.Min(caret, anchor);
+            int selEnd = Mathf.Max(caret, anchor);
+            if (selStart != selEnd)
+            {
+                // 有選取（Shift+方向鍵）：反白選取區（<mark> 不佔寬、不影響字元索引）。
+                string before = EscapeTmp(committed.Substring(0, selStart));
+                string sel = "<mark=#5B8DEF66>" + EscapeTmp(committed.Substring(selStart, selEnd - selStart)) + "</mark>";
+                string after = EscapeTmp(committed.Substring(selEnd));
+                return before + sel + after;
+            }
+
+            return EscapeTmp(committed);
+        }
+
+        // 游標閃爍：對稱 50/50、~0.53s 半週期（比照 Windows 文字游標）。bubble 泡與左下輸入框共用同一相位，避免看起來怪。
+        private const float CaretBlinkHalfSec = 0.53f;
+        private static bool CaretBlinkOn()
+            => Mathf.Repeat(Time.unscaledTime, CaretBlinkHalfSec * 2f) < CaretBlinkHalfSec;
+
+        private string _bubbleBodyFor = null;   // 目前 _chatBubbleText.text 對應的 body：只有變動才重設（避免每幀改字重算 mesh）
+        private string _bubbleSizedFor = null;  // 目前泡尺寸對應的草稿：只有變動才重量 GetPreferredValues
+        private bool _bubbleTextRectDirty = false; // 空字時文字框被移到 TypingTextRect → 下次打字要強制重跑 SizedStyle 還原
+
+        // ====== 泡內游標微調（自己改這幾個數字就好；改完直接重跑，不用動邏輯）======
+        private const float CaretWidthPx    = 2f;    // 游標寬（豎線粗細）
+        private const float CaretHeightScale = 1f;   // 游標高倍率（1=同字高；想短一點填 0.8、長一點 1.2）
+        private const float CaretOffsetX    = 0f;    // 水平微調：正=右移、負=左移（像素）。空字與有字都套用
+        private const float CaretOffsetY    = 0f;    // 垂直微調：正=上移、負=下移（像素）。空字與有字都套用
+        // 只影響「空字（初始）」時的起點：
+        private const float CaretEmptyX     = 8f;    // 空字時額外水平微調（接在左內緣之後）
+        private const float CaretEmptyY     = -1f;    // 空字時額外垂直微調（接在垂直中線之後）
+        // =========================================================================
+
+        // 泡內游標＝獨立 Image（_chatBubbleCaret，_chatBubbleText 的子物件）。用 textInfo 求第 caretCharIndex 個字元的位置，
+        // 擺到該處、依 CaretBlinkOn 閃 alpha。文字沒變就不 ForceMeshUpdate（方向鍵移游標只挪圖層，不重算文字）。
+        private void UpdateBubbleCaretOverlay(int caretCharIndex, bool textChanged)
+        {
+            if (_chatBubbleCaret == null || _chatBubbleText == null) return;
+            if (textChanged) _chatBubbleText.ForceMeshUpdate();
+            var ti = _chatBubbleText.textInfo;
+            int cc = ti != null ? ti.characterCount : 0;
+
+            float x, top, bot;
+            if (cc <= 0)
+            {
+                // 空字：無字元可參照。文字框 pivot=(0,1)（左上），故 y=0 是「上緣」不是中線——要用 rect 中心算垂直中線，
+                // 否則初始游標會跑到框頂。x 取左內緣、y 取（含上下 margin 的）垂直中央，高度用字級。
+                var rect = _chatBubbleText.rectTransform.rect;
+                var mg = _chatBubbleText.margin;   // x=左, y=上, z=右, w=下
+                x = rect.xMin + mg.x + CaretEmptyX;
+                float cy = (rect.yMin + rect.yMax) * 0.5f + (mg.w - mg.y) * 0.5f + CaretEmptyY;
+                float h = _chatBubbleText.fontSize;
+                top = cy + h * 0.5f;
+                bot = cy - h * 0.5f;
+            }
+            else
+            {
+                int idx = Mathf.Clamp(caretCharIndex, 0, cc);
+                var ci = idx < cc ? ti.characterInfo[idx] : ti.characterInfo[cc - 1];
+                x = idx < cc ? ci.origin : ci.xAdvance;   // 字前緣 / 末字後緣
+                top = ci.ascender;
+                bot = ci.descender;
+            }
+
+            // characterInfo 座標與子物件 localPosition 同為「相對父 pivot」空間 → 直接設 localPosition，跟著泡移動不延遲。
+            float cx = x + CaretOffsetX;
+            float cyMid = (top + bot) * 0.5f + CaretOffsetY;
+            _chatBubbleCaret.rectTransform.localPosition = new Vector3(cx, cyMid, 0f);
+            _chatBubbleCaret.rectTransform.sizeDelta = new Vector2(CaretWidthPx, Mathf.Max(8f, (top - bot) * CaretHeightScale));
+            var col = _chatBubbleCaret.color; col.a = CaretBlinkOn() ? 1f : 0f; _chatBubbleCaret.color = col;
+            if (!_chatBubbleCaret.gameObject.activeSelf) _chatBubbleCaret.gameObject.SetActive(true);
         }
 
         private void OnRoomChatInputChanged(string text)
@@ -1366,7 +1488,7 @@ namespace Sdo.UI.Screens
             _chatInput.caretColor = new Color(1f, 1f, 1f, 0f);
         }
 
-        // 輸入框模式(直接點左下輸入框、非 bubble 模式)才顯示自畫游標；擺在目前文字(含 IME 組字)尾端，~1.8Hz 閃爍。
+        // 輸入框模式(直接點左下輸入框、非 bubble 模式)才顯示自畫游標；擺在目前文字(含 IME 組字)尾端，閃爍同 bubble。
         private void UpdateChatCaret()
         {
             if (_chatCaret == null || _chatInput == null) return;
@@ -1382,7 +1504,7 @@ namespace Sdo.UI.Screens
                 ? _chatInput.textComponent.GetPreferredValues(disp).x : 0f;
             _chatCaret.rectTransform.anchoredPosition = new Vector2(2f + w, 0f);
             if (!_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(true);
-            bool on = Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
+            bool on = CaretBlinkOn();
             var c = _chatCaret.color; c.a = on ? 1f : 0f; _chatCaret.color = c;
         }
 
@@ -2178,12 +2300,7 @@ namespace Sdo.UI.Screens
                 return;
             }
 
-            // InputField 可能同幀先刪掉最後一字 → text 已空。要用「上一幀就空」才當退出，否則最後一字刪不掉。
-            if (empty && Input.GetKeyDown(KeyCode.Backspace) && _chatDraftWasEmpty)
-            {
-                CancelRoomChatTyping();
-                return;
-            }
+            // 空了再按 Backspace 不再退出打字（改由「空字串按 Enter」退出，見 SendRoomChat）。
 
             // 已空才按方向鍵：退 focus，讓本幀起可走路。
             if (empty && _chatDraftWasEmpty && RoomArrowKeyDown())
