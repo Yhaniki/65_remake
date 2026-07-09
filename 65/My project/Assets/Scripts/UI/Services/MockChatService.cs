@@ -11,6 +11,8 @@ namespace Sdo.UI.Services
     {
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private readonly IClock _clock;
+        private readonly Func<bool> _localIsMale;   // room-action keyword table is gender-specific (再見→F act5 / M act6)
+        private readonly Func<string> _localName;   // 本機發言者顯示名(active profile 的 id/名)；null → 回退 "我"
         private readonly string[] _botNames;
         private readonly string[] _botLines;
         private double _nextBotMs;
@@ -19,9 +21,11 @@ namespace Sdo.UI.Services
         public event Action<ChatMessage> MessageReceived;
         public IReadOnlyList<ChatMessage> History => _history;
 
-        public MockChatService(IClock clock)
+        public MockChatService(IClock clock, Func<bool> localIsMale = null, Func<string> localName = null)
         {
             _clock = clock;
+            _localIsMale = localIsMale;
+            _localName = localName;
             _botNames = new[] { "小舞", "風之舞", "Neo", "櫻花", "阿傑" };
             _botLines = new[]
             {
@@ -33,10 +37,38 @@ namespace Sdo.UI.Services
             Add(new ChatMessage("系統", "歡迎來到熱舞 Online！", _clock.NowMs, true));
         }
 
-        public void Send(string text)
+        public void Send(string text, ChatChannel channel = ChatChannel.Current)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
-            Add(new ChatMessage("我", text.Trim(), _clock.NowMs));
+            if (RoomChatCommand.TryParseExpression(text, out var expressionId, out var trailing))
+            {
+                SendExpression(expressionId, channel, trailing);
+                return;
+            }
+
+            string trimmed = text.Trim();
+            bool male = _localIsMale != null && _localIsMale();
+            RoomChatCommand.TryParseRoomAction(trimmed, male, out var action);
+            Add(new ChatMessage(LocalSender(), trimmed, _clock.NowMs, local: true, channel: channel, roomActionId: action?.Id));
+        }
+
+        public void SendExpression(int expressionId, ChatChannel channel = ChatChannel.Current)
+            => SendExpression(expressionId, channel, null);
+
+        public void SendExpression(int expressionId, ChatChannel channel, string trailingText)
+        {
+            if (!RoomChatCommand.IsValidExpression(expressionId)) return;
+            string trail = trailingText != null ? trailingText.Trim() : "";
+            Add(new ChatMessage(LocalSender(), trail, _clock.NowMs,
+                expressionId: expressionId, local: true, channel: channel));
+        }
+
+        // 本機發言者名：active profile 的 id/名（跟頭頂名字一致）；沒給就回退 "我"。
+        private string LocalSender()
+        {
+            if (_localName == null) return "我";
+            string n = _localName();
+            return string.IsNullOrEmpty(n) ? "我" : n;
         }
 
         public void Tick()

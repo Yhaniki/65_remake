@@ -45,7 +45,9 @@ namespace Sdo.UI.Services
     {
         IReadOnlyList<ChatMessage> History { get; }
         event Action<ChatMessage> MessageReceived;
-        void Send(string text);
+        void Send(string text, ChatChannel channel = ChatChannel.Current);
+        void SendExpression(int expressionId, ChatChannel channel = ChatChannel.Current);
+        void SendExpression(int expressionId, ChatChannel channel, string trailingText);
         void Tick();   // drive scripted bot traffic (call each frame)
     }
 }

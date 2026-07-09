@@ -37,7 +37,8 @@ namespace Sdo.UI.Core
             var clock = new SystemClock();
             var players = new MockPlayerService();
             var rooms = new MockRoomService(session);
-            var chat = new MockChatService(clock);
+            // 聊天列表本機發言者顯示 active 使用者的名字/id（跟頭頂名字一致），不再寫死「我」。
+            var chat = new MockChatService(clock, () => session.Gender == 1, () => session.LocalPlayerName);
             return new AppContext(session, flow, rooms, players, chat);
         }
     }

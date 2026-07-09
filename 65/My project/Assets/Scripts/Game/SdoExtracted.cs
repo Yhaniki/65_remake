@@ -34,6 +34,17 @@ namespace Sdo.Game
 
         private static string ResolveRoot()
         {
+            if (Application.isEditor)
+            {
+                try
+                {
+                    var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
+                    foreach (var root in DevRootCandidates(repo))
+                        if (LooksLikeGameDataRoot(root)) return root;
+                }
+                catch { /* ignore */ }
+            }
+
             // 1) Built player: a DATA folder beside the exe.
             try
             {
@@ -41,7 +52,7 @@ namespace Sdo.Game
                 if (exeDir != null)
                 {
                     var data = Path.Combine(exeDir, "DATA");
-                    if (Directory.Exists(data)) return data;
+                    if (LooksLikeGameDataRoot(data)) return data;
                 }
             }
             catch { /* Application.dataPath unavailable in some contexts — fall through */ }
@@ -51,13 +62,85 @@ namespace Sdo.Game
             {
                 var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
                 var ex = Path.Combine(repo, "assets", "sdox_offline", "Extracted");
-                if (Directory.Exists(ex)) return ex;
+                if (LooksLikeGameDataRoot(ex)) return ex;
             }
             catch { /* ignore */ }
 
             // 3) Last resort: assume the built layout even if not present yet.
             try { return Path.Combine(Directory.GetParent(Application.dataPath)?.FullName ?? ".", "DATA"); }
             catch { return "DATA"; }
+        }
+
+        private static bool LooksLikeGameDataRoot(string root)
+        {
+            if (string.IsNullOrEmpty(root)) return false;
+            try
+            {
+                if (!Directory.Exists(root)) return false;
+                if (File.Exists(Path.Combine(root, "AVATAR", "FEMALE.HRC"))) return true;
+                if (File.Exists(Path.Combine(root, "AVATAR", "MALE.HRC"))) return true;
+                if (Directory.Exists(Path.Combine(root, "3DEFT"))) return true;
+                if (Directory.Exists(Path.Combine(root, "SCENE"))) return true;
+                if (Directory.Exists(Path.Combine(root, "UI", "GAMEPLAY"))) return true;
+            }
+            catch { }
+            return false;
+        }
+
+        private static List<string> DevRootCandidates(string repo)
+        {
+            var roots = new List<string>();
+            AddDevRoot(roots, repo);
+            AddDevRoot(roots, ResolveGitPrimaryWorktree(repo));
+
+            try
+            {
+                var parent = Directory.GetParent(repo)?.FullName;
+                var name = Path.GetFileName(repo);
+                var dash = name.IndexOf('-');
+                if (parent != null && dash > 0)
+                    AddDevRoot(roots, Path.Combine(parent, name.Substring(0, dash)));
+            }
+            catch { }
+
+            return roots;
+        }
+
+        private static void AddDevRoot(List<string> roots, string repo)
+        {
+            if (string.IsNullOrEmpty(repo)) return;
+            try
+            {
+                var root = Path.GetFullPath(Path.Combine(repo, "assets", "sdox_offline", "Extracted"));
+                foreach (var existing in roots)
+                    if (string.Equals(existing, root, System.StringComparison.OrdinalIgnoreCase)) return;
+                roots.Add(root);
+            }
+            catch { }
+        }
+
+        private static string ResolveGitPrimaryWorktree(string repo)
+        {
+            try
+            {
+                var dotGit = Path.Combine(repo, ".git");
+                if (Directory.Exists(dotGit)) return repo;
+                if (!File.Exists(dotGit)) return null;
+
+                var text = File.ReadAllText(dotGit).Trim();
+                const string prefix = "gitdir:";
+                if (!text.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase)) return null;
+
+                var gitDir = text.Substring(prefix.Length).Trim();
+                if (!Path.IsPathRooted(gitDir))
+                    gitDir = Path.GetFullPath(Path.Combine(repo, gitDir));
+
+                var dir = new DirectoryInfo(gitDir);
+                while (dir != null && !string.Equals(dir.Name, ".git", System.StringComparison.OrdinalIgnoreCase))
+                    dir = dir.Parent;
+                return dir?.Parent?.FullName;
+            }
+            catch { return null; }
         }
 
         /// <summary>Directory of the (built) exe — parent of Application.dataPath; "." if unavailable.</summary>
@@ -90,8 +173,43 @@ namespace Sdo.Game
         /// and the bottom G幣/EXP digit strips (score_num / score_numS / Num8 / Num3).</summary>
         public static string ResultStatisDir => Path.Combine(StatisDir, "STATISTIC");
 
-        /// <summary>Sound-effects folder. Built: DATA/SE; dev: sdox_offline/SE (sibling of Extracted).</summary>
-        public static string SeDir => FirstDir(Path.Combine(Root, "SE"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "SE"));
+        /// <summary>Sound-effects folder. Built: DATA/SE; dev: sdox_offline/SE or sibling extracted asset dumps.</summary>
+        public static string SeDir => ResolveSeDir();
+
+        private static string ResolveSeDir()
+        {
+            var candidates = new List<string>();
+            AddUniqueDir(candidates, Path.Combine(Root, "SE"));
+            AddUniqueDir(candidates, Path.Combine(Path.GetDirectoryName(Root) ?? Root, "SE"));
+            try
+            {
+                var assets = Path.GetDirectoryName(Path.GetDirectoryName(Root));
+                if (assets != null && Directory.Exists(assets))
+                    foreach (var d in Directory.GetDirectories(assets))
+                        AddUniqueDir(candidates, Path.Combine(d, "SE"));
+            }
+            catch { }
+
+            foreach (var c in candidates)
+            {
+                try
+                {
+                    if (Directory.Exists(c) && File.Exists(Path.Combine(c, "Bubble.wav")))
+                        return c;
+                }
+                catch { }
+            }
+            return FirstDir(candidates.ToArray());
+        }
+
+        private static void AddUniqueDir(List<string> dirs, string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return;
+            try { dir = Path.GetFullPath(dir); } catch { }
+            foreach (var d in dirs)
+                if (string.Equals(d, dir, System.StringComparison.OrdinalIgnoreCase)) return;
+            dirs.Add(dir);
+        }
 
         /// <summary>Song chart/audio folder. Built: DATA/MUSIC (uppercase); dev: sdox_offline/music (sibling).</summary>
         public static string MusicDir => FirstDir(Path.Combine(Root, "MUSIC"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "music"));

@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Game;
 using Sdo.Localization;
@@ -24,8 +26,7 @@ namespace Sdo.UI.Screens
     {
         public override ScreenId Id => ScreenId.Room;
 
-        // DDRROOM window resting targets (TransForm targetx/targety); win2 子座標逐字取自「線上」DDRROOM.XML
-        // (閉撰敃氪 那套，RoomUiArt 實際載入的就是這套；它的 win2 target=(649,177)，子座標直接相對 Win2，不要再加 offset)。
+        // DDRROOM window resting targets; child coordinates are already relative to each window.
         private static readonly Vector2 Win1 = new Vector2(0f, 1f);     // top head panel
         private static readonly Vector2 Win2 = new Vector2(649f, 177f); // right song/scene/mode panel
         private static readonly Vector2 Win3 = new Vector2(0f, 481f);   // bottom chat + ready/start bar
@@ -54,6 +55,16 @@ namespace Sdo.UI.Screens
         // note 預覽動畫速度。hiteft2.an=40幀(10幀爆裂×4)：12fps 一輪3.3s(太慢)、60fps 0.67s(太快)；
         // 30fps → 一輪1.33s、單次爆裂0.33s，落在合理區間。要快/慢調這個值即可。
         private const float NoteEftFps = 20f;
+        private const float ChatBubbleLifetime = 10f;
+        private const float ChatBubbleRiseSpeed = 12f;    // px/s；泡持續往上飄，不再卡在固定高度（點5）
+        // 泡身垂直中心(畫布 y=56.5)對齊到「肩錨 + 位移」：換 sprite 不跳位、文字上下置中。位移=泡身中心相對肩錨的偏移。
+        private const float ChatBubbleAnchorVisibleLeft = 80f;   // 泡身中心相對肩錨的水平位移(右+/左-)；調小/負=更靠名字
+        private const float ChatBubbleAnchorVisibleTop = 10f;     // 泡身中心相對肩錨的垂直位移(下+/上-)；調大=更低(往胸)、負=更高(往頭)
+        // Official FUN_00460ef0 is gated by a 0x32 ms timer and moves 1/3 of the remaining distance per accepted tick.
+        private const float ChatBubbleFollowTicksPerSecond = 20f;
+        private const float ChatBubbleFollowStep = 0.33333335f;
+        private const float ChatBubbleDragScale = 1f;
+        private static readonly Color ChatBubbleTextColor = new Color32(0x7C, 0x01, 0x38, 0xFF);
 
         private RawImage _backdrop;
         private readonly RawImage[] _slotHead = new RawImage[RoomLayout.SeatCount];
@@ -64,6 +75,35 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI _roomNameLabel;
         private OutlinedLabel _songLabel;   // 歌名(白邊)
         private OutlinedLabel _floatName;       // name marker that floats above the avatar in the room (官方頭上名字)；字 rgb(250,252,214) 描黑邊
+        private RectTransform _chatContent;
+        private ScrollRect _chatScroll;
+        private TMP_InputField _chatInput;
+        private Image _chatCaret;   // 自畫閃爍游標(TMP 內建 caret 在執行期 CJK 字型+world-space canvas 下算不出可見寬高)
+        private Button _chatModeBtn, _expressionBtn;
+        private RectTransform _chatModeMenu, _expressionMenu;
+        private TextMeshProUGUI _expressionTipText;
+        private RectTransform _expressionTip;
+        private ChatChannel _chatChannel = ChatChannel.Current;
+        private int _expressionPage;
+        private RectTransform _chatBubbleRoot;
+        private Image _chatBubbleFrame, _chatBubbleAdd, _chatBubbleExpression;
+        private TextMeshProUGUI _chatBubbleText;
+        private SpriteSeqAnim _chatBubbleFrameAnim, _chatBubbleAddAnim, _chatBubbleExpressionAnim;
+        private bool _chatBubbleDragging, _chatBubbleTyping, _chatBubblePendingShow, _chatBubbleInputArmed;
+        private bool _chatDraftWasEmpty; // 上一幀 draft 已空：用它區分「刪最後一字」vs「空了再按 Backspace 退 focus」
+        private bool _chatImeComposing;  // 上一幀還在 IME 組字：擋「選字 Enter」誤觸 onSubmit
+        private bool _chatBubbleTypingArt; // 目前是固定打字小泡：有字後要換到隨長度變大的 style
+        private int _chatBubbleStyle = 1;
+        private bool _chatBubbleChainDragging;
+        private SentRoomBubble _chatBubbleDraggedSent;
+        private bool _chatBubbleDraggingTyping;
+        private Vector2 _chatBubblePhysicsPos, _chatBubblePhysicsVel;
+        private bool _chatBubbleHasPhysics;
+        private Vector2 _chatBubbleDragStartPointer, _chatBubbleDragStartPos;
+        private bool _chatBubbleDragPointerCaptured;
+        // 已送出的泡：可同時多顆，各自壽命；打字泡仍用上面 _chatBubble*。
+        private readonly List<SentRoomBubble> _sentBubbles = new List<SentRoomBubble>();
+        private Coroutine _chatInputFocusRoutine;
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
 
         // ---- win2 右側面板控件（模式/場景/歌曲資訊/速度/note/組隊/掉落）----
@@ -110,9 +150,7 @@ namespace Sdo.UI.Screens
 
         /// <summary>If the room renders upside-down on a given platform, flip the backdrop V (RT vertical convention).</summary>
         public bool flipBackdropV = false;
-
-        // Head-portrait placement: a SHARED offset from the DDRROOM AvatarView base coords + a size, applied to ALL 6
-        // head slots. Tune LIVE via the F2 panel (sliders + borders + all 6 heads shown). Default y+13 centres the face
+        // Head-slot placement: tune via the F2 panel; borders can show all six slots.
         // (the RT frames head+shoulder, so the face sits high in the slot).
         public Vector2 headSlotOffset = new Vector2(-10f, 6f);  // dialed in via the F2 panel: centres the head in the frame
         public Vector2 headSlotSize = new Vector2(99f, 76f);    // box (X-10/Y+6 from the AvatarView base, 99×76)
@@ -256,12 +294,32 @@ namespace Sdo.UI.Screens
 
             // 4) win3 — bottom chat bar:官方 DDRROOM win3 一整排功能鈕(座標/圖名逐字取自 XML),目前都是裝飾(onClick=null)。
             Art("Room0", Win3, 8, 37, "Win3Panel");
-            Btn("chatmode", "Room4", "Room5", "Room6", Win3, 17, 88, null);                                   // 聊天模式
+            BuildRoomChatLog();
+            _chatModeBtn = Btn("chatmode", "Room4", "Room5", "Room6", Win3, 17, 88, ToggleChatModeMenu);      // 聊天模式
+            UpdateChatModeButton();
             var chatEdit = Art("EditBlank", Win3, 72, 92, "ChatEdit");   // 聊天輸入框(無 EditBlank 圖 → 透明佔位)
             if (chatEdit != null) chatEdit.color = new Color(1f, 1f, 1f, 0f);
+            _chatInput = UIKit.AddInputField(_win3Root, "ChatEditInput", "", 12);
+            Place(_chatInput.GetComponent<RectTransform>(), Win3.x + 72, Win3.y + 88, 193, 24);
+            ConfigureRoomChatInput();
+            // 直接點左下輸入框 → 取消頭上藍泡、改在輸入框打字（顯示光標+IME）。實體點擊才觸發，程式聚焦(bubble 模式)不觸發。
+            _chatInput.gameObject.AddComponent<RoomChatInputClickHandle>().Owner = this;
+            // 自畫閃爍游標：擺在輸入框文字區(textViewport)裡，跟著文字尾端移動。TMP 內建 caret 這裡畫不出來(見 _chatCaret 註)。
+            if (_chatInput.textViewport != null)
+            {
+                _chatCaret = UIKit.AddImage(_chatInput.textViewport, "TypingCaret", Color.white, raycast: false);
+                var caretRt = _chatCaret.rectTransform;
+                caretRt.anchorMin = caretRt.anchorMax = new Vector2(0f, 0.5f);
+                caretRt.pivot = new Vector2(0f, 0.5f);
+                caretRt.sizeDelta = new Vector2(2f, 15f);
+                caretRt.anchoredPosition = new Vector2(2f, 0f);
+                _chatCaret.gameObject.SetActive(false);
+            }
+            if (_chatInput.targetGraphic is Image chatInputBg)
+                chatInputBg.color = new Color(0f, 0f, 0f, 0f);
             Btn("OpenRecord", "OpenRecord_a", "OpenRecord_b", "OpenRecord_c", Win3, 279, 82, null);           // 錄製
-            Btn("expression1", "BtnExpression_1", "BtnExpression_2", "BtnExpression_3", Win3, 311, 82, null); // 表情
-            Btn("ChatSendButton", "BtnSpeaker_1", "BtnSpeaker_2", "BtnSpeaker_3", Win3, 343, 82, null);       // 喇叭/送出
+            _expressionBtn = Btn("expression1", "BtnExpression_1", "BtnExpression_2", "BtnExpression_3", Win3, 311, 82, ToggleExpressionMenu); // 表情
+            Btn("ChatSendButton", "BtnSpeaker_1", "BtnSpeaker_2", "BtnSpeaker_3", Win3, 343, 82, SendRoomChat);       // 喇叭/送出
             Btn("LoudSpeaker", "LoudSpeaker_1", "LoudSpeaker_2", "LoudSpeaker_3", Win3, 376, 82, null);       // 大聲公
             Btn("RoomPet", "BtnPet_1", "BtnPet_2", "BtnPet_3", Win3, 411, 83, null);                         // 寵物
             Btn("WingButton", "RoomWing", "RoomWing1", "RoomWing", Win3, 447, 82, null);                     // 翅膀
@@ -349,6 +407,7 @@ namespace Sdo.UI.Screens
             if (!_subscribed)
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated += OnRoomUpdated;
+                if (Ctx.Chat != null) Ctx.Chat.MessageReceived += OnRoomChatMessage;
                 LocalizationManager.LanguageChanged += Render;   // 切語言時，房號/房名/位置標示即時重譯
                 _subscribed = true;
             }
@@ -390,6 +449,7 @@ namespace Sdo.UI.Screens
 
             ResetCollapse();             // 每次進場都從「完全展開」開始（常駐單例，避免上次收合狀態殘留）
             SeedDefaultSongIfNeeded();   // 進大廳預設選好 index 最大的歌(easy)，房間一進來就有歌
+            RebuildRoomChat();
             Render();
         }
 
@@ -416,9 +476,14 @@ namespace Sdo.UI.Screens
             if (_subscribed)
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated -= OnRoomUpdated;
+                if (Ctx.Chat != null) Ctx.Chat.MessageReceived -= OnRoomChatMessage;
                 LocalizationManager.LanguageChanged -= Render;
                 _subscribed = false;
             }
+            HideChatModeMenu();
+            HideExpressionMenu();
+            HideRoomChatBubble();
+            ClearSentRoomBubbles();
             if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
             if (_backdrop != null) { _backdrop.texture = null; _backdrop.color = Color.black; }
             for (int i = 0; i < _slotHead.Length; i++) if (_slotHead[i] != null) { _slotHead[i].texture = null; _slotHead[i].enabled = false; }
@@ -427,6 +492,958 @@ namespace Sdo.UI.Screens
         }
 
         private void OnRoomUpdated(int id) => Render();
+
+        private void BuildRoomChatLog()
+        {
+            _chatScroll = UIKit.AddVerticalScroll(_win3Root, "AllChatList", out _chatContent, 0f, 3, new Color(0f, 0f, 0f, 0.18f));
+            Place(_chatScroll.GetComponent<RectTransform>(), 14, 445, 360, 104);
+            _chatScroll.scrollSensitivity = 18f;
+
+            // 打字泡：固定一顆。已送出的泡另外 Spawn，可並存一串。
+            _chatBubbleRoot = UIKit.NewRect(Root, "RoomChatTypingBubble");
+            _chatBubbleRoot.anchorMin = _chatBubbleRoot.anchorMax = new Vector2(0f, 1f);
+            _chatBubbleRoot.pivot = new Vector2(0f, 1f);
+            _chatBubbleRoot.sizeDelta = new Vector2(171, 111);
+            var drag = _chatBubbleRoot.gameObject.AddComponent<RoomBubbleDragHandle>();
+            drag.Owner = this;
+            drag.Sent = null;
+
+            _chatBubbleFrame = UIKit.AddImage(_chatBubbleRoot, "Frame", Color.white, raycast: true);
+            UIKit.Stretch(_chatBubbleFrame.rectTransform);
+            UIKit.ApplySprite(_chatBubbleFrame, RoomBubbleArt.Base(1));
+            Place(_chatBubbleFrame.rectTransform, 0, 0, 171, 111);
+            _chatBubbleFrameAnim = _chatBubbleFrame.gameObject.AddComponent<SpriteSeqAnim>();
+            _chatBubbleFrameAnim.Fps = 12f;
+
+            _chatBubbleAdd = UIKit.AddImage(_chatBubbleRoot, "AddAni", Color.white);
+            UIKit.Stretch(_chatBubbleAdd.rectTransform);
+            _chatBubbleAddAnim = _chatBubbleAdd.gameObject.AddComponent<SpriteSeqAnim>();
+            _chatBubbleAddAnim.Fps = 14f;
+            _chatBubbleAddAnim.Frames = RoomBubbleArt.AddFrames();
+
+            _chatBubbleText = UIKit.AddText(_chatBubbleRoot, "Text", "", 13, ChatBubbleTextColor, TextAlignmentOptions.MidlineLeft, true);
+            Place(_chatBubbleText.rectTransform, 49, 43, 74, 28);
+            _chatBubbleText.richText = true;
+            _chatBubbleText.textWrappingMode = TextWrappingModes.Normal;
+            _chatBubbleText.overflowMode = TextOverflowModes.Overflow;
+
+            _chatBubbleExpression = UIKit.AddImage(_chatBubbleRoot, "Expression", Color.white);
+            _chatBubbleExpression.raycastTarget = false;
+            _chatBubbleExpression.preserveAspect = true;
+            Place(_chatBubbleExpression.rectTransform, 73, 43, 24, 24);
+            _chatBubbleExpressionAnim = _chatBubbleExpression.gameObject.AddComponent<SpriteSeqAnim>();
+            _chatBubbleExpressionAnim.Fps = 8f;
+
+            _chatBubbleRoot.gameObject.SetActive(false);
+        }
+
+        private void ConfigureRoomChatInput()
+        {
+            if (_chatInput == null) return;
+            _chatInput.characterLimit = 50;
+            _chatInput.customCaretColor = true;
+            _chatInput.caretColor = Color.white;
+            _chatInput.caretWidth = 2;
+            _chatInput.caretBlinkRate = 0.85f;
+            // richText 打開才會有 IME 組字底線：TMP_InputField.UpdateLabel 只在 m_RichText 為真時把 compositionString
+            // 包成 <u>…</u>（新注音「選字階段」注音下面的那條底線）。UIKit.AddInputField 預設關掉 richText，這裡覆寫成開。
+            // 送出/顯示都走 raw text（SendRoomChat 用 _chatInput.text、聊天列/泡走 EscapeTmp），richText 只影響輸入框自己的算圖。
+            _chatInput.richText = true;
+            if (_chatInput.textComponent != null) _chatInput.textComponent.richText = true;
+            _chatInput.selectionColor = new Color(1f, 1f, 1f, 0.28f);
+            _chatInput.onSubmit.AddListener(_ => SendRoomChat());
+            _chatInput.onValueChanged.AddListener(OnRoomChatInputChanged);
+            SetRoomChatInputEchoVisible(true);
+            // IME 選字用 Enter 也會觸發 onSubmit；用 composition 狀態擋誤送。
+
+            if (_chatInput.textViewport != null)
+            {
+                _chatInput.textViewport.offsetMin = new Vector2(5f, 4f);
+                _chatInput.textViewport.offsetMax = new Vector2(-5f, -4f);
+            }
+
+            if (_chatInput.textComponent != null)
+            {
+                _chatInput.textComponent.color = Color.white;
+                _chatInput.textComponent.fontSize = 12f;
+                _chatInput.textComponent.alignment = TextAlignmentOptions.MidlineLeft;
+                _chatInput.textComponent.margin = Vector4.zero;
+            }
+
+            if (_chatInput.placeholder is TextMeshProUGUI ph)
+            {
+                ph.fontSize = 12f;
+                ph.alignment = TextAlignmentOptions.MidlineLeft;
+                ph.margin = Vector4.zero;
+            }
+        }
+
+        private void ToggleChatModeMenu()
+        {
+            if (_chatModeMenu == null) BuildChatModeMenu();
+            bool show = !_chatModeMenu.gameObject.activeSelf;
+            HideExpressionMenu();
+            _chatModeMenu.gameObject.SetActive(show);
+        }
+
+        private void BuildChatModeMenu()
+        {
+            _chatModeMenu = UIKit.NewRect(_win3Root, "chatmodemenu");
+            Place(_chatModeMenu, 15, 463, 41, 104);
+            UIKit.AddSprite(_chatModeMenu, "Bg", RoomUiArt.An("Room_Pop16"), 0, 0);
+            AddChatModeChoice("chatmode_family", ChatChannel.Family, 2, 2);
+            AddChatModeChoice("chatmode_friend", ChatChannel.Friend, 2, 27);
+            AddChatModeChoice("chatmode_cur", ChatChannel.Current, 2, 52);
+            AddChatModeChoice("chatmode_talkback", ChatChannel.Reply, 2, 77);
+            _chatModeMenu.gameObject.SetActive(false);
+        }
+
+        private void AddChatModeChoice(string name, ChatChannel channel, float x, float y)
+        {
+            ChatModeArt(channel, out var nrm, out var hov, out var psh);
+            var b = UIKit.AddSpriteButton(_chatModeMenu, name, RoomUiArt.An(nrm), RoomUiArt.An(hov), RoomUiArt.An(psh), x, y);
+            UiHoverSfx.Attach(b, UiSfx.ButtonFloat);
+            UiSfx.AttachPress(b, UiSfx.Click);
+            b.onClick.AddListener(() => SetChatChannel(channel));
+        }
+
+        private void SetChatChannel(ChatChannel channel)
+        {
+            _chatChannel = channel;
+            UpdateChatModeButton();
+            UpdateChatListName();
+            HideChatModeMenu();
+            RebuildRoomChat();
+            if (_chatInput != null) _chatInput.ActivateInputField();
+        }
+
+        private void UpdateChatModeButton()
+        {
+            if (_chatModeBtn == null || !(_chatModeBtn.targetGraphic is Image img)) return;
+            ChatModeArt(_chatChannel, out var nrm, out var hov, out var psh);
+            UIKit.ApplySprite(img, RoomUiArt.An(nrm));
+            var st = _chatModeBtn.spriteState;
+            st.highlightedSprite = RoomUiArt.An(hov);
+            st.pressedSprite = RoomUiArt.An(psh);
+            st.selectedSprite = RoomUiArt.An(nrm);
+            _chatModeBtn.spriteState = st;
+        }
+
+        private static void ChatModeArt(ChatChannel channel, out string nrm, out string hov, out string psh)
+        {
+            switch (channel)
+            {
+                case ChatChannel.Family:
+                    nrm = "Room203"; hov = "Room204"; psh = "Room205"; break;
+                case ChatChannel.Friend:
+                    nrm = "Room200"; hov = "Room201"; psh = "Room202"; break;
+                case ChatChannel.Reply:
+                    nrm = "Room206"; hov = "Room207"; psh = "Room208"; break;
+                default:
+                    nrm = "Room4"; hov = "Room5"; psh = "Room6"; break;
+            }
+        }
+
+        private void ToggleExpressionMenu()
+        {
+            if (_expressionMenu == null) BuildExpressionMenu();
+            bool show = !_expressionMenu.gameObject.activeSelf;
+            HideChatModeMenu();
+            _expressionMenu.gameObject.SetActive(show);
+            if (show) RebuildExpressionMenu();
+        }
+
+        private void BuildExpressionMenu()
+        {
+            _expressionMenu = UIKit.NewRect(_win3Root, "expression");
+            // ROOMPOPMENU expression = 165×152；對齊表情鈕(311,563)上方，底邊貼近 win3 紫條。
+            Place(_expressionMenu, 248, 411, 165, 152);
+            _expressionMenu.gameObject.SetActive(false);
+            RebuildExpressionMenu();
+        }
+
+        private void RebuildExpressionMenu()
+        {
+            if (_expressionMenu == null) return;
+            _expressionTip = null;
+            _expressionTipText = null;
+            UIKit.Clear(_expressionMenu);
+
+            // ROOMPOPMENU: ExpBg at (0,20); NormalExp tab (5,3); arrows + page labels at bottom.
+            UIKit.AddSprite(_expressionMenu, "ExpressionInfo", RoomUiArt.ExpressionInfoPage(_expressionPage), 0, 20);
+            UIKit.AddSprite(_expressionMenu, "NormalExp", RoomUiArt.ExpressionNormalTab(selected: true), 5, 3);
+
+            var leftFrames = RoomUiArt.ExpressionPageArrowFrames(left: true);
+            var rightFrames = RoomUiArt.ExpressionPageArrowFrames(left: false);
+            var prev = UIKit.AddSpriteButton(_expressionMenu, "preexp",
+                leftFrames[0], leftFrames[1], leftFrames[2], 103, 131);
+            UiSfx.AttachPress(prev, UiSfx.Click);
+            prev.onClick.AddListener(() => StepExpressionPage(-1));
+            var next = UIKit.AddSpriteButton(_expressionMenu, "nextexp",
+                rightFrames[0], rightFrames[1], rightFrames[2], 146, 131);
+            UiSfx.AttachPress(next, UiSfx.Click);
+            next.onClick.AddListener(() => StepExpressionPage(1));
+
+            int pages = Mathf.Max(1, RoomChatCommand.TotalExpressionPages);
+            int pageNum = Mathf.Clamp(_expressionPage + 1, 1, pages);
+            // CurrentPage / TotalPage — ROOMPOPMENU color 0xffbb2077
+            var pageColor = new Color32(0xBB, 0x20, 0x77, 0xFF);
+            var cur = UIKit.AddText(_expressionMenu, "CurrentPage", pageNum.ToString(), 12, pageColor, TextAlignmentOptions.Center);
+            Place(cur.rectTransform, 118, 133, 12, 12);
+            var sep = UIKit.AddText(_expressionMenu, "PageSlash", "/", 12, pageColor, TextAlignmentOptions.Center);
+            Place(sep.rectTransform, 127, 133, 10, 12);
+            var total = UIKit.AddText(_expressionMenu, "TotalPage", pages.ToString(), 12, pageColor, TextAlignmentOptions.Center);
+            Place(total.rectTransform, 136, 133, 12, 12);
+
+            for (int slot = 0; slot < RoomChatCommand.ExpressionsPerPage; slot++)
+            {
+                int expressionId = RoomChatCommand.ExpressionAtMenuSlot(_expressionPage, slot);
+                if (expressionId <= 0) continue;
+                float x = 4 + (slot % 6) * 26;
+                float y = 24 + (slot / 6) * 26;
+                AddExpressionChoice(slot, expressionId, x, y);
+            }
+        }
+
+        private void AddExpressionChoice(int slot, int expressionId, float x, float y)
+        {
+            var hit = UIKit.AddImage(_expressionMenu, "BtExpSel_" + slot, new Color(1f, 1f, 1f, 0.001f), raycast: true);
+            Place(hit.rectTransform, x, y, 24, 24);
+            var btn = hit.gameObject.AddComponent<Button>();
+            btn.targetGraphic = hit;
+            btn.transition = Selectable.Transition.None;
+            UiSfx.AttachPress(btn, UiSfx.Click);
+            int id = expressionId;
+            btn.onClick.AddListener(() =>
+            {
+                Ctx?.Chat?.SendExpression(id, _chatChannel);
+                HideExpressionMenu();
+                if (_chatInput != null) _chatInput.ActivateInputField();
+            });
+            var tip = hit.gameObject.AddComponent<ExpressionTipHandle>();
+            tip.Owner = this;
+            tip.Command = RoomChatCommand.ExpressionDisplayText(expressionId);
+            tip.LocalPos = new Vector2(x, y);
+        }
+
+        private void StepExpressionPage(int delta)
+        {
+            int pages = Mathf.Max(1, RoomChatCommand.TotalExpressionPages);
+            _expressionPage = (_expressionPage + delta) % pages;
+            if (_expressionPage < 0) _expressionPage += pages;
+            RebuildExpressionMenu();
+        }
+
+        private void HideChatModeMenu()
+        {
+            if (_chatModeMenu != null) _chatModeMenu.gameObject.SetActive(false);
+        }
+
+        private void HideExpressionMenu()
+        {
+            if (_expressionMenu != null) _expressionMenu.gameObject.SetActive(false);
+            HideExpressionTip();
+        }
+
+        private void ShowExpressionTip(string command, Vector2 localPos)
+        {
+            if (string.IsNullOrEmpty(command) || _expressionMenu == null) return;
+            if (_expressionTip == null) BuildExpressionTip();
+            _expressionTipText.text = command;
+            Vector2 pref = _expressionTipText.GetPreferredValues(command, 120f, 18f);
+            float w = Mathf.Clamp(pref.x + 12f, 46f, 120f);
+            float h = 19f;
+            float x = Mathf.Clamp(localPos.x + 16f, 0f, 165f - w);
+            float y = Mathf.Clamp(localPos.y - 18f, 0f, 133f);
+            Place(_expressionTip, x, y, w, h);
+            _expressionTip.gameObject.SetActive(true);
+        }
+
+        private void HideExpressionTip()
+        {
+            if (_expressionTip != null) _expressionTip.gameObject.SetActive(false);
+        }
+
+        private void BuildExpressionTip()
+        {
+            _expressionTip = UIKit.NewRect(_expressionMenu, "ExpressionCommandTip");
+            var bg = _expressionTip.gameObject.AddComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.55f);
+            bg.raycastTarget = false;
+            _expressionTipText = UIKit.AddText(_expressionTip, "Text", "", 12, Color.white, TextAlignmentOptions.Center);
+            UIKit.Stretch(_expressionTipText.rectTransform, 4, 0, 4, 0);
+            _expressionTip.gameObject.SetActive(false);
+        }
+
+        private void RebuildRoomChat()
+        {
+            UpdateChatListName();
+            UIKit.Clear(_chatContent);
+            if (Ctx == null || Ctx.Chat == null) return;
+            foreach (var m in Ctx.Chat.History) AddRoomChatLine(m);
+            ScrollRoomChatToBottom();
+        }
+
+        private void UpdateChatListName()
+        {
+            if (_chatScroll == null) return;
+            _chatScroll.gameObject.name = ChatListName(_chatChannel);
+        }
+
+        private static string ChatListName(ChatChannel channel)
+        {
+            switch (channel)
+            {
+                case ChatChannel.Family: return "FamilyChatList";
+                case ChatChannel.Friend: return "FriendChatList";
+                case ChatChannel.Reply: return "RecordChatList";
+                default: return "AllChatList";
+            }
+        }
+
+        private void OnRoomChatMessage(ChatMessage m)
+        {
+            AddRoomChatLine(m);
+            ScrollRoomChatToBottom();
+            if (m != null && m.Local && !m.System)
+            {
+                ShowRoomChatBubble(m);
+                PlayRoomChatAction(m);
+            }
+        }
+
+        private void PlayRoomChatAction(ChatMessage m)
+        {
+            if (m == null || string.IsNullOrEmpty(m.RoomActionId)) return;
+            if (!RoomChatCommand.TryGetRoomAction(m.RoomActionId, out var action) || action == null) return;
+            // Gender picks BOTH the motion clip and the SE — same gender the id was parsed with (see MockChatService),
+            // so female "再見"→action5→WREST0063+WOMAN_5 while male "88"→action6→MREST0076+MAN_6 stay self-consistent.
+            bool male = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
+            string motion = action.MotionFor(male);
+            if (_scene != null && !string.IsNullOrEmpty(motion)) _scene.PlayChatAction(motion);
+            UiSfx.Play(action.SoundFor(male));
+        }
+
+        private void AddRoomChatLine(ChatMessage m)
+        {
+            if (_chatContent == null || m == null) return;
+            if (!ShouldShowChatMessage(m)) return;
+
+            if (!m.System && m.ExpressionId > 0)
+            {
+                AddRoomChatExpressionLine(m);
+                return;
+            }
+
+            string line = m.System
+                ? "<color=#F0C24A>" + EscapeTmp(m.Text) + "</color>"
+                : "<color=#7FB6FF>" + EscapeTmp(m.Sender) + "</color>: " + EscapeTmp(ChatLineText(m));
+            var t = UIKit.AddText(_chatContent, "line", line, 13, Color.white, TextAlignmentOptions.TopLeft, true);
+            t.richText = true;
+            UIKit.Layout(t.gameObject, 16);
+        }
+
+        // 表情訊息：左下聊天列顯示「暱稱:」+ S_Expression 小動畫，不要落成 /無聊 文字。
+        private void AddRoomChatExpressionLine(ChatMessage m)
+        {
+            var row = UIKit.NewRect(_chatContent, "exprLine");
+            UIKit.Layout(row.gameObject, 18);
+            var hlg = row.gameObject.AddComponent<HorizontalLayoutGroup>();
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            // childControlWidth 必須 true：false 時 HLG 用子物件「實際 RectTransform 寬」(NewRect 預設 100px)排版，
+            // 名字(我:)會佔滿 100px → emoji 被推到名字右邊很遠。true 才改用 LayoutElement.preferredWidth(實測字寬)貼齊。
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+            hlg.spacing = 2f;
+            hlg.padding = new RectOffset(0, 0, 0, 0);
+
+            string label = "<color=#7FB6FF>" + EscapeTmp(m.Sender) + "</color>:";
+            var name = UIKit.AddText(row, "name", label, 13, Color.white, TextAlignmentOptions.MidlineLeft, true);
+            name.richText = true;
+            var nameLe = name.gameObject.AddComponent<LayoutElement>();
+            nameLe.preferredWidth = name.GetPreferredValues(label, 280f, 18f).x + 2f;
+            nameLe.flexibleWidth = 0f;
+
+            var frames = RoomExpressionArt.SmallFrames(m.ExpressionId);
+            bool hasFrames = frames != null && frames.Length > 0;
+            if (hasFrames)
+            {
+                var icon = UIKit.AddImage(row, "expr", Color.white);
+                icon.preserveAspect = true;
+                icon.raycastTarget = false;
+                var iconLe = icon.gameObject.AddComponent<LayoutElement>();
+                iconLe.preferredWidth = 16f;
+                iconLe.preferredHeight = 16f;
+                iconLe.flexibleWidth = 0f;
+                icon.rectTransform.sizeDelta = new Vector2(16f, 16f);
+                var anim = icon.gameObject.AddComponent<SpriteSeqAnim>();
+                anim.Fps = 8f;
+                anim.SetFrames(frames, restart: true);
+            }
+            else
+            {
+                var fallback = UIKit.AddText(row, "cmd", EscapeTmp(RoomChatCommand.ExpressionDisplayText(m.ExpressionId)),
+                    13, Color.white, TextAlignmentOptions.MidlineLeft, true);
+                var fbLe = fallback.gameObject.AddComponent<LayoutElement>();
+                fbLe.flexibleWidth = 0f;
+            }
+
+            // 尾隨任意字（中文／英文／數字／標點），舊訊息 Text=/指令 不算尾隨。
+            if (HasExpressionTrailingText(m))
+            {
+                var after = UIKit.AddText(row, "trail", " " + EscapeTmp(m.Text.Trim()), 13, Color.white,
+                    TextAlignmentOptions.MidlineLeft, true);
+                var afterLe = after.gameObject.AddComponent<LayoutElement>();
+                afterLe.flexibleWidth = 1f;
+            }
+        }
+
+        private static bool HasExpressionTrailingText(ChatMessage m)
+        {
+            if (m == null || m.ExpressionId <= 0) return false;
+            string t = (m.Text ?? "").Trim();
+            if (t.Length == 0) return false;
+            // 舊訊息把指令本身當 Text（如 "/無聊"）→ 不當尾隨顯示。
+            if (RoomChatCommand.TryParseExpression(t, out var id, out var trail)
+                && id == m.ExpressionId && string.IsNullOrEmpty(trail))
+                return false;
+            if (string.Equals(t, RoomChatCommand.ExpressionDisplayText(m.ExpressionId),
+                    System.StringComparison.OrdinalIgnoreCase))
+                return false;
+            return true;
+        }
+
+        private bool ShouldShowChatMessage(ChatMessage m)
+            => m != null && (m.System || m.Channel == _chatChannel);
+
+        private void ScrollRoomChatToBottom()
+        {
+            if (_chatScroll == null) return;
+            Canvas.ForceUpdateCanvases();
+            _chatScroll.verticalNormalizedPosition = 0f;
+        }
+
+        private void SendRoomChat()
+        {
+            if (_chatInput == null || Ctx == null || Ctx.Chat == null) return;
+            // 中文 IME 還沒選完 / 剛用 Enter 選字：onSubmit 會誤觸，不要送、也不要清 draft。
+            if (IsRoomChatImeComposing() || _chatImeComposing) return;
+            string txt = _chatInput.text;
+            if (string.IsNullOrWhiteSpace(txt)) return;
+            // bubble 模式送出後續留 bubble-ready(ArmRoomBubbleInput)；輸入框模式送完就收回 focus。
+            bool keepBubbleInput = _chatBubbleTyping || _chatBubbleInputArmed;
+            if (_chatBubbleTyping) HideRoomChatBubble();
+            else _chatBubbleTyping = false;
+            if (RoomChatCommand.TryParseExpression(txt, out var expressionId, out var trailing))
+                Ctx.Chat.SendExpression(expressionId, _chatChannel, trailing);
+            else
+                Ctx.Chat.Send(txt, _chatChannel);
+            HideChatModeMenu();
+            HideExpressionMenu();
+            _chatInput.text = "";
+            if (keepBubbleInput) ArmRoomBubbleInput();
+            else EndRoomChatInputFocus();
+        }
+
+        private void ShowRoomChatBubble(ChatMessage m)
+        {
+            if (Root == null || m == null) return;
+            // 舊泡保留：新泡另開一顆，串起來各自計時。
+            if (_chatBubbleTyping) HideRoomChatBubble();
+
+            var bubble = SpawnSentRoomBubble();
+            bubble.PendingShow = true;
+            bubble.ShownAt = Time.unscaledTime;   // 每顆泡以此為「年齡」起點，各自從肩錨往上飄
+            bubble.HideAt = bubble.ShownAt + ChatBubbleLifetime;
+
+            string trail = (m.Text ?? "").Trim();
+            bool expressionWithText = HasExpressionTrailingText(m);
+            string text = expressionWithText ? trail : ChatLineText(m);
+            int style = (m.ExpressionId > 0 && !expressionWithText)
+                ? 1
+                : RoomBubbleStyleForText(text, bubble.Text);
+            ApplySentBubbleStyle(bubble, style, entering: true);
+            var enterFrames = RoomBubbleArt.EnterFrames(style);
+            bubble.TalkAt = bubble.ShownAt + Mathf.Clamp((enterFrames != null ? enterFrames.Length : 0) / 12f, 0.5f, 1.2f);
+            if (string.IsNullOrEmpty(m.RoomActionId)) UiSfx.Play(UiSfx.Bubble);
+            if (bubble.Add != null) bubble.Add.gameObject.SetActive(false);
+            if (bubble.AddAnim != null) bubble.AddAnim.Frames = null;
+
+            if (m.ExpressionId > 0)
+            {
+                var frames = RoomExpressionArt.SmallFrames(m.ExpressionId);
+                bool hasFrames = frames != null && frames.Length > 0;
+                bool showTrail = expressionWithText;
+
+                if (hasFrames && !showTrail)
+                {
+                    // 純表情：只播小動畫。
+                    bubble.Text.gameObject.SetActive(false);
+                    bubble.Expression.gameObject.SetActive(true);
+                    bubble.ExpressionAnim.Frames = frames;
+                    bubble.Expression.sprite = frames[0];
+                }
+                else if (hasFrames && showTrail)
+                {
+                    // 表情+字：小動畫 + 任意尾隨字（中文／英文／數字…）。
+                    bubble.Expression.gameObject.SetActive(true);
+                    bubble.ExpressionAnim.Frames = frames;
+                    bubble.Expression.sprite = frames[0];
+                    bubble.Text.gameObject.SetActive(true);
+                    bubble.Text.text = EscapeTmp(trail);
+                    var tr = RoomBubbleArt.TextRect(bubble.Style);
+                    Place(bubble.Expression.rectTransform, tr.x, tr.y + (tr.height - 24f) * 0.5f, 24, 24);
+                    Place(bubble.Text.rectTransform, tr.x + 26f, tr.y, Mathf.Max(8f, tr.width - 26f), tr.height);
+                    bubble.Text.alignment = TextAlignmentOptions.MidlineLeft;
+                }
+                else
+                {
+                    bubble.Expression.gameObject.SetActive(false);
+                    if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
+                    bubble.Text.gameObject.SetActive(true);
+                    bubble.Text.text = EscapeTmp(showTrail
+                        ? RoomChatCommand.ExpressionDisplayText(m.ExpressionId) + " " + trail
+                        : RoomChatCommand.ExpressionDisplayText(m.ExpressionId));
+                }
+            }
+            else
+            {
+                bubble.Expression.gameObject.SetActive(false);
+                if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
+                bubble.Text.gameObject.SetActive(true);
+                bubble.Text.text = EscapeTmp(text);
+            }
+
+            _sentBubbles.Add(bubble);
+            // 防洗版：太舊先踢（仍各自壽命為主）
+            while (_sentBubbles.Count > 8)
+                DestroySentRoomBubble(_sentBubbles[0]);
+        }
+
+        private SentRoomBubble SpawnSentRoomBubble()
+        {
+            var root = UIKit.NewRect(Root, "RoomChatBubble");
+            root.anchorMin = root.anchorMax = new Vector2(0f, 1f);
+            root.pivot = new Vector2(0f, 1f);
+            root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+
+            var bubble = new SentRoomBubble { Root = root };
+            var drag = root.gameObject.AddComponent<RoomBubbleDragHandle>();
+            drag.Owner = this;
+            drag.Sent = bubble;
+
+            bubble.Frame = UIKit.AddImage(root, "Frame", Color.white, raycast: true);
+            UIKit.Stretch(bubble.Frame.rectTransform);
+            UIKit.ApplySprite(bubble.Frame, RoomBubbleArt.Base(1));
+            Place(bubble.Frame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            bubble.FrameAnim = bubble.Frame.gameObject.AddComponent<SpriteSeqAnim>();
+            bubble.FrameAnim.Fps = 12f;
+
+            bubble.Add = UIKit.AddImage(root, "AddAni", Color.white);
+            UIKit.Stretch(bubble.Add.rectTransform);
+            bubble.AddAnim = bubble.Add.gameObject.AddComponent<SpriteSeqAnim>();
+            bubble.AddAnim.Fps = 14f;
+
+            bubble.Text = UIKit.AddText(root, "Text", "", 13, ChatBubbleTextColor, TextAlignmentOptions.MidlineLeft, true);
+            Place(bubble.Text.rectTransform, 49, 43, 74, 28);
+            bubble.Text.richText = true;
+            bubble.Text.textWrappingMode = TextWrappingModes.Normal;
+            bubble.Text.overflowMode = TextOverflowModes.Overflow;
+
+            bubble.Expression = UIKit.AddImage(root, "Expression", Color.white);
+            bubble.Expression.raycastTarget = false;
+            bubble.Expression.preserveAspect = true;
+            Place(bubble.Expression.rectTransform, 73, 43, 24, 24);
+            bubble.ExpressionAnim = bubble.Expression.gameObject.AddComponent<SpriteSeqAnim>();
+            bubble.ExpressionAnim.Fps = 8f;
+
+            root.gameObject.SetActive(false);
+            return bubble;
+        }
+
+        private void ApplySentBubbleStyle(SentRoomBubble bubble, int style, bool entering)
+        {
+            if (bubble == null || bubble.Root == null) return;
+            style = Mathf.Clamp(style, 1, 11);
+            bubble.Style = style;
+            var frames = entering ? RoomBubbleArt.EnterFrames(style) : null;
+            var sprite = frames != null && frames.Length > 0 ? frames[0] : RoomBubbleArt.Base(style);
+
+            bubble.Root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            if (bubble.FrameAnim != null) bubble.FrameAnim.SetFrames(frames, restart: true, loop: !entering);
+            if (bubble.Frame != null)
+            {
+                UIKit.ApplySprite(bubble.Frame, sprite);
+                Place(bubble.Frame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            }
+
+            var textRect = RoomBubbleArt.TextRect(style);
+            if (bubble.Text != null)
+            {
+                bubble.Text.fontSize = 13f;
+                Place(bubble.Text.rectTransform, textRect.x, textRect.y, textRect.width, textRect.height);
+            }
+            if (bubble.Expression != null)
+            {
+                var tr = RoomBubbleArt.TextRect(style);
+                float ex = tr.x + (tr.width - 24f) * 0.5f;
+                float ey = tr.y + (tr.height - 24f) * 0.5f;
+                Place(bubble.Expression.rectTransform, ex, ey, 24, 24);
+            }
+        }
+
+        private void DestroySentRoomBubble(SentRoomBubble bubble)
+        {
+            if (bubble == null) return;
+            if (ReferenceEquals(_chatBubbleDraggedSent, bubble))
+            {
+                _chatBubbleDraggedSent = null;
+                _chatBubbleChainDragging = false;
+                _chatBubbleDragging = false;
+            }
+            _sentBubbles.Remove(bubble);
+            if (bubble.FrameAnim != null) bubble.FrameAnim.Frames = null;
+            if (bubble.AddAnim != null) bubble.AddAnim.Frames = null;
+            if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
+            if (bubble.Root != null) Destroy(bubble.Root.gameObject);
+        }
+
+        private void ClearSentRoomBubbles()
+        {
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+                DestroySentRoomBubble(_sentBubbles[i]);
+            _sentBubbles.Clear();
+            _chatBubbleChainDragging = false;
+            _chatBubbleDragging = false;
+            _chatBubbleDraggedSent = null;
+            _chatBubbleDraggingTyping = false;
+            _chatBubbleDragPointerCaptured = false;
+            _chatBubbleHasPhysics = false;
+            _chatBubblePhysicsVel = Vector2.zero;
+        }
+
+        private void HideRoomChatBubble()
+        {
+            _chatBubbleTyping = false;
+            _chatBubblePendingShow = false;
+            if (!_chatBubbleInputArmed)
+                SetRoomChatInputEchoVisible(true);
+            if (_chatBubbleRoot != null) _chatBubbleRoot.gameObject.SetActive(false);
+            if (_chatBubbleAdd != null) _chatBubbleAdd.gameObject.SetActive(false);
+            if (_chatBubbleFrameAnim != null) _chatBubbleFrameAnim.Frames = null;
+            if (_chatBubbleAddAnim != null) _chatBubbleAddAnim.Frames = null;
+            if (_chatBubbleExpressionAnim != null) _chatBubbleExpressionAnim.Frames = null;
+            _chatBubbleHasPhysics = false;
+            _chatBubblePhysicsVel = Vector2.zero;
+            if (_chatBubbleDraggingTyping)
+            {
+                _chatBubbleDragging = false;
+                _chatBubbleChainDragging = false;
+                _chatBubbleDraggingTyping = false;
+                _chatBubbleDragPointerCaptured = false;
+            }
+        }
+
+        private void CancelRoomChatTyping()
+        {
+            if (_chatInput != null) _chatInput.text = "";
+            _chatDraftWasEmpty = true;
+            if (_chatBubbleTyping) HideRoomChatBubble();
+            EndRoomChatInputFocus();
+        }
+
+        // 「點空曠處」= bubble 打字模式：頭上彈藍色打字泡顯示草稿(含 | 假光標)，左下輸入框回顯隱藏(當隱形捕捉欄)。
+        // 「直接點左下輸入框」走另一條(OnRoomChatInputPointerDown)：取消藍泡、改在輸入框顯示字+閃爍光標+IME。
+        private void BeginRoomBubbleTyping(bool preserveDraft = false)
+        {
+            if (_chatInput == null || _chatBubbleRoot == null) return;
+            if (_chatBubbleTyping)
+            {
+                FocusRoomChatInput();
+                return;
+            }
+
+            HideChatModeMenu();
+            HideExpressionMenu();
+            _chatBubbleInputArmed = false;
+            _chatBubbleTyping = true;
+            _chatBubbleRoot.gameObject.SetActive(true);
+            _chatBubbleDragging = false;
+            _chatBubbleChainDragging = false;
+            _chatBubbleDraggedSent = null;
+            _chatBubbleDraggingTyping = false;
+            _chatBubbleDragPointerCaptured = false;
+            _chatBubblePendingShow = false;
+            _chatBubblePhysicsVel = Vector2.zero;
+            _chatBubbleHasPhysics = false;
+            if (!preserveDraft) _chatInput.text = "";
+            _chatDraftWasEmpty = string.IsNullOrEmpty(_chatInput.text);
+            SetRoomChatInputEchoVisible(false);
+            FocusRoomChatInput();
+
+            ApplyRoomBubbleTypingStyle();
+            if (_chatBubbleAdd != null) _chatBubbleAdd.gameObject.SetActive(false);
+            if (_chatBubbleAddAnim != null) _chatBubbleAddAnim.Frames = null;
+            if (_chatBubbleExpression != null) _chatBubbleExpression.gameObject.SetActive(false);
+            if (_chatBubbleExpressionAnim != null) _chatBubbleExpressionAnim.Frames = null;
+            UpdateRoomBubbleDraft();
+            SnapRoomBubbleTypingToAnchor();
+        }
+
+        private void UpdateRoomBubbleDraft()
+        {
+            if (!_chatBubbleTyping || _chatInput == null || _chatBubbleRoot == null) return;
+            if (!_chatBubbleRoot.gameObject.activeSelf) _chatBubbleRoot.gameObject.SetActive(true);
+            // 已上屏字 + IME 組字中（拼音／候選還沒寫進 text）都要顯示在 bubble。
+            string draft = (_chatInput.text ?? "") + (Input.compositionString ?? "");
+            SyncRoomBubbleTypingSize(draft);
+            if (_chatBubbleText == null) return;
+            if (_chatBubbleExpression != null) _chatBubbleExpression.gameObject.SetActive(false);
+            _chatBubbleText.gameObject.SetActive(true);
+            _chatBubbleText.text = BubbleDraftText(draft);
+        }
+
+        // 空 draft → ADDANI 打字小泡；有字 → TALK_N（下面有棍）依長度變寬，不要用無棍的 Base/ENTER。
+        private void SyncRoomBubbleTypingSize(string draft)
+        {
+            if (string.IsNullOrEmpty(draft))
+            {
+                if (!_chatBubbleTypingArt) ApplyRoomBubbleTypingStyle();
+                return;
+            }
+
+            int style = RoomBubbleStyleForText(draft);
+            if (_chatBubbleTypingArt || style != _chatBubbleStyle)
+                ApplyRoomBubbleTypingSizedStyle(style);
+        }
+
+        private static bool IsRoomChatImeComposing()
+            => !string.IsNullOrEmpty(Input.compositionString);
+
+        private int RoomBubbleStyleForText(string text, TextMeshProUGUI measureText = null)
+        {
+            var measure = measureText != null ? measureText : _chatBubbleText;
+            string sample = string.IsNullOrEmpty(text) ? " " : text;
+            for (int style = 1; style <= 11; style++)
+            {
+                var r = RoomBubbleArt.TextRect(style);
+                if (measure == null)
+                {
+                    if (sample.Length * 12f <= r.width) return style;
+                    continue;
+                }
+
+                Vector2 pref = measure.GetPreferredValues(sample, r.width, 200f);
+                if (pref.x <= r.width + 1f && pref.y <= r.height + 1f)
+                    return style;
+            }
+            return 11;
+        }
+
+        private void ApplyRoomBubbleStyle(int style, bool entering)
+        {
+            if (_chatBubbleRoot == null) return;
+            style = Mathf.Clamp(style, 1, 11);
+            _chatBubbleStyle = style;
+            _chatBubbleTypingArt = false;
+            var frames = entering ? RoomBubbleArt.EnterFrames(style) : null;
+            var sprite = frames != null && frames.Length > 0 ? frames[0] : RoomBubbleArt.Base(style);
+
+            _chatBubbleRoot.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            if (_chatBubbleFrameAnim != null) _chatBubbleFrameAnim.SetFrames(frames, restart: true, loop: !entering);
+            if (_chatBubbleFrame != null)
+            {
+                UIKit.ApplySprite(_chatBubbleFrame, sprite);
+                Place(_chatBubbleFrame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            }
+
+            var textRect = RoomBubbleArt.TextRect(style);
+            if (_chatBubbleText != null)
+            {
+                _chatBubbleText.fontSize = 13f;
+                Place(_chatBubbleText.rectTransform, textRect.x, textRect.y, textRect.width, textRect.height);
+            }
+            if (_chatBubbleExpression != null)
+                Place(_chatBubbleExpression.rectTransform, 73, 43, 24, 24);
+        }
+
+        private void ApplyRoomBubbleTypingStyle()
+        {
+            if (_chatBubbleRoot == null) return;
+            _chatBubbleStyle = 1;
+            _chatBubbleTypingArt = true;
+            _chatBubbleRoot.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            // ADDANI = 官方打字泡動態；空字時循環播，不要只貼靜態第 11 幀。
+            var addFrames = RoomBubbleArt.AddFrames();
+            if (_chatBubbleFrameAnim != null)
+                _chatBubbleFrameAnim.SetFrames(addFrames != null && addFrames.Length > 0 ? addFrames : null, restart: true, loop: false);
+            if (_chatBubbleFrame != null)
+            {
+                if (addFrames == null || addFrames.Length == 0)
+                    UIKit.ApplySprite(_chatBubbleFrame, RoomBubbleArt.Typing());
+                Place(_chatBubbleFrame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            }
+            if (_chatBubbleAdd != null) _chatBubbleAdd.gameObject.SetActive(false);
+            if (_chatBubbleAddAnim != null) _chatBubbleAddAnim.Frames = null;
+
+            if (_chatBubbleText != null)
+            {
+                _chatBubbleText.fontSize = 11f;
+                var textRect = RoomBubbleArt.TypingTextRect();
+                Place(_chatBubbleText.rectTransform, textRect.x, textRect.y, textRect.width, textRect.height);
+            }
+            if (_chatBubbleExpression != null)
+                Place(_chatBubbleExpression.rectTransform, 73, 43, 24, 24);
+        }
+
+        // 打字有字時變寬：用帶下方棍子的 TALK_N 靜態框（不要用無棍的 Base/ENTER）。
+        private void ApplyRoomBubbleTypingSizedStyle(int style)
+        {
+            if (_chatBubbleRoot == null) return;
+            style = Mathf.Clamp(style, 1, 11);
+            _chatBubbleStyle = style;
+            _chatBubbleTypingArt = false;
+            _chatBubbleRoot.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            if (_chatBubbleFrameAnim != null) _chatBubbleFrameAnim.Frames = null;
+            if (_chatBubbleFrame != null)
+            {
+                UIKit.ApplySprite(_chatBubbleFrame, RoomBubbleArt.Talk(style));
+                Place(_chatBubbleFrame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            }
+
+            var textRect = RoomBubbleArt.TextRect(style);
+            if (_chatBubbleText != null)
+            {
+                _chatBubbleText.fontSize = 13f;
+                Place(_chatBubbleText.rectTransform, textRect.x, textRect.y, textRect.width, textRect.height);
+            }
+            if (_chatBubbleExpression != null)
+            {
+                float ex = textRect.x + (textRect.width - 24f) * 0.5f;
+                float ey = textRect.y + (textRect.height - 24f) * 0.5f;
+                Place(_chatBubbleExpression.rectTransform, ex, ey, 24, 24);
+            }
+        }
+
+        private static string BubbleDraftText(string draft)
+        {
+            string text = EscapeTmp(draft ?? "");
+            bool caretVisible = Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
+            string caret = caretVisible ? "|" : "<alpha=#00>|<alpha=#FF>";
+            return text + caret;
+        }
+
+        private void OnRoomChatInputChanged(string text)
+        {
+            if (_chatBubbleInputArmed && !_chatBubbleTyping && !string.IsNullOrEmpty(text))
+                BeginRoomBubbleTyping(preserveDraft: true);
+        }
+
+        private void ArmRoomBubbleInput()
+        {
+            if (_chatInput == null) return;
+            _chatBubbleInputArmed = true;
+            _chatBubbleTyping = false;
+            _chatDraftWasEmpty = string.IsNullOrEmpty(_chatInput.text);
+            SetRoomChatInputEchoVisible(false);
+            FocusRoomChatInput();
+        }
+
+        // 兩種打字模式共用：bubble 模式(點空曠處)→隱藏輸入框回顯(草稿改顯示在頭上藍泡+假光標)；輸入框模式(直接點左下
+        // 輸入框)→顯示回顯=白字+閃爍白光標+IME 組字底線(richText→TMP 畫 <u>)。visible=false 把字與光標一起設成透明。
+        private void SetRoomChatInputEchoVisible(bool visible)
+        {
+            if (_chatInput == null) return;
+            Color textColor = visible ? Color.white : new Color(1f, 1f, 1f, 0f);
+            if (_chatInput.textComponent != null)
+                _chatInput.textComponent.color = textColor;
+            if (_chatInput.placeholder is TextMeshProUGUI ph)
+                ph.color = visible ? new Color(1f, 1f, 1f, 0.5f) : new Color(1f, 1f, 1f, 0f);
+            // TMP 內建 caret 一律透明，改用自畫 _chatCaret（UpdateChatCaret 控制顯示/位置/閃爍）。
+            _chatInput.customCaretColor = true;
+            _chatInput.caretColor = new Color(1f, 1f, 1f, 0f);
+        }
+
+        // 輸入框模式(直接點左下輸入框、非 bubble 模式)才顯示自畫游標；擺在目前文字(含 IME 組字)尾端，~1.8Hz 閃爍。
+        private void UpdateChatCaret()
+        {
+            if (_chatCaret == null || _chatInput == null) return;
+            // armed（bubble 送出後續待下一則草稿）仍 focus 但屬 bubble 模式：此時左下不該有游標，草稿會顯示在頭上藍泡。
+            bool inputMode = _chatInput.isFocused && !_chatBubbleTyping && !_chatBubbleInputArmed;
+            if (!inputMode)
+            {
+                if (_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(false);
+                return;
+            }
+            string disp = (_chatInput.text ?? "") + (Input.compositionString ?? "");
+            float w = (_chatInput.textComponent != null && disp.Length > 0)
+                ? _chatInput.textComponent.GetPreferredValues(disp).x : 0f;
+            _chatCaret.rectTransform.anchoredPosition = new Vector2(2f + w, 0f);
+            if (!_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(true);
+            bool on = Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
+            var c = _chatCaret.color; c.a = on ? 1f : 0f; _chatCaret.color = c;
+        }
+
+        private void FocusRoomChatInput()
+        {
+            if (_chatInput == null) return;
+            if (_chatInputFocusRoutine != null)
+            {
+                StopCoroutine(_chatInputFocusRoutine);
+                _chatInputFocusRoutine = null;
+            }
+            if (EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_chatInput.gameObject);
+            _chatInput.Select();
+            _chatInput.ActivateInputField();
+            _chatInput.MoveTextEnd(false);
+            _chatInputFocusRoutine = StartCoroutine(FocusRoomChatInputNextFrame());
+        }
+
+        private IEnumerator FocusRoomChatInputNextFrame()
+        {
+            yield return null;
+            if (_chatInput == null)
+            {
+                _chatInputFocusRoutine = null;
+                yield break;
+            }
+            if (EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_chatInput.gameObject);
+            _chatInput.Select();
+            _chatInput.ActivateInputField();
+            _chatInput.MoveTextEnd(false);
+            _chatInputFocusRoutine = null;
+        }
+
+        private void EndRoomChatInputFocus()
+        {
+            _chatBubbleInputArmed = false;
+            if (_chatInputFocusRoutine != null)
+            {
+                StopCoroutine(_chatInputFocusRoutine);
+                _chatInputFocusRoutine = null;
+            }
+            SetRoomChatInputEchoVisible(true);
+            if (_chatInput == null) return;
+            _chatInput.DeactivateInputField();
+            if (EventSystem.current != null && EventSystem.current.currentSelectedGameObject == _chatInput.gameObject)
+                EventSystem.current.SetSelectedGameObject(null);
+        }
+
+        private static string ChatLineText(ChatMessage m)
+        {
+            if (m == null) return "";
+            return m.ExpressionId > 0 ? RoomChatCommand.ExpressionDisplayText(m.ExpressionId) : (m.Text ?? "");
+        }
+
+        private static string EscapeTmp(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+        }
 
         // ---- render the seat occupancy / labels from the room state ----
 
@@ -598,13 +1615,22 @@ namespace Sdo.UI.Screens
                 ApplyCollapse();
             }
 
+            HandleRoomBlankChatClick();
+            HandleRoomChatTypingKeys();
+            // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
+            if (IsRoomChatImeComposing()) _chatImeComposing = true;
+            UpdateRoomBubbleDraft();
+            UpdateChatCaret();
+
             if (_scene == null) return;
 
             // 房間仍在選歌畫面底下即時 render，但選歌疊在上面時要凍結走動（否則方向鍵會把底下的角色走來走去）。
-            // 只有房間是最上層(當前畫面)時才收方向鍵。
-            _scene.InputEnabled = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
-
-            // place ALL 6 head slots from the shared offset+size (base = DDRROOM AvatarView coords). In the F2 debug
+            // 只有房間是最上層(當前畫面)時才收方向鍵。打字/focus 中鎖方向鍵；離開 focus 後立刻可走。
+            bool roomTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
+            bool chatCapturingKeys = _chatBubbleTyping
+                || _chatBubbleInputArmed
+                || (_chatInput != null && _chatInput.isFocused);
+            _scene.InputEnabled = roomTop && !chatCapturingKeys;
             // panel every slot shows the head (to check alignment); normally only slot 0 (the local player) does.
             Texture headTex = _localHead != null ? _localHead.Texture : null;
             for (int i = 0; i < RoomLayout.SeatCount; i++)
@@ -618,11 +1644,609 @@ namespace Sdo.UI.Screens
                 else { _slotHead[i].enabled = false; if (_slotClose[i] != null) _slotClose[i].enabled = showEmptySeatCovers; }
             }
 
-            if (_floatName != null && _floatName.gameObject.activeSelf && _scene.TryHeadViewport(out var vp))
-                PlaceFollow(_floatName.Rect, vp, -8f);                      // name sits just ABOVE the avatar's head
+            UpdateRoomChatBubble();
+            UpdateSentRoomBubbles();
+
+            if (_scene.TryHeadViewport(out var vp))
+            {
+                if (_floatName != null && _floatName.gameObject.activeSelf)
+                    PlaceFollow(_floatName.Rect, vp, -8f);                      // name sits just ABOVE the avatar's head
+            }
+
+            bool needBubbleAnchor = _sentBubbles.Count > 0
+                || (_chatBubbleRoot != null && (_chatBubbleRoot.gameObject.activeSelf || _chatBubblePendingShow));
+            if (needBubbleAnchor)
+            {
+                if (_scene.TryChatBubbleViewport(out var bubbleVp))
+                    PlaceRoomChatBubbles(bubbleVp);
+                else if (_scene.TryHeadViewport(out var fallbackVp))
+                    PlaceRoomChatBubbles(fallbackVp);
+            }
         }
 
-        // F2 tuning panel: sliders for the shared head-slot offset/size + a green border around each of the 6 slots
+        private void LateUpdate()
+        {
+            // UI / IME 事件跑完後再同步，選字 Enter 那幀 onSubmit 仍看得到「剛在組字」。
+            _chatImeComposing = IsRoomChatImeComposing();
+        }
+
+        private void UpdateRoomChatBubble()
+        {
+            // 打字泡不壽命到期；已送出泡走 UpdateSentRoomBubbles。
+            if (_chatBubbleRoot == null || !_chatBubbleRoot.gameObject.activeSelf) return;
+            if (!_chatBubbleTyping) return;
+            // drag 回彈整串共用，交 UpdateSentRoomBubbles / 下面 chain damp。
+        }
+
+        private void UpdateSentRoomBubbles()
+        {
+            float now = Time.unscaledTime;
+            float heldTime = _chatBubbleChainDragging ? Time.unscaledDeltaTime : 0f;
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+            {
+                var b = _sentBubbles[i];
+                if (b == null || b.Root == null)
+                {
+                    _sentBubbles.RemoveAt(i);
+                    continue;
+                }
+                if (heldTime > 0f)
+                {
+                    b.HideAt += heldTime;
+                    if (!float.IsInfinity(b.TalkAt))
+                        b.TalkAt += heldTime;
+                }
+                if (now >= b.HideAt)
+                {
+                    DestroySentRoomBubble(b);
+                    continue;
+                }
+                if (now >= b.TalkAt)
+                {
+                    if (b.FrameAnim != null) b.FrameAnim.Frames = null;
+                    if (b.Frame != null) UIKit.ApplySprite(b.Frame, RoomBubbleArt.Base(b.Style));
+                    if (b.Add != null) b.Add.gameObject.SetActive(false);
+                    if (b.AddAnim != null) b.AddAnim.Frames = null;
+                    b.TalkAt = float.PositiveInfinity;
+                }
+            }
+        }
+
+        private void PlaceRoomChatBubbles(Vector2 vp)
+        {
+            float anchorTop = (1f - vp.y) * 600f;
+            float visibleLeft = vp.x * 800f + ChatBubbleAnchorVisibleLeft;
+            float visibleTop = anchorTop + ChatBubbleAnchorVisibleTop;
+
+            bool typingVisible = _chatBubbleRoot != null
+                && (_chatBubbleTyping || _chatBubbleRoot.gameObject.activeSelf || _chatBubblePendingShow);
+
+            bool hasTypingNode = false;
+            RoomBubbleLayoutNode typingNode = default;
+            if (typingVisible)
+            {
+                typingNode = new RoomBubbleLayoutNode
+                {
+                    Root = _chatBubbleRoot,
+                    Typing = true,
+                    Position = _chatBubblePhysicsPos,
+                    Velocity = _chatBubblePhysicsVel,
+                    HasPhysics = _chatBubbleHasPhysics,
+                    Bounds = _chatBubbleTypingArt ? RoomBubbleArt.TypingBounds() : RoomBubbleArt.BubbleBounds(_chatBubbleStyle),
+                    Style = _chatBubbleStyle,
+                    Dragging = _chatBubbleChainDragging && _chatBubbleDraggingTyping
+                };
+                hasTypingNode = true;
+            }
+
+            var nodes = new List<RoomBubbleLayoutNode>(_sentBubbles.Count);
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+            {
+                var b = _sentBubbles[i];
+                if (b == null || b.Root == null) continue;
+                nodes.Add(new RoomBubbleLayoutNode
+                {
+                    Sent = b,
+                    Root = b.Root,
+                    Position = b.PhysicsPos,
+                    Velocity = b.PhysicsVel,
+                    HasPhysics = b.HasPhysics,
+                    Bounds = RoomBubbleArt.BubbleBounds(b.Style),
+                    Style = b.Style,
+                    Dragging = _chatBubbleChainDragging && ReferenceEquals(_chatBubbleDraggedSent, b)
+                });
+            }
+
+            if (!hasTypingNode && nodes.Count == 0) return;
+
+            float dt = Mathf.Clamp(Time.unscaledDeltaTime, 0.001f, 0.05f);
+            if (hasTypingNode)
+            {
+                Vector2 typingTarget = BubbleRootFromVisible(visibleLeft, visibleTop, typingNode.Bounds);
+                if (!typingNode.HasPhysics)
+                {
+                    typingNode.Position = typingTarget;
+                    typingNode.Velocity = Vector2.zero;
+                }
+                else if (!typingNode.Dragging)
+                {
+                    if (StepBubbleNode(ref typingNode, typingTarget, dt))
+                        typingNode.HasPhysics = false;
+                }
+                else
+                {
+                    KeepDraggedBubbleNode(ref typingNode);
+                }
+
+                if (typingNode.Root != null)
+                    typingNode.Root.anchoredPosition = typingNode.Position;
+                _chatBubblePhysicsPos = typingNode.Position;
+                _chatBubblePhysicsVel = typingNode.Velocity;
+                _chatBubbleHasPhysics = typingNode.HasPhysics;
+                if (_chatBubblePendingShow && _chatBubbleRoot != null)
+                {
+                    _chatBubbleRoot.gameObject.SetActive(true);
+                    _chatBubblePendingShow = false;
+                }
+                if (_chatBubbleRoot != null) _chatBubbleRoot.SetAsLastSibling();
+            }
+
+            if (nodes.Count == 0) return;
+
+            int draggedIndex = -1;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (!nodes[i].Dragging) continue;
+                draggedIndex = i;
+                break;
+            }
+
+            bool draggingSentBubble = _chatBubbleChainDragging && draggedIndex >= 0;
+            // 整串是「緊密堆疊」一起往上飄：基準 = 最新(最後送出)那顆的年齡。一送出新泡 → nodes[0] 換成它(年齡0)→ 基準歸零
+            // → 舊的(已飄高的)被拉回錨點重新疊好(compact)，之後整串繼續往上飄「不停頓」。nodes[0]=最新=串底(在錨點+baseRise)。
+            float baseRise = nodes[0].Sent != null ? Mathf.Max(0f, Time.unscaledTime - nodes[0].Sent.ShownAt) * ChatBubbleRiseSpeed : 0f;
+            Vector2 anchorRoot = BubbleRootFromVisible(visibleLeft, visibleTop, nodes[0].Bounds);
+            var homeTargets = new Vector2[nodes.Count];
+            // 打字泡也在錨點：整串往上讓「一個間距」給它，之後照 baseRise 繼續飄。不用 Max clamp——clamp 會把串釘在
+            // 固定高度、等 baseRise 追上才動 = 停頓；改成固定 +間距的位移，串一被頂上去就繼續往上飄不卡。
+            float stackY = anchorRoot.y + baseRise + (hasTypingNode ? OfficialBubbleFollowSpacing(nodes[0]) : 0f);
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (i > 0) stackY += OfficialBubbleFollowSpacing(nodes[i]);
+                homeTargets[i] = new Vector2(anchorRoot.x, stackY);
+            }
+
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                var node = nodes[i];
+                // 目標：拖曳中「被拖那顆上面的泡」跟著實際位置(火車效果)；其餘一律用自己的 home 目標(年齡上升 + 最小間距)。
+                Vector2 target = (draggingSentBubble && i > draggedIndex)
+                    ? nodes[i - 1].Position + new Vector2(0f, OfficialBubbleFollowSpacing(node))
+                    : homeTargets[i];
+
+                if (node.Dragging)
+                {
+                    KeepDraggedBubbleNode(ref node);
+                }
+                else if (node.Sent != null && node.Sent.PendingShow)
+                {
+                    // 剛送出第一次：直接落在錨點(不從角落彈性飛入)。
+                    node.Position = target;
+                    node.Velocity = Vector2.zero;
+                    node.HasPhysics = false;
+                }
+                else
+                {
+                    // 之後一律彈性跟隨(StepBubbleNode，跟拖曳的跟隨同款緩動)：新泡把舊泡往上頂、舊泡歸位時都帶一點彈性。
+                    node.HasPhysics = !StepBubbleNode(ref node, target, dt);
+                }
+
+                nodes[i] = node;
+            }
+
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                var node = nodes[i];
+                if (node.Root != null)
+                    node.Root.anchoredPosition = node.Position;
+
+                if (node.Sent != null)
+                {
+                    node.Sent.PhysicsPos = node.Position;
+                    node.Sent.PhysicsVel = node.Velocity;
+                    node.Sent.HasPhysics = node.HasPhysics;
+                    if (node.Sent.PendingShow)
+                    {
+                        node.Sent.Root.gameObject.SetActive(true);
+                        node.Sent.PendingShow = false;
+                    }
+                }
+            }
+        }
+
+
+        private static bool StepBubbleNode(ref RoomBubbleLayoutNode node, Vector2 target, float dt)
+        {
+            Vector2 before = node.Position;
+            float t = 1f - Mathf.Pow(1f - ChatBubbleFollowStep, Mathf.Max(0.001f, dt) * ChatBubbleFollowTicksPerSecond);
+            node.Position = Vector2.LerpUnclamped(node.Position, target, Mathf.Clamp01(t));
+            node.Velocity = (node.Position - before) / Mathf.Max(0.001f, dt);
+            if ((target - node.Position).sqrMagnitude < 0.25f)
+            {
+                node.Position = target;
+                node.Velocity = Vector2.zero;
+                return true;
+            }
+            return false;
+        }
+
+
+        private static void KeepDraggedBubbleNode(ref RoomBubbleLayoutNode node)
+        {
+            node.HasPhysics = true;
+            node.Velocity = Vector2.zero;
+        }
+
+        // 用「固定畫布錨點」對齊(bounds 忽略)：所有 bubble sprite 都畫在同一張 171×111 畫布，打字圖(AddAni)、文字圖
+        // (Talk_N)、各 style 的 body 垂直中心都在畫布 y=56.5、x=85.5。把這畫布點固定到螢幕 (refX, refY) → 換 sprite
+        // 時泡身不跳位(點1)，且泡身垂直中心=文字中心一直落在 refY(文字上下置中，點2)。
+        private static Vector2 BubbleRootFromVisible(float refX, float refY, Rect bounds)
+            => new Vector2(refX - RoomBubbleArt.AnchorCanvasX, -(refY - RoomBubbleArt.AnchorCanvasY));
+
+        private void SnapRoomBubbleTypingToAnchor()
+        {
+            if (_chatBubbleRoot == null || _scene == null) return;
+            Vector2 vp;
+            if (!_scene.TryChatBubbleViewport(out vp) && !_scene.TryHeadViewport(out vp))
+                return;
+
+            float anchorTop = (1f - vp.y) * 600f;
+            float visibleLeft = vp.x * 800f + ChatBubbleAnchorVisibleLeft;
+            float visibleTop = anchorTop + ChatBubbleAnchorVisibleTop;
+            Rect bounds = _chatBubbleTypingArt ? RoomBubbleArt.TypingBounds() : RoomBubbleArt.BubbleBounds(_chatBubbleStyle);
+            Vector2 pos = BubbleRootFromVisible(visibleLeft, visibleTop, bounds);
+            _chatBubbleRoot.anchoredPosition = pos;
+            _chatBubblePhysicsPos = pos;
+            _chatBubblePhysicsVel = Vector2.zero;
+            _chatBubbleHasPhysics = false;
+        }
+
+        private static float OfficialBubbleFollowSpacing(RoomBubbleLayoutNode node)
+        {
+            float spacing = RoomBubbleArt.CanvasH * 0.35f;
+            int style = Mathf.Clamp(node.Style, 1, 11);
+            if (style >= 8)
+                spacing += (style * 5 - 0x23) * 2f;
+            return spacing;
+        }
+
+        private void BeginRoomChatBubbleDrag(PointerEventData eventData, SentRoomBubble sent = null)
+        {
+            if (TryResolveRoomBubbleAtPointer(eventData, out var resolvedSent, out var resolvedTyping))
+            {
+                sent = resolvedTyping ? null : resolvedSent;
+            }
+
+            _chatBubbleDragging = true;
+            _chatBubbleChainDragging = true;
+            _chatBubbleDraggedSent = sent;
+            _chatBubbleDraggingTyping = sent == null;
+            CaptureRoomChatBubbleChainPhysics();
+            ExtendRoomBubbleLifetimeForDrag();
+            Vector2 startPos = Vector2.zero;
+            if (sent != null)
+            {
+                sent.HasPhysics = true;
+                sent.PhysicsPos = sent.Root != null ? sent.Root.anchoredPosition : sent.PhysicsPos;
+                sent.PhysicsVel = Vector2.zero;
+                startPos = sent.PhysicsPos;
+            }
+            else if (_chatBubbleRoot != null)
+            {
+                _chatBubbleHasPhysics = true;
+                _chatBubblePhysicsPos = _chatBubbleRoot.anchoredPosition;
+                _chatBubblePhysicsVel = Vector2.zero;
+                startPos = _chatBubblePhysicsPos;
+            }
+
+            if (TryRoomChatPointerLocal(eventData, out var pointerLocal))
+            {
+                _chatBubbleDragStartPointer = pointerLocal;
+                _chatBubbleDragStartPos = startPos;
+                _chatBubbleDragPointerCaptured = true;
+            }
+            else
+            {
+                _chatBubbleDragStartPointer = Vector2.zero;
+                _chatBubbleDragStartPos = startPos;
+                _chatBubbleDragPointerCaptured = false;
+            }
+        }
+
+        private void ExtendRoomBubbleLifetimeForDrag()
+        {
+            float minHideAt = Time.unscaledTime + ChatBubbleLifetime;
+            for (int i = 0; i < _sentBubbles.Count; i++)
+            {
+                var b = _sentBubbles[i];
+                if (b != null) b.HideAt = Mathf.Max(b.HideAt, minHideAt);
+            }
+        }
+
+        private void CaptureRoomChatBubbleChainPhysics()
+        {
+            if (_chatBubbleRoot != null && _chatBubbleRoot.gameObject.activeSelf)
+            {
+                _chatBubbleHasPhysics = true;
+                _chatBubblePhysicsPos = _chatBubbleRoot.anchoredPosition;
+                _chatBubblePhysicsVel = Vector2.zero;
+            }
+
+            for (int i = 0; i < _sentBubbles.Count; i++)
+            {
+                var b = _sentBubbles[i];
+                if (b == null || b.Root == null) continue;
+                b.HasPhysics = true;
+                b.PhysicsPos = b.Root.anchoredPosition;
+                b.PhysicsVel = Vector2.zero;
+            }
+        }
+
+        private void DragRoomChatBubble(PointerEventData eventData, SentRoomBubble sent = null)
+        {
+            float dt = Mathf.Max(0.001f, Time.unscaledDeltaTime);
+            var draggedSent = _chatBubbleChainDragging ? _chatBubbleDraggedSent : sent;
+            if (draggedSent != null)
+            {
+                Vector2 current = draggedSent.PhysicsPos;
+                Vector2 next = RoomChatDragPosition(eventData, current);
+                draggedSent.HasPhysics = true;
+                draggedSent.PhysicsPos = next;
+                draggedSent.PhysicsVel = (next - current) / dt;
+                return;
+            }
+
+            Vector2 typingCurrent = _chatBubblePhysicsPos;
+            Vector2 typingNext = RoomChatDragPosition(eventData, typingCurrent);
+            _chatBubbleHasPhysics = true;
+            _chatBubblePhysicsPos = typingNext;
+            _chatBubblePhysicsVel = (typingNext - typingCurrent) / dt;
+        }
+
+        private Vector2 RoomChatDragPosition(PointerEventData eventData, Vector2 current)
+        {
+            if (_chatBubbleDragPointerCaptured && TryRoomChatPointerLocal(eventData, out var pointerLocal))
+                return _chatBubbleDragStartPos + (pointerLocal - _chatBubbleDragStartPointer) * ChatBubbleDragScale;
+
+            return current + RoomChatDragDelta(eventData);
+        }
+
+        private bool TryRoomChatPointerLocal(PointerEventData eventData, out Vector2 local)
+        {
+            local = Vector2.zero;
+            if (eventData == null || Root == null) return false;
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            return RectTransformUtility.ScreenPointToLocalPointInRectangle(Root, eventData.position, cam, out local);
+        }
+
+        private Vector2 RoomChatDragDelta(PointerEventData eventData)
+        {
+            if (eventData != null && Root != null)
+            {
+                var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+                if (RectTransformUtility.ScreenPointToLocalPointInRectangle(Root, eventData.position, cam, out var now) &&
+                    RectTransformUtility.ScreenPointToLocalPointInRectangle(Root, eventData.position - eventData.delta, cam, out var prev))
+                    return (now - prev) * ChatBubbleDragScale;
+
+                return eventData.delta * ChatBubbleDragScale;
+            }
+
+            return Vector2.zero;
+        }
+
+        private bool TryResolveRoomBubbleAtPointer(PointerEventData eventData, out SentRoomBubble sent, out bool typing)
+        {
+            sent = null;
+            typing = false;
+            if (eventData == null) return false;
+
+            float best = float.PositiveInfinity;
+            if (_chatBubbleRoot != null && _chatBubbleRoot.gameObject.activeSelf)
+            {
+                Rect bounds = _chatBubbleTypingArt ? RoomBubbleArt.TypingBounds() : RoomBubbleArt.BubbleBounds(_chatBubbleStyle);
+                if (TryBubbleBoundsHit(_chatBubbleRoot, bounds, eventData.position, out best))
+                    typing = true;
+            }
+
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+            {
+                var b = _sentBubbles[i];
+                if (b == null || b.Root == null || !b.Root.gameObject.activeSelf) continue;
+                if (!TryBubbleBoundsHit(b.Root, RoomBubbleArt.BubbleBounds(b.Style), eventData.position, out var distance))
+                    continue;
+                if (distance >= best) continue;
+                best = distance;
+                sent = b;
+                typing = false;
+            }
+
+            return typing || sent != null;
+        }
+
+        private static bool TryBubbleBoundsHit(RectTransform root, Rect bounds, Vector2 screenPos, out float distance)
+        {
+            distance = float.PositiveInfinity;
+            if (root == null) return false;
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(root, screenPos, cam, out var local))
+                return false;
+
+            float x = local.x;
+            float y = -local.y;
+            if (x < bounds.xMin || x > bounds.xMax || y < bounds.yMin || y > bounds.yMax)
+                return false;
+
+            var center = bounds.center;
+            distance = (new Vector2(x, y) - center).sqrMagnitude;
+            return true;
+        }
+
+        private void EndRoomChatBubbleDrag(SentRoomBubble sent = null)
+        {
+            ExtendRoomBubbleLifetimeForDrag();
+            _chatBubbleDragging = false;
+            _chatBubbleChainDragging = false;
+            _chatBubbleDraggedSent = null;
+            _chatBubbleDraggingTyping = false;
+            _chatBubbleDragPointerCaptured = false;
+        }
+
+        private void ClickRoomChatBubble()
+        {
+            BeginRoomBubbleTyping();
+        }
+
+        private struct RoomBubbleLayoutNode
+        {
+            public SentRoomBubble Sent;
+            public RectTransform Root;
+            public bool Typing;
+            public bool Dragging;
+            public bool HasPhysics;
+            public Vector2 Position;
+            public Vector2 Velocity;
+            public Rect Bounds;
+            public int Style;
+        }
+
+        private sealed class SentRoomBubble
+        {
+            public RectTransform Root;
+            public Image Frame, Add, Expression;
+            public TextMeshProUGUI Text;
+            public SpriteSeqAnim FrameAnim, AddAnim, ExpressionAnim;
+            public int Style = 1;
+            public float ShownAt, HideAt, TalkAt;
+            public bool PendingShow;
+            public bool HasPhysics;
+            public Vector2 PhysicsPos, PhysicsVel;
+        }
+
+        private sealed class RoomBubbleDragHandle : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
+        {
+            public RoomScreen Owner;
+            public SentRoomBubble Sent;
+
+            public void OnBeginDrag(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.BeginRoomChatBubbleDrag(eventData, Sent);
+            }
+
+            public void OnDrag(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.DragRoomChatBubble(eventData, Sent);
+            }
+
+            public void OnEndDrag(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.EndRoomChatBubbleDrag(Sent);
+            }
+
+            public void OnPointerClick(PointerEventData eventData)
+            {
+                if (eventData != null && eventData.dragging) return;
+                if (Owner != null) Owner.ClickRoomChatBubble();
+            }
+        }
+
+        private void HandleRoomChatTypingKeys()
+        {
+            if (_chatInput == null) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+
+            bool capturing = _chatBubbleTyping || _chatBubbleInputArmed || _chatInput.isFocused;
+            if (!capturing) return;
+
+            bool composing = IsRoomChatImeComposing();
+            string draft = _chatInput.text ?? "";
+            bool empty = draft.Length == 0 && !composing;
+
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (composing) return; // 先讓 IME 自己吃掉 Esc 取消選字
+                CancelRoomChatTyping();
+                return;
+            }
+
+            // InputField 可能同幀先刪掉最後一字 → text 已空。要用「上一幀就空」才當退出，否則最後一字刪不掉。
+            if (empty && Input.GetKeyDown(KeyCode.Backspace) && _chatDraftWasEmpty)
+            {
+                CancelRoomChatTyping();
+                return;
+            }
+
+            // 已空才按方向鍵：退 focus，讓本幀起可走路。
+            if (empty && _chatDraftWasEmpty && RoomArrowKeyDown())
+            {
+                CancelRoomChatTyping();
+                return;
+            }
+
+            _chatDraftWasEmpty = empty;
+        }
+
+        private static bool RoomArrowKeyDown()
+        {
+            return Input.GetKeyDown(KeyCode.UpArrow)
+                || Input.GetKeyDown(KeyCode.DownArrow)
+                || Input.GetKeyDown(KeyCode.LeftArrow)
+                || Input.GetKeyDown(KeyCode.RightArrow);
+        }
+
+        private void HandleRoomBlankChatClick()
+        {
+            if (_scene == null || _chatInput == null || !Input.GetMouseButtonDown(0)) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+            BeginRoomBubbleTyping();
+        }
+
+        // 使用者「實體點擊」左下輸入框 → 切成輸入框打字：取消頭上藍泡、顯示回顯(字+閃爍光標+IME)，保留已打的草稿。
+        // 只由 RoomChatInputClickHandle(IPointerDownHandler) 呼叫；bubble 模式的程式聚焦走 Select()，不會誤觸這裡。
+        private void OnRoomChatInputPointerDown()
+        {
+            _chatBubbleInputArmed = false;
+            if (_chatBubbleTyping) HideRoomChatBubble();   // 取消藍泡（HideRoomChatBubble 內 !armed 會 SetRoomChatInputEchoVisible(true)）
+            else SetRoomChatInputEchoVisible(true);
+            // TMP_InputField 自己的 OnPointerDown 會聚焦並把光標放到點擊處（標準路徑，光標穩定顯示）。
+        }
+
+        private sealed class RoomChatInputClickHandle : MonoBehaviour, IPointerDownHandler
+        {
+            public RoomScreen Owner;
+
+            public void OnPointerDown(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.OnRoomChatInputPointerDown();
+            }
+        }
+
+        private sealed class ExpressionTipHandle : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+        {
+            public RoomScreen Owner;
+            public string Command;
+            public Vector2 LocalPos;
+
+            public void OnPointerEnter(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.ShowExpressionTip(Command, LocalPos);
+            }
+
+            public void OnPointerExit(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.HideExpressionTip();
+            }
+        }
         // (projected from the 800×600 canvas through the UI camera so they land exactly on the slots).
         private void OnGUI()
         {
@@ -731,8 +2355,6 @@ namespace Sdo.UI.Screens
             Ctx.Rooms?.LeaveRoom();
             GoTo(ScreenId.Lobby);
         }
-
-        // ---- art placement helpers (XML window-target + child offset → top-left pixel) ----
 
         /// <summary>Blue text edge on the location labels — rgb(70,74,152), per the official 白字藍邊 look.</summary>
         private static readonly Color32 LeftEdge = new Color32(70, 74, 152, 255);

@@ -143,12 +143,94 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Chat_Local_Sender_Uses_Profile_Name_When_Provided()
+        {
+            // 左下聊天列表本機發言者顯示 active 使用者名字(id)，不是寫死的「我」。
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, () => "玩家001");
+            c.Send("hi");
+            Assert.AreEqual("玩家001", c.History[1].Sender);
+            c.SendExpression(3);
+            Assert.AreEqual("玩家001", c.History[2].Sender);
+        }
+
+        [Test]
+        public void Chat_Local_Sender_Falls_Back_To_Me_Without_Name()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });   // 沒給 localName → 回退 "我"
+            c.Send("hi");
+            Assert.AreEqual("我", c.History[1].Sender);
+        }
+
+        [Test]
         public void Chat_Ignores_Blank()
         {
             var c = new MockChatService(new FakeClock());
             int before = c.History.Count;
             c.Send("   ");
             Assert.AreEqual(before, c.History.Count);
+        }
+
+        [Test]
+        public void Chat_Parses_Expression_Command()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.Send("/開始");
+            Assert.AreEqual(2, c.History.Count);
+            Assert.AreEqual(2, c.History[1].ExpressionId);
+            Assert.IsTrue(c.History[1].Local);
+            Assert.AreEqual(RoomChatCommand.ExpressionDisplayText(2), c.History[1].Text);
+        }
+
+        [TestCase("/YES", 13)]   // 大寫 emoji 指令也要送成表情訊息（左下角打 /YES → 對應表情圖）
+        [TestCase("/yes", 13)]
+        [TestCase("/GO", 3)]
+        [TestCase("/是", 13)]
+        public void Chat_Send_Emoji_Command_Produces_Expression(string text, int expectedId)
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.Send(text);
+            Assert.AreEqual(2, c.History.Count);
+            Assert.AreEqual(expectedId, c.History[1].ExpressionId);
+            Assert.IsTrue(c.History[1].Local);
+        }
+
+        [Test]
+        public void Chat_Parses_Room_Action_Command()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.Send("哈哈");
+            Assert.AreEqual(2, c.History.Count);
+            Assert.AreEqual("哈哈", c.History[1].Text);
+            Assert.AreEqual("action_1", c.History[1].RoomActionId);
+            Assert.IsTrue(c.History[1].Local);
+        }
+
+        [Test]
+        public void Chat_Parses_Room_Action_With_Player_Gender()
+        {
+            // "88" resolves differently per gender table: female → action_5 (再見), male → action_6 (再見).
+            var female = new MockChatService(new FakeClock { Now = 0 }, () => false);
+            female.Send("88");
+            Assert.AreEqual("action_5", female.History[1].RoomActionId);
+
+            var male = new MockChatService(new FakeClock { Now = 0 }, () => true);
+            male.Send("88");
+            Assert.AreEqual("action_6", male.History[1].RoomActionId);
+
+            // A male-only keyword ("昏") is ignored on the default (female) table.
+            var def = new MockChatService(new FakeClock { Now = 0 });
+            def.Send("昏");
+            Assert.IsNull(def.History[1].RoomActionId);
+        }
+
+        [Test]
+        public void Chat_Records_Selected_Channel()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.Send("family hi", ChatChannel.Family);
+            c.SendExpression(3, ChatChannel.Friend);
+            Assert.AreEqual(ChatChannel.Family, c.History[1].Channel);
+            Assert.AreEqual(ChatChannel.Friend, c.History[2].Channel);
         }
 
         [Test]

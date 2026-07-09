@@ -66,6 +66,16 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        public static Sprite AnExtractedFirst(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "extracted:" + anName;
+            if (_cache.TryGetValue(key, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAn1(Path.Combine(SdoExtracted.Root, "UI", "ROOM"), anName, bleed: true) ?? An(anName);
+            _cache[key] = s;
+            return s;
+        }
+
         /// <summary>ALL frames of a ROOM .an as sprites (cached). Multi-frame .an = one sprite per option/animation
         /// frame (e.g. moveuphelp0.an holds the 4 arrow-key frames, Team.an the name-plate strip).</summary>
         public static Sprite[] AnFrames(string anName)
@@ -87,5 +97,47 @@ namespace Sdo.UI.Util
             _cache[imageName] = s;
             return s;
         }
+
+        /// <summary>Crop atlas PNG at top-left (x,y,w,h) — matches official .an crop coords.</summary>
+        public static Sprite AtlasCrop(string imageName, int x, int y, int w, int h)
+        {
+            if (string.IsNullOrEmpty(imageName) || w <= 0 || h <= 0) return null;
+            string key = "atlas:" + imageName + ":" + x + "," + y + "," + w + "," + h;
+            if (_cache.TryGetValue(key, out var s) && s != null) return s;
+
+            var tex = SdoExtracted.LoadTextureRaw(Dir, imageName)
+                      ?? SdoExtracted.LoadTextureRaw(Dir, imageName.ToUpperInvariant())
+                      ?? SdoExtracted.LoadTextureRaw(Path.Combine(SdoExtracted.Root, "UI", "ROOM"), imageName);
+            if (tex == null) return null;
+            if (x + w > tex.width || y + h > tex.height) return null;
+
+            var rect = new Rect(x, tex.height - y - h, w, h);
+            s = Sprite.Create(tex, rect, new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            _cache[key] = s;
+            return s;
+        }
+
+        // PopNormalExpression1/2.an + tab/arrow crops from ExpressionInfo.png (ROOMPOPMENU).
+        public static Sprite ExpressionInfoPage(int page)
+            => AtlasCrop("EXPRESSIONINFO.PNG", 0, Mathf.Clamp(page, 0, 1) * 132, 165, 132);
+
+        public static Sprite ExpressionNormalTab(bool selected)
+            => AtlasCrop("EXPRESSIONINFO.PNG", selected ? 0 : 38, 396, 38, 18);
+
+        public static Sprite ExpressionPageArrow(bool left, int state)
+        {
+            // state 0=normal 1=hover 2=pushed — PopLeftArrow_*/PopRightArrow_*
+            int col = left ? (state == 0 ? 0 : 17) : (state == 0 ? 34 : 51);
+            int row = state == 2 ? 449 : 450;
+            return AtlasCrop("EXPRESSIONINFO.PNG", col, row, 17, 17);
+        }
+
+        public static Sprite[] ExpressionPageArrowFrames(bool left)
+            => new[]
+            {
+                ExpressionPageArrow(left, 0),
+                ExpressionPageArrow(left, 1),
+                ExpressionPageArrow(left, 2),
+            };
     }
 }

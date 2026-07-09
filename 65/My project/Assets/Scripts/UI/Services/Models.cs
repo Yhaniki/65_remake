@@ -5,6 +5,7 @@ namespace Sdo.UI.Services
     public enum GameMode { Free, Normal }
     public enum RoomStatus { Waiting, InGame }
     public enum JoinResult { Ok, Full, InGame, NotFound }
+    public enum ChatChannel { Family, Friend, Current, Reply }
 
     public sealed class PlayerProfile
     {
@@ -49,11 +50,23 @@ namespace Sdo.UI.Services
         public string Text;
         public double TimeMs;
         public bool System;   // system/announcement line
+        public int ExpressionId;
+        public bool Local;
+        public ChatChannel Channel = ChatChannel.Current;
+        public string RoomActionId;
 
         public ChatMessage() { }
-        public ChatMessage(string sender, string text, double timeMs, bool system = false)
+        public ChatMessage(string sender, string text, double timeMs, bool system = false, int expressionId = 0, bool local = false,
+            ChatChannel channel = ChatChannel.Current, string roomActionId = null)
         {
-            Sender = sender; Text = text; TimeMs = timeMs; System = system;
+            Sender = sender;
+            Text = text;
+            TimeMs = timeMs;
+            System = system;
+            ExpressionId = expressionId;
+            Local = local;
+            Channel = channel;
+            RoomActionId = roomActionId;
         }
     }
 }
