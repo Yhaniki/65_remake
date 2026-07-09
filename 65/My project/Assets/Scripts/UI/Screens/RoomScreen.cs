@@ -91,6 +91,7 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI _chatBubbleText;
         private SpriteSeqAnim _chatBubbleFrameAnim, _chatBubbleAddAnim, _chatBubbleExpressionAnim;
         private bool _chatBubbleDragging, _chatBubbleTyping, _chatBubblePendingShow, _chatBubbleInputArmed;
+        private bool _chatInputSticky;   // 左下輸入框「黏住 focus」：送出後不離開，點空曠/退出才放掉（比照 bubble 送完續打）
         private bool _chatDraftWasEmpty; // 上一幀 draft 已空：用它區分「刪最後一字」vs「空了再按 Backspace 退 focus」
         private bool _chatImeComposing;  // 上一幀還在 IME 組字：擋「選字 Enter」誤觸 onSubmit
         private bool _chatBubbleTypingArt; // 目前是固定打字小泡：有字後要換到隨長度變大的 style
@@ -405,6 +406,8 @@ namespace Sdo.UI.Screens
 
         public override void OnShow()
         {
+            // 自製輸入框：開啟 IME 組字並由 FeedImeCursorPos 指定選字視窗位置（Unity 官方作法）。離房時 OnHide 還原 Auto。
+            Input.imeCompositionMode = IMECompositionMode.On;
             if (!_subscribed)
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated += OnRoomUpdated;
@@ -485,6 +488,8 @@ namespace Sdo.UI.Screens
             HideExpressionMenu();
             HideRoomChatBubble();
             ClearSentRoomBubbles();
+            _chatInputSticky = false;   // 離開房間 → 放掉輸入框黏 focus，回來時不自動搶 focus
+            Input.imeCompositionMode = IMECompositionMode.Auto;   // 還原，別影響遊戲/其他畫面的按鍵
             if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
             if (_backdrop != null) { _backdrop.texture = null; _backdrop.color = Color.black; }
             for (int i = 0; i < _slotHead.Length; i++) if (_slotHead[i] != null) { _slotHead[i].texture = null; _slotHead[i].enabled = false; }
@@ -958,7 +963,7 @@ namespace Sdo.UI.Screens
             HideExpressionMenu();
             _chatInput.text = "";
             if (keepBubbleInput) ArmRoomBubbleInput();
-            else FocusRoomChatInput();   // 輸入框模式送完保持 focus，不退出
+            else { _chatInputSticky = true; FocusRoomChatInput(); }   // 輸入框模式送完保持 focus 續打，不退出
         }
 
         private void ShowRoomChatBubble(ChatMessage m)
@@ -1186,6 +1191,7 @@ namespace Sdo.UI.Screens
             HideExpressionMenu();
             _chatBubbleInputArmed = false;
             _chatBubbleTyping = true;
+            _chatInputSticky = false;   // 切到 bubble 模式 → 放掉輸入框黏 focus
             _bubbleBodyFor = null;   // 進打字態強制重畫文字＋重量尺寸（preserveDraft 也要重新算一次）
             _bubbleSizedFor = null;
             _chatBubbleRoot.gameObject.SetActive(true);
@@ -1234,8 +1240,8 @@ namespace Sdo.UI.Screens
             // 不要塞空白當佔位——空白字元的 ascender/descender 近乎 0，會把游標釘在框頂(pivot=左上)。
             bool bodyChanged = body != _bubbleBodyFor;
             if (bodyChanged) { _chatBubbleText.text = body; _bubbleBodyFor = body; }
-            // 游標字元索引 = 游標前的已上屏字數 + 組字串長度（<mark> 不佔字元）。
-            UpdateBubbleCaretOverlay(caret + composition.Length, bodyChanged);
+            // 游標字元索引 = 游標前的已上屏字數 + 組字內部游標（原生 IMM32；往回選會往回移，拿不到則落組字串尾端）。
+            UpdateBubbleCaretOverlay(caret + ImeCompositionCursor(composition), bodyChanged);
         }
 
         // 空 draft → ADDANI 打字小泡；有字 → TALK_N（下面有棍）依長度變寬，不要用無棍的 Base/ENTER。
@@ -1455,6 +1461,7 @@ namespace Sdo.UI.Screens
             _chatBubbleCaret.rectTransform.sizeDelta = new Vector2(CaretWidthPx, Mathf.Max(8f, (top - bot) * CaretHeightScale));
             var col = _chatBubbleCaret.color; col.a = CaretBlinkOn() ? 1f : 0f; _chatBubbleCaret.color = col;
             if (!_chatBubbleCaret.gameObject.activeSelf) _chatBubbleCaret.gameObject.SetActive(true);
+            FeedImeCursorPos(_chatBubbleCaret.rectTransform);   // 泡打字時選字視窗跟著泡內游標
         }
 
         private void OnRoomChatInputChanged(string text)
@@ -1467,6 +1474,7 @@ namespace Sdo.UI.Screens
         {
             if (_chatInput == null) return;
             _chatBubbleInputArmed = true;
+            _chatInputSticky = false;   // bubble armed 態不是輸入框黏 focus
             _chatBubbleTyping = false;
             _chatDraftWasEmpty = string.IsNullOrEmpty(_chatInput.text);
             SetRoomChatInputEchoVisible(false);
@@ -1488,6 +1496,27 @@ namespace Sdo.UI.Screens
             _chatInput.caretColor = new Color(1f, 1f, 1f, 0f);
         }
 
+        // IME 組字內部游標(字元索引)：由原生 SdoImeHook 讀 IMM32 GCS_CURSORPOS；拿不到 → 退化成組字串尾端。
+        // 新注音「往回選」時，游標就靠這個往回移。
+        private static int ImeCompositionCursor(string comp)
+        {
+            if (string.IsNullOrEmpty(comp)) return 0;
+            int c = SdoImeHook.CursorPos();
+            return (c >= 0 && c <= comp.Length) ? c : comp.Length;
+        }
+
+        // 自製輸入框要自己告訴系統「文字游標在螢幕哪裡」，選字視窗才會跟著游標出現（Unity 官方作法）。
+        // 每幀把目前 caret 的螢幕座標餵給 Input.compositionCursorPos（World-Space canvas → 傳 worldCamera）。
+        private readonly Vector3[] _imeCorners = new Vector3[4];
+        private void FeedImeCursorPos(RectTransform caretRt)
+        {
+            if (caretRt == null) return;
+            var canvas = caretRt.GetComponentInParent<Canvas>();
+            Camera cam = (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay) ? canvas.worldCamera : null;
+            caretRt.GetWorldCorners(_imeCorners);
+            Input.compositionCursorPos = RectTransformUtility.WorldToScreenPoint(cam, _imeCorners[0]); // 左下角
+        }
+
         // 輸入框模式(直接點左下輸入框、非 bubble 模式)才顯示自畫游標；擺在目前文字(含 IME 組字)尾端，閃爍同 bubble。
         private void UpdateChatCaret()
         {
@@ -1499,13 +1528,35 @@ namespace Sdo.UI.Screens
                 if (_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(false);
                 return;
             }
-            string disp = (_chatInput.text ?? "") + (Input.compositionString ?? "");
-            float w = (_chatInput.textComponent != null && disp.Length > 0)
-                ? _chatInput.textComponent.GetPreferredValues(disp).x : 0f;
+            // 非組字：游標擺在「實際輸入位置」（量到 stringPosition 的字寬）→ 往回移/中間刪都跟著動。
+            // 組字中：游標擺在「已上屏字 + 完整組字串」尾端（正常打字回饋）；內部選字回饋交給系統候選視窗
+            //（位置由 FeedImeCursorPos 餵給 compositionCursorPos，視窗會跟著游標）。
+            string committed = _chatInput.text ?? "";
+            int caretPos = Mathf.Clamp(_chatInput.stringPosition, 0, committed.Length);
+            string comp = Input.compositionString ?? "";
+            int imeCur = ImeCompositionCursor(comp);   // 組字內部游標（往回選時會往回移）
+            string upTo = committed.Substring(0, caretPos) + comp.Substring(0, imeCur);
+            float w = (_chatInput.textComponent != null && upTo.Length > 0)
+                ? _chatInput.textComponent.GetPreferredValues(upTo).x : 0f;
             _chatCaret.rectTransform.anchoredPosition = new Vector2(2f + w, 0f);
             if (!_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(true);
             bool on = CaretBlinkOn();
             var c = _chatCaret.color; c.a = on ? 1f : 0f; _chatCaret.color = c;
+            FeedImeCursorPos(_chatCaret.rectTransform);   // 選字視窗跟著游標
+        }
+
+        // 送出（Enter）會讓 TMP_InputField 反 activate；黏 focus 態下每幀把 focus 搶回來，做到「送完續打、點別處才離開」。
+        // 直接 ActivateInputField（非走會每幀重啟 coroutine 的 FocusRoomChatInput）；已 focus/IME 組字/離房/bubble 態就不動。
+        private void MaintainRoomChatInputFocus()
+        {
+            if (!_chatInputSticky || _chatInput == null) return;
+            bool roomTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
+            if (!roomTop) { _chatInputSticky = false; return; }   // 切到別畫面(含選歌 overlay)→放掉，回來不自動搶 focus
+            if (_chatBubbleTyping || _chatBubbleInputArmed) return;
+            if (_chatInput.isFocused || IsRoomChatImeComposing()) return;
+            if (EventSystem.current != null)
+                EventSystem.current.SetSelectedGameObject(_chatInput.gameObject);
+            _chatInput.ActivateInputField();
         }
 
         private void FocusRoomChatInput()
@@ -1543,6 +1594,7 @@ namespace Sdo.UI.Screens
         private void EndRoomChatInputFocus()
         {
             _chatBubbleInputArmed = false;
+            _chatInputSticky = false;   // 明確退出（Esc／空字 Enter／方向鍵走路）→ 放掉黏住的 focus
             if (_chatInputFocusRoutine != null)
             {
                 StopCoroutine(_chatInputFocusRoutine);
@@ -1741,6 +1793,7 @@ namespace Sdo.UI.Screens
             HandleRoomChatTypingKeys();
             // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
             if (IsRoomChatImeComposing()) _chatImeComposing = true;
+            MaintainRoomChatInputFocus();
             UpdateRoomBubbleDraft();
             UpdateChatCaret();
 
@@ -2333,6 +2386,7 @@ namespace Sdo.UI.Screens
         private void OnRoomChatInputPointerDown()
         {
             _chatBubbleInputArmed = false;
+            _chatInputSticky = true;                       // 進入輸入框模式 → 黏住 focus，直到點空曠/退出
             if (_chatBubbleTyping) HideRoomChatBubble();   // 取消藍泡（HideRoomChatBubble 內 !armed 會 SetRoomChatInputEchoVisible(true)）
             else SetRoomChatInputEchoVisible(true);
             // TMP_InputField 自己的 OnPointerDown 會聚焦並把光標放到點擊處（標準路徑，光標穩定顯示）。

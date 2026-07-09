@@ -1,0 +1,6 @@
+# 編譯中間檔／本地產物（原始碼 SdoImeHook.cpp 與 build.bat 仍追蹤）。
+# 發佈用的 DLL 在 Assets/Plugins/x86_64/SdoImeHook.dll（由 build.bat 複製過去，另行追蹤）。
+SdoImeHook.dll
+SdoImeHook.exp
+SdoImeHook.lib
+SdoImeHook.obj
