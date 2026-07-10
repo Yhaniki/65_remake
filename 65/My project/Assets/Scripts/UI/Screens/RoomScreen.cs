@@ -353,11 +353,14 @@ namespace Sdo.UI.Screens
                 _subscribed = true;
             }
 
+            bool localMale = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
+            string[] localAvatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : null;
+
             if (_scene == null)
             {
                 var sceneGo = new GameObject("RoomScene3D");
                 _scene = sceneGo.AddComponent<RoomScene3D>();
-                _scene.Build();
+                _scene.Build(localMale, localAvatarParts);
                 if (_backdrop != null && _scene.SceneTexture != null)
                 {
                     _backdrop.texture = _scene.SceneTexture;
@@ -371,7 +374,7 @@ namespace Sdo.UI.Screens
                 var headGo = new GameObject("RoomLocalHead");
                 _localHead = headGo.AddComponent<RoomHeadPortrait>();
                 _localHead.layer = HeadLayer;
-                _localHead.Init();
+                _localHead.Init(localMale, localAvatarParts);
                 _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
             }
@@ -729,7 +732,7 @@ namespace Sdo.UI.Screens
         private void OnLeave()
         {
             Ctx.Rooms?.LeaveRoom();
-            GoTo(ScreenId.Lobby);
+            GoTo(ScreenId.GenderSel);
         }
 
         // ---- art placement helpers (XML window-target + child offset → top-left pixel) ----

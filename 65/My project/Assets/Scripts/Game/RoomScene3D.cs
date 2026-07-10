@@ -51,6 +51,8 @@ namespace Sdo.Game
         private Camera _cam;
         private RenderTexture _rt;
         private MotLoader _walkMot, _idleMot;
+        private bool _male;
+        private string[] _avatarParts;
         private Vector3 _walkPos;     // logical floor position (X, floorY, Z)
         private float _feetY;         // model-space feet offset so the feet rest on floorY
         private float _facing;        // current Unity yaw (degrees)
@@ -86,9 +88,11 @@ namespace Sdo.Game
             return true;
         }
 
-        public void Build()
+        public void Build(bool male = false, string[] avatarParts = null)
         {
             if (_ready) return;
+            _male = male;
+            _avatarParts = avatarParts;
             LoadScene();
             LoadMask();
             LoadAvatar();
@@ -218,10 +222,10 @@ namespace Sdo.Game
         {
             var parent = new GameObject("RoomLocalAvatar");
             parent.transform.SetParent(transform, false);
-            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false);
+            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
             _avatarRoot = parent.transform;
-            _walkMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.WalkMot);
-            _idleMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.IdleMot);
+            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
+            _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
 
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;   // lowest skinned vertex at the bind pose
             // Host spawn = (-100, 0, -26): the REAL fixed offline spawn, captured via Frida from the running official EXE

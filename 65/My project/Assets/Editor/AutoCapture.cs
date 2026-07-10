@@ -1,5 +1,6 @@
 using UnityEditor;
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace Sdo.EditorTools
 {
@@ -64,11 +65,50 @@ namespace Sdo.EditorTools
                 Debug.Log("[AutoCapture] saved (SceneCam) " + OutPath);
                 return;
             }
-            var stex = ScreenCapture.CaptureScreenshotAsTexture();
-            if (stex == null) { Debug.LogWarning("[AutoCapture] capture failed"); return; }
-            System.IO.File.WriteAllBytes(OutPath, stex.EncodeToPNG());
-            Object.DestroyImmediate(stex);
-            Debug.Log("[AutoCapture] saved (screen) " + OutPath);
+            if (CaptureActiveCameras()) return;
+            Debug.LogWarning("[AutoCapture] capture failed: no active camera");
+        }
+
+        private static bool CaptureActiveCameras()
+        {
+            var cams = new List<Camera>();
+#pragma warning disable 0618
+            foreach (var c in Object.FindObjectsOfType<Camera>())
+#pragma warning restore 0618
+            {
+                if (c == null || !c.enabled || !c.gameObject.activeInHierarchy) continue;
+                if (c.targetTexture != null) continue;
+                cams.Add(c);
+            }
+            if (cams.Count == 0) return false;
+            cams.Sort((a, b) => a.depth.CompareTo(b.depth));
+
+            const int w = 800, h = 600;
+            var rt = new RenderTexture(w, h, 24);
+            var prevA = RenderTexture.active;
+            var prevTargets = new RenderTexture[cams.Count];
+            RenderTexture.active = rt;
+            GL.Clear(true, true, Color.black);
+            for (int i = 0; i < cams.Count; i++)
+            {
+                prevTargets[i] = cams[i].targetTexture;
+                cams[i].targetTexture = rt;
+                cams[i].Render();
+            }
+
+            RenderTexture.active = rt;
+            var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+            tex.Apply();
+            System.IO.File.WriteAllBytes(OutPath, tex.EncodeToPNG());
+
+            for (int i = 0; i < cams.Count; i++) if (cams[i] != null) cams[i].targetTexture = prevTargets[i];
+            RenderTexture.active = prevA;
+            Object.DestroyImmediate(tex);
+            rt.Release();
+            Object.DestroyImmediate(rt);
+            Debug.Log("[AutoCapture] saved (cameras) " + OutPath);
+            return true;
         }
     }
 }
