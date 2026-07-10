@@ -50,6 +50,13 @@ namespace Sdo.UI.Services
         void SendExpression(int expressionId, ChatChannel channel, string trailingText);
         // leadingText / trailingText = 指令前/後的字，保留 emoji 在輸入中的位置（見 RoomChatCommand.TryParseExpression）。
         void SendExpression(int expressionId, ChatChannel channel, string leadingText, string trailingText);
+        // 密語（私聊）：查對象是否在同伺服器/頻道 → 送「你對X說」+對方回「X對你說」；不在頻道→「X不在當前頻道」；查無帳號→「X無此id」。
+        void SendWhisper(string target, string body, ChatChannel channel = ChatChannel.Current);
+        // 玩家進出舞台遊戲的廣播（顏色 72c1fe）：「X 進入舞台遊戲」/「X 離開舞台」。
+        void AnnounceStageEnter(string name);
+        void AnnounceStageLeave(string name);
+        // 設定目前作用域：之後送出的訊息會標記成大廳或該房間（密語除外，永遠跨場）。畫面在 OnShow 設定。
+        void SetScope(ChatScope scope, int roomId = 0);
         void Tick();   // drive scripted bot traffic (call each frame)
     }
 }

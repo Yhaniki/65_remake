@@ -186,5 +186,28 @@ namespace Sdo.Tests
         [TestCase("/unknown")]
         public void Rejects_Non_Expression_Command(string text)
             => Assert.IsFalse(RoomChatCommand.TryParseExpression(text, out _));
+
+        // 密語 `[名字] 內容`：只認半形 []；內容可空（只選了對象還沒打字），含 / 也整段當內容不解析成表情。
+        [TestCase("[小舞] 你好嗎", "小舞", "你好嗎")]
+        [TestCase("[小舞] ", "小舞", "")]
+        [TestCase("[小舞]", "小舞", "")]
+        [TestCase("[小舞] /GO", "小舞", "/GO")]
+        [TestCase("  [ 風之舞 ]  哈囉  ", "風之舞", "哈囉")]  // 前後空白、名字內側空白都 trim
+        public void Parses_Whisper(string text, string expectedTarget, string expectedBody)
+        {
+            Assert.IsTrue(RoomChatCommand.TryParseWhisper(text, out var target, out var body));
+            Assert.AreEqual(expectedTarget, target);
+            Assert.AreEqual(expectedBody, body);
+        }
+
+        [TestCase("hello")]
+        [TestCase("你好 [小舞]")]   // 中括號不在開頭 → 不是密語
+        [TestCase("[] 內容")]        // 空名字
+        [TestCase("[小舞 內容")]     // 沒有結尾括號
+        [TestCase("［小雨］早安")]   // 全形中括號 → 只認半形，不算密語
+        [TestCase("【Neo】hi")]      // 【】→ 不算密語
+        [TestCase("")]
+        public void Rejects_Non_Whisper(string text)
+            => Assert.IsFalse(RoomChatCommand.TryParseWhisper(text, out _, out _));
     }
 }

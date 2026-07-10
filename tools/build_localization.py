@@ -65,6 +65,14 @@ STR = {
     "room.drop_down":       ["Down", "向下", "向下", "下"],
     "room.drop_tilt":       ["Tilt", "傾斜", "倾斜", "斜め"],
 
+    # 密語（私聊）與進出舞台廣播 —— 左下訊息欄
+    "room.whisper_out":        ["You whisper to {0}: {1}", "你對{0}說: {1}", "你对{0}说: {1}", "{0}にささやく: {1}"],
+    "room.whisper_in":         ["{0} whispers to you: {1}", "{0}對你說: {1}", "{0}对你说: {1}", "{0}があなたにささやく: {1}"],
+    "room.whisper_offchannel": ["{0} is not in this channel", "{0}不在當前頻道", "{0}不在当前频道", "{0}は現在のチャンネルにいません"],
+    "room.whisper_noid":       ["No such user: {0}", "{0}查無此人", "{0}查无此人", "{0}というユーザーは存在しません"],
+    "room.stage_enter":        ["{0} entered the stage", "{0} 進入舞台遊戲", "{0} 进入舞台游戏", "{0} がステージに入りました"],
+    "room.stage_leave":        ["{0} left the stage", "{0}離開舞台", "{0}离开舞台", "{0} がステージから退場しました"],
+
     "result.clear":     ["Clear!", "完成!", "完成!", "クリア!"],
     "result.failed":    ["Failed", "失敗", "失败", "失敗"],
     "result.score":     ["Score", "分數", "分数", "スコア"],

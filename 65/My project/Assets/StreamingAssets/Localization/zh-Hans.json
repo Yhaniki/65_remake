@@ -168,6 +168,30 @@
    "v": "倾斜"
   },
   {
+   "k": "room.whisper_out",
+   "v": "你对{0}说: {1}"
+  },
+  {
+   "k": "room.whisper_in",
+   "v": "{0}对你说: {1}"
+  },
+  {
+   "k": "room.whisper_offchannel",
+   "v": "{0}不在当前频道"
+  },
+  {
+   "k": "room.whisper_noid",
+   "v": "{0}查无此人"
+  },
+  {
+   "k": "room.stage_enter",
+   "v": "{0} 进入舞台游戏"
+  },
+  {
+   "k": "room.stage_leave",
+   "v": "{0}离开舞台"
+  },
+  {
    "k": "result.clear",
    "v": "完成!"
   },
@@ -258,10 +282,6 @@
   {
    "k": "songselect.mode_normal",
    "v": "普通模式"
-  },
-  {
-   "k": "songselect.mode_showtime",
-   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",

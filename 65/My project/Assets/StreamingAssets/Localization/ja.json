@@ -168,6 +168,30 @@
    "v": "斜め"
   },
   {
+   "k": "room.whisper_out",
+   "v": "{0}にささやく: {1}"
+  },
+  {
+   "k": "room.whisper_in",
+   "v": "{0}があなたにささやく: {1}"
+  },
+  {
+   "k": "room.whisper_offchannel",
+   "v": "{0}は現在のチャンネルにいません"
+  },
+  {
+   "k": "room.whisper_noid",
+   "v": "{0}というユーザーは存在しません"
+  },
+  {
+   "k": "room.stage_enter",
+   "v": "{0} がステージに入りました"
+  },
+  {
+   "k": "room.stage_leave",
+   "v": "{0} がステージから退場しました"
+  },
+  {
    "k": "result.clear",
    "v": "クリア!"
   },
@@ -258,10 +282,6 @@
   {
    "k": "songselect.mode_normal",
    "v": "ノーマルモード"
-  },
-  {
-   "k": "songselect.mode_showtime",
-   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",

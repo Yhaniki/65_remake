@@ -168,6 +168,30 @@
    "v": "Tilt"
   },
   {
+   "k": "room.whisper_out",
+   "v": "You whisper to {0}: {1}"
+  },
+  {
+   "k": "room.whisper_in",
+   "v": "{0} whispers to you: {1}"
+  },
+  {
+   "k": "room.whisper_offchannel",
+   "v": "{0} is not in this channel"
+  },
+  {
+   "k": "room.whisper_noid",
+   "v": "No such user: {0}"
+  },
+  {
+   "k": "room.stage_enter",
+   "v": "{0} entered the stage"
+  },
+  {
+   "k": "room.stage_leave",
+   "v": "{0} left the stage"
+  },
+  {
    "k": "result.clear",
    "v": "Clear!"
   },
@@ -258,10 +282,6 @@
   {
    "k": "songselect.mode_normal",
    "v": "Normal Mode"
-  },
-  {
-   "k": "songselect.mode_showtime",
-   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",

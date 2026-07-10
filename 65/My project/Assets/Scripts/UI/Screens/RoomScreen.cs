@@ -65,6 +65,11 @@ namespace Sdo.UI.Screens
         private const float ChatBubbleFollowStep = 0.33333335f;
         private const float ChatBubbleDragScale = 1f;
         private static readonly Color ChatBubbleTextColor = new Color32(0x7C, 0x01, 0x38, 0xFF);
+        // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe。
+        private const string ChatSystemHex = "F0C24A";
+        private const string WhisperHex = "1EFEFE";
+        private const string StageHex = "72C1FE";
+        private const string WhisperLinkId = "w|";   // TMP link id 前綴：<link="w|名字">名字</link> → 點名字密語
         // 行內 emoji（表情 + 字）：emoji 疊在使用者打的位置——前字後留一段固定寬空檔，emoji 疊上去。自己調這幾個像素數就好。
         private const float BubbleEmojiGapPx = 24f;       // <space=…> 在字裡預留的水平空檔
         private const float BubbleEmojiSizePx = 22f;      // emoji 顯示邊長
@@ -72,6 +77,7 @@ namespace Sdo.UI.Screens
         private const float BubbleEmojiInlineOffY = 0f;   // emoji 垂直微調(上+/下-)
 
         private RawImage _backdrop;
+        private RectTransform _bubbleLayer;   // 對話泡容器:夾在 3D 背景與 UI 之間 → 泡畫在 UI 底下
         private readonly RawImage[] _slotHead = new RawImage[RoomLayout.SeatCount];
         private readonly Image[] _slotClose = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
@@ -89,6 +95,7 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI _expressionTipText;
         private RectTransform _expressionTip;
         private ChatChannel _chatChannel = ChatChannel.Current;
+        private int _chatScopeRoomId;   // 本房間的作用域房號：只顯示此房 + 密語(跨場)；隔離其他房/大廳訊息
         private int _expressionPage;
         private RectTransform _chatBubbleRoot;
         private Image _chatBubbleFrame, _chatBubbleAdd, _chatBubbleExpression;
@@ -178,6 +185,11 @@ namespace Sdo.UI.Screens
             _backdrop.color = Color.black;
             _backdrop.raycastTarget = false;
             if (flipBackdropV) _backdrop.uvRect = new Rect(0f, 1f, 1f, -1f);
+
+            // 對話泡層:緊接在背景之後建立(sibling index 低)，之後才建的 UI 都疊在它上面 → 泡在 UI 底下、3D 背景之上。
+            // 打字泡與已送出的泡都掛這底下（見 BuildRoomChatLog / SpawnSentRoomBubble）。容器本身不擋點擊。
+            _bubbleLayer = UIKit.NewRect(Root, "RoomChatBubbleLayer");
+            UIKit.Stretch(_bubbleLayer);
 
             // name marker that floats above the avatar's head in the room (positioned each frame in Update).
             // 跟遊戲內頭頂名字同款:共用色 TextStyles.FaceCream(rgb 250,252,214)+ 黑邊 + 粗體 + 8 向描邊。
@@ -458,8 +470,23 @@ namespace Sdo.UI.Screens
 
             ResetCollapse();             // 每次進場都從「完全展開」開始（常駐單例，避免上次收合狀態殘留）
             SeedDefaultSongIfNeeded();   // 進大廳預設選好 index 最大的歌(easy)，房間一進來就有歌
+            // 聊天作用域切到本房間：之後的送話/廣播標記成此房，且只顯示此房 + 密語(跨場)。
+            _chatScopeRoomId = Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
+            Ctx.Chat?.SetScope(ChatScope.Room, _chatScopeRoomId);
             RebuildRoomChat();
             Render();
+            AnnounceStagePresence(true);   // 進房間 → 廣播「X 進入舞台遊戲」（只同房、只在「當前」分類）
+        }
+
+        // 進/出房間廣播（進入房間的人送出；同房才收得到，只在「當前」分類顯示）。
+        private void AnnounceStagePresence(bool entered)
+        {
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room == null || Ctx.Chat == null) return;
+            string who = LocalName(room);
+            if (string.IsNullOrEmpty(who)) return;
+            if (entered) Ctx.Chat.AnnounceStageEnter(who);
+            else Ctx.Chat.AnnounceStageLeave(who);
         }
 
         // 進房間時，若還沒選過歌就預設選「index(fileId) 最大的那首」easy。玩家之後自己選歌就蓋過去（HasSong 守門只做一次）。
@@ -506,12 +533,13 @@ namespace Sdo.UI.Screens
 
         private void BuildRoomChatLog()
         {
-            _chatScroll = UIKit.AddVerticalScroll(_win3Root, "AllChatList", out _chatContent, 0f, 3, new Color(0f, 0f, 0f, 0.18f));
+            // 訊息欄底改成全透明（原本是灰色半透明 a=0.18）；文字直接疊在 3D 房間上。
+            _chatScroll = UIKit.AddVerticalScroll(_win3Root, "AllChatList", out _chatContent, 0f, 3, new Color(0f, 0f, 0f, 0f));
             Place(_chatScroll.GetComponent<RectTransform>(), 14, 445, 360, 104);
             _chatScroll.scrollSensitivity = 18f;
 
-            // 打字泡：固定一顆。已送出的泡另外 Spawn，可並存一串。
-            _chatBubbleRoot = UIKit.NewRect(Root, "RoomChatTypingBubble");
+            // 打字泡：固定一顆。已送出的泡另外 Spawn，可並存一串。掛在 _bubbleLayer(UI 底下)。
+            _chatBubbleRoot = UIKit.NewRect(_bubbleLayer, "RoomChatTypingBubble");
             _chatBubbleRoot.anchorMin = _chatBubbleRoot.anchorMax = new Vector2(0f, 1f);
             _chatBubbleRoot.pivot = new Vector2(0f, 1f);
             _chatBubbleRoot.sizeDelta = new Vector2(171, 111);
@@ -821,9 +849,13 @@ namespace Sdo.UI.Screens
 
         private void OnRoomChatMessage(ChatMessage m)
         {
+            // 只有原本就停在底部才自動跳到最新；若使用者往前捲看舊訊息，新訊息不搶捲，等他自己捲回底部才恢復。
+            bool follow = ShouldShowChatMessage(m) && IsChatFollowingBottom();
             AddRoomChatLine(m);
-            ScrollRoomChatToBottom();
-            if (m != null && m.Local && !m.System)
+            if (follow) ScrollRoomChatToBottom();
+            // 密語/進出舞台是私聊/廣播文字，不彈頭上藍泡、不觸發角色動作。
+            if (m != null && m.Local && !m.System
+                && m.Whisper == WhisperKind.None && m.Stage == StageEventKind.None)
             {
                 ShowRoomChatBubble(m);
                 PlayRoomChatAction(m);
@@ -847,18 +879,128 @@ namespace Sdo.UI.Screens
             if (_chatContent == null || m == null) return;
             if (!ShouldShowChatMessage(m)) return;
 
+            if (m.Stage != StageEventKind.None) { AddRoomChatStageLine(m); return; }
+            if (m.Whisper != WhisperKind.None) { AddRoomChatWhisperLine(m); return; }
+
             if (!m.System && m.ExpressionId > 0)
             {
                 AddRoomChatExpressionLine(m);
                 return;
             }
 
+            // 一般行：名字改成白色（原本是 #7FB6FF 藍）；名字可點 → 密語（見 WhisperNameLink / ChatWhisperLinkHandle）。
             string line = m.System
-                ? "<color=#F0C24A>" + EscapeTmp(m.Text) + "</color>"
-                : "<color=#7FB6FF>" + EscapeTmp(m.Sender) + "</color>: " + EscapeTmp(ChatLineText(m));
+                ? "<color=#" + ChatSystemHex + ">" + EscapeTmp(m.Text) + "</color>"
+                : WhisperNameLink(m) + ": " + EscapeTmp(ChatLineText(m));
             var t = UIKit.AddText(_chatContent, "line", line, 13, Color.white, TextAlignmentOptions.TopLeft, true);
             t.richText = true;
             UIKit.Layout(t.gameObject, 16);
+            EnableWhisperNameClicks(t, m);
+        }
+
+        // 進出舞台廣播（顏色 #72c1fe）：「X 進入舞台遊戲」/「X 離開舞台」。
+        private void AddRoomChatStageLine(ChatMessage m)
+        {
+            string key = m.Stage == StageEventKind.Enter ? "room.stage_enter" : "room.stage_leave";
+            string text = LocalizationManager.Get(key, m.Sender ?? "");
+            var t = UIKit.AddText(_chatContent, "stageLine",
+                "<color=#" + StageHex + ">" + EscapeTmp(text) + "</color>", 13, Color.white, TextAlignmentOptions.TopLeft, true);
+            t.richText = true;
+            UIKit.Layout(t.gameObject, 16);
+        }
+
+        // 密語行（顏色 #1efefe）：Outgoing 你對X說 / Incoming X對你說 / OffChannel 不在當前頻道 / NoId 無此id。
+        private void AddRoomChatWhisperLine(ChatMessage m)
+        {
+            string party = m.WhisperParty ?? "";
+            // 帶表情的密語（[X] /GO）：畫「前綴 + inline emoji」而非純文字。前綴＝把 loc 模板的內容欄位填空得到。
+            if (m.ExpressionId > 0 && (m.Whisper == WhisperKind.Outgoing || m.Whisper == WhisperKind.Incoming))
+            {
+                string key = m.Whisper == WhisperKind.Outgoing ? "room.whisper_out" : "room.whisper_in";
+                AddRoomChatWhisperExpressionLine(m, LocalizationManager.Get(key, party, ""));
+                return;
+            }
+
+            var t = UIKit.AddText(_chatContent, "whisperLine",
+                "<color=#" + WhisperHex + ">" + EscapeTmp(ChatDisplay.WhisperText(m)) + "</color>", 13, Color.white, TextAlignmentOptions.TopLeft, true);
+            t.richText = true;
+            UIKit.Layout(t.gameObject, 16);
+        }
+
+        // 帶 inline emoji 的密語行：前綴(你對X說: / X對你說:)+指令前字 + emoji 小動畫 + 指令後字，整行 #1efefe。
+        private void AddRoomChatWhisperExpressionLine(ChatMessage m, string prefix)
+        {
+            var row = UIKit.NewRect(_chatContent, "whisperExprLine");
+            UIKit.Layout(row.gameObject, 18);
+            var hlg = row.gameObject.AddComponent<HorizontalLayoutGroup>();
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+            hlg.spacing = 2f;
+            hlg.padding = new RectOffset(0, 0, 0, 0);
+
+            string open = "<color=#" + WhisperHex + ">";
+            string lead = ExpressionLeadingText(m);
+            string headPlain = prefix + lead;
+            var head = UIKit.AddText(row, "head", open + EscapeTmp(headPlain) + "</color>", 13, Color.white,
+                TextAlignmentOptions.MidlineLeft, true);
+            head.richText = true;
+            var headLe = head.gameObject.AddComponent<LayoutElement>();
+            headLe.preferredWidth = head.GetPreferredValues(headPlain, 280f, 18f).x + 2f;
+            headLe.flexibleWidth = 0f;
+
+            var frames = RoomExpressionArt.SmallFrames(m.ExpressionId);
+            if (frames != null && frames.Length > 0)
+            {
+                var icon = UIKit.AddImage(row, "expr", Color.white);
+                icon.preserveAspect = true;
+                icon.raycastTarget = false;
+                var iconLe = icon.gameObject.AddComponent<LayoutElement>();
+                iconLe.preferredWidth = 16f;
+                iconLe.preferredHeight = 16f;
+                iconLe.flexibleWidth = 0f;
+                icon.rectTransform.sizeDelta = new Vector2(16f, 16f);
+                var anim = icon.gameObject.AddComponent<SpriteSeqAnim>();
+                anim.Fps = 8f;
+                anim.SetFrames(frames, restart: true);
+            }
+            else
+            {
+                var fb = UIKit.AddText(row, "cmd",
+                    open + EscapeTmp(RoomChatCommand.ExpressionDisplayText(m.ExpressionId)) + "</color>", 13, Color.white,
+                    TextAlignmentOptions.MidlineLeft, true);
+                fb.richText = true;
+                fb.gameObject.AddComponent<LayoutElement>().flexibleWidth = 0f;
+            }
+
+            string trail = (m.Text ?? "").Trim();
+            if (trail.Length > 0)
+            {
+                var after = UIKit.AddText(row, "trail", open + " " + EscapeTmp(trail) + "</color>", 13, Color.white,
+                    TextAlignmentOptions.MidlineLeft, true);
+                after.richText = true;
+                after.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            }
+        }
+
+        // 別人講的一般/表情行 → 名字包成可點的 TMP link（點了把 [名字] 塞進輸入框密語）。本機自己的名字不可點。
+        private string WhisperNameLink(ChatMessage m)
+        {
+            string name = EscapeTmp(m.Sender);
+            if (m == null || m.Local || string.IsNullOrEmpty(m.Sender)) return name;
+            return "<link=\"" + WhisperLinkId + EscapeTmp(m.Sender) + "\">" + name + "</link>";
+        }
+
+        // 讓聊天列可接收點擊並解析 TMP link（名字）→ 觸發密語目標插入。
+        private void EnableWhisperNameClicks(TextMeshProUGUI t, ChatMessage m)
+        {
+            if (t == null || m == null || m.Local || string.IsNullOrEmpty(m.Sender)) return;
+            t.raycastTarget = true;
+            var h = t.gameObject.AddComponent<ChatWhisperLinkHandle>();
+            h.Owner = this;
+            h.Text = t;
         }
 
         // 表情訊息：左下聊天列顯示「暱稱:」+ S_Expression 小動畫，不要落成 /無聊 文字。
@@ -877,11 +1019,14 @@ namespace Sdo.UI.Screens
             hlg.spacing = 2f;
             hlg.padding = new RectOffset(0, 0, 0, 0);
 
-            string label = "<color=#7FB6FF>" + EscapeTmp(m.Sender) + "</color>:";
+            // 名字白色（原本 #7FB6FF 藍）+ 可點密語（別人才可點）。量寬用純名字，避免 <link> 標記影響。
+            string plainLabel = EscapeTmp(m.Sender) + ":";
+            string label = WhisperNameLink(m) + ":";
             var name = UIKit.AddText(row, "name", label, 13, Color.white, TextAlignmentOptions.MidlineLeft, true);
             name.richText = true;
+            EnableWhisperNameClicks(name, m);
             var nameLe = name.gameObject.AddComponent<LayoutElement>();
-            nameLe.preferredWidth = name.GetPreferredValues(label, 280f, 18f).x + 2f;
+            nameLe.preferredWidth = name.GetPreferredValues(plainLabel, 280f, 18f).x + 2f;
             nameLe.flexibleWidth = 0f;
 
             // 指令前的字：排在名字後、emoji 前（保留輸入時 emoji 的位置：前字〔emoji〕後字）。
@@ -948,13 +1093,36 @@ namespace Sdo.UI.Screens
         }
 
         private bool ShouldShowChatMessage(ChatMessage m)
-            => m != null && (m.System || m.Channel == _chatChannel);
+        {
+            if (m == null) return false;
+            // 密語跨大廳/房間：不受作用域限制，出現在「當前」與「好友」頻道。
+            if (m.Whisper != WhisperKind.None)
+                return _chatChannel == ChatChannel.Current || _chatChannel == ChatChannel.Friend;
+            // 其餘（一般聊天/系統/進出廣播）只顯示本房間，隔離別房與大廳訊息。
+            if (m.Scope != ChatScope.Room || m.RoomId != _chatScopeRoomId) return false;
+            if (m.System) return true;
+            // 進出舞台廣播：只在「當前」分類顯示，其他分類過濾掉。
+            if (m.Stage != StageEventKind.None) return _chatChannel == ChatChannel.Current;
+            return m.Channel == _chatChannel;
+        }
 
         private void ScrollRoomChatToBottom()
         {
             if (_chatScroll == null) return;
             Canvas.ForceUpdateCanvases();
             _chatScroll.verticalNormalizedPosition = 0f;
+        }
+
+        // 是否停在（貼近）底部：內容還不足以捲動時一律視為在底部。0 = 底部（見 ScrollRoomChatToBottom）。
+        // 於「加入新訊息之前」呼叫 → verticalNormalizedPosition 反映使用者當下的位置。
+        private bool IsChatFollowingBottom()
+        {
+            if (_chatScroll == null) return true;
+            var content = _chatScroll.content;
+            var viewport = _chatScroll.viewport;
+            if (content == null || viewport == null) return true;
+            if (content.rect.height <= viewport.rect.height + 1f) return true;   // 不能捲 → 跟隨
+            return _chatScroll.verticalNormalizedPosition <= 0.02f;
         }
 
         private void SendRoomChat()
@@ -970,11 +1138,17 @@ namespace Sdo.UI.Screens
                     CancelRoomChatTyping();
                 return;
             }
+            // 密語 `[名字] 內容`：只選了對象還沒打內容 → 不送、不清、續打（讓使用者接著打字）。
+            bool isWhisper = RoomChatCommand.TryParseWhisper(txt, out var whisperTarget, out var whisperBody);
+            if (isWhisper && string.IsNullOrWhiteSpace(whisperBody)) return;
             // bubble 模式送出後續留 bubble-ready(ArmRoomBubbleInput)；輸入框模式送完保持 focus，繼續打下一則不退出。
             bool keepBubbleInput = _chatBubbleTyping || _chatBubbleInputArmed;
             if (_chatBubbleTyping) HideRoomChatBubble();
             else _chatBubbleTyping = false;
-            if (RoomChatCommand.TryParseExpression(txt, out var expressionId, out var leading, out var trailing))
+            // 密語優先於表情：`[X] /GO` 是把「/GO」密語給 X，不是送表情。
+            if (isWhisper)
+                Ctx.Chat.SendWhisper(whisperTarget, whisperBody, _chatChannel);
+            else if (RoomChatCommand.TryParseExpression(txt, out var expressionId, out var leading, out var trailing))
                 Ctx.Chat.SendExpression(expressionId, _chatChannel, leading, trailing);
             else
                 Ctx.Chat.Send(txt, _chatChannel);
@@ -1083,7 +1257,7 @@ namespace Sdo.UI.Screens
 
         private SentRoomBubble SpawnSentRoomBubble()
         {
-            var root = UIKit.NewRect(Root, "RoomChatBubble");
+            var root = UIKit.NewRect(_bubbleLayer, "RoomChatBubble");   // 掛在 _bubbleLayer(UI 底下)
             root.anchorMin = root.anchorMax = new Vector2(0f, 1f);
             root.pivot = new Vector2(0f, 1f);
             root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
@@ -1613,12 +1787,13 @@ namespace Sdo.UI.Screens
         private void MaintainRoomChatInputFocus()
         {
             if (_chatInput == null) return;
-            // 需保住 focus 的兩種態：輸入框黏 focus(sticky)、或 bubble 送完待打下一則(armed)。
-            // 少了 armed 這條，送出(Enter)讓 TMP 反 activate 後只靠一次性 coroutine 搶 focus——搶不回就「續打泡不出來」。
-            if (!_chatInputSticky && !_chatBubbleInputArmed) return;
+            // 三種要保住 focus 的態：輸入框黏 focus(sticky)、bubble 送完待打(armed)、bubble 打字中(typing)。
+            // 少了 typing 這條，點/拖泡讓 EventSystem 把輸入框反選後就回不來 → 打不了字也送不出去；
+            // 少了 armed 這條則「送完續打泡不出來」。
+            if (!_chatInputSticky && !_chatBubbleInputArmed && !_chatBubbleTyping) return;
             bool roomTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
             if (!roomTop) { _chatInputSticky = false; return; }   // 切到別畫面(含選歌 overlay)→放掉，回來不自動搶 focus
-            if (_chatBubbleTyping) return;                        // 已在打字泡態→輸入框自有 focus，不重複搶
+            if (_chatBubbleDragging) return;                      // 拖曳已送出泡進行中→不搶 focus，放開後下一幀再補
             if (_chatInput.isFocused || IsRoomChatImeComposing()) return;
             if (EventSystem.current != null)
                 EventSystem.current.SetSelectedGameObject(_chatInput.gameObject);
@@ -2174,6 +2349,9 @@ namespace Sdo.UI.Screens
                 sent = resolvedTyping ? null : resolvedSent;
             }
 
+            // 打字中的泡固定不動：不給拖（點它仍可 focus，見 OnPointerClick→ClickRoomChatBubble）。只有已送出的泡能拖。
+            if (sent == null) return;
+
             _chatBubbleDragging = true;
             _chatBubbleChainDragging = true;
             _chatBubbleDraggedSent = sent;
@@ -2241,23 +2419,15 @@ namespace Sdo.UI.Screens
 
         private void DragRoomChatBubble(PointerEventData eventData, SentRoomBubble sent = null)
         {
-            float dt = Mathf.Max(0.001f, Time.unscaledDeltaTime);
             var draggedSent = _chatBubbleChainDragging ? _chatBubbleDraggedSent : sent;
-            if (draggedSent != null)
-            {
-                Vector2 current = draggedSent.PhysicsPos;
-                Vector2 next = RoomChatDragPosition(eventData, current);
-                draggedSent.HasPhysics = true;
-                draggedSent.PhysicsPos = next;
-                draggedSent.PhysicsVel = (next - current) / dt;
-                return;
-            }
+            if (draggedSent == null) return;   // 打字中的泡不給拖（Unity 仍會發 OnDrag，這裡擋掉移動）
 
-            Vector2 typingCurrent = _chatBubblePhysicsPos;
-            Vector2 typingNext = RoomChatDragPosition(eventData, typingCurrent);
-            _chatBubbleHasPhysics = true;
-            _chatBubblePhysicsPos = typingNext;
-            _chatBubblePhysicsVel = (typingNext - typingCurrent) / dt;
+            float dt = Mathf.Max(0.001f, Time.unscaledDeltaTime);
+            Vector2 current = draggedSent.PhysicsPos;
+            Vector2 next = RoomChatDragPosition(eventData, current);
+            draggedSent.HasPhysics = true;
+            draggedSent.PhysicsPos = next;
+            draggedSent.PhysicsVel = (next - current) / dt;
         }
 
         private Vector2 RoomChatDragPosition(PointerEventData eventData, Vector2 current)
@@ -2475,6 +2645,53 @@ namespace Sdo.UI.Screens
             }
         }
 
+        // 點聊天列的人名 → 把 `[名字] ` 塞進輸入框，切成輸入框打字模式，保留已打的內容。
+        private void InsertWhisperTarget(string name)
+        {
+            if (_chatInput == null || string.IsNullOrWhiteSpace(name)) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+
+            // 切成輸入框打字模式（比照實體點輸入框）：取消頭上藍泡、顯示回顯、黏住 focus。
+            _chatBubbleInputArmed = false;
+            _chatInputSticky = true;
+            if (_chatBubbleTyping) HideRoomChatBubble();
+            else SetRoomChatInputEchoVisible(true);
+            HideChatModeMenu();
+            HideExpressionMenu();
+
+            // 保留使用者已打的本文（若已有 [舊名字] 前綴就換掉，只留內容）。
+            string draft = _chatInput.text ?? "";
+            string body = RoomChatCommand.TryParseWhisper(draft, out _, out var existingBody) ? existingBody : draft.Trim();
+            string prefix = "[" + name.Trim() + "] ";
+            _chatInput.text = string.IsNullOrEmpty(body) ? prefix : prefix + body;
+            _chatDraftWasEmpty = false;
+            FocusRoomChatInput();   // 內含 MoveTextEnd → 游標移到結尾接著打
+        }
+
+        // 掛在聊天列 TMP 上：點到名字 <link="w|名字"> 就把 [名字] 塞進輸入框密語。
+        private void OnChatWhisperLinkClick(TextMeshProUGUI text, PointerEventData eventData)
+        {
+            if (text == null || eventData == null) return;
+            var canvas = text.canvas;
+            Camera cam = (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay) ? canvas.worldCamera : null;
+            int idx = TMP_TextUtilities.FindIntersectingLink(text, eventData.position, cam);
+            if (idx < 0 || idx >= text.textInfo.linkCount) return;
+            string id = text.textInfo.linkInfo[idx].GetLinkID();
+            if (string.IsNullOrEmpty(id) || !id.StartsWith(WhisperLinkId, System.StringComparison.Ordinal)) return;
+            InsertWhisperTarget(id.Substring(WhisperLinkId.Length));
+        }
+
+        private sealed class ChatWhisperLinkHandle : MonoBehaviour, IPointerClickHandler
+        {
+            public RoomScreen Owner;
+            public TextMeshProUGUI Text;
+
+            public void OnPointerClick(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.OnChatWhisperLinkClick(Text, eventData);
+            }
+        }
+
         private sealed class ExpressionTipHandle : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
         {
             public RoomScreen Owner;
@@ -2596,6 +2813,7 @@ namespace Sdo.UI.Screens
 
         private void OnLeave()
         {
+            AnnounceStagePresence(false);   // 廣播「X 離開舞台」（趁還在房間、名字還查得到）
             Ctx.Rooms?.LeaveRoom();
             GoTo(ScreenId.Lobby);
         }

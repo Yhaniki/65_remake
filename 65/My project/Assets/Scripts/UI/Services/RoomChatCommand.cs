@@ -223,6 +223,26 @@ namespace Sdo.UI.Services
             return leading + " " + trailing;
         }
 
+        // 密語語法：以半形中括號包住對象名開頭 → `[名字] 訊息`（只認半形 []）。
+        // 點聊天列的人名會把 `[名字] ` 塞進輸入框（見 RoomScreen.InsertWhisperTarget），也可手打。
+        // 回傳 target=對象名（去空白）、body=中括號後的內容（去空白，可空—代表只選了對象還沒打字）。
+        public static bool TryParseWhisper(string text, out string target, out string body)
+        {
+            target = "";
+            body = "";
+            if (string.IsNullOrWhiteSpace(text)) return false;
+
+            string s = text.TrimStart();
+            if (s.Length < 2 || s[0] != '[') return false;
+            int close = s.IndexOf(']', 1);
+            if (close <= 1) return false;   // 沒有結尾括號，或括號內是空的 → 不是密語
+            string name = s.Substring(1, close - 1).Trim();
+            if (name.Length == 0) return false;
+            target = name;
+            body = s.Substring(close + 1).Trim();
+            return true;
+        }
+
         public static bool TryParseRoomAction(string text, out RoomChatAction action)
             => TryParseRoomAction(text, false, out action);
 
