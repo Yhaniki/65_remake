@@ -1,0 +1,211 @@
+# -*- coding: utf-8 -*-
+"""
+remove_songs.py — 把指定的幾首歌從遊戲徹底拿掉(檔案 + 目錄表都清)。
+
+遊戲歌單來自 song_catalog.json,而它是由 music/*.gn 譜面產生的。所以「拿掉一首」要同時:
+  1) 刪掉該首的資源檔(譜面/主音樂/試聽/DANCE/overlay icon)
+  2) 從四張 JSON 目錄表移除該首(gn_keytable / gn_header_catalog / song_catalog / song_name_overrides)
+只做 2) 不做 1) 的話,之後重跑 gn_keytable 會又把譜面掃回來 → 復活。故預設兩者都做。
+
+指定歌可用「詞幹 sdomNNNN」、「fileId(數字)」或「歌名(完全相符)」混用,以逗號或換行分隔。
+
+用法:
+  python tools/remove_songs.py --songs "sdom5013,15019,Gentleman"
+  python tools/remove_songs.py --file to_remove.txt          # 一行一首(詞幹/fileId/歌名)
+  python tools/remove_songs.py --songs "sdom5013" --dry-run  # 只看會刪什麼,不動手
+  python tools/remove_songs.py --songs "sdom5013" --keep-files  # 只從目錄表移除,保留檔案(注意:重建會復活)
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import io
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Dict, List, Set
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+SA = REPO / "65" / "My project" / "Assets" / "StreamingAssets"
+MUSIC = REPO / "assets" / "sdox_offline" / "music"
+EXPER = MUSIC / "exper"
+DANCE = REPO / "assets" / "sdox_offline" / "Extracted" / "DANCE"
+ICON_OVERLAY = REPO / "assets" / "sdox_offline" / "Extracted" / "UI" / "MUSIC" / "ICONS"
+
+KEYTABLE = SA / "gn_keytable.json"
+HEADERCAT = SA / "gn_header_catalog.json"
+CATALOG = SA / "song_catalog.json"
+OVERRIDES_JSON = SA / "song_name_overrides.json"
+OVERRIDES_CSV = SA / "song_name_overrides.csv"
+
+
+def stem(gn: str) -> str:
+    g = (gn or "").lower().rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if g.endswith(".gn"):
+        g = g[:-3]
+    if g and g[-1] in ("k", "t"):
+        g = g[:-1]
+    return g
+
+
+def load_catalog():
+    """{stem: {fileId, title, gns[]}}. fileId/title 取「K 譜」那筆 — 遊戲顯示與資源(DANCE/試聽/icon)
+    都用 K 譜的 fileId(K=15013、T=5013 這種 K/T fileId 不一致的歌,一律以 K 為準)。"""
+    songs = json.loads(CATALOG.read_text(encoding="utf-8")).get("songs", [])
+    by_stem: Dict[str, Dict] = {}
+    for e in songs:
+        s = stem(e.get("gn", ""))
+        if not s:
+            continue
+        is_k = (e.get("gn", "").lower().endswith("k.gn"))
+        cur = by_stem.get(s)
+        if cur is None:
+            by_stem[s] = {"fileId": int(e.get("fileId", 0)), "title": e.get("title", ""),
+                          "gns": [e["gn"]], "_k": is_k}
+        else:
+            cur["gns"].append(e["gn"])
+            if is_k and not cur["_k"]:          # 以 K 譜的 fileId/title 為準
+                cur["fileId"] = int(e.get("fileId", 0)); cur["title"] = e.get("title", ""); cur["_k"] = True
+    for v in by_stem.values():
+        v.pop("_k", None)
+    return by_stem
+
+
+def resolve(tokens: List[str], by_stem: Dict[str, Dict]):
+    """把使用者給的 token(詞幹/fileId/歌名)解析成一組詞幹。回傳(stems, unresolved, ambiguous)。"""
+    fid_to_stem = {v["fileId"]: k for k, v in by_stem.items()}
+    title_to_stems: Dict[str, List[str]] = {}
+    for k, v in by_stem.items():
+        title_to_stems.setdefault((v["title"] or "").strip().lower(), []).append(k)
+
+    stems: Set[str] = set()
+    unresolved: List[str] = []
+    ambiguous: Dict[str, List[str]] = {}
+    for t in tokens:
+        t = t.strip()
+        if not t:
+            continue
+        low = t.lower()
+        if re.fullmatch(r"sdom\d+", low):                 # 詞幹
+            (stems.add(low) if low in by_stem else unresolved.append(t))
+        elif t.isdigit():                                  # fileId
+            fid = int(t)
+            (stems.add(fid_to_stem[fid]) if fid in fid_to_stem else unresolved.append(t))
+        else:                                              # 歌名(完全相符)
+            hits = title_to_stems.get(low, [])
+            if len(hits) == 1:
+                stems.add(hits[0])
+            elif len(hits) > 1:
+                ambiguous[t] = hits
+            else:
+                unresolved.append(t)
+    return stems, unresolved, ambiguous
+
+
+def prune_json(path: Path, target: Set[str], key_is_stem: bool):
+    """從 {songs:[...]} 移除 stem 命中者。回傳移除數。"""
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    songs = doc.get("songs", [])
+    before = len(songs)
+    doc["songs"] = [e for e in songs if stem(e.get("gn", "")) not in target]
+    removed = before - len(doc["songs"])
+    if "count" in doc:
+        doc["count"] = len(doc["songs"])
+    if "counts" in doc and isinstance(doc["counts"], dict):
+        doc["counts"]["total"] = len(doc["songs"])
+    path.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + ("\n" if path != KEYTABLE else ""), encoding="utf-8")
+    return removed
+
+
+def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    ap = argparse.ArgumentParser(description="從遊戲移除指定歌曲")
+    ap.add_argument("--songs", default="", help="逗號分隔:詞幹 sdomNNNN / fileId / 歌名")
+    ap.add_argument("--file", help="一行一首的清單檔")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--keep-files", action="store_true", help="只清目錄表、保留檔案(重建會復活)")
+    args = ap.parse_args()
+
+    tokens: List[str] = []
+    if args.songs:
+        tokens += re.split(r"[,\n]", args.songs)
+    if args.file:
+        tokens += Path(args.file).read_text(encoding="utf-8-sig").splitlines()
+
+    by_stem = load_catalog()
+    stems, unresolved, ambiguous = resolve(tokens, by_stem)
+
+    if ambiguous:
+        print("歌名對到多首,請改用詞幹或 fileId 指定:")
+        for t, hits in ambiguous.items():
+            print(f"  「{t}」-> " + ", ".join(f"{h}(id={by_stem[h]['fileId']})" for h in hits))
+    if unresolved:
+        print("找不到(略過):", ", ".join(unresolved))
+    if not stems:
+        print("沒有可移除的目標。"); return 1
+
+    print(f"將移除 {len(stems)} 首:")
+    for s in sorted(stems):
+        v = by_stem[s]
+        print(f"  {s}  id={v['fileId']}  {v['title']!r}  charts={v['gns']}")
+
+    remove_stems(stems, by_stem, dry_run=args.dry_run, keep_files=args.keep_files)
+    return 0
+
+
+def remove_stems(stems: Set[str], by_stem: Dict[str, Dict], dry_run: bool = False, keep_files: bool = False):
+    """核心:刪掉這些詞幹的資源檔 + 從 4 張 JSON 目錄表移除。sync 工具也呼叫這支。"""
+    to_delete: List[Path] = []
+    for s in stems:
+        v = by_stem[s]; fid = v["fileId"]
+        for gn in v["gns"]:
+            to_delete.append(MUSIC / gn)
+        to_delete += [MUSIC / f"{s}.ogg", EXPER / f"{fid}.ogg", DANCE / f"{fid}.DPS",
+                      ICON_OVERLAY / f"{fid}.PNG", ICON_OVERLAY / f"{fid}.png"]
+
+    if dry_run:
+        print("\n[DRY-RUN] 會刪這些檔(存在者):")
+        for p in to_delete:
+            if p.exists():
+                print("   -", p)
+        print("[DRY-RUN] 會從 4 張 JSON 目錄表移除這些詞幹;不實際變更。")
+        return
+
+    ndel = 0
+    if not keep_files:
+        for p in to_delete:
+            try:
+                if p.is_file():
+                    p.unlink(); ndel += 1
+            except OSError as e:
+                print(f"  刪不掉 {p}: {e}", file=sys.stderr)
+
+    r_kt = prune_json(KEYTABLE, stems, False)
+    r_hc = prune_json(HEADERCAT, stems, False)
+    r_ct = prune_json(CATALOG, stems, False)
+    r_ov = prune_json(OVERRIDES_JSON, stems, True)
+
+    try:
+        doc = json.loads(OVERRIDES_JSON.read_text(encoding="utf-8"))
+        cols = ["gn", "title", "artist", "src", "bpm", "fileId"]
+        with OVERRIDES_CSV.open("w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader()
+            for e in doc.get("songs", []):
+                w.writerow({c: e.get(c, "") for c in cols})
+    except Exception as e:
+        print(f"  overrides.csv 重生失敗(不影響遊戲讀 json):{e}", file=sys.stderr)
+
+    print(f"\n完成:刪檔 {ndel}{'(--keep-files 略過)' if keep_files else ''};"
+          f"目錄表移除 keytable={r_kt} header={r_hc} catalog={r_ct} overrides={r_ov}")
+    print("遊戲下次啟動即不再出現這些歌。")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

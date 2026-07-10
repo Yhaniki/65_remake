@@ -1,7 +1,7 @@
 {
  "schema": "song-name-overrides/2",
  "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist 會覆蓋 k.gn 顯示名。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。fileId/bpm/src 僅供辨識，runtime 不套用。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。",
- "count": 2176,
+ "count": 2168,
  "songs": [
   {
    "gn": "sdom1956",
@@ -14068,14 +14068,6 @@
    "artist": "すぃ"
   },
   {
-   "gn": "sdom2947",
-   "fileId": 12952,
-   "bpm": 140.0,
-   "src": "kgn",
-   "title": "ECHO",
-   "artist": "れをる,茶理理"
-  },
-  {
    "gn": "sdom2948",
    "fileId": 12948,
    "bpm": 87.06,
@@ -14090,62 +14082,6 @@
    "src": "kgn",
    "title": "答案",
    "artist": "楊坤,郭采潔"
-  },
-  {
-   "gn": "sdom2950",
-   "fileId": 12950,
-   "bpm": 155.0,
-   "src": "kgn",
-   "title": "空も飞べるはず",
-   "artist": "さよならポニーテール"
-  },
-  {
-   "gn": "sdom2951",
-   "fileId": 12951,
-   "bpm": 131.0,
-   "src": "kgn",
-   "title": "俯瞰show",
-   "artist": "BIGMAMA"
-  },
-  {
-   "gn": "sdom2952",
-   "fileId": 12952,
-   "bpm": 165.0,
-   "src": "kgn",
-   "title": "ECHO",
-   "artist": "れをる,茶理理"
-  },
-  {
-   "gn": "sdom2953",
-   "fileId": 12953,
-   "bpm": 180.0,
-   "src": "kgn",
-   "title": "SLOW DOWN",
-   "artist": "向井太一"
-  },
-  {
-   "gn": "sdom2954",
-   "fileId": 12954,
-   "bpm": 134.0,
-   "src": "kgn",
-   "title": "遺失的心跳",
-   "artist": "蕭亞軒"
-  },
-  {
-   "gn": "sdom2955",
-   "fileId": 12950,
-   "bpm": 152.0,
-   "src": "kgn",
-   "title": "空も飞べるはず",
-   "artist": "さよならポニーテール"
-  },
-  {
-   "gn": "sdom2956",
-   "fileId": 12954,
-   "bpm": 146.0,
-   "src": "kgn",
-   "title": "遺失的心跳",
-   "artist": "蕭亞軒"
   },
   {
    "gn": "sdom0003",

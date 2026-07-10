@@ -20,8 +20,8 @@ namespace Sdo.UI.Catalog
         /// <summary>
         /// Browse-list curation. The original data ships a paired chart per song —
         /// sdomNNNN<b>k</b>.gn and sdomNNNN<b>t</b>.gn share one title — which made every song appear
-        /// twice in the list. Keep only the 'k' variant, then order by gn filename ascending
-        /// (sdomNNNN, the on-disk chart order). (SongCatalog.All stays unfiltered: gn-based
+        /// twice in the list. Keep only the 'k' variant, then order by gn filename DESCENDING
+        /// (sdomNNNN, highest number first / at the top). (SongCatalog.All stays unfiltered: gn-based
         /// title/artist lookups and font warmup still need both variants.)
         /// </summary>
         public static List<SongCatalog.Entry> Curate(IEnumerable<SongCatalog.Entry> entries)
@@ -30,7 +30,7 @@ namespace Sdo.UI.Catalog
             if (entries == null) return res;
             foreach (var e in entries)
                 if (e != null && IsPrimaryVariant(e.gn)) res.Add(e);
-            res.Sort((a, b) => string.CompareOrdinal(a.gn, b.gn));   // by filename sdomNNNNk.gn 升冪
+            res.Sort((a, b) => string.CompareOrdinal(b.gn, a.gn));   // by filename sdomNNNNk.gn 降冪(最大號在最上)
             return res;
         }
 

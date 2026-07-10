@@ -11,7 +11,7 @@
   "lcg": "state=seed; 每步 state=(state*0x3D09)&0xffffffff; k=(state>>16)&0xff; out=in-k (解密)"
  },
  "counts": {
-  "total": 4350,
+  "total": 4334,
   "ddrm": 4,
   "sdom": 3172,
   "rewu": 1172,
@@ -45213,28 +45213,6 @@
    "size": 70480
   },
   {
-   "gn": "sdom2947k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12952,
-   "bpm": 140.0,
-   "title": "ECHO",
-   "size": 101308
-  },
-  {
-   "gn": "sdom2947t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2952,
-   "bpm": 140.0,
-   "title": "ECHO",
-   "size": 92332
-  },
-  {
    "gn": "sdom2948k.gn",
    "enc": "sdom",
    "mode": "K",
@@ -45277,160 +45255,6 @@
    "bpm": 148.03,
    "title": "答案",
    "size": 114676
-  },
-  {
-   "gn": "sdom2950k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12950,
-   "bpm": 155.0,
-   "title": "空も飞べるはず",
-   "size": 95952
-  },
-  {
-   "gn": "sdom2950t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2950,
-   "bpm": 115.0,
-   "title": "空も飞べるはず",
-   "size": 68624
-  },
-  {
-   "gn": "sdom2951k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12951,
-   "bpm": 131.0,
-   "title": "俯瞰show",
-   "size": 139332
-  },
-  {
-   "gn": "sdom2951t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2951,
-   "bpm": 100.0,
-   "title": "俯瞰show",
-   "size": 125128
-  },
-  {
-   "gn": "sdom2952k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12952,
-   "bpm": 165.0,
-   "title": "ECHO",
-   "size": 89532
-  },
-  {
-   "gn": "sdom2952t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2952,
-   "bpm": 140.0,
-   "title": "ECHO",
-   "size": 89604
-  },
-  {
-   "gn": "sdom2953k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12953,
-   "bpm": 180.0,
-   "title": "SLOW DOWN",
-   "size": 109956
-  },
-  {
-   "gn": "sdom2953t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2953,
-   "bpm": 120.05,
-   "title": "SLOW DOWN",
-   "size": 70448
-  },
-  {
-   "gn": "sdom2954k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12954,
-   "bpm": 134.0,
-   "title": "遗失的心跳",
-   "size": 99312
-  },
-  {
-   "gn": "sdom2954t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2954,
-   "bpm": 126.02,
-   "title": "遗失的心跳",
-   "size": 72428
-  },
-  {
-   "gn": "sdom2955k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12950,
-   "bpm": 152.0,
-   "title": "空も飞べるはず",
-   "size": 107136
-  },
-  {
-   "gn": "sdom2955t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2950,
-   "bpm": 115.0,
-   "title": "空も飞べるはず",
-   "size": 80984
-  },
-  {
-   "gn": "sdom2956k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 12954,
-   "bpm": 146.0,
-   "title": "遗失的心跳",
-   "size": 116692
-  },
-  {
-   "gn": "sdom2956t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 2956,
-   "bpm": 126.02,
-   "title": "遗失的心跳",
-   "size": 87108
   },
   {
    "gn": "sdom3.gn",

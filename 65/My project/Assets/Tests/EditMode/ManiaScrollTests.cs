@@ -109,5 +109,17 @@ namespace Sdo.Tests
             var fast = ManiaScroll.Build(MapWith(240, 5000, new OsuTimingPoint(0, 250)), 2.5);
             Assert.AreEqual(slow.PixelDistance(0, 1000), fast.PixelDistance(0, 1000), 1e-4);
         }
+
+        [Test]
+        public void FollowSongBpm_Base_Follows_The_Song_Bpm_And_Gimmick_Scales_Officially()
+        {
+            // followSongBpm: base speed = songBpm × speed × 1.6 (official), and a ×2 mid-song gimmick
+            // scales to currentBpm × speed × 1.6. base (most-common) = 170bpm over [0,8000); 340bpm over [8000,9000).
+            var map = MapWith(170, 9000,
+                new OsuTimingPoint(0, 60000.0 / 170.0), new OsuTimingPoint(8000, 60000.0 / 340.0));
+            var scroll = ManiaScroll.Build(map, 2.5, constantScroll: false, referenceBpm: 140.0, followSongBpm: true);
+            Assert.AreEqual(170.0 * 2.5 * 1.6, scroll.PixelDistance(0, 1000), 1e-2);      // base 170 (NOT the 140 anchor)
+            Assert.AreEqual(340.0 * 2.5 * 1.6, scroll.PixelDistance(8000, 9000), 1e-2);   // ×2 gimmick = 340 × speed × 1.6
+        }
     }
 }

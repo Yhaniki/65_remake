@@ -57,6 +57,7 @@ namespace Sdo.UI.Services
         void AnnounceStageLeave(string name);
         // 設定目前作用域：之後送出的訊息會標記成大廳或該房間（密語除外，永遠跨場）。畫面在 OnShow 設定。
         void SetScope(ChatScope scope, int roomId = 0);
+        void Clear();  // 清空訊息歷史（換場地時呼叫：大廳→房間、房間→遊戲、遊戲→房間）
         void Tick();   // drive scripted bot traffic (call each frame)
     }
 }

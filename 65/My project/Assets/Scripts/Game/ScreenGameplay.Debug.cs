@@ -65,19 +65,32 @@ namespace Sdo.Game
                 GUILayout.Label($"Force hit grade: {(forcedJudge < 0 ? "Real (timing)" : ForceJudgeLabels[forcedJudge + 1])}");
                 forcedJudge = GUILayout.Toolbar(forcedJudge + 1, ForceJudgeLabels) - 1;   // 0=Real(-1), 1..4=Perfect..Miss
                 GUILayout.Space(6);
-                // ── note scroll speed (osu-style, fixed base tempo) ──
-                GUILayout.Label($"Scroll 速度: {scrollSpeedMul:F1}×  → {ManiaScroll.BaseVelocityFor(scrollSpeedMul, referenceBpm):F0}px/s base");
+                // ── note scroll speed (osu-style) ──
+                double baseAnchorBpm = scrollFollowsSongBpm && _map != null ? _map.Bpm : referenceBpm;
+                GUILayout.Label($"Scroll 速度: {scrollSpeedMul:F1}×  → {ManiaScroll.BaseVelocityFor(scrollSpeedMul, baseAnchorBpm):F0}px/s base"
+                    + (scrollFollowsSongBpm ? $"  (跟隨曲速 {(_map != null ? _map.Bpm : 0f):F0})" : "  (固定基準)"));
                 GUILayout.BeginHorizontal();
                 for (int i = 0; i < ScrollSpeedSteps.Length; i++)
                     if (GUILayout.Button(ScrollSpeedSteps[i].ToString("0.#"))) { scrollSpeedMul = ScrollSpeedSteps[i]; BuildScroll(); }
                 GUILayout.EndHorizontal();
-                GUILayout.Label($"基準 BPM (固定，不隨歌曲BPM): {referenceBpm:F0}");
-                float nb = GUILayout.HorizontalSlider(referenceBpm, 60f, 240f);
-                if (Mathf.Abs(nb - referenceBpm) > 0.5f) { referenceBpm = nb; BuildScroll(); }
+                bool fsb = GUILayout.Toggle(scrollFollowsSongBpm, scrollFollowsSongBpm
+                    ? " 捲動基準：跟隨該曲 BPM（官方 BPM×速度×1.6）"
+                    : " 捲動基準：固定（每首同一基準速度）");
+                if (fsb != scrollFollowsSongBpm) { scrollFollowsSongBpm = fsb; BuildScroll(); }
+                if (!scrollFollowsSongBpm)
+                {
+                    GUILayout.Label($"固定基準 BPM: {referenceBpm:F0}");
+                    float nb = GUILayout.HorizontalSlider(referenceBpm, 60f, 240f);
+                    if (Mathf.Abs(nb - referenceBpm) > 0.5f) { referenceBpm = nb; BuildScroll(); }
+                }
                 bool cs = GUILayout.Toggle(constantScroll, constantScroll
                     ? " 固定速度 ON：osu Constant，全程不變速（忽略BPM/SV）"
                     : " 固定速度 OFF：osu 預設，內部仍隨 BPM變速/SV 變速");
                 if (cs != constantScroll) { constantScroll = cs; BuildScroll(); }
+                bool mo = GUILayout.Toggle(useMusicStartOffset, useMusicStartOffset
+                    ? $" 音樂對齊 type-9 ON：跳過開頭 count-in（此曲 {(_map != null ? _map.MusicStartOffsetMs : 0):F0}ms）— 下次開始生效"
+                    : " 音樂對齊 type-9 OFF：音樂從 beat 0 播（下次開始生效）");
+                useMusicStartOffset = mo;
                 GUILayout.Space(6);
                 // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — re-shape the dancer LIVE.
                 GUILayout.Label($"Body shape (thin..fat): B={_bodyShapeB:F3}  (1.00 = standard)");

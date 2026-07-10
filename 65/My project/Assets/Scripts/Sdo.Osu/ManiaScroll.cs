@@ -55,9 +55,21 @@ namespace Sdo.Osu
         /// <paramref name="constantScroll"/> = osu "Constant Speed" mod (ignore all BPM/SV variation).
         /// </summary>
         public static ManiaScroll Build(OsuBeatmap map, double speedMul,
-            bool constantScroll = false, double referenceBpm = DefaultReferenceBpm)
+            bool constantScroll = false, double referenceBpm = DefaultReferenceBpm, bool followSongBpm = false)
         {
-            double vBase = BaseVelocityFor(speedMul, referenceBpm);
+            // Base-velocity anchor. Default: fixed referenceBpm (every song scrolls at the same base speed).
+            // followSongBpm: anchor to THIS song's most-common BPM, so the base tempo scrolls at the official
+            // px/s = songBpm × speed × 1.6 and mid-song ½/×2 changes scale it to currentBpm × speed × 1.6
+            // (the internal multiplier uses the same most-common beat length, so it is 1.0 at the base tempo).
+            double anchorBpm = referenceBpm;
+            if (followSongBpm && map != null)
+            {
+                double baseBeat = (map.TimingPoints != null && map.TimingPoints.Count > 0)
+                    ? MostCommonBeatLength(map.TimingPoints, LastObjectMs(map)) : 0.0;
+                if (baseBeat <= 0.0) baseBeat = 60000.0 / Math.Max(1.0, map.Bpm);
+                anchorBpm = 60000.0 / Math.Max(1e-9, baseBeat);
+            }
+            double vBase = BaseVelocityFor(speedMul, anchorBpm);
             var pts = (map == null || constantScroll) ? null : BuildMultiplierPoints(map);
             if (pts == null || pts.Count == 0)
                 return new ManiaScroll(vBase, new[] { 0.0 }, new[] { 1.0 }, new[] { 0.0 });

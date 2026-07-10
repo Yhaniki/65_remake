@@ -181,6 +181,7 @@ namespace Sdo.Osu
             var noteBeat = new List<double>();
             var noteLane = new List<int>();
             var noteType = new List<int>();
+            double firstMarkerBeat = -1.0;   // first type-9 (小節線) beat = the song's music/BPM start anchor
             int off = start;
             while (off + 8 <= end)
             {
@@ -201,6 +202,10 @@ namespace Sdo.Osu
                         { bpmBeats.Add(beat); bpmVals.Add(bpm); }
                         continue;
                     }
+                    // type-9 = 小節線 (bar line, at odd measurements 1,3,5…). The FIRST one (measurement 1)
+                    // marks where the music + BPM actually start; the measure before it is a silent count-in.
+                    if (ft == 9 && I16(body, off) != 0 && (firstMarkerBeat < 0.0 || beat < firstMarkerBeat))
+                        firstMarkerBeat = beat;
                     if (lane < 0) continue;
                     short u0 = I16(body, off);
                     byte nt = body[off + 3];
@@ -211,6 +216,10 @@ namespace Sdo.Osu
 
             // --- build the piecewise-constant BPM timeline (segment start beat / bpm / cumulative ms) ---
             BuildBpmTimeline(headerBpm, bpmBeats, bpmVals, out double[] segBeat, out double[] segBpm, out double[] segMs);
+
+            // The audio starts at the first type-9 (小節線 @ measurement 1) — i.e. the note/beat clock time of
+            // that marker. The caller delays music playback by this much so the song lines up with the notes.
+            map.MusicStartOffsetMs = firstMarkerBeat >= 0.0 ? BeatToMs(segBeat, segBpm, segMs, firstMarkerBeat) : 0.0;
 
             // scroll/timing points (ms): one uninherited point per BPM segment. Single-BPM charts get a
             // single point at 0; ManiaScroll then runs at a constant base velocity. (.gn has no SV.)

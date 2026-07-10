@@ -80,12 +80,13 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Curate_Orders_By_Gn_Filename_Ascending()
+        public void Curate_Orders_By_Gn_Filename_Descending()
         {
-            // Browse list is ordered by the on-disk chart filename (sdomNNNNk.gn) ascending.
+            // Browse list is ordered by the on-disk chart filename (sdomNNNNk.gn) descending —
+            // highest number first / at the top of the list.
             var r = SongListModel.Curate(Paired());
-            Assert.AreEqual("sdom1197k.gn", r[0].gn);
-            Assert.AreEqual("sdom1198k.gn", r[1].gn);
+            Assert.AreEqual("sdom1198k.gn", r[0].gn);
+            Assert.AreEqual("sdom1197k.gn", r[1].gn);
         }
 
         [Test]

@@ -146,6 +146,9 @@ namespace Sdo.UI.Services
             _scopeRoomId = roomId;
         }
 
+        // 換場地清空訊息歷史（畫面自行重繪即見空）。下一則 bot 訊息照常從新的空歷史累積。
+        public void Clear() => _history.Clear();
+
         // 本機發言者名：active profile 的 id/名（跟頭頂名字一致）；沒給就回退 "我"。
         private string LocalSender()
         {

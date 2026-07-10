@@ -150,6 +150,7 @@ namespace Sdo.UI.Screens
         // 開始 → 全螢幕 1 秒漸暗再切舞台：最上層黑幕(平時停用/透明)，OnStart 觸發後淡入到全黑才交棒給 ScreenGameplay。
         private Image _startFade;
         private bool _starting;                  // 進入漸暗切場後鎖住，避免重複觸發
+        private bool _returnedFromStage;         // true = 這次 OnShow 是從舞台遊戲回房(非從大廳進來) → 不重播進場廣播
         private const float StartFadeDuration = 1f;
 
         // 收合位移（anchoredPosition delta，逐字取自 DDRROOM.XML 各 Window 的 show→hide TransForm 目標）：
@@ -475,10 +476,13 @@ namespace Sdo.UI.Screens
             SeedDefaultSongIfNeeded();   // 進大廳預設選好 index 最大的歌(easy)，房間一進來就有歌
             // 聊天作用域切到本房間：之後的送話/廣播標記成此房，且只顯示此房 + 密語(跨場)。
             _chatScopeRoomId = Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
+            Ctx.Chat?.Clear();   // 換場地就清訊息欄：進房間(大廳→房間 / 遊戲→房間都會經過 OnShow)先清空
             Ctx.Chat?.SetScope(ChatScope.Room, _chatScopeRoomId);
             RebuildRoomChat();
             Render();
-            AnnounceStagePresence(true);   // 進房間 → 廣播「X 進入舞台遊戲」（只同房、只在「當前」分類）
+            // 進場廣播「X 進入舞台遊戲」只在「從大廳進來」時送；從舞台遊戲回房(打完一首回房)不重播。
+            if (_returnedFromStage) _returnedFromStage = false;
+            else AnnounceStagePresence(true);   // 只同房、只在「當前」分類
         }
 
         // 進/出房間廣播（進入房間的人送出；同房才收得到，只在「當前」分類顯示）。
@@ -2795,6 +2799,8 @@ namespace Sdo.UI.Screens
                 return;
             }
             _starting = true;
+            _returnedFromStage = true;         // 記住:待會回房的那次 OnShow 不再廣播「進入舞台遊戲」
+            Ctx.Chat?.Clear();                 // 換場地就清訊息欄：房間→遊戲時清空
             UiSfx.Play(UiSfx.GameStart);       // 開始音效
             StartCoroutine(FadeToStage());     // 全螢幕 1 秒漸暗 → 才 StartGame 切舞台
         }

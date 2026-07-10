@@ -120,6 +120,10 @@ namespace Sdo.UI.Screens
         private Coroutine _previewCo;
         private int _previewId = -1;
         private float _previewGateTime;   // unscaled time before which previews hold (set on entry so the open spin settles first)
+        // Fallback when a song has no dedicated exper preview: loop a 20s window from the MIDDLE of the full song.
+        private bool _previewWindow;
+        private float _previewWinStart, _previewWinEnd;
+        private const float PreviewWindowSec = 20f;
 
         // window open/close transition (spin-zoom in, shrink-fade out) — all dialog art lives under _window so it
         // animates as one piece; the combo popups parent themselves to Root, so they stay clear of the spin.
@@ -261,8 +265,8 @@ namespace Sdo.UI.Screens
 
         private void ComputeNewIds()
         {
-            // NEW badge = the highest-fileId (newest) songs. The browse list is now sorted by gn
-            // filename ascending, so pick the top-N by fileId explicitly rather than taking the head.
+            // NEW badge = the highest-fileId (newest) songs. Pick the top-N by fileId explicitly
+            // (independent of the browse list's sort order) so the badge logic stays robust.
             _newIds.Clear();
             var byNew = new List<SongCatalog.Entry>(_model.All);
             byNew.Sort((a, b) => b.fileId.CompareTo(a.fileId));
@@ -854,7 +858,18 @@ namespace Sdo.UI.Screens
             if (e.fileId == _previewId && _preview != null && _preview.isPlaying) return;
             StopPreview();
             _previewId = e.fileId;
-            _previewCo = StartCoroutine(LoadPreviewCo(e.fileId));
+            _previewCo = StartCoroutine(LoadPreviewCo(e.fileId, e.gn));
+        }
+
+        /// <summary>Full-song ogg name for a chart gn ("sdom2784k.gn" -> "sdom2784.ogg"), matching the on-disk
+        /// stem-based main audio; null if the gn isn't an sdom chart.</summary>
+        private static string MainOggName(string gn)
+        {
+            if (string.IsNullOrEmpty(gn)) return null;
+            var n = gn.ToLowerInvariant();
+            if (n.EndsWith(".gn")) n = n.Substring(0, n.Length - 3);
+            if (n.Length > 0 && (n[n.Length - 1] == 'k' || n[n.Length - 1] == 't')) n = n.Substring(0, n.Length - 1);
+            return n.Length > 0 ? n + ".ogg" : null;
         }
 
         // Mirrors ScreenGameplay.LoadAndPlayAudio: file:// + raw path (no URI escaping — the music tree is ASCII and
@@ -864,10 +879,19 @@ namespace Sdo.UI.Screens
         // Every exper/<fileId>.ogg is a real, pre-decoded preview clip (the official preview .sdm are decoded to
         // valid Vorbis at import time via donor headers — see tools/decode_previews). GetContent is still wrapped
         // in try/catch so that even a malformed file could never throw out of the coroutine (it just no-ops).
-        private IEnumerator LoadPreviewCo(int fileId)
+        private IEnumerator LoadPreviewCo(int fileId, string gn)
         {
+            // Prefer the dedicated exper/<fileId>.ogg preview clip; if none exists, fall back to the FULL song
+            // and loop a 20s window from its middle (see Update()).
             string path = Path.Combine(SdoExtracted.MusicDir, "exper", fileId + ".ogg");
-            if (!File.Exists(path)) { _previewCo = null; yield break; }
+            bool isPreviewClip = File.Exists(path);
+            if (!isPreviewClip)
+            {
+                var ogg = MainOggName(gn);
+                if (ogg == null) { _previewCo = null; yield break; }
+                path = Path.Combine(SdoExtracted.MusicDir, ogg);
+                if (!File.Exists(path)) { _previewCo = null; yield break; }
+            }
 
             AudioClip clip = null;
             var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.OGGVORBIS);
@@ -895,7 +919,27 @@ namespace Sdo.UI.Screens
 
             EnsurePreviewSource();
             _preview.clip = clip;
-            _preview.Play();
+            if (isPreviewClip)
+            {
+                _previewWindow = false;
+                _preview.loop = true;         // short preview clip: loop the whole thing
+                _preview.time = 0f;
+                _preview.Play();
+            }
+            else
+            {
+                // No preview clip -> loop a 20s window centred in the full song. Update() bounces time
+                // back to the window start (AudioSource.loop only loops the whole clip, not a sub-range).
+                float len = clip.length;
+                float win = Mathf.Min(PreviewWindowSec, len);
+                float start = Mathf.Clamp(len * 0.5f - win * 0.5f, 0f, Mathf.Max(0f, len - win));
+                _previewWinStart = start;
+                _previewWinEnd = start + win;
+                _previewWindow = true;
+                _preview.loop = false;
+                _preview.time = start;
+                _preview.Play();
+            }
         }
 
         private void EnsurePreviewSource()
@@ -915,6 +959,7 @@ namespace Sdo.UI.Screens
         {
             if (_previewCo != null) { StopCoroutine(_previewCo); _previewCo = null; }
             _previewId = -1;
+            _previewWindow = false;
             if (_preview != null) { _preview.Stop(); _preview.clip = null; }
         }
 
@@ -995,6 +1040,16 @@ namespace Sdo.UI.Screens
         // 所以右鍵另一首會直接關舊選單並換到那首（Select + 重開選單）；左鍵另一首也會換過去並關選單。
         private void Update()
         {
+            // Keep the fallback preview (full-song middle) looping within its 20s window.
+            if (_previewWindow && _preview != null && _preview.clip != null)
+            {
+                if (!_preview.isPlaying || _preview.time >= _previewWinEnd)
+                {
+                    _preview.time = _previewWinStart;
+                    if (!_preview.isPlaying) _preview.Play();
+                }
+            }
+
             if (_favPopup == null) return;
             if (Time.frameCount == _favPopupFrame) return;   // 剛開的那一幀不判關，避免自我關閉
             if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;

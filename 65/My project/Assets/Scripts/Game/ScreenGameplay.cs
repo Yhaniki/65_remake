@@ -36,8 +36,10 @@ namespace Sdo.Game
         // -2 = unset (standalone/F4 boot: keep stock); -1 = 隨機 (random skin); 0..10 = the specific note skin
         // (0..9 = the 2D skins in NoteTypeEftSuffix order, 10 = the 3D hiteft3D skin) — same order as the room's NoteEftArt.
         public int roomNoteType = -2;
-        public float referenceBpm = 140f;     // base-tempo anchor for the constant base speed
+        public float referenceBpm = 130f;     // base-tempo anchor when NOT following the song's BPM
+        public bool scrollFollowsSongBpm = false; // true = base speed follows the song's own BPM (official px/s = BPM×speed×1.6); false = fixed referenceBpm for every song
         public bool constantScroll = false;   // true = ignore BPM/SV variation (perfectly linear scroll)
+        public bool useMusicStartOffset = true;  // true = start the music at the chart's first type-9 marker (skip the leading count-in measure so notes line up with the song)
         public float judgeLineY = 70f;        // receptor / hit line Y (design px). UPSCROLL: notes rise to it.
         private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
@@ -1219,7 +1221,10 @@ namespace Sdo.Game
             // GO is done -> start the song and the gameplay clock together. Both use the same StartLeadSec offset on
             // their own time base (dspTime / timeAsDouble) so the audio and the chart stay aligned, as before. Runs even
             // if the READY/GO overlay was missing, so the song never fails to start.
-            _songStartDspTime = AudioSettings.dspTime + StartLeadSec;
+            // Delay the music by the chart's music-start offset (first type-9 小節線) so the leading count-in
+            // measure is silent and the song lines up with the notes/dancer (which stay on the beat-0 clock).
+            double musicDelaySec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
+            _songStartDspTime = AudioSettings.dspTime + StartLeadSec + musicDelaySec;
             if (_audio != null && _audio.clip != null) _audio.PlayScheduled(_songStartDspTime);
             _clockStart = Time.timeAsDouble + StartLeadSec;
             if (showtimeMode) _gaugeGlowFromStart = true;   // song is playing → head glow stays lit even at 0 fill (no key needed)
@@ -3571,12 +3576,14 @@ namespace Sdo.Game
             return rows;
         }
 
-        // Build the scroll positioner from the loaded chart + the selected speed step. Constant base speed
-        // across songs (referenceBpm anchor) with osu-style mid-song BPM/SV variation (or none if constantScroll).
+        // Build the scroll positioner from the loaded chart + the selected speed step. Base speed either follows
+        // the song's own BPM (official px/s = BPM×speed×1.6) or is anchored to referenceBpm for every song;
+        // osu-style mid-song BPM/SV variation on top (or none if constantScroll).
         private void BuildScroll()
         {
-            _scroll = ManiaScroll.Build(_map, scrollSpeedMul, constantScroll, referenceBpm);
-            Debug.Log($"[Step1] scroll vBase={_scroll.BaseVelocity:F0}px/s (speed {scrollSpeedMul}× @ {referenceBpm}bpm)"
+            _scroll = ManiaScroll.Build(_map, scrollSpeedMul, constantScroll, referenceBpm, scrollFollowsSongBpm);
+            Debug.Log($"[Step1] scroll vBase={_scroll.BaseVelocity:F0}px/s (speed {scrollSpeedMul}×"
+                + $", {(scrollFollowsSongBpm ? $"follow songBpm {_map.Bpm:F1}" : $"fixed {referenceBpm}bpm")})"
                 + $", {_map.TimingPoints.Count} timing pts, constant={constantScroll}");
         }
 
