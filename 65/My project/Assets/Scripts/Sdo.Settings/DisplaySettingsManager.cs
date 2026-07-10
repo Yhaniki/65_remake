@@ -77,6 +77,9 @@ namespace Sdo.Settings
             s.audio.gameMusic = Mathf.Clamp01(s.audio.gameMusic);
             s.audio.sfx = Mathf.Clamp01(s.audio.sfx);
 
+            s.gameplay ??= new GameplaySettings();
+            s.gameplay.panelOpacity = Mathf.Clamp(s.gameplay.panelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
+
             if (string.IsNullOrEmpty(s.language)) s.language = "zh-TW";
             return s;
         }

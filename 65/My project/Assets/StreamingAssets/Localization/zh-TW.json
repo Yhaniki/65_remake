@@ -32,6 +32,14 @@
    "v": "開"
   },
   {
+   "k": "common.enabled",
+   "v": "開啟"
+  },
+  {
+   "k": "common.disabled",
+   "v": "關閉"
+  },
+  {
    "k": "app.title",
    "v": "熱舞 Online"
   },
@@ -258,10 +266,6 @@
   {
    "k": "songselect.mode_normal",
    "v": "普通模式"
-  },
-  {
-   "k": "songselect.mode_showtime",
-   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",

@@ -261,10 +261,12 @@ namespace Sdo.UI.Screens
 
         private void ComputeNewIds()
         {
-            // _model.All is curated + sorted by fileId DESC (newest first) -> first N are the newest.
+            // NEW badge = the highest-fileId (newest) songs. The browse list is now sorted by gn
+            // filename ascending, so pick the top-N by fileId explicitly rather than taking the head.
             _newIds.Clear();
-            var all = _model.All;
-            for (int i = 0; i < all.Count && i < NewBadgeCount; i++) _newIds.Add(all[i].fileId);
+            var byNew = new List<SongCatalog.Entry>(_model.All);
+            byNew.Sort((a, b) => b.fileId.CompareTo(a.fileId));
+            for (int i = 0; i < byNew.Count && i < NewBadgeCount; i++) _newIds.Add(byNew[i].fileId);
         }
 
         // ---------------- build helpers ----------------

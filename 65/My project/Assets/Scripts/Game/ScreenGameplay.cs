@@ -285,6 +285,12 @@ namespace Sdo.Game
         public float boardAlpha = 1.4f;     // board alpha MULTIPLIER on the original texture: 1=native (~62%, the
                                             // original look), ~1.4=official (deep but inner detail still shows),
                                             // ~2.6=fully opaque. Multiplies the real alpha curve so detail survives.
+                                            // OPTION 遊戲頁「面板透明度」滑桿 → FrontendApp 開局前把 gameplay.panelOpacity 灌進來。
+        // OPTION 遊戲頁「遊戲特效」兩個勾選（FrontendApp 開局前設定）：關掉就不生對應特效。預設 true = 全開。
+        public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
+        public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
+        // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖鏡頭 1，無開場運鏡)。
+        public bool cameraAuto = true;
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
         public float burstSize = 1.3f;      // hit-burst size multiplier
         public float burstBright = 1.5f;    // hit-burst brightness (additive _TintColor; 1.0 = stock)
@@ -705,9 +711,12 @@ namespace Sdo.Game
             _ambient = gameObject.AddComponent<AudioSource>();
             var ambName = AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
             if (!string.IsNullOrEmpty(ambName)) StartCoroutine(LoadAmbientCo(ambName));
+            // OPTION 遊戲頁「固定」視角：鎖定鏡頭 1（FixedEye[0]），跳過自動導播的開場運鏡。默認視角則維持 -1(自動)。
+            if (!cameraAuto) _camMode = 0;
             // Enter on the crane with no note board: hold the track hidden while the opening shot flies in, then
-            // OpeningSequence() reveals it with READY. Only when there's actually a 3D crane to watch.
-            if (use3dCamera && _camReady && openingIntroSec > 0f) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
+            // OpeningSequence() reveals it with READY. Only when there's actually a 3D crane to watch AND the camera is
+            // on the auto-director (固定視角沒有吊臂運鏡，直接顯示 note 面板)。
+            if (use3dCamera && _camReady && openingIntroSec > 0f && cameraAuto) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
             if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f;   // idle dancer, fixed cam, hidden track
                 HideComboAndJudge(); HideHudForPanel(); }   // also clear the rest of the gameplay HUD (score/combo/judge/song labels/ranking) for a clean stage
             _sceneBootDone = true;            // the synchronous build above is complete (scene/avatar/board/HUD placed)
@@ -2222,14 +2231,17 @@ namespace Sdo.Game
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                        var tex = ResolveDds(dir, nm, out bool a2, out bool glow2);
-                        mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && volumetric, a2 && !opaque && singleSidedAlpha, glow2);
+                        var tex = ResolveDds(dir, nm, out bool a2, out bool glow2, out bool hc2);
+                        // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯): a
+                        // moving alpha-blend banner has no ZWrite, so its folds + the scene behind bleed through ("穿模").
+                        mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && (volumetric || (animated && hc2)), a2 && !opaque && singleSidedAlpha, glow2);
                     }
                 }
                 else
                 {
-                    var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1);
-                    mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && volumetric, a1 && !opaque && singleSidedAlpha, glow1) };
+                    var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1, out bool hc1);
+                    // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯) — see above.
+                    mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && (volumetric || (animated && hc1)), a1 && !opaque && singleSidedAlpha, glow1) };
                 }
                 subMats.Add(mats);
             }
@@ -2736,7 +2748,7 @@ namespace Sdo.Game
                 Debug.Log($"[scene] {SceneFolder()}: {res.Materials.Length} subsets, bounds c={b.center} s={b.size}");
                 TryLoadMapobjs();   // stage props on the same layer
                 TryLoadSceneAvatars();   // background NPCs ("場景的人" — e.g. SCN0017 subway passengers)
-                SpawnSceneEffects();   // persistent background EFTs (SCN0008 magic circle, snow, aurora, …)
+                if (effectScene) SpawnSceneEffects();   // 場景特效開關 (OPTION 遊戲頁)：常駐背景 EFT (SCN0008 magic circle, snow, aurora, …)
             }
 
             // Perspective camera renders the stage(+avatar, same layer) to a RenderTexture; a full-screen background
@@ -3108,8 +3120,18 @@ namespace Sdo.Game
 
         private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha, out bool additiveGlow)
         {
+            return ResolveDds(dir, ddsName, out hasAlpha, out additiveGlow, out _);
+        }
+
+        // hardCutout: the texture is a HARD cut-out (mostly-opaque body + real holes, e.g. the SCN0009 掛毯 GUATAN),
+        // classified by alpha DISTRIBUTION exactly like SCENE.MSH materials. Such props must render depth-writing
+        // (alpha-TEST/cutout, ZWrite On), NOT alpha-BLEND (ZWrite Off) — otherwise a moving two-sided cloth's own
+        // back faces and the pillars/people behind it bleed THROUGH it ("穿模"). The official used alpha-test here.
+        private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha, out bool additiveGlow, out bool hardCutout)
+        {
             hasAlpha = false;
             additiveGlow = false;
+            hardCutout = false;
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
@@ -3126,6 +3148,7 @@ namespace Sdo.Game
                 var bytes = File.ReadAllBytes(hit);
                 hasAlpha = DdsLoader.HasAlpha(bytes);
                 additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
+                hardCutout = hasAlpha && !additiveGlow && DdsLoader.GetSceneAlphaMode(bytes) == DdsAlphaMode.Cutout;
                 // Alpha-blended cut-out props (e.g. SCN0026 背景汽車 — flat DXT3 billboards on a WHITE matte) bled a
                 // white halo at the silhouette under straight alpha blending. Edge-bleed the decoded RGB so the
                 // transparent matte carries the prop's own colour instead. Additive glows are excluded: their low-

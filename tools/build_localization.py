@@ -27,6 +27,8 @@ STR = {
     "common.confirm": ["Confirm", "確定", "确定", "確定"],
     "common.off":     ["Off", "關", "关", "オフ"],
     "common.on":      ["On", "開", "开", "オン"],
+    "common.enabled":  ["On", "開啟", "开启", "オン"],
+    "common.disabled": ["Off", "關閉", "关闭", "オフ"],
 
     "app.title": ["Dance Online", "熱舞 Online", "热舞 Online", "ダンス Online"],
 
@@ -181,6 +183,8 @@ STR = {
     "option.save":         ["Save", "儲存", "保存", "保存"],
     "option.exit":         ["Exit", "離開", "退出", "終了"],
     "option.default":      ["Default", "預設", "默认", "デフォルト"],
+    # NOTE: the 遊戲 (OptionGameWindow) labels/captions + all four tab labels are BAKED into OPTIONDLG.clean.png,
+    # so they are NOT localized here — only the 進階 (display) page draws text, reusing the settings.* keys above.
 
     "join.full":     ["This room is full", "這個房間已滿了", "这个房间已满了", "このルームは満員です"],
     "join.ingame":   ["This room is in game", "這個房間正在遊戲中", "这个房间正在游戏中", "このルームはゲーム中です"],

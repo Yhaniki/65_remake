@@ -70,6 +70,11 @@ namespace Sdo.UI
 
             _ctx = AppContext.CreateMock();
 
+            // OPTION 遊戲頁「遊戲畫面」偏好：全屏(填滿) = Stretch，視窗化(左右黑邊) = Pillarbox。必須在 CreateWorldCanvas
+            // 註冊 UI 相機（→ AspectController 首次 Apply）之前設好靜態 Mode，之後開的遊戲相機也沿用同一個 Mode。
+            AspectController.Mode = (DisplaySettingsManager.Settings?.gameplay?.fullscreenFill ?? true)
+                ? AspectMode.Stretch : AspectMode.Pillarbox;
+
             // Fixed 800×600 (4:3) world-space canvas, framed by a camera the AspectController fits to the window
             // (stretched to fill by default) — same 4:3 frame as the play screen, so the whole app is consistent 4:3.
             var canvas = UIKit.CreateWorldCanvas("FrontendCanvas", new Vector2(800, 600), out _uiCam, 0);
@@ -172,6 +177,14 @@ namespace Sdo.UI
             game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
             game.showtimeMode = s.GameMode == 2;                 // 選歌模式選單：2 = ShowTime（氣條/集氣）模式；否則一般玩法
+            var gp = DisplaySettingsManager.Settings?.gameplay;  // OPTION 遊戲頁偏好 → 開局套用
+            if (gp != null)
+            {
+                game.effectCharacter = gp.effectCharacter;       // 人物特效（100/200/300 combo EFT）
+                game.effectScene = gp.effectScene;               // 場景特效（常駐背景 EFT）
+                game.cameraAuto = gp.cameraAuto;                 // 遊戲視角：默認(自動導播)/固定(鏡頭1)
+                game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
+            }
             _activeGame = game;
         }
 

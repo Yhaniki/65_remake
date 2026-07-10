@@ -372,7 +372,7 @@ namespace Sdo.Game
             // spawned at the dancer's pelvis-on-floor by Dancer_SpawnDirEffect_004a7680, uniform scale 30/20/30/30/35;
             // tiers clamp to 500. NB: the original fires these from authored chart events, not combo%100 — we
             // approximate with the milestone so the effect still plays at 100/200/...).
-            if (combo % 100 == 0) SpawnComboBurst(Mathf.Clamp(combo / 100 - 1, 0, 4));
+            if (effectCharacter && combo % 100 == 0) SpawnComboBurst(Mathf.Clamp(combo / 100 - 1, 0, 4));   // 人物特效開關 (OPTION 遊戲頁)
         }
 
         public float comboBurstSize = 1f, comboBurstBright = 1f;   // F4-tunable

@@ -9,18 +9,20 @@ namespace Sdo.Settings
         public long Area => (long)Width * Height;
     }
 
-    /// <summary>The window-size presets offered in Settings, plus validation/clamping. Pure logic.</summary>
+    /// <summary>The window-size presets offered in Settings, plus validation/clamping. Pure logic.
+    /// ALL entries are 4:3 to match the fixed 800×600 game frame: these presets only take effect in **Windowed**
+    /// mode (fullscreen/borderless use the native desktop resolution — see <see cref="DisplaySettingsManager.ApplyDisplay"/>),
+    /// and a 4:3 window fits the content exactly with no pillarbox bars or stretch distortion.</summary>
     public static class ResolutionPreset
     {
         public static readonly ScreenSize[] Presets =
         {
-            new ScreenSize(800, 600),
-            new ScreenSize(1024, 768),
-            new ScreenSize(1280, 720),
-            new ScreenSize(1280, 800),
-            new ScreenSize(1366, 768),
-            new ScreenSize(1600, 900),
-            new ScreenSize(1920, 1080),
+            new ScreenSize(800, 600),     // SVGA  (native design frame)
+            new ScreenSize(1024, 768),    // XGA   (default windowed size)
+            new ScreenSize(1152, 864),    // XGA+
+            new ScreenSize(1280, 960),    // SXGA−
+            new ScreenSize(1400, 1050),   // SXGA+
+            new ScreenSize(1600, 1200),   // UXGA
         };
 
         public const int MinDim = 640;
@@ -34,7 +36,7 @@ namespace Sdo.Settings
         {
             if (IsValid(w, h)) return new ScreenSize(w, h);
             long target = (long)w * h;
-            ScreenSize best = Presets[2]; // 1280x720 default
+            ScreenSize best = Presets[1]; // 1024×768 seed (always overwritten by the nearest-area preset below)
             long bestDist = long.MaxValue;
             foreach (var p in Presets)
             {

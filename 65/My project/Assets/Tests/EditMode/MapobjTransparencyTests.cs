@@ -96,6 +96,27 @@ namespace Sdo.Tests
             Assert.AreEqual(DdsAlphaMode.Blend, DdsLoader.GetAlphaMode(MakeDds("DXT5", block)));
         }
 
+        // The mapobj depth-write fix (SCN0009 GUATAN 掛毯 穿模) routes an ANIMATED prop to the cutout (ZWrite On)
+        // shader when its texture is GetSceneAlphaMode==Cutout. Pin the two decision points the gate relies on:
+        [Test]
+        public void GetSceneAlphaMode_Dxt3_MostlyOpaqueWithHoles_IsCutout()
+        {
+            // guantan.dds profile: ~91% opaque body + ~6% hard-transparent holes, almost no midtone → Cutout.
+            var block = new byte[16];
+            for (int i = 0; i < 8; i++) block[i] = 0xFF;   // all opaque
+            block[0] = 0xF0;                               // one texel fully transparent (1/16 = 6.25% hole)
+            Assert.AreEqual(DdsAlphaMode.Cutout, DdsLoader.GetSceneAlphaMode(MakeDds("DXT3", block)));
+        }
+
+        [Test]
+        public void GetSceneAlphaMode_Dxt3_SoftGradient_IsBlend()
+        {
+            // A soft/glow cloth (uniform midtone, no hard holes) must stay Blend so the gate does NOT depth-write it.
+            var block = new byte[16];
+            for (int i = 0; i < 8; i++) block[i] = 0x99;   // alpha 153/255 everywhere → soft
+            Assert.AreEqual(DdsAlphaMode.Blend, DdsLoader.GetSceneAlphaMode(MakeDds("DXT3", block)));
+        }
+
         [Test]
         public void LooksLikeAdditiveGlow_Detects_Soft_Bright_Dxt3()
         {

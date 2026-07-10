@@ -32,6 +32,14 @@
    "v": "オン"
   },
   {
+   "k": "common.enabled",
+   "v": "オン"
+  },
+  {
+   "k": "common.disabled",
+   "v": "オフ"
+  },
+  {
    "k": "app.title",
    "v": "ダンス Online"
   },
@@ -258,10 +266,6 @@
   {
    "k": "songselect.mode_normal",
    "v": "ノーマルモード"
-  },
-  {
-   "k": "songselect.mode_showtime",
-   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",

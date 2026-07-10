@@ -55,6 +55,45 @@ namespace Sdo.UI.Util
             }
         }
 
+        // 華康儷中黑 (DFLiHei) — the face the user hand-baked the OPTION dialog text in. BUNDLED with the game
+        // (Assets/Resources/Fonts/DFLiHei.ttc) so it renders on ANY machine, not just one with the font installed.
+        // Used ONLY for the OPTION dialog's dynamic text (the 進階 tab). Load order: bundled resource → OS-installed
+        // face → Cjk (SimSun/Source Han Sans) so the dialog never renders tofu even if the ttc is missing/unreadable.
+        public const string LiheiFontResource = "Fonts/DFLiHei";
+        private static TMP_FontAsset _lihei; private static bool _liheiTried;
+        public static TMP_FontAsset Lihei
+        {
+            get
+            {
+                if (_liheiTried) return _lihei;
+                _liheiTried = true;
+                var face = BuildResource(LiheiFontResource)
+                        ?? BuildOs(new[] { "DFLiHei-Md", "DFPLiHei-Md", "華康儷中黑", "華康儷中黑(P)", "DFLiHei", "DFPLiHei" });
+                if (face != null)
+                {
+                    face.name = "DFLiHei";
+                    var bundled = BuildBundled();
+                    if (bundled != null) AddFallback(face, bundled);   // rare glyphs fall through to Source Han Sans
+                    _lihei = face;
+                }
+                else
+                {
+                    _lihei = Cjk;   // face unavailable → reuse the SimSun/bundled face so text still shows
+                }
+                return _lihei;
+            }
+        }
+
+        /// <summary>Build a TMP asset from a Font imported under Resources (bundled with the game). Null if absent or
+        /// it fails to rasterize CJK (→ caller falls back to the OS face).</summary>
+        private static TMP_FontAsset BuildResource(string path)
+        {
+            var f = Resources.Load<Font>(path);
+            if (f == null) return null;
+            try { var fa = TMP_FontAsset.CreateFontAsset(f); if (fa != null && Probe(fa)) return fa; } catch { }
+            return null;
+        }
+
         // fallbackFontAssetTable is NULL on runtime-created assets (TMP only allocates it for serialized ones);
         // .Add() without this guard NREs and aborts whatever screen is mid-build.
         private static void AddFallback(TMP_FontAsset primary, TMP_FontAsset fallback)

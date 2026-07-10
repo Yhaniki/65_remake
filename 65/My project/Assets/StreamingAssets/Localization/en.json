@@ -32,6 +32,14 @@
    "v": "On"
   },
   {
+   "k": "common.enabled",
+   "v": "On"
+  },
+  {
+   "k": "common.disabled",
+   "v": "Off"
+  },
+  {
    "k": "app.title",
    "v": "Dance Online"
   },
@@ -258,10 +266,6 @@
   {
    "k": "songselect.mode_normal",
    "v": "Normal Mode"
-  },
-  {
-   "k": "songselect.mode_showtime",
-   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",

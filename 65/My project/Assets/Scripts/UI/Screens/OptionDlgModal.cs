@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using Sdo.Game;
 using Sdo.Localization;
 using Sdo.Settings;
 using Sdo.UI.Util;
@@ -11,35 +12,33 @@ using Sdo.UI.Util;
 namespace Sdo.UI.Screens
 {
     /// <summary>
-    /// OPTION dialog — a faithful rebuild of the original OPTIONDLG on the exact official pink frame
-    /// (<see cref="OptionDlgArt"/>, baked Chinese painted out) with all text overlaid as dynamic localized TMP.
-    /// Three tabs: 畫面 (resolution / display mode / vsync / language, from the real DisplaySettings), 音效
-    /// (three volume sliders), 鍵盤 (faithful 4-key rebinding — primary + auxiliary — persisted to
-    /// <see cref="KeyBindSettings"/> and consumed by ScreenGameplay). Replaces the old plain SettingsModal.
-    /// Coordinates follow OPTIONDLG.XML's 800×600 layout (top-left origin, y-down → AddSprite maps it).
+    /// OPTION dialog — a faithful rebuild of the original OPTIONDLG on the official pink frame (<see cref="OptionDlgArt"/>).
+    /// FOUR tabs, using the OFFICIAL baked tab art (遊戲/音效/鍵盤 + a custom 進階): 音效 (three volume sliders), 鍵盤
+    /// (faithful 4-key rebinding), 遊戲 (OptionGameWindow — 遊戲畫面/泛光/NOTES面板/特效/視角/呼叫卡/透明度, its labels
+    /// and option captions BAKED into the board so we overlay only selection dots + the transparency handle), and 進階
+    /// (display settings — 視窗大小/顯示模式/垂直同步/語言 — the only page with dynamic text, drawn in 華康儷中黑 with the
+    /// official colours: 標題/pill 標籤 = #FFF7D9, 內容 = #A5187F). Replaces the old plain SettingsModal.
     /// </summary>
     public sealed class OptionDlgModal : MonoBehaviour
     {
-        // ---- palette (dark text reads on the light sunken board; white on the magenta pills/frame) ----
-        private static readonly Color BtnText = Color.white;
-        private static readonly Color Header = new Color32(0xC0, 0x36, 0x86, 0xFF); // section headers (matches the original magenta pills)
-        private static readonly Color LabelC = new Color32(0x7A, 0x2C, 0x5C, 0xFF); // row labels
-        private static readonly Color ValueC = new Color32(0x53, 0x2A, 0x48, 0xFF); // selector/percent values
-        private static readonly Color KeyText = new Color32(0x00, 0x00, 0xB0, 0xFF);   // blue text fallback for keys with no glyph (matches the baked glyph blue)
+        // ---- palette ----
+        private static readonly Color TitleCream = new Color32(0xFF, 0xF7, 0xD9, 0xFF);    // 選項標題 + pill 標籤字 (官方指定)
+        private static readonly Color ContentMagenta = new Color32(0xA5, 0x18, 0x7F, 0xFF); // 內容字 (官方指定)
+        private static readonly Color Header = new Color32(0xC0, 0x36, 0x86, 0xFF);         // ◀▶ selector arrows
+        private static readonly Color KeyText = new Color32(0x00, 0x00, 0xB0, 0xFF);        // blue fallback for glyphless keys
 
         private static readonly string[] ModeIds = { "Windowed", "Fullscreen", "Borderless" };
 
         private CanvasGroup _cg;
         private RectTransform _window; private CanvasGroup _windowCg; private WindowAnim _anim; // ROOMDLG-style spin-zoom in/out
-        private RectTransform _videoTab, _audioTab, _keyTab;
+        private RectTransform _audioTab, _keyTab, _gameTab, _advTab;
         private MiniSelect _resSel, _modeSel, _langSel;
-        private Image _vsyncDot; private TextMeshProUGUI _vsyncTxt;
         private Slider _sBgm, _sMusic, _sSfx;
-        private Image _audioBoard;
+        private Image _board, _audioBoard, _advBoard;                               // 遊戲 / 音效 / 進階 boards
+        private Image[] _tabBtns; private Sprite[] _tabNormal, _tabActive;          // official tab art + active-state swap
         private readonly TextMeshProUGUI[,] _capLabel = new TextMeshProUGUI[2, 4]; // [slot 0=primary/1=aux, lane] — text fallback for glyphless keys
         private readonly Image[,] _capImg = new Image[2, 4];                        // key-cap chip sprite (purple idle / silver capturing)
         private readonly Image[,] _capGlyph = new Image[2, 4];                      // bound-key letter glyph (LOBBYDLG/KEYS/*.PNG)
-        private Image _board;                                                       // generic board (hidden on the keyboard tab so the baked 4-key board shows)
 
         // working copy (committed to settings on Save)
         private int _resIndex, _modeIndex; private bool _vsync;
@@ -48,6 +47,13 @@ namespace Sdo.UI.Screens
         private readonly string[] _prim = new string[4];
         private readonly string[] _aux = new string[4];
         private int _capSlot = -1, _capLane = -1;                   // active key-capture target (-1 = none)
+        private readonly List<Action> _advDots = new List<Action>(); // 進階 tab dots (vsync) repaint from their bool
+
+        // 遊戲 (OptionGameWindow) working copy — committed to settings.gameplay on Save. See BuildGame.
+        private bool _gpAspectFill, _gpBloom, _gpNotesLeft, _gpFxPlayer, _gpFxScene, _gpViewAuto, _gpCallShow;
+        private float _gpPanelOpacity;
+        private Slider _gpOpacitySlider;
+        private readonly List<Action> _gameRefresh = new List<Action>();   // re-paint every game-tab dot from its bool
 
         private static string L(string k) => LocalizationManager.Get(k);
 
@@ -73,34 +79,51 @@ namespace Sdo.UI.Screens
             var close = UIKit.AddSpriteButton(root, "Close", OptionDlgArt.CloseN, OptionDlgArt.CloseN, OptionDlgArt.CloseP, 561, 134);
             close.onClick.AddListener(Close);
 
-            // tabs (reuse a cleaned button pill as the chip; active = full colour, inactive = dimmed).
-            // Visual left→right = 鍵盤 | 音效 | 畫面; tabX[i] places tab index i (0=video,1=audio,2=keyboard) at
-            // its screen x while indices keep their meaning (ShowTab / boards / bodies unchanged).
-            _tabBtns = new Image[3];
-            string[] tabKeys = { "option.tab.video", "option.tab.audio", "option.tab.keyboard" };
-            float[] tabX = { 456f, 351f, 246f }; // video→right, audio→middle, keyboard→left
-            for (int i = 0; i < 3; i++)
+            // tabs — OFFICIAL baked pill art (each carries its 中文), active tab swaps to its deeper "pushed" state.
+            // Visual left→right = 鍵盤 | 音效 | 遊戲 | 進階 so 遊戲 sits SECOND-FROM-THE-RIGHT and 進階 rightmost (as
+            // requested). Internal index: 0=audio, 1=keyboard, 2=game, 3=advanced; tabX[idx] places it at its screen x.
+            _tabBtns = new Image[4];
+            _tabNormal = new[] { OptionDlgArt.TabAudioN, OptionDlgArt.TabKeyN, OptionDlgArt.TabGameN, OptionDlgArt.TabAdvN };
+            _tabActive = new[] { OptionDlgArt.TabAudioA, OptionDlgArt.TabKeyA, OptionDlgArt.TabGameA, OptionDlgArt.TabAdvA };
+            // Placed by CENTRE (pivot 0.5,1) with a FIXED size — normal/active are same-size so the sprite swap never
+            // moves the pill. Built in visual left→right order (鍵盤 | 音效 | 遊戲 | 進階) so pills shingle
+            // left-under-right; ShowTab raises the active pill to the front. Centres are computed from three knobs so
+            // the layout is retuned by changing ONE number:
+            //   ▶ TabSpacing = 相鄰 tab 中心距(px)。越小越擠(<pill寬 91-99 會重疊成連在一起)，越大越開。目前 80。
+            //   ▶ TabBarCenterX = 整條 tab bar 的水平中心(px)。想整條左右移就改這個(視窗 800 寬、對話框中心≈414)。
+            //   ▶ TabBarY = tab 的上緣高度(px，越小越高)。
+            const float TabSpacing = 86f, TabBarCenterX = 412f, TabBarY = 188f;
+            int[] visualOrder = { 1, 0, 2, 3 };          // create L→R by index (鍵盤,音效,遊戲,進階)
+            for (int slot = 0; slot < visualOrder.Length; slot++)
             {
-                int idx = i;
-                var b = UIKit.AddSpriteButton(root, "Tab" + i, OptionDlgArt.SaveN, OptionDlgArt.SaveN, OptionDlgArt.SaveP, tabX[i], 182);
-                _tabBtns[i] = b.targetGraphic as Image;
-                var lab = UIKit.AddLocText(b.transform, "L", tabKeys[i], 15, BtnText, TextAlignmentOptions.Center);
-                UIKit.Stretch(lab);
-                b.onClick.AddListener(() => ShowTab(idx));
+                int id = visualOrder[slot];
+                float cx = TabBarCenterX + (slot - (visualOrder.Length - 1) / 2f) * TabSpacing;
+                var img = UIKit.AddImage(root, "Tab" + id, Color.white, raycast: true);
+                img.sprite = _tabNormal[id];
+                var rt = img.rectTransform;
+                rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0.5f, 1f);
+                rt.anchoredPosition = new Vector2(cx, -TabBarY);
+                rt.sizeDelta = _tabNormal[id] != null ? _tabNormal[id].rect.size : new Vector2(94f, 38f);
+                var btn = img.gameObject.AddComponent<Button>(); btn.targetGraphic = img;
+                btn.onClick.AddListener(() => ShowTab(id));
+                _tabBtns[id] = img;
             }
 
-            // per-tab boards (only one shown at a time): 畫面 uses the empty OptScreenBoard + TMP labels;
-            // 音效 uses OptVolumeBoard which has its labels + MIN…MAX tracks baked in; 鍵盤 shows neither
+            // per-tab boards (only one shown at a time): 遊戲 uses OptScreenBoard (all labels+captions baked), 音效 uses
+            // OptVolumeBoard (labels + MIN…MAX baked), 進階 uses the clean AdvBoard (we draw its text); 鍵盤 shows none
             // (the 4-key board is baked into the frame art).
             _board = UIKit.AddSprite(root, "Board", OptionDlgArt.Board, 236, 225);
             _audioBoard = UIKit.AddSprite(root, "AudioBoard", OptionDlgArt.AudioBoard, 236, 225);
+            _advBoard = UIKit.AddSprite(root, "AdvBoard", OptionDlgArt.AdvBoard, 236, 225);
 
-            _videoTab = TabBody(root, "VideoTab");
             _audioTab = TabBody(root, "AudioTab");
             _keyTab = TabBody(root, "KeyTab");
-            BuildVideo(_videoTab);
+            _gameTab = TabBody(root, "GameTab");
+            _advTab = TabBody(root, "AdvTab");
             BuildAudio(_audioTab);
             BuildKeyboard(_keyTab);
+            BuildGame(_gameTab);
+            BuildAdvanced(_advTab);
 
             // action buttons — text is baked into the button art (保存/退出/默認設置, both states), so no TMP label
             SpriteBtn(root, "Default", OptionDlgArt.DefaultN, OptionDlgArt.DefaultP, 261, 448, ResetDefaults);
@@ -122,8 +145,6 @@ namespace Sdo.UI.Screens
             SetVisible(false);
         }
 
-        private Image[] _tabBtns;
-
         private RectTransform TabBody(RectTransform root, string name)
         {
             var rt = UIKit.NewRect(root, name);
@@ -131,30 +152,75 @@ namespace Sdo.UI.Screens
             return rt;
         }
 
-        // ---------------------------------------------------------------- 畫面 tab
-        private void BuildVideo(RectTransform b)
+        // ---------------------------------------------------------------- 進階 tab (display settings, dynamic text)
+        // The only page whose text we draw (everything else is baked). Left labels sit on 深紛紅 label-pills (華康儷中黑,
+        // #FFF7D9); values / captions are #A5187F. Row 1 (垂直同步) reuses the board's baked template pill + 2 circles
+        // at the standard option columns; rows 2-4 (視窗大小/顯示模式/語言) add a cropped pill + a ◀value▶ selector.
+        private void BuildAdvanced(RectTransform b)
         {
             var resNames = new string[ResolutionPreset.Presets.Length];
             for (int i = 0; i < resNames.Length; i++) resNames[i] = ResolutionPreset.Presets[i].ToString();
 
-            LocLabel(b, "L0", "settings.resolution", 262, 254, 120, 24, 15, LabelC, TextAlignmentOptions.Left);
-            _resSel = Selector(b, 386, 252, 180, resNames, 0, i => _resIndex = i);
+            // Row 1 — 垂直同步 (開啟/關閉 radio) on the board's baked template (pill @screen 254,243 · circles @392/481,255)
+            AdvLabel(b, 243f, "settings.vsync", bakedPill: true);
+            AdvDot(b, 392f, 255f, "common.enabled", () => _vsync, () => { _vsync = true; RefreshAdv(); });
+            AdvDot(b, 481f, 255f, "common.disabled", () => !_vsync, () => { _vsync = false; RefreshAdv(); });
 
-            LocLabel(b, "L1", "settings.display_mode", 262, 292, 120, 24, 15, LabelC, TextAlignmentOptions.Left);
-            _modeSel = Selector(b, 386, 290, 180,
-                new[] { L("display.windowed"), L("display.fullscreen"), L("display.borderless") }, 0, i => _modeIndex = i);
+            // Rows 2-4 — a cropped pill label + a selector
+            AdvLabel(b, 283f, "settings.resolution", bakedPill: false);
+            _resSel = AdvSelector(b, 283f, resNames, i => _resIndex = i);
 
-            LocLabel(b, "L2", "settings.vsync", 262, 330, 120, 24, 15, LabelC, TextAlignmentOptions.Left);
-            _vsyncDot = AddToggle(b, 390, 331, () => { _vsync = !_vsync; RefreshVSync(); });
-            _vsyncTxt = Label(b, "VSyncTxt", "", 414, 330, 90, 24, 15, ValueC, TextAlignmentOptions.Left);
+            AdvLabel(b, 323f, "settings.display_mode", bakedPill: false);
+            _modeSel = AdvSelector(b, 323f, new[] { L("display.windowed"), L("display.fullscreen"), L("display.borderless") }, i => _modeIndex = i);
 
-            LocLabel(b, "L3", "settings.language", 262, 368, 120, 24, 15, LabelC, TextAlignmentOptions.Left);
-            _langSel = Selector(b, 386, 366, 180,
-                new[] { "繁體中文", "简体中文", "English", "日本語" }, 0, i =>
-                {
-                    _lang = IndexToLang(i);
-                    LocalizationManager.SetLanguage(_lang);           // live preview
-                });
+            AdvLabel(b, 363f, "settings.language", bakedPill: false);
+            _langSel = AdvSelector(b, 363f, new[] { "繁體中文", "简体中文", "English", "日本語" }, i =>
+            {
+                _lang = IndexToLang(i);
+                LocalizationManager.SetLanguage(_lang);           // live preview
+            });
+        }
+
+        // 進階 helpers ---------------------------------------------------------
+        private const float AdvPillX = 254f, AdvPillW = 95f, AdvPillH = 21f;
+
+        // A left-side 深紛紅 label pill + its 華康儷中黑 caption. bakedPill=true uses the pill already on the board
+        // (row 1, the template); otherwise a cropped AdvPill sprite is placed at (AdvPillX, pillTopY).
+        private void AdvLabel(RectTransform b, float pillTopY, string key, bool bakedPill)
+        {
+            if (!bakedPill) UIKit.AddSprite(b, "advpill", OptionDlgArt.AdvPill, AdvPillX, pillTopY);
+            var t = AdvText(b, "advlab", key, 14, TitleCream, TextAlignmentOptions.Center);
+            PlaceTL(t.rectTransform, AdvPillX, pillTopY + 1.5f, AdvPillW, AdvPillH - 3f);
+        }
+
+        // A radio dot overlaid on a board circle at screen (cx,cy) + a 華康儷中黑 caption. Selected → filled RadioOn;
+        // otherwise transparent so the baked (empty) circle shows through. The whole dot+caption box is clickable.
+        private void AdvDot(RectTransform b, float cx, float cy, string capKey, Func<bool> isOn, Action onPick)
+        {
+            var box = UIKit.NewRect(b, "advopt");
+            box.anchorMin = box.anchorMax = new Vector2(0f, 1f); box.pivot = new Vector2(0f, 1f);
+            box.anchoredPosition = new Vector2(cx - 9f, -(cy - 10f)); box.sizeDelta = new Vector2(72f, 20f);
+            var hit = box.gameObject.AddComponent<Image>(); hit.color = new Color(1f, 1f, 1f, 0f); hit.raycastTarget = true;
+            var btn = box.gameObject.AddComponent<Button>(); btn.targetGraphic = hit;
+            btn.onClick.AddListener(() => { onPick(); RefreshAdv(); });
+            var dot = OptionDot(box);
+            var cap = AdvText(box, "cap", capKey, 13, ContentMagenta, TextAlignmentOptions.Left);
+            UIKit.Stretch(cap, 20, 0, 0, 0);
+            _advDots.Add(() => { if (dot != null) dot.color = isOn() ? Color.white : new Color(1f, 1f, 1f, 0f); });
+        }
+
+        private MiniSelect AdvSelector(RectTransform b, float pillTopY, string[] opts, Action<int> onChange)
+            => Selector(b, 388f, pillTopY - 3f, 172f, opts, 0, onChange);
+
+        private void RefreshAdv() { foreach (var r in _advDots) r(); }
+
+        // Localized TMP in 華康儷中黑 BOLD (falls back to Cjk if the face isn't installed) — used only on the 進階 tab.
+        private TextMeshProUGUI AdvText(Transform p, string name, string key, float size, Color col, TextAlignmentOptions align)
+        {
+            var t = UIKit.AddLocText(p, name, key, size, col, align);
+            var f = UIFont.Lihei; if (f != null) t.font = f;
+            t.fontStyle = FontStyles.Bold;
+            return t;
         }
 
         // ---------------------------------------------------------------- 音效 tab
@@ -219,6 +285,96 @@ namespace Sdo.UI.Screens
             _capLabel[slot, lane] = lab;
         }
 
+        // ---------------------------------------------------------------- 遊戲 tab (OptionGameWindow)
+        // The board (OptScreenBoard) has EVERY label + option caption BAKED (遊戲畫面 全屏/窗口, 全屏泛光效果 開啟/關閉,
+        // NOTES面板位置 屏幕左邊/屏幕中央, 遊戲特效 人物特效/場景特效, 遊戲視角 固定/默認, 呼叫卡遊戲中顯示 開啟/關閉, 面板
+        // 透明度 MIN…MAX). So we overlay ONLY: a selection dot on each baked circle (col A x=392, col B x=481; rows
+        // 248/274/300/326/352/378) + the transparency handle riding the baked track (screen x 415..545 @ y≈405). Some
+        // rows are wired to real behaviour (see GameplaySettings); 全屏泛光/音符面板/呼叫卡 just persist for fidelity.
+        private static readonly float[] GameRowY = { 248f, 274f, 300f, 326f, 352f, 378f };
+        private const float GameOptAX = 392f, GameOptBX = 481f;
+
+        private void BuildGame(RectTransform b)
+        {
+            // row 1 遊戲畫面: A=全屏(fill→Stretch) · B=窗口(→Pillarbox 左右黑邊)
+            GameDot(b, GameOptAX, GameRowY[0], () => _gpAspectFill,  () => _gpAspectFill = true);
+            GameDot(b, GameOptBX, GameRowY[0], () => !_gpAspectFill, () => _gpAspectFill = false);
+            // row 2 全屏泛光效果: A=開啟 · B=關閉 (persist only)
+            GameDot(b, GameOptAX, GameRowY[1], () => _gpBloom,  () => _gpBloom = true);
+            GameDot(b, GameOptBX, GameRowY[1], () => !_gpBloom, () => _gpBloom = false);
+            // row 3 NOTES面板位置: A=屏幕左邊 · B=屏幕中央 (persist only)
+            GameDot(b, GameOptAX, GameRowY[2], () => _gpNotesLeft,  () => _gpNotesLeft = true);
+            GameDot(b, GameOptBX, GameRowY[2], () => !_gpNotesLeft, () => _gpNotesLeft = false);
+            // row 4 遊戲特效: A=人物特效 · B=場景特效 (two INDEPENDENT checkboxes)
+            GameDot(b, GameOptAX, GameRowY[3], () => _gpFxPlayer, () => _gpFxPlayer = !_gpFxPlayer);
+            GameDot(b, GameOptBX, GameRowY[3], () => _gpFxScene,  () => _gpFxScene = !_gpFxScene);
+            // row 5 遊戲視角: A=固定(!auto) · B=默認(auto)   ← baked order: 固定 left, 默認 right
+            GameDot(b, GameOptAX, GameRowY[4], () => !_gpViewAuto, () => _gpViewAuto = false);
+            GameDot(b, GameOptBX, GameRowY[4], () => _gpViewAuto,  () => _gpViewAuto = true);
+            // row 6 呼叫卡遊戲中顯示: A=開啟 · B=關閉 (persist only)
+            GameDot(b, GameOptAX, GameRowY[5], () => _gpCallShow,  () => _gpCallShow = true);
+            GameDot(b, GameOptBX, GameRowY[5], () => !_gpCallShow, () => _gpCallShow = false);
+            // 面板透明度 slider (0..1.6X) → note 面板 alpha 倍率 (ScreenGameplay.boardAlpha). Handle travel is kept
+            // INSIDE the baked MIN(…405)/MAX(526…) text — handle is 43px wide so centre range 430..502 clears both.
+            _gpOpacitySlider = AddBakedSlider(b, 430f, 502f, 405f, v => _gpPanelOpacity = v);
+        }
+
+        // A selection dot overlaid on a baked board circle at screen (cx,cy) + a clickable box covering the dot and its
+        // baked caption. Selected → filled RadioOn shows; otherwise transparent so the baked (empty) circle shows.
+        private void GameDot(RectTransform b, float cx, float cy, Func<bool> isOn, Action onPick)
+        {
+            var box = UIKit.NewRect(b, "gopt");
+            box.anchorMin = box.anchorMax = new Vector2(0f, 1f); box.pivot = new Vector2(0f, 1f);
+            box.anchoredPosition = new Vector2(cx - 9f, -(cy - 10f)); box.sizeDelta = new Vector2(80f, 20f);
+            var hit = box.gameObject.AddComponent<Image>(); hit.color = new Color(1f, 1f, 1f, 0f); hit.raycastTarget = true;
+            var btn = box.gameObject.AddComponent<Button>(); btn.targetGraphic = hit;
+            btn.onClick.AddListener(() => { onPick(); RefreshGame(); });
+            var dot = OptionDot(box);
+            _gameRefresh.Add(() => { if (dot != null) dot.color = isOn() ? Color.white : new Color(1f, 1f, 1f, 0f); });
+        }
+
+        // A filled RadioOn dot pinned to the left of a clickable option box (box-local x=9 = the baked circle centre).
+        private static Image OptionDot(RectTransform box)
+        {
+            var dot = UIKit.AddImage(box, "dot", Color.white); dot.raycastTarget = false;
+            dot.sprite = OptionDlgArt.RadioOn;
+            var drt = dot.rectTransform;
+            drt.anchorMin = drt.anchorMax = new Vector2(0f, 0.5f); drt.pivot = new Vector2(0.5f, 0.5f);
+            drt.sizeDelta = OptionDlgArt.RadioOn != null ? OptionDlgArt.RadioOn.rect.size : new Vector2(15f, 15f);
+            drt.anchoredPosition = new Vector2(9f, 0f);
+            return dot;
+        }
+
+        private void RefreshGame() { foreach (var r in _gameRefresh) r(); }
+
+        // A handle-only slider whose official OptionDlg_Transparence handle rides between two screen x's (x0..x1) at a
+        // baked track's y — the track/MIN/MAX are baked, so track+fill are invisible. minValue 0 .. maxValue 1.6.
+        private Slider AddBakedSlider(RectTransform p, float x0, float x1, float y, Action<float> onChange)
+        {
+            const float H = 22f; float w = x1 - x0;
+            var rt = UIKit.NewRect(p, "tslider");
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = new Vector2(x0, -(y - H / 2f)); rt.sizeDelta = new Vector2(w, H);
+            var bg = rt.gameObject.AddComponent<Image>(); bg.color = new Color(1f, 1f, 1f, 0f); bg.raycastTarget = true; // drag area
+            var slider = rt.gameObject.AddComponent<Slider>();
+
+            var fillArea = UIKit.NewRect(rt, "FillArea");
+            fillArea.anchorMin = Vector2.zero; fillArea.anchorMax = Vector2.one; fillArea.offsetMin = Vector2.zero; fillArea.offsetMax = Vector2.zero;
+            var fill = UIKit.AddImage(fillArea, "Fill", new Color(1f, 1f, 1f, 0f)).rectTransform;
+            fill.anchorMin = Vector2.zero; fill.anchorMax = Vector2.one; fill.sizeDelta = Vector2.zero;
+
+            var handle = UIKit.AddImage(fill, "Handle", Color.white); handle.sprite = OptionDlgArt.SliderHandle; handle.raycastTarget = false;
+            handle.rectTransform.anchorMin = handle.rectTransform.anchorMax = new Vector2(1f, 0.5f);
+            handle.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            handle.rectTransform.sizeDelta = OptionDlgArt.SliderHandle != null ? OptionDlgArt.SliderHandle.rect.size : new Vector2(43, 23);
+            handle.rectTransform.anchoredPosition = Vector2.zero;
+
+            slider.fillRect = fill; slider.direction = Slider.Direction.LeftToRight;
+            slider.minValue = 0f; slider.maxValue = GameplaySettings.MaxPanelOpacity; slider.targetGraphic = bg;
+            slider.onValueChanged.AddListener(v => onChange(v));
+            return slider;
+        }
+
         // ---------------------------------------------------------------- key capture (Update)
         private static readonly KeyCode[] Bindable = BuildBindable();
 
@@ -278,18 +434,22 @@ namespace Sdo.UI.Screens
             s.keys ??= new KeyBindSettings();
             Array.Copy(KeyBindSettings.SanitizeNames(s.keys.lane4, KeyBindSettings.DefaultPrimary), _prim, 4);
             Array.Copy(KeyBindSettings.SanitizeNames(s.keys.lane4aux, KeyBindSettings.DefaultAux), _aux, 4);
+            s.gameplay ??= new GameplaySettings();
+            LoadGame(s.gameplay);
             CancelCapture();
 
             _resSel.Set(_resIndex, false);
             _modeSel.Set(_modeIndex, false);
             _langSel.Set(LangToIndex(_lang), false);
-            RefreshVSync();
+            RefreshAdv();
             if (_sBgm) _sBgm.value = _bgm;
             if (_sMusic) _sMusic.value = _music;
             if (_sSfx) _sSfx.value = _sfx;
             RefreshAllCaps();
+            if (_gpOpacitySlider) _gpOpacitySlider.value = _gpPanelOpacity;
+            RefreshGame();
 
-            ShowTab(1);   // open on the 音效 (audio) page by default
+            ShowTab(2);   // open on the 遊戲 (game) page by default
             SetVisible(true);
             if (_windowCg != null) _windowCg.blocksRaycasts = true;
             if (_anim != null) { _anim.ResetOpen(); _anim.PlayIn(); }   // spin-zoom in (same as song-select)
@@ -317,10 +477,14 @@ namespace Sdo.UI.Screens
             s.keys ??= new KeyBindSettings();
             s.keys.lane4 = (string[])_prim.Clone();
             s.keys.lane4aux = (string[])_aux.Clone();
+            s.gameplay ??= new GameplaySettings();
+            StoreGame(s.gameplay);
 
             DisplaySettingsManager.Save();
             DisplaySettingsManager.ApplyDisplay();
             AudioListener.volume = _music;
+            // 遊戲畫面 (全屏/黑邊) 立即套用：其餘遊戲頁偏好（特效/視角/透明度）在下一場遊戲開局讀取。
+            AspectController.SetMode(_gpAspectFill ? AspectMode.Stretch : AspectMode.Pillarbox);
             _applied = true; _entryLang = _lang;
             AnimatedHide();
         }
@@ -333,15 +497,36 @@ namespace Sdo.UI.Screens
             _vsync = d.display.vsync; _bgm = d.audio.bgm; _music = d.audio.gameMusic; _sfx = d.audio.sfx;
             Array.Copy(d.keys.lane4, _prim, 4);
             Array.Copy(d.keys.lane4aux, _aux, 4);
+            LoadGame(d.gameplay);
             CancelCapture();
 
             _resSel.Set(_resIndex, false);
             _modeSel.Set(_modeIndex, false);
-            RefreshVSync();
+            RefreshAdv();
             if (_sBgm) _sBgm.value = _bgm;
             if (_sMusic) _sMusic.value = _music;
             if (_sSfx) _sSfx.value = _sfx;
             RefreshAllCaps();
+            if (_gpOpacitySlider) _gpOpacitySlider.value = _gpPanelOpacity;
+            RefreshGame();
+        }
+
+        // ---- 遊戲 tab working-copy <-> GameplaySettings ----
+        private void LoadGame(GameplaySettings g)
+        {
+            g ??= new GameplaySettings();
+            _gpAspectFill = g.fullscreenFill; _gpBloom = g.bloom; _gpNotesLeft = g.notesPanelLeft;
+            _gpFxPlayer = g.effectCharacter; _gpFxScene = g.effectScene; _gpViewAuto = g.cameraAuto;
+            _gpCallShow = g.callCardInGame;
+            _gpPanelOpacity = Mathf.Clamp(g.panelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
+        }
+
+        private void StoreGame(GameplaySettings g)
+        {
+            g.fullscreenFill = _gpAspectFill; g.bloom = _gpBloom; g.notesPanelLeft = _gpNotesLeft;
+            g.effectCharacter = _gpFxPlayer; g.effectScene = _gpFxScene; g.cameraAuto = _gpViewAuto;
+            g.callCardInGame = _gpCallShow;
+            g.panelOpacity = Mathf.Clamp(_gpPanelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
         }
 
         private void Close()
@@ -352,15 +537,21 @@ namespace Sdo.UI.Screens
             AnimatedHide();
         }
 
+        // Tab indices: 0=音效, 1=鍵盤, 2=遊戲, 3=進階. Each shows its body + its board (鍵盤 has none — the 4-key board
+        // is baked into the frame). The active tab swaps to its deeper "pushed" pill art; the rest use the normal art.
         private void ShowTab(int i)
         {
-            _videoTab.gameObject.SetActive(i == 0);
-            _audioTab.gameObject.SetActive(i == 1);
-            _keyTab.gameObject.SetActive(i == 2);
-            if (_board != null) _board.gameObject.SetActive(i == 0);       // 畫面 board
-            if (_audioBoard != null) _audioBoard.gameObject.SetActive(i == 1); // 音效 board (baked labels); 鍵盤 shows the frame's baked 4-key board
-            for (int t = 0; t < 3; t++)
-                if (_tabBtns[t] != null) _tabBtns[t].color = (t == i) ? Color.white : new Color(1, 1, 1, 0.55f);
+            _audioTab.gameObject.SetActive(i == 0);
+            _keyTab.gameObject.SetActive(i == 1);
+            _gameTab.gameObject.SetActive(i == 2);
+            _advTab.gameObject.SetActive(i == 3);
+            if (_audioBoard != null) _audioBoard.gameObject.SetActive(i == 0);
+            if (_board != null) _board.gameObject.SetActive(i == 2);       // 遊戲 board (baked labels)
+            if (_advBoard != null) _advBoard.gameObject.SetActive(i == 3); // 進階 board (clean)
+            // swap the sprite ONLY (size stays fixed → no jump; normal/active are same-size crops)
+            for (int t = 0; t < _tabBtns.Length; t++)
+                if (_tabBtns[t] != null) _tabBtns[t].sprite = (t == i) ? _tabActive[t] : _tabNormal[t];
+            if (_tabBtns[i] != null) _tabBtns[i].transform.SetAsLastSibling();   // active pill on top of its overlapping neighbours
         }
 
         private void SetVisible(bool on)
@@ -368,13 +559,6 @@ namespace Sdo.UI.Screens
             _cg.alpha = on ? 1f : 0f;
             _cg.interactable = on;
             _cg.blocksRaycasts = on;
-        }
-
-        // ---------------------------------------------------------------- widget refreshers
-        private void RefreshVSync()
-        {
-            if (_vsyncDot != null) _vsyncDot.sprite = _vsync ? OptionDlgArt.RadioOn : OptionDlgArt.RadioOff;
-            if (_vsyncTxt != null) _vsyncTxt.text = L(_vsync ? "common.on" : "common.off");
         }
 
         private void RefreshAllCaps()
@@ -401,15 +585,6 @@ namespace Sdo.UI.Screens
         {
             var b = UIKit.AddSpriteButton(p, name, n, n, pushed, x, y);
             b.onClick.AddListener(() => onClick());
-        }
-
-        private Image AddToggle(RectTransform p, float x, float y, Action onClick)
-        {
-            var img = UIKit.AddSprite(p, "toggle", OptionDlgArt.RadioOff, x, y, raycast: true);
-            var btn = img.gameObject.AddComponent<Button>();
-            btn.targetGraphic = img;
-            btn.onClick.AddListener(() => onClick());
-            return img;
         }
 
         /// <summary>A bare handle-slider for the 音效 tab: the MIN…MAX track is baked into OptVolumeBoard, so the
@@ -450,7 +625,9 @@ namespace Sdo.UI.Screens
             box.anchorMin = box.anchorMax = new Vector2(0f, 1f); box.pivot = new Vector2(0f, 1f);
             box.anchoredPosition = new Vector2(x, -y); box.sizeDelta = new Vector2(w, 26f);
 
-            var val = UIKit.AddText(box, "Val", "", 15, ValueC, TextAlignmentOptions.Center);
+            var val = UIKit.AddText(box, "Val", "", 14, ContentMagenta, TextAlignmentOptions.Center);
+            var lf = UIFont.Lihei; if (lf != null) val.font = lf;
+            val.fontStyle = FontStyles.Bold;   // 紫色內容字加粗 (官方指定)
             UIKit.Stretch(val, 26, 0, 26, 0);
 
             var prev = ArrowButton(box, "Prev", "◀", true);
@@ -472,22 +649,6 @@ namespace Sdo.UI.Screens
             rt.sizeDelta = new Vector2(26f, 0f);
             rt.anchoredPosition = Vector2.zero;
             return b;
-        }
-
-        private TextMeshProUGUI Label(RectTransform p, string name, string txt, float x, float y, float w, float h,
-            float size, Color col, TextAlignmentOptions align)
-        {
-            var t = UIKit.AddText(p, name, txt, size, col, align);
-            PlaceTL(t.rectTransform, x, y, w, h);
-            return t;
-        }
-
-        private TextMeshProUGUI LocLabel(RectTransform p, string name, string key, float x, float y, float w, float h,
-            float size, Color col, TextAlignmentOptions align)
-        {
-            var t = UIKit.AddLocText(p, name, key, size, col, align);
-            PlaceTL(t.rectTransform, x, y, w, h);
-            return t;
         }
 
         private static void PlaceTL(RectTransform rt, float x, float y, float w, float h)

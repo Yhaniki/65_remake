@@ -71,10 +71,31 @@ namespace Sdo.UI.Util
         public static Sprite FrameTR => Crop(611, 0, 133, 256);
         public static Sprite FrameBL => Crop(355, 256, 256, 120);
         public static Sprite FrameBR => Crop(611, 256, 138, 120);
-        // flat inner board (sunken panel) — 畫面 tab (OptScreenBoard); empty, TMP labels overlaid.
+        // 遊戲 tab board (OptScreenBoard) — the OptionGameWindow board with ALL its labels + option captions BAKED
+        // (遊戲畫面/全屏泛光效果/NOTES面板位置/… + 全屏/窗口/開啟/關閉/… + the 面板透明度 MIN…MAX track). We overlay only
+        // the selection dots + the transparency handle at the measured screen positions (see OptionDlgModal.BuildGame).
         public static Sprite Board => Crop(674, 384, 350, 206);
         // 音效 tab board (OptVolumeBoard) — labels 背景音樂/遊戲音樂/遊戲音效 + MIN…MAX tracks baked into the art.
         public static Sprite AudioBoard => Crop(324, 384, 350, 207);
+        // 進階 tab board — a CLEAN板 (no baked text) carrying one 深紛紅 label-pill template + two option circles;
+        // OptionDlgModal overlays the display settings (視窗大小/顯示模式/垂直同步/語言) as dynamic 華康儷中黑 TMP text.
+        public static Sprite AdvBoard => Crop(324, 669, 351, 214);
+        // reusable 深紛紅 label-pill (blank) cropped from the 進階 board template — placed under each left-side label.
+        public static Sprite AdvPill => Crop(342, 687, 95, 21);
+        // official main-tab pills (normal = lighter/unselected, active = deeper/selected). Each carries its 中文 baked
+        // (遊戲/音效/鍵盤/進階). CRITICAL: normal + active of the SAME tab MUST be cropped to IDENTICAL dimensions and
+        // pill-centre so swapping states on select doesn't move/resize the pill (the pills share an x-centre; only the
+        // gloss/notch extents differ). Placed by centre (pivot 0.5,1) in OptionDlgModal. Measured off OPTIONDLG.clean.png.
+        public static Sprite TabAudioN => Crop(82, 81, 100, 38);
+        public static Sprite TabAudioA => Crop(82, 121, 100, 38);
+        public static Sprite TabKeyN => Crop(0, 163, 93, 38);
+        public static Sprite TabKeyA => Crop(0, 205, 93, 38);
+        public static Sprite TabGameN => Crop(173, 0, 94, 38);
+        public static Sprite TabGameA => Crop(173, 40, 94, 38);
+        // NB 進階 normal: crop TOP starts at the pill's dark top border (y=589), NOT higher — above it sits an
+        // unrelated element (a gloss dot + notch, y≈576-588) that the old y=586 crop clipped into the tab.
+        public static Sprite TabAdvN => Crop(580, 591, 95, 37);
+        public static Sprite TabAdvA => Crop(580, 631, 95, 37);
         // action buttons (text removed): normal + pushed
         public static Sprite SaveN => Crop(742, 0, 95, 33);
         public static Sprite SaveP => Crop(743, 36, 95, 33);

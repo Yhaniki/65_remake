@@ -47,7 +47,7 @@ namespace Sdo.Game
             av.Setup(hrc, idle);
             av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, false));   // default thin female (matches the dancer)
             av.RestMot = idle;
-            av.BlendSec = 0f;   // no idle↔walk crossfade in the lobby — start walking immediately (no 1s smooth)
+            av.BlendSec = 0.5f;   // 0.3s smoothstep crossfade on idle↔walk (and the mirrored head portrait) — no hard cut
 
             var bodyShader = Shader.Find("Unlit/Texture");
             var hairShader = Shader.Find("Sdo/UnlitDoubleSided") ?? bodyShader;
