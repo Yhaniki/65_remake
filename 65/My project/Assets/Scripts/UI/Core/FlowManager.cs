@@ -3,8 +3,9 @@ using System.Collections.Generic;
 
 namespace Sdo.UI.Core
 {
-    /// <summary>Front-end screens. Settings is a modal overlay, not a screen state.</summary>
-    public enum ScreenId { Lobby, Room, SongSelect, Gameplay }
+    /// <summary>Front-end screens. Settings is a modal overlay, not a screen state.
+    /// GenderSel is the standalone opening 男/女 select screen (entry state). New members appended to keep values stable.</summary>
+    public enum ScreenId { Lobby, Room, SongSelect, Gameplay, GenderSel }
 
     /// <summary>
     /// Pure-logic screen state machine. Validates transitions against an allowed-edges table and
@@ -15,13 +16,15 @@ namespace Sdo.UI.Core
         private static readonly Dictionary<ScreenId, HashSet<ScreenId>> Allowed =
             new Dictionary<ScreenId, HashSet<ScreenId>>
             {
+                { ScreenId.GenderSel, new HashSet<ScreenId> { ScreenId.Room } },   // 選完男女 → 直接進房間
                 { ScreenId.Lobby, new HashSet<ScreenId> { ScreenId.Room } },
-                { ScreenId.Room, new HashSet<ScreenId> { ScreenId.Lobby, ScreenId.SongSelect, ScreenId.Gameplay } },
+                { ScreenId.Room, new HashSet<ScreenId> { ScreenId.GenderSel, ScreenId.Lobby, ScreenId.SongSelect, ScreenId.Gameplay } },
                 { ScreenId.SongSelect, new HashSet<ScreenId> { ScreenId.Room } },
                 { ScreenId.Gameplay, new HashSet<ScreenId> { ScreenId.Room } },
             };
 
-        public ScreenId Current { get; private set; } = ScreenId.Lobby;
+        // 單機開場落在男/女選擇畫面（GenderSel）。選完 → Room。
+        public ScreenId Current { get; private set; } = ScreenId.GenderSel;
 
         /// <summary>(from, to)</summary>
         public event Action<ScreenId, ScreenId> ScreenChanged;

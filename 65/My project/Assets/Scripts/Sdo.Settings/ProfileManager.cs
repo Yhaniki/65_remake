@@ -25,6 +25,11 @@ namespace Sdo.Settings
         public const string ProfileFileName = "profile.json";
         public const string DefaultId = "00000000";
 
+        // 首次開機種下的兩個預設角色（見 EnsureSeeded）：女=00000000(gender 0)、男=00000001(gender 1)。單機開場的
+        // 男女選擇畫面(GenderSelectScreen)就是在這兩個帳號間切 active —— 選性別 == 選 profile。
+        public const string FemaleSeedId = "00000000";   // 女 (gender 0 / WOMAN)
+        public const string MaleSeedId = "00000001";     // 男 (gender 1 / MAN)
+
         private static string _root;          // DATA/PROFILE
         private static UserProfile _active;
         private static string _activeDir;     // DATA/PROFILE/<activeId>
@@ -73,7 +78,14 @@ namespace Sdo.Settings
         public static void SetActive(string id)
         {
             if (string.IsNullOrEmpty(id)) return;
-            if (!Directory.Exists(Path.Combine(Root, id))) return;
+            var dir = Path.Combine(Root, id);
+            if (!Directory.Exists(dir))
+            {
+                string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+                if (id == FemaleSeedId) WriteProfile(dir, new UserProfile(FemaleSeedId, "玩家001", 0) { createdAt = now });
+                else if (id == MaleSeedId) WriteProfile(dir, new UserProfile(MaleSeedId, "玩家002", 1) { createdAt = now });
+            }
+            if (!Directory.Exists(dir)) return;
             Activate(id, notify: true);
             RoomConfig.Load();   // 房間預設也是 per-user → 換人要重載
             ActiveChanged?.Invoke();
@@ -86,6 +98,7 @@ namespace Sdo.Settings
             _active = LoadProfile(_activeDir) ?? new UserProfile(id, DefaultNameForId(id), 0);
             _active.id = id;                 // 資料夾名是權威 id
             _active.Sanitize();
+            WriteProfile(_activeDir, _active);
             WriteActiveId(id);
             Favorites.Load(_activeDir);
             if (notify) ActiveChanged?.Invoke();
@@ -97,6 +110,7 @@ namespace Sdo.Settings
             if (string.IsNullOrEmpty(_activeDir) || _active == null) return;
             try
             {
+                _active.Sanitize();
                 _active.lastPlayedAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
                 File.WriteAllText(Path.Combine(_activeDir, ProfileFileName), JsonUtility.ToJson(_active, true), new UTF8Encoding(false));
             }
@@ -146,17 +160,38 @@ namespace Sdo.Settings
         /// <summary>首次開機（沒有任何編號資料夾）時種兩個預設角色：00000000 女、00000001 男。</summary>
         private static void EnsureSeeded()
         {
-            if (FirstExistingId() != null) return;   // 已有角色 → 不動
             string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
-            WriteProfile(Path.Combine(Root, "00000000"), new UserProfile("00000000", "玩家001", 0) { createdAt = now });
-            WriteProfile(Path.Combine(Root, "00000001"), new UserProfile("00000001", "玩家002", 1) { createdAt = now });
-            WriteActiveId("00000000");
+            EnsureSeedProfile(FemaleSeedId, "玩家001", 0, now);
+            EnsureSeedProfile(MaleSeedId, "玩家002", 1, now);
+            if (ReadActiveId() == null) WriteActiveId(FemaleSeedId);
+        }
+
+        private static void EnsureSeedProfile(string id, string defaultName, int gender, string now)
+        {
+            var dir = Path.Combine(Root, id);
+            var p = LoadProfile(dir);
+            if (p == null)
+            {
+                WriteProfile(dir, new UserProfile(id, defaultName, gender) { createdAt = now });
+                return;
+            }
+
+            bool changed = p.id != id || p.gender != gender || string.IsNullOrEmpty(p.name) || string.IsNullOrEmpty(p.createdAt);
+            p.id = id;
+            p.gender = gender;
+            if (string.IsNullOrEmpty(p.name)) p.name = defaultName;
+            if (string.IsNullOrEmpty(p.createdAt)) p.createdAt = now;
+            if (changed) WriteProfile(dir, p);
         }
 
         // ---------------- pure helpers (unit-tested) ----------------
 
         /// <summary>整數 → 8 位數零填 id 字串。負數夾成 0。</summary>
         public static string FormatId(int n) => Mathf.Max(0, n).ToString("D8", CultureInfo.InvariantCulture);
+
+        /// <summary>單機男女選擇 → 對應的預設 profile id：1(男)→<see cref="MaleSeedId"/>、其它(0/女)→<see cref="FemaleSeedId"/>。
+        /// 純函式（GenderSelectScreen 選性別時用來決定要 SetActive 哪個帳號）。</summary>
+        public static string SeededIdForGender(int gender) => gender == 1 ? MaleSeedId : FemaleSeedId;
 
         /// <summary>把資料夾名（"00000001"）解析成整數 id；非全數字/超界 → false。</summary>
         public static bool TryParseId(string name, out int value)

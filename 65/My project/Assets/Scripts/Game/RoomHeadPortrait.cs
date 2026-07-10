@@ -42,19 +42,19 @@ namespace Sdo.Game
         public Texture Texture => _rt;
 
         /// <summary>Build the isolated head avatar + camera + RT. Returns false if the avatar failed to load.</summary>
-        public bool Init()
+        public bool Init(bool male = false, string[] avatarParts = null)
         {
             var parent = new GameObject("RoomHeadIdleAvatar");
             parent.transform.SetParent(transform, false);
             parent.transform.position = parkSpot;
-            _avatar = SdoRoomAvatar.Build(parent, layer, portraitOpaque: true);
+            _avatar = SdoRoomAvatar.Build(parent, layer, portraitOpaque: true, male: male, equippedParts: avatarParts);
             if (_avatar == null) { Destroy(parent); return false; }
             _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
             // the avatar's live pose (官方頭像框跟著實際動作做動作).
-            _walkMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.WalkMot);
-            _idleMot = SdoRoomAvatar.LoadMot(SdoRoomAvatar.IdleMot);
+            _walkMot = SdoRoomAvatar.LoadMot(male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
+            _idleMot = SdoRoomAvatar.LoadMot(male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
 
             _rt = new RenderTexture(rtWidth, rtHeight, 16, RenderTextureFormat.ARGB32) { name = "RoomHeadPortraitRT" };
             var camGo = new GameObject("RoomHeadPortraitCam");

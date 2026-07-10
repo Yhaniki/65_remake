@@ -56,5 +56,18 @@ namespace Sdo.Tests
             Assert.AreEqual(1, m.gender);     // 男 kept
             Assert.AreEqual("阿明", m.name);
         }
+
+        [Test]
+        public void SeededIdForGender_MapsMaleAndFemaleToSeededProfiles()
+        {
+            // 單機開場男女選擇：女(0)→00000000、男(1)→00000001。與 EnsureSeeded 種下的兩帳號一致。
+            Assert.AreEqual(ProfileManager.FemaleSeedId, ProfileManager.SeededIdForGender(0));
+            Assert.AreEqual(ProfileManager.MaleSeedId, ProfileManager.SeededIdForGender(1));
+            Assert.AreEqual("00000000", ProfileManager.SeededIdForGender(0));
+            Assert.AreEqual("00000001", ProfileManager.SeededIdForGender(1));
+            // 只有 1 算男；其它值(含非法)一律回退成女(00000000)，與 UserProfile.Sanitize 的 gender 夾法一致。
+            Assert.AreEqual(ProfileManager.FemaleSeedId, ProfileManager.SeededIdForGender(2));
+            Assert.AreEqual(ProfileManager.FemaleSeedId, ProfileManager.SeededIdForGender(-1));
+        }
     }
 }

@@ -583,6 +583,7 @@ namespace Sdo.Game
         public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
         public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
+        public bool localPlayerMale = false;         // set by FrontendApp from GameSession.Gender before Start()
         private static readonly string[] OpponentNames =
             { "炫炎輪火", "Polaris晴天坊", "小醜麵具", "奶茶布丁", "醉小蛇" };
         private const int RosterRows = 6;            // PKSCORE digits only cover 0..6, so the room caps at 6 players
@@ -668,11 +669,39 @@ namespace Sdo.Game
         private void Start()
         {
             ResolveDevDefaults();
+            ConfigureAvatarGender();
             _cam = Camera.main ?? new GameObject("Main Camera") { tag = "MainCamera" }.AddComponent<Camera>();
             SdoLayout.SetupCamera(_cam);
             BuildBootCover();               // put the loading screen up FIRST...
             _bootShownRt = Time.realtimeSinceStartup;
             StartCoroutine(BootBuildCo());  // ...then build the (heavy) stage behind it — see BootBuildCo
+        }
+
+        private void ConfigureAvatarGender()
+        {
+            if (AvatarPartsNeedFallback(avatarParts, localPlayerMale))
+                avatarParts = SdoRoomAvatar.DefaultParts(localPlayerMale);
+
+            if (!localPlayerMale) return;
+
+            skeletonHrc = SdoRoomAvatar.MaleHrc;
+            maleBody = true;
+            danceMot = "MOTION/MDANCE0002.MOT";
+            restMot = "MOTION/MREST0082.MOT";
+            winMot = "MWIN0001.MOT";
+            loseMot = "MREST0004.MOT";
+        }
+
+        private static bool AvatarPartsNeedFallback(string[] parts, bool male)
+        {
+            if (parts == null || parts.Length == 0) return true;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string u = (parts[i] ?? "").ToUpperInvariant();
+                if (male && u.Contains("_WOMAN_")) return true;
+                if (!male && u.Contains("_MAN_")) return true;
+            }
+            return false;
         }
 
         // Build the stage AFTER the loading screen has rendered. The scene/avatar/chart load is heavy and fully
@@ -1852,7 +1881,7 @@ namespace Sdo.Game
                 parts++;
             }
             if (!any) { Debug.LogWarning("[avatar] no parts loaded"); return; }
-            Debug.Log($"[avatar] WOMAN: {parts} parts, skeleton={(hrc != null ? hrc.Names.Length + " bones" : "none")}, mot={(mot != null ? mot.MaxTime + 1 + " frames" : "none")}");
+            Debug.Log($"[avatar] {(localPlayerMale ? "MAN" : "WOMAN")}: {parts} parts, skeleton={(hrc != null ? hrc.Names.Length + " bones" : "none")}, mot={(mot != null ? mot.MaxTime + 1 + " frames" : "none")}");
             var handYellow = new Color(1f, 0.86f, 0.25f);
             if (use3dCamera) LoadCvCameras();
             if (use3dCamera && _camReady)
@@ -3097,6 +3126,7 @@ namespace Sdo.Game
         private MotLoader ResolveMot(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
+            name = ResolveGenderedMotName(name);
             if (_motCache.TryGetValue(name, out var cached)) return cached;
             MotLoader m = null;
             foreach (var dir in new[] { "AUMOTION", "MOTION" })
@@ -3106,6 +3136,20 @@ namespace Sdo.Game
             }
             _motCache[name] = m;   // cache even null to avoid re-probing missing files
             return m;
+        }
+
+        private string ResolveGenderedMotName(string name)
+        {
+            if (!localPlayerMale) return name;
+            string file = Path.GetFileName(name.Replace('\\', '/'));
+            if (string.IsNullOrEmpty(file) || file[0] != 'W') return name;
+
+            string maleName = "M" + file.Substring(1);
+            foreach (var dir in new[] { "AUMOTION", "MOTION" })
+            {
+                if (File.Exists(Path.Combine(SdoExtracted.Root, dir, maleName))) return maleName;
+            }
+            return name;
         }
 
         // resolve a material's .dds name to a file in the avatar dir (case-insensitive), load it

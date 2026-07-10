@@ -26,6 +26,25 @@ namespace Sdo.Game
                                                                  // arena idle WREST0072 (cat 0x15); the room holds standby
         public const string WalkMot = "MOTION/WWALK0001.MOT";   // free-walk clip (StateRoom walk category 6)
 
+        // Default MAN costume — the 900001..900006 body set (mirrors the WOMAN 900007.. set part-for-part). Used by the
+        // standalone gender-select preview (GenderSelectScreen) so the male toggle shows a real male dancer, not a
+        // recoloured female. The decompiled rest table maps lobby standby cat 0 to MREST0067 for male, WREST0056
+        // for female; free-walk has a male-skeleton MWALK0001 variant.
+        public static readonly string[] ManParts =
+        {
+            "AVATAR/900001_MAN_FACE.MSH",
+            "AVATAR/900002_MAN_HAIR.MSH",
+            "AVATAR/900003_MAN_COAT.MSH",
+            "AVATAR/900004_MAN_PANT.MSH",
+            "AVATAR/900006_MAN_SHOES.MSH",
+            "AVATAR/900005_MAN_HAND.MSH",
+        };
+        public const string MaleHrc = "AVATAR/MALE.HRC";
+        public const string MaleIdleMot = "MOTION/MREST0067.MOT";   // LOBBY standby idle (male rest cat 0)
+        public const string MaleWalkMot = "MOTION/MWALK0001.MOT";   // free-walk clip (male)
+
+        public static string[] DefaultParts(bool male) => male ? ManParts : WomanParts;
+
         /// <summary>
         /// Build the avatar onto <paramref name="parent"/>: load FEMALE.HRC, the 6 WOMAN parts and the idle clip, set
         /// the default (thin) body shape, arm the idle pose, and put everything on <paramref name="layer"/>. When
@@ -35,17 +54,28 @@ namespace Sdo.Game
         /// or every part failed to load.
         /// </summary>
         public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque)
+            => Build(parent, layer, portraitOpaque, male: false);
+
+        /// <summary>Gendered overload: <paramref name="male"/> true loads MALE.HRC + the MAN body set + the male
+        /// standby idle (and the male body-weight baseline); false is the default WOMAN build above. Everything else
+        /// (shaders, 2-material skin ranges, layering) is identical.</summary>
+        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male)
+            => Build(parent, layer, portraitOpaque, male, null);
+
+        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male, string[] equippedParts)
         {
             string root = SdoExtracted.Root;
-            string hrcPath = Path.Combine(root, FemaleHrc.Replace('/', Path.DirectorySeparatorChar));
+            string hrcRel = male ? MaleHrc : FemaleHrc;
+            var bodyParts = NormalizeParts(equippedParts, male);
+            string hrcPath = Path.Combine(root, hrcRel.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
             var hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath));
             if (hrc == null) { Debug.LogWarning("[room-avatar] HRC parse fail"); return null; }
 
-            var idle = LoadMot(IdleMot);
+            var idle = LoadMot(male ? MaleIdleMot : IdleMot);
             var av = parent.AddComponent<SdoAvatar>();
             av.Setup(hrc, idle);
-            av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, false));   // default thin female (matches the dancer)
+            av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, male));   // default thin body (male/female baseline)
             av.RestMot = idle;
             av.BlendSec = 0.5f;   // 0.3s smoothstep crossfade on idle↔walk (and the mirrored head portrait) — no hard cut
 
@@ -55,7 +85,7 @@ namespace Sdo.Game
             var fallback = Shader.Find("Unlit/Color");
 
             int parts = 0;
-            foreach (var rel in WomanParts)
+            foreach (var rel in bodyParts)
             {
                 var path = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
                 if (!File.Exists(path)) { Debug.LogWarning("[room-avatar] missing " + rel); continue; }
@@ -102,6 +132,27 @@ namespace Sdo.Game
             av.PoseInitialIdle();           // arm the idle so the first frame isn't the bind/T-pose
             SetLayerRecursive(parent, layer);
             return av;
+        }
+
+        private static string[] NormalizeParts(string[] parts, bool male)
+        {
+            var defaults = DefaultParts(male);
+            var res = new string[defaults.Length];
+            for (int i = 0; i < res.Length; i++)
+            {
+                string rel = parts != null && i < parts.Length ? parts[i] : null;
+                res[i] = string.IsNullOrEmpty(rel) ? defaults[i] : NormalizeRel(rel);
+            }
+            return res;
+        }
+
+        private static string NormalizeRel(string rel)
+        {
+            rel = (rel ?? "").Trim().Replace('\\', '/');
+            if (rel.Length == 0) return rel;
+            if (rel.IndexOf('/') < 0) rel = "AVATAR/" + rel;
+            if (!rel.EndsWith(".MSH", System.StringComparison.OrdinalIgnoreCase)) rel += ".MSH";
+            return rel;
         }
 
         public static MotLoader LoadMot(string rel)

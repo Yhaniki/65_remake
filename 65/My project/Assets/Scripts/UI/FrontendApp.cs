@@ -84,6 +84,7 @@ namespace Sdo.UI
 
             var screenLayer = UIKit.NewRect(root, "Screens");
             UIKit.Stretch(screenLayer);
+            Make<GenderSelectScreen>(screenLayer);   // 單機開場的男/女選擇畫面（Flow 的入口狀態）
             Make<LobbyScreen>(screenLayer);
             Make<RoomScreen>(screenLayer);
             Make<SongSelectScreen>(screenLayer);
@@ -170,6 +171,8 @@ namespace Sdo.UI
             game.oggPath = oggPath;
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
             game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
+            game.localPlayerMale = s.Gender == 1;
+            game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;
             game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
