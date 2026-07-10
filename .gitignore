@@ -24,6 +24,8 @@ Desktop.ini
 *.dll
 *.exe
 *.pdb
+# 但 Unity 原生外掛 DLL 是專案素材，要追蹤（例外於上面的 *.dll）
+!65/My project/Assets/Plugins/**/*.dll
 *.cache
 project.lock.json
 project.fragment.lock.json

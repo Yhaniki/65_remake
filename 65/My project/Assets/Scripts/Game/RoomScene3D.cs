@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
@@ -51,9 +52,11 @@ namespace Sdo.Game
         private Camera _cam;
         private RenderTexture _rt;
         private MotLoader _walkMot, _idleMot;
+        private readonly Dictionary<string, MotLoader> _chatActionMots = new Dictionary<string, MotLoader>(System.StringComparer.OrdinalIgnoreCase);
         private Vector3 _walkPos;     // logical floor position (X, floorY, Z)
         private float _feetY;         // model-space feet offset so the feet rest on floorY
         private float _facing;        // current Unity yaw (degrees)
+        private float _chatActionUntil = -1f;
         private bool _walking;
         private bool _ready;
 
@@ -66,6 +69,28 @@ namespace Sdo.Game
         public SdoAvatar AvatarForTest => _avatar;
         public bool IsWalking => _walking;              // so the head portrait can MIRROR the avatar's walk/idle motion
         public float AvatarFacing => _facing;           // so the head portrait can turn with the avatar's facing
+
+        public bool PlayChatAction(string motionRelPath)
+        {
+            if (!_ready || _avatar == null || string.IsNullOrEmpty(motionRelPath)) return false;
+            var mot = LoadChatActionMot(motionRelPath);
+            if (mot == null || mot.MaxTime <= 0f) return false;
+
+            _walking = false;
+            _avatar.SetClip(_idleMot);
+            _avatar.PlayOneShot(mot, false);
+            _chatActionUntil = Time.time + (mot.MaxTime + 1f) / Mathf.Max(1f, _avatar.Fps);
+            return true;
+        }
+
+        private MotLoader LoadChatActionMot(string motionRelPath)
+        {
+            if (string.IsNullOrEmpty(motionRelPath)) return null;
+            if (_chatActionMots.TryGetValue(motionRelPath, out var mot)) return mot;
+            mot = SdoRoomAvatar.LoadMot(motionRelPath);
+            _chatActionMots[motionRelPath] = mot;
+            return mot;
+        }
 
         /// <summary>Project the local avatar's head (Bip01_Head + rise) through the scene camera to a viewport point
         /// [0..1] (x right, y up). The scene camera fills the whole 4:3 backdrop, so this maps straight to the UI
@@ -82,6 +107,25 @@ namespace Sdo.Game
             Vector3 hw = _avatarRoot.TransformPoint(hm) + new Vector3(0f, headMarkerRise, 0f);
             Vector3 v = _cam.WorldToViewportPoint(hw);
             if (v.z <= 0f) return false;   // behind the camera
+            vp = new Vector2(v.x, v.y);
+            return true;
+        }
+
+        /// <summary>Bubble anchor sits at the SHOULDER (neck bone), not the chest — the bubble body then floats up to
+        /// head/name height with its tail pointing down at the shoulder. (Earlier this lerped down toward the spine and
+        /// the bubble landed at the waist; RoomScreen places the body above this anchor.)</summary>
+        public bool TryChatBubbleViewport(out Vector2 vp)
+        {
+            vp = default;
+            if (_avatar == null || _cam == null || _avatarRoot == null) return false;
+            Vector3 bp = _avatar.BoneModelPos("Bip01_Neck");
+            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Head");
+            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine1");
+            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine");
+            if (bp == Vector3.zero) return false;
+            Vector3 bw = _avatarRoot.TransformPoint(bp);
+            Vector3 v = _cam.WorldToViewportPoint(bw);
+            if (v.z <= 0f) return false;
             vp = new Vector2(v.x, v.y);
             return true;
         }
@@ -255,10 +299,21 @@ namespace Sdo.Game
         private void Update()
         {
             if (!_ready || _avatar == null) return;
+            if (_chatActionUntil > 0f && Time.time >= _chatActionUntil)
+            {
+                _avatar.ClearOneShot();
+                _chatActionUntil = -1f;
+                if (!_walking) _avatar.SetClip(_idleMot);
+            }
 
             int dir = InputEnabled ? CurrentDir() : -1;   // 選歌 modal 開著時凍結走動(房間仍在後面 render)
             if (dir >= 0)
             {
+                if (_chatActionUntil > 0f)
+                {
+                    _avatar.ClearOneShot();
+                    _chatActionUntil = -1f;
+                }
                 float dtMs = Time.deltaTime * 1000f;
                 Vector3 cand = RoomMovement.Step(_walkPos, dir, dtMs, walkSpeed);
                 if (_mask != null)

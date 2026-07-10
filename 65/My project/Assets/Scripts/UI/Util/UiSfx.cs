@@ -24,6 +24,8 @@ namespace Sdo.UI.Util
         public const string WindowSlide = "Interfaceout"; // room UI collapse/expand slide (uihide/uidisplay 按下)
         public const string GameStart = "Start";       // 開始 pressed -> fade to the stage
 
+        public const string Bubble = "Bubble";         // room speech bubble pop
+
         private static UiSfx _inst;
         private AudioSource _src;
         private readonly Dictionary<string, AudioClip> _cache = new Dictionary<string, AudioClip>();

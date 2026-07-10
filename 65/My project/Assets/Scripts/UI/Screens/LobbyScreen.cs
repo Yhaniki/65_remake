@@ -155,6 +155,7 @@ namespace Sdo.UI.Screens
                 Ctx.Chat.MessageReceived += OnChatMessage;
                 _subscribed = true;
             }
+            Ctx.Chat?.SetScope(ChatScope.Lobby);   // 大廳作用域：只顯示大廳訊息（密語跨場另計）
             RefreshRooms();
             RefreshPlayers();
             RebuildChat();
@@ -226,11 +227,30 @@ namespace Sdo.UI.Screens
 
         private void AddChatLine(ChatMessage m)
         {
-            string line = m.System ? $"<color=#F0C24A>{m.Text}</color>"
-                                    : $"<color=#7FB6FF>{m.Sender}</color>: {m.Text}";
+            if (m == null) return;
+            // 密語跨大廳/房間 → 大廳也顯示（青色單行）。
+            if (m.Whisper != WhisperKind.None)
+            {
+                var w = UIKit.AddText(_chatContent, "whisper",
+                    $"<color=#1EFEFE>{Esc(ChatDisplay.WhisperText(m))}</color>", 14, UITheme.Text, TextAlignmentOptions.TopLeft, true);
+                w.richText = true;
+                UIKit.Layout(w.gameObject, 20);
+                return;
+            }
+            // 進出舞台廣播只屬房間；一般/系統訊息只顯示大廳作用域（隔離房間訊息）。
+            if (m.Stage != StageEventKind.None) return;
+            if (m.Scope != ChatScope.Lobby) return;
+            string line = m.System ? $"<color=#F0C24A>{Esc(m.Text)}</color>"
+                                    : $"<color=#7FB6FF>{Esc(m.Sender)}</color>: {Esc(m.Text)}";
             var t = UIKit.AddText(_chatContent, "line", line, 14, UITheme.Text, TextAlignmentOptions.TopLeft, true);
             t.richText = true;
             UIKit.Layout(t.gameObject, 20);
+        }
+
+        private static string Esc(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
         }
 
         private void ScrollChatToBottom()
