@@ -134,7 +134,25 @@ namespace Sdo.UI.Services
         /// </summary>
         public static bool TryParseExpression(string text, out int expressionId, out string trailingText)
         {
+            if (TryParseExpression(text, out expressionId, out var leading, out trailingText))
+            {
+                trailingText = CombineExpressionText(leading, trailingText);
+                return true;
+            }
+            trailingText = "";
+            return false;
+        }
+
+        /// <summary>
+        /// 同上，但把「指令前的字」與「指令後的字」分開回傳，保留使用者輸入時 emoji 的位置：
+        /// 顯示時應排成 leadingText 〔emoji〕 trailingText。
+        /// 例：`有人一起跳嗎 /GO` → leading="有人一起跳嗎", trailing=""；`/GO 衝` → leading="", trailing="衝"；
+        /// `說話 /無聊 嗨` → leading="說話", trailing="嗨"。
+        /// </summary>
+        public static bool TryParseExpression(string text, out int expressionId, out string leadingText, out string trailingText)
+        {
             expressionId = 0;
+            leadingText = "";
             trailingText = "";
             if (string.IsNullOrWhiteSpace(text)) return false;
 
@@ -146,7 +164,8 @@ namespace Sdo.UI.Services
                 string leading = i > 0 ? s.Substring(0, i).Trim() : "";
                 if (!TryParseExpressionFromSlash(s.Substring(i), out expressionId, out var afterCmd))
                     continue;
-                trailingText = CombineExpressionText(leading, afterCmd);
+                leadingText = leading;
+                trailingText = afterCmd != null ? afterCmd.Trim() : "";
                 return true;
             }
             return false;

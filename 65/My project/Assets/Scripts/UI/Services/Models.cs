@@ -54,10 +54,11 @@ namespace Sdo.UI.Services
         public bool Local;
         public ChatChannel Channel = ChatChannel.Current;
         public string RoomActionId;
+        public string LeadingText;   // 表情指令「前面」的字（Text 為指令後的字）；顯示時排成 LeadingText〔emoji〕Text，保留輸入時 emoji 的位置
 
         public ChatMessage() { }
         public ChatMessage(string sender, string text, double timeMs, bool system = false, int expressionId = 0, bool local = false,
-            ChatChannel channel = ChatChannel.Current, string roomActionId = null)
+            ChatChannel channel = ChatChannel.Current, string roomActionId = null, string leadingText = null)
         {
             Sender = sender;
             Text = text;
@@ -67,6 +68,7 @@ namespace Sdo.UI.Services
             Local = local;
             Channel = channel;
             RoomActionId = roomActionId;
+            LeadingText = leadingText;
         }
     }
 }

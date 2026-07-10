@@ -48,6 +48,8 @@ namespace Sdo.UI.Services
         void Send(string text, ChatChannel channel = ChatChannel.Current);
         void SendExpression(int expressionId, ChatChannel channel = ChatChannel.Current);
         void SendExpression(int expressionId, ChatChannel channel, string trailingText);
+        // leadingText / trailingText = 指令前/後的字，保留 emoji 在輸入中的位置（見 RoomChatCommand.TryParseExpression）。
+        void SendExpression(int expressionId, ChatChannel channel, string leadingText, string trailingText);
         void Tick();   // drive scripted bot traffic (call each frame)
     }
 }

@@ -40,9 +40,9 @@ namespace Sdo.UI.Services
         public void Send(string text, ChatChannel channel = ChatChannel.Current)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
-            if (RoomChatCommand.TryParseExpression(text, out var expressionId, out var trailing))
+            if (RoomChatCommand.TryParseExpression(text, out var expressionId, out var leading, out var trailing))
             {
-                SendExpression(expressionId, channel, trailing);
+                SendExpression(expressionId, channel, leading, trailing);
                 return;
             }
 
@@ -53,14 +53,18 @@ namespace Sdo.UI.Services
         }
 
         public void SendExpression(int expressionId, ChatChannel channel = ChatChannel.Current)
-            => SendExpression(expressionId, channel, null);
+            => SendExpression(expressionId, channel, null, null);
 
         public void SendExpression(int expressionId, ChatChannel channel, string trailingText)
+            => SendExpression(expressionId, channel, null, trailingText);
+
+        public void SendExpression(int expressionId, ChatChannel channel, string leadingText, string trailingText)
         {
             if (!RoomChatCommand.IsValidExpression(expressionId)) return;
+            string lead = leadingText != null ? leadingText.Trim() : "";
             string trail = trailingText != null ? trailingText.Trim() : "";
             Add(new ChatMessage(LocalSender(), trail, _clock.NowMs,
-                expressionId: expressionId, local: true, channel: channel));
+                expressionId: expressionId, local: true, channel: channel, leadingText: lead));
         }
 
         // 本機發言者名：active profile 的 id/名（跟頭頂名字一致）；沒給就回退 "我"。

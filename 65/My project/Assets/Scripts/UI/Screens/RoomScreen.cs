@@ -65,6 +65,11 @@ namespace Sdo.UI.Screens
         private const float ChatBubbleFollowStep = 0.33333335f;
         private const float ChatBubbleDragScale = 1f;
         private static readonly Color ChatBubbleTextColor = new Color32(0x7C, 0x01, 0x38, 0xFF);
+        // 行內 emoji（表情 + 字）：emoji 疊在使用者打的位置——前字後留一段固定寬空檔，emoji 疊上去。自己調這幾個像素數就好。
+        private const float BubbleEmojiGapPx = 24f;       // <space=…> 在字裡預留的水平空檔
+        private const float BubbleEmojiSizePx = 22f;      // emoji 顯示邊長
+        private const float BubbleEmojiInlinePadX = 1f;   // emoji 相對前字右緣的水平微調(右+/左-)
+        private const float BubbleEmojiInlineOffY = 0f;   // emoji 垂直微調(上+/下-)
 
         private RawImage _backdrop;
         private readonly RawImage[] _slotHead = new RawImage[RoomLayout.SeatCount];
@@ -879,6 +884,16 @@ namespace Sdo.UI.Screens
             nameLe.preferredWidth = name.GetPreferredValues(label, 280f, 18f).x + 2f;
             nameLe.flexibleWidth = 0f;
 
+            // 指令前的字：排在名字後、emoji 前（保留輸入時 emoji 的位置：前字〔emoji〕後字）。
+            string lead = ExpressionLeadingText(m);
+            if (lead.Length > 0)
+            {
+                var before = UIKit.AddText(row, "lead", EscapeTmp(lead), 13, Color.white,
+                    TextAlignmentOptions.MidlineLeft, true);
+                var beforeLe = before.gameObject.AddComponent<LayoutElement>();
+                beforeLe.flexibleWidth = 0f;
+            }
+
             var frames = RoomExpressionArt.SmallFrames(m.ExpressionId);
             bool hasFrames = frames != null && frames.Length > 0;
             if (hasFrames)
@@ -912,6 +927,10 @@ namespace Sdo.UI.Screens
                 afterLe.flexibleWidth = 1f;
             }
         }
+
+        // 表情指令「前面」的字（顯示在 emoji 前）。空白／非表情訊息回 ""。
+        private static string ExpressionLeadingText(ChatMessage m)
+            => m != null && m.ExpressionId > 0 && !string.IsNullOrWhiteSpace(m.LeadingText) ? m.LeadingText.Trim() : "";
 
         private static bool HasExpressionTrailingText(ChatMessage m)
         {
@@ -955,8 +974,8 @@ namespace Sdo.UI.Screens
             bool keepBubbleInput = _chatBubbleTyping || _chatBubbleInputArmed;
             if (_chatBubbleTyping) HideRoomChatBubble();
             else _chatBubbleTyping = false;
-            if (RoomChatCommand.TryParseExpression(txt, out var expressionId, out var trailing))
-                Ctx.Chat.SendExpression(expressionId, _chatChannel, trailing);
+            if (RoomChatCommand.TryParseExpression(txt, out var expressionId, out var leading, out var trailing))
+                Ctx.Chat.SendExpression(expressionId, _chatChannel, leading, trailing);
             else
                 Ctx.Chat.Send(txt, _chatChannel);
             HideChatModeMenu();
@@ -977,36 +996,55 @@ namespace Sdo.UI.Screens
             bubble.ShownAt = Time.unscaledTime;   // 每顆泡以此為「年齡」起點，各自從肩錨往上飄
             bubble.HideAt = bubble.ShownAt + ChatBubbleLifetime;
 
-            string trail = (m.Text ?? "").Trim();
-            bool expressionWithText = HasExpressionTrailingText(m);
-            string text = expressionWithText ? trail : ChatLineText(m);
-            int style = (m.ExpressionId > 0 && !expressionWithText)
-                ? 1
-                : RoomBubbleStyleForText(text, bubble.Text);
+            string lead = ExpressionLeadingText(m);
+            string trail = HasExpressionTrailingText(m) ? (m.Text ?? "").Trim() : "";
+            bool exprInline = m.ExpressionId > 0 && (lead.Length > 0 || trail.Length > 0);   // 表情 + 前/後字
+            bool pureEmoji = m.ExpressionId > 0 && !exprInline;                              // 只有表情
+            // 泡大小：純表情用固定小泡；表情+字用「前字 + emoji 寬 + 後字」估寬；一般訊息照原本量文字。
+            string sizeText = pureEmoji
+                ? ""
+                : (exprInline ? lead + "　　" + trail : ChatLineText(m));
+            int style = pureEmoji ? 1 : RoomBubbleStyleForText(sizeText, bubble.Text);
             ApplySentBubbleStyle(bubble, style, entering: true);
             var enterFrames = RoomBubbleArt.EnterFrames(style);
             bubble.TalkAt = bubble.ShownAt + Mathf.Clamp((enterFrames != null ? enterFrames.Length : 0) / 12f, 0.5f, 1.2f);
             if (string.IsNullOrEmpty(m.RoomActionId)) UiSfx.Play(UiSfx.Bubble);
             if (bubble.Add != null) bubble.Add.gameObject.SetActive(false);
             if (bubble.AddAnim != null) bubble.AddAnim.Frames = null;
+            bubble.EmojiInlineLeadLen = -1;   // 預設不做行內 emoji 疊圖
 
             if (m.ExpressionId > 0)
             {
                 var frames = RoomExpressionArt.SmallFrames(m.ExpressionId);
                 bool hasFrames = frames != null && frames.Length > 0;
-                bool showTrail = expressionWithText;
 
-                if (hasFrames && !showTrail)
+                if (hasFrames && !exprInline)
                 {
-                    // 純表情：只播小動畫。
+                    // 純表情：只播小動畫（emoji 由 ApplySentBubbleStyle 置中）。
                     bubble.Text.gameObject.SetActive(false);
                     bubble.Expression.gameObject.SetActive(true);
                     bubble.ExpressionAnim.Frames = frames;
                     bubble.Expression.sprite = frames[0];
                 }
-                else if (hasFrames && showTrail)
+                else if (hasFrames && lead.Length > 0)
                 {
-                    // 表情+字：小動畫 + 任意尾隨字（中文／英文／數字…）。
+                    // 前面有字（「字 /GO」「字 /GO 字」）：emoji 疊在前字之後——前字 + 固定寬空檔（emoji 疊上）+ 後字。
+                    // 用前字最後一格的 xAdvance 定位（characterInfo 一定有這格，與 <space> 是否成字無關）。
+                    bubble.Expression.gameObject.SetActive(true);
+                    bubble.ExpressionAnim.Frames = frames;
+                    bubble.Expression.sprite = frames[0];
+                    bubble.Text.gameObject.SetActive(true);
+                    bubble.Text.alignment = TextAlignmentOptions.MidlineLeft;
+                    bubble.Text.text = EscapeTmp(lead)
+                        + "<space=" + ((int)BubbleEmojiGapPx) + ">"
+                        + EscapeTmp(trail);
+                    // emoji 掛到 Text 底下，用 characterInfo 座標定位（跟泡內游標同套機制）；泡活化後才有 mesh，故延後擺。
+                    bubble.Expression.rectTransform.SetParent(bubble.Text.rectTransform, false);
+                    bubble.EmojiInlineLeadLen = lead.Length;
+                }
+                else if (hasFrames)
+                {
+                    // 只有後字（「/GO 字」）：沿用原本穩定排版——emoji 靠左、字接在右邊。
                     bubble.Expression.gameObject.SetActive(true);
                     bubble.ExpressionAnim.Frames = frames;
                     bubble.Expression.sprite = frames[0];
@@ -1019,12 +1057,14 @@ namespace Sdo.UI.Screens
                 }
                 else
                 {
+                    // 沒有小圖：退回文字指令，前後字照位置串起來。
                     bubble.Expression.gameObject.SetActive(false);
                     if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
                     bubble.Text.gameObject.SetActive(true);
-                    bubble.Text.text = EscapeTmp(showTrail
-                        ? RoomChatCommand.ExpressionDisplayText(m.ExpressionId) + " " + trail
-                        : RoomChatCommand.ExpressionDisplayText(m.ExpressionId));
+                    string fb = RoomChatCommand.ExpressionDisplayText(m.ExpressionId);
+                    if (lead.Length > 0) fb = lead + " " + fb;
+                    if (trail.Length > 0) fb = fb + " " + trail;
+                    bubble.Text.text = EscapeTmp(fb);
                 }
             }
             else
@@ -1032,7 +1072,7 @@ namespace Sdo.UI.Screens
                 bubble.Expression.gameObject.SetActive(false);
                 if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
                 bubble.Text.gameObject.SetActive(true);
-                bubble.Text.text = EscapeTmp(text);
+                bubble.Text.text = EscapeTmp(ChatLineText(m));
             }
 
             _sentBubbles.Add(bubble);
@@ -1111,6 +1151,29 @@ namespace Sdo.UI.Screens
                 float ey = tr.y + (tr.height - 24f) * 0.5f;
                 Place(bubble.Expression.rectTransform, ex, ey, 24, 24);
             }
+        }
+
+        // 表情 + 字（前面有字）：泡活化後才有 mesh，這裡把 Expression 疊到「前字最後一格」之後。
+        // 用該格的 xAdvance 當 emoji 左緣、ascender/descender 取垂直中線（跟泡內游標 UpdateBubbleCaretOverlay 同一套 characterInfo 定位）。
+        private void LayoutSentBubbleInlineEmoji(SentRoomBubble b)
+        {
+            if (b == null || b.EmojiInlineLeadLen <= 0 || b.Text == null || b.Expression == null) return;
+            b.Text.ForceMeshUpdate();
+            var ti = b.Text.textInfo;
+            if (ti == null || ti.characterCount <= 0) return;
+
+            int idx = Mathf.Clamp(b.EmojiInlineLeadLen - 1, 0, ti.characterCount - 1);   // 前字最後一格
+            var ci = ti.characterInfo[idx];
+            float leftX = ci.xAdvance;                              // 前字右緣 = emoji 左緣
+            float cy = (ci.ascender + ci.descender) * 0.5f;
+
+            float size = BubbleEmojiSizePx;
+            var rt = b.Expression.rectTransform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(size, size);
+            rt.localPosition = new Vector3(leftX + size * 0.5f + BubbleEmojiInlinePadX, cy + BubbleEmojiInlineOffY, 0f);
+            b.EmojiInlineLeadLen = -1;   // 一次性擺好
         }
 
         private void DestroySentRoomBubble(SentRoomBubble bubble)
@@ -1386,7 +1449,7 @@ namespace Sdo.UI.Screens
             caret = Mathf.Clamp(caret, 0, committed.Length);
             anchor = Mathf.Clamp(anchor, 0, committed.Length);
 
-            // IME 組字中：組字串插在游標處（此時不畫選取）。
+            // IME 組字中：組字串插在游標處（不畫組字反白，組字回饋交給 IME 自己；只有下面的手動選取才反白）。
             if (!string.IsNullOrEmpty(composition))
                 return EscapeTmp(committed.Substring(0, caret)) + EscapeTmp(composition) + EscapeTmp(committed.Substring(caret));
 
@@ -1549,10 +1612,13 @@ namespace Sdo.UI.Screens
         // 直接 ActivateInputField（非走會每幀重啟 coroutine 的 FocusRoomChatInput）；已 focus/IME 組字/離房/bubble 態就不動。
         private void MaintainRoomChatInputFocus()
         {
-            if (!_chatInputSticky || _chatInput == null) return;
+            if (_chatInput == null) return;
+            // 需保住 focus 的兩種態：輸入框黏 focus(sticky)、或 bubble 送完待打下一則(armed)。
+            // 少了 armed 這條，送出(Enter)讓 TMP 反 activate 後只靠一次性 coroutine 搶 focus——搶不回就「續打泡不出來」。
+            if (!_chatInputSticky && !_chatBubbleInputArmed) return;
             bool roomTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
             if (!roomTop) { _chatInputSticky = false; return; }   // 切到別畫面(含選歌 overlay)→放掉，回來不自動搶 focus
-            if (_chatBubbleTyping || _chatBubbleInputArmed) return;
+            if (_chatBubbleTyping) return;                        // 已在打字泡態→輸入框自有 focus，不重複搶
             if (_chatInput.isFocused || IsRoomChatImeComposing()) return;
             if (EventSystem.current != null)
                 EventSystem.current.SetSelectedGameObject(_chatInput.gameObject);
@@ -1794,6 +1860,11 @@ namespace Sdo.UI.Screens
             // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
             if (IsRoomChatImeComposing()) _chatImeComposing = true;
             MaintainRoomChatInputFocus();
+            // armed(bubble 送完待打下一則)：一開始打字就把打字泡叫回來。中文 IME 組字時 onValueChanged 不會觸發
+            // （text 要等選字上屏才變），只靠 OnRoomChatInputChanged 會「續打泡不出來」；這裡每幀也看 compositionString。
+            if (_chatBubbleInputArmed && !_chatBubbleTyping && _chatInput != null
+                && (!string.IsNullOrEmpty(_chatInput.text) || IsRoomChatImeComposing()))
+                BeginRoomBubbleTyping(preserveDraft: true);
             UpdateRoomBubbleDraft();
             UpdateChatCaret();
 
@@ -2034,6 +2105,7 @@ namespace Sdo.UI.Screens
                     {
                         node.Sent.Root.gameObject.SetActive(true);
                         node.Sent.PendingShow = false;
+                        LayoutSentBubbleInlineEmoji(node.Sent);   // 活化後才有 mesh，這時把行內 emoji 疊到打的位置
                     }
                 }
             }
@@ -2305,6 +2377,7 @@ namespace Sdo.UI.Screens
             public bool PendingShow;
             public bool HasPhysics;
             public Vector2 PhysicsPos, PhysicsVel;
+            public int EmojiInlineLeadLen = -1;   // >=0：泡活化後把 Expression 疊到 Text 第 leadLen 個字之後；-1=不做
         }
 
         private sealed class RoomBubbleDragHandle : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler

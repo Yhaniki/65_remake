@@ -63,6 +63,23 @@ namespace Sdo.Tests
             Assert.AreEqual(expectedTrail, trailing);
         }
 
+        // 位置保留：leading（指令前的字）與 trailing（指令後的字）分開回傳，顯示時排成 leading〔emoji〕trailing。
+        [TestCase("/GO", 3, "", "")]
+        [TestCase("/GO 衝衝衝", 3, "", "衝衝衝")]
+        [TestCase("有人一起跳嗎 /GO", 3, "有人一起跳嗎", "")]
+        [TestCase("哈囉 /無聊", 16, "哈囉", "")]
+        [TestCase("前綴/開始", 2, "前綴", "")]
+        [TestCase("說話 /無聊 嗨", 16, "說話", "嗨")]
+        [TestCase("hi /GO 冲", 3, "hi", "冲")]
+        [TestCase("a/b/無聊", 16, "a/b", "")]
+        public void Parses_Expression_Command_Preserving_Emoji_Position(string text, int expectedId, string expectedLead, string expectedTrail)
+        {
+            Assert.IsTrue(RoomChatCommand.TryParseExpression(text, out var id, out var leading, out var trailing));
+            Assert.AreEqual(expectedId, id);
+            Assert.AreEqual(expectedLead, leading);
+            Assert.AreEqual(expectedTrail, trailing);
+        }
+
         [Test]
         public void Menu_Order_Matches_Decompiled_Popup_Order()
         {
