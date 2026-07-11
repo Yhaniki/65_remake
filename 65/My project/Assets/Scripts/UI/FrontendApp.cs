@@ -33,6 +33,7 @@ namespace Sdo.UI
         private NoteSkinPicker _notePicker;
         private ResultsModal _results;
         private ShopScreen _shop;
+        private WardrobeScreen _wardrobe;
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
@@ -106,11 +107,15 @@ namespace Sdo.UI
             _shop = new GameObject("Shop").AddComponent<ShopScreen>();
             _shop.transform.SetParent(modalLayer, false);
             _shop.Build(modalLayer, _ctx.Session);
+            _wardrobe = new GameObject("Wardrobe").AddComponent<WardrobeScreen>();
+            _wardrobe.transform.SetParent(modalLayer, false);
+            _wardrobe.Build(modalLayer, _ctx.Session);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
             Nav.OpenNoteSkinPicker = () => _notePicker.Open();
             Nav.OpenShop = () => _shop.Open();
+            Nav.OpenWardrobe = () => _wardrobe.Open();
             Nav.StartGame = StartGameplay;
 
             WarmupFont();

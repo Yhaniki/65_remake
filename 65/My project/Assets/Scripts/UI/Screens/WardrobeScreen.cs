@@ -1,0 +1,648 @@
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.EventSystems;
+using TMPro;
+using Sdo.Game;
+using Sdo.Shop;
+using Sdo.UI.Core;
+using Sdo.UI.Util;
+
+namespace Sdo.UI.Screens
+{
+    /// <summary>
+    /// 儲物櫃 (INVENTORY / 衣櫃) — 忠實重製官方 <c>HOUSECABINETDLG.XML</c> 的 HouseCabinetWin (CabinetAndTv_Dlg 皮，載入器
+    /// <see cref="CabinetArt"/>，MYHOUSEDLG 資料夾)。版面座標逐字取自 XML (視窗原點 (30,19)，800×600 左上原點 y-down)：左側
+    /// 整身 3D 預覽 (AvatarShow)、右側 3×3 已擁有衣物格 (CabinetButton1..9 + CabinetWear 3D 縮圖 + 使用中旗標)、右緣分類欄
+    /// (label_all/head/upcoat/…)、服饰/礼包 分頁 (coat/gift)、換頁箭頭、服饰删除 (DeleteCostume)、M/G 幣量。
+    ///
+    /// 與商城 (<see cref="ShopScreen"/>) 的差別：格子列的是「已擁有」的衣物 (<see cref="GameSession.Wardrobe"/>.Owned，由
+    /// <see cref="WardrobeStore.Load"/> 從 profile.json 載入)；點一件 = 永久換穿 (寫回 profile + 重建房間/遊戲 avatar)，
+    /// 不是商城的暫時試穿。3D 預覽/縮圖機制沿用 ShopScreen 的做法 (同一套 SdoRoomAvatar + 正交相機取景)。
+    /// </summary>
+    public sealed class WardrobeScreen : MonoBehaviour
+    {
+        private CanvasGroup _cg;
+        private RectTransform _root;
+        private GameSession _session;
+        private AvatarItemCatalog _catalog;
+
+        private ItemSex _sex = ItemSex.Female;
+        private int _page;
+        private int _totalPages = 1;
+        private CatFilter _filter = CatFilter.All;   // 分類欄目前選的
+        private int _selected;                        // 目前選中的格子 item id (供 服饰删除)；0=無
+
+        // 官方 HouseCabinetWin 視窗原點 (XML: <Window name="HouseCabinetWin" x="30" y="19">) → 子元件座標都相對它。
+        private const float WinX = 30f, WinY = 19f;
+
+        private RectTransform _grid, _catCol;
+        private TextMeshProUGUI _moneyM, _moneyG;
+        private TextMeshProUGUI _pageLbl;
+
+        // ---- 左側 3D 預覽 (同 ShopScreen；整身、可拖動轉身) ----
+        private const int PreviewLayer = 12;
+        private static readonly Vector3 PreviewSpot = new Vector3(2200f, 0f, 0f);   // 與 ShopScreen 的 PreviewSpot 錯開，避免同層入鏡
+        // AvatarShow x=87 y=107 w=220 h=320 (視窗相對) → +Win 後的螢幕框。RT 同尺寸避免拉伸。
+        private static readonly Vector2 PreviewRectPos = new Vector2(WinX + 87f, WinY + 107f);
+        private static readonly Vector2 PreviewRectSize = new Vector2(220f, 320f);
+        private const float PreviewBodyH = 320f;
+        private Camera _cam; private RenderTexture _rt; private RawImage _previewImg; private GameObject _avatarRoot;
+        private Camera _uiCam; private int _savedUiMask;
+        private float _dragAngle = -DefaultYaw; private float _pitchAngle;
+        private const float DragDegPerPixel = 0.4f, PitchDegPerPixel = 0.4f, PitchMin = -30f, PitchMax = 15f;
+        private const float DefaultYaw = 30f, PivotY = 30f;
+        private float _previewFeetY;
+        private const float RefHeight = 62f, MaleBodyRatio = 1.08f, MaleSizeScale = 1.05f;
+        private float _previewHeight = RefHeight;
+        private static readonly Vector3 EyeFar = new Vector3(0f, 37f, -140f), LookFar = new Vector3(0f, 27f, 0f);
+
+        // ---- 3×3 格的 3D 縮圖 (同 ShopScreen 卡片；靜態 bind-pose，不做 hover 旋轉) ----
+        private const int PerPage = 9;
+        private const int CardRtW = 100, CardRtH = 100;   // 格子 86×86 → RT 稍大保清晰
+        private const float CardEyeDist = 110f, CardOrthoHalfW = 64f, CardNear = 5f, CardFar = 1000f;
+        private Camera _cardCam;
+        private readonly GameObject[] _cardAv = new GameObject[PerPage];
+        private readonly RenderTexture[] _cardRT = new RenderTexture[PerPage];
+        private readonly RawImage[] _cardImg = new RawImage[PerPage];
+        private readonly Vector3[] _cardFramePos = new Vector3[PerPage];
+        private readonly Vector3[] _cardFrameScale = new Vector3[PerPage];
+        private static Vector3 CardSpot(int i) => new Vector3(4000f + i * 400f, 0f, 0f);
+
+        private static readonly Color CMoney = Hex(0xff004f7c);
+
+        // 分類欄目 → 對應的部位過濾。All = 全部已擁有衣物。
+        private enum CatFilter { All, Hair, Top, Bottom, Gloves, Shoes, Face, Glasses, Wings, Necklace }
+        private struct CatDef { public CatFilter F; public string Lit, Dim; public float Y; }
+        // 官方 label_* 分類鈕 (x=626)；y 取自 XML 主 8 項 + 翅膀/项链補在下方 (classup/down 捲動先略)。lit=bgpushed(選中)、dim=bgnormal。
+        private static readonly CatDef[] Cats =
+        {
+            new CatDef{ F=CatFilter.All,      Lit="label_all_2.an",      Dim="label_all_1.an",      Y=157 },
+            new CatDef{ F=CatFilter.Hair,     Lit="label_head_2.an",     Dim="label_head_1.an",     Y=192 },
+            new CatDef{ F=CatFilter.Top,      Lit="label_upcoat_2.an",   Dim="label_upcoat_1.an",   Y=226 },
+            new CatDef{ F=CatFilter.Bottom,   Lit="label_downcoat_2.an", Dim="label_downcoat_1.an", Y=260 },
+            new CatDef{ F=CatFilter.Gloves,   Lit="label_hand_2.an",     Dim="label_hand_1.an",     Y=294 },
+            new CatDef{ F=CatFilter.Shoes,    Lit="label_shoes_2.an",    Dim="label_shoes_1.an",    Y=328 },
+            new CatDef{ F=CatFilter.Face,     Lit="label_face_2.an",     Dim="label_face_1.an",     Y=362 },
+            new CatDef{ F=CatFilter.Glasses,  Lit="label_glasses_2.an",  Dim="label_glasses_1.an",  Y=396 },
+        };
+
+        // 3×3 格左上座標 (XML CabinetButton1..9，視窗相對；+Win 後為螢幕座標)。
+        private static readonly Vector2[] SlotPos =
+        {
+            new Vector2(338,145), new Vector2(434,146), new Vector2(528,146),
+            new Vector2(338,238), new Vector2(434,238), new Vector2(529,239),
+            new Vector2(338,331), new Vector2(434,332), new Vector2(527,332),
+        };
+        private const float SlotW = 86f, SlotH = 86f;
+
+        public void Build(RectTransform parent, GameSession session)
+        {
+            _session = session;
+            _root = UIKit.NewRect(parent, "Wardrobe");
+            UIKit.Stretch(_root);
+            _cg = _root.gameObject.AddComponent<CanvasGroup>();
+
+            // 不透明黑幕擋掉後面的房間 3D（點擊不穿透），再蓋官方視窗框。
+            var solid = UIKit.AddImage(_root, "Backdrop", new Color(0f, 0f, 0f, 0.55f), true);
+            UIKit.Stretch(solid.rectTransform);
+
+            // 官方視窗框 (background.an = CabinetAndTv_Dlg 621×500)；XML Label x=62 y=41 (視窗相對)。
+            AddArt(_root, "Frame", CabinetArt.An("background.an"), WinX + 62f, WinY + 41f);
+
+            // 左側 3D 預覽 (AvatarShow)
+            var pv = UIKit.NewRect(_root, "Preview");
+            pv.anchorMin = pv.anchorMax = new Vector2(0, 1); pv.pivot = new Vector2(0, 1);
+            pv.anchoredPosition = new Vector2(PreviewRectPos.x, -PreviewRectPos.y); pv.sizeDelta = PreviewRectSize;
+            _previewImg = pv.gameObject.AddComponent<RawImage>(); _previewImg.color = Color.white; _previewImg.raycastTarget = true;
+            AddTrigData(pv.gameObject.AddComponent<EventTrigger>(), EventTriggerType.Drag, OnPreviewDrag);
+
+            // 分頁 服饰/礼包 (coat/gift)；礼包離線無資料 → 點了顯示提示。
+            SpriteBtn(_root, "coat", "coat_2.an", "coat_2.an", WinX + 322f, WinY + 101f, () => { _filter = CatFilter.All; _page = 0; Refresh(); }, noSwap: true);
+            SpriteBtn(_root, "gift", "gift_1.an", "gift_1.an", WinX + 488f, WinY + 101f, () => Toast.Show("礼包：離線版暫無資料"), noSwap: true);
+
+            // 分類欄容器 (右緣 label_*) + 3×3 格容器 (依分類/頁重畫)
+            _catCol = UIKit.NewRect(_root, "CatCol"); UIKit.Stretch(_catCol);
+            _grid = UIKit.NewRect(_root, "Grid"); UIKit.Stretch(_grid);
+
+            // 換頁箭頭 + 頁碼 (leftarrow/rightarrow/lblPage)
+            SpriteBtn(_root, "leftarrow", "leftarrow_1.an", "leftarrow_3.an", WinX + 412f, WinY + 423f, () => PageBy(-1), hoverAn: "leftarrow_2.an");
+            SpriteBtn(_root, "rightarrow", "rightarrow_1.an", "rightarrow_3.an", WinX + 520f, WinY + 424f, () => PageBy(1), hoverAn: "rightarrow_2.an");
+            _pageLbl = TxtAt(_root, "lblPage", WinX + 436f, WinY + 426f, 84, 20, 14, Hex(0xff780049), TextAlignmentOptions.Center);
+            _pageLbl.fontStyle = FontStyles.Bold;
+
+            // 服饰删除 (DeleteCostume) + 關閉 (close)
+            SpriteBtn(_root, "DeleteCostume", "DeleteCostume_1.an", "DeleteCostume_3.an", WinX + 505f, WinY + 467f, DoDelete, hoverAn: "DeleteCostume_2.an");
+            SpriteBtn(_root, "close", "close_1.an", "close_3.an", WinX + 624f, WinY + 56f, Close, hoverAn: "close_2.an");
+
+            // 幣量 (Money_M=Coins / Money_G=Points)
+            _moneyM = TxtAt(_root, "Money_M", WinX + 63f, WinY + 440f, 123, 24, 14, CMoney, TextAlignmentOptions.Right);
+            _moneyM.fontStyle = FontStyles.Bold;
+            _moneyG = TxtAt(_root, "Money_G", WinX + 180f, WinY + 440f, 123, 24, 14, CMoney, TextAlignmentOptions.Right);
+            _moneyG.fontStyle = FontStyles.Bold;
+
+            SetVisible(false);
+        }
+
+        public void Open()
+        {
+            _catalog = AvatarItemCatalog.Instance;
+            _sex = _session != null && _session.Gender == 1 ? ItemSex.Male : ItemSex.Female;
+            // 開櫃時重載 profile → 從實際存檔的穿搭開始 (不吃商城遺留的試穿狀態)。
+            WardrobeStore.Load(_session);
+            _filter = CatFilter.All; _page = 0; _selected = 0;
+            _dragAngle = -DefaultYaw; _pitchAngle = 0f;
+            BuildPreview();
+            var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (ui != null) { _uiCam = ui; _savedUiMask = ui.cullingMask; ui.cullingMask &= ~(1 << PreviewLayer); }
+            RebuildAvatar();
+            SetVisible(true);
+            Refresh();
+        }
+
+        private void Refresh()
+        {
+            RefreshCatColumn();
+            RefreshGrid();
+            UpdateWallet();
+        }
+
+        // ---- 右緣分類欄 ----
+        private void RefreshCatColumn()
+        {
+            UIKit.Clear(_catCol);
+            foreach (var c in Cats)
+            {
+                bool active = c.F == _filter;
+                var f = c.F;
+                SpriteBtn(_catCol, "cat" + c.F, active ? c.Lit : c.Dim, active ? c.Lit : c.Dim,
+                          WinX + 626f, WinY + c.Y, () => { _filter = f; _page = 0; Refresh(); }, noSwap: true);
+            }
+        }
+
+        // 目前分類要顯示的「已擁有」衣物。
+        private List<ShopItem> OwnedForFilter()
+        {
+            var res = new List<ShopItem>();
+            if (_catalog == null || _session == null) return res;
+            foreach (var kv in _session.Wardrobe.Owned)
+            {
+                var it = _catalog.ById(kv.Key);
+                if (it == null || it.SlotType != ItemSlotType.Clothes) continue;
+                if (!_catalog.IsRenderable(it)) continue;
+                if (!MatchesFilter(it)) continue;
+                res.Add(it);
+            }
+            res.Sort((a, b) => a.ModelId.CompareTo(b.ModelId));
+            return res;
+        }
+
+        private bool MatchesFilter(ShopItem it)
+        {
+            switch (_filter)
+            {
+                case CatFilter.All: return true;
+                case CatFilter.Top: return it.EquipSlot == EquipSlot.Top || it.EquipSlot == EquipSlot.OnePiece;
+                case CatFilter.Hair: return it.EquipSlot == EquipSlot.Hair;
+                case CatFilter.Bottom: return it.EquipSlot == EquipSlot.Bottom;
+                case CatFilter.Gloves: return it.EquipSlot == EquipSlot.Gloves;
+                case CatFilter.Shoes: return it.EquipSlot == EquipSlot.Shoes;
+                case CatFilter.Face: return it.EquipSlot == EquipSlot.Expression;
+                case CatFilter.Glasses: return it.EquipSlot == EquipSlot.Glasses;
+                case CatFilter.Wings: return it.EquipSlot == EquipSlot.Wings;
+                case CatFilter.Necklace: return it.EquipSlot == EquipSlot.Necklace;
+                default: return true;
+            }
+        }
+
+        private void RefreshGrid()
+        {
+            DestroyCardPreviews();
+            UIKit.Clear(_grid);
+            if (_catalog == null) { _totalPages = 1; UpdatePageLabel(); return; }
+
+            var items = OwnedForFilter();
+            int pages = Mathf.Max(1, (items.Count + PerPage - 1) / PerPage);
+            _page = Mathf.Clamp(_page, 0, pages - 1);
+            _totalPages = pages;
+            UpdatePageLabel();
+            int start = _page * PerPage;
+
+            for (int i = 0; i < PerPage; i++)
+            {
+                int idx = start + i;
+                var pos = SlotPos[i];
+                var card = UIKit.NewRect(_grid, "slot" + i);
+                card.anchorMin = card.anchorMax = new Vector2(0, 1); card.pivot = new Vector2(0, 1);
+                card.anchoredPosition = new Vector2(WinX + pos.x, -(WinY + pos.y)); card.sizeDelta = new Vector2(SlotW, SlotH);
+                if (idx >= items.Count) continue;
+                var item = items[idx];
+
+                BuildCardPreview(i, card, item);                 // 3D 縮圖
+                if (IsWorn(item))                                // 使用中旗標 (EquipFlag = HouseCabinetDlg46.an)
+                    AddArt(card, "worn", CabinetArt.An("HouseCabinetDlg46.an"), 0, 0);
+                if (item.Id == _selected)                        // 選中框 (HouseCabinetDlg32.an = bgpushed)
+                    AddArt(card, "sel", CabinetArt.An("HouseCabinetDlg32.an"), 0, 0);
+
+                // 透明命中區：點 = 換穿 (並選中)。
+                var itLocal = item;
+                var hit = UIKit.AddImage(card, "hit", new Color(1, 1, 1, 0.001f), true);
+                var hrt = hit.rectTransform;
+                hrt.anchorMin = hrt.anchorMax = new Vector2(0, 1); hrt.pivot = new Vector2(0, 1);
+                hrt.anchoredPosition = Vector2.zero; hrt.sizeDelta = new Vector2(SlotW, SlotH);
+                var btn = hit.gameObject.AddComponent<Button>(); btn.targetGraphic = hit; btn.transition = Selectable.Transition.None;
+                btn.onClick.AddListener(() => OnCardClick(itLocal));
+            }
+        }
+
+        // 點格子 → 永久換穿 (寫回 profile + 重建房間/遊戲 avatar) + 選中。
+        private void OnCardClick(ShopItem item)
+        {
+            if (item == null || item.EquipSlot == EquipSlot.None) return;
+            _selected = item.Id;
+            var w = _session.Wardrobe;
+            if (item.EquipSlot == EquipSlot.OnePiece)
+            {
+                w.ClearEquipped(EquipSlot.Top); w.ClearEquipped(EquipSlot.Bottom);
+                w.SetEquipped(EquipSlot.OnePiece, item.Id);
+            }
+            else
+            {
+                if (item.EquipSlot == EquipSlot.Top || item.EquipSlot == EquipSlot.Bottom) w.ClearEquipped(EquipSlot.OnePiece);
+                w.SetEquipped(item.EquipSlot, item.Id);
+            }
+            WardrobeStore.SaveAll(_session);            // 落地 profile.json (穿搭 + equippedParts)
+            Nav.RefreshRoomAvatar?.Invoke();            // 房間裡的人立即換裝
+            RebuildAvatar();                            // 左側預覽換裝
+            RefreshGrid();                              // 更新 使用中 / 選中框
+        }
+
+        // 服饰删除：刪掉選中的已擁有衣物 (若正穿著先脫下)。
+        private void DoDelete()
+        {
+            if (_selected == 0 || _session == null) { Toast.Show("請先選擇要刪除的服飾"); return; }
+            var w = _session.Wardrobe;
+            var it = _catalog != null ? _catalog.ById(_selected) : null;
+            if (it != null && w.IsEquipped(_selected)) w.ClearEquipped(it.EquipSlot);   // 穿著中 → 先脫下
+            w.RemoveOwned(_selected);
+            _selected = 0;
+            WardrobeStore.SaveAll(_session);
+            Nav.RefreshRoomAvatar?.Invoke();
+            RebuildAvatar();
+            Refresh();
+            Toast.Show("已刪除服飾");
+        }
+
+        private bool IsWorn(ShopItem it) => it != null && _session != null && _session.Wardrobe.IsEquipped(it.Id);
+
+        private void PageBy(int d)
+        {
+            int np = Mathf.Clamp(_page + d, 0, _totalPages - 1);
+            if (np == _page) return;
+            _page = np; RefreshGrid();
+        }
+
+        private void UpdatePageLabel()
+        {
+            if (_pageLbl != null) _pageLbl.text = (_page + 1) + " / " + _totalPages;
+        }
+
+        private void UpdateWallet()
+        {
+            if (_session == null) return;
+            var wl = _session.Wardrobe.Wallet;
+            if (_moneyM != null) _moneyM.text = wl.Coins.ToString();
+            if (_moneyG != null) _moneyG.text = wl.Points.ToString();
+        }
+
+        // ================= 3D 預覽 (整身) — 同 ShopScreen 機制 =================
+
+        private void BuildPreview()
+        {
+            if (_cam != null) return;
+            int rtW = Mathf.RoundToInt(PreviewRectSize.x), rtH = Mathf.RoundToInt(PreviewRectSize.y);
+            _rt = new RenderTexture(rtW, rtH, 16, RenderTextureFormat.ARGB32) { name = "WardrobePreviewRT", antiAliasing = 4 };
+            var camGo = new GameObject("WardrobePreviewCam");
+            _cam = camGo.AddComponent<Camera>();
+            _cam.orthographic = false; _cam.fieldOfView = 32f;
+            _cam.nearClipPlane = 0.3f; _cam.farClipPlane = 3000f;
+            _cam.cullingMask = 1 << PreviewLayer;
+            _cam.clearFlags = CameraClearFlags.SolidColor;
+            _cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+            _cam.targetTexture = _rt;
+            if (_previewImg != null) _previewImg.texture = _rt;
+            ApplyCamera();
+        }
+
+        private void RebuildAvatar()
+        {
+            try
+            {
+                if (_avatarRoot != null) Destroy(_avatarRoot);
+                _avatarRoot = new GameObject("WardrobePreviewAvatar");
+                _avatarRoot.transform.position = PreviewSpot;
+                var parts = AvatarOutfit.ResolveParts(_sex, EquippedItems());
+                var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex));
+                if (av == null) { Destroy(_avatarRoot); _avatarRoot = null; return; }
+                ApplyLeftPose(av);
+                _previewFeetY = av.FeetYAt(0f);
+                _previewHeight = RefHeight * (_sex == ItemSex.Male ? MaleBodyRatio : 1f);
+                ApplyCamera();
+                ApplyPreviewRotation();
+            }
+            catch (System.Exception e) { Debug.LogWarning("[wardrobe] preview build failed (non-fatal): " + e.Message); }
+        }
+
+        private IEnumerable<ShopItem> EquippedItems()
+        {
+            if (_catalog == null) yield break;
+            foreach (var kv in _session.Wardrobe.Equipped)
+            {
+                var it = _catalog.ById(kv.Value);
+                if (it != null) yield return it;
+            }
+        }
+
+        private void ApplyLeftPose(SdoAvatar av)
+        {
+            var mot = SdoRoomAvatar.LoadMot(_sex == ItemSex.Male ? "MOTION/MREST0082.MOT" : "MOTION/WREST0072.MOT");
+            if (mot != null) { av.RestMot = mot; av.SetClip(mot); av.PoseInitialIdle(); }
+        }
+
+        private void OnPreviewDrag(BaseEventData ev)
+        {
+            if (!(ev is PointerEventData p)) return;
+            _dragAngle -= p.delta.x * DragDegPerPixel;
+            _pitchAngle = Mathf.Clamp(_pitchAngle + p.delta.y * PitchDegPerPixel, PitchMin, PitchMax);
+            ApplyPreviewRotation();
+        }
+
+        private void ApplyPreviewRotation()
+        {
+            if (_avatarRoot == null) return;
+            var pivot = PreviewSpot + new Vector3(0f, PivotY, 0f);
+            var basePos = PreviewSpot + new Vector3(0f, -_previewFeetY, 0f);
+            var q = Quaternion.Euler(_pitchAngle, RoomMovement.FacingDegrees(2) + _dragAngle, 0f);
+            _avatarRoot.transform.rotation = q;
+            _avatarRoot.transform.position = pivot + q * (basePos - pivot);
+        }
+
+        private void ApplyCamera()
+        {
+            if (_cam == null) return;
+            float refH = RefHeight * (_sex == ItemSex.Male ? MaleSizeScale : 1f);
+            float k = _previewHeight / refH;
+            _cam.transform.position = PreviewSpot + new Vector3(EyeFar.x, EyeFar.y * k, EyeFar.z * k);
+            _cam.transform.LookAt(PreviewSpot + new Vector3(LookFar.x, LookFar.y * k, LookFar.z * k));
+        }
+
+        // ================= 3D 縮圖 (每格一件；靜態 bind-pose) — 同 ShopScreen 機制 =================
+
+        private void BuildCardCam()
+        {
+            if (_cardCam != null) return;
+            var go = new GameObject("WardrobeCardCam");
+            _cardCam = go.AddComponent<Camera>();
+            _cardCam.orthographic = true;
+            _cardCam.orthographicSize = CardOrthoHalfW / ((float)CardRtW / CardRtH);
+            _cardCam.nearClipPlane = CardNear; _cardCam.farClipPlane = CardFar;
+            _cardCam.cullingMask = 1 << PreviewLayer;
+            _cardCam.clearFlags = CameraClearFlags.SolidColor;
+            _cardCam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+            _cardCam.enabled = false;
+        }
+
+        private void BuildCardPreview(int i, RectTransform card, ShopItem item)
+        {
+            GameObject root = null;
+            try
+            {
+                if (_catalog == null || !_catalog.IsRenderable(item)) return;
+                BuildCardCam();
+                _cardRT[i] = new RenderTexture(CardRtW, CardRtH, 16, RenderTextureFormat.ARGB32) { name = "WardrobeCardRT" + i, antiAliasing = 2 };
+                root = new GameObject("WardrobeCardAvatar" + i);
+                root.transform.position = CardSpot(i);
+                root.transform.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);
+                var av = SdoRoomAvatar.Build(root, PreviewLayer, false, ComposeCardParts(item), ShopHrcFor(_sex, item.EquipSlot), bindPoseNoIdle: true);
+                if (av == null) { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
+                av.enabled = false;
+                ApplyCardCutoutShader(root);
+                if (item.EquipSlot != EquipSlot.Hair && item.EquipSlot != EquipSlot.Expression && item.EquipSlot != EquipSlot.Outfit)
+                    HideSkinSubmeshes(root);
+
+                var slot = item.EquipSlot;
+                if (slot == EquipSlot.Wings)
+                {
+                    VisibleBounds(root, out float xmn, out float xmx, out float ymn, out float ymx);
+                    float ofh = CardOrthoHalfW / ((float)CardRtW / CardRtH);
+                    float os = Mathf.Min(CardOrthoHalfW * 2f * 0.9f / Mathf.Max(xmx - xmn, 1e-3f),
+                                         ofh * 2f * 0.9f / Mathf.Max(ymx - ymn, 1e-3f));
+                    _cardFrameScale[i] = new Vector3(os, os, os);
+                    _cardFramePos[i] = new Vector3(-os * (xmn + xmx) * 0.5f, -os * (ymn + ymx) * 0.5f, 0f);
+                }
+                else
+                {
+                    var fr = FrameFor(slot, _sex);
+                    _cardFrameScale[i] = fr.Scale; _cardFramePos[i] = fr.Pos;
+                }
+
+                var img = new GameObject("thumb", typeof(RectTransform)).AddComponent<RawImage>();
+                img.transform.SetParent(card, false);
+                var irt = img.rectTransform;
+                irt.anchorMin = irt.anchorMax = new Vector2(0.5f, 0.5f); irt.pivot = new Vector2(0.5f, 0.5f);
+                irt.anchoredPosition = Vector2.zero; irt.sizeDelta = new Vector2(SlotW - 6f, SlotH - 6f);
+                img.texture = _cardRT[i]; img.raycastTarget = false;
+                _cardAv[i] = root;
+                RenderCard(i);
+            }
+            catch (System.Exception e)
+            {
+                if (root != null && _cardAv[i] != root) Destroy(root);
+                Debug.LogWarning("[wardrobe] card " + i + " failed (non-fatal): " + e.Message);
+            }
+        }
+
+        private void RenderCard(int i)
+        {
+            if (_cardCam == null || _cardRT[i] == null || _cardAv[i] == null) return;
+            var t = _cardAv[i].transform;
+            t.localScale = _cardFrameScale[i];
+            t.position = CardSpot(i) + _cardFramePos[i];
+            t.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);
+            _cardCam.orthographicSize = CardOrthoHalfW / ((float)CardRtW / CardRtH);
+            _cardCam.transform.position = CardSpot(i) + new Vector3(0f, 0f, -CardEyeDist);
+            _cardCam.transform.LookAt(CardSpot(i));
+            _cardCam.targetTexture = _cardRT[i];
+            _cardCam.Render();
+        }
+
+        private void DestroyCardPreviews()
+        {
+            for (int i = 0; i < PerPage; i++)
+            {
+                if (_cardAv[i] != null) { DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
+                if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
+                _cardImg[i] = null;
+            }
+        }
+
+        // ---- ported card helpers (verbatim from ShopScreen) ----
+
+        private static string ShopHrcFor(ItemSex sex, EquipSlot slot)
+        {
+            bool male = sex == ItemSex.Male;
+            switch (slot)
+            {
+                case EquipSlot.Shoes:  return "AVATAR/MSHOP0003.HRC";
+                case EquipSlot.Gloves: return male ? "AVATAR/MSHOP0002.HRC" : "AVATAR/WSHOP0002.HRC";
+                default:               return male ? "AVATAR/MSHOP0001.HRC" : "AVATAR/WSHOP0001.HRC";
+            }
+        }
+
+        private string[] ComposeCardParts(ShopItem item)
+        {
+            var rel = item.MshRelPath;
+            if (item.EquipSlot == EquipSlot.Hair)
+            {
+                var d = AvatarOutfit.DefaultsFor(_sex);
+                if (d.TryGetValue(EquipSlot.Face, out var face) && !string.IsNullOrEmpty(face))
+                    return new[] { face, rel };
+            }
+            return new[] { rel };
+        }
+
+        private struct CardFrame { public Vector3 Pos, Scale; }
+        private static CardFrame FrameFor(EquipSlot slot, ItemSex sex)
+        {
+            bool f = sex != ItemSex.Male;
+            switch (slot)
+            {
+                case EquipSlot.Hair:
+                case EquipSlot.Face:
+                case EquipSlot.Expression: return new CardFrame { Pos = new Vector3(0, f ? -500 : -550, 0), Scale = new Vector3(9, 9, 9) };
+                case EquipSlot.Necklace:   return new CardFrame { Pos = new Vector3(0, -400, 0), Scale = new Vector3(8, 8, 8) };
+                case EquipSlot.Top:
+                case EquipSlot.OnePiece:   return new CardFrame { Pos = new Vector3(0, f ? -220 : -240, 0), Scale = new Vector3(5.5f, 5.5f, 5.5f) };
+                case EquipSlot.Bottom:     return new CardFrame { Pos = new Vector3(0, f ? 120 : 100, 0), Scale = new Vector3(6, 6, 6) };
+                case EquipSlot.Shoes:      return new CardFrame { Pos = new Vector3(0, 300, 0), Scale = new Vector3(10, 10, 10) };
+                case EquipSlot.Gloves:     return new CardFrame { Pos = new Vector3(0, 0, 0), Scale = new Vector3(7, 7, 7) };
+                case EquipSlot.Glasses:    return new CardFrame { Pos = new Vector3(0, f ? -520 : -560, 0), Scale = new Vector3(10, 10, 10) };
+                default:                   return new CardFrame { Pos = new Vector3(0, -30, 0), Scale = new Vector3(5.5f, 5.5f, 5.5f) };
+            }
+        }
+
+        private static void ApplyCardCutoutShader(GameObject root)
+        {
+            var cut = Shader.Find("Sdo/UnlitDoubleSided");
+            if (cut == null) return;
+            foreach (var mr in root.GetComponentsInChildren<MeshRenderer>())
+                foreach (var m in mr.sharedMaterials)
+                    if (m != null && m.mainTexture != null) { m.shader = cut; m.SetFloat("_Cutoff", 0.05f); }
+        }
+
+        private static bool IsSkinMat(Material m)
+            => m != null && m.name.IndexOf("BASIC", System.StringComparison.OrdinalIgnoreCase) >= 0;
+
+        private static void HideSkinSubmeshes(GameObject root)
+        {
+            bool anyCloth = false;
+            foreach (var mr in root.GetComponentsInChildren<MeshRenderer>())
+                foreach (var m in mr.sharedMaterials)
+                    if (m != null && !IsSkinMat(m)) { anyCloth = true; break; }
+            if (!anyCloth) return;
+            foreach (var mr in root.GetComponentsInChildren<MeshRenderer>())
+            {
+                var mf = mr.GetComponent<MeshFilter>();
+                var mesh = mf != null ? mf.sharedMesh : null;
+                var mats = mr.sharedMaterials;
+                if (mesh == null || mats == null) continue;
+                if (mesh.subMeshCount <= 1)
+                {
+                    if (mats.Length > 0 && IsSkinMat(mats[0])) mr.enabled = false;
+                }
+                else
+                {
+                    for (int s = 0; s < mesh.subMeshCount && s < mats.Length; s++)
+                        if (IsSkinMat(mats[s])) mesh.SetTriangles(new int[0], s);
+                }
+            }
+        }
+
+        private static void VisibleBounds(GameObject root, out float xmn, out float xmx, out float ymn, out float ymx)
+        {
+            bool any = false; xmn = xmx = ymn = ymx = 0f;
+            foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
+            {
+                var mr = mf.GetComponent<MeshRenderer>(); var mesh = mf.sharedMesh;
+                if (mesh == null || mr == null || !mr.enabled) continue;
+                var verts = mesh.vertices;
+                for (int s = 0; s < mesh.subMeshCount; s++)
+                {
+                    var tris = mesh.GetTriangles(s);
+                    for (int k = 0; k < tris.Length; k++)
+                    {
+                        var v = verts[tris[k]];
+                        if (!any) { xmn = xmx = v.x; ymn = ymx = v.y; any = true; }
+                        else { if (v.x < xmn) xmn = v.x; if (v.x > xmx) xmx = v.x; if (v.y < ymn) ymn = v.y; if (v.y > ymx) ymx = v.y; }
+                    }
+                }
+            }
+        }
+
+        // ================= helpers (同 ShopScreen 風格) =================
+
+        private static Image AddArt(Transform parent, string name, Sprite s, float x, float y)
+            => UIKit.AddSprite(parent, name, s, x, y);
+
+        private Button SpriteBtn(Transform parent, string name, string normalAn, string pushedAn, float x, float y, UnityEngine.Events.UnityAction onClick = null, bool noSwap = false, string hoverAn = null)
+        {
+            var n = CabinetArt.An(normalAn); var p = CabinetArt.An(pushedAn);
+            var h = hoverAn != null ? CabinetArt.An(hoverAn) : p;
+            var btn = UIKit.AddSpriteButton(parent, name, n, h, p, x, y);
+            if (noSwap) btn.transition = Selectable.Transition.None;
+            if (n == null)
+            {
+                var img = btn.targetGraphic as Image; if (img != null) { img.color = new Color(1, 1, 1, 0.001f); img.raycastTarget = true; }
+                var rt = btn.GetComponent<RectTransform>(); rt.sizeDelta = new Vector2(48, 20);
+            }
+            if (onClick != null) btn.onClick.AddListener(onClick);
+            return btn;
+        }
+
+        private static TextMeshProUGUI TxtAt(Transform parent, string name, float x, float y, float w, float h, float size, Color color, TextAlignmentOptions align)
+        {
+            var t = UIKit.AddText(parent, name, "", size, color, align);
+            var rt = t.rectTransform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0, 1); rt.pivot = new Vector2(0, 1);
+            rt.anchoredPosition = new Vector2(x, -y); rt.sizeDelta = new Vector2(w, h);
+            return t;
+        }
+
+        private static void AddTrigData(EventTrigger t, EventTriggerType type, UnityEngine.Events.UnityAction<BaseEventData> fn)
+        {
+            var e = new EventTrigger.Entry { eventID = type };
+            e.callback.AddListener(fn);
+            t.triggers.Add(e);
+        }
+
+        private static Color Hex(uint argb)
+            => new Color(((argb >> 16) & 0xff) / 255f, ((argb >> 8) & 0xff) / 255f, (argb & 0xff) / 255f, ((argb >> 24) & 0xff) / 255f);
+
+        private void Close() => SetVisible(false);
+
+        private void SetVisible(bool on)
+        {
+            if (_cg != null) { _cg.alpha = on ? 1f : 0f; _cg.interactable = on; _cg.blocksRaycasts = on; }
+            if (_cam != null) _cam.enabled = on;
+            if (!on && _uiCam != null) { _uiCam.cullingMask = _savedUiMask; _uiCam = null; }
+        }
+
+        private void OnDestroy()
+        {
+            if (_avatarRoot != null) Destroy(_avatarRoot);
+            if (_rt != null) { _rt.Release(); Destroy(_rt); }
+            DestroyCardPreviews();
+            if (_cardCam != null) Destroy(_cardCam.gameObject);
+        }
+    }
+}

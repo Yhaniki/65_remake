@@ -85,5 +85,14 @@ namespace Sdo.Shop
         }
         public void SetEquipped(EquipSlot slot, int itemId) { if (slot != EquipSlot.None) _equipped[slot] = itemId; }
         public void ClearEquipped(EquipSlot slot) { _equipped.Remove(slot); }
+
+        /// <summary>Wipe owned + equipped + wallet back to empty. Used before reloading from the persisted profile so a
+        /// re-opened screen starts from the saved state, not stale in-memory shop try-on (see WardrobeStore.Load).</summary>
+        public void Reset()
+        {
+            _owned.Clear();
+            _equipped.Clear();
+            Wallet.Coins = 0; Wallet.Points = 0; Wallet.Bonus = 0;
+        }
     }
 }

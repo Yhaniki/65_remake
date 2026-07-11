@@ -539,7 +539,7 @@ namespace Sdo.UI.Screens
         {
             switch (ShopService.Buy(_session.Wardrobe, item, Now()))
             {
-                case BuyResult.Ok: Toast.Show("購買成功：" + item.Name); break;
+                case BuyResult.Ok: WardrobeStore.SaveOwnedWallet(_session); Toast.Show("購買成功：" + item.Name); break;   // 落地 profile.json (擁有+錢包)
                 case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
                 case BuyResult.AlreadyOwned: Toast.Show("已經擁有：" + item.Name); break;
                 default: Toast.Show("購買失敗"); break;
@@ -560,6 +560,7 @@ namespace Sdo.UI.Screens
                 if (r == BuyResult.Ok) bought++;
                 else if (r == BuyResult.AlreadyOwned) already++;
             }
+            if (bought > 0) WardrobeStore.SaveOwnedWallet(_session);   // 落地 profile.json (擁有+錢包)
             Toast.Show(bought > 0 ? "全身購買成功（" + bought + " 件）"
                      : already > 0 ? "全身穿搭已全部擁有"
                      : "沒有可購買的穿搭");
@@ -567,12 +568,13 @@ namespace Sdo.UI.Screens
         }
 
         // 快速充值：離線版無金流後端 → 一鍵把三種幣 (M=Coins / G=Points / H=Bonus) 全部充滿,方便試玩。
-        // 錢包是 session 記憶體值 (GameSession.SeedRoomDefaults 種入,不存檔) → 直接設值 + 更新底條數字即可。
+        // 錢包由 WardrobeStore 持久化到 active user 的 profile.json → 設值後存檔 + 更新底條數字。
         private void DoRecharge()
         {
             const int Full = 999999999;   // 充滿 (int 上限內的大額;三幣一致,顯示 9 位仍在各幣位之間留有間距不重疊)
             var w = _session.Wardrobe.Wallet;
             w.Coins = Full; w.Points = Full; w.Bonus = Full;
+            WardrobeStore.SaveOwnedWallet(_session);   // 錢包落地 profile.json (充值也持久化)
             UpdateWallet();               // 只需刷新底條數字 (不動商品格/預覽)
             Toast.Show("快速充值：M／G／H 幣已全部充滿");
         }
