@@ -296,8 +296,8 @@ namespace Sdo.UI.Screens
 
             // 性別切換 (SHOP.XML：male @ 0,510 / female @ 40,510)。官方是 CheckBox：選中顯示 bgpushed(暗態)、未選 bgnormal(亮)
             // — 同 M/G 幣別 (選中=暗)。noSwap + RefreshToggles 依 _sex 換 sprite (修 user #5「男女亮暗相反」：舊版選中的性別反而亮)。
-            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => { _sex = ItemSex.Male;   _page = 0; _showHistory = false; RebuildAvatar(); Refresh(); }, noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
-            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => { _sex = ItemSex.Female; _page = 0; _showHistory = false; RebuildAvatar(); Refresh(); }, noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
+            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => SwitchGender(ItemSex.Male),   noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
+            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => SwitchGender(ItemSex.Female), noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
 
             // 復原穿搭 (SHOP.XML undochange @ 74,532，紅色 ↻)：清掉試穿、還原成預設穿搭。hover 補官方亮幀 Shop16 (#5)。
             // solo:true → 自貼圖載入,去掉 atlas 鄰居滲出的白邊 (#5 左下角按鈕白邊)。
@@ -357,6 +357,10 @@ namespace Sdo.UI.Screens
             if (_search != null) { _search.SetTextWithoutNotify(""); }
             _query = "";
             _dragAngle = -DefaultYaw; _pitchAngle = 0f;   // 人物預設朝右 30°
+            // 對齊 active 帳號到 session 性別 (修「從男女選擇畫面直接開商城」時 active 帳號可能還停在別的性別),並載入該帳號
+            // 的「實際穿戴」+ 錢包 (清掉上次的試穿殘留)；試穿不落地,購買才改真的穿搭。
+            if (_session != null) ActivateGenderProfile(_session.Gender);
+            _tryOnOutfitParts = null;
             BuildPreview();
             // 遮掉主 UI 相機的預覽層(12)，避免 3D 假人被主相機畫平到 UI 上 (同 RoomScreen 對場景/頭像層的做法)。
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
@@ -364,6 +368,38 @@ namespace Sdo.UI.Screens
             RebuildAvatar();
             SetVisible(true);   // 先顯示 (alpha=1) 再 Refresh：分頁按鈕在「可見」狀態下建立，避免首幀亮暗未套用
             Refresh();
+        }
+
+        // 切性別 == 切角色帳號 (女→00000000 / 男→00000001，與 GenderSelectScreen 同一套 profile)。使用者選定：在商城按
+        // 男/女不再只是換瀏覽/預覽,而是真的切換登入角色 —— 用該性別帳號的錢包買、存進該帳號衣櫃、離開商城後房間/遊戲也
+        // 是該性別。因為女裝綁女骨架、男裝綁男骨架,唯有連角色一起切,買到的衣服才穿得上 (修「切女角只能買同性別的衣服」)。
+        private void SwitchGender(ItemSex sex)
+        {
+            if (_session == null || _sex == sex) return;   // 已是該性別 → 不重載
+            _sex = sex;
+            ActivateGenderProfile(sex == ItemSex.Male ? 1 : 0);   // 換帳號 → 換錢包/擁有/穿搭/身分
+            _tryOnOutfitParts = null;
+            _page = 0; _showHistory = false;
+            RebuildAvatar();                   // 左側預覽換成新帳號的穿搭 (新性別骨架)
+            Refresh();                         // 商品格/幣別/性別鈕亮暗/底條錢包 依新帳號重畫
+            Nav.RefreshRoomAvatar?.Invoke();   // 房間背後的本機 3D avatar + 頭貼同步換新性別 (RoomScreen.RefreshLocalAvatar 讀 session.Gender)
+        }
+
+        // 對齊 active 使用者帳號到指定性別,並載入該帳號的錢包 + 擁有 + 穿搭。只有「帳號真的換了」才重種房間面板預設/同步
+        // 身分 (避免從房間開商城時,把玩家在房間改過的面板值被重置)；RoomConfig 由 SetActive 內部重載。
+        private void ActivateGenderProfile(int gender)
+        {
+            _session.Gender = gender;
+            string id = Sdo.Settings.ProfileManager.SeededIdForGender(gender);
+            var active = Sdo.Settings.ProfileManager.Active;
+            if (active == null || active.id != id)
+            {
+                Sdo.Settings.ProfileManager.SetActive(id);   // 載入該帳號 profile + 收藏 + config.ini
+                var p = Sdo.Settings.ProfileManager.Active;
+                if (p != null) { _session.LocalPlayerId = p.id; _session.LocalPlayerName = p.name; }
+                _session.SeedRoomDefaults();                 // 換帳號才重種房間面板預設 (per-user)
+            }
+            WardrobeStore.Load(_session);   // 一律重載該帳號錢包/擁有/穿搭 (清掉上一帳號殘留 + 商城試穿)
         }
 
         private void Refresh()
@@ -514,11 +550,9 @@ namespace Sdo.UI.Screens
                 if (idx >= items.Count) continue;                    // 這頁沒有第 i 件商品 → 只保留空框
                 var item = items[idx];
 
-                bool owned = _session.Wardrobe.Owns(item.Id);
-
                 var nm = TxtAt(card, "name", _L.NamePos.x, _L.NamePos.y, _L.TextW, 16, _L.NameFont, _L.NameColor, _L.Align);
                 nm.fontWeight = FontWeight.Thin;   // 白色細字
-                nm.text = (owned ? "✓ " : "") + item.Name;   // 官方沒有「已穿」圓點標記 → 不加 ●
+                nm.text = item.Name;   // 已擁有不加勾勾/標記 (使用者指定)
                 var pr = TxtAt(card, "price", _L.PricePos.x, _L.PricePos.y, _L.TextW, 16, 12, CWhite, _L.Align);
                 pr.fontStyle = FontStyles.Bold;
                 pr.text = (item.IsPermanent ? "永久 " : item.DurationDays + "天 ") + item.Price + CurrencyZh(item.Currency);
@@ -541,9 +575,16 @@ namespace Sdo.UI.Screens
         {
             switch (ShopService.Buy(_session.Wardrobe, item, Now()))
             {
-                case BuyResult.Ok: Toast.Show("購買成功：" + item.Name); break;
+                case BuyResult.Ok:
+                    EquipOwned(item);                        // 購買=直接穿戴 (使用者指定)
+                    WardrobeStore.SaveAll(_session);         // 落地 擁有+錢包+穿搭 (只存已擁有的)
+                    Nav.RefreshRoomAvatar?.Invoke();         // 房間/大廳的人同步換上
+                    RebuildAvatar();                         // 左側預覽更新
+                    Toast.Show("購買並穿上：" + item.Name);
+                    break;
                 case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
                 case BuyResult.AlreadyOwned: Toast.Show("已經擁有：" + item.Name); break;
+                case BuyResult.NoRoom: Toast.Show("服飾欄已滿，請到儲物櫃「服饰栏扩充」"); break;   // 預設 3 格，需擴充
                 default: Toast.Show("購買失敗"); break;
             }
             Refresh();
@@ -553,28 +594,39 @@ namespace Sdo.UI.Screens
         private void DoBuyAll()
         {
             if (_catalog == null) return;
-            int bought = 0, already = 0;
+            int bought = 0, already = 0, noRoom = 0, noMoney = 0;
             foreach (var kv in new List<KeyValuePair<EquipSlot, int>>(_session.Wardrobe.Equipped))
             {
                 var it = _catalog.ById(kv.Value);
                 if (it == null) continue;
-                var r = ShopService.Buy(_session.Wardrobe, it, Now());
-                if (r == BuyResult.Ok) bought++;
-                else if (r == BuyResult.AlreadyOwned) already++;
+                switch (ShopService.Buy(_session.Wardrobe, it, Now()))
+                {
+                    case BuyResult.Ok: bought++; break;
+                    case BuyResult.AlreadyOwned: already++; break;
+                    case BuyResult.NoRoom: noRoom++; break;
+                    case BuyResult.NotEnoughMoney: noMoney++; break;
+                }
             }
-            Toast.Show(bought > 0 ? "全身購買成功（" + bought + " 件）"
-                     : already > 0 ? "全身穿搭已全部擁有"
-                     : "沒有可購買的穿搭");
+            if (bought > 0) WardrobeStore.SaveOwnedWallet(_session);   // 落地 profile.json (擁有+錢包)
+            // 有件數因「服飾欄已滿」買不下 → 講清楚 (預設 9 格,不夠請到儲物櫃 服饰栏扩充)。
+            string msg;
+            if (noRoom > 0) msg = "全身購買 " + bought + " 件；服飾欄已滿(" + _session.Wardrobe.ClothSlotCount + "格)，還有 " + noRoom + " 件請先到儲物櫃「服饰栏扩充」";
+            else if (noMoney > 0) msg = "全身購買 " + bought + " 件；" + noMoney + " 件餘額不足";
+            else if (bought > 0) msg = "全身購買成功（" + bought + " 件）";
+            else if (already > 0) msg = "全身穿搭已全部擁有";
+            else msg = "沒有可購買的穿搭";
+            Toast.Show(msg);
             Refresh();
         }
 
         // 快速充值：離線版無金流後端 → 一鍵把三種幣 (M=Coins / G=Points / H=Bonus) 全部充滿,方便試玩。
-        // 錢包是 session 記憶體值 (GameSession.SeedRoomDefaults 種入,不存檔) → 直接設值 + 更新底條數字即可。
+        // 錢包由 WardrobeStore 持久化到 active user 的 profile.json → 設值後存檔 + 更新底條數字。
         private void DoRecharge()
         {
             const int Full = 999999999;   // 充滿 (int 上限內的大額;三幣一致,顯示 9 位仍在各幣位之間留有間距不重疊)
             var w = _session.Wardrobe.Wallet;
             w.Coins = Full; w.Points = Full; w.Bonus = Full;
+            WardrobeStore.SaveOwnedWallet(_session);   // 錢包落地 profile.json (充值也持久化)
             UpdateWallet();               // 只需刷新底條數字 (不動商品格/預覽)
             Toast.Show("快速充值：M／G／H 幣已全部充滿");
         }
@@ -619,15 +671,31 @@ namespace Sdo.UI.Screens
             // 之前多呼叫 RefreshGrid 會 DestroyCardPreviews 把整頁 8 張 3D 縮圖全砍掉重建 → 使用者看到「按一張、其餘 6 張同時重 load」。
         }
 
-        // 復原穿搭：清掉所有試穿的裝備 → 預覽回到預設造型。
+        // 買了直接穿上 (單件；套装另走 tryOn 預覽,不在這裡自動穿)。與 DoTryOn 同一套互斥規則。
+        private void EquipOwned(ShopItem item)
+        {
+            if (item == null || item.EquipSlot == EquipSlot.None || item.EquipSlot == EquipSlot.Outfit) return;
+            var w = _session.Wardrobe;
+            _tryOnOutfitParts = null;
+            if (item.EquipSlot == EquipSlot.OnePiece)
+            {
+                w.ClearEquipped(EquipSlot.Top); w.ClearEquipped(EquipSlot.Bottom);
+                w.SetEquipped(EquipSlot.OnePiece, item.Id);
+            }
+            else
+            {
+                if (item.EquipSlot == EquipSlot.Top || item.EquipSlot == EquipSlot.Bottom) w.ClearEquipped(EquipSlot.OnePiece);
+                w.SetEquipped(item.EquipSlot, item.Id);
+            }
+        }
+
+        // 復原穿搭：回到「儲物櫃實際穿戴」的樣子 (從 profile 重載擁有+穿搭)，不是清成裸體預設 (使用者指定)。
         private void DoResetOutfit()
         {
-            var w = _session.Wardrobe;
-            foreach (var slot in new[] { EquipSlot.OnePiece, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Shoes, EquipSlot.Gloves, EquipSlot.Glasses, EquipSlot.Hair, EquipSlot.Expression, EquipSlot.Necklace, EquipSlot.Wings })
-                w.ClearEquipped(slot);   // 含新增的表情/项链/翅膀 → 復原才會把試穿的飾品也清掉
-            _tryOnOutfitParts = null;   // 清掉整套試穿覆蓋
+            WardrobeStore.Load(_session);   // 重載存檔的真實穿搭
+            _tryOnOutfitParts = null;
             _dragAngle = -DefaultYaw; _pitchAngle = 0f;   // 連轉動角度一起復原 (人物朝右 30°)
-            RebuildAvatar();   // 靜默復原：同 DoTryOn,只換左側預覽,不重建卡片縮圖 (避免整頁 3D 縮圖無謂重 load)
+            RebuildAvatar();   // 靜默復原：只換左側預覽,不重建卡片縮圖
         }
 
         // 覆蓋卡片上半 (名稱 + 縮圖區、避開底排買/送/試穿鈕) 的透明命中區：點一下 → 試穿到左側預覽；滑上去 → 該卡縮圖放大旋轉。
@@ -1239,6 +1307,9 @@ namespace Sdo.UI.Screens
             if (_cg != null) { _cg.alpha = on ? 1f : 0f; _cg.interactable = on; _cg.blocksRaycasts = on; }
             if (_cam != null) _cam.enabled = on;
             if (!on && _uiCam != null) { _uiCam.cullingMask = _savedUiMask; _uiCam = null; }   // 關商城 → 還原主 UI 相機遮罩
+            // 關商城 → 若底下是男女選擇畫面(modal 不會重跑其 OnShow)，叫它用最新穿搭/性別刷新預覽 (hook 只在該畫面在底下時非 null；
+            // 關回房間時為 null → 由 RefreshRoomAvatar 那條處理)。修「女角商城買衣穿上，回選性別畫面沒穿上、進 room 才有」。
+            if (!on) Nav.RefreshGenderPreview?.Invoke();
         }
 
         private void OnDestroy()

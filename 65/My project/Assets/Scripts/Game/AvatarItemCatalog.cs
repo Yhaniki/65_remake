@@ -97,9 +97,44 @@ namespace Sdo.Game
 
         // Synthesised mesh-only rows get an Id in a high range that can't collide with a real iteminfo Id, so ById can
         // resolve an equipped synth item back to its ShopItem (→ its mesh) and it actually wears (user: 無名翅膀穿不起來).
-        private const int SynthIdBase = 90_000_000;
+        public const int SynthIdBase = 90_000_000;
         private readonly Dictionary<int, ShopItem> _synthById = new Dictionary<int, ShopItem>();
         private readonly Dictionary<(ItemSex, EquipSlot), List<ShopItem>> _meshModelCache = new Dictionary<(ItemSex, EquipSlot), List<ShopItem>>();
+
+        // The mesh-backed accessory slots a synth id can belong to: the AVATAR/*.MSH filename token + its per-gender
+        // category. Used to rebuild a synth ShopItem straight from its bare model id (see SynthesizeAccessory).
+        private struct SynthSlot { public string Token; public int CatMale, CatFemale; }
+        private static readonly SynthSlot[] SynthAccessorySlots =
+        {
+            new SynthSlot { Token = "CHIBANG",   CatMale = ItemCategory.WingsMale,    CatFemale = ItemCategory.WingsFemale },     // 翅膀
+            new SynthSlot { Token = "FACE_HUAN", CatMale = ItemCategory.FaceMale,     CatFemale = ItemCategory.FaceFemale },      // 表情
+            new SynthSlot { Token = "LINGDANG",  CatMale = ItemCategory.NecklaceMale, CatFemale = ItemCategory.NecklaceFemale },  // 项链
+        };
+
+        /// <summary>Pure: rebuild a synthesised mesh-only accessory <see cref="ShopItem"/> from its bare synth id
+        /// (<paramref name="id"/> ≥ <see cref="SynthIdBase"/>) by probing <paramref name="meshExists"/> (an AVATAR
+        /// filename predicate) for a wing/表情/项链 mesh of that model id. Deliberately does NOT apply the shop's
+        /// expression-quality gate: an item the player already OWNS/WEARS must always resolve back to its mesh. Returns
+        /// null if no accessory mesh matches. Prefers the MAN mesh when a model id exists for both genders (rare).</summary>
+        public static ShopItem SynthesizeAccessory(int id, Func<string, bool> meshExists)
+        {
+            if (id < SynthIdBase || meshExists == null) return null;
+            int modelId = id - SynthIdBase;
+            if (modelId <= 0) return null;
+            string id6 = modelId.ToString("D6");
+            foreach (var s in SynthAccessorySlots)
+            {
+                if (meshExists(id6 + "_MAN_" + s.Token + ".MSH"))   return NewSynth(id, modelId, id6, s.CatMale);
+                if (meshExists(id6 + "_WOMAN_" + s.Token + ".MSH")) return NewSynth(id, modelId, id6, s.CatFemale);
+            }
+            return null;
+        }
+
+        private static ShopItem NewSynth(int id, int modelId, string id6, int category) => new ShopItem
+        {
+            Id = id, Name = id6, Price = 100, PriceCategoryRaw = 1, ModelId = modelId, Category = category,
+            MinLevel = 1, DurationDays = -1, Quantity = -1, SexRaw = ItemTypes.SexFromCategory(category) == ItemSex.Male ? 1 : 0,
+        };
 
         /// <summary>Every model for a mesh-backed slot (e.g. Wings/CHIBANG): the named iteminfo rows PLUS every extra
         /// model that ONLY exists as a mesh on disk — synthesised as a row named by its 6-digit serial, permanent, 100M
@@ -187,7 +222,17 @@ namespace Sdo.Game
         /// Falls back to the synthesised mesh-only rows (<see cref="AllMeshModels"/>) so a tried-on unnamed wing resolves.</summary>
         public ShopItem ById(int id)
         {
-            if (id >= SynthIdBase) return _synthById.TryGetValue(id, out var syn) ? syn : null;
+            if (id >= SynthIdBase)
+            {
+                // A synth wing/表情/项链. It only landed in _synthById if the shop browsed that slot this session; an
+                // OWNED/EQUIPPED accessory reloaded from profile.json is looked up long before that, so rebuild it from
+                // its mesh on demand (and cache). Without this, ById→null makes the 儲物櫃 hide owned accessories AND a
+                // wardrobe save re-resolves equippedParts without them → they vanish until the shop tab is reopened.
+                if (_synthById.TryGetValue(id, out var syn)) return syn;
+                syn = SynthesizeAccessory(id, f => _meshFiles.Contains(f));
+                if (syn != null) _synthById[id] = syn;
+                return syn;
+            }
             if (_byId == null)
             {
                 _byId = new Dictionary<int, ShopItem>(Clothing.Count);

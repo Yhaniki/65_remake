@@ -27,6 +27,7 @@ namespace Sdo.UI.Util
         public const string GameStart = "Start";       // 開始 pressed -> fade to the stage
 
         public const string Bubble = "Bubble";         // room speech bubble pop
+        public const string Run = "Run";               // 儲物櫃穿脫衣物的布料摩擦音 (SE\Run.wav)
 
         private static UiSfx _inst;
         private AudioSource _src;

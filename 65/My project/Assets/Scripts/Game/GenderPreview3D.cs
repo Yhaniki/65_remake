@@ -52,14 +52,31 @@ namespace Sdo.Game
         /// <summary>The preview render — assign to the screen's RawImage. Null until Build succeeds.</summary>
         public Texture PreviewTexture => _rt;
 
-        /// <summary>Build the camera, RT and both dancers, then show <paramref name="gender"/> (0=女,1=男).</summary>
-        public void Build(int gender)
+        // 每個性別預覽要穿的實際部位 (由 UI 層從對應 profile 帶入；null → 用預設整套)。
+        private string[] _femaleParts, _maleParts;
+
+        /// <summary>Build the camera, RT and both dancers, then show <paramref name="gender"/> (0=女,1=男). Optional
+        /// <paramref name="femaleParts"/>/<paramref name="maleParts"/> = each gender's ACTUAL worn outfit (else default).</summary>
+        public void Build(int gender, string[] femaleParts = null, string[] maleParts = null)
         {
+            _femaleParts = femaleParts; _maleParts = maleParts;
             BuildCamera();
             _femalePreviewMots = LoadPreviewMots(FemalePreviewMotPaths);
             _malePreviewMots = LoadPreviewMots(MalePreviewMotPaths);
             _female = BuildAvatar(male: false, name: "GenderPreviewFemale");
             _male = BuildAvatar(male: true, name: "GenderPreviewMale");
+            SetGender(gender);
+        }
+
+        /// <summary>Rebuild both dancers with new outfits (換裝後回到選性別畫面時刷新)；相機/RT 保留。</summary>
+        public void SetOutfits(int gender, string[] femaleParts, string[] maleParts)
+        {
+            _femaleParts = femaleParts; _maleParts = maleParts;
+            if (_female != null) Destroy(_female.gameObject);
+            if (_male != null) Destroy(_male.gameObject);
+            _female = BuildAvatar(male: false, name: "GenderPreviewFemale");
+            _male = BuildAvatar(male: true, name: "GenderPreviewMale");
+            _gender = -1;   // 強制 SetGender 重新顯示/取景
             SetGender(gender);
         }
 
@@ -87,7 +104,8 @@ namespace Sdo.Game
             go.transform.SetParent(transform, false);
             // PreviewBody: full body but with the opaque-cutout portrait shader, so on the TRANSPARENT preview RT the
             // hair cutout doesn't punch see-through holes / write depth over the face (portraitOpaque:false did that).
-            var av = SdoRoomAvatar.Build(go, PreviewLayer, SdoRoomAvatar.RenderMode.PreviewBody, male: male);
+            var parts = male ? _maleParts : _femaleParts;   // 實際穿戴 (null → 預設整套)
+            var av = SdoRoomAvatar.Build(go, PreviewLayer, SdoRoomAvatar.RenderMode.PreviewBody, male: male, equippedParts: parts);
             if (av == null) { Destroy(go); return null; }
             av.DanceEnabled = () => false;   // no DPS in the select screen — hold the standby idle (which auto-loops)
             av.DanceTimeSec = () => -1f;

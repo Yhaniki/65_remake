@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using Sdo.Shop;
+using Sdo.Game;
 
 namespace Sdo.Tests
 {
@@ -77,6 +79,65 @@ namespace Sdo.Tests
         {
             Assert.AreEqual("MAN", Item(1, ItemCategory.TopMale).GenderFolder);
             Assert.AreEqual("WOMAN", Item(1, ItemCategory.TopFemale).GenderFolder);
+        }
+
+        // ---- synthesised mesh-only accessory rebuild (AvatarItemCatalog.ById fix) ----
+        // A synth wing/表情/项链 owned+equipped in profile.json must rebuild from its mesh on reload even when the shop
+        // never browsed that slot this session — otherwise the 儲物櫃 hides it and a save drops it from equippedParts
+        // (user bug: 重開遊戲翅膀/表情進儲物櫃就消失，去商城買一個才恢復).
+
+        private static System.Func<string, bool> MeshSet(params string[] names)
+        {
+            var set = new HashSet<string>(names);
+            return set.Contains;
+        }
+
+        [Test]
+        public void SynthesizeAccessory_MaleWing_RebuildsFromMesh()
+        {
+            int id = AvatarItemCatalog.SynthIdBase + 37931;                 // the real equipped wing id from profile 00000001
+            var it = AvatarItemCatalog.SynthesizeAccessory(id, MeshSet("037931_MAN_CHIBANG.MSH"));
+            Assert.IsNotNull(it);
+            Assert.AreEqual(id, it.Id);
+            Assert.AreEqual(37931, it.ModelId);
+            Assert.AreEqual(EquipSlot.Wings, it.EquipSlot);
+            Assert.AreEqual(ItemSex.Male, it.Sex);
+            Assert.AreEqual("AVATAR/037931_MAN_CHIBANG.MSH", it.MshRelPath);
+        }
+
+        [Test]
+        public void SynthesizeAccessory_MaleExpression_RebuildsFromMesh()
+        {
+            int id = AvatarItemCatalog.SynthIdBase + 37953;                 // the real equipped 表情 id from profile 00000001
+            var it = AvatarItemCatalog.SynthesizeAccessory(id, MeshSet("037953_MAN_FACE_HUAN.MSH"));
+            Assert.IsNotNull(it);
+            Assert.AreEqual(EquipSlot.Expression, it.EquipSlot);
+            Assert.AreEqual("AVATAR/037953_MAN_FACE_HUAN.MSH", it.MshRelPath);
+        }
+
+        [Test]
+        public void SynthesizeAccessory_FemaleNecklace_RebuildsFromMesh()
+        {
+            int id = AvatarItemCatalog.SynthIdBase + 100;
+            var it = AvatarItemCatalog.SynthesizeAccessory(id, MeshSet("000100_WOMAN_LINGDANG.MSH"));
+            Assert.IsNotNull(it);
+            Assert.AreEqual(EquipSlot.Necklace, it.EquipSlot);
+            Assert.AreEqual(ItemSex.Female, it.Sex);
+        }
+
+        [Test]
+        public void SynthesizeAccessory_NoMatchingMesh_ReturnsNull()
+        {
+            int id = AvatarItemCatalog.SynthIdBase + 37931;
+            Assert.IsNull(AvatarItemCatalog.SynthesizeAccessory(id, MeshSet()));                    // nothing on disk
+            Assert.IsNull(AvatarItemCatalog.SynthesizeAccessory(id, MeshSet("037931_MAN_COAT.MSH"))); // a top is not an accessory
+        }
+
+        [Test]
+        public void SynthesizeAccessory_NonSynthId_ReturnsNull()
+        {
+            // a real iteminfo id (< SynthIdBase) is never a synth accessory, even if a same-numbered mesh exists
+            Assert.IsNull(AvatarItemCatalog.SynthesizeAccessory(337891, MeshSet("337891_MAN_CHIBANG.MSH")));
         }
     }
 }

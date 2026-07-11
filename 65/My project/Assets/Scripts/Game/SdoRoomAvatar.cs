@@ -89,10 +89,11 @@ namespace Sdo.Game
             // the COAT/PANT submeshes to a single material (it never shows them); the full-body preview keeps the ranges.
             bool useCutout = mode != RenderMode.Scene;
             bool singleMaterial = mode == RenderMode.PortraitHead;
-            string root = SdoExtracted.Root;
             string hrcRel = male ? MaleHrc : FemaleHrc;
             var bodyParts = NormalizeParts(equippedParts, male);
-            string hrcPath = Path.Combine(root, hrcRel.Replace('/', Path.DirectorySeparatorChar));
+            // 用 ResolveAvatarFile(Root + dev Datas 全量) 解析,不再只找 Root —— 商城買的衣物 mesh 常只在 Datas 全量目錄,
+            // Root-only 會漏(→ 房間人變光頭)。與左側預覽/遊戲內舞者同一條解析路徑,穿搭在房間才一致。
+            string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel);
             if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
             var hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath));
             if (hrc == null) { Debug.LogWarning("[room-avatar] HRC parse fail"); return null; }
@@ -112,13 +113,15 @@ namespace Sdo.Game
             int parts = 0;
             foreach (var rel in bodyParts)
             {
-                var path = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+                var path = SdoAvatarBuilder.ResolveAvatarFile(rel);   // Root + dev Datas 全量 (見上;修光頭)
                 if (!File.Exists(path)) { Debug.LogWarning("[room-avatar] missing " + rel); continue; }
                 var r = MshLoader.Load(File.ReadAllBytes(path));
                 if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-avatar] parse fail " + rel); continue; }
                 var dir = Path.GetDirectoryName(path);
-                bool hair = rel.ToUpperInvariant().Contains("HAIR");
-                var sh = useCutout ? portraitShader : (hair ? hairShader : bodyShader);
+                // 髮/眼鏡/翅膀/項鍊都要雙面+alpha-cutout(去背),否則翅膀/眼鏡鏤空處變實心。其餘走 Unlit/Texture。
+                string ru = rel.ToUpperInvariant();
+                bool twoSidedAlpha = ru.Contains("HAIR") || ru.Contains("GLASS") || ru.Contains("CHIBANG") || ru.Contains("LINGDANG");
+                var sh = useCutout ? portraitShader : (twoSidedAlpha ? hairShader : bodyShader);
                 int si = 0;
                 foreach (var sub in r.Submeshes)
                 {
@@ -195,14 +198,13 @@ namespace Sdo.Game
 
         private static string[] NormalizeParts(string[] parts, bool male)
         {
-            var defaults = DefaultParts(male);
-            var res = new string[defaults.Length];
-            for (int i = 0; i < res.Length; i++)
-            {
-                string rel = parts != null && i < parts.Length ? parts[i] : null;
-                res[i] = string.IsNullOrEmpty(rel) ? defaults[i] : NormalizeRel(rel);
-            }
-            return res;
+            // 空 → 預設整套。否則「原樣保留全部非空部位」(含飾品/翅膀/眼鏡,index≥6)——舊版只留前 6 個核心部位,把飾品/翅膀
+            // 截掉了 → 房間看不到眼鏡/翅膀 (使用者回報)。equippedParts 由 AvatarOutfit.ResolveParts 產生時已含核心預設,故不需再補。
+            if (parts == null || parts.Length == 0) return DefaultParts(male);
+            var res = new System.Collections.Generic.List<string>(parts.Length);
+            foreach (var rel in parts)
+                if (!string.IsNullOrEmpty(rel)) res.Add(NormalizeRel(rel));
+            return res.Count > 0 ? res.ToArray() : DefaultParts(male);
         }
 
         private static string NormalizeRel(string rel)

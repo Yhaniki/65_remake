@@ -282,6 +282,28 @@ namespace Sdo.Game
             ApplyAvatarTransform();
         }
 
+        /// <summary>Rebuild the local host avatar with a new outfit (儲物櫃 換穿) without rebuilding the whole scene —
+        /// preserves the current walk position/facing and returns it to its idle pose. No-op (just stores) until Build ran.</summary>
+        public void RebuildLocalAvatar(bool male, string[] avatarParts)
+        {
+            _male = male;
+            _avatarParts = avatarParts;
+            if (!_ready) return;
+            var oldRoot = _avatarRoot;
+            _avatarRoot = null; _avatar = null;
+            var parent = new GameObject("RoomLocalAvatar");
+            parent.transform.SetParent(transform, false);
+            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
+            _avatarRoot = parent.transform;
+            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
+            _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
+            _walking = false;
+            if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);
+            ApplyAvatarTransform();
+            if (oldRoot != null) Destroy(oldRoot.gameObject);
+        }
+
         private void BuildCamera()
         {
             int rtH = Mathf.Clamp(Screen.height, 600, 1600);

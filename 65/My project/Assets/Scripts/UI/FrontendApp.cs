@@ -33,6 +33,7 @@ namespace Sdo.UI
         private NoteSkinPicker _notePicker;
         private ResultsModal _results;
         private ShopScreen _shop;
+        private WardrobeScreen _wardrobe;
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
@@ -110,11 +111,15 @@ namespace Sdo.UI
             _shop = new GameObject("Shop").AddComponent<ShopScreen>();
             _shop.transform.SetParent(modalLayer, false);
             _shop.Build(modalLayer, _ctx.Session);
+            _wardrobe = new GameObject("Wardrobe").AddComponent<WardrobeScreen>();
+            _wardrobe.transform.SetParent(modalLayer, false);
+            _wardrobe.Build(modalLayer, _ctx.Session);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
             Nav.OpenNoteSkinPicker = () => _notePicker.Open();
             Nav.OpenShop = () => ScreenTransition.Run(() => _shop.Open());   // 進商城：漸黑 → loading → 漸亮（同房間進出效果）
+            Nav.OpenWardrobe = () => _wardrobe.Open();                        // 儲物櫃有自己的視窗開闔動畫(WindowAnim)，不套轉場
             Nav.StartGame = StartGameplay;
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };

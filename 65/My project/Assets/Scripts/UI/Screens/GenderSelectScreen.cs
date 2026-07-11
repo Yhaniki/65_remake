@@ -98,11 +98,17 @@ namespace Sdo.UI.Screens
             // initial selection follows the current active profile's gender (00000000 女 on first boot).
             _gender = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0;
 
+            // 每個性別用它對應 profile 的「實際穿戴」顯示 (女 00000000 / 男 00000001)；換裝後回到本畫面也刷新。
+            string[] fParts = PartsForGender(0), mParts = PartsForGender(1);
             if (_preview == null)
             {
                 var go = new GameObject("GenderPreview3D");
                 _preview = go.AddComponent<GenderPreview3D>();
-                _preview.Build(_gender);
+                _preview.Build(_gender, fParts, mParts);
+            }
+            else
+            {
+                _preview.SetOutfits(_gender, fParts, mParts);
             }
             if (_previewImg != null && _preview != null && _preview.PreviewTexture != null)
             {
@@ -117,10 +123,38 @@ namespace Sdo.UI.Screens
 
             SelectGender(_gender);            // sync checkbox sprites + preview
             SelectInputMode(keyboard: true);  // 預設 = 鍵盤被選中(藍邊 LobbySel0b)；每次顯示都重置成 keyboard
+
+            // 商城是疊在本畫面上的 modal，關閉時不會重跑 OnShow → 綁一個 refresh 讓「在商城買了衣服/換了性別」回到本畫面時，
+            // 3D 預覽能用最新穿搭/性別刷新（否則預覽停在開商城前的樣子，要進房間才看得到；見 ShopScreen.SetVisible(false)）。
+            Nav.RefreshGenderPreview = RefreshFromShop;
+        }
+
+        // 從商城 modal 關閉回到本畫面時呼叫：性別同步成 session（商城可能切了性別=切帳號），並用兩個帳號最新的「實際穿戴」
+        // 刷新 3D 預覽（PartsForGender 直接讀 profile.json → 商城購買已 SaveAll 落地）。
+        private void RefreshFromShop()
+        {
+            int g = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0;
+            _gender = g;
+            if (_preview != null) _preview.SetOutfits(g, PartsForGender(0), PartsForGender(1));
+            UIKit.ApplySprite(_maleBox, g == 1 ? _maleOn : _maleOff);
+            UIKit.ApplySprite(_femaleBox, g == 0 ? _femaleOn : _femaleOff);
+        }
+
+        // 取某性別對應 profile (女 00000000 / 男 00000001) 的「實際穿戴」部位；找不到 → null (GenderPreview3D 用預設整套)。
+        // 從 id-based equippedItems 經 catalog 現算 (含合成 翅膀/表情/项链)，而非讀可能過時的 equippedParts 快取 →
+        // 選性別畫面才會跟儲物櫃/房間一致顯示飾品 (user: 選性別沒顯示)。
+        private static string[] PartsForGender(int gender)
+        {
+            string id = Sdo.Settings.ProfileManager.SeededIdForGender(gender);
+            foreach (var p in Sdo.Settings.ProfileManager.List())
+                if (p != null && p.id == id)
+                    return WardrobeStore.ResolveEquippedParts(p, gender, cid => AvatarItemCatalog.Instance.ById(cid));
+            return null;
         }
 
         public override void OnHide()
         {
+            if (Nav.RefreshGenderPreview == RefreshFromShop) Nav.RefreshGenderPreview = null;   // 離開本畫面 → 解綁 (避免刷到已拆的預覽)
             if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
             if (_previewImg != null) { _previewImg.texture = null; _previewImg.color = new Color(1f, 1f, 1f, 0f); }
             if (_preview != null) { Destroy(_preview.gameObject); _preview = null; }

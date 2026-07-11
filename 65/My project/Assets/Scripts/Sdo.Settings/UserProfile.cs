@@ -61,6 +61,41 @@ namespace Sdo.Settings
         }
     }
 
+    /// <summary>Persisted three-balance wallet (M=coins / G=points / H=bonus). <see cref="seeded"/> distinguishes a
+    /// brand-new profile (give the starter allowance once) from one whose balances have legitimately hit 0 — without it,
+    /// spending down to 0 would re-trigger the starter grant on the next launch. Mirrors <c>Sdo.Shop.Wallet</c>; the
+    /// bridge (WardrobeStore) copies between the two.</summary>
+    [Serializable]
+    public class WalletSave
+    {
+        public int coins;
+        public int points;
+        public int bonus;
+        public bool seeded;   // false = never granted the starter allowance yet
+    }
+
+    /// <summary>One owned 商城 item, keyed by its shop item id (mirrors <c>Sdo.Shop.OwnedItem</c>): what, when it lapses,
+    /// how many, and which inventory bucket (200=clothes / 400=consumables). This is the id-based inventory the 儲物櫃
+    /// (wardrobe) lists — the parallel path-based <see cref="UserProfile.ownedClothes"/> stays for the legacy avatar
+    /// loaders.</summary>
+    [Serializable]
+    public class OwnedItemSave
+    {
+        public int id;
+        public long expire = -1;   // -1 = permanent; else Unix-seconds expiry
+        public int qty = 1;
+        public int slot;           // (int)Sdo.Shop.ItemSlotType (200 clothes / 400 items)
+    }
+
+    /// <summary>What is worn in one body slot: <see cref="slot"/> = (int)Sdo.Shop.EquipSlot, <see cref="id"/> = shop
+    /// item id. Slot is stored as a raw int so <see cref="Sdo.Settings"/> stays a leaf assembly (no Sdo.Shop ref).</summary>
+    [Serializable]
+    public class EquipSave
+    {
+        public int slot;
+        public int id;
+    }
+
     [Serializable]
     public class UserProfile
     {
@@ -72,6 +107,15 @@ namespace Sdo.Settings
         public AvatarOutfit equippedClothes = new AvatarOutfit();
         public string createdAt = "";
         public string lastPlayedAt = "";
+
+        // ---- 商城/儲物櫃 持久化 (item-id 為鍵；由 WardrobeStore 在 Sdo.Shop.Wardrobe 之間橋接)。金幣也記在這裡 (wallet)。----
+        public WalletSave wallet = new WalletSave();
+        public int clothSlots = 9;   // 服飾欄容量：預設 1 頁=9 格(裝得下一整套穿搭)，按「服饰栏扩充」每次 +9，最多 1000（Wardrobe.ClothSlotCount）
+        public OwnedItemSave[] ownedItems = new OwnedItemSave[0];   // 擁有的商城道具 (含衣物 id)
+        public EquipSave[] equippedItems = new EquipSave[0];        // 目前穿的每個部位 → item id
+        // 目前穿搭解析出的完整 mesh 部位清單 (含飾品/翅膀/表情，順序=AvatarOutfit.Order)。房間/遊戲 avatar 的權威來源；
+        // 空 (舊檔) 時退回 6 部位的 equippedClothes。由 WardrobeStore 在存檔時用 Sdo.Game.AvatarOutfit.ResolveParts 算出。
+        public string[] equippedParts = new string[0];
 
         public UserProfile() { }
 
@@ -88,13 +132,22 @@ namespace Sdo.Settings
             if (string.IsNullOrEmpty(name)) name = "玩家001";
             gender = gender == 1 ? 1 : 0;
             if (avatarId < 0) avatarId = 0;
+            if (wallet == null) wallet = new WalletSave();
+            if (clothSlots < 9) clothSlots = 9; else if (clothSlots > 1000) clothSlots = 1000;   // 最少 1 頁(9)；舊檔存的 3 會自動補到 9
+            if (ownedItems == null) ownedItems = new OwnedItemSave[0];
+            if (equippedItems == null) equippedItems = new EquipSave[0];
+            if (equippedParts == null) equippedParts = new string[0];
             EnsureWardrobe();
             return this;
         }
 
+        /// <summary>The ordered mesh part paths the room/gameplay avatar wears. Prefers the full <see cref="equippedParts"/>
+        /// list (includes accessories/wings/expression, written by WardrobeStore), falling back to the legacy 6-slot
+        /// <see cref="equippedClothes"/> for profiles saved before the 儲物櫃 (or when nothing has been equipped yet).</summary>
         public string[] EquippedAvatarParts()
         {
             Sanitize();
+            if (equippedParts != null && equippedParts.Length > 0) return Clone(equippedParts);
             return Clone(equippedClothes.ToParts());
         }
 

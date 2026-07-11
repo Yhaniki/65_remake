@@ -70,10 +70,8 @@ namespace Sdo.UI.Core
                 var st = StageCatalog.Get(RoomConfig.defaultScene);
                 StageId = st.Id; StageFolder = st.Folder; StageRandom = false;
             }
-            // 起始錢包（單人試玩用；之後可接 Reward 或存檔）
-            Wardrobe.Wallet.Coins = 100000;
-            Wardrobe.Wallet.Points = 100000;
-            Wardrobe.Wallet.Bonus = 1000;
+            // 錢包 + 衣櫃(擁有/穿搭) 現在從 active user 的 profile.json 載入 (見 WardrobeStore.Load，於 AppContext.CreateMock
+            // 呼叫)；首次(wallet 未 seeded)才發起始金額。這裡不再種錢包，避免每次開機把花掉的錢補回去。
         }
 
         /// <summary>回傳 steps 裡最接近 want 的檔位（steps 空 → 直接回 want）。</summary>
