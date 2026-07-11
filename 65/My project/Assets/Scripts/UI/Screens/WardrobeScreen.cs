@@ -24,6 +24,13 @@ namespace Sdo.UI.Screens
     {
         private CanvasGroup _cg;
         private RectTransform _root;
+        private Image _backdrop;                        // 全螢幕黑幕 (留在 Root，不進旋轉視窗，當點擊擋板)
+        private RectTransform _window;                  // 旋轉進出的視窗容器 (參考選歌 SongSelectScreen.WrapInWindow)
+        private CanvasGroup _windowCg;
+        private WindowAnim _anim;
+        private bool _closing;
+        private RectTransform _tip;                     // 滑過服飾格顯示服飾名字的浮動提示 (取代官方 CabinetTip.xml)
+        private TextMeshProUGUI _tipText;
         private GameSession _session;
         private AvatarItemCatalog _catalog;
 
@@ -31,6 +38,7 @@ namespace Sdo.UI.Screens
         private int _page;
         private int _totalPages = 1;
         private CatFilter _filter = CatFilter.All;   // 分類欄目前選的
+        private int _catPage;                         // 分類欄目前頁 (0=身體 8 部位；1=飾品 翅膀/项链)。classup/classdown 換頁
         private int _selected;                        // 目前選中的格子 item id (供 服饰删除)；0=無
         private int _lastClickId; private float _lastClickTime;   // 雙擊偵測 (#2：點兩下換穿/脫下)
         private const float DoubleClickSec = 0.35f;
@@ -62,7 +70,7 @@ namespace Sdo.UI.Screens
         private float _dragAngle = 0f; private float _pitchAngle;   // 預設 0 = 人物正面朝相機 (#6)
         private const float DragDegPerPixel = 0.4f, PitchDegPerPixel = 0.4f, PitchMin = -30f, PitchMax = 15f;
         private const float DefaultYaw = 30f, PivotY = 30f;
-        private const float PreviewAimUp = 16f;   // 相機瞄準點上移 → 人物在框內往下 (修 #9「基準位置太高」；可調)
+        private const float PreviewAimUp = 5f;   // 相機瞄準點上移 → 人物在框內往下 (修 #9「基準位置太高」；可調)
         private float _previewFeetY;
         private const float RefHeight = 62f, MaleBodyRatio = 1.08f, MaleSizeScale = 1.05f;
         private float _previewHeight = RefHeight;
@@ -74,29 +82,42 @@ namespace Sdo.UI.Screens
         private const int CardRtW = 100, CardRtH = 100;   // 格子 86×86 → RT 稍大保清晰
         private const float CardEyeDist = 110f, CardOrthoHalfW = 64f, CardNear = 5f, CardFar = 1000f;
         private Camera _cardCam;
-        private readonly GameObject[] _cardAv = new GameObject[PerPage];
-        private readonly RenderTexture[] _cardRT = new RenderTexture[PerPage];
-        private readonly RawImage[] _cardImg = new RawImage[PerPage];
-        private readonly Vector3[] _cardFramePos = new Vector3[PerPage];
-        private readonly Vector3[] _cardFrameScale = new Vector3[PerPage];
-        private static Vector3 CardSpot(int i) => new Vector3(4000f + i * 400f, 0f, 0f);
+        // 縮圖 RT 依 item id 快取：同一件服飾只渲染一次 (靜態 bind-pose)，換穿/重排格子時直接沿用 → 不再每次重建 9 隻縮圖
+        // avatar+RT (換穿更順)。開櫃 (Open) 重算、超過上限才整批清。建縮圖用固定 off-screen 位置，avatar 渲完即銷毀不留幾何。
+        private readonly Dictionary<int, RenderTexture> _thumbCache = new Dictionary<int, RenderTexture>();
+        private const int ThumbCacheCap = 120;
+        private static readonly Vector3 ThumbBuildSpot = new Vector3(4000f, 0f, 0f);
+        // 穿上的服飾排到格子最前面，且依「穿上先後」排 (先穿在前、後穿接在後面)；未穿的在後、依 ModelId。使用者指定 (task 2)。
+        private readonly Dictionary<int, int> _equipOrder = new Dictionary<int, int>();
+        private int _equipSeq;
+        private bool _roomDirty;   // 換穿/刪除累積的房間人重建，延到關櫃一次做 (房間在黑幕後方非焦點 → 換穿更順；task 1)
 
         private static readonly Color CMoney = Hex(0xff004f7c);
 
         // 分類欄目 → 對應的部位過濾。All = 全部已擁有衣物。
         private enum CatFilter { All, Hair, Top, Bottom, Gloves, Shoes, Face, Glasses, Wings, Necklace }
         private struct CatDef { public CatFilter F; public string Lit, Dim; public float Y; }
-        // 官方 label_* 分類鈕 (x=626)；y 取自 XML 主 8 項 + 翅膀/项链補在下方 (classup/down 捲動先略)。lit=bgpushed(選中)、dim=bgnormal。
-        private static readonly CatDef[] Cats =
+        // 官方 label_* 分類鈕 (x=626)，分「頁」：按右緣 classup/classdown 一次把整欄換到上/下一頁。y 取自 XML。
+        // lit=bgpushed(選中)、dim=bgnormal。第 0 頁=身體 8 部位；第 1 頁=飾品 (翅膀/项链)。官方第 1 頁另有
+        // tail/pate/shoulder/waist/knee/ring 但皆 w=0 h=0 隱藏且本重製無對應資料模型 → 略。
+        private static readonly CatDef[][] CatPages =
         {
-            new CatDef{ F=CatFilter.All,      Lit="label_all_2.an",      Dim="label_all_1.an",      Y=157 },
-            new CatDef{ F=CatFilter.Hair,     Lit="label_head_2.an",     Dim="label_head_1.an",     Y=192 },
-            new CatDef{ F=CatFilter.Top,      Lit="label_upcoat_2.an",   Dim="label_upcoat_1.an",   Y=226 },
-            new CatDef{ F=CatFilter.Bottom,   Lit="label_downcoat_2.an", Dim="label_downcoat_1.an", Y=260 },
-            new CatDef{ F=CatFilter.Gloves,   Lit="label_hand_2.an",     Dim="label_hand_1.an",     Y=294 },
-            new CatDef{ F=CatFilter.Shoes,    Lit="label_shoes_2.an",    Dim="label_shoes_1.an",    Y=328 },
-            new CatDef{ F=CatFilter.Face,     Lit="label_face_2.an",     Dim="label_face_1.an",     Y=362 },
-            new CatDef{ F=CatFilter.Glasses,  Lit="label_glasses_2.an",  Dim="label_glasses_1.an",  Y=396 },
+            new[]
+            {
+                new CatDef{ F=CatFilter.All,      Lit="label_all_2.an",      Dim="label_all_1.an",      Y=157 },
+                new CatDef{ F=CatFilter.Hair,     Lit="label_head_2.an",     Dim="label_head_1.an",     Y=192 },
+                new CatDef{ F=CatFilter.Top,      Lit="label_upcoat_2.an",   Dim="label_upcoat_1.an",   Y=226 },
+                new CatDef{ F=CatFilter.Bottom,   Lit="label_downcoat_2.an", Dim="label_downcoat_1.an", Y=260 },
+                new CatDef{ F=CatFilter.Gloves,   Lit="label_hand_2.an",     Dim="label_hand_1.an",     Y=294 },
+                new CatDef{ F=CatFilter.Shoes,    Lit="label_shoes_2.an",    Dim="label_shoes_1.an",    Y=328 },
+                new CatDef{ F=CatFilter.Face,     Lit="label_face_2.an",     Dim="label_face_1.an",     Y=362 },
+                new CatDef{ F=CatFilter.Glasses,  Lit="label_glasses_2.an",  Dim="label_glasses_1.an",  Y=396 },
+            },
+            new[]
+            {
+                new CatDef{ F=CatFilter.Wings,    Lit="label_wing_2.an",     Dim="label_wing_1.an",     Y=157 },
+                new CatDef{ F=CatFilter.Necklace, Lit="label_necklace_2.an", Dim="label_necklace_1.an", Y=192 },
+            },
         };
 
         // 3×3 格左上座標 (XML CabinetButton1..9，視窗相對；+Win 後為螢幕座標)。
@@ -115,9 +136,9 @@ namespace Sdo.UI.Screens
             UIKit.Stretch(_root);
             _cg = _root.gameObject.AddComponent<CanvasGroup>();
 
-            // 不透明黑幕擋掉後面的房間 3D（點擊不穿透），再蓋官方視窗框。
-            var solid = UIKit.AddImage(_root, "Backdrop", new Color(0f, 0f, 0f, 0.55f), true);
-            UIKit.Stretch(solid.rectTransform);
+            // 不透明黑幕擋掉後面的房間 3D（點擊不穿透），再蓋官方視窗框。留在 Root，不進旋轉視窗。
+            _backdrop = UIKit.AddImage(_root, "Backdrop", new Color(0f, 0f, 0f, 0.55f), true);
+            UIKit.Stretch(_backdrop.rectTransform);
 
             // 官方視窗框 (background.an = CabinetAndTv_Dlg 621×500)；XML Label x=62 y=41 (視窗相對)。
             AddArt(_root, "Frame", CabinetArt.An("background.an"), WinX + 62f, WinY + 41f);
@@ -136,6 +157,10 @@ namespace Sdo.UI.Screens
             // 分類欄容器 (右緣 label_*) + 3×3 格容器 (依分類/頁重畫)
             _catCol = UIKit.NewRect(_root, "CatCol"); UIKit.Stretch(_catCol);
             _grid = UIKit.NewRect(_root, "Grid"); UIKit.Stretch(_grid);
+
+            // 分類欄換頁 (classup/classdown)：一次把整欄 8 個分類換到上/下一頁 → 才選得到第 2 頁的 翅膀/项链 (XML x=623)。
+            SpriteBtn(_root, "classup",   "classup_1.an",   "classup_3.an",   WinX + 623f, WinY + 136f, () => CatPageBy(-1), hoverAn: "classup_2.an");
+            SpriteBtn(_root, "classdown", "classdown_1.an", "classdown_3.an", WinX + 623f, WinY + 430f, () => CatPageBy(1),  hoverAn: "classdown_2.an");
 
             // 換頁箭頭 + 頁碼 (leftarrow/rightarrow/lblPage)
             SpriteBtn(_root, "leftarrow", "leftarrow_1.an", "leftarrow_3.an", WinX + 412f, WinY + 423f, () => PageBy(-1), hoverAn: "leftarrow_2.an");
@@ -158,7 +183,62 @@ namespace Sdo.UI.Screens
             _moneyP = TxtAt(_root, "Money_P", WinX + 181f, WinY + 472f, 123, 24, 14, CMoney, TextAlignmentOptions.Right);
             _moneyP.fontStyle = FontStyles.Bold;
 
+            WrapInWindow();   // 把整個對話框收進會旋轉縮放的視窗容器 (Backdrop 留在 Root)
+            BuildTip();       // 服飾名字浮動提示 (建在 WrapInWindow 之後 → 留在 Root，畫在最上層、不隨視窗旋轉)
+
             SetVisible(false);
+        }
+
+        // 參考選歌 SongSelectScreen.WrapInWindow：把 Root 底下的所有內容 (Backdrop 除外) 收進單一置中、pivot 0.5 的視窗
+        // 容器，開/關時就能把整組對話框一起旋轉+縮放+淡入淡出。Backdrop 留在 Root 當穩定的全螢幕點擊擋板。
+        private void WrapInWindow()
+        {
+            _window = UIKit.NewRect(_root, "Window");
+            UIKit.Stretch(_window);
+            _window.pivot = new Vector2(0.5f, 0.5f);
+            _windowCg = _window.gameObject.AddComponent<CanvasGroup>();
+            _anim = _window.gameObject.AddComponent<WindowAnim>();
+
+            var kids = new List<Transform>();
+            foreach (Transform c in _root)
+                if (c != (Transform)_window && c != (Transform)_backdrop.transform) kids.Add(c);
+            foreach (var c in kids) c.SetParent(_window, false);
+        }
+
+        // 滑過服飾格時顯示服飾名字的浮動提示 (取代官方 CabinetButton 的 tip_xml="CabinetTip.xml")。建在 Root、最上層。
+        private void BuildTip()
+        {
+            _tip = UIKit.NewRect(_root, "ItemTip");
+            _tip.anchorMin = _tip.anchorMax = new Vector2(0f, 1f);
+            _tip.pivot = new Vector2(0.5f, 0f);   // 底邊中心 → 貼在服飾格上方
+            var bg = _tip.gameObject.AddComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.85f);
+            bg.raycastTarget = false;
+            _tipText = UIKit.AddText(_tip, "Text", "", 13, Color.white, TextAlignmentOptions.Center);
+            UIKit.Stretch(_tipText, 8, 2, 8, 2);
+            _tip.gameObject.SetActive(false);
+        }
+
+        // 顯示某格服飾的名字提示 (貼在該格上方置中)。空格或無名 → 隱藏。
+        private void ShowTip(int slot)
+        {
+            if (_tip == null || slot < 0 || slot >= PerPage || _slotItemId[slot] == 0) { HideTip(); return; }
+            var it = _catalog != null ? _catalog.ById(_slotItemId[slot]) : null;
+            if (it == null) { HideTip(); return; }
+            string nm = string.IsNullOrEmpty(it.Name) ? ("服飾 " + it.ModelId) : it.Name;
+            _tipText.text = nm;
+            _tipText.ForceMeshUpdate();
+            float w = Mathf.Clamp(_tipText.preferredWidth + 16f, 44f, 240f);
+            _tip.sizeDelta = new Vector2(w, 22f);
+            var pos = SlotPos[slot];
+            _tip.anchoredPosition = new Vector2(WinX + pos.x + SlotW / 2f, -(WinY + pos.y - 4f));
+            _tip.gameObject.SetActive(true);
+            _tip.SetAsLastSibling();
+        }
+
+        private void HideTip()
+        {
+            if (_tip != null) _tip.gameObject.SetActive(false);
         }
 
         public void Open()
@@ -167,7 +247,11 @@ namespace Sdo.UI.Screens
             _sex = _session != null && _session.Gender == 1 ? ItemSex.Male : ItemSex.Female;
             // 開櫃時重載 profile → 從實際存檔的穿搭開始 (不吃商城遺留的試穿狀態)。
             WardrobeStore.Load(_session);
-            _filter = CatFilter.All; _page = 0; _selected = 0;
+            ClearThumbCache();                        // 縮圖快取重算 (性別/穿搭可能已變)；之後同一 session 的換穿沿用
+            _equipOrder.Clear(); _equipSeq = 0;
+            ReconcileEquipOrder();                    // 依 ModelId 給目前已穿的服飾初始排序 → 穿上的先排在最前 (task 2)
+            _roomDirty = false;
+            _filter = CatFilter.All; _catPage = 0; _page = 0; _selected = 0;
             _dragAngle = 0f; _pitchAngle = 0f;   // 正面朝相機 (#6)
             BuildPreview();
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
@@ -175,6 +259,12 @@ namespace Sdo.UI.Screens
             RebuildAvatar();
             SetVisible(true);
             Refresh();
+
+            // 開櫃 whoosh + 快速旋轉放大進場 (Frameround.wav；參考選歌 SongSelectScreen.OnShow)。
+            _closing = false;
+            if (_windowCg != null) _windowCg.blocksRaycasts = true;
+            if (_anim != null) { _anim.ResetOpen(); _anim.PlayIn(); }
+            UiSfx.Play(UiSfx.FrameRound);
         }
 
         private void Refresh()
@@ -184,17 +274,27 @@ namespace Sdo.UI.Screens
             UpdateWallet();
         }
 
-        // ---- 右緣分類欄 ----
+        // ---- 右緣分類欄 (目前頁；classup/classdown 換頁) ----
         private void RefreshCatColumn()
         {
             UIKit.Clear(_catCol);
-            foreach (var c in Cats)
+            _catPage = Mathf.Clamp(_catPage, 0, CatPages.Length - 1);
+            foreach (var c in CatPages[_catPage])
             {
                 bool active = c.F == _filter;
                 var f = c.F;
                 SpriteBtn(_catCol, "cat" + c.F, active ? c.Lit : c.Dim, active ? c.Lit : c.Dim,
                           WinX + 626f, WinY + c.Y, () => { _filter = f; _page = 0; Refresh(); }, noSwap: true);
             }
+        }
+
+        // classup/classdown：把整欄分類換到上/下一頁。只換顯示的 label，不動目前選的分類/格子 (再點新 label 才換內容)，忠實官方。
+        private void CatPageBy(int d)
+        {
+            int np = Mathf.Clamp(_catPage + d, 0, CatPages.Length - 1);
+            if (np == _catPage) return;
+            _catPage = np;
+            RefreshCatColumn();
         }
 
         // 目前分類要顯示的「已擁有」衣物。
@@ -209,8 +309,41 @@ namespace Sdo.UI.Screens
                 if (!MatchesFilter(it)) continue;   // #1：擁有的都列出來 (不再用 IsRenderable 過濾掉沒 3D 縮圖的)
                 res.Add(it);
             }
-            res.Sort((a, b) => a.ModelId.CompareTo(b.ModelId));
+            res.Sort(CompareForGrid);   // 穿上的排到最前 (依穿上先後)，未穿的在後依 ModelId (task 2)
             return res;
+        }
+
+        // 格子排序：穿上的在前 (依「穿上先後」序，先穿在前、後穿接在後面)，其餘依 ModelId (再以 Id 打破平手求穩定)。
+        private int CompareForGrid(ShopItem a, ShopItem b)
+        {
+            bool aw = IsWorn(a), bw = IsWorn(b);
+            if (aw != bw) return aw ? -1 : 1;                       // 穿上的排到最前面
+            if (aw)                                                 // 兩件都穿著 → 依穿上先後
+            {
+                int ao = _equipOrder.TryGetValue(a.Id, out var x) ? x : int.MaxValue;
+                int bo = _equipOrder.TryGetValue(b.Id, out var y) ? y : int.MaxValue;
+                if (ao != bo) return ao.CompareTo(bo);
+            }
+            int m = a.ModelId.CompareTo(b.ModelId);
+            return m != 0 ? m : a.Id.CompareTo(b.Id);
+        }
+
+        // 維護「穿上先後」序：移除已脫下的，給新穿上的指派遞增序號 (→ 接在既有穿上的後面)。開櫃初始化時同一批依 ModelId 穩定排。
+        private void ReconcileEquipOrder()
+        {
+            if (_session == null) return;
+            var w = _session.Wardrobe;
+            var stale = new List<int>();
+            foreach (var id in _equipOrder.Keys) if (!w.IsEquipped(id)) stale.Add(id);
+            foreach (var id in stale) _equipOrder.Remove(id);
+            var fresh = new List<ShopItem>();
+            foreach (var kv in w.Equipped)
+            {
+                var it = _catalog != null ? _catalog.ById(kv.Value) : null;
+                if (it != null && !_equipOrder.ContainsKey(it.Id)) fresh.Add(it);
+            }
+            fresh.Sort((a, b) => a.ModelId.CompareTo(b.ModelId));
+            foreach (var it in fresh) _equipOrder[it.Id] = _equipSeq++;
         }
 
         private bool MatchesFilter(ShopItem it)
@@ -233,8 +366,9 @@ namespace Sdo.UI.Screens
 
         private void RefreshGrid()
         {
-            DestroyCardPreviews();
-            UIKit.Clear(_grid);
+            HideTip();   // 重建格子前先收掉提示 (被 hover 的格子會被銷毀，PointerExit 不一定會觸發)
+            if (_thumbCache.Count > ThumbCacheCap) ClearThumbCache();   // 綁定記憶體：翻很多頁後才整批清一次
+            UIKit.Clear(_grid);   // 格子 (含縮圖 RawImage) 隨之銷毀；縮圖 RT 留在快取不重建 3D
             if (_catalog == null) { _totalPages = 1; UpdatePageLabel(); return; }
 
             var items = OwnedForFilter();
@@ -278,6 +412,11 @@ namespace Sdo.UI.Screens
                 hrt.anchoredPosition = Vector2.zero; hrt.sizeDelta = new Vector2(SlotW, SlotH);
                 var btn = hit.gameObject.AddComponent<Button>(); btn.targetGraphic = hit; btn.transition = Selectable.Transition.None;
                 btn.onClick.AddListener(() => OnCardClick(itLocal));
+                // 滑過該格 → 顯示服飾名字提示 (取代官方 CabinetTip；#2)。
+                int slot = i;
+                var trig = hit.gameObject.AddComponent<EventTrigger>();
+                AddTrigData(trig, EventTriggerType.PointerEnter, _ => ShowTip(slot));
+                AddTrigData(trig, EventTriggerType.PointerExit, _ => HideTip());
             }
             UpdateDeleteBtn();
         }
@@ -298,6 +437,7 @@ namespace Sdo.UI.Screens
         // 雙擊：已穿著 → 脫下 (回預設)；未穿 → 換穿。寫回 profile + 重建房間/遊戲 avatar + 左側預覽。
         private void ToggleEquip(ShopItem item)
         {
+            UiSfx.Play(UiSfx.Run);   // 穿脫衣物的布料摩擦音 (SE\Run.wav；使用者指定；#4)
             var w = _session.Wardrobe;
             if (w.IsEquipped(item.Id))
             {
@@ -313,10 +453,11 @@ namespace Sdo.UI.Screens
                 if (item.EquipSlot == EquipSlot.Top || item.EquipSlot == EquipSlot.Bottom) w.ClearEquipped(EquipSlot.OnePiece);
                 w.SetEquipped(item.EquipSlot, item.Id);
             }
+            ReconcileEquipOrder();                      // 更新「穿上先後」序 (新穿的接在既有穿上的後面；task 2)
             WardrobeStore.SaveAll(_session);            // 落地 profile.json (穿搭 + equippedParts)
-            Nav.RefreshRoomAvatar?.Invoke();            // 房間裡的人立即換裝
-            RebuildAvatar();                            // 左側預覽換裝
-            RefreshGrid();                              // 更新 使用中 壓暗
+            _roomDirty = true;                          // 房間人 (黑幕後方，非焦點) 延到關櫃再重建 → 換穿更順 (task 1)
+            RebuildAvatar();                            // 左側預覽換裝 (焦點，立即)
+            RefreshGrid();                              // 重排格子 (穿上的移到最前) + 更新使用中壓暗；縮圖走快取不重建 3D
         }
 
         private void UpdateSelectionHighlight()
@@ -331,14 +472,17 @@ namespace Sdo.UI.Screens
             if (_selected == 0 || _session == null) { Toast.Show("請先選擇要刪除的服飾"); return; }
             var w = _session.Wardrobe;
             var it = _catalog != null ? _catalog.ById(_selected) : null;
-            if (it != null && w.IsEquipped(_selected)) w.ClearEquipped(it.EquipSlot);   // 穿著中 → 先脫下
+            string nm = it != null && !string.IsNullOrEmpty(it.Name) ? it.Name : (it != null ? "服飾 " + it.ModelId : "服飾");
+            bool wasWorn = it != null && w.IsEquipped(_selected);
+            if (wasWorn) w.ClearEquipped(it.EquipSlot);   // 穿著中 → 先脫下
             w.RemoveOwned(_selected);
             _selected = 0;
+            ReconcileEquipOrder();                        // 脫下的從「穿上先後」序移除
             WardrobeStore.SaveAll(_session);
-            Nav.RefreshRoomAvatar?.Invoke();
+            if (wasWorn) _roomDirty = true;               // 刪的是穿著中的才需重建房間人 → 延到關櫃 (task 1)
             RebuildAvatar();
             Refresh();
-            Toast.Show("已刪除服飾");
+            Toast.Show("已刪除服飾：" + nm);
         }
 
         // 服饰栏扩充 (#8)：一次擴充「一頁」= PerPage(9) 格 (使用者指定)，上限 1000，落地 profile.json。
@@ -458,6 +602,8 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (_cg == null || _cg.alpha <= 0f) return;   // 只在儲物櫃開著時
+            // X 鍵：跟按關閉一樣旋轉出去 (使用者指定)。
+            if (!_closing && Input.GetKeyDown(KeyCode.X)) { Close(); return; }
             if (_previewAv == null || _idleLen <= 0f) return;
             if (Time.time - _idleStart >= _idleLen) ApplyRandomIdle(initial: false);   // 播完一輪 → 換一支隨機 (#4)
         }
@@ -506,24 +652,41 @@ namespace Sdo.UI.Screens
             _cardCam.enabled = false;
         }
 
+        // 一格縮圖：只是一張指向快取 RT 的 RawImage。RT 由 GetOrRenderThumb 建一次、之後沿用 → 換穿/重排不重建 3D。
         private void BuildCardPreview(int i, RectTransform card, ShopItem item)
         {
+            if (_catalog == null || !_catalog.IsRenderable(item)) return;
+            var rt = GetOrRenderThumb(item);
+            if (rt == null) return;
+            var img = new GameObject("thumb", typeof(RectTransform)).AddComponent<RawImage>();
+            img.transform.SetParent(card, false);
+            var irt = img.rectTransform;
+            irt.anchorMin = irt.anchorMax = new Vector2(0.5f, 0.5f); irt.pivot = new Vector2(0.5f, 0.5f);
+            irt.anchoredPosition = Vector2.zero; irt.sizeDelta = new Vector2(SlotW - 6f, SlotH - 6f);
+            img.texture = rt; img.raycastTarget = false;
+        }
+
+        // 取得某件服飾的縮圖 RT：快取命中直接回；否則建一次 avatar → 渲染到新 RT → 立即銷毀 avatar (縮圖已進 RT) → 快取。
+        private RenderTexture GetOrRenderThumb(ShopItem item)
+        {
+            if (_thumbCache.TryGetValue(item.Id, out var cached) && cached != null) return cached;
             GameObject root = null;
+            RenderTexture rt = null;
             try
             {
-                if (_catalog == null || !_catalog.IsRenderable(item)) return;
                 BuildCardCam();
-                _cardRT[i] = new RenderTexture(CardRtW, CardRtH, 16, RenderTextureFormat.ARGB32) { name = "WardrobeCardRT" + i, antiAliasing = 2 };
-                root = new GameObject("WardrobeCardAvatar" + i);
-                root.transform.position = CardSpot(i);
+                rt = new RenderTexture(CardRtW, CardRtH, 16, RenderTextureFormat.ARGB32) { name = "WardrobeThumb" + item.Id, antiAliasing = 2 };
+                root = new GameObject("WardrobeThumbBuild");
+                root.transform.position = ThumbBuildSpot;
                 root.transform.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);
                 var av = SdoRoomAvatar.Build(root, PreviewLayer, false, ComposeCardParts(item), ShopHrcFor(_sex, item.EquipSlot), bindPoseNoIdle: true);
-                if (av == null) { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
+                if (av == null) { DestroyImmediate(root); rt.Release(); Destroy(rt); return null; }
                 av.enabled = false;
                 ApplyCardCutoutShader(root);
                 if (item.EquipSlot != EquipSlot.Hair && item.EquipSlot != EquipSlot.Expression && item.EquipSlot != EquipSlot.Outfit)
                     HideSkinSubmeshes(root);
 
+                Vector3 framePos, frameScale;
                 var slot = item.EquipSlot;
                 if (slot == EquipSlot.Wings)
                 {
@@ -531,53 +694,44 @@ namespace Sdo.UI.Screens
                     float ofh = CardOrthoHalfW / ((float)CardRtW / CardRtH);
                     float os = Mathf.Min(CardOrthoHalfW * 2f * 0.9f / Mathf.Max(xmx - xmn, 1e-3f),
                                          ofh * 2f * 0.9f / Mathf.Max(ymx - ymn, 1e-3f));
-                    _cardFrameScale[i] = new Vector3(os, os, os);
-                    _cardFramePos[i] = new Vector3(-os * (xmn + xmx) * 0.5f, -os * (ymn + ymx) * 0.5f, 0f);
+                    frameScale = new Vector3(os, os, os);
+                    framePos = new Vector3(-os * (xmn + xmx) * 0.5f, -os * (ymn + ymx) * 0.5f, 0f);
                 }
                 else
                 {
                     var fr = FrameFor(slot, _sex);
-                    _cardFrameScale[i] = fr.Scale; _cardFramePos[i] = fr.Pos;
+                    frameScale = fr.Scale; framePos = fr.Pos;
                 }
 
-                var img = new GameObject("thumb", typeof(RectTransform)).AddComponent<RawImage>();
-                img.transform.SetParent(card, false);
-                var irt = img.rectTransform;
-                irt.anchorMin = irt.anchorMax = new Vector2(0.5f, 0.5f); irt.pivot = new Vector2(0.5f, 0.5f);
-                irt.anchoredPosition = Vector2.zero; irt.sizeDelta = new Vector2(SlotW - 6f, SlotH - 6f);
-                img.texture = _cardRT[i]; img.raycastTarget = false;
-                _cardAv[i] = root;
-                RenderCard(i);
+                root.transform.localScale = frameScale;
+                root.transform.position = ThumbBuildSpot + framePos;
+                root.transform.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);
+                _cardCam.orthographicSize = CardOrthoHalfW / ((float)CardRtW / CardRtH);
+                _cardCam.transform.position = ThumbBuildSpot + new Vector3(0f, 0f, -CardEyeDist);
+                _cardCam.transform.LookAt(ThumbBuildSpot);
+                _cardCam.targetTexture = rt;
+                _cardCam.Render();
+
+                // 立即銷毀 (非延遲 Destroy)：同一次 RefreshGrid 會在同一個 ThumbBuildSpot 連續建多件縮圖，若延到幀末才銷毀，
+                // 前一件的幾何還在原地 → 會疊進下一件的 render。縮圖已寫進 RT，幾何不再需要。
+                DestroyImmediate(root);
+                _thumbCache[item.Id] = rt;
+                return rt;
             }
             catch (System.Exception e)
             {
-                if (root != null && _cardAv[i] != root) Destroy(root);
-                Debug.LogWarning("[wardrobe] card " + i + " failed (non-fatal): " + e.Message);
+                if (root != null) DestroyImmediate(root);
+                if (rt != null) { rt.Release(); Destroy(rt); }
+                Debug.LogWarning("[wardrobe] thumb " + item.Id + " failed (non-fatal): " + e.Message);
+                return null;
             }
         }
 
-        private void RenderCard(int i)
+        private void ClearThumbCache()
         {
-            if (_cardCam == null || _cardRT[i] == null || _cardAv[i] == null) return;
-            var t = _cardAv[i].transform;
-            t.localScale = _cardFrameScale[i];
-            t.position = CardSpot(i) + _cardFramePos[i];
-            t.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);
-            _cardCam.orthographicSize = CardOrthoHalfW / ((float)CardRtW / CardRtH);
-            _cardCam.transform.position = CardSpot(i) + new Vector3(0f, 0f, -CardEyeDist);
-            _cardCam.transform.LookAt(CardSpot(i));
-            _cardCam.targetTexture = _cardRT[i];
-            _cardCam.Render();
-        }
-
-        private void DestroyCardPreviews()
-        {
-            for (int i = 0; i < PerPage; i++)
-            {
-                if (_cardAv[i] != null) { DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
-                if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
-                _cardImg[i] = null;
-            }
+            foreach (var kv in _thumbCache)
+                if (kv.Value != null) { kv.Value.Release(); Destroy(kv.Value); }
+            _thumbCache.Clear();
         }
 
         // ---- ported card helpers (verbatim from ShopScreen) ----
@@ -700,6 +854,7 @@ namespace Sdo.UI.Screens
                 var img = btn.targetGraphic as Image; if (img != null) { img.color = new Color(1, 1, 1, 0.001f); img.raycastTarget = true; }
                 var rt = btn.GetComponent<RectTransform>(); rt.sizeDelta = new Vector2(48, 20);
             }
+            UiSfx.AttachClick(btn);   // 儲物櫃所有按鈕按下 → SE_0001 (使用者指定；#3)
             if (onClick != null) btn.onClick.AddListener(onClick);
             return btn;
         }
@@ -723,7 +878,20 @@ namespace Sdo.UI.Screens
         private static Color Hex(uint argb)
             => new Color(((argb >> 16) & 0xff) / 255f, ((argb >> 8) & 0xff) / 255f, (argb & 0xff) / 255f, ((argb >> 24) & 0xff) / 255f);
 
-        private void Close() => SetVisible(false);
+        // 關櫃 whoosh + 縮小淡出 (Frameround.wav；參考選歌 SongSelectScreen.CloseTo)，動畫結束才真的隱藏。
+        // 淡出期間凍結視窗互動，避免殘留點擊誤觸換穿/刪除。
+        private void Close()
+        {
+            if (_closing) return;
+            _closing = true;
+            HideTip();
+            // 換穿/刪除期間累積的房間人 (+頭貼) 重建，關櫃時一次做掉 (換穿當下不做 → 更順；task 1)。
+            if (_roomDirty) { Nav.RefreshRoomAvatar?.Invoke(); _roomDirty = false; }
+            if (_windowCg != null) _windowCg.blocksRaycasts = false;
+            UiSfx.Play(UiSfx.FrameRound);
+            if (_anim != null) _anim.PlayOut(() => { SetVisible(false); _closing = false; });
+            else { SetVisible(false); _closing = false; }
+        }
 
         private void SetVisible(bool on)
         {
@@ -736,7 +904,7 @@ namespace Sdo.UI.Screens
         {
             if (_avatarRoot != null) Destroy(_avatarRoot);
             if (_rt != null) { _rt.Release(); Destroy(_rt); }
-            DestroyCardPreviews();
+            ClearThumbCache();
             if (_cardCam != null) Destroy(_cardCam.gameObject);
         }
     }
