@@ -32,6 +32,7 @@ namespace Sdo.UI
         private OptionDlgModal _option;
         private NoteSkinPicker _notePicker;
         private ResultsModal _results;
+        private ShopScreen _shop;
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
@@ -102,10 +103,14 @@ namespace Sdo.UI
             _results = new GameObject("Results").AddComponent<ResultsModal>();
             _results.transform.SetParent(modalLayer, false);
             _results.Build(modalLayer);
+            _shop = new GameObject("Shop").AddComponent<ShopScreen>();
+            _shop.transform.SetParent(modalLayer, false);
+            _shop.Build(modalLayer, _ctx.Session);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
             Nav.OpenNoteSkinPicker = () => _notePicker.Open();
+            Nav.OpenShop = () => _shop.Open();
             Nav.StartGame = StartGameplay;
 
             WarmupFont();
@@ -114,6 +119,8 @@ namespace Sdo.UI
             // DEV: SDO_ROOM → boot straight into the waiting room (create a mock room + show it), for inspecting the
             // 3D room + ROOM UI without clicking through the lobby. Editor reads it from EditorPrefs, a build from env.
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOM"))) EnterRoom();
+            // DEV: SDO_SHOP → boot into the waiting room then open the 商城 (shop) modal (Tools ▸ SDO ▸ Boot Into Shop).
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SHOP"))) { EnterRoom(); Nav.OpenShop?.Invoke(); }
         }
 
         /// <summary>Create a mock room (host = local player) if none, and show the waiting room. Used by the SDO_ROOM

@@ -46,8 +46,11 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// Parse the CRLF/whitespace-delimited contents of a "&lt;NAME&gt;.an" file into its ordered DDS frame names.
-        /// (e.g. "fangzi3an.dds\r\nfangzi3liang.dds" -> ["fangzi3an.dds","fangzi3liang.dds"]).
+        /// Parse the CRLF/whitespace-delimited contents of a "&lt;NAME&gt;.an" file into its ordered frame image names.
+        /// Frames may be .dds (SCN0016 buildings) OR .tga (avatar 翅膀/wings — e.g. 花雨飞翼 023921 lists
+        /// "023921_woman_chibang1_.tga\r\n..2_.tga\r\n..3_.tga"), also .bmp/.png. The caller resolves each name to a
+        /// texture (extension-agnostic), so keep any recognised image extension here — dropping .tga was exactly why
+        /// the wings fell back to the flat beige colour.
         /// </summary>
         public static string[] ParseAn(string anText)
         {
@@ -56,7 +59,10 @@ namespace Sdo.Game
             foreach (var raw in anText.Split('\r', '\n', ' ', '\t'))
             {
                 string t = raw.Trim();
-                if (t.Length > 0 && t.ToLowerInvariant().EndsWith(".dds")) frames.Add(t);
+                if (t.Length == 0) continue;
+                string lo = t.ToLowerInvariant();
+                if (lo.EndsWith(".dds") || lo.EndsWith(".tga") || lo.EndsWith(".bmp") || lo.EndsWith(".png"))
+                    frames.Add(t);
             }
             return frames.ToArray();
         }

@@ -5,6 +5,7 @@
         "Sdo.Osu",
         "Sdo.Ruleset",
         "Sdo.Game",
+        "Sdo.Shop",
         "Sdo.UI",
         "Sdo.Localization",
         "Sdo.Settings",

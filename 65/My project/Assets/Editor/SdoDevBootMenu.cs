@@ -14,23 +14,31 @@ namespace Sdo.EditorTools
         const string SceneKey = "SDO_SCENE";
         const string OnlyKey = "SDO_SCENE_ONLY";
         const string RoomKey = "SDO_ROOM";
+        const string ShopKey = "SDO_SHOP";
 
         const string MiLobby = "Tools/SDO/Boot Into Lobby (normal)";
         const string MiRoom = "Tools/SDO/Boot Into Room (waiting room)";
+        const string MiShop = "Tools/SDO/Boot Into Shop (商城)";
         const string MiScn0008 = "Tools/SDO/Scene-Only: SCN0008 (magic circle)";
         const string MiChoose = "Tools/SDO/Scene-Only: choose scene…";
 
         [MenuItem(MiLobby, priority = 0)]
-        static void Lobby() { EditorPrefs.DeleteKey(SceneKey); EditorPrefs.DeleteKey(OnlyKey); EditorPrefs.DeleteKey(RoomKey); Report(); }
+        static void Lobby() { EditorPrefs.DeleteKey(SceneKey); EditorPrefs.DeleteKey(OnlyKey); EditorPrefs.DeleteKey(RoomKey); EditorPrefs.DeleteKey(ShopKey); Report(); }
         [MenuItem(MiLobby, true)]
-        static bool LobbyValidate() { Menu.SetChecked(MiLobby, string.IsNullOrEmpty(EditorPrefs.GetString(SceneKey, "")) && string.IsNullOrEmpty(EditorPrefs.GetString(RoomKey, ""))); return true; }
+        static bool LobbyValidate() { Menu.SetChecked(MiLobby, string.IsNullOrEmpty(EditorPrefs.GetString(SceneKey, "")) && string.IsNullOrEmpty(EditorPrefs.GetString(RoomKey, "")) && string.IsNullOrEmpty(EditorPrefs.GetString(ShopKey, ""))); return true; }
 
         // Boot the front-end then jump straight into the waiting room (SCNCHIRSROOM 3D scene + ROOM UI). Clears the
         // scene-only keys so the front-end boots normally first (FrontendApp.EnterRoom runs after the lobby is built).
         [MenuItem(MiRoom, priority = 1)]
-        static void Room() { EditorPrefs.DeleteKey(SceneKey); EditorPrefs.DeleteKey(OnlyKey); EditorPrefs.SetString(RoomKey, "1"); Report(); }
+        static void Room() { EditorPrefs.DeleteKey(SceneKey); EditorPrefs.DeleteKey(OnlyKey); EditorPrefs.DeleteKey(ShopKey); EditorPrefs.SetString(RoomKey, "1"); Report(); }
         [MenuItem(MiRoom, true)]
         static bool RoomValidate() { Menu.SetChecked(MiRoom, EditorPrefs.GetString(RoomKey, "") == "1"); return true; }
+
+        // Boot the front-end → waiting room → open the 商城 (shop) modal straight away, for working on the shop UI.
+        [MenuItem(MiShop, priority = 2)]
+        static void Shop() { EditorPrefs.DeleteKey(SceneKey); EditorPrefs.DeleteKey(OnlyKey); EditorPrefs.DeleteKey(RoomKey); EditorPrefs.SetString(ShopKey, "1"); Report(); }
+        [MenuItem(MiShop, true)]
+        static bool ShopValidate() { Menu.SetChecked(MiShop, EditorPrefs.GetString(ShopKey, "") == "1"); return true; }
 
         [MenuItem(MiScn0008, priority = 20)]
         static void Scn0008() { EditorPrefs.SetString(SceneKey, "SCN0008"); EditorPrefs.SetString(OnlyKey, "1"); Report(); }
@@ -51,11 +59,14 @@ namespace Sdo.EditorTools
             string s = EditorPrefs.GetString(SceneKey, "");
             string o = EditorPrefs.GetString(OnlyKey, "");
             bool room = EditorPrefs.GetString(RoomKey, "") == "1";
+            bool shop = EditorPrefs.GetString(ShopKey, "") == "1";
             Debug.Log(!string.IsNullOrEmpty(s)
                 ? $"[SDO] next Play → {s} ({(o == "1" ? "scene-only: no song/notes/HUD" : "full gameplay")}). Press Play."
-                : room
-                    ? "[SDO] next Play → ROOM (waiting room: SCNCHIRSROOM 3D + ROOM UI). Press Play."
-                    : "[SDO] next Play → LOBBY (normal)");
+                : shop
+                    ? "[SDO] next Play → SHOP (商城 over the waiting room). Press Play."
+                    : room
+                        ? "[SDO] next Play → ROOM (waiting room: SCNCHIRSROOM 3D + ROOM UI). Press Play."
+                        : "[SDO] next Play → LOBBY (normal)");
         }
     }
 

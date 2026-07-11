@@ -395,6 +395,68 @@ namespace Sdo.Game
         }
         private static int MaskShift(uint mask) { if (mask == 0) return 0; int s = 0; while ((mask & 1) == 0) { mask >>= 1; s++; } return s; }
 
+        /// <summary>
+        /// Decode a Targa (.TGA) image → RGBA32. Handles true-colour uncompressed (type 2) and RLE (type 10), 24/32-bit
+        /// BGR(A). SDO ships some avatar texanim frames as TGA (e.g. the 花雨飞翼 wing glow 023921_woman_chibang2_/3_.tga),
+        /// which Unity's Texture2D.LoadImage can't read (PNG/JPG only) — so decode by hand. Origin is normalised to
+        /// top-left (TGA descriptor bit 5 = 0 means bottom-left → rows are flipped) so UVs match the DDS path. Returns
+        /// null on an unsupported header rather than throwing.
+        /// </summary>
+        public static Texture2D LoadTga(byte[] d)
+        {
+            if (d == null || d.Length < 18) return null;
+            int idLen = d[0], cmapType = d[1], imgType = d[2];
+            int cmapLen = d[5] | (d[6] << 8), cmapEntBits = d[7];
+            int w = d[12] | (d[13] << 8), h = d[14] | (d[15] << 8);
+            int bpp = d[16], desc = d[17];
+            if (w <= 0 || h <= 0 || (bpp != 24 && bpp != 32)) return null;
+            if (imgType != 2 && imgType != 10) return null;   // only true-colour (uncompressed / RLE)
+            int bytesPP = bpp / 8;
+            int off = 18 + idLen + (cmapType != 0 ? cmapLen * ((cmapEntBits + 7) / 8) : 0);
+            bool topLeft = (desc & 0x20) != 0;   // bit5: 1 = origin top-left, 0 = bottom-left (flip)
+            int total = w * h;
+            var lin = new Color32[total];   // in stored (row) order
+            if (imgType == 2)
+            {
+                if (off + total * bytesPP > d.Length) return null;
+                int si = off;
+                for (int i = 0; i < total; i++, si += bytesPP)
+                    lin[i] = new Color32(d[si + 2], d[si + 1], d[si], bytesPP == 4 ? d[si + 3] : (byte)255);
+            }
+            else   // type 10 — RLE packets
+            {
+                int si = off, count = 0;
+                while (count < total && si < d.Length)
+                {
+                    int packet = d[si++]; int n = (packet & 0x7f) + 1;
+                    if ((packet & 0x80) != 0)   // run-length: one pixel × n
+                    {
+                        if (si + bytesPP > d.Length) break;
+                        var c = new Color32(d[si + 2], d[si + 1], d[si], bytesPP == 4 ? d[si + 3] : (byte)255);
+                        si += bytesPP;
+                        for (int k = 0; k < n && count < total; k++) lin[count++] = c;
+                    }
+                    else   // raw: n literal pixels
+                    {
+                        for (int k = 0; k < n && count < total; k++, si += bytesPP)
+                        {
+                            if (si + bytesPP > d.Length) break;
+                            lin[count++] = new Color32(d[si + 2], d[si + 1], d[si], bytesPP == 4 ? d[si + 3] : (byte)255);
+                        }
+                    }
+                }
+            }
+            var px = new Color32[total];
+            for (int y = 0; y < h; y++)
+            {
+                int dst = (topLeft ? y : (h - 1 - y)) * w;
+                Array.Copy(lin, y * w, px, dst, w);
+            }
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            tex.SetPixels32(px); tex.Apply(false, true);
+            return tex;
+        }
+
         // BC1: 8-byte blocks (c0,c1 565 + 16×2-bit indices). c0>c1 → 4 opaque colours; c0≤c1 → 3 colours + a 4th
         // index that BC1 treats as transparent-black — but SDO's stage DXT1 textures are OPAQUE (their 1-bit alpha
         // isn't used; see HasAlpha), so we force alpha 255 for every texel. Decoded to RGBA32 because Unity's native

@@ -9,7 +9,8 @@ namespace Sdo.Game
     /// palette footer (hrc_bone_count | palette_size N | inv_bind[N][16] | hrc_to_local[hrc_count]). Multi-range
     /// submeshes split the palette PER RANGE (vertex bone byte = local index into ITS range's palette → HRC bone).
     /// Resolving bones correctly per range fixes the hand/arm skinning. Vertex skin (FVF XYZBn+LASTBETA_UBYTE4):
-    ///   stride44(0x1158)=rigid bone0; 48(0x115A)=3-bone; 52(0x115C)=4-bone. X negated -> Unity, winding reversed.
+    ///   stride40(0x1156)=1-bone rigid; 44(0x1158)=2-bone blend (1 float weight @12 + UBYTE4 @16, w1=1-w0);
+    ///   48(0x115A)=3-bone; 52(0x115C)=4-bone. Verts read verbatim (no -X flip), winding NOT reversed.
     /// </summary>
     public static class MshLoader
     {
@@ -78,7 +79,19 @@ namespace Sdo.Game
 
             int triTotal = idxCount / 3;
             var ranges = ScanRanges(d, p, vcount, triTotal, System.Math.Max(1, numMat), out int rangeTableEnd);
-            var pal = ScanBonePalette(d, p, out int palStart, out int palEnd, out Matrix4x4[] slotInv);
+            // 頂點實際引用的最高骨索引：合法骨盤必須大到能索引到它。擋掉「假的小骨盤」誤判——ScanBonePalette 會停在第一個結構
+            // 看似合法的候選,有些衣服(如 026816_WOMAN_ONE 冰山雪蓮)前面有個 palSize=1 的假盤,但頂點索引到 0..13 → 57% 頂點
+            // 掉出盤塌到 root 骨 → 嚴重變形。要求 palSize>maxBoneByte 就會跳過假盤、找到真盤(此例 palSize=14)。185 件衣服中此招。
+            int nWtmp = stride == 44 ? 1 : stride == 48 ? 2 : stride == 52 ? 3 : 0;
+            int boneOffTmp = 12 + nWtmp * 4;
+            int maxBoneByte = 0;
+            if ((stride == 40 || nWtmp > 0) && boneOffTmp + 4 <= stride)
+                for (int vi = 0; vi < vcount; vi++)
+                {
+                    int bb = vertOff + vi * stride + boneOffTmp;
+                    for (int k = 0; k <= nWtmp; k++) if (d[bb + k] > maxBoneByte) maxBoneByte = d[bb + k];   // 只算實際用到的骨 (nWtmp+1 個),stride40 只讀 byte0
+                }
+            var pal = ScanBonePalette(d, p, maxBoneByte, out int palStart, out int palEnd, out Matrix4x4[] slotInv);
             // per-range palettes live between the range table and the main palette
             if (pal != null && ranges.Count > 0 && palStart > rangeTableEnd)
             {
@@ -111,6 +124,10 @@ namespace Sdo.Game
             int boneOff = 12 + nW * 4;
             int[] mainMap = pal != null ? pal : null;
             var bHrc = new int[vcount * 4]; var bWt = new float[vcount * 4];
+            // 標記「零蒙皮」頂點:blend stride 卻全骨 byte=0 且全顯式權重≈0 → 匯出時漏蒙皮,下面隱含 last-weight 把它 100%
+            // 綁到調色盤 slot0 (常是 Bip01_Neck)。這些是 UV 接縫的重複頂點,bind pose 與正確 twin 重合沒事,一有動作脖子
+            // 一轉就把下擺往上扯 (烈酒清茶 男装 037567 有 125 個)。迴圈後用同位置 twin 的權重/骨骼重焊。
+            var zeroSkin = new bool[vcount]; int zeroSkinCount = 0;
             // vertex -> range (by vertex_start/count)
             for (int i = 0; i < vcount; i++)
             {
@@ -122,7 +139,7 @@ namespace Sdo.Game
                                      : new Color32(255, 255, 255, 255);
                 // weights
                 float w0, w1, w2, w3;
-                if (stride == 44) { w0 = 1f; w1 = w2 = w3 = 0f; }
+                if (stride == 44) { w0 = F(d, b + 12); w1 = 1f - w0; w2 = w3 = 0f; }   // 0x1158=XYZB2: 2 骨混合 (1 float 權重 @12 + UBYTE4 @16),非剛性單骨
                 else if (stride == 48) { w0 = F(d, b + 12); w1 = F(d, b + 16); w2 = 1f - w0 - w1; w3 = 0f; }
                 else if (stride == 52) { w0 = F(d, b + 12); w1 = F(d, b + 16); w2 = F(d, b + 20); w3 = 1f - w0 - w1 - w2; }
                 else { w0 = 1f; w1 = w2 = w3 = 0f; }
@@ -140,9 +157,35 @@ namespace Sdo.Game
                 }
                 for (int k = 0; k < 4; k++)
                 {
-                    int local = stride == 44 ? (k == 0 ? d[b + 16] : 0) : d[b + boneOff + k];
+                    int local = d[b + boneOff + k];   // stride44 boneOff=16 讀全 4 個 UBYTE4 (含 byte1=第二骨);stride40 boneOff=12
                     int hrc = (map != null && local >= 0 && local < map.Length) ? map[local] : 0;
                     bHrc[i * 4 + k] = hrc < 0 ? 0 : hrc;
+                }
+                if (nW > 0)   // detect an unskinned (all bone bytes 0 AND all explicit weights 0) seam-duplicate vertex
+                {
+                    bool bonesZero = d[b + boneOff] == 0 && d[b + boneOff + 1] == 0 && d[b + boneOff + 2] == 0 && d[b + boneOff + 3] == 0;
+                    bool weightsZero = true;
+                    for (int wi = 0; wi < nW; wi++) if (Mathf.Abs(F(d, b + 12 + wi * 4)) > 1e-4f) { weightsZero = false; break; }
+                    if (bonesZero && weightsZero) { zeroSkin[i] = true; zeroSkinCount++; }
+                }
+            }
+            // Re-weld ZERO-SKIN seam-duplicate verts to a correctly-weighted vertex at the SAME bind position, so the
+            // hem follows the body (Spine/Pelvis/Thigh) instead of being dragged by slot0 (Bip01_Neck) under a MOT clip.
+            if (zeroSkinCount > 0)
+            {
+                var posToGood = new Dictionary<long, int>(vcount);   // quantized bind pos -> a properly-skinned vertex
+                for (int i = 0; i < vcount; i++)
+                {
+                    if (zeroSkin[i]) continue;
+                    long key = PosKey(verts[i]);
+                    if (!posToGood.ContainsKey(key)) posToGood[key] = i;
+                }
+                for (int i = 0; i < vcount; i++)
+                {
+                    if (!zeroSkin[i]) continue;
+                    if (posToGood.TryGetValue(PosKey(verts[i]), out int tw))
+                        for (int k = 0; k < 4; k++) { bWt[i * 4 + k] = bWt[tw * 4 + k]; bHrc[i * 4 + k] = bHrc[tw * 4 + k]; }
+                    // no positional twin → leave as-is (a genuine slot0 vertex); none such in 037567.
                 }
             }
             // NO winding reversal — D3D9 & Unity share LH front-face winding, and we no longer X-flip the verts.
@@ -179,26 +222,36 @@ namespace Sdo.Game
             return new SubMesh
             {
                 Mesh = mesh, Dds = dds, DdsNames = ddsNames.ToArray(), Ranges = rangeList,
-                // Only mark a submesh skinnable when it actually carries per-vertex bone weights (stride 44/48/52 ->
-                // nW>0). Rigid stage props (fvf 0x112/0x142, stride 32/24 — corals, the FIFA crowd, sea/TV screens)
-                // have NO weights: their "bone index" bytes alias the normal/diffuse, so skinning them at the bind
-                // pose collapses the mesh to the origin (SCN0014 corals "lay flat at centre"). With BoneHrc=null the
-                // loader renders them VERBATIM (their MSH verts are already the final world geometry). Avatars and
-                // genuinely-deforming props (GUATAN, stride 44) keep weights -> still skinned.
-                BindVerts = (Vector3[])verts.Clone(), BoneHrc = (pal != null && nW > 0) ? bHrc : null, BoneWt = bWt,
+                // Mark a submesh skinnable when it carries bone weights (stride 44/48/52 -> nW>0) OR is a SINGLE-BONE
+                // rigid skin (fvf 0x1156 / stride 40 = XYZB1+LASTBETA_UBYTE4: one UBYTE4 index at offset 12, weight 1.0).
+                // 37% of hair meshes (e.g. 037902_WOMAN_HAIR 寒風伴我) are stride-40 and bind rigidly to ONE bone
+                // (Bip01_Head) — without this they froze at bind and never followed the skeleton (the "髮不跟身體動" bug).
+                // The `pal != null` guard still excludes the intentionally-static stage props (fvf 0x112/0x142/0x152,
+                // stride 32/24/36 — corals, FIFA crowd, TV screens) which have NO bone palette → rendered VERBATIM.
+                BindVerts = (Vector3[])verts.Clone(), BoneHrc = (pal != null && (nW > 0 || stride == 40)) ? bHrc : null, BoneWt = bWt,
                 MshInvBindByHrc = mshInv
             };
         }
 
+        // Quantize a bind position to a 1/64-unit lattice key. Seam-duplicate ("zero-skin") verts share byte-identical
+        // positions with their properly-weighted twin, so they map to the same key (24-bit fields cover ±131072 units).
+        private static long PosKey(Vector3 p)
+        {
+            long qx = Mathf.RoundToInt(p.x * 64f) & 0xFFFFFF;
+            long qy = Mathf.RoundToInt(p.y * 64f) & 0xFFFFFF;
+            long qz = Mathf.RoundToInt(p.z * 64f) & 0xFFFFFF;
+            return (qx << 48) | (qy << 24) | qz;
+        }
+
         // returns local_to_hrc array (palette_size) or null; sets palStart/palEnd; outputs per-slot inv-bind (Unity)
-        private static int[] ScanBonePalette(byte[] d, int start, out int palStart, out int palEnd, out Matrix4x4[] slotInv)
+        private static int[] ScanBonePalette(byte[] d, int start, int minPalSize, out int palStart, out int palEnd, out Matrix4x4[] slotInv)
         {
             palStart = -1; palEnd = -1; slotInv = null;
             int limit = System.Math.Min(d.Length - 8, start + 0x4000);
             for (int off = start; off + 8 <= limit; off += 4)
             {
                 int hrcCount = (int)U32At(d, off), palSize = (int)U32At(d, off + 4);
-                if (hrcCount < 1 || hrcCount > 512 || palSize < 1 || palSize > 128) continue;
+                if (hrcCount < 1 || hrcCount > 512 || palSize <= minPalSize || palSize > 128) continue;   // palSize 必須 >maxBoneByte,擋假的小盤
                 int matOff = off + 8, mapOff = matOff + palSize * 64, mapEnd = mapOff + hrcCount * 4;
                 if (mapEnd > d.Length) continue;
                 if (!LooksLikeMatrix(d, matOff)) continue;
@@ -255,11 +308,12 @@ namespace Sdo.Game
             float w = F(d, off + 60); return w > 0.99f && w < 1.01f;
         }
 
-        // Submesh-header marker (first u32). Avatar/character meshes use 0x1158/115A/115C; rigid stage props use the
-        // smaller FVFs 0x112 / 0x142 / 0x152 (e.g. FIFA_QIUBEI is two 0x142 submeshes — the trophy's ball + cup). The
-        // opt==101 tag plus the structural check below (a sane vert section right after the index data) make a false
-        // mid-data match effectively impossible, so widening this list is safe for the avatar meshes too.
-        private static readonly uint[] FvfStrides = { 0x1158, 0x115A, 0x115C, 0x112, 0x142, 0x152 };
+        // Submesh-header marker (first u32). Avatar/character meshes use 0x1156(stride40,single-bone)/1158/115A/115C;
+        // rigid stage props use the smaller FVFs 0x112 / 0x142 / 0x152 (e.g. FIFA_QIUBEI is two 0x142 submeshes — the
+        // trophy's ball + cup). The opt==101 tag plus the structural check below (a sane vert section right after the
+        // index data) make a false mid-data match effectively impossible, so widening this list is safe. 0x1156 added so
+        // a stride-40 submesh that FOLLOWS another (multi-submesh single-bone garments) is still located.
+        private static readonly uint[] FvfStrides = { 0x1156, 0x1158, 0x115A, 0x115C, 0x112, 0x142, 0x152 };
         private static int ScanNextSubmesh(byte[] d, int start)
         {
             for (int off = start; off + 12 <= d.Length; off += 4)

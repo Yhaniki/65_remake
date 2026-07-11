@@ -22,6 +22,16 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Room_Shop_RoundTrip()
+        {
+            var f = new FlowManager();
+            Assert.IsTrue(f.GoTo(ScreenId.Room));
+            Assert.IsTrue(f.GoTo(ScreenId.Shop));    // Room -> 商城
+            Assert.IsTrue(f.GoTo(ScreenId.Room));    // and back
+            Assert.IsFalse(new FlowManager().CanGoTo(ScreenId.Shop));   // never straight from Lobby
+        }
+
+        [Test]
         public void Blocked_Transitions_Are_Rejected()
         {
             var f = new FlowManager();

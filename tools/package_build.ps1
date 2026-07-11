@@ -71,6 +71,13 @@ if ($online) {
     # LOADING screens: the gameplay boot/loading screen (ScreenGameplay boot cover) picks random LOADING_N.PNG tips +
     # LOADINGS_N.PNG badges from here; overlay them so the built player resolves the same set (LoadingArt's DATA\LOADING fallback).
     Copy-Tree (Join-Path $ds 'LOADING')             (Join-Path $Data 'LOADING')             'online LOADING'
+    # 商城目錄：iteminfo.dat (單品名/價) + setinfo.dat (套装組件) 放到 DATA 根,讓打包後 AvatarItemCatalog 找得到 (編輯器
+    # 從 assets/閉撰敃氪 找,打包則從 <exe>/DATA 找)。兩檔在線上客戶端根目錄 (閉撰敃氪/),不在 DatasSDO 下。
+    foreach ($f in @('iteminfo.dat','setinfo.dat')) {
+        $src = Join-Path $online.FullName $f
+        if (Test-Path $src) { Copy-Item $src (Join-Path $Data $f) -Force; Write-Host "[package] copied $f" }
+        else { Write-Warning "[package] $f not found at $src" }
+    }
 } else {
     Write-Warning "[package] online DatasSDO not found under $assetsDir — icons fall back to the offline subset."
 }

@@ -159,6 +159,40 @@ namespace Sdo.Game
             return av;
         }
 
+        /// <summary>商城 shop preview overload: builds EXACTLY the given <paramref name="parts"/> (item-only card, or a
+        /// full composed outfit) on the <paramref name="hrcRel"/> skeleton (the wshop/mshop mannequin for cards), via the
+        /// shared <see cref="SdoAvatarBuilder"/>. When <paramref name="bindPoseNoIdle"/> the skeleton shows its BIND POSE
+        /// with no motion (the official AvtShow display mode). Kept separate from the room/gender overloads above so each
+        /// path preserves its own tested behaviour.</summary>
+        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, string[] parts, string hrcRel = null,
+                                      bool bindPoseNoIdle = false)
+        {
+            string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel ?? FemaleHrc);   // MALE.HRC for male outfits
+            if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
+            var hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath));
+            if (hrc == null) { Debug.LogWarning("[room-avatar] HRC parse fail"); return null; }
+
+            // bindPoseNoIdle (商城 shop preview): show the skeleton's BIND POSE with NO motion — exactly the official
+            // AvtShow (AvtShow_LoadModelByName → AvatarHelper_Create(name,0), no .mot). The shop passes the wshop/mshop
+            // MANNEQUIN hrc whose bind is arms-down + STRAIGHT legs. Animate=false → SdoAvatar.Pose uses hrc.LocalRest.
+            var idle = bindPoseNoIdle ? null : LoadMot(IdleMot);
+            var av = parent.AddComponent<SdoAvatar>();
+            av.Setup(hrc, idle);
+            av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, false));   // default thin female (matches the dancer)
+            if (bindPoseNoIdle) { av.Animate = false; }
+            else { av.RestMot = idle; av.BlendSec = 0f; }   // no idle↔walk crossfade — start walking immediately
+
+            // Load the body/garment parts via the shared builder (same loop the in-game dancer + head portrait use).
+            var built = SdoAvatarBuilder.LoadParts(parent, av, parts ?? WomanParts,
+                portraitOpaque ? SdoAvatarBuilder.SkinStyle.Portrait : SdoAvatarBuilder.SkinStyle.Gameplay);
+            if (built.Parts == 0) { Debug.LogWarning("[room-avatar] no parts loaded"); Object.Destroy(av); return null; }
+
+            if (bindPoseNoIdle) av.PoseFrame(0f);   // skin the bind pose now (retargets T-pose-authored garments onto the mannequin)
+            else av.PoseInitialIdle();              // arm the idle so the first frame isn't the bind/T-pose
+            SetLayerRecursive(parent, layer);
+            return av;
+        }
+
         private static string[] NormalizeParts(string[] parts, bool male)
         {
             var defaults = DefaultParts(male);
@@ -178,16 +212,6 @@ namespace Sdo.Game
             if (rel.IndexOf('/') < 0) rel = "AVATAR/" + rel;
             if (!rel.EndsWith(".MSH", System.StringComparison.OrdinalIgnoreCase)) rel += ".MSH";
             return rel;
-        }
-
-        public static MotLoader LoadMot(string rel)
-        {
-            try
-            {
-                var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-                return File.Exists(path) ? MotLoader.Load(File.ReadAllBytes(path)) : null;
-            }
-            catch { return null; }
         }
 
         // Resolve an avatar DDS by name within its folder (mirror of ScreenGameplay.ResolveDds: exact name first, then a
@@ -217,6 +241,16 @@ namespace Sdo.Game
             if (u.Contains("COAT")) return new Color(0.35f, 0.45f, 0.70f);
             if (u.Contains("PANT")) return new Color(0.70f, 0.25f, 0.30f);
             return new Color(0.6f, 0.6f, 0.65f);
+        }
+
+        public static MotLoader LoadMot(string rel)
+        {
+            try
+            {
+                var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
+                return File.Exists(path) ? MotLoader.Load(File.ReadAllBytes(path)) : null;
+            }
+            catch { return null; }
         }
 
         public static void SetLayerRecursive(GameObject go, int layer)
