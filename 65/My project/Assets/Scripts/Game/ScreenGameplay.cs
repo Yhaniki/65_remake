@@ -886,17 +886,6 @@ namespace Sdo.Game
                                  new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
-        private static Color PartColor(string name)
-        {
-            name = name.ToUpperInvariant();
-            if (name.Contains("HAIR")) return new Color(0.30f, 0.20f, 0.16f);
-            if (name.Contains("FACE") || name.Contains("HAND")) return new Color(0.96f, 0.82f, 0.72f);
-            if (name.Contains("COAT")) return new Color(0.42f, 0.62f, 0.92f);
-            if (name.Contains("PANT")) return new Color(0.86f, 0.86f, 0.92f);
-            if (name.Contains("SHOES")) return new Color(0.22f, 0.20f, 0.26f);
-            return new Color(0.80f, 0.75f, 0.70f);
-        }
-
         private void TryLoadAvatar()
         {
             var parent = new GameObject("Avatar3D");
@@ -924,58 +913,9 @@ namespace Sdo.Game
                 }
             }
 
-            Bounds bounds = default; bool any = false; int parts = 0;
-            foreach (var rel in avatarParts)
-            {
-                var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-                if (!File.Exists(path)) { Debug.LogWarning("[avatar] missing " + rel); continue; }
-                var r = MshLoader.Load(File.ReadAllBytes(path));
-                if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[avatar] parse fail " + rel); continue; }
-                var avatarDir = Path.GetDirectoryName(path);
-                int si = 0;
-                foreach (var sub in r.Submeshes)   // each submesh = its own texture + skin (COAT/PANT have 2)
-                {
-                    var go = new GameObject(Path.GetFileNameWithoutExtension(rel) + "_" + si++);
-                    go.transform.SetParent(parent.transform, false);
-                    go.AddComponent<MeshFilter>().mesh = sub.Mesh;
-                    var mr = go.AddComponent<MeshRenderer>();
-                    // Each SUBMESH has its OWN material: the cloth submesh -> the garment DDS (e.g.
-                    // 900019_woman_pant.dds = red shorts), the skin submesh -> a shared W_Basic_*.dds (bare arms/
-                    // legs/face). The PANT/COAT each have a cloth submesh + a skin submesh; resolve per submesh (and
-                    // per range for the 2-material skin submeshes) by the MSH material name. (Using the part DDS for
-                    // every submesh painted the skin submeshes with cloth -> navy arms + red calves.)
-                    // Hair (and any open/thin part) must render TWO-SIDED: single-sided Cull Back hides the
-                    // inward-facing strands, so from the front you see through gaps and lose part of the hair.
-                    // Body parts stay single-sided (closed solids -> correct occlusion, less overdraw).
-                    bool twoSided = rel.ToUpperInvariant().Contains("HAIR");
-                    var ds = twoSided ? Shader.Find("Sdo/UnlitDoubleSided") : null;
-                    var texShader = ds != null ? ds : Shader.Find("Unlit/Texture");
-                    if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
-                    {
-                        var mats = new Material[sub.Ranges.Count];
-                        for (int s = 0; s < sub.Ranges.Count; s++)
-                        {
-                            int a = sub.Ranges[s].Attrib;
-                            string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                            Texture2D t = ResolveDds(avatarDir, nm);
-                            mats[s] = t != null ? new Material(texShader) { mainTexture = t }
-                                                : new Material(Shader.Find("Unlit/Color")) { color = PartColor(rel) };
-                        }
-                        mr.sharedMaterials = mats;
-                    }
-                    else
-                    {
-                        Texture2D tex = ResolveDds(avatarDir, sub.Dds);
-                        if (tex != null) mr.sharedMaterial = new Material(texShader) { mainTexture = tex };
-                        else { mr.sharedMaterial = new Material(Shader.Find("Unlit/Color")) { color = PartColor(rel) }; }
-                    }
-                    if (avatar != null && sub.BindVerts != null && sub.BoneHrc != null)
-                        avatar.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
-                    var mb = sub.Mesh.bounds;
-                    if (!any) { bounds = mb; any = true; } else bounds.Encapsulate(mb);
-                }
-                parts++;
-            }
+            // Load the WOMAN body parts via the shared builder (same loop the lobby avatar + head portrait use).
+            var built = SdoAvatarBuilder.LoadParts(parent, avatar, avatarParts, SdoAvatarBuilder.SkinStyle.Gameplay);
+            Bounds bounds = built.Bounds; bool any = built.Any; int parts = built.Parts;
             if (!any) { Debug.LogWarning("[avatar] no parts loaded"); return; }
             Debug.Log($"[avatar] WOMAN: {parts} parts, skeleton={(hrc != null ? hrc.Names.Length + " bones" : "none")}, mot={(mot != null ? mot.MaxTime + 1 + " frames" : "none")}");
             var handYellow = new Color(1f, 0.86f, 0.25f);

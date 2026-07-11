@@ -7,6 +7,7 @@ namespace Sdo.UI.Core
     {
         public static Action OpenSettings;
         public static Action OpenNoteSkinPicker;
+        public static Action OpenShop;             // Room -> 商城 (avatar shop): browse / buy / try-on clothing
         public static Action StartGame;   // host pressed Start -> hand off to gameplay (ScreenGameplay) with the session selection
     }
 }

@@ -242,10 +242,13 @@ namespace Sdo.Game
             }
         }
 
-        private float _lastMinY;
+        private float _lastMinY, _lastMaxY;
         /// <summary>Pose at <paramref name="frame"/> and return the lowest skinned vertex Y (model space) — the feet
         /// height for that pose. Used to rest the avatar's feet on the floor (honours the actual skin mode + pose).</summary>
         public float FeetYAt(float frame) { if (_hrc == null || _parts.Count == 0) return 0f; Pose(frame); return _lastMinY; }
+        /// <summary>Pose at <paramref name="frame"/> and return the highest skinned vertex Y (model space) — the
+        /// head/hair-top height for that pose. Used with FeetYAt to measure body height for per-model framing.</summary>
+        public float HeadYAt(float frame) { if (_hrc == null || _parts.Count == 0) return 0f; Pose(frame); return _lastMaxY; }
 
         /// <summary>Find a bone index by name (for attaching hand-trail anchors etc.).</summary>
         public int BoneIndex(string name) => _hrc != null && _hrc.Index.TryGetValue(name, out int i) ? i : -1;
@@ -494,7 +497,7 @@ namespace Sdo.Game
             if (GpuSkinning) { WriteGpuBones(); _haveDisp = true;   // GPU: drive the SMR bones; the GPU does the vertex blend
                 foreach (var (bone, at) in _anchors) if (at) at.position = transform.TransformPoint((Vector3)_animWorld[bone].GetColumn(3));
                 return; }
-            float minY = float.PositiveInfinity;
+            float minY = float.PositiveInfinity, maxY = float.NegativeInfinity;
             foreach (var pt in _parts)
             {
                 // per-part skin matrices. MSH_INVBIND (avatar_viewer.py default — set_force_skin_mode("msh_invbind")):
@@ -516,12 +519,12 @@ namespace Sdo.Game
                         int bi = pt.Bi[k * 4 + j]; if (bi < 0 || bi >= bc) continue;
                         acc += w * pt.Skin[bi].MultiplyPoint3x4(bp);
                     }
-                    work[k] = acc; if (acc.y < minY) minY = acc.y;
+                    work[k] = acc; if (acc.y < minY) minY = acc.y; if (acc.y > maxY) maxY = acc.y;
                 }
                 pt.Mesh.vertices = work;
                 pt.Mesh.RecalculateBounds();
             }
-            if (!float.IsInfinity(minY)) _lastMinY = minY;   // lowest skinned vertex (model space) -> floor reference
+            if (!float.IsInfinity(minY)) { _lastMinY = minY; _lastMaxY = maxY; }   // lowest/highest skinned vertex (model space) -> floor / head-top
             _haveDisp = true;                                 // _dispLocal now holds a valid pose to blend from next switch
             // move trail anchors to their bone's animated WORLD position (anchors live at scene scale 1 so
             // the TrailRenderer width stays in world units, undistorted by the avatar's scale).

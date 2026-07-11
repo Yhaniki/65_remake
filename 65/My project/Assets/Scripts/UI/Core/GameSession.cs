@@ -1,4 +1,5 @@
 using Sdo.Settings;
+using Sdo.Shop;
 
 namespace Sdo.UI.Core
 {
@@ -31,6 +32,10 @@ namespace Sdo.UI.Core
 
         public string NoteSkin = "NOTEIMAGE_5";
 
+        // 商城 (shop): 衣櫃 + 錢包 + 裝備。單人離線 → 本地保存；起始給充足金額方便試玩。裝備狀態供 avatar 換裝
+        // (AvatarOutfit.ResolveParts) 使用。見 [[sdo-shop-mode]] / ShopScreen。
+        public readonly Wardrobe Wardrobe = new Wardrobe();
+
         // ---- 房間右側面板（DDRROOM win2）當下選的值。預設由 RoomDefaults(settings.json) 種入 SeedRoomDefaults()。----
         public float Speed = 2.5f;       // 下落速度倍率（對齊 RoomDefaults.speedSteps 的某一檔）
         public int NoteType = -1;        // note 種類(hit-effect)：-1=隨機, >=0=指定
@@ -53,6 +58,10 @@ namespace Sdo.UI.Core
             Team = RoomConfig.defaultTeam;
             DropDirection = RoomConfig.defaultDropDirection;
             GameMode = RoomConfig.defaultGameMode;
+            // 起始錢包（單人試玩用；之後可接 Reward 或存檔）
+            Wardrobe.Wallet.Coins = 100000;
+            Wardrobe.Wallet.Points = 100000;
+            Wardrobe.Wallet.Bonus = 1000;
         }
 
         /// <summary>回傳 steps 裡最接近 want 的檔位（steps 空 → 直接回 want）。</summary>

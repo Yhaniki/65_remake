@@ -3,6 +3,7 @@
     "rootNamespace": "Sdo.UI",
     "references": [
         "Sdo.Game",
+        "Sdo.Shop",
         "Sdo.Osu",
         "Sdo.Ruleset",
         "Sdo.Localization",

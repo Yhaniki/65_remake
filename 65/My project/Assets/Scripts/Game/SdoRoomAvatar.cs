@@ -34,72 +34,32 @@ namespace Sdo.Game
         /// resolved per-range (so arms/legs aren't painted with cloth). Returns the SdoAvatar, or null if the skeleton
         /// or every part failed to load.
         /// </summary>
-        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque)
+        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, string[] parts = null, string hrcRel = null,
+                                      bool bindPoseNoIdle = false)
         {
-            string root = SdoExtracted.Root;
-            string hrcPath = Path.Combine(root, FemaleHrc.Replace('/', Path.DirectorySeparatorChar));
+            string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel ?? FemaleHrc);   // MALE.HRC for male outfits
             if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
             var hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath));
             if (hrc == null) { Debug.LogWarning("[room-avatar] HRC parse fail"); return null; }
 
-            var idle = LoadMot(IdleMot);
+            // bindPoseNoIdle (商城 shop preview): show the skeleton's BIND POSE with NO motion — exactly the official
+            // AvtShow (AvtShow_LoadModelByName → AvatarHelper_Create(name,0), no .mot). The shop passes the wshop/mshop
+            // MANNEQUIN hrc whose bind is arms-down + STRAIGHT legs (FEMALE/MALE.HRC bind is a T-pose; the bent knees
+            // came from the WREST/MREST idle frame-0). Animate=false → SdoAvatar.Pose uses hrc.LocalRest for every bone.
+            var idle = bindPoseNoIdle ? null : LoadMot(IdleMot);
             var av = parent.AddComponent<SdoAvatar>();
             av.Setup(hrc, idle);
             av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, false));   // default thin female (matches the dancer)
-            av.RestMot = idle;
-            av.BlendSec = 0f;   // no idle↔walk crossfade in the lobby — start walking immediately (no 1s smooth)
+            if (bindPoseNoIdle) { av.Animate = false; }
+            else { av.RestMot = idle; av.BlendSec = 0f; }   // no idle↔walk crossfade in the lobby — start walking immediately
 
-            var bodyShader = Shader.Find("Unlit/Texture");
-            var hairShader = Shader.Find("Sdo/UnlitDoubleSided") ?? bodyShader;
-            var portraitShader = Shader.Find("Sdo/PortraitOpaque") ?? bodyShader;
-            var fallback = Shader.Find("Unlit/Color");
+            // Load the WOMAN body parts via the shared builder (same loop the in-game dancer + head portrait use).
+            var built = SdoAvatarBuilder.LoadParts(parent, av, parts ?? WomanParts,
+                portraitOpaque ? SdoAvatarBuilder.SkinStyle.Portrait : SdoAvatarBuilder.SkinStyle.Gameplay);
+            if (built.Parts == 0) { Debug.LogWarning("[room-avatar] no parts loaded"); Object.Destroy(av); return null; }
 
-            int parts = 0;
-            foreach (var rel in WomanParts)
-            {
-                var path = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
-                if (!File.Exists(path)) { Debug.LogWarning("[room-avatar] missing " + rel); continue; }
-                var r = MshLoader.Load(File.ReadAllBytes(path));
-                if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-avatar] parse fail " + rel); continue; }
-                var dir = Path.GetDirectoryName(path);
-                bool hair = rel.ToUpperInvariant().Contains("HAIR");
-                var sh = portraitOpaque ? portraitShader : (hair ? hairShader : bodyShader);
-                int si = 0;
-                foreach (var sub in r.Submeshes)
-                {
-                    var go = new GameObject(Path.GetFileNameWithoutExtension(rel) + "_" + si++);
-                    go.transform.SetParent(parent.transform, false);
-                    go.AddComponent<MeshFilter>().mesh = sub.Mesh;
-                    var mr = go.AddComponent<MeshRenderer>();
-
-                    // 2-material skin submeshes (COAT/PANT): cloth range -> garment DDS, skin range -> shared W_Basic DDS.
-                    // Only meaningful for the full-body avatar; the head portrait never shows them, so keep it single.
-                    if (!portraitOpaque && sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
-                    {
-                        var mats = new Material[sub.Ranges.Count];
-                        for (int s = 0; s < sub.Ranges.Count; s++)
-                        {
-                            int a = sub.Ranges[s].Attrib;
-                            string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                            var t = ResolveDds(dir, nm);
-                            mats[s] = t != null ? new Material(sh) { mainTexture = t } : new Material(fallback) { color = PartColor(rel) };
-                        }
-                        mr.sharedMaterials = mats;
-                    }
-                    else
-                    {
-                        var tex = ResolveDds(dir, sub.Dds);
-                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : new Material(fallback) { color = PartColor(rel) };
-                    }
-
-                    if (sub.BindVerts != null && sub.BoneHrc != null)
-                        av.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
-                }
-                parts++;
-            }
-            if (parts == 0) { Debug.LogWarning("[room-avatar] no parts loaded"); Object.Destroy(av); return null; }
-
-            av.PoseInitialIdle();           // arm the idle so the first frame isn't the bind/T-pose
+            if (bindPoseNoIdle) av.PoseFrame(0f);   // skin the bind pose now (retargets T-pose-authored garments onto the mannequin)
+            else av.PoseInitialIdle();              // arm the idle so the first frame isn't the bind/T-pose
             SetLayerRecursive(parent, layer);
             return av;
         }
@@ -112,35 +72,6 @@ namespace Sdo.Game
                 return File.Exists(path) ? MotLoader.Load(File.ReadAllBytes(path)) : null;
             }
             catch { return null; }
-        }
-
-        // Resolve an avatar DDS by name within its folder (mirror of ScreenGameplay.ResolveDds: exact name first, then a
-        // case-insensitive stem match), decoded via DdsLoader.
-        private static Texture2D ResolveDds(string dir, string ddsName)
-        {
-            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
-            string name = Path.GetFileName(ddsName.Replace('\\', '/'));
-            string direct = Path.Combine(dir, name);
-            string hit = File.Exists(direct) ? direct : null;
-            if (hit == null)
-            {
-                string stem = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
-                foreach (var f in Directory.GetFiles(dir, "*.*"))
-                    if (Path.GetExtension(f).ToLowerInvariant() == ".dds" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) { hit = f; break; }
-            }
-            if (hit == null) return null;
-            try { return DdsLoader.Load(File.ReadAllBytes(hit)); }
-            catch { return null; }
-        }
-
-        private static Color PartColor(string rel)
-        {
-            string u = rel.ToUpperInvariant();
-            if (u.Contains("HAIR")) return new Color(0.30f, 0.20f, 0.12f);
-            if (u.Contains("FACE") || u.Contains("HAND")) return new Color(0.95f, 0.80f, 0.70f);
-            if (u.Contains("COAT")) return new Color(0.35f, 0.45f, 0.70f);
-            if (u.Contains("PANT")) return new Color(0.70f, 0.25f, 0.30f);
-            return new Color(0.6f, 0.6f, 0.65f);
         }
 
         public static void SetLayerRecursive(GameObject go, int layer)

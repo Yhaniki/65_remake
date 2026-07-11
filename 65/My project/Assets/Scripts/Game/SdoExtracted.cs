@@ -248,6 +248,59 @@ namespace Sdo.Game
             return all.Length > 0 ? all[0] : null;
         }
 
+        /// <summary>First frame of an .an copied onto its OWN texture (crop + <paramref name="pad"/>px transparent
+        /// border, Clamp-wrapped, alpha-bled + de-matted). Use for a sprite whose atlas crop abuts a NEIGHBOURING
+        /// sprite: bilinear filtering at the crop edge would otherwise drag the neighbour's opaque pixels in as a
+        /// white/coloured fringe (the 全身购买 orb bleeds the light sprite sitting to its left/right). AlphaBleed /
+        /// DeMatteWhite alone can't fix that — they only treat the transparent matte, not an opaque neighbour. On its
+        /// own texture there is no neighbour, so the fringe is gone. Returns null if the .an/png is missing.</summary>
+        public static Sprite LoadAnSolo(string folder, string anName, int pad = 2)
+            => LoadAnSoloImpl(folder, anName, pad, circular: false);
+
+        /// <summary>As <see cref="LoadAnSolo"/> but for ROUND buttons (the shop's ♂/♀/reset/cart orbs): after de-matting,
+        /// flood the orb colour across the WHOLE transparent region (not just a 1px ring) and multiply alpha by a soft
+        /// inscribed-circle mask centred on the opaque disc. The orbs are authored composited on WHITE, so a ring of
+        /// (255,255,255,~0) matte texels sits just outside the disc; AlphaBleed's 1px reach leaves the far ones white and
+        /// bilinear MAGNIFICATION pulls that white into a fringe. Flood kills the white RGB everywhere; the circle mask
+        /// gives a clean round alpha cut-off. Use only for actually-round sprites (see ShopArt.CircularOrbs).</summary>
+        public static Sprite LoadAnSoloCircular(string folder, string anName, int pad = 0)
+            => LoadAnSoloImpl(folder, anName, pad, circular: true);
+
+        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular)
+        {
+            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            if (!File.Exists(anPath)) return null;
+            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (frames.Count == 0) return null;
+            var fr = frames[0];
+            var src = LoadTexture(Path.Combine(folder, fr.Image));
+            if (src == null) return null;
+            int cx, cy, cw, ch;
+            if (fr.HasCrop) { cx = fr.X; cy = src.height - fr.Y - fr.H; cw = fr.W; ch = fr.H; }   // top-left -> bottom-left
+            else { cx = 0; cy = 0; cw = src.width; ch = src.height; }
+            if (cw <= 0 || ch <= 0 || cx < 0 || cy < 0 || cx + cw > src.width || cy + ch > src.height) return null;
+            var block = src.GetPixels(cx, cy, cw, ch);
+            int W = cw + pad * 2, H = ch + pad * 2;
+            var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            outTex.SetPixels(new Color[W * H]);            // transparent border
+            outTex.SetPixels(pad, pad, cw, ch, block);
+            outTex.Apply(false);
+            // DeMatteWhite BEFORE AlphaBleed: DeMatteWhite auto-detects a white/light matte from the still-untouched
+            // transparent region (光球鈕的透明區是白/淺 → 整顆在白底上合成 → mid-alpha 邊是「帶色的白暈」). AlphaBleed 之後
+            // 透明區被填成不透明色,偵測就失效了。順序:先 demat 邊,再把 (demated) 邊色 dilate 進透明 pad。
+            DeMatteWhite(outTex);    // un-composite the white matte on the crop's own AA edges (kills the light halo)
+            if (circular)
+            {
+                AlphaFlood(outTex);  // flood orb colour into the ENTIRE transparent region → no white RGB left to bleed
+                CircleMask(outTex);  // soft inscribed-circle alpha cut-off → clean round edge under magnification
+            }
+            else
+            {
+                AlphaBleed(outTex);  // dilate the crop's opaque colour into the transparent pad (kills bilinear halo)
+            }
+            return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
+
         /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.
         /// <paramref name="bleed"/> dilates the transparent-white matte to remove the bilinear white halo on edges.</summary>
         public static Sprite LoadImage(string folder, string imageName, bool bleed = false)
@@ -356,6 +409,130 @@ namespace Sdo.Game
                         if (n > 0) { px[i].r = (byte)(r / n); px[i].g = (byte)(g / n); px[i].b = (byte)(b / n); changed = true; }
                     }
                 if (!changed) break;
+            }
+            tex.SetPixels32(px); tex.Apply();
+        }
+
+        /// <summary>Flood every (near-)transparent texel with the nearest opaque colour (alpha kept), propagating across
+        /// the WHOLE texture — unlike <see cref="AlphaBleed"/>, whose filled texels stay a≤8 and so never become sources,
+        /// giving it only a 1px reach. Used before <see cref="CircleMask"/> on the round orb buttons: it erases the
+        /// (255,255,255,~0) white matte ring the art bakes just outside the disc, so bilinear MAGNIFICATION has no white
+        /// RGB to pull into the edge. Alpha is untouched (purely a colour fill under the eventual mask).</summary>
+        public static void AlphaFlood(Texture2D tex)
+        {
+            if (tex == null) return;
+            int w = tex.width, h = tex.height;
+            var px = tex.GetPixels32();
+            var known = new bool[px.Length];
+            int unknown = 0;
+            for (int i = 0; i < px.Length; i++) { known[i] = px[i].a > 8; if (!known[i]) unknown++; }
+            int guard = w + h + 4;                                    // upper bound on propagation distance
+            while (unknown > 0 && guard-- > 0)
+            {
+                var srcKnown = (bool[])known.Clone();
+                var src = (Color32[])px.Clone();
+                bool changed = false;
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = y * w + x;
+                        if (srcKnown[i]) continue;
+                        int r = 0, g = 0, b = 0, n = 0;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                if (dx == 0 && dy == 0) continue;
+                                int nx = x + dx, ny = y + dy;
+                                if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                                int j = ny * w + nx;
+                                if (srcKnown[j]) { var c = src[j]; r += c.r; g += c.g; b += c.b; n++; }
+                            }
+                        if (n > 0) { px[i].r = (byte)(r / n); px[i].g = (byte)(g / n); px[i].b = (byte)(b / n); known[i] = true; unknown--; changed = true; }
+                    }
+                if (!changed) break;                                 // nothing left reachable (fully transparent texture)
+            }
+            tex.SetPixels32(px); tex.Apply();
+        }
+
+        /// <summary>Multiply alpha by a soft inscribed-circle mask centred on the opaque disc, auto-fitting the radius per
+        /// texture — clips the square crop's corners and the residual sub-pixel matte just outside the disc so a round
+        /// button reads clean over any background under bilinear filtering. Radius/feather are measured from the alpha
+        /// radial profile: maskRadius = the outermost ring still mostly-opaque (mean α≥128, the perceptual edge),
+        /// feather spans out to the AA edge (mean α≥16) plus a soft margin, so the orb's own antialiased rim is kept and
+        /// only the halo beyond it is zeroed. Orientation-invariant (radially symmetric), so bottom-up textures are fine.</summary>
+        public static void CircleMask(Texture2D tex, float featherExtra = 1.5f)
+        {
+            if (tex == null) return;
+            int w = tex.width, h = tex.height;
+            var px = tex.GetPixels32();
+            // alpha-weighted centroid = the disc centre (robust to the crop not being perfectly centred)
+            double sx = 0, sy = 0, sw = 0;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++) { int a = px[y * w + x].a; if (a > 0) { sx += (double)x * a; sy += (double)y * a; sw += a; } }
+            if (sw <= 0) return;
+            float cx = (float)(sx / sw), cy = (float)(sy / sw);
+            // mean alpha per integer-radius ring → find the α≥128 (maskRadius) and α≥16 (edgeRadius) crossings
+            int maxR = (int)Mathf.Ceil(Mathf.Sqrt(w * w + h * h)) + 1;
+            var sum = new double[maxR + 1];
+            var cnt = new int[maxR + 1];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int R = (int)Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                    if (R <= maxR) { sum[R] += px[y * w + x].a; cnt[R]++; }
+                }
+            int maskR = 0, edgeR = 0;
+            for (int R = 0; R <= maxR; R++)
+            {
+                if (cnt[R] == 0) continue;
+                double mean = sum[R] / cnt[R];
+                if (mean >= 128) maskR = R;
+                if (mean >= 16) edgeR = R;
+            }
+            float feather = Mathf.Max(edgeR - maskR + featherExtra, 1.0f);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int i = y * w + x;
+                    if (px[i].a == 0) continue;
+                    float d = Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                    float t = Mathf.Clamp01((maskR + feather - d) / feather);
+                    float s = t * t * (3f - 2f * t);                 // smoothstep: 1 inside maskR, 0 by maskR+feather
+                    px[i].a = (byte)Mathf.Clamp(px[i].a * s, 0f, 255f);
+                }
+            tex.SetPixels32(px); tex.Apply();
+        }
+
+        /// <summary>Remove a WHITE matte from anti-aliased sprite edges: pixels the source art blended against a white
+        /// background (0&lt;alpha&lt;opaque, colour pulled toward white) show a white halo when composited over the dark
+        /// UI. Recover the true colour by un-compositing over white — c_true = (c − 255·(1−a)) / a — so edges read
+        /// clean. Alpha is untouched (purely cosmetic). Only mid-alpha edge pixels are touched; the fully-opaque
+        /// interior and the (near-)transparent matte (handled by <see cref="AlphaBleed"/>) are skipped. Idempotent-ish;
+        /// call once per texture.</summary>
+        public static void DeMatteWhite(Texture2D tex, int loThresh = 8, int hiThresh = 250, int whiteMin = 140)
+        {
+            if (tex == null) return;
+            var px = tex.GetPixels32();
+            // WHITE-MATTE detection: is the fully-transparent region light on average? If so the WHOLE sprite was
+            // composited over white (光球鈕/圓 icon 常是白底出圖) → its mid-alpha AA edges carry a *hued* white halo
+            // (紅球邊=粉白、藍球邊=青白),不是純白 → demat ALL edge pixels. A sprite NOT on white keeps a dark
+            // transparent region → stay on the conservative pure-whiteish path (don't darken its真正帶色 AA 邊).
+            // 只取「非近黑」的透明 texel:LoadAnSolo 加的 2px 透明邊框是 RGB=0,會把平均拉低 → 排除;真正黑透明(無白暈)
+            // 也一併排除 → tn=0 → 保守路徑。剩下的若偏亮 → 判定白/淺底 matte。
+            long tl = 0; int tn = 0;
+            foreach (var c in px) if (c.a < loThresh && (c.r > 16 || c.g > 16 || c.b > 16)) { tl += (c.r * 30 + c.g * 59 + c.b * 11) / 100; tn++; }
+            bool whiteMatte = tn > 0 && tl / tn > 150;
+            for (int i = 0; i < px.Length; i++)
+            {
+                var c = px[i];
+                int a = c.a;
+                if (a < loThresh || a >= hiThresh) continue;
+                // 非白底 sprite → 只碰純白邊 (帶色 AA 邊留著,免被 demat 弄暗);白底 sprite → 全邊 demat。
+                if (!whiteMatte && (c.r < whiteMin || c.g < whiteMin || c.b < whiteMin)) continue;
+                float f = a / 255f, inv = 255f * (1f - f);
+                px[i].r = (byte)Mathf.Clamp((c.r - inv) / f, 0f, 255f);
+                px[i].g = (byte)Mathf.Clamp((c.g - inv) / f, 0f, 255f);
+                px[i].b = (byte)Mathf.Clamp((c.b - inv) / f, 0f, 255f);
             }
             tex.SetPixels32(px); tex.Apply();
         }

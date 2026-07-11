@@ -188,6 +188,11 @@ namespace Sdo.Tests
             Assert.IsTrue(TexAnimEx.TryParse("_texanimex(cs2)200_0_.dds", out var s3));
             Assert.AreEqual("cs2", s3.Name);
             Assert.AreEqual(200f, s3.IntervalMs, 1e-3f);
+
+            // 翅膀/wings — 花雨飞翼 023921: NAME carries a trailing underscore, interval 200. The ".an" is <NAME>.an.
+            Assert.IsTrue(TexAnimEx.TryParse("_texanimex(023921_woman_chibang1_)200_1.dds", out var w));
+            Assert.AreEqual("023921_woman_chibang1_", w.Name);
+            Assert.AreEqual(200f, w.IntervalMs, 1e-3f);
         }
 
         [Test]
@@ -205,11 +210,25 @@ namespace Sdo.Tests
             Assert.AreEqual(2, frames.Length);
             Assert.AreEqual("fangzi3an.dds", frames[0]);
             Assert.AreEqual("fangzi3liang.dds", frames[1]);
-            // tolerates trailing whitespace / blank lines / non-dds noise
+            // tolerates trailing whitespace / blank lines / non-image noise
             var f2 = TexAnimEx.ParseAn("  a.dds \n\n  b.dds  \r\nnote\n");
             Assert.AreEqual(2, f2.Length);
             Assert.AreEqual("a.dds", f2[0]);
             Assert.AreEqual("b.dds", f2[1]);
+        }
+
+        [Test]
+        public void TexAnimEx_ParseAn_Accepts_Tga_Frames()
+        {
+            // 翅膀/wings ship their glow frames as .tga (花雨飞翼 023921_WOMAN_CHIBANG1_.AN) — dropping these was why
+            // the wings fell back to the flat beige colour. .tga/.bmp/.png must all be kept; non-image lines ignored.
+            var frames = TexAnimEx.ParseAn("023921_woman_chibang1_.tga\r\n023921_woman_chibang2_.tga\r\n023921_woman_chibang3_.tga\r\n");
+            Assert.AreEqual(3, frames.Length);
+            Assert.AreEqual("023921_woman_chibang1_.tga", frames[0]);
+            Assert.AreEqual("023921_woman_chibang3_.tga", frames[2]);
+
+            var mixed = TexAnimEx.ParseAn("a.tga\nb.dds\nc.bmp\nd.png\nreadme\n");
+            Assert.AreEqual(4, mixed.Length);
         }
 
         [Test]

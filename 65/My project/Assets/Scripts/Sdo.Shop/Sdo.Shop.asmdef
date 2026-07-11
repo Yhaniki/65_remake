@@ -1,12 +1,7 @@
 {
-    "name": "Sdo.Game",
-    "rootNamespace": "Sdo.Game",
-    "references": [
-        "Sdo.Osu",
-        "Sdo.Ruleset",
-        "Sdo.Shop",
-        "Unity.TextMeshPro"
-    ],
+    "name": "Sdo.Shop",
+    "rootNamespace": "Sdo.Shop",
+    "references": [],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
@@ -15,5 +10,5 @@
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [],
-    "noEngineReferences": false
+    "noEngineReferences": true
 }

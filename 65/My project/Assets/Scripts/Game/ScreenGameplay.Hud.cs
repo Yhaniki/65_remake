@@ -230,29 +230,8 @@ namespace Sdo.Game
             av.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));
             av.DanceEnabled = () => false;     // always hold the standby idle clip
             av.DanceTimeSec = () => -1f;
-            foreach (var rel in avatarParts)
-            {
-                var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-                if (!File.Exists(path)) continue;
-                var r = MshLoader.Load(File.ReadAllBytes(path));
-                if (r == null || r.Submeshes.Count == 0) continue;
-                var dir = Path.GetDirectoryName(path);
-                // PortraitOpaque: forces drawn pixels fully opaque (no semi-transparent hair) + cutout gaps + two-sided.
-                var sh = Shader.Find("Sdo/PortraitOpaque") ?? Shader.Find("Unlit/Texture");
-                int si = 0;
-                foreach (var sub in r.Submeshes)
-                {
-                    var go = new GameObject("h_" + Path.GetFileNameWithoutExtension(rel) + "_" + si++);
-                    go.transform.SetParent(parent.transform, false);
-                    go.AddComponent<MeshFilter>().mesh = sub.Mesh;
-                    var mr = go.AddComponent<MeshRenderer>();
-                    var tex = ResolveDds(dir, sub.Dds);
-                    mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex }
-                                                    : new Material(Shader.Find("Unlit/Color")) { color = PartColor(rel) };
-                    if (sub.BindVerts != null && sub.BoneHrc != null)
-                        av.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
-                }
-            }
+            // Load the WOMAN body parts, opaque portrait style (shared builder; "h_" prefix keeps the isolated names).
+            SdoAvatarBuilder.LoadParts(parent, av, avatarParts, SdoAvatarBuilder.SkinStyle.Portrait, "h_");
             av.PoseInitialIdle();
             SetLayerRecursive(parent, headPortraitLayer);
             _headAvatar = av;
