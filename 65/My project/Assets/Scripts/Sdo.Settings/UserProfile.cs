@@ -110,7 +110,7 @@ namespace Sdo.Settings
 
         // ---- 商城/儲物櫃 持久化 (item-id 為鍵；由 WardrobeStore 在 Sdo.Shop.Wardrobe 之間橋接)。金幣也記在這裡 (wallet)。----
         public WalletSave wallet = new WalletSave();
-        public int clothSlots = 3;   // 服飾欄容量：預設 3，按「服饰栏扩充」每次 +1，最多 1000（Wardrobe.ClothSlotCount）
+        public int clothSlots = 9;   // 服飾欄容量：預設 1 頁=9 格(裝得下一整套穿搭)，按「服饰栏扩充」每次 +9，最多 1000（Wardrobe.ClothSlotCount）
         public OwnedItemSave[] ownedItems = new OwnedItemSave[0];   // 擁有的商城道具 (含衣物 id)
         public EquipSave[] equippedItems = new EquipSave[0];        // 目前穿的每個部位 → item id
         // 目前穿搭解析出的完整 mesh 部位清單 (含飾品/翅膀/表情，順序=AvatarOutfit.Order)。房間/遊戲 avatar 的權威來源；
@@ -133,7 +133,7 @@ namespace Sdo.Settings
             gender = gender == 1 ? 1 : 0;
             if (avatarId < 0) avatarId = 0;
             if (wallet == null) wallet = new WalletSave();
-            if (clothSlots < 3) clothSlots = 3; else if (clothSlots > 1000) clothSlots = 1000;
+            if (clothSlots < 9) clothSlots = 9; else if (clothSlots > 1000) clothSlots = 1000;   // 最少 1 頁(9)；舊檔存的 3 會自動補到 9
             if (ownedItems == null) ownedItems = new OwnedItemSave[0];
             if (equippedItems == null) equippedItems = new EquipSave[0];
             if (equippedParts == null) equippedParts = new string[0];

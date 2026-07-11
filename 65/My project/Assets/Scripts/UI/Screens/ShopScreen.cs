@@ -551,19 +551,28 @@ namespace Sdo.UI.Screens
         private void DoBuyAll()
         {
             if (_catalog == null) return;
-            int bought = 0, already = 0;
+            int bought = 0, already = 0, noRoom = 0, noMoney = 0;
             foreach (var kv in new List<KeyValuePair<EquipSlot, int>>(_session.Wardrobe.Equipped))
             {
                 var it = _catalog.ById(kv.Value);
                 if (it == null) continue;
-                var r = ShopService.Buy(_session.Wardrobe, it, Now());
-                if (r == BuyResult.Ok) bought++;
-                else if (r == BuyResult.AlreadyOwned) already++;
+                switch (ShopService.Buy(_session.Wardrobe, it, Now()))
+                {
+                    case BuyResult.Ok: bought++; break;
+                    case BuyResult.AlreadyOwned: already++; break;
+                    case BuyResult.NoRoom: noRoom++; break;
+                    case BuyResult.NotEnoughMoney: noMoney++; break;
+                }
             }
             if (bought > 0) WardrobeStore.SaveOwnedWallet(_session);   // 落地 profile.json (擁有+錢包)
-            Toast.Show(bought > 0 ? "全身購買成功（" + bought + " 件）"
-                     : already > 0 ? "全身穿搭已全部擁有"
-                     : "沒有可購買的穿搭");
+            // 有件數因「服飾欄已滿」買不下 → 講清楚 (預設 9 格,不夠請到儲物櫃 服饰栏扩充)。
+            string msg;
+            if (noRoom > 0) msg = "全身購買 " + bought + " 件；服飾欄已滿(" + _session.Wardrobe.ClothSlotCount + "格)，還有 " + noRoom + " 件請先到儲物櫃「服饰栏扩充」";
+            else if (noMoney > 0) msg = "全身購買 " + bought + " 件；" + noMoney + " 件餘額不足";
+            else if (bought > 0) msg = "全身購買成功（" + bought + " 件）";
+            else if (already > 0) msg = "全身穿搭已全部擁有";
+            else msg = "沒有可購買的穿搭";
+            Toast.Show(msg);
             Refresh();
         }
 
