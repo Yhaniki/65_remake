@@ -128,3 +128,7 @@ procmon_tool/runs/
 /65/My project/DATA/PROFILE/settings.json
 65/My project/Assets/TextMesh Pro/Examples & Extras/
 65/My project/Assets/TextMesh Pro/Examples & Extras.meta
+
+# SdoLog runtime output (editor run writes beside the project)
+/65/My project/log.txt
+/65/My project/log.txt.prev

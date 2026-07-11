@@ -12,9 +12,9 @@ namespace Sdo.Game
     /// Unity's buried Player.log. Warnings/errors are always written; plain info lines only when <see cref="Verbose"/>
     /// (Debug.Log fires every frame in places, so info is opt-in to keep the file small).
     ///
-    /// Location (printed on the first line and to the console): &lt;exeDir&gt;/sdo_log.txt when the exe folder is
+    /// Location (printed on the first line and to the console): &lt;exeDir&gt;/log.txt when the exe folder is
     /// writable — the most discoverable spot, right beside dance.exe and DATA/ — else
-    /// Application.persistentDataPath/sdo_log.txt (always writable). The previous run is kept as sdo_log.txt.prev.
+    /// Application.persistentDataPath/log.txt (always writable). The previous run is kept as log.txt.prev.
     ///
     /// This class touches NO Unity API from the log callback (which can arrive on a worker thread): the file path is
     /// resolved once on the main thread at install; the callback only does DateTime + a locked File.AppendAllText.
@@ -45,7 +45,7 @@ namespace Sdo.Game
                     try { if (File.Exists(prev)) File.Delete(prev); File.Move(_path, prev); } catch { }
                 }
                 File.WriteAllText(_path,
-                    $"# SDO log  {DateTime.Now:yyyy-MM-dd HH:mm:ss}  unity={Application.unityVersion}  data={SafeRoot()}{Environment.NewLine}",
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  unity={Application.unityVersion}  data={SafeRoot()}{Environment.NewLine}",
                     new UTF8Encoding(false));
             }
             catch { /* even file creation failed (read-only dir) — carry on console-only */ }
@@ -64,13 +64,13 @@ namespace Sdo.Game
                 var exeDir = Directory.GetParent(Application.dataPath)?.FullName;
                 if (!string.IsNullOrEmpty(exeDir))
                 {
-                    var p = System.IO.Path.Combine(exeDir, "sdo_log.txt");
+                    var p = System.IO.Path.Combine(exeDir, "log.txt");
                     try { File.AppendAllText(p, ""); return p; } catch { /* not writable (Program Files) — fall through */ }
                 }
             }
             catch { }
-            try { return System.IO.Path.Combine(Application.persistentDataPath, "sdo_log.txt"); }
-            catch { return "sdo_log.txt"; }
+            try { return System.IO.Path.Combine(Application.persistentDataPath, "log.txt"); }
+            catch { return "log.txt"; }
         }
 
         private static void OnLog(string msg, string stack, LogType type)

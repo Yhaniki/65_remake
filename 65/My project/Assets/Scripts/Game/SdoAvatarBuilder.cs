@@ -96,7 +96,9 @@ namespace Sdo.Game
                         {
                             int a = sub.Ranges[s].Attrib;
                             string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                            var t = ResolveDds(dir, nm, out var am);
+                            var t = ResolveDds(dir, nm, out var am, IsBodyGarment(rel));
+                            if (t == null) t = ResolveDds(dir, MeshSelfDds(rel), out am, IsBodyGarment(rel));   // 引到外來貼圖id → 退回 mesh 自己的 id
+                            if (t == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
                             var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader, hairShader);   // 真孔洞→cutout不透明 / 全軟→alpha-blend
                             // 記下材質名 = DDS 名 (如 W_Basic_Coat2)，讓上層 (商城衣物縮圖) 能認出「膚色 range」把它藏掉。
                             mats[s] = t != null ? new Material(sh) { mainTexture = t, name = nm ?? "" }
@@ -107,7 +109,9 @@ namespace Sdo.Game
                     }
                     else
                     {
-                        var tex = ResolveDds(dir, sub.Dds, out var am);
+                        var tex = ResolveDds(dir, sub.Dds, out var am, IsBodyGarment(rel));
+                        if (tex == null) tex = ResolveDds(dir, MeshSelfDds(rel), out am, IsBodyGarment(rel));   // 引到外來貼圖id → 退回 mesh 自己的 id
+                        if (tex == null && !string.IsNullOrEmpty(sub.Dds)) Debug.LogWarning($"[avtex] item='{LogLabel}' {rel}: material '{sub.Dds}' unresolved → fallback colour {PartColor(rel)}");
                         var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader, hairShader);   // 真孔洞→cutout不透明 / 全軟→alpha-blend
                         mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex, name = sub.Dds ?? "" }
                                                         : (TryBuildTexAnim(go, dir, sub.Dds, texShader)   // 翅膀 _TexAnimEx 動塗 → 換幀動畫
@@ -230,19 +234,20 @@ namespace Sdo.Game
         /// <summary>As <see cref="ResolveDds(string,string)"/> but also reports the texture's distribution-based alpha
         /// class (<see cref="DdsLoader.GetSceneAlphaMode"/>) so the caller can pick an alpha-blend material for a garment
         /// whose texture真的去背 (e.g. the 刺青/tattoo tops that are mostly transparent). Opaque tops report Opaque.</summary>
-        public static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode sceneAlpha)
+        public static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode sceneAlpha) => ResolveDds(dir, ddsName, out sceneAlpha, false);
+
+        /// <summary>As above, but when <paramref name="bodyGarment"/> (coat/pant/one) a texture that comes back MOSTLY
+        /// transparent is treated as OPAQUE — its alpha channel is broken (RGB fine, alpha exported all-0), which the
+        /// cutout/blend path would otherwise render as a see-through wireframe (璀璨繁星 男褲/裙裝). Accessories
+        /// (wings/glasses) legitimately are cut-outs, so they pass bodyGarment=false and keep their alpha.</summary>
+        public static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode sceneAlpha, bool bodyGarment)
         {
             sceneAlpha = DdsAlphaMode.Opaque;
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
             string hit = File.Exists(direct) ? direct : null;
-            if (hit == null)
-            {
-                string stem = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
-                foreach (var f in Directory.GetFiles(dir, "*.*"))
-                    if (Path.GetExtension(f).ToLowerInvariant() == ".dds" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) { hit = f; break; }
-            }
+            if (hit == null) hit = FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
             if (hit == null) return null;
             try
             {
@@ -250,10 +255,65 @@ namespace Sdo.Game
                 bool hasAlpha = DdsLoader.HasAlpha(bytes);
                 bool additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
                 sceneAlpha = DdsLoader.GetSceneAlphaMode(bytes);   // distribution-based (≥3% 真洞才 Cutout) → 不會被雜訊誤判
+                if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque && DdsLoader.HardTransparentFraction(bytes) > 0.7f)
+                    sceneAlpha = DdsAlphaMode.Opaque;   // 上衣/褲/連身 alpha 壞掉(>70% 全透明) → 當實心,不畫成透明線框
                 return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow);
             }
             catch { return null; }
         }
+
+        /// <summary>Shop-set label (item name, or 6-digit id when unnamed) that the <c>[avtex]</c> fallback warnings
+        /// print, so the log says WHICH shop item failed (使用者:「不然我不知道哪個 log 對到哪個衣服」). Set before a
+        /// card/preview build; harmless when null.</summary>
+        public static string LogLabel;
+
+        /// <summary>True for a body garment slot (coat/pant/one-piece) whose texture must stay opaque when its alpha is
+        /// broken — as opposed to accessories (wings/glasses/hair) that legitimately use alpha cut-outs.</summary>
+        private static bool IsBodyGarment(string rel)
+        { string u = (rel ?? "").ToUpperInvariant(); return u.Contains("COAT") || u.Contains("PANT") || u.Contains("_ONE"); }
+
+        /// <summary>The mesh's OWN texture derived from its filename: 'AVATAR/023441_WOMAN_ONE.MSH' → '023441_WOMAN_ONE.dds'.
+        /// Some meshes embed a FOREIGN texture id in their material name (祕密花園 023441_WOMAN_ONE 引 'sh1226_woman_one.dds',
+        /// 不存在) — when that fails to resolve, the mesh's own id texture is the correct fallback.</summary>
+        private static string MeshSelfDds(string rel)
+        { string stem = Path.GetFileNameWithoutExtension((rel ?? "").Replace('\\', '/')); return string.IsNullOrEmpty(stem) ? null : stem + ".dds"; }
+
+        // Cache: dir -> (normalised dds stem -> file path). The AVATAR folder holds ~40k files; the old per-call
+        // Directory.GetFiles + linear stem scan was O(files) EVERY resolve. Built once per dir; also powers the fuzzy match.
+        private static readonly Dictionary<string, Dictionary<string, string>> _ddsByNorm = new Dictionary<string, Dictionary<string, string>>();
+        private static Dictionary<string, string> DdsIndex(string dir)
+        {
+            if (_ddsByNorm.TryGetValue(dir, out var m)) return m;
+            m = new Dictionary<string, string>();
+            try { foreach (var f in Directory.GetFiles(dir, "*.dds")) { var k = NormStem(Path.GetFileNameWithoutExtension(f)); if (!m.ContainsKey(k)) m[k] = f; } }
+            catch { }
+            _ddsByNorm[dir] = m;
+            return m;
+        }
+
+        /// <summary>
+        /// Fuzzy DDS lookup for avatar meshes whose embedded material name doesn't match the on-disk file 1:1 —
+        /// artist-authored variants that the strict exact/stem match misses, dropping the part to a flat fallback
+        /// colour (white faces, brown hair, blue coats):
+        ///   • a spurious separator before a digit — <c>..._face_huan_1</c> vs on-disk <c>..._face_huan1</c>
+        ///   • the recurring <c>haun</c>↔<c>huan</c> transposition — <c>..._face_haun0</c> vs <c>..._face_huan0</c>
+        ///   • an extra numeric suffix on a shared base — <c>M_Basic_face01</c> vs on-disk <c>M_Basic_face</c>
+        /// Normalise (lowercase, haun→huan, drop separators) and match; then, as a last resort, strip a trailing digit
+        /// run to hit the shared base. ONLY reached after exact + stem match fail, so items that already resolve are untouched.
+        /// </summary>
+        public static string FuzzyFindDds(string dir, string stem)
+        {
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(stem)) return null;
+            var idx = DdsIndex(dir);
+            string norm = NormStem(stem);
+            if (idx.TryGetValue(norm, out var f1)) return f1;
+            string baseStem = System.Text.RegularExpressions.Regex.Replace(norm, "[0-9]+$", "");
+            if (baseStem.Length > 0 && baseStem != norm && idx.TryGetValue(baseStem, out var f2)) return f2;
+            return null;
+        }
+
+        private static string NormStem(string s)
+            => (s ?? "").ToLowerInvariant().Replace("haun", "huan").Replace("_", "").Replace("-", "").Replace(" ", "");
 
         /// <summary>Flat fallback colour when a part's DDS can't be resolved (keeps the silhouette readable).</summary>
         public static Color PartColor(string rel)

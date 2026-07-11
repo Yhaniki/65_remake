@@ -139,5 +139,104 @@ namespace Sdo.Tests
             // a real iteminfo id (< SynthIdBase) is never a synth accessory, even if a same-numbered mesh exists
             Assert.IsNull(AvatarItemCatalog.SynthesizeAccessory(337891, MeshSet("337891_MAN_CHIBANG.MSH")));
         }
+
+        // ---- synthesised mesh-only CLOTHING rows (髮型/上衣/下裝/鞋子 加進商城,序號當名字,100M) ----
+        // Same idea as the accessory synth above but for the 4 body-garment slots. The synth Id bakes slot+gender in
+        // (see AvatarItemCatalog.SynthId) so a modelId that exists in two slots — or for both genders — reloads into the
+        // RIGHT one instead of whichever mesh is probed first (there ARE such collisions in the shipped meshes).
+
+        [Test]
+        public void SynthId_ClothingRoundTrips_ToRightSlotGenderAndMesh()
+        {
+            int id = AvatarItemCatalog.SynthId(EquipSlot.Hair, ItemSex.Female, 100);
+            var it = AvatarItemCatalog.SynthesizeSynthItem(id, MeshSet("000100_WOMAN_HAIR.MSH"));
+            Assert.IsNotNull(it);
+            Assert.AreEqual(id, it.Id);
+            Assert.AreEqual(100, it.ModelId);
+            Assert.AreEqual("000100", it.Name);                                  // 序號當名字
+            Assert.AreEqual(100, it.Price);                                      // 100 …
+            Assert.AreEqual(ItemPriceCurrency.Coins, it.Currency);               // … M 幣
+            Assert.AreEqual(EquipSlot.Hair, it.EquipSlot);
+            Assert.AreEqual(ItemSex.Female, it.Sex);
+            Assert.AreEqual("AVATAR/000100_WOMAN_HAIR.MSH", it.MshRelPath);
+        }
+
+        [Test]
+        public void SynthId_SameModelInTwoSlots_ResolvesEachToItsOwnSlot()
+        {
+            // real collision: modelId 001277 女 exists as BOTH a COAT and a PANT mesh.
+            int topId = AvatarItemCatalog.SynthId(EquipSlot.Top, ItemSex.Female, 1277);
+            int botId = AvatarItemCatalog.SynthId(EquipSlot.Bottom, ItemSex.Female, 1277);
+            Assert.AreNotEqual(topId, botId, "a shared modelId must get distinct synth ids per slot");
+
+            var both = MeshSet("001277_WOMAN_COAT.MSH", "001277_WOMAN_PANT.MSH");   // both on disk → must not cross-resolve
+            var top = AvatarItemCatalog.SynthesizeSynthItem(topId, both);
+            var bot = AvatarItemCatalog.SynthesizeSynthItem(botId, both);
+            Assert.AreEqual(EquipSlot.Top, top.EquipSlot);
+            Assert.AreEqual("AVATAR/001277_WOMAN_COAT.MSH", top.MshRelPath);
+            Assert.AreEqual(EquipSlot.Bottom, bot.EquipSlot);
+            Assert.AreEqual("AVATAR/001277_WOMAN_PANT.MSH", bot.MshRelPath);
+        }
+
+        [Test]
+        public void SynthId_SameModelBothGenders_ResolvesEachToItsOwnGender()
+        {
+            // real collision: modelId 003547 exists as BOTH a MAN and a WOMAN hair mesh.
+            int maleId = AvatarItemCatalog.SynthId(EquipSlot.Hair, ItemSex.Male, 3547);
+            int femaleId = AvatarItemCatalog.SynthId(EquipSlot.Hair, ItemSex.Female, 3547);
+            Assert.AreNotEqual(maleId, femaleId, "a dual-gender modelId must get distinct synth ids per gender");
+
+            var both = MeshSet("003547_MAN_HAIR.MSH", "003547_WOMAN_HAIR.MSH");
+            Assert.AreEqual("AVATAR/003547_MAN_HAIR.MSH",   AvatarItemCatalog.SynthesizeSynthItem(maleId, both).MshRelPath);
+            Assert.AreEqual("AVATAR/003547_WOMAN_HAIR.MSH", AvatarItemCatalog.SynthesizeSynthItem(femaleId, both).MshRelPath);
+        }
+
+        [Test]
+        public void SynthId_Accessory_StaysBareModelId_ForBackwardCompat()
+        {
+            // 附件 (翅膀/表情/项链) keep the legacy gender-agnostic bare encoding so ids ALREADY saved in profiles resolve.
+            Assert.AreEqual(AvatarItemCatalog.SynthIdBase + 37931, AvatarItemCatalog.SynthId(EquipSlot.Wings, ItemSex.Male, 37931));
+            Assert.AreEqual(AvatarItemCatalog.SynthIdBase + 37931, AvatarItemCatalog.SynthId(EquipSlot.Wings, ItemSex.Female, 37931));
+            Assert.AreEqual(AvatarItemCatalog.SynthIdBase + 100,   AvatarItemCatalog.SynthId(EquipSlot.Necklace, ItemSex.Female, 100));
+        }
+
+        [Test]
+        public void SynthesizeSynthItem_RoutesAccessoryIds_ToAccessoryResolution()
+        {
+            // the general entry point must still resolve a legacy bare accessory id via the accessory probe.
+            int id = AvatarItemCatalog.SynthIdBase + 37931;
+            var it = AvatarItemCatalog.SynthesizeSynthItem(id, MeshSet("037931_MAN_CHIBANG.MSH"));
+            Assert.IsNotNull(it);
+            Assert.AreEqual(EquipSlot.Wings, it.EquipSlot);
+        }
+
+        [Test]
+        public void SynthesizeSynthItem_ClothingNoMeshOnDisk_ReturnsNull()
+        {
+            int id = AvatarItemCatalog.SynthId(EquipSlot.Shoes, ItemSex.Male, 500);
+            Assert.IsNull(AvatarItemCatalog.SynthesizeSynthItem(id, MeshSet()));                         // nothing on disk
+            Assert.IsNull(AvatarItemCatalog.SynthesizeSynthItem(id, MeshSet("000500_WOMAN_SHOES.MSH"))); // wrong gender only
+        }
+
+        [Test]
+        public void SynthesizeSynthItem_NonSynthId_ReturnsNull()
+        {
+            Assert.IsNull(AvatarItemCatalog.SynthesizeSynthItem(337891, MeshSet("337891_MAN_HAIR.MSH")));
+        }
+
+        [Test]
+        public void IsShopModelId_Excludes9xxxxxDefaultsAndNonPositive()
+        {
+            // 9xxxxx = 素體內建預設衣服/部位 (預設臉 900007、預設髮/上衣/下著/鞋 900002..900020) → 不上架 (user)
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(900007), "900007 default face is not a shop model");
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(900004), "900004 default pant is not a shop model");
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(AvatarItemCatalog.DefaultModelIdBase), "the 900000 boundary is excluded");
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(0), "0 is not a model");
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(-1), "negative is not a model");
+            // real buyable serials stay in
+            Assert.IsTrue(AvatarItemCatalog.IsShopModelId(12657), "012657 (a real 长靴) is a shop model");
+            Assert.IsTrue(AvatarItemCatalog.IsShopModelId(1277), "001277 is a shop model");
+            Assert.IsTrue(AvatarItemCatalog.IsShopModelId(899999), "899999 (just below the default range) is still a shop model");
+        }
     }
 }

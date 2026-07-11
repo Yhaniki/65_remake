@@ -71,7 +71,7 @@ namespace Sdo.UI.Screens
         private float _dragAngle = -DefaultYaw;         // 左側「人物」預設朝右轉 30° (卡片衣物才朝左 +DefaultYaw)
         private float _pitchAngle;                      // pitch (X)，官方 clamp [-30,15]
         private const float DragDegPerPixel = 0.4f;     // 水平每拖 1px 轉幾度 (官方 0.4)
-        private const float PitchDegPerPixel = 0.4f;    // 垂直每拖 1px 抬幾度 (官方線上 = 0.4，同 yaw)
+        private const float PitchDegPerPixel = 0.2f;    // 垂直每拖 1px 抬幾度 (官方線上 = 0.4，同 yaw)
         private const float PitchMin = -10f, PitchMax = 10f;   // 官方 pitch clamp
         private const float DefaultYaw = 30f;           // 官方預設朝左轉 30° (實測 -30 是朝右 → 用 +30)
         private const float PivotY = 30f;               // 轉身/抬頭的 pivot = 身體中心/腰部 (官方是繞 display-node 原點，不是腳底)
@@ -480,9 +480,26 @@ namespace Sdo.UI.Screens
         private static int TierRank(ShopItem it) => it.DurationDays < 0 ? int.MaxValue : it.DurationDays;
 
         // 一個部位分頁要顯示的商品：官方「上装」= 上衣 Top + 連身 OnePiece 併在一起 (連身不歸套装;套装=整套 OUTFIT/SET)。
+        // AllMeshModels = 該部位所有商品:髮型/上衣/下裝/鞋子(及翅膀/表情) 連只有 mesh、iteminfo 沒登錄名字的也帶出來
+        // (序號當名字、100M；user);其餘部位 AllMeshModels 等同原本的 Group(僅 iteminfo 有名的)。
+        // 搜尋涵蓋的所有部位 (服装店 + 饰品店 有實際商品的頁)。SlotItems 已含無名 mesh 道具 + 有快取 (AllMeshModels)，
+        // 故每次搜尋 union 這 9 個部位很便宜。讓「不同類型只要名字對都搜得到」(user)。
+        private static readonly EquipSlot[] SearchSlots =
+        {
+            EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Gloves, EquipSlot.Shoes,
+            EquipSlot.Glasses, EquipSlot.Expression, EquipSlot.Necklace, EquipSlot.Wings,
+        };
+
+        private IEnumerable<ShopItem> SearchSource()
+        {
+            foreach (var slot in SearchSlots)
+                foreach (var it in SlotItems(slot))
+                    yield return it;
+        }
+
         private IEnumerable<ShopItem> SlotItems(EquipSlot slot)
         {
-            foreach (var it in _catalog.Group(_sex, slot)) yield return it;
+            foreach (var it in _catalog.AllMeshModels(_sex, slot)) yield return it;
             if (slot == EquipSlot.Top)
                 foreach (var it in _catalog.Group(_sex, EquipSlot.OnePiece)) yield return it;
         }
@@ -494,10 +511,11 @@ namespace Sdo.UI.Screens
             if (_catalog == null) { _totalPages = 1; UpdateScrollHandle(); return; }
 
             bool searching = !string.IsNullOrEmpty(_query);
+            bool meshSlot = _slot == EquipSlot.Wings || _slot == EquipSlot.Expression;        // 翅膀/表情 = 只有 mesh 沒名字 (6 碼當名)
             IEnumerable<ShopItem> src = _showHistory ? (IEnumerable<ShopItem>)_history        // 穿搭歷史 → 只列試穿過的 (#6)
-                                       : searching ? _catalog.Clothing                       // 搜尋 → 跨部位找全部服裝
+                                       : searching ? SearchSource()                          // 搜尋 → 跨所有部位(含無名 6 碼道具),只要名字/id 對就找得到
                                        : _slot == EquipSlot.None ? System.Array.Empty<ShopItem>()
-                                       : _slot == EquipSlot.Wings || _slot == EquipSlot.Expression ? _catalog.AllMeshModels(_sex, _slot)   // 翅膀/表情 → 連只有 mesh 沒名字的也列 (100M/序號當名字)
+                                       : meshSlot ? _catalog.AllMeshModels(_sex, _slot)       // 翅膀/表情 → 連只有 mesh 沒名字的也列 (100M/序號當名字)
                                        : SlotItems(_slot);
 
             var items = new List<ShopItem>();
@@ -505,7 +523,16 @@ namespace Sdo.UI.Screens
             {
                 if (ItemTypes.GenderOf(it.Category, it.Name) != _sex) continue;                // 只顯示目前性別 (GenderOf 修 cat203 套装)
                 if (!_catalog.IsRenderable(it)) continue;                                      // 無模型(未 extract)的 item 直接隱藏,不列出 (user 指定)
-                if (searching && (it.Name == null || it.Name.IndexOf(_query, System.StringComparison.OrdinalIgnoreCase) < 0)) continue;
+                // 搜尋比對：商品名 OR 6碼 modelId OR 物品 id → 讓無名道具(只顯示 6 碼,如 003598)也搜得到。
+                if (searching)
+                {
+                    string q = _query.Trim();
+                    bool hit = (it.Name != null && it.Name.IndexOf(q, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                               || it.ModelId.ToString("D6").Contains(q)
+                               || it.ModelId.ToString().Contains(q)
+                               || it.Id.ToString().Contains(q);
+                    if (!hit) continue;
+                }
                 string z = CurrencyZh(it.Currency);
                 if (!((z == "G" && _showG) || (z == "M" && _showM) || z == "H")) continue;   // M/G 幣別 filter (H 恒顯)
                 items.Add(it);
@@ -702,21 +729,44 @@ namespace Sdo.UI.Screens
         }
 
         // 覆蓋卡片上半 (名稱 + 縮圖區、避開底排買/送/試穿鈕) 的透明命中區：點一下 → 試穿到左側預覽；滑上去 → 該卡縮圖放大旋轉。
+        // 命中區依「左邊衣物縮圖 / 右邊名稱價格」拆成兩塊 (user 指定)：只有滑到「左邊衣物」那塊才會放大旋轉;滑到右邊文字區不會。
+        // 兩塊都仍可點=試穿 (縮圖 raycastTarget=false → 放大時不搶 raycast,故拆塊不會抖動)。
         private void AddTryOnHit(RectTransform card, ShopItem item, int i)
         {
-            var hit = UIKit.AddImage(card, "tryhit", new Color(1, 1, 1, 0.001f), true);
-            var rt = hit.rectTransform;
-            rt.anchorMin = rt.anchorMax = new Vector2(0, 1); rt.pivot = new Vector2(0, 1);
-            // 命中區=卡片上半 (名稱+人形),覆蓋到按鈕列上方。依版面 _L → 大卡(套装)命中區跟著放大 (修「觸發位置很小」)。
-            rt.anchoredPosition = new Vector2(2, -4); rt.sizeDelta = new Vector2(_L.Size.x - 4, _L.FitPos.y - 8);
             var it = item; int idx = i; var theCard = card;
+            const float top = -4f;
+            float h = _L.FitPos.y - 8f;                              // 命中區高度 (卡片上半,避開按鈕列)
+            float avatarRight = _L.AvCenter.x + _L.AvSize.x / 2f;    // 左邊衣物縮圖的右緣 → 左右兩塊的分界
+
+            // 左塊 (衣物縮圖)：點=試穿；滑上去=該卡放大旋轉。
+            var left = UIKit.AddImage(card, "tryhitL", new Color(1, 1, 1, 0.001f), true);
+            var lrt = left.rectTransform;
+            lrt.anchorMin = lrt.anchorMax = new Vector2(0, 1); lrt.pivot = new Vector2(0, 1);
+            lrt.anchoredPosition = new Vector2(2, top); lrt.sizeDelta = new Vector2(Mathf.Max(1f, avatarRight - 2f), h);
+            AddTryOnClick(left, it);
+            var trig = left.gameObject.AddComponent<EventTrigger>();
+            AddTrigData(trig, EventTriggerType.PointerEnter, _ => { _hoverCard = idx; theCard.SetAsLastSibling(); });   // 放大的縮圖要蓋過鄰卡
+            AddTrigData(trig, EventTriggerType.PointerExit, _ => { if (_hoverCard == idx) _hoverCard = -1; });
+
+            // 右塊 (名稱/價格)：只點=試穿,不掛 PointerEnter/Exit → 滑到這裡「不」放大旋轉 (user 指定右邊區域不觸發)。
+            float rightW = _L.Size.x - 2f - avatarRight;
+            if (rightW > 1f)
+            {
+                var right = UIKit.AddImage(card, "tryhitR", new Color(1, 1, 1, 0.001f), true);
+                var rrt = right.rectTransform;
+                rrt.anchorMin = rrt.anchorMax = new Vector2(0, 1); rrt.pivot = new Vector2(0, 1);
+                rrt.anchoredPosition = new Vector2(avatarRight, top); rrt.sizeDelta = new Vector2(rightW, h);
+                AddTryOnClick(right, it);
+            }
+        }
+
+        // 命中區共用的「點=試穿」掛法 (透明 Image + Button + 按下音效)。
+        private void AddTryOnClick(Image hit, ShopItem it)
+        {
             var btn = hit.gameObject.AddComponent<Button>();
             btn.targetGraphic = hit; btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => DoTryOn(it));
             UiSfx.AttachPress(btn, UiSfx.Click);   // 點卡試穿也算按下 → SE_0001
-            var trig = hit.gameObject.AddComponent<EventTrigger>();
-            AddTrigData(trig, EventTriggerType.PointerEnter, _ => { _hoverCard = idx; theCard.SetAsLastSibling(); });   // 放大的縮圖要蓋過鄰卡
-            AddTrigData(trig, EventTriggerType.PointerExit, _ => { if (_hoverCard == idx) _hoverCard = -1; });
         }
 
         private static void AddTrigData(EventTrigger t, EventTriggerType type, UnityEngine.Events.UnityAction<BaseEventData> fn)
@@ -778,6 +828,7 @@ namespace Sdo.UI.Screens
                 root = new GameObject("ShopCardAvatar" + i);
                 root.transform.position = CardSpot(i);
                 root.transform.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);   // 衣物預設朝左 30°
+                SdoAvatarBuilder.LogLabel = string.IsNullOrEmpty(item.Name) ? item.ModelId.ToString("D6") : item.Name;   // [avtex] log 標名 (user)
                 var av = SdoRoomAvatar.Build(root, PreviewLayer, false, ComposeCardParts(item), ShopHrcFor(_sex, item.EquipSlot), bindPoseNoIdle: true);
                 if (av == null) { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
                 av.enabled = false;  // 凍結 (bind pose 已在 Build 內 PoseFrame(0) 蒙皮好)
@@ -870,10 +921,12 @@ namespace Sdo.UI.Screens
                 foreach (var m in mr.sharedMaterials)
                     if (m != null && m.mainTexture != null)
                     {
+                        // OPAQUE 衣服 (Unlit/Texture — 含 alpha 壞掉被強制 opaque 的布料) 在卡片上「不可裁」,否則它 94~100%
+                        // 的 alpha0 texel 被打穿 → 透明線框 (粉紅舞會/無限迷戀 小格子)。_Cutoff=0 = 不裁 + alpha 逼 1 (實心)。
+                        // 真鏤空件 (髮/紗/去背 = cutout/blend shader) 才保留 _Cutoff=0.05：只裁真洞、留半透布料。
+                        bool opaque = m.shader != null && m.shader.name == "Unlit/Texture";
                         m.shader = cut;   // 只改有貼圖的 (無貼圖回退材質留給 ForceLightExpressionFace 處理)
-                        // _Cutoff=0.05：只裁真鏤空(alpha=0),保住半透布料(如無雙未央紗袖 alpha 0.13~0.27,shader 預設 0.3 會誤裁掉)。
-                        // 只改卡片路徑材質實例;遊戲內/左側髮絲仍用 shader 全域預設 0.3 (清乾淨髮絲縫)。
-                        m.SetFloat("_Cutoff", 0.05f);
+                        m.SetFloat("_Cutoff", opaque ? 0f : 0.05f);
                     }
         }
 

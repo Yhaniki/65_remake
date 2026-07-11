@@ -53,7 +53,8 @@ namespace Sdo.UI.Screens
         private SongListModel _model;
         private List<SongCatalog.Entry> _filtered = new List<SongCatalog.Entry>();
         private SongCatalog.Entry _selected;
-        private int _difficulty;   // 0=easy/1=normal/2=hard; set from Session in OnShow
+        private int _difficulty;   // 0=easy/1=normal/2=hard; the EFFECTIVE difficulty (clamped to a chart the selected song actually has)
+        private int _preferredDifficulty;   // what the user last explicitly picked on a tab; restored when browsing back to a song that has it
         private int _page;
         private HashSet<int> _newIds = new HashSet<int>();   // fileIds that get a NEW badge (top-N newest)
 

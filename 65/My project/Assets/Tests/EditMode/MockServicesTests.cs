@@ -83,6 +83,48 @@ namespace Sdo.Tests
             Assert.AreEqual(before - 1, r.GetRooms().Count);
         }
 
+        // ---- RoomEntry.EnsureOwnHostRoom (選性別/建自己的房 → 保證本機是房主) ----
+
+        [Test]
+        public void EnsureOwnHostRoom_Creates_When_None()
+        {
+            var r = NewRooms(out var s);
+            s.LocalPlayerId = "female";
+            RoomEntry.EnsureOwnHostRoom(r, GameMode.Normal);
+            Assert.IsNotNull(r.CurrentRoom);
+            Assert.IsTrue(r.IsHost);
+        }
+
+        [Test]
+        public void EnsureOwnHostRoom_Keeps_Room_When_Already_Host()
+        {
+            var r = NewRooms(out var s);
+            s.LocalPlayerId = "female";
+            var first = r.CreateRoom(GameMode.Normal);
+            RoomEntry.EnsureOwnHostRoom(r, GameMode.Normal);   // 已是房主 → 不重建
+            Assert.AreEqual(first.Id, r.CurrentRoom.Id);
+            Assert.IsTrue(r.IsHost);
+        }
+
+        // 女→(未清房)→男 再進房：男角必須成為新房房主(IsHost=true)，否則房主標記消失。
+        [Test]
+        public void EnsureOwnHostRoom_Reassigns_Host_After_Identity_Switch()
+        {
+            var r = NewRooms(out var s);
+            s.LocalPlayerId = "female";
+            var femaleRoom = r.CreateRoom(GameMode.Normal);
+            Assert.IsTrue(r.IsHost);
+
+            // 切成男角但女角的房仍是 current → 男角在該房內非房主(這正是 bug 觸發條件)
+            s.LocalPlayerId = "male";
+            Assert.IsFalse(r.IsHost);
+
+            RoomEntry.EnsureOwnHostRoom(r, GameMode.Normal);   // 應離開女角房 + 建男角自己的房
+            Assert.IsNotNull(r.CurrentRoom);
+            Assert.AreNotEqual(femaleRoom.Id, r.CurrentRoom.Id);
+            Assert.IsTrue(r.IsHost);
+        }
+
         [Test]
         public void Ready_Toggle_And_AllReady()
         {

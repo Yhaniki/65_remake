@@ -140,6 +140,22 @@ namespace Sdo.UI.Screens
         private Camera _maskedCam; private int _savedMask;
         private bool _subscribed;
 
+        // ---- 頭貼框取微調（男女各一組，獨立調整）----------------------------------------------------------------
+        //  headAimUp   上下位置：變大 → 頭在框內往「上」    | zoom 遠近：變大 → 變「遠」變小、變小 → 拉近變大
+        //  headFrameDist 遠近基準(距離=頭高×此值×zoom)      | avatarScale 整體大小
+        //  只想微調的話：上下改 *HeadAimUp、遠近改 *Zoom 即可。改完 build 就生效。
+        private const float FemaleHeadAimUp = 0.11f, FemaleHeadZoom = 0.9f, FemaleHeadFrameDist = 1.9f, FemaleAvatarScale = 1.05f;
+        private const float MaleHeadAimUp   = 0.25f, MaleHeadZoom   = 1f, MaleHeadFrameDist   = 1.9f, MaleAvatarScale   = 1.05f;
+
+        // 依性別套用頭貼框取參數（上下位置 / 遠近）。必須在 RoomHeadPortrait.Init 之前呼叫，第一幕就正確。
+        private static void ApplyHeadFraming(RoomHeadPortrait head, bool male)
+        {
+            head.headAimUp     = male ? MaleHeadAimUp     : FemaleHeadAimUp;
+            head.zoom          = male ? MaleHeadZoom      : FemaleHeadZoom;
+            head.headFrameDist = male ? MaleHeadFrameDist : FemaleHeadFrameDist;
+            head.avatarScale   = male ? MaleAvatarScale   : FemaleAvatarScale;
+        }
+
         // ---- win 容器（收合用）：win1/win2/win3 的所有元件各掛在自己的容器下，收合就整組滑出畫面（官方 uihide/uidisplay）。
         //      每個容器都是「錨定左上、原點、800×600」的全畫布 rect → 子元件座標仍用絕對(win.x+x) 不變，收合只動容器 anchoredPosition。
         private RectTransform _win1Root, _win2Root, _win3Root;
@@ -485,6 +501,7 @@ namespace Sdo.UI.Screens
                 var headGo = new GameObject("RoomLocalHead");
                 _localHead = headGo.AddComponent<RoomHeadPortrait>();
                 _localHead.layer = HeadLayer;
+                ApplyHeadFraming(_localHead, localMale);   // 男女各自的上下/遠近
                 _localHead.Init(localMale, localAvatarParts);
                 _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
@@ -532,6 +549,7 @@ namespace Sdo.UI.Screens
             var headGo = new GameObject("RoomLocalHead");
             _localHead = headGo.AddComponent<RoomHeadPortrait>();
             _localHead.layer = HeadLayer;
+            ApplyHeadFraming(_localHead, male);   // 男女各自的上下/遠近
             _localHead.Init(male, parts);
             _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
             _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
@@ -2073,6 +2091,8 @@ namespace Sdo.UI.Screens
             var steps = SpeedSteps();
             _speedIndex = ((IndexOfNearest(steps, Ctx.Session.Speed) + d) % steps.Length + steps.Length) % steps.Length;
             Ctx.Session.Speed = steps[_speedIndex];
+            RoomConfig.defaultSpeed = Ctx.Session.Speed;   // 持久化：玩家選的速度寫回 config.ini（下次開房沿用；刪檔 → 回預設 2.5）
+            RoomConfig.Save();
             RenderWin2();
         }
 
@@ -2107,8 +2127,10 @@ namespace Sdo.UI.Screens
                 bool roomIsTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
                 bool typingChat = _chatBubbleTyping || _chatBubbleInputArmed || (_chatInput != null && _chatInput.isFocused);
                 bool modalOpen = FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen;
+                // 走 OnLeave（同「返回」鈕）：務必先 LeaveRoom 清掉房間，否則 CurrentRoom 殘留、換身分再進房時
+                // 本機不再擁有房主座位 → IsHost=false → 房主標記消失（女→ESC→男 進房 host 字樣不見的 bug）。
                 if (roomIsTop && !typingChat && !modalOpen && !ScreenTransition.Busy)
-                    ScreenTransition.Run(() => GoTo(ScreenId.GenderSel));
+                    OnLeave();
             }
 
             // UI 收合/展開補間（官方 uihide/uidisplay 面板滑動）。與 3D 掛載無關，永遠推進到目標狀態。

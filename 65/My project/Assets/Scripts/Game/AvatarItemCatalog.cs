@@ -89,17 +89,71 @@ namespace Sdo.Game
             bool m = sex == ItemSex.Male;
             switch (slot)
             {
-                case EquipSlot.Wings:      return m ? ItemCategory.WingsMale : ItemCategory.WingsFemale;
-                case EquipSlot.Expression: return m ? ItemCategory.FaceMale  : ItemCategory.FaceFemale;   // 表情 mesh = _FACE_HUAN
+                case EquipSlot.Hair:       return m ? ItemCategory.HairMale   : ItemCategory.HairFemale;    // 髮型 mesh = _HAIR
+                case EquipSlot.Top:        return m ? ItemCategory.TopMale    : ItemCategory.TopFemale;     // 上衣 mesh = _COAT
+                case EquipSlot.Bottom:     return m ? ItemCategory.BottomMale : ItemCategory.BottomFemale;  // 下裝 mesh = _PANT
+                case EquipSlot.Shoes:      return m ? ItemCategory.ShoesMale  : ItemCategory.ShoesFemale;   // 鞋子 mesh = _SHOES
+                case EquipSlot.Wings:      return m ? ItemCategory.WingsMale  : ItemCategory.WingsFemale;
+                case EquipSlot.Expression: return m ? ItemCategory.FaceMale   : ItemCategory.FaceFemale;    // 表情 mesh = _FACE_HUAN
                 default: return 0;
             }
         }
 
         // Synthesised mesh-only rows get an Id in a high range that can't collide with a real iteminfo Id, so ById can
         // resolve an equipped synth item back to its ShopItem (→ its mesh) and it actually wears (user: 無名翅膀穿不起來).
+        // Synth Id layout: SynthIdBase + mult*SynthSlotStride + modelId.
+        //   • mult 0        = 附件 (翅膀/表情/项链) — bare, gender-agnostic modelId; kept exactly so ids already saved
+        //                     in profiles keep resolving (SynthesizeAccessory probes MAN then WOMAN).
+        //   • mult ≥ 2      = a specific 衣物 slot+gender (髮型/上衣/下裝/鞋子): mult = slotCode(1..4)*2 + genderBit
+        //                     (0=男/1=女). Baking slot AND gender in disambiguates the ~16 modelIds shared by two slots
+        //                     (e.g. 001277 女 both COAT & PANT) and the ~22 shared by both genders → a saved synth
+        //                     garment reloads into the RIGHT slot/gender, not whichever mesh is probed first.
         public const int SynthIdBase = 90_000_000;
+        private const int SynthSlotStride = 1_000_000;   // modelIds are 6-digit (< 1e6), so mult never overlaps modelId
         private readonly Dictionary<int, ShopItem> _synthById = new Dictionary<int, ShopItem>();
         private readonly Dictionary<(ItemSex, EquipSlot), List<ShopItem>> _meshModelCache = new Dictionary<(ItemSex, EquipSlot), List<ShopItem>>();
+
+        // Synth-Id slot code (1..4) for the 衣物 slots that synthesise mesh-only rows; 0 = 附件 (bare id, legacy).
+        private static int SynthSlotCode(EquipSlot slot)
+        {
+            switch (slot)
+            {
+                case EquipSlot.Hair:   return 1;
+                case EquipSlot.Top:    return 2;
+                case EquipSlot.Bottom: return 3;
+                case EquipSlot.Shoes:  return 4;
+                default:               return 0;   // 翅膀/表情/项链 → bare modelId
+            }
+        }
+
+        // Inverse of SynthSlotCode: the 衣物 slot a synth code names (None for code 0 = 附件 / an unused code).
+        private static EquipSlot SlotFromSynthCode(int code)
+        {
+            switch (code)
+            {
+                case 1: return EquipSlot.Hair;
+                case 2: return EquipSlot.Top;
+                case 3: return EquipSlot.Bottom;
+                case 4: return EquipSlot.Shoes;
+                default: return EquipSlot.None;
+            }
+        }
+
+        // 9xxxxx (≥ DefaultModelIdBase) = the 素體內建 default body parts/clothes (預設臉 900007、預設 髮/上衣/下著/鞋…),
+        // not購買品 → never synthesised onto the shop shelf (user: 9xxxxx系列預設衣服的不要上架).
+        public const int DefaultModelIdBase = 900_000;
+
+        /// <summary>True if a 6-digit model serial is a real buyable shop model (positive and NOT a 9xxxxx 素體預設).</summary>
+        public static bool IsShopModelId(int modelId) => modelId > 0 && modelId < DefaultModelIdBase;
+
+        /// <summary>Encode a synth row's Id from its slot + gender + 6-digit model serial (see the SynthIdBase layout
+        /// note). 附件 slots collapse to the legacy bare <c>SynthIdBase + modelId</c>; 衣物 slots bake slot+gender in.</summary>
+        public static int SynthId(EquipSlot slot, ItemSex sex, int modelId)
+        {
+            int code = SynthSlotCode(slot);
+            int mult = code == 0 ? 0 : code * 2 + (sex == ItemSex.Male ? 0 : 1);
+            return SynthIdBase + mult * SynthSlotStride + modelId;
+        }
 
         // The mesh-backed accessory slots a synth id can belong to: the AVATAR/*.MSH filename token + its per-gender
         // category. Used to rebuild a synth ShopItem straight from its bare model id (see SynthesizeAccessory).
@@ -130,17 +184,43 @@ namespace Sdo.Game
             return null;
         }
 
+        /// <summary>Pure: rebuild a synthesised mesh-only <see cref="ShopItem"/> from its synth id — the general entry
+        /// point used by <see cref="ById"/>. Decodes the slot (and, for 衣物, the gender) from the id (see the SynthIdBase
+        /// layout note): a 附件 id (mult 0) is resolved by <see cref="SynthesizeAccessory"/> (probes 翅膀/表情/项链 tokens,
+        /// MAN then WOMAN); a 衣物 id (mult ≥ 2) resolves straight to its known slot+gender mesh, so a modelId shared
+        /// across slots or genders never resolves into the wrong one. Returns null if that mesh isn't on disk
+        /// (<paramref name="meshExists"/>).</summary>
+        public static ShopItem SynthesizeSynthItem(int id, Func<string, bool> meshExists)
+        {
+            if (id < SynthIdBase || meshExists == null) return null;
+            int rel = id - SynthIdBase;
+            int mult = rel / SynthSlotStride;
+            if (mult == 0) return SynthesizeAccessory(id, meshExists);   // legacy bare-id 附件 (翅膀/表情/项链)
+            var slot = SlotFromSynthCode(mult / 2);                      // mult = code*2 + genderBit
+            if (slot == EquipSlot.None) return null;
+            int modelId = rel % SynthSlotStride;
+            if (modelId <= 0) return null;
+            var sex = (mult % 2) == 0 ? ItemSex.Male : ItemSex.Female;
+            int cat = CategoryFor(sex, slot);
+            string token = ItemTypes.MshSlotSuffix(cat);
+            if (token == null) return null;
+            string id6 = modelId.ToString("D6");
+            string mesh = id6 + "_" + (sex == ItemSex.Male ? "MAN" : "WOMAN") + "_" + token + ".MSH";
+            return meshExists(mesh) ? NewSynth(id, modelId, id6, cat) : null;
+        }
+
         private static ShopItem NewSynth(int id, int modelId, string id6, int category) => new ShopItem
         {
             Id = id, Name = id6, Price = 100, PriceCategoryRaw = 1, ModelId = modelId, Category = category,
             MinLevel = 1, DurationDays = -1, Quantity = -1, SexRaw = ItemTypes.SexFromCategory(category) == ItemSex.Male ? 1 : 0,
         };
 
-        /// <summary>Every model for a mesh-backed slot (e.g. Wings/CHIBANG): the named iteminfo rows PLUS every extra
-        /// model that ONLY exists as a mesh on disk — synthesised as a row named by its 6-digit serial, permanent, 100M
-        /// (user: 無名翅膀改100M/用序號當名字) — so the shop can browse the full set. iteminfo lists only ~100 of the
-        /// ~1000 wing meshes shipped; 翅膀 wants them all (user #3). Named rows first (keep their names/prices), then the
-        /// mesh-only extras sorted by modelId. Cached + registered in <see cref="ById"/> so a tried-on synth wing wears.</summary>
+        /// <summary>Every model for a mesh-backed slot (翅膀/表情/髮型/上衣/下裝/鞋子 — see <see cref="CategoryFor"/>):
+        /// the named iteminfo rows PLUS every extra model that ONLY exists as a mesh on disk — synthesised as a row named
+        /// by its 6-digit serial, permanent, 100M (user: 無名的也加上去/用序號當名字) — so the shop can browse the full set.
+        /// iteminfo lists only a fraction of the meshes shipped (e.g. ~100 of ~1000 wings, and likewise for hair/tops/
+        /// bottoms/shoes); the user wants them all. Named rows first (keep their names/prices), then the mesh-only extras
+        /// sorted by modelId. Cached + registered in <see cref="ById"/> so a tried-on synth row wears + persists.</summary>
         public IReadOnlyList<ShopItem> AllMeshModels(ItemSex sex, EquipSlot slot)
         {
             if (_meshModelCache.TryGetValue((sex, slot), out var cached)) return cached;
@@ -159,11 +239,12 @@ namespace Sdo.Game
                 if (!f.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
                 int us = f.IndexOf('_');
                 if (us <= 0 || !int.TryParse(f.Substring(0, us), out var modelId)) continue;
+                if (!IsShopModelId(modelId)) continue;                        // 9xxxxx 素體預設衣服不上架 (user)
                 if (!have.Add(modelId)) continue;
                 if (isExpr && !IsGoodExpressionModel(modelId, g)) continue;   // 濾掉會渲染成 空白/破圖/假臉 的異常表情 (user)
                 var syn = new ShopItem
                 {
-                    Id = SynthIdBase + modelId, Name = modelId.ToString("D6"), Price = 100, PriceCategoryRaw = 1,   // 1=Coins→M 幣 (100M；user:無名翅膀改100M)
+                    Id = SynthId(slot, sex, modelId), Name = modelId.ToString("D6"), Price = 100, PriceCategoryRaw = 1,   // 1=Coins→M 幣 (100M；user:無名 翅膀/髮型/上衣/下裝/鞋子 改100M/序號當名字)
                     ModelId = modelId, Category = cat, MinLevel = 1, DurationDays = -1, Quantity = -1,
                     SexRaw = sex == ItemSex.Male ? 1 : 0,
                 };
@@ -224,12 +305,13 @@ namespace Sdo.Game
         {
             if (id >= SynthIdBase)
             {
-                // A synth wing/表情/项链. It only landed in _synthById if the shop browsed that slot this session; an
-                // OWNED/EQUIPPED accessory reloaded from profile.json is looked up long before that, so rebuild it from
-                // its mesh on demand (and cache). Without this, ById→null makes the 儲物櫃 hide owned accessories AND a
-                // wardrobe save re-resolves equippedParts without them → they vanish until the shop tab is reopened.
+                // A synth 翅膀/表情/项链 OR a synth 髮型/上衣/下裝/鞋子. It only landed in _synthById if the shop browsed
+                // that slot this session; an OWNED/EQUIPPED synth row reloaded from profile.json is looked up long before
+                // that, so rebuild it from its mesh on demand (and cache). Without this, ById→null makes the 儲物櫃 hide
+                // owned synth items AND a wardrobe save re-resolves equippedParts without them → they vanish until the
+                // shop tab is reopened.
                 if (_synthById.TryGetValue(id, out var syn)) return syn;
-                syn = SynthesizeAccessory(id, f => _meshFiles.Contains(f));
+                syn = SynthesizeSynthItem(id, f => _meshFiles.Contains(f));
                 if (syn != null) _synthById[id] = syn;
                 return syn;
             }

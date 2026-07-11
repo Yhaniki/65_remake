@@ -32,6 +32,12 @@ namespace Sdo.Game
             public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
             public int NoteCount(int d) => d <= 0 ? notesEasy : (d == 1 ? notesNormal : notesHard);
             public int DurationSec(int d) => d <= 0 ? durEasy : (d == 1 ? durNormal : durHard);
+
+            /// <summary>Whether difficulty d has a real, playable chart. Judged by the actual NOTE COUNT
+            /// (an empty chart has 0 notes), NOT the level field — some songs store level 0 for a
+            /// difficulty that carries no notes (e.g. 動畫歌曲串燒 sdom2140k: easy=3417 notes, normal/hard=0).
+            /// Those empty difficulties are greyed out / non-selectable in song-select.</summary>
+            public bool HasChart(int d) => NoteCount(d) > 0;
         }
         [Serializable] private class Catalog { public Entry[] songs = new Entry[0]; }   // populated by JsonUtility; init to silence CS0649
 

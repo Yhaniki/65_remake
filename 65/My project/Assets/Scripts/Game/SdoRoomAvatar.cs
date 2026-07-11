@@ -140,14 +140,16 @@ namespace Sdo.Game
                             int a = sub.Ranges[s].Attrib;
                             string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
                             var t = ResolveDds(dir, nm);
-                            mats[s] = t != null ? new Material(sh) { mainTexture = t } : new Material(fallback) { color = PartColor(rel) };
+                            if (t == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
+                            mats[s] = t != null ? new Material(sh) { mainTexture = t } : new Material(fallback) { color = PartColor(rel), name = nm ?? "" };
                         }
                         mr.sharedMaterials = mats;
                     }
                     else
                     {
                         var tex = ResolveDds(dir, sub.Dds);
-                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : new Material(fallback) { color = PartColor(rel) };
+                        if (tex == null && !string.IsNullOrEmpty(sub.Dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{sub.Dds}' unresolved → fallback colour {PartColor(rel)}");
+                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : new Material(fallback) { color = PartColor(rel), name = sub.Dds ?? "" };
                     }
 
                     if (sub.BindVerts != null && sub.BoneHrc != null)
@@ -224,12 +226,9 @@ namespace Sdo.Game
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
             string hit = File.Exists(direct) ? direct : null;
-            if (hit == null)
-            {
-                string stem = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
-                foreach (var f in Directory.GetFiles(dir, "*.*"))
-                    if (Path.GetExtension(f).ToLowerInvariant() == ".dds" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) { hit = f; break; }
-            }
+            // Fuzzy fallback (shared with SdoAvatarBuilder): tolerate mesh material-name variants — 'huan_1'→'huan1',
+            // 'haun0'→'huan0', 'M_Basic_face01'→'M_Basic_face' — that the strict match misses (→ white faces / fallbacks).
+            if (hit == null) hit = SdoAvatarBuilder.FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
             if (hit == null) return null;
             try { return DdsLoader.Load(File.ReadAllBytes(hit)); }
             catch { return null; }

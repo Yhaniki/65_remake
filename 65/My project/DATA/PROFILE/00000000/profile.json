@@ -20,5 +20,15 @@
         "hand": "AVATAR/900011_WOMAN_HAND.MSH"
     },
     "createdAt": "2026-07-07T22:52:30.3775949Z",
-    "lastPlayedAt": ""
+    "lastPlayedAt": "",
+    "wallet": {
+        "coins": 0,
+        "points": 0,
+        "bonus": 0,
+        "seeded": false
+    },
+    "clothSlots": 9,
+    "ownedItems": [],
+    "equippedItems": [],
+    "equippedParts": []
 }

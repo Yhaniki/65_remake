@@ -13,12 +13,14 @@ namespace Sdo.Game
     /// </summary>
     public sealed class MapobjTexAnimator : MonoBehaviour
     {
+        private static readonly int MainTexId = Shader.PropertyToID("_MainTex");
         private Material[] _mats;
         private Texture[] _frames;
         private float _interval;     // seconds per frame
         private bool _holdLast;      // true -> stop at the last frame (play-once, for SCN0016 building lights)
         private float _startTime;    // Time.time when Init was called; makes intervals relative to scene load
         private int _last = -1;
+        private bool _warnedNoTex;   // one-shot: named a texture-less material so the log isn't spammed
 
         /// <param name="mats">shared submesh materials whose _MainTex to drive (all set to the same frame)</param>
         /// <param name="frames">ordered frame textures (already loaded); cycled round-robin</param>
@@ -50,7 +52,24 @@ namespace Sdo.Game
             _last = idx;
             if (_mats == null || _frames == null || idx < 0 || idx >= _frames.Length) return;
             var t = _frames[idx];
-            for (int i = 0; i < _mats.Length; i++) if (_mats[i] != null) _mats[i].mainTexture = t;
+            for (int i = 0; i < _mats.Length; i++)
+            {
+                var m = _mats[i];
+                if (m == null) continue;
+                // A submesh whose base texture failed to load fell back to a texture-less shader (Unlit/Color). Setting
+                // .mainTexture on it makes Unity spam "Material '' … doesn't have a texture property '_MainTex'" with no
+                // clue which prop. Skip it and name the offending object ONCE (the holder is "<baseName>_texanim").
+                if (m.HasProperty(MainTexId)) m.mainTexture = t;
+                else WarnNoMainTex(m);
+            }
+        }
+
+        private void WarnNoMainTex(Material m)
+        {
+            if (_warnedNoTex) return;
+            _warnedNoTex = true;
+            Debug.LogWarning($"[texanim] '{name}': material '{m.name}' (shader '{(m.shader != null ? m.shader.name : "null")}') " +
+                             "has no _MainTex — this prop's base texture failed to load, so its animated frames can't show (flat colour instead).");
         }
     }
 }

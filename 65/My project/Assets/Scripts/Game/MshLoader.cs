@@ -75,7 +75,15 @@ namespace Sdo.Game
                 ddsNames.Add(nm); probe += 408;
             }
             if (probe > p) p = probe;
-            string dds = ddsNames.Count > 0 ? ddsNames[0] : null;
+            // Single-material fallback texture: PREFER the garment/main texture over a skin BASE (W_Basic_/M_Basic_).
+            // Many 2-material coats list the skin base FIRST (ddsNames[0] = W_Basic_Coat2, garment second); when the
+            // range split doesn't kick in, the old ddsNames[0] pick rendered the WHOLE top as bare skin (使用者:「很多
+            // 衣服是膚色的」). Pick the first non-Basic name so the garment shows; fall back to ddsNames[0] (pure-skin
+            // parts like HAND have only a Basic material → unchanged). The multi-range path still uses per-range DdsNames.
+            string dds = null;
+            foreach (var nm in ddsNames)
+                if (!string.IsNullOrEmpty(nm) && nm.IndexOf("Basic", System.StringComparison.OrdinalIgnoreCase) < 0) { dds = nm; break; }
+            if (dds == null && ddsNames.Count > 0) dds = ddsNames[0];
 
             int triTotal = idxCount / 3;
             var ranges = ScanRanges(d, p, vcount, triTotal, System.Math.Max(1, numMat), out int rangeTableEnd);

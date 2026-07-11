@@ -123,6 +123,13 @@ namespace Sdo.Game
             return DdsAlphaMode.Opaque;
         }
 
+        /// <summary>Fraction of ALL texels that are (near-)fully transparent (a≤8). A body garment (coat/pant/one) that
+        /// comes back with a HUGE fraction (e.g. 璀璨繁星 男褲 = 94%) has a broken/spurious alpha channel — the RGB art
+        /// is fine but the alpha was left at 0 — which the cutout/blend path renders as a see-through wireframe. No real
+        /// garment is mostly holes, so the caller forces such textures opaque. Returns 0 for alpha-less formats (DXT1).</summary>
+        public static float HardTransparentFraction(byte[] d)
+            => AlphaCounts(d, out int total, out _, out _, out int hardTransp) && total > 0 ? hardTransp / (float)total : 0f;
+
         // Walk the base-mip alpha and count: total texels, visible (a>8), soft (8<a<247), hardTransp (a<=8).
         // Mirrors GetAlphaMode's DXT3 / DXT5 / 32-bit-uncompressed decode paths (no early-out). Returns false for
         // formats with no alpha (DXT1 / unsupported) — caller treats those as Opaque.

@@ -16,7 +16,7 @@ namespace Sdo.Settings
     {
         // ---- 當下生效的值（欄位＝INI 的 key）----
         public static float[] speedSteps = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f };
-        public static float defaultSpeed = 2.5f;     // 預設速度（會對齊到 speedSteps 最近檔位）
+        public static float defaultSpeed = 2.5f;     // 預設速度（會對齊到 speedSteps 最近檔位）。玩家在房間選了會寫回這裡
         public static int defaultNoteType = -1;      // note 種類(hit-effect)：-1=隨機(預設)；>=0=指定第幾種。玩家在房間選了會寫回這裡
         public static int defaultTeam = 3;           // 組隊：0=A,1=B,2=C,3=自由
         public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
@@ -183,7 +183,7 @@ namespace Sdo.Settings
             sb.Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
             sb.Append("speedSteps=").Append(FloatListToString(speedSteps)).Append('\n');
-            sb.Append("# 預設速度（會對齊到上面最接近的檔位）\n");
+            sb.Append("# 預設速度（會對齊到上面最接近的檔位）。玩家在房間選了會寫回這裡\n");
             sb.Append("defaultSpeed=").Append(defaultSpeed.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 預設 note 種類(hit-effect)：-1=隨機，>=0=指定第幾種\n");
             sb.Append("defaultNoteType=").Append(defaultNoteType).Append('\n');
