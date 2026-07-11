@@ -34,6 +34,8 @@ namespace Sdo.UI.Core
             if (p == null || w == null) return;
             p.Sanitize();
 
+            w.ClothSlotCount = p.clothSlots;   // 服飾欄容量 (預設 3；服饰栏扩充 累加)
+
             if (p.wallet != null && p.wallet.seeded)
             {
                 w.Wallet.Coins = p.wallet.coins;
@@ -74,6 +76,7 @@ namespace Sdo.UI.Core
         {
             if (w == null || p == null) return;
             p.wallet = new WalletSave { coins = w.Wallet.Coins, points = w.Wallet.Points, bonus = w.Wallet.Bonus, seeded = true };
+            p.clothSlots = w.ClothSlotCount;   // 服飾欄容量 (服饰栏扩充 累加後落地)
 
             var owned = new List<OwnedItemSave>(w.Owned.Count);
             foreach (var kv in w.Owned)

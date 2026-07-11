@@ -32,13 +32,22 @@ namespace Sdo.UI.Screens
         private int _totalPages = 1;
         private CatFilter _filter = CatFilter.All;   // 分類欄目前選的
         private int _selected;                        // 目前選中的格子 item id (供 服饰删除)；0=無
+        private int _lastClickId; private float _lastClickTime;   // 雙擊偵測 (#2：點兩下換穿/脫下)
+        private const float DoubleClickSec = 0.35f;
+        private Button _deleteBtn;                    // 服饰删除 (無選中→灰 DeleteCostume_4；#7)
+
+        // 儲物櫃預覽人物的預設 idle 動作 (#10)：男/女各一組，隨機挑一支 (可連續重複)。
+        private static readonly string[] FemaleIdles = { "MOTION/WREST0011.MOT", "MOTION/WREST0013.MOT", "MOTION/WREST0016.MOT" };
+        private static readonly string[] MaleIdles = { "MOTION/MREST0002_02.MOT", "MOTION/MREST0002_01.MOT" };
 
         // 官方 HouseCabinetWin 視窗原點 (XML: <Window name="HouseCabinetWin" x="30" y="19">) → 子元件座標都相對它。
         private const float WinX = 30f, WinY = 19f;
 
         private RectTransform _grid, _catCol;
-        private TextMeshProUGUI _moneyM, _moneyG;
+        private TextMeshProUGUI _moneyM, _moneyG, _moneyP;   // M=Coins / G=Points / P=H幣(Bonus)。Money_J(金葉子)固定 0。
         private TextMeshProUGUI _pageLbl;
+        private readonly int[] _slotItemId = new int[PerPage];   // 每格對應的 item id (0=空)
+        private readonly Image[] _slotSel = new Image[PerPage];  // 每格選中框 (預設隱藏)
 
         // ---- 左側 3D 預覽 (同 ShopScreen；整身、可拖動轉身) ----
         private const int PreviewLayer = 12;
@@ -49,9 +58,10 @@ namespace Sdo.UI.Screens
         private const float PreviewBodyH = 320f;
         private Camera _cam; private RenderTexture _rt; private RawImage _previewImg; private GameObject _avatarRoot;
         private Camera _uiCam; private int _savedUiMask;
-        private float _dragAngle = -DefaultYaw; private float _pitchAngle;
+        private float _dragAngle = 0f; private float _pitchAngle;   // 預設 0 = 人物正面朝相機 (#6)
         private const float DragDegPerPixel = 0.4f, PitchDegPerPixel = 0.4f, PitchMin = -30f, PitchMax = 15f;
         private const float DefaultYaw = 30f, PivotY = 30f;
+        private const float PreviewAimUp = 16f;   // 相機瞄準點上移 → 人物在框內往下 (修 #9「基準位置太高」；可調)
         private float _previewFeetY;
         private const float RefHeight = 62f, MaleBodyRatio = 1.08f, MaleSizeScale = 1.05f;
         private float _previewHeight = RefHeight;
@@ -131,15 +141,20 @@ namespace Sdo.UI.Screens
             _pageLbl = TxtAt(_root, "lblPage", WinX + 436f, WinY + 426f, 84, 20, 14, Hex(0xff780049), TextAlignmentOptions.Center);
             _pageLbl.fontStyle = FontStyles.Bold;
 
-            // 服饰删除 (DeleteCostume) + 關閉 (close)
-            SpriteBtn(_root, "DeleteCostume", "DeleteCostume_1.an", "DeleteCostume_3.an", WinX + 505f, WinY + 467f, DoDelete, hoverAn: "DeleteCostume_2.an");
+            // 服饰栏扩充 (other_all_coat, #8) + 服饰删除 (DeleteCostume, 存 ref 供灰態 #7) + 關閉 (close)
+            SpriteBtn(_root, "other_all_coat", "other_all_coat_1.an", "other_all_coat_3.an", WinX + 376f, WinY + 467f, DoExpandSlots, hoverAn: "other_all_coat_2.an");
+            _deleteBtn = SpriteBtn(_root, "DeleteCostume", "DeleteCostume_1.an", "DeleteCostume_3.an", WinX + 505f, WinY + 467f, DoDelete, hoverAn: "DeleteCostume_2.an");
             SpriteBtn(_root, "close", "close_1.an", "close_3.an", WinX + 624f, WinY + 56f, Close, hoverAn: "close_2.an");
 
-            // 幣量 (Money_M=Coins / Money_G=Points)
+            // 幣量：Money_M=Coins / Money_G=Points (上排)；Money_J=金葉子(固定 0) / Money_P=H幣(Bonus) (下排)。(#5)
             _moneyM = TxtAt(_root, "Money_M", WinX + 63f, WinY + 440f, 123, 24, 14, CMoney, TextAlignmentOptions.Right);
             _moneyM.fontStyle = FontStyles.Bold;
             _moneyG = TxtAt(_root, "Money_G", WinX + 180f, WinY + 440f, 123, 24, 14, CMoney, TextAlignmentOptions.Right);
             _moneyG.fontStyle = FontStyles.Bold;
+            var moneyJ = TxtAt(_root, "Money_J", WinX + 64f, WinY + 471f, 123, 24, 14, CMoney, TextAlignmentOptions.Right);
+            moneyJ.fontStyle = FontStyles.Bold; moneyJ.text = "0";   // 金葉子固定 0 (使用者指定)
+            _moneyP = TxtAt(_root, "Money_P", WinX + 181f, WinY + 472f, 123, 24, 14, CMoney, TextAlignmentOptions.Right);
+            _moneyP.fontStyle = FontStyles.Bold;
 
             SetVisible(false);
         }
@@ -151,7 +166,7 @@ namespace Sdo.UI.Screens
             // 開櫃時重載 profile → 從實際存檔的穿搭開始 (不吃商城遺留的試穿狀態)。
             WardrobeStore.Load(_session);
             _filter = CatFilter.All; _page = 0; _selected = 0;
-            _dragAngle = -DefaultYaw; _pitchAngle = 0f;
+            _dragAngle = 0f; _pitchAngle = 0f;   // 正面朝相機 (#6)
             BuildPreview();
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
             if (ui != null) { _uiCam = ui; _savedUiMask = ui.cullingMask; ui.cullingMask &= ~(1 << PreviewLayer); }
@@ -189,8 +204,7 @@ namespace Sdo.UI.Screens
             {
                 var it = _catalog.ById(kv.Key);
                 if (it == null || it.SlotType != ItemSlotType.Clothes) continue;
-                if (!_catalog.IsRenderable(it)) continue;
-                if (!MatchesFilter(it)) continue;
+                if (!MatchesFilter(it)) continue;   // #1：擁有的都列出來 (不再用 IsRenderable 過濾掉沒 3D 縮圖的)
                 res.Add(it);
             }
             res.Sort((a, b) => a.ModelId.CompareTo(b.ModelId));
@@ -235,16 +249,24 @@ namespace Sdo.UI.Screens
                 var card = UIKit.NewRect(_grid, "slot" + i);
                 card.anchorMin = card.anchorMax = new Vector2(0, 1); card.pivot = new Vector2(0, 1);
                 card.anchoredPosition = new Vector2(WinX + pos.x, -(WinY + pos.y)); card.sizeDelta = new Vector2(SlotW, SlotH);
+                _slotItemId[i] = 0; _slotSel[i] = null;
                 if (idx >= items.Count) continue;
                 var item = items[idx];
+                _slotItemId[i] = item.Id;
 
                 BuildCardPreview(i, card, item);                 // 3D 縮圖
-                if (IsWorn(item))                                // 使用中旗標 (EquipFlag = HouseCabinetDlg46.an)
+                if (IsWorn(item))                                // 使用中：整格壓暗 (#4) + 使用中旗標 (HouseCabinetDlg46.an)
+                {
+                    var dark = UIKit.AddImage(card, "dark", new Color(0f, 0f, 0f, 0.5f), false);
+                    var drt = dark.rectTransform; drt.anchorMin = drt.anchorMax = new Vector2(0, 1); drt.pivot = new Vector2(0, 1);
+                    drt.anchoredPosition = Vector2.zero; drt.sizeDelta = new Vector2(SlotW, SlotH);
                     AddArt(card, "worn", CabinetArt.An("HouseCabinetDlg46.an"), 0, 0);
-                if (item.Id == _selected)                        // 選中框 (HouseCabinetDlg32.an = bgpushed)
-                    AddArt(card, "sel", CabinetArt.An("HouseCabinetDlg32.an"), 0, 0);
+                }
+                // 選中框 (HouseCabinetDlg32.an)：先建好、預設隱藏，選中時才顯示 (單擊選中不重建整頁縮圖)。
+                var sel = AddArt(card, "sel", CabinetArt.An("HouseCabinetDlg32.an"), 0, 0);
+                if (sel != null) { sel.enabled = item.Id == _selected; _slotSel[i] = sel; }
 
-                // 透明命中區：點 = 換穿 (並選中)。
+                // 透明命中區：單擊=選中、雙擊=換穿/脫下 (#2)。
                 var itLocal = item;
                 var hit = UIKit.AddImage(card, "hit", new Color(1, 1, 1, 0.001f), true);
                 var hrt = hit.rectTransform;
@@ -253,15 +275,31 @@ namespace Sdo.UI.Screens
                 var btn = hit.gameObject.AddComponent<Button>(); btn.targetGraphic = hit; btn.transition = Selectable.Transition.None;
                 btn.onClick.AddListener(() => OnCardClick(itLocal));
             }
+            UpdateDeleteBtn();
         }
 
-        // 點格子 → 永久換穿 (寫回 profile + 重建房間/遊戲 avatar) + 選中。
+        // 單擊=選中 (只換選中框，不重建縮圖)；雙擊=換穿/脫下 (#2)。
         private void OnCardClick(ShopItem item)
         {
             if (item == null || item.EquipSlot == EquipSlot.None) return;
+            float now = Time.unscaledTime;
+            bool dbl = item.Id == _lastClickId && (now - _lastClickTime) < DoubleClickSec;
+            _lastClickId = item.Id; _lastClickTime = now;
+            if (dbl) { _lastClickId = 0; ToggleEquip(item); return; }
             _selected = item.Id;
+            UpdateSelectionHighlight();
+            UpdateDeleteBtn();
+        }
+
+        // 雙擊：已穿著 → 脫下 (回預設)；未穿 → 換穿。寫回 profile + 重建房間/遊戲 avatar + 左側預覽。
+        private void ToggleEquip(ShopItem item)
+        {
             var w = _session.Wardrobe;
-            if (item.EquipSlot == EquipSlot.OnePiece)
+            if (w.IsEquipped(item.Id))
+            {
+                w.ClearEquipped(item.EquipSlot);   // 點兩下脫下
+            }
+            else if (item.EquipSlot == EquipSlot.OnePiece)
             {
                 w.ClearEquipped(EquipSlot.Top); w.ClearEquipped(EquipSlot.Bottom);
                 w.SetEquipped(EquipSlot.OnePiece, item.Id);
@@ -274,10 +312,16 @@ namespace Sdo.UI.Screens
             WardrobeStore.SaveAll(_session);            // 落地 profile.json (穿搭 + equippedParts)
             Nav.RefreshRoomAvatar?.Invoke();            // 房間裡的人立即換裝
             RebuildAvatar();                            // 左側預覽換裝
-            RefreshGrid();                              // 更新 使用中 / 選中框
+            RefreshGrid();                              // 更新 使用中 壓暗
         }
 
-        // 服饰删除：刪掉選中的已擁有衣物 (若正穿著先脫下)。
+        private void UpdateSelectionHighlight()
+        {
+            for (int i = 0; i < PerPage; i++)
+                if (_slotSel[i] != null) _slotSel[i].enabled = _slotItemId[i] != 0 && _slotItemId[i] == _selected;
+        }
+
+        // 服饰删除：沒選中就是灰的、按了提示；有選中才真的刪 (若正穿著先脫下)。
         private void DoDelete()
         {
             if (_selected == 0 || _session == null) { Toast.Show("請先選擇要刪除的服飾"); return; }
@@ -291,6 +335,25 @@ namespace Sdo.UI.Screens
             RebuildAvatar();
             Refresh();
             Toast.Show("已刪除服飾");
+        }
+
+        // 服饰栏扩充 (#8)：服飾欄容量 +1 (預設 3、上限 1000)，落地 profile.json。
+        private void DoExpandSlots()
+        {
+            if (_session == null) return;
+            var w = _session.Wardrobe;
+            if (w.ClothSlotCount >= 1000) { Toast.Show("服飾欄已達上限 1000"); return; }
+            w.ClothSlotCount += 1;
+            WardrobeStore.SaveAll(_session);
+            Toast.Show("服飾欄擴充成功（目前 " + w.ClothSlotCount + " 格）");
+        }
+
+        // 服饰删除 按鈕態：沒選中 → 灰 (DeleteCostume_4)；有選中 → 正常。
+        private void UpdateDeleteBtn()
+        {
+            if (_deleteBtn == null) return;
+            var img = _deleteBtn.targetGraphic as Image;
+            if (img != null) UIKit.ApplySprite(img, CabinetArt.An(_selected == 0 ? "DeleteCostume_4.an" : "DeleteCostume_1.an"));
         }
 
         private bool IsWorn(ShopItem it) => it != null && _session != null && _session.Wardrobe.IsEquipped(it.Id);
@@ -313,6 +376,7 @@ namespace Sdo.UI.Screens
             var wl = _session.Wardrobe.Wallet;
             if (_moneyM != null) _moneyM.text = wl.Coins.ToString();
             if (_moneyG != null) _moneyG.text = wl.Points.ToString();
+            if (_moneyP != null) _moneyP.text = wl.Bonus.ToString();   // 右下 H幣
         }
 
         // ================= 3D 預覽 (整身) — 同 ShopScreen 機制 =================
@@ -365,7 +429,12 @@ namespace Sdo.UI.Screens
 
         private void ApplyLeftPose(SdoAvatar av)
         {
-            var mot = SdoRoomAvatar.LoadMot(_sex == ItemSex.Male ? "MOTION/MREST0082.MOT" : "MOTION/WREST0072.MOT");
+            // #10：男/女各一組預設 idle，隨機挑一支 (可連續重複)。挑不到就退回原本的 rest idle。
+            var list = _sex == ItemSex.Male ? MaleIdles : FemaleIdles;
+            MotLoader mot = null;
+            if (list != null && list.Length > 0)
+                mot = SdoRoomAvatar.LoadMot(list[UnityEngine.Random.Range(0, list.Length)]);
+            if (mot == null) mot = SdoRoomAvatar.LoadMot(_sex == ItemSex.Male ? "MOTION/MREST0082.MOT" : "MOTION/WREST0072.MOT");
             if (mot != null) { av.RestMot = mot; av.SetClip(mot); av.PoseInitialIdle(); }
         }
 
@@ -392,8 +461,9 @@ namespace Sdo.UI.Screens
             if (_cam == null) return;
             float refH = RefHeight * (_sex == ItemSex.Male ? MaleSizeScale : 1f);
             float k = _previewHeight / refH;
-            _cam.transform.position = PreviewSpot + new Vector3(EyeFar.x, EyeFar.y * k, EyeFar.z * k);
-            _cam.transform.LookAt(PreviewSpot + new Vector3(LookFar.x, LookFar.y * k, LookFar.z * k));
+            // 瞄準點整體上移 PreviewAimUp → 人物在框內往下 (修 #9 基準太高)。eye/look 同步上移保持水平不俯仰。
+            _cam.transform.position = PreviewSpot + new Vector3(EyeFar.x, EyeFar.y * k + PreviewAimUp, EyeFar.z * k);
+            _cam.transform.LookAt(PreviewSpot + new Vector3(LookFar.x, LookFar.y * k + PreviewAimUp, LookFar.z * k));
         }
 
         // ================= 3D 縮圖 (每格一件；靜態 bind-pose) — 同 ShopScreen 機制 =================

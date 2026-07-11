@@ -89,10 +89,11 @@ namespace Sdo.Game
             // the COAT/PANT submeshes to a single material (it never shows them); the full-body preview keeps the ranges.
             bool useCutout = mode != RenderMode.Scene;
             bool singleMaterial = mode == RenderMode.PortraitHead;
-            string root = SdoExtracted.Root;
             string hrcRel = male ? MaleHrc : FemaleHrc;
             var bodyParts = NormalizeParts(equippedParts, male);
-            string hrcPath = Path.Combine(root, hrcRel.Replace('/', Path.DirectorySeparatorChar));
+            // 用 ResolveAvatarFile(Root + dev Datas 全量) 解析,不再只找 Root —— 商城買的衣物 mesh 常只在 Datas 全量目錄,
+            // Root-only 會漏(→ 房間人變光頭)。與左側預覽/遊戲內舞者同一條解析路徑,穿搭在房間才一致。
+            string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel);
             if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
             var hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath));
             if (hrc == null) { Debug.LogWarning("[room-avatar] HRC parse fail"); return null; }
@@ -112,7 +113,7 @@ namespace Sdo.Game
             int parts = 0;
             foreach (var rel in bodyParts)
             {
-                var path = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+                var path = SdoAvatarBuilder.ResolveAvatarFile(rel);   // Root + dev Datas 全量 (見上;修光頭)
                 if (!File.Exists(path)) { Debug.LogWarning("[room-avatar] missing " + rel); continue; }
                 var r = MshLoader.Load(File.ReadAllBytes(path));
                 if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-avatar] parse fail " + rel); continue; }

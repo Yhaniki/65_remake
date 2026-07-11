@@ -543,6 +543,7 @@ namespace Sdo.UI.Screens
                 case BuyResult.Ok: WardrobeStore.SaveOwnedWallet(_session); Toast.Show("購買成功：" + item.Name); break;   // 落地 profile.json (擁有+錢包)
                 case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
                 case BuyResult.AlreadyOwned: Toast.Show("已經擁有：" + item.Name); break;
+                case BuyResult.NoRoom: Toast.Show("服飾欄已滿，請到儲物櫃「服饰栏扩充」"); break;   // 預設 3 格，需擴充
                 default: Toast.Show("購買失敗"); break;
             }
             Refresh();

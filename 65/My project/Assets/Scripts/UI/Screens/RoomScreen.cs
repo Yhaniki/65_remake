@@ -495,7 +495,15 @@ namespace Sdo.UI.Screens
             string[] parts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : null;
             bool male = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
             if (_scene != null) _scene.RebuildLocalAvatar(male, parts);
-            if (_localHead != null) _localHead.Init(male, parts);
+            // 頭貼要「整個重建」：RoomHeadPortrait.Init 每次都新建一隻頭 avatar/相機/RT 卻不清舊的 → 直接再 Init 只會疊一隻
+            // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
+            if (_localHead != null) { Destroy(_localHead.gameObject); _localHead = null; }
+            var headGo = new GameObject("RoomLocalHead");
+            _localHead = headGo.AddComponent<RoomHeadPortrait>();
+            _localHead.layer = HeadLayer;
+            _localHead.Init(male, parts);
+            _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
+            _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
         }
 
         // 進/出房間廣播（進入房間的人送出；同房才收得到，只在「當前」分類顯示）。
