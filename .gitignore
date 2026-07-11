@@ -114,7 +114,17 @@ assets/*
 # Procmon capture logs (large binaries; keep the scripts, not the runs)
 procmon_tool/runs/
 
-# Scratch log folder
-新增資料夾/
+# Scratch log folder (any "新增資料夾" / "新增資料夾 (2)" …)
+新增資料夾*/
+
+# Runtime debug/probe outputs at repo root (keep the scripts, not the runs)
+/defaultlog.xml
+/gauge_*.txt
+/shop_avatar_probe_log.txt
+/tools/shop_probe/shop_avatar_online_log.txt
+/tools/shop_probe/Run
+
+# Per-machine settings writeback (not seed profile data)
+/65/My project/DATA/PROFILE/settings.json
 65/My project/Assets/TextMesh Pro/Examples & Extras/
 65/My project/Assets/TextMesh Pro/Examples & Extras.meta
