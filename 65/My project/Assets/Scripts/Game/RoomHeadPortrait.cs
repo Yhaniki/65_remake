@@ -37,6 +37,7 @@ namespace Sdo.Game
         private RenderTexture _rt;
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);
         private float _hairOffsetModel = -1f;
+        private float _chatActionUntil = -1f;   // 頭貼跟著房間 avatar 做聊天動作:此時間前不被 walk/idle 鏡射覆寫
 
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
@@ -90,12 +91,34 @@ namespace Sdo.Game
             return true;
         }
 
+        /// <summary>Mirror a room-chat action on the framed head — play the SAME one-shot motion the room avatar plays
+        /// (see RoomScene3D.PlayChatAction), so the 頭貼 做動作 too when the local player types a keyword. LateUpdate
+        /// holds off the walk/idle mirror until the action finishes, then re-syncs to the avatar's current pose.</summary>
+        public bool PlayChatAction(string motionRelPath)
+        {
+            if (_avatar == null || string.IsNullOrEmpty(motionRelPath)) return false;
+            var mot = SdoRoomAvatar.LoadMot(motionRelPath);
+            if (mot == null || mot.MaxTime <= 0f) return false;
+            _avatar.SetClip(_idleMot);
+            _avatar.PlayOneShot(mot, false);
+            _chatActionUntil = Time.time + (mot.MaxTime + 1f) / Mathf.Max(1f, _avatar.Fps);
+            return true;
+        }
+
         private void LateUpdate()
         {
             if (_avatar != null && WalkingProvider != null)
             {
-                bool w = WalkingProvider();
-                if (w != _mirrorWalking) { _mirrorWalking = w; _avatar.SetClip(w ? _walkMot : _idleMot); }
+                if (Time.time >= _chatActionUntil)   // 非動作進行中 → 鏡射 avatar 的走路/idle
+                {
+                    if (_chatActionUntil >= 0f)      // 動作剛結束 → 強制重套目前的 walk/idle(否則卡在動作末幀)
+                    {
+                        _chatActionUntil = -1f;
+                        _mirrorWalking = !WalkingProvider();
+                    }
+                    bool w = WalkingProvider();
+                    if (w != _mirrorWalking) { _mirrorWalking = w; _avatar.SetClip(w ? _walkMot : _idleMot); }
+                }
             }
             if (_cam != null && _avatar != null) UpdateCam();
         }

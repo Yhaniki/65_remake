@@ -25,7 +25,11 @@ namespace Sdo.UI.Util
         private List<string> _tracks;
         private int _last = -1;          // index of the track playing / just played → never repeated next
         private bool _playing;
+        private bool _muted;             // 禁音(選歌畫面):音量淡到 0 但軌道繼續播,離開再淡回
         private Coroutine _loop;
+        private Coroutine _fadeCo;
+
+        private float TargetVol() => _muted ? 0f : AudioMix.Bgm;
 
         private static BgmPlayer Instance
         {
@@ -51,7 +55,7 @@ namespace Sdo.UI.Util
         public static void Play()
         {
             var inst = Instance;
-            inst._src.volume = AudioMix.Bgm;   // 套用最新音量(可能停播期間被調過)
+            inst._src.volume = inst.TargetVol();   // 套用最新音量(禁音中維持 0,由 SetMuted 淡回)
             if (inst._playing) return;
             inst._playing = true;
             inst._loop = inst.StartCoroutine(inst.PlayLoop());
@@ -62,7 +66,9 @@ namespace Sdo.UI.Util
         {
             if (_inst == null) return;
             _inst._playing = false;
+            _inst._muted = false;   // 下次 Play 從非禁音起
             if (_inst._loop != null) { _inst.StopCoroutine(_inst._loop); _inst._loop = null; }
+            if (_inst._fadeCo != null) { _inst.StopCoroutine(_inst._fadeCo); _inst._fadeCo = null; }
             if (_inst._src != null)
             {
                 _inst._src.Stop();
@@ -72,7 +78,32 @@ namespace Sdo.UI.Util
             }
         }
 
-        private void OnMixChanged() { if (_src != null) _src.volume = AudioMix.Bgm; }
+        /// <summary>禁音/解禁 BGM,用線性淡入淡出(預設 0.2s),**不停止軌道**——選歌畫面禁音、離開再淡回原本那首。</summary>
+        public static void SetMuted(bool muted, float fade = 0.2f)
+        {
+            var inst = Instance;
+            if (inst._muted == muted) return;
+            inst._muted = muted;
+            if (inst._fadeCo != null) inst.StopCoroutine(inst._fadeCo);
+            inst._fadeCo = inst.StartCoroutine(inst.FadeTo(inst.TargetVol(), fade));
+        }
+
+        private IEnumerator FadeTo(float target, float dur)
+        {
+            if (_src == null || dur <= 0f) { if (_src != null) _src.volume = target; _fadeCo = null; yield break; }
+            float start = _src.volume, t = 0f;
+            while (t < dur)
+            {
+                t += Time.unscaledDeltaTime;   // unscaled → 即使遊戲暫停也淡
+                if (_src != null) _src.volume = Mathf.Lerp(start, target, Mathf.Clamp01(t / dur));
+                yield return null;
+            }
+            if (_src != null) _src.volume = target;
+            _fadeCo = null;
+        }
+
+        // 拖「背景音樂」滑桿時即時改音量(禁音中或淡入淡出中不覆寫,由 TargetVol/FadeTo 主導)。
+        private void OnMixChanged() { if (_src != null && !_muted && _fadeCo == null) _src.volume = AudioMix.Bgm; }
 
         private IEnumerator PlayLoop()
         {
@@ -89,6 +120,7 @@ namespace Sdo.UI.Util
                 if (clip == null) { yield return null; continue; }   // load failed → try another next round
 
                 _src.clip = clip;
+                if (_fadeCo == null) _src.volume = TargetVol();   // 新軌起始音量(禁音中=0);淡入淡出進行中則不打斷
                 _src.Play();
                 while (_playing && _src.isPlaying) yield return null;
                 if (_src.clip == clip) _src.clip = null;

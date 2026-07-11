@@ -37,6 +37,7 @@ namespace Sdo.UI
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
         private ScreenGameplay _activeGame;                // the running gameplay instance (null = in the front-end)
+        private bool _returningFromGame;              // 回房轉場已啟動（Update 每幀都會偵測 ResultConfirmed → 只觸發一次轉場）
         private HashSet<GameObject> _preGameRoots;    // scene roots that existed before launch -> kept on exit
 
         // Suppress the play screen's self-boot before any scene script runs (BeforeSceneLoad always precedes
@@ -113,8 +114,10 @@ namespace Sdo.UI
 
             Nav.OpenSettings = () => _option.Open();
             Nav.OpenNoteSkinPicker = () => _notePicker.Open();
-            Nav.OpenShop = () => _shop.Open();
+            Nav.OpenShop = () => ScreenTransition.Run(() => _shop.Open());   // 進商城：漸黑 → loading → 漸亮（同房間進出效果）
             Nav.StartGame = StartGameplay;
+            // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
+            Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
             WarmupFont();
             ShowOnly(_ctx.Flow.Current);
@@ -127,11 +130,12 @@ namespace Sdo.UI
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SHOP"))) { EnterRoom(); Nav.OpenShop?.Invoke(); }
         }
 
-        // 大廳系畫面(男/女選擇 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複);其餘畫面停:SongSelect 有試聽、
-        // Gameplay 有歌、Lobby 無。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 在商城裡持續。
+        // 大廳系畫面(男/女選擇 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複)並淡回;選歌畫面=淡出禁音但軌道繼續播
+        // (離開選歌回房間再淡回同一首);遊戲(有歌)/Lobby 才真的停。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 持續。
         private static void UpdateBgm(ScreenId to)
         {
-            if (to == ScreenId.GenderSel || to == ScreenId.Room) BgmPlayer.Play();
+            if (to == ScreenId.GenderSel || to == ScreenId.Room) { BgmPlayer.Play(); BgmPlayer.SetMuted(false); }
+            else if (to == ScreenId.SongSelect) BgmPlayer.SetMuted(true);   // 線性淡出 0.2s → 禁音,仍在播
             else BgmPlayer.Stop();
         }
 
@@ -169,6 +173,7 @@ namespace Sdo.UI
         private void StartGameplay()
         {
             if (_activeGame != null) return;
+            _returningFromGame = false;   // 新的一局：解除上次回房轉場的守門
             var s = _ctx.Session;
             if (!s.HasSong) { Toast.Show(LocalizationManager.Get("room.need_song")); return; }
 
@@ -214,17 +219,20 @@ namespace Sdo.UI
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),
         // so the front-end just tears the gameplay session down and returns to the room. (The legacy ResultsModal is
         // intentionally unused now that the play screen settles itself; kept built only so older call sites compile.)
-        private void ReturnFromGameplay()
-        {
-            TeardownGameplay();
-            _ctx.Flow.GoTo(ScreenId.Room);
-        }
+        private void ReturnFromGameplay() => TransitionToRoomFromGame();
 
         // Esc during play: abandon the run with no settlement and go straight back to the room.
-        private void AbortGameplay()
+        private void AbortGameplay() => TransitionToRoomFromGame();
+
+        // 遊戲 → 房間：漸黑 → 全黑時拆遊戲場景並切回房間（建 3D 房間的卡頓藏在黑幕下）→ 漸亮，房間 UI 從四邊滑入。
+        // 轉場的黑幕獨立於前端 canvas（gameplay 期間前端 canvas 關閉），所以能蓋住還在跑的遊戲畫面。
+        private void TransitionToRoomFromGame()
         {
-            TeardownGameplay();
-            _ctx.Flow.GoTo(ScreenId.Room);
+            if (_returningFromGame) return;   // Update 每幀都會偵測 ResultConfirmed → swap(_activeGame=null) 生效前先擋住重入
+            _returningFromGame = true;
+            ScreenTransition.Run(
+                () => { TeardownGameplay(); _ctx.Flow.GoTo(ScreenId.Room); },
+                onReveal: Nav.PlayRoomEntrance);
         }
 
         // Tear the gameplay session down and restore the front-end. ScreenGameplay owns the scene and never reparents into

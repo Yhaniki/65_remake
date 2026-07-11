@@ -412,6 +412,19 @@ namespace Sdo.UI.Screens
             if (_dropCombo != null) _dropCombo.CloseList();
         }
 
+        /// <summary>進房間轉場的「四邊滑入」進場：把三個面板先擺到收合(畫面外)位置，再由 Update 補間滑回展開
+        /// （win1 由上、win2 由右、win3 由下滑進來）。由 ScreenTransition 在漸亮開始時呼叫（Nav.PlayRoomEntrance），
+        /// 這樣滑入動作正好隨黑幕散去而顯現。非轉場路徑(dev hooks)不呼叫 → OnShow 的 ResetCollapse 直接展開，不受影響。</summary>
+        public void PlayEntrance()
+        {
+            _uiCollapsed = false;   // 目標＝完全展開
+            _collapseT = 1f;        // 由完全收合(畫面外)起跳
+            ApplyCollapse();        // 立即擺到畫面外，避免這一幀先閃到展開位置
+            if (_uiHideBtn != null) _uiHideBtn.gameObject.SetActive(true);
+            if (_uiShowBtn != null) _uiShowBtn.gameObject.SetActive(false);
+            if (_dropCombo != null) _dropCombo.CloseList();
+        }
+
         /// <summary>把三個面板容器依 _collapseT(0..1) 補到收合位移（SmoothStep 緩動）。</summary>
         private void ApplyCollapse()
         {
@@ -878,7 +891,11 @@ namespace Sdo.UI.Screens
             // so female "再見"→action5→WREST0063+WOMAN_5 while male "88"→action6→MREST0076+MAN_6 stay self-consistent.
             bool male = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
             string motion = action.MotionFor(male);
-            if (_scene != null && !string.IsNullOrEmpty(motion)) _scene.PlayChatAction(motion);
+            if (!string.IsNullOrEmpty(motion))
+            {
+                if (_scene != null) _scene.PlayChatAction(motion);
+                if (_localHead != null) _localHead.PlayChatAction(motion);   // 上面的頭貼跟著做同一個動作
+            }
             UiSfx.Play(action.SoundFor(male));
         }
 
