@@ -127,5 +127,41 @@ namespace Sdo.Tests
             Assert.Greater(worn.Length, 0);
             CollectionAssert.Contains(worn, "AVATAR/900018_WOMAN_COAT.MSH");   // WOMAN default coat
         }
+
+        // ResolveEquippedParts re-derives the room/gender-select render list from the id-based equippedItems, so an
+        // accessory the wardrobe shows (via ById) is ALSO worn by the room/gender-select even when the persisted
+        // equippedParts cache is stale (user bug: 儲物櫃有翅膀/表情、room 和選性別沒有).
+        [Test]
+        public void ResolveEquippedParts_IncludesEquippedAccessory_EvenWhenCacheIsStale()
+        {
+            var top  = new ShopItem { Id = 5001,     ModelId = 22222, Category = ItemCategory.TopFemale,   DurationDays = -1, Quantity = -1 };
+            var wing = new ShopItem { Id = 90012345, ModelId = 12345, Category = ItemCategory.WingsFemale, DurationDays = -1, Quantity = -1 };
+            var byId = new Dictionary<int, ShopItem> { { top.Id, top }, { wing.Id, wing } };
+            var p = new UserProfile
+            {
+                gender = 0,
+                equippedItems = new[]
+                {
+                    new EquipSave { slot = (int)EquipSlot.Top,   id = top.Id },
+                    new EquipSave { slot = (int)EquipSlot.Wings, id = wing.Id },
+                },
+                equippedParts = new[] { "AVATAR/900007_WOMAN_FACE.MSH" },   // stale cache: missing the wing (+ top)
+            };
+
+            var parts = WardrobeStore.ResolveEquippedParts(p, ItemSex.Female,
+                id => byId.TryGetValue(id, out var it) ? it : null, meshExists: _ => true);
+
+            CollectionAssert.Contains(parts, "AVATAR/012345_WOMAN_CHIBANG.MSH");   // the equipped wing IS in the render list
+            CollectionAssert.Contains(parts, "AVATAR/022222_WOMAN_COAT.MSH");      // and the equipped top
+        }
+
+        [Test]
+        public void ResolveEquippedParts_NoEquippedItems_FallsBackToProfileParts()
+        {
+            var p = new UserProfile { gender = 0 };
+            p.Sanitize();   // legacy equippedClothes, empty equippedItems
+            var parts = WardrobeStore.ResolveEquippedParts(p, ItemSex.Female, id => null, meshExists: _ => true);
+            CollectionAssert.Contains(parts, "AVATAR/900018_WOMAN_COAT.MSH");   // legacy default coat (fallback, not blank)
+        }
     }
 }

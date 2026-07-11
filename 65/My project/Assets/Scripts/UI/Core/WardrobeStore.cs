@@ -114,12 +114,71 @@ namespace Sdo.UI.Core
         // ---------------- I/O wrappers (Unity / ProfileManager / catalog) ----------------
 
         /// <summary>Load the active profile's wallet + inventory + outfit into <paramref name="s"/>'s wardrobe. Resets the
-        /// wardrobe first so re-opening a screen starts from the saved state (not stale in-memory shop try-on).</summary>
+        /// wardrobe first so re-opening a screen starts from the saved state (not stale in-memory shop try-on). Also heals
+        /// a stale <see cref="UserProfile.equippedParts"/> cache (see <see cref="HealEquippedParts"/>).</summary>
         public static void Load(GameSession s)
         {
             if (s == null) return;
             s.Wardrobe.Reset();
-            ApplyProfileToWardrobe(ProfileManager.Active, s.Wardrobe);
+            var p = ProfileManager.Active;
+            ApplyProfileToWardrobe(p, s.Wardrobe);
+            HealEquippedParts(p, s.Gender == 1 ? ItemSex.Male : ItemSex.Female);
+        }
+
+        /// <summary>Re-derive <see cref="UserProfile.equippedParts"/> (the room/gender-select/gameplay avatar's mesh-path
+        /// cache) from the id-based <see cref="UserProfile.equippedItems"/> and persist if it changed. Fixes profiles saved
+        /// while a synth accessory (翅膀/表情/项链) couldn't resolve: the wardrobe rebuilds from equippedItems (so it shows
+        /// the accessory) but the room/gender-select read the stale equippedParts (so they don't) — user bug: 儲物櫃有、
+        /// room/選性別沒有. Only adopts a re-derivation that doesn't LOSE parts (guards against a transiently-unresolvable
+        /// id blanking the avatar); leaves legacy (no equippedItems) profiles untouched. Non-fatal on any error.</summary>
+        public static void HealEquippedParts(UserProfile p, ItemSex sex)
+        {
+            if (p == null || p.equippedItems == null || p.equippedItems.Length == 0) return;
+            try
+            {
+                var reDerived = ResolveEquippedParts(p, sex, id => AvatarItemCatalog.Instance.ById(id));
+                var before = p.equippedParts ?? new string[0];
+                if (reDerived.Length >= before.Length && !SamePaths(before, reDerived))
+                {
+                    p.equippedParts = reDerived;
+                    ProfileManager.Save();
+                }
+            }
+            catch (Exception e) { UnityEngine.Debug.LogWarning("[wardrobe] heal equippedParts failed (non-fatal): " + e.Message); }
+        }
+
+        /// <summary>Ordered worn mesh parts re-derived from a profile's id-based <see cref="UserProfile.equippedItems"/> via
+        /// the catalog (<paramref name="byId"/>), so synth 翅膀/表情/项链 are included — the authoritative render list the
+        /// room / gender-select / gameplay avatar should use. Falls back to the profile's existing cache/legacy parts when
+        /// there is nothing id-based to resolve (never blanks the avatar). Pure (byId/meshExists injectable) → unit-tested.</summary>
+        /// <summary>Gender-int overload (0=female / 1=male) for callers that don't reference <see cref="ItemSex"/>.</summary>
+        public static string[] ResolveEquippedParts(UserProfile p, int gender, Func<int, ShopItem> byId, Func<string, bool> meshExists = null)
+            => ResolveEquippedParts(p, gender == 1 ? ItemSex.Male : ItemSex.Female, byId, meshExists);
+
+        public static string[] ResolveEquippedParts(UserProfile p, ItemSex sex, Func<int, ShopItem> byId, Func<string, bool> meshExists = null)
+        {
+            if (p == null) return new string[0];
+            var eq = p.equippedItems;
+            if (eq == null || eq.Length == 0 || byId == null) return p.EquippedAvatarParts();
+            var items = new List<ShopItem>();
+            foreach (var e in eq)
+            {
+                if (e == null || e.id == 0) continue;
+                var it = byId(e.id);
+                if (it != null) items.Add(it);
+            }
+            if (items.Count == 0) return p.EquippedAvatarParts();   // couldn't resolve any → keep existing (don't blank)
+            var parts = Sdo.Game.AvatarOutfit.ResolveParts(sex, items, meshExists);
+            return parts != null && parts.Count > 0 ? parts.ToArray() : p.EquippedAvatarParts();
+        }
+
+        private static bool SamePaths(string[] a, string[] b)
+        {
+            if (a == null || b == null) return a == b;
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+                if (!string.Equals(a[i], b[i], StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
         }
 
         /// <summary>Persist a purchase / recharge: wallet + owned only (NOT the worn outfit). Cheap — no catalog load.</summary>

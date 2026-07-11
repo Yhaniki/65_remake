@@ -344,7 +344,8 @@ namespace Sdo.UI.Screens
             Btn("LoudSpeaker", "LoudSpeaker_1", "LoudSpeaker_2", "LoudSpeaker_3", Win3, 376, 82, null);       // 大聲公
             Btn("RoomPet", "BtnPet_1", "BtnPet_2", "BtnPet_3", Win3, 411, 83, null);                         // 寵物
             Btn("WingButton", "RoomWing", "RoomWing1", "RoomWing", Win3, 447, 82, null);                     // 翅膀
-            Btn("ClosetButton", "RoomCloset001", "RoomCloset002", "RoomCloset003", Win3, 480, 81, () => Nav.OpenWardrobe?.Invoke());     // 衣櫥 → 儲物櫃 (WardrobeScreen)
+            // 衣櫥 → 儲物櫃 (WardrobeScreen)。比照選歌鈕：按下用滑動音(ButtonFloat)，開櫃的 Frameround whoosh 由 WardrobeScreen.Open 播 → 服飾欄旋轉進場。
+            Btn("ClosetButton", "RoomCloset001", "RoomCloset002", "RoomCloset003", Win3, 480, 81, () => Nav.OpenWardrobe?.Invoke(), UiSfx.ButtonFloat);
             Btn("BangleButton", "Bangle0", "Bangle1", "Bangle0", Win3, 514, 82, null);                       // 手環
             Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null);                              // 信件
             Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包
@@ -436,7 +437,11 @@ namespace Sdo.UI.Screens
             }
 
             bool localMale = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
-            string[] localAvatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : null;
+            // 從 id-based equippedItems 經 catalog 現算 (含合成 翅膀/表情/项链)，非讀可能過時的 equippedParts 快取 → 房間
+            // 才會跟儲物櫃一致顯示飾品 (user: 儲物櫃有、room 沒有)。
+            string[] localAvatarParts = ProfileManager.Active != null
+                ? WardrobeStore.ResolveEquippedParts(ProfileManager.Active, localMale ? 1 : 0, id => AvatarItemCatalog.Instance.ById(id))
+                : null;
 
             if (_scene == null)
             {
@@ -492,8 +497,10 @@ namespace Sdo.UI.Screens
         // 儲物櫃換穿 → 重建本機房間 3D avatar + 頭貼 (讀最新 EquippedAvatarParts；WardrobeScreen 已寫回 profile)。
         private void RefreshLocalAvatar()
         {
-            string[] parts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : null;
             bool male = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
+            string[] parts = ProfileManager.Active != null
+                ? WardrobeStore.ResolveEquippedParts(ProfileManager.Active, male ? 1 : 0, id => AvatarItemCatalog.Instance.ById(id))
+                : null;
             if (_scene != null) _scene.RebuildLocalAvatar(male, parts);
             // 頭貼要「整個重建」：RoomHeadPortrait.Init 每次都新建一隻頭 avatar/相機/RT 卻不清舊的 → 直接再 Init 只會疊一隻
             // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
