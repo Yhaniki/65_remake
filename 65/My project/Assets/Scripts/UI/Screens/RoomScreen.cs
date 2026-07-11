@@ -514,16 +514,23 @@ namespace Sdo.UI.Screens
         private void SeedDefaultSongIfNeeded()
         {
             var s = Ctx != null ? Ctx.Session : null;
-            if (s == null || s.HasSong) return;
-            var model = SongListModel.FromCatalog();          // 已按 fileId 由大到小排序
-            if (model.All.Count == 0) return;
-            var e = model.All[0];                              // [0] = index 最大的歌
-            s.SongGn = e.gn;
-            s.SongFileId = e.fileId;
-            s.SongTitle = e.title ?? e.gn;
-            s.SongArtist = e.artist;
-            s.Difficulty = Difficulty.Easy;
-            Ctx.Rooms?.SetSong(s.SongTitle);                  // 同步房間顯示（單機=房主）
+            if (s == null) return;
+            if (!s.HasSong)
+            {
+                var model = SongListModel.FromCatalog();          // 已按 fileId 由大到小排序
+                if (model.All.Count == 0) return;
+                var e = model.All[0];                             // [0] = index 最大 = 清單最上面
+                s.SongGn = e.gn;
+                s.SongFileId = e.fileId;
+                s.SongTitle = e.title ?? e.gn;
+                s.SongArtist = e.artist;
+                s.Difficulty = Difficulty.Easy;
+            }
+            // 不論剛預設或之前選的：確保「房間」也拿到這首歌。房間可能是重新建立的(SongTitle 還空著)——若只靠上面 HasSong
+            // 守門,離開再進來就會 session 有歌、房間沒歌 → 開始鈕的 CanStart 檢查 room.SongTitle 誤判成「請先選擇歌曲」。
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (s.HasSong && room != null && string.IsNullOrEmpty(room.SongTitle))
+                Ctx.Rooms.SetSong(s.SongTitle);               // 同步房間顯示（單機=房主）
         }
 
         public override void OnHide()
@@ -2842,7 +2849,9 @@ namespace Sdo.UI.Screens
         {
             AnnounceStagePresence(false);   // 廣播「X 離開舞台」（趁還在房間、名字還查得到）
             Ctx.Rooms?.LeaveRoom();
-            GoTo(ScreenId.GenderSel);
+            // 回男女選擇：漸黑 → loading → 漸亮（同其它畫面進出效果）。切畫面(GoTo)在全黑時執行；
+            // 男女選擇畫面無四邊滑入 UI → 不傳 onReveal。
+            ScreenTransition.Run(() => GoTo(ScreenId.GenderSel));
         }
 
         /// <summary>Blue text edge on the location labels — rgb(70,74,152), per the official 白字藍邊 look.</summary>
