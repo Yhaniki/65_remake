@@ -118,8 +118,10 @@ namespace Sdo.Game
                 var r = MshLoader.Load(File.ReadAllBytes(path));
                 if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-avatar] parse fail " + rel); continue; }
                 var dir = Path.GetDirectoryName(path);
-                bool hair = rel.ToUpperInvariant().Contains("HAIR");
-                var sh = useCutout ? portraitShader : (hair ? hairShader : bodyShader);
+                // 髮/眼鏡/翅膀/項鍊都要雙面+alpha-cutout(去背),否則翅膀/眼鏡鏤空處變實心。其餘走 Unlit/Texture。
+                string ru = rel.ToUpperInvariant();
+                bool twoSidedAlpha = ru.Contains("HAIR") || ru.Contains("GLASS") || ru.Contains("CHIBANG") || ru.Contains("LINGDANG");
+                var sh = useCutout ? portraitShader : (twoSidedAlpha ? hairShader : bodyShader);
                 int si = 0;
                 foreach (var sub in r.Submeshes)
                 {
@@ -196,14 +198,13 @@ namespace Sdo.Game
 
         private static string[] NormalizeParts(string[] parts, bool male)
         {
-            var defaults = DefaultParts(male);
-            var res = new string[defaults.Length];
-            for (int i = 0; i < res.Length; i++)
-            {
-                string rel = parts != null && i < parts.Length ? parts[i] : null;
-                res[i] = string.IsNullOrEmpty(rel) ? defaults[i] : NormalizeRel(rel);
-            }
-            return res;
+            // 空 → 預設整套。否則「原樣保留全部非空部位」(含飾品/翅膀/眼鏡,index≥6)——舊版只留前 6 個核心部位,把飾品/翅膀
+            // 截掉了 → 房間看不到眼鏡/翅膀 (使用者回報)。equippedParts 由 AvatarOutfit.ResolveParts 產生時已含核心預設,故不需再補。
+            if (parts == null || parts.Length == 0) return DefaultParts(male);
+            var res = new System.Collections.Generic.List<string>(parts.Length);
+            foreach (var rel in parts)
+                if (!string.IsNullOrEmpty(rel)) res.Add(NormalizeRel(rel));
+            return res.Count > 0 ? res.ToArray() : DefaultParts(male);
         }
 
         private static string NormalizeRel(string rel)

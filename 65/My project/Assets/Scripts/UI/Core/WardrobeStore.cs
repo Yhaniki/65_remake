@@ -101,6 +101,7 @@ namespace Sdo.UI.Core
             foreach (var kv in w.Equipped)
             {
                 if (kv.Value == 0) continue;
+                if (!w.Owns(kv.Value)) continue;   // 只存「擁有且穿著」的：商城試穿(未買)不落地，買了才會存成真的穿搭
                 eq.Add(new EquipSave { slot = (int)kv.Key, id = kv.Value });
                 var it = byId != null ? byId(kv.Value) : null;
                 if (it != null) items.Add(it);

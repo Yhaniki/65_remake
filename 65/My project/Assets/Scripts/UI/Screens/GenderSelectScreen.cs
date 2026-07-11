@@ -98,11 +98,17 @@ namespace Sdo.UI.Screens
             // initial selection follows the current active profile's gender (00000000 女 on first boot).
             _gender = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0;
 
+            // 每個性別用它對應 profile 的「實際穿戴」顯示 (女 00000000 / 男 00000001)；換裝後回到本畫面也刷新。
+            string[] fParts = PartsForGender(0), mParts = PartsForGender(1);
             if (_preview == null)
             {
                 var go = new GameObject("GenderPreview3D");
                 _preview = go.AddComponent<GenderPreview3D>();
-                _preview.Build(_gender);
+                _preview.Build(_gender, fParts, mParts);
+            }
+            else
+            {
+                _preview.SetOutfits(_gender, fParts, mParts);
             }
             if (_previewImg != null && _preview != null && _preview.PreviewTexture != null)
             {
@@ -117,6 +123,15 @@ namespace Sdo.UI.Screens
 
             SelectGender(_gender);            // sync checkbox sprites + preview
             SelectInputMode(keyboard: true);  // 預設 = 鍵盤被選中(藍邊 LobbySel0b)；每次顯示都重置成 keyboard
+        }
+
+        // 取某性別對應 profile (女 00000000 / 男 00000001) 的「實際穿戴」部位；找不到 → null (GenderPreview3D 用預設整套)。
+        private static string[] PartsForGender(int gender)
+        {
+            string id = Sdo.Settings.ProfileManager.SeededIdForGender(gender);
+            foreach (var p in Sdo.Settings.ProfileManager.List())
+                if (p != null && p.id == id) return p.EquippedAvatarParts();
+            return null;
         }
 
         public override void OnHide()

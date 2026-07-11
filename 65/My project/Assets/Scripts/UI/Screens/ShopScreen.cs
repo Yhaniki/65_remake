@@ -356,6 +356,8 @@ namespace Sdo.UI.Screens
             if (_search != null) { _search.SetTextWithoutNotify(""); }
             _query = "";
             _dragAngle = -DefaultYaw; _pitchAngle = 0f;   // 人物預設朝右 30°
+            WardrobeStore.Load(_session);   // 進商城先載入「實際穿戴」的樣子 (清掉上次的試穿殘留)；購買才會改真的穿搭
+            _tryOnOutfitParts = null;
             BuildPreview();
             // 遮掉主 UI 相機的預覽層(12)，避免 3D 假人被主相機畫平到 UI 上 (同 RoomScreen 對場景/頭像層的做法)。
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
@@ -538,7 +540,13 @@ namespace Sdo.UI.Screens
         {
             switch (ShopService.Buy(_session.Wardrobe, item, Now()))
             {
-                case BuyResult.Ok: WardrobeStore.SaveOwnedWallet(_session); Toast.Show("購買成功：" + item.Name); break;   // 落地 profile.json (擁有+錢包)
+                case BuyResult.Ok:
+                    EquipOwned(item);                        // 購買=直接穿戴 (使用者指定)
+                    WardrobeStore.SaveAll(_session);         // 落地 擁有+錢包+穿搭 (只存已擁有的)
+                    Nav.RefreshRoomAvatar?.Invoke();         // 房間/大廳的人同步換上
+                    RebuildAvatar();                         // 左側預覽更新
+                    Toast.Show("購買並穿上：" + item.Name);
+                    break;
                 case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
                 case BuyResult.AlreadyOwned: Toast.Show("已經擁有：" + item.Name); break;
                 case BuyResult.NoRoom: Toast.Show("服飾欄已滿，請到儲物櫃「服饰栏扩充」"); break;   // 預設 3 格，需擴充
@@ -628,15 +636,31 @@ namespace Sdo.UI.Screens
             // 之前多呼叫 RefreshGrid 會 DestroyCardPreviews 把整頁 8 張 3D 縮圖全砍掉重建 → 使用者看到「按一張、其餘 6 張同時重 load」。
         }
 
-        // 復原穿搭：清掉所有試穿的裝備 → 預覽回到預設造型。
+        // 買了直接穿上 (單件；套装另走 tryOn 預覽,不在這裡自動穿)。與 DoTryOn 同一套互斥規則。
+        private void EquipOwned(ShopItem item)
+        {
+            if (item == null || item.EquipSlot == EquipSlot.None || item.EquipSlot == EquipSlot.Outfit) return;
+            var w = _session.Wardrobe;
+            _tryOnOutfitParts = null;
+            if (item.EquipSlot == EquipSlot.OnePiece)
+            {
+                w.ClearEquipped(EquipSlot.Top); w.ClearEquipped(EquipSlot.Bottom);
+                w.SetEquipped(EquipSlot.OnePiece, item.Id);
+            }
+            else
+            {
+                if (item.EquipSlot == EquipSlot.Top || item.EquipSlot == EquipSlot.Bottom) w.ClearEquipped(EquipSlot.OnePiece);
+                w.SetEquipped(item.EquipSlot, item.Id);
+            }
+        }
+
+        // 復原穿搭：回到「儲物櫃實際穿戴」的樣子 (從 profile 重載擁有+穿搭)，不是清成裸體預設 (使用者指定)。
         private void DoResetOutfit()
         {
-            var w = _session.Wardrobe;
-            foreach (var slot in new[] { EquipSlot.OnePiece, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Shoes, EquipSlot.Gloves, EquipSlot.Glasses, EquipSlot.Hair, EquipSlot.Expression, EquipSlot.Necklace, EquipSlot.Wings })
-                w.ClearEquipped(slot);   // 含新增的表情/项链/翅膀 → 復原才會把試穿的飾品也清掉
-            _tryOnOutfitParts = null;   // 清掉整套試穿覆蓋
+            WardrobeStore.Load(_session);   // 重載存檔的真實穿搭
+            _tryOnOutfitParts = null;
             _dragAngle = -DefaultYaw; _pitchAngle = 0f;   // 連轉動角度一起復原 (人物朝右 30°)
-            RebuildAvatar();   // 靜默復原：同 DoTryOn,只換左側預覽,不重建卡片縮圖 (避免整頁 3D 縮圖無謂重 load)
+            RebuildAvatar();   // 靜默復原：只換左側預覽,不重建卡片縮圖
         }
 
         // 覆蓋卡片上半 (名稱 + 縮圖區、避開底排買/送/試穿鈕) 的透明命中區：點一下 → 試穿到左側預覽；滑上去 → 該卡縮圖放大旋轉。

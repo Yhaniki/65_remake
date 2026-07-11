@@ -91,6 +91,7 @@ namespace Sdo.Tests
             var byId = new Dictionary<int, ShopItem> { { top.Id, top } };
 
             var w = new Wardrobe();
+            w.AddOwned(new OwnedItem { ItemId = top.Id, Slot = ItemSlotType.Clothes, ExpireUnix = -1, Quantity = 1 });   // 只存「擁有且穿著」→ 要先擁有
             w.SetEquipped(EquipSlot.Top, top.Id);
 
             var p = new UserProfile();
