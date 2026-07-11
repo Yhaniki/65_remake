@@ -295,8 +295,8 @@ namespace Sdo.UI.Screens
 
             // 性別切換 (SHOP.XML：male @ 0,510 / female @ 40,510)。官方是 CheckBox：選中顯示 bgpushed(暗態)、未選 bgnormal(亮)
             // — 同 M/G 幣別 (選中=暗)。noSwap + RefreshToggles 依 _sex 換 sprite (修 user #5「男女亮暗相反」：舊版選中的性別反而亮)。
-            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => { _sex = ItemSex.Male;   _page = 0; _showHistory = false; RebuildAvatar(); Refresh(); }, noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
-            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => { _sex = ItemSex.Female; _page = 0; _showHistory = false; RebuildAvatar(); Refresh(); }, noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
+            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => SwitchGender(ItemSex.Male),   noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
+            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => SwitchGender(ItemSex.Female), noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
 
             // 復原穿搭 (SHOP.XML undochange @ 74,532，紅色 ↻)：清掉試穿、還原成預設穿搭。hover 補官方亮幀 Shop16 (#5)。
             // solo:true → 自貼圖載入,去掉 atlas 鄰居滲出的白邊 (#5 左下角按鈕白邊)。
@@ -356,7 +356,9 @@ namespace Sdo.UI.Screens
             if (_search != null) { _search.SetTextWithoutNotify(""); }
             _query = "";
             _dragAngle = -DefaultYaw; _pitchAngle = 0f;   // 人物預設朝右 30°
-            WardrobeStore.Load(_session);   // 進商城先載入「實際穿戴」的樣子 (清掉上次的試穿殘留)；購買才會改真的穿搭
+            // 對齊 active 帳號到 session 性別 (修「從男女選擇畫面直接開商城」時 active 帳號可能還停在別的性別),並載入該帳號
+            // 的「實際穿戴」+ 錢包 (清掉上次的試穿殘留)；試穿不落地,購買才改真的穿搭。
+            if (_session != null) ActivateGenderProfile(_session.Gender);
             _tryOnOutfitParts = null;
             BuildPreview();
             // 遮掉主 UI 相機的預覽層(12)，避免 3D 假人被主相機畫平到 UI 上 (同 RoomScreen 對場景/頭像層的做法)。
@@ -365,6 +367,38 @@ namespace Sdo.UI.Screens
             RebuildAvatar();
             SetVisible(true);   // 先顯示 (alpha=1) 再 Refresh：分頁按鈕在「可見」狀態下建立，避免首幀亮暗未套用
             Refresh();
+        }
+
+        // 切性別 == 切角色帳號 (女→00000000 / 男→00000001，與 GenderSelectScreen 同一套 profile)。使用者選定：在商城按
+        // 男/女不再只是換瀏覽/預覽,而是真的切換登入角色 —— 用該性別帳號的錢包買、存進該帳號衣櫃、離開商城後房間/遊戲也
+        // 是該性別。因為女裝綁女骨架、男裝綁男骨架,唯有連角色一起切,買到的衣服才穿得上 (修「切女角只能買同性別的衣服」)。
+        private void SwitchGender(ItemSex sex)
+        {
+            if (_session == null || _sex == sex) return;   // 已是該性別 → 不重載
+            _sex = sex;
+            ActivateGenderProfile(sex == ItemSex.Male ? 1 : 0);   // 換帳號 → 換錢包/擁有/穿搭/身分
+            _tryOnOutfitParts = null;
+            _page = 0; _showHistory = false;
+            RebuildAvatar();                   // 左側預覽換成新帳號的穿搭 (新性別骨架)
+            Refresh();                         // 商品格/幣別/性別鈕亮暗/底條錢包 依新帳號重畫
+            Nav.RefreshRoomAvatar?.Invoke();   // 房間背後的本機 3D avatar + 頭貼同步換新性別 (RoomScreen.RefreshLocalAvatar 讀 session.Gender)
+        }
+
+        // 對齊 active 使用者帳號到指定性別,並載入該帳號的錢包 + 擁有 + 穿搭。只有「帳號真的換了」才重種房間面板預設/同步
+        // 身分 (避免從房間開商城時,把玩家在房間改過的面板值被重置)；RoomConfig 由 SetActive 內部重載。
+        private void ActivateGenderProfile(int gender)
+        {
+            _session.Gender = gender;
+            string id = Sdo.Settings.ProfileManager.SeededIdForGender(gender);
+            var active = Sdo.Settings.ProfileManager.Active;
+            if (active == null || active.id != id)
+            {
+                Sdo.Settings.ProfileManager.SetActive(id);   // 載入該帳號 profile + 收藏 + config.ini
+                var p = Sdo.Settings.ProfileManager.Active;
+                if (p != null) { _session.LocalPlayerId = p.id; _session.LocalPlayerName = p.name; }
+                _session.SeedRoomDefaults();                 // 換帳號才重種房間面板預設 (per-user)
+            }
+            WardrobeStore.Load(_session);   // 一律重載該帳號錢包/擁有/穿搭 (清掉上一帳號殘留 + 商城試穿)
         }
 
         private void Refresh()
@@ -1272,6 +1306,9 @@ namespace Sdo.UI.Screens
             if (_cg != null) { _cg.alpha = on ? 1f : 0f; _cg.interactable = on; _cg.blocksRaycasts = on; }
             if (_cam != null) _cam.enabled = on;
             if (!on && _uiCam != null) { _uiCam.cullingMask = _savedUiMask; _uiCam = null; }   // 關商城 → 還原主 UI 相機遮罩
+            // 關商城 → 若底下是男女選擇畫面(modal 不會重跑其 OnShow)，叫它用最新穿搭/性別刷新預覽 (hook 只在該畫面在底下時非 null；
+            // 關回房間時為 null → 由 RefreshRoomAvatar 那條處理)。修「女角商城買衣穿上，回選性別畫面沒穿上、進 room 才有」。
+            if (!on) Nav.RefreshGenderPreview?.Invoke();
         }
 
         private void OnDestroy()
