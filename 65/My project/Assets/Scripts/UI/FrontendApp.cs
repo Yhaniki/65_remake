@@ -90,7 +90,7 @@ namespace Sdo.UI
             Make<RoomScreen>(screenLayer);
             Make<SongSelectScreen>(screenLayer);
 
-            _ctx.Flow.ScreenChanged += (from, to) => ShowOnly(to);
+            _ctx.Flow.ScreenChanged += (from, to) => { ShowOnly(to); UpdateBgm(to); };
 
             var modalLayer = UIKit.NewRect(root, "Modals");
             UIKit.Stretch(modalLayer);
@@ -115,12 +115,21 @@ namespace Sdo.UI
 
             WarmupFont();
             ShowOnly(_ctx.Flow.Current);
+            UpdateBgm(_ctx.Flow.Current);   // 開場即起隨機大廳 BGM(男/女選擇畫面)
 
             // DEV: SDO_ROOM → boot straight into the waiting room (create a mock room + show it), for inspecting the
             // 3D room + ROOM UI without clicking through the lobby. Editor reads it from EditorPrefs, a build from env.
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOM"))) EnterRoom();
             // DEV: SDO_SHOP → boot into the waiting room then open the 商城 (shop) modal (Tools ▸ SDO ▸ Boot Into Shop).
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SHOP"))) { EnterRoom(); Nav.OpenShop?.Invoke(); }
+        }
+
+        // 大廳系畫面(男/女選擇 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複);其餘畫面停:SongSelect 有試聽、
+        // Gameplay 有歌、Lobby 無。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 在商城裡持續。
+        private static void UpdateBgm(ScreenId to)
+        {
+            if (to == ScreenId.GenderSel || to == ScreenId.Room) BgmPlayer.Play();
+            else BgmPlayer.Stop();
         }
 
         /// <summary>Create a mock room (host = local player) if none, and show the waiting room. Used by the SDO_ROOM
