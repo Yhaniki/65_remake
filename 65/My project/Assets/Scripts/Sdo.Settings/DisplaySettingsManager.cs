@@ -14,17 +14,25 @@ namespace Sdo.Settings
         public static GameSettings Settings { get; private set; } = new GameSettings();
         public static event Action SettingsChanged;
 
-        private static string FilePath => Path.Combine(Application.persistentDataPath, "settings.json");
+        // settings.json 放在 DATA/PROFILE 底下（跟 active.txt 同一層；全域設定，非 per-user，不進 <id> 子資料夾），
+        // 讓所有存檔集中在專案 DATA 夾（可隨 exe 搬機），不再散落在 Unity 的 persistentDataPath。
+        private static string FilePath => Path.Combine(ProfileManager.Root, "settings.json");
+        // 舊位置（persistentDataPath/settings.json）：保留供一次性遷移。
+        private static string LegacyFilePath => Path.Combine(Application.persistentDataPath, "settings.json");
 
         public static void Load()
         {
             try
             {
-                if (File.Exists(FilePath))
+                // 新位置優先；沒有就從舊的 persistentDataPath 讀進來並一次性遷移（不刪舊檔）。
+                string path = File.Exists(FilePath) ? FilePath
+                            : (File.Exists(LegacyFilePath) ? LegacyFilePath : null);
+                if (path != null)
                 {
-                    var json = File.ReadAllText(FilePath);
+                    var json = File.ReadAllText(path);
                     var s = JsonUtility.FromJson<GameSettings>(json);
                     Settings = Sanitize(s ?? new GameSettings());
+                    if (path == LegacyFilePath) Save();   // 遷移：把舊設定寫到 DATA/PROFILE/settings.json
                 }
                 else
                 {
@@ -42,6 +50,7 @@ namespace Sdo.Settings
         {
             try
             {
+                Directory.CreateDirectory(ProfileManager.Root);   // DATA/PROFILE 可能尚未建立（Boot 之前存檔時）
                 Settings.updatedAt = DateTime.UtcNow.ToString("o");
                 var json = JsonUtility.ToJson(Settings, true);
                 var tmp = FilePath + ".tmp";

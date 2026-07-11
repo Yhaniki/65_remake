@@ -78,6 +78,7 @@ namespace Sdo.UI.Screens
 
         private RawImage _backdrop;
         private RectTransform _bubbleLayer;   // 對話泡容器:夾在 3D 背景與 UI 之間 → 泡畫在 UI 底下
+        private CanvasGroup _chatLogGroup;    // 收合時淡出左下訊息欄：win3 只下滑 119px,而訊息欄起點較高(y=445)會露出末幾行
         private readonly RawImage[] _slotHead = new RawImage[RoomLayout.SeatCount];
         private readonly Image[] _slotClose = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
@@ -302,7 +303,8 @@ namespace Sdo.UI.Screens
                 RoomUiArt.An("ShopDlg13"), RoomUiArt.An("LabUnCheck"), RoomUiArt.An("LabCheck"),
                 new[] { L("room.drop_up"), L("room.drop_down"), L("room.drop_tilt") }, null,
                 Mathf.Clamp(Ctx.Session.DropDirection, 0, 2), SpeedColor, DropListColor,
-                i => Ctx.Session.DropDirection = i, expandDown: true, listX: Win2.x + 70, listWidth: 38f,
+                i => { Ctx.Session.DropDirection = i; RoomConfig.defaultDropDirection = i; RoomConfig.Save(); },   // 持久化：掉落方式寫回 config.ini（進遊戲決定 note 面板上/下）
+                expandDown: true, listX: Win2.x + 70, listWidth: 38f,
                 valueOffsetY: 2f);   // 只把「向上/向下」值往上 2px，▼ 鈕位置不動
             // 掉落方式 ▼ 開關鈕按下 → SE_0001（清單列本來就有；此為開關鈕本身。中間設定塊仍不掛滑過音）。
             UiSfx.AttachClick(_dropCombo.GetComponent<Button>());
@@ -425,13 +427,22 @@ namespace Sdo.UI.Screens
             if (_dropCombo != null) _dropCombo.CloseList();
         }
 
-        /// <summary>把三個面板容器依 _collapseT(0..1) 補到收合位移（SmoothStep 緩動）。</summary>
+        /// <summary>把三個面板容器依 _collapseT(0..1) 補到收合位移（SmoothStep 緩動）。
+        /// 順帶把左下訊息欄隨收合淡出：win3 只下滑 119px，而訊息欄起點較高(y=445)不會被完全帶出畫面，
+        /// 不淡出就會在收合後露出末幾行。展開時淡回。(對話泡層不動，維持原本一直顯示。)</summary>
         private void ApplyCollapse()
         {
             float e = Mathf.SmoothStep(0f, 1f, _collapseT);
             if (_win1Root != null) _win1Root.anchoredPosition = Win1Hidden * e;
             if (_win2Root != null) _win2Root.anchoredPosition = Win2Hidden * e;
             if (_win3Root != null) _win3Root.anchoredPosition = Win3Hidden * e;
+
+            if (_chatLogGroup != null)
+            {
+                float chatVis = 1f - e;                          // 展開=1 顯示；收合=0 隱藏
+                _chatLogGroup.alpha = chatVis;
+                _chatLogGroup.blocksRaycasts = chatVis > 0.5f;   // 收合後訊息欄不再攔截捲動
+            }
         }
 
         // ---- lifecycle: spawn / tear down the 3D room ----
@@ -565,6 +576,7 @@ namespace Sdo.UI.Screens
             _chatScroll = UIKit.AddVerticalScroll(_win3Root, "AllChatList", out _chatContent, 0f, 3, new Color(0f, 0f, 0f, 0f));
             Place(_chatScroll.GetComponent<RectTransform>(), 14, 445, 360, 104);
             _chatScroll.scrollSensitivity = 18f;
+            _chatLogGroup = _chatScroll.gameObject.AddComponent<CanvasGroup>();   // 收合時淡出(win3 下滑不足以完全移出訊息欄,見 ApplyCollapse)
 
             // 打字泡：固定一顆。已送出的泡另外 Spawn，可並存一串。掛在 _bubbleLayer(UI 底下)。
             _chatBubbleRoot = UIKit.NewRect(_bubbleLayer, "RoomChatTypingBubble");
@@ -2052,7 +2064,14 @@ namespace Sdo.UI.Screens
         // projected Bip01_Head). Runs only while the room is mounted (_scene != null, cleared on OnHide).
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.F2)) _debugOpen = !_debugOpen;
+            // F2：直接開始遊戲（等同按「開始」鈕；OnStart 內含選歌/等待/重複按守門）。
+            // 只在房間為當前畫面、且非聊天輸入中才收，避免打字或選歌疊層時誤觸。
+            if (Input.GetKeyDown(KeyCode.F2))
+            {
+                bool roomIsTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
+                bool typingChat = _chatBubbleTyping || _chatBubbleInputArmed || (_chatInput != null && _chatInput.isFocused);
+                if (roomIsTop && !typingChat) { UiSfx.Play(UiSfx.Click); OnStart(); }   // 按 F2 發出 SE_0001（UiSfx.Click）
+            }
 
             // UI 收合/展開補間（官方 uihide/uidisplay 面板滑動）。與 3D 掛載無關，永遠推進到目標狀態。
             float ct = _uiCollapsed ? 1f : 0f;

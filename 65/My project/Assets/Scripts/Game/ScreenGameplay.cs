@@ -300,6 +300,27 @@ namespace Sdo.Game
         // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖鏡頭 1，無開場運鏡)。
         public bool cameraAuto = true;
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
+        // ── NOTE-PANEL POSITION (two orthogonal player settings, wired in by FrontendApp before boot; see NotePanelLayout).
+        // dropDirection = Room win2「掉落方式」(0=向上 top/up-scroll, 1=向下 bottom/down-scroll, 2=傾斜→比照向下);
+        // notesPanelLeft = OPTION 遊戲頁「NOTES面板位置」(true=屏幕左邊 預設 / false=屏幕中央). ApplyPanelLayout() turns these
+        // into the geometry the board/receptors/notes/HP/score/combo all read: _panelOffsetX (加在每個面板相對 X 上),
+        // judgeLineY (受擊線 Y, top↔bottom), _scrollSign (+1 上捲 / −1 下捲). Standalone/F4 boot keeps the defaults (向上左邊).
+        public int dropDirection = 0;        // 掉落方式：0=向上 1=向下 2=傾斜
+        public bool notesPanelLeft = true;   // NOTES面板位置：true=左邊(預設) / false=置中
+        private float _panelOffsetX = 0f;    // resolved 水平位移 (design px)：0=左, +242.5=中
+        private int _scrollSign = +1;        // +1=notes rise up to the judge line (向上), −1=notes fall down (向下)
+        // ── 周邊 HUD 隨面板位置左右重排（大分數/名次/名單/LV·時間 不跟著 board 平移；置中時要讓開中央的 board）。官方
+        // 向下置中 = 向上置中 的水平鏡射：分數/名次/名單這一坨與 LV·時間 互換左右邊。以下是設計px(800寬,置中 board≈242..557)
+        // 的初版座標，可在 Inspector/F4 微調。左邊模式沿用官方原本右側級聯(board 在左,右邊空著)。
+        private float _scoreBaseX = 290f;    // 大分數 8 位數起始 X（每幀 UpdateScoreDigits 讀）; LayoutSideHud 依模式設定
+        public float hudScoreRightX = 561f, hudScoreLeftX = 20f;                  // 大分數 起始 X（右/左）
+        public float hudRankRightX = 680f, hudRankLeftX = 120f;                   // 粉紅名次 N/M 中心 X（右/左）
+        public float hudRosterNameRightX = 577f, hudRosterScoreRightX = 781f;     // 小人名+分數 名單（右＝官方預設）
+        public float hudRosterNameLeftX = 19f, hudRosterScoreLeftX = 223f;        // 名單鏡射到左邊（about x=400）
+        public float hudAttrLeftX = 204f, hudAttrRightX = 548f;                   // 「LV: 时间:」整組基準 X（左下/右下）— 右下留邊避免時間值超出 800 框
+        // 向下置中：血條從頂端移到 note board 下面（受擊線在底部，血條跟著鏡射到底部框上；置中時橫向留在中央、避開左下歌名/右下LV）。
+        private float _hpYOffset = 0f;             // 血條整組 Y 位移（design px）；ApplyPanelLayout 依模式設定
+        public float hudHpDownYOffset = 552f;      // 向下置中的血條下移量（≈ 15→567，把頂端血條鏡射到板底）
         public float burstSize = 1.3f;      // hit-burst size multiplier
         public float burstBright = 1.5f;    // hit-burst brightness (additive _TintColor; 1.0 = stock)
         // ── hiteft3D: the "3D" note skin's hit effect = a real 3DEFT played at the receptor via the EftEffect particle
@@ -1094,7 +1115,7 @@ namespace Sdo.Game
                 if (_receptors[c] != null)
                 {
                     _receptors[c].sprite = _recIdle[c];
-                    PlaceAspect(_receptors[c], LaneLeftX[c] + LaneCx0, judgeLineY, ReceptorW * eff);
+                    PlaceAspect(_receptors[c], PX(LaneLeftX[c] + LaneCx0), judgeLineY, ReceptorW * eff);
                     _recBaseScale[c] = _receptors[c].transform.localScale;   // base for the press-pulse (UpdateHud)
                 }
         }
@@ -1348,8 +1369,65 @@ namespace Sdo.Game
             SdoLayout.PlaceBox(sr, cx - w / 2f, cy - h / 2f, w, h, z);
         }
 
+        /// <summary>Panel-relative design X → shifted by the horizontal anchor (屏幕左邊=+0 / 屏幕中央=+242.5). Wrap EVERY
+        /// note-panel X (board, receptors, notes, holds, bursts, click strips, HP bar, score, judge word, combo) in this
+        /// so the whole cluster moves as a unit. Non-panel HUD (中央名次/右側清單/旁觀) keeps its own screen anchor.</summary>
+        private float PX(float designX) => designX + _panelOffsetX;
+
+        /// <summary>Resolve the note-panel geometry from the two player settings (dropDirection + notesPanelLeft) into the
+        /// live fields the renderer reads. Called once before BuildBoard places the receptors; cheap enough to re-call if
+        /// the settings change (the board re-places its X every frame, so a live change of just the offset also takes).</summary>
+        private void ApplyPanelLayout()
+        {
+            var layout = NotePanelLayout.Resolve(dropDirection, notesPanelLeft);
+            _panelOffsetX = layout.OffsetX;
+            judgeLineY = layout.JudgeLineY;
+            _scrollSign = layout.ScrollSign;
+            // 向下置中：血條移到 note board 下面（板底受擊線那頭）；其餘模式血條留頂端。
+            _hpYOffset = (layout.Bottom && !notesPanelLeft) ? hudHpDownYOffset : 0f;
+        }
+
+        /// <summary>Arrange the surrounding HUD (大分數 / 粉紅名次 N/M / 小人名+分數名單 / 底部 LV·時間) around the note
+        /// board. These do NOT ride the board's PX offset — instead they sit to the sides so a centred board doesn't
+        /// cover them, and swap sides by drop direction (官方 向下置中 = 向上置中 的水平鏡射):
+        ///   左邊模式  → 沿用官方右側級聯（board 在左，右邊空著）。
+        ///   向上置中 → 分數/名次/名單 靠右，LV·時間 留左下。
+        ///   向下置中 → 分數/名次/名單 靠左，LV·時間 移右下。
+        /// Called at the end of BuildHud (after the elements exist) and safe to re-call if the layout changes.</summary>
+        private void LayoutSideHud()
+        {
+            bool center = !notesPanelLeft;
+            bool down = _scrollSign < 0;
+            float scoreX, rankX, rNameX, rScoreX, attrX;
+            if (!center) { scoreX = 290f; rankX = 429f; rNameX = 577f; rScoreX = 781f; attrX = hudAttrLeftX; }          // 左邊：官方預設
+            else if (!down) { scoreX = hudScoreRightX; rankX = hudRankRightX; rNameX = hudRosterNameRightX; rScoreX = hudRosterScoreRightX; attrX = hudAttrLeftX; }   // 向上置中：靠右 + LV·時間 左下
+            else { scoreX = hudScoreLeftX; rankX = hudRankLeftX; rNameX = hudRosterNameLeftX; rScoreX = hudRosterScoreLeftX; attrX = hudAttrRightX; }                 // 向下置中：靠左 + LV·時間 右下
+
+            _scoreBaseX = scoreX;      // UpdateScoreDigits 每幀讀
+            rankCenterX = rankX;       // UpdateRankDisplay 每幀讀
+            rosterNameX = rNameX; rosterScoreX = rScoreX;
+            if (_rosterName != null)   // 名單位置只在建/重排時套用 → 這裡重置
+                for (int row = 0; row < RosterRows; row++)
+                {
+                    float y = rosterFirstY + row * rosterRowStep;
+                    if (_rosterName[row] != null) _rosterName[row].Position = SdoLayout.ToWorld(rosterNameX, y, -3f);
+                    if (_rosterScore[row] != null) _rosterScore[row].Position = SdoLayout.ToWorld(rosterScoreX, y, -3f);
+                }
+            PlaceAttrRow(attrX);
+        }
+
+        /// <summary>Move the bottom「LV: 时间:」label + LV value + time value as one group (keep the shipped relative
+        /// offsets 0 / +36 / +132). The 歌曲名 label+value stay bottom-left in every mode.</summary>
+        private void PlaceAttrRow(float baseX)
+        {
+            if (_lblAttr) SdoLayout.PlaceTopLeft(_lblAttr, baseX, 575f);
+            if (_lvText) _lvText.transform.position = SdoLayout.ToWorld(baseX + 36f, 585f, -1f);    // 240−204
+            if (_timeText) _timeText.transform.position = SdoLayout.ToWorld(baseX + 132f, 585f, -1f); // 336−204
+        }
+
         private void BuildBoard()
         {
+            ApplyPanelLayout();   // resolve 掉落方式/面板位置 → _panelOffsetX + judgeLineY + _scrollSign before the receptors are placed
             // Single framed board (NOTES_BOARD1.PNG, 315×600) over the stage backdrop. It keeps the chamfered top
             // corners + side frame, AND its lane-divider grid is 69px pitch (texture x 14,83,152,221,290) which
             // matches the 4 note lanes — so it MUST be drawn 1:1 native (PlaceTopLeft, no scaling) at boardX=0,
@@ -1364,13 +1442,14 @@ namespace Sdo.Game
                 _board = NewSR("Board", null, -30);
                 _board.color = Color.white;
                 ApplyBoardAlpha();
-                SdoLayout.PlaceTopLeft(_board, boardX, 0f, 10f);
+                _board.flipY = _scrollSign < 0;   // 向下：整塊 note board 上下顛倒（缺角/框跟著翻到下方對齊底部受擊線）
+                SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f);
             }
             for (int c = 0; c < Keys; c++)
             {
                 _recDownStart[c] = -1f;   // idle (frame 1) until a press fires the burst
                 var sr = NewSR("Receptor" + c, _recIdle[c], 0);
-                PlaceAspect(sr, LaneLeftX[c] + LaneCx0, judgeLineY, ReceptorW);
+                PlaceAspect(sr, PX(LaneLeftX[c] + LaneCx0), judgeLineY, ReceptorW);
                 _receptors[c] = sr;
             }
             // per-lane click-flash overlays (notes_board_click{c+1}): above the board (-30), behind the receptors
@@ -1385,7 +1464,11 @@ namespace Sdo.Game
                 fsr.color = new Color(1f, 1f, 1f, 0f); fsr.enabled = false;
                 fsr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
                 fsr.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
-                SdoLayout.PlaceTopLeft(fsr, LaneLeftX[c] + 1f, ClickStripTopY, 9f);
+                // 向上: the strip emanates DOWN from the top board surface (y12). 向下: mirror it about the board centre
+                // (y300) and flipY so the same glow emanates UP from the bottom receptors.
+                float stripH = fsr.sprite != null ? fsr.sprite.bounds.size.y : 0f;
+                fsr.flipY = _scrollSign < 0;
+                SdoLayout.PlaceTopLeft(fsr, PX(LaneLeftX[c] + 1f), _scrollSign > 0 ? ClickStripTopY : (600f - ClickStripTopY - stripH), 9f);
                 _clickFlashSr[c] = fsr;
             }
             // miss flash: the click glow sprite TILED across all 4 lanes → the SAME soft glow as the white click flash, just
@@ -1398,7 +1481,8 @@ namespace Sdo.Game
             _missOverlay.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
             float trackW = LaneLeftX[Keys - 1] + 69f - LaneLeftX[0];
             if (glowSpr != null) { _missOverlay.drawMode = SpriteDrawMode.Tiled; _missOverlay.tileMode = SpriteTileMode.Continuous; _missOverlay.size = new Vector2(trackW, 558f); }
-            _missOverlay.transform.position = SdoLayout.ToWorld(LaneLeftX[0] + trackW / 2f, ClickStripTopY + 279f, 9f);
+            float missY = ClickStripTopY + 279f;   // ≈ board centre; mirror about y300 for 向下 so the wash tracks the receptors
+            _missOverlay.transform.position = SdoLayout.ToWorld(PX(LaneLeftX[0] + trackW / 2f), _scrollSign > 0 ? missY : (600f - missY), 9f);
             _missOverlay.color = new Color(1f, 0f, 0f, 0f); _missOverlay.enabled = false;
             BuildNoteClip();
         }
@@ -1513,12 +1597,12 @@ namespace Sdo.Game
             var hpBaseTex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
             hpBaseTex.SetPixel(0, 0, Color.black); hpBaseTex.Apply();
             _hpSolidBack = NewSR("HpSolidBase", Sprite.Create(hpBaseTex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f), 14);
-            SdoLayout.PlaceBox(_hpSolidBack, TrackCenterX - 123f, 15, 246, 18);   // the MyHpBack frame's full rect
-            _hpBg = NewSR("HpBg(bloodBG2)", SdoExtracted.Hud("bloodBG2.an"), 15); SdoLayout.PlaceBox(_hpBg, HpPos.x, HpPos.y, HpSize.x, HpSize.y);
+            SdoLayout.PlaceBox(_hpSolidBack, PX(TrackCenterX - 123f), 15 + _hpYOffset, 246, 18);   // the MyHpBack frame's full rect (PX = 面板位置 左/中; _hpYOffset = 向下置中下移)
+            _hpBg = NewSR("HpBg(bloodBG2)", SdoExtracted.Hud("bloodBG2.an"), 15); SdoLayout.PlaceBox(_hpBg, PX(HpPos.x), HpPos.y + _hpYOffset, HpSize.x, HpSize.y);
             _hpTex = NewSR("HpFill", SdoExtracted.Hud("MyHp.an"), 16); // official MyHp.png (top-bottom gradient)
             // MyHpBack is a dark-gray frame (centre ~24, edges ~65); key out the dark centre (<45) so the
             // red fill shows through, keeping only the lighter rounded frame edges on top.
-            _hpBackFrame = NewSR("MyHpBack", SdoExtracted.LoadImageBlackKeyed(SdoExtracted.GameplayUiDir, "MyHpBack.png", 45), 18); SdoLayout.PlaceBox(_hpBackFrame, TrackCenterX - 123f, 15, 246, 18);
+            _hpBackFrame = NewSR("MyHpBack", SdoExtracted.LoadImageBlackKeyed(SdoExtracted.GameplayUiDir, "MyHpBack.png", 45), 18); SdoLayout.PlaceBox(_hpBackFrame, PX(TrackCenterX - 123f), 15 + _hpYOffset, 246, 18);
             _hpGlowFrames = SdoExtracted.LoadAn(SdoExtracted.GameplayUiDir, "HpEft.an");
             _hpGlow = NewSR("HpEft", _hpGlowFrames.Length > 0 ? _hpGlowFrames[0] : null, 19);
 
@@ -1546,13 +1630,16 @@ namespace Sdo.Game
             _lvText = NewText("MusicLev", 240, 585, 11, Color.white); _lvText.text = _map.Level.ToString();
             int tot0 = (int)Math.Round(_totalMs / 1000.0);   // initial: "--:--  [total]"
             _timeText = NewText("MusicTime", 336, 585, 11, Color.white); _timeText.text = FullWidth($"- : -    {tot0 / 60} : {tot0 % 60:00}");
-            _info = NewText("Info", 610, 8, 10, Color.white);
-            _fpsText = NewText("Fps", 6, 9, 11, new Color(0.5f, 1f, 0.5f, 1f));   // debug FPS (top-left)
+            // 已隱藏：右上統計（P/C/B/M + combo + F2 相機標籤）不建立就不顯示也不更新（_info 保持 null，更新處有守門）
+            // _info = NewText("Info", 610, 8, 10, Color.white);
+            // 已隱藏：左上除錯 FPS 不建立就不顯示（_fpsText 保持 null，更新處有守門）
+            // _fpsText = NewText("Fps", 6, 9, 11, new Color(0.5f, 1f, 0.5f, 1f));   // debug FPS (top-left)
             _readyGo = NewSR("ReadyGo", null, 50); _readyGo.enabled = false;
             _gameOverGo = NewSR("GameOverText", null, 55); _gameOverGo.enabled = false;   // above the READY/GO overlay (50)
             // (死亡字幕的幀在死亡當下才依「當前 note skin」載入 → LoadGameOverFrames;每個 skin 各有一組 GAMEOVER 圖)
             BuildRankingUi();
             BuildEnergyHud();
+            LayoutSideHud();   // 依面板位置把 大分數/名次/名單/LV·時間 排到 board 兩側（置中時讓開中央）
             UpdateHpBar();
         }
 
@@ -3216,9 +3303,12 @@ namespace Sdo.Game
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
-            if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
-            if (Input.GetKeyDown(KeyCode.F8)) { EftEffect.DebugMeshOnly = !EftEffect.DebugMeshOnly; Debug.Log("[dbg] DebugMeshOnly=" + EftEffect.DebugMeshOnly + " (isolate the delta_line 3-colour mesh: hides disc/lightbars/MW, mesh at 5×)"); }
-            if (Input.GetKeyDown(KeyCode.F7)) { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // DEBUG F7: toggle ShowTime (氣條) mode — SetTrackVisible refreshes HP-bar visibility for the new mode
+            // 測試用（已停用）：F4 開/關除錯滑桿面板
+            // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
+            // F8：Auto（自動）模式開關 — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）
+            if (Input.GetKeyDown(KeyCode.F8)) { autoPlay = !autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按 F8 發出 SE_0001
+            // DEBUG F7（暫時停用）：切換 ShowTime（氣條）模式。註解掉避免誤觸；要測時再打開。
+            // if (Input.GetKeyDown(KeyCode.F7)) { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // SetTrackVisible refreshes HP-bar visibility for the new mode
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
             // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
             if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
@@ -3227,20 +3317,24 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.Alpha4)) SpawnComboBurst(3);
             if (Input.GetKeyDown(KeyCode.Alpha5)) SpawnComboBurst(4);
             if (Input.GetKeyDown(KeyCode.Alpha0)) SpawnNamedEft("FINISHED", 5f);
-            if (Input.GetKeyDown(KeyCode.F5) && _started && !_ended)
-            {
-                // DEBUG F5: cut the song short → jump to the result sequence. Shift+F5 forces HP-out → the GAME OVER
-                // death flow (Frameextrude + 死亡字幕 + no win/lose pose), for verifying it without grinding HP to zero.
-                if (!showtimeMode && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))) _failed = true;
-                _ended = true; EnterResult();
-            }
+            // 測試用（已停用）：F5 直接跳到結算（Shift+F5 強制 GAME OVER）
+            // if (Input.GetKeyDown(KeyCode.F5) && _started && !_ended)
+            // {
+            //     // DEBUG F5: cut the song short → jump to the result sequence. Shift+F5 forces HP-out → the GAME OVER
+            //     // death flow (Frameextrude + 死亡字幕 + no win/lose pose), for verifying it without grinding HP to zero.
+            //     if (!showtimeMode && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))) _failed = true;
+            //     _ended = true; EnterResult();
+            // }
+            // F5：加速 note（下一速度檔）／F6：減速 note（上一速度檔）— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
+            if (Input.GetKeyDown(KeyCode.F5)) StepScrollSpeed(+1);
+            if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
             if (Input.GetKeyDown(KeyCode.LeftBracket)) SetTimeScale(_timeScale * 0.5f);    // [ slower
             if (Input.GetKeyDown(KeyCode.RightBracket)) SetTimeScale(_timeScale * 2f);     // ] faster
             if (Input.GetKeyDown(KeyCode.Backslash)) { if (Time.timeScale > 0f) Time.timeScale = 0f; else SetTimeScale(_timeScale); }  // \ pause/resume
             if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) SetTimeScale(1f);   // = reset 1×
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
-            if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); SdoLayout.PlaceTopLeft(_board, boardX, 0f, 10f); }   // live board opacity + X nudge
+            if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
             // F9: toggle the stage backdrop V-flip (safety net — the RenderTexture vertical convention is auto-gated
             // on graphicsUVStartsAtTop, but if the stage still shows upside-down on this machine, F9 flips it).
             if (Input.GetKeyDown(KeyCode.F9) && _backdropMat != null)
@@ -3441,8 +3535,19 @@ namespace Sdo.Game
         private void ShowResultSongInfo()
         {
             if (_lblSong) _lblSong.enabled = true;                          // "歌曲名:"
-            if (_musicName) _musicName.gameObject.SetActive(true);         // song title value
-            if (_lvText) _lvText.gameObject.SetActive(true);              // LV value
+            // 結算列固定回官方預設位置：不管遊戲時 面板位置(左/中) 或 掉落方式(上/下) 把「LV: 时间:」整組推到左下或右下，
+            // 結算時 歌名+LV 都要回到 GamePlay 預設欄位（歌名值 x=80、LV 標籤 x=204、LV 值 x=240）。
+            // ── 過去只重置 LV 標籤(_lblAttr) 沒重置 LV 值(_lvText)，向下置中模式下 _lvText 仍停在 548+36=584，數字就跑到最右邊。
+            if (_musicName)
+            {
+                _musicName.gameObject.SetActive(true);                     // song title value
+                _musicName.transform.position = SdoLayout.ToWorld(80f, 585f, -1f);
+            }
+            if (_lvText)
+            {
+                _lvText.gameObject.SetActive(true);                        // LV value
+                _lvText.transform.position = SdoLayout.ToWorld(240f, 585f, -1f);
+            }
             if (_lblAttr)
             {
                 if (_lvOnlyLabel != null) _lblAttr.sprite = _lvOnlyLabel;  // "LV:" only (drop "时间:")
@@ -3572,12 +3677,13 @@ namespace Sdo.Game
                 + $", {_map.TimingPoints.Count} timing pts, constant={constantScroll}");
         }
 
-        // UPSCROLL (matches the official screen): future notes are below the hit line and RISE to it. Distance
-        // comes from ManiaScroll (osu Sequential integration), so mid-song BPM changes / SV vary it locally.
+        // 向上 (up-scroll, _scrollSign +1): future notes are BELOW the hit line and RISE to it. 向下 (_scrollSign −1):
+        // future notes are ABOVE and FALL to it. Distance comes from ManiaScroll (osu Sequential integration), so
+        // mid-song BPM changes / SV vary it locally; the sign just picks which side of the judge line notes come from.
         private float YForTime(double noteMs, double now)
         {
             if (_scroll == null) BuildScroll();
-            return judgeLineY + (float)_scroll.PixelDistance(now, noteMs);
+            return judgeLineY + _scrollSign * (float)_scroll.PixelDistance(now, noteMs);
         }
 
         private void ScrollNotes(double now)
@@ -3596,13 +3702,18 @@ namespace Sdo.Game
                 // On slow songs the off-top point comes BEFORE MissBoundary, so retiring it here would skip the
                 // Miss — instead we just hide it and let AutoMiss (or a late in-window press) judge it at the proper
                 // time, then retire it once it's been judged. (disappears at the same spot as before, still scored.)
-                if (!held && Mathf.Max(yRaw, yEnd) < NotesClipTop - 36f)
+                bool offPast = !held && (_scrollSign > 0
+                    ? Mathf.Max(yRaw, yEnd) < NotesClipTop - 36f       // up-scroll: flowed off the TOP past the judge line
+                    : Mathf.Min(yRaw, yEnd) > NotesClipBottom + 36f);  // down-scroll: flowed off the BOTTOM past the judge line
+                if (offPast)
                 {
                     n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false);
                     if (n.HeadJudged) n.Done = true;   // hit late / auto-missed -> now fully retired
                     continue;
                 }
-                bool visible = held || Mathf.Min(yRaw, yEnd) <= NotesClipBottom + 60f;   // shown once it enters from the bottom; SpriteMask clips it to the board
+                bool visible = held || (_scrollSign > 0
+                    ? Mathf.Min(yRaw, yEnd) <= NotesClipBottom + 60f   // up-scroll: shown once it enters from the bottom
+                    : Mathf.Max(yRaw, yEnd) >= NotesClipTop - 60f);    // down-scroll: shown once it enters from the top; SpriteMask clips it to the board
                 n.Head.enabled = visible;
                 if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
                 float y = yRaw;   // NO clamp — notes keep flowing past the receptor (the mask hides them above the HP bar)
@@ -3618,7 +3729,7 @@ namespace Sdo.Game
                     // body/tail below stay 2D. RotZ = the per-lane arrow direction.
                     // HOLD head is forced to family 0 = the on-beat (4th) MAGENTA (洋紅), regardless of its beat position.
                     _highwayItems.Add(new Note3dHighway.Item {
-                        World = SdoLayout.ToWorld(LaneLeftX[c] + LaneCx0, y, -0.5f),
+                        World = SdoLayout.ToWorld(PX(LaneLeftX[c] + LaneCx0), y, -0.5f),
                         Size = LaneW * note3dMaster * noteScale, RotZ = Note3dRot[c] + (note3dFlip180 ? 180f : 0f),
                         Family = n.Note.EndTimeMs.HasValue ? 0 : n.ColorFamily });
                     n.Head.enabled = false;
@@ -3636,13 +3747,13 @@ namespace Sdo.Game
                         if (_noteFrames[c] != null) n.Head.sprite = _noteFrames[c][frame];
                         if (n.Head.transform.localRotation != Quaternion.identity) n.Head.transform.localRotation = Quaternion.identity;   // restore after leaving 3D skin
                     }
-                    PlaceAspect(n.Head, LaneLeftX[c] + LaneCx0, y, noteW, 1f);
+                    PlaceAspect(n.Head, PX(LaneLeftX[c] + LaneCx0), y, noteW, 1f);
                 }
 
                 if (n.Note.EndTimeMs.HasValue)
                 {
                     float holdW = LaneW * (_note3dMode ? note3dHoldWidth * note3dMaster : 1f) * noteScale;   // 3D skin: hold width matches the note, scaled by the master (+ showtime grow)
-                    float cx = LaneLeftX[c] + 34.5f;
+                    float cx = PX(LaneLeftX[c] + 34.5f);
                     float tailY = Mathf.Max(y, yEnd);                                   // true tail edge (below the head in upscroll)
                     if (_note3dMode)
                     {
@@ -3652,20 +3763,26 @@ namespace Sdo.Game
                         if (n.Cap3d == null && _capMeshMat != null) n.Cap3d = CreateHoldCap();
                         if (n.Cap3d != null)
                         {
-                            float capBaseY = tailY + note3dCapOffset;
+                            // cap sits at the note's END on the side AWAY from the judge line. 向下 (down-scroll): the tail
+                            // is ABOVE the head → take the min edge, push the offset the other way, and flip the triangle
+                            // (scale.y·_scrollSign) so it still points away from the (now bottom) judge line.
+                            float capEndY = _scrollSign > 0 ? Mathf.Max(y, yEnd) : Mathf.Min(y, yEnd);
+                            float capBaseY = capEndY + _scrollSign * note3dCapOffset;
                             float capLen = holdW * LongCapLenRatio;
-                            bool capVis = capBaseY <= NotesClipBottom && capBaseY + capLen >= NotesClipTop;
+                            float capFar = capBaseY + _scrollSign * capLen;   // the tip end (design y)
+                            bool capVis = Mathf.Max(capBaseY, capFar) >= NotesClipTop && Mathf.Min(capBaseY, capFar) <= NotesClipBottom;
                             n.Cap3d.SetActive(capVis);
                             if (capVis)
                             {
                                 n.Cap3d.transform.position = SdoLayout.ToWorld(cx, capBaseY, 0.6f);
-                                n.Cap3d.transform.localScale = new Vector3(holdW, holdW, 1f);
+                                n.Cap3d.transform.localScale = new Vector3(holdW, holdW * _scrollSign, 1f);
                             }
                         }
                     }
                     else if (n.Tail)
                     {
                         n.Tail.enabled = true;
+                        n.Tail.flipY = _scrollSign < 0;   // 向下：cap 上下翻，尖端朝離開判定線的方向（否則方向相反）
                         // 2D cap sits at the tail END (yEnd), its own sprite/aspect.
                         PlaceAspect(n.Tail, cx, yEnd, holdW, 0.5f);
                         if (n.Cap3d != null && n.Cap3d.activeSelf) n.Cap3d.SetActive(false);
@@ -4164,7 +4281,7 @@ namespace Sdo.Game
             // native-proportional: scale by THIS skin's frame size vs the reference, so every skin keeps its true relative
             // size (the old fixed BurstWidth stretched a small 150px skin up to the 300px skin's footprint -> "too big").
             float burstNativeW = frames[0] != null ? frames[0].rect.width : BurstNativeRef;   // native px (PPU-independent)
-            PlaceAspect(sr, LaneLeftX[lane] + LaneCx0, judgeLineY, BurstWidth * burstSize * (burstNativeW / BurstNativeRef));
+            PlaceAspect(sr, PX(LaneLeftX[lane] + LaneCx0), judgeLineY, BurstWidth * burstSize * (burstNativeW / BurstNativeRef));
             var sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
             if (mat != null) sr2.sharedMaterial = mat;
             sr2.transform.SetParent(sr.transform, false);

@@ -17,6 +17,11 @@ namespace Sdo.UI.Screens
 
         public abstract ScreenId Id { get; }
 
+        /// <summary>True while this screen is shown (CanvasGroup visible). Screens keep their GameObject active while
+        /// hidden (visibility = CanvasGroup alpha), so per-frame input handlers (e.g. mouse wheel) must gate on this
+        /// or a hidden overlay steals input from the active screen.</summary>
+        protected bool Visible => _visible;
+
         public void Build(AppContext ctx)
         {
             Ctx = ctx;

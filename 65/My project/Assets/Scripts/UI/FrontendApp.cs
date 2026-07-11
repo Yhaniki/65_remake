@@ -204,6 +204,7 @@ namespace Sdo.UI
             game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
             game.showtimeMode = s.GameMode == 2;                 // 選歌模式選單：2 = ShowTime（氣條/集氣）模式；否則一般玩法
+            game.dropDirection = s.DropDirection;                // 房間 win2「掉落方式」→ note 面板上/下 + 捲動方向（0=向上 1=向下 2=傾斜）
             var gp = DisplaySettingsManager.Settings?.gameplay;  // OPTION 遊戲頁偏好 → 開局套用
             if (gp != null)
             {
@@ -212,6 +213,7 @@ namespace Sdo.UI
                 game.cameraAuto = gp.cameraAuto;                 // 遊戲視角：默認(自動導播)/固定(鏡頭1)
                 game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
                 game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
+                game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
             }
             _activeGame = game;
         }

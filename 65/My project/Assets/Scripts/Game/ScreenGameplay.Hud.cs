@@ -62,7 +62,7 @@ namespace Sdo.Game
                 _digitVisible[i] = show;
                 var spr = show ? _scoreDigitSprites[s[i] - '0'] : null;
                 _scoreDigits[i].enabled = spr != null; _scoreDigits[i].sprite = spr;
-                if (spr != null) { PlaceAspect(_scoreDigits[i], ScorePos.x + i * ScoreDigitPitch + 14, ScorePos.y + 18, 29); _scoreDigits[i].transform.localScale *= DigitBounce(Time.time - _digitPopAt[i]); }
+                if (spr != null) { PlaceAspect(_scoreDigits[i], _scoreBaseX + i * ScoreDigitPitch + 14, ScorePos.y + 18, 29); _scoreDigits[i].transform.localScale *= DigitBounce(Time.time - _digitPopAt[i]); }
             }
             _scoreCommitPop = false;
         }
@@ -93,7 +93,8 @@ namespace Sdo.Game
             // unit and the spacing never drifts. (Previously the word popped about its own centre Y=275 and the digits
             // about Y=326 — two separate pivots — so glyphs grew while the vertical gap stayed fixed and the rows fought.)
             const float comboPivotY = (ComboWordY + ComboDigitY) / 2f;
-            float startX = TrackCenterX - (s.Length - 1) * ComboDigitStep / 2f;   // centred on the track
+            float cxTrack = PX(TrackCenterX);   // track centre X shifted by the 面板位置 (左/中)
+            float startX = cxTrack - (s.Length - 1) * ComboDigitStep / 2f;   // centred on the track
             for (int i = 0; i < _comboDigits.Count; i++)
             {
                 var d = _comboDigits[i];
@@ -102,7 +103,7 @@ namespace Sdo.Game
                 d.enabled = spr != null; d.sprite = spr;
                 if (spr != null)
                 {
-                    float dx = TrackCenterX + (startX + i * ComboDigitStep - TrackCenterX) * pop;
+                    float dx = cxTrack + (startX + i * ComboDigitStep - cxTrack) * pop;
                     float dy = comboPivotY + (ComboDigitY - comboPivotY) * pop;
                     PlaceAspect(d, dx, dy, ComboDigitW, -2); d.transform.localScale *= pop;
                 }
@@ -111,7 +112,7 @@ namespace Sdo.Game
             {
                 _comboWord.enabled = true;
                 float wy = comboPivotY + (ComboWordY - comboPivotY) * pop;
-                PlaceAspect(_comboWord, TrackCenterX, wy, ComboWordW); _comboWord.transform.localScale *= pop;
+                PlaceAspect(_comboWord, cxTrack, wy, ComboWordW); _comboWord.transform.localScale *= pop;
             }
         }
 
@@ -420,7 +421,7 @@ namespace Sdo.Game
             float frac = Mathf.Clamp01((float)((hp - HealthProcessor.FloorHealth) / (HealthProcessor.MaxHealth - HealthProcessor.FloorHealth)));
             if (_emojiState.OnHp(frac)) PlaySe("VOICE_0012");   // 血剩30% → 警告語音 (低血只播語音;GTH emoji 改成累計100miss,見 OnJudge)
             // official MyHp fill clipped to (HP+150)/1150 (no overlay -> uniform red, no banding).
-            if (_hpTex) SdoLayout.PlaceBarFill(_hpTex, HpPos.x, HpPos.y, HpSize.x, HpSize.y, frac, -0.1f);
+            if (_hpTex) SdoLayout.PlaceBarFill(_hpTex, PX(HpPos.x), HpPos.y + _hpYOffset, HpSize.x, HpSize.y, frac, -0.1f);
             if (_hpGlow && _hpGlowFrames != null && _hpGlowFrames.Length > 0)
             {
                 _hpGlowT += Time.deltaTime * 24f;   // HpEft flash (6 frames) — was too slow at 12fps
@@ -436,7 +437,7 @@ namespace Sdo.Game
                     // bar's right end) shows bright instead of being chopped off.
                     if (_hpGlowMat.HasProperty("_ClipMinX"))
                     {
-                        _hpGlowMat.SetFloat("_ClipMinX", SdoLayout.WorldX(HpPos.x));
+                        _hpGlowMat.SetFloat("_ClipMinX", SdoLayout.WorldX(PX(HpPos.x)));
                         _hpGlowMat.SetFloat("_ClipMaxX", 100000f);   // no right clip — let the rightmost flash bleed out
                     }
                     _hpGlow.sharedMaterial = _hpGlowMat;
@@ -445,9 +446,9 @@ namespace Sdo.Game
                 // 64×32 (no width-squash). Clamp so the glow's right edge never juts PAST the bar's right end.
                 // HpEft.png's bright/widest core sits at ~0.78 of its width; hpGlowOffsetX (default -20) lands that core
                 // flush ON the fill edge (the old -16 left it ~2px right of the edge -> read as "too far right").
-                float edgeX = Mathf.Min(HpPos.x + HpSize.x * frac, HpPos.x + HpSize.x);   // fill edge, capped at bar end
+                float edgeX = Mathf.Min(PX(HpPos.x) + HpSize.x * frac, PX(HpPos.x) + HpSize.x);   // fill edge, capped at bar end
                 float cx = edgeX + hpGlowOffsetX;
-                PlaceAspect(_hpGlow, cx, HpPos.y + HpSize.y / 2f, HpEftSize.x, -0.2f);
+                PlaceAspect(_hpGlow, cx, HpPos.y + HpSize.y / 2f + _hpYOffset, HpEftSize.x, -0.2f);
                 _hpGlow.enabled = hp > HealthProcessor.FloorHealth + 1;
             }
         }

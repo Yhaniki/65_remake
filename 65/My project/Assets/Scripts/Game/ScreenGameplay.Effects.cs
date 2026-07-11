@@ -82,7 +82,7 @@ namespace Sdo.Game
             var file = LoadNamedEft(name);
             if (file == null) return null;
             var go = new GameObject("Hit3d" + lane);
-            go.transform.position = SdoLayout.ToWorld(LaneLeftX[lane] + LaneCx0, judgeLineY, hit3dZ);
+            go.transform.position = SdoLayout.ToWorld(PX(LaneLeftX[lane] + LaneCx0), judgeLineY, hit3dZ);
             // OFFICIAL: the hit burst is oriented per-lane like the arrow (FUN_004bcba0 rotZ = {90,180,0,-90}° for lanes
             // 0=left 1=down 2=up 3=right) — NOT always-up. The burst's note-arrow world-quads inherit this host rotation.
             go.transform.rotation = Quaternion.Euler(0f, 0f, Note3dRot[lane] + (note3dFlip180 ? 180f : 0f));
@@ -338,7 +338,7 @@ namespace Sdo.Game
             {
                 _judgeWord.color = new Color(1, 1, 1, Mathf.Clamp01(1f - age / 0.5f));
                 float pop = (1f + Mathf.Clamp01(1f - age * 6f) * 1.0f) * 0.8f; // 2.0->1.0 ×0.8 (decompiled)
-                PlaceAspect(_judgeWord, JudgeWordCenter.x, JudgeWordCenter.y, _judgeWord.sprite.bounds.size.x, -2);
+                PlaceAspect(_judgeWord, PX(JudgeWordCenter.x), JudgeWordCenter.y, _judgeWord.sprite.bounds.size.x, -2);
                 _judgeWord.transform.localScale *= pop;
             }
             else _judgeWord.color = new Color(1, 1, 1, 0);

@@ -343,7 +343,7 @@ namespace Sdo.UI.Screens
             // row 6 呼叫卡遊戲中顯示: A=開啟 · B=關閉 (persist only)
             GameDot(b, GameOptAX, GameRowY[5], () => _gpCallShow,  () => _gpCallShow = true);
             GameDot(b, GameOptBX, GameRowY[5], () => !_gpCallShow, () => _gpCallShow = false);
-            // 面板透明度 slider (0..1.6X) → note 面板 alpha 倍率 (ScreenGameplay.boardAlpha). Handle travel is kept
+            // 面板透明度 slider (0..1.4X, = GameplaySettings.MaxPanelOpacity) → note 面板 alpha 倍率 (ScreenGameplay.boardAlpha). Handle travel is kept
             // INSIDE the baked MIN(…405)/MAX(526…) text — handle is 43px wide so centre range 430..502 clears both.
             _gpOpacitySlider = AddBakedSlider(b, 430f, 502f, 405f, v => _gpPanelOpacity = v);
         }

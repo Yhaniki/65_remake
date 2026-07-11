@@ -15,6 +15,27 @@ namespace Sdo.Game
         // standard room "速度" steps (matches RoomConfig.speedSteps defaults) — quick-select buttons for live tuning
         private static readonly float[] ScrollSpeedSteps = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f };
 
+        // F5/F6 in-game note-speed step: snap scrollSpeedMul to the nearest room「速度」step then move ±1 (clamped at
+        // both ends), matching the room's outside speed selector (e.g. 2.5→3.0). Reads the SAME ladder the room uses —
+        // RoomConfig.speedSteps (config.ini 自訂檔位完全同步) — falling back to ScrollSpeedSteps if it's empty/bad.
+        // Rebuilds the scroll live + plays SE_0001 on change.
+        private void StepScrollSpeed(int dir)
+        {
+            if (_map == null) return;   // BuildScroll needs the loaded chart
+            var steps = (Sdo.Settings.RoomConfig.speedSteps != null && Sdo.Settings.RoomConfig.speedSteps.Length > 0)
+                ? Sdo.Settings.RoomConfig.speedSteps : ScrollSpeedSteps;
+            int nearest = 0; float best = float.MaxValue;
+            for (int i = 0; i < steps.Length; i++)
+            {
+                float d = Mathf.Abs(steps[i] - scrollSpeedMul);
+                if (d < best) { best = d; nearest = i; }
+            }
+            int idx = Mathf.Clamp(nearest + dir, 0, steps.Length - 1);
+            scrollSpeedMul = steps[idx];
+            BuildScroll();
+            PlaySe("SE_0001");
+        }
+
         // in-game debug tuning sliders (F4 toggles). Board alpha applies live; burst size/brightness apply to the
         // next bursts (taps fire continuously, so the effect shows within ~0.3s).
         private void OnGUI()
@@ -211,8 +232,8 @@ namespace Sdo.Game
                 openingIntroSec = GUILayout.HorizontalSlider(openingIntroSec, 0f, 15f);   // board+HP+READY appear after this; tunable live during the hold
                 GUILayout.Label($"相機開場切掉前: {camIntroSkipSec:F1}s (從第N秒的frame開始放；重進歌套用)");
                 camIntroSkipSec = GUILayout.HorizontalSlider(camIntroSkipSec, 0f, 10f);
-                GUILayout.Label($"Board opacity: {boardAlpha:F2}× (1=native, ~1.4=official, ~2.6=opaque)");
-                boardAlpha = GUILayout.HorizontalSlider(boardAlpha, 0f, 2.6f);
+                GUILayout.Label($"Board opacity: {boardAlpha:F2}× (1=native, ~1.4=official, 1.6=max)");
+                boardAlpha = GUILayout.HorizontalSlider(boardAlpha, 0f, 1.6f);   // 上限 1.6（對齊 OPTION 面板透明度 MaxPanelOpacity）
                 GUILayout.Label($"Board X nudge: {boardX:F0}px");
                 boardX = GUILayout.HorizontalSlider(boardX, -40f, 40f);
                 GUILayout.Label($"Burst size: {burstSize:F2}×");

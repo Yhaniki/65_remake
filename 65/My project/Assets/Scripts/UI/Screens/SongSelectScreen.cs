@@ -1063,6 +1063,28 @@ namespace Sdo.UI.Screens
                 }
             }
 
+            // 滾輪選歌：向下滾=下一首、向上滾=上一首（隨機分類則上下移動難度區間）。對齊商城慣例(向下=前進)；
+            // 只在選歌可見、非收起中、沒開收藏彈窗時作用（Update 在隱藏時仍會跑，不擋會搶走房間的滾輪）。
+            if (Visible && !_closing && _favPopup == null)
+            {
+                float sw = Input.mouseScrollDelta.y;
+                if (sw != 0f)
+                {
+                    int step = sw < 0f ? 1 : -1;
+                    if (_category == CatRandom)
+                    {
+                        SelectRandRange(_randRange + step);   // 內部 clamp 到 RandRanges 範圍
+                    }
+                    else if (_filtered.Count > 0)
+                    {
+                        int idx = _filtered.IndexOf(_selected);
+                        if (idx < 0) idx = 0;
+                        int next = Mathf.Clamp(idx + step, 0, _filtered.Count - 1);
+                        if (next != idx) { _page = next / PageSize; Select(_filtered[next]); }   // 跳頁讓選取列保持可見
+                    }
+                }
+            }
+
             if (_favPopup == null) return;
             if (Time.frameCount == _favPopupFrame) return;   // 剛開的那一幀不判關，避免自我關閉
             if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;

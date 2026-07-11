@@ -8,10 +8,10 @@ namespace Sdo.Settings
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Boot()
         {
-            DisplaySettingsManager.Load();
+            ProfileManager.Boot();   // 先解析/建立 DATA/PROFILE（active 使用者+資料夾）—— settings.json 也放這層，故要先跑
+            DisplaySettingsManager.Load();   // 讀 DATA/PROFILE/settings.json（舊 persistentDataPath 的會一次性遷移進來）
             DisplaySettingsManager.ApplyDisplay();
-            ProfileManager.Boot();   // 解析/建立 active 使用者(DATA/PROFILE)，載入其收藏 —— 必須在 RoomConfig 之前
-            RoomConfig.Load();       // 開房間面板預設：改成 active 使用者資料夾下的 config.ini
+            RoomConfig.Load();       // 開房間面板預設：active 使用者資料夾下的 config.ini（per-user）
         }
     }
 }
