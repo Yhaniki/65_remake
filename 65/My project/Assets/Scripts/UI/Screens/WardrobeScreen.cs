@@ -68,9 +68,9 @@ namespace Sdo.UI.Screens
         private float _previewHeight = RefHeight;
         private static readonly Vector3 EyeFar = new Vector3(0f, 37f, -140f), LookFar = new Vector3(0f, 27f, 0f);
 
-        // ---- 格子 3D 縮圖 (同 ShopScreen 卡片；靜態 bind-pose，不做 hover 旋轉) ----
-        // 一頁 = 6 格 (使用者指定「一次擴充一頁＝6格」)；用 3×3 格子的上兩排 (SlotPos 前 6 個)。
-        private const int PerPage = 6;
+        // ---- 3×3 格 3D 縮圖 (同 ShopScreen 卡片；靜態 bind-pose，不做 hover 旋轉) ----
+        // 一頁 = 9 格 (用滿 3×3)；服饰栏扩充 一次也 +9 格 (一頁)。使用者指定。
+        private const int PerPage = 9;
         private const int CardRtW = 100, CardRtH = 100;   // 格子 86×86 → RT 稍大保清晰
         private const float CardEyeDist = 110f, CardOrthoHalfW = 64f, CardNear = 5f, CardFar = 1000f;
         private Camera _cardCam;
@@ -238,7 +238,7 @@ namespace Sdo.UI.Screens
             if (_catalog == null) { _totalPages = 1; UpdatePageLabel(); return; }
 
             var items = OwnedForFilter();
-            // 依「服飾欄容量」分頁 (擴充後頁數變多；至少容得下已擁有的)。一頁 PerPage(6) 格。
+            // 依「服飾欄容量」分頁 (擴充後頁數變多；至少容得下已擁有的)。一頁 PerPage(9) 格。
             int capacity = Mathf.Max(_session.Wardrobe.ClothSlotCount, items.Count);
             int pages = Mathf.Max(1, (capacity + PerPage - 1) / PerPage);
             _page = Mathf.Clamp(_page, 0, pages - 1);
@@ -341,13 +341,13 @@ namespace Sdo.UI.Screens
             Toast.Show("已刪除服飾");
         }
 
-        // 服饰栏扩充 (#8)：一次擴充「一頁」= PerPage(6) 格 (使用者指定)，上限 1000，落地 profile.json。
+        // 服饰栏扩充 (#8)：一次擴充「一頁」= PerPage(9) 格 (使用者指定)，上限 1000，落地 profile.json。
         private void DoExpandSlots()
         {
             if (_session == null) return;
             var w = _session.Wardrobe;
             if (w.ClothSlotCount >= 1000) { Toast.Show("服飾欄已達上限 1000"); return; }
-            w.ClothSlotCount = Mathf.Min(1000, w.ClothSlotCount + PerPage);   // +一頁 (6 格)
+            w.ClothSlotCount = Mathf.Min(1000, w.ClothSlotCount + PerPage);   // +一頁 (9 格)
             WardrobeStore.SaveAll(_session);
             RefreshGrid();   // 頁數立即更新 (1/N)
             Toast.Show("服飾欄擴充成功（目前 " + w.ClothSlotCount + " 格）");
