@@ -350,6 +350,7 @@ namespace Sdo.UI.Screens
         public void Open()
         {
             _catalog = AvatarItemCatalog.Instance;
+            _sex = _session != null && _session.Gender == 1 ? ItemSex.Male : ItemSex.Female;   // 依 session 性別開對應性別商城 (開場/房間皆是)
             _store = Store.Clothing; _slot = EquipSlot.Top; _page = 0;   // 每次進來預設 focus 服装店 / 上装
             _showM = true; _showG = false;   // 每次進來預設只顯示 M 幣清單 (M 暗/選中、G 亮/未選)
             if (_search != null) { _search.SetTextWithoutNotify(""); }

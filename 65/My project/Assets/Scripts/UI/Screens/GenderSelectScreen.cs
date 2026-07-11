@@ -79,13 +79,13 @@ namespace Sdo.UI.Screens
             _maleBox = AddCheckbox("MaleCheck", MaleX, CheckY, () => SelectGender(1));
             _femaleBox = AddCheckbox("FemaleCheck", FemaleX, CheckY, () => SelectGender(0));
 
-            // right-bottom action buttons: 進入房間 (29/30/31) + 離開 (32/33/34).
-            // Positions swapped: 進入房間 now sits on the right (QuitX), 離開 on the left (EnterX); each button keeps its
+            // right-bottom action buttons: 進入房間 (29/30/31) + 商城 (32/33/34 — 原「離開」鍵位，美術已重繪成商城入口).
+            // Positions swapped: 進入房間 sits on the right (QuitX); the 商城 button on the left (EnterX). Each keeps its
             // own art + click handler, only the X slot is exchanged.
             var enter = UIKit.AddSpriteButton(Root, "EnterRoom", An("LobbySel29"), An("LobbySel30"), An("LobbySel31"), QuitX, BtnY);
             enter.onClick.AddListener(OnEnter);
-            var quit = UIKit.AddSpriteButton(Root, "Quit", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"), EnterX, BtnY);
-            quit.onClick.AddListener(OnQuit);
+            var shop = UIKit.AddSpriteButton(Root, "Shop", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"), EnterX, BtnY);
+            shop.onClick.AddListener(OnOpenShop);
 
             // Official AvtShow is composited over the lobby chrome; keep the transparent RT on top.
             if (_previewImg != null) _previewImg.transform.SetAsLastSibling();
@@ -160,7 +160,13 @@ namespace Sdo.UI.Screens
             GoTo(ScreenId.Room);
         }
 
-        private void OnQuit() => Sdo.Game.AppQuit.Now();
+        // 開場畫面直接進 商城 modal：先把目前選的性別帶進 session（商城依 session 性別開對應性別的 avatar），再開 商城，
+        // 疊在本畫面上；商城的 shopexit 只是隱藏 modal → 關閉後回到開場畫面（不離開遊戲）。
+        private void OnOpenShop()
+        {
+            if (Ctx != null && Ctx.Session != null) Ctx.Session.Gender = _gender;
+            Nav.OpenShop?.Invoke();
+        }
 
         // ---- helpers ----
 
