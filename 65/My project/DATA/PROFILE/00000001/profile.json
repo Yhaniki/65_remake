@@ -3,6 +3,22 @@
     "name": "玩家002",
     "gender": 1,
     "avatarId": 0,
+    "ownedClothes": [
+        "AVATAR/900001_MAN_FACE.MSH",
+        "AVATAR/900002_MAN_HAIR.MSH",
+        "AVATAR/900003_MAN_COAT.MSH",
+        "AVATAR/900004_MAN_PANT.MSH",
+        "AVATAR/900006_MAN_SHOES.MSH",
+        "AVATAR/900005_MAN_HAND.MSH"
+    ],
+    "equippedClothes": {
+        "face": "AVATAR/900001_MAN_FACE.MSH",
+        "hair": "AVATAR/900002_MAN_HAIR.MSH",
+        "coat": "AVATAR/900003_MAN_COAT.MSH",
+        "pant": "AVATAR/900004_MAN_PANT.MSH",
+        "shoes": "AVATAR/900006_MAN_SHOES.MSH",
+        "hand": "AVATAR/900005_MAN_HAND.MSH"
+    },
     "createdAt": "2026-07-07T22:52:30.3775949Z",
     "lastPlayedAt": ""
 }
