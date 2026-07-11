@@ -85,7 +85,9 @@ namespace Sdo.Game
         {
             var go = new GameObject(name);
             go.transform.SetParent(transform, false);
-            var av = SdoRoomAvatar.Build(go, PreviewLayer, portraitOpaque: false, male: male);
+            // PreviewBody: full body but with the opaque-cutout portrait shader, so on the TRANSPARENT preview RT the
+            // hair cutout doesn't punch see-through holes / write depth over the face (portraitOpaque:false did that).
+            var av = SdoRoomAvatar.Build(go, PreviewLayer, SdoRoomAvatar.RenderMode.PreviewBody, male: male);
             if (av == null) { Destroy(go); return null; }
             av.DanceEnabled = () => false;   // no DPS in the select screen — hold the standby idle (which auto-loops)
             av.DanceTimeSec = () => -1f;

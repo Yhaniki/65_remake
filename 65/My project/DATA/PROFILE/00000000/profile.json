@@ -3,6 +3,22 @@
     "name": "玩家001",
     "gender": 0,
     "avatarId": 0,
+    "ownedClothes": [
+        "AVATAR/900007_WOMAN_FACE.MSH",
+        "AVATAR/900017_WOMAN_HAIR.MSH",
+        "AVATAR/900018_WOMAN_COAT.MSH",
+        "AVATAR/900019_WOMAN_PANT.MSH",
+        "AVATAR/900020_WOMAN_SHOES.MSH",
+        "AVATAR/900011_WOMAN_HAND.MSH"
+    ],
+    "equippedClothes": {
+        "face": "AVATAR/900007_WOMAN_FACE.MSH",
+        "hair": "AVATAR/900017_WOMAN_HAIR.MSH",
+        "coat": "AVATAR/900018_WOMAN_COAT.MSH",
+        "pant": "AVATAR/900019_WOMAN_PANT.MSH",
+        "shoes": "AVATAR/900020_WOMAN_SHOES.MSH",
+        "hand": "AVATAR/900011_WOMAN_HAND.MSH"
+    },
     "createdAt": "2026-07-07T22:52:30.3775949Z",
     "lastPlayedAt": ""
 }

@@ -39,7 +39,7 @@ namespace Sdo.Game
         public float referenceBpm = 130f;     // base-tempo anchor when NOT following the song's BPM
         public bool scrollFollowsSongBpm = false; // true = base speed follows the song's own BPM (official px/s = BPM×speed×1.6); false = fixed referenceBpm for every song
         public bool constantScroll = false;   // true = ignore BPM/SV variation (perfectly linear scroll)
-        public bool useMusicStartOffset = true;  // true = start the music at the chart's first type-9 marker (skip the leading count-in measure so notes line up with the song)
+        public bool useMusicStartOffset = true;  // true = start the music (and the dancer) at the chart's type-10 音樂起止 marker (skip the leading count-in measure so notes line up with the song)
         public float judgeLineY = 70f;        // receptor / hit line Y (design px). UPSCROLL: notes rise to it.
         private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
@@ -132,6 +132,11 @@ namespace Sdo.Game
         private float _nextAmbientAt = -1f;      // realtime when the next ambient one-shot may fire (<0 = not armed yet)
         private bool _started, _failed, _ended;
         private double _songStartDspTime, _clockStart = -1;
+        // How far the audio (and, with it, the dancer) is delayed behind the beat-0 note clock — the chart's
+        // music-start offset (type-10 音樂起止 marker) in seconds. Notes scroll during this silent count-in; the
+        // dancer holds its standby idle and only starts the DPS choreography when the music actually begins.
+        // Set together with _clockStart in OpeningSequence(); read every frame by the avatar's DanceTimeSec.
+        private double _musicStartDelaySec;
         // Opening lead-in. While the READY->GO animation plays, _clockStart is parked this far in the future so the
         // song stays stopped, the notes stay hidden and the dancer holds its idle. When GO finishes, OpeningSequence()
         // re-anchors _clockStart StartLeadSec ahead and schedules the song, so neither starts before the opening does.
@@ -291,6 +296,7 @@ namespace Sdo.Game
         // OPTION 遊戲頁「遊戲特效」兩個勾選（FrontendApp 開局前設定）：關掉就不生對應特效。預設 true = 全開。
         public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
+        public bool playFullSong = false;   // 進階「無失敗模式」：HP 歸零不判失敗，整首照打(判定/舞蹈續行)到曲末，結算走正常名次(不出 GAME OVER)
         // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖鏡頭 1，無開場運鏡)。
         public bool cameraAuto = true;
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
@@ -1221,13 +1227,30 @@ namespace Sdo.Game
             // GO is done -> start the song and the gameplay clock together. Both use the same StartLeadSec offset on
             // their own time base (dspTime / timeAsDouble) so the audio and the chart stay aligned, as before. Runs even
             // if the READY/GO overlay was missing, so the song never fails to start.
-            // Delay the music by the chart's music-start offset (first type-9 小節線) so the leading count-in
-            // measure is silent and the song lines up with the notes/dancer (which stay on the beat-0 clock).
+            // Delay the music by the chart's music-start offset (type-10 音樂起止 marker) so the leading count-in
+            // measure is silent. The NOTES stay on the beat-0 clock (they scroll in during the count-in), but the
+            // DANCER follows the music: its DanceTimeSec subtracts _musicStartDelaySec, so it holds the standby idle
+            // through the count-in and starts the DPS the instant the audio begins (DPS is a music-timeline script).
             double musicDelaySec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
+            _musicStartDelaySec = musicDelaySec;
             _songStartDspTime = AudioSettings.dspTime + StartLeadSec + musicDelaySec;
             if (_audio != null && _audio.clip != null) _audio.PlayScheduled(_songStartDspTime);
             _clockStart = Time.timeAsDouble + StartLeadSec;
+            _clock.Reset();   // re-seed the smoothing clock onto the freshly-anchored timeline (drop any parked-clock frames)
             if (showtimeMode) _gaugeGlowFromStart = true;   // song is playing → head glow stays lit even at 0 fill (no key needed)
+        }
+
+        // The song audio's TRUE playback position, mapped back onto the beat-0 note timeline (seconds), or null when
+        // the audio isn't actually playing: the READY/GO lead-in and the silent type-10 count-in (dspTime hasn't
+        // reached the scheduled start), observe-burst mode (no clip), or after the clip finishes. dspTime is the sound
+        // device's own clock; the clip plays from _songStartDspTime, and the notes lead the music by the count-in
+        // (_musicStartDelaySec), so chart time = clip position + count-in. GameplayClock slews the note clock onto this.
+        private double? AudioChartSeconds()
+        {
+            if (_audio == null || _audio.clip == null || !_audio.isPlaying) return null;
+            double dsp = AudioSettings.dspTime;
+            if (dsp < _songStartDspTime) return null;                // scheduled start not reached yet (still in lead-in)
+            return (dsp - _songStartDspTime) + _musicStartDelaySec;  // clip position → beat-0 chart time
         }
 
         // Energy-bar INTRO (online FUN_0040dc00/0040e210/0040e0f0 + demo blocks @360861-360887): the bar does NOT
@@ -1826,8 +1849,11 @@ namespace Sdo.Game
                 {
                     avatar.Dps = dps;
                     avatar.MotResolver = ResolveMot;
-                    // raw (un-clamped) dance time: negative during the READY/GO lead-in -> avatar plays the rest idle
-                    avatar.DanceTimeSec = () => (float)(Time.timeAsDouble - _clockStart);
+                    // Dance time = MUSIC elapsed time, not the beat-0 note clock: subtract _musicStartDelaySec so
+                    // the DPS (a music-timeline choreography) stays synced to the audio and the dancer waits for the
+                    // music. Stays negative during the READY/GO lead-in AND the silent count-in -> avatar holds the
+                    // rest idle, then starts the DPS exactly when the audio begins.
+                    avatar.DanceTimeSec = () => (float)(Time.timeAsDouble - _clockStart - _musicStartDelaySec);
                     avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
                     Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
                 }
@@ -3023,7 +3049,18 @@ namespace Sdo.Game
                 var mat = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
                 if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", Color.white);   // full gold (the _addMat default 0.5 grey would dim it)
                 mr.sharedMaterial = mat;
-                mr.sortingOrder = -4;   // in front of the body, behind the HUD
+                // MUST NOT be negative. A negative sortingOrder pulls this additive (ZWrite Off) ribbon to the FRONT
+                // of the scene draw order — ahead of the background scene geometry (the SCN0009 palace shell / baked
+                // 背景人物 / GUATAN 掛毯), all at the default sortingOrder 0. Whatever then draws after it — opaque
+                // geometry (sortingOrder outranks the material renderQueue, so -4 jumped it ahead of the opaque pass)
+                // or an alpha-blended subset in the same transparent pass — paints over the ribbon's pixels, so the
+                // hand glow VANISHED wherever it crossed a background figure, even though the hand is NEARER the camera
+                // (the ribbon writes no depth, so its nearness alone can't keep it on top). At 0 the ribbon sorts
+                // naturally with the scene (sortingOrder tie → renderQueue then distance): its Transparent queue /
+                // nearer distance land it ON TOP of the background, while ZTest LEqual still clips it when the hand
+                // genuinely passes behind solid geometry. Behind-the-HUD is unaffected — the HUD is a separate camera
+                // composited over the scene RenderTexture. (Reported: SCN0009 手部光條被背景人物遮擋.)
+                mr.sortingOrder = 0;
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; mr.receiveShadows = false;
             }
             rib.hand = handGo.transform; rib.finger = fingerGo.transform;
@@ -3305,9 +3342,15 @@ namespace Sdo.Game
                 _sceneCam.transform.LookAt(tgt, Vector3.up);
             }
             if (!_started) return;
-            double now = (Time.timeAsDouble - _clockStart) * 1000.0;
+            // Note timeline = the wall clock (Time.timeAsDouble - _clockStart), but re-locked every frame onto the
+            // TRUE audio playback position so the notes never drift off the music over a long song (crystal drift)
+            // or after an audio-buffer stall. GameplayClock advances smoothly on the wall delta and slews back onto
+            // the audio; when the audio isn't playing yet (lead-in / silent count-in) AudioChartSeconds() is null and
+            // it free-runs on the wall clock. CurrentMs (offset-corrected, smoothed) is what drives everything below.
+            double wallSec = Time.timeAsDouble - _clockStart;
+            _clock.Tick(wallSec, AudioChartSeconds());
+            double now = _clock.CurrentMs;
             _nowMs = now;
-            _clock.SetAudioSeconds(now / 1000.0);
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
@@ -3328,7 +3371,9 @@ namespace Sdo.Game
             UpdateFx(); UpdateHud();
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
             // HP-out; it only ends naturally at the song's end (below). Normal mode still fails on HP-out.
-            if (!showtimeMode && _health != null && _health.IsFailed) _failed = true;
+            // HP-out. Normally fails immediately (freezes judging + cuts to GAME OVER). playFullSong = 無失敗模式:
+            // HP-out is ignored entirely (like showtime) — the song stays fully playable to its natural end, no GAME OVER.
+            if (!showtimeMode && !playFullSong && _health != null && _health.IsFailed) _failed = true;
             if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; EnterResult(); }
         }
 

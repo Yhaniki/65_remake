@@ -113,7 +113,7 @@
   },
   {
    "k": "room.channel",
-   "v": "Channel {0}"
+   "v": "ch{0}"
   },
   {
    "k": "room.default_name",
@@ -290,6 +290,10 @@
   {
    "k": "songselect.mode_normal",
    "v": "Normal Mode"
+  },
+  {
+   "k": "songselect.mode_showtime",
+   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",
@@ -546,6 +550,14 @@
   {
    "k": "settings.language",
    "v": "Language"
+  },
+  {
+   "k": "settings.play_full_song",
+   "v": "Full Play Mode"
+  },
+  {
+   "k": "settings.song_speed",
+   "v": "Song Speed"
   },
   {
    "k": "display.windowed",

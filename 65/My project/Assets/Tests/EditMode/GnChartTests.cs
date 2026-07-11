@@ -23,6 +23,9 @@ namespace Sdo.Tests
             int bodyLen = 348;
             var raw = new byte[BodyBase + bodyLen];
 
+            // ddrm container magic @0 (0x6D726464) so Decrypt takes the DDRM branch and the body at 0x54 is parsed;
+            // seeds (header @0x0c, block1[4] @0x24) stay 0 -> the LCG decrypt is a no-op and the body is verbatim.
+            raw[0] = (byte)'d'; raw[1] = (byte)'d'; raw[2] = (byte)'r'; raw[3] = (byte)'m';
             PutFloat(raw, 16, 120f);   // bpm @ body+16 -> beat*500 ms
 
             int o = 300;
@@ -80,6 +83,85 @@ namespace Sdo.Tests
             Assert.AreEqual(1, map.HitObjects.Count, "rewu chart should decrypt+parse to the single tap");
             Assert.AreEqual(0, map.HitObjects[0].Lane, "frameType 2 -> Left(0)");
             Assert.AreEqual(0, map.HitObjects[0].StartTimeMs);
+        }
+
+        /// <summary>
+        /// Locks the music-start anchor: it is the FIRST type-10 (音樂起止) slot carrying value 1000 — the marker
+        /// the exe watches for (NewNote_TriggerNoteSound_0048e9c0 sets its music-start flag when the play head hits
+        /// (slot &amp; 0xfff)==1000). Here bpm=120 (beat = 500ms) and the marker sits at measure 1 (beat 4), so the
+        /// audio+dancer should be delayed 2000ms. Guards against the old behaviour, which used the type-9 小節線.
+        /// </summary>
+        [Test]
+        public void MusicStart_AnchorsToType10Marker1000()
+        {
+            var body = PlainStep(120f,
+                (meas: 1, ft: 10, u0: 1000),   // 音樂起止 start marker @ beat 4 -> 2000ms
+                (meas: 2, ft: 2, u0: 1));       // a Left note after it
+            var map = GnChart.Load(body, difficulty: 0);
+            Assert.AreEqual(2000.0, map.MusicStartOffsetMs, 1e-6, "music starts at the type-10 value-1000 marker (beat 4)");
+        }
+
+        /// <summary>Charts with no type-10 marker keep the previous behaviour: anchor on the first type-9 小節線.</summary>
+        [Test]
+        public void MusicStart_FallsBackToType9_WhenNoType10()
+        {
+            var body = PlainStep(120f,
+                (meas: 1, ft: 9, u0: 2),        // bar line @ beat 4
+                (meas: 2, ft: 2, u0: 1));
+            var map = GnChart.Load(body, difficulty: 0);
+            Assert.AreEqual(2000.0, map.MusicStartOffsetMs, 1e-6, "no type-10 -> fall back to the type-9 bar line");
+        }
+
+        /// <summary>
+        /// type-10 (音樂起止) doubles as the music-END marker; some charts carry only an end marker sitting AFTER
+        /// the first note. That must NOT delay the music to mid-song — it is rejected and the anchor falls back
+        /// (here no type-9 either -> 0, i.e. music from beat 0), matching the old timing for those charts.
+        /// </summary>
+        [Test]
+        public void MusicStart_IgnoresType10EndMarkerAfterFirstNote()
+        {
+            var body = PlainStep(120f,
+                (meas: 1, ft: 2, u0: 1),        // first note @ beat 4
+                (meas: 60, ft: 10, u0: 1000));  // lone end marker far past it
+            var map = GnChart.Load(body, difficulty: 0);
+            Assert.AreEqual(0.0, map.MusicStartOffsetMs, 1e-6, "an end-only type-10 marker after the first note is ignored");
+        }
+
+        /// <summary>When both are present the type-10 marker wins over the type-9 bar line.</summary>
+        [Test]
+        public void MusicStart_Type10WinsOverType9()
+        {
+            var body = PlainStep(120f,
+                (meas: 1, ft: 9, u0: 2),
+                (meas: 1, ft: 10, u0: 1000),
+                (meas: 2, ft: 2, u0: 1));
+            var map = GnChart.Load(body, difficulty: 0);
+            Assert.AreEqual(2000.0, map.MusicStartOffsetMs, 1e-6);
+            Assert.AreEqual(1, map.HitObjects.Count, "marker frames must not be counted as notes");
+        }
+
+        /// <summary>
+        /// Build a PLAINTEXT StepFile at offset 0 ('gn'@4, address_easy==300 -> GnChart's plain branch, no
+        /// decrypt). Each frame is one slot (interval 1): (measurement, stepFrameType, u0). u1/nt are 0.
+        /// </summary>
+        private static byte[] PlainStep(float bpm, params (uint meas, ushort ft, ushort u0)[] frames)
+        {
+            int bodyLen = 300 + frames.Length * 12;
+            var b = new byte[bodyLen];
+            b[4] = (byte)'g'; b[5] = (byte)'n';                 // fileType 'gn' @4
+            PutFloatAbs(b, 16, bpm);                            // bpm @16
+            PutU32Abs(b, 284, 300);                             // address_easy == 300 (plain-branch trigger)
+            PutU32Abs(b, 288, (uint)bodyLen);                   // address_normal / hard / end = region end
+            PutU32Abs(b, 292, (uint)bodyLen);
+            PutU32Abs(b, 296, (uint)bodyLen);
+            int o = 300;
+            foreach (var (meas, ft, u0) in frames)
+            {
+                PutU32Abs(b, o, meas); PutU16Abs(b, o + 4, ft); PutU16Abs(b, o + 6, 1);
+                PutU16Abs(b, o + 8, u0); b[o + 10] = 0; b[o + 11] = 0;
+                o += 12;
+            }
+            return b;
         }
 
         /// <summary>Whole-file LCG encrypt (inverse of GnChart's decrypt): st*=0x3D09; out = in + (st>>16).</summary>

@@ -29,9 +29,10 @@ namespace Sdo.Osu
         public double Bpm { get; set; }
 
         /// <summary>
-        /// Time (ms, in the note/beat clock) of the song's music-start marker — the first StepFile type-9
-        /// event (小節線 at measurement 1) / type-10 (音樂起止). The audio should begin playing at this
-        /// point (the leading measure before it is a silent count-in); 0 if the chart has no marker.
+        /// Time (ms, in the note/beat clock) of the song's music-start marker — the first StepFile type-10
+        /// (音樂起止) slot carrying value 1000 (the engine's music-start flag; the type-9 小節線 is a fallback
+        /// for charts without one). The audio (and the dancer) should begin at this point — the leading measure
+        /// before it is a silent count-in; 0 if the chart has no usable marker.
         /// </summary>
         public double MusicStartOffsetMs { get; set; }
 

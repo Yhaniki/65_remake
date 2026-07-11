@@ -95,6 +95,8 @@ namespace Sdo.Tests
             Assert.IsTrue(g.effectScene);
             Assert.IsTrue(g.cameraAuto);          // 默認 (自動導播)
             Assert.IsTrue(g.callCardInGame);
+            Assert.IsFalse(g.playFullSong);       // 完奏模式 預設關
+            Assert.IsTrue(g.songSpeed);           // 歌曲變速 預設開
             Assert.AreEqual(1.4f, g.panelOpacity, 1e-4f);   // 官方預設
         }
 

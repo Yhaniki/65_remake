@@ -187,6 +187,7 @@ namespace Sdo.UI
                 game.effectScene = gp.effectScene;               // 場景特效（常駐背景 EFT）
                 game.cameraAuto = gp.cameraAuto;                 // 遊戲視角：默認(自動導播)/固定(鏡頭1)
                 game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
+                game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
             }
             _activeGame = game;
         }

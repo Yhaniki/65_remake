@@ -50,7 +50,7 @@ STR = {
 
     "room.title":           ["Room {0}", "房間 {0}", "房间 {0}", "ルーム {0}"],
     "room.server_name":     ["Free Practice {0}", "自由練習場{0}", "自由练习场{0}", "自由練習場{0}"],
-    "room.channel":         ["Channel {0}", "頻道{0}", "频道{0}", "チャンネル{0}"],
+    "room.channel":         ["ch{0}", "頻道{0}", "频道{0}", "ch{0}"],
     "room.default_name":    ["{0}'s Dance Room", "{0}的舞蹈室", "{0}的舞蹈室", "{0}のダンスルーム"],
     "room.leave":           ["Leave Room", "離開房間", "离开房间", "ルーム退出"],
     "room.ready":           ["Ready", "準備", "准备", "準備"],
@@ -101,8 +101,9 @@ STR = {
     "songselect.need_pick": ["Please pick a song first", "請先選擇歌曲", "请先选择歌曲", "先に曲を選んでください"],
     # NOTE: 場景選擇 caption + 演唱者/BPM info labels are BAKED into MUSICSELDLG art (and 音符數 uses lbl_notes.an),
     # so they are NOT text-localized here — the song-select screen draws values only. See SongSelectScreen.cs.
-    "songselect.mode_free":   ["Free Mode", "自由模式", "自由模式", "フリーモード"],
-    "songselect.mode_normal": ["Normal Mode", "普通模式", "普通模式", "ノーマルモード"],
+    "songselect.mode_free":     ["Free Mode", "自由模式", "自由模式", "フリーモード"],
+    "songselect.mode_normal":   ["Normal Mode", "普通模式", "普通模式", "ノーマルモード"],
+    "songselect.mode_showtime": ["ShowTime", "ShowTime", "ShowTime", "ShowTime"],
     "songselect.form_basic":  ["Basic", "基本", "基本", "基本"],
     "songselect.form_fan":    ["Fan", "扇形", "扇形", "扇形"],
     "songselect.form_ring":   ["Ring", "環繞", "环绕", "リング"],
@@ -175,6 +176,8 @@ STR = {
     "settings.game_music":   ["Game Music", "遊戲音樂", "游戏音乐", "ゲーム音楽"],
     "settings.sfx":          ["SFX", "音效", "音效", "効果音"],
     "settings.language":     ["Language", "語言", "语言", "言語"],
+    "settings.play_full_song": ["Full Play Mode", "完奏模式", "完奏模式", "完奏モード"],
+    "settings.song_speed":     ["Song Speed", "歌曲變速", "歌曲变速", "曲の変速"],
 
     "display.windowed":   ["Windowed", "視窗", "窗口", "ウィンドウ"],
     "display.fullscreen": ["Fullscreen", "全螢幕", "全屏", "フルスクリーン"],

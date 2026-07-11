@@ -79,10 +79,12 @@ namespace Sdo.UI.Screens
             _maleBox = AddCheckbox("MaleCheck", MaleX, CheckY, () => SelectGender(1));
             _femaleBox = AddCheckbox("FemaleCheck", FemaleX, CheckY, () => SelectGender(0));
 
-            // right-bottom action buttons: 進入房間 (29/30/31) + 離開 (32/33/34)
-            var enter = UIKit.AddSpriteButton(Root, "EnterRoom", An("LobbySel29"), An("LobbySel30"), An("LobbySel31"), EnterX, BtnY);
+            // right-bottom action buttons: 進入房間 (29/30/31) + 離開 (32/33/34).
+            // Positions swapped: 進入房間 now sits on the right (QuitX), 離開 on the left (EnterX); each button keeps its
+            // own art + click handler, only the X slot is exchanged.
+            var enter = UIKit.AddSpriteButton(Root, "EnterRoom", An("LobbySel29"), An("LobbySel30"), An("LobbySel31"), QuitX, BtnY);
             enter.onClick.AddListener(OnEnter);
-            var quit = UIKit.AddSpriteButton(Root, "Quit", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"), QuitX, BtnY);
+            var quit = UIKit.AddSpriteButton(Root, "Quit", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"), EnterX, BtnY);
             quit.onClick.AddListener(OnQuit);
 
             // Official AvtShow is composited over the lobby chrome; keep the transparent RT on top.

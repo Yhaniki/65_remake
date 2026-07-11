@@ -537,7 +537,9 @@ namespace Sdo.UI.Screens
             _search = UIKit.AddInputField(Root, "SearchBox", L("songselect.search"), 13);   // issue #8 (localized)
             Place(_search.GetComponent<RectTransform>(), 368, 427, 180, 20);
             _search.characterLimit = 32;
-            _search.onValueChanged.AddListener(_ => { _page = 0; ApplyFilter(); });
+            // Search runs on ENTER only (not per-keystroke). onSubmit fires on Enter for a SingleLine field (and
+            // NOT on blur, unlike onEndEdit) — then RunSearch re-filters and focuses+previews the top result.
+            _search.onSubmit.AddListener(_ => RunSearch());
             // Hide the hint the moment the field gains focus (caret shows); restore it on blur if still empty (#7).
             var ph = _search.placeholder;
             if (ph != null)
@@ -660,6 +662,16 @@ namespace Sdo.UI.Screens
             _page = Mathf.Clamp(_page, 0, maxPage);
             RenderDiffTabs();
             RenderPage();
+        }
+
+        // Enter in the search box: apply the current text as the filter, jump to page 0, and focus + preview the
+        // top result (Select highlights the row, updates info/disc and starts the preview). Empty result -> NONE disc.
+        private void RunSearch()
+        {
+            _page = 0;
+            ApplyFilter();
+            if (_filtered.Count > 0) Select(_filtered[0]);
+            else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }
         }
 
         // The song subset for the active category. 全部 = all; 收藏 = 本機 user 收藏的歌; 最新 = NEW-badge songs;

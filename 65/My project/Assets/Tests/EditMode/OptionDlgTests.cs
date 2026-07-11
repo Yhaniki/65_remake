@@ -54,6 +54,61 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void SanitizeNames_Preserves_Cleared_Empty_Slots()
+        {
+            // "" = 使用者在鍵盤頁刻意清空(去重)的格 → 必須原樣保留，不能還原成預設鍵(否則被清掉的鍵又冒出來/再重複)。
+            var res = KeyBindSettings.SanitizeNames(new[] { "", "S", "", "D" }, KeyBindSettings.DefaultPrimary);
+            Assert.AreEqual("", res[0]);
+            Assert.AreEqual("S", res[1]);
+            Assert.AreEqual("", res[2]);
+            Assert.AreEqual("D", res[3]);
+        }
+
+        [Test]
+        public void ToLaneKeys_Empty_Binding_Maps_To_None_Not_Default()
+        {
+            // 清空的主鍵位 → KeyCode.None(遊戲中不觸發)，不回退成該 lane 預設鍵；輔助鍵位不受影響仍可打。
+            var lanes = new KeyBindSettings { lane4 = new[] { "", "S", "W", "D" } }.ToLaneKeys();
+            Assert.AreEqual(KeyCode.None, lanes[0][0]);        // 清空 → None
+            Assert.AreEqual(KeyCode.LeftArrow, lanes[0][1]);   // 該 lane 仍可用輔助鍵
+            Assert.AreEqual(KeyCode.S, lanes[1][0]);           // 其餘不受影響
+        }
+
+        // ---- OptionDlgModal.ClearDuplicateBinding (pure) — 一鍵只綁一處 ----
+
+        [Test]
+        public void ClearDuplicate_Clears_Previous_Same_Key_In_Same_Row()
+        {
+            var prim = new[] { "A", "A", "W", "D" };   // 剛把 lane1 主鍵綁成 A，和 lane0 重複
+            var aux = new[] { "LeftArrow", "DownArrow", "UpArrow", "RightArrow" };
+            var cleared = OptionDlgModal.ClearDuplicateBinding(prim, aux, 0 /*prim*/, 1 /*剛綁的 lane*/);
+            Assert.AreEqual("", prim[0]);              // 前一個重複的 A 被清掉
+            Assert.AreEqual("A", prim[1]);             // 剛綁的保留
+            Assert.IsTrue(cleared.Contains((0, 0)));
+        }
+
+        [Test]
+        public void ClearDuplicate_Clears_Across_Primary_And_Aux()
+        {
+            var prim = new[] { "A", "S", "W", "D" };
+            var aux = new[] { "A", "DownArrow", "UpArrow", "RightArrow" };   // 剛把輔助 lane0 綁成 A
+            var cleared = OptionDlgModal.ClearDuplicateBinding(prim, aux, 1 /*aux*/, 0);
+            Assert.AreEqual("", prim[0]);              // 主鍵位那個重複的 A 被跨排清掉
+            Assert.AreEqual("A", aux[0]);              // 剛綁的保留
+            Assert.IsTrue(cleared.Contains((0, 0)));
+        }
+
+        [Test]
+        public void ClearDuplicate_Empty_Key_Is_NoOp()
+        {
+            var prim = new[] { "", "S", "W", "D" };
+            var aux = new[] { "", "DownArrow", "UpArrow", "RightArrow" };
+            var cleared = OptionDlgModal.ClearDuplicateBinding(prim, aux, 0, 0);   // 剛綁的是 "" → 不該去清別的空格
+            Assert.IsEmpty(cleared);
+            Assert.AreEqual("", aux[0]);               // 另一個 "" 不受影響
+        }
+
+        [Test]
         public void Sanitize_Repairs_Key_Bindings()
         {
             var s = new GameSettings();

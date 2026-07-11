@@ -51,6 +51,8 @@ namespace Sdo.UI.Screens
 
         // 遊戲 (OptionGameWindow) working copy — committed to settings.gameplay on Save. See BuildGame.
         private bool _gpAspectFill, _gpBloom, _gpNotesLeft, _gpFxPlayer, _gpFxScene, _gpViewAuto, _gpCallShow;
+        private bool _gpPlayFullSong;   // 進階「完奏模式」（放在進階頁最上面，存 settings.gameplay.playFullSong）
+        private bool _gpSongSpeed;      // 進階「歌曲變速」（存 settings.gameplay.songSpeed）
         private float _gpPanelOpacity;
         private Slider _gpOpacitySlider;
         private readonly List<Action> _gameRefresh = new List<Action>();   // re-paint every game-tab dot from its bool
@@ -142,6 +144,10 @@ namespace Sdo.UI.Screens
                 if (c != (Transform)_window && c.gameObject != dim.gameObject) kids.Add(c);
             foreach (var c in kids) c.SetParent(_window, false);
 
+            // 設定裡「每個按鈕按下都發 SE_0001」(官方 UI click)：所有 Button 都已建好且併入 _window，統一在此掃描掛上，
+            // 一次涵蓋 tab／關閉／保存／退出／默認／◀▶ 選擇器／圓點選項。鍵帽 (EventTrigger) 已在 KeyCap 各自處理。
+            foreach (var btn in _window.GetComponentsInChildren<Button>(true)) UiSfx.AttachClick(btn);
+
             SetVisible(false);
         }
 
@@ -161,20 +167,35 @@ namespace Sdo.UI.Screens
             var resNames = new string[ResolutionPreset.Presets.Length];
             for (int i = 0; i < resNames.Length; i++) resNames[i] = ResolutionPreset.Presets[i].ToString();
 
-            // Row 1 — 垂直同步 (開啟/關閉 radio) on the board's baked template (pill @screen 254,243 · circles @392/481,255)
-            AdvLabel(b, 243f, "settings.vsync", bakedPill: true);
-            AdvDot(b, 392f, 255f, "common.enabled", () => _vsync, () => { _vsync = true; RefreshAdv(); });
-            AdvDot(b, 481f, 255f, "common.disabled", () => !_vsync, () => { _vsync = false; RefreshAdv(); });
+            // 六列，起始 y=243、列距 33（比原本 40 緊，才塞得下第 6 列而不撞到下方 保存/退出/默認 按鈕）。radio 圓點在列頂 +12。
+            const float y0 = 243f, step = 33f, dotDown = 12f;
+            float yFull = y0, ySpeed = y0 + step, yVsync = y0 + step * 2f;
+            float yRes = y0 + step * 3f, yMode = y0 + step * 4f, yLang = y0 + step * 5f;
 
-            // Rows 2-4 — a cropped pill label + a selector
-            AdvLabel(b, 283f, "settings.resolution", bakedPill: false);
-            _resSel = AdvSelector(b, 283f, resNames, i => _resIndex = i);
+            // Row 1 — 完奏模式（原「無失敗模式」，移到最上面）：HP 歸零不判失敗，整首照打到曲末。用 board 烘好的模板 pill + 兩顆圈。
+            AdvLabel(b, yFull, "settings.play_full_song", bakedPill: true);
+            AdvDot(b, 392f, yFull + dotDown, "common.enabled", () => _gpPlayFullSong, () => { _gpPlayFullSong = true; RefreshAdv(); });
+            AdvDot(b, 481f, yFull + dotDown, "common.disabled", () => !_gpPlayFullSong, () => { _gpPlayFullSong = false; RefreshAdv(); });
 
-            AdvLabel(b, 323f, "settings.display_mode", bakedPill: false);
-            _modeSel = AdvSelector(b, 323f, new[] { L("display.windowed"), L("display.fullscreen"), L("display.borderless") }, i => _modeIndex = i);
+            // Row 2 — 歌曲變速：開啟/關閉，預設開啟。非模板列 → 自繪深紫空心圓框(ownFrame)才有圈可看。
+            AdvLabel(b, ySpeed, "settings.song_speed", bakedPill: false);
+            AdvDot(b, 392f, ySpeed + dotDown, "common.enabled", () => _gpSongSpeed, () => { _gpSongSpeed = true; RefreshAdv(); }, ownFrame: true);
+            AdvDot(b, 481f, ySpeed + dotDown, "common.disabled", () => !_gpSongSpeed, () => { _gpSongSpeed = false; RefreshAdv(); }, ownFrame: true);
 
-            AdvLabel(b, 363f, "settings.language", bakedPill: false);
-            _langSel = AdvSelector(b, 363f, new[] { "繁體中文", "简体中文", "English", "日本語" }, i =>
+            // Row 3 — 垂直同步：開啟/關閉。非模板列 → 自繪深紫空心圓框。
+            AdvLabel(b, yVsync, "settings.vsync", bakedPill: false);
+            AdvDot(b, 392f, yVsync + dotDown, "common.enabled", () => _vsync, () => { _vsync = true; RefreshAdv(); }, ownFrame: true);
+            AdvDot(b, 481f, yVsync + dotDown, "common.disabled", () => !_vsync, () => { _vsync = false; RefreshAdv(); }, ownFrame: true);
+
+            // Rows 4-6 — 視窗大小 / 顯示模式 / 語言：cropped pill label + a selector
+            AdvLabel(b, yRes, "settings.resolution", bakedPill: false);
+            _resSel = AdvSelector(b, yRes, resNames, i => _resIndex = i);
+
+            AdvLabel(b, yMode, "settings.display_mode", bakedPill: false);
+            _modeSel = AdvSelector(b, yMode, new[] { L("display.windowed"), L("display.fullscreen"), L("display.borderless") }, i => _modeIndex = i);
+
+            AdvLabel(b, yLang, "settings.language", bakedPill: false);
+            _langSel = AdvSelector(b, yLang, new[] { "繁體中文", "简体中文", "English", "日本語" }, i =>
             {
                 _lang = IndexToLang(i);
                 LocalizationManager.SetLanguage(_lang);           // live preview
@@ -194,8 +215,10 @@ namespace Sdo.UI.Screens
         }
 
         // A radio dot overlaid on a board circle at screen (cx,cy) + a 華康儷中黑 caption. Selected → filled RadioOn;
-        // otherwise transparent so the baked (empty) circle shows through. The whole dot+caption box is clickable.
-        private void AdvDot(RectTransform b, float cx, float cy, string capKey, Func<bool> isOn, Action onPick)
+        // otherwise transparent so the (empty) circle shows through. The whole dot+caption box is clickable. Rows that sit
+        // on the board's baked template circle leave <paramref name="ownFrame"/> false; rows placed on blank board area
+        // pass ownFrame:true so a 淡紫圓框 (RadioOff 合成 orb) is drawn under the dot (否則未選狀態沒有圈可看).
+        private void AdvDot(RectTransform b, float cx, float cy, string capKey, Func<bool> isOn, Action onPick, bool ownFrame = false)
         {
             var box = UIKit.NewRect(b, "advopt");
             box.anchorMin = box.anchorMax = new Vector2(0f, 1f); box.pivot = new Vector2(0f, 1f);
@@ -203,6 +226,7 @@ namespace Sdo.UI.Screens
             var hit = box.gameObject.AddComponent<Image>(); hit.color = new Color(1f, 1f, 1f, 0f); hit.raycastTarget = true;
             var btn = box.gameObject.AddComponent<Button>(); btn.targetGraphic = hit;
             btn.onClick.AddListener(() => { onPick(); RefreshAdv(); });
+            if (ownFrame) OptionCircle(box, OptionDlgArt.RadioOff);   // 淡紫圓墊底(未選也看得見);baked 模板列已自帶不需要
             var dot = OptionDot(box);
             var cap = AdvText(box, "cap", capKey, 13, ContentMagenta, TextAlignmentOptions.Left);
             UIKit.Stretch(cap, 20, 0, 0, 0);
@@ -266,7 +290,8 @@ namespace Sdo.UI.Screens
             // no ColorTint darkening on press, and the cap can't grab a key press (Space/Enter) during capture.
             var trigger = img.gameObject.AddComponent<EventTrigger>();
             var down = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
-            down.callback.AddListener(_ => BeginCapture(s, ln));
+            // 真人按下鍵帽才發 SE_0001（自動跳格的 BeginCapture 不經這裡，故不會連環叫）。
+            down.callback.AddListener(_ => { UiSfx.Play(UiSfx.Click); BeginCapture(s, ln); });
             trigger.triggers.Add(down);
 
             // bound-key letter: a 27×36 blue/white-outline glyph PNG centred on the chip (official look).
@@ -334,15 +359,18 @@ namespace Sdo.UI.Screens
         }
 
         // A filled RadioOn dot pinned to the left of a clickable option box (box-local x=9 = the baked circle centre).
-        private static Image OptionDot(RectTransform box)
+        private static Image OptionDot(RectTransform box) => OptionCircle(box, OptionDlgArt.RadioOn);
+
+        // A 15×15 radio orb (RadioOn orange / RadioOff lavender) pinned at box-local x=9 — the baked circle centre.
+        private static Image OptionCircle(RectTransform box, Sprite sprite)
         {
-            var dot = UIKit.AddImage(box, "dot", Color.white); dot.raycastTarget = false;
-            dot.sprite = OptionDlgArt.RadioOn;
-            var drt = dot.rectTransform;
-            drt.anchorMin = drt.anchorMax = new Vector2(0f, 0.5f); drt.pivot = new Vector2(0.5f, 0.5f);
-            drt.sizeDelta = OptionDlgArt.RadioOn != null ? OptionDlgArt.RadioOn.rect.size : new Vector2(15f, 15f);
-            drt.anchoredPosition = new Vector2(9f, 0f);
-            return dot;
+            var img = UIKit.AddImage(box, "circle", Color.white); img.raycastTarget = false;
+            img.sprite = sprite;
+            var rt = img.rectTransform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 0.5f); rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = sprite != null ? sprite.rect.size : new Vector2(15f, 15f);
+            rt.anchoredPosition = new Vector2(9f, 0f);
+            return img;
         }
 
         private void RefreshGame() { foreach (var r in _gameRefresh) r(); }
@@ -415,9 +443,13 @@ namespace Sdo.UI.Screens
             {
                 if (!Input.GetKeyDown(k)) continue;
                 (_capSlot == 0 ? _prim : _aux)[_capLane] = k.ToString();
-                int slot = _capSlot, lane = _capLane;
-                _capSlot = _capLane = -1;
-                RefreshCap(slot, lane);
+                // 一鍵只能綁一處：把「其它」位置上與剛綁相同的鍵清空(含主鍵位↔輔助鍵位跨排)，並刷新被清掉的鍵帽。
+                foreach (var pos in ClearDuplicateBinding(_prim, _aux, _capSlot, _capLane)) RefreshCap(pos.slot, pos.lane);
+                // 綁好一格後自動跳到「同一排」右邊那格繼續設定；到最後一格 (lane 3) 回捲到第一格 (lane 0)。
+                // 主鍵位 (slot 0) 與輔助鍵位 (slot 1) 各自獨立循環 —— slot 不變、只推進 lane。BeginCapture 內的
+                // CancelCapture 會先把剛綁好的那格刷回帶新字符的閒置態，再點亮下一格 (要 Esc 或點別處才停)。
+                int slot = _capSlot, nextLane = (_capLane + 1) % 4;
+                BeginCapture(slot, nextLane);
                 break;
             }
         }
@@ -449,7 +481,7 @@ namespace Sdo.UI.Screens
             if (_gpOpacitySlider) _gpOpacitySlider.value = _gpPanelOpacity;
             RefreshGame();
 
-            ShowTab(2);   // open on the 遊戲 (game) page by default
+            ShowTab(0);   // open on the 音效 (audio) page by default
             SetVisible(true);
             if (_windowCg != null) _windowCg.blocksRaycasts = true;
             if (_anim != null) { _anim.ResetOpen(); _anim.PlayIn(); }   // spin-zoom in (same as song-select)
@@ -518,6 +550,8 @@ namespace Sdo.UI.Screens
             _gpAspectFill = g.fullscreenFill; _gpBloom = g.bloom; _gpNotesLeft = g.notesPanelLeft;
             _gpFxPlayer = g.effectCharacter; _gpFxScene = g.effectScene; _gpViewAuto = g.cameraAuto;
             _gpCallShow = g.callCardInGame;
+            _gpPlayFullSong = g.playFullSong;
+            _gpSongSpeed = g.songSpeed;
             _gpPanelOpacity = Mathf.Clamp(g.panelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
         }
 
@@ -526,6 +560,8 @@ namespace Sdo.UI.Screens
             g.fullscreenFill = _gpAspectFill; g.bloom = _gpBloom; g.notesPanelLeft = _gpNotesLeft;
             g.effectCharacter = _gpFxPlayer; g.effectScene = _gpFxScene; g.cameraAuto = _gpViewAuto;
             g.callCardInGame = _gpCallShow;
+            g.playFullSong = _gpPlayFullSong;
+            g.songSpeed = _gpSongSpeed;
             g.panelOpacity = Mathf.Clamp(_gpPanelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
         }
 
@@ -666,6 +702,27 @@ namespace Sdo.UI.Screens
         {
             Language.TraditionalChinese => 0, Language.SimplifiedChinese => 1, Language.English => 2, _ => 3,
         };
+
+        /// <summary>一鍵只能綁一處：綁定 (keepSlot,keepLane) 後，把 prim/aux 兩排裡「其它」所有等於同一鍵名的格子
+        /// 清成 ""（含主鍵位↔輔助鍵位跨排），回傳被清掉的位置清單（讓呼叫端刷新那些鍵帽）。剛綁的那格與空鍵都不動。
+        /// 純函式，可測。</summary>
+        public static List<(int slot, int lane)> ClearDuplicateBinding(string[] prim, string[] aux, int keepSlot, int keepLane)
+        {
+            var cleared = new List<(int slot, int lane)>();
+            var key = (keepSlot == 0 ? prim : aux)?[keepLane];
+            if (string.IsNullOrEmpty(key)) return cleared;              // 剛綁的是空 → 不去清別的空格
+            for (int s = 0; s < 2; s++)
+            {
+                var arr = s == 0 ? prim : aux;
+                if (arr == null) continue;
+                for (int l = 0; l < arr.Length && l < 4; l++)
+                {
+                    if (s == keepSlot && l == keepLane) continue;       // 剛綁的那格保留
+                    if (arr[l] == key) { arr[l] = ""; cleared.Add((s, l)); }
+                }
+            }
+            return cleared;
+        }
 
         /// <summary>Short chip caption for a KeyCode name (fits a 37px key-cap). Pure/testable.</summary>
         public static string ShortKeyName(string keyName)

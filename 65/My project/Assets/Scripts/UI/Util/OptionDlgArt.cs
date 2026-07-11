@@ -106,8 +106,12 @@ namespace Sdo.UI.Util
         // close (X) — no baked text, unaffected by cleaning
         public static Sprite CloseN => Crop(322, 246, 33, 33);
         public static Sprite CloseP => Crop(322, 279, 33, 33);
-        // radio dot (toggle) off / on
-        public static Sprite RadioOff => Crop(1009, 0, 15, 15);
+        // radio dot (toggle) — ON is the orange orb; OFF is the lavender orb. The atlas has NO standalone off-sprite
+        // (that region is transparent): the official boards BAKE the lavender "off" orbs straight in. So RadioOff crops
+        // the 17×17 lavender orb baked into the 進階 board's row-1 template (atlas centre 480,698 → on the board's own
+        // #F2DFF1 panel). Because the dynamically-placed rows sit on that SAME board, the crop's panel-coloured corners
+        // blend invisibly, and the orb is pixel-identical to row 1's baked circle. RadioOn (gold) overlays it when selected.
+        public static Sprite RadioOff => Crop(472, 690, 17, 17);
         public static Sprite RadioOn => Crop(994, 0, 15, 15);
         // slider handle
         public static Sprite SliderHandle => Crop(951, 0, 43, 23);

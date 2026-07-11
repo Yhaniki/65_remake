@@ -38,6 +38,8 @@ namespace Sdo.Settings
         public bool effectScene = true;      // 遊戲特效「場景特效」：場景常駐背景 EFT（魔法陣/雪/極光/發光…）
         public bool cameraAuto = true;       // 遊戲視角：true=默認(自動導播) / false=固定(鏡頭 1)
         public bool callCardInGame = true;   // 呼叫卡遊戲中顯示（預設開；暫未接功能）
+        public bool playFullSong = false;    // 進階「完奏模式」（原無失敗模式）：HP 歸零不判失敗，整首照打到曲末，結算走正常名次（不出 GAME OVER）
+        public bool songSpeed = true;        // 進階「歌曲變速」：允許歌曲變速玩法（預設開；暫只保存狀態、忠實呈現官方選項）
         public float panelOpacity = 1.4f;    // 面板透明度：note 面板 alpha 倍率(=boardAlpha)，範圍 0..1.6（1.4=官方）
 
         public const float MaxPanelOpacity = 1.6f;   // 官方滑桿最高 1.6X
@@ -64,12 +66,16 @@ namespace Sdo.Settings
             var res = new KeyCode[4][];
             for (int i = 0; i < 4; i++)
             {
-                var p = ParseKey(At(lane4, i), DefaultPrimary[i]);
-                var a = ParseKey(At(lane4aux, i), DefaultAux[i]);
+                var p = LaneKey(At(lane4, i), DefaultPrimary[i]);
+                var a = LaneKey(At(lane4aux, i), DefaultAux[i]);
                 res[i] = new[] { p, a };
             }
             return res;
         }
+
+        // ""(使用者在鍵盤頁刻意清空該格，見 OPTION 去重)→ KeyCode.None：該格不觸發、也不回退成預設鍵（否則被清掉的鍵
+        // 會在遊戲中借預設又生效、重複衝突）。其餘沿用 ParseKey：null/缺欄位/無效名 → 該 lane 預設鍵。
+        private static KeyCode LaneKey(string s, KeyCode def) => (s != null && s.Length == 0) ? KeyCode.None : ParseKey(s, def);
 
         /// <summary>Coerce a 4-length name array to valid KeyCode names, filling gaps/invalid entries from
         /// <paramref name="def"/>. Pure (unit-testable) — used by DisplaySettingsManager.Sanitize.</summary>
@@ -79,7 +85,10 @@ namespace Sdo.Settings
             for (int i = 0; i < 4; i++)
             {
                 var v = At(a, i);
-                res[i] = (!string.IsNullOrEmpty(v) && Enum.TryParse<KeyCode>(v, out _)) ? v : def[i].ToString();
+                // ""(刻意清空)原樣保留 → 不塞回預設，去重清掉的鍵才不會又被還原(甚至再度重複)；
+                // null/缺欄位/無效名 → 該 lane 預設鍵。
+                if (v != null && v.Length == 0) res[i] = "";
+                else res[i] = (!string.IsNullOrEmpty(v) && Enum.TryParse<KeyCode>(v, out _)) ? v : def[i].ToString();
             }
             return res;
         }

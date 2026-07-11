@@ -181,7 +181,16 @@ namespace Sdo.Osu
             var noteBeat = new List<double>();
             var noteLane = new List<int>();
             var noteType = new List<int>();
-            double firstMarkerBeat = -1.0;   // first type-9 (小節線) beat = the song's music/BPM start anchor
+            // Music-start anchor. The authoritative marker is the type-10 (音樂起止) slot whose value 1000 the
+            // engine watches for: NewNote_TriggerNoteSound_0048e9c0 sets its "music started" flag (+0x2e0) the
+            // instant the play head reaches a slot with (value & 0xfff) == 1000 (value 998 = 0x3e5 is the END
+            // marker). So the FIRST type-10 u0==1000 slot's beat is where audio + dance begin; the measure
+            // before it is a silent count-in. Some charts carry only a type-10 END marker near the song's tail
+            // (u0==1000 sitting AFTER the first note) — reject those and fall back to the type-9 小節線 (the old
+            // heuristic) so those charts keep their previous timing instead of delaying the music to mid-song.
+            double firstMusicStartBeat = -1.0;   // first type-10 (u0==1000) slot beat — the real music-start marker
+            double firstBarLineBeat = -1.0;      // first type-9 (小節線) slot beat — fallback anchor
+            double firstNoteBeat = -1.0;         // earliest LDUR note beat — guards against END-only type-10 markers
             int off = start;
             while (off + 8 <= end)
             {
@@ -202,23 +211,33 @@ namespace Sdo.Osu
                         { bpmBeats.Add(beat); bpmVals.Add(bpm); }
                         continue;
                     }
-                    // type-9 = 小節線 (bar line, at odd measurements 1,3,5…). The FIRST one (measurement 1)
-                    // marks where the music + BPM actually start; the measure before it is a silent count-in.
-                    if (ft == 9 && I16(body, off) != 0 && (firstMarkerBeat < 0.0 || beat < firstMarkerBeat))
-                        firstMarkerBeat = beat;
+                    // type-10 = 音樂起止. Its start slot carries value 1000 (low 12 bits — engine tests
+                    // `param_2 & 0xfff == 1000`). This is THE music-start marker; take the earliest one.
+                    if (ft == 10 && (U32(body, off) & 0xfff) == 1000 && (firstMusicStartBeat < 0.0 || beat < firstMusicStartBeat))
+                        firstMusicStartBeat = beat;
+                    // type-9 = 小節線 (bar line, at odd measurements 1,3,5…). Kept as the fallback anchor for
+                    // charts that carry no valid type-10 start marker (older offline set).
+                    if (ft == 9 && I16(body, off) != 0 && (firstBarLineBeat < 0.0 || beat < firstBarLineBeat))
+                        firstBarLineBeat = beat;
                     if (lane < 0) continue;
                     short u0 = I16(body, off);
                     byte nt = body[off + 3];
                     if (u0 == 0) continue;
+                    if (firstNoteBeat < 0.0 || beat < firstNoteBeat) firstNoteBeat = beat;
                     noteBeat.Add(beat); noteLane.Add(lane); noteType.Add(nt);
                 }
             }
+            // Choose the anchor: the type-10 music-start marker when present AND plausible (at or before the
+            // first note — else it is an END-only marker); otherwise the type-9 bar line (previous behaviour).
+            bool t10Valid = firstMusicStartBeat >= 0.0 && (firstNoteBeat < 0.0 || firstMusicStartBeat <= firstNoteBeat + 1e-6);
+            double firstMarkerBeat = t10Valid ? firstMusicStartBeat : firstBarLineBeat;
 
             // --- build the piecewise-constant BPM timeline (segment start beat / bpm / cumulative ms) ---
             BuildBpmTimeline(headerBpm, bpmBeats, bpmVals, out double[] segBeat, out double[] segBpm, out double[] segMs);
 
-            // The audio starts at the first type-9 (小節線 @ measurement 1) — i.e. the note/beat clock time of
-            // that marker. The caller delays music playback by this much so the song lines up with the notes.
+            // The audio starts at the music-start marker (type-10 音樂起止 value 1000, else the type-9 小節線
+            // fallback) — i.e. the note/beat clock time of that marker. The caller delays music playback (and the
+            // dancer) by this much so the leading count-in measure is silent and the song lines up.
             map.MusicStartOffsetMs = firstMarkerBeat >= 0.0 ? BeatToMs(segBeat, segBpm, segMs, firstMarkerBeat) : 0.0;
 
             // scroll/timing points (ms): one uninherited point per BPM segment. Single-BPM charts get a

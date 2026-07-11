@@ -45,6 +45,21 @@ namespace Sdo.Game
 
         public static string[] DefaultParts(bool male) => male ? ManParts : WomanParts;
 
+        /// <summary>How the avatar's materials are set up for its render target.</summary>
+        public enum RenderMode
+        {
+            /// <summary>Full body over an OPAQUE 3D scene (room/gameplay): Unlit/Texture + two-sided hair, with the
+            /// 2-material COAT/PANT skin submeshes resolved per-range (so arms/legs aren't painted with cloth).</summary>
+            Scene,
+            /// <summary>Head-only over a TRANSPARENT portrait RT (result/room head): Sdo/PortraitOpaque (opaque + hair
+            /// cutout for a clean silhouette) and a single material per submesh (the head never shows COAT/PANT skin).</summary>
+            PortraitHead,
+            /// <summary>Full body over a TRANSPARENT RT (gender-select preview): the PortraitOpaque opaque-cutout shader
+            /// so hair gaps don't punch transparent holes / occlude the face on the alpha-cleared RT, BUT the 2-material
+            /// COAT/PANT skin ranges are kept (it's a whole body, not just a head).</summary>
+            PreviewBody,
+        }
+
         /// <summary>
         /// Build the avatar onto <paramref name="parent"/>: load FEMALE.HRC, the 6 WOMAN parts and the idle clip, set
         /// the default (thin) body shape, arm the idle pose, and put everything on <paramref name="layer"/>. When
@@ -62,8 +77,18 @@ namespace Sdo.Game
         public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male)
             => Build(parent, layer, portraitOpaque, male, null);
 
+        /// <summary>Back-compat bool overload: <paramref name="portraitOpaque"/> true → <see cref="RenderMode.PortraitHead"/>,
+        /// false → <see cref="RenderMode.Scene"/>. New callers should pass a <see cref="RenderMode"/> directly.</summary>
         public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male, string[] equippedParts)
+            => Build(parent, layer, portraitOpaque ? RenderMode.PortraitHead : RenderMode.Scene, male, equippedParts);
+
+        public static SdoAvatar Build(GameObject parent, int layer, RenderMode mode, bool male = false, string[] equippedParts = null)
         {
+            // PortraitHead + PreviewBody both composite over an alpha-cleared RT → use the opaque-cutout shader so hair
+            // gaps stay transparent instead of writing depth/alpha holes over the face. Only the head portrait collapses
+            // the COAT/PANT submeshes to a single material (it never shows them); the full-body preview keeps the ranges.
+            bool useCutout = mode != RenderMode.Scene;
+            bool singleMaterial = mode == RenderMode.PortraitHead;
             string root = SdoExtracted.Root;
             string hrcRel = male ? MaleHrc : FemaleHrc;
             var bodyParts = NormalizeParts(equippedParts, male);
@@ -93,7 +118,7 @@ namespace Sdo.Game
                 if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-avatar] parse fail " + rel); continue; }
                 var dir = Path.GetDirectoryName(path);
                 bool hair = rel.ToUpperInvariant().Contains("HAIR");
-                var sh = portraitOpaque ? portraitShader : (hair ? hairShader : bodyShader);
+                var sh = useCutout ? portraitShader : (hair ? hairShader : bodyShader);
                 int si = 0;
                 foreach (var sub in r.Submeshes)
                 {
@@ -104,7 +129,7 @@ namespace Sdo.Game
 
                     // 2-material skin submeshes (COAT/PANT): cloth range -> garment DDS, skin range -> shared W_Basic DDS.
                     // Only meaningful for the full-body avatar; the head portrait never shows them, so keep it single.
-                    if (!portraitOpaque && sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
+                    if (!singleMaterial && sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
                     {
                         var mats = new Material[sub.Ranges.Count];
                         for (int s = 0; s < sub.Ranges.Count; s++)

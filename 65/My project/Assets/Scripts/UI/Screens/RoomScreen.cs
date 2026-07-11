@@ -240,10 +240,11 @@ namespace Sdo.UI.Screens
             // 左上角所在位置：自由練習場 / 頻道 / 房號 (DDRROOM servername/channelnum/roomid) — 白字 + 藍邊(70,74,152) 粗體。
             // 藍邊用 OutlinedLabel(位移複製)畫，不用 TMP SDF 材質描邊(那條在執行期動態 CJK 字型上畫不出來)。
             // 三欄都左對齊;初始 x 不重要，Render() 會量實際字寬後左到右排版(ServerX 起、欄間 HeaderGap)。
+            // 欄寬給足(左對齊、透明容器):太窄會讓長字串(英文 Free Practice 1)自動換行成兩列 → 溢出紫框。寬一點只是留右側空白，不影響左緣定位。
             const float align_y = 11f, align_h = 18f;
-            _serverLabel  = OutlinedLabel.Create(_win1Root, "ServerName", ServerX, align_y, 120, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
-            _channelLabel = OutlinedLabel.Create(_win1Root, "ChannelNum", ServerX, align_y, 60, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
-            _roomIdLabel  = OutlinedLabel.Create(_win1Root, "RoomId", ServerX, align_y, 30, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
+            _serverLabel  = OutlinedLabel.Create(_win1Root, "ServerName", ServerX, align_y, 160, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
+            _channelLabel = OutlinedLabel.Create(_win1Root, "ChannelNum", ServerX, align_y, 110, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
+            _roomIdLabel  = OutlinedLabel.Create(_win1Root, "RoomId", ServerX, align_y, 60, align_h, HeaderFontSz, Color.white, LeftEdge, HeaderEdgePx, true, TextAlignmentOptions.Left);
             // 中央房名 (DDRROOM roomname) — 粗體白字(無描邊)，文字內容由 RoomLabels.DisplayName 決定。
             _roomNameLabel = UIKit.AddText(_win1Root, "RoomName", "", 12, Color.white, TextAlignmentOptions.Center);
             _roomNameLabel.fontStyle = FontStyles.Bold;
@@ -2835,7 +2836,7 @@ namespace Sdo.UI.Screens
 
         // 左上位置標示(自由練習場 / 頻道 / 房號):左對齊,Render() 量實際字寬後左到右自動排版。
         private const float ServerX = 19f;       // 起始左緣(紫框左邊)
-        private const float HeaderGap = 23f;     // 欄與欄的固定間距(px);調大=更開、調小=更擠
+        private const float HeaderGap = 16f;     // 欄與欄的固定間距(px);調大=更開、調小=更擠。壓小一點讓多語系(英文較長)都塞進紫框
         private const float HeaderFontSz = 14f;  // 字級(這串比官方「新手一区」長,比 14 小一點才連間距一起塞進紫框)
 
         /// <summary>頭上漂浮名字的黑邊厚度(canvas px)。字色/粗體跟遊戲內頭頂名字共用 <see cref="Sdo.Game.TextStyles.FaceCream"/>。</summary>

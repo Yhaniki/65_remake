@@ -88,8 +88,8 @@ namespace Sdo.Game
                     : " 固定速度 OFF：osu 預設，內部仍隨 BPM變速/SV 變速");
                 if (cs != constantScroll) { constantScroll = cs; BuildScroll(); }
                 bool mo = GUILayout.Toggle(useMusicStartOffset, useMusicStartOffset
-                    ? $" 音樂對齊 type-9 ON：跳過開頭 count-in（此曲 {(_map != null ? _map.MusicStartOffsetMs : 0):F0}ms）— 下次開始生效"
-                    : " 音樂對齊 type-9 OFF：音樂從 beat 0 播（下次開始生效）");
+                    ? $" 音樂對齊 type-10 ON：跳過開頭 count-in、舞蹈等音樂才跳（此曲 {(_map != null ? _map.MusicStartOffsetMs : 0):F0}ms）— 下次開始生效"
+                    : " 音樂對齊 type-10 OFF：音樂＋舞蹈從 beat 0 播（下次開始生效）");
                 useMusicStartOffset = mo;
                 GUILayout.Space(6);
                 // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — re-shape the dancer LIVE.

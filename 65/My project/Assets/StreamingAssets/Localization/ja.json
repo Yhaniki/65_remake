@@ -113,7 +113,7 @@
   },
   {
    "k": "room.channel",
-   "v": "チャンネル{0}"
+   "v": "ch{0}"
   },
   {
    "k": "room.default_name",
@@ -290,6 +290,10 @@
   {
    "k": "songselect.mode_normal",
    "v": "ノーマルモード"
+  },
+  {
+   "k": "songselect.mode_showtime",
+   "v": "ShowTime"
   },
   {
    "k": "songselect.form_basic",
@@ -546,6 +550,14 @@
   {
    "k": "settings.language",
    "v": "言語"
+  },
+  {
+   "k": "settings.play_full_song",
+   "v": "完奏モード"
+  },
+  {
+   "k": "settings.song_speed",
+   "v": "曲の変速"
   },
   {
    "k": "display.windowed",

@@ -292,6 +292,10 @@
    "v": "普通模式"
   },
   {
+   "k": "songselect.mode_showtime",
+   "v": "ShowTime"
+  },
+  {
    "k": "songselect.form_basic",
    "v": "基本"
   },
@@ -546,6 +550,14 @@
   {
    "k": "settings.language",
    "v": "语言"
+  },
+  {
+   "k": "settings.play_full_song",
+   "v": "完奏模式"
+  },
+  {
+   "k": "settings.song_speed",
+   "v": "歌曲变速"
   },
   {
    "k": "display.windowed",
