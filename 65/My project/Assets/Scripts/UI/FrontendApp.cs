@@ -69,6 +69,9 @@ namespace Sdo.UI
             var lang = LanguageInfo.FromCode(DisplaySettingsManager.Settings?.language);
             LocalizationManager.Init(lang);
 
+            var vol = DisplaySettingsManager.Settings?.audio;   // 開機即把已存的三個音量套進 AudioMix(BGM/歌曲/SE 一開始就對)
+            if (vol != null) AudioMix.Set(vol.bgm, vol.gameMusic, vol.sfx);
+
             _ctx = AppContext.CreateMock();
 
             // OPTION 遊戲頁「遊戲畫面」偏好：全屏(填滿) = Stretch，視窗化(左右黑邊) = Pillarbox。必須在 CreateWorldCanvas

@@ -20,8 +20,6 @@ namespace Sdo.UI.Util
     /// </summary>
     public sealed class BgmPlayer : MonoBehaviour
     {
-        [Range(0f, 1f)] private const float Volume = 0.55f;
-
         private static BgmPlayer _inst;
         private AudioSource _src;
         private List<string> _tracks;
@@ -43,7 +41,8 @@ namespace Sdo.UI.Util
                 _inst._src.playOnAwake = false;
                 _inst._src.loop = false;
                 _inst._src.spatialBlend = 0f;
-                _inst._src.volume = Volume;
+                _inst._src.volume = AudioMix.Bgm;
+                AudioMix.Changed += _inst.OnMixChanged;   // 拖「背景音樂」滑桿時即時改 BGM 音量
                 return _inst;
             }
         }
@@ -52,6 +51,7 @@ namespace Sdo.UI.Util
         public static void Play()
         {
             var inst = Instance;
+            inst._src.volume = AudioMix.Bgm;   // 套用最新音量(可能停播期間被調過)
             if (inst._playing) return;
             inst._playing = true;
             inst._loop = inst.StartCoroutine(inst.PlayLoop());
@@ -71,6 +71,8 @@ namespace Sdo.UI.Util
                 if (c != null) Destroy(c);
             }
         }
+
+        private void OnMixChanged() { if (_src != null) _src.volume = AudioMix.Bgm; }
 
         private IEnumerator PlayLoop()
         {

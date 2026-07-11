@@ -257,10 +257,14 @@ namespace Sdo.UI.Screens
 
         private void BuildAudio(RectTransform b)
         {
-            _sBgm = AddSlider(b, 0, v => _bgm = v);
-            _sMusic = AddSlider(b, 1, v => _music = v);
-            _sSfx = AddSlider(b, 2, v => _sfx = v);
+            // 拖動即時預覽:三個滑桿各自更新 working-copy 後 PushLiveAudio → AudioMix 立刻套用(聽得到);保存才寫進 settings。
+            _sBgm = AddSlider(b, 0, v => { _bgm = v; PushLiveAudio(); });
+            _sMusic = AddSlider(b, 1, v => { _music = v; PushLiveAudio(); });
+            _sSfx = AddSlider(b, 2, v => { _sfx = v; PushLiveAudio(); });
         }
+
+        // 把目前 working-copy 的三個音量推進 AudioMix → BGM/遊戲音樂/遊戲音效 即時套用(未存檔)。
+        private void PushLiveAudio() => Sdo.Game.AudioMix.Set(_bgm, _music, _sfx);
 
         // ---------------------------------------------------------------- 鍵盤 tab (4-key only)
         // Faithful to OPTIONDLG.XML Win4key: the 主鍵位設置/輔助鍵位 headers, the 8 colour arrows and the note
@@ -514,7 +518,7 @@ namespace Sdo.UI.Screens
 
             DisplaySettingsManager.Save();
             DisplaySettingsManager.ApplyDisplay();
-            AudioListener.volume = _music;
+            Sdo.Game.AudioMix.Set(_bgm, _music, _sfx);   // 三類分別套用(背景音樂/遊戲音樂/遊戲音效),非舊的全域 AudioListener
             // 遊戲畫面 (全屏/黑邊) 立即套用：其餘遊戲頁偏好（特效/視角/透明度）在下一場遊戲開局讀取。
             AspectController.SetMode(_gpAspectFill ? AspectMode.Stretch : AspectMode.Pillarbox);
             _applied = true; _entryLang = _lang;
@@ -570,6 +574,11 @@ namespace Sdo.UI.Screens
             CancelCapture();
             if (!_applied && LocalizationManager.Current != _entryLang)
                 LocalizationManager.SetLanguage(_entryLang);            // revert live language preview
+            if (!_applied)
+            {
+                var a = DisplaySettingsManager.Settings.audio;          // 退出未存 → 還原三個音量的 live 預覽到已存值
+                Sdo.Game.AudioMix.Set(a.bgm, a.gameMusic, a.sfx);
+            }
             AnimatedHide();
         }
 
