@@ -84,8 +84,10 @@ namespace Sdo.UI.Screens
             // own art + click handler, only the X slot is exchanged.
             var enter = UIKit.AddSpriteButton(Root, "EnterRoom", An("LobbySel29"), An("LobbySel30"), An("LobbySel31"), QuitX, BtnY);
             enter.onClick.AddListener(OnEnter);
+            UiSfx.AttachClick(enter);   // 按下 → SE_0001
             var shop = UIKit.AddSpriteButton(Root, "Shop", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"), EnterX, BtnY);
             shop.onClick.AddListener(OnOpenShop);
+            UiSfx.AttachClick(shop);    // 按下 → SE_0001
 
             // Official AvtShow is composited over the lobby chrome; keep the transparent RT on top.
             if (_previewImg != null) _previewImg.transform.SetAsLastSibling();
@@ -113,7 +115,8 @@ namespace Sdo.UI.Screens
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
             if (ui != null) { _maskedCam = ui; _savedMask = ui.cullingMask; ui.cullingMask &= ~(1 << GenderPreview3D.PreviewLayer); }
 
-            SelectGender(_gender);   // sync checkbox sprites + preview
+            SelectGender(_gender);            // sync checkbox sprites + preview
+            SelectInputMode(keyboard: true);  // 預設 = 鍵盤被選中(藍邊 LobbySel0b)；每次顯示都重置成 keyboard
         }
 
         public override void OnHide()
@@ -182,6 +185,7 @@ namespace Sdo.UI.Screens
             btn.targetGraphic = img;
             btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => onClick());
+            UiSfx.AttachPress(btn, UiSfx.Click);   // 性別畫面按鈕按下 → SE_0001
             return img;
         }
 
