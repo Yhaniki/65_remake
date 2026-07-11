@@ -7,8 +7,8 @@ namespace Sdo.UI.Catalog
     /// <summary>
     /// Pure-logic view over the song catalog for the song-select screen: text search + random pick.
     /// (Difficulty is a per-song property, not a list filter. Most songs carry easy/normal/hard, but
-    /// some ship only a subset — a difficulty with 0 notes is empty and non-selectable; see
-    /// <see cref="SongCatalog.Entry.HasChart"/> and <see cref="NearestPlayableDifficulty"/>.)
+    /// some ship only a subset — a difficulty with 0 notes is empty, so that song's row is greyed out
+    /// and non-selectable while that difficulty is active; see <see cref="SongCatalog.Entry.HasChart"/>.)
     /// </summary>
     public sealed class SongListModel
     {
@@ -82,23 +82,20 @@ namespace Sdo.UI.Catalog
         }
 
         /// <summary>
-        /// The difficulty a song should actually open on when the user prefers <paramref name="want"/> (0/1/2)
-        /// but that difficulty may be empty for this song. Returns <paramref name="want"/> if it has a chart;
-        /// otherwise the nearest difficulty that does (ties break toward the easier side). If the song has no
-        /// playable chart at all (all empty), or <paramref name="e"/> is null, returns <paramref name="want"/>
-        /// unchanged so callers keep the user's preference (e.g. the 隨機 pool, where no single song is focused).
+        /// First entry in <paramref name="list"/> at/after <paramref name="from"/> that has a real chart at
+        /// <paramref name="difficulty"/> (non-empty), searching forward then wrapping to the start; -1 if none.
+        /// Used to move the selection off a row that just became empty when the active difficulty changed.
         /// </summary>
-        public static int NearestPlayableDifficulty(SongCatalog.Entry e, int want)
+        public static int FirstPlayableIndex(IReadOnlyList<SongCatalog.Entry> list, int difficulty, int from)
         {
-            want = want < 0 ? 0 : (want > 2 ? 2 : want);
-            if (e == null || e.HasChart(want)) return want;
-            for (int off = 1; off <= 2; off++)
+            if (list == null || list.Count == 0) return -1;
+            if (from < 0) from = 0;
+            for (int k = 0; k < list.Count; k++)
             {
-                int lo = want - off, hi = want + off;
-                if (lo >= 0 && e.HasChart(lo)) return lo;
-                if (hi <= 2 && e.HasChart(hi)) return hi;
+                int i = (from + k) % list.Count;
+                if (list[i] != null && list[i].HasChart(difficulty)) return i;
             }
-            return want;   // no chart at any difficulty (degenerate entry) -> leave the preference untouched
+            return -1;
         }
 
         public SongCatalog.Entry PickRandom(int seed)

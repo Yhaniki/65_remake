@@ -220,7 +220,14 @@ namespace Sdo.Game
         ///   • <see cref="DdsAlphaMode.Opaque"/> → the opaque <paramref name="bodyShader"/> unchanged.</summary>
         private static Shader AlphaShaderFor(Shader texShader, DdsAlphaMode am, Shader bodyShader, Shader glassShader, Shader cutoutShader)
         {
-            if (texShader != bodyShader) return texShader;
+            if (texShader != bodyShader)
+            {
+                // 髮 mesh (hairShader = cutoutShader = Sdo/UnlitDoubleSided) 的柔性半透明層 —— 帽子的紗/veil (am=Blend) ——
+                // 用 cutout 會被裁成透明線框 (兔乖乖 女帽)。真髮絲是硬鏤空 (Cutout) → 保留髮 shader;只有 veil 這種
+                // Blend 層改實心 (可見,不再線框)。
+                if (texShader == cutoutShader && am == DdsAlphaMode.Blend) return bodyShader;
+                return texShader;
+            }
             switch (am)
             {
                 case DdsAlphaMode.Cutout: return cutoutShader;
@@ -255,8 +262,12 @@ namespace Sdo.Game
                 bool hasAlpha = DdsLoader.HasAlpha(bytes);
                 bool additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
                 sceneAlpha = DdsLoader.GetSceneAlphaMode(bytes);   // distribution-based (≥3% 真洞才 Cutout) → 不會被雜訊誤判
-                if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque && DdsLoader.HardTransparentFraction(bytes) > 0.7f)
-                    sceneAlpha = DdsAlphaMode.Opaque;   // 上衣/褲/連身 alpha 壞掉(>70% 全透明) → 當實心,不畫成透明線框
+                // 布料(COAT/PANT/ONE)的 alpha 幾乎都不是「透明度」:全透明(>70% a0)=匯出壞掉;柔性漸層(Blend,如嘻哈GIRL
+                // 97% soft)=光影/AO 圖非透明。兩者都當實心,否則 Blend 走 alpha-blend(ZWrite off)袖子會穿透衣服、破 alpha
+                // 走 cutout 被裁成透明線框。真孔洞去背(Cutout,<70% a0)保留不動。
+                if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque
+                    && (sceneAlpha == DdsAlphaMode.Blend || DdsLoader.HardTransparentFraction(bytes) > 0.7f))
+                    sceneAlpha = DdsAlphaMode.Opaque;
                 return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow);
             }
             catch { return null; }
@@ -270,7 +281,7 @@ namespace Sdo.Game
         /// <summary>True for a body garment slot (coat/pant/one-piece) whose texture must stay opaque when its alpha is
         /// broken — as opposed to accessories (wings/glasses/hair) that legitimately use alpha cut-outs.</summary>
         private static bool IsBodyGarment(string rel)
-        { string u = (rel ?? "").ToUpperInvariant(); return u.Contains("COAT") || u.Contains("PANT") || u.Contains("_ONE"); }
+        { string u = (rel ?? "").ToUpperInvariant(); return u.Contains("COAT") || u.Contains("PANT") || u.Contains("_ONE") || u.Contains("SHOES"); }
 
         /// <summary>The mesh's OWN texture derived from its filename: 'AVATAR/023441_WOMAN_ONE.MSH' → '023441_WOMAN_ONE.dds'.
         /// Some meshes embed a FOREIGN texture id in their material name (祕密花園 023441_WOMAN_ONE 引 'sh1226_woman_one.dds',

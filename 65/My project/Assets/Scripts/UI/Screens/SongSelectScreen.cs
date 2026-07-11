@@ -45,6 +45,7 @@ namespace Sdo.UI.Screens
 
         private static readonly Color ColComboList = FromArgb(0xff018194); // green-box dropdown list text (RGB 1,129,148)
         private static readonly Color ColRow = FromArgb(0xffc43e94);    // song name / level / time — 亮玫瑰洋紅(藍降,較原 c94bb3 飽和、比 a8318f 亮) + bold in AddRowText
+        private static readonly Color ColRowDisabled = FromArgb(0xa0928e93); // 這首歌在目前難度沒有譜面(0 note)→整列灰掉、不可選：中性灰 + 半透明(~0.63a),明顯比亮玫瑰的可選列暗
         private static readonly Color ColInfo = FromArgb(0xff7cddd8);   // left info block (演唱者/BPM/音符數) — 貼近烘死標籤的亮青(僅比原 82e6e2 微深) + bold in MakeInfo
         private static readonly Color ColPage = FromArgb(0xff842200);   // page counter
         private static readonly Color ColCaption = FromArgb(0xffffffff); // scene caption
@@ -53,8 +54,7 @@ namespace Sdo.UI.Screens
         private SongListModel _model;
         private List<SongCatalog.Entry> _filtered = new List<SongCatalog.Entry>();
         private SongCatalog.Entry _selected;
-        private int _difficulty;   // 0=easy/1=normal/2=hard; the EFFECTIVE difficulty (clamped to a chart the selected song actually has)
-        private int _preferredDifficulty;   // what the user last explicitly picked on a tab; restored when browsing back to a song that has it
+        private int _difficulty;   // 0=easy/1=normal/2=hard; set from Session in OnShow
         private int _page;
         private HashSet<int> _newIds = new HashSet<int>();   // fileIds that get a NEW badge (top-N newest)
 
@@ -239,10 +239,11 @@ namespace Sdo.UI.Screens
             else
             {
                 ApplyFilter();          // -> RenderDiffTabs + RenderPage
-                // re-select last time's song if it's in the list (else the first), jumping to its page so it's visible.
+                // re-select last time's song if it's in the list AND has a chart at the active difficulty
+                // (else the first playable), jumping to its page so it's visible.
                 var prev = FindPreviousSelection();
-                if (prev != null) { _page = _filtered.IndexOf(prev) / PageSize; Select(prev); }
-                else if (_filtered.Count > 0) Select(_filtered[0]);
+                if (prev != null && prev.HasChart(_difficulty)) { _page = _filtered.IndexOf(prev) / PageSize; Select(prev); }
+                else if (_filtered.Count > 0) SelectFirstPlayable();
                 else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }   // empty -> NONE disc, no music
             }
         }
@@ -393,7 +394,7 @@ namespace Sdo.UI.Screens
             else
             {
                 ApplyFilter();     // category + search -> rows
-                if (_filtered.Count > 0) Select(_filtered[0]);
+                if (_filtered.Count > 0) SelectFirstPlayable();   // 第一首在此難度有譜面的歌(跳過灰列)
                 else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }   // empty -> NONE disc, no spin, no music
             }
         }
@@ -645,8 +646,10 @@ namespace Sdo.UI.Screens
         {
             _difficulty = Mathf.Clamp(d, 0, 2);
             RenderDiffTabs();
-            RenderPage();
-            UpdateInfo();
+            // 切難度後：若目前選的歌在新難度沒有譜面(整列會變灰、不可選)，把選取移到最近一首在此難度有譜面的歌。
+            if (_category != CatRandom && (_selected == null || !_selected.HasChart(_difficulty)))
+                SelectFirstPlayable();
+            else { RenderPage(); UpdateInfo(); }
         }
 
         private void RenderDiffTabs()
@@ -654,6 +657,17 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < 3; i++)
                 if (_diffImg[i] != null)
                     UIKit.ApplySprite(_diffImg[i], i == _difficulty ? _diffPushed[i] : _diffNormal[i]);
+        }
+
+        // Move the selection to the first song (from the current focus, wrapping) that has a real chart at the
+        // active difficulty — used on entry and after a difficulty switch so a greyed (empty) row is never the
+        // selection. Jumps to that song's page so it's visible. No playable song at all -> clear selection.
+        private void SelectFirstPlayable()
+        {
+            int from = _selected != null ? _filtered.IndexOf(_selected) : 0;
+            int idx = SongListModel.FirstPlayableIndex(_filtered, _difficulty, from < 0 ? 0 : from);
+            if (idx >= 0) { _page = idx / PageSize; Select(_filtered[idx]); }
+            else { _selected = null; RenderPage(); UpdateInfo(); UpdateDisk(); StopPreview(); }
         }
 
         private void ApplyFilter()
@@ -671,7 +685,7 @@ namespace Sdo.UI.Screens
         {
             _page = 0;
             ApplyFilter();
-            if (_filtered.Count > 0) Select(_filtered[0]);
+            if (_filtered.Count > 0) SelectFirstPlayable();
             else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }
         }
 
@@ -715,7 +729,16 @@ namespace Sdo.UI.Screens
             if (row < 0 || row >= PageSize) row = 0;
             _page = ((_page + delta) % pages + pages) % pages;
             var slice = PageSlice(_filtered, _page, PageSize);
-            if (slice.Count > 0) Select(slice[Mathf.Clamp(row, 0, slice.Count - 1)]);   // re-focus same row (preview + info follow)
+            // Re-focus the same row on the new page; if that row is greyed (no chart at this difficulty),
+            // fall to the first playable row on the page. A page with no playable row -> just render it.
+            int want = -1;
+            if (slice.Count > 0)
+            {
+                int same = Mathf.Clamp(row, 0, slice.Count - 1);
+                if (slice[same].HasChart(_difficulty)) want = same;
+                else for (int j = 0; j < slice.Count; j++) if (slice[j].HasChart(_difficulty)) { want = j; break; }
+            }
+            if (want >= 0) Select(slice[want]);   // preview + info follow
             else RenderPage();
         }
 
@@ -750,20 +773,28 @@ namespace Sdo.UI.Screens
                 if (!has) { SetRowNewActive(i, false); continue; }
 
                 var e = slice[i];
+                // 這首歌在目前難度有沒有譜面(用實際 note 數判斷,非等級)：沒有→整列灰掉、左鍵不可選。
+                bool playable = e.HasChart(_difficulty);
                 bool sel = ReferenceEquals(e, _selected);
                 ApplyRowHi(i, sel);
+                Color rowCol = playable ? ColRow : ColRowDisabled;
                 _rowName[i].alignment = TextAlignmentOptions.Left;
                 _rowName[i].text = e.title ?? e.gn;
+                _rowName[i].color = rowCol;
                 int lvl = e.Diff(_difficulty);
                 _rowLevel[i].text = lvl >= 0 ? lvl.ToString() : "-";
+                _rowLevel[i].color = rowCol;
                 int dur = e.DurationSec(_difficulty);
                 _rowTime[i].text = dur > 0 ? FormatDuration(dur) : "";
+                _rowTime[i].color = rowCol;
                 SetRowNewActive(i, _newBadgeArt && _newIds.Contains(e.fileId));
                 // 左鍵選歌：先發 SE_0001 再 focus+試聽。（RenderPage 上面 RemoveAllListeners 會連 WrapInWindow 掛的 click SFX 一起清掉 → 這裡補回）
-                _rowBtn[i].onClick.AddListener(() => { UiSfx.Play(UiSfx.Click); Select(e); });
-                // 右鍵這首歌 → 先 focus+試聽該首（跟左鍵一樣選中並播放），再開收藏加/刪彈出選單（跟著滑鼠）。
+                // 灰列(此難度無譜面)不掛左鍵 → 點了沒反應、不會選中也不試聽。
+                if (playable)
+                    _rowBtn[i].onClick.AddListener(() => { UiSfx.Play(UiSfx.Click); Select(e); });
+                // 右鍵這首歌 → 開收藏加/刪彈出選單（收藏與難度無關,灰列也能收藏）；可選的歌順便 focus+試聽。
                 if (_rowCtx[i] != null)
-                    _rowCtx[i].Clicked = ev => { if (ev.button == PointerEventData.InputButton.Right) { Select(e); ShowFavPopup(e, ev.position); } };
+                    _rowCtx[i].Clicked = ev => { if (ev.button == PointerEventData.InputButton.Right) { if (playable) Select(e); ShowFavPopup(e, ev.position); } };
             }
         }
 
@@ -798,14 +829,19 @@ namespace Sdo.UI.Screens
         }
 
         // Songs eligible for the current 隨機 range (level at the active difficulty within [min,max]).
+        // Excludes songs with no chart at the active difficulty (0 notes) — a random pick must be playable.
         private List<SongCatalog.Entry> RandomPool()
         {
             var r = RandRanges[Mathf.Clamp(_randRange, 0, RandRanges.Length - 1)];
-            return SongListModel.InLevelRange(_model.All, _difficulty, r.Min, r.Max);
+            var pool = SongListModel.InLevelRange(_model.All, _difficulty, r.Min, r.Max);
+            pool.RemoveAll(e => e == null || !e.HasChart(_difficulty));
+            return pool;
         }
 
         private void Select(SongCatalog.Entry e)
         {
+            // 這首歌在目前難度沒有譜面(整列灰掉) → 不可選：忽略點擊/捲動，維持原本選取。
+            if (e != null && !e.HasChart(_difficulty)) return;
             _selected = e;
             RenderPage();
             UpdateInfo();
@@ -1080,7 +1116,11 @@ namespace Sdo.UI.Screens
                     {
                         int idx = _filtered.IndexOf(_selected);
                         if (idx < 0) idx = 0;
-                        int next = Mathf.Clamp(idx + step, 0, _filtered.Count - 1);
+                        // step to the next song in the scroll direction, skipping greyed rows (no chart at
+                        // this difficulty) so the wheel never "sticks" on an unselectable song.
+                        int next = idx;
+                        for (int j = idx + step; j >= 0 && j < _filtered.Count; j += step)
+                            if (_filtered[j].HasChart(_difficulty)) { next = j; break; }
                         if (next != idx) { _page = next / PageSize; Select(_filtered[next]); }   // 跳頁讓選取列保持可見
                     }
                 }
@@ -1099,8 +1139,8 @@ namespace Sdo.UI.Screens
         {
             var keep = _selected;
             ApplyFilter();
-            if (keep != null && _filtered.Contains(keep)) { _page = _filtered.IndexOf(keep) / PageSize; Select(keep); }
-            else if (_filtered.Count > 0) { _page = 0; Select(_filtered[0]); }
+            if (keep != null && _filtered.Contains(keep) && keep.HasChart(_difficulty)) { _page = _filtered.IndexOf(keep) / PageSize; Select(keep); }
+            else if (_filtered.Count > 0) { _page = 0; SelectFirstPlayable(); }
             else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); RenderPage(); }
         }
 

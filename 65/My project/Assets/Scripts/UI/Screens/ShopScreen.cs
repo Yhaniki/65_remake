@@ -518,19 +518,20 @@ namespace Sdo.UI.Screens
                                        : meshSlot ? _catalog.AllMeshModels(_sex, _slot)       // 翅膀/表情 → 連只有 mesh 沒名字的也列 (100M/序號當名字)
                                        : SlotItems(_slot);
 
+            // 搜尋字串折成簡體一次 (使用者打繁體也搜得到簡體名;數字 id 不受影響)。
+            string qSimp = searching ? Sdo.UI.Util.TradSimp.ToSimp(_query.Trim()) : null;
             var items = new List<ShopItem>();
             foreach (var it in src)
             {
                 if (ItemTypes.GenderOf(it.Category, it.Name) != _sex) continue;                // 只顯示目前性別 (GenderOf 修 cat203 套装)
                 if (!_catalog.IsRenderable(it)) continue;                                      // 無模型(未 extract)的 item 直接隱藏,不列出 (user 指定)
-                // 搜尋比對：商品名 OR 6碼 modelId OR 物品 id → 讓無名道具(只顯示 6 碼,如 003598)也搜得到。
+                // 搜尋比對：商品名(繁→簡折疊) OR 6碼 modelId OR 物品 id → 無名道具(只顯示 6 碼,如 003598)也搜得到。
                 if (searching)
                 {
-                    string q = _query.Trim();
-                    bool hit = (it.Name != null && it.Name.IndexOf(q, System.StringComparison.OrdinalIgnoreCase) >= 0)
-                               || it.ModelId.ToString("D6").Contains(q)
-                               || it.ModelId.ToString().Contains(q)
-                               || it.Id.ToString().Contains(q);
+                    bool hit = Sdo.UI.Util.TradSimp.ToSimp(it.Name ?? "").IndexOf(qSimp, System.StringComparison.OrdinalIgnoreCase) >= 0
+                               || it.ModelId.ToString("D6").Contains(qSimp)
+                               || it.ModelId.ToString().Contains(qSimp)
+                               || it.Id.ToString().Contains(qSimp);
                     if (!hit) continue;
                 }
                 string z = CurrencyZh(it.Currency);

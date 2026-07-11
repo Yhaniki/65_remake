@@ -126,5 +126,64 @@ namespace Sdo.Tests
         [Test]
         public void InLevelRange_Null_Safe()
             => Assert.AreEqual(0, SongListModel.InLevelRange(null, 0, 1, 5).Count);
+
+        // ---- HasChart / FirstPlayableIndex: a difficulty with 0 notes is empty (row greyed, non-selectable) ----
+        // Mirrors the real 動畫歌曲串燒 entry (sdom2140k): easy has notes, normal/hard are empty (level 0, not -1).
+
+        private static SongCatalog.Entry EasyOnly() => new SongCatalog.Entry
+        {
+            gn = "sdom2140k.gn", fileId = 12140, title = "动画歌曲串烧",
+            diffEasy = 26, diffNormal = 0, diffHard = 0,
+            notesEasy = 3417, notesNormal = 0, notesHard = 0,
+        };
+
+        [Test]
+        public void HasChart_Uses_NoteCount_Not_Level()
+        {
+            var e = EasyOnly();
+            Assert.IsTrue(e.HasChart(0), "easy has 3417 notes");
+            Assert.IsFalse(e.HasChart(1), "normal has 0 notes (even though level field is 0, not -1)");
+            Assert.IsFalse(e.HasChart(2), "hard has 0 notes");
+        }
+
+        private static List<SongCatalog.Entry> MixedList() => new List<SongCatalog.Entry>
+        {
+            new SongCatalog.Entry { gn = "0.gn", notesEasy = 10, notesNormal = 10, notesHard = 10 }, // full
+            EasyOnly(),                                                                              // easy only
+            new SongCatalog.Entry { gn = "2.gn", notesEasy = 10, notesNormal = 10, notesHard = 10 }, // full
+        };
+
+        [Test]
+        public void FirstPlayable_Returns_Same_Index_When_Playable()
+            => Assert.AreEqual(0, SongListModel.FirstPlayableIndex(MixedList(), 2, 0));   // index0 has a hard chart
+
+        [Test]
+        public void FirstPlayable_Skips_Empty_Difficulty_Rows()
+        {
+            // On HARD, index1 (動畫歌曲串燒) is empty -> from index1 the first playable hard chart is index2.
+            Assert.AreEqual(2, SongListModel.FirstPlayableIndex(MixedList(), 2, 1));
+        }
+
+        [Test]
+        public void FirstPlayable_Wraps_To_Start()
+        {
+            // Only index0 has a hard chart among {0:full, 1:easyOnly}; searching from index1 wraps to 0.
+            var list = new List<SongCatalog.Entry> { MixedList()[0], EasyOnly() };
+            Assert.AreEqual(0, SongListModel.FirstPlayableIndex(list, 2, 1));
+        }
+
+        [Test]
+        public void FirstPlayable_None_Returns_Negative()
+        {
+            var list = new List<SongCatalog.Entry> { EasyOnly(), EasyOnly() };   // none has a hard chart
+            Assert.AreEqual(-1, SongListModel.FirstPlayableIndex(list, 2, 0));
+        }
+
+        [Test]
+        public void FirstPlayable_Null_Or_Empty_Safe()
+        {
+            Assert.AreEqual(-1, SongListModel.FirstPlayableIndex(null, 0, 0));
+            Assert.AreEqual(-1, SongListModel.FirstPlayableIndex(new List<SongCatalog.Entry>(), 0, 0));
+        }
     }
 }
