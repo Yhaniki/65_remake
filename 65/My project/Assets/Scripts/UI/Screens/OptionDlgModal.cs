@@ -508,8 +508,13 @@ namespace Sdo.UI.Screens
         {
             var s = DisplaySettingsManager.Settings;
             var res = ResolutionPreset.Presets[Mathf.Clamp(_resIndex, 0, ResolutionPreset.Presets.Length - 1)];
+            string newMode = ModeIds[Mathf.Clamp(_modeIndex, 0, ModeIds.Length - 1)];
+            // 只有「顯示」設定真的改了才重設解析度/全螢幕。否則每次按保存(即使只改音量/按鍵/遊戲頁)都會 Screen.SetResolution
+            // 重建視窗 → 畫面抽動/黑一下,使用者看起來像「跳出去」。用改前的值比對,沒變就跳過 ApplyDisplay。
+            bool displayChanged = s.display.width != res.Width || s.display.height != res.Height
+                                  || s.display.displayMode != newMode || s.display.vsync != _vsync;
             s.display.width = res.Width; s.display.height = res.Height;
-            s.display.displayMode = ModeIds[Mathf.Clamp(_modeIndex, 0, ModeIds.Length - 1)];
+            s.display.displayMode = newMode;
             s.display.vsync = _vsync;
             s.audio.bgm = _bgm; s.audio.gameMusic = _music; s.audio.sfx = _sfx;
             s.language = LanguageInfo.Code(_lang);
@@ -523,12 +528,14 @@ namespace Sdo.UI.Screens
             // OPTION 設定也落地 per-user config.ini（DATA/PROFILE/<id>/）：抓目前值 → 寫檔（使用者要求）。
             Sdo.Settings.RoomConfig.CaptureOptionFrom(s);
             Sdo.Settings.RoomConfig.Save();
-            DisplaySettingsManager.ApplyDisplay();
+            if (displayChanged) DisplaySettingsManager.ApplyDisplay();   // 沒改顯示就不重建視窗(避免保存像「跳出去」)
             Sdo.Game.AudioMix.Set(_bgm, _music, _sfx);   // 三類分別套用(背景音樂/遊戲音樂/遊戲音效),非舊的全域 AudioListener
             // 遊戲畫面 (全屏/黑邊) 立即套用：其餘遊戲頁偏好（特效/視角/透明度）在下一場遊戲開局讀取。
             AspectController.SetMode(_gpAspectFill ? AspectMode.Stretch : AspectMode.Pillarbox);
             _applied = true; _entryLang = _lang;
-            AnimatedHide();
+            // 保存 = 只儲存,不關對話框(使用者要求)。播確認音 + Toast 回饋;關閉走「退出」鈕。
+            UiSfx.Play(UiSfx.Click);
+            Toast.Show("設定已保存");
         }
 
         private void ResetDefaults()
