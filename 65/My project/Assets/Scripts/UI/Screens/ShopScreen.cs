@@ -284,7 +284,8 @@ namespace Sdo.UI.Screens
             SpriteBtn(_root, "shopfamily", "BtnHeadFamily_1.an", "BtnHeadFamily_3.an", 652, 7);
             SpriteBtn(_root, "shopwedding","BtnHeadRank_1.an",   "BtnHeadRank_3.an",   689, 7);
             SpriteBtn(_root, "shophouse",  "BtnHeadLove_1.an",   "BtnHeadLove_3.an",   725, 7);
-            SpriteBtn(_root, "shopexit",   "BtnHeadReturn_1.an", "BtnHeadReturn_3.an", 760, 7, () => SetVisible(false));
+            // 關商城：漸黑 → loading → 漸亮，露出底下的房間/男女選擇畫面（同進商城的進出效果；房間仍在底下故不觸發滑入）。
+            SpriteBtn(_root, "shopexit",   "BtnHeadReturn_1.an", "BtnHeadReturn_3.an", 760, 7, () => ScreenTransition.Run(() => SetVisible(false)));
 
             // M/G 幣別切換 (SHOP.XML：M @ 105,75 / G @ 154,75)。切換 → 商品格依幣別過濾。
             // M幣/G幣 = 互斥幣別選擇 (按 M 只看 M 幣、按 G 只看 G 幣)。noSwap=true 關掉 Selectable 的 SpriteSwap,否則它會把

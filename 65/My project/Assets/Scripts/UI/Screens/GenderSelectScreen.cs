@@ -160,7 +160,8 @@ namespace Sdo.UI.Screens
             }
             if (Ctx != null && Ctx.Rooms != null && Ctx.Rooms.CurrentRoom == null)
                 Ctx.Rooms.CreateRoom(GameMode.Normal);
-            GoTo(ScreenId.Room);
+            // 進房間轉場：漸黑 → loading → 漸亮，房間 UI 從四邊滑入（Nav.PlayRoomEntrance）。切畫面(GoTo)在全黑時執行。
+            ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
         }
 
         // 開場畫面直接進 商城 modal：先把目前選的性別帶進 session（商城依 session 性別開對應性別的 avatar），再開 商城，

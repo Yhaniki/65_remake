@@ -22,6 +22,8 @@ namespace Sdo.UI.Util
         public const string Menufloat = "Menufloat";   // pointer slides onto a menu item / dropdown row (hover)
         public const string ButtonFloat = "Buttonfloat"; // pointer slides onto a room button (滑過)
         public const string WindowSlide = "Interfaceout"; // room UI collapse/expand slide (uihide/uidisplay 按下)
+        public const string ScreenFadeOut = "Interfaceout"; // 畫面進出轉場漸黑 (ScreenTransition)
+        public const string ScreenFadeIn = "Interfacein";   // 畫面進出轉場漸亮 (ScreenTransition)
         public const string GameStart = "Start";       // 開始 pressed -> fade to the stage
 
         public const string Bubble = "Bubble";         // room speech bubble pop
