@@ -513,11 +513,9 @@ namespace Sdo.UI.Screens
                 if (idx >= items.Count) continue;                    // 這頁沒有第 i 件商品 → 只保留空框
                 var item = items[idx];
 
-                bool owned = _session.Wardrobe.Owns(item.Id);
-
                 var nm = TxtAt(card, "name", _L.NamePos.x, _L.NamePos.y, _L.TextW, 16, _L.NameFont, _L.NameColor, _L.Align);
                 nm.fontWeight = FontWeight.Thin;   // 白色細字
-                nm.text = (owned ? "✓ " : "") + item.Name;   // 官方沒有「已穿」圓點標記 → 不加 ●
+                nm.text = item.Name;   // 已擁有不加勾勾/標記 (使用者指定)
                 var pr = TxtAt(card, "price", _L.PricePos.x, _L.PricePos.y, _L.TextW, 16, 12, CWhite, _L.Align);
                 pr.fontStyle = FontStyles.Bold;
                 pr.text = (item.IsPermanent ? "永久 " : item.DurationDays + "天 ") + item.Price + CurrencyZh(item.Currency);

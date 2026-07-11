@@ -58,6 +58,7 @@ namespace Sdo.UI.Screens
         private const float PreviewBodyH = 320f;
         private Camera _cam; private RenderTexture _rt; private RawImage _previewImg; private GameObject _avatarRoot;
         private Camera _uiCam; private int _savedUiMask;
+        private SdoAvatar _previewAv; private float _idleLen; private float _idleStart;   // #4：預覽 idle 播完一輪換一支隨機
         private float _dragAngle = 0f; private float _pitchAngle;   // 預設 0 = 人物正面朝相機 (#6)
         private const float DragDegPerPixel = 0.4f, PitchDegPerPixel = 0.4f, PitchMin = -30f, PitchMax = 15f;
         private const float DefaultYaw = 30f, PivotY = 30f;
@@ -67,8 +68,9 @@ namespace Sdo.UI.Screens
         private float _previewHeight = RefHeight;
         private static readonly Vector3 EyeFar = new Vector3(0f, 37f, -140f), LookFar = new Vector3(0f, 27f, 0f);
 
-        // ---- 3×3 格的 3D 縮圖 (同 ShopScreen 卡片；靜態 bind-pose，不做 hover 旋轉) ----
-        private const int PerPage = 9;
+        // ---- 格子 3D 縮圖 (同 ShopScreen 卡片；靜態 bind-pose，不做 hover 旋轉) ----
+        // 一頁 = 6 格 (使用者指定「一次擴充一頁＝6格」)；用 3×3 格子的上兩排 (SlotPos 前 6 個)。
+        private const int PerPage = 6;
         private const int CardRtW = 100, CardRtH = 100;   // 格子 86×86 → RT 稍大保清晰
         private const float CardEyeDist = 110f, CardOrthoHalfW = 64f, CardNear = 5f, CardFar = 1000f;
         private Camera _cardCam;
@@ -236,7 +238,9 @@ namespace Sdo.UI.Screens
             if (_catalog == null) { _totalPages = 1; UpdatePageLabel(); return; }
 
             var items = OwnedForFilter();
-            int pages = Mathf.Max(1, (items.Count + PerPage - 1) / PerPage);
+            // 依「服飾欄容量」分頁 (擴充後頁數變多；至少容得下已擁有的)。一頁 PerPage(6) 格。
+            int capacity = Mathf.Max(_session.Wardrobe.ClothSlotCount, items.Count);
+            int pages = Mathf.Max(1, (capacity + PerPage - 1) / PerPage);
             _page = Mathf.Clamp(_page, 0, pages - 1);
             _totalPages = pages;
             UpdatePageLabel();
@@ -337,14 +341,15 @@ namespace Sdo.UI.Screens
             Toast.Show("已刪除服飾");
         }
 
-        // 服饰栏扩充 (#8)：服飾欄容量 +1 (預設 3、上限 1000)，落地 profile.json。
+        // 服饰栏扩充 (#8)：一次擴充「一頁」= PerPage(6) 格 (使用者指定)，上限 1000，落地 profile.json。
         private void DoExpandSlots()
         {
             if (_session == null) return;
             var w = _session.Wardrobe;
             if (w.ClothSlotCount >= 1000) { Toast.Show("服飾欄已達上限 1000"); return; }
-            w.ClothSlotCount += 1;
+            w.ClothSlotCount = Mathf.Min(1000, w.ClothSlotCount + PerPage);   // +一頁 (6 格)
             WardrobeStore.SaveAll(_session);
+            RefreshGrid();   // 頁數立即更新 (1/N)
             Toast.Show("服飾欄擴充成功（目前 " + w.ClothSlotCount + " 格）");
         }
 
@@ -429,13 +434,32 @@ namespace Sdo.UI.Screens
 
         private void ApplyLeftPose(SdoAvatar av)
         {
-            // #10：男/女各一組預設 idle，隨機挑一支 (可連續重複)。挑不到就退回原本的 rest idle。
+            _previewAv = av;
+            ApplyRandomIdle(initial: true);
+        }
+
+        // #10：男/女各一組預設 idle 隨機挑一支 (可連續重複)。記錄本支長度 → Update 播完一輪再換一支 (#4：每播完一次 random 一次)。
+        private void ApplyRandomIdle(bool initial)
+        {
+            var av = _previewAv;
+            if (av == null) return;
             var list = _sex == ItemSex.Male ? MaleIdles : FemaleIdles;
             MotLoader mot = null;
             if (list != null && list.Length > 0)
                 mot = SdoRoomAvatar.LoadMot(list[UnityEngine.Random.Range(0, list.Length)]);
             if (mot == null) mot = SdoRoomAvatar.LoadMot(_sex == ItemSex.Male ? "MOTION/MREST0082.MOT" : "MOTION/WREST0072.MOT");
-            if (mot != null) { av.RestMot = mot; av.SetClip(mot); av.PoseInitialIdle(); }
+            if (mot == null) return;
+            av.RestMot = mot; av.SetClip(mot);
+            if (initial) av.PoseInitialIdle();
+            _idleLen = av.Fps > 0f ? mot.MaxTime / av.Fps : 0f;   // 秒 = 幀數 / fps(30)
+            _idleStart = Time.time;
+        }
+
+        private void Update()
+        {
+            if (_cg == null || _cg.alpha <= 0f) return;   // 只在儲物櫃開著時
+            if (_previewAv == null || _idleLen <= 0f) return;
+            if (Time.time - _idleStart >= _idleLen) ApplyRandomIdle(initial: false);   // 播完一輪 → 換一支隨機 (#4)
         }
 
         private void OnPreviewDrag(BaseEventData ev)
@@ -582,6 +606,7 @@ namespace Sdo.UI.Screens
         }
 
         private struct CardFrame { public Vector3 Pos, Scale; }
+        // 官方 per-slot 卡片取景表 (逐字取自 ShopScreen.FrameFor；之前 Bottom/Shoes 值是我自估的錯值 → 褲子/鞋子縮圖跑出框 #3)。
         private static CardFrame FrameFor(EquipSlot slot, ItemSex sex)
         {
             bool f = sex != ItemSex.Male;
@@ -589,15 +614,15 @@ namespace Sdo.UI.Screens
             {
                 case EquipSlot.Hair:
                 case EquipSlot.Face:
-                case EquipSlot.Expression: return new CardFrame { Pos = new Vector3(0, f ? -500 : -550, 0), Scale = new Vector3(9, 9, 9) };
-                case EquipSlot.Necklace:   return new CardFrame { Pos = new Vector3(0, -400, 0), Scale = new Vector3(8, 8, 8) };
+                case EquipSlot.Expression: return new CardFrame { Pos = new Vector3(0, f ? -500 : -550, 0), Scale = new Vector3(9, 9, 9) };   // slot0 頭
+                case EquipSlot.Necklace:   return new CardFrame { Pos = new Vector3(0, -400, 0), Scale = new Vector3(8, 8, 8) };   // 项链=頸部
                 case EquipSlot.Top:
-                case EquipSlot.OnePiece:   return new CardFrame { Pos = new Vector3(0, f ? -220 : -240, 0), Scale = new Vector3(5.5f, 5.5f, 5.5f) };
-                case EquipSlot.Bottom:     return new CardFrame { Pos = new Vector3(0, f ? 120 : 100, 0), Scale = new Vector3(6, 6, 6) };
-                case EquipSlot.Shoes:      return new CardFrame { Pos = new Vector3(0, 300, 0), Scale = new Vector3(10, 10, 10) };
-                case EquipSlot.Gloves:     return new CardFrame { Pos = new Vector3(0, 0, 0), Scale = new Vector3(7, 7, 7) };
-                case EquipSlot.Glasses:    return new CardFrame { Pos = new Vector3(0, f ? -520 : -560, 0), Scale = new Vector3(10, 10, 10) };
-                default:                   return new CardFrame { Pos = new Vector3(0, -30, 0), Scale = new Vector3(5.5f, 5.5f, 5.5f) };
+                case EquipSlot.OnePiece:   return new CardFrame { Pos = new Vector3(0, f ? -220 : -240, 0), Scale = new Vector3(5.5f, 5.5f, 5.5f) };   // slot2 胸
+                case EquipSlot.Bottom:     return new CardFrame { Pos = new Vector3(0, -150, 0), Scale = new Vector3(5.5f, 5.5f, 5.5f) };   // slot3
+                case EquipSlot.Gloves:     return new CardFrame { Pos = new Vector3(0, f ? -360 : -400, 0), Scale = new Vector3(10, 10, 10) };   // slot4 手
+                case EquipSlot.Shoes:      return new CardFrame { Pos = new Vector3(f ? 15 : 20, f ? -60 : -50, 0), Scale = new Vector3(f ? 6.5f : 5.8f, 5.8f, 5.8f) };   // slot5 腳
+                case EquipSlot.Glasses:    return new CardFrame { Pos = new Vector3(0, f ? -550 : -600, 0), Scale = new Vector3(10, 10, 10) };   // slot7 眼
+                default:                   return new CardFrame { Pos = Vector3.zero, Scale = Vector3.one };
             }
         }
 
