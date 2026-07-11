@@ -39,6 +39,11 @@ namespace Sdo.Game
         public const float LeftOffsetX = 0f;
         /// <summary>Centred board X offset: (frame − board)/2 so the 315-wide band sits centred (157.5→400) in the 800 frame.</summary>
         public const float CenterOffsetX = (FrameWidth - BoardWidth) / 2f;   // 242.5
+        /// <summary>notes_board1 height (design px); the clip band's far edge and the mirror axis (÷2 = 300).</summary>
+        public const float BoardHeight = 600f;
+        /// <summary>Hidden strip (design px) at the receptor/frame end of the play band: notes are masked out here so
+        /// they slip behind the chamfered board frame + HP bar rather than poking past the top of the board.</summary>
+        public const float ClipMargin = 30f;
 
         /// <summary>Design-px added to EVERY panel-relative X (board / receptors / notes / HP bar / score / combo).
         /// 0 = 屏幕左邊, +242.5 = 屏幕中央.</summary>
@@ -49,6 +54,13 @@ namespace Sdo.Game
         public readonly int ScrollSign;
         /// <summary><c>true</c> = receptors sit at the bottom (向下 / 傾斜); <c>false</c> = at the top (向上).</summary>
         public readonly bool Bottom;
+        /// <summary>Top edge (smaller design-Y) of the note clip band — notes are masked to [<see cref="ClipTopY"/>,
+        /// <see cref="ClipBottomY"/>]. 向上: <see cref="ClipMargin"/> (hidden strip behind the top frame/HP bar).
+        /// 向下 flips the whole board about the centre (300), so the strip mirrors to the far end → 0.</summary>
+        public readonly float ClipTopY;
+        /// <summary>Bottom edge (larger design-Y) of the note clip band. 向上: <see cref="BoardHeight"/> (frame bottom).
+        /// 向下: <c>BoardHeight − ClipMargin</c> (570) — the hidden strip is now at the bottom, behind the flipped frame.</summary>
+        public readonly float ClipBottomY;
 
         public NotePanelLayout(float offsetX, float judgeLineY, int scrollSign, bool bottom)
         {
@@ -56,6 +68,10 @@ namespace Sdo.Game
             JudgeLineY = judgeLineY;
             ScrollSign = scrollSign;
             Bottom = bottom;
+            // The clip band mirrors with the drop direction (like JudgeLineY): the ClipMargin hidden strip sits at the
+            // receptor/frame end, so 向上 = [30, 600] and 向下 = [0, 570] (the whole band reflected about y300).
+            ClipTopY = bottom ? 0f : ClipMargin;
+            ClipBottomY = bottom ? BoardHeight - ClipMargin : BoardHeight;
         }
 
         /// <summary>Resolve the panel layout from the two player settings.</summary>

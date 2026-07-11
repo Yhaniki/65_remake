@@ -141,6 +141,35 @@ namespace Sdo.Tests
         }
 
         /// <summary>
+        /// Long-intro charts (e.g. sdom1226): the type-10 music-start marker sits at beat 0 but the first note is
+        /// several measures in. MusicStartOffsetMs (audio delay) is then 0, yet the DPS dance must NOT start at
+        /// beat 0 — it is anchored to FirstNoteMs (here beat 16 @120bpm = 8000ms). This is the exact case where the
+        /// dancer used to lead the song by the whole intro; the two anchors must diverge.
+        /// </summary>
+        [Test]
+        public void FirstNoteMs_DivergesFromMusicStart_OnLongIntroChart()
+        {
+            var body = PlainStep(120f,
+                (meas: 0, ft: 10, u0: 1000),   // 音樂起止 start marker @ beat 0 -> MusicStartOffsetMs 0
+                (meas: 4, ft: 2, u0: 1));       // first note @ beat 16 -> FirstNoteMs 8000ms
+            var map = GnChart.Load(body, difficulty: 0);
+            Assert.AreEqual(0.0, map.MusicStartOffsetMs, 1e-6, "audio starts at the beat-0 marker (no count-in delay)");
+            Assert.AreEqual(8000.0, map.FirstNoteMs, 1e-6, "dance anchor is the first note, not the beat-0 marker");
+        }
+
+        /// <summary>FirstNoteMs is the earliest hit object and 0 for an empty chart.</summary>
+        [Test]
+        public void FirstNoteMs_IsEarliestNote_ZeroWhenEmpty()
+        {
+            Assert.AreEqual(0.0, new OsuBeatmap().FirstNoteMs, "empty chart -> 0");
+            var body = PlainStep(120f,
+                (meas: 3, ft: 2, u0: 1),        // Left @ beat 12 -> 6000ms
+                (meas: 1, ft: 4, u0: 1));       // Up   @ beat 4  -> 2000ms (earlier; file order is later)
+            var map = GnChart.Load(body, difficulty: 0);
+            Assert.AreEqual(2000.0, map.FirstNoteMs, 1e-6, "earliest note regardless of file order (HitObjects stay sorted)");
+        }
+
+        /// <summary>
         /// Build a PLAINTEXT StepFile at offset 0 ('gn'@4, address_easy==300 -> GnChart's plain branch, no
         /// decrypt). Each frame is one slot (interval 1): (measurement, stepFrameType, u0). u1/nt are 0.
         /// </summary>

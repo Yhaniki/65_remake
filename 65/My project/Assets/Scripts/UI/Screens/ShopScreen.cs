@@ -72,7 +72,7 @@ namespace Sdo.UI.Screens
         private float _pitchAngle;                      // pitch (X)，官方 clamp [-30,15]
         private const float DragDegPerPixel = 0.4f;     // 水平每拖 1px 轉幾度 (官方 0.4)
         private const float PitchDegPerPixel = 0.4f;    // 垂直每拖 1px 抬幾度 (官方線上 = 0.4，同 yaw)
-        private const float PitchMin = -30f, PitchMax = 15f;   // 官方 pitch clamp
+        private const float PitchMin = -10f, PitchMax = 10f;   // 官方 pitch clamp
         private const float DefaultYaw = 30f;           // 官方預設朝左轉 30° (實測 -30 是朝右 → 用 +30)
         private const float PivotY = 30f;               // 轉身/抬頭的 pivot = 身體中心/腰部 (官方是繞 display-node 原點，不是腳底)
         private float _previewFeetY;                     // 綁定姿勢最低頂點 (落地用)
@@ -347,6 +347,9 @@ namespace Sdo.UI.Screens
 
             SetVisible(false);
         }
+
+        /// 商城 modal 是否正顯示中（疊在房間/男女選擇畫面上）。底下畫面用它判斷 ESC 該不該由自己處理（見 GenderSelectScreen）。
+        public bool IsOpen => _cam != null && _cam.enabled;
 
         public void Open()
         {
@@ -1054,6 +1057,13 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (_cam == null || !_cam.enabled) return;
+
+            // ESC → 關商城（等同右上 shopexit 鈕）→ 露出底下的房間或選角色畫面。走轉場漸黑漸亮。
+            if (Input.GetKeyDown(KeyCode.Escape) && !ScreenTransition.Busy)
+            {
+                ScreenTransition.Run(() => SetVisible(false));
+                return;
+            }
 
             // 精品屋 banner 霓虹燈：循環播 jingpin1.an 的 18 幀 (#7)。各幀同尺寸 → 直接換 sprite 不需 resize。
             if (_jingpinImg != null && _jingpinFrames != null && _jingpinFrames.Length > 1)

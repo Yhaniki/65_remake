@@ -39,6 +39,16 @@ namespace Sdo.Osu
         public List<OsuHitObject> HitObjects { get; } = new List<OsuHitObject>();
 
         /// <summary>
+        /// Time (ms, note/beat clock) of the earliest hit object — the first "downbeat" the player hits.
+        /// The per-song DPS choreography spans this to the last note (its total ≈ last−first note), so the
+        /// dancer holds its standby idle through the intro (which can be several measures AFTER the music-start
+        /// marker — e.g. sdom1226 has the type-10 marker at beat 0 but the first note ~5.4 s in) and only begins
+        /// the DPS at this beat. Anchoring the dance here (not on <see cref="MusicStartOffsetMs"/>) keeps the
+        /// choreography from leading the song. Negative-guarded to 0 for empty charts. HitObjects are kept sorted.
+        /// </summary>
+        public double FirstNoteMs => HitObjects.Count > 0 ? HitObjects[0].StartTimeMs : 0.0;
+
+        /// <summary>
         /// Scroll/timing control points, in MILLISECONDS, sorted by time. Used to drive the note scroll
         /// (BPM-change segments + osu! SV) the way osu!mania does — see <see cref="ManiaScroll"/>.
         /// For single-BPM charts this is left empty (the scroll then runs at a constant base velocity).

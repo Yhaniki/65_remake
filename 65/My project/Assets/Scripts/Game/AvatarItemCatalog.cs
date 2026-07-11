@@ -268,6 +268,11 @@ namespace Sdo.Game
             }
             catch (Exception e) { Debug.LogWarning("[shop] iteminfo load failed: " + e.Message); }
 
+            // Overlay the build-time UTF-8 name sidecar. iteminfo.dat names are GBK/CP936; a standalone build has no
+            // such codepage, so tools/package_build.ps1 bakes shop_names.tsv (id→UTF-8 name) and we apply it here —
+            // the player then needs no encoding at all. No-op in the editor (GBK works there) or when the file is absent.
+            ApplyNameSidecar(items);
+
             var sets = new Dictionary<int, OutfitSet>();
             try
             {
@@ -358,13 +363,69 @@ namespace Sdo.Game
             return null;
         }
 
-        // GBK/CP936 decoder for the Simplified-Chinese names. Returns null if the runtime lacks the codepage (the
-        // reader then falls back to byte-preserving Latin1 — names show as mojibake but the catalog still works). A
-        // build step can pre-convert to UTF-8 to remove this dependency.
+        // Overlay UTF-8 item names from shop_names.tsv (baked by tools/package_build.ps1) over the GBK-parsed names.
+        // This is the primary fix for the standalone build's missing CP936 codepage; the GBK path below is the fallback.
+        private static void ApplyNameSidecar(List<ShopItem> items)
+        {
+            if (items == null || items.Count == 0) return;
+            var path = ResolveDataFile(ShopNameSidecar.FileName);
+            if (path == null) return;
+            Dictionary<int, string> map;
+            try { map = ShopNameSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            catch (Exception e) { Debug.LogWarning("[shop] " + ShopNameSidecar.FileName + " read failed: " + e.Message); return; }
+            if (map.Count == 0) return;
+            int n = 0;
+            foreach (var it in items)
+                if (map.TryGetValue(it.Id, out var nm) && !string.IsNullOrEmpty(nm) && it.Name != nm) { it.Name = nm; n++; }
+            Debug.Log($"[shop] applied {n} UTF-8 name overrides from {ShopNameSidecar.FileName}");
+        }
+
+        // Resolve a data file by name using the same search order as ResolveIteminfoPath: the runtime data root and its
+        // AVATAR subdir (built player), then any sibling assets subfolder (dev repo). Returns null when not found.
+        private static string ResolveDataFile(string fileName)
+        {
+            var cands = new[]
+            {
+                Path.Combine(SdoExtracted.Root, fileName),
+                Path.Combine(SdoExtracted.Root, "AVATAR", fileName),
+            };
+            foreach (var c in cands) if (File.Exists(c)) return c;
+            try
+            {
+                var assets = Directory.GetParent(SdoExtracted.Root)?.Parent?.FullName;
+                if (assets != null && Directory.Exists(assets))
+                    foreach (var sub in Directory.GetDirectories(assets))
+                    {
+                        var f = Path.Combine(sub, fileName);
+                        if (File.Exists(f)) return f;
+                    }
+            }
+            catch { }
+            return null;
+        }
+
+        // GBK/CP936 decoder for the Simplified-Chinese names. In a standalone build the codepage is only present when
+        // Assets/link.xml preserves I18N.CJK (otherwise the stripper drops it and GetEncoding throws). If it truly is
+        // unavailable the reader falls back to byte-preserving Latin1 — names show as mojibake but the catalog works.
+        // Cached so both call sites (items + sets) share one lookup and warn at most once.
+        private static Encoding _gbk;
+        private static bool _gbkResolved;
         private static Encoding TryGetGbk()
         {
-            try { return Encoding.GetEncoding(936); } catch { }
-            try { return Encoding.GetEncoding("GB2312"); } catch { return null; }
+            if (_gbkResolved) return _gbk;
+            _gbkResolved = true;
+            foreach (var id in new object[] { 936, "GBK", "gb2312" })
+            {
+                try
+                {
+                    _gbk = (id is int cp) ? Encoding.GetEncoding(cp) : Encoding.GetEncoding((string)id);
+                    if (_gbk != null) return _gbk;
+                }
+                catch { }
+            }
+            Debug.LogWarning("[shop] GBK/CP936 codepage unavailable in this runtime — item names will render as " +
+                             "mojibake. The standalone build must include I18N.CJK (see Assets/link.xml).");
+            return null;
         }
     }
 }

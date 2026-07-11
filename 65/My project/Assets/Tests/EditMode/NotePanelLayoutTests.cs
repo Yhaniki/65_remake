@@ -28,6 +28,53 @@ namespace Sdo.Tests
             Assert.AreEqual(600f - NotePanelLayout.TopJudgeY, NotePanelLayout.BottomJudgeY, 1e-4f);
         }
 
+        // ---- note clip band: the hidden strip mirrors with the drop direction ----
+
+        [Test]
+        public void ClipBand_Up_Hides_Strip_At_The_Top()   // 向上: [30, 600]
+        {
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            Assert.AreEqual(NotePanelLayout.ClipMargin, up.ClipTopY, 1e-4f);        // 30px strip behind the top frame/HP bar
+            Assert.AreEqual(NotePanelLayout.BoardHeight, up.ClipBottomY, 1e-4f);    // down to the board bottom (600)
+        }
+
+        [Test]
+        public void ClipBand_Down_Mirrors_Strip_To_The_Bottom()   // 向下: [0, 570]
+        {
+            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: false);
+            Assert.AreEqual(0f, down.ClipTopY, 1e-4f);                                              // notes emerge flush from the top
+            Assert.AreEqual(NotePanelLayout.BoardHeight - NotePanelLayout.ClipMargin, down.ClipBottomY, 1e-4f);  // 570: hidden strip now at the bottom (flipped frame)
+        }
+
+        [Test]
+        public void ClipBand_Reflects_About_BoardCentre_When_Flipped()
+        {
+            // the whole band is the up band reflected about y300 (600 − y), just like BottomJudgeY mirrors TopJudgeY.
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
+            Assert.AreEqual(NotePanelLayout.BoardHeight - up.ClipBottomY, down.ClipTopY, 1e-4f);
+            Assert.AreEqual(NotePanelLayout.BoardHeight - up.ClipTopY, down.ClipBottomY, 1e-4f);
+        }
+
+        [Test]
+        public void ClipBand_Horizontal_Anchor_Does_Not_Move_It()
+        {
+            // clip band is purely vertical — 屏幕左邊/置中 must not change it.
+            var left = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
+            var center = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: false);
+            Assert.AreEqual(left.ClipTopY, center.ClipTopY, 1e-4f);
+            Assert.AreEqual(left.ClipBottomY, center.ClipBottomY, 1e-4f);
+        }
+
+        [Test]
+        public void ClipBand_Tilt_Matches_Down()
+        {
+            var tilt = NotePanelLayout.Resolve(NoteDropDirection.Tilt, panelLeft: true);
+            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
+            Assert.AreEqual(down.ClipTopY, tilt.ClipTopY, 1e-4f);
+            Assert.AreEqual(down.ClipBottomY, tilt.ClipBottomY, 1e-4f);
+        }
+
         // ---- the four (drop × horizontal) combinations ----
 
         [Test]

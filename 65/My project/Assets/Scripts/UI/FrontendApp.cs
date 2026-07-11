@@ -27,6 +27,17 @@ namespace Sdo.UI
         /// scene behind its UI (e.g. RoomScreen → RoomScene3D) can mask the 3D layers off this camera while shown.</summary>
         public Camera UiCam => _uiCam;
 
+        /// <summary>True while the 商城 (avatar shop) modal is open over whatever screen is behind it. A backing screen
+        /// (e.g. GenderSelectScreen) checks this so its own ESC handler stays out of the way while the shop is up.</summary>
+        public bool ShopOpen => _shop != null && _shop.IsOpen;
+
+        /// <summary>True while any room-reachable modal (商城 / 儲物櫃 / 設定) is layered over the current screen. The room
+        /// gates its ESC→選角色 on this so ESC inside a modal doesn't jump past it. Modals don't change Flow.Current, so
+        /// the room can't tell them apart from a screen check alone.</summary>
+        public bool AnyModalOpen => ShopOpen
+            || (_wardrobe != null && _wardrobe.IsOpen)
+            || (_option != null && _option.IsOpen);
+
         private AppContext _ctx;
         private readonly Dictionary<ScreenId, UIScreenBase> _screens = new Dictionary<ScreenId, UIScreenBase>();
         private OptionDlgModal _option;

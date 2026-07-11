@@ -1,0 +1,17 @@
+<linker>
+  <!--
+    Force the CJK codepage assemblies into the standalone build.
+
+    Item names in iteminfo.dat / setinfo.dat are GBK (CP936) Simplified Chinese and are decoded
+    at runtime via Encoding.GetEncoding(936) (see AvatarItemCatalog.TryGetGbk). The Unity editor
+    has the codepage, so names render correctly there. In a stripped standalone build the managed
+    linker drops I18N.CJK, GetEncoding(936) throws, and the reader falls back to byte-preserving
+    Latin1 -> the shop shows mojibake (e.g. "°•ç éÎÙ Â®×°").
+
+    Preserving these assemblies as linker roots pulls I18N.CJK (and its I18N/I18N.West deps) from
+    the Mono BCL into the build, so the codepage resolves at runtime. Fixes ALL GBK text globally.
+  -->
+  <assembly fullname="I18N" preserve="all"/>
+  <assembly fullname="I18N.West" preserve="all"/>
+  <assembly fullname="I18N.CJK" preserve="all"/>
+</linker>

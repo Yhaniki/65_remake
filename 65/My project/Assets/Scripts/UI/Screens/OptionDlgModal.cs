@@ -459,6 +459,9 @@ namespace Sdo.UI.Screens
         }
 
         // ---------------------------------------------------------------- open / apply / defaults / close
+        /// 設定 modal 是否正顯示中（疊在房間上）。房間用它 gate ESC，避免開設定時 ESC 誤退回選角色。
+        public bool IsOpen => _cg != null && _cg.alpha > 0f;
+
         public void Open()
         {
             var s = DisplaySettingsManager.Settings;

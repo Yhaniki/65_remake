@@ -83,10 +83,12 @@ namespace Sdo.Game
         private const float ReceptorW = 92f;  // receptors are a touch larger than notes
         private const int Keys = 4;
         // notes must stay within the note board and never cover the HP bar (y 18..29). A SpriteMask clips note
-        // sprites to this Y band; the board top (0) is above the HP bar so notes are clipped just below it (30),
-        // and the bottom is the board/frame bottom (600) so nothing shows beneath the board (e.g. in editor view).
-        private const float NotesClipTop = 30f;
-        private const float NotesClipBottom = 600f;
+        // sprites to this Y band; 向上 the band is [30, 600] — the 30px strip hides notes behind the top frame/HP bar
+        // and the bottom is the board/frame bottom (600). 向下 flips the whole board about y300, so the hidden strip
+        // mirrors to the bottom → the band becomes [0, 570] (see NotePanelLayout.ClipTopY/ClipBottomY, set in
+        // ApplyPanelLayout). Defaults here are the 向上左邊 values used by the standalone/F4 boot before it resolves.
+        private float _clipTopY = 30f;
+        private float _clipBottomY = 600f;
         // DDR lane order: 0=Left 1=Down 2=Up 3=Right (matches NOTEIMAGE_5 + the original).
         private static readonly string[] Dir5 = { "left", "down", "up", "right" };
         // two manual key sets per lane (Left/Down/Up/Right): A S W D, and numpad 4 5 8 6 (right-hand cross).
@@ -132,11 +134,16 @@ namespace Sdo.Game
         private float _nextAmbientAt = -1f;      // realtime when the next ambient one-shot may fire (<0 = not armed yet)
         private bool _started, _failed, _ended;
         private double _songStartDspTime, _clockStart = -1;
-        // How far the audio (and, with it, the dancer) is delayed behind the beat-0 note clock — the chart's
-        // music-start offset (type-10 音樂起止 marker) in seconds. Notes scroll during this silent count-in; the
-        // dancer holds its standby idle and only starts the DPS choreography when the music actually begins.
-        // Set together with _clockStart in OpeningSequence(); read every frame by the avatar's DanceTimeSec.
+        // How far the audio is delayed behind the beat-0 note clock — the chart's music-start offset (type-10
+        // 音樂起止 marker) in seconds. Notes scroll during this silent count-in; drives the audio schedule and the
+        // beat-0<->clip-position mapping (AudioChartSeconds). Set with _clockStart in OpeningSequence().
         private double _musicStartDelaySec;
+        // When the DPS dance begins, in beat-0 note-clock seconds: the FIRST NOTE's time, NOT the music-start
+        // marker. The choreography spans first→last note (DpsLoader.Total ≈ last−first note), so on charts whose
+        // marker sits well before the first note (a long intro — e.g. sdom1226: marker at beat 0 but first note
+        // ~5.4 s in) anchoring on the marker made the dancer lead the song by the whole intro. The dancer holds
+        // the standby idle until this beat, then starts the DPS. Read every frame by the avatar's DanceTimeSec.
+        private double _danceStartSec;
         // Opening lead-in. While the READY->GO animation plays, _clockStart is parked this far in the future so the
         // song stays stopped, the notes stay hidden and the dancer holds its idle. When GO finishes, OpeningSequence()
         // re-anchors _clockStart StartLeadSec ahead and schedules the song, so neither starts before the opening does.
@@ -1249,11 +1256,14 @@ namespace Sdo.Game
             // their own time base (dspTime / timeAsDouble) so the audio and the chart stay aligned, as before. Runs even
             // if the READY/GO overlay was missing, so the song never fails to start.
             // Delay the music by the chart's music-start offset (type-10 音樂起止 marker) so the leading count-in
-            // measure is silent. The NOTES stay on the beat-0 clock (they scroll in during the count-in), but the
-            // DANCER follows the music: its DanceTimeSec subtracts _musicStartDelaySec, so it holds the standby idle
-            // through the count-in and starts the DPS the instant the audio begins (DPS is a music-timeline script).
+            // measure is silent. The NOTES stay on the beat-0 clock (they scroll in during the count-in). The DANCER
+            // is anchored separately to the FIRST NOTE (its DanceTimeSec subtracts _danceStartSec): the DPS spans
+            // first→last note, so on a long-intro chart (marker ≪ first note) the dancer holds the standby idle
+            // through the whole intro and starts the choreography on the first downbeat — not on the marker, which
+            // would make it lead the song (sdom1226: marker beat 0 vs first note ~5.4 s ⇒ was 5.4 s early).
             double musicDelaySec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
             _musicStartDelaySec = musicDelaySec;
+            _danceStartSec = (useMusicStartOffset && _map != null) ? Math.Max(musicDelaySec, _map.FirstNoteMs / 1000.0) : 0.0;
             _songStartDspTime = AudioSettings.dspTime + StartLeadSec + musicDelaySec;
             if (_audio != null && _audio.clip != null) _audio.PlayScheduled(_songStartDspTime);
             _clockStart = Time.timeAsDouble + StartLeadSec;
@@ -1383,6 +1393,9 @@ namespace Sdo.Game
             _panelOffsetX = layout.OffsetX;
             judgeLineY = layout.JudgeLineY;
             _scrollSign = layout.ScrollSign;
+            // 向下：整塊 note board 上下顛倒，note 隱藏區(頂端 30px 缺角/血條後)也要跟著鏡射到板底 → 帶 [0, 570]。
+            _clipTopY = layout.ClipTopY;
+            _clipBottomY = layout.ClipBottomY;
             // 向下置中：血條移到 note board 下面（板底受擊線那頭）；其餘模式血條留頂端。
             _hpYOffset = (layout.Bottom && !notesPanelLeft) ? hudHpDownYOffset : 0f;
         }
@@ -1487,9 +1500,10 @@ namespace Sdo.Game
             BuildNoteClip();
         }
 
-        // a SpriteMask spanning the board's play band [NotesClipTop, NotesClipBottom]; note head/tail (SpawnNotes),
-        // the lane click-flash strips and the miss red wash (BuildBoard) are flagged VisibleInsideMask so they're
-        // clipped to it — never drawn over the HP bar or below the board.
+        // a SpriteMask spanning the board's play band [_clipTopY, _clipBottomY] (向上 [30,600] / 向下 [0,570], mirrored
+        // with the drop direction in ApplyPanelLayout); note head/tail (SpawnNotes), the lane click-flash strips and the
+        // miss red wash (BuildBoard) are flagged VisibleInsideMask so they're clipped to it — never drawn over the HP
+        // bar or past the (向下-flipped) board frame. Built after ApplyPanelLayout so _clipTopY/_clipBottomY are resolved.
         private void BuildNoteClip()
         {
             var go = new GameObject("NoteClip");
@@ -1498,7 +1512,7 @@ namespace Sdo.Game
             var px = new Color32[16]; for (int i = 0; i < px.Length; i++) px[i] = new Color32(255, 255, 255, 255);
             tex.SetPixels32(px); tex.Apply();
             mask.sprite = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
-            float h = NotesClipBottom - NotesClipTop, cy = (NotesClipTop + NotesClipBottom) / 2f;
+            float h = _clipBottomY - _clipTopY, cy = (_clipTopY + _clipBottomY) / 2f;
             go.transform.position = SdoLayout.ToWorld(SdoLayout.Width / 2f, cy, 8f);
             go.transform.localScale = new Vector3((SdoLayout.Width + 200f) / 4f, h / 4f, 1f);   // wide (no horizontal clip) × the play band
         }
@@ -1925,11 +1939,12 @@ namespace Sdo.Game
                 {
                     avatar.Dps = dps;
                     avatar.MotResolver = ResolveMot;
-                    // Dance time = MUSIC elapsed time, not the beat-0 note clock: subtract _musicStartDelaySec so
-                    // the DPS (a music-timeline choreography) stays synced to the audio and the dancer waits for the
-                    // music. Stays negative during the READY/GO lead-in AND the silent count-in -> avatar holds the
-                    // rest idle, then starts the DPS exactly when the audio begins.
-                    avatar.DanceTimeSec = () => (float)(Time.timeAsDouble - _clockStart - _musicStartDelaySec);
+                    // Dance time = time since the FIRST NOTE (beat-0 note clock minus _danceStartSec), NOT the music
+                    // clock: the DPS spans first→last note, so anchoring here keeps it from leading the song on
+                    // long-intro charts. Stays negative through the READY/GO lead-in AND the intro (count-in + any
+                    // musical intro before the first note) -> avatar holds the rest idle, then starts the DPS on the
+                    // first downbeat.
+                    avatar.DanceTimeSec = () => (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
                     avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
                     Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
                 }
@@ -3197,11 +3212,27 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(name)) return null;
             name = ResolveGenderedMotName(name);
             if (_motCache.TryGetValue(name, out var cached)) return cached;
-            MotLoader m = null;
+            MotLoader m = null; string triedPath = null, why = null;
             foreach (var dir in new[] { "AUMOTION", "MOTION" })
             {
                 var p = Path.Combine(SdoExtracted.Root, dir, name);
-                if (File.Exists(p)) { try { m = MotLoader.Load(File.ReadAllBytes(p)); } catch { } if (m != null) break; }
+                if (!File.Exists(p)) continue;
+                triedPath = p;
+                try
+                {
+                    var bytes = File.ReadAllBytes(p);
+                    m = MotLoader.Load(bytes);
+                    if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
+                }
+                catch (System.Exception e) { why = e.Message; }
+                if (m != null) break;
+            }
+            if (m == null)
+            {
+                // This is the hole that hid the sdom5085 freeze: a DPS clip that's missing/empty/corrupt used to fail
+                // silently, so the dancer just held the previous clip's last frame (looked frozen). Name it in the log.
+                Debug.LogWarning($"[avatar] DPS motion unresolved: {name} — {(triedPath == null ? "not found in AUMOTION/ or MOTION/" : why)} (dancer holds the previous clip)");
+                SdoLog.MissingAsset("mot", triedPath ?? name, triedPath == null ? "not found" : why);
             }
             _motCache[name] = m;   // cache even null to avoid re-probing missing files
             return m;
@@ -3703,8 +3734,8 @@ namespace Sdo.Game
                 // Miss — instead we just hide it and let AutoMiss (or a late in-window press) judge it at the proper
                 // time, then retire it once it's been judged. (disappears at the same spot as before, still scored.)
                 bool offPast = !held && (_scrollSign > 0
-                    ? Mathf.Max(yRaw, yEnd) < NotesClipTop - 36f       // up-scroll: flowed off the TOP past the judge line
-                    : Mathf.Min(yRaw, yEnd) > NotesClipBottom + 36f);  // down-scroll: flowed off the BOTTOM past the judge line
+                    ? Mathf.Max(yRaw, yEnd) < _clipTopY - 36f       // up-scroll: flowed off the TOP past the judge line
+                    : Mathf.Min(yRaw, yEnd) > _clipBottomY + 36f);  // down-scroll: flowed off the BOTTOM past the judge line
                 if (offPast)
                 {
                     n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false);
@@ -3712,8 +3743,8 @@ namespace Sdo.Game
                     continue;
                 }
                 bool visible = held || (_scrollSign > 0
-                    ? Mathf.Min(yRaw, yEnd) <= NotesClipBottom + 60f   // up-scroll: shown once it enters from the bottom
-                    : Mathf.Max(yRaw, yEnd) >= NotesClipTop - 60f);    // down-scroll: shown once it enters from the top; SpriteMask clips it to the board
+                    ? Mathf.Min(yRaw, yEnd) <= _clipBottomY + 60f   // up-scroll: shown once it enters from the bottom
+                    : Mathf.Max(yRaw, yEnd) >= _clipTopY - 60f);    // down-scroll: shown once it enters from the top; SpriteMask clips it to the board
                 n.Head.enabled = visible;
                 if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
                 float y = yRaw;   // NO clamp — notes keep flowing past the receptor (the mask hides them above the HP bar)
@@ -3770,7 +3801,7 @@ namespace Sdo.Game
                             float capBaseY = capEndY + _scrollSign * note3dCapOffset;
                             float capLen = holdW * LongCapLenRatio;
                             float capFar = capBaseY + _scrollSign * capLen;   // the tip end (design y)
-                            bool capVis = Mathf.Max(capBaseY, capFar) >= NotesClipTop && Mathf.Min(capBaseY, capFar) <= NotesClipBottom;
+                            bool capVis = Mathf.Max(capBaseY, capFar) >= _clipTopY && Mathf.Min(capBaseY, capFar) <= _clipBottomY;
                             n.Cap3d.SetActive(capVis);
                             if (capVis)
                             {
@@ -3789,8 +3820,8 @@ namespace Sdo.Game
                     }
                     if (n.Body)
                     {
-                        float top = Mathf.Max(Mathf.Min(y, yEnd) + (_note3dMode ? note3dHoldHeadGap : 0f), NotesClipTop);
-                        float bot = Mathf.Min(Mathf.Max(y, yEnd), NotesClipBottom);
+                        float top = Mathf.Max(Mathf.Min(y, yEnd) + (_note3dMode ? note3dHoldHeadGap : 0f), _clipTopY);
+                        float bot = Mathf.Min(Mathf.Max(y, yEnd), _clipBottomY);
                         float len = Mathf.Max(0f, bot - top), midY = (top + bot) / 2f;
                         n.Body.SetActive(len > 0.5f);
                         if (showtimeMode) { var bmr = n.Body.GetComponent<MeshRenderer>(); if (bmr && bmr.sharedMaterial) bmr.sharedMaterial.color = _noteTint; }   // long-note body gold→red flash too

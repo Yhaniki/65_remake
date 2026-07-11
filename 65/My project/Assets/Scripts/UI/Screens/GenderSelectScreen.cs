@@ -160,6 +160,16 @@ namespace Sdo.UI.Screens
             if (_preview != null) { Destroy(_preview.gameObject); _preview = null; }
         }
 
+        // 開場的選角色畫面沒有「離開」鈕（原「離開」鍵位美術已改成商城入口），所以用 ESC 退出遊戲。走 AppQuit 即時 hard-kill，
+        // 避開 Unity shutdown 卡死（同 LobbyScreen 登出）。商城 modal 疊在本畫面上時本畫面仍 Visible → 讓商城保有 ESC 空間，
+        // 只有商城沒開（本畫面在最上層）時才吃 ESC。
+        private void Update()
+        {
+            if (!Visible || ScreenTransition.Busy) return;   // 轉場中(進房/進商城漸黑漸亮)先不吃 ESC
+            if (FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen) return;
+            if (Input.GetKeyDown(KeyCode.Escape)) Sdo.Game.AppQuit.Now();
+        }
+
         private void SelectGender(int g)
         {
             _gender = g == 1 ? 1 : 0;

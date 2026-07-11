@@ -2100,6 +2100,17 @@ namespace Sdo.UI.Screens
                 if (roomIsTop && !typingChat) { UiSfx.Play(UiSfx.Click); OnStart(); }   // 按 F2 發出 SE_0001（UiSfx.Click）
             }
 
+            // ESC → 退回選角色頁面（房間的上一層）。只在房間為當前畫面、非聊天輸入中、且無 modal(商城/儲物櫃/設定)疊層、
+            // 非轉場中時收——避免打字、選歌疊層、或 modal 開著時誤觸（打字中的 ESC 由 HandleRoomChatTypingKeys 取消打字）。
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                bool roomIsTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
+                bool typingChat = _chatBubbleTyping || _chatBubbleInputArmed || (_chatInput != null && _chatInput.isFocused);
+                bool modalOpen = FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen;
+                if (roomIsTop && !typingChat && !modalOpen && !ScreenTransition.Busy)
+                    ScreenTransition.Run(() => GoTo(ScreenId.GenderSel));
+            }
+
             // UI 收合/展開補間（官方 uihide/uidisplay 面板滑動）。與 3D 掛載無關，永遠推進到目標狀態。
             float ct = _uiCollapsed ? 1f : 0f;
             if (!Mathf.Approximately(_collapseT, ct))

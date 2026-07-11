@@ -109,7 +109,7 @@ namespace Sdo.Game
                     : " 固定速度 OFF：osu 預設，內部仍隨 BPM變速/SV 變速");
                 if (cs != constantScroll) { constantScroll = cs; BuildScroll(); }
                 bool mo = GUILayout.Toggle(useMusicStartOffset, useMusicStartOffset
-                    ? $" 音樂對齊 type-10 ON：跳過開頭 count-in、舞蹈等音樂才跳（此曲 {(_map != null ? _map.MusicStartOffsetMs : 0):F0}ms）— 下次開始生效"
+                    ? $" 音樂對齊 type-10 ON：音樂跳過 count-in（marker {(_map != null ? _map.MusicStartOffsetMs : 0):F0}ms）、舞蹈等到第一個音符才起跳（{(_map != null ? _map.FirstNoteMs : 0):F0}ms）— 下次開始生效"
                     : " 音樂對齊 type-10 OFF：音樂＋舞蹈從 beat 0 播（下次開始生效）");
                 useMusicStartOffset = mo;
                 GUILayout.Space(6);

@@ -44,6 +44,40 @@ function Copy-Tree($src, $dst, [string]$label) {
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($label) exit=$LASTEXITCODE" }
 }
 
+# Decode iteminfo.dat's GBK/CP936 Simplified-Chinese item names into a UTF-8 sidecar (shop_names.tsv, "id<TAB>name"
+# per line) so the built player never needs the CJK codepage at runtime: Unity's Mono standalone strips I18N.CJK, so
+# Encoding.GetEncoding(936) throws there and names render as mojibake. Windows PowerShell 5.1 HAS CP936, so we decode
+# once here at packaging time. Format mirrors Assets/Scripts/Sdo.Shop/IteminfoReader.cs (single source of truth for
+# the layout): 12-byte header (int32 headA must be 2), 156-byte records, self-inverse cipher (0x1F9-b)&0xFF, int32 id
+# @0x00, GBK name @0x14 (max 44 bytes, NUL-terminated). AvatarItemCatalog.ApplyNameSidecar overlays this at runtime.
+function Write-ShopNames($iteminfoPath, $outPath) {
+    if (-not (Test-Path $iteminfoPath)) { Write-Warning "[package] shop_names: iteminfo.dat missing -> $iteminfoPath"; return }
+    $bytes = [System.IO.File]::ReadAllBytes($iteminfoPath)
+    if ($bytes.Length -lt 12 -or [System.BitConverter]::ToInt32($bytes, 0) -ne 2) {
+        Write-Warning "[package] shop_names: bad iteminfo header (headA != 2) -> skipped"; return
+    }
+    $gbk = [System.Text.Encoding]::GetEncoding(936)
+    $HeaderLen = 12; $RecordLen = 156; $OffName = 0x14; $NameMax = 44
+    $rec = New-Object byte[] $RecordLen
+    $sb  = New-Object System.Text.StringBuilder
+    $pos = $HeaderLen; $n = 0
+    while ($pos + $RecordLen -le $bytes.Length) {
+        for ($i = 0; $i -lt $RecordLen; $i++) { $rec[$i] = [byte]((0x1F9 - $bytes[$pos + $i]) -band 0xFF) }
+        $id  = [System.BitConverter]::ToInt32($rec, 0)
+        $end = $OffName
+        while ($end -lt ($OffName + $NameMax) -and $rec[$end] -ne 0) { $end++ }
+        $len = $end - $OffName
+        if ($len -gt 0) {
+            $name = $gbk.GetString($rec, $OffName, $len)
+            [void]$sb.Append($id).Append("`t").Append($name).Append("`n")
+            $n++
+        }
+        $pos += $RecordLen
+    }
+    [System.IO.File]::WriteAllText($outPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))  # UTF-8, no BOM
+    Write-Host "[package] wrote shop_names.tsv ($n names, UTF-8)"
+}
+
 # 1) Base: the offline Extracted tree -> DATA
 Copy-Tree (Join-Path $Off 'Extracted') $Data 'Extracted'
 
@@ -65,6 +99,11 @@ if ($online) {
     # baked Chinese painted out by tools\build_optiondlg_clean.py, so the built player resolves the same faithful pink
     # frame the editor does (OptionDlgModal + OptionDlgArt's DATA\UI\OPTIONDLG fallback).
     Copy-Tree (Join-Path $ds 'UI\OPTIONDLG')        (Join-Path $Data 'UI\OPTIONDLG')        'online OPTIONDLG'
+    # 商城 (SHOP.XML atlas + .an) 與 儲物櫃/更衣間 (MYHOUSEDLG) UI 美術：都是「線上限定」資料夾，離線 Extracted 沒有。
+    # ShopArt / CabinetArt 在編輯器從 assets\閉撰敃氪 找、打包則 fallback 到 <exe>\DATA\UI\{SHOP,MYHOUSEDLG}，
+    # 沒複製 → 打包後商城/儲物櫃整片黑(素材全 null)。overlay 進 DATA 讓打包版跟編輯器一致。
+    Copy-Tree (Join-Path $ds 'UI\SHOP')             (Join-Path $Data 'UI\SHOP')             'online SHOP'
+    Copy-Tree (Join-Path $ds 'UI\MYHOUSEDLG')       (Join-Path $Data 'UI\MYHOUSEDLG')       'online MYHOUSEDLG'
     # OPTION 鍵盤 tab per-key letter glyphs (A/S/W/D…, blue-fill/white-outline PNGs blitted on each key cap; loaded by
     # KeysArt with a DATA\UI\LOBBYDLG\KEYS fallback). Not referenced by any .an — the exe loaded them by hardcoded path.
     Copy-Tree (Join-Path $ds 'UI\LOBBYDLG\KEYS')    (Join-Path $Data 'UI\LOBBYDLG\KEYS')    'online KEYS glyphs'
@@ -78,6 +117,8 @@ if ($online) {
         if (Test-Path $src) { Copy-Item $src (Join-Path $Data $f) -Force; Write-Host "[package] copied $f" }
         else { Write-Warning "[package] $f not found at $src" }
     }
+    # Bake the UTF-8 name sidecar from the iteminfo.dat we just staged, so ids match exactly what the runtime reads.
+    Write-ShopNames (Join-Path $Data 'iteminfo.dat') (Join-Path $Data 'shop_names.tsv')
 } else {
     Write-Warning "[package] online DatasSDO not found under $assetsDir — icons fall back to the offline subset."
 }

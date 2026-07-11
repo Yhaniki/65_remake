@@ -241,6 +241,9 @@ namespace Sdo.UI.Screens
             if (_tip != null) _tip.gameObject.SetActive(false);
         }
 
+        /// 更衣間 modal 是否正顯示中（疊在房間上）。房間用它 gate ESC，避免開櫃時 ESC 誤退回選角色。
+        public bool IsOpen => _cg != null && _cg.alpha > 0f;
+
         public void Open()
         {
             _catalog = AvatarItemCatalog.Instance;
