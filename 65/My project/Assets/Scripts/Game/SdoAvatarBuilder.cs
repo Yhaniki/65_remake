@@ -97,7 +97,7 @@ namespace Sdo.Game
                             int a = sub.Ranges[s].Attrib;
                             string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
                             var t = ResolveDds(dir, nm, out var am);
-                            var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader);   // 去背 range → alpha-blend 露膚
+                            var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader, hairShader);   // 真孔洞→cutout不透明 / 全軟→alpha-blend
                             // 記下材質名 = DDS 名 (如 W_Basic_Coat2)，讓上層 (商城衣物縮圖) 能認出「膚色 range」把它藏掉。
                             mats[s] = t != null ? new Material(sh) { mainTexture = t, name = nm ?? "" }
                                                 : (TryBuildTexAnim(go, dir, nm, texShader)
@@ -108,7 +108,7 @@ namespace Sdo.Game
                     else
                     {
                         var tex = ResolveDds(dir, sub.Dds, out var am);
-                        var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader);   // 去背刺青上装 → alpha-blend 露膚
+                        var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader, hairShader);   // 真孔洞→cutout不透明 / 全軟→alpha-blend
                         mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex, name = sub.Dds ?? "" }
                                                         : (TryBuildTexAnim(go, dir, sub.Dds, texShader)   // 翅膀 _TexAnimEx 動塗 → 換幀動畫
                                                            ?? new Material(fallbackShader) { color = PartColor(rel), name = sub.Dds ?? "" });
@@ -204,16 +204,26 @@ namespace Sdo.Game
         // Resolve an avatar DDS by material name within its folder: exact filename first, then a case-insensitive stem
         // match; decoded via DdsLoader with alpha-edge bleed for cut-out textures (mirrors ScreenGameplay.ResolveDds so
         // the dancer looks identical whichever path built it).
-        /// <summary>A garment on the opaque <paramref name="bodyShader"/> whose texture真的去背 (Cutout/Blend) must
-        /// alpha-blend so its transparent regions reveal the skin submesh behind it — the 刺青/tattoo 上装 (e.g. 至尊
-        /// 王者无敌 000558) are one MSH with an opaque skin-body submesh + a mostly-transparent decal submesh; the decal
-        /// on the opaque shader painted a solid black blob over the skin. Uses <paramref name="glassShader"/> (blend,
-        /// ZWrite Off, Queue=Transparent) not a cutout: the decal is COPLANAR with the skin body, so writing depth would
-        /// z-fight — instead it draws after and blends on top, and its a=0 texels contribute nothing → skin shows.
-        /// Gated twice: only the plain-garment path (texShader == bodyShader) is eligible AND only when the texture
-        /// reports alpha; hair/glasses/wings/portrait keep their own shader, and ordinary opaque tops (Opaque) unchanged.</summary>
-        private static Shader AlphaShaderFor(Shader texShader, DdsAlphaMode am, Shader bodyShader, Shader glassShader)
-            => (texShader == bodyShader && am != DdsAlphaMode.Opaque) ? glassShader : texShader;
+        /// <summary>Pick the material shader for a plain garment (texShader == bodyShader) by its texture's alpha class.
+        /// Only the plain-garment path is eligible; hair/glasses/wings/portrait keep their own shader.
+        ///   • <see cref="DdsAlphaMode.Cutout"/> — a SOLID body with REAL holes (e.g. the 眉画犹思 連身裙 037888:
+        ///     16.5% alpha-0 lace holes + 72.5% solid) → <paramref name="cutoutShader"/> (alpha-TEST, a→1, ZWrite On):
+        ///     the dress body stays fully opaque and the holes clip to reveal skin. Using alpha-BLEND here made the whole
+        ///     solid dress see-through (the reported bug); the plain opaque shader instead painted the holes solid black.
+        ///   • <see cref="DdsAlphaMode.Blend"/> — a mostly-soft gradient (glass, additive glows, a 去背/tattoo decal like
+        ///     至尊王者无敌 000558) → <paramref name="glassShader"/> (blend, ZWrite Off, Queue=Transparent): its a=0
+        ///     texels contribute nothing (skin shows) and the soft body reads as translucent, no z-fight with the skin.
+        ///   • <see cref="DdsAlphaMode.Opaque"/> → the opaque <paramref name="bodyShader"/> unchanged.</summary>
+        private static Shader AlphaShaderFor(Shader texShader, DdsAlphaMode am, Shader bodyShader, Shader glassShader, Shader cutoutShader)
+        {
+            if (texShader != bodyShader) return texShader;
+            switch (am)
+            {
+                case DdsAlphaMode.Cutout: return cutoutShader;
+                case DdsAlphaMode.Blend:  return glassShader;
+                default:                  return bodyShader;   // Opaque
+            }
+        }
 
         public static Texture2D ResolveDds(string dir, string ddsName) => ResolveDds(dir, ddsName, out _);
 

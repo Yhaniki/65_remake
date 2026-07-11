@@ -217,6 +217,9 @@ namespace Sdo.Game
         /// <summary>Background-music folder. Built: DATA/BGM; dev: sdox_offline/BGM (sibling).</summary>
         public static string BgmDir => FirstDir(Path.Combine(Root, "BGM"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "BGM"));
 
+        /// <summary>Front-end lobby/room UI background-music folder (random *.ogg / *.mp3). Built: DATA/UI/BGM; dev: Extracted/UI/BGM.</summary>
+        public static string UiBgmDir => FirstDir(Path.Combine(Root, "UI", "BGM"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "UI", "BGM"));
+
         /// <summary>Replay save folder (under DATA). Created on demand by callers.</summary>
         public static string ReplayDir => Path.Combine(Root, "REPLAY");
 

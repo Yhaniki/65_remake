@@ -846,7 +846,7 @@ namespace Sdo.Game
                     }
                 _seCache[name] = clip;
             }
-            if (clip != null && _sfx != null) _sfx.PlayOneShot(clip);
+            if (clip != null && _sfx != null) _sfx.PlayOneShot(clip, AudioMix.Sfx);   // 遊戲音效 音量
         }
 
         // ---- per-scene ambient SE (decompiled Gameplay_Update PlayVoiceTimed switch on scene id) ----
@@ -890,7 +890,7 @@ namespace Sdo.Game
             if (_ambientClip == null || _ambient == null) return;
             if (!_started || _ended || observeBurstMode || avatarDebug) return;
             if (_nextAmbientAt < 0f || Time.realtimeSinceStartup < _nextAmbientAt || _ambient.isPlaying) return;
-            _ambient.PlayOneShot(_ambientClip);
+            _ambient.PlayOneShot(_ambientClip, AudioMix.Sfx);   // 場景環境音 = 遊戲音效 音量
             _nextAmbientAt = Time.realtimeSinceStartup + _ambientClip.length + UnityEngine.Random.Range(0f, 29f);
         }
 
@@ -1162,7 +1162,7 @@ namespace Sdo.Game
             using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
             {
                 yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success) _audio.clip = DownloadHandlerAudioClip.GetContent(req);
+                if (req.result == UnityWebRequest.Result.Success) { _audio.clip = DownloadHandlerAudioClip.GetContent(req); _audio.volume = AudioMix.Music; }   // 遊戲音樂 音量
                 else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
             }
             _audioReady = true;   // song decoded (or failed) → the loading screen may now reveal the stage

@@ -931,6 +931,7 @@ namespace Sdo.UI.Screens
 
             EnsurePreviewSource();
             _preview.clip = clip;
+            _preview.volume = Sdo.Game.AudioMix.Music;   // 遊戲音樂 音量(試聽 exper/<id>.ogg)
             if (isPreviewClip)
             {
                 _previewWindow = false;

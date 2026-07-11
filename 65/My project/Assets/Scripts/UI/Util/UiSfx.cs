@@ -82,7 +82,7 @@ namespace Sdo.UI.Util
                     }
                 _cache[name] = clip;   // cache null too (missing file -> never re-hit disk)
             }
-            if (clip != null && _src != null) _src.PlayOneShot(clip);
+            if (clip != null && _src != null) _src.PlayOneShot(clip, AudioMix.Sfx);   // 遊戲音效 音量
         }
     }
 }
