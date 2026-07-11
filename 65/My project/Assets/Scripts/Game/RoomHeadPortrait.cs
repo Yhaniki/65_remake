@@ -109,15 +109,20 @@ namespace Sdo.Game
         {
             if (_avatar != null && WalkingProvider != null)
             {
-                if (Time.time >= _chatActionUntil)   // 非動作進行中 → 鏡射 avatar 的走路/idle
+                bool walking = WalkingProvider();
+                // 聊天動作結束(計時到)或玩家開始走動(房間 avatar 已中斷動作) → 清掉 one-shot 循環,回走路/idle。
+                // 關鍵:PlayOneShot(mot,false) 的 one-shot 優先級最高且會「無限循環」(f % MaxTime),只有 ClearOneShot 能停;
+                // 先前只 SetClip 沒清 one-shot → 頭貼卡在 hi 動作一直循環(mirror RoomScene3D.Update 的 ClearOneShot)。
+                if (_chatActionUntil > 0f && (walking || Time.time >= _chatActionUntil))
                 {
-                    if (_chatActionUntil >= 0f)      // 動作剛結束 → 強制重套目前的 walk/idle(否則卡在動作末幀)
-                    {
-                        _chatActionUntil = -1f;
-                        _mirrorWalking = !WalkingProvider();
-                    }
-                    bool w = WalkingProvider();
-                    if (w != _mirrorWalking) { _mirrorWalking = w; _avatar.SetClip(w ? _walkMot : _idleMot); }
+                    _avatar.ClearOneShot();
+                    _chatActionUntil = -1f;
+                    _mirrorWalking = !walking;   // 強制下面重套正確的 clip
+                }
+                if (_chatActionUntil <= 0f && walking != _mirrorWalking)   // 非動作中 → 鏡射 avatar 的走路/idle
+                {
+                    _mirrorWalking = walking;
+                    _avatar.SetClip(walking ? _walkMot : _idleMot);
                 }
             }
             if (_cam != null && _avatar != null) UpdateCam();
