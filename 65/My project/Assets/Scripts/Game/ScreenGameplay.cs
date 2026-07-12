@@ -1955,6 +1955,7 @@ namespace Sdo.Game
             Bounds bounds = built.Bounds; bool any = built.Any; int parts = built.Parts;
             if (!any) { Debug.LogWarning("[avatar] no parts loaded"); return; }
             Debug.Log($"[avatar] {(localPlayerMale ? "MAN" : "WOMAN")}: {parts} parts, skeleton={(hrc != null ? hrc.Names.Length + " bones" : "none")}, mot={(mot != null ? mot.MaxTime + 1 + " frames" : "none")}");
+            if (avatar != null) MmdDebug.RegisterSwappable(avatar);   // F8: swap the dancer to the MMD (Miku) model (SDO stays the motion driver)
             var handYellow = new Color(1f, 0.86f, 0.25f);
             if (use3dCamera) LoadCvCameras();
             if (use3dCamera && _camReady)

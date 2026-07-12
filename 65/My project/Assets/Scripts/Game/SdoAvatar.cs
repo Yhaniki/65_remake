@@ -258,6 +258,16 @@ namespace Sdo.Game
         public Vector3 BoneModelPos(string name)
         { int i = BoneIndex(name); return (i >= 0 && _animWorld != null && i < _animWorld.Length) ? (Vector3)_animWorld[i].GetColumn(3) : Vector3.zero; }
 
+        /// <summary>The loaded HRC skeleton (bone names, parents, rest/bind matrices). Exposed so an external retarget
+        /// (e.g. driving an MMD model — <see cref="MmdAvatar"/>) can pair each HRC bone with its bind pose.</summary>
+        public HrcLoader Hrc => _hrc;
+
+        /// <summary>This bone's animated model-space world matrix from the last <see cref="Pose"/> (root = identity in
+        /// the FK). Identity if not yet posed / out of range. The retarget reads its rotation (world-space delta vs the
+        /// bind) and, for the root, its translation.</summary>
+        public Matrix4x4 BoneAnimWorld(int i)
+            => (_animWorld != null && i >= 0 && i < _animWorld.Length) ? _animWorld[i] : Matrix4x4.identity;
+
         /// <summary>Evaluate one frame immediately so newly attached props/effects can start from a valid bone pose
         /// before the first LateUpdate.</summary>
         public void PoseFrame(float frame)
