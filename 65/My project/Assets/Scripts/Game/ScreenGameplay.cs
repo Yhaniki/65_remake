@@ -1507,6 +1507,7 @@ namespace Sdo.Game
             float trackW = LaneLeftX[Keys - 1] + 69f - LaneLeftX[0];
             if (glowSpr != null) { _missOverlay.drawMode = SpriteDrawMode.Tiled; _missOverlay.tileMode = SpriteTileMode.Continuous; _missOverlay.size = new Vector2(trackW, 558f); }
             float missY = ClickStripTopY + 279f;   // ≈ board centre; mirror about y300 for 向下 so the wash tracks the receptors
+            _missOverlay.flipY = _scrollSign < 0;  // 向下：漸層亮端跟軌條光一樣翻向底部受擊線
             _missOverlay.transform.position = SdoLayout.ToWorld(PX(LaneLeftX[0] + trackW / 2f), _scrollSign > 0 ? missY : (600f - missY), 9f);
             _missOverlay.color = new Color(1f, 0f, 0f, 0f); _missOverlay.enabled = false;
             BuildNoteClip();
