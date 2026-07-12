@@ -231,7 +231,8 @@ namespace Sdo.Game
         private readonly Texture2D[] _holdTex = new Texture2D[Keys];
         private readonly Sprite[] _holdTail = new Sprite[Keys];
         private readonly bool[] _holdTailFlipX = new bool[Keys];   // combined-name skins share one cap across a lane pair → mirror it
-        private readonly bool[] _holdTailFlipY = new bool[Keys];   // (per-lane-name skins like NOTEIMAGE_6 are pre-drawn → no flip)
+        private readonly bool[] _holdTailFlipY = new bool[Keys];   // per-skin baked correction (NOTEIMAGE_8 updown cap 貼圖上下顛倒)
+        private readonly bool[] _holdCapPerLane = new bool[Keys];   // true = 每軌預畫 cap (NOTEIMAGE_6 箭頭)：依軌向畫好，不吃 scroll 方向翻轉
         private SpriteRenderer _missOverlay;                       // track-wide red wash flashed on a miss (covers all 4 lanes reliably)
         private readonly Sprite[] _recIdle = new Sprite[Keys];
         // Keydown receptor feedback = a ONE-SHOT 5-frame burst (KEYDOWN_JUDGELINE.AN = *_judgeline 2→3→4→5→6),
@@ -978,23 +979,27 @@ namespace Sdo.Game
             for (int c = 0; c < Keys; c++)
             {
                 string d = Dir5[c];
+                // bleed:true — 這些 note/receptor PNG 的透明區是 (255,255,255,0) 白底,bilinear 會把白拉進邊緣成白邊 → 先把不透明色 dilate 進透明區清掉
                 var fr = new Sprite[4]; bool ok = true;
-                for (int f = 0; f < 4; f++) { fr[f] = SdoExtracted.LoadImage(NoteDir, d + "holdheadactive" + f + ".png"); if (fr[f] == null) ok = false; }
+                for (int f = 0; f < 4; f++) { fr[f] = SdoExtracted.LoadImage(NoteDir, d + "holdheadactive" + f + ".png", bleed: true); if (fr[f] == null) ok = false; }
                 if (ok) _noteFrames[c] = fr;
-                _recIdle[c] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline1.png") ?? SdoExtracted.LoadImage(NoteDir, d + "_judgeline.png");
+                _recIdle[c] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline1.png", bleed: true) ?? SdoExtracted.LoadImage(NoteDir, d + "_judgeline.png", bleed: true);
                 var rdf = new List<Sprite>();                         // keydown burst: numbered *_judgeline2..6, else *_judgeline_f2
-                for (int f = 2; f <= 6; f++) { var s = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + f + ".png"); if (s != null) rdf.Add(s); }
-                if (rdf.Count == 0) { var f2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2.png"); if (f2 != null) rdf.Add(f2); }
+                for (int f = 2; f <= 6; f++) { var s = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + f + ".png", bleed: true); if (s != null) rdf.Add(s); }
+                if (rdf.Count == 0) { var f2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2.png", bleed: true); if (f2 != null) rdf.Add(f2); }
                 if (rdf.Count == 0 && _recIdle[c] != null) rdf.Add(_recIdle[c]);
                 _recDownFrames[c] = rdf.ToArray();
                 string baseLong = (d == "left" || d == "right") ? "rightleft_long" : "updown_long";
                 var bodySpr = SdoExtracted.LoadImage(NoteDir, baseLong + ".png");
                 if (bodySpr != null) { _holdTex[c] = bodySpr.texture; _holdTex[c].wrapMode = TextureWrapMode.Repeat; SdoExtracted.AlphaBleed(_holdTex[c]); }
-                // end cap: prefer a PER-LANE cap ({left|right|down|up}_long_bottom — NOTEIMAGE_6, drawn per direction), else
-                // the combined cap (rightleft/updown_long_bottom — NOTEIMAGE_5/8). Caps render correct un-flipped on every
-                // skin EXCEPT NOTEIMAGE_8, whose updown cap is stored upside-down → its up & down lanes need a vertical flip.
-                var capSpr = SdoExtracted.LoadImage(NoteDir, d + "_long_bottom.png")
-                             ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
+                // end cap: prefer a PER-LANE cap ({left|right|down|up}_long_bottom — NOTEIMAGE_6, a mini-arrow drawn to match
+                // the LANE's arrow direction), else the combined cap (rightleft/updown_long_bottom — NOTEIMAGE_5/8, a shared
+                // "funnel" that must point away from the body). Per-lane caps are already oriented per lane → they must NOT
+                // take the scroll-direction flip (flipping them in 向下 points the arrow the wrong way). Combined caps DO take
+                // the scroll flip; NOTEIMAGE_8's updown cap is additionally stored upside-down → a baked correction flag.
+                var perLaneCap = SdoExtracted.LoadImage(NoteDir, d + "_long_bottom.png");
+                var capSpr = perLaneCap ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
+                _holdCapPerLane[c] = perLaneCap != null;
                 bool flipY = (d == "up" || d == "down") && NoteDir.EndsWith("NOTEIMAGE_8");
                 if (capSpr != null) { _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr); _holdTailFlipX[c] = false; _holdTailFlipY[c] = flipY; }
             }
@@ -3820,7 +3825,7 @@ namespace Sdo.Game
                     else if (n.Tail)
                     {
                         n.Tail.enabled = true;
-                        n.Tail.flipY = _scrollSign < 0;   // 向下：cap 上下翻，尖端朝離開判定線的方向（否則方向相反）
+                        n.Tail.flipY = HoldCapOrient.FlipY(_holdCapPerLane[c], _holdTailFlipY[c], _scrollSign < 0);
                         // 2D cap sits at the tail END (yEnd), its own sprite/aspect.
                         PlaceAspect(n.Tail, cx, yEnd, holdW, 0.5f);
                         if (n.Cap3d != null && n.Cap3d.activeSelf) n.Cap3d.SetActive(false);
