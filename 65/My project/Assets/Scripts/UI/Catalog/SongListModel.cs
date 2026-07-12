@@ -98,6 +98,45 @@ namespace Sdo.UI.Catalog
             return -1;
         }
 
+        // ---- external (user Songs/ folder) grouping — the 資料夾 drill-in category ----
+
+        /// <summary>Distinct group (folder) names among external songs, sorted alphabetically. Empty when no user
+        /// Songs/ were scanned (the drill-in category then shows nothing).</summary>
+        public List<string> ExternalGroups() => ExternalGroups(_all);
+
+        public static List<string> ExternalGroups(IReadOnlyList<SongCatalog.Entry> list)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var res = new List<string>();
+            if (list != null)
+                foreach (var e in list)
+                    if (e != null && e.external && !string.IsNullOrEmpty(e.group) && seen.Add(e.group))
+                        res.Add(e.group);
+            res.Sort(StringComparer.OrdinalIgnoreCase);
+            return res;
+        }
+
+        /// <summary>External songs in one group, sorted by title (then gn) — the rows shown after drilling into a group.</summary>
+        public List<SongCatalog.Entry> InGroup(string group) => InGroup(_all, group);
+
+        public static List<SongCatalog.Entry> InGroup(IReadOnlyList<SongCatalog.Entry> list, string group)
+        {
+            var res = new List<SongCatalog.Entry>();
+            if (list == null || string.IsNullOrEmpty(group)) return res;
+            foreach (var e in list)
+                if (e != null && e.external && string.Equals(e.group, group, StringComparison.OrdinalIgnoreCase))
+                    res.Add(e);
+            res.Sort((a, b) =>
+            {
+                int c = string.Compare(a.title ?? a.gn, b.title ?? b.gn, StringComparison.OrdinalIgnoreCase);
+                return c != 0 ? c : string.CompareOrdinal(a.gn, b.gn);
+            });
+            return res;
+        }
+
+        /// <summary>Count of external songs in a group (for the group-row label).</summary>
+        public int GroupCount(string group) => InGroup(_all, group).Count;
+
         public SongCatalog.Entry PickRandom(int seed)
             => _all.Count == 0 ? null : _all[new Random(seed).Next(_all.Count)];
 

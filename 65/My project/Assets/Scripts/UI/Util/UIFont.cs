@@ -84,6 +84,37 @@ namespace Sdo.UI.Util
             }
         }
 
+        // 俐方體 Cubic 11 — a SIL OFL pixel/bitmap font (bundled at Assets/Resources/Fonts/Cubic_11.ttf, redistributable
+        // unlike the OS SimSun). Used for the boot loading screen's tech-minimalist pixel look. Cubic 11 covers 繁中 +
+        // 假名 + Latin; any glyph it lacks (簡中 song titles, rare kanji) falls through to the CJK face, and if the pixel
+        // font itself is missing (worktree not yet imported by Unity) the whole thing degrades to Cjk so boot never breaks.
+        public const string CubicFontResource = "Fonts/Cubic_11";
+        private static TMP_FontAsset _cubic; private static bool _cubicTried;
+        public static TMP_FontAsset Cubic
+        {
+            get
+            {
+                if (_cubicTried) return _cubic;
+                _cubicTried = true;
+                var f = Resources.Load<Font>(CubicFontResource);
+                if (f != null)
+                {
+                    TMP_FontAsset fa = null;
+                    try { fa = TMP_FontAsset.CreateFontAsset(f); } catch { }
+                    if (fa != null)
+                    {
+                        fa.name = "Cubic11";
+                        var cjk = Cjk;                          // glyphs Cubic 11 lacks fall through to SimSun/Source Han
+                        if (cjk != null) AddFallback(fa, cjk);
+                        _cubic = fa;
+                        return _cubic;
+                    }
+                }
+                _cubic = Cjk;   // pixel font unavailable → keep the boot screen readable with the CJK face
+                return _cubic;
+            }
+        }
+
         /// <summary>Build a TMP asset from a Font imported under Resources (bundled with the game). Null if absent or
         /// it fails to rasterize CJK (→ caller falls back to the OS face).</summary>
         private static TMP_FontAsset BuildResource(string path)

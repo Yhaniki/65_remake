@@ -46,8 +46,15 @@ namespace Sdo.Game
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
         // SdoExtracted.MusicDir (see ResolveDevDefaults).
         public string gnPath = "";   // official chart (e.g. <MusicDir>/sdom1435K.gn)
-        public string oggPath = "";  // matching song audio (e.g. <MusicDir>/sdom1435.ogg)
+        public string oggPath = "";  // matching song audio (e.g. <MusicDir>/sdom1435.ogg); ogg/mp3/wav
         public int difficulty = 2;            // 0=easy 1=normal 2=hard
+        // External chart (user Songs/ folder). When chartFormat != 0 LoadChart parses this INSTEAD of a .gn:
+        // 1=osu (chartPath = one .osu file), 2=sm (chartPath = a .sm, chartIndex = which #NOTES block).
+        public string chartPath = "";
+        public int chartIndex;
+        public int chartFormat;               // 0=official .gn, 1=osu, 2=sm (Sdo.Osu.SongFormat)
+        public int chartLevel;                // external chart LV (osu!mania 星數×5) — shown as the LV label so it matches song-select
+        private const int ExternalLeadInMs = 2000;   // min ms the first external note is pushed to, so it scrolls in from the edge (count-in)
         // (2) 3D avatar — WOMAN default outfit: body-part .msh files (relative to Extracted/),
         // assembled in shared model space (bind pose). Skeleton/skinning/motion come next.
         public string[] avatarParts =
@@ -854,6 +861,7 @@ namespace Sdo.Game
         private void ResolveDevDefaults()
         {
             if (!string.IsNullOrEmpty(gnPath)) return;
+            if (chartFormat != 0) return;   // external chart (osu/StepMania) assigned → never fall back to the dev song (would overwrite oggPath/gnPath → 播成 sdom1435)
             var music = SdoExtracted.MusicDir;
             gnPath = Path.Combine(music, "sdom1435K.gn");
             oggPath = Path.Combine(music, "sdom1435.ogg");
@@ -1162,7 +1170,30 @@ namespace Sdo.Game
 
         private bool LoadChart()
         {
-            // (3) official .gn chart first
+            // (1) external user chart (osu / StepMania) from the Songs/ folder — the difficulty was already resolved
+            // to a concrete chart file at selection time (see SongSelectScreen.OnConfirm / FrontendApp.StartGameplay).
+            if (chartFormat != 0 && !string.IsNullOrEmpty(chartPath) && File.Exists(chartPath))
+            {
+                try
+                {
+                    _map = chartFormat == 2
+                        ? SmChart.ToBeatmap(SmChart.Parse(File.ReadAllText(chartPath)), chartIndex)   // .sm block
+                        : OsuBeatmapParser.Parse(File.ReadAllText(chartPath));                        // .osu
+                }
+                catch (Exception ex) { Debug.LogError($"[Step1] external chart parse failed: {ex.Message}"); _map = new OsuBeatmap(); }
+                if (_map.Bpm <= 0.0) _map.Bpm = 120.0;   // guard: a chart with no parseable BPM must not feed 0 into the judge windows
+                if (chartLevel > 0) _map.Level = chartLevel;   // LV label = the song-select 星數×5 level (Parse/ToBeatmap don't know it)
+                // external charts have no count-in → push the first note out so it scrolls in from the edge (see ApplyLeadIn).
+                if (_map.HitObjects.Count > 0)
+                {
+                    int leadIn = ExternalLeadInMs - (int)_map.FirstNoteMs;
+                    if (leadIn > 0) _map.ApplyLeadIn(leadIn);
+                }
+                if (_map.HitObjects.Count > 0) { Debug.Log($"[Step1] loaded external {Path.GetFileName(chartPath)}: {_map.HitObjects.Count} notes, bpm {_map.Bpm}, lv {_map.Level}"); return true; }
+                Debug.LogError("[Step1] external chart has no 4K notes: " + chartPath); return false;
+            }
+
+            // (2) official .gn chart
             if (!string.IsNullOrEmpty(gnPath) && File.Exists(gnPath))
             {
                 _map = GnChart.Load(File.ReadAllBytes(gnPath), difficulty, GnKeyTable.SeedsFor(gnPath));
@@ -1186,12 +1217,27 @@ namespace Sdo.Game
             }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
                 ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
-            var type = path.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) ? AudioType.OGGVORBIS : AudioType.MPEG;
-            using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
+            if (Mp3Decoder.IsMp3(path) && File.Exists(path))
             {
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success) { _audio.clip = DownloadHandlerAudioClip.GetContent(req); _audio.volume = AudioMix.Music; }   // 遊戲音樂 音量
-                else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
+                // Unity can't decode mp3 from a file on desktop → decode with the bundled NLayer on a worker thread.
+                var task = System.Threading.Tasks.Task.Run(() => Mp3Decoder.Decode(path));
+                while (!task.IsCompleted) yield return null;
+                var clip = Mp3Decoder.ToClip(task.Result, "mp3song");
+                if (clip != null) { _audio.clip = clip; _audio.volume = AudioMix.Music; }
+                else Debug.LogWarning("[Step1] mp3 decode failed: " + path);
+            }
+            else
+            {
+                // ogg (official + external) and wav decode natively via UnityWebRequestMultimedia.
+                var type = path.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) ? AudioType.OGGVORBIS
+                         : path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? AudioType.WAV
+                         : AudioType.MPEG;
+                using (var req = UnityWebRequestMultimedia.GetAudioClip(SdoExtracted.FileUri(path), type))
+                {
+                    yield return req.SendWebRequest();
+                    if (req.result == UnityWebRequest.Result.Success) { _audio.clip = DownloadHandlerAudioClip.GetContent(req); _audio.volume = AudioMix.Music; }   // 遊戲音樂 音量
+                    else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
+                }
             }
             _audioReady = true;   // song decoded (or failed) → the loading screen may now reveal the stage
             // Park the clock far ahead (song stopped, notes hidden, dancer idle, timer "- : -") and DON'T start the

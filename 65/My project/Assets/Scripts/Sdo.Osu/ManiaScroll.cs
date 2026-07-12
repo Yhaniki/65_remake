@@ -71,6 +71,10 @@ namespace Sdo.Osu
             }
             double vBase = BaseVelocityFor(speedMul, anchorBpm);
             var pts = (map == null || constantScroll) ? null : BuildMultiplierPoints(map);
+            // StepMania #STOPS freeze the highway: overlay zero-velocity windows so notes hold their position for
+            // each stop, then resume. Skipped under constantScroll (that mod kills ALL variation). No stops → no-op.
+            if (pts != null && pts.Count > 0 && map.Stops != null && map.Stops.Count > 0)
+                pts = MergeStops(pts, map.Stops);
             if (pts == null || pts.Count == 0)
                 return new ManiaScroll(vBase, new[] { 0.0 }, new[] { 1.0 }, new[] { 0.0 });
 
@@ -137,6 +141,60 @@ namespace Sdo.Osu
                     result.Add((p.TimeMs, mult));
             }
             return result;
+        }
+
+        /// <summary>
+        /// Overlay StepMania freeze windows onto the base multiplier points: inside a stop the scroll velocity is
+        /// 0, so <see cref="WeightedMsAt"/> stays flat and every note holds its on-screen position for the stop's
+        /// duration, then resumes (mirrors StepMania's beat freezing during a stop while song time advances).
+        /// Called only when the chart has stops, so stop-free charts keep the exact base points (no behaviour
+        /// change). <paramref name="pts"/> is ascending and collapsed by time; the result stays ascending.
+        /// </summary>
+        private static List<(double time, double mult)> MergeStops(
+            List<(double time, double mult)> pts, IReadOnlyList<ScrollStop> stops)
+        {
+            // normalize the freeze windows: drop non-positive, keep [start, end), sort by start.
+            var wins = new List<(double s, double e)>(stops.Count);
+            for (int i = 0; i < stops.Count; i++)
+            {
+                double s = stops[i].TimeMs, d = stops[i].DurationMs;
+                if (d > 0.0) wins.Add((s, s + d));
+            }
+            if (wins.Count == 0) return pts;
+            wins.Sort((a, b) => a.s.CompareTo(b.s));
+
+            // breakpoints = base-point times ∪ every window start/end, sorted & de-duplicated.
+            var cuts = new List<double>(pts.Count + wins.Count * 2);
+            for (int i = 0; i < pts.Count; i++) cuts.Add(pts[i].time);
+            for (int i = 0; i < wins.Count; i++) { cuts.Add(wins[i].s); cuts.Add(wins[i].e); }
+            cuts.Sort();
+
+            var merged = new List<(double time, double mult)>(cuts.Count);
+            for (int i = 0; i < cuts.Count; i++)
+            {
+                double c = cuts[i];
+                if (merged.Count > 0 && merged[merged.Count - 1].time == c) continue;   // de-dup coincident cuts
+                double mult = InAnyStop(wins, c) ? 0.0 : BaseMultAt(pts, c);
+                merged.Add((c, mult));
+            }
+            return merged;
+        }
+
+        // The segment starting at time t is frozen iff t lies in [s, e) of some window — end-exclusive so the cut
+        // at a window's end resumes normal speed.
+        private static bool InAnyStop(List<(double s, double e)> wins, double t)
+        {
+            for (int i = 0; i < wins.Count; i++) if (t >= wins[i].s && t < wins[i].e) return true;
+            return false;
+        }
+
+        // Base step-function multiplier at time t = the last base point with time <= t (before the first point →
+        // pts[0], matching WeightedMsAt's backward extrapolation off segment 0).
+        private static double BaseMultAt(List<(double time, double mult)> pts, double t)
+        {
+            int lo = 0, hi = pts.Count - 1, k = 0;
+            while (lo <= hi) { int mid = (lo + hi) >> 1; if (pts[mid].time <= t) { k = mid; lo = mid + 1; } else hi = mid - 1; }
+            return pts[k].mult;
         }
 
         /// <summary>Largest note time (hold end or tap), or 0 if none.</summary>

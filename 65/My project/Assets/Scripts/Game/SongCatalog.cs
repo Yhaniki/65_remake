@@ -28,6 +28,22 @@ namespace Sdo.Game
             public int notesEasy, notesNormal, notesHard;
             public int durEasy, durNormal, durHard;   // seconds per difficulty
 
+            // ---- external (user Songs/ folder: osu / StepMania) — absent/false for the official .gn catalog ----
+            public bool external;          // true → this row is a scanned external song, not an official .gn
+            public string group = "";      // group folder name (the drill-in 資料夾 category groups by this)
+            public string audioPath = "";  // absolute audio file (full-song ogg/mp3/wav) for gameplay + preview
+            public string imagePath = "";  // absolute cover (jacket→banner→background); "" → placeholder disc
+            public int chartFormat;        // 0=none, 1=osu, 2=sm (Sdo.Osu.SongFormat)
+            public string chartEasy = "", chartNormal = "", chartHard = "";   // absolute chart file per slot ("" if empty)
+            public int chartIdxEasy, chartIdxNormal, chartIdxHard;            // .sm #NOTES block index per slot (osu: 0)
+            public int previewStartMs = -1;   // 試聽起點(ms)：osu PreviewTime / SM #SAMPLESTART；-1 = 未指定→中段
+            public int previewLengthMs;       // 試聽長度(ms)：SM #SAMPLELENGTH；0 = 未指定→預設長度
+
+            /// <summary>Absolute chart file path for difficulty d (external songs only); "" if that slot is empty.</summary>
+            public string ChartPath(int d) => d <= 0 ? chartEasy : (d == 1 ? chartNormal : chartHard);
+            /// <summary>.sm note-block index for difficulty d (external songs only; osu always 0).</summary>
+            public int ChartIndex(int d) => d <= 0 ? chartIdxEasy : (d == 1 ? chartIdxNormal : chartIdxHard);
+
             /// <summary>Difficulty level for d (0=easy,1=normal,2=hard); -1 if unknown.</summary>
             public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
             public int NoteCount(int d) => d <= 0 ? notesEasy : (d == 1 ? notesNormal : notesHard);
@@ -65,6 +81,24 @@ namespace Sdo.Game
 
         public static string Title(string gnPathOrName) => Get(gnPathOrName)?.title;
         public static string Artist(string gnPathOrName) => Get(gnPathOrName)?.artist;
+
+        /// <summary>Merge scanned external songs (user Songs/ folder — osu / StepMania) into the catalog, AFTER the
+        /// official catalog is loaded. Entries whose gn already exists are skipped (idempotent). The song-select
+        /// list picks these up because <see cref="All"/> now includes them (browsed via the 資料夾 group category;
+        /// they are excluded from the 全部 tab — see SongSelectScreen.CategoryBase).</summary>
+        public static void RegisterExternal(IEnumerable<Entry> entries)
+        {
+            if (entries == null) return;
+            EnsureLoaded();
+            foreach (var e in entries)
+            {
+                if (e == null || string.IsNullOrEmpty(e.gn)) continue;
+                var key = e.gn.ToLowerInvariant();
+                if (_byGn.ContainsKey(key)) continue;
+                _byGn[key] = e;
+                _all.Add(e);
+            }
+        }
 
         private static void EnsureLoaded()
         {

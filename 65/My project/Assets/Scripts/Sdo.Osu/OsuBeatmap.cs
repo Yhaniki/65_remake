@@ -56,6 +56,46 @@ namespace Sdo.Osu
         /// </summary>
         public List<OsuTimingPoint> TimingPoints { get; } = new List<OsuTimingPoint>();
 
+        /// <summary>
+        /// StepMania #STOPS/#FREEZES, in MILLISECONDS on the note/beat clock, sorted by time. Each is a window
+        /// during which the note highway FREEZES: the audio keeps playing but every note holds its on-screen
+        /// position for <see cref="ScrollStop.DurationMs"/>, then resumes. StepMania folds the stop into note
+        /// timing (a note after a stop is hit that much later — <c>TimingData::GetElapsedTimeFromBeat</c>), which
+        /// <see cref="SmChart"/> already bakes into the hit-object times; this list additionally drives the visual
+        /// freeze via <see cref="ManiaScroll"/>. Empty for .gn/.osu and stop-free .sm charts (→ no freeze, no
+        /// behaviour change).
+        /// </summary>
+        public List<ScrollStop> Stops { get; } = new List<ScrollStop>();
+
+        /// <summary>
+        /// Shift every note + timing point LATER by <paramref name="leadInMs"/> and add the same to
+        /// <see cref="MusicStartOffsetMs"/> (which the engine treats as a silent count-in that delays the audio).
+        /// External osu/StepMania charts carry no count-in, so an early first note would pop in mid-highway; a lead-in
+        /// makes the first note scroll in from the spawn edge while keeping note↔audio sync (audio is delayed by the
+        /// same amount). No-op for leadInMs &lt;= 0. Note/TimingPoint are readonly structs → rebuilt in place.
+        /// </summary>
+        public void ApplyLeadIn(int leadInMs)
+        {
+            if (leadInMs <= 0) return;
+            for (int i = 0; i < HitObjects.Count; i++)
+            {
+                var h = HitObjects[i];
+                HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs + leadInMs,
+                    h.EndTimeMs.HasValue ? h.EndTimeMs.Value + leadInMs : (int?)null);
+            }
+            for (int i = 0; i < TimingPoints.Count; i++)
+            {
+                var t = TimingPoints[i];
+                TimingPoints[i] = new OsuTimingPoint(t.TimeMs + leadInMs, t.BeatLength);
+            }
+            for (int i = 0; i < Stops.Count; i++)
+            {
+                var s = Stops[i];
+                Stops[i] = new ScrollStop(s.TimeMs + leadInMs, s.DurationMs);
+            }
+            MusicStartOffsetMs += leadInMs;
+        }
+
         /// <summary>Total judged events = taps + holdHeads + holdReleases.</summary>
         public int TotalNotes
         {
@@ -91,5 +131,21 @@ namespace Sdo.Osu
 
         /// <summary>osu! scroll-velocity multiplier: 1.0 for tempo points, -100/BeatLength for green lines.</summary>
         public double SpeedMultiplier => BeatLength < 0.0 ? -100.0 / BeatLength : 1.0;
+    }
+
+    /// <summary>
+    /// One StepMania stop/freeze window (note/beat-clock ms): the highway holds all note positions for
+    /// <see cref="DurationMs"/> starting at <see cref="TimeMs"/>. See <see cref="OsuBeatmap.Stops"/>.
+    /// </summary>
+    public readonly struct ScrollStop
+    {
+        public double TimeMs { get; }
+        public double DurationMs { get; }
+
+        public ScrollStop(double timeMs, double durationMs)
+        {
+            TimeMs = timeMs;
+            DurationMs = durationMs;
+        }
     }
 }

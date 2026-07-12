@@ -226,6 +226,31 @@ namespace Sdo.Game
         /// <summary>Screenshot output folder, kept beside the exe (NOT under DATA). Editor: repo-root/screensave.</summary>
         public static string ScreensaveDir => Path.Combine(ExeDir, "screensave");
 
+        /// <summary>User songs folder beside the exe (NOT under DATA) — drop osu/StepMania songs here as
+        /// Songs/&lt;group&gt;/&lt;songFolder&gt;/. Editor/dev: &lt;My project&gt;/Songs. Additional roots come from
+        /// RoomConfig.additionalSongFolders (see ExternalSongLibrary).</summary>
+        public static string SongsDir => Path.Combine(ExeDir, "Songs");
+
+        /// <summary>Proper file:// URI for UnityWebRequestMultimedia. The official music tree is ASCII so callers used
+        /// "file://"+rawPath, but external song folders (osu/StepMania) carry spaces / brackets / '#' / unicode in
+        /// their names (e.g. "Annihilation in F# Minor") — those MUST be percent-escaped or the request 404s (no audio).
+        /// NOTE: new Uri(path).AbsoluteUri is NOT enough — it mishandles '#' (treated as a URI fragment → truncates the
+        /// path). So escape each path segment ourselves with EscapeDataString (leaves the drive letter's ':' intact).</summary>
+        public static string FileUri(string absPath)
+        {
+            if (string.IsNullOrEmpty(absPath)) return absPath;
+            string p = absPath.Replace('\\', '/');
+            var sb = new System.Text.StringBuilder("file:///");
+            int start = 0;
+            if (p.Length >= 2 && char.IsLetter(p[0]) && p[1] == ':') { sb.Append(p[0]).Append(':'); start = 2; }
+            foreach (var seg in p.Substring(start).Split('/'))
+            {
+                if (seg.Length == 0) continue;
+                sb.Append('/').Append(System.Uri.EscapeDataString(seg));
+            }
+            return sb.ToString();
+        }
+
         // ---- .an parsing (pure; testable without Unity) ----
 
         public struct AnFrame

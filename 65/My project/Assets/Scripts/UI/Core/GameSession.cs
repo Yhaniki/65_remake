@@ -26,6 +26,15 @@ namespace Sdo.UI.Core
         public string SongArtist;
         public Difficulty Difficulty = Difficulty.Easy;
 
+        // ---- external song (user Songs/ folder: osu / StepMania). Set at SongSelectScreen.OnConfirm from a scanned
+        //      SongCatalog.Entry, resolved to the chosen difficulty's chart; consumed by FrontendApp.StartGameplay. ----
+        public bool IsExternalSong;
+        public string ExternalChartPath = "";   // absolute .osu / .sm path for the selected difficulty
+        public int ExternalChartIndex;          // .sm #NOTES block index (osu: 0)
+        public int ExternalChartFormat;         // 1=osu, 2=sm (Sdo.Osu.SongFormat)
+        public string ExternalAudioPath = "";   // absolute audio (ogg/mp3/wav); "" → silent
+        public int ExternalLevel;                // chosen difficulty's LV (osu!mania 星數×5) → shown in gameplay too
+
         public string StageFolder = "SCN0009";
         public int StageId = 9;
         // true = 選歌時選的是「隨機場景」→ 房間第二層圖顯示 RANDOM（雖然 gameplay 仍用上面解析出的具體場景）。

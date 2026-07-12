@@ -4,7 +4,7 @@ using Sdo.Osu;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// ManiaScroll = osu!mania-style scroll at a FIXED base tempo (the user's "base 140, 不依 BPM").
+    /// ManiaScroll = osu!mania-style scroll at a FIXED base tempo (the user's "base 130, 不依 BPM").
     /// Verifies: base velocity calibration, constant (single-BPM) linearity, the osu "Constant Speed"
     /// toggle, and that mid-song BPM changes / SV still vary the scroll locally (relative-scale multiplier).
     /// </summary>
@@ -25,9 +25,9 @@ namespace Sdo.Tests
         [Test]
         public void BaseVelocity_Is_ReferenceBpm_Times_Speed_Times_1point6()
         {
-            Assert.AreEqual(560.0, ManiaScroll.BaseVelocityFor(2.5), Eps);          // 140 × 2.5 × 1.6
-            Assert.AreEqual(224.0, ManiaScroll.BaseVelocityFor(1.0), Eps);          // 140 × 1.0 × 1.6
-            Assert.AreEqual(1792.0, ManiaScroll.BaseVelocityFor(8.0), Eps);         // 140 × 8.0 × 1.6
+            Assert.AreEqual(520.0, ManiaScroll.BaseVelocityFor(2.5), Eps);          // 130 × 2.5 × 1.6
+            Assert.AreEqual(208.0, ManiaScroll.BaseVelocityFor(1.0), Eps);          // 130 × 1.0 × 1.6
+            Assert.AreEqual(1664.0, ManiaScroll.BaseVelocityFor(8.0), Eps);         // 130 × 8.0 × 1.6
             Assert.AreEqual(320.0, ManiaScroll.BaseVelocityFor(2.5, 80.0), Eps);    // 80bpm → matches old 320px/s
         }
 
@@ -108,6 +108,36 @@ namespace Sdo.Tests
             var slow = ManiaScroll.Build(MapWith(60, 5000, new OsuTimingPoint(0, 1000)), 2.5);
             var fast = ManiaScroll.Build(MapWith(240, 5000, new OsuTimingPoint(0, 250)), 2.5);
             Assert.AreEqual(slow.PixelDistance(0, 1000), fast.PixelDistance(0, 1000), 1e-4);
+        }
+
+        [Test]
+        public void Stop_Freezes_The_Highway_Then_Resumes()
+        {
+            // single 120bpm tempo (multiplier 1.0 everywhere) + a 500ms StepMania freeze window at 1000ms.
+            var map = MapWith(120, 5000, new OsuTimingPoint(0, 500));
+            map.Stops.Add(new ScrollStop(1000, 500));   // freeze [1000, 1500)
+            var scroll = ManiaScroll.Build(map, 2.5);
+            double v = ManiaScroll.BaseVelocityFor(2.5);
+
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(0, 1000), 1e-3);   // before the stop: base speed
+
+            // a note at 2000ms holds its distance while `now` advances through the freeze (notes freeze on screen).
+            double dStart = scroll.PixelDistance(1000, 2000);
+            Assert.AreEqual(v * 0.5, dStart, 1e-3);                          // only the post-freeze 500ms of travel remains
+            Assert.AreEqual(dStart, scroll.PixelDistance(1250, 2000), 1e-3); // mid-freeze → frozen (same distance)
+            Assert.AreEqual(dStart, scroll.PixelDistance(1499, 2000), 1e-3); // just before the freeze ends → still frozen
+            Assert.AreEqual(v * 0.5, scroll.PixelDistance(1500, 2000), 1e-3);// freeze over → base speed resumes
+        }
+
+        [Test]
+        public void ConstantScroll_Ignores_Stops()
+        {
+            var map = MapWith(120, 5000, new OsuTimingPoint(0, 500));
+            map.Stops.Add(new ScrollStop(1000, 500));
+            var scroll = ManiaScroll.Build(map, 2.5, constantScroll: true);
+            double v = ManiaScroll.BaseVelocityFor(2.5);
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(1000, 2000), 1e-4);   // perfectly linear despite the stop
+            Assert.AreEqual(v * 2.0, scroll.PixelDistance(1000, 3000), 1e-4);
         }
 
         [Test]

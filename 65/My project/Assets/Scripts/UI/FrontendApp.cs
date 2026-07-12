@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -99,17 +100,46 @@ namespace Sdo.UI
             var root = (RectTransform)canvas.transform;
             UIKit.Stretch(UIKit.AddImage(root, "AppBg", UITheme.Bg).rectTransform);
 
+            // Layers are created empty here; the (slow) screen/modal building + catalog parse + external Songs/ scan run
+            // in BootCo behind a progress bar so the window shows a filling bar instead of a long black freeze. The
+            // BootProgress overlay is created LAST inside BootCo so it renders above these layers.
             var screenLayer = UIKit.NewRect(root, "Screens");
             UIKit.Stretch(screenLayer);
+            var modalLayer = UIKit.NewRect(root, "Modals");
+            UIKit.Stretch(modalLayer);
+            StartCoroutine(BootCo(root, screenLayer, modalLayer));
+        }
+
+        // Staged boot with a progress bar. The genuinely slow part is (a) the official catalog parse and (b) the
+        // external Songs/ folder scan (reads + note-counts every candidate osu/StepMania chart); both advance the bar.
+        private IEnumerator BootCo(RectTransform root, RectTransform screenLayer, RectTransform modalLayer)
+        {
+            var prog = BootProgress.Create(root);   // last child of root → above the (empty) screen/modal layers
+            yield return null;                       // let the overlay render before any heavy work
+
+            // Phase 1 — official song catalog (one atomic JsonUtility parse; coarse pre/post steps).
+            prog.Set(0.05f, "載入歌曲資料…");
+            yield return null;
+            var _ = SongCatalog.All;   // force EnsureLoaded (the big catalog parse + name overrides)
+            prog.Set(0.15f, "載入歌曲資料…");
+            yield return null;
+
+            // Phase 2 — scan the exe-sibling Songs/ + AdditionalSongFolders for osu/StepMania songs (incremental).
+            yield return ExternalSongLibrary.ScanAndRegisterCo((f, title) =>
+                prog.Set(0.15f + 0.55f * Mathf.Clamp01(f), string.IsNullOrEmpty(title) ? "掃描歌曲資料夾…" : title));
+
+            // Phase 3 — build the screens (SongSelect now sees the external songs registered above).
+            prog.Set(0.72f, "建立介面…");
+            yield return null;
             Make<GenderSelectScreen>(screenLayer);   // 單機開場的男/女選擇畫面（Flow 的入口狀態）
             Make<LobbyScreen>(screenLayer);
             Make<RoomScreen>(screenLayer);
             Make<SongSelectScreen>(screenLayer);
-
             _ctx.Flow.ScreenChanged += (from, to) => { ShowOnly(to); UpdateBgm(to); };
 
-            var modalLayer = UIKit.NewRect(root, "Modals");
-            UIKit.Stretch(modalLayer);
+            // Phase 4 — modals + Nav wiring.
+            prog.Set(0.85f, "建立介面…");
+            yield return null;
             _option = new GameObject("OptionDlg").AddComponent<OptionDlgModal>();
             _option.transform.SetParent(modalLayer, false);
             _option.Build(modalLayer);
@@ -135,7 +165,14 @@ namespace Sdo.UI
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
+            // Phase 5 — font atlas warmup (rasterises the CJK glyphs of the visible song titles).
+            prog.Set(0.92f, "準備字型…");
+            yield return null;
             WarmupFont();
+            prog.Set(1f, "");
+            yield return null;
+
+            prog.Destroy();
             ShowOnly(_ctx.Flow.Current);
             UpdateBgm(_ctx.Flow.Current);   // 開場即起隨機大廳 BGM(男/女選擇畫面)
 
@@ -207,8 +244,23 @@ namespace Sdo.UI
             if (_uiCam != null) _uiCam.enabled = false;   // stop the UI cam clearing over the play screen
 
             var game = new GameObject("ScreenGameplay").AddComponent<ScreenGameplay>();   // fields read in its Start() next frame
-            game.gnPath = gnPath;
-            game.oggPath = oggPath;
+            if (s.IsExternalSong)
+            {
+                // external osu/StepMania (user Songs/ folder): ScreenGameplay.LoadChart parses chartPath directly,
+                // bypassing .gn; audio is the resolved file (ogg/mp3/wav). A missing DANCE/<negId>.DPS makes the
+                // dancer fall back to a generic motion — no per-song choreography needed to be playable.
+                game.chartFormat = s.ExternalChartFormat;
+                game.chartPath = s.ExternalChartPath;
+                game.chartIndex = s.ExternalChartIndex;
+                game.chartLevel = s.ExternalLevel;
+                game.gnPath = "";
+                game.oggPath = s.ExternalAudioPath;
+            }
+            else
+            {
+                game.gnPath = gnPath;
+                game.oggPath = oggPath;
+            }
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
             game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
             game.localPlayerMale = s.Gender == 1;

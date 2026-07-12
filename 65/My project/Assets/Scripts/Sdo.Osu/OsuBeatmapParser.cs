@@ -74,6 +74,72 @@ namespace Sdo.Osu
             if (beatLength > 0.0 && map.Bpm <= 0.0) map.Bpm = 60000.0 / beatLength;
         }
 
+        /// <summary>
+        /// Lightweight metadata read for the folder scanner: title/artist/creator/version, key count (CircleSize),
+        /// audio filename, first-BPM, [Events] background filename, and the [HitObjects] line count — WITHOUT
+        /// allocating the full note list. Cheap enough to run over thousands of candidate .osu files at boot.
+        /// </summary>
+        public static OsuMeta ReadMeta(string text)
+        {
+            var m = new OsuMeta();
+            if (string.IsNullOrEmpty(text)) return m;
+            string section = "";
+            foreach (var rawLine in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                var line = rawLine.Trim();
+                if (line.Length == 0 || line.StartsWith("//")) continue;
+                if (line.StartsWith("[") && line.EndsWith("]")) { section = line.Substring(1, line.Length - 2); continue; }
+                switch (section)
+                {
+                    case "General":
+                        ParseKeyValue(line, "AudioFilename", v => m.AudioFilename = v);
+                        ParseKeyValue(line, "Mode", v => m.Mode = ParseInt(v));
+                        ParseKeyValue(line, "PreviewTime", v => m.PreviewTime = ParseInt(v));
+                        break;
+                    case "Metadata":
+                        ParseKeyValue(line, "Title", v => { if (string.IsNullOrEmpty(m.Title)) m.Title = v; });
+                        ParseKeyValue(line, "Artist", v => { if (string.IsNullOrEmpty(m.Artist)) m.Artist = v; });
+                        ParseKeyValue(line, "Creator", v => m.Creator = v);
+                        ParseKeyValue(line, "Version", v => m.Version = v);
+                        break;
+                    case "Difficulty":
+                        ParseKeyValue(line, "CircleSize", v => m.Keys = (int)Math.Round(ParseDouble(v)));
+                        break;
+                    case "TimingPoints":
+                        if (m.Bpm <= 0.0)
+                        {
+                            var p = line.Split(',');
+                            if (p.Length >= 2 &&
+                                double.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var bl) &&
+                                bl > 0.0)
+                                m.Bpm = 60000.0 / bl;
+                        }
+                        break;
+                    case "Events":
+                        // First "0,0,\"bg.jpg\",..." line is the background; a leading "1,..." video is a fallback bg.
+                        if (string.IsNullOrEmpty(m.BackgroundFilename))
+                        {
+                            var p = line.Split(',');
+                            if (p.Length >= 3 && (p[0].Trim() == "0" || p[0].Trim() == "1"))
+                                m.BackgroundFilename = Dequote(p[2]);
+                        }
+                        break;
+                    case "HitObjects":
+                        m.NoteCount++;   // one object per line (tap or hold)
+                        break;
+                }
+            }
+            return m;
+        }
+
+        /// <summary>Strip surrounding quotes / normalise backslashes from an osu! filename token.</summary>
+        private static string Dequote(string s)
+        {
+            s = (s ?? "").Trim();
+            if (s.Length >= 2 && s[0] == '"' && s[s.Length - 1] == '"') s = s.Substring(1, s.Length - 2);
+            return s.Replace('\\', '/').Trim();
+        }
+
         private static void ParseKeyValue(string line, string key, Action<string> set)
         {
             // osu uses "Key:Value" (General/Metadata/Difficulty have no spaces around ':' guaranteed).
@@ -123,5 +189,22 @@ namespace Sdo.Osu
 
         private static double ParseDouble(string s) =>
             double.Parse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Lightweight .osu metadata (no hit-object list) produced by <see cref="OsuBeatmapParser.ReadMeta"/>
+    /// for the external-song folder scan.</summary>
+    public sealed class OsuMeta
+    {
+        public int Mode;                 // 3 = mania
+        public int Keys;                 // CircleSize (mania key/column count)
+        public string Title = "";
+        public string Artist = "";
+        public string Creator = "";
+        public string Version = "";      // difficulty name
+        public string AudioFilename = "";
+        public string BackgroundFilename = "";
+        public double Bpm;
+        public int NoteCount;            // number of [HitObjects] lines
+        public int PreviewTime = -1;     // [General] PreviewTime (ms); -1 = none (試聽起點；長度用預設)
     }
 }

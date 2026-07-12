@@ -72,9 +72,15 @@ namespace Sdo.UI.Screens
 
         // category tabs (全部/隨機/收藏/最新/勁樂/懷舊) — toggle: the selected tab stays pushed
         private const int CatAll = 0, CatRandom = 1, CatFav = 2, CatNewest = 3, CatJam = 4, CatNostalgia = 5;
+        private const int CatFolder = CatJam;   // 勁樂 頁籤改用途：外部歌曲(osu/StepMania)的「資料夾(group)」瀏覽
         private Image[] _catImg;
         private Sprite[] _catNormal, _catPushed;
         private int _category = CatAll;
+
+        // 資料夾(group) drill-in state for the CatFolder tab: _activeGroup == null → the row list shows GROUP folders;
+        // else it shows that group's songs. Clicking the 資料夾 tab always returns to the group list (acts as 返回).
+        private string _activeGroup;
+        private List<string> _groupNames = new List<string>();
 
         // 隨機 difficulty ranges — shown AS the list rows when the 隨機 tab is active; OK picks a random song from the pool.
         private struct RandRange { public string Key; public int Min, Max; }
@@ -124,6 +130,7 @@ namespace Sdo.UI.Screens
         // Fallback when a song has no dedicated exper preview: loop a 20s window from the MIDDLE of the full song.
         private bool _previewWindow;
         private float _previewWinStart, _previewWinEnd;
+        private Sdo.Game.Mp3StreamClip _previewStream;   // streaming mp3 preview (fast start; disposed on stop/change)
         private const float PreviewWindowSec = 20f;
 
         // window open/close transition (spin-zoom in, shrink-fade out) — all dialog art lives under _window so it
@@ -214,6 +221,7 @@ namespace Sdo.UI.Screens
             // EXCEPTIONS reset on every open: the category tab snaps back to 全部, and the search box is cleared —
             // so re-entering always shows the full list, not a stale filter/tab.
             _category = CatAll;
+            _activeGroup = null;       // 資料夾 drill-in reset：再進來從 group 列表開始（下次點資料夾 tab 重新載入 group 名單）
             _diskSpinPaused = false;   // 跳出再進 → 唱片轉動 reset：預設會轉（下面選歌時 SetDiskSpinning 會轉起來）
             if (_search != null)
             {
@@ -223,6 +231,23 @@ namespace Sdo.UI.Screens
             }
             RenderCategoryTabs();
             UpdateScene();
+
+            // If the last confirmed song was an external (user Songs/) song, reopen the 資料夾 tab at its group and
+            // reselect it — external songs aren't in 全部, so the default path below would jump to an official SDO song.
+            var extPrev = (Ctx.Session != null && !string.IsNullOrEmpty(Ctx.Session.SongGn)) ? SongCatalog.Get(Ctx.Session.SongGn) : null;
+            if (extPrev != null && extPrev.external)
+            {
+                _category = CatFolder;
+                _activeGroup = extPrev.group;
+                _groupNames = _model.ExternalGroups();
+                RenderCategoryTabs();
+                ApplyFilter();   // CategoryBase → this group's songs
+                int idx = _filtered.IndexOf(extPrev);
+                if (idx >= 0 && extPrev.HasChart(_difficulty)) { _page = idx / PageSize; Select(extPrev); }
+                else if (_filtered.Count > 0) SelectFirstPlayable();
+                else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }
+                return;
+            }
 
             if (_category == CatRandom)
             {
@@ -368,6 +393,16 @@ namespace Sdo.UI.Screens
                 btn.onClick.AddListener(() => SetCategory(idx));
                 _catImg[i] = img;
             }
+
+            // CatFolder(原「勁樂」) 頁籤改用途為外部歌曲「資料夾(group)」瀏覽。疊一層半透明底把烘死的「勁樂」字壓暗，
+            // 再放白字「資料夾」，讓頁籤語意正確。點擊仍由底下的 tab 按鈕接收（遮罩/文字都不吃 raycast）。
+            if (_catImg[CatFolder] != null)
+            {
+                var mask = UIKit.AddImage(_catImg[CatFolder].transform, "folderTabMask", new Color(0f, 0f, 0f, 0.62f));
+                UIKit.Stretch(mask.rectTransform, 3f, 3f, 3f, 3f);
+                var lbl = UIKit.AddText(_catImg[CatFolder].transform, "folderTabLbl", "資料夾", 12f, Color.white, TextAlignmentOptions.Center);
+                UIKit.Stretch(lbl.rectTransform);
+            }
         }
 
         private void RenderCategoryTabs()
@@ -390,6 +425,18 @@ namespace Sdo.UI.Screens
                 SetDiskSpinning(false);
                 RenderPage();      // -> RenderRandomRows
                 UpdateInfo();      // clears the value block (no song picked)
+            }
+            else if (_category == CatFolder)
+            {
+                // 資料夾(group) browse: always land on the group LIST (tab click doubles as 返回上層).
+                _activeGroup = null;
+                _groupNames = _model.ExternalGroups();
+                StopPreview();
+                _selected = null;
+                SetDiskJacket(_iconNone);   // no song picked yet → placeholder disc
+                SetDiskSpinning(false);
+                RenderPage();      // -> RenderGroupRows (since _activeGroup == null)
+                UpdateInfo();
             }
             else
             {
@@ -695,7 +742,10 @@ namespace Sdo.UI.Screens
         {
             var all = _model.All;
             var res = new List<SongCatalog.Entry>();
-            if (_category == CatAll) { res.AddRange(all); }
+            // 資料夾 tab: the current group's external songs (empty until a group is opened).
+            if (_category == CatFolder) return _activeGroup == null ? res : _model.InGroup(_activeGroup);
+            // 全部 = official .gn songs only; external (user Songs/) songs live under the 資料夾 tab.
+            if (_category == CatAll) { foreach (var e in all) if (e != null && !e.external) res.Add(e); }
             else if (_category == CatFav)
             {
                 // 收藏頁：最近加入的排最上面（照收藏加入順序反向），對回歌單條目。
@@ -723,6 +773,13 @@ namespace Sdo.UI.Screens
         private void ChangePage(int delta)
         {
             if (_category == CatRandom) return;   // 隨機 rows are a single fixed page
+            if (_category == CatFolder && _activeGroup == null)   // group list: page over the group folders
+            {
+                int gpages = Mathf.Max(1, (_groupNames.Count + PageSize - 1) / PageSize);
+                _page = ((_page + delta) % gpages + gpages) % gpages;
+                RenderGroupRows();
+                return;
+            }
             int pages = Mathf.Max(1, (_filtered.Count + PageSize - 1) / PageSize);
             // remember the focused ROW within the page so paging lands on the same row on the next page.
             int row = _selected != null ? _filtered.IndexOf(_selected) - _page * PageSize : 0;
@@ -756,6 +813,7 @@ namespace Sdo.UI.Screens
         private void RenderPage()
         {
             if (_category == CatRandom) { RenderRandomRows(); return; }
+            if (_category == CatFolder && _activeGroup == null) { RenderGroupRows(); return; }
 
             int maxPage = Mathf.Max(0, (_filtered.Count - 1) / PageSize);
             _pageLabel.text = _filtered.Count == 0 ? "0 / 0" : (_page + 1) + " / " + (maxPage + 1);
@@ -796,6 +854,47 @@ namespace Sdo.UI.Screens
                 if (_rowCtx[i] != null)
                     _rowCtx[i].Clicked = ev => { if (ev.button == PointerEventData.InputButton.Right) { if (playable) Select(e); ShowFavPopup(e, ev.position); } };
             }
+        }
+
+        // 資料夾 mode, group list: the rows are the external-song GROUP folders (name + song count). Clicking a row
+        // drills into that group's songs (EnterGroup). Paginated like the song list (>12 groups → multiple pages).
+        private void RenderGroupRows()
+        {
+            int maxPage = Mathf.Max(0, (_groupNames.Count - 1) / PageSize);
+            _page = Mathf.Clamp(_page, 0, maxPage);
+            _pageLabel.text = _groupNames.Count == 0 ? "0 / 0" : (_page + 1) + " / " + (maxPage + 1);
+            int start = _page * PageSize;
+            for (int i = 0; i < PageSize; i++)
+            {
+                int gi = start + i;
+                bool has = gi < _groupNames.Count;
+                _rowHi[i].gameObject.SetActive(has);
+                _rowName[i].gameObject.SetActive(has);
+                _rowTime[i].gameObject.SetActive(false);
+                _rowLevel[i].gameObject.SetActive(false);
+                SetRowNewActive(i, false);
+                _rowBtn[i].onClick.RemoveAllListeners();
+                if (_rowCtx[i] != null) _rowCtx[i].Clicked = null;
+                if (!has) continue;
+
+                ApplyRowHi(i, false);
+                string name = _groupNames[gi];
+                _rowName[i].alignment = TextAlignmentOptions.Left;
+                _rowName[i].color = ColRow;
+                _rowName[i].text = "▶ " + name + "  (" + _model.GroupCount(name) + ")";
+                string g = name;
+                _rowBtn[i].onClick.AddListener(() => { UiSfx.Play(UiSfx.Click); EnterGroup(g); });
+            }
+        }
+
+        // Drill into a group: switch the row list to that group's songs and focus the first playable one.
+        private void EnterGroup(string group)
+        {
+            _activeGroup = group;
+            _page = 0;
+            ApplyFilter();   // CategoryBase() now returns this group's songs
+            if (_filtered.Count > 0) SelectFirstPlayable();
+            else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }
         }
 
         // 隨機 mode: the row list shows the difficulty-range options instead of songs; OK then picks a random song.
@@ -845,7 +944,11 @@ namespace Sdo.UI.Screens
             _selected = e;
             RenderPage();
             UpdateInfo();
-            if (UpdateDisk()) PlayPreview(e);   // cover present -> preview; NONE disc -> no music
+            // Official songs preview only when a jacket loads (mirrors the original — NONE disc = no music). External
+            // (user Songs/) songs preview whenever they have audio, even with NO cover image — an image-less osu/SM
+            // folder still gets a preview (the disc just shows the placeholder).
+            bool extAudio = e != null && e.external && !string.IsNullOrEmpty(e.audioPath);
+            if (UpdateDisk() || extAudio) PlayPreview(e);
             else StopPreview();
         }
 
@@ -860,9 +963,26 @@ namespace Sdo.UI.Screens
         // Returns true if a real cover is shown (spins); false for the NONE disc (no cover -> static, no music).
         private bool UpdateDisk()
         {
-            var jacket = _selected != null ? SongIcons.Load(_selected.fileId) : null;
+            Sprite jacket = null;
+            if (_selected != null)
+                jacket = _selected.external ? LoadExternalCover(_selected.imagePath) : SongIcons.Load(_selected.fileId);
             if (jacket != null) { SetDiskJacket(jacket); SetDiskSpinning(true); return true; }   // real cover -> spins
             SetDiskJacket(_iconNone); SetDiskSpinning(false); return false;                       // no cover -> NONE disc, no spin
+        }
+
+        // External song cover: the jacket→banner→background image resolved by the scanner (absolute path). Decoded via
+        // the shared texture cache; cached per path (null included) so re-selecting a song never re-decodes. Non-decodable
+        // formats (e.g. .gif) or a missing file → null → the NONE placeholder disc.
+        private readonly Dictionary<string, Sprite> _extCovers = new Dictionary<string, Sprite>();
+        private Sprite LoadExternalCover(string absPath)
+        {
+            if (string.IsNullOrEmpty(absPath)) return null;
+            if (_extCovers.TryGetValue(absPath, out var cached)) return cached;
+            Sprite sp = null;
+            try { if (File.Exists(absPath)) sp = SdoExtracted.LoadImage(Path.GetDirectoryName(absPath), Path.GetFileName(absPath)); }
+            catch { sp = null; }
+            _extCovers[absPath] = sp;
+            return sp;
         }
 
         // ---------------- scene preview ----------------
@@ -907,7 +1027,7 @@ namespace Sdo.UI.Screens
             if (e.fileId == _previewId && _preview != null && _preview.isPlaying) return;
             StopPreview();
             _previewId = e.fileId;
-            _previewCo = StartCoroutine(LoadPreviewCo(e.fileId, e.gn));
+            _previewCo = StartCoroutine(LoadPreviewCo(e));
         }
 
         /// <summary>Full-song ogg name for a chart gn ("sdom2784k.gn" -> "sdom2784.ogg"), matching the on-disk
@@ -921,6 +1041,15 @@ namespace Sdo.UI.Screens
             return n.Length > 0 ? n + ".ogg" : null;
         }
 
+        /// <summary>UnityWebRequestMultimedia AudioType from a file extension (external ogg/mp3/wav previews).</summary>
+        private static AudioType PreviewAudioType(string path)
+        {
+            var p = (path ?? "").ToLowerInvariant();
+            if (p.EndsWith(".ogg")) return AudioType.OGGVORBIS;
+            if (p.EndsWith(".wav")) return AudioType.WAV;
+            return AudioType.MPEG;
+        }
+
         // Mirrors ScreenGameplay.LoadAndPlayAudio: file:// + raw path (no URI escaping — the music tree is ASCII and
         // every loader in the repo concatenates raw), AudioType.OGGVORBIS, result==Success guard, GetContent,
         // graceful no-op when the file is missing. Loops at a modest volume so it sits under the UI.
@@ -928,31 +1057,64 @@ namespace Sdo.UI.Screens
         // Every exper/<fileId>.ogg is a real, pre-decoded preview clip (the official preview .sdm are decoded to
         // valid Vorbis at import time via donor headers — see tools/decode_previews). GetContent is still wrapped
         // in try/catch so that even a malformed file could never throw out of the coroutine (it just no-ops).
-        private IEnumerator LoadPreviewCo(int fileId, string gn)
+        private IEnumerator LoadPreviewCo(SongCatalog.Entry e)
         {
-            // Prefer the dedicated exper/<fileId>.ogg preview clip; if none exists, fall back to the FULL song
-            // and loop a 20s window from its middle (see Update()).
-            string path = Path.Combine(SdoExtracted.MusicDir, "exper", fileId + ".ogg");
-            bool isPreviewClip = File.Exists(path);
-            if (!isPreviewClip)
+            int fileId = e.fileId;
+            string path;
+            bool isPreviewClip;
+            AudioType audioType;
+            if (e.external)
             {
-                var ogg = MainOggName(gn);
-                if (ogg == null) { _previewCo = null; yield break; }
-                path = Path.Combine(SdoExtracted.MusicDir, ogg);
-                if (!File.Exists(path)) { _previewCo = null; yield break; }
+                // external song: no exper/ preview clip — loop a window of its full audio (ogg/mp3/wav).
+                path = e.audioPath;
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) { _previewCo = null; yield break; }
+                isPreviewClip = false;
+                audioType = PreviewAudioType(path);
+            }
+            else
+            {
+                // Prefer the dedicated exper/<fileId>.ogg preview clip; if none exists, fall back to the FULL song
+                // and loop a 20s window from its middle (see Update()).
+                path = Path.Combine(SdoExtracted.MusicDir, "exper", fileId + ".ogg");
+                isPreviewClip = File.Exists(path);
+                if (!isPreviewClip)
+                {
+                    var ogg = MainOggName(e.gn);
+                    if (ogg == null) { _previewCo = null; yield break; }
+                    path = Path.Combine(SdoExtracted.MusicDir, ogg);
+                    if (!File.Exists(path)) { _previewCo = null; yield break; }
+                }
+                audioType = AudioType.OGGVORBIS;
             }
 
             AudioClip clip = null;
-            var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.OGGVORBIS);
-            yield return req.SendWebRequest();
-            if (_previewId != fileId) { req.Dispose(); _previewCo = null; yield break; }   // superseded mid-load
-            if (req.result == UnityWebRequest.Result.Success)
+            bool streamMp3 = false;
+            if (Sdo.Game.Mp3Decoder.IsMp3(path))
             {
-                try { clip = DownloadHandlerAudioClip.GetContent(req); }
-                catch (System.Exception ex) { clip = null; Debug.LogWarning("[SongSelect] preview decode fail: " + ex.Message); }
+                // mp3: STREAM it (decode on demand on the audio thread) so the preview starts as fast as ogg — no
+                // up-front full-window decode. The streaming clip loops the [start,len] window itself. ~20-30ms to start.
+                float startSec = e.previewStartMs >= 0 ? e.previewStartMs / 1000f : -1f;
+                float lenSec = e.previewLengthMs > 0 ? e.previewLengthMs / 1000f : PreviewWindowSec;
+                _previewStream?.Dispose();
+                _previewStream = Sdo.Game.Mp3StreamClip.Create(path, startSec, lenSec, "preview");
+                if (_previewStream == null || _previewStream.Clip == null)
+                { Debug.LogWarning("[SongSelect] mp3 preview stream fail: " + path); _previewCo = null; yield break; }
+                clip = _previewStream.Clip;
+                streamMp3 = true;
             }
-            else Debug.LogWarning("[SongSelect] preview load fail: " + req.error);
-            req.Dispose();
+            else
+            {
+                var req = UnityWebRequestMultimedia.GetAudioClip(Sdo.Game.SdoExtracted.FileUri(path), audioType);
+                yield return req.SendWebRequest();
+                if (_previewId != fileId) { req.Dispose(); _previewCo = null; yield break; }   // superseded mid-load
+                if (req.result == UnityWebRequest.Result.Success)
+                {
+                    try { clip = DownloadHandlerAudioClip.GetContent(req); }
+                    catch (System.Exception ex) { clip = null; Debug.LogWarning("[SongSelect] preview decode fail: " + ex.Message); }
+                }
+                else Debug.LogWarning("[SongSelect] preview load fail: " + req.error);
+                req.Dispose();
+            }
 
             // race guard: selection changed (or hidden) while loading -> drop the stale clip.
             if (clip == null || _previewId != fileId) { _previewCo = null; yield break; }
@@ -969,7 +1131,14 @@ namespace Sdo.UI.Screens
             EnsurePreviewSource();
             _preview.clip = clip;
             _preview.volume = Sdo.Game.AudioMix.Music;   // 遊戲音樂 音量(試聽 exper/<id>.ogg)
-            if (isPreviewClip)
+            if (streamMp3)
+            {
+                _previewWindow = false;
+                _preview.loop = false;   // the streaming clip loops the window internally (OnRead)
+                _preview.time = 0f;
+                _preview.Play();
+            }
+            else if (isPreviewClip)
             {
                 _previewWindow = false;
                 _preview.loop = true;         // short preview clip: loop the whole thing
@@ -978,11 +1147,24 @@ namespace Sdo.UI.Screens
             }
             else
             {
-                // No preview clip -> loop a 20s window centred in the full song. Update() bounces time
-                // back to the window start (AudioSource.loop only loops the whole clip, not a sub-range).
+                // Loop a window of the full song (Update() bounces time back to the window start — AudioSource.loop
+                // only loops the whole clip). External songs specify the preview point (osu PreviewTime / StepMania
+                // #SAMPLESTART+#SAMPLELENGTH); honour it. Otherwise centre a default window in the song.
                 float len = clip.length;
-                float win = Mathf.Min(PreviewWindowSec, len);
-                float start = Mathf.Clamp(len * 0.5f - win * 0.5f, 0f, Mathf.Max(0f, len - win));
+                float win, start;
+                if (e.external && e.previewStartMs >= 0)
+                {
+                    start = e.previewStartMs / 1000f;
+                    win = e.previewLengthMs > 0 ? e.previewLengthMs / 1000f : PreviewWindowSec;
+                }
+                else
+                {
+                    win = PreviewWindowSec;
+                    start = 0.4f * len;   // osu default preview point (WorkingBeatmap: 40% of length) when none is specified
+                }
+                win = Mathf.Min(win, len);
+                if (start >= len) start = 0.4f * len;   // preview point past the clip → osu's 40% default, not the silent tail
+                start = Mathf.Clamp(start, 0f, Mathf.Max(0f, len - win));
                 _previewWinStart = start;
                 _previewWinEnd = start + win;
                 _previewWindow = true;
@@ -1010,7 +1192,8 @@ namespace Sdo.UI.Screens
             if (_previewCo != null) { StopCoroutine(_previewCo); _previewCo = null; }
             _previewId = -1;
             _previewWindow = false;
-            if (_preview != null) { _preview.Stop(); _preview.clip = null; }
+            if (_preview != null) { _preview.Stop(); _preview.clip = null; }   // detach BEFORE disposing so OnRead stops being called
+            if (_previewStream != null) { _previewStream.Dispose(); _previewStream = null; }
         }
 
         // ---------------- confirm ----------------
@@ -1031,6 +1214,16 @@ namespace Sdo.UI.Screens
             s.SongTitle = _selected.title ?? _selected.gn;
             s.SongArtist = _selected.artist;
             s.Difficulty = (Difficulty)_difficulty;
+            // external song (user Songs/ folder): resolve the chosen difficulty's chart + audio for gameplay.
+            s.IsExternalSong = _selected.external;
+            if (_selected.external)
+            {
+                s.ExternalChartFormat = _selected.chartFormat;
+                s.ExternalChartPath = _selected.ChartPath(_difficulty);
+                s.ExternalChartIndex = _selected.ChartIndex(_difficulty);
+                s.ExternalAudioPath = _selected.audioPath;
+                s.ExternalLevel = _selected.Diff(_difficulty);   // 星數×5 等級 → 帶進遊戲顯示同一個 LV
+            }
             // scene: slot 0 = random -> pick an actual scene now; else the chosen stage.
             bool randomScene = _sceneIndex <= 0 && _stages.Count > 0;
             var stage = randomScene
