@@ -9,9 +9,15 @@ namespace Sdo.UI.Util
     /// <c>iteminfo.dat</c> and are SIMPLIFIED; a user typing TRADITIONAL (繁體) otherwise matches nothing (使用者:
     /// 「搜尋打繁體可是可以搜到簡體」). We fold both the query AND the candidate name to Simplified before comparing.
     ///
-    /// The map is baked at packaging time (tools, via OpenCC t2s over the CJK BMP, ~3.5k chars that actually change)
-    /// into <c>StreamingAssets/trad2simp.txt</c> — line 1 = traditional chars, line 2 = the aligned simplified chars.
+    /// The map is baked at packaging time (tools, via OpenCC t2s over the CJK BMP, ~2.9k chars that actually change)
+    /// into <c>StreamingAssets/trad2simp.txt</c>, one mapping per line as <c>繁\t简</c> (TAB-separated).
     /// Loaded once, lazily. Missing file → <see cref="ToSimp"/> is a no-op (search still works for simplified input).
+    ///
+    /// NOTE: an earlier two-line format (line1=繁 chars, line2=aligned 简 chars, indexed pairwise) was SILENTLY BROKEN
+    /// in the player: OpenCC emits some simplified chars OUTSIDE the BMP (astral, e.g. rare hanzi), which are surrogate
+    /// PAIRS in C#'s UTF-16 <c>string</c> — so index-alignment drifted after the first astral char and every later
+    /// mapping (紅→红, 動→动, 藍→蓝 …) resolved to garbage. Python tooling counts code points so it looked fine. The
+    /// per-line format below is immune: each line carries its own 繁/简 pair, no cross-line index alignment.
     /// </summary>
     public static class TradSimp
     {
@@ -26,12 +32,10 @@ namespace Sdo.UI.Util
                 var path = Path.Combine(Application.streamingAssetsPath, "trad2simp.txt");
                 if (File.Exists(path))
                 {
-                    var lines = File.ReadAllText(path).Split('\n');
-                    if (lines.Length >= 2)
+                    foreach (var raw in File.ReadAllLines(path))
                     {
-                        string t = lines[0], s = lines[1];
-                        int n = Mathf.Min(t.Length, s.Length);
-                        for (int i = 0; i < n; i++) _map[t[i]] = s[i];
+                        // "繁\t简" — both single BMP chars (astral/multi-char entries were filtered out at bake time).
+                        if (raw.Length >= 3 && raw[1] == '\t') _map[raw[0]] = raw[2];
                     }
                 }
             }
