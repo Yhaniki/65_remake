@@ -126,9 +126,18 @@ namespace Sdo.Game
                 // firmness ← authored joint-limit tightness: tight limits (limMean→0, e.g. twintails) hold the styled
                 // shape (near-rigid); loose limits (limMean→0.45, e.g. bangs) swing.
                 float stiff = Mathf.Lerp(0.85f, 0.05f, Mathf.Clamp01(limMean / 0.45f));
-                // air-damping ← authored angular damping: heavily-damped parts (angDamp 2.0) settle fast, don't bounce.
-                float damping = Mathf.Lerp(0.08f, 0.35f, Mathf.InverseLerp(0.99f, 2.0f, angMean));
-                if (part == TIE) stiff = 0f;   // TIE: hang freely (user request) — no pull-back to the styled pose
+                float damping = Mathf.Lerp(0.05f, 0.12f, Mathf.InverseLerp(0.99f, 2.0f, angMean));
+                float worldInertia = 1f, depthInertia = 0f;
+                // Per-part FEEL, hand-tuned from user testing:
+                //  - HAIR: the long twintails must move as ONE COHERENT chain that WHIPS root→tip on a spin, not each
+                //    joint writhing on its own. depthInertia ANCHORS the root to the head (weak inertia at the root)
+                //    while the tip keeps full inertia → a head turn propagates down and flings the tips out. A moderate
+                //    (not floppy) angle stiffness holds the chain's shape so it swings as a unit; damping settles it.
+                //  - BANG: firm AND low world-inertia so they just track the head with almost no sway.
+                //  - TIE: hangs free (stiff 0) but damped so it doesn't bounce forever.
+                if (part == HAIR) { stiff = 0.90f; damping = 0.14f; depthInertia = 0.85f; }   // very firm chain + strong root-anchor → whips as one stiff unit
+                else if (part == BANG) { stiff = 0.90f; worldInertia = 0.2f; }
+                else if (part == TIE) { stiff = 0f; damping = 0.20f; depthInertia = 0.5f; }
 
                 // colliders this part actually touches (authored groups/masks); fallback = all colliders.
                 var partCols = allCols != null ? allCols : SelectColliders(acc, colRecs);
@@ -141,9 +150,9 @@ namespace Sdo.Game
                 // lossyScale like colliders), so convert the authored raw radius to world by × unitScale, else the skirt
                 // is ~unitScale× too thin to catch limbs (clipping).
                 float radWorld = radMean * unitScale;
-                SdoLog.Note("mmd", $"  cloth[{names[part]}] roots={acc.Roots.Count} cols={partCols.Count} conn={conn} limMean={limMean:F3} " +
-                                   $"angMean={angMean:F2} -> stiff={stiff:F2} damp={damping:F2} radiusW={radWorld:F2}");
-                BuildCloth(host, names[part], acc.Roots, partCols, baseGravity * gravMul[part], stiff, damping, radWorld, u, conn);
+                SdoLog.Note("mmd", $"  cloth[{names[part]}] roots={acc.Roots.Count} cols={partCols.Count} conn={conn} " +
+                                   $"-> stiff={stiff:F2} damp={damping:F2} wInertia={worldInertia:F2} depthI={depthInertia:F2} radiusW={radWorld:F2}");
+                BuildCloth(host, names[part], acc.Roots, partCols, baseGravity * gravMul[part], stiff, damping, radWorld, u, conn, part == SKIRT, worldInertia, depthInertia);
             }
 
             // Fast dance = fast bones; raise the global solver rate (default 90) to its hard cap (150) so a limb moves
@@ -243,7 +252,7 @@ namespace Sdo.Game
 
         private void BuildCloth(GameObject host, string name, List<Transform> roots, List<ColliderComponent> cols,
                                 float gravity, float angleStiff, float damping, float particleRadius, float unitScale,
-                                RenderSetupData.BoneConnectionMode connectionMode)
+                                RenderSetupData.BoneConnectionMode connectionMode, bool pinRoot, float worldInertia, float depthInertia)
         {
             if (roots.Count == 0) return;
             var go = new GameObject(name);
@@ -256,24 +265,39 @@ namespace Sdo.Game
             foreach (var r in roots) sd.rootBones.Add(r);
             sd.gravity = gravity;
             sd.damping.SetValue(Mathf.Clamp01(damping));               // authored angular damping → air resistance
-            if (particleRadius > 1e-4f) sd.radius.SetValue(particleRadius);   // authored body radius → particle thickness
+            // Particle thickness as a root→tip CURVE: THIN near the body (0.35×) so the fabric next to the waist/neck
+            // doesn't get puffed up over the hip/shoulder colliders, FULL toward the tip where it must catch the legs.
+            if (particleRadius > 1e-4f) sd.radius.SetValue(particleRadius, 0.35f, 1f);
             // hold chain lengths (shape) with distance restoration; ANGLE restoration = authored firmness (0 = hang free
             // for the tie — gravity + distance only, no pull back to the styled pose).
             sd.distanceConstraint.stiffness.SetValue(1f);
             sd.angleRestorationConstraint.useAngleRestoration = angleStiff > 0.001f;
             if (angleStiff > 0.001f) sd.angleRestorationConstraint.stiffness.SetValue(angleStiff);
-            // World-movement handling: when the character WALKS (root translates in world), heavily SMOOTH it so the
-            // cloth follows instead of being flung/clipping; local/animation movement (the dance) is unaffected.
-            sd.inertiaConstraint.worldInertia = 1f;
-            sd.inertiaConstraint.movementInertiaSmoothing = 0.9f;
+            // Inertia: the cloth must PICK UP the body's motion (spins especially). Keep full world inertia but only
+            // LIGHTLY smooth it (0.3, near Magica's 0.4 default) — the earlier 0.9 over-smoothed it into "floaty, won't
+            // react" hair. Raise the world-ROTATION cap far above the default 720°/s so a fast dance spin fully carries
+            // the hair/tie out instead of being clamped ("速度帶不上來").
+            sd.inertiaConstraint.worldInertia = worldInertia;   // per-part: bangs low (barely react), hair/skirt full
+            sd.inertiaConstraint.depthInertia = depthInertia;   // anchor the root, free the tip → chain whips as a whole
+            sd.inertiaConstraint.movementInertiaSmoothing = 0.3f;
             float uu = Mathf.Max(unitScale, 1f);
             sd.inertiaConstraint.movementSpeedLimit = new CheckSliderSerializeData(true, 5f * uu * 3f);
+            sd.inertiaConstraint.rotationSpeedLimit = new CheckSliderSerializeData(true, 2000f);   // was default 720°/s
             sd.inertiaConstraint.particleSpeedLimit = new CheckSliderSerializeData(true, 4f * uu * 10f);
-            // EDGE collision (segments between particles, not just points) so a fast leg/arm can't slip THROUGH the
-            // cloth during big dance moves; friction so a rising leg DRAGS the panel along its length (grips it) instead
-            // of shearing past / letting it climb over a convex hip.
+            // Keep each particle near where the ANIMATION drapes it — pinned tight at the root (0.12×), loose at the hem
+            // (1.0×). Stops the skirt from riding up over the hips (near-body puff) and, on a body spin, from wrapping up
+            // onto the body and not falling back (it can never travel more than maxDistance from its drape). Skirt only —
+            // hair/tie must stay free to swing.
+            if (pinRoot)
+            {
+                sd.motionConstraint.useMaxDistance = true;
+                sd.motionConstraint.maxDistance.SetValue(4f, 0.12f, 1f);   // world units (clamped 0..5); depth²-biased
+            }
+            // EDGE collision (segments between particles) so a fast leg/arm can't slip THROUGH the cloth; a little
+            // friction so a rising leg drags the panel along instead of shearing past — but LOW (0.15) so the skirt
+            // slides back DOWN after a spin instead of sticking wrapped up on the body.
             sd.colliderCollisionConstraint.mode = ColliderCollisionConstraint.Mode.Edge;
-            sd.colliderCollisionConstraint.friction = 0.3f;
+            sd.colliderCollisionConstraint.friction = 0.15f;
             sd.colliderCollisionConstraint.colliderList.AddRange(cols);
             cloth.BuildAndRun();
             _cloths.Add(cloth); _baseGrav.Add(gravity); _baseStiff.Add(angleStiff);
