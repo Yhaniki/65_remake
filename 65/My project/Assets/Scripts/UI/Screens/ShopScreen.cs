@@ -745,8 +745,10 @@ namespace Sdo.UI.Screens
         private void AddTryOnHit(RectTransform card, ShopItem item, int i)
         {
             var it = item; int idx = i; var theCard = card;
-            const float top = -4f;
-            float h = _L.FitPos.y - 8f;                              // 命中區高度 (卡片上半,避開按鈕列)
+            // 放大/命中區:小卡=卡片上半(避開按鈕列);大卡(套裝)=只涵蓋縮圖範圍,下方價格/按鈕區不觸發放大旋轉(使用者)。
+            float top, h;
+            if (_slot == EquipSlot.Outfit) { top = _L.AvCenter.y + _L.AvSize.y / 2f; h = _L.AvSize.y; }   // 縮圖上緣 / 縮圖高
+            else { top = -4f; h = _L.FitPos.y - 8f; }
             float avatarRight = _L.AvCenter.x + _L.AvSize.x / 2f;    // 左邊衣物縮圖的右緣 → 左右兩塊的分界
 
             // 左塊 (衣物縮圖)：點=試穿；滑上去=該卡放大旋轉。
@@ -1145,6 +1147,17 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (_cam == null || !_cam.enabled) return;
+
+            // 輸入法選字框跟著搜尋框:World-Space canvas 下 Unity 不會自動設候選框位置 → 跑到螢幕左上角。聚焦時把
+            // compositionCursorPos 設到搜尋框(螢幕座標,原點左下,與 WorldToScreenPoint 一致)→ 候選框出現在框旁邊(使用者)。
+            if (_search != null && _search.isFocused)
+            {
+                var corners = new Vector3[4];
+                _search.GetComponent<RectTransform>().GetWorldCorners(corners);   // 0=左下
+                var sp = _uiCam != null ? _uiCam.WorldToScreenPoint(corners[0]) : corners[0];
+                // WorldToScreenPoint 原點在左下(y 上);compositionCursorPos 的 y 原點在左上 → Y 要翻(否則框跑到螢幕頂端)。
+                Input.compositionCursorPos = new Vector2(sp.x, Screen.height - sp.y);
+            }
 
             // ESC → 關商城（等同右上 shopexit 鈕）→ 露出底下的房間或選角色畫面。走轉場漸黑漸亮。
             if (Input.GetKeyDown(KeyCode.Escape) && !ScreenTransition.Busy)

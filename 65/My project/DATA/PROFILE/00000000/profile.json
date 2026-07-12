@@ -20,9 +20,9 @@
         "hand": "AVATAR/900011_WOMAN_HAND.MSH"
     },
     "createdAt": "2026-07-07T22:52:30.3775949Z",
-    "lastPlayedAt": "2026-07-12T01:51:40.4354763Z",
+    "lastPlayedAt": "2026-07-12T02:26:37.1739010Z",
     "wallet": {
-        "coins": 999947699,
+        "coins": 999947599,
         "points": 999999999,
         "bonus": 999999999,
         "seeded": true
@@ -58,12 +58,18 @@
             "expire": -1,
             "qty": 1,
             "slot": 200
+        },
+        {
+            "id": 90026394,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
         }
     ],
     "equippedItems": [
         {
             "slot": 14,
-            "id": 90036937
+            "id": 90026394
         }
     ],
     "equippedParts": [
@@ -73,6 +79,6 @@
         "AVATAR/900019_WOMAN_PANT.MSH",
         "AVATAR/900020_WOMAN_SHOES.MSH",
         "AVATAR/900011_WOMAN_HAND.MSH",
-        "AVATAR/036937_WOMAN_CHIBANG.MSH"
+        "AVATAR/026394_WOMAN_CHIBANG.MSH"
     ]
 }

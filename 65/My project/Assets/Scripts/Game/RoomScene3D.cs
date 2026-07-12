@@ -52,6 +52,7 @@ namespace Sdo.Game
         private Camera _cam;
         private RenderTexture _rt;
         private MotLoader _walkMot, _idleMot;
+        private bool _flying;   // 飛行翅膀已裝備:idle=flystay、走路=fly 前傾滑動、移動時 +10 懸浮 (SpecialMotionItems)
         private readonly Dictionary<string, MotLoader> _chatActionMots = new Dictionary<string, MotLoader>(System.StringComparer.OrdinalIgnoreCase);
         private bool _male;
         private string[] _avatarParts;
@@ -309,14 +310,15 @@ namespace Sdo.Game
         /// is also worn, which forces 3.0). Called after every (re)build so 換裝 picks the trait up immediately.</summary>
         private void ApplyOutfitMotion()
         {
-            System.Func<string, bool> meshExists = rel => System.IO.File.Exists(SdoAvatarBuilder.ResolveAvatarFile(rel));
-            bool fly = SpecialMotionItems.WearsFlyingWing(_avatarParts, meshExists);
+            _flying = SpecialMotionItems.WearsFlyingWing(_avatarParts);
             bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
-            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male,
-                _male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot, meshExists);
+            // 飛行翅膀:idle→flystay 浮空,走路→fly(前傾滑動),速度強制 3.0(028:2774),移動時 body Y +10 懸浮(028:2852)。
+            // 「哪些翅膀會飛」離線推不出來 → SpecialMotionItems 用硬編 5 id + 線上實測名單(見該檔)。
+            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            string walkRel = SpecialMotionItems.WalkMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
             _idleMot = SdoRoomAvatar.LoadMot(idleRel);
-            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
-            walkSpeed = SpecialMotionItems.WalkSpeedMult(fast, fly);
+            _walkMot = SdoRoomAvatar.LoadMot(walkRel);
+            walkSpeed = SpecialMotionItems.WalkSpeedMult(fast, _flying);
         }
 
         private void BuildCamera()
@@ -374,6 +376,7 @@ namespace Sdo.Game
             {
                 _walking = false;
                 _avatar.SetClip(_idleMot);
+                ApplyAvatarTransform();   // 停下:移除飛行懸浮 (+10)，回地面高度(否則 flystay 停在半空)
             }
 
             UpdateCamera();
@@ -392,7 +395,9 @@ namespace Sdo.Game
         private void ApplyAvatarTransform()
         {
             if (_avatarRoot == null) return;
-            _avatarRoot.position = new Vector3(_walkPos.x, floorY - _feetY, _walkPos.z);
+            // 飛行翅膀移動時 body Y +10 懸浮(Player_StepMovement 028:2852 fStack_8 += 10);停下(flystay)回地面高度。
+            float hover = (_flying && _walking) ? SpecialMotionItems.FlyHoverY : 0f;
+            _avatarRoot.position = new Vector3(_walkPos.x, floorY - _feetY + hover, _walkPos.z);
             _avatarRoot.localRotation = Quaternion.Euler(0f, _facing, 0f);
         }
 

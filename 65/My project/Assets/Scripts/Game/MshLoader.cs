@@ -251,8 +251,22 @@ namespace Sdo.Game
             return (qx << 48) | (qy << 24) | qz;
         }
 
-        // returns local_to_hrc array (palette_size) or null; sets palStart/palEnd; outputs per-slot inv-bind (Unity)
+        // returns local_to_hrc array (palette_size) or null; sets palStart/palEnd; outputs per-slot inv-bind (Unity).
+        // TWO PASSES: first the strict near-rotation matrix test (LooksLikeMatrix) — unchanged behaviour for the ~38k
+        // meshes that already parse. Only if that finds NOTHING, retry accepting a SCALED bind (LooksLikeScaledMatrix):
+        // a few avatar parts (e.g. 025149_WOMAN_HAIR 蔚蓝舞动 女发, plus wings/tails/shoes/props) are authored in a
+        // bone-local space, so their inv-bind carries a large uniform/anisotropic scale (3x3 elements up to ~36, well
+        // past the strict ±4). Without accepting it, the palette was rejected → the part fell back to the HRC bind (which
+        // assumes model-space verts) and collapsed to the origin → invisible ("bald" hair / missing wings). Doing the
+        // strict pass first guarantees ZERO change for anything that already resolves (no earlier scaled-but-coincidental
+        // offset can shadow a correct strict match), so this only ever recovers previously-broken meshes.
         private static int[] ScanBonePalette(byte[] d, int start, int minPalSize, out int palStart, out int palEnd, out Matrix4x4[] slotInv)
+        {
+            var pal = ScanBonePalettePass(d, start, minPalSize, false, out palStart, out palEnd, out slotInv);
+            return pal ?? ScanBonePalettePass(d, start, minPalSize, true, out palStart, out palEnd, out slotInv);
+        }
+
+        private static int[] ScanBonePalettePass(byte[] d, int start, int minPalSize, bool relaxed, out int palStart, out int palEnd, out Matrix4x4[] slotInv)
         {
             palStart = -1; palEnd = -1; slotInv = null;
             int limit = System.Math.Min(d.Length - 8, start + 0x4000);
@@ -262,7 +276,7 @@ namespace Sdo.Game
                 if (hrcCount < 1 || hrcCount > 512 || palSize <= minPalSize || palSize > 128) continue;   // palSize 必須 >maxBoneByte,擋假的小盤
                 int matOff = off + 8, mapOff = matOff + palSize * 64, mapEnd = mapOff + hrcCount * 4;
                 if (mapEnd > d.Length) continue;
-                if (!LooksLikeMatrix(d, matOff)) continue;
+                if (!(relaxed ? LooksLikeScaledMatrix(d, matOff) : LooksLikeMatrix(d, matOff))) continue;
                 int valid = 0;
                 for (int i = 0; i < hrcCount; i++) { uint v = U32At(d, mapOff + i * 4); if (v == 0xFFFFFFFF || v < (uint)palSize) valid++; }
                 if (valid < hrcCount - 1) continue;
@@ -314,6 +328,42 @@ namespace Sdo.Game
             for (int i = 0; i < 12; i++) { float v = F(d, off + i * 4); if (float.IsNaN(v) || Mathf.Abs(v) > 4f) return false; }
             if (Mathf.Abs(F(d, off + 48)) > 5000 || Mathf.Abs(F(d, off + 52)) > 5000 || Mathf.Abs(F(d, off + 56)) > 5000) return false;
             float w = F(d, off + 60); return w > 0.99f && w < 1.01f;
+        }
+
+        // Relaxed variant used only as ScanBonePalette's fallback pass: reads the 16 floats and defers to the pure
+        // IsScaledBindMatrix classifier below.
+        private static bool LooksLikeScaledMatrix(byte[] d, int off)
+        {
+            if (off + 64 > d.Length) return false;
+            var m = new float[16];
+            for (int i = 0; i < 16; i++) m[i] = F(d, off + i * 4);
+            return IsScaledBindMatrix(m);
+        }
+
+        /// <summary>True if the row-major 4x4 <paramref name="m"/> is a plausible bind matrix authored WITH SCALE.
+        /// The strict <see cref="LooksLikeMatrix"/> caps 3x3 elements at ±4 (assumes a near-rotation), but a bind
+        /// authored in a scaled bone-local space has elements up to ~36 (e.g. 025149_WOMAN_HAIR 蔚蓝舞动 女发, whose
+        /// verts sit at Y≈5 and are lifted onto the head by a ~10× bind). A REAL bind is rotation × (possibly
+        /// anisotropic) scale ⇒ its three 3x3 COLUMNS stay mutually ORTHOGONAL — a scale-invariant test that separates
+        /// it from a coincidental structural hit (verified across all avatar meshes: real binds have ortho-error ≈ 0.00;
+        /// false candidates ≈ 0.23–0.49). Column LENGTHS are NOT required equal — genuine binds are often anisotropic.
+        /// Pure logic (no byte buffer) so the classifier is unit-testable.</summary>
+        public static bool IsScaledBindMatrix(float[] m)
+        {
+            if (m == null || m.Length < 16) return false;
+            for (int i = 0; i < 12; i++) { float v = m[i]; if (float.IsNaN(v) || Mathf.Abs(v) > 4000f) return false; }
+            if (Mathf.Abs(m[12]) > 5000 || Mathf.Abs(m[13]) > 5000 || Mathf.Abs(m[14]) > 5000) return false;   // translation row
+            if (!(m[15] > 0.99f && m[15] < 1.01f)) return false;
+            // row-major: column c = (m[0,c], m[1,c], m[2,c]) = (m[c], m[4+c], m[8+c]).
+            Vector3 c0 = new Vector3(m[0], m[4], m[8]);
+            Vector3 c1 = new Vector3(m[1], m[5], m[9]);
+            Vector3 c2 = new Vector3(m[2], m[6], m[10]);
+            float l0 = c0.magnitude, l1 = c1.magnitude, l2 = c2.magnitude;
+            if (l0 < 1e-3f || l1 < 1e-3f || l2 < 1e-3f) return false;
+            const float ortho = 0.06f;   // |cos(angle)| between column pairs must be ~0 (perpendicular)
+            return Mathf.Abs(Vector3.Dot(c0, c1)) <= ortho * l0 * l1
+                && Mathf.Abs(Vector3.Dot(c0, c2)) <= ortho * l0 * l2
+                && Mathf.Abs(Vector3.Dot(c1, c2)) <= ortho * l1 * l2;
         }
 
         // Submesh-header marker (first u32). Avatar/character meshes use 0x1156(stride40,single-bone)/1158/115A/115C;

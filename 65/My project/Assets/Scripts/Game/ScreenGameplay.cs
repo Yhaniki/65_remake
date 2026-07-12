@@ -729,9 +729,9 @@ namespace Sdo.Game
             }
 
             // 飛行翅膀 → arena standby idle 換成 flystay 浮空 clip (rest cat 0x2c, 023_gameplay:4138). Only the idle/rest
-            // changes; the DPS dance is unaffected. 飛行翅膀 = 硬編 5 id 或有 _CHIBANG_G 滑翔模型的翅膀。
-            // See [[sdo-special-item-idle-walk]] / SpecialMotionItems.
-            if (SpecialMotionItems.WearsFlyingWing(avatarParts, rel => System.IO.File.Exists(SdoAvatarBuilder.ResolveAvatarFile(rel))))
+            // changes; the DPS dance is unaffected. 飛行翅膀 = 硬編 5 id + 線上實測名單(離線無法從資料推;見 SpecialMotionItems)。
+            // 競技場沒有走路,故只換 idle;前傾滑動 fly-walk 只在房間走動時用。See [[sdo-special-item-idle-walk]].
+            if (SpecialMotionItems.WearsFlyingWing(avatarParts))
                 restMot = SpecialMotionItems.FlyIdleMot(localPlayerMale);
         }
 
