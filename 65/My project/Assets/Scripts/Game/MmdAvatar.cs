@@ -44,6 +44,8 @@ namespace Sdo.Game
         private bool[] _aim;                       // this bone uses aim (has a mapped child)
         private int[] _aimChildHrc;                // HRC child bone index the aim targets
         private Vector3[] _aimRestDir;             // MMD rest bone→child direction (root-local, normalised)
+        private bool[] _useDelta;                  // non-aimed bone drives by world-delta (root + head: need absolute
+                                                   // orientation) vs following its parent (hand/foot/fingertip: stable)
         private Quaternion[] _rwLocal;             // scratch: world-in-root-local rotation per bone this frame
         private Quaternion[] _animLocalRot;        // per-bone local rotation this frame (append source)
         private int[] _appendParent;               // PMX 付与 parent per bone (-1 none)
@@ -134,7 +136,7 @@ namespace Sdo.Game
 
             // ---- retarget wiring ----
             _hrcIndex = new int[bc]; _hrcRestInv = new Quaternion[bc];
-            _aim = new bool[bc]; _aimChildHrc = new int[bc]; _aimRestDir = new Vector3[bc];
+            _aim = new bool[bc]; _aimChildHrc = new int[bc]; _aimRestDir = new Vector3[bc]; _useDelta = new bool[bc];
             var bip01ToMmd = new Dictionary<string, int>();
             for (int i = 0; i < bc; i++)
             {
@@ -143,9 +145,11 @@ namespace Sdo.Game
                 {
                     if (!bip01ToMmd.ContainsKey(bip01)) bip01ToMmd[bip01] = i;
                     if (hrc.Index.TryGetValue(bip01, out int h)) { _hrcIndex[i] = h; _hrcRestInv[i] = Quaternion.Inverse(hrc.BindWorld[h].rotation); }
+                    if (bip01 == "Bip01_Head") _useDelta[i] = true;   // head: absolute orientation → stays upright in idle
                 }
                 if (pmx.Bones[i].NameJp == MmdBoneMap.RootMmdBone) _rootBone = i;
             }
+            if (_rootBone >= 0) _useDelta[_rootBone] = true;           // root carries the whole-body rotation
             int aimed = BuildAim(pmx, hrc, bip01ToMmd);
             if (_rootBone >= 0) _rootRestLocal = _bone[_rootBone].localPosition;
             if (hrc.Index.TryGetValue("Bip01", out int rootH)) { _hrcRootIndex = rootH; _hrcRootRestPos = hrc.BindWorld[rootH].GetColumn(3); }
@@ -200,20 +204,31 @@ namespace Sdo.Game
                 int p = _parent[i];
                 Quaternion parentRw = p >= 0 ? _rwLocal[p] : Quaternion.identity;
                 Quaternion rw;
-                if (_hrcIndex[i] >= 0 && UseAim && _aim[i])
+                if (_hrcIndex[i] < 0) rw = parentRw;                     // unmapped → follow parent (rest)
+                else if (UseAim && _aim[i])
                 {
-                    // AIM: point the bone toward where the HRC bone points (immune to A/T-pose rest mismatch).
-                    Vector3 tgt = (Vector3)Driver.BoneAnimWorld(_aimChildHrc[i]).GetColumn(3) - (Vector3)Driver.BoneAnimWorld(_hrcIndex[i]).GetColumn(3);
-                    Vector3 tgtLocal = _qrootInv * tgt;
-                    rw = tgtLocal.sqrMagnitude > 1e-8f ? Quaternion.FromToRotation(_aimRestDir[i], tgtLocal.normalized) : parentRw;
+                    // AIM (direction, immune to A/T-pose rest mismatch) + TWIST (roll about the bone axis, copied from
+                    // the SDO bone so a body spin / torso twist is reproduced — aim alone loses it → body turns wrong).
+                    int h = _hrcIndex[i];
+                    Vector3 tgt = (Vector3)Driver.BoneAnimWorld(_aimChildHrc[i]).GetColumn(3) - (Vector3)Driver.BoneAnimWorld(h).GetColumn(3);
+                    if (tgt.sqrMagnitude > 1e-8f)
+                    {
+                        Quaternion swing = Quaternion.FromToRotation(_aimRestDir[i], (_qrootInv * tgt).normalized);
+                        Quaternion deltaH = Driver.BoneAnimWorld(h).rotation * _hrcRestInv[i];       // SDO world delta
+                        Quaternion twist = _qrootInv * TwistAbout(deltaH, tgt.normalized) * _qroot;   // its roll about the aim axis
+                        rw = twist * swing;
+                    }
+                    else rw = parentRw;
                 }
-                else if (_hrcIndex[i] >= 0)
+                else if (!UseAim || _useDelta[i])
                 {
-                    // world-delta fallback (leaf bones with no mapped child, or aim disabled)
+                    // world-delta (absolute orientation): the aim-OFF comparison mode, and the root + head — the head's
+                    // bind≈rest so it doesn't over-rotate, and absolute keeps it upright regardless of the neck's tilt.
                     Quaternion deltaH = Driver.BoneAnimWorld(_hrcIndex[i]).rotation * _hrcRestInv[i];
                     rw = _qrootInv * deltaH * _qroot;
                 }
-                else rw = parentRw;
+                else rw = parentRw;   // other leaf mapped (hand/foot/fingertips) → follow parent: stable, avoids the
+                                      // world-delta over-rotation that crosses the wrists/ankles
                 _rwLocal[i] = rw;
                 Quaternion local = Quaternion.Inverse(parentRw) * rw;
                 _bone[i].localRotation = local;
@@ -237,6 +252,19 @@ namespace Sdo.Game
                 Vector3 d = (Vector3)Driver.BoneAnimWorld(_hrcRootIndex).GetColumn(3) - _hrcRootRestPos;
                 _bone[_rootBone].localPosition = _rootRestLocal + (_qrootInv * d) / _unitScale;
             }
+        }
+
+        // The twist component of rotation q about a (normalised) axis — swing-twist decomposition. Used to copy the
+        // SDO bone's roll about its own direction onto the aimed MMD bone (aim gives direction but zero twist).
+        private static Quaternion TwistAbout(Quaternion q, Vector3 axis)
+        {
+            Vector3 v = new Vector3(q.x, q.y, q.z);
+            float dot = Vector3.Dot(v, axis);
+            var twist = new Quaternion(axis.x * dot, axis.y * dot, axis.z * dot, q.w);
+            float n = Mathf.Sqrt(twist.x * twist.x + twist.y * twist.y + twist.z * twist.z + twist.w * twist.w);
+            if (n < 1e-6f) return Quaternion.identity;   // 180° swing singularity → no defined twist
+            twist.x /= n; twist.y /= n; twist.z /= n; twist.w /= n;
+            return twist;
         }
 
         private Quaternion ComputeFacingAlign(PmxLoader pmx)
