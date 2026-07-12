@@ -176,15 +176,18 @@ namespace Sdo.Game
                 //    independent) — a restoration force is the wrong analog (it attenuates down long chains: 0.4 fixed the
                 //    18-bone tie but did nothing for the 30-bone twintail, droop 7° vs ref 31.8°). Use Magica's per-joint
                 //    ANGLE LIMIT instead: authored half-range + ~1.5° Bullet ERP softness per joint.
-                // BOTH constraints, composed unconditionally (a binary spring-vs-limit branch broke MIXED groups: the
-                // hair pool's few sprung joints made springMean 0.29 → it got a useless 0.05 restoration AND no limit):
-                //  - restoration ∝ authored rotation spring, enabled only when meaningful (>0.1 — the bang's 0.9).
-                //  - per-joint ANGLE LIMIT = authored half-range + 0.5° Bullet ERP softness — MEASURED from the ref:
-                //    locked twintail relaxes 16°/30 joints = 0.53°/joint; the tie lands 19.94° vs ref 19.90° with this.
-                //    For sprung parts the limit is loose (bang ~10.5°) and the restoration dominates — they compose.
-                float angleStiff = Mathf.Clamp01(springNorm * 0.9f);
-                bool useAngle = angleStiff > 0.1f;
-                float angleLimitDeg = 0.5f + Mathf.Rad2Deg * limMean * 0.5f;
+                // SHAPE = force-based RESTORATION (primary) + a loose hard LIMIT (guard). Findings that shaped this:
+                //  - Magica's angleLimit stiffness ≠ Bullet ERP: at 1.0 it hard-glues the chain to the animated pose
+                //    (rigid + violent whipping in a real dance, though gentle probe scenarios read fine); at 0.2 it
+                //    never wins against gravity (rest shape collapses). One knob can't do rest-tight + dance-soft.
+                //  - Restoration is a FORCE — it yields under dance load naturally and holds at rest; its old failure
+                //    on long chains (30-bone twintail) is fixed by a root-weighted curve (torque concentrates at the
+                //    root: full strength there, 40% at the tip where the whip should live).
+                //  - spring>0 parts (bang) keep the authored-spring restoration (validated 9/10 PASS).
+                float angleStiff = springMean > 0f ? Mathf.Clamp01(springNorm * 0.9f) : 0.9f;   // user-tuned feel: 0.5→0.65→0.8→0.9 (雙馬尾要硬)
+                bool useAngle = true;
+                bool rootWeighted = springMean <= 0f;                       // pendulum chains: strong root, free tip
+                float angleLimitDeg = 6f + Mathf.Rad2Deg * limMean;         // loose guard: only catches extreme excursions
                 // gravityFalloff ← springNorm: a pinned part holds its shape against gravity (falloff→1 = gravity≈0 at
                 // rest pose); a pendulum keeps full gravity (falloff 0) so it hangs down. Replaces per-part gravity hacks.
                 float gravityFalloff = springNorm;
@@ -198,15 +201,15 @@ namespace Sdo.Game
                 // Full inertia is the faithful value; shape retention comes from angle restoration, not motion removal.
                 const float worldInertia = 1f;
                 // depthInertia ← MASS gradient (root heavy = carried with the body, tip light = lags = the whip),
-                // log-scaled + capped 0.25 — at 0.5 the twintails were half-carried with every motion (spin fling
-                // exactly 0, turn amp −71%) while the low-depthInertia bang/tie responded fine.
-                float depthInertia = 0.25f * Mathf.Clamp01(massGrad / 5.70f);
-                // CONNECTION: Line for everything — MMD skirt panels are INDEPENDENT strands loosely tied by position-
-                // limit joints (they may separate); mesh-connecting them into an inextensible ring killed all skirt
-                // dynamics (measured 0 oscillations vs ref 6, hem locked inward vs resting on the hip colliders at 53°).
-                // Anti-poke duty falls to Edge collision + 150 Hz + the authored colliders (correct radii now).
-                bool sheet = acc.BoxN * 2 >= acc.BodyN && acc.BodyN > 0;   // still used for the maxDistance leash
-                var conn = RenderSetupData.BoneConnectionMode.Line;
+                // cap user-tuned back to 0.5: the upper chain rides with the body = the "整條硬挺" feel (its old
+                // side-effects — violent whip/zero response — came from the un-scaled clamps, fixed since).
+                float depthInertia = 0.5f * Mathf.Clamp01(massGrad / 5.70f);
+                // CONNECTION: skirt = AutomaticMesh. MMD's panels are independent strands (Line matches Bullet's
+                // dynamics better — flare/oscillation), but Magica's Edge collision on independent strands has only
+                // VERTICAL edges, so a dance-speed leg slips BETWEEN panels (user-verified clipping). Anti-clip wins:
+                // mesh cross-edges catch the leg; the flare/oscillation gap vs the ref is the accepted cost.
+                bool sheet = acc.BoxN * 2 >= acc.BodyN && acc.BodyN > 0;
+                var conn = sheet ? RenderSetupData.BoneConnectionMode.AutomaticMesh : RenderSetupData.BoneConnectionMode.Line;
                 float radWorld = radMean * unitScale;   // particle radius is WORLD-space (× scaleRatio=1, not lossyScale)
                 float chainLenWorld = Mathf.Max((acc.MaxY - acc.MinY) * unitScale, radWorld);   // ≈ how far the hem can physically travel
 
@@ -218,7 +221,7 @@ namespace Sdo.Game
                 SdoLog.Note("mmd", $"  cloth[{names[part]}] roots={acc.Roots.Count} cols={partCols.Count} {(sheet ? "MESH" : "line")} anchor={(acc.AnchorBone >= 0 ? pmx.Bones[acc.AnchorBone].NameJp : "root")} " +
                                    $"massR/T={massRoot:F1}/{massTip:F2} spring={springMean:F1} -> angle={(useAngle ? angleStiff.ToString("F2") : "off")} limit={angleLimitDeg:F1}° gFall={gravityFalloff:F2} " +
                                    $"damp={dampRoot:F2}→{dampTip:F2} wInertia={worldInertia:F2} depthI={depthInertia:F2} radW={radWorld:F2} g={gravity:F0}(upm={unitsPerMeter:F1})");
-                BuildCloth(refT, names[part], acc.Roots, partCols, gravity, gravityFalloff, useAngle, angleStiff, angleLimitDeg,
+                BuildCloth(refT, names[part], acc.Roots, partCols, gravity, gravityFalloff, useAngle, angleStiff, rootWeighted, angleLimitDeg,
                            dampRoot, dampTip, radWorld, conn, sheet, worldInertia, depthInertia, unitsPerMeter, chainLenWorld);
             }
 
@@ -318,7 +321,7 @@ namespace Sdo.Game
         }
 
         private void BuildCloth(Transform parentT, string name, List<Transform> roots, List<ColliderComponent> cols,
-                                float gravity, float gravityFalloff, bool useAngle, float angleStiff, float angleLimitDeg,
+                                float gravity, float gravityFalloff, bool useAngle, float angleStiff, bool rootWeighted, float angleLimitDeg,
                                 float dampRoot, float dampTip, float particleRadius,
                                 RenderSetupData.BoneConnectionMode connectionMode, bool sheet, float worldInertia, float depthInertia,
                                 float unitsPerMeter, float chainLenWorld)
@@ -349,12 +352,21 @@ namespace Sdo.Game
             // spring-less chains get a per-joint ANGLE LIMIT instead (the Bullet locked-limit analog): they hang and
             // swing freely WITHIN the limit, so long chains keep their authored shape structurally.
             sd.angleRestorationConstraint.useAngleRestoration = useAngle;
-            if (useAngle) sd.angleRestorationConstraint.stiffness.SetValue(angleStiff);
+            if (useAngle)
+            {
+                // pendulum chains: root-weighted curve — full strength where gravity torque concentrates, 65% at the
+                // tip (user-tuned: firmer tip = the "韌性" spring-back feel). Sprung parts (bang) stay flat.
+                if (rootWeighted) sd.angleRestorationConstraint.stiffness.SetValue(angleStiff, 1f, 0.8f);
+                else sd.angleRestorationConstraint.stiffness.SetValue(angleStiff);
+            }
             if (angleLimitDeg > 0.01f)
             {
                 sd.angleLimitConstraint.useAngleLimit = true;
                 sd.angleLimitConstraint.limitAngle.SetValue(angleLimitDeg);
-                sd.angleLimitConstraint.stiffness = 1f;
+                // Bullet solves locked limits with ERP≈0.2 per substep — a SOFT constraint that YIELDS under dance-speed
+                // load and converges at rest. stiffness=1 (hard clamp) glued the hair to the head — rigid + violent
+                // whipping in a real dance, while the probe's gentle 0.4 s turn only read as +60% over-swing.
+                sd.angleLimitConstraint.stiffness = 0.2f;
             }
             // FOLLOW the anchor bone with a lag (= swing). worldInertia < 1 so the reference frame is dragged by the body
             // (1 = ignore body motion = the won't-follow failure); depthInertia carries the heavy root / lets the light tip

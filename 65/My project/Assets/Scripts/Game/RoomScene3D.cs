@@ -268,7 +268,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
             _avatarRoot = parent.transform;
-            if (_avatar != null) MmdDebug.RegisterSwappable(_avatar);   // F8: swap this dancer to the MMD (Miku) model
+            if (_avatar != null) MmdDebug.RegisterSwappable(_avatar);   // F7: swap this dancer to the MMD (Miku) model
             _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
             _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
 
@@ -296,7 +296,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
             _avatarRoot = parent.transform;
-            if (_avatar != null) MmdDebug.RegisterSwappable(_avatar);   // F8: swap this dancer to the MMD (Miku) model
+            if (_avatar != null) MmdDebug.RegisterSwappable(_avatar);   // F7: swap this dancer to the MMD (Miku) model
             _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
             _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
