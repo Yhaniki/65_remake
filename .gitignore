@@ -136,3 +136,11 @@ procmon_tool/runs/
 # Magica Cloth 2 (paid Unity Asset Store package — do NOT commit; each dev installs their own licensed copy)
 65/My project/Assets/MagicaCloth2/
 65/My project/Assets/MagicaCloth2.meta
+
+# cloth validation harness: regenerable artifacts (keep scripts + ref baselines + report)
+tools/mmd_cloth_validate/magica_*.json
+tools/mmd_cloth_validate/unity_*.log
+tools/mmd_cloth_validate/*.xml
+tools/mmd_cloth_validate/__pycache__/
+tools/mmd_cloth_validate/probe.request
+tools/mmd_cloth_validate/pmx_dump.txt

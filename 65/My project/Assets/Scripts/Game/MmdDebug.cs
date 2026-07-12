@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Sdo.Game
 {
     /// <summary>
-    /// Debug switch for the "display an MMD model instead of the SDO avatar" experiment. Press <b>F8</b> (or click the
+    /// Debug switch for the "display an MMD model instead of the SDO avatar" experiment. Press <b>F7</b> (or click the
     /// on-screen button) to swap every registered in-scene dancer (the lobby walker and the gameplay dancer) between
     /// its native SDO body and the MMD model — the SDO <see cref="SdoAvatar"/> stays alive as the hidden motion driver
     /// either way, so the MMD model dances the exact same MOT/DPS. The model is the Miku .pmx under
@@ -19,11 +19,13 @@ namespace Sdo.Game
     /// </summary>
     public sealed class MmdDebug : MonoBehaviour
     {
-        public KeyCode ToggleKey = KeyCode.F8;
+        public KeyCode ToggleKey = KeyCode.F7;    // swap SDO⇄MMD avatar (was F8; F8 now free for gameplay auto-play)
+        public KeyCode PanelKey  = KeyCode.F10;   // show/hide this whole debug panel
 
         private sealed class Reg { public SdoAvatar Avatar; public MmdAvatar Mmd; }
         private readonly List<Reg> _regs = new List<Reg>();
         private bool _mmdOn;
+        private bool _panelOn = true;   // the on-screen debug panel starts visible; PanelKey (F10) or its 隱藏 button hides it
 
         private static MmdDebug _inst;
         private static PmxLoader _pmx;      // parsed once, shared
@@ -42,7 +44,7 @@ namespace Sdo.Game
         {
             Ensure();
             _mikuPath = ResolveMikuPmx(out _mikuDir);
-            Log("[mmd] armed — F8 (or on-screen button) swaps SDO⇄MMD. model=" +
+            Log("[mmd] armed — F7 (or on-screen button) swaps SDO⇄MMD; F10 shows/hides the panel. model=" +
                 (_mikuPath ?? "NOT FOUND under assets/IkaHatunemiku2025"));
         }
 
@@ -73,6 +75,7 @@ namespace Sdo.Game
         private void Update()
         {
             if (Input.GetKeyDown(ToggleKey)) Toggle();
+            if (Input.GetKeyDown(PanelKey)) _panelOn = !_panelOn;
         }
 
         private void Toggle()
@@ -190,10 +193,17 @@ namespace Sdo.Game
         private void OnGUI()
         {
             const int w = 344, h = 326;
+            if (!_panelOn)
+            {
+                // panel hidden — leave only a small re-opener so a key conflict / editor focus can't strand the feature
+                if (GUI.Button(new Rect(8, 8, 150, 22), "MMD 面板 (F10)")) _panelOn = true;
+                return;
+            }
             GUI.Box(new Rect(8, 8, w, h), "MMD 顯示實驗");
+            if (GUI.Button(new Rect(8 + w - 60, 12, 52, 18), "隱藏")) { _panelOn = false; return; }
             GUI.Label(new Rect(16, 30, w - 16, 20), $"狀態: {(_mmdOn ? "MMD (初音)" : "SDO 原角色")}   模型: {_status}");
             GUI.Label(new Rect(16, 48, w - 16, 20), $"可切換舞者: {_regs.Count}" + (string.IsNullOrEmpty(_lastError) ? "" : "   err: " + _lastError));
-            if (GUI.Button(new Rect(16, 68, 200, 22), _mmdOn ? "切回 SDO 角色 (F8)" : "切成 MMD 初音 (F8)")) Toggle();
+            if (GUI.Button(new Rect(16, 68, 200, 22), _mmdOn ? "切回 SDO 角色 (F7)" : "切成 MMD 初音 (F7)")) Toggle();
             if (GUI.Button(new Rect(16, 94, 320, 20), $"貼圖V翻轉 flipV: {(_flipV ? "ON" : "OFF")}  ←領帶錯就切這個")) { _flipV = !_flipV; ApplyOpts(); }
             if (GUI.Button(new Rect(16, 116, 320, 20), $"aim 重定向: {(_aim ? "ON" : "OFF")}  (手腳姿勢)")) { _aim = !_aim; ApplyOpts(); }
             if (GUI.Button(new Rect(16, 138, 320, 20), $"sphere 反光: {(_sphere ? "ON" : "OFF")}")) { _sphere = !_sphere; ApplyOpts(); }

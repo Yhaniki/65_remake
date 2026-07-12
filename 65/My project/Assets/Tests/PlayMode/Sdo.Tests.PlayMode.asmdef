@@ -5,6 +5,7 @@
         "Sdo.Osu",
         "Sdo.Ruleset",
         "Sdo.Game",
+        "MagicaClothV2",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

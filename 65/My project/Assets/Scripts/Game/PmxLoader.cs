@@ -79,9 +79,15 @@ namespace Sdo.Game
         public List<RigidBody> RigidBodies = new List<RigidBody>();
 
         /// <summary>Per dynamic-body bone: the authored joint rotation-limit "tightness" (mean |max−min| over XYZ, in
-        /// radians; the MIN across a bone's joints). Small ⇒ the author locked that bone (near-rigid: e.g. twintails at
-        /// ~0), large ⇒ free to swing (e.g. bangs ~0.35). Drives each cloth's angle-restoration stiffness.</summary>
+        /// radians; the MIN across a bone's joints). Bullet 6DOF convention: lower==upper ⇒ locked (rigid), lower&gt;upper
+        /// ⇒ free. Only a stiffness signal for chains WITHOUT a restoring spring — see <see cref="BoneJointSpring"/>.</summary>
         public Dictionary<int, float> BoneJointLimit = new Dictionary<int, float>();
+
+        /// <summary>Per dynamic-body bone: the authored joint ROTATION SPRING (Bullet btGeneric6DofSpring setStiffness;
+        /// mean |xyz|, MAX across the bone's joints). THIS is the real "springs back to its shape" signal: the fringe
+        /// (前髪) uses ~5 (actively pinned to the forehead → must be stiff), the free-swinging twintails/tie use 0. The
+        /// rotation-limit width is NOT a reliable stiffness signal (locked-looking 0/0 hair actually swings).</summary>
+        public Dictionary<int, float> BoneJointSpring = new Dictionary<int, float>();
 
         public sealed class Bone
         {
@@ -360,12 +366,15 @@ namespace Sdo.Game
                 V3(); V3();                // position, rotation
                 V3(); V3();                // position limit lower / upper
                 Vector3 rLo = V3(), rHi = V3();   // rotation limit lower / upper (radians)
-                V3(); V3();                // position spring, rotation spring
+                V3();                          // position spring (unused)
+                Vector3 rSpr = V3();           // rotation spring = the "return to shape" stiffness (Bullet setStiffness)
                 if (rbB < 0 || rbB >= RigidBodies.Count) continue;
                 var child = RigidBodies[rbB];      // rbB = the constrained (child) body; its bone gets this firmness
                 if (child.Mode == 0 || child.Bone < 0 || child.Bone >= Bones.Count) continue;
                 float range = (Mathf.Abs(rHi.x - rLo.x) + Mathf.Abs(rHi.y - rLo.y) + Mathf.Abs(rHi.z - rLo.z)) / 3f;
                 BoneJointLimit[child.Bone] = BoneJointLimit.TryGetValue(child.Bone, out float prev) ? Mathf.Min(prev, range) : range;
+                float spring = (Mathf.Abs(rSpr.x) + Mathf.Abs(rSpr.y) + Mathf.Abs(rSpr.z)) / 3f;
+                BoneJointSpring[child.Bone] = BoneJointSpring.TryGetValue(child.Bone, out float psp) ? Mathf.Max(psp, spring) : spring;
             }
         }
 

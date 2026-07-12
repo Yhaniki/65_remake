@@ -65,22 +65,35 @@ namespace Sdo.Game
         private static bool Collide(byte gA, ushort mA, byte gB, ushort mB)
             => ((mA >> gB) & 1) == 1 && ((mB >> gA) & 1) == 1;
 
+        // Bullet/MMD damping is PER-SECOND (velocity retains (1−d) after 1 s); Magica damping is applied PER SUBSTEP
+        // (at our 150 Hz: v ×= 1 − m×0.6 each step). Match one second of decay: (1 − m×0.6)^150 = (1 − d)
+        //   ⇒ m = (1 − (1−d)^(1/150)) / 0.6.   e.g. d=0.2 → m=0.0025, d=1.0(capped) → m=0.043 ≈ Magica's stock range.
+        private static float BulletToMagicaDamping(float bulletDamp)
+        {
+            const float freq = 150f, power = 0.6f;   // our SetSimulationFrequency(150); solver z-power = 90/150
+            float retainPerSec = Mathf.Clamp(1f - bulletDamp, 0.02f, 1f);
+            return Mathf.Clamp((1f - Mathf.Pow(retainPerSec, 1f / freq)) / power, 0f, 0.2f);
+        }
+
         // Per-group accumulator of the authored firmness data (means computed at build) + the distinct collision
         // filters (group|mask) of the part's dynamic bodies, used to select which colliders this part touches.
         private sealed class GroupAccum
         {
             public readonly List<Transform> Roots = new List<Transform>();
             public readonly HashSet<int> Filters = new HashSet<int>();   // (group << 16) | mask
-            public float LimSum, AngSum, LinSum, RadSum;
-            public int LimN, BodyN;
+            public int AnchorBone = -1;   // the body bone the chain hangs from (its motion is the cloth's inertia reference)
+            public float LimSum, AngSum, LinSum, RadSum, SpringSum;
+            public int LimN, BodyN, SpringN, BoxN;   // BoxN = box-shaped dynamic bodies (skirt panels) → mesh connection
+            // chain root vs tip mass + linear-damping → derive depthInertia (from the mass gradient) + a damping curve
+            public float RootMassSum, TipMassSum, RootLinSum, TipLinSum;
+            public int RootN, TipN;
+            public float MinY = float.PositiveInfinity, MaxY = float.NegativeInfinity;   // bone Y extent ≈ chain length
         }
 
         private void Build(GameObject host, Transform[] bone, int[] parent, PmxLoader pmx, float unitScale)
         {
             int bc = pmx.Bones.Count;
             float u = Mathf.Max(unitScale, 1f);
-            // Gravity is physical (uniform); per-part firmness (below) decides how much each part resists it.
-            float baseGravity = 10f * u;
 
             // ---- body colliders from the model's KINEMATIC rigid bodies (exact authored shapes + their groups) ----
             var colRecs = new List<ColRec>();
@@ -97,6 +110,10 @@ namespace Sdo.Game
             foreach (var rb in pmx.RigidBodies)
                 if (rb.Mode != 0 && rb.Bone >= 0 && !body.ContainsKey(rb.Bone)) body[rb.Bone] = rb;
 
+            // a physics bone that is another physics bone's parent has a physics child → it is NOT a chain tip
+            var hasPhysChild = new HashSet<int>();
+            foreach (int i in pmx.PhysicsBones) { int pp = parent[i]; if (pp >= 0 && pmx.PhysicsBones.Contains(pp)) hasPhysChild.Add(pp); }
+
             var g = new GroupAccum[4];
             for (int i = 0; i < 4; i++) g[i] = new GroupAccum();
             foreach (int i in pmx.PhysicsBones)
@@ -104,55 +121,105 @@ namespace Sdo.Game
                 if (i < 0 || i >= bc || bone[i] == null) continue;
                 body.TryGetValue(i, out var rb);
                 var acc = g[GroupOf(rb != null ? rb.Name : (pmx.Bones[i].NameEn + pmx.Bones[i].NameJp))];
+                int p = parent[i];
+                bool isRoot = !(p >= 0 && pmx.PhysicsBones.Contains(p));
+                bool isTip = !hasPhysChild.Contains(i);
                 if (rb != null)
                 {
                     acc.AngSum += rb.AngularDamp; acc.LinSum += rb.LinearDamp; acc.RadSum += Mathf.Max(rb.Size.x, 1e-3f); acc.BodyN++;
+                    if (rb.Shape == 1) acc.BoxN++;   // box panel ⇒ a sheet (ring) not a strand
                     acc.Filters.Add((rb.Group << 16) | rb.Mask);
+                    // MMD authors the chain ROOT heavy (anchored) and the TIP light (swings) + the tip more damped —
+                    // exactly Magica's depthInertia + a root→tip damping curve. Capture root/tip mass + linear damping.
+                    if (isRoot) { acc.RootMassSum += rb.Mass; acc.RootLinSum += rb.LinearDamp; acc.RootN++; }
+                    if (isTip) { acc.TipMassSum += rb.Mass; acc.TipLinSum += rb.LinearDamp; acc.TipN++; }
                 }
                 if (pmx.BoneJointLimit.TryGetValue(i, out float lim)) { acc.LimSum += lim; acc.LimN++; }
-                int p = parent[i];
-                if (!(p >= 0 && pmx.PhysicsBones.Contains(p))) acc.Roots.Add(bone[i]);   // chain root (parent not physics)
+                if (pmx.BoneJointSpring.TryGetValue(i, out float spr)) { acc.SpringSum += spr; acc.SpringN++; }
+                float by = pmx.Bones[i].Position.y;
+                if (by < acc.MinY) acc.MinY = by; if (by > acc.MaxY) acc.MaxY = by;
+                if (isRoot) { acc.Roots.Add(bone[i]); if (acc.AnchorBone < 0) acc.AnchorBone = p; }   // p = the non-physics bone the chain hangs from
             }
 
             string[] names = { "MmdBangCloth", "MmdHairCloth", "MmdSkirtCloth", "MmdTieCloth" };
-            float[] gravMul = { 0.35f, 0.4f, 1.0f, 1.25f };   // head parts held (little gravity); skirt/tie hang (more)
+            // ---- world scale, derived from the avatar itself (data-driven, no hand constant) ----
+            // Magica assumes METER-scale characters (its clamps are SI: gravity≤20, particle speed≤10 m/s). This avatar
+            // renders ~51 world units tall ≈ a 1.6 m girl ⇒ ~32 units per meter, so physically-correct values are that
+            // factor larger: g = 9.8×upm ≈ 314 u/s². With the stock clamps the sim runs ~4× slow motion (pendulum
+            // T=2π√(L/g): twintail L≈36u @ g20 → 8.4 s vs correct 2.1 s) — the real cause of "floaty / slow / can't
+            // whip". Requires the two MC2 clamp constants raised (local patch); values are safe either way (they clamp).
+            float minY = float.PositiveInfinity, maxY = float.NegativeInfinity;
+            foreach (var bp in pmx.Bones) { if (bp.Position.y < minY) minY = bp.Position.y; if (bp.Position.y > maxY) maxY = bp.Position.y; }
+            float worldHeight = Mathf.Max((maxY - minY) * unitScale, 1e-3f);
+            float unitsPerMeter = Mathf.Max(worldHeight / 1.6f, 0.1f);   // assume a ~1.6 m humanoid
+            float gravity = 9.8f * unitsPerMeter;
             for (int part = 0; part < 4; part++)
             {
                 var acc = g[part];
                 if (acc.Roots.Count == 0) continue;
-                float limMean = acc.LimN > 0 ? acc.LimSum / acc.LimN : 0.2f;
-                float angMean = acc.BodyN > 0 ? acc.AngSum / acc.BodyN : 1f;
-                float radMean = acc.BodyN > 0 ? acc.RadSum / acc.BodyN : 0.2f;
-                // firmness ← authored joint-limit tightness: tight limits (limMean→0, e.g. twintails) hold the styled
-                // shape (near-rigid); loose limits (limMean→0.45, e.g. bangs) swing.
-                float stiff = Mathf.Lerp(0.85f, 0.05f, Mathf.Clamp01(limMean / 0.45f));
-                float damping = Mathf.Lerp(0.05f, 0.12f, Mathf.InverseLerp(0.99f, 2.0f, angMean));
-                float worldInertia = 1f, depthInertia = 0f;
-                // Per-part FEEL, hand-tuned from user testing:
-                //  - HAIR: the long twintails must move as ONE COHERENT chain that WHIPS root→tip on a spin, not each
-                //    joint writhing on its own. depthInertia ANCHORS the root to the head (weak inertia at the root)
-                //    while the tip keeps full inertia → a head turn propagates down and flings the tips out. A moderate
-                //    (not floppy) angle stiffness holds the chain's shape so it swings as a unit; damping settles it.
-                //  - BANG: firm AND low world-inertia so they just track the head with almost no sway.
-                //  - TIE: hangs free (stiff 0) but damped so it doesn't bounce forever.
-                if (part == HAIR) { stiff = 0.90f; damping = 0.14f; depthInertia = 0.85f; }   // very firm chain + strong root-anchor → whips as one stiff unit
-                else if (part == BANG) { stiff = 0.90f; worldInertia = 0.2f; }
-                else if (part == TIE) { stiff = 0f; damping = 0.20f; depthInertia = 0.5f; }
 
-                // colliders this part actually touches (authored groups/masks); fallback = all colliders.
+                // ===== every Magica value below is DERIVED from the PMX physics (no per-part hand constants) =====
+                float springMean = acc.SpringN > 0 ? acc.SpringSum / acc.SpringN : 0f;
+                float springNorm = Mathf.Clamp01(springMean / 5f);                 // rotation-spring strength 0..1
+                float limMean = acc.LimN > 0 ? acc.LimSum / acc.LimN : 0f;         // joint rotation-limit range (rad)
+                float massRoot = acc.RootN > 0 ? acc.RootMassSum / acc.RootN : 1f;
+                float massTip = acc.TipN > 0 ? acc.TipMassSum / acc.TipN : 1f;
+                float massGrad = Mathf.Log(Mathf.Max(massRoot / Mathf.Max(massTip, 1e-3f), 1f));   // ln(root/tip mass)
+                float angMean = acc.BodyN > 0 ? acc.AngSum / acc.BodyN : 1f;
+                float linRoot = acc.RootN > 0 ? acc.RootLinSum / acc.RootN : 0.5f;
+                float linTip = acc.TipN > 0 ? acc.TipLinSum / acc.TipN : 0.5f;
+                float radMean = acc.BodyN > 0 ? acc.RadSum / acc.BodyN : 0.2f;
+
+                // SHAPE RETENTION, calibrated against the pybullet ground truth (compare.py):
+                //  - spring>0 (fringe): angle RESTORATION ∝ the authored rotation spring — measured 9/10 PASS at 0.9×norm.
+                //  - spring==0 (twintails/tie/skirt): MMD's rotation LIMITS are per-joint structural constraints (length-
+                //    independent) — a restoration force is the wrong analog (it attenuates down long chains: 0.4 fixed the
+                //    18-bone tie but did nothing for the 30-bone twintail, droop 7° vs ref 31.8°). Use Magica's per-joint
+                //    ANGLE LIMIT instead: authored half-range + ~1.5° Bullet ERP softness per joint.
+                // BOTH constraints, composed unconditionally (a binary spring-vs-limit branch broke MIXED groups: the
+                // hair pool's few sprung joints made springMean 0.29 → it got a useless 0.05 restoration AND no limit):
+                //  - restoration ∝ authored rotation spring, enabled only when meaningful (>0.1 — the bang's 0.9).
+                //  - per-joint ANGLE LIMIT = authored half-range + 0.5° Bullet ERP softness — MEASURED from the ref:
+                //    locked twintail relaxes 16°/30 joints = 0.53°/joint; the tie lands 19.94° vs ref 19.90° with this.
+                //    For sprung parts the limit is loose (bang ~10.5°) and the restoration dominates — they compose.
+                float angleStiff = Mathf.Clamp01(springNorm * 0.9f);
+                bool useAngle = angleStiff > 0.1f;
+                float angleLimitDeg = 0.5f + Mathf.Rad2Deg * limMean * 0.5f;
+                // gravityFalloff ← springNorm: a pinned part holds its shape against gravity (falloff→1 = gravity≈0 at
+                // rest pose); a pendulum keeps full gravity (falloff 0) so it hangs down. Replaces per-part gravity hacks.
+                float gravityFalloff = springNorm;
+                // DAMPING ← Bullet LINEAR damping, converted per-second → per-substep (see BulletToMagicaDamping).
+                // Validated: twintail oscillation count 4 vs ref 5 (PASS).
+                float dampRoot = BulletToMagicaDamping(linRoot);
+                float dampTip = BulletToMagicaDamping(linTip);
+                // worldInertia = fraction of the body's motion imparted to the cloth as inertia (movementShift =
+                // 1−worldInertia removes the rest). MMD/Bullet imparts the FULL motion — measured: at 0.67 our twintail
+                // under-swung 65% (turn amp 0.30 vs ref 0.85 chain-length), zero spin fling, walk stream 12° vs 32°.
+                // Full inertia is the faithful value; shape retention comes from angle restoration, not motion removal.
+                const float worldInertia = 1f;
+                // depthInertia ← MASS gradient (root heavy = carried with the body, tip light = lags = the whip),
+                // log-scaled + capped 0.25 — at 0.5 the twintails were half-carried with every motion (spin fling
+                // exactly 0, turn amp −71%) while the low-depthInertia bang/tie responded fine.
+                float depthInertia = 0.25f * Mathf.Clamp01(massGrad / 5.70f);
+                // CONNECTION: Line for everything — MMD skirt panels are INDEPENDENT strands loosely tied by position-
+                // limit joints (they may separate); mesh-connecting them into an inextensible ring killed all skirt
+                // dynamics (measured 0 oscillations vs ref 6, hem locked inward vs resting on the hip colliders at 53°).
+                // Anti-poke duty falls to Edge collision + 150 Hz + the authored colliders (correct radii now).
+                bool sheet = acc.BoxN * 2 >= acc.BodyN && acc.BodyN > 0;   // still used for the maxDistance leash
+                var conn = RenderSetupData.BoneConnectionMode.Line;
+                float radWorld = radMean * unitScale;   // particle radius is WORLD-space (× scaleRatio=1, not lossyScale)
+                float chainLenWorld = Mathf.Max((acc.MaxY - acc.MinY) * unitScale, radWorld);   // ≈ how far the hem can physically travel
+
                 var partCols = allCols != null ? allCols : SelectColliders(acc, colRecs);
-                // A SKIRT is a closed ring of panels: mesh-connect its strands so a fast leg can't slip BETWEEN two
-                // panels (independent Line strands leave gaps that Edge collision has no edge to catch → poke-through on
-                // big moves). Hair/bangs/tie stay Line (they ARE independent strands).
-                var conn = part == SKIRT ? RenderSetupData.BoneConnectionMode.AutomaticMesh
-                                         : RenderSetupData.BoneConnectionMode.Line;
-                // Magica's particle radius is applied in WORLD space (× scaleRatio, which is 1 here — NOT × the cloth's
-                // lossyScale like colliders), so convert the authored raw radius to world by × unitScale, else the skirt
-                // is ~unitScale× too thin to catch limbs (clipping).
-                float radWorld = radMean * unitScale;
-                SdoLog.Note("mmd", $"  cloth[{names[part]}] roots={acc.Roots.Count} cols={partCols.Count} conn={conn} " +
-                                   $"-> stiff={stiff:F2} damp={damping:F2} wInertia={worldInertia:F2} depthI={depthInertia:F2} radiusW={radWorld:F2}");
-                BuildCloth(host, names[part], acc.Roots, partCols, baseGravity * gravMul[part], stiff, damping, radWorld, u, conn, part == SKIRT, worldInertia, depthInertia);
+                // Inertia reference = the bone the chain hangs from (the kinematic anchor: head/hip/…). The SDO dance is
+                // in the bones, so a cloth under the static _mmdRoot sees no body motion; parenting to the anchor makes a
+                // spin rotate the reference → inertia carries the chain.
+                Transform refT = (acc.AnchorBone >= 0 && acc.AnchorBone < bc && bone[acc.AnchorBone] != null) ? bone[acc.AnchorBone] : host.transform;
+                SdoLog.Note("mmd", $"  cloth[{names[part]}] roots={acc.Roots.Count} cols={partCols.Count} {(sheet ? "MESH" : "line")} anchor={(acc.AnchorBone >= 0 ? pmx.Bones[acc.AnchorBone].NameJp : "root")} " +
+                                   $"massR/T={massRoot:F1}/{massTip:F2} spring={springMean:F1} -> angle={(useAngle ? angleStiff.ToString("F2") : "off")} limit={angleLimitDeg:F1}° gFall={gravityFalloff:F2} " +
+                                   $"damp={dampRoot:F2}→{dampTip:F2} wInertia={worldInertia:F2} depthI={depthInertia:F2} radW={radWorld:F2} g={gravity:F0}(upm={unitsPerMeter:F1})");
+                BuildCloth(refT, names[part], acc.Roots, partCols, gravity, gravityFalloff, useAngle, angleStiff, angleLimitDeg,
+                           dampRoot, dampTip, radWorld, conn, sheet, worldInertia, depthInertia, unitsPerMeter, chainLenWorld);
             }
 
             // Fast dance = fast bones; raise the global solver rate (default 90) to its hard cap (150) so a limb moves
@@ -250,52 +317,73 @@ namespace Sdo.Game
             Capsule("右足", "右ひざ", 0.34f); Capsule("右ひざ", "右足首", 0.26f);
         }
 
-        private void BuildCloth(GameObject host, string name, List<Transform> roots, List<ColliderComponent> cols,
-                                float gravity, float angleStiff, float damping, float particleRadius, float unitScale,
-                                RenderSetupData.BoneConnectionMode connectionMode, bool pinRoot, float worldInertia, float depthInertia)
+        private void BuildCloth(Transform parentT, string name, List<Transform> roots, List<ColliderComponent> cols,
+                                float gravity, float gravityFalloff, bool useAngle, float angleStiff, float angleLimitDeg,
+                                float dampRoot, float dampTip, float particleRadius,
+                                RenderSetupData.BoneConnectionMode connectionMode, bool sheet, float worldInertia, float depthInertia,
+                                float unitsPerMeter, float chainLenWorld)
         {
             if (roots.Count == 0) return;
             var go = new GameObject(name);
-            go.transform.SetParent(host.transform, false);
+            go.transform.SetParent(parentT, false);   // parentT = the anchor bone → its motion is the cloth's inertia reference
             var cloth = go.AddComponent<MagicaCloth>();
             var sd = cloth.SerializeData;
             sd.clothType = ClothProcess.ClothType.BoneCloth;
             sd.connectionMode = connectionMode;          // Line strands vs AutomaticMesh sheet (skirt) — build-time only
             sd.updateMode = ClothUpdateMode.Normal;      // we pose bones in a manual LateUpdate (no Animator to link to)
+            // ALWAYS simulate: default camera culling (AnimatorLinkage/AutomaticRenderer) looks for a renderer under the
+            // cloth GO — ours is an empty holder (the SkinnedMeshRenderer lives elsewhere), so the sim can be suspended
+            // as "invisible" (headless probe: rigid follow, zero physics). The dancer is always on screen anyway.
+            sd.cullingSettings.cameraCullingMode = CullingSettings.CameraCullingMode.Off;
             foreach (var r in roots) sd.rootBones.Add(r);
-            sd.gravity = gravity;
-            sd.damping.SetValue(Mathf.Clamp01(damping));               // authored angular damping → air resistance
-            // Particle thickness as a root→tip CURVE: THIN near the body (0.35×) so the fabric next to the waist/neck
-            // doesn't get puffed up over the hip/shoulder colliders, FULL toward the tip where it must catch the legs.
+            sd.gravity = gravity;                                // gravityDirection defaults to (0,-1,0) = world down
+            sd.gravityFalloff = Mathf.Clamp01(gravityFalloff);   // 0 = hang straight down; 1 (pinned bang) = hold rest shape
+            // authored linear-damping gradient → root→tip air-resistance curve (root light, tip heavier so the tip settles)
+            if (dampTip > 1e-4f) sd.damping.SetValue(dampTip, dampRoot / dampTip, 1f);
+            else sd.damping.SetValue(Mathf.Clamp01(dampRoot));
+            // Particle thickness = the body's own collision radius (world-scaled), THIN near the body (0.35×) so it doesn't
+            // puff over the adjacent hip/shoulder collider, FULL toward the tip where it must catch limbs.
             if (particleRadius > 1e-4f) sd.radius.SetValue(particleRadius, 0.35f, 1f);
-            // hold chain lengths (shape) with distance restoration; ANGLE restoration = authored firmness (0 = hang free
-            // for the tie — gravity + distance only, no pull back to the styled pose).
-            sd.distanceConstraint.stiffness.SetValue(1f);
-            sd.angleRestorationConstraint.useAngleRestoration = angleStiff > 0.001f;
-            if (angleStiff > 0.001f) sd.angleRestorationConstraint.stiffness.SetValue(angleStiff);
-            // Inertia: the cloth must PICK UP the body's motion (spins especially). Keep full world inertia but only
-            // LIGHTLY smooth it (0.3, near Magica's 0.4 default) — the earlier 0.9 over-smoothed it into "floaty, won't
-            // react" hair. Raise the world-ROTATION cap far above the default 720°/s so a fast dance spin fully carries
-            // the hair/tie out instead of being clamped ("速度帶不上來").
-            sd.inertiaConstraint.worldInertia = worldInertia;   // per-part: bangs low (barely react), hair/skirt full
-            sd.inertiaConstraint.depthInertia = depthInertia;   // anchor the root, free the tip → chain whips as a whole
-            sd.inertiaConstraint.movementInertiaSmoothing = 0.3f;
-            float uu = Mathf.Max(unitScale, 1f);
-            sd.inertiaConstraint.movementSpeedLimit = new CheckSliderSerializeData(true, 5f * uu * 3f);
-            sd.inertiaConstraint.rotationSpeedLimit = new CheckSliderSerializeData(true, 2000f);   // was default 720°/s
-            sd.inertiaConstraint.particleSpeedLimit = new CheckSliderSerializeData(true, 4f * uu * 10f);
-            // Keep each particle near where the ANIMATION drapes it — pinned tight at the root (0.12×), loose at the hem
-            // (1.0×). Stops the skirt from riding up over the hips (near-body puff) and, on a body spin, from wrapping up
-            // onto the body and not falling back (it can never travel more than maxDistance from its drape). Skirt only —
-            // hair/tie must stay free to swing.
-            if (pinRoot)
+            sd.distanceConstraint.stiffness.SetValue(1f);   // 0/0-position joints = inextensible strand
+            // ANGLE restoration ON only where the joint has a rotation SPRING (pinned to a shape, e.g. the fringe);
+            // spring-less chains get a per-joint ANGLE LIMIT instead (the Bullet locked-limit analog): they hang and
+            // swing freely WITHIN the limit, so long chains keep their authored shape structurally.
+            sd.angleRestorationConstraint.useAngleRestoration = useAngle;
+            if (useAngle) sd.angleRestorationConstraint.stiffness.SetValue(angleStiff);
+            if (angleLimitDeg > 0.01f)
+            {
+                sd.angleLimitConstraint.useAngleLimit = true;
+                sd.angleLimitConstraint.limitAngle.SetValue(angleLimitDeg);
+                sd.angleLimitConstraint.stiffness = 1f;
+            }
+            // FOLLOW the anchor bone with a lag (= swing). worldInertia < 1 so the reference frame is dragged by the body
+            // (1 = ignore body motion = the won't-follow failure); depthInertia carries the heavy root / lets the light tip
+            // lag (whip). movementInertiaSmoothing 0.3 low-passes jitter without smoothing away a fast spin.
+            sd.inertiaConstraint.worldInertia = Mathf.Clamp01(worldInertia);
+            sd.inertiaConstraint.depthInertia = Mathf.Clamp01(depthInertia);
+            // light smoothing: MMD imparts motion unsmoothed, but Magica's impulsive shift over-whips vs Bullet's
+            // constraint-solved transfer (twintail turn amp +59% at 0.1); 0.15 shaves the spike, 0.3 was too slow.
+            sd.inertiaConstraint.movementInertiaSmoothing = 0.15f;
+            // MMD imposes no world speed caps → DISABLE movement + rotation limits (let the cloth lag on fast walk/spin).
+            // Particle speed stays as an anti-explosion safety, but at REAL scale: 8 m/s × unitsPerMeter (~256 u/s), not
+            // Magica's SI default (10 u/s = 0.31 m/s here = hair physically unable to keep up with a dancing body).
+            // Requires the MC2 MaxParticleSpeedLimit clamp raised (local patch); clamps back to 10 until then.
+            sd.inertiaConstraint.movementSpeedLimit = new CheckSliderSerializeData(false, 10f);
+            sd.inertiaConstraint.rotationSpeedLimit = new CheckSliderSerializeData(false, 1440f);
+            sd.inertiaConstraint.particleSpeedLimit = new CheckSliderSerializeData(true, 8f * unitsPerMeter);
+            // A panel RING (skirt) is leashed to its animated drape (root tight 0.12×, hem loose) so it can't wrap up onto
+            // the body on a spin and stay; strands (hair/tie) are free to swing (no leash).
+            if (sheet)
             {
                 sd.motionConstraint.useMaxDistance = true;
-                sd.motionConstraint.maxDistance.SetValue(4f, 0.12f, 1f);   // world units (clamped 0..5); depth²-biased
+                // hem may travel up to its own chain length from the animated drape (the physical maximum for a panel
+                // pinned at the waist). Root leash loosened 0.12→0.5: the tight leash suppressed ALL skirt dynamics
+                // (measured 0 oscillations vs ref 6, walk stream −45%); the anti-wrap job is mostly done by the angle
+                // restoration now. The stock 0..5 u clamp (16 cm equiv) is patched to 100.
+                sd.motionConstraint.maxDistance.SetValue(Mathf.Min(100f, chainLenWorld), 0.5f, 1f);
             }
-            // EDGE collision (segments between particles) so a fast leg/arm can't slip THROUGH the cloth; a little
-            // friction so a rising leg drags the panel along instead of shearing past — but LOW (0.15) so the skirt
-            // slides back DOWN after a spin instead of sticking wrapped up on the body.
+            // EDGE collision (segments) so a fast limb can't slip THROUGH between particles; low friction so a rising leg
+            // drags the panel a little then it slides back down (MMD cloth-side friction is 0; body friction not fed raw).
             sd.colliderCollisionConstraint.mode = ColliderCollisionConstraint.Mode.Edge;
             sd.colliderCollisionConstraint.friction = 0.15f;
             sd.colliderCollisionConstraint.colliderList.AddRange(cols);

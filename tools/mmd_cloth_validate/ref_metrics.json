@@ -1,0 +1,54 @@
+{
+  "unitsPerMeter": 12.777686404733686,
+  "fps": 60,
+  "chains": {
+    "RightTwicHairA": {
+      "chainLenM": 1.399,
+      "restDroopDeg": 31.8,
+      "settleTime": 1.933,
+      "turnPeakAmp": 1.1927,
+      "turnPeakAmpNorm": 0.8525,
+      "turnLagMs": 483.3,
+      "oscillations": 5,
+      "walkStreamDeg": 32.09,
+      "walkRecoverySec": 0.183,
+      "spinFlingAmp": 0.2224
+    },
+    "BangHairA": {
+      "chainLenM": 0.1024,
+      "restDroopDeg": 38.63,
+      "settleTime": 0.2,
+      "turnPeakAmp": 0.176,
+      "turnPeakAmpNorm": 1.7194,
+      "turnLagMs": 150.0,
+      "oscillations": 1,
+      "walkStreamDeg": 53.67,
+      "walkRecoverySec": 0.0,
+      "spinFlingAmp": 0.0075
+    },
+    "Tie": {
+      "chainLenM": 0.4806,
+      "restDroopDeg": 23.54,
+      "settleTime": 1.7,
+      "turnPeakAmp": 0.0215,
+      "turnPeakAmpNorm": 0.0447,
+      "turnLagMs": -133.3,
+      "oscillations": 0,
+      "walkStreamDeg": 60.92,
+      "walkRecoverySec": 0.0,
+      "spinFlingAmp": 0.2418
+    },
+    "Dress_5": {
+      "chainLenM": 0.3084,
+      "restDroopDeg": 53.3,
+      "settleTime": 3.517,
+      "turnPeakAmp": 0.0539,
+      "turnPeakAmpNorm": 0.1746,
+      "turnLagMs": 483.3,
+      "oscillations": 6,
+      "walkStreamDeg": 58.64,
+      "walkRecoverySec": 0.0,
+      "spinFlingAmp": 0.0667
+    }
+  }
+}
