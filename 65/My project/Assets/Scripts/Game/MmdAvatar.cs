@@ -30,6 +30,10 @@ namespace Sdo.Game
         public bool UseAim = true;
         /// <summary>Show MMD sphere maps (matcap sheen/glow). Toggle live to compare.</summary>
         public bool ShowSphere = true;
+        /// <summary>Cel-shading toon ramp (N·L, fixed light). Toggle live.</summary>
+        public bool ShowToon = true;
+        /// <summary>MMD pencil outline (inverted-hull edge). Toggle live.</summary>
+        public bool ShowOutline = true;
         /// <summary>Flip the mesh UV V (uv.y = 1-uv.y) — the canonical MMD→Unity fix (PMX UVs are V-down). Toggle live
         /// to find the orientation whose atlas maps correctly (green necktie, not skin).</summary>
         public bool FlipV = true;
@@ -46,6 +50,8 @@ namespace Sdo.Game
         private Vector3[] _aimRestDir;             // MMD rest bone→child direction (root-local, normalised)
         private bool[] _useDelta;                  // non-aimed bone drives by world-delta (root + head: need absolute
                                                    // orientation) vs following its parent (hand/foot/fingertip: stable)
+        private bool[] _isPhysics;                 // hair/skirt/tie bones — owned by the cloth sim (Magica/spring); the
+                                                   // retarget MUST NOT write them each frame or it fights the sim (jitter)
         private Quaternion[] _rwLocal;             // scratch: world-in-root-local rotation per bone this frame
         private Quaternion[] _animLocalRot;        // per-bone local rotation this frame (append source)
         private int[] _appendParent;               // PMX 付与 parent per bone (-1 none)
@@ -57,6 +63,11 @@ namespace Sdo.Game
         private int _hrcRootIndex = -1;
         private Vector3 _hrcRootRestPos, _rootRestLocal;
         private readonly List<KeyValuePair<Material, float>> _sphereMats = new List<KeyValuePair<Material, float>>();  // (material, its sphere mode)
+        private readonly List<Material> _toonMats = new List<Material>();
+        private readonly List<KeyValuePair<Material, float>> _edgeMats = new List<KeyValuePair<Material, float>>();   // (material, its edge size)
+        private MmdSpringBones _spring;
+        private MmdMagicaCloth _magica;   // preferred cloth solver (Magica Cloth 2); _spring is the fallback
+        private bool _visible = true, _physicsOn = true;   // physics runs only when BOTH hold (independent toggles)
         private bool[] _hide;                       // material not drawn (morph-hidden / overlay)
         private bool _ready;
 
@@ -154,6 +165,8 @@ namespace Sdo.Game
             if (_rootBone >= 0) _rootRestLocal = _bone[_rootBone].localPosition;
             if (hrc.Index.TryGetValue("Bip01", out int rootH)) { _hrcRootIndex = rootH; _hrcRootRestPos = hrc.BindWorld[rootH].GetColumn(3); }
 
+            _isPhysics = new bool[bc];
+            foreach (int i in pmx.PhysicsBones) if (i >= 0 && i < bc) _isPhysics[i] = true;   // cloth-owned; skip in retarget
             _order = TopoOrder(_parent);
             _rwLocal = new Quaternion[bc]; _animLocalRot = new Quaternion[bc];
             _appendParent = new int[bc]; _appendWeight = new float[bc];
@@ -167,9 +180,17 @@ namespace Sdo.Game
             _appendOrder = BuildAppendOrder(bc);
 
             SetLayer(_mmdRoot.gameObject, layer);
+            _magica = MmdMagicaCloth.Setup(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale);   // Magica Cloth 2 (preferred)
+            if (_magica == null)   // package missing / setup failed → hand-rolled spring bones
+            {
+                _spring = MmdSpringBones.Attach(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _mmdRoot);
+                BuildColliders(pmx, _unitScale);
+            }
             _ready = true;
+            string phys = _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col)" : (_spring != null ? "spring" : "none");
             LogMilestone($"[mmd] built '{pmx.NameJp}': {pmx.VertexCount} verts, {pmx.Materials.Count} mats, {bc} bones, " +
-                         $"scale={_unitScale:F3}, facing={_qroot.eulerAngles.y:F0}°, driven={CountDriven()}/{bc}, aimed={aimed}, sphere={_sphereMats.Count}");
+                         $"scale={_unitScale:F3}, facing={_qroot.eulerAngles.y:F0}°, driven={CountDriven()}/{bc}, aimed={aimed}, " +
+                         $"sphere={_sphereMats.Count}, toon={_toonMats.Count}, edge={_edgeMats.Count}, physics={pmx.PhysicsBones.Count}({phys})");
         }
 
         // Precompute the aim target/direction for every mapped bone that has a mapped child.
@@ -201,6 +222,7 @@ namespace Sdo.Game
             for (int k = 0; k < _order.Length; k++)
             {
                 int i = _order[k];
+                if (_isPhysics[i]) continue;                             // cloth sim (Magica/spring) owns this bone — don't fight it
                 int p = _parent[i];
                 Quaternion parentRw = p >= 0 ? _rwLocal[p] : Quaternion.identity;
                 Quaternion rw;
@@ -390,8 +412,22 @@ namespace Sdo.Game
                     if (sph != null) { mat.SetTexture("_SphereTex", sph); sphereMode = pm.SphereMode; _sphereMats.Add(new KeyValuePair<Material, float>(mat, sphereMode)); }
                 }
                 mat.SetFloat("_SphereMode", ShowSphere ? sphereMode : 0f);
+
+                // toon ramp (cel shading): a vertical light→shadow gradient sampled by N·L. Either a per-material toon
+                // TEXTURE (ToonIndex) or a built-in SHARED toon (ToonShared 0..9) → a synthesized 2-tone ramp fallback.
+                Texture2D toon = pm.ToonIndex >= 0 && pm.ToonIndex < pmx.TexturePaths.Length ? LoadTexture(dir, pmx.TexturePaths[pm.ToonIndex]) : null;
+                if (toon == null && pm.ToonShared >= 0) toon = DefaultToonRamp();
+                bool hasToon = toon != null;
+                if (hasToon) { toon.wrapMode = TextureWrapMode.Clamp; mat.SetTexture("_ToonTex", toon); _toonMats.Add(mat); }
+                mat.SetFloat("_UseToon", (ShowToon && hasToon) ? 1f : 0f);
+
+                // pencil outline: only edge-flagged materials get a non-zero edge size.
+                mat.SetColor("_EdgeColor", pm.EdgeColor);
+                if (pm.HasEdge) _edgeMats.Add(new KeyValuePair<Material, float>(mat, pm.EdgeSize));
+                mat.SetFloat("_EdgeSize", (ShowOutline && pm.HasEdge) ? pm.EdgeSize : 0f);
+
                 mats[i] = mat;
-                SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{Path.GetFileName(texName)}' {(cutout ? "CUTOUT" : "opaque")}{(pm.DoubleSided ? " 2sided" : "")}{(sphereMode > 0 ? " +sphere" + (int)sphereMode : "")}");
+                SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{Path.GetFileName(texName)}' {(cutout ? "CUTOUT" : "opaque")}{(pm.DoubleSided ? " 2sided" : "")}{(sphereMode > 0 ? " +sphere" + (int)sphereMode : "")}{(hasToon ? " +toon" : "")}{(pm.HasEdge ? " +edge" : "")}");
             }
             return mats;
         }
@@ -401,6 +437,60 @@ namespace Sdo.Game
 
         /// <summary>Live toggle: flip the mesh UV V (find the atlas-correct orientation without a recompile).</summary>
         public void SetFlipV(bool on) { FlipV = on; if (_mesh != null && _uvVerbatim != null) _mesh.uv = on ? _uvFlipped : _uvVerbatim; }
+
+        /// <summary>Live toggle: cel-shading toon ramp on/off.</summary>
+        public void SetToon(bool on) { ShowToon = on; foreach (var m in _toonMats) if (m != null) m.SetFloat("_UseToon", on ? 1f : 0f); }
+
+        // Synthesized shared-toon ramp (shadow at V=0 → lit at V=1) for materials that reference a built-in MMD toon
+        // (toon01..toon10) we don't bundle. Cached; the shader samples it at (0.5, N·L) so lit=top, shadow=bottom.
+        private static Texture2D _defToon;
+        private static Texture2D DefaultToonRamp()
+        {
+            if (_defToon != null) return _defToon;
+            const int h = 32;
+            var t = new Texture2D(1, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            var px = new Color32[h];
+            for (int y = 0; y < h; y++) { byte b = (byte)(Mathf.SmoothStep(0.55f, 1f, y / (float)(h - 1)) * 255f); px[y] = new Color32(b, b, b, 255); }
+            t.SetPixels32(px); t.Apply(false); _defToon = t; return t;
+        }
+
+        /// <summary>Live toggle: pencil outline on/off (restores each material's authored edge size).</summary>
+        public void SetOutline(bool on) { ShowOutline = on; foreach (var kv in _edgeMats) if (kv.Key != null) kv.Key.SetFloat("_EdgeSize", on ? kv.Value : 0f); }
+
+        /// <summary>Live toggle / tune of the hair-skirt spring-bone sway.</summary>
+        public void SetPhysics(bool on) { _physicsOn = on; UpdateSpring(); }
+        public void TunePhysics(float stiffness, float drag, float gravMul)
+        {
+            if (_spring != null) _spring.SetTuning(stiffness, drag, gravMul);
+            if (_magica != null) _magica.Tune(gravMul, stiffness / 0.12f);   // 0.12 = panel default → stiffMul 1
+        }
+        public void SetColliderRadius(float mul) { if (_spring != null) _spring.ColliderMul = mul; if (_magica != null) _magica.SetColliderRadius(mul); }
+        private void UpdateSpring() { bool on = _visible && _physicsOn; if (_spring != null) _spring.enabled = on; if (_magica != null) _magica.SetEnabled(on); }
+
+        // Body colliders so hair/skirt tails don't sink into the body: CAPSULES down the legs + torso (they cover the
+        // gaps that spheres leave between thigh/knee), plus hip + head spheres. Radius ∝ leg spacing (half hip width).
+        private void BuildColliders(PmxLoader pmx, float unitScale)
+        {
+            if (_spring == null) return;
+            float hipHalf = (MmdBonePos(pmx, "左足") - MmdBonePos(pmx, "右足")).magnitude * 0.5f * unitScale;
+            if (hipHalf < 1e-3f) hipHalf = (MmdBonePos(pmx, "左腕") - MmdBonePos(pmx, "右腕")).magnitude * 0.3f * unitScale;
+            if (hipHalf < 1e-3f) return;
+            var a = new List<Transform>(); var b = new List<Transform>(); var r = new List<float>();
+            AddCapsule(a, b, r, pmx, "上半身2", "下半身", hipHalf * 0.85f);   // torso
+            AddCapsule(a, b, r, pmx, "左足", "左ひざ", hipHalf * 0.55f);       // left thigh
+            AddCapsule(a, b, r, pmx, "左ひざ", "左足首", hipHalf * 0.45f);     // left shin
+            AddCapsule(a, b, r, pmx, "右足", "右ひざ", hipHalf * 0.55f);       // right thigh
+            AddCapsule(a, b, r, pmx, "右ひざ", "右足首", hipHalf * 0.45f);     // right shin
+            AddCapsule(a, b, r, pmx, "下半身", "下半身", hipHalf * 1.0f);      // hips (sphere)
+            AddCapsule(a, b, r, pmx, "頭", "頭", hipHalf * 0.9f);             // head (sphere) — keep hair off the crown
+            if (a.Count > 0) _spring.SetColliders(a.ToArray(), b.ToArray(), r.ToArray());
+        }
+        private void AddCapsule(List<Transform> a, List<Transform> b, List<float> r, PmxLoader pmx, string n0, string n1, float radius)
+        {
+            int i0 = FindBoneIndex(pmx, n0), i1 = FindBoneIndex(pmx, n1);
+            if (i0 >= 0 && i1 >= 0 && _bone[i0] != null && _bone[i1] != null) { a.Add(_bone[i0]); b.Add(_bone[i1]); r.Add(radius); }
+        }
+        private static int FindBoneIndex(PmxLoader pmx, string nameJp) { for (int i = 0; i < pmx.Bones.Count; i++) if (pmx.Bones[i].NameJp == nameJp) return i; return -1; }
 
         private static void AlphaStats(Texture2D tex, out float midFrac, out float holeFrac)
         {
@@ -476,6 +566,7 @@ namespace Sdo.Game
             var smr = GetComponentInChildren<SkinnedMeshRenderer>(true);
             if (smr != null) smr.enabled = on;
             enabled = on;
+            _visible = on; UpdateSpring();   // spring runs only when visible AND physics-enabled (no toggle clobber)
         }
     }
 }

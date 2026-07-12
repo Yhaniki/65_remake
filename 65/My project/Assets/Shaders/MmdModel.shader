@@ -1,9 +1,10 @@
-// MMD (.pmx) material shader — faithful-ish unlit port of MMD's fixed-function look:
-//   base texture × diffuse, optional SPHERE map (matcap sampled by the VIEW-space normal: multiply = .sph sheen,
-//   add = .spa glow), optional TOON ramp (N·L, fixed light), and per-material alpha (opaque / alpha-test cutout /
-//   alpha-blend) + cull, all driven by material properties so one shader covers every PMX material class.
-// Sphere is the defining MMD texture feature (eye highlights, skin/metal sheen); it needs no scene light, so it's on
-// by default. Toon needs a light direction (approximated) and is opt-in.
+// MMD (.pmx) material shader — unlit port of MMD's fixed-function look:
+//   Pass 1 (base): base texture × diffuse, optional SPHERE map (matcap by view normal: multiply=.sph sheen,
+//     add=.spa glow), optional TOON ramp (N·L, fixed light), per-material alpha (opaque / alpha-test cutout /
+//     alpha-blend) + cull.
+//   Pass 2 (outline): MMD-style pencil edge — inverted hull, back-faces expanded along the view normal by a
+//     screen-constant width (_OutlineWidth × per-material _EdgeSize), drawn in _EdgeColor; skipped when _EdgeSize≈0.
+// One shader covers every PMX material class; the C# side sets the properties per material.
 Shader "Sdo/MmdModel"
 {
     Properties
@@ -16,6 +17,9 @@ Shader "Sdo/MmdModel"
         _UseToon ("Use Toon", Float) = 0
         _Cutoff ("Alpha Cutoff", Float) = 0.5
         _AlphaClip ("Alpha Clip", Float) = 0
+        _EdgeColor ("Edge Colour", Color) = (0,0,0,1)
+        _EdgeSize ("Edge Size (per-material)", Float) = 0
+        _OutlineWidth ("Outline Width (global)", Float) = 0.0018
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend ("Src Blend", Float) = 1
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend ("Dst Blend", Float) = 0
@@ -24,6 +28,8 @@ Shader "Sdo/MmdModel"
     SubShader
     {
         Tags { "RenderType"="Opaque" "Queue"="Geometry" }
+
+        // ---- base ----
         Pass
         {
             Cull [_Cull]
@@ -35,13 +41,7 @@ Shader "Sdo/MmdModel"
             #include "UnityCG.cginc"
 
             struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
-            struct v2f
-            {
-                float4 pos : SV_POSITION;
-                float2 uv : TEXCOORD0;
-                float3 vnormal : TEXCOORD1;   // view-space normal (sphere sampling)
-                float3 wnormal : TEXCOORD2;   // world normal (toon)
-            };
+            struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; float3 vnormal : TEXCOORD1; float3 wnormal : TEXCOORD2; };
 
             sampler2D _MainTex; float4 _MainTex_ST;
             sampler2D _SphereTex; sampler2D _ToonTex;
@@ -62,21 +62,61 @@ Shader "Sdo/MmdModel"
             {
                 fixed4 c = tex2D(_MainTex, i.uv) * _Color;
                 if (_AlphaClip > 0.5) clip(c.a - _Cutoff);
-
                 if (_SphereMode > 0.5)
                 {
-                    float2 suv = normalize(i.vnormal).xy * 0.5 + 0.5;   // MMD spherical matcap coords
+                    float2 suv = normalize(i.vnormal).xy * 0.5 + 0.5;
                     fixed3 s = tex2D(_SphereTex, suv).rgb;
-                    if (_SphereMode < 1.5) c.rgb *= s;                  // .sph multiply (sheen/shading)
-                    else c.rgb += s;                                    // .spa add (highlight/glow)
+                    if (_SphereMode < 1.5) c.rgb *= s; else c.rgb += s;
                 }
                 if (_UseToon > 0.5)
                 {
-                    float3 L = normalize(float3(-0.4, -1.0, -0.5));     // approximate MMD default key light
+                    float3 L = normalize(float3(-0.4, -1.0, -0.5));
                     float d = saturate(dot(normalize(i.wnormal), -L));
-                    c.rgb *= tex2D(_ToonTex, float2(0.5, d)).rgb;       // toon ramp (vertical)
+                    c.rgb *= tex2D(_ToonTex, float2(0.5, d)).rgb;
                 }
                 return c;
+            }
+            ENDCG
+        }
+
+        // ---- outline (inverted hull) ----
+        Pass
+        {
+            Name "Outline"
+            Cull Front
+            ZWrite On
+            CGPROGRAM
+            #pragma vertex vo
+            #pragma fragment fo
+            #include "UnityCG.cginc"
+
+            struct ai { float4 vertex : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
+            struct vf { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
+
+            sampler2D _MainTex; float4 _MainTex_ST;
+            float _EdgeSize, _OutlineWidth, _Cutoff, _AlphaClip;
+            fixed4 _EdgeColor;
+
+            vf vo (ai v)
+            {
+                vf o;
+                float4 clip = UnityObjectToClipPos(v.vertex);
+                float3 vn = normalize(mul((float3x3)UNITY_MATRIX_IT_MV, v.normal));   // view-space normal
+                // expand in clip xy by a screen-constant amount (×clip.w survives the perspective divide); silhouettes
+                // (normal ⟂ view → big xy) get the outline, front faces (small xy) barely move. The x is scaled by
+                // height/width so the outline is PIXEL-uniform (not NDC-uniform → thicker sideways on a wide viewport).
+                float2 aspect = float2(_ScreenParams.y / _ScreenParams.x, 1.0);
+                clip.xy += vn.xy * aspect * (_OutlineWidth * max(_EdgeSize, 0.0)) * clip.w;
+                o.pos = clip;
+                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                return o;
+            }
+
+            fixed4 fo (vf i) : SV_Target
+            {
+                if (_EdgeSize < 0.001) discard;                      // non-edge material → no outline
+                if (_AlphaClip > 0.5) clip(tex2D(_MainTex, i.uv).a - _Cutoff);   // don't outline transparent (hair) holes
+                return _EdgeColor;
             }
             ENDCG
         }

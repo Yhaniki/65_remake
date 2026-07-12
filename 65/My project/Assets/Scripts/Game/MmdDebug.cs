@@ -97,6 +97,7 @@ namespace Sdo.Game
                 r.Mmd = MmdAvatar.Build(r.Avatar, pmx, _mikuDir, r.Avatar.gameObject.layer);
                 if (r.Mmd == null) { _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); return true; }
                 r.Mmd.UseAim = _aim; r.Mmd.DriveRootTranslation = _rootMove; r.Mmd.SetSphere(_sphere); r.Mmd.SetFlipV(_flipV);   // honour the live debug toggles
+                r.Mmd.SetToon(_toon); r.Mmd.SetOutline(_outline); r.Mmd.SetPhysics(_physics); r.Mmd.TunePhysics(_stiff, 0.6f, _gravMul); r.Mmd.SetColliderRadius(_colMul);
             }
             // SDO body parts are MeshRenderers; the MMD body is a SkinnedMeshRenderer — so toggling MeshRenderers
             // never touches the MMD mesh (and vice-versa). The SdoAvatar component keeps running as the motion driver.
@@ -164,29 +165,50 @@ namespace Sdo.Game
             if (!string.IsNullOrEmpty(sa)) yield return Path.Combine(sa, "IkaHatunemiku2025");
         }
 
-        // live retarget/render toggles (diagnose without a recompile)
+        // live retarget/render toggles (diagnose / tune without a recompile)
         private static bool _aim = true;        // matches MmdAvatar.UseAim default
         private static bool _sphere = true;     // matches MmdAvatar.ShowSphere default
         private static bool _rootMove = true;   // matches MmdAvatar.DriveRootTranslation default
         private static bool _flipV = true;      // matches MmdAvatar.FlipV default
+        private static bool _toon = true;       // cel shading
+        private static bool _outline = true;    // pencil edge
+        private static bool _physics = true;    // hair/skirt sway
+        private static float _gravMul = 1f;     // spring-bone gravity multiplier
+        private static float _stiff = 0.12f;    // spring stiffness (matches MmdSpringBones default; low = gravity hangs it)
+        private static float _colMul = 1f;      // body-collider radius multiplier
 
         private void ApplyOpts()
         {
-            foreach (var r in _regs) if (r.Mmd != null) { r.Mmd.UseAim = _aim; r.Mmd.DriveRootTranslation = _rootMove; r.Mmd.SetSphere(_sphere); r.Mmd.SetFlipV(_flipV); }
+            foreach (var r in _regs) if (r.Mmd != null)
+            {
+                r.Mmd.UseAim = _aim; r.Mmd.DriveRootTranslation = _rootMove; r.Mmd.SetSphere(_sphere); r.Mmd.SetFlipV(_flipV);
+                r.Mmd.SetToon(_toon); r.Mmd.SetOutline(_outline); r.Mmd.SetPhysics(_physics); r.Mmd.TunePhysics(_stiff, 0.6f, _gravMul); r.Mmd.SetColliderRadius(_colMul);
+            }
         }
 
         // Unmissable on-screen state + click-to-toggle buttons (so a key conflict / editor focus can't hide the feature).
         private void OnGUI()
         {
-            const int w = 344, h = 192;
+            const int w = 344, h = 326;
             GUI.Box(new Rect(8, 8, w, h), "MMD 顯示實驗");
             GUI.Label(new Rect(16, 30, w - 16, 20), $"狀態: {(_mmdOn ? "MMD (初音)" : "SDO 原角色")}   模型: {_status}");
             GUI.Label(new Rect(16, 48, w - 16, 20), $"可切換舞者: {_regs.Count}" + (string.IsNullOrEmpty(_lastError) ? "" : "   err: " + _lastError));
             if (GUI.Button(new Rect(16, 68, 200, 22), _mmdOn ? "切回 SDO 角色 (F8)" : "切成 MMD 初音 (F8)")) Toggle();
             if (GUI.Button(new Rect(16, 94, 320, 20), $"貼圖V翻轉 flipV: {(_flipV ? "ON" : "OFF")}  ←領帶錯就切這個")) { _flipV = !_flipV; ApplyOpts(); }
             if (GUI.Button(new Rect(16, 116, 320, 20), $"aim 重定向: {(_aim ? "ON" : "OFF")}  (手腳姿勢)")) { _aim = !_aim; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 138, 320, 20), $"sphere 反光貼圖: {(_sphere ? "ON" : "OFF")}")) { _sphere = !_sphere; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 160, 320, 20), $"根位移 rootMove: {(_rootMove ? "ON" : "OFF")}")) { _rootMove = !_rootMove; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 138, 320, 20), $"sphere 反光: {(_sphere ? "ON" : "OFF")}")) { _sphere = !_sphere; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 160, 320, 20), $"toon 卡通著色: {(_toon ? "ON" : "OFF")}")) { _toon = !_toon; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 182, 320, 20), $"outline 描邊: {(_outline ? "ON" : "OFF")}")) { _outline = !_outline; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 204, 320, 20), $"physics 頭髮裙擺物理: {(_physics ? "ON" : "OFF")}")) { _physics = !_physics; ApplyOpts(); }
+            GUI.Label(new Rect(16, 227, 130, 20), $"重力 ×{_gravMul:F2}  硬度 ×{_stiff:F2}");
+            if (GUI.Button(new Rect(150, 225, 40, 20), "重-")) { _gravMul = Mathf.Max(0.05f, _gravMul * 0.7f); ApplyOpts(); }
+            if (GUI.Button(new Rect(192, 225, 40, 20), "重+")) { _gravMul = Mathf.Min(8f, _gravMul * 1.4f); ApplyOpts(); }
+            if (GUI.Button(new Rect(250, 225, 40, 20), "硬-")) { _stiff = Mathf.Max(0.03f, _stiff * 0.75f); ApplyOpts(); }
+            if (GUI.Button(new Rect(292, 225, 40, 20), "硬+")) { _stiff = Mathf.Min(0.9f, _stiff * 1.3f); ApplyOpts(); }
+            GUI.Label(new Rect(16, 251, 140, 20), $"身體碰撞半徑 ×{_colMul:F2}");
+            if (GUI.Button(new Rect(150, 249, 40, 20), "碰-")) { _colMul = Mathf.Max(0.2f, _colMul * 0.85f); ApplyOpts(); }
+            if (GUI.Button(new Rect(192, 249, 40, 20), "碰+")) { _colMul = Mathf.Min(4f, _colMul * 1.18f); ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 275, 320, 20), $"根位移 rootMove: {(_rootMove ? "ON" : "OFF")}")) { _rootMove = !_rootMove; ApplyOpts(); }
         }
     }
 }

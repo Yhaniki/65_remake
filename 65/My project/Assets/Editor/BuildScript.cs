@@ -47,6 +47,7 @@ public static class BuildScript
         "Sdo/SceneVertexAlpha",      // soft-alpha SCENE.MSH materials (glass floors, feathered decals)
         "Sdo/SceneVertexCutout",     // base SCENE.MSH × baked vertex lighting (scene darkening/tint)
         "Sdo/UnlitInstancedCutout",  // solid/volumetric alpha mapobj props (SCN0006 carousel — no see-through)
+        "Sdo/MmdModel",              // MMD-avatar base+sphere+toon+outline; stripped -> Miku falls back to Unlit (no fx)
     };
 
     public static void BuildWindows()

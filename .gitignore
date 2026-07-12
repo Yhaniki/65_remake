@@ -132,3 +132,7 @@ procmon_tool/runs/
 # SdoLog runtime output (editor run writes beside the project)
 /65/My project/log.txt
 /65/My project/log.txt.prev
+
+# Magica Cloth 2 (paid Unity Asset Store package — do NOT commit; each dev installs their own licensed copy)
+65/My project/Assets/MagicaCloth2/
+65/My project/Assets/MagicaCloth2.meta
