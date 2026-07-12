@@ -9,7 +9,7 @@ namespace Sdo.UI.Util
 {
     /// <summary>
     /// Front-end background-music player for the lobby-style screens (男/女選擇 + ROOM). Plays the *.ogg / *.mp3 files in
-    /// <see cref="SdoExtracted.UiBgmDir"/> (Extracted/UI/BGM) as an endless RANDOM playlist — when a track finishes the
+    /// <see cref="SdoExtracted.UiBgmDir"/> (ship: DATA/BGM; dev: Extracted/UI/BGM) as an endless RANDOM playlist — when a track finishes the
     /// next one is picked at random, but NEVER the same track twice in a row. A lazily-created DontDestroyOnLoad host
     /// carries the AudioSource so any screen can drive it from a static context (mirrors <see cref="UiSfx"/>).
     ///

@@ -58,6 +58,9 @@ namespace Sdo.UI
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void SuppressGameplayAutoBoot()
         {
+            // DEV: SDO_PROBE → dead-file probe mode: suppress gameplay AND the front-end (Boot returns early), so the
+            // only thing that runs is UsedAssetsProbe (touches every loadable file, then quits). See UsedAssetsProbe.
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_PROBE"))) { ScreenGameplay.AutoBootSuppressed = true; return; }
             // DEV: SDO_SCENE → skip the front-end and boot straight into that gameplay scene (for testing a specific
             // stage's render/effects, e.g. SDO_SCENE=SCN0008). Editor reads it from EditorPrefs (Tools/SDO menu), a
             // player build from the env var — see ScreenGameplay.DevVar. Leaves AutoBoot un-suppressed so ScreenGameplay.Boot runs.
@@ -68,6 +71,7 @@ namespace Sdo.UI
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
+            if (UsedAssetsProbe.LaunchIfRequested()) return;                          // DEV: SDO_PROBE → run the probe instead of the app
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SCENE"))) return;   // DEV: no front-end in scene-test mode (env var or Tools/SDO menu)
             if (Instance != null) return;
             var go = new GameObject("FrontendApp");

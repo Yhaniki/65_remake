@@ -146,6 +146,11 @@ public static class BuildScript
     // (no hardcoded drive letters); failures are logged but do not fail the build (data can be packaged manually).
     private static void PackageData(string outDir)
     {
+        // SDO_SKIP_PACKAGE=1 → skip assembling DATA beside the exe (used by the dead-file probe build, which points
+        // SdoExtracted.Root at an existing DATA tree via SDO_PROBE and never reads a packaged DATA).
+        if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("SDO_SKIP_PACKAGE")))
+        { Debug.Log("[Build] SDO_SKIP_PACKAGE set — skipping DATA packaging."); return; }
+
         string script = RepoPath("tools", "package_build.ps1");
         if (!File.Exists(script)) { Debug.LogWarning($"[Build] packaging script missing: {script}"); return; }
 

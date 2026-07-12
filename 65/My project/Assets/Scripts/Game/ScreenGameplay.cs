@@ -687,6 +687,10 @@ namespace Sdo.Game
             if (!string.IsNullOrEmpty(demoSweep) && demoSweep != "0") DebugGaugeSweep = true;
             var iso = DevVar("SDO_SHOWTIME_ISO");
             if (!string.IsNullOrEmpty(iso) && int.TryParse(iso, out int isoN)) EftEffect.PowerIsolate = isoN;
+            // DEV: SDO_NOTETYPE=0..10 forces a specific note skin at boot (ApplyRoomNoteSkin) so the dead-art
+            // smoke test can exercise every EFFECT/NOTEIMAGE skin, not just the stock one.
+            var noteType = DevVar("SDO_NOTETYPE");
+            if (!string.IsNullOrEmpty(noteType) && int.TryParse(noteType, out int ntv)) g.roomNoteType = ntv;
         }
 
         /// <summary>DEV scene-override config. A player build (dance.exe) reads the OS env var (set in the terminal

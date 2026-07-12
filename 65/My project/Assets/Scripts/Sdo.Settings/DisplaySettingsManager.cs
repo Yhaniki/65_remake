@@ -36,7 +36,10 @@ namespace Sdo.Settings
                 }
                 else
                 {
+                    // 首次開機 / settings.json 被刪：用內建預設，並立刻落地一份預設檔
+                    // （缺檔不能擋開機——打包版 DATA 可能不帶任何 PROFILE 存檔，開機自己生）。
                     Settings = new GameSettings();
+                    Save();
                 }
             }
             catch (Exception e)

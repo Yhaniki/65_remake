@@ -214,11 +214,15 @@ namespace Sdo.Game
         /// <summary>Song chart/audio folder. Built: DATA/MUSIC (uppercase); dev: sdox_offline/music (sibling).</summary>
         public static string MusicDir => FirstDir(Path.Combine(Root, "MUSIC"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "music"));
 
-        /// <summary>Background-music folder. Built: DATA/BGM; dev: sdox_offline/BGM (sibling).</summary>
-        public static string BgmDir => FirstDir(Path.Combine(Root, "BGM"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "BGM"));
-
-        /// <summary>Front-end lobby/room UI background-music folder (random *.ogg / *.mp3). Built: DATA/UI/BGM; dev: Extracted/UI/BGM.</summary>
-        public static string UiBgmDir => FirstDir(Path.Combine(Root, "UI", "BGM"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "UI", "BGM"));
+        /// <summary>Front-end lobby/room background-music folder (endless random *.ogg / *.mp3, driven by
+        /// <see cref="Sdo.UI.Util.BgmPlayer"/>). Built player: <c>DATA/BGM</c> — the lobby tracks (bgm_000..007.ogg) ship at
+        /// the DATA root; editor/dev falls back to their SDO-authentic location <c>Extracted/UI/BGM</c>. (The original
+        /// game's top-level BGM set BMG_/TEACHING had no consumer in the remake and is no longer shipped, so DATA/BGM
+        /// holds the lobby tracks.)</summary>
+        public static string UiBgmDir => FirstDir(
+            Path.Combine(Root, "BGM"),                                        // built player: DATA/BGM (relocated lobby bgm)
+            Path.Combine(Root, "UI", "BGM"),                                  // editor/dev: Extracted/UI/BGM (authentic SDO location)
+            Path.Combine(Path.GetDirectoryName(Root) ?? Root, "UI", "BGM")); // sibling extracted-dump fallback
 
         /// <summary>Replay save folder (under DATA). Created on demand by callers.</summary>
         public static string ReplayDir => Path.Combine(Root, "REPLAY");
