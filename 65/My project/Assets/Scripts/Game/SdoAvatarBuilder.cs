@@ -135,7 +135,7 @@ namespace Sdo.Game
         // 成一坨米色(user 看到的「flat tan 翅膀」)。這裡解出幀序列、先貼第 0 幀、再掛 MapobjTexAnimator 逐幀輪播。與場景道具
         // 共用同一套 TexAnimEx/MapobjTexAnimator(render/008 TexAnimEx_parse 的忠實移植)。回傳材質;非動塗/無幀 → 回 null 讓
         // 呼叫端走 fallback 色。
-        private static Material TryBuildTexAnim(GameObject go, string dir, string placeholder, Shader shader)
+        internal static Material TryBuildTexAnim(GameObject go, string dir, string placeholder, Shader shader)
         {
             if (string.IsNullOrEmpty(dir) || !TexAnimEx.TryParse(placeholder, out var spec)) return null;
             string anPath = Path.Combine(dir, spec.Name + ".an");
@@ -262,9 +262,8 @@ namespace Sdo.Game
                 bool hasAlpha = DdsLoader.HasAlpha(bytes);
                 bool additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
                 sceneAlpha = DdsLoader.GetSceneAlphaMode(bytes);   // distribution-based (≥3% 真洞才 Cutout) → 不會被雜訊誤判
-                // 布料(COAT/PANT/ONE)的 alpha 幾乎都不是「透明度」:全透明(>70% a0)=匯出壞掉;柔性漸層(Blend,如嘻哈GIRL
-                // 97% soft)=光影/AO 圖非透明。兩者都當實心,否則 Blend 走 alpha-blend(ZWrite off)袖子會穿透衣服、破 alpha
-                // 走 cutout 被裁成透明線框。真孔洞去背(Cutout,<70% a0)保留不動。
+                // 布料(COAT/PANT/ONE/SHOES)的 alpha 壞掉(全透明 >70% = 匯出壞/atlas 留白;柔性 Blend = 光影漸層非透明)→ 當實心,
+                // 否則畫成透明線框/袖子穿透。但 Cutout(<70% 硬鏤空,如裙擺蕾絲/去背刺青)是「真透明」設計 → 保留不動。
                 if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque
                     && (sceneAlpha == DdsAlphaMode.Blend || DdsLoader.HardTransparentFraction(bytes) > 0.7f))
                     sceneAlpha = DdsAlphaMode.Opaque;

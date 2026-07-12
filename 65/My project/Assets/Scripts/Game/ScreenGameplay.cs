@@ -718,14 +718,21 @@ namespace Sdo.Game
             if (AvatarPartsNeedFallback(avatarParts, localPlayerMale))
                 avatarParts = SdoRoomAvatar.DefaultParts(localPlayerMale);
 
-            if (!localPlayerMale) return;
+            if (localPlayerMale)
+            {
+                skeletonHrc = SdoRoomAvatar.MaleHrc;
+                maleBody = true;
+                danceMot = "MOTION/MDANCE0002.MOT";
+                restMot = "MOTION/MREST0082.MOT";
+                winMot = "MWIN0001.MOT";
+                loseMot = "MREST0004.MOT";
+            }
 
-            skeletonHrc = SdoRoomAvatar.MaleHrc;
-            maleBody = true;
-            danceMot = "MOTION/MDANCE0002.MOT";
-            restMot = "MOTION/MREST0082.MOT";
-            winMot = "MWIN0001.MOT";
-            loseMot = "MREST0004.MOT";
+            // 飛行翅膀 → arena standby idle 換成 flystay 浮空 clip (rest cat 0x2c, 023_gameplay:4138). Only the idle/rest
+            // changes; the DPS dance is unaffected. 飛行翅膀 = 硬編 5 id 或有 _CHIBANG_G 滑翔模型的翅膀。
+            // See [[sdo-special-item-idle-walk]] / SpecialMotionItems.
+            if (SpecialMotionItems.WearsFlyingWing(avatarParts, rel => System.IO.File.Exists(SdoAvatarBuilder.ResolveAvatarFile(rel))))
+                restMot = SpecialMotionItems.FlyIdleMot(localPlayerMale);
         }
 
         private static bool AvatarPartsNeedFallback(string[] parts, bool male)

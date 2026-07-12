@@ -486,7 +486,7 @@ namespace Sdo.UI.Screens
         // 故每次搜尋 union 這 9 個部位很便宜。讓「不同類型只要名字對都搜得到」(user)。
         private static readonly EquipSlot[] SearchSlots =
         {
-            EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Gloves, EquipSlot.Shoes,
+            EquipSlot.Outfit, EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Gloves, EquipSlot.Shoes,
             EquipSlot.Glasses, EquipSlot.Expression, EquipSlot.Necklace, EquipSlot.Wings,
         };
 
@@ -534,8 +534,9 @@ namespace Sdo.UI.Screens
                                || it.Id.ToString().Contains(qSimp);
                     if (!hit) continue;
                 }
-                string z = CurrencyZh(it.Currency);
-                if (!((z == "G" && _showG) || (z == "M" && _showM) || z == "H")) continue;   // M/G 幣別 filter (H 恒顯)
+                // 幣別 filter 只在「瀏覽分頁」時套用;搜尋時跨幣別找(否則 priceCat 0=Points/G 幣的 夏日新娘 個別部件在預設 M 頁被擋掉,搜不到)。
+                if (!searching)
+                { string z = CurrencyZh(it.Currency); if ((z == "G" && !_showG) || (z == "M" && !_showM)) continue; }
                 items.Add(it);
             }
             // 同一件商品在 iteminfo 有 7天/30天/永久 三筆 (ModelId 相同,只 Id/Duration/Price 不同,價 1×/2×/6×) → 官方一件
@@ -559,7 +560,8 @@ namespace Sdo.UI.Screens
             else if (_slot == EquipSlot.Top && !searching) items.Sort((a, b) => b.ModelId.CompareTo(a.ModelId));
             else items.Reverse();
 
-            _L = (!_showHistory && _slot == EquipSlot.Outfit) ? BigLayout : SmallLayout;   // 套装 tab → 官方 suitwin 大卡 (2張);其餘小卡 (8張)
+            // 套装 tab → 官方 suitwin 大卡 (2張);其餘小卡 (8張)。搜尋時是跨部位混合結果 → 一律小卡 (使用者:套装 tab 搜尋要小格)。
+            _L = (!_showHistory && !searching && _slot == EquipSlot.Outfit) ? BigLayout : SmallLayout;
 
             int pages = Mathf.Max(1, (items.Count + _L.PerPage - 1) / _L.PerPage);
             _page = Mathf.Clamp(_page, 0, pages - 1);
@@ -680,11 +682,19 @@ namespace Sdo.UI.Screens
             var w = _session.Wardrobe;
             if (item.EquipSlot == EquipSlot.Outfit)
             {
-                _tryOnOutfitParts = ComposeOutfitParts(item);   // 套装：整套穿上左側預覽 (RebuildAvatar 走這組覆蓋)
+                _tryOnOutfitParts = ComposeOutfitParts(item, useCurrent: true);   // 試穿到身上:沿用現況(沒涵蓋的部位保留),RebuildAvatar 走這組
                 RebuildAvatar();
                 return;
             }
-            _tryOnOutfitParts = null;   // 換單件 → 取消整套覆蓋,回歸逐部位裝備
+            // 目前正顯示套裝(或已連續試穿疊加)→ 把這件疊到「目前顯示的穿搭」上:只換該部位、其餘保留
+            // (使用者:穿白色星辰套裝再選它的上衣,褲子要留著,不是整組脫回 default)。
+            if (_tryOnOutfitParts != null && item.EquipSlot != EquipSlot.None)
+            {
+                _tryOnOutfitParts = ComposeParts(_tryOnOutfitParts, new[] { item.MshRelPath });
+                RebuildAvatar();
+                return;
+            }
+            _tryOnOutfitParts = null;   // (無套裝在試穿)換單件 → 逐部位裝備到 Wardrobe
             if (item.EquipSlot == EquipSlot.OnePiece)
             {
                 w.ClearEquipped(EquipSlot.Top);
@@ -1015,7 +1025,7 @@ namespace Sdo.UI.Screens
         // 只放大眼鏡本身),其餘一律純衣物。
         private string[] ComposeCardParts(ShopItem item)
         {
-            if (item.EquipSlot == EquipSlot.Outfit) return ComposeOutfitParts(item);   // 套装 = 整套穿身上
+            if (item.EquipSlot == EquipSlot.Outfit) return ComposeOutfitParts(item, useCurrent: false);   // 卡片縮圖:套装穿在 default 假人上
             var rel = item.MshRelPath;
             if (item.EquipSlot == EquipSlot.Hair)
             {
@@ -1028,26 +1038,50 @@ namespace Sdo.UI.Screens
 
         // 套装卡：把該套所有組件穿到預設身體上 (組件覆蓋對應部位;連身取代上衣並移除下著;翅膀/眼鏡/項鍊為附加),沒被覆蓋
         // 的部位保留預設 (臉/髮/手…) → 呈現完整穿搭的全身人形。
-        private string[] ComposeOutfitParts(ShopItem item)
+        private string[] ComposeOutfitParts(ShopItem item, bool useCurrent)
         {
             var gender = ItemTypes.GenderOf(item.Category, item.Name);
-            var slots = new Dictionary<EquipSlot, string>(AvatarOutfit.DefaultsFor(gender));
-            var additive = new List<string>();
-            foreach (var rel in _catalog.OutfitComponentMeshes(item))
+            var baseParts = new List<string>();
+            foreach (var kv in AvatarOutfit.DefaultsFor(gender)) baseParts.Add(kv.Value);   // default 打底(補臉/手/髮等)
+            // 只有「試穿到身上」(useCurrent) 才把目前顯示的穿搭蓋上去 → 套裝沒涵蓋的部位沿用現況(含連續試穿上一套)。
+            // 卡片縮圖(右邊假人)useCurrent=false → 純 default,不沿用玩家目前穿搭(使用者:右邊假人頭髮要用 default)。
+            if (useCurrent) baseParts.AddRange(CurrentDisplayedParts());
+            return ComposeParts(baseParts, _catalog.OutfitComponentMeshes(item));
+        }
+
+        // 目前左側預覽實際顯示的穿搭:正在試穿套裝(或已疊過單件)→ 那份;否則 → 現有裝備。連續試穿疊加的底。
+        private IEnumerable<string> CurrentDisplayedParts()
+            => _tryOnOutfitParts != null ? (IEnumerable<string>)_tryOnOutfitParts : AvatarOutfit.ResolveParts(_sex, EquippedItems());
+
+        // 把 overrides(套裝組件 / 單件)逐部位疊到 baseParts 上:連身取代上下著;眼鏡/項鍊/翅膀=附加(依 mesh token 去重);
+        // 其餘覆蓋該部位。回傳完整 parts。沒被 overrides 覆蓋的部位保留 base(這就是「套裝沒有的部位沿用現況」)。
+        private string[] ComposeParts(IEnumerable<string> baseParts, IEnumerable<string> overrides)
+        {
+            var slots = new Dictionary<EquipSlot, string>();
+            var additive = new Dictionary<string, string>();   // token(GLASS/LINGDANG/CHIBANG…) → mesh,去重(base 與 override 同類只留一)
+            void Apply(string rel)
             {
+                if (string.IsNullOrEmpty(rel)) return;
                 var s = SlotFromMeshToken(rel);
-                switch (s)
-                {
-                    case EquipSlot.OnePiece: slots[EquipSlot.Top] = rel; slots.Remove(EquipSlot.Bottom); break;
-                    case EquipSlot.Glasses: case EquipSlot.Necklace: case EquipSlot.None: additive.Add(rel); break;   // 眼鏡/項鍊/翅膀(CHIBANG)=附加
-                    default: slots[s] = rel; break;
-                }
+                if (s == EquipSlot.OnePiece) { slots[EquipSlot.Top] = rel; slots.Remove(EquipSlot.Bottom); }
+                else if (s == EquipSlot.Glasses || s == EquipSlot.Necklace || s == EquipSlot.None) additive[MeshToken(rel)] = rel;
+                else { if (s == EquipSlot.Top || s == EquipSlot.Bottom) slots.Remove(EquipSlot.OnePiece); slots[s] = rel; }
             }
+            foreach (var rel in baseParts) Apply(rel);
+            foreach (var rel in overrides) Apply(rel);
             var list = new List<string>();
             foreach (var s in new[] { EquipSlot.Face, EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Shoes, EquipSlot.Gloves })
                 if (slots.TryGetValue(s, out var p) && !string.IsNullOrEmpty(p)) list.Add(p);
-            list.AddRange(additive);
+            list.AddRange(additive.Values);
             return list.ToArray();
+        }
+
+        // mesh 檔名最後一段部位 token:'AVATAR/023424_WOMAN_HAIR.MSH' → 'HAIR'(附加類去重用)。
+        private static string MeshToken(string rel)
+        {
+            if (string.IsNullOrEmpty(rel)) return "";
+            var n = rel; int dot = n.LastIndexOf('.'); if (dot > 0) n = n.Substring(0, dot);
+            int us = n.LastIndexOf('_'); return (us >= 0 ? n.Substring(us + 1) : n).ToUpperInvariant();
         }
 
         // 從組件 mesh 檔名的部位 token 推 EquipSlot (CHIBANG 翅膀無對應 slot → None=附加)。

@@ -23,5 +23,7 @@ namespace Sdo.Shop
         public int ModelId;
         public short Flag;
         public string Name;   // per-component GBK name (usually empty; display name comes from the iteminfo row)
+        public string Token;  // AVATAR/*.MSH slot token (COAT/PANT/HAIR/SHOES/ONE…) — resolves the RIGHT mesh when a
+                              // modelId owns several (e.g. 020366 has both _COAT and _PANT); null → probe by token order.
     }
 }

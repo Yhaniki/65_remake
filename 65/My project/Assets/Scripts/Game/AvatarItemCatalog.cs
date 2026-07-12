@@ -53,15 +53,21 @@ namespace Sdo.Game
             var g = ItemTypes.GenderOf(outfitItem.Category, outfitItem.Name) == ItemSex.Male ? "MAN" : "WOMAN";
             foreach (var c in set.Components)
             {
-                string hit = FindComponentMesh(c.ModelId, g) ?? FindComponentMesh(c.ModelId, g == "MAN" ? "WOMAN" : "MAN");
+                string hit = FindComponentMesh(c.ModelId, g, c.Token) ?? FindComponentMesh(c.ModelId, g == "MAN" ? "WOMAN" : "MAN", c.Token);
                 if (hit != null) res.Add("AVATAR/" + hit);
             }
             return res;
         }
 
-        private string FindComponentMesh(int modelId, string g)
+        private string FindComponentMesh(int modelId, string g, string preferredToken = null)
         {
             string id = modelId.ToString("D6");
+            // 該組件已知部位 → 直接用它的 token(修:020366 同時有 _COAT 與 _PANT,裙子要拿 PANT 不是先命中的 COAT)。
+            if (!string.IsNullOrEmpty(preferredToken))
+            {
+                string pf = id + "_" + g + "_" + preferredToken + ".MSH";
+                if (_meshFiles.Contains(pf)) return pf;
+            }
             foreach (var tok in OutfitSlotTokens)
             {
                 string f = id + "_" + g + "_" + tok + ".MSH";
@@ -375,8 +381,71 @@ namespace Sdo.Game
                 if (!groups.TryGetValue(key, out var l)) groups[key] = l = new List<ShopItem>();
                 l.Add(it);
             }
-            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets");
+            // 離線無 setinfo → 依「系列基底名」把同名多件衣物合成套裝,放進 套装 分頁(使用者要求:兔乖乖/璀璨繁星…)。
+            int synth = BuildSyntheticSets(clothing, groups, sets);
+            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成)");
             return new AvatarItemCatalog(clothing, groups, meshFiles, sets);
+        }
+
+        private const int SynthSetIdBase = 80_000_000;   // 8xxxxxxx:高於 6 位 modelId、低於 SynthIdBase(9xxxxxxx),不撞
+
+        /// <summary>Offline has no setinfo.dat, so synthesise 套装 from item NAMES: group garments whose name shares a
+        /// "series" base (name minus its trailing 部位/性別 word — 「兔乖乖 女帽」→「兔乖乖」) by (base,gender); any group
+        /// covering ≥2 distinct worn slots becomes one outfit set (one item per slot) shown as a dressed mannequin in the
+        /// 套装 tab. Reuses the existing OutfitSet/OutfitComponentMeshes render path. Returns the number of sets made.</summary>
+        private static int BuildSyntheticSets(List<ShopItem> clothing,
+            Dictionary<(ItemSex, EquipSlot), List<ShopItem>> groups, Dictionary<int, OutfitSet> sets)
+        {
+            var byName = new Dictionary<(string, ItemSex), Dictionary<EquipSlot, ShopItem>>();
+            foreach (var it in clothing)
+            {
+                var slot = it.EquipSlot;
+                if (slot == EquipSlot.Outfit || slot == EquipSlot.Expression || slot == EquipSlot.None) continue;   // 表情非穿搭
+                string bn = SeriesBaseName(it.Name);
+                if (bn == null) continue;
+                var key = (bn, ItemTypes.GenderOf(it.Category, it.Name));
+                if (!byName.TryGetValue(key, out var bySlot)) byName[key] = bySlot = new Dictionary<EquipSlot, ShopItem>();
+                if (!bySlot.ContainsKey(slot)) bySlot[slot] = it;   // 一個部位第一件
+            }
+            int made = 0, nextId = SynthSetIdBase;
+            foreach (var kv in byName)
+            {
+                if (kv.Value.Count < 2) continue;   // 至少 2 個不同部位才算一套
+                if (!kv.Value.ContainsKey(EquipSlot.Top) && !kv.Value.ContainsKey(EquipSlot.OnePiece)) continue;   // 套裝至少要有上衣(使用者要求),沒上衣的丟掉
+                var (bn, gender) = kv.Key;
+                int setId = nextId++;
+                var set = new OutfitSet { SetId = setId };
+                int price = 0;
+                foreach (var comp in kv.Value.Values)
+                {
+                    set.Components.Add(new OutfitComponent { ModelId = comp.ModelId, Flag = -1, Token = ItemTypes.MshSlotSuffix(comp.Category) });
+                    if (comp.Price > 0) price += comp.Price;
+                }
+                sets[setId] = set;
+                var outfit = new ShopItem
+                {
+                    Id = setId, Name = bn, ModelId = setId,
+                    Category = gender == ItemSex.Male ? ItemCategory.OutfitMale : ItemCategory.OutfitFemale,
+                    Price = price > 0 ? price : 100, PriceCategoryRaw = 1, MinLevel = 1, DurationDays = -1, Quantity = -1,
+                };
+                clothing.Add(outfit);
+                var okey = (gender, EquipSlot.Outfit);
+                if (!groups.TryGetValue(okey, out var l)) groups[okey] = l = new List<ShopItem>();
+                l.Add(outfit);
+                made++;
+            }
+            return made;
+        }
+
+        // 商品名 → 系列基底名:去掉尾端一個(空白分隔的)描述部位/性別的詞。尾詞需含 男/女 或部位關鍵字才去,否則回 null(不合成)。
+        internal static string SeriesBaseName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            int sp = name.LastIndexOf(' ');
+            if (sp <= 0 || sp + 1 >= name.Length) return null;
+            const string slotChars = "男女帽发髮装裝衣裤褲鞋鞋镜鏡链鏈膀巴饰飾情连連身套";
+            foreach (char c in name.Substring(sp + 1)) if (slotChars.IndexOf(c) >= 0) return name.Substring(0, sp);
+            return null;
         }
 
         // setinfo.dat sits beside iteminfo.dat (online 閉撰敃氪 pack). Same folders as ResolveIteminfoPath.

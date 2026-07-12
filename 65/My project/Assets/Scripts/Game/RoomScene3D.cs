@@ -40,7 +40,7 @@ namespace Sdo.Game
         // purpose (avatar floor ≈ X[-199,178] Z[-234,2.3]); tune to taste — smaller = camera holds the framing sooner.
         public Vector2 cameraBoundsMin = new Vector2(-120f, -130f);   // anchor min (worldX, worldZ)
         public Vector2 cameraBoundsMax = new Vector2(100f, 0f);       // anchor max (worldX, worldZ)
-        public float walkSpeed = RoomMovement.WalkSpeed;         // free-walk speed mult (3.0); no run in the lobby
+        public float walkSpeed = RoomMovement.WalkSpeed;         // free-walk speed mult; 3.0 default, 5.0 with 加速鞋 (SpecialMotionItems)
         public bool useMask = true;                              // sample MASK.MSK for furniture collision (else box clamp)
         // Arrow-key walking gate. RoomScreen clears this while the 選歌(MusicSelDlg) modal is open so the room keeps
         // rendering (dimmed) behind the dialog but the avatar can't be walked around by stray arrow presses.
@@ -268,8 +268,8 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
             _avatarRoot = parent.transform;
-            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
-            _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
+            if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
 
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;   // lowest skinned vertex at the bind pose
             // Host spawn = (-100, 0, -26): the REAL fixed offline spawn, captured via Frida from the running official EXE
@@ -295,13 +295,28 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
             _avatarRoot = parent.transform;
-            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
-            _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
             _walking = false;
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);
             ApplyAvatarTransform();
             if (oldRoot != null) Destroy(oldRoot.gameObject);
+        }
+
+        /// <summary>Resolve the idle/walk clips + walk speed for the CURRENT outfit — the decompiled special-item traits
+        /// ([[sdo-special-item-idle-walk]] / <see cref="SpecialMotionItems"/>): a 飛行翅膀 (flying wing) swaps the idle to
+        /// the flystay 浮空 clip (rest cat 0x2c); a 加速鞋 (speed shoe) bumps the free-walk speed to 5.0 (unless a wing
+        /// is also worn, which forces 3.0). Called after every (re)build so 換裝 picks the trait up immediately.</summary>
+        private void ApplyOutfitMotion()
+        {
+            System.Func<string, bool> meshExists = rel => System.IO.File.Exists(SdoAvatarBuilder.ResolveAvatarFile(rel));
+            bool fly = SpecialMotionItems.WearsFlyingWing(_avatarParts, meshExists);
+            bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
+            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male,
+                _male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot, meshExists);
+            _idleMot = SdoRoomAvatar.LoadMot(idleRel);
+            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
+            walkSpeed = SpecialMotionItems.WalkSpeedMult(fast, fly);
         }
 
         private void BuildCamera()

@@ -789,7 +789,13 @@ namespace Sdo.UI.Screens
             if (cut == null) return;
             foreach (var mr in root.GetComponentsInChildren<MeshRenderer>())
                 foreach (var m in mr.sharedMaterials)
-                    if (m != null && m.mainTexture != null) { m.shader = cut; m.SetFloat("_Cutoff", 0.05f); }
+                    if (m != null && m.mainTexture != null)
+                    {
+                        // OPAQUE 衣服(Unlit/Texture,含 alpha 壞掉被強制實心的布料)不可裁,否則卡片變透明線框(璀璨繁星 褲子)。
+                        bool opaque = m.shader != null && m.shader.name == "Unlit/Texture";
+                        m.shader = cut;
+                        m.SetFloat("_Cutoff", opaque ? 0f : 0.05f);
+                    }
         }
 
         private static bool IsSkinMat(Material m)

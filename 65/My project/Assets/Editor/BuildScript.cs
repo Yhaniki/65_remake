@@ -37,8 +37,12 @@ public static class BuildScript
         "Sdo/HpGlowClip",
         "Sdo/GlowClipRect",      // ShowTime energy-bar head glow (rect-clipped additive = official viewport crop)
         "Sdo/AdditiveRGB",       // ShowTime gauge RT composite (One-One add of the POWER EFT camera render)
+        "Sdo/NoteCutout",        // 3D note highway cut-out sprites; stripped -> notes fall back to opaque (Note3dHighway/ScreenGameplay)
+        "Sdo/UnlitSpotGlow",     // gameplay spotlight glow; stripped -> glow renders wrong (ScreenGameplay)
         "Sdo/PortraitOpaque",
         "Sdo/UnlitDoubleSided",
+        "Sdo/UnlitAvatarAlpha",  // 眼鏡鏡片 + 翅膀(CHIBANG)/去背飾品 alpha-blend; stripped -> Shader.Find null -> 退回 UnlitDoubleSided(cutout,c.a=1
+                                 // 強制不透明) -> 翅膀周圍閃爍貼圖/眼鏡鏡片「透明度沒做出來」(editor 不 strip 故只在打包版壞)
         "Sdo/UnlitInstanced",
         "Sdo/UnlitInstancedAlpha",   // alpha-blended mapobj props ("去背"); stripped -> alpha stage props go magenta
         "Sdo/UnlitInstancedAlphaCullBack", // mirrored separated alpha planes (SCN0011 DING): single-sided blend
