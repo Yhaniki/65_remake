@@ -76,6 +76,39 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void ToEntry_Time_Column_Is_The_Music_Files_Length()
+        {
+            // 時間 = how long the TRACK plays, not where the chart stops — so every difficulty of one song shows the
+            // same time, even though their charts end at different points.
+            var song = new ExternalSong { FolderPath = "C:/x", Title = "t", AudioDurationSec = 214 };
+            song.Charts[0] = new ExternalChart { NoteCount = 10, DurationSec = 95 };
+            song.Charts[2] = new ExternalChart { NoteCount = 40, DurationSec = 128 };
+            var e = ExternalSongLibrary.ToEntry(song, 0);
+            Assert.AreEqual(214, e.DurationSec(0));
+            Assert.AreEqual(0, e.DurationSec(1), "empty slot stays blank");
+            Assert.AreEqual(214, e.DurationSec(2));
+        }
+
+        [Test]
+        public void ToEntry_Falls_Back_To_The_Chart_Length_When_The_Audio_Cant_Be_Measured()
+        {
+            var song = new ExternalSong { FolderPath = "C:/x", Title = "t", AudioDurationSec = 0 };   // unreadable/odd format
+            song.Charts[2] = new ExternalChart { NoteCount = 40, DurationSec = 128 };
+            Assert.AreEqual(128, ExternalSongLibrary.ToEntry(song, 0).DurationSec(2));
+        }
+
+        [Test]
+        public void StatsOf_Duration_Is_The_Last_Notes_Time_In_Seconds()
+        {
+            var bm = new OsuBeatmap { Keys = 4 };
+            bm.HitObjects.Add(new OsuHitObject(0, 1000));
+            bm.HitObjects.Add(new OsuHitObject(1, 100_400, 125_600));   // hold tail = the real end of the chart
+            Assert.AreEqual(126, ExternalSongScanner.StatsOf(bm, 0).DurationSec);
+            Assert.AreEqual(7, ExternalSongScanner.StatsOf(null, 7).Level, "unparseable chart → fallback level, no duration");
+            Assert.AreEqual(0, ExternalSongScanner.StatsOf(null, 7).DurationSec);
+        }
+
+        [Test]
         public void ToEntry_Gn_Is_Stable_Per_Song()
         {
             var a = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x" }, 0);
@@ -103,34 +136,37 @@ namespace Sdo.Tests
             Assert.AreEqual(legacy.gn, sole.gn, "one-song folders keep the gn they had before multi-song folders existed");
         }
 
-        // ---- SongListModel group helpers ----
+        // ---- what the 分類瀏覽 panel browses: the external pool, folder-grouped (SongGrouping owns the rules) ----
 
         private static SongCatalog.Entry Ext(string gn, string group, string title)
             => new SongCatalog.Entry { gn = gn, external = true, group = group, title = title, notesHard = 1 };
 
+        private static List<SongBucket> FolderBuckets(List<SongCatalog.Entry> list)
+            => SongGrouping.Build(SongListModel.Externals(list), SongGroupMode.Folder);
+
         [Test]
-        public void ExternalGroups_Distinct_And_Sorted()
+        public void Folder_Buckets_Are_Distinct_And_Sorted()
         {
             var list = new List<SongCatalog.Entry>
             {
                 Ext("ext_1k.gn", "Beta", "t1"), Ext("ext_2k.gn", "Alpha", "t2"),
                 Ext("ext_3k.gn", "Beta", "t3"), new SongCatalog.Entry { gn = "sdom1k.gn", title = "official" },
             };
-            var g = SongListModel.ExternalGroups(list);
-            Assert.AreEqual(new[] { "Alpha", "Beta" }, g.ToArray());
+            Assert.AreEqual(new[] { "Alpha", "Beta" }, FolderBuckets(list).ConvertAll(b => b.Key).ToArray());
         }
 
         [Test]
-        public void InGroup_Filters_And_Sorts_By_Title()
+        public void Folder_Bucket_Holds_Its_Songs_Sorted_By_Title()
         {
             var list = new List<SongCatalog.Entry>
             {
                 Ext("ext_1k.gn", "Beta", "Zeta"), Ext("ext_2k.gn", "Beta", "Alpha"), Ext("ext_3k.gn", "Alpha", "x"),
             };
-            var songs = SongListModel.InGroup(list, "Beta");
-            Assert.AreEqual(2, songs.Count);
-            Assert.AreEqual("Alpha", songs[0].title);
-            Assert.AreEqual("Zeta", songs[1].title);
+            var beta = FolderBuckets(list)[1];
+            Assert.AreEqual("Beta", beta.Key);
+            Assert.AreEqual(2, beta.Count);
+            Assert.AreEqual("Alpha", beta.Songs[0].title);
+            Assert.AreEqual("Zeta", beta.Songs[1].title);
         }
 
         [Test]
@@ -140,8 +176,7 @@ namespace Sdo.Tests
             {
                 new SongCatalog.Entry { gn = "sdom1k.gn", group = "X", title = "official" },   // group set but external=false
             };
-            Assert.AreEqual(0, SongListModel.ExternalGroups(list).Count);
-            Assert.AreEqual(0, SongListModel.InGroup(list, "X").Count);
+            Assert.AreEqual(0, FolderBuckets(list).Count);   // official songs live in 全部, never in the panel
         }
     }
 }

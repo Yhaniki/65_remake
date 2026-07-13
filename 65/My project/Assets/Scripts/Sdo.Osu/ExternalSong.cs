@@ -10,6 +10,7 @@ namespace Sdo.Osu
         public int ChartIndex;         // .sm: index of the #NOTES block; .osu: 0
         public int NoteCount;          // objects (taps + holds) — used to rank difficulties
         public int Level;              // .sm meter / .osu unknown(0) — shown as the LV label
+        public int DurationSec;        // last note's time — the 時間 column, same measure as the official catalog's dur*
     }
 
     /// <summary>
@@ -34,6 +35,7 @@ namespace Sdo.Osu
         public string Artist = "";
         public double Bpm;
         public string AudioPath = "";   // absolute; "" if no audio file found
+        public int AudioDurationSec;    // the music file's own play time (see AudioDuration) — what the 時間 column shows
         public string ImagePath = "";   // absolute cover (jacket→banner→background); "" if none
         public SongFormat Format;
 

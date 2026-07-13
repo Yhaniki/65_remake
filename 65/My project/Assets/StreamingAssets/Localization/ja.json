@@ -340,6 +340,42 @@
    "v": "ランダム難易度 13以上"
   },
   {
+   "k": "songselect.group_panel",
+   "v": "カテゴリ"
+  },
+  {
+   "k": "songselect.group_folder",
+   "v": "Group"
+  },
+  {
+   "k": "songselect.group_title",
+   "v": "Song"
+  },
+  {
+   "k": "songselect.group_artist",
+   "v": "Artist"
+  },
+  {
+   "k": "songselect.group_bpm",
+   "v": "BPM"
+  },
+  {
+   "k": "songselect.group_other",
+   "v": "その他"
+  },
+  {
+   "k": "songselect.group_uncat",
+   "v": "(未分類)"
+  },
+  {
+   "k": "songselect.group_bpm_unknown",
+   "v": "BPM 不明"
+  },
+  {
+   "k": "songselect.group_empty",
+   "v": "Songs/ に曲がありません"
+  },
+  {
    "k": "stage.name.0",
    "v": "歩行者天国"
   },

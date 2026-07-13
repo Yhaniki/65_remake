@@ -147,21 +147,25 @@ namespace Sdo.Game
                 previewStartMs = song.PreviewStartMs,
                 previewLengthMs = song.PreviewLengthMs,
             };
-            SetSlot(e, 0, song.Charts[0]);
-            SetSlot(e, 1, song.Charts[1]);
-            SetSlot(e, 2, song.Charts[2]);
+            SetSlot(e, 0, song.Charts[0], song.AudioDurationSec);
+            SetSlot(e, 1, song.Charts[1], song.AudioDurationSec);
+            SetSlot(e, 2, song.Charts[2], song.AudioDurationSec);
             return e;
         }
 
-        private static void SetSlot(SongCatalog.Entry e, int d, ExternalChart c)
+        /// <summary>Fill one difficulty slot. The 時間 column shows the MUSIC FILE's length (<paramref name="audioSec"/>,
+        /// same for all three difficulties — it's one song); the chart's own last-note time is only the fallback for
+        /// audio we couldn't measure, since a chart usually stops before the track's outro.</summary>
+        private static void SetSlot(SongCatalog.Entry e, int d, ExternalChart c, int audioSec)
         {
             if (c == null) return;   // empty slot: notes stay 0 → HasChart false → greyed row
             int level = c.Level > 0 ? c.Level : -1;
+            int dur = audioSec > 0 ? audioSec : c.DurationSec;
             switch (d)
             {
-                case 0: e.notesEasy = c.NoteCount; e.diffEasy = level; e.chartEasy = c.FilePath; e.chartIdxEasy = c.ChartIndex; break;
-                case 1: e.notesNormal = c.NoteCount; e.diffNormal = level; e.chartNormal = c.FilePath; e.chartIdxNormal = c.ChartIndex; break;
-                default: e.notesHard = c.NoteCount; e.diffHard = level; e.chartHard = c.FilePath; e.chartIdxHard = c.ChartIndex; break;
+                case 0: e.notesEasy = c.NoteCount; e.diffEasy = level; e.chartEasy = c.FilePath; e.chartIdxEasy = c.ChartIndex; e.durEasy = dur; break;
+                case 1: e.notesNormal = c.NoteCount; e.diffNormal = level; e.chartNormal = c.FilePath; e.chartIdxNormal = c.ChartIndex; e.durNormal = dur; break;
+                default: e.notesHard = c.NoteCount; e.diffHard = level; e.chartHard = c.FilePath; e.chartIdxHard = c.ChartIndex; e.durHard = dur; break;
             }
         }
 

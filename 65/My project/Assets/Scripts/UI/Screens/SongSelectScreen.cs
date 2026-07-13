@@ -72,15 +72,16 @@ namespace Sdo.UI.Screens
 
         // category tabs (全部/隨機/收藏/最新/勁樂/懷舊) — toggle: the selected tab stays pushed
         private const int CatAll = 0, CatRandom = 1, CatFav = 2, CatNewest = 3, CatJam = 4, CatNostalgia = 5;
-        private const int CatFolder = CatJam;   // 勁樂 頁籤改用途：外部歌曲(osu/StepMania)的「資料夾(group)」瀏覽
+        private const int CatFolder = CatJam;   // 勁樂 頁籤改用途：外部歌曲(osu/StepMania)的「分類瀏覽」
         private Image[] _catImg;
         private Sprite[] _catNormal, _catPushed;
         private int _category = CatAll;
 
-        // 資料夾(group) drill-in state for the CatFolder tab: _activeGroup == null → the row list shows GROUP folders;
-        // else it shows that group's songs. Clicking the 資料夾 tab always returns to the group list (acts as 返回).
-        private string _activeGroup;
-        private List<string> _groupNames = new List<string>();
+        // 分類瀏覽 (CatFolder tab): a floating panel groups the external songs — 資料夾 / 歌名 / 歌手 / BPM
+        // (StepMania's sections; see SongGrouping) — and hands the picked bucket's songs to _bucketSongs, which is
+        // what the main row list then shows. Clicking the 資料夾 tab reopens the panel on its last bucket.
+        private SongGroupPanel _groupPanel;
+        private List<SongCatalog.Entry> _bucketSongs = new List<SongCatalog.Entry>();
 
         // 隨機 difficulty ranges — shown AS the list rows when the 隨機 tab is active; OK picks a random song from the pool.
         private struct RandRange { public string Key; public int Min, Max; }
@@ -173,7 +174,8 @@ namespace Sdo.UI.Screens
             BuildBottomBar();
             BuildActionButtons();
             WrapInWindow();
-            BuildDimScrim();   // AFTER WrapInWindow so it stays on Root (not inside the spinning _window)
+            BuildDimScrim();     // AFTER WrapInWindow so it stays on Root (not inside the spinning _window)
+            BuildGroupPanel();   // ditto: the IMGUI window positions itself against Root's un-animated design rect
         }
 
         // The dim scrim behind the dialog (取代原本全黑). 選歌不再是取代房間的獨立畫面，而是「疊在房間上」的 overlay：
@@ -221,7 +223,7 @@ namespace Sdo.UI.Screens
             // EXCEPTIONS reset on every open: the category tab snaps back to 全部, and the search box is cleared —
             // so re-entering always shows the full list, not a stale filter/tab.
             _category = CatAll;
-            _activeGroup = null;       // 資料夾 drill-in reset：再進來從 group 列表開始（下次點資料夾 tab 重新載入 group 名單）
+            CloseGroupPanel();         // 分類瀏覽面板不跨場次留著；再進來由 資料夾 頁籤重新開（分類方式/桶則沿用上次）
             _diskSpinPaused = false;   // 跳出再進 → 唱片轉動 reset：預設會轉（下面選歌時 SetDiskSpinning 會轉起來）
             if (_search != null)
             {
@@ -232,20 +234,17 @@ namespace Sdo.UI.Screens
             RenderCategoryTabs();
             UpdateScene();
 
-            // If the last confirmed song was an external (user Songs/) song, reopen the 資料夾 tab at its group and
-            // reselect it — external songs aren't in 全部, so the default path below would jump to an official SDO song.
+            // If the last confirmed song was an external (user Songs/) song, reopen the 資料夾 tab on the bucket that
+            // holds it (in whatever grouping the panel is on) and reselect it — external songs aren't in 全部, so the
+            // default path below would jump to an official SDO song instead.
             var extPrev = (Ctx.Session != null && !string.IsNullOrEmpty(Ctx.Session.SongGn)) ? SongCatalog.Get(Ctx.Session.SongGn) : null;
-            if (extPrev != null && extPrev.external)
+            if (extPrev != null && extPrev.external && _groupPanel != null)
             {
                 _category = CatFolder;
-                _activeGroup = extPrev.group;
-                _groupNames = _model.ExternalGroups();
                 RenderCategoryTabs();
-                ApplyFilter();   // CategoryBase → this group's songs
+                OpenGroupPanel(SongGrouping.SectionName(extPrev, _groupPanel.Mode));   // → OnBucketPicked fills the list
                 int idx = _filtered.IndexOf(extPrev);
                 if (idx >= 0 && extPrev.HasChart(_difficulty)) { _page = idx / PageSize; Select(extPrev); }
-                else if (_filtered.Count > 0) SelectFirstPlayable();
-                else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }
                 return;
             }
 
@@ -282,13 +281,14 @@ namespace Sdo.UI.Screens
             if (_windowCg != null) _windowCg.blocksRaycasts = false;
             UiSfx.Play(UiSfx.FrameRound);
             CloseFavPopup();
+            CloseGroupPanel();
             StopPreview();
             if (_anim != null) _anim.PlayOut(() => GoTo(target));
             else GoTo(target);
         }
 
-        public override void OnHide() { CloseFavPopup(); StopPreview(); }
-        private void OnDisable() { CloseFavPopup(); StopPreview(); }   // covers canvas SetActive(false) on gameplay hand-off
+        public override void OnHide() { CloseFavPopup(); CloseGroupPanel(); StopPreview(); }
+        private void OnDisable() { CloseFavPopup(); CloseGroupPanel(); StopPreview(); }   // covers canvas SetActive(false) on gameplay hand-off
 
         private void ComputeNewIds()
         {
@@ -394,13 +394,13 @@ namespace Sdo.UI.Screens
                 _catImg[i] = img;
             }
 
-            // CatFolder(原「勁樂」) 頁籤改用途為外部歌曲「資料夾(group)」瀏覽。疊一層半透明底把烘死的「勁樂」字壓暗，
-            // 再放白字「資料夾」，讓頁籤語意正確。點擊仍由底下的 tab 按鈕接收（遮罩/文字都不吃 raycast）。
+            // CatFolder(原「勁樂」) 頁籤改用途為外部歌曲的「分類瀏覽」。疊一層半透明底把烘死的「勁樂」字壓暗，
+            // 再放白字標題，讓頁籤語意正確。點擊仍由底下的 tab 按鈕接收（遮罩/文字都不吃 raycast）。
             if (_catImg[CatFolder] != null)
             {
                 var mask = UIKit.AddImage(_catImg[CatFolder].transform, "folderTabMask", new Color(0f, 0f, 0f, 0.62f));
                 UIKit.Stretch(mask.rectTransform, 3f, 3f, 3f, 3f);
-                var lbl = UIKit.AddText(_catImg[CatFolder].transform, "folderTabLbl", "資料夾", 12f, Color.white, TextAlignmentOptions.Center);
+                var lbl = UIKit.AddText(_catImg[CatFolder].transform, "folderTabLbl", L("songselect.group_panel"), 12f, Color.white, TextAlignmentOptions.Center);
                 UIKit.Stretch(lbl.rectTransform);
             }
         }
@@ -417,6 +417,7 @@ namespace Sdo.UI.Screens
             _category = Mathf.Clamp(c, 0, 5);
             RenderCategoryTabs();
             _page = 0;
+            if (_category != CatFolder) CloseGroupPanel();   // 離開 資料夾 → 收起分類瀏覽面板
             if (_category == CatRandom)
             {
                 StopPreview();
@@ -428,15 +429,8 @@ namespace Sdo.UI.Screens
             }
             else if (_category == CatFolder)
             {
-                // 資料夾(group) browse: always land on the group LIST (tab click doubles as 返回上層).
-                _activeGroup = null;
-                _groupNames = _model.ExternalGroups();
-                StopPreview();
-                _selected = null;
-                SetDiskJacket(_iconNone);   // no song picked yet → placeholder disc
-                SetDiskSpinning(false);
-                RenderPage();      // -> RenderGroupRows (since _activeGroup == null)
-                UpdateInfo();
+                // 分類瀏覽：開浮動面板，停在上次的桶(第一次則第一個桶)；面板 onPick → OnBucketPicked 把歌灌進歌單。
+                OpenGroupPanel(_groupPanel != null ? _groupPanel.ActiveKey : null);
             }
             else
             {
@@ -444,6 +438,31 @@ namespace Sdo.UI.Screens
                 if (_filtered.Count > 0) SelectFirstPlayable();   // 第一首在此難度有譜面的歌(跳過灰列)
                 else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }   // empty -> NONE disc, no spin, no music
             }
+        }
+
+        // ---------------- 分類瀏覽面板 (資料夾 tab) ----------------
+
+        private void BuildGroupPanel() => _groupPanel = SongGroupPanel.Create(Root, OnBucketPicked);
+
+        /// <summary>Show the panel over the dialog and land it on <paramref name="key"/>'s bucket (else the first one).
+        /// The panel answers with <see cref="OnBucketPicked"/>, which is what actually fills the song list.</summary>
+        private void OpenGroupPanel(string key)
+        {
+            if (_groupPanel == null) return;
+            _groupPanel.SetPool(_model.Externals());   // 使用者 Songs/ 掃到的歌 = 面板分類的池子
+            _groupPanel.Open(key);
+        }
+
+        private void CloseGroupPanel() => _groupPanel?.Close();
+
+        /// <summary>The panel picked a bucket (row click, tab change, or reopen): its songs become the row list.</summary>
+        private void OnBucketPicked(SongBucket b)
+        {
+            _bucketSongs = b != null ? b.Songs : new List<SongCatalog.Entry>();
+            _page = 0;
+            ApplyFilter();   // CategoryBase → this bucket's songs (search box still narrows within it)
+            if (_filtered.Count > 0) SelectFirstPlayable();
+            else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }   // empty bucket -> NONE disc, no music
         }
 
         // Show a sprite on the disc jacket (clipped to the vinyl circle); hide if null.
@@ -737,13 +756,13 @@ namespace Sdo.UI.Screens
         }
 
         // The song subset for the active category. 全部 = all; 收藏 = 本機 user 收藏的歌; 最新 = NEW-badge songs;
-        // 勁樂/懷舊 unconfigured = empty. (隨機 never reaches here — it renders the range rows instead.)
+        // 懷舊 unconfigured = empty. (隨機 never reaches here — it renders the range rows instead.)
         private List<SongCatalog.Entry> CategoryBase()
         {
             var all = _model.All;
             var res = new List<SongCatalog.Entry>();
-            // 資料夾 tab: the current group's external songs (empty until a group is opened).
-            if (_category == CatFolder) return _activeGroup == null ? res : _model.InGroup(_activeGroup);
+            // 分類瀏覽 tab: the songs of the bucket the floating panel currently has picked (empty if none).
+            if (_category == CatFolder) { res.AddRange(_bucketSongs); return res; }
             // 全部 = official .gn songs only; external (user Songs/) songs live under the 資料夾 tab.
             if (_category == CatAll) { foreach (var e in all) if (e != null && !e.external) res.Add(e); }
             else if (_category == CatFav)
@@ -773,13 +792,6 @@ namespace Sdo.UI.Screens
         private void ChangePage(int delta)
         {
             if (_category == CatRandom) return;   // 隨機 rows are a single fixed page
-            if (_category == CatFolder && _activeGroup == null)   // group list: page over the group folders
-            {
-                int gpages = Mathf.Max(1, (_groupNames.Count + PageSize - 1) / PageSize);
-                _page = ((_page + delta) % gpages + gpages) % gpages;
-                RenderGroupRows();
-                return;
-            }
             int pages = Mathf.Max(1, (_filtered.Count + PageSize - 1) / PageSize);
             // remember the focused ROW within the page so paging lands on the same row on the next page.
             int row = _selected != null ? _filtered.IndexOf(_selected) - _page * PageSize : 0;
@@ -813,7 +825,6 @@ namespace Sdo.UI.Screens
         private void RenderPage()
         {
             if (_category == CatRandom) { RenderRandomRows(); return; }
-            if (_category == CatFolder && _activeGroup == null) { RenderGroupRows(); return; }
 
             int maxPage = Mathf.Max(0, (_filtered.Count - 1) / PageSize);
             _pageLabel.text = _filtered.Count == 0 ? "0 / 0" : (_page + 1) + " / " + (maxPage + 1);
@@ -854,47 +865,6 @@ namespace Sdo.UI.Screens
                 if (_rowCtx[i] != null)
                     _rowCtx[i].Clicked = ev => { if (ev.button == PointerEventData.InputButton.Right) { if (playable) Select(e); ShowFavPopup(e, ev.position); } };
             }
-        }
-
-        // 資料夾 mode, group list: the rows are the external-song GROUP folders (name + song count). Clicking a row
-        // drills into that group's songs (EnterGroup). Paginated like the song list (>12 groups → multiple pages).
-        private void RenderGroupRows()
-        {
-            int maxPage = Mathf.Max(0, (_groupNames.Count - 1) / PageSize);
-            _page = Mathf.Clamp(_page, 0, maxPage);
-            _pageLabel.text = _groupNames.Count == 0 ? "0 / 0" : (_page + 1) + " / " + (maxPage + 1);
-            int start = _page * PageSize;
-            for (int i = 0; i < PageSize; i++)
-            {
-                int gi = start + i;
-                bool has = gi < _groupNames.Count;
-                _rowHi[i].gameObject.SetActive(has);
-                _rowName[i].gameObject.SetActive(has);
-                _rowTime[i].gameObject.SetActive(false);
-                _rowLevel[i].gameObject.SetActive(false);
-                SetRowNewActive(i, false);
-                _rowBtn[i].onClick.RemoveAllListeners();
-                if (_rowCtx[i] != null) _rowCtx[i].Clicked = null;
-                if (!has) continue;
-
-                ApplyRowHi(i, false);
-                string name = _groupNames[gi];
-                _rowName[i].alignment = TextAlignmentOptions.Left;
-                _rowName[i].color = ColRow;
-                _rowName[i].text = "▶ " + name + "  (" + _model.GroupCount(name) + ")";
-                string g = name;
-                _rowBtn[i].onClick.AddListener(() => { UiSfx.Play(UiSfx.Click); EnterGroup(g); });
-            }
-        }
-
-        // Drill into a group: switch the row list to that group's songs and focus the first playable one.
-        private void EnterGroup(string group)
-        {
-            _activeGroup = group;
-            _page = 0;
-            ApplyFilter();   // CategoryBase() now returns this group's songs
-            if (_filtered.Count > 0) SelectFirstPlayable();
-            else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }
         }
 
         // 隨機 mode: the row list shows the difficulty-range options instead of songs; OK then picks a random song.
@@ -963,26 +933,13 @@ namespace Sdo.UI.Screens
         // Returns true if a real cover is shown (spins); false for the NONE disc (no cover -> static, no music).
         private bool UpdateDisk()
         {
+            // External songs show the CD disc built from their cover art (ExternalCdImage: composed once, then read
+            // back from the song's own folder) — same shape as the official ICONS discs, so both spin identically.
             Sprite jacket = null;
             if (_selected != null)
-                jacket = _selected.external ? LoadExternalCover(_selected.imagePath) : SongIcons.Load(_selected.fileId);
+                jacket = _selected.external ? ExternalCdImage.Get(_selected) : SongIcons.Load(_selected.fileId);
             if (jacket != null) { SetDiskJacket(jacket); SetDiskSpinning(true); return true; }   // real cover -> spins
             SetDiskJacket(_iconNone); SetDiskSpinning(false); return false;                       // no cover -> NONE disc, no spin
-        }
-
-        // External song cover: the jacket→banner→background image resolved by the scanner (absolute path). Decoded via
-        // the shared texture cache; cached per path (null included) so re-selecting a song never re-decodes. Non-decodable
-        // formats (e.g. .gif) or a missing file → null → the NONE placeholder disc.
-        private readonly Dictionary<string, Sprite> _extCovers = new Dictionary<string, Sprite>();
-        private Sprite LoadExternalCover(string absPath)
-        {
-            if (string.IsNullOrEmpty(absPath)) return null;
-            if (_extCovers.TryGetValue(absPath, out var cached)) return cached;
-            Sprite sp = null;
-            try { if (File.Exists(absPath)) sp = SdoExtracted.LoadImage(Path.GetDirectoryName(absPath), Path.GetFileName(absPath)); }
-            catch { sp = null; }
-            _extCovers[absPath] = sp;
-            return sp;
         }
 
         // ---------------- scene preview ----------------
@@ -1223,6 +1180,8 @@ namespace Sdo.UI.Screens
                 s.ExternalChartIndex = _selected.ChartIndex(_difficulty);
                 s.ExternalAudioPath = _selected.audioPath;
                 s.ExternalLevel = _selected.Diff(_difficulty);   // 星數×5 等級 → 帶進遊戲顯示同一個 LV
+                s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdo.header 都寫在歌曲自己的資料夾
+                s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
             }
             // scene: slot 0 = random -> pick an actual scene now; else the chosen stage.
             bool randomScene = _sceneIndex <= 0 && _stages.Count > 0;
@@ -1295,7 +1254,8 @@ namespace Sdo.UI.Screens
 
             // 滾輪選歌：向下滾=下一首、向上滾=上一首（隨機分類則上下移動難度區間）。對齊商城慣例(向下=前進)；
             // 只在選歌可見、非收起中、沒開收藏彈窗時作用（Update 在隱藏時仍會跑，不擋會搶走房間的滾輪）。
-            if (Visible && !_closing && _favPopup == null)
+            // 滑鼠在分類瀏覽面板上時滾輪歸面板（翻它的分類頁），這裡讓開。
+            if (Visible && !_closing && _favPopup == null && !(_groupPanel != null && _groupPanel.PointerOver))
             {
                 float sw = Input.mouseScrollDelta.y;
                 if (sw != 0f)

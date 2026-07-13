@@ -185,5 +185,24 @@ namespace Sdo.Tests
             Assert.AreEqual(-1, SongListModel.FirstPlayableIndex(null, 0, 0));
             Assert.AreEqual(-1, SongListModel.FirstPlayableIndex(new List<SongCatalog.Entry>(), 0, 0));
         }
+
+        // ---- Externals: the pool the 分類瀏覽 panel groups (user Songs/ songs only, never the official .gn ones) ----
+
+        [Test]
+        public void Externals_Keeps_Only_External_Songs()
+        {
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "sdom0001k.gn", title = "official" },
+                new SongCatalog.Entry { gn = "ext_aaaak.gn", title = "user", external = true, group = "Anime" },
+            };
+            var r = SongListModel.Externals(list);
+            Assert.AreEqual(1, r.Count);
+            Assert.AreEqual("user", r[0].title);
+        }
+
+        [Test]
+        public void Externals_Null_Safe()
+            => Assert.AreEqual(0, SongListModel.Externals(null).Count);
     }
 }

@@ -340,6 +340,42 @@
    "v": "隨機難度 13級以上"
   },
   {
+   "k": "songselect.group_panel",
+   "v": "分類瀏覽"
+  },
+  {
+   "k": "songselect.group_folder",
+   "v": "Group"
+  },
+  {
+   "k": "songselect.group_title",
+   "v": "Song"
+  },
+  {
+   "k": "songselect.group_artist",
+   "v": "Artist"
+  },
+  {
+   "k": "songselect.group_bpm",
+   "v": "BPM"
+  },
+  {
+   "k": "songselect.group_other",
+   "v": "其他"
+  },
+  {
+   "k": "songselect.group_uncat",
+   "v": "(未分類)"
+  },
+  {
+   "k": "songselect.group_bpm_unknown",
+   "v": "BPM 未知"
+  },
+  {
+   "k": "songselect.group_empty",
+   "v": "Songs/ 裡沒有歌曲"
+  },
+  {
    "k": "stage.name.0",
    "v": "步行街"
   },

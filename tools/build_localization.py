@@ -118,6 +118,18 @@ STR = {
     "songselect.rand_9up":  ["Random Lv 9+",   "隨機難度 9級以上",  "随机难度 9级以上",  "ランダム難易度 9以上"],
     "songselect.rand_13up": ["Random Lv 13+",  "隨機難度 13級以上", "随机难度 13级以上", "ランダム難易度 13以上"],
 
+    # 分類瀏覽 — the floating group panel behind the 資料夾 category (StepMania-style sections)
+    "songselect.group_panel":  ["Browse", "分類瀏覽", "分类浏览", "カテゴリ"],
+    # the panel's grouping tabs are English in every language (they sit in a narrow toolbar; asked for verbatim)
+    "songselect.group_folder": ["Group", "Group", "Group", "Group"],
+    "songselect.group_title":  ["Song", "Song", "Song", "Song"],
+    "songselect.group_artist": ["Artist", "Artist", "Artist", "Artist"],
+    "songselect.group_bpm":    ["BPM", "BPM", "BPM", "BPM"],
+    "songselect.group_other":  ["Other", "其他", "其他", "その他"],
+    "songselect.group_uncat":  ["(Ungrouped)", "(未分類)", "(未分类)", "(未分類)"],
+    "songselect.group_bpm_unknown": ["BPM ?", "BPM 未知", "BPM 未知", "BPM 不明"],
+    "songselect.group_empty":  ["No songs in Songs/", "Songs/ 裡沒有歌曲", "Songs/ 里没有歌曲", "Songs/ に曲がありません"],
+
     # 3D stage names — selector scenes (ids 0..30) + special rooms (31/32/33/35/37/38/39).
     # zh-TW are the real EXE names; en/ja are translations (proper nouns like NARNIA kept as-is).
     "stage.name.0":  ["Pedestrian Street", "步行街", "步行街", "歩行者天国"],

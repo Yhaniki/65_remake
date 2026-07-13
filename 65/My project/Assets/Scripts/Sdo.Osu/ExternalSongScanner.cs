@@ -262,10 +262,11 @@ namespace Sdo.Osu
                     int c = slots[s];
                     if (c < 0) continue;
                     int i = g.Charts[c];
+                    var st = OsuStats(candFile[i]);   // 星數×5 → 等級 + 譜長（只對選中的 3 張全解析，掃描才不慢）
                     d.Charts[s] = new ExternalChart
                     {
                         FilePath = candFile[i], ChartIndex = 0, NoteCount = candMeta[i].NoteCount,
-                        Level = OsuLevel(candFile[i]),   // 星數×5 → 等級（只對選中的 3 張全解析，掃描才不慢）
+                        Level = st.Level, DurationSec = st.DurationSec,
                     };
                 }
 
@@ -318,10 +319,11 @@ namespace Sdo.Osu
                 {
                     int c = slots[s];
                     if (c < 0) continue;
+                    var st = SmStats(smSong, candIndex[c], candLevel[c]);   // 同 osu 一致的星數量尺；失敗回退譜面 meter
                     d.Charts[s] = new ExternalChart
                     {
                         FilePath = smPath, ChartIndex = candIndex[c], NoteCount = candCount[c],
-                        Level = SmLevel(smSong, candIndex[c], candLevel[c]),   // 同 osu 一致的星數量尺；失敗回退譜面 meter
+                        Level = st.Level, DurationSec = st.DurationSec,
                     };
                 }
                 d.Title = Coalesce(smSong.Title, Path.GetFileNameWithoutExtension(smPath));
@@ -362,6 +364,7 @@ namespace Sdo.Osu
                 PreviewStartMs = d.PreviewStartMs,
                 PreviewLengthMs = d.PreviewLengthMs,
                 AudioPath = audioPath,
+                AudioDurationSec = AudioDuration.Seconds(audioPath),   // 時間欄用「音樂檔長度」，不是譜尾
                 ImagePath = ResolveImage(dir, ImagePool(images, d, sole, claimed), d),
             };
             for (int s = 0; s < 3; s++) song.Charts[s] = d.Charts[s];
@@ -448,19 +451,35 @@ namespace Sdo.Osu
             }
         }
 
-        // Level from osu!mania star rating (star × 5, clamped) — full-parse only the chosen chart. 0 on failure.
-        private static int OsuLevel(string osuPath)
+        /// <summary>Level + play time of ONE chart. Both come from the same full parse — the star rating already needs
+        /// it, so the 時間 column costs nothing extra (the scan still only full-parses the 3 chosen charts).</summary>
+        public struct ChartStats { public int Level; public int DurationSec; }
+
+        // Level from osu!mania star rating (star × 5, clamped). Level 0 / no duration on failure.
+        private static ChartStats OsuStats(string osuPath)
         {
-            try { return ManiaStarRating.Level(OsuBeatmapParser.Parse(File.ReadAllText(osuPath))); }
-            catch { return 0; }
+            try { return StatsOf(OsuBeatmapParser.Parse(File.ReadAllText(osuPath)), 0); }
+            catch { return new ChartStats { Level = 0 }; }
         }
 
-        // Level for a StepMania chart: convert to the osu representation and use the SAME star scale as osu; fall back
+        // Same for a StepMania chart: convert to the osu representation and use the SAME star scale as osu; fall back
         // to the chart's own #NOTES meter if the conversion/rating fails.
-        private static int SmLevel(SmChart.SmSong song, int blockIndex, int fallbackMeter)
+        private static ChartStats SmStats(SmChart.SmSong song, int blockIndex, int fallbackMeter)
         {
-            try { return ManiaStarRating.Level(SmChart.ToBeatmap(song, blockIndex)); }
-            catch { return fallbackMeter; }
+            try { return StatsOf(SmChart.ToBeatmap(song, blockIndex), fallbackMeter); }
+            catch { return new ChartStats { Level = fallbackMeter }; }
+        }
+
+        /// <summary>Rating + duration of a parsed chart. Duration = the last note's time (hold ends included), which is
+        /// the same measure the official catalog's dur* carries — so both kinds of song read alike in the list.</summary>
+        public static ChartStats StatsOf(OsuBeatmap beatmap, int fallbackLevel)
+        {
+            if (beatmap == null) return new ChartStats { Level = fallbackLevel };
+            return new ChartStats
+            {
+                Level = ManiaStarRating.Level(beatmap),
+                DurationSec = (int)Math.Round(Math.Max(0.0, beatmap.LastNoteMs) / 1000.0),
+            };
         }
 
         private static string First(List<int> charts, Func<int, string> field, string fallback)

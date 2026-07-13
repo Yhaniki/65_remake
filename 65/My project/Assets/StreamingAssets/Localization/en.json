@@ -340,6 +340,42 @@
    "v": "Random Lv 13+"
   },
   {
+   "k": "songselect.group_panel",
+   "v": "Browse"
+  },
+  {
+   "k": "songselect.group_folder",
+   "v": "Group"
+  },
+  {
+   "k": "songselect.group_title",
+   "v": "Song"
+  },
+  {
+   "k": "songselect.group_artist",
+   "v": "Artist"
+  },
+  {
+   "k": "songselect.group_bpm",
+   "v": "BPM"
+  },
+  {
+   "k": "songselect.group_other",
+   "v": "Other"
+  },
+  {
+   "k": "songselect.group_uncat",
+   "v": "(Ungrouped)"
+  },
+  {
+   "k": "songselect.group_bpm_unknown",
+   "v": "BPM ?"
+  },
+  {
+   "k": "songselect.group_empty",
+   "v": "No songs in Songs/"
+  },
+  {
    "k": "stage.name.0",
    "v": "Pedestrian Street"
   },

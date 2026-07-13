@@ -132,3 +132,6 @@ procmon_tool/runs/
 # SdoLog runtime output (editor run writes beside the project)
 /65/My project/log.txt
 /65/My project/log.txt.prev
+
+# User song library (osu!/StepMania folders dropped beside the exe) — local data, never versioned
+/65/My project/Songs/
