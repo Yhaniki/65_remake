@@ -39,7 +39,7 @@ namespace Sdo.Game
         {
             _mesh = new Mesh { name = "HandRibbon" };
             _mesh.MarkDynamic();
-            var mf = GetComponent<MeshFilter>() ?? gameObject.AddComponent<MeshFilter>();
+            if (!TryGetComponent<MeshFilter>(out var mf)) mf = gameObject.AddComponent<MeshFilter>();
             mf.mesh = _mesh;
             transform.position = Vector3.zero; transform.rotation = Quaternion.identity; transform.localScale = Vector3.one;
         }

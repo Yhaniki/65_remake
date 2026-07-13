@@ -263,7 +263,7 @@ namespace Sdo.UI.Util
 
         public static LayoutElement Layout(GameObject go, float preferredHeight)
         {
-            var le = go.GetComponent<LayoutElement>() ?? go.AddComponent<LayoutElement>();
+            if (!go.TryGetComponent<LayoutElement>(out var le)) le = go.AddComponent<LayoutElement>();
             le.preferredHeight = preferredHeight;
             le.flexibleWidth = 1f;
             return le;
