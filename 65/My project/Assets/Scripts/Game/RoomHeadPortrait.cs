@@ -52,6 +52,9 @@ namespace Sdo.Game
             if (_avatar == null) { Destroy(parent); return false; }
             _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;
+            // F7 swaps the 頭貼 to the MMD model too (framing: MmdAvatar.TryHeadBounds). No cloth sim: at 192×152 the hair
+            // sway is invisible, and the solver is the costliest part of an MMD rig — the hair just rides the head instead.
+            MmdDebug.RegisterSwappable(_avatar, cloth: false);
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
             // the avatar's live pose (官方頭像框跟著實際動作做動作).
             _walkMot = SdoRoomAvatar.LoadMot(male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
@@ -161,9 +164,13 @@ namespace Sdo.Game
         }
 
         // Combined world AABB of the head (FACE+HAIR) renderers, after the avatar has been CPU-skinned this frame. False
-        // until the meshes have valid bounds (first pose).
+        // until the meshes have valid bounds (first pose). In MMD display mode the SDO parts are hidden and the model is
+        // one skinned mesh with no FACE/HAIR split, so the MMD rig measures its own head (head bone subtree) instead.
         private bool TryHeadBounds(out Bounds b)
         {
+            var mmd = MmdDebug.ActiveFor(_avatar);
+            if (mmd != null && mmd.TryHeadBounds(out b)) return true;
+
             b = default; bool any = false;
             if (_headRends != null)
                 foreach (var r in _headRends)

@@ -37,7 +37,33 @@ namespace Sdo.Game
         /// <summary>Flip the mesh UV V (uv.y = 1-uv.y) — the canonical MMD→Unity fix (PMX UVs are V-down). Toggle live
         /// to find the orientation whose atlas maps correctly (green necktie, not skin).</summary>
         public bool FlipV = true;
-        private Mesh _mesh; private Vector2[] _uvVerbatim, _uvFlipped;
+
+        /// <summary>
+        /// The parts of a built MMD model that do NOT depend on which dancer wears it — the skinned MESH (172k verts for
+        /// Miku), its MATERIALS (+ the expensive per-texture alpha scan that classifies them), and the head box. Built
+        /// once per model and handed to every rig: with the stage dancer, the room walker, the room 頭貼, the 結算 headshot
+        /// and BOTH gender previews alive, that is 6 rigs off ONE mesh instead of six copies of it.
+        ///
+        /// This is safe because the mesh's BINDPOSES are rig-independent: bindpose = bone.worldToLocal × mesh.localToWorld,
+        /// the MMD rest bones carry identity rotation and unit scale, and the rig root's own scale/rotation/placement
+        /// appears in both matrices and cancels — so it reduces to translate(−bonePos), the same for every rig regardless
+        /// of its unit scale (each dancer height-matches the model differently: 3.04, 3.34, 3.02 …). What each rig DOES
+        /// own is its bone Transforms, so they all pose independently off the same mesh.
+        /// </summary>
+        private sealed class Shared
+        {
+            public Mesh Mesh;
+            public Vector2[] UvVerbatim, UvFlipped;
+            public bool FlipVApplied = true;                 // which UV set is currently on Mesh (avoids re-uploading 172k UVs)
+            public Material[] Materials;
+            public bool[] Hide;                              // material not drawn (morph-hidden / overlay)
+            public readonly List<KeyValuePair<Material, float>> SphereMats = new List<KeyValuePair<Material, float>>();
+            public readonly List<Material> ToonMats = new List<Material>();
+            public readonly List<KeyValuePair<Material, float>> EdgeMats = new List<KeyValuePair<Material, float>>();
+            public bool HasHead; public int HeadBone = -1; public Bounds HeadLocal; public Vector3 HeadRestPos;
+        }
+        private static readonly Dictionary<PmxLoader, Shared> _sharedByModel = new Dictionary<PmxLoader, Shared>();
+        private Shared _sh;
 
         private Transform _mmdRoot;
         private Transform[] _bone;
@@ -62,16 +88,22 @@ namespace Sdo.Game
         private int _rootBone = -1;
         private int _hrcRootIndex = -1;
         private Vector3 _hrcRootRestPos, _rootRestLocal;
-        private readonly List<KeyValuePair<Material, float>> _sphereMats = new List<KeyValuePair<Material, float>>();  // (material, its sphere mode)
-        private readonly List<Material> _toonMats = new List<Material>();
-        private readonly List<KeyValuePair<Material, float>> _edgeMats = new List<KeyValuePair<Material, float>>();   // (material, its edge size)
         private MmdSpringBones _spring;
         private MmdMagicaCloth _magica;   // preferred cloth solver (Magica Cloth 2); _spring is the fallback
         private bool _visible = true, _physicsOn = true;   // physics runs only when BOTH hold (independent toggles)
-        private bool[] _hide;                       // material not drawn (morph-hidden / overlay)
         private bool _ready;
 
-        public static MmdAvatar Build(SdoAvatar driver, PmxLoader pmx, string textureDir, int layer)
+        /// <summary>Is the MMD body currently the one being drawn (vs the native SDO body)?</summary>
+        public bool Visible => _visible && _ready;
+
+        /// <summary>Does this rig have a cloth solver at all? False for the head portraits, which are built without one
+        /// (see the <c>cloth</c> argument of <see cref="Build"/>).</summary>
+        public bool HasCloth => _magica != null || _spring != null;
+
+        /// <summary><paramref name="cloth"/> false builds the rig with NO hair/skirt simulation — the physics bones just
+        /// hold their styled rest pose and ride the head. That is what the head portraits (room 頭貼 / 結算頭貼) use: at
+        /// that size the sway is invisible, and a cloth solver per rig is the most expensive part of a build.</summary>
+        public static MmdAvatar Build(SdoAvatar driver, PmxLoader pmx, string textureDir, int layer, bool cloth = true)
         {
             if (driver == null || driver.Hrc == null || pmx == null || pmx.Bones.Count == 0 || pmx.VertexCount == 0)
                 return null;
@@ -80,13 +112,14 @@ namespace Sdo.Game
             var self = rootGo.AddComponent<MmdAvatar>();
             self.Driver = driver;
             self._mmdRoot = rootGo.transform;
-            try { self.Construct(pmx, textureDir, layer); }
+            try { self.Construct(pmx, textureDir, layer, cloth); }
             catch (Exception e) { Debug.LogWarning("[mmd] build fail: " + e.Message + "\n" + e.StackTrace); UnityEngine.Object.Destroy(rootGo); return null; }
             return self;
         }
 
-        private void Construct(PmxLoader pmx, string textureDir, int layer)
+        private void Construct(PmxLoader pmx, string textureDir, int layer, bool cloth)
         {
+            float t0 = Time.realtimeSinceStartup;
             int bc = pmx.Bones.Count;
             var hrc = Driver.Hrc;
 
@@ -129,21 +162,16 @@ namespace Sdo.Game
             _mmdRoot.localRotation = _qroot;
             _mmdRoot.localPosition = new Vector3(0f, feetY - minY * _unitScale, 0f);
 
-            // ---- materials (sets _hide) + mesh (skips hidden submeshes) ----
+            // ---- mesh + materials: SHARED across every rig of this model (see Shared / GetShared) ----
+            _sh = GetShared(pmx, textureDir);
             var meshGo = new GameObject("MmdMesh");
             meshGo.transform.SetParent(_mmdRoot, false);
             var smr = meshGo.AddComponent<SkinnedMeshRenderer>();
-            var mats = BuildMaterials(pmx, textureDir);
-            var mesh = BuildMesh(pmx);
-            smr.sharedMesh = mesh;
-            smr.bones = _bone;
+            smr.sharedMesh = _sh.Mesh;      // bindposes are rig-independent — see GetShared
+            smr.bones = _bone;              // …but the BONES are this rig's own, so each dances on its own
             smr.rootBone = _mmdRoot;
             smr.updateWhenOffscreen = true;
-            smr.sharedMaterials = mats;
-
-            var binds = new Matrix4x4[bc];
-            for (int i = 0; i < bc; i++) binds[i] = _bone[i].worldToLocalMatrix * meshGo.transform.localToWorldMatrix;
-            mesh.bindposes = binds;
+            smr.sharedMaterials = _sh.Materials;
 
             // ---- retarget wiring ----
             _hrcIndex = new int[bc]; _hrcRestInv = new Quaternion[bc];
@@ -180,17 +208,20 @@ namespace Sdo.Game
             _appendOrder = BuildAppendOrder(bc);
 
             SetLayer(_mmdRoot.gameObject, layer);
-            _magica = MmdMagicaCloth.Setup(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale);   // Magica Cloth 2 (preferred)
-            if (_magica == null)   // package missing / setup failed → hand-rolled spring bones
+            if (cloth)   // head portraits build without one — the hair then holds its styled rest pose and rides the head
             {
-                _spring = MmdSpringBones.Attach(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _mmdRoot);
-                BuildColliders(pmx, _unitScale);
+                _magica = MmdMagicaCloth.Setup(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale);   // Magica Cloth 2 (preferred)
+                if (_magica == null)   // package missing / setup failed → hand-rolled spring bones
+                {
+                    _spring = MmdSpringBones.Attach(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _mmdRoot);
+                    BuildColliders(pmx, _unitScale);
+                }
             }
             _ready = true;
-            string phys = _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col)" : (_spring != null ? "spring" : "none");
-            LogMilestone($"[mmd] built '{pmx.NameJp}': {pmx.VertexCount} verts, {pmx.Materials.Count} mats, {bc} bones, " +
+            string phys = _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col)" : (_spring != null ? "spring" : (cloth ? "none" : "OFF (portrait)"));
+            LogMilestone($"[mmd] built '{pmx.NameJp}' in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms: {pmx.VertexCount} verts, {pmx.Materials.Count} mats, {bc} bones, " +
                          $"scale={_unitScale:F3}, facing={_qroot.eulerAngles.y:F0}°, driven={CountDriven()}/{bc}, aimed={aimed}, " +
-                         $"sphere={_sphereMats.Count}, toon={_toonMats.Count}, edge={_edgeMats.Count}, physics={pmx.PhysicsBones.Count}({phys})");
+                         $"sphere={_sh.SphereMats.Count}, toon={_sh.ToonMats.Count}, edge={_sh.EdgeMats.Count}, physics={pmx.PhysicsBones.Count}({phys})");
         }
 
         // Precompute the aim target/direction for every mapped bone that has a mapped child.
@@ -321,18 +352,51 @@ namespace Sdo.Game
             return list.ToArray();
         }
 
+        // ---- shared per-model assets: built for the first rig, reused by every rig after it ----
+        private static Shared GetShared(PmxLoader pmx, string textureDir)
+        {
+            if (_sharedByModel.TryGetValue(pmx, out var s) && s.Mesh != null && s.Materials != null &&
+                s.Materials.Length > 0 && s.Materials[0] != null)
+            {
+                LogMilestone($"[mmd] reusing the shared mesh/materials ({pmx.VertexCount} verts, {s.Materials.Length} mats) — not rebuilt");
+                return s;
+            }
+
+            var t0 = Time.realtimeSinceStartup;
+            s = new Shared();
+            s.Materials = BuildMaterials(pmx, textureDir, s);   // sets s.Hide (+ the sphere/toon/edge lists)
+            s.Mesh = BuildMesh(pmx, s);                         // skips the hidden submeshes
+
+            // Bindposes: the MMD rest bones have identity rotation and unit scale, and the rig root's transform cancels
+            // out of bone.worldToLocal × mesh.localToWorld — so the bindpose is just translate(−bonePos), identical for
+            // every rig. That is what makes ONE mesh serve rigs built at different unit scales.
+            var binds = new Matrix4x4[pmx.Bones.Count];
+            for (int i = 0; i < binds.Length; i++) binds[i] = Matrix4x4.Translate(-pmx.Bones[i].Position);
+            s.Mesh.bindposes = binds;
+
+            if (MmdHeadBounds.TryCompute(pmx, out int hb, out var hl))
+            {
+                s.HasHead = true; s.HeadBone = hb; s.HeadLocal = hl; s.HeadRestPos = pmx.Bones[hb].Position;
+            }
+
+            _sharedByModel[pmx] = s;
+            LogMilestone($"[mmd] shared mesh+materials built in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms " +
+                         $"({pmx.VertexCount} verts, {s.Materials.Length} mats) — every rig reuses these");
+            return s;
+        }
+
         // ---- mesh ----
-        private Mesh BuildMesh(PmxLoader pmx)
+        private static Mesh BuildMesh(PmxLoader pmx, Shared sh)
         {
             int vc = pmx.VertexCount;
             var mesh = new Mesh { name = "mmd_" + pmx.NameEn };
             if (vc > 65000) mesh.indexFormat = IndexFormat.UInt32;
             mesh.vertices = pmx.Positions; mesh.normals = pmx.Normals;
-            _uvVerbatim = pmx.Uvs;
-            _uvFlipped = new Vector2[vc];
-            for (int k = 0; k < vc; k++) _uvFlipped[k] = new Vector2(pmx.Uvs[k].x, 1f - pmx.Uvs[k].y);
-            mesh.uv = FlipV ? _uvFlipped : _uvVerbatim;   // PMX UVs are V-down; flip for Unity (toggle to verify)
-            _mesh = mesh;
+            sh.UvVerbatim = pmx.Uvs;
+            sh.UvFlipped = new Vector2[vc];
+            for (int k = 0; k < vc; k++) sh.UvFlipped[k] = new Vector2(pmx.Uvs[k].x, 1f - pmx.Uvs[k].y);
+            mesh.uv = sh.UvFlipped;   // PMX UVs are V-down; flip for Unity (SetFlipV toggles it live)
+            sh.FlipVApplied = true;
             var bw = new BoneWeight[vc];
             for (int v = 0; v < vc; v++)
             {
@@ -349,7 +413,7 @@ namespace Sdo.Game
             mesh.subMeshCount = pmx.Materials.Count;
             for (int s = 0; s < pmx.Materials.Count; s++)
             {
-                if (_hide != null && _hide[s]) { mesh.SetTriangles(Array.Empty<int>(), s); continue; }
+                if (sh.Hide != null && sh.Hide[s]) { mesh.SetTriangles(Array.Empty<int>(), s); continue; }
                 var m = pmx.Materials[s];
                 var tris = new int[m.IndexCount];
                 Array.Copy(pmx.Indices, m.IndexStart, tris, 0, m.IndexCount);
@@ -360,12 +424,14 @@ namespace Sdo.Game
         }
 
         // ---- materials (MMD shader: base + sphere; alpha class → opaque/cutout; morph-overlay & a=0 hidden) ----
-        private Material[] BuildMaterials(PmxLoader pmx, string dir)
+        // Built with every effect ON; MmdDebug re-applies the panel's live toggles to each rig right after it is built,
+        // and since the materials are shared those writes land on the same materials for all of them.
+        private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh)
         {
             var shader = Shader.Find("Sdo/MmdModel") ?? Shader.Find("Unlit/Texture");
             var col = Shader.Find("Unlit/Color") ?? shader;
             var mats = new Material[pmx.Materials.Count];
-            _hide = new bool[pmx.Materials.Count];
+            var _hide = sh.Hide = new bool[pmx.Materials.Count];
             for (int i = 0; i < pmx.Materials.Count; i++)
             {
                 var pm = pmx.Materials[i];
@@ -409,22 +475,22 @@ namespace Sdo.Game
                 if ((pm.SphereMode == 1 || pm.SphereMode == 2) && pm.SphereIndex >= 0 && pm.SphereIndex < pmx.TexturePaths.Length)
                 {
                     var sph = LoadTexture(dir, pmx.TexturePaths[pm.SphereIndex]);
-                    if (sph != null) { mat.SetTexture("_SphereTex", sph); sphereMode = pm.SphereMode; _sphereMats.Add(new KeyValuePair<Material, float>(mat, sphereMode)); }
+                    if (sph != null) { mat.SetTexture("_SphereTex", sph); sphereMode = pm.SphereMode; sh.SphereMats.Add(new KeyValuePair<Material, float>(mat, sphereMode)); }
                 }
-                mat.SetFloat("_SphereMode", ShowSphere ? sphereMode : 0f);
+                mat.SetFloat("_SphereMode", sphereMode);
 
                 // toon ramp (cel shading): a vertical light→shadow gradient sampled by N·L. Either a per-material toon
                 // TEXTURE (ToonIndex) or a built-in SHARED toon (ToonShared 0..9) → a synthesized 2-tone ramp fallback.
                 Texture2D toon = pm.ToonIndex >= 0 && pm.ToonIndex < pmx.TexturePaths.Length ? LoadTexture(dir, pmx.TexturePaths[pm.ToonIndex]) : null;
                 if (toon == null && pm.ToonShared >= 0) toon = DefaultToonRamp();
                 bool hasToon = toon != null;
-                if (hasToon) { toon.wrapMode = TextureWrapMode.Clamp; mat.SetTexture("_ToonTex", toon); _toonMats.Add(mat); }
-                mat.SetFloat("_UseToon", (ShowToon && hasToon) ? 1f : 0f);
+                if (hasToon) { toon.wrapMode = TextureWrapMode.Clamp; mat.SetTexture("_ToonTex", toon); sh.ToonMats.Add(mat); }
+                mat.SetFloat("_UseToon", hasToon ? 1f : 0f);
 
                 // pencil outline: only edge-flagged materials get a non-zero edge size.
                 mat.SetColor("_EdgeColor", pm.EdgeColor);
-                if (pm.HasEdge) _edgeMats.Add(new KeyValuePair<Material, float>(mat, pm.EdgeSize));
-                mat.SetFloat("_EdgeSize", (ShowOutline && pm.HasEdge) ? pm.EdgeSize : 0f);
+                if (pm.HasEdge) sh.EdgeMats.Add(new KeyValuePair<Material, float>(mat, pm.EdgeSize));
+                mat.SetFloat("_EdgeSize", pm.HasEdge ? pm.EdgeSize : 0f);
 
                 mats[i] = mat;
                 SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{Path.GetFileName(texName)}' {(cutout ? "CUTOUT" : "opaque")}{(pm.DoubleSided ? " 2sided" : "")}{(sphereMode > 0 ? " +sphere" + (int)sphereMode : "")}{(hasToon ? " +toon" : "")}{(pm.HasEdge ? " +edge" : "")}");
@@ -433,13 +499,19 @@ namespace Sdo.Game
         }
 
         /// <summary>Live toggle: turn all sphere maps on/off (restores each material's authored sphere mode).</summary>
-        public void SetSphere(bool on) { ShowSphere = on; foreach (var kv in _sphereMats) if (kv.Key != null) kv.Key.SetFloat("_SphereMode", on ? kv.Value : 0f); }
+        public void SetSphere(bool on) { ShowSphere = on; if (_sh == null) return; foreach (var kv in _sh.SphereMats) if (kv.Key != null) kv.Key.SetFloat("_SphereMode", on ? kv.Value : 0f); }
 
         /// <summary>Live toggle: flip the mesh UV V (find the atlas-correct orientation without a recompile).</summary>
-        public void SetFlipV(bool on) { FlipV = on; if (_mesh != null && _uvVerbatim != null) _mesh.uv = on ? _uvFlipped : _uvVerbatim; }
+        public void SetFlipV(bool on)
+        {
+            FlipV = on;
+            if (_sh == null || _sh.Mesh == null || _sh.UvVerbatim == null || _sh.FlipVApplied == on) return;   // shared mesh: don't re-upload 172k UVs per rig
+            _sh.Mesh.uv = on ? _sh.UvFlipped : _sh.UvVerbatim;
+            _sh.FlipVApplied = on;
+        }
 
         /// <summary>Live toggle: cel-shading toon ramp on/off.</summary>
-        public void SetToon(bool on) { ShowToon = on; foreach (var m in _toonMats) if (m != null) m.SetFloat("_UseToon", on ? 1f : 0f); }
+        public void SetToon(bool on) { ShowToon = on; if (_sh == null) return; foreach (var m in _sh.ToonMats) if (m != null) m.SetFloat("_UseToon", on ? 1f : 0f); }
 
         // Synthesized shared-toon ramp (shadow at V=0 → lit at V=1) for materials that reference a built-in MMD toon
         // (toon01..toon10) we don't bundle. Cached; the shader samples it at (0.5, N·L) so lit=top, shadow=bottom.
@@ -455,7 +527,7 @@ namespace Sdo.Game
         }
 
         /// <summary>Live toggle: pencil outline on/off (restores each material's authored edge size).</summary>
-        public void SetOutline(bool on) { ShowOutline = on; foreach (var kv in _edgeMats) if (kv.Key != null) kv.Key.SetFloat("_EdgeSize", on ? kv.Value : 0f); }
+        public void SetOutline(bool on) { ShowOutline = on; if (_sh == null) return; foreach (var kv in _sh.EdgeMats) if (kv.Key != null) kv.Key.SetFloat("_EdgeSize", on ? kv.Value : 0f); }
 
         /// <summary>Live toggle / tune of the hair-skirt spring-bone sway.</summary>
         public void SetPhysics(bool on) { _physicsOn = on; UpdateSpring(); }
@@ -506,21 +578,31 @@ namespace Sdo.Game
         // project's texel layout — the SDO DDS pipeline puts image-top at texel row 0, and Unity's PNG/BMP decode here
         // matches, so a flip actually scrambled the clothing atlas (skin bled onto the necktie). Verified by rendering
         // the model both ways: unflipped = correct Miku (green tie, right costume), flipped = broken.
+        private static readonly Dictionary<string, Texture2D> _texCache = new Dictionary<string, Texture2D>();
         private static Texture2D LoadTexture(string dir, string rel)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(rel)) return null;
             string path = ResolvePath(dir, rel.Replace('\\', '/'));
             if (path == null) return null;
+            // The same model is now built several times over (stage dancer, room walker, room 頭貼, 結算頭貼, both gender
+            // previews) — decode each texture once and share it, or every extra rig re-reads the whole texture set.
+            if (_texCache.TryGetValue(path, out var hit) && hit != null) return hit;
             byte[] b; try { b = File.ReadAllBytes(path); } catch { return null; }
             string ext = Path.GetExtension(path).ToLowerInvariant();
+            Texture2D tex = null;
             try
             {
-                if (ext == ".tga") return DdsLoader.LoadTga(b);
-                if (b.Length > 2 && b[0] == 'B' && b[1] == 'M') return DecodeBmp(b);
-                var t = new Texture2D(2, 2, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Repeat };
-                return t.LoadImage(b) ? t : null;
+                if (ext == ".tga") tex = DdsLoader.LoadTga(b);
+                else if (b.Length > 2 && b[0] == 'B' && b[1] == 'M') tex = DecodeBmp(b);
+                else
+                {
+                    var t = new Texture2D(2, 2, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Repeat };
+                    tex = t.LoadImage(b) ? t : null;
+                }
             }
             catch { return null; }
+            if (tex != null) _texCache[path] = tex;
+            return tex;
         }
 
         private static string ResolvePath(string dir, string rel)
@@ -560,6 +642,44 @@ namespace Sdo.Game
 
         private static void SetLayer(GameObject go, int layer) { go.layer = layer; foreach (Transform c in go.transform) SetLayer(c.gameObject, layer); }
         private static void LogMilestone(string m) { Debug.Log(m); SdoLog.Note("mmd", m); }
+
+        /// <summary>Re-layer the whole MMD rig (the portrait / preview cameras cull by layer, and the driver's layer can
+        /// be assigned AFTER the SDO parts are built — so the rig has to be able to follow it).</summary>
+        public void SetLayer(int layer) { if (_mmdRoot != null) SetLayer(_mmdRoot.gameObject, layer); }
+
+        /// <summary>The head's world AABB in the CURRENT pose (animated head bone) — a head-portrait cam that should keep
+        /// the head centred while the body walks/bobs frames this. False if the model has no usable head (see
+        /// <see cref="MmdHeadBounds"/>), in which case the caller keeps its own framing.</summary>
+        public bool TryHeadBounds(out Bounds world)
+        {
+            world = default;
+            if (_sh == null || !_sh.HasHead || !_ready || _bone == null || _sh.HeadBone < 0 || _sh.HeadBone >= _bone.Length || _bone[_sh.HeadBone] == null) return false;
+            return BoxToWorld(_bone[_sh.HeadBone].localToWorldMatrix, out world);
+        }
+
+        /// <summary>The head's world AABB in the REST pose (head bone unrotated, body transform still applied) — a FIXED
+        /// portrait cam frames this, so the idle head-bob plays out inside the frame instead of being chased (the same
+        /// reason the SDO head cam targets the head bone's rest position).</summary>
+        public bool TryHeadBoundsRest(out Bounds world)
+        {
+            world = default;
+            if (_sh == null || !_sh.HasHead || !_ready || _mmdRoot == null) return false;
+            return BoxToWorld(_mmdRoot.localToWorldMatrix * Matrix4x4.Translate(_sh.HeadRestPos), out world);
+        }
+
+        // World AABB of the head box under an arbitrary head-bone→world matrix (8 corners; the matrix carries the rig's
+        // unit scale and the driver's scale/yaw, so no extra bookkeeping here).
+        private bool BoxToWorld(Matrix4x4 m, out Bounds world)
+        {
+            Vector3 c = _sh.HeadLocal.center, e = _sh.HeadLocal.extents;
+            world = new Bounds(m.MultiplyPoint3x4(c + new Vector3(-e.x, -e.y, -e.z)), Vector3.zero);
+            for (int i = 1; i < 8; i++)
+            {
+                var corner = new Vector3((i & 1) != 0 ? e.x : -e.x, (i & 2) != 0 ? e.y : -e.y, (i & 4) != 0 ? e.z : -e.z);
+                world.Encapsulate(m.MultiplyPoint3x4(c + corner));
+            }
+            return true;
+        }
 
         public void SetVisible(bool on)
         {

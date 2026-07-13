@@ -6,10 +6,11 @@ namespace Sdo.Game
 {
     /// <summary>
     /// Debug switch for the "display an MMD model instead of the SDO avatar" experiment. Press <b>F7</b> (or click the
-    /// on-screen button) to swap every registered in-scene dancer (the lobby walker and the gameplay dancer) between
-    /// its native SDO body and the MMD model — the SDO <see cref="SdoAvatar"/> stays alive as the hidden motion driver
-    /// either way, so the MMD model dances the exact same MOT/DPS. The model is the Miku .pmx under
-    /// <c>assets/IkaHatunemiku2025</c>, parsed once (<see cref="PmxLoader"/>) and reused.
+    /// on-screen button) to swap EVERY registered avatar between its native SDO body and the MMD model — the gameplay
+    /// dancer, the room walker, and the three portrait/preview surfaces that render their own private avatar into a
+    /// RenderTexture (the 男/女 select preview, the room 頭貼, and the 結算 left headshot). The SDO <see cref="SdoAvatar"/>
+    /// stays alive as the hidden motion driver either way, so the MMD model plays the exact same MOT/DPS. The model is
+    /// the Miku .pmx under <c>assets/IkaHatunemiku2025</c>, parsed once (<see cref="PmxLoader"/>) and reused.
     ///
     /// Self-bootstraps (<see cref="Boot"/>) and announces itself at scene load; the two build sites just call
     /// <see cref="RegisterSwappable"/>, which also eagerly parses the model so you get "[mmd] parsed …" confirmation
@@ -22,7 +23,7 @@ namespace Sdo.Game
         public KeyCode ToggleKey = KeyCode.F7;    // swap SDO⇄MMD avatar (was F8; F8 now free for gameplay auto-play)
         public KeyCode PanelKey  = KeyCode.F10;   // show/hide this whole debug panel
 
-        private sealed class Reg { public SdoAvatar Avatar; public MmdAvatar Mmd; }
+        private sealed class Reg { public SdoAvatar Avatar; public MmdAvatar Mmd; public bool Failed; public bool Cloth = true; }
         private readonly List<Reg> _regs = new List<Reg>();
         private bool _mmdOn;
         private bool _panelOn = true;   // the on-screen debug panel starts visible; PanelKey (F10) or its 隱藏 button hides it
@@ -42,9 +43,15 @@ namespace Sdo.Game
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
-            Ensure();
+            var inst = Ensure();
             _mikuPath = ResolveMikuPmx(out _mikuDir);
-            Log("[mmd] armed — F7 (or on-screen button) swaps SDO⇄MMD; F10 shows/hides the panel. model=" +
+            // -mmd on the command line starts the whole session in MMD mode (every avatar, from the 男/女 select screen
+            // on) — otherwise the run starts on the SDO bodies and F7 swaps.
+            bool cli = false;
+            try { foreach (var a in System.Environment.GetCommandLineArgs()) if (a == "-mmd") cli = true; } catch { }
+            if (cli) inst._mmdOn = true;   // (no Apply: nothing is registered yet — each dancer swaps as it's built)
+            Log("[mmd] armed — F7 (or on-screen button) swaps SDO⇄MMD; F10 shows/hides the panel. " +
+                (cli ? "-mmd → starting in MMD mode. " : "") + "model=" +
                 (_mikuPath ?? "NOT FOUND under assets/IkaHatunemiku2025"));
         }
 
@@ -57,51 +64,91 @@ namespace Sdo.Game
             return _inst;
         }
 
-        /// <summary>Register an in-scene dancer as swappable. Called right after each SDO dancer is built (lobby /
-        /// gameplay). Eagerly parses the model so its "[mmd] parsed …" (or "not found") confirmation appears on room
-        /// entry, before any toggle. If MMD mode is already on, the new dancer is swapped immediately.</summary>
-        public static void RegisterSwappable(SdoAvatar avatar)
+        /// <summary>Register an in-scene dancer as swappable. Called right after each SDO dancer is built. Eagerly parses
+        /// the model so its "[mmd] parsed …" (or "not found") confirmation appears on room entry, before any toggle. If
+        /// MMD mode is already on, the new dancer is swapped immediately.
+        /// <paramref name="cloth"/> false → build this one WITHOUT the hair/skirt sim (the head portraits: the sway is
+        /// invisible at that size and the cloth solver is the most expensive part of a rig).</summary>
+        public static void RegisterSwappable(SdoAvatar avatar, bool cloth = true)
         {
             if (avatar == null) return;
             var inst = Ensure();
             inst._regs.RemoveAll(r => r.Avatar == null);   // drop destroyed dancers (scene changes / rebuilds)
             if (inst._regs.Exists(r => r.Avatar == avatar)) return;
-            inst._regs.Add(new Reg { Avatar = avatar });
+            inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth });
             Log($"[mmd] registered dancer '{avatar.name}' (now {inst._regs.Count} swappable) — parsing model…");
             SharedPmx();   // eager parse → logs "[mmd] parsed …" or the not-found/parse-fail reason right now
             if (inst._mmdOn) inst.Apply(inst._regs[inst._regs.Count - 1], true);
+        }
+
+        /// <summary>The MMD body currently DISPLAYED for <paramref name="avatar"/>, or null when the native SDO body is
+        /// the one on screen. The head-portrait cameras (room 頭貼 / 結算頭貼) ask this so they can frame the MMD head —
+        /// the SDO FACE/HAIR geometry they normally measure is hidden while MMD is shown.</summary>
+        public static MmdAvatar ActiveFor(SdoAvatar avatar)
+        {
+            if (_inst == null || !_inst._mmdOn || avatar == null) return null;
+            foreach (var r in _inst._regs)
+                if (r.Avatar == avatar) return (r.Mmd != null && r.Mmd.Visible) ? r.Mmd : null;
+            return null;
         }
 
         private void Update()
         {
             if (Input.GetKeyDown(ToggleKey)) Toggle();
             if (Input.GetKeyDown(PanelKey)) _panelOn = !_panelOn;
+
+            // Build the MMD body for any dancer that could NOT be built when it was last applied because its GameObject
+            // was inactive — the gender-select screen keeps BOTH previews alive and only activates the selected one, and
+            // Magica Cloth / the skinned rig need a live GameObject. Retried once the dancer is shown.
+            if (!_mmdOn) return;
+            for (int i = 0; i < _regs.Count; i++)
+            {
+                var r = _regs[i];
+                if (r.Mmd != null || r.Failed || r.Avatar == null || !r.Avatar.gameObject.activeInHierarchy) continue;
+                Apply(r, true);
+            }
         }
 
-        private void Toggle()
+        private void Toggle() => SetEnabled(!_mmdOn);
+
+        /// <summary>Show the MMD body (true) or the native SDO body (false) on every registered avatar. What F7 and the
+        /// on-screen button call; also the entry point for the <c>-mmd</c> launch flag and the tests.</summary>
+        public static void SetEnabled(bool on)
         {
-            _mmdOn = !_mmdOn;
-            _regs.RemoveAll(r => r.Avatar == null);
+            var inst = Ensure();
+            inst._mmdOn = on;
+            inst._regs.RemoveAll(r => r.Avatar == null);
             int n = 0;
-            foreach (var r in _regs) if (Apply(r, _mmdOn)) n++;
-            _status = _mmdOn ? "MMD" : "SDO";
-            Log($"[mmd] toggle → {_status} display on {n} dancer(s)" +
+            foreach (var r in inst._regs) if (inst.Apply(r, on)) n++;
+            Log($"[mmd] display → {(on ? "MMD" : "SDO")} on {n} dancer(s)" +
                 (n == 0 ? " (NO swappable dancer registered — enter a room or a song first)" : ""));
         }
+
+        /// <summary>Is the MMD body the one being displayed?</summary>
+        public static bool Enabled => _inst != null && _inst._mmdOn;
+
+        /// <summary>The resolved .pmx, or null when the model isn't installed (the tests skip themselves without it).</summary>
+        public static string ModelPath => _mikuPath;
 
         // Swap one dancer. Building the MMD model is lazy (first time it's shown). Returns true if the dancer is live.
         private bool Apply(Reg r, bool mmdOn)
         {
             if (r.Avatar == null) return false;
-            if (mmdOn && r.Mmd == null)
+            if (mmdOn && r.Mmd == null && !r.Failed)
             {
+                // An inactive dancer (the gender preview parks the unselected gender) can't be built yet — the rig and
+                // Magica Cloth need a live GameObject. Leave it on its SDO body; Update() swaps it the moment it's shown.
+                if (!r.Avatar.gameObject.activeInHierarchy) return true;
                 var pmx = SharedPmx();
-                if (pmx == null) { _lastError = "model not parsed (" + _status + ")"; Debug.LogWarning("[mmd] no model → staying on SDO body"); return true; }
-                r.Mmd = MmdAvatar.Build(r.Avatar, pmx, _mikuDir, r.Avatar.gameObject.layer);
-                if (r.Mmd == null) { _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); return true; }
+                if (pmx == null) { r.Failed = true; _lastError = "model not parsed (" + _status + ")"; Debug.LogWarning("[mmd] no model → staying on SDO body"); return true; }
+                r.Mmd = MmdAvatar.Build(r.Avatar, pmx, _mikuDir, r.Avatar.gameObject.layer, r.Cloth);
+                if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); return true; }
                 r.Mmd.UseAim = _aim; r.Mmd.DriveRootTranslation = _rootMove; r.Mmd.SetSphere(_sphere); r.Mmd.SetFlipV(_flipV);   // honour the live debug toggles
                 r.Mmd.SetToon(_toon); r.Mmd.SetOutline(_outline); r.Mmd.SetPhysics(_physics); r.Mmd.TunePhysics(_stiff, 0.6f, _gravMul); r.Mmd.SetColliderRadius(_colMul);
             }
+            // The portrait / preview cameras cull by LAYER, and a dancer's layer is assigned after its parts are built —
+            // so keep the rig on whatever layer its driver ended up on (else the 頭貼 cam renders an empty RT).
+            if (r.Mmd != null) r.Mmd.SetLayer(r.Avatar.gameObject.layer);
             // SDO body parts are MeshRenderers; the MMD body is a SkinnedMeshRenderer — so toggling MeshRenderers
             // never touches the MMD mesh (and vice-versa). The SdoAvatar component keeps running as the motion driver.
             int hidden = 0;
