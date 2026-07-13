@@ -12,9 +12,9 @@ namespace Sdo.Shop
     /// 逆向依據 (離線 exe <c>sdo_stand_alone.exe.c</c>): 讀檔迴圈 :122092 用 <c>sscanf(line,"%d %s")</c> 把 dress.txt
     /// 建成 <c>map&lt;int,{檔名,category,…}&gt;</c>；查表 :44360 <c>FUN_004312e0(&amp;id)</c> 回傳 value，<c>+0x0c</c> 就是檔名。
     /// 商品格 (SHOP.XML 的 <c>AvtShow avtnormal_N</c>) 依這個檔名的副檔名決定畫 2D 還是 3D (:44412 FUN_004313c0)：
-    ///   .an  → 2D 圖示 (UI/ITEM2D_PACK*、寵物在 UI/MATCHITEMS)
-    ///   .msh → 3D 模型 (道具 DAOJU/、寵物 PETAVATAR/)
-    ///   .dds → 只有貼圖 (寵物衣服:全部共用同一件 coat mesh、只換貼圖 —— PETDRESS 的 1041000 那筆就是那個共用 mesh)
+    ///   .an  → 2D 圖示 (UI/ITEM2D_PACK*)
+    ///   .msh → 3D 模型 (道具/禮盒 DAOJU/)
+    ///   .dds → 只有貼圖 (寵物衣服那種「共用一件 mesh 換印花」的作法;寵物不上架 → 目前沒有商品走這條)
     ///
     /// ⚠️ 檔名**不是** {modelId} 加零補齊，帶著漢語拼音 (<c>100000 → 100000_xiaolaba.an</c>)，客戶端也是查表才知道 →
     /// 不查這張表就找不到圖 (這是「商城道具沒有圖」的真正原因，不是素材缺)。
@@ -66,11 +66,5 @@ namespace Sdo.Shop
             return -1;
         }
 
-        /// <summary>寵物衣服 (cat 43000) 共用的那件 coat mesh 在 PETDRESS 的 key (1041000 → 1040000_all_coat_.msh)。
-        /// 各件衣服自己只有一張 <c>1040xxx_all_coat.dds</c> 貼圖 → 畫的時候是「同一件 mesh + 換貼圖」。</summary>
-        public const int PetCoatMeshKey = 1041000;
-
-        /// <summary>這個 modelId 是寵物衣服嗎 (只有貼圖、要借共用 mesh)。</summary>
-        public static bool IsPetClothes(int modelId) => modelId >= 1040000 && modelId <= 1040999;
     }
 }

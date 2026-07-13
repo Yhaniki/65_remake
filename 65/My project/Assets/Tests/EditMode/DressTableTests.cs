@@ -68,14 +68,5 @@ namespace Sdo.Tests
             Assert.AreEqual(-1, DressTable.GiftPackProxyModelId(1000000));      // 寵物不借
         }
 
-        [Test]
-        public void PetClothes_ShareOneCoatMesh()
-        {
-            Assert.IsTrue(DressTable.IsPetClothes(1040000));
-            Assert.IsTrue(DressTable.IsPetClothes(1040023));
-            Assert.IsFalse(DressTable.IsPetClothes(1030000));   // 頭飾有自己的 mesh
-            Assert.IsFalse(DressTable.IsPetClothes(1000001));   // 寵物本體
-            Assert.AreEqual(1041000, DressTable.PetCoatMeshKey);
-        }
     }
 }
