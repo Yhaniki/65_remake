@@ -84,31 +84,64 @@ namespace Sdo.Tests
             Assert.IsTrue(a.TryDequeue(1e9, out double t)); Assert.AreEqual(50.0, t);
         }
 
+        // ── clap 波形（StepMania 的打拍音是一顆手拍；音檔不在 source 樹裡 → 合成） ──
+
         [Test]
-        public void RenderClick_IsAShortDecayingClickInRange()
+        public void RenderClap_IsAPercussiveClapInRange()
         {
             const int rate = 48000;
-            var pcm = AssistTick.RenderClick(rate, lengthSec: 0.04);
-            Assert.AreEqual((int)Math.Round(rate * 0.04), pcm.Length);
+            var pcm = AssistTick.RenderClap(rate, lengthSec: 0.15);
+            Assert.AreEqual((int)Math.Round(rate * 0.15), pcm.Length);
 
-            float peak = 0f, last = 0f;
-            int peakAt = 0;
+            float peak = 0f;
             for (int i = 0; i < pcm.Length; i++)
             {
                 Assert.LessOrEqual(Math.Abs(pcm[i]), 1f, "sample " + i + " clips");
-                if (Math.Abs(pcm[i]) > peak) { peak = Math.Abs(pcm[i]); peakAt = i; }
-                last = Math.Abs(pcm[i]);
+                if (Math.Abs(pcm[i]) > peak) peak = Math.Abs(pcm[i]);
             }
-            Assert.Greater(peak, 0.3f, "click 太小聲");
+            Assert.AreEqual(0.9f, peak, 0.01f, "正規化到 0.9");
             Assert.AreEqual(0f, pcm[0], 1e-6f, "起音要從 0 開始(否則爆一聲 DC click)");
-            Assert.Less(peakAt, pcm.Length / 4, "能量該集中在起音,是 click 不是持續音");
-            Assert.Less(last, 0.01f, "尾端要收到 0(不留切斷的爆音)");
+            Assert.Less(Math.Abs(pcm[pcm.Length - 1]), 0.02f, "尾端淡出(切斷噪音會有爆音)");
+
+            // 是「拍擊」不是持續音：能量集中在前段（三連爆點 + 短殘響），尾段幾乎空掉
+            double head = Energy(pcm, 0, rate / 20);                        // 前 50ms
+            double tail = Energy(pcm, pcm.Length - rate / 20, pcm.Length);  // 末 50ms
+            Assert.Greater(head, tail * 20.0, "能量該集中在拍擊頭段");
         }
 
         [Test]
-        public void RenderClick_BadSampleRate()
+        public void RenderClap_HasThreeContactBursts()
         {
-            Assert.AreEqual(0, AssistTick.RenderClick(0).Length);
+            const int rate = 48000;
+            var pcm = AssistTick.RenderClap(rate);
+            // clap = 三次接觸（間隔 ~9.5ms）→ 每個爆點所在的 2ms 窗，能量都要明顯高於它前面的低谷
+            for (int k = 0; k < 3; k++)
+            {
+                int at = (int)(k * 0.0095 * rate);
+                double burst = Energy(pcm, at, at + (int)(0.002 * rate));
+                double valley = Energy(pcm, Math.Max(0, at - (int)(0.002 * rate)), Math.Max(1, at));
+                if (k == 0) Assert.Greater(burst, 0.0, "第一個爆點要有聲音");
+                else Assert.Greater(burst, valley * 1.5, $"第 {k + 1} 個接觸爆點應該比前面的低谷響");
+            }
+        }
+
+        [Test]
+        public void RenderClap_IsDeterministic()   // 固定 seed 的 LCG → 純函式，同輸入同波形
+        {
+            Assert.AreEqual(AssistTick.RenderClap(44100), AssistTick.RenderClap(44100));
+        }
+
+        [Test]
+        public void RenderClap_BadSampleRate()
+        {
+            Assert.AreEqual(0, AssistTick.RenderClap(0).Length);
+        }
+
+        private static double Energy(float[] pcm, int from, int to)
+        {
+            double e = 0;
+            for (int i = Math.Max(0, from); i < Math.Min(pcm.Length, to); i++) e += pcm[i] * (double)pcm[i];
+            return e;
         }
     }
 }

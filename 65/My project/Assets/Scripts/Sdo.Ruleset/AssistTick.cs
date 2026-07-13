@@ -77,24 +77,56 @@ namespace Sdo.Ruleset
             return false;
         }
 
-        /// <summary>合成一聲 click(單聲道 PCM,[-1,1])。遊戲的 SE 音色庫裡沒有 StepMania 那顆 clap,
-        /// 而打拍音只要「短、脆、對得準」,所以直接合成:1.5ms 起音 + 指數衰減的 1.8kHz 基音(疊一個八度泛音)。
-        /// 純函式(不吃亂數),可單元測試。</summary>
-        public static float[] RenderClick(int sampleRate, double lengthSec = 0.04, double freqHz = 1800.0, double decay = 90.0)
+        /// <summary>StepMania 的打拍音是一顆**手拍(clap)**(theme 的 "assist tick" 音檔,DDR 系的 clap);
+        /// 那顆 wav 不在這份 source 樹裡(SM-YHANIKI-master 只有 src/ 和 Program/,沒有 Themes/),SDO 的 SE 音色庫
+        /// 也沒有 clap,所以照 clap 的物理模型**合成**一顆(單聲道 PCM,[-1,1]):
+        ///
+        ///   • 三顆極短的噪音爆點(間隔 ~9.5ms、各自 ~2ms 衰減)—— 手掌拍擊的多次接觸,就是 clap 那個「啪」的顆粒感;
+        ///   • 一條較長的噪音尾巴(~45ms 衰減)—— 拍完的殘響,clap 聽起來比單純 click「有身體」的原因;
+        ///   • 帶通(HP ~600Hz + LP ~4kHz)—— 去掉低頻轟隆與過亮的嘶聲,落在人耳最容易對拍的頻段。
+        ///
+        /// 亂數是固定 seed 的 LCG(不用 System.Random),所以這是**純函式**:同樣輸入永遠同樣波形,可單元測試。
+        /// 播放時不隨遊戲流速變速(StepMania 也是:m_soundAssistTick.Play 沒有 SetPlaybackRate)。
+        /// </summary>
+        public static float[] RenderClap(int sampleRate, double lengthSec = 0.15)
         {
             if (sampleRate <= 0) return new float[0];
             int n = Math.Max(1, (int)Math.Round(sampleRate * Math.Max(0.001, lengthSec)));
             var buf = new float[n];
-            double attack = 0.0015;   // 起音斜坡:直接從 1 開始會爆一聲 DC click
+
+            uint seed = 0x9E3779B9;                                 // 固定 seed → 波形完全可重現
+            double lp = 0.0, hpPrev = 0.0, hpOut = 0.0;
+            double aLp = 1.0 - Math.Exp(-2 * Math.PI * 4000.0 / sampleRate);   // 低通 4kHz
+            double aHp = Math.Exp(-2 * Math.PI * 600.0 / sampleRate);          // 高通 600Hz(一階)
+
             for (int i = 0; i < n; i++)
             {
                 double t = (double)i / sampleRate;
-                double env = Math.Exp(-decay * t) * Math.Min(1.0, t / attack);
-                double tail = 1.0 - (double)i / n;                      // 尾端拉到 0,不留突然切斷的爆音
-                double s = 0.75 * Math.Sin(2 * Math.PI * freqHz * t)
-                         + 0.25 * Math.Sin(4 * Math.PI * freqHz * t);   // + 一個八度
-                buf[i] = (float)Math.Max(-1.0, Math.Min(1.0, s * env * tail));
+
+                double env = 0.0;
+                for (int k = 0; k < 3; k++)                          // 三連爆點 = 手掌的多次接觸
+                {
+                    double tk = t - k * 0.0095;
+                    if (tk >= 0.0) env = Math.Max(env, Math.Exp(-tk / 0.0022));
+                }
+                if (t >= 0.019) env = Math.Max(env, 0.5 * Math.Exp(-(t - 0.019) / 0.045));   // 殘響尾巴
+                env *= Math.Min(1.0, t / 0.0003);                   // 0.3ms 起音斜坡:噪音直接從滿振幅切入 = 一個 DC 階躍(多一聲爆音)
+
+                seed = seed * 1664525u + 1013904223u;               // LCG 白噪音
+                double noise = (int)(seed >> 8) / 8388608.0 - 1.0;  // [-1,1)
+
+                double x = noise * env;
+                lp += (x - lp) * aLp;                               // 低通
+                hpOut = aHp * (hpOut + lp - hpPrev); hpPrev = lp;   // 高通
+                buf[i] = (float)hpOut;
             }
+
+            // 尾端 5ms 淡出(切斷噪音會有爆音)+ 正規化到 0.9(合成音量不該隨參數飄)
+            int fade = Math.Max(1, (int)(sampleRate * 0.005));
+            for (int i = Math.Max(0, n - fade); i < n; i++) buf[i] *= (float)(n - i) / fade;
+            float peak = 0f;
+            for (int i = 0; i < n; i++) { float a = Math.Abs(buf[i]); if (a > peak) peak = a; }
+            if (peak > 1e-6f) { float g = 0.9f / peak; for (int i = 0; i < n; i++) buf[i] *= g; }
             return buf;
         }
     }

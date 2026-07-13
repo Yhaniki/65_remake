@@ -135,7 +135,8 @@ namespace Sdo.Game
         private AudioSource _audio, _sfx, _ambient;
         private readonly Dictionary<string, AudioClip> _seCache = new Dictionary<string, AudioClip>();
         // ---- 打拍音 (F7, StepMania assist tick) ----
-        // 每個有音符的 row 響一聲 click(練習/對拍用)。開關**跨歌延續**(s_assistTick,同一次執行內),但不落地存檔 —
+        // 每個有音符的 row 響一聲 clap(練習/對拍用;音色=官方 theme 的 assist tick.ogg,見 BuildAssistTick)。
+        // 開關**跨歌延續**(s_assistTick,同一次執行內),但不落地存檔 —
         // 等同 StepMania 的 GAMESTATE->m_StoredSongOptions.m_bAssistTick(「Store this change, so it sticks if we change songs」)。
         // 排程走音訊時鐘(PlayScheduled),不是「這幀到了就播」,所以不吃 frame rate 抖動。
         private readonly AssistTick _tick = new AssistTick();
@@ -419,6 +420,7 @@ namespace Sdo.Game
         public float handTrailWidth = 0.5f; // width multiplier (1 = faithful 2×|Hand→Finger0|); 0.5 tuned to match the original on-screen
         public float handTrailTime = 0.24f; // lifetime (s); original = 8 segments × 30ms
         private bool _showDebugUI = false;   // F4 toggles the tuning panel; hidden by default
+        private bool _showRateUI = false;    // F9 toggles the 遊戲流速 (music rate) test panel
         private Vector2 _dbgScroll;          // scroll for the tuning sliders so they never push the playtest controls off-panel
         private int _dbgTab;                 // F4 panel tab: 0=Play, 1=Combo, 2=Stage — keeps each group's sliders roomy
         private static readonly string[] DbgTabs = { "Play", "Combo", "Stage", "Emoji", "Result", "Banner" };
@@ -917,15 +919,16 @@ namespace Sdo.Game
 
         // ---- 打拍音 (F7) — StepMania ScreenGameplay::PlayTicks() 的移植 ----
 
-        // 本譜的 tick 時間軸(每個音符的頭,同時間的只留一個)+ 排程用的音源池。SE 庫裡沒有 StepMania 那顆 clap,
-        // 所以 click 是合成的(AssistTick.RenderClick,純函式)。
+        // 本譜的 tick 時間軸(每個音符的頭,同時間的只留一個)+ 排程用的音源池。
+        // 音色 = **官方 StepMania theme 的那顆 clap**(Themes/<theme>/Sounds/ScreenGameplay assist tick.ogg,
+        // 這裡取 CyberiaStyle 6),放在 SE/assist_tick.ogg(package_build 會鏡射進 DATA/SE)。載不到就退回自己合成的
+        // clap(AssistTick.RenderClap) —— 純函式、有測試,所以沒有那個檔案時打拍音仍然可用,不會靜音。
+        private const string TickSeName = "assist_tick";
+
         private void BuildAssistTick()
         {
             _tick.Load(NoteStartTimes());
-            int rate = AudioSettings.outputSampleRate > 0 ? AudioSettings.outputSampleRate : 48000;
-            var pcm = AssistTick.RenderClick(rate);
-            _tickClip = AudioClip.Create("AssistTick", pcm.Length, 1, rate, false);
-            _tickClip.SetData(pcm, 0);
+            _tickClip = SynthClapClip();          // 先掛 fallback,音源池才有 clip 可用
             _tickVoices = new AudioSource[TickVoices];
             for (int i = 0; i < TickVoices; i++)
             {
@@ -933,6 +936,37 @@ namespace Sdo.Game
                 a.clip = _tickClip; a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
                 _tickVoices[i] = a;
             }
+            StartCoroutine(LoadTickClipCo());     // 官方 clap 載好就換上去(遠早於 READY/GO 結束,不影響第一個 tick)
+        }
+
+        private AudioClip SynthClapClip()
+        {
+            int rate = AudioSettings.outputSampleRate > 0 ? AudioSettings.outputSampleRate : 48000;
+            var pcm = AssistTick.RenderClap(rate);
+            var clip = AudioClip.Create("AssistTickSynth", pcm.Length, 1, rate, false);
+            clip.SetData(pcm, 0);
+            return clip;
+        }
+
+        private IEnumerator LoadTickClipCo()
+        {
+            foreach (var ext in new[] { ".ogg", ".wav" })   // theme 檔是 .ogg;若哪天換成 wav 也吃
+            {
+                var path = Path.Combine(SdoExtracted.SeDir, TickSeName + ext);
+                if (!File.Exists(path)) continue;
+                var type = ext == ".ogg" ? AudioType.OGGVORBIS : AudioType.WAV;
+                using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
+                {
+                    yield return req.SendWebRequest();
+                    if (req.result != UnityWebRequest.Result.Success) { Debug.LogWarning("[tick] " + path + ": " + req.error); continue; }
+                    var clip = DownloadHandlerAudioClip.GetContent(req);
+                    if (clip == null) continue;
+                    _tickClip = clip;
+                    if (_tickVoices != null) foreach (var v in _tickVoices) if (v != null) v.clip = clip;
+                    yield break;
+                }
+            }
+            Debug.Log("[tick] SE/" + TickSeName + " 不在,改用合成的 clap");
         }
 
         private IEnumerable<double> NoteStartTimes()
@@ -946,16 +980,25 @@ namespace Sdo.Game
         private void TickAssist(double nowMs)
         {
             if (_tickVoices == null) return;
-            if (!assistTick || _ended || Time.timeScale <= 0f) { _tick.Rewind(nowMs); return; }
+            if (!assistTick || _ended || _paused || Time.timeScale <= 0f) { _tick.Rewind(nowMs); return; }
             double horizon = nowMs + AssistTick.DefaultLookaheadMs;
             while (_tick.TryDequeue(horizon, out double tMs))
             {
-                double dsp = _songStartDspTime + (tMs / 1000.0 - _musicStartDelaySec);
+                // 譜面時間 → dsp:除以流速(StepMania 同一句 fSecondsUntil /= m_fMusicRate,「2x music rate 就是等一半的時間」)
+                double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, _musicStartDelaySec);
                 var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
                 v.volume = AudioMix.Sfx;
                 v.Stop();   // 輪到的音源可能還在響上一聲(超密集譜)→ 蓋掉
-                v.PlayScheduled(System.Math.Max(dsp, AudioSettings.dspTime));
+                v.PlayScheduled(Math.Max(dsp, AudioSettings.dspTime));
             }
+        }
+
+        // 作廢所有「已排程但還沒響」的打拍音(改流速/暫停時它們的 dsp 落點已經失效),游標退回現在重排。
+        private void ResetScheduledTicks()
+        {
+            if (_tickVoices == null) return;
+            foreach (var v in _tickVoices) if (v != null) v.Stop();
+            _tick.Rewind(_nowMs);
         }
 
         // F7 按下去當場響一聲(開/關的聽覺回饋 — 這畫面沒有 StepMania 那條除錯字幕)
@@ -1357,9 +1400,11 @@ namespace Sdo.Game
             double musicDelaySec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
             _musicStartDelaySec = musicDelaySec;
             _danceStartSec = (useMusicStartOffset && _map != null) ? Math.Max(musicDelaySec, _map.FirstNoteMs / 1000.0) : 0.0;
-            _songStartDspTime = AudioSettings.dspTime + StartLeadSec + musicDelaySec;
-            if (_audio != null && _audio.clip != null) _audio.PlayScheduled(_songStartDspTime);
-            _clockStart = Time.timeAsDouble + StartLeadSec;
+            // 兩段前導(共用 lead + 無聲數拍)都是**譜面時間**;dspTime 是真實時間,所以要除以流速換回真實秒數
+            // (1× 時就是原本的 dspNow + StartLeadSec + musicDelaySec)。音樂本身也用 pitch 變速(= SetPlaybackRate)。
+            _songStartDspTime = GameRate.StartDspFor(AudioSettings.dspTime, StartLeadSec, musicDelaySec, _musicRate);
+            if (_audio != null && _audio.clip != null) { _audio.pitch = _timeScale; _audio.PlayScheduled(_songStartDspTime); }
+            _clockStart = Time.timeAsDouble + StartLeadSec;   // timeAsDouble 已被 timeScale 縮放 → 譜面時鐘自動吃流速
             _clock.Reset();   // re-seed the smoothing clock onto the freshly-anchored timeline (drop any parked-clock frames)
             if (showtimeMode) _gaugeGlowFromStart = true;   // song is playing → head glow stays lit even at 0 fill (no key needed)
         }
@@ -1374,7 +1419,9 @@ namespace Sdo.Game
             if (_audio == null || _audio.clip == null || !_audio.isPlaying) return null;
             double dsp = AudioSettings.dspTime;
             if (dsp < _songStartDspTime) return null;                // scheduled start not reached yet (still in lead-in)
-            return (dsp - _songStartDspTime) + _musicStartDelaySec;  // clip position → beat-0 chart time
+            // clip position → beat-0 chart time。流速 r 時 clip 位置 = r×(dsp − 起播點),所以譜面時間也要乘 r
+            // (r=1 時就是原式)。改速度/暫停會重新錨定 _songStartDspTime,這條式子因此永遠連續。
+            return GameRate.ChartSecondsFromDsp(dsp, _songStartDspTime, _musicRate, _musicStartDelaySec);
         }
 
         // Energy-bar INTRO (online FUN_0040dc00/0040e210/0040e0f0 + demo blocks @360861-360887): the bar does NOT
@@ -2103,7 +2150,14 @@ namespace Sdo.Game
         // (=100..500COMBO), 0 = FINISHED, or the F4 panel; SLOW-MOTION with [ (slower) / ] (faster), \ = pause toggle,
         // = (equals) = reset to 1×. Set false in the Inspector for normal gameplay.
         public bool observeBurstMode = false;
-        private float _timeScale = 1f;   // current (non-paused) slow-motion factor for burst observation
+        // ---- 整體遊戲流速 (F9 測試面板) = StepMania 的 music rate ----
+        // 音樂用 AudioSource.pitch 變速變調(= RageSound SetPlaybackRate),其餘全部掛在 Time.timeScale 上一起變慢:
+        // 譜面時鐘是 Time.timeAsDouble(scaled)驅動的,所以音符/判定/舞者/特效/HUD 自動跟著走。dspTime 是真實時間,
+        // 不吃 timeScale,所以 dsp↔譜面時間的換算要自己帶 rate(GameRate),改速度時還得重新錨定否則會跳拍。
+        private float _timeScale = 1f;   // = 目前流速(未暫停時)。F4/F9 面板與 [ ] \ = 都走 SetGameRate。
+        private double _musicRate = 1.0; // 同上,雙精度版(dsp 換算用)
+        private bool _paused;            // \ 暫停:timeScale=0 且音樂 Pause(否則音樂會自己跑掉)
+        private double _pauseChartSec;   // 暫停當下的譜面時間(秒)→ 恢復時用它重新錨定音訊
         private const int SceneLayer = 4;             // the perspective stage layer
         // The default camera is the AUTO-DIRECTOR (decompiled CameraSeq, a CAMERA/*.CDT shot list): a sequence of
         // shots, each a moving .cv dolly shown for its own durationMs, auto-cutting to the next and looping. F2
@@ -3424,8 +3478,57 @@ namespace Sdo.Game
 
         // ---------- loop ----------
 
-        // Slow-motion for burst observation: scales Time.timeScale (so the 50Hz EFT sim + everything slows together).
-        private void SetTimeScale(float s) { _timeScale = Mathf.Clamp(s, 0.03f, 2f); Time.timeScale = _timeScale; }
+        // ---- 整體遊戲流速 (StepMania music rate) ----
+        // 一次改三件事,缺一就會音畫不同步:
+        //   (1) Time.timeScale = rate → 音符/判定/舞者/特效/協程 全部跟著慢(譜面時鐘是 scaled time 驅動的);
+        //   (2) AudioSource.pitch = rate → 音樂本身變速(連音高,同 RageSound SetPlaybackRate);
+        //   (3) 重新錨定 dsp↔譜面時間(dspTime 是真實時間,不吃 timeScale)。不錨定的話譜面時間會當場跳掉。
+        // 判定窗口刻意**不**跟著縮放(仍是譜面 ms)→ 越快越難,同 StepMania。
+        private void SetGameRate(double rate)
+        {
+            rate = GameRate.Clamp(rate);
+            if (Math.Abs(rate - _musicRate) < 1e-6) return;
+            double dspNow = AudioSettings.dspTime;
+            double chartSecNow = GameRate.ChartSecondsFromDsp(dspNow, _songStartDspTime, _musicRate, _musicStartDelaySec);
+
+            _musicRate = rate; _timeScale = (float)rate;
+            if (!_paused) Time.timeScale = _timeScale;
+
+            _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSecNow, rate, _musicStartDelaySec);
+            if (_audio != null && _audio.clip != null)
+            {
+                _audio.pitch = _timeScale;
+                if (dspNow < _songStartDspTime) _audio.SetScheduledStartTime(_songStartDspTime);   // 還在 lead-in/數拍:起播點也要重排
+            }
+            ResetScheduledTicks();   // 已排進音訊時鐘的打拍音是舊速度算的 → 全部作廢重排
+        }
+
+        // \ 暫停/恢復。音樂也要停 —— 只把 timeScale 歸零的話音樂會自顧自跑掉,恢復時整首歌就對不上了。
+        private void SetPaused(bool paused)
+        {
+            if (paused == _paused) return;
+            if (paused)
+            {
+                _pauseChartSec = GameRate.ChartSecondsFromDsp(AudioSettings.dspTime, _songStartDspTime, _musicRate, _musicStartDelaySec);
+                if (_audio != null && _audio.clip != null) _audio.Pause();
+                Time.timeScale = 0f;   // Time.timeAsDouble 隨之凍結 → 譜面時鐘自己就停了,不需另外存
+                ResetScheduledTicks();
+            }
+            else
+            {
+                _songStartDspTime = GameRate.AnchorForChartSeconds(AudioSettings.dspTime, _pauseChartSec, _musicRate, _musicStartDelaySec);
+                if (_audio != null && _audio.clip != null)
+                {
+                    if (AudioSettings.dspTime < _songStartDspTime) _audio.SetScheduledStartTime(_songStartDspTime);   // 暫停在音樂進來之前
+                    _audio.UnPause();
+                }
+                Time.timeScale = _timeScale;
+            }
+            _paused = paused;
+        }
+
+        // 舊名保留(F4 面板/觀察模式在用):現在等同「改流速」,音樂會跟著變 —— 以前只動 timeScale,音樂照原速播,是會走音的。
+        private void SetTimeScale(float s) => SetGameRate(s);
 
         private void Update()
         {
@@ -3464,20 +3567,26 @@ namespace Sdo.Game
             // F5：加速 note（下一速度檔）／F6：減速 note（上一速度檔）— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
             if (Input.GetKeyDown(KeyCode.F5)) StepScrollSpeed(+1);
             if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
-            if (Input.GetKeyDown(KeyCode.LeftBracket)) SetTimeScale(_timeScale * 0.5f);    // [ slower
-            if (Input.GetKeyDown(KeyCode.RightBracket)) SetTimeScale(_timeScale * 2f);     // ] faster
-            if (Input.GetKeyDown(KeyCode.Backslash)) { if (Time.timeScale > 0f) Time.timeScale = 0f; else SetTimeScale(_timeScale); }  // \ pause/resume
-            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) SetTimeScale(1f);   // = reset 1×
+            // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
+            // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。F9 開測試面板（滑桿＋檔位按鈕）。
+            if (Input.GetKeyDown(KeyCode.LeftBracket)) SetGameRate(GameRate.Step(_musicRate, -1));
+            if (Input.GetKeyDown(KeyCode.RightBracket)) SetGameRate(GameRate.Step(_musicRate, +1));
+            if (Input.GetKeyDown(KeyCode.Backslash)) SetPaused(!_paused);
+            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) SetGameRate(GameRate.Normal);
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
-            // F9: toggle the stage backdrop V-flip (safety net — the RenderTexture vertical convention is auto-gated
-            // on graphicsUVStartsAtTop, but if the stage still shows upside-down on this machine, F9 flips it).
-            if (Input.GetKeyDown(KeyCode.F9) && _backdropMat != null)
+            if (Input.GetKeyDown(KeyCode.F9))
             {
-                _backdropFlip = !_backdropFlip;
-                _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
-                _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
+                // Shift+F9: 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依 graphicsUVStartsAtTop 自動判斷，
+                // 但萬一這台機器仍然上下顛倒就用它救）。原本掛在 F9，讓位給流速面板。
+                if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && _backdropMat != null)
+                {
+                    _backdropFlip = !_backdropFlip;
+                    _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
+                    _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
+                }
+                else _showRateUI = !_showRateUI;   // F9: 流速測試面板
             }
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
