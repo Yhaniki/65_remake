@@ -47,7 +47,8 @@ namespace Sdo.UI.Screens
         private const float MvpX = 443f, MvpY = 414f;
 
         private static readonly Color RateWhite = Color.white;                        // XML color="0xffffffff"
-        private static readonly Color NameCream = new Color32(0xFA, 0xFF, 0x74, 0xFF); // XML color="0xfffaff74"
+        private static readonly Color32 NameCream = new Color32(0xFA, 0xFF, 0x74, 0xFF); // XML color="0xfffaff74"
+        private static readonly Color32 NameEdge = new Color32(0x5A, 0x1B, 0x45, 0xFF);   // 描邊：面板的深紫紅
 
         // ---- 左側 3D 人物 (AvtShow x=105 y=111 w=230 h=391) ----
         private const int PreviewLayer = 12;
@@ -67,7 +68,8 @@ namespace Sdo.UI.Screens
 
         private readonly TextMeshProUGUI[] _rate = new TextMeshProUGUI[6];
         private readonly Image[] _bar = new Image[6];
-        private TextMeshProUGUI _name, _level, _mvp;
+        private OutlinedLabel _name, _level;
+        private TextMeshProUGUI _mvp;
 
         private Camera _cam; private RenderTexture _rt; private RawImage _avatarImg; private GameObject _avatarRoot;
         private Camera _uiCam; private int _savedUiMask;
@@ -98,10 +100,13 @@ namespace Sdo.UI.Screens
             _avatarImg = av.gameObject.AddComponent<RawImage>();
             _avatarImg.color = Color.white; _avatarImg.raycastTarget = false;
 
-            _name = UIKit.AddText(root, "Name", "", 14f, NameCream, TextAlignmentOptions.Left);
-            Place(_name.rectTransform, NameX, NameY, 90f, 16f);
-            _level = UIKit.AddText(root, "Level", "", 13f, NameCream, TextAlignmentOptions.Left);
-            Place(_level.rectTransform, LevelX, LevelY, 90f, 16f);
+            // 官方的 name/level 是 #faff74 淡黃色，壓在左側人物區上 —— 但官方左側還有一張深色的人物襯底
+            // (CharBack，線上執行期才貼)，離線沒有 → 黃字直接壓在淺色底板上會看不見。用專案既有的假描邊
+            // (OutlinedLabel，房間名字牌同一套) 加一圈深色邊，保住官方字色又讀得到。
+            _name = OutlinedLabel.Create(root, "Name", NameX, NameY, 96f, 18f, 14f, NameCream, NameEdge,
+                edgePx: 1.5f, bold: true, align: TextAlignmentOptions.Left);
+            _level = OutlinedLabel.Create(root, "Level", LevelX, LevelY, 96f, 18f, 13f, NameCream, NameEdge,
+                edgePx: 1.5f, bold: true, align: TextAlignmentOptions.Left);
 
             // 分頁條：每個 .an 都是整條 350×39、只畫自己那一格 → 兩條疊起來就是官方的分頁列
             _tab0Img = UIKit.AddSprite(root, "Tab0", PlayerInfoArt.Tab0N, TabX, TabY, raycast: true);
@@ -233,8 +238,8 @@ namespace Sdo.UI.Screens
         private void Render()
         {
             var st = _target.Stats ?? new PlayerStats();
-            if (_name != null) _name.text = _target.Name ?? "";
-            if (_level != null) _level.text = "Lv " + Mathf.Max(1, _target.Level);
+            if (_name != null) _name.SetText(_target.Name ?? "");
+            if (_level != null) _level.SetText("Lv " + Mathf.Max(1, _target.Level));
             if (_mvp != null) _mvp.text = st.wins.ToString();
 
             double[] pct = { st.WinRate, st.HitRate, st.PerfectRate, st.CoolRate, st.BadRate, st.MissRate };

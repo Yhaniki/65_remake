@@ -55,6 +55,9 @@ namespace Sdo.UI.Util
         public static void Play(string name)
         {
             if (string.IsNullOrEmpty(name)) return;
+            // 非 Play mode（EditMode 測試 / 編輯器截圖工具）沒有 coroutine，Instance 的 DontDestroyOnLoad 還會直接丟例外。
+            // 音效本來就只在遊戲跑起來時才有意義 → 靜靜跳過。
+            if (!Application.isPlaying) return;
             Instance.StartCoroutine(Instance.PlayCo(name));
         }
 
