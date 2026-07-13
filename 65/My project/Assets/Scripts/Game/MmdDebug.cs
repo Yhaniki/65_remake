@@ -9,8 +9,12 @@ namespace Sdo.Game
     /// on-screen button) to swap EVERY registered avatar between its native SDO body and the MMD model — the gameplay
     /// dancer, the room walker, and the three portrait/preview surfaces that render their own private avatar into a
     /// RenderTexture (the 男/女 select preview, the room 頭貼, and the 結算 left headshot). The SDO <see cref="SdoAvatar"/>
-    /// stays alive as the hidden motion driver either way, so the MMD model plays the exact same MOT/DPS. The model is
-    /// the Miku .pmx under <c>assets/IkaHatunemiku2025</c>, parsed once (<see cref="PmxLoader"/>) and reused.
+    /// stays alive as the hidden motion driver either way, so the MMD model plays the exact same MOT/DPS.
+    ///
+    /// WHICH model is not hardcoded: every folder holding a .pmx under <c>DATA/MODEL/</c> (dev: <c>assets/MODEL/</c>) is
+    /// an entry in <see cref="MmdModelCatalog"/>, listed in the panel and switchable live (◀ ▶ buttons, or F9 for the
+    /// next one, or <c>-mmdmodel &lt;name&gt;</c> on the command line). Each model is parsed once and cached, so flipping
+    /// back and forth between two models only pays the parse cost once each.
     ///
     /// Self-bootstraps (<see cref="Boot"/>) and announces itself at scene load; the two build sites just call
     /// <see cref="RegisterSwappable"/>, which also eagerly parses the model so you get "[mmd] parsed …" confirmation
@@ -21,6 +25,7 @@ namespace Sdo.Game
     public sealed class MmdDebug : MonoBehaviour
     {
         public KeyCode ToggleKey = KeyCode.F7;    // swap SDO⇄MMD avatar (was F8; F8 now free for gameplay auto-play)
+        public KeyCode ModelKey  = KeyCode.F9;    // next installed model (DATA/MODEL/*)
         public KeyCode PanelKey  = KeyCode.F10;   // show/hide this whole debug panel
 
         private sealed class Reg { public SdoAvatar Avatar; public MmdAvatar Mmd; public bool Failed; public bool Cloth = true; }
@@ -29,12 +34,16 @@ namespace Sdo.Game
         private bool _panelOn = true;   // the on-screen debug panel starts visible; PanelKey (F10) or its 隱藏 button hides it
 
         private static MmdDebug _inst;
-        private static PmxLoader _pmx;      // parsed once, shared
-        private static bool _pmxTried;
-        private static string _mikuDir;
-        private static string _mikuPath;   // resolved .pmx (or null)
+        private static List<MmdModelCatalog.Entry> _models = new List<MmdModelCatalog.Entry>();
+        private static int _sel = -1;                    // index into _models; -1 = nothing installed
+        // Parsed models, keyed by .pmx path — switching back to a model you already looked at is free (and MmdAvatar's
+        // own mesh/material cache is keyed by the PmxLoader instance, so it stays warm too).
+        private static readonly Dictionary<string, PmxLoader> _parsed = new Dictionary<string, PmxLoader>();
+        private static readonly HashSet<string> _parseFailed = new HashSet<string>();
         private static string _status = "boot";
         private static string _lastError = "";
+
+        private static MmdModelCatalog.Entry Sel => (_sel >= 0 && _sel < _models.Count) ? _models[_sel] : null;
 
         // Write to BOTH the editor console (Debug.Log) and log.txt (SdoLog.Note) — the project's SdoLog drops
         // info-level Debug.Log, so a plain Debug.Log milestone would never appear in the file the user inspects.
@@ -44,16 +53,46 @@ namespace Sdo.Game
         private static void Boot()
         {
             var inst = Ensure();
-            _mikuPath = ResolveMikuPmx(out _mikuDir);
-            // -mmd on the command line starts the whole session in MMD mode (every avatar, from the 男/女 select screen
-            // on) — otherwise the run starts on the SDO bodies and F7 swaps.
-            bool cli = false;
-            try { foreach (var a in System.Environment.GetCommandLineArgs()) if (a == "-mmd") cli = true; } catch { }
+
+            // -mmd starts the whole session in MMD mode (every avatar, from the 男/女 select screen on) — otherwise the
+            // run starts on the SDO bodies and F7 swaps. "-mmdmodel <name>" (or "-mmdmodel=<name>") picks which of the
+            // installed models to start on, by name or any substring of it.
+            bool cli = false; string want = null;
+            try
+            {
+                var argv = System.Environment.GetCommandLineArgs();
+                for (int i = 0; i < argv.Length; i++)
+                {
+                    if (argv[i] == "-mmd") cli = true;
+                    else if (argv[i].StartsWith("-mmdmodel=")) want = argv[i].Substring("-mmdmodel=".Length);
+                    else if (argv[i] == "-mmdmodel" && i + 1 < argv.Length) want = argv[++i];
+                }
+            }
+            catch { }
+
+            Rescan(want);
             if (cli) inst._mmdOn = true;   // (no Apply: nothing is registered yet — each dancer swaps as it's built)
-            Log("[mmd] armed — F7 (or on-screen button) swaps SDO⇄MMD; F10 shows/hides the panel. " +
-                (cli ? "-mmd → starting in MMD mode. " : "") + "model=" +
-                (_mikuPath ?? "NOT FOUND under assets/IkaHatunemiku2025"));
+            Log("[mmd] armed — F7 swaps SDO⇄MMD, F9 next model, F10 shows/hides the panel. " +
+                (cli ? "-mmd → starting in MMD mode. " : "") + ModelSummary());
         }
+
+        /// <summary>Re-read the installed models from disk (DATA/MODEL/*, dev assets/MODEL/*, …) and select
+        /// <paramref name="want"/> (name or substring) — or keep the current selection if it survived the rescan.
+        /// Called at boot and from the panel's 重新掃描 button, so you can drop a model in and pick it up without a restart.</summary>
+        public static void Rescan(string want = null)
+        {
+            string keep = want ?? Sel?.Name;
+            _models = MmdModelCatalog.Discover(ModelRoots());
+            _sel = MmdModelCatalog.IndexOf(_models, keep);
+            _status = _models.Count == 0 ? "NO MODEL" : "found";
+            if (_models.Count == 0)
+                _lastError = "沒有模型 — 放一個 MMD 資料夾(含 .pmx)到 " + string.Join(" 或 ", new List<string>(ModelRoots()).ToArray());
+        }
+
+        private static string ModelSummary()
+            => _models.Count == 0
+                ? "NO MODEL — 放 .pmx 資料夾到 DATA/MODEL/ (開發樹: assets/MODEL/)"
+                : $"models={_models.Count}, using '{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})";
 
         private static MmdDebug Ensure()
         {
@@ -95,6 +134,7 @@ namespace Sdo.Game
         private void Update()
         {
             if (Input.GetKeyDown(ToggleKey)) Toggle();
+            if (Input.GetKeyDown(ModelKey)) NextModel();
             if (Input.GetKeyDown(PanelKey)) _panelOn = !_panelOn;
 
             // Build the MMD body for any dancer that could NOT be built when it was last applied because its GameObject
@@ -127,8 +167,37 @@ namespace Sdo.Game
         /// <summary>Is the MMD body the one being displayed?</summary>
         public static bool Enabled => _inst != null && _inst._mmdOn;
 
-        /// <summary>The resolved .pmx, or null when the model isn't installed (the tests skip themselves without it).</summary>
-        public static string ModelPath => _mikuPath;
+        /// <summary>The selected model's .pmx, or null when none is installed (the tests skip themselves without it).</summary>
+        public static string ModelPath => Sel?.PmxPath;
+
+        /// <summary>The installed models, in panel order.</summary>
+        public static IReadOnlyList<MmdModelCatalog.Entry> Models => _models;
+
+        /// <summary>Switch to another installed model: every MMD body already built is thrown away and rebuilt from the
+        /// new .pmx (the SDO driver underneath is untouched, so the dance keeps playing). No-op if the index is the
+        /// current one or out of range.</summary>
+        public static void SelectModel(int index)
+        {
+            if (index < 0 || index >= _models.Count || index == _sel) return;
+            _sel = index;
+            var inst = Ensure();
+            inst._regs.RemoveAll(r => r.Avatar == null);
+            foreach (var r in inst._regs)
+            {
+                if (r.Mmd != null) Destroy(r.Mmd.gameObject);
+                r.Mmd = null;
+                r.Failed = false;   // a model that failed to build is no reason to distrust the next one
+            }
+            Log($"[mmd] model → '{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})");
+            if (inst._mmdOn) foreach (var r in inst._regs) inst.Apply(r, true);
+        }
+
+        /// <summary>Cycle to the next installed model (F9 / the panel's ▶).</summary>
+        public static void NextModel(int step = 1)
+        {
+            if (_models.Count < 2) return;
+            SelectModel(((_sel + step) % _models.Count + _models.Count) % _models.Count);
+        }
 
         // Swap one dancer. Building the MMD model is lazy (first time it's shown). Returns true if the dancer is live.
         private bool Apply(Reg r, bool mmdOn)
@@ -141,7 +210,7 @@ namespace Sdo.Game
                 if (!r.Avatar.gameObject.activeInHierarchy) return true;
                 var pmx = SharedPmx();
                 if (pmx == null) { r.Failed = true; _lastError = "model not parsed (" + _status + ")"; Debug.LogWarning("[mmd] no model → staying on SDO body"); return true; }
-                r.Mmd = MmdAvatar.Build(r.Avatar, pmx, _mikuDir, r.Avatar.gameObject.layer, r.Cloth);
+                r.Mmd = MmdAvatar.Build(r.Avatar, pmx, Sel.Dir, r.Avatar.gameObject.layer, r.Cloth);
                 if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); return true; }
                 r.Mmd.UseAim = _aim; r.Mmd.DriveRootTranslation = _rootMove; r.Mmd.SetSphere(_sphere); r.Mmd.SetFlipV(_flipV);   // honour the live debug toggles
                 r.Mmd.SetToon(_toon); r.Mmd.SetOutline(_outline); r.Mmd.SetPhysics(_physics); r.Mmd.TunePhysics(_stiff, 0.6f, _gravMul); r.Mmd.SetColliderRadius(_colMul);
@@ -158,61 +227,56 @@ namespace Sdo.Game
             return true;
         }
 
+        // Parse (once) the SELECTED model. Cached per .pmx path, so F9-ing through the installed models parses each one
+        // the first time it is shown and is instant afterwards.
         private static PmxLoader SharedPmx()
         {
-            if (_pmxTried) return _pmx;
-            _pmxTried = true;
-            if (_mikuPath == null) _mikuPath = ResolveMikuPmx(out _mikuDir);
-            if (_mikuPath == null) { _status = "NOT FOUND"; _lastError = "Miku .pmx not found under assets/IkaHatunemiku2025"; Debug.LogWarning("[mmd] " + _lastError); return null; }
+            var e = Sel;
+            if (e == null) { _status = "NO MODEL"; Debug.LogWarning("[mmd] " + _lastError); return null; }
+            if (_parsed.TryGetValue(e.PmxPath, out var hit)) { _status = "parsed"; return hit; }
+            if (_parseFailed.Contains(e.PmxPath)) return null;
+
             var t0 = Time.realtimeSinceStartup;
-            try { _pmx = PmxLoader.Load(File.ReadAllBytes(_mikuPath)); }
-            catch (System.Exception e) { _lastError = "read/parse fail: " + e.Message; Debug.LogWarning("[mmd] " + _lastError); }
-            if (_pmx != null)
+            PmxLoader pmx = null;
+            try { pmx = PmxLoader.Load(File.ReadAllBytes(e.PmxPath)); }
+            catch (System.Exception ex) { _lastError = "read/parse fail: " + ex.Message; Debug.LogWarning("[mmd] " + _lastError); }
+            if (pmx == null)
             {
-                _status = "parsed";
-                Log($"[mmd] parsed {Path.GetFileName(_mikuPath)} in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms " +
-                    $"({_pmx.VertexCount} verts, {_pmx.Materials.Count} mats, {_pmx.Bones.Count} bones)");
+                _parseFailed.Add(e.PmxPath);
+                _status = "parse fail";
+                if (string.IsNullOrEmpty(_lastError)) { _lastError = "PmxLoader.Load returned null (bad magic/format)"; Debug.LogWarning("[mmd] " + _lastError); }
+                return null;
             }
-            else if (string.IsNullOrEmpty(_lastError)) { _status = "parse=null"; _lastError = "PmxLoader.Load returned null (bad magic/format)"; Debug.LogWarning("[mmd] " + _lastError); }
-            return _pmx;
+            _parsed[e.PmxPath] = pmx;
+            _status = "parsed";
+            _lastError = "";
+            Log($"[mmd] parsed {Path.GetFileName(e.PmxPath)} in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms " +
+                $"({pmx.VertexCount} verts, {pmx.Materials.Count} mats, {pmx.Bones.Count} bones, " +
+                $"{pmx.RigidBodies.Count} 剛體 → {(pmx.RigidBodies.Count > 0 ? "用模型自帶物理" : "退回內建碰撞體")})");
+            return pmx;
         }
 
-        // The model lives beside the SDO game data. Probe several layouts so it resolves in the editor AND a built
-        // player: <assets>/IkaHatunemiku2025 (grandparent-of-Root; dev), <DATA>/IkaHatunemiku2025 (packaged), and
-        // StreamingAssets. Prefer the JP file (Japanese bone names = the map keys). Returns null if none exist.
-        private static string ResolveMikuPmx(out string dir)
-        {
-            dir = null;
-            foreach (var d in ModelDirCandidates())
-            {
-                try
-                {
-                    if (string.IsNullOrEmpty(d) || !Directory.Exists(d)) continue;
-                    string best = null;
-                    foreach (var f in Directory.GetFiles(d))
-                    {
-                        if (Path.GetExtension(f).ToLowerInvariant() != ".pmx") continue;
-                        if (f.ToUpperInvariant().Contains("-JP")) { dir = d; return f; }
-                        if (best == null) best = f;
-                    }
-                    if (best != null) { dir = d; return best; }
-                }
-                catch { }
-            }
-            return null;
-        }
-
-        private static IEnumerable<string> ModelDirCandidates()
+        /// <summary>Where models are installed, in priority order. They live BESIDE the SDO game data, so the same drop
+        /// resolves in the editor AND in a built player: <c>&lt;DATA&gt;/MODEL</c> (packaged — package_build.ps1 fills it
+        /// from the dev tree), <c>&lt;repo&gt;/assets/MODEL</c> (the dev drop-box), StreamingAssets/MODEL, plus the
+        /// original single-model folder (<c>assets/IkaHatunemiku2025</c>) so an existing checkout keeps working unmoved.
+        /// One folder holding a .pmx = one model (see <see cref="MmdModelCatalog"/>).</summary>
+        public static IEnumerable<string> ModelRoots()
         {
             string root = null; try { root = SdoExtracted.Root; } catch { }
+            string assets = null;
             if (!string.IsNullOrEmpty(root))
             {
-                string gp = null; try { gp = Directory.GetParent(root)?.Parent?.FullName; } catch { }
-                if (!string.IsNullOrEmpty(gp)) yield return Path.Combine(gp, "IkaHatunemiku2025");   // dev: <repo>/assets/IkaHatunemiku2025
-                yield return Path.Combine(root, "IkaHatunemiku2025");                                 // built: DATA/IkaHatunemiku2025
+                try { assets = Directory.GetParent(root)?.Parent?.FullName; } catch { }   // <repo>/assets
+                yield return Path.Combine(root, "MODEL");                                  // built: DATA/MODEL
+            }
+            if (!string.IsNullOrEmpty(assets))
+            {
+                yield return Path.Combine(assets, "MODEL");                                // dev: <repo>/assets/MODEL
+                yield return Path.Combine(assets, "IkaHatunemiku2025");                    // legacy single-model layout
             }
             string sa = null; try { sa = Application.streamingAssetsPath; } catch { }
-            if (!string.IsNullOrEmpty(sa)) yield return Path.Combine(sa, "IkaHatunemiku2025");
+            if (!string.IsNullOrEmpty(sa)) yield return Path.Combine(sa, "MODEL");
         }
 
         // live retarget/render toggles (diagnose / tune without a recompile)
@@ -239,7 +303,7 @@ namespace Sdo.Game
         // Unmissable on-screen state + click-to-toggle buttons (so a key conflict / editor focus can't hide the feature).
         private void OnGUI()
         {
-            const int w = 344, h = 326;
+            const int w = 344, h = 352;
             if (!_panelOn)
             {
                 // panel hidden — leave only a small re-opener so a key conflict / editor focus can't strand the feature
@@ -248,24 +312,33 @@ namespace Sdo.Game
             }
             GUI.Box(new Rect(8, 8, w, h), "MMD 顯示實驗");
             if (GUI.Button(new Rect(8 + w - 60, 12, 52, 18), "隱藏")) { _panelOn = false; return; }
-            GUI.Label(new Rect(16, 30, w - 16, 20), $"狀態: {(_mmdOn ? "MMD (初音)" : "SDO 原角色")}   模型: {_status}");
+            GUI.Label(new Rect(16, 30, w - 16, 20), $"狀態: {(_mmdOn ? "MMD 模型" : "SDO 原角色")}   解析: {_status}");
             GUI.Label(new Rect(16, 48, w - 16, 20), $"可切換舞者: {_regs.Count}" + (string.IsNullOrEmpty(_lastError) ? "" : "   err: " + _lastError));
-            if (GUI.Button(new Rect(16, 68, 200, 22), _mmdOn ? "切回 SDO 角色 (F7)" : "切成 MMD 初音 (F7)")) Toggle();
-            if (GUI.Button(new Rect(16, 94, 320, 20), $"貼圖V翻轉 flipV: {(_flipV ? "ON" : "OFF")}  ←領帶錯就切這個")) { _flipV = !_flipV; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 116, 320, 20), $"aim 重定向: {(_aim ? "ON" : "OFF")}  (手腳姿勢)")) { _aim = !_aim; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 138, 320, 20), $"sphere 反光: {(_sphere ? "ON" : "OFF")}")) { _sphere = !_sphere; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 160, 320, 20), $"toon 卡通著色: {(_toon ? "ON" : "OFF")}")) { _toon = !_toon; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 182, 320, 20), $"outline 描邊: {(_outline ? "ON" : "OFF")}")) { _outline = !_outline; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 204, 320, 20), $"physics 頭髮裙擺物理: {(_physics ? "ON" : "OFF")}")) { _physics = !_physics; ApplyOpts(); }
-            GUI.Label(new Rect(16, 227, 130, 20), $"重力 ×{_gravMul:F2}  硬度 ×{_stiff:F2}");
-            if (GUI.Button(new Rect(150, 225, 40, 20), "重-")) { _gravMul = Mathf.Max(0.05f, _gravMul * 0.7f); ApplyOpts(); }
-            if (GUI.Button(new Rect(192, 225, 40, 20), "重+")) { _gravMul = Mathf.Min(8f, _gravMul * 1.4f); ApplyOpts(); }
-            if (GUI.Button(new Rect(250, 225, 40, 20), "硬-")) { _stiff = Mathf.Max(0.03f, _stiff * 0.75f); ApplyOpts(); }
-            if (GUI.Button(new Rect(292, 225, 40, 20), "硬+")) { _stiff = Mathf.Min(0.9f, _stiff * 1.3f); ApplyOpts(); }
-            GUI.Label(new Rect(16, 251, 140, 20), $"身體碰撞半徑 ×{_colMul:F2}");
-            if (GUI.Button(new Rect(150, 249, 40, 20), "碰-")) { _colMul = Mathf.Max(0.2f, _colMul * 0.85f); ApplyOpts(); }
-            if (GUI.Button(new Rect(192, 249, 40, 20), "碰+")) { _colMul = Mathf.Min(4f, _colMul * 1.18f); ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 275, 320, 20), $"根位移 rootMove: {(_rootMove ? "ON" : "OFF")}")) { _rootMove = !_rootMove; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 68, 200, 22), _mmdOn ? "切回 SDO 角色 (F7)" : "切成 MMD 模型 (F7)")) Toggle();
+
+            // ---- model picker: every folder holding a .pmx under DATA/MODEL (dev: assets/MODEL) ----
+            string label = Sel == null ? "(沒有模型 — 放進 DATA/MODEL/)" : $"{Sel.Name}  [{_sel + 1}/{_models.Count}]";
+            if (GUI.Button(new Rect(16, 94, 24, 20), "◀")) NextModel(-1);
+            GUI.Label(new Rect(44, 94, 232, 20), "模型: " + label);
+            if (GUI.Button(new Rect(280, 94, 24, 20), "▶")) NextModel(1);
+            if (GUI.Button(new Rect(308, 94, 28, 20), "⟳")) Rescan();   // re-read the folder without restarting
+
+            if (GUI.Button(new Rect(16, 118, 320, 20), $"貼圖V翻轉 flipV: {(_flipV ? "ON" : "OFF")}  ←領帶錯就切這個")) { _flipV = !_flipV; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 140, 320, 20), $"aim 重定向: {(_aim ? "ON" : "OFF")}  (手腳姿勢)")) { _aim = !_aim; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 162, 320, 20), $"sphere 反光: {(_sphere ? "ON" : "OFF")}")) { _sphere = !_sphere; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 184, 320, 20), $"toon 卡通著色: {(_toon ? "ON" : "OFF")}")) { _toon = !_toon; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 206, 320, 20), $"outline 描邊: {(_outline ? "ON" : "OFF")}")) { _outline = !_outline; ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 228, 320, 20), $"physics 頭髮裙擺物理: {(_physics ? "ON" : "OFF")}")) { _physics = !_physics; ApplyOpts(); }
+            GUI.Label(new Rect(16, 251, 130, 20), $"重力 ×{_gravMul:F2}  硬度 ×{_stiff:F2}");
+            if (GUI.Button(new Rect(150, 249, 40, 20), "重-")) { _gravMul = Mathf.Max(0.05f, _gravMul * 0.7f); ApplyOpts(); }
+            if (GUI.Button(new Rect(192, 249, 40, 20), "重+")) { _gravMul = Mathf.Min(8f, _gravMul * 1.4f); ApplyOpts(); }
+            if (GUI.Button(new Rect(250, 249, 40, 20), "硬-")) { _stiff = Mathf.Max(0.03f, _stiff * 0.75f); ApplyOpts(); }
+            if (GUI.Button(new Rect(292, 249, 40, 20), "硬+")) { _stiff = Mathf.Min(0.9f, _stiff * 1.3f); ApplyOpts(); }
+            GUI.Label(new Rect(16, 275, 140, 20), $"身體碰撞半徑 ×{_colMul:F2}");
+            if (GUI.Button(new Rect(150, 273, 40, 20), "碰-")) { _colMul = Mathf.Max(0.2f, _colMul * 0.85f); ApplyOpts(); }
+            if (GUI.Button(new Rect(192, 273, 40, 20), "碰+")) { _colMul = Mathf.Min(4f, _colMul * 1.18f); ApplyOpts(); }
+            if (GUI.Button(new Rect(16, 299, 320, 20), $"根位移 rootMove: {(_rootMove ? "ON" : "OFF")}")) { _rootMove = !_rootMove; ApplyOpts(); }
+            GUI.Label(new Rect(16, 322, w - 32, 20), "F9 換下一個模型 · 模型放 DATA/MODEL/<名稱>/*.pmx");
         }
     }
 }

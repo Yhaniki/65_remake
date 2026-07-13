@@ -10,6 +10,7 @@
       screensave/                                           (screenshot output, beside the exe)
       DATA/                                                 (SdoExtracted.Root)
         <Extracted contents> + SE/ + BGM/ + MUSIC/ + REPLAY/
+        MODEL/<name>/*.pmx  <- MMD models (from assets\MODEL); one folder per model, F7/F9 in-game
         UI/MUSIC/ICONS      <- overlaid with the FULL online (DatasSDO) icon set
         UI/STATIS/STATISTIC <- overlaid with the online result-screen art (safety; usually already in Extracted)
 
@@ -127,6 +128,14 @@ if ($online) {
 Copy-Tree (Join-Path $Off 'SE')    (Join-Path $Data 'SE')    'SE'
 Copy-Tree (Join-Path $Off 'BGM')   (Join-Path $Data 'BGM')   'BGM'
 Copy-Tree (Join-Path $Off 'music') (Join-Path $Data 'MUSIC') 'MUSIC'
+
+# 3b) MMD models -> DATA/MODEL. One sub-folder per model, each holding its .pmx plus its own textures/Toon/Sph — the
+#     same layout the editor reads from assets\MODEL, so a model that works in play mode works in the built player.
+#     Without this the packaged game finds no model and the MMD swap (F7) silently stays on the SDO body.
+Copy-Tree (Join-Path $assetsDir 'MODEL') (Join-Path $Data 'MODEL') 'MMD models'
+# The original single-model layout (assets\IkaHatunemiku2025, before DATA\MODEL existed) still ships, as DATA\MODEL\<its name>.
+$mmdLegacy = Join-Path $assetsDir 'IkaHatunemiku2025'
+if (Test-Path $mmdLegacy) { Copy-Tree $mmdLegacy (Join-Path $Data 'MODEL\IkaHatunemiku2025') 'MMD model (legacy folder)' }
 
 # 4) Writable folders: replay saves (under DATA) and screenshots (beside the exe)
 New-Item -ItemType Directory -Force -Path (Join-Path $Data 'REPLAY')   | Out-Null
