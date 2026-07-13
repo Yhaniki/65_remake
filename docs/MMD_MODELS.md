@@ -47,6 +47,25 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 2. **剛體命名很特別**:`MmdMagicaCloth.GroupOf()` 用剛體名稱的關鍵字把布料分成 4 組(瀏海 `Bang|前髪` / 裙子 `Dress|Skirt|スカート|裙` / 領帶 `Tie|ネクタイ` / 其餘算頭髮)分別套手感參數。名稱對不上不會壞掉,只是全部落進「頭髮」那組,裙子可能偏硬或偏軟 —— 用面板的重力/硬度即時調。
 3. **貼圖 V 翻轉**:少數模型 UV 是反的(領帶/腰帶最容易看出來),面板 `flipV` 按鈕切一下。
 
+## 存下調好的物理:physics.ini
+
+每個模型資料夾裡可以放一個 `physics.ini`(跟 .pmx 同一層):
+
+```
+assets/MODEL/<模型名>/xxx.pmx
+assets/MODEL/<模型名>/physics.ini     ← 有這個檔就用它,沒有就直接從 .pmx 轉換
+```
+
+* 面板(F10)最下面 **「存成 physics.ini」** = 把這個舞者現在跑的物理(轉換值 + 你用重力/硬度/碰撞半徑三個鈕調出來的結果)整包寫進模型資料夾,每一行都有中文註解可以再手改。
+* **「刪除(回轉換值)」** = 刪掉檔案並即時重建,回到純轉換。
+* 覆寫是**逐 key** 的:只寫兩行「把裙子調軟」也可以,其他沒列到的 key 一律沿用轉換值。所以沒調過的模型行為跟這個功能不存在時完全一樣。
+* 手改檔案後不必重開遊戲 —— 目前沒有自動偵測,但 F9 切走再切回來(或面板的刪除/存檔)會重建。
+* 檔案內所有數值都**與縮放無關**(用倍率而非世界座標長度)。同一個模型套在高矮不同的舞者身上,unitScale 不一樣,但 physics.ini 還原出來的手感一致。
+* 幾何**不**進這個檔:哪些骨頭是布料、碰撞形狀與碰撞群組、鏈長、是裙片還是髮束 —— 這些永遠從 .pmx 讀。檔案只帶「手感」。
+* `DATA/MODEL` 整棵複製進打包版,所以 physics.ini 會跟著模型一起出貨。
+
+分段是四個布料群組 `[bang] [hair] [skirt] [tie]` 加一個 `[global]`;群組是用剛體名稱關鍵字判的(見下),名稱對不上的模型全部落在 `[hair]`,那就在 `[hair]` 調。
+
 ## 物理的忠實度(現況)
 
 轉換公式有用 pybullet 當真值校準過(`tools/mmd_cloth_validate/`,四個情境 rest/turn/walk/spin)。當時 22/38 PASS;之後為了跳舞好看把韌性調到 0.9,現在對真值是 **16/38** —— 裙子與雙馬尾刻意比 MMD 原生**硬**、擺幅小。這是手感取捨,不是壞掉。要往回校準就跑:
@@ -68,4 +87,5 @@ python tools/mmd_cloth_validate/compare.py        # 對真值 → report.md
 | `Assets/Scripts/Game/MmdAvatar.cs` | 建 rig、身高對齊、每幀從 SDO 骨架重定向 |
 | `Assets/Scripts/Game/MmdBoneMap.cs` | MMD 日文骨名 → SDO Bip01 對應表 |
 | `Assets/Scripts/Game/MmdMagicaCloth.cs` | PMX 剛體/關節 → Magica Cloth 2 |
-| `tools/package_build.ps1` | `assets/MODEL` → `DATA/MODEL` |
+| `Assets/Scripts/Game/MmdClothProfile.cs` | 每個模型的 physics.ini(有就用、沒有就轉換;逐 key 覆寫) |
+| `tools/package_build.ps1` | `assets/MODEL` → `DATA/MODEL`(含 physics.ini) |

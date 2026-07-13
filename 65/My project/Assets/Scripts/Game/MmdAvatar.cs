@@ -90,6 +90,7 @@ namespace Sdo.Game
         private Vector3 _hrcRootRestPos, _rootRestLocal;
         private MmdSpringBones _spring;
         private MmdMagicaCloth _magica;   // preferred cloth solver (Magica Cloth 2); _spring is the fallback
+        private MmdClothProfile _profile; // the model's physics.ini, when it has one (null = tuning converted from the .pmx)
         private bool _visible = true, _physicsOn = true;   // physics runs only when BOTH hold (independent toggles)
         private bool _ready;
 
@@ -99,6 +100,10 @@ namespace Sdo.Game
         /// <summary>Does this rig have a cloth solver at all? False for the head portraits, which are built without one
         /// (see the <c>cloth</c> argument of <see cref="Build"/>).</summary>
         public bool HasCloth => _magica != null || _spring != null;
+
+        /// <summary>The Magica Cloth rig, when this body has one (null for the portrait rigs and for the spring-bone
+        /// fallback). The debug panel asks for it to save the current tuning into the model's physics.ini.</summary>
+        public MmdMagicaCloth Cloth => _magica;
 
         /// <summary><paramref name="cloth"/> false builds the rig with NO hair/skirt simulation — the physics bones just
         /// hold their styled rest pose and ride the head. That is what the head portraits (room 頭貼 / 結算頭貼) use: at
@@ -210,7 +215,10 @@ namespace Sdo.Game
             SetLayer(_mmdRoot.gameObject, layer);
             if (cloth)   // head portraits build without one — the hair then holds its styled rest pose and rides the head
             {
-                _magica = MmdMagicaCloth.Setup(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale);   // Magica Cloth 2 (preferred)
+                // A physics.ini beside the .pmx (if the model has one) overrides the values converted from its rigid
+                // bodies/joints; no file → pure conversion, exactly as before. See MmdClothProfile.
+                _profile = MmdClothProfile.Load(textureDir);
+                _magica = MmdMagicaCloth.Setup(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _profile);   // Magica Cloth 2 (preferred)
                 if (_magica == null)   // package missing / setup failed → hand-rolled spring bones
                 {
                     _spring = MmdSpringBones.Attach(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _mmdRoot);
@@ -218,7 +226,7 @@ namespace Sdo.Game
                 }
             }
             _ready = true;
-            string phys = _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col)" : (_spring != null ? "spring" : (cloth ? "none" : "OFF (portrait)"));
+            string phys = _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col{(_magica.ProfilePath != null ? ",physics.ini" : "")})" : (_spring != null ? "spring" : (cloth ? "none" : "OFF (portrait)"));
             LogMilestone($"[mmd] built '{pmx.NameJp}' in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms: {pmx.VertexCount} verts, {pmx.Materials.Count} mats, {bc} bones, " +
                          $"scale={_unitScale:F3}, facing={_qroot.eulerAngles.y:F0}°, driven={CountDriven()}/{bc}, aimed={aimed}, " +
                          $"sphere={_sh.SphereMats.Count}, toon={_sh.ToonMats.Count}, edge={_sh.EdgeMats.Count}, physics={pmx.PhysicsBones.Count}({phys})");

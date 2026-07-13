@@ -180,16 +180,8 @@ namespace Sdo.Game
         {
             if (index < 0 || index >= _models.Count || index == _sel) return;
             _sel = index;
-            var inst = Ensure();
-            inst._regs.RemoveAll(r => r.Avatar == null);
-            foreach (var r in inst._regs)
-            {
-                if (r.Mmd != null) Destroy(r.Mmd.gameObject);
-                r.Mmd = null;
-                r.Failed = false;   // a model that failed to build is no reason to distrust the next one
-            }
             Log($"[mmd] model → '{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})");
-            if (inst._mmdOn) foreach (var r in inst._regs) inst.Apply(r, true);
+            RebuildAll();   // a model that failed to build is no reason to distrust the next one — Failed is cleared
         }
 
         /// <summary>Cycle to the next installed model (F9 / the panel's ▶).</summary>
@@ -197,6 +189,67 @@ namespace Sdo.Game
         {
             if (_models.Count < 2) return;
             SelectModel(((_sel + step) % _models.Count + _models.Count) % _models.Count);
+        }
+
+        /// <summary>Write the cloth tuning the dancer is running right now (the values converted from the .pmx, plus the
+        /// live gravity/stiffness/collider knobs above) into the model's own folder as physics.ini. From then on THAT
+        /// file is what the model loads — on this machine and in a packaged build, since DATA/MODEL ships whole.
+        /// Returns the file written, or null (no MMD body on screen / nothing writable).</summary>
+        public static string SaveProfile()
+        {
+            var e = Sel;
+            var cloth = FirstCloth();
+            if (e == null || cloth == null) { _lastError = "沒有可存的布料(先按 F7 顯示 MMD 模型)"; return null; }
+            string path = MmdClothProfile.Save(e.Dir, cloth.CurrentSimulationFrequency, cloth.CurrentColliderMul, cloth.CurrentParts);
+            _lastError = path == null ? "physics.ini 寫入失敗(資料夾唯讀?)" : "";
+            Log(path != null ? "[mmd] 物理已存到 " + path : "[mmd] physics.ini 寫入失敗: " + MmdClothProfile.PathFor(e.Dir));
+            return path;
+        }
+
+        /// <summary>Delete the model's physics.ini and rebuild → back to the values converted straight from the .pmx.</summary>
+        public static bool DeleteProfile()
+        {
+            var e = Sel;
+            if (e == null) return false;
+            bool gone = MmdClothProfile.Delete(e.Dir);
+            Log(gone ? "[mmd] 刪掉 physics.ini → 回到 .pmx 轉換值" : "[mmd] 本來就沒有 physics.ini");
+            if (gone) RebuildAll();
+            return gone;
+        }
+
+        /// <summary>Is the displayed body running a physics.ini (vs the converted values)?</summary>
+        public static string ProfileStatus()
+        {
+            var cloth = FirstCloth();
+            if (cloth != null) return cloth.ProfilePath != null ? "physics.ini" : "轉換值";
+            var e = Sel;
+            return e != null && File.Exists(MmdClothProfile.PathFor(e.Dir)) ? "physics.ini (未套用)" : "轉換值";
+        }
+
+        private static MmdMagicaCloth FirstCloth()
+        {
+            if (_inst == null) return null;
+            foreach (var r in _inst._regs)
+                if (r.Mmd != null && r.Mmd.Cloth != null) return r.Mmd.Cloth;
+            return null;
+        }
+
+        /// <summary>Throw away every built MMD body and build it again — what to call after the model's physics.ini was
+        /// changed on disk (the panel's 刪除 does; hand-editing the file + this = see your edit without restarting).</summary>
+        public static void Rebuild() => RebuildAll();
+
+        // Throw away every built MMD body and build it again (after the model or its physics.ini changed).
+        private static void RebuildAll()
+        {
+            var inst = Ensure();
+            inst._regs.RemoveAll(r => r.Avatar == null);
+            foreach (var r in inst._regs)
+            {
+                if (r.Mmd != null) Destroy(r.Mmd.gameObject);
+                r.Mmd = null;
+                r.Failed = false;
+            }
+            if (inst._mmdOn) foreach (var r in inst._regs) inst.Apply(r, true);
         }
 
         // Swap one dancer. Building the MMD model is lazy (first time it's shown). Returns true if the dancer is live.
@@ -303,7 +356,7 @@ namespace Sdo.Game
         // Unmissable on-screen state + click-to-toggle buttons (so a key conflict / editor focus can't hide the feature).
         private void OnGUI()
         {
-            const int w = 344, h = 352;
+            const int w = 344, h = 400;
             if (!_panelOn)
             {
                 // panel hidden — leave only a small re-opener so a key conflict / editor focus can't strand the feature
@@ -338,7 +391,12 @@ namespace Sdo.Game
             if (GUI.Button(new Rect(150, 273, 40, 20), "碰-")) { _colMul = Mathf.Max(0.2f, _colMul * 0.85f); ApplyOpts(); }
             if (GUI.Button(new Rect(192, 273, 40, 20), "碰+")) { _colMul = Mathf.Min(4f, _colMul * 1.18f); ApplyOpts(); }
             if (GUI.Button(new Rect(16, 299, 320, 20), $"根位移 rootMove: {(_rootMove ? "ON" : "OFF")}")) { _rootMove = !_rootMove; ApplyOpts(); }
-            GUI.Label(new Rect(16, 322, w - 32, 20), "F9 換下一個模型 · 模型放 DATA/MODEL/<名稱>/*.pmx");
+
+            // ---- physics.ini: 調到滿意就存進模型資料夾;有這個檔就用它,刪掉就回去用 .pmx 轉換 ----
+            GUI.Label(new Rect(16, 322, w - 32, 20), "物理來源: " + ProfileStatus());
+            if (GUI.Button(new Rect(16, 344, 156, 22), "存成 physics.ini")) SaveProfile();
+            if (GUI.Button(new Rect(180, 344, 156, 22), "刪除(回轉換值)")) DeleteProfile();
+            GUI.Label(new Rect(16, 370, w - 32, 20), "F9 換下一個模型 · 模型放 DATA/MODEL/<名稱>/*.pmx");
         }
     }
 }
