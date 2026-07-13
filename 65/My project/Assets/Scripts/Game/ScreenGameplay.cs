@@ -28,9 +28,10 @@ namespace Sdo.Game
         private static readonly string[] ForceJudgeLabels = { "Real", "Perfect", "Cool", "Bad", "Miss" };
         // Note scroll = osu!mania-style (Sequential + relative beat-length scaling) at a FIXED base tempo:
         // the base speed is the SAME for every song (NOT scaled by the song's BPM), calibrated with the
-        // official px/s = BPM×speed×1.6 at referenceBpm=140. Mid-song BPM changes / osu SV still vary the
-        // scroll locally (see ManiaScroll). scrollSpeedMul = the room "速度" step (RoomConfig.speedSteps),
-        // set by FrontendApp from the session. constantScroll = osu "Constant Speed" mod (kill all variation).
+        // official px/s = BPM×speed×1.6 at referenceBpm (ManiaScroll.DefaultReferenceBpm). Mid-song BPM changes /
+        // osu SV still vary the scroll locally (see ManiaScroll). scrollSpeedMul = the room "速度" step
+        // (RoomConfig.speedSteps), set by FrontendApp from the session. constantScroll = osu "Constant Speed" mod
+        // (kill all variation) — wired to OPTION 進階「歌曲變速」關閉 (GameplaySettings.songSpeed == false).
         public float scrollSpeedMul = 2.5f;   // 速度 step (1.0..8.0); FrontendApp wires GameSession.Speed in
         // Room win2 "note" selection (GameSession.NoteType) → the gameplay skin applied at boot via SelectSkin.
         // -2 = unset (standalone/F4 boot: keep stock); -1 = 隨機 (random skin); 0..10 = the specific note skin

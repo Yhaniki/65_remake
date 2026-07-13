@@ -25,9 +25,10 @@ namespace Sdo.Tests
         [Test]
         public void BaseVelocity_Is_ReferenceBpm_Times_Speed_Times_1point6()
         {
-            Assert.AreEqual(560.0, ManiaScroll.BaseVelocityFor(2.5), Eps);          // 140 × 2.5 × 1.6
-            Assert.AreEqual(224.0, ManiaScroll.BaseVelocityFor(1.0), Eps);          // 140 × 1.0 × 1.6
-            Assert.AreEqual(1792.0, ManiaScroll.BaseVelocityFor(8.0), Eps);         // 140 × 8.0 × 1.6
+            double r = ManiaScroll.DefaultReferenceBpm;                             // 基準 BPM 可調 → 斷言綁常數，不寫死數字
+            Assert.AreEqual(r * 2.5 * 1.6, ManiaScroll.BaseVelocityFor(2.5), Eps);
+            Assert.AreEqual(r * 1.0 * 1.6, ManiaScroll.BaseVelocityFor(1.0), Eps);
+            Assert.AreEqual(r * 8.0 * 1.6, ManiaScroll.BaseVelocityFor(8.0), Eps);
             Assert.AreEqual(320.0, ManiaScroll.BaseVelocityFor(2.5, 80.0), Eps);    // 80bpm → matches old 320px/s
         }
 

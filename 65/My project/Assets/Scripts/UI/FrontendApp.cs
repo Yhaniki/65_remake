@@ -220,7 +220,7 @@ namespace Sdo.UI
             game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
-            game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準140，osu式內部變速）
+            game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準 ManiaScroll.DefaultReferenceBpm，osu式內部變速）
             game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
             game.showtimeMode = s.GameMode == 2;                 // 選歌模式選單：2 = ShowTime（氣條/集氣）模式；否則一般玩法
@@ -234,6 +234,7 @@ namespace Sdo.UI
                 game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
                 game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
                 game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
+                game.constantScroll = !gp.songSpeed;             // 進階「歌曲變速」關 → 整首固定流速（忽略譜面 BPM 變化 / SV）
             }
             _activeGame = game;
         }

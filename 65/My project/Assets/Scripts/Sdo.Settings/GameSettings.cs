@@ -39,7 +39,7 @@ namespace Sdo.Settings
         public bool cameraAuto = true;       // 遊戲視角：true=默認(自動導播) / false=固定(鏡頭 1)
         public bool callCardInGame = true;   // 呼叫卡遊戲中顯示（預設開；暫未接功能）
         public bool playFullSong = false;    // 進階「完奏模式」（原無失敗模式）：HP 歸零不判失敗，整首照打到曲末，結算走正常名次（不出 GAME OVER）
-        public bool songSpeed = true;        // 進階「歌曲變速」：允許歌曲變速玩法（預設開；暫只保存狀態、忠實呈現官方選項）
+        public bool songSpeed = true;        // 進階「歌曲變速」：true=譜面中途的 BPM 變化/SV 照樣改變 note 流速（預設，官方玩法）；false=整首固定流速（ScreenGameplay.constantScroll）
         public float panelOpacity = 1.4f;    // 面板透明度：note 面板 alpha 倍率(=boardAlpha)，範圍 0..1.4（1.4=官方＝上限）
 
         public const float MaxPanelOpacity = 1.4f;   // OPTION 面板透明度滑桿最高 1.4X
