@@ -218,6 +218,7 @@ namespace Sdo.UI
             "UI/STATIS/STATISTIC",  // result screen (the ONLY STATIS subtree the active ResultScreen reads)
             "UI/ROOMDLG", "UI/ROOM",
             "UI/OPTIONDLG", "UI/SHOP", "UI/MYHOUSEDLG",
+            "UI/PLAYERINFORMATIONDLG",   // 房間右鍵點人的個人資訊/戰績面板 (PlayerInfoArt) — 線上限定資料夾
             "UI/BUBBLE2", "UI/EXPRESSIONS",
             "UI/LOBBYDLG/KEYS",     // keyboard glyphs (the only LOBBYDLG subtree read)
             "UI/LOBBYSEL",          // gender-select art

@@ -234,6 +234,10 @@ namespace Sdo.UI.Screens
             {
                 _slotHead[i] = AddRaw("Slot" + i, sx[i] + Win1.x, RoomLayout.HeadSlotY, RoomLayout.HeadSlotW, RoomLayout.HeadSlotH);
                 _slotHead[i].enabled = false;   // shown only when occupied (head RT assigned)
+                // 官方也可以直接右鍵頭像框看那個人的資訊 → 頭貼要吃得到滑鼠（沒人時 Graphic 是 disabled，不會擋）
+                _slotHead[i].raycastTarget = true;
+                var headClick = _slotHead[i].gameObject.AddComponent<HeadSlotClickHandle>();
+                headClick.Owner = this; headClick.Slot = i;
                 _slotClose[i] = Art("close", Win1, closeX[i], 59, "Close" + i);
                 _slotMaster[i] = Art("master", Win1, masterX[i], 102, "Master" + i);
                 _slotMaster[i].enabled = false;
@@ -494,6 +498,7 @@ namespace Sdo.UI.Screens
                     _backdrop.color = Color.white;
                     _backdrop.uvRect = flipBackdropV ? new Rect(0f, 1f, 1f, -1f) : new Rect(0f, 0f, 1f, 1f);
                 }
+                AssignOccupantIdentities();   // 房間裡每個人的名字/等級 → 右鍵才知道點到誰
             }
 
             if (_localHead == null)
@@ -2141,6 +2146,7 @@ namespace Sdo.UI.Screens
                 ApplyCollapse();
             }
 
+            HandleRightClickPerson();
             HandleRoomBlankChatClick();
             HandleRoomChatTypingKeys();
             // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
@@ -2725,6 +2731,106 @@ namespace Sdo.UI.Screens
                 || Input.GetKeyDown(KeyCode.DownArrow)
                 || Input.GetKeyDown(KeyCode.LeftArrow)
                 || Input.GetKeyDown(KeyCode.RightArrow);
+        }
+
+        // ---------------- 右鍵點人 → 個人資訊/戰績面板 (PlayerInformationDlg) ----------------
+
+        // 右鍵頭像框 = 右鍵那個人（官方兩種點法都有）。左鍵不管，交給既有的空曠處打字泡邏輯。
+        private sealed class HeadSlotClickHandle : MonoBehaviour, IPointerClickHandler
+        {
+            public RoomScreen Owner;
+            public int Slot;
+
+            public void OnPointerClick(PointerEventData eventData)
+            {
+                if (eventData.button != PointerEventData.InputButton.Right) return;
+                if (Owner != null) Owner.OpenPlayerInfoForSlot(Slot);
+            }
+        }
+
+        private void OpenPlayerInfoForSlot(int slot)
+        {
+            if (_scene == null) return;
+            foreach (var occ in _scene.Occupants)
+                if (occ != null && occ.Slot == slot) { OpenPlayerInfo(occ); return; }
+        }
+
+
+        // 房間裡每個 3D 人物的身分。slot 0 = 本機玩家（真資料，取自 profile.json）；其餘是決定性的假身分
+        // （RoomOccupants + MockPlayerStats）—— 離線 EXE 的房間本來只有房主一個人，其他人是連線時伺服器放進來的。
+        private void AssignOccupantIdentities()
+        {
+            if (_scene == null) return;
+            var me = ProfileManager.Active;
+            foreach (var occ in _scene.Occupants)
+            {
+                if (occ == null) continue;
+                if (occ.IsLocal)
+                {
+                    occ.Id = me != null ? me.id : "00000000";
+                    occ.DisplayName = me != null ? me.name : "";
+                    occ.Level = me != null ? me.level : 1;
+                }
+                else
+                {
+                    occ.Id = RoomOccupants.IdFor(occ.Slot);
+                    occ.DisplayName = RoomOccupants.NameFor(occ.Slot);
+                    occ.Level = MockPlayerStats.LevelFor(occ.Id);
+                }
+            }
+        }
+
+        // 右鍵點房間裡的人 → 開他的個人資訊。滑鼠在 UI 上時不處理（頭貼有自己的右鍵處理）。
+        private void HandleRightClickPerson()
+        {
+            if (_scene == null || !Input.GetMouseButtonDown(1)) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+            if (!TryBackdropViewport(Input.mousePosition, out var vp)) return;
+            if (!_scene.TryPickOccupant(vp, out var occ)) return;
+            OpenPlayerInfo(occ);
+        }
+
+        // 螢幕座標 → backdrop 的視口座標 [0..1]。場景相機整張渲進 backdrop，所以視口就是 RT 的取樣座標；
+        // backdrop 若是上下翻的（flipBackdropV），y 也要跟著翻回去。
+        private bool TryBackdropViewport(Vector3 screenPos, out Vector2 vp)
+        {
+            vp = default;
+            if (_backdrop == null) return false;
+            var rt = _backdrop.rectTransform;
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, screenPos, cam, out var local)) return false;
+            var r = rt.rect;
+            if (r.width <= 0f || r.height <= 0f) return false;
+            float x = (local.x - r.xMin) / r.width;
+            float y = (local.y - r.yMin) / r.height;
+            if (x < 0f || x > 1f || y < 0f || y > 1f) return false;
+            if (flipBackdropV) y = 1f - y;
+            vp = new Vector2(x, y);
+            return true;
+        }
+
+        // 組出面板要顯示的那個人。本機玩家 = profile.json 的真累計戰績；其他人 = 由 id 決定性生成的假戰績。
+        private void OpenPlayerInfo(RoomOccupant occ)
+        {
+            if (occ == null || Nav.OpenPlayerInfo == null) return;
+            var t = new PlayerInfoTarget { Name = occ.DisplayName, Level = occ.Level, Male = occ.Male, IsSelf = occ.IsLocal };
+            if (occ.IsLocal)
+            {
+                var me = ProfileManager.Active;
+                if (me != null)
+                {
+                    me.Sanitize();
+                    t.Name = me.name;
+                    t.Level = me.level;
+                    t.Male = me.gender == 1;
+                    t.Stats = me.stats;
+                    t.AvatarParts = WardrobeStore.ResolveEquippedParts(me, me.gender, id => AvatarItemCatalog.Instance.ById(id));
+                }
+            }
+            else t.Stats = MockPlayerStats.For(occ.Id);
+            Nav.OpenPlayerInfo(t);
         }
 
         private void HandleRoomBlankChatClick()

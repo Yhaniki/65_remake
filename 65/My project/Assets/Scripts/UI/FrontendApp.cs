@@ -36,6 +36,7 @@ namespace Sdo.UI
         /// the room can't tell them apart from a screen check alone.</summary>
         public bool AnyModalOpen => ShopOpen
             || (_wardrobe != null && _wardrobe.IsOpen)
+            || (_playerInfo != null && _playerInfo.IsOpen)
             || (_option != null && _option.IsOpen);
 
         private AppContext _ctx;
@@ -45,6 +46,7 @@ namespace Sdo.UI
         private ResultsModal _results;
         private ShopScreen _shop;
         private WardrobeScreen _wardrobe;
+        private PlayerInfoModal _playerInfo;   // 房間右鍵點人 → 官方個人資訊/戰績面板 (PlayerInformationDlg)
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
@@ -129,6 +131,9 @@ namespace Sdo.UI
             _wardrobe = new GameObject("Wardrobe").AddComponent<WardrobeScreen>();
             _wardrobe.transform.SetParent(modalLayer, false);
             _wardrobe.Build(modalLayer, _ctx.Session);
+            _playerInfo = new GameObject("PlayerInfo").AddComponent<PlayerInfoModal>();
+            _playerInfo.transform.SetParent(modalLayer, false);
+            _playerInfo.Build(modalLayer);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
@@ -136,6 +141,7 @@ namespace Sdo.UI
             Nav.OpenShop = () => ScreenTransition.Run(() => _shop.Open());   // 進商城：漸黑 → loading → 漸亮（同房間進出效果）
             Nav.OpenWardrobe = () => _wardrobe.Open();                        // 儲物櫃有自己的視窗開闔動畫(WindowAnim)，不套轉場
             Nav.StartGame = StartGameplay;
+            Nav.OpenPlayerInfo = t => _playerInfo.Open(t);   // 房間右鍵點人 → 他的個人資訊/戰績
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
@@ -225,6 +231,7 @@ namespace Sdo.UI
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
             game.showtimeMode = s.GameMode == 2;                 // 選歌模式選單：2 = ShowTime（氣條/集氣）模式；否則一般玩法
             game.dropDirection = s.DropDirection;                // 房間 win2「掉落方式」→ note 面板上/下 + 捲動方向（0=向上 1=向下 2=傾斜）
+            game.onRoundStats = RecordRoundStats;                // 結算 → 併進 profile.json 的累計戰績（房間右鍵看的「技术统计」）
             var gp = DisplaySettingsManager.Settings?.gameplay;  // OPTION 遊戲頁偏好 → 開局套用
             if (gp != null)
             {
@@ -237,6 +244,17 @@ namespace Sdo.UI
                 game.constantScroll = !gp.songSpeed;             // 進階「歌曲變速」關 → 整首固定流速（忽略譜面 BPM 變化 / SV）
             }
             _activeGame = game;
+        }
+
+        // 一場結束 → 把判定數/名次/分數併進 active profile 的累計戰績並存檔。官方這些數字是伺服器統計後下發的
+        // （離線 EXE 根本沒有 PlayerInformationDlg 的程式碼），離線版就自己在本機累計，欄位對得上官方那六列。
+        private static void RecordRoundStats(int perfect, int cool, int bad, int miss, bool won, long score)
+        {
+            var prof = ProfileManager.Active;
+            if (prof == null) return;
+            prof.Sanitize();
+            prof.stats.AddGame(perfect, cool, bad, miss, won, score);
+            ProfileManager.Save();
         }
 
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),

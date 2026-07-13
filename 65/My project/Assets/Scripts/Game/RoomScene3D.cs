@@ -22,8 +22,10 @@ namespace Sdo.Game
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
         public bool loadMapobjs = true;          // load the Room_obj stage props (dianshi/laba/guang/taizi)
-        public bool fillTestAvatars = false;     // OFF: only the local host is shown (matches the offline solo room). Set
-                                                 // true to drop the same avatar on the other 15 slots for layout testing.
+        // 房間裡的其他人。離線 EXE 只有房主一個人（其他人是連線時由伺服器 move packet 放進來的），但「右鍵選人看戰績」
+        // 沒有人可以點就沒意義 → 預設放上 5 個舞者 + 10 個旁觀者（假身分，見 Sdo.UI.Services.RoomOccupants）。
+        // 接上線之後這裡改成用伺服器下發的名單建人。
+        public bool fillTestAvatars = true;
         public bool overview = false;            // frame the whole room from a fixed high vantage (verification captures)
 
         // ---- tunables (floor height / back distance need one visual calibration pass; see risks) ----
@@ -62,8 +64,23 @@ namespace Sdo.Game
         private float _chatActionUntil = -1f;
         private bool _walking;
         private bool _ready;
+        private readonly List<RoomOccupant> _occupants = new List<RoomOccupant>();
 
         public float headMarkerRise = 18f;   // world Y above the head bone for the floating head portrait (EXE +15)
+
+        /// <summary>房間裡所有可以被右鍵點到的人（房主 + 舞者 + 旁觀者）。UI 層開場時填他們的身分。</summary>
+        public IReadOnlyList<RoomOccupant> Occupants => _occupants;
+
+        /// <summary>把 backdrop 上的視口座標 [0..1] 射進場景，看有沒有打到人。打到 → 回傳那個人。</summary>
+        public bool TryPickOccupant(Vector2 viewport, out RoomOccupant occ)
+        {
+            occ = null;
+            if (!_ready || _cam == null) return false;
+            var ray = _cam.ViewportPointToRay(new Vector3(viewport.x, viewport.y, 0f));
+            if (!Physics.Raycast(ray, out var hit, 5000f, 1 << SceneLayer)) return false;
+            occ = hit.collider.GetComponentInParent<RoomOccupant>();
+            return occ != null;
+        }
 
         /// <summary>The room render — assign to the RoomScreen backdrop RawImage. Null until Build succeeds.</summary>
         public Texture SceneTexture => _rt;
@@ -197,6 +214,7 @@ namespace Sdo.Game
                     : RoomLayout.SpectatorAnchors[slot - RoomLayout.SeatCount];              // lookers 6-15: af0
                 parent.transform.position = new Vector3(a.x, floorY - feet, a.z);
                 parent.transform.localRotation = Quaternion.Euler(0f, RoomLayout.SlotFacingDegrees(slot), 0f);
+                _occupants.Add(RoomOccupant.Attach(parent, SceneLayer, slot, isLocal: false, male: false));
             }
         }
 
@@ -269,6 +287,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
             _avatarRoot = parent.transform;
+            _occupants.Add(RoomOccupant.Attach(parent, SceneLayer, 0, isLocal: true, male: _male));   // 右鍵點自己 → 自己的戰績
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
 
@@ -296,6 +315,15 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
             _avatarRoot = parent.transform;
+            // 換穿會整個換掉 root → slot-0 的 RoomOccupant 也要跟著搬過去，不然右鍵點自己會 raycast 到已銷毀的物件
+            var old = _occupants.Find(o => o != null && o.Slot == 0);
+            var host = RoomOccupant.Attach(parent, SceneLayer, 0, isLocal: true, male: _male);
+            if (old != null)
+            {
+                host.Id = old.Id; host.DisplayName = old.DisplayName; host.Level = old.Level;
+                _occupants.Remove(old);
+            }
+            _occupants.Add(host);
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
             _walking = false;

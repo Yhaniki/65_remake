@@ -619,6 +619,11 @@ namespace Sdo.Game
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
         public bool mockOpponents = false;           // 預設關閉測試對手(離線單人=solo rank 1/1、清單只有本機);真連線時再開
         public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
+        /// <summary>結算時回報這一場的判定數/名次/分數，給前端併進帳號的累計戰績（官方 PlayerInformationDlg 技术统计分頁的來源）。
+        /// 參數 = (perfect, cool, bad, miss, 第一名, 分數)。自由模式不會呼叫。由 FrontendApp.StartGameplay 掛上，
+        /// Game assembly 因此不必直接碰 Sdo.Settings（與 laneKeyOverride 同一個解耦約定）。</summary>
+        public System.Action<int, int, int, int, bool, long> onRoundStats;
+        private bool _statsReported;                 // ShowResultPanel 只回報一次
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
         public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
         public bool localPlayerMale = false;         // set by FrontendApp from GameSession.Gender before Start()
@@ -3675,6 +3680,13 @@ namespace Sdo.Game
             // 自由模式不加 G幣/EXP
             int expGained = freeMode ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
             int coinsGained = freeMode ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
+            // 併進帳號累計戰績（自由模式不計，與 G幣/EXP 同一條規則）。只回報一次。
+            if (!freeMode && !_statsReported && _score != null && onRoundStats != null)
+            {
+                _statsReported = true;
+                onRoundStats(_score.PerfectCount, _score.CoolCount, _score.BadCount, _score.MissCount, place == 1, TotalScore);
+            }
+
             Texture head = BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
             _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe, showBanner: !freeMode);

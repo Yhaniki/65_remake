@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Assemble the clean ship layout for a built player: all SDO game data under a single DATA/ folder beside the exe.
 
@@ -121,6 +121,9 @@ if ($online) {
     # 沒複製 → 打包後商城/儲物櫃整片黑(素材全 null)。overlay 進 DATA 讓打包版跟編輯器一致。
     Copy-Tree (Join-Path $ds 'UI\SHOP')             (Join-Path $Data 'UI\SHOP')             'online SHOP'
     Copy-Tree (Join-Path $ds 'UI\MYHOUSEDLG')       (Join-Path $Data 'UI\MYHOUSEDLG')       'online MYHOUSEDLG'
+    # 個人資訊/戰績面板 (PlayerInformationDlg)：房間右鍵點人開的那個對話框。也是線上限定資料夾（離線 Extracted 沒有），
+    # PlayerInfoArt 讀 DATA\UI\PLAYERINFORMATIONDLG；沒複製 → 打包版右鍵不會開面板 (PlayerInfoArt.Available=false)。
+    Copy-Tree (Join-Path $ds 'UI\PLAYERINFORMATIONDLG') (Join-Path $Data 'UI\PLAYERINFORMATIONDLG') 'online PLAYERINFORMATIONDLG'
     # OPTION 鍵盤 tab per-key letter glyphs (A/S/W/D…, blue-fill/white-outline PNGs blitted on each key cap; loaded by
     # KeysArt with a DATA\UI\LOBBYDLG\KEYS fallback). Not referenced by any .an — the exe loaded them by hardcoded path.
     Copy-Tree (Join-Path $ds 'UI\LOBBYDLG\KEYS')    (Join-Path $Data 'UI\LOBBYDLG\KEYS')    'online KEYS glyphs'

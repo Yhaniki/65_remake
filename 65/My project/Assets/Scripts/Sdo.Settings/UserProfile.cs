@@ -117,6 +117,10 @@ namespace Sdo.Settings
         // 空 (舊檔) 時退回 6 部位的 equippedClothes。由 WardrobeStore 在存檔時用 Sdo.Game.AvatarOutfit.ResolveParts 算出。
         public string[] equippedParts = new string[0];
 
+        // ---- 累計戰績（官方 PlayerInformationDlg「技术统计」分頁的資料源；官方是伺服器下發，離線改成本地累計）----
+        public int level = 1;                              // 等級（官方 level Label）；目前只由經驗換算的占位，等經驗系統接上再驅動
+        public PlayerStats stats = new PlayerStats();
+
         public UserProfile() { }
 
         public UserProfile(string id, string name, int gender)
@@ -137,6 +141,8 @@ namespace Sdo.Settings
             if (ownedItems == null) ownedItems = new OwnedItemSave[0];
             if (equippedItems == null) equippedItems = new EquipSave[0];
             if (equippedParts == null) equippedParts = new string[0];
+            if (stats == null) stats = new PlayerStats();       // 舊檔沒有 stats 欄位
+            if (level < 1) level = 1;
             EnsureWardrobe();
             return this;
         }
