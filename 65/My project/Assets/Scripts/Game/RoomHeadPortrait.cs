@@ -39,13 +39,6 @@ namespace Sdo.Game
         private float _hairOffsetModel = -1f;
         private float _chatActionUntil = -1f;   // 頭貼跟著房間 avatar 做聊天動作:此時間前不被 walk/idle 鏡射覆寫
 
-        // MMD framing, solved ONCE from the rest pose and then frozen: the cam is nailed to a world position and never
-        // moves again. Chasing the live head instead pins the head dead-centre and swings the BODY around it, which is
-        // not what the official portrait does — there the camera is fixed and the head sways inside the frame.
-        private MmdAvatar _mmdFramedFor;   // the rig the frozen framing belongs to (a model switch re-solves it)
-        private Vector3 _mmdCamPos;
-        private Quaternion _mmdCamRot;
-
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
 
@@ -149,14 +142,16 @@ namespace Sdo.Game
             float facing = FacingProvider != null ? FacingProvider() : 0f;
             t.localRotation = Quaternion.Euler(0f, yaw + facing, 0f);
 
-            if (TryFrozenMmdCam()) return;   // MMD: a cam fixed in WORLD space (solved once) — the head sways in-frame
-
             Vector3 target; float dist;
-            if (TryHeadBounds(out var b))
+            if (TryHeadBounds(out var b, out bool mmd))
             {
+                // The MMD box is the head ITSELF; the SDO box is FACE+HAIR (the hair past the chin included) and so is
+                // ~40% taller — hence its own, looser constants. Same head on screen either way.
+                float frameDist = mmd ? MmdAvatar.PortraitFrameDist : headFrameDist;
+                float aimUp = mmd ? MmdAvatar.PortraitAimUp : headAimUp;
                 target = b.center;                                    // head visual centre → centred X/Z
-                target.y -= headAimUp * b.size.y;                     // nudge so the FACE (not the neck-biased AABB) centres
-                dist = Mathf.Max(b.size.y, 1f) * headFrameDist * Mathf.Max(0.05f, zoom);
+                target.y -= aimUp * b.size.y;                         // nudge so the FACE (not the neck-biased AABB) centres
+                dist = Mathf.Max(b.size.y, 1f) * frameDist * Mathf.Max(0.05f, zoom);
             }
             else   // bounds not ready yet → fall back to the head bone + measured hair-top
             {
@@ -172,37 +167,16 @@ namespace Sdo.Game
             _cam.transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
         }
 
-        // MMD display: solve the framing ONCE off the REST head box, then leave the camera parked in world space forever.
-        // (Rest, not live: a cam that re-aims at the head every frame holds the head perfectly still and makes the body
-        // swing around it — the head has to be the thing that moves. The head box is measured at rest, so the framing is
-        // also immune to the head-turn/nod that used to pump the distance.) Re-solved if the model is switched.
-        private bool TryFrozenMmdCam()
-        {
-            var mmd = MmdDebug.ActiveFor(_avatar);
-            if (mmd == null) return false;
-
-            if (_mmdFramedFor != mmd)
-            {
-                if (!mmd.TryHeadBoundsRest(out var rest)) return false;   // rig not posed yet — retry next frame
-                Vector3 aim = rest.center;
-                aim.y -= MmdAvatar.PortraitAimUp * rest.size.y;
-                float d = Mathf.Max(rest.size.y, 1f) * MmdAvatar.PortraitFrameDist * Mathf.Max(0.05f, zoom);
-                Vector3 fwd = Quaternion.Euler(pitchDeg, 0f, 0f) * Vector3.forward;
-                _mmdCamPos = aim - fwd * d;
-                _mmdCamRot = Quaternion.LookRotation(fwd, Vector3.up);
-                _mmdFramedFor = mmd;
-            }
-            _cam.fieldOfView = fov;
-            _cam.transform.position = _mmdCamPos;
-            _cam.transform.rotation = _mmdCamRot;
-            return true;
-        }
-
         // Combined world AABB of the head (FACE+HAIR) renderers, after the avatar has been CPU-skinned this frame. False
-        // until the meshes have valid bounds (first pose). The SDO path only — in MMD display mode the SDO parts are
-        // hidden and TryFrozenMmdCam has already taken over.
-        private bool TryHeadBounds(out Bounds b)
+        // until the meshes have valid bounds (first pose). In MMD display mode the SDO parts are hidden and the model is
+        // one skinned mesh with no FACE/HAIR split, so the MMD rig measures its own head instead (isMmd → looser framing
+        // constants, since that box is the bare head rather than head+hair).
+        private bool TryHeadBounds(out Bounds b, out bool isMmd)
         {
+            isMmd = false;
+            var mmd = MmdDebug.ActiveFor(_avatar);
+            if (mmd != null && mmd.TryHeadBounds(out b)) { isMmd = true; return true; }
+
             b = default; bool any = false;
             if (_headRends != null)
                 foreach (var r in _headRends)

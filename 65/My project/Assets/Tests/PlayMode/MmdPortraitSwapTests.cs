@@ -59,7 +59,7 @@ namespace Sdo.Tests
 
             // (b) framing: the head box must be HEAD-sized. Miku's twintails hang off head-child bones down to the waist,
             // so a naive "head bone subtree" AABB would be most of the body — the portrait would show a full figure.
-            Assert.IsTrue(mmd.TryHeadBoundsRest(out var head), "no MMD head bounds");
+            Assert.IsTrue(mmd.TryHeadBounds(out var head), "no MMD head bounds");
             float body = smr.bounds.size.y;
             Assert.Greater(body, 0.1f);
             Assert.Less(head.size.y, 0.45f * body, $"head box {head.size.y:F1} is body-sized (body {body:F1}) — twintails not clipped");
@@ -67,13 +67,23 @@ namespace Sdo.Tests
             // the head sits in the TOP of the body (a portrait aimed at the middle would show the chest)
             Assert.Greater(head.center.y, smr.bounds.center.y + 0.2f * body, "head box is not in the upper body");
 
-            // The portrait cam is FIXED in world space: it must NOT re-aim at the head each frame (that pins the head and
-            // swings the body around it). Watch it across the idle — it may not move at all.
+            // The cam LOCKS ONTO the head: it re-aims every frame, so the head holds the middle of the slot while the
+            // body walks and sways under it. And because the box is the rest-measured head SIZE (not the posed AABB, whose
+            // extents swell as the head turns), the framing distance must not breathe either.
             var cam = host.GetComponentInChildren<Camera>();
-            Vector3 camPos0 = cam.transform.position;
-            for (int i = 0; i < 30; i++) yield return null;
-            Assert.Less(Vector3.Distance(cam.transform.position, camPos0), 1e-3f * Mathf.Max(1f, head.size.y),
-                "the head-portrait camera is chasing the head instead of staying put in world space");
+            float xMin = 9f, xMax = -9f, dMin = float.MaxValue, dMax = float.MinValue;
+            for (int i = 0; i < 40; i++)
+            {
+                yield return null;
+                Assert.IsTrue(mmd.TryHeadBounds(out var h));
+                var vp = cam.WorldToViewportPoint(h.center);
+                xMin = Mathf.Min(xMin, vp.x); xMax = Mathf.Max(xMax, vp.x);
+                float d = Vector3.Distance(cam.transform.position, h.center);
+                dMin = Mathf.Min(dMin, d); dMax = Mathf.Max(dMax, d);
+            }
+            Assert.AreEqual(0.5f, xMin, 0.02f, "the head drifted off-centre — the cam is not locked onto it");
+            Assert.AreEqual(0.5f, xMax, 0.02f, "the head drifted off-centre — the cam is not locked onto it");
+            Assert.Less(dMax - dMin, 0.02f * dMax, "the framing distance is breathing — the head box is not a fixed size");
 
             // (c) the camera actually SEES it: the head portrait RT must come back non-empty.
             if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)

@@ -665,21 +665,33 @@ namespace Sdo.Game
         public const float PortraitAimUp = 0.25f;
 
         /// <summary>Where a head-portrait camera should aim, in world space: an upright box the size of this model's head,
-        /// placed where the head sits in the REST pose. Frame it with <see cref="PortraitFrameDist"/> /
-        /// <see cref="PortraitAimUp"/>, NOT the SDO constants, and then leave the camera alone — the portrait cameras are
-        /// FIXED in world space, so the head moves inside the frame as the dancer bobs and sways (a cam that re-aimed at
-        /// the live head every frame would hold the head rigidly still and swing the body around it instead).
-        ///
-        /// Deliberately not the axis-aligned bounds of the POSED head+hair either: an oriented box's AABB changes size
-        /// and centre as it rotates, so framing that pumps the camera in and out as the head nods, and drags the centre
-        /// off toward whichever way the twintails swing. False if the model has no usable head (see
+        /// anchored on the LIVE head bone — the room 頭貼 re-aims at this every frame, keeping the head locked in the
+        /// middle of the slot as the dancer walks and sways. Frame it with <see cref="PortraitFrameDist"/> /
+        /// <see cref="PortraitAimUp"/>, NOT the SDO constants. False if the model has no usable head (see
         /// <see cref="MmdHeadBounds"/>), in which case the caller keeps its own framing.</summary>
+        public bool TryHeadBounds(out Bounds world)
+        {
+            world = default;
+            if (_sh == null || !_sh.HasHead || !_ready || _bone == null || _sh.HeadBone < 0 || _sh.HeadBone >= _bone.Length || _bone[_sh.HeadBone] == null) return false;
+            return StableHeadBox(_bone[_sh.HeadBone].position, _bone[_sh.HeadBone].lossyScale.y, out world);
+        }
+
+        /// <summary>The same box in the REST pose (head bone unrotated, the dancer's own transform still applied) — for a
+        /// FIXED portrait cam (結算頭貼), so the idle head-bob plays out inside the frame instead of being chased.</summary>
         public bool TryHeadBoundsRest(out Bounds world)
         {
             world = default;
             if (_sh == null || !_sh.HasHead || !_ready || _mmdRoot == null) return false;
-            float scale = _mmdRoot.lossyScale.y;
-            Vector3 headWorld = _mmdRoot.TransformPoint(_sh.HeadRestPos);
+            return StableHeadBox(_mmdRoot.TransformPoint(_sh.HeadRestPos), _mmdRoot.lossyScale.y, out world);
+        }
+
+        // An UPRIGHT box of the REST-measured head size, anchored at a head position. Deliberately not the axis-aligned
+        // bounds of the POSED head+hair: an oriented box's AABB changes size and centre as it rotates, so framing that
+        // pumps the camera in and out as the head nods (reads as the model swaying toward you) and drags the centre off
+        // toward whichever way the twintails swing (the face slides out of the slot as the dancer turns). Only the ANCHOR
+        // is allowed to move — so a walk/bob re-centres the head, but a head-turn does not disturb the framing at all.
+        private bool StableHeadBox(Vector3 headWorld, float scale, out Bounds world)
+        {
             Vector3 size = _sh.HeadLocal.size * scale;
             world = new Bounds(headWorld + Vector3.up * (_sh.HeadLocal.center.y * scale), size);
             return size.y > 1e-4f;
