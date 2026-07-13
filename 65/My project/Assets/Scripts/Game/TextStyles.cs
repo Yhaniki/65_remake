@@ -65,12 +65,6 @@ namespace Sdo.Game
             return false;
         }
 
-        private static Vector2[] Outline8(float d) => new[]
-        {
-            new Vector2(d, 0), new Vector2(-d, 0), new Vector2(0, d), new Vector2(0, -d),
-            new Vector2(d, d), new Vector2(d, -d), new Vector2(-d, d), new Vector2(-d, -d),
-        };
-
         /// <summary>Create a styled label (face + outline/shadow copies). Caller positions via <c>Position</c>.</summary>
         public static Label3D NewLabel(string name, Style style, int order, float pxSize, TextAnchor anchor, int layer = 0)
         {
@@ -80,7 +74,8 @@ namespace Sdo.Game
                 case Style.ListLocal:  face = FaceYellow;     edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
                 case Style.ListOther:  face = FaceOrange;     edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
                 case Style.Looker:     face = FaceLookerBlue; edge = EdgeBlack; offsets = new[] { new Vector2(1f, -1f) };     bold = false; break;
-                default: /* HeadName */ face = FaceCream;     edge = EdgeBlack; offsets = Outline8(1.4f); bold = true; break;
+                // 16-direction ring: 8 left scalloped notches in the black edge once fullscreen magnified the offsets.
+                default: /* HeadName */ face = FaceCream;     edge = EdgeBlack; offsets = NameplateMetrics.Ring(1.4f, 16); bold = true; break;
             }
             return new Label3D(name, CjkFont(), face, edge, offsets, order, pxSize, anchor, layer, -3f, bold);
         }
@@ -97,14 +92,20 @@ namespace Sdo.Game
 
     /// <summary>
     /// A world-space text label = one face <see cref="TextMesh"/> plus N offset copies behind it for an
-    /// outline (8-way) or drop-shadow (1 offset). All children of a root transform; move the label by
-    /// setting <see cref="Position"/>. Sizes are in design px (the HUD ortho cam maps 1px = 1 world unit).
+    /// outline (16-direction ring) or drop-shadow (1 offset). All children of a root transform; move the
+    /// label by setting <see cref="Position"/>. Sizes are in design px (the HUD ortho cam maps 1px = 1 world
+    /// unit); the glyph bitmap is rasterized at the PHYSICAL px size and the offsets stretch-compensated so
+    /// the text stays crisp and the ring uniform at fullscreen (see <see cref="NameplateMetrics"/>).
     /// </summary>
     public sealed class Label3D
     {
         public readonly GameObject root;
         private readonly TextMesh _main;
         private readonly TextMesh[] _back;
+        private readonly Vector2[] _offsets;    // design-px outline/shadow offsets (x is stretch-compensated on apply)
+        private float _pxSize;
+        private int _lastFontPx = -1;
+        private float _lastPxSize = -1f, _lastAx = -1f;
 
         public Label3D(string name, Font font, Color face, Color edge, Vector2[] offsets,
                        int order, float pxSize, TextAnchor anchor, int layer, float z, bool bold = false)
@@ -113,24 +114,24 @@ namespace Sdo.Game
             if (layer != 0) root.layer = layer;
             root.transform.position = new Vector3(0f, 0f, z);
             var fs = bold ? FontStyle.Bold : FontStyle.Normal;
-            _back = new TextMesh[offsets != null ? offsets.Length : 0];
+            _offsets = offsets ?? System.Array.Empty<Vector2>();
+            _back = new TextMesh[_offsets.Length];
             for (int i = 0; i < _back.Length; i++)
-                _back[i] = MakeTm(root.transform, "edge" + i, font, edge, offsets[i], order - 1, pxSize, anchor, layer, fs);
-            _main = MakeTm(root.transform, "main", font, face, Vector2.zero, order, pxSize, anchor, layer, fs);
+                _back[i] = MakeTm(root.transform, "edge" + i, font, edge, order - 1, anchor, layer, fs);
+            _main = MakeTm(root.transform, "main", font, face, order, anchor, layer, fs);
+            _pxSize = pxSize;
+            Refresh(true);
         }
 
-        private static TextMesh MakeTm(Transform parent, string n, Font font, Color col, Vector2 off,
-                                       int order, float pxSize, TextAnchor anchor, int layer, FontStyle fontStyle)
+        private static TextMesh MakeTm(Transform parent, string n, Font font, Color col,
+                                       int order, TextAnchor anchor, int layer, FontStyle fontStyle)
         {
             var go = new GameObject(n);
             if (layer != 0) go.layer = layer;
             go.transform.SetParent(parent, false);
-            go.transform.localPosition = new Vector3(off.x, off.y, 0f);
             var tm = go.AddComponent<TextMesh>();
             tm.font = font;
-            tm.fontSize = 64;
-            tm.fontStyle = fontStyle;
-            tm.characterSize = pxSize * 0.11f;   // see PxToCharSize
+            tm.fontStyle = fontStyle;           // fontSize/characterSize/offset come from Refresh()
             tm.anchor = anchor;
             tm.alignment = TextAlignment.Center;
             tm.color = col;
@@ -140,12 +141,32 @@ namespace Sdo.Game
             return tm;
         }
 
-        // design px → TextMesh characterSize. Calibrated against the offscreen capture: at fontSize 64 the
-        // dynamic CJK font renders ≈9 px per unit of characterSize, so px × 0.11 ≈ px tall on screen.
-        private const float PxToCharSize = 0.11f;
+        /// <summary>Re-rasterize at the CURRENT physical on-screen glyph size and re-space the outline copies
+        /// for the current 4:3→screen stretch. fontSize == physical px ⇒ the dynamic-font bitmap draws ≈1:1
+        /// (crisp); a fixed fontSize gets bilinear-resampled (font atlas has no mips) and the edges go ragged
+        /// at fullscreen. No-op when nothing changed — HeadMarker sets PxSize every frame, so a resolution
+        /// change mid-game re-applies live.</summary>
+        private void Refresh(bool force)
+        {
+            float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
+            float ax = NameplateMetrics.AnisotropyX(Screen.width, Screen.height, AspectController.ContentRect);
+            int fontPx = NameplateMetrics.FontPxFor(_pxSize, sy);
+            if (!force && fontPx == _lastFontPx && Mathf.Approximately(_pxSize, _lastPxSize) && Mathf.Approximately(ax, _lastAx))
+                return;
+            _lastFontPx = fontPx; _lastPxSize = _pxSize; _lastAx = ax;
+
+            float c = NameplateMetrics.CharacterSizeFor(_pxSize, fontPx);
+            _main.fontSize = fontPx; _main.characterSize = c;
+            for (int i = 0; i < _back.Length; i++)
+            {
+                _back[i].fontSize = fontPx; _back[i].characterSize = c;
+                var o = NameplateMetrics.Compensate(_offsets[i], ax);
+                _back[i].transform.localPosition = new Vector3(o.x, o.y, 0f);
+            }
+        }
 
         public string Text { set { _main.text = value; for (int i = 0; i < _back.Length; i++) _back[i].text = value; } }
-        public float PxSize { set { float c = value * PxToCharSize; _main.characterSize = c; for (int i = 0; i < _back.Length; i++) _back[i].characterSize = c; } }
+        public float PxSize { set { _pxSize = value; Refresh(false); } }
         public Vector3 Position { set { root.transform.position = value; } }
         public void SetColors(Color face, Color edge) { _main.color = face; for (int i = 0; i < _back.Length; i++) _back[i].color = edge; }
         public void SetActive(bool on) { if (root != null) root.SetActive(on); }
