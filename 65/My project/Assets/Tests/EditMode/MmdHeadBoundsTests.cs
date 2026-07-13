@@ -76,26 +76,43 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void TryCompute_FramesTheHead_AndDropsTheTwintailHangingBelowTheChin()
+        public void TryCompute_MeasuresTheHeadItself_NotTheHairHangingOffIt()
         {
-            // skull/hair top at y=14 (4 above the head bone) → the slab keeps down to 10 − 0.45×4 = 8.2.
             var pmx = BuildModel(
-                (new Vector3(0f, 14f, 0f), Head),        // hair top
+                (new Vector3(0f, 14f, 0f), Head),        // hair cap / crown, rigid on the head bone
                 (new Vector3(-2f, 11f, 1f), Head),       // skull
-                (new Vector3(2f, 9f, -1f), Head),        // jaw, just under the bone → kept
-                (new Vector3(3f, 9.5f, 0f), Tail),       // twintail root → above the cut, kept
-                (new Vector3(4f, 2f, 0f), TailTip),      // twintail tip at the waist → DROPPED
-                (new Vector3(0f, 5f, 0f), Center));      // body → never in the head subtree
+                (new Vector3(2f, 9f, -1f), Head),        // jaw, just under the bone
+                (new Vector3(3f, 9.5f, 0f), Tail),       // twintail root — a HAIR bone, not the head
+                (new Vector3(4f, 2f, 0f), TailTip),      // twintail tip at the waist
+                (new Vector3(0f, 5f, 0f), Center));      // body
 
             Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out int head, out Bounds b));
             Assert.AreEqual(Head, head);
 
             // bounds are HEAD-BONE-LOCAL (p − headPos), so the head bone itself is y = 0.
-            Assert.AreEqual(4f, b.max.y, 1e-4f, "top of the hair");
-            Assert.AreEqual(-1f, b.min.y, 1e-4f, "the jaw vertex — NOT the twintail tip 8 units below the bone");
-            Assert.AreEqual(3f, b.max.x, 1e-4f, "the kept twintail root");
+            Assert.AreEqual(4f, b.max.y, 1e-4f, "top of the head");
+            Assert.AreEqual(-1f, b.min.y, 1e-4f, "the jaw — not the twintail tip 8 units below the bone");
+            Assert.AreEqual(2f, b.max.x, 1e-4f, "the skull's own width — the twintail bones are NOT the head");
             Assert.AreEqual(-2f, b.min.x, 1e-4f);
-            Assert.Less(b.size.y, 6f, "head-sized, not body-sized (a whole-body AABB would be ~12 tall)");
+            Assert.Less(b.size.y, 6f, "head-sized, not body-sized");
+        }
+
+        [Test]
+        public void TryCompute_FallsBackToTheSubtree_WhenNothingIsSkinnedToTheHeadBoneItself()
+        {
+            // a model that hangs ALL its head geometry off child bones → the head-proper set is empty, so the clipped
+            // subtree is used instead (and the twintail tip at the waist is still dropped).
+            var pmx = BuildModel(
+                (new Vector3(0f, 14f, 0f), Tail),        // head geometry, but skinned to a child bone
+                (new Vector3(-2f, 11f, 1f), Tail),
+                (new Vector3(3f, 9.5f, 0f), Tail),
+                (new Vector3(4f, 2f, 0f), TailTip),      // hanging past the chin → DROPPED by the clip
+                (new Vector3(0f, 5f, 0f), Center));
+
+            Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out int head, out Bounds b));
+            Assert.AreEqual(Head, head);
+            Assert.AreEqual(4f, b.max.y, 1e-4f);
+            Assert.AreEqual(-0.5f, b.min.y, 1e-4f, "clipped at 0.45×4 below the bone — the waist-level vertex is gone");
         }
 
         [Test]

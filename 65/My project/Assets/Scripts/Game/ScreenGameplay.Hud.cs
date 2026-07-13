@@ -291,8 +291,9 @@ namespace Sdo.Game
             var mmd = MmdDebug.ActiveFor(_headAvatar);
             if (mmd != null && mmd.TryHeadBoundsRest(out var mb))
             {
-                headPortraitDist = Mathf.Max(mb.size.y, 1f) * 1.9f * Mathf.Max(0.05f, headZoom);
-                Vector3 aim = mb.center + new Vector3(headAimOffset.x, 0f, 0f);
+                // MmdAvatar's constants, not the SDO ones: its box is the bare head, the SDO box is head+hair (see there).
+                headPortraitDist = Mathf.Max(mb.size.y, 1f) * MmdAvatar.PortraitFrameDist * Mathf.Max(0.05f, headZoom);
+                Vector3 aim = mb.center + new Vector3(headAimOffset.x, -MmdAvatar.PortraitAimUp * mb.size.y, 0f);
                 Vector3 fwd = Quaternion.Euler(headPitchDeg, 0f, 0f) * Vector3.forward;
                 _headCam.fieldOfView = headPortraitFov;
                 _headCam.transform.position = aim - fwd * headPortraitDist;

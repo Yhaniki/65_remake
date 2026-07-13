@@ -655,38 +655,34 @@ namespace Sdo.Game
         /// be assigned AFTER the SDO parts are built — so the rig has to be able to follow it).</summary>
         public void SetLayer(int layer) { if (_mmdRoot != null) SetLayer(_mmdRoot.gameObject, layer); }
 
-        /// <summary>The head's world AABB in the CURRENT pose (animated head bone) — a head-portrait cam that should keep
-        /// the head centred while the body walks/bobs frames this. False if the model has no usable head (see
-        /// <see cref="MmdHeadBounds"/>), in which case the caller keeps its own framing.</summary>
-        public bool TryHeadBounds(out Bounds world)
-        {
-            world = default;
-            if (_sh == null || !_sh.HasHead || !_ready || _bone == null || _sh.HeadBone < 0 || _sh.HeadBone >= _bone.Length || _bone[_sh.HeadBone] == null) return false;
-            return BoxToWorld(_bone[_sh.HeadBone].localToWorldMatrix, out world);
-        }
+        // Portrait framing for an MMD head box, calibrated against the SDO head portrait so the swapped-in model's head
+        // lands where the official one does. The SDO cam uses dist = 1.9×box and aim = centre − 0.11×box, but ITS box is
+        // the FACE+HAIR renderer bounds — which include the hair hanging past the chin, so it is ~40% taller than the head
+        // itself. Feeding the MMD head box (chin→crown, nothing below) into those same numbers frames far too tight (chin
+        // at 75% down the frame vs the official 62%). These put the MMD head at 55% of the frame height, centred at 36%
+        // down — i.e. spanning 0.09…0.64, which is where the SDO head sits (0.05…0.62).
+        public const float PortraitFrameDist = 2.2f;
+        public const float PortraitAimUp = 0.25f;
 
-        /// <summary>The head's world AABB in the REST pose (head bone unrotated, body transform still applied) — a FIXED
-        /// portrait cam frames this, so the idle head-bob plays out inside the frame instead of being chased (the same
-        /// reason the SDO head cam targets the head bone's rest position).</summary>
+        /// <summary>Where a head-portrait camera should aim, in world space: an upright box the size of this model's head,
+        /// placed where the head sits in the REST pose. Frame it with <see cref="PortraitFrameDist"/> /
+        /// <see cref="PortraitAimUp"/>, NOT the SDO constants, and then leave the camera alone — the portrait cameras are
+        /// FIXED in world space, so the head moves inside the frame as the dancer bobs and sways (a cam that re-aimed at
+        /// the live head every frame would hold the head rigidly still and swing the body around it instead).
+        ///
+        /// Deliberately not the axis-aligned bounds of the POSED head+hair either: an oriented box's AABB changes size
+        /// and centre as it rotates, so framing that pumps the camera in and out as the head nods, and drags the centre
+        /// off toward whichever way the twintails swing. False if the model has no usable head (see
+        /// <see cref="MmdHeadBounds"/>), in which case the caller keeps its own framing.</summary>
         public bool TryHeadBoundsRest(out Bounds world)
         {
             world = default;
             if (_sh == null || !_sh.HasHead || !_ready || _mmdRoot == null) return false;
-            return BoxToWorld(_mmdRoot.localToWorldMatrix * Matrix4x4.Translate(_sh.HeadRestPos), out world);
-        }
-
-        // World AABB of the head box under an arbitrary head-bone→world matrix (8 corners; the matrix carries the rig's
-        // unit scale and the driver's scale/yaw, so no extra bookkeeping here).
-        private bool BoxToWorld(Matrix4x4 m, out Bounds world)
-        {
-            Vector3 c = _sh.HeadLocal.center, e = _sh.HeadLocal.extents;
-            world = new Bounds(m.MultiplyPoint3x4(c + new Vector3(-e.x, -e.y, -e.z)), Vector3.zero);
-            for (int i = 1; i < 8; i++)
-            {
-                var corner = new Vector3((i & 1) != 0 ? e.x : -e.x, (i & 2) != 0 ? e.y : -e.y, (i & 4) != 0 ? e.z : -e.z);
-                world.Encapsulate(m.MultiplyPoint3x4(c + corner));
-            }
-            return true;
+            float scale = _mmdRoot.lossyScale.y;
+            Vector3 headWorld = _mmdRoot.TransformPoint(_sh.HeadRestPos);
+            Vector3 size = _sh.HeadLocal.size * scale;
+            world = new Bounds(headWorld + Vector3.up * (_sh.HeadLocal.center.y * scale), size);
+            return size.y > 1e-4f;
         }
 
         public void SetVisible(bool on)

@@ -9,19 +9,27 @@ namespace Sdo.Game
     /// this is unit-tested.
     ///
     /// The SDO avatar finds its head by renderer NAME (the "*_FACE_*" / "*_HAIR_*" parts). An MMD model is ONE skinned
-    /// mesh with no such split, so the head must be found by SKINNING instead: every vertex whose dominant bone is 頭 or
-    /// a descendant of it. That set alone is too big — the twintails/ponytail hang off head-CHILD bones all the way down
-    /// to the waist, so framing its AABB would zoom the portrait out to a full body. Vertices far BELOW the head bone are
-    /// therefore dropped: the kept slab runs from <see cref="KeepBelowFrac"/>×(hair height above the bone) under the head
-    /// bone up to the very top of the hair — i.e. chin/jaw upward, which is exactly what a head portrait shows.
+    /// mesh with no such split, so the head must be found by SKINNING instead — and the right set is the vertices skinned
+    /// DIRECTLY to 頭: the skull, the face and the hair cap that sits rigidly on it. That is the head a portrait frames,
+    /// and it is what the SDO FACE+HAIR box means too.
+    ///
+    /// Taking 頭 AND ITS DESCENDANTS instead would look reasonable and is wrong: the twintails/ponytail/bangs hang off
+    /// head-CHILD bones (they are the cloth-simulated ones), so on Miku that set measures 8.02 × 4.31 × 8.45 instead of
+    /// the head's actual 3.68 × 3.12 × 3.11 — a box a third taller and nearly 3× deeper, pulling the camera back until
+    /// the head is small and framed too high. The subtree (clipped below the chin, see <see cref="KeepBelowFrac"/>) is
+    /// kept only as a FALLBACK for a model that skins nothing directly to 頭.
     /// </summary>
     public static class MmdHeadBounds
     {
         public const string HeadBoneJp = "頭";
 
-        /// <summary>How far BELOW the head bone the head slab reaches, as a fraction of the hair height above it. The
-        /// chin sits a little under the bone; the long hair hanging past that is not part of the portrait.</summary>
+        /// <summary>Fallback only: how far BELOW the head bone the subtree slab reaches, as a fraction of the hair height
+        /// above it. The chin sits a little under the bone; the long hair hanging past that is not part of the portrait.</summary>
         public const float KeepBelowFrac = 0.45f;
+
+        /// <summary>The head bone must carry at least this share of the head subtree's vertices for its OWN geometry to be
+        /// taken as the head (Miku: 45%). Below it, the model skins the head to child bones → use the subtree fallback.</summary>
+        public const float MinHeadVertexFrac = 0.1f;
 
         /// <summary>Index of the bone named <paramref name="nameJp"/>, or -1.</summary>
         public static int FindBone(IList<PmxLoader.Bone> bones, string nameJp)
@@ -104,19 +112,43 @@ namespace Sdo.Game
             return got;
         }
 
+        /// <summary>How many vertices have their dominant bone in <paramref name="set"/>.</summary>
+        public static int CountDominant(int[] boneIdx, float[] boneWt, bool[] set, int vertexCount)
+        {
+            int n = 0;
+            for (int v = 0; v < vertexCount; v++)
+            {
+                int b = DominantBone(boneIdx, boneWt, v);
+                if (b >= 0 && b < set.Length && set[b]) n++;
+            }
+            return n;
+        }
+
         /// <summary>Locate the head bone and measure its rest-local head AABB. False if the model has no 頭 bone or
-        /// nothing is skinned to it (then the caller keeps its non-MMD framing).</summary>
+        /// nothing is skinned to it or its children (then the caller keeps its non-MMD framing).</summary>
         public static bool TryCompute(PmxLoader pmx, out int headBone, out Bounds headLocal)
         {
             headBone = -1; headLocal = default;
             if (pmx == null || pmx.Bones == null || pmx.VertexCount == 0) return false;
             headBone = FindBone(pmx.Bones, HeadBoneJp);
             if (headBone < 0) return false;
+            Vector3 headPos = pmx.Bones[headBone].Position;
 
             var parent = new int[pmx.Bones.Count];
             for (int i = 0; i < parent.Length; i++) parent[i] = pmx.Bones[i].Parent;
-            var inHead = Subtree(parent, headBone);
-            return TryLocalBounds(pmx.Positions, pmx.BoneIdx, pmx.BoneWt, inHead, pmx.Bones[headBone].Position, out headLocal);
+            var subtree = Subtree(parent, headBone);
+
+            // the head PROPER — what is skinned straight onto the head bone (skull + face + rigid hair cap)
+            var headOnly = new bool[pmx.Bones.Count];
+            headOnly[headBone] = true;
+            int nHead = CountDominant(pmx.BoneIdx, pmx.BoneWt, headOnly, pmx.VertexCount);
+            int nSubtree = CountDominant(pmx.BoneIdx, pmx.BoneWt, subtree, pmx.VertexCount);
+            if (nSubtree > 0 && nHead >= MinHeadVertexFrac * nSubtree &&
+                TryLocalBounds(pmx.Positions, pmx.BoneIdx, pmx.BoneWt, headOnly, headPos, out headLocal))
+                return true;
+
+            // fallback: this model hangs its head geometry off child bones → take the subtree, clipped below the chin
+            return TryLocalBounds(pmx.Positions, pmx.BoneIdx, pmx.BoneWt, subtree, headPos, out headLocal);
         }
     }
 }
