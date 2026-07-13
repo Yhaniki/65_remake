@@ -101,21 +101,27 @@ namespace Sdo.Tests
             Assert.AreEqual(2000.0, map.MusicStartOffsetMs, 1e-6, "music starts at the type-10 value-1000 marker (beat 4)");
         }
 
-        /// <summary>Charts with no type-10 marker keep the previous behaviour: anchor on the first type-9 小節線.</summary>
+        /// <summary>
+        /// Charts with NO type-10 start marker (689 of the 4334-file corpus, e.g. sdom1162) play the audio from
+        /// beat 0 with no delay: the exe's no-marker path (00490910, one-shot flag +0x109dd) unpauses the channel
+        /// as soon as the play head walks a marker-lane frame at tick >= 0. The type-9 小節線 carries an
+        /// incrementing bar number (2,3,4…), never the 1000 the engine tests for, so it must NOT act as an anchor
+        /// — anchoring on it delayed sdom1162's audio by a whole measure (bar line @ beat 4, 210bpm = 1143ms).
+        /// </summary>
         [Test]
-        public void MusicStart_FallsBackToType9_WhenNoType10()
+        public void MusicStart_IsZero_WhenNoType10_EvenWithType9BarLine()
         {
             var body = PlainStep(120f,
-                (meas: 1, ft: 9, u0: 2),        // bar line @ beat 4
+                (meas: 1, ft: 9, u0: 2),        // bar line @ beat 4 — must NOT become the anchor
                 (meas: 2, ft: 2, u0: 1));
             var map = GnChart.Load(body, difficulty: 0);
-            Assert.AreEqual(2000.0, map.MusicStartOffsetMs, 1e-6, "no type-10 -> fall back to the type-9 bar line");
+            Assert.AreEqual(0.0, map.MusicStartOffsetMs, 1e-6, "no type-10 -> music from beat 0; type-9 is not an anchor");
         }
 
         /// <summary>
         /// type-10 (音樂起止) doubles as the music-END marker; some charts carry only an end marker sitting AFTER
         /// the first note. That must NOT delay the music to mid-song — it is rejected and the anchor falls back
-        /// (here no type-9 either -> 0, i.e. music from beat 0), matching the old timing for those charts.
+        /// to beat 0, matching the exe's no-marker path.
         /// </summary>
         [Test]
         public void MusicStart_IgnoresType10EndMarkerAfterFirstNote()
