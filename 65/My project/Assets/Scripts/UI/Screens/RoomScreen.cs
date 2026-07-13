@@ -142,9 +142,10 @@ namespace Sdo.UI.Screens
 
         // ---- 頭貼框取微調（男女各一組，獨立調整）----------------------------------------------------------------
         //  headAimUp   上下位置：變大 → 頭在框內往「上」    | zoom 遠近：變大 → 變「遠」變小、變小 → 拉近變大
-        //  headFrameDist 遠近基準(距離=頭高×此值×zoom)      | avatarScale 整體大小
+        //  headFrameDist 遠近基準(距離=框高×此值×zoom；框高只由「臉」決定，換髮型不變 → 見 RoomHeadPortrait)
         //  只想微調的話：上下改 *HeadAimUp、遠近改 *Zoom 即可。改完 build 就生效。
-        private const float FemaleHeadAimUp = 0.11f, FemaleHeadZoom = 0.9f, FemaleHeadFrameDist = 1.9f, FemaleAvatarScale = 1.05f;
+        //  女生沿用男生這組（使用者：男生預設的頭大小/位置剛好，女生比照，且不隨髮型變）。
+        private const float FemaleHeadAimUp = 0.25f, FemaleHeadZoom = 1f, FemaleHeadFrameDist = 1.9f, FemaleAvatarScale = 1.05f;
         private const float MaleHeadAimUp   = 0.25f, MaleHeadZoom   = 1f, MaleHeadFrameDist   = 1.9f, MaleAvatarScale   = 1.05f;
 
         // 依性別套用頭貼框取參數（上下位置 / 遠近）。必須在 RoomHeadPortrait.Init 之前呼叫，第一幕就正確。

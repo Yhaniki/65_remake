@@ -7,7 +7,8 @@ namespace Sdo.Game
     /// result screen uses (ScreenGameplay BuildIdleHeadAvatar / UpdateHeadPortraitCam): an isolated idle avatar parked
     /// far off the room, on its own layer, framed head-on (3/4 yaw) by a dedicated camera with a transparent
     /// background. The camera targets the head bone's REST position so the idle head-bob plays inside the frame instead
-    /// of being chased, and auto-frames from the measured hair-top so the whole head fits with the hair never cut.
+    /// of being chased, and auto-frames off the FACE box raised to the measured hair-top (ComputeHeadBox) so the whole
+    /// head fits, the hair is never cut, and a 長髮 mesh can't push the camera away (商城卡片同招:VisibleYBounds "FACE").
     /// Owns its avatar + camera + RT; release via OnDestroy (the host destroys this GameObject).
     /// </summary>
     public sealed class RoomHeadPortrait : MonoBehaviour
@@ -19,9 +20,11 @@ namespace Sdo.Game
         public float yaw = 0f;                                   // 正視: front-facing (NOT the result screen's 30° 3/4)
         public float avatarScale = 1.05f;
         public float zoom = 1f;                                  // auto-frame fine multiplier (>1 = zoom out)
-        public float headFrameDist = 1.9f;                       // cam distance = headFrameDist × head height (size)
-        public float headAimUp = 0.11f;                          // shift aim down by this × head height → head sits centred
-                                                                 // (the FACE+HAIR AABB centre is a bit below the visual centre)
+        public float headFrameDist = 1.9f;                       // cam distance = headFrameDist × 框高(只由臉決定)
+        public float headAimUp = 0.11f;                          // shift aim down by this × 框高 → head sits centred
+        /// <summary>true = 蓬鬆髮/髮飾頂出框時,把鏡頭往上挪(頭大小仍不變,但構圖會隨髮型上下移)。
+        /// 預設 false:使用者要「完全不看頭髮」——大小與位置固定,超出框的髮頂就讓它被切掉。</summary>
+        public bool fitHairTop = false;
         public int rtWidth = 192, rtHeight = 152;               // matches the ROOM AvatarView slot aspect (96:76 ≈ 1.263)
 
         /// <summary>Set by the host: returns true while the room avatar is walking, so the framed head mirrors it.</summary>
@@ -29,8 +32,20 @@ namespace Sdo.Game
         /// <summary>Set by the host: the room avatar's facing yaw (deg), so the framed head turns left/right with it.</summary>
         public System.Func<float> FacingProvider;
 
+        // ---- 取景框(以「臉」為單位) -------------------------------------------------------------------------------
+        // 臉 mesh (900007/900001) 每套裝扮都一樣 → 拿它定框,換髮型頭就恆等大、位置也不動(使用者:「不看頭髮」)。
+        // 框 = 下巴 → 顱頂再往上 BoxTopPadFaces 個臉高。0.216 是校正值:逐字取自「男生預設頭貼」那個框(使用者說那個
+        // 大小/位置剛好) —— 實測男生 臉 58.05..68.81(臉高 10.76)、髮頂 71.13 → (71.13-68.81)/10.76 = 0.216。女生用
+        // 同一個比例(臉高 10.45)自動對齊同樣的觀感。頭髮完全不參與框的大小。
+        public const float BoxBottomPadFaces = 0f;
+        public const float BoxTopPadFaces    = 0.216f;
+        /// <summary>髮頂/下巴離畫面邊緣至少留這麼多(臉高單位)。</summary>
+        public const float FitMarginFaces = 0.05f;
+
         private SdoAvatar _avatar;
-        private Renderer[] _headRends;     // FACE + HAIR renderers → the head's VISUAL bounds (for true centering)
+        private Renderer[] _headRends;     // FACE + HAIR renderers (fallback: no FACE mesh → union of these)
+        private Renderer[] _faceRends;     // FACE* only → 頭本體 = 取景基準 (換髮型不變)
+        private Renderer[] _hairRends;     // HAIR* only → 只用「髮頂」決定鏡頭上下,不影響頭的大小
         private MotLoader _walkMot, _idleMot;
         private bool _mirrorWalking;
         private Camera _cam;
@@ -38,6 +53,15 @@ namespace Sdo.Game
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);
         private float _hairOffsetModel = -1f;
         private float _chatActionUntil = -1f;   // 頭貼跟著房間 avatar 做聊天動作:此時間前不被 walk/idle 鏡射覆寫
+
+        // ---- 凍結的取景(模型空間) ---------------------------------------------------------------------------------
+        // 相機的目標點與距離只算「一次」(idle 第 0 幀的姿勢),之後不再跟著每幀的 renderer.bounds 跑。
+        // 追活 bounds 會晃:人左右擺動時,臉的世界 AABB 高度與中心 z 每幀都在變 → dist/相機 z 跟著變 → 頭忽大忽小,
+        // 看起來就是「人在前後晃」(使用者回報;動作本身只有左右)。凍結後,擺動就在框內自然演出(=官方作法)。
+        private bool _framed;
+        private Vector3 _aimModel;      // 取景目標(模型空間)
+        private float _distModel;       // 相機距離(模型單位;世界距離 = × avatarScale)
+        private Vector3 _rootModel0;    // 凍結當下的 root 骨位置 → 走路時的位移補償(只補平移,不補擺動)
 
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
@@ -75,17 +99,26 @@ namespace Sdo.Game
             if (hp == Vector3.zero) hp = _avatar.BoneModelPos("Bip01_Neck");
             if (hp != Vector3.zero) _headModelPos = hp;
 
-            // collect the FACE + HAIR renderers (named "*_WOMAN_FACE_*" / "*_HAIR_*") → their combined world bounds is
-            // the head's true visual centre, so the cam centres the HEAD (not the head BONE, which is off-centre).
+            // collect the FACE renderers (the head proper — same mesh for every costume) and the HAIR renderers
+            // separately: the frame is anchored on the FACE box and only the HAIR *TOP* pushes it up (see
+            // ComputeHeadBox). Taking the FACE+HAIR union instead would let a 長髮 mesh (hair falling to the chest)
+            // triple the box height → cam distance → 頭貼變小.
             var all = _avatar.GetComponentsInChildren<Renderer>();
-            var list = new System.Collections.Generic.List<Renderer>();
+            var head = new System.Collections.Generic.List<Renderer>();
+            var face = new System.Collections.Generic.List<Renderer>();
+            var hair = new System.Collections.Generic.List<Renderer>();
             foreach (var r in all)
             {
                 if (r == null) continue;
                 string n = r.gameObject.name.ToUpperInvariant();
-                if (n.Contains("FACE") || n.Contains("HAIR")) list.Add(r);
+                bool isFace = n.Contains("FACE"), isHair = n.Contains("HAIR");
+                if (!isFace && !isHair) continue;
+                head.Add(r);
+                (isFace ? face : hair).Add(r);
             }
-            _headRends = list.ToArray();
+            _headRends = head.ToArray();
+            _faceRends = face.ToArray();
+            _hairRends = hair.ToArray();
 
             UpdateCam();
             return true;
@@ -128,9 +161,8 @@ namespace Sdo.Game
             if (_cam != null && _avatar != null) UpdateCam();
         }
 
-        // Head cam: aim at the head's VISUAL bounds CENTRE (face+hair) so the head is truly centred in the RT — both
-        // horizontally and vertically — regardless of the head-bone offset, the motion (walk root drift) or the facing
-        // yaw. Size = headFrameDist × head height. Yaws the avatar to mirror the room avatar's facing.
+        // Head cam: size + position come from the FACE alone (ComputeFraming) → 換什麼髮型頭都一樣大、一樣位置。
+        // Yaws the avatar to mirror the room avatar's facing.
         private void UpdateCam()
         {
             var t = _avatar.transform;
@@ -139,14 +171,17 @@ namespace Sdo.Game
             float facing = FacingProvider != null ? FacingProvider() : 0f;
             t.localRotation = Quaternion.Euler(0f, yaw + facing, 0f);
 
+            if (!_framed) TryFreezeFraming();
+
             Vector3 target; float dist;
-            if (TryHeadBounds(out var b))
+            if (_framed)
             {
-                target = b.center;                                    // head visual centre → centred X/Z
-                target.y -= headAimUp * b.size.y;                     // nudge so the FACE (not the neck-biased AABB) centres
-                dist = Mathf.Max(b.size.y, 1f) * headFrameDist * Mathf.Max(0.05f, zoom);
+                // 只補「root 骨的平移」(走路時整個人前進/浮沉),頭的擺動不補 → 擺動在框內演出,相機不追、不晃。
+                Vector3 drift = _avatar.BoneModelPos(RootBone) - _rootModel0;
+                target = t.TransformPoint(_aimModel + drift);
+                dist = _distModel * Mathf.Max(0.01f, avatarScale);
             }
-            else   // bounds not ready yet → fall back to the head bone + measured hair-top
+            else   // 姿勢/bounds 還沒好 → 退回頭骨 + 量到的髮頂
             {
                 EnsureHairOffset();
                 float h = _hairOffsetModel * Mathf.Max(0.01f, avatarScale);
@@ -160,18 +195,97 @@ namespace Sdo.Game
             _cam.transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
         }
 
-        // Combined world AABB of the head (FACE+HAIR) renderers, after the avatar has been CPU-skinned this frame. False
-        // until the meshes have valid bounds (first pose).
-        private bool TryHeadBounds(out Bounds b)
+        private const string RootBone = "Bip01";
+
+        // 凍結取景:用 idle 第 0 幀的姿勢量一次臉框(模型空間),算出目標點/距離就定案。mesh.bounds 就是模型空間的框
+        // (各 part 掛在 avatar 底下、local transform 是 identity),所以量到的值與 avatar 的 yaw/park 位置無關。
+        private void TryFreezeFraming()
         {
-            b = default; bool any = false;
+            if (_avatar == null) return;
+            if (_idleMot != null) { _avatar.SetClip(_idleMot); _avatar.PoseFrame(0f); }   // 每次都從同一個姿勢量 → 可重現
+            if (!TryMeshUnion(_faceRends, out var face) || face.size.y <= 1e-4f) return;  // 還沒蒙皮好 → 下一幀再試
+            bool hairFound = TryMeshUnion(_hairRends, out var hair);
+            float hairTop = hairFound ? hair.max.y : 0f;
+            ComputeFraming(face, hairFound && fitHairTop, hairTop,
+                           headFrameDist, zoom, headAimUp, fov, out _aimModel, out _distModel);
+            _rootModel0 = _avatar.BoneModelPos(RootBone);
+            _framed = true;
+            LogFramingOnce(face, hairFound, hairTop, _aimModel, _distModel);   // 髮頂照印(診斷用),即使不參與取景
+        }
+
+        /// <summary>純幾何:算出頭貼相機的目標點與距離。
+        ///
+        /// 頭的「大小」只看臉(face):臉 mesh 每套裝扮都一樣,所以換髮型頭恆等大、位置也不動 —— 這是使用者要的
+        /// 「不看頭髮」。頭髮只有一件事可做:當它蓬到會被切掉時,把鏡頭「往上挪」(下巴下面本來就有餘裕),頭一樣大,
+        /// 只是整體構圖上移;挪到下巴要出框了還塞不下,才退遠(上限 MaxZoomOut)。fitHairTop=false 就完全不理頭髮。
+        ///
+        /// 舊版拿 FACE∪HAIR 的 AABB 當框 → 框高 = 相機距離。實測(執行期 renderer.bounds):預設髮 900017 貼著頭皮
+        /// (髮頂 64.36,顱頂 63.67)→框高 11.13;037916 髮蓬到 69.23 →框高 16.00 → 相機遠了 1.44 倍、頭縮小。
+        /// (更早之前連垂到胸口的髮尾也算進框,遠到 2 倍以上。)</summary>
+        public static void ComputeFraming(Bounds face, bool hasHair, float hairTopY,
+                                          float frameDist, float zoom, float aimUp, float fovDeg,
+                                          out Vector3 target, out float dist)
+        {
+            float faceH = Mathf.Max(face.size.y, 1e-4f);
+            float bottom = face.min.y - BoxBottomPadFaces * faceH;
+            float top = face.max.y + BoxTopPadFaces * faceH;
+            float boxH = top - bottom;
+            dist = boxH * Mathf.Max(0.01f, frameDist) * Mathf.Max(0.05f, zoom);   // ← 只跟臉有關
+            target = new Vector3(face.center.x, (bottom + top) * 0.5f - aimUp * boxH, face.center.z);
+            if (!hasHair) return;
+
+            float margin = FitMarginFaces * faceH;
+            float half = dist * Mathf.Tan(fovDeg * 0.5f * Mathf.Deg2Rad);   // 相機在 dist 處看得到的「半個畫面高」
+            float lo = hairTopY + margin - half;               // target 至少要這麼高,髮頂才在框內
+            float hi = face.min.y - margin + half;             // 再高就切到下巴
+            // 頭永遠不縮小(使用者:「不看頭髮」) → 只在「下巴到髮頂」塞得進畫面時才往上挪。塞不下的極端髮型
+            // (>1 個臉高的高髮髻/大帽子,或離群頂點/飄帶把髮頂算到天上)一律維持基準構圖,髮頂讓它被切。
+            if (lo <= hi) target.y = Mathf.Clamp(target.y, lo, hi);
+        }
+
+        // 一次性診斷:把每個頭部 part 的實際 mesh 框(模型空間) + 凍結下來的相機目標/距離寫進 log.txt。
+        // 換裝後頭貼被拉遠的回報都靠這行定位 —— 離線量 MSH 的 raw 頂點會騙人(預設髮 900017 是 scaled bone-local
+        // 綁定,raw 頂點根本不是模型座標),只有這行 log 講真話。
+        private void LogFramingOnce(Bounds face, bool hasHair, float hairTopY, Vector3 aimModel, float distModel)
+        {
+            if (_loggedFraming) return;
+            _loggedFraming = true;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("face[").Append(face.min.y.ToString("F2")).Append("..").Append(face.max.y.ToString("F2"))
+              .Append("] faceH=").Append(face.size.y.ToString("F2")).Append(' ')
+              .Append("hairTop=").Append(hasHair ? hairTopY.ToString("F2") : "(none)")
+              .Append(" aimY=").Append(aimModel.y.ToString("F2"))
+              .Append(" dist=").Append(distModel.ToString("F2"));
             if (_headRends != null)
                 foreach (var r in _headRends)
                 {
                     if (r == null) continue;
-                    var rb = r.bounds;
-                    if (rb.size.sqrMagnitude < 1e-6f) continue;
-                    if (!any) { b = rb; any = true; } else b.Encapsulate(rb);
+                    var mf = r.GetComponent<MeshFilter>();
+                    if (mf == null || mf.sharedMesh == null) continue;
+                    var mb = mf.sharedMesh.bounds;
+                    sb.Append("\n    ").Append(r.gameObject.name)
+                      .Append(" y[").Append(mb.min.y.ToString("F2")).Append("..").Append(mb.max.y.ToString("F2"))
+                      .Append("] x[").Append(mb.min.x.ToString("F2")).Append("..").Append(mb.max.x.ToString("F2")).Append(']');
+                }
+            SdoLog.Note("headframe", sb.ToString());
+        }
+
+        private bool _loggedFraming;
+
+        // 模型空間的合併框:各 part 掛在 avatar 底下且 local transform 是 identity → mesh.bounds 就是模型空間的框。
+        // (不能用 renderer.bounds:那是世界 AABB,會被 avatar 的 yaw/park 位置汙染,而且每幀隨姿勢變 → 就是晃的來源。)
+        private static bool TryMeshUnion(Renderer[] rends, out Bounds b)
+        {
+            b = default; bool any = false;
+            if (rends != null)
+                foreach (var r in rends)
+                {
+                    if (r == null) continue;
+                    var mf = r.GetComponent<MeshFilter>();
+                    if (mf == null || mf.sharedMesh == null) continue;
+                    var mb = mf.sharedMesh.bounds;
+                    if (mb.size.sqrMagnitude < 1e-6f) continue;
+                    if (!any) { b = mb; any = true; } else b.Encapsulate(mb);
                 }
             return any;
         }
