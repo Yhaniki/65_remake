@@ -47,6 +47,7 @@ namespace Sdo.UI.Screens
         private readonly string[] _prim = new string[4];
         private readonly string[] _aux = new string[4];
         private int _capSlot = -1, _capLane = -1;                   // active key-capture target (-1 = none)
+        private IMECompositionMode _imeBeforeOpen = IMECompositionMode.Auto;   // 房間(聊天)開著 On；關窗時還原
         private readonly List<Action> _advDots = new List<Action>(); // 進階 tab dots (vsync) repaint from their bool
 
         // 遊戲 (OptionGameWindow) working copy — committed to settings.gameplay on Save. See BuildGame.
@@ -410,6 +411,17 @@ namespace Sdo.UI.Screens
 
         // ---------------------------------------------------------------- key capture (Update)
         private static readonly KeyCode[] Bindable = BuildBindable();
+        private static readonly KeyCode[] CaptureScan = BuildCaptureScan();   // Bindable + Esc（取消）
+        private readonly KeyDownEdge _rawEdge = new KeyDownEdge();            // 實體按鍵的「剛按下」邊緣（繞過 IME）
+
+        /// <summary>可綁的鍵（給測試檢查每顆都有對應的虛擬鍵碼，raw 路徑才不會漏鍵）。</summary>
+        public static IReadOnlyList<KeyCode> BindableKeys => Bindable;
+
+        private static KeyCode[] BuildCaptureScan()
+        {
+            var l = new List<KeyCode>(Bindable) { KeyCode.Escape };
+            return l.ToArray();
+        }
 
         // Only keys with a glyph in LOBBYDLG/KEYS are bindable — matches the original, whose scan-code→glyph
         // switch (FUN_00461170) rejects (returns 0 for) anything it can't draw (Shift/Ctrl/Enter/…).
@@ -442,21 +454,29 @@ namespace Sdo.UI.Screens
 
         private void Update()
         {
-            if (_cg == null || _cg.alpha < 0.5f || _capSlot < 0) return;
-            if (Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
-            foreach (var k in Bindable)
-            {
-                if (!Input.GetKeyDown(k)) continue;
-                (_capSlot == 0 ? _prim : _aux)[_capLane] = k.ToString();
-                // 一鍵只能綁一處：把「其它」位置上與剛綁相同的鍵清空(含主鍵位↔輔助鍵位跨排)，並刷新被清掉的鍵帽。
-                foreach (var pos in ClearDuplicateBinding(_prim, _aux, _capSlot, _capLane)) RefreshCap(pos.slot, pos.lane);
-                // 綁好一格後自動跳到「同一排」右邊那格繼續設定；到最後一格 (lane 3) 回捲到第一格 (lane 0)。
-                // 主鍵位 (slot 0) 與輔助鍵位 (slot 1) 各自獨立循環 —— slot 不變、只推進 lane。BeginCapture 內的
-                // CancelCapture 會先把剛綁好的那格刷回帶新字符的閒置態，再點亮下一格 (要 Esc 或點別處才停)。
-                int slot = _capSlot, nextLane = (_capLane + 1) % 4;
-                BeginCapture(slot, nextLane);
-                break;
-            }
+            // 綁鍵不能只靠 Input.GetKeyDown：中文輸入法組字態會把按鍵吃掉（房間為了聊天開著 IME 組字），
+            // 那條路要先切英數才收得到。改成主走 RawKeyboard 的實體鍵狀態（IME 攔不到），Unity Input 只當後備
+            // （非 Windows / 沒對應虛擬鍵碼時）。狀態每幀都要更新，所以 Tick 擺在提早 return 之前。
+            bool capturing = _cg != null && _cg.alpha >= 0.5f && _capSlot >= 0;
+            // GetAsyncKeyState 讀的是全系統鍵盤狀態 → 視窗沒焦點時別把別的程式的按鍵綁進來。
+            KeyCode? raw = _rawEdge.Tick(CaptureScan, RawKeyboard.IsHeld, capturing && Application.isFocused);
+            if (!capturing) return;
+
+            if (raw == KeyCode.Escape || Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
+
+            KeyCode? hit = raw;
+            if (hit == null)
+                foreach (var k in Bindable) if (Input.GetKeyDown(k)) { hit = k; break; }
+            if (hit == null) return;
+
+            (_capSlot == 0 ? _prim : _aux)[_capLane] = hit.Value.ToString();
+            // 一鍵只能綁一處：把「其它」位置上與剛綁相同的鍵清空(含主鍵位↔輔助鍵位跨排)，並刷新被清掉的鍵帽。
+            foreach (var pos in ClearDuplicateBinding(_prim, _aux, _capSlot, _capLane)) RefreshCap(pos.slot, pos.lane);
+            // 綁好一格後自動跳到「同一排」右邊那格繼續設定；到最後一格 (lane 3) 回捲到第一格 (lane 0)。
+            // 主鍵位 (slot 0) 與輔助鍵位 (slot 1) 各自獨立循環 —— slot 不變、只推進 lane。BeginCapture 內的
+            // CancelCapture 會先把剛綁好的那格刷回帶新字符的閒置態，再點亮下一格 (要 Esc 或點別處才停)。
+            int slot = _capSlot, nextLane = (_capLane + 1) % 4;
+            BeginCapture(slot, nextLane);
         }
 
         // ---------------------------------------------------------------- open / apply / defaults / close
@@ -465,6 +485,12 @@ namespace Sdo.UI.Screens
 
         public void Open()
         {
+            // 設定視窗（尤其鍵盤頁）不打字，關掉 IME 組字：房間為了聊天把它開成 On，中文輸入法下按鍵會進組字被吃掉，
+            // 還會把選字視窗蓋在對話框上。同時放掉聊天輸入框的 focus，免得綁鍵按的字母也打進聊天欄。關窗還原。
+            _imeBeforeOpen = Input.imeCompositionMode;
+            Input.imeCompositionMode = IMECompositionMode.Off;
+            if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
+
             var s = DisplaySettingsManager.Settings;
             _resIndex = Mathf.Max(0, ResolutionPreset.IndexOf(s.display.width, s.display.height));
             _modeIndex = Array.IndexOf(ModeIds, s.display.displayMode); if (_modeIndex < 0) _modeIndex = 0;
@@ -588,6 +614,7 @@ namespace Sdo.UI.Screens
         private void Close()
         {
             CancelCapture();
+            Input.imeCompositionMode = _imeBeforeOpen;   // 還原開窗前的組字模式（房間=On，聊天才打得出中文）
             if (!_applied && LocalizationManager.Current != _entryLang)
                 LocalizationManager.SetLanguage(_entryLang);            // revert live language preview
             if (!_applied)

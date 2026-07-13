@@ -1882,6 +1882,9 @@ namespace Sdo.UI.Screens
             if (!_chatInputSticky && !_chatBubbleInputArmed && !_chatBubbleTyping) return;
             bool roomTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
             if (!roomTop) { _chatInputSticky = false; return; }   // 切到別畫面(含選歌 overlay)→放掉，回來不自動搶 focus
+            // modal(商城/儲物櫃/設定)疊在房間上時不搶 focus：設定的鍵盤頁要收按鍵，focus 被搶回去的話那些字母
+            // 會打進聊天欄(還會把 IME 組字叫回來)。modal 關掉後 sticky 還在 → 焦點自動回到聊天欄。
+            if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
             if (_chatBubbleDragging) return;                      // 拖曳已送出泡進行中→不搶 focus，放開後下一幀再補
             if (_chatInput.isFocused || IsRoomChatImeComposing()) return;
             if (EventSystem.current != null)
