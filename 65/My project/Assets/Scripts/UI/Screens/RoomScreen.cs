@@ -89,6 +89,7 @@ namespace Sdo.UI.Screens
         private OutlinedLabel _floatName;       // name marker that floats above the avatar in the room (官方頭上名字)；字 rgb(250,252,214) 描黑邊
         private RectTransform _chatContent;
         private ScrollRect _chatScroll;
+        private ChatLineClip _chatClip;
         private TMP_InputField _chatInput;
         private Image _chatCaret;   // 自畫閃爍游標(TMP 內建 caret 在執行期 CJK 字型+world-space canvas 下算不出可見寬高)
         private Button _chatModeBtn, _expressionBtn;
@@ -625,6 +626,8 @@ namespace Sdo.UI.Screens
             Place(_chatScroll.GetComponent<RectTransform>(), 14, 445, 360, 104);
             _chatScroll.scrollSensitivity = 18f;
             _chatLogGroup = _chatScroll.gameObject.AddComponent<CanvasGroup>();   // 收合時淡出(win3 下滑不足以完全移出訊息欄,見 ApplyCollapse)
+            // 整行裁切：視窗 104px 不是行高的整數倍，捲到底時最上面那行只露下半截字且一直不走(見 ChatLineClip)。
+            _chatClip = _chatScroll.gameObject.AddComponent<ChatLineClip>();
 
             // 打字泡：固定一顆。已送出的泡另外 Spawn，可並存一串。掛在 _bubbleLayer(UI 底下)。
             _chatBubbleRoot = UIKit.NewRect(_bubbleLayer, "RoomChatTypingBubble");
@@ -1204,6 +1207,7 @@ namespace Sdo.UI.Screens
             if (_chatScroll == null) return;
             Canvas.ForceUpdateCanvases();
             _chatScroll.verticalNormalizedPosition = 0f;
+            if (_chatClip != null) _chatClip.Refresh();   // 立刻按新位置整行裁切，別等下一幀（會閃一格半截字）
         }
 
         // 是否停在（貼近）底部：內容還不足以捲動時一律視為在底部。0 = 底部（見 ScrollRoomChatToBottom）。
