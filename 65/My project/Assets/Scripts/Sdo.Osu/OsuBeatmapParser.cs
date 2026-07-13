@@ -101,6 +101,7 @@ namespace Sdo.Osu
                         ParseKeyValue(line, "Artist", v => { if (string.IsNullOrEmpty(m.Artist)) m.Artist = v; });
                         ParseKeyValue(line, "Creator", v => m.Creator = v);
                         ParseKeyValue(line, "Version", v => m.Version = v);
+                        ParseKeyValue(line, "BeatmapSetID", v => m.BeatmapSetId = TryInt(v, -1));
                         break;
                     case "Difficulty":
                         ParseKeyValue(line, "CircleSize", v => m.Keys = (int)Math.Round(ParseDouble(v)));
@@ -187,6 +188,9 @@ namespace Sdo.Osu
         private static int ParseInt(string s) =>
             int.Parse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture);
 
+        private static int TryInt(string s, int fallback) =>
+            int.TryParse((s ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : fallback;
+
         private static double ParseDouble(string s) =>
             double.Parse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture);
     }
@@ -204,6 +208,7 @@ namespace Sdo.Osu
         public string AudioFilename = "";
         public string BackgroundFilename = "";
         public double Bpm;
+        public int BeatmapSetId = -1;    // [Metadata] BeatmapSetID；未上傳/自製/轉檔譜大多是 -1，只能當分組的次要線索
         public int NoteCount;            // number of [HitObjects] lines
         public int PreviewTime = -1;     // [General] PreviewTime (ms); -1 = none (試聽起點；長度用預設)
     }

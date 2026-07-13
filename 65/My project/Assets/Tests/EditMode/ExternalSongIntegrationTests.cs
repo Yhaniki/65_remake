@@ -63,11 +63,44 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void ToEntry_Gn_Is_Stable_Per_Folder()
+        public void LastNoteMs_Is_The_End_Of_The_Last_Note()
+        {
+            // 生成舞蹈的區間 = 第一個 note → 最後一個 note（長條算到尾巴，即使它比後面的 tap 還晚結束）。
+            var bm = new OsuBeatmap { Keys = 4 };
+            Assert.AreEqual(0.0, bm.LastNoteMs, 1e-9, "空譜 → 0");
+            bm.HitObjects.Add(new OsuHitObject(0, 1000));
+            bm.HitObjects.Add(new OsuHitObject(1, 2000, 9000));   // 長條尾巴比最後一顆 tap 還晚
+            bm.HitObjects.Add(new OsuHitObject(2, 5000));
+            Assert.AreEqual(9000.0, bm.LastNoteMs, 1e-9);
+            Assert.AreEqual(1000.0, bm.FirstNoteMs, 1e-9);
+        }
+
+        [Test]
+        public void ToEntry_Gn_Is_Stable_Per_Song()
         {
             var a = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x" }, 0);
             var b = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x" }, 5);
-            Assert.AreEqual(a.gn, b.gn, "gn depends on the folder path, not the scan index");
+            Assert.AreEqual(a.gn, b.gn, "gn depends on the song's identity, not the scan index");
+        }
+
+        [Test]
+        public void ToEntry_Gn_Differs_Per_Song_In_The_Same_Folder()
+        {
+            // SongCatalog.RegisterExternal silently skips duplicate gns — two songs in one folder sharing a gn would
+            // mean the second one just never appears in the list.
+            var a = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x", SongKey = "audio:a.mp3" }, 0);
+            var b = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x", SongKey = "audio:b.mp3" }, 1);
+            Assert.AreNotEqual(a.gn, b.gn);
+            var again = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x", SongKey = "audio:B.MP3" }, 7);
+            Assert.AreEqual(b.gn, again.gn, "same song, later rescan → same gn, so favourites stick");
+        }
+
+        [Test]
+        public void ToEntry_Gn_Of_A_Sole_Song_Is_The_Plain_Folder_Hash()
+        {
+            var sole = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x", SongKey = "" }, 0);
+            var legacy = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x" }, 0);
+            Assert.AreEqual(legacy.gn, sole.gn, "one-song folders keep the gn they had before multi-song folders existed");
         }
 
         // ---- SongListModel group helpers ----

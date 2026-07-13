@@ -34,6 +34,10 @@ namespace Sdo.UI.Core
         public int ExternalChartFormat;         // 1=osu, 2=sm (Sdo.Osu.SongFormat)
         public string ExternalAudioPath = "";   // absolute audio (ogg/mp3/wav); "" → silent
         public int ExternalLevel;                // chosen difficulty's LV (osu!mania 星數×5) → shown in gameplay too
+        // 這首歌的身分（資料夾 + 資料夾內是哪一首）：外部歌沒有官方 .dps，開局時 ExternalDps 用它當種子生一份舞蹈、
+        // 寫進歌曲資料夾並記在該資料夾的 sdo.header（同一首歌永遠生出同一支舞，且只生一次）。
+        public string ExternalFolderPath = "";  // 歌曲資料夾（CD 圖／sdo.header／生成的 .dps 都放這）
+        public string ExternalSongKey = "";     // 資料夾內的識別（"" = 該資料夾只有一首）
 
         public string StageFolder = "SCN0009";
         public int StageId = 9;

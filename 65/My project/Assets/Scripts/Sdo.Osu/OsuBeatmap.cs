@@ -96,6 +96,57 @@ namespace Sdo.Osu
             MusicStartOffsetMs += leadInMs;
         }
 
+        /// <summary>
+        /// Time (ms, note/beat clock) the chart's last note ENDS at (a hold's tail, else its hit time); 0 for an empty
+        /// chart. With <see cref="FirstNoteMs"/> this is the dance span — what a generated choreography has to fill
+        /// (see <see cref="RandomDps"/>). HitObjects are sorted by start, but a hold can outlast a later tap → scan.
+        /// </summary>
+        public double LastNoteMs
+        {
+            get
+            {
+                double last = 0.0;
+                foreach (var h in HitObjects)
+                {
+                    double t = h.EndTimeMs ?? h.StartTimeMs;
+                    if (t > last) last = t;
+                }
+                return last;
+            }
+        }
+
+        /// <summary>
+        /// 「無理短 long note」的長度上限（ms）＝ 180 BPM 的 16 分音符 (60000/180/4 ≈ 83.3 ms)。短於此的長條在遊戲裡
+        /// 按不出來（頭尾兩次判定擠在一個判定窗內），多半是 osu/StepMania 譜面把裝飾音寫成極短 hold。這是絕對時間門檻，
+        /// 與歌曲自身 BPM 無關：220 BPM 的 16 分 (68.2 ms) 比它短 → 收掉；150 BPM 的 16 分 (100 ms) 比它長 → 留著。
+        /// </summary>
+        public const double ShortHoldMaxMs = 60000.0 / 180.0 / 4.0;
+
+        /// <summary>剛好一個 16 分音符的長條「不算」無理（規格：16 分以下、不含 16 分）。譜面時間是整數 ms，180 BPM
+        /// 的 16 分 83.33 ms 會被存成 83，直接跟門檻比會被誤收 → 留 1 ms 的取整容差。</summary>
+        private const double ShortHoldRoundingMs = 1.0;
+
+        /// <summary>
+        /// 把「無理的短 long note」原地改成一般 note（清掉 EndTimeMs，只留頭部判定）：長度 &lt;
+        /// <paramref name="maxHoldMs"/> 的長條 → tap。回傳被轉換的顆數。純函式（只動 HitObjects，不碰時間/BPM/timing
+        /// points），呼叫端用開關 gating（見 GameplaySettings.collapseShortHolds）。長度剛好等於門檻的長條保留。
+        /// </summary>
+        public int CollapseShortHolds(double maxHoldMs = ShortHoldMaxMs)
+        {
+            double cutoff = maxHoldMs - ShortHoldRoundingMs;
+            int n = 0;
+            for (int i = 0; i < HitObjects.Count; i++)
+            {
+                var h = HitObjects[i];
+                if (!h.IsHold) continue;
+                double dur = h.EndTimeMs.Value - h.StartTimeMs;
+                if (dur >= cutoff) continue;
+                HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs);   // 長條 → 一般 note
+                n++;
+            }
+            return n;
+        }
+
         /// <summary>Total judged events = taps + holdHeads + holdReleases.</summary>
         public int TotalNotes
         {

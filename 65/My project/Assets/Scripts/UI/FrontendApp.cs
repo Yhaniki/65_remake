@@ -247,14 +247,17 @@ namespace Sdo.UI
             if (s.IsExternalSong)
             {
                 // external osu/StepMania (user Songs/ folder): ScreenGameplay.LoadChart parses chartPath directly,
-                // bypassing .gn; audio is the resolved file (ogg/mp3/wav). A missing DANCE/<negId>.DPS makes the
-                // dancer fall back to a generic motion — no per-song choreography needed to be playable.
+                // bypassing .gn; audio is the resolved file (ogg/mp3/wav). There is no official DANCE/<negId>.DPS, so
+                // LoadChart generates the song's choreography from these two (ExternalDps: once, deterministically,
+                // recorded in the song folder's sdo.header) instead of looping the single fallback clip.
                 game.chartFormat = s.ExternalChartFormat;
                 game.chartPath = s.ExternalChartPath;
                 game.chartIndex = s.ExternalChartIndex;
                 game.chartLevel = s.ExternalLevel;
                 game.gnPath = "";
                 game.oggPath = s.ExternalAudioPath;
+                game.externalFolder = s.ExternalFolderPath;
+                game.externalSongKey = s.ExternalSongKey;
             }
             else
             {
@@ -282,6 +285,7 @@ namespace Sdo.UI
                 game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
                 game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
                 game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
+                game.collapseShortHolds = gp.collapseShortHolds; // 無理短長條(<180BPM 16分)收成一般 note（預設開，尚未接 UI）
             }
             _activeGame = game;
         }

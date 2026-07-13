@@ -32,7 +32,10 @@ namespace Sdo.Game
             public bool external;          // true → this row is a scanned external song, not an official .gn
             public string group = "";      // group folder name (the drill-in 資料夾 category groups by this)
             public string audioPath = "";  // absolute audio file (full-song ogg/mp3/wav) for gameplay + preview
-            public string imagePath = "";  // absolute cover (jacket→banner→background); "" → placeholder disc
+            public string imagePath = "";  // absolute SOURCE cover (jacket→banner→background); "" → placeholder disc
+            public string folderPath = ""; // the song's folder — where its CD disc + sdo.header sidecar live
+            public string songKey = "";    // identity WITHIN the folder ("" = the folder's only song); see ExternalSongGrouper
+            public string cdPath = "";     // absolute generated CD disc image; "" → compose it from imagePath on first use
             public int chartFormat;        // 0=none, 1=osu, 2=sm (Sdo.Osu.SongFormat)
             public string chartEasy = "", chartNormal = "", chartHard = "";   // absolute chart file per slot ("" if empty)
             public int chartIdxEasy, chartIdxNormal, chartIdxHard;            // .sm #NOTES block index per slot (osu: 0)

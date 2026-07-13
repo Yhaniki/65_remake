@@ -40,7 +40,7 @@ namespace Sdo.Settings
         public static string optLang = "zh-TW";
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
-                           optPlayFullSong = false, optSongSpeed = true;
+                           optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true;
         public static float optPanelOpacity = 1.4f;
 
         public const string FileName = "config.ini";
@@ -161,6 +161,7 @@ namespace Sdo.Settings
                     case "opt_callCardInGame": optCallCard = ParseBool(val, optCallCard); break;
                     case "opt_playFullSong": optPlayFullSong = ParseBool(val, optPlayFullSong); break;
                     case "opt_songSpeed": optSongSpeed = ParseBool(val, optSongSpeed); break;
+                    case "opt_collapseShortHolds": optCollapseShortHolds = ParseBool(val, optCollapseShortHolds); break;
                     case "opt_panelOpacity": optPanelOpacity = ParseFloat(val, optPanelOpacity); break;
                 }
             }
@@ -230,6 +231,8 @@ namespace Sdo.Settings
             sb.Append("opt_callCardInGame=").Append(B(optCallCard)).Append('\n');
             sb.Append("opt_playFullSong=").Append(B(optPlayFullSong)).Append('\n');
             sb.Append("opt_songSpeed=").Append(B(optSongSpeed)).Append('\n');
+            sb.Append("# 無理短長條收成一般 note（短於 180BPM 16 分音符 ≈83ms 的 long note → note；1=開 預設 0=關）\n");
+            sb.Append("opt_collapseShortHolds=").Append(B(optCollapseShortHolds)).Append('\n');
             sb.Append("# 面板透明度 0.0~1.6\n");
             sb.Append("opt_panelOpacity=").Append(optPanelOpacity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             return sb.ToString();
@@ -268,6 +271,7 @@ namespace Sdo.Settings
                 optFullscreenFill = g.fullscreenFill; optBloom = g.bloom; optNotesPanelLeft = g.notesPanelLeft;
                 optEffectChar = g.effectCharacter; optEffectScene = g.effectScene; optCameraAuto = g.cameraAuto;
                 optCallCard = g.callCardInGame; optPlayFullSong = g.playFullSong; optSongSpeed = g.songSpeed;
+                optCollapseShortHolds = g.collapseShortHolds;
                 optPanelOpacity = g.panelOpacity;
             }
             hasOption = true;
@@ -292,6 +296,7 @@ namespace Sdo.Settings
             g.fullscreenFill = optFullscreenFill; g.bloom = optBloom; g.notesPanelLeft = optNotesPanelLeft;
             g.effectCharacter = optEffectChar; g.effectScene = optEffectScene; g.cameraAuto = optCameraAuto;
             g.callCardInGame = optCallCard; g.playFullSong = optPlayFullSong; g.songSpeed = optSongSpeed;
+            g.collapseShortHolds = optCollapseShortHolds;
             g.panelOpacity = optPanelOpacity;
         }
 

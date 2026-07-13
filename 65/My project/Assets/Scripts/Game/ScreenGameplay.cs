@@ -77,6 +77,10 @@ namespace Sdo.Game
         public string danceMot = "MOTION/WDANCE0002.MOT";      // fallback dance motion if no DPS
         public string restMot = "MOTION/WREST0072.MOT";        // in-game standby idle (decompiled: rest-table category 0x15, played before/after the DPS — 023_gameplay:4135). male = MREST0082.MOT. (WREST0056 was cat 0, the lobby idle — wrong here.)
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
+        // External (osu/StepMania) songs have no official .dps: these two identify the song so ExternalDps can generate
+        // one — deterministically, once — into its folder and record it in the folder's sdo.header (see EnsureExternalDance).
+        public string externalFolder = "";     // the song's folder (SongCatalog.Entry.folderPath)
+        public string externalSongKey = "";    // which song in that folder ("" = its only one; ExternalSongGrouper key)
         private readonly Dictionary<string, MotLoader> _motCache = new Dictionary<string, MotLoader>();
 
         // EXACT note-board geometry (4-key, left board X=0): lane LEFT-EDGE X 0/69/138/207 (pitch 69 exact).
@@ -311,6 +315,9 @@ namespace Sdo.Game
         public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
         public bool playFullSong = false;   // 進階「無失敗模式」：HP 歸零不判失敗，整首照打(判定/舞蹈續行)到曲末，結算走正常名次(不出 GAME OVER)
+        // 無理短長條 → 一般 note（預設開；OPTION 尚未接 UI，先由 GameplaySettings.collapseShortHolds / config.ini 灌進來）：
+        // 載譜後把長度短於 180 BPM 16 分音符 (OsuBeatmap.ShortHoldMaxMs ≈83ms) 的 long note 收成單顆 note，見 LoadChart。
+        public bool collapseShortHolds = true;
         // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖鏡頭 1，無開場運鏡)。
         public bool cameraAuto = true;
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
@@ -1168,7 +1175,34 @@ namespace Sdo.Game
             _hpGlowMat = new Material(Shader.Find("Sdo/HpGlowClip") ?? sh);
         }
 
+        /// <summary>載譜（官方 .gn / 外部 osu·sm），成功後套用譜面修整：<see cref="collapseShortHolds"/> 開著時把
+        /// 「無理的短 long note」(短於 180 BPM 的 16 分音符) 收成一般 note。修整必須在這裡、在任何吃 _map 的東西
+        /// (判定、TotalNotes→滿分、捲動、note 皮) 建起來之前做完。</summary>
         private bool LoadChart()
+        {
+            if (!LoadChartRaw()) return false;
+            if (collapseShortHolds && _map != null)
+            {
+                int collapsed = _map.CollapseShortHolds();
+                if (collapsed > 0) Debug.Log($"[Step1] collapsed {collapsed} short hold(s) (< {OsuBeatmap.ShortHoldMaxMs:0.#} ms) into taps");
+            }
+            EnsureExternalDance();
+            return true;
+        }
+
+        /// <summary>An external (osu/StepMania) song ships no choreography — its DANCE/&lt;id&gt;.DPS doesn't exist — so
+        /// generate one for it (once; recorded in the song folder's sdo.header, see <see cref="ExternalDps"/>) and dance
+        /// that instead of looping the single fallback clip. Official songs and songs whose .dps is already there are
+        /// untouched.</summary>
+        private void EnsureExternalDance()
+        {
+            if (chartFormat == 0 || _map == null || string.IsNullOrEmpty(externalFolder)) return;
+            if (!string.IsNullOrEmpty(dpsPath) && File.Exists(Path.Combine(SdoExtracted.Root, dpsPath))) return;
+            string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, _map);
+            if (!string.IsNullOrEmpty(generated)) dpsPath = generated;   // absolute → LoadAsset uses it as-is
+        }
+
+        private bool LoadChartRaw()
         {
             // (1) external user chart (osu / StepMania) from the Songs/ folder — the difficulty was already resolved
             // to a concrete chart file at selection time (see SongSelectScreen.OnConfirm / FrontendApp.StartGameplay).

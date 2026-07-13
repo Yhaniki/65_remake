@@ -5,14 +5,18 @@ using System.IO;
 namespace Sdo.Osu
 {
     /// <summary>
-    /// Scans user song folders — <c>Songs/&lt;group&gt;/&lt;songFolder&gt;/</c> (and each AdditionalSongFolders root,
-    /// treated as another Songs root, i.e. a group-parent, exactly like StepMania) — for osu!mania and StepMania
-    /// charts, producing <see cref="ExternalSong"/> records. Engine-free (System.IO only) so it stays in Sdo.Osu and
-    /// is unit-testable; the Unity glue (register into the catalog, load textures) lives in Sdo.Game.ExternalSongLibrary.
+    /// Scans user song folders — <c>Songs/&lt;group&gt;/…</c> (and each AdditionalSongFolders root, treated as another
+    /// Songs root, i.e. a group-parent, exactly like StepMania) — for osu!mania and StepMania charts, producing
+    /// <see cref="ExternalSong"/> records. Engine-free (System.IO only) so it stays in Sdo.Osu and is unit-testable;
+    /// the Unity glue (register into the catalog, load textures) lives in Sdo.Game.ExternalSongLibrary.
     ///
-    /// Per song folder: prefer .osu (a whole beatmap set = many .osu difficulties in one folder), else .sm. Only 4K
-    /// difficulties are used (osu CircleSize==4 &amp; Mode==3; StepMania dance-single). The three highest note-count
-    /// difficulties fill hard/normal/easy (<see cref="ExternalDifficultyPicker"/>). Missing dance choreography is fine —
+    /// A song folder is the FIRST folder holding chart files on the way down from a group — so a pack downloaded as one
+    /// more folder level is still found, while a song folder's own subfolders (a StepMania editor's FileBackup/, an osu
+    /// storyboard dir) stay assets rather than becoming songs. One such folder may hold MORE THAN ONE song: several
+    /// beatmap sets dropped in flat, or several .sm files. <see cref="ExternalSongGrouper"/> splits them by audio file;
+    /// each song then fills its own hard/normal/easy slots from ITS three highest-note-count 4K difficulties
+    /// (<see cref="ExternalDifficultyPicker"/>). Only 4K is used (osu CircleSize==4 &amp; Mode==3; StepMania
+    /// dance-single), and only songs whose audio file is actually present. Missing dance choreography is fine —
     /// gameplay falls back to a generic dance.
     /// </summary>
     public static class ExternalSongScanner
@@ -24,35 +28,89 @@ namespace Sdo.Osu
         private static readonly string[] AudioExt = { ".ogg", ".mp3", ".wav" };
         private static readonly string[] ImageExt = { ".png", ".jpg", ".jpeg", ".bmp" };
 
-        /// <summary>Flatten roots → the list of song folders to load (group = the folder one level under a root).
-        /// Groups and songs are sorted alphabetically for a stable, readable browse order.</summary>
+        /// <summary>How deep below a group folder we still look for charts. Packs nest one or two levels; the cap is
+        /// there so a mis-configured root (e.g. C:\) can't walk the world.</summary>
+        private const int MaxDepth = 8;
+
+        /// <summary>Flatten roots → the list of song folders to load. The group is the folder one level under a root
+        /// (the browse tab); chart folders nested deeper inside it still belong to that group. Groups and folders are
+        /// walked in alphabetical order for a stable, readable browse order.</summary>
         public static List<SongDir> BuildWorklist(IReadOnlyList<string> roots)
         {
             var work = new List<SongDir>();
             if (roots == null) return work;
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // junction/symlink loop guard
             foreach (var root in roots)
             {
                 if (string.IsNullOrEmpty(root)) continue;
+                try { if (!Directory.Exists(root)) continue; } catch { continue; }
+
+                // Charts dropped straight into a root (no group folder) still count — the root names their group.
+                Probe(root, out bool rootCharts, out _);
+                if (rootCharts) work.Add(new SongDir { Group = DirName(root), Path = root });
+
                 string[] groups;
-                try { if (!Directory.Exists(root)) continue; groups = Directory.GetDirectories(root); }
-                catch { continue; }
+                try { groups = Directory.GetDirectories(root); } catch { continue; }
                 Array.Sort(groups, StringComparer.OrdinalIgnoreCase);
                 foreach (var groupDir in groups)
-                {
-                    string groupName = new DirectoryInfo(groupDir).Name;
-                    string[] songs;
-                    try { songs = Directory.GetDirectories(groupDir); }
-                    catch { continue; }
-                    Array.Sort(songs, StringComparer.OrdinalIgnoreCase);
-                    foreach (var songDir in songs)
-                        work.Add(new SongDir { Group = groupName, Path = songDir });
-                }
+                    Collect(work, groupDir, DirName(groupDir), 0, visited);
             }
             return work;
         }
 
-        /// <summary>Non-incremental scan (used by tests / as a fallback). Prefer BuildWorklist + LoadOne when you
-        /// want to yield between songs for a progress bar.</summary>
+        private static void Collect(List<SongDir> work, string dir, string group, int depth, HashSet<string> visited)
+        {
+            string full;
+            try { full = Path.GetFullPath(dir); } catch { return; }
+            if (!visited.Add(full)) return;
+
+            Probe(dir, out bool isSong, out _);
+            if (isSong) work.Add(new SongDir { Group = group, Path = dir });
+            if (depth >= MaxDepth) return;
+
+            string[] subs;
+            try { subs = Directory.GetDirectories(dir); } catch { return; }
+            Array.Sort(subs, StringComparer.OrdinalIgnoreCase);
+            foreach (var sub in subs)
+            {
+                // Inside a song folder, subfolders are its assets — a StepMania editor's FileBackup/ (dozens of
+                // autosaved .sm), an osu storyboard dir — so only descend into one that is a song in its own right:
+                // charts AND its own audio. Outside a song folder we always keep walking, because a pack is just one
+                // more folder level, and one stray chart lying at pack level must not hide the songs beneath it.
+                if (isSong)
+                {
+                    Probe(sub, out bool subCharts, out bool subAudio);
+                    if (!subCharts || !subAudio) continue;
+                }
+                Collect(work, sub, group, depth + 1, visited);
+            }
+        }
+
+        /// <summary>Does this folder hold chart files / audio files? One enumeration, stops as soon as both are known
+        /// (the whole tree is walked before boot can show a determinate progress bar, so this stays cheap).</summary>
+        private static void Probe(string dir, out bool charts, out bool audio)
+        {
+            charts = false; audio = false;
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir))
+                {
+                    var ext = Path.GetExtension(f).ToLowerInvariant();
+                    if (ext == ".osu" || ext == ".sm") charts = true;
+                    else if (Array.IndexOf(AudioExt, ext) >= 0) audio = true;
+                    if (charts && audio) return;
+                }
+            }
+            catch { /* unreadable folder → not a song folder */ }
+        }
+
+        private static string DirName(string dir)
+        {
+            try { return new DirectoryInfo(dir).Name; } catch { return ""; }
+        }
+
+        /// <summary>Non-incremental scan (fallback / harness). Prefer BuildWorklist + LoadFolder when you want to
+        /// yield between folders for a progress bar.</summary>
         public static List<ExternalSong> Scan(IReadOnlyList<string> roots, Action<ScanProgress> onProgress = null)
         {
             var work = BuildWorklist(roots);
@@ -60,21 +118,22 @@ namespace Sdo.Osu
             var prog = new ScanProgress { Total = work.Count };
             for (int i = 0; i < work.Count; i++)
             {
-                var song = LoadOne(work[i].Group, work[i].Path);
-                if (song != null) songs.Add(song);
+                var found = LoadFolder(work[i].Group, work[i].Path);
+                songs.AddRange(found);
                 prog.Done = i + 1;
-                prog.Current = song?.Title ?? "";
+                prog.Current = found.Count > 0 ? found[0].Title : "";
                 onProgress?.Invoke(prog);
             }
             return songs;
         }
 
-        /// <summary>Load a single song folder → <see cref="ExternalSong"/>, or null if it holds no playable 4K chart.</summary>
-        public static ExternalSong LoadOne(string group, string songDir)
+        /// <summary>Load one folder → every playable 4K song in it (empty list when it holds none).</summary>
+        public static List<ExternalSong> LoadFolder(string group, string songDir)
         {
+            var songs = new List<ExternalSong>();
             string[] files;
-            try { files = Directory.GetFiles(songDir); }
-            catch { return null; }
+            try { files = Directory.GetFiles(songDir); } catch { return songs; }
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);   // deterministic: grouping must not ride on FS order
 
             var osu = new List<string>();
             var sm = new List<string>();
@@ -89,20 +148,96 @@ namespace Sdo.Osu
                 else if (Array.IndexOf(ImageExt, ext) >= 0) images.Add(Path.GetFileName(f));
             }
 
+            var drafts = new List<Draft>();
             try
             {
-                if (osu.Count > 0) return BuildOsu(group, songDir, osu, audio, images);
-                if (sm.Count > 0) return BuildSm(group, songDir, sm[0], audio, images);
+                DraftOsu(drafts, osu);
+                DraftSm(drafts, sm);
             }
             catch { /* a malformed folder must never abort the whole scan */ }
-            return null;
+            if (drafts.Count == 0) return songs;
+
+            // Songs are the drafts whose audio we can actually find: a chart with no music is unplayable, and dropping
+            // it is what keeps chart-only junk (an editor's autosaves, an orphaned .sm) out of the song list. Guessing
+            // "the folder's first audio file" is only safe when the folder holds ONE song — with several it would hand
+            // song B the music of song A, and silence beats playing the wrong track.
+            var kept = new List<Draft>(drafts.Count);
+            var tracks = new List<string>(drafts.Count);
+            foreach (var d in drafts)
+            {
+                string audioPath = ResolveAudio(audio, d.AudioName);
+                if (audioPath.Length == 0) continue;
+                kept.Add(d); tracks.Add(audioPath);
+            }
+            if (kept.Count == 0 && drafts.Count == 1 && audio.Count > 0)
+            {
+                kept.Add(drafts[0]); tracks.Add(audio[0]);   // sole song whose chart names its audio wrongly
+            }
+            if (kept.Count == 0) return songs;
+
+            bool sole = kept.Count == 1;
+            var claimed = ClaimedImages(kept);
+            var sidecar = ReadSidecar(songDir);
+            RemoveGeneratedCds(images, kept, sole, sidecar);
+            for (int i = 0; i < kept.Count; i++)
+                songs.Add(Materialize(kept[i], group, songDir, tracks[i], images, sole, claimed, sidecar));
+
+            Disambiguate(songs, kept);
+            return songs;
         }
 
-        private static ExternalSong BuildOsu(string group, string dir, List<string> osuFiles,
-            List<string> audioFiles, List<string> images)
+        // The discs we generate are written INTO the song folder, so on the next scan they are just more images sitting
+        // next to the cover — and a folder whose cover carries no filename hint would hand the picker its own disc back
+        // (a disc composed from a disc). Take every name the sidecar records as a CD, plus the names this folder's songs
+        // would generate, out of the cover pool.
+        private static void RemoveGeneratedCds(List<string> images, List<Draft> kept, bool sole,
+            List<SongSidecarEntry> sidecar)
+        {
+            var cds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in sidecar)
+                if (e != null && !string.IsNullOrEmpty(e.CdImage)) cds.Add(e.CdImage);
+            foreach (var d in kept) cds.Add(SongSidecar.CdFileName(sole ? "" : d.Key));
+            images.RemoveAll(f => cds.Contains(f));
+        }
+
+        /// <summary>The folder's sdo.header, or an empty list when it has none / is unreadable.</summary>
+        private static List<SongSidecarEntry> ReadSidecar(string songDir)
+        {
+            try
+            {
+                var path = Path.Combine(songDir, SongSidecar.FileName);
+                if (File.Exists(path)) return SongSidecar.Parse(File.ReadAllText(path));
+            }
+            catch { /* a corrupt sidecar just means "nothing recorded yet" */ }
+            return new List<SongSidecarEntry>();
+        }
+
+        /// <summary>Kept for callers that only want the folder's first song (e.g. a preview probe).</summary>
+        public static ExternalSong LoadOne(string group, string songDir)
+        {
+            var songs = LoadFolder(group, songDir);
+            return songs.Count > 0 ? songs[0] : null;
+        }
+
+        // ---- drafting: everything decided from the chart files alone, before folder-wide resolution ----
+
+        /// <summary>One song, still unresolved against the folder's audio/image files.</summary>
+        private sealed class Draft
+        {
+            public string Key = "";
+            public SongFormat Format;
+            public readonly ExternalChart[] Charts = new ExternalChart[3];
+            public string Title = "", Artist = "", Version = "";
+            public double Bpm;
+            public int PreviewStartMs = -1, PreviewLengthMs;
+            public string AudioName = "", BannerName = "", BackgroundName = "", CdTitleName = "";
+        }
+
+        private static void DraftOsu(List<Draft> drafts, List<string> osuFiles)
         {
             var candFile = new List<string>();
             var candMeta = new List<OsuMeta>();
+            var candName = new List<string>();
             foreach (var path in osuFiles)
             {
                 OsuMeta meta;
@@ -111,76 +246,206 @@ namespace Sdo.Osu
                 if (meta.Mode != 3) continue;                // mania only
                 if (meta.Keys != 4) continue;                // 4K only
                 if (meta.NoteCount <= 0) continue;
-                candFile.Add(path); candMeta.Add(meta);
+                candFile.Add(path); candMeta.Add(meta); candName.Add(Path.GetFileName(path));
             }
-            if (candFile.Count == 0) return null;
+            if (candFile.Count == 0) return;
 
-            var counts = new List<int>(candMeta.Count);
-            foreach (var m in candMeta) counts.Add(m.NoteCount);
-            var slots = ExternalDifficultyPicker.Assign(counts);
-
-            var song = new ExternalSong { Group = group, FolderPath = dir, Format = SongFormat.Osu };
-            for (int s = 0; s < 3; s++)
+            foreach (var g in ExternalSongGrouper.GroupOsu(candMeta, candName))
             {
-                int c = slots[s];
-                if (c < 0) continue;
-                song.Charts[s] = new ExternalChart
+                var counts = new List<int>(g.Charts.Count);
+                foreach (var i in g.Charts) counts.Add(candMeta[i].NoteCount);
+
+                var d = new Draft { Key = g.Key, Format = SongFormat.Osu };
+                var slots = ExternalDifficultyPicker.Assign(counts);   // per SONG — never across the folder
+                for (int s = 0; s < 3; s++)
                 {
-                    FilePath = candFile[c], ChartIndex = 0, NoteCount = candMeta[c].NoteCount,
-                    Level = OsuLevel(candFile[c]),   // 星數×5 → 等級（只對選中的 3 張全解析，掃描才不慢）
-                };
+                    int c = slots[s];
+                    if (c < 0) continue;
+                    int i = g.Charts[c];
+                    d.Charts[s] = new ExternalChart
+                    {
+                        FilePath = candFile[i], ChartIndex = 0, NoteCount = candMeta[i].NoteCount,
+                        Level = OsuLevel(candFile[i]),   // 星數×5 → 等級（只對選中的 3 張全解析，掃描才不慢）
+                    };
+                }
+
+                // Display fields: hardest chart first, but a single chart often leaves a field blank (converters emit
+                // empty artists, PreviewTime:-1, an empty [Events] bg) — so take the first chart that HAS each field.
+                int lead = g.Charts[0];
+                d.Title = First(g.Charts, i => candMeta[i].Title, Path.GetFileNameWithoutExtension(candFile[lead]));
+                d.Artist = First(g.Charts, i => candMeta[i].Artist, "");
+                d.Version = First(g.Charts, i => candMeta[i].Version, "");
+                // Basenamed like the grouping key and like the .sm branch: a chart may spell its audio/background with
+                // a folder prefix or backslashes, and the folder's files are matched by filename.
+                d.AudioName = ExternalSongGrouper.BaseName(First(g.Charts, i => candMeta[i].AudioFilename, ""));
+                d.BackgroundName = ExternalSongGrouper.BaseName(First(g.Charts, i => candMeta[i].BackgroundFilename, ""));
+                foreach (var i in g.Charts) { if (candMeta[i].Bpm > 0) { d.Bpm = candMeta[i].Bpm; break; } }
+                d.PreviewStartMs = -1;
+                foreach (var i in g.Charts) { if (candMeta[i].PreviewTime >= 0) { d.PreviewStartMs = candMeta[i].PreviewTime; break; } }
+                d.PreviewLengthMs = 0;   // osu carries no preview length → default window
+                drafts.Add(d);
             }
-            var lead = candMeta[slots[2] >= 0 ? slots[2] : 0];   // hardest chart's metadata
-            song.Title = Coalesce(lead.Title, Path.GetFileNameWithoutExtension(candFile[0]));
-            song.Artist = lead.Artist ?? "";
-            song.Bpm = lead.Bpm;
-            song.AudioPath = ResolveFile(dir, audioFiles, lead.AudioFilename);
-            song.ImagePath = ResolveImage(dir, images, "", lead.BackgroundFilename, "");
-            song.PreviewStartMs = lead.PreviewTime;   // osu PreviewTime (ms); -1 = none. osu carries no length → default.
-            song.PreviewLengthMs = 0;
+        }
+
+        private static void DraftSm(List<Draft> drafts, List<string> smFiles)
+        {
+            foreach (var smPath in smFiles)
+            {
+                SmChart.SmSong smSong;
+                try { smSong = SmChart.Parse(File.ReadAllText(smPath)); }
+                catch { continue; }
+
+                var candIndex = new List<int>();
+                var candCount = new List<int>();
+                var candLevel = new List<int>();
+                for (int i = 0; i < smSong.Charts.Count; i++)
+                {
+                    var ch = smSong.Charts[i];
+                    if (!SmChart.IsDanceSingle(ch)) continue;
+                    int notes = SmChart.NoteCount(ch.NoteData);
+                    if (notes <= 0) continue;
+                    candIndex.Add(i); candCount.Add(notes); candLevel.Add(ch.Meter);
+                }
+                if (candIndex.Count == 0) continue;
+
+                string audioName = ExternalSongGrouper.BaseName(smSong.Music);
+                // The same song shipped as both .osu and .sm (same audio) stays ONE song — the .osu wins, as before.
+                if (audioName.Length > 0 && HasAudio(drafts, audioName)) continue;
+
+                var d = new Draft { Key = ExternalSongGrouper.SmKeyOf(Path.GetFileName(smPath)), Format = SongFormat.Sm };
+                var slots = ExternalDifficultyPicker.Assign(candCount);
+                for (int s = 0; s < 3; s++)
+                {
+                    int c = slots[s];
+                    if (c < 0) continue;
+                    d.Charts[s] = new ExternalChart
+                    {
+                        FilePath = smPath, ChartIndex = candIndex[c], NoteCount = candCount[c],
+                        Level = SmLevel(smSong, candIndex[c], candLevel[c]),   // 同 osu 一致的星數量尺；失敗回退譜面 meter
+                    };
+                }
+                d.Title = Coalesce(smSong.Title, Path.GetFileNameWithoutExtension(smPath));
+                d.Artist = smSong.Artist ?? "";
+                d.Version = "";
+                d.Bpm = smSong.FirstBpm;
+                d.AudioName = audioName;
+                d.BannerName = ExternalSongGrouper.BaseName(smSong.Banner);
+                d.BackgroundName = ExternalSongGrouper.BaseName(smSong.Background);
+                d.CdTitleName = ExternalSongGrouper.BaseName(smSong.CdTitle);
+                d.PreviewStartMs = smSong.SampleStart >= 0 ? (int)Math.Round(smSong.SampleStart * 1000.0) : -1;
+                d.PreviewLengthMs = smSong.SampleLength > 0 ? (int)Math.Round(smSong.SampleLength * 1000.0) : 0;
+                drafts.Add(d);
+            }
+        }
+
+        private static bool HasAudio(List<Draft> drafts, string audioName)
+        {
+            foreach (var d in drafts)
+                if (string.Equals(d.AudioName, audioName, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        // ---- resolution against the folder's files ----
+
+        private static ExternalSong Materialize(Draft d, string group, string dir, string audioPath,
+            List<string> images, bool sole, HashSet<string> claimed, List<SongSidecarEntry> sidecar)
+        {
+            var song = new ExternalSong
+            {
+                Group = group,
+                FolderPath = dir,
+                SongKey = sole ? "" : d.Key,   // sole song → "" keeps the folder-only gn (and its favourites)
+                Format = d.Format,
+                Title = d.Title,
+                Artist = d.Artist,
+                Bpm = d.Bpm,
+                PreviewStartMs = d.PreviewStartMs,
+                PreviewLengthMs = d.PreviewLengthMs,
+                AudioPath = audioPath,
+                ImagePath = ResolveImage(dir, ImagePool(images, d, sole, claimed), d),
+            };
+            for (int s = 0; s < 3; s++) song.Charts[s] = d.Charts[s];
+            ApplySidecar(song, SongSidecar.Find(sidecar, song.SongKey), dir);
             return song;
         }
 
-        private static ExternalSong BuildSm(string group, string dir, string smPath,
-            List<string> audioFiles, List<string> images)
+        // What the folder's sdo.header already records for this song: the CD disc built on an earlier run (skip
+        // composing it again) and — reserved — its dance/camera files. A recorded name whose file is gone is ignored,
+        // so deleting cd.png is all it takes to have the disc rebuilt.
+        private static void ApplySidecar(ExternalSong song, SongSidecarEntry e, string dir)
         {
-            SmChart.SmSong smSong;
-            try { smSong = SmChart.Parse(File.ReadAllText(smPath)); }
-            catch { return null; }
+            if (e == null) return;
+            song.CdImagePath = SidecarFile(dir, e.CdImage);
+            song.MotPath = SidecarFile(dir, e.Mot);
+            song.CameraPath = SidecarFile(dir, e.Camera);
+        }
 
-            var candIndex = new List<int>();
-            var candCount = new List<int>();
-            var candLevel = new List<int>();
-            for (int i = 0; i < smSong.Charts.Count; i++)
+        private static string SidecarFile(string dir, string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            try
             {
-                var ch = smSong.Charts[i];
-                if (!SmChart.IsDanceSingle(ch)) continue;
-                int notes = SmChart.NoteCount(ch.NoteData);
-                if (notes <= 0) continue;
-                candIndex.Add(i); candCount.Add(notes); candLevel.Add(ch.Meter);
+                var path = Path.Combine(dir, name);
+                return File.Exists(path) ? path : "";
             }
-            if (candIndex.Count == 0) return null;
+            catch { return ""; }
+        }
 
-            var slots = ExternalDifficultyPicker.Assign(candCount);
-            var song = new ExternalSong { Group = group, FolderPath = dir, Format = SongFormat.Sm };
-            for (int s = 0; s < 3; s++)
+        /// <summary>The audio file a chart names, matched case-insensitively against the folder ("" = not there).</summary>
+        private static string ResolveAudio(List<string> available, string named)
+        {
+            if (!string.IsNullOrEmpty(named))
+                foreach (var f in available)
+                    if (string.Equals(Path.GetFileName(f), named, StringComparison.OrdinalIgnoreCase)) return f;
+            return "";
+        }
+
+        // Images another song in this folder explicitly claimed (its banner/background) are off-limits to the rest —
+        // otherwise ExternalImagePicker's "any image left" rule hands every song the same cover.
+        private static HashSet<string> ClaimedImages(List<Draft> drafts)
+        {
+            var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in drafts)
             {
-                int c = slots[s];
-                if (c < 0) continue;
-                song.Charts[s] = new ExternalChart
-                {
-                    FilePath = smPath, ChartIndex = candIndex[c], NoteCount = candCount[c],
-                    Level = SmLevel(smSong, candIndex[c], candLevel[c]),   // 星數×5 → 等級（同 osu 一致的量尺）；失敗回退譜面 meter
-                };
+                if (d.BannerName.Length > 0) claimed.Add(d.BannerName);
+                if (d.BackgroundName.Length > 0) claimed.Add(d.BackgroundName);
             }
-            song.Title = Coalesce(smSong.Title, Path.GetFileNameWithoutExtension(smPath));
-            song.Artist = smSong.Artist ?? "";
-            song.Bpm = smSong.FirstBpm;
-            song.AudioPath = ResolveFile(dir, audioFiles, smSong.Music);
-            song.ImagePath = ResolveImage(dir, images, smSong.Banner, smSong.Background, smSong.CdTitle);
-            song.PreviewStartMs = smSong.SampleStart >= 0 ? (int)System.Math.Round(smSong.SampleStart * 1000.0) : -1;
-            song.PreviewLengthMs = smSong.SampleLength > 0 ? (int)System.Math.Round(smSong.SampleLength * 1000.0) : 0;
-            return song;
+            return claimed;
+        }
+
+        private static List<string> ImagePool(List<string> images, Draft d, bool sole, HashSet<string> claimed)
+        {
+            if (sole || claimed.Count == 0) return images;
+            var pool = new List<string>(images.Count);
+            foreach (var f in images)
+                if (!claimed.Contains(f) || NameEq(f, d.BannerName) || NameEq(f, d.BackgroundName)) pool.Add(f);
+            return pool;
+        }
+
+        private static string ResolveImage(string dir, List<string> pool, Draft d)
+        {
+            string chosen = ExternalImagePicker.Pick(pool, d.BannerName, d.BackgroundName, d.CdTitleName);
+            return string.IsNullOrEmpty(chosen) ? "" : Path.Combine(dir, chosen);
+        }
+
+        // Two songs in one folder routinely share a title (a sped-up edit is a second audio file with the same name
+        // on it). Tag the clashing ones with their difficulty/audio so the song list can tell them apart.
+        private static void Disambiguate(List<ExternalSong> songs, List<Draft> drafts)
+        {
+            if (songs.Count < 2) return;
+            var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in songs)
+            {
+                seen.TryGetValue(s.Title, out int n);
+                seen[s.Title] = n + 1;
+            }
+            for (int i = 0; i < songs.Count; i++)
+            {
+                if (!seen.TryGetValue(songs[i].Title, out int n) || n < 2) continue;
+                string tag = drafts[i].Version;
+                if (string.IsNullOrEmpty(tag)) tag = Path.GetFileNameWithoutExtension(drafts[i].AudioName);
+                if (!string.IsNullOrEmpty(tag)) songs[i].Title += " (" + tag + ")";
+            }
         }
 
         // Level from osu!mania star rating (star × 5, clamped) — full-parse only the chosen chart. 0 on failure.
@@ -198,27 +463,19 @@ namespace Sdo.Osu
             catch { return fallbackMeter; }
         }
 
-        // Resolve a named file to an absolute path: prefer the named one (case-insensitive basename match against the
-        // folder's files); else the first available file of that kind.
-        private static string ResolveFile(string dir, List<string> available, string named)
+        private static string First(List<int> charts, Func<int, string> field, string fallback)
         {
-            if (!string.IsNullOrEmpty(named))
+            foreach (var i in charts)
             {
-                string want = Path.GetFileName(named.Replace('\\', '/'));
-                foreach (var f in available)
-                    if (string.Equals(Path.GetFileName(f), want, StringComparison.OrdinalIgnoreCase)) return f;
+                var v = field(i);
+                if (!string.IsNullOrEmpty(v)) return v;
             }
-            return available.Count > 0 ? available[0] : "";
+            return fallback ?? "";
         }
 
-        private static string ResolveImage(string dir, List<string> images, string banner, string background, string cdtitle)
-        {
-            string chosen = ExternalImagePicker.Pick(images, Base(banner), Base(background), Base(cdtitle));
-            return string.IsNullOrEmpty(chosen) ? "" : Path.Combine(dir, chosen);
-        }
-
-        private static string Base(string tag)
-            => string.IsNullOrEmpty(tag) ? "" : Path.GetFileName(tag.Replace('\\', '/'));
+        private static bool NameEq(string a, string b)
+            => !string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(b) &&
+               string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
         private static string Coalesce(string a, string b) => !string.IsNullOrEmpty(a) ? a : (b ?? "");
     }

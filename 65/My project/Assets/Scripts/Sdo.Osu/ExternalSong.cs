@@ -16,17 +16,37 @@ namespace Sdo.Osu
     /// A user song discovered under Songs/&lt;group&gt;/&lt;folder&gt;/ (or an AdditionalSongFolders root). Carries the
     /// resolved audio + cover image paths and up to three 4K difficulty slots (index 0=easy, 1=normal, 2=hard),
     /// filled hard-first from the highest-note-count charts (see <see cref="ExternalDifficultyPicker"/>).
+    ///
+    /// One folder may hold SEVERAL songs (several beatmap sets flattened together, or several .sm files); each gets
+    /// its own record, keyed by <see cref="SongKey"/> (see <see cref="ExternalSongGrouper"/>).
     /// </summary>
     public sealed class ExternalSong
     {
         public string Group = "";
         public string FolderPath = "";
+
+        /// <summary>Identity of this song WITHIN its folder — the grouping key (audio file, else set id / metadata /
+        /// chart filename). "" when the folder holds a single song, which keeps that song's catalog gn (a hash of
+        /// FolderPath + SongKey) byte-identical to the one-song-per-folder era, so existing favourites survive.</summary>
+        public string SongKey = "";
+
         public string Title = "";
         public string Artist = "";
         public double Bpm;
         public string AudioPath = "";   // absolute; "" if no audio file found
         public string ImagePath = "";   // absolute cover (jacket→banner→background); "" if none
         public SongFormat Format;
+
+        // ---- from the folder's sdo.header sidecar (see SongSidecar) ----
+
+        /// <summary>Absolute path of the generated CD disc image; "" = the sidecar records none (or its file is gone),
+        /// i.e. the disc still has to be composed from <see cref="ImagePath"/> the first time this song is selected.</summary>
+        public string CdImagePath = "";
+
+        /// <summary>Reserved: the dance / camera files the sidecar points at ("" = none). Read today, unused by
+        /// gameplay — the format is in place for when user .mot / camera files land in song folders.</summary>
+        public string MotPath = "";
+        public string CameraPath = "";
 
         // Preview clip window (from osu PreviewTime / StepMania #SAMPLESTART+#SAMPLELENGTH). Song-select loops this
         // window of the full audio instead of a middle-of-song default.
