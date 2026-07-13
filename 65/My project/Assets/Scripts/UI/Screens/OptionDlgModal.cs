@@ -560,9 +560,8 @@ namespace Sdo.UI.Screens
             // 遊戲畫面 (全屏/黑邊) 立即套用：其餘遊戲頁偏好（特效/視角/透明度）在下一場遊戲開局讀取。
             AspectController.SetMode(_gpAspectFill ? AspectMode.Stretch : AspectMode.Pillarbox);
             _applied = true; _entryLang = _lang;
-            // 保存 = 只儲存,不關對話框(使用者要求)。播確認音 + Toast 回饋;關閉走「退出」鈕。
+            // 保存 = 只儲存,不關對話框(使用者要求)。只播確認音,不跳提示;關閉走「退出」鈕。
             UiSfx.Play(UiSfx.Click);
-            Toast.Show("設定已保存");
         }
 
         private void ResetDefaults()

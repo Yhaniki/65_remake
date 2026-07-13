@@ -292,6 +292,8 @@ namespace Sdo.Game
             if (!_ready) return;
             var oldRoot = _avatarRoot;
             _avatarRoot = null; _avatar = null;
+            // Destroy 要到幀尾才生效 → 先關掉舊的，否則新舊兩隻同位置疊畫一幀 (換穿當場重建時會看到閃一下)
+            if (oldRoot != null) oldRoot.gameObject.SetActive(false);
             var parent = new GameObject("RoomLocalAvatar");
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);

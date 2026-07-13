@@ -249,7 +249,7 @@ namespace Sdo.UI.Screens
             Btn("changeroomname", "Room45", "Room46", "Room47", Win1, 461, 7, null);
             Btn("help", "BtnHeadHelp_1", "BtnHeadHelp_2", "BtnHeadHelp_3", Win1, 654, 7, null);
             Btn("roomangel", "roomangel_0", "roomangel_1", "roomangel_2", Win1, 616, 5, null);
-            Btn("roomexchange", "BtnHeadExchange_1", "BtnHeadExchange_2", "BtnHeadExchange_3", Win1, 652, 5, () => Nav.OpenShop?.Invoke());   // → 商城 (avatar shop)
+            Btn("roomexchange", "BtnHeadExchange_1", "BtnHeadExchange_2", "BtnHeadExchange_3", Win1, 652, 5, null);   // 官方是交易鈕;重製沒有交易 → 按了不做事
             Btn("invite", "BtnHeadInvite_1", "BtnHeadInvite_2", "BtnHeadInvite_3", Win1, 688, 5, null);
             Btn("setting", "BtnHeadOption_1", "BtnHeadOption_2", "BtnHeadOption_3", Win1, 724, 5, () => Nav.OpenSettings?.Invoke());
             Btn("leaveroom", "BtnHeadReturn_1", "BtnHeadReturn_2", "BtnHeadReturn_3", Win1, 760, 5, OnLeave);
@@ -538,6 +538,7 @@ namespace Sdo.UI.Screens
         // 儲物櫃換穿 → 重建本機房間 3D avatar + 頭貼 (讀最新 EquippedAvatarParts；WardrobeScreen 已寫回 profile)。
         private void RefreshLocalAvatar()
         {
+            if (_scene == null) return;   // 房間不在場上 (OnHide 已拆掉) → 別重建出孤兒頭貼相機；回房 OnShow 會用最新穿搭重建
             bool male = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
             string[] parts = ProfileManager.Active != null
                 ? WardrobeStore.ResolveEquippedParts(ProfileManager.Active, male ? 1 : 0, id => AvatarItemCatalog.Instance.ById(id))
@@ -545,7 +546,8 @@ namespace Sdo.UI.Screens
             if (_scene != null) _scene.RebuildLocalAvatar(male, parts);
             // 頭貼要「整個重建」：RoomHeadPortrait.Init 每次都新建一隻頭 avatar/相機/RT 卻不清舊的 → 直接再 Init 只會疊一隻
             // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
-            if (_localHead != null) { Destroy(_localHead.gameObject); _localHead = null; }
+            // (Destroy 幀尾才生效 → 先 SetActive(false)，否則舊頭 avatar 這一幀還在同一個 parkSpot，新頭相機會同時拍到兩顆。)
+            if (_localHead != null) { _localHead.gameObject.SetActive(false); Destroy(_localHead.gameObject); _localHead = null; }
             var headGo = new GameObject("RoomLocalHead");
             _localHead = headGo.AddComponent<RoomHeadPortrait>();
             _localHead.layer = HeadLayer;
@@ -721,7 +723,8 @@ namespace Sdo.UI.Screens
         {
             _chatModeMenu = UIKit.NewRect(_win3Root, "chatmodemenu");
             Place(_chatModeMenu, 15, 463, 41, 104);
-            UIKit.AddSprite(_chatModeMenu, "Bg", RoomUiArt.An("Room_Pop16"), 0, 0);
+            // 不畫 XML 的 background="Room_Pop16.an"：那張是 100% 灰階板(灰172/黑框)，直接 alpha-blend 會變成一塊
+            // 灰白底露在按鈕四周。四顆按鈕自帶完整底圖，選單不需要背板。
             AddChatModeChoice("chatmode_family", ChatChannel.Family, 2, 2);
             AddChatModeChoice("chatmode_friend", ChatChannel.Friend, 2, 27);
             AddChatModeChoice("chatmode_cur", ChatChannel.Current, 2, 52);
