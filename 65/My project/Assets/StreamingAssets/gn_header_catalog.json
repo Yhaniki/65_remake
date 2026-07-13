@@ -9,7 +9,7 @@
   "en"
  ],
  "zhTW": "opencc s2twp",
- "count": 4332,
+ "count": 4344,
  "songs": [
   {
    "gn": "sdom0.gn",
@@ -131494,7 +131494,7 @@
    "noteCounts": [
     860,
     1809,
-    3428
+    3427
    ],
    "measurements": [
     533,
@@ -133605,7 +133605,7 @@
    "measurements": [
     428,
     428,
-    530
+    531
    ],
    "durations": [
     169,
@@ -135231,19 +135231,19 @@
    "mode": "K",
    "bpm": 160.0,
    "levels": [
-    0,
-    0,
-    11
+    3,
+    8,
+    26
    ],
    "noteCounts": [
-    0,
-    0,
-    1182
+    297,
+    636,
+    1566
    ],
    "measurements": [
     291,
     335,
-    381
+    349
    ],
    "durations": [
     120,
@@ -145532,14 +145532,14 @@
     23
    ],
    "noteCounts": [
-    430,
-    729,
-    1128
+    440,
+    739,
+    1146
    ],
    "measurements": [
-    422,
-    500,
-    412
+    430,
+    508,
+    422
    ],
    "durations": [
     165,
@@ -164083,6 +164083,552 @@
    },
    "producer": "tina",
    "origName": "sdom2949T.gm"
+  },
+  {
+   "gn": "sdom2950k.gn",
+   "fileId": 12950,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 115.0,
+   "levels": [
+    6,
+    16,
+    20
+   ],
+   "noteCounts": [
+    556,
+    684,
+    898
+   ],
+   "measurements": [
+    277,
+    274,
+    274
+   ],
+   "durations": [
+    133,
+    133,
+    133
+   ],
+   "title": {
+    "zhCN": "空も飞べるはず",
+    "zhTW": "空も飛べるはず",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "さよならポニーテール",
+    "zhTW": "さよならポニーテール",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2950K.gm"
+  },
+  {
+   "gn": "sdom2950t.gn",
+   "fileId": 2950,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 115.0,
+   "levels": [
+    6,
+    9,
+    16
+   ],
+   "noteCounts": [
+    549,
+    600,
+    682
+   ],
+   "measurements": [
+    276,
+    271,
+    274
+   ],
+   "durations": [
+    133,
+    133,
+    133
+   ],
+   "title": {
+    "zhCN": "空も飞べるはず",
+    "zhTW": "空も飛べるはず",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "さよならポニーテール",
+    "zhTW": "さよならポニーテール",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2950T.gm"
+  },
+  {
+   "gn": "sdom2951k.gn",
+   "fileId": 12951,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 127.0,
+   "levels": [
+    10,
+    15,
+    19
+   ],
+   "noteCounts": [
+    810,
+    1220,
+    1328
+   ],
+   "measurements": [
+    358,
+    359,
+    359
+   ],
+   "durations": [
+    154,
+    154,
+    154
+   ],
+   "title": {
+    "zhCN": "オノマトペメガネ",
+    "zhTW": "オノマトペメガネ",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "ササノマリイ",
+    "zhTW": "ササノマリイ",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2951K.gm"
+  },
+  {
+   "gn": "sdom2951t.gn",
+   "fileId": 2951,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 127.0,
+   "levels": [
+    9,
+    10,
+    13
+   ],
+   "noteCounts": [
+    744,
+    767,
+    853
+   ],
+   "measurements": [
+    354,
+    353,
+    358
+   ],
+   "durations": [
+    154,
+    154,
+    154
+   ],
+   "title": {
+    "zhCN": "オノマトペメガネ",
+    "zhTW": "オノマトペメガネ",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "ササノマリイ",
+    "zhTW": "ササノマリイ",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2951T.gm"
+  },
+  {
+   "gn": "sdom2952k.gn",
+   "fileId": 12952,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 140.0,
+   "levels": [
+    14,
+    24,
+    30
+   ],
+   "noteCounts": [
+    1077,
+    1335,
+    1705
+   ],
+   "measurements": [
+    347,
+    351,
+    361
+   ],
+   "durations": [
+    147,
+    147,
+    147
+   ],
+   "title": {
+    "zhCN": "ECHO",
+    "zhTW": "ECHO",
+    "en": "ECHO"
+   },
+   "artist": {
+    "zhCN": "れをる,茶理理",
+    "zhTW": "れをる,茶理理",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2952K.gm"
+  },
+  {
+   "gn": "sdom2952t.gn",
+   "fileId": 2952,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 140.0,
+   "levels": [
+    3,
+    4,
+    5
+   ],
+   "noteCounts": [
+    335,
+    369,
+    504
+   ],
+   "measurements": [
+    268,
+    280,
+    314
+   ],
+   "durations": [
+    147,
+    147,
+    147
+   ],
+   "title": {
+    "zhCN": "ECHO",
+    "zhTW": "ECHO",
+    "en": "ECHO"
+   },
+   "artist": {
+    "zhCN": "れをる,茶理理",
+    "zhTW": "れをる,茶理理",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2952T.gm"
+  },
+  {
+   "gn": "sdom2953k.gn",
+   "fileId": 12953,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 120.05,
+   "levels": [
+    7,
+    14,
+    19
+   ],
+   "noteCounts": [
+    664,
+    935,
+    1039
+   ],
+   "measurements": [
+    347,
+    349,
+    349
+   ],
+   "durations": [
+    159,
+    159,
+    159
+   ],
+   "title": {
+    "zhCN": "SLOW DOWN",
+    "zhTW": "SLOW DOWN",
+    "en": "SLOW DOWN"
+   },
+   "artist": {
+    "zhCN": "向井太一",
+    "zhTW": "向井太一",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2953K.gm"
+  },
+  {
+   "gn": "sdom2953t.gn",
+   "fileId": 2953,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 120.05,
+   "levels": [
+    2,
+    3,
+    4
+   ],
+   "noteCounts": [
+    351,
+    429,
+    457
+   ],
+   "measurements": [
+    295,
+    316,
+    318
+   ],
+   "durations": [
+    159,
+    159,
+    159
+   ],
+   "title": {
+    "zhCN": "SLOW DOWN",
+    "zhTW": "SLOW DOWN",
+    "en": "SLOW DOWN"
+   },
+   "artist": {
+    "zhCN": "向井太一",
+    "zhTW": "向井太一",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2953T.gm"
+  },
+  {
+   "gn": "sdom2954k.gn",
+   "fileId": 12954,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 126.02,
+   "levels": [
+    5,
+    10,
+    16
+   ],
+   "noteCounts": [
+    477,
+    819,
+    904
+   ],
+   "measurements": [
+    323,
+    336,
+    338
+   ],
+   "durations": [
+    148,
+    148,
+    148
+   ],
+   "title": {
+    "zhCN": "遗失的心跳",
+    "zhTW": "遺失的心跳",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧亚轩",
+    "zhTW": "蕭亞軒",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2954K.gm"
+  },
+  {
+   "gn": "sdom2954t.gn",
+   "fileId": 2954,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 126.02,
+   "levels": [
+    3,
+    4,
+    5
+   ],
+   "noteCounts": [
+    362,
+    395,
+    476
+   ],
+   "measurements": [
+    303,
+    314,
+    323
+   ],
+   "durations": [
+    148,
+    148,
+    148
+   ],
+   "title": {
+    "zhCN": "遗失的心跳",
+    "zhTW": "遺失的心跳",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧亚轩",
+    "zhTW": "蕭亞軒",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2954T.gm"
+  },
+  {
+   "gn": "sdom2955k.gn",
+   "fileId": 12955,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 122.5,
+   "levels": [
+    5,
+    11,
+    17
+   ],
+   "noteCounts": [
+    504,
+    906,
+    1026
+   ],
+   "measurements": [
+    349,
+    383,
+    383
+   ],
+   "durations": [
+    172,
+    172,
+    172
+   ],
+   "title": {
+    "zhCN": "怪咖",
+    "zhTW": "怪咖",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "薛之谦",
+    "zhTW": "薛之謙",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2955K.gm"
+  },
+  {
+   "gn": "sdom2955t.gn",
+   "fileId": 2955,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 122.5,
+   "levels": [
+    3,
+    4,
+    5
+   ],
+   "noteCounts": [
+    382,
+    429,
+    506
+   ],
+   "measurements": [
+    312,
+    326,
+    350
+   ],
+   "durations": [
+    172,
+    172,
+    172
+   ],
+   "title": {
+    "zhCN": "怪咖",
+    "zhTW": "怪咖",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "薛之谦",
+    "zhTW": "薛之謙",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2955T.gm"
+  },
+  {
+   "gn": "sdom2956k.gn",
+   "fileId": 12956,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 158.0,
+   "levels": [
+    9,
+    13,
+    21
+   ],
+   "noteCounts": [
+    878,
+    1190,
+    1297
+   ],
+   "measurements": [
+    450,
+    455,
+    456
+   ],
+   "durations": [
+    157,
+    157,
+    157
+   ],
+   "title": {
+    "zhCN": "海芋恋",
+    "zhTW": "海芋戀",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧敬腾",
+    "zhTW": "蕭敬騰",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2956K.gm"
+  },
+  {
+   "gn": "sdom2956t.gn",
+   "fileId": 2956,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 158.0,
+   "levels": [
+    4,
+    5,
+    6
+   ],
+   "noteCounts": [
+    532,
+    556,
+    581
+   ],
+   "measurements": [
+    432,
+    436,
+    443
+   ],
+   "durations": [
+    157,
+    157,
+    157
+   ],
+   "title": {
+    "zhCN": "海芋恋",
+    "zhTW": "海芋戀",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧敬腾",
+    "zhTW": "蕭敬騰",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2956T.gm"
   },
   {
    "gn": "sdom3.gn",

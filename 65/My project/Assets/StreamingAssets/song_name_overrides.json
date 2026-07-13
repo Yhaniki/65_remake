@@ -1,7 +1,7 @@
 {
  "schema": "song-name-overrides/2",
  "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist 會覆蓋 k.gn 顯示名。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。fileId/bpm/src 僅供辨識，runtime 不套用。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。",
- "count": 2168,
+ "count": 2175,
  "songs": [
   {
    "gn": "sdom1956",
@@ -10480,8 +10480,8 @@
    "fileId": 12491,
    "bpm": 160.0,
    "src": "kgn",
-   "title": "feat. 阿悄",
-   "artist": "本兮 - 無限速"
+   "title": "無限速",
+   "artist": "本兮 feat. 阿悄"
   },
   {
    "gn": "sdom2492",
@@ -17346,6 +17346,62 @@
    "src": "kgn",
    "title": "Identic Conflict",
    "artist": "BBN"
+  },
+  {
+   "gn": "sdom2950",
+   "fileId": 12950,
+   "bpm": 115.0,
+   "src": "manual",
+   "title": "空も飛べるはず",
+   "artist": "さよならポニーテール"
+  },
+  {
+   "gn": "sdom2951",
+   "fileId": 12951,
+   "bpm": 127.0,
+   "src": "kgn",
+   "title": "オノマトペメガネ",
+   "artist": "ササノマリイ"
+  },
+  {
+   "gn": "sdom2952",
+   "fileId": 12952,
+   "bpm": 140.0,
+   "src": "kgn",
+   "title": "ECHO",
+   "artist": "れをる,茶理理"
+  },
+  {
+   "gn": "sdom2953",
+   "fileId": 12953,
+   "bpm": 120.05,
+   "src": "kgn",
+   "title": "SLOW DOWN",
+   "artist": "向井太一"
+  },
+  {
+   "gn": "sdom2954",
+   "fileId": 12954,
+   "bpm": 126.02,
+   "src": "kgn",
+   "title": "遺失的心跳",
+   "artist": "蕭亞軒"
+  },
+  {
+   "gn": "sdom2955",
+   "fileId": 12955,
+   "bpm": 122.5,
+   "src": "kgn",
+   "title": "怪咖",
+   "artist": "薛之謙"
+  },
+  {
+   "gn": "sdom2956",
+   "fileId": 12956,
+   "bpm": 158.0,
+   "src": "kgn",
+   "title": "海芋戀",
+   "artist": "蕭敬騰"
   }
  ]
 }
