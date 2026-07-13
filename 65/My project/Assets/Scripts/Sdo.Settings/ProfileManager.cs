@@ -15,12 +15,12 @@ namespace Sdo.Settings
     /// 登入/選角 UI；<see cref="SetActive"/> + 編號資料夾本身就是多帳號的底層，未來線上版換掉 backing store
     /// （伺服器帳號 → 同一個 <see cref="UserProfile"/> 形狀）即可，呼叫端不動。
     ///
-    /// 路徑解析刻意自帶（不引用 Sdo.Game.SdoExtracted），讓 Sdo.Settings 維持 leaf assembly。id 格式/編號/挑選
-    /// 都是純函式（<see cref="FormatId"/> / <see cref="TryParseId"/> / <see cref="NextFreeId"/>），可單元測試。
+    /// 根目錄一律問 <see cref="SdoDataRoot"/>（同 assembly，維持 leaf），跟美術/音樂共用同一個 data root。id 格式/
+    /// 編號/挑選都是純函式（<see cref="FormatId"/> / <see cref="TryParseId"/> / <see cref="NextFreeId"/>），可單元測試。
     /// </summary>
     public static class ProfileManager
     {
-        public const string DirName = "PROFILE";
+        public const string DirName = SdoDataRoot.ProfileDirName;
         public const string ActiveFileName = "active.txt";
         public const string ProfileFileName = "profile.json";
         public const string DefaultId = "00000000";
@@ -43,10 +43,11 @@ namespace Sdo.Settings
         /// <summary>切換 active user 後觸發（收藏/房間預設已重載）。</summary>
         public static event Action ActiveChanged;
 
-        /// <summary>DATA/PROFILE 根目錄（延遲解析；可設值供測試覆寫）。</summary>
+        /// <summary>&lt;data root&gt;/PROFILE（延遲解析；可設值供測試覆寫）。根目錄由 <see cref="SdoDataRoot"/> 決定 ——
+        /// 跟美術/音樂/譜面同一個根（含 SDO_DATA_ROOT / data_root.txt 覆寫），存檔不會再跟資產分家。</summary>
         public static string Root
         {
-            get => _root ?? (_root = Path.Combine(ResolveDataDir(), DirName));
+            get => _root ?? (_root = SdoDataRoot.ProfileDir);
             set { _root = value; }
         }
 
@@ -270,25 +271,5 @@ namespace Sdo.Settings
 
         private static string DefaultNameForId(string id)
             => TryParseId(id, out var v) ? "玩家" + (v + 1).ToString("000", CultureInfo.InvariantCulture) : "玩家001";
-
-        /// <summary>解析 DATA 目錄（PROFILE 的上一層）。刻意鏡射 Sdo.Game.SdoExtracted.Root 的邏輯，讓本組件不必
-        /// 依賴 Sdo.Game：build 版 → &lt;exe&gt;/DATA；editor/dev → &lt;repo&gt;/assets/sdox_offline/Extracted；退回 &lt;exe&gt;/DATA。</summary>
-        private static string ResolveDataDir()
-        {
-            try
-            {
-                var exeDir = Directory.GetParent(Application.dataPath)?.FullName;
-                if (exeDir != null)
-                {
-                    var data = Path.Combine(exeDir, "DATA");
-                    if (Directory.Exists(data)) return data;
-                }
-                var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
-                var ex = Path.Combine(repo, "assets", "sdox_offline", "Extracted");
-                if (Directory.Exists(ex)) return ex;
-                return exeDir != null ? Path.Combine(exeDir, "DATA") : "DATA";
-            }
-            catch { return "DATA"; }
-        }
     }
 }

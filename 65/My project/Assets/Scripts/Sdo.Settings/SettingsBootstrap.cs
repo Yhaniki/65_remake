@@ -8,6 +8,10 @@ namespace Sdo.Settings
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Boot()
         {
+            // 開機第一行就把實際解析到的 data root 印出來（含 SDO_DATA_ROOT / data_root.txt 覆寫的結果）——
+            // 「資產/存檔到底讀哪一棵樹」以前只能靠猜。
+            Debug.Log($"[DataRoot] {SdoDataRoot.Root}  (profiles: {SdoDataRoot.ProfileDir})");
+
             ProfileManager.Boot();   // 先解析/建立 DATA/PROFILE（active 使用者+資料夾）—— settings.json 也放這層，故要先跑
             DisplaySettingsManager.Load();   // 讀 DATA/PROFILE/settings.json（舊 persistentDataPath 的會一次性遷移進來）
             DisplaySettingsManager.ApplyDisplay();

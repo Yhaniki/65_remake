@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using Sdo.Settings;
 using UnityEngine;
 
 namespace Sdo.Game
@@ -23,154 +24,13 @@ namespace Sdo.Game
         //                    Application.dataPath == <exeDir>/<exe>_Data, so the exe dir is its parent.
         //   • Editor / dev:  <repo>/assets/sdox_offline/Extracted  (derived repo-relative from Application.dataPath,
         //                    which is <repo>/65/My project/Assets — three levels up = repo root).
-        private static string _root;
+        // 解析本身住在 Sdo.Settings.SdoDataRoot（單一來源；存檔 ProfileManager 也走同一個根，不會再分裂）。
 
         /// <summary>Root of the SDO game data tree. Resolves lazily on first use; settable for tests/overrides.</summary>
         public static string Root
         {
-            get { return _root ?? (_root = ResolveRoot()); }
-            set { _root = value; }
-        }
-
-        private static string ResolveRoot()
-        {
-            // 0) Explicit override — env SDO_DATA_ROOT, or a one-line `data_root.txt` beside the exe / at the repo root.
-            //    Points the game at any prepared DATA tree (e.g. the pruned clean pack at H:\65_remake_clean\DATA)
-            //    without a rebuild or a hardcoded path. Falls through to the normal resolution if the path is invalid.
-            try { var cfg = ConfiguredRoot(); if (LooksLikeGameDataRoot(cfg)) return cfg; } catch { }
-
-            if (Application.isEditor)
-            {
-                try
-                {
-                    var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
-                    foreach (var root in DevRootCandidates(repo))
-                        if (LooksLikeGameDataRoot(root)) return root;
-                }
-                catch { /* ignore */ }
-            }
-
-            // 1) Built player: a DATA folder beside the exe.
-            try
-            {
-                var exeDir = Directory.GetParent(Application.dataPath)?.FullName;
-                if (exeDir != null)
-                {
-                    var data = Path.Combine(exeDir, "DATA");
-                    if (LooksLikeGameDataRoot(data)) return data;
-                }
-            }
-            catch { /* Application.dataPath unavailable in some contexts — fall through */ }
-
-            // 2) Editor / dev: repo-relative extracted tree.
-            try
-            {
-                var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
-                var ex = Path.Combine(repo, "assets", "sdox_offline", "Extracted");
-                if (LooksLikeGameDataRoot(ex)) return ex;
-            }
-            catch { /* ignore */ }
-
-            // 3) Last resort: assume the built layout even if not present yet.
-            try { return Path.Combine(Directory.GetParent(Application.dataPath)?.FullName ?? ".", "DATA"); }
-            catch { return "DATA"; }
-        }
-
-        /// <summary>Optional data-root override: env <c>SDO_DATA_ROOT</c> wins, else the first line of a
-        /// <c>data_root.txt</c> found beside the exe (built player) or at the repo root (editor). Null if none set.</summary>
-        private static string ConfiguredRoot()
-        {
-            try { var e = System.Environment.GetEnvironmentVariable("SDO_DATA_ROOT"); if (!string.IsNullOrEmpty(e)) return e.Trim(); } catch { }
-            string exeDir = null, repo = null;
-            try { exeDir = Directory.GetParent(Application.dataPath)?.FullName; } catch { }
-            try { repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "..")); } catch { }
-            foreach (var dir in new[] { exeDir, repo })
-            {
-                if (string.IsNullOrEmpty(dir)) continue;
-                try
-                {
-                    var f = Path.Combine(dir, "data_root.txt");
-                    if (File.Exists(f))
-                    {
-                        var line = File.ReadAllText(f).Trim();
-                        if (!string.IsNullOrEmpty(line)) return line;
-                    }
-                }
-                catch { }
-            }
-            return null;
-        }
-
-        private static bool LooksLikeGameDataRoot(string root)
-        {
-            if (string.IsNullOrEmpty(root)) return false;
-            try
-            {
-                if (!Directory.Exists(root)) return false;
-                if (File.Exists(Path.Combine(root, "AVATAR", "FEMALE.HRC"))) return true;
-                if (File.Exists(Path.Combine(root, "AVATAR", "MALE.HRC"))) return true;
-                if (Directory.Exists(Path.Combine(root, "3DEFT"))) return true;
-                if (Directory.Exists(Path.Combine(root, "SCENE"))) return true;
-                if (Directory.Exists(Path.Combine(root, "UI", "GAMEPLAY"))) return true;
-            }
-            catch { }
-            return false;
-        }
-
-        private static List<string> DevRootCandidates(string repo)
-        {
-            var roots = new List<string>();
-            AddDevRoot(roots, repo);
-            AddDevRoot(roots, ResolveGitPrimaryWorktree(repo));
-
-            try
-            {
-                var parent = Directory.GetParent(repo)?.FullName;
-                var name = Path.GetFileName(repo);
-                var dash = name.IndexOf('-');
-                if (parent != null && dash > 0)
-                    AddDevRoot(roots, Path.Combine(parent, name.Substring(0, dash)));
-            }
-            catch { }
-
-            return roots;
-        }
-
-        private static void AddDevRoot(List<string> roots, string repo)
-        {
-            if (string.IsNullOrEmpty(repo)) return;
-            try
-            {
-                var root = Path.GetFullPath(Path.Combine(repo, "assets", "sdox_offline", "Extracted"));
-                foreach (var existing in roots)
-                    if (string.Equals(existing, root, System.StringComparison.OrdinalIgnoreCase)) return;
-                roots.Add(root);
-            }
-            catch { }
-        }
-
-        private static string ResolveGitPrimaryWorktree(string repo)
-        {
-            try
-            {
-                var dotGit = Path.Combine(repo, ".git");
-                if (Directory.Exists(dotGit)) return repo;
-                if (!File.Exists(dotGit)) return null;
-
-                var text = File.ReadAllText(dotGit).Trim();
-                const string prefix = "gitdir:";
-                if (!text.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase)) return null;
-
-                var gitDir = text.Substring(prefix.Length).Trim();
-                if (!Path.IsPathRooted(gitDir))
-                    gitDir = Path.GetFullPath(Path.Combine(repo, gitDir));
-
-                var dir = new DirectoryInfo(gitDir);
-                while (dir != null && !string.Equals(dir.Name, ".git", System.StringComparison.OrdinalIgnoreCase))
-                    dir = dir.Parent;
-                return dir?.Parent?.FullName;
-            }
-            catch { return null; }
+            get { return SdoDataRoot.Root; }
+            set { SdoDataRoot.Root = value; }
         }
 
         /// <summary>Directory of the (built) exe — parent of Application.dataPath; "." if unavailable.</summary>
