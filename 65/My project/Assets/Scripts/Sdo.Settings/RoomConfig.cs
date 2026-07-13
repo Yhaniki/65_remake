@@ -37,6 +37,7 @@ namespace Sdo.Settings
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
                            optPlayFullSong = false, optSongSpeed = true;
+        public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
 
         public const string FileName = "config.ini";
@@ -153,6 +154,7 @@ namespace Sdo.Settings
                     case "opt_effectCharacter": optEffectChar = ParseBool(val, optEffectChar); break;
                     case "opt_effectScene": optEffectScene = ParseBool(val, optEffectScene); break;
                     case "opt_cameraAuto": optCameraAuto = ParseBool(val, optCameraAuto); break;
+                    case "opt_cameraFixed": optCameraFixed = ParseInt(val, optCameraFixed); break;
                     case "opt_callCardInGame": optCallCard = ParseBool(val, optCallCard); break;
                     case "opt_playFullSong": optPlayFullSong = ParseBool(val, optPlayFullSong); break;
                     case "opt_songSpeed": optSongSpeed = ParseBool(val, optSongSpeed); break;
@@ -218,6 +220,8 @@ namespace Sdo.Settings
             sb.Append("opt_effectCharacter=").Append(B(optEffectChar)).Append('\n');
             sb.Append("opt_effectScene=").Append(B(optEffectScene)).Append('\n');
             sb.Append("opt_cameraAuto=").Append(B(optCameraAuto)).Append('\n');
+            sb.Append("# 固定視角用哪一台（0~5，＝遊戲中 F2 循環的 6 台固定鏡頭；F2 切了會寫回這裡）\n");
+            sb.Append("opt_cameraFixed=").Append(optCameraFixed).Append('\n');
             sb.Append("opt_callCardInGame=").Append(B(optCallCard)).Append('\n');
             sb.Append("opt_playFullSong=").Append(B(optPlayFullSong)).Append('\n');
             sb.Append("opt_songSpeed=").Append(B(optSongSpeed)).Append('\n');
@@ -258,6 +262,7 @@ namespace Sdo.Settings
                 var g = s.gameplay;
                 optFullscreenFill = g.fullscreenFill; optBloom = g.bloom; optNotesPanelLeft = g.notesPanelLeft;
                 optEffectChar = g.effectCharacter; optEffectScene = g.effectScene; optCameraAuto = g.cameraAuto;
+                optCameraFixed = g.cameraFixed;
                 optCallCard = g.callCardInGame; optPlayFullSong = g.playFullSong; optSongSpeed = g.songSpeed;
                 optPanelOpacity = g.panelOpacity;
             }
@@ -282,6 +287,7 @@ namespace Sdo.Settings
             var g = s.gameplay;
             g.fullscreenFill = optFullscreenFill; g.bloom = optBloom; g.notesPanelLeft = optNotesPanelLeft;
             g.effectCharacter = optEffectChar; g.effectScene = optEffectScene; g.cameraAuto = optCameraAuto;
+            g.cameraFixed = optCameraFixed;
             g.callCardInGame = optCallCard; g.playFullSong = optPlayFullSong; g.songSpeed = optSongSpeed;
             g.panelOpacity = optPanelOpacity;
         }

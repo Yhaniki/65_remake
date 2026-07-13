@@ -23,6 +23,12 @@ namespace Sdo.Game
         // (Perfect +2 / Cool +1 / Bad -5 / Miss -30): lighter miss AND proportionally lighter Bad drain.
         public int healthLevel = 2;
         public bool autoPlay = true;
+        // F7 打拍音:譜面上每個音符響一聲 click。F8 自動打擊。兩者都是「開發/練習用開關」,按下去後**下一首歌會延續**
+        // (靜態欄位 = 同一次執行內有效),但**不寫進設定檔** —— 重開遊戲就回到預設。FrontendApp 每次開局都會把
+        // autoPlay 設回 false(正常遊玩),所以 F8 的延續要靠 s_autoPlay 這個「玩家按過才存在」的覆寫值在 Start 蓋回去。
+        public bool assistTick;
+        private static bool s_assistTick;
+        private static bool? s_autoPlay;   // null = 玩家這次執行還沒按過 F8 → 照 FrontendApp/Inspector 給的值
         // DEBUG: force a grade on every manual hit (-1 = real timing window). F4 panel selects it.
         public int forcedJudge = -1;
         private static readonly string[] ForceJudgeLabels = { "Real", "Perfect", "Cool", "Bad", "Miss" };
@@ -128,6 +134,15 @@ namespace Sdo.Game
         private readonly GameplayClock _clock = new GameplayClock();
         private AudioSource _audio, _sfx, _ambient;
         private readonly Dictionary<string, AudioClip> _seCache = new Dictionary<string, AudioClip>();
+        // ---- 打拍音 (F7, StepMania assist tick) ----
+        // 每個有音符的 row 響一聲 click(練習/對拍用)。開關**跨歌延續**(s_assistTick,同一次執行內),但不落地存檔 —
+        // 等同 StepMania 的 GAMESTATE->m_StoredSongOptions.m_bAssistTick(「Store this change, so it sticks if we change songs」)。
+        // 排程走音訊時鐘(PlayScheduled),不是「這幀到了就播」,所以不吃 frame rate 抖動。
+        private readonly AssistTick _tick = new AssistTick();
+        private AudioClip _tickClip;
+        private AudioSource[] _tickVoices;      // 小型輪替池:密集 16 分音符時,前一聲還在響就換下一個音源
+        private int _tickVoice;
+        private const int TickVoices = 8;
         // Per-scene ambient SE (decompiled SeMgr_PlayVoiceTimed, gated on scene id in Gameplay_Update): only a few
         // scenes carry an intermittent ambience (sea waves / stadium crowd / underwater bubbles / garden); see
         // AmbientSeName + TickAmbient. Most scenes are BGM/song-only.
@@ -306,8 +321,12 @@ namespace Sdo.Game
         public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
         public bool playFullSong = false;   // 進階「無失敗模式」：HP 歸零不判失敗，整首照打(判定/舞蹈續行)到曲末，結算走正常名次(不出 GAME OVER)
-        // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖鏡頭 1，無開場運鏡)。
+        // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖 cameraFixedIndex 那台，無開場運鏡)。
         public bool cameraAuto = true;
+        public int cameraFixedIndex = 0;    // 固定視角鎖第幾台（0..FixedCamCount-1）＝上次在遊戲中用 F2 切到的那台
+        // 遊戲中按 F2 換鏡頭時回報新的模式（-1=自動導播 / 0..n-1=固定鏡頭）。前端(FrontendApp)接起來寫回 OPTION 設定，
+        // 所以下一局會停在同一台，OPTION「遊戲視角」的標籤也會跟著變成 固定/默認。
+        public Action<int> onCamModeChanged;
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
         // ── NOTE-PANEL POSITION (two orthogonal player settings, wired in by FrontendApp before boot; see NotePanelLayout).
         // dropDirection = Room win2「掉落方式」(0=向上 top/up-scroll, 1=向下 bottom/down-scroll, 2=傾斜→比照向下);
@@ -710,6 +729,10 @@ namespace Sdo.Game
 
         private void Start()
         {
+            // 跨歌延續的開關(F7 打拍音 / F8 自動打擊)。在這裡套用:FrontendApp 是在 AddComponent 之後、Start 之前
+            // 才設欄位的,所以要等到 Start 才蓋得過它那句 autoPlay = false。
+            assistTick = s_assistTick;
+            if (s_autoPlay.HasValue) autoPlay = s_autoPlay.Value;
             ResolveDevDefaults();
             ConfigureAvatarGender();
             _cam = Camera.main ?? new GameObject("Main Camera") { tag = "MainCamera" }.AddComponent<Camera>();
@@ -787,10 +810,12 @@ namespace Sdo.Game
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
             _ambient = gameObject.AddComponent<AudioSource>();
+            BuildAssistTick();   // F7 打拍音:本譜的 tick 時間軸 + 排程用的音源池
             var ambName = AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
             if (!string.IsNullOrEmpty(ambName)) StartCoroutine(LoadAmbientCo(ambName));
-            // OPTION 遊戲頁「固定」視角：鎖定鏡頭 1（FixedEye[0]），跳過自動導播的開場運鏡。默認視角則維持 -1(自動)。
-            if (!cameraAuto) _camMode = 0;
+            // OPTION 遊戲頁「固定」視角：鎖定上次記住的那台（F2 切過就是那台，預設 FixedEye[0]＝鏡頭 1），
+            // 跳過自動導播的開場運鏡。默認視角則維持 -1(自動)。
+            if (!cameraAuto) _camMode = Mathf.Clamp(cameraFixedIndex, 0, FixedEye.Length - 1);
             // Enter on the crane with no note board: hold the track hidden while the opening shot flies in, then
             // OpeningSequence() reveals it with READY. Only when there's actually a 3D crane to watch AND the camera is
             // on the auto-director (固定視角沒有吊臂運鏡，直接顯示 note 面板)。
@@ -888,6 +913,57 @@ namespace Sdo.Game
                 _seCache[name] = clip;
             }
             if (clip != null && _sfx != null) _sfx.PlayOneShot(clip, AudioMix.Sfx);   // 遊戲音效 音量
+        }
+
+        // ---- 打拍音 (F7) — StepMania ScreenGameplay::PlayTicks() 的移植 ----
+
+        // 本譜的 tick 時間軸(每個音符的頭,同時間的只留一個)+ 排程用的音源池。SE 庫裡沒有 StepMania 那顆 clap,
+        // 所以 click 是合成的(AssistTick.RenderClick,純函式)。
+        private void BuildAssistTick()
+        {
+            _tick.Load(NoteStartTimes());
+            int rate = AudioSettings.outputSampleRate > 0 ? AudioSettings.outputSampleRate : 48000;
+            var pcm = AssistTick.RenderClick(rate);
+            _tickClip = AudioClip.Create("AssistTick", pcm.Length, 1, rate, false);
+            _tickClip.SetData(pcm, 0);
+            _tickVoices = new AudioSource[TickVoices];
+            for (int i = 0; i < TickVoices; i++)
+            {
+                var a = gameObject.AddComponent<AudioSource>();
+                a.clip = _tickClip; a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
+                _tickVoices[i] = a;
+            }
+        }
+
+        private IEnumerable<double> NoteStartTimes()
+        {
+            foreach (var n in _notes) yield return n.Note.StartTimeMs;
+        }
+
+        // 每幀:把「地平線(now + lookahead)之前」的 tick 全部排進音訊時鐘。tick 的譜面時間 → dspTime 用的是**音樂本身
+        // 的映射**(_songStartDspTime + (t − 數拍前導)),跟歌曲同一支時鐘,所以 click 落點是取樣級精準,不受 frame rate 影響。
+        // 關閉時每幀把游標推到現在:中途才按 F7 打開,只會從當下的音符開始響(不會把前面累積的一次倒光)。
+        private void TickAssist(double nowMs)
+        {
+            if (_tickVoices == null) return;
+            if (!assistTick || _ended || Time.timeScale <= 0f) { _tick.Rewind(nowMs); return; }
+            double horizon = nowMs + AssistTick.DefaultLookaheadMs;
+            while (_tick.TryDequeue(horizon, out double tMs))
+            {
+                double dsp = _songStartDspTime + (tMs / 1000.0 - _musicStartDelaySec);
+                var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+                v.volume = AudioMix.Sfx;
+                v.Stop();   // 輪到的音源可能還在響上一聲(超密集譜)→ 蓋掉
+                v.PlayScheduled(System.Math.Max(dsp, AudioSettings.dspTime));
+            }
+        }
+
+        // F7 按下去當場響一聲(開/關的聽覺回饋 — 這畫面沒有 StepMania 那條除錯字幕)
+        private void PlayTickOnce()
+        {
+            if (_tickVoices == null || _tickClip == null) return;
+            var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+            v.Stop(); v.volume = AudioMix.Sfx; v.Play();
         }
 
         // ---- per-scene ambient SE (decompiled Gameplay_Update PlayVoiceTimed switch on scene id) ----
@@ -2101,7 +2177,11 @@ namespace Sdo.Game
                 if (_dirShot == 0 && _dirCv != null && _dirCv.Length > 1) _dirShot = 1;
                 _dirShotStart = Time.time;
             }
+            onCamModeChanged?.Invoke(_camMode);   // 記住玩家的選擇（OPTION「遊戲視角」＋下一局的開場鏡頭）
         }
+
+        /// <summary>F2 可循環的固定鏡頭台數（前端把玩家選到的那台存進 OPTION 設定時要夾範圍）。</summary>
+        public static int FixedCamCount => FixedEye.Length;
         // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
         // stays readable after this GameObject is destroyed as long as the caller grabs the reference first.
         public bool Finished => _ended;          // song played out (or failed) — time to settle
@@ -3354,10 +3434,17 @@ namespace Sdo.Game
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
-            // F8：Auto（自動）模式開關 — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）
-            if (Input.GetKeyDown(KeyCode.F8)) { autoPlay = !autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按 F8 發出 SE_0001
-            // DEBUG F7（暫時停用）：切換 ShowTime（氣條）模式。註解掉避免誤觸；要測時再打開。
-            // if (Input.GetKeyDown(KeyCode.F7)) { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // SetTrackVisible refreshes HP-bar visibility for the new mode
+            // F8：Auto（自動）模式開關 — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
+            if (Input.GetKeyDown(KeyCode.F8)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按 F8 發出 SE_0001
+            // F7：打拍音（StepMania assist tick）— 每個音符響一聲 click，方便對拍。s_assistTick = 跨歌延續（不存檔）。
+            if (Input.GetKeyDown(KeyCode.F7))
+            {
+                assistTick = !assistTick; s_assistTick = assistTick;
+                if (assistTick) { _tick.Rewind(_nowMs); PlayTickOnce(); }   // 從當下的音符開始響（不補播過去的）
+                Debug.Log("[dbg] Assist Tick is " + (assistTick ? "ON" : "OFF"));
+            }
+            // DEBUG（暫時停用）：切換 ShowTime（氣條）模式。註解掉避免誤觸；F7 現在給打拍音，要測時請自己挑個沒用到的鍵。
+            // { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // SetTrackVisible refreshes HP-bar visibility for the new mode
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
             // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
             if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
@@ -3435,6 +3522,7 @@ namespace Sdo.Game
             double now = _clock.CurrentMs;
             _nowMs = now;
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
+            TickAssist(now);   // F7 打拍音：把接下來 250ms 內的 tick 排進音訊時鐘（關閉時只推游標）
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)

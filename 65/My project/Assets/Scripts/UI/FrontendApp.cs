@@ -230,13 +230,29 @@ namespace Sdo.UI
             {
                 game.effectCharacter = gp.effectCharacter;       // 人物特效（100/200/300 combo EFT）
                 game.effectScene = gp.effectScene;               // 場景特效（常駐背景 EFT）
-                game.cameraAuto = gp.cameraAuto;                 // 遊戲視角：默認(自動導播)/固定(鏡頭1)
+                game.cameraAuto = gp.cameraAuto;                 // 遊戲視角：默認(自動導播)/固定
+                game.cameraFixedIndex = gp.cameraFixed;          // 固定視角鎖第幾台＝上次在遊戲中用 F2 切到的那台
+                game.onCamModeChanged = PersistCamMode;          // 遊戲中 F2 換鏡頭 → 記住（見 PersistCamMode）
                 game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
                 game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
                 game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
                 game.constantScroll = !gp.songSpeed;             // 進階「歌曲變速」關 → 整首固定流速（忽略譜面 BPM 變化 / SV）
             }
             _activeGame = game;
+        }
+
+        // 遊戲中按 F2 換鏡頭 → 存進 OPTION 遊戲頁的「遊戲視角」：切到固定鏡頭就記住是第幾台且標籤變「固定」，
+        // 循環回自動導播就變回「默認」（台號保留）。落地到 settings.json（裝置層）＋ per-user config.ini 的 [Option]，
+        // 否則下次開機 config.ini 會用舊值把它蓋回去。值沒變就不寫檔。
+        private static void PersistCamMode(int camMode)
+        {
+            var s = DisplaySettingsManager.Settings;
+            if (s == null) return;
+            s.gameplay ??= new GameplaySettings();
+            if (!s.gameplay.SetFromCamMode(camMode, ScreenGameplay.FixedCamCount)) return;
+            DisplaySettingsManager.Save();
+            RoomConfig.CaptureOptionFrom(s);
+            RoomConfig.Save();
         }
 
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),

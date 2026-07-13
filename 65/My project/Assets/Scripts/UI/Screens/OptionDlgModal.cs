@@ -51,6 +51,7 @@ namespace Sdo.UI.Screens
 
         // 遊戲 (OptionGameWindow) working copy — committed to settings.gameplay on Save. See BuildGame.
         private bool _gpAspectFill, _gpBloom, _gpNotesLeft, _gpFxPlayer, _gpFxScene, _gpViewAuto, _gpCallShow;
+        private int _gpViewFixed;       // 「固定」視角鎖第幾台鏡頭（遊戲中 F2 切到哪台就記哪台；這裡只是跟著存/還原）
         private bool _gpPlayFullSong;   // 進階「完奏模式」（放在進階頁最上面，存 settings.gameplay.playFullSong）
         private bool _gpSongSpeed;      // 進階「歌曲變速」（存 settings.gameplay.songSpeed）
         private float _gpPanelOpacity;
@@ -566,6 +567,7 @@ namespace Sdo.UI.Screens
             g ??= new GameplaySettings();
             _gpAspectFill = g.fullscreenFill; _gpBloom = g.bloom; _gpNotesLeft = g.notesPanelLeft;
             _gpFxPlayer = g.effectCharacter; _gpFxScene = g.effectScene; _gpViewAuto = g.cameraAuto;
+            _gpViewFixed = g.cameraFixed;
             _gpCallShow = g.callCardInGame;
             _gpPlayFullSong = g.playFullSong;
             _gpSongSpeed = g.songSpeed;
@@ -576,6 +578,7 @@ namespace Sdo.UI.Screens
         {
             g.fullscreenFill = _gpAspectFill; g.bloom = _gpBloom; g.notesPanelLeft = _gpNotesLeft;
             g.effectCharacter = _gpFxPlayer; g.effectScene = _gpFxScene; g.cameraAuto = _gpViewAuto;
+            g.cameraFixed = _gpViewFixed;
             g.callCardInGame = _gpCallShow;
             g.playFullSong = _gpPlayFullSong;
             g.songSpeed = _gpSongSpeed;
