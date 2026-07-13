@@ -10,8 +10,8 @@ namespace Sdo.UI.Util
     /// Loads the original 商城 (SHOP) UI art — mirrors <see cref="RoomUiArt"/> / <see cref="RoomDlgArt"/> exactly, only
     /// the folder leaf differs (SHOP). The .an files reference crops of SHOP.png / atlas pages in the same folder, so
     /// <see cref="SdoExtracted.LoadAn1"/> (PNG + crop + Y-flip) loads them directly — no DDS decode needed. Folder
-    /// resolution prefers the ONLINE art (閉撰敃氪/DatasSDO/UI/SHOP), matching the room screens' convention; built
-    /// player falls back to DATA/UI/SHOP. Returns null for a missing asset; callers guard.
+    /// resolution reads DATA/UI/SHOP under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan (the resolved data
+    /// root, e.g. the pruned clean pack via data_root.txt, is the single UI source). Returns null for a missing asset; callers guard.
     /// </summary>
     public static class ShopArt
     {
@@ -57,13 +57,8 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));   // .../assets
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "SHOP"));
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "SHOP"));
-                return RoomDlgArt.PickDir(ordered, Directory.Exists);
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "SHOP");
             }
             catch { return Path.Combine(SdoExtracted.Root, "UI", "SHOP"); }
         }

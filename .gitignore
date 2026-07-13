@@ -3,6 +3,9 @@
 Thumbs.db
 Desktop.ini
 
+# Local machine-specific data-root override (SdoExtracted.ConfiguredRoot) — points the game at a prepared DATA tree
+data_root.txt
+
 # IDE / Editor
 .vs/
 .vscode/

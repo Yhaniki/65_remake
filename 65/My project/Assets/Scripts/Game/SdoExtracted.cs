@@ -34,6 +34,11 @@ namespace Sdo.Game
 
         private static string ResolveRoot()
         {
+            // 0) Explicit override — env SDO_DATA_ROOT, or a one-line `data_root.txt` beside the exe / at the repo root.
+            //    Points the game at any prepared DATA tree (e.g. the pruned clean pack at H:\65_remake_clean\DATA)
+            //    without a rebuild or a hardcoded path. Falls through to the normal resolution if the path is invalid.
+            try { var cfg = ConfiguredRoot(); if (LooksLikeGameDataRoot(cfg)) return cfg; } catch { }
+
             if (Application.isEditor)
             {
                 try
@@ -69,6 +74,31 @@ namespace Sdo.Game
             // 3) Last resort: assume the built layout even if not present yet.
             try { return Path.Combine(Directory.GetParent(Application.dataPath)?.FullName ?? ".", "DATA"); }
             catch { return "DATA"; }
+        }
+
+        /// <summary>Optional data-root override: env <c>SDO_DATA_ROOT</c> wins, else the first line of a
+        /// <c>data_root.txt</c> found beside the exe (built player) or at the repo root (editor). Null if none set.</summary>
+        private static string ConfiguredRoot()
+        {
+            try { var e = System.Environment.GetEnvironmentVariable("SDO_DATA_ROOT"); if (!string.IsNullOrEmpty(e)) return e.Trim(); } catch { }
+            string exeDir = null, repo = null;
+            try { exeDir = Directory.GetParent(Application.dataPath)?.FullName; } catch { }
+            try { repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "..")); } catch { }
+            foreach (var dir in new[] { exeDir, repo })
+            {
+                if (string.IsNullOrEmpty(dir)) continue;
+                try
+                {
+                    var f = Path.Combine(dir, "data_root.txt");
+                    if (File.Exists(f))
+                    {
+                        var line = File.ReadAllText(f).Trim();
+                        if (!string.IsNullOrEmpty(line)) return line;
+                    }
+                }
+                catch { }
+            }
+            return null;
         }
 
         private static bool LooksLikeGameDataRoot(string root)
@@ -271,8 +301,25 @@ namespace Sdo.Game
         private static readonly Dictionary<string, Texture2D> _texCache = new Dictionary<string, Texture2D>();
         private static readonly HashSet<Texture2D> _bled = new HashSet<Texture2D>();
 
+        // DEV load-trace: when env SDO_TRACE_LOADS names a file, EVERY attempted texture path (png/bmp/dds) is appended
+        // there — the ground-truth "what gameplay actually loads", used by the dead-art prune to avoid false-deletes.
+        private static System.IO.StreamWriter _trace;
+        private static bool _traceInit;
+        private static void TraceLoad(string path)
+        {
+            if (!_traceInit)
+            {
+                _traceInit = true;
+                try { var p = System.Environment.GetEnvironmentVariable("SDO_TRACE_LOADS");
+                      if (!string.IsNullOrEmpty(p)) _trace = new StreamWriter(p, true) { AutoFlush = true }; } catch { }
+            }
+            if (_trace == null) return;
+            try { lock (_trace) _trace.WriteLine(path); } catch { }
+        }
+
         private static Texture2D LoadTexture(string path)
         {
+            TraceLoad(path);
             if (_texCache.TryGetValue(path, out var t) && t != null) return t;
             if (!File.Exists(path)) return null;
             var bytes = File.ReadAllBytes(path);
@@ -472,6 +519,7 @@ namespace Sdo.Game
 
         private static Texture2D LoadTextureLinear(string path)
         {
+            TraceLoad(path);
             if (_texLinearCache.TryGetValue(path, out var t) && t != null) return t;
             if (!File.Exists(path)) return null;
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);   // linear=true

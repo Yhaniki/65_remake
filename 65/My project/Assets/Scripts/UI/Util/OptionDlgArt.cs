@@ -13,9 +13,8 @@ namespace Sdo.UI.Util
     /// the 1024×1024 atlas by pixel rect (top-left origin, Y-flipped for Unity); the .an indirection is bypassed
     /// because those .an files point at the ORIGINAL (text-baked) OPTIONDLG.png.
     ///
-    /// Folder resolution mirrors <see cref="RoomDlgArt"/>: prefer the online 閉撰敃氪 set in dev, fall back to
-    /// DATA/UI/OPTIONDLG beside a built exe (package_build overlays the clean atlas there). If the clean atlas is
-    /// missing it falls back to the raw one (text still baked, but nothing crashes).
+    /// Folder resolution reads DATA/UI/OPTIONDLG under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan. If the
+    /// clean atlas is missing it falls back to the raw one (text still baked, but nothing crashes).
     /// </summary>
     public static class OptionDlgArt
     {
@@ -37,13 +36,8 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "OPTIONDLG"));
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "OPTIONDLG"));
-                return RoomDlgArt.PickDir(ordered, Directory.Exists);   // reuse the same pure picker
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "OPTIONDLG");
             }
             catch { return Path.Combine(SdoExtracted.Root, "UI", "OPTIONDLG"); }
         }

@@ -147,13 +147,8 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "BUBBLE2"));
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "BUBBLE2"));
-                return RoomDlgArt.PickDir(ordered, Directory.Exists);
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "BUBBLE2");
             }
             catch
             {

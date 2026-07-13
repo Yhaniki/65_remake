@@ -11,12 +11,8 @@ namespace Sdo.UI.Util
     /// MUSICSELDLG.PNG / SCENE.PNG sitting in the same folder, so <see cref="SdoExtracted.LoadAn1"/>
     /// (PNG + crop + Y-flip,底圖快取) loads them directly — no DDS decode needed.
     ///
-    /// Folder resolution prefers the ONLINE art (閉撰敃氪/DatasSDO/UI/ROOMDLG) over the standalone
-    /// Extracted tree, because the user picked the 閉撰敃氪 set as the canonical look:
-    ///   1. dev: scan assets/ for any &lt;sub&gt;/DatasSDO/UI/ROOMDLG (hits 閉撰敃氪/DatasSDO/... ; the
-    ///      oddly-encoded folder name is matched by structure, never hardcoded);
-    ///   2. built/fallback: DATA/UI/ROOMDLG (packaging overlays the 閉撰敃氪 art there beside the exe).
-    /// In a built player there is no assets/ tree, so (1) finds nothing and it falls to DATA/UI/ROOMDLG.
+    /// Folder resolution reads DATA/UI/ROOMDLG under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan. The
+    /// resolved data root (e.g. the pruned clean pack, pointed at via data_root.txt) is the single source for UI art.
     /// Returns null for a missing asset; callers guard.
     /// </summary>
     public static class RoomDlgArt
@@ -36,16 +32,8 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                // 1) dev: assets/*/DatasSDO/UI/ROOMDLG (online 閉撰敃氪 art preferred).
-                //    SdoExtracted.Root = .../assets/sdox_offline/Extracted -> assets/ is two parents up.
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "ROOMDLG"));
-                // 2) built/fallback: DATA/UI/ROOMDLG (last = used when nothing above exists).
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "ROOMDLG"));
-                return PickDir(ordered, Directory.Exists);
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "ROOMDLG");
             }
             catch
             {
