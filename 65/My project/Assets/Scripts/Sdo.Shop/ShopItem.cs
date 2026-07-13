@@ -29,7 +29,10 @@ namespace Sdo.Shop
         public ItemSlotType SlotType => ItemTypes.SlotTypeFromCategory(Category);
         public EquipSlot EquipSlot => ItemTypes.EquipSlotFromCategory(Category);
         public bool IsClothes => SlotType == ItemSlotType.Clothes;
-        public bool IsConsumable => Category == ItemCategory.MainConsumables;
+        /// <summary>會堆疊的消耗品 (道具/藥水/寵物食物/禮包) —— 買第二次是 +數量。</summary>
+        public bool IsConsumable => ItemTypes.IsStackable(Category);
+        /// <summary>非穿戴的 2D 商品 (道具/藥水/特效/寵物/禮包)：沒有 avatar mesh，商品格畫 ITEM2D 圖示、不能試穿。</summary>
+        public bool IsProp => ItemTypes.IsProp(EquipSlot);
         public bool IsPermanent => DurationDays < 0;
 
         /// <summary>Gender folder token for the model files (MAN / WOMAN), from the category block.</summary>

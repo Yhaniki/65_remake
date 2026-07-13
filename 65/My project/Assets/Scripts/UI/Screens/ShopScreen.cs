@@ -180,12 +180,51 @@ namespace Sdo.UI.Screens
             new SlotTab{ Slot=EquipSlot.None,       Lit="PateBtn_2.an", Dim="PateBtn_1.an", X=596 }, // 头饰 (官方 CheckBox name="pate";離線無資料→None)
             new SlotTab{ Slot=EquipSlot.None,       Lit="ShoulderBtn_2.an", Dim="ShoulderBtn_1.an", X=650 }, // 肩饰 (官方 name="shoulder";離線無資料→None)
         };
+        // ---- 道具店 (SHOP.XML Window name="Property" @ y101)：非衣服的 2D 商品。art/座標逐字取自官方 XML。----
+        //      官方 4 個 CheckBox：funcprop(功能道具) / pill(藥水) / effectplayer(人物特效) / actioncard(動作卡)。
+        //      iteminfo 對得上前三個 (21000/22000/24000)；actioncard 離線無任何 category 對應 → None (點了沒反應)。
+        private static readonly SlotTab[] PropertyTabs =
+        {
+            new SlotTab{ Slot=EquipSlot.Consumable, Lit="Shop106.an", Dim="Shop105.an", X=325 }, // 功能道具 (cat21000,188 件:小喇叭…)
+            new SlotTab{ Slot=EquipSlot.Potion,     Lit="Shop109.an", Dim="Shop108.an", X=379 }, // 药水     (cat22000,21 件:标准/纤瘦/胖胖药水)
+            new SlotTab{ Slot=EquipSlot.Effect,     Lit="Shop118.an", Dim="Shop117.an", X=433 }, // 人物特效 (cat24000,36 件:樱花纷飞…背景卡)
+            new SlotTab{ Slot=EquipSlot.None,       Lit="Shop210.an", Dim="Shop209.an", X=488 }, // 动作卡   (離線 iteminfo 無此類 → 空)
+        };
+        // ---- 伙伴店 (SHOP.XML Window name="Shoppet" @ y100)：寵物。子分頁→category 取自線上反編譯
+        //      (sdo.bin.c:517331 FUN_007ad450 一長串 if/else 把按鈕對到 category code):
+        //      Petavt 41000 / Petclo **43000(衣服)** / Pethead **42000(頭飾)** / Petface 45000(離線 0 筆) / Petpro 44000。
+        //      官方 Petface 與 Pethead 的 x 都是 432 (改版殘留) → 重製只擺 Pethead 那顆 (有資料的那個)。
+        private static readonly SlotTab[] ShoppetTabs =
+        {
+            new SlotTab{ Slot=EquipSlot.Pet,        Lit="Shop191.an", Dim="Shop190.an", X=324 }, // 宠物     (41000,52 件,1000xxx → UI/MATCHITEMS 2D 圖示)
+            new SlotTab{ Slot=EquipSlot.PetClothes, Lit="Shop194.an", Dim="Shop193.an", X=378 }, // 宠物衣服 (43000,24 件,1040xxx → 共用 coat mesh + 各自貼圖)
+            new SlotTab{ Slot=EquipSlot.PetHead,    Lit="Shop197.an", Dim="Shop196.an", X=432 }, // 宠物头饰 (42000,21 件,1030xxx → PETAVATAR/*_HEADEAR.MSH)
+            new SlotTab{ Slot=EquipSlot.PetProp,    Lit="Shop37.an",  Dim="Shop36.an",  X=486 }, // 宠物道具 (44000,10 件,1090xxx:饼干 → 2D 圖示)
+        };
+        // ---- 礼包店 (頂端 Shop_29 分頁) → 單一清單 (cat14000,28 件禮包)。官方其實把禮包擺在「专卖店」的 package
+        //      子分頁 (反編譯:Exclusive 的 package → code 14000);重製版留著這顆已經做好的頂端分頁,兩邊同一份清單。----
+        private static readonly SlotTab[] GiftpackTabs = System.Array.Empty<SlotTab>();
+        // ---- 专卖店 (Window name="Exclusive")：yiyuan/hot/discount/merry 是**伺服器下發的促銷旗標**,不是 category →
+        //      離線永遠空 (None);只有 package = 14000 禮包有資料 (與礼包店同一份)。----
+        private static readonly SlotTab[] ExclusiveTabs =
+        {
+            new SlotTab{ Slot=EquipSlot.None,     Lit="Shop137.an", Dim="Shop136.an", X=323 }, // 一元 (促銷,離線無)
+            new SlotTab{ Slot=EquipSlot.None,     Lit="Shop85.an",  Dim="Shop84.an",  X=378 }, // 热卖 (促銷,離線無)
+            new SlotTab{ Slot=EquipSlot.None,     Lit="Shop34.an",  Dim="Shop33.an",  X=433 }, // 折扣 (促銷,離線無)
+            new SlotTab{ Slot=EquipSlot.None,     Lit="Shop134.an", Dim="Shop133.an", X=488 }, // 喜庆 (促銷,離線無)
+            new SlotTab{ Slot=EquipSlot.GiftPack, Lit="Shop88.an",  Dim="Shop87.an",  X=547 }, // 礼包 (14000)
+        };
+
         private static SlotTab[] TabsFor(Store s)
         {
             switch (s)
             {
+                case Store.Exclusive: return ExclusiveTabs;
                 case Store.Clothing: return ClothingTabs;
                 case Store.Cosmetology: return CosmetologyTabs;
+                case Store.Property: return PropertyTabs;
+                case Store.Shoppet: return ShoppetTabs;
+                case Store.Giftpack: return GiftpackTabs;
                 default: return System.Array.Empty<SlotTab>();
             }
         }
@@ -432,8 +471,11 @@ namespace Sdo.UI.Screens
             _store = s;
             _page = 0;
             _showHistory = false;   // 換店 → 退出穿搭歷史模式 (#6)
-            // 服装店預設落在「上装」(有貨),不落在「套装」(=OUTFIT/SET,離線無 setinfo 資料→空);其餘店取第一個有效分頁。
-            _slot = s == Store.Clothing ? EquipSlot.Top : FirstRealSlot(TabsFor(s));
+            // 服装店預設落在「上装」(有貨),不落在「套装」(=OUTFIT/SET,離線無 setinfo 資料→空);
+            // 礼包店沒有子分頁 → 直接落在 GiftPack 那一頁;其餘店取第一個有效分頁。
+            _slot = s == Store.Clothing ? EquipSlot.Top
+                  : s == Store.Giftpack ? EquipSlot.GiftPack
+                  : FirstRealSlot(TabsFor(s));
             Refresh();
         }
 
@@ -488,6 +530,9 @@ namespace Sdo.UI.Screens
         {
             EquipSlot.Outfit, EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Gloves, EquipSlot.Shoes,
             EquipSlot.Glasses, EquipSlot.Expression, EquipSlot.Necklace, EquipSlot.Wings,
+            // 非衣服的 2D 商品也要搜得到 (道具/藥水/特效/寵物/禮包)
+            EquipSlot.Consumable, EquipSlot.Potion, EquipSlot.Effect,
+            EquipSlot.Pet, EquipSlot.PetHead, EquipSlot.PetClothes, EquipSlot.PetProp, EquipSlot.GiftPack,
         };
 
         private IEnumerable<ShopItem> SearchSource()
@@ -499,6 +544,11 @@ namespace Sdo.UI.Screens
 
         private IEnumerable<ShopItem> SlotItems(EquipSlot slot)
         {
+            if (ItemTypes.IsProp(slot))                       // 非衣服的 2D 商品 (無 mesh) → 直接取 iteminfo 那組
+            {
+                foreach (var it in _catalog.PropGroup(slot)) yield return it;
+                yield break;
+            }
             foreach (var it in _catalog.AllMeshModels(_sex, slot)) yield return it;
             if (slot == EquipSlot.Top)
                 foreach (var it in _catalog.Group(_sex, EquipSlot.OnePiece)) yield return it;
@@ -523,8 +573,10 @@ namespace Sdo.UI.Screens
             var items = new List<ShopItem>();
             foreach (var it in src)
             {
-                if (ItemTypes.GenderOf(it.Category, it.Name) != _sex) continue;                // 只顯示目前性別 (GenderOf 修 cat203 套装)
-                if (!_catalog.IsRenderable(it)) continue;                                      // 無模型(未 extract)的 item 直接隱藏,不列出 (user 指定)
+                // 非衣服的 2D 商品 (道具/藥水/特效/寵物/禮包):不分性別、也沒有 avatar mesh → 跳過這兩道衣服專用的過濾。
+                bool prop = it.IsProp;
+                if (!prop && ItemTypes.GenderOf(it.Category, it.Name) != _sex) continue;       // 只顯示目前性別 (GenderOf 修 cat203 套装)
+                if (!prop && !_catalog.IsRenderable(it)) continue;                             // 無模型(未 extract)的 item 直接隱藏,不列出 (user 指定)
                 // 搜尋比對：商品名(繁→簡折疊) OR 6碼 modelId OR 物品 id → 無名道具(只顯示 6 碼,如 003598)也搜得到。
                 if (searching)
                 {
@@ -542,13 +594,15 @@ namespace Sdo.UI.Screens
             // 同一件商品在 iteminfo 有 7天/30天/永久 三筆 (ModelId 相同,只 Id/Duration/Price 不同,價 1×/2×/6×) → 官方一件
             // 一張卡。收合：以 (Category,ModelId) 為鍵,保留永久(-1)那筆為代表 (無永久取天數最長);維持首見順序。所有 tab 皆適用
             // (衣服也是三筆一件)。AvatarItemCatalog 仍保留全部檔位 → ById/Owns/購買各時效仍可解析。
+            // ⚠️ 非衣服商品**不收合**:它們的多筆是「不同數量/幣別的 SKU」(小喇叭 ×1 / ×5 / ×10、G 幣版 / M 幣版),
+            // 是不同商品不是同一件的時效檔位 → 每筆各一張卡 (Id 當鍵 = 不收合)。
             if (items.Count > 1)
             {
-                var rep = new Dictionary<(int, int), int>(items.Count);
+                var rep = new Dictionary<(int, int, int), int>(items.Count);
                 var kept = new List<ShopItem>(items.Count);
                 foreach (var it in items)
                 {
-                    var key = (it.Category, it.ModelId);
+                    var key = it.IsProp ? (0, 0, it.Id) : (it.Category, it.ModelId, 0);
                     if (!rep.TryGetValue(key, out var ki)) { rep[key] = kept.Count; kept.Add(it); }
                     else if (TierRank(it) > TierRank(kept[ki])) kept[ki] = it;   // 永久 > 30天 > 7天
                 }
@@ -588,11 +642,25 @@ namespace Sdo.UI.Screens
                 nm.text = item.Name;   // 已擁有不加勾勾/標記 (使用者指定)
                 var pr = TxtAt(card, "price", _L.PricePos.x, _L.PricePos.y, _L.TextW, 16, 12, CWhite, _L.Align);
                 pr.fontStyle = FontStyles.Bold;
-                pr.text = (item.IsPermanent ? "永久 " : item.DurationDays + "天 ") + item.Price + CurrencyZh(item.Currency);
+                // 消耗品的多筆 SKU 差在「一次買幾個」(×1/×5/×10/×25) → 數量要寫出來,不然同名卡片看起來一樣只是價錢不同。
+                string qty = item.Quantity > 1 ? " ×" + item.Quantity : "";
+                pr.text = (item.IsPermanent ? "永久 " : item.DurationDays + "天 ") + item.Price + CurrencyZh(item.Currency) + qty;
                 var lv = TxtAt(card, "lv", _L.LvPos.x, _L.LvPos.y, _L.TextW, 16, 11, CLv, _L.Align);
                 lv.text = "等级限制:LV" + Mathf.Max(1, item.MinLevel);   // 無模型的 item 已在 RefreshGrid 過濾掉 → 不再需要「無模型」標記
 
                 var itLocal = item;
+                // 非衣服商品 (道具/藥水/特效/禮包/寵物):不掛試穿 (穿不了)。縮圖走官方 DRESS.TXT 的分流 ——
+                //   ① 檔名 .an → 2D 圖示 (道具/藥水/背景卡/寵物本體/寵物食物,UI/ITEM2D_PACK*、UI/MATCHITEMS);
+                //   ② 檔名 .msh/.dds → 3D (寵物頭飾 PETAVATAR、禮包借的禮盒 DAOJU、寵物衣服=共用 coat mesh 換貼圖);
+                //   ③ 官方資料就沒有 (23 隻舊寵物不在 DRESS.TXT) → 只有名字/價格的空格,商品照樣上架 (user:「都上架」)。
+                if (item.IsProp)
+                {
+                    if (!AddPropIcon(card, item))
+                        _pendingCards.Add(new PendingCard { I = i, Card = card, Item = item });   // 寵物 → 3D 縮圖 (漸進建)
+                    SpriteBtn(card, "buy",  "Shop123.an", "Shop125.an", _L.BuyPos.x,  _L.BuyPos.y,  () => DoBuy(itLocal),  hoverAn: "Shop124.an");
+                    SpriteBtn(card, "gift", "Shop126.an", "Shop128.an", _L.GiftPos.x, _L.GiftPos.y, hoverAn: "Shop127.an");   // 送禮 (尚無功能)
+                    continue;
+                }
                 // 套装大卡不放中間的購物車(試穿)鈕 (user 指定) → 只有 買/送;試穿改由點卡片 (AddTryOnHit)。小卡才有 fit 鈕。
                 if (_slot != EquipSlot.Outfit)
                     SpriteBtn(card, "fit",  "Shop148.an", "Shop150.an", _L.FitPos.x,  _L.FitPos.y,  () => DoTryOn(itLocal), hoverAn: "Shop149.an");  // 試穿 (不需擁有)
@@ -603,12 +671,40 @@ namespace Sdo.UI.Screens
             }
         }
 
+        // 消耗品類 2D 商品 (道具/藥水/人物特效/寵物食物) 的商品格圖 = ITEM2D 的 2D 圖示 (多半是 daoju_a.png 圖集裁切)。
+        // 位置=官方 avtnormal 那塊 (卡內 72×88 縮圖區,AvCenter 置中);圖示尺寸不一 (90×100 的道具格 ~ 256×189 的背景卡)
+        // → 等比縮到框內 (不裁切、不變形)。回傳 false = 這個商品沒有 2D 圖 (寵物 → 呼叫端改走 3D 縮圖)。
+        private bool AddPropIcon(RectTransform card, ShopItem item)
+        {
+            var s = Item2dArt.Icon(item.ModelId);
+            if (s == null) return false;
+            var img = UIKit.AddSprite(card, "icon2d", s, 0, 0);
+            var rt = img.rectTransform;
+            float w = s.rect.width, h = s.rect.height;
+            float k = Mathf.Min(_L.AvSize.x / Mathf.Max(1f, w), _L.AvSize.y / Mathf.Max(1f, h));
+            k = Mathf.Min(k, 1f);                       // 小圖示不放大 (官方是原尺寸貼,放大會糊)
+            rt.anchorMin = rt.anchorMax = new Vector2(0, 1); rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(w * k, h * k);
+            rt.anchoredPosition = _L.AvCenter;          // 卡內縮圖區中心 (y-down 已在 AvCenter 內)
+            return true;
+        }
+
         // 購買/全身購買 = 使用者主動花錢 → 要有 info 回饋 (其餘按鈕才靜默)。
         private void DoBuy(ShopItem item)
         {
             switch (ShopService.Buy(_session.Wardrobe, item, Now()))
             {
                 case BuyResult.Ok:
+                    if (item.IsProp)
+                    {
+                        // 2D 商品 (道具/藥水/特效/寵物/禮包) 是「進背包」不是「穿上」→ 不換裝、不重建 avatar。
+                        // 消耗品買第二次會疊數量 (ShopService.Buy 已處理),回饋帶上目前持有數。
+                        var owned = _session.Wardrobe.GetOwned(item.Id);
+                        int qty = owned != null ? owned.Quantity : 1;
+                        WardrobeStore.SaveOwnedWallet(_session);   // 落地 擁有+錢包 (穿搭沒變)
+                        Toast.Show("購買：" + item.Name + (qty > 1 ? " ×" + qty : ""));
+                        break;
+                    }
                     EquipOwned(item);                        // 購買=直接穿戴 (使用者指定)
                     WardrobeStore.SaveAll(_session);         // 落地 擁有+錢包+穿搭 (只存已擁有的)
                     Nav.RefreshRoomAvatar?.Invoke();         // 房間/大廳的人同步換上
@@ -617,7 +713,7 @@ namespace Sdo.UI.Screens
                     break;
                 case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
                 case BuyResult.AlreadyOwned: Toast.Show("已經擁有：" + item.Name); break;
-                case BuyResult.NoRoom: Toast.Show("服飾欄已滿，請到儲物櫃「服饰栏扩充」"); break;   // 預設 3 格，需擴充
+                case BuyResult.NoRoom: Toast.Show(item.IsProp ? "背包已滿" : "服飾欄已滿，請到儲物櫃「服饰栏扩充」"); break;
                 default: Toast.Show("購買失敗"); break;
             }
             Refresh();
@@ -835,13 +931,41 @@ namespace Sdo.UI.Screens
             GameObject root = null;
             try
             {
-                if (_catalog == null || !_catalog.IsRenderable(item)) return;   // 無模型 → 不做縮圖
+                // 走到這裡的非衣服商品 = DRESS.TXT 說它畫 3D 的那些 (寵物頭飾 .msh / 禮包借的禮盒 .msh /
+                // 寵物衣服=共用 coat mesh + 自己的貼圖)。有 2D 圖示的早在 RefreshGrid 就貼好圖了。
+                bool prop = item.IsProp;
+                string propMesh = null, propDds = null;
+                if (prop)
+                {
+                    if (!DressCatalog.PetClothesMesh(item.ModelId, out propMesh, out propDds))
+                        propMesh = DressCatalog.MeshRel(item.ModelId);
+                    if (propMesh == null) return;                                // 官方資料就沒有模型 → 留空格 (商品仍上架)
+                }
+                else if (_catalog == null || !_catalog.IsRenderable(item)) return;   // 無模型 → 不做縮圖
                 BuildCardCam();
                 _cardRT[i] = new RenderTexture(_L.RtW, _L.RtH, 16, RenderTextureFormat.ARGB32) { name = "ShopCardRT" + i, antiAliasing = 2 };
                 root = new GameObject("ShopCardAvatar" + i);
                 root.transform.position = CardSpot(i);
                 root.transform.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);   // 衣物預設朝左 30°
                 SdoAvatarBuilder.LogLabel = string.IsNullOrEmpty(item.Name) ? item.ModelId.ToString("D6") : item.Name;   // [avtex] log 標名 (user)
+                if (prop)
+                {
+                    // 寵物裝備/禮盒:自己的骨架 (PETAVATAR/DAOJU 的 .hrc),不是人物假人 → 直接畫 mesh 的 bind 頂點
+                    // (avatar=null → SdoAvatarBuilder 不註冊骨骼、不套 mot),跟卡片衣物同一條「靜態 bind」路線。
+                    var pres = SdoAvatarBuilder.LoadParts(root, null, new[] { propMesh }, SdoAvatarBuilder.SkinStyle.Gameplay);
+                    SdoRoomAvatar.SetLayerRecursive(root, PreviewLayer);
+                    if (!pres.Any)
+                    { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
+                    ApplyCardCutoutShader(root);
+                    if (propDds != null) ApplyPropTexture(root, propDds);   // 寵物衣服:同一件 coat mesh,換自己的印花貼圖
+                    // 寵物裝備/禮盒大小不一,又沒有官方 per-slot 表可查 → 依實際幾何填滿格子 + 置中。
+                    FitCardToBounds(i, pres.Bounds);
+                    _cardAv[i] = root;
+                    _cardNoSpin[i] = false;   // hover 一樣轉 (官方 AvtShow 也會轉)
+                    AddCardImage(i, card);
+                    RenderCard(i);
+                    return;
+                }
                 var av = SdoRoomAvatar.Build(root, PreviewLayer, false, ComposeCardParts(item), ShopHrcFor(_sex, item.EquipSlot), bindPoseNoIdle: true);
                 if (av == null) { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
                 av.enabled = false;  // 凍結 (bind pose 已在 Build 內 PoseFrame(0) 蒙皮好)
@@ -887,16 +1011,7 @@ namespace Sdo.UI.Screens
                 }
                 _cardAv[i] = root;
                 _cardNoSpin[i] = slot == EquipSlot.Glasses;   // 眼鏡卡：hover 不旋轉,只放大 (user 指定)
-
-                // 卡內縮圖 RawImage (版面 _L 決定尺寸/位置；小卡 72×88、套装大卡 150×240；pivot 置中以便由中心放大)
-                var img = new GameObject("preview", typeof(RectTransform)).AddComponent<RawImage>();
-                img.transform.SetParent(card, false);
-                var irt = img.rectTransform;
-                irt.anchorMin = irt.anchorMax = new Vector2(0, 1); irt.pivot = new Vector2(0.5f, 0.5f);
-                irt.anchoredPosition = _L.AvCenter; irt.sizeDelta = _L.AvSize;
-                img.texture = _cardRT[i]; img.raycastTarget = false;
-                _cardImg[i] = img;
-                _cardScale[i] = 1f; _cardAngle[i] = 0f;
+                AddCardImage(i, card);
                 RenderCard(i);
             }
             catch (System.Exception e)
@@ -904,6 +1019,30 @@ namespace Sdo.UI.Screens
                 if (root != null && _cardAv[i] != root) Destroy(root);   // 半成品別留在 CardSpot (下次重建會入鏡疊影)
                 Debug.LogWarning("[shop] card preview " + i + " failed (non-fatal): " + e.Message);
             }
+        }
+
+        // 卡內縮圖 RawImage (版面 _L 決定尺寸/位置；小卡 72×88、套装大卡 150×240；pivot 置中以便由中心放大)
+        private void AddCardImage(int i, RectTransform card)
+        {
+            var img = new GameObject("preview", typeof(RectTransform)).AddComponent<RawImage>();
+            img.transform.SetParent(card, false);
+            var irt = img.rectTransform;
+            irt.anchorMin = irt.anchorMax = new Vector2(0, 1); irt.pivot = new Vector2(0.5f, 0.5f);
+            irt.anchoredPosition = _L.AvCenter; irt.sizeDelta = _L.AvSize;
+            img.texture = _cardRT[i]; img.raycastTarget = false;
+            _cardImg[i] = img;
+            _cardScale[i] = 1f; _cardAngle[i] = 0f;
+        }
+
+        // 依模型自身的 bbox 把它縮到「填滿卡片格子的 90%」並置中 (沒有官方 per-slot 表可查的東西才用：寵物/寵物裝備)。
+        private void FitCardToBounds(int i, Bounds b)
+        {
+            float halfH = CardOrthoHalfW / ((float)_L.RtW / _L.RtH);
+            var size = b.size;
+            float s = Mathf.Min(CardOrthoHalfW * 2f * 0.9f / Mathf.Max(size.x, 1e-3f),
+                                halfH * 2f * 0.9f / Mathf.Max(size.y, 1e-3f));
+            _cardFrameScale[i] = new Vector3(s, s, s);
+            _cardFramePos[i] = new Vector3(-s * b.center.x, -s * b.center.y, 0f);   // bbox 中心對到相機中心
         }
 
         // 把第 i 件衣物畫進它的 RT：官方=正交相機看世界 Y≈0，節點依 per-slot 表放大(scale)+位移(pos)把該部位頂進中心；
@@ -1105,6 +1244,21 @@ namespace Sdo.UI.Screens
         // 表情臉統一用「最白」膚色變體 (huan0)。官方 FACE_HUAN mesh 的 material[0] 各自綁不同深淺膚色——不少綁最深的 huan4
         // (亮度~51,看起來像黑人),另有一批綁到打錯字/不存在的檔名 (haun4/huan_1) → 回退平塗膚色。強制改用該 model 的
         // *_FACE_HUAN0.DDS (亮度~190,同一表情最白膚色) → 一次修好深膚色與檔名回退兩種。231 件中僅 1 件無任何 huan 貼圖。
+        // 寵物衣服 (cat 43000)：官方 31 件共用同一件 coat mesh (PETDRESS 1041000 → 1040000_all_coat_.msh)，每件只有自己的
+        // 一張 1040xxx_all_coat.dds 印花 → 換貼圖就是換衣服。把該 mesh 上所有材質的貼圖換成這件的 DDS。
+        private static void ApplyPropTexture(GameObject root, string ddsName)
+        {
+            if (root == null || string.IsNullOrEmpty(ddsName)) return;
+            var meshPath = SdoAvatarBuilder.ResolveAvatarFile("PETAVATAR/" + ddsName);
+            var tex = SdoAvatarBuilder.ResolveDds(System.IO.Path.GetDirectoryName(meshPath), ddsName);
+            if (tex == null) return;
+            foreach (var mr in root.GetComponentsInChildren<MeshRenderer>())
+            {
+                var mats = mr.sharedMaterials;   // 每卡 material 都是新建實例 → 直接改安全
+                for (int s = 0; s < mats.Length; s++) if (mats[s] != null) mats[s].mainTexture = tex;
+            }
+        }
+
         private void ForceLightExpressionFace(GameObject root, ShopItem item)
         {
             if (root == null || item == null || item.EquipSlot != EquipSlot.Expression) return;
