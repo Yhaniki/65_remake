@@ -281,6 +281,11 @@ namespace Sdo.Game
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
         public bool mockOpponents = false;           // 預設關閉測試對手(離線單人=solo rank 1/1、清單只有本機);真連線時再開
         public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
+        // 情侶模式 (LOVER): a second opposite-gender dancer faces the local one, hearts are collected, and the finish
+        // plays a couple pose + TakePhoto camera + photo-frame overlay. Set from FrontendApp (GameMode==2). Faithful to
+        // the CN online client's couple screen (mode byte +0x62=0x0c). See docs/reverse-engineering/SDO_COUPLE_MODE.md
+        // and the ScreenGameplay.Couple.cs partial. freeMode/coupleMode are independent (couple is not a "free" run).
+        public bool coupleMode = false;
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
         public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
         private static readonly string[] OpponentNames =
@@ -374,6 +379,7 @@ namespace Sdo.Game
             foreach (var n in _notes) { double t = n.Note.EndTimeMs ?? n.Note.StartTimeMs; if (t > _totalMs) _totalMs = t; }
             BuildHud();
             TryLoadAvatar();
+            if (coupleMode) SetupCoupleMode();   // 情侶模式: 2nd MALE dancer + heart HUD + photo cam (ScreenGameplay.Couple.cs)
             TryLoadScene();
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromSdoBpm(_map.Bpm));
             _score = new ScoreProcessor(_map.TotalNotes);
@@ -2287,6 +2293,7 @@ namespace Sdo.Game
         {
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
+            if (coupleMode) CoupleUpdate();   // 情侶模式: heart HUD refresh
             if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
             if (Input.GetKeyDown(KeyCode.F8)) { EftEffect.DebugMeshOnly = !EftEffect.DebugMeshOnly; Debug.Log("[dbg] DebugMeshOnly=" + EftEffect.DebugMeshOnly + " (isolate the delta_line 3-colour mesh: hides disc/lightbars/MW, mesh at 5×)"); }
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
@@ -2335,6 +2342,7 @@ namespace Sdo.Game
                     int fi = Mathf.Clamp(_camMode, 0, FixedEye.Length - 1);
                     eye = FixedEye[fi]; tgt = FixedTgt[fi];
                 }
+                if (coupleMode && SamplePhotoCam(out var peye, out var ptgt)) { eye = peye; tgt = ptgt; }   // 情侶結尾 TakePhoto 掃鏡
                 _sceneCam.transform.position = eye;
                 _sceneCam.transform.LookAt(tgt, Vector3.up);
             }
@@ -2385,6 +2393,7 @@ namespace Sdo.Game
             // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
             // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
             if (_localWon) SpawnNamedEft("FINISHED", 5f);
+            if (coupleMode) CoupleFinish();                                   // 情侶結尾: partner pose + TakePhoto 相機 + 相框 overlay
             if (enableResultSfx) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
             _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
         }
@@ -2707,6 +2716,7 @@ namespace Sdo.Game
         {
             _score.Apply(j); _health.Apply(j);
             UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins
+            if (coupleMode) OnCoupleJudge(j);                                     // 情侶模式: 收愛心 (Perfect → +1, clamp 20)
             _blockHadNote = true;                                                // a note was judged this block (-> not an empty block)
             if (j == Judgment.Bad || j == Judgment.Miss) _blockHadBreak = true;   // break -> NOT stopped now; the dancer is re-decided at the next 8-beat settlement
             _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;

@@ -256,6 +256,10 @@
    "v": "普通模式"
   },
   {
+   "k": "songselect.mode_lover",
+   "v": "情侶模式"
+  },
+  {
    "k": "songselect.form_basic",
    "v": "基本"
   },

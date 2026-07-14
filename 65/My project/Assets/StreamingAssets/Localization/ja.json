@@ -256,6 +256,10 @@
    "v": "ノーマルモード"
   },
   {
+   "k": "songselect.mode_lover",
+   "v": "カップルモード"
+  },
+  {
    "k": "songselect.form_basic",
    "v": "基本"
   },

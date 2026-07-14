@@ -373,7 +373,8 @@ namespace Sdo.UI.Screens
 
             // 模式標題（自由模式/普通模式…）—— 純文字 + 白邊
             if (_modeLabel != null)
-                _modeLabel.SetText(L(s.GameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
+                _modeLabel.SetText(L(s.GameMode == 2 ? "songselect.mode_lover"
+                                     : s.GameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
 
             // 場景縮圖：隨機 → RANDOM；具體 → Scene{id+1}（官方縮圖編號是 1-based）
             if (_sceneThumb != null)

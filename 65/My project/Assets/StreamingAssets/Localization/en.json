@@ -256,6 +256,10 @@
    "v": "Normal Mode"
   },
   {
+   "k": "songselect.mode_lover",
+   "v": "Lover Mode"
+  },
+  {
    "k": "songselect.form_basic",
    "v": "Basic"
   },

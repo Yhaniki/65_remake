@@ -37,8 +37,10 @@ namespace Sdo.UI.Core
         public int Team = 3;             // 組隊：0=A,1=B,2=C,3=自由
         public int DropDirection = 0;    // 掉落方式：0=向上,1=向下
 
-        // ROOMDLG room settings (single-player: stored locally; gameplay is always free/normal for now).
-        public int GameMode = 0;      // 0=自由模式, 1=普通模式 (only these two enabled for now)
+        // ROOMDLG room settings (single-player: stored locally).
+        public int GameMode = 0;      // 0=自由模式, 1=普通模式, 2=情侶模式(LOVER)
+        /// <summary>情侶模式 (couple): 男女對跳 + 愛心收集 + 結尾拍照。對映線上 client 的 mode byte +0x62=0x0c。</summary>
+        public bool IsLover => GameMode == 2;
         public int Formation = 0;     // 0=基本, 1=扇形, 2=環線, 3=隨機
         public int LookerCount = 10;  // 旁觀人數 0..10
 

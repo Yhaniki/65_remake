@@ -169,6 +169,7 @@ namespace Sdo.UI
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
             game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準140，osu式內部變速）
+            game.coupleMode = (s.GameMode == 2);                 // 情侶模式(LOVER): 男女對跳+愛心+結尾拍照 (線上 client mode byte +0x62=0x0c)
             _activeGame = game;
         }
 

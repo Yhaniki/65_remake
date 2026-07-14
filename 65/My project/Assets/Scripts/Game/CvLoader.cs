@@ -23,10 +23,16 @@ namespace Sdo.Game
             // unused by the dance cams, so skipped).
             if (d == null || d.Length < 22) return null;
             string magic = System.Text.Encoding.ASCII.GetString(d, 0, 12);
-            if (magic != "CV0000000003" && magic != "CV0000000004") return null;
+            // CV2 (couple Couple\TakePhoto.cv / lovertest.cv) omits the eye-static flag: its header carries ONE flag
+            // byte (move) instead of two, and the eye array is always full-length. Verified byte-exact on TAKEPHOTO.CV
+            // (frameCount 500, moveFlag 1 → static target, keyCount 24000, 12+4+1+4+24000*16+24000*12+16 = 672037).
+            // See docs/reverse-engineering/SDO_COUPLE_MODE.md §5.
+            bool cv2 = magic == "CV0000000002";
+            if (!cv2 && magic != "CV0000000003" && magic != "CV0000000004") return null;
             int p = 12;
             int frameCount = BitConverter.ToInt32(d, p); p += 4;
-            byte eyeFlag = d[p++], moveFlag = d[p++];
+            byte eyeFlag = cv2 ? (byte)0 : d[p++];
+            byte moveFlag = d[p++];
             int keyCount = BitConverter.ToInt32(d, p); p += 4;
             if (keyCount <= 0 || keyCount > 100000) return null;
             int f13 = (eyeFlag != 0 && moveFlag != 0) ? 1 : 0;

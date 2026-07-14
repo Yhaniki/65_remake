@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Sdo.UI.Services
 {
-    public enum GameMode { Free, Normal }
+    public enum GameMode { Free, Normal, Lover }
     public enum RoomStatus { Waiting, InGame }
     public enum JoinResult { Ok, Full, InGame, NotFound }
 

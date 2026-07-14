@@ -529,9 +529,12 @@ namespace Sdo.UI.Screens
             // slot is the full 258-wide value area (offline lblTeamMode), arrow at btnTeamMode x522. Formation/looker
             // use white text (no name-slice art for those values).
             var sdoModes = RoomDlgArt.AnFrames("LABEL_SDO.an");
-            Sprite[] modeSprites = (sdoModes != null && sdoModes.Length >= 2) ? new[] { sdoModes[0], sdoModes[1] } : null;
+            // Collapsed value sprites from LABEL_SDO.an: 自由=frame0, 普通=frame1, 情侶=frame3 (LOVER; the 13-mode
+            // atlas order — frame2 is BOYS-VS-GIRLS, so LOVER is frame3). Falls back to text if the strip lacks it.
+            // See docs/reverse-engineering/SDO_COUPLE_MODE.md §1.
+            Sprite[] modeSprites = (sdoModes != null && sdoModes.Length >= 4) ? new[] { sdoModes[0], sdoModes[1], sdoModes[3] } : null;
             SdoComboBox.Create(Root, "modeCombo", 289, slotY, 258, slotH, 522, arrow, listMode, listModeH,
-                new[] { L("songselect.mode_free"), L("songselect.mode_normal") }, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 1), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
+                new[] { L("songselect.mode_free"), L("songselect.mode_normal"), L("songselect.mode_lover") }, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 2), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
                 listAsText: true);   // expanded list = green text rows (like formation/looker); collapsed value keeps the LABEL_SDO sprite
             SdoComboBox.Create(Root, "formCombo", 571, slotY, 56, slotH, 627, arrow, listSm, listSmH,
                 new[] { L("songselect.form_basic"), L("songselect.form_fan"), L("songselect.form_ring"), L("songselect.form_random") }, null, Mathf.Clamp(Ctx.Session.Formation, 0, 3), Color.white, ColComboList, i => Ctx.Session.Formation = i);
