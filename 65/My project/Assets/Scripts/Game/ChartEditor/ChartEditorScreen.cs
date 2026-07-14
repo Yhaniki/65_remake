@@ -450,7 +450,8 @@ namespace Sdo.Game
 
             double now = ready ? _game.EditorNowMs : 0.0;
             double end = ready ? Math.Max(1.0, _game.EditorEndMs) : 1.0;
-            float pos = GUILayout.HorizontalSlider((float)now, 0f, (float)end, GUILayout.Width(Mathf.Max(160, Screen.width - 640)));
+            // 這一列右邊還有 時間/小節拍/縮放/流速/單首offset 幾格固定寬的讀數 → 進度條吃剩下的寬度
+            float pos = GUILayout.HorizontalSlider((float)now, 0f, (float)end, GUILayout.Width(Mathf.Max(120, Screen.width - 900)));
             if (ready && Mathf.Abs(pos - (float)now) > 1f) _game.EditorSeekMs(pos);   // 拖 slider = seek（暫停中也可以）
 
             GUILayout.Label($"{Fmt(now)} / {Fmt(end)}", box, GUILayout.Width(110));
@@ -461,7 +462,9 @@ namespace Sdo.Game
                 GUILayout.Label($"小節 {g.MeasureAt(now)}  拍 {(beat % 4 + 4) % 4 + 1:0.00}", box, GUILayout.Width(130));
             }
             float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
-            GUILayout.Label($"縮放 {speed:0.00}× (Ctrl+↑↓)   單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12)", box, GUILayout.Width(300));
+            GUILayout.Label($"縮放 {speed:0.00}× (Ctrl+↑↓/F5F6)", box, GUILayout.Width(150));
+            GUILayout.Label($"流速 {(ready ? _game.EditorRate : 1.0):0.00}× ([ ]，= 回 1×)", box, GUILayout.Width(150));
+            GUILayout.Label($"單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12)", box, GUILayout.Width(180));
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
