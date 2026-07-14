@@ -36,6 +36,7 @@ namespace Sdo.Game
             int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
             SetNoteBoardSkin(NoteTypeBoardSuffix[t]);                        // falling notes + receptors + hold (live reload)
             LoadHitEffects(t);                                              // per-skin hit burst (sets _eftNoteType)
+            LoadLnEndArt(t);                                                // per-skin long-note END burst (own EFT_0_* or shared PUBLICEFT)
             LoadComboJudgeArt(t);                                          // combo digits + word + judgement words (shared or own folder)
         }
 
@@ -160,6 +161,33 @@ namespace Sdo.Game
             if (jz.Count > 0) { _burstFrames = jz.ToArray(); _burstFramesUD = null; }
         }
 
+        /// <summary>(Re)load the LONG-NOTE END burst — the official <c>Eft_LnEnd</c> / <c>Eft_Longnote_End</c> .DGE slot,
+        /// fired at the receptor when a hold is completed. Source per <see cref="LnEndArt"/>: the self-contained skins
+        /// (7/8/9/10/PET) ship their own EFT_0_0..5, everything else shares PUBLICEFT\EFT_LNEND0..5.</summary>
+        internal void LoadLnEndArt(int noteType)
+        {
+            string dir = Path.Combine(SdoExtracted.Root, "EFFECT", LnEndArt.Folder(noteType));
+            var f = new List<Sprite>();
+            for (int i = 0; i < LnEndArt.FrameCount; i++)
+            {
+                var s = SdoExtracted.LoadImage(dir, LnEndArt.FrameFile(noteType, i));
+                if (s == null) break;
+                f.Add(s);
+            }
+            _lnEndFrames = f.Count > 0 ? f.ToArray() : null;
+            if (_lnEndFrames == null) Debug.LogWarning("[lnend] no long-note end frames under " + dir);
+        }
+
+        /// <summary>A hold was completed → one-shot LnEnd burst at the lane's receptor. Skipped for the 3D skin (it
+        /// terminates a hold with the real HIT_SUO 3DEFT, see <see cref="StopHit3dLong"/>) and inside a ShowTime
+        /// auto-window (the golden showtime note set has no LnEnd slot).</summary>
+        private void SpawnLnEndBurst(int lane)
+        {
+            if (_hit3dMode || _lnEndFrames == null) return;
+            if (showtimeMode && _showtime.Active) return;
+            SpawnBurstFrames(lane, _lnEndFrames, false, lnEndSize, lnEndSpeed, lnEndBright, doubleLayer: false);
+        }
+
         // Load a directional hit-frame set jz00_<dir>.png, jz01_<dir>.png … until the first gap. null if none.
         private static Sprite[] LoadJzFrames(string dir, string dirSuffix)
         {
@@ -220,7 +248,7 @@ namespace Sdo.Game
                 var fx = _fx[i];
                 var frames = fx.Frames;   // each burst animates ITS OWN (directional) frame set, captured at spawn
                 if (frames == null || frames.Length == 0) { if (fx.IsHold) _holdBurst[fx.Lane] = null; DestroyBurst(fx); _fx.RemoveAt(i); continue; }
-                int step = (int)((Time.time - fx.Start) / BurstSecPerFrame);
+                int step = (int)((Time.time - fx.Start) / Mathf.Max(1e-4f, fx.SecPerFrame));
                 if (step >= frames.Length)
                 {
                     // HOLD: finished a round, still held -> loop (wait for the full animation before the next round).
@@ -251,7 +279,8 @@ namespace Sdo.Game
             if (_missOverlay) _missOverlay.enabled = false;
         }
 
-        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public int Lane; public float Start; public bool IsHold; public Sprite[] Frames; }
+        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public int Lane; public float Start; public bool IsHold; public Sprite[] Frames;
+                                       public float SecPerFrame = BurstSecPerFrame; }   // per-burst frame duration (the LnEnd burst runs at half speed)
 
         // ---------- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----------
 

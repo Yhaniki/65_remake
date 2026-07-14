@@ -291,6 +291,7 @@ namespace Sdo.Game
         private readonly Sprite[] _scoreDigitSprites = new Sprite[10];
         private Sprite[] _burstFrames, _readyFrames, _goFrames;
         private Sprite[] _burstFramesUD;   // self-contained skins' UP/DOWN-lane hit frames (jz*_ud); null = non-directional (use _burstFrames for all lanes)
+        private Sprite[] _lnEndFrames;     // 長條完成的 END burst (官方 Eft_LnEnd 槽) — 6 frames, per LnEndArt
         private Material _addMat;           // additive material template; each burst clones its own instance
         private Material _hpGlowMat;        // HP-edge glow's OWN additive instance (dedicated so its _TintColor can be driven bright, and no _MainTex cross-bleed with bursts)
         private SpriteRenderer _readyGo;   // opening READY/GO overlay (centre screen)
@@ -352,6 +353,12 @@ namespace Sdo.Game
         public float hudHpDownYOffset = 552f;      // 向下置中的血條下移量（≈ 15→567，把頂端血條鏡射到板底）
         public float burstSize = 1.3f;      // hit-burst size multiplier
         public float burstBright = 1.5f;    // hit-burst brightness (additive _TintColor; 1.0 = stock)
+        public float holdDropDim = 0.5f;    // 中途放開(Bad/Miss)的長條不消失，改用這個亮度繼續流走 (0.5 = 50%)
+        public float lnEndSize = 0.7f;      // 長條結尾爆發大小 ×burstSize
+        public float lnEndSpeed = 0.5f;     // 長條結尾爆發播放速度 (0.5 = 半速 → 每幀 60ms)
+        // 結尾爆發亮度 ×burstBright。命中爆發是「additive×2 層 + burstBright 1.5」刻意炸亮的，結尾沿用會整片泛光；
+        // 這裡壓亮度，且 SpawnLnEndBurst 只畫單層 (見 SpawnBurstFrames 的 doubleLayer)。
+        public float lnEndBright = 1.0f;
         // ── hiteft3D: the "3D" note skin's hit effect = a real 3DEFT played at the receptor via the EftEffect particle
         // engine (instead of the flat sprite flipbook). Selected in the F4 STAGE tab note-skin selector (index past the
         // 2D skins). The official 3D skin's hit is HIT.EFT — a note-ARROW-shaped flash (the map_g\NOTES textures = "固定
@@ -1285,6 +1292,7 @@ namespace Sdo.Game
             var bf = new List<Sprite>();                 // (6) hit burst = EFT_13/EFT_HIT0..11.PNG
             for (int i = 0; i < 12; i++) { var s = SdoExtracted.LoadImage(SdoExtracted.EftDir(13), "EFT_HIT" + i + ".PNG"); if (s != null) bf.Add(s); }
             _burstFrames = bf.Count > 0 ? bf.ToArray() : null;
+            LoadLnEndArt(8);                            // stock skin = EFT_13 (index 8) -> its .DGE LnEnd slot = PUBLICEFT
             _readyFrames = new List<Sprite>().ToArray();
             var rf = new List<Sprite>(); for (int i = 0; i < 10; i++) { var s = SdoExtracted.Eft("READY0" + i + ".PNG"); if (s != null) rf.Add(s); } _readyFrames = rf.ToArray();
             var gf = new List<Sprite>(); for (int i = 1; i <= 6; i++) { var s = SdoExtracted.Eft("GO0" + i + ".PNG"); if (s != null) gf.Add(s); } _goFrames = gf.ToArray(); // GO01..GO06 only
@@ -3971,7 +3979,11 @@ namespace Sdo.Game
                 bool stWin = showtimeMode && _showtime.Active;
                 float noteScale = stWin ? showtimeNoteScale : 1f;       // notes grow a little during the auto-hit window
                 float noteW = LaneW * noteScale;
-                if (showtimeMode) { n.Head.color = _noteTint; if (n.Tail) n.Tail.color = _noteTint; }   // gold→red flash over the window's last 3s
+                // 中途放開 (Bad/Miss) 的長條不直接消失：整條 (頭/身/尾) 調暗到 holdDropDim，繼續往判定線外流走。
+                Color noteCol = showtimeMode ? _noteTint : Color.white;   // showtime: gold→red flash over the window's last 3s
+                if (n.Dropped) noteCol = new Color(noteCol.r * holdDropDim, noteCol.g * holdDropDim, noteCol.b * holdDropDim, noteCol.a);
+                bool tintNote = showtimeMode || n.Dropped;                // else leave the renderers at their default white
+                if (tintNote) { n.Head.color = noteCol; if (n.Tail) n.Tail.color = noteCol; }
                 if (use3d)
                 {
                     // 3D-MESH head: draw the real NOTES.MSH arrow FLAT at this note's exact 2D position (same lane + scroll
@@ -4043,7 +4055,7 @@ namespace Sdo.Game
                         float bot = Mathf.Min(Mathf.Max(y, yEnd), _clipBottomY);
                         float len = Mathf.Max(0f, bot - top), midY = (top + bot) / 2f;
                         n.Body.SetActive(len > 0.5f);
-                        if (showtimeMode) { var bmr = n.Body.GetComponent<MeshRenderer>(); if (bmr && bmr.sharedMaterial) bmr.sharedMaterial.color = _noteTint; }   // long-note body gold→red flash too
+                        if (tintNote) { var bmr = n.Body.GetComponent<MeshRenderer>(); if (bmr && bmr.sharedMaterial) bmr.sharedMaterial.color = noteCol; }   // body follows the same tint (showtime flash / dropped-hold dim)
                         if (len > 0.5f)
                         {
                             n.Body.transform.position = SdoLayout.ToWorld(cx, midY, 0.6f);
@@ -4140,13 +4152,13 @@ namespace Sdo.Game
                 {
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
                     _recDownStart[n.Note.Lane] = Time.time;   // auto-press: fire the keydown burst (head only, never the hold tail)
-                    if (grade == Judgment.Miss) { /* flows past the receptor, then ScrollNotes removes it */ }
+                    if (grade == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // flows past the receptor (bar dimmed), then ScrollNotes removes it
                     else if (n.Note.IsHold) { _holding[n.Note.Lane] = n; SpawnHit3dLong(n.Note.Lane); }   // 3D: continuous HIT_LONG for the hold
                     else n.Done = true;
                 }
                 if (n.HeadJudged && !n.Done && grade != Judgment.Miss && n.Note.IsHold && _holding[n.Note.Lane] == n
                     && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value)
-                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); StopHit3dLong(n.Note.Lane); n.Done = true; }
+                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); EndHold(n.Note.Lane, n, grade); }
             }
         }
 
@@ -4420,12 +4432,13 @@ namespace Sdo.Game
             if (j == null || j.Value == Judgment.Miss) return;     // press too far off the aimed note → leave it for normal manual play (a fresh post-seam press), don't force a seam miss
             n.HeadJudged = true; ApplyEvent(j.Value, lane); _recDownStart[lane] = Time.time;   // keydown burst on the replayed press too
             if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
-            if (j.Value == Judgment.Bad) { n.BundledFail = true; return; }   // bad hold head → AutoMiss fails the tail later (matches PressLane)
+            if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; return; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
             if (held) { _holding[lane] = n; return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
             // player already let go INSIDE the window → judge the tail at the TRUE release time (clamped ≤ seam), not a lingering auto-Perfect and not the over-lenient seam time
             double relMs = _stReleaseMs[lane] >= 0.0 ? Math.Min(_stReleaseMs[lane], now) : now;
-            ApplyEvent(_engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss, lane);
-            n.Done = true;
+            var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss;
+            ApplyEvent(tail, lane);
+            EndHold(lane, n, tail);
         }
 
         private void PressLane(int lane, double now)
@@ -4435,8 +4448,8 @@ namespace Sdo.Game
             if (forcedJudge >= 0) jv = (Judgment)forcedJudge;                         // debug: force a grade on the hit
             else { var j = _engine.JudgeHit(n.Note.StartTimeMs, now); if (j == null) return; jv = j.Value; }
             n.HeadJudged = true; ApplyEvent(jv, lane);
-            if (jv == Judgment.Miss) { /* keep flowing past the receptor; ScrollNotes removes it off the top */ }
-            else if (n.Note.IsHold) { if (jv == Judgment.Bad) n.BundledFail = true; else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // 3D: continuous HIT_LONG for the hold
+            if (jv == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // keep flowing past the receptor (dimmed if it's a bar); ScrollNotes removes it off the top
+            else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // Bad head = never held → dimmed bar; 3D: continuous HIT_LONG for the hold
             else n.Done = true;
         }
 
@@ -4444,8 +4457,21 @@ namespace Sdo.Game
         {
             var n = _holding[lane]; if (n == null) return;
             _holding[lane] = null;
-            ApplyEvent(_engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss, lane);
-            StopHit3dLong(lane);   // 3D: end the looping HIT_LONG → one-shot HIT_SUO terminator
+            var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss;
+            ApplyEvent(tail, lane);
+            EndHold(lane, n, tail);
+        }
+
+        // A hold stops being held. Two outcomes:
+        //   COMPLETED (Perfect/Cool tail) → the official LnEnd burst at the receptor, note retired.
+        //   DROPPED   (Bad/Miss tail = let go mid-bar) → the bar is NOT deleted: it keeps scrolling at holdDropDim
+        //             brightness (ScrollNotes) until it flows off the board, then retires like any judged note.
+        // Either way the 3D skin's looping HIT_LONG is torn down (→ its own HIT_SUO terminator).
+        private void EndHold(int lane, RuntimeNote n, Judgment tail)
+        {
+            StopHit3dLong(lane);
+            if (tail == Judgment.Bad || tail == Judgment.Miss) { n.Dropped = true; return; }
+            SpawnLnEndBurst(lane);
             n.Done = true;
         }
 
@@ -4466,9 +4492,13 @@ namespace Sdo.Game
             foreach (var n in _notes)
             {
                 if (n.Done) continue;
-                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) ApplyEvent(Judgment.Miss); continue; }   // judged miss, but keeps flowing off the top
-                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.Done = true; continue; }
-                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Perfect); StopHit3dLong(n.Note.Lane); n.Done = true; }
+                // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
+                // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
+                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
+                // bad head → the tail misses too once it passes. Score it ONCE (clear the flag), but do NOT retire the note:
+                // the dimmed bar keeps scrolling like every other failed hold, and ScrollNotes retires it off the board.
+                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
+                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Perfect); EndHold(n.Note.Lane, n, Judgment.Perfect); }   // held all the way → LnEnd burst
             }
         }
 
@@ -4521,21 +4551,35 @@ namespace Sdo.Game
             // directional skins (PET/8/9/10) ship separate frames for left-right vs up-down lanes; lanes 1(down)/2(up) use
             // the _ud set, lanes 0(left)/3(right) use _rl (_burstFrames). Non-directional skins leave _burstFramesUD null.
             var frames = (_burstFramesUD != null && (lane == 1 || lane == 2)) ? _burstFramesUD : _burstFrames;
+            return SpawnBurstFrames(lane, frames, isHold);
+        }
+
+        // Spawn an arbitrary flipbook at the lane's receptor (hit burst, or the long-note LnEnd burst). sizeMul/speedMul/
+        // brightMul scale THIS burst only; doubleLayer=false draws a SINGLE additive layer (the LnEnd burst — the hit
+        // burst's 2-layer stack is a deliberate over-bright punch that makes the LnEnd art bloom all over the lane).
+        private BurstFx SpawnBurstFrames(int lane, Sprite[] frames, bool isHold,
+                                         float sizeMul = 1f, float speedMul = 1f, float brightMul = 1f, bool doubleLayer = true)
+        {
             if (frames == null || frames.Length == 0) return null;
             var mat = _matPool.Count > 0 ? _matPool.Pop() : (_addMat != null ? new Material(_addMat) : null);  // own instance, pooled
             // brightness: the additive shader is Blend SrcAlpha One, and its _TintColor defaults to (.5,.5,.5,.5) ->
             // the .5 alpha halves the burst (too dark). Drive _TintColor by burstBright (1.0 = stock, higher = brighter).
-            if (mat != null) { float t = 0.5f * burstBright; mat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t))); }
+            if (mat != null) { float t = 0.5f * burstBright * brightMul; mat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t))); }
             var sr = NewSR("Burst", frames[0], 6);
             if (mat != null) sr.sharedMaterial = mat;                   // additive -> black bg becomes transparent glow
             // native-proportional: scale by THIS skin's frame size vs the reference, so every skin keeps its true relative
             // size (the old fixed BurstWidth stretched a small 150px skin up to the 300px skin's footprint -> "too big").
             float burstNativeW = frames[0] != null ? frames[0].rect.width : BurstNativeRef;   // native px (PPU-independent)
-            PlaceAspect(sr, PX(LaneLeftX[lane] + LaneCx0), judgeLineY, BurstWidth * burstSize * (burstNativeW / BurstNativeRef));
-            var sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
-            if (mat != null) sr2.sharedMaterial = mat;
-            sr2.transform.SetParent(sr.transform, false);
-            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, Start = Time.time, IsHold = isHold, Frames = frames };
+            PlaceAspect(sr, PX(LaneLeftX[lane] + LaneCx0), judgeLineY, BurstWidth * burstSize * sizeMul * (burstNativeW / BurstNativeRef));
+            SpriteRenderer sr2 = null;
+            if (doubleLayer)
+            {
+                sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
+                if (mat != null) sr2.sharedMaterial = mat;
+                sr2.transform.SetParent(sr.transform, false);
+            }
+            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, Start = Time.time, IsHold = isHold, Frames = frames,
+                                   SecPerFrame = BurstSecPerFrame / Mathf.Max(0.01f, speedMul) };
             _fx.Add(fx);
             return fx;
         }
@@ -4545,6 +4589,8 @@ namespace Sdo.Game
             public readonly OsuHitObject Note; public readonly SpriteRenderer Head, Tail; public readonly GameObject Body;
             public GameObject Cap3d;   // 3D skin: the official LONG.MSH cap TRIANGLE (real geometry, welded at the tail end); lazily created
             public bool HeadJudged, BundledFail, Done;
+            public bool Dropped;       // a hold the player never owned: head missed / head Bad / let go mid-bar. The bar is
+                                       // NOT deleted — it keeps scrolling at holdDropDim brightness until it flows off.
             public readonly int ColorFamily;   // 3D-note beat-quantization colour (0=magenta,1=blue,2=green); used only in _note3dMode
             public RuntimeNote(OsuHitObject n, SpriteRenderer head, GameObject body, SpriteRenderer tail, int colorFamily)
             { Note = n; Head = head; Body = body; Tail = tail; ColorFamily = colorFamily; }
