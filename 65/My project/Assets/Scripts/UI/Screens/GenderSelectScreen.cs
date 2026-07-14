@@ -14,8 +14,9 @@ namespace Sdo.UI.Screens
     /// 選 profile：女→00000000、男→00000001（ProfileManager.SeededIdForGender）。按進入 → 切 active 使用者、把身分帶回
     /// session、建/進房間（依需求「直接進房間」而不經大廳列表）。離開 → AppQuit。
     ///
-    /// 座標逐字取自 DDRLOBBYSEL.XML 的 win5（800×600 4:3、左上原點）。原版另有「鍵盤/毯子模式」選擇——單機鍵盤唯一輸入，
-    /// 毯子(跳舞毯)無意義，故省略那組核取方塊與其面板(LobbySel138)。3D 預覽掛在自己的相機+layer→RenderTexture，顯示時把
+    /// 座標逐字取自 DDRLOBBYSEL.XML 的 win5（800×600 4:3、左上原點）。原版頂端的橫幅(LobbySel47..50)不顯示。右側「鍵盤/
+    /// 毯子模式」面板照畫，但單機鍵盤是唯一輸入 → 鍵盤固定顯示選中圖 LobbySel0c、跳舞毯固定 LobbySel1a（LobbySel1b 不用），
+    /// 按跳舞毯只發音效不換圖。3D 預覽掛在自己的相機+layer→RenderTexture，顯示時把
     /// 該 layer 從前端 UI 相機的 cullingMask 遮掉（同 RoomScreen 掛 3D 房間的做法），OnHide 時整組拆除。
     /// </summary>
     public sealed class GenderSelectScreen : UIScreenBase
@@ -32,8 +33,6 @@ namespace Sdo.UI.Screens
         private RawImage _previewImg;
         private Image _maleBox, _femaleBox;
         private Sprite _maleOn, _maleOff, _femaleOn, _femaleOff;
-        private Image _keyboardMode, _dancingPadMode;
-        private Sprite _keyboardOn, _keyboardOff, _dancingPadOn, _dancingPadOff;
         private Camera _maskedCam; private int _savedMask;
         private int _gender;   // 0=女, 1=男
 
@@ -51,27 +50,21 @@ namespace Sdo.UI.Screens
             _previewImg = AddRaw("AvatarView", AvatarView.x, AvatarView.y, AvatarSize.x, AvatarSize.y);
             _previewImg.color = new Color(1f, 1f, 1f, 0f);   // hidden until the RT is assigned
 
-            // decorative bands / logo (tolerant of missing art). Top strips 47..50, bottom labels 134..137, logo + twt.
-            UIKit.AddSprite(Root, "Strip47", An("LobbySel47"), 0f, 0f);
-            UIKit.AddSprite(Root, "Strip48", An("LobbySel48"), 256f, 0f);
-            UIKit.AddSprite(Root, "Strip49", An("LobbySel49"), 512f, 0f);
-            UIKit.AddSprite(Root, "Strip50", An("LobbySel50"), 768f, 0f);
+            // decorative bands / logo (tolerant of missing art). 原版頂端還有一排橫幅 (LobbySel47..50)，這裡不顯示。
             UIKit.AddSprite(Root, "Label134", An("LobbySel134"), 13f, 518f);
             UIKit.AddSprite(Root, "Label135", An("LobbySel135"), 269f, 518f);
             UIKit.AddSprite(Root, "Label136", An("LobbySel136"), 525f, 518f);
             UIKit.AddSprite(Root, "Label137", An("LobbySel137"), 781f, 518f);
 
-            // DDRLOBBYSEL right-side input mode panel.
+            // DDRLOBBYSEL 右側輸入模式面板。單機只有鍵盤能玩 → 鍵盤固定顯示選中的 LobbySel0c，跳舞毯固定 LobbySel1a
+            // (從不換成 LobbySel1b)；按跳舞毯只會發出音效 (AddToggleSprite 裡的 UiSfx)，圖不變。
             UIKit.AddSprite(Root, "ModeFrame", An("LobbySel138"), 593f, 276f);
-            _keyboardOff = An("LobbySel0a"); _keyboardOn = An("LobbySel0b");
-            _dancingPadOff = An("LobbySel1a"); _dancingPadOn = An("LobbySel1b");
-            _keyboardMode = AddToggleSprite("KeyboardMode", 599f, 286f, () => SelectInputMode(keyboard: true));
-            _dancingPadMode = AddToggleSprite("DancingPadMode", 599f, 394f, () => SelectInputMode(keyboard: false));
+            UIKit.ApplySprite(AddToggleSprite("KeyboardMode", 599f, 286f, null), An("LobbySel0c"));
+            UIKit.ApplySprite(AddToggleSprite("DancingPadMode", 599f, 394f, null), An("LobbySel1a"));
             var twt = UIKit.AddSprite(Root, "Twt", An("twt"), 627f, 435f);
             var twtAnim = twt.gameObject.AddComponent<SpriteSeqAnim>();
             twtAnim.Frames = LobbySelArt.AnFrames("twt");
             twtAnim.Fps = 12f;
-            SelectInputMode(keyboard: true);
 
             // male / female checkboxes (mutually exclusive). 130a/b = male off/on, 131a/b = female off/on.
             _maleOff = An("LobbySel130a"); _maleOn = An("LobbySel130b");
@@ -122,7 +115,6 @@ namespace Sdo.UI.Screens
             if (ui != null) { _maskedCam = ui; _savedMask = ui.cullingMask; ui.cullingMask &= ~(1 << GenderPreview3D.PreviewLayer); }
 
             SelectGender(_gender);            // sync checkbox sprites + preview
-            SelectInputMode(keyboard: true);  // 預設 = 鍵盤被選中(藍邊 LobbySel0b)；每次顯示都重置成 keyboard
 
             // 商城是疊在本畫面上的 modal，關閉時不會重跑 OnShow → 綁一個 refresh 讓「在商城買了衣服/換了性別」回到本畫面時，
             // 3D 預覽能用最新穿搭/性別刷新（否則預覽停在開商城前的樣子，要進房間才看得到；見 ShopScreen.SetVisible(false)）。
@@ -178,12 +170,6 @@ namespace Sdo.UI.Screens
             if (_preview != null) _preview.SetGender(_gender);
         }
 
-        private void SelectInputMode(bool keyboard)
-        {
-            UIKit.ApplySprite(_keyboardMode, keyboard ? _keyboardOn : _keyboardOff);
-            UIKit.ApplySprite(_dancingPadMode, keyboard ? _dancingPadOff : _dancingPadOn);
-        }
-
         // 進入：切 active 使用者(女/男 → 00000000/00000001)、把身分帶回 session、建/進房間（不經大廳列表，直接進房）。
         private void OnEnter()
         {
@@ -225,13 +211,14 @@ namespace Sdo.UI.Screens
         private Image AddCheckbox(string name, float x, float y, System.Action onClick)
             => AddToggleSprite(name, x, y, onClick);
 
+        // onClick 可為 null → 按下只有音效、圖不變（跳舞毯：單機不支援，但保留原版的按鈕回饋）。
         private Image AddToggleSprite(string name, float x, float y, System.Action onClick)
         {
             var img = UIKit.AddSprite(Root, name, null, x, y, raycast: true);
             var btn = img.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.transition = Selectable.Transition.None;
-            btn.onClick.AddListener(() => onClick());
+            if (onClick != null) btn.onClick.AddListener(() => onClick());
             UiSfx.AttachPress(btn, UiSfx.Click);   // 性別畫面按鈕按下 → SE_0001
             return img;
         }
