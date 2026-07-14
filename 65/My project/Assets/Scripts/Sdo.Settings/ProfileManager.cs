@@ -8,8 +8,9 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），內含
-    /// profile.json + favorites.json + config.ini。目前登入的本機 user 記在 DATA/PROFILE/active.txt。
+    /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），裡面只放
+    /// 衣服/道具（profile.json）。收藏夾(favorites.json)跟 settings.json 一樣是全帳號共用，放在 PROFILE 那層
+    /// （舊版 per-user 的 favorites.json 開機時一次性併入）。目前登入的本機 user 記在 DATA/PROFILE/active.txt。
     ///
     /// 單機 v1 首次開機自動種兩個角色 —— 00000000(女) 與 00000001(男) —— 並以 00000000 為 active。刻意先不做
     /// 登入/選角 UI；<see cref="SetActive"/> + 編號資料夾本身就是多帳號的底層，未來線上版換掉 backing store
@@ -40,7 +41,7 @@ namespace Sdo.Settings
         /// <summary>active 角色的資料夾（DATA/PROFILE/&lt;id&gt;）；Boot() 前為空字串（表示尚未落地，走 legacy 路徑）。</summary>
         public static string ActiveDir => _activeDir ?? "";
 
-        /// <summary>切換 active user 後觸發（收藏/房間預設已重載）。</summary>
+        /// <summary>切換 active user 後觸發。收藏夾是全帳號共用（PROFILE 層），不隨切換重載。</summary>
         public static event Action ActiveChanged;
 
         /// <summary>&lt;data root&gt;/PROFILE（延遲解析；可設值供測試覆寫）。根目錄由 <see cref="SdoDataRoot"/> 決定 ——
@@ -65,6 +66,8 @@ namespace Sdo.Settings
                 if (id == null || !Directory.Exists(Path.Combine(Root, id)))
                     id = FirstExistingId() ?? DefaultId;
                 Activate(id, notify: false);
+                MigrateLegacyFavorites();
+                Favorites.Load(Root);   // 收藏夾在 PROFILE 層（全帳號共用，跟 settings.json 同層），不跟著 user
             }
             catch (Exception e)
             {
@@ -101,7 +104,6 @@ namespace Sdo.Settings
             _active.Sanitize();
             WriteProfile(_activeDir, _active);
             WriteActiveId(id);
-            Favorites.Load(_activeDir);
             if (notify) ActiveChanged?.Invoke();
         }
 
@@ -183,6 +185,35 @@ namespace Sdo.Settings
             if (string.IsNullOrEmpty(p.name)) p.name = defaultName;
             if (string.IsNullOrEmpty(p.createdAt)) p.createdAt = now;
             if (changed) WriteProfile(dir, p);
+        }
+
+        // ---------------- migration ----------------
+
+        /// <summary>一次性遷移：舊版把 favorites.json 放在各 user 資料夾（DATA/PROFILE/&lt;id&gt;/）。把殘留的
+        /// per-user 收藏依 id 由小到大併入 PROFILE 層的共用檔，然後刪掉舊檔 —— user 資料夾從此只放衣服(profile.json)。
+        /// 兩個種子帳號是同一位玩家（選性別==選 profile），合併不會混到別人的收藏。合併去重、可重入（失敗下次開機再試）。</summary>
+        private static void MigrateLegacyFavorites()
+        {
+            try
+            {
+                var legacy = new List<string>();
+                foreach (var d in Directory.GetDirectories(Root))
+                {
+                    if (!TryParseId(Path.GetFileName(d), out _)) continue;   // 只認 8 位數編號資料夾
+                    var f = Path.Combine(d, Favorites.FileName);
+                    if (File.Exists(f)) legacy.Add(f);
+                }
+                if (legacy.Count == 0) return;
+                legacy.Sort(StringComparer.Ordinal);   // id 小 → 大 = 合併後的「加入順序」
+
+                var shared = Path.Combine(Root, Favorites.FileName);
+                var docs = new List<string>();
+                if (File.Exists(shared)) docs.Add(File.ReadAllText(shared, Encoding.UTF8));   // 共用檔已有內容 → 其順序優先
+                foreach (var f in legacy) docs.Add(File.ReadAllText(f, Encoding.UTF8));
+                File.WriteAllText(shared, Favorites.MergeDocs(docs), new UTF8Encoding(false));
+                foreach (var f in legacy) File.Delete(f);
+            }
+            catch (Exception e) { Debug.LogWarning($"[Profile] favorites migrate failed: {e.Message}"); }
         }
 
         // ---------------- pure helpers (unit-tested) ----------------

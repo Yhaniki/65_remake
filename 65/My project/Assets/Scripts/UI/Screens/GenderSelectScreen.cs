@@ -188,7 +188,7 @@ namespace Sdo.UI.Screens
         private void OnEnter()
         {
             string id = ProfileManager.SeededIdForGender(_gender);
-            ProfileManager.SetActive(id);            // 載入該帳號 profile + 收藏 + config.ini，觸發 ActiveChanged
+            ProfileManager.SetActive(id);            // 載入該帳號 profile(衣服)，觸發 ActiveChanged；收藏/設定是全帳號共用不重載
             var p = ProfileManager.Active;
             if (p != null && p.id == id && p.gender != _gender)
             {

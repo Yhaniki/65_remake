@@ -1,3 +1,5 @@
+using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using Sdo.Settings;
 
@@ -55,6 +57,40 @@ namespace Sdo.Tests
             var m = new UserProfile("00000001", "阿明", 1).Sanitize();
             Assert.AreEqual(1, m.gender);     // 男 kept
             Assert.AreEqual("阿明", m.name);
+        }
+
+        [Test]
+        public void Boot_MigratesLegacyPerUserFavorites_ToSharedProfileLayer()
+        {
+            // 舊版把 favorites.json 放在各 user 資料夾；現在收藏是 PROFILE 層全帳號共用（user 資料夾只放衣服）。
+            // Boot() 要把殘留的 per-user 檔依 id 由小到大併入共用檔（去重、先出現先贏）並刪掉舊檔。
+            string root = Path.Combine(Path.GetTempPath(), "sdo_profile_test_" + Path.GetRandomFileName());
+            try
+            {
+                ProfileManager.Root = root;
+                Directory.CreateDirectory(Path.Combine(root, "00000000"));
+                Directory.CreateDirectory(Path.Combine(root, "00000001"));
+                File.WriteAllText(Path.Combine(root, "00000000", Favorites.FileName), Favorites.Serialize(new[] { "sdom1.gn", "sdom2.gn" }));
+                File.WriteAllText(Path.Combine(root, "00000001", Favorites.FileName), Favorites.Serialize(new[] { "sdom2.gn", "sdom3.gn" }));
+
+                ProfileManager.Boot();
+
+                var shared = Path.Combine(root, Favorites.FileName);
+                Assert.IsTrue(File.Exists(shared), "共用檔應建立在 PROFILE 層");
+                CollectionAssert.AreEqual(new[] { "sdom1.gn", "sdom2.gn", "sdom3.gn" },
+                    Favorites.Parse(File.ReadAllText(shared)).ToList());
+                Assert.IsFalse(File.Exists(Path.Combine(root, "00000000", Favorites.FileName)), "舊 per-user 檔應刪除");
+                Assert.IsFalse(File.Exists(Path.Combine(root, "00000001", Favorites.FileName)), "舊 per-user 檔應刪除");
+                Assert.IsTrue(Favorites.IsFav("sdom1.gn"));   // Boot 後記憶體集合 = 共用檔內容
+                Assert.IsTrue(Favorites.IsFav("sdom3.gn"));
+                Assert.AreEqual(3, Favorites.Count);
+            }
+            finally
+            {
+                ProfileManager.Root = null;    // 還原 lazy 解析，避免污染其他測試
+                Favorites.ResetForTests();     // 解除對 temp 檔的綁定
+                try { Directory.Delete(root, true); } catch { /* best effort */ }
+            }
         }
 
         [Test]

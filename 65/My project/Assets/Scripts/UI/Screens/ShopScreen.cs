@@ -397,7 +397,7 @@ namespace Sdo.UI.Screens
             var active = Sdo.Settings.ProfileManager.Active;
             if (active == null || active.id != id)
             {
-                Sdo.Settings.ProfileManager.SetActive(id);   // 載入該帳號 profile + 收藏 + config.ini
+                Sdo.Settings.ProfileManager.SetActive(id);   // 載入該帳號 profile(衣服)；收藏/設定是全帳號共用不重載
                 var p = Sdo.Settings.ProfileManager.Active;
                 if (p != null) { _session.LocalPlayerId = p.id; _session.LocalPlayerName = p.name; }
                 _session.SeedRoomDefaults();                 // 換帳號才重種房間面板預設 (per-user)

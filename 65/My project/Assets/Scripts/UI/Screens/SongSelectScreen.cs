@@ -1050,7 +1050,7 @@ namespace Sdo.UI.Screens
         // ---------------- 收藏右鍵彈出選單 ----------------
 
         // 右鍵歌曲列 → 單鈕選單「添加收藏夹 / 从收藏夹删除」(原版 MUSICPOP)：位置跟著滑鼠、夾在畫面內；按下切換收藏
-        // 並收起，點選單外任一處(全螢幕 overlay)也收起。收藏狀態存在 active user 的 favorites.json。
+        // 並收起，點選單外任一處(全螢幕 overlay)也收起。收藏狀態存在 PROFILE 層全帳號共用的 favorites.json。
         private void ShowFavPopup(SongCatalog.Entry e, Vector2 screenPos)
         {
             CloseFavPopup();
