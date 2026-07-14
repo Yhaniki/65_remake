@@ -1908,6 +1908,7 @@ namespace Sdo.Game
         private Camera _sceneCam;
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
+        private FormationPreview _formation;   // F2 隊形 dummy preview (lazily created)
         private int _camMode = -1;                     // -1 = auto-director (default); 0..5 = fixed F2 camera
         private CvLoader[] _dirCv; private int[] _dirDurMs; private bool[] _dirAbs;   // director shots + per-shot absolute(:0)/relative(:1)
         private int _dirShot; private float _dirShotStart;
@@ -1960,6 +1961,25 @@ namespace Sdo.Game
                 _dirShotStart = Time.time;
             }
         }
+        // F2: toggle the 隊形 (formation) DUMMY preview — stands up to 6 stand-ins on the stage floor at the exact
+        // decompiled slot positions (FormationCatalog, table @0x582690). While it's up, ←→ pick the formation TYPE
+        // (1..3) and ↑↓ the dancer COUNT (1..6). Slot 0 (gold) is the leader/rank-1/camera-anchor spot; the solo
+        // dancer is hidden so the dummy stands in its place. Purely a study/visualiser (no scoring/notes/net).
+        private void ToggleFormationPreview()
+        {
+            if (_formation == null)
+            {
+                var go = new GameObject("FormationPreview");
+                go.transform.SetParent(transform, false);
+                _formation = go.AddComponent<FormationPreview>();
+                _formation.Layer = SceneLayer;
+            }
+            _formation.Cam = _sceneCam;      // (re)bind — the stage camera may have been built after first toggle
+            _formation.Anchor = _danceSpot;
+            _formation.Toggle();
+            if (_avatarRoot != null) _avatarRoot.gameObject.SetActive(!_formation.Active);   // hide the solo dancer while previewing
+        }
+
         // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
         // stays readable after this GameObject is destroyed as long as the caller grabs the reference first.
         public bool Finished => _ended;          // song played out (or failed) — time to settle
@@ -3155,6 +3175,7 @@ namespace Sdo.Game
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
+            if (Input.GetKeyDown(KeyCode.F2)) ToggleFormationPreview();            // 隊形 dummy preview (←→ type, ↑↓ count)
             if (Input.GetKeyDown(KeyCode.F8)) { EftEffect.DebugMeshOnly = !EftEffect.DebugMeshOnly; Debug.Log("[dbg] DebugMeshOnly=" + EftEffect.DebugMeshOnly + " (isolate the delta_line 3-colour mesh: hides disc/lightbars/MW, mesh at 5×)"); }
             if (Input.GetKeyDown(KeyCode.F7)) { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // DEBUG F7: toggle ShowTime (氣條) mode — SetTrackVisible refreshes HP-bar visibility for the new mode
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
@@ -3183,8 +3204,9 @@ namespace Sdo.Game
             }
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
-                // F2 (decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
-                if (Input.GetKeyDown(KeyCode.F2)) CycleCamMode();
+                // Camera cycle (decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-
+                // director. Moved off F2 → F3 because F2 now toggles the 隊形 (formation) dummy preview (see below).
+                if (Input.GetKeyDown(KeyCode.F3)) CycleCamMode();
                 Vector3 eye, tgt;
                 if (_camMode < 0 && _dirCv != null && _dirCv.Length > 0)
                 {
