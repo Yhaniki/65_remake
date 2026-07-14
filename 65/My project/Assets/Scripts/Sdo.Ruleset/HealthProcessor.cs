@@ -28,8 +28,12 @@ namespace Sdo.Ruleset
 
         private readonly double[] _delta;
         private readonly bool _invincible;
+        private readonly bool _lockOnDeath;
 
         public double Health { get; private set; } = MaxHealth;
+
+        /// <summary>Latched once HP has ever reached the death floor (never clears for the rest of the song).</summary>
+        public bool Dead { get; private set; }
 
         /// <summary>0..1 for the visible HP bar (negative buffer shows empty).</summary>
         public double Normalized
@@ -46,21 +50,29 @@ namespace Sdo.Ruleset
 
         /// <param name="level">System health level 0/1/2 (DAT_00674f04+0x75). Clamped.</param>
         /// <param name="invincible">player[0x9d] flag: HP changes disabled when set.</param>
-        public HealthProcessor(int level = 0, bool invincible = false)
+        /// <param name="lockOnDeath">
+        /// 完奏模式 (ScreenGameplay.playFullSong): the song does not end on HP-out, so HP would otherwise be
+        /// healed back up by the combo that follows. Latch it instead — once HP hits the floor it stays there
+        /// for the rest of the song and no judgment moves it again.
+        /// </param>
+        public HealthProcessor(int level = 0, bool invincible = false, bool lockOnDeath = false)
         {
             if (level < 0) level = 0;
             if (level > 2) level = 2;
             _delta = Deltas[level];
             _invincible = invincible;
+            _lockOnDeath = lockOnDeath;
         }
 
         public void Apply(Judgment j)
         {
             if (_invincible) return;
+            if (_lockOnDeath && Dead) return;
 
             Health += BaseDelta(j);
             if (Health > MaxHealth) Health = MaxHealth;
             if (Health < FloorHealth) Health = FloorHealth;
+            if (Health <= FloorHealth) Dead = true;
         }
 
         private double BaseDelta(Judgment j)

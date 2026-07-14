@@ -810,7 +810,8 @@ namespace Sdo.Game
             // 精度在 config.ini [Room] judgeLevel 手改(1~8、9=JUSTICE)。
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromStepManiaJudge(Sdo.Settings.RoomConfig.judgeLevel));
             _score = new ScoreProcessor(_map.TotalNotes);
-            _health = new HealthProcessor(healthLevel);
+            // 完奏模式：HP 歸零不結束歌曲(見 Update 的 IsFailed 判定) → HP 必須鎖死在地板，否則後面的 combo 會把血補回來。
+            _health = new HealthProcessor(healthLevel, lockOnDeath: playFullSong);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
             _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; }   // clear the auto→manual handoff latches
             _gaugeCur[0] = _gaugeCur[1] = _gaugeCur[2] = GaugeBaseP; _gaugeActive = 0;   // gauge positions re-init empty
@@ -3664,7 +3665,8 @@ namespace Sdo.Game
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
             // HP-out; it only ends naturally at the song's end (below). Normal mode still fails on HP-out.
             // HP-out. Normally fails immediately (freezes judging + cuts to GAME OVER). playFullSong = 無失敗模式:
-            // HP-out is ignored entirely (like showtime) — the song stays fully playable to its natural end, no GAME OVER.
+            // the song stays fully playable to its natural end, no GAME OVER — but HP itself latches empty (HealthProcessor
+            // lockOnDeath), so a good run after HP-out no longer refills the bar; it stays dead until the song ends.
             if (!showtimeMode && !playFullSong && _health != null && _health.IsFailed) _failed = true;
             if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; EnterResult(); }
         }
