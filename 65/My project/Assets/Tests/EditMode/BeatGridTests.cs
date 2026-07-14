@@ -74,6 +74,35 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void SnapOf_ClassifiesTheStepManiaQuantizations()
+        {
+            // 一小節 192 row、一拍 48 row。4分每 48、8分每 24、12分每 16、16分每 12、24分每 8、32分每 6。
+            Assert.AreEqual(4, BeatGrid.SnapOf(0.0));       // 正拍
+            Assert.AreEqual(4, BeatGrid.SnapOf(3.0));
+            Assert.AreEqual(8, BeatGrid.SnapOf(0.5));       // 反拍
+            Assert.AreEqual(12, BeatGrid.SnapOf(1.0 / 3));  // 三連音
+            Assert.AreEqual(16, BeatGrid.SnapOf(0.25));
+            Assert.AreEqual(24, BeatGrid.SnapOf(1.0 / 6));
+            Assert.AreEqual(32, BeatGrid.SnapOf(0.125));
+            Assert.AreEqual(0, BeatGrid.SnapOf(1.0 / 12));  // 48分 → 更細的一律 0（畫成白色）
+            Assert.AreEqual(0, BeatGrid.SnapOf(1.0 / 16));  // 64分
+        }
+
+        [Test]
+        public void LinesInWindow_TagsEachLineWithItsSnap()
+        {
+            var g = new BeatGrid(Pts((0, 120)));
+            var lines = new List<BeatGrid.Line>();
+            g.LinesInWindow(0, 2000, 4, lines);             // 每拍 4 格 = 16 分音
+
+            Assert.AreEqual(4, lines[0].Snap);              // beat 0   → 4分
+            Assert.AreEqual(16, lines[1].Snap);             // beat .25 → 16分
+            Assert.AreEqual(8, lines[2].Snap);              // beat .5  → 8分
+            Assert.AreEqual(16, lines[3].Snap);             // beat .75 → 16分
+            Assert.AreEqual(4, lines[4].Snap);              // beat 1   → 4分
+        }
+
+        [Test]
         public void LinesInWindow_SkipsNegativeBeatsAndRespectsCap()
         {
             var g = new BeatGrid(Pts((0, 120)));

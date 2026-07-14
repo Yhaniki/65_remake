@@ -52,16 +52,29 @@ namespace Sdo.Game
         // 純視覺（不改判定時間 —— 那是 GameplayClock.OffsetMs 的事）。預設 0 = 正中受擊線；用編輯器的打拍測試調。
         public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
 
-        /// <summary>單首歌的 offset（毫秒，<see cref="Sdo.Settings.SongOffsets"/>）：補「這首譜跟音檔沒對齊」。
-        /// 正 = 音符相對音樂往後。與全域 offset 相加後套在譜面時鐘上（<see cref="ApplyClockOffset"/>）。
-        /// 由 FrontendApp（開局）或譜面編輯器（F11/F12 即時調）設。</summary>
+        /// <summary>
+        /// 單首歌的 offset（毫秒，<see cref="Sdo.Settings.SongOffsets"/>）：補「這首譜跟音檔沒對齊」。
+        /// <b>動的是音樂，不是音符</b>（同 StepMania：你在調的是音樂相對譜面的位置）—— 它加在音樂的
+        /// count-in 上（<see cref="MusicCountInSec"/>），所以譜面時鐘/音符/判定線都不動，只有音樂前後挪。
+        /// 正 = 音樂往後（延後播放）＝ 音符相對音樂變早。
+        /// 由 FrontendApp（開局）或譜面編輯器（F11/F12 即時調）設。
+        /// </summary>
         public float songOffsetMs;
 
         // 全域 offset（config.ini [Room] globalOffsetMs）：補這台機器「聲音→耳朵→手→鍵盤→引擎」的整條延遲。
+        // 這個**動的是譜面時鐘**（判定時間），跟單首 offset 是兩回事。
         // 正 = 譜面時鐘往前推 → 同一下打擊的 delta 變大（判得比較晚）→ 整體打太早的人要調正的。用打拍測試量。
         private float _globalOffsetMs = Sdo.Settings.RoomConfig.globalOffsetMs;
 
-        private void ApplyClockOffset() => _clock.OffsetMs = _globalOffsetMs + songOffsetMs;
+        private void ApplyClockOffset() => _clock.OffsetMs = _globalOffsetMs;
+
+        /// <summary>
+        /// 音樂真正的 count-in（秒）＝ 譜面的 type-10 無聲數拍 ＋ 單首 offset。
+        /// dsp ↔ 譜面時間的換算**一律**用這個值（AudioChartSeconds / 變速 / 暫停 / seek / 打拍音排程），
+        /// 少用一處就會音畫不同步。錨點與 count-in 一起搬時，「譜面時間 → dsp」的映射是不變的
+        /// （anchor' = anchor + Δ/rate），所以打拍音仍然對在音符上，只有音樂本身被挪走。
+        /// </summary>
+        private double MusicCountInSec => _musicStartDelaySec + songOffsetMs / 1000.0;
         private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
@@ -1010,7 +1023,7 @@ namespace Sdo.Game
             while (_tick.TryDequeue(horizon, out double tMs))
             {
                 // 譜面時間 → dsp:除以流速(StepMania 同一句 fSecondsUntil /= m_fMusicRate,「2x music rate 就是等一半的時間」)
-                double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, _musicStartDelaySec);
+                double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, MusicCountInSec);
                 var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
                 v.volume = AudioMix.Sfx;
                 v.Stop();   // 輪到的音源可能還在響上一聲(超密集譜)→ 蓋掉
@@ -1438,7 +1451,7 @@ namespace Sdo.Game
             _danceStartSec = (useMusicStartOffset && _map != null) ? Math.Max(musicDelaySec, _map.FirstNoteMs / 1000.0) : 0.0;
             // 兩段前導(共用 lead + 無聲數拍)都是**譜面時間**;dspTime 是真實時間,所以要除以流速換回真實秒數
             // (1× 時就是原本的 dspNow + StartLeadSec + musicDelaySec)。音樂本身也用 pitch 變速(= SetPlaybackRate)。
-            _songStartDspTime = GameRate.StartDspFor(AudioSettings.dspTime, StartLeadSec, musicDelaySec, _musicRate);
+            _songStartDspTime = GameRate.StartDspFor(AudioSettings.dspTime, StartLeadSec, MusicCountInSec, _musicRate);   // 音樂的起播點含單首 offset（動音樂不動音符）
             if (_audio != null && _audio.clip != null) { _audio.pitch = _timeScale; _audio.PlayScheduled(_songStartDspTime); }
             _clockStart = Time.timeAsDouble + StartLeadSec;   // timeAsDouble 已被 timeScale 縮放 → 譜面時鐘自動吃流速
             _clock.Reset();   // re-seed the smoothing clock onto the freshly-anchored timeline (drop any parked-clock frames)
@@ -1457,7 +1470,7 @@ namespace Sdo.Game
             if (dsp < _songStartDspTime) return null;                // scheduled start not reached yet (still in lead-in)
             // clip position → beat-0 chart time。流速 r 時 clip 位置 = r×(dsp − 起播點),所以譜面時間也要乘 r
             // (r=1 時就是原式)。改速度/暫停會重新錨定 _songStartDspTime,這條式子因此永遠連續。
-            return GameRate.ChartSecondsFromDsp(dsp, _songStartDspTime, _musicRate, _musicStartDelaySec);
+            return GameRate.ChartSecondsFromDsp(dsp, _songStartDspTime, _musicRate, MusicCountInSec);
         }
 
         // Energy-bar INTRO (online FUN_0040dc00/0040e210/0040e0f0 + demo blocks @360861-360887): the bar does NOT
@@ -3525,12 +3538,12 @@ namespace Sdo.Game
             rate = GameRate.Clamp(rate);
             if (Math.Abs(rate - _musicRate) < 1e-6) return;
             double dspNow = AudioSettings.dspTime;
-            double chartSecNow = GameRate.ChartSecondsFromDsp(dspNow, _songStartDspTime, _musicRate, _musicStartDelaySec);
+            double chartSecNow = GameRate.ChartSecondsFromDsp(dspNow, _songStartDspTime, _musicRate, MusicCountInSec);
 
             _musicRate = rate; _timeScale = (float)rate;
             if (!_paused) Time.timeScale = _timeScale;
 
-            _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSecNow, rate, _musicStartDelaySec);
+            _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSecNow, rate, MusicCountInSec);
             if (_audio != null && _audio.clip != null)
             {
                 _audio.pitch = _timeScale;
@@ -3545,14 +3558,14 @@ namespace Sdo.Game
             if (paused == _paused) return;
             if (paused)
             {
-                _pauseChartSec = GameRate.ChartSecondsFromDsp(AudioSettings.dspTime, _songStartDspTime, _musicRate, _musicStartDelaySec);
+                _pauseChartSec = GameRate.ChartSecondsFromDsp(AudioSettings.dspTime, _songStartDspTime, _musicRate, MusicCountInSec);
                 if (_audio != null && _audio.clip != null) _audio.Pause();
                 Time.timeScale = 0f;   // Time.timeAsDouble 隨之凍結 → 譜面時鐘自己就停了,不需另外存
                 ResetScheduledTicks();
             }
             else
             {
-                _songStartDspTime = GameRate.AnchorForChartSeconds(AudioSettings.dspTime, _pauseChartSec, _musicRate, _musicStartDelaySec);
+                _songStartDspTime = GameRate.AnchorForChartSeconds(AudioSettings.dspTime, _pauseChartSec, _musicRate, MusicCountInSec);
                 if (_audio != null && _audio.clip != null)
                 {
                     if (AudioSettings.dspTime < _songStartDspTime) _audio.SetScheduledStartTime(_songStartDspTime);   // 暫停在音樂進來之前

@@ -36,9 +36,29 @@ namespace Sdo.Game
         private const float StripGap = 12f;
         private const float StripWidth = 84f;
 
-        private static readonly Color32 ColMeasure = new Color32(0x7a, 0x7a, 0x92, 0xff);
-        private static readonly Color32 ColBeat = new Color32(0x44, 0x44, 0x58, 0xff);
+        // 格線顏色 = StepMania 的 note quantization 配色（4分紅、8分藍、12分深紫、16分黃、24分粉、32分橘、再細的白）
+        private static readonly Color32 Col4th = new Color32(0xe0, 0x30, 0x30, 0xff);
+        private static readonly Color32 Col8th = new Color32(0x30, 0x70, 0xe0, 0xff);
+        private static readonly Color32 Col12th = new Color32(0x6a, 0x25, 0x9a, 0xff);
+        private static readonly Color32 Col16th = new Color32(0xe0, 0xd0, 0x30, 0xff);
+        private static readonly Color32 Col24th = new Color32(0xf0, 0x70, 0xc0, 0xff);
+        private static readonly Color32 Col32nd = new Color32(0xf0, 0x90, 0x28, 0xff);
+        private static readonly Color32 ColFiner = new Color32(0xe8, 0xe8, 0xe8, 0xff);
         private static readonly Color32 ColSub = new Color32(0x2b, 0x2b, 0x36, 0xff);
+
+        private static Color32 SnapColor(int snap)
+        {
+            switch (snap)
+            {
+                case 4: return Col4th;
+                case 8: return Col8th;
+                case 12: return Col12th;
+                case 16: return Col16th;
+                case 24: return Col24th;
+                case 32: return Col32nd;
+                default: return ColFiner;   // 48/64/192… 都白色
+            }
+        }
         private static readonly Color32 ColStripBg = new Color32(0x14, 0x14, 0x1a, 0xff);
         private static readonly Color32 ColWavePeak = new Color32(0x4a, 0x3f, 0x0d, 0xff);   // 瞬態的淡暈（畫在 RMS 底下）
         private static readonly Color32 ColWaveLo = new Color32(0x8a, 0x77, 0x18, 0xff);
@@ -91,6 +111,8 @@ namespace Sdo.Game
         private void LateUpdate()
         {
             _verts.Clear(); _cols.Clear(); _tris.Clear();
+            // 波形畫的是「音樂」→ 單首 offset（F11/F12）把音樂挪走時，波形要跟著挪，音符才不會跟波形一起動。
+            if (Game != null) PeaksOffsetMs = Game.EditorMusicCountInMs;
             if (Game != null && Game.EditorReady) Build();
             _mesh.Clear();
             if (_verts.Count > 0)
@@ -164,14 +186,9 @@ namespace Sdo.Game
             {
                 float y = Game.EditorYForTime(ln.Ms);
                 if (y < top || y > bottom) continue;
-                float h; Color32 c;
-                switch (ln.Kind)
-                {
-                    case BeatGrid.LineKind.Measure: h = 2.0f; c = ColMeasure; break;
-                    case BeatGrid.LineKind.Beat: h = 1.5f; c = ColBeat; break;
-                    default: h = 1.0f; c = ColSub; break;
-                }
-                Quad(x0, y - h * 0.5f, x1, y + h * 0.5f, c);
+                // 顏色依「幾分音」（StepMania 的 note quantization），粗細依是不是小節線
+                float h = ln.Kind == BeatGrid.LineKind.Measure ? 3f : (ln.Kind == BeatGrid.LineKind.Beat ? 2f : 1f);
+                Quad(x0, y - h * 0.5f, x1, y + h * 0.5f, SnapColor(ln.Snap));
             }
         }
 

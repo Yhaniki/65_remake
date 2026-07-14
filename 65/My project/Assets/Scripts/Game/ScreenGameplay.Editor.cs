@@ -51,12 +51,23 @@ namespace Sdo.Game
             set { _globalOffsetMs = (float)value; ApplyClockOffset(); }
         }
 
-        /// <summary>單首歌的 offset（毫秒）。補「這首譜跟音檔沒對齊」；正 = 音符相對音樂往後。</summary>
+        /// <summary>
+        /// 單首歌的 offset（毫秒）。補「這首譜跟音檔沒對齊」。<b>動的是音樂，音符/判定線不動</b>：
+        /// 改完只重新錨定音樂（用同一個譜面時間 re-seek），所以畫面上的音符一格都不會跳，只有音樂前後挪。
+        /// 正 = 音樂延後播放。
+        /// </summary>
         public double EditorSongOffsetMs
         {
             get => songOffsetMs;
-            set { songOffsetMs = (float)value; ApplyClockOffset(); }
+            set
+            {
+                songOffsetMs = (float)value;
+                if (_started) EditorSeekMs(_nowMs);   // 譜面時間不變 → 音符不動；音樂被重新排到新的 count-in 上
+            }
         }
+
+        /// <summary>音樂目前播到第幾秒（clip 位置）。單首 offset 動的就是它 —— 測試用來確認「動的是音樂不是音符」。</summary>
+        public double EditorClipSec => (_audio != null && _audio.clip != null) ? _audio.time : 0.0;
 
         /// <summary>
         /// 顯示縮放（＝下落速度）。StepMania 編輯器的 Ctrl+↑/↓ 就是改這個：速度越快，同一段畫面涵蓋的時間越短
@@ -129,8 +140,11 @@ namespace Sdo.Game
         /// <summary>音檔載入「已經試過了」（成功或失敗都算）—— 沒有 .ogg 的歌不會有 clip，等它是等不到的。</summary>
         public bool EditorAudioReady => _audioReady;
 
-        /// <summary>音樂比譜面第 0 拍晚多少秒進來（type-10 音樂起點的無聲數拍）。波形要減掉它才對得上音符。</summary>
+        /// <summary>音樂比譜面第 0 拍晚多少秒進來（type-10 音樂起點的無聲數拍）。</summary>
         public double EditorMusicDelaySec => _musicStartDelaySec;
+
+        /// <summary>音樂實際的 count-in（毫秒）＝ type-10 無聲數拍 ＋ 單首 offset。波形的第 0 格對應的譜面時間就是它。</summary>
+        public double EditorMusicCountInMs => MusicCountInSec * 1000.0;
 
         // ---- 幾何：覆蓋層（格線/波形）用「跟音符同一套」的時間→Y，才不會有一格誤差 ----
         public float EditorYForTime(double ms) => YForTime(ms, _nowMs);
@@ -154,7 +168,7 @@ namespace Sdo.Game
 
             // 可 seek 的範圍：音樂通常比最後一顆音符長（尾奏），編譜時要能拖到歌尾。
             double clipMs = (_audio != null && _audio.clip != null) ? _audio.clip.length * 1000.0 : 0.0;
-            EditorEndMs = Math.Max(_totalMs, clipMs + _musicStartDelaySec * 1000.0);
+            EditorEndMs = Math.Max(_totalMs, clipMs + MusicCountInSec * 1000.0);
 
             _started = true;
             EditorSetPaused(true);
@@ -205,7 +219,7 @@ namespace Sdo.Game
 
             // 四個錨點一起搬（少一個就對不上）：dsp 錨點、wall 基準、音源位置、平滑時鐘。
             double dspNow = AudioSettings.dspTime;
-            _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSec, _musicRate, _musicStartDelaySec);
+            _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSec, _musicRate, MusicCountInSec);
             _clockStart = Time.timeAsDouble - chartSec;   // 暫停時 timeAsDouble 是凍結的 → 時鐘就停在 chartSec
             _pauseChartSec = chartSec;
             _clock.Reset();
@@ -214,7 +228,7 @@ namespace Sdo.Game
             if (_audio != null && _audio.clip != null)
             {
                 _audio.Stop();
-                double clipSec = chartSec - _musicStartDelaySec;   // 音樂晚 count-in 秒才進來
+                double clipSec = chartSec - MusicCountInSec;   // 音樂晚 count-in 秒才進來（含單首 offset）
                 if (clipSec < 0.0)
                 {
                     // 還在無聲數拍裡：把音樂排在「譜面時間 = count-in」的那個 dsp 時刻（即錨點本身）。

@@ -83,6 +83,27 @@ namespace Sdo.Tests
             Assert.AreEqual(game.EditorJudgeLineY, game.EditorYForTime(note.StartTimeMs), 12.0,
                 "seek 到某顆音符的時間，該音符卻不在受擊線上");
 
+            // (4b) 單首 offset（F11/F12）：**動的是音樂，音符不動**。
+            //      譜面時間不變（音符/判定線一格都不跳），但音樂的播放位置要往回退 = 音樂延後播出來。
+            if (game.EditorClip != null)
+            {
+                double chartBefore = game.EditorNowMs;
+                double clipBefore = game.EditorClipSec;
+
+                game.EditorSongOffsetMs = 100.0;   // 音樂延後 100ms
+                yield return null;
+
+                Assert.AreEqual(chartBefore, game.EditorNowMs, 3.0,
+                    "單首 offset 不該移動譜面時鐘 —— 音符/判定線要待在原地");
+                Assert.AreEqual(clipBefore - 0.100, game.EditorClipSec, 0.010,
+                    "單首 offset +100ms → 音樂要往回退 100ms（＝之後才播到現在這個位置）");
+                Assert.AreEqual(game.EditorMusicDelaySec * 1000.0 + 100.0, game.EditorMusicCountInMs, 1.0,
+                    "波形的時間原點要跟著音樂走（不然波形會跟音符一起動）");
+
+                game.EditorSongOffsetMs = 0.0;     // 還原，後面的波形檢查才不受影響
+                yield return null;
+            }
+
             // (5) 波形：真的從 AudioClip 的 PCM 解出來（不是全靜音）
             if (game.EditorClip != null)
             {
@@ -153,11 +174,11 @@ namespace Sdo.Tests
             Assert.AreEqual(40.0, after - before, 2.0,
                 "offset +40 → 譜面時鐘要往前 40ms（同一下打擊的 delta 變大 = 判得比較晚）");
 
-            // (3) 單首 offset 疊加在全域 offset 之上（兩者相加才是套在時鐘上的量）
+            // (3) 單首 offset 動的是「音樂」不是「音符」→ 它不該碰譜面時鐘（打拍測試沒有音樂，所以什麼都不該變）
             game.EditorSongOffsetMs = -10.0;
             yield return null;
-            Assert.AreEqual(30.0, game.EditorNowMs - before, 2.0,
-                "全域 +40 與單首 -10 要相加（= +30），不是互相覆蓋");
+            Assert.AreEqual(after, game.EditorNowMs, 2.0,
+                "單首 offset 不該移動譜面時鐘（音符/判定線不動，動的是音樂）");
         }
 
         // 獨立重算一次「編號最大、有譜、檔案真的存在」的那首（不呼叫產品程式的同一支函式，才驗得出東西）

@@ -23,12 +23,36 @@ namespace Sdo.Osu
         /// <summary>格線種類：小節線 / 拍線 / 細分線。</summary>
         public enum LineKind { Measure, Beat, Sub }
 
+        /// <summary>一小節 192 row（= 一拍 48 row）—— .gn 的 slot 解析度，也是所有 snap 的最小公倍數。</summary>
+        public const int RowsPerMeasure = 192;
+        public const int RowsPerBeat = RowsPerMeasure / BeatsPerMeasure;   // 48
+
         public readonly struct Line
         {
             public readonly double Ms;
             public readonly double Beat;
             public readonly LineKind Kind;
-            public Line(double ms, double beat, LineKind kind) { Ms = ms; Beat = beat; Kind = kind; }
+            /// <summary>這條線落在幾分音上：4/8/12/16/24/32；再細的（48/64/192…）為 0。</summary>
+            public readonly int Snap;
+            public Line(double ms, double beat, LineKind kind, int snap) { Ms = ms; Beat = beat; Kind = kind; Snap = snap; }
+        }
+
+        /// <summary>
+        /// 這個拍點落在幾分音上（StepMania 的 note quantization）：4=正拍、8=反拍、12=三連、16、24、32；
+        /// 更細的回 0。判斷方式是「一小節 192 row」裡的位置能被誰整除 —— 4分每 48 row、8分每 24、12分每 16、
+        /// 16分每 12、24分每 8、32分每 6。（192 全都整除，所以用全域 row 取模跟用小節內 row 取模等價。）
+        /// </summary>
+        public static int SnapOf(double beat)
+        {
+            long row = (long)Math.Round(beat * RowsPerBeat);
+            if (row < 0) row = -row;
+            if (row % 48 == 0) return 4;
+            if (row % 24 == 0) return 8;
+            if (row % 16 == 0) return 12;
+            if (row % 12 == 0) return 16;
+            if (row % 8 == 0) return 24;
+            if (row % 6 == 0) return 32;
+            return 0;
         }
 
         public int SegmentCount => _segMs.Length;
@@ -126,7 +150,7 @@ namespace Sdo.Osu
                 LineKind kind = (i % perMeasure == 0) ? LineKind.Measure
                               : (i % div == 0) ? LineKind.Beat
                               : LineKind.Sub;
-                outLines.Add(new Line(ms, beat, kind));
+                outLines.Add(new Line(ms, beat, kind, SnapOf(beat)));
             }
         }
     }
