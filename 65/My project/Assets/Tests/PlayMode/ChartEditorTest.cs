@@ -1,8 +1,11 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using NUnit.Framework;
 using Sdo.Game;
+using Sdo.Osu;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
 namespace Sdo.Tests
@@ -15,6 +18,22 @@ namespace Sdo.Tests
     public class ChartEditorTest
     {
         private const int W = 800, H = 600;
+
+        // PlayMode 的測試共用同一個場景：一個測試留下來的 ScreenGameplay（以及它生出來的一堆根物件）會被
+        // 下一個測試的 FindAnyObjectByType 撈到，驗到的就不是自己建的那個了。每個測試前後照差集清乾淨。
+        private HashSet<GameObject> _preRoots;
+
+        [SetUp]
+        public void SnapshotRoots()
+            => _preRoots = new HashSet<GameObject>(SceneManager.GetActiveScene().GetRootGameObjects());
+
+        [TearDown]
+        public void DestroySpawnedRoots()
+        {
+            foreach (var go in SceneManager.GetActiveScene().GetRootGameObjects())
+                if (!_preRoots.Contains(go)) Object.DestroyImmediate(go);
+            Time.timeScale = 1f;   // 編輯器暫停時把 timeScale 歸零過
+        }
 
         [UnityTest]
         public IEnumerator ChartEditor_BlackBackground_Notes_Seek_And_Waveform()
@@ -85,6 +104,54 @@ namespace Sdo.Tests
 
             yield return null;
             Capture("H:/65_remake/chart-editor-capture.png");
+        }
+
+        /// <summary>
+        /// 打拍測試（校時）：不讀 .gn、不放音樂，只有固定 BPM 的等距音符。這裡釘住兩件事——
+        /// (1) 合成譜真的長在 R 軌、間距 = 一拍；(2) global offset 的**方向**：offset 加大 → 譜面時鐘往前 →
+        /// 同一下打擊的 delta 變大（判得比較晚）。方向弄反的話，照著建議值調只會越調越糟。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator BeatTest_SynthChart_AndGlobalOffsetShiftsClockForward()
+        {
+            KillByName("FrontendApp");
+            KillByName("FrontendCanvas");
+            yield return null;
+
+            var game = new GameObject("ScreenGameplay_beattest").AddComponent<ScreenGameplay>();
+            game.editorMode = true;
+            game.beatTestMode = true;
+            game.beatTestBpm = 120f;          // 一拍 500ms
+            game.assistTick = true;
+            game.effectCharacter = false;
+            game.effectScene = false;
+
+            float t0 = Time.realtimeSinceStartup;
+            while (!game.EditorReady && Time.realtimeSinceStartup - t0 < 30f) yield return null;
+            Assert.IsTrue(game.EditorReady, "打拍測試 30 秒內沒有備妥");
+
+            // (1) 合成譜：全部在 R 軌、每拍一顆、沒有音樂
+            var map = game.EditorMap;
+            Assert.Greater(map.TotalNotes, 100);
+            Assert.IsNull(game.EditorClip, "打拍測試不該載入任何音樂");
+            for (int i = 1; i < 20; i++)
+            {
+                Assert.AreEqual(BeatTestChart.RightLane, map.HitObjects[i].Lane);
+                Assert.AreEqual(500, map.HitObjects[i].StartTimeMs - map.HitObjects[i - 1].StartTimeMs);
+            }
+            Assert.IsNotNull(game.EditorWindows, "誤差條需要判定窗");
+
+            // (2) global offset 的方向
+            game.EditorSeekMs(10000);
+            yield return null;
+            double before = game.EditorNowMs;
+
+            game.EditorGlobalOffsetMs = 40.0;
+            yield return null;
+            double after = game.EditorNowMs;
+
+            Assert.AreEqual(40.0, after - before, 2.0,
+                "offset +40 → 譜面時鐘要往前 40ms（同一下打擊的 delta 變大 = 判得比較晚）");
         }
 
         // 獨立重算一次「編號最大、有譜、檔案真的存在」的那首（不呼叫產品程式的同一支函式，才驗得出東西）

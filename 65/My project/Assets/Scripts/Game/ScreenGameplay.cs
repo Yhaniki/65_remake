@@ -48,6 +48,9 @@ namespace Sdo.Game
         public bool constantScroll = false;   // true = ignore BPM/SV variation (perfectly linear scroll)
         public bool useMusicStartOffset = true;  // true = start the music (and the dancer) at the chart's type-10 音樂起止 marker (skip the leading count-in measure so notes line up with the song)
         public float judgeLineY = 70f;        // receptor / hit line Y (design px). UPSCROLL: notes rise to it.
+        // 判定線的視覺偏移（設計 px）：完美時機的音符落在 judgeLineY + judgeOffsetY，受擊線圖本身不動。
+        // 純視覺（不改判定時間 —— 那是 GameplayClock.OffsetMs 的事）。預設 0 = 正中受擊線；用編輯器的打拍測試調。
+        public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
         private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
@@ -804,6 +807,9 @@ namespace Sdo.Game
             // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
             // 精度在 config.ini [Room] judgeLevel 手改(1~8、9=JUSTICE)。
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromStepManiaJudge(Sdo.Settings.RoomConfig.judgeLevel));
+            // 全域判定 offset（config.ini [Room] globalOffsetMs）：補音效/畫面/鍵盤的整條延遲。
+            // 正 = 譜面時鐘往前推 → 同一下打擊的 delta 變大（判得比較晚）→ 整體打太早的人要調正的。用打拍測試量。
+            _clock.OffsetMs = Sdo.Settings.RoomConfig.globalOffsetMs;
             _score = new ScoreProcessor(_map.TotalNotes);
             _health = new HealthProcessor(healthLevel);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
@@ -1306,6 +1312,12 @@ namespace Sdo.Game
 
         private bool LoadChart()
         {
+            // 打拍測試：不讀 .gn、也不放音樂 —— 用固定 BPM 的等距音符當節拍器（assist tick 每顆音符響一聲）。
+            if (beatTestMode)
+            {
+                _map = BeatTestChart.Build(beatTestBpm, BeatTestDurationSec, BeatTestChart.RightLane, beatTestBeatsPerNote);
+                return true;
+            }
             // (3) official .gn chart first
             if (!string.IsNullOrEmpty(gnPath) && File.Exists(gnPath))
             {
@@ -1328,6 +1340,9 @@ namespace Sdo.Game
                 _audioReady = true;   // no song to wait for → the loading screen can reveal
                 yield break;
             }
+            // 打拍測試：完全不放音樂（節拍音是 assist tick 排出來的）。沒有這道門，下面那個 fallback 會把
+            // 示範曲 Bassdrop.mp3 撈出來播 —— 校時的時候背後放歌是最不該發生的事。
+            if (beatTestMode) { _audioReady = true; StartCoroutine(EditorOpeningCo()); yield break; }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
                 ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
             var type = path.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) ? AudioType.OGGVORBIS : AudioType.MPEG;
@@ -3644,8 +3659,9 @@ namespace Sdo.Game
             _nowMs = now;
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
             TickAssist(now);   // F7 打拍音：把接下來 250ms 內的 tick 排進音訊時鐘（關閉時只推游標）
-            // 譜面編輯器：只把音符捲過去 —— 不判定、不扣血、不計分、不結算（時間由 ChartEditorScreen 自由 seek）。
-            if (editorMode) { ScrollNotes(now); EditorTick(now); return; }
+            // 譜面編輯器：只把音符捲過去 —— 不扣血、不計分、不結算（時間由 ChartEditorScreen 自由 seek）。
+            // 打拍測試模式例外：那個模式就是要打，所以判定要跑（但只回報誤差，不進分數/血量）。
+            if (editorMode) { if (beatTestMode) EditorJudgeTick(now); ScrollNotes(now); EditorTick(now); return; }
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
@@ -3943,7 +3959,7 @@ namespace Sdo.Game
         private float YForTime(double noteMs, double now)
         {
             if (_scroll == null) BuildScroll();
-            return judgeLineY + _scrollSign * (float)_scroll.PixelDistance(now, noteMs);
+            return judgeLineY + judgeOffsetY + _scrollSign * (float)_scroll.PixelDistance(now, noteMs);
         }
 
         private void ScrollNotes(double now)

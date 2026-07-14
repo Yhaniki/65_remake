@@ -24,6 +24,65 @@ namespace Sdo.Game
         /// <summary>譜面編輯器模式：純黑背景（無場景/舞者）＋可自由 seek，不判定也不結算。</summary>
         public bool editorMode;
 
+        // ---------- 打拍測試（校時）----------
+
+        /// <summary>打拍測試：不讀 .gn、不放音樂，改用固定 BPM 的等距音符（節拍音＝assist tick）。用來校 offset。</summary>
+        public bool beatTestMode;
+
+        /// <summary>打拍測試的 BPM。</summary>
+        public float beatTestBpm = 120f;
+
+        /// <summary>每幾拍一顆音符（1 = 4 分音符）。</summary>
+        public float beatTestBeatsPerNote = 1f;
+
+        /// <summary>打拍測試的長度（秒）。5 分鐘的連續打點遠遠夠校時，再長只是白白多生幾千個音符物件。</summary>
+        public const double BeatTestDurationSec = 300.0;
+
+        /// <summary>每次判定到就回報：deltaMs = 打擊時間 − 音符時間（負 = 太早、正 = 太晚）；miss 時 delta 為 NaN。</summary>
+        public Action<double, Judgment> EditorOnHit;
+
+        /// <summary>目前的判定窗（畫誤差條要用）。</summary>
+        public JudgmentWindows EditorWindows => _engine?.Windows;
+
+        /// <summary>全域判定 offset（毫秒，加在譜面時鐘上）。正 = 判定時間往後 → 適合整體打太早的人。</summary>
+        public double EditorGlobalOffsetMs
+        {
+            get => _clock.OffsetMs;
+            set => _clock.OffsetMs = value;
+        }
+
+        // 打拍測試的判定：只回報誤差，不進分數/血量/連段/結算（ApplyEvent 那一整套在這裡沒有意義）。
+        private void EditorJudgeTick(double now)
+        {
+            var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
+            for (int lane = 0; lane < Keys; lane++)
+            {
+                bool down = false;
+                foreach (var k in laneKeys[lane]) if (Input.GetKeyDown(k)) down = true;
+                if (down) EditorPressLane(lane, now);
+            }
+            // 沒打到的音符走過判定窗 → 記一次 miss
+            foreach (var n in _notes)
+            {
+                if (n.Done || n.HeadJudged) continue;
+                if (!_engine.HasPassed(n.Note.StartTimeMs, now)) continue;
+                n.HeadJudged = true; n.Done = true;
+                EditorOnHit?.Invoke(double.NaN, Judgment.Miss);
+            }
+        }
+
+        private void EditorPressLane(int lane, double now)
+        {
+            var n = NearestHittable(lane, now);
+            if (n == null) return;                       // 空打（判定窗內沒有音符）→ 不計入統計，同 osu
+            var j = _engine.JudgeHit(n.Note.StartTimeMs, now);
+            if (j == null) return;
+            n.HeadJudged = true; n.Done = true;          // 打拍測試只有 tap
+            EditorOnHit?.Invoke(now - n.Note.StartTimeMs, j.Value);   // delta：負 = 太早、正 = 太晚（同 osu）
+            TriggerClickFlash(lane);                                   // 打到有回饋
+            if (_burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane, false);
+        }
+
         /// <summary>編輯器可 seek 的尾端（毫秒）＝ 最後一顆音符 與 音樂長度 取大者。</summary>
         public double EditorEndMs { get; private set; }
 

@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using Sdo.Osu;
+using Sdo.Ruleset;
+using Sdo.Settings;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -56,6 +58,17 @@ namespace Sdo.Game
         private bool _loading;
         private BeatGrid _grid;                     // 依 map 快取（OnGUI/按鍵每幀會問好幾次）
         private OsuBeatmap _gridFor;
+
+        // 打拍測試（校時）
+        private bool _beatTest;
+        private float _beatBpm = 120f;
+        private float _beatDiv = 1f;                // 每幾拍一顆（1 = 4 分音符）
+        private float _beatBpmPending = 120f;       // 滑桿上的值；放開滑鼠才真的重建（見 Update）
+        private float _beatDivPending = 1f;
+        private int _misses;
+        private readonly HitErrorStats _stats = new HitErrorStats();
+        private double _globalOffset = RoomConfig.globalOffsetMs;   // 判定 offset（毫秒）
+        private float _judgeOffsetY = RoomConfig.judgeOffsetY;      // 判定線視覺偏移（設計 px）
 
         // 歌單視窗
         private bool _showList;
@@ -141,10 +154,81 @@ namespace Sdo.Game
                 ogo.transform.SetParent(transform, false);
                 _overlay = ogo.AddComponent<ChartEditorOverlay>();
             }
+            EnsureOverlay();
             _overlay.Game = _game;
             _overlay.Peaks = null;
+            _overlay.showWaveform = true;
+            _overlay.showJudgeLine = false;
+            _overlay.showHitError = false;
             _peaksCo = StartCoroutine(BuildPeaksCo(_game));
             _loading = false;
+        }
+
+        private void EnsureOverlay()
+        {
+            if (_overlay != null) return;
+            var ogo = new GameObject("ChartEditorOverlay");
+            ogo.transform.SetParent(transform, false);
+            _overlay = ogo.AddComponent<ChartEditorOverlay>();
+        }
+
+        // ---------- 打拍測試（校時）----------
+        //
+        // 不讀 .gn、不放音樂：只有固定 BPM 的等距音符（全部在 R 軌）＋每顆音符一聲節拍音（assist tick）。
+        // 打下去 → osu 式誤差條告訴你偏早還偏晚，統計出來的中位數就是該補的 global offset。
+
+        private void ToggleBeatTest()
+        {
+            if (_loading) return;
+            _beatTest = !_beatTest;
+            if (_beatTest) StartCoroutine(LoadBeatTestCo());
+            else LoadSong(_gn, _diff);
+        }
+
+        private IEnumerator LoadBeatTestCo()
+        {
+            _loading = true;
+            Teardown();
+            yield return null;
+
+            _stats.Clear();
+            _status = "";
+            _preRoots = new HashSet<GameObject>(SceneManager.GetActiveScene().GetRootGameObjects());
+
+            var game = new GameObject("ScreenGameplay").AddComponent<ScreenGameplay>();
+            game.editorMode = true;
+            game.beatTestMode = true;            // 合成譜（LoadChart 走 BeatTestChart）＋判定會跑
+            game.beatTestBpm = _beatBpm;
+            game.beatTestBeatsPerNote = _beatDiv;
+            game.assistTick = true;              // 節拍音 = 每顆音符一聲 clap
+            game.autoPlay = false;
+            game.effectCharacter = false;
+            game.effectScene = false;
+            game.scrollSpeedMul = _speed;
+            game.judgeOffsetY = _judgeOffsetY;
+            game.EditorOnHit = OnBeatTestHit;
+            _game = game;
+
+            EnsureOverlay();
+            _overlay.Game = _game;
+            _overlay.Peaks = null;
+            _overlay.showWaveform = false;       // 沒有音樂 → 沒有波形
+            _overlay.showJudgeLine = true;
+            _overlay.showHitError = true;
+            _overlay.ClearHits();
+            _loading = false;
+
+            while (_game != null && !_game.EditorReady) yield return null;
+            if (_game == null) yield break;
+            _game.EditorGlobalOffsetMs = _globalOffset;   // 時鐘建好之後才套（_clock 在 BootBuildCo 之後才有值）
+            _game.EditorSetPaused(false);                 // 直接開始（打拍測試沒有什麼好等的）
+        }
+
+        private void OnBeatTestHit(double deltaMs, Sdo.Ruleset.Judgment j)
+        {
+            if (_overlay != null) _overlay.AddHit(deltaMs, j);
+            if (!double.IsNaN(deltaMs)) _stats.Add(deltaMs);   // miss 不進統計（同 osu）
+            else _misses++;
         }
 
         private void Teardown()
@@ -208,14 +292,30 @@ namespace Sdo.Game
         private void Update()
         {
             if (Input.GetKeyDown(KeyCode.F1)) _showList = !_showList;
+            if (Input.GetKeyDown(KeyCode.F2)) ToggleBeatTest();
             if (Input.GetKeyDown(KeyCode.Escape) && _showList) _showList = false;
             if (_game == null || !_game.EditorReady) return;
+
+            if (Input.GetKeyDown(KeyCode.Space)) _game.EditorSetPaused(!_game.EditorPaused);
+
+            if (_beatTest)
+            {
+                // 打拍測試：方向鍵是「軌道鍵」（A/S/W/D + ←↓↑→，R 軌 = D 或 →），不能拿來 seek/調格線。
+                if (Input.GetKeyDown(KeyCode.Backspace)) { _stats.Clear(); _misses = 0; _overlay?.ClearHits(); }
+                // BPM / 密度改了要重建整份合成譜（幾千顆音符）→ 等滑鼠放開再做，不然拖滑桿會每幀重建一次。
+                if (!_loading && !Input.GetMouseButton(0)
+                    && (Mathf.Abs(_beatBpmPending - _beatBpm) > 0.5f || Mathf.Abs(_beatDivPending - _beatDiv) > 0.01f))
+                {
+                    _beatBpm = _beatBpmPending; _beatDiv = _beatDivPending;
+                    StartCoroutine(LoadBeatTestCo());
+                }
+                return;
+            }
 
             if (Input.GetKeyDown(KeyCode.F3) && _overlay != null) _overlay.showWaveform = !_overlay.showWaveform;
             if (Input.GetKeyDown(KeyCode.G) && _overlay != null) _overlay.showGrid = !_overlay.showGrid;
             if (Input.GetKeyDown(KeyCode.Tab)) CycleDifficulty();
 
-            if (Input.GetKeyDown(KeyCode.Space)) _game.EditorSetPaused(!_game.EditorPaused);
             if (Input.GetKeyDown(KeyCode.Home)) _game.EditorSeekMs(0);
             if (Input.GetKeyDown(KeyCode.End)) _game.EditorSeekMs(_game.EditorEndMs);
 
@@ -283,6 +383,8 @@ namespace Sdo.Game
         private void OnGUI()
         {
             var box = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.MiddleLeft, padding = new RectOffset(8, 8, 4, 4) };
+            if (_beatTest) { DrawBeatTestGui(box); return; }
+
             GUI.Box(new Rect(0, 0, Screen.width, 54), GUIContent.none);
 
             bool ready = _game != null && _game.EditorReady;
@@ -293,7 +395,8 @@ namespace Sdo.Game
             GUILayout.BeginArea(new Rect(6, 4, Screen.width - 12, 46));
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("歌單 (F1)", GUILayout.Width(80))) _showList = !_showList;
-            GUILayout.Label($"♪ {title}   [{_gn}]", box, GUILayout.Width(320));
+            if (GUILayout.Button("打拍測試 (F2)", GUILayout.Width(100))) ToggleBeatTest();
+            GUILayout.Label($"♪ {title}   [{_gn}]", box, GUILayout.Width(280));
 
             for (int d = 0; d < 3; d++)
             {
@@ -350,6 +453,123 @@ namespace Sdo.Game
             if (ms < 0) ms = 0;
             int t = (int)(ms / 1000.0);
             return $"{t / 60:00}:{t % 60:00}.{(int)(ms % 1000) / 100}";
+        }
+
+        // ---------- 打拍測試的面板 ----------
+        //
+        // 左上：BPM / 節拍密度 / 重來。右側：兩個 offset 滑桿、即時統計、osu 式誤差直方圖、建議值與存檔。
+        private void DrawBeatTestGui(GUIStyle box)
+        {
+            bool ready = _game != null && _game.EditorReady;
+            GUI.Box(new Rect(0, 0, Screen.width, 30), GUIContent.none);
+
+            GUILayout.BeginArea(new Rect(6, 3, Screen.width - 12, 26));
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("← 回譜面 (F2)", GUILayout.Width(110))) ToggleBeatTest();
+            GUILayout.Label("打拍測試：跟著節拍音打 R 軌（D 或 →）", box, GUILayout.Width(260));
+
+            GUILayout.Label("BPM", GUILayout.Width(32));
+            _beatBpmPending = Mathf.Round(GUILayout.HorizontalSlider(_beatBpmPending, 60f, 240f, GUILayout.Width(140)));
+            GUILayout.Label($"{_beatBpmPending:0}", box, GUILayout.Width(36));
+
+            GUILayout.Label("音符", GUILayout.Width(32));
+            _beatDivPending = GUILayout.Toggle(_beatDivPending < 0.75f, "8 分", GUI.skin.button, GUILayout.Width(50)) ? 0.5f : 1f;
+
+            if (GUILayout.Button("重來 (Backspace)", GUILayout.Width(120)))
+            { _stats.Clear(); _misses = 0; _overlay?.ClearHits(); }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.EndArea();
+
+            // ---- 右下面板 ----（不能貼著上面：誤差條就畫在軌道右邊、與受擊線同高，蓋到就看不到了）
+            const float PanelW = 380f;
+            float panelH = Mathf.Min(440f, Screen.height * 0.66f);
+            var r = new Rect(Screen.width - PanelW - 8, Screen.height - panelH - 30f, PanelW, panelH);
+            GUILayout.BeginArea(r, GUI.skin.box);
+
+            GUILayout.Label("判定 offset（毫秒）— 正 = 判定往後（整體打太早就往正的調）");
+            GUILayout.BeginHorizontal();
+            double off = GUILayout.HorizontalSlider((float)_globalOffset, -150f, 150f, GUILayout.Width(240));
+            off = Math.Round(off);
+            GUILayout.Label($"{_globalOffset:+0;-0;0} ms", box, GUILayout.Width(70));
+            GUILayout.EndHorizontal();
+            if (ready && Math.Abs(off - _globalOffset) > 0.5) { _globalOffset = off; _game.EditorGlobalOffsetMs = off; }
+
+            GUILayout.Space(4);
+            GUILayout.Label("判定線位置（px）— 完美時機的音符落在受擊線 + 這個位移（藍線）");
+            GUILayout.BeginHorizontal();
+            float jy = GUILayout.HorizontalSlider(_judgeOffsetY, -60f, 60f, GUILayout.Width(240));
+            jy = Mathf.Round(jy);
+            GUILayout.Label($"{_judgeOffsetY:+0;-0;0} px", box, GUILayout.Width(70));
+            GUILayout.EndHorizontal();
+            if (ready && Mathf.Abs(jy - _judgeOffsetY) > 0.5f) { _judgeOffsetY = jy; _game.judgeOffsetY = jy; }
+
+            GUILayout.Space(6);
+            int n = _stats.Count;
+            double mean = _stats.Mean, median = _stats.Median, ur = _stats.UnstableRate;
+            GUILayout.Label($"打了 {n} 下（miss {_misses}）");
+            if (n > 0)
+            {
+                GUILayout.Label($"平均 {mean:+0.0;-0.0;0.0} ms（{(mean < 0 ? "偏早" : "偏晚")}）   中位數 {median:+0.0;-0.0;0.0} ms");
+                GUILayout.Label($"UR {ur:0.0}（越小越穩；10 × 標準差）");
+            }
+            else GUILayout.Label("跟著節拍音打右鍵，資料會即時累積。");
+
+            GUILayout.Space(6);
+            DrawHistogram(GUILayoutUtility.GetRect(PanelW - 20, 120));
+
+            GUILayout.Space(6);
+            double suggested = _stats.SuggestedOffset(_globalOffset);
+            bool enough = n >= 20;
+            GUI.enabled = enough && ready;
+            if (Math.Abs(suggested - _globalOffset) < 0.5 && enough)
+                GUILayout.Label($"目前的 offset 就很準了（{n} 下）");
+            else
+                GUILayout.Label(enough
+                    ? $"建議 offset：{suggested:+0;-0;0} ms（依中位數，打太亂會自動保守）"
+                    : $"再打幾下（至少 20 下）才給建議…目前 {n}");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("套用建議值", GUILayout.Width(110)))
+            { _globalOffset = Math.Round(suggested); if (ready) _game.EditorGlobalOffsetMs = _globalOffset; }
+            GUI.enabled = true;
+            if (GUILayout.Button("存進 config.ini", GUILayout.Width(120)))
+            {
+                RoomConfig.globalOffsetMs = (float)_globalOffset;
+                RoomConfig.judgeOffsetY = _judgeOffsetY;
+                RoomConfig.Save();
+                _status = "已存進 config.ini（下次開遊戲生效）";
+            }
+            GUILayout.EndHorizontal();
+            if (!string.IsNullOrEmpty(_status)) GUILayout.Label(_status);
+            GUILayout.EndArea();
+
+            GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
+                "空白=播放/暫停   D 或 → =打右軌   Backspace=重來   F2=回譜面   誤差條：左=太早 右=太晚，箭頭=你的平均偏移");
+        }
+
+        // osu 式打擊誤差直方圖（HitEventTimingDistributionGraph）：中央 = 準時，左邊 = 太早、右邊 = 太晚。
+        private void DrawHistogram(Rect area)
+        {
+            GUI.Box(area, GUIContent.none);
+            var bins = _stats.Histogram(25, out double binSize);
+            int max = 1;
+            foreach (var b in bins) if (b > max) max = b;
+
+            float w = area.width / bins.Length;
+            for (int i = 0; i < bins.Length; i++)
+            {
+                if (bins[i] <= 0) continue;
+                float h = (area.height - 16f) * bins[i] / max;
+                var bar = new Rect(area.x + i * w, area.yMax - 14f - h, Mathf.Max(1f, w - 1f), h);
+                // 離中央越遠越紅：中央（準）藍、外圍（不準）黃紅
+                float t = Mathf.Abs(i - bins.Length / 2) / (float)(bins.Length / 2);
+                GUI.color = Color.Lerp(new Color(0.4f, 0.8f, 1f), new Color(1f, 0.35f, 0.2f), t);
+                GUI.DrawTexture(bar, Texture2D.whiteTexture);
+            }
+            GUI.color = Color.white;
+            GUI.Label(new Rect(area.x + 2, area.yMax - 16f, 90, 16), $"-{binSize * 25:0} ms");
+            GUI.Label(new Rect(area.center.x - 12, area.yMax - 16f, 40, 16), "0");
+            GUI.Label(new Rect(area.xMax - 60, area.yMax - 16f, 60, 16), $"+{binSize * 25:0} ms");
         }
 
         private void DrawSongList()
