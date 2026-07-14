@@ -89,7 +89,7 @@ def resolve(tokens: List[str], by_stem: Dict[str, Dict]):
         if not t:
             continue
         low = t.lower()
-        if re.fullmatch(r"sdom\d+", low):                 # 詞幹
+        if re.fullmatch(r"sdom[\d_]+", low):              # 詞幹(插隊加的歌會有 _N 後綴，例 sdom1150_1)
             (stems.add(low) if low in by_stem else unresolved.append(t))
         elif t.isdigit():                                  # fileId
             fid = int(t)

@@ -11,23 +11,13 @@
   "lcg": "state=seed; 每步 state=(state*0x3D09)&0xffffffff; k=(state>>16)&0xff; out=in-k (解密)"
  },
  "counts": {
-  "total": 4348,
+  "total": 4326,
   "ddrm": 4,
   "sdom": 3170,
   "rewu": 1172,
   "unknown": 2
  },
  "songs": [
-  {
-   "gn": "sdom0.gn",
-   "enc": "ddrm",
-   "seed1": 1125664963,
-   "seed2": 3163574781,
-   "fileId": 0,
-   "bpm": 120.0,
-   "title": "新手教学",
-   "size": 7072
-  },
   {
    "gn": "sdom0001k.gn",
    "enc": "sdom",
@@ -11999,6 +11989,16 @@
    "bpm": 146.0,
    "title": "丝路",
    "size": 57296
+  },
+  {
+   "gn": "sdom1117_1k.gn",
+   "enc": "rewu",
+   "mode": "K",
+   "seed": 736269,
+   "fileId": 11138,
+   "bpm": 127.0,
+   "title": "The Chaser",
+   "size": 87968
   },
   {
    "gn": "sdom1117k.gn",
@@ -26673,94 +26673,6 @@
    "size": 37620
   },
   {
-   "gn": "sdom1925k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 3628250,
-   "innerOff": 456,
-   "fileId": 11925,
-   "bpm": 120.0,
-   "title": "好胆你就来",
-   "size": 78036
-  },
-  {
-   "gn": "sdom1925t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 11602070,
-   "innerOff": 456,
-   "fileId": 1925,
-   "bpm": 120.0,
-   "title": "好胆你就来",
-   "size": 46776
-  },
-  {
-   "gn": "sdom1926k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 11926,
-   "bpm": 140.0,
-   "title": "心電心",
-   "size": 60720
-  },
-  {
-   "gn": "sdom1926t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 5378792,
-   "innerOff": 456,
-   "fileId": 1926,
-   "bpm": 140.0,
-   "title": "心電心",
-   "size": 59268
-  },
-  {
-   "gn": "sdom1927k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 1044917,
-   "innerOff": 456,
-   "fileId": 11927,
-   "bpm": 105.0,
-   "title": "罗生门",
-   "size": 52940
-  },
-  {
-   "gn": "sdom1927t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 11823522,
-   "innerOff": 456,
-   "fileId": 1927,
-   "bpm": 105.0,
-   "title": "罗生门",
-   "size": 50004
-  },
-  {
-   "gn": "sdom1928k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 16559437,
-   "innerOff": 456,
-   "fileId": 11928,
-   "bpm": 80.08,
-   "title": "雨爱",
-   "size": 39316
-  },
-  {
-   "gn": "sdom1928t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 935380,
-   "innerOff": 456,
-   "fileId": 1928,
-   "bpm": 80.08,
-   "title": "雨爱",
-   "size": 39316
-  },
-  {
    "gn": "sdom1929k.gn",
    "enc": "sdom",
    "mode": "K",
@@ -26781,116 +26693,6 @@
    "bpm": 130.0,
    "title": "闪闪惹人爱",
    "size": 72888
-  },
-  {
-   "gn": "sdom1930k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 8967522,
-   "innerOff": 456,
-   "fileId": 11930,
-   "bpm": 125.0,
-   "title": "Happy Loving",
-   "size": 47988
-  },
-  {
-   "gn": "sdom1930t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 7799440,
-   "innerOff": 456,
-   "fileId": 1930,
-   "bpm": 125.0,
-   "title": "Happy Loving",
-   "size": 44904
-  },
-  {
-   "gn": "sdom1931k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 10275474,
-   "innerOff": 456,
-   "fileId": 11931,
-   "bpm": 140.0,
-   "title": "爱的主场秀",
-   "size": 51700
-  },
-  {
-   "gn": "sdom1931t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 9175850,
-   "innerOff": 456,
-   "fileId": 1931,
-   "bpm": 140.0,
-   "title": "爱的主场秀",
-   "size": 46152
-  },
-  {
-   "gn": "sdom1932k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 4675663,
-   "innerOff": 456,
-   "fileId": 11932,
-   "bpm": 123.0,
-   "title": "不爱请闪开",
-   "size": 46012
-  },
-  {
-   "gn": "sdom1932t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 13176189,
-   "innerOff": 456,
-   "fileId": 1932,
-   "bpm": 123.0,
-   "title": "不爱请闪开",
-   "size": 39864
-  },
-  {
-   "gn": "sdom1933k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 7836746,
-   "innerOff": 456,
-   "fileId": 11933,
-   "bpm": 130.42,
-   "title": "习惯就好",
-   "size": 58080
-  },
-  {
-   "gn": "sdom1933t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 15637509,
-   "innerOff": 456,
-   "fileId": 1933,
-   "bpm": 130.42,
-   "title": "习惯就好",
-   "size": 62332
-  },
-  {
-   "gn": "sdom1934k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 6271120,
-   "innerOff": 456,
-   "fileId": 11934,
-   "bpm": 165.0,
-   "title": "WOW",
-   "size": 59744
-  },
-  {
-   "gn": "sdom1934t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 5277227,
-   "innerOff": 456,
-   "fileId": 1934,
-   "bpm": 165.0,
-   "title": "WOW",
-   "size": 60692
   },
   {
    "gn": "sdom1935k.gn",
@@ -46539,46 +46341,6 @@
    "bpm": 110.1,
    "title": "Beautiful",
    "size": 194644
-  },
-  {
-   "gn": "sdom5080k.gn",
-   "enc": "rewu",
-   "mode": "K",
-   "seed": 1044917,
-   "fileId": 15080,
-   "bpm": 175.0,
-   "title": "Imprinting",
-   "size": 259652
-  },
-  {
-   "gn": "sdom5080t.gn",
-   "enc": "rewu",
-   "mode": "T",
-   "seed": 16559437,
-   "fileId": 5080,
-   "bpm": 175.0,
-   "title": "Imprinting",
-   "size": 259652
-  },
-  {
-   "gn": "sdom5081k.gn",
-   "enc": "rewu",
-   "mode": "K",
-   "seed": 736269,
-   "fileId": 15081,
-   "bpm": 179.95,
-   "title": "Garasu no Hitomi",
-   "size": 99060
-  },
-  {
-   "gn": "sdom5081t.gn",
-   "enc": "rewu",
-   "mode": "T",
-   "seed": 8967522,
-   "fileId": 5081,
-   "bpm": 179.95,
-   "title": "Garasu no Hitomi",
-   "size": 99060
   },
   {
    "gn": "sdom5082k.gn",

@@ -271,12 +271,15 @@ def main() -> int:
 
     doc = {
         "schema": "song-name-overrides/2",
-        "note": ("手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist 會覆蓋 k.gn 顯示名。"
+        "note": ("手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist/bpm 會覆蓋 k.gn 的顯示值。"
                  "key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。"
                  "src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；"
                  "src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；"
                  "src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。"
-                 "fileId/bpm/src 僅供辨識，runtime 不套用。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；"
+                 "bpm>0 會覆蓋歌單/房間顯示的 BPM 數字(只影響顯示；遊戲判定與流速一律讀譜面本身)；"
+                 "fileId/src 僅供辨識，runtime 不套用。此清單不決定歌單內容(歌單來自 song_catalog.json)，"
+                 "刪掉某首只是讓它顯示回 .gn 內嵌名，歌照樣能選。"
+                 "SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；"
                  "其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。"),
         "count": len(rows),
         "songs": rows,

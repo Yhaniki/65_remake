@@ -910,16 +910,9 @@ namespace Sdo.UI.Screens
             _previewCo = StartCoroutine(LoadPreviewCo(e.fileId, e.gn));
         }
 
-        /// <summary>Full-song ogg name for a chart gn ("sdom2784k.gn" -> "sdom2784.ogg"), matching the on-disk
-        /// stem-based main audio; null if the gn isn't an sdom chart.</summary>
-        private static string MainOggName(string gn)
-        {
-            if (string.IsNullOrEmpty(gn)) return null;
-            var n = gn.ToLowerInvariant();
-            if (n.EndsWith(".gn")) n = n.Substring(0, n.Length - 3);
-            if (n.Length > 0 && (n[n.Length - 1] == 'k' || n[n.Length - 1] == 't')) n = n.Substring(0, n.Length - 1);
-            return n.Length > 0 ? n + ".ogg" : null;
-        }
+        /// <summary>Full-song ogg name for a chart gn ("sdom2784k.gn" -> "sdom2784.ogg"). Shared with the
+        /// gameplay hand-off (FrontendApp) so preview and play never resolve different audio.</summary>
+        private static string MainOggName(string gn) => SongCatalog.MainOggName(gn);
 
         // Mirrors ScreenGameplay.LoadAndPlayAudio: file:// + raw path (no URI escaping — the music tree is ASCII and
         // every loader in the repo concatenates raw), AudioType.OGGVORBIS, result==Success guard, GetContent,

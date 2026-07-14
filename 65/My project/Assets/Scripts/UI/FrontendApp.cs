@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Sdo.Game;
@@ -199,8 +198,8 @@ namespace Sdo.UI
 
             string musicDir = SdoExtracted.MusicDir;                                    // built: DATA/MUSIC; dev: sdox_offline/music
             string gnPath = Path.Combine(musicDir, s.SongGn);                           // e.g. .../MUSIC/sdom1197k.gn
-            string oggBase = Regex.Match(s.SongGn ?? "", @"sdom\d+").Value;             // chart letter (k/t) dropped: sdom1197k -> sdom1197
-            string oggPath = oggBase.Length > 0 ? Path.Combine(musicDir, oggBase + ".ogg") : null;
+            string oggName = SongCatalog.MainOggName(s.SongGn);                         // chart letter (k/t) dropped: sdom1197k -> sdom1197.ogg
+            string oggPath = oggName != null ? Path.Combine(musicDir, oggName) : null;
 
             // Snapshot the current scene roots (canvas, EventSystem, Main Camera, …) so TeardownGameplay can destroy
             // exactly what ScreenGameplay spawns (it parents nothing to us — every board/avatar/scene object is a new root).

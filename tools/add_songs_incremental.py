@@ -98,30 +98,15 @@ def upsert(songs: List[Dict[str, Any]], row: Dict[str, Any], sort_key, label: st
     return f"新增 {label}"
 
 
-def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        try:
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-    ap = argparse.ArgumentParser(description="把指定的 .gn 增量追加進四張表(不全量重掃)")
-    ap.add_argument("gn", nargs="*", help=".gn 檔案路徑")
-    ap.add_argument("--music-dir", help="配合 --stems 使用")
-    ap.add_argument("--stems", nargs="*", default=[], help="詞幹(sdom2950)，會找 K/T 兩譜")
-    ap.add_argument("--force", action="store_true", help="已存在的 gn 也覆寫(預設跳過)")
-    ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
+def add_gn_files(files: List[Path], force: bool = False, dry_run: bool = False,
+                 file_id: int | None = None) -> List[str]:
+    """把這些 .gn upsert 進四張表。回傳 log 行(呼叫端自己決定要不要印)。
 
-    files = [Path(g) for g in args.gn]
-    if args.stems:
-        md = Path(args.music_dir or (REPO / "assets" / "sdox_offline" / "music"))
-        for st in args.stems:
-            files += [p for p in (md / f"{st}K.gn", md / f"{st}T.gn") if p.is_file()]
-    files = [p for p in files if p.is_file()]
-    if not files:
-        print("沒有可處理的 .gn", file=sys.stderr)
-        return 1
-
+    file_id: 指定 fileId，覆蓋 .gn 表頭裡那個。撞號插隊時用 —— 你把新歌的譜面改名成一個空號
+    (sdom5086K.gn)，但 .gn 表頭內嵌的 fileId 仍是它老家的號，照抄會跟既有歌撞在一起
+    (fileId 才是 DANCE/試聽/封面 的 key)。runtime 只讀目錄表的 fileId、不讀 .gn 內嵌的那個，
+    所以在這裡改寫就夠，不必動 .gn 位元組。None = 沿用表頭值(一般加歌路徑)。
+    """
     kt, kt_crlf = load(KEYTABLE)
     hc, hc_crlf = load(HEADERS)
     sc, sc_crlf = load(CATALOG)
@@ -141,15 +126,19 @@ def main() -> int:
             continue
 
         kt_row = {"gn": gn, **{k: e[k] for k in KEY_FIELDS if k in e}}
-        log.append("  keytable  " + upsert(kt["songs"], kt_row, by_name, gn, args.force))
+        if file_id is not None:
+            kt_row["fileId"] = file_id
+        log.append("  keytable  " + upsert(kt["songs"], kt_row, by_name, gn, force))
 
         hb = header_bytes(raw, {"gn": gn, **e})
         if hb is None:
             log.append(f"!! {gn} 取不到表頭 — 跳過")
             continue
         h_row = parse_header(hb, {"gn": gn, "mode": e.get("mode", "")})
-        log.append("  header    " + upsert(hc["songs"], h_row, by_name, gn, args.force))
-        log.append("  catalog   " + upsert(sc["songs"], catalog_row(h_row), by_fid, gn, args.force))
+        if file_id is not None:
+            h_row["fileId"] = file_id
+        log.append("  header    " + upsert(hc["songs"], h_row, by_name, gn, force))
+        log.append("  catalog   " + upsert(sc["songs"], catalog_row(h_row), by_fid, gn, force))
 
         if e.get("mode", "").upper() != "K":          # overrides 一首歌一筆，掛在 K 譜
             continue
@@ -167,15 +156,12 @@ def main() -> int:
         })
         log.append(f"  overrides 新增 {stem}")
 
-    for line in log:
-        print(line)
-    if args.dry_run:
-        print("\n(dry-run，未寫檔)")
-        return 0
+    if dry_run:
+        log.append("(dry-run，未寫檔)")
+        return log
 
-    for key, cnt in (("total", len(kt["songs"])),):
-        if isinstance(kt.get("counts"), dict) and key in kt["counts"]:
-            kt["counts"][key] = cnt
+    if isinstance(kt.get("counts"), dict) and "total" in kt["counts"]:
+        kt["counts"]["total"] = len(kt["songs"])
     if "count" in ov:
         ov["count"] = len(ov["songs"])
 
@@ -183,9 +169,40 @@ def main() -> int:
     save(HEADERS, hc, hc_crlf)
     save(CATALOG, sc, sc_crlf)
     save(OVERRIDES, ov, ov_crlf)
-    print(f"\n寫入完成 → keytable {len(kt['songs'])} / header {len(hc['songs'])} / "
-          f"catalog {len(sc['songs'])} / overrides {len(ov['songs'])}")
-    print("CSV 鏡像：python tools/song_names_csv.py export")
+    log.append(f"寫入完成 → keytable {len(kt['songs'])} / header {len(hc['songs'])} / "
+               f"catalog {len(sc['songs'])} / overrides {len(ov['songs'])}")
+    return log
+
+
+def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    ap = argparse.ArgumentParser(description="把指定的 .gn 增量追加進四張表(不全量重掃)")
+    ap.add_argument("gn", nargs="*", help=".gn 檔案路徑")
+    ap.add_argument("--music-dir", help="配合 --stems 使用")
+    ap.add_argument("--stems", nargs="*", default=[], help="詞幹(sdom2950)，會找 K/T 兩譜")
+    ap.add_argument("--force", action="store_true", help="已存在的 gn 也覆寫(預設跳過)")
+    ap.add_argument("--file-id", type=int, help="指定 fileId(撞號插隊用；預設沿用 .gn 表頭)")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    files = [Path(g) for g in args.gn]
+    if args.stems:
+        md = Path(args.music_dir or (REPO / "assets" / "sdox_offline" / "music"))
+        for st in args.stems:
+            files += [p for p in (md / f"{st}K.gn", md / f"{st}T.gn") if p.is_file()]
+    files = [p for p in files if p.is_file()]
+    if not files:
+        print("沒有可處理的 .gn", file=sys.stderr)
+        return 1
+
+    for line in add_gn_files(files, force=args.force, dry_run=args.dry_run, file_id=args.file_id):
+        print(line)
+    if not args.dry_run:
+        print("CSV 鏡像：python tools/song_names_csv.py export")
     return 0
 
 

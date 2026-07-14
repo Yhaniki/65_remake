@@ -41,9 +41,9 @@ namespace Sdo.Game
         }
         [Serializable] private class Catalog { public Entry[] songs = new Entry[0]; }   // populated by JsonUtility; init to silence CS0649
 
-        // Hand-editable name overrides (StreamingAssets/song_name_overrides.json), seeded from the
-        // official songlist.dat open songs. See BuildOverrideMap / tools/build_song_name_overrides.py.
-        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; }   // init to silence CS0649 (JsonUtility fills these)
+        // Hand-editable display overrides (StreamingAssets/song_name_overrides.json), seeded from the
+        // official songlist.dat open songs. See ApplyOverrides / tools/build_song_name_overrides.py.
+        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; public float bpm = -1f; }   // init to silence CS0649 (JsonUtility fills these)
         [Serializable] private class OverrideDoc { public Override[] songs = new Override[0]; }
 
         private const string FileName = "song_catalog.json";
@@ -95,29 +95,33 @@ namespace Sdo.Game
                 Debug.LogError($"[SongCatalog] failed to load {path}: {ex.Message}");
             }
 
-            ApplyNameOverrides();
+            var ovPath = Path.Combine(Application.streamingAssetsPath, OverrideFileName);
+            if (File.Exists(ovPath))                                        // optional: no overrides -> keep k.gn values
+                ApplyOverrides(_all, File.ReadAllText(ovPath, Encoding.UTF8), ovPath);
         }
 
         /// <summary>
-        /// Overlay the hand-editable name list (StreamingAssets/song_name_overrides.json) onto the
-        /// catalog: for every song whose gn-stem (sdomNNNN, without the k/t chart suffix) is listed,
-        /// replace title/artist. Songs absent from the override keep their k.gn-derived names.
+        /// Overlay the hand-editable list (StreamingAssets/song_name_overrides.json) onto catalog
+        /// entries: for every song whose gn-stem (sdomNNNN, without the k/t chart suffix) is listed,
+        /// replace title / artist / bpm. Songs absent from the list keep their k.gn-derived values,
+        /// as does any field left blank (title/artist) or &lt;= 0 (bpm).
         ///
-        /// Why: some .gn headers carry stale/wrong titles (recycled file slots). The list is a
-        /// full, hand-editable roster (tools/build_song_name_overrides.py): open songs are pre-filled
-        /// from the authoritative official songlist.dat, the rest from k.gn — edit any line to fix a
-        /// name. Only display names are overridden; bpm/levels/note counts stay from the actual
-        /// chart. Missing/blank/malformed file -> catalog unchanged (k.gn names).
+        /// Why: some .gn headers carry stale/wrong titles and BPMs (recycled file slots). The list is
+        /// a full, hand-editable roster (tools/build_song_name_overrides.py): open songs are pre-filled
+        /// from the authoritative official songlist.dat, the rest from k.gn — edit any line to fix it.
+        /// Only DISPLAY values are overridden (song-select info panel + the room's BPM label); levels /
+        /// note counts and, crucially, the whole gameplay timeline (note times, scroll speed) still come
+        /// from the chart itself, so a wrong bpm here can never desync the game. Blank/malformed JSON ->
+        /// entries unchanged.
         /// </summary>
-        private static void ApplyNameOverrides()
+        public static void ApplyOverrides(IEnumerable<Entry> entries, string json, string srcLabel = OverrideFileName)
         {
-            var path = Path.Combine(Application.streamingAssetsPath, OverrideFileName);
-            if (!File.Exists(path)) return;   // optional: no overrides -> keep k.gn names
+            if (entries == null || string.IsNullOrWhiteSpace(json)) return;
 
             Dictionary<string, Override> byStem;
             try
             {
-                var doc = JsonUtility.FromJson<OverrideDoc>(File.ReadAllText(path, Encoding.UTF8));
+                var doc = JsonUtility.FromJson<OverrideDoc>(json);
                 if (doc?.songs == null || doc.songs.Length == 0) return;
                 byStem = new Dictionary<string, Override>(StringComparer.Ordinal);
                 foreach (var o in doc.songs)
@@ -125,17 +129,34 @@ namespace Sdo.Game
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SongCatalog] failed to load {path}: {ex.Message}");
+                Debug.LogError($"[SongCatalog] failed to load {srcLabel}: {ex.Message}");
                 return;
             }
 
-            foreach (var e in _all)
+            foreach (var e in entries)
             {
                 if (e == null || string.IsNullOrEmpty(e.gn)) continue;
-                if (!byStem.TryGetValue(Stem(e.gn), out var o)) continue;   // not listed -> keep k.gn name
+                if (!byStem.TryGetValue(Stem(e.gn), out var o)) continue;   // not listed -> keep k.gn values
                 if (!string.IsNullOrEmpty(o.title)) e.title = o.title;
                 if (!string.IsNullOrEmpty(o.artist)) e.artist = o.artist;
+                if (o.bpm > 0f) e.bpm = o.bpm;
             }
+        }
+
+        /// <summary>
+        /// Full-song audio filename for a chart gn: "sdom2784k.gn" -> "sdom2784.ogg" (the two charts of a
+        /// song share one .ogg, which is named after the stem). Null for an empty/degenerate name.
+        ///
+        /// Single source of truth for gameplay (FrontendApp) AND the song-select preview fallback, which
+        /// used to derive it two different ways — a regex 'sdom\d+' vs this stem. They agree for a plain
+        /// sdomNNNN{k,t}.gn, but not for a hand-added chart whose stem carries a suffix (sdom1234_1k.gn,
+        /// used to slot in a song whose number is already taken): the regex would silently resolve it to
+        /// sdom1234.ogg — the OTHER song's audio.
+        /// </summary>
+        public static string MainOggName(string gnPathOrName)
+        {
+            var stem = Stem(gnPathOrName);
+            return stem.Length > 0 ? stem + ".ogg" : null;
         }
 
         /// <summary>gn filename/path -> chart-pair stem, e.g. "sdom0001k.gn" / "SDOM0001T" -> "sdom0001".

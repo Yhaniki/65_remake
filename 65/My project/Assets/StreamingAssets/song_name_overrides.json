@@ -1,7 +1,7 @@
 {
  "schema": "song-name-overrides/2",
- "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist 會覆蓋 k.gn 顯示名。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。fileId/bpm/src 僅供辨識，runtime 不套用。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。",
- "count": 2175,
+ "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist/bpm 會覆蓋 k.gn 的顯示值。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。bpm>0 會覆蓋歌單/房間顯示的 BPM 數字(只影響顯示；遊戲判定與流速一律讀譜面本身)；fileId/src 僅供辨識，runtime 不套用。此清單不決定歌單內容(歌單來自 song_catalog.json)，刪掉某首只是讓它顯示回 .gn 內嵌名，歌照樣能選。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。",
+ "count": 2164,
  "songs": [
   {
    "gn": "sdom1956",
@@ -5268,14 +5268,6 @@
    "artist": "DONOVAN"
   },
   {
-   "gn": "sdom0",
-   "fileId": 0,
-   "bpm": 120.0,
-   "src": "kgn",
-   "title": "新手教學",
-   "artist": "DONOVAN"
-  },
-  {
    "gn": "sdom3",
    "fileId": 0,
    "bpm": 120.0,
@@ -7468,84 +7460,12 @@
    "artist": "After School"
   },
   {
-   "gn": "sdom1925",
-   "fileId": 11925,
-   "bpm": 120.0,
-   "src": "kgn",
-   "title": "好膽你就來",
-   "artist": "張惠妹"
-  },
-  {
-   "gn": "sdom1926",
-   "fileId": 11926,
-   "bpm": 140.0,
-   "src": "kgn",
-   "title": "心電心",
-   "artist": "王心凌"
-  },
-  {
-   "gn": "sdom1927",
-   "fileId": 11927,
-   "bpm": 105.0,
-   "src": "kgn",
-   "title": "羅生門",
-   "artist": "羅志祥"
-  },
-  {
-   "gn": "sdom1928",
-   "fileId": 11928,
-   "bpm": 80.08,
-   "src": "kgn",
-   "title": "雨愛",
-   "artist": "楊丞琳"
-  },
-  {
    "gn": "sdom1929",
    "fileId": 11929,
    "bpm": 130.0,
    "src": "kgn",
    "title": "閃閃惹人愛",
    "artist": "蕭亞軒"
-  },
-  {
-   "gn": "sdom1930",
-   "fileId": 11930,
-   "bpm": 125.0,
-   "src": "kgn",
-   "title": "Happy Loving",
-   "artist": "王心凌"
-  },
-  {
-   "gn": "sdom1931",
-   "fileId": 11931,
-   "bpm": 140.0,
-   "src": "kgn",
-   "title": "愛的主場秀",
-   "artist": "羅志祥"
-  },
-  {
-   "gn": "sdom1932",
-   "fileId": 11932,
-   "bpm": 123.0,
-   "src": "kgn",
-   "title": "不愛請閃開",
-   "artist": "蕭亞軒"
-  },
-  {
-   "gn": "sdom1933",
-   "fileId": 11933,
-   "bpm": 130.42,
-   "src": "kgn",
-   "title": "習慣就好",
-   "artist": "羅志祥"
-  },
-  {
-   "gn": "sdom1934",
-   "fileId": 11934,
-   "bpm": 165.0,
-   "src": "kgn",
-   "title": "WOW",
-   "artist": "萧亚軒"
   },
   {
    "gn": "sdom1935",
@@ -17300,22 +17220,6 @@
    "artist": "Crush"
   },
   {
-   "gn": "sdom5080",
-   "fileId": 15080,
-   "bpm": 175.0,
-   "src": "kgn",
-   "title": "Imprinting",
-   "artist": "Sakuzyo"
-  },
-  {
-   "gn": "sdom5081",
-   "fileId": 15081,
-   "bpm": 179.95,
-   "src": "kgn",
-   "title": "Garasu no Hitomi",
-   "artist": "Sid"
-  },
-  {
    "gn": "sdom5082",
    "fileId": 15082,
    "bpm": 185.0,
@@ -17402,6 +17306,14 @@
    "src": "kgn",
    "title": "海芋戀",
    "artist": "蕭敬騰"
+  },
+  {
+   "gn": "sdom1117_1",
+   "fileId": 11138,
+   "bpm": 127.0,
+   "src": "kgn",
+   "title": "The Chaser",
+   "artist": "Infinite"
   }
  ]
 }

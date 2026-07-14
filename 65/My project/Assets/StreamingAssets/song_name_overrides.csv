@@ -657,7 +657,6 @@ sdom0002,算你狠,陳小春,songname,93.0,10002
 sdom0001,野蠻遊戲,蔡依林,songname,139.0,10001
 sdom2,新手教學,DONOVAN,kgn,120.0,2
 sdom1,新手教學,DONOVAN,kgn,120.0,1
-sdom0,新手教學,DONOVAN,kgn,120.0,0
 sdom3,新手教學,DONOVAN,kgn,120.0,0
 sdom0026,使者,N.R.G,kgn,127.0,10026
 sdom0039,I NEED YOU,麻吉弟弟,kgn,160.01,10039
@@ -932,16 +931,7 @@ sdom1921,Different Tears,Wonder Girls,kgn,124.01,11921
 sdom1922,Run Devil Run,少女時代,kgn,129.98,11922
 sdom1923,GEE,少女時代,kgn,200.0,11923
 sdom1924,BANG!,After School,kgn,120.0,11924
-sdom1925,好膽你就來,張惠妹,kgn,120.0,11925
-sdom1926,心電心,王心凌,kgn,140.0,11926
-sdom1927,羅生門,羅志祥,kgn,105.0,11927
-sdom1928,雨愛,楊丞琳,kgn,80.08,11928
 sdom1929,閃閃惹人愛,蕭亞軒,kgn,130.0,11929
-sdom1930,Happy Loving,王心凌,kgn,125.0,11930
-sdom1931,愛的主場秀,羅志祥,kgn,140.0,11931
-sdom1932,不愛請閃開,蕭亞軒,kgn,123.0,11932
-sdom1933,習慣就好,羅志祥,kgn,130.42,11933
-sdom1934,WOW,萧亚軒,kgn,165.0,11934
 sdom1935,ポニーテールとシュシュ,AKB48,kgn,160.0,11935
 sdom1936,仆のYELL,AKB48,kgn,124.0,11936
 sdom1937,愛情病,Dream Girls,kgn,126.0,11937
@@ -1308,7 +1298,7 @@ sdom2487,Don't Forget Me,Girl's Day,kgn,134.0,12487
 sdom2488,Popular Song (feat. Ariana Grand,Mika,kgn,99.0,12488
 sdom2489,If You Love Me (Feat.樸宰範),N.S允智,kgn,170.0,12489
 sdom2490,要瘋了,Teen Top,kgn,140.0,12490
-sdom2491,feat. 阿悄,本兮 - 無限速,kgn,160.0,12491
+sdom2491,無限速,本兮 feat. 阿悄,kgn,160.0,12491
 sdom2492,LIPSTICK,橙子焦糖,kgn,126.0,12492
 sdom2493,即刻出發,吉克雋逸,kgn,80.0,12493
 sdom2494,Missing You,權志龍,kgn,123.0,12494
@@ -2161,8 +2151,6 @@ sdom5072,Odin,Black Another,kgn,163.0,15072
 sdom5073,Holy Knight,Eyemedia,kgn,155.0,15073
 sdom5074,Catch Me If You Can,SNSD,kgn,134.0,15074
 sdom5079,Beautiful,Crush,kgn,110.1,15079
-sdom5080,Imprinting,Sakuzyo,kgn,175.0,15080
-sdom5081,Garasu no Hitomi,Sid,kgn,179.95,15081
 sdom5082,Persephone,Ebico,kgn,185.0,15082
 sdom5083,TT,Twice,kgn,130.0,15083
 sdom5084,ANiMA,Xi,kgn,183.5,15084
@@ -2174,3 +2162,4 @@ sdom2953,SLOW DOWN,向井太一,kgn,120.05,12953
 sdom2954,遺失的心跳,蕭亞軒,kgn,126.02,12954
 sdom2955,怪咖,薛之謙,kgn,122.5,12955
 sdom2956,海芋戀,蕭敬騰,kgn,158.0,12956
+sdom1117_1,The Chaser,Infinite,kgn,127.0,11138
