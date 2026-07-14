@@ -11,7 +11,8 @@ namespace Sdo.Settings
     /// 跟 <see cref="RoomConfig.globalOffsetMs"/>（全域，補這台機器的整條延遲）是兩回事：這個是補**那一首譜**
     /// 本身跟音檔對不齊（很常見：譜是別人打的、音檔換過版本）。兩者相加才是實際套在譜面時鐘上的量。
     ///
-    /// 正 = 音符相對音樂**往後**（判定與畫面都延後）。譜面聽起來「音符比音樂早」就調正的。
+    /// <b>動的是音樂，不是音符</b>（同 StepMania）：正 = 音樂**延後**播放（音符相對就變早了）。
+    /// 覺得「音樂比音符早跑」就調正的；反之調負的。音符、判定線、格線一格都不會動。
     ///
     /// .gn 是唯讀的（而且還加密），改不進去 → 存成執行檔同層的 <c>song_offsets.ini</c>（跟 config.ini 同一層，
     /// 純文字可手改）。key = .gn 檔名（小寫）。
@@ -97,7 +98,7 @@ namespace Sdo.Settings
         public static string Serialize()
         {
             var sb = new System.Text.StringBuilder();
-            sb.Append("# 單首歌的 offset（毫秒）。正 = 音符相對音樂往後（音符聽起來比音樂早就調正的）。\n");
+            sb.Append("# 單首歌的 offset（毫秒）。正 = 音樂延後播放（音符不動）。覺得「音樂比音符早跑」就調正的。\n");
             sb.Append("# 在譜面編輯器裡用 F11 / F12 調（一次 20ms，按住 Alt 是 1ms），會自動寫回這裡。\n");
             sb.Append("# 這是「那一首譜跟音檔沒對齊」的補償；整台機器的延遲請調 config.ini 的 globalOffsetMs。\n");
             sb.Append("[SongOffsetMs]\n");
