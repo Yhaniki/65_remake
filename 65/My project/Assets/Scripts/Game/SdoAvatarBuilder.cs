@@ -145,6 +145,24 @@ namespace Sdo.Game
             var frames = new List<Texture>(frameNames.Length);
             foreach (var fn in frameNames) { var t = ResolveAnimFrame(dir, fn); if (t != null) frames.Add(t); }
             if (frames.Count == 0) return null;
+            // 布料(呼叫端傳不透明 Unlit/Texture)的換幀若帶真 alpha,不能沿用不透明 shader——透明底會畫成實心白板
+            // (070025 領口愛心卡引 012989_* 幀:DXT3、99% 全透明)。依第一幀 alpha 分佈換 cutout/blend,與一般貼圖的
+            // AlphaShaderFor 同語意。只動布料呼叫端:翅膀/髮/portrait 傳入的 alpha shader 是每條路徑調校過的,不覆蓋;
+            // 無 alpha 幀(012983 衣身、場景閃燈)也維持原 shader。
+            if (shader != null && shader.name == "Unlit/Texture")
+            {
+                try
+                {
+                    string p0 = FindDdsPath(dir, frameNames[0]);   // 只認 .dds 幀;TGA 幀=翅膀,不會走進這個 if
+                    if (p0 != null)
+                    {
+                        var am = DdsLoader.GetSceneAlphaMode(File.ReadAllBytes(p0));
+                        if (am == DdsAlphaMode.Cutout) shader = Shader.Find("Sdo/UnlitDoubleSided") ?? shader;
+                        else if (am == DdsAlphaMode.Blend) shader = Shader.Find("Sdo/UnlitAvatarAlpha") ?? shader;
+                    }
+                }
+                catch { }
+            }
             var mat = new Material(shader) { mainTexture = frames[0], name = placeholder ?? "" };
             go.AddComponent<MapobjTexAnimator>().Init(new[] { mat }, frames.ToArray(), spec.IntervalMs > 0f ? spec.IntervalMs : 150f);
             return mat;
@@ -250,11 +268,7 @@ namespace Sdo.Game
         public static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode sceneAlpha, bool bodyGarment)
         {
             sceneAlpha = DdsAlphaMode.Opaque;
-            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
-            string name = Path.GetFileName(ddsName.Replace('\\', '/'));
-            string direct = Path.Combine(dir, name);
-            string hit = File.Exists(direct) ? direct : null;
-            if (hit == null) hit = FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
+            string hit = FindDdsPath(dir, ddsName);
             if (hit == null) return null;
             try
             {
@@ -311,6 +325,17 @@ namespace Sdo.Game
         /// Normalise (lowercase, haun→huan, drop separators) and match; then, as a last resort, strip a trailing digit
         /// run to hit the shared base. ONLY reached after exact + stem match fail, so items that already resolve are untouched.
         /// </summary>
+        /// <summary>On-disk .dds path for a material/frame name (exact filename first, then fuzzy stem), no decode.
+        /// Shared by ResolveDds and the texanim frame alpha probe. Null when nothing matches.</summary>
+        public static string FindDdsPath(string dir, string ddsName)
+        {
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
+            string name = Path.GetFileName(ddsName.Replace('\\', '/'));
+            string direct = Path.Combine(dir, name);
+            if (File.Exists(direct)) return direct;
+            return FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
+        }
+
         public static string FuzzyFindDds(string dir, string stem)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(stem)) return null;
