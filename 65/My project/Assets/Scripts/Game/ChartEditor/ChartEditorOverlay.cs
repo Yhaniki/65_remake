@@ -189,21 +189,34 @@ namespace Sdo.Game
             if (peaks != null && peaks.Count > 0)
             {
                 double bucket = peaks.BucketMs;
-                // 對齊到 bucket 邊界（用譜面時間算，波形的第 0 格 = 音樂起點 = PeaksOffsetMs）
-                double firstIdx = Math.Floor((msLo - PeaksOffsetMs) / bucket);
-                double t = PeaksOffsetMs + firstIdx * bucket;
+
+                // 一格在畫面上占幾個 px？不到 1px 就把好幾格併成一根（取最大值）——不然縮小時會吐出上萬個
+                // 次像素四邊形（又慢又鋸齒）；放大時則維持一格一根，波形自然變細緻。
+                float pxPerBucket = Mathf.Abs(Game.EditorYForTime(PeaksOffsetMs + bucket) - Game.EditorYForTime(PeaksOffsetMs));
+                int group = pxPerBucket > 1e-4f ? Mathf.Max(1, Mathf.CeilToInt(1f / pxPerBucket)) : 1;
+                double step = bucket * group;
+
+                int last = peaks.Count - 1;
+                int i0 = Math.Max(0, (int)Math.Floor((msLo - PeaksOffsetMs) / step) * group);
                 int guard = 0;
-                while (t <= msHi && guard++ < 8192)
+                for (int i = i0; i <= last && guard++ < 4096; i += group)
                 {
-                    double tStart = t;
-                    t += bucket;
-                    float rms = peaks.RmsAtMs(tStart - PeaksOffsetMs);
-                    float peak = peaks.PeakAtMs(tStart - PeaksOffsetMs);
+                    double tStart = PeaksOffsetMs + i * bucket;
+                    if (tStart > msHi) break;
+
+                    // 併起來的那幾格取最大值（峰值/RMS 各自取），縮小時才不會把打點漏掉
+                    float rms = 0f, peak = 0f;
+                    for (int k = i; k < i + group && k <= last; k++)
+                    {
+                        if (peaks.Rms[k] > rms) rms = peaks.Rms[k];
+                        if (peaks.Peak[k] > peak) peak = peaks.Peak[k];
+                    }
                     if (peak <= 0.001f) continue;
 
-                    float ya = Game.EditorYForTime(tStart), yb = Game.EditorYForTime(t);
+                    float ya = Game.EditorYForTime(tStart), yb = Game.EditorYForTime(tStart + step);
                     float ylo = Mathf.Max(Mathf.Min(ya, yb), top), yhi = Mathf.Min(Mathf.Max(ya, yb), bottom);
                     if (yhi <= ylo) continue;
+                    if (yhi - ylo < 1f) yhi = ylo + 1f;   // 至少 1px 高，免得放大到極限時出現斷線
 
                     // 峰值（瞬態）＝外面那圈淡暈；RMS（音量包絡）＝裡面那根實體 —— 只畫峰值的話整條會是實心柱。
                     float hp = Mathf.Max(1f, peak * halfMax);

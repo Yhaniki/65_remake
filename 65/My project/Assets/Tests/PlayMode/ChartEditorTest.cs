@@ -152,6 +152,12 @@ namespace Sdo.Tests
 
             Assert.AreEqual(40.0, after - before, 2.0,
                 "offset +40 → 譜面時鐘要往前 40ms（同一下打擊的 delta 變大 = 判得比較晚）");
+
+            // (3) 單首 offset 疊加在全域 offset 之上（兩者相加才是套在時鐘上的量）
+            game.EditorSongOffsetMs = -10.0;
+            yield return null;
+            Assert.AreEqual(30.0, game.EditorNowMs - before, 2.0,
+                "全域 +40 與單首 -10 要相加（= +30），不是互相覆蓋");
         }
 
         // 獨立重算一次「編號最大、有譜、檔案真的存在」的那首（不呼叫產品程式的同一支函式，才驗得出東西）

@@ -51,6 +51,17 @@ namespace Sdo.Game
         // 判定線的視覺偏移（設計 px）：完美時機的音符落在 judgeLineY + judgeOffsetY，受擊線圖本身不動。
         // 純視覺（不改判定時間 —— 那是 GameplayClock.OffsetMs 的事）。預設 0 = 正中受擊線；用編輯器的打拍測試調。
         public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
+
+        /// <summary>單首歌的 offset（毫秒，<see cref="Sdo.Settings.SongOffsets"/>）：補「這首譜跟音檔沒對齊」。
+        /// 正 = 音符相對音樂往後。與全域 offset 相加後套在譜面時鐘上（<see cref="ApplyClockOffset"/>）。
+        /// 由 FrontendApp（開局）或譜面編輯器（F11/F12 即時調）設。</summary>
+        public float songOffsetMs;
+
+        // 全域 offset（config.ini [Room] globalOffsetMs）：補這台機器「聲音→耳朵→手→鍵盤→引擎」的整條延遲。
+        // 正 = 譜面時鐘往前推 → 同一下打擊的 delta 變大（判得比較晚）→ 整體打太早的人要調正的。用打拍測試量。
+        private float _globalOffsetMs = Sdo.Settings.RoomConfig.globalOffsetMs;
+
+        private void ApplyClockOffset() => _clock.OffsetMs = _globalOffsetMs + songOffsetMs;
         private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
@@ -807,9 +818,7 @@ namespace Sdo.Game
             // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
             // 精度在 config.ini [Room] judgeLevel 手改(1~8、9=JUSTICE)。
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromStepManiaJudge(Sdo.Settings.RoomConfig.judgeLevel));
-            // 全域判定 offset（config.ini [Room] globalOffsetMs）：補音效/畫面/鍵盤的整條延遲。
-            // 正 = 譜面時鐘往前推 → 同一下打擊的 delta 變大（判得比較晚）→ 整體打太早的人要調正的。用打拍測試量。
-            _clock.OffsetMs = Sdo.Settings.RoomConfig.globalOffsetMs;
+            ApplyClockOffset();   // 全域 offset（這台機器的延遲）+ 單首 offset（這首譜跟音檔沒對齊）
             _score = new ScoreProcessor(_map.TotalNotes);
             _health = new HealthProcessor(healthLevel);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
@@ -980,7 +989,9 @@ namespace Sdo.Game
                     yield break;
                 }
             }
-            Debug.Log("[tick] SE/" + TickSeName + " 不在,改用合成的 clap");
+            // 找不到通常不是「檔案沒有」，而是**資料根解錯了**（例：worktree 沒有 gitignore 掉的 data_root.txt
+            // → Root 退回 sdox_offline/Extracted，那裡根本沒有 SE）。把實際找過的資料夾印出來，不用再猜。
+            Debug.LogWarning($"[tick] 找不到 {TickSeName}.ogg/.wav（找過 {SdoExtracted.SeDir}）→ 改用合成的 clap");
         }
 
         private IEnumerable<double> NoteStartTimes()

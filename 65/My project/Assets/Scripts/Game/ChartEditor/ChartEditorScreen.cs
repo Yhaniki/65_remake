@@ -31,7 +31,9 @@ namespace Sdo.Game
         /// <summary>上次開的那首（PlayerPrefs key）。沒有紀錄時才會退回 <see cref="PickDefaultGn"/>（編號最大的那首）。</summary>
         public const string PrefLastGn = "sdo.editor.lastGn";
         private const string PrefLastDiff = "sdo.editor.lastDiff";
-        private const double WaveBucketMs = 10.0;   // 波形每格 10ms（4 分鐘的歌 ≈ 24000 格；夠細，捲動時看得出打點）
+        // 波形每格 2ms：一般速度下 1 格 ≈ 1 螢幕像素，波形才不會一格一格像階梯（10ms 一格 ≈ 5px，明顯粗）。
+        // 4 分鐘的歌 = 12 萬格 × 2 條（RMS/峰值）× 4B ≈ 1MB，可以接受。畫的時候會依當下縮放把不到 1px 的格併起來。
+        private const double WaveBucketMs = 2.0;
 
         public static ChartEditorScreen Instance;
 
@@ -69,6 +71,7 @@ namespace Sdo.Game
         private readonly HitErrorStats _stats = new HitErrorStats();
         private double _globalOffset = RoomConfig.globalOffsetMs;   // 判定 offset（毫秒）
         private float _judgeOffsetY = RoomConfig.judgeOffsetY;      // 判定線視覺偏移（設計 px）
+        private double _songOffset;                                 // 這首歌自己的 offset（毫秒，F11/F12）
 
         // 歌單視窗
         private bool _showList;
@@ -146,6 +149,8 @@ namespace Sdo.Game
             game.effectScene = false;            // 不放場景常駐特效
             game.scrollSpeedMul = _speed;
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
+            _songOffset = SongOffsets.Get(_gn);   // 這首歌上次調好的 offset（F11/F12）
+            game.songOffsetMs = (float)_songOffset;
             _game = game;
 
             if (_overlay == null)
@@ -319,6 +324,18 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.Home)) _game.EditorSeekMs(0);
             if (Input.GetKeyDown(KeyCode.End)) _game.EditorSeekMs(_game.EditorEndMs);
 
+            // 單首 offset（StepMania 編輯器的 F11/F12）：一次 0.02 秒，按住 Alt 微調 0.001 秒。
+            // 正 = 音符相對音樂往後。改完立刻寫回 song_offsets.ini，正式遊玩就吃得到。
+            bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            double stepMs = (alt ? SongOffsets.FineStepSec : SongOffsets.StepSec) * 1000.0;
+            if (Input.GetKeyDown(KeyCode.F11)) NudgeSongOffset(-stepMs);
+            if (Input.GetKeyDown(KeyCode.F12)) NudgeSongOffset(+stepMs);
+
+            // Ctrl+↑/↓ = 顯示縮放（StepMania 的 Ctrl+Up/Down 改 scroll speed）：↓ 變窄、↑ 變寬。
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            if (ctrl && Input.GetKeyDown(KeyCode.DownArrow)) { _game.EditorZoom(+1); return; }
+            if (ctrl && Input.GetKeyDown(KeyCode.UpArrow)) { _game.EditorZoom(-1); return; }
+
             // 上下 = 一格 snap（＝格線的細分）、PgUp/PgDn = 一小節；左右 = 調格線細分（同參考工具）
             if (Input.GetKeyDown(KeyCode.UpArrow)) SeekBySnap(-1);
             if (Input.GetKeyDown(KeyCode.DownArrow)) SeekBySnap(+1);
@@ -329,6 +346,15 @@ namespace Sdo.Game
 
             float wheel = Input.GetAxis("Mouse ScrollWheel");
             if (Mathf.Abs(wheel) > 0.01f) SeekBySnap(wheel > 0f ? -1 : +1);
+        }
+
+        // 單首 offset：即時套進時鐘（音符會當場位移，跟 StepMania 一樣邊聽邊調）＋寫回 song_offsets.ini。
+        private void NudgeSongOffset(double deltaMs)
+        {
+            if (_game == null || string.IsNullOrEmpty(_gn)) return;
+            _songOffset = Math.Round(Mathf.Clamp((float)(_songOffset + deltaMs), SongOffsets.MinMs, SongOffsets.MaxMs), 3);
+            _game.EditorSongOffsetMs = _songOffset;
+            SongOffsets.Set(_gn, (float)_songOffset);
         }
 
         private BeatGrid Grid()
@@ -434,16 +460,16 @@ namespace Sdo.Game
                 double beat = g.MsToBeat(now);
                 GUILayout.Label($"小節 {g.MeasureAt(now)}  拍 {(beat % 4 + 4) % 4 + 1:0.00}", box, GUILayout.Width(130));
             }
-            float speed = ready ? _game.scrollSpeedMul : _speed;   // F5/F6 直接改 ScreenGameplay 的檔位 → 顯示以它為準
-            GUILayout.Label($"速度 {speed:0.0}× (F5/F6)   流速 {(ready ? _game.EditorRate : 1.0):0.00}× ([ ])", box, GUILayout.Width(230));
+            float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
+            GUILayout.Label($"縮放 {speed:0.00}× (Ctrl+↑↓)   單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12)", box, GUILayout.Width(300));
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
 
             GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
-                "空白=播放/暫停  ↑↓=一格  PgUp/PgDn=一小節  ←→=格線細分" +
+                "空白=播放/暫停  ↑↓=一格  Ctrl+↑↓=區域窄/寬  PgUp/PgDn=一小節  ←→=格線細分" +
                 (_overlay != null ? $"（每拍 {_overlay.subdivisions} 格）" : "") +
-                "  Home/End=頭/尾  F1=歌單  F3=波形  G=格線  Tab=難度");
+                "  F11/F12=單首offset(±20ms，Alt=±1ms)  F1=歌單  F2=打拍測試  F3=波形  G=格線  Tab=難度");
 
             if (_showList) DrawSongList();
         }

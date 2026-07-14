@@ -44,12 +44,43 @@ namespace Sdo.Game
         /// <summary>目前的判定窗（畫誤差條要用）。</summary>
         public JudgmentWindows EditorWindows => _engine?.Windows;
 
-        /// <summary>全域判定 offset（毫秒，加在譜面時鐘上）。正 = 判定時間往後 → 適合整體打太早的人。</summary>
+        /// <summary>全域判定 offset（毫秒）。補這台機器的整條延遲；正 = 判定時間往後 → 適合整體打太早的人。</summary>
         public double EditorGlobalOffsetMs
         {
-            get => _clock.OffsetMs;
-            set => _clock.OffsetMs = value;
+            get => _globalOffsetMs;
+            set { _globalOffsetMs = (float)value; ApplyClockOffset(); }
         }
+
+        /// <summary>單首歌的 offset（毫秒）。補「這首譜跟音檔沒對齊」；正 = 音符相對音樂往後。</summary>
+        public double EditorSongOffsetMs
+        {
+            get => songOffsetMs;
+            set { songOffsetMs = (float)value; ApplyClockOffset(); }
+        }
+
+        /// <summary>
+        /// 顯示縮放（＝下落速度）。StepMania 編輯器的 Ctrl+↑/↓ 就是改這個：速度越快，同一段畫面涵蓋的時間越短
+        /// （＝「區域變窄」）。步進 0.5、底端特例 0.25（ScreenEdit.cpp 的 fNewScrollSpeed）。
+        /// </summary>
+        public void EditorZoom(int dir)
+        {
+            if (_map == null) return;
+            float s = scrollSpeedMul;
+            if (dir > 0)   // 變窄（速度變快）
+            {
+                if (s <= 0.25f + 1e-3f) s = 0.5f;
+                else if (s < 8f) s = Mathf.Min(8f, s + 0.5f);
+            }
+            else           // 變寬（速度變慢）
+            {
+                if (s >= 1f) s -= 0.5f;
+                else if (s >= 0.5f - 1e-3f) s = 0.25f;
+            }
+            scrollSpeedMul = Mathf.Clamp(s, 0.25f, 8f);
+            BuildScroll();   // 速度是烘進 ManiaScroll 的 → 一定要重建，不然畫面不會變
+        }
+
+        public float EditorScrollSpeed => scrollSpeedMul;
 
         // 打拍測試的判定：只回報誤差，不進分數/血量/連段/結算（ApplyEvent 那一整套在這裡沒有意義）。
         private void EditorJudgeTick(double now)
