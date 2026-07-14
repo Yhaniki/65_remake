@@ -38,6 +38,10 @@ namespace Sdo.Game
         /// <summary>打拍測試的長度（秒）。5 分鐘的連續打點遠遠夠校時，再長只是白白多生幾千個音符物件。</summary>
         public const double BeatTestDurationSec = 300.0;
 
+        /// <summary>seek 之後音樂排程的餘裕（秒）。要大於一個 DSP buffer（預設 512~1024 取樣 ≈ 11~21ms），
+        /// 排程點才不會落在過去而被當成「立刻播」——那就退回 Play() 的不精準了。50ms 對編譜的手感沒有影響。</summary>
+        private const double AudioScheduleLeadSec = 0.05;
+
         /// <summary>每次判定到就回報：deltaMs = 打擊時間 − 音符時間（負 = 太早、正 = 太晚）；miss 時 delta 為 NaN。</summary>
         public Action<double, Judgment> EditorOnHit;
 
@@ -217,10 +221,18 @@ namespace Sdo.Game
             chartMs = Math.Max(0.0, Math.Min(chartMs, Math.Max(0.0, EditorEndMs)));
             double chartSec = chartMs / 1000.0;
 
+            bool willPlay = !_paused && _audio != null && _audio.clip != null;
+            // 音樂一律用 PlayScheduled 起播，**不能用 Play()**：Play() 要等下一個 mixer 回呼才真的出聲
+            // （最多一個 DSP buffer，實測 ≈10ms），而打拍音是排程進 dsp 時鐘的（取樣級精準）→ 用 Play()
+            // 會讓音樂固定慢打拍音一點點。所以先把起播點排在 dspNow + 這段餘裕上，錨點也錨在同一個時刻。
+            // （正式遊玩的開場本來就走 PlayScheduled，所以這個坑只出現在編輯器的 seek。）
+            double lead = willPlay ? AudioScheduleLeadSec : 0.0;
+
             // 四個錨點一起搬（少一個就對不上）：dsp 錨點、wall 基準、音源位置、平滑時鐘。
-            double dspNow = AudioSettings.dspTime;
-            _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSec, _musicRate, MusicCountInSec);
-            _clockStart = Time.timeAsDouble - chartSec;   // 暫停時 timeAsDouble 是凍結的 → 時鐘就停在 chartSec
+            double startDsp = AudioSettings.dspTime + lead;   // 音樂真正開始出聲的時刻
+            _songStartDspTime = GameRate.AnchorForChartSeconds(startDsp, chartSec, _musicRate, MusicCountInSec);
+            // 譜面時鐘也要在 startDsp 那一刻剛好等於 chartSec（timeAsDouble 吃 timeScale，所以餘裕要乘流速）。
+            _clockStart = Time.timeAsDouble - (chartSec - lead * _musicRate);
             _pauseChartSec = chartSec;
             _clock.Reset();
             _nowMs = chartMs;
@@ -233,12 +245,14 @@ namespace Sdo.Game
                 {
                     // 還在無聲數拍裡：把音樂排在「譜面時間 = count-in」的那個 dsp 時刻（即錨點本身）。
                     _audio.timeSamples = 0;
-                    if (!_paused) _audio.PlayScheduled(_songStartDspTime);
+                    if (willPlay) _audio.PlayScheduled(_songStartDspTime);
                 }
                 else if (clipSec < _audio.clip.length)
                 {
-                    _audio.time = (float)clipSec;
-                    if (!_paused) _audio.Play();
+                    // timeSamples（整數取樣）而不是 time（float 秒）：clip 是 DecompressOnLoad，seek 是取樣級精準的。
+                    _audio.timeSamples = Math.Min(_audio.clip.samples - 1,
+                        Math.Max(0, (int)Math.Round(clipSec * _audio.clip.frequency)));
+                    if (willPlay) _audio.PlayScheduled(startDsp);
                 }
             }
 
