@@ -36,6 +36,13 @@ namespace Sdo.Game
         private const float StripGap = 12f;
         private const float StripWidth = 84f;
 
+        /// <summary>波形直條的左右界（design px）。誤差條要排在它右邊，兩個都畫在軌道右側，不能疊。</summary>
+        private void StripBounds(out float sx0, out float sx1)
+        {
+            sx0 = Game.EditorTrackRightPx + StripGap;
+            sx1 = Mathf.Min(sx0 + StripWidth, SdoLayout.Width - 4f);
+        }
+
         // 格線顏色 = StepMania 的 note quantization 配色（4分紅、8分藍、12分深紫、16分黃、24分粉、32分橘、再細的白）
         private static readonly Color32 Col4th = new Color32(0xe0, 0x30, 0x30, 0xff);
         private static readonly Color32 Col8th = new Color32(0x30, 0x70, 0xe0, 0xff);
@@ -194,8 +201,7 @@ namespace Sdo.Game
 
         private void BuildWaveform(double msLo, double msHi, float top, float bottom)
         {
-            float sx0 = Game.EditorTrackRightPx + StripGap;
-            float sx1 = Mathf.Min(sx0 + StripWidth, SdoLayout.Width - 4f);
+            StripBounds(out float sx0, out float sx1);
             if (sx1 - sx0 < 8f) return;
             float cx = (sx0 + sx1) * 0.5f, halfMax = (sx1 - sx0) * 0.5f - 1f;
 
@@ -259,9 +265,10 @@ namespace Sdo.Game
         private double _ema;
         private bool _emaPrimed;
 
-        private const float BarW = 300f;         // 橫條寬（設計 px）
-        private const float BarH = 12f;          // 判定窗色帶的高
-        private const float TickH = 22f;         // tick 的高
+        private const float BarW = 210f;         // 橫條寬（設計 px）
+        private const float BarH = 8f;           // 判定窗色帶的高
+        private const float TickH = 15f;         // tick 的高
+        private const float BarGapFromStrip = 18f;   // 與波形條之間的間隔（不能疊到波形）
         private const float TickLifeSec = 5f;    // tick 活多久（同 osu）
 
         /// <summary>打到一下就餵進來（deltaMs 為 NaN = miss，不畫 tick 也不進 EMA）。</summary>
@@ -295,11 +302,14 @@ namespace Sdo.Game
             var w = Game.EditorWindows;
             if (w == null || w.MissBoundary <= 0.0) return;
 
-            // 放在軌道「右側」、與受擊線同高：音符不會從它身上穿過去（軌道裡任何位置都在音符的行進路線上），
-            // 又剛好在眼睛盯著受擊線時的餘光範圍內 —— 這正是 osu 把它擺在遊玩區旁邊的理由。
-            float cx = Game.EditorTrackRightPx + 30f + BarW * 0.5f;
-            float cy = Game.EditorJudgeLineY;
+            // 排在「波形條的右邊」、與受擊線同高：
+            //   • 軌道裡任何位置都在音符的行進路線上 → 不能畫在軌道裡（會被音符穿過去）。
+            //   • 波形條也在軌道右側 → 誤差條必須讓開它，不然會蓋住波形（就是這次要修的）。
+            // 與受擊線同高則讓它落在「盯著受擊線時的餘光」裡，這正是 osu 把它擺在遊玩區旁邊的理由。
+            StripBounds(out _, out float stripRight);
             float half = BarW * 0.5f;
+            float cx = Mathf.Min(stripRight + BarGapFromStrip + half, SdoLayout.Width - 16f - half);
+            float cy = Game.EditorJudgeLineY;
             float msToPx = half / (float)w.MissBoundary;   // 兩端 = ±Miss 邊界
 
             // 判定窗色帶：由寬到窄疊上去（大的先畫，小的蓋在上面）＝ 中央往外的同心帶，同 osu

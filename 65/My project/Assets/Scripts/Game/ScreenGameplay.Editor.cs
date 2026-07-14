@@ -128,7 +128,7 @@ namespace Sdo.Game
                     if (!beatTestMode && IsArrowKey(k)) continue;   // 編譜時方向鍵歸 seek/縮放
                     if (Input.GetKeyDown(k)) down = true;
                 }
-                if (down) EditorPressLane(lane, now);
+                if (down) EditorPressLane(lane, PressTimeMs(now));   // 輪詢邊緣 → 取上一幀與這一幀的中點（見 PressTimeMs）
             }
             if (!beatTestMode) return;
 

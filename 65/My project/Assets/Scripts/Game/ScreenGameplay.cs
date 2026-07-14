@@ -4175,9 +4175,24 @@ namespace Sdo.Game
 
         // ---------- input / judge ----------
 
+        /// <summary>
+        /// 一次按鍵**實際發生**的譜面時間（ms）。<c>Input.GetKeyDown</c> 是在 Update 輪詢的:鍵是在「上一幀到這一幀
+        /// 之間」的某處按下的,直接拿這一幀的 now 當打擊時間會**系統性偏晚半幀** —— 60fps 平均 +8ms、30fps +16ms,
+        /// 而且偏差會跟著 fps 飄(掉幀時判定莫名變嚴)。
+        ///
+        /// StepMania 對「沒有事件時戳的輪詢裝置」就是取上次輪詢與現在的**中點**(InputHandler.cpp:5-16,
+        /// <c>di.ts = m_LastUpdate.Half()</c> —— 註解原文:「will pretend the button was pressed at the midpoint
+        /// since the last update, which will smooth out the error」)。取中點後平均偏差 ≈ 0,且不隨 fps 變。
+        ///
+        /// (StepMania 另有專屬高優先權輸入執行緒能拿到**真**事件時戳,Player::Step 再用 tm.Ago() 回推按下當時的
+        /// 音樂時間;Unity 舊版 Input 沒有時戳,中點是能做到的最好近似。osu!lazer 同樣只有幀時間,連中點都沒取。)
+        /// </summary>
+        private double PressTimeMs(double now) => now - 0.5 * Time.deltaTime * 1000.0;   // deltaTime 已吃 timeScale → 與譜面時間同單位
+
         private void HandleInput(double now)
         {
             int mask = 0;
+            double press = PressTimeMs(now);
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
             {
@@ -4185,9 +4200,9 @@ namespace Sdo.Game
                 foreach (var k in laneKeys[lane])
                 { if (Input.GetKeyDown(k)) down = true; if (Input.GetKey(k)) anyHeld = true; if (Input.GetKeyUp(k)) anyUp = true; }
                 if (anyHeld) mask |= 1 << lane;
-                if (down) { PressLane(lane, now); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
+                if (down) { PressLane(lane, press); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
                 else if (_stJustEnded) ReplayShowtimeSeamPress(lane, now, anyHeld);    // ShowTime auto→manual SEAM: replay the in-window press that lost its GetKeyDown edge onto the exact note it aimed at
-                if (anyUp && !anyHeld) ReleaseLane(lane, now);   // released only when no set key is still held
+                if (anyUp && !anyHeld) ReleaseLane(lane, press);   // released only when no set key is still held（放開同樣是輪詢邊緣 → 同一個中點修正）
             }
             if (_stJustEnded) { _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; } }   // seam carry-over is a one-frame event
             _replay.Record(now, mask);   // osu-style 打擊紀錄 (appends only when the held-key bitmask changes)
