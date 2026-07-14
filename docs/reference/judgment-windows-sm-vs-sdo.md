@@ -25,7 +25,7 @@
 
 實作：[JudgmentWindows.FromStepManiaJudge()](../../65/My%20project/Assets/Scripts/Sdo.Ruleset/JudgmentWindows.cs)。
 
-**精度可手改**：`config.ini`（`DATA/PROFILE/<id>/config.ini`）的 `[Room]` 區：
+**精度可手改**：`config.ini`（**全域一份，執行檔同一層**；Editor 下 = `65/My project/config.ini`）的 `[Room]` 區：
 
 ```ini
 [Room]
