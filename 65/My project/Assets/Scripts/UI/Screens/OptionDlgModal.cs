@@ -36,6 +36,12 @@ namespace Sdo.UI.Screens
         private Slider _sBgm, _sMusic, _sSfx;
         private Image _board, _audioBoard, _advBoard;                               // 遊戲 / 音效 / 進階 boards
         private Image[] _tabBtns; private Sprite[] _tabNormal, _tabActive;          // official tab art + active-state swap
+        // Each pill's art is baked with its own internal padding, so a shared Y leaves them visually uneven. These are
+        // the hand-tuned per-tab downward nudges (px) that line the four pills up against the frame, one value per
+        // state. Index = internal id: 0=音效, 1=鍵盤, 2=遊戲, 3=進階.
+        private static readonly float[] TabNudgeNormal = { 1f, 1f, 2f, 2f };
+        private static readonly float[] TabNudgeActive = { 1f, 1f, 1f, 2f };
+        private float _tabBarY;                                                     // pill top edge before the nudge
         private readonly TextMeshProUGUI[,] _capLabel = new TextMeshProUGUI[2, 4]; // [slot 0=primary/1=aux, lane] — text fallback for glyphless keys
         private readonly Image[,] _capImg = new Image[2, 4];                        // key-cap chip sprite (purple idle / silver capturing)
         private readonly Image[,] _capGlyph = new Image[2, 4];                      // bound-key letter glyph (LOBBYDLG/KEYS/*.PNG)
@@ -97,6 +103,7 @@ namespace Sdo.UI.Screens
             //   ▶ TabBarCenterX = 整條 tab bar 的水平中心(px)。想整條左右移就改這個(視窗 800 寬、對話框中心≈414)。
             //   ▶ TabBarY = tab 的上緣高度(px，越小越高)。
             const float TabSpacing = 86f, TabBarCenterX = 412f, TabBarY = 188f;
+            _tabBarY = TabBarY;
             int[] visualOrder = { 1, 0, 2, 3 };          // create L→R by index (鍵盤,音效,遊戲,進階)
             for (int slot = 0; slot < visualOrder.Length; slot++)
             {
@@ -106,7 +113,7 @@ namespace Sdo.UI.Screens
                 img.sprite = _tabNormal[id];
                 var rt = img.rectTransform;
                 rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0.5f, 1f);
-                rt.anchoredPosition = new Vector2(cx, -TabBarY);
+                rt.anchoredPosition = new Vector2(cx, -(TabBarY + TabNudgeNormal[id]));
                 rt.sizeDelta = _tabNormal[id] != null ? _tabNormal[id].rect.size : new Vector2(94f, 38f);
                 var btn = img.gameObject.AddComponent<Button>(); btn.targetGraphic = img;
                 btn.onClick.AddListener(() => ShowTab(id));
@@ -635,9 +642,18 @@ namespace Sdo.UI.Screens
             if (_audioBoard != null) _audioBoard.gameObject.SetActive(i == 0);
             if (_board != null) _board.gameObject.SetActive(i == 2);       // 遊戲 board (baked labels)
             if (_advBoard != null) _advBoard.gameObject.SetActive(i == 3); // 進階 board (clean)
-            // swap the sprite ONLY (size stays fixed → no jump; normal/active are same-size crops)
+            // swap the sprite (size stays fixed → no jump; normal/active are same-size crops) and re-apply that state's
+            // per-tab downward nudge, since a pill's art can sit differently in its normal vs pushed crop.
             for (int t = 0; t < _tabBtns.Length; t++)
-                if (_tabBtns[t] != null) _tabBtns[t].sprite = (t == i) ? _tabActive[t] : _tabNormal[t];
+            {
+                if (_tabBtns[t] == null) continue;
+                bool active = t == i;
+                _tabBtns[t].sprite = active ? _tabActive[t] : _tabNormal[t];
+                var rt = _tabBtns[t].rectTransform;
+                var p = rt.anchoredPosition;
+                p.y = -(_tabBarY + (active ? TabNudgeActive[t] : TabNudgeNormal[t]));
+                rt.anchoredPosition = p;
+            }
             if (_tabBtns[i] != null) _tabBtns[i].transform.SetAsLastSibling();   // active pill on top of its overlapping neighbours
         }
 
