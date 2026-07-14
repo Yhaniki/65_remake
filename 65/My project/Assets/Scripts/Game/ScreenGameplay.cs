@@ -1465,6 +1465,15 @@ namespace Sdo.Game
         // (_musicStartDelaySec), so chart time = clip position + count-in. GameplayClock slews the note clock onto this.
         private double? AudioChartSeconds()
         {
+            // 編輯器：dsp ↔ 譜面時間的映射是 EditorSeekMs 錨的，跟「有沒有音檔在播」無關 → 沒有音樂也交得出真值。
+            // 打拍測試（F2）非交不可：那個模式**沒有音樂**，但你聽到的 click 是 PlayScheduled 排進 dsp 時鐘的。
+            // 這裡若回 null，譜面時鐘就純靠 wall clock 自走 —— 於是「格線/判定」走 wall、「聽到的 click」走 dsp，
+            // 兩支時鐘只在 seek 那一刻對過一次：會慢慢漂，而且視窗一失焦（wall 停、dsp 照跑）回來就固定錯開一段
+            // （實測：+108ms → 切出去再切回來變 −104ms）。鎖上 dsp 之後，殘留的固定偏移才等於「這台機器的真實延遲」。
+            // 暫停中不交：timeScale=0 讓 wall 停住而 dsp 照跑，拿它當真值會把時鐘推著往前爬。
+            if (editorMode)
+                return _paused ? (double?)null
+                    : GameRate.ChartSecondsFromDsp(AudioSettings.dspTime, _songStartDspTime, _musicRate, MusicCountInSec);
             if (_audio == null || _audio.clip == null || !_audio.isPlaying) return null;
             double dsp = AudioSettings.dspTime;
             if (dsp < _songStartDspTime) return null;                // scheduled start not reached yet (still in lead-in)
@@ -3701,8 +3710,15 @@ namespace Sdo.Game
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
             TickAssist(now);   // F7 打拍音：把接下來 250ms 內的 tick 排進音訊時鐘（關閉時只推游標）
             // 譜面編輯器：只把音符捲過去 —— 不扣血、不計分、不結算（時間由 ChartEditorScreen 自由 seek）。
-            // 打拍測試模式例外：那個模式就是要打，所以判定要跑（但只回報誤差，不進分數/血量）。
-            if (editorMode) { if (beatTestMode) EditorJudgeTick(now); ScrollNotes(now); EditorTick(now); return; }
+            // 判定照跑（含一般編譜模式）：只回報誤差給 osu 式誤差條，讓你邊看譜邊跟著打、即時看出偏早/偏晚。
+            if (editorMode)
+            {
+                EditorJudgeTick(now);
+                ScrollNotes(now);
+                UpdateFx(); UpdateClickFlash();   // 爆發/受擊閃光也要有人推幀＋回收：少了這行，每打中一下就永久留一張 frame 0 疊上去（additive → 越疊越白）
+                EditorTick(now);
+                return;
+            }
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)

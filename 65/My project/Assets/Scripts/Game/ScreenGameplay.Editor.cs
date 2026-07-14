@@ -113,17 +113,26 @@ namespace Sdo.Game
 
         public float EditorScrollSpeed => scrollSpeedMul;
 
-        // 打拍測試的判定：只回報誤差，不進分數/血量/連段/結算（ApplyEvent 那一整套在這裡沒有意義）。
+        // 編輯器的判定：只回報誤差（給 osu 式誤差條用），不進分數/血量/連段/結算。
+        // 一般編譜模式也跑 —— 可以邊看譜邊跟著打，即時看出自己偏早/偏晚。兩處差別：
+        //   • 方向鍵：編譜時是 seek/縮放，不能同時當軌道鍵（打拍測試才吃方向鍵）→ 只認 A/S/W/D 那組。
+        //   • 自動 miss：編譜時**不判** —— 你多半只是在看譜，沒在打；判下去音符會一路被吃掉、誤差條也會被 miss 洗版。
         private void EditorJudgeTick(double now)
         {
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
             {
                 bool down = false;
-                foreach (var k in laneKeys[lane]) if (Input.GetKeyDown(k)) down = true;
+                foreach (var k in laneKeys[lane])
+                {
+                    if (!beatTestMode && IsArrowKey(k)) continue;   // 編譜時方向鍵歸 seek/縮放
+                    if (Input.GetKeyDown(k)) down = true;
+                }
                 if (down) EditorPressLane(lane, now);
             }
-            // 沒打到的音符走過判定窗 → 記一次 miss
+            if (!beatTestMode) return;
+
+            // 打拍測試：沒打到的音符走過判定窗 → 記一次 miss（那個模式就是要你打完每一顆）
             foreach (var n in _notes)
             {
                 if (n.Done || n.HeadJudged) continue;
@@ -133,13 +142,17 @@ namespace Sdo.Game
             }
         }
 
+        private static bool IsArrowKey(KeyCode k)
+            => k == KeyCode.LeftArrow || k == KeyCode.RightArrow || k == KeyCode.UpArrow || k == KeyCode.DownArrow;
+
         private void EditorPressLane(int lane, double now)
         {
             var n = NearestHittable(lane, now);
             if (n == null) return;                       // 空打（判定窗內沒有音符）→ 不計入統計，同 osu
             var j = _engine.JudgeHit(n.Note.StartTimeMs, now);
             if (j == null) return;
-            n.HeadJudged = true; n.Done = true;          // 打拍測試只有 tap
+            n.HeadJudged = true;                         // 同一顆不重複判（seek 會重新 arm）
+            n.Done = true;                               // 打到就消失（跟遊玩一樣的回饋）；長條在編輯器一律當 tap
             EditorOnHit?.Invoke(now - n.Note.StartTimeMs, j.Value);   // delta：負 = 太早、正 = 太晚（同 osu）
             TriggerClickFlash(lane);                                   // 打到有回饋
             if (_burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane, false);
@@ -220,6 +233,7 @@ namespace Sdo.Game
                 if (_audio != null) _audio.Pause();
                 Time.timeScale = 0f;
                 ResetScheduledTicks();
+                ClearGameplayFx();   // 爆發是用 Time.time 推幀的 → timeScale=0 會讓還在飛的那幾張定格在畫面上不消
                 _paused = true;
             }
             else

@@ -151,6 +151,7 @@ namespace Sdo.Game
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
             _songOffset = SongOffsets.Get(_gn);   // 這首歌上次調好的 offset（F11/F12）
             game.songOffsetMs = (float)_songOffset;
+            game.EditorOnHit = OnHit;             // 跟著打 → 誤差條（一般編譜模式也有，不必進打拍測試）
             _game = game;
 
             if (_overlay == null)
@@ -163,8 +164,10 @@ namespace Sdo.Game
             _overlay.Game = _game;
             _overlay.Peaks = null;
             _overlay.showWaveform = true;
-            _overlay.showJudgeLine = false;
-            _overlay.showHitError = false;
+            _overlay.showJudgeLine = true;    // 判定線（受擊線 + judgeOffsetY）：完美時機的音符實際落點
+            _overlay.showHitError = true;     // osu 式誤差條：跟著打就會記錄
+            _overlay.ClearHits();
+            _stats.Clear(); _misses = 0;
             _peaksCo = StartCoroutine(BuildPeaksCo(_game));
             _loading = false;
         }
@@ -211,7 +214,7 @@ namespace Sdo.Game
             game.effectScene = false;
             game.scrollSpeedMul = _speed;
             game.judgeOffsetY = _judgeOffsetY;
-            game.EditorOnHit = OnBeatTestHit;
+            game.EditorOnHit = OnHit;
             _game = game;
 
             EnsureOverlay();
@@ -229,7 +232,8 @@ namespace Sdo.Game
             _game.EditorSetPaused(false);                 // 直接開始（打拍測試沒有什麼好等的）
         }
 
-        private void OnBeatTestHit(double deltaMs, Sdo.Ruleset.Judgment j)
+        // 打拍測試與一般編譜模式共用：跟著打 → 進誤差條與統計。
+        private void OnHit(double deltaMs, Sdo.Ruleset.Judgment j)
         {
             if (_overlay != null) _overlay.AddHit(deltaMs, j);
             if (!double.IsNaN(deltaMs)) _stats.Add(deltaMs);   // miss 不進統計（同 osu）
@@ -319,7 +323,9 @@ namespace Sdo.Game
 
             if (Input.GetKeyDown(KeyCode.F3) && _overlay != null) _overlay.showWaveform = !_overlay.showWaveform;
             if (Input.GetKeyDown(KeyCode.G) && _overlay != null) _overlay.showGrid = !_overlay.showGrid;
+            if (Input.GetKeyDown(KeyCode.F4) && _overlay != null) _overlay.showHitError = !_overlay.showHitError;
             if (Input.GetKeyDown(KeyCode.Tab)) CycleDifficulty();
+            if (Input.GetKeyDown(KeyCode.Backspace)) { _stats.Clear(); _misses = 0; _overlay?.ClearHits(); }   // 清掉打擊紀錄
 
             if (Input.GetKeyDown(KeyCode.Home)) _game.EditorSeekMs(0);
             if (Input.GetKeyDown(KeyCode.End)) _game.EditorSeekMs(_game.EditorEndMs);
@@ -436,6 +442,16 @@ namespace Sdo.Game
 
             if (map != null)
                 GUILayout.Label($"BPM {map.Bpm:0.##}   {map.TotalNotes} notes", box, GUILayout.Width(180));
+
+            // 跟著打的即時統計（誤差條畫在軌道右邊）。A/S/W/D 打擊 —— 方向鍵在編譜模式歸 seek/縮放。
+            if (_stats.Count > 0)
+            {
+                double mean = _stats.Mean;
+                GUILayout.Label($"打擊 {_stats.Count}   平均 {mean:+0.0;-0.0;0.0} ms（{(mean < 0 ? "偏早" : "偏晚")}）   UR {_stats.UnstableRate:0}   [Backspace 清除]",
+                    box, GUILayout.Width(330));
+            }
+            else GUILayout.Label("跟著打 A/S/W/D → 右邊誤差條記錄偏早/偏晚", box, GUILayout.Width(280));
+
             if (!string.IsNullOrEmpty(_status))
                 GUILayout.Label(_status, box);
             GUILayout.FlexibleSpace();
@@ -472,7 +488,7 @@ namespace Sdo.Game
             GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
                 "空白=播放/暫停  ↑↓=一格  Ctrl+↑↓=區域窄/寬  PgUp/PgDn=一小節  ←→=格線細分" +
                 (_overlay != null ? $"（每拍 {_overlay.subdivisions} 格）" : "") +
-                "  F11/F12=單首offset(±20ms，Alt=±1ms)  F1=歌單  F2=打拍測試  F3=波形  G=格線  Tab=難度");
+                "  A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  F1=歌單  F2=打拍測試  F3=波形  F4=誤差條  G=格線  Tab=難度");
 
             if (_showList) DrawSongList();
         }
