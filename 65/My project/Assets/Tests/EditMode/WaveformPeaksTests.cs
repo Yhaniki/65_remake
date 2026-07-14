@@ -104,6 +104,36 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void BucketMs_IsTheRealDuration_NotTheRequestedOne()
+        {
+            // 44100Hz 立體聲、要求 2ms → 一格 round(44100×2×0.002) = 176 個取樣 = 1.9955ms（不是 2ms）。
+            // 若回報 2ms，畫波形時每格就偏 0.23% → 一分鐘漂 136ms。
+            var w = WaveformPeaks.Build(new float[176 * 3], channels: 2, sampleRate: 44100, bucketMs: 2.0);
+            Assert.AreEqual(176 * 1000.0 / (44100.0 * 2), w.BucketMs, 1e-9);
+            Assert.AreNotEqual(2.0, w.BucketMs, "回報要求值 = 埋一個會累積的漂移");
+
+            // 48000Hz 剛好整除（192 個取樣 = 2ms）→ 完全不偏。症狀因此是「有些歌會飄、有些不會」。
+            var w48 = WaveformPeaks.Build(new float[192 * 3], 2, 48000, 2.0);
+            Assert.AreEqual(2.0, w48.BucketMs, 1e-9);
+        }
+
+        [Test]
+        public void PeakAtMs_DoesNotDrift_OverManyBuckets()
+        {
+            // 44100Hz 立體聲，每「整整一秒」放一個尖峰，連放 6 秒。查詢 k 秒時就必須查到那個尖峰 ——
+            // 每格時長只要算錯一點點，第 5、6 秒就會偏掉好幾格（這就是「波形有時候比按鍵快/慢」的真正原因）。
+            const int Sr = 44100, Ch = 2, Secs = 6;
+            var samples = new float[Sr * Ch * Secs];
+            for (int s = 0; s < Secs; s++) samples[s * Sr * Ch] = 1.0f;   // 第 s 秒的第一個取樣
+
+            var w = WaveformPeaks.Build(samples, Ch, Sr, bucketMs: 2.0);
+
+            for (int s = 0; s < Secs; s++)
+                Assert.AreEqual(1f, w.PeakAtMs(s * 1000.0), 1e-6f,
+                    $"第 {s} 秒的尖峰沒對上 —— 波形漂移了（每格 {w.BucketMs:0.####}ms）");
+        }
+
+        [Test]
         public void Silence_DoesNotDivideByZero()
         {
             var w = WaveformPeaks.Build(new float[500], 1, 1000, 100.0);

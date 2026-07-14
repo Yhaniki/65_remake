@@ -17,7 +17,13 @@ namespace Sdo.Osu
     /// </summary>
     public sealed class WaveformPeaks
     {
-        /// <summary>每格代表幾毫秒。</summary>
+        /// <summary>
+        /// 每格**實際**代表幾毫秒 —— 由「這一格吃了幾個取樣」回算，不是當初要求的值。
+        ///
+        /// 一格一定是整數個取樣：44100Hz 立體聲、要求 2ms → round(44100×2×0.002) = 176 個取樣，
+        /// 而 176 個取樣只有 1.9955ms。若還用 2ms 去畫，每格就偏 0.23%，**一分鐘累積 136ms**，
+        /// 波形會越跑越前面（48000Hz 剛好整除 192 → 完全不偏，所以症狀是「有些歌會飄、有些不會」）。
+        /// </summary>
         public double BucketMs { get; }
 
         /// <summary>每格的峰值振幅（0..1）。</summary>
@@ -73,10 +79,12 @@ namespace Sdo.Osu
 
             public Builder(int channels, int sampleRate, double bucketMs = 10.0)
             {
-                _bucketMs = bucketMs > 0.0 ? bucketMs : 10.0;
+                double want = bucketMs > 0.0 ? bucketMs : 10.0;
                 int ch = Math.Max(1, channels);
                 int sr = Math.Max(1, sampleRate);
-                _samplesPerBucket = Math.Max(1, (int)Math.Round(sr * ch * _bucketMs / 1000.0));
+                _samplesPerBucket = Math.Max(1, (int)Math.Round(sr * ch * want / 1000.0));
+                // 回算這一格「真正」多長：整數個取樣不見得剛好等於要求的毫秒數，用要求值去畫會累積漂移。
+                _bucketMs = _samplesPerBucket * 1000.0 / (sr * (double)ch);
             }
 
             /// <summary>餵進 <paramref name="count"/> 個交錯取樣（<paramref name="chunk"/> 比 count 長時，尾端多的忽略）。</summary>
