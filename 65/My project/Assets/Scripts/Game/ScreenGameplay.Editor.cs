@@ -38,9 +38,25 @@ namespace Sdo.Game
         /// <summary>打拍測試的長度（秒）。5 分鐘的連續打點遠遠夠校時，再長只是白白多生幾千個音符物件。</summary>
         public const double BeatTestDurationSec = 300.0;
 
-        /// <summary>seek 之後音樂排程的餘裕（秒）。要大於一個 DSP buffer（預設 512~1024 取樣 ≈ 11~21ms），
-        /// 排程點才不會落在過去而被當成「立刻播」——那就退回 Play() 的不精準了。50ms 對編譜的手感沒有影響。</summary>
-        private const double AudioScheduleLeadSec = 0.05;
+        /// <summary>
+        /// 音樂排程的「視野」（秒）—— 依這台機器實際的 DSP buffer 算出來，不是拍腦袋的數字。
+        ///
+        /// <b>它不是延遲，也不會造成任何偏差</b>：起播點、dsp 錨點、譜面時鐘的 wall 基準三者都錨在同一個
+        /// <c>startDsp</c> 上，所以這個量在對齊式子裡完全消掉（換成 20ms 或 100ms，對齊結果一模一樣，
+        /// 只差「按下播放後多久開始響」）。它唯一的用途是保證排程點**還沒到達** ——
+        /// <c>PlayScheduled</c> 只有在未來時刻才是取樣級精準的；排在過去就退化成「下一個混音回呼立刻播」，
+        /// 那正是 <c>Play()</c> 慢掉一個 buffer 的老問題。
+        ///
+        /// 取 3 個 buffer（至少 20ms）：一個 buffer 是理論下限，多留兩個是給偶發的混音抖動/長幀。
+        /// </summary>
+        private static double AudioScheduleLeadSec()
+        {
+            var cfg = AudioSettings.GetConfiguration();
+            double buf = (cfg.sampleRate > 0 && cfg.dspBufferSize > 0)
+                ? cfg.dspBufferSize / (double)cfg.sampleRate
+                : 0.0213;   // 取不到就抓 1024@48k
+            return Math.Max(3.0 * buf, 0.02);
+        }
 
         /// <summary>每次判定到就回報：deltaMs = 打擊時間 − 音符時間（負 = 太早、正 = 太晚）；miss 時 delta 為 NaN。</summary>
         public Action<double, Judgment> EditorOnHit;
@@ -226,7 +242,7 @@ namespace Sdo.Game
             // （最多一個 DSP buffer，實測 ≈10ms），而打拍音是排程進 dsp 時鐘的（取樣級精準）→ 用 Play()
             // 會讓音樂固定慢打拍音一點點。所以先把起播點排在 dspNow + 這段餘裕上，錨點也錨在同一個時刻。
             // （正式遊玩的開場本來就走 PlayScheduled，所以這個坑只出現在編輯器的 seek。）
-            double lead = willPlay ? AudioScheduleLeadSec : 0.0;
+            double lead = willPlay ? AudioScheduleLeadSec() : 0.0;
 
             // 四個錨點一起搬（少一個就對不上）：dsp 錨點、wall 基準、音源位置、平滑時鐘。
             double startDsp = AudioSettings.dspTime + lead;   // 音樂真正開始出聲的時刻

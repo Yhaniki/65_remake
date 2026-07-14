@@ -3565,13 +3565,30 @@ namespace Sdo.Game
             }
             else
             {
-                _songStartDspTime = GameRate.AnchorForChartSeconds(AudioSettings.dspTime, _pauseChartSec, _musicRate, MusicCountInSec);
+                // 恢復也必須是**取樣級**的：UnPause() 跟 Play() 一樣要等下一個混音回呼才真的出聲（最多一個 DSP
+                // buffer ≈ 11~21ms），而打拍音/判定都掛在 dsp 錨點上 → 每暫停一次，音樂就慢掉不到一個 buffer。
+                // 改成排程起播：起播點 startDsp、dsp 錨點、譜面時鐘的 wall 基準三者錨在同一刻，餘裕本身完全消掉。
+                double lead = AudioScheduleLeadSec();
+                double startDsp = AudioSettings.dspTime + lead;
+                _songStartDspTime = GameRate.AnchorForChartSeconds(startDsp, _pauseChartSec, _musicRate, MusicCountInSec);
                 if (_audio != null && _audio.clip != null)
                 {
-                    if (AudioSettings.dspTime < _songStartDspTime) _audio.SetScheduledStartTime(_songStartDspTime);   // 暫停在音樂進來之前
-                    _audio.UnPause();
+                    double clipSec = _pauseChartSec - MusicCountInSec;
+                    _audio.Stop();
+                    _audio.pitch = _timeScale;
+                    if (clipSec < 0.0) { _audio.timeSamples = 0; _audio.PlayScheduled(_songStartDspTime); }   // 還在無聲數拍裡
+                    else if (clipSec < _audio.clip.length)
+                    {
+                        _audio.timeSamples = Math.Min(_audio.clip.samples - 1,
+                            Math.Max(0, (int)Math.Round(clipSec * _audio.clip.frequency)));   // 整數取樣（clip 是 DecompressOnLoad）
+                        _audio.PlayScheduled(startDsp);
+                    }
                 }
                 Time.timeScale = _timeScale;
+                // 譜面時鐘同樣錨到 startDsp：在音樂真正出聲的那一刻，譜面時間剛好等於暫停時的位置。
+                // （timeAsDouble 吃 timeScale，所以餘裕要乘流速。）
+                _clockStart = Time.timeAsDouble - (_pauseChartSec - lead * _musicRate);
+                _clock.Reset();
             }
             _paused = paused;
         }
