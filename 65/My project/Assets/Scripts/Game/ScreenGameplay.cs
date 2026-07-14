@@ -739,7 +739,9 @@ namespace Sdo.Game
             ConfigureAvatarGender();
             _cam = Camera.main ?? new GameObject("Main Camera") { tag = "MainCamera" }.AddComponent<Camera>();
             SdoLayout.SetupCamera(_cam);
-            BuildBootCover();               // put the loading screen up FIRST...
+            // 譜面編輯器：換一首歌就重建整個畫面，每次閃一秒載入圖很擾人 → 不放載入畫面（相機的清除色本來就是黑）。
+            if (editorMode) loadingMinSec = 0f;
+            else BuildBootCover();          // put the loading screen up FIRST...
             _bootShownRt = Time.realtimeSinceStartup;
             StartCoroutine(BootBuildCo());  // ...then build the (heavy) stage behind it — see BootBuildCo
         }
@@ -795,8 +797,8 @@ namespace Sdo.Game
             BuildHud();
             ApplyRoomNoteSkin();   // AFTER BuildHud so _comboWord exists → LoadComboJudgeArt can assign the skin's COMBO.PNG
                                    // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
-            TryLoadAvatar();
-            TryLoadScene();
+            // 編輯器：不載舞者、不載 3D 場景（也就沒有 SceneCam/背景 quad）→ 主相機的 SolidColor 黑直接成為背景。
+            if (!editorMode) { TryLoadAvatar(); TryLoadScene(); }
             // 判定窗:StepMania(YHANIKI)的「精N」毫秒窗,與 BPM 無關(原版是 tick 窗 = 歌越快越嚴,見 FromSdoBpm)。
             // 以精4 為基準(Perfect 45 / Cool 90 / Bad 135 / Miss 180 ms)乘精度係數;預設精2(×1.33)。
             // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
@@ -817,7 +819,7 @@ namespace Sdo.Game
             _sfx = gameObject.AddComponent<AudioSource>();
             _ambient = gameObject.AddComponent<AudioSource>();
             BuildAssistTick();   // F7 打拍音:本譜的 tick 時間軸 + 排程用的音源池
-            var ambName = AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
+            var ambName = editorMode ? null : AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
             if (!string.IsNullOrEmpty(ambName)) StartCoroutine(LoadAmbientCo(ambName));
             // OPTION 遊戲頁「固定」視角：鎖定上次記住的那台（F2 切過就是那台，預設 FixedEye[0]＝鏡頭 1），
             // 跳過自動導播的開場運鏡。默認視角則維持 -1(自動)。
@@ -828,6 +830,8 @@ namespace Sdo.Game
             if (use3dCamera && _camReady && openingIntroSec > 0f && cameraAuto) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
             if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f;   // idle dancer, fixed cam, hidden track
                 HideComboAndJudge(); HideHudForPanel(); }   // also clear the rest of the gameplay HUD (score/combo/judge/song labels/ranking) for a clean stage
+            // 編輯器：沒有開場運鏡，音符板直接出來；HP/分數/名次/歌曲列全部收掉，只留板子+受擊線+音符。
+            if (editorMode) { _dancing = false; _introStartRt = -1f; SetTrackVisible(true); HideHudForEditor(); }
             _sceneBootDone = true;            // the synchronous build above is complete (scene/avatar/board/HUD placed)
             StartCoroutine(LoadAndPlayAudio());
             StartCoroutine(BootRevealCo());   // hold the loading screen until everything's ready (+ online gate), then reveal
@@ -1334,6 +1338,8 @@ namespace Sdo.Game
                 else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
             }
             _audioReady = true;   // song decoded (or failed) → the loading screen may now reveal the stage
+            // 編輯器：沒有 READY/GO 開場，也不自己起播 —— 停在 0ms 等使用者按播放（見 EditorOpeningCo）。
+            if (editorMode) { StartCoroutine(EditorOpeningCo()); yield break; }
             // Park the clock far ahead (song stopped, notes hidden, dancer idle, timer "- : -") and DON'T start the
             // song here. OpeningSequence() starts the song + gameplay clock the instant the GO animation finishes, so
             // they never begin mid-opening (mirrors the original: state-4 AdvancePlayTime fires when the GO anim slot
@@ -3573,10 +3579,12 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
             // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
             // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。F9 開測試面板（滑桿＋檔位按鈕）。
-            if (Input.GetKeyDown(KeyCode.LeftBracket)) SetGameRate(GameRate.Step(_musicRate, -1));
-            if (Input.GetKeyDown(KeyCode.RightBracket)) SetGameRate(GameRate.Step(_musicRate, +1));
-            if (Input.GetKeyDown(KeyCode.Backslash)) SetPaused(!_paused);
-            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) SetGameRate(GameRate.Normal);
+            // 編輯器模式的暫停/變速要走 Editor* 版本（會重新錨定 dsp↔譜面時間；SetPaused 的恢復路徑假設音源是 Pause 過的，
+            // 但編輯器 seek 是 Stop→Play，直接用會恢復不了聲音）。
+            if (Input.GetKeyDown(KeyCode.LeftBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, -1)); else SetGameRate(GameRate.Step(_musicRate, -1)); }
+            if (Input.GetKeyDown(KeyCode.RightBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, +1)); else SetGameRate(GameRate.Step(_musicRate, +1)); }
+            if (Input.GetKeyDown(KeyCode.Backslash)) { if (editorMode) EditorSetPaused(!_paused); else SetPaused(!_paused); }
+            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) { if (editorMode) EditorSetRate(GameRate.Normal); else SetGameRate(GameRate.Normal); }
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
@@ -3636,6 +3644,8 @@ namespace Sdo.Game
             _nowMs = now;
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
             TickAssist(now);   // F7 打拍音：把接下來 250ms 內的 tick 排進音訊時鐘（關閉時只推游標）
+            // 譜面編輯器：只把音符捲過去 —— 不判定、不扣血、不計分、不結算（時間由 ChartEditorScreen 自由 seek）。
+            if (editorMode) { ScrollNotes(now); EditorTick(now); return; }
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
