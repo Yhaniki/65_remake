@@ -88,6 +88,9 @@ assets/*
 /*.jpg
 /*.log
 /*-results.xml
+# PlayMode capture 測試寫進子資料夾的整組連續截圖（ComboBurstCaptureTest）
+/cross400/
+/finflick/
 /eft_log.txt
 /eft_online_log*.txt
 /audio_online_log.txt

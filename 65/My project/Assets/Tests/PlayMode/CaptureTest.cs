@@ -7,20 +7,25 @@ using UnityEngine.TestTools;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// Not a real assertion test — drives the self-booting ScreenGameplay for a few seconds and
-    /// saves an offscreen render to disk so the gameplay layout can be reviewed.
+    /// Not a real assertion test — drives ScreenGameplay for a few seconds and saves an offscreen render to disk
+    /// so the gameplay layout can be reviewed. Boots the play screen itself (see GameplayBoot): the front-end owns
+    /// startup now, so nothing self-boots — the old `if (game != null)` skip meant this quietly captured an empty
+    /// scene instead of the game.
     /// Run: -runTests -testPlatform PlayMode
     /// </summary>
     public class CaptureTest
     {
         private const int W = 800, H = 600;   // exact DdrGamePlay.xml design frame (1px = 1 design unit)
 
+        [UnityTearDown]
+        public IEnumerator TearDown() => GameplayBoot.Teardown();
+
         [UnityTest]
         public IEnumerator Capture_Gameplay()
         {
-            yield return new WaitForSecondsRealtime(1.7f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            if (game != null) game.SetCamModeForTest(0);   // fixed front cam0 to inspect hair + note board
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);
+            game.SetCamModeForTest(0);   // fixed front cam0 to inspect hair + note board
             yield return new WaitForSecondsRealtime(6.0f);
             Cap("H:/65_remake/play-capture.png");
         }

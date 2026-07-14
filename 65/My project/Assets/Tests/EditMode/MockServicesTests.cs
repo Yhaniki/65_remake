@@ -211,6 +211,8 @@ namespace Sdo.Tests
             Assert.AreEqual(before, c.History.Count);
         }
 
+        // 表情訊息只存 ExpressionId + 指令「前/後」的字；指令本身不落成文字（聊天列畫 emoji 圖，
+        // 需要文字時由 ExpressionDisplayText(id) 還原）——跟 Whisper_Carries_Expression 同一套規則。
         [Test]
         public void Chat_Parses_Expression_Command()
         {
@@ -219,7 +221,18 @@ namespace Sdo.Tests
             Assert.AreEqual(1, c.History.Count);
             Assert.AreEqual(2, c.History[0].ExpressionId);
             Assert.IsTrue(c.History[0].Local);
-            Assert.AreEqual(RoomChatCommand.ExpressionDisplayText(2), c.History[0].Text);
+            Assert.AreEqual("", c.History[0].Text);            // 純指令 → 無尾隨字
+            Assert.AreEqual("", c.History[0].LeadingText);     // 也無前置字
+        }
+
+        [Test]
+        public void Chat_Expression_Keeps_Text_Around_The_Command()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.Send("大家好 /開始 衝啊");
+            Assert.AreEqual(2, c.History[0].ExpressionId);
+            Assert.AreEqual("大家好", c.History[0].LeadingText);
+            Assert.AreEqual("衝啊", c.History[0].Text);
         }
 
         [TestCase("/YES", 13)]   // 大寫 emoji 指令也要送成表情訊息（左下角打 /YES → 對應表情圖）

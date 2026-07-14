@@ -12,13 +12,14 @@ namespace Sdo.Tests
     /// </summary>
     public class CameraReentryTest
     {
+        [UnityTearDown]
+        public IEnumerator TearDown() => GameplayBoot.Teardown();
+
         [UnityTest]
         public IEnumerator Reentry_To_Auto_Resumes_Current_Shot_Not_Zero()
         {
-            yield return new WaitForSecondsRealtime(2.5f);   // let the self-booting game load avatar + cameras
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not booted");
-            Assert.Greater(game.FixedCamCountForTest, 0, "fixed F2 cameras failed to load (CAMERA/* missing?)");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
 
             Assert.AreEqual(-1, game.CamModeForTest, "should start in AUTO director mode");
 

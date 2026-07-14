@@ -73,7 +73,7 @@ namespace Sdo.Tests
             Assert.AreEqual(-1, RoomConfig.defaultNoteType);
             Assert.AreEqual(3, RoomConfig.defaultTeam);
             Assert.AreEqual(0, RoomConfig.defaultDropDirection);
-            Assert.AreEqual(1, RoomConfig.defaultGameMode);
+            Assert.AreEqual(2, RoomConfig.defaultGameMode);   // 0=自由 1=普通 2=ShowTime → 上限是 2
         }
 
         [Test]

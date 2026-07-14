@@ -3,11 +3,12 @@ using Sdo.UI.Core;
 
 namespace Sdo.Tests
 {
+    /// <summary>單機開場落在男/女選擇畫面（GenderSel），選完直接進 Room —— Lobby 只在 Room 之後才回得去。</summary>
     public class FlowManagerTests
     {
         [Test]
-        public void Default_Is_Lobby()
-            => Assert.AreEqual(ScreenId.Lobby, new FlowManager().Current);
+        public void Default_Is_GenderSel()
+            => Assert.AreEqual(ScreenId.GenderSel, new FlowManager().Current);
 
         [Test]
         public void Allowed_Path_Through_All_Screens()
@@ -28,7 +29,7 @@ namespace Sdo.Tests
             Assert.IsTrue(f.GoTo(ScreenId.Room));
             Assert.IsTrue(f.GoTo(ScreenId.Shop));    // Room -> 商城
             Assert.IsTrue(f.GoTo(ScreenId.Room));    // and back
-            Assert.IsFalse(new FlowManager().CanGoTo(ScreenId.Shop));   // never straight from Lobby
+            Assert.IsFalse(new FlowManager().CanGoTo(ScreenId.Shop));   // never straight from the entry screen
         }
 
         [Test]
@@ -38,11 +39,11 @@ namespace Sdo.Tests
             Assert.IsFalse(f.CanGoTo(ScreenId.SongSelect));
             Assert.IsFalse(f.CanGoTo(ScreenId.Gameplay));
             Assert.IsFalse(f.GoTo(ScreenId.SongSelect));
-            Assert.AreEqual(ScreenId.Lobby, f.Current);
+            Assert.AreEqual(ScreenId.GenderSel, f.Current);
         }
 
         [Test]
-        public void Lobby_To_Gameplay_Blocked()
+        public void Entry_To_Gameplay_Blocked()
         {
             var f = new FlowManager();
             Assert.IsFalse(f.GoTo(ScreenId.Gameplay));
@@ -57,7 +58,7 @@ namespace Sdo.Tests
             f.ScreenChanged += (a, b) => { from = a; to = b; n++; };
             f.GoTo(ScreenId.Room);
             Assert.AreEqual(1, n);
-            Assert.AreEqual(ScreenId.Lobby, from);
+            Assert.AreEqual(ScreenId.GenderSel, from);
             Assert.AreEqual(ScreenId.Room, to);
         }
 
@@ -67,7 +68,7 @@ namespace Sdo.Tests
             var f = new FlowManager();
             int n = 0;
             f.ScreenChanged += (a, b) => n++;
-            Assert.IsTrue(f.GoTo(ScreenId.Lobby));
+            Assert.IsTrue(f.GoTo(ScreenId.GenderSel));
             Assert.AreEqual(0, n);
         }
     }

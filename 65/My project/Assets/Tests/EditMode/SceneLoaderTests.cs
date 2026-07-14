@@ -51,11 +51,12 @@ namespace Sdo.Tests
             return b.ToArray();
         }
 
+        // 16-byte file header: "Mesh" + an 8-byte tag + the u32 block count at offset 12 → blocks start at 16.
         private static byte[] MakeFile(int blockCountField, params byte[][] blocks)
         {
             var b = new List<byte>();
             b.AddRange(System.Text.Encoding.ASCII.GetBytes("Mesh"));
-            b.AddRange(new byte[4]);                          // 4-byte tag
+            b.AddRange(new byte[8]);                            // 8-byte tag
             b.AddRange(BitConverter.GetBytes(blockCountField)); // block count @12
             foreach (var blk in blocks) b.AddRange(blk);
             return b.ToArray();

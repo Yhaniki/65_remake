@@ -15,12 +15,14 @@ namespace Sdo.Tests
     {
         private const int W = 800, H = 600;
 
+        [UnityTearDown]
+        public IEnumerator TearDown() => GameplayBoot.Teardown();
+
         [UnityTest]
         public IEnumerator Capture_ComboBurst()
         {
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
 
@@ -62,9 +64,8 @@ namespace Sdo.Tests
         [UnityTest]
         public IEnumerator Capture_200_300()
         {
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
 
@@ -91,9 +92,8 @@ namespace Sdo.Tests
         [UnityTest]
         public IEnumerator Capture_ComboDark()
         {
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
             game.HideStageForTest();
@@ -121,9 +121,8 @@ namespace Sdo.Tests
         [UnityTest]
         public IEnumerator Capture_MeshOnly()
         {
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
             game.HideStageForTest();
@@ -152,9 +151,8 @@ namespace Sdo.Tests
         [UnityTest]
         public IEnumerator Capture_200Slots()
         {
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
             game.HideStageForTest();
@@ -185,9 +183,8 @@ namespace Sdo.Tests
             // -nographics makes RenderTexture.Create log [Error] every frame; the test framework auto-fails on any
             // unhandled error log. We only need the particle SIM (Debug.Log trajectory), not rendering → ignore them.
             LogAssert.ignoreFailingMessages = true;
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
 
@@ -218,9 +215,8 @@ namespace Sdo.Tests
         public IEnumerator Capture_FinishedFlicker()
         {
             LogAssert.ignoreFailingMessages = true;
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
             System.IO.Directory.CreateDirectory("H:/65_remake/finflick");
@@ -237,9 +233,8 @@ namespace Sdo.Tests
         public IEnumerator Capture_400Cross()
         {
             LogAssert.ignoreFailingMessages = true;
-            yield return new WaitForSecondsRealtime(2.2f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
             System.IO.Directory.CreateDirectory("H:/65_remake/cross400");

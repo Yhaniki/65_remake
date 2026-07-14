@@ -5,35 +5,51 @@ namespace Sdo.Tests
 {
     public class ScoreProcessorTests
     {
-        // ---- Score = combo-multiplied (doc per-note: JudgeMul·(combo+1)/2·LevelScore) ----
+        // ---- Score（HUD 與結算顯示的那個）= ServerScore：Perfects*C + Cools*(C-10)，C = clamp(maxCombo, 10, 68) ----
 
         [Test]
         public void Score_Grows_With_Combo()
         {
-            var s = new ScoreProcessor { LevelScore = 100 };
-            // perfect at combo 0: 2.0 * (0+1)/2 * 100 = 100
-            s.Apply(Judgment.Perfect); Assert.AreEqual(100L, s.Score);
-            // perfect at combo 1: 2.0 * (1+1)/2 * 100 = 200  -> total 300
-            s.Apply(Judgment.Perfect); Assert.AreEqual(300L, s.Score);
-            // perfect at combo 2: 2.0 * 3/2 * 100 = 300 -> total 600
-            s.Apply(Judgment.Perfect); Assert.AreEqual(600L, s.Score);
+            var s = new ScoreProcessor();
+            // 連段還沒超過下限 10 之前，C 一律夾在 10：每個 perfect 就是 +10。
+            s.Apply(Judgment.Perfect); Assert.AreEqual(10L, s.Score);
+            s.Apply(Judgment.Perfect); Assert.AreEqual(20L, s.Score);
+
+            // 連段拉過 10 之後 C = maxCombo，倍率跟著長：11 連 → 11*11 = 121（不是 11*10）。
+            for (int i = 0; i < 9; i++) s.Apply(Judgment.Perfect);
+            Assert.AreEqual(11, s.MaxCombo);
+            Assert.AreEqual(121L, s.Score);
         }
 
         [Test]
-        public void Cool_Worth_75pct_Of_Perfect_At_Same_Combo()
+        public void Score_Combo_Multiplier_Caps_At_68()
         {
-            var p = new ScoreProcessor { LevelScore = 100 };
-            p.Apply(Judgment.Perfect);                 // 100
-            var c = new ScoreProcessor { LevelScore = 100 };
-            c.Apply(Judgment.Cool);                    // 1.5/2.0 * 100 = 75
-            Assert.AreEqual(100L, p.Score);
-            Assert.AreEqual(75L, c.Score);
+            var s = new ScoreProcessor();
+            for (int i = 0; i < 100; i++) s.Apply(Judgment.Perfect);
+            Assert.AreEqual(100, s.MaxCombo);
+            Assert.AreEqual(6800L, s.Score);   // C 封頂在 68，不是 100
+        }
+
+        [Test]
+        public void Cool_Worth_10_Less_Than_Perfect_At_Same_Combo()
+        {
+            // 同樣 20 連的情況下比較單一判定的價值：perfect = C、cool = C-10。
+            var p = new ScoreProcessor();
+            var c = new ScoreProcessor();
+            for (int i = 0; i < 19; i++) { p.Apply(Judgment.Perfect); c.Apply(Judgment.Perfect); }
+            p.Apply(Judgment.Perfect);
+            c.Apply(Judgment.Cool);
+
+            Assert.AreEqual(20, p.MaxCombo);
+            Assert.AreEqual(20, c.MaxCombo);
+            Assert.AreEqual(20L * 20, p.Score);                  // 20 個 perfect × C(20)
+            Assert.AreEqual(19L * 20 + 1 * (20 - 10), c.Score);  // 19 perfect × 20 + 1 cool × 10
         }
 
         [Test]
         public void Miss_Scores_Zero()
         {
-            var s = new ScoreProcessor { LevelScore = 100 };
+            var s = new ScoreProcessor();
             s.Apply(Judgment.Miss);
             Assert.AreEqual(0L, s.Score);
         }

@@ -14,13 +14,14 @@ namespace Sdo.Tests
     {
         private const int W = 800, H = 600;
 
+        [UnityTearDown]
+        public IEnumerator TearDown() => GameplayBoot.Teardown();
+
         [UnityTest]
         public IEnumerator Capture_Default_Director()
         {
-            yield return new WaitForSecondsRealtime(2.5f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not booted");
-            Assert.Greater(game.FixedCamCountForTest, 0, "cameras not loaded");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
 
             // 1) director shot 0 at t~0 = the crane's start position
             game.RestartDirectorForTest();

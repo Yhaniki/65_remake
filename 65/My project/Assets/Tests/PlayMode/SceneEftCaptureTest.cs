@@ -12,8 +12,9 @@ namespace Sdo.Tests
     /// delta_line EXTEND animation + loop are visible. Not an assertion test; saves PNGs for manual comparison
     /// against the original (sdo_stand_alone.exe SCN0008 screenshot / Frida transform dump).
     ///
-    /// REQUIRES the env vars set BEFORE launching Unity (consumed by ScreenGameplay.Boot at scene load):
-    ///   $env:SDO_SCENE='SCN0008'; $env:SDO_SCENE_ONLY='1'
+    /// The clean SCN0008 scene-only boot is configured HERE (scenePath + observeBurstMode), not via the
+    /// $env:SDO_SCENE / SDO_SCENE_ONLY vars the shipped auto-boot reads — the front-end owns startup now, so nothing
+    /// self-boots and the env vars would never be consumed. Previously, forgetting them silently captured the wrong scene.
     /// Run: -runTests -batchmode -projectPath "h:\65_remake\65\My project" -testPlatform PlayMode
     ///      -testFilter Sdo.Tests.SceneEftCaptureTest -logFile &lt;log&gt;     (do NOT pass -nographics)
     /// Output: H:/65_remake/scn0008-0..N.png (composite) + -bg.png (scene only, no HUD).
@@ -22,16 +23,24 @@ namespace Sdo.Tests
     {
         private const int W = 800, H = 600;   // 800×600 4:3 design frame
 
+        // 乾淨的「只有舞台」開機：載 SCN0008（SCENE.MSH + mapobjs + 常駐 EFT），不要音符/音樂/HUD，舞者待機在舞點。
+        // 等同官方 auto-boot 讀 SDO_SCENE='SCN0008' + SDO_SCENE_ONLY='1' 的那段。
+        private static void SceneOnlyScn0008(Sdo.Game.ScreenGameplay g)
+        {
+            g.scenePath = "SCENE/SCN0008";
+            g.observeBurstMode = true;
+        }
+
+        [UnityTearDown]
+        public IEnumerator TearDown() => GameplayBoot.Teardown();
+
         [UnityTest]
         public IEnumerator Capture_Scn0008SceneEft()
         {
-            // let ScreenGameplay auto-boot, load the scene (SCENE.MSH + mapobjs) and spawn the persistent EFTs
-            yield return new WaitForSecondsRealtime(3.5f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found — is the test player auto-booting?");
-            if (!game.observeBurstMode || game.scenePath == null || !game.scenePath.ToUpperInvariant().Contains("SCN0008"))
-                Debug.LogWarning($"[scn0008-cap] NOT a clean SCN0008 scene-only boot (scenePath={game.scenePath}, observe={game.observeBurstMode}). " +
-                                 "Set $env:SDO_SCENE='SCN0008' and $env:SDO_SCENE_ONLY='1' before launching, else this captures the wrong scene.");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g, SceneOnlyScn0008);
+            Assert.IsTrue(game.observeBurstMode && game.scenePath.ToUpperInvariant().Contains("SCN0008"),
+                $"not a clean SCN0008 scene-only boot (scenePath={game.scenePath}, observe={game.observeBurstMode})");
             game.SetCamModeForTest(0);   // fixed front cam to inspect the ground circle
             yield return new WaitForSecondsRealtime(0.5f);
 
@@ -51,11 +60,11 @@ namespace Sdo.Tests
         [UnityTest]
         public IEnumerator Dump_DeltaLine()
         {
+            // 旗標要在 boot 之前設 —— 常駐 EFT 是在舞台載入時就生出來的，設晚了那一批就沒被記錄到。
             Sdo.Game.EftMotMesh.Dbg = true;
             Sdo.Game.EftEffect.DumpTraj = true;   // also log MW(tex117)/disc(tex69) WORLD pos + alpha → mysim-traj.log
-            yield return new WaitForSecondsRealtime(3.5f);
-            var game = Object.FindAnyObjectByType<Sdo.Game.ScreenGameplay>();
-            Assert.IsNotNull(game, "ScreenGameplay not found");
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g, SceneOnlyScn0008);
             game.SetCamModeForTest(0);
             // dense capture across the whole ~10s disc life; tag each with the disc's current alpha so a phase-aligned
             // (bright vs dim) pair can be diffed to verify the disc pulse renders.

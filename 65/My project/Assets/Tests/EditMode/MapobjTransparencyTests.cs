@@ -399,11 +399,12 @@ namespace Sdo.Tests
             Assert.Greater(halo.ScaleMul.x, 0.5f);
             Assert.Greater(halo.ScaleMul.y, 0.5f);
 
+            // booklight slot2 = 書上的發光球：載體 baseSize 0.3 乘進來後球只有 ~14 世界單位（「發光太小」），
+            // 所以 scaleMul 放大它（>2×）、rgbMul 壓暗顏色，alpha 維持原樣不動。
             var book = SceneEftRenderCatalog.Find("booklight", 2, 31);
             Assert.Less(book.RgbMul, 1f);
-            Assert.Less(book.AlphaMul, 1f);
-            Assert.Greater(book.ScaleMul.x, 1.5f);
-            Assert.Less(book.ScaleMul.x, 2f);
+            Assert.AreEqual(1f, book.AlphaMul, 1e-3f);
+            Assert.Greater(book.ScaleMul.x, 2f);
             Assert.AreEqual(1f, SceneEftRenderCatalog.Find("booklight", 0, 0).ScaleMul.x, 1e-3f);
         }
 
@@ -413,7 +414,11 @@ namespace Sdo.Tests
             var speed = SceneMapobjUvScrollCatalog.Find("SCN0015", "15_UV");
             Assert.AreEqual(0f, speed.x, 1e-6f);
             Assert.AreEqual(0.06f, speed.y, 1e-6f);
-            Assert.IsTrue(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0015", "15_UV"));
+            // D3D9 實測窗光是標準 alpha-blend（SRCALPHA/INVSRCALPHA），不是 additive：MSH loader 的
+            // LooksLikeAdditiveGlow 會把 GUANG1_.DDS 誤判成輝光 → 用 ForceAlphaBlend 蓋掉它。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.ForceAlphaBlend,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0015", "15_UV"));
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0015", "15_UV"));
             Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0015", "15_HUA").sqrMagnitude, 1e-6f);
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0015", "15_HUA"));
         }
