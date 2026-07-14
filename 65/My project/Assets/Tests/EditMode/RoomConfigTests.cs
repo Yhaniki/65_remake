@@ -15,6 +15,25 @@ namespace Sdo.Tests
             RoomConfig.defaultTeam = 3;
             RoomConfig.defaultDropDirection = 0;
             RoomConfig.defaultGameMode = 0;
+            RoomConfig.judgeLevel = 2;
+        }
+
+        [Test]
+        public void JudgeLevel_Parses_Clamps_And_RoundTrips()
+        {
+            RoomConfig.ParseInto("[Room]\njudgeLevel=7\n");
+            Assert.AreEqual(7, RoomConfig.judgeLevel);
+
+            RoomConfig.judgeLevel = 0;  RoomConfig.Sanitize();   // 精1 是下限
+            Assert.AreEqual(1, RoomConfig.judgeLevel);
+            RoomConfig.judgeLevel = 42; RoomConfig.Sanitize();   // 9 = JUSTICE 是上限
+            Assert.AreEqual(9, RoomConfig.judgeLevel);
+
+            RoomConfig.judgeLevel = 4;
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual(4, RoomConfig.judgeLevel);
         }
 
         [Test]

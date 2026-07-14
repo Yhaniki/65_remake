@@ -22,6 +22,9 @@ namespace Sdo.Settings
         public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
         public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式,2=ShowTime模式
         public static int defaultScene = -1;         // 場景：-1=隨機(預設)；0..30=指定場景 id(見 StageCatalog)。玩家在選歌選了會寫回這裡
+        // 判定精度：沿用 StepMania 的「精N」（1~8，9=JUSTICE）。以精4 為基準窗（Perfect 45 / Cool 90 / Bad 135 /
+        // Miss 180 ms）乘上該精度的係數；精2 = ×1.33。手改這個 key 就能整組調鬆緊，見 JudgmentWindows.FromStepManiaJudge。
+        public static int judgeLevel = 2;
 
         // ---- OPTION 對話框設定的 per-user 鏡像（存進同一份 config.ini 的 [Option] 區）。使用者要求 OPTION 設定也落地
         //      config.ini（放 DATA/PROFILE/<id>/）。裝置層的 settings.json 仍是執行期讀取的工作副本；這裡是「每帳號」的
@@ -137,6 +140,7 @@ namespace Sdo.Settings
                     case "defaultDropDirection": defaultDropDirection = ParseInt(val, defaultDropDirection); break;
                     case "defaultGameMode": defaultGameMode = ParseInt(val, defaultGameMode); break;
                     case "defaultScene": defaultScene = ParseInt(val, defaultScene); break;
+                    case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -174,6 +178,7 @@ namespace Sdo.Settings
             defaultDropDirection = Mathf.Clamp(defaultDropDirection, 0, 2);
             defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 2);
             if (defaultScene < -1 || defaultScene > 30) defaultScene = -1;   // 只允許 -1(隨機) 或 0..30(可選場景 id)
+            judgeLevel = Mathf.Clamp(judgeLevel, 1, 9);                      // 精1~精8、9=JUSTICE
         }
 
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
@@ -197,6 +202,11 @@ namespace Sdo.Settings
             sb.Append("defaultGameMode=").Append(defaultGameMode).Append('\n');
             sb.Append("# 預設場景：-1=隨機，0..30=指定場景 id（步行街=0 … 卡通公路=30）。玩家在選歌選了會寫回這裡\n");
             sb.Append("defaultScene=").Append(defaultScene).Append('\n');
+            sb.Append("# 判定精度（StepMania 的「精N」）：1~8，9=JUSTICE。數字越大越嚴格。\n");
+            sb.Append("# 以精4 為基準窗（Perfect ±45 / Cool ±90 / Bad ±135 / Miss ±180 ms）乘該精度係數：\n");
+            sb.Append("#   精1=1.50 精2=1.33 精3=1.16 精4=1.00 精5=0.84 精6=0.66 精7=0.50 精8=0.33 JUSTICE=0.20\n");
+            sb.Append("#   例：精2 → Perfect ±59.9 / Cool ±119.7 / Bad ±179.6 / Miss ±239.4 ms\n");
+            sb.Append("judgeLevel=").Append(judgeLevel).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的 per-user 設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");

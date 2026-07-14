@@ -797,7 +797,11 @@ namespace Sdo.Game
                                    // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
             TryLoadAvatar();
             TryLoadScene();
-            _engine = new ManiaJudgmentEngine(JudgmentWindows.FromSdoBpm(_map.Bpm));
+            // 判定窗:StepMania(YHANIKI)的「精N」毫秒窗,與 BPM 無關(原版是 tick 窗 = 歌越快越嚴,見 FromSdoBpm)。
+            // 以精4 為基準(Perfect 45 / Cool 90 / Bad 135 / Miss 180 ms)乘精度係數;預設精2(×1.33)。
+            // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
+            // 精度在 config.ini [Room] judgeLevel 手改(1~8、9=JUSTICE)。
+            _engine = new ManiaJudgmentEngine(JudgmentWindows.FromStepManiaJudge(Sdo.Settings.RoomConfig.judgeLevel));
             _score = new ScoreProcessor(_map.TotalNotes);
             _health = new HealthProcessor(healthLevel);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
