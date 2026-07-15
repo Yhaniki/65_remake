@@ -357,6 +357,8 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.G) && _overlay != null) _overlay.showGrid = !_overlay.showGrid;
             if (Input.GetKeyDown(KeyCode.F2) && _overlay != null) _overlay.showHitError = !_overlay.showHitError;
             if (Input.GetKeyDown(KeyCode.Tab)) CycleDifficulty();
+            if (Input.GetKeyDown(KeyCode.Q)) StepSong(-1);   // 上一首
+            if (Input.GetKeyDown(KeyCode.E)) StepSong(+1);   // 下一首
             if (Input.GetKeyDown(KeyCode.Backspace)) { _stats.Clear(); _misses = 0; _overlay?.ClearHits(); }   // 清掉打擊紀錄
 
             if (Input.GetKeyDown(KeyCode.Home)) _game.EditorSeekMs(0);
@@ -502,8 +504,8 @@ namespace Sdo.Game
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("歌單 (F1)", GUILayout.Width(80))) _showList = !_showList;
             GUI.enabled = !_loading;
-            if (GUILayout.Button("◀ 上一首", GUILayout.Width(70))) StepSong(-1);
-            if (GUILayout.Button("下一首 ▶", GUILayout.Width(70))) StepSong(+1);
+            if (GUILayout.Button("◀ 上一首 (Q)", GUILayout.Width(84))) StepSong(-1);
+            if (GUILayout.Button("下一首 (E) ▶", GUILayout.Width(84))) StepSong(+1);
             GUI.enabled = true;
             if (GUILayout.Button("打拍測試 (F4)", GUILayout.Width(100))) ToggleBeatTest();
             GUILayout.Label($"♪ {title}   [{_gn}]", box, GUILayout.Width(280));
@@ -574,7 +576,7 @@ namespace Sdo.Game
             GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
                 "空白=播放/暫停  ↑↓=一格  Ctrl+↑↓=區域窄/寬  PgUp/PgDn=一小節  ←→=格線細分" +
                 (_overlay != null ? $"（每拍 {_overlay.subdivisions} 格）" : "") +
-                "  A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  Ctrl+S=存offset  F1=歌單  F4=打拍測試  F3=波形  F2=誤差條  G=格線  Tab=難度");
+                "  A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  Ctrl+S=存offset  F1=歌單  Q/E=上/下一首  F4=打拍測試  F3=波形  F2=誤差條  G=格線  Tab=難度");
 
             if (_showList) DrawSongList();
         }
