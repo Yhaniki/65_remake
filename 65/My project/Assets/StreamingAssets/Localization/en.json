@@ -340,6 +340,14 @@
    "v": "Random Lv 13+"
   },
   {
+   "k": "songselect.rand_20up",
+   "v": "Random Lv 20+"
+  },
+  {
+   "k": "songselect.rand_25up",
+   "v": "Random Lv 25+"
+  },
+  {
    "k": "stage.name.0",
    "v": "Pedestrian Street"
   },

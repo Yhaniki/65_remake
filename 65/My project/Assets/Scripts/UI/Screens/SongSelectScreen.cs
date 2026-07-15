@@ -87,6 +87,8 @@ namespace Sdo.UI.Screens
             new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = 99 },
             new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = 99 },
             new RandRange { Key = "songselect.rand_13up", Min = 13, Max = 99 },
+            new RandRange { Key = "songselect.rand_20up", Min = 20, Max = 99 },
+            new RandRange { Key = "songselect.rand_25up", Min = 25, Max = 99 },
         };
         private int _randRange = 3;   // default = 全部
 
