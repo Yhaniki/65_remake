@@ -27,16 +27,41 @@ namespace Sdo.Game
         /// <summary>
         /// 設定（或清除）某首歌的 offsetMs。<paramref name="stem"/> = gn 詞幹（sdomNNNN，去掉 k/t）。
         /// 值 ≈ 0 → 把欄位移掉（檔案不會越存越髒）。成功回 true；找不到那首歌 / 檔案壞掉 → false 且不寫檔。
+        ///
+        /// 字串手術本身在 <see cref="TrySetOffsetInText"/>（純函式、有測試）；這裡只負責讀寫檔。
         /// </summary>
         public static bool SetOffset(string stem, double ms, out string message)
         {
-            message = "";
-            if (string.IsNullOrEmpty(stem)) { message = "沒有歌"; return false; }
-
             string path = FilePath;
             string text;
             try { text = File.ReadAllText(path, Encoding.UTF8); }
             catch (Exception e) { message = "讀不到 " + FileName + "：" + e.Message; return false; }
+
+            if (!TrySetOffsetInText(text, stem, ms, out string updated, out message)) return false;
+            if (updated == null) return true;   // 例：清一首本來就是 0 的 → 成功但無需寫檔
+
+            try { File.WriteAllText(path, updated, new UTF8Encoding(false)); }
+            catch (Exception e) { message = "寫不進 " + FileName + "：" + e.Message; return false; }
+            return true;
+        }
+
+        /// <summary>
+        /// <see cref="SetOffset"/> 的純字串核心：把 <paramref name="text"/>（整份 override JSON）裡那一首歌的
+        /// offsetMs 改成 <paramref name="ms"/>（≈0 = 刪欄位），結果放進 <paramref name="updated"/>。
+        ///
+        /// 回傳 true＝邏輯上成功。<paramref name="updated"/> 為 null 代表「成功但不用寫檔」（想清一個本來就沒有
+        /// 的欄位）。回 false＝失敗（空詞幹／找不到歌／JSON 結構看不懂），<paramref name="updated"/> 為 null。
+        ///
+        /// **外科手術式編輯，不重新序列化**：見型別註解。這裡是遊戲裡編輯器 Ctrl+S 的路徑，一定要保證產出的
+        /// 仍是合法 JSON —— 插欄位時務必插在物件的 '}' **之內**（早期版本把插入點算到 '}' 本身，欄位就掉到
+        /// 物件外面變孤兒，整份檔案 parse 失敗、所有歌名 override 就全部套不上了）。
+        /// </summary>
+        public static bool TrySetOffsetInText(string text, string stem, double ms, out string updated, out string message)
+        {
+            updated = null;
+            message = "";
+            if (string.IsNullOrEmpty(stem)) { message = "沒有歌"; return false; }
+            if (text == null) { message = "沒有內容"; return false; }
 
             // 找 "gn": "<stem>" —— 這個檔的 key 一律小寫詞幹
             string needle = "\"gn\": \"" + stem.ToLowerInvariant() + "\"";
@@ -50,7 +75,6 @@ namespace Sdo.Game
             string field = "\"offsetMs\": " + ms.ToString("0.###", CultureInfo.InvariantCulture);
 
             int fieldAt = text.IndexOf("\"offsetMs\"", objStart, objEnd - objStart, StringComparison.Ordinal);
-            string updated;
             if (fieldAt >= 0)
             {
                 // 既有欄位：換掉整個 "offsetMs": <值>（值到下一個 , 或 } 為止）
@@ -71,16 +95,15 @@ namespace Sdo.Game
             }
             else
             {
-                if (clear) { message = $"{stem} 的 offset 本來就是 0，沒有變動"; return true; }
-                // 插在物件最後一個欄位後面：找 } 之前最後一個非空白字元，接上 ",\n  <field>"
-                int tail = objEnd - 1;
+                if (clear) { message = $"{stem} 的 offset 本來就是 0，沒有變動"; return true; }   // updated 留 null = 不用寫
+                // 插在物件最後一個欄位後面：從 } 的**前一個**字元起（objEnd-1 就是 '}' 本身，'}' 不是空白，
+                // 會讓下面的 while 停在原地→欄位插到 } 外面變成孤兒，整份 JSON 就壞了），往回找最後一個非空白
+                // 字元，接上 ",\n  <field>"。
+                int tail = objEnd - 2;
                 while (tail > objStart && char.IsWhiteSpace(text[tail])) tail--;
                 string indent = IndentOf(text, objStart);
                 updated = text.Substring(0, tail + 1) + ",\n" + indent + " " + field + text.Substring(tail + 1);
             }
-
-            try { File.WriteAllText(path, updated, new UTF8Encoding(false)); }
-            catch (Exception e) { message = "寫不進 " + FileName + "：" + e.Message; return false; }
 
             message = clear ? $"{stem} 的 offset 已清除 → {FileName}"
                             : $"{stem} offset {ms:+0.#;-0.#;0} ms 已存進 {FileName}";
