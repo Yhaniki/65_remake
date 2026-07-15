@@ -38,10 +38,10 @@ namespace Sdo.UI.Screens
 
         // 改名框：改「目前選的性別」對應那個 user 的名字（女 00000000 / 男 00000001）。
         private string _nameEdit; private int _nameEditFor = -1; private string _nameStatus = "";
+        private Rect _nameWin; private bool _nameWinInit;   // 可拖動視窗（螢幕像素）；預設落在 4:3 內容區內
+        private const int NameWinId = 0x6E616D65;           // "name"
         // IMGUI 樣式只能在 OnGUI 期間（GUI.skin 有效時）建 → lazy getter。
-        private GUIStyle _titleStyle, _hintStyle;
-        private GUIStyle NameTitleStyle => _titleStyle ?? (_titleStyle =
-            new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold });
+        private GUIStyle _hintStyle;
         private GUIStyle NameHintStyle => _hintStyle ?? (_hintStyle =
             new GUIStyle(GUI.skin.label) { wordWrap = true, normal = { textColor = new Color(0.7f, 0.7f, 0.7f) } });
 
@@ -190,17 +190,42 @@ namespace Sdo.UI.Screens
 
             if (_nameEditFor != _gender) { _nameEdit = SeedName(_gender); _nameEditFor = _gender; _nameStatus = ""; }
 
-            const float w = 260f, h = 112f;
-            var rect = new Rect(24f, (Screen.height - h) * 0.5f, w, h);   // 靠左、垂直置中
-            GUILayout.BeginArea(rect, GUI.skin.box);
-            GUILayout.Label("玩家名稱", NameTitleStyle);
-            GUILayout.Space(6f);
+            if (!_nameWinInit) { _nameWin = DefaultNameWin(); _nameWinInit = true; }
+            _nameWin = GUILayout.Window(NameWinId, _nameWin, DrawNameWindow, "玩家名稱",
+                                        GUILayout.Width(240f), GUILayout.Height(92f));
+            // 不讓它被拖到整個看不見（至少留一角在畫面內）
+            _nameWin.x = Mathf.Clamp(_nameWin.x, 8f - _nameWin.width, Screen.width - 8f);
+            _nameWin.y = Mathf.Clamp(_nameWin.y, 0f, Screen.height - 24f);
+        }
+
+        // 視窗內容；GUI.DragWindow 讓整個視窗（除了輸入框/按鈕本身）都能拖。
+        private void DrawNameWindow(int id)
+        {
+            GUILayout.Space(2f);
             GUILayout.BeginHorizontal();
-            _nameEdit = GUILayout.TextField(_nameEdit ?? "", 24, GUILayout.Height(24f));
-            if (GUILayout.Button("儲存", GUILayout.Width(56f), GUILayout.Height(24f))) SaveName();
+            _nameEdit = GUILayout.TextField(_nameEdit ?? "", 24, GUILayout.Height(22f));
+            if (GUILayout.Button("儲存", GUILayout.Width(52f), GUILayout.Height(22f))) SaveName();
             GUILayout.EndHorizontal();
-            if (!string.IsNullOrEmpty(_nameStatus)) { GUILayout.Space(4f); GUILayout.Label(_nameStatus, NameHintStyle); }
-            GUILayout.EndArea();
+            if (!string.IsNullOrEmpty(_nameStatus)) GUILayout.Label(_nameStatus, NameHintStyle);
+            GUI.DragWindow();
+        }
+
+        // 預設位置：落在 4:3 內容區（背景圖）內、靠左垂直置中 —— IMGUI 用螢幕像素，直接放螢幕左邊會跑到
+        // pillarbox 黑邊上，所以先算出 800×600 內容在螢幕上的實際矩形，再把視窗放進去。
+        private static Rect DefaultNameWin()
+        {
+            const float w = 240f, h = 92f;
+            Rect c = ContentRect();
+            return new Rect(c.x + Mathf.Min(24f, c.width * 0.04f), c.y + (c.height - h) * 0.5f, w, h);
+        }
+
+        // 800×600(4:3) 內容在螢幕上的矩形：寬螢幕→兩側 pillarbox、窄螢幕→上下 letterbox（同 AspectController 的取景）。
+        private static Rect ContentRect()
+        {
+            const float aspect = 800f / 600f;
+            float sw = Screen.width, sh = Mathf.Max(1f, Screen.height);
+            if (sw / sh > aspect) { float cw = sh * aspect; return new Rect((sw - cw) * 0.5f, 0f, cw, sh); }
+            float ch = sw / aspect; return new Rect(0f, (sh - ch) * 0.5f, sw, ch);
         }
 
         // 讀某性別 seed 帳號目前的名字（唯讀，不動 active）。List() 掃磁碟，只在切性別時呼叫一次，不是每幀。
