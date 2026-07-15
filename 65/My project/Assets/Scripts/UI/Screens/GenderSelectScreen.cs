@@ -36,8 +36,14 @@ namespace Sdo.UI.Screens
         private Camera _maskedCam; private int _savedMask;
         private int _gender;   // 0=女, 1=男
 
-        // DEBUG 改名框：改「目前選的性別」對應那個 user 的名字（女 00000000 / 男 00000001）。
+        // 改名框：改「目前選的性別」對應那個 user 的名字（女 00000000 / 男 00000001）。
         private string _nameEdit; private int _nameEditFor = -1; private string _nameStatus = "";
+        // IMGUI 樣式只能在 OnGUI 期間（GUI.skin 有效時）建 → lazy getter。
+        private GUIStyle _titleStyle, _hintStyle;
+        private GUIStyle NameTitleStyle => _titleStyle ?? (_titleStyle =
+            new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold });
+        private GUIStyle NameHintStyle => _hintStyle ?? (_hintStyle =
+            new GUIStyle(GUI.skin.label) { wordWrap = true, normal = { textColor = new Color(0.7f, 0.7f, 0.7f) } });
 
         private static Sprite An(string n) => LobbySelArt.An(n);
 
@@ -184,13 +190,16 @@ namespace Sdo.UI.Screens
 
             if (_nameEditFor != _gender) { _nameEdit = SeedName(_gender); _nameEditFor = _gender; _nameStatus = ""; }
 
-            GUILayout.BeginArea(new Rect(8f, 8f, 300f, 96f), GUI.skin.box);
-            GUILayout.Label($"[DEBUG] {(_gender == 1 ? "男" : "女")}玩家名字（改完進房/遊戲生效）");
+            const float w = 260f, h = 112f;
+            var rect = new Rect(24f, (Screen.height - h) * 0.5f, w, h);   // 靠左、垂直置中
+            GUILayout.BeginArea(rect, GUI.skin.box);
+            GUILayout.Label("玩家名稱", NameTitleStyle);
+            GUILayout.Space(6f);
             GUILayout.BeginHorizontal();
-            _nameEdit = GUILayout.TextField(_nameEdit ?? "", 24);
-            if (GUILayout.Button("存", GUILayout.Width(48))) SaveName();
+            _nameEdit = GUILayout.TextField(_nameEdit ?? "", 24, GUILayout.Height(24f));
+            if (GUILayout.Button("儲存", GUILayout.Width(56f), GUILayout.Height(24f))) SaveName();
             GUILayout.EndHorizontal();
-            if (!string.IsNullOrEmpty(_nameStatus)) GUILayout.Label(_nameStatus);
+            if (!string.IsNullOrEmpty(_nameStatus)) { GUILayout.Space(4f); GUILayout.Label(_nameStatus, NameHintStyle); }
             GUILayout.EndArea();
         }
 
@@ -207,13 +216,13 @@ namespace Sdo.UI.Screens
         private void SaveName()
         {
             string name = (_nameEdit ?? "").Trim();
-            if (name.Length == 0) { _nameStatus = "名字不能空白"; return; }
+            if (name.Length == 0) { _nameStatus = "名稱不可空白"; return; }
             string id = ProfileManager.SeededIdForGender(_gender);
             ProfileManager.SetActive(id);
             ProfileManager.Active.name = name;
             ProfileManager.Save();
             if (Ctx != null && Ctx.Session != null) Ctx.Session.LocalPlayerName = name;
-            _nameStatus = $"已存 → {id}/profile.json";
+            _nameStatus = "已儲存，進入房間後生效";
         }
 
         private void SelectGender(int g)
