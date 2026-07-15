@@ -99,27 +99,31 @@ namespace Sdo.UI.Screens
         // （內建 UIFont.Cjk）→ 中文能打。放在 design (x,y) → 落在 800×600 背景圖裡，不用管螢幕 pillarbox。
         private void BuildNamePanel()
         {
-            var panel = UIKit.AddImage(Root, "NamePanel", new Color(0f, 0f, 0f, 0.5f), raycast: true).rectTransform;
+            // 用專案標準面板樣式（UITheme）：深紫面板 + 粉紅主按鈕 + 暗色提示字，跟其他對話框一致。
+            var panel = UIKit.AddImage(Root, "NamePanel", UITheme.Panel, raycast: true).rectTransform;
             _namePanel = panel.gameObject;
             PlaceTL(panel, 14f, 232f, 224f, 100f);   // 靠左、垂直略偏中；可拖，之後想動就拖
             var drag = panel.gameObject.AddComponent<PanelDrag>();
             drag.Target = panel; drag.Area = Root;
 
-            var title = UIKit.AddText(panel, "Title", "玩家名稱", 16f, UITheme.Text);
-            PlaceTL(title.rectTransform, 12f, 8f, 200f, 22f);
+            // 標題列：Header 色的橫條 + 文字（同標準對話框的頭）
+            var header = UIKit.AddImage(panel, "Header", UITheme.Header);
+            PlaceTL(header.rectTransform, 0f, 0f, 224f, 28f);
+            var title = UIKit.AddText(panel, "Title", "玩家名稱", 15f, UITheme.Text);
+            PlaceTL(title.rectTransform, 12f, 4f, 200f, 20f);
 
             _nameInput = UIKit.AddInputField(panel, "NameInput", "", 15f);
-            PlaceTL(_nameInput.GetComponent<RectTransform>(), 12f, 36f, 146f, 30f);
+            PlaceTL(_nameInput.GetComponent<RectTransform>(), 12f, 38f, 146f, 30f);
             _nameInput.characterLimit = 24;
             _nameInput.onSubmit.AddListener(_ => SaveName());
 
-            var save = UIKit.AddButton(panel, "NameSave", out var saveLabel, UITheme.Accent, UITheme.OnPrimary, 15f);
+            var save = UIKit.AddButton(panel, "NameSave", out var saveLabel, UITheme.Primary, UITheme.OnPrimary, 15f);
             saveLabel.text = "儲存";
-            PlaceTL(save.GetComponent<RectTransform>(), 166f, 36f, 46f, 30f);
+            PlaceTL(save.GetComponent<RectTransform>(), 166f, 38f, 46f, 30f);
             save.onClick.AddListener(SaveName);
 
-            _nameStatusLabel = UIKit.AddText(panel, "Status", "", 12f, new Color(0.75f, 0.75f, 0.75f));
-            PlaceTL(_nameStatusLabel.rectTransform, 12f, 70f, 200f, 22f);
+            _nameStatusLabel = UIKit.AddText(panel, "Status", "", 12f, UITheme.TextDim);
+            PlaceTL(_nameStatusLabel.rectTransform, 12f, 74f, 200f, 20f);
         }
 
         // design (x,y,w,h) → RectTransform（top-left 原點、y 向下，同 UIKit.AddSprite/AddRaw/Place 的慣例）。
