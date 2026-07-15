@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Text;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -72,6 +71,8 @@ namespace Sdo.UI
         {
             if (UsedAssetsProbe.LaunchIfRequested()) return;                          // DEV: SDO_PROBE → run the probe instead of the app
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SCENE"))) return;   // DEV: no front-end in scene-test mode (env var or Tools/SDO menu)
+            // DEV: SDO_EDITOR → 譜面編輯器（ChartEditorScreen 自己開起來）：不要前端，也不要大廳 BGM。
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar(ChartEditorScreen.EnvVar))) return;
             if (Instance != null) return;
             var go = new GameObject("FrontendApp");
             Instance = go.AddComponent<FrontendApp>();
@@ -196,10 +197,8 @@ namespace Sdo.UI
             var s = _ctx.Session;
             if (!s.HasSong) { Toast.Show(LocalizationManager.Get("room.need_song")); return; }
 
-            string musicDir = SdoExtracted.MusicDir;                                    // built: DATA/MUSIC; dev: sdox_offline/music
-            string gnPath = Path.Combine(musicDir, s.SongGn);                           // e.g. .../MUSIC/sdom1197k.gn
-            string oggName = SongCatalog.MainOggName(s.SongGn);                         // chart letter (k/t) dropped: sdom1197k -> sdom1197.ogg
-            string oggPath = oggName != null ? Path.Combine(musicDir, oggName) : null;
+            string gnPath = SongPaths.Gn(s.SongGn);     // e.g. .../MUSIC/sdom1197k.gn（SongPaths 內部走 SdoExtracted.MusicDir）
+            string oggPath = SongPaths.Ogg(s.SongGn);   // chart letter (k/t) dropped: sdom1197k -> sdom1197.ogg
 
             // Snapshot the current scene roots (canvas, EventSystem, Main Camera, …) so TeardownGameplay can destroy
             // exactly what ScreenGameplay spawns (it parents nothing to us — every board/avatar/scene object is a new root).
@@ -213,6 +212,7 @@ namespace Sdo.UI
             game.gnPath = gnPath;
             game.oggPath = oggPath;
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
+            game.songOffsetMs = SongCatalog.OffsetMs(s.SongGn);  // 這首譜自己的 offset（手改在 song_name_overrides.json 的 offsetMs）
             game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
             game.localPlayerMale = s.Gender == 1;
             game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;

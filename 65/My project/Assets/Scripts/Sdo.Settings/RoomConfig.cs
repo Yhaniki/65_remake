@@ -27,6 +27,20 @@ namespace Sdo.Settings
         // Miss 180 ms）乘上該精度的係數；精2 = ×1.33。手改這個 key 就能整組調鬆緊，見 JudgmentWindows.FromStepManiaJudge。
         public static int judgeLevel = 2;
 
+        // 全域判定 offset（毫秒）：加在譜面時鐘上（GameplayClock.OffsetMs）。正 = 判定時間往後（適合整體打太早的人）。
+        //
+        // **機器的音訊延遲不歸它管，已經自動補掉了**（ScreenGameplay：DSP 混音緩衝算得出來、驅動延遲是實測寫死的
+        // DriverLatencyMs、打拍音檔的前導靜音在排程時提早）。所以這裡預設 0，留給「我就是想打早/晚一點」的個人偏好，
+        // 以及「別台機器的驅動延遲跟我的不一樣」的微調。
+        //
+        // 要調就用編輯器的「打拍測試」(F2) 量 —— **一定要用聽節拍器那個測法**。看著 note 打是拿時鐘畫出來的東西去對
+        // 時鐘（自我參照），只量得到輸入延遲，永遠量不到音訊延遲。
+        public static float globalOffsetMs = 0f;
+
+        // 判定線的視覺偏移（設計 px）：完美時機的音符會落在受擊線 + 這個位移的地方（0 = 正中受擊線）。
+        // 只影響「看起來要打在哪」，不影響判定時間（那是 globalOffsetMs 的事）。同樣用打拍測試調。
+        public static float judgeOffsetY = 0f;
+
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
@@ -176,6 +190,8 @@ namespace Sdo.Settings
                     case "defaultGameMode": defaultGameMode = ParseInt(val, defaultGameMode); break;
                     case "defaultScene": defaultScene = ParseInt(val, defaultScene); break;
                     case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
+                    case "globalOffsetMs": globalOffsetMs = ParseFloat(val, globalOffsetMs); break;
+                    case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -214,6 +230,8 @@ namespace Sdo.Settings
             defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 2);
             if (defaultScene < -1 || defaultScene > 30) defaultScene = -1;   // 只允許 -1(隨機) 或 0..30(可選場景 id)
             judgeLevel = Mathf.Clamp(judgeLevel, 1, 9);                      // 精1~精8、9=JUSTICE
+            globalOffsetMs = Mathf.Clamp(globalOffsetMs, -300f, 300f);       // 再大就不是延遲、是打錯拍了
+            judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
         }
 
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
@@ -242,6 +260,12 @@ namespace Sdo.Settings
             sb.Append("#   精1=1.50 精2=1.33 精3=1.16 精4=1.00 精5=0.84 精6=0.66 精7=0.50 精8=0.33 JUSTICE=0.20\n");
             sb.Append("#   例：精2 → Perfect ±59.9 / Cool ±119.7 / Bad ±179.6 / Miss ±239.4 ms\n");
             sb.Append("judgeLevel=").Append(judgeLevel).Append('\n');
+            sb.Append("# 全域判定 offset（毫秒）：正 = 判定時間往後（整體打太早就調正的）。預設 0。\n");
+            sb.Append("# 機器的音訊延遲**已經自動補掉了**（DSP 緩衝、驅動延遲、打拍音的前導靜音）→ 這裡只留給個人偏好/跨機微調。\n");
+            sb.Append("# 要調就用譜面編輯器的「打拍測試」(F2)，**聽節拍器打**（看著 note 打量不到音訊延遲），它會給建議值。\n");
+            sb.Append("globalOffsetMs=").Append(globalOffsetMs.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 判定線視覺偏移（設計 px，畫面高 600）：完美時機的音符會落在受擊線 + 這個位移處。0 = 正中受擊線。\n");
+            sb.Append("judgeOffsetY=").Append(judgeOffsetY.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的 per-user 設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");

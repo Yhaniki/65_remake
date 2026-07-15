@@ -138,3 +138,6 @@ procmon_tool/runs/
 # SdoLog runtime output (editor run writes beside the project)
 /65/My project/log.txt
 /65/My project/log.txt.prev
+
+# gn_note_export 的輸出（5MB 生成檔，隨時能用 dotnet run --project tools/gn_note_export 重跑）
+tools/kgn_export/gn_notes.json
