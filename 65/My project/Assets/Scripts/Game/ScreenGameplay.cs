@@ -61,6 +61,14 @@ namespace Sdo.Game
         /// </summary>
         public float songOffsetMs;
 
+        /// <summary>
+        /// **全曲共用**的音樂 offset（毫秒）—— 官方那批 k.gn 的譜面時間軸整體跟音檔差了一段，實測**每一首都一樣**，
+        /// 所以它不是 per-song（不該烘進 song_name_overrides.json 的 offsetMs），而是一個全域常數。
+        /// 語意跟 <see cref="songOffsetMs"/> 相同：動音樂、不動音符，正 = 音樂延後。加在 <see cref="MusicCountInSec"/>
+        /// 裡，所以遊玩、音訊排程、編輯器波形全部一致跟著走。個別歌若還有殘差，再用它自己的 offsetMs 疊上去。
+        /// </summary>
+        public const double GlobalSongOffsetMs = -25.0;
+
         // 全域 offset（config.ini [Room] globalOffsetMs）：**使用者的個人偏好**，預設 0。
         // 機器的音訊延遲已經由下面兩段自動補掉了，這裡只留給「我就是想打早一點/晚一點」的人。
         // 正 = 譜面時鐘往前推 → 同一下打擊的 delta 變大（判得比較晚）→ 整體打太早的人要調正的。用打拍測試量。
@@ -143,12 +151,12 @@ namespace Sdo.Game
         private void OnDestroy() => AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
 
         /// <summary>
-        /// 音樂真正的 count-in（秒）＝ 譜面的 type-10 無聲數拍 ＋ 單首 offset。
+        /// 音樂真正的 count-in（秒）＝ 譜面的 type-10 無聲數拍 ＋ 單首 offset ＋ 全曲共用 offset。
         /// dsp ↔ 譜面時間的換算**一律**用這個值（AudioChartSeconds / 變速 / 暫停 / seek / 打拍音排程），
         /// 少用一處就會音畫不同步。錨點與 count-in 一起搬時，「譜面時間 → dsp」的映射是不變的
         /// （anchor' = anchor + Δ/rate），所以打拍音仍然對在音符上，只有音樂本身被挪走。
         /// </summary>
-        private double MusicCountInSec => _musicStartDelaySec + songOffsetMs / 1000.0;
+        private double MusicCountInSec => _musicStartDelaySec + (songOffsetMs + GlobalSongOffsetMs) / 1000.0;
         private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
