@@ -1,7 +1,5 @@
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.EventSystems;
-using TMPro;
 using Sdo.Game;
 using Sdo.Settings;
 using Sdo.UI.Core;
@@ -38,10 +36,14 @@ namespace Sdo.UI.Screens
         private Camera _maskedCam; private int _savedMask;
         private int _gender;   // 0=女, 1=男
 
-        // 改名框（uGUI，可拖動）：改「目前選的性別」對應那個 user 的名字（女 00000000 / 男 00000001）。
-        // 用 uGUI TMP_InputField 而非 IMGUI TextField —— IMGUI 在 Windows 上打不了中文 IME；TMP 走 UIFont.Cjk 就能打
-        // （同聊天室/房間聊天）。放在畫布 design 座標下 → 自然落在背景圖裡，不用算 pillarbox。
-        private TMP_InputField _nameInput; private TextMeshProUGUI _nameStatusLabel; private GameObject _namePanel;
+        // 改名框：改「目前選的性別」對應那個 user 的名字（女 00000000 / 男 00000001）。
+        private string _nameEdit; private int _nameEditFor = -1; private string _nameStatus = "";
+        private Rect _nameWin; private bool _nameWinInit;   // 可拖動視窗（螢幕像素）；預設落在 4:3 內容區內
+        private const int NameWinId = 0x6E616D65;           // "name"
+        // IMGUI 樣式只能在 OnGUI 期間（GUI.skin 有效時）建 → lazy getter。
+        private GUIStyle _hintStyle;
+        private GUIStyle NameHintStyle => _hintStyle ?? (_hintStyle =
+            new GUIStyle(GUI.skin.label) { wordWrap = true, normal = { textColor = new Color(0.7f, 0.7f, 0.7f) } });
 
         private static Sprite An(string n) => LobbySelArt.An(n);
 
@@ -91,71 +93,6 @@ namespace Sdo.UI.Screens
 
             // Official AvtShow is composited over the lobby chrome; keep the transparent RT on top.
             if (_previewImg != null) _previewImg.transform.SetAsLastSibling();
-
-            BuildNamePanel();   // 改名框（最後建 → 疊在最上層可點/可拖）
-        }
-
-        // 改名框：畫布 design 座標下的小面板（標題 + 輸入框 + 儲存），整塊可拖。輸入框走 UIKit.AddInputField
-        // （內建 UIFont.Cjk）→ 中文能打。放在 design (x,y) → 落在 800×600 背景圖裡，不用管螢幕 pillarbox。
-        private void BuildNamePanel()
-        {
-            // 模仿 IMGUI 預設 debug 視窗：灰底樸素框、淺灰按鈕深字、淺灰文字。不用專案的紫色主題。
-            var boxGrey = new Color(0.20f, 0.20f, 0.20f, 0.82f);       // IMGUI box 的深灰半透明
-            var btnGrey = new Color(0.78f, 0.78f, 0.78f, 1f);         // IMGUI button 的淺灰
-            var btnText = new Color(0.12f, 0.12f, 0.12f, 1f);         // 淺灰按鈕上的深字
-            var lightText = new Color(0.90f, 0.90f, 0.90f, 1f);
-
-            var panel = UIKit.AddImage(Root, "NamePanel", boxGrey, raycast: true).rectTransform;
-            _namePanel = panel.gameObject;
-            PlaceTL(panel, 14f, 232f, 224f, 92f);   // 靠左、垂直略偏中；可拖，之後想動就拖
-            var drag = panel.gameObject.AddComponent<PanelDrag>();
-            drag.Target = panel; drag.Area = Root;
-
-            var title = UIKit.AddText(panel, "Title", "玩家名稱", 14f, lightText);
-            PlaceTL(title.rectTransform, 10f, 6f, 200f, 20f);
-
-            _nameInput = UIKit.AddInputField(panel, "NameInput", "", 14f);
-            PlaceTL(_nameInput.GetComponent<RectTransform>(), 10f, 30f, 150f, 26f);
-            _nameInput.characterLimit = 24;
-            _nameInput.onSubmit.AddListener(_ => SaveName());
-
-            var save = UIKit.AddButton(panel, "NameSave", out var saveLabel, btnGrey, btnText, 14f);
-            saveLabel.text = "儲存";
-            PlaceTL(save.GetComponent<RectTransform>(), 166f, 30f, 48f, 26f);
-            save.onClick.AddListener(SaveName);
-
-            _nameStatusLabel = UIKit.AddText(panel, "Status", "", 12f, lightText);
-            PlaceTL(_nameStatusLabel.rectTransform, 10f, 62f, 204f, 20f);
-        }
-
-        // design (x,y,w,h) → RectTransform（top-left 原點、y 向下，同 UIKit.AddSprite/AddRaw/Place 的慣例）。
-        private static void PlaceTL(RectTransform rt, float x, float y, float w, float h)
-        {
-            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
-            rt.pivot = new Vector2(0f, 1f);
-            rt.anchoredPosition = new Vector2(x, -y);
-            rt.sizeDelta = new Vector2(w, h);
-        }
-
-        // 讓面板可拖：只用「這一幀相對上一幀」的位移（在世界空間畫布上要透過 UI 相機轉換，不能用原始像素 delta），
-        // 加到 anchoredPosition 上。用 delta 所以座標系原點是誰不重要（會相消）。同 RoomScreen 拖聊天泡泡的做法。
-        private sealed class PanelDrag : MonoBehaviour, IBeginDragHandler, IDragHandler
-        {
-            public RectTransform Target, Area;
-            private Vector2 _last;
-            public void OnBeginDrag(PointerEventData e) => _last = Local(e);
-            public void OnDrag(PointerEventData e)
-            {
-                var now = Local(e);
-                if (Target != null) Target.anchoredPosition += now - _last;
-                _last = now;
-            }
-            private Vector2 Local(PointerEventData e)
-            {
-                var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
-                RectTransformUtility.ScreenPointToLocalPointInRectangle(Area, e.position, cam, out var p);
-                return p;
-            }
         }
 
         public override void OnShow()
@@ -229,14 +166,6 @@ namespace Sdo.UI.Screens
         // 只有商城沒開（本畫面在最上層）時才吃 ESC。
         private void Update()
         {
-            // 改名框：商城 modal 疊上來時（本畫面仍 Visible）先藏起來，關掉商城再現。!Visible 時 CanvasGroup 已讓整個
-            // 畫面透明，不用另外管。放在早退之前處理。
-            if (_namePanel != null)
-            {
-                bool show = Visible && !(FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen);
-                if (_namePanel.activeSelf != show) _namePanel.SetActive(show);
-            }
-
             if (!Visible || ScreenTransition.Busy) return;   // 轉場中(進房/進商城漸黑漸亮)先不吃 ESC
             if (FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen) return;
             // F2：開發用 —— 進譜面編輯器。先把前端收掉並註冊「編輯器 ESC 退出時還原前端」（Sdo.Game 不能反向引用
@@ -251,6 +180,54 @@ namespace Sdo.UI.Screens
             if (Input.GetKeyDown(KeyCode.Escape)) Sdo.Game.AppQuit.Now();
         }
 
+        // DEBUG 框：改目前選的性別那個 user 的名字。IMGUI 小框（沿用 ChartEditorScreen 的 GUI.skin.box + TextField 樣式）。
+        // 編輯器開著時本畫面 canvas 被停用 → OnGUI 本來就不會跑，這裡的 Instance 守門只是保險。
+        private void OnGUI()
+        {
+            if (!Visible || ScreenTransition.Busy) return;
+            if (FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen) return;
+            if (ChartEditorScreen.Instance != null) return;
+
+            if (_nameEditFor != _gender) { _nameEdit = SeedName(_gender); _nameEditFor = _gender; _nameStatus = ""; }
+
+            if (!_nameWinInit) { _nameWin = DefaultNameWin(); _nameWinInit = true; }
+            _nameWin = GUILayout.Window(NameWinId, _nameWin, DrawNameWindow, "玩家名稱",
+                                        GUILayout.Width(240f), GUILayout.Height(92f));
+            // 不讓它被拖到整個看不見（至少留一角在畫面內）
+            _nameWin.x = Mathf.Clamp(_nameWin.x, 8f - _nameWin.width, Screen.width - 8f);
+            _nameWin.y = Mathf.Clamp(_nameWin.y, 0f, Screen.height - 24f);
+        }
+
+        // 視窗內容；GUI.DragWindow 讓整個視窗（除了輸入框/按鈕本身）都能拖。
+        private void DrawNameWindow(int id)
+        {
+            GUILayout.Space(2f);
+            GUILayout.BeginHorizontal();
+            _nameEdit = GUILayout.TextField(_nameEdit ?? "", 24, GUILayout.Height(22f));
+            if (GUILayout.Button("儲存", GUILayout.Width(52f), GUILayout.Height(22f))) SaveName();
+            GUILayout.EndHorizontal();
+            if (!string.IsNullOrEmpty(_nameStatus)) GUILayout.Label(_nameStatus, NameHintStyle);
+            GUI.DragWindow();
+        }
+
+        // 預設位置：落在 4:3 內容區（背景圖）內、靠左垂直置中 —— IMGUI 用螢幕像素，直接放螢幕左邊會跑到
+        // pillarbox 黑邊上，所以先算出 800×600 內容在螢幕上的實際矩形，再把視窗放進去。
+        private static Rect DefaultNameWin()
+        {
+            const float w = 240f, h = 92f;
+            Rect c = ContentRect();
+            return new Rect(c.x + Mathf.Min(24f, c.width * 0.04f), c.y + (c.height - h) * 0.5f, w, h);
+        }
+
+        // 800×600(4:3) 內容在螢幕上的矩形：寬螢幕→兩側 pillarbox、窄螢幕→上下 letterbox（同 AspectController 的取景）。
+        private static Rect ContentRect()
+        {
+            const float aspect = 800f / 600f;
+            float sw = Screen.width, sh = Mathf.Max(1f, Screen.height);
+            if (sw / sh > aspect) { float cw = sh * aspect; return new Rect((sw - cw) * 0.5f, 0f, cw, sh); }
+            float ch = sw / aspect; return new Rect(0f, (sh - ch) * 0.5f, sw, ch);
+        }
+
         // 讀某性別 seed 帳號目前的名字（唯讀，不動 active）。List() 掃磁碟，只在切性別時呼叫一次，不是每幀。
         private static string SeedName(int gender)
         {
@@ -259,25 +236,18 @@ namespace Sdo.UI.Screens
             return gender == 1 ? "玩家002" : "玩家001";
         }
 
-        // 切性別時把輸入框填成該性別目前的名字、清掉狀態訊息。
-        private void RefreshNameField()
-        {
-            if (_nameInput != null) _nameInput.SetTextWithoutNotify(SeedName(_gender));
-            if (_nameStatusLabel != null) _nameStatusLabel.text = "";
-        }
-
         // 存：把名字寫回該性別的 profile.json（＋這次執行的 session，房間/遊戲頭上名牌就吃得到）。
         // SetActive 到該性別（OnEnter 本來也會做同一件事）→ 改 name → Save。空白名字 Sanitize 會擋，這裡先攔。
         private void SaveName()
         {
-            string name = (_nameInput != null ? _nameInput.text : "").Trim();
-            if (name.Length == 0) { if (_nameStatusLabel != null) _nameStatusLabel.text = "名稱不可空白"; return; }
+            string name = (_nameEdit ?? "").Trim();
+            if (name.Length == 0) { _nameStatus = "名稱不可空白"; return; }
             string id = ProfileManager.SeededIdForGender(_gender);
             ProfileManager.SetActive(id);
             ProfileManager.Active.name = name;
             ProfileManager.Save();
             if (Ctx != null && Ctx.Session != null) Ctx.Session.LocalPlayerName = name;
-            if (_nameStatusLabel != null) _nameStatusLabel.text = "已儲存，進入房間後生效";
+            _nameStatus = "已儲存，進入房間後生效";
         }
 
         private void SelectGender(int g)
@@ -286,7 +256,6 @@ namespace Sdo.UI.Screens
             UIKit.ApplySprite(_maleBox, _gender == 1 ? _maleOn : _maleOff);
             UIKit.ApplySprite(_femaleBox, _gender == 0 ? _femaleOn : _femaleOff);
             if (_preview != null) _preview.SetGender(_gender);
-            RefreshNameField();   // 輸入框跟著顯示該性別目前的名字
         }
 
         // 進入：切 active 使用者(女/男 → 00000000/00000001)、把身分帶回 session、建/進房間（不經大廳列表，直接進房）。
