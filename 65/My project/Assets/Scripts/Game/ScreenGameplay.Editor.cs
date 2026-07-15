@@ -153,8 +153,11 @@ namespace Sdo.Game
             if (!beatTestMode) return;
 
             // 打拍測試：沒打到的音符走過判定窗 → 記一次 miss（那個模式就是要你打完每一顆）
-            foreach (var n in _notes)
+            // 只掃「頭已到 now」的音符（未來的還沒走過判定窗）—— 同 NoteScan 視窗。
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now);
+            for (int i = _firstAlive; i < hi; i++)
             {
+                var n = _notes[i];
                 if (n.Done || n.HeadJudged) continue;
                 if (!_engine.HasPassed(n.Note.StartTimeMs, now)) continue;
                 n.HeadJudged = true; n.Done = true;
@@ -310,8 +313,11 @@ namespace Sdo.Game
             }
 
             // 倒帶回去時音符要能重新出現：編輯器不判定，所以只有捲出畫面的 Done 需要清掉。
-            foreach (var n in _notes) { n.Done = false; n.HeadJudged = false; n.BundledFail = false; }
+            foreach (var n in _notes) { n.Done = false; n.HeadJudged = false; n.BundledFail = false; n.Dropped = false; }
             for (int i = 0; i < Keys; i++) _holding[i] = null;
+            // seek 可能跳到任何位置：整批視覺歸還池、alive 游標歸零，讓 ScrollNotes 依新位置重新租用（否則跳出畫面的殘影會漏收）。
+            ReturnAllVisuals();
+            _firstAlive = 0;
 
             _tick.Rewind(chartMs);   // F7 打拍音：游標跟著跳，不補播過去的
             ResetScheduledTicks();

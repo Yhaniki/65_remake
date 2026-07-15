@@ -44,6 +44,7 @@ namespace Sdo.Game
         private Matrix4x4[] _dispLocal;                      // last displayed per-bone local (blend source / continuity)
         private Quaternion[] _blendFromQ; private Vector3[] _blendFromP;   // snapshot of the displayed pose at the switch
         private float _blendStart = -1f;                     // Time.time the current crossfade began (<0 = none)
+        private bool _snapNextBlend;                          // true -> next clip switch is a HARD CUT (see SnapNextClip)
         private bool _haveDisp;                              // _dispLocal holds a valid previous pose
         private MotLoader _lastMot;                          // active clip last frame (to detect a switch)
 
@@ -89,6 +90,11 @@ namespace Sdo.Game
             _oneShot = mot; _oneShotHold = hold; _oneShotStart = Time.time;
         }
         public void ClearOneShot() { _oneShot = null; _oneShotStart = -1f; }
+
+        /// <summary>Force the NEXT clip switch to be a HARD CUT (no crossfade). Used when the result-screen
+        /// background replay resumes the DPS dance, so the win/lose 定格 pose snaps straight to the dance pose
+        /// instead of blending through it over BlendSec.</summary>
+        public void SnapNextClip() { _snapNextBlend = true; }
 
         /// <summary>Switch the active LOOPING clip (no DPS): used by the waiting room to flip between the standby idle
         /// and the walk clip as the local player moves. The change is picked up next LateUpdate, which crossfades from
@@ -420,6 +426,7 @@ namespace Sdo.Game
         {
             if (_mot == _lastMot) return;
             _lastMot = _mot;
+            if (_snapNextBlend) { _snapNextBlend = false; _blendStart = -1f; return; }   // hard cut requested -> no crossfade
             if (!_haveDisp || _dispLocal == null) return;     // nothing displayed yet -> nothing to blend from
             int bc = _hrc.Names.Length;
             for (int i = 0; i < bc; i++) { _blendFromQ[i] = _dispLocal[i].rotation; _blendFromP[i] = _dispLocal[i].GetColumn(3); }

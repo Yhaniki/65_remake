@@ -62,12 +62,14 @@ namespace Sdo.Game
         public float songOffsetMs;
 
         /// <summary>
-        /// **全曲共用**的音樂 offset（毫秒）—— 官方那批 k.gn 的譜面時間軸整體跟音檔差了一段，實測**每一首都一樣**，
-        /// 所以它不是 per-song（不該烘進 song_name_overrides.json 的 offsetMs），而是一個全域常數。
-        /// 語意跟 <see cref="songOffsetMs"/> 相同：動音樂、不動音符，正 = 音樂延後。加在 <see cref="MusicCountInSec"/>
-        /// 裡，所以遊玩、音訊排程、編輯器波形全部一致跟著走。個別歌若還有殘差，再用它自己的 offsetMs 疊上去。
+        /// **全曲共用**的音樂 offset（毫秒）—— 已停用，設 0。
+        /// 曾經以為官方那批 k.gn 的譜面時間軸整體跟音檔差了固定一段（每首都一樣），所以放一個全域 −25。
+        /// 後來逐首手校（sdom2675 之後）發現**沒有這種全域常數**，每首的殘差各不相同，該由各自的
+        /// <see cref="songOffsetMs"/>（song_name_overrides.json 的 offsetMs）處理。於是把全域歸零，
+        /// 並把原本那 −25 烘進 sdom2675 之後每首的 offsetMs，讓那批已校過的歌行為不變。
+        /// 保留這個常數只為讓 <see cref="MusicCountInSec"/> 的算式與排程/波形路徑維持單一入口。
         /// </summary>
-        public const double GlobalSongOffsetMs = -25.0;
+        public const double GlobalSongOffsetMs = 0.0;
 
         // 全域 offset（config.ini [Room] globalOffsetMs）：**使用者的個人偏好**，預設 0。
         // 機器的音訊延遲已經由下面兩段自動補掉了，這裡只留給「我就是想打早一點/晚一點」的人。
@@ -148,7 +150,11 @@ namespace Sdo.Game
 
         // AudioSettings.OnAudioConfigurationChanged 是**靜態**事件：編輯器每按一次 F2 就重建一次 ScreenGameplay，
         // 不解除的話舊實例會留在委派鏈上（洩漏；裝置一變就對著已銷毀的物件呼叫）。
-        private void OnDestroy() => AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
+        private void OnDestroy()
+        {
+            AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
+            if (_noteVisualRoot) Destroy(_noteVisualRoot.gameObject);   // tear down the pooled note visuals (root-level like the old per-note objects) with this screen
+        }
 
         /// <summary>
         /// 音樂真正的 count-in（秒）＝ 譜面的 type-10 無聲數拍 ＋ 單首 offset ＋ 全曲共用 offset。
@@ -356,6 +362,11 @@ namespace Sdo.Game
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
 
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
+        private readonly List<double> _noteStarts = new List<double>();   // _notes[i].Note.StartTimeMs, ascending — drives NoteScan.UpperBound
+        private int _firstAlive;                                          // cursor: index of the earliest still-live note (see NoteScan.Advance)
+        private readonly Stack<NoteVisual> _visualFree = new Stack<NoteVisual>();   // returned note-visual bundles waiting to be re-rented
+        private readonly List<NoteVisual> _visualAll = new List<NoteVisual>();      // every bundle ever created (for teardown/debug)
+        private Transform _noteVisualRoot;                                // identity origin parent so all pooled note GameObjects live under one node
         private readonly RuntimeNote[] _holding = new RuntimeNote[Keys];
         private readonly Sprite[][] _noteFrames = new Sprite[Keys][];
         private readonly Texture2D[] _holdTex = new Texture2D[Keys];
@@ -1431,6 +1442,7 @@ namespace Sdo.Game
         private GameObject CreateHoldCap()
         {
             var go = new GameObject("HoldCap3d");
+            go.transform.SetParent(NoteVisualRoot, false);   // pooled with the note visual that owns it (position is set world-space in ScrollNotes)
             var mf = go.AddComponent<MeshFilter>(); var mr = go.AddComponent<MeshRenderer>();
             mf.mesh = new Mesh
             {
@@ -1945,34 +1957,120 @@ namespace Sdo.Game
             return go;
         }
 
+        // Build the note DATA only — no GameObjects. On a 5k–10k-note chart, spawning a SpriteRenderer + material
+        // per note up front is a load-time hitch (thousands of Shader.Find + Instantiate) and tens of MB of idle
+        // materials, when only ~100 are ever on-screen. The visuals are rented from a pool as notes scroll in
+        // (RentVisual) and returned as they scroll off (ReturnVisual), so cost tracks the visible window, not chart
+        // length. Notes are kept START-TIME-ASCENDING so the per-frame scans can window with NoteScan.
         private void SpawnNotes()
         {
             foreach (var h in _map.HitObjects)
+                _notes.Add(new RuntimeNote(h, NoteBeatColor.Family(h.StartTimeMs, _map)));   // beat-quantization colour precomputed (used only in 3D skin)
+            _notes.Sort((a, b) => a.Note.StartTimeMs.CompareTo(b.Note.StartTimeMs));   // window/break rely on ascending start (loaders sort, but be defensive)
+            _noteStarts.Clear();
+            foreach (var n in _notes) _noteStarts.Add(n.Note.StartTimeMs);
+            _firstAlive = 0;
+        }
+
+        private Transform NoteVisualRoot => _noteVisualRoot != null ? _noteVisualRoot
+            : (_noteVisualRoot = new GameObject("NotesPool").transform);   // identity origin: transform.position writes are world-space, so parenting is neutral
+
+        // Hand note n a pooled visual (no-op if it already holds one). Binds the CURRENT skin's head sprite and,
+        // for a hold, the body texture/shader + tail sprite/flips — the same bindings SpawnNotes used to bake once,
+        // now applied on rent so a live skin swap (F4 / ShowTime) reaches every note as it re-appears.
+        private void RentVisual(RuntimeNote n)
+        {
+            if (n.Vis != null) return;
+            var v = _visualFree.Count > 0 ? _visualFree.Pop() : CreateVisual();
+            n.Vis = v;
+            int c = Mathf.Clamp(n.Note.Lane, 0, Keys - 1);
+            // reset the transient state a previous tenant may have left (colour tint / 3D rotation); sprite is set per-frame.
+            v.Head.color = Color.white;
+            if (v.Head.transform.localRotation != Quaternion.identity) v.Head.transform.localRotation = Quaternion.identity;
+            v.Head.sprite = _noteFrames[c] != null ? _noteFrames[c][0] : _recIdle[c];
+            n.Head = v.Head;
+            if (n.Note.IsHold)
             {
-                int c = Mathf.Clamp(h.Lane, 0, Keys - 1);
-                var head = NewSR("Note", _noteFrames[c] != null ? _noteFrames[c][0] : _recIdle[c], 5);
-                head.enabled = false;   // hidden until it scrolls into view (else it sits at screen centre)
-                head.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;   // clipped to the note board (NoteClip mask)
-                head.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
-                GameObject body = null; SpriteRenderer tail = null;
-                if (h.IsHold)
+                if (_holdTex[c] != null)
                 {
-                    if (_holdTex[c] != null) body = CreateHoldBody(c);
-                    if (_holdTail[c] != null)
-                    {
-                        tail = NewSR("HoldTail", _holdTail[c], 4);
-                        tail.flipX = _holdTailFlipX[c]; tail.flipY = _holdTailFlipY[c];   // mirror the shared combined-skin cap per lane
-                        tail.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
-                        // own material -> no mask batch cross-bleed. (In 3D mode the sprite tail stays hidden — the cap is real triangle geometry.)
-                        tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
-                    }
+                    if (v.Body == null) CreateVisualBody(v);
+                    var sh = Shader.Find(_note3dMode ? "Sdo/NoteCutout" : "Sprites/Default") ?? Shader.Find("Sprites/Default");
+                    if (sh) v.BodyMr.sharedMaterial.shader = sh;
+                    v.BodyMr.sharedMaterial.mainTexture = _holdTex[c];
+                    v.BodyMr.sharedMaterial.color = Color.white;
+                    n.Body = v.Body;
                 }
-                if (body) body.SetActive(false);   // hide body+tail too until scrolled in (else they pile at screen centre)
-                if (tail) tail.enabled = false;
-                // precompute the beat-quantization colour for the 3D skin (cheap; used only when _note3dMode is on)
-                _notes.Add(new RuntimeNote(h, head, body, tail, NoteBeatColor.Family(h.StartTimeMs, _map)));
+                if (_holdTail[c] != null)
+                {
+                    if (v.Tail == null) CreateVisualTail(v);
+                    v.Tail.sprite = _holdTail[c]; v.Tail.color = Color.white;
+                    v.Tail.flipX = _holdTailFlipX[c]; v.Tail.flipY = _holdTailFlipY[c];   // mirror the shared combined-skin cap per lane
+                    n.Tail = v.Tail;
+                }
+            }
+            n.Cap3d = v.Cap3d;   // reuse the cap triangle if this bundle built one in a previous life
+        }
+
+        // Return note n's visual to the pool (idempotent). Disables every part and stashes the lazily-built cap back
+        // on the bundle so the next hold on it reuses the triangle.
+        private void ReturnVisual(RuntimeNote n)
+        {
+            var v = n.Vis;
+            if (v == null) return;
+            v.Head.enabled = false;
+            if (v.Body) v.Body.SetActive(false);
+            if (v.Tail) v.Tail.enabled = false;
+            v.Cap3d = n.Cap3d;                       // ScrollNotes may have created it this life; keep it on the bundle
+            if (v.Cap3d) v.Cap3d.SetActive(false);
+            n.Head = null; n.Tail = null; n.Body = null; n.Cap3d = null; n.Vis = null;
+            _visualFree.Push(v);
+        }
+
+        private NoteVisual CreateVisual()
+        {
+            var v = new NoteVisual();
+            var head = NewSR("Note", null, 5);
+            head.transform.SetParent(NoteVisualRoot, false);
+            head.enabled = false;
+            head.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;   // clipped to the note board (NoteClip mask)
+            head.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
+            v.Head = head;
+            _visualAll.Add(v);
+            return v;
+        }
+
+        private void CreateVisualBody(NoteVisual v)
+        {
+            var go = CreateHoldBody(0);   // texture/shader re-bound per rent; the placeholder col is irrelevant to the mesh
+            go.transform.SetParent(NoteVisualRoot, false);
+            go.SetActive(false);
+            v.Body = go; v.BodyMf = go.GetComponent<MeshFilter>(); v.BodyMr = go.GetComponent<MeshRenderer>();
+        }
+
+        private void CreateVisualTail(NoteVisual v)
+        {
+            var tail = NewSR("HoldTail", null, 4);
+            tail.transform.SetParent(NoteVisualRoot, false);
+            tail.enabled = false;
+            tail.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+            tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material -> no mask batch cross-bleed
+            v.Tail = tail;
+        }
+
+        // Skip the alive cursor past notes retired by hits/misses outside ScrollNotes, returning each skipped
+        // note's visual so the pool never leaks the sprites of a note that was judged away and then out-scrolled by
+        // the cursor. Called once per frame at the top of ScrollNotes.
+        private void AdvanceAliveWindow()
+        {
+            while (_firstAlive < _notes.Count && _notes[_firstAlive].Done)
+            {
+                ReturnVisual(_notes[_firstAlive]);
+                _firstAlive++;
             }
         }
+
+        // Return every note's visual to the pool (e.g. song end, or an editor seek that re-arms the whole chart).
+        private void ReturnAllVisuals() { foreach (var n in _notes) ReturnVisual(n); }
 
         private void BuildHud()
         {
@@ -3941,8 +4039,7 @@ namespace Sdo.Game
             HideComboAndJudge();                              // combo number + judgment word (part of the play board)
             ClearGameplayFx();                                // tear down in-flight bursts/holds (F5 mid-song leaves a hold burst looping)
             if (_emoji != null) _emoji.Stop();                // clear any head emoji cut-in so it doesn't linger into the result
-            foreach (var n in _notes)                         // also kill any note sprites still in flight
-            { if (n.Head) n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); }
+            ReturnAllVisuals();                               // also kill any note sprites still in flight (return them to the pool)
             if (_gameOver)
             {
                 // 血條用完死掉 (HP-out): 不放結束勝利/失敗的定格動作與 FINISHED effect;改播死亡字幕 GAME OVER (置中) +
@@ -4035,7 +4132,7 @@ namespace Sdo.Game
             if (_lvText) _lvText.gameObject.SetActive(false);
             if (_timeText) _timeText.gameObject.SetActive(false);
             if (_info) _info.gameObject.SetActive(false);
-            if (_headMarker) _headMarker.Hide();               // arrow + the "玩家" name label (separate root object)
+            // 頭上的名牌（箭頭 + 名字）結算/回放全程保留不隱藏 — 不呼叫 _headMarker.Hide()。
         }
 
         // On the result panel, the old top song-name/level row is gone; instead the gameplay HUD's bottom song-info row
@@ -4095,6 +4192,7 @@ namespace Sdo.Game
         {
             if (_avatar == null) return;
             _avatar.ClearOneShot();                                   // resume the DPS dance path
+            _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
             _replayLenMs = _totalMs > 1.0 ? _totalMs : Math.Max(1.0, _replay.LengthMs);
             _replayLoopStart = Time.timeAsDouble;
             _avatar.DanceTimeSec = () => (float)((LoopMs() ) / 1000.0);
@@ -4199,9 +4297,16 @@ namespace Sdo.Game
         {
             bool use3d = _note3dMode && note3dMesh && EnsureHighway();   // real 3D mesh highway (else 2D coloured-sprite path)
             _highwayItems.Clear();
-            foreach (var n in _notes)
+            AdvanceAliveWindow();
+            // Notes are start-time sorted, so once one is far enough ahead to still be off the bottom (up-scroll) /
+            // top (down-scroll) of the board, every later note is too. `aheadPx` is the exact on-screen distance from
+            // the judge line to the far entry edge (+ margin); break there instead of walking the whole 10k chart.
+            float aheadPx = Mathf.Max(_clipBottomY + 60f - judgeLineY, judgeLineY - (_clipTopY - 60f)) + 200f;
+            for (int i = _firstAlive; i < _notes.Count; i++)
             {
-                if (n.Done) { n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
+                var n = _notes[i];
+                if (n.Done) { ReturnVisual(n); continue; }
+                if (n.Note.StartTimeMs > now && (float)_scroll.PixelDistance(now, n.Note.StartTimeMs) > aheadPx) break;   // this + all later notes are still below/above the board
                 int c = n.Note.Lane;
                 bool held = _holding[c] == n;        // a held long-note head stays pinned to the judge line
                 float yRaw = held ? judgeLineY : YForTime(n.Note.StartTimeMs, now);
@@ -4216,15 +4321,16 @@ namespace Sdo.Game
                     : Mathf.Min(yRaw, yEnd) > _clipBottomY + 36f);  // down-scroll: flowed off the BOTTOM past the judge line
                 if (offPast)
                 {
-                    n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false);
+                    ReturnVisual(n);
                     if (n.HeadJudged) n.Done = true;   // hit late / auto-missed -> now fully retired
                     continue;
                 }
                 bool visible = held || (_scrollSign > 0
                     ? Mathf.Min(yRaw, yEnd) <= _clipBottomY + 60f   // up-scroll: shown once it enters from the bottom
                     : Mathf.Max(yRaw, yEnd) >= _clipTopY - 60f);    // down-scroll: shown once it enters from the top; SpriteMask clips it to the board
-                n.Head.enabled = visible;
-                if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
+                if (!visible) { ReturnVisual(n); continue; }
+                RentVisual(n);                    // entered the board -> hand it a pooled visual (skin-bound), then render as before
+                n.Head.enabled = true;
                 float y = yRaw;   // NO clamp — notes keep flowing past the receptor (the mask hides them above the HP bar)
                 int frame = ((int)(Time.time * noteAnimFps)) & 3;   // 4-frame glow cycle (= the official _0.._3 frames)
                 bool stWin = showtimeMode && _showtime.Active;
@@ -4411,8 +4517,12 @@ namespace Sdo.Game
             // in the panel immediately drives what auto-play hits with. A Miss isn't "held"/removed: it flows off.
             // In a ShowTime window every note is a forced PERFECT (exe forces grade 4 via +0x109b0), ignoring forcedJudge.
             Judgment grade = showtime ? Judgment.Perfect : (forcedJudge >= 0 ? (Judgment)forcedJudge : Judgment.Perfect);
-            foreach (var n in _notes)
+            // only notes whose head is due (start ≤ now) can be judged this frame — window the scan to them (held
+            // holds have start in the past, so they stay in-window and their tails are still ended below).
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now);
+            for (int i = _firstAlive; i < hi; i++)
             {
+                var n = _notes[i];
                 if (n.Done) continue;
                 if (!n.HeadJudged && now >= n.Note.StartTimeMs)
                 {
@@ -4744,8 +4854,12 @@ namespace Sdo.Game
         private RuntimeNote NearestHittable(int lane, double now)
         {
             RuntimeNote best = null; double bestAbs = double.MaxValue;
-            foreach (var n in _notes)
+            // a hittable head is within ±MissBoundary of now; notes past now+MissBoundary can't be nearer, so bound
+            // the scan there (the late side, now−MissBoundary, is already ≥ the first still-live note).
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + _engine.Windows.MissBoundary);
+            for (int i = _firstAlive; i < hi; i++)
             {
+                var n = _notes[i];
                 if (n.Done || n.HeadJudged || n.Note.Lane != lane) continue;
                 double d = Math.Abs(n.Note.StartTimeMs - now);
                 if (d < bestAbs && d <= _engine.Windows.MissBoundary) { bestAbs = d; best = n; }
@@ -4755,8 +4869,12 @@ namespace Sdo.Game
 
         private void AutoMiss(double now)
         {
-            foreach (var n in _notes)
+            // everything AutoMiss acts on (a passed unhit head, a bundled-fail tail, a held hold's end) has start ≤ now;
+            // future notes have nothing to miss yet, so window the scan to start ≤ now.
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now);
+            for (int i = _firstAlive; i < hi; i++)
             {
+                var n = _notes[i];
                 if (n.Done) continue;
                 // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
                 // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
@@ -4852,14 +4970,31 @@ namespace Sdo.Game
 
         private sealed class RuntimeNote
         {
-            public readonly OsuHitObject Note; public readonly SpriteRenderer Head, Tail; public readonly GameObject Body;
-            public GameObject Cap3d;   // 3D skin: the official LONG.MSH cap TRIANGLE (real geometry, welded at the tail end); lazily created
+            public readonly OsuHitObject Note;
+            public readonly int ColorFamily;   // 3D-note beat-quantization colour (0=magenta,1=blue,2=green); used only in _note3dMode
             public bool HeadJudged, BundledFail, Done;
             public bool Dropped;       // a hold the player never owned: head missed / head Bad / let go mid-bar. The bar is
                                        // NOT deleted — it keeps scrolling at holdDropDim brightness until it flows off.
-            public readonly int ColorFamily;   // 3D-note beat-quantization colour (0=magenta,1=blue,2=green); used only in _note3dMode
-            public RuntimeNote(OsuHitObject n, SpriteRenderer head, GameObject body, SpriteRenderer tail, int colorFamily)
-            { Note = n; Head = head; Body = body; Tail = tail; ColorFamily = colorFamily; }
+            // Visuals are POOLED (see NoteVisual): a note owns GameObjects ONLY while it is on-screen — rented in
+            // ScrollNotes when it enters the board, returned when it scrolls off or is retired. A 10k-note chart
+            // therefore keeps only the ~visible window (≈100) worth of sprites alive at once instead of 10k.
+            // Head/Body/Tail/Cap3d mirror Vis's parts while rented (null when off-screen) so the per-frame render
+            // code reads them exactly as before; the `if (n.Body)` / `if (n.Tail)` guards already handle null.
+            public NoteVisual Vis;
+            public SpriteRenderer Head, Tail;
+            public GameObject Body, Cap3d;
+            public RuntimeNote(OsuHitObject n, int colorFamily) { Note = n; ColorFamily = colorFamily; }
+        }
+
+        // A reusable bundle of the GameObjects one on-screen note needs. Rented from _visualFree when a note enters
+        // the visible window and returned when it leaves. Body/Tail/Cap3d are built lazily the first time a hold on
+        // this bundle needs them, then kept for reuse (a later tap simply leaves them inactive). Each Head/Tail owns
+        // its OWN material so masked sprites never batch-bleed textures (see the SpriteMask material note).
+        private sealed class NoteVisual
+        {
+            public SpriteRenderer Head, Tail;
+            public GameObject Body, Cap3d;
+            public MeshFilter BodyMf; public MeshRenderer BodyMr;
         }
     }
 }
