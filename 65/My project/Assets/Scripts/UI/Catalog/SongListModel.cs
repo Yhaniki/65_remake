@@ -20,29 +20,18 @@ namespace Sdo.UI.Catalog
         public static SongListModel FromCatalog() => new SongListModel(Curate(SongCatalog.All));
 
         /// <summary>
-        /// Browse-list curation. The original data ships a paired chart per song —
-        /// sdomNNNN<b>k</b>.gn and sdomNNNN<b>t</b>.gn share one title — which made every song appear
-        /// twice in the list. Keep only the 'k' variant, then order by gn filename DESCENDING
-        /// (sdomNNNN, highest number first / at the top). (SongCatalog.All stays unfiltered: gn-based
-        /// title/artist lookups and font warmup still need both variants.)
+        /// Browse-list curation: keep only the keyboard ('k') chart of each sdomNNNNk/t pair
+        /// (<see cref="SongCatalog.IsPrimaryVariant"/> — that's where the k/t story is written down),
+        /// then order by gn filename DESCENDING (highest sdomNNNN first / at the top).
         /// </summary>
         public static List<SongCatalog.Entry> Curate(IEnumerable<SongCatalog.Entry> entries)
         {
             var res = new List<SongCatalog.Entry>();
             if (entries == null) return res;
             foreach (var e in entries)
-                if (e != null && IsPrimaryVariant(e.gn)) res.Add(e);
+                if (e != null && SongCatalog.IsPrimaryVariant(e.gn)) res.Add(e);
             res.Sort((a, b) => string.CompareOrdinal(b.gn, a.gn));   // by filename sdomNNNNk.gn 降冪(最大號在最上)
             return res;
-        }
-
-        /// <summary>True for the 'k' chart of a sdomNNNNk/t.gn pair (the one we list); false for 't'.</summary>
-        private static bool IsPrimaryVariant(string gn)
-        {
-            if (string.IsNullOrEmpty(gn)) return false;
-            var name = gn.ToLowerInvariant();
-            if (name.EndsWith(".gn")) name = name.Substring(0, name.Length - 3);
-            return name.Length > 0 && name[name.Length - 1] == 'k';
         }
 
         public int Count => _all.Count;

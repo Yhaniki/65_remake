@@ -119,7 +119,9 @@ namespace Sdo.Game
         {
             _verts.Clear(); _cols.Clear(); _tris.Clear();
             // 波形畫的是「音樂」→ 單首 offset（F11/F12）把音樂挪走時，波形要跟著挪，音符才不會跟波形一起動。
-            if (Game != null) PeaksOffsetMs = Game.EditorMusicCountInMs;
+            // 再往早補 WaveformDecoderDelayMs：Unity 的 Vorbis 解碼在 clip 開頭留了 ~30ms 暖機樣本，不補的話波形
+            // 瞬態會整條晚 30ms，看起來音符比波形早到。純顯示修正（見 ScreenGameplay.WaveformDecoderDelayMs）。
+            if (Game != null) PeaksOffsetMs = Game.EditorMusicCountInMs - ScreenGameplay.WaveformDecoderDelayMs;
             if (Game != null && Game.EditorReady) Build();
             _mesh.Clear();
             if (_verts.Count > 0)

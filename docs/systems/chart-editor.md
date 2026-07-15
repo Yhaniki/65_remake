@@ -92,10 +92,75 @@
 
 ### 兩種 offset（很容易搞混，方向不一樣）
 
-| | 動什麼 | 幹嘛用的 |
-|---|---|---|
-| **全域** `globalOffsetMs`（打拍測試調） | **譜面時鐘**（音符與判定一起位移，音樂不動） | 補這台機器「聲音→耳朵→手→鍵盤→引擎」的整條延遲 |
-| **單首** `song_offsets.ini`（F11/F12） | **音樂**（音符/判定線一格都不動，只有音樂前後挪；波形跟著音樂走） | 補「這首譜跟音檔沒對齊」 |
+| | 動什麼 | 存在哪 | 幹嘛用的 |
+|---|---|---|---|
+| **全域** `globalOffsetMs` | **譜面時鐘**（音符與判定一起位移，音樂不動） | `config.ini`（打拍測試面板可存） | 個人偏好／跨機微調（機器延遲已自動補掉，見下） |
+| **單首** `offsetMs` | **音樂**（音符/判定線一格都不動，只有音樂前後挪；波形跟著音樂走） | `StreamingAssets/song_name_overrides.json`，**手改** | 補「這首譜跟音檔沒對齊」 |
+
+單首 offset 用 **F11/F12** 邊聽邊調（一次 20ms，Alt 微調 1ms），但**不會自動寫檔** —— 調到滿意後，面板會印出一行
+可以直接貼進 `song_name_overrides.json` 的 JSON，自己寫進去。key 是 gn 詞幹（`sdom0001`），k/t 兩份譜共用同一筆
+（同一個音檔，本來就該共用）。
+
+> 為什麼放在 `song_name_overrides.json`：它是**唯一**一份手改的歌曲資料。`song_catalog.json` 是工具從 .gn 重建的
+> （bpm／難度／音符數以實際譜面為準，重掃會蓋掉），所以任何「人決定的東西」都只能住在 overrides。
+> `build_song_name_overrides.py` 全量重寫時會**一律保留** `offsetMs`（連 `--reseed` 也不動它）。
+
+### 音訊延遲：兩段自動補償 ＋ 一個要校的殘差
+
+延遲**大部分是自動補掉的**，`globalOffsetMs` 只負責收尾。
+
+**① 輸出延遲 → 譜面時鐘自動扣掉（＝ StepMania 的「時鐘讀播放游標」）**
+
+StepMania 的歌曲時鐘不是「我送了多少音訊出去」，而是去問音效卡「**現在正從喇叭出來的是第幾個取樣**」
+（DirectSound 播放游標 → `RageSound::GetPositionSecondsInternal` → `pos_map.Search` → `m_fMusicSeconds`）。
+緩衝區裡那段「已混音、還沒出喇叭」的音訊從來不算進時鐘 —— 輸出延遲在判定路徑上**自動抵銷**。這就是它敢把
+Windows DSound 的 writeahead 開到 8192 frames（186ms）而 `GlobalOffsetSeconds` 預設 0 的原因；
+`GetPlayLatency()` 只拿去提前排程打拍音，從不進判定。
+
+Unity 沒有播放游標 API（`AudioSettings.dspTime` 是**混音**游標），但它領先喇叭的距離可以算：
+`bufferLength × numBuffers / sampleRate`（`AudioSettings.GetDSPBufferSize`）。而
+`ChartSecondsFromDsp = rate×(dsp − anchor) + countIn`，所以 **dsp 退 L 秒 ⇔ 譜面時間退 rate×L 秒** ——
+一個常數，直接疊在 `GameplayClock.OffsetMs` 上（`ScreenGameplay.ApplyClockOffset`），不必動任何錨點。
+
+> **不變式：排程（`PlayScheduled`）一律走原始 `dspTime`，只有「讀時鐘」走播放游標。** 兩邊一起搬就抵銷了。
+
+**② 打拍音的前導靜音 → 排程自動提早（音檔不動）**
+
+`PlayScheduled` 排的是 **clip 的第 0 個取樣**，不是「聽得到的那一刻」。官方 `assist_tick.ogg` 前面有 ~30ms 空白
+（實測 44.1kHz、全長 81.4ms：前 26ms 全 0，起音 29.8ms、峰值 34.3ms）→ 每一聲 click 都晚 30ms 進耳朵。
+`ScreenGameplay.MeasureOnsetSec` 載入時量出來，`TickAssist` 排程時減掉（同 StepMania：提早排程、從不改音檔）。
+
+這種延遲特別惡毒：它**只污染耳朵、不污染眼睛** —— 音符的畫面位置是譜面時鐘畫出來的，所以「看著 note 打」
+量不到它，「聽著節拍器打」卻會白白多吃 30ms。兩個測試因此對不起來，整包還會被誤認成音效卡延遲。
+
+倒推（`TickAssist` 的註解有完整推導）：譜面時間 T 的 click 要在「時鐘讀到 T」那一刻進耳朵
+⇒ **排在 `Draw(T) − onset`**。輸出延遲 L 自己消掉了（它對時鐘和聲音一視同仁），只在「排得到的界線」
+`T > now + (L + onset)×rate`（＝ `TickLeadChartMs`）裡還留著。
+
+**③ 驅動延遲 → 寫死的平台常數 `ScreenGameplay.DriverLatencyMs = 33`**
+
+補完①，剩下的是 **FMOD 底下（WASAPI/驅動/喇叭）Unity 看不到的那一段**。沒有 API 問得到，只能實測。
+用打拍測試在兩種 buffer 下各量一次（聽節拍器打 100 下取中位數）：
+
+| DSP buffer | ① 算得到的 | 聽覺中位數 | 視覺中位數 | 殘差 ＝ ③ |
+|---|---|---|---|---|
+| 1024×4 @48k | 85.3 ms | +32.8 | +1.6 | **31.2 ms** |
+| 512×4 @48k | 42.7 ms | +33.2 | +4.4 | **28.8 ms** |
+
+**殘差不隨 buffer 改變** —— 若它正比於 FMOD 緩衝，512 下該掉到 15.6ms，實測沒掉。所以它是固定的驅動延遲，
+寫死即可。取 33（＝聽覺中位數）而不是 31：那 ~2ms 是輸入延遲（Update 輪詢＋鍵盤），一併吸收，
+**跟著音樂打的人 delta 才會真的落在 0**。
+
+推論：兩種 buffer 下需要的總補償都是同一個數 → `m_DSPBufferSize` 從此純粹是「會不會爆音」的取捨，
+**換它不必重新校時**。這正是「時鐘讀播放游標」換來的東西。
+
+osu!lazer 的處境與解法完全相同（`FramedBeatmapClock.WINDOWS_BASE_AUDIO_OFFSET = 15`，實驗性 WASAPI 再 −25，
+外加使用者 `AudioOffset`）—— 差別只在我們這個數字是實測的，不是猜的。
+
+於是 **`globalOffsetMs` 預設 0**，回歸本意：使用者的個人偏好（想打早/晚一點），以及別台機器驅動延遲不同時的微調。
+
+> **校時一定要用耳朵。**「看著 note 打」是拿時鐘畫出來的東西去對時鐘 —— 自我參照，
+> 它只量得到輸入延遲（本機 +1.6 ~ +4.4ms），**永遠量不到音訊延遲**。兩個測法的差值才是音訊延遲。
 
 單首 offset 的實作是把它加進**音樂的 count-in**（`ScreenGameplay.MusicCountInSec` = type-10 無聲數拍 ＋ 單首 offset），
 而 dsp ↔ 譜面時間的換算一律走這個值。錨點與 count-in 一起搬時「譜面時間 → dsp」的映射是不變的

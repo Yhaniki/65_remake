@@ -219,15 +219,18 @@ def main() -> int:
 
     order, kgn = catalog_by_stem(catalog)
 
-    # 既有手改：merge-preserve 用
+    # 舊檔：merge-preserve 用。**一律讀進來**（就算 --reseed 也要）——
+    # --reseed 的語意是「歌名整份重填」，不該把手調的 offsetMs 一起炸掉：那是人耳一首一首對出來的，
+    # 沒有任何地方能還原。歌名的保留才受 --reseed 控制（下面 keep_names）。
     prev: Dict[str, Dict] = {}
-    if out.exists() and not args.reseed:
+    if out.exists():
         try:
             for r in json.loads(out.read_text(encoding="utf-8")).get("songs", []):
                 if r.get("gn"):
                     prev[stem(r["gn"])] = r
         except Exception as e:
             print(f"[warn] 舊清單解析失敗，改為全新產生：{e}", file=sys.stderr)
+    keep_names = not args.reseed
 
     rows: List[Dict] = []
     n_songname = n_official = n_kgn = n_kept = n_new = n_fixed = 0
@@ -252,7 +255,7 @@ def main() -> int:
                 title, artist, src = fix[0], fix[1], "fixed"
                 n_fixed += 1
             # merge-preserve：SONGNAME 未涵蓋的曲，保留既有手改(SONGNAME 涵蓋的以 SONGNAME 為準)
-            keep = prev.get(s)
+            keep = prev.get(s) if keep_names else None
             if keep is not None:
                 title = keep.get("title", title)
                 artist = keep.get("artist", artist)
@@ -260,24 +263,36 @@ def main() -> int:
                 n_kept += 1
             else:
                 n_new += 1
-        rows.append({
+        row = {
             "gn": s,
             "fileId": off["fileId"] if off else base["fileId"],
             "bpm": off["bpm"] if off else base["bpm"],
             "src": src,                    # official=官方 songlist / kgn=沿用 k.gn（給你辨識哪些較可信）
             "title": title,
             "artist": artist,
-        })
+        }
+        # 單首 offset（毫秒，補「這首譜跟音檔沒對齊」）——**一律從舊檔原樣搬過來**。
+        # 它跟上面那套「歌名該用誰的」判定完全無關（SONGNAME 權不權威跟譜面對不對得齊是兩回事），
+        # 而且是人耳一首一首調出來的資料 —— 全量重寫要是把它弄丟，沒有任何地方能還原。
+        keep_row = prev.get(s)
+        if keep_row and keep_row.get("offsetMs"):
+            row["offsetMs"] = keep_row["offsetMs"]
+        rows.append(row)
 
     doc = {
         "schema": "song-name-overrides/2",
-        "note": ("手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist 會覆蓋 k.gn 顯示名。"
-                 "key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。"
+        "note": ("手動可編輯的全曲清單(繁體)。這是**唯一**一份手改的歌曲資料——song_catalog.json 是工具從 .gn "
+                 "重建的，改它會被蓋掉。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。"
+                 "title/artist 覆蓋 k.gn 顯示名，要改名直接改該行。"
+                 "offsetMs = 單首 offset(毫秒，補「這首譜跟音檔沒對齊」)：正 = 音樂延後播放，音符不動；"
+                 "在譜面編輯器用 F11/F12 邊聽邊調(它不會自動存)，滿意了自己把值寫進這裡。沒寫 = 0。"
+                 "機器的音訊延遲不歸它管(那個在 runtime 的譜面時鐘上自動補掉，全部歌一體適用)。"
                  "src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；"
                  "src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；"
                  "src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。"
                  "fileId/bpm/src 僅供辨識，runtime 不套用。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；"
-                 "其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。"),
+                 "其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填。"
+                 "offsetMs 則**一律保留**，重跑/reseed 都不會弄丟。"),
         "count": len(rows),
         "songs": rows,
     }

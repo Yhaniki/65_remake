@@ -64,6 +64,26 @@ namespace Sdo.Game
         /// <summary>目前的判定窗（畫誤差條要用）。</summary>
         public JudgmentWindows EditorWindows => _engine?.Windows;
 
+        /// <summary>打拍音檔的前導靜音（毫秒）—— 排程提早的量。校時面板要顯示（它會偽裝成音訊延遲）。</summary>
+        public double EditorTickOnsetMs => _tickOnsetSec * 1000.0;
+
+        /// <summary>
+        /// **波形顯示**要往早補的量（毫秒）＝ 聲音的 <see cref="DriverLatencyMs"/> ＋ 這個實測校出來的差
+        /// <see cref="WaveformExtraMs"/>。兩條路徑吃到的延遲不同，所以是兩個獨立的旋鈕、各自用眼睛/耳朵校：
+        ///   • 聲音（時鐘）走「解碼 → 混音 → 喇叭」，用 DriverLatencyMs 校（耳朵：聽節拍器 ≈ 0）；
+        ///   • 波形畫的是 clip 的**原始樣本**，跟聲音路徑差一段（Vorbis 解碼暖機等），用眼睛校（波形瞬態壓在音符上）。
+        /// 目前實測差是 <see cref="WaveformExtraMs"/>（本機 = −30 → 波形淨位移 33−30 ≈ 3ms，跟 libsndfile 量到的 +3 一致）。
+        ///
+        /// 純顯示：不碰音符時間、不碰音訊排程、更不是 per-song offset。改 DriverLatencyMs 波形會跟著動並維持這個差；
+        /// 若哪天在別台機器波形沒對準，只調 WaveformExtraMs 這一個數字。
+        /// </summary>
+        public const double WaveformExtraMs = -30.0;
+        public const double WaveformDecoderDelayMs = DriverLatencyMs + WaveformExtraMs;
+
+        /// <summary>譜面時鐘已自動扣掉的音訊延遲（毫秒）＝ 算得到的 DSP 緩衝 ＋ 寫死的驅動延遲常數。校時面板要顯示。</summary>
+        public double EditorDspLatencyMs => _outputLatencySec * 1000.0;
+        public double EditorDriverLatencyMs => DriverLatencyMs;
+
         /// <summary>全域判定 offset（毫秒）。補這台機器的整條延遲；正 = 判定時間往後 → 適合整體打太早的人。</summary>
         public double EditorGlobalOffsetMs
         {
@@ -262,7 +282,10 @@ namespace Sdo.Game
             double startDsp = AudioSettings.dspTime + lead;   // 音樂真正開始出聲的時刻
             _songStartDspTime = GameRate.AnchorForChartSeconds(startDsp, chartSec, _musicRate, MusicCountInSec);
             // 譜面時鐘也要在 startDsp 那一刻剛好等於 chartSec（timeAsDouble 吃 timeScale，所以餘裕要乘流速）。
-            _clockStart = Time.timeAsDouble - (chartSec - lead * _musicRate);
+            // 尾巴那項 = 把輸出延遲補償加回來：譜面時鐘一律減 rate×L（＝「時鐘讀的是正在出喇叭的位置」，見 ApplyClockOffset），
+            // 但**暫停中根本沒有聲音在出**，時鐘只能靠 wall 自走 —— 不加回去的話「暫停 + seek 到 X」會停在 X−rate×L，
+            // 編輯器就不 WYSIWYG 了（格線/波形/F11 全都讀 _nowMs）。播放中這一項不影響任何事：第一幀就會從音訊真值重新 seed。
+            _clockStart = Time.timeAsDouble - (chartSec + ClockLatencyChartMs / 1000.0 - lead * _musicRate);
             _pauseChartSec = chartSec;
             _clock.Reset();
             _nowMs = chartMs;

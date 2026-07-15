@@ -28,6 +28,18 @@ namespace Sdo.Game
             public int notesEasy, notesNormal, notesHard;
             public int durEasy, durNormal, durHard;   // seconds per difficulty
 
+            /// <summary>
+            /// 單首 offset（毫秒）——StepMania 的 song offset、osu 的 beatmap offset。補「這首譜跟音檔沒對齊」
+            /// （譜是別人打的、音檔換過版本）。**動的是音樂，不是音符**：正 = 音樂延後播放。
+            ///
+            /// 不在 song_catalog.json 裡（那個是工具重建的，手改會被蓋掉）—— 來源是 song_name_overrides.json
+            /// 的 <c>offsetMs</c> 欄，跟歌名一樣是**手改**的（見 <see cref="ApplyNameOverrides"/>）。
+            /// 沒寫就是 0。key 是 stem（sdomNNNN）→ k/t 兩份譜共用同一個值，本來就該如此：它們是同一個音檔。
+            ///
+            /// 跟機器的音訊延遲**無關**（那個在 ScreenGameplay 的時鐘上自動補掉了，全部歌一體適用）。
+            /// </summary>
+            public float offsetMs;
+
             /// <summary>Difficulty level for d (0=easy,1=normal,2=hard); -1 if unknown.</summary>
             public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
             public int NoteCount(int d) => d <= 0 ? notesEasy : (d == 1 ? notesNormal : notesHard);
@@ -41,18 +53,56 @@ namespace Sdo.Game
         }
         [Serializable] private class Catalog { public Entry[] songs = new Entry[0]; }   // populated by JsonUtility; init to silence CS0649
 
-        // Hand-editable name overrides (StreamingAssets/song_name_overrides.json), seeded from the
-        // official songlist.dat open songs. See BuildOverrideMap / tools/build_song_name_overrides.py.
-        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; }   // init to silence CS0649 (JsonUtility fills these)
+        // Hand-editable per-song data (StreamingAssets/song_name_overrides.json), seeded from the
+        // official songlist.dat open songs. See ApplyNameOverrides / tools/build_song_name_overrides.py.
+        // 名字 + 單首 offset 都住在這裡：它是**唯一**一份手改的歌曲資料，song_catalog.json 是工具重建的。
+        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; public float offsetMs; }   // init to silence CS0649 (JsonUtility fills these)
         [Serializable] private class OverrideDoc { public Override[] songs = new Override[0]; }
 
         private const string FileName = "song_catalog.json";
         private const string OverrideFileName = "song_name_overrides.json";
         private static Dictionary<string, Entry> _byGn;   // key = lowercase .gn filename
         private static List<Entry> _all;                  // in file order
+        private static List<Entry> _primary;              // k-only view of _all (lazy)
 
-        /// <summary>All catalog entries in file order (empty if no catalog).</summary>
+        /// <summary>All catalog entries in file order (empty if no catalog). Includes BOTH chart variants —
+        /// for a browsable list you almost always want <see cref="Primary"/> instead.</summary>
         public static IReadOnlyList<Entry> All { get { EnsureLoaded(); return _all; } }
+
+        /// <summary>
+        /// 每首歌在原始資料裡有**兩份譜**：sdomNNNN<b>k</b>.gn（鍵盤）與 sdomNNNN<b>t</b>.gn（毯子）。
+        /// 兩者共用同一個標題／曲師／音檔，但難度與音符數不同 —— 例 sdom0001：k = LV 3/4/5、easy 510 notes；
+        /// t = LV 1/3/5、easy 284 notes（毯子譜比較鬆）。
+        ///
+        /// 重製版是**純鍵盤**，所以任何「給人瀏覽的清單」都只該出現 k：不濾的話目錄的 4346 筆會讓每首歌
+        /// 在清單裡出現兩次（2175 首 × 2），而且因為 <see cref="ApplyNameOverrides"/> 是照 stem 蓋名字，
+        /// 兩列連標題都一模一樣，看起來就是整份清單重複。
+        ///
+        /// <see cref="All"/> 刻意**不濾**：以 gn 反查標題／曲師、字型預熱都需要兩種變體都在。
+        /// </summary>
+        public static bool IsPrimaryVariant(string gnPathOrName)
+        {
+            if (string.IsNullOrEmpty(gnPathOrName)) return false;
+            var name = Path.GetFileName(gnPathOrName).ToLowerInvariant();
+            if (name.EndsWith(".gn")) name = name.Substring(0, name.Length - 3);
+            return name.Length > 0 && name[name.Length - 1] == 'k';
+        }
+
+        /// <summary>只有鍵盤譜（k）的清單，檔案順序。**所有給人瀏覽的清單都該用這個**（選歌畫面、譜面編輯器），
+        /// 不是 <see cref="All"/>。名字已經套過 song_name_overrides.json。</summary>
+        public static IReadOnlyList<Entry> Primary
+        {
+            get
+            {
+                EnsureLoaded();
+                if (_primary == null)
+                {
+                    _primary = new List<Entry>();
+                    foreach (var e in _all) if (e != null && IsPrimaryVariant(e.gn)) _primary.Add(e);
+                }
+                return _primary;
+            }
+        }
 
         /// <summary>Look up by a .gn path or filename (case-insensitive). Null if absent / no catalog.</summary>
         public static Entry Get(string gnPathOrName)
@@ -65,6 +115,30 @@ namespace Sdo.Game
 
         public static string Title(string gnPathOrName) => Get(gnPathOrName)?.title;
         public static string Artist(string gnPathOrName) => Get(gnPathOrName)?.artist;
+
+        /// <summary>這首譜的單首 offset（毫秒）；沒設過 = 0。見 <see cref="Entry.offsetMs"/>。</summary>
+        public static float OffsetMs(string gnPathOrName) => Get(gnPathOrName)?.offsetMs ?? 0f;
+
+        /// <summary>
+        /// 這首歌是否符合搜尋字串 —— 比對 標題／曲師／gn 檔名／<b>fileId 編號</b>，全部是 case-insensitive 子字串。
+        /// 空字串／null／全空白 → 一律符合（＝不過濾）。純邏輯、不碰硬碟，給歌單搜尋用（見 SongCatalogSearchTests）。
+        ///
+        /// fileId 是歌曲編號，封面圖（<c>NNNN.PNG</c>）、試聽（<c>exper/NNNN.ogg</c>）、編舞（<c>DANCE/NNNN.DPS</c>）都用它，
+        /// 跟 gn 檔名裡的號碼**不一樣**：sdom0001<b>k</b>.gn 的 fileId 是 10001、sdom0001<b>t</b>.gn 是 1。
+        /// 所以「照封面上的編號找歌」只有這個欄位辦得到 —— 拿編號去比 gn 子字串是找不到的。
+        /// </summary>
+        public static bool Matches(Entry e, string query)
+        {
+            if (e == null) return false;
+            if (string.IsNullOrWhiteSpace(query)) return true;
+            query = query.Trim();
+            return Has(e.title, query) || Has(e.artist, query) || Has(e.gn, query)
+                || e.fileId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                       .IndexOf(query, StringComparison.Ordinal) >= 0;   // 編號一律 ASCII 數字 → Ordinal
+        }
+
+        private static bool Has(string hay, string needle)
+            => !string.IsNullOrEmpty(hay) && hay.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
 
         private static void EnsureLoaded()
         {
@@ -99,15 +173,20 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// Overlay the hand-editable name list (StreamingAssets/song_name_overrides.json) onto the
+        /// Overlay the hand-editable per-song list (StreamingAssets/song_name_overrides.json) onto the
         /// catalog: for every song whose gn-stem (sdomNNNN, without the k/t chart suffix) is listed,
-        /// replace title/artist. Songs absent from the override keep their k.gn-derived names.
+        /// apply <c>title</c> / <c>artist</c> / <c>offsetMs</c>. Songs absent from it keep their
+        /// k.gn-derived names and offset 0.
         ///
-        /// Why: some .gn headers carry stale/wrong titles (recycled file slots). The list is a
-        /// full, hand-editable roster (tools/build_song_name_overrides.py): open songs are pre-filled
-        /// from the authoritative official songlist.dat, the rest from k.gn — edit any line to fix a
-        /// name. Only display names are overridden; bpm/levels/note counts stay from the actual
-        /// chart. Missing/blank/malformed file -> catalog unchanged (k.gn names).
+        /// Why: some .gn headers carry stale/wrong titles (recycled file slots), and the chart's timing
+        /// sometimes doesn't line up with the .ogg. The list is a full, hand-editable roster
+        /// (tools/build_song_name_overrides.py): open songs are pre-filled from the authoritative official
+        /// songlist.dat, the rest from k.gn — edit any line to fix a name or dial in an offset.
+        ///
+        /// **這是唯一一份手改的歌曲資料。** song_catalog.json 是工具從 .gn 重建的（bpm / 難度 / 音符數都以實際
+        /// 譜面為準，重掃會蓋掉），所以任何「人決定的東西」都只能住在這裡。
+        ///
+        /// 檔案不存在／空的／壞掉 → 目錄原樣不動（k.gn 的名字、offset 0）。
         /// </summary>
         private static void ApplyNameOverrides()
         {
@@ -132,9 +211,10 @@ namespace Sdo.Game
             foreach (var e in _all)
             {
                 if (e == null || string.IsNullOrEmpty(e.gn)) continue;
-                if (!byStem.TryGetValue(Stem(e.gn), out var o)) continue;   // not listed -> keep k.gn name
+                if (!byStem.TryGetValue(Stem(e.gn), out var o)) continue;   // not listed -> keep k.gn name, offset 0
                 if (!string.IsNullOrEmpty(o.title)) e.title = o.title;
                 if (!string.IsNullOrEmpty(o.artist)) e.artist = o.artist;
+                e.offsetMs = o.offsetMs;   // 沒寫 = 0（k/t 兩份譜拿到同一個值：同一個音檔）
             }
         }
 

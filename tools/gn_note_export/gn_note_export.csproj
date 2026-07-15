@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    gn_note_export — 把每首 k.gn 的「音符時間 + 音樂起點 marker」導成 JSON，給 measure_song_offsets.py 用。
+
+    關鍵：它直接編譯**遊戲實際在用的那份** Sdo.Osu 原始碼（GnChart / OsuBeatmap），不另外寫一份 Python
+    .gn 解析器 —— 自己重寫一份的話，量出來的偏差有可能只是兩個 parser 的分歧，那整個量測就沒有意義了。
+    Sdo.Osu 是 noEngineReferences（純邏輯），所以可以脫離 Unity 直接編。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>gn_note_export</AssemblyName>
+    <RootNamespace>GnNoteExport</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../65/My project/Assets/Scripts/Sdo.Osu/GnChart.cs" />
+    <Compile Include="../../65/My project/Assets/Scripts/Sdo.Osu/OsuBeatmap.cs" />
+    <Compile Include="../../65/My project/Assets/Scripts/Sdo.Osu/OsuHitObject.cs" />
+  </ItemGroup>
+</Project>

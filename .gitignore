@@ -136,6 +136,5 @@ procmon_tool/runs/
 /65/My project/log.txt
 /65/My project/log.txt.prev
 
-# 譜面編輯器 F11/F12 調出來的單首 offset（使用者資料，不進版控）
-65/My project/song_offsets.ini
-song_offsets.ini
+# gn_note_export 的輸出（5MB 生成檔，隨時能用 dotnet run --project tools/gn_note_export 重跑）
+tools/kgn_export/gn_notes.json

@@ -53,7 +53,7 @@ namespace Sdo.Game
         public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
 
         /// <summary>
-        /// 單首歌的 offset（毫秒，<see cref="Sdo.Settings.SongOffsets"/>）：補「這首譜跟音檔沒對齊」。
+        /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_name_overrides.json）：補「這首譜跟音檔沒對齊」。
         /// <b>動的是音樂，不是音符</b>（同 StepMania：你在調的是音樂相對譜面的位置）—— 它加在音樂的
         /// count-in 上（<see cref="MusicCountInSec"/>），所以譜面時鐘/音符/判定線都不動，只有音樂前後挪。
         /// 正 = 音樂往後（延後播放）＝ 音符相對音樂變早。
@@ -61,12 +61,86 @@ namespace Sdo.Game
         /// </summary>
         public float songOffsetMs;
 
-        // 全域 offset（config.ini [Room] globalOffsetMs）：補這台機器「聲音→耳朵→手→鍵盤→引擎」的整條延遲。
-        // 這個**動的是譜面時鐘**（判定時間），跟單首 offset 是兩回事。
+        // 全域 offset（config.ini [Room] globalOffsetMs）：**使用者的個人偏好**，預設 0。
+        // 機器的音訊延遲已經由下面兩段自動補掉了，這裡只留給「我就是想打早一點/晚一點」的人。
         // 正 = 譜面時鐘往前推 → 同一下打擊的 delta 變大（判得比較晚）→ 整體打太早的人要調正的。用打拍測試量。
         private float _globalOffsetMs = Sdo.Settings.RoomConfig.globalOffsetMs;
 
-        private void ApplyClockOffset() => _clock.OffsetMs = _globalOffsetMs;
+        // ---- 輸出延遲補償（StepMania 的核心作法）----
+        //
+        // StepMania 的歌曲時鐘**不是**「我送了多少音訊出去」，而是去問音效卡「**現在正從喇叭出來的是第幾個取樣**」
+        // （DirectSound 的播放游標 → RageSound::GetPositionSecondsInternal → pos_map.Search → GameState::m_fMusicSeconds）。
+        // 因此緩衝區裡那一大段「已混音、還沒出喇叭」的音訊，從來不算進時鐘裡 —— 輸出延遲在判定路徑上**自動抵銷**。
+        // 它敢把 Windows DSound 的 writeahead 開到 8192 frames（186ms）而 GlobalOffsetSeconds 預設 0，就是這個原因；
+        // GetPlayLatency() 只拿去「提前排程」打拍音（ScreenGameplay.cpp:1220-1225），從不進判定。
+        //
+        // Unity 沒有播放游標 API —— AudioSettings.dspTime 是**混音**游標，它領先喇叭一整個輸出緩衝。所以我們用「算」的
+        // 補回同一件事：把譜面時鐘往回推那段距離，讓 CurrentMs 代表「此刻正在出喇叭的那個譜面時間」。
+        // ChartSecondsFromDsp = rate×(dsp − anchor) + countIn，所以 dsp 退 L 秒 ⇔ 譜面時間退 rate×L 秒
+        // —— 一個常數，直接疊在 clock offset 上就行，不必動任何錨點。
+        //
+        // 關鍵不變式：**排程（PlayScheduled）一律走原始 dspTime，只有「讀時鐘」走播放游標。** 兩者若一起搬就抵銷掉了。
+        // 於是：譜面 T 的打拍音排在 raw dsp(T) → L 秒後出喇叭 → 那一刻時鐘剛好讀到 T；音符也在那一刻通過判定線。
+        // 聽到的 click、看到的音符、判定的時間三者對齊。
+        //
+        // L 由兩段組成：
+        private double _outputLatencySec;   // ① FMOD 的混音緩衝（bufferLength × numBuffers / sampleRate）—— 算得到，隨設定變
+
+        /// <summary>
+        /// ② 混音緩衝**以外**、Unity 沒有 API 看得到的那段輸出延遲 —— 只能實測後寫死。
+        ///
+        /// 這個值只補**聲音**路徑（時鐘）。編輯器**波形**是另一條路徑（畫 clip 原始樣本），實測要多補 30ms
+        /// —— 見 <see cref="WaveformDecoderDelayMs"/>（= 這個值 + 30）。兩者相關但不相等：波形多吃到 Vorbis
+        /// 解碼的暖機，聲音路徑上那段被別的環節吸收了。改這個值時波形會跟著動並維持 +30 的差。
+        ///
+        /// 本機用打拍測試量出來的（打拍測試面板 F2，聽節拍器打 100 下取中位數）：
+        ///
+        /// | DSP buffer | ① 算得到的 | 聽覺中位數 | 視覺中位數 | 殘差 = ② |
+        /// |---|---|---|---|---|
+        /// | 1024×4 @48k | 85.3 ms | +32.8 | +1.6 | **31.2 ms** |
+        /// | 512×4 @48k | 42.7 ms | +33.2 | +4.4 | **28.8 ms** |
+        ///
+        /// **殘差不隨 buffer 改變**（若它正比於 FMOD 緩衝，512 下該掉到 15.6ms，實測沒掉）→ 確認是 buffer 以外的固定量。
+        /// 於是兩種 buffer 下需要的補償都是同一個 ~33ms，<c>m_DSPBufferSize</c> 從此純粹是「會不會爆音」的取捨，
+        /// 換它不必重新校時 —— 這正是「時鐘讀播放游標」換來的。
+        ///
+        /// 取 33（＝聽覺中位數）而不是 31：那 ~2ms 的差是**輸入延遲**（Update 輪詢 + 鍵盤），
+        /// 一併吸收掉，跟著音樂打的人 delta 才會真的落在 0。聽感（耳朵）與波形（眼睛）該落在同一個數字上——
+        /// 兩者是同一個解碼暖機，可以互相驗證：調到這個值時，聽節拍器 ≈ 0 且波形瞬態壓在音符上。
+        ///
+        /// osu!lazer 的處境與解法完全相同 —— 它也量不到，也是寫死一個平台常數再讓使用者微調
+        /// （<c>FramedBeatmapClock.WINDOWS_BASE_AUDIO_OFFSET = 15</c> / 實驗性 WASAPI 再 −25）。
+        /// 差別只在我們這個數字是這台機器實測的，不是猜的。別台機器有出入 → 調這個值（聽感＋波形一起校）。
+        /// </summary>
+        private const double DriverLatencyMs = 33.0;
+
+        private static double MeasureOutputLatencySec()
+        {
+            AudioSettings.GetDSPBufferSize(out int bufferLength, out int numBuffers);
+            int rate = AudioSettings.outputSampleRate;
+            if (bufferLength <= 0 || numBuffers <= 0 || rate <= 0) return 0.0;
+            return (double)bufferLength * numBuffers / rate;
+        }
+
+        /// <summary>譜面時鐘要往回推的總量（真實秒）＝ ① 算得到的混音緩衝 ＋ ② 量不到的驅動延遲常數。</summary>
+        private double ClockLatencySec => _outputLatencySec + DriverLatencyMs / 1000.0;
+
+        /// <summary>同上，換算成**譜面毫秒**（流速 r 時，真實 L 秒 = r×L 秒的譜面時間）。</summary>
+        private double ClockLatencyChartMs => ClockLatencySec * 1000.0 * _musicRate;
+
+        // 時鐘 offset = 使用者偏好 − 輸出延遲（後者就是「讀播放游標而不是混音游標」的等價量）。
+        // rate 會變 → SetGameRate 之後必須重算；換音訊裝置也會變 → OnAudioConfigurationChanged 重量。
+        private void ApplyClockOffset() => _clock.OffsetMs = _globalOffsetMs - ClockLatencyChartMs;
+
+        private void OnAudioConfigChanged(bool deviceChanged)
+        {
+            _outputLatencySec = MeasureOutputLatencySec();   // 換裝置 → buffer/取樣率可能全變
+            ApplyClockOffset();
+        }
+
+        // AudioSettings.OnAudioConfigurationChanged 是**靜態**事件：編輯器每按一次 F2 就重建一次 ScreenGameplay，
+        // 不解除的話舊實例會留在委派鏈上（洩漏；裝置一變就對著已銷毀的物件呼叫）。
+        private void OnDestroy() => AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
 
         /// <summary>
         /// 音樂真正的 count-in（秒）＝ 譜面的 type-10 無聲數拍 ＋ 單首 offset。
@@ -168,6 +242,7 @@ namespace Sdo.Game
         // 排程走音訊時鐘(PlayScheduled),不是「這幀到了就播」,所以不吃 frame rate 抖動。
         private readonly AssistTick _tick = new AssistTick();
         private AudioClip _tickClip;
+        private double _tickOnsetSec;           // 打拍音檔開頭的前導靜音(秒) —— 排程要提早這麼多,見 MeasureOnsetSec
         private AudioSource[] _tickVoices;      // 小型輪替池:密集 16 分音符時,前一聲還在響就換下一個音源
         private int _tickVoice;
         private const int TickVoices = 8;
@@ -831,7 +906,9 @@ namespace Sdo.Game
             // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
             // 精度在 config.ini [Room] judgeLevel 手改(1~8、9=JUSTICE)。
             _engine = new ManiaJudgmentEngine(JudgmentWindows.FromStepManiaJudge(Sdo.Settings.RoomConfig.judgeLevel));
-            ApplyClockOffset();   // 全域 offset（這台機器的延遲）+ 單首 offset（這首譜跟音檔沒對齊）
+            _outputLatencySec = MeasureOutputLatencySec();                       // 這台機器的輸出緩衝有多長（= 混音游標領先喇叭多久）
+            AudioSettings.OnAudioConfigurationChanged += OnAudioConfigChanged;   // 換音訊裝置 → buffer/取樣率變 → 重量
+            ApplyClockOffset();   // 全域 offset（這台機器的延遲）− 輸出延遲（讓時鐘＝正在出喇叭的位置，同 StepMania）
             _score = new ScoreProcessor(_map.TotalNotes);
             _health = new HealthProcessor(healthLevel);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
@@ -964,14 +1041,14 @@ namespace Sdo.Game
         private void BuildAssistTick()
         {
             _tick.Load(NoteStartTimes());
-            _tickClip = SynthClapClip();          // 先掛 fallback,音源池才有 clip 可用
             _tickVoices = new AudioSource[TickVoices];
             for (int i = 0; i < TickVoices; i++)
             {
                 var a = gameObject.AddComponent<AudioSource>();
-                a.clip = _tickClip; a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
+                a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
                 _tickVoices[i] = a;
             }
+            SetTickClip(SynthClapClip());         // 先掛 fallback,音源池才有 clip 可用(合成的 clap 沒有前導靜音)
             StartCoroutine(LoadTickClipCo());     // 官方 clap 載好就換上去(遠早於 READY/GO 結束,不影響第一個 tick)
         }
 
@@ -997,8 +1074,7 @@ namespace Sdo.Game
                     if (req.result != UnityWebRequest.Result.Success) { Debug.LogWarning("[tick] " + path + ": " + req.error); continue; }
                     var clip = DownloadHandlerAudioClip.GetContent(req);
                     if (clip == null) continue;
-                    _tickClip = clip;
-                    if (_tickVoices != null) foreach (var v in _tickVoices) if (v != null) v.clip = clip;
+                    SetTickClip(clip);   // 順便量前導靜音（官方那顆 clap 前面有 ~30ms 空白 → 排程要提早）
                     yield break;
                 }
             }
@@ -1007,23 +1083,86 @@ namespace Sdo.Game
             Debug.LogWarning($"[tick] 找不到 {TickSeName}.ogg/.wav（找過 {SdoExtracted.SeDir}）→ 改用合成的 clap");
         }
 
+        /// <summary>
+        /// 音檔開頭到「起音」的時間（秒）—— 排程時要提早這麼多，音檔本身不動。
+        ///
+        /// <c>PlayScheduled</c> 排的是 <b>clip 的第 0 個取樣</b>，不是「聽得到的那一刻」。官方的
+        /// <c>assist_tick.ogg</c>（StepMania theme 的 clap）前面有一段空白 —— 實測 44.1kHz / 全長 81.4ms，
+        /// 前 26ms 完全是 0，起音在 ~29.8ms、峰值在 34.3ms。於是每一聲 click 都比排程時間晚 ~30ms 才進耳朵。
+        ///
+        /// 這在校時上特別惡毒：它是一段**只污染耳朵、不污染眼睛**的假延遲 —— 音符的畫面位置是譜面時鐘畫出來的
+        /// （看著 note 打 → 量到 ~+5ms），但聽著 click 打會白白多吃這 30ms，於是兩個測試永遠對不起來，
+        /// 整包還會被誤認成「音效卡延遲」。
+        ///
+        /// 補法照 StepMania：**提早排程，不動音檔**（它的 tick 也是把落點寫進 RageSoundParams::StartTime，
+        /// 從不去改 wav）。切音檔還多一個風險 —— 起音偵測抓歪就把起音本身削掉了。
+        ///
+        /// 起音 = 第一個達到峰值 1% 的取樣。這顆 clap 從 1% 爬到 50% 只要 3.3ms，所以門檻取哪裡差不了幾 ms，
+        /// 而且那點殘差是常數，會被 globalOffsetMs 一併吸收。
+        /// </summary>
+        private static double MeasureOnsetSec(AudioClip clip)
+        {
+            if (clip == null || clip.samples <= 0 || clip.frequency <= 0) return 0.0;
+            int ch = Mathf.Max(1, clip.channels);
+            var data = new float[clip.samples * ch];
+            if (!clip.GetData(data, 0)) return 0.0;   // 壓縮在記憶體裡的 clip 讀不到 → 當作沒有前導靜音
+
+            float peak = 0f;
+            for (int i = 0; i < data.Length; i++) { float a = Mathf.Abs(data[i]); if (a > peak) peak = a; }
+            if (peak <= 1e-6f) return 0.0;            // 整段靜音
+
+            float th = peak * 0.01f;
+            for (int i = 0; i < data.Length; i++)
+                if (Mathf.Abs(data[i]) >= th) return (i / ch) / (double)clip.frequency;
+            return 0.0;
+        }
+
+        private void SetTickClip(AudioClip clip)
+        {
+            _tickClip = clip;
+            _tickOnsetSec = MeasureOnsetSec(clip);
+            if (_tickVoices != null) foreach (var v in _tickVoices) if (v != null) v.clip = clip;
+            if (_tickOnsetSec > 0.001)
+                Debug.Log($"[tick] 前導靜音 {_tickOnsetSec * 1000.0:0.0} ms → 排程提早這麼多"
+                        + "（PlayScheduled 排的是第 0 取樣；不補的話每一聲都晚這麼多，校時會誤認成音效卡延遲）");
+        }
+
         private IEnumerable<double> NoteStartTimes()
         {
             foreach (var n in _notes) yield return n.Note.StartTimeMs;
         }
 
-        // 每幀:把「地平線(now + lookahead)之前」的 tick 全部排進音訊時鐘。tick 的譜面時間 → dspTime 用的是**音樂本身
-        // 的映射**(_songStartDspTime + (t − 數拍前導)),跟歌曲同一支時鐘,所以 click 落點是取樣級精準,不受 frame rate 影響。
-        // 關閉時每幀把游標推到現在:中途才按 F7 打開,只會從當下的音符開始響(不會把前面累積的一次倒光)。
+        // 每幀:把「地平線之前」的 tick 全部排進音訊時鐘。tick 的譜面時間 → dspTime 用的是**音樂本身的映射**
+        // (_songStartDspTime + (t − 數拍前導)),跟歌曲同一支時鐘,所以 click 落點是取樣級精準,不受 frame rate 影響。
+        //
+        // ---- 要提早多少排? 從「聽得到的那一刻」倒推 ----
+        // 目標:譜面時間 T 的 click,要在**時鐘讀到 T** 的那一刻進耳朵。
+        //   • 時鐘 = 播放游標 = ChartFromDsp(dspNow) − L·rate  (L = 輸出延遲,見 ApplyClockOffset)
+        //     → 時鐘讀到 T 的時刻是 dspTime = Draw(T) + L      (Draw = DspFromChartSeconds)
+        //   • 排在 dsp D 的聲音,要 L 之後才出喇叭,而且音檔前面還有 onset 秒的靜音
+        //     → 實際聽到的時刻是 dspTime = D + L + onset
+        //   兩式相等 ⇒ **D = Draw(T) − onset**。輸出延遲 L 自己消掉了(它對時鐘和聲音一視同仁),
+        //   真正要補的只有音檔的前導靜音 —— 而那是「提早排程」,音檔一個位元組都不用動(同 StepMania)。
+        //
+        // 排得到的條件是 D > dspNow,代進去化簡 ⇒ T > now + (L + onset)·rate = now + TickLeadChartMs。
+        // 所以地平線的起點要推到那裡:早於它的 tick 已經來不及排進混音,撿了也只會被 clamp 成「立刻播」而慢半拍。
+        // (StepMania 同一句:fPositionSeconds += SOUND->GetPlayLatency() + TickEarly + 0.25f — ScreenGameplay.cpp:1220-1225)
+        //
+        // 關閉時每幀把游標推到地平線起點:中途才按 F7 打開只會從當下的音符開始響(不會把前面累積的一次倒光)。
+        private double TickLeadChartMs => (ClockLatencySec + _tickOnsetSec) * 1000.0 * _musicRate;
+
         private void TickAssist(double nowMs)
         {
             if (_tickVoices == null) return;
-            if (!assistTick || _ended || _paused || Time.timeScale <= 0f) { _tick.Rewind(nowMs); return; }
-            double horizon = nowMs + AssistTick.DefaultLookaheadMs;
+            double schedulableMs = nowMs + TickLeadChartMs;   // 早於此的 tick 已經來不及排準了
+            if (!assistTick || _ended || _paused || Time.timeScale <= 0f) { _tick.Rewind(schedulableMs); return; }
+            double horizon = schedulableMs + AssistTick.DefaultLookaheadMs;
             while (_tick.TryDequeue(horizon, out double tMs))
             {
                 // 譜面時間 → dsp:除以流速(StepMania 同一句 fSecondsUntil /= m_fMusicRate,「2x music rate 就是等一半的時間」)
-                double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, MusicCountInSec);
+                // 再減掉音檔的前導靜音 → 起音(而不是第 0 取樣)才落在音符上。
+                double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, MusicCountInSec)
+                           - _tickOnsetSec;
                 var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
                 v.volume = AudioMix.Sfx;
                 v.Stop();   // 輪到的音源可能還在響上一聲(超密集譜)→ 蓋掉
@@ -1036,7 +1175,7 @@ namespace Sdo.Game
         {
             if (_tickVoices == null) return;
             foreach (var v in _tickVoices) if (v != null) v.Stop();
-            _tick.Rewind(_nowMs);
+            _tick.Rewind(_nowMs + TickLeadChartMs);   // 同 TickAssist:早於此的 tick 已經來不及排準,別撿
         }
 
         // F7 按下去當場響一聲(開/關的聽覺回饋 — 這畫面沒有 StepMania 那條除錯字幕)
@@ -3551,6 +3690,7 @@ namespace Sdo.Game
 
             _musicRate = rate; _timeScale = (float)rate;
             if (!_paused) Time.timeScale = _timeScale;
+            ApplyClockOffset();   // 輸出延遲補償是「rate × L」→ 流速一變就要重算（見 ClockLatencyChartMs）
 
             _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSecNow, rate, MusicCountInSec);
             if (_audio != null && _audio.clip != null)

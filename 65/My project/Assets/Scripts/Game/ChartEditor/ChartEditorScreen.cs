@@ -92,12 +92,13 @@ namespace Sdo.Game
         }
 
         // 預設要開哪一首：編號（fileId）最大的那首 —— 也就是最後匯入的新歌，通常就是正要看的那首。
-        // 條件是「有譜」而且「DATA 樹裡真的有檔案」：目錄有 4346 筆，但有些歌的檔案不在這棵樹裡
+        // 條件是「有譜」而且「DATA 樹裡真的有檔案」：目錄裡有些歌的檔案不在這棵樹裡
         // （例如第一筆 sdom0.gn 新手教学），只看目錄會開出一片空白。
+        // 走 Primary（只有鍵盤譜 k）：毯子譜 t 不該被開起來 —— 跟歌單同一套規則。
         private static string PickDefaultGn()
         {
             SongCatalog.Entry best = null;
-            foreach (var e in SongCatalog.All)
+            foreach (var e in SongCatalog.Primary)
             {
                 if (best != null && e.fileId <= best.fileId) continue;   // 先比編號，再去碰硬碟
                 if (!(e.HasChart(0) || e.HasChart(1) || e.HasChart(2))) continue;
@@ -149,7 +150,7 @@ namespace Sdo.Game
             game.effectScene = false;            // 不放場景常駐特效
             game.scrollSpeedMul = _speed;
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
-            _songOffset = SongOffsets.Get(_gn);   // 這首歌上次調好的 offset（F11/F12）
+            _songOffset = SongCatalog.OffsetMs(_gn);   // 這首譜的 offset：手改在 song_name_overrides.json 的 offsetMs
             game.songOffsetMs = (float)_songOffset;
             game.EditorOnHit = OnHit;             // 跟著打 → 誤差條（一般編譜模式也有，不必進打拍測試）
             _game = game;
@@ -301,7 +302,7 @@ namespace Sdo.Game
         private void Update()
         {
             if (Input.GetKeyDown(KeyCode.F1)) _showList = !_showList;
-            if (Input.GetKeyDown(KeyCode.F2)) ToggleBeatTest();
+            if (Input.GetKeyDown(KeyCode.F4)) ToggleBeatTest();   // 打拍測試切換（雙向）—— 要在 _beatTest 的 return 之前，才切得出來
             if (Input.GetKeyDown(KeyCode.Escape) && _showList) _showList = false;
             if (_game == null || !_game.EditorReady) return;
 
@@ -323,19 +324,23 @@ namespace Sdo.Game
 
             if (Input.GetKeyDown(KeyCode.F3) && _overlay != null) _overlay.showWaveform = !_overlay.showWaveform;
             if (Input.GetKeyDown(KeyCode.G) && _overlay != null) _overlay.showGrid = !_overlay.showGrid;
-            if (Input.GetKeyDown(KeyCode.F4) && _overlay != null) _overlay.showHitError = !_overlay.showHitError;
+            if (Input.GetKeyDown(KeyCode.F2) && _overlay != null) _overlay.showHitError = !_overlay.showHitError;
             if (Input.GetKeyDown(KeyCode.Tab)) CycleDifficulty();
             if (Input.GetKeyDown(KeyCode.Backspace)) { _stats.Clear(); _misses = 0; _overlay?.ClearHits(); }   // 清掉打擊紀錄
 
             if (Input.GetKeyDown(KeyCode.Home)) _game.EditorSeekMs(0);
             if (Input.GetKeyDown(KeyCode.End)) _game.EditorSeekMs(_game.EditorEndMs);
 
-            // 單首 offset（StepMania 編輯器的 F11/F12）：一次 0.02 秒，按住 Alt 微調 0.001 秒。
-            // 正 = 音符相對音樂往後。改完立刻寫回 song_offsets.ini，正式遊玩就吃得到。
+            // 單首 offset（StepMania 編輯器的 F11/F12）：一次 20ms，按住 Alt 微調 1ms。正 = 音樂延後播放。
+            // **調的時候不寫檔** —— 要留下來按 Ctrl+S（下面），才寫進 song_name_overrides.json。
             bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-            double stepMs = (alt ? SongOffsets.FineStepSec : SongOffsets.StepSec) * 1000.0;
+            double stepMs = alt ? SongOffsetFineStepMs : SongOffsetStepMs;
             if (Input.GetKeyDown(KeyCode.F11)) NudgeSongOffset(-stepMs);
             if (Input.GetKeyDown(KeyCode.F12)) NudgeSongOffset(+stepMs);
+
+            // Ctrl+S：把目前的單首 offset 存進 song_name_overrides.json（只動那一筆的 offsetMs，其餘位元組不變）
+            if (Input.GetKeyDown(KeyCode.S) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
+                SaveSongOffset();
 
             // Ctrl+↑/↓ = 顯示縮放（StepMania 的 Ctrl+Up/Down 改 scroll speed）：↓ 變窄、↑ 變寬。
             bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
@@ -354,13 +359,51 @@ namespace Sdo.Game
             if (Mathf.Abs(wheel) > 0.01f) SeekBySnap(wheel > 0f ? -1 : +1);
         }
 
-        // 單首 offset：即時套進時鐘（音符會當場位移，跟 StepMania 一樣邊聽邊調）＋寫回 song_offsets.ini。
+        // 單首 offset 的調整步進（StepMania 編輯器：F11/F12 一次 0.02 秒，Alt 微調 0.001 秒）。
+        private const double SongOffsetStepMs = 20.0, SongOffsetFineStepMs = 1.0;
+        // 合理範圍：超過這個量就不是 offset 沒對好，是譜/音檔根本配錯了。
+        private const float SongOffsetMinMs = -2000f, SongOffsetMaxMs = 2000f;
+
+        // 單首 offset：即時套進時鐘（音樂會當場前後挪，跟 StepMania 一樣邊聽邊調）。
+        // **不寫檔** —— 值只活在這次執行裡。要留著就自己抄進 song_name_overrides.json（面板會印出那一行）。
         private void NudgeSongOffset(double deltaMs)
         {
             if (_game == null || string.IsNullOrEmpty(_gn)) return;
-            _songOffset = Math.Round(Mathf.Clamp((float)(_songOffset + deltaMs), SongOffsets.MinMs, SongOffsets.MaxMs), 3);
+            _songOffset = Math.Round(Mathf.Clamp((float)(_songOffset + deltaMs), SongOffsetMinMs, SongOffsetMaxMs), 3);
             _game.EditorSongOffsetMs = _songOffset;
-            SongOffsets.Set(_gn, (float)_songOffset);
+        }
+
+        /// <summary>目前這首的 gn 詞幹（sdomNNNN）—— song_name_overrides.json 的 key，k/t 共用一筆（同一個音檔）。</summary>
+        private string Stem()
+        {
+            var s = Path.GetFileNameWithoutExtension(_gn ?? "").ToLowerInvariant();
+            if (s.Length > 0 && (s[s.Length - 1] == 'k' || s[s.Length - 1] == 't')) s = s.Substring(0, s.Length - 1);
+            return s;
+        }
+
+        // Ctrl+S：把 F11/F12 調出來的 offset 落地。同時更新記憶體裡的 catalog，正式遊玩（FrontendApp 讀 SongCatalog）
+        // 這次執行就吃得到，不必重開。
+        private void SaveSongOffset()
+        {
+            if (string.IsNullOrEmpty(_gn)) return;
+            if (SongOverridesWriter.SetOffset(Stem(), _songOffset, out string msg))
+            {
+                var e = SongCatalog.Get(_gn);
+                if (e != null) e.offsetMs = (float)_songOffset;   // k 這筆；t 那筆下次重載 catalog 時才會同步（同一個 stem）
+            }
+            _status = msg;
+        }
+
+        // 上一首 / 下一首：走跟歌單同一份順序（SongCatalog.Primary，只有鍵盤譜 k）。
+        private void StepSong(int dir)
+        {
+            var list = SongCatalog.Primary;
+            if (list.Count == 0 || _loading) return;
+            int cur = -1;
+            for (int i = 0; i < list.Count; i++)
+                if (string.Equals(list[i].gn, _gn, StringComparison.OrdinalIgnoreCase)) { cur = i; break; }
+            int next = cur < 0 ? 0 : (cur + dir + list.Count) % list.Count;   // 頭尾相接，撞到邊界不會卡住
+            LoadSong(list[next].gn, _diff);
         }
 
         private BeatGrid Grid()
@@ -427,7 +470,11 @@ namespace Sdo.Game
             GUILayout.BeginArea(new Rect(6, 4, Screen.width - 12, 46));
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("歌單 (F1)", GUILayout.Width(80))) _showList = !_showList;
-            if (GUILayout.Button("打拍測試 (F2)", GUILayout.Width(100))) ToggleBeatTest();
+            GUI.enabled = !_loading;
+            if (GUILayout.Button("◀ 上一首", GUILayout.Width(70))) StepSong(-1);
+            if (GUILayout.Button("下一首 ▶", GUILayout.Width(70))) StepSong(+1);
+            GUI.enabled = true;
+            if (GUILayout.Button("打拍測試 (F4)", GUILayout.Width(100))) ToggleBeatTest();
             GUILayout.Label($"♪ {title}   [{_gn}]", box, GUILayout.Width(280));
 
             for (int d = 0; d < 3; d++)
@@ -485,10 +532,18 @@ namespace Sdo.Game
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
 
+            // 單首 offset 不寫檔（值只活在這次執行裡）→ 把可以直接貼進 song_name_overrides.json 的那一行印出來。
+            // 存檔提示 / 存檔結果：offset 調了但還沒存 → 提醒 Ctrl+S（存完 _status 會蓋掉這行）
+            if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
+                GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
+                    $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_name_overrides.json（{Stem()}）");
+            else if (!string.IsNullOrEmpty(_status))
+                GUI.Label(new Rect(6, 52, Screen.width - 12, 20f), _status);
+
             GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
                 "空白=播放/暫停  ↑↓=一格  Ctrl+↑↓=區域窄/寬  PgUp/PgDn=一小節  ←→=格線細分" +
                 (_overlay != null ? $"（每拍 {_overlay.subdivisions} 格）" : "") +
-                "  A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  F1=歌單  F2=打拍測試  F3=波形  F4=誤差條  G=格線  Tab=難度");
+                "  A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  Ctrl+S=存offset  F1=歌單  F4=打拍測試  F3=波形  F2=誤差條  G=格線  Tab=難度");
 
             if (_showList) DrawSongList();
         }
@@ -510,7 +565,7 @@ namespace Sdo.Game
 
             GUILayout.BeginArea(new Rect(6, 3, Screen.width - 12, 26));
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("← 回譜面 (F2)", GUILayout.Width(110))) ToggleBeatTest();
+            if (GUILayout.Button("← 回譜面 (F4)", GUILayout.Width(110))) ToggleBeatTest();
             GUILayout.Label("打拍測試：跟著節拍音打 R 軌（D 或 →）", box, GUILayout.Width(260));
 
             GUILayout.Label("BPM", GUILayout.Width(32));
@@ -563,6 +618,18 @@ namespace Sdo.Game
             GUILayout.Space(6);
             DrawHistogram(GUILayoutUtility.GetRect(PanelW - 20, 120));
 
+            // 已經自動補掉的三個量，攤開來 —— 這裡量到的殘差就是「這三個以外」還剩下的東西（理想 ≈ 0）。
+            //   ① DSP 混音緩衝：算得到，時鐘扣掉它（＝ StepMania 的「時鐘讀播放游標」）。
+            //   ② 驅動延遲：Unity 量不到，寫死的常數（ScreenGameplay.DriverLatencyMs，本機實測）。
+            //   ③ 打拍音檔的前導靜音：排程提早它（音檔不動，同 StepMania）。它只污染耳朵、不污染眼睛。
+            if (ready)
+            {
+                AudioSettings.GetDSPBufferSize(out int dspBuf, out int dspNumBuf);
+                GUILayout.Label($"時鐘已扣 {_game.EditorDspLatencyMs + _game.EditorDriverLatencyMs:0.0} ms"
+                              + $"（DSP {dspBuf}×{dspNumBuf} = {_game.EditorDspLatencyMs:0.0} ＋ 驅動常數 {_game.EditorDriverLatencyMs:0.0}）");
+                GUILayout.Label($"打拍音前導靜音 {_game.EditorTickOnsetMs:0.0} ms → 排程已提早這麼多");
+            }
+
             GUILayout.Space(6);
             double suggested = _stats.SuggestedOffset(_globalOffset);
             bool enough = n >= 20;
@@ -589,7 +656,7 @@ namespace Sdo.Game
             GUILayout.EndArea();
 
             GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
-                "空白=播放/暫停   D 或 → =打右軌   Backspace=重來   F2=回譜面   誤差條：左=太早 右=太晚，箭頭=你的平均偏移");
+                "空白=播放/暫停   D 或 → =打右軌   Backspace=重來   F4=回譜面   誤差條：左=太早 右=太晚，箭頭=你的平均偏移");
         }
 
         // osu 式打擊誤差直方圖（HitEventTimingDistributionGraph）：中央 = 準時，左邊 = 太早、右邊 = 太晚。
@@ -630,34 +697,34 @@ namespace Sdo.Game
             // 只在 Layout 階段重篩：IMGUI 的 Layout 與 Repaint 兩趟必須產生一樣多的控制項，
             // 在 Repaint 時改清單長度會直接丟 "GUILayout: Mismatched LayoutGroup"。
             if (Event.current.type == EventType.Layout) Refilter();
-            GUILayout.Label($"{_filtered.Count} / {SongCatalog.All.Count} 首（點一下換歌，難度用上面的按鈕或 Tab）");
+            GUILayout.Label($"{_filtered.Count} / {SongCatalog.Primary.Count} 首　搜尋：名稱／曲師／gn／編號 #fileId　（點一下換歌，難度用 Tab）");
             _listScroll = GUILayout.BeginScrollView(_listScroll);
             int shown = 0;
             foreach (var e in _filtered)
             {
                 if (shown++ > 400) { GUILayout.Label("…（太多了，打字縮小範圍）"); break; }
                 string lvs = $"{(e.HasChart(0) ? e.Diff(0).ToString() : "-")}/{(e.HasChart(1) ? e.Diff(1).ToString() : "-")}/{(e.HasChart(2) ? e.Diff(2).ToString() : "-")}";
-                if (GUILayout.Button($"{e.title}  —  {e.artist}\n{e.gn}   BPM {e.bpm:0.#}   LV {lvs}", GUILayout.Height(38)))
+                if (GUILayout.Button($"{e.title}  —  {e.artist}\n#{e.fileId}   {e.gn}   BPM {e.bpm:0.#}   LV {lvs}", GUILayout.Height(38)))
                 { LoadSong(e.gn, _diff); _showList = false; }
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
 
+        // 歌單只列**鍵盤譜（k.gn）**：每首歌在原始資料裡有 k（鍵盤）/ t（毯子）兩份譜，共用同一個標題，
+        // 照 All 列的話 2175 首會變成 4346 列、每首重複一次（連名字都一樣 —— song_name_overrides.json 是
+        // 照 stem 蓋名字的）。規則寫在 SongCatalog.IsPrimaryVariant，選歌畫面走的是同一套。
+        //
+        // 搜尋比對交給 SongCatalog.Matches（名稱／曲師／gn／fileId 編號都吃）：打編號能直接找到歌，
+        // 而且 fileId 跟 gn 檔名的號碼不同（k 譜是 10000+N），拿編號去比 gn 是找不到的 —— 這正是這個功能的用處。
         private void Refilter()
         {
             string q = (_search ?? "").Trim();
             if (_filterFor == q) return;
             _filterFor = q;
             _filtered.Clear();
-            foreach (var e in SongCatalog.All)
-            {
-                if (q.Length > 0
-                    && (e.title == null || e.title.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)
-                    && (e.artist == null || e.artist.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)
-                    && (e.gn == null || e.gn.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)) continue;
-                _filtered.Add(e);
-            }
+            foreach (var e in SongCatalog.Primary)
+                if (SongCatalog.Matches(e, q)) _filtered.Add(e);
         }
     }
 }
