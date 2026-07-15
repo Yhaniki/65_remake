@@ -194,7 +194,7 @@ def remove_stems(stems: Set[str], by_stem: Dict[str, Dict], dry_run: bool = Fals
 
     try:
         doc = json.loads(OVERRIDES_JSON.read_text(encoding="utf-8"))
-        cols = ["gn", "title", "artist", "src", "bpm", "fileId"]
+        cols = ["gn", "title", "artist", "src", "bpm", "offsetMs", "fileId"]   # 同 song_names_csv.COLS
         with OVERRIDES_CSV.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader()
             for e in doc.get("songs", []):

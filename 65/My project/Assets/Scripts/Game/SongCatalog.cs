@@ -28,6 +28,12 @@ namespace Sdo.Game
             public int notesEasy, notesNormal, notesHard;
             public int durEasy, durNormal, durHard;   // seconds per difficulty
 
+            /// <summary>Per-song audio calibration in ms, from song_name_overrides.json (0 = none, the default).
+            /// Positive = the music comes in LATER (use it when the audio runs ahead of the chart), negative =
+            /// earlier. Added on top of the chart's own type-10 music-start marker; shifts the AUDIO (and the
+            /// dancer, which rides the music timeline) only — notes and judgement stay on the chart clock.</summary>
+            public float offsetMs;
+
             /// <summary>Difficulty level for d (0=easy,1=normal,2=hard); -1 if unknown.</summary>
             public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
             public int NoteCount(int d) => d <= 0 ? notesEasy : (d == 1 ? notesNormal : notesHard);
@@ -43,8 +49,12 @@ namespace Sdo.Game
 
         // Hand-editable display overrides (StreamingAssets/song_name_overrides.json), seeded from the
         // official songlist.dat open songs. See ApplyOverrides / tools/build_song_name_overrides.py.
-        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; public float bpm = -1f; }   // init to silence CS0649 (JsonUtility fills these)
+        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; public float bpm = -1f; public float offsetMs = 0f; }   // init to silence CS0649 (JsonUtility fills these)
         [Serializable] private class OverrideDoc { public Override[] songs = new Override[0]; }
+
+        /// <summary>Sanity bound for a hand-typed offsetMs. A stray extra digit (30 -> 3000000) would otherwise
+        /// push the music start minutes away / off the end of the clip; ±5 s covers every real calibration.</summary>
+        public const float MaxOffsetMs = 5000f;
 
         private const string FileName = "song_catalog.json";
         private const string OverrideFileName = "song_name_overrides.json";
@@ -65,6 +75,12 @@ namespace Sdo.Game
 
         public static string Title(string gnPathOrName) => Get(gnPathOrName)?.title;
         public static string Artist(string gnPathOrName) => Get(gnPathOrName)?.artist;
+
+        /// <summary>This song's hand-set audio offset in ms (0 when unlisted / no catalog). See <see cref="Entry.offsetMs"/>.</summary>
+        public static float OffsetMs(string gnPathOrName) => Get(gnPathOrName)?.offsetMs ?? 0f;
+
+        private static float ClampOffsetMs(float ms)
+            => float.IsNaN(ms) ? 0f : (ms < -MaxOffsetMs ? -MaxOffsetMs : (ms > MaxOffsetMs ? MaxOffsetMs : ms));
 
         private static void EnsureLoaded()
         {
@@ -103,8 +119,10 @@ namespace Sdo.Game
         /// <summary>
         /// Overlay the hand-editable list (StreamingAssets/song_name_overrides.json) onto catalog
         /// entries: for every song whose gn-stem (sdomNNNN, without the k/t chart suffix) is listed,
-        /// replace title / artist / bpm. Songs absent from the list keep their k.gn-derived values,
-        /// as does any field left blank (title/artist) or &lt;= 0 (bpm).
+        /// replace title / artist / bpm / offsetMs. Songs absent from the list keep their k.gn-derived
+        /// values, as does any field left blank (title/artist) or &lt;= 0 (bpm). offsetMs is the one
+        /// override that DOES reach gameplay (it shifts the audio start; see <see cref="Entry.offsetMs"/>);
+        /// absent / 0 = no shift.
         ///
         /// Why: some .gn headers carry stale/wrong titles and BPMs (recycled file slots). The list is
         /// a full, hand-editable roster (tools/build_song_name_overrides.py): open songs are pre-filled
@@ -140,6 +158,7 @@ namespace Sdo.Game
                 if (!string.IsNullOrEmpty(o.title)) e.title = o.title;
                 if (!string.IsNullOrEmpty(o.artist)) e.artist = o.artist;
                 if (o.bpm > 0f) e.bpm = o.bpm;
+                e.offsetMs = ClampOffsetMs(o.offsetMs);   // 0 / 缺欄 = 不位移(這欄沒有「沿用譜面值」可言)
             }
         }
 

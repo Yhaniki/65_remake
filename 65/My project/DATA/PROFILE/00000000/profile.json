@@ -1,6 +1,6 @@
 {
     "id": "00000000",
-    "name": "玩家001",
+    "name": "飄漂o",
     "gender": 0,
     "avatarId": 0,
     "ownedClothes": [
@@ -19,66 +19,316 @@
         "shoes": "AVATAR/900020_WOMAN_SHOES.MSH",
         "hand": "AVATAR/900011_WOMAN_HAND.MSH"
     },
-    "createdAt": "2026-07-07T22:52:30.3775949Z",
-    "lastPlayedAt": "2026-07-12T02:26:37.1739010Z",
+    "createdAt": "2026-07-06T11:02:37.7041287Z",
+    "lastPlayedAt": "2026-07-13T12:13:14.9704839Z",
     "wallet": {
-        "coins": 999947599,
-        "points": 999999999,
+        "coins": 999939099,
+        "points": 999607789,
         "bonus": 999999999,
         "seeded": true
     },
-    "clothSlots": 9,
+    "clothSlots": 189,
     "ownedItems": [
         {
-            "id": 323921,
+            "id": 172807,
+            "expire": 1786370263,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 173345,
+            "expire": 1786370265,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 90466,
             "expire": -1,
             "qty": 1,
             "slot": 200
         },
         {
-            "id": 93691,
+            "id": 62399,
             "expire": -1,
             "qty": 1,
             "slot": 200
         },
         {
-            "id": 90037130,
+            "id": 62404,
             "expire": -1,
             "qty": 1,
             "slot": 200
         },
         {
-            "id": 90036937,
+            "id": 62392,
             "expire": -1,
             "qty": 1,
             "slot": 200
         },
         {
-            "id": 90004451,
+            "id": 63328,
             "expire": -1,
             "qty": 1,
             "slot": 200
         },
         {
-            "id": 90026394,
+            "id": 63585,
             "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 63834,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 65631,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 65630,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 172179,
+            "expire": 1786370769,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 173852,
+            "expire": 1786370777,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 174909,
+            "expire": 1786370780,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 174494,
+            "expire": 1786370781,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 175578,
+            "expire": 1786370783,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 63541,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 324922,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 325326,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 60882,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 61659,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 61578,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 61373,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 61839,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 64800,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 93457,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 88170,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 66058,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 65659,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 63545,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 94574,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 94668,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 95288,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 95382,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 96398,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 96438,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 97056,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 97446,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 90107,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 90411,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 90886,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 91117,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 92974,
+            "expire": -1,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 179440,
+            "expire": 1786384713,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 172748,
+            "expire": 1786384728,
+            "qty": 1,
+            "slot": 200
+        },
+        {
+            "id": 174514,
+            "expire": 1786384737,
             "qty": 1,
             "slot": 200
         }
     ],
     "equippedItems": [
         {
-            "slot": 14,
-            "id": 90026394
+            "slot": 2,
+            "id": 173345
+        },
+        {
+            "slot": 6,
+            "id": 175578
+        },
+        {
+            "slot": 12,
+            "id": 92974
+        },
+        {
+            "slot": 8,
+            "id": 63328
         }
     ],
     "equippedParts": [
-        "AVATAR/900007_WOMAN_FACE.MSH",
-        "AVATAR/900017_WOMAN_HAIR.MSH",
-        "AVATAR/900018_WOMAN_COAT.MSH",
-        "AVATAR/900019_WOMAN_PANT.MSH",
-        "AVATAR/900020_WOMAN_SHOES.MSH",
-        "AVATAR/900011_WOMAN_HAND.MSH",
-        "AVATAR/026394_WOMAN_CHIBANG.MSH"
+        "AVATAR/012974_WOMAN_FACE_HUAN.MSH",
+        "AVATAR/003345_WOMAN_HAIR.MSH",
+        "AVATAR/003328_WOMAN_ONE.MSH",
+        "AVATAR/005578_WOMAN_SHOES.MSH",
+        "AVATAR/900011_WOMAN_HAND.MSH"
     ]
 }

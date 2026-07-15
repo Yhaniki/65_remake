@@ -7,8 +7,8 @@ namespace Sdo.Tests
 {
     /// <summary>
     /// StreamingAssets/song_name_overrides.json 的套用規則（SongCatalog.ApplyOverrides）。
-    /// 這份清單只覆蓋「顯示值」：title / artist / bpm。它不決定歌單內容 —— 歌單來自
-    /// song_catalog.json，所以沒列在清單裡的歌照樣存在，只是沿用 .gn 內嵌名。
+    /// 覆蓋「顯示值」title / artist / bpm，外加一個真的會進遊戲的 offsetMs（每首歌的音訊校正）。
+    /// 它不決定歌單內容 —— 歌單來自 song_catalog.json，所以沒列在清單裡的歌照樣存在，只是沿用 .gn 內嵌名。
     /// </summary>
     public class SongCatalogOverrideTests
     {
@@ -65,6 +65,40 @@ namespace Sdo.Tests
 
             Assert.AreEqual(88f, list[0].bpm, 0.001f);
             Assert.AreEqual("kgn名", list[0].title);
+        }
+
+        /// <summary>offsetMs 是唯一會影響遊戲本身的覆蓋欄：每首歌的音訊校正（正 = 音樂晚一點進來）。
+        /// 沒填 / 0 = 不位移；K/T 兩譜共用同一筆。</summary>
+        [Test]
+        public void OffsetMs_Applies_To_Both_Charts_And_Defaults_To_Zero()
+        {
+            var list = Sample();
+            SongCatalog.ApplyOverrides(list, @"{""songs"":[{""gn"":""sdom0001"",""offsetMs"":-42.5}]}");
+
+            Assert.AreEqual(-42.5f, list[0].offsetMs, 0.001f);
+            Assert.AreEqual(-42.5f, list[1].offsetMs, 0.001f);
+            Assert.AreEqual(0f, list[2].offsetMs, 0.001f);          // 沒列到 → 不位移
+        }
+
+        [Test]
+        public void OffsetMs_Absent_From_The_Row_Means_No_Shift()
+        {
+            var list = Sample();
+            SongCatalog.ApplyOverrides(list, Json);                  // 舊格式的一列（沒有 offsetMs 欄）
+            Assert.AreEqual(0f, list[0].offsetMs, 0.001f);
+        }
+
+        /// <summary>手滑多打一個 0（30 → 300000）不該把音樂推到歌曲之外 —— 夾在 ±MaxOffsetMs。</summary>
+        [Test]
+        public void Absurd_OffsetMs_Is_Clamped()
+        {
+            var list = Sample();
+            SongCatalog.ApplyOverrides(list, @"{""songs"":[{""gn"":""sdom0001"",""offsetMs"":300000}]}");
+            Assert.AreEqual(SongCatalog.MaxOffsetMs, list[0].offsetMs, 0.001f);
+
+            list = Sample();
+            SongCatalog.ApplyOverrides(list, @"{""songs"":[{""gn"":""sdom0001"",""offsetMs"":-300000}]}");
+            Assert.AreEqual(-SongCatalog.MaxOffsetMs, list[0].offsetMs, 0.001f);
         }
 
         /// <summary>主音樂 .ogg 一律由 gn 詞幹決定（開局與選歌試聽共用同一支，見 SongCatalog.MainOggName）。

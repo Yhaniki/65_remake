@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-song_manager.py — 歌曲管理員(Tkinter GUI):看歌單、改歌名/BPM、刪歌、插入新歌。
+song_manager.py — 歌曲管理員(Tkinter GUI):看歌單、改歌名/BPM/音訊 offset、刪歌、插入新歌。
 
 啟動:
     python tools/song_manager.py
@@ -14,7 +14,9 @@ song_manager.py — 歌曲管理員(Tkinter GUI):看歌單、改歌名/BPM、刪
 
 三個概念先講清楚(這是所有坑的來源):
   1. 「歌單有哪些歌」由 song_catalog.json 決定;song_name_overrides.json 只覆蓋顯示的
-     title/artist/bpm。從 overrides 刪一列 ≠ 移除歌曲(只是歌名變回 .gn 內嵌名)。
+     title/artist/bpm，外加一個真的會進遊戲的 offsetMs(這首歌的音訊校正:正 = 音樂晚一點進來、
+     負 = 提早,只挪音樂＋舞蹈,音符/判定仍讀譜面)。從 overrides 刪一列 ≠ 移除歌曲
+     (只是歌名變回 .gn 內嵌名、offset 歸零)。
   2. 兩個 key,各管一半:
        gn 檔名(詞幹) → 譜面、主音樂 sdomNNNN.ogg、收藏、歌名覆蓋
        fileId(整數)  → 試聽 exper/<id>.ogg、舞蹈 DANCE/<id>.DPS、封面 ICONS/<id>.PNG
@@ -45,7 +47,8 @@ from gn_keytable import process_file                                            
 from remove_songs import (DANCE, EXPER, ICON_OVERLAY, MUSIC, OVERRIDES_CSV,      # noqa: E402
                           OVERRIDES_JSON, CATALOG, load_catalog, remove_stems, stem)
 
-CSV_COLS = ["gn", "title", "artist", "src", "bpm", "fileId"]
+CSV_COLS = ["gn", "title", "artist", "src", "bpm", "offsetMs", "fileId"]   # 同 song_names_csv.COLS / remove_songs
+MAX_OFFSET_MS = 5000.0                                                    # 同 runtime SongCatalog.MaxOffsetMs
 
 
 # ---------------------------------------------------------------- 資料層
@@ -87,6 +90,8 @@ class Song:
             if float(ov.get("bpm") or 0) > 0:
                 self.bpm = float(ov["bpm"])
         self.src = (ov or {}).get("src", "")
+        # 音訊校正(毫秒):正 = 音樂晚一點進來、負 = 提早、0 = 不動。只有這欄會真的進遊戲。
+        self.offset_ms = float((ov or {}).get("offsetMs") or 0)
 
     def assets(self) -> str:
         """哪些資源檔在位。缺主音樂 = 開局會沒聲音,其餘缺了都有 fallback。"""
@@ -254,10 +259,11 @@ class App(tk.Tk):
         self.count = ttk.Label(top, text="")
         self.count.pack(side="right")
 
-        cols = ("stem", "fid", "title", "artist", "bpm", "diff", "assets")
+        cols = ("stem", "fid", "title", "artist", "bpm", "offset", "diff", "assets")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="extended")
         for c, txt, w in (("stem", "詞幹", 110), ("fid", "fileId", 70), ("title", "歌名", 300),
-                          ("artist", "歌手", 170), ("bpm", "BPM", 60), ("diff", "難度 E/N/H", 90),
+                          ("artist", "歌手", 170), ("bpm", "BPM", 60), ("offset", "offset(ms)", 80),
+                          ("diff", "難度 E/N/H", 90),
                           ("assets", "音樂/試聽/舞蹈/封面", 150)):
             self.tree.heading(c, text=txt)
             self.tree.column(c, width=w, anchor="w" if c in ("title", "artist") else "center")
@@ -267,18 +273,26 @@ class App(tk.Tk):
         vs.place(in_=self.tree, relx=1.0, rely=0, relheight=1.0, anchor="ne")
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
-        ed = ttk.LabelFrame(self, text="編輯顯示值(寫進 song_name_overrides.json;只影響顯示，不動譜面)", padding=8)
+        ed = ttk.LabelFrame(self, text="編輯(寫進 song_name_overrides.json;歌名/歌手/BPM 只影響顯示，offset 會真的挪音樂)",
+                            padding=8)
         ed.pack(fill="x", padx=8, pady=8)
-        self.f_title, self.f_artist, self.f_bpm = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.f_title, self.f_artist = tk.StringVar(), tk.StringVar()
+        self.f_bpm, self.f_offset = tk.StringVar(), tk.StringVar()
         ttk.Label(ed, text="歌名").grid(row=0, column=0, sticky="e")
         ttk.Entry(ed, textvariable=self.f_title, width=36).grid(row=0, column=1, padx=(4, 12))
         ttk.Label(ed, text="歌手").grid(row=0, column=2, sticky="e")
         ttk.Entry(ed, textvariable=self.f_artist, width=22).grid(row=0, column=3, padx=(4, 12))
         ttk.Label(ed, text="BPM").grid(row=0, column=4, sticky="e")
         ttk.Entry(ed, textvariable=self.f_bpm, width=8).grid(row=0, column=5, padx=(4, 12))
-        ttk.Button(ed, text="套用修改", command=self.on_apply_edit).grid(row=0, column=6)
+        ttk.Label(ed, text="offset(ms)").grid(row=0, column=6, sticky="e")
+        ttk.Entry(ed, textvariable=self.f_offset, width=8).grid(row=0, column=7, padx=(4, 12))
+        ttk.Button(ed, text="套用修改", command=self.on_apply_edit).grid(row=0, column=8)
+        ttk.Label(ed, foreground="#666",
+                  text="offset = 這首歌的音訊校正：正值 = 音樂晚一點進來(音樂跑太前面、音符老是慢半拍時用)，"
+                       "負值 = 音樂提早，留空/0 = 不動。只挪音樂＋舞蹈，音符與判定不受影響。").grid(
+            row=1, column=0, columnspan=9, sticky="w", pady=(6, 0))
         self.status = ttk.Label(ed, text="", foreground="#0a7")
-        self.status.grid(row=1, column=0, columnspan=7, sticky="w", pady=(6, 0))
+        self.status.grid(row=2, column=0, columnspan=9, sticky="w", pady=(4, 0))
 
     # ---- 資料
     def reload(self):
@@ -301,7 +315,8 @@ class App(tk.Tk):
             diff = "/".join(str(row.get(k, 0)) for k in ("diffEasy", "diffNormal", "diffHard"))
             self.tree.insert("", "end", iid=str(i), values=(
                 s.stem, s.file_id, s.title, s.artist,
-                (f"{s.bpm:g}" if s.bpm > 0 else ""), diff, s.assets()))
+                (f"{s.bpm:g}" if s.bpm > 0 else ""),
+                (f"{s.offset_ms:+g}" if s.offset_ms else ""), diff, s.assets()))
         self.count.config(text=f"{len(self.shown)} / {len(self.songs)} 首")
 
     def selected(self) -> List[Song]:
@@ -315,8 +330,9 @@ class App(tk.Tk):
         self.f_title.set(s.title)
         self.f_artist.set(s.artist)
         self.f_bpm.set(f"{s.bpm:g}" if s.bpm > 0 else "")
+        self.f_offset.set(f"{s.offset_ms:g}" if s.offset_ms else "")
 
-    # ---- 改名 / 改 BPM
+    # ---- 改名 / 改 BPM / 改 offset
     def on_apply_edit(self):
         sel = self.selected()
         if len(sel) != 1:
@@ -329,15 +345,26 @@ class App(tk.Tk):
         except ValueError:
             messagebox.showerror("BPM 不是數字", f"「{bpm_txt}」不是數字。留空 = 沿用譜面的 BPM。")
             return
+        off_txt = self.f_offset.get().strip()
+        try:
+            off_ms = round(float(off_txt), 1) if off_txt else 0.0
+        except ValueError:
+            messagebox.showerror("offset 不是數字", f"「{off_txt}」不是數字。留空/0 = 不位移音樂。")
+            return
+        if abs(off_ms) > MAX_OFFSET_MS:        # 同 runtime 的夾限(SongCatalog.MaxOffsetMs)，先擋在這裡免得白調
+            messagebox.showerror("offset 太大", f"offset 只收 ±{MAX_OFFSET_MS:g}ms(遊戲端也會夾)。是不是多打了一個 0?")
+            return
 
         doc = read_overrides()
         row = next((e for e in doc["songs"] if e.get("gn") == s.stem), None)
         if row is None:
-            row = {"gn": s.stem, "fileId": s.file_id, "bpm": 0.0, "src": "manual", "title": "", "artist": ""}
+            row = {"gn": s.stem, "fileId": s.file_id, "bpm": 0.0, "offsetMs": 0.0,
+                   "src": "manual", "title": "", "artist": ""}
             doc["songs"].append(row)
         row["title"] = self.f_title.get().strip()
         row["artist"] = self.f_artist.get().strip()
         row["bpm"] = bpm                       # 0 = 不覆蓋(顯示回譜面的 BPM)
+        row["offsetMs"] = off_ms               # 0 = 不位移音樂
         row["src"] = "manual"                  # 標記手改 → build_song_name_overrides 重跑時會保留
         write_overrides(doc)
         self.reload()

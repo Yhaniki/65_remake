@@ -68,5 +68,30 @@ namespace Sdo.Ruleset
         /// 兩段前導都是**譜面時間**,所以都要除以 rate 換回真實秒數。</summary>
         public static double StartDspFor(double dspNow, double chartSecUntilZero, double countInSec, double rate)
             => dspNow + (chartSecUntilZero + countInSec) / rate;
+
+        /// <summary>音訊排程的最小提前量(真實秒)。PlayScheduled 排到「已經過去」的時刻會當場開聲,
+        /// 起播點就跟錨點對不上了 —— 永遠留這點餘裕給音訊執行緒。</summary>
+        public const double MinScheduleLeadSec = 0.02;
+
+        /// <summary>
+        /// 開場排程,允許 <paramref name="countInSec"/> 為**負**(每首歌的 offset 把音樂往前挪,見
+        /// song_name_overrides.json 的 offsetMs)。負得夠多時錨點(clip 第 0 秒)會落在現在之前 —— 那段音樂
+        /// 已經來不及播,只能**從中途切入**:排在最早可排的時刻起播,並把 clip 讀取頭先推到
+        /// <paramref name="clipSkipSec"/>。不變式 clipPos(dsp) = rate×(dsp − anchorDsp) 因此照樣成立,
+        /// 上層的 dsp↔譜面時間換算(<see cref="ChartSecondsFromDsp"/>)完全不用改。
+        /// </summary>
+        /// <param name="anchorDsp">clip 第 0 秒對應的 dsp(可能已是過去式 → 搭配 clipSkipSec)。</param>
+        /// <param name="playAtDsp">實際要餵給 PlayScheduled 的時刻。</param>
+        /// <param name="clipSkipSec">起播時 clip 要跳過的秒數(0 = 從頭播)。</param>
+        public static void ScheduleMusic(double dspNow, double chartSecUntilZero, double countInSec, double rate,
+                                         out double anchorDsp, out double playAtDsp, out double clipSkipSec)
+        {
+            rate = Clamp(rate);
+            anchorDsp = StartDspFor(dspNow, chartSecUntilZero, countInSec, rate);
+            double earliest = dspNow + MinScheduleLeadSec;
+            if (anchorDsp >= earliest) { playAtDsp = anchorDsp; clipSkipSec = 0.0; return; }
+            playAtDsp = earliest;
+            clipSkipSec = rate * (playAtDsp - anchorDsp);   // 錨點在過去 → clip 已經該播到這裡了
+        }
     }
 }

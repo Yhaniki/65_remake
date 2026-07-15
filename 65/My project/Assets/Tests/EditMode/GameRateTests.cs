@@ -109,5 +109,57 @@ namespace Sdo.Tests
             Assert.AreEqual(countIn, GameRate.ChartSecondsFromDsp(s, s, 0.5, countIn), 1e-9);
             Assert.AreEqual(-lead, GameRate.ChartSecondsFromDsp(dspNow, s, 0.5, countIn), 1e-9);   // 此刻 = 譜面 −lead
         }
+
+        // ---- 起播排程(含每首歌的 offsetMs:count-in 可以是負的) ----
+
+        [Test]
+        public void ScheduleMusic_NonNegativeCountIn_PlaysTheClipFromItsStart()
+        {
+            const double dspNow = 100.0, lead = 0.1;
+            foreach (var c in new[] { 0.0, 0.05, 2.0 })
+                foreach (var rate in new[] { 0.5, 1.0, 2.0 })
+                {
+                    GameRate.ScheduleMusic(dspNow, lead, c, rate, out var anchor, out var playAt, out var skip);
+                    Assert.AreEqual(0.0, skip, 1e-9, $"count-in {c} @ {rate}× 不該跳過音樂");
+                    Assert.AreEqual(anchor, playAt, 1e-9, "沒跳過就該照錨點起播");
+                    Assert.AreEqual(GameRate.StartDspFor(dspNow, lead, c, rate), playAt, 1e-9);   // 同舊行為
+                }
+        }
+
+        [Test]
+        public void ScheduleMusic_SmallNegativeOffset_StillFitsInsideTheLeadIn()
+        {
+            const double dspNow = 100.0, lead = 0.1, countIn = -0.05;   // 音樂提早 50ms,但前導有 100ms → 排得下
+            GameRate.ScheduleMusic(dspNow, lead, countIn, 1.0, out var anchor, out var playAt, out var skip);
+            Assert.AreEqual(0.0, skip, 1e-9);
+            Assert.AreEqual(dspNow + 0.05, playAt, 1e-9);
+            Assert.AreEqual(anchor, playAt, 1e-9);
+        }
+
+        [Test]
+        public void ScheduleMusic_BigNegativeOffset_StartsTheClipMidWay_AndKeepsTheInvariant()
+        {
+            const double dspNow = 100.0, lead = 0.1, countIn = -0.5;    // 音樂要比譜面第 0 拍早 0.5s → clip 第 0 秒早就過去了
+            const double rate = 1.0;
+            GameRate.ScheduleMusic(dspNow, lead, countIn, rate, out var anchor, out var playAt, out var skip);
+
+            Assert.GreaterOrEqual(playAt, dspNow + GameRate.MinScheduleLeadSec - 1e-9, "起播點不能排進過去");
+            Assert.Greater(skip, 0.0, "來不及的那段音樂要用 clip 讀取頭跳過");
+            // 不變式:起播那刻的 clip 位置 = skip,且 clipPos(dsp) = rate×(dsp − anchor) 照樣成立
+            Assert.AreEqual(skip, rate * (playAt - anchor), 1e-9);
+            // 譜面第 0 拍時,音樂已經播了 0.5 秒 —— 這正是 offset 想要的
+            double dspAtBeat0 = dspNow + lead / rate;
+            Assert.AreEqual(0.5, rate * (dspAtBeat0 - anchor), 1e-9);
+            Assert.AreEqual(0.0, GameRate.ChartSecondsFromDsp(dspAtBeat0, anchor, rate, countIn), 1e-9);
+        }
+
+        [Test]
+        public void ScheduleMusic_MidWayStart_ScalesTheSkipByTheRate()
+        {
+            const double dspNow = 0.0, lead = 0.1, countIn = -1.0, rate = 2.0;
+            GameRate.ScheduleMusic(dspNow, lead, countIn, rate, out var anchor, out var playAt, out var skip);
+            Assert.AreEqual(rate * (playAt - anchor), skip, 1e-9);   // clip 秒數 = 真實秒數 × rate
+            Assert.AreEqual(countIn, GameRate.ChartSecondsFromDsp(anchor, anchor, rate, countIn), 1e-9);
+        }
     }
 }

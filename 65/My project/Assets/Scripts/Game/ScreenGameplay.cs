@@ -152,8 +152,10 @@ namespace Sdo.Game
         private bool _started, _failed, _ended;
         private double _songStartDspTime, _clockStart = -1;
         // How far the audio is delayed behind the beat-0 note clock — the chart's music-start offset (type-10
-        // 音樂起止 marker) in seconds. Notes scroll during this silent count-in; drives the audio schedule and the
-        // beat-0<->clip-position mapping (AudioChartSeconds). Set with _clockStart in OpeningSequence().
+        // 音樂起止 marker) plus this song's hand-set offsetMs (SongCatalog), in seconds. Notes scroll during this
+        // silent count-in; drives the audio schedule and the beat-0<->clip-position mapping (AudioChartSeconds).
+        // May be NEGATIVE when offsetMs pulls the music ahead of beat 0 (GameRate.ScheduleMusic then starts the
+        // clip mid-way). Set with _clockStart in OpeningSequence().
         private double _musicStartDelaySec;
         // When the DPS dance begins, in beat-0 note-clock seconds: the FIRST NOTE's time, NOT the music-start
         // marker. The choreography spans first→last note (DpsLoader.Total ≈ last−first note), so on charts whose
@@ -1410,13 +1412,30 @@ namespace Sdo.Game
             // first→last note, so on a long-intro chart (marker ≪ first note) the dancer holds the standby idle
             // through the whole intro and starts the choreography on the first downbeat — not on the marker, which
             // would make it lead the song (sdom1226: marker beat 0 vs first note ~5.4 s ⇒ was 5.4 s early).
-            double musicDelaySec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
+            double markerSec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
+            // 再疊上這首歌的手動音訊校正(song_name_overrides.json 的 offsetMs):正值 = 音樂晚一點進來
+            // (音樂跑在譜面前面、音符老是落在拍後時用),負值 = 音樂提早。挪的是音樂 + 舞蹈(DPS 掛在音樂時間軸上),
+            // 音符/判定仍舊釘在譜面時鐘 —— 所以填錯頂多是音畫不合拍,不會改難度。
+            double songOffsetSec = SongCatalog.OffsetMs(gnPath) / 1000.0;
+            double musicDelaySec = markerSec + songOffsetSec;
             _musicStartDelaySec = musicDelaySec;
-            _danceStartSec = (useMusicStartOffset && _map != null) ? Math.Max(musicDelaySec, _map.FirstNoteMs / 1000.0) : 0.0;
+            _danceStartSec = ((useMusicStartOffset && _map != null) ? Math.Max(markerSec, _map.FirstNoteMs / 1000.0) : 0.0) + songOffsetSec;
             // 兩段前導(共用 lead + 無聲數拍)都是**譜面時間**;dspTime 是真實時間,所以要除以流速換回真實秒數
             // (1× 時就是原本的 dspNow + StartLeadSec + musicDelaySec)。音樂本身也用 pitch 變速(= SetPlaybackRate)。
-            _songStartDspTime = GameRate.StartDspFor(AudioSettings.dspTime, StartLeadSec, musicDelaySec, _musicRate);
-            if (_audio != null && _audio.clip != null) { _audio.pitch = _timeScale; _audio.PlayScheduled(_songStartDspTime); }
+            // offsetMs 為負且大過前導時,clip 第 0 秒已經來不及播 → ScheduleMusic 給出 clipSkipSec,音樂從中途切入。
+            GameRate.ScheduleMusic(AudioSettings.dspTime, StartLeadSec, musicDelaySec, _musicRate,
+                                   out _songStartDspTime, out double playAtDsp, out double clipSkipSec);
+            if (_audio != null && _audio.clip != null)
+            {
+                _audio.pitch = _timeScale;
+                if (clipSkipSec >= _audio.clip.length)
+                    Debug.LogWarning($"[Step1] offsetMs {SongCatalog.OffsetMs(gnPath):F0} 把音樂整首推到 clip 之外 — 這首不播音樂");
+                else
+                {
+                    if (clipSkipSec > 0.0) _audio.time = (float)clipSkipSec;
+                    _audio.PlayScheduled(playAtDsp);
+                }
+            }
             _clockStart = Time.timeAsDouble + StartLeadSec;   // timeAsDouble 已被 timeScale 縮放 → 譜面時鐘自動吃流速
             _clock.Reset();   // re-seed the smoothing clock onto the freshly-anchored timeline (drop any parked-clock frames)
             if (showtimeMode) _gaugeGlowFromStart = true;   // song is playing → head glow stays lit even at 0 fill (no key needed)
