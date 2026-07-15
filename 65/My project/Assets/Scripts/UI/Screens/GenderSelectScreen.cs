@@ -99,31 +99,33 @@ namespace Sdo.UI.Screens
         // （內建 UIFont.Cjk）→ 中文能打。放在 design (x,y) → 落在 800×600 背景圖裡，不用管螢幕 pillarbox。
         private void BuildNamePanel()
         {
-            // 用專案標準面板樣式（UITheme）：深紫面板 + 粉紅主按鈕 + 暗色提示字，跟其他對話框一致。
-            var panel = UIKit.AddImage(Root, "NamePanel", UITheme.Panel, raycast: true).rectTransform;
+            // 模仿 IMGUI 預設 debug 視窗：灰底樸素框、淺灰按鈕深字、淺灰文字。不用專案的紫色主題。
+            var boxGrey = new Color(0.20f, 0.20f, 0.20f, 0.82f);       // IMGUI box 的深灰半透明
+            var btnGrey = new Color(0.78f, 0.78f, 0.78f, 1f);         // IMGUI button 的淺灰
+            var btnText = new Color(0.12f, 0.12f, 0.12f, 1f);         // 淺灰按鈕上的深字
+            var lightText = new Color(0.90f, 0.90f, 0.90f, 1f);
+
+            var panel = UIKit.AddImage(Root, "NamePanel", boxGrey, raycast: true).rectTransform;
             _namePanel = panel.gameObject;
-            PlaceTL(panel, 14f, 232f, 224f, 100f);   // 靠左、垂直略偏中；可拖，之後想動就拖
+            PlaceTL(panel, 14f, 232f, 224f, 92f);   // 靠左、垂直略偏中；可拖，之後想動就拖
             var drag = panel.gameObject.AddComponent<PanelDrag>();
             drag.Target = panel; drag.Area = Root;
 
-            // 標題列：Header 色的橫條 + 文字（同標準對話框的頭）
-            var header = UIKit.AddImage(panel, "Header", UITheme.Header);
-            PlaceTL(header.rectTransform, 0f, 0f, 224f, 28f);
-            var title = UIKit.AddText(panel, "Title", "玩家名稱", 15f, UITheme.Text);
-            PlaceTL(title.rectTransform, 12f, 4f, 200f, 20f);
+            var title = UIKit.AddText(panel, "Title", "玩家名稱", 14f, lightText);
+            PlaceTL(title.rectTransform, 10f, 6f, 200f, 20f);
 
-            _nameInput = UIKit.AddInputField(panel, "NameInput", "", 15f);
-            PlaceTL(_nameInput.GetComponent<RectTransform>(), 12f, 38f, 146f, 30f);
+            _nameInput = UIKit.AddInputField(panel, "NameInput", "", 14f);
+            PlaceTL(_nameInput.GetComponent<RectTransform>(), 10f, 30f, 150f, 26f);
             _nameInput.characterLimit = 24;
             _nameInput.onSubmit.AddListener(_ => SaveName());
 
-            var save = UIKit.AddButton(panel, "NameSave", out var saveLabel, UITheme.Primary, UITheme.OnPrimary, 15f);
+            var save = UIKit.AddButton(panel, "NameSave", out var saveLabel, btnGrey, btnText, 14f);
             saveLabel.text = "儲存";
-            PlaceTL(save.GetComponent<RectTransform>(), 166f, 38f, 46f, 30f);
+            PlaceTL(save.GetComponent<RectTransform>(), 166f, 30f, 48f, 26f);
             save.onClick.AddListener(SaveName);
 
-            _nameStatusLabel = UIKit.AddText(panel, "Status", "", 12f, UITheme.TextDim);
-            PlaceTL(_nameStatusLabel.rectTransform, 12f, 74f, 200f, 20f);
+            _nameStatusLabel = UIKit.AddText(panel, "Status", "", 12f, lightText);
+            PlaceTL(_nameStatusLabel.rectTransform, 10f, 62f, 204f, 20f);
         }
 
         // design (x,y,w,h) → RectTransform（top-left 原點、y 向下，同 UIKit.AddSprite/AddRaw/Place 的慣例）。
