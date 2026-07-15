@@ -36,6 +36,9 @@ namespace Sdo.UI.Screens
         private Camera _maskedCam; private int _savedMask;
         private int _gender;   // 0=女, 1=男
 
+        // DEBUG 改名框：改「目前選的性別」對應那個 user 的名字（女 00000000 / 男 00000001）。
+        private string _nameEdit; private int _nameEditFor = -1; private string _nameStatus = "";
+
         private static Sprite An(string n) => LobbySelArt.An(n);
 
         protected override void BuildUI()
@@ -159,7 +162,58 @@ namespace Sdo.UI.Screens
         {
             if (!Visible || ScreenTransition.Busy) return;   // 轉場中(進房/進商城漸黑漸亮)先不吃 ESC
             if (FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen) return;
+            // F2：開發用 —— 進譜面編輯器。先把前端收掉並註冊「編輯器 ESC 退出時還原前端」（Sdo.Game 不能反向引用
+            // Sdo.UI，所以用回呼把還原注進去），再開編輯器。編輯器開著時本畫面的 canvas 會被停用 → Update 不再跑。
+            if (Input.GetKeyDown(KeyCode.F2) && ChartEditorScreen.Instance == null)
+            {
+                ChartEditorScreen.OnExit = () => { var f = FrontendApp.Instance; if (f != null) f.ShowAfterTool(); };
+                FrontendApp.Instance?.HideForTool();
+                ChartEditorScreen.Launch();
+                return;
+            }
             if (Input.GetKeyDown(KeyCode.Escape)) Sdo.Game.AppQuit.Now();
+        }
+
+        // DEBUG 框：改目前選的性別那個 user 的名字。IMGUI 小框（沿用 ChartEditorScreen 的 GUI.skin.box + TextField 樣式）。
+        // 編輯器開著時本畫面 canvas 被停用 → OnGUI 本來就不會跑，這裡的 Instance 守門只是保險。
+        private void OnGUI()
+        {
+            if (!Visible || ScreenTransition.Busy) return;
+            if (FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen) return;
+            if (ChartEditorScreen.Instance != null) return;
+
+            if (_nameEditFor != _gender) { _nameEdit = SeedName(_gender); _nameEditFor = _gender; _nameStatus = ""; }
+
+            GUILayout.BeginArea(new Rect(8f, 8f, 300f, 96f), GUI.skin.box);
+            GUILayout.Label($"[DEBUG] {(_gender == 1 ? "男" : "女")}玩家名字（改完進房/遊戲生效）");
+            GUILayout.BeginHorizontal();
+            _nameEdit = GUILayout.TextField(_nameEdit ?? "", 24);
+            if (GUILayout.Button("存", GUILayout.Width(48))) SaveName();
+            GUILayout.EndHorizontal();
+            if (!string.IsNullOrEmpty(_nameStatus)) GUILayout.Label(_nameStatus);
+            GUILayout.EndArea();
+        }
+
+        // 讀某性別 seed 帳號目前的名字（唯讀，不動 active）。List() 掃磁碟，只在切性別時呼叫一次，不是每幀。
+        private static string SeedName(int gender)
+        {
+            string id = ProfileManager.SeededIdForGender(gender);
+            foreach (var p in ProfileManager.List()) if (p.id == id) return p.name;
+            return gender == 1 ? "玩家002" : "玩家001";
+        }
+
+        // 存：把名字寫回該性別的 profile.json（＋這次執行的 session，房間/遊戲頭上名牌就吃得到）。
+        // SetActive 到該性別（OnEnter 本來也會做同一件事）→ 改 name → Save。空白名字 Sanitize 會擋，這裡先攔。
+        private void SaveName()
+        {
+            string name = (_nameEdit ?? "").Trim();
+            if (name.Length == 0) { _nameStatus = "名字不能空白"; return; }
+            string id = ProfileManager.SeededIdForGender(_gender);
+            ProfileManager.SetActive(id);
+            ProfileManager.Active.name = name;
+            ProfileManager.Save();
+            if (Ctx != null && Ctx.Session != null) Ctx.Session.LocalPlayerName = name;
+            _nameStatus = $"已存 → {id}/profile.json";
         }
 
         private void SelectGender(int g)

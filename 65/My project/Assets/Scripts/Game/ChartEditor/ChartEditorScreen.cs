@@ -40,11 +40,36 @@ namespace Sdo.Game
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
-            if (string.IsNullOrEmpty(ScreenGameplay.DevVar(EnvVar))) return;
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar(EnvVar))) return;   // 開發用:設了 SDO_EDITOR 才自動開起來
+            Launch();
+        }
+
+        /// <summary>
+        /// 退出時要跑的還原邏輯（把前端畫面復原）。由呼叫端在 <see cref="Launch"/> 前設 —— 因為 Sdo.Game 不能反向
+        /// 引用 Sdo.UI（FrontendApp 在 Sdo.UI），只能用這個回呼把「還原前端」注進來。SDO_EDITOR 自動開的情況沒有
+        /// 前端可還原，維持 null（ESC 就只是把編輯器拆掉）。
+        /// </summary>
+        public static System.Action OnExit;
+
+        /// <summary>開起編輯器（自己的 GameObject，跨場景常駐）。可由 SDO_EDITOR 自動觸發，也可由前端畫面(男女選擇 F2)呼叫。
+        /// 從前端呼叫時，呼叫端要先把前端收掉，並設好 <see cref="OnExit"/> 還原；退出走 <see cref="ExitToFrontend"/>。</summary>
+        public static void Launch()
+        {
             if (Instance != null) return;
             var go = new GameObject("ChartEditor");
             Instance = go.AddComponent<ChartEditorScreen>();
             DontDestroyOnLoad(go);
+        }
+
+        // ESC 退出編輯器。拆掉自己生的東西:Teardown 清掉這一首的場景根(音符板 + ScreenGameplay 自建的 Main Camera),
+        // 跑 OnExit 還原前端(男女選擇畫面),再 Destroy 自己(連帶子物件 overlay)。
+        private void ExitToFrontend()
+        {
+            Teardown();                    // 毀掉這首的場景根(不在 _preRoots 裡的),含 ScreenGameplay 與它的相機
+            var onExit = OnExit;
+            Instance = null; OnExit = null;
+            onExit?.Invoke();              // 前端 canvas + UI 相機 + 大廳 BGM 復原(flow 從沒變 → 回到男女選擇)
+            Destroy(gameObject);           // ChartEditor GO(+ 子物件 overlay)一起收
         }
 
         private ScreenGameplay _game;
@@ -303,7 +328,13 @@ namespace Sdo.Game
         {
             if (Input.GetKeyDown(KeyCode.F1)) _showList = !_showList;
             if (Input.GetKeyDown(KeyCode.F4)) ToggleBeatTest();   // 打拍測試切換（雙向）—— 要在 _beatTest 的 return 之前，才切得出來
-            if (Input.GetKeyDown(KeyCode.Escape) && _showList) _showList = false;
+            // ESC 逐層退出：歌單開著→關歌單；打拍測試中→回譜面；都不是→退出編輯器回前端(男女選擇)。
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (_showList) _showList = false;
+                else if (_beatTest) ToggleBeatTest();
+                else { ExitToFrontend(); return; }
+            }
             if (_game == null || !_game.EditorReady) return;
 
             if (Input.GetKeyDown(KeyCode.Space)) _game.EditorSetPaused(!_game.EditorPaused);

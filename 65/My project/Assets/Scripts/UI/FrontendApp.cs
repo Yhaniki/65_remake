@@ -291,6 +291,24 @@ namespace Sdo.UI
             if (_uiCam != null) _uiCam.enabled = true;
         }
 
+        // 讓一個「全螢幕開發工具」（目前是譜面編輯器）接管畫面：把整個前端 canvas + UI 相機 + 大廳 BGM 收掉，
+        // 跟進 gameplay 時同一套（EnterGameplay/TeardownGameplay 就是這樣做的），只是不經正常的 flow 切換。
+        // 停用 canvas 會連同底下的螢幕 MonoBehaviour（含 GenderSelectScreen.Update）一起停 → 不會雙重吃輸入。
+        public void HideForTool()
+        {
+            if (_canvasGo != null) _canvasGo.SetActive(false);
+            if (_uiCam != null) _uiCam.enabled = false;
+            BgmPlayer.Stop();
+        }
+
+        // 工具退出：把前端還原（flow 從沒變過，所以 Current 仍是原畫面），BGM 依當前畫面恢復。
+        public void ShowAfterTool()
+        {
+            if (_canvasGo != null) _canvasGo.SetActive(true);
+            if (_uiCam != null) _uiCam.enabled = true;
+            if (_ctx != null && _ctx.Flow != null) UpdateBgm(_ctx.Flow.Current);
+        }
+
         private void Make<T>(RectTransform parent) where T : UIScreenBase
         {
             var rt = UIKit.NewRect(parent, typeof(T).Name);
