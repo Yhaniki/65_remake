@@ -30,7 +30,7 @@ namespace Sdo.Game
 
         /// <summary>True-tracking (em-fraction removed per inter-char gap) for the song-select list-row song names
         /// (TMP characterSpacing). 0 = natural spacing.</summary>
-        public const float SongTitleTrackEm = 0.1f;
+        public const float SongTitleTrackEm = 0.05f;
 
         /// <summary>Same, but for the gameplay HUD bottom song title (<see cref="TrackedTextMesh"/>) — kept separate
         /// because that label reads tighter at the same value, so it wants a gentler amount.</summary>
