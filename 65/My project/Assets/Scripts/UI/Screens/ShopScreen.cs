@@ -1124,8 +1124,31 @@ namespace Sdo.UI.Screens
                 {
                     var mats = mr.sharedMaterials;   // 每卡 material 都是新建實例 → 直接改安全
                     for (int s = 0; s < mats.Length; s++)
-                        if (mats[s] != null) { if (faceShader != null) mats[s].shader = faceShader; mats[s].mainTexture = tex; }
+                        // 把「膚色臉底」統一成最白 huan0,但**保留裝飾疊層**(面具/口罩/腮紅 = base …_face_huan)自己的貼圖。
+                        // 要壓白的兩種:①膚色底=材質名有數字尾 huan[0-4](含深膚 huan4 與打錯字 haun4/huan_1);②貼圖**解不到**
+                        // 的破損材質(mainTexture==null → LoadParts 退回平塗色 = 白頭)——如 030252,mesh 的兩個 submesh 都引到
+                        // 磁碟不存在的 base huan、但 huan0-4 都在 → 必須回退到 huan0(原本 ForceLightExpressionFace 無差別壓白
+                        // 有救到它,我改成只壓數字尾後它變全白 = 迴歸)。要保留的:有解到貼圖的裝飾疊層(面具/口罩,base huan
+                        // DDS 存在)與有效 base 膚色(012882)。否則疊層被膚色蓋掉,疊層幾何(眼周/口鼻)帶臉底 UV → 帶鬼影五官
+                        // 的素臉(使用者回報 017675 化妝舞會眼罩 / 015353 貓咪口罩「貼圖錯誤」)。
+                        if (mats[s] != null && (IsFaceSkinVariant(mats[s].name) || mats[s].mainTexture == null))
+                        { if (faceShader != null) mats[s].shader = faceShader; mats[s].mainTexture = tex; }
                 }
+        }
+
+        // 表情 mesh 的膚色臉底材質貼圖名 = …_face_huan[0-4].dds (含打錯字 haun[0-4]、分隔底線 huan_0)。裝飾疊層
+        // (面具/口罩/腮紅) 貼圖名 = base …_face_huan.dds (無數字尾) → 回傳 false 讓 ForceLightExpressionFace 略過、
+        // 保留疊層原貼圖。非 huan/haun 材質 (W_Basic_ 頸/耳膚色…) 也回傳 false (本來就是膚色,不需再壓白)。
+        private static bool IsFaceSkinVariant(string matName)
+        {
+            if (string.IsNullOrEmpty(matName)) return false;
+            string n = matName.ToLowerInvariant();
+            int i = n.IndexOf("huan", System.StringComparison.Ordinal);
+            if (i < 0) i = n.IndexOf("haun", System.StringComparison.Ordinal);   // 打錯字檔名 haun
+            if (i < 0) return false;
+            int j = i + 4;
+            if (j < n.Length && n[j] == '_') j++;   // huan_0 / haun_4 的分隔底線
+            return j < n.Length && n[j] >= '0' && n[j] <= '9';   // 有數字尾 = 膚色底;base huan = 裝飾疊層 → 略過
         }
 
         private void DestroyCardPreviews()
