@@ -83,7 +83,101 @@ namespace Sdo.Game
             if (it == null) return false;
             if (it.EquipSlot == EquipSlot.Outfit) return OutfitComponentMeshes(it).Count > 0;
             var rel = it.MshRelPath;
-            return rel != null && _meshFiles.Contains(rel.Substring(rel.LastIndexOf('/') + 1));
+            if (rel == null || !_meshFiles.Contains(rel.Substring(rel.LastIndexOf('/') + 1))) return false;
+            // 有 mesh 但布料貼圖完全解不到的殘骸 (如 000004:主布料 submesh 的材質名是 GBK 亂碼「未标题-1副本_.dds」=
+            // Photoshop 預設檔名的垃圾佔位,磁碟上也沒有自身的 COAT 貼圖) → 只會畫成一坨 fallback 純色 (使用者回報:
+            // 服裝 000004 無法顯示)。視為不可渲染而隱藏,正如它已隱藏「沒 mesh」的道具。只檢查帶布料貼圖的 mesh 衣物槽
+            // (上衣/下裝/髮型/鞋子/連身);配件/眼鏡/表情維持原本「有 mesh 即可」的規則。
+            if (IsClothTextureSlot(it.EquipSlot) && !GarmentClothResolves(it)) return false;
+            return true;
+        }
+
+        /// <summary>The mesh clothing slots whose garment carries its OWN cloth texture (上衣/下裝/髮型/鞋子/連身). A
+        /// mesh in one of these that resolves to NO cloth texture renders as a flat fallback colour, so it is treated as
+        /// non-renderable and hidden. Accessories/眼鏡/表情 are excluded (they keep the mesh-only rule).</summary>
+        private static bool IsClothTextureSlot(EquipSlot s)
+            => s == EquipSlot.Top || s == EquipSlot.Bottom || s == EquipSlot.Hair || s == EquipSlot.Shoes || s == EquipSlot.OnePiece;
+
+        private static readonly Dictionary<string, bool> _clothResolveCache = new Dictionary<string, bool>();
+
+        /// <summary>True if this garment's mesh has a resolvable CLOTH texture on disk. Fast path: if any texture of the
+        /// item's own family (<c>{id}_{G}_{TOKEN}*</c> .dds/.an) exists, the garment's own-id/variant texture is present
+        /// → it renders (no mesh read). Otherwise read the mesh's material names and apply the builder's actual
+        /// resolution (<see cref="ClothTextureResolvable"/>): a corrupt row like 000004 (junk material name + no own
+        /// texture) fails → hidden. Only the ~0.1% of garments with no own-family texture ever pay the mesh read, and
+        /// the result is cached (a stable property of the shipped data).</summary>
+        public bool GarmentClothResolves(ShopItem it)
+        {
+            var rel = it?.MshRelPath;
+            if (rel == null) return true;
+            if (_clothResolveCache.TryGetValue(rel, out var cached)) return cached;
+            bool r = ComputeGarmentClothResolves(rel);
+            _clothResolveCache[rel] = r;
+            return r;
+        }
+
+        private static bool ComputeGarmentClothResolves(string rel)
+        {
+            string fam = Path.GetFileNameWithoutExtension(rel);              // e.g. "000004_MAN_COAT"
+            if (TexFamilies().Contains(fam.ToUpperInvariant())) return true;   // own texture family present → renders
+            string path = SdoAvatarBuilder.ResolveAvatarFile(rel);
+            if (!File.Exists(path)) return false;
+            string dir = Path.GetDirectoryName(path);
+            List<string> names;
+            try { names = MshLoader.ReadMaterialNames(File.ReadAllBytes(path)); }
+            catch { return false; }
+            return ClothTextureResolvable(names,
+                nm => SdoAvatarBuilder.FindDdsPath(dir, nm) != null,
+                anName => !string.IsNullOrEmpty(anName) && File.Exists(Path.Combine(dir, anName + ".an")));
+        }
+
+        /// <summary>Pure: does a garment mesh have a resolvable CLOTH texture? True if ANY of its submesh material names
+        /// (from <see cref="MshLoader.ReadMaterialNames"/>) is a real garment texture — a non-<c>Basic</c> name that
+        /// resolves to a DDS (<paramref name="ddsResolves"/>) OR a <c>_TexAnimEx(NAME)</c> placeholder whose frame list
+        /// <c>NAME.an</c> exists (<paramref name="anExists"/>). Shared <c>Basic</c> skin-base names (exposed arms/neck)
+        /// and blank/placeholder names don't count. A garment whose ONLY materials are skin-base or unresolvable junk
+        /// (使用者:000004「未标题-1副本」) returns false. The own-id fallback the builder also tries is exactly what the
+        /// caller's family fast path already covers, so it isn't repeated here.</summary>
+        public static bool ClothTextureResolvable(IEnumerable<string> matNames, Func<string, bool> ddsResolves, Func<string, bool> anExists)
+        {
+            if (matNames == null) return false;
+            foreach (var nm in matNames)
+            {
+                if (string.IsNullOrEmpty(nm)) continue;
+                if (nm.IndexOf("Basic", StringComparison.OrdinalIgnoreCase) >= 0) continue;   // 膚色底材 (手臂/脖子),非布料
+                if (ddsResolves != null && ddsResolves(nm)) return true;
+                if (TexAnimEx.TryParse(nm, out var spec) && anExists != null && anExists(spec.Name)) return true;
+            }
+            return false;
+        }
+
+        // Garment texture "families" present on disk, as UPPERCASE "{id}_{G}_{TOKEN}" keys derived from every AVATAR
+        // *.dds / *.an filename (garment tokens only). A family hit means the item's own or a variant/frame texture
+        // exists → it renders, so GarmentClothResolves can skip the mesh read. Built once, cached for the session.
+        private static HashSet<string> _texFamilies;
+        private static readonly System.Text.RegularExpressions.Regex _famRx =
+            new System.Text.RegularExpressions.Regex(@"^(\d{6})_(MAN|WOMAN)_(COAT|PANT|HAIR|SHOES|ONE)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        private static HashSet<string> TexFamilies()
+        {
+            if (_texFamilies != null) return _texFamilies;
+            var set = new HashSet<string>();
+            foreach (var dir in AvatarDirs())
+            {
+                try
+                {
+                    if (!Directory.Exists(dir)) continue;
+                    foreach (var pat in new[] { "*.dds", "*.an" })
+                        foreach (var f in Directory.GetFiles(dir, pat))
+                        {
+                            var m = _famRx.Match(Path.GetFileNameWithoutExtension(f));
+                            if (m.Success) set.Add((m.Groups[1].Value + "_" + m.Groups[2].Value + "_" + m.Groups[3].Value).ToUpperInvariant());
+                        }
+                }
+                catch { }
+            }
+            _texFamilies = set;
+            return set;
         }
 
         /// <summary>Items of a gender + worn slot (e.g. female hair), in catalog order.</summary>

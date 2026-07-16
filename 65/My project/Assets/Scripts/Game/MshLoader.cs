@@ -43,6 +43,60 @@ namespace Sdo.Game
             return res.Submeshes.Count > 0 ? res : null;
         }
 
+        /// <summary>Read every submesh's material (texture) name WITHOUT building any Unity mesh — the cheap header scan
+        /// the 商城 uses to tell a renderable garment from a corrupt one (see
+        /// <see cref="Sdo.Game.AvatarItemCatalog.ClothTextureResolvable"/>). Names come back in submesh order and may
+        /// include "" (a blank/placeholder material) or non-file junk (e.g. 000004_MAN_COAT's GBK「未标题-1副本_.dds」).
+        /// Mirrors <see cref="ParseSubmesh"/>'s material section exactly (incl. the trailing under-reported-material
+        /// probe) so the names match what the builder resolves. Empty list on a malformed / non-MSH buffer.</summary>
+        public static List<string> ReadMaterialNames(byte[] d)
+        {
+            var res = new List<string>();
+            if (d == null || d.Length < 16 || System.Text.Encoding.ASCII.GetString(d, 0, 12) != "Mesh00000030") return res;
+            int p = 12;
+            int submeshCount = (int)U32(d, ref p);
+            if (submeshCount <= 0 || submeshCount > 16) return res;
+            for (int s = 0; s < submeshCount; s++)
+            {
+                if (!ReadSubmeshMaterialNames(d, ref p, res)) break;
+                if (s < submeshCount - 1) { int nx = ScanNextSubmesh(d, p); if (nx >= d.Length) break; p = nx; }
+            }
+            return res;
+        }
+
+        // Advance p over ONE submesh, appending its material names to outNames. Same offsets as ParseSubmesh up to the
+        // material table; skips the range/palette tail (the caller re-locates the next submesh via ScanNextSubmesh).
+        private static bool ReadSubmeshMaterialNames(byte[] d, ref int p, List<string> outNames)
+        {
+            if (p + 12 > d.Length) return false;
+            U32(d, ref p);                                       // fvf
+            int idxSize = (int)U32(d, ref p); U32(d, ref p);     // idxSize, options
+            if (idxSize <= 0 || (idxSize & 1) != 0 || p + idxSize > d.Length) return false;
+            p += idxSize;
+            if (p + 8 > d.Length) return false;
+            int vertSize = (int)U32(d, ref p);
+            int stride = (int)U32(d, ref p);
+            if (stride <= 0 || vertSize <= 0 || vertSize % stride != 0 || p + vertSize > d.Length) return false;
+            p += vertSize;
+            for (int i = 0; i < 6 && p + 4 <= d.Length; i++) U32(d, ref p);   // reserved[6]
+            if (p + 4 > d.Length) return false;
+            int numMat = (int)U32(d, ref p);
+            int firstMat = p;
+            for (int m = 0; m < numMat && p + 408 <= d.Length; m++)
+            {
+                outNames.Add(ReadCStr(d, p + 17 * 4, 320));
+                p = firstMat + (m + 1) * 408;
+            }
+            int probe = firstMat + numMat * 408;                 // probe trailing under-reported materials (as ParseSubmesh)
+            while (probe + 408 <= d.Length)
+            {
+                string nm = TryMaterialName(d, probe); if (nm == null) break;
+                outNames.Add(nm); probe += 408;
+            }
+            if (probe > p) p = probe;
+            return true;
+        }
+
         private static SubMesh ParseSubmesh(byte[] d, ref int p)
         {
             uint fvf = U32(d, ref p);
