@@ -36,6 +36,16 @@ namespace Sdo.Game
             PlaySe("SE_0001");
         }
 
+        // 把 F4 選的體型 (胖瘦) index 寫進「目前這個角色」的 profile.json 並存檔 → 回房間/下次進遊戲的本機 avatar 都用同一身材。
+        // 這是「寫入角色各自的參數」的來源;讀取端在 FrontendApp(遊戲舞者)/RoomScreen(房間+頭貼)/GenderSelectScreen(選性別預覽)。
+        private static void PersistBodyShape(int index)
+        {
+            var p = Sdo.Settings.ProfileManager.Active;
+            if (p == null) return;
+            p.bodyShapeIndex = index;
+            Sdo.Settings.ProfileManager.Save();   // _activeDir 未落地(editor/beat-test)時 Save 會自行 no-op
+        }
+
         // ── F9：遊戲流速測試面板（右側，標題列可拖曳）─────────────────────────────────────────────────
         // StepMania 的 music rate（SongOptions "1.50xMusic"）：音樂本身變速變調，其餘一切掛在音樂時鐘上一起變。
         // 這裡一格 = 0.05（SM 的 rate 是兩位小數）。判定窗口不跟著縮放（仍是譜面 ms）→ 快=難、慢=簡單，同 SM。
@@ -163,13 +173,14 @@ namespace Sdo.Game
                     GUILayout.Label($" 歌曲 offset：{songOffMs:+0;-0}ms（song_name_overrides.json）— 下次開始生效");
                 GUILayout.Space(6);
                 // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — re-shape the dancer LIVE.
-                GUILayout.Label($"Body shape (thin..fat): B={_bodyShapeB:F3}  (1.00 = standard)");
+                // 按 preset 會把體型 index 寫進「這個角色」的 profile.json (bodyShapeIndex) 並存檔 → 回房間/下次進遊戲都記得。
+                GUILayout.Label($"Body shape (thin..fat): index={bodyShapeIndex} B={_bodyShapeB:F3}  (1.00=standard；按鈕存進角色)");
                 GUILayout.BeginHorizontal();
                 for (int i = 0; i < BodyShapeLabels.Length; i++)
                     if (GUILayout.Button(BodyShapeLabels[i]))
-                    { _bodyShapeB = SdoBodyShape.WeightFromIndex(i, maleBody); if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
+                    { bodyShapeIndex = i; _bodyShapeB = SdoBodyShape.WeightFromIndex(i, maleBody); if (_avatar) _avatar.SetBodyShape(_bodyShapeB); PersistBodyShape(i); }
                 GUILayout.EndHorizontal();
-                float newB = GUILayout.HorizontalSlider(_bodyShapeB, 0.7f, 1.4f);   // fine override (continuous)
+                float newB = GUILayout.HorizontalSlider(_bodyShapeB, 0.7f, 1.4f);   // fine override (continuous, live-only — 不存檔)
                 if (Mathf.Abs(newB - _bodyShapeB) > 1e-4f) { _bodyShapeB = newB; if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
             }
             else if (_dbgTab == 1)   // ===== COMBO: fire bursts + combo/mesh/trail tuning =====

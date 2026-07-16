@@ -556,7 +556,9 @@ namespace Sdo.UI.Screens
                 _avatarRoot = new GameObject("WardrobePreviewAvatar");
                 _avatarRoot.transform.position = PreviewSpot;
                 var parts = AvatarOutfit.ResolveParts(_sex, EquippedItems());
-                var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex));
+                // 左側「玩家假人」跟隨玩家自己的體型 (胖瘦)：儲物櫃是本人衣櫃，_sex = active profile 的性別。
+                float bodyB = SdoBodyShape.WeightFromIndex(Sdo.Settings.ProfileManager.Active.bodyShapeIndex, _sex == ItemSex.Male);
+                var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex), bodyWeight: bodyB);
                 if (av == null) { Destroy(_avatarRoot); _avatarRoot = null; return; }
                 ApplyLeftPose(av);
                 _previewFeetY = av.FeetYAt(0f);

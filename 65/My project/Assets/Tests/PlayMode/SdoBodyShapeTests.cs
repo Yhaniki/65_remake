@@ -75,5 +75,18 @@ namespace Sdo.Tests
             Assert.AreEqual(SdoBodyShape.WeightFromIndex(0, false), SdoBodyShape.WeightFromIndex(-3, false), 1e-6f);
             Assert.AreEqual(SdoBodyShape.WeightFromIndex(4, false), SdoBodyShape.WeightFromIndex(99, false), 1e-6f);
         }
+
+        [Test]
+        public void StandardIndex1_IsNormalBody_ForBothGenders_AndScalesNothing()
+        {
+            // 商店/儲物櫃的「卡片縮圖」用預設「正常身材」= index 1 (SdoRoomAvatar preview overload 的 bodyWeight 預設 1.0)。
+            // index 1 對兩種性別都是 B=1.0，且對任何骨頭都是不縮放 (no-op)。(左側玩家假人另外跟隨玩家自己的體型。)
+            Assert.AreEqual(1f, SdoBodyShape.WeightFromIndex(1, false), 1e-6f);
+            Assert.AreEqual(1f, SdoBodyShape.WeightFromIndex(1, true), 1e-6f);
+            float bStd = SdoBodyShape.WeightFromIndex(1, false);
+            Assert.AreEqual(Vector3.one, SdoBodyShape.ScaleFor("Bip01_Pelvis", bStd));
+            Assert.AreEqual(Vector3.one, SdoBodyShape.ScaleFor("Bip01_L_Hand", bStd));
+            Assert.AreEqual(Vector3.one, SdoBodyShape.ScaleFor("Bip01_Head", bStd));
+        }
     }
 }

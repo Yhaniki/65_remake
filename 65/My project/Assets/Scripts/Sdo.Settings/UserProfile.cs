@@ -103,6 +103,9 @@ namespace Sdo.Settings
         public string name = "玩家001";
         public int gender = 0;
         public int avatarId = 0;
+        // 體型 (胖瘦): 每個角色自己的身材參數 (faithful SDO body index 0..4 → SdoBodyShape.WeightFromIndex; 0=瘦 1=標準 2..4=胖)。
+        // 房間/遊戲的本機角色 avatar 讀這個值決定骨骼橫截面縮放;服裝預覽(商店/儲物櫃)則一律用標準身材(index 1),不受此值影響。
+        public int bodyShapeIndex = 0;
         public string[] ownedClothes = new string[0];
         public AvatarOutfit equippedClothes = new AvatarOutfit();
         public string createdAt = "";
@@ -132,6 +135,7 @@ namespace Sdo.Settings
             if (string.IsNullOrEmpty(name)) name = "玩家001";
             gender = gender == 1 ? 1 : 0;
             if (avatarId < 0) avatarId = 0;
+            if (bodyShapeIndex < 0) bodyShapeIndex = 0; else if (bodyShapeIndex > 4) bodyShapeIndex = 4;   // 體型 index 夾在 0..4
             if (wallet == null) wallet = new WalletSave();
             if (clothSlots < 9) clothSlots = 9; else if (clothSlots > 1000) clothSlots = 1000;   // 最少 1 頁(9)；舊檔存的 3 會自動補到 9
             if (ownedItems == null) ownedItems = new OwnedItemSave[0];

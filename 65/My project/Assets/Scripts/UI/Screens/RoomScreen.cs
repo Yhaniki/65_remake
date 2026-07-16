@@ -488,12 +488,13 @@ namespace Sdo.UI.Screens
             string[] localAvatarParts = ProfileManager.Active != null
                 ? WardrobeStore.ResolveEquippedParts(ProfileManager.Active, localMale ? 1 : 0, id => AvatarItemCatalog.Instance.ById(id))
                 : null;
+            int localBody = ProfileManager.Active != null ? ProfileManager.Active.bodyShapeIndex : 0;   // 本機角色自己的體型 (胖瘦)
 
             if (_scene == null)
             {
                 var sceneGo = new GameObject("RoomScene3D");
                 _scene = sceneGo.AddComponent<RoomScene3D>();
-                _scene.Build(localMale, localAvatarParts);
+                _scene.Build(localMale, localAvatarParts, localBody);
                 if (_backdrop != null && _scene.SceneTexture != null)
                 {
                     _backdrop.texture = _scene.SceneTexture;
@@ -508,7 +509,7 @@ namespace Sdo.UI.Screens
                 _localHead = headGo.AddComponent<RoomHeadPortrait>();
                 _localHead.layer = HeadLayer;
                 ApplyHeadFraming(_localHead, localMale);   // 男女各自的上下/遠近
-                _localHead.Init(localMale, localAvatarParts);
+                _localHead.Init(localMale, localAvatarParts, localBody);
                 _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
             }
@@ -549,7 +550,8 @@ namespace Sdo.UI.Screens
             string[] parts = ProfileManager.Active != null
                 ? WardrobeStore.ResolveEquippedParts(ProfileManager.Active, male ? 1 : 0, id => AvatarItemCatalog.Instance.ById(id))
                 : null;
-            if (_scene != null) _scene.RebuildLocalAvatar(male, parts);
+            int body = ProfileManager.Active != null ? ProfileManager.Active.bodyShapeIndex : 0;   // 本機角色自己的體型 (胖瘦)
+            if (_scene != null) _scene.RebuildLocalAvatar(male, parts, body);
             // 頭貼要「整個重建」：RoomHeadPortrait.Init 每次都新建一隻頭 avatar/相機/RT 卻不清舊的 → 直接再 Init 只會疊一隻
             // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
             // (Destroy 幀尾才生效 → 先 SetActive(false)，否則舊頭 avatar 這一幀還在同一個 parkSpot，新頭相機會同時拍到兩顆。)
@@ -558,7 +560,7 @@ namespace Sdo.UI.Screens
             _localHead = headGo.AddComponent<RoomHeadPortrait>();
             _localHead.layer = HeadLayer;
             ApplyHeadFraming(_localHead, male);   // 男女各自的上下/遠近
-            _localHead.Init(male, parts);
+            _localHead.Init(male, parts, body);
             _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
             _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
         }

@@ -54,12 +54,16 @@ namespace Sdo.Game
 
         // 每個性別預覽要穿的實際部位 (由 UI 層從對應 profile 帶入；null → 用預設整套)。
         private string[] _femaleParts, _maleParts;
+        // 每個性別對應 profile 自己的體型 (胖瘦) index 0..4 (由 UI 層帶入;選性別畫面就是角色本人,故用角色自己的身材)。
+        private int _femaleBodyIndex, _maleBodyIndex;
 
         /// <summary>Build the camera, RT and both dancers, then show <paramref name="gender"/> (0=女,1=男). Optional
-        /// <paramref name="femaleParts"/>/<paramref name="maleParts"/> = each gender's ACTUAL worn outfit (else default).</summary>
-        public void Build(int gender, string[] femaleParts = null, string[] maleParts = null)
+        /// <paramref name="femaleParts"/>/<paramref name="maleParts"/> = each gender's ACTUAL worn outfit (else default).
+        /// <paramref name="femaleBody"/>/<paramref name="maleBody"/> = each profile's own 體型 (胖瘦) index (0=瘦)。</summary>
+        public void Build(int gender, string[] femaleParts = null, string[] maleParts = null, int femaleBody = 0, int maleBody = 0)
         {
             _femaleParts = femaleParts; _maleParts = maleParts;
+            _femaleBodyIndex = femaleBody; _maleBodyIndex = maleBody;
             BuildCamera();
             _femalePreviewMots = LoadPreviewMots(FemalePreviewMotPaths);
             _malePreviewMots = LoadPreviewMots(MalePreviewMotPaths);
@@ -69,9 +73,10 @@ namespace Sdo.Game
         }
 
         /// <summary>Rebuild both dancers with new outfits (換裝後回到選性別畫面時刷新)；相機/RT 保留。</summary>
-        public void SetOutfits(int gender, string[] femaleParts, string[] maleParts)
+        public void SetOutfits(int gender, string[] femaleParts, string[] maleParts, int femaleBody = 0, int maleBody = 0)
         {
             _femaleParts = femaleParts; _maleParts = maleParts;
+            _femaleBodyIndex = femaleBody; _maleBodyIndex = maleBody;
             if (_female != null) Destroy(_female.gameObject);
             if (_male != null) Destroy(_male.gameObject);
             _female = BuildAvatar(male: false, name: "GenderPreviewFemale");
@@ -105,7 +110,8 @@ namespace Sdo.Game
             // PreviewBody: full body but with the opaque-cutout portrait shader, so on the TRANSPARENT preview RT the
             // hair cutout doesn't punch see-through holes / write depth over the face (portraitOpaque:false did that).
             var parts = male ? _maleParts : _femaleParts;   // 實際穿戴 (null → 預設整套)
-            var av = SdoRoomAvatar.Build(go, PreviewLayer, SdoRoomAvatar.RenderMode.PreviewBody, male: male, equippedParts: parts);
+            int bodyIndex = male ? _maleBodyIndex : _femaleBodyIndex;   // 角色自己的體型 (胖瘦)
+            var av = SdoRoomAvatar.Build(go, PreviewLayer, SdoRoomAvatar.RenderMode.PreviewBody, male: male, equippedParts: parts, bodyIndex: bodyIndex);
             if (av == null) { Destroy(go); return null; }
             av.DanceEnabled = () => false;   // no DPS in the select screen — hold the standby idle (which auto-loops)
             av.DanceTimeSec = () => -1f;

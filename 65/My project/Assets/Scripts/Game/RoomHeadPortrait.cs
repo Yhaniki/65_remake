@@ -66,13 +66,14 @@ namespace Sdo.Game
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
 
-        /// <summary>Build the isolated head avatar + camera + RT. Returns false if the avatar failed to load.</summary>
-        public bool Init(bool male = false, string[] avatarParts = null)
+        /// <summary>Build the isolated head avatar + camera + RT. Returns false if the avatar failed to load.
+        /// <paramref name="bodyIndex"/> = 這個角色自己的體型 (胖瘦;跟房間全身 avatar 同一個值,頭貼才一致)。</summary>
+        public bool Init(bool male = false, string[] avatarParts = null, int bodyIndex = 0)
         {
             var parent = new GameObject("RoomHeadIdleAvatar");
             parent.transform.SetParent(transform, false);
             parent.transform.position = parkSpot;
-            _avatar = SdoRoomAvatar.Build(parent, layer, portraitOpaque: true, male: male, equippedParts: avatarParts);
+            _avatar = SdoRoomAvatar.Build(parent, layer, portraitOpaque: true, male: male, equippedParts: avatarParts, bodyIndex: bodyIndex);
             if (_avatar == null) { Destroy(parent); return false; }
             _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;

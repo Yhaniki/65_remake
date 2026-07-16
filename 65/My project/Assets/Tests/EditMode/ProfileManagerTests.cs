@@ -60,6 +60,25 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void UserProfile_BodyShapeIndex_DefaultsThin_And_ClampsTo0To4()
+        {
+            Assert.AreEqual(0, new UserProfile().bodyShapeIndex);                                     // 預設 0=瘦 (維持既有外觀)
+            Assert.AreEqual(0, new UserProfile { bodyShapeIndex = -2 }.Sanitize().bodyShapeIndex);    // 負 → 0
+            Assert.AreEqual(4, new UserProfile { bodyShapeIndex = 99 }.Sanitize().bodyShapeIndex);    // 超界 → 4
+            Assert.AreEqual(2, new UserProfile { bodyShapeIndex = 2 }.Sanitize().bodyShapeIndex);     // 合法值保留
+        }
+
+        [Test]
+        public void UserProfile_BodyShapeIndex_RoundTripsThroughJson()
+        {
+            // 「寫入角色各自的參數和讀取」: 體型 index 要能存進 profile.json 並讀回 (ProfileManager.Save 走 JsonUtility)。
+            var src = new UserProfile("00000001", "阿明", 1) { bodyShapeIndex = 3 }.Sanitize();
+            var json = UnityEngine.JsonUtility.ToJson(src);
+            var back = UnityEngine.JsonUtility.FromJson<UserProfile>(json).Sanitize();
+            Assert.AreEqual(3, back.bodyShapeIndex);
+        }
+
+        [Test]
         public void Boot_MigratesLegacyPerUserFavorites_ToSharedProfileLayer()
         {
             // 舊版把 favorites.json 放在各 user 資料夾；現在收藏是 PROFILE 層全帳號共用（user 資料夾只放衣服）。

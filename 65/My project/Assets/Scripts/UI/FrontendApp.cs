@@ -232,6 +232,7 @@ namespace Sdo.UI
             game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
             game.localPlayerMale = s.Gender == 1;
             game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;
+            if (ProfileManager.Active != null) game.bodyShapeIndex = ProfileManager.Active.bodyShapeIndex;   // 遊戲舞者用這個角色自己的體型 (胖瘦)
             game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player

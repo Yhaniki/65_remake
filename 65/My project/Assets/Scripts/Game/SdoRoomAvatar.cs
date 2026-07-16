@@ -78,11 +78,12 @@ namespace Sdo.Game
             => Build(parent, layer, portraitOpaque, male, null);
 
         /// <summary>Back-compat bool overload: <paramref name="portraitOpaque"/> true → <see cref="RenderMode.PortraitHead"/>,
-        /// false → <see cref="RenderMode.Scene"/>. New callers should pass a <see cref="RenderMode"/> directly.</summary>
-        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male, string[] equippedParts)
-            => Build(parent, layer, portraitOpaque ? RenderMode.PortraitHead : RenderMode.Scene, male, equippedParts);
+        /// false → <see cref="RenderMode.Scene"/>. New callers should pass a <see cref="RenderMode"/> directly.
+        /// <paramref name="bodyIndex"/> = 這個角色自己的體型 (胖瘦) index 0..4 (預設 0=瘦;由 UI 層從 profile.json 帶入)。</summary>
+        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male, string[] equippedParts, int bodyIndex = 0)
+            => Build(parent, layer, portraitOpaque ? RenderMode.PortraitHead : RenderMode.Scene, male, equippedParts, bodyIndex);
 
-        public static SdoAvatar Build(GameObject parent, int layer, RenderMode mode, bool male = false, string[] equippedParts = null)
+        public static SdoAvatar Build(GameObject parent, int layer, RenderMode mode, bool male = false, string[] equippedParts = null, int bodyIndex = 0)
         {
             // PortraitHead + PreviewBody both composite over an alpha-cleared RT → use the opaque-cutout shader so hair
             // gaps stay transparent instead of writing depth/alpha holes over the face. Only the head portrait collapses
@@ -101,7 +102,7 @@ namespace Sdo.Game
             var idle = LoadMot(male ? MaleIdleMot : IdleMot);
             var av = parent.AddComponent<SdoAvatar>();
             av.Setup(hrc, idle);
-            av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, male));   // default thin body (male/female baseline)
+            av.SetBodyShape(SdoBodyShape.WeightFromIndex(bodyIndex, male));   // 這個角色自己的體型 (胖瘦;預設 0=瘦,male/female baseline)
             av.RestMot = idle;
             av.BlendSec = 0.5f;   // 0.3s smoothstep crossfade on idle↔walk (and the mirrored head portrait) — no hard cut
 
@@ -179,7 +180,7 @@ namespace Sdo.Game
         /// with no motion (the official AvtShow display mode). Kept separate from the room/gender overloads above so each
         /// path preserves its own tested behaviour.</summary>
         public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, string[] parts, string hrcRel = null,
-                                      bool bindPoseNoIdle = false)
+                                      bool bindPoseNoIdle = false, float bodyWeight = 1f)
         {
             string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel ?? FemaleHrc);   // MALE.HRC for male outfits
             if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
@@ -192,7 +193,9 @@ namespace Sdo.Game
             var idle = bindPoseNoIdle ? null : LoadMot(IdleMot);
             var av = parent.AddComponent<SdoAvatar>();
             av.Setup(hrc, idle);
-            av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, false));   // default thin female (matches the dancer)
+            // 服裝預覽的體型 B：卡片縮圖用預設「正常身材」(bodyWeight=1.0，對任何骨頭都不縮放)；左側「玩家假人」則由呼叫端
+            // 帶入玩家自己的體型 (胖瘦) → 換衣服在玩家實際身材上預覽 (user)。
+            av.SetBodyShape(bodyWeight);
             if (bindPoseNoIdle) { av.Animate = false; }
             else { av.RestMot = idle; av.BlendSec = 0f; }   // no idle↔walk crossfade — start walking immediately
 

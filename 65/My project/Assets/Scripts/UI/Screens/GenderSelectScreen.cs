@@ -106,11 +106,11 @@ namespace Sdo.UI.Screens
             {
                 var go = new GameObject("GenderPreview3D");
                 _preview = go.AddComponent<GenderPreview3D>();
-                _preview.Build(_gender, fParts, mParts);
+                _preview.Build(_gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
             }
             else
             {
-                _preview.SetOutfits(_gender, fParts, mParts);
+                _preview.SetOutfits(_gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
             }
             if (_previewImg != null && _preview != null && _preview.PreviewTexture != null)
             {
@@ -136,7 +136,7 @@ namespace Sdo.UI.Screens
         {
             int g = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0;
             _gender = g;
-            if (_preview != null) _preview.SetOutfits(g, PartsForGender(0), PartsForGender(1));
+            if (_preview != null) _preview.SetOutfits(g, PartsForGender(0), PartsForGender(1), BodyIndexForGender(0), BodyIndexForGender(1));
             UIKit.ApplySprite(_maleBox, g == 1 ? _maleOn : _maleOff);
             UIKit.ApplySprite(_femaleBox, g == 0 ? _femaleOn : _femaleOff);
         }
@@ -151,6 +151,16 @@ namespace Sdo.UI.Screens
                 if (p != null && p.id == id)
                     return WardrobeStore.ResolveEquippedParts(p, gender, cid => AvatarItemCatalog.Instance.ById(cid));
             return null;
+        }
+
+        // 取某性別對應 profile 自己的體型 (胖瘦) index 0..4；找不到 → 0 (瘦)。選性別畫面是角色本人，故用角色自己的身材。
+        private static int BodyIndexForGender(int gender)
+        {
+            string id = Sdo.Settings.ProfileManager.SeededIdForGender(gender);
+            foreach (var p in Sdo.Settings.ProfileManager.List())
+                if (p != null && p.id == id)
+                    return p.bodyShapeIndex;
+            return 0;
         }
 
         public override void OnHide()

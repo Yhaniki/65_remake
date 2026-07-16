@@ -56,6 +56,7 @@ namespace Sdo.Game
         private readonly Dictionary<string, MotLoader> _chatActionMots = new Dictionary<string, MotLoader>(System.StringComparer.OrdinalIgnoreCase);
         private bool _male;
         private string[] _avatarParts;
+        private int _bodyIndex;       // 本機角色自己的體型 (胖瘦) index 0..4;預設 0=瘦 (見 UserProfile.bodyShapeIndex)
         private Vector3 _walkPos;     // logical floor position (X, floorY, Z)
         private float _feetY;         // model-space feet offset so the feet rest on floorY
         private float _facing;        // current Unity yaw (degrees)
@@ -133,11 +134,12 @@ namespace Sdo.Game
             return true;
         }
 
-        public void Build(bool male = false, string[] avatarParts = null)
+        public void Build(bool male = false, string[] avatarParts = null, int bodyIndex = 0)
         {
             if (_ready) return;
             _male = male;
             _avatarParts = avatarParts;
+            _bodyIndex = bodyIndex;   // 本機角色自己的體型 (胖瘦;由 RoomScreen 從 profile 帶入)
             LoadScene();
             LoadMask();
             LoadAvatar();
@@ -267,7 +269,7 @@ namespace Sdo.Game
         {
             var parent = new GameObject("RoomLocalAvatar");
             parent.transform.SetParent(transform, false);
-            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
+            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
@@ -285,10 +287,11 @@ namespace Sdo.Game
 
         /// <summary>Rebuild the local host avatar with a new outfit (儲物櫃 換穿) without rebuilding the whole scene —
         /// preserves the current walk position/facing and returns it to its idle pose. No-op (just stores) until Build ran.</summary>
-        public void RebuildLocalAvatar(bool male, string[] avatarParts)
+        public void RebuildLocalAvatar(bool male, string[] avatarParts, int bodyIndex = 0)
         {
             _male = male;
             _avatarParts = avatarParts;
+            _bodyIndex = bodyIndex;   // 換穿時一併帶入最新體型 (胖瘦)
             if (!_ready) return;
             var oldRoot = _avatarRoot;
             _avatarRoot = null; _avatar = null;
@@ -296,7 +299,7 @@ namespace Sdo.Game
             if (oldRoot != null) oldRoot.gameObject.SetActive(false);
             var parent = new GameObject("RoomLocalAvatar");
             parent.transform.SetParent(transform, false);
-            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
+            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
