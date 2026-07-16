@@ -464,6 +464,7 @@ namespace Sdo.UI.Screens
                 // song name / time / level nudged down 2px to sit centred in the row strip (was at `top`).
                 float textTop = top + 2f;
                 _rowName[i] = AddRowText("row" + i + "name", NameX, textTop, NameW, ColRow, TextAlignmentOptions.Left);
+                _rowName[i].characterSpacing = -TextStyles.SongTitleTrackEm * 100f;   // 歌名字靠緊一點（TMP 真字距，不變形）
                 _rowTime[i] = AddRowText("row" + i + "time", TimeX, textTop, TimeW, ColRow, TextAlignmentOptions.Center);
                 _rowLevel[i] = AddRowText("row" + i + "lvl", LevelX, textTop, LevelW, ColRow, TextAlignmentOptions.Center);
 

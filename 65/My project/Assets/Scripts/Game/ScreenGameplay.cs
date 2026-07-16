@@ -561,7 +561,17 @@ namespace Sdo.Game
             ("800→HE", EmojiKind.HE),
             ("miss10→H", EmojiKind.H), ("miss30→Y", EmojiKind.Y), ("miss50→JS", EmojiKind.JS), ("lowHP→GTH", EmojiKind.GTH),
         };
-        private TextMesh _musicName, _lvText, _timeText, _info, _fpsText;
+        private TrackedTextMesh _musicName;                       // bottom song title — per-char so its letter-spacing can be tightened
+        private TextMesh _lvText, _timeText, _info, _fpsText;
+        // 「時間」欄拆成三個獨立文字物件，讓數字變動時「冒號」與「總長」的位置都定住不動：
+        //   _timeMin  ＝ 倒數的「分」，右對齊 → 右緣釘在冒號錨點，分是「—」或數字都不影響冒號 x。
+        //   _timeText ＝ 倒數的「: 秒」，左對齊在冒號錨點 → 冒號位置固定；秒往右長不影響冒號。
+        //   _timeTotal＝ 整首固定的「總長」，位置只釘一次。
+        private TextMesh _timeMin, _timeTotal;
+        private int _timeMeasure;             // 0=待量測 1=量測中 2=已定位
+        private const float TimeMinW = 10f;   // 「分」欄寬(design px)：欄位左緣 → 冒號錨點的距離
+        private float _timeTotalDx = 40f;     // 欄位左緣(baseX+132) → 總長欄左緣 的水平距離；量到實寬後更新
+        private float _attrBaseX = 204f;      // 最近一次 PlaceAttrRow 的 baseX（量測後重排要用）
         private SpriteRenderer _lblSong, _lblAttr;   // bottom "歌曲名:" / "LV: 时间:" labels
         private Sprite _lvOnlyLabel;                  // "LV:"-only crop of GAMEPLAY2, shown at result (time field dropped)
         private float _fps;
@@ -1817,9 +1827,14 @@ namespace Sdo.Game
         /// offsets 0 / +36 / +132). The 歌曲名 label+value stay bottom-left in every mode.</summary>
         private void PlaceAttrRow(float baseX)
         {
+            _attrBaseX = baseX;   // 量測完成後要能依同一 baseX 重排
+            float fieldX = baseX + 132f;          // 「時間」欄左緣（維持原設計 336−204）
+            float colX = fieldX + TimeMinW;       // 冒號錨點＝分欄右緣：分右對齊到此、「: 秒」左對齊自此，冒號 x 恆定
             if (_lblAttr) SdoLayout.PlaceTopLeft(_lblAttr, baseX, 575f);
             if (_lvText) _lvText.transform.position = SdoLayout.ToWorld(baseX + 36f, 585f, -1f);    // 240−204
-            if (_timeText) _timeText.transform.position = SdoLayout.ToWorld(baseX + 132f, 585f, -1f); // 336−204
+            if (_timeMin) _timeMin.transform.position = SdoLayout.ToWorld(colX, 585f, -1f);         // 分：右對齊
+            if (_timeText) _timeText.transform.position = SdoLayout.ToWorld(colX, 585f, -1f);       // : 秒：左對齊（冒號固定）
+            if (_timeTotal) _timeTotal.transform.position = SdoLayout.ToWorld(fieldX + _timeTotalDx, 585f, -1f); // 總長：釘在秒欄右側
         }
 
         private void BuildBoard()
@@ -2110,11 +2125,21 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(songTitle)) songTitle = _map.Title;
             if (string.IsNullOrEmpty(songTitle)) songTitle = "song";
             // song name / LV / time value text — white, two sizes smaller (13 -> 11) per request.
-            _musicName = NewText("MusicName", 80, 585, 11, Color.white); _musicName.text = songTitle;
+            // Same font/size as NewText (LegacyRuntime, fontSize 64, characterSize 11×0.2, order 42, MiddleLeft) but
+            // laid out per-glyph so the letter-spacing can be tightened (字靠緊一點).
+            _musicName = new TrackedTextMesh("MusicName", Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"),
+                64, 11 * 0.2f, Color.white, 42, TextAnchor.MiddleLeft, TextStyles.GameSongTitleTrackEm);
+            _musicName.Position = SdoLayout.ToWorld(80, 585, -1);
+            _musicName.Text = songTitle;
             _songTitle = songTitle;   // keep for the result panel
             _lvText = NewText("MusicLev", 240, 585, 11, Color.white); _lvText.text = _map.Level.ToString();
+            // 「時間」欄拆成三個獨立文字物件（見欄位宣告處說明）：分(右對齊)｜: 秒(左對齊，冒號固定)｜總長(固定)。
+            // 冒號與總長位置都不隨數字寬度位移。總長 x 由「: 秒」最寬字串的實測寬度在 Update 釘一次（見 380 附近）。
             int tot0 = (int)Math.Round(_totalMs / 1000.0);   // initial: "--:--  [total]"
-            _timeText = NewText("MusicTime", 336, 585, 11, Color.white); _timeText.text = FullWidth($"- : -    {tot0 / 60} : {tot0 % 60:00}");
+            _timeMin = NewText("MusicTimeMin", 336, 585, 11, Color.white); _timeMin.anchor = TextAnchor.MiddleRight; _timeMin.text = "0";
+            _timeText = NewText("MusicTime", 336, 585, 11, Color.white); _timeText.text = " : 00";   // 先放最寬秒字串供量測
+            _timeTotal = NewText("MusicTimeTotal", 336, 585, 11, Color.white); _timeTotal.text = $"{tot0 / 60} : {tot0 % 60:00}";
+            _timeTotal.GetComponent<Renderer>().enabled = false;   // 量到寬度、釘好位置前先不顯示（免得疊在倒數欄上）
             // 已隱藏：右上統計（P/C/B/M + combo + F2 相機標籤）不建立就不顯示也不更新（_info 保持 null，更新處有守門）
             // _info = NewText("Info", 610, 8, 10, Color.white);
             // 已隱藏：左上除錯 FPS 不建立就不顯示（_fpsText 保持 null，更新處有守門）
@@ -2373,11 +2398,6 @@ namespace Sdo.Game
             tm.fontSize = 64; tm.characterSize = px * 0.2f; tm.anchor = TextAnchor.MiddleLeft; tm.color = col;
             return tm;
         }
-
-        // Style the bottom time field like the original. The colon is written as " : " (an ASCII colon with an EQUAL
-        // space on each side) so it sits centred between the digits — the full-width colon glyph was left-biased.
-        // Only the placeholder dash is widened to an em dash ("— : —"); digits stay half-width (tight).
-        private static string FullWidth(string s) => s.Replace('-', '—');   // U+2014 em dash
 
         // Crop a label sprite to its left `width` px (same texture, top-left preserved) — used to keep just the "LV:"
         // half of the combined "LV: 时间:" label when the time field is dropped on the result screen.
@@ -4128,9 +4148,11 @@ namespace Sdo.Game
             if (_scoreDigits != null) foreach (var d in _scoreDigits) if (d) d.enabled = false;
             if (_lblSong) _lblSong.enabled = false;
             if (_lblAttr) _lblAttr.enabled = false;
-            if (_musicName) _musicName.gameObject.SetActive(false);
+            if (_musicName != null) _musicName.SetActive(false);
             if (_lvText) _lvText.gameObject.SetActive(false);
+            if (_timeMin) _timeMin.gameObject.SetActive(false);
             if (_timeText) _timeText.gameObject.SetActive(false);
+            if (_timeTotal) _timeTotal.gameObject.SetActive(false);
             if (_info) _info.gameObject.SetActive(false);
             // 頭上的名牌（箭頭 + 名字）結算/回放全程保留不隱藏 — 不呼叫 _headMarker.Hide()。
         }
@@ -4144,10 +4166,10 @@ namespace Sdo.Game
             // 結算列固定回官方預設位置：不管遊戲時 面板位置(左/中) 或 掉落方式(上/下) 把「LV: 时间:」整組推到左下或右下，
             // 結算時 歌名+LV 都要回到 GamePlay 預設欄位（歌名值 x=80、LV 標籤 x=204、LV 值 x=240）。
             // ── 過去只重置 LV 標籤(_lblAttr) 沒重置 LV 值(_lvText)，向下置中模式下 _lvText 仍停在 548+36=584，數字就跑到最右邊。
-            if (_musicName)
+            if (_musicName != null)
             {
-                _musicName.gameObject.SetActive(true);                     // song title value
-                _musicName.transform.position = SdoLayout.ToWorld(80f, 585f, -1f);
+                _musicName.SetActive(true);                                // song title value
+                _musicName.Position = SdoLayout.ToWorld(80f, 585f, -1f);
             }
             if (_lvText)
             {
@@ -4160,7 +4182,9 @@ namespace Sdo.Game
                 SdoLayout.PlaceTopLeft(_lblAttr, 204, 575);                // re-place: cropped sprite has narrower bounds
                 _lblAttr.enabled = true;
             }
-            if (_timeText) _timeText.gameObject.SetActive(false);         // 時間欄位移除
+            if (_timeMin) _timeMin.gameObject.SetActive(false);           // 時間欄位移除（分）
+            if (_timeText) _timeText.gameObject.SetActive(false);         // 時間欄位移除（: 秒）
+            if (_timeTotal) _timeTotal.gameObject.SetActive(false);       // 連同總長欄一起移除
         }
 
         // Drive the post-song sequence: hold the win/lose pose, then settle the panel, then loop the background

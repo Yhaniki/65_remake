@@ -23,6 +23,19 @@ namespace Sdo.Game
         /// keep full width (NOT a squash/condense). 0 = natural spacing; raise toward ~0.15 for tighter.</summary>
         public const float HeadNameTrackEm = 0.15f;
 
+        /// <summary>Same true-tracking as <see cref="HeadNameTrackEm"/> but for the right-side ranking roster
+        /// (name + score rows, <see cref="Style.ListLocal"/>/<see cref="Style.ListOther"/>). Independently tunable.
+        /// 0 = natural spacing.</summary>
+        public const float RosterTrackEm = 0.15f;
+
+        /// <summary>True-tracking (em-fraction removed per inter-char gap) for the song-select list-row song names
+        /// (TMP characterSpacing). 0 = natural spacing.</summary>
+        public const float SongTitleTrackEm = 0.1f;
+
+        /// <summary>Same, but for the gameplay HUD bottom song title (<see cref="TrackedTextMesh"/>) — kept separate
+        /// because that label reads tighter at the same value, so it wants a gentler amount.</summary>
+        public const float GameSongTitleTrackEm = 0.0f;
+
         // Colours eyedropped from the official screenshots (20151030 / 20151208):
         public static readonly Color FaceCream  = new Color32(250, 252, 214, 255);       // 頭頂名(粗體) 房間+遊戲共用 = RGB(250,252,214)
         public static readonly Color FaceYellow = new Color(1.000f, 1.000f, 0.580f, 1f); // 清單-本機       = RGB(255,255,148)
@@ -75,8 +88,10 @@ namespace Sdo.Game
         public static Label3D NewLabel(string name, Style style, int order, float pxSize, TextAnchor anchor, int layer = 0)
         {
             Color face, edge; Vector2[] offsets; bool bold;
-            // Only the head-top nameplate gets letter-spacing tightening (字靠緊一點); roster/looker keep natural spacing.
-            float trackEm = style == Style.HeadName ? HeadNameTrackEm : 0f;
+            // Letter-spacing tightening (字靠緊一點): head nameplate + ranking roster; spectator (Looker) stays natural.
+            float trackEm = style == Style.HeadName ? HeadNameTrackEm
+                          : (style == Style.ListLocal || style == Style.ListOther) ? RosterTrackEm
+                          : 0f;
             switch (style)
             {
                 case Style.ListLocal:  face = FaceYellow;     edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
@@ -287,19 +302,33 @@ namespace Sdo.Game
         {
             set
             {
-                _text = value ?? "";
+                string v = value ?? "";
+                bool built = _trackEm == 0f ? _main != null : _cellFace != null;
+                if (built && v == _text) return;   // unchanged → skip (the live roster score sets this every frame)
+                _text = v;
                 if (_trackEm == 0f)
                 {
-                    _main.text = _text;
-                    for (int i = 0; i < _back.Length; i++) _back[i].text = _text;
+                    _main.text = v;
+                    for (int i = 0; i < _back.Length; i++) _back[i].text = v;
                 }
                 else
                 {
-                    BuildCells(_text);
-                    _lastFontPx = -1;   // force a reflow of the freshly-built cells
+                    // Reuse cells when the length is unchanged (score digits usually keep their count) — only rebuild
+                    // GameObjects when the character count changes, so a per-frame score update just re-letters + reflows.
+                    if (_cellFace == null || _cellFace.Length != v.Length) BuildCells(v);
+                    else for (int k = 0; k < v.Length; k++) SetCellChar(k, v[k]);
+                    _lastFontPx = -1;   // force a reflow of the (re)built cells
                     Refresh(true);
                 }
             }
+        }
+
+        private void SetCellChar(int k, char ch)
+        {
+            string s = ch.ToString();
+            if (_cellFace[k] != null) _cellFace[k].text = s;
+            var es = _cellEdge[k];
+            if (es != null) for (int i = 0; i < es.Length; i++) if (es[i] != null) es[i].text = s;
         }
 
         public float PxSize { set { _pxSize = value; Refresh(false); } }
@@ -321,5 +350,94 @@ namespace Sdo.Game
         }
 
         public void SetActive(bool on) { if (root != null) root.SetActive(on); }
+    }
+
+    /// <summary>
+    /// A plain (no-outline) legacy <see cref="TextMesh"/> label laid out ONE glyph at a time so its letter-spacing can
+    /// be tightened — legacy TextMesh has no character-spacing. Each cell keeps the SAME fontSize/characterSize as the
+    /// single-mesh label it replaces, so glyphs are never distorted; only their x positions change. World units per
+    /// raster pixel = characterSize×0.1 (Unity's fixed TextMesh scale), so placing cell k+1 at cell k's advance
+    /// reproduces the native string at trackEm 0, then a constant reduction pulls the characters closer. Used for the
+    /// gameplay HUD bottom song title.
+    /// </summary>
+    public sealed class TrackedTextMesh
+    {
+        public readonly GameObject root;
+        private readonly Font _font;
+        private readonly int _fontSize;
+        private readonly float _charSize;
+        private readonly int _order;
+        private readonly TextAnchor _anchor;
+        private readonly float _trackEm;
+        private Color _color;
+        private TextMesh[] _cells;
+        private string _text = "";
+
+        public TrackedTextMesh(string name, Font font, int fontSize, float charSize, Color color, int order, TextAnchor anchor, float trackEm)
+        {
+            root = new GameObject(name);
+            _font = font; _fontSize = fontSize; _charSize = charSize; _color = color; _order = order; _anchor = anchor; _trackEm = trackEm;
+        }
+
+        public Vector3 Position { set { root.transform.position = value; } }
+        public void SetActive(bool on) { if (root != null) root.SetActive(on); }
+        public Color Color { set { _color = value; if (_cells != null) foreach (var c in _cells) if (c != null) c.color = value; } }
+
+        public string Text
+        {
+            set
+            {
+                string v = value ?? "";
+                if (_cells != null && v == _text) return;
+                if (_cells == null || _cells.Length != v.Length) Build(v);
+                else for (int k = 0; k < v.Length; k++) _cells[k].text = v[k].ToString();
+                _text = v;
+                Reflow();
+            }
+        }
+
+        private void Build(string s)
+        {
+            if (_cells != null) foreach (var c in _cells) if (c != null) UnityEngine.Object.Destroy(c.gameObject);
+            _cells = new TextMesh[s.Length];
+            for (int k = 0; k < s.Length; k++)
+            {
+                var go = new GameObject("c" + k);
+                go.transform.SetParent(root.transform, false);
+                var tm = go.AddComponent<TextMesh>();
+                tm.font = _font; tm.fontSize = _fontSize; tm.characterSize = _charSize;
+                tm.anchor = TextAnchor.MiddleLeft; tm.alignment = TextAlignment.Left; tm.color = _color;
+                tm.text = s[k].ToString();
+                var mr = go.GetComponent<MeshRenderer>();
+                mr.sharedMaterial = _font.material; mr.sortingOrder = _order;
+                _cells[k] = tm;
+            }
+        }
+
+        private void Reflow()
+        {
+            int n = _cells.Length;
+            if (n == 0) return;
+            _font.RequestCharactersInTexture(_text, _fontSize, FontStyle.Normal);
+            float worldPerPx = 0.1f * _charSize;
+            float reduce = _trackEm * _fontSize * worldPerPx;
+            var adv = new float[n];
+            float total = 0f;
+            for (int k = 0; k < n; k++)
+            {
+                float a = _font.GetCharacterInfo(_text[k], out CharacterInfo info, _fontSize, FontStyle.Normal) ? info.advance : _fontSize;
+                adv[k] = a * worldPerPx; total += adv[k];
+            }
+            if (n > 1) total -= reduce * (n - 1);
+            float cursor =
+                (_anchor == TextAnchor.MiddleLeft  || _anchor == TextAnchor.UpperLeft  || _anchor == TextAnchor.LowerLeft)  ? 0f :
+                (_anchor == TextAnchor.MiddleRight || _anchor == TextAnchor.UpperRight || _anchor == TextAnchor.LowerRight) ? -total :
+                -total * 0.5f;
+            for (int k = 0; k < n; k++)
+            {
+                _cells[k].transform.localPosition = new Vector3(cursor, 0f, 0f);
+                cursor += adv[k] - reduce;
+            }
+        }
     }
 }
