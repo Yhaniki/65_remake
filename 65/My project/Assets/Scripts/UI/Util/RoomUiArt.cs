@@ -59,13 +59,16 @@ namespace Sdo.UI.Util
         /// white/coloured fringe that ATLAS-NEIGHBOUR bleed drags into a crop edge when the .an abuts another opaque
         /// sprite in the shared PNG (旁觀/開始 鈕的白邊). AlphaBleed (the bleed:true path above) only dilates the
         /// transparent-white matte, so it can't fix an opaque neighbour — on its own texture there is no neighbour.
-        /// Falls back to the shared-atlas <see cref="An"/> if the solo crop fails. Use only for the buttons that
-        /// actually show the fringe.</summary>
+        /// pad:0 是刻意的:LoadAnSolo 的 pad 會在四周加透明邊,而 UIKit.AddSprite 依 sprite.rect.size 定位(左上角錨在
+        /// (x,y))→ pad 每加 N 就把可見圖往「右下」內縮 N px(pad:2 → 房間鈕整批右下位移 2px)。pad:0 讓 solo sprite 尺寸
+        /// 與 atlas crop 完全相同 → 佔用的螢幕矩形跟舊 An 路徑一致 → 不位移。去鄰居白邊靠「自貼圖 + DeMatteWhite + Clamp」
+        /// 即可,不需要 pad(同 ShopArt/CabinetArt 皆 pad:0)。Falls back to the shared-atlas <see cref="An"/> if the solo
+        /// crop fails. Use only for the buttons that actually show the fringe.</summary>
         public static Sprite AnSolo(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;
             if (_soloCache.TryGetValue(anName, out var s) && s != null) return s;
-            s = SdoExtracted.LoadAnSolo(Dir, anName, pad: 2) ?? An(anName);
+            s = SdoExtracted.LoadAnSolo(Dir, anName, pad: 0) ?? An(anName);   // pad:0 → 尺寸同 atlas crop,不位移(見 doc)
             _soloCache[anName] = s;
             return s;
         }
