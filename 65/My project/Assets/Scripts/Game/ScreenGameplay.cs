@@ -570,6 +570,7 @@ namespace Sdo.Game
         private TextMesh _timeMin, _timeTotal;
         private int _timeMeasure;             // 0=待量測 1=量測中 2=已定位
         private const float TimeMinW = 10f;   // 「分」欄寬(design px)：欄位左緣 → 冒號錨點的距離
+        private const float CountdownDx = 5f; // 倒數「分:秒」整組再往左移的 px（標籤「時間:」與總長不動；冒號固定關係不變）
         private float _timeTotalDx = 40f;     // 欄位左緣(baseX+132) → 總長欄左緣 的水平距離；量到實寬後更新
         private float _attrBaseX = 204f;      // 最近一次 PlaceAttrRow 的 baseX（量測後重排要用）
         private SpriteRenderer _lblSong, _lblAttr;   // bottom "歌曲名:" / "LV: 时间:" labels
@@ -1829,7 +1830,7 @@ namespace Sdo.Game
         {
             _attrBaseX = baseX;   // 量測完成後要能依同一 baseX 重排
             float fieldX = baseX + 132f;          // 「時間」欄左緣（維持原設計 336−204）
-            float colX = fieldX + TimeMinW;       // 冒號錨點＝分欄右緣：分右對齊到此、「: 秒」左對齊自此，冒號 x 恆定
+            float colX = fieldX + TimeMinW - CountdownDx;  // 冒號錨點＝分欄右緣：分右對齊到此、「: 秒」左對齊自此，冒號 x 恆定
             if (_lblAttr) SdoLayout.PlaceTopLeft(_lblAttr, baseX, 575f);
             if (_lvText) _lvText.transform.position = SdoLayout.ToWorld(baseX + 36f, 585f, -1f);    // 240−204
             if (_timeMin) _timeMin.transform.position = SdoLayout.ToWorld(colX, 585f, -1f);         // 分：右對齊
