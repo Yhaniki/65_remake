@@ -1893,7 +1893,14 @@ namespace Sdo.UI.Screens
             // 少了 armed 這條則「送完續打泡不出來」。
             if (!_chatInputSticky && !_chatBubbleInputArmed && !_chatBubbleTyping) return;
             bool roomTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
-            if (!roomTop) { _chatInputSticky = false; return; }   // 切到別畫面(含選歌 overlay)→放掉，回來不自動搶 focus
+            if (!roomTop)
+            {
+                // 切到別畫面(含選歌 overlay)：不只放掉黏 focus，還要完整取消打字態（清藍泡/輸入框殘草稿＋放 focus）。
+                // 否則頭上打字泡/輸入框的殘草稿會活到選歌畫面，選歌搜尋框一按 Enter 就把殘草稿當聊天送出（泡把字送出去）。
+                // 三態全清後下一幀由上面 early-return 擋住，不會每幀重呼；回房也不自動搶 focus。
+                CancelRoomChatTyping();
+                return;
+            }
             // modal(商城/儲物櫃/設定)疊在房間上時不搶 focus：設定的鍵盤頁要收按鍵，focus 被搶回去的話那些字母
             // 會打進聊天欄(還會把 IME 組字叫回來)。modal 關掉後 sticky 還在 → 焦點自動回到聊天欄。
             if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
