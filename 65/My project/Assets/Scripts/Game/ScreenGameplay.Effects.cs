@@ -377,12 +377,39 @@ namespace Sdo.Game
 
             if (_timeText)
             {
-                // official format: "[left]  [total]". Left = "--:--" until the music starts (during the READY/GO
-                // opening _clockStart is still in the future), then a countdown of the remaining time. Right = total.
+                // 「時間」＝ 分(_timeMin，右對齊) ｜ ": 秒"(_timeText，左對齊，冒號固定) ｜ 總長(_timeTotal，整首固定)。
+                // 未開始（READY/GO 期間 _clockStart 還在未來）顯示 "— : —"，之後倒數剩餘時間。冒號與總長都不隨數字寬度位移。
                 int tot = (int)Math.Round(_totalMs / 1000.0);
                 double el = Time.timeAsDouble - _clockStart;
-                string left = el < 0 ? "- : -" : $"{(int)Math.Max(0, tot - el) / 60} : {(int)Math.Max(0, tot - el) % 60:00}";
-                _timeText.text = FullWidth($"{left}    {tot / 60} : {tot % 60:00}");
+
+                // 總長欄定位：以「: 秒」最寬字串(" : 00")的實測 renderer 寬度，把總長釘到秒欄右側固定間距處
+                // （world unit == design px，見 SdoLayout）。legacy TextMesh 的 mesh 於下一次繪製才重建，故隔一幀再讀 bounds。
+                if (_timeMeasure < 2 && _timeTotal)
+                {
+                    if (_timeMeasure == 0) { _timeText.text = " : 00"; _timeMeasure = 1; }
+                    else
+                    {
+                        float w = _timeText.GetComponent<Renderer>().bounds.size.x;
+                        if (w > 0.01f)
+                        {
+                            _timeTotalDx = TimeMinW + w + 12f;
+                            PlaceAttrRow(_attrBaseX);                          // 依實測寬度重排總長欄
+                            _timeTotal.GetComponent<Renderer>().enabled = true;
+                            _timeMeasure = 2;
+                        }
+                    }
+                }
+
+                if (_timeMeasure == 2)
+                {
+                    if (el < 0) { if (_timeMin) _timeMin.text = "—"; _timeText.text = " : —"; }
+                    else
+                    {
+                        int rem = (int)Math.Max(0, tot - el);
+                        if (_timeMin) _timeMin.text = (rem / 60).ToString();
+                        _timeText.text = $" : {rem % 60:00}";
+                    }
+                }
             }
             // combo milestone (50/100/150…) -> celebration burst + voice
             int milestone = (_score.Combo / 50) * 50;
