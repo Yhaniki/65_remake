@@ -11,7 +11,7 @@
   "lcg": "state=seed; 每步 state=(state*0x3D09)&0xffffffff; k=(state>>16)&0xff; out=in-k (解密)"
  },
  "counts": {
-  "total": 4326,
+  "total": 4321,
   "ddrm": 4,
   "sdom": 3170,
   "rewu": 1172,
@@ -20875,26 +20875,6 @@
    "size": 56052
   },
   {
-   "gn": "sdom1619k.gn",
-   "enc": "rewu",
-   "mode": "K",
-   "seed": 4675663,
-   "fileId": 11619,
-   "bpm": 148.0,
-   "title": "如果没有",
-   "size": 100412
-  },
-  {
-   "gn": "sdom1619t.gn",
-   "enc": "rewu",
-   "mode": "T",
-   "seed": 13176189,
-   "fileId": 1619,
-   "bpm": 148.0,
-   "title": "如果没有",
-   "size": 72468
-  },
-  {
    "gn": "sdom1620k.gn",
    "enc": "rewu",
    "mode": "K",
@@ -21063,26 +21043,6 @@
    "bpm": 126.0,
    "title": "Why I like you",
    "size": 139536
-  },
-  {
-   "gn": "sdom1628k.gn",
-   "enc": "rewu",
-   "mode": "K",
-   "seed": 9458173,
-   "fileId": 11628,
-   "bpm": 150.0,
-   "title": "怪怪女",
-   "size": 86952
-  },
-  {
-   "gn": "sdom1628t.gn",
-   "enc": "rewu",
-   "mode": "T",
-   "seed": 5378792,
-   "fileId": 1628,
-   "bpm": 150.0,
-   "title": "怪怪女",
-   "size": 84768
   },
   {
    "gn": "sdom1629k.gn",
@@ -45211,16 +45171,6 @@
    "bpm": 158.0,
    "title": "海芋恋",
    "size": 87108
-  },
-  {
-   "gn": "sdom3.gn",
-   "enc": "ddrm",
-   "seed1": 3707018625,
-   "seed2": 1466531599,
-   "fileId": 0,
-   "bpm": 120.0,
-   "title": "新手教学",
-   "size": 7144
   },
   {
    "gn": "sdom5001k.gn",

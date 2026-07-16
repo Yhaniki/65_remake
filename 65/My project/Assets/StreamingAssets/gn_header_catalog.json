@@ -9,7 +9,7 @@
   "en"
  ],
  "zhTW": "opencc s2twp",
- "count": 4323,
+ "count": 4319,
  "songs": [
   {
    "gn": "sdom0001k.gn",
@@ -77154,84 +77154,6 @@
    "origName": "sdom1618T.gm"
   },
   {
-   "gn": "sdom1619k.gn",
-   "fileId": 11619,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 148.0,
-   "levels": [
-    3,
-    5,
-    16
-   ],
-   "noteCounts": [
-    204,
-    439,
-    670
-   ],
-   "measurements": [
-    226,
-    311,
-    377
-   ],
-   "durations": [
-    115,
-    115,
-    115
-   ],
-   "title": {
-    "zhCN": "如果没有",
-    "zhTW": "如果沒有",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "梁靜茹",
-    "zhTW": "梁靜茹",
-    "en": ""
-   },
-   "producer": "李寅晨",
-   "origName": "sdom1.gm"
-  },
-  {
-   "gn": "sdom1619t.gn",
-   "fileId": 1619,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 148.0,
-   "levels": [
-    1,
-    2,
-    6
-   ],
-   "noteCounts": [
-    137,
-    246,
-    443
-   ],
-   "measurements": [
-    184,
-    275,
-    356
-   ],
-   "durations": [
-    115,
-    115,
-    115
-   ],
-   "title": {
-    "zhCN": "如果没有",
-    "zhTW": "如果沒有",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "梁靜茹",
-    "zhTW": "梁靜茹",
-    "en": ""
-   },
-   "producer": "李寅晨",
-   "origName": "sdom1.gm"
-  },
-  {
    "gn": "sdom1620k.gn",
    "fileId": 11620,
    "fileType": "gn",
@@ -77854,84 +77776,6 @@
    },
    "producer": "丁翰午",
    "origName": "sdom1627T.gm"
-  },
-  {
-   "gn": "sdom1628k.gn",
-   "fileId": 11628,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 150.0,
-   "levels": [
-    5,
-    7,
-    11
-   ],
-   "noteCounts": [
-    351,
-    469,
-    631
-   ],
-   "measurements": [
-    410,
-    423,
-    432
-   ],
-   "durations": [
-    105,
-    105,
-    105
-   ],
-   "title": {
-    "zhCN": "怪怪女",
-    "zhTW": "怪怪女",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "青鸟飞鱼",
-    "zhTW": "青鳥飛魚",
-    "en": ""
-   },
-   "producer": "丁翰午",
-   "origName": "sdom1628K.gm"
-  },
-  {
-   "gn": "sdom1628t.gn",
-   "fileId": 1628,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 150.0,
-   "levels": [
-    4,
-    5,
-    6
-   ],
-   "noteCounts": [
-    310,
-    351,
-    441
-   ],
-   "measurements": [
-    402,
-    409,
-    420
-   ],
-   "durations": [
-    105,
-    105,
-    105
-   ],
-   "title": {
-    "zhCN": "怪怪女",
-    "zhTW": "怪怪女",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "青鸟飞鱼",
-    "zhTW": "青鳥飛魚",
-    "en": ""
-   },
-   "producer": "丁翰午",
-   "origName": "sdom1628T.gm"
   },
   {
    "gn": "sdom1629k.gn",
@@ -162373,26 +162217,26 @@
    "fileId": 12933,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 120.0,
+   "bpm": 119.99,
    "levels": [
-    0,
-    0,
-    1
+    6,
+    11,
+    20
    ],
    "noteCounts": [
-    0,
-    0,
-    939
+    525,
+    902,
+    1035
    ],
    "measurements": [
-    4,
-    4,
-    330
+    285,
+    292,
+    292
    ],
    "durations": [
-    2,
-    2,
-    70
+    136,
+    136,
+    136
    ],
    "title": {
     "zhCN": "Booty Music",
@@ -163927,45 +163771,6 @@
    },
    "producer": "Tina",
    "origName": "sdom2956T.gm"
-  },
-  {
-   "gn": "sdom3.gn",
-   "fileId": 0,
-   "fileType": "gn",
-   "mode": "",
-   "bpm": 120.0,
-   "levels": [
-    1,
-    0,
-    0
-   ],
-   "noteCounts": [
-    44,
-    0,
-    0
-   ],
-   "measurements": [
-    43,
-    11,
-    11
-   ],
-   "durations": [
-    40,
-    0,
-    0
-   ],
-   "title": {
-    "zhCN": "新手教学",
-    "zhTW": "新手教學",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "DONOVAN",
-    "zhTW": "DONOVAN",
-    "en": "DONOVAN"
-   },
-   "producer": "VAN",
-   "origName": "sdom2.gm"
   },
   {
    "gn": "sdom5001k.gn",

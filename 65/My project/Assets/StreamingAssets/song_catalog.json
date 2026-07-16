@@ -1,22 +1,6 @@
 {
  "songs": [
   {
-   "gn": "sdom3.gn",
-   "fileId": 0,
-   "title": "新手教学",
-   "artist": "DONOVAN",
-   "bpm": 120.0,
-   "diffEasy": 1,
-   "diffNormal": 0,
-   "diffHard": 0,
-   "notesEasy": 44,
-   "notesNormal": 0,
-   "notesHard": 0,
-   "durEasy": 40,
-   "durNormal": 0,
-   "durHard": 0
-  },
-  {
    "gn": "sdom0001t.gn",
    "fileId": 1,
    "title": "野蛮游戏",
@@ -15857,22 +15841,6 @@
    "durHard": 168
   },
   {
-   "gn": "sdom1619t.gn",
-   "fileId": 1619,
-   "title": "如果没有",
-   "artist": "梁靜茹",
-   "bpm": 148.0,
-   "diffEasy": 1,
-   "diffNormal": 2,
-   "diffHard": 6,
-   "notesEasy": 137,
-   "notesNormal": 246,
-   "notesHard": 443,
-   "durEasy": 115,
-   "durNormal": 115,
-   "durHard": 115
-  },
-  {
    "gn": "sdom1620t.gn",
    "fileId": 1620,
    "title": "星期六的晚上",
@@ -15999,22 +15967,6 @@
    "durEasy": 135,
    "durNormal": 135,
    "durHard": 135
-  },
-  {
-   "gn": "sdom1628t.gn",
-   "fileId": 1628,
-   "title": "怪怪女",
-   "artist": "青鸟飞鱼",
-   "bpm": 150.0,
-   "diffEasy": 4,
-   "diffNormal": 5,
-   "diffHard": 6,
-   "notesEasy": 310,
-   "notesNormal": 351,
-   "notesHard": 441,
-   "durEasy": 105,
-   "durNormal": 105,
-   "durHard": 105
   },
   {
    "gn": "sdom1629t.gn",
@@ -50433,22 +50385,6 @@
    "durHard": 168
   },
   {
-   "gn": "sdom1619k.gn",
-   "fileId": 11619,
-   "title": "如果没有",
-   "artist": "梁靜茹",
-   "bpm": 148.0,
-   "diffEasy": 3,
-   "diffNormal": 5,
-   "diffHard": 16,
-   "notesEasy": 204,
-   "notesNormal": 439,
-   "notesHard": 670,
-   "durEasy": 115,
-   "durNormal": 115,
-   "durHard": 115
-  },
-  {
    "gn": "sdom1620k.gn",
    "fileId": 11620,
    "title": "星期六的晚上",
@@ -50575,22 +50511,6 @@
    "durEasy": 135,
    "durNormal": 135,
    "durHard": 135
-  },
-  {
-   "gn": "sdom1628k.gn",
-   "fileId": 11628,
-   "title": "怪怪女",
-   "artist": "青鸟飞鱼",
-   "bpm": 150.0,
-   "diffEasy": 5,
-   "diffNormal": 7,
-   "diffHard": 11,
-   "notesEasy": 351,
-   "notesNormal": 469,
-   "notesHard": 631,
-   "durEasy": 105,
-   "durNormal": 105,
-   "durHard": 105
   },
   {
    "gn": "sdom1629k.gn",
@@ -67909,16 +67829,16 @@
    "fileId": 12933,
    "title": "Booty Music",
    "artist": "Deep Side",
-   "bpm": 120.0,
-   "diffEasy": 0,
-   "diffNormal": 0,
-   "diffHard": 1,
-   "notesEasy": 0,
-   "notesNormal": 0,
-   "notesHard": 939,
-   "durEasy": 2,
-   "durNormal": 2,
-   "durHard": 70
+   "bpm": 119.99,
+   "diffEasy": 6,
+   "diffNormal": 11,
+   "diffHard": 20,
+   "notesEasy": 525,
+   "notesNormal": 902,
+   "notesHard": 1035,
+   "durEasy": 136,
+   "durNormal": 136,
+   "durHard": 136
   },
   {
    "gn": "sdom2934k.gn",

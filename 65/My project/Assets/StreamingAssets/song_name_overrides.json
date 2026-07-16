@@ -1,13 +1,13 @@
 {
  "schema": "song-name-overrides/2",
  "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist/bpm 會覆蓋 k.gn 的顯示值。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。bpm>0 會覆蓋歌單/房間顯示的 BPM 數字(只影響顯示；遊戲判定與流速一律讀譜面本身)；offsetMs = 這首歌的音訊校正(毫秒，唯一會進遊戲的欄位)：正值 = 音樂晚一點進來(音樂跑在譜面前面、音符老是慢半拍時用)，負值 = 音樂提早，0/不填 = 不動。它疊在譜面自己的音樂起點(type-10 marker)上，只挪音樂＋舞蹈；音符與判定仍在譜面時鐘上，所以調錯頂多音畫不合拍，不會影響難度。範圍夾在 ±5000ms。fileId/src 僅供辨識，runtime 不套用。此清單不決定歌單內容(歌單來自 song_catalog.json)，刪掉某首只是讓它顯示回 .gn 內嵌名，歌照樣能選。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填(offsetMs 例外：永遠保留)。",
- "count": 2164,
+ "count": 2161,
  "songs": [
   {
    "gn": "sdom1956",
    "fileId": 11956,
    "bpm": 165.0,
-   "offsetMs": 0.0,
+   "offsetMs": -11,
    "src": "songname",
    "title": "WOW",
    "artist": "蕭亞軒"
@@ -16,7 +16,7 @@
    "gn": "sdom1955",
    "fileId": 11955,
    "bpm": 130.42,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "songname",
    "title": "習慣就好",
    "artist": "羅志祥"
@@ -61,7 +61,7 @@
    "gn": "sdom1950",
    "fileId": 11950,
    "bpm": 80.08,
-   "offsetMs": 0.0,
+   "offsetMs": 44,
    "src": "songname",
    "title": "雨愛",
    "artist": "楊丞琳"
@@ -79,7 +79,7 @@
    "gn": "sdom1948",
    "fileId": 11948,
    "bpm": 140.0,
-   "offsetMs": 0.0,
+   "offsetMs": 6,
    "src": "songname",
    "title": "心電心",
    "artist": "王心凌"
@@ -88,7 +88,7 @@
    "gn": "sdom1947",
    "fileId": 11947,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -13,
    "src": "songname",
    "title": "有膽你就來",
    "artist": "張惠妹"
@@ -97,7 +97,7 @@
    "gn": "sdom1886",
    "fileId": 11886,
    "bpm": 85.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "海賊王",
    "artist": "COLOR"
@@ -115,7 +115,7 @@
    "gn": "sdom1884",
    "fileId": 11884,
    "bpm": 88.0,
-   "offsetMs": 0.0,
+   "offsetMs": -10,
    "src": "songname",
    "title": "白色謊言",
    "artist": "戴愛玲"
@@ -124,7 +124,7 @@
    "gn": "sdom1883",
    "fileId": 11883,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 13,
    "src": "songname",
    "title": "小乖乖",
    "artist": "蔡旻佑"
@@ -133,7 +133,7 @@
    "gn": "sdom1882",
    "fileId": 11882,
    "bpm": 86.5,
-   "offsetMs": 0.0,
+   "offsetMs": -4,
    "src": "songname",
    "title": "光速青春",
    "artist": "COLOR"
@@ -142,7 +142,7 @@
    "gn": "sdom1881",
    "fileId": 11881,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -16,
    "src": "songname",
    "title": "鑽石糖",
    "artist": "蕭亞軒"
@@ -169,7 +169,7 @@
    "gn": "sdom1878",
    "fileId": 11878,
    "bpm": 70.0,
-   "offsetMs": 0.0,
+   "offsetMs": 6,
    "src": "songname",
    "title": "可不可以愛我",
    "artist": "盧學叡"
@@ -178,7 +178,7 @@
    "gn": "sdom1877",
    "fileId": 11877,
    "bpm": 189.9,
-   "offsetMs": 0.0,
+   "offsetMs": -5,
    "src": "songname",
    "title": "Rock'n Roll Crazy",
    "artist": "Richard Myhill"
@@ -196,7 +196,7 @@
    "gn": "sdom1811",
    "fileId": 11811,
    "bpm": 156.0,
-   "offsetMs": 0.0,
+   "offsetMs": -7,
    "src": "songname",
    "title": "Kizuna",
    "artist": "Orange Range"
@@ -232,7 +232,7 @@
    "gn": "sdom1806",
    "fileId": 11806,
    "bpm": 177.0,
-   "offsetMs": 0.0,
+   "offsetMs": -8,
    "src": "songname",
    "title": "Walking Through the Rain",
    "artist": "百代著作權"
@@ -250,7 +250,7 @@
    "gn": "sdom1804",
    "fileId": 11804,
    "bpm": 148.0,
-   "offsetMs": 0.0,
+   "offsetMs": 9,
    "src": "songname",
    "title": "Smart Bomb",
    "artist": "百代著作權"
@@ -259,7 +259,7 @@
    "gn": "sdom1803",
    "fileId": 11803,
    "bpm": 148.0,
-   "offsetMs": 0.0,
+   "offsetMs": 6,
    "src": "songname",
    "title": "Little Melody",
    "artist": "百代著作權"
@@ -286,7 +286,6 @@
    "gn": "sdom1769",
    "fileId": 11769,
    "bpm": 124.02,
-   "offsetMs": 0.0,
    "src": "songname",
    "title": "What Makes the World Go Round",
    "artist": "證聲"
@@ -304,7 +303,7 @@
    "gn": "sdom1767",
    "fileId": 11767,
    "bpm": 170.0,
-   "offsetMs": 0.0,
+   "offsetMs": 13,
    "src": "songname",
    "title": "Gravedigger",
    "artist": "證聲"
@@ -313,7 +312,7 @@
    "gn": "sdom1766",
    "fileId": 11766,
    "bpm": 135.97,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "songname",
    "title": "Let Yourself Go",
    "artist": "證聲"
@@ -340,7 +339,7 @@
    "gn": "sdom1763",
    "fileId": 11763,
    "bpm": 88.0,
-   "offsetMs": 0.0,
+   "offsetMs": 21,
    "src": "songname",
    "title": "想知道現在你好不好",
    "artist": "范瑋琪"
@@ -349,7 +348,7 @@
    "gn": "sdom1762",
    "fileId": 11762,
    "bpm": 80.0,
-   "offsetMs": 0.0,
+   "offsetMs": 9,
    "src": "songname",
    "title": "1到10＝我和你",
    "artist": "范瑋琪"
@@ -367,7 +366,7 @@
    "gn": "sdom1760",
    "fileId": 11760,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "songname",
    "title": "Skin On Skin",
    "artist": "U.Franke&A.Breitschaft"
@@ -385,7 +384,7 @@
    "gn": "sdom1758",
    "fileId": 11758,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": 11,
    "src": "songname",
    "title": "一有愛就走吧",
    "artist": "許茹芸"
@@ -394,7 +393,7 @@
    "gn": "sdom1757",
    "fileId": 11757,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -6,
    "src": "songname",
    "title": "愛上這世界",
    "artist": "周瑜民"
@@ -403,7 +402,7 @@
    "gn": "sdom1736",
    "fileId": 11736,
    "bpm": 152.0,
-   "offsetMs": 0.0,
+   "offsetMs": -4,
    "src": "songname",
    "title": "DNA",
    "artist": "王力宏"
@@ -448,7 +447,7 @@
    "gn": "sdom1728",
    "fileId": 11728,
    "bpm": 107.0,
-   "offsetMs": 0.0,
+   "offsetMs": 38,
    "src": "songname",
    "title": "當你想著我",
    "artist": "品冠"
@@ -457,7 +456,7 @@
    "gn": "sdom1727",
    "fileId": 11727,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "songname",
    "title": "王妃",
    "artist": "蕭敬滕"
@@ -484,7 +483,7 @@
    "gn": "sdom1724",
    "fileId": 11724,
    "bpm": 115.0,
-   "offsetMs": 0.0,
+   "offsetMs": -9,
    "src": "songname",
    "title": "相愛後動物感傷",
    "artist": "張惠妹"
@@ -556,7 +555,7 @@
    "gn": "sdom1716",
    "fileId": 11716,
    "bpm": 153.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "songname",
    "title": "Beautiful woman",
    "artist": "張懸"
@@ -601,7 +600,7 @@
    "gn": "sdom1695",
    "fileId": 11695,
    "bpm": 147.0,
-   "offsetMs": 0.0,
+   "offsetMs": -4,
    "src": "songname",
    "title": "愛極限",
    "artist": "許慧欣"
@@ -610,7 +609,7 @@
    "gn": "sdom1684",
    "fileId": 11684,
    "bpm": 166.0,
-   "offsetMs": 0.0,
+   "offsetMs": 16,
    "src": "songname",
    "title": "痞子和英雄",
    "artist": "鄒承恩"
@@ -619,7 +618,7 @@
    "gn": "sdom1683",
    "fileId": 11683,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": 9,
    "src": "songname",
    "title": "破天荒",
    "artist": "張芸京"
@@ -655,7 +654,7 @@
    "gn": "sdom1679",
    "fileId": 11679,
    "bpm": 174.02,
-   "offsetMs": 0.0,
+   "offsetMs": 15,
    "src": "songname",
    "title": "天色",
    "artist": "中川翔子"
@@ -664,7 +663,7 @@
    "gn": "sdom1678",
    "fileId": 11678,
    "bpm": 160.0,
-   "offsetMs": 0.0,
+   "offsetMs": 8,
    "src": "songname",
    "title": "小姐，請你給我愛",
    "artist": "橘子新樂園"
@@ -673,7 +672,7 @@
    "gn": "sdom1677",
    "fileId": 11677,
    "bpm": 114.0,
-   "offsetMs": 0.0,
+   "offsetMs": 8,
    "src": "songname",
    "title": "愛的大行進",
    "artist": "橘子新樂園"
@@ -682,7 +681,7 @@
    "gn": "sdom1676",
    "fileId": 11676,
    "bpm": 92.0,
-   "offsetMs": 0.0,
+   "offsetMs": 17,
    "src": "songname",
    "title": "Hana 花",
    "artist": "橘子新樂園"
@@ -700,7 +699,7 @@
    "gn": "sdom1662",
    "fileId": 11662,
    "bpm": 117.0,
-   "offsetMs": 0.0,
+   "offsetMs": -5,
    "src": "songname",
    "title": "Road Movie",
    "artist": "證聲"
@@ -754,7 +753,7 @@
    "gn": "sdom1656",
    "fileId": 11656,
    "bpm": 153.0,
-   "offsetMs": 0.0,
+   "offsetMs": -5,
    "src": "songname",
    "title": "對手",
    "artist": "強辯樂團+武虎將+東城衛"
@@ -808,7 +807,6 @@
    "gn": "sdom1650",
    "fileId": 11650,
    "bpm": 150.0,
-   "offsetMs": 0.0,
    "src": "songname",
    "title": "怪怪女",
    "artist": "青鳥飛魚"
@@ -844,7 +842,7 @@
    "gn": "sdom1646",
    "fileId": 11646,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": 8,
    "src": "songname",
    "title": "THE GAME IS OVER",
    "artist": "證聲"
@@ -871,7 +869,7 @@
    "gn": "sdom1643",
    "fileId": 11643,
    "bpm": 170.0,
-   "offsetMs": 0.0,
+   "offsetMs": 4,
    "src": "songname",
    "title": "Point of no return",
    "artist": "證聲"
@@ -889,7 +887,7 @@
    "gn": "sdom1641",
    "fileId": 11641,
    "bpm": 188.0,
-   "offsetMs": 0.0,
+   "offsetMs": 13,
    "src": "songname",
    "title": "SKATE PUNK",
    "artist": "證聲"
@@ -1078,7 +1076,7 @@
    "gn": "sdom1601",
    "fileId": 11601,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -2,
    "src": "songname",
    "title": "耍大牌",
    "artist": "蔡依林"
@@ -1195,7 +1193,7 @@
    "gn": "sdom1588",
    "fileId": 11588,
    "bpm": 137.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "songname",
    "title": "NEW WORLD SYMPHONY",
    "artist": "證聲"
@@ -1249,7 +1247,7 @@
    "gn": "sdom1549",
    "fileId": 11549,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "songname",
    "title": "國王皇后",
    "artist": "大嘴巴"
@@ -1258,7 +1256,7 @@
    "gn": "sdom1548",
    "fileId": 11548,
    "bpm": 129.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "songname",
    "title": "宇宙小姐",
    "artist": "S.H.E"
@@ -1267,7 +1265,7 @@
    "gn": "sdom1545",
    "fileId": 11545,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": -60,
    "src": "songname",
    "title": "PP別黏在椅上",
    "artist": "by2"
@@ -1276,7 +1274,7 @@
    "gn": "sdom1531",
    "fileId": 11531,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "拿手絕活",
    "artist": "羅志祥"
@@ -1285,7 +1283,7 @@
    "gn": "sdom1530",
    "fileId": 11530,
    "bpm": 134.0,
-   "offsetMs": 0.0,
+   "offsetMs": -46,
    "src": "songname",
    "title": "撐腰",
    "artist": "羅志祥"
@@ -1294,7 +1292,7 @@
    "gn": "sdom1529",
    "fileId": 11529,
    "bpm": 115.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "箇中強手",
    "artist": "羅志祥"
@@ -1303,7 +1301,7 @@
    "gn": "sdom1528",
    "fileId": 11528,
    "bpm": 85.0,
-   "offsetMs": 0.0,
+   "offsetMs": -8,
    "src": "songname",
    "title": "搖滾怎麼了",
    "artist": "王力宏"
@@ -1312,7 +1310,7 @@
    "gn": "sdom1527",
    "fileId": 11527,
    "bpm": 134.0,
-   "offsetMs": 0.0,
+   "offsetMs": -16,
    "src": "songname",
    "title": "小心眼",
    "artist": "大嘴巴"
@@ -1321,7 +1319,7 @@
    "gn": "sdom1526",
    "fileId": 11526,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": -49,
    "src": "songname",
    "title": "Da Now一場",
    "artist": "大嘴巴"
@@ -1330,7 +1328,7 @@
    "gn": "sdom1525",
    "fileId": 11525,
    "bpm": 118.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "Lovefool",
    "artist": "蔡依林"
@@ -1339,7 +1337,7 @@
    "gn": "sdom1524",
    "fileId": 11524,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -24,
    "src": "songname",
    "title": "Lady Marmalade",
    "artist": "蔡依林"
@@ -1348,7 +1346,7 @@
    "gn": "sdom1523",
    "fileId": 11523,
    "bpm": 100.0,
-   "offsetMs": 0.0,
+   "offsetMs": -8,
    "src": "songname",
    "title": "Kiss Me",
    "artist": "蔡依林"
@@ -1357,7 +1355,7 @@
    "gn": "sdom1522",
    "fileId": 11522,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "Disturbia",
    "artist": "Rihanna蕾哈娜"
@@ -1366,7 +1364,7 @@
    "gn": "sdom1521",
    "fileId": 11521,
    "bpm": 118.51,
-   "offsetMs": 0.0,
+   "offsetMs": -24,
    "src": "songname",
    "title": "When I Grow Up",
    "artist": "小野貓"
@@ -1375,7 +1373,7 @@
    "gn": "sdom1520",
    "fileId": 11520,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "我是你的誰",
    "artist": "黃立行"
@@ -1384,7 +1382,7 @@
    "gn": "sdom1519",
    "fileId": 11519,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -17,
    "src": "songname",
    "title": "想念聖誕節",
    "artist": "蕭亞軒"
@@ -1393,7 +1391,7 @@
    "gn": "sdom1518",
    "fileId": 11518,
    "bpm": 102.0,
-   "offsetMs": 0.0,
+   "offsetMs": -19,
    "src": "songname",
    "title": "男傭",
    "artist": "吳克群"
@@ -1402,7 +1400,7 @@
    "gn": "sdom1517",
    "fileId": 11517,
    "bpm": 98.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "殺手",
    "artist": "林俊傑"
@@ -1411,7 +1409,7 @@
    "gn": "sdom1516",
    "fileId": 11516,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "湘南海鷗",
    "artist": "南拳媽媽"
@@ -1420,7 +1418,7 @@
    "gn": "sdom1515",
    "fileId": 11515,
    "bpm": 90.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "夜訪吸血鬼",
    "artist": "五月天"
@@ -1429,7 +1427,7 @@
    "gn": "sdom1514",
    "fileId": 11514,
    "bpm": 82.0,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "songname",
    "title": "出頭天",
    "artist": "五月天"
@@ -1438,7 +1436,7 @@
    "gn": "sdom1513",
    "fileId": 11513,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": -37,
    "src": "songname",
    "title": "Closer",
    "artist": "尼歐"
@@ -1447,7 +1445,7 @@
    "gn": "sdom1512",
    "fileId": 11512,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "你是壞人",
    "artist": "楊丞琳"
@@ -1456,7 +1454,7 @@
    "gn": "sdom1502",
    "fileId": 11502,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "Always Online",
    "artist": "林俊傑"
@@ -1465,7 +1463,7 @@
    "gn": "sdom1499",
    "fileId": 11499,
    "bpm": 106.0,
-   "offsetMs": 0.0,
+   "offsetMs": -21,
    "src": "songname",
    "title": "愛的城堡",
    "artist": "卓文萱"
@@ -1474,7 +1472,7 @@
    "gn": "sdom1498",
    "fileId": 11498,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "不說",
    "artist": "卓文萱"
@@ -1483,7 +1481,7 @@
    "gn": "sdom1497",
    "fileId": 11497,
    "bpm": 146.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "獨家快樂",
    "artist": "卓文萱"
@@ -1492,7 +1490,7 @@
    "gn": "sdom1496",
    "fileId": 11496,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "超級喜歡",
    "artist": "卓文萱"
@@ -1501,7 +1499,7 @@
    "gn": "sdom1493",
    "fileId": 11493,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -23,
    "src": "songname",
    "title": "滿滿的都是愛",
    "artist": "梁靜茹"
@@ -1510,7 +1508,7 @@
    "gn": "sdom1492",
    "fileId": 11492,
    "bpm": 108.1,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "songname",
    "title": "不敗的戀人",
    "artist": "徐若瑄"
@@ -1519,7 +1517,7 @@
    "gn": "sdom1491",
    "fileId": 11491,
    "bpm": 127.02,
-   "offsetMs": 0.0,
+   "offsetMs": -3,
    "src": "songname",
    "title": "幸福的節拍",
    "artist": "楊丞琳"
@@ -1528,7 +1526,7 @@
    "gn": "sdom1490",
    "fileId": 11490,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "愛我請shut up",
    "artist": "楊丞琳"
@@ -1537,7 +1535,7 @@
    "gn": "sdom1489",
    "fileId": 11489,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -15,
    "src": "songname",
    "title": "半熟宣言",
    "artist": "楊丞琳"
@@ -1546,7 +1544,7 @@
    "gn": "sdom1488",
    "fileId": 11488,
    "bpm": 92.0,
-   "offsetMs": 0.0,
+   "offsetMs": -37,
    "src": "songname",
    "title": "太煩惱",
    "artist": "楊丞琳"
@@ -1555,7 +1553,7 @@
    "gn": "sdom1487",
    "fileId": 11487,
    "bpm": 149.63,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "songname",
    "title": "自由REMIX",
    "artist": "李心潔"
@@ -1564,7 +1562,7 @@
    "gn": "sdom1486",
    "fileId": 11486,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "笑忘歌",
    "artist": "五月天"
@@ -1573,7 +1571,7 @@
    "gn": "sdom1485",
    "fileId": 11485,
    "bpm": 89.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "春天的吶喊",
    "artist": "五月天"
@@ -1582,7 +1580,7 @@
    "gn": "sdom1484",
    "fileId": 11484,
    "bpm": 97.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "生存以上生活以下",
    "artist": "五月天"
@@ -1591,7 +1589,7 @@
    "gn": "sdom1483",
    "fileId": 11483,
    "bpm": 84.0,
-   "offsetMs": 0.0,
+   "offsetMs": -17,
    "src": "songname",
    "title": "噢買尬",
    "artist": "五月天"
@@ -1600,7 +1598,7 @@
    "gn": "sdom1482",
    "fileId": 11482,
    "bpm": 95.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "爆肝",
    "artist": "五月天"
@@ -1609,7 +1607,7 @@
    "gn": "sdom1469",
    "fileId": 11469,
    "bpm": 112.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "藏經閣",
    "artist": "棒棒堂"
@@ -1618,7 +1616,7 @@
    "gn": "sdom1468",
    "fileId": 11468,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "乂",
    "artist": "陳嘉唯"
@@ -1627,7 +1625,7 @@
    "gn": "sdom1467",
    "fileId": 11467,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "愛的奇蹟",
    "artist": "陳嘉唯"
@@ -1636,7 +1634,7 @@
    "gn": "sdom1466",
    "fileId": 11466,
    "bpm": 102.0,
-   "offsetMs": 0.0,
+   "offsetMs": -70,
    "src": "songname",
    "title": "RUN",
    "artist": "朱婧"
@@ -1645,7 +1643,7 @@
    "gn": "sdom1465",
    "fileId": 11465,
    "bpm": 83.0,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "songname",
    "title": "香草天空",
    "artist": "關煒棠"
@@ -1654,7 +1652,7 @@
    "gn": "sdom1464",
    "fileId": 11464,
    "bpm": 90.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "是什麼音樂讓你覺得舒服",
    "artist": "J.WU feat HotDog&大支"
@@ -1672,7 +1670,7 @@
    "gn": "sdom1462",
    "fileId": 11462,
    "bpm": 136.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "愛上愛",
    "artist": "非同小可"
@@ -1681,7 +1679,7 @@
    "gn": "sdom1461",
    "fileId": 11461,
    "bpm": 112.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "不潮不用花錢",
    "artist": "林俊傑"
@@ -1699,7 +1697,7 @@
    "gn": "sdom1459",
    "fileId": 11459,
    "bpm": 94.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "主角",
    "artist": "林俊傑&MACHI"
@@ -1708,7 +1706,7 @@
    "gn": "sdom1458",
    "fileId": 11458,
    "bpm": 95.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "小酒窩",
    "artist": "林俊傑&阿Sa"
@@ -1717,7 +1715,7 @@
    "gn": "sdom1401",
    "fileId": 11401,
    "bpm": 90.0,
-   "offsetMs": 0.0,
+   "offsetMs": -45,
    "src": "songname",
    "title": "honey money",
    "artist": "張惠春"
@@ -1726,7 +1724,7 @@
    "gn": "sdom1400",
    "fileId": 11400,
    "bpm": 85.0,
-   "offsetMs": 0.0,
+   "offsetMs": -100,
    "src": "songname",
    "title": "期待愛",
    "artist": "林俊傑&金莎"
@@ -1735,7 +1733,7 @@
    "gn": "sdom1399",
    "fileId": 11399,
    "bpm": 112.0,
-   "offsetMs": 0.0,
+   "offsetMs": -67,
    "src": "songname",
    "title": "左邊",
    "artist": "楊丞琳"
@@ -1744,7 +1742,7 @@
    "gn": "sdom1398",
    "fileId": 11398,
    "bpm": 112.56,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "songname",
    "title": "Friend Or Foe",
    "artist": "T.A.T.U"
@@ -1753,7 +1751,7 @@
    "gn": "sdom1397",
    "fileId": 11397,
    "bpm": 122.7,
-   "offsetMs": 0.0,
+   "offsetMs": -15,
    "src": "songname",
    "title": "Don't Stop The Music",
    "artist": "Rihanna"
@@ -1762,7 +1760,7 @@
    "gn": "sdom1396",
    "fileId": 11396,
    "bpm": 99.0,
-   "offsetMs": 0.0,
+   "offsetMs": -56,
    "src": "songname",
    "title": "許願池的希臘少女",
    "artist": "蔡依林"
@@ -1771,7 +1769,7 @@
    "gn": "sdom1395",
    "fileId": 11395,
    "bpm": 84.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "songname",
    "title": "獨立",
    "artist": "蜜雪薇琪"
@@ -1780,7 +1778,7 @@
    "gn": "sdom1394",
    "fileId": 11394,
    "bpm": 153.6,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "Pump it",
    "artist": "黑眼豆豆"
@@ -1789,7 +1787,7 @@
    "gn": "sdom1393",
    "fileId": 11393,
    "bpm": 99.0,
-   "offsetMs": 0.0,
+   "offsetMs": 56,
    "src": "songname",
    "title": "香草吧噗",
    "artist": "南拳媽媽"
@@ -1798,7 +1796,7 @@
    "gn": "sdom1392",
    "fileId": 11392,
    "bpm": 143.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "特務J",
    "artist": "蔡依林"
@@ -1807,7 +1805,7 @@
    "gn": "sdom1391",
    "fileId": 11391,
    "bpm": 152.0,
-   "offsetMs": 0.0,
+   "offsetMs": -26,
    "src": "songname",
    "title": "Mr.Q(REMIX版)",
    "artist": "蔡依林"
@@ -1816,7 +1814,7 @@
    "gn": "sdom1390",
    "fileId": 11390,
    "bpm": 112.0,
-   "offsetMs": 0.0,
+   "offsetMs": -55,
    "src": "songname",
    "title": "讓讓",
    "artist": "蔡依林"
@@ -1825,7 +1823,7 @@
    "gn": "sdom1389",
    "fileId": 11389,
    "bpm": 160.0,
-   "offsetMs": 0.0,
+   "offsetMs": -36,
    "src": "songname",
    "title": "我秀故我在",
    "artist": "羅志祥"
@@ -1834,7 +1832,7 @@
    "gn": "sdom1388",
    "fileId": 11388,
    "bpm": 89.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "敗給你",
    "artist": "羅志祥"
@@ -1843,7 +1841,7 @@
    "gn": "sdom1387",
    "fileId": 11387,
    "bpm": 147.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "SUPERMAN",
    "artist": "倪子岡"
@@ -1852,7 +1850,7 @@
    "gn": "sdom1386",
    "fileId": 11386,
    "bpm": 84.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "絕對無敵",
    "artist": "倪子岡"
@@ -1861,7 +1859,7 @@
    "gn": "sdom1385",
    "fileId": 11385,
    "bpm": 103.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "暫停戀愛",
    "artist": "蕭亞軒"
@@ -1870,7 +1868,7 @@
    "gn": "sdom1384",
    "fileId": 11384,
    "bpm": 108.0,
-   "offsetMs": 0.0,
+   "offsetMs": -8,
    "src": "songname",
    "title": "Hey Girl",
    "artist": "蕭亞軒"
@@ -1879,7 +1877,7 @@
    "gn": "sdom1383",
    "fileId": 11383,
    "bpm": 139.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "More More More",
    "artist": "蕭亞軒"
@@ -1888,7 +1886,7 @@
    "gn": "sdom1382",
    "fileId": 11382,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "I'll be there",
    "artist": "蕭亞軒"
@@ -1897,7 +1895,7 @@
    "gn": "sdom1376",
    "fileId": 11376,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "A Night To Remenber",
    "artist": "歌舞青春"
@@ -1906,7 +1904,7 @@
    "gn": "sdom1375",
    "fileId": 11375,
    "bpm": 115.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "The Boys Are Back",
    "artist": "歌舞青春"
@@ -1915,7 +1913,7 @@
    "gn": "sdom1374",
    "fileId": 11374,
    "bpm": 115.04,
-   "offsetMs": 0.0,
+   "offsetMs": -18,
    "src": "songname",
    "title": "Now Or Never",
    "artist": "歌舞青春"
@@ -1924,7 +1922,7 @@
    "gn": "sdom1355",
    "fileId": 11355,
    "bpm": 175.0,
-   "offsetMs": 0.0,
+   "offsetMs": -36,
    "src": "songname",
    "title": "愛戀Remix",
    "artist": "cornandbeans"
@@ -1933,7 +1931,7 @@
    "gn": "sdom1354",
    "fileId": 11354,
    "bpm": 170.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "血淚Remix",
    "artist": "DJ YOSHITAKA"
@@ -1942,7 +1940,7 @@
    "gn": "sdom1353",
    "fileId": 11353,
    "bpm": 175.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "地獄之門Remix",
    "artist": "cornandbeans"
@@ -1951,7 +1949,7 @@
    "gn": "sdom1345",
    "fileId": 11345,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -64,
    "src": "songname",
    "title": "臭皮匠",
    "artist": "陳小春"
@@ -1960,7 +1958,7 @@
    "gn": "sdom1344",
    "fileId": 11344,
    "bpm": 93.0,
-   "offsetMs": 0.0,
+   "offsetMs": -11,
    "src": "songname",
    "title": "不在服務區",
    "artist": "陳小春"
@@ -1969,7 +1967,7 @@
    "gn": "sdom1343",
    "fileId": 11343,
    "bpm": 158.0,
-   "offsetMs": 0.0,
+   "offsetMs": -60,
    "src": "songname",
    "title": "自我做主",
    "artist": "陳小春"
@@ -1978,7 +1976,7 @@
    "gn": "sdom1342",
    "fileId": 11342,
    "bpm": 81.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "回音",
    "artist": "郭靜"
@@ -1987,7 +1985,7 @@
    "gn": "sdom1341",
    "fileId": 11341,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "感冒",
    "artist": "郭靜"
@@ -1996,7 +1994,7 @@
    "gn": "sdom1340",
    "fileId": 11340,
    "bpm": 107.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "大玩笑",
    "artist": "郭靜"
@@ -2005,7 +2003,7 @@
    "gn": "sdom1339",
    "fileId": 11339,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "下一個天亮",
    "artist": "郭靜"
@@ -2014,7 +2012,7 @@
    "gn": "sdom1338",
    "fileId": 11338,
    "bpm": 164.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "放電",
    "artist": "范瑋琪"
@@ -2023,7 +2021,7 @@
    "gn": "sdom1337",
    "fileId": 11337,
    "bpm": 150.0,
-   "offsetMs": 0.0,
+   "offsetMs": -48,
    "src": "songname",
    "title": "再聯絡",
    "artist": "范瑋琪"
@@ -2032,7 +2030,7 @@
    "gn": "sdom1336",
    "fileId": 11336,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -44,
    "src": "songname",
    "title": "一顆心的距離",
    "artist": "范瑋琪"
@@ -2041,7 +2039,7 @@
    "gn": "sdom1335",
    "fileId": 11335,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": -45,
    "src": "songname",
    "title": "尋找茱麗葉",
    "artist": "吳健豪"
@@ -2050,7 +2048,7 @@
    "gn": "sdom1334",
    "fileId": 11334,
    "bpm": 140.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "自己的節奏",
    "artist": "吳建豪"
@@ -2059,7 +2057,7 @@
    "gn": "sdom1333",
    "fileId": 11333,
    "bpm": 112.0,
-   "offsetMs": 0.0,
+   "offsetMs": -44,
    "src": "songname",
    "title": "Lucky Me",
    "artist": "吳建豪"
@@ -2068,7 +2066,7 @@
    "gn": "sdom1332",
    "fileId": 11332,
    "bpm": 118.0,
-   "offsetMs": 0.0,
+   "offsetMs": -16,
    "src": "songname",
    "title": "我不是自己",
    "artist": "吳建豪"
@@ -2077,7 +2075,7 @@
    "gn": "sdom1331",
    "fileId": 11331,
    "bpm": 90.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "愛?",
    "artist": "蔡旻佑"
@@ -2086,7 +2084,7 @@
    "gn": "sdom1330",
    "fileId": 11330,
    "bpm": 65.0,
-   "offsetMs": 0.0,
+   "offsetMs": -45,
    "src": "songname",
    "title": "台北21度C",
    "artist": "蔡旻佑"
@@ -2095,7 +2093,7 @@
    "gn": "sdom1329",
    "fileId": 11329,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -8,
    "src": "songname",
    "title": "我要用一首Demo跟你告白",
    "artist": "蔡旻佑"
@@ -2104,7 +2102,7 @@
    "gn": "sdom1328",
    "fileId": 11328,
    "bpm": 95.0,
-   "offsetMs": 0.0,
+   "offsetMs": -24,
    "src": "songname",
    "title": "希區考特作品152",
    "artist": "蔡旻佑"
@@ -2113,7 +2111,7 @@
    "gn": "sdom1327",
    "fileId": 11327,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "阿姆斯壯",
    "artist": "蔡旻佑"
@@ -2122,7 +2120,7 @@
    "gn": "sdom1326",
    "fileId": 11326,
    "bpm": 96.0,
-   "offsetMs": 0.0,
+   "offsetMs": -47,
    "src": "songname",
    "title": "我回來了",
    "artist": "蔡旻佑"
@@ -2131,7 +2129,7 @@
    "gn": "sdom1305",
    "fileId": 11305,
    "bpm": 170.0,
-   "offsetMs": 0.0,
+   "offsetMs": -26,
    "src": "songname",
    "title": "普派進行曲Remix",
    "artist": "beautiful day"
@@ -2140,7 +2138,7 @@
    "gn": "sdom1299",
    "fileId": 11299,
    "bpm": 162.0,
-   "offsetMs": 0.0,
+   "offsetMs": -12,
    "src": "songname",
    "title": "卡農Remix",
    "artist": "Dr.Flower Shirts"
@@ -2149,7 +2147,7 @@
    "gn": "sdom1283",
    "fileId": 11283,
    "bpm": 156.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "songname",
    "title": "致命病毒Remix",
    "artist": "Diana"
@@ -2158,7 +2156,7 @@
    "gn": "sdom1280",
    "fileId": 11280,
    "bpm": 121.0,
-   "offsetMs": 0.0,
+   "offsetMs": -55,
    "src": "songname",
    "title": "好心情",
    "artist": "李玟"
@@ -2167,7 +2165,7 @@
    "gn": "sdom1279",
    "fileId": 11279,
    "bpm": 164.0,
-   "offsetMs": 0.0,
+   "offsetMs": -8,
    "src": "songname",
    "title": "冥想愛",
    "artist": "李玟"
@@ -2176,7 +2174,7 @@
    "gn": "sdom1278",
    "fileId": 11278,
    "bpm": 104.02,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "Do you want my love",
    "artist": "李玟"
@@ -2185,7 +2183,7 @@
    "gn": "sdom1277",
    "fileId": 11277,
    "bpm": 90.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "撒哈拉冰室",
    "artist": "李玟"
@@ -2194,7 +2192,7 @@
    "gn": "sdom1276",
    "fileId": 11276,
    "bpm": 96.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "songname",
    "title": "No Doubt",
    "artist": "李玟"
@@ -2203,7 +2201,7 @@
    "gn": "sdom1275",
    "fileId": 11275,
    "bpm": 150.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "刀馬旦",
    "artist": "李玟"
@@ -2212,7 +2210,7 @@
    "gn": "sdom1274",
    "fileId": 11274,
    "bpm": 141.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "official",
    "title": "U + Ur Hand",
    "artist": "Pink"
@@ -2221,7 +2219,7 @@
    "gn": "sdom1273",
    "fileId": 11273,
    "bpm": 99.25,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "official",
    "title": "Crazy in Love",
    "artist": "Beyonce"
@@ -2230,7 +2228,7 @@
    "gn": "sdom1272",
    "fileId": 11272,
    "bpm": 168.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "official",
    "title": "Hound Dog",
    "artist": "Elvis Presley"
@@ -2239,7 +2237,7 @@
    "gn": "sdom1271",
    "fileId": 11271,
    "bpm": 161.2,
-   "offsetMs": 0.0,
+   "offsetMs": -24,
    "src": "official",
    "title": "Survivor",
    "artist": "Destiny's Child"
@@ -2248,7 +2246,7 @@
    "gn": "sdom1270",
    "fileId": 11270,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -135,
    "src": "songname",
    "title": "孤單芭蕾",
    "artist": "許慧欣"
@@ -2257,7 +2255,7 @@
    "gn": "sdom1269",
    "fileId": 11269,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -34,
    "src": "songname",
    "title": "誰是MVP",
    "artist": "潘瑋柏"
@@ -2266,7 +2264,7 @@
    "gn": "sdom1268",
    "fileId": 11268,
    "bpm": 136.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "119",
    "artist": "大嘴巴"
@@ -2275,7 +2273,7 @@
    "gn": "sdom1267",
    "fileId": 11267,
    "bpm": 106.0,
-   "offsetMs": 0.0,
+   "offsetMs": -34,
    "src": "songname",
    "title": "大嘴巴",
    "artist": "大嘴巴"
@@ -2284,7 +2282,7 @@
    "gn": "sdom1266",
    "fileId": 11266,
    "bpm": 92.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "我就是喜歡你",
    "artist": "大嘴巴"
@@ -2293,7 +2291,7 @@
    "gn": "sdom1265",
    "fileId": 11265,
    "bpm": 90.2,
-   "offsetMs": 0.0,
+   "offsetMs": -55,
    "src": "songname",
    "title": "Step On The Beat",
    "artist": "大嘴巴"
@@ -2302,7 +2300,7 @@
    "gn": "sdom1264",
    "fileId": 11264,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "結果咧",
    "artist": "大嘴巴"
@@ -2311,7 +2309,7 @@
    "gn": "sdom1263",
    "fileId": 11263,
    "bpm": 148.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "Get You Back",
    "artist": "大嘴巴"
@@ -2320,7 +2318,7 @@
    "gn": "sdom1262",
    "fileId": 11262,
    "bpm": 125.93,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "kgn",
    "title": "Sway",
    "artist": "The Pussycat Dolls"
@@ -2329,7 +2327,7 @@
    "gn": "sdom1261",
    "fileId": 11261,
    "bpm": 94.06,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "愛上未來的你",
    "artist": "潘瑋柏"
@@ -2338,7 +2336,7 @@
    "gn": "sdom1260",
    "fileId": 11260,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "PK賽",
    "artist": "戴愛玲"
@@ -2347,7 +2345,7 @@
    "gn": "sdom1259",
    "fileId": 11259,
    "bpm": 98.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "愛自己",
    "artist": "戴愛玲"
@@ -2356,7 +2354,7 @@
    "gn": "sdom1258",
    "fileId": 11258,
    "bpm": 127.05,
-   "offsetMs": 0.0,
+   "offsetMs": -50,
    "src": "songname",
    "title": "愛的勇氣",
    "artist": "賴雅妍"
@@ -2365,7 +2363,7 @@
    "gn": "sdom1257",
    "fileId": 11257,
    "bpm": 119.93,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "songname",
    "title": "快樂的人請舉手",
    "artist": "彭佳慧"
@@ -2374,7 +2372,7 @@
    "gn": "sdom1256",
    "fileId": 11256,
    "bpm": 125.9,
-   "offsetMs": 0.0,
+   "offsetMs": -15,
    "src": "songname",
    "title": "敲敲我的頭",
    "artist": "彭佳慧"
@@ -2383,7 +2381,7 @@
    "gn": "sdom1255",
    "fileId": 11255,
    "bpm": 96.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "愛的就是你",
    "artist": "王力宏"
@@ -2392,7 +2390,7 @@
    "gn": "sdom1254",
    "fileId": 11254,
    "bpm": 148.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "愛你喲",
    "artist": "楊家成&小雅"
@@ -2401,7 +2399,7 @@
    "gn": "sdom1253",
    "fileId": 11253,
    "bpm": 143.03,
-   "offsetMs": 0.0,
+   "offsetMs": -13,
    "src": "songname",
    "title": "就是你",
    "artist": "范瑋琪"
@@ -2410,7 +2408,7 @@
    "gn": "sdom1252",
    "fileId": 11252,
    "bpm": 105.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "靠近一點點",
    "artist": "Lara"
@@ -2419,7 +2417,7 @@
    "gn": "sdom1251",
    "fileId": 11251,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "初戀粉色系",
    "artist": "南拳媽媽"
@@ -2428,7 +2426,7 @@
    "gn": "sdom1250",
    "fileId": 11250,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "songname",
    "title": "我要的世界",
    "artist": "王傅一"
@@ -2437,7 +2435,7 @@
    "gn": "sdom1249",
    "fileId": 11249,
    "bpm": 176.02,
-   "offsetMs": 0.0,
+   "offsetMs": -16,
    "src": "songname",
    "title": "臭男人",
    "artist": "黃義達"
@@ -2446,7 +2444,7 @@
    "gn": "sdom1248",
    "fileId": 11248,
    "bpm": 102.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "因為你笑了",
    "artist": "DR.MOON"
@@ -2455,7 +2453,7 @@
    "gn": "sdom1247",
    "fileId": 11247,
    "bpm": 95.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "快點來愛我",
    "artist": "李玖哲"
@@ -2464,7 +2462,7 @@
    "gn": "sdom1246",
    "fileId": 11246,
    "bpm": 162.0,
-   "offsetMs": 0.0,
+   "offsetMs": -16,
    "src": "songname",
    "title": "不愛拉倒",
    "artist": "胡靈"
@@ -2473,7 +2471,7 @@
    "gn": "sdom1245",
    "fileId": 11245,
    "bpm": 138.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "動",
    "artist": "吳克群"
@@ -2482,7 +2480,7 @@
    "gn": "sdom1244",
    "fileId": 11244,
    "bpm": 108.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "音樂讓我說",
    "artist": "吳克群"
@@ -2491,7 +2489,7 @@
    "gn": "sdom1243",
    "fileId": 11243,
    "bpm": 102.0,
-   "offsetMs": 0.0,
+   "offsetMs": -21,
    "src": "songname",
    "title": "什麼東西",
    "artist": "吳克群"
@@ -2500,7 +2498,7 @@
    "gn": "sdom1242",
    "fileId": 11242,
    "bpm": 118.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "songname",
    "title": "情人節",
    "artist": "吳克群"
@@ -2509,7 +2507,7 @@
    "gn": "sdom1241",
    "fileId": 11241,
    "bpm": 143.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "songname",
    "title": "為你寫詩",
    "artist": "吳克群"
@@ -2518,7 +2516,7 @@
    "gn": "sdom1238",
    "fileId": 11238,
    "bpm": 168.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "songname",
    "title": "四季Remix",
    "artist": "BANYA"
@@ -2527,7 +2525,7 @@
    "gn": "sdom1236",
    "fileId": 11236,
    "bpm": 160.0,
-   "offsetMs": 0.0,
+   "offsetMs": -7,
    "src": "songname",
    "title": "狂潮Remix",
    "artist": "Takoyaki"
@@ -2536,7 +2534,7 @@
    "gn": "sdom1230",
    "fileId": 11230,
    "bpm": 120.63,
-   "offsetMs": 0.0,
+   "offsetMs": -29,
    "src": "songname",
    "title": "警報Remix",
    "artist": "Warmen"
@@ -2545,7 +2543,7 @@
    "gn": "sdom1226",
    "fileId": 11226,
    "bpm": 178.0,
-   "offsetMs": 0.0,
+   "offsetMs": 44,
    "src": "songname",
    "title": "天空Remix",
    "artist": "SHIKI"
@@ -2554,7 +2552,7 @@
    "gn": "sdom1225",
    "fileId": 11225,
    "bpm": 175.0,
-   "offsetMs": 0.0,
+   "offsetMs": -26,
    "src": "songname",
    "title": "舞以倫比Remix",
    "artist": "RageVI"
@@ -2563,7 +2561,7 @@
    "gn": "sdom1224",
    "fileId": 11224,
    "bpm": 160.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "自殺Remix",
    "artist": "Smiley"
@@ -2572,7 +2570,7 @@
    "gn": "sdom1219",
    "fileId": 11219,
    "bpm": 163.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "songname",
    "title": "永恆Remix",
    "artist": "Smiley"
@@ -2743,7 +2741,7 @@
    "gn": "sdom1191",
    "fileId": 11191,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -26,
    "src": "songname",
    "title": "新世界Remix",
    "artist": "Peppertones"
@@ -4237,7 +4235,7 @@
    "gn": "sdom0695",
    "fileId": 10695,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": -26,
    "src": "songname",
    "title": "暴風Remix",
    "artist": "Bokko Dance"
@@ -5227,7 +5225,7 @@
    "gn": "sdom0240",
    "fileId": 10240,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -32,
    "src": "songname",
    "title": "花黃瘦-Remix",
    "artist": "puremorning"
@@ -5926,15 +5924,6 @@
    "artist": "DONOVAN"
   },
   {
-   "gn": "sdom3",
-   "fileId": 0,
-   "bpm": 120.0,
-   "offsetMs": 0.0,
-   "src": "kgn",
-   "title": "新手教學",
-   "artist": "DONOVAN"
-  },
-  {
    "gn": "sdom0026",
    "fileId": 10026,
    "bpm": 127.0,
@@ -6280,7 +6269,7 @@
    "gn": "sdom0400",
    "fileId": 10400,
    "bpm": 140.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "kgn",
    "title": "moonlight shadow（REMIX）",
    "artist": "groove coverage"
@@ -6703,7 +6692,7 @@
    "gn": "sdom1228",
    "fileId": 11228,
    "bpm": 136.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Conga SAS",
    "artist": "HI CUTIE"
@@ -6712,7 +6701,7 @@
    "gn": "sdom1229",
    "fileId": 11229,
    "bpm": 146.0,
-   "offsetMs": 0.0,
+   "offsetMs": -34,
    "src": "kgn",
    "title": "BadX",
    "artist": "Techno Sensation"
@@ -6721,7 +6710,7 @@
    "gn": "sdom1231",
    "fileId": 11231,
    "bpm": 117.0,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "kgn",
    "title": "Deja Vu",
    "artist": "SS501"
@@ -6730,7 +6719,7 @@
    "gn": "sdom1232",
    "fileId": 11232,
    "bpm": 160.08,
-   "offsetMs": 0.0,
+   "offsetMs": -10,
    "src": "kgn",
    "title": "STAY",
    "artist": "STAY"
@@ -6739,7 +6728,7 @@
    "gn": "sdom1233",
    "fileId": 11233,
    "bpm": 135.01,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Turbo",
    "artist": "黑貓"
@@ -6748,7 +6737,7 @@
    "gn": "sdom1234",
    "fileId": 11234,
    "bpm": 150.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "God Know",
    "artist": "平野綾"
@@ -6757,7 +6746,7 @@
    "gn": "sdom1235",
    "fileId": 11235,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "為你唱的歌",
    "artist": "SS501"
@@ -6766,7 +6755,7 @@
    "gn": "sdom1237",
    "fileId": 11237,
    "bpm": 148.0,
-   "offsetMs": 0.0,
+   "offsetMs": -26,
    "src": "kgn",
    "title": "MonStAR",
    "artist": "平野綾"
@@ -6775,7 +6764,7 @@
    "gn": "sdom1285",
    "fileId": 11285,
    "bpm": 155.0,
-   "offsetMs": 0.0,
+   "offsetMs": -32,
    "src": "kgn",
    "title": "happy happy",
    "artist": "宋寶蘭"
@@ -6784,7 +6773,7 @@
    "gn": "sdom1293",
    "fileId": 11293,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Selfish Love",
    "artist": "LEXY"
@@ -6793,7 +6782,7 @@
    "gn": "sdom1296",
    "fileId": 11296,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -16,
    "src": "kgn",
    "title": "Super Star",
    "artist": "超新星"
@@ -6802,7 +6791,7 @@
    "gn": "sdom1298",
    "fileId": 11298,
    "bpm": 160.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "kgn",
    "title": "穿越時空的愛戀",
    "artist": "Brandy"
@@ -6811,7 +6800,7 @@
    "gn": "sdom1306",
    "fileId": 11306,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "kgn",
    "title": "Bad Boy",
    "artist": "孫丹菲"
@@ -6820,7 +6809,7 @@
    "gn": "sdom1309",
    "fileId": 11309,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": -49,
    "src": "kgn",
    "title": "瘋了",
    "artist": "MC夢"
@@ -6829,7 +6818,7 @@
    "gn": "sdom1352",
    "fileId": 11352,
    "bpm": 144.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Love Dance",
    "artist": "Super Kidd"
@@ -6838,7 +6827,7 @@
    "gn": "sdom1357",
    "fileId": 11357,
    "bpm": 118.0,
-   "offsetMs": 0.0,
+   "offsetMs": -22,
    "src": "kgn",
    "title": "Don't You Worry",
    "artist": "Bown Eyes"
@@ -6847,7 +6836,7 @@
    "gn": "sdom1358",
    "fileId": 11358,
    "bpm": 118.0,
-   "offsetMs": 0.0,
+   "offsetMs": -31,
    "src": "kgn",
    "title": "在我之前",
    "artist": "Enjel"
@@ -6856,7 +6845,7 @@
    "gn": "sdom1361",
    "fileId": 11361,
    "bpm": 104.0,
-   "offsetMs": 0.0,
+   "offsetMs": -23,
    "src": "kgn",
    "title": "搖擺吧",
    "artist": "Kil"
@@ -6865,7 +6854,7 @@
    "gn": "sdom1363",
    "fileId": 11363,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "kgn",
    "title": "Go!!",
    "artist": "Rhymer"
@@ -6874,7 +6863,7 @@
    "gn": "sdom1408",
    "fileId": 11408,
    "bpm": 133.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "step by step",
    "artist": "Ballte"
@@ -6883,7 +6872,7 @@
    "gn": "sdom1410",
    "fileId": 11410,
    "bpm": 160.0,
-   "offsetMs": 0.0,
+   "offsetMs": -50,
    "src": "kgn",
    "title": "BRAND NEW WORLD",
    "artist": "D-51"
@@ -6892,7 +6881,7 @@
    "gn": "sdom1415",
    "fileId": 11415,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "kgn",
    "title": "happy go",
    "artist": "甦醒"
@@ -6901,7 +6890,7 @@
    "gn": "sdom1417",
    "fileId": 11417,
    "bpm": 103.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "kgn",
    "title": "Lady",
    "artist": "BigBang"
@@ -6910,7 +6899,7 @@
    "gn": "sdom1422",
    "fileId": 11422,
    "bpm": 129.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "CRAZY LOVE",
    "artist": "東方神起"
@@ -6919,7 +6908,7 @@
    "gn": "sdom1425",
    "fileId": 11425,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "伸展翅膀",
    "artist": "烏龜"
@@ -6928,7 +6917,7 @@
    "gn": "sdom1427",
    "fileId": 11427,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Luv U",
    "artist": "Battle"
@@ -6937,7 +6926,7 @@
    "gn": "sdom1428",
    "fileId": 11428,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Oh My Friend",
    "artist": "Bigbang"
@@ -6946,7 +6935,7 @@
    "gn": "sdom1430",
    "fileId": 11430,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Walk-My Love",
    "artist": "J"
@@ -6964,7 +6953,7 @@
    "gn": "sdom1433",
    "fileId": 11433,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "沒關係",
    "artist": "SSEN"
@@ -6973,7 +6962,7 @@
    "gn": "sdom1435",
    "fileId": 11435,
    "bpm": 101.0,
-   "offsetMs": 0.0,
+   "offsetMs": -22,
    "src": "kgn",
    "title": "U-Go-Girl",
    "artist": "李孝利"
@@ -6982,7 +6971,7 @@
    "gn": "sdom1438",
    "fileId": 11438,
    "bpm": 134.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "夏日的請求",
    "artist": "OH SONG"
@@ -6991,7 +6980,7 @@
    "gn": "sdom1441",
    "fileId": 11441,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -12,
    "src": "kgn",
    "title": "太陽昇起的那天",
    "artist": "申智"
@@ -7000,7 +6989,7 @@
    "gn": "sdom1442",
    "fileId": 11442,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "我愛你",
    "artist": "徐智英"
@@ -7009,7 +6998,7 @@
    "gn": "sdom1445",
    "fileId": 11445,
    "bpm": 171.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Abyss -The Heavens Remix-",
    "artist": "Ryu☆"
@@ -7018,7 +7007,7 @@
    "gn": "sdom1446",
    "fileId": 11446,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "kgn",
    "title": "愛情和戰爭",
    "artist": "Davichi"
@@ -7027,16 +7016,16 @@
    "gn": "sdom1470",
    "fileId": 11470,
    "bpm": 121.0,
-   "offsetMs": 0.0,
    "src": "kgn",
    "title": "偶然の確率",
-   "artist": "GIRL NEXT DOOR"
+   "artist": "GIRL NEXT DOOR",
+   "offsetMs": -25
   },
   {
    "gn": "sdom1471",
    "fileId": 11471,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "kgn",
    "title": "間隔",
    "artist": "G-Zone"
@@ -7045,7 +7034,7 @@
    "gn": "sdom1472",
    "fileId": 11472,
    "bpm": 146.0,
-   "offsetMs": 0.0,
+   "offsetMs": -15,
    "src": "kgn",
    "title": "討厭",
    "artist": "G-Zone"
@@ -7054,7 +7043,7 @@
    "gn": "sdom1473",
    "fileId": 11473,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "kgn",
    "title": "Happy Birthday",
    "artist": "NEWS"
@@ -7063,7 +7052,7 @@
    "gn": "sdom1474",
    "fileId": 11474,
    "bpm": 177.0,
-   "offsetMs": 0.0,
+   "offsetMs": -29,
    "src": "kgn",
    "title": "untouched",
    "artist": "The Veronicas"
@@ -7072,7 +7061,7 @@
    "gn": "sdom1477",
    "fileId": 11477,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "WHATEVER",
    "artist": "濱崎步"
@@ -7081,7 +7070,7 @@
    "gn": "sdom1479",
    "fileId": 11479,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "TABO0",
    "artist": "幸田來未"
@@ -7090,7 +7079,7 @@
    "gn": "sdom1480",
    "fileId": 11480,
    "bpm": 177.58,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "kgn",
    "title": "The Kinslayer",
    "artist": "Nightwish"
@@ -7099,7 +7088,7 @@
    "gn": "sdom1501",
    "fileId": 11501,
    "bpm": 89.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "感覺特別",
    "artist": "胡彥斌"
@@ -7108,7 +7097,7 @@
    "gn": "sdom1503",
    "fileId": 11503,
    "bpm": 60.0,
-   "offsetMs": 0.0,
+   "offsetMs": -38,
    "src": "kgn",
    "title": "You are not alone",
    "artist": "周定緯"
@@ -7117,7 +7106,7 @@
    "gn": "sdom1534",
    "fileId": 11534,
    "bpm": 94.5,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "high and mighty color",
    "artist": "amazing"
@@ -7126,7 +7115,7 @@
    "gn": "sdom1546",
    "fileId": 11546,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "街道",
    "artist": "林俊杰"
@@ -7135,7 +7124,7 @@
    "gn": "sdom1547",
    "fileId": 11547,
    "bpm": 148.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "GHOST REVIVAL",
    "artist": "L.E.D."
@@ -7144,7 +7133,7 @@
    "gn": "sdom1551",
    "fileId": 11551,
    "bpm": 105.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "So What",
    "artist": "周定緯"
@@ -7153,7 +7142,7 @@
    "gn": "sdom1552",
    "fileId": 11552,
    "bpm": 185.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Anisakis",
    "artist": "朱雀"
@@ -7171,7 +7160,7 @@
    "gn": "sdom1554",
    "fileId": 11554,
    "bpm": 149.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Second Heaven",
    "artist": "Ryu☆"
@@ -7198,7 +7187,7 @@
    "gn": "sdom1560",
    "fileId": 11560,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -22,
    "src": "kgn",
    "title": "MOLA",
    "artist": "News"
@@ -7207,7 +7196,7 @@
    "gn": "sdom1561",
    "fileId": 11561,
    "bpm": 94.0,
-   "offsetMs": 0.0,
+   "offsetMs": 6,
    "src": "kgn",
    "title": "我的主題曲",
    "artist": "江語晨"
@@ -7216,7 +7205,7 @@
    "gn": "sdom1562",
    "fileId": 11562,
    "bpm": 100.0,
-   "offsetMs": 0.0,
+   "offsetMs": -60,
    "src": "kgn",
    "title": "快樂英雄",
    "artist": "潘瑋柏"
@@ -7225,7 +7214,7 @@
    "gn": "sdom1563",
    "fileId": 11563,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "リズム",
    "artist": "青山黛瑪"
@@ -7234,7 +7223,7 @@
    "gn": "sdom1564",
    "fileId": 11564,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "kgn",
    "title": "夢幻奇緣",
    "artist": "袁成傑"
@@ -7297,7 +7286,7 @@
    "gn": "sdom1574",
    "fileId": 11574,
    "bpm": 174.0,
-   "offsetMs": 0.0,
+   "offsetMs": 12,
    "src": "kgn",
    "title": "大声ダイヤモンド",
    "artist": "AKB48"
@@ -7315,7 +7304,7 @@
    "gn": "sdom1579",
    "fileId": 11579,
    "bpm": 116.0,
-   "offsetMs": 0.0,
+   "offsetMs": 27,
    "src": "kgn",
    "title": "Super Man",
    "artist": "Mario"
@@ -7333,7 +7322,7 @@
    "gn": "sdom1613",
    "fileId": 11613,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 8,
    "src": "kgn",
    "title": "PlayBoy",
    "artist": "Yipani"
@@ -7378,7 +7367,7 @@
    "gn": "sdom1623",
    "fileId": 11623,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "Survivor",
    "artist": "東方神起"
@@ -7405,7 +7394,7 @@
    "gn": "sdom1626",
    "fileId": 11626,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 1,
    "src": "kgn",
    "title": "第二晚",
    "artist": "M.H.IS"
@@ -7432,7 +7421,7 @@
    "gn": "sdom1685",
    "fileId": 11685,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": -6,
    "src": "kgn",
    "title": "Fire",
    "artist": "2NE1"
@@ -7441,7 +7430,7 @@
    "gn": "sdom1686",
    "fileId": 11686,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 14,
    "src": "kgn",
    "title": "Diva",
    "artist": "After School"
@@ -7450,7 +7439,7 @@
    "gn": "sdom1688",
    "fileId": 11688,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "傻瓜一樣",
    "artist": "JunJin"
@@ -7459,7 +7448,7 @@
    "gn": "sdom1689",
    "fileId": 11689,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -4,
    "src": "kgn",
    "title": "魅力人生",
    "artist": "Miss Joo"
@@ -7468,7 +7457,7 @@
    "gn": "sdom1693",
    "fileId": 11693,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 7,
    "src": "kgn",
    "title": "就是你",
    "artist": "SuperJunior"
@@ -7477,7 +7466,7 @@
    "gn": "sdom1698",
    "fileId": 11698,
    "bpm": 146.0,
-   "offsetMs": 0.0,
+   "offsetMs": 4,
    "src": "kgn",
    "title": "Go Go",
    "artist": "高耀太"
@@ -7495,7 +7484,7 @@
    "gn": "sdom1700",
    "fileId": 11700,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 13,
    "src": "kgn",
    "title": "更愛你",
    "artist": "高耀太"
@@ -7504,7 +7493,7 @@
    "gn": "sdom1703",
    "fileId": 11703,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -5,
    "src": "kgn",
    "title": "記憶與回憶",
    "artist": "金泰宇"
@@ -7567,7 +7556,7 @@
    "gn": "sdom1737",
    "fileId": 11737,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": 4,
    "src": "kgn",
    "title": "So What",
    "artist": "粉紅佳人"
@@ -7612,7 +7601,6 @@
    "gn": "sdom1742",
    "fileId": 11742,
    "bpm": 126.0,
-   "offsetMs": 0.0,
    "src": "kgn",
    "title": "白馬王子",
    "artist": "Kara"
@@ -7630,7 +7618,7 @@
    "gn": "sdom1746",
    "fileId": 11746,
    "bpm": 111.0,
-   "offsetMs": 0.0,
+   "offsetMs": 18,
    "src": "kgn",
    "title": "stand by me",
    "artist": "shinee"
@@ -7639,7 +7627,7 @@
    "gn": "sdom1772",
    "fileId": 11772,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 8,
    "src": "kgn",
    "title": "Keep You Much Longer",
    "artist": "Akon"
@@ -7648,7 +7636,7 @@
    "gn": "sdom1773",
    "fileId": 11773,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": -7,
    "src": "kgn",
    "title": "troublemaker",
    "artist": "Akon"
@@ -7657,7 +7645,6 @@
    "gn": "sdom1775",
    "fileId": 11775,
    "bpm": 115.0,
-   "offsetMs": 0.0,
    "src": "kgn",
    "title": "So Beautiful",
    "artist": "Bigbang"
@@ -7666,7 +7653,7 @@
    "gn": "sdom1779",
    "fileId": 11779,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": 10,
    "src": "kgn",
    "title": "Glam Girl",
    "artist": "Brown Eyed Girls"
@@ -7675,7 +7662,7 @@
    "gn": "sdom1783",
    "fileId": 11783,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": 10,
    "src": "kgn",
    "title": "加減公式",
    "artist": "Flying Girls"
@@ -7702,7 +7689,7 @@
    "gn": "sdom1793",
    "fileId": 11793,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": 34,
    "src": "kgn",
    "title": "The show",
    "artist": "Lenka"
@@ -7747,7 +7734,7 @@
    "gn": "sdom1800",
    "fileId": 11800,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 14,
    "src": "kgn",
    "title": "強烈的你",
    "artist": "Run"
@@ -7756,7 +7743,6 @@
    "gn": "sdom1801",
    "fileId": 11801,
    "bpm": 131.0,
-   "offsetMs": 0.0,
    "src": "kgn",
    "title": "Sweet Christmas",
    "artist": "李賢智"
@@ -7810,7 +7796,7 @@
    "gn": "sdom1833",
    "fileId": 11833,
    "bpm": 190.0,
-   "offsetMs": 0.0,
+   "offsetMs": 14,
    "src": "kgn",
    "title": "BingBingBing",
    "artist": "F.T.Island"
@@ -7828,7 +7814,7 @@
    "gn": "sdom1835",
    "fileId": 11835,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": -13,
    "src": "kgn",
    "title": "Not Your Girl",
    "artist": "Rainbow"
@@ -7846,7 +7832,7 @@
    "gn": "sdom1837",
    "fileId": 11837,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": 13,
    "src": "kgn",
    "title": "Oh, Yes!",
    "artist": "高耀太"
@@ -7909,7 +7895,7 @@
    "gn": "sdom1847",
    "fileId": 11847,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -6,
    "src": "kgn",
    "title": "Crazy4s",
    "artist": "2PM"
@@ -7918,7 +7904,7 @@
    "gn": "sdom1848",
    "fileId": 11848,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -7,
    "src": "kgn",
    "title": "super girl",
    "artist": "superjunior"
@@ -7927,7 +7913,7 @@
    "gn": "sdom1849",
    "fileId": 11849,
    "bpm": 105.0,
-   "offsetMs": 0.0,
+   "offsetMs": -14,
    "src": "kgn",
    "title": "ttl time to love",
    "artist": "T-ara & Supernova"
@@ -7936,7 +7922,7 @@
    "gn": "sdom1851",
    "fileId": 11851,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": 3,
    "src": "kgn",
    "title": "tell me",
    "artist": "wonder girls"
@@ -7945,7 +7931,7 @@
    "gn": "sdom1852",
    "fileId": 11852,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Every Heart",
    "artist": "寶兒"
@@ -7963,7 +7949,7 @@
    "gn": "sdom1854",
    "fileId": 11854,
    "bpm": 144.0,
-   "offsetMs": 0.0,
+   "offsetMs": -15,
    "src": "kgn",
    "title": "oh!",
    "artist": "少女時代"
@@ -7972,7 +7958,7 @@
    "gn": "sdom1855",
    "fileId": 11855,
    "bpm": 180.0,
-   "offsetMs": 0.0,
+   "offsetMs": -1886,
    "src": "kgn",
    "title": "Wahrheit",
    "artist": "妖精帝國"
@@ -7990,7 +7976,7 @@
    "gn": "sdom1857",
    "fileId": 11857,
    "bpm": 160.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "月下香",
    "artist": "妖精帝國"
@@ -7999,7 +7985,7 @@
    "gn": "sdom1858",
    "fileId": 11858,
    "bpm": 134.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "気まぐれプリンセス",
    "artist": "早安少女組"
@@ -8017,7 +8003,7 @@
    "gn": "sdom1860",
    "fileId": 11860,
    "bpm": 139.0,
-   "offsetMs": 0.0,
+   "offsetMs": 11,
    "src": "kgn",
    "title": "Troublemaker",
    "artist": "嵐"
@@ -8026,7 +8012,6 @@
    "gn": "sdom1861",
    "fileId": 11861,
    "bpm": 170.0,
-   "offsetMs": 0.0,
    "src": "kgn",
    "title": "經驗值upup",
    "artist": "南家三姐妹"
@@ -8035,7 +8020,7 @@
    "gn": "sdom1862",
    "fileId": 11862,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "Earthquake",
    "artist": "Little Boots"
@@ -8062,7 +8047,7 @@
    "gn": "sdom1865",
    "fileId": 11865,
    "bpm": 140.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "君がいない未来",
    "artist": "大無限樂團"
@@ -8089,7 +8074,7 @@
    "gn": "sdom1871",
    "fileId": 11871,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "kgn",
    "title": "第四十號交響",
    "artist": "Donovanlee"
@@ -8116,7 +8101,7 @@
    "gn": "sdom1888",
    "fileId": 11888,
    "bpm": 138.83,
-   "offsetMs": 0.0,
+   "offsetMs": -12,
    "src": "kgn",
    "title": "Beat It",
    "artist": "Michael Jackson"
@@ -8143,7 +8128,7 @@
    "gn": "sdom1891",
    "fileId": 11891,
    "bpm": 117.04,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "MJ串燒",
    "artist": "Michael Jackson"
@@ -8161,7 +8146,7 @@
    "gn": "sdom1894",
    "fileId": 11894,
    "bpm": 138.0,
-   "offsetMs": 0.0,
+   "offsetMs": -10,
    "src": "kgn",
    "title": "DA DA BUL",
    "artist": "Aurora"
@@ -8170,7 +8155,7 @@
    "gn": "sdom1895",
    "fileId": 11895,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": 7,
    "src": "kgn",
    "title": "Magic",
    "artist": "Brown Eyed Girls"
@@ -8179,7 +8164,7 @@
    "gn": "sdom1896",
    "fileId": 11896,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 23,
    "src": "kgn",
    "title": "首班車",
    "artist": "superjunior t"
@@ -8188,7 +8173,7 @@
    "gn": "sdom1897",
    "fileId": 11897,
    "bpm": 106.53,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "RIVER",
    "artist": "AKB48"
@@ -8206,7 +8191,7 @@
    "gn": "sdom1899",
    "fileId": 11899,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "Wacko",
    "artist": "Belinda peregrín schull"
@@ -8215,7 +8200,7 @@
    "gn": "sdom1900",
    "fileId": 11900,
    "bpm": 99.5,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "Paradise",
    "artist": "Da Buzz"
@@ -8314,7 +8299,7 @@
    "gn": "sdom1916",
    "fileId": 11916,
    "bpm": 76.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "crazy woman",
    "artist": "seeya davichi"
@@ -8323,7 +8308,7 @@
    "gn": "sdom1917",
    "fileId": 11917,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 4,
    "src": "kgn",
    "title": "Chu",
    "artist": "fx"
@@ -8332,7 +8317,7 @@
    "gn": "sdom1918",
    "fileId": 11918,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "heymrbig",
    "artist": "Jazzhiphop"
@@ -8350,7 +8335,7 @@
    "gn": "sdom1920",
    "fileId": 11920,
    "bpm": 96.05,
-   "offsetMs": 0.0,
+   "offsetMs": -5,
    "src": "kgn",
    "title": "The Way You Do Me",
    "artist": "JOJO"
@@ -8359,7 +8344,7 @@
    "gn": "sdom1921",
    "fileId": 11921,
    "bpm": 124.01,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "Different Tears",
    "artist": "Wonder Girls"
@@ -8431,7 +8416,7 @@
    "gn": "sdom1938",
    "fileId": 11938,
    "bpm": 141.0,
-   "offsetMs": 0.0,
+   "offsetMs": -66,
    "src": "kgn",
    "title": "Because Of You",
    "artist": "Gummy"
@@ -8440,7 +8425,7 @@
    "gn": "sdom1939",
    "fileId": 11939,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 6,
    "src": "kgn",
    "title": "IU",
    "artist": "守護"
@@ -8449,7 +8434,7 @@
    "gn": "sdom1940",
    "fileId": 11940,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": 11,
    "src": "kgn",
    "title": "Rumble Fish",
    "artist": "Toxic"
@@ -8458,7 +8443,7 @@
    "gn": "sdom1941",
    "fileId": 11941,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "Push Push",
    "artist": "SISTAR"
@@ -8485,7 +8470,7 @@
    "gn": "sdom1944",
    "fileId": 11944,
    "bpm": 134.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "Cabi Song",
    "artist": "少女時代、2PM"
@@ -8494,7 +8479,7 @@
    "gn": "sdom1945",
    "fileId": 11945,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 4,
    "src": "kgn",
    "title": "Grab Bag",
    "artist": "西野カナ"
@@ -8503,7 +8488,7 @@
    "gn": "sdom1946",
    "fileId": 11946,
    "bpm": 115.0,
-   "offsetMs": 0.0,
+   "offsetMs": 19,
    "src": "kgn",
    "title": "給我你的手",
    "artist": "弦子"
@@ -8530,7 +8515,7 @@
    "gn": "sdom1989",
    "fileId": 11989,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "溫馨一刻",
    "artist": "Hiro"
@@ -8566,7 +8551,7 @@
    "gn": "sdom1993",
    "fileId": 11993,
    "bpm": 147.04,
-   "offsetMs": 0.0,
+   "offsetMs": 11,
    "src": "kgn",
    "title": "零次元",
    "artist": "Nao Paradigm"
@@ -8575,7 +8560,7 @@
    "gn": "sdom1994",
    "fileId": 11994,
    "bpm": 185.0,
-   "offsetMs": 0.0,
+   "offsetMs": 8,
    "src": "kgn",
    "title": "野蜂飛舞",
    "artist": "勁樂"
@@ -8593,7 +8578,7 @@
    "gn": "sdom1996",
    "fileId": 11996,
    "bpm": 133.0,
-   "offsetMs": 0.0,
+   "offsetMs": 15,
    "src": "kgn",
    "title": "BEAUTIFUL HANGOVER",
    "artist": "BigBang"
@@ -8602,7 +8587,7 @@
    "gn": "sdom1997",
    "fileId": 11997,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": 44,
    "src": "kgn",
    "title": "The Catalyst",
    "artist": "Linkin Park"
@@ -8611,7 +8596,7 @@
    "gn": "sdom1998",
    "fileId": 11998,
    "bpm": 125.5,
-   "offsetMs": 0.0,
+   "offsetMs": -7,
    "src": "kgn",
    "title": "One Life",
    "artist": "No Angels"
@@ -11954,7 +11939,7 @@
    "gn": "sdom2521",
    "fileId": 12521,
    "bpm": 180.0,
-   "offsetMs": 7,
+   "offsetMs": -5,
    "src": "kgn",
    "title": "Crystal World",
    "artist": "Wa. remixed celas"
@@ -12517,7 +12502,7 @@
    "gn": "sdom2584",
    "fileId": 12584,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": 7,
    "src": "kgn",
    "title": "Carry You(Remix)",
    "artist": "Union J"
@@ -13599,7 +13584,7 @@
    "gn": "sdom2705",
    "fileId": 12705,
    "bpm": 128.0,
-   "offsetMs": 0,
+   "offsetMs": 55,
    "src": "kgn",
    "title": "Til It's Gone",
    "artist": "Britney Spears"
@@ -17001,7 +16986,7 @@
    "gn": "sdom0330",
    "fileId": 10330,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "唯舞獨尊(remix串燒 )",
    "artist": "蔡依琳"
@@ -17658,7 +17643,7 @@
    "gn": "sdom1281",
    "fileId": 11281,
    "bpm": 155.0,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "kgn",
    "title": "Blood on Fire",
    "artist": "Aaa"
@@ -17667,7 +17652,7 @@
    "gn": "sdom1282",
    "fileId": 11282,
    "bpm": 114.5,
-   "offsetMs": 0.0,
+   "offsetMs": -12,
    "src": "kgn",
    "title": "ダーリン I LOVE YOU",
    "artist": "Berryz工房"
@@ -17676,7 +17661,7 @@
    "gn": "sdom1284",
    "fileId": 11284,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "都会っ子 纯情",
    "artist": "℃-ute"
@@ -17685,7 +17670,7 @@
    "gn": "sdom1286",
    "fileId": 11286,
    "bpm": 135.0,
-   "offsetMs": 0.0,
+   "offsetMs": -60,
    "src": "kgn",
    "title": "For no one",
    "artist": "9U"
@@ -17694,7 +17679,7 @@
    "gn": "sdom1287",
    "fileId": 11287,
    "bpm": 106.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Show time",
    "artist": "twenty"
@@ -17703,7 +17688,7 @@
    "gn": "sdom1288",
    "fileId": 11288,
    "bpm": 114.1,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "DANDAAN",
    "artist": "KREVA"
@@ -17712,7 +17697,7 @@
    "gn": "sdom1289",
    "fileId": 11289,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "kgn",
    "title": "magic",
    "artist": "MEG"
@@ -17730,7 +17715,7 @@
    "gn": "sdom1291",
    "fileId": 11291,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": -52,
    "src": "kgn",
    "title": "Zza Zza La",
    "artist": "As one"
@@ -17739,7 +17724,7 @@
    "gn": "sdom1292",
    "fileId": 11292,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -60,
    "src": "kgn",
    "title": "Ma People",
    "artist": "LEXY"
@@ -17748,7 +17733,7 @@
    "gn": "sdom1294",
    "fileId": 11294,
    "bpm": 155.15,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "kgn",
    "title": "night of fire",
    "artist": "Initial D"
@@ -17757,7 +17742,7 @@
    "gn": "sdom1295",
    "fileId": 11295,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "kgn",
    "title": "RUN",
    "artist": "神話"
@@ -17766,7 +17751,7 @@
    "gn": "sdom1297",
    "fileId": 11297,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": -48,
    "src": "kgn",
    "title": "不相信",
    "artist": "聽Me"
@@ -17775,7 +17760,7 @@
    "gn": "sdom1300",
    "fileId": 11300,
    "bpm": 119.0,
-   "offsetMs": 0.0,
+   "offsetMs": -57,
    "src": "kgn",
    "title": "1-1234 Back",
    "artist": "A star"
@@ -17784,7 +17769,7 @@
    "gn": "sdom1301",
    "fileId": 11301,
    "bpm": 134.01,
-   "offsetMs": 0.0,
+   "offsetMs": -21,
    "src": "kgn",
    "title": "Kiss Me",
    "artist": "As One"
@@ -17793,7 +17778,7 @@
    "gn": "sdom1302",
    "fileId": 11302,
    "bpm": 116.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Adrenaline",
    "artist": "Buga Kingz"
@@ -17802,7 +17787,7 @@
    "gn": "sdom1303",
    "fileId": 11303,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": -32,
    "src": "kgn",
    "title": "哥哥的心",
    "artist": "Ez-Life"
@@ -17811,7 +17796,7 @@
    "gn": "sdom1304",
    "fileId": 11304,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Kiss Me",
    "artist": "H Eugene"
@@ -17820,7 +17805,7 @@
    "gn": "sdom1307",
    "fileId": 11307,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Lucky",
    "artist": "Wax"
@@ -17829,7 +17814,7 @@
    "gn": "sdom1308",
    "fileId": 11308,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -31,
    "src": "kgn",
    "title": "NoNoNo",
    "artist": "PK Heman"
@@ -17838,7 +17823,7 @@
    "gn": "sdom1310",
    "fileId": 11310,
    "bpm": 144.0,
-   "offsetMs": 0.0,
+   "offsetMs": -30,
    "src": "kgn",
    "title": "全都噓聲",
    "artist": "Jewelry"
@@ -17847,7 +17832,7 @@
    "gn": "sdom1346",
    "fileId": 11346,
    "bpm": 115.01,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "He Said, She Said",
    "artist": "Ashley Tisdale"
@@ -17856,7 +17841,7 @@
    "gn": "sdom1347",
    "fileId": 11347,
    "bpm": 100.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Sexy",
    "artist": "Babyvox"
@@ -17865,7 +17850,7 @@
    "gn": "sdom1348",
    "fileId": 11348,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -32,
    "src": "kgn",
    "title": "Sol Flower",
    "artist": "Baechigi"
@@ -17874,7 +17859,7 @@
    "gn": "sdom1349",
    "fileId": 11349,
    "bpm": 140.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "DANCE DANCE",
    "artist": "Cool"
@@ -17883,7 +17868,7 @@
    "gn": "sdom1350",
    "fileId": 11350,
    "bpm": 138.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Kil Gun",
    "artist": "LMS"
@@ -17892,7 +17877,7 @@
    "gn": "sdom1351",
    "fileId": 11351,
    "bpm": 100.0,
-   "offsetMs": 0.0,
+   "offsetMs": -17,
    "src": "kgn",
    "title": "雜耍",
    "artist": "MC夢"
@@ -17901,7 +17886,7 @@
    "gn": "sdom1356",
    "fileId": 11356,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -56,
    "src": "kgn",
    "title": "With U",
    "artist": "BIGBANG"
@@ -17910,7 +17895,7 @@
    "gn": "sdom1359",
    "fileId": 11359,
    "bpm": 140.0,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "kgn",
    "title": "Astraea",
    "artist": "Hashimoto Miyuki"
@@ -17919,7 +17904,7 @@
    "gn": "sdom1360",
    "fileId": 11360,
    "bpm": 140.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "捉迷藏",
    "artist": "MC夢"
@@ -17928,7 +17913,7 @@
    "gn": "sdom1362",
    "fileId": 11362,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -15,
    "src": "kgn",
    "title": "Alright",
    "artist": "Rhymer"
@@ -17937,7 +17922,7 @@
    "gn": "sdom1364",
    "fileId": 11364,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -40,
    "src": "kgn",
    "title": "離別公式",
    "artist": "Yeon Seo"
@@ -17946,7 +17931,7 @@
    "gn": "sdom1365",
    "fileId": 11365,
    "bpm": 105.0,
-   "offsetMs": 0.0,
+   "offsetMs": -23,
    "src": "kgn",
    "title": "今天晚上怎麼樣",
    "artist": "Meilin"
@@ -17955,7 +17940,7 @@
    "gn": "sdom1409",
    "fileId": 11409,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": -16,
    "src": "kgn",
    "title": "天國",
    "artist": "BigBang"
@@ -17964,7 +17949,7 @@
    "gn": "sdom1411",
    "fileId": 11411,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "怎麼辦",
    "artist": "Brown Eyed Girls"
@@ -17973,7 +17958,7 @@
    "gn": "sdom1412",
    "fileId": 11412,
    "bpm": 92.5,
-   "offsetMs": 0.0,
+   "offsetMs": 40,
    "src": "kgn",
    "title": "Asereje",
    "artist": "Las Ketchup"
@@ -17982,7 +17967,7 @@
    "gn": "sdom1413",
    "fileId": 11413,
    "bpm": 137.01,
-   "offsetMs": 0.0,
+   "offsetMs": -29,
    "src": "kgn",
    "title": "斷念",
    "artist": "SARA"
@@ -17991,7 +17976,7 @@
    "gn": "sdom1414",
    "fileId": 11414,
    "bpm": 166.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "We can do it",
    "artist": "Shoko Nakagawa"
@@ -18000,7 +17985,7 @@
    "gn": "sdom1416",
    "fileId": 11416,
    "bpm": 142.0,
-   "offsetMs": 0.0,
+   "offsetMs": -43,
    "src": "kgn",
    "title": "橡皮筋",
    "artist": "Sunny Hill"
@@ -18009,7 +17994,7 @@
    "gn": "sdom1418",
    "fileId": 11418,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "Ready ot love",
    "artist": "BEG"
@@ -18018,7 +18003,7 @@
    "gn": "sdom1419",
    "fileId": 11419,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Every Sweet Day",
    "artist": "IU"
@@ -18027,7 +18012,7 @@
    "gn": "sdom1420",
    "fileId": 11420,
    "bpm": 122.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Moonlight Girl",
    "artist": "玄英"
@@ -18045,7 +18030,7 @@
    "gn": "sdom1423",
    "fileId": 11423,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": -50,
    "src": "kgn",
    "title": "要走嗎",
    "artist": "SeeYa"
@@ -18054,7 +18039,7 @@
    "gn": "sdom1424",
    "fileId": 11424,
    "bpm": 117.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "SolBi",
    "artist": "Doit Doit"
@@ -18063,7 +18048,7 @@
    "gn": "sdom1426",
    "fileId": 11426,
    "bpm": 123.0,
-   "offsetMs": 0.0,
+   "offsetMs": -27,
    "src": "kgn",
    "title": "DISCO",
    "artist": "嚴正花"
@@ -18072,7 +18057,7 @@
    "gn": "sdom1429",
    "fileId": 11429,
    "bpm": 126.0,
-   "offsetMs": 0.0,
+   "offsetMs": -45,
    "src": "kgn",
    "title": "每天每天",
    "artist": "Bigbang"
@@ -18081,7 +18066,7 @@
    "gn": "sdom1432",
    "fileId": 11432,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -28,
    "src": "kgn",
    "title": "除了愛情我什麼都不懂",
    "artist": "Sunny Hill"
@@ -18090,7 +18075,7 @@
    "gn": "sdom1434",
    "fileId": 11434,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": -35,
    "src": "kgn",
    "title": "She The One",
    "artist": "V"
@@ -18099,7 +18084,7 @@
    "gn": "sdom1436",
    "fileId": 11436,
    "bpm": 100.0,
-   "offsetMs": 0.0,
+   "offsetMs": -42,
    "src": "kgn",
    "title": "我的愛",
    "artist": "殆死悲愛"
@@ -18108,7 +18093,7 @@
    "gn": "sdom1437",
    "fileId": 11437,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": -31,
    "src": "kgn",
    "title": "辛德瑞拉",
    "artist": "徐仁英"
@@ -18117,7 +18102,7 @@
    "gn": "sdom1439",
    "fileId": 11439,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -25,
    "src": "kgn",
    "title": "Hung Up",
    "artist": "Madonna"
@@ -18126,7 +18111,7 @@
    "gn": "sdom1440",
    "fileId": 11440,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "愛情男女",
    "artist": "我不管家族"
@@ -18144,7 +18129,7 @@
    "gn": "sdom1550",
    "fileId": 11550,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -47,
    "src": "kgn",
    "title": "Eyes Say",
    "artist": "林永俊"
@@ -18153,7 +18138,7 @@
    "gn": "sdom1556",
    "fileId": 11556,
    "bpm": 132.96,
-   "offsetMs": 0.0,
+   "offsetMs": -24,
    "src": "kgn",
    "title": "MASURAO",
    "artist": "DJ OZMA"
@@ -18162,7 +18147,7 @@
    "gn": "sdom1558",
    "fileId": 11558,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -22,
    "src": "kgn",
    "title": "幸福條件",
    "artist": "GIRL NEXT DOOR"
@@ -18171,7 +18156,7 @@
    "gn": "sdom1559",
    "fileId": 11559,
    "bpm": 132.0,
-   "offsetMs": 0.0,
+   "offsetMs": -23,
    "src": "kgn",
    "title": "Nobody's Perfect",
    "artist": "Hannah Montana"
@@ -18198,7 +18183,7 @@
    "gn": "sdom1571",
    "fileId": 11571,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 8,
    "src": "kgn",
    "title": "Baby Baby",
    "artist": "ZaZa"
@@ -18207,7 +18192,7 @@
    "gn": "sdom1576",
    "fileId": 11576,
    "bpm": 134.0,
-   "offsetMs": 0.0,
+   "offsetMs": -7,
    "src": "kgn",
    "title": "My Style",
    "artist": "BrownEyedGirls"
@@ -18234,7 +18219,7 @@
    "gn": "sdom1580",
    "fileId": 11580,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": 4,
    "src": "kgn",
    "title": "NANANA",
    "artist": "王心凌+吳克群"
@@ -18243,7 +18228,7 @@
    "gn": "sdom1582",
    "fileId": 11582,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 38,
    "src": "kgn",
    "title": "Fantastic Girl",
    "artist": "Yipani"
@@ -18252,19 +18237,10 @@
    "gn": "sdom1616",
    "fileId": 11616,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": -1,
    "src": "kgn",
    "title": "My Love Song",
    "artist": "金錫民"
-  },
-  {
-   "gn": "sdom1619",
-   "fileId": 11619,
-   "bpm": 148.0,
-   "offsetMs": 0.0,
-   "src": "kgn",
-   "title": "如果沒有",
-   "artist": "梁靜茹"
   },
   {
    "gn": "sdom1620",
@@ -18292,15 +18268,6 @@
    "src": "kgn",
    "title": "我的愛情羅曼史",
    "artist": "我不管家族"
-  },
-  {
-   "gn": "sdom1628",
-   "fileId": 11628,
-   "bpm": 150.0,
-   "offsetMs": 0.0,
-   "src": "kgn",
-   "title": "怪怪女",
-   "artist": "青鳥飛魚"
   },
   {
    "gn": "sdom1629",
@@ -18342,7 +18309,7 @@
    "gn": "sdom1691",
    "fileId": 11691,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": 75,
    "src": "kgn",
    "title": "Bye Bye",
    "artist": "ShinGun"
@@ -18351,7 +18318,7 @@
    "gn": "sdom1692",
    "fileId": 11692,
    "bpm": 117.02,
-   "offsetMs": 0.0,
+   "offsetMs": 36,
    "src": "kgn",
    "title": "Play",
    "artist": "SS501"
@@ -18360,7 +18327,7 @@
    "gn": "sdom1694",
    "fileId": 11694,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 16,
    "src": "kgn",
    "title": "Bye Bye",
    "artist": "TaeGoon"
@@ -18378,7 +18345,7 @@
    "gn": "sdom1697",
    "fileId": 11697,
    "bpm": 96.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "墜入愛河",
    "artist": "殆死悲愛"
@@ -18396,7 +18363,7 @@
    "gn": "sdom1707",
    "fileId": 11707,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 51,
    "src": "kgn",
    "title": "看了又看",
    "artist": "金鐘旭"
@@ -18432,7 +18399,7 @@
    "gn": "sdom1734",
    "fileId": 11734,
    "bpm": 130.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "被吸引了",
    "artist": "我不管家族"
@@ -18468,7 +18435,7 @@
    "gn": "sdom1747",
    "fileId": 11747,
    "bpm": 124.0,
-   "offsetMs": 0.0,
+   "offsetMs": 3,
    "src": "kgn",
    "title": "準備開始",
    "artist": "T-Max"
@@ -18477,7 +18444,7 @@
    "gn": "sdom1748",
    "fileId": 11748,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "新窩",
    "artist": "飛輪海"
@@ -18486,7 +18453,7 @@
    "gn": "sdom1749",
    "fileId": 11749,
    "bpm": 127.0,
-   "offsetMs": 0.0,
+   "offsetMs": -5,
    "src": "kgn",
    "title": "Style News",
    "artist": "閔孝琳"
@@ -18504,7 +18471,7 @@
    "gn": "sdom1751",
    "fileId": 11751,
    "bpm": 100.92,
-   "offsetMs": 0.0,
+   "offsetMs": 3,
    "src": "kgn",
    "title": "Because of you",
    "artist": "Winds"
@@ -18513,7 +18480,7 @@
    "gn": "sdom1752",
    "fileId": 11752,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": 5,
    "src": "kgn",
    "title": "The Couple",
    "artist": "One Love"
@@ -18531,7 +18498,7 @@
    "gn": "sdom1754",
    "fileId": 11754,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 7,
    "src": "kgn",
    "title": "Indian Boy",
    "artist": "MC 夢"
@@ -18540,7 +18507,7 @@
    "gn": "sdom1755",
    "fileId": 11755,
    "bpm": 105.0,
-   "offsetMs": 0.0,
+   "offsetMs": 2,
    "src": "kgn",
    "title": "the boy i used to know",
    "artist": "Marie Serneholt"
@@ -18549,7 +18516,6 @@
    "gn": "sdom1756",
    "fileId": 11756,
    "bpm": 89.0,
-   "offsetMs": 0.0,
    "src": "kgn",
    "title": "Rally",
    "artist": "Jewelry"
@@ -18576,7 +18542,7 @@
    "gn": "sdom1776",
    "fileId": 11776,
    "bpm": 120.0,
-   "offsetMs": 0.0,
+   "offsetMs": 6,
    "src": "kgn",
    "title": "去吧去吧",
    "artist": "Bigbang"
@@ -18612,7 +18578,7 @@
    "gn": "sdom1781",
    "fileId": 11781,
    "bpm": 122.5,
-   "offsetMs": 0.0,
+   "offsetMs": 50,
    "src": "kgn",
    "title": "Bad Girl",
    "artist": "Devil Angel"
@@ -18621,7 +18587,7 @@
    "gn": "sdom1782",
    "fileId": 11782,
    "bpm": 116.0,
-   "offsetMs": 0.0,
+   "offsetMs": -10,
    "src": "kgn",
    "title": "Hey  Mr",
    "artist": "Dream Girls"
@@ -18630,7 +18596,7 @@
    "gn": "sdom1785",
    "fileId": 11785,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": 11,
    "src": "kgn",
    "title": "Hot Issue",
    "artist": "4minute"
@@ -18747,7 +18713,7 @@
    "gn": "sdom1872",
    "fileId": 11872,
    "bpm": 110.0,
-   "offsetMs": 0.0,
+   "offsetMs": -7,
    "src": "kgn",
    "title": "My Color",
    "artist": "2PM"
@@ -18756,7 +18722,7 @@
    "gn": "sdom1874",
    "fileId": 11874,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": -5,
    "src": "kgn",
    "title": "Break Down",
    "artist": "我不管家族"
@@ -18765,7 +18731,7 @@
    "gn": "sdom1875",
    "fileId": 11875,
    "bpm": 134.0,
-   "offsetMs": 0.0,
+   "offsetMs": -3,
    "src": "kgn",
    "title": "Sign",
    "artist": "Brown Eyed Girls"
@@ -18774,7 +18740,7 @@
    "gn": "sdom1876",
    "fileId": 11876,
    "bpm": 150.0,
-   "offsetMs": 0.0,
+   "offsetMs": -10,
    "src": "kgn",
    "title": "只為愛上你",
    "artist": "S.H.E"
@@ -18783,7 +18749,7 @@
    "gn": "sdom1963",
    "fileId": 11963,
    "bpm": 115.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "單程車票",
    "artist": "恰萌奇"
@@ -18792,7 +18758,7 @@
    "gn": "sdom1964",
    "fileId": 11964,
    "bpm": 129.0,
-   "offsetMs": 0.0,
+   "offsetMs": 20,
    "src": "kgn",
    "title": "RPG",
    "artist": "恰萌奇"
@@ -18801,7 +18767,7 @@
    "gn": "sdom1966",
    "fileId": 11966,
    "bpm": 192.0,
-   "offsetMs": 0.0,
+   "offsetMs": 7,
    "src": "kgn",
    "title": "Lacrimosa",
    "artist": "華麗菲娜"
@@ -18810,7 +18776,7 @@
    "gn": "sdom1967",
    "fileId": 11967,
    "bpm": 78.0,
-   "offsetMs": 0.0,
+   "offsetMs": -20,
    "src": "kgn",
    "title": "そばにいてあげる",
    "artist": "林綾"
@@ -18819,7 +18785,7 @@
    "gn": "sdom1969",
    "fileId": 11969,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 75,
    "src": "kgn",
    "title": "就在",
    "artist": "張懸"
@@ -18837,7 +18803,7 @@
    "gn": "sdom1972",
    "fileId": 11972,
    "bpm": 125.0,
-   "offsetMs": 0.0,
+   "offsetMs": 25,
    "src": "kgn",
    "title": "迷迷羊",
    "artist": "恰萌奇"
@@ -18846,7 +18812,6 @@
    "gn": "sdom1973",
    "fileId": 11973,
    "bpm": 178.0,
-   "offsetMs": 0.0,
    "src": "kgn",
    "title": "任性",
    "artist": "恰萌奇"
@@ -19431,7 +19396,7 @@
    "gn": "sdom2954",
    "fileId": 12954,
    "bpm": 126.02,
-   "offsetMs": 12,
+   "offsetMs": 1503,
    "src": "kgn",
    "title": "遺失的心跳",
    "artist": "蕭亞軒"
