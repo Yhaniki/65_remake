@@ -5,6 +5,7 @@ using UnityEngine.SceneManagement;
 using Sdo.Game;
 using Sdo.Localization;
 using Sdo.Settings;
+using Sdo.UI.Catalog;
 using Sdo.UI.Core;
 using Sdo.UI.Screens;
 using Sdo.UI.Util;
@@ -196,6 +197,21 @@ namespace Sdo.UI
             _returningFromGame = false;   // 新的一局：解除上次回房轉場的守門
             var s = _ctx.Session;
             if (!s.HasSong) { Toast.Show(LocalizationManager.Get("room.need_song")); return; }
+
+            // 隨機難度：房間只鎖定「難度範圍」(SongRandomRange)，實際歌曲/難度到這裡(進遊戲)才抽 → 每局重抽，
+            // 同一個隨機設定每次進遊戲都是不同歌。easy/normal/hard 一起搜(見 SongListModel.RandomCandidates)。
+            if (s.SongIsRandom)
+            {
+                var pool = SongListModel.RandomCandidates(SongListModel.FromCatalog().All, s.SongRandomRange);
+                if (pool.Count > 0)
+                {
+                    var cand = pool[Random.Range(0, pool.Count)];
+                    s.SongGn = cand.Song.gn;
+                    s.SongFileId = cand.Song.fileId;
+                    s.SongArtist = cand.Song.artist;
+                    s.Difficulty = (Difficulty)cand.Difficulty;
+                }
+            }
 
             string gnPath = SongPaths.Gn(s.SongGn);     // e.g. .../MUSIC/sdom1197k.gn（SongPaths 內部走 SdoExtracted.MusicDir）
             string oggPath = SongPaths.Ogg(s.SongGn);   // chart letter (k/t) dropped: sdom1197k -> sdom1197.ogg

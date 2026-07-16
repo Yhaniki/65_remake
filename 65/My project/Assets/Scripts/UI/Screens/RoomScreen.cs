@@ -127,6 +127,7 @@ namespace Sdo.UI.Screens
         private Image _sceneThumb;         // 第二層場景圖（隨機 → RANDOM；具體 → Scene{id+1}）
         private Image _diffDisc;           // CD 光碟，依難度換色（Difficult.an 3 幀）
         private Sprite[] _diffDiscFrames;
+        private Sprite _diffDiscGray;      // 隨機難度用的灰階碟（去色一次快取）：難度隨機 → 不顯示任何一色碟，用灰階當中性
         private OutlinedLabel _levelLabel, _bpmLabel;   // 難度/BPM 數字(白邊)
         private TextMeshProUGUI _speedLabel;
         private Image _noteDisplay;        // note 種類預覽框
@@ -213,7 +214,10 @@ namespace Sdo.UI.Screens
 
             // name marker that floats above the avatar's head in the room (positioned each frame in Update).
             // 跟遊戲內頭頂名字同款:共用色 TextStyles.FaceCream(rgb 250,252,214)+ 黑邊 + 粗體 + 8 向描邊。
-            _floatName = OutlinedLabel.Create(Root, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true);
+            // charSpacing = 字靠緊一點（真・字距，字不變形）。TMP 的 characterSpacing 每格加 值×fontSize/100 px，
+            // 要移除 HeadNameTrackEm 個 em → characterSpacing = -HeadNameTrackEm×100（與字級無關，跟遊戲內頭頂名字同款）。
+            _floatName = OutlinedLabel.Create(Root, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
+                charSpacing: -TextStyles.HeadNameTrackEm * 100f);
             _floatName.gameObject.SetActive(false);
 
             // window containers — everything in win1/win2/win3 hangs under one of these so the collapse button can slide
@@ -318,7 +322,7 @@ namespace Sdo.UI.Screens
             //   綠色下拉清單：左緣 = listX（改這個 → 清單左右移動）、寬 = listWidth（改這個 → 清單變寬/窄）
             //     右緣 = listX + listWidth。目前 listX=Win2.x+55、listWidth=43 → 55..98。
             _dropCombo = SdoComboBox.Create(_win2Root, "DropDir", Win2.x + 50, Win2.y + 268, 75, 16, Win2.x + 105,
-                RoomUiArt.An("ShopDlg13"), RoomUiArt.An("LabUnCheck"), RoomUiArt.An("LabCheck"),
+                RoomUiArt.AnSolo("ShopDlg13"), RoomUiArt.AnSolo("LabUnCheck"), RoomUiArt.AnSolo("LabCheck"),   // 自貼圖去白邊（▼ 鈕＋清單列）
                 new[] { L("room.drop_up"), L("room.drop_down"), L("room.drop_tilt") }, null,
                 Mathf.Clamp(Ctx.Session.DropDirection, 0, 2), SpeedColor, DropListColor,
                 i => { Ctx.Session.DropDirection = i; RoomConfig.defaultDropDirection = i; RoomConfig.Save(); },   // 持久化：掉落方式寫回 config.ini（進遊戲決定 note 面板上/下）
@@ -381,12 +385,12 @@ namespace Sdo.UI.Screens
             //    收合後原地換成 ►(BtnMaypopRight) 展開鈕。掛在 Root（不隨面板收合），且最後建立 → 疊在最上層永遠可點。
             // 收合/展開鈕：滑過 Buttonfloat、按下 Interfaceout（官方 uihide/uidisplay 滑動音）。
             _uiHideBtn = UIKit.AddSpriteButton(Root, "uihide",
-                RoomUiArt.An("BtnMaypopLeft_1"), RoomUiArt.An("BtnMaypopLeft_2"), RoomUiArt.An("BtnMaypopLeft_3"), 11, 83);
+                RoomUiArt.AnSolo("BtnMaypopLeft_1"), RoomUiArt.AnSolo("BtnMaypopLeft_2"), RoomUiArt.AnSolo("BtnMaypopLeft_3"), 11, 83);
             UiHoverSfx.Attach(_uiHideBtn, UiSfx.ButtonFloat);
             UiSfx.AttachPress(_uiHideBtn, UiSfx.WindowSlide);
             _uiHideBtn.onClick.AddListener(() => SetCollapsed(true));
             _uiShowBtn = UIKit.AddSpriteButton(Root, "uidisplay",
-                RoomUiArt.An("BtnMaypopRight_1"), RoomUiArt.An("BtnMaypopRight_2"), RoomUiArt.An("BtnMaypopRight_3"), 11, 83);
+                RoomUiArt.AnSolo("BtnMaypopRight_1"), RoomUiArt.AnSolo("BtnMaypopRight_2"), RoomUiArt.AnSolo("BtnMaypopRight_3"), 11, 83);
             UiHoverSfx.Attach(_uiShowBtn, UiSfx.ButtonFloat);
             UiSfx.AttachPress(_uiShowBtn, UiSfx.WindowSlide);
             _uiShowBtn.onClick.AddListener(() => SetCollapsed(false));
@@ -739,7 +743,7 @@ namespace Sdo.UI.Screens
         private void AddChatModeChoice(string name, ChatChannel channel, float x, float y)
         {
             ChatModeArt(channel, out var nrm, out var hov, out var psh);
-            var b = UIKit.AddSpriteButton(_chatModeMenu, name, RoomUiArt.An(nrm), RoomUiArt.An(hov), RoomUiArt.An(psh), x, y);
+            var b = UIKit.AddSpriteButton(_chatModeMenu, name, RoomUiArt.AnSolo(nrm), RoomUiArt.AnSolo(hov), RoomUiArt.AnSolo(psh), x, y);
             UiHoverSfx.Attach(b, UiSfx.ButtonFloat);
             UiSfx.AttachPress(b, UiSfx.Click);
             b.onClick.AddListener(() => SetChatChannel(channel));
@@ -759,11 +763,11 @@ namespace Sdo.UI.Screens
         {
             if (_chatModeBtn == null || !(_chatModeBtn.targetGraphic is Image img)) return;
             ChatModeArt(_chatChannel, out var nrm, out var hov, out var psh);
-            UIKit.ApplySprite(img, RoomUiArt.An(nrm));
+            UIKit.ApplySprite(img, RoomUiArt.AnSolo(nrm));   // 自貼圖去白邊（與 chatmode 鈕本身 Btn 預設一致）
             var st = _chatModeBtn.spriteState;
-            st.highlightedSprite = RoomUiArt.An(hov);
-            st.pressedSprite = RoomUiArt.An(psh);
-            st.selectedSprite = RoomUiArt.An(nrm);
+            st.highlightedSprite = RoomUiArt.AnSolo(hov);
+            st.pressedSprite = RoomUiArt.AnSolo(psh);
+            st.selectedSprite = RoomUiArt.AnSolo(nrm);
             _chatModeBtn.spriteState = st;
         }
 
@@ -2036,12 +2040,20 @@ namespace Sdo.UI.Screens
                 UIKit.ApplySprite(_sceneThumb, sc);
             }
 
-            // CD 光碟依難度換色（Difficult0/1/2）
+            // CD 光碟依難度換色（Difficult0/1/2）。隨機難度選擇：難度也是隨機的 → 用「灰階碟」當中性顯示
+            // （不鎖任何一色；實際難度進遊戲才抽）。灰階碟去色失敗(材質不可讀)時退回原本的難度碟。
             if (_diffDisc != null && _diffDiscFrames != null && _diffDiscFrames.Length > 0)
-                UIKit.ApplySprite(_diffDisc, _diffDiscFrames[Mathf.Clamp((int)s.Difficulty, 0, _diffDiscFrames.Length - 1)]);
+            {
+                Sprite disc = s.SongIsRandom
+                    ? (DiffDiscGray() ?? _diffDiscFrames[_diffDiscFrames.Length - 1])
+                    : _diffDiscFrames[Mathf.Clamp((int)s.Difficulty, 0, _diffDiscFrames.Length - 1)];
+                UIKit.ApplySprite(_diffDisc, disc);
+            }
 
             // 歌名 + 難度 + BPM（從歌曲目錄查；沒選歌就空白）。歌名以 session 為準（離線單機 = 房主選的歌）。
             var entry = s.HasSong ? SongCatalog.Get(s.SongGn) : null;
+            // 隨機難度選擇：房間顯示「隨機難度 X」標籤、不揭曉抽到的歌 → 等級/BPM 也一併隱藏（否則會露出那首歌的等級/BPM）。
+            if (s.SongIsRandom) entry = null;
             if (_songLabel != null)
                 _songLabel.SetText(s.HasSong ? (s.SongTitle ?? "") : L("room.no_song"));
             if (_levelLabel != null)
@@ -2081,6 +2093,40 @@ namespace Sdo.UI.Screens
                 if (_teamImg[i] != null) UIKit.ApplySprite(_teamImg[i], s.Team == i ? _teamPushed[i] : _teamNormal[i]);
 
             // 掉落方式的值由 SdoComboBox 自己維護（onPick → session.DropDirection）；此處不需重畫。
+        }
+
+        /// <summary>隨機難度用的灰階 CD 碟：把任一難度碟去色一次並快取（碟形相同、只差色相，去色後即中性灰）。
+        /// 來源材質不可讀時回 null，呼叫端退回原本的難度碟。</summary>
+        private Sprite DiffDiscGray()
+        {
+            if (_diffDiscGray != null) return _diffDiscGray;
+            if (_diffDiscFrames == null || _diffDiscFrames.Length == 0) return null;
+            _diffDiscGray = ToGrayscale(_diffDiscFrames[_diffDiscFrames.Length - 1]);
+            return _diffDiscGray;
+        }
+
+        /// <summary>Desaturate a sprite (luminance, alpha preserved) into a fresh sprite of the same on-screen size.
+        /// Reads the sprite's crop out of its (readable) atlas texture; returns the source unchanged if it can't.</summary>
+        private static Sprite ToGrayscale(Sprite src)
+        {
+            if (src == null || src.texture == null) return src;
+            var r = src.textureRect;
+            int x = Mathf.RoundToInt(r.x), y = Mathf.RoundToInt(r.y);
+            int w = Mathf.RoundToInt(r.width), h = Mathf.RoundToInt(r.height);
+            if (w <= 0 || h <= 0) return src;
+            Color[] px;
+            try { px = src.texture.GetPixels(x, y, w, h); }
+            catch { return src; }   // texture not CPU-readable -> caller falls back to the colour disc
+            for (int i = 0; i < px.Length; i++)
+            {
+                var c = px[i];
+                float g = 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;   // Rec.601 luma
+                px[i] = new Color(g, g, g, c.a);
+            }
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            tex.SetPixels(px);
+            tex.Apply(false);
+            return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), src.pixelsPerUnit, 0, SpriteMeshType.FullRect);
         }
 
         /// <summary>速度檔位清單（config.ini → RoomConfig.speedSteps；壞掉就回退內建）。</summary>
@@ -2938,10 +2984,12 @@ namespace Sdo.UI.Screens
         private void OnLeave()
         {
             AnnounceStagePresence(false);   // 廣播「X 離開舞台」（趁還在房間、名字還查得到）
-            Ctx.Rooms?.LeaveRoom();
             // 回男女選擇：漸黑 → loading → 漸亮（同其它畫面進出效果）。切畫面(GoTo)在全黑時執行；
             // 男女選擇畫面無四邊滑入 UI → 不傳 onReveal。
-            ScreenTransition.Run(() => GoTo(ScreenId.GenderSel));
+            // LeaveRoom() 一定要在轉場「全黑」時才呼叫,不能在轉場前:它會觸發 RoomUpdated → Render(),此時 IsHost 已變 false
+            // → 「開始」鈕被藏、橘色「準備」鈕現身,玩家會在黑幕蓋上前瞥見這一翻。放進 swap callback(全黑執行)即可藏住,
+            // 且仍在 GoTo 之前 → 維持「先清房再換身分」的既有順序(F9 換性別 host 標記 bug 需要此順序)。
+            ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(ScreenId.GenderSel); });
         }
 
         /// <summary>Blue text edge on the location labels — rgb(70,74,152), per the official 白字藍邊 look.</summary>
@@ -2980,8 +3028,8 @@ namespace Sdo.UI.Screens
         // 組隊單選格：normal/pushed 兩態，點了把 GameSession.Team 設成 idx 並重畫（座標 = Win2 + (x,y)）
         private void BuildTeamToggle(int idx, string normalAn, string pushedAn, float x, float y)
         {
-            _teamNormal[idx] = RoomUiArt.An(normalAn);
-            _teamPushed[idx] = RoomUiArt.An(pushedAn);
+            _teamNormal[idx] = RoomUiArt.AnSolo(normalAn);   // 自貼圖載入 → 去 atlas 鄰居白邊（同其他房間按鈕）
+            _teamPushed[idx] = RoomUiArt.AnSolo(pushedAn);
             var img = UIKit.AddSprite(_win2Root, "Team" + idx, _teamNormal[idx], Win2.x + x, Win2.y + y, raycast: true);
             var btn = img.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
@@ -2996,9 +3044,12 @@ namespace Sdo.UI.Screens
         //   pressSfx：房主設置→Buttonfloat；開始→null(由 OnStart 播 Start 音 + 漸暗)。
         //   hoverSfx：win2 中間設定塊(速度/note/組隊/掉落)→null(滑過不出聲)，其餘保留 Buttonfloat。
         private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y,
-            System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat)
+            System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat, bool solo = true)
         {
-            var b = UIKit.AddSpriteButton(WinRoot(win), objName, RoomUiArt.An(nrm), RoomUiArt.An(hov), RoomUiArt.An(psh), win.x + x, win.y + y);
+            // solo=true(預設) → 三態都用 AnSolo(自貼圖)載入，消掉 atlas 鄰居滲出的白邊。所有房間按鈕統一去白邊(跟商城
+            // ShopArt.An 全走自貼圖同一套)；載不到 solo crop 時 AnSolo 內部自動回退共用大圖，安全。
+            System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)RoomUiArt.AnSolo : RoomUiArt.An;
+            var b = UIKit.AddSpriteButton(WinRoot(win), objName, res(nrm), res(hov), res(psh), win.x + x, win.y + y);
             if (hoverSfx != null) UiHoverSfx.Attach(b, hoverSfx);
             UiSfx.AttachPress(b, pressSfx);
             if (onClick != null) b.onClick.AddListener(() => onClick());

@@ -127,6 +127,68 @@ namespace Sdo.Tests
         public void InLevelRange_Null_Safe()
             => Assert.AreEqual(0, SongListModel.InLevelRange(null, 0, 1, 5).Count);
 
+        // ---- RandomCandidates: 隨機難度 searches easy/normal/hard together, keyed on each qualifying chart ----
+
+        // easy3/normal6/hard9, all playable (notes>0); "hi" is hard-only level 27 with notes only on hard.
+        private static List<SongCatalog.Entry> Levelled() => new List<SongCatalog.Entry>
+        {
+            new SongCatalog.Entry { gn = "a.gn", fileId = 1, diffEasy = 3, diffNormal = 6, diffHard = 9,
+                                    notesEasy = 100, notesNormal = 200, notesHard = 300 },
+            new SongCatalog.Entry { gn = "hi.gn", fileId = 2, diffEasy = 3, diffNormal = 12, diffHard = 27,
+                                    notesEasy = 0, notesNormal = 150, notesHard = 250 },   // easy empty -> not a candidate
+        };
+
+        private const int RngAll = 3, Rng1to5 = 0, Rng5to9 = 2, Rng9up = 5, Rng25up = 8;
+
+        [Test]
+        public void RandomCandidates_Searches_All_Three_Difficulties()
+        {
+            // "a" qualifies at easy(3) in 1-5; "hi" easy is empty. Only one candidate.
+            var c15 = SongListModel.RandomCandidates(Levelled(), Rng1to5);
+            Assert.AreEqual(1, c15.Count);
+            Assert.AreEqual("a.gn", c15[0].Song.gn);
+            Assert.AreEqual(0, c15[0].Difficulty);   // the matched difficulty is easy
+
+            // 5-9 catches a.normal(6) and a.hard(9) — same song, two candidates at different difficulties.
+            var c59 = SongListModel.RandomCandidates(Levelled(), Rng5to9);
+            Assert.AreEqual(2, c59.Count);
+            CollectionAssert.AreEquivalent(new[] { 1, 2 }, c59.ConvertAll(x => x.Difficulty));
+        }
+
+        [Test]
+        public void RandomCandidates_High_Range_Uses_A_Different_Songs_Hard()
+        {
+            // 25以上: only hi.hard(27) qualifies — proves the pool isn't limited to the active/easy difficulty.
+            var c = SongListModel.RandomCandidates(Levelled(), Rng25up);
+            Assert.AreEqual(1, c.Count);
+            Assert.AreEqual("hi.gn", c[0].Song.gn);
+            Assert.AreEqual(2, c[0].Difficulty);
+        }
+
+        [Test]
+        public void RandomCandidates_9up_Spans_Both_Songs()
+        {
+            // 9級以上: a.hard(9), hi.normal(12), hi.hard(27) — 3 candidates across both songs.
+            var c = SongListModel.RandomCandidates(Levelled(), Rng9up);
+            Assert.AreEqual(3, c.Count);
+        }
+
+        [Test]
+        public void RandomCandidates_All_Includes_Every_Playable_Chart()
+        {
+            // 全部: a has 3 playable charts, hi has 2 (easy empty) -> 5 candidates.
+            Assert.AreEqual(5, SongListModel.RandomCandidates(Levelled(), RngAll).Count);
+        }
+
+        [Test]
+        public void RandomCandidates_Clamps_Range_And_Is_Null_Safe()
+        {
+            Assert.AreEqual(0, SongListModel.RandomCandidates(null, RngAll).Count);
+            // out-of-bounds index clamps into the table instead of throwing.
+            Assert.DoesNotThrow(() => SongListModel.RandomCandidates(Levelled(), -5));
+            Assert.DoesNotThrow(() => SongListModel.RandomCandidates(Levelled(), 999));
+        }
+
         // ---- HasChart / FirstPlayableIndex: a difficulty with 0 notes is empty (row greyed, non-selectable) ----
         // Mirrors the real 動畫歌曲串燒 entry (sdom2140k): easy has notes, normal/hard are empty (level 0, not -1).
 

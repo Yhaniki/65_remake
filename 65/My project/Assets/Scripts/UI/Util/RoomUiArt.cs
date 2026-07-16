@@ -20,13 +20,14 @@ namespace Sdo.UI.Util
     {
         private static string _dir;
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
+        private static readonly Dictionary<string, Sprite> _soloCache = new Dictionary<string, Sprite>();
         private static readonly Dictionary<string, Sprite[]> _framesCache = new Dictionary<string, Sprite[]>();
 
         /// <summary>Resolved ROOM art folder (lazy). Settable for tests.</summary>
         public static string Dir
         {
             get { return _dir ?? (_dir = ResolveDir()); }
-            set { _dir = value; _cache.Clear(); _framesCache.Clear(); }
+            set { _dir = value; _cache.Clear(); _soloCache.Clear(); _framesCache.Clear(); }
         }
 
         private static string ResolveDir()
@@ -51,6 +52,21 @@ namespace Sdo.UI.Util
             if (_cache.TryGetValue(anName, out var s) && s != null) return s;
             s = SdoExtracted.LoadAn1(Dir, anName, bleed: true);
             _cache[anName] = s;
+            return s;
+        }
+
+        /// <summary>As <see cref="An"/> but the first frame is copied onto its OWN texture (LoadAnSolo) — kills the
+        /// white/coloured fringe that ATLAS-NEIGHBOUR bleed drags into a crop edge when the .an abuts another opaque
+        /// sprite in the shared PNG (旁觀/開始 鈕的白邊). AlphaBleed (the bleed:true path above) only dilates the
+        /// transparent-white matte, so it can't fix an opaque neighbour — on its own texture there is no neighbour.
+        /// Falls back to the shared-atlas <see cref="An"/> if the solo crop fails. Use only for the buttons that
+        /// actually show the fringe.</summary>
+        public static Sprite AnSolo(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            if (_soloCache.TryGetValue(anName, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSolo(Dir, anName, pad: 2) ?? An(anName);
+            _soloCache[anName] = s;
             return s;
         }
 

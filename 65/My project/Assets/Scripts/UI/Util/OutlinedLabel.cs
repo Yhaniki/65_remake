@@ -51,7 +51,7 @@ namespace Sdo.UI.Util
         public static OutlinedLabel Create(Transform parent, string name, float x, float y, float w, float h,
             float size, Color32 face, Color32 edge, float edgePx, bool bold,
             TextAlignmentOptions align = TextAlignmentOptions.Center,
-            float glyphScaleX = 1f, float glyphScaleY = 1f)
+            float glyphScaleX = 1f, float glyphScaleY = 1f, float charSpacing = 0f)
         {
             var holder = UIKit.NewRect(parent, name);
             holder.anchorMin = holder.anchorMax = new Vector2(0f, 1f);
@@ -68,16 +68,17 @@ namespace Sdo.UI.Util
             ol._edgePx = edgePx;
             ol._edges = new TextMeshProUGUI[Dirs16.Length];
             for (int i = 0; i < Dirs16.Length; i++)           // edges first → they sit BEHIND the face (UGUI sibling order)
-                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale);
-            ol._face = Make(holder, "Face", size, face, bold, align, glyphScale);
+                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale, charSpacing);
+            ol._face = Make(holder, "Face", size, face, bold, align, glyphScale, charSpacing);
             ol.ApplyEdgeOffsets(true);
             return ol;
         }
 
-        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, TextAlignmentOptions align, Vector3 glyphScale)
+        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, TextAlignmentOptions align, Vector3 glyphScale, float charSpacing)
         {
             var t = UIKit.AddText(parent, name, "", size, color, align);
             if (bold) t.fontStyle = FontStyles.Bold;
+            t.characterSpacing = charSpacing;   // TMP letter-spacing: adds charSpacing×fontSize/100 px per gap (negative = tighter)
             var rt = t.rectTransform;
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;   // stretch to the holder; edges get shifted by ApplyEdgeOffsets
             rt.offsetMin = Vector2.zero;
