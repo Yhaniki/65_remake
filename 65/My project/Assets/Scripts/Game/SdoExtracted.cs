@@ -576,33 +576,12 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// Flatten the bright near-white highlight pixels of a (small) sprite to its average opaque colour, removing
-        /// the glossy rim that reads as a "white seam" — used on the hold tail cap. Opaque pixels whose luminance
-        /// exceeds <paramref name="threshMul"/>× the average opaque luminance are set to the average colour.
-        /// </summary>
-        public static void DampenBrightRim(Texture2D tex, float threshMul = 1.5f)
-        {
-            if (tex == null) return;
-            var px = tex.GetPixels32();
-            long r = 0, g = 0, b = 0; int n = 0;
-            foreach (var c in px) if (c.a > 40) { r += c.r; g += c.g; b += c.b; n++; }
-            if (n == 0) return;
-            byte ar = (byte)(r / n), ag = (byte)(g / n), ab = (byte)(b / n);
-            float avgLum = 0.299f * ar + 0.587f * ag + 0.114f * ab;
-            float thresh = avgLum * threshMul;
-            for (int i = 0; i < px.Length; i++)
-            {
-                if (px[i].a <= 40) continue;
-                float lum = 0.299f * px[i].r + 0.587f * px[i].g + 0.114f * px[i].b;
-                if (lum > thresh) { px[i].r = ar; px[i].g = ag; px[i].b = ab; }   // kill the bright rim highlight
-            }
-            tex.SetPixels32(px); tex.Apply();
-        }
-
-        /// <summary>
-        /// Return a sprite over a FRESH, UNIQUE copy of <paramref name="src"/>'s texture (de-fringed + de-rimmed).
+        /// Return a sprite over a FRESH, UNIQUE copy of <paramref name="src"/>'s texture (de-fringed only).
         /// Each lane's cap gets its OWN texture this way, so it can never be confused with another lane's cap
-        /// (no shared cache texture), and the white fringe/rim is removed. Original colours are preserved.
+        /// (no shared cache texture), and the transparent-matte fringe is removed. Original colours are preserved.
+        /// NB: do NOT dampen the bright rim — the cap art ships a designed WHITE/silver metallic rim (the outer
+        /// taper edge). Flattening it to the cap's average opaque colour tints the edge (teal-green on the
+        /// left/right cap, brown on up/down) instead of the intended white.
         /// </summary>
         public static Sprite CleanCapCopy(Sprite src)
         {
@@ -610,8 +589,7 @@ namespace Sdo.Game
             var t0 = src.texture;
             var tex = new Texture2D(t0.width, t0.height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             tex.SetPixels32(t0.GetPixels32()); tex.Apply();
-            AlphaBleed(tex);        // kill transparent-white fringe
-            DampenBrightRim(tex);   // kill the bright rim "white seam"
+            AlphaBleed(tex);        // kill transparent-white fringe (the visible white rim is left intact)
             return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
