@@ -4335,6 +4335,9 @@ namespace Sdo.Game
                 if (n.Note.StartTimeMs > now && (float)_scroll.PixelDistance(now, n.Note.StartTimeMs) > aheadPx) break;   // this + all later notes are still below/above the board
                 int c = n.Note.Lane;
                 bool held = _holding[c] == n;        // a held long-note head stays pinned to the judge line
+                // 長條頭按住時釘在判定線；一旦尾端(END)通過判定線 (now ≥ EndTimeMs) 就整條隱藏 — 判定仍在跑
+                // (還按著 → 等放開評 tail，或 release 窗口過了才 AutoMiss)，但畫面上直接消失，不留一顆釘在判定線的頭。
+                if (held && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { ReturnVisual(n); continue; }
                 float yRaw = held ? judgeLineY : YForTime(n.Note.StartTimeMs, now);
                 float yEnd = n.Note.EndTimeMs.HasValue ? YForTime(n.Note.EndTimeMs.Value, now) : yRaw;
                 // a note that has flowed off the top (above the clip band, past the HP bar) is no longer VISIBLE,
