@@ -42,6 +42,28 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void TrackEmOverrideZero_KeepsSingleMesh_EvenForListStyle()
+        {
+            // The ranking SCORE column reuses a tracked list style but forces trackEm 0 so the numbers show at
+            // natural spacing (數字不縮): that must fall back to the single-mesh path (length-independent), unlike
+            // the NAME column which builds one cell per character.
+            var name3 = Make(TextStyles.Style.ListOther, "ABC");   // tracked → per-char cells
+            var score1 = TextStyles.NewLabel("score1", TextStyles.Style.ListOther, 0, 22f, TextAnchor.MiddleRight, trackEmOverride: 0f);
+            var score3 = TextStyles.NewLabel("score3", TextStyles.Style.ListOther, 0, 22f, TextAnchor.MiddleRight, trackEmOverride: 0f);
+            score1.Text = "1"; score3.Text = "144";
+            try
+            {
+                Assert.AreEqual(MeshCount(score1), MeshCount(score3), "score column (trackEm 0) must use a single mesh regardless of length");
+                Assert.Greater(MeshCount(name3), MeshCount(score3), "name column stays tracked (per-char) while the score column does not");
+            }
+            finally
+            {
+                Object.DestroyImmediate(name3.root);
+                Object.DestroyImmediate(score1.root); Object.DestroyImmediate(score3.root);
+            }
+        }
+
+        [Test]
         public void SameLengthTextUpdate_ReusesCells_NoChurn()
         {
             var l = Make(TextStyles.Style.ListOther, "17408");

@@ -142,7 +142,9 @@ namespace Sdo.Game
                 float y = rosterFirstY + row * rosterRowStep;
                 _rosterName[row] = TextStyles.NewLabel("RosterName" + row, TextStyles.Style.ListOther, 45, rosterFontWorld, TextAnchor.MiddleLeft);
                 _rosterName[row].Position = SdoLayout.ToWorld(rosterNameX, y, -3f);
-                _rosterScore[row] = TextStyles.NewLabel("RosterScore" + row, TextStyles.Style.ListOther, 45, rosterFontWorld, TextAnchor.MiddleRight);
+                // Score column: trackEm 0 → numbers stay at natural spacing (數字照原本的不縮). Only the NAME column
+                // above keeps the RosterTrackEm tightening (名字縮緊). Both remain right/left anchored to their column.
+                _rosterScore[row] = TextStyles.NewLabel("RosterScore" + row, TextStyles.Style.ListOther, 45, rosterFontWorld, TextAnchor.MiddleRight, trackEmOverride: 0f);
                 _rosterScore[row].Position = SdoLayout.ToWorld(rosterScoreX, y, -3f);
             }
 

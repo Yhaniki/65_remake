@@ -84,14 +84,17 @@ namespace Sdo.Game
             return false;
         }
 
-        /// <summary>Create a styled label (face + outline/shadow copies). Caller positions via <c>Position</c>.</summary>
-        public static Label3D NewLabel(string name, Style style, int order, float pxSize, TextAnchor anchor, int layer = 0)
+        /// <summary>Create a styled label (face + outline/shadow copies). Caller positions via <c>Position</c>.
+        /// <paramref name="trackEmOverride"/> forces a specific letter-spacing (null = pick by style): the ranking
+        /// roster passes 0 for the SCORE column so the numbers show at natural spacing (數字不縮), while the NAME
+        /// column keeps the style's <see cref="RosterTrackEm"/> tightening (名字縮緊).</summary>
+        public static Label3D NewLabel(string name, Style style, int order, float pxSize, TextAnchor anchor, int layer = 0, float? trackEmOverride = null)
         {
             Color face, edge; Vector2[] offsets; bool bold;
             // Letter-spacing tightening (字靠緊一點): head nameplate + ranking roster; spectator (Looker) stays natural.
-            float trackEm = style == Style.HeadName ? HeadNameTrackEm
+            float trackEm = trackEmOverride ?? (style == Style.HeadName ? HeadNameTrackEm
                           : (style == Style.ListLocal || style == Style.ListOther) ? RosterTrackEm
-                          : 0f;
+                          : 0f);
             switch (style)
             {
                 case Style.ListLocal:  face = FaceYellow;     edge = EdgeRed;   offsets = new[] { new Vector2(1.4f, -1.4f) }; bold = false; break;
