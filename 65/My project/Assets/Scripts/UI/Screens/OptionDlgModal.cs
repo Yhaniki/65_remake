@@ -102,7 +102,7 @@ namespace Sdo.UI.Screens
             //   ▶ TabSpacing = 相鄰 tab 中心距(px)。越小越擠(<pill寬 91-99 會重疊成連在一起)，越大越開。目前 80。
             //   ▶ TabBarCenterX = 整條 tab bar 的水平中心(px)。想整條左右移就改這個(視窗 800 寬、對話框中心≈414)。
             //   ▶ TabBarY = tab 的上緣高度(px，越小越高)。
-            const float TabSpacing = 86f, TabBarCenterX = 412f, TabBarY = 188f;
+            const float TabSpacing = 86f, TabBarCenterX = 412f, TabBarY = 183f;
             _tabBarY = TabBarY;
             int[] visualOrder = { 1, 0, 2, 3 };          // create L→R by index (鍵盤,音效,遊戲,進階)
             for (int slot = 0; slot < visualOrder.Length; slot++)
@@ -125,7 +125,7 @@ namespace Sdo.UI.Screens
             // (the 4-key board is baked into the frame art).
             _board = UIKit.AddSprite(root, "Board", OptionDlgArt.Board, 236, 225);
             _audioBoard = UIKit.AddSprite(root, "AudioBoard", OptionDlgArt.AudioBoard, 236, 225);
-            _advBoard = UIKit.AddSprite(root, "AdvBoard", OptionDlgArt.AdvBoard, 236, 225);
+            _advBoard = UIKit.AddSprite(root, "AdvBoard", OptionDlgArt.AdvBoard, 236, 220); // 進階板整體比其它板高 5px（連同下方文字一起上移）
 
             _audioTab = TabBody(root, "AudioTab");
             _keyTab = TabBody(root, "KeyTab");
@@ -176,8 +176,8 @@ namespace Sdo.UI.Screens
             var resNames = new string[ResolutionPreset.Presets.Length];
             for (int i = 0; i < resNames.Length; i++) resNames[i] = ResolutionPreset.Presets[i].ToString();
 
-            // 六列，起始 y=243、列距 33（比原本 40 緊，才塞得下第 6 列而不撞到下方 保存/退出/默認 按鈕）。radio 圓點在列頂 +12。
-            const float y0 = 243f, step = 33f, dotDown = 12f;
+            // 六列，起始 y=238（比原本 243 高 5px，連同進階板一起上移）、列距 26（沿用「遊戲」頁 GameRowY 的列距）。radio 圓點在列頂 +12。
+            const float y0 = 238f, step = 26f, dotDown = 12f;
             float yFull = y0, ySpeed = y0 + step, yVsync = y0 + step * 2f;
             float yRes = y0 + step * 3f, yMode = y0 + step * 4f, yLang = y0 + step * 5f;
 
