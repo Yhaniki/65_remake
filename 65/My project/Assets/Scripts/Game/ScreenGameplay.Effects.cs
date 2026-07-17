@@ -188,15 +188,17 @@ namespace Sdo.Game
             SpawnBurstFrames(lane, _lnEndFrames, false, lnEndSize, lnEndSpeed, lnEndBright, doubleLayer: false);
         }
 
-        // Load a directional hit-frame set jz00_<dir>.png, jz01_<dir>.png … until the first gap. null if none.
+        // Load a directional hit-frame set jz00_<dir>.png, jz01_<dir>.png … null if none.
+        // The official set can be SPARSE: EFT_PET's _rl series has no jz01_rl (frames run 00,02,03…10, faithful to the
+        // skin's .DGE manifest), so collect EVERY present index up to the scan bound and skip gaps — a `break` on the
+        // first hole left the left/right lanes with only jz00_rl (one static frame) while up/down animated fine.
         private static Sprite[] LoadJzFrames(string dir, string dirSuffix)
         {
             var list = new List<Sprite>();
             for (int i = 0; i < 32; i++)
             {
                 var s = SdoExtracted.LoadImage(dir, "jz" + i.ToString("00") + "_" + dirSuffix + ".png");
-                if (s == null) break;
-                list.Add(s);
+                if (s != null) list.Add(s);
             }
             return list.Count > 0 ? list.ToArray() : null;
         }
