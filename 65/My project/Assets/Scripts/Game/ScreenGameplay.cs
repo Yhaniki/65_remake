@@ -4218,6 +4218,7 @@ namespace Sdo.Game
             if (_avatar == null) return;
             _avatar.ClearOneShot();                                   // resume the DPS dance path
             _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
+            foreach (var rib in _handTrails) if (rib) rib.Clear();    // 手在硬切處瞬移 → 清掉光條歷史，別從定格 pose 連一條光帶到回放起點；回放開始後光條自然重新累積成連續光帶（後面 mot 的手部光繼續做）
             _replayLenMs = _totalMs > 1.0 ? _totalMs : Math.Max(1.0, _replay.LengthMs);
             _replayLoopStart = Time.timeAsDouble;
             _avatar.DanceTimeSec = () => (float)((LoopMs() ) / 1000.0);
@@ -4457,11 +4458,17 @@ namespace Sdo.Game
                             }
                             else
                             {
-                                // 2D skin: tile the body texture square along the length (拼接, not stretch)
+                                // 2D skin: tile the body texture square along the length (拼接, not stretch).
+                                // Anchor the tile phase to the (UNCLAMPED) tailY, NOT to the clamped bottom edge —
+                                // otherwise, on a hold long enough that BOTH ends clamp to the clip band, the quad
+                                // and its V=0..tiles UV render identically every frame and the body looks FROZEN in
+                                // place. Phasing off tailY makes the pattern flow with the note (same fix as the 3D
+                                // branch above). wrapMode=Repeat (set at load) tiles the out-of-range V.
                                 float tileH = holdW * (_holdTex[c].height / (float)_holdTex[c].width);
-                                float tiles = len / Mathf.Max(tileH, 1e-3f);
+                                float invTile = 1f / Mathf.Max(tileH, 1e-3f);
                                 uv[0].x = 0f; uv[3].x = 0f; uv[1].x = 1f; uv[2].x = 1f;
-                                uv[0].y = 0f; uv[1].y = 0f; uv[2].y = tiles; uv[3].y = tiles;
+                                uv[0].y = (tailY - bot) * invTile; uv[1].y = uv[0].y;
+                                uv[2].y = (tailY - top) * invTile; uv[3].y = uv[2].y;
                             }
                             m.uv = uv;
                         }
@@ -4865,8 +4872,8 @@ namespace Sdo.Game
 
         // A hold stops being held. Two outcomes:
         //   COMPLETED (Perfect/Cool tail) → the official LnEnd burst at the receptor, note retired.
-        //   DROPPED   (Bad/Miss tail = let go mid-bar) → the bar is NOT deleted: it keeps scrolling at holdDropDim
-        //             brightness (ScrollNotes) until it flows off the board, then retires like any judged note.
+        //   DROPPED   (Bad/Miss tail = let go off the tail time, or never released at all) → the bar is NOT deleted: it
+        //             keeps scrolling at holdDropDim brightness (ScrollNotes) until it flows off the board, then retires.
         // Either way the 3D skin's looping HIT_LONG is torn down (→ its own HIT_SUO terminator).
         private void EndHold(int lane, RuntimeNote n, Judgment tail)
         {
@@ -4907,7 +4914,12 @@ namespace Sdo.Game
                 // bad head → the tail misses too once it passes. Score it ONCE (clear the flag), but do NOT retire the note:
                 // the dimmed bar keeps scrolling like every other failed hold, and ScrollNotes retires it off the board.
                 if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
-                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Perfect); EndHold(n.Note.Lane, n, Judgment.Perfect); }   // held all the way → LnEnd burst
+                // A long note's END is judged on the RELEASE, exactly as a tap is judged on the press — a real release
+                // inside the tail window is graded by ReleaseLane. Holding through without letting go earns NOTHING:
+                // once the release window has fully passed with the key still held (same late boundary a tap auto-misses
+                // at), the tail is a MISS. (Was: auto-Perfect the instant the tail reached the line → free perfect for
+                // just never releasing.)
+                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
             }
         }
 
