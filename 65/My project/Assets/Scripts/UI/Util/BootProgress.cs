@@ -18,7 +18,7 @@ namespace Sdo.UI.Util
 
         private GameObject _go;
         private Image _fill, _cap;
-        private TextMeshProUGUI _pct, _label;
+        private TextMeshProUGUI _pct, _label, _detail;
 
         public static BootProgress Create(RectTransform parent)
         {
@@ -68,10 +68,16 @@ namespace Sdo.UI.Util
             if (pf != null) bp._pct.font = pf;
             Center(bp._pct.rectTransform, W, 20f, 0f, BarY - 22f);
 
-            // Bottom info: the live phase / song title (載入資料 → 掃描歌曲 → 建立介面 → 準備字型).
+            // Bottom info: the live phase / current folder being read (載入資料 → 掃描歌曲 → 建立介面 → 準備字型).
             bp._label = UIKit.AddText(layer, "label", "", 11f, new Color(1f, 1f, 1f, 0.85f), TextAlignmentOptions.Center);
             if (pf != null) bp._label.font = pf;
             Center(bp._label.rectTransform, 720f, 22f, 0f, -206f);
+
+            // A dimmer second line beneath it — during the song scan this carries the current song + running count so
+            // the player can watch the library come in. Blank in every other phase.
+            bp._detail = UIKit.AddText(layer, "detail", "", 11f, new Color(1f, 1f, 1f, 0.5f), TextAlignmentOptions.Center);
+            if (pf != null) bp._detail.font = pf;
+            Center(bp._detail.rectTransform, 720f, 22f, 0f, -224f);
 
             bp.Set(0f, "");
             return bp;
@@ -85,8 +91,12 @@ namespace Sdo.UI.Util
             rt.anchoredPosition = new Vector2(x, y);
         }
 
-        /// <summary>Update the bar (0..1) and the sub-label (current phase / song title).</summary>
-        public void Set(float p01, string label)
+        /// <summary>Update the bar (0..1) and the sub-label (current phase / folder). Clears the detail line.</summary>
+        public void Set(float p01, string label) => Set(p01, label, "");
+
+        /// <summary>Update the bar (0..1), the sub-label (current phase / folder being read) and the dimmer detail
+        /// line beneath it (the current song + running count during the song scan).</summary>
+        public void Set(float p01, string label, string detail)
         {
             p01 = Mathf.Clamp01(p01);
             if (_fill != null) _fill.rectTransform.sizeDelta = new Vector2(W * p01, H);
@@ -98,6 +108,7 @@ namespace Sdo.UI.Util
             }
             if (_pct != null) _pct.text = Mathf.RoundToInt(p01 * 100f) + "%";
             if (_label != null && label != null) _label.text = label;
+            if (_detail != null && detail != null) _detail.text = detail;
         }
 
         public void Destroy()

@@ -132,6 +132,13 @@ Copy-Tree (Join-Path $Off 'music') (Join-Path $Data 'MUSIC') 'MUSIC'
 New-Item -ItemType Directory -Force -Path (Join-Path $Data 'REPLAY')   | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $BuildDir 'screensave') | Out-Null
 
+# 4b) ADDON plugin tree — empty folders the player drops into: SONG (osu/StepMania songs, scanned at boot),
+#     plus reserved NOTESKIN / THEME / MODEL for future plugin loaders. Runtime also creates these on first launch
+#     (SdoExtracted.EnsureAddonDirs); shipping them means a fresh build already shows where things go.
+foreach ($sub in 'SONG','NOTESKIN','THEME','MODEL') {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Data (Join-Path 'ADDON' $sub)) | Out-Null
+}
+
 # 5) Strip Burst debug-info folders so the top level stays clean
 Get-ChildItem -LiteralPath $BuildDir -Directory -Filter '*_BurstDebugInformation_DoNotShip' -ErrorAction SilentlyContinue |
     ForEach-Object { Write-Host "[package] remove $($_.Name)"; Remove-Item -LiteralPath $_.FullName -Recurse -Force }

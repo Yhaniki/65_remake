@@ -103,6 +103,34 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void A_Multi_Song_Folder_Becomes_Its_Own_Pack()
+        {
+            // Several sets dropped flat in one folder → that folder is its OWN pack (named after itself), not dissolved
+            // into the parent group's song list.
+            var dir = Dir("pack", "mixed");
+            Audio(dir, "a.mp3"); Audio(dir, "b.mp3");
+            Osu(dir, "a1.osu", "a.mp3", "Song A", 100);
+            Osu(dir, "b1.osu", "b.mp3", "Song B", 100);
+
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+            Assert.AreEqual(2, songs.Count);
+            foreach (var s in songs)
+                Assert.AreEqual("mixed", s.Group, "a folder with several songs is grouped under the folder, not 'pack'");
+        }
+
+        [Test]
+        public void A_Single_Song_Folder_Keeps_Its_Parent_Group()
+        {
+            var dir = Dir("pack", "one");
+            Audio(dir, "a.mp3");
+            Osu(dir, "a1.osu", "a.mp3", "Song A", 100);
+
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+            Assert.AreEqual(1, songs.Count);
+            Assert.AreEqual("pack", songs[0].Group, "one song → stays under the pack it was found in");
+        }
+
+        [Test]
         public void Songs_In_One_Folder_Get_Distinct_Song_Keys()
         {
             var dir = Dir("pack", "mixed");

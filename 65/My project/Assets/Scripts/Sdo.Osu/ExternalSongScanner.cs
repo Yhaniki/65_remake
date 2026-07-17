@@ -176,11 +176,18 @@ namespace Sdo.Osu
             if (kept.Count == 0) return songs;
 
             bool sole = kept.Count == 1;
+            // A folder that holds SEVERAL songs (several osu sets / several .sm dropped in flat) is its OWN pack: name
+            // it after the folder rather than letting its songs dissolve into the parent group's flat song list. A
+            // single-song folder keeps the group it was found under (the pack it sits in). DirName("") never fires
+            // because a multi-song folder always has a name.
+            string packGroup = sole ? group : DirName(songDir);
+            if (string.IsNullOrEmpty(packGroup)) packGroup = group;
+
             var claimed = ClaimedImages(kept);
             var sidecar = ReadSidecar(songDir);
             RemoveGeneratedCds(images, kept, sole, sidecar);
             for (int i = 0; i < kept.Count; i++)
-                songs.Add(Materialize(kept[i], group, songDir, tracks[i], images, sole, claimed, sidecar));
+                songs.Add(Materialize(kept[i], packGroup, songDir, tracks[i], images, sole, claimed, sidecar));
 
             Disambiguate(songs, kept);
             return songs;

@@ -25,12 +25,13 @@ namespace Sdo.Game
     /// </summary>
     public static class ExternalSongLibrary
     {
-        /// <summary>Song-folder roots to scan: exe-sibling Songs/ first, then config's AdditionalSongFolders
-        /// (existing directories only, de-duplicated).</summary>
+        /// <summary>Song-folder roots to scan: DATA/ADDON/SONG first, then the legacy exe-sibling Songs/ (honoured
+        /// when it still exists), then config's AdditionalSongFolders (existing directories only, de-duplicated).</summary>
         public static List<string> Roots()
         {
             var roots = new List<string>();
-            Add(roots, SdoExtracted.SongsDir);
+            Add(roots, SdoExtracted.SongsDir);         // DATA/ADDON/SONG — the documented default
+            Add(roots, SdoExtracted.LegacySongsDir);   // pre-ADDON exe-sibling Songs/ — kept working on upgrade
             if (RoomConfig.additionalSongFolders != null)
                 foreach (var f in RoomConfig.additionalSongFolders) Add(roots, f);
             return roots;
@@ -54,8 +55,12 @@ namespace Sdo.Game
         /// boot bar alive during the directory walk, which used to run to completion inside the coroutine's first
         /// frame, and it stops the per-folder parse from being throttled to a few folders per frame on a big library.
         /// The bar stays determinate: the walk finishes first, and its folder count is the denominator (a folder can
-        /// yield several songs, so the bar counts FOLDERS, not songs). Catalog registration stays on the main thread.</summary>
-        public static IEnumerator ScanAndRegisterCo(Action<float, string> onProgress)
+        /// yield several songs, so the bar counts FOLDERS, not songs). Catalog registration stays on the main thread.
+        ///
+        /// <paramref name="onProgress"/> is (fraction 0..1, folder line, detail line): the folder currently being read
+        /// (group / name — updated BEFORE each folder loads, so on a big library the names flick past under the bar),
+        /// and a detail line with the last song found + a running total. The boot overlay shows both under the bar.</summary>
+        public static IEnumerator ScanAndRegisterCo(Action<float, string, string> onProgress)
         {
             var job = new ScanJob(Roots());
             var task = Task.Run((Action)job.Run);
@@ -74,14 +79,23 @@ namespace Sdo.Game
             }
 
             SongCatalog.RegisterExternal(entries);
-            onProgress?.Invoke(1f, "");
+            onProgress?.Invoke(1f, "", "");
         }
 
-        private static void Report(Action<float, string> onProgress, ScanJob job)
+        private static void Report(Action<float, string, string> onProgress, ScanJob job)
         {
             int total = job.Total;   // 0 while the tree is still being walked → hold the bar at its floor
             float f = total > 0 ? Math.Min(1f, job.Done / (float)total) : 0f;
-            onProgress?.Invoke(f, job.Current ?? "");
+            onProgress?.Invoke(f, job.Folder ?? "", Detail(job));
+        }
+
+        // The line under the folder path: the last song found + how many so far. Blank until the first song lands.
+        private static string Detail(ScanJob job)
+        {
+            int n = job.Found;
+            if (n <= 0) return "";
+            string title = job.Current;
+            return string.IsNullOrEmpty(title) ? ("已找到 " + n + " 首") : ("♪ " + title + "　·　已找到 " + n + " 首");
         }
 
         /// <summary>The off-thread half of the scan. Only reads the filesystem; publishes its counters for the boot
@@ -91,12 +105,16 @@ namespace Sdo.Game
             private readonly List<string> _roots;
             private volatile int _total;    // folders to load — 0 until the walk is done (bar is "searching")
             private volatile int _done;     // folders loaded so far
-            private volatile string _current = "";
+            private volatile int _found;    // songs discovered so far (across folders)
+            private volatile string _folder = "";   // the folder being read right now (group / name)
+            private volatile string _current = "";  // the last song's title
 
             public ScanJob(List<string> roots) { _roots = roots; }
 
             public int Total => _total;
             public int Done => _done;
+            public int Found => _found;
+            public string Folder => _folder;
             public string Current => _current;
             public readonly List<ExternalSong> Songs = new List<ExternalSong>();
 
@@ -109,18 +127,32 @@ namespace Sdo.Game
 
                 for (int i = 0; i < work.Count; i++)
                 {
+                    _folder = FolderLabel(work[i]);   // publish BEFORE the (possibly slow) parse → the label keeps moving
                     try
                     {
                         var found = ExternalSongScanner.LoadFolder(work[i].Group, work[i].Path);
                         if (found != null && found.Count > 0)
                         {
                             Songs.AddRange(found);   // one folder can hold several songs (several sets / several .sm)
+                            _found = Songs.Count;
                             _current = found[found.Count - 1].Title ?? "";
                         }
                     }
                     catch { /* a bad folder must never abort the scan */ }
                     _done = i + 1;
                 }
+                _folder = "";
+            }
+
+            // "group / folderName" for the boot bar — what the player sees being read. Path's leaf is the folder name.
+            private static string FolderLabel(ExternalSongScanner.SongDir d)
+            {
+                string name = "";
+                try { name = new System.IO.DirectoryInfo(d.Path).Name; } catch { }
+                string group = d.Group ?? "";
+                if (group.Length == 0) return name;
+                if (name.Length == 0 || string.Equals(name, group, StringComparison.OrdinalIgnoreCase)) return group;
+                return group + " / " + name;
             }
         }
 

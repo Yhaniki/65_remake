@@ -23,9 +23,14 @@ namespace Sdo.Settings
         public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式,2=ShowTime模式
         public static int defaultScene = -1;         // 場景：-1=隨機(預設)；0..30=指定場景 id(見 StageCatalog)。玩家在選歌選了會寫回這裡
 
-        // 額外歌曲資料夾（osu / StepMania）：逗號分隔的絕對路徑，每個路徑都當成一個 Songs 根目錄（底下第一層=分類 group，
-        // 再一層=各首歌的資料夾），語意同 StepMania 的 AdditionalSongFolders。exe 同層的 Songs/ 一律自動掃描，不需列在這。
+        // 額外歌曲資料夾（osu / StepMania）：分號(;)分隔的絕對路徑（逗號仍相容），每個路徑都當成一個 Songs 根目錄（底下第一層=
+        // 分類 group，再一層=各首歌的資料夾），語意同 StepMania 的 AdditionalSongFolders。預設的 <ADDON>/SONG 一律自動掃描，
+        // 不需列在這（舊的 exe 同層 Songs/ 也仍相容）。
         public static string[] additionalSongFolders = new string[0];
+
+        // 外掛(ADDON)根目錄覆蓋：預設空 = DATA/ADDON（即 Root/ADDON）。想把整包外掛（SONG/NOTESKIN/THEME/MODEL）放到別的
+        // 資料夾（例如另一顆硬碟 D:/SdoAddon）就填一個絕對路徑；該資料夾底下就是 SONG 等子夾。見 SdoExtracted.AddonDir。
+        public static string addonFolder = "";
 
         // ---- OPTION 對話框設定的 per-user 鏡像（存進同一份 config.ini 的 [Option] 區）。使用者要求 OPTION 設定也落地
         //      config.ini（放 DATA/PROFILE/<id>/）。裝置層的 settings.json 仍是執行期讀取的工作副本；這裡是「每帳號」的
@@ -141,6 +146,7 @@ namespace Sdo.Settings
                     case "defaultGameMode": defaultGameMode = ParseInt(val, defaultGameMode); break;
                     case "defaultScene": defaultScene = ParseInt(val, defaultScene); break;
                     case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
+                    case "AddonFolder": addonFolder = NormalizeFolder(val); break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -179,6 +185,7 @@ namespace Sdo.Settings
             defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 2);
             if (defaultScene < -1 || defaultScene > 30) defaultScene = -1;   // 只允許 -1(隨機) 或 0..30(可選場景 id)
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
+            if (addonFolder == null) addonFolder = "";
         }
 
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
@@ -202,9 +209,13 @@ namespace Sdo.Settings
             sb.Append("defaultGameMode=").Append(defaultGameMode).Append('\n');
             sb.Append("# 預設場景：-1=隨機，0..30=指定場景 id（步行街=0 … 卡通公路=30）。玩家在選歌選了會寫回這裡\n");
             sb.Append("defaultScene=").Append(defaultScene).Append('\n');
-            sb.Append("# 額外歌曲資料夾（osu/StepMania）：逗號分隔的絕對路徑，例如 D:/test,E:/songs。\n");
-            sb.Append("# 每個路徑都當成一個 Songs 根：底下第一層=分類(group)，再下一層=各首歌資料夾。exe 同層的 Songs/ 一律自動掃描。\n");
+            sb.Append("# 額外歌曲資料夾（osu/StepMania），仿 StepMania：分號分隔多個絕對路徑，例如 D:/test;E:/songs。\n");
+            sb.Append("# 每個路徑都當成一個 Songs 根：底下第一層=分類(group)，再下一層=各首歌資料夾。\n");
+            sb.Append("# 預設的 <ADDON>/SONG 一律自動掃描（舊的 exe 同層 Songs/ 仍相容），不需列在這。\n");
             sb.Append("AdditionalSongFolders=").Append(StringListToString(additionalSongFolders)).Append('\n');
+            sb.Append("# 外掛(ADDON)根目錄：預設空=DATA/ADDON。想把整包外掛（SONG/NOTESKIN/THEME/MODEL）放別處就填絕對路徑，\n");
+            sb.Append("# 例如 AddonFolder=D:/SdoAddon（該資料夾底下就是 SONG 等子夾）。\n");
+            sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的 per-user 設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");
@@ -331,26 +342,41 @@ namespace Sdo.Settings
             return list.ToArray();
         }
 
-        /// <summary>Split a comma-separated path list (trim each, drop empties, normalise backslashes to '/').
-        /// Pure/testable — mirrors <see cref="ParseFloatList"/> for the AdditionalSongFolders key.</summary>
+        /// <summary>Split a path list into folders — StepMania-style, semicolon-separated (<c>;</c>); comma is still
+        /// accepted for back-compat. Each entry is trimmed, backslashes normalised to '/', empties dropped, and leading
+        /// slashes in front of a Windows drive letter stripped (a config like <c>////D:/Songs</c> resolves to
+        /// <c>D:/Songs</c>). Pure/testable — mirrors <see cref="ParseFloatList"/> for the AdditionalSongFolders key.</summary>
         public static string[] ParseStringList(string s)
         {
             if (string.IsNullOrEmpty(s)) return new string[0];
-            var parts = s.Split(',');
+            var parts = s.Split(';', ',');   // '; ' preferred (a folder name can carry a ','), ',' kept for old configs
             var list = new System.Collections.Generic.List<string>(parts.Length);
             foreach (var p in parts)
             {
-                var t = p.Trim().Replace('\\', '/');
+                var t = NormalizeFolder(p);
                 if (t.Length > 0) list.Add(t);
             }
             return list.ToArray();
+        }
+
+        /// <summary>Clean one folder entry: trim, backslashes→'/', and strip leading slashes sitting in front of a
+        /// Windows drive letter (so a StepMania-style <c>////D:/Songs</c> becomes <c>D:/Songs</c>). A UNC path
+        /// (<c>//server/share</c>) is left untouched — its second segment isn't a <c>X:</c> drive.</summary>
+        private static string NormalizeFolder(string p)
+        {
+            if (string.IsNullOrEmpty(p)) return "";
+            var t = p.Trim().Replace('\\', '/');
+            int i = 0;
+            while (i < t.Length && t[i] == '/') i++;
+            if (i > 0 && i + 1 < t.Length && char.IsLetter(t[i]) && t[i + 1] == ':') t = t.Substring(i);
+            return t.Trim();
         }
 
         private static string StringListToString(string[] a)
         {
             if (a == null || a.Length == 0) return "";
             var sb = new StringBuilder();
-            for (int i = 0; i < a.Length; i++) { if (i > 0) sb.Append(','); sb.Append(a[i] ?? ""); }
+            for (int i = 0; i < a.Length; i++) { if (i > 0) sb.Append(';'); sb.Append(a[i] ?? ""); }
             return sb.ToString();
         }
 

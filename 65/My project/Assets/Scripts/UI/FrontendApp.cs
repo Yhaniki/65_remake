@@ -124,9 +124,13 @@ namespace Sdo.UI
             prog.Set(0.15f, "載入歌曲資料…");
             yield return null;
 
-            // Phase 2 — scan the exe-sibling Songs/ + AdditionalSongFolders for osu/StepMania songs (incremental).
-            yield return ExternalSongLibrary.ScanAndRegisterCo((f, title) =>
-                prog.Set(0.15f + 0.55f * Mathf.Clamp01(f), string.IsNullOrEmpty(title) ? "掃描歌曲資料夾…" : title));
+            // Phase 2 — scan DATA/ADDON/SONG (+ legacy Songs/ + AdditionalSongFolders) for osu/StepMania songs. The
+            // ADDON plugin folders are created first so a fresh install shows the player where to drop songs. The bar's
+            // sub-label shows the folder being read and its detail line the current song + running count.
+            SdoExtracted.EnsureAddonDirs();
+            yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
+                prog.Set(0.15f + 0.55f * Mathf.Clamp01(f),
+                         string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
 
             // Phase 3 — build the screens (SongSelect now sees the external songs registered above).
             prog.Set(0.72f, "建立介面…");

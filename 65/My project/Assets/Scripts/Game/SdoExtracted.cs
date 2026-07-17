@@ -226,10 +226,47 @@ namespace Sdo.Game
         /// <summary>Screenshot output folder, kept beside the exe (NOT under DATA). Editor: repo-root/screensave.</summary>
         public static string ScreensaveDir => Path.Combine(ExeDir, "screensave");
 
-        /// <summary>User songs folder beside the exe (NOT under DATA) — drop osu/StepMania songs here as
-        /// Songs/&lt;group&gt;/&lt;songFolder&gt;/. Editor/dev: &lt;My project&gt;/Songs. Additional roots come from
-        /// RoomConfig.additionalSongFolders (see ExternalSongLibrary).</summary>
-        public static string SongsDir => Path.Combine(ExeDir, "Songs");
+        /// <summary>The external-plugin root. Default = <c>DATA/ADDON</c> (i.e. <see cref="Root"/>/ADDON), but a player
+        /// can point it anywhere with <c>AddonFolder=</c> in config.ini (<see cref="Sdo.Settings.RoomConfig.addonFolder"/>)
+        /// — e.g. to keep a big song/plugin library off the game folder or on another drive. Everything a player drops
+        /// in lives under here as a sub-folder: <c>SONG</c> (osu!mania / StepMania songs, see <see cref="AddonSongsDir"/>),
+        /// plus the reserved <c>NOTESKIN</c> / <c>THEME</c> / <c>MODEL</c> folders for future plugin loaders. Created on
+        /// demand by <see cref="EnsureAddonDirs"/> so a fresh install shows exactly where things go.</summary>
+        public static string AddonDir
+        {
+            get
+            {
+                var custom = Sdo.Settings.RoomConfig.addonFolder;
+                if (!string.IsNullOrEmpty(custom))
+                {
+                    try { return Path.GetFullPath(custom); } catch { /* bad path in config → fall back to the default */ }
+                }
+                return Path.Combine(Root, "ADDON");
+            }
+        }
+        public static string AddonSongsDir => Path.Combine(AddonDir, "SONG");
+        public static string AddonNoteskinDir => Path.Combine(AddonDir, "NOTESKIN");
+        public static string AddonThemeDir => Path.Combine(AddonDir, "THEME");
+        public static string AddonModelDir => Path.Combine(AddonDir, "MODEL");
+
+        /// <summary>Primary user-songs folder: <see cref="AddonSongsDir"/> = &lt;ADDON&gt;/SONG, where ADDON defaults to
+        /// <see cref="Root"/>/ADDON (built: &lt;exe&gt;/DATA/ADDON) but can be redirected by config's <c>AddonFolder=</c>.
+        /// Drop osu/StepMania songs here as &lt;group&gt;/&lt;songFolder&gt;/. The old exe-sibling <c>Songs/</c>
+        /// (<see cref="LegacySongsDir"/>) is still scanned when present. Extra roots: RoomConfig.additionalSongFolders.</summary>
+        public static string SongsDir => AddonSongsDir;
+
+        /// <summary>Legacy user-songs location — the exe-sibling <c>Songs/</c> used before the default moved under
+        /// DATA/ADDON. Still auto-scanned when it exists so nobody's existing songs disappear on upgrade.</summary>
+        public static string LegacySongsDir => Path.Combine(ExeDir, "Songs");
+
+        /// <summary>Create the DATA/ADDON plugin folders (SONG / NOTESKIN / THEME / MODEL) if absent, so the player
+        /// can see exactly where to drop songs (and, later, note-skins / themes / models). Best-effort: a read-only or
+        /// missing data tree just means the folders aren't pre-created — the scan still copes with them being absent.</summary>
+        public static void EnsureAddonDirs()
+        {
+            foreach (var d in new[] { AddonSongsDir, AddonNoteskinDir, AddonThemeDir, AddonModelDir })
+                try { Directory.CreateDirectory(d); } catch { /* read-only data tree — fine */ }
+        }
 
         /// <summary>Proper file:// URI for UnityWebRequestMultimedia. The official music tree is ASCII so callers used
         /// "file://"+rawPath, but external song folders (osu/StepMania) carry spaces / brackets / '#' / unicode in
