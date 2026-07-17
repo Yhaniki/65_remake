@@ -311,7 +311,7 @@ namespace Sdo.Game
 
         private static ShopItem NewSynth(int id, int modelId, string id6, int category) => new ShopItem
         {
-            Id = id, Name = id6, Price = 100, PriceCategoryRaw = 1, ModelId = modelId, Category = category,
+            Id = id, Name = SynthName(category, modelId), Price = 100, PriceCategoryRaw = 1, ModelId = modelId, Category = category,
             MinLevel = 1, DurationDays = -1, Quantity = -1, SexRaw = ItemTypes.SexFromCategory(category) == ItemSex.Male ? 1 : 0,
         };
 
@@ -344,7 +344,7 @@ namespace Sdo.Game
                 if (isExpr && !IsGoodExpressionModel(modelId, g)) continue;   // 濾掉會渲染成 空白/破圖/假臉 的異常表情 (user)
                 var syn = new ShopItem
                 {
-                    Id = SynthId(slot, sex, modelId), Name = modelId.ToString("D6"), Price = 100, PriceCategoryRaw = 1,   // 1=Coins→M 幣 (100M；user:無名 翅膀/髮型/上衣/下裝/鞋子 改100M/序號當名字)
+                    Id = SynthId(slot, sex, modelId), Name = SynthName(cat, modelId), Price = 100, PriceCategoryRaw = 1,   // 1=Coins→M 幣 (100M；user:無名 翅膀/髮型/上衣/下裝/鞋子 改100M/序號當名字); 名字優先用 TW 繁體, 無則 6 位序號
                     ModelId = modelId, Category = cat, MinLevel = 1, DurationDays = -1, Quantity = -1,
                     SexRaw = sex == ItemSex.Male ? 1 : 0,
                 };
@@ -455,6 +455,13 @@ namespace Sdo.Game
             // the player then needs no encoding at all. No-op in the editor (GBK works there) or when the file is absent.
             ApplyNameSidecar(items);
 
+            // Overlay the Traditional-Chinese (TW 櫻式搖滾) names on top: fills in a real name for many otherwise-
+            // unnamed mesh-only rows AND replaces the CN Simplified name with the official Traditional one where the TW
+            // client has it. Loaded into the static _twNames map here so it's ready before any synth-row naming below
+            // (see SynthName), and applied last so a TW name wins over both the GBK parse and shop_names.tsv.
+            LoadTwNames();
+            ApplyTwNames(items);
+
             var sets = new Dictionary<int, OutfitSet>();
             try
             {
@@ -477,7 +484,11 @@ namespace Sdo.Game
             }
             // 離線無 setinfo → 依「系列基底名」把同名多件衣物合成套裝,放進 套装 分頁(使用者要求:兔乖乖/璀璨繁星…)。
             int synth = BuildSyntheticSets(clothing, groups, sets);
-            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成)");
+            // 台版官方套装 (古惑仔/卡卡西/逍遙英雄/聖誕老公公…): 名字來自台版 iteminfo 的 Outfit 列、組件來自台版 setinfo,
+            // 由 tools/build_shop_names_tw.py 併成 shop_sets_tw.tsv。CN 與 TW 的 setId 各自重編號、意義不同 → 當「新套装」
+            // 加入 (重映射 id 避免撞 CN),不覆蓋。渲染由 shop 的 IsRenderable 過濾 (組件 mesh 齊的才顯示)。
+            int twSets = AddTwSets(clothing, groups, sets);
+            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版)");
             return new AvatarItemCatalog(clothing, groups, meshFiles, sets);
         }
 
@@ -529,6 +540,72 @@ namespace Sdo.Game
                 made++;
             }
             return made;
+        }
+
+        // 台版套装 id base:把 TW setId 重映射成 TwSetIdBase+setId,避開 CN setId(≤ 850004)、合成套装(SynthSetIdBase 80M
+        // 起小幅遞增)、synth 道具(SynthIdBase 90M) 與 6 位 modelId。落在 [85M, 85.85M],高於合成套装、低於 90M,
+        // 故 ById 對 < 90M 的 id 仍走 _byId(clothing 內)找得到 → 套装穿得起來/存得住。
+        private const int TwSetIdBase = 85_000_000;
+
+        /// <summary>Register the台版 official outfit sets from <c>shop_sets_tw.tsv</c> as extra 套装 rows. Each set's name
+        /// (from the TW iteminfo Outfit row) + component model ids (from the TW setinfo) are self-contained in the
+        /// sidecar; we add an <see cref="OutfitSet"/> + a linked outfit <see cref="ShopItem"/> under a remapped id (see
+        /// <see cref="TwSetIdBase"/>) so it never collides with a CN setId (CN/TW renumber sets independently). Skips a
+        /// def whose exact component signature already exists (no duplicate of a CN/synthetic set) or whose remapped id
+        /// is taken. Renderability is left to the shop's <see cref="IsRenderable"/> filter, exactly like the CN sets.
+        /// Returns the number of sets added.</summary>
+        private static int AddTwSets(List<ShopItem> clothing,
+            Dictionary<(ItemSex, EquipSlot), List<ShopItem>> groups, Dictionary<int, OutfitSet> sets)
+        {
+            var path = ResolveDataFile(ShopSetTwSidecar.FileName);
+            if (path == null) return 0;
+            List<TwSetDef> defs;
+            try { defs = ShopSetTwSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            catch (Exception e) { Debug.LogWarning("[shop] " + ShopSetTwSidecar.FileName + " read failed: " + e.Message); return 0; }
+            if (defs.Count == 0) return 0;
+
+            // Dedup only against VISIBLE outfits (CN outfit rows + synthetic sets already in the 套装 groups) — not every
+            // entry in `sets` (a CN setinfo record with no naming iteminfo row isn't shown, so it must not hide a TW set).
+            var seen = new HashSet<string>();
+            foreach (var it in clothing)
+                if (it.EquipSlot == EquipSlot.Outfit && sets.TryGetValue(it.ModelId, out var os))
+                    seen.Add(SetSignature(os.Components));
+
+            int made = 0;
+            foreach (var d in defs)
+            {
+                if (d.Components == null || d.Components.Length == 0 || string.IsNullOrEmpty(d.Name)) continue;
+                int id = TwSetIdBase + d.SetId;
+                if (sets.ContainsKey(id)) continue;
+
+                var set = new OutfitSet { SetId = id };
+                foreach (var mid in d.Components) set.Components.Add(new OutfitComponent { ModelId = mid, Flag = -1 });   // Token null → probe by token order
+                if (!seen.Add(SetSignature(set.Components))) continue;   // identical to an existing CN/synthetic set
+
+                sets[id] = set;
+                var gender = d.Male ? ItemSex.Male : ItemSex.Female;
+                var outfit = new ShopItem
+                {
+                    Id = id, Name = d.Name, ModelId = id,
+                    Category = d.Male ? ItemCategory.OutfitMale : ItemCategory.OutfitFemale,
+                    Price = 100, PriceCategoryRaw = 1, MinLevel = 1, DurationDays = -1, Quantity = -1,
+                };
+                clothing.Add(outfit);
+                var okey = (gender, EquipSlot.Outfit);
+                if (!groups.TryGetValue(okey, out var l)) groups[okey] = l = new List<ShopItem>();
+                l.Add(outfit);
+                made++;
+            }
+            return made;
+        }
+
+        // A set's identity for dedup: its component modelIds sorted + comma-joined (order-independent).
+        private static string SetSignature(List<OutfitComponent> comps)
+        {
+            var ids = new List<int>(comps.Count);
+            foreach (var c in comps) ids.Add(c.ModelId);
+            ids.Sort();
+            return string.Join(",", ids);
         }
 
         // 商品名 → 系列基底名:去掉尾端一個(空白分隔的)描述部位/性別的詞。尾詞需含 男/女 或部位關鍵字才去,否則回 null(不合成)。
@@ -623,6 +700,46 @@ namespace Sdo.Game
             foreach (var it in items)
                 if (map.TryGetValue(it.Id, out var nm) && !string.IsNullOrEmpty(nm) && it.Name != nm) { it.Name = nm; n++; }
             Debug.Log($"[shop] applied {n} UTF-8 name overrides from {ShopNameSidecar.FileName}");
+        }
+
+        // ---- Traditional-Chinese (TW 櫻式搖滾) name overlay ----
+        // The TW client names far more of the on-disk meshes than the CN iteminfo.dat does, in Traditional Chinese.
+        // tools/build_shop_names_tw.py bakes those names into shop_names_tw.tsv (category+modelId → UTF-8 name). We
+        // hold the parsed map statically so BOTH the real-row overlay (ApplyTwNames) and the synth-row namer (SynthName,
+        // reachable from the static Synthesize* rebuild path used by ById) can consult it. Keyed by (category, modelId)
+        // — NOT item id — because ids differ between clients and synth mesh-only rows have no iteminfo id at all.
+        private static Dictionary<long, string> _twNames;
+
+        // Load (or clear) the TW name map for the current data root. Re-read every catalog Load() (cheap; the data root
+        // can change between loads/tests), mirroring ApplyNameSidecar's un-cached read. Absent file → _twNames = null.
+        private static void LoadTwNames()
+        {
+            _twNames = null;
+            var path = ResolveDataFile(ShopNameTwSidecar.FileName);
+            if (path == null) return;
+            try { _twNames = ShopNameTwSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            catch (Exception e) { Debug.LogWarning("[shop] " + ShopNameTwSidecar.FileName + " read failed: " + e.Message); }
+        }
+
+        // Overlay TW Traditional names over the (GBK-parsed / shop_names.tsv) names of real iteminfo rows, by (cat,modelId).
+        private static void ApplyTwNames(List<ShopItem> items)
+        {
+            if (items == null || _twNames == null || _twNames.Count == 0) return;
+            int n = 0;
+            foreach (var it in items)
+                if (_twNames.TryGetValue(ShopNameTwSidecar.Key(it.Category, it.ModelId), out var nm)
+                    && !string.IsNullOrEmpty(nm) && it.Name != nm) { it.Name = nm; n++; }
+            if (n > 0) Debug.Log($"[shop] applied {n} 繁體 name overrides from {ShopNameTwSidecar.FileName}");
+        }
+
+        // The display name for a synthesised mesh-only row: the TW Traditional name for this (category, modelId) if we
+        // have one, else the bare 6-digit model serial (the historical fallback). Used by NewSynth + AllMeshModels so
+        // every unnamed mesh row shows a real name where the TW client provides one.
+        internal static string SynthName(int category, int modelId)
+        {
+            if (_twNames != null && _twNames.TryGetValue(ShopNameTwSidecar.Key(category, modelId), out var nm)
+                && !string.IsNullOrEmpty(nm)) return nm;
+            return modelId.ToString("D6");
         }
 
         // Resolve a data file by name using the same search order as ResolveIteminfoPath: the runtime data root and its

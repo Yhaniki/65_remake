@@ -142,6 +142,26 @@ if ($online) {
     Write-Warning "[package] online DatasSDO not found under $assetsDir — icons fall back to the offline subset."
 }
 
+# 2b) Traditional-Chinese (TW 櫻式搖滾) name overlay: shop_names_tw.tsv (category<TAB>modelId<TAB>Big5-decoded-name).
+# Committed at tools\data\ (produced by tools\build_shop_names_tw.py from the TW iteminfo.dat, a different 152-byte/Big5
+# format the runtime reader ignores). AvatarItemCatalog overlays it to fill unnamed mesh-only rows + swap CN Simplified
+# names for the official Traditional ones. Independent of the online overlay above, so copied here unconditionally.
+$twNames = Join-Path $Repo 'tools\data\shop_names_tw.tsv'
+if (Test-Path $twNames) {
+    Copy-Item $twNames (Join-Path $Data 'shop_names_tw.tsv') -Force
+    Write-Host "[package] copied shop_names_tw.tsv (繁體 name overlay)"
+} else {
+    Write-Warning "[package] shop_names_tw.tsv not found at $twNames — built shop keeps 簡體/序號 names (run tools\build_shop_names_tw.py)"
+}
+# 台版官方套装 (古惑仔/卡卡西/逍遙英雄…): AvatarItemCatalog.AddTwSets 讀它,加進 套装 分頁。
+$twSets = Join-Path $Repo 'tools\data\shop_sets_tw.tsv'
+if (Test-Path $twSets) {
+    Copy-Item $twSets (Join-Path $Data 'shop_sets_tw.tsv') -Force
+    Write-Host "[package] copied shop_sets_tw.tsv (繁體 套装)"
+} else {
+    Write-Warning "[package] shop_sets_tw.tsv not found at $twSets — built shop has no 台版套装 (run tools\build_shop_names_tw.py)"
+}
+
 # 3) Audio + song trees -> DATA (folder names normalized to UPPERCASE)
 Copy-Tree (Join-Path $Off 'SE')    (Join-Path $Data 'SE')    'SE'
 # BGM: the lobby/room random playlist lives in Extracted/UI/BGM (bgm_000..007.ogg) — ship it at DATA/BGM (UiBgmDir's
