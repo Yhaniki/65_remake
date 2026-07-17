@@ -55,6 +55,9 @@ namespace Sdo.UI.Screens
         // note 預覽動畫速度。hiteft2.an=40幀(10幀爆裂×4)：12fps 一輪3.3s(太慢)、60fps 0.67s(太快)；
         // 30fps → 一輪1.33s、單次爆裂0.33s，落在合理區間。要快/慢調這個值即可。
         private const float NoteEftFps = 20f;
+        // note 特效預覽的黑底框(烘在 WaitingRoom.png Room72 crop 裡)實測內緣：Win2 局部左上(8,189)、大小 57×48。
+        // 特效貼圖多為 53×48 / 54×54(甚至外掛皮可能更大)，比框高 → 底部溢出。用 RectMask2D 容器把貼圖硬裁進這塊。
+        private const float NoteBoxX = 8f, NoteBoxY = 189f, NoteBoxW = 57f, NoteBoxH = 48f;
         private const float ChatBubbleLifetime = 10f;
         private const float ChatBubbleRiseSpeed = 12f;    // px/s；泡持續往上飄，不再卡在固定高度（點5）
         // 泡身垂直中心(畫布 y=56.5)對齊到「肩錨 + 位移」：換 sprite 不跳位、文字上下置中。位移=泡身中心相對肩錨的偏移。
@@ -300,7 +303,14 @@ namespace Sdo.UI.Screens
             Btn("songnext", "BtnOraSmallRightArrow_1", "BtnOraSmallRightArrow_2", "BtnOraSmallRightArrow_3", Win2, 109, 167, () => StepSpeed(1), hoverSfx: null);
 
             // note 種類（hit-effect）預覽框 + ◄ ►（預設 random）。hiteft.an 是多幀動畫(hiteft2=40幀) → 用 SpriteSeqAnim 循環撥放。
-            _noteDisplay = Art("hiteft2", Win2, 11, 191, "NoteDisplay");
+            // 貼圖(53×48/54×54/外掛皮可能更大)以 RectMask2D 容器硬裁進黑框 NoteBox，並在框內置中(焦點=貼圖中心) →
+            // 保證預覽不溢出框底。ApplySprite 只改 sizeDelta(不動錨/pivot)，所以置中設定一次即永遠成立。
+            var noteClip = NewClip("NoteClip", NoteBoxX, NoteBoxY, NoteBoxW, NoteBoxH);
+            _noteDisplay = UIKit.AddImage(noteClip, "NoteDisplay", Color.white);
+            var noteRt = _noteDisplay.rectTransform;
+            noteRt.anchorMin = noteRt.anchorMax = noteRt.pivot = new Vector2(0.5f, 0.5f);
+            noteRt.anchoredPosition = Vector2.zero;
+            UIKit.ApplySprite(_noteDisplay, RoomUiArt.An("hiteft2"));   // 初始一幀；RenderWin2 隨即依 session 換
             _noteAnim = _noteDisplay.gameObject.AddComponent<SpriteSeqAnim>();
             _noteAnim.Fps = NoteEftFps;
             Btn("eftpre", "BtnOraLeftArrow_1", "BtnOraLeftArrow_2", "BtnOraLeftArrow_3", Win2, 8, 242, () => StepNote(-1), hoverSfx: null);
@@ -3021,6 +3031,18 @@ namespace Sdo.UI.Screens
 
         private Image Art(string an, Vector2 win, float x, float y, string name)
             => UIKit.AddSprite(WinRoot(win), name, RoomUiArt.An(an), win.x + x, win.y + y);
+
+        // 裁切容器：左上錨在 Win2 局部(x,y)、大小 w×h，掛 RectMask2D → 子物件超出即被硬裁(同 AddSprite 的左上像素座標系)。
+        private RectTransform NewClip(string name, float x, float y, float w, float h)
+        {
+            var rt = UIKit.NewRect(_win2Root, name);
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = new Vector2(Win2.x + x, -(Win2.y + y));
+            rt.sizeDelta = new Vector2(w, h);
+            rt.gameObject.AddComponent<RectMask2D>();
+            return rt;
+        }
 
         // win2 文字定位：把線上 DDRROOM.XML 子座標 (x,y) 換成絕對畫布座標（相對 Win2 視窗原點）
         private static void PlaceW2(RectTransform rt, float x, float y, float w, float h)
