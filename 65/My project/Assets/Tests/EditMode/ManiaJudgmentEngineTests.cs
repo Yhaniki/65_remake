@@ -35,6 +35,18 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void JudgeHoldTail_NeverReleased_Or_FarLate_Is_Not_Rewarded()
+        {
+            var e = Engine();
+            // The tail is judged on the RELEASE timing. A release far past the tail — or effectively "never
+            // released", which the gameplay layer resolves once now runs past end+MissBoundary — is outside the
+            // window: null. ScreenGameplay maps that to a MISS, so just holding the key through the end earns
+            // nothing (regression guard: the old code auto-awarded a Perfect for holding through).
+            Assert.IsNull(e.JudgeHoldTail(2000, 2500));                 // +500ms, well past the miss boundary
+            Assert.IsTrue(e.HasPassed(2000, 2500));                     // → the "held through, never released" gate
+        }
+
+        [Test]
         public void HasPassed_True_When_Beyond_Miss_Boundary()
         {
             var e = Engine();
