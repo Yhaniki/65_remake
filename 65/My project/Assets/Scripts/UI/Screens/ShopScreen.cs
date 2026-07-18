@@ -555,11 +555,12 @@ namespace Sdo.UI.Screens
                 }
                 items = kept;
             }
-            // 上装 tab 併了 上衣+連身兩個 category → 依 ModelId 穿插排序 (連身照編號插進上衣間,不整陀堆最上面)。降冪對齊
-            // 其餘 tab 的 Reverse 方向 (iteminfo 是升冪 ModelId,Reverse 後=降冪) → 上装順序不再跟別的 tab 相反 (user 回饋)。
-            if (_showHistory) { }   // 歷史：保留 _history 的「最近在前」順序，不 reverse/排序
-            else if (_slot == EquipSlot.Top && !searching) items.Sort((a, b) => b.ModelId.CompareTo(a.ModelId));
-            else items.Reverse();
+            // 所有瀏覽分頁一律依 ModelId 真正降冪「合併」排序 → 有名/無名(序號)依序號穿插,不再把無名整塊堆到第一頁。
+            // 之前只有 上装 這樣做,其餘 tab 用 Reverse:但 AllMeshModels 把無名 extras append 在有名之後 (那裡是升冪),
+            // Reverse 只翻轉整條 → 無名區塊被整塊翻到最前面 (user 回報「第一頁都是沒名字的服裝」)。改成全部 Sort 即真穿插。
+            if (_showHistory) { }                        // 歷史：保留 _history 的「最近在前」順序，不 reverse/排序
+            else if (!searching) items.Sort((a, b) => b.ModelId.CompareTo(a.ModelId));   // 瀏覽：ModelId 降冪合併 (含 上装/連身)
+            else items.Reverse();                        // 搜尋結果：跨部位混合,維持原本反轉行為
 
             // 套装 tab → 官方 suitwin 大卡 (2張);其餘小卡 (8張)。搜尋時是跨部位混合結果 → 一律小卡 (使用者:套装 tab 搜尋要小格)。
             _L = (!_showHistory && !searching && _slot == EquipSlot.Outfit) ? BigLayout : SmallLayout;
