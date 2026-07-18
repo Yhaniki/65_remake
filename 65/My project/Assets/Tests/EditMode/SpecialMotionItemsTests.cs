@@ -10,7 +10,9 @@ namespace Sdo.Tests
         // ---- flying-wing id membership: the 5 decompiled ids (gameplay/023:4068) + curated online additions ----
 
         [TestCase(8448)]  [TestCase(8449)]  [TestCase(8483)]  [TestCase(8484)]  [TestCase(20003)]  // decompiled 5
-        [TestCase(26394)]                                                                          // online-confirmed (Fly 甜心飛翼)
+        [TestCase(26394)]                                                                          // online-confirmed (Fly 甜心飛翼 synth mesh)
+        [TestCase(23691)] [TestCase(23692)]                                                        // Fly 甜心飛翼 女 / 男 (iteminfo)
+        [TestCase(23920)] [TestCase(23921)]                                                        // Fly 花雨飛翼 男 / 女 (iteminfo)
         public void FlyingWing_Ids_AreRecognised(int modelId)
             => Assert.IsTrue(SpecialMotionItems.IsFlyingWing(modelId));
 
@@ -99,6 +101,17 @@ namespace Sdo.Tests
             Assert.AreEqual("MOTION/FLY_NV.MOT", SpecialMotionItems.WalkMotFor(new[] { "AVATAR/008448_WOMAN_CHIBANG.MSH" }, false, "MOTION/WWALK0001.MOT"));
             Assert.AreEqual("MOTION/FLY_NAN.MOT", SpecialMotionItems.WalkMotFor(new[] { "AVATAR/008449_MAN_CHIBANG.MSH" }, true, "MOTION/MWALK0001.MOT"));
             Assert.AreEqual("MOTION/WWALK0001.MOT", SpecialMotionItems.WalkMotFor(Starter, false, "MOTION/WWALK0001.MOT"));   // no wing → passthrough
+        }
+
+        [Test]
+        public void NamedFlyWings_UseGenderCorrectClips()
+        {
+            // Fly 甜心飛翼 / 花雨飛翼 — the male mesh (023692/023920) must play the MALE clips, the female mesh
+            // (023691/023921) the FEMALE ones. (使用者需求:男女都要,男生套男生的 mot 版本。)
+            Assert.AreEqual("MOTION/FLYSTAY_NAN.MOT", SpecialMotionItems.IdleMotFor(new[] { "AVATAR/023692_MAN_CHIBANG.MSH" }, true, "MOTION/MREST0082.MOT"));
+            Assert.AreEqual("MOTION/FLY_NAN.MOT",     SpecialMotionItems.WalkMotFor(new[] { "AVATAR/023920_MAN_CHIBANG.MSH" }, true, "MOTION/MWALK0001.MOT"));
+            Assert.AreEqual("MOTION/FLYSTAY_NV.MOT",  SpecialMotionItems.IdleMotFor(new[] { "AVATAR/023691_WOMAN_CHIBANG.MSH" }, false, "MOTION/WREST0072.MOT"));
+            Assert.AreEqual("MOTION/FLY_NV.MOT",      SpecialMotionItems.WalkMotFor(new[] { "AVATAR/023921_WOMAN_CHIBANG.MSH" }, false, "MOTION/WWALK0001.MOT"));
         }
 
         [Test]

@@ -31,9 +31,15 @@ namespace Sdo.Game
         private static readonly int[] DecompiledFlyingWings = { 8448, 8449, 8483, 8484, 20003 };
 
         // 官方線上額外會飛、但離線資料推不出來的翅膀(伺服器決定;使用者實測補上)。要讓更多翅膀會飛就把 modelId 加在這裡。
+        // 「Fly …」系列本來就是官方的飛行翅膀 — modelId 取自 iteminfo.dat(0x04 欄),商城名對照見注解。男女各一 modelId
+        // (穿戴時 mesh 路徑帶各自 modelId → WearsFlyingWing 解出),男會拿 FLY_NAN/FLYSTAY_NAN、女拿 FLY_NV/FLYSTAY_NV。
         private static readonly int[] OnlineFlyingWings =
         {
-            26394,   // Fly 甜心飛翼(使用者實測會飛)
+            26394,   // Fly 甜心飛翼(合成 mesh-only 版 026394_WOMAN_CHIBANG,使用者實測會飛)
+            23691,   // Fly 甜心飛翼(女)— iteminfo id 33691/83691/93691
+            23692,   // Fly 甜心飛翼(男)— iteminfo id 33692/83692/93692
+            23920,   // Fly 花雨飛翼(男)— iteminfo id 123920/223920/323920
+            23921,   // Fly 花雨飛翼(女)— iteminfo id 123921/223921/323921
         };
 
         private static readonly HashSet<int> FlyingWings = BuildSet(DecompiledFlyingWings, OnlineFlyingWings);
