@@ -90,8 +90,9 @@ namespace Sdo.Game
             // The COMBO word + the number are ONE rigid group: scale every element's position AND size about a single
             // shared pivot (TrackCenterX, comboPivotY = the group's centre) by `pop`. Because the word→number gap and
             // the inter-digit gaps all scale by the same `pop` about the same point, the whole thing grows/shrinks as a
-            // unit and the spacing never drifts. (Previously the word popped about its own centre Y=275 and the digits
-            // about Y=326 — two separate pivots — so glyphs grew while the vertical gap stayed fixed and the rows fought.)
+            // unit and the spacing never drifts. (Previously the word popped about its own centre ComboWordY and the
+            // digits about ComboDigitY — two separate pivots — so glyphs grew while the vertical gap stayed fixed and the
+            // rows fought.)
             const float comboPivotY = (ComboWordY + ComboDigitY) / 2f;
             float cxTrack = PX(TrackCenterX);   // track centre X shifted by the 面板位置 (左/中)
             float startX = cxTrack - (s.Length - 1) * ComboDigitStep / 2f;   // centred on the track

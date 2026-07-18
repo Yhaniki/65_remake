@@ -234,9 +234,15 @@ namespace Sdo.Game
         private static readonly Vector2 HpEftSize = new Vector2(64, 32);  // real HpEft1.png size
         private static readonly Vector2 ScorePos = new Vector2(290, 18);
         private const float ScoreDigitPitch = 25f;       // 29 + alt(-4)
-        private static readonly Vector2 JudgeWordCenter = new Vector2(TrackCenterX, 216);
-        private const float ComboWordY = 275f;
-        private const float ComboDigitY = 326f, ComboDigitStep = 42f, ComboDigitW = 48f;
+        // PERFECT/COMBO/digits form ONE rigid cluster (JudgeWord → COMBO word → number). Its bounding box spans from the
+        // PERFECT word's top (~JudgeWordCenter.y − 20) to the digits' bottom (~ComboDigitY + 33). The three anchors are
+        // offset in lock-step so that box is centred in the play area BELOW the judgment band — NOT the whole board: the
+        // receptors are 100×100 drawn at ReceptorW=92 about judgeLineY=70, so the judgment band is [70 ± 46] = [24, 116].
+        // The usable band below it is [116, 600] (board bottom); its centre = 358, shared by every noteskin (向上/up-scroll).
+        // (History: originally ~277 = biased up; then board-midline 300; now below-judgment centre 358.)
+        private static readonly Vector2 JudgeWordCenter = new Vector2(TrackCenterX, 259);
+        private const float ComboWordY = 318f;
+        private const float ComboDigitY = 369f, ComboDigitStep = 42f, ComboDigitW = 48f;
         // The COMBO word and the digits must render at ONE per-pixel scale so the label and the number read as the
         // same font (native COMBO.PNG = 117×33, each digit = 67×72). Deriving the word width from the digit width
         // locks word/number to the source-art ratio; a hardcoded 100 drew the word at 0.855× vs the digits' 0.716×.
