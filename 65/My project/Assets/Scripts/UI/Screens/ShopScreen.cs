@@ -107,6 +107,7 @@ namespace Sdo.UI.Screens
         private readonly float[] _cardScale = new float[PerPage];
         private readonly float[] _cardAngle = new float[PerPage];
         private readonly bool[] _cardNoSpin = new bool[PerPage];            // 眼鏡卡：靜態不旋轉 (user 指定 眼鏡不轉、只 hover 放大)
+        private readonly bool[] _cardUvScroll = new bool[PerPage];          // 炫 hair 卡 (model 40000-49999)：貼圖 V 捲動 → RT 每幀重畫才看得到變色
         private readonly Vector3[] _cardFramePos = new Vector3[PerPage];    // 官方 per-slot 節點位移 (模型空間,y 為負把部位往下推)
         private readonly Vector3[] _cardFrameScale = new Vector3[PerPage];  // 官方 per-slot 節點縮放 (5.5~10x)
         private int _hoverCard = -1;
@@ -903,6 +904,9 @@ namespace Sdo.UI.Screens
                 }
                 _cardAv[i] = root;
                 _cardNoSpin[i] = slot == EquipSlot.Glasses;   // 眼鏡卡：hover 不旋轉,只放大 (user 指定)
+                // 炫 hair (model 40000-49999)：AvatarUvScroll 已由 LoadParts 掛上、每幀捲 V,但卡 RT 只在 hover 重畫 →
+                // 縮圖凍結。標記此卡,Update 每幀重畫 RT,小圖也會「不斷變色」(user 指定)。SdoAvatarBuilder.IsUvScrollHair 同判準。
+                _cardUvScroll[i] = SpecialMotionItems.IsUvScrollHair(item.ModelId);
 
                 // 卡內縮圖 RawImage (版面 _L 決定尺寸/位置；小卡 72×88、套装大卡 150×240；pivot 置中以便由中心放大)
                 var img = new GameObject("preview", typeof(RectTransform)).AddComponent<RawImage>();
@@ -1189,7 +1193,7 @@ namespace Sdo.UI.Screens
                 // 獨立 runtime GameObject,立即銷毀安全。
                 if (_cardAv[i] != null) { DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
                 if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
-                _cardImg[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f; _cardNoSpin[i] = false;
+                _cardImg[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f; _cardNoSpin[i] = false; _cardUvScroll[i] = false;
             }
             _pendingCards.Clear();
             _hoverCard = -1;
@@ -1251,7 +1255,8 @@ namespace Sdo.UI.Screens
                 // 眼鏡卡不旋轉 (角度恆 0);其餘 hover 自轉、離開歸零 (官方 snap)。放大對所有卡都保留。
                 _cardAngle[i] = (hov && !_cardNoSpin[i]) ? Mathf.Repeat(_cardAngle[i] + Time.deltaTime * CardSpinDegPerSec, 360f) : 0f;
                 if (_cardScale[i] != prevScale) _cardImg[i].rectTransform.localScale = Vector3.one * _cardScale[i];   // 2D 放大 (不需重畫 RT)
-                if (hov || _cardAngle[i] != prevAngle) RenderCard(i);                                                 // 旋轉/回正才重畫 RT
+                // 旋轉/回正才重畫 RT;但 炫 hair 卡的貼圖每幀在捲 V → 需每幀重畫,小圖才會持續變色 (AvatarUvScroll 已在動材質)。
+                if (hov || _cardAngle[i] != prevAngle || _cardUvScroll[i]) RenderCard(i);
             }
         }
 

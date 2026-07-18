@@ -78,6 +78,12 @@ namespace Sdo.Game
                               : hair ? hairShader
                               : bodyShader;
                 string stem = Path.GetFileNameWithoutExtension(rel);
+                // 炫 hair (model band [40000,49999] = 炫红/炫紫/炫白/炫黄) → its texture V scrolls at 2.0/s, sweeping a
+                // bright band through the hair ("不斷變色"). Not for the Portrait head thumbnail; the in-world dancer/lobby
+                // is where it shows. See SpecialMotionItems.IsUvScrollHair for the decompile + Frida trail.
+                int? partModelId = SpecialMotionItems.ModelIdFromMeshPath(rel);
+                bool uvScroll = style != SkinStyle.Portrait
+                                && partModelId.HasValue && SpecialMotionItems.IsUvScrollHair(partModelId.Value);
                 int si = 0;
                 foreach (var sub in r.Submeshes)   // each submesh = its own texture + skin (COAT/PANT have 2)
                 {
@@ -122,6 +128,8 @@ namespace Sdo.Game
                                                            ?? new Material(fallbackShader) { color = PartColor(rel), name = dds ?? "" });
                     }
 
+                    if (uvScroll) AttachUvScroll(go, mr);   // 炫 hair → per-frame V texture scroll
+
                     if (avatar != null && sub.BindVerts != null && sub.BoneHrc != null)
                         avatar.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
 
@@ -131,6 +139,19 @@ namespace Sdo.Game
                 res.Parts++;
             }
             return res;
+        }
+
+        // 炫 hair UV scroll: attach AvatarUvScroll to scroll the textured material(s) V each frame (2.0 units/s, REPEAT
+        // wrap). The existing hair shader (UnlitDoubleSided) uses TRANSFORM_TEX, so mainTextureOffset works as-is — no
+        // shader swap. Skips skin ranges / fallback-colour materials (no mainTexture) so only the hair texture scrolls.
+        private static void AttachUvScroll(GameObject go, Renderer mr)
+        {
+            var mats = mr.sharedMaterials;
+            bool any = false;
+            for (int i = 0; i < mats.Length; i++)
+                if (mats[i] != null && mats[i].mainTexture != null) { any = true; break; }
+            if (!any) return;
+            go.AddComponent<AvatarUvScroll>().Init(mats, SpecialMotionItems.UvScrollUnitsPerSec);
         }
 
         // 翅膀(CHIBANG)的「動塗」：官方把發光羽翼做成 model-embedded 換幀貼圖。MSH 的材質名不是真檔名,而是佔位符

@@ -137,5 +137,71 @@ namespace Sdo.Tests
         [Test]
         public void FlyHover_MatchesDecompiledOffset()
             => Assert.AreEqual(10f, SpecialMotionItems.FlyHoverY);   // Player_StepMovement 028:2852: world-Y += 10
+
+        // ---- 炫 UV-scroll hair: model band [40000,49999] (avatar/015: `if ((id<40000)||(49999<id))`) ----
+
+        [TestCase(40000)]  // 炫红
+        [TestCase(40001)]  // 炫紫
+        [TestCase(40002)]  // 炫白
+        [TestCase(40003)]  // 炫黄
+        [TestCase(49999)]  // band upper bound
+        public void UvScrollHair_Ids_AreRecognised(int modelId)
+            => Assert.IsTrue(SpecialMotionItems.IsUvScrollHair(modelId));
+
+        [TestCase(39999)]   // just below the band
+        [TestCase(50000)]   // just above the band
+        [TestCase(900017)]  // default WOMAN hair
+        [TestCase(20502)]   // 炫动青春 男发 (a NAMED shop hair, NOT in the animated band)
+        [TestCase(2077)]    // 002077_MAN_HAIR — a .AN frame-texanim hair, a different mechanism
+        public void NonUvScrollHair_Ids_AreNotRecognised(int modelId)
+            => Assert.IsFalse(SpecialMotionItems.IsUvScrollHair(modelId));
+
+        [Test]
+        public void UvScroll_DoesNotLeakIntoOtherTraits()
+        {
+            Assert.IsFalse(SpecialMotionItems.IsUvScrollHair(8448));   // a flying wing
+            Assert.IsFalse(SpecialMotionItems.IsUvScrollHair(11106));  // a speed shoe
+            Assert.IsFalse(SpecialMotionItems.IsFlyingWing(40000));    // a 炫 hair is not a wing
+            Assert.IsFalse(SpecialMotionItems.IsFastWalkShoe(40000));  // …nor a speed shoe
+        }
+
+        [Test]
+        public void WearsUvScrollHair_TrueOnlyForBandHair()
+        {
+            Assert.IsTrue(SpecialMotionItems.WearsUvScrollHair(new[] { Starter[0], "AVATAR/040000_MAN_HAIR.MSH" }));
+            Assert.IsFalse(SpecialMotionItems.WearsUvScrollHair(Starter));   // default hair (900017) is static
+            Assert.IsFalse(SpecialMotionItems.WearsUvScrollHair(null));
+        }
+
+        [Test]
+        public void ModelIdFromMeshPath_ParsesXuanHair()
+            => Assert.AreEqual(40000, SpecialMotionItems.ModelIdFromMeshPath("AVATAR/040000_MAN_HAIR.MSH"));
+
+        // ---- UV V-scroll offset math (pure; drives the material V offset; rate 2.0/s measured on the live client) ----
+
+        [Test]
+        public void ScrollOffsetV_WrapsIntoUnitRange()
+        {
+            const float rate = 2f;   // units/sec (measured 1.999)
+            Assert.AreEqual(0f,   SpecialMotionItems.ScrollOffsetV(0.0,  rate), 1e-5f);   // start
+            Assert.AreEqual(0.5f, SpecialMotionItems.ScrollOffsetV(0.25, rate), 1e-5f);   // 0.25s × 2 = 0.5
+            Assert.AreEqual(0f,   SpecialMotionItems.ScrollOffsetV(0.5,  rate), 1e-5f);   // 0.5s × 2 = 1.0 → wraps to 0
+            Assert.AreEqual(0.5f, SpecialMotionItems.ScrollOffsetV(0.75, rate), 1e-5f);   // 1.5 → wraps to 0.5
+        }
+
+        [Test]
+        public void ScrollOffsetV_AlwaysInUnitRange()
+        {
+            for (double t = 0; t < 20; t += 0.37)
+            {
+                float v = SpecialMotionItems.ScrollOffsetV(t, SpecialMotionItems.UvScrollUnitsPerSec);
+                Assert.GreaterOrEqual(v, 0f);
+                Assert.Less(v, 1f);
+            }
+        }
+
+        [Test]
+        public void UvScrollRate_MatchesMeasuredGroundTruth()
+            => Assert.AreEqual(2.0f, SpecialMotionItems.UvScrollUnitsPerSec, 1e-4f);   // Frida: 1.999 units/s
     }
 }

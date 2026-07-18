@@ -48,6 +48,22 @@ namespace Sdo.Game
         // man 11114 / woman 11115 (flag +0x86e). Verbatim from gameplay/023:4072-4076 (0x2b62/0x2b63/0x2b6a/0x2b6b).
         private static readonly HashSet<int> FastWalkShoes = new HashSet<int> { 11106, 11107, 11114, 11115 };
 
+        // 炫 (dazzle) hair "不斷變色": the standalone client hardcodes the MODEL-id band [40000,49999] as "animated"
+        // items — three identical range checks in avatar/015_avatar_0042fe80.c (`if ((id < 40000) || (49999 < id))`)
+        // set an anim flag that ordinary items never get, enabling texture-stage animation on the hair mesh.
+        // GROUND TRUTH (Frida on the live online client sdo.bin, hooking FUN_0042cda0 = Mesh_applyRenderStates,
+        // assets/閉撰敃氪/hook_xuan_hair.js → H:/65_remake/xuan_hair_log.txt): the ONLY flag set is 0x10000 (the
+        // texture-coordinate transform), U stays 0, and V scrolls at a constant 1.999 ≈ 2.0 texture-units/sec (time-
+        // based; measured identical across frame-rates). colA/B/C (the D3DRS_TEXTUREFACTOR sources) never change — so
+        // it is NOT a colour animation. It is a UV V-scroll (the same updater as the SCN0011 running lights,
+        // hook_uv_speed.js, +0x58/+0x5c). The 炫红/炫紫/炫白/炫黄 textures (model 40000-40003, cat 1) are a vertical
+        // gradient of the item's own colour with a bright highlight band; scrolling V sweeps that sheen through the
+        // hair → the "dazzle". Reproduced by scrolling the REAL texture's V (AvatarUvScroll) — no fabricated colours.
+        public const int UvScrollModelIdMin = 40000;
+        public const int UvScrollModelIdMax = 49999;
+        /// <summary>Texture V units scrolled per second — measured 1.999 on the live client (2.0 exactly).</summary>
+        public const float UvScrollUnitsPerSec = 2.0f;
+
         private static HashSet<int> BuildSet(params int[][] groups)
         {
             var s = new HashSet<int>();
@@ -81,6 +97,21 @@ namespace Sdo.Game
         /// <summary>True if <paramref name="modelId"/> is a speed shoe (grants the 5.0 walk).</summary>
         public static bool IsFastWalkShoe(int modelId) => FastWalkShoes.Contains(modelId);
 
+        /// <summary>True if <paramref name="modelId"/> is a 炫 UV-scroll hair (model band [40000,49999] → its texture V
+        /// scrolls, sweeping a bright band through the hair). The band is exactly 炫红/炫紫/炫白/炫黄 (40000-40003).</summary>
+        public static bool IsUvScrollHair(int modelId) => modelId >= UvScrollModelIdMin && modelId <= UvScrollModelIdMax;
+
+        /// <summary>The V texture-coordinate offset at <paramref name="elapsedSec"/> — the raw accumulator (V = rate·t)
+        /// wrapped into [0,1) so the value never loses float precision over a long session (the texture sampler REPEATs,
+        /// so wrapping is visually identical to the client's unbounded V=6.46→11.65…). Pure (no Unity/time) → the scroll
+        /// is deterministic and unit-testable; <see cref="AvatarUvScroll"/> feeds it into the material's V offset.</summary>
+        public static float ScrollOffsetV(double elapsedSec, float unitsPerSec)
+        {
+            double v = elapsedSec * unitsPerSec;
+            v -= Math.Floor(v);           // wrap into [0,1) (Repeat sampler); also normalises negative elapsed
+            return (float)v;
+        }
+
         /// <summary>Parse the leading 6-digit MODEL id out of an AVATAR mesh path (e.g.
         /// <c>AVATAR/011106_WOMAN_SHOES.MSH</c> → 11106). Returns null when the filename doesn't start with digits.</summary>
         public static int? ModelIdFromMeshPath(string path)
@@ -99,6 +130,10 @@ namespace Sdo.Game
 
         /// <summary>True if any equipped mesh path is a speed shoe → the avatar walks faster (subject to the wing gate).</summary>
         public static bool WearsFastWalkShoe(IEnumerable<string> equippedParts) => AnyMatch(equippedParts, IsFastWalkShoe);
+
+        /// <summary>True if any equipped mesh path is a 炫 UV-scroll hair → its material should be driven by
+        /// <see cref="AvatarUvScroll"/> (continuous V scroll).</summary>
+        public static bool WearsUvScrollHair(IEnumerable<string> equippedParts) => AnyMatch(equippedParts, IsUvScrollHair);
 
         private static bool AnyMatch(IEnumerable<string> parts, Func<int, bool> pred)
         {
