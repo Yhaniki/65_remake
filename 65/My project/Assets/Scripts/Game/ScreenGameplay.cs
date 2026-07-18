@@ -4923,12 +4923,11 @@ namespace Sdo.Game
                 // bad head → the tail misses too once it passes. Score it ONCE (clear the flag), but do NOT retire the note:
                 // the dimmed bar keeps scrolling like every other failed hold, and ScrollNotes retires it off the board.
                 if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
-                // A long note's END is judged on the RELEASE, exactly as a tap is judged on the press — a real release
-                // inside the tail window is graded by ReleaseLane. Holding through without letting go earns NOTHING:
-                // once the release window has fully passed with the key still held (same late boundary a tap auto-misses
-                // at), the tail is a MISS. (Was: auto-Perfect the instant the tail reached the line → free perfect for
-                // just never releasing.)
-                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
+                // A long note's END is judged on the RELEASE — a real release inside the (widened) tail window is
+                // graded by ReleaseLane. Holding through without letting go earns NOTHING: once the tail release window
+                // has fully passed with the key still held, the tail is a MISS. Gate on the TAIL boundary (not the press
+                // boundary), else a note held into the extra tail leniency is force-missed before its release could score.
+                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
             }
         }
 

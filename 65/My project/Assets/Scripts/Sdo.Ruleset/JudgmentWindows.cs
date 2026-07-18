@@ -98,6 +98,14 @@ namespace Sdo.Ruleset
             return null;
         }
 
+        /// <summary>
+        /// A copy with every window (Perfect/Cool/Bad/Miss) multiplied by <paramref name="factor"/>.
+        /// factor &gt; 1 = more forgiving. Used for the hold-tail release window, which is deliberately
+        /// looser than the press window (see <see cref="ManiaJudgmentEngine.HoldTailWindowScale"/>).
+        /// </summary>
+        public JudgmentWindows Scaled(double factor)
+            => new JudgmentWindows(Perfect * factor, Cool * factor, Bad * factor, MissBoundary * factor);
+
         /// <summary>osu! piecewise-linear difficulty interpolation. range = (min, mid, max).</summary>
         public static double DifficultyRange(double difficulty, double[] range)
         {
