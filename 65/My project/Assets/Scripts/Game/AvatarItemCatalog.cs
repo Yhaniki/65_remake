@@ -98,6 +98,21 @@ namespace Sdo.Game
         private static bool IsClothTextureSlot(EquipSlot s)
             => s == EquipSlot.Top || s == EquipSlot.Bottom || s == EquipSlot.Hair || s == EquipSlot.Shoes || s == EquipSlot.OnePiece;
 
+        /// <summary>The slots one outfit design ships as interchangeable geometry: 上衣 / 下裝 / 連身. A single modelId's
+        /// COAT, PANT and ONE meshes are the SAME design — the coat half of 快乐舞会 002247's 連身裙 is
+        /// 002247_WOMAN_COAT.MSH; 野战迷彩中裤 001278's companion 001278_WOMAN_COAT.MSH merely re-uses 性感嘻哈 001277's
+        /// coat texture. So a modelId named in ONE of these must not be re-synthesised as a phantom row in ANOTHER.</summary>
+        private static bool IsBodyOutfitSlot(EquipSlot s)
+            => s == EquipSlot.Top || s == EquipSlot.Bottom || s == EquipSlot.OnePiece;
+
+        /// <summary>Pure: should a mesh-only garment row be synthesised for this (sex, slot, modelId)? NO when the modelId
+        /// is already a NAMED garment worn in a body-outfit slot (上衣/下裝/連身) for the same sex — its mesh in a DIFFERENT
+        /// body-outfit slot is that same outfit's companion piece, so listing it would show a visual duplicate (使用者回報:
+        /// 合成上衣「001278」==「性感嘻哈」、「002247」==「快乐舞会」顯示同一件衣服). 髮型/鞋子/翅膀/表情 keep the plain
+        /// "any mesh on disk" rule — they don't share a modelId across a 上↔下 split.</summary>
+        public static bool ShouldSynthGarment(ItemSex sex, EquipSlot slot, int modelId, ISet<(ItemSex, int)> namedBodyOutfitIds)
+            => !(IsBodyOutfitSlot(slot) && namedBodyOutfitIds != null && namedBodyOutfitIds.Contains((sex, modelId)));
+
         private static readonly Dictionary<string, bool> _clothResolveCache = new Dictionary<string, bool>();
 
         /// <summary>True if this garment's mesh has a resolvable CLOTH texture on disk. Fast path: if any texture of the
@@ -212,6 +227,20 @@ namespace Sdo.Game
         private const int SynthSlotStride = 1_000_000;   // modelIds are 6-digit (< 1e6), so mult never overlaps modelId
         private readonly Dictionary<int, ShopItem> _synthById = new Dictionary<int, ShopItem>();
         private readonly Dictionary<(ItemSex, EquipSlot), List<ShopItem>> _meshModelCache = new Dictionary<(ItemSex, EquipSlot), List<ShopItem>>();
+
+        // (sex, modelId) of every NAMED garment worn in a body-outfit slot (上衣/下裝/連身). A modelId here must not be
+        // synthesised as a mesh-only row in a DIFFERENT body-outfit slot (see ShouldSynthGarment). Built once, cached.
+        private HashSet<(ItemSex, int)> _namedBodyOutfitIds;
+        private HashSet<(ItemSex, int)> NamedBodyOutfitIds()
+        {
+            if (_namedBodyOutfitIds != null) return _namedBodyOutfitIds;
+            var s = new HashSet<(ItemSex, int)>();
+            foreach (var it in Clothing)
+                if (IsBodyOutfitSlot(it.EquipSlot))
+                    s.Add((ItemTypes.GenderOf(it.Category, it.Name), it.ModelId));   // 與 groups/AllMeshModels 同一套性別判定
+            _namedBodyOutfitIds = s;
+            return s;
+        }
 
         // Synth-Id slot code (1..4) for the 衣物 slots that synthesise mesh-only rows; 0 = 附件 (bare id, legacy).
         private static int SynthSlotCode(EquipSlot slot)
@@ -341,6 +370,7 @@ namespace Sdo.Game
                 if (us <= 0 || !int.TryParse(f.Substring(0, us), out var modelId)) continue;
                 if (!IsShopModelId(modelId)) continue;                        // 9xxxxx 素體預設衣服不上架 (user)
                 if (!have.Add(modelId)) continue;
+                if (!ShouldSynthGarment(sex, slot, modelId, NamedBodyOutfitIds())) continue;   // 跨部位同一套 → 不重複合成 (使用者:001278/002247)
                 if (isExpr && !IsGoodExpressionModel(modelId, g)) continue;   // 濾掉會渲染成 空白/破圖/假臉 的異常表情 (user)
                 var syn = new ShopItem
                 {
