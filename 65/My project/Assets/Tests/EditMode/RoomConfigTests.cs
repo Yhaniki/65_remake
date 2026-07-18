@@ -1,3 +1,4 @@
+using System.IO;
 using NUnit.Framework;
 using Sdo.Settings;
 
@@ -5,6 +6,23 @@ namespace Sdo.Tests
 {
     public class RoomConfigTests
     {
+        [Test]
+        public void FilePath_Resolves_Under_ProfileRoot_Not_ExeDir()
+        {
+            // config.ini 現在放在存檔層 DATA/PROFILE/（＝ProfileManager.Root，與 settings.json / active.txt 同層），
+            // 不再是執行檔同層。這是「把 config.ini 搬進 profile 資料夾」的核心行為。
+            string root = Path.Combine(Path.GetTempPath(), "sdo_cfg_root");
+            try
+            {
+                ProfileManager.Root = root;
+                Assert.AreEqual(Path.GetFullPath(Path.Combine(root, RoomConfig.FileName)),
+                                Path.GetFullPath(RoomConfig.FilePath), "config.ini 應落在 PROFILE 資料夾下");
+                Assert.AreNotEqual(Path.GetFullPath(RoomConfig.FilePath),
+                                   Path.GetFullPath(RoomConfig.LegacyExePath), "新位置要跟舊的執行檔同層不同");
+            }
+            finally { ProfileManager.Root = null; }   // 還原 lazy 解析，避免污染其他測試
+        }
+
         // Reset to built-in defaults before each case (RoomConfig holds static state).
         [SetUp]
         public void Reset()

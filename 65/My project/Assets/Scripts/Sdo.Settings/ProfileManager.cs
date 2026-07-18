@@ -55,7 +55,7 @@ namespace Sdo.Settings
         // ---------------- boot / activate ----------------
 
         /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且在 <see cref="RoomConfig.Load"/> 之前
-        /// （Load 會把殘留的 per-user config.ini 搬進全域檔）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
+        /// （Load 會把舊位置的 config.ini 搬進 DATA/PROFILE 的全域檔，需要先有 PROFILE 資料夾）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
         public static void Boot()
         {
             try
@@ -91,7 +91,7 @@ namespace Sdo.Settings
             }
             if (!Directory.Exists(dir)) return;
             Activate(id, notify: true);
-            // config.ini 是全域一份（執行檔同層）→ 換人不重載設定，設定不跟著使用者。
+            // config.ini 是全域一份（DATA/PROFILE/config.ini）→ 換人不重載設定，設定不跟著使用者。
             ActiveChanged?.Invoke();
         }
 

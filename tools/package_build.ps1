@@ -49,8 +49,9 @@ function Copy-Tree($src, $dst, [string]$label, [string[]]$ExcludeDirs) {
 
 # Copy a tree WITHOUT touching files that already exist at the destination (/XC /XN /XO = only files missing
 # there are copied). Used to seed the per-user save tree (PROFILE: profile.json / favorites.json / settings.json /
-# active.txt) so re-packaging over an existing build never clobbers live player data. (config.ini is NOT per-user —
-# it lives next to the exe and the game writes a commented template there on first boot.)
+# active.txt / config.ini) so re-packaging over an existing build never clobbers live player data. (config.ini is
+# global-not-per-user, but now lives in DATA/PROFILE alongside settings.json; the game writes a commented template
+# there on first boot, so shipping it is optional.)
 function Copy-TreeIfMissing($src, $dst, [string]$label) {
     if (-not (Test-Path $src)) { Write-Warning "[package] skip ${label}: source missing -> $src"; return }
     Write-Host "[package] seed $label (existing files kept) : $src -> $dst"
@@ -94,9 +95,9 @@ function Write-ShopNames($iteminfoPath, $outPath) {
 
 # 1) Base: the offline Extracted tree -> DATA. PROFILE (per-user saves) is excluded from the mirror and
 #    SEEDED separately below — a re-package over an existing build must never overwrite the player's live
-#    profile.json / favorites.json / settings.json / active.txt. (The game also self-heals: missing PROFILE
-#    files are re-created with defaults at boot, see ProfileManager/DisplaySettingsManager. config.ini is
-#    global — exe-adjacent, written by RoomConfig on first boot.)
+#    profile.json / favorites.json / settings.json / active.txt / config.ini. (The game also self-heals: missing
+#    PROFILE files are re-created with defaults at boot, see ProfileManager/DisplaySettingsManager/RoomConfig.
+#    config.ini is global-not-per-user but now lives in DATA/PROFILE, written by RoomConfig on first boot.)
 Copy-Tree (Join-Path $Off 'Extracted') $Data 'Extracted' -ExcludeDirs @(Join-Path $Off 'Extracted\PROFILE')
 Copy-TreeIfMissing (Join-Path $Off 'Extracted\PROFILE') (Join-Path $Data 'PROFILE') 'PROFILE (seed only)'
 

@@ -7,9 +7,10 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 開房間右側面板的可選清單與預設值 + OPTION 設定，存成 <c>config.ini</c>。**全域一份**（執行檔同一層），
-    /// 設定不跟著使用者跑 —— 換帳號不會換設定。（曾短暫改成 per-user 放在 DATA/PROFILE/&lt;id&gt;/，
-    /// 現已搬回全域；開機時會把殘留的 per-user config.ini 併進全域檔並移除，見 <see cref="Load"/>。）
+    /// 開房間右側面板的可選清單與預設值 + OPTION 設定，存成 <c>config.ini</c>。**全域一份**，放在存檔層
+    /// <c>DATA/PROFILE/</c>（與 active.txt / settings.json / favorites.json 同層）—— 設定仍不跟著使用者跑
+    /// （換帳號不會換設定），只是把檔案位置搬進 PROFILE 資料夾。開機時會把舊位置的 config.ini 一次性搬進來後移除：
+    /// 舊 per-user（<c>DATA/PROFILE/&lt;id&gt;/</c>）優先，其次舊全域（執行檔同層），見 <see cref="Load"/>。
     /// 純文字、好手改：第一次跑會自動寫一份附註解的範本；之後讀檔覆蓋預設。解析/夾值是純函式可單元測試
     /// （<see cref="ParseInto"/> / <see cref="Sanitize"/> 不碰檔案）。
     /// </summary>
@@ -59,14 +60,28 @@ namespace Sdo.Settings
 
         public const string FileName = "config.ini";
 
-        /// <summary>config.ini 的完整路徑：**全域一份**，執行檔同一層（Editor 下 = 專案根「My project/」）。
-        /// 不隨 active user 改變 —— 設定不跟著使用者。</summary>
+        /// <summary>config.ini 的完整路徑：**全域一份**，放在存檔層 <c>DATA/PROFILE/</c>（＝<see cref="ProfileManager.Root"/>，
+        /// 與 active.txt / settings.json 同層）。不隨 active user 改變 —— 設定不跟著使用者，只是位置在 PROFILE 資料夾。</summary>
         public static string FilePath
         {
             get
             {
+                // 存檔根（含 SDO_DATA_ROOT / data_root.txt 覆寫）由 ProfileManager.Root（= SdoDataRoot.ProfileDir）決定，
+                // 跟 settings.json / active.txt 同一層。理論上一定解析得到；萬一為空（極端測試情境）才退回舊的執行檔同層。
+                var profileRoot = ProfileManager.Root;
+                if (!string.IsNullOrEmpty(profileRoot)) return Path.Combine(profileRoot, FileName);
+                return LegacyExePath;
+            }
+        }
+
+        /// <summary>舊版位置：執行檔同一層（建置版＝exe 資料夾；Editor 下＝專案根「My project/」）。只用於開機時把
+        /// 舊 config.ini 一次性搬進 <see cref="FilePath"/>（PROFILE），不再是實際讀寫位置。</summary>
+        public static string LegacyExePath
+        {
+            get
+            {
                 // 建置版 Application.dataPath = "<exe 同層>/<Product>_Data" → 其上一層就是 exe 所在資料夾。
-                // Editor 下 dataPath = ".../My project/Assets" → 上一層 = "My project"（開發放這方便）。
+                // Editor 下 dataPath = ".../My project/Assets" → 上一層 = "My project"。
                 string dir;
                 try { dir = Directory.GetParent(Application.dataPath).FullName; }
                 catch { dir = Application.dataPath; }
@@ -74,35 +89,39 @@ namespace Sdo.Settings
             }
         }
 
-        /// <summary>讀 config.ini（全域，不存在就用內建預設並寫一份範本）。開機呼叫一次即可（<see cref="SettingsBootstrap"/>）；
-        /// 換 active user **不需要**重讀。殘留的 per-user config.ini（DATA/PROFILE/&lt;id&gt;/）會被搬進全域檔後移除。</summary>
+        /// <summary>讀 config.ini（全域，放在 DATA/PROFILE/；不存在就用內建預設並寫一份範本）。開機呼叫一次即可
+        /// （<see cref="SettingsBootstrap"/>）；換 active user **不需要**重讀。新位置若還沒有，會把舊位置的 config.ini
+        /// 一次性搬進來後移除：舊 per-user（DATA/PROFILE/&lt;id&gt;/）優先，其次舊全域（執行檔同層）。</summary>
         public static void Load()
         {
             try
             {
-                string perUser = FindProfileConfig();   // 殘留的 per-user 檔（可能不存在）
-
-                if (perUser != null)
+                if (File.Exists(FilePath))
                 {
-                    // 一次性搬遷：per-user config.ini 才是玩家實際在用的那份 → 直接**蓋成**全域檔（含 [Option]），
-                    // 然後把 PROFILE 底下的都刪掉。之後每次開機都只走下面的全域路徑。
-                    ParseInto(File.ReadAllText(perUser));
-                    Sanitize();
-                    if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前值
-                    Save();
-                    DeleteProfileConfigs();
-                    Debug.Log($"[RoomConfig] moved per-user config.ini -> global {FilePath}");
-                }
-                else if (File.Exists(FilePath))
-                {
+                    // 新位置（DATA/PROFILE/config.ini）已就緒 → 正常讀。
                     ParseInto(File.ReadAllText(FilePath));
                     Sanitize();
                 }
                 else
                 {
-                    Sanitize();
-                    CaptureOptionFrom(DisplaySettingsManager.Settings);   // 第一次：範本的 [Option] 反映目前 settings.json 值
-                    Save();   // 第一次：留一份可編輯的範本在執行檔同層
+                    // 新位置還沒有 → 找舊檔一次性搬進來：舊 per-user（DATA/PROFILE/<id>/config.ini）才是玩家實際在用的那份，
+                    // 優先；沒有再看舊全域（執行檔同層）。搬完寫進新位置並把舊檔刪掉，之後每次開機都只走上面那條。
+                    string legacy = FindProfileConfig() ?? FindLegacyExeConfig();
+                    if (legacy != null)
+                    {
+                        ParseInto(File.ReadAllText(legacy));
+                        Sanitize();
+                        if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前值
+                        Save();                 // 落地到新位置 DATA/PROFILE/config.ini
+                        DeleteLegacyConfigs();  // 清掉舊 per-user + 執行檔同層的舊檔（內容已寫進新位置）
+                        Debug.Log($"[RoomConfig] moved legacy config.ini -> {FilePath}");
+                    }
+                    else
+                    {
+                        Sanitize();
+                        CaptureOptionFrom(DisplaySettingsManager.Settings);   // 第一次：範本的 [Option] 反映目前 settings.json 值
+                        Save();   // 第一次：在 DATA/PROFILE 留一份可編輯的範本
+                    }
                 }
 
                 // config.ini 帶了 [Option] → 以檔案值覆蓋 settings.json 的 GameSettings（見 SettingsBootstrap 隨後 ApplyDisplay）。
@@ -115,7 +134,8 @@ namespace Sdo.Settings
             }
         }
 
-        /// <summary>找一份殘留的 per-user config.ini：優先 active user，其次 PROFILE 下第一個找到的。沒有則 null。</summary>
+        /// <summary>找一份殘留的舊 per-user config.ini：優先 active user，其次 PROFILE 下第一個找到的（只看 &lt;id&gt; 子資料夾，
+        /// 不會誤抓 PROFILE 根的新全域檔）。沒有則 null。</summary>
         private static string FindProfileConfig()
         {
             try
@@ -128,7 +148,7 @@ namespace Sdo.Settings
                 }
                 var root = ProfileManager.Root;
                 if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
-                    foreach (var dir in Directory.GetDirectories(root))
+                    foreach (var dir in Directory.GetDirectories(root))   // 只列子資料夾 → PROFILE 根的 config.ini 不在其中
                     {
                         var p = Path.Combine(dir, FileName);
                         if (File.Exists(p)) return p;
@@ -138,28 +158,58 @@ namespace Sdo.Settings
             return null;
         }
 
-        /// <summary>移除 PROFILE/&lt;id&gt;/config.ini（只在內容已寫進全域檔後呼叫）。</summary>
-        private static void DeleteProfileConfigs()
+        /// <summary>找舊全域位置（執行檔同層）的 config.ini。沒有、或它其實就是新位置（極端 fallback 情形）則 null。</summary>
+        private static string FindLegacyExeConfig()
+        {
+            try
+            {
+                var p = LegacyExePath;
+                if (File.Exists(p) && !SamePath(p, FilePath)) return p;
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>移除舊位置的 config.ini（只在內容已寫進新位置後呼叫）：PROFILE/&lt;id&gt;/config.ini（per-user）+ 執行檔同層的舊全域檔。</summary>
+        private static void DeleteLegacyConfigs()
         {
             try
             {
                 var root = ProfileManager.Root;
-                if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
-                foreach (var dir in Directory.GetDirectories(root))
-                {
-                    var p = Path.Combine(dir, FileName);
-                    if (File.Exists(p)) { File.Delete(p); Debug.Log($"[RoomConfig] removed per-user {p}"); }
-                }
+                if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
+                    foreach (var dir in Directory.GetDirectories(root))
+                    {
+                        var p = Path.Combine(dir, FileName);
+                        if (File.Exists(p)) { File.Delete(p); Debug.Log($"[RoomConfig] removed per-user {p}"); }
+                    }
             }
-            catch (Exception e) { Debug.LogWarning($"[RoomConfig] cleanup failed: {e.Message}"); }
+            catch (Exception e) { Debug.LogWarning($"[RoomConfig] per-user cleanup failed: {e.Message}"); }
+
+            try
+            {
+                var exe = LegacyExePath;
+                if (File.Exists(exe) && !SamePath(exe, FilePath)) { File.Delete(exe); Debug.Log($"[RoomConfig] removed legacy {exe}"); }
+            }
+            catch (Exception e) { Debug.LogWarning($"[RoomConfig] legacy cleanup failed: {e.Message}"); }
         }
 
-        /// <summary>把目前的值寫回 config.ini（附中文註解）。</summary>
+        /// <summary>兩個路徑是否指同一個檔（大小寫不敏感、正規化後比較）；任一失敗保守回 false。</summary>
+        private static bool SamePath(string a, string b)
+        {
+            try { return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
+        /// <summary>把目前的值寫回 config.ini（附中文註解）。寫在 DATA/PROFILE/ 下（開機時該資料夾已由 ProfileManager.Boot
+        /// 建好，這裡再保險確保一次，供 OPTION 保存等較晚的呼叫）。</summary>
         public static void Save()
         {
             try
             {
-                File.WriteAllText(FilePath, Serialize(), new UTF8Encoding(false));
+                var path = FilePath;
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(path, Serialize(), new UTF8Encoding(false));
             }
             catch (Exception e)
             {
@@ -238,7 +288,7 @@ namespace Sdo.Settings
         public static string Serialize()
         {
             var sb = new StringBuilder();
-            sb.Append("# 開房間右側面板預設設定 — 放在執行檔同一層，純文字可手改。\n");
+            sb.Append("# 開房間右側面板預設設定 — 放在存檔資料夾 DATA/PROFILE/（與 settings.json 同層），純文字可手改。\n");
             sb.Append("# 改完存檔，下次開遊戲生效。\n");
             sb.Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
