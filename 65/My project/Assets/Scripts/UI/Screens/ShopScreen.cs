@@ -950,13 +950,26 @@ namespace Sdo.UI.Screens
                 foreach (var m in mr.sharedMaterials)
                     if (m != null && m.mainTexture != null)
                     {
-                        // OPAQUE 衣服 (Unlit/Texture — 含 alpha 壞掉被強制 opaque 的布料) 在卡片上「不可裁」,否則它 94~100%
-                        // 的 alpha0 texel 被打穿 → 透明線框 (粉紅舞會/無限迷戀 小格子)。_Cutoff=0 = 不裁 + alpha 逼 1 (實心)。
-                        // 真鏤空件 (髮/紗/去背 = cutout/blend shader) 才保留 _Cutoff=0.05：只裁真洞、留半透布料。
-                        bool opaque = m.shader != null && m.shader.name == "Unlit/Texture";
+                        string sn = m.shader != null ? m.shader.name : "";
+                        // 髮/鏤空布料 (Sdo/UnlitDoubleSided) 本來就帶 authored _Cutoff(0.3);讀出保留,別壓到 0.05 (見 CardCutoutFor)。
+                        float authored = sn == "Sdo/UnlitDoubleSided" ? m.GetFloat("_Cutoff") : 0f;
                         m.shader = cut;   // 只改有貼圖的 (無貼圖回退材質留給 ForceLightExpressionFace 處理)
-                        m.SetFloat("_Cutoff", opaque ? 0f : 0.05f);
+                        m.SetFloat("_Cutoff", CardCutoutFor(sn, authored));
                     }
+        }
+
+        /// <summary>透空-RT 卡片縮圖:每個部位都被強制成 cutout shader,alpha-clip 門檻依「原本的 shader」決定。Pure → 單元測試。
+        ///   • <c>Unlit/Texture</c> (opaque 衣服,含 alpha 壞掉被強制 opaque 的布料) → 0：不裁 + alpha 逼 1 (實心),
+        ///     否則它 94~100% 的 alpha0 texel 被打穿成透明線框 (粉紅舞會/無限迷戀 小格子)。
+        ///   • <c>Sdo/UnlitDoubleSided</c> (髮/鏤空布料) → 保留 authored cutoff(預設 0.3)。髮飾的「去背」底不是全透 (a=0),
+        ///     而是半透明 a≈0.07~0.25 (DXT3 量化底色);壓到 0.05 裁不掉 → 縮圖露出方框實底 (070028 蝴蝶結髮飾「沒去背」)。
+        ///     0.3 與遊戲內 / 左側大預覽同一 shader、同一門檻,縮圖才一致。
+        ///   • 其餘 (blend = 去背刺青/紗/眼鏡 Sdo/UnlitAvatarAlpha) → 0.05：只裁真洞、留半透布料。</summary>
+        public static float CardCutoutFor(string shaderName, float authoredCutoff)
+        {
+            if (shaderName == "Unlit/Texture") return 0f;
+            if (shaderName == "Sdo/UnlitDoubleSided") return authoredCutoff > 0f ? authoredCutoff : 0.3f;
+            return 0.05f;
         }
 
         // 消掉衣物網格上的「膚色」part/submesh (材質名 = W_Basic_* / M_Basic_*，即裸身手臂/腿) → 格子裡只剩布料。
