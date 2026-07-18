@@ -73,7 +73,7 @@ namespace Sdo.UI.Screens
             var twt = UIKit.AddSprite(Root, "Twt", An("twt"), 627f, 435f);
             var twtAnim = twt.gameObject.AddComponent<SpriteSeqAnim>();
             twtAnim.Frames = LobbySelArt.AnFrames("twt");
-            twtAnim.Fps = 24f;   // 旋轉速度 ×1.2（原 12fps）
+            twtAnim.Fps = 24f;   // 旋轉速度 ×2（原 12fps）
 
             // male / female checkboxes (mutually exclusive). 130a/b = male off/on, 131a/b = female off/on.
             _maleOff = An("LobbySel130a"); _maleOn = An("LobbySel130b");
