@@ -289,6 +289,7 @@ namespace Sdo.Game
         /// preserves the current walk position/facing and returns it to its idle pose. No-op (just stores) until Build ran.</summary>
         public void RebuildLocalAvatar(bool male, string[] avatarParts, int bodyIndex = 0)
         {
+            bool wasFlying = _flying;   // 舊穿搭是否在飛(要在 ApplyOutfitMotion 覆寫 _flying 前捕捉)
             _male = male;
             _avatarParts = avatarParts;
             _bodyIndex = bodyIndex;   // 換穿時一併帶入最新體型 (胖瘦)
@@ -304,9 +305,29 @@ namespace Sdo.Game
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
             _walking = false;
-            if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);
+            ApplyRebuildIdle(wasFlying);
             ApplyAvatarTransform();
             if (oldRoot != null) Destroy(oldRoot.gameObject);
+        }
+
+        /// <summary>Arm the rebuilt avatar's idle. Normally an instant idle pose, BUT when the outfit change 脱下飛行翅膀
+        /// (was flying, now grounded) settle the body from the flystay 浮空 pose down to the ground idle over 1s instead
+        /// of popping — prime the flystay pose as the crossfade source, then blend to the new idle (使用者需求 #2)。</summary>
+        private void ApplyRebuildIdle(bool wasFlying)
+        {
+            if (_avatar == null || _idleMot == null) return;
+            if (wasFlying && !_flying)
+            {
+                var flystay = SdoRoomAvatar.LoadMot(SpecialMotionItems.FlyIdleMot(_male));
+                if (flystay != null)
+                {
+                    _avatar.PrimeBlendFrom(flystay);   // 顯示 flystay 當 crossfade 起點
+                    _avatar.BlendNextClip(1f);         // 只此一次用 1 秒(不影響之後 idle↔walk 的預設混色)
+                    _avatar.SetClip(_idleMot);         // → 1 秒平滑 flystay→地面 idle
+                    return;
+                }
+            }
+            _avatar.SetClip(_idleMot);   // 一般:從生成起就用對的 idle(flystay 也是,不必等走一步)
         }
 
         /// <summary>Resolve the idle/walk clips + walk speed for the CURRENT outfit — the decompiled special-item traits

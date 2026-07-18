@@ -65,8 +65,8 @@ namespace Sdo.Game
             _femaleParts = femaleParts; _maleParts = maleParts;
             _femaleBodyIndex = femaleBody; _maleBodyIndex = maleBody;
             BuildCamera();
-            _femalePreviewMots = LoadPreviewMots(FemalePreviewMotPaths);
-            _malePreviewMots = LoadPreviewMots(MalePreviewMotPaths);
+            _femalePreviewMots = BuildPreviewMots(male: false);
+            _malePreviewMots = BuildPreviewMots(male: true);
             _female = BuildAvatar(male: false, name: "GenderPreviewFemale");
             _male = BuildAvatar(male: true, name: "GenderPreviewMale");
             SetGender(gender);
@@ -77,6 +77,10 @@ namespace Sdo.Game
         {
             _femaleParts = femaleParts; _maleParts = maleParts;
             _femaleBodyIndex = femaleBody; _maleBodyIndex = maleBody;
+            // 換裝可能新增/移除飛行翅膀 → 重挑每個性別的預覽動作(穿飛行翅膀=flystay 浮空,否則隨機 idle)。
+            _femalePreviewMots = BuildPreviewMots(male: false);
+            _malePreviewMots = BuildPreviewMots(male: true);
+            _femaleMotIndex = -1; _maleMotIndex = -1;
             if (_female != null) Destroy(_female.gameObject);
             if (_male != null) Destroy(_male.gameObject);
             _female = BuildAvatar(male: false, name: "GenderPreviewFemale");
@@ -129,6 +133,21 @@ namespace Sdo.Game
         {
             TickRandomMotion(_female, male: false);
             TickRandomMotion(_male, male: true);
+        }
+
+        /// <summary>The preview clips for a gender: when the previewed outfit wears a 飛行翅膀 (fly wing), the single
+        /// flystay 浮空 idle (rest cat 0x2c) held on loop — the select screen shows the character actually hovering
+        /// (使用者需求 #1);otherwise the usual pool of random standby idles.</summary>
+        private MotLoader[] BuildPreviewMots(bool male)
+        {
+            var parts = male ? _maleParts : _femaleParts;
+            if (SpecialMotionItems.WearsFlyingWing(parts))
+            {
+                var fly = SdoRoomAvatar.LoadMot(SpecialMotionItems.FlyIdleMot(male));
+                if (fly != null) return new[] { fly };   // 只 flystay,不隨機切換(單元素清單 → 循環同一支)
+                Debug.LogWarning("[gender-preview] missing flystay MOT " + SpecialMotionItems.FlyIdleMot(male));
+            }
+            return LoadPreviewMots(male ? MalePreviewMotPaths : FemalePreviewMotPaths);
         }
 
         private static MotLoader[] LoadPreviewMots(string[] rels)

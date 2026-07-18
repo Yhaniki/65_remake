@@ -78,9 +78,11 @@ namespace Sdo.Game
             _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
-            // the avatar's live pose (官方頭像框跟著實際動作做動作).
-            _walkMot = SdoRoomAvatar.LoadMot(male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
-            _idleMot = SdoRoomAvatar.LoadMot(male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            // the avatar's live pose (官方頭像框跟著實際動作做動作). 穿飛行翅膀時比照房間 avatar 用 flystay 浮空 idle /
+            // fly 前傾滑動,頭貼才跟著一樣做飛行動作 (使用者需求 #3;SpecialMotionItems 同一條規則)。
+            bool flying = SpecialMotionItems.WearsFlyingWing(avatarParts);
+            _walkMot = SdoRoomAvatar.LoadMot(flying ? SpecialMotionItems.FlyWalkMot(male) : (male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot));
+            _idleMot = SdoRoomAvatar.LoadMot(flying ? SpecialMotionItems.FlyIdleMot(male) : (male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot));
 
             _rt = new RenderTexture(rtWidth, rtHeight, 16, RenderTextureFormat.ARGB32) { name = "RoomHeadPortraitRT" };
             var camGo = new GameObject("RoomHeadPortraitCam");
