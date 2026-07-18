@@ -11,7 +11,7 @@
   "lcg": "state=seed; 每步 state=(state*0x3D09)&0xffffffff; k=(state>>16)&0xff; out=in-k (解密)"
  },
  "counts": {
-  "total": 4321,
+  "total": 4323,
   "ddrm": 4,
   "sdom": 3170,
   "rewu": 1172,
@@ -8547,6 +8547,17 @@
    "bpm": 95.0,
    "title": "完美的互动",
    "size": 69792
+  },
+  {
+   "gn": "sdom0686k.gn",
+   "enc": "sdom",
+   "mode": "K",
+   "seed": 11823522,
+   "innerOff": 456,
+   "fileId": 10686,
+   "bpm": 138.0,
+   "title": "kissy kissy",
+   "size": 109812
   },
   {
    "gn": "sdom0691k.gn",
@@ -27585,16 +27596,6 @@
    "size": 85440
   },
   {
-   "gn": "sdom2.gn",
-   "enc": "ddrm",
-   "seed1": 3396121139,
-   "seed2": 89264872,
-   "fileId": 2,
-   "bpm": 120.0,
-   "title": "新手教学",
-   "size": 7072
-  },
-  {
    "gn": "sdom2000k.gn",
    "enc": "sdom",
    "mode": "K",
@@ -28233,6 +28234,17 @@
    "size": 66880
   },
   {
+   "gn": "sdom2033k.gn",
+   "enc": "sdom",
+   "mode": "K",
+   "seed": 7836746,
+   "innerOff": 456,
+   "fileId": 12033,
+   "bpm": 145.0,
+   "title": "didida",
+   "size": 125108
+  },
+  {
    "gn": "sdom2035k.gn",
    "enc": "sdom",
    "mode": "K",
@@ -28275,6 +28287,17 @@
    "bpm": 113.0,
    "title": "Breaking News",
    "size": 103648
+  },
+  {
+   "gn": "sdom2038k.gn",
+   "enc": "sdom",
+   "mode": "K",
+   "seed": 7836746,
+   "innerOff": 456,
+   "fileId": 12038,
+   "bpm": 145.0,
+   "title": "didida",
+   "size": 125108
   },
   {
    "gn": "sdom2040k.gn",

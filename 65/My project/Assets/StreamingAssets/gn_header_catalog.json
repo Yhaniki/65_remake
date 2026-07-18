@@ -9,7 +9,7 @@
   "en"
  ],
  "zhTW": "opencc s2twp",
- "count": 4319,
+ "count": 4318,
  "songs": [
   {
    "gn": "sdom0001k.gn",
@@ -32302,6 +32302,45 @@
    },
    "producer": "Mina",
    "origName": "sdom0665T.gm"
+  },
+  {
+   "gn": "sdom0686k.gn",
+   "fileId": 10686,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 138.0,
+   "levels": [
+    4,
+    6,
+    16
+   ],
+   "noteCounts": [
+    376,
+    620,
+    1152
+   ],
+   "measurements": [
+    326,
+    336,
+    361
+   ],
+   "durations": [
+    151,
+    151,
+    151
+   ],
+   "title": {
+    "zhCN": "kissy kissy",
+    "zhTW": "kissy kissy",
+    "en": "kissy kissy"
+   },
+   "artist": {
+    "zhCN": "smile",
+    "zhTW": "smile",
+    "en": "smile"
+   },
+   "producer": "MR Jerry",
+   "origName": "sdom2222K.gm"
   },
   {
    "gn": "sdom0691k.gn",
@@ -101412,45 +101451,6 @@
    "origName": "sdom1999T.gm"
   },
   {
-   "gn": "sdom2.gn",
-   "fileId": 2,
-   "fileType": "gn",
-   "mode": "",
-   "bpm": 120.0,
-   "levels": [
-    1,
-    0,
-    0
-   ],
-   "noteCounts": [
-    24,
-    0,
-    0
-   ],
-   "measurements": [
-    23,
-    0,
-    0
-   ],
-   "durations": [
-    40,
-    0,
-    0
-   ],
-   "title": {
-    "zhCN": "新手教学",
-    "zhTW": "新手教學",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "DONOVAN",
-    "zhTW": "DONOVAN",
-    "en": "DONOVAN"
-   },
-   "producer": "VAN",
-   "origName": "sdom02.gm"
-  },
-  {
    "gn": "sdom2000k.gn",
    "fileId": 12000,
    "fileType": "gn",
@@ -103713,6 +103713,45 @@
    "origName": "sdom2031T.gm"
   },
   {
+   "gn": "sdom2033k.gn",
+   "fileId": 12033,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 145.0,
+   "levels": [
+    3,
+    8,
+    24
+   ],
+   "noteCounts": [
+    303,
+    619,
+    817
+   ],
+   "measurements": [
+    257,
+    325,
+    367
+   ],
+   "durations": [
+    112,
+    112,
+    112
+   ],
+   "title": {
+    "zhCN": "didida",
+    "zhTW": "didida",
+    "en": "didida"
+   },
+   "artist": {
+    "zhCN": "郭书瑶",
+    "zhTW": "郭書瑤",
+    "en": ""
+   },
+   "producer": "lee",
+   "origName": "sdom2038K.gm"
+  },
+  {
    "gn": "sdom2035k.gn",
    "fileId": 12035,
    "fileType": "gn",
@@ -103867,6 +103906,45 @@
    },
    "producer": "zhou",
    "origName": "sdom2036T.gm"
+  },
+  {
+   "gn": "sdom2038k.gn",
+   "fileId": 12038,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 145.0,
+   "levels": [
+    3,
+    8,
+    24
+   ],
+   "noteCounts": [
+    303,
+    619,
+    817
+   ],
+   "measurements": [
+    257,
+    325,
+    367
+   ],
+   "durations": [
+    112,
+    112,
+    112
+   ],
+   "title": {
+    "zhCN": "didida",
+    "zhTW": "didida",
+    "en": "didida"
+   },
+   "artist": {
+    "zhCN": "郭书瑶",
+    "zhTW": "郭書瑤",
+    "en": ""
+   },
+   "producer": "lee",
+   "origName": "sdom2038K.gm"
   },
   {
    "gn": "sdom2040k.gn",

@@ -49,22 +49,6 @@
    "durHard": 172
   },
   {
-   "gn": "sdom2.gn",
-   "fileId": 2,
-   "title": "新手教学",
-   "artist": "DONOVAN",
-   "bpm": 120.0,
-   "diffEasy": 1,
-   "diffNormal": 0,
-   "diffHard": 0,
-   "notesEasy": 24,
-   "notesNormal": 0,
-   "notesHard": 0,
-   "durEasy": 40,
-   "durNormal": 0,
-   "durHard": 0
-  },
-  {
    "gn": "sdom0003t.gn",
    "fileId": 3,
    "title": "不如跳舞",
@@ -41201,6 +41185,22 @@
    "durHard": 121
   },
   {
+   "gn": "sdom0686k.gn",
+   "fileId": 10686,
+   "title": "kissy kissy",
+   "artist": "smile",
+   "bpm": 138.0,
+   "diffEasy": 4,
+   "diffNormal": 6,
+   "diffHard": 16,
+   "notesEasy": 376,
+   "notesNormal": 620,
+   "notesHard": 1152,
+   "durEasy": 151,
+   "durNormal": 151,
+   "durHard": 151
+  },
+  {
    "gn": "sdom0691k.gn",
    "fileId": 10691,
    "title": "Like This 13",
@@ -55825,6 +55825,22 @@
    "durHard": 104
   },
   {
+   "gn": "sdom2033k.gn",
+   "fileId": 12033,
+   "title": "didida",
+   "artist": "郭书瑶",
+   "bpm": 145.0,
+   "diffEasy": 3,
+   "diffNormal": 8,
+   "diffHard": 24,
+   "notesEasy": 303,
+   "notesNormal": 619,
+   "notesHard": 817,
+   "durEasy": 112,
+   "durNormal": 112,
+   "durHard": 112
+  },
+  {
    "gn": "sdom2035k.gn",
    "fileId": 12035,
    "title": "吻我好吗",
@@ -55855,6 +55871,22 @@
    "durEasy": 159,
    "durNormal": 159,
    "durHard": 159
+  },
+  {
+   "gn": "sdom2038k.gn",
+   "fileId": 12038,
+   "title": "didida",
+   "artist": "郭书瑶",
+   "bpm": 145.0,
+   "diffEasy": 3,
+   "diffNormal": 8,
+   "diffHard": 24,
+   "notesEasy": 303,
+   "notesNormal": 619,
+   "notesHard": 817,
+   "durEasy": 112,
+   "durNormal": 112,
+   "durHard": 112
   },
   {
    "gn": "sdom2040k.gn",
