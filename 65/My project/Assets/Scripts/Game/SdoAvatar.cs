@@ -84,6 +84,11 @@ namespace Sdo.Game
         public bool OneShotHeld => _oneShot != null && _oneShotHold && _oneShotStart >= 0f
             && (Time.time - _oneShotStart) * Fps >= _oneShot.MaxTime;
 
+        /// <summary>True when the avatar is currently displaying its standby REST clip (idle) or a win/lose one-shot —
+        /// i.e. NOT a dance slice. Lets the gameplay host lift the DANCING body up to the floating idle's altitude
+        /// (飛行翅膀:flystay idle 靠自身 pose 浮空,dance 貼地 → 跳舞時額外抬 root 補上;見 ScreenGameplay.UpdateFlyHover)。</summary>
+        public bool IsRestPose => _oneShot != null || (RestMot != null && _mot == RestMot);
+
         /// <summary>Play a single motion clip once from t=0. When <paramref name="hold"/> it clamps on the last
         /// frame; otherwise it loops. Takes priority over DPS/idle until <see cref="ClearOneShot"/>.</summary>
         public void PlayOneShot(MotLoader mot, bool hold)

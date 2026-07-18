@@ -2466,6 +2466,22 @@ namespace Sdo.Game
                 Vector3 chestLocal = avatar != null ? avatar.BoneModelPos("Bip01_Spine1") : new Vector3(0f, 38f, 0f);
                 _avatarChest = parent.transform.position + chestLocal;   // star-ring / bounds / debug framing only
                 _avatarRoot = parent.transform;
+                // 飛行翅膀:量 flystay 浮空 idle 比「dance 貼地」高多少(Δ),UpdateFlyHover 在跳舞時把 root 抬 Δ,讓跳舞和
+                // fly idle 同高(不然飛行角色跳舞卻黏地上)。用「身體(骨盆)」的高度差,不用最低頂點——飛行 idle 常是腿垂下,
+                // 最低頂點反而更低會量成 0;骨盆才代表身體被抬起的高度。idle 本身靠 flystay pose 已浮,故只在 dance 補抬。
+                _flyBaseRootY = _danceSpot.y - feetY; _flyDanceLift = 0f; _flyLiftCur = 0f;
+                if (avatar != null && avatar.RestMot != null && SpecialMotionItems.WearsFlyingWing(avatarParts))
+                {
+                    string refBone = avatar.BoneIndex("Bip01_Pelvis") >= 0 ? "Bip01_Pelvis"
+                                   : avatar.BoneIndex("Bip01_Spine") >= 0 ? "Bip01_Spine" : "Bip01";
+                    avatar.SetClip(mot); avatar.PoseFrame(0f);                       // dance ready pose
+                    float danceRefY = avatar.BoneModelPos(refBone).y;
+                    avatar.SetClip(avatar.RestMot); float flyFeet = avatar.FeetYAt(0f);   // flystay pose (FeetYAt poses it)
+                    float flyRefY = avatar.BoneModelPos(refBone).y;
+                    // 用「身體(骨盆)高度差」和「腳底高度差」取較大者:飛行 idle 可能腿垂下(腳底差≈0)或整個抬起(兩者皆>0);
+                    // 取 max 兩種都涵蓋,寧可抬到位也不要黏地。
+                    _flyDanceLift = Mathf.Max(0f, Mathf.Max(flyRefY - danceRefY, flyFeet - feetY));
+                }
                 if (avatar != null) avatar.PoseInitialIdle();   // arm the idle so the first frame doesn't crossfade from the measurement T-pose
                 if (!avatarDebug && avatar != null)
                     try   // never let a hand-glow hiccup abort scene/audio setup (which run AFTER TryLoadAvatar)
@@ -2530,6 +2546,18 @@ namespace Sdo.Game
         // .cv eye/target ONLY for shots whose CDT flag = 1. For solo the spot is the origin, so the anchor is zero and
         // every camera is just its raw .cv/table value. (The old _avatarChest re-centring was the source of the
         // wrong angles + the fly-in; it's gone.)
+        // 飛行翅膀:每幀把整個舞者平滑抬到與 flystay 浮空 idle 同高。idle 靠自身 pose 已浮 Δ(抬 0);dance 貼地(抬 Δ)。
+        // 非飛行(_flyDanceLift==0)/2D/編輯器直接跳過。地面星環釘在 FloorY,故舞者浮起、星環仍貼地;相機是 verbatim CDT
+        // 不動 → 舞者在畫面內往上浮。見 [[sdo-special-item-idle-walk]]。
+        private void UpdateFlyHover()
+        {
+            if (_flyDanceLift <= 0f || _avatarRoot == null || _avatar == null) return;
+            float target = _avatar.IsRestPose ? 0f : _flyDanceLift;   // idle 已浮 Δ → 0;跳舞 → Δ(抬到同高)
+            _flyLiftCur = Mathf.Lerp(_flyLiftCur, target, 1f - Mathf.Exp(-Time.deltaTime / 0.25f));   // 平滑起降(τ≈0.25s)
+            var p = _avatarRoot.position;
+            _avatarRoot.position = new Vector3(p.x, _flyBaseRootY + _flyLiftCur, p.z);
+        }
+
         private Vector3 _danceSpot = Vector3.zero;     // solo floor spot (0,0,0); dancer's feet stand here
         private Vector3 _avatarChest;                  // dancer chest world point (star-ring / bounds / debug framing only)
         private bool _camReady;                        // director shots loaded
@@ -2537,6 +2565,10 @@ namespace Sdo.Game
         private Camera _sceneCam;
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
+        // 飛行翅膀跳舞抬升:flystay 浮空 idle 靠自身 pose 已浮 Δ,dance 貼地 → 跳舞時把 root 抬 Δ,讓跳舞與 fly idle 同高。
+        private float _flyDanceLift;   // Δ = flystay idle 相對「dance 貼地」的浮高(>0 才啟用;非飛行/2D/編輯器=0)
+        private float _flyBaseRootY;   // dance 貼地時的 root.y(= danceSpot.y − danceFeetY)
+        private float _flyLiftCur;     // 目前已套用的抬升,平滑到 idle→0 / dance→Δ
         private int _camMode = -1;                     // -1 = auto-director (default); 0..5 = fixed F2 camera
         private CvLoader[] _dirCv; private int[] _dirDurMs; private bool[] _dirAbs;   // director shots + per-shot absolute(:0)/relative(:1)
         private int _dirShot; private float _dirShotStart;
@@ -3952,6 +3984,7 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) { if (editorMode) EditorSetRate(GameRate.Normal); else SetGameRate(GameRate.Normal); }
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
+            UpdateFlyHover();   // 飛行翅膀:跳舞時把舞者抬到 fly idle 同高(idle 靠 pose 已浮,dance 補抬)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
             if (Input.GetKeyDown(KeyCode.F9))
             {
