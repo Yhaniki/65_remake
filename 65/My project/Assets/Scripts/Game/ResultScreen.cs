@@ -148,7 +148,19 @@ namespace Sdo.Game
         private GameObject BuildBanner(string name, string dir, string an, float x, float y)
         {
             var go = new GameObject(name); go.transform.SetParent(_root.transform, false);
-            var sr = NewSR(name + "Img", SdoExtracted.LoadAn1(dir, an, bleed: true), OrderBanner);
+            // The banner is magnified on screen (zooms screen-width→1, plus the 800×600→window stretch), and with the
+            // default STRAIGHT-alpha sprite material bilinear MAGNIFICATION interpolates colour and coverage separately
+            // across each glyph's opaque→transparent edge, smearing the bright candy bevel / white matte outward as a
+            // pale 「白邊」 halo (worst on the U's flat top). The art is clean (composites fine over black at native size),
+            // so it's a GPU-sampler artifact, not a matte to scrub — bleed:true only touches the a≤8 matte and can't
+            // stop it. Fix = PREMULTIPLIED alpha: its own premult texture + a premult-blend material (Blend One
+            // OneMinusSrcAlpha) make the edge interpolate correctly → no halo, and it stays SMOOTH through the zoom
+            // (unlike point filtering). Fall back to the old straight-alpha path if the shader was stripped.
+            var premultSh = Shader.Find("Sdo/SpritePremultiply");
+            Sprite spr = premultSh != null ? SdoExtracted.LoadAnSoloPremultiplied(dir, an)
+                                           : SdoExtracted.LoadAn1(dir, an, bleed: true);
+            var sr = NewSR(name + "Img", spr, OrderBanner);
+            if (premultSh != null && spr != null) sr.sharedMaterial = new Material(premultSh) { mainTexture = spr.texture };
             Place(sr, x, y);
             go.transform.position = sr.transform.position;        // root at the banner centre
             sr.transform.SetParent(go.transform, true);

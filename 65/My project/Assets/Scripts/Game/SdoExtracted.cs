@@ -338,6 +338,52 @@ namespace Sdo.Game
             return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
+        /// <summary>First frame of an .an cropped onto its OWN texture with its RGB PREMULTIPLIED by alpha (bilinear, no
+        /// mipmaps, 1px transparent pad). Pair with a premultiplied-alpha material (Blend One OneMinusSrcAlpha —
+        /// <c>Sdo/SpritePremultiply</c>). For a sprite that gets MAGNIFIED on screen (the result 「YOU WIN／LOSE」 banner
+        /// zooms screen-width→1, and everything is stretched from the 800×600 design to the real window): with the
+        /// default STRAIGHT-alpha material, bilinear interpolates colour and coverage SEPARATELY across each glyph's
+        /// opaque→transparent edge, so the transparent matte keeps a bright RGB while its alpha fades — the candy bevel /
+        /// white matte leak outward as a semi-transparent PALE halo (the 「白邊」, worst on flat letter tops like U). It's
+        /// a GPU-sampler artifact, NOT baked in the PNG (the art composites cleanly over black at native size), so
+        /// AlphaBleed / DeMatteWhite can't touch it. Premultiplied colour makes the transparent texels (0,0,0,0): now
+        /// interpolation fades only COVERAGE, the edge keeps the glyph colour (no halo) and stays SMOOTH at any scale
+        /// (unlike point filtering). Premultiply is done in LINEAR space (the project is Linear; the sRGB texture is
+        /// decoded on sample) then re-encoded to sRGB, so the antialiased edge isn't darkened into a faint rim. Its own
+        /// texture keeps this off the shared BALANCE.png atlas (the OK/SAVE buttons crop it too and stay straight-alpha).</summary>
+        public static Sprite LoadAnSoloPremultiplied(string folder, string anName, int pad = 1)
+        {
+            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            if (!File.Exists(anPath)) return null;
+            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (frames.Count == 0) return null;
+            var fr = frames[0];
+            var src = LoadTexture(Path.Combine(folder, fr.Image));
+            if (src == null) return null;
+            int cx, cy, cw, ch;
+            if (fr.HasCrop) { cx = fr.X; cy = src.height - fr.Y - fr.H; cw = fr.W; ch = fr.H; }   // top-left -> bottom-left
+            else { cx = 0; cy = 0; cw = src.width; ch = src.height; }
+            if (cw <= 0 || ch <= 0 || cx < 0 || cy < 0 || cx + cw > src.width || cy + ch > src.height) return null;
+            int W = cw + pad * 2, H = ch + pad * 2;
+            var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            outTex.SetPixels(new Color[W * H]);           // (0,0,0,0) transparent border — premult-clean under bilinear
+            outTex.SetPixels(pad, pad, cw, ch, src.GetPixels(cx, cy, cw, ch));
+            outTex.Apply(false);
+            var cols = outTex.GetPixels();                // straight-alpha, sRGB-stored floats
+            for (int i = 0; i < cols.Length; i++)
+            {
+                var c = cols[i];
+                float a = c.a;
+                var lin = c.linear;                       // sRGB → linear (A untouched)
+                lin.r *= a; lin.g *= a; lin.b *= a;       // premultiply in linear space
+                var outc = lin.gamma;                     // linear → sRGB for storage; GPU decode yields linear·a
+                outc.a = a;
+                cols[i] = outc;
+            }
+            outTex.SetPixels(cols); outTex.Apply(false);
+            return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
+
         /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.
         /// <paramref name="bleed"/> dilates the transparent-white matte to remove the bilinear white halo on edges.</summary>
         public static Sprite LoadImage(string folder, string imageName, bool bleed = false)
