@@ -299,7 +299,8 @@ namespace Sdo.Game
         /// inscribed-circle mask centred on the opaque disc. The orbs are authored composited on WHITE, so a ring of
         /// (255,255,255,~0) matte texels sits just outside the disc; AlphaBleed's 1px reach leaves the far ones white and
         /// bilinear MAGNIFICATION pulls that white into a fringe. Flood kills the white RGB everywhere; the circle mask
-        /// gives a clean round alpha cut-off. Use only for actually-round sprites (see ShopArt.CircularOrbs).</summary>
+        /// gives a clean round alpha cut-off. Use only for actually-round sprites. (SHOP now uses premultiplied alpha
+        /// instead — see <see cref="LoadAnSoloPremultiplied"/> — so this is currently unused, kept for reference.)</summary>
         public static Sprite LoadAnSoloCircular(string folder, string anName, int pad = 0)
             => LoadAnSoloImpl(folder, anName, pad, circular: true);
 
@@ -351,7 +352,7 @@ namespace Sdo.Game
         /// (unlike point filtering). Premultiply is done in LINEAR space (the project is Linear; the sRGB texture is
         /// decoded on sample) then re-encoded to sRGB, so the antialiased edge isn't darkened into a faint rim. Its own
         /// texture keeps this off the shared BALANCE.png atlas (the OK/SAVE buttons crop it too and stay straight-alpha).</summary>
-        public static Sprite LoadAnSoloPremultiplied(string folder, string anName, int pad = 1)
+        public static Sprite LoadAnSoloPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
@@ -374,6 +375,11 @@ namespace Sdo.Game
             {
                 var c = cols[i];
                 float a = c.a;
+                // cleanMatte: 白底出圖在鈕外緣(尤其右上角)留一圈「低透明度純白」matte (a<~48)。premult 會把它「正確」合成成一層
+                // 淡白霧 —— 疊在深色商城 UI 上就顯出「右上外圍沒清乾淨的白邊」。這種低-alpha 泛白像素是 matte 殘留(鈕本身 AA 邊
+                // a≥59、白色圖示 a=255 都在門檻外),直接清成全透明。純白條件避免誤傷帶色 AA 邊。
+                if (cleanMatte && a < 48f / 255f && c.r > 170f / 255f && c.g > 170f / 255f && c.b > 170f / 255f)
+                { cols[i] = new Color(0f, 0f, 0f, 0f); continue; }
                 var lin = c.linear;                       // sRGB → linear (A untouched)
                 lin.r *= a; lin.g *= a; lin.b *= a;       // premultiply in linear space
                 var outc = lin.gamma;                     // linear → sRGB for storage; GPU decode yields linear·a
@@ -381,7 +387,32 @@ namespace Sdo.Game
                 cols[i] = outc;
             }
             outTex.SetPixels(cols); outTex.Apply(false);
+            _premultTextures.Add(outTex);                 // mark so UGUI can pair it with the premult material (UIKit.ApplySprite)
             return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
+
+        // Textures produced by LoadAnSoloPremultiplied (RGB already × alpha). A sprite on one of these MUST render with a
+        // premultiplied-alpha material (Blend One OneMinusSrcAlpha) or it looks wrong — UIKit.ApplySprite auto-pairs them.
+        private static readonly HashSet<Texture> _premultTextures = new HashSet<Texture>();
+        /// <summary>True if <paramref name="t"/> is a premultiplied-alpha texture from <see cref="LoadAnSoloPremultiplied"/>.</summary>
+        public static bool IsPremultTexture(Texture t) => t != null && _premultTextures.Contains(t);
+
+        private static Material _premultUiMat;
+        /// <summary>Shared premultiplied-alpha material (<c>Sdo/SpritePremultiply</c>, Blend One OneMinusSrcAlpha) for
+        /// UI Images / SpriteRenderers showing a premult texture. One instance serves all — UGUI binds each renderer's own
+        /// texture, and SpriteRenderers set their own. Null if the shader was stripped (caller keeps the default material,
+        /// which shows the premult texture too dark — so registration in BuildScript.RequiredShaders matters).</summary>
+        public static Material PremultUiMaterial
+        {
+            get
+            {
+                if (_premultUiMat == null)
+                {
+                    var sh = Shader.Find("Sdo/SpritePremultiply");
+                    if (sh != null) _premultUiMat = new Material(sh) { name = "SdoPremultUI" };
+                }
+                return _premultUiMat;
+            }
         }
 
         /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.
