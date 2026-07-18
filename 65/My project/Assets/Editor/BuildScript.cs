@@ -63,35 +63,110 @@ public static class BuildScript
         ApplyAppIcon();
         EnsureShadersIncluded();
 
-        var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
-        if (scenes.Length == 0) scenes = new[] { "Assets/Scenes/SampleScene.unity" };
-
-        var opts = new BuildPlayerOptions
+        // Stamp the git version into the window title (PlayerSettings.productName). Captured so we can put it back
+        // afterwards — leaving the versioned title in ProjectSettings.asset would dirty the tracked file on every build.
+        string originalTitle = PlayerSettings.productName;
+        ApplyWindowTitle(ComputeWindowTitle(originalTitle), originalTitle);
+        try
         {
-            scenes = scenes,
-            locationPathName = Path.Combine(outDir, ExeName),
-            target = BuildTarget.StandaloneWindows64,
-            targetGroup = BuildTargetGroup.Standalone,
-            options = BuildOptions.None,
-        };
+            var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
+            if (scenes.Length == 0) scenes = new[] { "Assets/Scenes/SampleScene.unity" };
 
-        Debug.Log($"[Build] scenes=[{string.Join(", ", scenes)}] -> {opts.locationPathName}");
-        BuildReport report = BuildPipeline.BuildPlayer(opts);
-        BuildSummary s = report.summary;
-        Debug.Log($"[Build] result={s.result} errors={s.totalErrors} warnings={s.totalWarnings} " +
-                  $"size={s.totalSize} time={s.totalTime} out={s.outputPath}");
+            var opts = new BuildPlayerOptions
+            {
+                scenes = scenes,
+                locationPathName = Path.Combine(outDir, ExeName),
+                target = BuildTarget.StandaloneWindows64,
+                targetGroup = BuildTargetGroup.Standalone,
+                options = BuildOptions.None,
+            };
 
-        if (s.result != BuildResult.Succeeded)
-        {
-            foreach (var step in report.steps)
-                foreach (var msg in step.messages)
-                    if (msg.type == LogType.Error || msg.type == LogType.Exception)
-                        Debug.LogError($"[Build] {step.name}: {msg.content}");
-            EditorApplication.Exit(1);
+            Debug.Log($"[Build] scenes=[{string.Join(", ", scenes)}] -> {opts.locationPathName}");
+            BuildReport report = BuildPipeline.BuildPlayer(opts);
+            BuildSummary s = report.summary;
+            Debug.Log($"[Build] result={s.result} errors={s.totalErrors} warnings={s.totalWarnings} " +
+                      $"size={s.totalSize} time={s.totalTime} out={s.outputPath}");
+
+            // Restore before any exit: EditorApplication.Exit() does not run finally blocks, so put it back here.
+            RestoreWindowTitle(originalTitle);
+
+            if (s.result != BuildResult.Succeeded)
+            {
+                foreach (var step in report.steps)
+                    foreach (var msg in step.messages)
+                        if (msg.type == LogType.Error || msg.type == LogType.Exception)
+                            Debug.LogError($"[Build] {step.name}: {msg.content}");
+                EditorApplication.Exit(1);
+            }
+
+            PackageData(outDir);
+            EditorApplication.Exit(0);
         }
+        catch
+        {
+            RestoreWindowTitle(originalTitle);   // exception path (unlike Exit, this DOES run before the throw propagates)
+            throw;
+        }
+    }
 
-        PackageData(outDir);
-        EditorApplication.Exit(0);
+    // Build the versioned window title from git. SDO_BUILD_TITLE (env) overrides everything (CI / manual). Otherwise:
+    // on a tag -> "<product> <tag>", after a tag -> "<product> <tag>-dev-<hash5>", no git -> the original product name.
+    private static string ComputeWindowTitle(string fallback)
+    {
+        string env = System.Environment.GetEnvironmentVariable("SDO_BUILD_TITLE");
+        if (!string.IsNullOrWhiteSpace(env)) return env.Trim();
+
+        string exact   = Git("describe --tags --exact-match HEAD"); // null unless HEAD is exactly on a tag
+        string nearest = Git("describe --tags --abbrev=0");         // closest ancestor tag (null if repo has no tags)
+        string hash5   = Git("rev-parse --short=5 HEAD");           // 5-char commit hash
+
+        string title = Sdo.Game.BuildTitle.Format(fallback, exact, nearest, hash5);
+        return string.IsNullOrEmpty(title) ? fallback : title;
+    }
+
+    private static void ApplyWindowTitle(string title, string original)
+    {
+        if (string.IsNullOrEmpty(title) || title == original)
+        {
+            Debug.Log($"[Build] window title unchanged = \"{original}\" (git unavailable or no override)");
+            return;
+        }
+        PlayerSettings.productName = title;   // in-memory value BuildPipeline.BuildPlayer bakes into the player
+        Debug.Log($"[Build] window title (productName) = \"{title}\"  (was \"{original}\")");
+    }
+
+    private static void RestoreWindowTitle(string original)
+    {
+        if (PlayerSettings.productName == original) return;
+        PlayerSettings.productName = original;
+        AssetDatabase.SaveAssets();   // flush ProjectSettings.asset so the versioned title never lands in git
+        Debug.Log($"[Build] restored window title (productName) = \"{original}\"");
+    }
+
+    // Run `git <args>` at the repo root; return trimmed stdout on exit 0, else null (no tags / not a repo / git missing).
+    private static string Git(string args)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = args,
+                WorkingDirectory = RepoPath(),
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            using (var p = System.Diagnostics.Process.Start(psi))
+            {
+                string outp = p.StandardOutput.ReadToEnd();
+                p.StandardError.ReadToEnd();   // drain so git can't block on a full stderr pipe
+                p.WaitForExit();
+                return p.ExitCode == 0 ? outp.Trim() : null;
+            }
+        }
+        catch { return null; }
     }
 
     // Append every RequiredShaders entry to GraphicsSettings' "Always Included Shaders" list (idempotent) so the
