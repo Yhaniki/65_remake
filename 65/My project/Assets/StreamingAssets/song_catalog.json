@@ -43675,10 +43675,10 @@
    "diffHard": 14,
    "notesEasy": 504,
    "notesNormal": 636,
-   "notesHard": 919,
-   "durEasy": 140,
-   "durNormal": 140,
-   "durHard": 140
+   "notesHard": 866,
+   "durEasy": 136,
+   "durNormal": 136,
+   "durHard": 136
   },
   {
    "gn": "sdom1112k.gn",
@@ -55516,9 +55516,9 @@
    "notesEasy": 292,
    "notesNormal": 785,
    "notesHard": 887,
-   "durEasy": 115,
-   "durNormal": 115,
-   "durHard": 115
+   "durEasy": 113,
+   "durNormal": 113,
+   "durHard": 113
   },
   {
    "gn": "sdom2010k.gn",
@@ -55829,16 +55829,16 @@
    "fileId": 12033,
    "title": "didida",
    "artist": "郭书瑶",
-   "bpm": 145.0,
-   "diffEasy": 3,
-   "diffNormal": 8,
-   "diffHard": 24,
-   "notesEasy": 303,
-   "notesNormal": 619,
-   "notesHard": 817,
-   "durEasy": 112,
-   "durNormal": 112,
-   "durHard": 112
+   "bpm": 132.0,
+   "diffEasy": 4,
+   "diffNormal": 10,
+   "diffHard": 25,
+   "notesEasy": 363,
+   "notesNormal": 761,
+   "notesHard": 1006,
+   "durEasy": 118,
+   "durNormal": 118,
+   "durHard": 118
   },
   {
    "gn": "sdom2035k.gn",
@@ -67867,10 +67867,10 @@
    "diffHard": 20,
    "notesEasy": 525,
    "notesNormal": 902,
-   "notesHard": 1035,
-   "durEasy": 136,
-   "durNormal": 136,
-   "durHard": 136
+   "notesHard": 939,
+   "durEasy": 132,
+   "durNormal": 132,
+   "durHard": 132
   },
   {
    "gn": "sdom2934k.gn",
@@ -68107,58 +68107,58 @@
    "diffHard": 30,
    "notesEasy": 1077,
    "notesNormal": 1335,
-   "notesHard": 1705,
-   "durEasy": 147,
-   "durNormal": 147,
-   "durHard": 147
+   "notesHard": 1669,
+   "durEasy": 145,
+   "durNormal": 145,
+   "durHard": 145
   },
   {
    "gn": "sdom2953k.gn",
    "fileId": 12953,
    "title": "SLOW DOWN",
    "artist": "向井太一",
-   "bpm": 120.05,
+   "bpm": 120.0,
    "diffEasy": 7,
    "diffNormal": 14,
    "diffHard": 19,
    "notesEasy": 664,
    "notesNormal": 935,
-   "notesHard": 1039,
-   "durEasy": 159,
-   "durNormal": 159,
-   "durHard": 159
+   "notesHard": 1053,
+   "durEasy": 156,
+   "durNormal": 156,
+   "durHard": 156
   },
   {
    "gn": "sdom2954k.gn",
    "fileId": 12954,
    "title": "遗失的心跳",
    "artist": "萧亚轩",
-   "bpm": 126.02,
-   "diffEasy": 5,
-   "diffNormal": 10,
+   "bpm": 126.0,
+   "diffEasy": 9,
+   "diffNormal": 13,
    "diffHard": 16,
-   "notesEasy": 477,
-   "notesNormal": 819,
-   "notesHard": 904,
-   "durEasy": 148,
-   "durNormal": 148,
-   "durHard": 148
+   "notesEasy": 559,
+   "notesNormal": 816,
+   "notesHard": 924,
+   "durEasy": 146,
+   "durNormal": 146,
+   "durHard": 146
   },
   {
    "gn": "sdom2955k.gn",
    "fileId": 12955,
    "title": "怪咖",
    "artist": "薛之谦",
-   "bpm": 122.5,
+   "bpm": 122.0,
    "diffEasy": 5,
    "diffNormal": 11,
    "diffHard": 17,
    "notesEasy": 504,
    "notesNormal": 906,
-   "notesHard": 1026,
-   "durEasy": 172,
-   "durNormal": 172,
-   "durHard": 172
+   "notesHard": 771,
+   "durEasy": 171,
+   "durNormal": 171,
+   "durHard": 171
   },
   {
    "gn": "sdom2956k.gn",
@@ -68185,8 +68185,8 @@
    "diffEasy": 10,
    "diffNormal": 12,
    "diffHard": 14,
-   "notesEasy": 593,
-   "notesNormal": 802,
+   "notesEasy": 595,
+   "notesNormal": 803,
    "notesHard": 1009,
    "durEasy": 103,
    "durNormal": 103,
@@ -68235,10 +68235,10 @@
    "diffHard": 15,
    "notesEasy": 265,
    "notesNormal": 351,
-   "notesHard": 630,
-   "durEasy": 103,
+   "notesHard": 693,
+   "durEasy": 101,
    "durNormal": 101,
-   "durHard": 103
+   "durHard": 101
   },
   {
    "gn": "sdom5005k.gn",
@@ -68389,16 +68389,16 @@
    "fileId": 15014,
    "title": "Uso",
    "artist": "Full Metal Alchemist",
-   "bpm": 90.0,
+   "bpm": 86.454,
    "diffEasy": 5,
    "diffNormal": 8,
    "diffHard": 13,
    "notesEasy": 315,
    "notesNormal": 455,
-   "notesHard": 776,
-   "durEasy": 104,
-   "durNormal": 104,
-   "durHard": 104
+   "notesHard": 777,
+   "durEasy": 99,
+   "durNormal": 99,
+   "durHard": 99
   },
   {
    "gn": "sdom5015k.gn",
@@ -68620,9 +68620,9 @@
    "notesEasy": 182,
    "notesNormal": 252,
    "notesHard": 629,
-   "durEasy": 97,
-   "durNormal": 97,
-   "durHard": 97
+   "durEasy": 90,
+   "durNormal": 90,
+   "durHard": 90
   },
   {
    "gn": "sdom5029k.gn",
@@ -69126,15 +69126,15 @@
    "title": "Identic Conflict",
    "artist": "BBN",
    "bpm": 178.0,
-   "diffEasy": 5,
+   "diffEasy": 7,
    "diffNormal": 10,
-   "diffHard": 35,
-   "notesEasy": 287,
-   "notesNormal": 482,
-   "notesHard": 1252,
-   "durEasy": 94,
-   "durNormal": 94,
-   "durHard": 94
+   "diffHard": 22,
+   "notesEasy": 285,
+   "notesNormal": 470,
+   "notesHard": 1251,
+   "durEasy": 93,
+   "durNormal": 93,
+   "durHard": 93
   }
  ]
 }
