@@ -13,19 +13,66 @@ Add-Type -AssemblyName System.Drawing
 # 背景比對工作(在獨立 runspace 執行，避免 UI 卡住)
 # ---------------------------------------------------------------------------
 $script:worker = {
-    param($sync, $OldRoot, $NewRoot, $OutRoot, $Fast, $ReportOnly, $ClearOut)
+    param($sync, $OldRoot, $NewRoot, $OutRoot, $Fast, $ReportOnly, $ClearOut, $Threads)
 
     function Log($m) { $sync.Log.Enqueue($m) }
+
+    # 每條執行緒處理一批新檔的工作邏輯
+    $chunkScript = {
+        param($files, $OldRoot, $NewRoot, $OutRoot, $Fast, $ReportOnly, $sync, $wi)
+        $added = 0; $modified = 0; $same = 0; $copied = 0; $n = 0
+        $rows = New-Object System.Collections.Generic.List[object]
+        foreach ($nf in $files) {
+            $n++
+            if (($n -band 63) -eq 0) { $sync.Prog[$wi] = $n }
+            $rel     = $nf.FullName.Substring($NewRoot.Length).TrimStart('\')
+            $oldPath = Join-Path $OldRoot $rel
+            $status  = $null
+            if (-not (Test-Path -LiteralPath $oldPath)) {
+                $status = 'Added'; $added++
+            }
+            else {
+                $oldItem  = Get-Item -LiteralPath $oldPath -Force
+                $sameFile = $false
+                if ($oldItem.Length -eq $nf.Length) {
+                    if ($Fast) {
+                        $sameFile = ($oldItem.LastWriteTimeUtc -eq $nf.LastWriteTimeUtc)
+                    }
+                    else {
+                        $h1 = (Get-FileHash -LiteralPath $oldPath -Algorithm SHA256).Hash
+                        $h2 = (Get-FileHash -LiteralPath $nf.FullName -Algorithm SHA256).Hash
+                        $sameFile = ($h1 -eq $h2)
+                    }
+                }
+                if ($sameFile) { $same++; continue }
+                $status = 'Modified'; $modified++
+            }
+            $rows.Add([pscustomobject]@{ Status = $status; RelativePath = $rel; Bytes = $nf.Length })
+            if (-not $ReportOnly) {
+                $dest    = Join-Path $OutRoot $rel
+                $destDir = Split-Path $dest -Parent
+                if (-not (Test-Path -LiteralPath $destDir)) {
+                    try { New-Item -ItemType Directory -Path $destDir -Force | Out-Null } catch {}
+                }
+                Copy-Item -LiteralPath $nf.FullName -Destination $dest -Force
+                $copied++
+            }
+        }
+        $sync.Prog[$wi] = $n
+        [pscustomobject]@{ Added = $added; Modified = $modified; Same = $same; Copied = $copied; Rows = $rows }
+    }
 
     try {
         $OldRoot = $OldRoot.TrimEnd('\')
         $NewRoot = $NewRoot.TrimEnd('\')
+        if ($Threads -lt 1) { $Threads = 1 }
 
-        Log("舊包 : $OldRoot")
-        Log("新包 : $NewRoot")
-        Log("輸出 : $OutRoot")
-        Log("比對 : " + $(if ($Fast) { '大小 + 修改時間 (快速)' } else { '大小 + SHA256 內容雜湊' }))
-        Log("模式 : " + $(if ($ReportOnly) { '只出清單，不複製' } else { '複製新增/修改檔案' }))
+        Log("舊包   : $OldRoot")
+        Log("新包   : $NewRoot")
+        Log("輸出   : $OutRoot")
+        Log("比對   : " + $(if ($Fast) { '大小 + 修改時間 (快速)' } else { '大小 + SHA256 內容雜湊' }))
+        Log("執行緒 : $Threads")
+        Log("模式   : " + $(if ($ReportOnly) { '只出清單，不複製' } else { '複製新增/修改檔案' }))
         Log(("-" * 56))
 
         if (-not $ReportOnly -and $ClearOut -and (Test-Path -LiteralPath $OutRoot)) {
@@ -39,52 +86,46 @@ $script:worker = {
         $sync.Total = $total
         Log("新包檔案數 : $total")
 
-        $added = 0; $modified = 0; $same = 0; $copied = 0; $i = 0
-        $manifest = New-Object System.Collections.Generic.List[object]
+        # 分批(round-robin)
+        $chunks = @{}
+        for ($t = 0; $t -lt $Threads; $t++) { $chunks[$t] = New-Object System.Collections.Generic.List[object] }
+        for ($idx = 0; $idx -lt $total; $idx++) { $chunks[$idx % $Threads].Add($newFiles[$idx]) }
+        $sync.Prog = New-Object 'int[]' $Threads
 
-        foreach ($nf in $newFiles) {
-            $i++
-            if (($i % 100) -eq 0 -and $total -gt 0) {
-                $sync.Progress = [int](($i / $total) * 100)
-                $sync.Status = "比對中 $i / $total"
-            }
+        Log("以 $Threads 條執行緒平行比對...")
+        $iss  = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+        $pool = [runspacefactory]::CreateRunspacePool(1, $Threads, $iss, $Host)
+        $pool.Open()
 
-            $rel     = $nf.FullName.Substring($NewRoot.Length).TrimStart('\')
-            $oldPath = Join-Path $OldRoot $rel
-            $status  = $null
-
-            if (-not (Test-Path -LiteralPath $oldPath)) {
-                $status = 'Added'; $added++
-            }
-            else {
-                $oldItem  = Get-Item -LiteralPath $oldPath -Force
-                $sameFile = $false
-                if ($oldItem.Length -eq $nf.Length) {
-                    if ($Fast) {
-                        $sameFile = ($oldItem.LastWriteTimeUtc -eq $nf.LastWriteTimeUtc)
-                    }
-                    else {
-                        $h1 = (Get-FileHash -LiteralPath $oldItem.FullName -Algorithm SHA256).Hash
-                        $h2 = (Get-FileHash -LiteralPath $nf.FullName -Algorithm SHA256).Hash
-                        $sameFile = ($h1 -eq $h2)
-                    }
-                }
-                if ($sameFile) { $same++; continue }
-                $status = 'Modified'; $modified++
-            }
-
-            $manifest.Add([pscustomobject]@{ Status = $status; RelativePath = $rel; Bytes = $nf.Length })
-
-            if (-not $ReportOnly) {
-                $dest    = Join-Path $OutRoot $rel
-                $destDir = Split-Path $dest -Parent
-                if (-not (Test-Path -LiteralPath $destDir)) {
-                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-                }
-                Copy-Item -LiteralPath $nf.FullName -Destination $dest -Force
-                $copied++
-            }
+        $jobs = @()
+        for ($t = 0; $t -lt $Threads; $t++) {
+            $ps = [powershell]::Create()
+            $ps.RunspacePool = $pool
+            [void]$ps.AddScript($chunkScript.ToString()).
+                AddArgument($chunks[$t].ToArray()).
+                AddArgument($OldRoot).AddArgument($NewRoot).AddArgument($OutRoot).
+                AddArgument([bool]$Fast).AddArgument([bool]$ReportOnly).
+                AddArgument($sync).AddArgument($t)
+            $jobs += [pscustomobject]@{ PS = $ps; Handle = $ps.BeginInvoke() }
         }
+
+        while ($jobs.Handle.IsCompleted -contains $false) {
+            $done = ($sync.Prog | Measure-Object -Sum).Sum
+            if ($total -gt 0) { $sync.Progress = [int](($done / $total) * 100) }
+            $sync.Status = "比對中 $done / $total"
+            Start-Sleep -Milliseconds 200
+        }
+
+        $added = 0; $modified = 0; $same = 0; $copied = 0
+        $manifest = New-Object System.Collections.Generic.List[object]
+        foreach ($j in $jobs) {
+            $res = $j.PS.EndInvoke($j.Handle)
+            $o = $res[0]
+            $added += $o.Added; $modified += $o.Modified; $same += $o.Same; $copied += $o.Copied
+            if ($o.Rows) { $manifest.AddRange([object[]]$o.Rows) }
+            $j.PS.Dispose()
+        }
+        $pool.Close(); $pool.Dispose()
         $sync.Progress = 100
 
         Log('掃描舊包(找刪除項)...')
@@ -208,6 +249,21 @@ $chkClear.Text = '先清空輸出資料夾'; $chkClear.AutoSize = $true
 $chkClear.Location = New-Object System.Drawing.Point(360, 186)
 $form.Controls.Add($chkClear)
 
+$lblThreads = New-Object System.Windows.Forms.Label
+$lblThreads.Text = '執行緒'; $lblThreads.AutoSize = $true
+$lblThreads.Location = New-Object System.Drawing.Point(520, 188)
+$lblThreads.Anchor = 'Top,Right'
+$form.Controls.Add($lblThreads)
+
+$numThreads = New-Object System.Windows.Forms.NumericUpDown
+$numThreads.Location = New-Object System.Drawing.Point(578, 184)
+$numThreads.Size = New-Object System.Drawing.Size(56, 24)
+$numThreads.Anchor = 'Top,Right'
+$numThreads.Minimum = 1
+$numThreads.Maximum = [Environment]::ProcessorCount
+$numThreads.Value = [Math]::Min([Environment]::ProcessorCount, 8)
+$form.Controls.Add($numThreads)
+
 $btnStart = New-Object System.Windows.Forms.Button
 $btnStart.Text = '開始比對'
 $btnStart.Location = New-Object System.Drawing.Point(12, 214)
@@ -299,6 +355,7 @@ $btnStart.Add_Click({
     $script:sync.Status = '開始...'
     $script:sync.Summary = ''
     $script:sync.Total = 0
+    $script:sync.Prog = New-Object 'int[]' 1
 
     $script:ps = [powershell]::Create()
     $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
@@ -310,7 +367,8 @@ $btnStart.Add_Click({
         AddArgument($out).
         AddArgument([bool]$chkFast.Checked).
         AddArgument([bool]$chkReport.Checked).
-        AddArgument([bool]$chkClear.Checked)
+        AddArgument([bool]$chkClear.Checked).
+        AddArgument([int]$numThreads.Value)
     $script:handle = $script:ps.BeginInvoke()
     $script:timer.Start()
 })
