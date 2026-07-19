@@ -360,8 +360,11 @@ namespace Sdo.Game
         /// name — but ONLY when the own-id file is actually present, else the material is returned unchanged (so a shared
         /// skin base, or a template whose recolour wasn't shipped, keeps working). Needs the folder to probe for the file,
         /// so it wraps the pure <see cref="SwapLeadingId"/> with an existence check (.an for a texanim placeholder, else
-        /// the .dds itself). Fixes 070030 女鞋 rendering the template's pink shoe + a static 256 master-card decal.</summary>
-        private static string PreferOwnIdTexture(string dir, string rel, string materialName)
+        /// the .dds itself). Fixes 070030 女鞋 rendering the template's pink shoe + a static 256 master-card decal.
+        /// Public so the room/gender-select loop (<see cref="SdoRoomAvatar"/>) can share the SAME id-swap — else that
+        /// self-contained loop renders shared-template recolours (070025 男上衣) in the TEMPLATE's colour (使用者回報:
+        /// 商城看是黃色,房間/選男女看變粉紅).</summary>
+        public static string PreferOwnIdTexture(string dir, string rel, string materialName)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(materialName)) return materialName;
             string ownId = LeadingSixDigitId(Path.GetFileName((rel ?? "").Replace('\\', '/')));

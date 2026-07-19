@@ -143,6 +143,10 @@ namespace Sdo.Game
                         {
                             int a = sub.Ranges[s].Attrib;
                             string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
+                            // 共用模板 mesh:材質名內嵌的是「模板 id」(070025 男上衣 reuse 012983 幾何 → 材質名寫 012983_man_coat),
+                            // 但道具出了自己的改色貼圖(070025_MAN_COAT.AN 黃色)。換成道具自己的 id → 房間/選男女/頭貼才跟商城/儲物間
+                            // 一致(否則穿成模板的粉紅色)。與 SdoAvatarBuilder.LoadParts 同一支,存在才換(見該函式)。
+                            nm = SdoAvatarBuilder.PreferOwnIdTexture(dir, rel, nm);
                             var t = ResolveDds(dir, nm);
                             // 翅膀(CHIBANG)的發光羽翼常是 model-embedded 換幀貼圖:材質名是佔位符 "_TexAnimEx(NAME)…"，
                             // 找不到真檔 → 交給共用的 TryBuildTexAnim 解出 <NAME>.an 幀序列並掛動畫(與遊戲內舞者/商城同一套),
@@ -155,11 +159,13 @@ namespace Sdo.Game
                     }
                     else
                     {
-                        var tex = ResolveDds(dir, sub.Dds);
+                        // 共用模板 mesh:內嵌模板 id → 換成道具自己 id 的改色貼圖(見上;070025 男上衣 / 070030 女鞋)。
+                        var dds = SdoAvatarBuilder.PreferOwnIdTexture(dir, rel, sub.Dds);
+                        var tex = ResolveDds(dir, dds);
                         // 見上:翅膀 _TexAnimEx 換幀貼圖 → 交給共用 TryBuildTexAnim(解 .an 幀序列)否則變灰色。
-                        Material texAnim = tex == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, sub.Dds, sh) : null;
-                        if (tex == null && texAnim == null && !string.IsNullOrEmpty(sub.Dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{sub.Dds}' unresolved → fallback colour {PartColor(rel)}");
-                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = sub.Dds ?? "" });
+                        Material texAnim = tex == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, dds, sh) : null;
+                        if (tex == null && texAnim == null && !string.IsNullOrEmpty(dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{dds}' unresolved → fallback colour {PartColor(rel)}");
+                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
                     }
 
                     if (sub.BindVerts != null && sub.BoneHrc != null)
