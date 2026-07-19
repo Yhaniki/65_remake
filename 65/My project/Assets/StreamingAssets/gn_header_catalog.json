@@ -9,7 +9,7 @@
   "en"
  ],
  "zhTW": "opencc s2twp",
- "count": 4318,
+ "count": 4321,
  "songs": [
   {
    "gn": "sdom0001k.gn",
@@ -5992,7 +5992,7 @@
    "noteCounts": [
     347,
     339,
-    512
+    515
    ],
    "measurements": [
     282,
@@ -44485,17 +44485,17 @@
    "noteCounts": [
     504,
     636,
-    919
+    866
    ],
    "measurements": [
-    266,
-    291,
-    302
+    296,
+    331,
+    337
    ],
    "durations": [
-    140,
-    140,
-    140
+    136,
+    136,
+    136
    ],
    "title": {
     "zhCN": "Electric Shock",
@@ -102169,14 +102169,14 @@
     887
    ],
    "measurements": [
-    254,
-    259,
-    258
+    279,
+    293,
+    292
    ],
    "durations": [
-    115,
-    115,
-    115
+    113,
+    113,
+    113
    ],
    "title": {
     "zhCN": "坏天使",
@@ -103717,26 +103717,26 @@
    "fileId": 12033,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 145.0,
+   "bpm": 132.0,
    "levels": [
-    3,
-    8,
-    24
+    4,
+    10,
+    25
    ],
    "noteCounts": [
-    303,
-    619,
-    817
+    363,
+    761,
+    1006
    ],
    "measurements": [
-    257,
-    325,
-    367
+    270,
+    271,
+    270
    ],
    "durations": [
-    112,
-    112,
-    112
+    118,
+    118,
+    118
    ],
    "title": {
     "zhCN": "didida",
@@ -103748,8 +103748,8 @@
     "zhTW": "郭書瑤",
     "en": ""
    },
-   "producer": "lee",
-   "origName": "sdom2038K.gm"
+   "producer": "ouqi",
+   "origName": "sdom2033K.gm"
   },
   {
    "gn": "sdom2035k.gn",
@@ -162304,17 +162304,17 @@
    "noteCounts": [
     525,
     902,
-    1035
+    939
    ],
    "measurements": [
-    285,
-    292,
-    292
+    321,
+    329,
+    329
    ],
    "durations": [
-    136,
-    136,
-    136
+    132,
+    132,
+    132
    ],
    "title": {
     "zhCN": "Booty Music",
@@ -163426,26 +163426,26 @@
    "fileId": 2951,
    "fileType": "gn",
    "mode": "T",
-   "bpm": 127.0,
+   "bpm": 100.0,
    "levels": [
-    9,
-    10,
-    13
+    4,
+    8,
+    9
    ],
    "noteCounts": [
-    744,
-    767,
-    853
+    443,
+    447,
+    599
    ],
    "measurements": [
-    354,
-    353,
-    358
+    255,
+    254,
+    263
    ],
    "durations": [
-    154,
-    154,
-    154
+    144,
+    144,
+    144
    ],
    "title": {
     "zhCN": "オノマトペメガネ",
@@ -163458,7 +163458,7 @@
     "en": ""
    },
    "producer": "tina",
-   "origName": "sdom2951T.gm"
+   "origName": "sdom2944T.gm"
   },
   {
    "gn": "sdom2952k.gn",
@@ -163474,17 +163474,17 @@
    "noteCounts": [
     1077,
     1335,
-    1705
+    1669
    ],
    "measurements": [
-    347,
-    351,
-    361
+    390,
+    393,
+    408
    ],
    "durations": [
-    147,
-    147,
-    147
+    145,
+    145,
+    145
    ],
    "title": {
     "zhCN": "ECHO",
@@ -163543,7 +163543,7 @@
    "fileId": 12953,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 120.05,
+   "bpm": 120.0,
    "levels": [
     7,
     14,
@@ -163552,17 +163552,17 @@
    "noteCounts": [
     664,
     935,
-    1039
+    1053
    ],
    "measurements": [
-    347,
-    349,
-    349
+    389,
+    391,
+    367
    ],
    "durations": [
-    159,
-    159,
-    159
+    156,
+    156,
+    156
    ],
    "title": {
     "zhCN": "SLOW DOWN",
@@ -163621,26 +163621,26 @@
    "fileId": 12954,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 126.02,
+   "bpm": 126.0,
    "levels": [
-    5,
-    10,
+    9,
+    13,
     16
    ],
    "noteCounts": [
-    477,
-    819,
-    904
+    559,
+    816,
+    924
    ],
    "measurements": [
-    323,
-    336,
-    338
+    356,
+    360,
+    362
    ],
    "durations": [
-    148,
-    148,
-    148
+    146,
+    146,
+    146
    ],
    "title": {
     "zhCN": "遗失的心跳",
@@ -163699,7 +163699,7 @@
    "fileId": 12955,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 122.5,
+   "bpm": 122.0,
    "levels": [
     5,
     11,
@@ -163708,17 +163708,17 @@
    "noteCounts": [
     504,
     906,
-    1026
+    771
    ],
    "measurements": [
-    349,
-    383,
-    383
+    419,
+    445,
+    424
    ],
    "durations": [
-    172,
-    172,
-    172
+    171,
+    171,
+    171
    ],
    "title": {
     "zhCN": "怪咖",
@@ -163735,29 +163735,29 @@
   },
   {
    "gn": "sdom2955t.gn",
-   "fileId": 2955,
+   "fileId": 2950,
    "fileType": "gn",
    "mode": "T",
-   "bpm": 122.5,
+   "bpm": 115.0,
    "levels": [
-    3,
-    4,
-    5
+    6,
+    9,
+    16
    ],
    "noteCounts": [
-    382,
-    429,
-    506
+    549,
+    600,
+    682
    ],
    "measurements": [
-    312,
-    326,
-    350
+    276,
+    271,
+    274
    ],
    "durations": [
-    172,
-    172,
-    172
+    133,
+    133,
+    133
    ],
    "title": {
     "zhCN": "怪咖",
@@ -163769,8 +163769,8 @@
     "zhTW": "薛之謙",
     "en": ""
    },
-   "producer": "Tina",
-   "origName": "sdom2955T.gm"
+   "producer": "tina",
+   "origName": "sdom2950T.gm"
   },
   {
    "gn": "sdom2956k.gn",
@@ -163816,26 +163816,26 @@
    "fileId": 2956,
    "fileType": "gn",
    "mode": "T",
-   "bpm": 158.0,
+   "bpm": 126.02,
    "levels": [
+    3,
     4,
-    5,
-    6
+    5
    ],
    "noteCounts": [
-    532,
-    556,
-    581
+    362,
+    395,
+    476
    ],
    "measurements": [
-    432,
-    436,
-    443
+    303,
+    314,
+    323
    ],
    "durations": [
-    157,
-    157,
-    157
+    148,
+    148,
+    148
    ],
    "title": {
     "zhCN": "海芋恋",
@@ -163848,7 +163848,7 @@
     "en": ""
    },
    "producer": "Tina",
-   "origName": "sdom2956T.gm"
+   "origName": "sdom2954T.gm"
   },
   {
    "gn": "sdom5001k.gn",
@@ -163862,14 +163862,14 @@
     14
    ],
    "noteCounts": [
-    593,
-    802,
+    595,
+    803,
     1009
    ],
    "measurements": [
-    270,
-    282,
-    289
+    304,
+    316,
+    322
    ],
    "durations": [
     103,
@@ -164098,17 +164098,17 @@
    "noteCounts": [
     265,
     351,
-    630
+    693
    ],
    "measurements": [
-    208,
-    227,
-    279
+    244,
+    263,
+    321
    ],
    "durations": [
-    103,
     101,
-    103
+    101,
+    101
    ],
    "title": {
     "zhCN": "Space Boy",
@@ -164869,7 +164869,7 @@
    "fileId": 15014,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 90.0,
+   "bpm": 86.454,
    "levels": [
     5,
     8,
@@ -164878,17 +164878,17 @@
    "noteCounts": [
     315,
     455,
-    776
+    777
    ],
    "measurements": [
-    159,
-    169,
-    173
+    177,
+    192,
+    192
    ],
    "durations": [
-    104,
-    104,
-    104
+    99,
+    99,
+    99
    ],
    "title": {
     "zhCN": "Uso",
@@ -165973,14 +165973,14 @@
     629
    ],
    "measurements": [
-    175,
-    203,
-    230
+    197,
+    217,
+    247
    ],
    "durations": [
-    97,
-    97,
-    97
+    90,
+    90,
+    90
    ],
    "title": {
     "zhCN": "My Dearest",
@@ -168459,24 +168459,24 @@
    "mode": "K",
    "bpm": 178.0,
    "levels": [
-    5,
+    7,
     10,
-    35
+    22
    ],
    "noteCounts": [
-    287,
-    482,
-    1252
+    285,
+    470,
+    1251
    ],
    "measurements": [
-    238,
-    284,
-    307
+    277,
+    316,
+    344
    ],
    "durations": [
-    94,
-    94,
-    94
+    93,
+    93,
+    93
    ],
    "title": {
     "zhCN": "Identic Conflict",
@@ -168530,5 +168530,6 @@
    "producer": "AQ",
    "origName": "sdom5085T.gm"
   }
- ]
+ ],
+ "statsRefreshedBy": "tools/refresh_gn_header_stats.py"
 }
