@@ -108,21 +108,29 @@ namespace Sdo.Settings
                 if (File.Exists(FilePath))
                 {
                     // 新位置（DATA/PROFILE/config.ini）已就緒 → 正常讀。
-                    ParseInto(File.ReadAllText(FilePath));
+                    string text = File.ReadAllText(FilePath);
+                    ParseInto(text);
                     Sanitize();
+                    // schema 升級：舊版存的 config.ini 可能缺這版新增的 key（例如 AdditionalSongFolders / AddonFolder /
+                    // opt_collapseShortHolds）。缺了就補寫一次 —— 讓新 key 以預設值出現在檔案裡可手改，舊 key 既有值照留。
+                    if (IsMissingCurrentKey(text))
+                    {
+                        if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔沒 [Option] → 先補現值再寫，別用預設蓋掉裝置層
+                        Save();
+                        Debug.Log("[RoomConfig] config.ini 缺新 key → 已補寫升級");
+                    }
                 }
                 else
                 {
-                    // 新位置還沒有 → 找舊檔一次性搬進來：舊 per-user（DATA/PROFILE/<id>/config.ini）才是玩家實際在用的那份，
-                    // 優先；沒有再看舊全域（執行檔同層）。搬完寫進新位置並把舊檔刪掉，之後每次開機都只走上面那條。
-                    string legacy = FindProfileConfig() ?? FindLegacyExeConfig();
+                    // 新位置還沒有 → 只從舊「全域」位置（執行檔同層）一次性搬進來。
+                    // per-user（DATA/PROFILE/<id>/config.ini）是更早的中繼設計，已停用 —— 刻意不再讀取那裡。
+                    string legacy = FindLegacyExeConfig();
                     if (legacy != null)
                     {
                         ParseInto(File.ReadAllText(legacy));
                         Sanitize();
                         if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前值
                         Save();                 // 落地到新位置 DATA/PROFILE/config.ini
-                        DeleteLegacyConfigs();  // 清掉舊 per-user + 執行檔同層的舊檔（內容已寫進新位置）
                         Debug.Log($"[RoomConfig] moved legacy config.ini -> {FilePath}");
                     }
                     else
@@ -132,6 +140,9 @@ namespace Sdo.Settings
                         Save();   // 第一次：在 DATA/PROFILE 留一份可編輯的範本
                     }
                 }
+
+                // 清掉殘留的舊位置 config.ini（已不再讀取那些位置，留著只會混淆）：per-user（DATA/PROFILE/<id>/）+ 執行檔同層。
+                DeleteLegacyConfigs();
 
                 // config.ini 帶了 [Option] → 以檔案值覆蓋 settings.json 的 GameSettings（見 SettingsBootstrap 隨後 ApplyDisplay）。
                 if (hasOption) ApplyOptionTo(DisplaySettingsManager.Settings);
@@ -143,28 +154,29 @@ namespace Sdo.Settings
             }
         }
 
-        /// <summary>找一份殘留的舊 per-user config.ini：優先 active user，其次 PROFILE 下第一個找到的（只看 &lt;id&gt; 子資料夾，
-        /// 不會誤抓 PROFILE 根的新全域檔）。沒有則 null。</summary>
-        private static string FindProfileConfig()
+        /// <summary>目前 schema（<see cref="Serialize"/> 會寫出的 key 全集）裡，是否有 key 不在給定的 INI 文字內。
+        /// 用來偵測「舊版存的 config.ini 缺這版新增的 key」→ <see cref="Load"/> 會補寫一次讓新 key 出現。
+        /// 純函式（只讀字串；<c>Serialize()</c> 只拿來抽 key 清單，值不影響結果）。</summary>
+        public static bool IsMissingCurrentKey(string fileText)
         {
-            try
+            var have = new System.Collections.Generic.HashSet<string>(KeysIn(fileText), StringComparer.Ordinal);
+            foreach (var k in KeysIn(Serialize())) if (!have.Contains(k)) return true;
+            return false;
+        }
+
+        // 取一份 INI 文字裡所有 "key=" 的 key（略過空行/註解/區段標頭）。純函式。
+        private static System.Collections.Generic.List<string> KeysIn(string ini)
+        {
+            var keys = new System.Collections.Generic.List<string>();
+            if (string.IsNullOrEmpty(ini)) return keys;
+            foreach (var raw in ini.Split('\n'))
             {
-                var active = ProfileManager.ActiveDir;
-                if (!string.IsNullOrEmpty(active))
-                {
-                    var p = Path.Combine(active, FileName);
-                    if (File.Exists(p)) return p;
-                }
-                var root = ProfileManager.Root;
-                if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
-                    foreach (var dir in Directory.GetDirectories(root))   // 只列子資料夾 → PROFILE 根的 config.ini 不在其中
-                    {
-                        var p = Path.Combine(dir, FileName);
-                        if (File.Exists(p)) return p;
-                    }
+                var line = raw.Trim();
+                if (line.Length == 0 || line[0] == '#' || line[0] == ';' || line[0] == '[') continue;
+                int eq = line.IndexOf('=');
+                if (eq > 0) keys.Add(line.Substring(0, eq).Trim());
             }
-            catch { /* 找不到就算了，用預設 */ }
-            return null;
+            return keys;
         }
 
         /// <summary>找舊全域位置（執行檔同層）的 config.ini。沒有、或它其實就是新位置（極端 fallback 情形）則 null。</summary>
@@ -179,7 +191,8 @@ namespace Sdo.Settings
             return null;
         }
 
-        /// <summary>移除舊位置的 config.ini（只在內容已寫進新位置後呼叫）：PROFILE/&lt;id&gt;/config.ini（per-user）+ 執行檔同層的舊全域檔。</summary>
+        /// <summary>移除殘留的舊位置 config.ini（每次 <see cref="Load"/> 尾端呼叫，冪等）：PROFILE/&lt;id&gt;/config.ini
+        /// （per-user，已停用、不再讀取）+ 執行檔同層的舊全域檔。新位置 <see cref="FilePath"/> 有 SamePath 守門，不會被刪。</summary>
         private static void DeleteLegacyConfigs()
         {
             try
