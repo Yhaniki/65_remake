@@ -9,7 +9,8 @@ namespace Sdo.Settings
 {
     /// <summary>
     /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），內含
-    /// profile.json + favorites.json + config.ini。目前登入的本機 user 記在 DATA/PROFILE/active.txt。
+    /// profile.json（config.ini 改為全帳號共用、放 DATA/PROFILE/ 根，見 <see cref="RoomConfig"/>）。
+    /// 目前登入的本機 user 記在 DATA/PROFILE/active.txt。
     ///
     /// 單機 v1 首次開機自動種兩個角色 —— 00000000(女) 與 00000001(男) —— 並以 00000000 為 active。刻意先不做
     /// 登入/選角 UI；<see cref="SetActive"/> + 編號資料夾本身就是多帳號的底層，未來線上版換掉 backing store
@@ -53,7 +54,7 @@ namespace Sdo.Settings
         // ---------------- boot / activate ----------------
 
         /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且必須在 <see cref="RoomConfig.Load"/> 之前
-        /// （config.ini 已改成 per-user）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
+        /// （RoomConfig.FilePath 用到 <see cref="Root"/>）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
         public static void Boot()
         {
             try
@@ -87,7 +88,7 @@ namespace Sdo.Settings
             }
             if (!Directory.Exists(dir)) return;
             Activate(id, notify: true);
-            RoomConfig.Load();   // 房間預設也是 per-user → 換人要重載
+            RoomConfig.Load();   // config 現為全帳號共用；重載只是讓外部手改的檔案即時生效（idempotent）
             ActiveChanged?.Invoke();
         }
 

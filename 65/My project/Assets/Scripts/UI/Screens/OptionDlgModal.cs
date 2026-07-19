@@ -525,7 +525,7 @@ namespace Sdo.UI.Screens
             StoreGame(s.gameplay);
 
             DisplaySettingsManager.Save();
-            // OPTION 設定也落地 per-user config.ini（DATA/PROFILE/<id>/）：抓目前值 → 寫檔（使用者要求）。
+            // OPTION 設定也落地共用 config.ini（DATA/PROFILE/）：抓目前值 → 寫檔（使用者要求）。
             Sdo.Settings.RoomConfig.CaptureOptionFrom(s);
             Sdo.Settings.RoomConfig.Save();
             if (displayChanged) DisplaySettingsManager.ApplyDisplay();   // 沒改顯示就不重建視窗(避免保存像「跳出去」)

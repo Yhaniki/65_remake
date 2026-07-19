@@ -1,3 +1,4 @@
+using System.IO;
 using NUnit.Framework;
 using Sdo.Settings;
 
@@ -5,6 +6,21 @@ namespace Sdo.Tests
 {
     public class RoomConfigTests
     {
+        // config.ini 全帳號共用：位於 DATA/PROFILE/ 根（== ProfileManager.Root），不進 per-user 子資料夾、
+        // 不依賴 ActiveDir。這個合約若被改回 per-user 會讓外部歌曲資料夾等「本機」設定綁到單一角色。
+        [Test]
+        public void FilePath_Is_Shared_At_Profile_Root_Not_Per_User()
+        {
+            var saved = ProfileManager.Root;
+            try
+            {
+                var root = Path.Combine(Path.GetTempPath(), "sdo_cfg_root_test");
+                ProfileManager.Root = root;
+                Assert.AreEqual(Path.Combine(root, RoomConfig.FileName), RoomConfig.FilePath);
+            }
+            finally { ProfileManager.Root = saved; }
+        }
+
         // Reset to built-in defaults before each case (RoomConfig holds static state).
         [SetUp]
         public void Reset()

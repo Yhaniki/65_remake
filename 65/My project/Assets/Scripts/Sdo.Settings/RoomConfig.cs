@@ -7,8 +7,9 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 開房間右側面板的可選清單與預設值，存成 <c>config.ini</c>。改成 per-user —— 放在 active 使用者資料夾
-    /// （DATA/PROFILE/&lt;id&gt;/config.ini，見 <see cref="ProfileManager"/>）；舊的執行檔同層 config.ini 會一次性遷移進來。
+    /// 開房間右側面板的可選清單與預設值，存成 <c>config.ini</c>。全帳號共用 —— 放在 PROFILE 根
+    /// （DATA/PROFILE/config.ini，與 settings.json / active.txt 同層，見 <see cref="ProfileManager"/>）；
+    /// 舊的 per-user（DATA/PROFILE/&lt;id&gt;/）與更早的 exe 同層 config.ini 會一次性遷移進來。
     /// 純文字、好手改：第一次跑會自動寫一份附註解的範本；之後讀檔覆蓋預設。解析/夾值是純函式可單元測試
     /// （<see cref="ParseInto"/> / <see cref="Sanitize"/> 不碰檔案）。
     /// </summary>
@@ -32,9 +33,9 @@ namespace Sdo.Settings
         // 資料夾（例如另一顆硬碟 D:/SdoAddon）就填一個絕對路徑；該資料夾底下就是 SONG 等子夾。見 SdoExtracted.AddonDir。
         public static string addonFolder = "";
 
-        // ---- OPTION 對話框設定的 per-user 鏡像（存進同一份 config.ini 的 [Option] 區）。使用者要求 OPTION 設定也落地
-        //      config.ini（放 DATA/PROFILE/<id>/）。裝置層的 settings.json 仍是執行期讀取的工作副本；這裡是「每帳號」的
-        //      覆蓋值：開機/切帳號 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），Apply 時再抓回來存
+        // ---- OPTION 對話框設定的鏡像（存進同一份共用 config.ini 的 [Option] 區）。使用者要求 OPTION 設定也落地
+        //      config.ini（放 DATA/PROFILE/）。裝置層的 settings.json 仍是執行期讀取的工作副本；這裡是共用的
+        //      覆蓋值：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），Apply 時再抓回來存
         //      （CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
         public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了才覆蓋 settings.json 的裝置層值）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
@@ -50,18 +51,23 @@ namespace Sdo.Settings
 
         public const string FileName = "config.ini";
 
-        /// <summary>config.ini 的完整路徑：改成 per-user —— active 使用者資料夾（DATA/PROFILE/&lt;id&gt;/config.ini）。
-        /// ProfileManager.Boot() 尚未跑（ActiveDir 空）時退回舊的 exe 同層路徑，見 <see cref="LegacyFilePath"/>。</summary>
-        public static string FilePath
+        /// <summary>config.ini 的完整路徑：全帳號共用 —— <c>DATA/PROFILE/config.ini</c>（與 settings.json / active.txt 同層）。
+        /// 房間預設、OPTION、外部歌曲資料夾都屬「本機」層級、不綁單一角色，故放 PROFILE 根而非 per-user 子資料夾。
+        /// 需在 <see cref="ProfileManager.Boot"/> 之後讀（Root 那時才確定）。</summary>
+        public static string FilePath => Path.Combine(ProfileManager.Root, FileName);
+
+        /// <summary>前一版的 per-user 位置（<c>DATA/PROFILE/&lt;active id&gt;/config.ini</c>）。保留供一次性遷移；
+        /// Boot() 前 ActiveDir 為空 → 回傳空字串（該來源略過）。</summary>
+        public static string LegacyPerUserFilePath
         {
             get
             {
                 var dir = ProfileManager.ActiveDir;
-                return string.IsNullOrEmpty(dir) ? LegacyFilePath : Path.Combine(dir, FileName);
+                return string.IsNullOrEmpty(dir) ? "" : Path.Combine(dir, FileName);
             }
         }
 
-        /// <summary>舊版位置：執行檔同一層（Editor 下 = 專案根「My project/」）。保留供一次性遷移與 fallback。</summary>
+        /// <summary>更早的位置：執行檔同一層（Editor 下 = 專案根「My project/」）。保留供一次性遷移與 fallback。</summary>
         public static string LegacyFilePath
         {
             get
@@ -75,8 +81,8 @@ namespace Sdo.Settings
             }
         }
 
-        /// <summary>讀 config.ini（per-user，不存在就用內建預設並寫一份範本）。在 <see cref="ProfileManager.Boot"/>
-        /// 之後呼叫；換 active user 時 ProfileManager 也會重呼一次。舊的 exe 同層 config.ini 會一次性遷移進來。</summary>
+        /// <summary>讀 config.ini（全帳號共用，不存在就用內建預設並寫一份範本）。在 <see cref="ProfileManager.Boot"/>
+        /// 之後呼叫。首次會把舊位置（前一版 per-user、更早的 exe 同層）的 config.ini 一次性遷移進來。</summary>
         public static void Load()
         {
             try
@@ -86,21 +92,25 @@ namespace Sdo.Settings
                     ParseInto(File.ReadAllText(FilePath));
                     Sanitize();
                 }
-                else if (FilePath != LegacyFilePath && File.Exists(LegacyFilePath))
-                {
-                    // 一次性遷移：把舊的 exe 同層 config.ini 讀進來，寫成 active user 的一份（不刪原檔）。
-                    ParseInto(File.ReadAllText(LegacyFilePath));
-                    Sanitize();
-                    if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前裝置層值
-                    Save();
-                }
                 else
                 {
-                    Sanitize();
-                    CaptureOptionFrom(DisplaySettingsManager.Settings);   // 第一次：範本的 [Option] 反映目前 settings.json 值
-                    Save();   // 第一次：留一份可編輯的範本在 user 資料夾
+                    // 首次 / 從舊版升級：把舊位置的 config.ini 讀進來，寫成共用的一份（不刪原檔）。
+                    // 先找前一版的 per-user（DATA/PROFILE/<id>/），再找更早的 exe 同層檔。
+                    string legacy = FirstExisting(LegacyPerUserFilePath, LegacyFilePath);
+                    if (legacy != null)
+                    {
+                        ParseInto(File.ReadAllText(legacy));
+                        Sanitize();
+                        if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前裝置層值
+                    }
+                    else
+                    {
+                        Sanitize();
+                        CaptureOptionFrom(DisplaySettingsManager.Settings);   // 第一次：範本的 [Option] 反映目前 settings.json 值
+                    }
+                    Save();   // 落地一份共用的可編輯範本 DATA/PROFILE/config.ini
                 }
-                // config.ini 帶了 [Option] → 以「每帳號」值覆蓋 settings.json 的裝置層 GameSettings（見 SettingsBootstrap 隨後 ApplyDisplay）。
+                // config.ini 帶了 [Option] → 用共用值覆蓋 settings.json 的裝置層 GameSettings（見 SettingsBootstrap 隨後 ApplyDisplay）。
                 if (hasOption) ApplyOptionTo(DisplaySettingsManager.Settings);
             }
             catch (Exception e)
@@ -108,6 +118,15 @@ namespace Sdo.Settings
                 Debug.LogWarning($"[RoomConfig] load failed, using defaults: {e.Message}");
                 Sanitize();
             }
+        }
+
+        // 回傳第一個存在的檔案路徑（空/null/不存在都略過）；供 Load 的一次性遷移挑舊來源。
+        private static string FirstExisting(params string[] paths)
+        {
+            if (paths == null) return null;
+            foreach (var p in paths)
+                try { if (!string.IsNullOrEmpty(p) && File.Exists(p)) return p; } catch { }
+            return null;
         }
 
         /// <summary>把目前的值寫回 config.ini（附中文註解）。</summary>
@@ -192,7 +211,7 @@ namespace Sdo.Settings
         public static string Serialize()
         {
             var sb = new StringBuilder();
-            sb.Append("# 開房間右側面板預設設定 — 放在執行檔同一層，純文字可手改。\n");
+            sb.Append("# 開房間右側面板預設設定 — 放在 DATA/PROFILE/（全帳號共用），純文字可手改。\n");
             sb.Append("# 改完存檔，下次開遊戲生效。\n");
             sb.Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
@@ -217,7 +236,7 @@ namespace Sdo.Settings
             sb.Append("# 例如 AddonFolder=D:/SdoAddon（該資料夾底下就是 SONG 等子夾）。\n");
             sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
 
-            // OPTION 對話框（畫面/音效/鍵盤/遊戲）的 per-user 設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
+            // OPTION 對話框（畫面/音效/鍵盤/遊戲）的共用設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");
             sb.Append("# 音量 0.0~1.0（背景音樂 / 遊戲音樂 / 遊戲音效）\n");
             sb.Append("opt_bgm=").Append(optBgm.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
@@ -288,7 +307,7 @@ namespace Sdo.Settings
             hasOption = true;
         }
 
-        /// <summary>把 config.ini 的 OPTION 鏡像值套回 <see cref="GameSettings"/>（每帳號覆蓋裝置層）。開機/切帳號
+        /// <summary>把 config.ini 的 OPTION 鏡像值套回 <see cref="GameSettings"/>（共用值覆蓋裝置層）。開機
         /// Load() 後呼叫（見 <see cref="Load"/>）。純函式（不碰檔案）。</summary>
         public static void ApplyOptionTo(GameSettings s)
         {
