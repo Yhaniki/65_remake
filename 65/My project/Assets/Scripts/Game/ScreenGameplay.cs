@@ -176,6 +176,8 @@ namespace Sdo.Game
         public int chartIndex;
         public int chartFormat;               // 0=official .gn, 1=osu, 2=sm (Sdo.Osu.SongFormat)
         public int chartLevel;                // external chart LV (osu!mania 星數×5) — shown as the LV label so it matches song-select
+        public string songDisplayName = "";   // external: the catalog's display title (an osu pack's real per-song name);
+                                               // _map.Title would be the shared pack label ("SDO Pack8"). Official = "" (resolved from the .gn catalog).
         private const int ExternalLeadInMs = 2000;   // min ms the first external note is pushed to, so it scrolls in from the edge (count-in)
         // (2) 3D avatar — WOMAN default outfit: body-part .msh files (relative to Extracted/),
         // assembled in shared model space (bind pose). Skeleton/skinning/motion come next.
@@ -1558,6 +1560,7 @@ namespace Sdo.Game
         /// untouched.</summary>
         private void EnsureExternalDance()
         {
+            if (editorMode) return;   // 編輯器只校時/看譜，不生成也不寫 .dps 進使用者的歌資料夾
             if (chartFormat == 0 || _map == null || string.IsNullOrEmpty(externalFolder)) return;
             if (!string.IsNullOrEmpty(dpsPath) && File.Exists(Path.Combine(SdoExtracted.Root, dpsPath))) return;
             string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, _map);
@@ -2206,9 +2209,11 @@ namespace Sdo.Game
             _lvOnlyLabel = CropLeftSprite(_lblAttr.sprite, 34);   // GAMEPLAY2 cols 0..28 = "LV:"; the result screen swaps to this so "时间:" disappears with its value
             // values sit at x per DdrGamePlay.xml, but y = the label graphics' vertical centre (575+~20/2 ≈ 585),
             // MiddleLeft-anchored so they're vertically centred with "歌曲名:" / "LV: 时间:".
-            // Title from the import-time UTF-8 catalog (keyed by .gn filename); GB2312 is never
-            // decoded at runtime. Fall back to _map.Title (set only on the .osu path) then "song".
-            var songTitle = SongCatalog.Title(gnPath);
+            // External (user Songs/) songs carry their catalog display name — for an osu "pack" set that's the real
+            // per-song name (promoted from the .osu Version); _map.Title would be the shared pack label ("SDO Pack8").
+            // Official songs read the import-time UTF-8 catalog (keyed by .gn filename; GB2312 never decoded at runtime),
+            // then fall back to _map.Title (set only on the .osu path), then "song".
+            var songTitle = chartFormat != 0 && !string.IsNullOrEmpty(songDisplayName) ? songDisplayName : SongCatalog.Title(gnPath);
             if (string.IsNullOrEmpty(songTitle)) songTitle = _map.Title;
             if (string.IsNullOrEmpty(songTitle)) songTitle = "song";
             // song name / LV / time value text — white, two sizes smaller (13 -> 11) per request.
@@ -2525,6 +2530,7 @@ namespace Sdo.Game
                     avatar.DanceTimeSec = () => (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
                     avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
                     Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
+                    PrewarmDpsMotions(dps);   // read every clip NOW (behind the loading cover), not lazily mid-song
                 }
             }
 
@@ -3826,6 +3832,19 @@ namespace Sdo.Game
 
         // Combo milestones / consecutive-miss cut-ins — pure decision in EmojiTriggers (unit-tested).
         private void UpdateEmojiOnJudge(Judgment j) => ShowEmoji(_emojiState.OnJudge(j, _score.Combo));
+
+        // Read every distinct choreography clip up front, while the loading cover is still up, so SdoAvatar.LateUpdate
+        // never hits the disk mid-song. A generated external dance pulls from a large random pool of wdanceNNNN.mot
+        // clips, and each one that first appeared during play used to cost a File.ReadAllBytes + MOT parse on the main
+        // thread — a periodic hitch. ResolveMot caches even a missing clip, so play is guaranteed touch-free afterwards.
+        private void PrewarmDpsMotions(DpsLoader dps)
+        {
+            if (dps == null || dps.Rows == null) return;
+            var seen = new HashSet<string>();
+            foreach (var row in dps.Rows)
+                if (!string.IsNullOrEmpty(row.Mot) && seen.Add(row.Mot))
+                    ResolveMot(row.Mot);   // populates _motCache under the exact (gendered) key LateUpdate will look up
+        }
 
         // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/).
         private MotLoader ResolveMot(string name)

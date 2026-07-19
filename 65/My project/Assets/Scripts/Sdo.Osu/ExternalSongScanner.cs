@@ -45,15 +45,29 @@ namespace Sdo.Osu
                 if (string.IsNullOrEmpty(root)) continue;
                 try { if (!Directory.Exists(root)) continue; } catch { continue; }
 
+                string rootGroup = DirName(root);   // the shared group for songs sitting loose directly under the root
+
                 // Charts dropped straight into a root (no group folder) still count — the root names their group.
                 Probe(root, out bool rootCharts, out _);
-                if (rootCharts) work.Add(new SongDir { Group = DirName(root), Path = root });
+                if (rootCharts) work.Add(new SongDir { Group = rootGroup, Path = root });
 
                 string[] groups;
                 try { groups = Directory.GetDirectories(root); } catch { continue; }
                 Array.Sort(groups, StringComparer.OrdinalIgnoreCase);
                 foreach (var groupDir in groups)
-                    Collect(work, groupDir, DirName(groupDir), 0, visited);
+                {
+                    // A folder one level under the root is one of two things:
+                    //   • an UNPACKED SINGLE — osu! drops every song as its own folder straight under Songs/, with no
+                    //     group level. Hundreds of these must NOT each become a one-song browse tab, so they all share
+                    //     the root's group (rootGroup).
+                    //   • a PACK — a StepMania group folder, or an osu pack that itself holds song subfolders (or several
+                    //     sets dropped flat). It becomes its OWN group, named after the pack folder.
+                    // The tell is whether the folder is itself a song (charts sit directly in it). A flat multi-song
+                    // folder is a pack too: it is a song here, but LoadFolder re-groups it under its own name.
+                    Probe(groupDir, out bool isSong, out _);
+                    string group = isSong ? rootGroup : DirName(groupDir);
+                    Collect(work, groupDir, group, 0, visited);
+                }
             }
             return work;
         }
@@ -219,6 +233,18 @@ namespace Sdo.Osu
             return new List<SongSidecarEntry>();
         }
 
+        /// <summary>Re-read a folder's sidecar and refresh ONLY its sidecar-derived paths (CD disc / mot / camera) on an
+        /// already-built song. Used when a scan result is reused from a cache: a disc composed since the cache was
+        /// written (song-select builds it once, then records it) must still be picked up without re-parsing the folder,
+        /// so the disc keeps being built exactly once, ever. Reproduces a fresh parse's sidecar step. Pure/testable.</summary>
+        public static void ReapplySidecar(ExternalSong song)
+        {
+            if (song == null || string.IsNullOrEmpty(song.FolderPath)) return;
+            song.CdImagePath = ""; song.MotPath = ""; song.CameraPath = "";
+            var sidecar = ReadSidecar(song.FolderPath);
+            ApplySidecar(song, SongSidecar.Find(sidecar, song.SongKey), song.FolderPath);
+        }
+
         /// <summary>Kept for callers that only want the folder's first song (e.g. a preview probe).</summary>
         public static ExternalSong LoadOne(string group, string songDir)
         {
@@ -371,7 +397,10 @@ namespace Sdo.Osu
                 PreviewStartMs = d.PreviewStartMs,
                 PreviewLengthMs = d.PreviewLengthMs,
                 AudioPath = audioPath,
-                AudioDurationSec = AudioDuration.Seconds(audioPath),   // 時間欄用「音樂檔長度」，不是譜尾
+                // 掃描時「只讀 .osu/.sm」——不碰音檔。mp3 要整檔逐幀解碼才算得出長度(NLayer)，是開機掃描
+                // 最慢的一步；ogg/wav 雖只讀檔頭也一併省下。時間欄先用譜尾(StatsOf.DurationSec)，等玩家真的
+                // 選到這首歌時，SongSelectScreen 才補上真正的音檔長度(一次、背景執行緒)。
+                AudioDurationSec = 0,
                 ImagePath = ResolveImage(dir, ImagePool(images, d, sole, claimed), d),
             };
             for (int s = 0; s < 3; s++) song.Charts[s] = d.Charts[s];
@@ -438,24 +467,47 @@ namespace Sdo.Osu
             return string.IsNullOrEmpty(chosen) ? "" : Path.Combine(dir, chosen);
         }
 
-        // Two songs in one folder routinely share a title (a sped-up edit is a second audio file with the same name
-        // on it). Tag the clashing ones with their difficulty/audio so the song list can tell them apart.
+        // Several songs in one folder routinely share a title — for two very different reasons that want opposite
+        // display:
+        //   • A sped-up EDIT: the same song re-timed onto a second audio file. The Title is the real song name and
+        //     the osu Version is the variant ("Normal" / "Nightcore") → keep the title, tag the variant.
+        //   • An osu PACK / compilation SET: one beatmap set holding SEVERAL distinct songs (each its own audio),
+        //     where the shared Title is just the pack label ("SDO Pack8") and each song's real name lives in its
+        //     Version ("Aoi Shiori"). The pack label is noise → promote the Version to be the title.
+        // The tell is how many songs collapse onto the one Title: an edit is a pair, a pack is many. At THREE or more
+        // we read the shared Title as a pack label. (Below that stays "Title (variant)", so the edit pair is safe.)
         private static void Disambiguate(List<ExternalSong> songs, List<Draft> drafts)
         {
             if (songs.Count < 2) return;
-            var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var s in songs)
-            {
-                seen.TryGetValue(s.Title, out int n);
-                seen[s.Title] = n + 1;
-            }
+
+            // Pack set: drop the shared pack label, show each song's own name (its osu Version) instead.
+            var byTitle = CountTitles(songs);
             for (int i = 0; i < songs.Count; i++)
             {
-                if (!seen.TryGetValue(songs[i].Title, out int n) || n < 2) continue;
-                string tag = drafts[i].Version;
-                if (string.IsNullOrEmpty(tag)) tag = Path.GetFileNameWithoutExtension(drafts[i].AudioName);
+                if (byTitle[songs[i].Title] < 3) continue;
+                string version = (drafts[i].Version ?? "").Trim();
+                if (version.Length > 0) songs[i].Title = version;   // "SDO Pack8" → "Aoi Shiori"
+            }
+
+            // Whatever still shares a title — an edit pair, or pack songs whose Version was blank/duplicated — gets a
+            // distinguishing tag appended (the osu difficulty name, else the audio file name).
+            var stillClash = CountTitles(songs);
+            for (int i = 0; i < songs.Count; i++)
+            {
+                if (stillClash[songs[i].Title] < 2) continue;
+                string tag = (drafts[i].Version ?? "").Trim();
+                // A promoted pack song already shows its Version as the title — tag it by audio, not "(X (X))".
+                if (tag.Length == 0 || string.Equals(tag, songs[i].Title, StringComparison.OrdinalIgnoreCase))
+                    tag = Path.GetFileNameWithoutExtension(drafts[i].AudioName);
                 if (!string.IsNullOrEmpty(tag)) songs[i].Title += " (" + tag + ")";
             }
+        }
+
+        private static Dictionary<string, int> CountTitles(List<ExternalSong> songs)
+        {
+            var n = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in songs) { n.TryGetValue(s.Title ?? "", out int c); n[s.Title ?? ""] = c + 1; }
+            return n;
         }
 
         /// <summary>Level + play time of ONE chart. Both come from the same full parse — the star rating already needs

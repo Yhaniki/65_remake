@@ -157,16 +157,38 @@ namespace Sdo.Game
             PlayerPrefs.SetString(PrefLastGn, _gn);
             PlayerPrefs.SetInt(PrefLastDiff, _diff);
 
-            string gnPath = SongPaths.Gn(_gn), oggPath = SongPaths.Ogg(_gn);
-            if (gnPath == null || !File.Exists(gnPath)) { _status = "找不到譜面檔：" + gnPath; _loading = false; yield break; }
-            _status = (oggPath != null && File.Exists(oggPath)) ? "" : "找不到音樂檔（只能看譜，沒有聲音/波形）";
+            // 外部歌(osu/StepMania)沒有官方 .gn：直接餵 chartPath + 掃描解析出的音檔(ogg/mp3/wav)；官方歌走 gnPath/oggPath。
+            bool ext = e != null && e.external;
+            string gnPath = null, oggPath;
+            if (ext)
+            {
+                string chartPath = e.ChartPath(_diff);
+                if (string.IsNullOrEmpty(chartPath) || !File.Exists(chartPath)) { _status = "找不到外部譜面檔：" + chartPath; _loading = false; yield break; }
+                oggPath = e.audioPath;
+            }
+            else
+            {
+                gnPath = SongPaths.Gn(_gn); oggPath = SongPaths.Ogg(_gn);
+                if (gnPath == null || !File.Exists(gnPath)) { _status = "找不到譜面檔：" + gnPath; _loading = false; yield break; }
+            }
+            _status = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath)) ? "" : "找不到音樂檔（只能看譜，沒有聲音/波形）";
 
             // ScreenGameplay 什麼都不掛在自己身上（音符板/HUD 都是新的場景根物件）→ 先記下現有的根，換歌時照差集拆。
             _preRoots = new HashSet<GameObject>(SceneManager.GetActiveScene().GetRootGameObjects());
 
             var game = new GameObject("ScreenGameplay").AddComponent<ScreenGameplay>();   // 欄位在它的 Start() 之前讀
             game.editorMode = true;              // 純黑背景（不載場景/舞者）＋不判定/不結算＋可自由 seek
-            game.gnPath = gnPath;
+            if (ext)
+            {
+                game.chartFormat = e.chartFormat;      // 1=osu, 2=sm → LoadChart 直接解析 chartPath（跳過 .gn）
+                game.chartPath = e.ChartPath(_diff);
+                game.chartIndex = e.ChartIndex(_diff); // .sm 的 #NOTES 區塊序號（osu 恆 0）
+                game.chartLevel = e.Diff(_diff);       // 星數×5 等級 → LV 標籤
+                game.gnPath = "";
+                game.externalFolder = e.folderPath;    // LoadChart 認得出是外部歌；editorMode 下不會生成/寫 .dps（見 EnsureExternalDance）
+                game.externalSongKey = e.songKey;
+            }
+            else game.gnPath = gnPath;
             game.oggPath = oggPath;
             game.difficulty = _diff;
             game.autoPlay = false;
@@ -175,7 +197,8 @@ namespace Sdo.Game
             game.effectScene = false;            // 不放場景常駐特效
             game.scrollSpeedMul = _speed;
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
-            _songOffset = SongCatalog.OffsetMs(_gn);   // 這首譜的 offset：手改在 song_name_overrides.json 的 offsetMs
+            // 外部歌沒有 song_name_overrides.json 的 offset → 從 0 開始，靠 F11/F12 即時對齊（不寫檔，見 SaveSongOffset）。
+            _songOffset = ext ? 0.0 : SongCatalog.OffsetMs(_gn);
             game.songOffsetMs = (float)_songOffset;
             game.EditorOnHit = OnHit;             // 跟著打 → 誤差條（一般編譜模式也有，不必進打拍測試）
             _game = game;
@@ -419,6 +442,7 @@ namespace Sdo.Game
         private void SaveSongOffset()
         {
             if (string.IsNullOrEmpty(_gn)) return;
+            if (_entry != null && _entry.external) { _status = "外部歌不寫檔：offset 只在本次編輯器內即時生效"; return; }
             if (SongOverridesWriter.SetOffset(Stem(), _songOffset, out string msg))
             {
                 var e = SongCatalog.Get(_gn);
@@ -560,14 +584,17 @@ namespace Sdo.Game
             float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
             GUILayout.Label($"縮放 {speed:0.00}× (Ctrl+↑↓/F5F6)", box, GUILayout.Width(150));
             GUILayout.Label($"流速 {(ready ? _game.EditorRate : 1.0):0.00}× ([ ]，= 回 1×)", box, GUILayout.Width(150));
-            GUILayout.Label($"單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12)", box, GUILayout.Width(180));
+            GUILayout.Label($"單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12){((_entry != null && _entry.external) ? " 外部歌·即時" : "")}", box, GUILayout.Width(200));
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
 
             // 單首 offset 不寫檔（值只活在這次執行裡）→ 把可以直接貼進 song_name_overrides.json 的那一行印出來。
             // 存檔提示 / 存檔結果：offset 調了但還沒存 → 提醒 Ctrl+S（存完 _status 會蓋掉這行）
-            if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
+            if (_entry != null && _entry.external)
+                GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
+                    $"外部歌單首 offset {_songOffset:+0.#;-0.#;0} ms —— 只在本次編輯器內即時對齊音樂/波形（不寫檔）");
+            else if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
                 GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
                     $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_name_overrides.json（{Stem()}）");
             else if (!string.IsNullOrEmpty(_status))

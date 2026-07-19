@@ -2,7 +2,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 using Sdo.Osu;
 using Sdo.Settings;
 
@@ -37,6 +39,14 @@ namespace Sdo.Game
             return roots;
         }
 
+        // Per-user writable location for the scan cache. Application.persistentDataPath is main-thread only, so this is
+        // resolved on the coroutine (main thread) and the resulting path handed to the worker — never touched off-thread.
+        private static string CacheFilePath()
+        {
+            try { return Path.Combine(Application.persistentDataPath, "external_song_cache.json"); }
+            catch { return ""; }
+        }
+
         private static void Add(List<string> roots, string dir)
         {
             if (string.IsNullOrEmpty(dir)) return;
@@ -62,7 +72,10 @@ namespace Sdo.Game
         /// and a detail line with the last song found + a running total. The boot overlay shows both under the bar.</summary>
         public static IEnumerator ScanAndRegisterCo(Action<float, string, string> onProgress)
         {
-            var job = new ScanJob(Roots());
+            // Cache I/O (JsonUtility + persistentDataPath) stays on the main thread; the worker does only pure
+            // System.IO + arithmetic. Load the previous scan, hand it to the worker, save the fresh one when it returns.
+            string cacheFile = CacheFilePath();
+            var job = new ScanJob(Roots(), ExternalScanCache.Load(cacheFile));
             var task = Task.Run((Action)job.Run);
 
             while (!task.IsCompleted)
@@ -70,6 +83,8 @@ namespace Sdo.Game
                 Report(onProgress, job);
                 yield return null;
             }
+
+            ExternalScanCache.Save(cacheFile, job.CacheLines);   // rewrite (prunes folders that are gone now)
 
             var entries = new List<SongCatalog.Entry>();
             foreach (var song in job.Songs)   // ToEntry + the catalog are main-thread only
@@ -103,13 +118,18 @@ namespace Sdo.Game
         private sealed class ScanJob
         {
             private readonly List<string> _roots;
+            private readonly Dictionary<string, ExternalScanCache.Folder> _cache;   // previous scan, read-only in Run
             private volatile int _total;    // folders to load — 0 until the walk is done (bar is "searching")
             private volatile int _done;     // folders loaded so far
             private volatile int _found;    // songs discovered so far (across folders)
             private volatile string _folder = "";   // the folder being read right now (group / name)
             private volatile string _current = "";  // the last song's title
 
-            public ScanJob(List<string> roots) { _roots = roots; }
+            public ScanJob(List<string> roots, Dictionary<string, ExternalScanCache.Folder> cache)
+            {
+                _roots = roots;
+                _cache = cache ?? new Dictionary<string, ExternalScanCache.Folder>(StringComparer.OrdinalIgnoreCase);
+            }
 
             public int Total => _total;
             public int Done => _done;
@@ -117,6 +137,7 @@ namespace Sdo.Game
             public string Folder => _folder;
             public string Current => _current;
             public readonly List<ExternalSong> Songs = new List<ExternalSong>();
+            public readonly List<ExternalScanCache.Folder> CacheLines = new List<ExternalScanCache.Folder>();   // to persist (main thread)
 
             public void Run()
             {
@@ -124,23 +145,58 @@ namespace Sdo.Game
                 try { work = ExternalSongScanner.BuildWorklist(_roots); }
                 catch { work = new List<ExternalSongScanner.SongDir>(); }
                 _total = work.Count;
+                if (work.Count == 0) { _folder = ""; return; }   // CacheLines stays empty → the coroutine saves an empty cache
 
-                for (int i = 0; i < work.Count; i++)
+                // Folders are independent and LoadFolder is pure (System.IO + arithmetic — no Unity API), so parse them
+                // across all cores instead of one at a time. Each result goes into its own slot so the final order stays
+                // the deterministic alphabetical walk order (external fileIds are assigned from it); only the progress
+                // counters are shared, and those go through Interlocked. Songs is filled single-threaded afterwards.
+                //
+                // Before parsing a folder we check the cache (loaded on the main thread, read-only here → safe to share):
+                // if its source files are unchanged since last boot we reuse the parsed result (only re-reading the tiny
+                // sidecar, for a disc built since), skipping the expensive chart parse + star-rating entirely. lines[i] is
+                // the cache entry to persist for folder i (hit or fresh) — the coroutine writes them out when Run returns.
+                var results = new List<ExternalSong>[work.Count];
+                var lines = new ExternalScanCache.Folder[work.Count];
+                int done = 0, found = 0;
+                var opts = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) };
+                try
                 {
-                    _folder = FolderLabel(work[i]);   // publish BEFORE the (possibly slow) parse → the label keeps moving
-                    try
+                    Parallel.For(0, work.Count, opts, i =>
                     {
-                        var found = ExternalSongScanner.LoadFolder(work[i].Group, work[i].Path);
-                        if (found != null && found.Count > 0)
+                        var sd = work[i];
+                        _folder = FolderLabel(sd);   // racy across threads — it only drives the boot bar's flicker
+                        try
                         {
-                            Songs.AddRange(found);   // one folder can hold several songs (several sets / several .sm)
-                            _found = Songs.Count;
-                            _current = found[found.Count - 1].Title ?? "";
+                            string sig = ExternalScanCache.Signature(sd.Path);
+                            List<ExternalSong> f;
+                            if (sig.Length > 0 && _cache.TryGetValue(sd.Path, out var hit) && hit.sig == sig)
+                            {
+                                f = ExternalScanCache.FromFolder(hit);                        // reuse — no parse
+                                foreach (var s in f) ExternalSongScanner.ReapplySidecar(s);   // pick up a disc built since caching
+                            }
+                            else
+                            {
+                                f = ExternalSongScanner.LoadFolder(sd.Group, sd.Path);        // cold / changed → parse
+                            }
+                            results[i] = f;   // one folder can hold several songs (several sets / several .sm)
+                            if (sig.Length > 0) lines[i] = ExternalScanCache.ToFolder(sd.Path, sig, f);   // don't cache unreadable folders
+                            if (f != null && f.Count > 0)
+                            {
+                                _found = Interlocked.Add(ref found, f.Count);
+                                _current = f[f.Count - 1].Title ?? "";
+                            }
                         }
-                    }
-                    catch { /* a bad folder must never abort the scan */ }
-                    _done = i + 1;
+                        catch { /* a bad folder must never abort the scan */ }
+                        _done = Interlocked.Increment(ref done);
+                    });
                 }
+                catch (AggregateException) { /* per-folder errors are already swallowed; guard the whole loop anyway */ }
+
+                foreach (var list in results)
+                    if (list != null && list.Count > 0) Songs.AddRange(list);
+                foreach (var ln in lines)
+                    if (ln != null) CacheLines.Add(ln);   // in worklist order; the coroutine persists them (prunes gone folders)
                 _folder = "";
             }
 

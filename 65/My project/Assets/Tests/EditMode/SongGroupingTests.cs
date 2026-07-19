@@ -71,17 +71,18 @@ namespace Sdo.Tests
             Assert.AreEqual(SongGrouping.Other, SongGrouping.InitialSection(null));
         }
 
-        // ---- BPM bands (SM: 20-wide, rounded up to the top of the band) ----
+        // ---- BPM bands (50-wide, rounded up to the top of the band) ----
 
         [Test]
-        public void BpmSection_Bands_Are_20_Wide_And_Zero_Padded()
+        public void BpmSection_Bands_Are_50_Wide_And_Zero_Padded()
         {
-            Assert.AreEqual("140-159", SongGrouping.BpmSection(140));
-            Assert.AreEqual("140-159", SongGrouping.BpmSection(145.9));
-            Assert.AreEqual("140-159", SongGrouping.BpmSection(159));
-            Assert.AreEqual("160-179", SongGrouping.BpmSection(160));
-            Assert.AreEqual("020-039", SongGrouping.BpmSection(20));
-            Assert.AreEqual("000-019", SongGrouping.BpmSection(19));
+            Assert.AreEqual("100-149", SongGrouping.BpmSection(100));
+            Assert.AreEqual("100-149", SongGrouping.BpmSection(145.9));
+            Assert.AreEqual("100-149", SongGrouping.BpmSection(149));
+            Assert.AreEqual("150-199", SongGrouping.BpmSection(150));
+            Assert.AreEqual("050-099", SongGrouping.BpmSection(50));
+            Assert.AreEqual("000-049", SongGrouping.BpmSection(49));
+            Assert.AreEqual("000-049", SongGrouping.BpmSection(20));
         }
 
         [Test]
@@ -106,7 +107,7 @@ namespace Sdo.Tests
             var e = Song("a.gn", "Butterfly", "Smile.dk", 138f, "Anime");
             Assert.AreEqual("B", SongGrouping.SectionName(e, SongGroupMode.Title));
             Assert.AreEqual("S", SongGrouping.SectionName(e, SongGroupMode.Artist));
-            Assert.AreEqual("120-139", SongGrouping.SectionName(e, SongGroupMode.Bpm));
+            Assert.AreEqual("100-149", SongGrouping.SectionName(e, SongGroupMode.Bpm));
         }
 
         // ---- Build: buckets, counts, ordering ----
@@ -183,10 +184,10 @@ namespace Sdo.Tests
         {
             var b = SongGrouping.Build(Library(), SongGroupMode.Bpm);
             CollectionAssert.AreEqual(
-                new[] { "120-139", "140-159", "160-179", SongGrouping.UnknownBpm },
+                new[] { "100-149", "150-199", SongGrouping.UnknownBpm },
                 b.ConvertAll(x => x.Key));
-            Assert.AreEqual(2, b[1].Count);   // 145 ×2 (Cross, 危險的演出)
-            Assert.AreEqual(1, b[3].Count);   // Apple has no bpm
+            Assert.AreEqual(3, b[0].Count);   // 138 + 145 ×2 all fall in the one 100-149 band
+            Assert.AreEqual(1, b[2].Count);   // Apple has no bpm → UnknownBpm, last
         }
 
         [Test]
@@ -194,13 +195,29 @@ namespace Sdo.Tests
         {
             var list = new List<SongCatalog.Entry>
             {
-                Song("a.gn", "Zebra", bpm: 155f),
+                Song("a.gn", "Zebra", bpm: 145f),   // all three land in the one 100-149 band
                 Song("b.gn", "Alpha", bpm: 141f),
                 Song("c.gn", "Beta",  bpm: 141f),
             };
             var b = SongGrouping.Build(list, SongGroupMode.Bpm);
             Assert.AreEqual(1, b.Count);
+            // within the band: by BPM then title → 141 Alpha, 141 Beta (tie → title), 145 Zebra
             CollectionAssert.AreEqual(new[] { "Alpha", "Beta", "Zebra" }, b[0].Songs.ConvertAll(s => s.title));
+        }
+
+        [Test]
+        public void Build_Bpm_Bands_Order_Numerically_Not_Lexically()
+        {
+            // A 4–5 digit BPM band must sort ABOVE the small bands, not wedge in after "100-…" because '1' < '2'.
+            var list = new List<SongCatalog.Entry>
+            {
+                Song("a.gn", "Slow",   bpm: 100f),     // 100-149
+                Song("b.gn", "Mid",    bpm: 200f),     // 200-249
+                Song("c.gn", "Broken", bpm: 10000f),   // 10000-10049 — must come LAST, not between 100 and 200
+            };
+            var b = SongGrouping.Build(list, SongGroupMode.Bpm);
+            CollectionAssert.AreEqual(
+                new[] { "100-149", "200-249", "10000-10049" }, b.ConvertAll(x => x.Key));
         }
 
         [Test]

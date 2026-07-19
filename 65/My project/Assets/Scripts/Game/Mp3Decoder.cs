@@ -47,11 +47,136 @@ namespace Sdo.Game
                         }
                     }
                     if (len == 0) return null;
+                    // GAPLESS: NLayer decodes every MPEG frame verbatim — it does NOT trim the LAME encoder delay /
+                    // padding, so its output LEADS a gapless decoder (osu! plays through BASS; StepMania authors
+                    // calibrate #OFFSET against a gapless decode) by encoderDelay + 529 samples. On ALBIDA.mp3 that is
+                    // 1105 frames ≈ 25 ms, verified sample-exact against libsndfile. Left untrimmed, every imported
+                    // mp3 song's music starts ~25 ms late → notes appear early — the reason osu/StepMania charts do
+                    // not line up here while official .gn songs (ogg = already gapless) do. Trim it to match.
+                    len = ApplyGapless(path, data, len, ch);
+                    if (len == 0) return null;
                     if (len != data.Length) Array.Resize(ref data, len);
                     return new Mp3Pcm { Samples = data, Channels = ch, SampleRate = sr };
                 }
             }
             catch { return null; }   // caller logs; keep this Unity-free so it can run on a worker thread
+        }
+
+        /// <summary>Inherent MP3 decoder delay (samples/frames per channel): the 528-sample polyphase synthesis
+        /// filterbank delay + 1. A gapless decode discards <c>encoderDelay + <see cref="Mp3DecoderDelay"/></c> at the
+        /// front and <c>padding − <see cref="Mp3DecoderDelay"/></c> at the back (LAME's own gapless recipe).</summary>
+        public const int Mp3DecoderDelay = 529;
+
+        private static readonly byte[] XingTag = { 0x58, 0x69, 0x6E, 0x67 }; // "Xing"
+        private static readonly byte[] InfoTag = { 0x49, 0x6E, 0x66, 0x6F }; // "Info"
+        private static readonly byte[] LameTag = { 0x4C, 0x41, 0x4D, 0x45 }; // "LAME"
+
+        /// <summary>
+        /// Trim the LAME/Xing gapless priming from a fully-decoded interleaved buffer, IN PLACE, and return the new
+        /// interleaved length. No-op (returns <paramref name="len"/> unchanged) when the file carries no LAME tag —
+        /// a non-LAME mp3 keeps NLayer's raw output exactly as before, so nothing regresses. <paramref name="ch"/> is
+        /// the channel count (interleave stride). Only <see cref="Decode"/> (full song → gameplay clock) needs this;
+        /// previews seek by time, where a 25 ms priming is inaudible.
+        /// </summary>
+        private static int ApplyGapless(string path, float[] data, int len, int ch)
+        {
+            if (ch <= 0 || len <= 0 || data == null) return len;
+            byte[] region = ReadTagRegion(path);
+            if (region == null || !TryParseLameGapless(region, out int encoderDelay, out int padding)) return len;
+            int frames = len / ch;
+            GaplessTrim(frames, encoderDelay, padding, out int skipFrames, out int keepFrames);
+            if (skipFrames <= 0 && keepFrames >= frames) return len;   // nothing to remove
+            int keepInterleaved = keepFrames * ch;
+            if (skipFrames > 0 && keepInterleaved > 0)
+                Array.Copy(data, skipFrames * ch, data, 0, keepInterleaved);   // memmove: overlapping is fine
+            return keepInterleaved;
+        }
+
+        /// <summary>
+        /// Parse the LAME encoder delay + padding (both 12-bit sample counts) from an mp3's first-frame region. The
+        /// two values are a 3-byte field at offset 0x15 from the "LAME" magic, which itself sits just after the
+        /// Xing/Info VBR/CBR header. Returns false (delay = padding = 0) when there is no LAME tag. Pure — unit-tested.
+        /// </summary>
+        public static bool TryParseLameGapless(byte[] header, out int encoderDelay, out int padding)
+        {
+            encoderDelay = 0; padding = 0;
+            if (header == null) return false;
+            int vbr = IndexOf(header, XingTag, 0);
+            if (vbr < 0) vbr = IndexOf(header, InfoTag, 0);
+            if (vbr < 0) return false;                       // no VBR/CBR header frame → no gapless metadata
+            int lame = IndexOf(header, LameTag, vbr);
+            if (lame < 0) return false;                      // Xing/Info without the LAME extension → no delays
+            int o = lame + 0x15;
+            if (o + 3 > header.Length) return false;
+            int v = (header[o] << 16) | (header[o + 1] << 8) | header[o + 2];
+            encoderDelay = (v >> 12) & 0xFFF;
+            padding = v & 0xFFF;
+            return true;
+        }
+
+        /// <summary>
+        /// Given the total per-channel frame count of a NON-gapless decode plus the LAME delay/padding, compute how
+        /// many leading frames to drop (<paramref name="skipFrames"/> = encoderDelay + decoder delay) and how many to
+        /// keep (<paramref name="keepFrames"/>, after also dropping padding − decoder delay at the tail). All results
+        /// are clamped into [0, total]. Pure — unit-tested. (ALBIDA: total 5094144, delay 576, pad 1776 → skip 1105,
+        /// keep 5091792, exactly libsndfile's gapless length.)
+        /// </summary>
+        public static void GaplessTrim(int totalFrames, int encoderDelay, int padding,
+            out int skipFrames, out int keepFrames)
+        {
+            if (totalFrames <= 0) { skipFrames = 0; keepFrames = 0; return; }
+            int skip = encoderDelay + Mp3DecoderDelay;
+            if (skip < 0) skip = 0;
+            if (skip > totalFrames) skip = totalFrames;
+            int tail = padding - Mp3DecoderDelay;
+            if (tail < 0) tail = 0;
+            int keep = totalFrames - skip - tail;
+            if (keep < 0) keep = 0;
+            skipFrames = skip; keepFrames = keep;
+        }
+
+        /// <summary>First index of <paramref name="needle"/> in <paramref name="hay"/> at or after
+        /// <paramref name="start"/>, or −1. Small linear scan (needle is 4 bytes; region is a few KB).</summary>
+        private static int IndexOf(byte[] hay, byte[] needle, int start)
+        {
+            if (hay == null || needle == null || needle.Length == 0) return -1;
+            int last = hay.Length - needle.Length;
+            for (int i = Math.Max(0, start); i <= last; i++)
+            {
+                int j = 0;
+                while (j < needle.Length && hay[i + j] == needle[j]) j++;
+                if (j == needle.Length) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>Read the bytes covering an mp3's first audio frame (where the Xing/Info + LAME tag lives), skipping
+        /// any leading ID3v2 tag via its syncsafe size. ~2.6 KB is enough for the header frame (Xing TOC + LAME ext).
+        /// Null on IO failure → <see cref="ApplyGapless"/> then simply leaves the audio untrimmed.</summary>
+        private static byte[] ReadTagRegion(string path)
+        {
+            try
+            {
+                using (var fs = System.IO.File.OpenRead(path))
+                {
+                    long fileLen = fs.Length;
+                    int id3 = 0;
+                    var h = new byte[10];
+                    if (fs.Read(h, 0, 10) == 10 && h[0] == 0x49 && h[1] == 0x44 && h[2] == 0x33)   // "ID3"
+                        id3 = 10 + (((h[6] & 0x7F) << 21) | ((h[7] & 0x7F) << 14) | ((h[8] & 0x7F) << 7) | (h[9] & 0x7F));
+                    if (id3 < 0 || id3 >= fileLen) return null;
+                    int want = (int)Math.Min(2600L, fileLen - id3);
+                    if (want <= 0) return null;
+                    var region = new byte[want];
+                    fs.Seek(id3, System.IO.SeekOrigin.Begin);
+                    int read = 0, r;
+                    while (read < want && (r = fs.Read(region, read, want - read)) > 0) read += r;
+                    if (read <= 0) return null;
+                    if (read < want) Array.Resize(ref region, read);
+                    return region;
+                }
+            }
+            catch { return null; }
         }
 
         /// <summary>

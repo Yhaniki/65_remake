@@ -68,6 +68,40 @@ namespace Sdo.Tests
 
         private static void Audio(string dir, string file) => File.WriteAllBytes(Path.Combine(dir, file), new byte[] { 0 });
 
+        // A real, readable WAV of `seconds` at 44.1k stereo 16-bit — so a test can prove the scanner deliberately does
+        // NOT read it (deferred to song-select), as opposed to it merely being an unreadable stub.
+        private static void ValidWav(string dir, string file, int seconds)
+        {
+            const uint byteRate = 176400u;   // 44100 * 2ch * 2bytes
+            uint dataBytes = byteRate * (uint)seconds;
+            var ms = new MemoryStream();
+            var w = new BinaryWriter(ms, Encoding.ASCII);
+            w.Write(Encoding.ASCII.GetBytes("RIFF")); w.Write(36u + dataBytes); w.Write(Encoding.ASCII.GetBytes("WAVE"));
+            w.Write(Encoding.ASCII.GetBytes("fmt ")); w.Write(16u);
+            w.Write((ushort)1); w.Write((ushort)2); w.Write(44100u); w.Write(byteRate); w.Write((ushort)4); w.Write((ushort)16);
+            w.Write(Encoding.ASCII.GetBytes("data")); w.Write(dataBytes); w.Write(new byte[dataBytes]);
+            w.Flush();
+            File.WriteAllBytes(Path.Combine(dir, file), ms.ToArray());
+        }
+
+        // ---- the scan reads only .osu/.sm: audio length is left for song-select ----
+
+        [Test]
+        public void Scan_Does_Not_Read_Audio_Length_It_Is_Deferred_To_Song_Select()
+        {
+            var dir = Dir("pack", "song");
+            ValidWav(dir, "track.wav", 7);                       // a real 7s wav — readable, has a length
+            Osu(dir, "chart.osu", "track.wav", "Song", 200);
+
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+            Assert.AreEqual(1, songs.Count);
+            Assert.AreEqual(Path.Combine(dir, "track.wav"), songs[0].AudioPath);
+
+            // The file's length is genuinely readable (7s) — proving the 0 below is a deliberate deferral, not a stub.
+            Assert.AreEqual(7, AudioDuration.Seconds(Path.Combine(dir, "track.wav")));
+            Assert.AreEqual(0, songs[0].AudioDurationSec, "scan must not decode audio — 時間 falls back to chart length");
+        }
+
         // ---- one folder, several songs ----
 
         [Test]
@@ -213,6 +247,45 @@ namespace Sdo.Tests
             Assert.AreEqual("Same (Nightcore)", songs[1].Title);
         }
 
+        [Test]
+        public void Osu_Pack_Set_Shows_Song_Names_Not_The_Pack_Label()
+        {
+            // One osu beatmap set holding several DISTINCT songs (each its own audio): the shared Title is only the
+            // pack label and each song's real name lives in its Version. The list must show "Aoi Shiori", not
+            // "SDO Pack8 (Aoi Shiori)". Three+ songs under one title is the tell that the title is a pack label.
+            var dir = Dir("osu", "SDO Pack8");
+            Audio(dir, "aoi.mp3"); Audio(dir, "invoke.mp3"); Audio(dir, "shining.mp3");
+            Osu(dir, "s1.osu", "aoi.mp3",     "SDO Pack8", 100, "Aoi Shiori");
+            Osu(dir, "s2.osu", "invoke.mp3",  "SDO Pack8", 200, "INVOKE");
+            Osu(dir, "s3.osu", "shining.mp3", "SDO Pack8", 300, "Shining Collection");
+
+            var songs = ExternalSongScanner.LoadFolder("osu", dir);
+            var titles = new List<string>();
+            foreach (var s in songs) titles.Add(s.Title);
+            Assert.AreEqual(3, songs.Count);
+            CollectionAssert.AreEquivalent(
+                new[] { "Aoi Shiori", "INVOKE", "Shining Collection" }, titles,
+                "3+ same-titled songs = a pack → each row shows its own Version, not the shared pack label");
+        }
+
+        [Test]
+        public void Osu_Pack_Song_Without_A_Version_Keeps_The_Unique_Pack_Label()
+        {
+            // A pack whose one song carries no Version can't be promoted; it stays the pack label — which is now
+            // unique among the promoted siblings, so it still reads as a distinct row (no bogus duplicate).
+            var dir = Dir("osu", "SDO Pack");
+            Audio(dir, "a.mp3"); Audio(dir, "b.mp3"); Audio(dir, "c.mp3");
+            Osu(dir, "s1.osu", "a.mp3", "Pack", 100, "Song A");
+            Osu(dir, "s2.osu", "b.mp3", "Pack", 200, "Song B");
+            Osu(dir, "s3.osu", "c.mp3", "Pack", 300, "");   // no Version → left as the (now unique) pack label
+
+            var songs = ExternalSongScanner.LoadFolder("osu", dir);
+            var titles = new List<string>();
+            foreach (var s in songs) titles.Add(s.Title);
+            Assert.AreEqual(3, songs.Count);
+            CollectionAssert.AreEquivalent(new[] { "Song A", "Song B", "Pack" }, titles);
+        }
+
         // ---- StepMania ----
 
         [Test]
@@ -275,6 +348,37 @@ namespace Sdo.Tests
 
             var songs = ExternalSongScanner.Scan(new List<string> { _root });
             Assert.AreEqual(2, songs.Count);
+        }
+
+        [Test]
+        public void Osu_Style_Singles_Share_One_Group_While_Packs_Get_Their_Own()
+        {
+            // osu! drops each song as its OWN folder directly under Songs/ (no group level). Those singles must not
+            // each become a one-song browse tab — they share the root's group. A PACK (a folder that itself holds
+            // several song folders) is still pulled out as its own group.
+            var rootName = new DirectoryInfo(_root).Name;
+
+            var a = Dir("Artist A - Track A");          // single, straight under the root
+            Audio(a, "a.mp3"); Osu(a, "a.osu", "a.mp3", "Track A", 100);
+            var b = Dir("Artist B - Track B");          // another single
+            Audio(b, "b.mp3"); Osu(b, "b.osu", "b.mp3", "Track B", 100);
+            var p1 = Dir("Cool Pack", "Song One");      // a pack: songs nested one level in
+            Audio(p1, "1.mp3"); Osu(p1, "1.osu", "1.mp3", "Song One", 100);
+            var p2 = Dir("Cool Pack", "Song Two");
+            Audio(p2, "2.mp3"); Osu(p2, "2.osu", "2.mp3", "Song Two", 100);
+
+            var work = ExternalSongScanner.BuildWorklist(new List<string> { _root });
+            string GroupOf(string path) => work.Find(w => w.Path == path).Group;
+
+            Assert.AreEqual(rootName, GroupOf(a), "single osu folders share the root group");
+            Assert.AreEqual(rootName, GroupOf(b));
+            Assert.AreEqual("Cool Pack", GroupOf(p1), "a pack is pulled out as its own group");
+            Assert.AreEqual("Cool Pack", GroupOf(p2));
+
+            // …and it carries through to the actual songs (a single keeps the root group; the pack keeps its own).
+            var songs = ExternalSongScanner.Scan(new List<string> { _root });
+            Assert.AreEqual(rootName, songs.Find(s => s.Title == "Track A").Group);
+            Assert.AreEqual("Cool Pack", songs.Find(s => s.Title == "Song One").Group);
         }
 
         [Test]

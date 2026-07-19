@@ -35,6 +35,21 @@ namespace Sdo.Tests
             => Assert.AreEqual(1, new SongListModel(Sample()).Filter("蔡妍").Count);
 
         [Test]
+        public void Filter_By_Group_Finds_External_Pack_By_Its_Name()
+        {
+            // An external song's pack/folder label is searchable, so typing the pack name surfaces its songs even
+            // when none of their titles contain it (e.g. "SDO Pack8" holding "Aoi Shiori", "INVOKE", …).
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "ext_1k.gn", title = "Aoi Shiori", external = true, group = "SDO Pack8" },
+                new SongCatalog.Entry { gn = "ext_2k.gn", title = "INVOKE",     external = true, group = "SDO Pack8" },
+                new SongCatalog.Entry { gn = "sdom0001k.gn", title = "official", group = "" },
+            };
+            Assert.AreEqual(2, SongListModel.Filter(list, "Pack8").Count);
+            Assert.AreEqual(2, SongListModel.Filter(list, "sdo pack").Count);   // case-insensitive
+        }
+
+        [Test]
         public void PickRandom_Is_Deterministic_And_InRange()
         {
             var m = new SongListModel(Sample());

@@ -35,7 +35,9 @@ namespace Sdo.Osu
         public string Artist = "";
         public double Bpm;
         public string AudioPath = "";   // absolute; "" if no audio file found
-        public int AudioDurationSec;    // the music file's own play time (see AudioDuration) — what the 時間 column shows
+        public int AudioDurationSec;    // the music file's own play time (see AudioDuration). Left 0 by the scanner
+                                        // (reading it means decoding the audio — deferred to song-select); 0 → the 時間
+                                        // column falls back to the chart's last-note time until then.
         public string ImagePath = "";   // absolute cover (jacket→banner→background); "" if none
         public SongFormat Format;
 

@@ -18,7 +18,8 @@ namespace Sdo.UI.Screens
     /// Drawn with IMGUI (<c>GUI.Window</c>), like the project's other tool panels (see MmdDebug): the window drags by
     /// its title bar and the scroll view brings its own draggable slider — no canvas art, no layout groups, nothing to
     /// mis-lay-out. This browser never existed in the original game, so it deliberately wears the plain dev-tool look
-    /// instead of imitating MUSICSELDLG.
+    /// instead of imitating MUSICSELDLG. It starts sized to the CD column beneath it but is FREELY RESIZABLE — drag its
+    /// right / bottom edge or bottom-right corner (long osu pack folder names often need it wider than the disc column).
     ///
     /// IMGUI draws over the UI canvas but does NOT consume its clicks, so <see cref="_blocker"/> — an invisible UGUI
     /// raycast target tracking the window's rect — keeps a click on a bucket from also landing on the dialog beneath
@@ -34,6 +35,8 @@ namespace Sdo.UI.Screens
         private const float TopH = 20f, TabH = 22f, Pad = 6f;   // TopH = the close-button strip / drag handle (no title)
         private const float ListTop = TopH + TabH + 6f;
         private const float BarW = 18f;                     // IMGUI's vertical scrollbar gutter
+        private const float EdgeGrab = 6f;                  // width of the draggable resize border (fits the list's Pad margin, clear of the scrollbar)
+        private const float MinW = 150f, MinH = 130f;       // don't let a resize shrink the panel past usefulness
 
         private RectTransform _host;    // the screen's Root — the design (800×600) space we position against
         private Image _blocker;         // invisible click blocker under the window
@@ -43,6 +46,15 @@ namespace Sdo.UI.Screens
         private bool _placed;           // default position resolved once (from the design-space anchor)
         private bool _open;
         private Vector2 _scroll;
+
+        // Resize state. Until the user drags an edge the size tracks the CD column (SizeToDiscColumn); after that
+        // _userSized freezes their chosen size. During a drag _resizeGrab is the (window-local) offset from the cursor
+        // to the corner being moved, and _resizeTo is the size we want applied AFTER GUI.Window returns (a size set
+        // inside the window callback would be clobbered by GUI.Window's own return value).
+        private bool _userSized;
+        private bool _resizeRight, _resizeBottom;
+        private Vector2 _resizeGrab;
+        private Vector2 _resizeTo;
 
         private IReadOnlyList<SongCatalog.Entry> _pool = new List<SongCatalog.Entry>();
         private List<SongBucket> _buckets = new List<SongBucket>();
@@ -163,8 +175,14 @@ namespace Sdo.UI.Screens
         {
             if (!_open) return;
             EnsureStyles();
-            SizeToDiscColumn();
+            if (!_userSized) SizeToDiscColumn();   // default size = the disc column; once the user drags an edge it sticks
             _rect = GUI.Window(WindowId, _rect, DrawWindow, GUIContent.none, _winStyle);   // no title, no white frame
+
+            // Apply a size the resize-grip drag asked for this frame (see _resizeTo), then keep the window sane: a size
+            // between the minimum and the viewport, and a position that keeps it fully on screen.
+            if (_userSized) { _rect.width = _resizeTo.x; _rect.height = _resizeTo.y; }
+            _rect.width = Mathf.Clamp(_rect.width, MinW, Screen.width);
+            _rect.height = Mathf.Clamp(_rect.height, MinH, Screen.height);
             _rect.x = Mathf.Clamp(_rect.x, 0f, Mathf.Max(0f, Screen.width - _rect.width));
             _rect.y = Mathf.Clamp(_rect.y, 0f, Mathf.Max(0f, Screen.height - _rect.height));
         }
@@ -193,6 +211,7 @@ namespace Sdo.UI.Screens
             if (_buckets.Count == 0)
             {
                 GUI.Label(view, L("songselect.group_empty"), _emptyStyle);
+                HandleResizeGrip(w, h);
                 GUI.DragWindow(new Rect(0f, 0f, w, TopH));
                 return;
             }
@@ -218,8 +237,65 @@ namespace Sdo.UI.Screens
             GUI.backgroundColor = bg;
             GUI.EndScrollView();
 
+            HandleResizeGrip(w, h);   // AFTER the scroll view, so its scrollbar claims its own gutter first
             GUI.DragWindow(new Rect(0f, 0f, w, TopH));   // drag by the top strip (where the close button sits)
         }
+
+        // Free resize: the window's right edge / bottom edge / bottom-right corner are drag handles (each a thin strip
+        // in the list's padding, clear of the scrollbar). hotControl capture keeps the drag alive even when the cursor
+        // leaves the window — same mechanism GUI.DragWindow uses. The new size is stashed in _resizeTo and applied in
+        // OnGUI (setting _rect.width/height here would be overwritten by GUI.Window's own return value).
+        private void HandleResizeGrip(float w, float h)
+        {
+            var rightEdge  = new Rect(w - EdgeGrab, TopH, EdgeGrab, h - TopH);   // below the close strip
+            var bottomEdge = new Rect(0f, h - EdgeGrab, w, EdgeGrab);
+            int id = GUIUtility.GetControlID(FocusType.Passive);
+            var e = Event.current;
+            switch (e.GetTypeForControl(id))
+            {
+                case EventType.MouseDown:
+                    bool onR = rightEdge.Contains(e.mousePosition);
+                    bool onB = bottomEdge.Contains(e.mousePosition);
+                    if (onR || onB)
+                    {
+                        GUIUtility.hotControl = id;
+                        _userSized = true;
+                        _resizeRight = onR; _resizeBottom = onB;
+                        _resizeGrab = new Vector2(w, h) - e.mousePosition;   // keep the grabbed point under the cursor
+                        _resizeTo = new Vector2(w, h);
+                        e.Use();
+                    }
+                    break;
+                case EventType.MouseDrag:
+                    if (GUIUtility.hotControl == id)
+                    {
+                        if (_resizeRight)  _resizeTo.x = e.mousePosition.x + _resizeGrab.x;
+                        if (_resizeBottom) _resizeTo.y = e.mousePosition.y + _resizeGrab.y;
+                        e.Use();
+                    }
+                    break;
+                case EventType.MouseUp:
+                    if (GUIUtility.hotControl == id)
+                    {
+                        GUIUtility.hotControl = 0;
+                        _resizeRight = _resizeBottom = false;
+                        e.Use();
+                    }
+                    break;
+            }
+
+            if (e.type == EventType.Repaint)   // a subtle triangle-of-dots grip in the bottom-right corner
+            {
+                var gc = GUI.color;
+                GUI.color = new Color(1f, 1f, 1f, 0.4f);
+                Dot(w, h, 4f, 4f); Dot(w, h, 4f, 9f); Dot(w, h, 9f, 4f);
+                Dot(w, h, 4f, 14f); Dot(w, h, 9f, 9f); Dot(w, h, 14f, 4f);
+                GUI.color = gc;
+            }
+        }
+
+        private static void Dot(float w, float h, float dx, float dy)
+            => GUI.DrawTexture(new Rect(w - dx, h - dy, 2f, 2f), Texture2D.whiteTexture);
 
         private void EnsureStyles()
         {
@@ -257,8 +333,9 @@ namespace Sdo.UI.Screens
             if (_bgTex != null) Destroy(_bgTex);
         }
 
-        /// <summary>Lock the window to the width of the dialog's CD column beneath it (and re-derive it whenever the
-        /// window/resolution changes). The dragged POSITION is kept; only the size follows the design rect.</summary>
+        /// <summary>Default size = the width of the dialog's CD column beneath it (re-derived each frame so it tracks
+        /// the resolution) — UNTIL the user drags a resize edge, after which <see cref="_userSized"/> gates this off and
+        /// their chosen size sticks. The dragged POSITION is always kept.</summary>
         private void SizeToDiscColumn()
         {
             if (!DesignToGui(new Vector2(DesignX, DesignY), out var tl) ||
@@ -336,7 +413,7 @@ namespace Sdo.UI.Screens
         // ---------------- labels ----------------
 
         /// <summary>Display name of a section: the folder name as-is; the letter buckets as 0-9 / A..Z / 其他;
-        /// a BPM band as "140-159" (BPM 未知 for songs with no BPM).</summary>
+        /// a BPM band as "100-149" (BPM 未知 for songs with no BPM).</summary>
         public static string LabelOf(string key, SongGroupMode mode)
         {
             switch (mode)

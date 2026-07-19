@@ -280,6 +280,7 @@ namespace Sdo.UI
                 game.oggPath = s.ExternalAudioPath;
                 game.externalFolder = s.ExternalFolderPath;
                 game.externalSongKey = s.ExternalSongKey;
+                game.songDisplayName = s.SongTitle;   // catalog display name (osu pack → real song name), not the .osu pack-label Title
             }
             else
             {

@@ -39,8 +39,9 @@ namespace Sdo.UI.Catalog
 
         public List<SongCatalog.Entry> Filter(string query) => Filter(_all, query);
 
-        /// <summary>Text search (title/artist/gn, case-insensitive) over an arbitrary list — lets the screen
-        /// search WITHIN a category subset. Empty/blank query returns a copy of the whole list.</summary>
+        /// <summary>Text search (title/artist/group/gn, case-insensitive) over an arbitrary list — lets the screen
+        /// search WITHIN a category subset. group matches an external song's pack/folder label (e.g. "SDO Pack8"), so
+        /// a pack is findable by its name as well as by song title. Empty/blank query returns a copy of the whole list.</summary>
         public static List<SongCatalog.Entry> Filter(IReadOnlyList<SongCatalog.Entry> list, string query)
         {
             var res = new List<SongCatalog.Entry>();
@@ -48,7 +49,8 @@ namespace Sdo.UI.Catalog
             if (string.IsNullOrWhiteSpace(query)) { res.AddRange(list); return res; }
             query = query.Trim();
             foreach (var e in list)
-                if (e != null && (Contains(e.title, query) || Contains(e.artist, query) || Contains(e.gn, query)))
+                if (e != null && (Contains(e.title, query) || Contains(e.artist, query)
+                                  || Contains(e.group, query) || Contains(e.gn, query)))
                     res.Add(e);
             return res;
         }

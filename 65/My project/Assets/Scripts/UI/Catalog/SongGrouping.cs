@@ -25,15 +25,16 @@ namespace Sdo.UI.Catalog
     ///   歌名 / 歌手 (Title/Artist) — first character of the sort string: digits bucket to
     ///     <see cref="Num"/>, A–Z to that letter, anything else (CJK, symbols, blank) to <see cref="Other"/>.
     ///     Sections order NUM first, then A–Z, OTHER last — exactly SM's "0"/"1"+name/"2" ordering.
-    ///   BPM — fixed <see cref="BpmGroupSize"/>-wide bands off the song's BPM ("140-159"); songs with no
+    ///   BPM — fixed <see cref="BpmGroupSize"/>-wide bands off the song's BPM ("100-149"); songs with no
     ///     BPM in the catalog (bpm ≤ 0) bucket to <see cref="UnknownBpm"/>, which sorts last.
     ///
     /// Pure logic (no Unity, no IO) — the panel only renders what comes out of <see cref="Build"/>.
     /// </summary>
     public static class SongGrouping
     {
-        /// <summary>BPM band width — SM's <c>iBPMGroupSize</c>.</summary>
-        public const int BpmGroupSize = 20;
+        /// <summary>BPM band width (SM's <c>iBPMGroupSize</c> is 20; we use 50-wide bands — "100-149" — so the
+        /// browse list has fewer, coarser BPM sections).</summary>
+        public const int BpmGroupSize = 50;
 
         public const string Num = "NUM";          // title/artist starts with a digit
         public const string Other = "OTHER";      // title/artist starts with anything else (incl. CJK) or is blank
@@ -88,7 +89,7 @@ namespace Sdo.UI.Catalog
             return s.Substring(0, 1);
         }
 
-        /// <summary>BPM band containing <paramref name="bpm"/>, e.g. 140 or 145 → "140-159"; ≤0 → <see cref="UnknownBpm"/>.</summary>
+        /// <summary>BPM band containing <paramref name="bpm"/>, e.g. 100 or 145 → "100-149"; ≤0 → <see cref="UnknownBpm"/>.</summary>
         public static string BpmSection(double bpm)
         {
             if (!(bpm > 0)) return UnknownBpm;   // catches 0, negatives and NaN (catalog stores -1 = unknown)
@@ -101,15 +102,23 @@ namespace Sdo.UI.Catalog
 
         /// <summary>
         /// Ordering key for a section — SM's <c>SortSongPointerArrayBySectionName</c>: NUM first ("0"),
-        /// named sections in the middle ("1"+sort string), OTHER last ("2"). BPM bands are already
-        /// zero-padded so they order as strings; the unknown-BPM bucket sorts last.
+        /// named sections in the middle ("1"+sort string), OTHER last ("2"). BPM bands order by their NUMERIC low
+        /// bound (see below); the unknown-BPM bucket sorts last.
         /// </summary>
         public static string SortKey(string section, SongGroupMode mode)
         {
             switch (mode)
             {
                 case SongGroupMode.Bpm:
-                    return section == UnknownBpm ? "2" : "1" + section;
+                    if (section == UnknownBpm) return "2";
+                    // Order BPM bands by their numeric low bound, NOT as raw strings: "10000-…" string-compares below
+                    // "200-…" (2nd char '0' < '2'), so a 4–5 digit BPM band wrongly wedges in just after "100-…". Key
+                    // on the parsed low bound, zero-padded wide so the comparison stays numeric for any real BPM.
+                    int dash = section.IndexOf('-');
+                    string lo = dash > 0 ? section.Substring(0, dash) : section;
+                    return int.TryParse(lo, NumberStyles.Integer, CultureInfo.InvariantCulture, out int min)
+                        ? "1" + min.ToString("D8", CultureInfo.InvariantCulture)
+                        : "1" + section;
                 case SongGroupMode.Title:
                 case SongGroupMode.Artist:
                     if (section == Num) return "0";

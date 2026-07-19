@@ -124,6 +124,10 @@ namespace Sdo.UI.Screens
         private float _previewWinStart, _previewWinEnd;
         private Sdo.Game.Mp3StreamClip _previewStream;   // streaming mp3 preview (fast start; disposed on stop/change)
         private const float PreviewWindowSec = 20f;
+        // External songs are scanned WITHOUT reading their audio (see ExternalSongScanner) so boot stays fast; their
+        // 時間 column shows the chart's last-note time until played. When one is actually selected its real audio length
+        // is measured once — off-thread — and the row refreshed. This tracks which fileIds we've already measured.
+        private readonly HashSet<int> _extDurDone = new HashSet<int>();
 
         // window open/close transition (spin-zoom in, shrink-fade out) — all dialog art lives under _window so it
         // animates as one piece; the combo popups parent themselves to Root, so they stay clear of the spin.
@@ -739,7 +743,12 @@ namespace Sdo.UI.Screens
 
         private void ApplyFilter()
         {
-            _filtered = SongListModel.Filter(CategoryBase(), _search != null ? _search.text : null);
+            string q = _search != null ? _search.text : null;
+            // A text search is GLOBAL — it spans the whole library (official + external), regardless of the active
+            // category or which 資料夾 bucket is open, so a song in another folder is always findable. With no query
+            // the category's own list (全部 / 收藏 / a picked bucket / …) is shown, exactly as before.
+            var baseList = string.IsNullOrWhiteSpace(q) ? CategoryBase() : (IReadOnlyList<SongCatalog.Entry>)_model.All;
+            _filtered = SongListModel.Filter(baseList, q);
             int maxPage = Mathf.Max(0, (_filtered.Count - 1) / PageSize);
             _page = Mathf.Clamp(_page, 0, maxPage);
             RenderDiffTabs();
@@ -764,7 +773,8 @@ namespace Sdo.UI.Screens
             var res = new List<SongCatalog.Entry>();
             // 分類瀏覽 tab: the songs of the bucket the floating panel currently has picked (empty if none).
             if (_category == CatFolder) { res.AddRange(_bucketSongs); return res; }
-            // 全部 = official .gn songs only; external (user Songs/) songs live under the 資料夾 tab.
+            // 全部 = official .gn songs only; external (user Songs/) songs live under the 資料夾 tab. (A text search
+            // isn't limited to this list — ApplyFilter searches the whole library when the box has text.)
             if (_category == CatAll) { foreach (var e in all) if (e != null && !e.external) res.Add(e); }
             else if (_category == CatFav)
             {
@@ -1075,6 +1085,10 @@ namespace Sdo.UI.Screens
             }
             _previewCo = null;
 
+            // The scan never read this song's audio (boot speed) → its 時間 is only the chart length so far. Now that
+            // it is the committed selection, measure the real track length once, in the background, and refresh the row.
+            if (e.external) EnsureExternalDuration(e);
+
             EnsurePreviewSource();
             _preview.clip = clip;
             _preview.volume = Sdo.Game.AudioMix.Music;   // 遊戲音樂 音量(試聽 exper/<id>.ogg)
@@ -1119,6 +1133,31 @@ namespace Sdo.UI.Screens
                 _preview.time = start;
                 _preview.Play();
             }
+        }
+
+        // Measure an external song's real audio length once (the scan skipped it — mp3 needs a full decode), off the
+        // main thread, then upgrade its 時間 column from the chart-length placeholder to the true track length.
+        private void EnsureExternalDuration(SongCatalog.Entry e)
+        {
+            if (e == null || !e.external || string.IsNullOrEmpty(e.audioPath)) return;
+            if (!_extDurDone.Add(e.fileId)) return;   // already measured this song
+            StartCoroutine(MeasureExternalDurationCo(e, e.audioPath));
+        }
+
+        private IEnumerator MeasureExternalDurationCo(SongCatalog.Entry e, string path)
+        {
+            // ogg/wav read only the file header (cheap); mp3 decodes the whole file (the slow case) — so always run it
+            // on a worker thread and just poll, exactly like the boot scan does, to never stall a frame.
+            var task = System.Threading.Tasks.Task.Run(() => Sdo.Osu.AudioDuration.Seconds(path));
+            while (!task.IsCompleted) yield return null;
+            int sec; try { sec = task.Result; } catch { sec = 0; }
+            if (sec <= 0) yield break;   // unreadable/odd format → keep the chart-length fallback
+
+            // One song → one length; only overwrite difficulties that actually have a chart (empty slots stay 0 = blank).
+            if (e.notesEasy > 0) e.durEasy = sec;
+            if (e.notesNormal > 0) e.durNormal = sec;
+            if (e.notesHard > 0) e.durHard = sec;
+            if (isActiveAndEnabled) RenderPage();   // repaint the current page's 時間 column with the real length
         }
 
         private void EnsurePreviewSource()
