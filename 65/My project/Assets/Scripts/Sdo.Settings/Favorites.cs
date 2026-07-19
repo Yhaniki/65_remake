@@ -7,11 +7,12 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// per-user 收藏夾。用歌曲的 .gn 檔名（小寫）當 key —— 選歌清單只列 k 譜面，所以一首歌一個 key，穩定不重複。
-    /// 存成 DATA/PROFILE/&lt;id&gt;/favorites.json；<see cref="ProfileManager"/> 在開機/切換 user 時指向對應資料夾。
+    /// 收藏夾（全帳號共用）。用歌曲的 .gn 檔名（小寫）當 key —— 選歌清單只列 k 譜面，所以一首歌一個 key，穩定不重複。
+    /// 存成 DATA/PROFILE/favorites.json（跟 settings.json 同層；&lt;id&gt;/ user 資料夾只放衣服）。
+    /// <see cref="ProfileManager"/> 開機時載入，殘留在 user 資料夾的舊版 per-user 檔會一次性併入共用檔。
     ///
-    /// 集合運算、key 正規化、JSON 讀寫都是純函式（<see cref="Key"/> / <see cref="Parse"/> / <see cref="Serialize"/>），
-    /// 可單元測試。線上版要同步收藏時，換掉 <see cref="Load"/>/<see cref="Save"/> 的 backing store 即可。
+    /// 集合運算、key 正規化、JSON 讀寫都是純函式（<see cref="Key"/> / <see cref="Parse"/> / <see cref="Serialize"/> /
+    /// <see cref="MergeDocs"/>），可單元測試。線上版要同步收藏時，換掉 <see cref="Load"/>/<see cref="Save"/> 的 backing store 即可。
     /// </summary>
     public static class Favorites
     {
@@ -69,7 +70,7 @@ namespace Sdo.Settings
 
         // ---------------- persistence（由 ProfileManager 在開機/切換時驅動）----------------
 
-        /// <summary>把收藏綁到某個 user 資料夾並讀入其 favorites.json。dir 為 null → 清空、只在記憶體。</summary>
+        /// <summary>把收藏綁到某個資料夾（正式流程 = DATA/PROFILE 層）並讀入其 favorites.json。dir 為 null → 清空、只在記憶體。</summary>
         public static void Load(string dir)
         {
             _path = string.IsNullOrEmpty(dir) ? null : Path.Combine(dir, FileName);
@@ -114,6 +115,16 @@ namespace Sdo.Settings
             if (keys != null)
                 foreach (var k in keys) if (!string.IsNullOrEmpty(k) && seen.Add(k)) list.Add(k);
             return JsonUtility.ToJson(new Doc { gns = list.ToArray() }, true);
+        }
+
+        /// <summary>合併多份 favorites.json 內容成一份（先出現先贏的順序、去重；壞 JSON/null 的份直接略過）。
+        /// 舊版 per-user 檔 → PROFILE 層共用檔的一次性遷移用（<see cref="ProfileManager"/>）。</summary>
+        public static string MergeDocs(IEnumerable<string> jsons)
+        {
+            var merged = new List<string>();
+            if (jsons != null)
+                foreach (var j in jsons) merged.AddRange(Parse(j));
+            return Serialize(merged);   // Serialize 去重 → 同一首以先出現的位置為準
         }
 
         /// <summary>測試/重置用：清掉記憶體集合與綁定路徑。</summary>

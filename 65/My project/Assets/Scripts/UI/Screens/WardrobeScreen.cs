@@ -90,7 +90,6 @@ namespace Sdo.UI.Screens
         // 穿上的服飾排到格子最前面，且依「穿上先後」排 (先穿在前、後穿接在後面)；未穿的在後、依 ModelId。使用者指定 (task 2)。
         private readonly Dictionary<int, int> _equipOrder = new Dictionary<int, int>();
         private int _equipSeq;
-        private bool _roomDirty;   // 換穿/刪除累積的房間人重建，延到關櫃一次做 (房間在黑幕後方非焦點 → 換穿更順；task 1)
 
         private static readonly Color CMoney = Hex(0xff004f7c);
 
@@ -150,9 +149,9 @@ namespace Sdo.UI.Screens
             _previewImg = pv.gameObject.AddComponent<RawImage>(); _previewImg.color = Color.white; _previewImg.raycastTarget = true;
             AddTrigData(pv.gameObject.AddComponent<EventTrigger>(), EventTriggerType.Drag, OnPreviewDrag);
 
-            // 分頁 服饰/礼包 (coat/gift)；礼包離線無資料 → 點了顯示提示。
+            // 分頁 服饰/礼包 (coat/gift)；礼包離線無資料 → 點了不做事(不跳提示)。
             SpriteBtn(_root, "coat", "coat_2.an", "coat_2.an", WinX + 322f, WinY + 101f, () => { _filter = CatFilter.All; _page = 0; Refresh(); }, noSwap: true);
-            SpriteBtn(_root, "gift", "gift_1.an", "gift_1.an", WinX + 488f, WinY + 101f, () => Toast.Show("礼包：離線版暫無資料"), noSwap: true);
+            SpriteBtn(_root, "gift", "gift_1.an", "gift_1.an", WinX + 488f, WinY + 101f, () => { }, noSwap: true);
 
             // 分類欄容器 (右緣 label_*) + 3×3 格容器 (依分類/頁重畫)
             _catCol = UIKit.NewRect(_root, "CatCol"); UIKit.Stretch(_catCol);
@@ -253,7 +252,6 @@ namespace Sdo.UI.Screens
             ClearThumbCache();                        // 縮圖快取重算 (性別/穿搭可能已變)；之後同一 session 的換穿沿用
             _equipOrder.Clear(); _equipSeq = 0;
             ReconcileEquipOrder();                    // 依 ModelId 給目前已穿的服飾初始排序 → 穿上的先排在最前 (task 2)
-            _roomDirty = false;
             _filter = CatFilter.All; _catPage = 0; _page = 0; _selected = 0;
             _dragAngle = 0f; _pitchAngle = 0f;   // 正面朝相機 (#6)
             BuildPreview();
@@ -458,7 +456,7 @@ namespace Sdo.UI.Screens
             }
             ReconcileEquipOrder();                      // 更新「穿上先後」序 (新穿的接在既有穿上的後面；task 2)
             WardrobeStore.SaveAll(_session);            // 落地 profile.json (穿搭 + equippedParts)
-            _roomDirty = true;                          // 房間人 (黑幕後方，非焦點) 延到關櫃再重建 → 換穿更順 (task 1)
+            Nav.RefreshRoomAvatar?.Invoke();            // 櫃子後方的房間人 + 頭貼當場換裝 (不等關櫃)
             RebuildAvatar();                            // 左側預覽換裝 (焦點，立即)
             RefreshGrid();                              // 重排格子 (穿上的移到最前) + 更新使用中壓暗；縮圖走快取不重建 3D
         }
@@ -482,7 +480,7 @@ namespace Sdo.UI.Screens
             _selected = 0;
             ReconcileEquipOrder();                        // 脫下的從「穿上先後」序移除
             WardrobeStore.SaveAll(_session);
-            if (wasWorn) _roomDirty = true;               // 刪的是穿著中的才需重建房間人 → 延到關櫃 (task 1)
+            if (wasWorn) Nav.RefreshRoomAvatar?.Invoke();  // 刪的是穿著中的才需重建房間人 + 頭貼 (當場)
             RebuildAvatar();
             Refresh();
             Toast.Show("已刪除服飾：" + nm);
@@ -558,7 +556,9 @@ namespace Sdo.UI.Screens
                 _avatarRoot = new GameObject("WardrobePreviewAvatar");
                 _avatarRoot.transform.position = PreviewSpot;
                 var parts = AvatarOutfit.ResolveParts(_sex, EquippedItems());
-                var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex));
+                // 左側「玩家假人」跟隨玩家自己的體型 (胖瘦)：儲物櫃是本人衣櫃，_sex = active profile 的性別。
+                float bodyB = SdoBodyShape.WeightFromIndex(Sdo.Settings.ProfileManager.Active.bodyShapeIndex, _sex == ItemSex.Male);
+                var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex), bodyWeight: bodyB);
                 if (av == null) { Destroy(_avatarRoot); _avatarRoot = null; return; }
                 ApplyLeftPose(av);
                 _previewFeetY = av.FeetYAt(0f);
@@ -789,7 +789,13 @@ namespace Sdo.UI.Screens
             if (cut == null) return;
             foreach (var mr in root.GetComponentsInChildren<MeshRenderer>())
                 foreach (var m in mr.sharedMaterials)
-                    if (m != null && m.mainTexture != null) { m.shader = cut; m.SetFloat("_Cutoff", 0.05f); }
+                    if (m != null && m.mainTexture != null)
+                    {
+                        // OPAQUE 衣服(Unlit/Texture,含 alpha 壞掉被強制實心的布料)不可裁,否則卡片變透明線框(璀璨繁星 褲子)。
+                        bool opaque = m.shader != null && m.shader.name == "Unlit/Texture";
+                        m.shader = cut;
+                        m.SetFloat("_Cutoff", opaque ? 0f : 0.05f);
+                    }
         }
 
         private static bool IsSkinMat(Material m)
@@ -888,8 +894,6 @@ namespace Sdo.UI.Screens
             if (_closing) return;
             _closing = true;
             HideTip();
-            // 換穿/刪除期間累積的房間人 (+頭貼) 重建，關櫃時一次做掉 (換穿當下不做 → 更順；task 1)。
-            if (_roomDirty) { Nav.RefreshRoomAvatar?.Invoke(); _roomDirty = false; }
             if (_windowCg != null) _windowCg.blocksRaycasts = false;
             UiSfx.Play(UiSfx.FrameRound);
             if (_anim != null) _anim.PlayOut(() => { SetVisible(false); _closing = false; });

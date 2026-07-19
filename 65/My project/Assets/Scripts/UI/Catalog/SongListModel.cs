@@ -20,29 +20,18 @@ namespace Sdo.UI.Catalog
         public static SongListModel FromCatalog() => new SongListModel(Curate(SongCatalog.All));
 
         /// <summary>
-        /// Browse-list curation. The original data ships a paired chart per song —
-        /// sdomNNNN<b>k</b>.gn and sdomNNNN<b>t</b>.gn share one title — which made every song appear
-        /// twice in the list. Keep only the 'k' variant, then order by gn filename DESCENDING
-        /// (sdomNNNN, highest number first / at the top). (SongCatalog.All stays unfiltered: gn-based
-        /// title/artist lookups and font warmup still need both variants.)
+        /// Browse-list curation: keep only the keyboard ('k') chart of each sdomNNNNk/t pair
+        /// (<see cref="SongCatalog.IsPrimaryVariant"/> — that's where the k/t story is written down),
+        /// then order by gn filename DESCENDING (highest sdomNNNN first / at the top).
         /// </summary>
         public static List<SongCatalog.Entry> Curate(IEnumerable<SongCatalog.Entry> entries)
         {
             var res = new List<SongCatalog.Entry>();
             if (entries == null) return res;
             foreach (var e in entries)
-                if (e != null && IsPrimaryVariant(e.gn)) res.Add(e);
+                if (e != null && SongCatalog.IsPrimaryVariant(e.gn)) res.Add(e);
             res.Sort((a, b) => string.CompareOrdinal(b.gn, a.gn));   // by filename sdomNNNNk.gn 降冪(最大號在最上)
             return res;
-        }
-
-        /// <summary>True for the 'k' chart of a sdomNNNNk/t.gn pair (the one we list); false for 't'.</summary>
-        private static bool IsPrimaryVariant(string gn)
-        {
-            if (string.IsNullOrEmpty(gn)) return false;
-            var name = gn.ToLowerInvariant();
-            if (name.EndsWith(".gn")) name = name.Substring(0, name.Length - 3);
-            return name.Length > 0 && name[name.Length - 1] == 'k';
         }
 
         public int Count => _all.Count;
@@ -61,6 +50,55 @@ namespace Sdo.UI.Catalog
             foreach (var e in list)
                 if (e != null && (Contains(e.title, query) || Contains(e.artist, query) || Contains(e.gn, query)))
                     res.Add(e);
+            return res;
+        }
+
+        /// <summary>隨機 (random) difficulty-range options — shown as the rows of the 隨機 tab, and used as the
+        /// label carried into the room ("隨機難度 X"). Min/Max are inclusive level bounds at the active difficulty;
+        /// Key is the localization key. Single source of truth: the screen renders it, FrontendApp re-rolls off it.</summary>
+        public struct RandRange { public string Key; public int Min, Max; }
+        public static readonly RandRange[] RandRanges =
+        {
+            new RandRange { Key = "songselect.rand_1_5",  Min = 1,  Max = 5 },
+            new RandRange { Key = "songselect.rand_1_9",  Min = 1,  Max = 9 },
+            new RandRange { Key = "songselect.rand_5_9",  Min = 5,  Max = 9 },
+            new RandRange { Key = "songselect.rand_all",  Min = 0,  Max = 99 },
+            new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = 99 },
+            new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = 99 },
+            new RandRange { Key = "songselect.rand_13up", Min = 13, Max = 99 },
+            new RandRange { Key = "songselect.rand_20up", Min = 20, Max = 99 },
+            new RandRange { Key = "songselect.rand_25up", Min = 25, Max = 99 },
+        };
+
+        /// <summary>Clamp an arbitrary index into <see cref="RandRanges"/>.</summary>
+        public static int ClampRange(int rangeIndex)
+            => rangeIndex < 0 ? 0 : (rangeIndex >= RandRanges.Length ? RandRanges.Length - 1 : rangeIndex);
+
+        /// <summary>A random-eligible candidate: a song plus the specific difficulty (0/1/2) whose level fell in
+        /// the range. A song can appear up to 3 times (once per qualifying difficulty).</summary>
+        public struct RandomCandidate { public SongCatalog.Entry Song; public int Difficulty; }
+
+        /// <summary>All (song, difficulty) candidates for RandRanges[rangeIndex]: searches easy/normal/hard TOGETHER —
+        /// a song qualifies at ANY difficulty whose level is inside the range AND carries a playable chart. The picked
+        /// difficulty is the one that matched (not a pre-selected tab). "全部" = every playable chart. Call afresh
+        /// each time to re-roll.</summary>
+        public static List<RandomCandidate> RandomCandidates(IReadOnlyList<SongCatalog.Entry> list, int rangeIndex)
+        {
+            var res = new List<RandomCandidate>();
+            if (list == null) return res;
+            var r = RandRanges[ClampRange(rangeIndex)];
+            bool all = r.Min <= 0 && r.Max >= 99;
+            foreach (var e in list)
+            {
+                if (e == null) continue;
+                for (int d = 0; d < 3; d++)
+                {
+                    if (!e.HasChart(d)) continue;   // empty difficulty can't be a random pick
+                    if (all) { res.Add(new RandomCandidate { Song = e, Difficulty = d }); continue; }
+                    int lvl = e.Diff(d);
+                    if (lvl >= r.Min && lvl <= r.Max) res.Add(new RandomCandidate { Song = e, Difficulty = d });
+                }
+            }
             return res;
         }
 

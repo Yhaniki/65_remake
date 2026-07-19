@@ -1,19 +1,27 @@
+using Sdo.Game;
 using TMPro;
 using UnityEngine;
 
 namespace Sdo.UI.Util
 {
     /// <summary>
-    /// A TMP label with a SOLID coloured edge, drawn the bulletproof way: eight offset copies of the glyphs in the
+    /// A TMP label with a SOLID coloured edge, drawn the bulletproof way: offset copies of the glyphs in the
     /// edge colour stacked BEHIND the face copy. Unlike TMP's SDF material outline
     /// (<c>outlineWidth</c>/<c>outlineColor</c>), this does NOT depend on the font being SDF or on the Distance-Field
     /// shader's outline feature — which is exactly why the room header uses it: the runtime-built dynamic CJK atlas
     /// would not show the SDF outline at any width. Call <see cref="SetText"/> to update face + all edge copies at once.
+    ///
+    /// The edge is a 16-direction ring (8 showed scalloped notches once fullscreen magnified the offsets to
+    /// 2–3 physical px), and each offset's x is divided by the 4:3→screen stretch anisotropy so the ring
+    /// thickness looks uniform under the non-uniform Stretch mode (re-applied on resolution/mode change).
     /// </summary>
     public sealed class OutlinedLabel : MonoBehaviour
     {
         private TextMeshProUGUI _face;
         private TextMeshProUGUI[] _edges;
+        private float _edgePx;
+        private int _lastW, _lastH;
+        private AspectMode _lastMode;
 
         /// <summary>The front-face text (read-only access for callers that need the TMP itself).</summary>
         public TextMeshProUGUI Face => _face;
@@ -31,12 +39,8 @@ namespace Sdo.UI.Util
             rt.anchoredPosition = new Vector2(x, rt.anchoredPosition.y);
         }
 
-        // eight compass directions → a smooth ring of edge copies around the face glyphs
-        private static readonly Vector2[] Dirs8 =
-        {
-            new Vector2( 1f,  0f), new Vector2(-1f,  0f), new Vector2( 0f,  1f), new Vector2( 0f, -1f),
-            new Vector2( 1f,  1f), new Vector2( 1f, -1f), new Vector2(-1f,  1f), new Vector2(-1f, -1f),
-        };
+        // 16 evenly-spaced unit directions → a closed ring of edge copies around the face glyphs
+        private static readonly Vector2[] Dirs16 = NameplateMetrics.Ring(1f, 16);
 
         /// <summary>Build the label under <paramref name="parent"/> at top-left (<paramref name="x"/>,<paramref name="y"/>)
         /// of size (<paramref name="w"/>,<paramref name="h"/>): a <paramref name="face"/>-coloured face over a
@@ -47,7 +51,7 @@ namespace Sdo.UI.Util
         public static OutlinedLabel Create(Transform parent, string name, float x, float y, float w, float h,
             float size, Color32 face, Color32 edge, float edgePx, bool bold,
             TextAlignmentOptions align = TextAlignmentOptions.Center,
-            float glyphScaleX = 1f, float glyphScaleY = 1f)
+            float glyphScaleX = 1f, float glyphScaleY = 1f, float charSpacing = 0f)
         {
             var holder = UIKit.NewRect(parent, name);
             holder.anchorMin = holder.anchorMax = new Vector2(0f, 1f);
@@ -61,23 +65,47 @@ namespace Sdo.UI.Util
             var glyphScale = new Vector3(glyphScaleX, glyphScaleY, 1f);
 
             var ol = holder.gameObject.AddComponent<OutlinedLabel>();
-            ol._edges = new TextMeshProUGUI[Dirs8.Length];
-            for (int i = 0; i < Dirs8.Length; i++)           // edges first → they sit BEHIND the face (UGUI sibling order)
-                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, Dirs8[i] * edgePx, align, glyphScale);
-            ol._face = Make(holder, "Face", size, face, bold, Vector2.zero, align, glyphScale);
+            ol._edgePx = edgePx;
+            ol._edges = new TextMeshProUGUI[Dirs16.Length];
+            for (int i = 0; i < Dirs16.Length; i++)           // edges first → they sit BEHIND the face (UGUI sibling order)
+                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale, charSpacing);
+            ol._face = Make(holder, "Face", size, face, bold, align, glyphScale, charSpacing);
+            ol.ApplyEdgeOffsets(true);
             return ol;
         }
 
-        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, Vector2 offset, TextAlignmentOptions align, Vector3 glyphScale)
+        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, TextAlignmentOptions align, Vector3 glyphScale, float charSpacing)
         {
             var t = UIKit.AddText(parent, name, "", size, color, align);
             if (bold) t.fontStyle = FontStyles.Bold;
+            t.characterSpacing = charSpacing;   // TMP letter-spacing: adds charSpacing×fontSize/100 px per gap (negative = tighter)
             var rt = t.rectTransform;
-            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;   // stretch to the holder, then shift by the offset
-            rt.offsetMin = offset;
-            rt.offsetMax = offset;
+            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;   // stretch to the holder; edges get shifted by ApplyEdgeOffsets
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
             rt.localScale = glyphScale;                               // squash glyphs around their centre (pivot 0.5,0.5)
             return t;
+        }
+
+        private void LateUpdate() => ApplyEdgeOffsets(false);         // labels live across fullscreen toggles
+
+        /// <summary>(Re)apply the edge-copy offsets, compressing x by the current stretch anisotropy so the
+        /// ring stays visually uniform. Runs once per resolution/mode change (cheap int check per frame).</summary>
+        private void ApplyEdgeOffsets(bool force)
+        {
+            if (_edges == null) return;
+            if (!force && Screen.width == _lastW && Screen.height == _lastH && AspectController.Mode == _lastMode) return;
+            _lastW = Screen.width; _lastH = Screen.height; _lastMode = AspectController.Mode;
+
+            float ax = NameplateMetrics.AnisotropyX(Screen.width, Screen.height, AspectController.ContentRect);
+            for (int i = 0; i < _edges.Length; i++)
+            {
+                if (_edges[i] == null) continue;
+                var rt = _edges[i].rectTransform;
+                Vector2 o = NameplateMetrics.Compensate(Dirs16[i] * _edgePx, ax);
+                rt.offsetMin = o;                                     // shift the whole stretched rect by the offset
+                rt.offsetMax = o;
+            }
         }
 
         /// <summary>Set the text on the face and every edge copy together.</summary>

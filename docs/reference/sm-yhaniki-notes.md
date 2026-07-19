@@ -30,5 +30,6 @@
 
 ## 相關
 
+- [judgment-windows-sm-vs-sdo.md](judgment-windows-sm-vs-sdo.md)：精1～精7 與 SDO 各判定段的時間窗對照
 - [external-references.md](external-references.md)
 - [architecture/skin-system.md](../architecture/skin-system.md)

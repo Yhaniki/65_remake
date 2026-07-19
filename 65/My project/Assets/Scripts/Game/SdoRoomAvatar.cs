@@ -78,11 +78,12 @@ namespace Sdo.Game
             => Build(parent, layer, portraitOpaque, male, null);
 
         /// <summary>Back-compat bool overload: <paramref name="portraitOpaque"/> true → <see cref="RenderMode.PortraitHead"/>,
-        /// false → <see cref="RenderMode.Scene"/>. New callers should pass a <see cref="RenderMode"/> directly.</summary>
-        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male, string[] equippedParts)
-            => Build(parent, layer, portraitOpaque ? RenderMode.PortraitHead : RenderMode.Scene, male, equippedParts);
+        /// false → <see cref="RenderMode.Scene"/>. New callers should pass a <see cref="RenderMode"/> directly.
+        /// <paramref name="bodyIndex"/> = 這個角色自己的體型 (胖瘦) index 0..4 (預設 0=瘦;由 UI 層從 profile.json 帶入)。</summary>
+        public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, bool male, string[] equippedParts, int bodyIndex = 0)
+            => Build(parent, layer, portraitOpaque ? RenderMode.PortraitHead : RenderMode.Scene, male, equippedParts, bodyIndex);
 
-        public static SdoAvatar Build(GameObject parent, int layer, RenderMode mode, bool male = false, string[] equippedParts = null)
+        public static SdoAvatar Build(GameObject parent, int layer, RenderMode mode, bool male = false, string[] equippedParts = null, int bodyIndex = 0)
         {
             // PortraitHead + PreviewBody both composite over an alpha-cleared RT → use the opaque-cutout shader so hair
             // gaps stay transparent instead of writing depth/alpha holes over the face. Only the head portrait collapses
@@ -101,7 +102,7 @@ namespace Sdo.Game
             var idle = LoadMot(male ? MaleIdleMot : IdleMot);
             var av = parent.AddComponent<SdoAvatar>();
             av.Setup(hrc, idle);
-            av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, male));   // default thin body (male/female baseline)
+            av.SetBodyShape(SdoBodyShape.WeightFromIndex(bodyIndex, male));   // 這個角色自己的體型 (胖瘦;預設 0=瘦,male/female baseline)
             av.RestMot = idle;
             av.BlendSec = 0.5f;   // 0.3s smoothstep crossfade on idle↔walk (and the mirrored head portrait) — no hard cut
 
@@ -121,7 +122,10 @@ namespace Sdo.Game
                 // 髮/眼鏡/翅膀/項鍊都要雙面+alpha-cutout(去背),否則翅膀/眼鏡鏤空處變實心。其餘走 Unlit/Texture。
                 string ru = rel.ToUpperInvariant();
                 bool twoSidedAlpha = ru.Contains("HAIR") || ru.Contains("GLASS") || ru.Contains("CHIBANG") || ru.Contains("LINGDANG");
-                var sh = useCutout ? portraitShader : (twoSidedAlpha ? hairShader : bodyShader);
+                // 布料(非 髮/眼鏡/翅膀/項鍊)一律 bodyShader (Unlit/Texture,UNITY_OPAQUE_ALPHA 逼 alpha=1) → 破 alpha 布料
+                // 在透空 RT 也畫成實心,不被 portrait cutout 裁成透明線框(璀璨繁星 褲子 在男女選單/儲物櫃)。只有 twoSidedAlpha
+                // (髮/眼鏡/翅膀/項鍊,鏤空去背)才需 cutout:RT 用 portrait、場景用 hair。
+                var sh = twoSidedAlpha ? (useCutout ? portraitShader : hairShader) : bodyShader;
                 int si = 0;
                 foreach (var sub in r.Submeshes)
                 {
@@ -140,16 +144,22 @@ namespace Sdo.Game
                             int a = sub.Ranges[s].Attrib;
                             string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
                             var t = ResolveDds(dir, nm);
-                            if (t == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
-                            mats[s] = t != null ? new Material(sh) { mainTexture = t } : new Material(fallback) { color = PartColor(rel), name = nm ?? "" };
+                            // 翅膀(CHIBANG)的發光羽翼常是 model-embedded 換幀貼圖:材質名是佔位符 "_TexAnimEx(NAME)…"，
+                            // 找不到真檔 → 交給共用的 TryBuildTexAnim 解出 <NAME>.an 幀序列並掛動畫(與遊戲內舞者/商城同一套),
+                            // 否則房間/選男女的翅膀會變一坨灰色(user 回報 8448 貼圖寫不出來)。仍解不出才退 fallback 色。
+                            Material texAnim = t == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, nm, sh) : null;
+                            if (t == null && texAnim == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
+                            mats[s] = t != null ? new Material(sh) { mainTexture = t } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
                         }
                         mr.sharedMaterials = mats;
                     }
                     else
                     {
                         var tex = ResolveDds(dir, sub.Dds);
-                        if (tex == null && !string.IsNullOrEmpty(sub.Dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{sub.Dds}' unresolved → fallback colour {PartColor(rel)}");
-                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : new Material(fallback) { color = PartColor(rel), name = sub.Dds ?? "" };
+                        // 見上:翅膀 _TexAnimEx 換幀貼圖 → 交給共用 TryBuildTexAnim(解 .an 幀序列)否則變灰色。
+                        Material texAnim = tex == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, sub.Dds, sh) : null;
+                        if (tex == null && texAnim == null && !string.IsNullOrEmpty(sub.Dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{sub.Dds}' unresolved → fallback colour {PartColor(rel)}");
+                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = sub.Dds ?? "" });
                     }
 
                     if (sub.BindVerts != null && sub.BoneHrc != null)
@@ -170,7 +180,7 @@ namespace Sdo.Game
         /// with no motion (the official AvtShow display mode). Kept separate from the room/gender overloads above so each
         /// path preserves its own tested behaviour.</summary>
         public static SdoAvatar Build(GameObject parent, int layer, bool portraitOpaque, string[] parts, string hrcRel = null,
-                                      bool bindPoseNoIdle = false)
+                                      bool bindPoseNoIdle = false, float bodyWeight = 1f)
         {
             string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel ?? FemaleHrc);   // MALE.HRC for male outfits
             if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
@@ -183,7 +193,9 @@ namespace Sdo.Game
             var idle = bindPoseNoIdle ? null : LoadMot(IdleMot);
             var av = parent.AddComponent<SdoAvatar>();
             av.Setup(hrc, idle);
-            av.SetBodyShape(SdoBodyShape.WeightFromIndex(0, false));   // default thin female (matches the dancer)
+            // 服裝預覽的體型 B：卡片縮圖用預設「正常身材」(bodyWeight=1.0，對任何骨頭都不縮放)；左側「玩家假人」則由呼叫端
+            // 帶入玩家自己的體型 (胖瘦) → 換衣服在玩家實際身材上預覽 (user)。
+            av.SetBodyShape(bodyWeight);
             if (bindPoseNoIdle) { av.Animate = false; }
             else { av.RestMot = idle; av.BlendSec = 0f; }   // no idle↔walk crossfade — start walking immediately
 

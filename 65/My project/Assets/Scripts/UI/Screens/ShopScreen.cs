@@ -32,7 +32,7 @@ namespace Sdo.UI.Screens
         private int _styleIndex;                    // 服装风格 filter (視覺；iteminfo 無 style 欄)
         private bool _showM = true, _showG = false;  // 幣別 filter (M/G 切換鈕)：預設只看 M 幣 (M 暗/選中、G 亮/未選)
         private string _query = "";                 // 搜尋字串 (商品名)
-        private int _page;
+        private int _page;                          // 逐列捲動:目前「最上方可見列」的索引 (非頁碼;每列 GridCols 格)
 
         private RectTransform _storeRow, _tabRow, _styleRow, _grid;
         private TextMeshProUGUI _gmine, _mmine, _hmine;
@@ -48,7 +48,7 @@ namespace Sdo.UI.Screens
         // 右側捲軸 (官方 SHOP.XML <ScrollBarV name="shop_scroll" x="749" y="170" w="25" h="360">, Handle=Shop55.an)：
         // 可拖動 slider + 上下鈕 + 滾輪。軌道 groove 是背景 Shop0.an 畫死的,thumb 頭必須落在 y∈[170,530] 內;
         // 舊值 132/400 讓 thumb 頂端高出 groove 圓角上緣 (超出上/下邊界),改用官方 XML 實值對齊。
-        private int _totalPages = 1;
+        private int _totalPages = 1;   // 可停靠的捲動位置數 (= maxTopRow+1;逐列捲動的步數,非頁數)
         private Image _scrollHandle;
         private const float ScrollX = 749f, ScrollTop = 180f, ScrollTrackH = 350f;
 
@@ -107,6 +107,7 @@ namespace Sdo.UI.Screens
         private readonly float[] _cardScale = new float[PerPage];
         private readonly float[] _cardAngle = new float[PerPage];
         private readonly bool[] _cardNoSpin = new bool[PerPage];            // 眼鏡卡：靜態不旋轉 (user 指定 眼鏡不轉、只 hover 放大)
+        private readonly bool[] _cardUvScroll = new bool[PerPage];          // 炫 hair 卡 (model 40000-49999)：貼圖 V 捲動 → RT 每幀重畫才看得到變色
         private readonly Vector3[] _cardFramePos = new Vector3[PerPage];    // 官方 per-slot 節點位移 (模型空間,y 為負把部位往下推)
         private readonly Vector3[] _cardFrameScale = new Vector3[PerPage];  // 官方 per-slot 節點縮放 (5.5~10x)
         private int _hoverCard = -1;
@@ -211,6 +212,7 @@ namespace Sdo.UI.Screens
         private static readonly float[] StyleX = { 330, 383, 436, 489, 540, 591, 644, 696 };
 
         private const int PerPage = 8;   // 縮圖陣列上限 (小卡一頁8;大卡一頁2,用索引 0~1)
+        private const int GridCols = 2;  // 商品格欄數 (小卡 2×4、大卡 2×1 皆 2 欄)；捲軸「逐列」捲動用
 
         // 商品格版面：一般 tab = 官方 normalwin 2×4 八張小卡 (Shop5.an 210×101);套装 tab = 官方 suitwin 兩張大卡
         // (Shop145.an 204×388,全身人形)。座標皆 SHOP.XML 實值 (800×600,左上原點,y-down)。RefreshGrid 依 _slot 選 (_L)。
@@ -397,7 +399,7 @@ namespace Sdo.UI.Screens
             var active = Sdo.Settings.ProfileManager.Active;
             if (active == null || active.id != id)
             {
-                Sdo.Settings.ProfileManager.SetActive(id);   // 載入該帳號 profile + 收藏 + config.ini
+                Sdo.Settings.ProfileManager.SetActive(id);   // 載入該帳號 profile(衣服)；收藏/設定是全帳號共用不重載
                 var p = Sdo.Settings.ProfileManager.Active;
                 if (p != null) { _session.LocalPlayerId = p.id; _session.LocalPlayerName = p.name; }
                 _session.SeedRoomDefaults();                 // 換帳號才重種房間面板預設 (per-user)
@@ -486,7 +488,7 @@ namespace Sdo.UI.Screens
         // 故每次搜尋 union 這 9 個部位很便宜。讓「不同類型只要名字對都搜得到」(user)。
         private static readonly EquipSlot[] SearchSlots =
         {
-            EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Gloves, EquipSlot.Shoes,
+            EquipSlot.Outfit, EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Gloves, EquipSlot.Shoes,
             EquipSlot.Glasses, EquipSlot.Expression, EquipSlot.Necklace, EquipSlot.Wings,
         };
 
@@ -534,8 +536,9 @@ namespace Sdo.UI.Screens
                                || it.Id.ToString().Contains(qSimp);
                     if (!hit) continue;
                 }
-                string z = CurrencyZh(it.Currency);
-                if (!((z == "G" && _showG) || (z == "M" && _showM) || z == "H")) continue;   // M/G 幣別 filter (H 恒顯)
+                // 幣別 filter 只在「瀏覽分頁」時套用;搜尋時跨幣別找(否則 priceCat 0=Points/G 幣的 夏日新娘 個別部件在預設 M 頁被擋掉,搜不到)。
+                if (!searching)
+                { string z = CurrencyZh(it.Currency); if ((z == "G" && !_showG) || (z == "M" && !_showM)) continue; }
                 items.Add(it);
             }
             // 同一件商品在 iteminfo 有 7天/30天/永久 三筆 (ModelId 相同,只 Id/Duration/Price 不同,價 1×/2×/6×) → 官方一件
@@ -553,19 +556,27 @@ namespace Sdo.UI.Screens
                 }
                 items = kept;
             }
-            // 上装 tab 併了 上衣+連身兩個 category → 依 ModelId 穿插排序 (連身照編號插進上衣間,不整陀堆最上面)。降冪對齊
-            // 其餘 tab 的 Reverse 方向 (iteminfo 是升冪 ModelId,Reverse 後=降冪) → 上装順序不再跟別的 tab 相反 (user 回饋)。
-            if (_showHistory) { }   // 歷史：保留 _history 的「最近在前」順序，不 reverse/排序
-            else if (_slot == EquipSlot.Top && !searching) items.Sort((a, b) => b.ModelId.CompareTo(a.ModelId));
-            else items.Reverse();
+            // 所有瀏覽分頁一律依 ModelId 真正降冪「合併」排序 → 有名/無名(序號)依序號穿插,不再把無名整塊堆到第一頁。
+            // 之前只有 上装 這樣做,其餘 tab 用 Reverse:但 AllMeshModels 把無名 extras append 在有名之後 (那裡是升冪),
+            // Reverse 只翻轉整條 → 無名區塊被整塊翻到最前面 (user 回報「第一頁都是沒名字的服裝」)。改成全部 Sort 即真穿插。
+            if (_showHistory) { }                        // 歷史：保留 _history 的「最近在前」順序，不 reverse/排序
+            else if (!searching) items.Sort((a, b) => b.ModelId.CompareTo(a.ModelId));   // 瀏覽：ModelId 降冪合併 (含 上装/連身)
+            else items.Reverse();                        // 搜尋結果：跨部位混合,維持原本反轉行為
 
-            _L = (!_showHistory && _slot == EquipSlot.Outfit) ? BigLayout : SmallLayout;   // 套装 tab → 官方 suitwin 大卡 (2張);其餘小卡 (8張)
+            // 套装 tab → 官方 suitwin 大卡 (2張);其餘小卡 (8張)。搜尋時是跨部位混合結果 → 一律小卡 (使用者:套装 tab 搜尋要小格)。
+            _L = (!_showHistory && !searching && _slot == EquipSlot.Outfit) ? BigLayout : SmallLayout;
 
-            int pages = Mathf.Max(1, (items.Count + _L.PerPage - 1) / _L.PerPage);
-            _page = Mathf.Clamp(_page, 0, pages - 1);
-            _totalPages = pages;
+            // 捲軸改「逐列」捲動 (user)：往下一單位只把最上一列 (GridCols 格) 捲出、底部補進新的一列，
+            // 而非整頁 8 格全換。→ _page 現在代表「最上方可見列」的索引 (非頁碼)，每步 = 1 列 = GridCols 件；
+            // _totalPages = 可停靠的捲動位置數 (含頂端，最多捲到「最後一列貼齊底部」)。
+            int cols = GridCols;                                   // 兩種版面都是 2 欄 (小卡 2×4、大卡 2×1)
+            int visRows = Mathf.Max(1, _L.PerPage / cols);         // 一次看得到幾列 (小卡 4、大卡 1)
+            int totalRows = Mathf.Max(1, (items.Count + cols - 1) / cols);
+            int maxTopRow = Mathf.Max(0, totalRows - visRows);     // 最後一列貼齊底部時的最上列索引
+            _page = Mathf.Clamp(_page, 0, maxTopRow);
+            _totalPages = maxTopRow + 1;
             UpdateScrollHandle();
-            int start = _page * _L.PerPage;
+            int start = _page * cols;                              // 首格 = 最上列 × 欄數 → 逐列滑動
 
             for (int i = 0; i < _L.PerPage; i++)
             {
@@ -680,11 +691,19 @@ namespace Sdo.UI.Screens
             var w = _session.Wardrobe;
             if (item.EquipSlot == EquipSlot.Outfit)
             {
-                _tryOnOutfitParts = ComposeOutfitParts(item);   // 套装：整套穿上左側預覽 (RebuildAvatar 走這組覆蓋)
+                _tryOnOutfitParts = ComposeOutfitParts(item, useCurrent: true);   // 試穿到身上:沿用現況(沒涵蓋的部位保留),RebuildAvatar 走這組
                 RebuildAvatar();
                 return;
             }
-            _tryOnOutfitParts = null;   // 換單件 → 取消整套覆蓋,回歸逐部位裝備
+            // 目前正顯示套裝(或已連續試穿疊加)→ 把這件疊到「目前顯示的穿搭」上:只換該部位、其餘保留
+            // (使用者:穿白色星辰套裝再選它的上衣,褲子要留著,不是整組脫回 default)。
+            if (_tryOnOutfitParts != null && item.EquipSlot != EquipSlot.None)
+            {
+                _tryOnOutfitParts = ComposeParts(_tryOnOutfitParts, new[] { item.MshRelPath });
+                RebuildAvatar();
+                return;
+            }
+            _tryOnOutfitParts = null;   // (無套裝在試穿)換單件 → 逐部位裝備到 Wardrobe
             if (item.EquipSlot == EquipSlot.OnePiece)
             {
                 w.ClearEquipped(EquipSlot.Top);
@@ -735,8 +754,18 @@ namespace Sdo.UI.Screens
         private void AddTryOnHit(RectTransform card, ShopItem item, int i)
         {
             var it = item; int idx = i; var theCard = card;
-            const float top = -4f;
-            float h = _L.FitPos.y - 8f;                              // 命中區高度 (卡片上半,避開按鈕列)
+            // 放大/命中區:左塊=整片深紫色縮圖格子(卡片整高,使用者指定);右塊=名稱/價格,留在按鈕列上方。大卡(套裝)=整張縮圖。
+            float top, h, rightTop, rightH;
+            if (_slot == EquipSlot.Outfit)
+            {
+                top = _L.AvCenter.y + _L.AvSize.y / 2f; h = _L.AvSize.y;   // 縮圖上緣 / 縮圖高
+                rightTop = top; rightH = h;
+            }
+            else
+            {
+                top = -3f; h = _L.Size.y - 6f;              // 左塊=整片縮圖格子 (卡片幾乎整高)；按鈕在右側 x≥90,不會被蓋
+                rightTop = -4f; rightH = _L.FitPos.y - 8f;  // 右塊留在按鈕列 (y=FitPos.y) 上方,才不擋 買/送/試穿 鈕
+            }
             float avatarRight = _L.AvCenter.x + _L.AvSize.x / 2f;    // 左邊衣物縮圖的右緣 → 左右兩塊的分界
 
             // 左塊 (衣物縮圖)：點=試穿；滑上去=該卡放大旋轉。
@@ -756,7 +785,7 @@ namespace Sdo.UI.Screens
                 var right = UIKit.AddImage(card, "tryhitR", new Color(1, 1, 1, 0.001f), true);
                 var rrt = right.rectTransform;
                 rrt.anchorMin = rrt.anchorMax = new Vector2(0, 1); rrt.pivot = new Vector2(0, 1);
-                rrt.anchoredPosition = new Vector2(avatarRight, top); rrt.sizeDelta = new Vector2(rightW, h);
+                rrt.anchoredPosition = new Vector2(avatarRight, rightTop); rrt.sizeDelta = new Vector2(rightW, rightH);
                 AddTryOnClick(right, it);
             }
         }
@@ -875,6 +904,9 @@ namespace Sdo.UI.Screens
                 }
                 _cardAv[i] = root;
                 _cardNoSpin[i] = slot == EquipSlot.Glasses;   // 眼鏡卡：hover 不旋轉,只放大 (user 指定)
+                // 炫 hair (model 40000-49999)：AvatarUvScroll 已由 LoadParts 掛上、每幀捲 V,但卡 RT 只在 hover 重畫 →
+                // 縮圖凍結。標記此卡,Update 每幀重畫 RT,小圖也會「不斷變色」(user 指定)。SdoAvatarBuilder.IsUvScrollHair 同判準。
+                _cardUvScroll[i] = SpecialMotionItems.IsUvScrollHair(item.ModelId);
 
                 // 卡內縮圖 RawImage (版面 _L 決定尺寸/位置；小卡 72×88、套装大卡 150×240；pivot 置中以便由中心放大)
                 var img = new GameObject("preview", typeof(RectTransform)).AddComponent<RawImage>();
@@ -922,13 +954,26 @@ namespace Sdo.UI.Screens
                 foreach (var m in mr.sharedMaterials)
                     if (m != null && m.mainTexture != null)
                     {
-                        // OPAQUE 衣服 (Unlit/Texture — 含 alpha 壞掉被強制 opaque 的布料) 在卡片上「不可裁」,否則它 94~100%
-                        // 的 alpha0 texel 被打穿 → 透明線框 (粉紅舞會/無限迷戀 小格子)。_Cutoff=0 = 不裁 + alpha 逼 1 (實心)。
-                        // 真鏤空件 (髮/紗/去背 = cutout/blend shader) 才保留 _Cutoff=0.05：只裁真洞、留半透布料。
-                        bool opaque = m.shader != null && m.shader.name == "Unlit/Texture";
+                        string sn = m.shader != null ? m.shader.name : "";
+                        // 髮/鏤空布料 (Sdo/UnlitDoubleSided) 本來就帶 authored _Cutoff(0.3);讀出保留,別壓到 0.05 (見 CardCutoutFor)。
+                        float authored = sn == "Sdo/UnlitDoubleSided" ? m.GetFloat("_Cutoff") : 0f;
                         m.shader = cut;   // 只改有貼圖的 (無貼圖回退材質留給 ForceLightExpressionFace 處理)
-                        m.SetFloat("_Cutoff", opaque ? 0f : 0.05f);
+                        m.SetFloat("_Cutoff", CardCutoutFor(sn, authored));
                     }
+        }
+
+        /// <summary>透空-RT 卡片縮圖:每個部位都被強制成 cutout shader,alpha-clip 門檻依「原本的 shader」決定。Pure → 單元測試。
+        ///   • <c>Unlit/Texture</c> (opaque 衣服,含 alpha 壞掉被強制 opaque 的布料) → 0：不裁 + alpha 逼 1 (實心),
+        ///     否則它 94~100% 的 alpha0 texel 被打穿成透明線框 (粉紅舞會/無限迷戀 小格子)。
+        ///   • <c>Sdo/UnlitDoubleSided</c> (髮/鏤空布料) → 保留 authored cutoff(預設 0.3)。髮飾的「去背」底不是全透 (a=0),
+        ///     而是半透明 a≈0.07~0.25 (DXT3 量化底色);壓到 0.05 裁不掉 → 縮圖露出方框實底 (070028 蝴蝶結髮飾「沒去背」)。
+        ///     0.3 與遊戲內 / 左側大預覽同一 shader、同一門檻,縮圖才一致。
+        ///   • 其餘 (blend = 去背刺青/紗/眼鏡 Sdo/UnlitAvatarAlpha) → 0.05：只裁真洞、留半透布料。</summary>
+        public static float CardCutoutFor(string shaderName, float authoredCutoff)
+        {
+            if (shaderName == "Unlit/Texture") return 0f;
+            if (shaderName == "Sdo/UnlitDoubleSided") return authoredCutoff > 0f ? authoredCutoff : 0.3f;
+            return 0.05f;
         }
 
         // 消掉衣物網格上的「膚色」part/submesh (材質名 = W_Basic_* / M_Basic_*，即裸身手臂/腿) → 格子裡只剩布料。
@@ -1015,7 +1060,7 @@ namespace Sdo.UI.Screens
         // 只放大眼鏡本身),其餘一律純衣物。
         private string[] ComposeCardParts(ShopItem item)
         {
-            if (item.EquipSlot == EquipSlot.Outfit) return ComposeOutfitParts(item);   // 套装 = 整套穿身上
+            if (item.EquipSlot == EquipSlot.Outfit) return ComposeOutfitParts(item, useCurrent: false);   // 卡片縮圖:套装穿在 default 假人上
             var rel = item.MshRelPath;
             if (item.EquipSlot == EquipSlot.Hair)
             {
@@ -1028,26 +1073,50 @@ namespace Sdo.UI.Screens
 
         // 套装卡：把該套所有組件穿到預設身體上 (組件覆蓋對應部位;連身取代上衣並移除下著;翅膀/眼鏡/項鍊為附加),沒被覆蓋
         // 的部位保留預設 (臉/髮/手…) → 呈現完整穿搭的全身人形。
-        private string[] ComposeOutfitParts(ShopItem item)
+        private string[] ComposeOutfitParts(ShopItem item, bool useCurrent)
         {
             var gender = ItemTypes.GenderOf(item.Category, item.Name);
-            var slots = new Dictionary<EquipSlot, string>(AvatarOutfit.DefaultsFor(gender));
-            var additive = new List<string>();
-            foreach (var rel in _catalog.OutfitComponentMeshes(item))
+            var baseParts = new List<string>();
+            foreach (var kv in AvatarOutfit.DefaultsFor(gender)) baseParts.Add(kv.Value);   // default 打底(補臉/手/髮等)
+            // 只有「試穿到身上」(useCurrent) 才把目前顯示的穿搭蓋上去 → 套裝沒涵蓋的部位沿用現況(含連續試穿上一套)。
+            // 卡片縮圖(右邊假人)useCurrent=false → 純 default,不沿用玩家目前穿搭(使用者:右邊假人頭髮要用 default)。
+            if (useCurrent) baseParts.AddRange(CurrentDisplayedParts());
+            return ComposeParts(baseParts, _catalog.OutfitComponentMeshes(item));
+        }
+
+        // 目前左側預覽實際顯示的穿搭:正在試穿套裝(或已疊過單件)→ 那份;否則 → 現有裝備。連續試穿疊加的底。
+        private IEnumerable<string> CurrentDisplayedParts()
+            => _tryOnOutfitParts != null ? (IEnumerable<string>)_tryOnOutfitParts : AvatarOutfit.ResolveParts(_sex, EquippedItems());
+
+        // 把 overrides(套裝組件 / 單件)逐部位疊到 baseParts 上:連身取代上下著;眼鏡/項鍊/翅膀=附加(依 mesh token 去重);
+        // 其餘覆蓋該部位。回傳完整 parts。沒被 overrides 覆蓋的部位保留 base(這就是「套裝沒有的部位沿用現況」)。
+        private string[] ComposeParts(IEnumerable<string> baseParts, IEnumerable<string> overrides)
+        {
+            var slots = new Dictionary<EquipSlot, string>();
+            var additive = new Dictionary<string, string>();   // token(GLASS/LINGDANG/CHIBANG…) → mesh,去重(base 與 override 同類只留一)
+            void Apply(string rel)
             {
+                if (string.IsNullOrEmpty(rel)) return;
                 var s = SlotFromMeshToken(rel);
-                switch (s)
-                {
-                    case EquipSlot.OnePiece: slots[EquipSlot.Top] = rel; slots.Remove(EquipSlot.Bottom); break;
-                    case EquipSlot.Glasses: case EquipSlot.Necklace: case EquipSlot.None: additive.Add(rel); break;   // 眼鏡/項鍊/翅膀(CHIBANG)=附加
-                    default: slots[s] = rel; break;
-                }
+                if (s == EquipSlot.OnePiece) { slots[EquipSlot.Top] = rel; slots.Remove(EquipSlot.Bottom); }
+                else if (s == EquipSlot.Glasses || s == EquipSlot.Necklace || s == EquipSlot.None) additive[MeshToken(rel)] = rel;
+                else { if (s == EquipSlot.Top || s == EquipSlot.Bottom) slots.Remove(EquipSlot.OnePiece); slots[s] = rel; }
             }
+            foreach (var rel in baseParts) Apply(rel);
+            foreach (var rel in overrides) Apply(rel);
             var list = new List<string>();
             foreach (var s in new[] { EquipSlot.Face, EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Shoes, EquipSlot.Gloves })
                 if (slots.TryGetValue(s, out var p) && !string.IsNullOrEmpty(p)) list.Add(p);
-            list.AddRange(additive);
+            list.AddRange(additive.Values);
             return list.ToArray();
+        }
+
+        // mesh 檔名最後一段部位 token:'AVATAR/023424_WOMAN_HAIR.MSH' → 'HAIR'(附加類去重用)。
+        private static string MeshToken(string rel)
+        {
+            if (string.IsNullOrEmpty(rel)) return "";
+            var n = rel; int dot = n.LastIndexOf('.'); if (dot > 0) n = n.Substring(0, dot);
+            int us = n.LastIndexOf('_'); return (us >= 0 ? n.Substring(us + 1) : n).ToUpperInvariant();
         }
 
         // 從組件 mesh 檔名的部位 token 推 EquipSlot (CHIBANG 翅膀無對應 slot → None=附加)。
@@ -1088,8 +1157,31 @@ namespace Sdo.UI.Screens
                 {
                     var mats = mr.sharedMaterials;   // 每卡 material 都是新建實例 → 直接改安全
                     for (int s = 0; s < mats.Length; s++)
-                        if (mats[s] != null) { if (faceShader != null) mats[s].shader = faceShader; mats[s].mainTexture = tex; }
+                        // 把「膚色臉底」統一成最白 huan0,但**保留裝飾疊層**(面具/口罩/腮紅 = base …_face_huan)自己的貼圖。
+                        // 要壓白的兩種:①膚色底=材質名有數字尾 huan[0-4](含深膚 huan4 與打錯字 haun4/huan_1);②貼圖**解不到**
+                        // 的破損材質(mainTexture==null → LoadParts 退回平塗色 = 白頭)——如 030252,mesh 的兩個 submesh 都引到
+                        // 磁碟不存在的 base huan、但 huan0-4 都在 → 必須回退到 huan0(原本 ForceLightExpressionFace 無差別壓白
+                        // 有救到它,我改成只壓數字尾後它變全白 = 迴歸)。要保留的:有解到貼圖的裝飾疊層(面具/口罩,base huan
+                        // DDS 存在)與有效 base 膚色(012882)。否則疊層被膚色蓋掉,疊層幾何(眼周/口鼻)帶臉底 UV → 帶鬼影五官
+                        // 的素臉(使用者回報 017675 化妝舞會眼罩 / 015353 貓咪口罩「貼圖錯誤」)。
+                        if (mats[s] != null && (IsFaceSkinVariant(mats[s].name) || mats[s].mainTexture == null))
+                        { if (faceShader != null) mats[s].shader = faceShader; mats[s].mainTexture = tex; }
                 }
+        }
+
+        // 表情 mesh 的膚色臉底材質貼圖名 = …_face_huan[0-4].dds (含打錯字 haun[0-4]、分隔底線 huan_0)。裝飾疊層
+        // (面具/口罩/腮紅) 貼圖名 = base …_face_huan.dds (無數字尾) → 回傳 false 讓 ForceLightExpressionFace 略過、
+        // 保留疊層原貼圖。非 huan/haun 材質 (W_Basic_ 頸/耳膚色…) 也回傳 false (本來就是膚色,不需再壓白)。
+        private static bool IsFaceSkinVariant(string matName)
+        {
+            if (string.IsNullOrEmpty(matName)) return false;
+            string n = matName.ToLowerInvariant();
+            int i = n.IndexOf("huan", System.StringComparison.Ordinal);
+            if (i < 0) i = n.IndexOf("haun", System.StringComparison.Ordinal);   // 打錯字檔名 haun
+            if (i < 0) return false;
+            int j = i + 4;
+            if (j < n.Length && n[j] == '_') j++;   // huan_0 / haun_4 的分隔底線
+            return j < n.Length && n[j] >= '0' && n[j] <= '9';   // 有數字尾 = 膚色底;base huan = 裝飾疊層 → 略過
         }
 
         private void DestroyCardPreviews()
@@ -1101,7 +1193,7 @@ namespace Sdo.UI.Screens
                 // 獨立 runtime GameObject,立即銷毀安全。
                 if (_cardAv[i] != null) { DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
                 if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
-                _cardImg[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f; _cardNoSpin[i] = false;
+                _cardImg[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f; _cardNoSpin[i] = false; _cardUvScroll[i] = false;
             }
             _pendingCards.Clear();
             _hoverCard = -1;
@@ -1111,6 +1203,17 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (_cam == null || !_cam.enabled) return;
+
+            // 輸入法選字框跟著搜尋框:World-Space canvas 下 Unity 不會自動設候選框位置 → 跑到螢幕左上角。聚焦時把
+            // compositionCursorPos 設到搜尋框(螢幕座標,原點左下,與 WorldToScreenPoint 一致)→ 候選框出現在框旁邊(使用者)。
+            if (_search != null && _search.isFocused)
+            {
+                var corners = new Vector3[4];
+                _search.GetComponent<RectTransform>().GetWorldCorners(corners);   // 0=左下
+                var sp = _uiCam != null ? _uiCam.WorldToScreenPoint(corners[0]) : corners[0];
+                // WorldToScreenPoint 原點在左下(y 上);compositionCursorPos 的 y 原點在左上 → Y 要翻(否則框跑到螢幕頂端)。
+                Input.compositionCursorPos = new Vector2(sp.x, Screen.height - sp.y);
+            }
 
             // ESC → 關商城（等同右上 shopexit 鈕）→ 露出底下的房間或選角色畫面。走轉場漸黑漸亮。
             if (Input.GetKeyDown(KeyCode.Escape) && !ScreenTransition.Busy)
@@ -1132,7 +1235,7 @@ namespace Sdo.UI.Screens
                 }
             }
 
-            // 滾輪換頁 (商城可見時)
+            // 滾輪捲動 (商城可見時)：一格 = 一列 (2 格出、2 格進)
             float sw = Input.mouseScrollDelta.y;
             if (sw != 0f) PageBy(sw < 0f ? 1 : -1);
 
@@ -1152,7 +1255,8 @@ namespace Sdo.UI.Screens
                 // 眼鏡卡不旋轉 (角度恆 0);其餘 hover 自轉、離開歸零 (官方 snap)。放大對所有卡都保留。
                 _cardAngle[i] = (hov && !_cardNoSpin[i]) ? Mathf.Repeat(_cardAngle[i] + Time.deltaTime * CardSpinDegPerSec, 360f) : 0f;
                 if (_cardScale[i] != prevScale) _cardImg[i].rectTransform.localScale = Vector3.one * _cardScale[i];   // 2D 放大 (不需重畫 RT)
-                if (hov || _cardAngle[i] != prevAngle) RenderCard(i);                                                 // 旋轉/回正才重畫 RT
+                // 旋轉/回正才重畫 RT;但 炫 hair 卡的貼圖每幀在捲 V → 需每幀重畫,小圖才會持續變色 (AvatarUvScroll 已在動材質)。
+                if (hov || _cardAngle[i] != prevAngle || _cardUvScroll[i]) RenderCard(i);
             }
         }
 
@@ -1180,7 +1284,8 @@ namespace Sdo.UI.Screens
         }
 
         // ---- 右側捲軸 (slider) ----
-        // 頁沒變 (已在頭/尾) → 不重建,否則滾輪滾到底每一格都 RefreshGrid 重建 3D 縮圖 → 一直閃 (user #1)。換頁只需 RefreshGrid。
+        // 逐列捲動:d=±1 = 上/下移一列 (2 格出、2 格進)。列沒變 (已在頭/尾) → 不重建,否則滾到底每一格都 RefreshGrid
+        // 重建 3D 縮圖 → 一直閃 (user #1)。捲動只需 RefreshGrid (start 依 _page 逐列滑窗)。
         private void PageBy(int d)
         {
             int np = Mathf.Clamp(_page + d, 0, _totalPages - 1);
@@ -1188,7 +1293,7 @@ namespace Sdo.UI.Screens
             _page = np; RefreshGrid();
         }
 
-        // 依 _page/_totalPages 把 Handle 定位在軌道上 (canvas y-down；只有一頁就隱藏)。
+        // 依 _page/_totalPages (最上列索引/可捲步數) 把 Handle 定位在軌道上 (canvas y-down；只有一列就隱藏)。
         private void UpdateScrollHandle()
         {
             if (_scrollHandle == null) return;
@@ -1200,7 +1305,7 @@ namespace Sdo.UI.Screens
             rt.anchoredPosition = new Vector2(ScrollX, Mathf.Lerp(topY, botY, t));
         }
 
-        // 拖動 Handle → 換頁：用滑鼠在軌道上的實際位置 (位置式，clamp 在軌道內，不會超出範圍/不受螢幕縮放影響)。
+        // 拖動 Handle → 捲到某列：用滑鼠在軌道上的實際位置對應最上列 (位置式，clamp 在軌道內，不受螢幕縮放影響)。
         private void OnScrollDrag(BaseEventData ev)
         {
             if (!(ev is PointerEventData p) || _totalPages <= 1) return;
@@ -1208,8 +1313,8 @@ namespace Sdo.UI.Screens
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_root, p.position, uiCam, out var local)) return;
             float canvasY = 300f - local.y;                                     // _root 800×600 置中 → 轉成頂左 y-down (0..600)
             float frac = Mathf.Clamp01((canvasY - ScrollTop) / ScrollTrackH);   // 0(頂)..1(底)，clamp 不超出軌道
-            int newPage = Mathf.Clamp(Mathf.RoundToInt(frac * (_totalPages - 1)), 0, _totalPages - 1);
-            if (newPage != _page) { _page = newPage; RefreshGrid(); }           // RefreshGrid → UpdateScrollHandle 依 page 定位 handle
+            int newRow = Mathf.Clamp(Mathf.RoundToInt(frac * (_totalPages - 1)), 0, _totalPages - 1);
+            if (newRow != _page) { _page = newRow; RefreshGrid(); }             // RefreshGrid → UpdateScrollHandle 依最上列定位 handle
         }
 
         // ---- 3D 試穿預覽 ----
@@ -1254,7 +1359,9 @@ namespace Sdo.UI.Screens
                 var parts = _tryOnOutfitParts != null
                     ? new List<string>(_tryOnOutfitParts)
                     : AvatarOutfit.ResolveParts(_sex, EquippedItems());
-                var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex));   // FEMALE/MALE.HRC
+                // 左側「玩家假人」跟隨玩家自己的體型 (胖瘦)：商城切性別=切帳號(SetActive)，故 Active 對得上 _sex。
+                float bodyB = SdoBodyShape.WeightFromIndex(Sdo.Settings.ProfileManager.Active.bodyShapeIndex, _sex == ItemSex.Male);
+                var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex), bodyWeight: bodyB);   // FEMALE/MALE.HRC
                 if (av == null) { Destroy(_avatarRoot); _avatarRoot = null; return; }
                 ApplyLeftPose(av);              // 左側穿的人 = WREST0072/MREST0082 自然站姿 idle (非假人 bind)
                 foreach (var it in EquippedItems())

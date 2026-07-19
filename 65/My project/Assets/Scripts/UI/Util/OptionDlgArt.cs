@@ -13,9 +13,8 @@ namespace Sdo.UI.Util
     /// the 1024×1024 atlas by pixel rect (top-left origin, Y-flipped for Unity); the .an indirection is bypassed
     /// because those .an files point at the ORIGINAL (text-baked) OPTIONDLG.png.
     ///
-    /// Folder resolution mirrors <see cref="RoomDlgArt"/>: prefer the online 閉撰敃氪 set in dev, fall back to
-    /// DATA/UI/OPTIONDLG beside a built exe (package_build overlays the clean atlas there). If the clean atlas is
-    /// missing it falls back to the raw one (text still baked, but nothing crashes).
+    /// Folder resolution reads DATA/UI/OPTIONDLG under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan. If the
+    /// clean atlas is missing it falls back to the raw one (text still baked, but nothing crashes).
     /// </summary>
     public static class OptionDlgArt
     {
@@ -25,6 +24,7 @@ namespace Sdo.UI.Util
         private static string _dir;
         private static Texture2D _atlas;
         private static readonly Dictionary<long, Sprite> _cache = new Dictionary<long, Sprite>();
+        private static readonly Dictionary<long, Sprite> _soloCache = new Dictionary<long, Sprite>();
 
         /// <summary>Resolved OPTIONDLG art folder (lazy). Settable for tests (clears the sprite cache).</summary>
         public static string Dir
@@ -37,13 +37,8 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "OPTIONDLG"));
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "OPTIONDLG"));
-                return RoomDlgArt.PickDir(ordered, Directory.Exists);   // reuse the same pure picker
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "OPTIONDLG");
             }
             catch { return Path.Combine(SdoExtracted.Root, "UI", "OPTIONDLG"); }
         }
@@ -62,6 +57,32 @@ namespace Sdo.UI.Util
             var rect = new Rect(x, tex.height - y - h, w, h);          // top-left origin -> Unity bottom-left
             s = Sprite.Create(tex, rect, new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
             _cache[key] = s;
+            return s;
+        }
+
+        /// <summary>Like <see cref="Crop"/> but extracts the rect onto its OWN texture (then de-mattes the white AA edge
+        /// + bleeds the pill colour into any transparent margin), so bilinear MAGNIFICATION by the aspect scaler can't
+        /// pull the neighbouring ATLAS content / white matte into the sprite's four free edges — that bleed is what shows
+        /// as a white halo (白邊) on the tab pills, which sit against the pink frame on all sides. pad=0 keeps the output
+        /// the SAME size as Crop, so swapping in CropSolo does not move/resize the pill. Cached.</summary>
+        public static Sprite CropSolo(int x, int y, int w, int h, int pad = 0)
+        {
+            long key = ((long)x << 40) | ((long)y << 20) | ((long)w << 10) | (uint)h;
+            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
+            var tex = Atlas;
+            if (tex == null) return null;
+            int cy = tex.height - y - h;                                // top-left origin -> Unity bottom-left
+            if (x < 0 || cy < 0 || w <= 0 || h <= 0 || x + w > tex.width || cy + h > tex.height) return null;
+            var block = tex.GetPixels(x, cy, w, h);
+            int W = w + pad * 2, H = h + pad * 2;
+            var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            outTex.SetPixels(new Color[W * H]);                        // transparent border (if pad>0)
+            outTex.SetPixels(pad, pad, w, h, block);
+            outTex.Apply(false);
+            SdoExtracted.DeMatteWhite(outTex);   // un-composite the white matte on the pill's AA edge (kills the light halo)
+            SdoExtracted.AlphaBleed(outTex);     // dilate the pill colour into the (transparent) edge so bilinear reads pink, not white
+            s = Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            _soloCache[key] = s;
             return s;
         }
 
@@ -86,16 +107,18 @@ namespace Sdo.UI.Util
         // (遊戲/音效/鍵盤/進階). CRITICAL: normal + active of the SAME tab MUST be cropped to IDENTICAL dimensions and
         // pill-centre so swapping states on select doesn't move/resize the pill (the pills share an x-centre; only the
         // gloss/notch extents differ). Placed by centre (pivot 0.5,1) in OptionDlgModal. Measured off OPTIONDLG.clean.png.
-        public static Sprite TabAudioN => Crop(82, 81, 100, 38);
-        public static Sprite TabAudioA => Crop(82, 121, 100, 38);
-        public static Sprite TabKeyN => Crop(0, 163, 93, 38);
-        public static Sprite TabKeyA => Crop(0, 205, 93, 38);
-        public static Sprite TabGameN => Crop(173, 0, 94, 38);
-        public static Sprite TabGameA => Crop(173, 40, 94, 38);
+        // CropSolo (own texture + de-matte) instead of Crop: the shared-atlas bilinear bleed shows as a white halo (白邊)
+        // on the pills' four free edges against the pink frame. pad=0 → identical size, so the state-swap still never moves.
+        public static Sprite TabAudioN => CropSolo(82, 81, 100, 38);
+        public static Sprite TabAudioA => CropSolo(82, 121, 100, 38);
+        public static Sprite TabKeyN => CropSolo(0, 163, 93, 38);
+        public static Sprite TabKeyA => CropSolo(0, 205, 93, 38);
+        public static Sprite TabGameN => CropSolo(173, 0, 94, 38);
+        public static Sprite TabGameA => CropSolo(173, 40, 94, 38);
         // NB 進階 normal: crop TOP starts at the pill's dark top border (y=589), NOT higher — above it sits an
         // unrelated element (a gloss dot + notch, y≈576-588) that the old y=586 crop clipped into the tab.
-        public static Sprite TabAdvN => Crop(580, 591, 95, 37);
-        public static Sprite TabAdvA => Crop(580, 631, 95, 37);
+        public static Sprite TabAdvN => CropSolo(580, 591, 95, 37);
+        public static Sprite TabAdvA => CropSolo(580, 631, 95, 37);
         // action buttons (text removed): normal + pushed
         public static Sprite SaveN => Crop(742, 0, 95, 33);
         public static Sprite SaveP => Crop(743, 36, 95, 33);

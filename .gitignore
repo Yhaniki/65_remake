@@ -3,6 +3,9 @@
 Thumbs.db
 Desktop.ini
 
+# Local machine-specific data-root override (SdoExtracted.ConfiguredRoot) — points the game at a prepared DATA tree
+data_root.txt
+
 # IDE / Editor
 .vs/
 .vscode/
@@ -85,6 +88,9 @@ assets/*
 /*.jpg
 /*.log
 /*-results.xml
+# PlayMode capture 測試寫進子資料夾的整組連續截圖（ComboBurstCaptureTest）
+/cross400/
+/finflick/
 /eft_log.txt
 /eft_online_log*.txt
 /audio_online_log.txt
@@ -135,3 +141,6 @@ procmon_tool/runs/
 
 # User song library (osu!/StepMania folders dropped beside the exe) — local data, never versioned
 /65/My project/Songs/
+
+# gn_note_export 的輸出（5MB 生成檔，隨時能用 dotnet run --project tools/gn_note_export 重跑）
+tools/kgn_export/gn_notes.json

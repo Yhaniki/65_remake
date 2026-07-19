@@ -39,6 +39,11 @@ namespace Sdo.UI.Core
         public string ExternalFolderPath = "";  // 歌曲資料夾（CD 圖／sdo.header／生成的 .dps 都放這）
         public string ExternalSongKey = "";     // 資料夾內的識別（"" = 該資料夾只有一首）
 
+        // 隨機難度選擇：確認時就抽好實際歌曲(SongGn/SongFileId/SongArtist)，但房間只顯示「隨機難度 X」標籤(SongTitle)，
+        // 進遊戲才揭曉是哪首歌。重進選歌選單 → 直接回隨機 tab 的該區間。false = 一般（指定歌曲）選擇。
+        public bool SongIsRandom;
+        public int SongRandomRange;   // SongSelectScreen.RandRanges 索引（哪個難度區間）
+
         public string StageFolder = "SCN0009";
         public int StageId = 9;
         // true = 選歌時選的是「隨機場景」→ 房間第二層圖顯示 RANDOM（雖然 gameplay 仍用上面解析出的具體場景）。

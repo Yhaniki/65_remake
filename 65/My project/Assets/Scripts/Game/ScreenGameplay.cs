@@ -23,14 +23,21 @@ namespace Sdo.Game
         // (Perfect +2 / Cool +1 / Bad -5 / Miss -30): lighter miss AND proportionally lighter Bad drain.
         public int healthLevel = 2;
         public bool autoPlay = true;
+        // F7 打拍音:譜面上每個音符響一聲 click。F8 自動打擊。兩者都是「開發/練習用開關」,按下去後**下一首歌會延續**
+        // (靜態欄位 = 同一次執行內有效),但**不寫進設定檔** —— 重開遊戲就回到預設。FrontendApp 每次開局都會把
+        // autoPlay 設回 false(正常遊玩),所以 F8 的延續要靠 s_autoPlay 這個「玩家按過才存在」的覆寫值在 Start 蓋回去。
+        public bool assistTick;
+        private static bool s_assistTick;
+        private static bool? s_autoPlay;   // null = 玩家這次執行還沒按過 F8 → 照 FrontendApp/Inspector 給的值
         // DEBUG: force a grade on every manual hit (-1 = real timing window). F4 panel selects it.
         public int forcedJudge = -1;
         private static readonly string[] ForceJudgeLabels = { "Real", "Perfect", "Cool", "Bad", "Miss" };
         // Note scroll = osu!mania-style (Sequential + relative beat-length scaling) at a FIXED base tempo:
         // the base speed is the SAME for every song (NOT scaled by the song's BPM), calibrated with the
-        // official px/s = BPM×speed×1.6 at referenceBpm=140. Mid-song BPM changes / osu SV still vary the
-        // scroll locally (see ManiaScroll). scrollSpeedMul = the room "速度" step (RoomConfig.speedSteps),
-        // set by FrontendApp from the session. constantScroll = osu "Constant Speed" mod (kill all variation).
+        // official px/s = BPM×speed×1.6 at referenceBpm (ManiaScroll.DefaultReferenceBpm). Mid-song BPM changes /
+        // osu SV still vary the scroll locally (see ManiaScroll). scrollSpeedMul = the room "速度" step
+        // (RoomConfig.speedSteps), set by FrontendApp from the session. constantScroll = osu "Constant Speed" mod
+        // (kill all variation) — wired to OPTION 進階「歌曲變速」關閉 (GameplaySettings.songSpeed == false).
         public float scrollSpeedMul = 2.5f;   // 速度 step (1.0..8.0); FrontendApp wires GameSession.Speed in
         // Room win2 "note" selection (GameSession.NoteType) → the gameplay skin applied at boot via SelectSkin.
         // -2 = unset (standalone/F4 boot: keep stock); -1 = 隨機 (random skin); 0..10 = the specific note skin
@@ -41,6 +48,121 @@ namespace Sdo.Game
         public bool constantScroll = false;   // true = ignore BPM/SV variation (perfectly linear scroll)
         public bool useMusicStartOffset = true;  // true = start the music (and the dancer) at the chart's type-10 音樂起止 marker (skip the leading count-in measure so notes line up with the song)
         public float judgeLineY = 70f;        // receptor / hit line Y (design px). UPSCROLL: notes rise to it.
+        // 判定線的視覺偏移（設計 px）：完美時機的音符落在 judgeLineY + judgeOffsetY，受擊線圖本身不動。
+        // 純視覺（不改判定時間 —— 那是 GameplayClock.OffsetMs 的事）。預設 0 = 正中受擊線；用編輯器的打拍測試調。
+        public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
+
+        /// <summary>
+        /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_name_overrides.json）：補「這首譜跟音檔沒對齊」。
+        /// <b>動的是音樂，不是音符</b>（同 StepMania：你在調的是音樂相對譜面的位置）—— 它加在音樂的
+        /// count-in 上（<see cref="MusicCountInSec"/>），所以譜面時鐘/音符/判定線都不動，只有音樂前後挪。
+        /// 正 = 音樂往後（延後播放）＝ 音符相對音樂變早。
+        /// 由 FrontendApp（開局）或譜面編輯器（F11/F12 即時調）設。
+        /// </summary>
+        public float songOffsetMs;
+
+        /// <summary>
+        /// **全曲共用**的音樂 offset（毫秒）—— 已停用，設 0。
+        /// 曾經以為官方那批 k.gn 的譜面時間軸整體跟音檔差了固定一段（每首都一樣），所以放一個全域 −25。
+        /// 後來逐首手校（sdom2675 之後）發現**沒有這種全域常數**，每首的殘差各不相同，該由各自的
+        /// <see cref="songOffsetMs"/>（song_name_overrides.json 的 offsetMs）處理。於是把全域歸零，
+        /// 並把原本那 −25 烘進 sdom2675 之後每首的 offsetMs，讓那批已校過的歌行為不變。
+        /// 保留這個常數只為讓 <see cref="MusicCountInSec"/> 的算式與排程/波形路徑維持單一入口。
+        /// </summary>
+        public const double GlobalSongOffsetMs = 0.0;
+
+        // 全域 offset（config.ini [Room] globalOffsetMs）：**使用者的個人偏好**，預設 0。
+        // 機器的音訊延遲已經由下面兩段自動補掉了，這裡只留給「我就是想打早一點/晚一點」的人。
+        // 正 = 譜面時鐘往前推 → 同一下打擊的 delta 變大（判得比較晚）→ 整體打太早的人要調正的。用打拍測試量。
+        private float _globalOffsetMs = Sdo.Settings.RoomConfig.globalOffsetMs;
+
+        // ---- 輸出延遲補償（StepMania 的核心作法）----
+        //
+        // StepMania 的歌曲時鐘**不是**「我送了多少音訊出去」，而是去問音效卡「**現在正從喇叭出來的是第幾個取樣**」
+        // （DirectSound 的播放游標 → RageSound::GetPositionSecondsInternal → pos_map.Search → GameState::m_fMusicSeconds）。
+        // 因此緩衝區裡那一大段「已混音、還沒出喇叭」的音訊，從來不算進時鐘裡 —— 輸出延遲在判定路徑上**自動抵銷**。
+        // 它敢把 Windows DSound 的 writeahead 開到 8192 frames（186ms）而 GlobalOffsetSeconds 預設 0，就是這個原因；
+        // GetPlayLatency() 只拿去「提前排程」打拍音（ScreenGameplay.cpp:1220-1225），從不進判定。
+        //
+        // Unity 沒有播放游標 API —— AudioSettings.dspTime 是**混音**游標，它領先喇叭一整個輸出緩衝。所以我們用「算」的
+        // 補回同一件事：把譜面時鐘往回推那段距離，讓 CurrentMs 代表「此刻正在出喇叭的那個譜面時間」。
+        // ChartSecondsFromDsp = rate×(dsp − anchor) + countIn，所以 dsp 退 L 秒 ⇔ 譜面時間退 rate×L 秒
+        // —— 一個常數，直接疊在 clock offset 上就行，不必動任何錨點。
+        //
+        // 關鍵不變式：**排程（PlayScheduled）一律走原始 dspTime，只有「讀時鐘」走播放游標。** 兩者若一起搬就抵銷掉了。
+        // 於是：譜面 T 的打拍音排在 raw dsp(T) → L 秒後出喇叭 → 那一刻時鐘剛好讀到 T；音符也在那一刻通過判定線。
+        // 聽到的 click、看到的音符、判定的時間三者對齊。
+        //
+        // L 由兩段組成：
+        private double _outputLatencySec;   // ① FMOD 的混音緩衝（bufferLength × numBuffers / sampleRate）—— 算得到，隨設定變
+
+        /// <summary>
+        /// ② 混音緩衝**以外**、Unity 沒有 API 看得到的那段輸出延遲 —— 只能實測後寫死。
+        ///
+        /// 這個值只補**聲音**路徑（時鐘）。編輯器**波形**是另一條路徑（畫 clip 原始樣本），實測要多補 30ms
+        /// —— 見 <see cref="WaveformDecoderDelayMs"/>（= 這個值 + 30）。兩者相關但不相等：波形多吃到 Vorbis
+        /// 解碼的暖機，聲音路徑上那段被別的環節吸收了。改這個值時波形會跟著動並維持 +30 的差。
+        ///
+        /// 本機用打拍測試量出來的（打拍測試面板 F2，聽節拍器打 100 下取中位數）：
+        ///
+        /// | DSP buffer | ① 算得到的 | 聽覺中位數 | 視覺中位數 | 殘差 = ② |
+        /// |---|---|---|---|---|
+        /// | 1024×4 @48k | 85.3 ms | +32.8 | +1.6 | **31.2 ms** |
+        /// | 512×4 @48k | 42.7 ms | +33.2 | +4.4 | **28.8 ms** |
+        ///
+        /// **殘差不隨 buffer 改變**（若它正比於 FMOD 緩衝，512 下該掉到 15.6ms，實測沒掉）→ 確認是 buffer 以外的固定量。
+        /// 於是兩種 buffer 下需要的補償都是同一個 ~33ms，<c>m_DSPBufferSize</c> 從此純粹是「會不會爆音」的取捨，
+        /// 換它不必重新校時 —— 這正是「時鐘讀播放游標」換來的。
+        ///
+        /// 取 33（＝聽覺中位數）而不是 31：那 ~2ms 的差是**輸入延遲**（Update 輪詢 + 鍵盤），
+        /// 一併吸收掉，跟著音樂打的人 delta 才會真的落在 0。聽感（耳朵）與波形（眼睛）該落在同一個數字上——
+        /// 兩者是同一個解碼暖機，可以互相驗證：調到這個值時，聽節拍器 ≈ 0 且波形瞬態壓在音符上。
+        ///
+        /// osu!lazer 的處境與解法完全相同 —— 它也量不到，也是寫死一個平台常數再讓使用者微調
+        /// （<c>FramedBeatmapClock.WINDOWS_BASE_AUDIO_OFFSET = 15</c> / 實驗性 WASAPI 再 −25）。
+        /// 差別只在我們這個數字是這台機器實測的，不是猜的。別台機器有出入 → 調這個值（聽感＋波形一起校）。
+        /// </summary>
+        private const double DriverLatencyMs = 33.0;
+
+        private static double MeasureOutputLatencySec()
+        {
+            AudioSettings.GetDSPBufferSize(out int bufferLength, out int numBuffers);
+            int rate = AudioSettings.outputSampleRate;
+            if (bufferLength <= 0 || numBuffers <= 0 || rate <= 0) return 0.0;
+            return (double)bufferLength * numBuffers / rate;
+        }
+
+        /// <summary>譜面時鐘要往回推的總量（真實秒）＝ ① 算得到的混音緩衝 ＋ ② 量不到的驅動延遲常數。</summary>
+        private double ClockLatencySec => _outputLatencySec + DriverLatencyMs / 1000.0;
+
+        /// <summary>同上，換算成**譜面毫秒**（流速 r 時，真實 L 秒 = r×L 秒的譜面時間）。</summary>
+        private double ClockLatencyChartMs => ClockLatencySec * 1000.0 * _musicRate;
+
+        // 時鐘 offset = 使用者偏好 − 輸出延遲（後者就是「讀播放游標而不是混音游標」的等價量）。
+        // rate 會變 → SetGameRate 之後必須重算；換音訊裝置也會變 → OnAudioConfigurationChanged 重量。
+        private void ApplyClockOffset() => _clock.OffsetMs = _globalOffsetMs - ClockLatencyChartMs;
+
+        private void OnAudioConfigChanged(bool deviceChanged)
+        {
+            _outputLatencySec = MeasureOutputLatencySec();   // 換裝置 → buffer/取樣率可能全變
+            ApplyClockOffset();
+        }
+
+        // AudioSettings.OnAudioConfigurationChanged 是**靜態**事件：編輯器每按一次 F2 就重建一次 ScreenGameplay，
+        // 不解除的話舊實例會留在委派鏈上（洩漏；裝置一變就對著已銷毀的物件呼叫）。
+        private void OnDestroy()
+        {
+            AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
+            if (_noteVisualRoot) Destroy(_noteVisualRoot.gameObject);   // tear down the pooled note visuals (root-level like the old per-note objects) with this screen
+        }
+
+        /// <summary>
+        /// 音樂真正的 count-in（秒）＝ 譜面的 type-10 無聲數拍 ＋ 單首 offset ＋ 全曲共用 offset。
+        /// dsp ↔ 譜面時間的換算**一律**用這個值（AudioChartSeconds / 變速 / 暫停 / seek / 打拍音排程），
+        /// 少用一處就會音畫不同步。錨點與 count-in 一起搬時，「譜面時間 → dsp」的映射是不變的
+        /// （anchor' = anchor + Δ/rate），所以打拍音仍然對在音符上，只有音樂本身被挪走。
+        /// </summary>
+        private double MusicCountInSec => _musicStartDelaySec + (songOffsetMs + GlobalSongOffsetMs) / 1000.0;
         private ManiaScroll _scroll;          // built from _map after LoadChart (BuildScroll)
         // Chart/audio paths. Normally set by FrontendApp from the song selection; left EMPTY by default so no
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
@@ -123,9 +245,15 @@ namespace Sdo.Game
         private static readonly Vector2 HpEftSize = new Vector2(64, 32);  // real HpEft1.png size
         private static readonly Vector2 ScorePos = new Vector2(290, 18);
         private const float ScoreDigitPitch = 25f;       // 29 + alt(-4)
-        private static readonly Vector2 JudgeWordCenter = new Vector2(TrackCenterX, 216);
-        private const float ComboWordY = 275f;
-        private const float ComboDigitY = 326f, ComboDigitStep = 42f, ComboDigitW = 48f;
+        // PERFECT/COMBO/digits form ONE rigid cluster (JudgeWord → COMBO word → number). Its bounding box spans from the
+        // PERFECT word's top (~JudgeWordCenter.y − 20) to the digits' bottom (~ComboDigitY + 33). The three anchors are
+        // offset in lock-step so that box is centred in the play area BELOW the judgment band — NOT the whole board: the
+        // receptors are 100×100 drawn at ReceptorW=92 about judgeLineY=70, so the judgment band is [70 ± 46] = [24, 116].
+        // The usable band below it is [116, 600] (board bottom); its centre = 358, shared by every noteskin (向上/up-scroll).
+        // (History: originally ~277 = biased up; then board-midline 300; now below-judgment centre 358.)
+        private static readonly Vector2 JudgeWordCenter = new Vector2(TrackCenterX, 259);
+        private const float ComboWordY = 318f;
+        private const float ComboDigitY = 369f, ComboDigitStep = 42f, ComboDigitW = 48f;
         // The COMBO word and the digits must render at ONE per-pixel scale so the label and the number read as the
         // same font (native COMBO.PNG = 117×33, each digit = 67×72). Deriving the word width from the digit width
         // locks word/number to the source-art ratio; a hardcoded 100 drew the word at 0.855× vs the digits' 0.716×.
@@ -138,6 +266,17 @@ namespace Sdo.Game
         private readonly GameplayClock _clock = new GameplayClock();
         private AudioSource _audio, _sfx, _ambient;
         private readonly Dictionary<string, AudioClip> _seCache = new Dictionary<string, AudioClip>();
+        // ---- 打拍音 (F7, StepMania assist tick) ----
+        // 每個有音符的 row 響一聲 clap(練習/對拍用;音色=官方 theme 的 assist tick.ogg,見 BuildAssistTick)。
+        // 開關**跨歌延續**(s_assistTick,同一次執行內),但不落地存檔 —
+        // 等同 StepMania 的 GAMESTATE->m_StoredSongOptions.m_bAssistTick(「Store this change, so it sticks if we change songs」)。
+        // 排程走音訊時鐘(PlayScheduled),不是「這幀到了就播」,所以不吃 frame rate 抖動。
+        private readonly AssistTick _tick = new AssistTick();
+        private AudioClip _tickClip;
+        private double _tickOnsetSec;           // 打拍音檔開頭的前導靜音(秒) —— 排程要提早這麼多,見 MeasureOnsetSec
+        private AudioSource[] _tickVoices;      // 小型輪替池:密集 16 分音符時,前一聲還在響就換下一個音源
+        private int _tickVoice;
+        private const int TickVoices = 8;
         // Per-scene ambient SE (decompiled SeMgr_PlayVoiceTimed, gated on scene id in Gameplay_Update): only a few
         // scenes carry an intermittent ambience (sea waves / stadium crowd / underwater bubbles / garden); see
         // AmbientSeName + TickAmbient. Most scenes are BGM/song-only.
@@ -145,9 +284,12 @@ namespace Sdo.Game
         private float _nextAmbientAt = -1f;      // realtime when the next ambient one-shot may fire (<0 = not armed yet)
         private bool _started, _failed, _ended;
         private double _songStartDspTime, _clockStart = -1;
-        // How far the audio is delayed behind the beat-0 note clock — the chart's music-start offset (type-10
-        // 音樂起止 marker) in seconds. Notes scroll during this silent count-in; drives the audio schedule and the
-        // beat-0<->clip-position mapping (AudioChartSeconds). Set with _clockStart in OpeningSequence().
+        // The chart's music-start offset (type-10 音樂起止 marker) in seconds — the silent count-in the notes
+        // scroll through before the audio comes in. This holds the MARKER ONLY (always >= 0); the hand-set
+        // offsetMs and the global offset are added separately in MusicCountInSec, which is what actually drives
+        // the audio schedule / the beat-0<->clip-position mapping (AudioChartSeconds). MusicCountInSec may go
+        // NEGATIVE when the offsets pull the music ahead of beat 0 (GameRate.ScheduleMusic then starts the clip
+        // mid-way). Set with _clockStart in OpeningSequence().
         private double _musicStartDelaySec;
         // When the DPS dance begins, in beat-0 note-clock seconds: the FIRST NOTE's time, NOT the music-start
         // marker. The choreography spans first→last note (DpsLoader.Total ≈ last−first note), so on charts whose
@@ -237,12 +379,18 @@ namespace Sdo.Game
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
 
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
+        private readonly List<double> _noteStarts = new List<double>();   // _notes[i].Note.StartTimeMs, ascending — drives NoteScan.UpperBound
+        private int _firstAlive;                                          // cursor: index of the earliest still-live note (see NoteScan.Advance)
+        private readonly Stack<NoteVisual> _visualFree = new Stack<NoteVisual>();   // returned note-visual bundles waiting to be re-rented
+        private readonly List<NoteVisual> _visualAll = new List<NoteVisual>();      // every bundle ever created (for teardown/debug)
+        private Transform _noteVisualRoot;                                // identity origin parent so all pooled note GameObjects live under one node
         private readonly RuntimeNote[] _holding = new RuntimeNote[Keys];
         private readonly Sprite[][] _noteFrames = new Sprite[Keys][];
         private readonly Texture2D[] _holdTex = new Texture2D[Keys];
         private readonly Sprite[] _holdTail = new Sprite[Keys];
         private readonly bool[] _holdTailFlipX = new bool[Keys];   // combined-name skins share one cap across a lane pair → mirror it
-        private readonly bool[] _holdTailFlipY = new bool[Keys];   // (per-lane-name skins like NOTEIMAGE_6 are pre-drawn → no flip)
+        private readonly bool[] _holdTailFlipY = new bool[Keys];   // per-skin baked correction (NOTEIMAGE_8 updown cap 貼圖上下顛倒)
+        private readonly bool[] _holdCapPerLane = new bool[Keys];   // true = 每軌預畫 cap (NOTEIMAGE_6 箭頭)：依軌向畫好，不吃 scroll 方向翻轉
         private SpriteRenderer _missOverlay;                       // track-wide red wash flashed on a miss (covers all 4 lanes reliably)
         private readonly Sprite[] _recIdle = new Sprite[Keys];
         // Keydown receptor feedback = a ONE-SHOT 5-frame burst (KEYDOWN_JUDGELINE.AN = *_judgeline 2→3→4→5→6),
@@ -284,6 +432,7 @@ namespace Sdo.Game
         private readonly Sprite[] _scoreDigitSprites = new Sprite[10];
         private Sprite[] _burstFrames, _readyFrames, _goFrames;
         private Sprite[] _burstFramesUD;   // self-contained skins' UP/DOWN-lane hit frames (jz*_ud); null = non-directional (use _burstFrames for all lanes)
+        private Sprite[] _lnEndFrames;     // 長條完成的 END burst (官方 Eft_LnEnd 槽) — 6 frames, per LnEndArt
         private Material _addMat;           // additive material template; each burst clones its own instance
         private Material _hpGlowMat;        // HP-edge glow's OWN additive instance (dedicated so its _TintColor can be driven bright, and no _MainTex cross-bleed with bursts)
         private SpriteRenderer _readyGo;   // opening READY/GO overlay (centre screen)
@@ -318,8 +467,12 @@ namespace Sdo.Game
         // 無理短長條 → 一般 note（預設開；OPTION 尚未接 UI，先由 GameplaySettings.collapseShortHolds / config.ini 灌進來）：
         // 載譜後把長度短於 180 BPM 16 分音符 (OsuBeatmap.ShortHoldMaxMs ≈83ms) 的 long note 收成單顆 note，見 LoadChart。
         public bool collapseShortHolds = true;
-        // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖鏡頭 1，無開場運鏡)。
+        // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖 cameraFixedIndex 那台，無開場運鏡)。
         public bool cameraAuto = true;
+        public int cameraFixedIndex = 0;    // 固定視角鎖第幾台（0..FixedCamCount-1）＝上次在遊戲中用 F2 切到的那台
+        // 遊戲中按 F2 換鏡頭時回報新的模式（-1=自動導播 / 0..n-1=固定鏡頭）。前端(FrontendApp)接起來寫回 OPTION 設定，
+        // 所以下一局會停在同一台，OPTION「遊戲視角」的標籤也會跟著變成 固定/默認。
+        public Action<int> onCamModeChanged;
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
         // ── NOTE-PANEL POSITION (two orthogonal player settings, wired in by FrontendApp before boot; see NotePanelLayout).
         // dropDirection = Room win2「掉落方式」(0=向上 top/up-scroll, 1=向下 bottom/down-scroll, 2=傾斜→比照向下);
@@ -344,6 +497,12 @@ namespace Sdo.Game
         public float hudHpDownYOffset = 552f;      // 向下置中的血條下移量（≈ 15→567，把頂端血條鏡射到板底）
         public float burstSize = 1.3f;      // hit-burst size multiplier
         public float burstBright = 1.5f;    // hit-burst brightness (additive _TintColor; 1.0 = stock)
+        public float holdDropDim = 0.5f;    // 中途放開(Bad/Miss)的長條不消失，改用這個亮度繼續流走 (0.5 = 50%)
+        public float lnEndSize = 0.7f;      // 長條結尾爆發大小 ×burstSize
+        public float lnEndSpeed = 0.5f;     // 長條結尾爆發播放速度 (0.5 = 半速 → 每幀 60ms)
+        // 結尾爆發亮度 ×burstBright。命中爆發是「additive×2 層 + burstBright 1.5」刻意炸亮的，結尾沿用會整片泛光；
+        // 這裡壓亮度，且 SpawnLnEndBurst 只畫單層 (見 SpawnBurstFrames 的 doubleLayer)。
+        public float lnEndBright = 1.0f;
         // ── hiteft3D: the "3D" note skin's hit effect = a real 3DEFT played at the receptor via the EftEffect particle
         // engine (instead of the flat sprite flipbook). Selected in the F4 STAGE tab note-skin selector (index past the
         // 2D skins). The official 3D skin's hit is HIT.EFT — a note-ARROW-shaped flash (the map_g\NOTES textures = "固定
@@ -412,6 +571,7 @@ namespace Sdo.Game
         public float handTrailWidth = 0.5f; // width multiplier (1 = faithful 2×|Hand→Finger0|); 0.5 tuned to match the original on-screen
         public float handTrailTime = 0.24f; // lifetime (s); original = 8 segments × 30ms
         private bool _showDebugUI = false;   // F4 toggles the tuning panel; hidden by default
+        private bool _showRateUI = false;    // F9 toggles the 遊戲流速 (music rate) test panel
         private Vector2 _dbgScroll;          // scroll for the tuning sliders so they never push the playtest controls off-panel
         private int _dbgTab;                 // F4 panel tab: 0=Play, 1=Combo, 2=Stage — keeps each group's sliders roomy
         private static readonly string[] DbgTabs = { "Play", "Combo", "Stage", "Emoji", "Result", "Banner" };
@@ -421,7 +581,18 @@ namespace Sdo.Game
             ("800→HE", EmojiKind.HE),
             ("miss10→H", EmojiKind.H), ("miss30→Y", EmojiKind.Y), ("miss50→JS", EmojiKind.JS), ("lowHP→GTH", EmojiKind.GTH),
         };
-        private TextMesh _musicName, _lvText, _timeText, _info, _fpsText;
+        private TrackedTextMesh _musicName;                       // bottom song title — per-char so its letter-spacing can be tightened
+        private TextMesh _lvText, _timeText, _info, _fpsText;
+        // 「時間」欄拆成三個獨立文字物件，讓數字變動時「冒號」與「總長」的位置都定住不動：
+        //   _timeMin  ＝ 倒數的「分」，右對齊 → 右緣釘在冒號錨點，分是「—」或數字都不影響冒號 x。
+        //   _timeText ＝ 倒數的「: 秒」，左對齊在冒號錨點 → 冒號位置固定；秒往右長不影響冒號。
+        //   _timeTotal＝ 整首固定的「總長」，位置只釘一次。
+        private TextMesh _timeMin, _timeTotal;
+        private int _timeMeasure;             // 0=待量測 1=量測中 2=已定位
+        private const float TimeMinW = 10f;   // 「分」欄寬(design px)：欄位左緣 → 冒號錨點的距離
+        private const float CountdownDx = 5f; // 倒數「分:秒」整組再往左移的 px（標籤「時間:」與總長不動；冒號固定關係不變）
+        private float _timeTotalDx = 40f;     // 欄位左緣(baseX+132) → 總長欄左緣 的水平距離；量到實寬後更新
+        private float _attrBaseX = 204f;      // 最近一次 PlaceAttrRow 的 baseX（量測後重排要用）
         private SpriteRenderer _lblSong, _lblAttr;   // bottom "歌曲名:" / "LV: 时间:" labels
         private Sprite _lvOnlyLabel;                  // "LV:"-only crop of GAMEPLAY2, shown at result (time field dropped)
         private float _fps;
@@ -700,6 +871,10 @@ namespace Sdo.Game
             if (!string.IsNullOrEmpty(demoSweep) && demoSweep != "0") DebugGaugeSweep = true;
             var iso = DevVar("SDO_SHOWTIME_ISO");
             if (!string.IsNullOrEmpty(iso) && int.TryParse(iso, out int isoN)) EftEffect.PowerIsolate = isoN;
+            // DEV: SDO_NOTETYPE=0..10 forces a specific note skin at boot (ApplyRoomNoteSkin) so the dead-art
+            // smoke test can exercise every EFFECT/NOTEIMAGE skin, not just the stock one.
+            var noteType = DevVar("SDO_NOTETYPE");
+            if (!string.IsNullOrEmpty(noteType) && int.TryParse(noteType, out int ntv)) g.roomNoteType = ntv;
         }
 
         /// <summary>DEV scene-override config. A player build (dance.exe) reads the OS env var (set in the terminal
@@ -718,11 +893,17 @@ namespace Sdo.Game
 
         private void Start()
         {
+            // 跨歌延續的開關(F7 打拍音 / F8 自動打擊)。在這裡套用:FrontendApp 是在 AddComponent 之後、Start 之前
+            // 才設欄位的,所以要等到 Start 才蓋得過它那句 autoPlay = false。
+            assistTick = s_assistTick;
+            if (s_autoPlay.HasValue) autoPlay = s_autoPlay.Value;
             ResolveDevDefaults();
             ConfigureAvatarGender();
             _cam = Camera.main ?? new GameObject("Main Camera") { tag = "MainCamera" }.AddComponent<Camera>();
             SdoLayout.SetupCamera(_cam);
-            BuildBootCover();               // put the loading screen up FIRST...
+            // 譜面編輯器：換一首歌就重建整個畫面，每次閃一秒載入圖很擾人 → 不放載入畫面（相機的清除色本來就是黑）。
+            if (editorMode) loadingMinSec = 0f;
+            else BuildBootCover();          // put the loading screen up FIRST...
             _bootShownRt = Time.realtimeSinceStartup;
             StartCoroutine(BootBuildCo());  // ...then build the (heavy) stage behind it — see BootBuildCo
         }
@@ -732,14 +913,21 @@ namespace Sdo.Game
             if (AvatarPartsNeedFallback(avatarParts, localPlayerMale))
                 avatarParts = SdoRoomAvatar.DefaultParts(localPlayerMale);
 
-            if (!localPlayerMale) return;
+            if (localPlayerMale)
+            {
+                skeletonHrc = SdoRoomAvatar.MaleHrc;
+                maleBody = true;
+                danceMot = "MOTION/MDANCE0002.MOT";
+                restMot = "MOTION/MREST0082.MOT";
+                winMot = "MWIN0001.MOT";
+                loseMot = "MREST0004.MOT";
+            }
 
-            skeletonHrc = SdoRoomAvatar.MaleHrc;
-            maleBody = true;
-            danceMot = "MOTION/MDANCE0002.MOT";
-            restMot = "MOTION/MREST0082.MOT";
-            winMot = "MWIN0001.MOT";
-            loseMot = "MREST0004.MOT";
+            // 飛行翅膀 → arena standby idle 換成 flystay 浮空 clip (rest cat 0x2c, 023_gameplay:4138). Only the idle/rest
+            // changes; the DPS dance is unaffected. 飛行翅膀 = 硬編 5 id + 線上實測名單(離線無法從資料推;見 SpecialMotionItems)。
+            // 競技場沒有走路,故只換 idle;前傾滑動 fly-walk 只在房間走動時用。See [[sdo-special-item-idle-walk]].
+            if (SpecialMotionItems.WearsFlyingWing(avatarParts))
+                restMot = SpecialMotionItems.FlyIdleMot(localPlayerMale);
         }
 
         private static bool AvatarPartsNeedFallback(string[] parts, bool male)
@@ -771,11 +959,19 @@ namespace Sdo.Game
             BuildHud();
             ApplyRoomNoteSkin();   // AFTER BuildHud so _comboWord exists → LoadComboJudgeArt can assign the skin's COMBO.PNG
                                    // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
-            TryLoadAvatar();
-            TryLoadScene();
-            _engine = new ManiaJudgmentEngine(JudgmentWindows.FromSdoBpm(_map.Bpm));
+            // 編輯器：不載舞者、不載 3D 場景（也就沒有 SceneCam/背景 quad）→ 主相機的 SolidColor 黑直接成為背景。
+            if (!editorMode) { TryLoadAvatar(); TryLoadScene(); }
+            // 判定窗:StepMania(YHANIKI)的「精N」毫秒窗,與 BPM 無關(原版是 tick 窗 = 歌越快越嚴,見 FromSdoBpm)。
+            // 以精4 為基準(Perfect 45 / Cool 90 / Bad 135 / Miss 180 ms)乘精度係數;預設精2(×1.33)。
+            // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
+            // 精度在 config.ini [Room] judgeLevel 手改(1~8、9=JUSTICE)。
+            _engine = new ManiaJudgmentEngine(JudgmentWindows.FromStepManiaJudge(Sdo.Settings.RoomConfig.judgeLevel));
+            _outputLatencySec = MeasureOutputLatencySec();                       // 這台機器的輸出緩衝有多長（= 混音游標領先喇叭多久）
+            AudioSettings.OnAudioConfigurationChanged += OnAudioConfigChanged;   // 換音訊裝置 → buffer/取樣率變 → 重量
+            ApplyClockOffset();   // 全域 offset（這台機器的延遲）− 輸出延遲（讓時鐘＝正在出喇叭的位置，同 StepMania）
             _score = new ScoreProcessor(_map.TotalNotes);
-            _health = new HealthProcessor(healthLevel);
+            // 完奏模式：HP 歸零不結束歌曲(見 Update 的 IsFailed 判定) → HP 必須鎖死在地板，否則後面的 combo 會把血補回來。
+            _health = new HealthProcessor(healthLevel, lockOnDeath: playFullSong);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
             _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; }   // clear the auto→manual handoff latches
             _gaugeCur[0] = _gaugeCur[1] = _gaugeCur[2] = GaugeBaseP; _gaugeActive = 0;   // gauge positions re-init empty
@@ -788,16 +984,20 @@ namespace Sdo.Game
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
             _ambient = gameObject.AddComponent<AudioSource>();
-            var ambName = AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
+            BuildAssistTick();   // F7 打拍音:本譜的 tick 時間軸 + 排程用的音源池
+            var ambName = editorMode ? null : AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
             if (!string.IsNullOrEmpty(ambName)) StartCoroutine(LoadAmbientCo(ambName));
-            // OPTION 遊戲頁「固定」視角：鎖定鏡頭 1（FixedEye[0]），跳過自動導播的開場運鏡。默認視角則維持 -1(自動)。
-            if (!cameraAuto) _camMode = 0;
+            // OPTION 遊戲頁「固定」視角：鎖定上次記住的那台（F2 切過就是那台，預設 FixedEye[0]＝鏡頭 1），
+            // 跳過自動導播的開場運鏡。默認視角則維持 -1(自動)。
+            if (!cameraAuto) _camMode = Mathf.Clamp(cameraFixedIndex, 0, FixedEye.Length - 1);
             // Enter on the crane with no note board: hold the track hidden while the opening shot flies in, then
             // OpeningSequence() reveals it with READY. Only when there's actually a 3D crane to watch AND the camera is
             // on the auto-director (固定視角沒有吊臂運鏡，直接顯示 note 面板)。
             if (use3dCamera && _camReady && openingIntroSec > 0f && cameraAuto) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
             if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f;   // idle dancer, fixed cam, hidden track
                 HideComboAndJudge(); HideHudForPanel(); }   // also clear the rest of the gameplay HUD (score/combo/judge/song labels/ranking) for a clean stage
+            // 編輯器：沒有開場運鏡，音符板直接出來；HP/分數/名次/歌曲列全部收掉，只留板子+受擊線+音符。
+            if (editorMode) { _dancing = false; _introStartRt = -1f; SetTrackVisible(true); HideHudForEditor(); }
             _sceneBootDone = true;            // the synchronous build above is complete (scene/avatar/board/HUD placed)
             StartCoroutine(LoadAndPlayAudio());
             StartCoroutine(BootRevealCo());   // hold the loading screen until everything's ready (+ online gate), then reveal
@@ -890,6 +1090,162 @@ namespace Sdo.Game
                 _seCache[name] = clip;
             }
             if (clip != null && _sfx != null) _sfx.PlayOneShot(clip, AudioMix.Sfx);   // 遊戲音效 音量
+        }
+
+        // ---- 打拍音 (F7) — StepMania ScreenGameplay::PlayTicks() 的移植 ----
+
+        // 本譜的 tick 時間軸(每個音符的頭,同時間的只留一個)+ 排程用的音源池。
+        // 音色 = **官方 StepMania theme 的那顆 clap**(Themes/<theme>/Sounds/ScreenGameplay assist tick.ogg,
+        // 這裡取 CyberiaStyle 6),放在 SE/assist_tick.ogg(package_build 會鏡射進 DATA/SE)。載不到就退回自己合成的
+        // clap(AssistTick.RenderClap) —— 純函式、有測試,所以沒有那個檔案時打拍音仍然可用,不會靜音。
+        private const string TickSeName = "assist_tick";
+
+        private void BuildAssistTick()
+        {
+            _tick.Load(NoteStartTimes());
+            _tickVoices = new AudioSource[TickVoices];
+            for (int i = 0; i < TickVoices; i++)
+            {
+                var a = gameObject.AddComponent<AudioSource>();
+                a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
+                _tickVoices[i] = a;
+            }
+            SetTickClip(SynthClapClip());         // 先掛 fallback,音源池才有 clip 可用(合成的 clap 沒有前導靜音)
+            StartCoroutine(LoadTickClipCo());     // 官方 clap 載好就換上去(遠早於 READY/GO 結束,不影響第一個 tick)
+        }
+
+        private AudioClip SynthClapClip()
+        {
+            int rate = AudioSettings.outputSampleRate > 0 ? AudioSettings.outputSampleRate : 48000;
+            var pcm = AssistTick.RenderClap(rate);
+            var clip = AudioClip.Create("AssistTickSynth", pcm.Length, 1, rate, false);
+            clip.SetData(pcm, 0);
+            return clip;
+        }
+
+        private IEnumerator LoadTickClipCo()
+        {
+            foreach (var ext in new[] { ".ogg", ".wav" })   // theme 檔是 .ogg;若哪天換成 wav 也吃
+            {
+                var path = Path.Combine(SdoExtracted.SeDir, TickSeName + ext);
+                if (!File.Exists(path)) continue;
+                var type = ext == ".ogg" ? AudioType.OGGVORBIS : AudioType.WAV;
+                using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
+                {
+                    yield return req.SendWebRequest();
+                    if (req.result != UnityWebRequest.Result.Success) { Debug.LogWarning("[tick] " + path + ": " + req.error); continue; }
+                    var clip = DownloadHandlerAudioClip.GetContent(req);
+                    if (clip == null) continue;
+                    SetTickClip(clip);   // 順便量前導靜音（官方那顆 clap 前面有 ~30ms 空白 → 排程要提早）
+                    yield break;
+                }
+            }
+            // 找不到通常不是「檔案沒有」，而是**資料根解錯了**（例：worktree 沒有 gitignore 掉的 data_root.txt
+            // → Root 退回 sdox_offline/Extracted，那裡根本沒有 SE）。把實際找過的資料夾印出來，不用再猜。
+            Debug.LogWarning($"[tick] 找不到 {TickSeName}.ogg/.wav（找過 {SdoExtracted.SeDir}）→ 改用合成的 clap");
+        }
+
+        /// <summary>
+        /// 音檔開頭到「起音」的時間（秒）—— 排程時要提早這麼多，音檔本身不動。
+        ///
+        /// <c>PlayScheduled</c> 排的是 <b>clip 的第 0 個取樣</b>，不是「聽得到的那一刻」。官方的
+        /// <c>assist_tick.ogg</c>（StepMania theme 的 clap）前面有一段空白 —— 實測 44.1kHz / 全長 81.4ms，
+        /// 前 26ms 完全是 0，起音在 ~29.8ms、峰值在 34.3ms。於是每一聲 click 都比排程時間晚 ~30ms 才進耳朵。
+        ///
+        /// 這在校時上特別惡毒：它是一段**只污染耳朵、不污染眼睛**的假延遲 —— 音符的畫面位置是譜面時鐘畫出來的
+        /// （看著 note 打 → 量到 ~+5ms），但聽著 click 打會白白多吃這 30ms，於是兩個測試永遠對不起來，
+        /// 整包還會被誤認成「音效卡延遲」。
+        ///
+        /// 補法照 StepMania：**提早排程，不動音檔**（它的 tick 也是把落點寫進 RageSoundParams::StartTime，
+        /// 從不去改 wav）。切音檔還多一個風險 —— 起音偵測抓歪就把起音本身削掉了。
+        ///
+        /// 起音 = 第一個達到峰值 1% 的取樣。這顆 clap 從 1% 爬到 50% 只要 3.3ms，所以門檻取哪裡差不了幾 ms，
+        /// 而且那點殘差是常數，會被 globalOffsetMs 一併吸收。
+        /// </summary>
+        private static double MeasureOnsetSec(AudioClip clip)
+        {
+            if (clip == null || clip.samples <= 0 || clip.frequency <= 0) return 0.0;
+            int ch = Mathf.Max(1, clip.channels);
+            var data = new float[clip.samples * ch];
+            if (!clip.GetData(data, 0)) return 0.0;   // 壓縮在記憶體裡的 clip 讀不到 → 當作沒有前導靜音
+
+            float peak = 0f;
+            for (int i = 0; i < data.Length; i++) { float a = Mathf.Abs(data[i]); if (a > peak) peak = a; }
+            if (peak <= 1e-6f) return 0.0;            // 整段靜音
+
+            float th = peak * 0.01f;
+            for (int i = 0; i < data.Length; i++)
+                if (Mathf.Abs(data[i]) >= th) return (i / ch) / (double)clip.frequency;
+            return 0.0;
+        }
+
+        private void SetTickClip(AudioClip clip)
+        {
+            _tickClip = clip;
+            _tickOnsetSec = MeasureOnsetSec(clip);
+            if (_tickVoices != null) foreach (var v in _tickVoices) if (v != null) v.clip = clip;
+            if (_tickOnsetSec > 0.001)
+                Debug.Log($"[tick] 前導靜音 {_tickOnsetSec * 1000.0:0.0} ms → 排程提早這麼多"
+                        + "（PlayScheduled 排的是第 0 取樣；不補的話每一聲都晚這麼多，校時會誤認成音效卡延遲）");
+        }
+
+        private IEnumerable<double> NoteStartTimes()
+        {
+            foreach (var n in _notes) yield return n.Note.StartTimeMs;
+        }
+
+        // 每幀:把「地平線之前」的 tick 全部排進音訊時鐘。tick 的譜面時間 → dspTime 用的是**音樂本身的映射**
+        // (_songStartDspTime + (t − 數拍前導)),跟歌曲同一支時鐘,所以 click 落點是取樣級精準,不受 frame rate 影響。
+        //
+        // ---- 要提早多少排? 從「聽得到的那一刻」倒推 ----
+        // 目標:譜面時間 T 的 click,要在**時鐘讀到 T** 的那一刻進耳朵。
+        //   • 時鐘 = 播放游標 = ChartFromDsp(dspNow) − L·rate  (L = 輸出延遲,見 ApplyClockOffset)
+        //     → 時鐘讀到 T 的時刻是 dspTime = Draw(T) + L      (Draw = DspFromChartSeconds)
+        //   • 排在 dsp D 的聲音,要 L 之後才出喇叭,而且音檔前面還有 onset 秒的靜音
+        //     → 實際聽到的時刻是 dspTime = D + L + onset
+        //   兩式相等 ⇒ **D = Draw(T) − onset**。輸出延遲 L 自己消掉了(它對時鐘和聲音一視同仁),
+        //   真正要補的只有音檔的前導靜音 —— 而那是「提早排程」,音檔一個位元組都不用動(同 StepMania)。
+        //
+        // 排得到的條件是 D > dspNow,代進去化簡 ⇒ T > now + (L + onset)·rate = now + TickLeadChartMs。
+        // 所以地平線的起點要推到那裡:早於它的 tick 已經來不及排進混音,撿了也只會被 clamp 成「立刻播」而慢半拍。
+        // (StepMania 同一句:fPositionSeconds += SOUND->GetPlayLatency() + TickEarly + 0.25f — ScreenGameplay.cpp:1220-1225)
+        //
+        // 關閉時每幀把游標推到地平線起點:中途才按 F7 打開只會從當下的音符開始響(不會把前面累積的一次倒光)。
+        private double TickLeadChartMs => (ClockLatencySec + _tickOnsetSec) * 1000.0 * _musicRate;
+
+        private void TickAssist(double nowMs)
+        {
+            if (_tickVoices == null) return;
+            double schedulableMs = nowMs + TickLeadChartMs;   // 早於此的 tick 已經來不及排準了
+            if (!assistTick || _ended || _paused || Time.timeScale <= 0f) { _tick.Rewind(schedulableMs); return; }
+            double horizon = schedulableMs + AssistTick.DefaultLookaheadMs;
+            while (_tick.TryDequeue(horizon, out double tMs))
+            {
+                // 譜面時間 → dsp:除以流速(StepMania 同一句 fSecondsUntil /= m_fMusicRate,「2x music rate 就是等一半的時間」)
+                // 再減掉音檔的前導靜音 → 起音(而不是第 0 取樣)才落在音符上。
+                double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, MusicCountInSec)
+                           - _tickOnsetSec;
+                var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+                v.volume = AudioMix.Sfx;
+                v.Stop();   // 輪到的音源可能還在響上一聲(超密集譜)→ 蓋掉
+                v.PlayScheduled(Math.Max(dsp, AudioSettings.dspTime));
+            }
+        }
+
+        // 作廢所有「已排程但還沒響」的打拍音(改流速/暫停時它們的 dsp 落點已經失效),游標退回現在重排。
+        private void ResetScheduledTicks()
+        {
+            if (_tickVoices == null) return;
+            foreach (var v in _tickVoices) if (v != null) v.Stop();
+            _tick.Rewind(_nowMs + TickLeadChartMs);   // 同 TickAssist:早於此的 tick 已經來不及排準,別撿
+        }
+
+        // F7 按下去當場響一聲(開/關的聽覺回饋 — 這畫面沒有 StepMania 那條除錯字幕)
+        private void PlayTickOnce()
+        {
+            if (_tickVoices == null || _tickClip == null) return;
+            var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+            v.Stop(); v.volume = AudioMix.Sfx; v.Play();
         }
 
         // ---- per-scene ambient SE (decompiled Gameplay_Update PlayVoiceTimed switch on scene id) ----
@@ -986,23 +1342,27 @@ namespace Sdo.Game
             for (int c = 0; c < Keys; c++)
             {
                 string d = Dir5[c];
+                // bleed:true — 這些 note/receptor PNG 的透明區是 (255,255,255,0) 白底,bilinear 會把白拉進邊緣成白邊 → 先把不透明色 dilate 進透明區清掉
                 var fr = new Sprite[4]; bool ok = true;
-                for (int f = 0; f < 4; f++) { fr[f] = SdoExtracted.LoadImage(NoteDir, d + "holdheadactive" + f + ".png"); if (fr[f] == null) ok = false; }
+                for (int f = 0; f < 4; f++) { fr[f] = SdoExtracted.LoadImage(NoteDir, d + "holdheadactive" + f + ".png", bleed: true); if (fr[f] == null) ok = false; }
                 if (ok) _noteFrames[c] = fr;
-                _recIdle[c] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline1.png") ?? SdoExtracted.LoadImage(NoteDir, d + "_judgeline.png");
+                _recIdle[c] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline1.png", bleed: true) ?? SdoExtracted.LoadImage(NoteDir, d + "_judgeline.png", bleed: true);
                 var rdf = new List<Sprite>();                         // keydown burst: numbered *_judgeline2..6, else *_judgeline_f2
-                for (int f = 2; f <= 6; f++) { var s = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + f + ".png"); if (s != null) rdf.Add(s); }
-                if (rdf.Count == 0) { var f2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2.png"); if (f2 != null) rdf.Add(f2); }
+                for (int f = 2; f <= 6; f++) { var s = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + f + ".png", bleed: true); if (s != null) rdf.Add(s); }
+                if (rdf.Count == 0) { var f2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2.png", bleed: true); if (f2 != null) rdf.Add(f2); }
                 if (rdf.Count == 0 && _recIdle[c] != null) rdf.Add(_recIdle[c]);
                 _recDownFrames[c] = rdf.ToArray();
                 string baseLong = (d == "left" || d == "right") ? "rightleft_long" : "updown_long";
                 var bodySpr = SdoExtracted.LoadImage(NoteDir, baseLong + ".png");
                 if (bodySpr != null) { _holdTex[c] = bodySpr.texture; _holdTex[c].wrapMode = TextureWrapMode.Repeat; SdoExtracted.AlphaBleed(_holdTex[c]); }
-                // end cap: prefer a PER-LANE cap ({left|right|down|up}_long_bottom — NOTEIMAGE_6, drawn per direction), else
-                // the combined cap (rightleft/updown_long_bottom — NOTEIMAGE_5/8). Caps render correct un-flipped on every
-                // skin EXCEPT NOTEIMAGE_8, whose updown cap is stored upside-down → its up & down lanes need a vertical flip.
-                var capSpr = SdoExtracted.LoadImage(NoteDir, d + "_long_bottom.png")
-                             ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
+                // end cap: prefer a PER-LANE cap ({left|right|down|up}_long_bottom — NOTEIMAGE_6, a mini-arrow drawn to match
+                // the LANE's arrow direction), else the combined cap (rightleft/updown_long_bottom — NOTEIMAGE_5/8, a shared
+                // "funnel" that must point away from the body). Per-lane caps are already oriented per lane → they must NOT
+                // take the scroll-direction flip (flipping them in 向下 points the arrow the wrong way). Combined caps DO take
+                // the scroll flip; NOTEIMAGE_8's updown cap is additionally stored upside-down → a baked correction flag.
+                var perLaneCap = SdoExtracted.LoadImage(NoteDir, d + "_long_bottom.png");
+                var capSpr = perLaneCap ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
+                _holdCapPerLane[c] = perLaneCap != null;
                 bool flipY = (d == "up" || d == "down") && NoteDir.EndsWith("NOTEIMAGE_8");
                 if (capSpr != null) { _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr); _holdTailFlipX[c] = false; _holdTailFlipY[c] = flipY; }
             }
@@ -1114,6 +1474,7 @@ namespace Sdo.Game
         private GameObject CreateHoldCap()
         {
             var go = new GameObject("HoldCap3d");
+            go.transform.SetParent(NoteVisualRoot, false);   // pooled with the note visual that owns it (position is set world-space in ScrollNotes)
             var mf = go.AddComponent<MeshFilter>(); var mr = go.AddComponent<MeshRenderer>();
             mf.mesh = new Mesh
             {
@@ -1160,6 +1521,7 @@ namespace Sdo.Game
             var bf = new List<Sprite>();                 // (6) hit burst = EFT_13/EFT_HIT0..11.PNG
             for (int i = 0; i < 12; i++) { var s = SdoExtracted.LoadImage(SdoExtracted.EftDir(13), "EFT_HIT" + i + ".PNG"); if (s != null) bf.Add(s); }
             _burstFrames = bf.Count > 0 ? bf.ToArray() : null;
+            LoadLnEndArt(8);                            // stock skin = EFT_13 (index 8) -> its .DGE LnEnd slot = PUBLICEFT
             _readyFrames = new List<Sprite>().ToArray();
             var rf = new List<Sprite>(); for (int i = 0; i < 10; i++) { var s = SdoExtracted.Eft("READY0" + i + ".PNG"); if (s != null) rf.Add(s); } _readyFrames = rf.ToArray();
             var gf = new List<Sprite>(); for (int i = 1; i <= 6; i++) { var s = SdoExtracted.Eft("GO0" + i + ".PNG"); if (s != null) gf.Add(s); } _goFrames = gf.ToArray(); // GO01..GO06 only
@@ -1204,6 +1566,12 @@ namespace Sdo.Game
 
         private bool LoadChartRaw()
         {
+            // 打拍測試：不讀 .gn、也不放音樂 —— 用固定 BPM 的等距音符當節拍器（assist tick 每顆音符響一聲）。
+            if (beatTestMode)
+            {
+                _map = BeatTestChart.Build(beatTestBpm, BeatTestDurationSec, BeatTestChart.RightLane, beatTestBeatsPerNote);
+                return true;
+            }
             // (1) external user chart (osu / StepMania) from the Songs/ folder — the difficulty was already resolved
             // to a concrete chart file at selection time (see SongSelectScreen.OnConfirm / FrontendApp.StartGameplay).
             if (chartFormat != 0 && !string.IsNullOrEmpty(chartPath) && File.Exists(chartPath))
@@ -1249,6 +1617,9 @@ namespace Sdo.Game
                 _audioReady = true;   // no song to wait for → the loading screen can reveal
                 yield break;
             }
+            // 打拍測試：完全不放音樂（節拍音是 assist tick 排出來的）。沒有這道門，下面那個 fallback 會把
+            // 示範曲 Bassdrop.mp3 撈出來播 —— 校時的時候背後放歌是最不該發生的事。
+            if (beatTestMode) { _audioReady = true; StartCoroutine(EditorOpeningCo()); yield break; }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
                 ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
             if (Mp3Decoder.IsMp3(path) && File.Exists(path))
@@ -1274,6 +1645,8 @@ namespace Sdo.Game
                 }
             }
             _audioReady = true;   // song decoded (or failed) → the loading screen may now reveal the stage
+            // 編輯器：沒有 READY/GO 開場，也不自己起播 —— 停在 0ms 等使用者按播放（見 EditorOpeningCo）。
+            if (editorMode) { StartCoroutine(EditorOpeningCo()); yield break; }
             // Park the clock far ahead (song stopped, notes hidden, dancer idle, timer "- : -") and DON'T start the
             // song here. OpeningSequence() starts the song + gameplay clock the instant the GO animation finishes, so
             // they never begin mid-opening (mirrors the original: state-4 AdvancePlayTime fires when the GO anim slot
@@ -1341,12 +1714,29 @@ namespace Sdo.Game
             // first→last note, so on a long-intro chart (marker ≪ first note) the dancer holds the standby idle
             // through the whole intro and starts the choreography on the first downbeat — not on the marker, which
             // would make it lead the song (sdom1226: marker beat 0 vs first note ~5.4 s ⇒ was 5.4 s early).
-            double musicDelaySec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
-            _musicStartDelaySec = musicDelaySec;
-            _danceStartSec = (useMusicStartOffset && _map != null) ? Math.Max(musicDelaySec, _map.FirstNoteMs / 1000.0) : 0.0;
-            _songStartDspTime = AudioSettings.dspTime + StartLeadSec + musicDelaySec;
-            if (_audio != null && _audio.clip != null) _audio.PlayScheduled(_songStartDspTime);
-            _clockStart = Time.timeAsDouble + StartLeadSec;
+            double markerSec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
+            _musicStartDelaySec = markerSec;   // 只放 type-10 無聲數拍;手動 offset(songOffsetMs)＋全曲 offset(GlobalSongOffsetMs)一律走 MusicCountInSec，別在這裡折進去(會雙重套用)
+            // 音樂被挪的總量(= MusicCountInSec − marker):正 = 音樂晚進來(音檔跑在譜面前面時用)、負 = 提早。
+            // 挪的是音樂 + 舞蹈(DPS 掛在音樂時間軸上),音符/判定仍釘在譜面時鐘 —— 填錯頂多音畫不合拍,不改難度。
+            double songOffsetSec = (songOffsetMs + GlobalSongOffsetMs) / 1000.0;
+            _danceStartSec = ((useMusicStartOffset && _map != null) ? Math.Max(markerSec, _map.FirstNoteMs / 1000.0) : 0.0) + songOffsetSec;
+            // 兩段前導(共用 lead + 無聲數拍 + offset)都是**譜面時間**;dspTime 是真實時間,所以除以流速換回真實秒數。
+            // 開場排程走 GameRate.ScheduleMusic(能處理負 count-in:offset 負得比前導多時 clip 第 0 秒已來不及播 →
+            // 從中途切入),餵的是 feat 管線的 MusicCountInSec(= marker + songOffsetMs + GlobalSongOffsetMs)。
+            GameRate.ScheduleMusic(AudioSettings.dspTime, StartLeadSec, MusicCountInSec, _musicRate,
+                                   out _songStartDspTime, out double playAtDsp, out double clipSkipSec);
+            if (_audio != null && _audio.clip != null)
+            {
+                _audio.pitch = _timeScale;
+                if (clipSkipSec >= _audio.clip.length)
+                    Debug.LogWarning($"[Step1] offset {(songOffsetMs + GlobalSongOffsetMs):F0}ms 把音樂整首推到 clip 之外 — 這首不播音樂");
+                else
+                {
+                    if (clipSkipSec > 0.0) _audio.time = (float)clipSkipSec;
+                    _audio.PlayScheduled(playAtDsp);
+                }
+            }
+            _clockStart = Time.timeAsDouble + StartLeadSec;   // timeAsDouble 已被 timeScale 縮放 → 譜面時鐘自動吃流速
             _clock.Reset();   // re-seed the smoothing clock onto the freshly-anchored timeline (drop any parked-clock frames)
             if (showtimeMode) _gaugeGlowFromStart = true;   // song is playing → head glow stays lit even at 0 fill (no key needed)
         }
@@ -1358,10 +1748,21 @@ namespace Sdo.Game
         // (_musicStartDelaySec), so chart time = clip position + count-in. GameplayClock slews the note clock onto this.
         private double? AudioChartSeconds()
         {
+            // 編輯器：dsp ↔ 譜面時間的映射是 EditorSeekMs 錨的，跟「有沒有音檔在播」無關 → 沒有音樂也交得出真值。
+            // 打拍測試（F2）非交不可：那個模式**沒有音樂**，但你聽到的 click 是 PlayScheduled 排進 dsp 時鐘的。
+            // 這裡若回 null，譜面時鐘就純靠 wall clock 自走 —— 於是「格線/判定」走 wall、「聽到的 click」走 dsp，
+            // 兩支時鐘只在 seek 那一刻對過一次：會慢慢漂，而且視窗一失焦（wall 停、dsp 照跑）回來就固定錯開一段
+            // （實測：+108ms → 切出去再切回來變 −104ms）。鎖上 dsp 之後，殘留的固定偏移才等於「這台機器的真實延遲」。
+            // 暫停中不交：timeScale=0 讓 wall 停住而 dsp 照跑，拿它當真值會把時鐘推著往前爬。
+            if (editorMode)
+                return _paused ? (double?)null
+                    : GameRate.ChartSecondsFromDsp(AudioSettings.dspTime, _songStartDspTime, _musicRate, MusicCountInSec);
             if (_audio == null || _audio.clip == null || !_audio.isPlaying) return null;
             double dsp = AudioSettings.dspTime;
             if (dsp < _songStartDspTime) return null;                // scheduled start not reached yet (still in lead-in)
-            return (dsp - _songStartDspTime) + _musicStartDelaySec;  // clip position → beat-0 chart time
+            // clip position → beat-0 chart time。流速 r 時 clip 位置 = r×(dsp − 起播點),所以譜面時間也要乘 r
+            // (r=1 時就是原式)。改速度/暫停會重新錨定 _songStartDspTime,這條式子因此永遠連續。
+            return GameRate.ChartSecondsFromDsp(dsp, _songStartDspTime, _musicRate, MusicCountInSec);
         }
 
         // Energy-bar INTRO (online FUN_0040dc00/0040e210/0040e0f0 + demo blocks @360861-360887): the bar does NOT
@@ -1513,9 +1914,14 @@ namespace Sdo.Game
         /// offsets 0 / +36 / +132). The 歌曲名 label+value stay bottom-left in every mode.</summary>
         private void PlaceAttrRow(float baseX)
         {
+            _attrBaseX = baseX;   // 量測完成後要能依同一 baseX 重排
+            float fieldX = baseX + 132f;          // 「時間」欄左緣（維持原設計 336−204）
+            float colX = fieldX + TimeMinW - CountdownDx;  // 冒號錨點＝分欄右緣：分右對齊到此、「: 秒」左對齊自此，冒號 x 恆定
             if (_lblAttr) SdoLayout.PlaceTopLeft(_lblAttr, baseX, 575f);
             if (_lvText) _lvText.transform.position = SdoLayout.ToWorld(baseX + 36f, 585f, -1f);    // 240−204
-            if (_timeText) _timeText.transform.position = SdoLayout.ToWorld(baseX + 132f, 585f, -1f); // 336−204
+            if (_timeMin) _timeMin.transform.position = SdoLayout.ToWorld(colX, 585f, -1f);         // 分：右對齊
+            if (_timeText) _timeText.transform.position = SdoLayout.ToWorld(colX, 585f, -1f);       // : 秒：左對齊（冒號固定）
+            if (_timeTotal) _timeTotal.transform.position = SdoLayout.ToWorld(fieldX + _timeTotalDx, 585f, -1f); // 總長：釘在秒欄右側
         }
 
         private void BuildBoard()
@@ -1575,6 +1981,7 @@ namespace Sdo.Game
             float trackW = LaneLeftX[Keys - 1] + 69f - LaneLeftX[0];
             if (glowSpr != null) { _missOverlay.drawMode = SpriteDrawMode.Tiled; _missOverlay.tileMode = SpriteTileMode.Continuous; _missOverlay.size = new Vector2(trackW, 558f); }
             float missY = ClickStripTopY + 279f;   // ≈ board centre; mirror about y300 for 向下 so the wash tracks the receptors
+            _missOverlay.flipY = _scrollSign < 0;  // 向下：漸層亮端跟軌條光一樣翻向底部受擊線
             _missOverlay.transform.position = SdoLayout.ToWorld(PX(LaneLeftX[0] + trackW / 2f), _scrollSign > 0 ? missY : (600f - missY), 9f);
             _missOverlay.color = new Color(1f, 0f, 0f, 0f); _missOverlay.enabled = false;
             BuildNoteClip();
@@ -1652,34 +2059,120 @@ namespace Sdo.Game
             return go;
         }
 
+        // Build the note DATA only — no GameObjects. On a 5k–10k-note chart, spawning a SpriteRenderer + material
+        // per note up front is a load-time hitch (thousands of Shader.Find + Instantiate) and tens of MB of idle
+        // materials, when only ~100 are ever on-screen. The visuals are rented from a pool as notes scroll in
+        // (RentVisual) and returned as they scroll off (ReturnVisual), so cost tracks the visible window, not chart
+        // length. Notes are kept START-TIME-ASCENDING so the per-frame scans can window with NoteScan.
         private void SpawnNotes()
         {
             foreach (var h in _map.HitObjects)
+                _notes.Add(new RuntimeNote(h, NoteBeatColor.Family(h.StartTimeMs, _map)));   // beat-quantization colour precomputed (used only in 3D skin)
+            _notes.Sort((a, b) => a.Note.StartTimeMs.CompareTo(b.Note.StartTimeMs));   // window/break rely on ascending start (loaders sort, but be defensive)
+            _noteStarts.Clear();
+            foreach (var n in _notes) _noteStarts.Add(n.Note.StartTimeMs);
+            _firstAlive = 0;
+        }
+
+        private Transform NoteVisualRoot => _noteVisualRoot != null ? _noteVisualRoot
+            : (_noteVisualRoot = new GameObject("NotesPool").transform);   // identity origin: transform.position writes are world-space, so parenting is neutral
+
+        // Hand note n a pooled visual (no-op if it already holds one). Binds the CURRENT skin's head sprite and,
+        // for a hold, the body texture/shader + tail sprite/flips — the same bindings SpawnNotes used to bake once,
+        // now applied on rent so a live skin swap (F4 / ShowTime) reaches every note as it re-appears.
+        private void RentVisual(RuntimeNote n)
+        {
+            if (n.Vis != null) return;
+            var v = _visualFree.Count > 0 ? _visualFree.Pop() : CreateVisual();
+            n.Vis = v;
+            int c = Mathf.Clamp(n.Note.Lane, 0, Keys - 1);
+            // reset the transient state a previous tenant may have left (colour tint / 3D rotation); sprite is set per-frame.
+            v.Head.color = Color.white;
+            if (v.Head.transform.localRotation != Quaternion.identity) v.Head.transform.localRotation = Quaternion.identity;
+            v.Head.sprite = _noteFrames[c] != null ? _noteFrames[c][0] : _recIdle[c];
+            n.Head = v.Head;
+            if (n.Note.IsHold)
             {
-                int c = Mathf.Clamp(h.Lane, 0, Keys - 1);
-                var head = NewSR("Note", _noteFrames[c] != null ? _noteFrames[c][0] : _recIdle[c], 5);
-                head.enabled = false;   // hidden until it scrolls into view (else it sits at screen centre)
-                head.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;   // clipped to the note board (NoteClip mask)
-                head.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
-                GameObject body = null; SpriteRenderer tail = null;
-                if (h.IsHold)
+                if (_holdTex[c] != null)
                 {
-                    if (_holdTex[c] != null) body = CreateHoldBody(c);
-                    if (_holdTail[c] != null)
-                    {
-                        tail = NewSR("HoldTail", _holdTail[c], 4);
-                        tail.flipX = _holdTailFlipX[c]; tail.flipY = _holdTailFlipY[c];   // mirror the shared combined-skin cap per lane
-                        tail.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
-                        // own material -> no mask batch cross-bleed. (In 3D mode the sprite tail stays hidden — the cap is real triangle geometry.)
-                        tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
-                    }
+                    if (v.Body == null) CreateVisualBody(v);
+                    var sh = Shader.Find(_note3dMode ? "Sdo/NoteCutout" : "Sprites/Default") ?? Shader.Find("Sprites/Default");
+                    if (sh) v.BodyMr.sharedMaterial.shader = sh;
+                    v.BodyMr.sharedMaterial.mainTexture = _holdTex[c];
+                    v.BodyMr.sharedMaterial.color = Color.white;
+                    n.Body = v.Body;
                 }
-                if (body) body.SetActive(false);   // hide body+tail too until scrolled in (else they pile at screen centre)
-                if (tail) tail.enabled = false;
-                // precompute the beat-quantization colour for the 3D skin (cheap; used only when _note3dMode is on)
-                _notes.Add(new RuntimeNote(h, head, body, tail, NoteBeatColor.Family(h.StartTimeMs, _map)));
+                if (_holdTail[c] != null)
+                {
+                    if (v.Tail == null) CreateVisualTail(v);
+                    v.Tail.sprite = _holdTail[c]; v.Tail.color = Color.white;
+                    v.Tail.flipX = _holdTailFlipX[c]; v.Tail.flipY = _holdTailFlipY[c];   // mirror the shared combined-skin cap per lane
+                    n.Tail = v.Tail;
+                }
+            }
+            n.Cap3d = v.Cap3d;   // reuse the cap triangle if this bundle built one in a previous life
+        }
+
+        // Return note n's visual to the pool (idempotent). Disables every part and stashes the lazily-built cap back
+        // on the bundle so the next hold on it reuses the triangle.
+        private void ReturnVisual(RuntimeNote n)
+        {
+            var v = n.Vis;
+            if (v == null) return;
+            v.Head.enabled = false;
+            if (v.Body) v.Body.SetActive(false);
+            if (v.Tail) v.Tail.enabled = false;
+            v.Cap3d = n.Cap3d;                       // ScrollNotes may have created it this life; keep it on the bundle
+            if (v.Cap3d) v.Cap3d.SetActive(false);
+            n.Head = null; n.Tail = null; n.Body = null; n.Cap3d = null; n.Vis = null;
+            _visualFree.Push(v);
+        }
+
+        private NoteVisual CreateVisual()
+        {
+            var v = new NoteVisual();
+            var head = NewSR("Note", null, 5);
+            head.transform.SetParent(NoteVisualRoot, false);
+            head.enabled = false;
+            head.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;   // clipped to the note board (NoteClip mask)
+            head.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
+            v.Head = head;
+            _visualAll.Add(v);
+            return v;
+        }
+
+        private void CreateVisualBody(NoteVisual v)
+        {
+            var go = CreateHoldBody(0);   // texture/shader re-bound per rent; the placeholder col is irrelevant to the mesh
+            go.transform.SetParent(NoteVisualRoot, false);
+            go.SetActive(false);
+            v.Body = go; v.BodyMf = go.GetComponent<MeshFilter>(); v.BodyMr = go.GetComponent<MeshRenderer>();
+        }
+
+        private void CreateVisualTail(NoteVisual v)
+        {
+            var tail = NewSR("HoldTail", null, 4);
+            tail.transform.SetParent(NoteVisualRoot, false);
+            tail.enabled = false;
+            tail.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+            tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material -> no mask batch cross-bleed
+            v.Tail = tail;
+        }
+
+        // Skip the alive cursor past notes retired by hits/misses outside ScrollNotes, returning each skipped
+        // note's visual so the pool never leaks the sprites of a note that was judged away and then out-scrolled by
+        // the cursor. Called once per frame at the top of ScrollNotes.
+        private void AdvanceAliveWindow()
+        {
+            while (_firstAlive < _notes.Count && _notes[_firstAlive].Done)
+            {
+                ReturnVisual(_notes[_firstAlive]);
+                _firstAlive++;
             }
         }
+
+        // Return every note's visual to the pool (e.g. song end, or an editor seek that re-arms the whole chart).
+        private void ReturnAllVisuals() { foreach (var n in _notes) ReturnVisual(n); }
 
         private void BuildHud()
         {
@@ -1719,11 +2212,21 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(songTitle)) songTitle = _map.Title;
             if (string.IsNullOrEmpty(songTitle)) songTitle = "song";
             // song name / LV / time value text — white, two sizes smaller (13 -> 11) per request.
-            _musicName = NewText("MusicName", 80, 585, 11, Color.white); _musicName.text = songTitle;
+            // Same font/size as NewText (LegacyRuntime, fontSize 64, characterSize 11×0.2, order 42, MiddleLeft) but
+            // laid out per-glyph so the letter-spacing can be tightened (字靠緊一點).
+            _musicName = new TrackedTextMesh("MusicName", Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"),
+                64, 11 * 0.2f, Color.white, 42, TextAnchor.MiddleLeft, TextStyles.GameSongTitleTrackEm);
+            _musicName.Position = SdoLayout.ToWorld(80, 585, -1);
+            _musicName.Text = songTitle;
             _songTitle = songTitle;   // keep for the result panel
             _lvText = NewText("MusicLev", 240, 585, 11, Color.white); _lvText.text = _map.Level.ToString();
+            // 「時間」欄拆成三個獨立文字物件（見欄位宣告處說明）：分(右對齊)｜: 秒(左對齊，冒號固定)｜總長(固定)。
+            // 冒號與總長位置都不隨數字寬度位移。總長 x 由「: 秒」最寬字串的實測寬度在 Update 釘一次（見 380 附近）。
             int tot0 = (int)Math.Round(_totalMs / 1000.0);   // initial: "--:--  [total]"
-            _timeText = NewText("MusicTime", 336, 585, 11, Color.white); _timeText.text = FullWidth($"- : -    {tot0 / 60} : {tot0 % 60:00}");
+            _timeMin = NewText("MusicTimeMin", 336, 585, 11, Color.white); _timeMin.anchor = TextAnchor.MiddleRight; _timeMin.text = "0";
+            _timeText = NewText("MusicTime", 336, 585, 11, Color.white); _timeText.text = " : 00";   // 先放最寬秒字串供量測
+            _timeTotal = NewText("MusicTimeTotal", 336, 585, 11, Color.white); _timeTotal.text = $"{tot0 / 60} : {tot0 % 60:00}";
+            _timeTotal.GetComponent<Renderer>().enabled = false;   // 量到寬度、釘好位置前先不顯示（免得疊在倒數欄上）
             // 已隱藏：右上統計（P/C/B/M + combo + F2 相機標籤）不建立就不顯示也不更新（_info 保持 null，更新處有守門）
             // _info = NewText("Info", 610, 8, 10, Color.white);
             // 已隱藏：左上除錯 FPS 不建立就不顯示（_fpsText 保持 null，更新處有守門）
@@ -1983,11 +2486,6 @@ namespace Sdo.Game
             return tm;
         }
 
-        // Style the bottom time field like the original. The colon is written as " : " (an ASCII colon with an EQUAL
-        // space on each side) so it sits centred between the digits — the full-width colon glyph was left-biased.
-        // Only the placeholder dash is widened to an em dash ("— : —"); digits stay half-width (tight).
-        private static string FullWidth(string s) => s.Replace('-', '—');   // U+2014 em dash
-
         // Crop a label sprite to its left `width` px (same texture, top-left preserved) — used to keep just the "LV:"
         // half of the combined "LV: 时间:" label when the time field is dropped on the result screen.
         private static Sprite CropLeftSprite(Sprite src, int width)
@@ -2048,6 +2546,22 @@ namespace Sdo.Game
                 Vector3 chestLocal = avatar != null ? avatar.BoneModelPos("Bip01_Spine1") : new Vector3(0f, 38f, 0f);
                 _avatarChest = parent.transform.position + chestLocal;   // star-ring / bounds / debug framing only
                 _avatarRoot = parent.transform;
+                // 飛行翅膀:量 flystay 浮空 idle 比「dance 貼地」高多少(Δ),UpdateFlyHover 在跳舞時把 root 抬 Δ,讓跳舞和
+                // fly idle 同高(不然飛行角色跳舞卻黏地上)。用「身體(骨盆)」的高度差,不用最低頂點——飛行 idle 常是腿垂下,
+                // 最低頂點反而更低會量成 0;骨盆才代表身體被抬起的高度。idle 本身靠 flystay pose 已浮,故只在 dance 補抬。
+                _flyBaseRootY = _danceSpot.y - feetY; _flyDanceLift = 0f; _flyLiftCur = 0f;
+                if (avatar != null && avatar.RestMot != null && SpecialMotionItems.WearsFlyingWing(avatarParts))
+                {
+                    string refBone = avatar.BoneIndex("Bip01_Pelvis") >= 0 ? "Bip01_Pelvis"
+                                   : avatar.BoneIndex("Bip01_Spine") >= 0 ? "Bip01_Spine" : "Bip01";
+                    avatar.SetClip(mot); avatar.PoseFrame(0f);                       // dance ready pose
+                    float danceRefY = avatar.BoneModelPos(refBone).y;
+                    avatar.SetClip(avatar.RestMot); float flyFeet = avatar.FeetYAt(0f);   // flystay pose (FeetYAt poses it)
+                    float flyRefY = avatar.BoneModelPos(refBone).y;
+                    // 用「身體(骨盆)高度差」和「腳底高度差」取較大者:飛行 idle 可能腿垂下(腳底差≈0)或整個抬起(兩者皆>0);
+                    // 取 max 兩種都涵蓋,寧可抬到位也不要黏地。
+                    _flyDanceLift = Mathf.Max(0f, Mathf.Max(flyRefY - danceRefY, flyFeet - feetY));
+                }
                 if (avatar != null) avatar.PoseInitialIdle();   // arm the idle so the first frame doesn't crossfade from the measurement T-pose
                 if (!avatarDebug && avatar != null)
                     try   // never let a hand-glow hiccup abort scene/audio setup (which run AFTER TryLoadAvatar)
@@ -2089,7 +2603,14 @@ namespace Sdo.Game
         // (=100..500COMBO), 0 = FINISHED, or the F4 panel; SLOW-MOTION with [ (slower) / ] (faster), \ = pause toggle,
         // = (equals) = reset to 1×. Set false in the Inspector for normal gameplay.
         public bool observeBurstMode = false;
-        private float _timeScale = 1f;   // current (non-paused) slow-motion factor for burst observation
+        // ---- 整體遊戲流速 (F9 測試面板) = StepMania 的 music rate ----
+        // 音樂用 AudioSource.pitch 變速變調(= RageSound SetPlaybackRate),其餘全部掛在 Time.timeScale 上一起變慢:
+        // 譜面時鐘是 Time.timeAsDouble(scaled)驅動的,所以音符/判定/舞者/特效/HUD 自動跟著走。dspTime 是真實時間,
+        // 不吃 timeScale,所以 dsp↔譜面時間的換算要自己帶 rate(GameRate),改速度時還得重新錨定否則會跳拍。
+        private float _timeScale = 1f;   // = 目前流速(未暫停時)。F4/F9 面板與 [ ] \ = 都走 SetGameRate。
+        private double _musicRate = 1.0; // 同上,雙精度版(dsp 換算用)
+        private bool _paused;            // \ 暫停:timeScale=0 且音樂 Pause(否則音樂會自己跑掉)
+        private double _pauseChartSec;   // 暫停當下的譜面時間(秒)→ 恢復時用它重新錨定音訊
         private const int SceneLayer = 4;             // the perspective stage layer
         // The default camera is the AUTO-DIRECTOR (decompiled CameraSeq, a CAMERA/*.CDT shot list): a sequence of
         // shots, each a moving .cv dolly shown for its own durationMs, auto-cutting to the next and looping. F2
@@ -2105,6 +2626,18 @@ namespace Sdo.Game
         // .cv eye/target ONLY for shots whose CDT flag = 1. For solo the spot is the origin, so the anchor is zero and
         // every camera is just its raw .cv/table value. (The old _avatarChest re-centring was the source of the
         // wrong angles + the fly-in; it's gone.)
+        // 飛行翅膀:每幀把整個舞者平滑抬到與 flystay 浮空 idle 同高。idle 靠自身 pose 已浮 Δ(抬 0);dance 貼地(抬 Δ)。
+        // 非飛行(_flyDanceLift==0)/2D/編輯器直接跳過。地面星環釘在 FloorY,故舞者浮起、星環仍貼地;相機是 verbatim CDT
+        // 不動 → 舞者在畫面內往上浮。見 [[sdo-special-item-idle-walk]]。
+        private void UpdateFlyHover()
+        {
+            if (_flyDanceLift <= 0f || _avatarRoot == null || _avatar == null) return;
+            float target = _avatar.IsRestPose ? 0f : _flyDanceLift;   // idle 已浮 Δ → 0;跳舞 → Δ(抬到同高)
+            _flyLiftCur = Mathf.Lerp(_flyLiftCur, target, 1f - Mathf.Exp(-Time.deltaTime / 0.25f));   // 平滑起降(τ≈0.25s)
+            var p = _avatarRoot.position;
+            _avatarRoot.position = new Vector3(p.x, _flyBaseRootY + _flyLiftCur, p.z);
+        }
+
         private Vector3 _danceSpot = Vector3.zero;     // solo floor spot (0,0,0); dancer's feet stand here
         private Vector3 _avatarChest;                  // dancer chest world point (star-ring / bounds / debug framing only)
         private bool _camReady;                        // director shots loaded
@@ -2112,6 +2645,10 @@ namespace Sdo.Game
         private Camera _sceneCam;
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
+        // 飛行翅膀跳舞抬升:flystay 浮空 idle 靠自身 pose 已浮 Δ,dance 貼地 → 跳舞時把 root 抬 Δ,讓跳舞與 fly idle 同高。
+        private float _flyDanceLift;   // Δ = flystay idle 相對「dance 貼地」的浮高(>0 才啟用;非飛行/2D/編輯器=0)
+        private float _flyBaseRootY;   // dance 貼地時的 root.y(= danceSpot.y − danceFeetY)
+        private float _flyLiftCur;     // 目前已套用的抬升,平滑到 idle→0 / dance→Δ
         private int _camMode = -1;                     // -1 = auto-director (default); 0..5 = fixed F2 camera
         private CvLoader[] _dirCv; private int[] _dirDurMs; private bool[] _dirAbs;   // director shots + per-shot absolute(:0)/relative(:1)
         private int _dirShot; private float _dirShotStart;
@@ -2163,7 +2700,11 @@ namespace Sdo.Game
                 if (_dirShot == 0 && _dirCv != null && _dirCv.Length > 1) _dirShot = 1;
                 _dirShotStart = Time.time;
             }
+            onCamModeChanged?.Invoke(_camMode);   // 記住玩家的選擇（OPTION「遊戲視角」＋下一局的開場鏡頭）
         }
+
+        /// <summary>F2 可循環的固定鏡頭台數（前端把玩家選到的那台存進 OPTION 設定時要夾範圍）。</summary>
+        public static int FixedCamCount => FixedEye.Length;
         // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
         // stays readable after this GameObject is destroyed as long as the caller grabs the reference first.
         public bool Finished => _ended;          // song played out (or failed) — time to settle
@@ -3406,8 +3947,75 @@ namespace Sdo.Game
 
         // ---------- loop ----------
 
-        // Slow-motion for burst observation: scales Time.timeScale (so the 50Hz EFT sim + everything slows together).
-        private void SetTimeScale(float s) { _timeScale = Mathf.Clamp(s, 0.03f, 2f); Time.timeScale = _timeScale; }
+        // ---- 整體遊戲流速 (StepMania music rate) ----
+        // 一次改三件事,缺一就會音畫不同步:
+        //   (1) Time.timeScale = rate → 音符/判定/舞者/特效/協程 全部跟著慢(譜面時鐘是 scaled time 驅動的);
+        //   (2) AudioSource.pitch = rate → 音樂本身變速(連音高,同 RageSound SetPlaybackRate);
+        //   (3) 重新錨定 dsp↔譜面時間(dspTime 是真實時間,不吃 timeScale)。不錨定的話譜面時間會當場跳掉。
+        // 判定窗口刻意**不**跟著縮放(仍是譜面 ms)→ 越快越難,同 StepMania。
+        private void SetGameRate(double rate)
+        {
+            rate = GameRate.Clamp(rate);
+            if (Math.Abs(rate - _musicRate) < 1e-6) return;
+            double dspNow = AudioSettings.dspTime;
+            double chartSecNow = GameRate.ChartSecondsFromDsp(dspNow, _songStartDspTime, _musicRate, MusicCountInSec);
+
+            _musicRate = rate; _timeScale = (float)rate;
+            if (!_paused) Time.timeScale = _timeScale;
+            ApplyClockOffset();   // 輸出延遲補償是「rate × L」→ 流速一變就要重算（見 ClockLatencyChartMs）
+
+            _songStartDspTime = GameRate.AnchorForChartSeconds(dspNow, chartSecNow, rate, MusicCountInSec);
+            if (_audio != null && _audio.clip != null)
+            {
+                _audio.pitch = _timeScale;
+                if (dspNow < _songStartDspTime) _audio.SetScheduledStartTime(_songStartDspTime);   // 還在 lead-in/數拍:起播點也要重排
+            }
+            ResetScheduledTicks();   // 已排進音訊時鐘的打拍音是舊速度算的 → 全部作廢重排
+        }
+
+        // \ 暫停/恢復。音樂也要停 —— 只把 timeScale 歸零的話音樂會自顧自跑掉,恢復時整首歌就對不上了。
+        private void SetPaused(bool paused)
+        {
+            if (paused == _paused) return;
+            if (paused)
+            {
+                _pauseChartSec = GameRate.ChartSecondsFromDsp(AudioSettings.dspTime, _songStartDspTime, _musicRate, MusicCountInSec);
+                if (_audio != null && _audio.clip != null) _audio.Pause();
+                Time.timeScale = 0f;   // Time.timeAsDouble 隨之凍結 → 譜面時鐘自己就停了,不需另外存
+                ResetScheduledTicks();
+            }
+            else
+            {
+                // 恢復也必須是**取樣級**的：UnPause() 跟 Play() 一樣要等下一個混音回呼才真的出聲（最多一個 DSP
+                // buffer ≈ 11~21ms），而打拍音/判定都掛在 dsp 錨點上 → 每暫停一次，音樂就慢掉不到一個 buffer。
+                // 改成排程起播：起播點 startDsp、dsp 錨點、譜面時鐘的 wall 基準三者錨在同一刻，餘裕本身完全消掉。
+                double lead = AudioScheduleLeadSec();
+                double startDsp = AudioSettings.dspTime + lead;
+                _songStartDspTime = GameRate.AnchorForChartSeconds(startDsp, _pauseChartSec, _musicRate, MusicCountInSec);
+                if (_audio != null && _audio.clip != null)
+                {
+                    double clipSec = _pauseChartSec - MusicCountInSec;
+                    _audio.Stop();
+                    _audio.pitch = _timeScale;
+                    if (clipSec < 0.0) { _audio.timeSamples = 0; _audio.PlayScheduled(_songStartDspTime); }   // 還在無聲數拍裡
+                    else if (clipSec < _audio.clip.length)
+                    {
+                        _audio.timeSamples = Math.Min(_audio.clip.samples - 1,
+                            Math.Max(0, (int)Math.Round(clipSec * _audio.clip.frequency)));   // 整數取樣（clip 是 DecompressOnLoad）
+                        _audio.PlayScheduled(startDsp);
+                    }
+                }
+                Time.timeScale = _timeScale;
+                // 譜面時鐘同樣錨到 startDsp：在音樂真正出聲的那一刻，譜面時間剛好等於暫停時的位置。
+                // （timeAsDouble 吃 timeScale，所以餘裕要乘流速。）
+                _clockStart = Time.timeAsDouble - (_pauseChartSec - lead * _musicRate);
+                _clock.Reset();
+            }
+            _paused = paused;
+        }
+
+        // 舊名保留(F4 面板/觀察模式在用):現在等同「改流速」,音樂會跟著變 —— 以前只動 timeScale,音樂照原速播,是會走音的。
+        private void SetTimeScale(float s) => SetGameRate(s);
 
         private void Update()
         {
@@ -3416,10 +4024,17 @@ namespace Sdo.Game
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
-            // F8：Auto（自動）模式開關 — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）
-            if (Input.GetKeyDown(KeyCode.F8)) { autoPlay = !autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按 F8 發出 SE_0001
-            // DEBUG F7（暫時停用）：切換 ShowTime（氣條）模式。註解掉避免誤觸；要測時再打開。
-            // if (Input.GetKeyDown(KeyCode.F7)) { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // SetTrackVisible refreshes HP-bar visibility for the new mode
+            // F8：Auto（自動）模式開關 — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
+            if (Input.GetKeyDown(KeyCode.F8)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按 F8 發出 SE_0001
+            // F7：打拍音（StepMania assist tick）— 每個音符響一聲 click，方便對拍。s_assistTick = 跨歌延續（不存檔）。
+            if (Input.GetKeyDown(KeyCode.F7))
+            {
+                assistTick = !assistTick; s_assistTick = assistTick;
+                if (assistTick) { _tick.Rewind(_nowMs); PlayTickOnce(); }   // 從當下的音符開始響（不補播過去的）
+                Debug.Log("[dbg] Assist Tick is " + (assistTick ? "ON" : "OFF"));
+            }
+            // DEBUG（暫時停用）：切換 ShowTime（氣條）模式。註解掉避免誤觸；F7 現在給打拍音，要測時請自己挑個沒用到的鍵。
+            // { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // SetTrackVisible refreshes HP-bar visibility for the new mode
             if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
             // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
             if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
@@ -3439,20 +4054,29 @@ namespace Sdo.Game
             // F5：加速 note（下一速度檔）／F6：減速 note（上一速度檔）— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
             if (Input.GetKeyDown(KeyCode.F5)) StepScrollSpeed(+1);
             if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
-            if (Input.GetKeyDown(KeyCode.LeftBracket)) SetTimeScale(_timeScale * 0.5f);    // [ slower
-            if (Input.GetKeyDown(KeyCode.RightBracket)) SetTimeScale(_timeScale * 2f);     // ] faster
-            if (Input.GetKeyDown(KeyCode.Backslash)) { if (Time.timeScale > 0f) Time.timeScale = 0f; else SetTimeScale(_timeScale); }  // \ pause/resume
-            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) SetTimeScale(1f);   // = reset 1×
+            // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
+            // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。F9 開測試面板（滑桿＋檔位按鈕）。
+            // 編輯器模式的暫停/變速要走 Editor* 版本（會重新錨定 dsp↔譜面時間；SetPaused 的恢復路徑假設音源是 Pause 過的，
+            // 但編輯器 seek 是 Stop→Play，直接用會恢復不了聲音）。
+            if (Input.GetKeyDown(KeyCode.LeftBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, -1)); else SetGameRate(GameRate.Step(_musicRate, -1)); }
+            if (Input.GetKeyDown(KeyCode.RightBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, +1)); else SetGameRate(GameRate.Step(_musicRate, +1)); }
+            if (Input.GetKeyDown(KeyCode.Backslash)) { if (editorMode) EditorSetPaused(!_paused); else SetPaused(!_paused); }
+            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) { if (editorMode) EditorSetRate(GameRate.Normal); else SetGameRate(GameRate.Normal); }
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
+            UpdateFlyHover();   // 飛行翅膀:跳舞時把舞者抬到 fly idle 同高(idle 靠 pose 已浮,dance 補抬)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
-            // F9: toggle the stage backdrop V-flip (safety net — the RenderTexture vertical convention is auto-gated
-            // on graphicsUVStartsAtTop, but if the stage still shows upside-down on this machine, F9 flips it).
-            if (Input.GetKeyDown(KeyCode.F9) && _backdropMat != null)
+            if (Input.GetKeyDown(KeyCode.F9))
             {
-                _backdropFlip = !_backdropFlip;
-                _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
-                _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
+                // Shift+F9: 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依 graphicsUVStartsAtTop 自動判斷，
+                // 但萬一這台機器仍然上下顛倒就用它救）。原本掛在 F9，讓位給流速面板。
+                if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && _backdropMat != null)
+                {
+                    _backdropFlip = !_backdropFlip;
+                    _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
+                    _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
+                }
+                else _showRateUI = !_showRateUI;   // F9: 流速測試面板
             }
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
@@ -3497,6 +4121,17 @@ namespace Sdo.Game
             double now = _clock.CurrentMs;
             _nowMs = now;
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
+            TickAssist(now);   // F7 打拍音：把接下來 250ms 內的 tick 排進音訊時鐘（關閉時只推游標）
+            // 譜面編輯器：只把音符捲過去 —— 不扣血、不計分、不結算（時間由 ChartEditorScreen 自由 seek）。
+            // 判定照跑（含一般編譜模式）：只回報誤差給 osu 式誤差條，讓你邊看譜邊跟著打、即時看出偏早/偏晚。
+            if (editorMode)
+            {
+                EditorJudgeTick(now);
+                ScrollNotes(now);
+                UpdateFx(); UpdateClickFlash();   // 爆發/受擊閃光也要有人推幀＋回收：少了這行，每打中一下就永久留一張 frame 0 疊上去（additive → 越疊越白）
+                EditorTick(now);
+                return;
+            }
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
@@ -3517,7 +4152,8 @@ namespace Sdo.Game
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
             // HP-out; it only ends naturally at the song's end (below). Normal mode still fails on HP-out.
             // HP-out. Normally fails immediately (freezes judging + cuts to GAME OVER). playFullSong = 無失敗模式:
-            // HP-out is ignored entirely (like showtime) — the song stays fully playable to its natural end, no GAME OVER.
+            // the song stays fully playable to its natural end, no GAME OVER — but HP itself latches empty (HealthProcessor
+            // lockOnDeath), so a good run after HP-out no longer refills the bar; it stays dead until the song ends.
             if (!showtimeMode && !playFullSong && _health != null && _health.IsFailed) _failed = true;
             if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; EnterResult(); }
         }
@@ -3543,8 +4179,7 @@ namespace Sdo.Game
             HideComboAndJudge();                              // combo number + judgment word (part of the play board)
             ClearGameplayFx();                                // tear down in-flight bursts/holds (F5 mid-song leaves a hold burst looping)
             if (_emoji != null) _emoji.Stop();                // clear any head emoji cut-in so it doesn't linger into the result
-            foreach (var n in _notes)                         // also kill any note sprites still in flight
-            { if (n.Head) n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); }
+            ReturnAllVisuals();                               // also kill any note sprites still in flight (return them to the pool)
             if (_gameOver)
             {
                 // 血條用完死掉 (HP-out): 不放結束勝利/失敗的定格動作與 FINISHED effect;改播死亡字幕 GAME OVER (置中) +
@@ -3633,11 +4268,13 @@ namespace Sdo.Game
             if (_scoreDigits != null) foreach (var d in _scoreDigits) if (d) d.enabled = false;
             if (_lblSong) _lblSong.enabled = false;
             if (_lblAttr) _lblAttr.enabled = false;
-            if (_musicName) _musicName.gameObject.SetActive(false);
+            if (_musicName != null) _musicName.SetActive(false);
             if (_lvText) _lvText.gameObject.SetActive(false);
+            if (_timeMin) _timeMin.gameObject.SetActive(false);
             if (_timeText) _timeText.gameObject.SetActive(false);
+            if (_timeTotal) _timeTotal.gameObject.SetActive(false);
             if (_info) _info.gameObject.SetActive(false);
-            if (_headMarker) _headMarker.Hide();               // arrow + the "玩家" name label (separate root object)
+            // 頭上的名牌（箭頭 + 名字）結算/回放全程保留不隱藏 — 不呼叫 _headMarker.Hide()。
         }
 
         // On the result panel, the old top song-name/level row is gone; instead the gameplay HUD's bottom song-info row
@@ -3649,10 +4286,10 @@ namespace Sdo.Game
             // 結算列固定回官方預設位置：不管遊戲時 面板位置(左/中) 或 掉落方式(上/下) 把「LV: 时间:」整組推到左下或右下，
             // 結算時 歌名+LV 都要回到 GamePlay 預設欄位（歌名值 x=80、LV 標籤 x=204、LV 值 x=240）。
             // ── 過去只重置 LV 標籤(_lblAttr) 沒重置 LV 值(_lvText)，向下置中模式下 _lvText 仍停在 548+36=584，數字就跑到最右邊。
-            if (_musicName)
+            if (_musicName != null)
             {
-                _musicName.gameObject.SetActive(true);                     // song title value
-                _musicName.transform.position = SdoLayout.ToWorld(80f, 585f, -1f);
+                _musicName.SetActive(true);                                // song title value
+                _musicName.Position = SdoLayout.ToWorld(80f, 585f, -1f);
             }
             if (_lvText)
             {
@@ -3665,7 +4302,9 @@ namespace Sdo.Game
                 SdoLayout.PlaceTopLeft(_lblAttr, 204, 575);                // re-place: cropped sprite has narrower bounds
                 _lblAttr.enabled = true;
             }
-            if (_timeText) _timeText.gameObject.SetActive(false);         // 時間欄位移除
+            if (_timeMin) _timeMin.gameObject.SetActive(false);           // 時間欄位移除（分）
+            if (_timeText) _timeText.gameObject.SetActive(false);         // 時間欄位移除（: 秒）
+            if (_timeTotal) _timeTotal.gameObject.SetActive(false);       // 連同總長欄一起移除
         }
 
         // Drive the post-song sequence: hold the win/lose pose, then settle the panel, then loop the background
@@ -3697,6 +4336,8 @@ namespace Sdo.Game
         {
             if (_avatar == null) return;
             _avatar.ClearOneShot();                                   // resume the DPS dance path
+            _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
+            foreach (var rib in _handTrails) if (rib) rib.Clear();    // 手在硬切處瞬移 → 清掉光條歷史，別從定格 pose 連一條光帶到回放起點；回放開始後光條自然重新累積成連續光帶（後面 mot 的手部光繼續做）
             _replayLenMs = _totalMs > 1.0 ? _totalMs : Math.Max(1.0, _replay.LengthMs);
             _replayLoopStart = Time.timeAsDouble;
             _avatar.DanceTimeSec = () => (float)((LoopMs() ) / 1000.0);
@@ -3794,18 +4435,28 @@ namespace Sdo.Game
         private float YForTime(double noteMs, double now)
         {
             if (_scroll == null) BuildScroll();
-            return judgeLineY + _scrollSign * (float)_scroll.PixelDistance(now, noteMs);
+            return judgeLineY + judgeOffsetY + _scrollSign * (float)_scroll.PixelDistance(now, noteMs);
         }
 
         private void ScrollNotes(double now)
         {
             bool use3d = _note3dMode && note3dMesh && EnsureHighway();   // real 3D mesh highway (else 2D coloured-sprite path)
             _highwayItems.Clear();
-            foreach (var n in _notes)
+            AdvanceAliveWindow();
+            // Notes are start-time sorted, so once one is far enough ahead to still be off the bottom (up-scroll) /
+            // top (down-scroll) of the board, every later note is too. `aheadPx` is the exact on-screen distance from
+            // the judge line to the far entry edge (+ margin); break there instead of walking the whole 10k chart.
+            float aheadPx = Mathf.Max(_clipBottomY + 60f - judgeLineY, judgeLineY - (_clipTopY - 60f)) + 200f;
+            for (int i = _firstAlive; i < _notes.Count; i++)
             {
-                if (n.Done) { n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
+                var n = _notes[i];
+                if (n.Done) { ReturnVisual(n); continue; }
+                if (n.Note.StartTimeMs > now && (float)_scroll.PixelDistance(now, n.Note.StartTimeMs) > aheadPx) break;   // this + all later notes are still below/above the board
                 int c = n.Note.Lane;
                 bool held = _holding[c] == n;        // a held long-note head stays pinned to the judge line
+                // 長條頭按住時釘在判定線；一旦尾端(END)通過判定線 (now ≥ EndTimeMs) 就整條隱藏 — 判定仍在跑
+                // (還按著 → 等放開評 tail，或 release 窗口過了才 AutoMiss)，但畫面上直接消失，不留一顆釘在判定線的頭。
+                if (held && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { ReturnVisual(n); continue; }
                 float yRaw = held ? judgeLineY : YForTime(n.Note.StartTimeMs, now);
                 float yEnd = n.Note.EndTimeMs.HasValue ? YForTime(n.Note.EndTimeMs.Value, now) : yRaw;
                 // a note that has flowed off the top (above the clip band, past the HP bar) is no longer VISIBLE,
@@ -3818,21 +4469,26 @@ namespace Sdo.Game
                     : Mathf.Min(yRaw, yEnd) > _clipBottomY + 36f);  // down-scroll: flowed off the BOTTOM past the judge line
                 if (offPast)
                 {
-                    n.Head.enabled = false; if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false);
+                    ReturnVisual(n);
                     if (n.HeadJudged) n.Done = true;   // hit late / auto-missed -> now fully retired
                     continue;
                 }
                 bool visible = held || (_scrollSign > 0
                     ? Mathf.Min(yRaw, yEnd) <= _clipBottomY + 60f   // up-scroll: shown once it enters from the bottom
                     : Mathf.Max(yRaw, yEnd) >= _clipTopY - 60f);    // down-scroll: shown once it enters from the top; SpriteMask clips it to the board
-                n.Head.enabled = visible;
-                if (!visible) { if (n.Body) n.Body.SetActive(false); if (n.Tail) n.Tail.enabled = false; if (n.Cap3d) n.Cap3d.SetActive(false); continue; }
+                if (!visible) { ReturnVisual(n); continue; }
+                RentVisual(n);                    // entered the board -> hand it a pooled visual (skin-bound), then render as before
+                n.Head.enabled = true;
                 float y = yRaw;   // NO clamp — notes keep flowing past the receptor (the mask hides them above the HP bar)
                 int frame = ((int)(Time.time * noteAnimFps)) & 3;   // 4-frame glow cycle (= the official _0.._3 frames)
                 bool stWin = showtimeMode && _showtime.Active;
                 float noteScale = stWin ? showtimeNoteScale : 1f;       // notes grow a little during the auto-hit window
                 float noteW = LaneW * noteScale;
-                if (showtimeMode) { n.Head.color = _noteTint; if (n.Tail) n.Tail.color = _noteTint; }   // gold→red flash over the window's last 3s
+                // 中途放開 (Bad/Miss) 的長條不直接消失：整條 (頭/身/尾) 調暗到 holdDropDim，繼續往判定線外流走。
+                Color noteCol = showtimeMode ? _noteTint : Color.white;   // showtime: gold→red flash over the window's last 3s
+                if (n.Dropped) noteCol = new Color(noteCol.r * holdDropDim, noteCol.g * holdDropDim, noteCol.b * holdDropDim, noteCol.a);
+                bool tintNote = showtimeMode || n.Dropped;                // else leave the renderers at their default white
+                if (tintNote) { n.Head.color = noteCol; if (n.Tail) n.Tail.color = noteCol; }
                 if (use3d)
                 {
                     // 3D-MESH head: draw the real NOTES.MSH arrow FLAT at this note's exact 2D position (same lane + scroll
@@ -3893,7 +4549,7 @@ namespace Sdo.Game
                     else if (n.Tail)
                     {
                         n.Tail.enabled = true;
-                        n.Tail.flipY = _scrollSign < 0;   // 向下：cap 上下翻，尖端朝離開判定線的方向（否則方向相反）
+                        n.Tail.flipY = HoldCapOrient.FlipY(_holdCapPerLane[c], _holdTailFlipY[c], _scrollSign < 0);
                         // 2D cap sits at the tail END (yEnd), its own sprite/aspect.
                         PlaceAspect(n.Tail, cx, yEnd, holdW, 0.5f);
                         if (n.Cap3d != null && n.Cap3d.activeSelf) n.Cap3d.SetActive(false);
@@ -3904,7 +4560,7 @@ namespace Sdo.Game
                         float bot = Mathf.Min(Mathf.Max(y, yEnd), _clipBottomY);
                         float len = Mathf.Max(0f, bot - top), midY = (top + bot) / 2f;
                         n.Body.SetActive(len > 0.5f);
-                        if (showtimeMode) { var bmr = n.Body.GetComponent<MeshRenderer>(); if (bmr && bmr.sharedMaterial) bmr.sharedMaterial.color = _noteTint; }   // long-note body gold→red flash too
+                        if (tintNote) { var bmr = n.Body.GetComponent<MeshRenderer>(); if (bmr && bmr.sharedMaterial) bmr.sharedMaterial.color = noteCol; }   // body follows the same tint (showtime flash / dropped-hold dim)
                         if (len > 0.5f)
                         {
                             n.Body.transform.position = SdoLayout.ToWorld(cx, midY, 0.6f);
@@ -3924,11 +4580,17 @@ namespace Sdo.Game
                             }
                             else
                             {
-                                // 2D skin: tile the body texture square along the length (拼接, not stretch)
+                                // 2D skin: tile the body texture square along the length (拼接, not stretch).
+                                // Anchor the tile phase to the (UNCLAMPED) tailY, NOT to the clamped bottom edge —
+                                // otherwise, on a hold long enough that BOTH ends clamp to the clip band, the quad
+                                // and its V=0..tiles UV render identically every frame and the body looks FROZEN in
+                                // place. Phasing off tailY makes the pattern flow with the note (same fix as the 3D
+                                // branch above). wrapMode=Repeat (set at load) tiles the out-of-range V.
                                 float tileH = holdW * (_holdTex[c].height / (float)_holdTex[c].width);
-                                float tiles = len / Mathf.Max(tileH, 1e-3f);
+                                float invTile = 1f / Mathf.Max(tileH, 1e-3f);
                                 uv[0].x = 0f; uv[3].x = 0f; uv[1].x = 1f; uv[2].x = 1f;
-                                uv[0].y = 0f; uv[1].y = 0f; uv[2].y = tiles; uv[3].y = tiles;
+                                uv[0].y = (tailY - bot) * invTile; uv[1].y = uv[0].y;
+                                uv[2].y = (tailY - top) * invTile; uv[3].y = uv[2].y;
                             }
                             m.uv = uv;
                         }
@@ -3953,9 +4615,24 @@ namespace Sdo.Game
 
         // ---------- input / judge ----------
 
+        /// <summary>
+        /// 一次按鍵**實際發生**的譜面時間（ms）。<c>Input.GetKeyDown</c> 是在 Update 輪詢的:鍵是在「上一幀到這一幀
+        /// 之間」的某處按下的,直接拿這一幀的 now 當打擊時間會**系統性偏晚半幀** —— 60fps 平均 +8ms、30fps +16ms,
+        /// 而且偏差會跟著 fps 飄(掉幀時判定莫名變嚴)。
+        ///
+        /// StepMania 對「沒有事件時戳的輪詢裝置」就是取上次輪詢與現在的**中點**(InputHandler.cpp:5-16,
+        /// <c>di.ts = m_LastUpdate.Half()</c> —— 註解原文:「will pretend the button was pressed at the midpoint
+        /// since the last update, which will smooth out the error」)。取中點後平均偏差 ≈ 0,且不隨 fps 變。
+        ///
+        /// (StepMania 另有專屬高優先權輸入執行緒能拿到**真**事件時戳,Player::Step 再用 tm.Ago() 回推按下當時的
+        /// 音樂時間;Unity 舊版 Input 沒有時戳,中點是能做到的最好近似。osu!lazer 同樣只有幀時間,連中點都沒取。)
+        /// </summary>
+        private double PressTimeMs(double now) => now - 0.5 * Time.deltaTime * 1000.0;   // deltaTime 已吃 timeScale → 與譜面時間同單位
+
         private void HandleInput(double now)
         {
             int mask = 0;
+            double press = PressTimeMs(now);
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
             {
@@ -3963,9 +4640,9 @@ namespace Sdo.Game
                 foreach (var k in laneKeys[lane])
                 { if (Input.GetKeyDown(k)) down = true; if (Input.GetKey(k)) anyHeld = true; if (Input.GetKeyUp(k)) anyUp = true; }
                 if (anyHeld) mask |= 1 << lane;
-                if (down) { PressLane(lane, now); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
+                if (down) { PressLane(lane, press); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
                 else if (_stJustEnded) ReplayShowtimeSeamPress(lane, now, anyHeld);    // ShowTime auto→manual SEAM: replay the in-window press that lost its GetKeyDown edge onto the exact note it aimed at
-                if (anyUp && !anyHeld) ReleaseLane(lane, now);   // released only when no set key is still held
+                if (anyUp && !anyHeld) ReleaseLane(lane, press);   // released only when no set key is still held（放開同樣是輪詢邊緣 → 同一個中點修正）
             }
             if (_stJustEnded) { _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; } }   // seam carry-over is a one-frame event
             _replay.Record(now, mask);   // osu-style 打擊紀錄 (appends only when the held-key bitmask changes)
@@ -3994,20 +4671,24 @@ namespace Sdo.Game
             // in the panel immediately drives what auto-play hits with. A Miss isn't "held"/removed: it flows off.
             // In a ShowTime window every note is a forced PERFECT (exe forces grade 4 via +0x109b0), ignoring forcedJudge.
             Judgment grade = showtime ? Judgment.Perfect : (forcedJudge >= 0 ? (Judgment)forcedJudge : Judgment.Perfect);
-            foreach (var n in _notes)
+            // only notes whose head is due (start ≤ now) can be judged this frame — window the scan to them (held
+            // holds have start in the past, so they stay in-window and their tails are still ended below).
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now);
+            for (int i = _firstAlive; i < hi; i++)
             {
+                var n = _notes[i];
                 if (n.Done) continue;
                 if (!n.HeadJudged && now >= n.Note.StartTimeMs)
                 {
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
                     _recDownStart[n.Note.Lane] = Time.time;   // auto-press: fire the keydown burst (head only, never the hold tail)
-                    if (grade == Judgment.Miss) { /* flows past the receptor, then ScrollNotes removes it */ }
+                    if (grade == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // flows past the receptor (bar dimmed), then ScrollNotes removes it
                     else if (n.Note.IsHold) { _holding[n.Note.Lane] = n; SpawnHit3dLong(n.Note.Lane); }   // 3D: continuous HIT_LONG for the hold
                     else n.Done = true;
                 }
                 if (n.HeadJudged && !n.Done && grade != Judgment.Miss && n.Note.IsHold && _holding[n.Note.Lane] == n
                     && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value)
-                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); StopHit3dLong(n.Note.Lane); n.Done = true; }
+                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); EndHold(n.Note.Lane, n, grade); }
             }
         }
 
@@ -4281,12 +4962,13 @@ namespace Sdo.Game
             if (j == null || j.Value == Judgment.Miss) return;     // press too far off the aimed note → leave it for normal manual play (a fresh post-seam press), don't force a seam miss
             n.HeadJudged = true; ApplyEvent(j.Value, lane); _recDownStart[lane] = Time.time;   // keydown burst on the replayed press too
             if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
-            if (j.Value == Judgment.Bad) { n.BundledFail = true; return; }   // bad hold head → AutoMiss fails the tail later (matches PressLane)
+            if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; return; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
             if (held) { _holding[lane] = n; return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
             // player already let go INSIDE the window → judge the tail at the TRUE release time (clamped ≤ seam), not a lingering auto-Perfect and not the over-lenient seam time
             double relMs = _stReleaseMs[lane] >= 0.0 ? Math.Min(_stReleaseMs[lane], now) : now;
-            ApplyEvent(_engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss, lane);
-            n.Done = true;
+            var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss;
+            ApplyEvent(tail, lane);
+            EndHold(lane, n, tail);
         }
 
         private void PressLane(int lane, double now)
@@ -4296,8 +4978,8 @@ namespace Sdo.Game
             if (forcedJudge >= 0) jv = (Judgment)forcedJudge;                         // debug: force a grade on the hit
             else { var j = _engine.JudgeHit(n.Note.StartTimeMs, now); if (j == null) return; jv = j.Value; }
             n.HeadJudged = true; ApplyEvent(jv, lane);
-            if (jv == Judgment.Miss) { /* keep flowing past the receptor; ScrollNotes removes it off the top */ }
-            else if (n.Note.IsHold) { if (jv == Judgment.Bad) n.BundledFail = true; else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // 3D: continuous HIT_LONG for the hold
+            if (jv == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // keep flowing past the receptor (dimmed if it's a bar); ScrollNotes removes it off the top
+            else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // Bad head = never held → dimmed bar; 3D: continuous HIT_LONG for the hold
             else n.Done = true;
         }
 
@@ -4305,16 +4987,33 @@ namespace Sdo.Game
         {
             var n = _holding[lane]; if (n == null) return;
             _holding[lane] = null;
-            ApplyEvent(_engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss, lane);
-            StopHit3dLong(lane);   // 3D: end the looping HIT_LONG → one-shot HIT_SUO terminator
+            var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss;
+            ApplyEvent(tail, lane);
+            EndHold(lane, n, tail);
+        }
+
+        // A hold stops being held. Two outcomes:
+        //   COMPLETED (Perfect/Cool tail) → the official LnEnd burst at the receptor, note retired.
+        //   DROPPED   (Bad/Miss tail = let go off the tail time, or never released at all) → the bar is NOT deleted: it
+        //             keeps scrolling at holdDropDim brightness (ScrollNotes) until it flows off the board, then retires.
+        // Either way the 3D skin's looping HIT_LONG is torn down (→ its own HIT_SUO terminator).
+        private void EndHold(int lane, RuntimeNote n, Judgment tail)
+        {
+            StopHit3dLong(lane);
+            if (tail == Judgment.Bad || tail == Judgment.Miss) { n.Dropped = true; return; }
+            SpawnLnEndBurst(lane);
             n.Done = true;
         }
 
         private RuntimeNote NearestHittable(int lane, double now)
         {
             RuntimeNote best = null; double bestAbs = double.MaxValue;
-            foreach (var n in _notes)
+            // a hittable head is within ±MissBoundary of now; notes past now+MissBoundary can't be nearer, so bound
+            // the scan there (the late side, now−MissBoundary, is already ≥ the first still-live note).
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + _engine.Windows.MissBoundary);
+            for (int i = _firstAlive; i < hi; i++)
             {
+                var n = _notes[i];
                 if (n.Done || n.HeadJudged || n.Note.Lane != lane) continue;
                 double d = Math.Abs(n.Note.StartTimeMs - now);
                 if (d < bestAbs && d <= _engine.Windows.MissBoundary) { bestAbs = d; best = n; }
@@ -4324,12 +5023,24 @@ namespace Sdo.Game
 
         private void AutoMiss(double now)
         {
-            foreach (var n in _notes)
+            // everything AutoMiss acts on (a passed unhit head, a bundled-fail tail, a held hold's end) has start ≤ now;
+            // future notes have nothing to miss yet, so window the scan to start ≤ now.
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now);
+            for (int i = _firstAlive; i < hi; i++)
             {
+                var n = _notes[i];
                 if (n.Done) continue;
-                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) ApplyEvent(Judgment.Miss); continue; }   // judged miss, but keeps flowing off the top
-                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.Done = true; continue; }
-                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Perfect); StopHit3dLong(n.Note.Lane); n.Done = true; }
+                // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
+                // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
+                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
+                // bad head → the tail misses too once it passes. Score it ONCE (clear the flag), but do NOT retire the note:
+                // the dimmed bar keeps scrolling like every other failed hold, and ScrollNotes retires it off the board.
+                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
+                // A long note's END is judged on the RELEASE — a real release inside the (widened) tail window is
+                // graded by ReleaseLane. Holding through without letting go earns NOTHING: once the tail release window
+                // has fully passed with the key still held, the tail is a MISS. Gate on the TAIL boundary (not the press
+                // boundary), else a note held into the extra tail leniency is force-missed before its release could score.
+                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
             }
         }
 
@@ -4382,33 +5093,66 @@ namespace Sdo.Game
             // directional skins (PET/8/9/10) ship separate frames for left-right vs up-down lanes; lanes 1(down)/2(up) use
             // the _ud set, lanes 0(left)/3(right) use _rl (_burstFrames). Non-directional skins leave _burstFramesUD null.
             var frames = (_burstFramesUD != null && (lane == 1 || lane == 2)) ? _burstFramesUD : _burstFrames;
+            return SpawnBurstFrames(lane, frames, isHold);
+        }
+
+        // Spawn an arbitrary flipbook at the lane's receptor (hit burst, or the long-note LnEnd burst). sizeMul/speedMul/
+        // brightMul scale THIS burst only; doubleLayer=false draws a SINGLE additive layer (the LnEnd burst — the hit
+        // burst's 2-layer stack is a deliberate over-bright punch that makes the LnEnd art bloom all over the lane).
+        private BurstFx SpawnBurstFrames(int lane, Sprite[] frames, bool isHold,
+                                         float sizeMul = 1f, float speedMul = 1f, float brightMul = 1f, bool doubleLayer = true)
+        {
             if (frames == null || frames.Length == 0) return null;
             var mat = _matPool.Count > 0 ? _matPool.Pop() : (_addMat != null ? new Material(_addMat) : null);  // own instance, pooled
             // brightness: the additive shader is Blend SrcAlpha One, and its _TintColor defaults to (.5,.5,.5,.5) ->
             // the .5 alpha halves the burst (too dark). Drive _TintColor by burstBright (1.0 = stock, higher = brighter).
-            if (mat != null) { float t = 0.5f * burstBright; mat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t))); }
+            if (mat != null) { float t = 0.5f * burstBright * brightMul; mat.SetColor("_TintColor", new Color(t, t, t, Mathf.Clamp01(t))); }
             var sr = NewSR("Burst", frames[0], 6);
             if (mat != null) sr.sharedMaterial = mat;                   // additive -> black bg becomes transparent glow
             // native-proportional: scale by THIS skin's frame size vs the reference, so every skin keeps its true relative
             // size (the old fixed BurstWidth stretched a small 150px skin up to the 300px skin's footprint -> "too big").
             float burstNativeW = frames[0] != null ? frames[0].rect.width : BurstNativeRef;   // native px (PPU-independent)
-            PlaceAspect(sr, PX(LaneLeftX[lane] + LaneCx0), judgeLineY, BurstWidth * burstSize * (burstNativeW / BurstNativeRef));
-            var sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
-            if (mat != null) sr2.sharedMaterial = mat;
-            sr2.transform.SetParent(sr.transform, false);
-            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, Start = Time.time, IsHold = isHold, Frames = frames };
+            PlaceAspect(sr, PX(LaneLeftX[lane] + LaneCx0), judgeLineY, BurstWidth * burstSize * sizeMul * (burstNativeW / BurstNativeRef));
+            SpriteRenderer sr2 = null;
+            if (doubleLayer)
+            {
+                sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
+                if (mat != null) sr2.sharedMaterial = mat;
+                sr2.transform.SetParent(sr.transform, false);
+            }
+            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, Start = Time.time, IsHold = isHold, Frames = frames,
+                                   SecPerFrame = BurstSecPerFrame / Mathf.Max(0.01f, speedMul) };
             _fx.Add(fx);
             return fx;
         }
 
         private sealed class RuntimeNote
         {
-            public readonly OsuHitObject Note; public readonly SpriteRenderer Head, Tail; public readonly GameObject Body;
-            public GameObject Cap3d;   // 3D skin: the official LONG.MSH cap TRIANGLE (real geometry, welded at the tail end); lazily created
-            public bool HeadJudged, BundledFail, Done;
+            public readonly OsuHitObject Note;
             public readonly int ColorFamily;   // 3D-note beat-quantization colour (0=magenta,1=blue,2=green); used only in _note3dMode
-            public RuntimeNote(OsuHitObject n, SpriteRenderer head, GameObject body, SpriteRenderer tail, int colorFamily)
-            { Note = n; Head = head; Body = body; Tail = tail; ColorFamily = colorFamily; }
+            public bool HeadJudged, BundledFail, Done;
+            public bool Dropped;       // a hold the player never owned: head missed / head Bad / let go mid-bar. The bar is
+                                       // NOT deleted — it keeps scrolling at holdDropDim brightness until it flows off.
+            // Visuals are POOLED (see NoteVisual): a note owns GameObjects ONLY while it is on-screen — rented in
+            // ScrollNotes when it enters the board, returned when it scrolls off or is retired. A 10k-note chart
+            // therefore keeps only the ~visible window (≈100) worth of sprites alive at once instead of 10k.
+            // Head/Body/Tail/Cap3d mirror Vis's parts while rented (null when off-screen) so the per-frame render
+            // code reads them exactly as before; the `if (n.Body)` / `if (n.Tail)` guards already handle null.
+            public NoteVisual Vis;
+            public SpriteRenderer Head, Tail;
+            public GameObject Body, Cap3d;
+            public RuntimeNote(OsuHitObject n, int colorFamily) { Note = n; ColorFamily = colorFamily; }
+        }
+
+        // A reusable bundle of the GameObjects one on-screen note needs. Rented from _visualFree when a note enters
+        // the visible window and returned when it leaves. Body/Tail/Cap3d are built lazily the first time a hold on
+        // this bundle needs them, then kept for reuse (a later tap simply leaves them inactive). Each Head/Tail owns
+        // its OWN material so masked sprites never batch-bleed textures (see the SpriteMask material note).
+        private sealed class NoteVisual
+        {
+            public SpriteRenderer Head, Tail;
+            public GameObject Body, Cap3d;
+            public MeshFilter BodyMf; public MeshRenderer BodyMr;
         }
     }
 }

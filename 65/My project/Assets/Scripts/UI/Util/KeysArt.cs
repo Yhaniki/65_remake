@@ -15,8 +15,8 @@ namespace Sdo.UI.Util
     /// key's DirectInput scan code, then blits it onto the key Label. We reproduce that by mapping a Unity
     /// <see cref="KeyCode"/> name to its glyph file.
     ///
-    /// Folder resolution mirrors <see cref="OptionDlgArt"/>: online 閉撰敃氪/DatasSDO/UI/LOBBYDLG/KEYS in dev,
-    /// DATA/UI/LOBBYDLG/KEYS beside a built exe. <see cref="Glyph"/> returns null for a key with no glyph
+    /// Folder resolution reads DATA/UI/LOBBYDLG/KEYS under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan.
+    /// <see cref="Glyph"/> returns null for a key with no glyph
     /// (Shift/Ctrl/Enter…) so callers can fall back to text.
     /// </summary>
     public static class KeysArt
@@ -35,13 +35,8 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "LOBBYDLG", "KEYS"));
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "LOBBYDLG", "KEYS"));
-                return RoomDlgArt.PickDir(ordered, Directory.Exists);   // reuse the same pure picker
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "LOBBYDLG", "KEYS");
             }
             catch { return Path.Combine(SdoExtracted.Root, "UI", "LOBBYDLG", "KEYS"); }
         }

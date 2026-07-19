@@ -11,8 +11,8 @@ namespace Sdo.UI.Util
     /// left/right page arrows, DeleteCostume, HouseCabinetDlg32/36/39/42/46 slot chrome, close). Mirrors
     /// <see cref="ShopArt"/> exactly; only the folder leaf differs (MYHOUSEDLG). The .an frames reference crops of
     /// CabinetAndTv_Dlg.png in the same folder, so <see cref="SdoExtracted.LoadAn1"/> loads them directly. Folder
-    /// resolution prefers the ONLINE art (閉撰敃氪/DatasSDO/UI/MYHOUSEDLG); a built player falls back to DATA/UI/MYHOUSEDLG.
-    /// Returns null for a missing asset; callers guard.
+    /// resolution reads DATA/UI/MYHOUSEDLG under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan (the resolved
+    /// data root, e.g. the pruned clean pack via data_root.txt, is the single UI source). Returns null for a missing asset; callers guard.
     /// </summary>
     public static class CabinetArt
     {
@@ -32,13 +32,8 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));   // .../assets
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "MYHOUSEDLG"));
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "MYHOUSEDLG"));
-                return RoomDlgArt.PickDir(ordered, Directory.Exists);
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "MYHOUSEDLG");
             }
             catch { return Path.Combine(SdoExtracted.Root, "UI", "MYHOUSEDLG"); }
         }

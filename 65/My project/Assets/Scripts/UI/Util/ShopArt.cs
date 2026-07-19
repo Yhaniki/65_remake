@@ -10,8 +10,8 @@ namespace Sdo.UI.Util
     /// Loads the original 商城 (SHOP) UI art — mirrors <see cref="RoomUiArt"/> / <see cref="RoomDlgArt"/> exactly, only
     /// the folder leaf differs (SHOP). The .an files reference crops of SHOP.png / atlas pages in the same folder, so
     /// <see cref="SdoExtracted.LoadAn1"/> (PNG + crop + Y-flip) loads them directly — no DDS decode needed. Folder
-    /// resolution prefers the ONLINE art (閉撰敃氪/DatasSDO/UI/SHOP), matching the room screens' convention; built
-    /// player falls back to DATA/UI/SHOP. Returns null for a missing asset; callers guard.
+    /// resolution reads DATA/UI/SHOP under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan (the resolved data
+    /// root, e.g. the pruned clean pack via data_root.txt, is the single UI source). Returns null for a missing asset; callers guard.
     /// </summary>
     public static class ShopArt
     {
@@ -20,26 +20,17 @@ namespace Sdo.UI.Util
         private static readonly Dictionary<string, Sprite[]> _framesCache = new Dictionary<string, Sprite[]>();
         private static readonly HashSet<Texture2D> _deMatted = new HashSet<Texture2D>();
 
-        // 左下角的「圓形」鈕 (♂/♀/reset/購物車) 的所有狀態變體:美術是白底出圖,圓盤外緣一圈 (255,255,255,~0) 白 matte,
-        // 放大時 bilinear 會把白拉進邊緣 → 圓形遮罩 (LoadAnSoloCircular) 專門切掉。刻意只列這幾顆真圓的鈕:
-        // 全身購買 (Shop174/175/176) 是長條、非圓,且沒有白 matte(透明區是洋紅光暈),不可切,故不列入。其它素材也不受影響。
-        private static readonly HashSet<string> CircularOrbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "Shop45", "Shop46",            // 男 (normal / pushed)
-            "Shop47", "Shop48",            // 女
-            "Shop15", "Shop16", "Shop17",  // reset 復原穿搭 (normal / hover / pushed)
-            "Shop206", "Shop207", "Shop208", // 購物車
-        };
-
-        private static bool IsCircular(string anName)
-        {
-            if (string.IsNullOrEmpty(anName)) return false;
-            var key = anName.EndsWith(".an", StringComparison.OrdinalIgnoreCase) ? anName.Substring(0, anName.Length - 3) : anName;
-            return CircularOrbs.Contains(key);
-        }
+        // 商城「白邊」根因:美術幾乎每張都是白底去背 PNG,鈕/格/頁籤外緣一圈亮 matte。原圖原生尺寸疊黑底乾淨,但整個商城 UI 從
+        // 800×600 設計稿拉伸放大時,預設 straight-alpha 材質的 bilinear 把「顏色」與「覆蓋率(alpha)」分開內插 —— 透明區留著亮 RGB、
+        // alpha 卻淡出 → 亮邊滲成半透明白邊 (方形格/圓鈕/頁籤全中)。純 GPU 取樣 artifact,DeMatteWhite/AlphaBleed/圓形遮罩都治不好
+        // (AlphaFlood 還會把鈕頂高光灌進外圈 → 放大又被抓回)。根治 = 整個商城改 premultiplied alpha:每張都自貼圖 RGB×alpha 讓透明
+        // 像素變 (0,0,0,0),配 Blend One OneMinusSrcAlpha 材質 (UIKit.ApplySprite 依 SdoExtracted.IsPremultTexture 自動掛),內插
+        // 只淡化覆蓋率、邊緣保持原色 → 任何倍率都無白邊且平滑,黑底放大 == 原生 (同結算 YOU WIN 旗的修法;黑底三欄模擬已驗證)。
+        // 對不透明底圖 (Shop0 全屏背景等) premult 是 no-op → 安全。全身購买的白是字體描邊(美術)不受影響。
 
         // SHOP 美術很多是「白底去背」PNG：AA 邊緣殘留半透明白 → 疊在深色 UI 上會有白邊。AlphaBleed 只補全透明像素、
-        // 補不到半透明白邊，所以每張底圖再做一次白色 de-matte 把白邊洗掉 (每個 texture 只做一次)。
+        // 補不到半透明白邊，所以每張底圖再做一次白色 de-matte 把白邊洗掉 (每個 texture 只做一次)。(premult 路徑無此問題,只有
+        // fallback 到共用大圖的 LoadAn1 才需要。)
         private static Sprite DeMatte(Sprite s)
         {
             if (s != null && s.texture != null && _deMatted.Add(s.texture)) SdoExtracted.DeMatteWhite(s.texture);
@@ -57,29 +48,24 @@ namespace Sdo.UI.Util
         {
             try
             {
-                var ordered = new List<string>();
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));   // .../assets
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "UI", "SHOP"));
-                ordered.Add(Path.Combine(SdoExtracted.Root, "UI", "SHOP"));
-                return RoomDlgArt.PickDir(ordered, Directory.Exists);
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "UI", "SHOP");
             }
             catch { return Path.Combine(SdoExtracted.Root, "UI", "SHOP"); }
         }
 
-        /// <summary>First frame of a SHOP .an as a sprite (cached). 每張都載成「自己的貼圖」(LoadAnSolo) — SHOP 的大圖集
-        /// (ShopBtn.png) 空白區是透明白 (255,255,255,0)，sprite crop 緊貼鄰居時 bilinear 會把鄰居的透明白拉進邊緣成白邊
-        /// (#1「左下角按鈕白邊」)。切到獨立貼圖 + Clamp → 取樣不會越過自己的邊界抓到鄰居；pad:0 保持原尺寸不位移。
-        /// AlphaBleed/DeMatteWhite 仍在 LoadAnSolo 內處理自身邊緣。極少數載不到 crop → 回退舊的共用大圖路徑。</summary>
+        /// <summary>First frame of a SHOP .an as a sprite (cached). 每張都載成「自己的貼圖 + premultiplied alpha」
+        /// (LoadAnSoloPremultiplied) — SHOP UI 放大時 straight-alpha 會滲白邊,premult 徹底消掉 (見上方註解)。UIKit.ApplySprite
+        /// 依 SdoExtracted.IsPremultTexture 自動把 premult 材質掛到 Image 上,所以呼叫端不需改。pad:0 保持原尺寸不位移。
+        /// 極少數載不到 crop → 回退舊的共用大圖路徑 (LoadAn1 + DeMatte,straight-alpha)。</summary>
         public static Sprite An(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;
             if (_cache.TryGetValue(anName, out var s) && s != null) return s;
-            // 圓形鈕走 LoadAnSoloCircular (flood + 圓形遮罩,消放大白邊);其餘走一般 LoadAnSolo。gating 放在這個唯一 choke
-            // point,連 RefreshToggles 切換男女時重貼 sprite 也自動吃到遮罩 (若在呼叫端 gating,切一次就被無遮罩的 sprite 蓋回)。
-            s = (IsCircular(anName)
-                    ? SdoExtracted.LoadAnSoloCircular(Dir, anName, pad: 0)
+            // premult 需要 Sdo/SpritePremultiply 材質才畫得對;材質在時走 premult(消白邊),萬一 shader 被剝掉則退回舊 straight-alpha
+            // LoadAnSolo(白邊回來但不會整片變暗)——用 PremultUiMaterial 是否為 null 當這個 gate。
+            s = (SdoExtracted.PremultUiMaterial != null
+                    ? SdoExtracted.LoadAnSoloPremultiplied(Dir, anName, pad: 0, cleanMatte: true)   // cleanMatte 清鈕外緣殘留的低-alpha 白 matte(右上白邊)
                     : SdoExtracted.LoadAnSolo(Dir, anName, pad: 0))
                 ?? DeMatte(SdoExtracted.LoadAn1(Dir, anName, bleed: true));
             _cache[anName] = s;

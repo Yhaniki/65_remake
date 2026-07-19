@@ -8,20 +8,20 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），內含
-    /// profile.json（config.ini 改為全帳號共用、放 DATA/PROFILE/ 根，見 <see cref="RoomConfig"/>）。
-    /// 目前登入的本機 user 記在 DATA/PROFILE/active.txt。
+    /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），裡面只放
+    /// 衣服/道具（profile.json）。收藏夾(favorites.json)跟 settings.json 一樣是全帳號共用，放在 PROFILE 那層
+    /// （舊版 per-user 的 favorites.json 開機時一次性併入）。目前登入的本機 user 記在 DATA/PROFILE/active.txt。
     ///
     /// 單機 v1 首次開機自動種兩個角色 —— 00000000(女) 與 00000001(男) —— 並以 00000000 為 active。刻意先不做
     /// 登入/選角 UI；<see cref="SetActive"/> + 編號資料夾本身就是多帳號的底層，未來線上版換掉 backing store
     /// （伺服器帳號 → 同一個 <see cref="UserProfile"/> 形狀）即可，呼叫端不動。
     ///
-    /// 路徑解析刻意自帶（不引用 Sdo.Game.SdoExtracted），讓 Sdo.Settings 維持 leaf assembly。id 格式/編號/挑選
-    /// 都是純函式（<see cref="FormatId"/> / <see cref="TryParseId"/> / <see cref="NextFreeId"/>），可單元測試。
+    /// 根目錄一律問 <see cref="SdoDataRoot"/>（同 assembly，維持 leaf），跟美術/音樂共用同一個 data root。id 格式/
+    /// 編號/挑選都是純函式（<see cref="FormatId"/> / <see cref="TryParseId"/> / <see cref="NextFreeId"/>），可單元測試。
     /// </summary>
     public static class ProfileManager
     {
-        public const string DirName = "PROFILE";
+        public const string DirName = SdoDataRoot.ProfileDirName;
         public const string ActiveFileName = "active.txt";
         public const string ProfileFileName = "profile.json";
         public const string DefaultId = "00000000";
@@ -41,20 +41,21 @@ namespace Sdo.Settings
         /// <summary>active 角色的資料夾（DATA/PROFILE/&lt;id&gt;）；Boot() 前為空字串（表示尚未落地，走 legacy 路徑）。</summary>
         public static string ActiveDir => _activeDir ?? "";
 
-        /// <summary>切換 active user 後觸發（收藏/房間預設已重載）。</summary>
+        /// <summary>切換 active user 後觸發。收藏夾是全帳號共用（PROFILE 層），不隨切換重載。</summary>
         public static event Action ActiveChanged;
 
-        /// <summary>DATA/PROFILE 根目錄（延遲解析；可設值供測試覆寫）。</summary>
+        /// <summary>&lt;data root&gt;/PROFILE（延遲解析；可設值供測試覆寫）。根目錄由 <see cref="SdoDataRoot"/> 決定 ——
+        /// 跟美術/音樂/譜面同一個根（含 SDO_DATA_ROOT / data_root.txt 覆寫），存檔不會再跟資產分家。</summary>
         public static string Root
         {
-            get => _root ?? (_root = Path.Combine(ResolveDataDir(), DirName));
+            get => _root ?? (_root = SdoDataRoot.ProfileDir);
             set { _root = value; }
         }
 
         // ---------------- boot / activate ----------------
 
-        /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且必須在 <see cref="RoomConfig.Load"/> 之前
-        /// （RoomConfig.FilePath 用到 <see cref="Root"/>）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
+        /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且在 <see cref="RoomConfig.Load"/> 之前
+        /// （Load 會把舊位置的 config.ini 搬進 DATA/PROFILE 的全域檔，需要先有 PROFILE 資料夾）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
         public static void Boot()
         {
             try
@@ -65,6 +66,8 @@ namespace Sdo.Settings
                 if (id == null || !Directory.Exists(Path.Combine(Root, id)))
                     id = FirstExistingId() ?? DefaultId;
                 Activate(id, notify: false);
+                MigrateLegacyFavorites();
+                Favorites.Load(Root);   // 收藏夾在 PROFILE 層（全帳號共用，跟 settings.json 同層），不跟著 user
             }
             catch (Exception e)
             {
@@ -88,7 +91,7 @@ namespace Sdo.Settings
             }
             if (!Directory.Exists(dir)) return;
             Activate(id, notify: true);
-            RoomConfig.Load();   // config 現為全帳號共用；重載只是讓外部手改的檔案即時生效（idempotent）
+            // config.ini 是全域一份（DATA/PROFILE/config.ini）→ 換人不重載設定，設定不跟著使用者。
             ActiveChanged?.Invoke();
         }
 
@@ -101,7 +104,6 @@ namespace Sdo.Settings
             _active.Sanitize();
             WriteProfile(_activeDir, _active);
             WriteActiveId(id);
-            Favorites.Load(_activeDir);
             if (notify) ActiveChanged?.Invoke();
         }
 
@@ -183,6 +185,35 @@ namespace Sdo.Settings
             if (string.IsNullOrEmpty(p.name)) p.name = defaultName;
             if (string.IsNullOrEmpty(p.createdAt)) p.createdAt = now;
             if (changed) WriteProfile(dir, p);
+        }
+
+        // ---------------- migration ----------------
+
+        /// <summary>一次性遷移：舊版把 favorites.json 放在各 user 資料夾（DATA/PROFILE/&lt;id&gt;/）。把殘留的
+        /// per-user 收藏依 id 由小到大併入 PROFILE 層的共用檔，然後刪掉舊檔 —— user 資料夾從此只放衣服(profile.json)。
+        /// 兩個種子帳號是同一位玩家（選性別==選 profile），合併不會混到別人的收藏。合併去重、可重入（失敗下次開機再試）。</summary>
+        private static void MigrateLegacyFavorites()
+        {
+            try
+            {
+                var legacy = new List<string>();
+                foreach (var d in Directory.GetDirectories(Root))
+                {
+                    if (!TryParseId(Path.GetFileName(d), out _)) continue;   // 只認 8 位數編號資料夾
+                    var f = Path.Combine(d, Favorites.FileName);
+                    if (File.Exists(f)) legacy.Add(f);
+                }
+                if (legacy.Count == 0) return;
+                legacy.Sort(StringComparer.Ordinal);   // id 小 → 大 = 合併後的「加入順序」
+
+                var shared = Path.Combine(Root, Favorites.FileName);
+                var docs = new List<string>();
+                if (File.Exists(shared)) docs.Add(File.ReadAllText(shared, Encoding.UTF8));   // 共用檔已有內容 → 其順序優先
+                foreach (var f in legacy) docs.Add(File.ReadAllText(f, Encoding.UTF8));
+                File.WriteAllText(shared, Favorites.MergeDocs(docs), new UTF8Encoding(false));
+                foreach (var f in legacy) File.Delete(f);
+            }
+            catch (Exception e) { Debug.LogWarning($"[Profile] favorites migrate failed: {e.Message}"); }
         }
 
         // ---------------- pure helpers (unit-tested) ----------------
@@ -271,25 +302,5 @@ namespace Sdo.Settings
 
         private static string DefaultNameForId(string id)
             => TryParseId(id, out var v) ? "玩家" + (v + 1).ToString("000", CultureInfo.InvariantCulture) : "玩家001";
-
-        /// <summary>解析 DATA 目錄（PROFILE 的上一層）。刻意鏡射 Sdo.Game.SdoExtracted.Root 的邏輯，讓本組件不必
-        /// 依賴 Sdo.Game：build 版 → &lt;exe&gt;/DATA；editor/dev → &lt;repo&gt;/assets/sdox_offline/Extracted；退回 &lt;exe&gt;/DATA。</summary>
-        private static string ResolveDataDir()
-        {
-            try
-            {
-                var exeDir = Directory.GetParent(Application.dataPath)?.FullName;
-                if (exeDir != null)
-                {
-                    var data = Path.Combine(exeDir, "DATA");
-                    if (Directory.Exists(data)) return data;
-                }
-                var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
-                var ex = Path.Combine(repo, "assets", "sdox_offline", "Extracted");
-                if (Directory.Exists(ex)) return ex;
-                return exeDir != null ? Path.Combine(exeDir, "DATA") : "DATA";
-            }
-            catch { return "DATA"; }
-        }
     }
 }

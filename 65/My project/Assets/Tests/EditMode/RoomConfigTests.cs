@@ -6,19 +6,21 @@ namespace Sdo.Tests
 {
     public class RoomConfigTests
     {
-        // config.ini 全帳號共用：位於 DATA/PROFILE/ 根（== ProfileManager.Root），不進 per-user 子資料夾、
-        // 不依賴 ActiveDir。這個合約若被改回 per-user 會讓外部歌曲資料夾等「本機」設定綁到單一角色。
         [Test]
-        public void FilePath_Is_Shared_At_Profile_Root_Not_Per_User()
+        public void FilePath_Resolves_Under_ProfileRoot_Not_ExeDir()
         {
-            var saved = ProfileManager.Root;
+            // config.ini 現在放在存檔層 DATA/PROFILE/（＝ProfileManager.Root，與 settings.json / active.txt 同層），
+            // 不再是執行檔同層。這是「把 config.ini 搬進 profile 資料夾」的核心行為。
+            string root = Path.Combine(Path.GetTempPath(), "sdo_cfg_root");
             try
             {
-                var root = Path.Combine(Path.GetTempPath(), "sdo_cfg_root_test");
                 ProfileManager.Root = root;
-                Assert.AreEqual(Path.Combine(root, RoomConfig.FileName), RoomConfig.FilePath);
+                Assert.AreEqual(Path.GetFullPath(Path.Combine(root, RoomConfig.FileName)),
+                                Path.GetFullPath(RoomConfig.FilePath), "config.ini 應落在 PROFILE 資料夾下");
+                Assert.AreNotEqual(Path.GetFullPath(RoomConfig.FilePath),
+                                   Path.GetFullPath(RoomConfig.LegacyExePath), "新位置要跟舊的執行檔同層不同");
             }
-            finally { ProfileManager.Root = saved; }
+            finally { ProfileManager.Root = null; }   // 還原 lazy 解析，避免污染其他測試
         }
 
         // Reset to built-in defaults before each case (RoomConfig holds static state).
@@ -31,6 +33,25 @@ namespace Sdo.Tests
             RoomConfig.defaultTeam = 3;
             RoomConfig.defaultDropDirection = 0;
             RoomConfig.defaultGameMode = 0;
+            RoomConfig.judgeLevel = 2;
+        }
+
+        [Test]
+        public void JudgeLevel_Parses_Clamps_And_RoundTrips()
+        {
+            RoomConfig.ParseInto("[Room]\njudgeLevel=7\n");
+            Assert.AreEqual(7, RoomConfig.judgeLevel);
+
+            RoomConfig.judgeLevel = 0;  RoomConfig.Sanitize();   // 精1 是下限
+            Assert.AreEqual(1, RoomConfig.judgeLevel);
+            RoomConfig.judgeLevel = 42; RoomConfig.Sanitize();   // 9 = JUSTICE 是上限
+            Assert.AreEqual(9, RoomConfig.judgeLevel);
+
+            RoomConfig.judgeLevel = 4;
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual(4, RoomConfig.judgeLevel);
         }
 
         [Test]
@@ -70,7 +91,7 @@ namespace Sdo.Tests
             Assert.AreEqual(-1, RoomConfig.defaultNoteType);
             Assert.AreEqual(3, RoomConfig.defaultTeam);
             Assert.AreEqual(0, RoomConfig.defaultDropDirection);
-            Assert.AreEqual(1, RoomConfig.defaultGameMode);
+            Assert.AreEqual(2, RoomConfig.defaultGameMode);   // 0=自由 1=普通 2=ShowTime → 上限是 2
         }
 
         [Test]

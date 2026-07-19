@@ -67,6 +67,43 @@ namespace Sdo.Tests
             Assert.IsFalse(h.IsFailed);
         }
 
+        // 完奏模式 (playFullSong): the song keeps going after HP-out, so HP must stay dead — no healing back up.
+        [Test]
+        public void LockOnDeath_Keeps_Hp_At_Floor_After_HpOut()
+        {
+            var h = new HealthProcessor(0, lockOnDeath: true);
+            for (int i = 0; i < 100 && !h.IsFailed; i++) h.Apply(Judgment.Miss);
+            Assert.IsTrue(h.Dead);
+            Assert.AreEqual(HealthProcessor.FloorHealth, h.Health, 1e-9);
+
+            for (int i = 0; i < 500; i++) h.Apply(Judgment.Perfect);   // a full combo after death heals nothing
+            Assert.AreEqual(HealthProcessor.FloorHealth, h.Health, 1e-9);
+            Assert.AreEqual(0.0, h.Normalized, 1e-9);
+            Assert.IsTrue(h.IsFailed);
+        }
+
+        // Without the latch (normal mode) the old behaviour is untouched: HP recovers off the floor.
+        [Test]
+        public void Without_LockOnDeath_Hp_Recovers_From_Floor()
+        {
+            var h = new HealthProcessor(0);
+            for (int i = 0; i < 100 && !h.IsFailed; i++) h.Apply(Judgment.Miss);
+            Assert.IsTrue(h.Dead);                                     // latched, but not enforced
+            h.Apply(Judgment.Perfect);                                 // -150 + 6
+            Assert.AreEqual(-144.0, h.Health, 1e-9);
+            Assert.IsFalse(h.IsFailed);
+        }
+
+        [Test]
+        public void LockOnDeath_Does_Not_Freeze_Hp_Before_Death()
+        {
+            var h = new HealthProcessor(0, lockOnDeath: true);
+            h.Apply(Judgment.Miss);                                    // 1000 - 50
+            h.Apply(Judgment.Perfect);                                 // + 6 (still alive -> normal healing)
+            Assert.AreEqual(956.0, h.Health, 1e-9);
+            Assert.IsFalse(h.Dead);
+        }
+
         [Test]
         public void Normalized_Maps_Health_To_0_1()
         {

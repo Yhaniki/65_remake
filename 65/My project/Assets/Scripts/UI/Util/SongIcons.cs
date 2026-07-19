@@ -5,10 +5,8 @@ using Sdo.Game;
 namespace Sdo.UI.Util
 {
     /// <summary>
-    /// Best-effort song-icon loader. Looks in two places, in order:
-    ///   1. Root/UI/MUSIC/ICONS — the built layout, where packaging overlays the FULL online icon set into DATA;
-    ///   2. the dev fallback: SCAN assets/ for any subfolder holding DatasSDO/UI/MUSIC/ICONS (the online client),
-    ///      so the editor still shows the complete icon set without hardcoding the oddly-encoded folder name.
+    /// Best-effort song-icon loader. Reads Root/UI/MUSIC/ICONS under <see cref="SdoExtracted.Root"/> ONLY — no assets/
+    /// scan (the resolved data root, e.g. the pruned clean pack via data_root.txt, is the single icon source).
     /// Returns null when unavailable; callers fall back to a placeholder.
     /// </summary>
     public static class SongIcons
@@ -21,21 +19,9 @@ namespace Sdo.UI.Util
             var list = new System.Collections.Generic.List<string>();
             try
             {
-                // 1) built/overlaid icons under the data root.
+                // Icons under the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
                 var inData = Path.Combine(SdoExtracted.Root, "UI", "MUSIC", "ICONS");
                 if (Directory.Exists(inData)) list.Add(inData);
-
-                // 2) dev fallback: scan assets/ siblings for the online DatasSDO icons.
-                //    SdoExtracted.Root = .../assets/sdox_offline/Extracted  ->  assets/
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
-                if (assets != null && Directory.Exists(assets))
-                {
-                    foreach (var d in Directory.GetDirectories(assets))
-                    {
-                        var cand = Path.Combine(d, "DatasSDO", "UI", "MUSIC", "ICONS");
-                        if (Directory.Exists(cand) && !list.Contains(cand)) list.Add(cand);
-                    }
-                }
             }
             catch { /* best effort */ }
             _dirs = list.ToArray();

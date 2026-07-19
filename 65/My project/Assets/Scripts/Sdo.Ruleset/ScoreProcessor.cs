@@ -3,15 +3,16 @@ using System;
 namespace Sdo.Ruleset
 {
     /// <summary>
-    /// SDO score. The ON-SCREEN score is the STAND-ALONE exe's own formula, recovered
-    /// from the decompilation (FUN at 0x46b8a0+, 021_gameplay_0046b8a0.c:3684):
+    /// SDO score. The ON-SCREEN score (<see cref="Score"/>) is the packet-verified online formula
+    /// <see cref="ServerScore"/>: Perfects*C + Cools*(C-10), C = clamp(maxCombo, 10, 68).
+    ///
+    /// The stand-alone exe's own display formula is kept alongside as <see cref="StandaloneScore"/>,
+    /// recovered from the decompilation (FUN at 0x46b8a0+, 021_gameplay_0046b8a0.c:3684):
     ///
     ///   score = max(0, score + (P*5 + (B + C*2)*2 - M) * 10)   // batched per frame, floored at 0
     ///
-    /// i.e. per judgement: Perfect +50, Cool +40, Bad +20, Miss -10, running total never &lt; 0.
-    /// There is NO combo multiplier in the stand-alone's displayed score (that lives only in the
-    /// online server formula, kept here as <see cref="ServerScore"/>). See
-    /// docs/reverse-engineering/SDO_SCORE_FORMULA.md.
+    /// i.e. per judgement: Perfect +50, Cool +40, Bad +20, Miss -10, running total never &lt; 0 — no
+    /// combo multiplier. See docs/reverse-engineering/SDO_SCORE_FORMULA.md.
     ///
     /// Combo: Perfect &amp; Cool keep it, Bad &amp; Miss break it (exe FUN_00497500 + HP grade map).
     /// </summary>
@@ -37,25 +38,6 @@ namespace Sdo.Ruleset
         public int TotalJudged => PerfectCount + CoolCount + BadCount + MissCount;
 
         private long _flatScore;   // stand-alone exe display formula (no combo multiplier)
-        private double _comboScore; // per-note combo-multiplied (the live "combo 倍率")
-
-        /// <summary>
-        /// Base per-note score before judge/combo multipliers (cLevelScore-like). Tunable.
-        /// Documented per-note formula: LevelScore × JudgeMul[j] × (combo+1)/2.
-        /// </summary>
-        public double LevelScore = 100.0;
-
-        // cGajoong judge multipliers {Perfect, Cool, Bad, Miss} (SDO_SCORE_FORMULA.md §3.1)
-        private static double JudgeMul(Judgment j)
-        {
-            switch (j)
-            {
-                case Judgment.Perfect: return 2.0;
-                case Judgment.Cool: return 1.5;
-                case Judgment.Bad: return 1.0;
-                default: return 0.0; // Miss
-            }
-        }
 
         /// <summary>
         /// On-screen score = the packet-verified SDO formula (combo multiplier via maxCombo,
@@ -114,9 +96,6 @@ namespace Sdo.Ruleset
         public void Apply(Judgment j)
         {
             Count(j);
-
-            // combo-multiplied score uses the combo BEFORE this note (doc: (combo+1)/2).
-            _comboScore += JudgeMul(j) * (Combo + 1) * 0.5 * LevelScore;
 
             // stand-alone flat formula (kept for reference): running total, floored at 0.
             _flatScore += Delta(j);

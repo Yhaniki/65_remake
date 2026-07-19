@@ -181,15 +181,22 @@ namespace Sdo.Osu
             var noteBeat = new List<double>();
             var noteLane = new List<int>();
             var noteType = new List<int>();
-            // Music-start anchor. The authoritative marker is the type-10 (音樂起止) slot whose value 1000 the
-            // engine watches for: NewNote_TriggerNoteSound_0048e9c0 sets its "music started" flag (+0x2e0) the
-            // instant the play head reaches a slot with (value & 0xfff) == 1000 (value 998 = 0x3e5 is the END
-            // marker). So the FIRST type-10 u0==1000 slot's beat is where audio + dance begin; the measure
-            // before it is a silent count-in. Some charts carry only a type-10 END marker near the song's tail
-            // (u0==1000 sitting AFTER the first note) — reject those and fall back to the type-9 小節線 (the old
-            // heuristic) so those charts keep their previous timing instead of delaying the music to mid-song.
+            // Music-start anchor. The engine holds the song's FMOD channel paused and has exactly two ways to
+            // unpause it (both end at the same listener, 0046d590 -> FMOD::Channel::setPaused(false)):
+            //   1. MARKER path — NewNote_TriggerNoteSound_0048e9c0 sets the music-start flag (+0x2e0) the instant
+            //      the play head reaches a type-10 (音樂起止) slot with (value & 0xfff) == 1000; the next frame
+            //      (0049ce40) unpauses. So a type-10 u0==1000 slot's beat is where the audio begins, and the
+            //      measure(s) before it are a silent count-in. (value 998 = 0x3e5 is the END marker.)
+            //   2. NO-MARKER path — 00490910 unpauses via its one-shot flag (+0x109dd) as soon as the play head
+            //      walks any marker-lane frame at tick >= 0, i.e. AT BEAT 0. Charts with no type-10 start marker
+            //      (689 of the 4334-file corpus) therefore play the audio from beat 0 with NO delay.
+            // type-9 (小節線) carries an incrementing bar number (2,3,4…), never 1000, so it takes NO part in
+            // starting the music. An earlier version anchored on it when type-10 was absent — that delayed the
+            // audio by a whole measure on the 54 files whose first bar line sits at beat 3-4 (sdom1162: beat 4 @
+            // 210bpm = 1143ms late). No type-10 start marker now means offset 0, matching the exe.
+            // Some charts carry only a type-10 END marker near the song's tail (u0==1000 sitting AFTER the first
+            // note) — reject those too (they'd delay the music to mid-song) and fall back to the same beat 0.
             double firstMusicStartBeat = -1.0;   // first type-10 (u0==1000) slot beat — the real music-start marker
-            double firstBarLineBeat = -1.0;      // first type-9 (小節線) slot beat — fallback anchor
             double firstNoteBeat = -1.0;         // earliest LDUR note beat — guards against END-only type-10 markers
             int off = start;
             while (off + 8 <= end)
@@ -215,10 +222,6 @@ namespace Sdo.Osu
                     // `param_2 & 0xfff == 1000`). This is THE music-start marker; take the earliest one.
                     if (ft == 10 && (U32(body, off) & 0xfff) == 1000 && (firstMusicStartBeat < 0.0 || beat < firstMusicStartBeat))
                         firstMusicStartBeat = beat;
-                    // type-9 = 小節線 (bar line, at odd measurements 1,3,5…). Kept as the fallback anchor for
-                    // charts that carry no valid type-10 start marker (older offline set).
-                    if (ft == 9 && I16(body, off) != 0 && (firstBarLineBeat < 0.0 || beat < firstBarLineBeat))
-                        firstBarLineBeat = beat;
                     if (lane < 0) continue;
                     short u0 = I16(body, off);
                     byte nt = body[off + 3];
@@ -228,17 +231,17 @@ namespace Sdo.Osu
                 }
             }
             // Choose the anchor: the type-10 music-start marker when present AND plausible (at or before the
-            // first note — else it is an END-only marker); otherwise the type-9 bar line (previous behaviour).
+            // first note — else it is an END-only marker); otherwise beat 0 (the exe's no-marker path).
             bool t10Valid = firstMusicStartBeat >= 0.0 && (firstNoteBeat < 0.0 || firstMusicStartBeat <= firstNoteBeat + 1e-6);
-            double firstMarkerBeat = t10Valid ? firstMusicStartBeat : firstBarLineBeat;
+            double firstMarkerBeat = t10Valid ? firstMusicStartBeat : 0.0;
 
             // --- build the piecewise-constant BPM timeline (segment start beat / bpm / cumulative ms) ---
             BuildBpmTimeline(headerBpm, bpmBeats, bpmVals, out double[] segBeat, out double[] segBpm, out double[] segMs);
 
-            // The audio starts at the music-start marker (type-10 音樂起止 value 1000, else the type-9 小節線
-            // fallback) — i.e. the note/beat clock time of that marker. The caller delays music playback (and the
-            // dancer) by this much so the leading count-in measure is silent and the song lines up.
-            map.MusicStartOffsetMs = firstMarkerBeat >= 0.0 ? BeatToMs(segBeat, segBpm, segMs, firstMarkerBeat) : 0.0;
+            // The audio starts at the music-start marker (type-10 音樂起止 value 1000; beat 0 when there is none) —
+            // i.e. the note/beat clock time of that marker. The caller delays music playback (and the dancer) by
+            // this much so the leading count-in measure is silent and the song lines up.
+            map.MusicStartOffsetMs = BeatToMs(segBeat, segBpm, segMs, firstMarkerBeat);
 
             // scroll/timing points (ms): one uninherited point per BPM segment. Single-BPM charts get a
             // single point at 0; ManiaScroll then runs at a constant base velocity. (.gn has no SV.)

@@ -140,6 +140,12 @@ namespace Sdo.UI.Util
             img.sprite = s;
             if (s != null) { img.color = Color.white; img.rectTransform.sizeDelta = s.rect.size; }
             else img.color = new Color(1f, 1f, 1f, 0f);   // missing art -> invisible, no white box
+            // Premultiplied-alpha sprites (SdoExtracted.LoadAnSoloPremultiplied — e.g. all SHOP art) MUST render with the
+            // premult material or the transparent matte fringes white under UI magnification (the 「方形白邊」). Auto-pair it
+            // here at the single sprite-assignment choke point, so SpriteSwap / RefreshGrid re-assigns stay premult too.
+            // (UGUI binds each Image's own texture per renderer, so one shared material serves them all.)
+            if (s != null && SdoExtracted.IsPremultTexture(s.texture) && SdoExtracted.PremultUiMaterial != null)
+                img.material = SdoExtracted.PremultUiMaterial;
         }
 
         /// <summary>A three-state (normal/hover/pushed) sprite button at XML top-left pixel (x,y), sized to
@@ -263,7 +269,7 @@ namespace Sdo.UI.Util
 
         public static LayoutElement Layout(GameObject go, float preferredHeight)
         {
-            var le = go.GetComponent<LayoutElement>() ?? go.AddComponent<LayoutElement>();
+            if (!go.TryGetComponent<LayoutElement>(out var le)) le = go.AddComponent<LayoutElement>();
             le.preferredHeight = preferredHeight;
             le.flexibleWidth = 1f;
             return le;

@@ -36,10 +36,67 @@ namespace Sdo.Game
             PlaySe("SE_0001");
         }
 
+        // 把 F4 選的體型 (胖瘦) index 寫進「目前這個角色」的 profile.json 並存檔 → 回房間/下次進遊戲的本機 avatar 都用同一身材。
+        // 這是「寫入角色各自的參數」的來源;讀取端在 FrontendApp(遊戲舞者)/RoomScreen(房間+頭貼)/GenderSelectScreen(選性別預覽)。
+        private static void PersistBodyShape(int index)
+        {
+            var p = Sdo.Settings.ProfileManager.Active;
+            if (p == null) return;
+            p.bodyShapeIndex = index;
+            Sdo.Settings.ProfileManager.Save();   // _activeDir 未落地(editor/beat-test)時 Save 會自行 no-op
+        }
+
+        // ── F9：遊戲流速測試面板（右側，標題列可拖曳）─────────────────────────────────────────────────
+        // StepMania 的 music rate（SongOptions "1.50xMusic"）：音樂本身變速變調，其餘一切掛在音樂時鐘上一起變。
+        // 這裡一格 = 0.05（SM 的 rate 是兩位小數）。判定窗口不跟著縮放（仍是譜面 ms）→ 快=難、慢=簡單，同 SM。
+        private const int RateWinId = 65090;
+        private const float RateWinW = 330f, RateWinH = 200f;
+        private Rect _rateWin;          // 拖曳後的位置（第一次顯示時貼到右上角）
+        private bool _rateWinPlaced;
+
+        private void RateGUI()
+        {
+            if (!_showRateUI) return;
+            if (!_rateWinPlaced) { _rateWin = new Rect(Screen.width - RateWinW - 12f, 12f, RateWinW, RateWinH); _rateWinPlaced = true; }
+            // 視窗跟著解析度/畫面變動夾回可見範圍（拖到畫面外就再也抓不回來了）
+            _rateWin.x = Mathf.Clamp(_rateWin.x, -RateWinW + 60f, Screen.width - 60f);
+            _rateWin.y = Mathf.Clamp(_rateWin.y, 0f, Screen.height - 24f);
+            _rateWin = GUI.Window(RateWinId, _rateWin, RateWindow, "遊戲流速 / Music Rate　[F9 關閉]");
+        }
+
+        private void RateWindow(int id)
+        {
+            GUILayout.Space(2);
+            GUILayout.Label(_paused
+                ? "現在：⏸ 暫停（音樂也停了）"
+                : $"現在：{_musicRate:0.00}× 　音樂/音符/舞者/特效 同步");
+
+            GUILayout.BeginHorizontal();   // StepMania 常見檔位
+            foreach (var p in GameRate.Presets)
+                if (GUILayout.Button(p.ToString("0.##") + "×")) SetGameRate(p);
+            GUILayout.EndHorizontal();
+
+            float r = GUILayout.HorizontalSlider((float)_musicRate, (float)GameRate.Min, (float)GameRate.Max);
+            if (Mathf.Abs(r - (float)_musicRate) > 1e-3f) SetGameRate(Math.Round(r / GameRate.StepSize) * GameRate.StepSize);   // 吸附到 0.05 格線
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("− 0.05")) SetGameRate(GameRate.Step(_musicRate, -1));
+            if (GUILayout.Button("+ 0.05")) SetGameRate(GameRate.Step(_musicRate, +1));
+            if (GUILayout.Button(_paused ? "▶ 繼續" : "❚❚ 暫停")) SetPaused(!_paused);
+            if (GUILayout.Button("重設 1×")) SetGameRate(GameRate.Normal);
+            GUILayout.EndHorizontal();
+
+            GUILayout.Label("鍵盤： [ 慢一格 　] 快一格 　\\ 暫停 　= 回 1×");
+            GUILayout.Label($"（判定窗口不變 → 越快越難。F7 打拍音{(assistTick ? "：ON" : "：OFF")}，不隨流速變調）");
+
+            GUI.DragWindow(new Rect(0, 0, RateWinW, 20f));   // 只有標題列可拖（不然按鈕/滑桿會被拖曳吃掉）
+        }
+
         // in-game debug tuning sliders (F4 toggles). Board alpha applies live; burst size/brightness apply to the
         // next bursts (taps fire continuously, so the effect shows within ~0.3s).
         private void OnGUI()
         {
+            RateGUI();          // F9 流速測試面板（獨立小視窗，跟 F4 那塊互不相干）
             if (!_showDebugUI) return;
             float h = Mathf.Min(560f, Screen.height - 16f);
             GUILayout.BeginArea(new Rect(Screen.width - 280, 8, 270, h), GUI.skin.box);
@@ -49,31 +106,29 @@ namespace Sdo.Game
             GUILayout.Label("[F4 hide]   Debug");
             _dbgTab = GUILayout.Toolbar(_dbgTab, DbgTabs);
 
-            // ── GLOBAL 遊戲內時間流速 (slow-mo / 暫停) — 每個分頁都在，方便觀察音符/特效。也可用鍵盤 [ ] \ = ──
-            // (縮放 Time.timeScale：音符/舞者/特效全部一起變慢；音樂 AudioSource 不隨之變速，是純觀察工具。)
+            // ── GLOBAL 遊戲流速 (StepMania music rate) — 每個分頁都在。也可用鍵盤 [ ] \ =，或 F9 開專用面板。
+            // (音樂 pitch + Time.timeScale 一起改：音符/舞者/特效/音樂全部同步變速，不再是「只有畫面慢、音樂照跑」。)
             {
-                bool paused = Time.timeScale <= 0f;
                 GUILayout.BeginHorizontal();
-                GUILayout.Label($"時間流速: {(paused ? "⏸ 暫停" : _timeScale.ToString("0.00") + "×")}", GUILayout.Width(110));
-                if (GUILayout.Button("1×", GUILayout.Width(32))) SetTimeScale(1f);
-                if (GUILayout.Button(paused ? "▶" : "❚❚", GUILayout.Width(32))) { if (paused) SetTimeScale(_timeScale); else Time.timeScale = 0f; }
+                GUILayout.Label($"遊戲流速: {(_paused ? "⏸ 暫停" : _musicRate.ToString("0.00") + "×")}", GUILayout.Width(110));
+                if (GUILayout.Button("1×", GUILayout.Width(32))) SetGameRate(GameRate.Normal);
+                if (GUILayout.Button(_paused ? "▶" : "❚❚", GUILayout.Width(32))) SetPaused(!_paused);
                 GUILayout.EndHorizontal();
-                float ts = GUILayout.HorizontalSlider(_timeScale, 0.05f, 2f);
-                if (Mathf.Abs(ts - _timeScale) > 1e-3f) SetTimeScale(ts);
+                float ts = GUILayout.HorizontalSlider((float)_musicRate, (float)GameRate.Min, (float)GameRate.Max);
+                if (Mathf.Abs(ts - (float)_musicRate) > 1e-3f) SetGameRate(ts);
             }
 
             // slow-mo time control is mode-level (observation) — keep it reachable on every tab while observing.
             if (observeBurstMode)
             {
-                bool paused = Time.timeScale <= 0f;
                 GUILayout.Label("== OBSERVE ==  cam0, no dance/notes/music");
-                GUILayout.Label($"Time: {(paused ? "PAUSED" : _timeScale.ToString("0.00") + "×")}   [ ] slow/fast, \\ pause, = reset");
+                GUILayout.Label($"Time: {(_paused ? "PAUSED" : _musicRate.ToString("0.00") + "×")}   [ ] slow/fast, \\ pause, = reset");
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button("0.1×")) SetTimeScale(0.1f);
-                if (GUILayout.Button("0.25×")) SetTimeScale(0.25f);
-                if (GUILayout.Button("0.5×")) SetTimeScale(0.5f);
-                if (GUILayout.Button("1×")) SetTimeScale(1f);
-                if (GUILayout.Button(paused ? "▶" : "❚❚")) { if (paused) SetTimeScale(_timeScale); else Time.timeScale = 0f; }
+                if (GUILayout.Button("0.1×")) SetGameRate(0.1);
+                if (GUILayout.Button("0.25×")) SetGameRate(0.25);
+                if (GUILayout.Button("0.5×")) SetGameRate(0.5);
+                if (GUILayout.Button("1×")) SetGameRate(GameRate.Normal);
+                if (GUILayout.Button(_paused ? "▶" : "❚❚")) SetPaused(!_paused);
                 GUILayout.EndHorizontal();
                 GUILayout.Space(4);
             }
@@ -112,15 +167,20 @@ namespace Sdo.Game
                     ? $" 音樂對齊 type-10 ON：音樂跳過 count-in（marker {(_map != null ? _map.MusicStartOffsetMs : 0):F0}ms）、舞蹈等到第一個音符才起跳（{(_map != null ? _map.FirstNoteMs : 0):F0}ms）— 下次開始生效"
                     : " 音樂對齊 type-10 OFF：音樂＋舞蹈從 beat 0 播（下次開始生效）");
                 useMusicStartOffset = mo;
+                // 這首歌在 song_name_overrides.json 手動填的音訊校正(正 = 音樂晚進來)。只顯示,調整在那份 JSON / 歌曲管理員。
+                float songOffMs = SongCatalog.OffsetMs(gnPath);
+                if (Mathf.Abs(songOffMs) > 0.01f)
+                    GUILayout.Label($" 歌曲 offset：{songOffMs:+0;-0}ms（song_name_overrides.json）— 下次開始生效");
                 GUILayout.Space(6);
                 // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — re-shape the dancer LIVE.
-                GUILayout.Label($"Body shape (thin..fat): B={_bodyShapeB:F3}  (1.00 = standard)");
+                // 按 preset 會把體型 index 寫進「這個角色」的 profile.json (bodyShapeIndex) 並存檔 → 回房間/下次進遊戲都記得。
+                GUILayout.Label($"Body shape (thin..fat): index={bodyShapeIndex} B={_bodyShapeB:F3}  (1.00=standard；按鈕存進角色)");
                 GUILayout.BeginHorizontal();
                 for (int i = 0; i < BodyShapeLabels.Length; i++)
                     if (GUILayout.Button(BodyShapeLabels[i]))
-                    { _bodyShapeB = SdoBodyShape.WeightFromIndex(i, maleBody); if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
+                    { bodyShapeIndex = i; _bodyShapeB = SdoBodyShape.WeightFromIndex(i, maleBody); if (_avatar) _avatar.SetBodyShape(_bodyShapeB); PersistBodyShape(i); }
                 GUILayout.EndHorizontal();
-                float newB = GUILayout.HorizontalSlider(_bodyShapeB, 0.7f, 1.4f);   // fine override (continuous)
+                float newB = GUILayout.HorizontalSlider(_bodyShapeB, 0.7f, 1.4f);   // fine override (continuous, live-only — 不存檔)
                 if (Mathf.Abs(newB - _bodyShapeB) > 1e-4f) { _bodyShapeB = newB; if (_avatar) _avatar.SetBodyShape(_bodyShapeB); }
             }
             else if (_dbgTab == 1)   // ===== COMBO: fire bursts + combo/mesh/trail tuning =====

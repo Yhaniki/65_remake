@@ -5,14 +5,13 @@ using UnityEngine;
 namespace Sdo.Game
 {
     /// <summary>
-    /// Original loading-screen art (閉撰敃氪/DatasSDO/LOADING): full-screen tip backgrounds LOADING_1..N.PNG (800×600)
+    /// Original loading-screen art (DATA/LOADING): full-screen tip backgrounds LOADING_1..N.PNG (800×600)
     /// shown behind everything while a screen boots, plus a small "Loading..." badge LOADINGS_1..M.PNG (158×81) for the
     /// bottom-right corner. Both are picked at RANDOM on each show.
     ///
-    /// Folder resolution mirrors <see cref="Sdo.UI.Util.RoomUiArt"/>/RoomDlgArt (kept here in Sdo.Game so gameplay can
-    /// use it without depending on the UI assembly): dev scans assets/*/DatasSDO/LOADING (the 閉撰敃氪 online tree,
-    /// matched by STRUCTURE, never by its oddly-encoded name); built/fallback = DATA/LOADING (package_build overlays it
-    /// there beside the exe). Returns null when the art is absent; callers fall back (ScreenGameplay → plain black).
+    /// Folder resolution reads DATA/LOADING under <see cref="SdoExtracted.Root"/> ONLY — no assets/ scan (kept here in
+    /// Sdo.Game so gameplay can use it without depending on the UI assembly). Returns null when the art is absent;
+    /// callers fall back (ScreenGameplay → plain black).
     /// </summary>
     public static class LoadingArt
     {
@@ -32,16 +31,8 @@ namespace Sdo.Game
         {
             try
             {
-                var ordered = new List<string>();
-                // 1) dev: assets/*/DatasSDO/LOADING (online 閉撰敃氪 art preferred). Root = .../assets/sdox_offline/Extracted.
-                var assets = Path.GetDirectoryName(Path.GetDirectoryName(SdoExtracted.Root));
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var d in Directory.GetDirectories(assets))
-                        ordered.Add(Path.Combine(d, "DatasSDO", "LOADING"));
-                // 2) built/fallback: DATA/LOADING (used when nothing above exists).
-                ordered.Add(Path.Combine(SdoExtracted.Root, "LOADING"));
-                foreach (var c in ordered) if (Directory.Exists(c)) return c;
-                return ordered[ordered.Count - 1];
+                // Use the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                return Path.Combine(SdoExtracted.Root, "LOADING");
             }
             catch { return Path.Combine(SdoExtracted.Root, "LOADING"); }
         }

@@ -63,6 +63,19 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void MergeDocs_FirstSeenWins_SkipsBadDocs()
+        {
+            // 舊 per-user favorites.json → PROFILE 層共用檔的遷移合併：順序=先出現先贏、去重；壞份直接略過。
+            var a = Favorites.Serialize(new[] { "sdom1.gn", "sdom2.gn" });
+            var b = Favorites.Serialize(new[] { "sdom2.gn", "sdom3.gn" });
+            var keys = Favorites.Parse(Favorites.MergeDocs(new[] { a, "{ not json", null, b })).ToList();
+            CollectionAssert.AreEqual(new[] { "sdom1.gn", "sdom2.gn", "sdom3.gn" }, keys);
+
+            Assert.IsEmpty(Favorites.Parse(Favorites.MergeDocs(null)));
+            Assert.IsEmpty(Favorites.Parse(Favorites.MergeDocs(new string[0])));
+        }
+
+        [Test]
         public void Parse_BadOrEmptyJson_ReturnsEmpty()
         {
             Assert.IsEmpty(Favorites.Parse(null));

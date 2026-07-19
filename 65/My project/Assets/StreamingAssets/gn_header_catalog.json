@@ -9,47 +9,8 @@
   "en"
  ],
  "zhTW": "opencc s2twp",
- "count": 4332,
+ "count": 4321,
  "songs": [
-  {
-   "gn": "sdom0.gn",
-   "fileId": 0,
-   "fileType": "gn",
-   "mode": "",
-   "bpm": 120.0,
-   "levels": [
-    1,
-    0,
-    0
-   ],
-   "noteCounts": [
-    24,
-    0,
-    0
-   ],
-   "measurements": [
-    35,
-    0,
-    0
-   ],
-   "durations": [
-    40,
-    0,
-    0
-   ],
-   "title": {
-    "zhCN": "新手教学",
-    "zhTW": "新手教學",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "DONOVAN",
-    "zhTW": "DONOVAN",
-    "en": "DONOVAN"
-   },
-   "producer": "VAN",
-   "origName": "sdom.gm"
-  },
   {
    "gn": "sdom0001k.gn",
    "fileId": 10001,
@@ -32343,6 +32304,45 @@
    "origName": "sdom0665T.gm"
   },
   {
+   "gn": "sdom0686k.gn",
+   "fileId": 10686,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 138.0,
+   "levels": [
+    4,
+    6,
+    16
+   ],
+   "noteCounts": [
+    376,
+    620,
+    1152
+   ],
+   "measurements": [
+    326,
+    336,
+    361
+   ],
+   "durations": [
+    151,
+    151,
+    151
+   ],
+   "title": {
+    "zhCN": "kissy kissy",
+    "zhTW": "kissy kissy",
+    "en": "kissy kissy"
+   },
+   "artist": {
+    "zhCN": "smile",
+    "zhTW": "smile",
+    "en": "smile"
+   },
+   "producer": "MR Jerry",
+   "origName": "sdom2222K.gm"
+  },
+  {
    "gn": "sdom0691k.gn",
    "fileId": 10691,
    "fileType": "gn",
@@ -44485,17 +44485,17 @@
    "noteCounts": [
     504,
     636,
-    919
+    866
    ],
    "measurements": [
-    266,
-    291,
-    302
+    296,
+    331,
+    337
    ],
    "durations": [
-    140,
-    140,
-    140
+    136,
+    136,
+    136
    ],
    "title": {
     "zhCN": "Electric Shock",
@@ -44938,6 +44938,45 @@
    },
    "producer": "Mina",
    "origName": "sdom1116T.gm"
+  },
+  {
+   "gn": "sdom1117_1k.gn",
+   "fileId": 11138,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 127.0,
+   "levels": [
+    9,
+    13,
+    27
+   ],
+   "noteCounts": [
+    498,
+    674,
+    1131
+   ],
+   "measurements": [
+    275,
+    301,
+    353
+   ],
+   "durations": [
+    143,
+    143,
+    141
+   ],
+   "title": {
+    "zhCN": "The Chaser",
+    "zhTW": "The Chaser",
+    "en": "The Chaser"
+   },
+   "artist": {
+    "zhCN": "Infinite",
+    "zhTW": "Infinite",
+    "en": "Infinite"
+   },
+   "producer": "AQ",
+   "origName": "sdom1117K.gm"
   },
   {
    "gn": "sdom1117k.gn",
@@ -77154,84 +77193,6 @@
    "origName": "sdom1618T.gm"
   },
   {
-   "gn": "sdom1619k.gn",
-   "fileId": 11619,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 148.0,
-   "levels": [
-    3,
-    5,
-    16
-   ],
-   "noteCounts": [
-    204,
-    439,
-    670
-   ],
-   "measurements": [
-    226,
-    311,
-    377
-   ],
-   "durations": [
-    115,
-    115,
-    115
-   ],
-   "title": {
-    "zhCN": "如果没有",
-    "zhTW": "如果沒有",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "梁靜茹",
-    "zhTW": "梁靜茹",
-    "en": ""
-   },
-   "producer": "李寅晨",
-   "origName": "sdom1.gm"
-  },
-  {
-   "gn": "sdom1619t.gn",
-   "fileId": 1619,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 148.0,
-   "levels": [
-    1,
-    2,
-    6
-   ],
-   "noteCounts": [
-    137,
-    246,
-    443
-   ],
-   "measurements": [
-    184,
-    275,
-    356
-   ],
-   "durations": [
-    115,
-    115,
-    115
-   ],
-   "title": {
-    "zhCN": "如果没有",
-    "zhTW": "如果沒有",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "梁靜茹",
-    "zhTW": "梁靜茹",
-    "en": ""
-   },
-   "producer": "李寅晨",
-   "origName": "sdom1.gm"
-  },
-  {
    "gn": "sdom1620k.gn",
    "fileId": 11620,
    "fileType": "gn",
@@ -77854,84 +77815,6 @@
    },
    "producer": "丁翰午",
    "origName": "sdom1627T.gm"
-  },
-  {
-   "gn": "sdom1628k.gn",
-   "fileId": 11628,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 150.0,
-   "levels": [
-    5,
-    7,
-    11
-   ],
-   "noteCounts": [
-    351,
-    469,
-    631
-   ],
-   "measurements": [
-    410,
-    423,
-    432
-   ],
-   "durations": [
-    105,
-    105,
-    105
-   ],
-   "title": {
-    "zhCN": "怪怪女",
-    "zhTW": "怪怪女",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "青鸟飞鱼",
-    "zhTW": "青鳥飛魚",
-    "en": ""
-   },
-   "producer": "丁翰午",
-   "origName": "sdom1628K.gm"
-  },
-  {
-   "gn": "sdom1628t.gn",
-   "fileId": 1628,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 150.0,
-   "levels": [
-    4,
-    5,
-    6
-   ],
-   "noteCounts": [
-    310,
-    351,
-    441
-   ],
-   "measurements": [
-    402,
-    409,
-    420
-   ],
-   "durations": [
-    105,
-    105,
-    105
-   ],
-   "title": {
-    "zhCN": "怪怪女",
-    "zhTW": "怪怪女",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "青鸟飞鱼",
-    "zhTW": "青鳥飛魚",
-    "en": ""
-   },
-   "producer": "丁翰午",
-   "origName": "sdom1628T.gm"
   },
   {
    "gn": "sdom1629k.gn",
@@ -98136,318 +98019,6 @@
    "origName": "sdom1924W.gm"
   },
   {
-   "gn": "sdom1925k.gn",
-   "fileId": 11925,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 120.0,
-   "levels": [
-    4,
-    10,
-    14
-   ],
-   "noteCounts": [
-    375,
-    724,
-    963
-   ],
-   "measurements": [
-    281,
-    322,
-    339
-   ],
-   "durations": [
-    145,
-    145,
-    145
-   ],
-   "title": {
-    "zhCN": "好胆你就来",
-    "zhTW": "好膽你就來",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "张惠妹",
-    "zhTW": "張惠妹",
-    "en": ""
-   },
-   "producer": "zb",
-   "origName": "sdom1925K.gm"
-  },
-  {
-   "gn": "sdom1925t.gn",
-   "fileId": 1925,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 120.0,
-   "levels": [
-    1,
-    3,
-    5
-   ],
-   "noteCounts": [
-    184,
-    351,
-    475
-   ],
-   "measurements": [
-    172,
-    274,
-    284
-   ],
-   "durations": [
-    146,
-    146,
-    146
-   ],
-   "title": {
-    "zhCN": "好胆你就来",
-    "zhTW": "好膽你就來",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "张惠妹",
-    "zhTW": "張惠妹",
-    "en": ""
-   },
-   "producer": "zb",
-   "origName": "sdom1925T.gm"
-  },
-  {
-   "gn": "sdom1926k.gn",
-   "fileId": 11926,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 140.0,
-   "levels": [
-    5,
-    10,
-    18
-   ],
-   "noteCounts": [
-    425,
-    835,
-    802
-   ],
-   "measurements": [
-    287,
-    305,
-    296
-   ],
-   "durations": [
-    121,
-    121,
-    121
-   ],
-   "title": {
-    "zhCN": "心電心",
-    "zhTW": "心電心",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "王心凌",
-    "zhTW": "王心凌",
-    "en": ""
-   },
-   "producer": "zhou",
-   "origName": "sdom1926K.gm"
-  },
-  {
-   "gn": "sdom1926t.gn",
-   "fileId": 1926,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 140.0,
-   "levels": [
-    2,
-    4,
-    5
-   ],
-   "noteCounts": [
-    216,
-    338,
-    425
-   ],
-   "measurements": [
-    233,
-    278,
-    292
-   ],
-   "durations": [
-    121,
-    121,
-    121
-   ],
-   "title": {
-    "zhCN": "心電心",
-    "zhTW": "心電心",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "王心凌",
-    "zhTW": "王心凌",
-    "en": ""
-   },
-   "producer": "zhou",
-   "origName": "sdom1926T.gm"
-  },
-  {
-   "gn": "sdom1927k.gn",
-   "fileId": 11927,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 105.0,
-   "levels": [
-    4,
-    10,
-    18
-   ],
-   "noteCounts": [
-    390,
-    771,
-    890
-   ],
-   "measurements": [
-    244,
-    252,
-    253
-   ],
-   "durations": [
-    132,
-    132,
-    132
-   ],
-   "title": {
-    "zhCN": "罗生门",
-    "zhTW": "羅生門",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "罗志祥",
-    "zhTW": "羅志祥",
-    "en": ""
-   },
-   "producer": "zhou",
-   "origName": "sdom1927K.gm"
-  },
-  {
-   "gn": "sdom1927t.gn",
-   "fileId": 1927,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 105.0,
-   "levels": [
-    2,
-    4,
-    5
-   ],
-   "noteCounts": [
-    292,
-    370,
-    417
-   ],
-   "measurements": [
-    239,
-    235,
-    241
-   ],
-   "durations": [
-    132,
-    132,
-    132
-   ],
-   "title": {
-    "zhCN": "罗生门",
-    "zhTW": "羅生門",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "罗志祥",
-    "zhTW": "羅志祥",
-    "en": ""
-   },
-   "producer": "zhou",
-   "origName": "sdom1927T.gm"
-  },
-  {
-   "gn": "sdom1928k.gn",
-   "fileId": 11928,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 80.08,
-   "levels": [
-    4,
-    9,
-    14
-   ],
-   "noteCounts": [
-    380,
-    564,
-    640
-   ],
-   "measurements": [
-    187,
-    185,
-    190
-   ],
-   "durations": [
-    134,
-    134,
-    134
-   ],
-   "title": {
-    "zhCN": "雨爱",
-    "zhTW": "雨愛",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "杨丞琳",
-    "zhTW": "楊丞琳",
-    "en": ""
-   },
-   "producer": "zhou",
-   "origName": "sdom1928K.gm"
-  },
-  {
-   "gn": "sdom1928t.gn",
-   "fileId": 1928,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 80.08,
-   "levels": [
-    3,
-    4,
-    5
-   ],
-   "noteCounts": [
-    265,
-    375,
-    411
-   ],
-   "measurements": [
-    175,
-    183,
-    188
-   ],
-   "durations": [
-    134,
-    134,
-    134
-   ],
-   "title": {
-    "zhCN": "雨爱",
-    "zhTW": "雨愛",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "杨丞琳",
-    "zhTW": "楊丞琳",
-    "en": ""
-   },
-   "producer": "zhou",
-   "origName": "sdom1928T.gm"
-  },
-  {
    "gn": "sdom1929k.gn",
    "fileId": 11929,
    "fileType": "gn",
@@ -98524,396 +98095,6 @@
    },
    "producer": "zhou",
    "origName": "sdom1929T.gm"
-  },
-  {
-   "gn": "sdom1930k.gn",
-   "fileId": 11930,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 125.0,
-   "levels": [
-    5,
-    7,
-    10
-   ],
-   "noteCounts": [
-    373,
-    489,
-    732
-   ],
-   "measurements": [
-    241,
-    244,
-    240
-   ],
-   "durations": [
-    109,
-    109,
-    109
-   ],
-   "title": {
-    "zhCN": "Happy Loving",
-    "zhTW": "Happy Loving",
-    "en": "Happy Loving"
-   },
-   "artist": {
-    "zhCN": "王心凌",
-    "zhTW": "王心凌",
-    "en": ""
-   },
-   "producer": "lee",
-   "origName": "sdom1930K.gm"
-  },
-  {
-   "gn": "sdom1930t.gn",
-   "fileId": 1930,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 125.0,
-   "levels": [
-    1,
-    2,
-    3
-   ],
-   "noteCounts": [
-    207,
-    235,
-    271
-   ],
-   "measurements": [
-    212,
-    235,
-    237
-   ],
-   "durations": [
-    109,
-    109,
-    109
-   ],
-   "title": {
-    "zhCN": "Happy Loving",
-    "zhTW": "Happy Loving",
-    "en": "Happy Loving"
-   },
-   "artist": {
-    "zhCN": "王心凌",
-    "zhTW": "王心凌",
-    "en": ""
-   },
-   "producer": "lee",
-   "origName": "sdom1930T.gm"
-  },
-  {
-   "gn": "sdom1931k.gn",
-   "fileId": 11931,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 140.0,
-   "levels": [
-    4,
-    7,
-    10
-   ],
-   "noteCounts": [
-    345,
-    468,
-    668
-   ],
-   "measurements": [
-    258,
-    256,
-    259
-   ],
-   "durations": [
-    102,
-    102,
-    102
-   ],
-   "title": {
-    "zhCN": "爱的主场秀",
-    "zhTW": "愛的主場秀",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "罗志祥",
-    "zhTW": "羅志祥",
-    "en": ""
-   },
-   "producer": "lee",
-   "origName": "sdom1931K.gm"
-  },
-  {
-   "gn": "sdom1931t.gn",
-   "fileId": 1931,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 140.0,
-   "levels": [
-    1,
-    2,
-    3
-   ],
-   "noteCounts": [
-    214,
-    236,
-    292
-   ],
-   "measurements": [
-    219,
-    234,
-    249
-   ],
-   "durations": [
-    102,
-    102,
-    102
-   ],
-   "title": {
-    "zhCN": "爱的主场秀",
-    "zhTW": "愛的主場秀",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "罗志祥",
-    "zhTW": "羅志祥",
-    "en": ""
-   },
-   "producer": "lee",
-   "origName": "sdom1931T.gm"
-  },
-  {
-   "gn": "sdom1932k.gn",
-   "fileId": 11932,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 123.0,
-   "levels": [
-    5,
-    8,
-    14
-   ],
-   "noteCounts": [
-    330,
-    490,
-    663
-   ],
-   "measurements": [
-    206,
-    214,
-    221
-   ],
-   "durations": [
-    101,
-    101,
-    101
-   ],
-   "title": {
-    "zhCN": "不爱请闪开",
-    "zhTW": "不愛請閃開",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "萧亚轩",
-    "zhTW": "蕭亞軒",
-    "en": ""
-   },
-   "producer": "lee",
-   "origName": "sdom1932K.gm"
-  },
-  {
-   "gn": "sdom1932t.gn",
-   "fileId": 1932,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 123.0,
-   "levels": [
-    1,
-    2,
-    3
-   ],
-   "noteCounts": [
-    192,
-    227,
-    277
-   ],
-   "measurements": [
-    192,
-    206,
-    206
-   ],
-   "durations": [
-    101,
-    101,
-    101
-   ],
-   "title": {
-    "zhCN": "不爱请闪开",
-    "zhTW": "不愛請閃開",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "萧亚轩",
-    "zhTW": "蕭亞軒",
-    "en": ""
-   },
-   "producer": "lee",
-   "origName": "sdom1932T.gm"
-  },
-  {
-   "gn": "sdom1933k.gn",
-   "fileId": 11933,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 130.42,
-   "levels": [
-    4,
-    7,
-    14
-   ],
-   "noteCounts": [
-    283,
-    355,
-    462
-   ],
-   "measurements": [
-    236,
-    240,
-    250
-   ],
-   "durations": [
-    115,
-    115,
-    115
-   ],
-   "title": {
-    "zhCN": "习惯就好",
-    "zhTW": "習慣就好",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "罗志祥",
-    "zhTW": "羅志祥",
-    "en": ""
-   },
-   "producer": "ouqi",
-   "origName": "sdom1933K.gm"
-  },
-  {
-   "gn": "sdom1933t.gn",
-   "fileId": 1933,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 130.42,
-   "levels": [
-    1,
-    2,
-    3
-   ],
-   "noteCounts": [
-    127,
-    237,
-    275
-   ],
-   "measurements": [
-    157,
-    227,
-    235
-   ],
-   "durations": [
-    115,
-    115,
-    115
-   ],
-   "title": {
-    "zhCN": "习惯就好",
-    "zhTW": "習慣就好",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "罗志祥",
-    "zhTW": "羅志祥",
-    "en": ""
-   },
-   "producer": "ouqi",
-   "origName": "sdom1933T.gm"
-  },
-  {
-   "gn": "sdom1934k.gn",
-   "fileId": 11934,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 165.0,
-   "levels": [
-    4,
-    11,
-    18
-   ],
-   "noteCounts": [
-    328,
-    527,
-    694
-   ],
-   "measurements": [
-    257,
-    277,
-    287
-   ],
-   "durations": [
-    96,
-    96,
-    96
-   ],
-   "title": {
-    "zhCN": "WOW",
-    "zhTW": "WOW",
-    "en": "WOW"
-   },
-   "artist": {
-    "zhCN": "萧亚軒",
-    "zhTW": "蕭亞軒",
-    "en": ""
-   },
-   "producer": "ouqi",
-   "origName": "sdom1934K.gm"
-  },
-  {
-   "gn": "sdom1934t.gn",
-   "fileId": 1934,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 165.0,
-   "levels": [
-    1,
-    2,
-    4
-   ],
-   "noteCounts": [
-    178,
-    251,
-    312
-   ],
-   "measurements": [
-    210,
-    247,
-    270
-   ],
-   "durations": [
-    96,
-    96,
-    96
-   ],
-   "title": {
-    "zhCN": "WOW",
-    "zhTW": "WOW",
-    "en": "WOW"
-   },
-   "artist": {
-    "zhCN": "萧亚軒",
-    "zhTW": "蕭亞軒",
-    "en": ""
-   },
-   "producer": "ouqi",
-   "origName": "sdom1934T.gm"
   },
   {
    "gn": "sdom1935k.gn",
@@ -102270,45 +101451,6 @@
    "origName": "sdom1999T.gm"
   },
   {
-   "gn": "sdom2.gn",
-   "fileId": 2,
-   "fileType": "gn",
-   "mode": "",
-   "bpm": 120.0,
-   "levels": [
-    1,
-    0,
-    0
-   ],
-   "noteCounts": [
-    24,
-    0,
-    0
-   ],
-   "measurements": [
-    23,
-    0,
-    0
-   ],
-   "durations": [
-    40,
-    0,
-    0
-   ],
-   "title": {
-    "zhCN": "新手教学",
-    "zhTW": "新手教學",
-    "en": ""
-   },
-   "artist": {
-    "zhCN": "DONOVAN",
-    "zhTW": "DONOVAN",
-    "en": "DONOVAN"
-   },
-   "producer": "VAN",
-   "origName": "sdom02.gm"
-  },
-  {
    "gn": "sdom2000k.gn",
    "fileId": 12000,
    "fileType": "gn",
@@ -103027,14 +102169,14 @@
     887
    ],
    "measurements": [
-    254,
-    259,
-    258
+    279,
+    293,
+    292
    ],
    "durations": [
-    115,
-    115,
-    115
+    113,
+    113,
+    113
    ],
    "title": {
     "zhCN": "坏天使",
@@ -104571,6 +103713,45 @@
    "origName": "sdom2031T.gm"
   },
   {
+   "gn": "sdom2033k.gn",
+   "fileId": 12033,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 132.0,
+   "levels": [
+    4,
+    10,
+    25
+   ],
+   "noteCounts": [
+    363,
+    761,
+    1006
+   ],
+   "measurements": [
+    270,
+    271,
+    270
+   ],
+   "durations": [
+    118,
+    118,
+    118
+   ],
+   "title": {
+    "zhCN": "didida",
+    "zhTW": "didida",
+    "en": "didida"
+   },
+   "artist": {
+    "zhCN": "郭书瑶",
+    "zhTW": "郭書瑤",
+    "en": ""
+   },
+   "producer": "ouqi",
+   "origName": "sdom2033K.gm"
+  },
+  {
    "gn": "sdom2035k.gn",
    "fileId": 12035,
    "fileType": "gn",
@@ -104725,6 +103906,45 @@
    },
    "producer": "zhou",
    "origName": "sdom2036T.gm"
+  },
+  {
+   "gn": "sdom2038k.gn",
+   "fileId": 12038,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 145.0,
+   "levels": [
+    3,
+    8,
+    24
+   ],
+   "noteCounts": [
+    303,
+    619,
+    817
+   ],
+   "measurements": [
+    257,
+    325,
+    367
+   ],
+   "durations": [
+    112,
+    112,
+    112
+   ],
+   "title": {
+    "zhCN": "didida",
+    "zhTW": "didida",
+    "en": "didida"
+   },
+   "artist": {
+    "zhCN": "郭书瑶",
+    "zhTW": "郭書瑤",
+    "en": ""
+   },
+   "producer": "lee",
+   "origName": "sdom2038K.gm"
   },
   {
    "gn": "sdom2040k.gn",
@@ -131494,7 +130714,7 @@
    "noteCounts": [
     860,
     1809,
-    3428
+    3427
    ],
    "measurements": [
     533,
@@ -133605,7 +132825,7 @@
    "measurements": [
     428,
     428,
-    530
+    531
    ],
    "durations": [
     169,
@@ -135231,19 +134451,19 @@
    "mode": "K",
    "bpm": 160.0,
    "levels": [
-    0,
-    0,
-    11
+    3,
+    8,
+    26
    ],
    "noteCounts": [
-    0,
-    0,
-    1182
+    297,
+    636,
+    1566
    ],
    "measurements": [
     291,
     335,
-    381
+    349
    ],
    "durations": [
     120,
@@ -145532,14 +144752,14 @@
     23
    ],
    "noteCounts": [
-    430,
-    729,
-    1128
+    440,
+    739,
+    1146
    ],
    "measurements": [
-    422,
-    500,
-    412
+    430,
+    508,
+    422
    ],
    "durations": [
     165,
@@ -163075,26 +162295,26 @@
    "fileId": 12933,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 120.0,
+   "bpm": 119.99,
    "levels": [
-    0,
-    0,
-    1
+    6,
+    11,
+    20
    ],
    "noteCounts": [
-    0,
-    0,
+    525,
+    902,
     939
    ],
    "measurements": [
-    4,
-    4,
-    330
+    321,
+    329,
+    329
    ],
    "durations": [
-    2,
-    2,
-    70
+    132,
+    132,
+    132
    ],
    "title": {
     "zhCN": "Booty Music",
@@ -164085,43 +163305,550 @@
    "origName": "sdom2949T.gm"
   },
   {
-   "gn": "sdom3.gn",
-   "fileId": 0,
+   "gn": "sdom2950k.gn",
+   "fileId": 12950,
    "fileType": "gn",
-   "mode": "",
-   "bpm": 120.0,
+   "mode": "K",
+   "bpm": 115.0,
    "levels": [
-    1,
-    0,
-    0
+    6,
+    16,
+    20
    ],
    "noteCounts": [
-    44,
-    0,
-    0
+    556,
+    684,
+    898
    ],
    "measurements": [
-    43,
-    11,
-    11
+    277,
+    274,
+    274
    ],
    "durations": [
-    40,
-    0,
-    0
+    133,
+    133,
+    133
    ],
    "title": {
-    "zhCN": "新手教学",
-    "zhTW": "新手教學",
+    "zhCN": "空も飞べるはず",
+    "zhTW": "空も飛べるはず",
     "en": ""
    },
    "artist": {
-    "zhCN": "DONOVAN",
-    "zhTW": "DONOVAN",
-    "en": "DONOVAN"
+    "zhCN": "さよならポニーテール",
+    "zhTW": "さよならポニーテール",
+    "en": ""
    },
-   "producer": "VAN",
-   "origName": "sdom2.gm"
+   "producer": "tina",
+   "origName": "sdom2950K.gm"
+  },
+  {
+   "gn": "sdom2950t.gn",
+   "fileId": 2950,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 115.0,
+   "levels": [
+    6,
+    9,
+    16
+   ],
+   "noteCounts": [
+    549,
+    600,
+    682
+   ],
+   "measurements": [
+    276,
+    271,
+    274
+   ],
+   "durations": [
+    133,
+    133,
+    133
+   ],
+   "title": {
+    "zhCN": "空も飞べるはず",
+    "zhTW": "空も飛べるはず",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "さよならポニーテール",
+    "zhTW": "さよならポニーテール",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2950T.gm"
+  },
+  {
+   "gn": "sdom2951k.gn",
+   "fileId": 12951,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 127.0,
+   "levels": [
+    10,
+    15,
+    19
+   ],
+   "noteCounts": [
+    810,
+    1220,
+    1328
+   ],
+   "measurements": [
+    358,
+    359,
+    359
+   ],
+   "durations": [
+    154,
+    154,
+    154
+   ],
+   "title": {
+    "zhCN": "オノマトペメガネ",
+    "zhTW": "オノマトペメガネ",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "ササノマリイ",
+    "zhTW": "ササノマリイ",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2951K.gm"
+  },
+  {
+   "gn": "sdom2951t.gn",
+   "fileId": 2951,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 127.0,
+   "levels": [
+    9,
+    10,
+    13
+   ],
+   "noteCounts": [
+    744,
+    767,
+    853
+   ],
+   "measurements": [
+    354,
+    353,
+    358
+   ],
+   "durations": [
+    154,
+    154,
+    154
+   ],
+   "title": {
+    "zhCN": "オノマトペメガネ",
+    "zhTW": "オノマトペメガネ",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "ササノマリイ",
+    "zhTW": "ササノマリイ",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2951T.gm"
+  },
+  {
+   "gn": "sdom2952k.gn",
+   "fileId": 12952,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 140.0,
+   "levels": [
+    14,
+    24,
+    30
+   ],
+   "noteCounts": [
+    1077,
+    1335,
+    1669
+   ],
+   "measurements": [
+    390,
+    393,
+    408
+   ],
+   "durations": [
+    145,
+    145,
+    145
+   ],
+   "title": {
+    "zhCN": "ECHO",
+    "zhTW": "ECHO",
+    "en": "ECHO"
+   },
+   "artist": {
+    "zhCN": "れをる,茶理理",
+    "zhTW": "れをる,茶理理",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2952K.gm"
+  },
+  {
+   "gn": "sdom2952t.gn",
+   "fileId": 2952,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 140.0,
+   "levels": [
+    3,
+    4,
+    5
+   ],
+   "noteCounts": [
+    335,
+    369,
+    504
+   ],
+   "measurements": [
+    268,
+    280,
+    314
+   ],
+   "durations": [
+    147,
+    147,
+    147
+   ],
+   "title": {
+    "zhCN": "ECHO",
+    "zhTW": "ECHO",
+    "en": "ECHO"
+   },
+   "artist": {
+    "zhCN": "れをる,茶理理",
+    "zhTW": "れをる,茶理理",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2952T.gm"
+  },
+  {
+   "gn": "sdom2953k.gn",
+   "fileId": 12953,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 120.0,
+   "levels": [
+    7,
+    14,
+    19
+   ],
+   "noteCounts": [
+    664,
+    935,
+    1053
+   ],
+   "measurements": [
+    389,
+    391,
+    367
+   ],
+   "durations": [
+    156,
+    156,
+    156
+   ],
+   "title": {
+    "zhCN": "SLOW DOWN",
+    "zhTW": "SLOW DOWN",
+    "en": "SLOW DOWN"
+   },
+   "artist": {
+    "zhCN": "向井太一",
+    "zhTW": "向井太一",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2953K.gm"
+  },
+  {
+   "gn": "sdom2953t.gn",
+   "fileId": 2953,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 120.05,
+   "levels": [
+    2,
+    3,
+    4
+   ],
+   "noteCounts": [
+    351,
+    429,
+    457
+   ],
+   "measurements": [
+    295,
+    316,
+    318
+   ],
+   "durations": [
+    159,
+    159,
+    159
+   ],
+   "title": {
+    "zhCN": "SLOW DOWN",
+    "zhTW": "SLOW DOWN",
+    "en": "SLOW DOWN"
+   },
+   "artist": {
+    "zhCN": "向井太一",
+    "zhTW": "向井太一",
+    "en": ""
+   },
+   "producer": "tina",
+   "origName": "sdom2953T.gm"
+  },
+  {
+   "gn": "sdom2954k.gn",
+   "fileId": 12954,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 126.0,
+   "levels": [
+    9,
+    13,
+    16
+   ],
+   "noteCounts": [
+    559,
+    816,
+    924
+   ],
+   "measurements": [
+    356,
+    360,
+    362
+   ],
+   "durations": [
+    146,
+    146,
+    146
+   ],
+   "title": {
+    "zhCN": "遗失的心跳",
+    "zhTW": "遺失的心跳",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧亚轩",
+    "zhTW": "蕭亞軒",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2954K.gm"
+  },
+  {
+   "gn": "sdom2954t.gn",
+   "fileId": 2954,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 126.02,
+   "levels": [
+    3,
+    4,
+    5
+   ],
+   "noteCounts": [
+    362,
+    395,
+    476
+   ],
+   "measurements": [
+    303,
+    314,
+    323
+   ],
+   "durations": [
+    148,
+    148,
+    148
+   ],
+   "title": {
+    "zhCN": "遗失的心跳",
+    "zhTW": "遺失的心跳",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧亚轩",
+    "zhTW": "蕭亞軒",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2954T.gm"
+  },
+  {
+   "gn": "sdom2955k.gn",
+   "fileId": 12955,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 122.0,
+   "levels": [
+    5,
+    11,
+    17
+   ],
+   "noteCounts": [
+    504,
+    906,
+    771
+   ],
+   "measurements": [
+    419,
+    445,
+    424
+   ],
+   "durations": [
+    171,
+    171,
+    171
+   ],
+   "title": {
+    "zhCN": "怪咖",
+    "zhTW": "怪咖",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "薛之谦",
+    "zhTW": "薛之謙",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2955K.gm"
+  },
+  {
+   "gn": "sdom2955t.gn",
+   "fileId": 2955,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 122.5,
+   "levels": [
+    3,
+    4,
+    5
+   ],
+   "noteCounts": [
+    382,
+    429,
+    506
+   ],
+   "measurements": [
+    312,
+    326,
+    350
+   ],
+   "durations": [
+    172,
+    172,
+    172
+   ],
+   "title": {
+    "zhCN": "怪咖",
+    "zhTW": "怪咖",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "薛之谦",
+    "zhTW": "薛之謙",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2955T.gm"
+  },
+  {
+   "gn": "sdom2956k.gn",
+   "fileId": 12956,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 158.0,
+   "levels": [
+    9,
+    13,
+    21
+   ],
+   "noteCounts": [
+    878,
+    1190,
+    1297
+   ],
+   "measurements": [
+    450,
+    455,
+    456
+   ],
+   "durations": [
+    157,
+    157,
+    157
+   ],
+   "title": {
+    "zhCN": "海芋恋",
+    "zhTW": "海芋戀",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧敬腾",
+    "zhTW": "蕭敬騰",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2956K.gm"
+  },
+  {
+   "gn": "sdom2956t.gn",
+   "fileId": 2956,
+   "fileType": "gn",
+   "mode": "T",
+   "bpm": 158.0,
+   "levels": [
+    4,
+    5,
+    6
+   ],
+   "noteCounts": [
+    532,
+    556,
+    581
+   ],
+   "measurements": [
+    432,
+    436,
+    443
+   ],
+   "durations": [
+    157,
+    157,
+    157
+   ],
+   "title": {
+    "zhCN": "海芋恋",
+    "zhTW": "海芋戀",
+    "en": ""
+   },
+   "artist": {
+    "zhCN": "萧敬腾",
+    "zhTW": "蕭敬騰",
+    "en": ""
+   },
+   "producer": "Tina",
+   "origName": "sdom2956T.gm"
   },
   {
    "gn": "sdom5001k.gn",
@@ -164135,14 +163862,14 @@
     14
    ],
    "noteCounts": [
-    593,
-    802,
+    595,
+    803,
     1009
    ],
    "measurements": [
-    270,
-    282,
-    289
+    304,
+    316,
+    322
    ],
    "durations": [
     103,
@@ -164371,17 +164098,17 @@
    "noteCounts": [
     265,
     351,
-    630
+    693
    ],
    "measurements": [
-    208,
-    227,
-    279
+    244,
+    263,
+    321
    ],
    "durations": [
-    103,
     101,
-    103
+    101,
+    101
    ],
    "title": {
     "zhCN": "Space Boy",
@@ -165142,7 +164869,7 @@
    "fileId": 15014,
    "fileType": "gn",
    "mode": "K",
-   "bpm": 90.0,
+   "bpm": 86.454,
    "levels": [
     5,
     8,
@@ -165151,17 +164878,17 @@
    "noteCounts": [
     315,
     455,
-    776
+    777
    ],
    "measurements": [
-    159,
-    169,
-    173
+    177,
+    192,
+    192
    ],
    "durations": [
-    104,
-    104,
-    104
+    99,
+    99,
+    99
    ],
    "title": {
     "zhCN": "Uso",
@@ -166246,14 +165973,14 @@
     629
    ],
    "measurements": [
-    175,
-    203,
-    230
+    197,
+    217,
+    247
    ],
    "durations": [
-    97,
-    97,
-    97
+    90,
+    90,
+    90
    ],
    "title": {
     "zhCN": "My Dearest",
@@ -168492,162 +168219,6 @@
    "origName": "sdom5079T.gm"
   },
   {
-   "gn": "sdom5080k.gn",
-   "fileId": 15080,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 175.0,
-   "levels": [
-    7,
-    14,
-    21
-   ],
-   "noteCounts": [
-    494,
-    752,
-    1124
-   ],
-   "measurements": [
-    591,
-    645,
-    671
-   ],
-   "durations": [
-    117,
-    117,
-    117
-   ],
-   "title": {
-    "zhCN": "Imprinting",
-    "zhTW": "Imprinting",
-    "en": "Imprinting"
-   },
-   "artist": {
-    "zhCN": "Sakuzyo",
-    "zhTW": "Sakuzyo",
-    "en": "Sakuzyo"
-   },
-   "producer": "Kun",
-   "origName": "sdom5080K.gm"
-  },
-  {
-   "gn": "sdom5080t.gn",
-   "fileId": 5080,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 175.0,
-   "levels": [
-    7,
-    14,
-    21
-   ],
-   "noteCounts": [
-    494,
-    752,
-    1124
-   ],
-   "measurements": [
-    591,
-    645,
-    671
-   ],
-   "durations": [
-    117,
-    117,
-    117
-   ],
-   "title": {
-    "zhCN": "Imprinting",
-    "zhTW": "Imprinting",
-    "en": "Imprinting"
-   },
-   "artist": {
-    "zhCN": "Sakuzyo",
-    "zhTW": "Sakuzyo",
-    "en": "Sakuzyo"
-   },
-   "producer": "Kun",
-   "origName": "sdom5080T.gm"
-  },
-  {
-   "gn": "sdom5081k.gn",
-   "fileId": 15081,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 179.95,
-   "levels": [
-    6,
-    10,
-    21
-   ],
-   "noteCounts": [
-    344,
-    661,
-    969
-   ],
-   "measurements": [
-    325,
-    384,
-    612
-   ],
-   "durations": [
-    114,
-    114,
-    114
-   ],
-   "title": {
-    "zhCN": "Garasu no Hitomi",
-    "zhTW": "Garasu no Hitomi",
-    "en": "Garasu no Hitomi"
-   },
-   "artist": {
-    "zhCN": "Sid",
-    "zhTW": "Sid",
-    "en": "Sid"
-   },
-   "producer": "Kun",
-   "origName": "sdom5081K.gm"
-  },
-  {
-   "gn": "sdom5081t.gn",
-   "fileId": 5081,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 179.95,
-   "levels": [
-    6,
-    10,
-    21
-   ],
-   "noteCounts": [
-    344,
-    661,
-    969
-   ],
-   "measurements": [
-    325,
-    384,
-    612
-   ],
-   "durations": [
-    114,
-    114,
-    114
-   ],
-   "title": {
-    "zhCN": "Garasu no Hitomi",
-    "zhTW": "Garasu no Hitomi",
-    "en": "Garasu no Hitomi"
-   },
-   "artist": {
-    "zhCN": "Sid",
-    "zhTW": "Sid",
-    "en": "Sid"
-   },
-   "producer": "Kun",
-   "origName": "sdom5081T.gm"
-  },
-  {
    "gn": "sdom5082k.gn",
    "fileId": 15082,
    "fileType": "gn",
@@ -168888,24 +168459,24 @@
    "mode": "K",
    "bpm": 178.0,
    "levels": [
-    5,
+    7,
     10,
-    35
+    22
    ],
    "noteCounts": [
-    287,
-    482,
-    1252
+    285,
+    470,
+    1251
    ],
    "measurements": [
-    238,
-    284,
-    307
+    277,
+    316,
+    344
    ],
    "durations": [
-    94,
-    94,
-    94
+    93,
+    93,
+    93
    ],
    "title": {
     "zhCN": "Identic Conflict",
@@ -168959,5 +168530,6 @@
    "producer": "AQ",
    "origName": "sdom5085T.gm"
   }
- ]
+ ],
+ "statsRefreshedBy": "tools/refresh_gn_header_stats.py"
 }

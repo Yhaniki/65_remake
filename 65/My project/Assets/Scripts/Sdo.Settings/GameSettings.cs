@@ -36,10 +36,11 @@ namespace Sdo.Settings
         public bool notesPanelLeft = true;   // notes 面板位置：true=左(預設) / false=中（暫未接功能）
         public bool effectCharacter = true;  // 遊戲特效「人物特效」：每 100 combo 的 100/200/300 COMBO.EFT
         public bool effectScene = true;      // 遊戲特效「場景特效」：場景常駐背景 EFT（魔法陣/雪/極光/發光…）
-        public bool cameraAuto = true;       // 遊戲視角：true=默認(自動導播) / false=固定(鏡頭 1)
+        public bool cameraAuto = true;       // 遊戲視角：true=默認(自動導播) / false=固定(第 cameraFixed 台)
+        public int cameraFixed = 0;          // 固定視角用哪一台：0..5＝遊戲中 F2 循環的 6 台固定鏡頭。遊戲中按 F2 切鏡頭會寫回這裡
         public bool callCardInGame = true;   // 呼叫卡遊戲中顯示（預設開；暫未接功能）
         public bool playFullSong = false;    // 進階「完奏模式」（原無失敗模式）：HP 歸零不判失敗，整首照打到曲末，結算走正常名次（不出 GAME OVER）
-        public bool songSpeed = true;        // 進階「歌曲變速」：允許歌曲變速玩法（預設開；暫只保存狀態、忠實呈現官方選項）
+        public bool songSpeed = true;        // 進階「歌曲變速」：true=譜面中途的 BPM 變化/SV 照樣改變 note 流速（預設，官方玩法）；false=整首固定流速（ScreenGameplay.constantScroll）
         public float panelOpacity = 1.4f;    // 面板透明度：note 面板 alpha 倍率(=boardAlpha)，範圍 0..1.4（1.4=官方＝上限）
         // 無理短長條 → 一般 note：長度短於 180 BPM 的 16 分音符 (≈83 ms, OsuBeatmap.ShortHoldMaxMs) 的 long note，
         // 開局載譜時直接收成單顆 note（頭尾判定擠在同一個判定窗內＝按不出來，多半是外部譜把裝飾音寫成極短 hold）。
@@ -47,6 +48,24 @@ namespace Sdo.Settings
         public bool collapseShortHolds = true;
 
         public const float MaxPanelOpacity = 1.4f;   // OPTION 面板透明度滑桿最高 1.4X
+        public const int AutoCamMode = -1;           // ScreenGameplay._camMode 的「自動導播」值（0..n-1 才是固定鏡頭）
+
+        /// <summary>本設定 → 開局時的鏡頭模式（-1=自動導播；0..fixedCount-1=固定鏡頭）。純函式。</summary>
+        public int ToCamMode(int fixedCount)
+            => cameraAuto ? AutoCamMode : ClampFixed(cameraFixed, fixedCount);
+
+        /// <summary>遊戲中 F2 切到的鏡頭模式 → 寫回本設定（自動/固定，並記住是第幾台；切回自動時保留上次的台號，
+        /// 這樣 OPTION 的「遊戲視角」標籤永遠跟遊戲裡看到的一致）。回傳「值有變」→ 呼叫端才需要存檔。純函式。</summary>
+        public bool SetFromCamMode(int camMode, int fixedCount)
+        {
+            bool auto = camMode < 0;
+            int idx = ClampFixed(auto ? cameraFixed : camMode, fixedCount);
+            if (auto == cameraAuto && idx == cameraFixed) return false;
+            cameraAuto = auto; cameraFixed = idx;
+            return true;
+        }
+
+        private static int ClampFixed(int i, int fixedCount) => Mathf.Clamp(i, 0, Mathf.Max(0, fixedCount - 1));
     }
 
     /// <summary>

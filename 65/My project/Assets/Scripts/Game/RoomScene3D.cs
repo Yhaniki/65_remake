@@ -40,7 +40,7 @@ namespace Sdo.Game
         // purpose (avatar floor ≈ X[-199,178] Z[-234,2.3]); tune to taste — smaller = camera holds the framing sooner.
         public Vector2 cameraBoundsMin = new Vector2(-120f, -130f);   // anchor min (worldX, worldZ)
         public Vector2 cameraBoundsMax = new Vector2(100f, 0f);       // anchor max (worldX, worldZ)
-        public float walkSpeed = RoomMovement.WalkSpeed;         // free-walk speed mult (3.0); no run in the lobby
+        public float walkSpeed = RoomMovement.WalkSpeed;         // free-walk speed mult; 3.0 default, 5.0 with 加速鞋 (SpecialMotionItems)
         public bool useMask = true;                              // sample MASK.MSK for furniture collision (else box clamp)
         // Arrow-key walking gate. RoomScreen clears this while the 選歌(MusicSelDlg) modal is open so the room keeps
         // rendering (dimmed) behind the dialog but the avatar can't be walked around by stray arrow presses.
@@ -52,9 +52,11 @@ namespace Sdo.Game
         private Camera _cam;
         private RenderTexture _rt;
         private MotLoader _walkMot, _idleMot;
+        private bool _flying;   // 飛行翅膀已裝備:idle=flystay、走路=fly 前傾滑動、移動時 +10 懸浮 (SpecialMotionItems)
         private readonly Dictionary<string, MotLoader> _chatActionMots = new Dictionary<string, MotLoader>(System.StringComparer.OrdinalIgnoreCase);
         private bool _male;
         private string[] _avatarParts;
+        private int _bodyIndex;       // 本機角色自己的體型 (胖瘦) index 0..4;預設 0=瘦 (見 UserProfile.bodyShapeIndex)
         private Vector3 _walkPos;     // logical floor position (X, floorY, Z)
         private float _feetY;         // model-space feet offset so the feet rest on floorY
         private float _facing;        // current Unity yaw (degrees)
@@ -132,11 +134,12 @@ namespace Sdo.Game
             return true;
         }
 
-        public void Build(bool male = false, string[] avatarParts = null)
+        public void Build(bool male = false, string[] avatarParts = null, int bodyIndex = 0)
         {
             if (_ready) return;
             _male = male;
             _avatarParts = avatarParts;
+            _bodyIndex = bodyIndex;   // 本機角色自己的體型 (胖瘦;由 RoomScreen 從 profile 帶入)
             LoadScene();
             LoadMask();
             LoadAvatar();
@@ -266,10 +269,10 @@ namespace Sdo.Game
         {
             var parent = new GameObject("RoomLocalAvatar");
             parent.transform.SetParent(transform, false);
-            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
+            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
-            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
-            _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
+            if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
 
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;   // lowest skinned vertex at the bind pose
             // Host spawn = (-100, 0, -26): the REAL fixed offline spawn, captured via Frida from the running official EXE
@@ -284,24 +287,64 @@ namespace Sdo.Game
 
         /// <summary>Rebuild the local host avatar with a new outfit (儲物櫃 換穿) without rebuilding the whole scene —
         /// preserves the current walk position/facing and returns it to its idle pose. No-op (just stores) until Build ran.</summary>
-        public void RebuildLocalAvatar(bool male, string[] avatarParts)
+        public void RebuildLocalAvatar(bool male, string[] avatarParts, int bodyIndex = 0)
         {
+            bool wasFlying = _flying;   // 舊穿搭是否在飛(要在 ApplyOutfitMotion 覆寫 _flying 前捕捉)
             _male = male;
             _avatarParts = avatarParts;
+            _bodyIndex = bodyIndex;   // 換穿時一併帶入最新體型 (胖瘦)
             if (!_ready) return;
             var oldRoot = _avatarRoot;
             _avatarRoot = null; _avatar = null;
+            // Destroy 要到幀尾才生效 → 先關掉舊的，否則新舊兩隻同位置疊畫一幀 (換穿當場重建時會看到閃一下)
+            if (oldRoot != null) oldRoot.gameObject.SetActive(false);
             var parent = new GameObject("RoomLocalAvatar");
             parent.transform.SetParent(transform, false);
-            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts);
+            _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
-            _walkMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
-            _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
             _walking = false;
-            if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);
+            ApplyRebuildIdle(wasFlying);
             ApplyAvatarTransform();
             if (oldRoot != null) Destroy(oldRoot.gameObject);
+        }
+
+        /// <summary>Arm the rebuilt avatar's idle. Normally an instant idle pose, BUT when the outfit change 脱下飛行翅膀
+        /// (was flying, now grounded) settle the body from the flystay 浮空 pose down to the ground idle over 1s instead
+        /// of popping — prime the flystay pose as the crossfade source, then blend to the new idle (使用者需求 #2)。</summary>
+        private void ApplyRebuildIdle(bool wasFlying)
+        {
+            if (_avatar == null || _idleMot == null) return;
+            if (wasFlying && !_flying)
+            {
+                var flystay = SdoRoomAvatar.LoadMot(SpecialMotionItems.FlyIdleMot(_male));
+                if (flystay != null)
+                {
+                    _avatar.PrimeBlendFrom(flystay);   // 顯示 flystay 當 crossfade 起點
+                    _avatar.BlendNextClip(1f);         // 只此一次用 1 秒(不影響之後 idle↔walk 的預設混色)
+                    _avatar.SetClip(_idleMot);         // → 1 秒平滑 flystay→地面 idle
+                    return;
+                }
+            }
+            _avatar.SetClip(_idleMot);   // 一般:從生成起就用對的 idle(flystay 也是,不必等走一步)
+        }
+
+        /// <summary>Resolve the idle/walk clips + walk speed for the CURRENT outfit — the decompiled special-item traits
+        /// ([[sdo-special-item-idle-walk]] / <see cref="SpecialMotionItems"/>): a 飛行翅膀 (flying wing) swaps the idle to
+        /// the flystay 浮空 clip (rest cat 0x2c); a 加速鞋 (speed shoe) bumps the free-walk speed to 5.0 (unless a wing
+        /// is also worn, which forces 3.0). Called after every (re)build so 換裝 picks the trait up immediately.</summary>
+        private void ApplyOutfitMotion()
+        {
+            _flying = SpecialMotionItems.WearsFlyingWing(_avatarParts);
+            bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
+            // 飛行翅膀:idle→flystay 浮空,走路→fly(前傾滑動),速度強制 3.0(028:2774),移動時 body Y +10 懸浮(028:2852)。
+            // 「哪些翅膀會飛」離線推不出來 → SpecialMotionItems 用硬編 5 id + 線上實測名單(見該檔)。
+            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            string walkRel = SpecialMotionItems.WalkMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
+            _idleMot = SdoRoomAvatar.LoadMot(idleRel);
+            _walkMot = SdoRoomAvatar.LoadMot(walkRel);
+            walkSpeed = SpecialMotionItems.WalkSpeedMult(fast, _flying);
         }
 
         private void BuildCamera()
@@ -359,6 +402,7 @@ namespace Sdo.Game
             {
                 _walking = false;
                 _avatar.SetClip(_idleMot);
+                ApplyAvatarTransform();   // 停下:移除飛行懸浮 (+10)，回地面高度(否則 flystay 停在半空)
             }
 
             UpdateCamera();
@@ -377,7 +421,9 @@ namespace Sdo.Game
         private void ApplyAvatarTransform()
         {
             if (_avatarRoot == null) return;
-            _avatarRoot.position = new Vector3(_walkPos.x, floorY - _feetY, _walkPos.z);
+            // 飛行翅膀移動時 body Y +10 懸浮(Player_StepMovement 028:2852 fStack_8 += 10);停下(flystay)回地面高度。
+            float hover = (_flying && _walking) ? SpecialMotionItems.FlyHoverY : 0f;
+            _avatarRoot.position = new Vector3(_walkPos.x, floorY - _feetY + hover, _walkPos.z);
             _avatarRoot.localRotation = Quaternion.Euler(0f, _facing, 0f);
         }
 

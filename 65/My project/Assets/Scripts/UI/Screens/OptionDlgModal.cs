@@ -36,6 +36,12 @@ namespace Sdo.UI.Screens
         private Slider _sBgm, _sMusic, _sSfx;
         private Image _board, _audioBoard, _advBoard;                               // 遊戲 / 音效 / 進階 boards
         private Image[] _tabBtns; private Sprite[] _tabNormal, _tabActive;          // official tab art + active-state swap
+        // Each pill's art is baked with its own internal padding, so a shared Y leaves them visually uneven. These are
+        // the hand-tuned per-tab downward nudges (px) that line the four pills up against the frame, one value per
+        // state. Index = internal id: 0=音效, 1=鍵盤, 2=遊戲, 3=進階.
+        private static readonly float[] TabNudgeNormal = { 1f, 1f, 2f, 2f };
+        private static readonly float[] TabNudgeActive = { 1f, 1f, 1f, 2f };
+        private float _tabBarY;                                                     // pill top edge before the nudge
         private readonly TextMeshProUGUI[,] _capLabel = new TextMeshProUGUI[2, 4]; // [slot 0=primary/1=aux, lane] — text fallback for glyphless keys
         private readonly Image[,] _capImg = new Image[2, 4];                        // key-cap chip sprite (purple idle / silver capturing)
         private readonly Image[,] _capGlyph = new Image[2, 4];                      // bound-key letter glyph (LOBBYDLG/KEYS/*.PNG)
@@ -47,10 +53,12 @@ namespace Sdo.UI.Screens
         private readonly string[] _prim = new string[4];
         private readonly string[] _aux = new string[4];
         private int _capSlot = -1, _capLane = -1;                   // active key-capture target (-1 = none)
+        private IMECompositionMode _imeBeforeOpen = IMECompositionMode.Auto;   // 房間(聊天)開著 On；關窗時還原
         private readonly List<Action> _advDots = new List<Action>(); // 進階 tab dots (vsync) repaint from their bool
 
         // 遊戲 (OptionGameWindow) working copy — committed to settings.gameplay on Save. See BuildGame.
         private bool _gpAspectFill, _gpBloom, _gpNotesLeft, _gpFxPlayer, _gpFxScene, _gpViewAuto, _gpCallShow;
+        private int _gpViewFixed;       // 「固定」視角鎖第幾台鏡頭（遊戲中 F2 切到哪台就記哪台；這裡只是跟著存/還原）
         private bool _gpPlayFullSong;   // 進階「完奏模式」（放在進階頁最上面，存 settings.gameplay.playFullSong）
         private bool _gpSongSpeed;      // 進階「歌曲變速」（存 settings.gameplay.songSpeed）
         private float _gpPanelOpacity;
@@ -94,7 +102,8 @@ namespace Sdo.UI.Screens
             //   ▶ TabSpacing = 相鄰 tab 中心距(px)。越小越擠(<pill寬 91-99 會重疊成連在一起)，越大越開。目前 80。
             //   ▶ TabBarCenterX = 整條 tab bar 的水平中心(px)。想整條左右移就改這個(視窗 800 寬、對話框中心≈414)。
             //   ▶ TabBarY = tab 的上緣高度(px，越小越高)。
-            const float TabSpacing = 86f, TabBarCenterX = 412f, TabBarY = 188f;
+            const float TabSpacing = 86f, TabBarCenterX = 412f, TabBarY = 183f;
+            _tabBarY = TabBarY;
             int[] visualOrder = { 1, 0, 2, 3 };          // create L→R by index (鍵盤,音效,遊戲,進階)
             for (int slot = 0; slot < visualOrder.Length; slot++)
             {
@@ -104,7 +113,7 @@ namespace Sdo.UI.Screens
                 img.sprite = _tabNormal[id];
                 var rt = img.rectTransform;
                 rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0.5f, 1f);
-                rt.anchoredPosition = new Vector2(cx, -TabBarY);
+                rt.anchoredPosition = new Vector2(cx, -(TabBarY + TabNudgeNormal[id]));
                 rt.sizeDelta = _tabNormal[id] != null ? _tabNormal[id].rect.size : new Vector2(94f, 38f);
                 var btn = img.gameObject.AddComponent<Button>(); btn.targetGraphic = img;
                 btn.onClick.AddListener(() => ShowTab(id));
@@ -116,7 +125,7 @@ namespace Sdo.UI.Screens
             // (the 4-key board is baked into the frame art).
             _board = UIKit.AddSprite(root, "Board", OptionDlgArt.Board, 236, 225);
             _audioBoard = UIKit.AddSprite(root, "AudioBoard", OptionDlgArt.AudioBoard, 236, 225);
-            _advBoard = UIKit.AddSprite(root, "AdvBoard", OptionDlgArt.AdvBoard, 236, 225);
+            _advBoard = UIKit.AddSprite(root, "AdvBoard", OptionDlgArt.AdvBoard, 236, 220); // 進階板整體比其它板高 5px（連同下方文字一起上移）
 
             _audioTab = TabBody(root, "AudioTab");
             _keyTab = TabBody(root, "KeyTab");
@@ -167,8 +176,8 @@ namespace Sdo.UI.Screens
             var resNames = new string[ResolutionPreset.Presets.Length];
             for (int i = 0; i < resNames.Length; i++) resNames[i] = ResolutionPreset.Presets[i].ToString();
 
-            // 六列，起始 y=243、列距 33（比原本 40 緊，才塞得下第 6 列而不撞到下方 保存/退出/默認 按鈕）。radio 圓點在列頂 +12。
-            const float y0 = 243f, step = 33f, dotDown = 12f;
+            // 六列，起始 y=238（比原本 243 高 5px，連同進階板一起上移）、列距 26（沿用「遊戲」頁 GameRowY 的列距）。radio 圓點在列頂 +12。
+            const float y0 = 238f, step = 26f, dotDown = 12f;
             float yFull = y0, ySpeed = y0 + step, yVsync = y0 + step * 2f;
             float yRes = y0 + step * 3f, yMode = y0 + step * 4f, yLang = y0 + step * 5f;
 
@@ -409,6 +418,17 @@ namespace Sdo.UI.Screens
 
         // ---------------------------------------------------------------- key capture (Update)
         private static readonly KeyCode[] Bindable = BuildBindable();
+        private static readonly KeyCode[] CaptureScan = BuildCaptureScan();   // Bindable + Esc（取消）
+        private readonly KeyDownEdge _rawEdge = new KeyDownEdge();            // 實體按鍵的「剛按下」邊緣（繞過 IME）
+
+        /// <summary>可綁的鍵（給測試檢查每顆都有對應的虛擬鍵碼，raw 路徑才不會漏鍵）。</summary>
+        public static IReadOnlyList<KeyCode> BindableKeys => Bindable;
+
+        private static KeyCode[] BuildCaptureScan()
+        {
+            var l = new List<KeyCode>(Bindable) { KeyCode.Escape };
+            return l.ToArray();
+        }
 
         // Only keys with a glyph in LOBBYDLG/KEYS are bindable — matches the original, whose scan-code→glyph
         // switch (FUN_00461170) rejects (returns 0 for) anything it can't draw (Shift/Ctrl/Enter/…).
@@ -441,21 +461,29 @@ namespace Sdo.UI.Screens
 
         private void Update()
         {
-            if (_cg == null || _cg.alpha < 0.5f || _capSlot < 0) return;
-            if (Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
-            foreach (var k in Bindable)
-            {
-                if (!Input.GetKeyDown(k)) continue;
-                (_capSlot == 0 ? _prim : _aux)[_capLane] = k.ToString();
-                // 一鍵只能綁一處：把「其它」位置上與剛綁相同的鍵清空(含主鍵位↔輔助鍵位跨排)，並刷新被清掉的鍵帽。
-                foreach (var pos in ClearDuplicateBinding(_prim, _aux, _capSlot, _capLane)) RefreshCap(pos.slot, pos.lane);
-                // 綁好一格後自動跳到「同一排」右邊那格繼續設定；到最後一格 (lane 3) 回捲到第一格 (lane 0)。
-                // 主鍵位 (slot 0) 與輔助鍵位 (slot 1) 各自獨立循環 —— slot 不變、只推進 lane。BeginCapture 內的
-                // CancelCapture 會先把剛綁好的那格刷回帶新字符的閒置態，再點亮下一格 (要 Esc 或點別處才停)。
-                int slot = _capSlot, nextLane = (_capLane + 1) % 4;
-                BeginCapture(slot, nextLane);
-                break;
-            }
+            // 綁鍵不能只靠 Input.GetKeyDown：中文輸入法組字態會把按鍵吃掉（房間為了聊天開著 IME 組字），
+            // 那條路要先切英數才收得到。改成主走 RawKeyboard 的實體鍵狀態（IME 攔不到），Unity Input 只當後備
+            // （非 Windows / 沒對應虛擬鍵碼時）。狀態每幀都要更新，所以 Tick 擺在提早 return 之前。
+            bool capturing = _cg != null && _cg.alpha >= 0.5f && _capSlot >= 0;
+            // GetAsyncKeyState 讀的是全系統鍵盤狀態 → 視窗沒焦點時別把別的程式的按鍵綁進來。
+            KeyCode? raw = _rawEdge.Tick(CaptureScan, RawKeyboard.IsHeld, capturing && Application.isFocused);
+            if (!capturing) return;
+
+            if (raw == KeyCode.Escape || Input.GetKeyDown(KeyCode.Escape)) { CancelCapture(); return; }
+
+            KeyCode? hit = raw;
+            if (hit == null)
+                foreach (var k in Bindable) if (Input.GetKeyDown(k)) { hit = k; break; }
+            if (hit == null) return;
+
+            (_capSlot == 0 ? _prim : _aux)[_capLane] = hit.Value.ToString();
+            // 一鍵只能綁一處：把「其它」位置上與剛綁相同的鍵清空(含主鍵位↔輔助鍵位跨排)，並刷新被清掉的鍵帽。
+            foreach (var pos in ClearDuplicateBinding(_prim, _aux, _capSlot, _capLane)) RefreshCap(pos.slot, pos.lane);
+            // 綁好一格後自動跳到「同一排」右邊那格繼續設定；到最後一格 (lane 3) 回捲到第一格 (lane 0)。
+            // 主鍵位 (slot 0) 與輔助鍵位 (slot 1) 各自獨立循環 —— slot 不變、只推進 lane。BeginCapture 內的
+            // CancelCapture 會先把剛綁好的那格刷回帶新字符的閒置態，再點亮下一格 (要 Esc 或點別處才停)。
+            int slot = _capSlot, nextLane = (_capLane + 1) % 4;
+            BeginCapture(slot, nextLane);
         }
 
         // ---------------------------------------------------------------- open / apply / defaults / close
@@ -464,6 +492,12 @@ namespace Sdo.UI.Screens
 
         public void Open()
         {
+            // 設定視窗（尤其鍵盤頁）不打字，關掉 IME 組字：房間為了聊天把它開成 On，中文輸入法下按鍵會進組字被吃掉，
+            // 還會把選字視窗蓋在對話框上。同時放掉聊天輸入框的 focus，免得綁鍵按的字母也打進聊天欄。關窗還原。
+            _imeBeforeOpen = Input.imeCompositionMode;
+            Input.imeCompositionMode = IMECompositionMode.Off;
+            if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
+
             var s = DisplaySettingsManager.Settings;
             _resIndex = Mathf.Max(0, ResolutionPreset.IndexOf(s.display.width, s.display.height));
             _modeIndex = Array.IndexOf(ModeIds, s.display.displayMode); if (_modeIndex < 0) _modeIndex = 0;
@@ -533,9 +567,8 @@ namespace Sdo.UI.Screens
             // 遊戲畫面 (全屏/黑邊) 立即套用：其餘遊戲頁偏好（特效/視角/透明度）在下一場遊戲開局讀取。
             AspectController.SetMode(_gpAspectFill ? AspectMode.Stretch : AspectMode.Pillarbox);
             _applied = true; _entryLang = _lang;
-            // 保存 = 只儲存,不關對話框(使用者要求)。播確認音 + Toast 回饋;關閉走「退出」鈕。
+            // 保存 = 只儲存,不關對話框(使用者要求)。只播確認音,不跳提示;關閉走「退出」鈕。
             UiSfx.Play(UiSfx.Click);
-            Toast.Show("設定已保存");
         }
 
         private void ResetDefaults()
@@ -566,6 +599,7 @@ namespace Sdo.UI.Screens
             g ??= new GameplaySettings();
             _gpAspectFill = g.fullscreenFill; _gpBloom = g.bloom; _gpNotesLeft = g.notesPanelLeft;
             _gpFxPlayer = g.effectCharacter; _gpFxScene = g.effectScene; _gpViewAuto = g.cameraAuto;
+            _gpViewFixed = g.cameraFixed;
             _gpCallShow = g.callCardInGame;
             _gpPlayFullSong = g.playFullSong;
             _gpSongSpeed = g.songSpeed;
@@ -576,6 +610,7 @@ namespace Sdo.UI.Screens
         {
             g.fullscreenFill = _gpAspectFill; g.bloom = _gpBloom; g.notesPanelLeft = _gpNotesLeft;
             g.effectCharacter = _gpFxPlayer; g.effectScene = _gpFxScene; g.cameraAuto = _gpViewAuto;
+            g.cameraFixed = _gpViewFixed;
             g.callCardInGame = _gpCallShow;
             g.playFullSong = _gpPlayFullSong;
             g.songSpeed = _gpSongSpeed;
@@ -585,6 +620,7 @@ namespace Sdo.UI.Screens
         private void Close()
         {
             CancelCapture();
+            Input.imeCompositionMode = _imeBeforeOpen;   // 還原開窗前的組字模式（房間=On，聊天才打得出中文）
             if (!_applied && LocalizationManager.Current != _entryLang)
                 LocalizationManager.SetLanguage(_entryLang);            // revert live language preview
             if (!_applied)
@@ -606,9 +642,18 @@ namespace Sdo.UI.Screens
             if (_audioBoard != null) _audioBoard.gameObject.SetActive(i == 0);
             if (_board != null) _board.gameObject.SetActive(i == 2);       // 遊戲 board (baked labels)
             if (_advBoard != null) _advBoard.gameObject.SetActive(i == 3); // 進階 board (clean)
-            // swap the sprite ONLY (size stays fixed → no jump; normal/active are same-size crops)
+            // swap the sprite (size stays fixed → no jump; normal/active are same-size crops) and re-apply that state's
+            // per-tab downward nudge, since a pill's art can sit differently in its normal vs pushed crop.
             for (int t = 0; t < _tabBtns.Length; t++)
-                if (_tabBtns[t] != null) _tabBtns[t].sprite = (t == i) ? _tabActive[t] : _tabNormal[t];
+            {
+                if (_tabBtns[t] == null) continue;
+                bool active = t == i;
+                _tabBtns[t].sprite = active ? _tabActive[t] : _tabNormal[t];
+                var rt = _tabBtns[t].rectTransform;
+                var p = rt.anchoredPosition;
+                p.y = -(_tabBarY + (active ? TabNudgeActive[t] : TabNudgeNormal[t]));
+                rt.anchoredPosition = p;
+            }
             if (_tabBtns[i] != null) _tabBtns[i].transform.SetAsLastSibling();   // active pill on top of its overlapping neighbours
         }
 

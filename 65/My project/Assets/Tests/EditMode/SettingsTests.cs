@@ -64,7 +64,7 @@ namespace Sdo.Tests
             Assert.AreEqual(1f, s.display.uiScale, 1e-4f);
             Assert.AreEqual(1f, s.audio.bgm, 1e-4f);
             Assert.AreEqual(0f, s.audio.sfx, 1e-4f);
-            Assert.AreEqual("Windowed", s.display.displayMode);
+            Assert.AreEqual("Borderless", s.display.displayMode);   // 預設全螢幕視窗化（同 GameSettings 的預設值）
             Assert.AreEqual("zh-TW", s.language);
         }
 

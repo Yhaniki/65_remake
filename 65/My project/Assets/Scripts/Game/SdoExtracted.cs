@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using Sdo.Settings;
 using UnityEngine;
 
 namespace Sdo.Game
@@ -23,124 +24,13 @@ namespace Sdo.Game
         //                    Application.dataPath == <exeDir>/<exe>_Data, so the exe dir is its parent.
         //   • Editor / dev:  <repo>/assets/sdox_offline/Extracted  (derived repo-relative from Application.dataPath,
         //                    which is <repo>/65/My project/Assets — three levels up = repo root).
-        private static string _root;
+        // 解析本身住在 Sdo.Settings.SdoDataRoot（單一來源；存檔 ProfileManager 也走同一個根，不會再分裂）。
 
         /// <summary>Root of the SDO game data tree. Resolves lazily on first use; settable for tests/overrides.</summary>
         public static string Root
         {
-            get { return _root ?? (_root = ResolveRoot()); }
-            set { _root = value; }
-        }
-
-        private static string ResolveRoot()
-        {
-            if (Application.isEditor)
-            {
-                try
-                {
-                    var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
-                    foreach (var root in DevRootCandidates(repo))
-                        if (LooksLikeGameDataRoot(root)) return root;
-                }
-                catch { /* ignore */ }
-            }
-
-            // 1) Built player: a DATA folder beside the exe.
-            try
-            {
-                var exeDir = Directory.GetParent(Application.dataPath)?.FullName;
-                if (exeDir != null)
-                {
-                    var data = Path.Combine(exeDir, "DATA");
-                    if (LooksLikeGameDataRoot(data)) return data;
-                }
-            }
-            catch { /* Application.dataPath unavailable in some contexts — fall through */ }
-
-            // 2) Editor / dev: repo-relative extracted tree.
-            try
-            {
-                var repo = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
-                var ex = Path.Combine(repo, "assets", "sdox_offline", "Extracted");
-                if (LooksLikeGameDataRoot(ex)) return ex;
-            }
-            catch { /* ignore */ }
-
-            // 3) Last resort: assume the built layout even if not present yet.
-            try { return Path.Combine(Directory.GetParent(Application.dataPath)?.FullName ?? ".", "DATA"); }
-            catch { return "DATA"; }
-        }
-
-        private static bool LooksLikeGameDataRoot(string root)
-        {
-            if (string.IsNullOrEmpty(root)) return false;
-            try
-            {
-                if (!Directory.Exists(root)) return false;
-                if (File.Exists(Path.Combine(root, "AVATAR", "FEMALE.HRC"))) return true;
-                if (File.Exists(Path.Combine(root, "AVATAR", "MALE.HRC"))) return true;
-                if (Directory.Exists(Path.Combine(root, "3DEFT"))) return true;
-                if (Directory.Exists(Path.Combine(root, "SCENE"))) return true;
-                if (Directory.Exists(Path.Combine(root, "UI", "GAMEPLAY"))) return true;
-            }
-            catch { }
-            return false;
-        }
-
-        private static List<string> DevRootCandidates(string repo)
-        {
-            var roots = new List<string>();
-            AddDevRoot(roots, repo);
-            AddDevRoot(roots, ResolveGitPrimaryWorktree(repo));
-
-            try
-            {
-                var parent = Directory.GetParent(repo)?.FullName;
-                var name = Path.GetFileName(repo);
-                var dash = name.IndexOf('-');
-                if (parent != null && dash > 0)
-                    AddDevRoot(roots, Path.Combine(parent, name.Substring(0, dash)));
-            }
-            catch { }
-
-            return roots;
-        }
-
-        private static void AddDevRoot(List<string> roots, string repo)
-        {
-            if (string.IsNullOrEmpty(repo)) return;
-            try
-            {
-                var root = Path.GetFullPath(Path.Combine(repo, "assets", "sdox_offline", "Extracted"));
-                foreach (var existing in roots)
-                    if (string.Equals(existing, root, System.StringComparison.OrdinalIgnoreCase)) return;
-                roots.Add(root);
-            }
-            catch { }
-        }
-
-        private static string ResolveGitPrimaryWorktree(string repo)
-        {
-            try
-            {
-                var dotGit = Path.Combine(repo, ".git");
-                if (Directory.Exists(dotGit)) return repo;
-                if (!File.Exists(dotGit)) return null;
-
-                var text = File.ReadAllText(dotGit).Trim();
-                const string prefix = "gitdir:";
-                if (!text.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase)) return null;
-
-                var gitDir = text.Substring(prefix.Length).Trim();
-                if (!Path.IsPathRooted(gitDir))
-                    gitDir = Path.GetFullPath(Path.Combine(repo, gitDir));
-
-                var dir = new DirectoryInfo(gitDir);
-                while (dir != null && !string.Equals(dir.Name, ".git", System.StringComparison.OrdinalIgnoreCase))
-                    dir = dir.Parent;
-                return dir?.Parent?.FullName;
-            }
-            catch { return null; }
+            get { return SdoDataRoot.Root; }
+            set { SdoDataRoot.Root = value; }
         }
 
         /// <summary>Directory of the (built) exe — parent of Application.dataPath; "." if unavailable.</summary>
@@ -214,11 +104,15 @@ namespace Sdo.Game
         /// <summary>Song chart/audio folder. Built: DATA/MUSIC (uppercase); dev: sdox_offline/music (sibling).</summary>
         public static string MusicDir => FirstDir(Path.Combine(Root, "MUSIC"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "music"));
 
-        /// <summary>Background-music folder. Built: DATA/BGM; dev: sdox_offline/BGM (sibling).</summary>
-        public static string BgmDir => FirstDir(Path.Combine(Root, "BGM"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "BGM"));
-
-        /// <summary>Front-end lobby/room UI background-music folder (random *.ogg / *.mp3). Built: DATA/UI/BGM; dev: Extracted/UI/BGM.</summary>
-        public static string UiBgmDir => FirstDir(Path.Combine(Root, "UI", "BGM"), Path.Combine(Path.GetDirectoryName(Root) ?? Root, "UI", "BGM"));
+        /// <summary>Front-end lobby/room background-music folder (endless random *.ogg / *.mp3, driven by
+        /// <see cref="Sdo.UI.Util.BgmPlayer"/>). Built player: <c>DATA/BGM</c> — the lobby tracks (bgm_000..007.ogg) ship at
+        /// the DATA root; editor/dev falls back to their SDO-authentic location <c>Extracted/UI/BGM</c>. (The original
+        /// game's top-level BGM set BMG_/TEACHING had no consumer in the remake and is no longer shipped, so DATA/BGM
+        /// holds the lobby tracks.)</summary>
+        public static string UiBgmDir => FirstDir(
+            Path.Combine(Root, "BGM"),                                        // built player: DATA/BGM (relocated lobby bgm)
+            Path.Combine(Root, "UI", "BGM"),                                  // editor/dev: Extracted/UI/BGM (authentic SDO location)
+            Path.Combine(Path.GetDirectoryName(Root) ?? Root, "UI", "BGM")); // sibling extracted-dump fallback
 
         /// <summary>Replay save folder (under DATA). Created on demand by callers.</summary>
         public static string ReplayDir => Path.Combine(Root, "REPLAY");
@@ -329,8 +223,25 @@ namespace Sdo.Game
         private static readonly Dictionary<string, Texture2D> _texCache = new Dictionary<string, Texture2D>();
         private static readonly HashSet<Texture2D> _bled = new HashSet<Texture2D>();
 
+        // DEV load-trace: when env SDO_TRACE_LOADS names a file, EVERY attempted texture path (png/bmp/dds) is appended
+        // there — the ground-truth "what gameplay actually loads", used by the dead-art prune to avoid false-deletes.
+        private static System.IO.StreamWriter _trace;
+        private static bool _traceInit;
+        private static void TraceLoad(string path)
+        {
+            if (!_traceInit)
+            {
+                _traceInit = true;
+                try { var p = System.Environment.GetEnvironmentVariable("SDO_TRACE_LOADS");
+                      if (!string.IsNullOrEmpty(p)) _trace = new StreamWriter(p, true) { AutoFlush = true }; } catch { }
+            }
+            if (_trace == null) return;
+            try { lock (_trace) _trace.WriteLine(path); } catch { }
+        }
+
         private static Texture2D LoadTexture(string path)
         {
+            TraceLoad(path);
             if (_texCache.TryGetValue(path, out var t) && t != null) return t;
             if (!File.Exists(path)) return null;
             var bytes = File.ReadAllBytes(path);
@@ -450,7 +361,8 @@ namespace Sdo.Game
         /// inscribed-circle mask centred on the opaque disc. The orbs are authored composited on WHITE, so a ring of
         /// (255,255,255,~0) matte texels sits just outside the disc; AlphaBleed's 1px reach leaves the far ones white and
         /// bilinear MAGNIFICATION pulls that white into a fringe. Flood kills the white RGB everywhere; the circle mask
-        /// gives a clean round alpha cut-off. Use only for actually-round sprites (see ShopArt.CircularOrbs).</summary>
+        /// gives a clean round alpha cut-off. Use only for actually-round sprites. (SHOP now uses premultiplied alpha
+        /// instead — see <see cref="LoadAnSoloPremultiplied"/> — so this is currently unused, kept for reference.)</summary>
         public static Sprite LoadAnSoloCircular(string folder, string anName, int pad = 0)
             => LoadAnSoloImpl(folder, anName, pad, circular: true);
 
@@ -487,6 +399,82 @@ namespace Sdo.Game
                 AlphaBleed(outTex);  // dilate the crop's opaque colour into the transparent pad (kills bilinear halo)
             }
             return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
+
+        /// <summary>First frame of an .an cropped onto its OWN texture with its RGB PREMULTIPLIED by alpha (bilinear, no
+        /// mipmaps, 1px transparent pad). Pair with a premultiplied-alpha material (Blend One OneMinusSrcAlpha —
+        /// <c>Sdo/SpritePremultiply</c>). For a sprite that gets MAGNIFIED on screen (the result 「YOU WIN／LOSE」 banner
+        /// zooms screen-width→1, and everything is stretched from the 800×600 design to the real window): with the
+        /// default STRAIGHT-alpha material, bilinear interpolates colour and coverage SEPARATELY across each glyph's
+        /// opaque→transparent edge, so the transparent matte keeps a bright RGB while its alpha fades — the candy bevel /
+        /// white matte leak outward as a semi-transparent PALE halo (the 「白邊」, worst on flat letter tops like U). It's
+        /// a GPU-sampler artifact, NOT baked in the PNG (the art composites cleanly over black at native size), so
+        /// AlphaBleed / DeMatteWhite can't touch it. Premultiplied colour makes the transparent texels (0,0,0,0): now
+        /// interpolation fades only COVERAGE, the edge keeps the glyph colour (no halo) and stays SMOOTH at any scale
+        /// (unlike point filtering). Premultiply is done in LINEAR space (the project is Linear; the sRGB texture is
+        /// decoded on sample) then re-encoded to sRGB, so the antialiased edge isn't darkened into a faint rim. Its own
+        /// texture keeps this off the shared BALANCE.png atlas (the OK/SAVE buttons crop it too and stay straight-alpha).</summary>
+        public static Sprite LoadAnSoloPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
+        {
+            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            if (!File.Exists(anPath)) return null;
+            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (frames.Count == 0) return null;
+            var fr = frames[0];
+            var src = LoadTexture(Path.Combine(folder, fr.Image));
+            if (src == null) return null;
+            int cx, cy, cw, ch;
+            if (fr.HasCrop) { cx = fr.X; cy = src.height - fr.Y - fr.H; cw = fr.W; ch = fr.H; }   // top-left -> bottom-left
+            else { cx = 0; cy = 0; cw = src.width; ch = src.height; }
+            if (cw <= 0 || ch <= 0 || cx < 0 || cy < 0 || cx + cw > src.width || cy + ch > src.height) return null;
+            int W = cw + pad * 2, H = ch + pad * 2;
+            var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            outTex.SetPixels(new Color[W * H]);           // (0,0,0,0) transparent border — premult-clean under bilinear
+            outTex.SetPixels(pad, pad, cw, ch, src.GetPixels(cx, cy, cw, ch));
+            outTex.Apply(false);
+            var cols = outTex.GetPixels();                // straight-alpha, sRGB-stored floats
+            for (int i = 0; i < cols.Length; i++)
+            {
+                var c = cols[i];
+                float a = c.a;
+                // cleanMatte: 白底出圖在鈕外緣(尤其右上角)留一圈「低透明度純白」matte (a<~48)。premult 會把它「正確」合成成一層
+                // 淡白霧 —— 疊在深色商城 UI 上就顯出「右上外圍沒清乾淨的白邊」。這種低-alpha 泛白像素是 matte 殘留(鈕本身 AA 邊
+                // a≥59、白色圖示 a=255 都在門檻外),直接清成全透明。純白條件避免誤傷帶色 AA 邊。
+                if (cleanMatte && a < 48f / 255f && c.r > 170f / 255f && c.g > 170f / 255f && c.b > 170f / 255f)
+                { cols[i] = new Color(0f, 0f, 0f, 0f); continue; }
+                var lin = c.linear;                       // sRGB → linear (A untouched)
+                lin.r *= a; lin.g *= a; lin.b *= a;       // premultiply in linear space
+                var outc = lin.gamma;                     // linear → sRGB for storage; GPU decode yields linear·a
+                outc.a = a;
+                cols[i] = outc;
+            }
+            outTex.SetPixels(cols); outTex.Apply(false);
+            _premultTextures.Add(outTex);                 // mark so UGUI can pair it with the premult material (UIKit.ApplySprite)
+            return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
+
+        // Textures produced by LoadAnSoloPremultiplied (RGB already × alpha). A sprite on one of these MUST render with a
+        // premultiplied-alpha material (Blend One OneMinusSrcAlpha) or it looks wrong — UIKit.ApplySprite auto-pairs them.
+        private static readonly HashSet<Texture> _premultTextures = new HashSet<Texture>();
+        /// <summary>True if <paramref name="t"/> is a premultiplied-alpha texture from <see cref="LoadAnSoloPremultiplied"/>.</summary>
+        public static bool IsPremultTexture(Texture t) => t != null && _premultTextures.Contains(t);
+
+        private static Material _premultUiMat;
+        /// <summary>Shared premultiplied-alpha material (<c>Sdo/SpritePremultiply</c>, Blend One OneMinusSrcAlpha) for
+        /// UI Images / SpriteRenderers showing a premult texture. One instance serves all — UGUI binds each renderer's own
+        /// texture, and SpriteRenderers set their own. Null if the shader was stripped (caller keeps the default material,
+        /// which shows the premult texture too dark — so registration in BuildScript.RequiredShaders matters).</summary>
+        public static Material PremultUiMaterial
+        {
+            get
+            {
+                if (_premultUiMat == null)
+                {
+                    var sh = Shader.Find("Sdo/SpritePremultiply");
+                    if (sh != null) _premultUiMat = new Material(sh) { name = "SdoPremultUI" };
+                }
+                return _premultUiMat;
+            }
         }
 
         /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.
@@ -530,6 +518,7 @@ namespace Sdo.Game
 
         private static Texture2D LoadTextureLinear(string path)
         {
+            TraceLoad(path);
             if (_texLinearCache.TryGetValue(path, out var t) && t != null) return t;
             if (!File.Exists(path)) return null;
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);   // linear=true
@@ -726,33 +715,12 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// Flatten the bright near-white highlight pixels of a (small) sprite to its average opaque colour, removing
-        /// the glossy rim that reads as a "white seam" — used on the hold tail cap. Opaque pixels whose luminance
-        /// exceeds <paramref name="threshMul"/>× the average opaque luminance are set to the average colour.
-        /// </summary>
-        public static void DampenBrightRim(Texture2D tex, float threshMul = 1.5f)
-        {
-            if (tex == null) return;
-            var px = tex.GetPixels32();
-            long r = 0, g = 0, b = 0; int n = 0;
-            foreach (var c in px) if (c.a > 40) { r += c.r; g += c.g; b += c.b; n++; }
-            if (n == 0) return;
-            byte ar = (byte)(r / n), ag = (byte)(g / n), ab = (byte)(b / n);
-            float avgLum = 0.299f * ar + 0.587f * ag + 0.114f * ab;
-            float thresh = avgLum * threshMul;
-            for (int i = 0; i < px.Length; i++)
-            {
-                if (px[i].a <= 40) continue;
-                float lum = 0.299f * px[i].r + 0.587f * px[i].g + 0.114f * px[i].b;
-                if (lum > thresh) { px[i].r = ar; px[i].g = ag; px[i].b = ab; }   // kill the bright rim highlight
-            }
-            tex.SetPixels32(px); tex.Apply();
-        }
-
-        /// <summary>
-        /// Return a sprite over a FRESH, UNIQUE copy of <paramref name="src"/>'s texture (de-fringed + de-rimmed).
+        /// Return a sprite over a FRESH, UNIQUE copy of <paramref name="src"/>'s texture (de-fringed only).
         /// Each lane's cap gets its OWN texture this way, so it can never be confused with another lane's cap
-        /// (no shared cache texture), and the white fringe/rim is removed. Original colours are preserved.
+        /// (no shared cache texture), and the transparent-matte fringe is removed. Original colours are preserved.
+        /// NB: do NOT dampen the bright rim — the cap art ships a designed WHITE/silver metallic rim (the outer
+        /// taper edge). Flattening it to the cap's average opaque colour tints the edge (teal-green on the
+        /// left/right cap, brown on up/down) instead of the intended white.
         /// </summary>
         public static Sprite CleanCapCopy(Sprite src)
         {
@@ -760,8 +728,7 @@ namespace Sdo.Game
             var t0 = src.texture;
             var tex = new Texture2D(t0.width, t0.height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             tex.SetPixels32(t0.GetPixels32()); tex.Apply();
-            AlphaBleed(tex);        // kill transparent-white fringe
-            DampenBrightRim(tex);   // kill the bright rim "white seam"
+            AlphaBleed(tex);        // kill transparent-white fringe (the visible white rim is left intact)
             return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 

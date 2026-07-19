@@ -18,7 +18,8 @@ namespace Sdo.Tests
             src.keys.lane4aux = new[] { "Keypad4", "Keypad2", "Keypad8", "Keypad6" };
             src.display.width = 1280; src.display.height = 960; src.display.displayMode = "Fullscreen"; src.display.vsync = false;
             src.language = "en";
-            src.gameplay.fullscreenFill = true; src.gameplay.cameraAuto = false; src.gameplay.playFullSong = true;
+            src.gameplay.fullscreenFill = true; src.gameplay.cameraAuto = false; src.gameplay.cameraFixed = 4;
+            src.gameplay.playFullSong = true;
             src.gameplay.panelOpacity = 1.1f; src.gameplay.effectScene = false;
 
             RoomConfig.CaptureOptionFrom(src);
@@ -28,7 +29,8 @@ namespace Sdo.Tests
             RoomConfig.hasOption = false;
             RoomConfig.optBgm = RoomConfig.optMusic = RoomConfig.optSfx = 0.5f;
             RoomConfig.optKeys = "A,S,W,D"; RoomConfig.optDispW = 1024; RoomConfig.optLang = "zh-TW";
-            RoomConfig.optFullscreenFill = false; RoomConfig.optCameraAuto = true; RoomConfig.optPlayFullSong = false;
+            RoomConfig.optFullscreenFill = false; RoomConfig.optCameraAuto = true; RoomConfig.optCameraFixed = 0;
+            RoomConfig.optPlayFullSong = false;
             RoomConfig.ParseInto(ini);
             Assert.IsTrue(RoomConfig.hasOption, "[Option] 區應被辨識");
 
@@ -47,6 +49,7 @@ namespace Sdo.Tests
             Assert.AreEqual("en", dst.language);
             Assert.IsTrue(dst.gameplay.fullscreenFill);
             Assert.IsFalse(dst.gameplay.cameraAuto);
+            Assert.AreEqual(4, dst.gameplay.cameraFixed, "F2 記住的固定鏡頭台號要跟著 config.ini 走");
             Assert.IsTrue(dst.gameplay.playFullSong);
             Assert.IsFalse(dst.gameplay.effectScene);
             Assert.AreEqual(1.1f, dst.gameplay.panelOpacity, 1e-4f);

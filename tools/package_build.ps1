@@ -10,6 +10,7 @@
       screensave/                                           (screenshot output, beside the exe)
       DATA/                                                 (SdoExtracted.Root)
         <Extracted contents> + SE/ + BGM/ + MUSIC/ + REPLAY/
+        PROFILE/            <- SEEDED only (existing saves/settings are NEVER overwritten by re-packaging)
         UI/MUSIC/ICONS      <- overlaid with the FULL online (DatasSDO) icon set
         UI/STATIS/STATISTIC <- overlaid with the online result-screen art (safety; usually already in Extracted)
 
@@ -37,10 +38,24 @@ Write-Host "[package] data     = $Data"
 if (-not (Test-Path $BuildDir)) { throw "BuildDir not found: $BuildDir (build the player first)" }
 
 # robocopy mirror-copy a tree; treat exit codes 0..7 as success (8+ = real failure).
-function Copy-Tree($src, $dst, [string]$label) {
+# -ExcludeDirs: absolute dir paths to skip (robocopy /XD).
+function Copy-Tree($src, $dst, [string]$label, [string[]]$ExcludeDirs) {
     if (-not (Test-Path $src)) { Write-Warning "[package] skip ${label}: source missing -> $src"; return }
     Write-Host "[package] copy $label : $src -> $dst"
-    & robocopy $src $dst /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+    $xd = @(); if ($ExcludeDirs) { $xd = @('/XD') + $ExcludeDirs }
+    & robocopy $src $dst /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 @xd | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($label) exit=$LASTEXITCODE" }
+}
+
+# Copy a tree WITHOUT touching files that already exist at the destination (/XC /XN /XO = only files missing
+# there are copied). Used to seed the per-user save tree (PROFILE: profile.json / favorites.json / settings.json /
+# active.txt / config.ini) so re-packaging over an existing build never clobbers live player data. (config.ini is
+# global-not-per-user, but now lives in DATA/PROFILE alongside settings.json; the game writes a commented template
+# there on first boot, so shipping it is optional.)
+function Copy-TreeIfMissing($src, $dst, [string]$label) {
+    if (-not (Test-Path $src)) { Write-Warning "[package] skip ${label}: source missing -> $src"; return }
+    Write-Host "[package] seed $label (existing files kept) : $src -> $dst"
+    & robocopy $src $dst /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($label) exit=$LASTEXITCODE" }
 }
 
@@ -78,8 +93,13 @@ function Write-ShopNames($iteminfoPath, $outPath) {
     Write-Host "[package] wrote shop_names.tsv ($n names, UTF-8)"
 }
 
-# 1) Base: the offline Extracted tree -> DATA
-Copy-Tree (Join-Path $Off 'Extracted') $Data 'Extracted'
+# 1) Base: the offline Extracted tree -> DATA. PROFILE (per-user saves) is excluded from the mirror and
+#    SEEDED separately below — a re-package over an existing build must never overwrite the player's live
+#    profile.json / favorites.json / settings.json / active.txt / config.ini. (The game also self-heals: missing
+#    PROFILE files are re-created with defaults at boot, see ProfileManager/DisplaySettingsManager/RoomConfig.
+#    config.ini is global-not-per-user but now lives in DATA/PROFILE, written by RoomConfig on first boot.)
+Copy-Tree (Join-Path $Off 'Extracted') $Data 'Extracted' -ExcludeDirs @(Join-Path $Off 'Extracted\PROFILE')
+Copy-TreeIfMissing (Join-Path $Off 'Extracted\PROFILE') (Join-Path $Data 'PROFILE') 'PROFILE (seed only)'
 
 # 2) Overlay online (DatasSDO) assets the remake uses. Locate the online client folder by scanning assets/ for the
 #    subdir that holds DatasSDO\UI\MUSIC\ICONS (the folder name is oddly encoded, so we don't hardcode it).
@@ -123,9 +143,36 @@ if ($online) {
     Write-Warning "[package] online DatasSDO not found under $assetsDir — icons fall back to the offline subset."
 }
 
+# 2b) Traditional-Chinese (TW 櫻式搖滾) name overlay: shop_names_tw.tsv (category<TAB>modelId<TAB>Big5-decoded-name).
+# Committed at tools\data\ (produced by tools\build_shop_names_tw.py from the TW iteminfo.dat, a different 152-byte/Big5
+# format the runtime reader ignores). AvatarItemCatalog overlays it to fill unnamed mesh-only rows + swap CN Simplified
+# names for the official Traditional ones. Independent of the online overlay above, so copied here unconditionally.
+$twNames = Join-Path $Repo 'tools\data\shop_names_tw.tsv'
+if (Test-Path $twNames) {
+    Copy-Item $twNames (Join-Path $Data 'shop_names_tw.tsv') -Force
+    Write-Host "[package] copied shop_names_tw.tsv (繁體 name overlay)"
+} else {
+    Write-Warning "[package] shop_names_tw.tsv not found at $twNames — built shop keeps 簡體/序號 names (run tools\build_shop_names_tw.py)"
+}
+# 台版官方套装 (古惑仔/卡卡西/逍遙英雄…): AvatarItemCatalog.AddTwSets 讀它,加進 套装 分頁。
+$twSets = Join-Path $Repo 'tools\data\shop_sets_tw.tsv'
+if (Test-Path $twSets) {
+    Copy-Item $twSets (Join-Path $Data 'shop_sets_tw.tsv') -Force
+    Write-Host "[package] copied shop_sets_tw.tsv (繁體 套装)"
+} else {
+    Write-Warning "[package] shop_sets_tw.tsv not found at $twSets — built shop has no 台版套装 (run tools\build_shop_names_tw.py)"
+}
+
 # 3) Audio + song trees -> DATA (folder names normalized to UPPERCASE)
 Copy-Tree (Join-Path $Off 'SE')    (Join-Path $Data 'SE')    'SE'
-Copy-Tree (Join-Path $Off 'BGM')   (Join-Path $Data 'BGM')   'BGM'
+# BGM: the lobby/room random playlist lives in Extracted/UI/BGM (bgm_000..007.ogg) — ship it at DATA/BGM (UiBgmDir's
+# preferred location) and drop the copies older layouts left at DATA/UI/BGM (Extracted mirror) and DATA/BGA (a
+# short-lived rename). The old top-level sdox_offline/BGM (BMG_/TEACHING) has NO consumer in the remake, so it is
+# no longer shipped — DATA/BGM holds the lobby tracks.
+Copy-Tree (Join-Path $Off 'Extracted\UI\BGM') (Join-Path $Data 'BGM') 'BGM (lobby, from Extracted/UI/BGM)'
+foreach ($stale in @((Join-Path $Data 'UI\BGM'), (Join-Path $Data 'BGA'))) {
+    if (Test-Path $stale) { Remove-Item -LiteralPath $stale -Recurse -Force; Write-Host "[package] removed $stale (lobby bgm now at DATA\BGM)" }
+}
 Copy-Tree (Join-Path $Off 'music') (Join-Path $Data 'MUSIC') 'MUSIC'
 
 # 4) Writable folders: replay saves (under DATA) and screenshots (beside the exe)
@@ -145,3 +192,5 @@ Get-ChildItem -LiteralPath $BuildDir -Directory -Filter '*_BurstDebugInformation
 
 Write-Host "[package] done. Top level of $BuildDir :"
 Get-ChildItem -LiteralPath $BuildDir | Select-Object Name | Format-Table -HideTableHeaders
+# robocopy leaves 1/2 ("copied"/"extras at destination") in $LASTEXITCODE on success; exit 0 so callers don't see a false failure.
+exit 0

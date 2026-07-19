@@ -84,17 +84,8 @@ namespace Sdo.UI.Screens
         private List<SongCatalog.Entry> _bucketSongs = new List<SongCatalog.Entry>();
 
         // 隨機 difficulty ranges — shown AS the list rows when the 隨機 tab is active; OK picks a random song from the pool.
-        private struct RandRange { public string Key; public int Min, Max; }
-        private static readonly RandRange[] RandRanges =
-        {
-            new RandRange { Key = "songselect.rand_1_5",  Min = 1,  Max = 5 },
-            new RandRange { Key = "songselect.rand_1_9",  Min = 1,  Max = 9 },
-            new RandRange { Key = "songselect.rand_5_9",  Min = 5,  Max = 9 },
-            new RandRange { Key = "songselect.rand_all",  Min = 0,  Max = 99 },
-            new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = 99 },
-            new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = 99 },
-            new RandRange { Key = "songselect.rand_13up", Min = 13, Max = 99 },
-        };
+        // 範圍表 + 選池邏輯放在 SongListModel（唯一來源）：FrontendApp 進遊戲時也用同一份重抽。
+        private static SongListModel.RandRange[] RandRanges => SongListModel.RandRanges;
         private int _randRange = 3;   // default = 全部
 
         // list rows
@@ -222,7 +213,16 @@ namespace Sdo.UI.Screens
             // and those fields/widgets are never reset here, so it reopens exactly as it was left.
             // EXCEPTIONS reset on every open: the category tab snaps back to 全部, and the search box is cleared —
             // so re-entering always shows the full list, not a stale filter/tab.
-            _category = CatAll;
+            // BUT: 若上次確認的是「隨機難度」→ 直接回隨機 tab 的同一個區間按鈕（房間顯示的是隨機標籤，不是某首歌）。
+            if (Ctx.Session.SongIsRandom)
+            {
+                _category = CatRandom;
+                _randRange = Mathf.Clamp(Ctx.Session.SongRandomRange, 0, RandRanges.Length - 1);
+            }
+            else
+            {
+                _category = CatAll;
+            }
             CloseGroupPanel();         // 分類瀏覽面板不跨場次留著；再進來由 資料夾 頁籤重新開（分類方式/桶則沿用上次）
             _diskSpinPaused = false;   // 跳出再進 → 唱片轉動 reset：預設會轉（下面選歌時 SetDiskSpinning 會轉起來）
             if (_search != null)
@@ -530,6 +530,7 @@ namespace Sdo.UI.Screens
                 // song name / time / level nudged down 2px to sit centred in the row strip (was at `top`).
                 float textTop = top + 2f;
                 _rowName[i] = AddRowText("row" + i + "name", NameX, textTop, NameW, ColRow, TextAlignmentOptions.Left);
+                _rowName[i].characterSpacing = -TextStyles.SongTitleTrackEm * 100f;   // 歌名字靠緊一點（TMP 真字距，不變形）
                 _rowTime[i] = AddRowText("row" + i + "time", TimeX, textTop, TimeW, ColRow, TextAlignmentOptions.Center);
                 _rowLevel[i] = AddRowText("row" + i + "lvl", LevelX, textTop, LevelW, ColRow, TextAlignmentOptions.Center);
 
@@ -887,7 +888,8 @@ namespace Sdo.UI.Screens
                 _rowName[i].alignment = TextAlignmentOptions.Left;   // same left indent as song names
                 _rowName[i].text = L(RandRanges[i].Key);
                 int idx = i;
-                _rowBtn[i].onClick.AddListener(() => SelectRandRange(idx));
+                // RemoveAllListeners 上面清掉了 WrapInWindow 掛的 click SFX → 這裡補回（對齊歌曲列 line 796）
+                _rowBtn[i].onClick.AddListener(() => { UiSfx.Play(UiSfx.Click); SelectRandRange(idx); });
             }
         }
 
@@ -897,15 +899,10 @@ namespace Sdo.UI.Screens
             RenderRandomRows();   // re-highlight the picked range
         }
 
-        // Songs eligible for the current 隨機 range (level at the active difficulty within [min,max]).
-        // Excludes songs with no chart at the active difficulty (0 notes) — a random pick must be playable.
-        private List<SongCatalog.Entry> RandomPool()
-        {
-            var r = RandRanges[Mathf.Clamp(_randRange, 0, RandRanges.Length - 1)];
-            var pool = SongListModel.InLevelRange(_model.All, _difficulty, r.Min, r.Max);
-            pool.RemoveAll(e => e == null || !e.HasChart(_difficulty));
-            return pool;
-        }
+        // (song, difficulty) candidates for the current 隨機 range — searches easy/normal/hard together;
+        // the matched difficulty is what gets played. See SongListModel.RandomCandidates.
+        private List<SongListModel.RandomCandidate> RandomPool()
+            => SongListModel.RandomCandidates(_model.All, _randRange);
 
         private void Select(SongCatalog.Entry e)
         {
@@ -987,16 +984,9 @@ namespace Sdo.UI.Screens
             _previewCo = StartCoroutine(LoadPreviewCo(e));
         }
 
-        /// <summary>Full-song ogg name for a chart gn ("sdom2784k.gn" -> "sdom2784.ogg"), matching the on-disk
-        /// stem-based main audio; null if the gn isn't an sdom chart.</summary>
-        private static string MainOggName(string gn)
-        {
-            if (string.IsNullOrEmpty(gn)) return null;
-            var n = gn.ToLowerInvariant();
-            if (n.EndsWith(".gn")) n = n.Substring(0, n.Length - 3);
-            if (n.Length > 0 && (n[n.Length - 1] == 'k' || n[n.Length - 1] == 't')) n = n.Substring(0, n.Length - 1);
-            return n.Length > 0 ? n + ".ogg" : null;
-        }
+        /// <summary>Full-song ogg name for a chart gn ("sdom2784k.gn" -> "sdom2784.ogg"). Shared with the
+        /// gameplay hand-off (FrontendApp) so preview and play never resolve different audio.</summary>
+        private static string MainOggName(string gn) => SongCatalog.MainOggName(gn);
 
         /// <summary>UnityWebRequestMultimedia AudioType from a file extension (external ogg/mp3/wav previews).</summary>
         private static AudioType PreviewAudioType(string path)
@@ -1157,29 +1147,39 @@ namespace Sdo.UI.Screens
 
         private void OnConfirm()
         {
-            // 隨機 mode: pick a random song from the selected difficulty-range pool.
-            if (_category == CatRandom && _selected == null)
+            // 隨機 mode: pick a (song, difficulty) candidate from the range pool — easy/normal/hard are searched
+            // together, so the drawn difficulty (not the active tab) is what gets played.
+            bool randomPick = _category == CatRandom && _selected == null;
+            int pickedRange = _randRange;
+            int pickedDifficulty = _difficulty;
+            if (randomPick)
             {
                 var pool = RandomPool();
                 if (pool.Count == 0) { Toast.Show(L("songselect.need_pick")); return; }
-                _selected = pool[Random.Range(0, pool.Count)];
+                var cand = pool[Random.Range(0, pool.Count)];
+                _selected = cand.Song;
+                pickedDifficulty = cand.Difficulty;
             }
             if (_selected == null) { Toast.Show(L("songselect.need_pick")); return; }
             var s = Ctx.Session;
             s.SongGn = _selected.gn;
             s.SongFileId = _selected.fileId;
-            s.SongTitle = _selected.title ?? _selected.gn;
+            // 隨機難度：房間只顯示「隨機難度 X」標籤，抽到的實際歌名(進遊戲才揭曉)藏起來；一般選擇顯示歌名。
+            s.SongTitle = randomPick ? L(RandRanges[pickedRange].Key) : (_selected.title ?? _selected.gn);
             s.SongArtist = _selected.artist;
-            s.Difficulty = (Difficulty)_difficulty;
+            s.SongIsRandom = randomPick;
+            s.SongRandomRange = pickedRange;
+            s.Difficulty = (Difficulty)pickedDifficulty;
             // external song (user Songs/ folder): resolve the chosen difficulty's chart + audio for gameplay.
+            // （external 歌不進隨機池 → pickedDifficulty == _difficulty，這裡統一用 pickedDifficulty。）
             s.IsExternalSong = _selected.external;
             if (_selected.external)
             {
                 s.ExternalChartFormat = _selected.chartFormat;
-                s.ExternalChartPath = _selected.ChartPath(_difficulty);
-                s.ExternalChartIndex = _selected.ChartIndex(_difficulty);
+                s.ExternalChartPath = _selected.ChartPath(pickedDifficulty);
+                s.ExternalChartIndex = _selected.ChartIndex(pickedDifficulty);
                 s.ExternalAudioPath = _selected.audioPath;
-                s.ExternalLevel = _selected.Diff(_difficulty);   // 星數×5 等級 → 帶進遊戲顯示同一個 LV
+                s.ExternalLevel = _selected.Diff(pickedDifficulty);   // 星數×5 等級 → 帶進遊戲顯示同一個 LV
                 s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdo.header 都寫在歌曲自己的資料夾
                 s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
             }
@@ -1202,7 +1202,7 @@ namespace Sdo.UI.Screens
         // ---------------- 收藏右鍵彈出選單 ----------------
 
         // 右鍵歌曲列 → 單鈕選單「添加收藏夹 / 从收藏夹删除」(原版 MUSICPOP)：位置跟著滑鼠、夾在畫面內；按下切換收藏
-        // 並收起，點選單外任一處(全螢幕 overlay)也收起。收藏狀態存在 active user 的 favorites.json。
+        // 並收起，點選單外任一處(全螢幕 overlay)也收起。收藏狀態存在 PROFILE 層全帳號共用的 favorites.json。
         private void ShowFavPopup(SongCatalog.Entry e, Vector2 screenPos)
         {
             CloseFavPopup();

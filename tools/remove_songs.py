@@ -25,21 +25,102 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 SA = REPO / "65" / "My project" / "Assets" / "StreamingAssets"
-MUSIC = REPO / "assets" / "sdox_offline" / "music"
-EXPER = MUSIC / "exper"
-DANCE = REPO / "assets" / "sdox_offline" / "Extracted" / "DANCE"
-ICON_OVERLAY = REPO / "assets" / "sdox_offline" / "Extracted" / "UI" / "MUSIC" / "ICONS"
 
+# 目錄表(歌單/難度/歌名)—— data_root.txt 不轉這幾張,永遠留在 StreamingAssets(隨 build 打包)。
 KEYTABLE = SA / "gn_keytable.json"
 HEADERCAT = SA / "gn_header_catalog.json"
 CATALOG = SA / "song_catalog.json"
 OVERRIDES_JSON = SA / "song_name_overrides.json"
 OVERRIDES_CSV = SA / "song_name_overrides.csv"
+
+# ---------------------------------------------------------------- 資料樹解析
+# 譜面/主音樂/試聽/舞蹈/封面這些「檔案」不在 StreamingAssets,而是遊戲執行期從 data-root 讀。
+# data-root 由 runtime 的 SdoDataRoot 解析:env SDO_DATA_ROOT 或 repo 根 data_root.txt 指到別處
+# (例如剪枝過的乾淨包 clean\DATA)時,遊戲就從那裡讀 —— 這裡必須跟著寫過去,否則加的歌只進了
+# repo 的 sdox_offline、跑起來的遊戲(讀 clean\DATA)完全看不到。見 SdoDataRoot.cs / SdoExtracted.cs。
+#
+# 一個 data-root 底下四個目錄的位置,完全照 SdoExtracted 的規則推(才不會跟遊戲讀的位置對不上):
+#   music = <root>/MUSIC(存在就用)否則 <root 的上一層>/music   ← 對應 SdoExtracted.MusicDir
+#   exper = <music>/exper
+#   dance = <root>/DANCE                                        ← FrontendApp: "DANCE/<id>.DPS"
+#   icons = <root>/UI/MUSIC/ICONS                               ← SongIcons: Root/UI/MUSIC/ICONS
+# repo 的 dev 原始樹以 Extracted 當 root:<root>/MUSIC 不存在 → 退到兄弟 sdox_offline/music,
+# 剛好等於歷來的四條路徑(下面的 MUSIC/EXPER/DANCE/ICON_OVERLAY 就是它,保留給既有呼叫端)。
+
+DEV_ROOT = REPO / "assets" / "sdox_offline" / "Extracted"
+
+
+def _tree_for_root(root: Path) -> Dict[str, Path]:
+    """給一個 data-root,回它底下 {music,exper,dance,icons} 四個目錄(同 SdoExtracted 規則)。"""
+    root = Path(root)
+    music = root / "MUSIC"
+    if not music.is_dir():
+        music = root.parent / "music"          # dev 版型:Extracted 的兄弟 music(遊戲的第二順位)
+    return {"music": music, "exper": music / "exper",
+            "dance": root / "DANCE", "icons": root / "UI" / "MUSIC" / "ICONS"}
+
+
+def configured_data_root() -> Optional[Path]:
+    """覆寫來源(同 runtime SdoDataRoot.ConfiguredRoot):env SDO_DATA_ROOT 優先,否則 repo 根
+    data_root.txt 第一行。指到「存在的別處」才回,否則 None(打錯字的路徑不會被拿來亂建樹)。"""
+    try:
+        e = (os.environ.get("SDO_DATA_ROOT") or "").strip()
+        if e and Path(e).is_dir():
+            return Path(e)
+    except Exception:
+        pass
+    try:
+        f = REPO / "data_root.txt"
+        if f.is_file():
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                ln = ln.strip()
+                if ln:
+                    return Path(ln) if Path(ln).is_dir() else None
+    except Exception:
+        pass
+    return None
+
+
+def _norm(p: Path) -> str:
+    try:
+        return os.path.normcase(os.path.abspath(str(p)))
+    except Exception:
+        return str(p)
+
+
+def data_trees() -> List[Dict[str, Path]]:
+    """所有要同步的資料樹(去重):dev 原始樹永遠在;若 data_root.txt/SDO_DATA_ROOT 指到別處
+    (遊戲實際讀的乾淨 DATA),也一起寫。順序 = [dev, ...configured];runtime_tree 取最後一個。"""
+    trees: List[Dict[str, Path]] = []
+    seen = set()
+    for root in (DEV_ROOT, configured_data_root()):
+        if root is None:
+            continue
+        t = _tree_for_root(root)
+        key = (_norm(t["music"]), _norm(t["dance"]), _norm(t["icons"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        trees.append(t)
+    return trees
+
+
+def runtime_tree() -> Dict[str, Path]:
+    """遊戲執行期實際讀檔的那棵樹(有覆寫就是覆寫的,否則 dev)。用來判斷資源在不在位。"""
+    return data_trees()[-1]
+
+
+# 保留給既有呼叫端的單棵 dev-tree 常數(= data_trees()[0]);多樹同步走上面的 data_trees()。
+_DEV = _tree_for_root(DEV_ROOT)
+MUSIC = _DEV["music"]
+EXPER = _DEV["exper"]
+DANCE = _DEV["dance"]
+ICON_OVERLAY = _DEV["icons"]
 
 
 def stem(gn: str) -> str:
@@ -89,7 +170,7 @@ def resolve(tokens: List[str], by_stem: Dict[str, Dict]):
         if not t:
             continue
         low = t.lower()
-        if re.fullmatch(r"sdom\d+", low):                 # 詞幹
+        if re.fullmatch(r"sdom[\d_]+", low):              # 詞幹(插隊加的歌會有 _N 後綴，例 sdom1150_1)
             (stems.add(low) if low in by_stem else unresolved.append(t))
         elif t.isdigit():                                  # fileId
             fid = int(t)
@@ -165,10 +246,12 @@ def remove_stems(stems: Set[str], by_stem: Dict[str, Dict], dry_run: bool = Fals
     to_delete: List[Path] = []
     for s in stems:
         v = by_stem[s]; fid = v["fileId"]
-        for gn in v["gns"]:
-            to_delete.append(MUSIC / gn)
-        to_delete += [MUSIC / f"{s}.ogg", EXPER / f"{fid}.ogg", DANCE / f"{fid}.DPS",
-                      ICON_OVERLAY / f"{fid}.PNG", ICON_OVERLAY / f"{fid}.png"]
+        for tree in data_trees():                      # dev 樹 + data_root.txt 指到的乾淨 DATA,都要清
+            for gn in v["gns"]:
+                to_delete.append(tree["music"] / gn)
+            to_delete += [tree["music"] / f"{s}.ogg", tree["exper"] / f"{fid}.ogg",
+                          tree["dance"] / f"{fid}.DPS", tree["icons"] / f"{fid}.PNG",
+                          tree["icons"] / f"{fid}.png"]
 
     if dry_run:
         print("\n[DRY-RUN] 會刪這些檔(存在者):")
@@ -194,7 +277,7 @@ def remove_stems(stems: Set[str], by_stem: Dict[str, Dict], dry_run: bool = Fals
 
     try:
         doc = json.loads(OVERRIDES_JSON.read_text(encoding="utf-8"))
-        cols = ["gn", "title", "artist", "src", "bpm", "fileId"]
+        cols = ["gn", "title", "artist", "src", "bpm", "offsetMs", "fileId"]   # 同 song_names_csv.COLS
         with OVERRIDES_CSV.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader()
             for e in doc.get("songs", []):

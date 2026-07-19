@@ -55,12 +55,18 @@ namespace Sdo.EditorTools
                 const int w = 960, h = 720;   // 4:3 stage view
                 var rt = new RenderTexture(w, h, 24);
                 var prevT = cam.targetTexture; var prevA = RenderTexture.active;
+                // In Pillarbox mode (視窗化) the on-screen camera's rect is a centred sub-rect and its aspect is
+                // reset to the window's letterbox shape. Rendering that straight into a fixed 4:3 RT would crop the
+                // left/right of the frame. Force the FULL 4:3 frame into the RT for the capture, then restore.
+                var prevRect = cam.rect; var prevAspect = cam.aspect;
+                cam.rect = new Rect(0f, 0f, 1f, 1f); cam.aspect = (float)w / h;
                 cam.targetTexture = rt; cam.Render();
                 RenderTexture.active = rt;
                 var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
                 tex.ReadPixels(new Rect(0, 0, w, h), 0, 0); tex.Apply();
                 System.IO.File.WriteAllBytes(OutPath, tex.EncodeToPNG());
-                cam.targetTexture = prevT; RenderTexture.active = prevA;
+                cam.targetTexture = prevT; cam.rect = prevRect; cam.aspect = prevAspect;
+                RenderTexture.active = prevA;
                 Object.DestroyImmediate(tex); rt.Release(); Object.DestroyImmediate(rt);
                 Debug.Log("[AutoCapture] saved (SceneCam) " + OutPath);
                 return;
@@ -87,11 +93,19 @@ namespace Sdo.EditorTools
             var rt = new RenderTexture(w, h, 24);
             var prevA = RenderTexture.active;
             var prevTargets = new RenderTexture[cams.Count];
+            // Save the on-screen rect/aspect so the Pillarbox (視窗化) sub-rect doesn't crop the capture:
+            // each camera renders the FULL 4:3 frame into the 4:3 RT, then is restored (see SceneCam path above).
+            var prevRects = new Rect[cams.Count];
+            var prevAspects = new float[cams.Count];
             RenderTexture.active = rt;
             GL.Clear(true, true, Color.black);
             for (int i = 0; i < cams.Count; i++)
             {
                 prevTargets[i] = cams[i].targetTexture;
+                prevRects[i] = cams[i].rect;
+                prevAspects[i] = cams[i].aspect;
+                cams[i].rect = new Rect(0f, 0f, 1f, 1f);
+                cams[i].aspect = (float)w / h;
                 cams[i].targetTexture = rt;
                 cams[i].Render();
             }
@@ -102,7 +116,8 @@ namespace Sdo.EditorTools
             tex.Apply();
             System.IO.File.WriteAllBytes(OutPath, tex.EncodeToPNG());
 
-            for (int i = 0; i < cams.Count; i++) if (cams[i] != null) cams[i].targetTexture = prevTargets[i];
+            for (int i = 0; i < cams.Count; i++)
+                if (cams[i] != null) { cams[i].targetTexture = prevTargets[i]; cams[i].rect = prevRects[i]; cams[i].aspect = prevAspects[i]; }
             RenderTexture.active = prevA;
             Object.DestroyImmediate(tex);
             rt.Release();

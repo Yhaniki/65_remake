@@ -25,7 +25,9 @@ namespace Sdo.Settings
             new ScreenSize(1600, 1200),   // UXGA
         };
 
-        public const int MinDim = 640;
+        // 600 = 最小預設 800×600 的高。設 640 的話 Clamp() 吐回來的 800×600 反而過不了 IsValid()，
+        // Sanitize() 就會留下一組「自己判定為非法」的值。
+        public const int MinDim = 600;
         public const int MaxDim = 7680;
 
         public static bool IsValid(int w, int h)

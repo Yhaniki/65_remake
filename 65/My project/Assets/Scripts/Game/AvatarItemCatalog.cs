@@ -53,15 +53,21 @@ namespace Sdo.Game
             var g = ItemTypes.GenderOf(outfitItem.Category, outfitItem.Name) == ItemSex.Male ? "MAN" : "WOMAN";
             foreach (var c in set.Components)
             {
-                string hit = FindComponentMesh(c.ModelId, g) ?? FindComponentMesh(c.ModelId, g == "MAN" ? "WOMAN" : "MAN");
+                string hit = FindComponentMesh(c.ModelId, g, c.Token) ?? FindComponentMesh(c.ModelId, g == "MAN" ? "WOMAN" : "MAN", c.Token);
                 if (hit != null) res.Add("AVATAR/" + hit);
             }
             return res;
         }
 
-        private string FindComponentMesh(int modelId, string g)
+        private string FindComponentMesh(int modelId, string g, string preferredToken = null)
         {
             string id = modelId.ToString("D6");
+            // 該組件已知部位 → 直接用它的 token(修:020366 同時有 _COAT 與 _PANT,裙子要拿 PANT 不是先命中的 COAT)。
+            if (!string.IsNullOrEmpty(preferredToken))
+            {
+                string pf = id + "_" + g + "_" + preferredToken + ".MSH";
+                if (_meshFiles.Contains(pf)) return pf;
+            }
             foreach (var tok in OutfitSlotTokens)
             {
                 string f = id + "_" + g + "_" + tok + ".MSH";
@@ -77,7 +83,116 @@ namespace Sdo.Game
             if (it == null) return false;
             if (it.EquipSlot == EquipSlot.Outfit) return OutfitComponentMeshes(it).Count > 0;
             var rel = it.MshRelPath;
-            return rel != null && _meshFiles.Contains(rel.Substring(rel.LastIndexOf('/') + 1));
+            if (rel == null || !_meshFiles.Contains(rel.Substring(rel.LastIndexOf('/') + 1))) return false;
+            // 有 mesh 但布料貼圖完全解不到的殘骸 (如 000004:主布料 submesh 的材質名是 GBK 亂碼「未标题-1副本_.dds」=
+            // Photoshop 預設檔名的垃圾佔位,磁碟上也沒有自身的 COAT 貼圖) → 只會畫成一坨 fallback 純色 (使用者回報:
+            // 服裝 000004 無法顯示)。視為不可渲染而隱藏,正如它已隱藏「沒 mesh」的道具。只檢查帶布料貼圖的 mesh 衣物槽
+            // (上衣/下裝/髮型/鞋子/連身);配件/眼鏡/表情維持原本「有 mesh 即可」的規則。
+            if (IsClothTextureSlot(it.EquipSlot) && !GarmentClothResolves(it)) return false;
+            return true;
+        }
+
+        /// <summary>The mesh clothing slots whose garment carries its OWN cloth texture (上衣/下裝/髮型/鞋子/連身). A
+        /// mesh in one of these that resolves to NO cloth texture renders as a flat fallback colour, so it is treated as
+        /// non-renderable and hidden. Accessories/眼鏡/表情 are excluded (they keep the mesh-only rule).</summary>
+        private static bool IsClothTextureSlot(EquipSlot s)
+            => s == EquipSlot.Top || s == EquipSlot.Bottom || s == EquipSlot.Hair || s == EquipSlot.Shoes || s == EquipSlot.OnePiece;
+
+        /// <summary>The slots one outfit design ships as interchangeable geometry: 上衣 / 下裝 / 連身. A single modelId's
+        /// COAT, PANT and ONE meshes are the SAME design — the coat half of 快乐舞会 002247's 連身裙 is
+        /// 002247_WOMAN_COAT.MSH; 野战迷彩中裤 001278's companion 001278_WOMAN_COAT.MSH merely re-uses 性感嘻哈 001277's
+        /// coat texture. So a modelId named in ONE of these must not be re-synthesised as a phantom row in ANOTHER.</summary>
+        private static bool IsBodyOutfitSlot(EquipSlot s)
+            => s == EquipSlot.Top || s == EquipSlot.Bottom || s == EquipSlot.OnePiece;
+
+        /// <summary>Pure: should a mesh-only garment row be synthesised for this (sex, slot, modelId)? NO when the modelId
+        /// is already a NAMED garment worn in a body-outfit slot (上衣/下裝/連身) for the same sex — its mesh in a DIFFERENT
+        /// body-outfit slot is that same outfit's companion piece, so listing it would show a visual duplicate (使用者回報:
+        /// 合成上衣「001278」==「性感嘻哈」、「002247」==「快乐舞会」顯示同一件衣服). 髮型/鞋子/翅膀/表情 keep the plain
+        /// "any mesh on disk" rule — they don't share a modelId across a 上↔下 split.</summary>
+        public static bool ShouldSynthGarment(ItemSex sex, EquipSlot slot, int modelId, ISet<(ItemSex, int)> namedBodyOutfitIds)
+            => !(IsBodyOutfitSlot(slot) && namedBodyOutfitIds != null && namedBodyOutfitIds.Contains((sex, modelId)));
+
+        private static readonly Dictionary<string, bool> _clothResolveCache = new Dictionary<string, bool>();
+
+        /// <summary>True if this garment's mesh has a resolvable CLOTH texture on disk. Fast path: if any texture of the
+        /// item's own family (<c>{id}_{G}_{TOKEN}*</c> .dds/.an) exists, the garment's own-id/variant texture is present
+        /// → it renders (no mesh read). Otherwise read the mesh's material names and apply the builder's actual
+        /// resolution (<see cref="ClothTextureResolvable"/>): a corrupt row like 000004 (junk material name + no own
+        /// texture) fails → hidden. Only the ~0.1% of garments with no own-family texture ever pay the mesh read, and
+        /// the result is cached (a stable property of the shipped data).</summary>
+        public bool GarmentClothResolves(ShopItem it)
+        {
+            var rel = it?.MshRelPath;
+            if (rel == null) return true;
+            if (_clothResolveCache.TryGetValue(rel, out var cached)) return cached;
+            bool r = ComputeGarmentClothResolves(rel);
+            _clothResolveCache[rel] = r;
+            return r;
+        }
+
+        private static bool ComputeGarmentClothResolves(string rel)
+        {
+            string fam = Path.GetFileNameWithoutExtension(rel);              // e.g. "000004_MAN_COAT"
+            if (TexFamilies().Contains(fam.ToUpperInvariant())) return true;   // own texture family present → renders
+            string path = SdoAvatarBuilder.ResolveAvatarFile(rel);
+            if (!File.Exists(path)) return false;
+            string dir = Path.GetDirectoryName(path);
+            List<string> names;
+            try { names = MshLoader.ReadMaterialNames(File.ReadAllBytes(path)); }
+            catch { return false; }
+            return ClothTextureResolvable(names,
+                nm => SdoAvatarBuilder.FindDdsPath(dir, nm) != null,
+                anName => !string.IsNullOrEmpty(anName) && File.Exists(Path.Combine(dir, anName + ".an")));
+        }
+
+        /// <summary>Pure: does a garment mesh have a resolvable CLOTH texture? True if ANY of its submesh material names
+        /// (from <see cref="MshLoader.ReadMaterialNames"/>) is a real garment texture — a non-<c>Basic</c> name that
+        /// resolves to a DDS (<paramref name="ddsResolves"/>) OR a <c>_TexAnimEx(NAME)</c> placeholder whose frame list
+        /// <c>NAME.an</c> exists (<paramref name="anExists"/>). Shared <c>Basic</c> skin-base names (exposed arms/neck)
+        /// and blank/placeholder names don't count. A garment whose ONLY materials are skin-base or unresolvable junk
+        /// (使用者:000004「未标题-1副本」) returns false. The own-id fallback the builder also tries is exactly what the
+        /// caller's family fast path already covers, so it isn't repeated here.</summary>
+        public static bool ClothTextureResolvable(IEnumerable<string> matNames, Func<string, bool> ddsResolves, Func<string, bool> anExists)
+        {
+            if (matNames == null) return false;
+            foreach (var nm in matNames)
+            {
+                if (string.IsNullOrEmpty(nm)) continue;
+                if (nm.IndexOf("Basic", StringComparison.OrdinalIgnoreCase) >= 0) continue;   // 膚色底材 (手臂/脖子),非布料
+                if (ddsResolves != null && ddsResolves(nm)) return true;
+                if (TexAnimEx.TryParse(nm, out var spec) && anExists != null && anExists(spec.Name)) return true;
+            }
+            return false;
+        }
+
+        // Garment texture "families" present on disk, as UPPERCASE "{id}_{G}_{TOKEN}" keys derived from every AVATAR
+        // *.dds / *.an filename (garment tokens only). A family hit means the item's own or a variant/frame texture
+        // exists → it renders, so GarmentClothResolves can skip the mesh read. Built once, cached for the session.
+        private static HashSet<string> _texFamilies;
+        private static readonly System.Text.RegularExpressions.Regex _famRx =
+            new System.Text.RegularExpressions.Regex(@"^(\d{6})_(MAN|WOMAN)_(COAT|PANT|HAIR|SHOES|ONE)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        private static HashSet<string> TexFamilies()
+        {
+            if (_texFamilies != null) return _texFamilies;
+            var set = new HashSet<string>();
+            foreach (var dir in AvatarDirs())
+            {
+                try
+                {
+                    if (!Directory.Exists(dir)) continue;
+                    foreach (var pat in new[] { "*.dds", "*.an" })
+                        foreach (var f in Directory.GetFiles(dir, pat))
+                        {
+                            var m = _famRx.Match(Path.GetFileNameWithoutExtension(f));
+                            if (m.Success) set.Add((m.Groups[1].Value + "_" + m.Groups[2].Value + "_" + m.Groups[3].Value).ToUpperInvariant());
+                        }
+                }
+                catch { }
+            }
+            _texFamilies = set;
+            return set;
         }
 
         /// <summary>Items of a gender + worn slot (e.g. female hair), in catalog order.</summary>
@@ -112,6 +227,20 @@ namespace Sdo.Game
         private const int SynthSlotStride = 1_000_000;   // modelIds are 6-digit (< 1e6), so mult never overlaps modelId
         private readonly Dictionary<int, ShopItem> _synthById = new Dictionary<int, ShopItem>();
         private readonly Dictionary<(ItemSex, EquipSlot), List<ShopItem>> _meshModelCache = new Dictionary<(ItemSex, EquipSlot), List<ShopItem>>();
+
+        // (sex, modelId) of every NAMED garment worn in a body-outfit slot (上衣/下裝/連身). A modelId here must not be
+        // synthesised as a mesh-only row in a DIFFERENT body-outfit slot (see ShouldSynthGarment). Built once, cached.
+        private HashSet<(ItemSex, int)> _namedBodyOutfitIds;
+        private HashSet<(ItemSex, int)> NamedBodyOutfitIds()
+        {
+            if (_namedBodyOutfitIds != null) return _namedBodyOutfitIds;
+            var s = new HashSet<(ItemSex, int)>();
+            foreach (var it in Clothing)
+                if (IsBodyOutfitSlot(it.EquipSlot))
+                    s.Add((ItemTypes.GenderOf(it.Category, it.Name), it.ModelId));   // 與 groups/AllMeshModels 同一套性別判定
+            _namedBodyOutfitIds = s;
+            return s;
+        }
 
         // Synth-Id slot code (1..4) for the 衣物 slots that synthesise mesh-only rows; 0 = 附件 (bare id, legacy).
         private static int SynthSlotCode(EquipSlot slot)
@@ -211,7 +340,7 @@ namespace Sdo.Game
 
         private static ShopItem NewSynth(int id, int modelId, string id6, int category) => new ShopItem
         {
-            Id = id, Name = id6, Price = 100, PriceCategoryRaw = 1, ModelId = modelId, Category = category,
+            Id = id, Name = SynthName(category, modelId), Price = 100, PriceCategoryRaw = 1, ModelId = modelId, Category = category,
             MinLevel = 1, DurationDays = -1, Quantity = -1, SexRaw = ItemTypes.SexFromCategory(category) == ItemSex.Male ? 1 : 0,
         };
 
@@ -241,10 +370,11 @@ namespace Sdo.Game
                 if (us <= 0 || !int.TryParse(f.Substring(0, us), out var modelId)) continue;
                 if (!IsShopModelId(modelId)) continue;                        // 9xxxxx 素體預設衣服不上架 (user)
                 if (!have.Add(modelId)) continue;
+                if (!ShouldSynthGarment(sex, slot, modelId, NamedBodyOutfitIds())) continue;   // 跨部位同一套 → 不重複合成 (使用者:001278/002247)
                 if (isExpr && !IsGoodExpressionModel(modelId, g)) continue;   // 濾掉會渲染成 空白/破圖/假臉 的異常表情 (user)
                 var syn = new ShopItem
                 {
-                    Id = SynthId(slot, sex, modelId), Name = modelId.ToString("D6"), Price = 100, PriceCategoryRaw = 1,   // 1=Coins→M 幣 (100M；user:無名 翅膀/髮型/上衣/下裝/鞋子 改100M/序號當名字)
+                    Id = SynthId(slot, sex, modelId), Name = SynthName(cat, modelId), Price = 100, PriceCategoryRaw = 1,   // 1=Coins→M 幣 (100M；user:無名 翅膀/髮型/上衣/下裝/鞋子 改100M/序號當名字); 名字優先用 TW 繁體, 無則 6 位序號
                     ModelId = modelId, Category = cat, MinLevel = 1, DurationDays = -1, Quantity = -1,
                     SexRaw = sex == ItemSex.Male ? 1 : 0,
                 };
@@ -355,6 +485,13 @@ namespace Sdo.Game
             // the player then needs no encoding at all. No-op in the editor (GBK works there) or when the file is absent.
             ApplyNameSidecar(items);
 
+            // Overlay the Traditional-Chinese (TW 櫻式搖滾) names on top: fills in a real name for many otherwise-
+            // unnamed mesh-only rows AND replaces the CN Simplified name with the official Traditional one where the TW
+            // client has it. Loaded into the static _twNames map here so it's ready before any synth-row naming below
+            // (see SynthName), and applied last so a TW name wins over both the GBK parse and shop_names.tsv.
+            LoadTwNames();
+            ApplyTwNames(items);
+
             var sets = new Dictionary<int, OutfitSet>();
             try
             {
@@ -375,8 +512,141 @@ namespace Sdo.Game
                 if (!groups.TryGetValue(key, out var l)) groups[key] = l = new List<ShopItem>();
                 l.Add(it);
             }
-            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets");
+            // 離線無 setinfo → 依「系列基底名」把同名多件衣物合成套裝,放進 套装 分頁(使用者要求:兔乖乖/璀璨繁星…)。
+            int synth = BuildSyntheticSets(clothing, groups, sets);
+            // 台版官方套装 (古惑仔/卡卡西/逍遙英雄/聖誕老公公…): 名字來自台版 iteminfo 的 Outfit 列、組件來自台版 setinfo,
+            // 由 tools/build_shop_names_tw.py 併成 shop_sets_tw.tsv。CN 與 TW 的 setId 各自重編號、意義不同 → 當「新套装」
+            // 加入 (重映射 id 避免撞 CN),不覆蓋。渲染由 shop 的 IsRenderable 過濾 (組件 mesh 齊的才顯示)。
+            int twSets = AddTwSets(clothing, groups, sets);
+            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版)");
             return new AvatarItemCatalog(clothing, groups, meshFiles, sets);
+        }
+
+        private const int SynthSetIdBase = 80_000_000;   // 8xxxxxxx:高於 6 位 modelId、低於 SynthIdBase(9xxxxxxx),不撞
+
+        /// <summary>Offline has no setinfo.dat, so synthesise 套装 from item NAMES: group garments whose name shares a
+        /// "series" base (name minus its trailing 部位/性別 word — 「兔乖乖 女帽」→「兔乖乖」) by (base,gender); any group
+        /// covering ≥2 distinct worn slots becomes one outfit set (one item per slot) shown as a dressed mannequin in the
+        /// 套装 tab. Reuses the existing OutfitSet/OutfitComponentMeshes render path. Returns the number of sets made.</summary>
+        private static int BuildSyntheticSets(List<ShopItem> clothing,
+            Dictionary<(ItemSex, EquipSlot), List<ShopItem>> groups, Dictionary<int, OutfitSet> sets)
+        {
+            var byName = new Dictionary<(string, ItemSex), Dictionary<EquipSlot, ShopItem>>();
+            foreach (var it in clothing)
+            {
+                var slot = it.EquipSlot;
+                if (slot == EquipSlot.Outfit || slot == EquipSlot.Expression || slot == EquipSlot.None) continue;   // 表情非穿搭
+                string bn = SeriesBaseName(it.Name);
+                if (bn == null) continue;
+                var key = (bn, ItemTypes.GenderOf(it.Category, it.Name));
+                if (!byName.TryGetValue(key, out var bySlot)) byName[key] = bySlot = new Dictionary<EquipSlot, ShopItem>();
+                if (!bySlot.ContainsKey(slot)) bySlot[slot] = it;   // 一個部位第一件
+            }
+            int made = 0, nextId = SynthSetIdBase;
+            foreach (var kv in byName)
+            {
+                if (kv.Value.Count < 2) continue;   // 至少 2 個不同部位才算一套
+                if (!kv.Value.ContainsKey(EquipSlot.Top) && !kv.Value.ContainsKey(EquipSlot.OnePiece)) continue;   // 套裝至少要有上衣(使用者要求),沒上衣的丟掉
+                var (bn, gender) = kv.Key;
+                int setId = nextId++;
+                var set = new OutfitSet { SetId = setId };
+                int price = 0;
+                foreach (var comp in kv.Value.Values)
+                {
+                    set.Components.Add(new OutfitComponent { ModelId = comp.ModelId, Flag = -1, Token = ItemTypes.MshSlotSuffix(comp.Category) });
+                    if (comp.Price > 0) price += comp.Price;
+                }
+                sets[setId] = set;
+                var outfit = new ShopItem
+                {
+                    Id = setId, Name = bn, ModelId = setId,
+                    Category = gender == ItemSex.Male ? ItemCategory.OutfitMale : ItemCategory.OutfitFemale,
+                    Price = price > 0 ? price : 100, PriceCategoryRaw = 1, MinLevel = 1, DurationDays = -1, Quantity = -1,
+                };
+                clothing.Add(outfit);
+                var okey = (gender, EquipSlot.Outfit);
+                if (!groups.TryGetValue(okey, out var l)) groups[okey] = l = new List<ShopItem>();
+                l.Add(outfit);
+                made++;
+            }
+            return made;
+        }
+
+        // 台版套装 id base:把 TW setId 重映射成 TwSetIdBase+setId,避開 CN setId(≤ 850004)、合成套装(SynthSetIdBase 80M
+        // 起小幅遞增)、synth 道具(SynthIdBase 90M) 與 6 位 modelId。落在 [85M, 85.85M],高於合成套装、低於 90M,
+        // 故 ById 對 < 90M 的 id 仍走 _byId(clothing 內)找得到 → 套装穿得起來/存得住。
+        private const int TwSetIdBase = 85_000_000;
+
+        /// <summary>Register the台版 official outfit sets from <c>shop_sets_tw.tsv</c> as extra 套装 rows. Each set's name
+        /// (from the TW iteminfo Outfit row) + component model ids (from the TW setinfo) are self-contained in the
+        /// sidecar; we add an <see cref="OutfitSet"/> + a linked outfit <see cref="ShopItem"/> under a remapped id (see
+        /// <see cref="TwSetIdBase"/>) so it never collides with a CN setId (CN/TW renumber sets independently). Skips a
+        /// def whose exact component signature already exists (no duplicate of a CN/synthetic set) or whose remapped id
+        /// is taken. Renderability is left to the shop's <see cref="IsRenderable"/> filter, exactly like the CN sets.
+        /// Returns the number of sets added.</summary>
+        private static int AddTwSets(List<ShopItem> clothing,
+            Dictionary<(ItemSex, EquipSlot), List<ShopItem>> groups, Dictionary<int, OutfitSet> sets)
+        {
+            var path = ResolveDataFile(ShopSetTwSidecar.FileName);
+            if (path == null) return 0;
+            List<TwSetDef> defs;
+            try { defs = ShopSetTwSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            catch (Exception e) { Debug.LogWarning("[shop] " + ShopSetTwSidecar.FileName + " read failed: " + e.Message); return 0; }
+            if (defs.Count == 0) return 0;
+
+            // Dedup only against VISIBLE outfits (CN outfit rows + synthetic sets already in the 套装 groups) — not every
+            // entry in `sets` (a CN setinfo record with no naming iteminfo row isn't shown, so it must not hide a TW set).
+            var seen = new HashSet<string>();
+            foreach (var it in clothing)
+                if (it.EquipSlot == EquipSlot.Outfit && sets.TryGetValue(it.ModelId, out var os))
+                    seen.Add(SetSignature(os.Components));
+
+            int made = 0;
+            foreach (var d in defs)
+            {
+                if (d.Components == null || d.Components.Length == 0 || string.IsNullOrEmpty(d.Name)) continue;
+                int id = TwSetIdBase + d.SetId;
+                if (sets.ContainsKey(id)) continue;
+
+                var set = new OutfitSet { SetId = id };
+                foreach (var mid in d.Components) set.Components.Add(new OutfitComponent { ModelId = mid, Flag = -1 });   // Token null → probe by token order
+                if (!seen.Add(SetSignature(set.Components))) continue;   // identical to an existing CN/synthetic set
+
+                sets[id] = set;
+                var gender = d.Male ? ItemSex.Male : ItemSex.Female;
+                var outfit = new ShopItem
+                {
+                    Id = id, Name = d.Name, ModelId = id,
+                    Category = d.Male ? ItemCategory.OutfitMale : ItemCategory.OutfitFemale,
+                    Price = 100, PriceCategoryRaw = 1, MinLevel = 1, DurationDays = -1, Quantity = -1,
+                };
+                clothing.Add(outfit);
+                var okey = (gender, EquipSlot.Outfit);
+                if (!groups.TryGetValue(okey, out var l)) groups[okey] = l = new List<ShopItem>();
+                l.Add(outfit);
+                made++;
+            }
+            return made;
+        }
+
+        // A set's identity for dedup: its component modelIds sorted + comma-joined (order-independent).
+        private static string SetSignature(List<OutfitComponent> comps)
+        {
+            var ids = new List<int>(comps.Count);
+            foreach (var c in comps) ids.Add(c.ModelId);
+            ids.Sort();
+            return string.Join(",", ids);
+        }
+
+        // 商品名 → 系列基底名:去掉尾端一個(空白分隔的)描述部位/性別的詞。尾詞需含 男/女 或部位關鍵字才去,否則回 null(不合成)。
+        internal static string SeriesBaseName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            int sp = name.LastIndexOf(' ');
+            if (sp <= 0 || sp + 1 >= name.Length) return null;
+            const string slotChars = "男女帽发髮装裝衣裤褲鞋鞋镜鏡链鏈膀巴饰飾情连連身套";
+            foreach (char c in name.Substring(sp + 1)) if (slotChars.IndexOf(c) >= 0) return name.Substring(0, sp);
+            return null;
         }
 
         // setinfo.dat sits beside iteminfo.dat (online 閉撰敃氪 pack). Same folders as ResolveIteminfoPath.
@@ -460,6 +730,46 @@ namespace Sdo.Game
             foreach (var it in items)
                 if (map.TryGetValue(it.Id, out var nm) && !string.IsNullOrEmpty(nm) && it.Name != nm) { it.Name = nm; n++; }
             Debug.Log($"[shop] applied {n} UTF-8 name overrides from {ShopNameSidecar.FileName}");
+        }
+
+        // ---- Traditional-Chinese (TW 櫻式搖滾) name overlay ----
+        // The TW client names far more of the on-disk meshes than the CN iteminfo.dat does, in Traditional Chinese.
+        // tools/build_shop_names_tw.py bakes those names into shop_names_tw.tsv (category+modelId → UTF-8 name). We
+        // hold the parsed map statically so BOTH the real-row overlay (ApplyTwNames) and the synth-row namer (SynthName,
+        // reachable from the static Synthesize* rebuild path used by ById) can consult it. Keyed by (category, modelId)
+        // — NOT item id — because ids differ between clients and synth mesh-only rows have no iteminfo id at all.
+        private static Dictionary<long, string> _twNames;
+
+        // Load (or clear) the TW name map for the current data root. Re-read every catalog Load() (cheap; the data root
+        // can change between loads/tests), mirroring ApplyNameSidecar's un-cached read. Absent file → _twNames = null.
+        private static void LoadTwNames()
+        {
+            _twNames = null;
+            var path = ResolveDataFile(ShopNameTwSidecar.FileName);
+            if (path == null) return;
+            try { _twNames = ShopNameTwSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            catch (Exception e) { Debug.LogWarning("[shop] " + ShopNameTwSidecar.FileName + " read failed: " + e.Message); }
+        }
+
+        // Overlay TW Traditional names over the (GBK-parsed / shop_names.tsv) names of real iteminfo rows, by (cat,modelId).
+        private static void ApplyTwNames(List<ShopItem> items)
+        {
+            if (items == null || _twNames == null || _twNames.Count == 0) return;
+            int n = 0;
+            foreach (var it in items)
+                if (_twNames.TryGetValue(ShopNameTwSidecar.Key(it.Category, it.ModelId), out var nm)
+                    && !string.IsNullOrEmpty(nm) && it.Name != nm) { it.Name = nm; n++; }
+            if (n > 0) Debug.Log($"[shop] applied {n} 繁體 name overrides from {ShopNameTwSidecar.FileName}");
+        }
+
+        // The display name for a synthesised mesh-only row: the TW Traditional name for this (category, modelId) if we
+        // have one, else the bare 6-digit model serial (the historical fallback). Used by NewSynth + AllMeshModels so
+        // every unnamed mesh row shows a real name where the TW client provides one.
+        internal static string SynthName(int category, int modelId)
+        {
+            if (_twNames != null && _twNames.TryGetValue(ShopNameTwSidecar.Key(category, modelId), out var nm)
+                && !string.IsNullOrEmpty(nm)) return nm;
+            return modelId.ToString("D6");
         }
 
         // Resolve a data file by name using the same search order as ResolveIteminfoPath: the runtime data root and its

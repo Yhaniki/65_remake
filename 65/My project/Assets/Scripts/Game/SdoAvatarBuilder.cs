@@ -78,6 +78,12 @@ namespace Sdo.Game
                               : hair ? hairShader
                               : bodyShader;
                 string stem = Path.GetFileNameWithoutExtension(rel);
+                // 炫 hair (model band [40000,49999] = 炫红/炫紫/炫白/炫黄) → its texture V scrolls at 2.0/s, sweeping a
+                // bright band through the hair ("不斷變色"). Not for the Portrait head thumbnail; the in-world dancer/lobby
+                // is where it shows. See SpecialMotionItems.IsUvScrollHair for the decompile + Frida trail.
+                int? partModelId = SpecialMotionItems.ModelIdFromMeshPath(rel);
+                bool uvScroll = style != SkinStyle.Portrait
+                                && partModelId.HasValue && SpecialMotionItems.IsUvScrollHair(partModelId.Value);
                 int si = 0;
                 foreach (var sub in r.Submeshes)   // each submesh = its own texture + skin (COAT/PANT have 2)
                 {
@@ -96,9 +102,11 @@ namespace Sdo.Game
                         {
                             int a = sub.Ranges[s].Attrib;
                             string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
+                            nm = PreferOwnIdTexture(dir, rel, nm);   // 共用模板 mesh:內嵌的是模板 id → 換成道具自己 id 的改色貼圖 (070030 女鞋 reuse 012989 mesh)
                             var t = ResolveDds(dir, nm, out var am, IsBodyGarment(rel));
-                            if (t == null) t = ResolveDds(dir, MeshSelfDds(rel), out am, IsBodyGarment(rel));   // 引到外來貼圖id → 退回 mesh 自己的 id
-                            if (t == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
+                            // _texanimex(...) 佔位符不能退回 mesh 自己的 base atlas——那是 256 master 卡,靜態貼上會蓋掉換幀動畫(使用者看到的黃卡)
+                            if (t == null && !TexAnimEx.TryParse(nm, out _)) t = ResolveDds(dir, MeshSelfDds(rel), out am, IsBodyGarment(rel));   // 引到外來貼圖id → 退回 mesh 自己的 id
+                            if (t == null && !string.IsNullOrEmpty(nm) && !TexAnimEx.TryParse(nm, out _)) Debug.LogWarning($"[avtex] item='{LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");   // texanim 由下方 TryBuildTexAnim 渲染,非未解析
                             var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader, hairShader);   // 真孔洞→cutout不透明 / 全軟→alpha-blend
                             // 記下材質名 = DDS 名 (如 W_Basic_Coat2)，讓上層 (商城衣物縮圖) 能認出「膚色 range」把它藏掉。
                             mats[s] = t != null ? new Material(sh) { mainTexture = t, name = nm ?? "" }
@@ -109,14 +117,18 @@ namespace Sdo.Game
                     }
                     else
                     {
-                        var tex = ResolveDds(dir, sub.Dds, out var am, IsBodyGarment(rel));
-                        if (tex == null) tex = ResolveDds(dir, MeshSelfDds(rel), out am, IsBodyGarment(rel));   // 引到外來貼圖id → 退回 mesh 自己的 id
-                        if (tex == null && !string.IsNullOrEmpty(sub.Dds)) Debug.LogWarning($"[avtex] item='{LogLabel}' {rel}: material '{sub.Dds}' unresolved → fallback colour {PartColor(rel)}");
+                        var dds = PreferOwnIdTexture(dir, rel, sub.Dds);   // 共用模板 mesh:換成道具自己 id 的改色貼圖
+                        var tex = ResolveDds(dir, dds, out var am, IsBodyGarment(rel));
+                        // texanim 佔位符不退回 base atlas(256 master 卡),讓下面走 TryBuildTexAnim 換幀動畫
+                        if (tex == null && !TexAnimEx.TryParse(dds, out _)) tex = ResolveDds(dir, MeshSelfDds(rel), out am, IsBodyGarment(rel));   // 引到外來貼圖id → 退回 mesh 自己的 id
+                        if (tex == null && !string.IsNullOrEmpty(dds) && !TexAnimEx.TryParse(dds, out _)) Debug.LogWarning($"[avtex] item='{LogLabel}' {rel}: material '{dds}' unresolved → fallback colour {PartColor(rel)}");   // texanim 由下方 TryBuildTexAnim 渲染,非未解析
                         var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader, hairShader);   // 真孔洞→cutout不透明 / 全軟→alpha-blend
-                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex, name = sub.Dds ?? "" }
-                                                        : (TryBuildTexAnim(go, dir, sub.Dds, texShader)   // 翅膀 _TexAnimEx 動塗 → 換幀動畫
-                                                           ?? new Material(fallbackShader) { color = PartColor(rel), name = sub.Dds ?? "" });
+                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex, name = dds ?? "" }
+                                                        : (TryBuildTexAnim(go, dir, dds, texShader)   // 翅膀/貼花 _TexAnimEx 動塗 → 換幀動畫
+                                                           ?? new Material(fallbackShader) { color = PartColor(rel), name = dds ?? "" });
                     }
+
+                    if (uvScroll) AttachUvScroll(go, mr);   // 炫 hair → per-frame V texture scroll
 
                     if (avatar != null && sub.BindVerts != null && sub.BoneHrc != null)
                         avatar.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
@@ -129,13 +141,26 @@ namespace Sdo.Game
             return res;
         }
 
+        // 炫 hair UV scroll: attach AvatarUvScroll to scroll the textured material(s) V each frame (2.0 units/s, REPEAT
+        // wrap). The existing hair shader (UnlitDoubleSided) uses TRANSFORM_TEX, so mainTextureOffset works as-is — no
+        // shader swap. Skips skin ranges / fallback-colour materials (no mainTexture) so only the hair texture scrolls.
+        private static void AttachUvScroll(GameObject go, Renderer mr)
+        {
+            var mats = mr.sharedMaterials;
+            bool any = false;
+            for (int i = 0; i < mats.Length; i++)
+                if (mats[i] != null && mats[i].mainTexture != null) { any = true; break; }
+            if (!any) return;
+            go.AddComponent<AvatarUvScroll>().Init(mats, SpecialMotionItems.UvScrollUnitsPerSec);
+        }
+
         // 翅膀(CHIBANG)的「動塗」：官方把發光羽翼做成 model-embedded 換幀貼圖。MSH 的材質名不是真檔名,而是佔位符
         // "_TexAnimEx(NAME)interval_..."(如 _texanimex(002090_woman_chibang)150_1.dds)。真正的貼圖是同資料夾 "<NAME>.an"
         // 列出的一串 DDS 幀(002090_woman_chibang_1/_2/_3.dds),依 interval(ms)輪播。ResolveDds 找不到佔位符 → 原本 fallback
         // 成一坨米色(user 看到的「flat tan 翅膀」)。這裡解出幀序列、先貼第 0 幀、再掛 MapobjTexAnimator 逐幀輪播。與場景道具
         // 共用同一套 TexAnimEx/MapobjTexAnimator(render/008 TexAnimEx_parse 的忠實移植)。回傳材質;非動塗/無幀 → 回 null 讓
         // 呼叫端走 fallback 色。
-        private static Material TryBuildTexAnim(GameObject go, string dir, string placeholder, Shader shader)
+        internal static Material TryBuildTexAnim(GameObject go, string dir, string placeholder, Shader shader)
         {
             if (string.IsNullOrEmpty(dir) || !TexAnimEx.TryParse(placeholder, out var spec)) return null;
             string anPath = Path.Combine(dir, spec.Name + ".an");
@@ -145,6 +170,24 @@ namespace Sdo.Game
             var frames = new List<Texture>(frameNames.Length);
             foreach (var fn in frameNames) { var t = ResolveAnimFrame(dir, fn); if (t != null) frames.Add(t); }
             if (frames.Count == 0) return null;
+            // 布料(呼叫端傳不透明 Unlit/Texture)的換幀若帶真 alpha,不能沿用不透明 shader——透明底會畫成實心白板
+            // (070025 領口愛心卡引 012989_* 幀:DXT3、99% 全透明)。依第一幀 alpha 分佈換 cutout/blend,與一般貼圖的
+            // AlphaShaderFor 同語意。只動布料呼叫端:翅膀/髮/portrait 傳入的 alpha shader 是每條路徑調校過的,不覆蓋;
+            // 無 alpha 幀(012983 衣身、場景閃燈)也維持原 shader。
+            if (shader != null && shader.name == "Unlit/Texture")
+            {
+                try
+                {
+                    string p0 = FindDdsPath(dir, frameNames[0]);   // 只認 .dds 幀;TGA 幀=翅膀,不會走進這個 if
+                    if (p0 != null)
+                    {
+                        var am = DdsLoader.GetSceneAlphaMode(File.ReadAllBytes(p0));
+                        if (am == DdsAlphaMode.Cutout) shader = Shader.Find("Sdo/UnlitDoubleSided") ?? shader;
+                        else if (am == DdsAlphaMode.Blend) shader = Shader.Find("Sdo/UnlitAvatarAlpha") ?? shader;
+                    }
+                }
+                catch { }
+            }
             var mat = new Material(shader) { mainTexture = frames[0], name = placeholder ?? "" };
             go.AddComponent<MapobjTexAnimator>().Init(new[] { mat }, frames.ToArray(), spec.IntervalMs > 0f ? spec.IntervalMs : 150f);
             return mat;
@@ -250,11 +293,7 @@ namespace Sdo.Game
         public static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode sceneAlpha, bool bodyGarment)
         {
             sceneAlpha = DdsAlphaMode.Opaque;
-            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
-            string name = Path.GetFileName(ddsName.Replace('\\', '/'));
-            string direct = Path.Combine(dir, name);
-            string hit = File.Exists(direct) ? direct : null;
-            if (hit == null) hit = FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
+            string hit = FindDdsPath(dir, ddsName);
             if (hit == null) return null;
             try
             {
@@ -262,9 +301,8 @@ namespace Sdo.Game
                 bool hasAlpha = DdsLoader.HasAlpha(bytes);
                 bool additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
                 sceneAlpha = DdsLoader.GetSceneAlphaMode(bytes);   // distribution-based (≥3% 真洞才 Cutout) → 不會被雜訊誤判
-                // 布料(COAT/PANT/ONE)的 alpha 幾乎都不是「透明度」:全透明(>70% a0)=匯出壞掉;柔性漸層(Blend,如嘻哈GIRL
-                // 97% soft)=光影/AO 圖非透明。兩者都當實心,否則 Blend 走 alpha-blend(ZWrite off)袖子會穿透衣服、破 alpha
-                // 走 cutout 被裁成透明線框。真孔洞去背(Cutout,<70% a0)保留不動。
+                // 布料(COAT/PANT/ONE/SHOES)的 alpha 壞掉(全透明 >70% = 匯出壞/atlas 留白;柔性 Blend = 光影漸層非透明)→ 當實心,
+                // 否則畫成透明線框/袖子穿透。但 Cutout(<70% 硬鏤空,如裙擺蕾絲/去背刺青)是「真透明」設計 → 保留不動。
                 if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque
                     && (sceneAlpha == DdsAlphaMode.Blend || DdsLoader.HardTransparentFraction(bytes) > 0.7f))
                     sceneAlpha = DdsAlphaMode.Opaque;
@@ -289,6 +327,53 @@ namespace Sdo.Game
         private static string MeshSelfDds(string rel)
         { string stem = Path.GetFileNameWithoutExtension((rel ?? "").Replace('\\', '/')); return string.IsNullOrEmpty(stem) ? null : stem + ".dds"; }
 
+        /// <summary>The leading 6-digit item id of a name ("070030_woman_shoes.dds" → "070030"), or null when it isn't a
+        /// "NNNNNN_…" filename (shared skin bases like "W_Basic_Pants2.dds", or a "sh1226_…" alias, have no leading id).</summary>
+        private static string LeadingSixDigitId(string name)
+        {
+            if (string.IsNullOrEmpty(name) || name.Length < 7) return null;
+            for (int i = 0; i < 6; i++) if (name[i] < '0' || name[i] > '9') return null;
+            return name[6] == '_' ? name.Substring(0, 6) : null;
+        }
+
+        /// <summary>Pure: rewrite <paramref name="materialName"/> so its leading 6-digit TEMPLATE id becomes
+        /// <paramref name="ownId"/>; null when there's nothing to swap (no leading 6-digit id, or it already equals ownId).
+        /// Handles a plain "NNNNNN_woman_shoes.dds" AND a "_texanimex(NNNNNN_woman_shoes)100_1.dds" placeholder (the id
+        /// inside the parens is swapped, the interval kept). Unit-testable; the caller confirms the swapped-id file exists
+        /// before using the result. This is the "shared-template mesh" case: 070030 女鞋 reuses 012989's geometry, so its
+        /// material names embed 012989's id, but it ships its OWN recolour textures under 070030_*.</summary>
+        public static string SwapLeadingId(string materialName, string ownId)
+        {
+            if (string.IsNullOrEmpty(materialName) || string.IsNullOrEmpty(ownId)) return null;
+            bool isAnim = TexAnimEx.TryParse(materialName, out var spec);
+            string inner = isAnim ? spec.Name : materialName;          // "012989_woman_shoes" | "012989_woman_shoes.dds"
+            string embId = LeadingSixDigitId(inner);
+            if (embId == null || embId == ownId) return null;
+            string swappedInner = ownId + inner.Substring(embId.Length);
+            if (!isAnim) return swappedInner;                          // "070030_woman_shoes.dds"
+            int open = materialName.IndexOf('('), close = open >= 0 ? materialName.IndexOf(')', open + 1) : -1;
+            if (open < 0 || close < 0) return null;
+            return materialName.Substring(0, open + 1) + swappedInner + materialName.Substring(close);   // "_texanimex(070030_woman_shoes)100_1.dds"
+        }
+
+        /// <summary>Prefer the mesh's OWN-id recolour texture over a shared-template mesh's embedded template-id material
+        /// name — but ONLY when the own-id file is actually present, else the material is returned unchanged (so a shared
+        /// skin base, or a template whose recolour wasn't shipped, keeps working). Needs the folder to probe for the file,
+        /// so it wraps the pure <see cref="SwapLeadingId"/> with an existence check (.an for a texanim placeholder, else
+        /// the .dds itself). Fixes 070030 女鞋 rendering the template's pink shoe + a static 256 master-card decal.</summary>
+        private static string PreferOwnIdTexture(string dir, string rel, string materialName)
+        {
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(materialName)) return materialName;
+            string ownId = LeadingSixDigitId(Path.GetFileName((rel ?? "").Replace('\\', '/')));
+            if (ownId == null) return materialName;
+            string swapped = SwapLeadingId(materialName, ownId);
+            if (swapped == null) return materialName;
+            bool isAnim = TexAnimEx.TryParse(swapped, out var spec);
+            bool exists = isAnim ? File.Exists(Path.Combine(dir, spec.Name + ".an"))   // 換幀清單存在才換 → 走 own-id 動畫
+                                 : FindDdsPath(dir, swapped) != null;                  // own-id 圖集存在才換
+            return exists ? swapped : materialName;
+        }
+
         // Cache: dir -> (normalised dds stem -> file path). The AVATAR folder holds ~40k files; the old per-call
         // Directory.GetFiles + linear stem scan was O(files) EVERY resolve. Built once per dir; also powers the fuzzy match.
         private static readonly Dictionary<string, Dictionary<string, string>> _ddsByNorm = new Dictionary<string, Dictionary<string, string>>();
@@ -312,6 +397,17 @@ namespace Sdo.Game
         /// Normalise (lowercase, haun→huan, drop separators) and match; then, as a last resort, strip a trailing digit
         /// run to hit the shared base. ONLY reached after exact + stem match fail, so items that already resolve are untouched.
         /// </summary>
+        /// <summary>On-disk .dds path for a material/frame name (exact filename first, then fuzzy stem), no decode.
+        /// Shared by ResolveDds and the texanim frame alpha probe. Null when nothing matches.</summary>
+        public static string FindDdsPath(string dir, string ddsName)
+        {
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
+            string name = Path.GetFileName(ddsName.Replace('\\', '/'));
+            string direct = Path.Combine(dir, name);
+            if (File.Exists(direct)) return direct;
+            return FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
+        }
+
         public static string FuzzyFindDds(string dir, string stem)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(stem)) return null;

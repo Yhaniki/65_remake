@@ -376,6 +376,14 @@
    "v": "Songs/ 裡沒有歌曲"
   },
   {
+   "k": "songselect.rand_20up",
+   "v": "隨機難度 20級以上"
+  },
+  {
+   "k": "songselect.rand_25up",
+   "v": "隨機難度 25級以上"
+  },
+  {
    "k": "stage.name.0",
    "v": "步行街"
   },

@@ -44,6 +44,9 @@ namespace Sdo.Game
         private Matrix4x4[] _dispLocal;                      // last displayed per-bone local (blend source / continuity)
         private Quaternion[] _blendFromQ; private Vector3[] _blendFromP;   // snapshot of the displayed pose at the switch
         private float _blendStart = -1f;                     // Time.time the current crossfade began (<0 = none)
+        private float _blendDur = 1f;                         // duration (s) of the crossfade in progress, captured at its start
+        private float _blendNextSec = -1f;                    // >=0 -> the NEXT clip switch crossfades over this (one-shot), then reverts to BlendSec
+        private bool _snapNextBlend;                          // true -> next clip switch is a HARD CUT (see SnapNextClip)
         private bool _haveDisp;                              // _dispLocal holds a valid previous pose
         private MotLoader _lastMot;                          // active clip last frame (to detect a switch)
 
@@ -81,6 +84,11 @@ namespace Sdo.Game
         public bool OneShotHeld => _oneShot != null && _oneShotHold && _oneShotStart >= 0f
             && (Time.time - _oneShotStart) * Fps >= _oneShot.MaxTime;
 
+        /// <summary>True when the avatar is currently displaying its standby REST clip (idle) or a win/lose one-shot —
+        /// i.e. NOT a dance slice. Lets the gameplay host lift the DANCING body up to the floating idle's altitude
+        /// (飛行翅膀:flystay idle 靠自身 pose 浮空,dance 貼地 → 跳舞時額外抬 root 補上;見 ScreenGameplay.UpdateFlyHover)。</summary>
+        public bool IsRestPose => _oneShot != null || (RestMot != null && _mot == RestMot);
+
         /// <summary>Play a single motion clip once from t=0. When <paramref name="hold"/> it clamps on the last
         /// frame; otherwise it loops. Takes priority over DPS/idle until <see cref="ClearOneShot"/>.</summary>
         public void PlayOneShot(MotLoader mot, bool hold)
@@ -89,6 +97,29 @@ namespace Sdo.Game
             _oneShot = mot; _oneShotHold = hold; _oneShotStart = Time.time;
         }
         public void ClearOneShot() { _oneShot = null; _oneShotStart = -1f; }
+
+        /// <summary>Force the NEXT clip switch to be a HARD CUT (no crossfade). Used when the result-screen
+        /// background replay resumes the DPS dance, so the win/lose 定格 pose snaps straight to the dance pose
+        /// instead of blending through it over BlendSec.</summary>
+        public void SnapNextClip() { _snapNextBlend = true; }
+
+        /// <summary>Make ONLY the next clip switch crossfade over <paramref name="sec"/> seconds instead of
+        /// <see cref="BlendSec"/> (one-shot, mirrors <see cref="SnapNextClip"/>; reverts to BlendSec afterwards). Used
+        /// for the 脱下飛行翅膀 settle (flystay→地面 idle over 1s) without changing the room's default idle↔walk blend.</summary>
+        public void BlendNextClip(float sec) { _blendNextSec = Mathf.Max(0f, sec); }
+
+        /// <summary>Pose <paramref name="from"/> now as the crossfade SOURCE and mark it the displayed clip, so the very
+        /// next <see cref="SetClip"/> to a different clip crossfades FROM this pose. Used when an avatar is rebuilt with a
+        /// new outfit but should visually settle from the previous motion (脱飛行翅膀:flystay 浮空 → 地面 idle) instead of
+        /// popping straight to the new idle. No-op without a skeleton/clip.</summary>
+        public void PrimeBlendFrom(MotLoader from)
+        {
+            if (_hrc == null || from == null) return;
+            _mot = from;
+            _blendStart = -1f;      // not blending yet — we're only establishing the displayed pose
+            Pose(0f);               // display 'from' → _dispLocal = from's pose, _haveDisp = true
+            _lastMot = from;        // so SetClip(target) next is seen as a switch → crossfade from this pose
+        }
 
         /// <summary>Switch the active LOOPING clip (no DPS): used by the waiting room to flip between the standby idle
         /// and the walk clip as the local player moves. The change is picked up next LateUpdate, which crossfades from
@@ -420,10 +451,13 @@ namespace Sdo.Game
         {
             if (_mot == _lastMot) return;
             _lastMot = _mot;
-            if (!_haveDisp || _dispLocal == null) return;     // nothing displayed yet -> nothing to blend from
+            if (_snapNextBlend) { _snapNextBlend = false; _blendStart = -1f; _blendNextSec = -1f; return; }   // hard cut requested -> no crossfade
+            if (!_haveDisp || _dispLocal == null) { _blendNextSec = -1f; return; }     // nothing displayed yet -> nothing to blend from
             int bc = _hrc.Names.Length;
             for (int i = 0; i < bc; i++) { _blendFromQ[i] = _dispLocal[i].rotation; _blendFromP[i] = _dispLocal[i].GetColumn(3); }
             _blendStart = Time.time;
+            _blendDur = _blendNextSec >= 0f ? _blendNextSec : BlendSec;   // one-shot override (BlendNextClip) or the default
+            _blendNextSec = -1f;
         }
 
         // reference mot_player.quat_to_matrix (column-vector) then m[:3,:3] = m[:3,:3].T (MOT quat is row-major).
@@ -449,10 +483,10 @@ namespace Sdo.Game
         {
             int bc = _hrc.Names.Length;
             float blendW = 1f;
-            bool blending = _blendStart >= 0f && BlendSec > 1e-4f && _haveDisp;
+            bool blending = _blendStart >= 0f && _blendDur > 1e-4f && _haveDisp;
             if (blending)
             {
-                blendW = (Time.time - _blendStart) / BlendSec;
+                blendW = (Time.time - _blendStart) / _blendDur;
                 if (blendW >= 1f) { _blendStart = -1f; blending = false; }     // crossfade finished
                 else blendW = blendW * blendW * (3f - 2f * blendW);           // smoothstep ease
             }

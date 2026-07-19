@@ -376,6 +376,14 @@
    "v": "Songs/ に曲がありません"
   },
   {
+   "k": "songselect.rand_20up",
+   "v": "ランダム難易度 20以上"
+  },
+  {
+   "k": "songselect.rand_25up",
+   "v": "ランダム難易度 25以上"
+  },
+  {
    "k": "stage.name.0",
    "v": "歩行者天国"
   },

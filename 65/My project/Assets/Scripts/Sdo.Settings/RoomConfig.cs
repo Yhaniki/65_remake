@@ -7,9 +7,10 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 開房間右側面板的可選清單與預設值，存成 <c>config.ini</c>。全帳號共用 —— 放在 PROFILE 根
-    /// （DATA/PROFILE/config.ini，與 settings.json / active.txt 同層，見 <see cref="ProfileManager"/>）；
-    /// 舊的 per-user（DATA/PROFILE/&lt;id&gt;/）與更早的 exe 同層 config.ini 會一次性遷移進來。
+    /// 開房間右側面板的可選清單與預設值 + OPTION 設定，存成 <c>config.ini</c>。**全域一份**，放在存檔層
+    /// <c>DATA/PROFILE/</c>（與 active.txt / settings.json / favorites.json 同層）—— 設定仍不跟著使用者跑
+    /// （換帳號不會換設定），只是把檔案位置搬進 PROFILE 資料夾。開機時會把舊位置的 config.ini 一次性搬進來後移除：
+    /// 舊 per-user（<c>DATA/PROFILE/&lt;id&gt;/</c>）優先，其次舊全域（執行檔同層），見 <see cref="Load"/>。
     /// 純文字、好手改：第一次跑會自動寫一份附註解的範本；之後讀檔覆蓋預設。解析/夾值是純函式可單元測試
     /// （<see cref="ParseInto"/> / <see cref="Sanitize"/> 不碰檔案）。
     /// </summary>
@@ -23,6 +24,23 @@ namespace Sdo.Settings
         public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
         public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式,2=ShowTime模式
         public static int defaultScene = -1;         // 場景：-1=隨機(預設)；0..30=指定場景 id(見 StageCatalog)。玩家在選歌選了會寫回這裡
+        // 判定精度：沿用 StepMania 的「精N」（1~8，9=JUSTICE）。以精4 為基準窗（Perfect 45 / Cool 90 / Bad 135 /
+        // Miss 180 ms）乘上該精度的係數；精2 = ×1.33。手改這個 key 就能整組調鬆緊，見 JudgmentWindows.FromStepManiaJudge。
+        public static int judgeLevel = 2;
+
+        // 全域判定 offset（毫秒）：加在譜面時鐘上（GameplayClock.OffsetMs）。正 = 判定時間往後（適合整體打太早的人）。
+        //
+        // **機器的音訊延遲不歸它管，已經自動補掉了**（ScreenGameplay：DSP 混音緩衝算得出來、驅動延遲是實測寫死的
+        // DriverLatencyMs、打拍音檔的前導靜音在排程時提早）。所以這裡預設 0，留給「我就是想打早/晚一點」的個人偏好，
+        // 以及「別台機器的驅動延遲跟我的不一樣」的微調。
+        //
+        // 要調就用編輯器的「打拍測試」(F2) 量 —— **一定要用聽節拍器那個測法**。看著 note 打是拿時鐘畫出來的東西去對
+        // 時鐘（自我參照），只量得到輸入延遲，永遠量不到音訊延遲。
+        public static float globalOffsetMs = 0f;
+
+        // 判定線的視覺偏移（設計 px）：完美時機的音符會落在受擊線 + 這個位移的地方（0 = 正中受擊線）。
+        // 只影響「看起來要打在哪」，不影響判定時間（那是 globalOffsetMs 的事）。同樣用打拍測試調。
+        public static float judgeOffsetY = 0f;
 
         // 額外歌曲資料夾（osu / StepMania）：分號(;)分隔的絕對路徑（逗號仍相容），每個路徑都當成一個 Songs 根目錄（底下第一層=
         // 分類 group，再一層=各首歌的資料夾），語意同 StepMania 的 AdditionalSongFolders。預設的 <ADDON>/SONG 一律自動掃描，
@@ -33,10 +51,9 @@ namespace Sdo.Settings
         // 資料夾（例如另一顆硬碟 D:/SdoAddon）就填一個絕對路徑；該資料夾底下就是 SONG 等子夾。見 SdoExtracted.AddonDir。
         public static string addonFolder = "";
 
-        // ---- OPTION 對話框設定的鏡像（存進同一份共用 config.ini 的 [Option] 區）。使用者要求 OPTION 設定也落地
-        //      config.ini（放 DATA/PROFILE/）。裝置層的 settings.json 仍是執行期讀取的工作副本；這裡是共用的
-        //      覆蓋值：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），Apply 時再抓回來存
-        //      （CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
+        // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
+        //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
+        //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
         public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了才覆蓋 settings.json 的裝置層值）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
         public static string optKeys = "A,S,W,D";
@@ -47,33 +64,33 @@ namespace Sdo.Settings
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
                            optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true;
+        public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
 
         public const string FileName = "config.ini";
 
-        /// <summary>config.ini 的完整路徑：全帳號共用 —— <c>DATA/PROFILE/config.ini</c>（與 settings.json / active.txt 同層）。
-        /// 房間預設、OPTION、外部歌曲資料夾都屬「本機」層級、不綁單一角色，故放 PROFILE 根而非 per-user 子資料夾。
-        /// 需在 <see cref="ProfileManager.Boot"/> 之後讀（Root 那時才確定）。</summary>
-        public static string FilePath => Path.Combine(ProfileManager.Root, FileName);
-
-        /// <summary>前一版的 per-user 位置（<c>DATA/PROFILE/&lt;active id&gt;/config.ini</c>）。保留供一次性遷移；
-        /// Boot() 前 ActiveDir 為空 → 回傳空字串（該來源略過）。</summary>
-        public static string LegacyPerUserFilePath
+        /// <summary>config.ini 的完整路徑：**全域一份**，放在存檔層 <c>DATA/PROFILE/</c>（＝<see cref="ProfileManager.Root"/>，
+        /// 與 active.txt / settings.json 同層）。不隨 active user 改變 —— 設定不跟著使用者，只是位置在 PROFILE 資料夾。</summary>
+        public static string FilePath
         {
             get
             {
-                var dir = ProfileManager.ActiveDir;
-                return string.IsNullOrEmpty(dir) ? "" : Path.Combine(dir, FileName);
+                // 存檔根（含 SDO_DATA_ROOT / data_root.txt 覆寫）由 ProfileManager.Root（= SdoDataRoot.ProfileDir）決定，
+                // 跟 settings.json / active.txt 同一層。理論上一定解析得到；萬一為空（極端測試情境）才退回舊的執行檔同層。
+                var profileRoot = ProfileManager.Root;
+                if (!string.IsNullOrEmpty(profileRoot)) return Path.Combine(profileRoot, FileName);
+                return LegacyExePath;
             }
         }
 
-        /// <summary>更早的位置：執行檔同一層（Editor 下 = 專案根「My project/」）。保留供一次性遷移與 fallback。</summary>
-        public static string LegacyFilePath
+        /// <summary>舊版位置：執行檔同一層（建置版＝exe 資料夾；Editor 下＝專案根「My project/」）。只用於開機時把
+        /// 舊 config.ini 一次性搬進 <see cref="FilePath"/>（PROFILE），不再是實際讀寫位置。</summary>
+        public static string LegacyExePath
         {
             get
             {
                 // 建置版 Application.dataPath = "<exe 同層>/<Product>_Data" → 其上一層就是 exe 所在資料夾。
-                // Editor 下 dataPath = ".../My project/Assets" → 上一層 = "My project"（開發放這方便）。
+                // Editor 下 dataPath = ".../My project/Assets" → 上一層 = "My project"。
                 string dir;
                 try { dir = Directory.GetParent(Application.dataPath).FullName; }
                 catch { dir = Application.dataPath; }
@@ -81,36 +98,42 @@ namespace Sdo.Settings
             }
         }
 
-        /// <summary>讀 config.ini（全帳號共用，不存在就用內建預設並寫一份範本）。在 <see cref="ProfileManager.Boot"/>
-        /// 之後呼叫。首次會把舊位置（前一版 per-user、更早的 exe 同層）的 config.ini 一次性遷移進來。</summary>
+        /// <summary>讀 config.ini（全域，放在 DATA/PROFILE/；不存在就用內建預設並寫一份範本）。開機呼叫一次即可
+        /// （<see cref="SettingsBootstrap"/>）；換 active user **不需要**重讀。新位置若還沒有，會把舊位置的 config.ini
+        /// 一次性搬進來後移除：舊 per-user（DATA/PROFILE/&lt;id&gt;/）優先，其次舊全域（執行檔同層）。</summary>
         public static void Load()
         {
             try
             {
                 if (File.Exists(FilePath))
                 {
+                    // 新位置（DATA/PROFILE/config.ini）已就緒 → 正常讀。
                     ParseInto(File.ReadAllText(FilePath));
                     Sanitize();
                 }
                 else
                 {
-                    // 首次 / 從舊版升級：把舊位置的 config.ini 讀進來，寫成共用的一份（不刪原檔）。
-                    // 先找前一版的 per-user（DATA/PROFILE/<id>/），再找更早的 exe 同層檔。
-                    string legacy = FirstExisting(LegacyPerUserFilePath, LegacyFilePath);
+                    // 新位置還沒有 → 找舊檔一次性搬進來：舊 per-user（DATA/PROFILE/<id>/config.ini）才是玩家實際在用的那份，
+                    // 優先；沒有再看舊全域（執行檔同層）。搬完寫進新位置並把舊檔刪掉，之後每次開機都只走上面那條。
+                    string legacy = FindProfileConfig() ?? FindLegacyExeConfig();
                     if (legacy != null)
                     {
                         ParseInto(File.ReadAllText(legacy));
                         Sanitize();
-                        if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前裝置層值
+                        if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前值
+                        Save();                 // 落地到新位置 DATA/PROFILE/config.ini
+                        DeleteLegacyConfigs();  // 清掉舊 per-user + 執行檔同層的舊檔（內容已寫進新位置）
+                        Debug.Log($"[RoomConfig] moved legacy config.ini -> {FilePath}");
                     }
                     else
                     {
                         Sanitize();
                         CaptureOptionFrom(DisplaySettingsManager.Settings);   // 第一次：範本的 [Option] 反映目前 settings.json 值
+                        Save();   // 第一次：在 DATA/PROFILE 留一份可編輯的範本
                     }
-                    Save();   // 落地一份共用的可編輯範本 DATA/PROFILE/config.ini
                 }
-                // config.ini 帶了 [Option] → 用共用值覆蓋 settings.json 的裝置層 GameSettings（見 SettingsBootstrap 隨後 ApplyDisplay）。
+
+                // config.ini 帶了 [Option] → 以檔案值覆蓋 settings.json 的 GameSettings（見 SettingsBootstrap 隨後 ApplyDisplay）。
                 if (hasOption) ApplyOptionTo(DisplaySettingsManager.Settings);
             }
             catch (Exception e)
@@ -120,21 +143,82 @@ namespace Sdo.Settings
             }
         }
 
-        // 回傳第一個存在的檔案路徑（空/null/不存在都略過）；供 Load 的一次性遷移挑舊來源。
-        private static string FirstExisting(params string[] paths)
+        /// <summary>找一份殘留的舊 per-user config.ini：優先 active user，其次 PROFILE 下第一個找到的（只看 &lt;id&gt; 子資料夾，
+        /// 不會誤抓 PROFILE 根的新全域檔）。沒有則 null。</summary>
+        private static string FindProfileConfig()
         {
-            if (paths == null) return null;
-            foreach (var p in paths)
-                try { if (!string.IsNullOrEmpty(p) && File.Exists(p)) return p; } catch { }
+            try
+            {
+                var active = ProfileManager.ActiveDir;
+                if (!string.IsNullOrEmpty(active))
+                {
+                    var p = Path.Combine(active, FileName);
+                    if (File.Exists(p)) return p;
+                }
+                var root = ProfileManager.Root;
+                if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
+                    foreach (var dir in Directory.GetDirectories(root))   // 只列子資料夾 → PROFILE 根的 config.ini 不在其中
+                    {
+                        var p = Path.Combine(dir, FileName);
+                        if (File.Exists(p)) return p;
+                    }
+            }
+            catch { /* 找不到就算了，用預設 */ }
             return null;
         }
 
-        /// <summary>把目前的值寫回 config.ini（附中文註解）。</summary>
+        /// <summary>找舊全域位置（執行檔同層）的 config.ini。沒有、或它其實就是新位置（極端 fallback 情形）則 null。</summary>
+        private static string FindLegacyExeConfig()
+        {
+            try
+            {
+                var p = LegacyExePath;
+                if (File.Exists(p) && !SamePath(p, FilePath)) return p;
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>移除舊位置的 config.ini（只在內容已寫進新位置後呼叫）：PROFILE/&lt;id&gt;/config.ini（per-user）+ 執行檔同層的舊全域檔。</summary>
+        private static void DeleteLegacyConfigs()
+        {
+            try
+            {
+                var root = ProfileManager.Root;
+                if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
+                    foreach (var dir in Directory.GetDirectories(root))
+                    {
+                        var p = Path.Combine(dir, FileName);
+                        if (File.Exists(p)) { File.Delete(p); Debug.Log($"[RoomConfig] removed per-user {p}"); }
+                    }
+            }
+            catch (Exception e) { Debug.LogWarning($"[RoomConfig] per-user cleanup failed: {e.Message}"); }
+
+            try
+            {
+                var exe = LegacyExePath;
+                if (File.Exists(exe) && !SamePath(exe, FilePath)) { File.Delete(exe); Debug.Log($"[RoomConfig] removed legacy {exe}"); }
+            }
+            catch (Exception e) { Debug.LogWarning($"[RoomConfig] legacy cleanup failed: {e.Message}"); }
+        }
+
+        /// <summary>兩個路徑是否指同一個檔（大小寫不敏感、正規化後比較）；任一失敗保守回 false。</summary>
+        private static bool SamePath(string a, string b)
+        {
+            try { return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
+        /// <summary>把目前的值寫回 config.ini（附中文註解）。寫在 DATA/PROFILE/ 下（開機時該資料夾已由 ProfileManager.Boot
+        /// 建好，這裡再保險確保一次，供 OPTION 保存等較晚的呼叫）。</summary>
         public static void Save()
         {
             try
             {
-                File.WriteAllText(FilePath, Serialize(), new UTF8Encoding(false));
+                var path = FilePath;
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(path, Serialize(), new UTF8Encoding(false));
             }
             catch (Exception e)
             {
@@ -164,6 +248,9 @@ namespace Sdo.Settings
                     case "defaultDropDirection": defaultDropDirection = ParseInt(val, defaultDropDirection); break;
                     case "defaultGameMode": defaultGameMode = ParseInt(val, defaultGameMode); break;
                     case "defaultScene": defaultScene = ParseInt(val, defaultScene); break;
+                    case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
+                    case "globalOffsetMs": globalOffsetMs = ParseFloat(val, globalOffsetMs); break;
+                    case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
                     case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
                     case "AddonFolder": addonFolder = NormalizeFolder(val); break;
                     // ---- OPTION 對話框設定 ----
@@ -183,6 +270,7 @@ namespace Sdo.Settings
                     case "opt_effectCharacter": optEffectChar = ParseBool(val, optEffectChar); break;
                     case "opt_effectScene": optEffectScene = ParseBool(val, optEffectScene); break;
                     case "opt_cameraAuto": optCameraAuto = ParseBool(val, optCameraAuto); break;
+                    case "opt_cameraFixed": optCameraFixed = ParseInt(val, optCameraFixed); break;
                     case "opt_callCardInGame": optCallCard = ParseBool(val, optCallCard); break;
                     case "opt_playFullSong": optPlayFullSong = ParseBool(val, optPlayFullSong); break;
                     case "opt_songSpeed": optSongSpeed = ParseBool(val, optSongSpeed); break;
@@ -203,6 +291,9 @@ namespace Sdo.Settings
             defaultDropDirection = Mathf.Clamp(defaultDropDirection, 0, 2);
             defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 2);
             if (defaultScene < -1 || defaultScene > 30) defaultScene = -1;   // 只允許 -1(隨機) 或 0..30(可選場景 id)
+            judgeLevel = Mathf.Clamp(judgeLevel, 1, 9);                      // 精1~精8、9=JUSTICE
+            globalOffsetMs = Mathf.Clamp(globalOffsetMs, -300f, 300f);       // 再大就不是延遲、是打錯拍了
+            judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
             if (addonFolder == null) addonFolder = "";
         }
@@ -211,7 +302,7 @@ namespace Sdo.Settings
         public static string Serialize()
         {
             var sb = new StringBuilder();
-            sb.Append("# 開房間右側面板預設設定 — 放在 DATA/PROFILE/（全帳號共用），純文字可手改。\n");
+            sb.Append("# 開房間右側面板預設設定 — 放在存檔資料夾 DATA/PROFILE/（與 settings.json 同層），純文字可手改。\n");
             sb.Append("# 改完存檔，下次開遊戲生效。\n");
             sb.Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
@@ -228,6 +319,17 @@ namespace Sdo.Settings
             sb.Append("defaultGameMode=").Append(defaultGameMode).Append('\n');
             sb.Append("# 預設場景：-1=隨機，0..30=指定場景 id（步行街=0 … 卡通公路=30）。玩家在選歌選了會寫回這裡\n");
             sb.Append("defaultScene=").Append(defaultScene).Append('\n');
+            sb.Append("# 判定精度（StepMania 的「精N」）：1~8，9=JUSTICE。數字越大越嚴格。\n");
+            sb.Append("# 以精4 為基準窗（Perfect ±45 / Cool ±90 / Bad ±135 / Miss ±180 ms）乘該精度係數：\n");
+            sb.Append("#   精1=1.50 精2=1.33 精3=1.16 精4=1.00 精5=0.84 精6=0.66 精7=0.50 精8=0.33 JUSTICE=0.20\n");
+            sb.Append("#   例：精2 → Perfect ±59.9 / Cool ±119.7 / Bad ±179.6 / Miss ±239.4 ms\n");
+            sb.Append("judgeLevel=").Append(judgeLevel).Append('\n');
+            sb.Append("# 全域判定 offset（毫秒）：正 = 判定時間往後（整體打太早就調正的）。預設 0。\n");
+            sb.Append("# 機器的音訊延遲**已經自動補掉了**（DSP 緩衝、驅動延遲、打拍音的前導靜音）→ 這裡只留給個人偏好/跨機微調。\n");
+            sb.Append("# 要調就用譜面編輯器的「打拍測試」(F2)，**聽節拍器打**（看著 note 打量不到音訊延遲），它會給建議值。\n");
+            sb.Append("globalOffsetMs=").Append(globalOffsetMs.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 判定線視覺偏移（設計 px，畫面高 600）：完美時機的音符會落在受擊線 + 這個位移處。0 = 正中受擊線。\n");
+            sb.Append("judgeOffsetY=").Append(judgeOffsetY.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 額外歌曲資料夾（osu/StepMania），仿 StepMania：分號分隔多個絕對路徑，例如 D:/test;E:/songs。\n");
             sb.Append("# 每個路徑都當成一個 Songs 根：底下第一層=分類(group)，再下一層=各首歌資料夾。\n");
             sb.Append("# 預設的 <ADDON>/SONG 一律自動掃描（舊的 exe 同層 Songs/ 仍相容），不需列在這。\n");
@@ -236,7 +338,7 @@ namespace Sdo.Settings
             sb.Append("# 例如 AddonFolder=D:/SdoAddon（該資料夾底下就是 SONG 等子夾）。\n");
             sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
 
-            // OPTION 對話框（畫面/音效/鍵盤/遊戲）的共用設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
+            // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");
             sb.Append("# 音量 0.0~1.0（背景音樂 / 遊戲音樂 / 遊戲音效）\n");
             sb.Append("opt_bgm=").Append(optBgm.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
@@ -258,6 +360,8 @@ namespace Sdo.Settings
             sb.Append("opt_effectCharacter=").Append(B(optEffectChar)).Append('\n');
             sb.Append("opt_effectScene=").Append(B(optEffectScene)).Append('\n');
             sb.Append("opt_cameraAuto=").Append(B(optCameraAuto)).Append('\n');
+            sb.Append("# 固定視角用哪一台（0~5，＝遊戲中 F2 循環的 6 台固定鏡頭；F2 切了會寫回這裡）\n");
+            sb.Append("opt_cameraFixed=").Append(optCameraFixed).Append('\n');
             sb.Append("opt_callCardInGame=").Append(B(optCallCard)).Append('\n');
             sb.Append("opt_playFullSong=").Append(B(optPlayFullSong)).Append('\n');
             sb.Append("opt_songSpeed=").Append(B(optSongSpeed)).Append('\n');
@@ -300,6 +404,7 @@ namespace Sdo.Settings
                 var g = s.gameplay;
                 optFullscreenFill = g.fullscreenFill; optBloom = g.bloom; optNotesPanelLeft = g.notesPanelLeft;
                 optEffectChar = g.effectCharacter; optEffectScene = g.effectScene; optCameraAuto = g.cameraAuto;
+                optCameraFixed = g.cameraFixed;
                 optCallCard = g.callCardInGame; optPlayFullSong = g.playFullSong; optSongSpeed = g.songSpeed;
                 optCollapseShortHolds = g.collapseShortHolds;
                 optPanelOpacity = g.panelOpacity;
@@ -307,7 +412,7 @@ namespace Sdo.Settings
             hasOption = true;
         }
 
-        /// <summary>把 config.ini 的 OPTION 鏡像值套回 <see cref="GameSettings"/>（共用值覆蓋裝置層）。開機
+        /// <summary>把 config.ini 的 OPTION 鏡像值套回 <see cref="GameSettings"/>（每帳號覆蓋裝置層）。開機/切帳號
         /// Load() 後呼叫（見 <see cref="Load"/>）。純函式（不碰檔案）。</summary>
         public static void ApplyOptionTo(GameSettings s)
         {
@@ -325,6 +430,7 @@ namespace Sdo.Settings
             var g = s.gameplay;
             g.fullscreenFill = optFullscreenFill; g.bloom = optBloom; g.notesPanelLeft = optNotesPanelLeft;
             g.effectCharacter = optEffectChar; g.effectScene = optEffectScene; g.cameraAuto = optCameraAuto;
+            g.cameraFixed = optCameraFixed;
             g.callCardInGame = optCallCard; g.playFullSong = optPlayFullSong; g.songSpeed = optSongSpeed;
             g.collapseShortHolds = optCollapseShortHolds;
             g.panelOpacity = optPanelOpacity;
@@ -360,6 +466,24 @@ namespace Sdo.Settings
             }
             return list.ToArray();
         }
+
+        private static string FloatListToString(float[] a)
+        {
+            if (a == null || a.Length == 0) return "";
+            var sb = new StringBuilder();
+            for (int i = 0; i < a.Length; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(a[i].ToString("0.0##", CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
+        }
+
+        private static float ParseFloat(string s, float fallback)
+            => float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : fallback;
+
+        private static int ParseInt(string s, int fallback)
+            => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : fallback;
 
         /// <summary>Split a path list into folders — StepMania-style, semicolon-separated (<c>;</c>); comma is still
         /// accepted for back-compat. Each entry is trimmed, backslashes normalised to '/', empties dropped, and leading
@@ -398,23 +522,5 @@ namespace Sdo.Settings
             for (int i = 0; i < a.Length; i++) { if (i > 0) sb.Append(';'); sb.Append(a[i] ?? ""); }
             return sb.ToString();
         }
-
-        private static string FloatListToString(float[] a)
-        {
-            if (a == null || a.Length == 0) return "";
-            var sb = new StringBuilder();
-            for (int i = 0; i < a.Length; i++)
-            {
-                if (i > 0) sb.Append(',');
-                sb.Append(a[i].ToString("0.0##", CultureInfo.InvariantCulture));
-            }
-            return sb.ToString();
-        }
-
-        private static float ParseFloat(string s, float fallback)
-            => float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : fallback;
-
-        private static int ParseInt(string s, int fallback)
-            => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : fallback;
     }
 }
