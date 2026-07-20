@@ -2672,11 +2672,18 @@ namespace Sdo.Game
         // Solo dance-spot = decompiled floor table @0x582690 entry1 = (0,0,0). (Multiplayer would index by slot/mode.)
         private Vector3 SoloDanceSpot() => Vector3.zero;
 
-        // EXACT decompiled mapId(3..18) -> CDT, recovered from the 021_gameplay jump tables (disassembled):
-        // solo/small (playerCount<=3) @0x4780b8 pushes the _1 variants; group (4..6) @0x4780f8 pushes the base.
-        // SCN0009 = mapId 9 = the PALACE -> palace_1.cdt (solo) / palace.cdt (group). null entry = decompiled fallback.
-        private static readonly string[] SoloCdt  = { "Garage_1","sea_1","Christmas_","playground_","sky_1","egypt_1","palace_1","huache_1",null,"fifa_1","fifa_1","ocean_1","Ghosthill_1","street_1","railway_1","houseboat_1" };
-        private static readonly string[] GroupCdt = { "Garage","sea","Christmas","playground","sky","egypt","palace","huache",null,"fifa","fifa","ocean","Ghosthill","street","railway","houseboat" };
+        // EXACT decompiled mapId(3..34) -> CDT. mapId 3..18 = the 16 classic maps, from the OFFLINE 021_gameplay
+        // jump tables (solo/small @0x4780b8 = _1 variants; group 4..6 @0x4780f8 = base). SCN0009 = mapId 9 = PALACE.
+        // mapId 19..34 = the NEWER maps: the offline standalone caps its switch at mapId 18 (>18 falls back to
+        // 1.cdt/3.cdt), so those come from the ONLINE client (sdo.bin) gameplay switch @0x73d425 (solo, byte-remap
+        // @0x73dccc -> JT @0x73dc48) / group @0x73d43a. scn####=mapId#### verified (palace9/railway17/subway20/
+        // basketball26). ⚠️ SCN0022 = mapId 22 = the 墓地/tomb -> 3ren.cdt (solo) / 6ren.cdt (group) = the "mu di"
+        // director whose .cv up-vectors roll ~60° (the tilted-map shots). null entry = fall through to the numeric
+        // fallback. Missing files are handled by SelectCdtPath's File.Exists chain, so unshipped maps stay safe.
+        private static readonly string[] SoloCdt  = { "Garage_1","sea_1","Christmas_","playground_","sky_1","egypt_1","palace_1","huache_1",null,"fifa_1","fifa_1","ocean_1","Ghosthill_1","street_1","railway_1","houseboat_1",
+                                                      "luoma_3","underground_3","zhanwei_3","3ren","jiaoshi_3","xuejing_3ren","spring_3g","basketball_3","narnia_3","niaochao_3","airpot_3","jiedao3","mj3ren","xk3","xk3","7.9_6ren" };
+        private static readonly string[] GroupCdt = { "Garage","sea","Christmas","playground","sky","egypt","palace","huache",null,"fifa","fifa","ocean","Ghosthill","street","railway","houseboat",
+                                                      "luoma_6","underground_shan","zhanwei_6","6ren","jiaoshi_6","xuejing_6ren","spring_6g","basketball_6yi","narnia_6yi","niaochao_6yi","airpot_6yi","jiedao6","mj6ren","xk6","xk6","7.9_6ren" };
 
         // scenePath "SCENE/SCN0009" -> 9 (matches the decompiled mapId = DAT_00674f04+0x5c).
         private int SceneMapId()
@@ -2685,14 +2692,14 @@ namespace Sdo.Game
             return m.Success ? int.Parse(m.Groups[1].Value) : -1;
         }
 
-        // mapId 3-18 → CDT stem; solo(n<=3) vs group(n=4-6); fallback chain: map→numeric→1
+        // mapId 3-34 → CDT stem; solo(n<=3) vs group(n=4-6); fallback chain: map→numeric→1
         private string SelectCdtPath()
         {
             int map = SceneMapId();
             int n   = Mathf.Max(1, playerCount);
             string[] table  = n <= 3 ? SoloCdt : GroupCdt;
             string fallback = n == 1 ? "1" : n <= 3 ? "3" : "6";
-            string mapped   = map >= 3 && map <= 18 ? table[map - 3] : null;
+            string mapped   = map >= 3 && map <= 2 + SoloCdt.Length ? table[map - 3] : null;
             foreach (var c in new[] { mapped, fallback, "1" })
             {
                 if (c == null) continue;
@@ -4031,7 +4038,7 @@ namespace Sdo.Game
             {
                 // F2 (decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
                 if (Input.GetKeyDown(KeyCode.F2)) CycleCamMode();
-                Vector3 eye, tgt;
+                Vector3 eye, tgt, up = Vector3.up;   // up = the .cv per-frame up vector (Camera_Update's LookAtLH 4th arg); non-vertical => roll/tilt
                 if (_camMode < 0 && _dirCv != null && _dirCv.Length > 0)
                 {
                     // Hold the director pinned to the START of shot 0 while the loading screen is still up — the camera
@@ -4045,19 +4052,21 @@ namespace Sdo.Game
                     float durSec = Mathf.Max(0.1f, _dirDurMs[_dirShot] / 1000f);
                     float el = Time.time - _dirShotStart;
                     if (el >= durSec) { _dirShot = (_dirShot + 1) % _dirCv.Length; _dirShotStart = Time.time; el = 0f; durSec = Mathf.Max(0.1f, _dirDurMs[_dirShot] / 1000f); }
-                    _dirCv[_dirShot].Sample(el / durSec, out eye, out tgt);     // VERBATIM .cv eye/target (Camera_Update)
+                    _dirCv[_dirShot].Sample(el / durSec, out eye, out tgt, out up);     // VERBATIM .cv eye/target/UP (Camera_Update)
                     // Camera_GetEyePos/GetTargetPos: add the dance-spot anchor ONLY for relative (:1) shots;
                     // absolute (:0) shots (e.g. the opening crane) use raw .cv world coords. Solo spot = 0 either way.
+                    // The anchor is a POSITION offset — it never touches the up vector (a direction).
                     if (!_dirAbs[_dirShot]) { eye += _danceSpot; tgt += _danceSpot; }
                 }
                 else
                 {
                     // FIXED camera: the exact decompiled static eye/target (DAT_005824f0/0x582538), absolute world.
+                    // These are built via Camera_ctor_default (up = world-up), so they stay level — keep up = Vector3.up.
                     int fi = Mathf.Clamp(_camMode, 0, FixedEye.Length - 1);
                     eye = FixedEye[fi]; tgt = FixedTgt[fi];
                 }
                 _sceneCam.transform.position = eye;
-                _sceneCam.transform.LookAt(tgt, Vector3.up);
+                _sceneCam.transform.LookAt(tgt, up);   // up carries the .cv roll → the auto-director's tilted-map shots
             }
             if (!_started) return;
             // Note timeline = the wall clock (Time.timeAsDouble - _clockStart), but re-locked every frame onto the
