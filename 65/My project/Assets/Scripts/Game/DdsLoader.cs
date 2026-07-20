@@ -114,7 +114,7 @@ namespace Sdo.Game
         /// </summary>
         public static DdsAlphaMode GetSceneAlphaMode(byte[] d)
         {
-            if (!AlphaCounts(d, out int total, out int visible, out int soft, out int hardTransp) || visible == 0)
+            if (!AlphaCounts(d, out int total, out int visible, out int soft, out int hardTransp, out _) || visible == 0)
                 return DdsAlphaMode.Opaque;
             float softOfVisible = soft / (float)visible;
             float hardTranspFrac = hardTransp / (float)total;
@@ -128,28 +128,41 @@ namespace Sdo.Game
         /// is fine but the alpha was left at 0 — which the cutout/blend path renders as a see-through wireframe. No real
         /// garment is mostly holes, so the caller forces such textures opaque. Returns 0 for alpha-less formats (DXT1).</summary>
         public static float HardTransparentFraction(byte[] d)
-            => AlphaCounts(d, out int total, out _, out _, out int hardTransp) && total > 0 ? hardTransp / (float)total : 0f;
+            => AlphaCounts(d, out int total, out _, out _, out int hardTransp, out _) && total > 0 ? hardTransp / (float)total : 0f;
 
-        // Walk the base-mip alpha and count: total texels, visible (a>8), soft (8<a<247), hardTransp (a<=8).
-        // Mirrors GetAlphaMode's DXT3 / DXT5 / 32-bit-uncompressed decode paths (no early-out). Returns false for
-        // formats with no alpha (DXT1 / unsupported) — caller treats those as Opaque.
-        private static bool AlphaCounts(byte[] d, out int total, out int visible, out int soft, out int hardTransp)
+        /// <summary>Fraction of ALL texels whose alpha is GENUINELY intermediate (<see cref="MidLo"/>&lt;a&lt;<see cref="MidHi"/>
+        /// ≈ 0.13..0.87). A real sheer FABRIC (lace / mesh / organza) is translucent everywhere → a HIGH fraction here
+        /// (Flower Lace Dress 024976_WOMAN_ONE ≈ 0.27-0.35). Two look-alikes score LOW and must NOT be treated as sheer:
+        /// a SOLID dress with hard lace-hem holes is BIMODAL — mass at a≈0 and a≈1, few midtones (眉画犹思 037888 ≈ 0.09);
+        /// a broken all-0 alpha channel is ≈0. The garment builder routes a high fraction to alpha-BLEND so the skin shows
+        /// through the fabric (see <see cref="SdoAvatarBuilder.GarmentAlphaMode"/>). Returns 0 for alpha-less DXT1.</summary>
+        public static float TranslucentFraction(byte[] d)
+            => AlphaCounts(d, out int total, out _, out _, out _, out int mid) && total > 0 ? mid / (float)total : 0f;
+
+        // "genuinely translucent" alpha band: exclude near-transparent (holes / AA fringe) AND near-opaque (solid body /
+        // AA fringe) so only real sheer-fabric midtones are counted — the signal that separates lace from a solid dress.
+        private const int MidLo = 32, MidHi = 224;
+
+        // Walk the base-mip alpha and count: total texels, visible (a>8), soft (8<a<247), hardTransp (a<=8), and mid
+        // (genuinely translucent, MidLo<a<MidHi). Mirrors GetAlphaMode's DXT3 / DXT5 / 32-bit-uncompressed decode paths
+        // (no early-out). Returns false for formats with no alpha (DXT1 / unsupported) — caller treats those as Opaque.
+        private static bool AlphaCounts(byte[] d, out int total, out int visible, out int soft, out int hardTransp, out int mid)
         {
-            total = visible = soft = hardTransp = 0;
+            total = visible = soft = hardTransp = mid = 0;
             if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
             string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
             int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
             if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return false;
             int bw = Math.Max(1, (width + 3) / 4), bh = Math.Max(1, (height + 3) / 4), bi = 128;
-            int t = 0, v = 0, s = 0, ht = 0;
+            int t = 0, v = 0, s = 0, ht = 0, mt = 0;
             if (fourcc == "DXT3")
             {
                 for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
                     for (int k = 0; k < 8; k++)
                     {
                         int ab = d[bi + k];
-                        int a0t = (ab & 0xF) * 255 / 15; t++; if (a0t <= 8) ht++; else { v++; if (a0t < 247) s++; }
-                        int a1t = ((ab >> 4) & 0xF) * 255 / 15; t++; if (a1t <= 8) ht++; else { v++; if (a1t < 247) s++; }
+                        int a0t = (ab & 0xF) * 255 / 15; t++; if (a0t <= 8) ht++; else { v++; if (a0t < 247) s++; } if (a0t > MidLo && a0t < MidHi) mt++;
+                        int a1t = ((ab >> 4) & 0xF) * 255 / 15; t++; if (a1t <= 8) ht++; else { v++; if (a1t < 247) s++; } if (a1t > MidLo && a1t < MidHi) mt++;
                     }
             }
             else if (fourcc == "DXT5")
@@ -161,7 +174,7 @@ namespace Sdo.Game
                     for (int i = 0; i < 16; i++)
                     {
                         int a = Dxt5Alpha(a0, a1, (int)((bits >> (i * 3)) & 7));
-                        t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; }
+                        t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++;
                     }
                 }
             }
@@ -176,10 +189,10 @@ namespace Sdo.Game
                 {
                     uint px = (uint)(d[off + i * 4] | (d[off + i * 4 + 1] << 8) | (d[off + i * 4 + 2] << 16) | (d[off + i * 4 + 3] << 24));
                     int a = max == 0 ? 255 : (int)(((px & am) >> shift) * 255 / max);
-                    t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; }
+                    t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++;
                 }
             }
-            total = t; visible = v; soft = s; hardTransp = ht;
+            total = t; visible = v; soft = s; hardTransp = ht; mid = mt;
             return t > 0;
         }
 

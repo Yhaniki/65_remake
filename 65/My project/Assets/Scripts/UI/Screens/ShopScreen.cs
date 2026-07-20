@@ -960,6 +960,10 @@ namespace Sdo.UI.Screens
                     if (m != null && m.mainTexture != null)
                     {
                         string sn = m.shader != null ? m.shader.name : "";
+                        // 真紗質/蕾絲布料 (Sdo/UnlitAvatarSheer) 已是「密度提升 alpha-blend」,分離-alpha 在透空 RT 正確合成
+                        // (opaque 底保留、紗料半透)。改成 cutout 會 clip+a→1 把 ~68% 的紗壓成實心黑 → 格子縮圖失去透明度
+                        // (使用者:「格子裡面的透明度沒改」)。跳過,讓卡片跟左側大預覽/遊戲內一致地半透。
+                        if (sn == "Sdo/UnlitAvatarSheer") continue;
                         // 髮/鏤空布料 (Sdo/UnlitDoubleSided) 本來就帶 authored _Cutoff(0.3);讀出保留,別壓到 0.05 (見 CardCutoutFor)。
                         float authored = sn == "Sdo/UnlitDoubleSided" ? m.GetFloat("_Cutoff") : 0f;
                         m.shader = cut;   // 只改有貼圖的 (無貼圖回退材質留給 ForceLightExpressionFace 處理)

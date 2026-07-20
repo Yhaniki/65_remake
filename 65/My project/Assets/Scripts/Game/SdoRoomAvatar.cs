@@ -109,6 +109,7 @@ namespace Sdo.Game
             var bodyShader = Shader.Find("Unlit/Texture");
             var hairShader = Shader.Find("Sdo/UnlitDoubleSided") ?? bodyShader;
             var portraitShader = Shader.Find("Sdo/PortraitOpaque") ?? bodyShader;
+            var sheerShader = Shader.Find("Sdo/UnlitAvatarSheer") ?? Shader.Find("Sdo/UnlitAvatarAlpha") ?? hairShader;   // 真紗質/蕾絲布料 → alpha-blend + 密度提升(見下)
             var fallback = Shader.Find("Unlit/Color");
 
             int parts = 0;
@@ -122,6 +123,7 @@ namespace Sdo.Game
                 // 髮/眼鏡/翅膀/項鍊都要雙面+alpha-cutout(去背),否則翅膀/眼鏡鏤空處變實心。其餘走 Unlit/Texture。
                 string ru = rel.ToUpperInvariant();
                 bool twoSidedAlpha = ru.Contains("HAIR") || ru.Contains("GLASS") || ru.Contains("CHIBANG") || ru.Contains("LINGDANG");
+                bool isGarment = SdoAvatarBuilder.IsBodyGarment(rel);   // cloth slot → classify sheerness (shared with the shop builder)
                 // 布料(非 髮/眼鏡/翅膀/項鍊)一律 bodyShader (Unlit/Texture,UNITY_OPAQUE_ALPHA 逼 alpha=1) → 破 alpha 布料
                 // 在透空 RT 也畫成實心,不被 portrait cutout 裁成透明線框(璀璨繁星 褲子 在男女選單/儲物櫃)。只有 twoSidedAlpha
                 // (髮/眼鏡/翅膀/項鍊,鏤空去背)才需 cutout:RT 用 portrait、場景用 hair。
@@ -147,13 +149,13 @@ namespace Sdo.Game
                             // 但道具出了自己的改色貼圖(070025_MAN_COAT.AN 黃色)。換成道具自己的 id → 房間/選男女/頭貼才跟商城/儲物間
                             // 一致(否則穿成模板的粉紅色)。與 SdoAvatarBuilder.LoadParts 同一支,存在才換(見該函式)。
                             nm = SdoAvatarBuilder.PreferOwnIdTexture(dir, rel, nm);
-                            var t = ResolveDds(dir, nm);
+                            var t = ResolveDds(dir, nm, out var am, isGarment);
                             // 翅膀(CHIBANG)的發光羽翼常是 model-embedded 換幀貼圖:材質名是佔位符 "_TexAnimEx(NAME)…"，
                             // 找不到真檔 → 交給共用的 TryBuildTexAnim 解出 <NAME>.an 幀序列並掛動畫(與遊戲內舞者/商城同一套),
                             // 否則房間/選男女的翅膀會變一坨灰色(user 回報 8448 貼圖寫不出來)。仍解不出才退 fallback 色。
                             Material texAnim = t == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, nm, sh) : null;
                             if (t == null && texAnim == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
-                            mats[s] = t != null ? new Material(sh) { mainTexture = t } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
+                            mats[s] = t != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : sh) { mainTexture = t } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
                         }
                         mr.sharedMaterials = mats;
                     }
@@ -161,11 +163,11 @@ namespace Sdo.Game
                     {
                         // 共用模板 mesh:內嵌模板 id → 換成道具自己 id 的改色貼圖(見上;070025 男上衣 / 070030 女鞋)。
                         var dds = SdoAvatarBuilder.PreferOwnIdTexture(dir, rel, sub.Dds);
-                        var tex = ResolveDds(dir, dds);
+                        var tex = ResolveDds(dir, dds, out var am, isGarment);
                         // 見上:翅膀 _TexAnimEx 換幀貼圖 → 交給共用 TryBuildTexAnim(解 .an 幀序列)否則變灰色。
                         Material texAnim = tex == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, dds, sh) : null;
                         if (tex == null && texAnim == null && !string.IsNullOrEmpty(dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{dds}' unresolved → fallback colour {PartColor(rel)}");
-                        mr.sharedMaterial = tex != null ? new Material(sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
+                        mr.sharedMaterial = tex != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
                     }
 
                     if (sub.BindVerts != null && sub.BoneHrc != null)
@@ -236,10 +238,16 @@ namespace Sdo.Game
             return rel;
         }
 
+        private static Texture2D ResolveDds(string dir, string ddsName) => ResolveDds(dir, ddsName, out _, false);
+
         // Resolve an avatar DDS by name within its folder (mirror of ScreenGameplay.ResolveDds: exact name first, then a
-        // case-insensitive stem match), decoded via DdsLoader.
-        private static Texture2D ResolveDds(string dir, string ddsName)
+        // case-insensitive stem match), decoded via DdsLoader. When <paramref name="bodyGarment"/> (a cloth slot) also
+        // report the garment alpha CLASS via the SHARED SdoAvatarBuilder.GarmentAlphaMode so this loop renders a genuine
+        // sheer fabric (lace/mesh) alpha-blended — the SAME classification the shop/gameplay builder uses — instead of the
+        // blanket-opaque cloth this path used to force. Broken/normal alpha still come back Opaque → no regression.
+        private static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode garmentAlpha, bool bodyGarment)
         {
+            garmentAlpha = DdsAlphaMode.Opaque;
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
@@ -248,7 +256,18 @@ namespace Sdo.Game
             // 'haun0'→'huan0', 'M_Basic_face01'→'M_Basic_face' — that the strict match misses (→ white faces / fallbacks).
             if (hit == null) hit = SdoAvatarBuilder.FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
             if (hit == null) return null;
-            try { return DdsLoader.Load(File.ReadAllBytes(hit)); }
+            try
+            {
+                var bytes = File.ReadAllBytes(hit);
+                bool sheer = false;
+                if (bodyGarment)
+                {
+                    garmentAlpha = SdoAvatarBuilder.GarmentAlphaMode(DdsLoader.GetSceneAlphaMode(bytes),
+                        DdsLoader.HardTransparentFraction(bytes), DdsLoader.TranslucentFraction(bytes), true);
+                    sheer = garmentAlpha == DdsAlphaMode.Blend;
+                }
+                return DdsLoader.Load(bytes, bleedAlphaEdges: sheer);   // sheer fabric: dilate RGB into a=0 → no black halo at the lace edges
+            }
             catch { return null; }
         }
 

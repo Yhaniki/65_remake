@@ -44,6 +44,7 @@ public static class BuildScript
 
         "Sdo/UnlitAvatarAlpha",  // 眼鏡鏡片 + 翅膀(CHIBANG)/去背飾品 alpha-blend; stripped -> Shader.Find null -> 退回 UnlitDoubleSided(cutout,c.a=1
                                  // 強制不透明) -> 翅膀周圍閃爍貼圖/眼鏡鏡片「透明度沒做出來」(editor 不 strip 故只在打包版壞)
+        "Sdo/UnlitAvatarSheer",  // 真紗質/蕾絲衣料(Flower Lace Dress)alpha-blend + 密度提升(_Density);stripped -> 退回 cutout -> 紗變實心黑袖
         "Sdo/UnlitInstanced",
         "Sdo/UnlitInstancedAlpha",   // alpha-blended mapobj props ("去背"); stripped -> alpha stage props go magenta
         "Sdo/UnlitInstancedAlphaCullBack", // mirrored separated alpha planes (SCN0011 DING): single-sided blend

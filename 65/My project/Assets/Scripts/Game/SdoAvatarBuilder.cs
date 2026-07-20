@@ -56,6 +56,7 @@ namespace Sdo.Game
             var bodyShader = Shader.Find("Unlit/Texture");
             var hairShader = Shader.Find("Sdo/UnlitDoubleSided") ?? bodyShader;
             var glassShader = Shader.Find("Sdo/UnlitAvatarAlpha") ?? hairShader;   // 眼鏡 DXT3 有真 alpha → 鏡片半透(見眼睛),去背 a=0 隱形
+            var sheerShader = Shader.Find("Sdo/UnlitAvatarSheer") ?? glassShader;  // 真紗質/蕾絲布料 → alpha-blend + 密度提升(比玻璃/翅膀多一層密度,見 shader)
             var portraitShader = Shader.Find("Sdo/PortraitOpaque") ?? bodyShader;
             var fallbackShader = Shader.Find("Unlit/Color");
 
@@ -107,7 +108,7 @@ namespace Sdo.Game
                             // _texanimex(...) 佔位符不能退回 mesh 自己的 base atlas——那是 256 master 卡,靜態貼上會蓋掉換幀動畫(使用者看到的黃卡)
                             if (t == null && !TexAnimEx.TryParse(nm, out _)) t = ResolveDds(dir, MeshSelfDds(rel), out am, IsBodyGarment(rel));   // 引到外來貼圖id → 退回 mesh 自己的 id
                             if (t == null && !string.IsNullOrEmpty(nm) && !TexAnimEx.TryParse(nm, out _)) Debug.LogWarning($"[avtex] item='{LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");   // texanim 由下方 TryBuildTexAnim 渲染,非未解析
-                            var sh = AlphaShaderFor(texShader, am, bodyShader, glassShader, hairShader);   // 真孔洞→cutout不透明 / 全軟→alpha-blend
+                            var sh = AlphaShaderFor(texShader, am, bodyShader, sheerShader, hairShader);   // 真孔洞→cutout不透明 / 真紗質→sheer alpha-blend(密度提升)
                             // 記下材質名 = DDS 名 (如 W_Basic_Coat2)，讓上層 (商城衣物縮圖) 能認出「膚色 range」把它藏掉。
                             mats[s] = t != null ? new Material(sh) { mainTexture = t, name = nm ?? "" }
                                                 : (TryBuildTexAnim(go, dir, nm, texShader)
@@ -257,11 +258,12 @@ namespace Sdo.Game
         ///     16.5% alpha-0 lace holes + 72.5% solid) → <paramref name="cutoutShader"/> (alpha-TEST, a→1, ZWrite On):
         ///     the dress body stays fully opaque and the holes clip to reveal skin. Using alpha-BLEND here made the whole
         ///     solid dress see-through (the reported bug); the plain opaque shader instead painted the holes solid black.
-        ///   • <see cref="DdsAlphaMode.Blend"/> — a mostly-soft gradient (glass, additive glows, a 去背/tattoo decal like
-        ///     至尊王者无敌 000558) → <paramref name="glassShader"/> (blend, ZWrite Off, Queue=Transparent): its a=0
-        ///     texels contribute nothing (skin shows) and the soft body reads as translucent, no z-fight with the skin.
+        ///   • <see cref="DdsAlphaMode.Blend"/> — a genuinely SHEER fabric (lace/mesh/organza, e.g. Flower Lace Dress
+        ///     024976) → <paramref name="garmentBlendShader"/> (Sdo/UnlitAvatarSheer: blend + density boost, ZWrite Off,
+        ///     Queue=Transparent): its a=0 texels contribute nothing (skin shows) and the veil reads as dense translucent
+        ///     fabric, no z-fight with the skin. Distinct from the glasses/wings Sdo/UnlitAvatarAlpha (no density boost).
         ///   • <see cref="DdsAlphaMode.Opaque"/> → the opaque <paramref name="bodyShader"/> unchanged.</summary>
-        private static Shader AlphaShaderFor(Shader texShader, DdsAlphaMode am, Shader bodyShader, Shader glassShader, Shader cutoutShader)
+        private static Shader AlphaShaderFor(Shader texShader, DdsAlphaMode am, Shader bodyShader, Shader garmentBlendShader, Shader cutoutShader)
         {
             if (texShader != bodyShader)
             {
@@ -274,7 +276,7 @@ namespace Sdo.Game
             switch (am)
             {
                 case DdsAlphaMode.Cutout: return cutoutShader;
-                case DdsAlphaMode.Blend:  return glassShader;
+                case DdsAlphaMode.Blend:  return garmentBlendShader;
                 default:                  return bodyShader;   // Opaque
             }
         }
@@ -301,14 +303,34 @@ namespace Sdo.Game
                 bool hasAlpha = DdsLoader.HasAlpha(bytes);
                 bool additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
                 sceneAlpha = DdsLoader.GetSceneAlphaMode(bytes);   // distribution-based (≥3% 真洞才 Cutout) → 不會被雜訊誤判
-                // 布料(COAT/PANT/ONE/SHOES)的 alpha 壞掉(全透明 >70% = 匯出壞/atlas 留白;柔性 Blend = 光影漸層非透明)→ 當實心,
-                // 否則畫成透明線框/袖子穿透。但 Cutout(<70% 硬鏤空,如裙擺蕾絲/去背刺青)是「真透明」設計 → 保留不動。
-                if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque
-                    && (sceneAlpha == DdsAlphaMode.Blend || DdsLoader.HardTransparentFraction(bytes) > 0.7f))
-                    sceneAlpha = DdsAlphaMode.Opaque;
+                if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque)
+                    sceneAlpha = GarmentAlphaMode(sceneAlpha, DdsLoader.HardTransparentFraction(bytes),
+                                                  DdsLoader.TranslucentFraction(bytes), true);
                 return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow);
             }
             catch { return null; }
+        }
+
+        /// <summary>Pure body-garment (coat/pant/one/shoes) alpha-mode decision — the File-reading <see cref="ResolveDds"/>
+        /// delegates the classification here so it can be unit-tested without a texture on disk. Inputs are the texture's
+        /// distribution-based <paramref name="scene"/> class plus its hard-transparent (a≤8) and genuinely-translucent
+        /// (mid-alpha) fractions. Rules, in order:
+        ///   • a real SHEER fabric (lace/mesh/organza) — many mid-alpha texels AND not mostly-holes — stays alpha-BLEND so
+        ///     the skin shows through (Flower Lace Dress 024976_WOMAN_ONE: translucent≈0.27-0.35, hardTransp≈0.07-0.11).
+        ///     This is checked FIRST because <see cref="DdsLoader.GetSceneAlphaMode"/> would otherwise call such lace
+        ///     Cutout (hard clip + a→1 = solid black sleeves, the "透明度沒做出來" report) and the opaque-force below would
+        ///     flatten a soft one entirely;
+        ///   • a broken/spurious all-0 alpha channel (&gt;70% holes) OR a soft-shaded SOLID garment (scene=Blend, few
+        ///     midtones) → OPAQUE, else it renders as a see-through wireframe / whole-dress transparency (璀璨繁星 男褲);
+        ///   • otherwise keep the scene class — a SOLID dress with hard lace-hem holes stays Cutout (眉画犹思 037888:
+        ///     translucent≈0.09, so it is NOT mistaken for sheer fabric).
+        /// Accessories (wings/glasses/hair) never reach here (bodyGarment=false) and keep their own alpha untouched.</summary>
+        public static DdsAlphaMode GarmentAlphaMode(DdsAlphaMode scene, float hardTransp, float translucent, bool bodyGarment)
+        {
+            if (!bodyGarment || scene == DdsAlphaMode.Opaque) return scene;
+            if (hardTransp <= 0.7f && translucent >= 0.15f) return DdsAlphaMode.Blend;
+            if (scene == DdsAlphaMode.Blend || hardTransp > 0.7f) return DdsAlphaMode.Opaque;
+            return scene;
         }
 
         /// <summary>Shop-set label (item name, or 6-digit id when unnamed) that the <c>[avtex]</c> fallback warnings
@@ -316,9 +338,11 @@ namespace Sdo.Game
         /// card/preview build; harmless when null.</summary>
         public static string LogLabel;
 
-        /// <summary>True for a body garment slot (coat/pant/one-piece) whose texture must stay opaque when its alpha is
-        /// broken — as opposed to accessories (wings/glasses/hair) that legitimately use alpha cut-outs.</summary>
-        private static bool IsBodyGarment(string rel)
+        /// <summary>True for a body garment slot (coat/pant/one-piece/shoes) whose texture alpha is classified by
+        /// <see cref="GarmentAlphaMode"/> — broken alpha → opaque, genuine sheer fabric → blend — as opposed to
+        /// accessories (wings/glasses/hair) that legitimately use alpha cut-outs. Public so the room/gender/wardrobe
+        /// avatar loop (<see cref="SdoRoomAvatar"/>) shares the SAME predicate and doesn't drift from the shop builder.</summary>
+        public static bool IsBodyGarment(string rel)
         { string u = (rel ?? "").ToUpperInvariant(); return u.Contains("COAT") || u.Contains("PANT") || u.Contains("_ONE") || u.Contains("SHOES"); }
 
         /// <summary>The mesh's OWN texture derived from its filename: 'AVATAR/023441_WOMAN_ONE.MSH' → '023441_WOMAN_ONE.dds'.
