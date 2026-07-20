@@ -32,6 +32,15 @@ namespace Sdo.Osu
         private const uint MagicDdrm = 0x6D726464u; // 'drmd' little-endian
         private const int StepHeader = 300;
 
+        /// <summary>
+        /// SDO online/NX charts add frame_type 33 = 捲動速度 (scroll-speed) events; each slot's low 16 bits is a
+        /// raw speed value where <b>1000 = 原速度 ×1.0</b>. The current scroll multiplier = value / 1000, so
+        /// sdom2818's opening 2000 = ×2.0 (the song starts at double speed), 10000 = ×10, 250 = ×0.25, etc.
+        /// These go to <see cref="OsuBeatmap.ScrollSpeeds"/> (a "current speed that jumps when the play head
+        /// arrives" track — NOT osu SV; see that field). Offline .gn have no type-33 frames → no effect.
+        /// </summary>
+        public const double Frame33SpeedBase = 1000.0;
+
         private static uint U32(byte[] d, int o) => (uint)(d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24));
         private static short I16(byte[] d, int o) => (short)(d[o] | (d[o + 1] << 8));
 
@@ -181,6 +190,9 @@ namespace Sdo.Osu
             var noteBeat = new List<double>();
             var noteLane = new List<int>();
             var noteType = new List<int>();
+            var scrollBeat = new List<double>();   // frame_type 33 捲動速度事件的拍點
+            var scrollRaw = new List<double>();     // 對應的原始速度值 (稍後除以 base 1000 成倍率)
+            var scrollRampTk = new List<int>();     // slot 高 16 位 = 線性變速時長 (1/48 拍 tick;0=瞬間)
             // Music-start anchor. The engine holds the song's FMOD channel paused and has exactly two ways to
             // unpause it (both end at the same listener, 0046d590 -> FMOD::Channel::setPaused(false)):
             //   1. MARKER path — NewNote_TriggerNoteSound_0048e9c0 sets the music-start flag (+0x2e0) the instant
@@ -218,6 +230,14 @@ namespace Sdo.Osu
                         { bpmBeats.Add(beat); bpmVals.Add(bpm); }
                         continue;
                     }
+                    // frame_type 33 = SDO online/NX 捲動速度事件；slot 低 16 位是速度值。
+                    if (ft == 33)
+                    {
+                        int sv = (ushort)I16(body, off);         // low 16 = 速度值 (1000 = ×1.0)
+                        int ramp = (ushort)I16(body, off + 2);   // high 16 = 線性變速時長 (1/48 拍 tick;0=瞬間)
+                        if (sv != 0) { scrollBeat.Add(beat); scrollRaw.Add(sv); scrollRampTk.Add(ramp); }
+                        continue;
+                    }
                     // type-10 = 音樂起止. Its start slot carries value 1000 (low 12 bits — engine tests
                     // `param_2 & 0xfff == 1000`). This is THE music-start marker; take the earliest one.
                     if (ft == 10 && (U32(body, off) & 0xfff) == 1000 && (firstMusicStartBeat < 0.0 || beat < firstMusicStartBeat))
@@ -247,6 +267,21 @@ namespace Sdo.Osu
             // single point at 0; ManiaScroll then runs at a constant base velocity. (.gn has no SV.)
             for (int s = 0; s < segBeat.Length; s++)
                 map.TimingPoints.Add(new OsuTimingPoint(segMs[s], 60000.0 / Math.Max(1.0, segBpm[s])));
+
+            // SDO online/NX 捲動速度事件 (frame_type 33) → ScrollSpeeds (現時捲動速度，播放頭到達才變、非 osu SV)。
+            // 值 / 1000 = 倍率 (1000 = 原速度 ×1.0)；高 16 位 = 線性變速時長 (1/48 拍 tick),0=瞬間。渲染時整場乘
+            // 上「當下」倍率，所有畫面上的 note 一起跳/漸變。
+            for (int k = 0; k < scrollBeat.Count; k++)
+            {
+                double mul = scrollRaw[k] / Frame33SpeedBase;
+                if (mul <= 0.0) continue;
+                double ms = BeatToMs(segBeat, segBpm, segMs, scrollBeat[k]);
+                double rampMs = 0.0;
+                if (scrollRampTk[k] > 0)   // ramp 到 mul，跨 tick/48 拍;用 BeatToMs 差算 ms(尊重中途變速)
+                    rampMs = BeatToMs(segBeat, segBpm, segMs, scrollBeat[k] + scrollRampTk[k] / 48.0) - ms;
+                map.ScrollSpeeds.Add(new OsuScrollSpeed(ms, mul, rampMs > 0.0 ? rampMs : 0.0));
+            }
+            map.ScrollSpeeds.Sort((a, b) => a.TimeMs.CompareTo(b.TimeMs));
 
             // --- pass 2: resolve note beats -> ms via the BPM timeline; pair holds (file order = beat order) ---
             var openHoldMs = new int[4]; for (int i = 0; i < 4; i++) openHoldMs[i] = -1;

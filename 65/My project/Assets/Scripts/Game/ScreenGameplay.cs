@@ -4390,11 +4390,19 @@ namespace Sdo.Game
         // 向上 (up-scroll, _scrollSign +1): future notes are BELOW the hit line and RISE to it. 向下 (_scrollSign −1):
         // future notes are ABOVE and FALL to it. Distance comes from ManiaScroll (osu Sequential integration), so
         // mid-song BPM changes / SV vary it locally; the sign just picks which side of the judge line notes come from.
-        private float YForTime(double noteMs, double now)
+        // Signed on-screen distance (design-px) from the judge line to a note at noteMs. SDO online/NX frame_type 33
+        // 捲動速度 is a SET current speed: the whole field scrolls at CurrentScrollSpeed(now) (snaps at an instant
+        // event, ramps linearly when the slot carries a duration), so a ×10 event genuinely pushes the notes out
+        // (the intended gimmick). No type-33 (offline .gn) → CurrentScrollSpeed is 1 → identical to before.
+        private float ScrollPx(double now, double noteMs)
         {
             if (_scroll == null) BuildScroll();
-            return judgeLineY + judgeOffsetY + _scrollSign * (float)_scroll.PixelDistance(now, noteMs);
+            float sv = _map != null ? (float)_map.CurrentScrollSpeed(now) : 1f;
+            return sv * (float)_scroll.PixelDistance(now, noteMs);
         }
+
+        private float YForTime(double noteMs, double now)
+            => judgeLineY + judgeOffsetY + _scrollSign * ScrollPx(now, noteMs);
 
         private void ScrollNotes(double now)
         {
@@ -4409,7 +4417,15 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) { ReturnVisual(n); continue; }
-                if (n.Note.StartTimeMs > now && (float)_scroll.PixelDistance(now, n.Note.StartTimeMs) > aheadPx) break;   // this + all later notes are still below/above the board
+                if (n.Note.StartTimeMs > now && ScrollPx(now, n.Note.StartTimeMs) > aheadPx)
+                {
+                    // Note is past the far edge of the board. With frame_type 33 捲動速度 the current speed can jump/
+                    // ramp, so a note that's off-board this frame may be back on it the next — we must keep hiding it
+                    // (never leave a stale visual frozen at its last spot). Constant-scroll charts stay sorted, so the
+                    // classic early-out is still safe and cheaper there.
+                    if (_map != null && _map.ScrollSpeeds.Count > 0) { ReturnVisual(n); continue; }
+                    break;   // this + all later notes are still below/above the board
+                }
                 int c = n.Note.Lane;
                 bool held = _holding[c] == n;        // a held long-note head stays pinned to the judge line
                 // 長條頭按住時釘在判定線；一旦尾端(END)通過判定線 (now ≥ EndTimeMs) 就整條隱藏 — 判定仍在跑
