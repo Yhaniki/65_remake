@@ -1,7 +1,7 @@
 {
  "schema": "song-name-overrides/2",
  "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist/bpm 會覆蓋 k.gn 的顯示值。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。bpm>0 會覆蓋歌單/房間顯示的 BPM 數字(只影響顯示；遊戲判定與流速一律讀譜面本身)；offsetMs = 這首歌的音訊校正(毫秒，唯一會進遊戲的欄位)：正值 = 音樂晚一點進來(音樂跑在譜面前面、音符老是慢半拍時用)，負值 = 音樂提早，0/不填 = 不動。它疊在譜面自己的音樂起點(type-10 marker)上，只挪音樂＋舞蹈；音符與判定仍在譜面時鐘上，所以調錯頂多音畫不合拍，不會影響難度。範圍夾在 ±5000ms。fileId/src 僅供辨識，runtime 不套用。此清單不決定歌單內容(歌單來自 song_catalog.json)，刪掉某首只是讓它顯示回 .gn 內嵌名，歌照樣能選。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填(offsetMs 例外：永遠保留)。",
- "count": 2163,
+ "count": 2162,
  "songs": [
   {
    "gn": "sdom1956",
@@ -405,7 +405,7 @@
    "offsetMs": -4,
    "src": "songname",
    "title": "DNA",
-   "artist": "王力宏"
+   "artist": "五月天"
   },
   {
    "gn": "sdom1733",
@@ -963,15 +963,6 @@
    "src": "songname",
    "title": "私奔到月球",
    "artist": "五月天+陳綺貞"
-  },
-  {
-   "gn": "sdom1630",
-   "fileId": 11630,
-   "bpm": 122.0,
-   "offsetMs": 0.0,
-   "src": "kgn",
-   "title": "DNA",
-   "artist": "by2"
   },
   {
    "gn": "sdom1612",
@@ -6402,7 +6393,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "謊言",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1002",
@@ -6483,7 +6474,7 @@
    "offsetMs": -15,
    "src": "kgn",
    "title": "Crazy Dog",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1084",
@@ -6492,7 +6483,7 @@
    "offsetMs": -25,
    "src": "kgn",
    "title": "傻瓜",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1085",
@@ -6501,7 +6492,7 @@
    "offsetMs": -25,
    "src": "kgn",
    "title": "最後的問候",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1099",
@@ -6879,7 +6870,7 @@
    "offsetMs": -30,
    "src": "kgn",
    "title": "Lady",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1422",
@@ -6915,7 +6906,7 @@
    "offsetMs": -25,
    "src": "kgn",
    "title": "Oh My Friend",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1430",
@@ -7239,7 +7230,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "Number 1",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1568",
@@ -7284,7 +7275,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "Lollipop",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1579",
@@ -7633,7 +7624,7 @@
    "bpm": 115.0,
    "src": "kgn",
    "title": "So Beautiful",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1779",
@@ -7857,7 +7848,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "Strong Baby",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1844",
@@ -8567,7 +8558,7 @@
    "offsetMs": 15,
    "src": "kgn",
    "title": "BEAUTIFUL HANGOVER",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1997",
@@ -9537,7 +9528,7 @@
    "offsetMs": 6,
    "src": "kgn",
    "title": "High High",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom2133",
@@ -10505,8 +10496,8 @@
    "bpm": 128.0,
    "offsetMs": 6,
    "src": "kgn",
-   "title": "寶石(井上麻裡奈)",
-   "artist": "柯賽特的肖像"
+   "title": "寶石",
+   "artist": "井上麻裡奈 (柯賽特的肖像ed)"
   },
   {
    "gn": "sdom2313",
@@ -10541,7 +10532,7 @@
    "bpm": 156.0,
    "offsetMs": 20,
    "src": "kgn",
-   "title": "讓我們就這樣愛著吧（Apink）",
+   "title": "讓我們就這樣愛著吧",
    "artist": "A Pink"
   },
   {
@@ -11639,8 +11630,8 @@
    "bpm": 99.0,
    "offsetMs": 9,
    "src": "kgn",
-   "title": "Popular Song (feat. Ariana Grand",
-   "artist": "Mika"
+   "title": "Popular Song",
+   "artist": "Mika feat. Ariana Grand"
   },
   {
    "gn": "sdom2489",
@@ -11648,8 +11639,8 @@
    "bpm": 170.0,
    "offsetMs": 0.0,
    "src": "kgn",
-   "title": "If You Love Me (Feat.樸宰範)",
-   "artist": "N.S允智"
+   "title": "If You Love Me",
+   "artist": "N.S允智 Feat.樸宰範"
   },
   {
    "gn": "sdom2490",
@@ -11730,7 +11721,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "Last Farewell",
-   "artist": "Big Bang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom2499",
@@ -11739,7 +11730,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "謊言",
-   "artist": "Big Bang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom2501",
@@ -11748,7 +11739,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "想怎樣",
-   "artist": "Big Bang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom2502",
@@ -11757,7 +11748,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "OH BABY",
-   "artist": "Big Bang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom2503",
@@ -12947,8 +12938,8 @@
    "bpm": 122.0,
    "offsetMs": 20,
    "src": "kgn",
-   "title": "想神馬有神馬 (feat. 吳莫愁)",
-   "artist": "李代沫;吳莫愁"
+   "title": "想神馬有神馬",
+   "artist": "李代沫 feat.吳莫愁"
   },
   {
    "gn": "sdom2636",
@@ -13780,7 +13771,7 @@
    "offsetMs": 80,
    "src": "kgn",
    "title": "Blue",
-   "artist": "Big Bang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom2729",
@@ -15595,7 +15586,7 @@
    "gn": "sdom2933",
    "fileId": 12933,
    "bpm": 120.0,
-   "offsetMs": -105,
+   "offsetMs": 1910,
    "src": "kgn",
    "title": "Booty Music",
    "artist": "Deep Side"
@@ -16045,8 +16036,8 @@
    "fileId": 10078,
    "bpm": 106.0,
    "src": "kgn",
-   "title": "keep sweatin",
-   "artist": "ray j feat"
+   "title": "Keep Sweatin'",
+   "artist": "Ray J ft. Fat Joe"
   },
   {
    "gn": "sdom0079",
@@ -16718,8 +16709,8 @@
    "bpm": 103.66,
    "offsetMs": -30,
    "src": "kgn",
-   "title": "Beep (feat will i am)",
-   "artist": "SDO"
+   "title": "Beep",
+   "artist": "The Pussycat Dolls ft. will.i.am"
   },
   {
    "gn": "sdom0256",
@@ -16728,7 +16719,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "Still Alive",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom0257",
@@ -16746,7 +16737,7 @@
    "offsetMs": 5,
    "src": "kgn",
    "title": "Blue",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom0274",
@@ -17050,8 +17041,8 @@
    "bpm": 101.96,
    "offsetMs": -45,
    "src": "kgn",
-   "title": "Bigbang",
-   "artist": "Bigbang"
+   "title": "BIGBANG",
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom0399",
@@ -17381,7 +17372,7 @@
    "gn": "sdom1111",
    "fileId": 11111,
    "bpm": 125.0,
-   "offsetMs": 80,
+   "offsetMs": 1765,
    "src": "kgn",
    "title": "Electric Shock",
    "artist": "f(x)"
@@ -17393,7 +17384,7 @@
    "offsetMs": 0.0,
    "src": "kgn",
    "title": "Monster",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1113",
@@ -17402,7 +17393,7 @@
    "offsetMs": 5,
    "src": "kgn",
    "title": "Fanstatic Baby",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1114",
@@ -17924,7 +17915,7 @@
    "offsetMs": -16,
    "src": "kgn",
    "title": "天國",
-   "artist": "BigBang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1411",
@@ -18041,7 +18032,7 @@
    "offsetMs": -45,
    "src": "kgn",
    "title": "每天每天",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1432",
@@ -18337,8 +18328,8 @@
    "bpm": 125.0,
    "offsetMs": 0.0,
    "src": "kgn",
-   "title": "Feat.Maboos",
-   "artist": "韓尤娜"
+   "title": "Mannequin",
+   "artist": "HyunA Feat. Maboos"
   },
   {
    "gn": "sdom1707",
@@ -18373,8 +18364,8 @@
    "bpm": 98.0,
    "offsetMs": 0.0,
    "src": "kgn",
-   "title": "feat. Speed Motion",
-   "artist": "秀彬"
+   "title": "Maybe",
+   "artist": "秀彬 feat. Speed Motion"
   },
   {
    "gn": "sdom1734",
@@ -18526,7 +18517,7 @@
    "offsetMs": 6,
    "src": "kgn",
    "title": "去吧去吧",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom1777",
@@ -18801,7 +18792,7 @@
    "gn": "sdom5001",
    "fileId": 15001,
    "bpm": 155.0,
-   "offsetMs": -115,
+   "offsetMs": 1543,
    "src": "kgn",
    "title": "Dogfight",
    "artist": "Initial D"
@@ -18828,7 +18819,7 @@
    "gn": "sdom5004",
    "fileId": 15004,
    "bpm": 155.7,
-   "offsetMs": 35,
+   "offsetMs": 1400,
    "src": "kgn",
    "title": "Space Boy",
    "artist": "Initial D"
@@ -18873,7 +18864,7 @@
    "gn": "sdom5009",
    "fileId": 15009,
    "bpm": 146.0,
-   "offsetMs": -18,
+   "offsetMs": 82,
    "src": "kgn",
    "title": "Unfinished",
    "artist": "Accel World"
@@ -18918,7 +18909,7 @@
    "gn": "sdom5014",
    "fileId": 15014,
    "bpm": 90.0,
-   "offsetMs": 123,
+   "offsetMs": 2076,
    "src": "kgn",
    "title": "Uso",
    "artist": "Full Metal Alchemist"
@@ -19044,7 +19035,7 @@
    "gn": "sdom5028",
    "fileId": 15028,
    "bpm": 169.0,
-   "offsetMs": -78,
+   "offsetMs": 180,
    "src": "kgn",
    "title": "My Dearest",
    "artist": "Supercell"
@@ -19056,7 +19047,7 @@
    "offsetMs": 21,
    "src": "kgn",
    "title": "Tonight",
-   "artist": "Bigbang"
+   "artist": "BIGBANG"
   },
   {
    "gn": "sdom5030",
@@ -19359,7 +19350,7 @@
    "gn": "sdom2952",
    "fileId": 12952,
    "bpm": 140.0,
-   "offsetMs": -112,
+   "offsetMs": 1394,
    "src": "kgn",
    "title": "ECHO",
    "artist": "れをる,茶理理"
@@ -19368,7 +19359,7 @@
    "gn": "sdom2953",
    "fileId": 12953,
    "bpm": 120.05,
-   "offsetMs": 55,
+   "offsetMs": 1595,
    "src": "kgn",
    "title": "SLOW DOWN",
    "artist": "向井太一"
@@ -19386,7 +19377,7 @@
    "gn": "sdom2955",
    "fileId": 12955,
    "bpm": 122.5,
-   "offsetMs": 146,
+   "offsetMs": 806,
    "src": "kgn",
    "title": "怪咖",
    "artist": "薛之謙"

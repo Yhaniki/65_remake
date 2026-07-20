@@ -6,9 +6,9 @@ namespace Sdo.Settings
     [Serializable]
     public class DisplaySettings
     {
-        public int width = 1024;                // windowed size (4:3, matches the 800×600 design aspect)
-        public int height = 768;
-        public string displayMode = "Borderless"; // 預設全螢幕視窗化。Windowed | Fullscreen | Borderless
+        public int width = 800;                 // windowed size = 800×600 native frame（遊戲畫面「窗口」預設，與進階「視窗大小」連動）
+        public int height = 600;
+        public string displayMode = "Windowed"; // 預設視窗化（與遊戲畫面「窗口」連動）。Windowed | Fullscreen | Borderless
         public bool vsync = true;
         public float uiScale = 1f;              // 1.0 / 1.25 / 1.5
     }
@@ -31,7 +31,7 @@ namespace Sdo.Settings
     [Serializable]
     public class GameplaySettings
     {
-        public bool fullscreenFill = false;  // 遊戲畫面：true=全屏(填滿) / false=視窗化(左右黑邊 pillarbox)。預設窗口
+        public bool fullscreenFill = false;  // 遊戲畫面：true=全屏(填滿,拉伸→無邊框全螢幕) / false=視窗化(左右黑邊 pillarbox→視窗)。預設窗口；與進階「顯示模式/視窗大小」雙向連動(見 OptionDlgModal)
         public bool bloom = true;            // 全屏泛光效果（預設開；暫未接功能）
         public bool notesPanelLeft = true;   // notes 面板位置：true=左(預設) / false=中（暫未接功能）
         public bool effectCharacter = true;  // 遊戲特效「人物特效」：每 100 combo 的 100/200/300 COMBO.EFT

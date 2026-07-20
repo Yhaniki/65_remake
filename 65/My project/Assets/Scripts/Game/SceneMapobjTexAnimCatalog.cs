@@ -110,6 +110,9 @@ namespace Sdo.Game
                     new MapobjTexAnim("SHUIMO", Seq("SHUIMO", 5), 125f, true),          // water-ink ripple, alpha
                     new MapobjTexAnim("WATER", Seq("WATER", 10), 150f, false),          // river surface, opaque
                 },
+                // SCN0022 坟墓 is NOT here: the flame (鬼火) is 3 camera-facing BillboardSet sprites
+                // (SceneFlameBillboardCatalog), and the flying ghosts (gui/gui2) are .mot-driven camera-facing billboards
+                // whose GUI01↔GUI02 texture swing is carried by SceneGhostBillboardCatalog — neither is a mapobj-mesh anim.
             };
 
         /// <summary>The frame sequence for a (scene folder, mesh base) pair, or null if that prop isn't a sequence.</summary>

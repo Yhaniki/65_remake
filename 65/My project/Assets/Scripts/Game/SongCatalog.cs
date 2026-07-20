@@ -62,8 +62,10 @@ namespace Sdo.Game
         [Serializable] private class OverrideDoc { public Override[] songs = new Override[0]; }
 
         /// <summary>Sanity bound for a hand-typed offsetMs. A stray extra digit (30 -> 3000000) would otherwise
-        /// push the music start minutes away / off the end of the clip; ±5 s covers every real calibration.</summary>
-        public const float MaxOffsetMs = 5000f;
+        /// push the music start minutes away / off the end of the clip. ±60 s: imported charts (osu/StepMania)
+        /// often carry a long silent lead-in or plainly mis-cut audio, so several seconds is legitimate — this
+        /// only guards against runaway typos. Kept in lock-step with the editor nudge clamp (ChartEditorScreen).</summary>
+        public const float MaxOffsetMs = 60000f;
 
         private const string FileName = "song_catalog.json";
         private const string OverrideFileName = "song_name_overrides.json";

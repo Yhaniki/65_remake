@@ -395,12 +395,12 @@ namespace Sdo.UI.Screens
             //    收合後原地換成 ►(BtnMaypopRight) 展開鈕。掛在 Root（不隨面板收合），且最後建立 → 疊在最上層永遠可點。
             // 收合/展開鈕：滑過 Buttonfloat、按下 Interfaceout（官方 uihide/uidisplay 滑動音）。
             _uiHideBtn = UIKit.AddSpriteButton(Root, "uihide",
-                RoomUiArt.AnSolo("BtnMaypopLeft_1"), RoomUiArt.AnSolo("BtnMaypopLeft_2"), RoomUiArt.AnSolo("BtnMaypopLeft_3"), 11, 83);
+                RoomUiArt.AnSoloAA("BtnMaypopLeft_1"), RoomUiArt.AnSoloAA("BtnMaypopLeft_2"), RoomUiArt.AnSoloAA("BtnMaypopLeft_3"), 11, 83);
             UiHoverSfx.Attach(_uiHideBtn, UiSfx.ButtonFloat);
             UiSfx.AttachPress(_uiHideBtn, UiSfx.WindowSlide);
             _uiHideBtn.onClick.AddListener(() => SetCollapsed(true));
             _uiShowBtn = UIKit.AddSpriteButton(Root, "uidisplay",
-                RoomUiArt.AnSolo("BtnMaypopRight_1"), RoomUiArt.AnSolo("BtnMaypopRight_2"), RoomUiArt.AnSolo("BtnMaypopRight_3"), 11, 83);
+                RoomUiArt.AnSoloAA("BtnMaypopRight_1"), RoomUiArt.AnSoloAA("BtnMaypopRight_2"), RoomUiArt.AnSoloAA("BtnMaypopRight_3"), 11, 83);
             UiHoverSfx.Attach(_uiShowBtn, UiSfx.ButtonFloat);
             UiSfx.AttachPress(_uiShowBtn, UiSfx.WindowSlide);
             _uiShowBtn.onClick.AddListener(() => SetCollapsed(false));
@@ -3059,8 +3059,8 @@ namespace Sdo.UI.Screens
         // 組隊單選格：normal/pushed 兩態，點了把 GameSession.Team 設成 idx 並重畫（座標 = Win2 + (x,y)）
         private void BuildTeamToggle(int idx, string normalAn, string pushedAn, float x, float y)
         {
-            _teamNormal[idx] = RoomUiArt.AnSolo(normalAn);   // 自貼圖載入 → 去 atlas 鄰居白邊（同其他房間按鈕）
-            _teamPushed[idx] = RoomUiArt.AnSolo(pushedAn);
+            _teamNormal[idx] = RoomUiArt.AnSoloAA(normalAn);   // 自貼圖 + 邊緣抗鋸齒（同其他房間按鈕）
+            _teamPushed[idx] = RoomUiArt.AnSoloAA(pushedAn);
             var img = UIKit.AddSprite(_win2Root, "Team" + idx, _teamNormal[idx], Win2.x + x, Win2.y + y, raycast: true);
             var btn = img.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
@@ -3077,9 +3077,10 @@ namespace Sdo.UI.Screens
         private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y,
             System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat, bool solo = true)
         {
-            // solo=true(預設) → 三態都用 AnSolo(自貼圖)載入，消掉 atlas 鄰居滲出的白邊。所有房間按鈕統一去白邊(跟商城
-            // ShopArt.An 全走自貼圖同一套)；載不到 solo crop 時 AnSolo 內部自動回退共用大圖，安全。
-            System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)RoomUiArt.AnSolo : RoomUiArt.An;
+            // solo=true(預設) → 三態都用 AnSoloAA(自貼圖 + mipmap/trilinear)載入：消掉 atlas 鄰居滲出的白邊，並讓官方近
+            // 1-bit 圓鈕在房間「縮小顯示」時由 mipmap 取正確降取樣 → 邊緣不再鋸齒/破碎(開始/旁觀/房主設置…)。≥1× 用 base
+            // level 不會糊;載不到 solo crop 時自動回退共用大圖，安全。
+            System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)RoomUiArt.AnSoloAA : RoomUiArt.An;
             var b = UIKit.AddSpriteButton(WinRoot(win), objName, res(nrm), res(hov), res(psh), win.x + x, win.y + y);
             if (hoverSfx != null) UiHoverSfx.Attach(b, hoverSfx);
             UiSfx.AttachPress(b, pressSfx);

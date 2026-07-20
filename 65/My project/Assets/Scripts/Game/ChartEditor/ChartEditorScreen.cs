@@ -394,8 +394,9 @@ namespace Sdo.Game
 
         // 單首 offset 的調整步進（StepMania 編輯器：F11/F12 一次 0.02 秒，Alt 微調 0.001 秒）。
         private const double SongOffsetStepMs = 20.0, SongOffsetFineStepMs = 1.0;
-        // 合理範圍：超過這個量就不是 offset 沒對好，是譜/音檔根本配錯了。
-        private const float SongOffsetMinMs = -2000f, SongOffsetMaxMs = 2000f;
+        // 防呆夾值：只擋按鍵卡住暴衝／手誤。放到 ±60 秒 —— 匯入譜（osu/StepMania）常有很長的靜音前奏
+        // 或音檔根本沒對好，offset 動輒好幾秒；下游（writer / 時鐘 re-seek）本來就吃得下任意值。
+        private const float SongOffsetMinMs = -60000f, SongOffsetMaxMs = 60000f;
 
         // 單首 offset：即時套進時鐘（音樂會當場前後挪，跟 StepMania 一樣邊聽邊調）。
         // **不寫檔** —— 值只活在這次執行裡。要留著就自己抄進 song_name_overrides.json（面板會印出那一行）。

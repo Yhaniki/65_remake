@@ -2747,6 +2747,15 @@ namespace Sdo.Game
         {
             foreach (var g in SceneMapobjCatalog.ForFolder(SceneFolder()))
             {
+                // SCN0022 坟墓: three props are drawn as camera-facing billboards instead of the fixed-orientation mesh
+                // (see SpawnSceneFlames / SpawnSceneGhosts) — skip the meshes here so they aren't double-drawn:
+                //   FENMU/LANHUO (SHAN.MSH, 鬼火 flame) — loaded but never linked as a child in the official (030 idx 2).
+                //   FENMU/GUI, FENMU/GUI2 (LABA11/12, 飛鬼) — the official Billboard_AddEntry's them; the flat .mot-baked
+                //     quad foreshortens/goes edge-on from the stage angle (hard, "solid-division"). Ghost billboards fly
+                //     via the .mot and always face the camera. (sheguang stays a mesh — it's a directional sweeping beam.)
+                if (g.Folder.Equals("FENMU/LANHUO", System.StringComparison.OrdinalIgnoreCase) ||
+                    g.Folder.Equals("FENMU/GUI", System.StringComparison.OrdinalIgnoreCase) ||
+                    g.Folder.Equals("FENMU/GUI2", System.StringComparison.OrdinalIgnoreCase)) continue;
                 var insts = new MapobjInstance[g.Instances.Length];
                 for (int i = 0; i < insts.Length; i++)
                 {
@@ -3210,6 +3219,13 @@ namespace Sdo.Game
                 if (shader != null) mat.shader = shader;
                 if (mat.HasProperty("_Color")) mat.color = Color.white;
             }
+            else if (mode == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay)
+            {
+                // two-sided standard alpha-blend at full opacity — undo an additive false-positive (SCN0022 sheguang)
+                var shader = Shader.Find("Sdo/UnlitOverlay");
+                if (shader != null) mat.shader = shader;
+                if (mat.HasProperty("_Color")) mat.color = Color.white;
+            }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.ForceAlphaBlend)
             {
                 // Override whatever shader the MSH loader chose with the standard alpha-blend shader.
@@ -3391,6 +3407,8 @@ namespace Sdo.Game
                 Debug.Log($"[scene] {SceneFolder()}: {res.Materials.Length} subsets, bounds c={b.center} s={b.size}");
                 TryLoadMapobjs();   // stage props on the same layer
                 TryLoadSceneAvatars();   // background NPCs ("場景的人" — e.g. SCN0017 subway passengers)
+                SpawnSceneFlames();   // camera-facing BillboardSet sprites (SCN0022 坟墓 鬼火) — a scene prop, always on
+                SpawnSceneGhosts();   // .mot-driven camera-facing sprites (SCN0022 坟墓 飛鬼) — flat mesh would foreshorten
                 if (effectScene) SpawnSceneEffects();   // 場景特效開關 (OPTION 遊戲頁)：常駐背景 EFT (SCN0008 magic circle, snow, aurora, …)
             }
 

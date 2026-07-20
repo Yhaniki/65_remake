@@ -94,7 +94,7 @@ namespace Sdo.UI
 
             // OPTION 遊戲頁「遊戲畫面」偏好：全屏(填滿) = Stretch，視窗化(左右黑邊) = Pillarbox。必須在 CreateWorldCanvas
             // 註冊 UI 相機（→ AspectController 首次 Apply）之前設好靜態 Mode，之後開的遊戲相機也沿用同一個 Mode。
-            AspectController.Mode = (DisplaySettingsManager.Settings?.gameplay?.fullscreenFill ?? true)
+            AspectController.Mode = (DisplaySettingsManager.Settings?.gameplay?.fullscreenFill ?? false)
                 ? AspectMode.Stretch : AspectMode.Pillarbox;
 
             // Fixed 800×600 (4:3) world-space canvas, framed by a camera the AspectController fits to the window

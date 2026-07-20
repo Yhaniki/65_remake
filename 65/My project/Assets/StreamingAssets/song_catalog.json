@@ -15969,22 +15969,6 @@
    "durHard": 118
   },
   {
-   "gn": "sdom1630t.gn",
-   "fileId": 1630,
-   "title": "DNA",
-   "artist": "by2",
-   "bpm": 122.0,
-   "diffEasy": 1,
-   "diffNormal": 3,
-   "diffHard": 5,
-   "notesEasy": 191,
-   "notesNormal": 304,
-   "notesHard": 395,
-   "durEasy": 123,
-   "durNormal": 123,
-   "durHard": 123
-  },
-  {
    "gn": "sdom1631t.gn",
    "fileId": 1631,
    "title": "心痛",
@@ -50529,22 +50513,6 @@
    "durHard": 118
   },
   {
-   "gn": "sdom1630k.gn",
-   "fileId": 11630,
-   "title": "DNA",
-   "artist": "by2",
-   "bpm": 122.0,
-   "diffEasy": 3,
-   "diffNormal": 5,
-   "diffHard": 10,
-   "notesEasy": 304,
-   "notesNormal": 395,
-   "notesHard": 584,
-   "durEasy": 123,
-   "durNormal": 123,
-   "durHard": 123
-  },
-  {
    "gn": "sdom1631k.gn",
    "fileId": 11631,
    "title": "心痛",
@@ -68313,12 +68281,12 @@
    "diffEasy": 15,
    "diffNormal": 16,
    "diffHard": 25,
-   "notesEasy": 656,
-   "notesNormal": 516,
-   "notesHard": 730,
-   "durEasy": 82,
-   "durNormal": 84,
-   "durHard": 82
+   "notesEasy": 293,
+   "notesNormal": 470,
+   "notesHard": 768,
+   "durEasy": 80,
+   "durNormal": 80,
+   "durHard": 80
   },
   {
    "gn": "sdom5010k.gn",

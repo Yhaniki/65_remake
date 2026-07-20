@@ -9,7 +9,7 @@
   "en"
  ],
  "zhTW": "opencc s2twp",
- "count": 4321,
+ "count": 4319,
  "songs": [
   {
    "gn": "sdom0001k.gn",
@@ -77893,84 +77893,6 @@
    },
    "producer": "李寅晨",
    "origName": "sdom1629T.gm"
-  },
-  {
-   "gn": "sdom1630k.gn",
-   "fileId": 11630,
-   "fileType": "gn",
-   "mode": "K",
-   "bpm": 122.0,
-   "levels": [
-    3,
-    5,
-    10
-   ],
-   "noteCounts": [
-    304,
-    395,
-    584
-   ],
-   "measurements": [
-    195,
-    224,
-    247
-   ],
-   "durations": [
-    123,
-    123,
-    123
-   ],
-   "title": {
-    "zhCN": "DNA",
-    "zhTW": "DNA",
-    "en": "DNA"
-   },
-   "artist": {
-    "zhCN": "by2",
-    "zhTW": "by2",
-    "en": "by2"
-   },
-   "producer": "WolF.R",
-   "origName": "sdom1630K.gm"
-  },
-  {
-   "gn": "sdom1630t.gn",
-   "fileId": 1630,
-   "fileType": "gn",
-   "mode": "T",
-   "bpm": 122.0,
-   "levels": [
-    1,
-    3,
-    5
-   ],
-   "noteCounts": [
-    191,
-    304,
-    395
-   ],
-   "measurements": [
-    137,
-    195,
-    224
-   ],
-   "durations": [
-    123,
-    123,
-    123
-   ],
-   "title": {
-    "zhCN": "DNA",
-    "zhTW": "DNA",
-    "en": "DNA"
-   },
-   "artist": {
-    "zhCN": "by2",
-    "zhTW": "by2",
-    "en": "by2"
-   },
-   "producer": "WolF.R",
-   "origName": "sdom1630T.gm"
   },
   {
    "gn": "sdom1631k.gn",
@@ -164486,19 +164408,19 @@
     25
    ],
    "noteCounts": [
-    656,
-    516,
-    730
+    293,
+    470,
+    768
    ],
    "measurements": [
-    209,
-    204,
-    208
+    201,
+    221,
+    226
    ],
    "durations": [
-    82,
-    84,
-    82
+    80,
+    80,
+    80
    ],
    "title": {
     "zhCN": "Unfinished",

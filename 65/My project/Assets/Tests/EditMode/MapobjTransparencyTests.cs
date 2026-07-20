@@ -309,6 +309,66 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void SceneFlame_Scn0022_Is_Three_Billboards_At_150ms()
+        {
+            // 坟墓 (SCN0022) 鬼火/蓝火: the official draws it as 3 camera-facing BillboardSet sprites (NOT the SHAN.MSH
+            // mesh, which is loaded but never linked as a child) animated at 150 ms — StageScene_UpdateLightGroups_004b0b30
+            // advances a 0x96=150ms timer, index=(i+1)%3, and writes the frame to all 3 billboards from one shared counter.
+            var set = SceneFlameBillboardCatalog.ForFolder("SCN0022");
+            Assert.IsNotNull(set);
+            Assert.AreEqual(3, set.Frames.Length);
+            Assert.AreEqual("FENMUOBJ_LANHUO_01_.TGA", set.Frames[0], "smooth 8-bit TGA (the DXT3 twin bands the glow)");
+            Assert.AreEqual(150f, set.IntervalMs, 1e-3f);
+            Assert.AreEqual(3, set.Billboards.Length);
+            // decompiled billboard positions (030 case 0x16: param_1[0x56/57/58] +0x28/2c/30) + size 100 (0x42c80000).
+            Assert.AreEqual(-163.43f, set.Billboards[0].X, 0.01f);
+            Assert.AreEqual(40f, set.Billboards[0].Y, 0.01f);
+            Assert.AreEqual(135.51f, set.Billboards[0].Z, 0.01f);
+            Assert.AreEqual(182.96f, set.Billboards[2].X, 0.01f);
+            foreach (var b in set.Billboards) Assert.AreEqual(100f, b.Size, 1e-3f);
+
+            Assert.IsNotNull(SceneFlameBillboardCatalog.ForFolder("scn0022"), "folder key is case-insensitive");
+            Assert.IsNull(SceneFlameBillboardCatalog.ForFolder("SCN0008"), "only 坟墓 has flame billboards");
+        }
+
+        [Test]
+        public void SceneGhost_Scn0022_Flying_Ghosts_Are_Mot_Billboards()
+        {
+            // 坟墓 flying ghosts (gui/gui2): .mot-driven camera-facing billboards (the official Billboard_AddEntry's them),
+            // with a GUI01↔GUI02 texture swing @125 ms. Rendering the flat .mot-baked mesh foreshortened/edge-on ("硬").
+            var defs = SceneGhostBillboardCatalog.ForFolder("SCN0022");
+            Assert.AreEqual(2, defs.Count);
+            var gui = defs[0];
+            Assert.AreEqual("LABA11.MOT", gui.Mot);
+            Assert.AreEqual(2, gui.Frames.Length);
+            Assert.AreEqual("FENMUOBJ_GUI_GUI01_.dds", gui.Frames[0]);
+            Assert.AreEqual(125f, gui.IntervalMs, 1e-3f);
+            Assert.Greater(gui.Size, 0f);
+            Assert.AreEqual("SCENE/MAPOBJ/FENMU/GUI2", defs[1].Dir);
+
+            Assert.AreEqual(2, SceneGhostBillboardCatalog.ForFolder("scn0022").Count);   // folder key case-insensitive
+            Assert.AreEqual(0, SceneGhostBillboardCatalog.ForFolder("SCN0008").Count);   // only 坟墓 has ghost billboards
+            // the ghost swing is NOT a mapobj-mesh tex-anim (the mesh is skipped) — it lives in the ghost catalog.
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0022", "LABA11"));
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0022_Spotlights_Force_AlphaBlend()
+        {
+            // 射光 (sheguang1-3): the MSH loader makes these additive (LooksLikeAdditiveGlow false positive → hard edge,
+            // no transparency variation, like SCN0015 窗光). Force two-sided standard alpha-blend so the beam reads soft.
+            foreach (var key in new[] { "SHEGUANG", "SHEGUANG2", "SHEGUANG3" })
+            {
+                Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay,
+                    SceneMapobjUvScrollCatalog.FindRenderMode("SCN0022", key), key);
+                Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0022", key).sqrMagnitude, 1e-6f, key + " does not UV-scroll");
+            }
+            // it must NOT be the additive path (that was the wrong fix) and must not leak to other scenes.
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0022", "LABA11"));
+        }
+
+        [Test]
         public void TexAnim_Lookup_Misses_Are_Null()
         {
             Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0005", "NOT_A_PROP"));

@@ -18,6 +18,10 @@ namespace Sdo.Game
             // Force standard alpha-blend (SrcAlpha,OneMinusSrcAlpha) regardless of what the MSH loader assigned.
             // Needed when LooksLikeAdditiveGlow() misclassifies a texture that D3D9 confirmed uses DST=INVSRCALPHA.
             ForceAlphaBlend,
+            // Like ForceAlphaBlend but TWO-SIDED and at FULL opacity (Sdo/UnlitOverlay) — for a glow prop the MSH loader
+            // wrongly made additive (LooksLikeAdditiveGlow false positive) whose additive edge reads hard/opaque. Unlike
+            // ForceAlphaBlend it doesn't cull (a sweeping beam mustn't vanish edge-on) or dim to 0.2 (keep the beam visible).
+            AlphaBlendOverlay,
             // Soft searchlight beam: additive, but blur the texture along its width so the light spreads sideways
             // and the narrow hard alpha edge becomes a gradual soft falloff (SCN0016 JIGUANG spotlights).
             SpotGlow,
@@ -74,6 +78,14 @@ namespace Sdo.Game
             new Target("SCN0016", "JIGUANG1", -1, Vector2.zero, RenderMode.SpotGlow),
             new Target("SCN0016", "JIGUANG2", -1, Vector2.zero, RenderMode.SpotGlow),
             new Target("SCN0016", "JIGUANG3", -1, Vector2.zero, RenderMode.SpotGlow),
+            // SCN0022 坟墓 射光 (sheguang1-3 = light-ray spotlights): the MSH loader makes these DXT3 glows ADDITIVE
+            // (LooksLikeAdditiveGlow: bright RGB + all-soft alpha), but that's the SCN0015-窗光 false-positive — additive
+            // reads as a hard, edgy beam with no transparency variation. Force TWO-SIDED standard alpha-blend so the ray
+            // is a soft translucent shaft (the sweep must not cull edge-on). gui/gui2 (LABA11/12) are NOT here — they're
+            // rebuilt as camera-facing billboards (SpawnSceneGhosts), which set their own alpha-blend material.
+            new Target("SCN0022", "SHEGUANG",  -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
+            new Target("SCN0022", "SHEGUANG2", -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
+            new Target("SCN0022", "SHEGUANG3", -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
             // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
             new Target(null, "SHANHU-BAI", -1, CoralV),
             new Target(null, "SHANHU-HONG", -1, CoralV),
