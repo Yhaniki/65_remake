@@ -5,12 +5,12 @@ using Sdo.Game;
 
 namespace Sdo.Tests
 {
-    /// <summary>Guards the fix for 使用者回報「room 開始/旁觀 圓鈕邊緣鋸齒/破碎」. Root cause (found by capturing the button
-    /// through a real Unity camera at several scales): the room buttons render at &lt;native size, and bilinear
-    /// MINIFICATION without mipmaps aliases the near 1-bit round edge. <see cref="SdoExtracted.LoadAnSoloMip"/> gives the
-    /// button texture a mipmap chain + Trilinear filtering so the GPU box-filters the downsample. Integration test: loads
-    /// the real 開始 (Room15) crop and asserts the texture is mipmapped + trilinear. Skipped (not failed) when the game
-    /// data tree isn't present in this environment.</summary>
+    /// <summary>Guards the fix for 使用者回報「room 開始/旁觀 圓鈕邊緣鋸齒/破碎/往外糊/描邊外亮光」. Root cause (found by
+    /// capturing the button through a real Unity camera at 1:1 and fullscreen): the ~73px near 1-bit disc shows ~1:1 at
+    /// the default 800×600 window, where a hard edge is jagged and a blur is mushy. <see cref="SdoExtracted.LoadAnSoloMip"/>
+    /// SUPERSAMPLES it — clips the baked outer glow, upsamples <see cref="SdoExtracted.ButtonSupersample"/>× onto a
+    /// mipmapped texture, and returns it at ppu = SS so it displays at the logical size (crisp ~1px AA edge). Integration
+    /// test; skipped (not failed) when the game data tree isn't present.</summary>
     public class MipButtonTextureTests
     {
         private static string RoomDir()
@@ -22,24 +22,30 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void LoadAnSoloMip_Room15_IsMipmappedAndTrilinear()
+        public void LoadAnSoloMip_Room15_IsSupersampledMipmappedTrilinear()
         {
             var dir = RoomDir();
             if (dir == null) Assert.Ignore("ROOM art (Room15.an) not present in this environment.");
 
+            var solo = SdoExtracted.LoadAnSolo(dir, "Room15", 0);
             var sprite = SdoExtracted.LoadAnSoloMip(dir, "Room15", 0);
             Assert.IsNotNull(sprite, "LoadAnSoloMip returned null for a present crop");
             var tex = sprite.texture;
-            Assert.Greater(tex.mipmapCount, 1, "button texture must carry a mip chain (else minification aliases the edge)");
-            Assert.AreEqual(FilterMode.Trilinear, tex.filterMode, "button texture must sample trilinear across mips");
+            int ss = SdoExtracted.ButtonSupersample;
+
+            Assert.Greater(tex.mipmapCount, 1, "supersampled texture must carry a mip chain (GPU downsamples it to display size)");
+            Assert.AreEqual(FilterMode.Trilinear, tex.filterMode, "must sample trilinear across mips");
+            // texture is SS× the crop, but pixelsPerUnit = SS so it DISPLAYS at the logical size (rect.size / ppu).
+            Assert.AreEqual(solo.rect.width * ss, tex.width, "texture width should be SS× the crop");
+            Assert.AreEqual((float)ss, sprite.pixelsPerUnit, "sprite must report ppu = SS so ApplySprite sizes it to logical px");
+            Assert.AreEqual(solo.rect.width, sprite.rect.width / sprite.pixelsPerUnit, 0.5f, "logical display size == native crop");
         }
 
         [Test]
         public void LoadAnSoloMip_Room15_HasNoBrightOuterGlow()
         {
-            // The art bakes a jagged low-alpha bright-cyan glow outside the dark rim; the loader must clip it so no
-            // partially-visible bright-cyan texel survives (使用者回報「描邊之外的異常亮光」). The softened edge ramp is the
-            // dark-rim colour, so it never trips the bright-cyan test.
+            // The art bakes a jagged low-alpha bright-cyan glow outside the dark rim; the loader clips it so no
+            // partially-visible bright-cyan texel survives (使用者回報「描邊之外的異常亮光」).
             var dir = RoomDir();
             if (dir == null) Assert.Ignore("ROOM art (Room15.an) not present in this environment.");
 
@@ -52,15 +58,16 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void LoadAnSolo_Room15_HasNoMipmaps()
+        public void LoadAnSolo_Room15_IsPlainNativeBilinear()
         {
-            // The plain solo path (used where 1:1 is guaranteed) stays single-level bilinear — only the button path opts in.
+            // The plain solo path stays single-level bilinear at ppu 1 — only the button path opts into supersampling.
             var dir = RoomDir();
             if (dir == null) Assert.Ignore("ROOM art (Room15.an) not present in this environment.");
 
             var sprite = SdoExtracted.LoadAnSolo(dir, "Room15", 0);
             Assert.IsNotNull(sprite);
             Assert.AreEqual(1, sprite.texture.mipmapCount, "plain AnSolo texture should have no mip chain");
+            Assert.AreEqual(1f, sprite.pixelsPerUnit, "plain AnSolo stays ppu 1 (displays at native size)");
         }
     }
 }

@@ -304,21 +304,27 @@ namespace Sdo.Game
         public static Sprite LoadAnSoloCircular(string folder, string anName, int pad = 0)
             => LoadAnSoloImpl(folder, anName, pad, circular: true);
 
-        /// <summary>As <see cref="LoadAnSolo"/> but ANTI-ALIASES the round button edge two ways, because the room buttons
-        /// (開始/旁觀/房主設置…) are 73px-ish crops of a near 1-bit disc rendered SMALLER than design (使用者回報「邊緣鋸齒
-        /// /破碎」): (1) a gaussian softens the alpha silhouette on the base level so mip0 itself has a real anti-aliased
-        /// edge — needed because at the buttons' mild minification (~0.8×) the GPU still samples mostly mip0; (2) a mipmap
-        /// chain + Trilinear so stronger minification box-filters cleanly. <paramref name="sigma"/> is the edge softness
-        /// in texels (0 = mipmaps only). Falls back to the shared atlas via the AnSolo path if the crop fails.</summary>
-        public static Sprite LoadAnSoloMip(string folder, string anName, int pad = 0, float sigma = 1.8f)
-            => LoadAnSoloImpl(folder, anName, pad, circular: false, mip: true, sigma: sigma);
+        /// <summary>As <see cref="LoadAnSolo"/> but SUPERSAMPLED, so the round button edge is crisp AND smooth at any
+        /// display size. The room buttons (開始/旁觀/房主設置…) are ~73px crops of a near 1-bit disc; the default window is
+        /// 800×600 so a button shows at ~73px (1:1) — where a hard edge is jagged and a blur is mushy (使用者回報「鋸齒」
+        /// 然後「往外糊」). The fix is genuine supersampling: clip the baked outer glow, then upsample the crop
+        /// <see cref="ButtonSupersample"/>× onto a MIPMAPPED/Trilinear texture and hand it back at pixelsPerUnit = SS so it
+        /// DISPLAYS at the logical size — the GPU then area-downsamples the high-res texture, giving a clean ~1px AA edge
+        /// (crisp, not soft) whether the window is 1:1 or stretched fullscreen. Requires UIKit.ApplySprite to size by
+        /// rect.size / pixelsPerUnit. Falls back to the shared atlas via the AnSolo path if the crop fails.</summary>
+        public static Sprite LoadAnSoloMip(string folder, string anName, int pad = 0)
+            => LoadAnSoloImpl(folder, anName, pad, circular: false, mip: true);
+
+        /// <summary>Supersample factor for room-button textures (see <see cref="LoadAnSoloMip"/>). 3× keeps the button
+        /// crisp from 1:1 up to ~3× fullscreen stretch; higher just costs memory (a 73px crop → 219²·RGBA·mips ≈ 255 KB).</summary>
+        public const int ButtonSupersample = 3;
 
         /// <summary>Alpha at/above which a room-button texel is part of the SOLID disc (the dark rim and inward). Texels
-        /// below it are the baked outer glow / matte and are cleared before the edge is softened (see LoadAnSoloImpl).
+        /// below it are the baked outer bright-cyan glow / matte and are cleared before supersampling (see LoadAnSoloImpl).
         /// 128 is safe: the α≥128 region of the button crops is a single stable contour (barely moves over α 110-150).</summary>
         private const byte SolidAlphaThreshold = 128;
 
-        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false, float sigma = 0f)
+        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
@@ -333,12 +339,11 @@ namespace Sdo.Game
             if (cw <= 0 || ch <= 0 || cx < 0 || cy < 0 || cx + cw > src.width || cy + ch > src.height) return null;
             var block = src.GetPixels(cx, cy, cw, ch);
             int W = cw + pad * 2, H = ch + pad * 2;
-            // mip=true → mipChain + Trilinear so the button reads smooth when the room UI is minified (see LoadAnSoloMip).
-            var outTex = new Texture2D(W, H, TextureFormat.RGBA32, mip)
-            { wrapMode = TextureWrapMode.Clamp, filterMode = mip ? FilterMode.Trilinear : FilterMode.Bilinear };
+            var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             outTex.SetPixels(new Color[W * H]);            // transparent border
             outTex.SetPixels(pad, pad, cw, ch, block);
-            outTex.Apply(mip);
+            outTex.Apply(false);
             // DeMatteWhite BEFORE AlphaBleed: DeMatteWhite auto-detects a white/light matte from the still-untouched
             // transparent region (光球鈕的透明區是白/淺 → 整顆在白底上合成 → mid-alpha 邊是「帶色的白暈」). AlphaBleed 之後
             // 透明區被填成不透明色,偵測就失效了。順序:先 demat 邊,再把 (demated) 邊色 dilate 進透明 pad。
@@ -347,65 +352,54 @@ namespace Sdo.Game
             {
                 AlphaFlood(outTex);  // flood orb colour into the ENTIRE transparent region → no white RGB left to bleed
                 CircleMask(outTex);  // soft inscribed-circle alpha cut-off → clean round edge under magnification
+                return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
             }
-            else if (mip && sigma > 0f)
+            if (mip)
             {
-                // (1) CLIP TO THE SOLID DISC first. The art bakes a jagged low-alpha BRIGHT-CYAN glow just outside the
-                // dark rim (rgb≈(193,255,254) at α≈35-49); flood/blur alone can't remove it (α>8 so AlphaFlood skips it)
-                // and the blur would smear it into a bright halo outside the outline (使用者回報「描邊之外的異常亮光」).
-                // Snapping every sub-solid texel to α=0 drops the glow; the dark rim (α≥128, a stable single-component
-                // contour) becomes the outer edge. Interior artwork (face/gloss/text, α=255) is untouched.
+                // (1) CLIP TO THE SOLID DISC. The art bakes a jagged low-alpha BRIGHT-CYAN glow just outside the dark rim
+                // (rgb≈(193,255,254) at α≈35-49); snapping every sub-solid texel to α=0 drops it so the dark rim (α≥128,
+                // a stable single contour) is the outer edge (使用者回報「描邊之外的異常亮光」). Interior art (α=255) is kept.
                 var pc = outTex.GetPixels32();
                 for (int i = 0; i < pc.Length; i++) if (pc[i].a < SolidAlphaThreshold) pc[i].a = 0;
                 outTex.SetPixels32(pc); outTex.Apply(false);
-                // (2) Flood the rim colour across the now-transparent region, so widening the edge outward reveals the
-                // dark-rim colour (never the cleared glow's cyan or the black matte).
-                AlphaFlood(outTex);
-                // (3) Soften the silhouette so mip0 has a genuine anti-aliased edge (~σ texels wide).
-                var p = outTex.GetPixels32();
-                BlurAlphaGaussian(p, W, H, sigma);
-                outTex.SetPixels32(p);
+                AlphaFlood(outTex);  // fill the cleared ring with the rim colour so the AA edge is dark-rim, not black/cyan
+                // (2) SUPERSAMPLE: upsample SS× onto a mipmapped/trilinear texture; return it at ppu = SS so it displays at
+                // the logical size and the GPU area-downsamples → crisp ~1px AA edge at 1:1 or fullscreen.
+                int ss = ButtonSupersample;
+                var up = UpsampleBilinear(outTex.GetPixels32(), W, H, ss);
+                return Sprite.Create(up, new Rect(0, 0, W * ss, H * ss), new Vector2(0.5f, 0.5f), ss, 0, SpriteMeshType.FullRect);
             }
-            else
-            {
-                AlphaBleed(outTex);  // dilate the crop's opaque colour into the transparent pad (kills bilinear halo)
-            }
-            // Regenerate the mip chain from the FINAL mip0 (the AlphaFlood/AlphaBleed-filled rim means each downsample
-            // averages button-colour, not black/white matte → no dark fringe).
-            if (mip) outTex.Apply(true);
+            AlphaBleed(outTex);      // non-mip path: dilate the crop's opaque colour into the transparent pad (kills halo)
             return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
-        /// <summary>Separable gaussian blur over the ALPHA channel only (RGB untouched), Clamp/edge-replicate borders.
-        /// Softens a hard silhouette into a real anti-aliased edge of ~<paramref name="sigma"/> texels — pure array logic
-        /// so it's unit-testable. Interior alpha (all neighbours 255) is preserved; only the 0↔255 boundary ramps.</summary>
-        public static void BlurAlphaGaussian(Color32[] px, int w, int h, float sigma)
+        /// <summary>Upsample RGBA texels by integer factor <paramref name="ss"/> with bilinear interpolation onto a fresh
+        /// MIPMAPPED, Trilinear, Clamp texture (all four channels). Used to supersample room buttons (see LoadAnSoloMip).</summary>
+        private static Texture2D UpsampleBilinear(Color32[] src, int w, int h, int ss)
         {
-            if (px == null || w < 2 || h < 2 || px.Length < w * h || sigma <= 0f) return;
-            int r = Mathf.Max(1, Mathf.CeilToInt(sigma * 3f));
-            var k = new float[r * 2 + 1];
-            float sum = 0f;
-            for (int i = -r; i <= r; i++) { float v = Mathf.Exp(-(i * i) / (2f * sigma * sigma)); k[i + r] = v; sum += v; }
-            for (int i = 0; i < k.Length; i++) k[i] /= sum;
-
-            int n = w * h;
-            var a = new float[n];
-            for (int i = 0; i < n; i++) a[i] = px[i].a;
-            var tmp = new float[n];
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
+            int W = w * ss, H = h * ss;
+            var dst = new Color32[W * H];
+            for (int y = 0; y < H; y++)
+            {
+                float sy = (y + 0.5f) / ss - 0.5f;
+                int y0 = Mathf.Clamp(Mathf.FloorToInt(sy), 0, h - 1), y1 = Mathf.Clamp(y0 + 1, 0, h - 1);
+                float fy = Mathf.Clamp01(sy - Mathf.Floor(sy));
+                for (int x = 0; x < W; x++)
                 {
-                    float acc = 0f;
-                    for (int i = -r; i <= r; i++) { int xx = Mathf.Clamp(x + i, 0, w - 1); acc += a[y * w + xx] * k[i + r]; }
-                    tmp[y * w + x] = acc;
+                    float sx = (x + 0.5f) / ss - 0.5f;
+                    int x0 = Mathf.Clamp(Mathf.FloorToInt(sx), 0, w - 1), x1 = Mathf.Clamp(x0 + 1, 0, w - 1);
+                    float fx = Mathf.Clamp01(sx - Mathf.Floor(sx));
+                    Color32 c00 = src[y0 * w + x0], c10 = src[y0 * w + x1], c01 = src[y1 * w + x0], c11 = src[y1 * w + x1];
+                    dst[y * W + x] = new Color32(
+                        (byte)(Mathf.Lerp(Mathf.Lerp(c00.r, c10.r, fx), Mathf.Lerp(c01.r, c11.r, fx), fy) + 0.5f),
+                        (byte)(Mathf.Lerp(Mathf.Lerp(c00.g, c10.g, fx), Mathf.Lerp(c01.g, c11.g, fx), fy) + 0.5f),
+                        (byte)(Mathf.Lerp(Mathf.Lerp(c00.b, c10.b, fx), Mathf.Lerp(c01.b, c11.b, fx), fy) + 0.5f),
+                        (byte)(Mathf.Lerp(Mathf.Lerp(c00.a, c10.a, fx), Mathf.Lerp(c01.a, c11.a, fx), fy) + 0.5f));
                 }
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    float acc = 0f;
-                    for (int i = -r; i <= r; i++) { int yy = Mathf.Clamp(y + i, 0, h - 1); acc += tmp[yy * w + x] * k[i + r]; }
-                    px[y * w + x].a = (byte)Mathf.Clamp(acc + 0.5f, 0f, 255f);
-                }
+            }
+            var t = new Texture2D(W, H, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
+            t.SetPixels32(dst); t.Apply(true);
+            return t;
         }
 
         /// <summary>First frame of an .an cropped onto its OWN texture with its RGB PREMULTIPLIED by alpha (bilinear, no

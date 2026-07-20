@@ -74,12 +74,11 @@ namespace Sdo.UI.Util
             return s;
         }
 
-        /// <summary>As <see cref="AnSolo"/> but the round button edge is ANTI-ALIASED (see <see cref="SdoExtracted.LoadAnSoloMip"/>):
-        /// the ROOM buttons (開始/旁觀/房主設置…) render at &lt;native size and their near 1-bit disc aliases into a broken
-        /// staircase (「邊緣鋸齒/破碎」). The base level's alpha silhouette is gaussian-softened (mip0 gets a real AA edge —
-        /// needed because at ~0.8× the GPU still samples mostly mip0) and a mipmap chain + trilinear handles stronger
-        /// minification. pad:0 keeps the exact same on-screen rect as <see cref="AnSolo"/>. Falls back to the plain solo
-        /// sprite if the crop fails.</summary>
+        /// <summary>As <see cref="AnSolo"/> but SUPERSAMPLED (see <see cref="SdoExtracted.LoadAnSoloMip"/>): the ROOM
+        /// buttons (開始/旁觀/房主設置…) are ~73px near 1-bit discs; at the default 800×600 window they show ~1:1 where a
+        /// hard edge is jagged and a blur is mushy. The loader clips the baked outer glow, upsamples the crop 3× onto a
+        /// mipmapped texture and returns it at ppu = 3 so it DISPLAYS at the logical size — the GPU area-downsamples it to
+        /// a crisp ~1px AA edge at any window/fullscreen scale. Falls back to the plain solo sprite if the crop fails.</summary>
         public static Sprite AnSoloAA(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;

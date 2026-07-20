@@ -138,7 +138,10 @@ namespace Sdo.UI.Util
         {
             if (img == null) return;
             img.sprite = s;
-            if (s != null) { img.color = Color.white; img.rectTransform.sizeDelta = s.rect.size; }
+            // Size by rect.size / pixelsPerUnit: a SUPERSAMPLED sprite (SdoExtracted.LoadAnSoloMip stores the room buttons
+            // at ppu = ButtonSupersample so a 219px texture displays at its 73px logical size) shrinks back to logical
+            // pixels here; every other sprite ships ppu = 1 so this is unchanged.
+            if (s != null) { img.color = Color.white; float ppu = s.pixelsPerUnit > 0f ? s.pixelsPerUnit : 1f; img.rectTransform.sizeDelta = s.rect.size / ppu; }
             else img.color = new Color(1f, 1f, 1f, 0f);   // missing art -> invisible, no white box
             // Premultiplied-alpha sprites (SdoExtracted.LoadAnSoloPremultiplied — e.g. all SHOP art) MUST render with the
             // premult material or the transparent matte fringes white under UI magnification (the 「方形白邊」). Auto-pair it

@@ -3077,9 +3077,9 @@ namespace Sdo.UI.Screens
         private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y,
             System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat, bool solo = true)
         {
-            // solo=true(預設) → 三態都用 AnSoloAA(自貼圖 + mipmap/trilinear)載入：消掉 atlas 鄰居滲出的白邊，並讓官方近
-            // 1-bit 圓鈕在房間「縮小顯示」時由 mipmap 取正確降取樣 → 邊緣不再鋸齒/破碎(開始/旁觀/房主設置…)。≥1× 用 base
-            // level 不會糊;載不到 solo crop 時自動回退共用大圖，安全。
+            // solo=true(預設) → 三態都用 AnSoloAA(自貼圖 + 3× 超取樣)載入：消掉 atlas 鄰居白邊，並把官方近 1-bit 圓鈕以
+            // 3× 解析度存、用邏輯尺寸顯示 → GPU 面積降取樣出乾淨的 ~1px 抗鋸齒邊(開始/旁觀/房主設置…),不鋸齒也不糊;
+            // 載不到 solo crop 時自動回退共用大圖，安全。
             System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)RoomUiArt.AnSoloAA : RoomUiArt.An;
             var b = UIKit.AddSpriteButton(WinRoot(win), objName, res(nrm), res(hov), res(psh), win.x + x, win.y + y);
             if (hoverSfx != null) UiHoverSfx.Attach(b, hoverSfx);
