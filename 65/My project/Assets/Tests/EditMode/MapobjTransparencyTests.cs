@@ -369,6 +369,42 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void SmoothAlpha_Debands_Gradient_But_Preserves_Sharp_Detail()
+        {
+            // DXT3's 4-bit alpha quantises a soft glow to ~9-16 levels → concentric "tree-ring" bands (年輪). SmoothAlpha
+            // is a BILATERAL pass: it merges the small quantisation steps into a smooth fade WITHOUT erasing high-contrast
+            // detail (the SCN0022 ghost's eye/mouth holes live in the alpha). Synthesise a 16-band gradient + a hard hole.
+            const int w = 64, h = 32;
+            var px = new Color32[w * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int level = x * 16 / w;                                  // 16 bands, step 255/15 ≈ 17
+                    px[y * w + x] = new Color32(200, 210, 255, (byte)(level * 255 / 15));
+                }
+            // punch a hard, high-contrast "eye" hole (alpha 0) inside a bright band (alpha ≈ 136) — the "face" detail.
+            for (int y = 14; y < 18; y++)
+                for (int x = 34; x < 40; x++)
+                    px[y * w + x] = new Color32(200, 210, 255, 0);
+
+            int before = DistinctAlpha(px);
+            DdsLoader.SmoothAlpha(px, w, h);
+            int after = DistinctAlpha(px);
+            Assert.LessOrEqual(before, 17, "the synthetic gradient starts banded (≤16 levels + 0)");
+            Assert.Greater(after, before * 2, "de-banding introduces many intermediate alpha levels → no visible rings");
+            Assert.Less(px[16 * w + 37].a, 40, "the hard hole (the face) is PRESERVED, not blurred away");
+            Assert.AreEqual(200, px[16 * w + 10].r, "RGB is untouched — only alpha is smoothed");
+            Assert.AreEqual(255, px[16 * w + 10].b);
+        }
+
+        private static int DistinctAlpha(Color32[] px)
+        {
+            var seen = new bool[256]; int n = 0;
+            foreach (var p in px) if (!seen[p.a]) { seen[p.a] = true; n++; }
+            return n;
+        }
+
+        [Test]
         public void TexAnim_Lookup_Misses_Are_Null()
         {
             Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0005", "NOT_A_PROP"));

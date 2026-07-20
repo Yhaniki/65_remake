@@ -2855,6 +2855,12 @@ namespace Sdo.Game
             // capable (Sdo/UnlitInstanced) so a group's copies batch into instanced draws on the GPU. A material
             // whose texture carries real alpha (DXT3/DXT5 cut-out) uses the alpha-blended instanced twin so its
             // transparent regions "去背" instead of painting solid (faithful to the original's per-material blend).
+            // Glow props flagged AlphaBlendOverlay (SCN0022 sheguang searchlight) have a banded DXT3 alpha → smooth it so
+            // the beam gradient doesn't show concentric "tree-ring" steps (年輪). FULL strength: the beam is a pure gradient
+            // with no detail to protect, so flatten every step (the ghost uses PreserveDetail to keep its face). Scoped.
+            var glowSmooth = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName)
+                              == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay
+                              ? DdsLoader.AlphaSmooth.Full : DdsLoader.AlphaSmooth.None;
             var subMats = new List<Material[]>(r.Submeshes.Count);
             foreach (var sub in r.Submeshes)
             {
@@ -2883,7 +2889,7 @@ namespace Sdo.Game
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                        var tex = ResolveDds(dir, nm, out bool a2, out bool glow2, out bool hc2);
+                        var tex = ResolveDds(dir, nm, out bool a2, out bool glow2, out bool hc2, glowSmooth);
                         // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯): a
                         // moving alpha-blend banner has no ZWrite, so its folds + the scene behind bleed through ("穿模").
                         mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && (volumetric || (animated && hc2)), a2 && !opaque && singleSidedAlpha, glow2);
@@ -2891,7 +2897,7 @@ namespace Sdo.Game
                 }
                 else
                 {
-                    var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1, out bool hc1);
+                    var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1, out bool hc1, glowSmooth);
                     // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯) — see above.
                     mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && (volumetric || (animated && hc1)), a1 && !opaque && singleSidedAlpha, glow1) };
                 }
@@ -3221,10 +3227,11 @@ namespace Sdo.Game
             }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay)
             {
-                // two-sided standard alpha-blend at full opacity — undo an additive false-positive (SCN0022 sheguang)
+                // two-sided standard alpha-blend — undo an additive false-positive (SCN0022 sheguang searchlight). Faint
+                // the alpha (SCN0015 窗光 lesson) so the beam is a soft translucent shaft, not a solid additive-bright bar.
                 var shader = Shader.Find("Sdo/UnlitOverlay");
                 if (shader != null) mat.shader = shader;
-                if (mat.HasProperty("_Color")) mat.color = Color.white;
+                if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, GhostSpriteAlpha);
             }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.ForceAlphaBlend)
             {
@@ -3813,6 +3820,10 @@ namespace Sdo.Game
 
         // resolve a material's .dds name to a file in the avatar dir (case-insensitive), load it
         private Texture2D ResolveDds(string dir, string ddsName) => ResolveDds(dir, ddsName, out _);
+        // smooth overload: low-pass the DXT3 4-bit alpha to kill the "tree-ring" banding on a glow gradient
+        // (SCN0022 ghost/searchlight). Their DDS has only ~9-12 alpha levels; see DdsLoader.SmoothAlpha.
+        private Texture2D ResolveDds(string dir, string ddsName, DdsLoader.AlphaSmooth smooth)
+            => ResolveDds(dir, ddsName, out _, out _, out _, smooth);
 
         // Resolve a mapobj texture by material name and report whether it carries real alpha (so the caller can
         // alpha-blend its "去背" cut-out instead of painting it opaque). Reads the file once for both.
@@ -3830,7 +3841,7 @@ namespace Sdo.Game
         // classified by alpha DISTRIBUTION exactly like SCENE.MSH materials. Such props must render depth-writing
         // (alpha-TEST/cutout, ZWrite On), NOT alpha-BLEND (ZWrite Off) — otherwise a moving two-sided cloth's own
         // back faces and the pillars/people behind it bleed THROUGH it ("穿模"). The official used alpha-test here.
-        private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha, out bool additiveGlow, out bool hardCutout)
+        private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha, out bool additiveGlow, out bool hardCutout, DdsLoader.AlphaSmooth smooth = DdsLoader.AlphaSmooth.None)
         {
             hasAlpha = false;
             additiveGlow = false;
@@ -3856,7 +3867,7 @@ namespace Sdo.Game
                 // white halo at the silhouette under straight alpha blending. Edge-bleed the decoded RGB so the
                 // transparent matte carries the prop's own colour instead. Additive glows are excluded: their low-
                 // alpha RGB IS the glow and must not be dilated. No-op on opaque textures, so it's safe by default.
-                return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow);
+                return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow, smooth: smooth);
             }
             catch { return null; }
         }

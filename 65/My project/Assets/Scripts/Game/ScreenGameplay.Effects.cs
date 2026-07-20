@@ -577,6 +577,11 @@ namespace Sdo.Game
             Debug.Log($"[flame] {SceneFolder()}: {set.Billboards.Length} billboard(s), {frames.Count}/{set.Frames.Length} frames @ {set.IntervalMs}ms");
         }
 
+        // Faintness for the SCN0022 坟墓 ghost sprites (and shared with the sheguang searchlight's AlphaBlendOverlay):
+        // the DXT3 glows are bright + fairly opaque, so at full alpha they read as solid decals. Scaling alpha down makes
+        // them translucent wisps (the SCN0015 窗光 lesson — that beam used 0.2). Raise toward 1 for a stronger ghost.
+        internal const float GhostSpriteAlpha = 0.45f;
+
         private static Mesh _ghostQuad;
         private static Mesh FlameQuadMesh() => BillboardQuadMesh(doubleSided: true);
 
@@ -630,7 +635,9 @@ namespace Sdo.Game
                 if (hrc == null || mot == null) { Debug.LogWarning("[ghost] missing hrc/mot in " + g.Dir); continue; }
                 var dir = Path.Combine(SdoExtracted.Root, g.Dir.Replace('/', Path.DirectorySeparatorChar));
                 var frames = new List<Texture2D>(g.Frames.Length);
-                foreach (var fn in g.Frames) { var t = ResolveDds(dir, fn); if (t != null) frames.Add(t); }
+                // PreserveDetail smooth: the ghost DDS has ~9 alpha levels → "tree-ring" banding on the soft body, but its
+                // FACE (eyes+mouth) is also in the alpha — the edge-preserving pass de-bands the body yet keeps the face.
+                foreach (var fn in g.Frames) { var t = ResolveDds(dir, fn, DdsLoader.AlphaSmooth.PreserveDetail); if (t != null) frames.Add(t); }
                 if (frames.Count == 0) { Debug.LogWarning("[ghost] no frames in " + dir); continue; }
 
                 // root: an SdoAvatar that just plays the looping .mot (no parts → poses the skeleton, no skinning)
@@ -645,9 +652,13 @@ namespace Sdo.Game
                 avatar.AddBoneFollower(bone, anchor.transform, applyBindScale: true);
                 avatar.PoseFrame(0f);                          // start posed so the first frame is placed
 
-                // camera-facing billboard quad on the anchor: inherits the fly + scale, its texture swings, additive
-                var mat = new Material(shader != null ? shader : Shader.Find("Sprites/Default")) { name = "GhostAdditive" };
+                // camera-facing billboard quad on the anchor: inherits the fly + scale, its texture swings, alpha-blended
+                var mat = new Material(shader != null ? shader : Shader.Find("Sprites/Default")) { name = "GhostSprite" };
                 mat.mainTexture = frames[0];
+                // FAINT it: the DXT3 body is bright RGB + ~53% peak alpha → at full opacity it reads as a solid white
+                // decal. The SCN0015 窗光 fix wasn't just "alpha-blend" — it also scaled alpha DOWN (there to 0.2) so the
+                // glow is a translucent wisp. Scale the ghost's alpha here too (0.53 × GhostSpriteAlpha ≈ 0.24 peak).
+                if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, GhostSpriteAlpha);
                 var quad = new GameObject("billboard");
                 quad.transform.SetParent(anchor.transform, false);
                 // X sign is driven per-frame by SceneFlameBillboard.flipToMotion (lead with the head in the flight
