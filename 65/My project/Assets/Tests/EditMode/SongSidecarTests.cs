@@ -118,6 +118,49 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void SetOffset_PersistsPerSong_AndLeavesOtherTagsAlone()
+        {
+            // 外部歌的單首 offset 存進 sdo.header：只動那一筆的 #OFFSETMS，別首歌與同一首的其他 tag 都不能被吃掉。
+            var text = SongSidecar.Write(new List<SongSidecarEntry>
+            {
+                new SongSidecarEntry { SongKey = "audio:a.mp3", CdImage = "cd_a.png" },
+                new SongSidecarEntry { SongKey = "audio:b.mp3", Dps = "dance_b.dps", DpsVersion = SongSidecar.DpsGenerator },
+            });
+
+            var e = SongSidecar.Parse(SongSidecar.SetOffset(text, "audio:b.mp3", -57.3f));
+            Assert.AreEqual(-57.3f, SongSidecar.Find(e, "audio:b.mp3").OffsetMs, 1e-3f);
+            Assert.AreEqual("dance_b.dps", SongSidecar.Find(e, "audio:b.mp3").Dps, "存 offset 把別的 tag 蓋掉了");
+            Assert.AreEqual("cd_a.png", SongSidecar.Find(e, "audio:a.mp3").CdImage, "別首歌被動到了");
+            Assert.AreEqual(0f, SongSidecar.Find(e, "audio:a.mp3").OffsetMs, "沒設過的歌 offset 應為 0");
+        }
+
+        [Test]
+        public void Offset_Zero_IsNotWritten_ButReadsBackAsZero()
+        {
+            // 0 = 不位移 → 不寫進檔（不要污染），讀回來還是 0。設過再設回 0 也一樣清掉。
+            var text = SongSidecar.SetOffset("", "", 0f);
+            StringAssert.DoesNotContain("OFFSETMS", text);
+            Assert.AreEqual(0f, SongSidecar.Parse(text).Count == 0 ? 0f : SongSidecar.Parse(text)[0].OffsetMs);
+
+            var set = SongSidecar.SetOffset("", "", 42f);
+            StringAssert.Contains("OFFSETMS", set);
+            var cleared = SongSidecar.SetOffset(set, "", 0f);
+            StringAssert.DoesNotContain("OFFSETMS", cleared);
+            Assert.AreEqual(0f, SongSidecar.Parse(cleared)[0].OffsetMs);
+        }
+
+        [Test]
+        public void Offset_RoundTripsThroughHandEditableText()
+        {
+            // 檔是可手改的：直接寫 #OFFSETMS 也讀得回來（含小數與負值）。
+            var e = SongSidecar.Parse("#SONG:;\n#CDIMAGE:cd.png;\n#OFFSETMS:-25.5;\n");
+            Assert.AreEqual(-25.5f, e[0].OffsetMs, 1e-3f);
+            Assert.AreEqual("cd.png", e[0].CdImage);
+            // 往返後仍保留
+            Assert.AreEqual(-25.5f, SongSidecar.Parse(SongSidecar.Write(e))[0].OffsetMs, 1e-3f);
+        }
+
+        [Test]
         public void Rewrite_KeepsTagsWeDontKnowAbout()
         {
             var e = SongSidecar.Parse("#SONG:;\n#CDIMAGE:cd.png;\n#OFFSET:0.123;\n");

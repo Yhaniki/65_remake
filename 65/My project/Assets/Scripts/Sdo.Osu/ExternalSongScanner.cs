@@ -240,7 +240,7 @@ namespace Sdo.Osu
         public static void ReapplySidecar(ExternalSong song)
         {
             if (song == null || string.IsNullOrEmpty(song.FolderPath)) return;
-            song.CdImagePath = ""; song.MotPath = ""; song.CameraPath = "";
+            song.CdImagePath = ""; song.MotPath = ""; song.CameraPath = ""; song.OffsetMs = 0f;
             var sidecar = ReadSidecar(song.FolderPath);
             ApplySidecar(song, SongSidecar.Find(sidecar, song.SongKey), song.FolderPath);
         }
@@ -417,6 +417,7 @@ namespace Sdo.Osu
             song.CdImagePath = SidecarFile(dir, e.CdImage);
             song.MotPath = SidecarFile(dir, e.Mot);
             song.CameraPath = SidecarFile(dir, e.Camera);
+            song.OffsetMs = e.OffsetMs;
         }
 
         private static string SidecarFile(string dir, string name)

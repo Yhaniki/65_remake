@@ -234,6 +234,8 @@ namespace Sdo.Game
                 chartFormat = (int)song.Format,
                 previewStartMs = song.PreviewStartMs,
                 previewLengthMs = song.PreviewLengthMs,
+                // hand-calibrated per-song offset from the folder sidecar → drives gameplay's songOffsetMs (see FrontendApp).
+                offsetMs = Mathf.Clamp(song.OffsetMs, -SongCatalog.MaxOffsetMs, SongCatalog.MaxOffsetMs),
             };
             SetSlot(e, 0, song.Charts[0], song.AudioDurationSec);
             SetSlot(e, 1, song.Charts[1], song.AudioDurationSec);

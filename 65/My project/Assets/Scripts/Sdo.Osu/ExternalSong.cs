@@ -52,6 +52,10 @@ namespace Sdo.Osu
         public string MotPath = "";
         public string CameraPath = "";
 
+        /// <summary>Per-song timing offset (ms) recorded in the folder's sidecar by the chart editor (F11/F12 → Ctrl+S);
+        /// positive delays the music. Flows to <see cref="SongCatalog.Entry.offsetMs"/> so it also applies in gameplay.</summary>
+        public float OffsetMs;
+
         // Preview clip window (from osu PreviewTime / StepMania #SAMPLESTART+#SAMPLELENGTH). Song-select loops this
         // window of the full audio instead of a middle-of-song default.
         public int PreviewStartMs = -1;   // -1 = unspecified → fall back to a centred default window

@@ -197,8 +197,8 @@ namespace Sdo.Game
             game.effectScene = false;            // 不放場景常駐特效
             game.scrollSpeedMul = _speed;
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
-            // 外部歌沒有 song_name_overrides.json 的 offset → 從 0 開始，靠 F11/F12 即時對齊（不寫檔，見 SaveSongOffset）。
-            _songOffset = ext ? 0.0 : SongCatalog.OffsetMs(_gn);
+            // 外部歌的 offset 存在歌資料夾的 sdo.header（已灌進 entry.offsetMs，見 ExternalSongLibrary.ToEntry）；官方歌走 song_name_overrides.json。
+            _songOffset = ext ? (e != null ? e.offsetMs : 0f) : SongCatalog.OffsetMs(_gn);
             game.songOffsetMs = (float)_songOffset;
             game.EditorOnHit = OnHit;             // 跟著打 → 誤差條（一般編譜模式也有，不必進打拍測試）
             _game = game;
@@ -442,13 +442,30 @@ namespace Sdo.Game
         private void SaveSongOffset()
         {
             if (string.IsNullOrEmpty(_gn)) return;
-            if (_entry != null && _entry.external) { _status = "外部歌不寫檔：offset 只在本次編輯器內即時生效"; return; }
+            if (_entry != null && _entry.external) { SaveExternalSongOffset(); return; }
             if (SongOverridesWriter.SetOffset(Stem(), _songOffset, out string msg))
             {
                 var e = SongCatalog.Get(_gn);
                 if (e != null) e.offsetMs = (float)_songOffset;   // k 這筆；t 那筆下次重載 catalog 時才會同步（同一個 stem）
             }
             _status = msg;
+        }
+
+        // 外部歌：offset 寫進歌資料夾的 sdo.header（跟著歌走 → 下次開編輯器＋正式遊玩都吃得到），只動那一筆的 #OFFSETMS，
+        // 其餘位元組不變（走 SongSidecar.SetOffset 的 round-trip）。同步記憶體 catalog，這次執行的遊玩不必重掃就生效。
+        private void SaveExternalSongOffset()
+        {
+            string folder = _entry.folderPath;
+            if (string.IsNullOrEmpty(folder)) { _status = "外部歌沒有資料夾路徑，無法存 offset"; return; }
+            try
+            {
+                string path = Path.Combine(folder, SongSidecar.FileName);
+                string text = File.Exists(path) ? File.ReadAllText(path) : "";
+                File.WriteAllText(path, SongSidecar.SetOffset(text, _entry.songKey, (float)_songOffset));
+                _entry.offsetMs = (float)_songOffset;   // FrontendApp 讀 SongCatalog → 這次執行的 gameplay 直接吃到
+                _status = $"已存外部歌 offset {_songOffset:+0.#;-0.#;0} ms → {SongSidecar.FileName}（跟著歌走，遊玩也生效）";
+            }
+            catch (Exception ex) { _status = "存 offset 失敗：" + ex.Message; }
         }
 
         // 上一首 / 下一首：走跟歌單同一份順序（SongCatalog.Primary，只有鍵盤譜 k）。
@@ -579,21 +596,23 @@ namespace Sdo.Game
             if (g != null)
             {
                 double beat = g.MsToBeat(now);
-                GUILayout.Label($"小節 {g.MeasureAt(now)}  拍 {(beat % 4 + 4) % 4 + 1:0.00}", box, GUILayout.Width(130));
+                // 秒/拍都給 6 位小數，對齊 StepMania 的 CURRENT SECOND / CURRENT BEAT，方便逐拍核對匯入的譜。
+                // 秒＝真實音檔時間（外部譜編輯器不套 lead-in，見 ScreenGameplay.ExternalLeadInMsFor）→ 應與 .sm 的秒數一致。
+                GUILayout.Label($"秒 {now / 1000.0:0.000000}  小節 {g.MeasureAt(now)}  拍 {(beat % 4 + 4) % 4 + 1:0.000000}",
+                    box, GUILayout.Width(280));
             }
             float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
             GUILayout.Label($"縮放 {speed:0.00}× (Ctrl+↑↓/F5F6)", box, GUILayout.Width(150));
             GUILayout.Label($"流速 {(ready ? _game.EditorRate : 1.0):0.00}× ([ ]，= 回 1×)", box, GUILayout.Width(150));
-            GUILayout.Label($"單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12){((_entry != null && _entry.external) ? " 外部歌·即時" : "")}", box, GUILayout.Width(200));
+            GUILayout.Label($"單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12){((_entry != null && _entry.external) ? " 外部歌·Ctrl+S存" : "")}", box, GUILayout.Width(220));
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
 
-            // 單首 offset 不寫檔（值只活在這次執行裡）→ 把可以直接貼進 song_name_overrides.json 的那一行印出來。
             // 存檔提示 / 存檔結果：offset 調了但還沒存 → 提醒 Ctrl+S（存完 _status 會蓋掉這行）
-            if (_entry != null && _entry.external)
+            if (_entry != null && _entry.external && Mathf.Abs((float)_songOffset - _entry.offsetMs) > 0.0005f)
                 GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
-                    $"外部歌單首 offset {_songOffset:+0.#;-0.#;0} ms —— 只在本次編輯器內即時對齊音樂/波形（不寫檔）");
+                    $"外部歌單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進歌資料夾的 {SongSidecar.FileName}（跟著歌走，遊玩也生效）");
             else if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
                 GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
                     $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_name_overrides.json（{Stem()}）");

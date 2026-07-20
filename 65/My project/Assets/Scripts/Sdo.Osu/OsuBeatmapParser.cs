@@ -16,6 +16,12 @@ namespace Sdo.Osu
             var map = new OsuBeatmap();
             string section = "";
 
+            // osu applies a fixed +24 ms to EVERY time (hit objects, timing points…) when loading a beatmap whose
+            // file-format version is < 5 — "to correct timing changes applied at a game client level" (osu!lazer
+            // LegacyBeatmapDecoder.EARLY_VERSION_TIMING_OFFSET = 24). Reproduce it so old maps convert in sync; modern
+            // maps (the "osu file format v14" the vast majority carry) get 0.
+            int timeOffset = EarlyVersionTimingOffset(text);
+
             foreach (var rawLine in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
             {
                 var line = rawLine.Trim();
@@ -45,10 +51,10 @@ namespace Sdo.Osu
                         // "time,beatLength,meter,...". Uninherited points (beatLength > 0) are tempo
                         // changes; inherited points (beatLength < 0) are osu! SV (green) lines. ALL of
                         // them are kept (for the note scroll); the first uninherited also sets map.Bpm.
-                        ParseTimingPoint(line, map);
+                        ParseTimingPoint(line, map, timeOffset);
                         break;
                     case "HitObjects":
-                        var ho = ParseHitObject(line, map.Keys);
+                        var ho = ParseHitObject(line, map.Keys, timeOffset);
                         if (ho.HasValue) map.HitObjects.Add(ho.Value);
                         break;
                 }
@@ -62,12 +68,27 @@ namespace Sdo.Osu
         /// uninherited point (beatLength &gt; 0) also sets map.Bpm = 60000/beatLength. Inherited points
         /// keep their negative beatLength (osu! SV encoding); see <see cref="OsuTimingPoint"/>.
         /// </summary>
-        private static void ParseTimingPoint(string line, OsuBeatmap map)
+        /// <summary>osu's early-format timing correction: +24 ms on all times when the file-format version &lt; 5, else 0.
+        /// Reads the "osu file format vN" header (first non-empty line). Pure — unit-tested.</summary>
+        public const int EarlyVersionOffsetMs = 24;
+        public static int EarlyVersionTimingOffset(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            int i = text.IndexOf("osu file format v", StringComparison.OrdinalIgnoreCase);
+            if (i < 0) return 0;
+            i += "osu file format v".Length;
+            int j = i;
+            while (j < text.Length && char.IsDigit(text[j])) j++;
+            return int.TryParse(text.Substring(i, j - i), out int ver) && ver > 0 && ver < 5 ? EarlyVersionOffsetMs : 0;
+        }
+
+        private static void ParseTimingPoint(string line, OsuBeatmap map, int timeOffset = 0)
         {
             var p = line.Split(',');
             if (p.Length < 2) return;
             if (!double.TryParse(p[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var time))
                 return;
+            time += timeOffset;
             if (!double.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var beatLength))
                 return;
             map.TimingPoints.Add(new OsuTimingPoint(time, beatLength));
@@ -156,14 +177,14 @@ namespace Sdo.Osu
         /// mania: lane = floor(x * keys / 512). type bit 0 (1) = tap, bit 7 (128) = hold.
         /// For holds the first objectParams field (before ':') is the end time.
         /// </summary>
-        private static OsuHitObject? ParseHitObject(string line, int keys)
+        private static OsuHitObject? ParseHitObject(string line, int keys, int timeOffset = 0)
         {
             var parts = line.Split(',');
             if (parts.Length < 5) return null;
             if (keys <= 0) keys = 4;
 
             int x = ParseInt(parts[0]);
-            int time = ParseInt(parts[2]);
+            int time = ParseInt(parts[2]) + timeOffset;
             int type = ParseInt(parts[3]);
 
             int lane = (int)Math.Floor(x * (double)keys / 512.0);
@@ -178,7 +199,7 @@ namespace Sdo.Osu
                 var endField = parts[5];
                 int colon = endField.IndexOf(':');
                 var endStr = colon >= 0 ? endField.Substring(0, colon) : endField;
-                int end = ParseInt(endStr);
+                int end = ParseInt(endStr) + timeOffset;
                 return new OsuHitObject(lane, time, end);
             }
 

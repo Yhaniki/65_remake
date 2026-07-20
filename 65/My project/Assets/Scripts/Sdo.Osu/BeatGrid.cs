@@ -77,7 +77,11 @@ namespace Sdo.Osu
                 }
             }
             if (ms.Count == 0) { ms.Add(0.0); len.Add(60000.0 / Math.Max(1.0, fallbackBpm)); }
-            if (ms[0] > 0.0) { ms.Insert(0, 0.0); len.Insert(0, len[0]); }   // 補上從 0 起的首段（.osu 可能沒有）
+            // 首段的起點 = 第一個 timing point 的 ms，就是「beat 0」的錨點 —— 這一定要跟音符時間同一個錨：
+            // SmChart 把 beat 0 放在 −#OFFSET（負 offset → 正 ms），osu 把它放在第一個 timing point 的 time。
+            // 千萬別在 ms 0 硬插一段 beat 0（舊 bug）：那會把 beat 重新編號，害負 offset 的 SM 譜（如 Hibana，
+            // offset −0.041 → 首段在 +41ms）整條格線位移 |offset|、音符落不到線上；first-TP 在正 ms 的 osu 譜同理歪掉。
+            // 首段之前的時間（beat < 0）本來就沒有格線要畫（LinesInWindow 只吐 beat ≥ 0），不需要補段。
 
             _segMs = ms.ToArray();
             _beatLen = len.ToArray();

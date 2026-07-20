@@ -179,6 +179,17 @@ namespace Sdo.Game
         public string songDisplayName = "";   // external: the catalog's display title (an osu pack's real per-song name);
                                                // _map.Title would be the shared pack label ("SDO Pack8"). Official = "" (resolved from the .gn catalog).
         private const int ExternalLeadInMs = 2000;   // min ms the first external note is pushed to, so it scrolls in from the edge (count-in)
+
+        /// <summary>
+        /// 外部譜（osu/StepMania）要往後推多少毫秒才進場（gameplay 的無聲 count-in）。純函式，方便測。
+        ///   • 正式遊玩：把第一顆音符推到至少 <see cref="ExternalLeadInMs"/>，讓它從邊緣捲進來而不是一開場就貼在受擊線上。
+        ///   • 編輯器（<paramref name="editorMode"/>）：回 0 —— 編譜要 WYSIWYG，音符必須落在**真實音檔時間**上
+        ///     （第一顆＝.sm 的 beat×60/BPM−OFFSET），這樣時間讀數＝StepMania 的秒數、波形對得起來、拍號也正確。
+        ///     套了 lead-in 會把整張譜往後推 ~1.5s（且不是整數拍），時間軸就跟音檔/.sm 全對不上（見 BeatGrid 會誤插 beat0）。
+        /// </summary>
+        public static int ExternalLeadInMsFor(bool editorMode, int firstNoteMs)
+            => editorMode ? 0 : Math.Max(0, ExternalLeadInMs - firstNoteMs);
+
         // (2) 3D avatar — WOMAN default outfit: body-part .msh files (relative to Extracted/),
         // assembled in shared model space (bind pose). Skeleton/skinning/motion come next.
         public string[] avatarParts =
@@ -1589,9 +1600,10 @@ namespace Sdo.Game
                 if (_map.Bpm <= 0.0) _map.Bpm = 120.0;   // guard: a chart with no parseable BPM must not feed 0 into the judge windows
                 if (chartLevel > 0) _map.Level = chartLevel;   // LV label = the song-select 星數×5 level (Parse/ToBeatmap don't know it)
                 // external charts have no count-in → push the first note out so it scrolls in from the edge (see ApplyLeadIn).
+                // 編輯器例外：回 0（見 ExternalLeadInMsFor）—— 編譜要 WYSIWYG，音符要落在真實音檔時間上（時間讀數＝StepMania 的秒數）。
                 if (_map.HitObjects.Count > 0)
                 {
-                    int leadIn = ExternalLeadInMs - (int)_map.FirstNoteMs;
+                    int leadIn = ExternalLeadInMsFor(editorMode, (int)_map.FirstNoteMs);
                     if (leadIn > 0) _map.ApplyLeadIn(leadIn);
                 }
                 if (_map.HitObjects.Count > 0) { Debug.Log($"[Step1] loaded external {Path.GetFileName(chartPath)}: {_map.HitObjects.Count} notes, bpm {_map.Bpm}, lv {_map.Level}"); return true; }
@@ -1628,7 +1640,10 @@ namespace Sdo.Game
             if (Mp3Decoder.IsMp3(path) && File.Exists(path))
             {
                 // Unity can't decode mp3 from a file on desktop → decode with the bundled NLayer on a worker thread.
-                var task = System.Threading.Tasks.Task.Run(() => Mp3Decoder.Decode(path));
+                // osu (chartFormat 1) and StepMania (2) decode mp3 to different positions; match the chart's home game
+                // so it lines up at global-offset 0 (see Mp3Decoder.Mp3Sync). Non-external mp3 (dev fallback) → StepMania.
+                var sync = chartFormat == 1 ? Mp3Decoder.Mp3Sync.Osu : Mp3Decoder.Mp3Sync.StepMania;
+                var task = System.Threading.Tasks.Task.Run(() => Mp3Decoder.Decode(path, sync));
                 while (!task.IsCompleted) yield return null;
                 var clip = Mp3Decoder.ToClip(task.Result, "mp3song");
                 if (clip != null) { _audio.clip = clip; _audio.volume = AudioMix.Music; }

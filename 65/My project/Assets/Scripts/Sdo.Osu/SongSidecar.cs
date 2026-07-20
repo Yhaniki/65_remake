@@ -29,6 +29,11 @@ namespace Sdo.Osu
         public string Mot = "";
         public string Camera = "";
 
+        /// <summary>Per-song timing tweak in MILLISECONDS (chart editor F11/F12 → Ctrl+S). Positive delays the music.
+        /// External osu/StepMania charts often carry a <c>#OFFSET</c> that doesn't quite match their (re-encoded) audio;
+        /// this is where the editor's hand-calibrated correction persists so it also applies in gameplay. 0 = none.</summary>
+        public float OffsetMs;
+
         /// <summary>Tags we don't know about, kept in order so rewriting the file never eats a user's own lines.</summary>
         public readonly List<KeyValuePair<string, string>> Extra = new List<KeyValuePair<string, string>>();
     }
@@ -65,6 +70,7 @@ namespace Sdo.Osu
         private const string TagDpsVer = "DPSVER";
         private const string TagMot = "MOT";
         private const string TagCamera = "CAMERA";
+        private const string TagOffsetMs = "OFFSETMS";
 
         /// <summary>Parse a sidecar. Malformed input yields whatever blocks were readable — never throws.</summary>
         public static List<SongSidecarEntry> Parse(string text)
@@ -100,6 +106,7 @@ namespace Sdo.Osu
                     case TagDpsVer: cur.DpsVersion = ParseInt(value); break;
                     case TagMot: cur.Mot = value; break;
                     case TagCamera: cur.Camera = value; break;
+                    case TagOffsetMs: cur.OffsetMs = ParseFloat(value); break;
                     default: cur.Extra.Add(new KeyValuePair<string, string>(name, value)); break;
                 }
             }
@@ -126,6 +133,8 @@ namespace Sdo.Osu
                         sb.Append('#').Append(TagDpsVer).Append(':').Append(e.DpsVersion.ToString(CultureInfo.InvariantCulture)).Append(";\n");
                     sb.Append('#').Append(TagMot).Append(':').Append(Clean(e.Mot)).Append(";\n");
                     sb.Append('#').Append(TagCamera).Append(':').Append(Clean(e.Camera)).Append(";\n");
+                    if (e.OffsetMs != 0f)   // 0 = no shift → don't clutter the file (absent reads back as 0)
+                        sb.Append('#').Append(TagOffsetMs).Append(':').Append(e.OffsetMs.ToString("0.###", CultureInfo.InvariantCulture)).Append(";\n");
                     foreach (var x in e.Extra)
                         sb.Append('#').Append(Clean(x.Key)).Append(':').Append(Clean(x.Value)).Append(";\n");
                 }
@@ -156,6 +165,19 @@ namespace Sdo.Osu
             if (entry == null) { entry = new SongSidecarEntry { SongKey = key }; entries.Add(entry); }
             entry.Dps = Clean(dpsFile);
             entry.DpsVersion = generator;
+            return Write(entries);
+        }
+
+        /// <summary>Record the per-song timing offset (ms) for <paramref name="songKey"/>, leaving every other song's
+        /// block — and this song's other tags — untouched. The chart editor's Ctrl+S calls this for external songs so a
+        /// hand-calibrated offset survives to gameplay and the next session. Returns the new file text.</summary>
+        public static string SetOffset(string text, string songKey, float offsetMs)
+        {
+            var entries = Parse(text);
+            string key = Clean(songKey);
+            var entry = Find(entries, key);
+            if (entry == null) { entry = new SongSidecarEntry { SongKey = key }; entries.Add(entry); }
+            entry.OffsetMs = offsetMs;
             return Write(entries);
         }
 
@@ -230,6 +252,9 @@ namespace Sdo.Osu
 
         private static int ParseInt(string s)
             => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > 0 ? v : 0;
+
+        private static float ParseFloat(string s)
+            => float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : 0f;
 
         // Values are single-line tokens: strip the separators that would corrupt the file if a filename ever held them.
         private static string Clean(string s)

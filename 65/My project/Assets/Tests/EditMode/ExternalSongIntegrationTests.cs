@@ -45,6 +45,21 @@ namespace Sdo.Tests
             Assert.AreEqual("", e.ChartPath(0));
         }
 
+        // The sidecar's per-song offset (ExternalSong.OffsetMs, read from sdo.header) must reach the catalog entry —
+        // that's the field FrontendApp feeds into gameplay's songOffsetMs. Out-of-range values are clamped, not trusted.
+        [Test]
+        public void ToEntry_CarriesSidecarOffset_IntoCatalog_Clamped()
+        {
+            var song = new ExternalSong { FolderPath = "C:/x", Title = "t", OffsetMs = 57f };
+            Assert.AreEqual(57f, ExternalSongLibrary.ToEntry(song, 0).offsetMs, 1e-3f);
+
+            var wild = new ExternalSong { FolderPath = "C:/x", Title = "t", OffsetMs = 999999f };
+            Assert.AreEqual(SongCatalog.MaxOffsetMs, ExternalSongLibrary.ToEntry(wild, 0).offsetMs, 1e-3f);
+
+            var none = new ExternalSong { FolderPath = "C:/x", Title = "t" };
+            Assert.AreEqual(0f, ExternalSongLibrary.ToEntry(none, 0).offsetMs);
+        }
+
         [Test]
         public void ApplyLeadIn_Shifts_Notes_Timing_And_Offset()
         {
@@ -60,6 +75,42 @@ namespace Sdo.Tests
             Assert.AreEqual(1460.0, bm.MusicStartOffsetMs, 1e-9);
             bm.ApplyLeadIn(0);   // no-op
             Assert.AreEqual(2000, bm.HitObjects[0].StartTimeMs);
+        }
+
+        // 外部譜 lead-in 只在正式遊玩套用；編輯器回 0（音符留在真實音檔時間上），這是「打譜看到的秒數＝StepMania 的秒數」的關鍵。
+        [Test]
+        public void ExternalLeadIn_Skipped_In_Editor()
+        {
+            // gameplay：把第一顆音符推到 2000ms（count-in），好從邊緣捲進來。
+            Assert.AreEqual(2000 - 537, ScreenGameplay.ExternalLeadInMsFor(false, 537));
+            // editor：0 → 音符不動，第一顆留在 537ms（＝.sm 的 beat4 @ 140BPM, OFFSET 1.177）。
+            Assert.AreEqual(0, ScreenGameplay.ExternalLeadInMsFor(true, 537));
+            // 第一顆音符本來就晚於 lead-in → 兩種模式都不推（clamp 到 0，不會變成負的）。
+            Assert.AreEqual(0, ScreenGameplay.ExternalLeadInMsFor(false, 3000));
+            Assert.AreEqual(0, ScreenGameplay.ExternalLeadInMsFor(true, 3000));
+        }
+
+        // 端對端（純解析）：Be Crazy For Me 的 SM 標頭數字 → 第一顆音符必須落在 0.537s，套上「編輯器不 lead-in」後仍是 0.537s。
+        // 這就是使用者回報「轉出來變 2.0s」的重現：gameplay 會 +1463ms → 2.0s；editor 不套 → 維持 0.537s。
+        [Test]
+        public void SmFirstNote_RealTime_Matches_StepMania_In_Editor()
+        {
+            // #OFFSET:1.177; #BPMS:0=140; 第一顆在 beat 4（第一個小節結尾）→ 4×(60/140)−1.177 = 0.537286s。
+            // NOTES 欄位：StepsType:Description:Difficulty:Meter:Radar:NoteData（Description 空 → 只有一個冒號）。
+            const string sm =
+                "#OFFSET:1.177;\n#BPMS:0.000=140.000;\n" +
+                "#NOTES:dance-single::Challenge:15:0,0,0,0,0:\n" +
+                "0000\n0000\n0000\n0000\n,\n1000\n0000\n0000\n0000\n;";
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            Assert.AreEqual(1, map.HitObjects.Count);
+            Assert.AreEqual(537, map.HitObjects[0].StartTimeMs);            // 真實音檔時間（≈0.537s）
+
+            int firstMs = (int)map.FirstNoteMs;
+            // 編輯器：lead-in = 0 → 音符停在 537ms（打譜看到的秒數＝StepMania）。
+            Assert.AreEqual(0, ScreenGameplay.ExternalLeadInMsFor(true, firstMs));
+            // 正式遊玩：lead-in > 0 → 套上後第一顆到 2000ms（＝使用者回報的 2.0s，遊玩本來就要的 count-in）。
+            int gameLead = ScreenGameplay.ExternalLeadInMsFor(false, firstMs);
+            Assert.AreEqual(2000, firstMs + gameLead);
         }
 
         [Test]

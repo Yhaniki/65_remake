@@ -50,6 +50,20 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void FirstTimingPointAtPositiveMs_AnchorsBeatZeroThere_NotAtMsZero()
+        {
+            // Hibana 迴歸：SM #OFFSET 為負(−0.041) → SmChart 把 beat 0 的 timing point 放在 +41ms。格線的 beat 0 一定要
+            // 跟音符同錨在那 41ms，否則(舊 bug 在 ms 0 硬插 beat 0)整條線位移，音符落不到線上。200 BPM → 一拍 300ms。
+            var g = new BeatGrid(Pts((41, 200)));
+            Assert.AreEqual(0.0, g.MsToBeat(41.0), 1e-9);       // beat 0 就在 timing point 上，不是 ms 0
+            Assert.AreEqual(41.0, g.BeatToMs(0), 1e-9);
+            // 音符 beat 4（SmChart 給的 chart 時間 = 4×300 − (−41) = 1241ms）必須正好落在 beat 4 的格線上。
+            Assert.AreEqual(4.0, g.MsToBeat(1241.0), 1e-9);
+            Assert.AreEqual(1241.0, g.BeatToMs(4), 1e-9);       // beat 4 = 第 1 小節線，音符在線上
+            Assert.AreEqual(1, g.MeasureAt(1241.0));
+        }
+
+        [Test]
         public void MeasureStartMs_MatchesGnBeatSpace()
         {
             // .gn: beat = measurement*4 → 小節 3 = 第 12 拍

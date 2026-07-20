@@ -80,5 +80,30 @@ namespace Sdo.Tests
             // 3 taps + 1 hold(=2) = 5
             Assert.AreEqual(5, map.TotalNotes);
         }
+
+        [Test]
+        public void EarlyVersionTimingOffset_Only_For_FormatBelow5()
+        {
+            // osu adds +24ms to every time on format < 5 (EARLY_VERSION_TIMING_OFFSET); v5+ gets 0.
+            Assert.AreEqual(24, OsuBeatmapParser.EarlyVersionTimingOffset("osu file format v4\n[HitObjects]\n"));
+            Assert.AreEqual(24, OsuBeatmapParser.EarlyVersionTimingOffset("osu file format v3"));
+            Assert.AreEqual(0, OsuBeatmapParser.EarlyVersionTimingOffset("osu file format v5"));
+            Assert.AreEqual(0, OsuBeatmapParser.EarlyVersionTimingOffset("osu file format v14"));
+            Assert.AreEqual(0, OsuBeatmapParser.EarlyVersionTimingOffset("no header at all"));
+        }
+
+        [Test]
+        public void OldFormat_ShiftsAllTimesBy24ms()
+        {
+            // v14 sample → 2432 verbatim; the same chart as v4 → every time +24 (notes AND hold end).
+            var modern = OsuBeatmapParser.Parse(Sample);
+            Assert.AreEqual(2432, modern.HitObjects[0].StartTimeMs);
+
+            var old = OsuBeatmapParser.Parse(Sample.Replace("osu file format v14", "osu file format v4"));
+            Assert.AreEqual(2432 + 24, old.HitObjects[0].StartTimeMs);
+            var hold = old.HitObjects[2];
+            Assert.AreEqual(2432 + 24, hold.StartTimeMs);
+            Assert.AreEqual(3270 + 24, hold.EndTimeMs);
+        }
     }
 }

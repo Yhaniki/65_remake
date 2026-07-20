@@ -4,99 +4,80 @@ using Sdo.Game;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// Mp3Decoder gapless trim — the fix that makes imported osu!/StepMania (mp3) charts line up like they do in
-    /// their own game. NLayer decodes every MPEG frame verbatim (no LAME encoder-delay/padding trim), so its output
-    /// leads a gapless decoder (osu! BASS / the decode StepMania #OFFSET is calibrated against) by
-    /// encoderDelay + 529 samples. These cover the two pure pieces:
-    ///   • <see cref="Mp3Decoder.TryParseLameGapless"/> — pull encoder delay + padding out of the LAME tag.
-    ///   • <see cref="Mp3Decoder.GaplessTrim"/> — turn those into leading-skip / keep frame counts.
-    /// The numbers are ALBIDA.mp3's, verified sample-exact against libsndfile (delay 576, pad 1776 → skip 1105,
-    /// keep 5091792 out of 5094144).
+    /// Mp3Decoder timing — making imported osu!/StepMania (mp3) charts line up at global-offset 0 like they do in their
+    /// home game. Both games decode through MAD (StepMania) / BASS (osu, DWI); those keep the LAME encoder-delay priming
+    /// (NO gapless trim) and, for a CBR "Info" header frame they can't recognise, EMIT it as ~26 ms of silence rather
+    /// than skipping it (RageSoundReader_MP3.cpp: <c>if(type==INFO) return false</c>). NLayer instead skips that frame,
+    /// so our decode starts one frame early — <see cref="Mp3Decoder.ApplyBassInfoFrame"/> re-inserts it. These cover the
+    /// two pure pieces that decide the fix: is the header an Info tag, and how big is one frame.
+    /// Measured on "Be Crazy For Me.mp3" (MPEG-1 L3, Info tag): NLayer-raw onset 0.504 s + 1 frame (1152/44100 ≈ 26 ms)
+    /// = 0.530 s ≈ chart beat 4 at 0.537 s; the old gapless trim instead put it at 0.479 s (≈ 51 ms early).
     /// </summary>
     public class Mp3GaplessTests
     {
-        // Build an mp3 first-frame region: "Info"/"Xing" VBR/CBR header, then the "LAME" extension whose
-        // delay+padding 3-byte field sits at LAME+0x15. delay/padding are packed 12 bits each (delay high).
-        private static byte[] Frame(string vbrTag, bool withLame, int delay, int padding)
+        private static void Put(byte[] b, int at, string s) { for (int i = 0; i < s.Length; i++) b[at + i] = (byte)s[i]; }
+
+        // First frame header + a Xing/Info tag at the usual offset (after MPEG1-stereo side info).
+        private static byte[] Frame(byte hdr1, string vbrTag, int size = 128)
         {
-            var b = new byte[64];
-            Put(b, 4, vbrTag);                       // Xing/Info near the top of the frame
-            if (withLame)
-            {
-                Put(b, 20, "LAME");                  // LAME extension right after the header
-                int o = 20 + 0x15;                   // delay/padding field
-                int v = ((delay & 0xFFF) << 12) | (padding & 0xFFF);
-                b[o] = (byte)(v >> 16); b[o + 1] = (byte)(v >> 8); b[o + 2] = (byte)v;
-            }
+            var b = new byte[size];
+            b[0] = 0xFF; b[1] = hdr1;         // frame sync + version/layer
+            if (vbrTag != null) Put(b, 36, vbrTag);
             return b;
         }
 
-        private static void Put(byte[] b, int at, string s)
+        [Test]
+        public void FrameSamples_ReadsMpegVersion()
         {
-            for (int i = 0; i < s.Length; i++) b[at + i] = (byte)s[i];
+            // 0xFB = MPEG-1 Layer III → 1152; 0xF3 = MPEG-2 Layer III → 576; 0xE3 = MPEG-2.5 → 576.
+            Assert.AreEqual(1152, Mp3Decoder.FrameSamplesPerChannel(Frame(0xFB, null)));
+            Assert.AreEqual(576, Mp3Decoder.FrameSamplesPerChannel(Frame(0xF3, null)));
+            Assert.AreEqual(576, Mp3Decoder.FrameSamplesPerChannel(Frame(0xE3, null)));
         }
 
         [Test]
-        public void ParsesLameEncoderDelayAndPadding()
+        public void FrameSamples_ZeroWhenNoSync()
         {
-            Assert.IsTrue(Mp3Decoder.TryParseLameGapless(Frame("Info", true, 576, 1776), out int d, out int p));
-            Assert.AreEqual(576, d);
-            Assert.AreEqual(1776, p);
+            Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(new byte[64]));   // all zero → no 0xFFEx sync
+            Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(null));
         }
 
         [Test]
-        public void ParsesXingVariantToo()
+        public void InfoHeaderFrame_TrueForInfo_FalseForXing()
         {
-            Assert.IsTrue(Mp3Decoder.TryParseLameGapless(Frame("Xing", true, 1024, 300), out int d, out int p));
-            Assert.AreEqual(1024, d);
-            Assert.AreEqual(300, p);
+            // "Info" (CBR) → BASS/DWI emit it as a silence frame → must be re-inserted. This is Be Crazy For Me's case.
+            Assert.IsTrue(Mp3Decoder.HasInfoHeaderFrame(Frame(0xFB, "Info")));
+            // "Xing" (VBR) → skipped by MAD/BASS too → nothing to re-insert.
+            Assert.IsFalse(Mp3Decoder.HasInfoHeaderFrame(Frame(0xFB, "Xing")));
+            // No VBR/CBR tag at all → no header frame.
+            Assert.IsFalse(Mp3Decoder.HasInfoHeaderFrame(Frame(0xFB, null)));
+            Assert.IsFalse(Mp3Decoder.HasInfoHeaderFrame(null));
         }
 
         [Test]
-        public void NoLameTagIsNotGapless()
+        public void OsuGapless_TrimsPrimingFromTheFront()
         {
-            // Xing/Info present but no LAME extension → we have no delay data → leave the audio untrimmed.
-            Assert.IsFalse(Mp3Decoder.TryParseLameGapless(Frame("Info", false, 0, 0), out _, out _));
-            // No VBR/CBR header at all (e.g. a raw stream) → also not gapless.
-            Assert.IsFalse(Mp3Decoder.TryParseLameGapless(new byte[64], out _, out _));
-            Assert.IsFalse(Mp3Decoder.TryParseLameGapless(null, out _, out _));
+            // osu/BASS drops 576+529 = 1105 frames of priming; verified to align SDO Pack9's osu charts at offset 0.
+            Assert.AreEqual(1105, Mp3Decoder.OsuGaplessTrim);
+            // stereo: 1105 frames = 2210 interleaved samples removed.
+            Assert.AreEqual(100000 - 2210, Mp3Decoder.OsuGaplessKeptLength(100000, 2));
+            Assert.AreEqual(100000 - 1105, Mp3Decoder.OsuGaplessKeptLength(100000, 1));   // mono
+            // a buffer shorter than the priming is emptied, never negative.
+            Assert.AreEqual(0, Mp3Decoder.OsuGaplessKeptLength(1000, 2));
+            Assert.AreEqual(0, Mp3Decoder.OsuGaplessKeptLength(0, 2));
         }
 
         [Test]
-        public void TrimMatchesAlbidaGaplessLength()
+        public void InfoHeaderFrame_OnlyLooksInsideTheFirstFrame()
         {
-            // ALBIDA.mp3, verified sample-exact vs libsndfile: NLayer 5094144 frames → skip 1105, keep 5091792.
-            Mp3Decoder.GaplessTrim(5094144, 576, 1776, out int skip, out int keep);
-            Assert.AreEqual(576 + Mp3Decoder.Mp3DecoderDelay, skip);   // 1105
-            Assert.AreEqual(1105, skip);
-            Assert.AreEqual(5091792, keep);
-            Assert.AreEqual(5094144, skip + keep + (1776 - Mp3Decoder.Mp3DecoderDelay));  // skip + keep + tail == total
-        }
-
-        [Test]
-        public void PaddingBelowDecoderDelayTrimsNoTail()
-        {
-            // padding < 529 → tail clamps to 0 (never trims real audio). keep = total − skip only.
-            Mp3Decoder.GaplessTrim(10000, 576, 100, out int skip, out int keep);
-            Assert.AreEqual(1105, skip);
-            Assert.AreEqual(10000 - 1105, keep);
-        }
-
-        [Test]
-        public void ClampsWhenBufferShorterThanPriming()
-        {
-            // A buffer shorter than the leading priming must not produce negative/oversized indices.
-            Mp3Decoder.GaplessTrim(500, 576, 1776, out int skip, out int keep);
-            Assert.AreEqual(500, skip);   // clamped to total
-            Assert.AreEqual(0, keep);
-        }
-
-        [Test]
-        public void EmptyBufferIsNoOp()
-        {
-            Mp3Decoder.GaplessTrim(0, 576, 1776, out int skip, out int keep);
-            Assert.AreEqual(0, skip);
-            Assert.AreEqual(0, keep);
+            // "Info" as 4 bytes of real audio data 1200 B in is NOT the header tag → must not be treated as one.
+            var b = new byte[2000];
+            b[0] = 0xFF; b[1] = 0xFB;
+            Put(b, 1200, "Info");
+            Assert.IsFalse(Mp3Decoder.HasInfoHeaderFrame(b));
+            // The genuine tag near the frame start is still found.
+            Put(b, 36, "Info");
+            Assert.IsTrue(Mp3Decoder.HasInfoHeaderFrame(b));
         }
     }
 }
