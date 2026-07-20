@@ -71,8 +71,8 @@ namespace Sdo.UI.Screens
         private float _dragAngle = -DefaultYaw;         // 左側「人物」預設朝右轉 30° (卡片衣物才朝左 +DefaultYaw)
         private float _pitchAngle;                      // pitch (X)，官方 clamp [-30,15]
         private const float DragDegPerPixel = 0.4f;     // 水平每拖 1px 轉幾度 (官方 0.4)
-        private const float PitchDegPerPixel = 0.2f;    // 垂直每拖 1px 抬幾度 (官方線上 = 0.4，同 yaw)
-        private const float PitchMin = -10f, PitchMax = 10f;   // 官方 pitch clamp
+        private const float PitchDegPerPixel = 0.4f;    // 垂直每拖 1px 抬幾度 (官方線上 = 0.4，同 yaw；Frida 實測確認)
+        private const float PitchMin = -30f, PitchMax = 15f;   // 官方線上 pitch clamp [-30,15]：可下看 30°、上抬 15°
         private const float DefaultYaw = 30f;           // 官方預設朝左轉 30° (實測 -30 是朝右 → 用 +30)
         private const float PivotY = 30f;               // 轉身/抬頭的 pivot = 身體中心/腰部 (官方是繞 display-node 原點，不是腳底)
         private float _previewFeetY;                     // 綁定姿勢最低頂點 (落地用)
@@ -1387,14 +1387,16 @@ namespace Sdo.UI.Screens
             }
         }
 
-        // 在左側人物上按住拖動：水平 → 轉身 (yaw)、垂直 → 抬頭 (pitch，官方 clamp [-30,15])。
+        // 在左側人物上按住拖動：水平 → 轉身 (yaw)、垂直 → 抬頭 (pitch，官方線上 clamp [-30,15])。
         private void OnPreviewDrag(BaseEventData ev)
         {
             if (!(ev is PointerEventData p)) return;
-            // 官方 offline 反編譯 (AvtShow_ApplyDragRotateZoom)：拖動只改 yaw(0x1e4 −=dx*0.4)，pitch(0x1e0) 完全不隨拖動變。
-            // 之前加的上下傾斜是錯的 → 移除 (人物不會因上下拖動而傾斜)。
+            // 官方版本差異 (AvtShow_ApplyDragRotateZoom)：
+            //   離線 sdo_stand_alone.exe (FUN_0042fe80)：拖動只改 yaw(0x1e4 −=dx*0.4)，垂直量存 0x1f0 但從不使用 → 無 pitch。
+            //   線上 sdo.bin        (FUN_0044f900)：yaw(0x308 −=dx*0.4) 且 pitch(0x304 −=dy*0.4，clamp[-30,15]，除非 mode@0x1b5==5)。
+            // 我們照「線上」行為 (有 pitch)。倍率/clamp 由 Frida 實錄 shop_pitch_drag_online_log 確認：0.4/px、[-30,15]、mode=2。
             _dragAngle -= p.delta.x * DragDegPerPixel;
-            // 滑鼠往上(delta.y>0) → 人往上抬 (之前 -delta.y 是反的,user 回饋修正)
+            // 滑鼠往上(Unity delta.y>0=往上) → 人往上抬 → _pitchAngle 增加(+15 上限)；往下 → -30 下限 (官方可下看多於上抬)。
             _pitchAngle = Mathf.Clamp(_pitchAngle + p.delta.y * PitchDegPerPixel, PitchMin, PitchMax);
             ApplyPreviewRotation();
         }
@@ -1406,7 +1408,12 @@ namespace Sdo.UI.Screens
             if (_avatarRoot == null) return;
             var pivot = PreviewSpot + new Vector3(0f, PivotY, 0f);
             var basePos = PreviewSpot + new Vector3(0f, -_previewFeetY, 0f);
-            var q = Quaternion.Euler(_pitchAngle, RoomMovement.FacingDegrees(2) + _dragAngle, 0f);
+            // 官方引擎 (sdo.bin 反編譯) 把節點旋轉建成 Q = quat(axis=(1,0,0),pitch) · quat(axis=(0,1,0),yaw)：
+            //   先繞「世界 Y 軸」轉身，再繞「固定的世界 X 軸」抬頭 → 轉身後抬頭是「側邊抬起」，
+            //   不是像 Quaternion.Euler(pitch,yaw,0) 那樣繞頭部朝向的局部軸點頭 (user 回饋)。
+            //   軸常數 DAT_00581760=(1,0,0) / DAT_0058176c=(0,1,0) 已從 exe 驗過。
+            float yawDeg = RoomMovement.FacingDegrees(2) + _dragAngle;
+            var q = Quaternion.AngleAxis(_pitchAngle, Vector3.right) * Quaternion.AngleAxis(yawDeg, Vector3.up);
             _avatarRoot.transform.rotation = q;
             _avatarRoot.transform.position = pivot + q * (basePos - pivot);
         }

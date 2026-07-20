@@ -624,7 +624,10 @@ namespace Sdo.UI.Screens
             if (_avatarRoot == null) return;
             var pivot = PreviewSpot + new Vector3(0f, PivotY, 0f);
             var basePos = PreviewSpot + new Vector3(0f, -_previewFeetY, 0f);
-            var q = Quaternion.Euler(_pitchAngle, RoomMovement.FacingDegrees(2) + _dragAngle, 0f);
+            // 同商城：官方引擎 Q = quat((1,0,0),pitch)·quat((0,1,0),yaw) → 先繞世界 Y 轉身、
+            // 再繞固定世界 X 軸抬頭 (轉身後是「側邊抬起」，非繞頭部局部軸點頭)。見 ShopScreen 註解。
+            float yawDeg = RoomMovement.FacingDegrees(2) + _dragAngle;
+            var q = Quaternion.AngleAxis(_pitchAngle, Vector3.right) * Quaternion.AngleAxis(yawDeg, Vector3.up);
             _avatarRoot.transform.rotation = q;
             _avatarRoot.transform.position = pivot + q * (basePos - pivot);
         }
