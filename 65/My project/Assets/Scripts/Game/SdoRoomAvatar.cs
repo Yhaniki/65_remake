@@ -123,10 +123,13 @@ namespace Sdo.Game
                 // 髮/眼鏡/翅膀/項鍊都要雙面+alpha-cutout(去背),否則翅膀/眼鏡鏤空處變實心。其餘走 Unlit/Texture。
                 string ru = rel.ToUpperInvariant();
                 bool twoSidedAlpha = ru.Contains("HAIR") || ru.Contains("GLASS") || ru.Contains("CHIBANG") || ru.Contains("LINGDANG");
-                bool isGarment = SdoAvatarBuilder.IsBodyGarment(rel);   // cloth slot → classify sheerness (shared with the shop builder)
-                // 布料(非 髮/眼鏡/翅膀/項鍊)一律 bodyShader (Unlit/Texture,UNITY_OPAQUE_ALPHA 逼 alpha=1) → 破 alpha 布料
-                // 在透空 RT 也畫成實心,不被 portrait cutout 裁成透明線框(璀璨繁星 褲子 在男女選單/儲物櫃)。只有 twoSidedAlpha
-                // (髮/眼鏡/翅膀/項鍊,鏤空去背)才需 cutout:RT 用 portrait、場景用 hair。
+                bool isGarment = SdoAvatarBuilder.IsBodyGarment(rel);   // cloth slot → classify alpha (shared with the shop builder)
+                // sh = 「非 garment」的預設 shader:twoSidedAlpha(髮/眼鏡/翅膀/項鍊,鏤空去背)RT 用 portrait、場景用 hair;
+                // 其餘(FACE/HAND 膚色)走 bodyShader。GARMENT(COAT/PANT/ONE/SHOES) 則由下方 material 端依 `am` 三分:
+                //   Blend(真紗質)→ sheerShader;Cutout(真去背孔洞,如「我的帥氣」001839 piano外套 13% 洞)→ hairShader(clip 去背);
+                //   Opaque(含破 alpha 被 GarmentAlphaMode 判 Opaque 的 璀璨繁星 褲)→ bodyShader(逼 alpha=1 實心,不變線框)。
+                // 舊碼 garment 一律 bodyShader → Cutout 去背孔洞被畫實心方框(房間/選性別/儲物櫃「項鍊沒去背」);商城 builder 走
+                // AlphaShaderFor 早就正確(cutoutShader),兩條管線在此對齊。
                 var sh = twoSidedAlpha ? (useCutout ? portraitShader : hairShader) : bodyShader;
                 int si = 0;
                 foreach (var sub in r.Submeshes)
@@ -155,7 +158,7 @@ namespace Sdo.Game
                             // 否則房間/選男女的翅膀會變一坨灰色(user 回報 8448 貼圖寫不出來)。仍解不出才退 fallback 色。
                             Material texAnim = t == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, nm, sh) : null;
                             if (t == null && texAnim == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
-                            mats[s] = t != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : sh) { mainTexture = t } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
+                            mats[s] = t != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = t } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
                         }
                         mr.sharedMaterials = mats;
                     }
@@ -167,7 +170,7 @@ namespace Sdo.Game
                         // 見上:翅膀 _TexAnimEx 換幀貼圖 → 交給共用 TryBuildTexAnim(解 .an 幀序列)否則變灰色。
                         Material texAnim = tex == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, dds, sh) : null;
                         if (tex == null && texAnim == null && !string.IsNullOrEmpty(dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{dds}' unresolved → fallback colour {PartColor(rel)}");
-                        mr.sharedMaterial = tex != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
+                        mr.sharedMaterial = tex != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
                     }
 
                     if (sub.BindVerts != null && sub.BoneHrc != null)
