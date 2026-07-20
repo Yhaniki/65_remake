@@ -87,9 +87,11 @@ namespace Sdo.UI.Screens
             var enter = UIKit.AddSpriteButton(Root, "EnterRoom", An("LobbySel29"), An("LobbySel30"), An("LobbySel31"), QuitX, BtnY);
             enter.onClick.AddListener(OnEnter);
             UiSfx.AttachClick(enter);   // 按下 → SE_0001
+            UIKit.SetAlphaHit(enter.targetGraphic);   // 命中判定跟著可見圖形走,透明四角不再誤觸
             var shop = UIKit.AddSpriteButton(Root, "Shop", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"), EnterX, BtnY);
             shop.onClick.AddListener(OnOpenShop);
             UiSfx.AttachClick(shop);    // 按下 → SE_0001
+            UIKit.SetAlphaHit(shop.targetGraphic);
 
             // Official AvtShow is composited over the lobby chrome; keep the transparent RT on top.
             if (_previewImg != null) _previewImg.transform.SetAsLastSibling();

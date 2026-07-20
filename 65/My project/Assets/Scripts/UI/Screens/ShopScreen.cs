@@ -52,6 +52,10 @@ namespace Sdo.UI.Screens
         private Image _scrollHandle;
         private const float ScrollX = 749f, ScrollTop = 180f, ScrollTrackH = 350f;
 
+        // 圓球/圓角鈕的 alpha 命中門檻：α ≥ 此值的像素才算點到，讓判定跟著可見圖形走 (不吃透明四角)。
+        // 0.5 落在球體羽化邊中段 → 命中邊界貼齊視覺邊緣;premult 貼圖 α 保留完好,取樣正確。
+        private const float OrbAlphaHit = 0.5f;
+
         // 左側 3D 試穿預覽 (官方 AvtWoman/AvtMan 是整屏 AvtShow、人物落在左側；這裡取左半區、全身取景)
         private const int PreviewLayer = 12;
         private static readonly Vector3 PreviewSpot = new Vector3(2000f, 0f, 0f);
@@ -298,18 +302,19 @@ namespace Sdo.UI.Screens
 
             // 性別切換 (SHOP.XML：male @ 0,510 / female @ 40,510)。官方是 CheckBox：選中顯示 bgpushed(暗態)、未選 bgnormal(亮)
             // — 同 M/G 幣別 (選中=暗)。noSwap + RefreshToggles 依 _sex 換 sprite (修 user #5「男女亮暗相反」：舊版選中的性別反而亮)。
-            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => SwitchGender(ItemSex.Male),   noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
-            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => SwitchGender(ItemSex.Female), noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
+            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => SwitchGender(ItemSex.Male),   noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
+            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => SwitchGender(ItemSex.Female), noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
 
             // 復原穿搭 (SHOP.XML undochange @ 74,532，紅色 ↻)：清掉試穿、還原成預設穿搭。hover 補官方亮幀 Shop16 (#5)。
             // solo:true → 自貼圖載入,去掉 atlas 鄰居滲出的白邊 (#5 左下角按鈕白邊)。
-            SpriteBtn(_root, "reset", "Shop15.an", "Shop17.an", 74, 532, DoResetOutfit, hoverAn: "Shop16.an", solo: true);
+            SpriteBtn(_root, "reset", "Shop15.an", "Shop17.an", 74, 532, DoResetOutfit, hoverAn: "Shop16.an", solo: true, alphaHit: OrbAlphaHit);
 
             // 底部：全身购买 (買下整套穿搭，有 info) / 购物车 (尚無功能) / 快速充值 (右下橘鈕)。hover 各補官方亮幀 (#3/#5)。
             // 全身购买 orb 用 solo (自貼圖) 去掉 atlas 鄰居滲出的白邊 (#1)。快速充值離線無金流後端 → 直接把三種幣一次充滿 (試玩用)。
-            SpriteBtn(_root, "buyall",   "Shop174.an",  "Shop176.an",  0,  543, DoBuyAll, hoverAn: "Shop175.an", solo: true);
-            SpriteBtn(_root, "cart",     "Shop206.an",  "Shop208.an",  98, 565, hoverAn: "Shop207.an", hoverSfx: UiSfx.ButtonFloat);
-            SpriteBtn(_root, "recharge", "chongzhi1.an","chongzhi3.an", 678,571, DoRecharge, hoverAn: "chongzhi2.an", hoverSfx: UiSfx.ButtonFloat);
+            // alphaHit：這幾顆是圓球/圓角形,命中判定跟著可見像素走,不吃透明四角 (使用者回報「部分區域不在按鈕裡面也會觸發」)。
+            SpriteBtn(_root, "buyall",   "Shop174.an",  "Shop176.an",  0,  543, DoBuyAll, hoverAn: "Shop175.an", solo: true, alphaHit: OrbAlphaHit);
+            SpriteBtn(_root, "cart",     "Shop206.an",  "Shop208.an",  98, 565, hoverAn: "Shop207.an", hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
+            SpriteBtn(_root, "recharge", "chongzhi1.an","chongzhi3.an", 678,571, DoRecharge, hoverAn: "chongzhi2.an", hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
 
             // 搜尋框 (SHOP.XML SearchEdit @ 154,579) + 放大鏡 (chakan/Shop199 @ 270,576)。打字即時過濾商品名 (跨部位)。
             // 依需求：無 placeholder 文字、無半透明底 (透明但仍可點 focus)、白字白光標。
@@ -1441,7 +1446,7 @@ namespace Sdo.UI.Screens
         // 不會有「要點一次分頁才變亮」的狀態延遲。
         // hoverAn = 官方 bghover (滑過幀，通常最亮/發光)：沒給就沿用 pushed (舊行為)。給了 → 滑過變亮而非變暗 (修 #3/#4/#5「亮暗相反」)。
         // solo = orb 類鈕用自貼圖載入 (ShopArt.AnSolo) 去掉 atlas 鄰居滲出的白邊 (#1)。
-        private Button SpriteBtn(Transform parent, string name, string normalAn, string pushedAn, float x, float y, UnityEngine.Events.UnityAction onClick = null, bool noSwap = false, string hoverAn = null, bool solo = false, string hoverSfx = null)
+        private Button SpriteBtn(Transform parent, string name, string normalAn, string pushedAn, float x, float y, UnityEngine.Events.UnityAction onClick = null, bool noSwap = false, string hoverAn = null, bool solo = false, string hoverSfx = null, float alphaHit = 0f)
         {
             System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)ShopArt.AnSolo : ShopArt.An;
             var n = res(normalAn); var p = res(pushedAn);
@@ -1453,6 +1458,8 @@ namespace Sdo.UI.Screens
                 var img = btn.targetGraphic as Image; if (img != null) { img.color = new Color(1, 1, 1, 0.001f); img.raycastTarget = true; }
                 var rt = btn.GetComponent<RectTransform>(); rt.sizeDelta = new Vector2(48, 20);
             }
+            // 圓球/圓角橫幅鈕：命中判定改「只有 α ≥ 門檻的像素才算點到」→ 透明四角不再誤觸 (使用者回報「部分區域不在按鈕裡面也會觸發」)。
+            UIKit.SetAlphaHit(btn.targetGraphic, alphaHit);
             if (onClick != null) btn.onClick.AddListener(onClick);
             UiSfx.AttachPress(btn, UiSfx.Click);                      // 所有商城按鈕按下 → SE_0001
             if (hoverSfx != null) UiHoverSfx.Attach(btn, hoverSfx);   // 指定底排鈕滑過 → Buttonfloat
