@@ -41,29 +41,59 @@
 
 ---
 
-## 2. 加密（**離線解不開，這是 DRM**）
+## 2. 加密（**已完全破解，可離線解，用 `crack_nx.py`**）
 
-- **Cipher = 遊戲原本的 0x3D09 LCG**，和舊 `.gn` 完全同一套：
-  ```
-  state *= 0x3D09;  plain = cipher − ((state >> 16) & 0xFF)     // 逐 byte
-  ```
-  NXPatch.exe `FUN 0xb1c950(seed, start, end)`；離線版對應 `FUN_0048bf50`。
-- **容器讀取器 `FUN 0xd6e9b0`**：開檔 → 取 filesize → `bodyLen = filesize − 0x2F4` → `SetFilePointer(0x2F4)` → `ReadFile(blob, bodyLen)` → `0xb1c950(seed2, blob, blob+bodyLen)`。
-- **seed 來源（關鍵）**：`seed2 = [param+0x24]`，param 是一個 **0x54-byte ddrm 標頭**
-  （`[0]='ddrm'`、`[4]=1`、`[8]=bodyLen+0x54`、`[0xc]=seed1`、`[0x20:0x54]`=用 seed1 解出的 block、`[0x24]=seed2`）。
-  這個標頭 **不在 `.nx` 檔裡**，而是執行期從**全域 context `[ctx+0x90]`**（`ctx = FUN 0x4026a0()`）拿的。
-  呼叫鏈：`0x7f52a9 / 0x9b1726` → `0x7f70c0`（存進 `obj+0x1bcc8`）→ `0xd6f0b0` → `0xd6e9b0`。
+`.nx` 是 **兩層**：patcher 外層固定變換 + 遊戲原本的 0x3D09 LCG。
 
-**對照**：舊的 classic ddrm `.gn`（如 `music\sdom0.gn`）走 `FUN 0xd6c360`，**從檔案前 0x54 bytes 讀 ddrm 標頭**（seed 在檔內）→ 可離線解。
-新容器把 seed **搬出檔案** = DRM 強化。
+### 2.1 遊戲怎麼讀到 `.nx`（patcher 的三個 hook）
 
-**實測**：Frida 起 NXPatch，開機期間 `[ctx+0x90]` 全程是 **null**、`0xb1c950` **不觸發**；只有真正進歌載譜時才由連線填入。
-→ **光有 `.nx` 檔無法離線解密**（連舊 SDOM 那種 148-seed pool 都沒有，是 per-song server-provided）。
+遊戲程式碼**只會**組出 `.gn` 檔名（唯一的格式字串 `"%sgn"` @ `0xf3b0e0`），是 patcher 在中間動手腳：
 
-已排除的猜測（都試過不成立）：0x3D09 全 2²⁴ 暴力（doubled / 非 doubled、起點 296/300）、zlib/bz2/lzma、週期 XOR、跨檔固定金鑰（兩檔密文 XOR = 純亂數）、容器頭內找 seed。
+1. **路徑改寫**（`CreateFileA` hook `0x1249373`，只在 `dwCreationDisposition==3` 即 OPEN_EXISTING 時）
+   路徑開頭是 `music\` → 改成 `patch music\`（檔名原樣接上）。另有 `CreateFileW` 版。
+2. **副檔名改寫**（`.gxl` 段 `0x124b076`）
+   改完路徑後跳到這裡：若結尾是 `.gn`（不分大小寫）→ 直接改成 `.nx`，然後才真的 CreateFile。
+   ```
+   music\sdom2818K.gn  →  patch music\sdom2818K.gn  →  patch music\sdom2818K.nx
+   ```
+3. **CRC 檢查繞過**（`.g20` 段 `0x124d036`，由容器讀取器 `0xd6ec16` 跳入）
+   checksum 不符時，只要旗標 `[0x124c000]==1` 就照樣放行（patch 檔內容變了，CRC 當然對不上）。
 
-### 唯一實用取得法
-真伺服器正常玩到該曲，用 `dump_chart.py` hook `0xb1c950` 把解密後 blob 存下來（見 README）。
+### 2.2 外層：patcher 的固定變換（**無金鑰**）
+
+解密函式 `0xb1c950` 被 inline hook（`jmp 0xb1c950 → 0x124e000`，`.g22` 段）。
+`.g22` 在原本的 LCG **之前**先對每個 byte 做：
+
+```c
+b ^= 0xA7;  b -= 0x29;  b = (b * 0xF9) & 0xFF;  b = ror8(b, 3);
+```
+
+**沒有金鑰、與位置無關**（純混淆）。只在 `length > 0x100` 且旗標 `[0x124c000]==1` 時套用。
+> 那段從 `[esi-4] … [esi-0x10]` 和 `0xA5C3F17B` 算出來的 `edx` **完全沒被用到** —— 是誘餌。
+
+### 2.3 內層：0x3D09 LCG（seed 可離線還原）
+
+還原外層後就是舊的那套（`0x124e078` 起，等同離線版 `FUN_0048bf50`）：
+```
+state *= 0x3D09;  plain = cipher − ((state >> 16) & 0xFF)
+```
+執行期 seed 來自 `[ctx+0x90]` 的 ddrm 標頭（`[0xc]=seed1` 解出 block → `[0x24]=seed2`），
+呼叫鏈 `0x7f52a9/0x9b1726 → 0x7f70c0 → 0xd6f0b0 → 0xd6e9b0`。
+
+**但不需要它** —— blob 解出來的**前 300 bytes 就是「重複表頭」**，內容等於檔案 `0x1C8` 那份
+**明文**表頭。拿它當已知明文即可反推 seed：keystream 只取 state 的 bit16–23 → 只依賴低 24 位
+→ 向量化掃 2²⁴ 個等價 state，唯一解。**seed 會在檔案間重複用**（實測 199 個 `.nx` 只有二十幾種），
+先試已知 pool、沒中才暴力。
+
+> 驗證重複表頭時**不要**逐位元組比對容器表頭：少數檔 metadata 會差幾個 byte，而且容器表頭的
+> `address_end(+296)` 本來就是垃圾值。改用結構條件：`[4:8]=='gn\0\0'`、fileId 一致、
+> `address_easy==300`、四個 address 單調遞增且 ≤ blob 長度。
+> （也**不能**要求 `address_end == blob 長度` —— 有內嵌 dps/png/ogg 的檔，note 資料只佔 blob 前段。）
+
+**驗證**：`sdom2818K.nx` 全檔離線解出的 1,384,076 bytes，與從遊戲記憶體 hook `0xb1c950` dump 到的明文
+**byte-for-byte 完全一致**。
+
+**對照**：`music\*.gn`（已安裝的）**沒有**外層變換，直接就是 0x3D09 + 重複表頭 → 同樣可離線解。
 
 ---
 

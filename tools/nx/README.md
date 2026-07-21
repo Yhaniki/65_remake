@@ -4,15 +4,25 @@
 它跟舊的 `k.gn` 很像但**不一樣**，而且多了兩個功能：**捲動速度變化**與**炸彈**。
 這個資料夾放逆向的成果：格式規格、啟動繞過、以及取得解密譜面的工具。
 
-## 先講結論（很重要）
+## 先講結論
 
-> **光有 `.nx` 檔案，離線解不開。**
-> 譜面用的還是遊戲原本的 0x3D09 LCG，但**解密金鑰不在檔案裡** —— 是進歌時由**連線提供**、
-> 放在執行期記憶體的。舊 `.gn` 的金鑰在檔頭（或有 148-seed pool 可暴力），新容器把它搬走了，
-> 這是刻意的 DRM。
+> **`.nx` 已完全破解，可以離線解，不用進遊戲、不用連伺服器。**
 >
-> 想拿到明文譜，**只能連上真伺服器實際玩到那首歌**，用 `dump_chart.py` 在執行期把解密後的
-> buffer 撈出來。細節與已排除的所有猜測見 [`NX_FORMAT.md`](NX_FORMAT.md) §2。
+> ```
+> python crack_nx.py "H:/sdo/Super Dance Online/patch music/*.nx" -o out/
+> ```
+>
+> 加密是兩層：patcher 的**無金鑰固定變換**（`^0xA7 → -0x29 → ×0xF9 → ror3`）+ 遊戲原本的
+> **0x3D09 LCG**。而 LCG 的 seed 也不必連線拿 —— blob 解出來的前 300 bytes 是「重複表頭」，
+> 內容就是檔案 `0x1C8` 那份**明文**表頭，拿它當已知明文即可反推（seed 還會跨檔重複用）。
+> 細節見 [`NX_FORMAT.md`](NX_FORMAT.md) §2。
+>
+> 已驗證：`sdom2818K.nx` 離線解出的 1,384,076 bytes 與從遊戲記憶體 dump 的明文 **byte-for-byte 完全一致**。
+
+> ⚠️ **更正紀錄**：本文件較早的版本寫「離線解不開、只能連伺服器 dump」。那是只拿 `patch music\*.nx`
+> 試「重複表頭已知明文」失敗就下的結論 —— 當時**漏看了 patcher 對解密函式的 inline hook**（外層那道
+> 固定變換），所以已知明文對不上。補上外層還原後即可離線破解。`dump_chart.py`（執行期撈明文）仍然
+> 保留，但現在只是**交叉驗證**用，不再是唯一手段。
 
 ## 檔案
 
@@ -21,7 +31,8 @@
 | [`NX_FORMAT.md`](NX_FORMAT.md) | **格式規格**：容器版面、StepFile 表頭、加密機制與金鑰來源、note 格式（frame/note type）、**捲動速度 frame_type 33**、**炸彈 note_type 1** |
 | [`NXSTART.md`](NXSTART.md) | **啟動握手怎麼繞過**：LaunchStamp + seal + 共享記憶體，含校驗算法與 Python 版 |
 | [`NXStart.cs`](NXStart.cs) | 最小替代啟動器原始碼（C#，來源見 NXSTART.md） |
-| [`dump_chart.py`](dump_chart.py) | **主力工具**：attach 執行中的 NXPatch，hook 解密函式，把明文譜面 dump 下來 |
+| [`crack_nx.py`](crack_nx.py) | **主力工具**：離線破解 `.nx` → 明文譜（外層還原 + LCG seed 反推）。**實測 199/199 全解** |
+| [`dump_chart.py`](dump_chart.py) | 執行期從遊戲記憶體 hook 解密函式撈明文（現在只當**交叉驗證**用，非必要） |
 | [`decode_chart.py`](decode_chart.py) | 解析 dump 出來的明文譜：frame/note 統計、**捲動速度表**、**炸彈表** |
 | [`dump_nxpatch_image.py`](dump_nxpatch_image.py) | spawn NXPatch 並 dump 記憶體映像（靜態逐位址分析用；平常不需要） |
 | [`install_bomb_assets.py`](install_bomb_assets.py) | 把炸彈用的 StepMania 素材裝進打包來源樹（見下） |
@@ -48,15 +59,26 @@ python tools/nx/install_bomb_assets.py
 > 炸彈**本體**的圖不用裝 —— 那是遊戲自帶的 `NOTEIMAGE/NOTEIMAGE_*/ZD00..ZD03.PNG`，會跟著 note skin 換。
 > 編輯器吃的是 `data_root.txt` 指到的那棵 DATA，需要的話把這兩個檔一併複製過去。
 
-## 取得解密譜面的流程
+## 取得解密譜面的流程（離線，兩步）
 
 ```
-1. 照平常方式啟動遊戲並登入（要連得上私服）
-2. python dump_chart.py            ← attach 到執行中的 NXPatch.exe
-3. 進遊戲，實際進入你要的那首歌
-4. 產出 dumped_seed<seed>_len<n>.bin（明文譜），終端也會印出 seed
-5. python decode_chart.py dumped_*.bin --diff hard
+python crack_nx.py "H:/sdo/Super Dance Online/patch music/*.nx" -o out/
+python decode_chart.py out/sdom2818K.nx.plain --diff hard
 ```
+
+實測全量結果：**199/199 成功，distinct seed = 43**（seed 跨檔重複用，多數檔直接命中 pool，
+只有新 seed 才需要暴力 2²⁴，整批數分鐘內跑完）。
+
+`music\*.gn`（已安裝的、沒有外層變換）同樣可解，`crack_nx.py` 會自動處理。
+
+<details><summary>（選用）用執行期 dump 交叉驗證</summary>
+
+```
+1. 照平常方式啟動遊戲並登入 → 2. python dump_chart.py → 3. 進遊戲玩那首歌
+4. 產出 dumped_seed<seed>_len<n>.bin，可與 crack_nx.py 的輸出逐位元組比對
+```
+（`sdom2818K.nx` 已這樣驗過：兩者 1,384,076 bytes 完全一致。）
+</details>
 
 `decode_chart.py` 對 sdom2818（"3" by Laur）的實測輸出：
 
