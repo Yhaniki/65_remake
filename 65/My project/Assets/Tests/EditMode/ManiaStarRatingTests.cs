@@ -5,15 +5,17 @@ namespace Sdo.Tests
 {
     public class ManiaStarRatingTests
     {
-        // Level = round(star × 5) clamped 1..99 — documented examples from the reference tool.
+        // Level = round(star × 7) clamped 1..99.
         [Test]
         public void LevelFromStar_Examples_And_Clamps()
         {
-            Assert.AreEqual(12, ManiaStarRating.LevelFromStar(2.35));
-            Assert.AreEqual(25, ManiaStarRating.LevelFromStar(5.0));
-            Assert.AreEqual(40, ManiaStarRating.LevelFromStar(8.0));
-            Assert.AreEqual(1, ManiaStarRating.LevelFromStar(0.0));    // clamp min
-            Assert.AreEqual(99, ManiaStarRating.LevelFromStar(50.0));  // clamp max
+            Assert.AreEqual(16, ManiaStarRating.LevelFromStar(2.35));   // 16.45 → 16
+            Assert.AreEqual(35, ManiaStarRating.LevelFromStar(5.0));
+            Assert.AreEqual(56, ManiaStarRating.LevelFromStar(8.0));
+            Assert.AreEqual(4, ManiaStarRating.LevelFromStar(0.5));     // 3.5 → 4 (rounds away from zero)
+            Assert.AreEqual(1, ManiaStarRating.LevelFromStar(0.0));     // clamp min
+            Assert.AreEqual(99, ManiaStarRating.LevelFromStar(50.0));   // clamp max (350)
+            Assert.AreEqual(99, ManiaStarRating.LevelFromStar(14.2));   // 99.4 → 99, still inside the band
         }
 
         [Test]

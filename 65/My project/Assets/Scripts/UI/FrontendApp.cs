@@ -275,6 +275,7 @@ namespace Sdo.UI
                 game.chartFormat = s.ExternalChartFormat;
                 game.chartPath = s.ExternalChartPath;
                 game.chartIndex = s.ExternalChartIndex;
+                game.chartSeed = s.ExternalChartSeed;   // .gn 歌曲包：這首譜自己的解密金鑰
                 game.chartLevel = s.ExternalLevel;
                 game.gnPath = "";
                 game.oggPath = s.ExternalAudioPath;
@@ -293,7 +294,10 @@ namespace Sdo.UI
             game.localPlayerMale = s.Gender == 1;
             game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;
             if (ProfileManager.Active != null) game.bodyShapeIndex = ProfileManager.Active.bodyShapeIndex;   // 遊戲舞者用這個角色自己的體型 (胖瘦)
-            game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
+            // per-song choreography (missing -> generic dance fallback). A .gn 歌曲包 ships the song's OWN official
+            // .DPS next to it — an absolute path, which LoadAsset takes as-is, so it dances the real choreography
+            // instead of the one ExternalDps would generate.
+            game.dpsPath = !string.IsNullOrEmpty(s.ExternalDpsPath) ? s.ExternalDpsPath : "DANCE/" + s.SongFileId + ".DPS";
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
             game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準 ManiaScroll.DefaultReferenceBpm，osu式內部變速）

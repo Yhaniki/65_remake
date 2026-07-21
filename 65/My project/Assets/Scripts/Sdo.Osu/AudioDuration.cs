@@ -23,11 +23,13 @@ namespace Sdo.Osu
             try
             {
                 if (!File.Exists(path)) return 0;
-                var ext = Path.GetExtension(path).ToLowerInvariant();
-                if (ext == ".mp3") return Mp3Seconds(path);
+                // 依**內容**選解析法，不是副檔名 —— 名不符實的檔（.mp3 裡面是 Ogg）用錯的解析器會量出 0 秒，
+                // 歌單的「時間」欄就會掉回譜尾時間。見 AudioFileType。
+                var kind = AudioFileType.Of(path);
+                if (kind == AudioKind.Mp3) return Mp3Seconds(path);
                 using (var fs = File.OpenRead(path))
                 {
-                    double sec = ext == ".wav" ? WavSeconds(fs) : ext == ".ogg" ? OggSeconds(fs) : 0.0;
+                    double sec = kind == AudioKind.Wav ? WavSeconds(fs) : kind == AudioKind.Ogg ? OggSeconds(fs) : 0.0;
                     return sec > 0.0 ? (int)Math.Round(sec) : 0;
                 }
             }

@@ -1,13 +1,16 @@
 namespace Sdo.Osu
 {
-    /// <summary>On-disk chart format of an external (user-dropped) song folder.</summary>
-    public enum SongFormat { None = 0, Osu = 1, Sm = 2 }
+    /// <summary>On-disk chart format of an external (user-dropped) song folder.
+    /// <see cref="Gn"/> = a native SDO chart pack ([NX]Patch converted by tools/nx/nx_to_gn.py, or any folder of
+    /// .gn + music laid out the same way) — one file holds all three difficulties.</summary>
+    public enum SongFormat { None = 0, Osu = 1, Sm = 2, Gn = 3 }
 
-    /// <summary>One playable difficulty of an external song (one .osu file, or one #NOTES block in a .sm).</summary>
+    /// <summary>One playable difficulty of an external song (one .osu file, one #NOTES block in a .sm, or one
+    /// difficulty of a .gn).</summary>
     public sealed class ExternalChart
     {
-        public string FilePath = "";   // absolute path to the .osu / .sm file
-        public int ChartIndex;         // .sm: index of the #NOTES block; .osu: 0
+        public string FilePath = "";   // absolute path to the .osu / .sm / .gn file
+        public int ChartIndex;         // .sm: index of the #NOTES block; .gn: the difficulty (0/1/2); .osu: 0
         public int NoteCount;          // objects (taps + holds) — used to rank difficulties
         public int Level;              // .sm meter / .osu unknown(0) — shown as the LV label
         public int DurationSec;        // last note's time — the 時間 column, same measure as the official catalog's dur*
@@ -40,6 +43,24 @@ namespace Sdo.Osu
                                         // column falls back to the chart's last-note time until then.
         public string ImagePath = "";   // absolute cover (jacket→banner→background); "" if none
         public SongFormat Format;
+
+        // ---- SDO song pack (Format == SongFormat.Gn; see SdoPackIndex) ----
+
+        /// <summary>The pack's own song number, the key its CD art / preview / choreography are named by. 0 = not a
+        /// pack song (osu/StepMania songs get their catalog id assigned by the scan instead).</summary>
+        public int FileId;
+
+        /// <summary>LCG seed for this .gn. [NX] gives every chart its own key, so without this the shared seed pool
+        /// can't decrypt it. 0 = unknown → fall back to the pool.</summary>
+        public uint GnSeed;
+
+        /// <summary>Absolute path of a DEDICATED preview clip (a pack's <c>exper/&lt;fileId&gt;.ogg</c>) — song-select
+        /// loops this whole short clip instead of a window of the full track. "" = none.</summary>
+        public string PreviewAudioPath = "";
+
+        /// <summary>Absolute path of the pack's own choreography (<c>DANCE/&lt;fileId&gt;.DPS</c>). "" = none, and
+        /// gameplay generates one like it does for any other external song.</summary>
+        public string DpsPath = "";
 
         // ---- from the folder's sdo.header sidecar (see SongSidecar) ----
 

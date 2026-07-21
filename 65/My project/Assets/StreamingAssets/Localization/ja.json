@@ -376,6 +376,38 @@
    "v": "Songs/ に曲がありません"
   },
   {
+   "k": "songselect.group_refresh",
+   "v": "更新"
+  },
+  {
+   "k": "songselect.group_scanning",
+   "v": "スキャン中…"
+  },
+  {
+   "k": "songselect.group_refresh_done",
+   "v": "曲を更新しました：{0}"
+  },
+  {
+   "k": "songselect.group_refresh_none",
+   "v": "変更はありません（全 {0} 曲）"
+  },
+  {
+   "k": "songselect.group_refresh_added",
+   "v": "追加 {0} 曲"
+  },
+  {
+   "k": "songselect.group_refresh_changed",
+   "v": "更新 {0} 曲"
+  },
+  {
+   "k": "songselect.group_refresh_removed",
+   "v": "削除 {0} 曲"
+  },
+  {
+   "k": "songselect.group_refresh_sep",
+   "v": "、"
+  },
+  {
    "k": "songselect.rand_20up",
    "v": "ランダム難易度 20以上"
   },

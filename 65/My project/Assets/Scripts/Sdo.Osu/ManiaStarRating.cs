@@ -9,8 +9,9 @@ namespace Sdo.Osu
     /// StepMania charts (converted to an OsuBeatmap by <see cref="SmChart.ToBeatmap"/>) get a star rating on the SAME
     /// scale as osu maps — that's how both get a displayed LEVEL.
     ///
-    /// <see cref="Level"/> = round(star × 5), clamped 1..99 (the GN-injection convention from the reference tool:
-    /// 2.35★→12, 5.0★→25, 8.0★→40). Engine-free / unit-testable.
+    /// <see cref="Level"/> = round(star × 7), clamped 1..99 (2.35★→16, 5.0★→35, 8.0★→56). The scale factor is a
+    /// display convention only — it stretches the usable star range over more of the 1..99 LV band than the
+    /// reference tool's ×5 did. Engine-free / unit-testable.
     /// </summary>
     public static class ManiaStarRating
     {
@@ -21,14 +22,15 @@ namespace Sdo.Osu
         private const double DifficultyMultiplier = 0.018;
         private const double Eps = 1.0;              // osu Precision.DefinitelyBigger default (1 ms)
         private const int LevelMin = 1, LevelMax = 99;
+        private const double LevelPerStar = 7.0;     // display scale: LV = round(star × this)
 
-        /// <summary>GN level for a chart = round(star × 5), clamped 1..99. 0-note charts → LevelMin.</summary>
+        /// <summary>GN level for a chart = round(star × 7), clamped 1..99. 0-note charts → LevelMin.</summary>
         public static int Level(OsuBeatmap bm) => LevelFromStar(Calculate(bm));
 
-        /// <summary>round(star × 5) clamped to 1..99.</summary>
+        /// <summary>round(star × 7) clamped to 1..99.</summary>
         public static int LevelFromStar(double star)
         {
-            int v = (int)Math.Round(star * 5.0, MidpointRounding.AwayFromZero);
+            int v = (int)Math.Round(star * LevelPerStar, MidpointRounding.AwayFromZero);
             return Math.Max(LevelMin, Math.Min(LevelMax, v));
         }
 

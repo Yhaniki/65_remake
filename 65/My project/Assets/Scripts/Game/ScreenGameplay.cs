@@ -170,12 +170,22 @@ namespace Sdo.Game
         public string gnPath = "";   // official chart (e.g. <MusicDir>/sdom1435K.gn)
         public string oggPath = "";  // matching song audio (e.g. <MusicDir>/sdom1435.ogg); ogg/mp3/wav
         public int difficulty = 2;            // 0=easy 1=normal 2=hard
-        // External chart (user Songs/ folder). When chartFormat != 0 LoadChart parses this INSTEAD of a .gn:
-        // 1=osu (chartPath = one .osu file), 2=sm (chartPath = a .sm, chartIndex = which #NOTES block).
+        // External chart (user Songs/ folder). When chartFormat != 0 LoadChart parses chartPath INSTEAD of gnPath:
+        // 1=osu (chartPath = one .osu file), 2=sm (chartPath = a .sm, chartIndex = which #NOTES block),
+        // 3=gn 歌曲包 (chartPath = a .gn holding all three difficulties, chartIndex = which one, chartSeed = its key).
         public string chartPath = "";
         public int chartIndex;
-        public int chartFormat;               // 0=official .gn, 1=osu, 2=sm (Sdo.Osu.SongFormat)
-        public int chartLevel;                // external chart LV (osu!mania 星數×5) — shown as the LV label so it matches song-select
+        public int chartFormat;               // 0=official .gn, 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
+        public long chartSeed;                // chartFormat 3: 該 .gn 的 LCG 金鑰（0 = 未知→只用共用 seed 池）
+        /// <summary>可選：換掉「解 mp3」這一步（路徑, 對拍方式）→ PCM。譜面編輯器塞
+        /// <see cref="EditorAudioCache"/> 進來，換歌就不必每首重解一次。null = 照常自己解。</summary>
+        public System.Func<string, Mp3Decoder.Mp3Sync, System.Threading.Tasks.Task<Mp3Pcm>> mp3Decoder;
+
+        /// <summary>這種譜的 mp3 該用哪一套對拍（見 <see cref="Mp3Decoder.Mp3Sync"/>）。純函式，編輯器的
+        /// 預抓也要用同一套，不然預抓的 PCM 位置跟實際播的不一樣。</summary>
+        public static Mp3Decoder.Mp3Sync Mp3SyncFor(int format)
+            => format == 1 || format == 3 ? Mp3Decoder.Mp3Sync.Osu : Mp3Decoder.Mp3Sync.StepMania;
+        public int chartLevel;                // external chart LV (osu!mania 星數×7) — shown as the LV label so it matches song-select
         public string songDisplayName = "";   // external: the catalog's display title (an osu pack's real per-song name);
                                                // _map.Title would be the shared pack label ("SDO Pack8"). Official = "" (resolved from the .gn catalog).
         private const int ExternalLeadInMs = 2000;   // min ms the first external note is pushed to, so it scrolls in from the edge (count-in)
@@ -1600,16 +1610,23 @@ namespace Sdo.Game
             {
                 try
                 {
-                    _map = chartFormat == 2
-                        ? SmChart.ToBeatmap(SmChart.Parse(File.ReadAllText(chartPath)), chartIndex)   // .sm block
-                        : OsuBeatmapParser.Parse(File.ReadAllText(chartPath));                        // .osu
+                    if (chartFormat == 3)
+                        // .gn 歌曲包：一個檔裝三個難度，chartIndex 就是難度。金鑰優先用這首自己的（[NX] 每首譜
+                        // 一把鑰匙，共用池救不了），失敗才退回共用池。
+                        _map = GnChart.Load(File.ReadAllBytes(chartPath), chartIndex, GnSeedsFor(chartSeed));
+                    else
+                        _map = chartFormat == 2
+                            ? SmChart.ToBeatmap(SmChart.Parse(File.ReadAllText(chartPath)), chartIndex)   // .sm block
+                            : OsuBeatmapParser.Parse(File.ReadAllText(chartPath));                        // .osu
                 }
                 catch (Exception ex) { Debug.LogError($"[Step1] external chart parse failed: {ex.Message}"); _map = new OsuBeatmap(); }
                 if (_map.Bpm <= 0.0) _map.Bpm = 120.0;   // guard: a chart with no parseable BPM must not feed 0 into the judge windows
-                if (chartLevel > 0) _map.Level = chartLevel;   // LV label = the song-select 星數×5 level (Parse/ToBeatmap don't know it)
+                if (chartLevel > 0) _map.Level = chartLevel;   // LV label = the song-select 星數×7 level (Parse/ToBeatmap don't know it)
                 // external charts have no count-in → push the first note out so it scrolls in from the edge (see ApplyLeadIn).
                 // 編輯器例外：回 0（見 ExternalLeadInMsFor）—— 編譜要 WYSIWYG，音符要落在真實音檔時間上（時間讀數＝StepMania 的秒數）。
-                if (_map.HitObjects.Count > 0)
+                // .gn 歌曲包例外：它是原生 SDO 譜，本來就自帶無聲 count-in（type-10 音樂起止 → MusicStartOffsetMs，
+                // 跟內建歌一模一樣），再疊一次 lead-in 會把整張譜推離它自己的音樂。
+                if (_map.HitObjects.Count > 0 && chartFormat != 3)
                 {
                     int leadIn = ExternalLeadInMsFor(editorMode, (int)_map.FirstNoteMs);
                     if (leadIn > 0) _map.ApplyLeadIn(leadIn);
@@ -1630,6 +1647,23 @@ namespace Sdo.Game
             return true;
         }
 
+        /// <summary>Candidate LCG seeds for an external .gn: the pack's own key for THIS chart first, then the shared
+        /// pool from the key table. [NX] gives every chart a distinct key, so the pack's own is what actually opens it;
+        /// the pool is there for a pack shipped without a sidecar (or with a stale one) whose charts happen to use the
+        /// common seeds. Pure — public for tests.</summary>
+        public static uint[] GnSeedsFor(long ownSeed) => GnSeedsFor(ownSeed, GnKeyTable.SdomSeeds);
+
+        /// <summary>Testable core of <see cref="GnSeedsFor(long)"/>: own key first, then the pool minus a duplicate.</summary>
+        public static uint[] GnSeedsFor(long ownSeed, uint[] pool)
+        {
+            pool = pool ?? Array.Empty<uint>();
+            if (ownSeed <= 0) return pool;
+            uint own = (uint)ownSeed;
+            var list = new List<uint>(pool.Length + 1) { own };
+            foreach (var s in pool) if (s != own) list.Add(s);
+            return list.ToArray();
+        }
+
         private IEnumerator LoadAndPlayAudio()
         {
             if (observeBurstMode)
@@ -1645,13 +1679,21 @@ namespace Sdo.Game
             if (beatTestMode) { _audioReady = true; StartCoroutine(EditorOpeningCo()); yield break; }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
                 ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
-            if (Mp3Decoder.IsMp3(path) && File.Exists(path))
+            // 走哪個解碼器看**檔案內容**，不是副檔名 —— 外面撿來的歌曲庫常有名不符實的檔（[NX] 那包就有 4 個
+            // Ogg 取名叫 .mp3）。餵錯解碼器不會報錯，只會解出 0 個取樣 → 這首歌整首沒聲音。見 AudioFileType。
+            var kind = AudioFileType.Of(path);
+            if (kind == AudioKind.Mp3 && File.Exists(path))
             {
                 // Unity can't decode mp3 from a file on desktop → decode with the bundled NLayer on a worker thread.
                 // osu (chartFormat 1) and StepMania (2) decode mp3 to different positions; match the chart's home game
                 // so it lines up at global-offset 0 (see Mp3Decoder.Mp3Sync). Non-external mp3 (dev fallback) → StepMania.
-                var sync = chartFormat == 1 ? Mp3Decoder.Mp3Sync.Osu : Mp3Decoder.Mp3Sync.StepMania;
-                var task = System.Threading.Tasks.Task.Run(() => Mp3Decoder.Decode(path, sync));
+                // .gn 歌曲包 (3) 也走 Osu：那譜是照原版 .ogg 打的，包裡的 mp3 是後來轉出來的，而轉檔器一定會在檔頭
+                // 塞編碼器延遲(priming)。Osu 這條正好是「把 priming 修掉」，解出來的位置才會回到原版 ogg 的時間。
+                var sync = Mp3SyncFor(chartFormat);
+                // 譜面編輯器會把這個換成「解過就直接給、還會預抓前後兩首」的快取（EditorAudioCache）——
+                // 整包 mp3 的歌一首一秒多的解碼，校時時全卡在換歌上。正式遊玩沒設，就每次自己解。
+                var task = mp3Decoder != null ? mp3Decoder(path, sync)
+                                              : System.Threading.Tasks.Task.Run(() => Mp3Decoder.Decode(path, sync));
                 while (!task.IsCompleted) yield return null;
                 var clip = Mp3Decoder.ToClip(task.Result, "mp3song");
                 if (clip != null) { _audio.clip = clip; _audio.volume = AudioMix.Music; }
@@ -1660,8 +1702,8 @@ namespace Sdo.Game
             else
             {
                 // ogg (official + external) and wav decode natively via UnityWebRequestMultimedia.
-                var type = path.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) ? AudioType.OGGVORBIS
-                         : path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? AudioType.WAV
+                var type = kind == AudioKind.Ogg ? AudioType.OGGVORBIS
+                         : kind == AudioKind.Wav ? AudioType.WAV
                          : AudioType.MPEG;
                 using (var req = UnityWebRequestMultimedia.GetAudioClip(SdoExtracted.FileUri(path), type))
                 {
@@ -2550,7 +2592,12 @@ namespace Sdo.Game
                     // long-intro charts. Stays negative through the READY/GO lead-in AND the intro (count-in + any
                     // musical intro before the first note) -> avatar holds the rest idle, then starts the DPS on the
                     // first downbeat.
-                    avatar.DanceTimeSec = () => (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
+                    // _clockStart is still the "not anchored yet" sentinel (-1) from here until LoadAndPlayAudio
+                    // finishes decoding the song — a second or more on an external mp3. Subtracting it would make the
+                    // dance time the WALL CLOCK since app start (a different, arbitrary point of the choreography every
+                    // run: "進遊戲先亂跳一段舞才回 idle"), so report "before the dance" until the clock is real.
+                    avatar.DanceTimeSec = () => _clockStart < 0.0 ? -1f
+                                              : (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
                     avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
                     Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
                     PrewarmDpsMotions(dps);   // read every clip NOW (behind the loading cover), not lazily mid-song

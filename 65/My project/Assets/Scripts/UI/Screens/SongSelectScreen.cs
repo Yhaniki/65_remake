@@ -82,6 +82,7 @@ namespace Sdo.UI.Screens
         // what the main row list then shows. Clicking the 資料夾 tab reopens the panel on its last bucket.
         private SongGroupPanel _groupPanel;
         private List<SongCatalog.Entry> _bucketSongs = new List<SongCatalog.Entry>();
+        private Coroutine _rescan;   // 更新 in flight (non-null) → the button is a no-op until it finishes
 
         // 隨機 difficulty ranges — shown AS the list rows when the 隨機 tab is active; OK picks a random song from the pool.
         // 範圍表 + 選池邏輯放在 SongListModel（唯一來源）：FrontendApp 進遊戲時也用同一份重抽。
@@ -141,6 +142,7 @@ namespace Sdo.UI.Screens
         private Image _dimScrim;
 
         private static string L(string k) => LocalizationManager.Get(k);
+        private static string L(string k, params object[] args) => LocalizationManager.Get(k, args);
 
         protected override void BuildUI()
         {
@@ -291,8 +293,17 @@ namespace Sdo.UI.Screens
             else GoTo(target);
         }
 
-        public override void OnHide() { CloseFavPopup(); CloseGroupPanel(); StopPreview(); }
-        private void OnDisable() { CloseFavPopup(); CloseGroupPanel(); StopPreview(); }   // covers canvas SetActive(false) on gameplay hand-off
+        public override void OnHide() { CloseFavPopup(); CloseGroupPanel(); StopPreview(); CancelRescan(); }
+        private void OnDisable() { CloseFavPopup(); CloseGroupPanel(); StopPreview(); CancelRescan(); }   // covers canvas SetActive(false) on gameplay hand-off
+
+        // Leaving the screen mid-更新: drop the coroutine (its results would land on a screen nobody is looking at)
+        // and clear the panel's busy state, so re-entering finds a live 更新 button. The worker thread is left to
+        // finish on its own — it only reads files, and ExternalSongLibrary clears its own Scanning flag.
+        private void CancelRescan()
+        {
+            if (_rescan != null) { StopCoroutine(_rescan); _rescan = null; }
+            _groupPanel?.SetBusy(false);
+        }
 
         private void ComputeNewIds()
         {
@@ -397,16 +408,8 @@ namespace Sdo.UI.Screens
                 btn.onClick.AddListener(() => SetCategory(idx));
                 _catImg[i] = img;
             }
-
-            // CatFolder(原「勁樂」) 頁籤改用途為外部歌曲的「分類瀏覽」。疊一層半透明底把烘死的「勁樂」字壓暗，
-            // 再放白字標題，讓頁籤語意正確。點擊仍由底下的 tab 按鈕接收（遮罩/文字都不吃 raycast）。
-            if (_catImg[CatFolder] != null)
-            {
-                var mask = UIKit.AddImage(_catImg[CatFolder].transform, "folderTabMask", new Color(0f, 0f, 0f, 0.62f));
-                UIKit.Stretch(mask.rectTransform, 3f, 3f, 3f, 3f);
-                var lbl = UIKit.AddText(_catImg[CatFolder].transform, "folderTabLbl", L("songselect.group_panel"), 12f, Color.white, TextAlignmentOptions.Center);
-                UIKit.Stretch(lbl.rectTransform);
-            }
+            // CatFolder 頁籤沿用官方原本的「勁樂」美術（不疊自製底/字），只是改接外部歌曲的「分類瀏覽」：
+            // 點下去照樣開浮動面板，見 SetCategory。
         }
 
         private void RenderCategoryTabs()
@@ -446,7 +449,78 @@ namespace Sdo.UI.Screens
 
         // ---------------- 分類瀏覽面板 (資料夾 tab) ----------------
 
-        private void BuildGroupPanel() => _groupPanel = SongGroupPanel.Create(Root, OnBucketPicked);
+        private void BuildGroupPanel() => _groupPanel = SongGroupPanel.Create(Root, OnBucketPicked, BeginRescan);
+
+        // ---------------- 更新：re-scan the song folders without restarting ----------------
+
+        /// <summary>分類瀏覽面板的「更新」鈕：re-run the external-song scan so songs added / edited / removed on disk
+        /// since boot show up right away. Cheap in practice — unchanged folders come straight out of ExternalScanCache
+        /// (a file-stats signature, no chart parse), so only what actually changed is re-read.</summary>
+        private void BeginRescan()
+        {
+            if (_rescan == null) _rescan = StartCoroutine(RescanCo());
+        }
+
+        private IEnumerator RescanCo()
+        {
+            // What to come back to. Both are keys, NOT Entry objects: ReplaceExternal throws every external Entry
+            // away, so anything held across the scan has to be re-resolved by gn afterwards.
+            string keepGn = _selected != null && _selected.external ? _selected.gn : null;
+            string bucketKey = _groupPanel != null ? _groupPanel.ActiveKey : null;
+
+            StopPreview();   // the file being previewed may be the one about to be rewritten/deleted
+            _groupPanel?.SetBusy(true, L("songselect.group_scanning"));
+            yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
+                _groupPanel?.SetBusy(true, ScanLine(f, folder, detail)));
+            _groupPanel?.SetBusy(false);
+
+            // The catalog changed underneath us → rebuild everything derived from it.
+            _model = SongListModel.FromCatalog();
+            ComputeNewIds();
+            _extDurDone.Clear();       // fileIds are handed out afresh by the scan; measured durations don't carry over
+            _bucketSongs.Clear();      // stale Entry objects — OpenGroupPanel refills this via OnBucketPicked
+
+            // Re-bucket the new pool and land on the same bucket (gone → the panel's first one). Reload — not
+            // OpenGroupPanel — so a panel the player closed mid-scan stays closed; either way its onPick refills
+            // _bucketSongs and re-selects a song.
+            if (_groupPanel != null) _groupPanel.Reload(_model.Externals(), bucketKey);
+            else ApplyFilter();
+
+            // If the song that was selected survived the re-scan, go back to it.
+            var keep = !string.IsNullOrEmpty(keepGn) ? SongCatalog.Get(keepGn) : null;
+            if (keep != null && keep.HasChart(_difficulty))
+            {
+                int idx = _filtered.IndexOf(keep);
+                if (idx >= 0) { _page = idx / PageSize; Select(keep); }
+            }
+
+            var delta = ExternalSongLibrary.LastDelta;
+            Toast.Show(delta.Any ? L("songselect.group_refresh_done", ChangeSummary(delta))
+                                 : L("songselect.group_refresh_none", delta.Total));
+            _rescan = null;
+        }
+
+        // "新增 2 首、更新 1 首" — only the non-zero parts. Re-finding the same songs is NOT an update, so a scan that
+        // changed nothing says 沒有變更 instead (see ExternalSongLibrary.ScanDelta): the count of songs in the library
+        // is not the count of songs that changed, and reporting the former as the latter is unverifiable noise.
+        private static string ChangeSummary(ExternalSongLibrary.ScanDelta d)
+        {
+            var parts = new List<string>();
+            if (d.Added > 0) parts.Add(L("songselect.group_refresh_added", d.Added));
+            if (d.Changed > 0) parts.Add(L("songselect.group_refresh_changed", d.Changed));
+            if (d.Removed > 0) parts.Add(L("songselect.group_refresh_removed", d.Removed));
+            return string.Join(L("songselect.group_refresh_sep"), parts.ToArray());
+        }
+
+        // The panel's progress line: percentage + the folder being read + the running song count, all optional
+        // (the scanner reports blanks while it is still walking the tree).
+        private static string ScanLine(float f, string folder, string detail)
+        {
+            string s = L("songselect.group_scanning") + "  " + Mathf.RoundToInt(Mathf.Clamp01(f) * 100f) + "%";
+            if (!string.IsNullOrEmpty(folder)) s += "\n" + folder;
+            if (!string.IsNullOrEmpty(detail)) s += "\n" + detail;
+            return s;
+        }
 
         /// <summary>Show the panel over the dialog and land it on <paramref name="key"/>'s bucket (else the first one).
         /// The panel answers with <see cref="OnBucketPicked"/>, which is what actually fills the song list.</summary>
@@ -998,13 +1072,17 @@ namespace Sdo.UI.Screens
         /// gameplay hand-off (FrontendApp) so preview and play never resolve different audio.</summary>
         private static string MainOggName(string gn) => SongCatalog.MainOggName(gn);
 
-        /// <summary>UnityWebRequestMultimedia AudioType from a file extension (external ogg/mp3/wav previews).</summary>
+        /// <summary>UnityWebRequestMultimedia AudioType for an external ogg/mp3/wav preview — judged by the file's
+        /// CONTENT, not its extension (a mislabelled file handed to the wrong decoder just plays silence; see
+        /// <see cref="Sdo.Osu.AudioFileType"/>).</summary>
         private static AudioType PreviewAudioType(string path)
         {
-            var p = (path ?? "").ToLowerInvariant();
-            if (p.EndsWith(".ogg")) return AudioType.OGGVORBIS;
-            if (p.EndsWith(".wav")) return AudioType.WAV;
-            return AudioType.MPEG;
+            switch (Sdo.Osu.AudioFileType.Of(path))
+            {
+                case Sdo.Osu.AudioKind.Ogg: return AudioType.OGGVORBIS;
+                case Sdo.Osu.AudioKind.Wav: return AudioType.WAV;
+                default: return AudioType.MPEG;
+            }
         }
 
         // Mirrors ScreenGameplay.LoadAndPlayAudio: file:// + raw path (no URI escaping — the music tree is ASCII and
@@ -1022,10 +1100,11 @@ namespace Sdo.UI.Screens
             AudioType audioType;
             if (e.external)
             {
-                // external song: no exper/ preview clip — loop a window of its full audio (ogg/mp3/wav).
-                path = e.audioPath;
+                // A .gn 歌曲包 ships the官方 exper 試聽短檔 alongside its charts — play that whole clip on loop, exactly
+                // like a built-in song. Everything else has no preview clip → loop a window of its full audio.
+                path = !string.IsNullOrEmpty(e.previewPath) && File.Exists(e.previewPath) ? e.previewPath : e.audioPath;
                 if (string.IsNullOrEmpty(path) || !File.Exists(path)) { _previewCo = null; yield break; }
-                isPreviewClip = false;
+                isPreviewClip = path == e.previewPath;
                 audioType = PreviewAudioType(path);
             }
             else
@@ -1046,7 +1125,7 @@ namespace Sdo.UI.Screens
 
             AudioClip clip = null;
             bool streamMp3 = false;
-            if (Sdo.Game.Mp3Decoder.IsMp3(path))
+            if (Sdo.Osu.AudioFileType.Of(path) == Sdo.Osu.AudioKind.Mp3)   // 看內容，不是副檔名
             {
                 // mp3: STREAM it (decode on demand on the audio thread) so the preview starts as fast as ogg — no
                 // up-front full-window decode. The streaming clip loops the [start,len] window itself. ~20-30ms to start.
@@ -1217,8 +1296,10 @@ namespace Sdo.UI.Screens
                 s.ExternalChartFormat = _selected.chartFormat;
                 s.ExternalChartPath = _selected.ChartPath(pickedDifficulty);
                 s.ExternalChartIndex = _selected.ChartIndex(pickedDifficulty);
+                s.ExternalChartSeed = _selected.chartSeed;       // .gn 歌曲包：每首譜自己的金鑰
+                s.ExternalDpsPath = _selected.dpsPath;           // 包裡有官方編舞就跳舞那支，不用生成的
                 s.ExternalAudioPath = _selected.audioPath;
-                s.ExternalLevel = _selected.Diff(pickedDifficulty);   // 星數×5 等級 → 帶進遊戲顯示同一個 LV
+                s.ExternalLevel = _selected.Diff(pickedDifficulty);   // 星數×7 等級 → 帶進遊戲顯示同一個 LV
                 s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdo.header 都寫在歌曲自己的資料夾
                 s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
             }

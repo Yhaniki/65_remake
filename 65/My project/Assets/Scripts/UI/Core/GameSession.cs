@@ -29,11 +29,13 @@ namespace Sdo.UI.Core
         // ---- external song (user Songs/ folder: osu / StepMania). Set at SongSelectScreen.OnConfirm from a scanned
         //      SongCatalog.Entry, resolved to the chosen difficulty's chart; consumed by FrontendApp.StartGameplay. ----
         public bool IsExternalSong;
-        public string ExternalChartPath = "";   // absolute .osu / .sm path for the selected difficulty
-        public int ExternalChartIndex;          // .sm #NOTES block index (osu: 0)
-        public int ExternalChartFormat;         // 1=osu, 2=sm (Sdo.Osu.SongFormat)
+        public string ExternalChartPath = "";   // absolute .osu / .sm / .gn path for the selected difficulty
+        public int ExternalChartIndex;          // .sm #NOTES block index; .gn 的難度(0/1/2)；osu: 0
+        public int ExternalChartFormat;         // 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
+        public long ExternalChartSeed;          // .gn 的 LCG 解密金鑰（0 = 未知→退回共用 seed 池）
+        public string ExternalDpsPath = "";     // .gn 歌曲包自帶的官方編舞；"" → 開局自己生一份
         public string ExternalAudioPath = "";   // absolute audio (ogg/mp3/wav); "" → silent
-        public int ExternalLevel;                // chosen difficulty's LV (osu!mania 星數×5) → shown in gameplay too
+        public int ExternalLevel;                // chosen difficulty's LV (osu!mania 星數×7) → shown in gameplay too
         // 這首歌的身分（資料夾 + 資料夾內是哪一首）：外部歌沒有官方 .dps，開局時 ExternalDps 用它當種子生一份舞蹈、
         // 寫進歌曲資料夾並記在該資料夾的 sdo.header（同一首歌永遠生出同一支舞，且只生一次）。
         public string ExternalFolderPath = "";  // 歌曲資料夾（CD 圖／sdo.header／生成的 .dps 都放這）

@@ -376,6 +376,38 @@
    "v": "Songs/ 裡沒有歌曲"
   },
   {
+   "k": "songselect.group_refresh",
+   "v": "更新"
+  },
+  {
+   "k": "songselect.group_scanning",
+   "v": "掃描中…"
+  },
+  {
+   "k": "songselect.group_refresh_done",
+   "v": "歌曲已更新：{0}"
+  },
+  {
+   "k": "songselect.group_refresh_none",
+   "v": "歌曲沒有變更（共 {0} 首）"
+  },
+  {
+   "k": "songselect.group_refresh_added",
+   "v": "新增 {0} 首"
+  },
+  {
+   "k": "songselect.group_refresh_changed",
+   "v": "更新 {0} 首"
+  },
+  {
+   "k": "songselect.group_refresh_removed",
+   "v": "移除 {0} 首"
+  },
+  {
+   "k": "songselect.group_refresh_sep",
+   "v": "、"
+  },
+  {
    "k": "songselect.rand_20up",
    "v": "隨機難度 20級以上"
   },

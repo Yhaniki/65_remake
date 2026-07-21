@@ -61,6 +61,12 @@ namespace Sdo.UI.Screens
         private SongGroupMode _mode = SongGroupMode.Folder;   // 預設分類 = 資料夾
         private string _activeKey;
         private Action<SongBucket> _onPick;
+        private Action _onRefresh;
+
+        // 更新 (re-scan) in progress: the bucket list is replaced by a progress line and every control is inert, so
+        // nothing can pick a bucket whose Entry objects the scan is about to throw away. Driven by SetBusy.
+        private bool _busy;
+        private string _busyLine = "";
 
         private GUIStyle _winStyle, _rowStyle, _countStyle, _emptyStyle;
         private Texture2D _bgTex;       // flat plate behind the window (replaces the skin's framed background)
@@ -85,14 +91,17 @@ namespace Sdo.UI.Screens
         private static string L(string k) => LocalizationManager.Get(k);
 
         /// <summary>Build the panel (hidden). <paramref name="onPick"/> fires with the bucket whose songs the host
-        /// should load into the song list — on a row click, and whenever the grouping tab changes.</summary>
-        public static SongGroupPanel Create(RectTransform host, Action<SongBucket> onPick)
+        /// should load into the song list — on a row click, and whenever the grouping tab changes.
+        /// <paramref name="onRefresh"/> fires when the 更新 button is pressed: the host re-scans the song folders and
+        /// feeds the panel a new pool (see SongSelectScreen.BeginRescan).</summary>
+        public static SongGroupPanel Create(RectTransform host, Action<SongBucket> onPick, Action onRefresh = null)
         {
             var root = UIKit.NewRect(host, "GroupPanel");
             UIKit.Stretch(root);
             var p = root.gameObject.AddComponent<SongGroupPanel>();
             p._host = host;
             p._onPick = onPick;
+            p._onRefresh = onRefresh;
             p._rect = new Rect(DesignX, DesignY, DesignW, DesignH);   // px fallback; SizeToDiscColumn re-derives it
 
             p._blocker = UIKit.AddImage(root, "GroupPanelBlocker", new Color(0f, 0f, 0f, 0f), raycast: true);
@@ -109,6 +118,25 @@ namespace Sdo.UI.Screens
         {
             _pool = pool ?? new List<SongCatalog.Entry>();
             Rebuild();
+        }
+
+        /// <summary>Swap in a freshly scanned pool and land back on <paramref name="key"/>'s bucket (else the first
+        /// one), firing <c>onPick</c> so the host's row list is rebuilt from the NEW entries. Unlike <see cref="Open"/>
+        /// this never changes visibility — a 更新 finishing must not pop the window back up if the player closed it
+        /// meanwhile, nor hide it if they didn't.</summary>
+        public void Reload(IReadOnlyList<SongCatalog.Entry> pool, string key)
+        {
+            SetPool(pool);
+            PickByKey(key);
+        }
+
+        /// <summary>Put the panel into (or out of) its 更新 progress state: while busy the bucket list is hidden
+        /// behind <paramref name="line"/> and both the refresh button and the buckets are inert. The host calls this
+        /// around the re-scan and hands it the scanner's progress text.</summary>
+        public void SetBusy(bool busy, string line = "")
+        {
+            _busy = busy;
+            _busyLine = line ?? "";
         }
 
         /// <summary>Show the panel; select <paramref name="key"/>'s bucket if it still exists, else the first one.
@@ -191,10 +219,32 @@ namespace Sdo.UI.Screens
         {
             float w = _rect.width, h = _rect.height;
 
+            // 更新 (re-scan the song folders) sits left of 關閉, so songs added / edited / removed on disk can be
+            // picked up without restarting the game. Inert while a scan is running (its label becomes the progress).
+            GUI.enabled = !_busy;
+            if (GUI.Button(new Rect(w - 108f, 2f, 52f, 16f), L("songselect.group_refresh")))
+            {
+                UiSfx.Play(UiSfx.Click);
+                GUI.enabled = true;
+                _onRefresh?.Invoke();
+                return;
+            }
+            GUI.enabled = true;
+
             if (GUI.Button(new Rect(w - 52f, 2f, 46f, 16f), L("common.close")))
             {
                 UiSfx.Play(UiSfx.Click);
                 Close();
+                return;
+            }
+
+            // While re-scanning, the buckets on screen point at Entry objects the scan is about to replace — so the
+            // whole body is swapped for the progress line and nothing below is drawn (nothing to click, nothing stale).
+            if (_busy)
+            {
+                GUI.Label(new Rect(Pad, ListTop, w - Pad * 2f, h - ListTop - Pad), _busyLine, _emptyStyle);
+                HandleResizeGrip(w, h);
+                GUI.DragWindow(new Rect(0f, 0f, w, TopH));
                 return;
             }
 

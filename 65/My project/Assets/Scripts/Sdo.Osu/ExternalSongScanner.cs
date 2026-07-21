@@ -110,7 +110,7 @@ namespace Sdo.Osu
                 foreach (var f in Directory.EnumerateFiles(dir))
                 {
                     var ext = Path.GetExtension(f).ToLowerInvariant();
-                    if (ext == ".osu" || ext == ".sm") charts = true;
+                    if (ext == ".osu" || ext == ".sm" || ext == ".gn") charts = true;
                     else if (Array.IndexOf(AudioExt, ext) >= 0) audio = true;
                     if (charts && audio) return;
                 }
@@ -151,6 +151,7 @@ namespace Sdo.Osu
 
             var osu = new List<string>();
             var sm = new List<string>();
+            var gn = new List<string>();
             var audio = new List<string>();
             var images = new List<string>();   // basenames
             foreach (var f in files)
@@ -158,15 +159,18 @@ namespace Sdo.Osu
                 var ext = Path.GetExtension(f).ToLowerInvariant();
                 if (ext == ".osu") osu.Add(f);
                 else if (ext == ".sm") sm.Add(f);
+                else if (ext == ".gn") gn.Add(f);
                 else if (Array.IndexOf(AudioExt, ext) >= 0) audio.Add(f);
                 else if (Array.IndexOf(ImageExt, ext) >= 0) images.Add(Path.GetFileName(f));
             }
 
+            var pack = ReadPackIndex(songDir);
             var drafts = new List<Draft>();
             try
             {
                 DraftOsu(drafts, osu);
                 DraftSm(drafts, sm);
+                DraftGn(drafts, gn, pack);
             }
             catch { /* a malformed folder must never abort the whole scan */ }
             if (drafts.Count == 0) return songs;
@@ -180,6 +184,7 @@ namespace Sdo.Osu
             foreach (var d in drafts)
             {
                 string audioPath = ResolveAudio(audio, d.AudioName);
+                if (audioPath.Length == 0) audioPath = ResolveAudioStem(audio, d.AudioStem);   // .gn: any extension
                 if (audioPath.Length == 0) continue;
                 kept.Add(d); tracks.Add(audioPath);
             }
@@ -194,7 +199,10 @@ namespace Sdo.Osu
             // it after the folder rather than letting its songs dissolve into the parent group's flat song list. A
             // single-song folder keeps the group it was found under (the pack it sits in). DirName("") never fires
             // because a multi-song folder always has a name.
-            string packGroup = sole ? group : DirName(songDir);
+            // EXCEPTION — an SDO song pack: it is multi-song BY CONSTRUCTION (hundreds of .gn in one music folder) and
+            // that folder's own name says nothing about the pack ("patch music" / "MUSIC"), so it keeps the group it was
+            // found under — which is the pack's real name, the folder the player dropped in.
+            string packGroup = sole || AllGn(kept) ? group : DirName(songDir);
             if (string.IsNullOrEmpty(packGroup)) packGroup = group;
 
             var claimed = ClaimedImages(kept);
@@ -206,6 +214,7 @@ namespace Sdo.Osu
             Disambiguate(songs, kept);
             return songs;
         }
+
 
         // The discs we generate are written INTO the song folder, so on the next scan they are just more images sitting
         // next to the cover — and a folder whose cover carries no filename hint would hand the picker its own disc back
@@ -240,9 +249,15 @@ namespace Sdo.Osu
         public static void ReapplySidecar(ExternalSong song)
         {
             if (song == null || string.IsNullOrEmpty(song.FolderPath)) return;
+            // A pack song's jacket comes from sdo_pack.tsv, not from sdo.header, and it is cached alongside the song —
+            // so hold it across the clear below, or every cache hit would strip the pack's real jackets off and leave
+            // the whole pack showing the NONE disc. (Its preview clip / choreography aren't sidecar fields at all, so
+            // they survive untouched.) A re-run of the converter rewrites the .tsv → new signature → full re-parse.
+            string packCd = song.Format == SongFormat.Gn ? song.CdImagePath ?? "" : "";
             song.CdImagePath = ""; song.MotPath = ""; song.CameraPath = ""; song.OffsetMs = 0f;
             var sidecar = ReadSidecar(song.FolderPath);
             ApplySidecar(song, SongSidecar.Find(sidecar, song.SongKey), song.FolderPath);
+            if (packCd.Length > 0) song.CdImagePath = packCd;
         }
 
         /// <summary>Kept for callers that only want the folder's first song (e.g. a preview probe).</summary>
@@ -264,6 +279,145 @@ namespace Sdo.Osu
             public double Bpm;
             public int PreviewStartMs = -1, PreviewLengthMs;
             public string AudioName = "", BannerName = "", BackgroundName = "", CdTitleName = "";
+            /// <summary>.gn only, and only when the sidecar didn't name the audio: the chart stem to match against the
+            /// folder with ANY audio extension (see <see cref="ResolveAudioStem"/>). "" = use <see cref="AudioName"/>.</summary>
+            public string AudioStem = "";
+            // ---- SDO pack (Format == Gn) ----
+            public int FileId;
+            public uint Seed;
+            // Paths RELATIVE to the song folder, straight out of sdo_pack.tsv (a pack keeps its art, previews and
+            // choreography in sibling trees, e.g. "../patch Datas/UI/MUSIC/ICONS/10040.PNG"). "" = the pack has none.
+            public string CdRel = "", PreviewRel = "", DpsRel = "";
+        }
+
+        private static bool AllGn(List<Draft> drafts)
+        {
+            if (drafts == null || drafts.Count == 0) return false;
+            foreach (var d in drafts) if (d.Format != SongFormat.Gn) return false;
+            return true;
+        }
+
+        /// <summary>The folder's <c>sdo_pack.tsv</c> indexed by .gn name, or an empty map when it has none. A pack
+        /// without the sidecar still scans — it just falls back to the .gn's own header + filename conventions, and
+        /// (having no seed) can't be decrypted at play time unless its seeds happen to be in the shared pool.</summary>
+        private static Dictionary<string, SdoPackSong> ReadPackIndex(string songDir)
+        {
+            try
+            {
+                var path = Path.Combine(songDir, SdoPackIndex.FileName);
+                if (File.Exists(path))
+                    return SdoPackIndex.ByGn(SdoPackIndex.Parse(File.ReadAllText(path, System.Text.Encoding.UTF8)));
+            }
+            catch { /* unreadable/corrupt sidecar → scan the .gn files bare */ }
+            return new Dictionary<string, SdoPackSong>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// One draft per .gn — a native SDO chart carries ALL THREE difficulties in one file, so unlike osu/StepMania
+        /// there is nothing to rank or pick: slot d is difficulty d, and an empty difficulty (0 notes, which several
+        /// official songs really do ship) simply leaves its slot null so song-select greys it out.
+        ///
+        /// Everything numeric is read from the .gn's own PLAINTEXT header (<see cref="GnHeader"/>) — no decryption, no
+        /// note parsing, so a 199-song pack scans as fast as reading 199 file headers. The sidecar only adds what the
+        /// file can't say: the decryption seed, the UTF-8 title/artist, and where the pack keeps art/preview/dance.
+        /// </summary>
+        private static void DraftGn(List<Draft> drafts, List<string> gnFiles, Dictionary<string, SdoPackSong> pack)
+        {
+            foreach (var path in gnFiles)
+            {
+                string name = Path.GetFileName(path);
+                GnHeader h;
+                try { h = GnHeader.Read(ReadPrefix(path, GnHeaderProbeBytes)); }
+                catch { continue; }
+                pack.TryGetValue(name, out var row);
+                if (!h.Valid && row == null) continue;   // not a .gn we can make sense of
+
+                var d = new Draft { Key = name, Format = SongFormat.Gn };
+                bool any = false;
+                for (int s = 0; s < 3; s++)
+                {
+                    int notes = h.Valid ? h.Notes[s] : 0;
+                    if (notes <= 0 && row != null) notes = row.Notes[s];
+                    if (notes <= 0) continue;                      // difficulty not in this chart → leave the slot empty
+                    int level = h.Valid ? h.Levels[s] : 0;
+                    if (level <= 0 && row != null) level = row.Levels[s];
+                    int dur = h.Valid ? h.Durations[s] : 0;
+                    if (dur <= 0 && row != null) dur = row.Durations[s];
+                    d.Charts[s] = new ExternalChart
+                    {
+                        FilePath = path, ChartIndex = s, NoteCount = notes,
+                        Level = level > 0 ? level : -1, DurationSec = dur,
+                    };
+                    any = true;
+                }
+                if (!any) continue;
+
+                d.FileId = h.Valid && h.FileId > 0 ? h.FileId : (row?.FileId ?? 0);
+                d.Bpm = h.Valid && h.Bpm > 0f ? h.Bpm : (row?.Bpm ?? 0.0);
+                d.Title = !string.IsNullOrEmpty(row?.Title) ? row.Title : Path.GetFileNameWithoutExtension(path);
+                d.Artist = row?.Artist ?? "";
+                d.Seed = row?.Seed ?? 0u;
+                d.CdRel = row?.Cd ?? "";
+                d.PreviewRel = row?.Preview ?? "";
+                d.DpsRel = row?.Dps ?? "";
+                // The music file: what the sidecar names, else the chart name with its difficulty letter dropped
+                // (sdom0040K.gn → sdom0040.ogg/.mp3/.wav — the engine's own convention, see Sdo.Game.SongPaths).
+                if (!string.IsNullOrEmpty(row?.Audio)) d.AudioName = ExternalSongGrouper.BaseName(row.Audio);
+                else { d.AudioStem = GnAudioStem(path); d.AudioName = d.AudioStem + ".ogg"; }
+                d.PreviewStartMs = -1;   // a pack ships a real preview CLIP instead of a window into the full song
+                drafts.Add(d);
+            }
+        }
+
+        /// <summary>How much of a .gn to read to find its header. The plaintext header sits at 456 in every known file
+        /// and <see cref="GnHeader"/> scans at most 0x4000 — reading 20 KB is generous and keeps a 199-song pack's scan
+        /// off the "read every chart in full" path.</summary>
+        private const int GnHeaderProbeBytes = 20 * 1024;
+
+        private static byte[] ReadPrefix(string path, int count)
+        {
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                var buf = new byte[(int)Math.Min(count, Math.Max(0, fs.Length))];
+                int read = 0;
+                while (read < buf.Length)
+                {
+                    int n = fs.Read(buf, read, buf.Length - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+                if (read == buf.Length) return buf;
+                var exact = new byte[read];
+                Array.Copy(buf, exact, read);
+                return exact;
+            }
+        }
+
+        /// <summary>"sdom0040K.gn" → "sdom0040": the chart name with its difficulty-set letter (k = 一般譜, t = 另一份譜,
+        /// both play the same track) dropped. That is the engine's own chart↔music naming rule (Sdo.Game.SongPaths).</summary>
+        internal static string GnAudioStem(string gnPath)
+        {
+            string stem = Path.GetFileNameWithoutExtension(gnPath) ?? "";
+            if (stem.Length > 1)
+            {
+                char last = char.ToUpperInvariant(stem[stem.Length - 1]);
+                if (last == 'K' || last == 'T') stem = stem.Substring(0, stem.Length - 1);
+            }
+            return stem;
+        }
+
+        /// <summary>Match a bare stem against the folder's audio files, whatever extension it turned up as (the [NX]
+        /// pack ships .mp3 where the original game had .ogg). "" when the folder has none of them.</summary>
+        private static string ResolveAudioStem(List<string> available, string stem)
+        {
+            if (string.IsNullOrEmpty(stem)) return "";
+            foreach (var ext in AudioExt)
+            {
+                string want = stem + ext;
+                foreach (var f in available)
+                    if (string.Equals(Path.GetFileName(f), want, StringComparison.OrdinalIgnoreCase)) return f;
+            }
+            return "";
         }
 
         private static void DraftOsu(List<Draft> drafts, List<string> osuFiles)
@@ -295,7 +449,7 @@ namespace Sdo.Osu
                     int c = slots[s];
                     if (c < 0) continue;
                     int i = g.Charts[c];
-                    var st = OsuStats(candFile[i]);   // 星數×5 → 等級 + 譜長（只對選中的 3 張全解析，掃描才不慢）
+                    var st = OsuStats(candFile[i]);   // 星數×7 → 等級 + 譜長（只對選中的 3 張全解析，掃描才不慢）
                     d.Charts[s] = new ExternalChart
                     {
                         FilePath = candFile[i], ChartIndex = 0, NoteCount = candMeta[i].NoteCount,
@@ -405,7 +559,22 @@ namespace Sdo.Osu
             };
             for (int s = 0; s < 3; s++) song.Charts[s] = d.Charts[s];
             ApplySidecar(song, SongSidecar.Find(sidecar, song.SongKey), dir);
+            song.FileId = d.FileId;
+            song.GnSeed = d.Seed;
+            ApplyPackResources(song, dir, d.CdRel, d.PreviewRel, d.DpsRel);
             return song;
+        }
+
+        /// <summary>Point a pack song at the art / preview clip / choreography the pack ships for it (paths are
+        /// relative to the song folder and routinely climb out of it into a sibling tree). Runs AFTER the sidecar so a
+        /// pack's own CD art wins over a disc we composed on an earlier run — the pack's is the real jacket. A recorded
+        /// file that isn't there is dropped, exactly like a sidecar entry.</summary>
+        private static void ApplyPackResources(ExternalSong song, string dir, string cdRel, string previewRel, string dpsRel)
+        {
+            string cd = SidecarFile(dir, cdRel);
+            if (cd.Length > 0) song.CdImagePath = cd;
+            song.PreviewAudioPath = SidecarFile(dir, previewRel);
+            song.DpsPath = SidecarFile(dir, dpsRel);
         }
 
         // What the folder's sdo.header already records for this song: the CD disc built on an earlier run (skip
@@ -515,7 +684,7 @@ namespace Sdo.Osu
         /// it, so the 時間 column costs nothing extra (the scan still only full-parses the 3 chosen charts).</summary>
         public struct ChartStats { public int Level; public int DurationSec; }
 
-        // Level from osu!mania star rating (star × 5, clamped). Level 0 / no duration on failure.
+        // Level from osu!mania star rating (star × 7, clamped). Level 0 / no duration on failure.
         private static ChartStats OsuStats(string osuPath)
         {
             try { return StatsOf(OsuBeatmapParser.Parse(File.ReadAllText(osuPath)), 0); }

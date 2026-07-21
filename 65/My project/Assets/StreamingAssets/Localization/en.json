@@ -376,6 +376,38 @@
    "v": "No songs in Songs/"
   },
   {
+   "k": "songselect.group_refresh",
+   "v": "Refresh"
+  },
+  {
+   "k": "songselect.group_scanning",
+   "v": "Scanning…"
+  },
+  {
+   "k": "songselect.group_refresh_done",
+   "v": "Songs updated: {0}"
+  },
+  {
+   "k": "songselect.group_refresh_none",
+   "v": "No changes ({0} songs)"
+  },
+  {
+   "k": "songselect.group_refresh_added",
+   "v": "{0} added"
+  },
+  {
+   "k": "songselect.group_refresh_changed",
+   "v": "{0} updated"
+  },
+  {
+   "k": "songselect.group_refresh_removed",
+   "v": "{0} removed"
+  },
+  {
+   "k": "songselect.group_refresh_sep",
+   "v": ", "
+  },
+  {
    "k": "songselect.rand_20up",
    "v": "Random Lv 20+"
   },

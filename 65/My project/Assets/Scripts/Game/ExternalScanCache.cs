@@ -26,7 +26,9 @@ namespace Sdo.Game
         // Bump when the PARSE RESULT for the same source files changes (not just the schema), so old cache lines are
         // dropped and every folder re-parses with the new logic. v2: osu pack sets now show the song name (Version)
         // instead of the shared pack-label title — cached titles from v1 must be discarded to pick that up.
-        public const int Version = 2;
+        // v3: the displayed LV changed from star × 5 to star × 7, so every cached `level` is stale.
+        // v4: .gn song packs are scanned now — old lines for a pack folder cached it as "yields nothing".
+        public const int Version = 4;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null
@@ -38,8 +40,11 @@ namespace Sdo.Game
         {
             public string songKey = "", title = "", artist = "", audioPath = "", imagePath = "";
             public string cdImagePath = "", motPath = "", cameraPath = "";
+            public string previewAudioPath = "", dpsPath = "";   // .gn pack: its own preview clip / choreography
             public double bpm;
             public int format, previewStartMs, previewLengthMs, audioDurationSec;
+            public int fileId;      // .gn pack: the official song number its art/preview/dance are named by
+            public long gnSeed;     // .gn pack: LCG seed (uint32 — long so it survives JsonUtility unsigned)
             public List<Chart> charts = new List<Chart>();
         }
 
@@ -54,7 +59,9 @@ namespace Sdo.Game
 
         // ---- signature: what makes a folder's parse result stale ----
 
-        private static readonly string[] Chartish = { ".osu", ".sm", ".ogg", ".mp3", ".wav", ".png", ".jpg", ".jpeg", ".bmp" };
+        // .gn = a native SDO chart; .tsv = a pack's sdo_pack.tsv (re-running the converter must invalidate the folder,
+        // since titles/seeds/art paths all come from there).
+        private static readonly string[] Chartish = { ".osu", ".sm", ".gn", ".tsv", ".ogg", ".mp3", ".wav", ".png", ".jpg", ".jpeg", ".bmp" };
 
         /// <summary>A token that changes iff the folder's SOURCE files change — file stats only, no content read.
         /// Generated files (the sidecar, composed <c>cd*.png</c> discs, <c>dance*.dps</c>) are skipped so runtime output
@@ -151,7 +158,8 @@ namespace Sdo.Game
                 songKey = s.SongKey ?? "", title = s.Title ?? "", artist = s.Artist ?? "",
                 audioPath = s.AudioPath ?? "", imagePath = s.ImagePath ?? "",
                 cdImagePath = s.CdImagePath ?? "", motPath = s.MotPath ?? "", cameraPath = s.CameraPath ?? "",
-                bpm = s.Bpm, format = (int)s.Format,
+                previewAudioPath = s.PreviewAudioPath ?? "", dpsPath = s.DpsPath ?? "",
+                bpm = s.Bpm, format = (int)s.Format, fileId = s.FileId, gnSeed = s.GnSeed,
                 previewStartMs = s.PreviewStartMs, previewLengthMs = s.PreviewLengthMs, audioDurationSec = s.AudioDurationSec,
             };
             for (int i = 0; i < 3; i++)
@@ -183,6 +191,8 @@ namespace Sdo.Game
                 AudioPath = o.audioPath ?? "", AudioDurationSec = o.audioDurationSec, ImagePath = o.imagePath ?? "",
                 Format = (SongFormat)o.format,
                 CdImagePath = o.cdImagePath ?? "", MotPath = o.motPath ?? "", CameraPath = o.cameraPath ?? "",
+                PreviewAudioPath = o.previewAudioPath ?? "", DpsPath = o.dpsPath ?? "",
+                FileId = o.fileId, GnSeed = (uint)o.gnSeed,
                 PreviewStartMs = o.previewStartMs, PreviewLengthMs = o.previewLengthMs,
             };
             if (o.charts != null)

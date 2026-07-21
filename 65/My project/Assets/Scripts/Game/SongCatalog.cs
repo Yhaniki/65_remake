@@ -36,7 +36,11 @@ namespace Sdo.Game
             public string folderPath = ""; // the song's folder — where its CD disc + sdo.header sidecar live
             public string songKey = "";    // identity WITHIN the folder ("" = the folder's only song); see ExternalSongGrouper
             public string cdPath = "";     // absolute generated CD disc image; "" → compose it from imagePath on first use
-            public int chartFormat;        // 0=none, 1=osu, 2=sm (Sdo.Osu.SongFormat)
+            public int chartFormat;        // 0=none, 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
+            // ---- .gn 歌曲包 (chartFormat 3；見 Sdo.Osu.SdoPackIndex) ----
+            public string previewPath = ""; // 專屬試聽短檔（包裡的 exper/<fileId>.ogg）；"" → 用全曲擷取一段
+            public string dpsPath = "";     // 包裡自帶的官方編舞（DANCE/<fileId>.DPS）；"" → 開局自己生一份
+            public long chartSeed;          // .gn 的 LCG 解密金鑰（uint32）；0 = 未知→退回共用 seed 池
             public string chartEasy = "", chartNormal = "", chartHard = "";   // absolute chart file per slot ("" if empty)
             public int chartIdxEasy, chartIdxNormal, chartIdxHard;            // .sm #NOTES block index per slot (osu: 0)
             public int previewStartMs = -1;   // 試聽起點(ms)：osu PreviewTime / SM #SAMPLESTART；-1 = 未指定→中段
@@ -158,7 +162,37 @@ namespace Sdo.Game
                 if (_byGn.ContainsKey(key)) continue;
                 _byGn[key] = e;
                 _all.Add(e);
+                _primary = null;   // external gns end in 'k' → they belong to the Primary view; drop its cache
             }
+        }
+
+        /// <summary>Swap the WHOLE external half of the catalog for a fresh scan's entries: every previously
+        /// registered <c>external</c> row is dropped first, then <paramref name="entries"/> registered. This is what a
+        /// RE-scan needs (see ExternalSongLibrary.ScanAndRegisterCo, driven at boot and by 選歌 → 分類瀏覽 → 更新):
+        /// <see cref="RegisterExternal"/> alone only ever adds, so a song deleted from disk — or one whose gn changed
+        /// because its folder/audio was renamed — would linger in the list pointing at a file that is gone.
+        ///
+        /// Official (.gn) rows are untouched. Entry OBJECTS are replaced wholesale, so anything holding an Entry
+        /// reference across a re-scan must re-resolve it by gn (<see cref="Get"/>) — gns are content-derived and
+        /// stable, which is also why favourites and the restored selection survive.</summary>
+        public static void ReplaceExternal(IEnumerable<Entry> entries)
+        {
+            EnsureLoaded();
+            if (DropExternalRows(_all, _byGn) > 0) _primary = null;
+            RegisterExternal(entries);
+        }
+
+        /// <summary>Remove every <c>external</c> row from a catalog's two views, keeping the official ones and their
+        /// order; returns how many were dropped. Pure (no IO, no globals) — the testable half of
+        /// <see cref="ReplaceExternal"/>.</summary>
+        public static int DropExternalRows(List<Entry> all, Dictionary<string, Entry> byGn)
+        {
+            int n = all != null ? all.RemoveAll(e => e != null && e.external) : 0;
+            if (byGn == null) return n;
+            var stale = new List<string>();
+            foreach (var kv in byGn) if (kv.Value != null && kv.Value.external) stale.Add(kv.Key);
+            foreach (var k in stale) byGn.Remove(k);
+            return n;
         }
 
         /// <summary>這首譜的單首 offset（毫秒）；沒設過 = 0。見 <see cref="Entry.offsetMs"/>。</summary>

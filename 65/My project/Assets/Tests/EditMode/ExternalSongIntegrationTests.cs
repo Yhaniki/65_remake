@@ -229,5 +229,132 @@ namespace Sdo.Tests
             };
             Assert.AreEqual(0, FolderBuckets(list).Count);   // official songs live in 全部, never in the panel
         }
+
+        // ---- 更新 (re-scan): SongCatalog.DropExternalRows, the swap half of ReplaceExternal ----
+        // A re-scan must REPLACE the previous scan's rows, not add to them: a song deleted on disk has to disappear,
+        // and a re-found one must not end up listed twice. Official (.gn) rows are never touched.
+
+        private static Dictionary<string, SongCatalog.Entry> ByGn(List<SongCatalog.Entry> all)
+        {
+            var d = new Dictionary<string, SongCatalog.Entry>();
+            foreach (var e in all) d[e.gn.ToLowerInvariant()] = e;
+            return d;
+        }
+
+        [Test]
+        public void DropExternalRows_Removes_Only_External_Rows_From_Both_Views()
+        {
+            var all = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "sdom1k.gn", title = "official" },
+                Ext("ext_1k.gn", "Alpha", "gone"),
+                new SongCatalog.Entry { gn = "sdom2k.gn", title = "official2" },
+                Ext("ext_2k.gn", "Beta", "also gone"),
+            };
+            var byGn = ByGn(all);
+
+            Assert.AreEqual(2, SongCatalog.DropExternalRows(all, byGn));
+            Assert.AreEqual(new[] { "sdom1k.gn", "sdom2k.gn" }, all.ConvertAll(e => e.gn).ToArray());   // order kept
+            Assert.AreEqual(2, byGn.Count);
+            Assert.IsFalse(byGn.ContainsKey("ext_1k.gn"));
+            Assert.IsTrue(byGn.ContainsKey("sdom1k.gn"));
+        }
+
+        [Test]
+        public void DropExternalRows_On_A_Catalog_With_No_External_Rows_Changes_Nothing()
+        {
+            var all = new List<SongCatalog.Entry> { new SongCatalog.Entry { gn = "sdom1k.gn" } };
+            var byGn = ByGn(all);
+            Assert.AreEqual(0, SongCatalog.DropExternalRows(all, byGn));   // ← boot's first scan takes this path
+            Assert.AreEqual(1, all.Count);
+            Assert.AreEqual(1, byGn.Count);
+        }
+
+        // ---- what the 更新 toast is allowed to claim: ExternalSongLibrary.Diff ----
+        // Re-finding the same 18 songs is NOT 「更新 18 首」. Only songs that appeared, whose files changed, or that
+        // vanished may be reported; everything else is 「沒有變更」.
+
+        private static SongCatalog.Entry Scanned(string gn, string title = "t", string chart = "c.osu", int notes = 100)
+            => new SongCatalog.Entry
+            {
+                gn = gn, external = true, title = title, artist = "a", bpm = 140f, group = "G",
+                folderPath = "C:/Songs/G/" + gn, audioPath = "C:/Songs/G/" + gn + "/a.mp3",
+                chartHard = chart, notesHard = notes, diffHard = 5, chartFormat = 1,
+            };
+
+        [Test]
+        public void Diff_Of_An_Unchanged_Library_Reports_No_Change_At_All()
+        {
+            var before = new List<SongCatalog.Entry> { Scanned("ext_1k.gn"), Scanned("ext_2k.gn") };
+            var after = new List<SongCatalog.Entry> { Scanned("ext_1k.gn"), Scanned("ext_2k.gn") };   // fresh objects, same files
+            var d = ExternalSongLibrary.Diff(before, after);
+            Assert.IsFalse(d.Any, "same songs re-scanned → the toast must say 沒有變更, not 已更新 2 首");
+            Assert.AreEqual(0, d.Added);
+            Assert.AreEqual(0, d.Changed);
+            Assert.AreEqual(0, d.Removed);
+            Assert.AreEqual(2, d.Total, "Total is the library size, reported separately from the changes");
+        }
+
+        [Test]
+        public void Diff_Counts_Added_Changed_And_Removed_Songs()
+        {
+            var before = new List<SongCatalog.Entry> { Scanned("ext_1k.gn"), Scanned("ext_2k.gn"), Scanned("ext_3k.gn") };
+            var after = new List<SongCatalog.Entry>
+            {
+                Scanned("ext_1k.gn"),                                   // untouched
+                Scanned("ext_2k.gn", notes: 250),                        // chart re-edited → changed
+                Scanned("ext_4k.gn"),                                    // new folder → added
+            };                                                           // ext_3k gone from disk → removed
+            var d = ExternalSongLibrary.Diff(before, after);
+            Assert.IsTrue(d.Any);
+            Assert.AreEqual(1, d.Added);
+            Assert.AreEqual(1, d.Changed);
+            Assert.AreEqual(1, d.Removed);
+            Assert.AreEqual(3, d.Total);
+        }
+
+        [Test]
+        public void Diff_On_A_First_Scan_Counts_Everything_As_Added()
+        {
+            var d = ExternalSongLibrary.Diff(new List<SongCatalog.Entry>(), new List<SongCatalog.Entry> { Scanned("ext_1k.gn") });
+            Assert.AreEqual(1, d.Added);
+            Assert.AreEqual(0, d.Changed);
+        }
+
+        [Test]
+        public void Fingerprint_Ignores_Fields_The_Running_Game_Writes_Back()
+        {
+            // 選了一首歌 → 合成 CD 封面 (cdPath)、量到真實音檔長度 (durX)；編輯器微調 offset (offsetMs)。
+            // 磁碟上的譜/音檔一個字都沒變，所以這些都不算「更新」。
+            var e = Scanned("ext_1k.gn");
+            var touched = Scanned("ext_1k.gn");
+            touched.cdPath = "C:/Songs/G/ext_1k.gn/cd_x.png";
+            touched.durHard = 213;
+            touched.offsetMs = -35f;
+            Assert.AreEqual(ExternalSongLibrary.Fingerprint(e), ExternalSongLibrary.Fingerprint(touched));
+            Assert.IsFalse(ExternalSongLibrary.Diff(new[] { e }, new[] { touched }).Any);
+        }
+
+        [Test]
+        public void Fingerprint_Reacts_To_Title_Chart_And_Audio_Changes()
+        {
+            var e = Scanned("ext_1k.gn");
+            var f = ExternalSongLibrary.Fingerprint(e);
+            Assert.AreNotEqual(f, ExternalSongLibrary.Fingerprint(Scanned("ext_1k.gn", title: "retitled")));
+            Assert.AreNotEqual(f, ExternalSongLibrary.Fingerprint(Scanned("ext_1k.gn", chart: "other.osu")));
+            Assert.AreNotEqual(f, ExternalSongLibrary.Fingerprint(Scanned("ext_1k.gn", notes: 101)));
+        }
+
+        [Test]
+        public void A_Song_Still_On_Disk_Keeps_Its_Gn_Across_A_Rescan()
+        {
+            // Drop + re-register is only safe because the gn is content-derived: the favourite and the restored
+            // selection are keyed on it, and SongSelectScreen re-resolves its selection by gn after a 更新.
+            var song = new ExternalSong { FolderPath = "C:/Songs/G/Foo", SongKey = "audio:a.mp3", Title = "Foo" };
+            var before = ExternalSongLibrary.ToEntry(song, 0);
+            var after = ExternalSongLibrary.ToEntry(song, 12);   // different scan order the second time round
+            Assert.AreEqual(before.gn, after.gn);
+            Assert.AreNotSame(before, after, "a rescan yields NEW Entry objects — hold the gn, not the reference");
+        }
     }
 }

@@ -69,14 +69,31 @@ namespace Sdo.Game
         ///
         /// <paramref name="onProgress"/> is (fraction 0..1, folder line, detail line): the folder currently being read
         /// (group / name — updated BEFORE each folder loads, so on a big library the names flick past under the bar),
-        /// and a detail line with the last song found + a running total. The boot overlay shows both under the bar.</summary>
+        /// and a detail line with the last song found + a running total. The boot overlay shows both under the bar.
+        ///
+        /// RE-RUNNABLE: the same coroutine is what 選歌 → 分類瀏覽 → 更新 runs to pick up songs added / edited /
+        /// deleted while the game was open, so it ends in <see cref="SongCatalog.ReplaceExternal"/> — the previous
+        /// scan's rows are swapped out, not merely added to. A re-scan is cheap because unchanged folders come
+        /// straight from <see cref="ExternalScanCache"/> (signature = file stats, no parse). Only one scan runs at a
+        /// time (<see cref="Scanning"/>); a second call while one is in flight just waits for it and returns.</summary>
         public static IEnumerator ScanAndRegisterCo(Action<float, string, string> onProgress)
         {
+            if (Scanning)   // a boot scan / another refresh is already running — don't start a second worker
+            {
+                while (Scanning) yield return null;
+                onProgress?.Invoke(1f, "", "");
+                yield break;
+            }
+
             // Cache I/O (JsonUtility + persistentDataPath) stays on the main thread; the worker does only pure
             // System.IO + arithmetic. Load the previous scan, hand it to the worker, save the fresh one when it returns.
             string cacheFile = CacheFilePath();
             var job = new ScanJob(Roots(), ExternalScanCache.Load(cacheFile));
-            var task = Task.Run((Action)job.Run);
+            // The flag is cleared by the WORKER's continuation, not by this coroutine: a refresh coroutine dies with
+            // its screen (leaving the scene mid-scan), and clearing it here would then leave Scanning stuck true and
+            // every later scan waiting forever on a worker that finished long ago.
+            Scanning = true;
+            var task = Task.Run((Action)job.Run).ContinueWith(_ => { Scanning = false; });
 
             while (!task.IsCompleted)
             {
@@ -93,8 +110,85 @@ namespace Sdo.Game
                 entries.Add(ToEntry(song, entries.Count));   // index per SONG → fileIds stay unique
             }
 
-            SongCatalog.RegisterExternal(entries);
+            // Snapshot BEFORE the swap so the 更新 toast can say what actually changed on disk (see LastDelta) —
+            // "已更新 18 首" when all 18 were the same songs as before is a lie the player can't check.
+            var before = ExternalEntries();
+            SongCatalog.ReplaceExternal(entries);   // swap, so a deleted song really disappears on a re-scan
+            LastDelta = Diff(before, entries);
             onProgress?.Invoke(1f, "", "");
+        }
+
+        /// <summary>True while a scan is in flight (boot or refresh) — the 更新 button greys out on it.</summary>
+        public static bool Scanning { get; private set; }
+
+        /// <summary>What the last completed scan actually changed (for the 更新 toast).</summary>
+        public static ScanDelta LastDelta { get; private set; }
+
+        /// <summary>The external rows currently in the catalog (the previous scan's result).</summary>
+        private static List<SongCatalog.Entry> ExternalEntries()
+        {
+            var res = new List<SongCatalog.Entry>();
+            foreach (var e in SongCatalog.All) if (e != null && e.external) res.Add(e);
+            return res;
+        }
+
+        // ---------------- what a re-scan changed ----------------
+
+        /// <summary>How one scan differs from the previous one: songs that appeared, songs whose FILES changed, and
+        /// songs that are gone. <see cref="Total"/> is just how many are in the library now.</summary>
+        public struct ScanDelta
+        {
+            public int Added, Changed, Removed, Total;
+            /// <summary>Nothing on disk differs from last time — the 更新 toast then says "沒有變更", not "已更新".</summary>
+            public bool Any => Added > 0 || Changed > 0 || Removed > 0;
+        }
+
+        /// <summary>Compare two scans by gn (a song's stable identity): present only in <paramref name="after"/> =
+        /// added, only in <paramref name="before"/> = removed, in both but with a different <see cref="Fingerprint"/>
+        /// = changed. Pure — public for tests.</summary>
+        public static ScanDelta Diff(IEnumerable<SongCatalog.Entry> before, IEnumerable<SongCatalog.Entry> after)
+        {
+            var old = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (before != null)
+                foreach (var e in before)
+                    if (e != null && !string.IsNullOrEmpty(e.gn)) old[e.gn] = Fingerprint(e);
+
+            var d = new ScanDelta();
+            if (after != null)
+                foreach (var e in after)
+                {
+                    if (e == null || string.IsNullOrEmpty(e.gn)) continue;
+                    d.Total++;
+                    if (!old.TryGetValue(e.gn, out var was)) { d.Added++; continue; }
+                    if (!string.Equals(was, Fingerprint(e), StringComparison.Ordinal)) d.Changed++;
+                    old.Remove(e.gn);   // seen → what's left over at the end was removed from disk
+                }
+            d.Removed = old.Count;
+            return d;
+        }
+
+        /// <summary>Everything about an entry that comes from the song's own FILES — so an edited chart, a renamed
+        /// audio file or a retitled beatmap all count as "changed". Deliberately EXCLUDES the fields the running game
+        /// writes back into the entry (<c>cdPath</c> composed on first select, <c>durX</c> measured on first play,
+        /// <c>offsetMs</c> nudged in the editor): those move without anything on disk changing for the player, and
+        /// counting them would report phantom updates. Public for tests.</summary>
+        public static string Fingerprint(SongCatalog.Entry e)
+        {
+            if (e == null) return "";
+            const char sep = '';   // unit separator — can't occur in a title or a path
+            var sb = new System.Text.StringBuilder();
+            sb.Append(e.title).Append(sep).Append(e.artist).Append(sep)
+              .Append(e.bpm.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(sep)
+              .Append(e.group).Append(sep).Append(e.folderPath).Append(sep).Append(e.songKey).Append(sep)
+              .Append(e.chartFormat).Append(sep).Append(e.audioPath).Append(sep).Append(e.imagePath).Append(sep)
+              .Append(e.previewStartMs).Append(sep).Append(e.previewLengthMs).Append(sep)
+              // pack-supplied files: swapping in a folder whose .tsv now points at real jackets / previews / dances IS
+              // a change the player can see, even though every chart file stayed the same.
+              .Append(e.previewPath).Append(sep).Append(e.dpsPath).Append(sep).Append(e.chartSeed);
+            for (int d = 0; d < 3; d++)
+                sb.Append(sep).Append(e.ChartPath(d)).Append(sep).Append(e.ChartIndex(d))
+                  .Append(sep).Append(e.NoteCount(d)).Append(sep).Append(e.Diff(d));
+            return sb.ToString();
         }
 
         private static void Report(Action<float, string, string> onProgress, ScanJob job)
@@ -232,6 +326,9 @@ namespace Sdo.Game
                 songKey = song.SongKey ?? "",
                 cdPath = song.CdImagePath ?? "",   // "" → ExternalCdImage composes (and records) the disc on first select
                 chartFormat = (int)song.Format,
+                previewPath = song.PreviewAudioPath ?? "",
+                dpsPath = song.DpsPath ?? "",
+                chartSeed = song.GnSeed,
                 previewStartMs = song.PreviewStartMs,
                 previewLengthMs = song.PreviewLengthMs,
                 // hand-calibrated per-song offset from the folder sidecar → drives gameplay's songOffsetMs (see FrontendApp).
