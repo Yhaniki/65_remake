@@ -92,29 +92,38 @@ def brute_state1(st1: np.ndarray, hdr: bytes, n: int = 16) -> int | None:
     return int(c[0]) if len(c) else None
 
 
+def _stage1(raw: bytes, n: int, outer: bool) -> np.ndarray:
+    """取 blob 前 n bytes；outer=True 先還原 patcher 外層變換。"""
+    b = raw[BLOB_OFF:BLOB_OFF + n] if n else raw[BLOB_OFF:]
+    return undo_outer(b) if outer else np.frombuffer(b, dtype=np.uint8)
+
+
 def crack(path: str, pool: list[int]):
-    """回傳 (state1, raw, how)；失敗時 state1 為 None。"""
+    """回傳 (state1, raw, outer, how)；失敗時 state1 為 None。
+
+    自動判斷有沒有 patcher 外層變換：
+      patch music\\*.nx → 有外層；music\\*.gn（已安裝/離線單機）→ 沒有。
+    """
     raw = open(path, "rb").read()
     if len(raw) < BLOB_OFF + KNOWN or raw[HDR_OFF + 4:HDR_OFF + 6] != b"gn":
-        return None, None, "not a container"
+        return None, None, None, "not a container"
     hdr = raw[HDR_OFF:HDR_OFF + KNOWN]
     bloblen = len(raw) - BLOB_OFF
-    st1 = undo_outer(raw[BLOB_OFF:BLOB_OFF + KNOWN])
-    for s in pool:                                    # seed 會重複用 → 先試已知的（免暴力）
-        if looks_valid(st1, s, hdr, bloblen):
-            return s, raw, "pool"
-    s = brute_state1(st1, hdr)
-    if s is None:
-        return None, None, "no candidate"
-    if not looks_valid(st1, s, hdr, bloblen):
-        return None, None, "verify failed"
-    pool.insert(0, s)
-    return s, raw, "brute"
+    for outer in (True, False):                       # 先試 .nx（有外層），再試純 .gn
+        st1 = _stage1(raw, KNOWN, outer)
+        for s in pool:                                # seed 會跨檔重複用 → 先試已知的（免暴力）
+            if looks_valid(st1, s, hdr, bloblen):
+                return s, raw, outer, "pool"
+        s = brute_state1(st1, hdr)
+        if s is not None and looks_valid(st1, s, hdr, bloblen):
+            pool.insert(0, s)
+            return s, raw, outer, "brute"
+    return None, None, None, "no candidate"
 
 
-def decrypt(raw: bytes, state1: int) -> bytes:
+def decrypt(raw: bytes, state1: int, outer: bool) -> bytes:
     """完整解密 blob → 明文 StepFile。"""
-    st1 = undo_outer(raw[BLOB_OFF:])
+    st1 = _stage1(raw, 0, outer)
     ks = keystream(state1, len(st1))
     return ((st1.astype(np.int16) - ks.astype(np.int16)) & 0xFF).astype(np.uint8).tobytes()
 
@@ -134,7 +143,7 @@ def main() -> int:
     pool: list[int] = []
     ok, failed = 0, []
     for i, f in enumerate(files, 1):
-        s, raw, how = crack(f, pool)
+        s, raw, outer, how = crack(f, pool)
         name = os.path.basename(f)
         if s is None:
             failed.append((name, how))
@@ -143,9 +152,10 @@ def main() -> int:
         ok += 1
         if a.out:
             os.makedirs(a.out, exist_ok=True)
-            open(os.path.join(a.out, name + ".plain"), "wb").write(decrypt(raw, s))
+            open(os.path.join(a.out, name + ".plain"), "wb").write(decrypt(raw, s, outer))
         if a.verbose or how == "brute":
-            print(f"  [{i}/{len(files)}] {name:22} state1={s:#08x} ({how})")
+            layer = "外層+LCG" if outer else "純LCG"
+            print(f"  [{i}/{len(files)}] {name:22} state1={s:#08x} ({how}, {layer})")
 
     print(f"\n{ok}/{len(files)} 成功；distinct seed = {len(pool)}")
     if a.out:
