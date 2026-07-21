@@ -227,9 +227,10 @@ namespace Sdo.Tests
         [Test]
         public void IsShopModelId_Excludes9xxxxxDefaultsAndNonPositive()
         {
-            // 9xxxxx = 素體內建預設衣服/部位 (預設臉 900007、預設髮/上衣/下著/鞋 900002..900020) → 不上架 (user)
+            // 900xxx = 素體內建預設衣服/部位 (預設臉 900007、預設髮/上衣/下著/鞋 900001..900020) → 不上架 (user)
             Assert.IsFalse(AvatarItemCatalog.IsShopModelId(900007), "900007 default face is not a shop model");
             Assert.IsFalse(AvatarItemCatalog.IsShopModelId(900004), "900004 default pant is not a shop model");
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(900017), "900017 default hair is not a shop model");
             Assert.IsFalse(AvatarItemCatalog.IsShopModelId(AvatarItemCatalog.DefaultModelIdBase), "the 900000 boundary is excluded");
             Assert.IsFalse(AvatarItemCatalog.IsShopModelId(0), "0 is not a model");
             Assert.IsFalse(AvatarItemCatalog.IsShopModelId(-1), "negative is not a model");
@@ -237,6 +238,32 @@ namespace Sdo.Tests
             Assert.IsTrue(AvatarItemCatalog.IsShopModelId(12657), "012657 (a real 长靴) is a shop model");
             Assert.IsTrue(AvatarItemCatalog.IsShopModelId(1277), "001277 is a shop model");
             Assert.IsTrue(AvatarItemCatalog.IsShopModelId(899999), "899999 (just below the default range) is still a shop model");
+        }
+
+        [Test]
+        public void IsShopModelId_Allows999xxxPatchBand()
+        {
+            // 999xxx = patch Datas 後補活動/特殊服裝 (999901..999949) → 要上架 (user: 9999xx 系列沒出現 → 上架)
+            Assert.IsTrue(AvatarItemCatalog.IsShopModelId(999901), "999901 patch shoes IS a shop model");
+            Assert.IsTrue(AvatarItemCatalog.IsShopModelId(999949), "999949 patch coat IS a shop model");
+            Assert.IsTrue(AvatarItemCatalog.IsShopModelId(AvatarItemCatalog.PatchModelIdBase), "the 999000 patch-band boundary is a shop model");
+            // the empty gap between the 900xxx defaults and the 999xxx patch band stays excluded (no files live there)
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(950000), "950000 (default..patch gap) is not a shop model");
+            Assert.IsFalse(AvatarItemCatalog.IsShopModelId(998999), "998999 (just below the patch band) is not a shop model");
+        }
+
+        [Test]
+        public void CapCoinPrice_CapsMPricesOver5000_LeavesOthers()
+        {
+            // user: 超過 5000M 的衣服都改成 5000 (M 幣 = Coins = priceCategory 1)
+            int coins = (int)ItemPriceCurrency.Coins;   // 1 = M 幣
+            Assert.AreEqual(5000, AvatarItemCatalog.CapCoinPrice(6000, coins), "6000M → capped to 5000");
+            Assert.AreEqual(5000, AvatarItemCatalog.CapCoinPrice(2000000, coins), "a 2,000,000M item → 5000");
+            Assert.AreEqual(5000, AvatarItemCatalog.CapCoinPrice(5000, coins), "exactly 5000M stays 5000 (not over)");
+            Assert.AreEqual(4000, AvatarItemCatalog.CapCoinPrice(4000, coins), "under 5000M is unchanged");
+            // other wallets (G=Points 0 / H=Bonus 4) are not '5000M' → never capped
+            Assert.AreEqual(6000, AvatarItemCatalog.CapCoinPrice(6000, (int)ItemPriceCurrency.Points), "G 幣 (Points) price is not capped");
+            Assert.AreEqual(6000, AvatarItemCatalog.CapCoinPrice(6000, (int)ItemPriceCurrency.Bonus), "H 幣 (Bonus) price is not capped");
         }
     }
 }

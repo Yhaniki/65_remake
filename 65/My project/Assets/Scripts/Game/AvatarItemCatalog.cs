@@ -268,12 +268,25 @@ namespace Sdo.Game
             }
         }
 
-        // 9xxxxx (≥ DefaultModelIdBase) = the 素體內建 default body parts/clothes (預設臉 900007、預設 髮/上衣/下著/鞋…),
-        // not購買品 → never synthesised onto the shop shelf (user: 9xxxxx系列預設衣服的不要上架).
-        public const int DefaultModelIdBase = 900_000;
+        // 素體內建 default body parts/clothes (預設臉 900007、預設 髮/上衣/下著/鞋 900001..900020) 佔 900xxx 一段 →
+        // 不上架 (user: 9xxxxx系列預設衣服的不要上架)。但 999xxx 是 patch Datas 後補的活動/特殊服裝 (999901..999949,mesh-only,
+        // 借 035855..035858 / 023546 家族貼圖),要上架 (user: 9999xx 系列沒出現 → 上架)。磁碟上 9xxxxx 就只有這兩段
+        // (900xxx 預設 20 個 / 999xxx patch 49 個),中間無檔 → 排除 900xxx、放行 999xxx。
+        public const int DefaultModelIdBase = 900_000;   // 素體預設起點 (預設只佔 900xxx)
+        public const int PatchModelIdBase   = 999_000;   // 999xxx = 後補活動/特殊服裝 → 允許上架
 
-        /// <summary>True if a 6-digit model serial is a real buyable shop model (positive and NOT a 9xxxxx 素體預設).</summary>
-        public static bool IsShopModelId(int modelId) => modelId > 0 && modelId < DefaultModelIdBase;
+        /// <summary>True if a 6-digit model serial is a real buyable shop model: positive, and either below the 素體
+        /// 預設 band (&lt; 900000) or in the 999xxx patch band (≥ 999000). The 900xxx 素體 defaults stay off the shelf.</summary>
+        public static bool IsShopModelId(int modelId)
+            => modelId > 0 && (modelId < DefaultModelIdBase || modelId >= PatchModelIdBase);
+
+        // 使用者要求:M 幣 (Coins / priceCategory 1) 定價超過 5000 的衣服一律壓到 5000;其他幣別 (G=Points / H=Bonus) 不動。
+        public const int MaxCoinPrice = 5000;
+
+        /// <summary>Pure: cap a price at <see cref="MaxCoinPrice"/> when it is charged in M 幣 (Coins); a price in any
+        /// other wallet (G/H) is returned unchanged (user: 超過 5000M 的衣服都改成 5000).</summary>
+        public static int CapCoinPrice(int price, int priceCategoryRaw)
+            => (priceCategoryRaw == (int)ItemPriceCurrency.Coins && price > MaxCoinPrice) ? MaxCoinPrice : price;
 
         /// <summary>Encode a synth row's Id from its slot + gender + 6-digit model serial (see the SynthIdBase layout
         /// note). 附件 slots collapse to the legacy bare <c>SynthIdBase + modelId</c>; 衣物 slots bake slot+gender in.</summary>
@@ -518,7 +531,11 @@ namespace Sdo.Game
             // 由 tools/build_shop_names_tw.py 併成 shop_sets_tw.tsv。CN 與 TW 的 setId 各自重編號、意義不同 → 當「新套装」
             // 加入 (重映射 id 避免撞 CN),不覆蓋。渲染由 shop 的 IsRenderable 過濾 (組件 mesh 齊的才顯示)。
             int twSets = AddTwSets(clothing, groups, sets);
-            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版)");
+            // 使用者:M 幣 (Coins) 定價 > 5000 的衣服壓到 5000 (G/H 幣不動)。clothing 與 groups 共用同一批 ShopItem 物件,
+            // 改這裡的 Price → 顯示/購買/買齊/套装 全部吃到。合成 mes-only 列 (AllMeshModels, 100M) 本就 < 5000,不受影響。
+            int capped = 0;
+            foreach (var it in clothing) { int p = CapCoinPrice(it.Price, it.PriceCategoryRaw); if (p != it.Price) { it.Price = p; capped++; } }
+            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版, {capped} 件 M-幣 定價壓到 {MaxCoinPrice})");
             return new AvatarItemCatalog(clothing, groups, meshFiles, sets);
         }
 

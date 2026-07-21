@@ -11,7 +11,7 @@
   "lcg": "state=seed; 每步 state=(state*0x3D09)&0xffffffff; k=(state>>16)&0xff; out=in-k (解密)"
  },
  "counts": {
-  "total": 4323,
+  "total": 4321,
   "ddrm": 4,
   "sdom": 3170,
   "rewu": 1172,
@@ -21074,28 +21074,6 @@
    "bpm": 128.0,
    "title": "非常好",
    "size": 51960
-  },
-  {
-   "gn": "sdom1630k.gn",
-   "enc": "sdom",
-   "mode": "K",
-   "seed": 9458173,
-   "innerOff": 456,
-   "fileId": 11630,
-   "bpm": 122.0,
-   "title": "DNA",
-   "size": 49008
-  },
-  {
-   "gn": "sdom1630t.gn",
-   "enc": "sdom",
-   "mode": "T",
-   "seed": 5378792,
-   "innerOff": 456,
-   "fileId": 1630,
-   "bpm": 122.0,
-   "title": "DNA",
-   "size": 43932
   },
   {
    "gn": "sdom1631k.gn",

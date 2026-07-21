@@ -39,6 +39,40 @@ namespace Sdo.Osu
         public List<OsuHitObject> HitObjects { get; } = new List<OsuHitObject>();
 
         /// <summary>
+        /// SDO online/NX frame_type 33 = 捲動速度 track (time ms → current scroll-speed multiplier), sorted by time.
+        /// Unlike osu SV (which bakes each note's spacing over its whole flight via the scroll integral, so a note
+        /// is drawn wide from the moment it enters), this is the CURRENT global scroll speed: it changes the instant
+        /// the play head REACHES the event and rescales every on-screen note together (they jump), then holds until
+        /// the next event. Base value 1000 = ×1.0 (see GnChart.Frame33SpeedBase). Empty for offline .gn (no type-33)
+        /// → <see cref="CurrentScrollSpeed"/> is 1.0 everywhere.
+        /// </summary>
+        public List<OsuScrollSpeed> ScrollSpeeds { get; } = new List<OsuScrollSpeed>();
+
+        /// <summary>
+        /// The frame_type-33 scroll multiplier in effect at <paramref name="ms"/> = the last event at or before it
+        /// (1.0 before the first event, or when there are none). Multiply a note's scroll distance by this to get the
+        /// "speed changes when the play head arrives" behaviour. Events with <see cref="OsuScrollSpeed.RampMs"/> &gt; 0
+        /// ramp LINEARLY from the previous multiplier to their own over that duration (the slot's high 16 bits, e.g.
+        /// sdom2818 小節7 → gradual slow-down); RampMs == 0 is an instant step. Pure/testable; O(log n).
+        /// </summary>
+        public double CurrentScrollSpeed(double ms)
+        {
+            var ss = ScrollSpeeds;
+            if (ss == null || ss.Count == 0) return 1.0;
+            int lo = 0, hi = ss.Count - 1, s = -1;
+            while (lo <= hi) { int mid = (lo + hi) >> 1; if (ss[mid].TimeMs <= ms) { s = mid; lo = mid + 1; } else hi = mid - 1; }
+            if (s < 0) return 1.0;
+            var ev = ss[s];
+            if (ev.RampMs > 0.0 && ms < ev.TimeMs + ev.RampMs)
+            {
+                double prev = s > 0 ? ss[s - 1].Mult : 1.0;
+                double t = (ms - ev.TimeMs) / ev.RampMs;   // 0..1 across the ramp
+                return prev + (ev.Mult - prev) * t;
+            }
+            return ev.Mult;
+        }
+
+        /// <summary>
         /// Time (ms, note/beat clock) of the earliest hit object — the first "downbeat" the player hits.
         /// The per-song DPS choreography spans this to the last note (its total ≈ last−first note), so the
         /// dancer holds its standby idle through the intro (which can be several measures AFTER the music-start
@@ -158,6 +192,19 @@ namespace Sdo.Osu
                 return total;
             }
         }
+    }
+
+    /// <summary>
+    /// One SDO frame_type-33 捲動速度 point: at <see cref="TimeMs"/> the current scroll multiplier heads to
+    /// <see cref="Mult"/>. <see cref="RampMs"/> == 0 → instant step; &gt; 0 → linear ramp from the previous
+    /// multiplier over that many ms (the slot's high-16-bits duration, 官方線性變速).
+    /// </summary>
+    public readonly struct OsuScrollSpeed
+    {
+        public double TimeMs { get; }
+        public double Mult { get; }
+        public double RampMs { get; }
+        public OsuScrollSpeed(double timeMs, double mult, double rampMs = 0.0) { TimeMs = timeMs; Mult = mult; RampMs = rampMs; }
     }
 
     /// <summary>

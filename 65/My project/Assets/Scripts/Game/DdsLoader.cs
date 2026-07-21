@@ -114,7 +114,7 @@ namespace Sdo.Game
         /// </summary>
         public static DdsAlphaMode GetSceneAlphaMode(byte[] d)
         {
-            if (!AlphaCounts(d, out int total, out int visible, out int soft, out int hardTransp) || visible == 0)
+            if (!AlphaCounts(d, out int total, out int visible, out int soft, out int hardTransp, out _) || visible == 0)
                 return DdsAlphaMode.Opaque;
             float softOfVisible = soft / (float)visible;
             float hardTranspFrac = hardTransp / (float)total;
@@ -128,28 +128,41 @@ namespace Sdo.Game
         /// is fine but the alpha was left at 0 — which the cutout/blend path renders as a see-through wireframe. No real
         /// garment is mostly holes, so the caller forces such textures opaque. Returns 0 for alpha-less formats (DXT1).</summary>
         public static float HardTransparentFraction(byte[] d)
-            => AlphaCounts(d, out int total, out _, out _, out int hardTransp) && total > 0 ? hardTransp / (float)total : 0f;
+            => AlphaCounts(d, out int total, out _, out _, out int hardTransp, out _) && total > 0 ? hardTransp / (float)total : 0f;
 
-        // Walk the base-mip alpha and count: total texels, visible (a>8), soft (8<a<247), hardTransp (a<=8).
-        // Mirrors GetAlphaMode's DXT3 / DXT5 / 32-bit-uncompressed decode paths (no early-out). Returns false for
-        // formats with no alpha (DXT1 / unsupported) — caller treats those as Opaque.
-        private static bool AlphaCounts(byte[] d, out int total, out int visible, out int soft, out int hardTransp)
+        /// <summary>Fraction of ALL texels whose alpha is GENUINELY intermediate (<see cref="MidLo"/>&lt;a&lt;<see cref="MidHi"/>
+        /// ≈ 0.13..0.87). A real sheer FABRIC (lace / mesh / organza) is translucent everywhere → a HIGH fraction here
+        /// (Flower Lace Dress 024976_WOMAN_ONE ≈ 0.27-0.35). Two look-alikes score LOW and must NOT be treated as sheer:
+        /// a SOLID dress with hard lace-hem holes is BIMODAL — mass at a≈0 and a≈1, few midtones (眉画犹思 037888 ≈ 0.09);
+        /// a broken all-0 alpha channel is ≈0. The garment builder routes a high fraction to alpha-BLEND so the skin shows
+        /// through the fabric (see <see cref="SdoAvatarBuilder.GarmentAlphaMode"/>). Returns 0 for alpha-less DXT1.</summary>
+        public static float TranslucentFraction(byte[] d)
+            => AlphaCounts(d, out int total, out _, out _, out _, out int mid) && total > 0 ? mid / (float)total : 0f;
+
+        // "genuinely translucent" alpha band: exclude near-transparent (holes / AA fringe) AND near-opaque (solid body /
+        // AA fringe) so only real sheer-fabric midtones are counted — the signal that separates lace from a solid dress.
+        private const int MidLo = 32, MidHi = 224;
+
+        // Walk the base-mip alpha and count: total texels, visible (a>8), soft (8<a<247), hardTransp (a<=8), and mid
+        // (genuinely translucent, MidLo<a<MidHi). Mirrors GetAlphaMode's DXT3 / DXT5 / 32-bit-uncompressed decode paths
+        // (no early-out). Returns false for formats with no alpha (DXT1 / unsupported) — caller treats those as Opaque.
+        private static bool AlphaCounts(byte[] d, out int total, out int visible, out int soft, out int hardTransp, out int mid)
         {
-            total = visible = soft = hardTransp = 0;
+            total = visible = soft = hardTransp = mid = 0;
             if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
             string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
             int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
             if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return false;
             int bw = Math.Max(1, (width + 3) / 4), bh = Math.Max(1, (height + 3) / 4), bi = 128;
-            int t = 0, v = 0, s = 0, ht = 0;
+            int t = 0, v = 0, s = 0, ht = 0, mt = 0;
             if (fourcc == "DXT3")
             {
                 for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
                     for (int k = 0; k < 8; k++)
                     {
                         int ab = d[bi + k];
-                        int a0t = (ab & 0xF) * 255 / 15; t++; if (a0t <= 8) ht++; else { v++; if (a0t < 247) s++; }
-                        int a1t = ((ab >> 4) & 0xF) * 255 / 15; t++; if (a1t <= 8) ht++; else { v++; if (a1t < 247) s++; }
+                        int a0t = (ab & 0xF) * 255 / 15; t++; if (a0t <= 8) ht++; else { v++; if (a0t < 247) s++; } if (a0t > MidLo && a0t < MidHi) mt++;
+                        int a1t = ((ab >> 4) & 0xF) * 255 / 15; t++; if (a1t <= 8) ht++; else { v++; if (a1t < 247) s++; } if (a1t > MidLo && a1t < MidHi) mt++;
                     }
             }
             else if (fourcc == "DXT5")
@@ -161,7 +174,7 @@ namespace Sdo.Game
                     for (int i = 0; i < 16; i++)
                     {
                         int a = Dxt5Alpha(a0, a1, (int)((bits >> (i * 3)) & 7));
-                        t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; }
+                        t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++;
                     }
                 }
             }
@@ -176,10 +189,10 @@ namespace Sdo.Game
                 {
                     uint px = (uint)(d[off + i * 4] | (d[off + i * 4 + 1] << 8) | (d[off + i * 4 + 2] << 16) | (d[off + i * 4 + 3] << 24));
                     int a = max == 0 ? 255 : (int)(((px & am) >> shift) * 255 / max);
-                    t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; }
+                    t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++;
                 }
             }
-            total = t; visible = v; soft = s; hardTransp = ht;
+            total = t; visible = v; soft = s; hardTransp = ht; mid = mt;
             return t > 0;
         }
 
@@ -331,7 +344,21 @@ namespace Sdo.Game
             return ((6 - code) * a0 + (code - 1) * a1) / 5;
         }
 
+        /// <summary>Alpha-debanding strength for a glow DDS with banded 4-bit alpha (see <see cref="SmoothAlpha"/>).</summary>
+        public enum AlphaSmooth { None, PreserveDetail, Full }
+
         public static Texture2D Load(byte[] d) => Load(d, false);
+        public static Texture2D Load(byte[] d, bool bleedAlphaEdges, AlphaSmooth smooth)
+        {
+            // smooth only affects the DXT3 hand-decode (4-bit alpha banding); other formats are already smooth.
+            if (smooth != AlphaSmooth.None && d != null && d.Length >= 128 && d[0] == 'D' && d[1] == 'D' && d[2] == 'S' && d[3] == ' '
+                && System.Text.Encoding.ASCII.GetString(d, 84, 4) == "DXT3")
+            {
+                int hgt = BitConverter.ToInt32(d, 12), wid = BitConverter.ToInt32(d, 16);
+                if (wid > 0 && hgt > 0 && wid <= 4096 && hgt <= 4096) return DecodeDxt3(d, 128, wid, hgt, bleedAlphaEdges, smooth);
+            }
+            return Load(d, bleedAlphaEdges);
+        }
 
         /// <param name="bleedAlphaEdges">When true, the decoded RGB is dilated outward into transparent /
         /// semi-transparent texels (alpha unchanged) so a white/light MATTE behind a cut-out can't bleed a halo
@@ -572,7 +599,78 @@ namespace Sdo.Game
         }
 
         // BC2: 16-byte blocks = 8 bytes 4-bit alpha + 8 bytes DXT1-style colour (always 4-colour, no 1-bit alpha)
-        private static Texture2D DecodeDxt3(byte[] d, int off, int w, int h, bool bleed = false)
+        /// <summary>Low-pass the ALPHA channel to reconstruct a smooth gradient from DXT3's 4-bit (≤16-level) alpha — a
+        /// soft glow quantised to ~9-12 levels renders as concentric "tree-ring" bands (年輪). Alpha only; RGB untouched.
+        /// Two strengths (the SCN0022 ghost vs searchlight need different treatment):
+        ///   preserveDetail=TRUE  → a single BILATERAL pass: a texel averages only neighbours whose alpha is within
+        ///     <c>rangeThreshold</c>, so the small quantisation steps (~17) merge into a fade while high-contrast detail
+        ///     (the ghost's eye/mouth holes, ≫threshold) stays sharp. Used for sprites that carry shape in their alpha.
+        ///   preserveDetail=FALSE → a stronger 3-pass separable BOX blur: for a pure gradient with NO detail to keep (the
+        ///     searchlight beam), it flattens every step. The bilateral is too weak on a big 256px beam (rings survive).
+        /// Radius scales with the texture (≈max(w,h)/40).</summary>
+        public static void SmoothAlpha(Color32[] px, int w, int h, bool preserveDetail = true)
+        {
+            if (px == null || w <= 0 || h <= 0 || px.Length < w * h) return;
+            int radius = Math.Max(1, Math.Min(8, (int)Math.Round(Math.Max(w, h) / 40.0)));
+            if (preserveDetail)
+            {
+                const int rangeThreshold = 28;   // > the ~17 quantisation step (bands merge), ≪ the face-hole contrast
+                                                 // (~110, eyes/mouth kept). ONE pass — a 2nd pass washed the low-contrast mouth.
+                var a = new byte[w * h];
+                for (int i = 0; i < w * h; i++) a[i] = px[i].a;
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int c = a[y * w + x], sum = 0, cnt = 0;
+                        for (int dy = -radius; dy <= radius; dy++)
+                        {
+                            int yy = y + dy; if (yy < 0 || yy >= h) continue;
+                            for (int dx = -radius; dx <= radius; dx++)
+                            {
+                                int xx = x + dx; if (xx < 0 || xx >= w) continue;
+                                int v = a[yy * w + xx];
+                                int diff = v - c; if (diff < 0) diff = -diff;
+                                if (diff <= rangeThreshold) { sum += v; cnt++; }
+                            }
+                        }
+                        px[y * w + x].a = cnt > 0 ? (byte)((sum + cnt / 2) / cnt) : (byte)c;
+                    }
+            }
+            else
+            {
+                var a = new float[w * h];
+                for (int i = 0; i < w * h; i++) a[i] = px[i].a;
+                var tmp = new float[w * h];
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    for (int y = 0; y < h; y++)          // horizontal
+                        for (int x = 0; x < w; x++)
+                        {
+                            float sum = 0f; int cnt = 0;
+                            for (int dx = -radius; dx <= radius; dx++)
+                            {
+                                int xx = x + dx; if (xx < 0 || xx >= w) continue;
+                                sum += a[y * w + xx]; cnt++;
+                            }
+                            tmp[y * w + x] = sum / cnt;
+                        }
+                    for (int y = 0; y < h; y++)          // vertical
+                        for (int x = 0; x < w; x++)
+                        {
+                            float sum = 0f; int cnt = 0;
+                            for (int dy = -radius; dy <= radius; dy++)
+                            {
+                                int yy = y + dy; if (yy < 0 || yy >= h) continue;
+                                sum += tmp[yy * w + x]; cnt++;
+                            }
+                            a[y * w + x] = sum / cnt;
+                        }
+                }
+                for (int i = 0; i < w * h; i++) { int v = (int)(a[i] + 0.5f); px[i].a = (byte)(v < 0 ? 0 : v > 255 ? 255 : v); }
+            }
+        }
+
+        private static Texture2D DecodeDxt3(byte[] d, int off, int w, int h, bool bleed = false, AlphaSmooth smooth = AlphaSmooth.None)
         {
             int bw = (w + 3) / 4, bh = (h + 3) / 4;
             if (off + bw * bh * 16 > d.Length) return null;
@@ -597,6 +695,7 @@ namespace Sdo.Game
                         px[y * w + x] = new Color32(col.r, col.g, col.b, (byte)((nib * 255 + 7) / 15));
                     }
                 }
+            if (smooth != AlphaSmooth.None) SmoothAlpha(px, w, h, smooth == AlphaSmooth.PreserveDetail);   // BEFORE the edge bleed
             if (bleed) BleedAlphaEdges(px, w, h);
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };   // D3D default is WRAP; tiling UVs (FIFA crowd u=-7.75..7.32, floors) need it
             tex.SetPixels32(px); tex.Apply(false, true);

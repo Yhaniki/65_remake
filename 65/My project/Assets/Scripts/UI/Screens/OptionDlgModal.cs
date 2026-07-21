@@ -28,6 +28,8 @@ namespace Sdo.UI.Screens
         private static readonly Color KeyText = new Color32(0x00, 0x00, 0xB0, 0xFF);        // blue fallback for glyphless keys
 
         private static readonly string[] ModeIds = { "Windowed", "Fullscreen", "Borderless" };
+        // 遊戲畫面(全屏/窗口) ↔ 進階(顯示模式/視窗大小) 連動用：800×600 在 ResolutionPreset 的索引(找不到退 0)。
+        private static readonly int Res800Index = Mathf.Max(0, ResolutionPreset.IndexOf(800, 600));
 
         private CanvasGroup _cg;
         private RectTransform _window; private CanvasGroup _windowCg; private WindowAnim _anim; // ROOMDLG-style spin-zoom in/out
@@ -201,7 +203,13 @@ namespace Sdo.UI.Screens
             _resSel = AdvSelector(b, yRes, resNames, i => _resIndex = i);
 
             AdvLabel(b, yMode, "settings.display_mode", bakedPill: false);
-            _modeSel = AdvSelector(b, yMode, new[] { L("display.windowed"), L("display.fullscreen"), L("display.borderless") }, i => _modeIndex = i);
+            _modeSel = AdvSelector(b, yMode, new[] { L("display.windowed"), L("display.fullscreen"), L("display.borderless") }, i =>
+            {
+                _modeIndex = i;
+                // 顯示模式 → 遊戲畫面(全屏/窗口)連動：視窗=窗口(pillarbox)、全螢幕/無邊框全螢幕=全屏(stretch)。「主要就是看是選視窗或全螢幕」。
+                _gpAspectFill = ModeIndexToAspectFill(i);
+                RefreshGame();
+            });
 
             AdvLabel(b, yLang, "settings.language", bakedPill: false);
             _langSel = AdvSelector(b, yLang, new[] { "繁體中文", "简体中文", "English", "日本語" }, i =>
@@ -334,9 +342,10 @@ namespace Sdo.UI.Screens
 
         private void BuildGame(RectTransform b)
         {
-            // row 1 遊戲畫面: A=全屏(fill→Stretch) · B=窗口(→Pillarbox 左右黑邊)
-            GameDot(b, GameOptAX, GameRowY[0], () => _gpAspectFill,  () => _gpAspectFill = true);
-            GameDot(b, GameOptBX, GameRowY[0], () => !_gpAspectFill, () => _gpAspectFill = false);
+            // row 1 遊戲畫面: A=全屏(fill→Stretch) · B=窗口(→Pillarbox 左右黑邊)。與進階頁「顯示模式/視窗大小」雙向連動：
+            // 全屏 → 無邊框全螢幕 + 800×600(拉伸)；窗口 → 視窗 + 800×600（見 SetAspectFillLinked）。
+            GameDot(b, GameOptAX, GameRowY[0], () => _gpAspectFill,  () => SetAspectFillLinked(true));
+            GameDot(b, GameOptBX, GameRowY[0], () => !_gpAspectFill, () => SetAspectFillLinked(false));
             // row 2 全屏泛光效果: A=開啟 · B=關閉 (persist only)
             GameDot(b, GameOptAX, GameRowY[1], () => _gpBloom,  () => _gpBloom = true);
             GameDot(b, GameOptBX, GameRowY[1], () => !_gpBloom, () => _gpBloom = false);
@@ -387,6 +396,18 @@ namespace Sdo.UI.Screens
         }
 
         private void RefreshGame() { foreach (var r in _gameRefresh) r(); }
+
+        // 遊戲畫面(全屏/窗口) → 連動進階(顯示模式 + 視窗大小)：全屏=無邊框全螢幕+800×600(拉伸)、窗口=視窗+800×600。
+        // 更新選擇器一律 notify:false，避免回頭觸發 _modeSel.onChange 又改回 _gpAspectFill（雙向遞迴）。
+        private void SetAspectFillLinked(bool fill)
+        {
+            _gpAspectFill = fill;
+            _modeIndex = AspectFillToModeIndex(fill);
+            _resIndex = Res800Index;
+            _modeSel?.Set(_modeIndex, false);
+            _resSel?.Set(_resIndex, false);
+            RefreshGame();
+        }
 
         // A handle-only slider whose official OptionDlg_Transparence handle rides between two screen x's (x0..x1) at a
         // baked track's y — the track/MIN/MAX are baked, so track+fill are invisible. minValue 0 .. maxValue 1.6.
@@ -509,6 +530,9 @@ namespace Sdo.UI.Screens
             Array.Copy(KeyBindSettings.SanitizeNames(s.keys.lane4aux, KeyBindSettings.DefaultAux), _aux, 4);
             s.gameplay ??= new GameplaySettings();
             LoadGame(s.gameplay);
+            // 遊戲畫面(全屏/窗口)與進階顯示模式連動 → 開窗時以顯示模式為準同步(主要看視窗 vs 全螢幕)，讓兩頁一開就一致
+            // (含修正舊版存檔裡不一致的組合)。
+            _gpAspectFill = ModeIndexToAspectFill(_modeIndex);
             CancelCapture();
 
             _resSel.Set(_resIndex, false);
@@ -580,6 +604,7 @@ namespace Sdo.UI.Screens
             Array.Copy(d.keys.lane4, _prim, 4);
             Array.Copy(d.keys.lane4aux, _aux, 4);
             LoadGame(d.gameplay);
+            _gpAspectFill = ModeIndexToAspectFill(_modeIndex);   // 同 Open：遊戲畫面跟顯示模式連動
             CancelCapture();
 
             _resSel.Set(_resIndex, false);
@@ -761,6 +786,14 @@ namespace Sdo.UI.Screens
         }
 
         // ---------------------------------------------------------------- pure helpers
+        /// <summary>遊戲畫面「全屏(拉伸)/窗口」→ 進階「顯示模式」索引：全屏=無邊框全螢幕(Borderless,2)、窗口=視窗(Windowed,0)。
+        /// 官方需求：全屏對應「全螢幕視窗化」。純函式(可測)。</summary>
+        public static int AspectFillToModeIndex(bool fill) => fill ? 2 : 0;
+
+        /// <summary>進階「顯示模式」索引 → 遊戲畫面是否全屏(拉伸)：視窗(0)=窗口(false)，全螢幕(1)/無邊框全螢幕(2)=全屏(true)。
+        /// 「主要就是看是選視窗或全螢幕」。純函式(可測)。</summary>
+        public static bool ModeIndexToAspectFill(int modeIndex) => modeIndex != 0;
+
         private static Language IndexToLang(int i) => i switch
         {
             0 => Language.TraditionalChinese, 1 => Language.SimplifiedChinese, 2 => Language.English, _ => Language.Japanese,

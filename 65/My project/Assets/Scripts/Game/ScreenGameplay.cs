@@ -399,6 +399,9 @@ namespace Sdo.Game
         private Transform _noteVisualRoot;                                // identity origin parent so all pooled note GameObjects live under one node
         private readonly RuntimeNote[] _holding = new RuntimeNote[Keys];
         private readonly Sprite[][] _noteFrames = new Sprite[Keys][];
+        private Sprite[] _bombFrames;                              // ZD00..ZD03 炸彈動畫 (NOTEIMAGE 共用,非每軌;隨 note skin 換)
+        private Sprite _bombExplodeSprite;                        // 引爆特效圖 = StepMania 的 Fallback Tap Explosion Dim HitMine → DATA/NOTEIMAGE/BOMB_EXPLODE.png
+        private const string MineSeName = "player_mine";          // StepMania theme 的 Player mine.ogg → DATA/SE/player_mine.wav
         private readonly Texture2D[] _holdTex = new Texture2D[Keys];
         private readonly Sprite[] _holdTail = new Sprite[Keys];
         private readonly bool[] _holdTailFlipX = new bool[Keys];   // combined-name skins share one cap across a lane pair → mirror it
@@ -415,6 +418,7 @@ namespace Sdo.Game
         public float recKeydownStepSec = 0.03f;                     // per-frame hold time for the 5-frame keydown burst
         private readonly SpriteRenderer[] _receptors = new SpriteRenderer[Keys];
         public float noteAnimFps = 12f;
+        public float bombAnimFps = 5f;   // 炸彈 ZD00..ZD03 循環速度(比音符慢,不然轉太快)
 
         // ---- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----
         // notes_board_click{1..4}.png (1..4 = lane) lights the struck lane. The original tints the strip with a
@@ -1379,6 +1383,10 @@ namespace Sdo.Game
                 bool flipY = (d == "up" || d == "down") && NoteDir.EndsWith("NOTEIMAGE_8");
                 if (capSpr != null) { _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr); _holdTailFlipX[c] = false; _holdTailFlipY[c] = flipY; }
             }
+            // 炸彈 (note_type 1) 動畫：ZD00..ZD03,整組共用(非每軌);隨 note skin 一起換。
+            var zd = new List<Sprite>();
+            for (int f = 0; f < 4; f++) { var s = SdoExtracted.LoadImage(NoteDir, "ZD0" + f + ".png", bleed: true); if (s != null) zd.Add(s); }
+            _bombFrames = zd.Count > 0 ? zd.ToArray() : null;
         }
 
         // 3D-note skin: load the three beat-colour families (magenta / blue / green) from 3DNOTES\ as 4-frame glow sets.
@@ -2773,11 +2781,18 @@ namespace Sdo.Game
         // Solo dance-spot = decompiled floor table @0x582690 entry1 = (0,0,0). (Multiplayer would index by slot/mode.)
         private Vector3 SoloDanceSpot() => Vector3.zero;
 
-        // EXACT decompiled mapId(3..18) -> CDT, recovered from the 021_gameplay jump tables (disassembled):
-        // solo/small (playerCount<=3) @0x4780b8 pushes the _1 variants; group (4..6) @0x4780f8 pushes the base.
-        // SCN0009 = mapId 9 = the PALACE -> palace_1.cdt (solo) / palace.cdt (group). null entry = decompiled fallback.
-        private static readonly string[] SoloCdt  = { "Garage_1","sea_1","Christmas_","playground_","sky_1","egypt_1","palace_1","huache_1",null,"fifa_1","fifa_1","ocean_1","Ghosthill_1","street_1","railway_1","houseboat_1" };
-        private static readonly string[] GroupCdt = { "Garage","sea","Christmas","playground","sky","egypt","palace","huache",null,"fifa","fifa","ocean","Ghosthill","street","railway","houseboat" };
+        // EXACT decompiled mapId(3..34) -> CDT. mapId 3..18 = the 16 classic maps, from the OFFLINE 021_gameplay
+        // jump tables (solo/small @0x4780b8 = _1 variants; group 4..6 @0x4780f8 = base). SCN0009 = mapId 9 = PALACE.
+        // mapId 19..34 = the NEWER maps: the offline standalone caps its switch at mapId 18 (>18 falls back to
+        // 1.cdt/3.cdt), so those come from the ONLINE client (sdo.bin) gameplay switch @0x73d425 (solo, byte-remap
+        // @0x73dccc -> JT @0x73dc48) / group @0x73d43a. scn####=mapId#### verified (palace9/railway17/subway20/
+        // basketball26). ⚠️ SCN0022 = mapId 22 = the 墓地/tomb -> 3ren.cdt (solo) / 6ren.cdt (group) = the "mu di"
+        // director whose .cv up-vectors roll ~60° (the tilted-map shots). null entry = fall through to the numeric
+        // fallback. Missing files are handled by SelectCdtPath's File.Exists chain, so unshipped maps stay safe.
+        private static readonly string[] SoloCdt  = { "Garage_1","sea_1","Christmas_","playground_","sky_1","egypt_1","palace_1","huache_1",null,"fifa_1","fifa_1","ocean_1","Ghosthill_1","street_1","railway_1","houseboat_1",
+                                                      "luoma_3","underground_3","zhanwei_3","3ren","jiaoshi_3","xuejing_3ren","spring_3g","basketball_3","narnia_3","niaochao_3","airpot_3","jiedao3","mj3ren","xk3","xk3","7.9_6ren" };
+        private static readonly string[] GroupCdt = { "Garage","sea","Christmas","playground","sky","egypt","palace","huache",null,"fifa","fifa","ocean","Ghosthill","street","railway","houseboat",
+                                                      "luoma_6","underground_shan","zhanwei_6","6ren","jiaoshi_6","xuejing_6ren","spring_6g","basketball_6yi","narnia_6yi","niaochao_6yi","airpot_6yi","jiedao6","mj6ren","xk6","xk6","7.9_6ren" };
 
         // scenePath "SCENE/SCN0009" -> 9 (matches the decompiled mapId = DAT_00674f04+0x5c).
         private int SceneMapId()
@@ -2786,14 +2801,14 @@ namespace Sdo.Game
             return m.Success ? int.Parse(m.Groups[1].Value) : -1;
         }
 
-        // mapId 3-18 → CDT stem; solo(n<=3) vs group(n=4-6); fallback chain: map→numeric→1
+        // mapId 3-34 → CDT stem; solo(n<=3) vs group(n=4-6); fallback chain: map→numeric→1
         private string SelectCdtPath()
         {
             int map = SceneMapId();
             int n   = Mathf.Max(1, playerCount);
             string[] table  = n <= 3 ? SoloCdt : GroupCdt;
             string fallback = n == 1 ? "1" : n <= 3 ? "3" : "6";
-            string mapped   = map >= 3 && map <= 18 ? table[map - 3] : null;
+            string mapped   = map >= 3 && map <= 2 + SoloCdt.Length ? table[map - 3] : null;
             foreach (var c in new[] { mapped, fallback, "1" })
             {
                 if (c == null) continue;
@@ -2848,6 +2863,15 @@ namespace Sdo.Game
         {
             foreach (var g in SceneMapobjCatalog.ForFolder(SceneFolder()))
             {
+                // SCN0022 坟墓: three props are drawn as camera-facing billboards instead of the fixed-orientation mesh
+                // (see SpawnSceneFlames / SpawnSceneGhosts) — skip the meshes here so they aren't double-drawn:
+                //   FENMU/LANHUO (SHAN.MSH, 鬼火 flame) — loaded but never linked as a child in the official (030 idx 2).
+                //   FENMU/GUI, FENMU/GUI2 (LABA11/12, 飛鬼) — the official Billboard_AddEntry's them; the flat .mot-baked
+                //     quad foreshortens/goes edge-on from the stage angle (hard, "solid-division"). Ghost billboards fly
+                //     via the .mot and always face the camera. (sheguang stays a mesh — it's a directional sweeping beam.)
+                if (g.Folder.Equals("FENMU/LANHUO", System.StringComparison.OrdinalIgnoreCase) ||
+                    g.Folder.Equals("FENMU/GUI", System.StringComparison.OrdinalIgnoreCase) ||
+                    g.Folder.Equals("FENMU/GUI2", System.StringComparison.OrdinalIgnoreCase)) continue;
                 var insts = new MapobjInstance[g.Instances.Length];
                 for (int i = 0; i < insts.Length; i++)
                 {
@@ -2947,6 +2971,12 @@ namespace Sdo.Game
             // capable (Sdo/UnlitInstanced) so a group's copies batch into instanced draws on the GPU. A material
             // whose texture carries real alpha (DXT3/DXT5 cut-out) uses the alpha-blended instanced twin so its
             // transparent regions "去背" instead of painting solid (faithful to the original's per-material blend).
+            // Glow props flagged AlphaBlendOverlay (SCN0022 sheguang searchlight) have a banded DXT3 alpha → smooth it so
+            // the beam gradient doesn't show concentric "tree-ring" steps (年輪). FULL strength: the beam is a pure gradient
+            // with no detail to protect, so flatten every step (the ghost uses PreserveDetail to keep its face). Scoped.
+            var glowSmooth = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName)
+                              == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay
+                              ? DdsLoader.AlphaSmooth.Full : DdsLoader.AlphaSmooth.None;
             var subMats = new List<Material[]>(r.Submeshes.Count);
             foreach (var sub in r.Submeshes)
             {
@@ -2975,7 +3005,7 @@ namespace Sdo.Game
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
-                        var tex = ResolveDds(dir, nm, out bool a2, out bool glow2, out bool hc2);
+                        var tex = ResolveDds(dir, nm, out bool a2, out bool glow2, out bool hc2, glowSmooth);
                         // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯): a
                         // moving alpha-blend banner has no ZWrite, so its folds + the scene behind bleed through ("穿模").
                         mats[s] = NewMapobjMat(tex, fallbackCol, a2 && !opaque, a2 && !opaque && (volumetric || (animated && hc2)), a2 && !opaque && singleSidedAlpha, glow2);
@@ -2983,7 +3013,7 @@ namespace Sdo.Game
                 }
                 else
                 {
-                    var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1, out bool hc1);
+                    var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1, out bool hc1, glowSmooth);
                     // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯) — see above.
                     mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && (volumetric || (animated && hc1)), a1 && !opaque && singleSidedAlpha, glow1) };
                 }
@@ -3311,6 +3341,14 @@ namespace Sdo.Game
                 if (shader != null) mat.shader = shader;
                 if (mat.HasProperty("_Color")) mat.color = Color.white;
             }
+            else if (mode == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay)
+            {
+                // two-sided standard alpha-blend — undo an additive false-positive (SCN0022 sheguang searchlight). Faint
+                // the alpha (SCN0015 窗光 lesson) so the beam is a soft translucent shaft, not a solid additive-bright bar.
+                var shader = Shader.Find("Sdo/UnlitOverlay");
+                if (shader != null) mat.shader = shader;
+                if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, GhostSpriteAlpha);
+            }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.ForceAlphaBlend)
             {
                 // Override whatever shader the MSH loader chose with the standard alpha-blend shader.
@@ -3492,6 +3530,8 @@ namespace Sdo.Game
                 Debug.Log($"[scene] {SceneFolder()}: {res.Materials.Length} subsets, bounds c={b.center} s={b.size}");
                 TryLoadMapobjs();   // stage props on the same layer
                 TryLoadSceneAvatars();   // background NPCs ("場景的人" — e.g. SCN0017 subway passengers)
+                SpawnSceneFlames();   // camera-facing BillboardSet sprites (SCN0022 坟墓 鬼火) — a scene prop, always on
+                SpawnSceneGhosts();   // .mot-driven camera-facing sprites (SCN0022 坟墓 飛鬼) — flat mesh would foreshorten
                 if (effectScene) SpawnSceneEffects();   // 場景特效開關 (OPTION 遊戲頁)：常駐背景 EFT (SCN0008 magic circle, snow, aurora, …)
             }
 
@@ -3909,6 +3949,10 @@ namespace Sdo.Game
 
         // resolve a material's .dds name to a file in the avatar dir (case-insensitive), load it
         private Texture2D ResolveDds(string dir, string ddsName) => ResolveDds(dir, ddsName, out _);
+        // smooth overload: low-pass the DXT3 4-bit alpha to kill the "tree-ring" banding on a glow gradient
+        // (SCN0022 ghost/searchlight). Their DDS has only ~9-12 alpha levels; see DdsLoader.SmoothAlpha.
+        private Texture2D ResolveDds(string dir, string ddsName, DdsLoader.AlphaSmooth smooth)
+            => ResolveDds(dir, ddsName, out _, out _, out _, smooth);
 
         // Resolve a mapobj texture by material name and report whether it carries real alpha (so the caller can
         // alpha-blend its "去背" cut-out instead of painting it opaque). Reads the file once for both.
@@ -3926,7 +3970,7 @@ namespace Sdo.Game
         // classified by alpha DISTRIBUTION exactly like SCENE.MSH materials. Such props must render depth-writing
         // (alpha-TEST/cutout, ZWrite On), NOT alpha-BLEND (ZWrite Off) — otherwise a moving two-sided cloth's own
         // back faces and the pillars/people behind it bleed THROUGH it ("穿模"). The official used alpha-test here.
-        private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha, out bool additiveGlow, out bool hardCutout)
+        private Texture2D ResolveDds(string dir, string ddsName, out bool hasAlpha, out bool additiveGlow, out bool hardCutout, DdsLoader.AlphaSmooth smooth = DdsLoader.AlphaSmooth.None)
         {
             hasAlpha = false;
             additiveGlow = false;
@@ -3952,7 +3996,7 @@ namespace Sdo.Game
                 // white halo at the silhouette under straight alpha blending. Edge-bleed the decoded RGB so the
                 // transparent matte carries the prop's own colour instead. Additive glows are excluded: their low-
                 // alpha RGB IS the glow and must not be dilated. No-op on opaque textures, so it's safe by default.
-                return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow);
+                return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow, smooth: smooth);
             }
             catch { return null; }
         }
@@ -4069,14 +4113,7 @@ namespace Sdo.Game
             }
             // DEBUG（暫時停用）：切換 ShowTime（氣條）模式。註解掉避免誤觸；F7 現在給打拍音，要測時請自己挑個沒用到的鍵。
             // { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // SetTrackVisible refreshes HP-bar visibility for the new mode
-            if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
-            // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
-            if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
-            if (Input.GetKeyDown(KeyCode.Alpha2)) SpawnComboBurst(1);
-            if (Input.GetKeyDown(KeyCode.Alpha3)) SpawnComboBurst(2);
-            if (Input.GetKeyDown(KeyCode.Alpha4)) SpawnComboBurst(3);
-            if (Input.GetKeyDown(KeyCode.Alpha5)) SpawnComboBurst(4);
-            if (Input.GetKeyDown(KeyCode.Alpha0)) SpawnNamedEft("FINISHED", 5f);
+            // (已移除) 測試用 combo 爆發按鍵 B / 1-5 / 0 —— 會在遊玩時誤觸,清掉。要觀察爆發時自己臨時加回。
             // 測試用（已停用）：F5 直接跳到結算（Shift+F5 強制 GAME OVER）
             // if (Input.GetKeyDown(KeyCode.F5) && _started && !_ended)
             // {
@@ -4089,34 +4126,38 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.F5)) StepScrollSpeed(+1);
             if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
             // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
-            // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。F9 開測試面板（滑桿＋檔位按鈕）。
+            // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。
+            // 正式遊玩已停用（會誤觸）；只留給譜面編輯器（它的 HUD 就寫著這幾個鍵）。
             // 編輯器模式的暫停/變速要走 Editor* 版本（會重新錨定 dsp↔譜面時間；SetPaused 的恢復路徑假設音源是 Pause 過的，
             // 但編輯器 seek 是 Stop→Play，直接用會恢復不了聲音）。
-            if (Input.GetKeyDown(KeyCode.LeftBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, -1)); else SetGameRate(GameRate.Step(_musicRate, -1)); }
-            if (Input.GetKeyDown(KeyCode.RightBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, +1)); else SetGameRate(GameRate.Step(_musicRate, +1)); }
-            if (Input.GetKeyDown(KeyCode.Backslash)) { if (editorMode) EditorSetPaused(!_paused); else SetPaused(!_paused); }
-            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) { if (editorMode) EditorSetRate(GameRate.Normal); else SetGameRate(GameRate.Normal); }
+            if (editorMode)
+            {
+                if (Input.GetKeyDown(KeyCode.LeftBracket)) EditorSetRate(GameRate.Step(_musicRate, -1));
+                if (Input.GetKeyDown(KeyCode.RightBracket)) EditorSetRate(GameRate.Step(_musicRate, +1));
+                if (Input.GetKeyDown(KeyCode.Backslash)) EditorSetPaused(!_paused);
+                if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) EditorSetRate(GameRate.Normal);
+            }
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
             UpdateFlyHover();   // 飛行翅膀:跳舞時把舞者抬到 fly idle 同高(idle 靠 pose 已浮,dance 補抬)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
-            if (Input.GetKeyDown(KeyCode.F9))
-            {
-                // Shift+F9: 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依 graphicsUVStartsAtTop 自動判斷，
-                // 但萬一這台機器仍然上下顛倒就用它救）。原本掛在 F9，讓位給流速面板。
-                if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && _backdropMat != null)
-                {
-                    _backdropFlip = !_backdropFlip;
-                    _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
-                    _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
-                }
-                else _showRateUI = !_showRateUI;   // F9: 流速測試面板
-            }
+            // 測試用（已停用）：F9 開流速測試面板；Shift+F9 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依
+            // graphicsUVStartsAtTop 自動判斷，但萬一這台機器仍然上下顛倒就用它救）。遊玩時會誤觸，需要時再解開。
+            // if (Input.GetKeyDown(KeyCode.F9))
+            // {
+            //     if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && _backdropMat != null)
+            //     {
+            //         _backdropFlip = !_backdropFlip;
+            //         _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
+            //         _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
+            //     }
+            //     else _showRateUI = !_showRateUI;   // F9: 流速測試面板
+            // }
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
                 // F2 (decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
                 if (Input.GetKeyDown(KeyCode.F2)) CycleCamMode();
-                Vector3 eye, tgt;
+                Vector3 eye, tgt, up = Vector3.up;   // up = the .cv per-frame up vector (Camera_Update's LookAtLH 4th arg); non-vertical => roll/tilt
                 if (_camMode < 0 && _dirCv != null && _dirCv.Length > 0)
                 {
                     // Hold the director pinned to the START of shot 0 while the loading screen is still up — the camera
@@ -4130,19 +4171,21 @@ namespace Sdo.Game
                     float durSec = Mathf.Max(0.1f, _dirDurMs[_dirShot] / 1000f);
                     float el = Time.time - _dirShotStart;
                     if (el >= durSec) { _dirShot = (_dirShot + 1) % _dirCv.Length; _dirShotStart = Time.time; el = 0f; durSec = Mathf.Max(0.1f, _dirDurMs[_dirShot] / 1000f); }
-                    _dirCv[_dirShot].Sample(el / durSec, out eye, out tgt);     // VERBATIM .cv eye/target (Camera_Update)
+                    _dirCv[_dirShot].Sample(el / durSec, out eye, out tgt, out up);     // VERBATIM .cv eye/target/UP (Camera_Update)
                     // Camera_GetEyePos/GetTargetPos: add the dance-spot anchor ONLY for relative (:1) shots;
                     // absolute (:0) shots (e.g. the opening crane) use raw .cv world coords. Solo spot = 0 either way.
+                    // The anchor is a POSITION offset — it never touches the up vector (a direction).
                     if (!_dirAbs[_dirShot]) { eye += _danceSpot; tgt += _danceSpot; }
                 }
                 else
                 {
                     // FIXED camera: the exact decompiled static eye/target (DAT_005824f0/0x582538), absolute world.
+                    // These are built via Camera_ctor_default (up = world-up), so they stay level — keep up = Vector3.up.
                     int fi = Mathf.Clamp(_camMode, 0, FixedEye.Length - 1);
                     eye = FixedEye[fi]; tgt = FixedTgt[fi];
                 }
                 _sceneCam.transform.position = eye;
-                _sceneCam.transform.LookAt(tgt, Vector3.up);
+                _sceneCam.transform.LookAt(tgt, up);   // up carries the .cv roll → the auto-director's tilted-map shots
             }
             if (!_started) return;
             // Note timeline = the wall clock (Time.timeAsDouble - _clockStart), but re-locked every frame onto the
@@ -4175,6 +4218,7 @@ namespace Sdo.Game
                 else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
                 else { HandleInput(now); AutoMiss(now); }
             }
+            TickBombs(now);   // 炸彈:踩到(該軌按著)引爆 mine 音+扣血,否則安全通過
             UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
@@ -4466,11 +4510,19 @@ namespace Sdo.Game
         // 向上 (up-scroll, _scrollSign +1): future notes are BELOW the hit line and RISE to it. 向下 (_scrollSign −1):
         // future notes are ABOVE and FALL to it. Distance comes from ManiaScroll (osu Sequential integration), so
         // mid-song BPM changes / SV vary it locally; the sign just picks which side of the judge line notes come from.
-        private float YForTime(double noteMs, double now)
+        // Signed on-screen distance (design-px) from the judge line to a note at noteMs. SDO online/NX frame_type 33
+        // 捲動速度 is a SET current speed: the whole field scrolls at CurrentScrollSpeed(now) (snaps at an instant
+        // event, ramps linearly when the slot carries a duration), so a ×10 event genuinely pushes the notes out
+        // (the intended gimmick). No type-33 (offline .gn) → CurrentScrollSpeed is 1 → identical to before.
+        private float ScrollPx(double now, double noteMs)
         {
             if (_scroll == null) BuildScroll();
-            return judgeLineY + judgeOffsetY + _scrollSign * (float)_scroll.PixelDistance(now, noteMs);
+            float sv = _map != null ? (float)_map.CurrentScrollSpeed(now) : 1f;
+            return sv * (float)_scroll.PixelDistance(now, noteMs);
         }
+
+        private float YForTime(double noteMs, double now)
+            => judgeLineY + judgeOffsetY + _scrollSign * ScrollPx(now, noteMs);
 
         private void ScrollNotes(double now)
         {
@@ -4485,7 +4537,15 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) { ReturnVisual(n); continue; }
-                if (n.Note.StartTimeMs > now && (float)_scroll.PixelDistance(now, n.Note.StartTimeMs) > aheadPx) break;   // this + all later notes are still below/above the board
+                if (n.Note.StartTimeMs > now && ScrollPx(now, n.Note.StartTimeMs) > aheadPx)
+                {
+                    // Note is past the far edge of the board. With frame_type 33 捲動速度 the current speed can jump/
+                    // ramp, so a note that's off-board this frame may be back on it the next — we must keep hiding it
+                    // (never leave a stale visual frozen at its last spot). Constant-scroll charts stay sorted, so the
+                    // classic early-out is still safe and cheaper there.
+                    if (_map != null && _map.ScrollSpeeds.Count > 0) { ReturnVisual(n); continue; }
+                    break;   // this + all later notes are still below/above the board
+                }
                 int c = n.Note.Lane;
                 bool held = _holding[c] == n;        // a held long-note head stays pinned to the judge line
                 // 長條頭按住時釘在判定線；一旦尾端(END)通過判定線 (now ≥ EndTimeMs) 就整條隱藏 — 判定仍在跑
@@ -4518,6 +4578,16 @@ namespace Sdo.Game
                 bool stWin = showtimeMode && _showtime.Active;
                 float noteScale = stWin ? showtimeNoteScale : 1f;       // notes grow a little during the auto-hit window
                 float noteW = LaneW * noteScale;
+                if (n.Note.IsBomb)
+                {
+                    // 炸彈：ZD00..ZD03 循環動畫(用較慢的 bombAnimFps),平面 sprite —— 不旋轉、不吃 3D 箭頭、無長條/尾。
+                    if (n.Head.transform.localRotation != Quaternion.identity) n.Head.transform.localRotation = Quaternion.identity;
+                    if (_bombFrames != null && _bombFrames.Length > 0)
+                        n.Head.sprite = _bombFrames[((int)(Time.time * bombAnimFps)) % _bombFrames.Length];
+                    n.Head.color = Color.white;
+                    PlaceAspect(n.Head, PX(LaneLeftX[c] + LaneCx0), y, noteW, 1f);
+                    continue;
+                }
                 // 中途放開 (Bad/Miss) 的長條不直接消失：整條 (頭/身/尾) 調暗到 holdDropDim，繼續往判定線外流走。
                 Color noteCol = showtimeMode ? _noteTint : Color.white;   // showtime: gold→red flash over the window's last 3s
                 if (n.Dropped) noteCol = new Color(noteCol.r * holdDropDim, noteCol.g * holdDropDim, noteCol.b * holdDropDim, noteCol.a);
@@ -4712,6 +4782,7 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) continue;
+                if (n.Note.IsBomb) continue;   // 炸彈自動玩時避開,不打(由 TickBombs 處理)
                 if (!n.HeadJudged && now >= n.Note.StartTimeMs)
                 {
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
@@ -5048,7 +5119,7 @@ namespace Sdo.Game
             for (int i = _firstAlive; i < hi; i++)
             {
                 var n = _notes[i];
-                if (n.Done || n.HeadJudged || n.Note.Lane != lane) continue;
+                if (n.Done || n.HeadJudged || n.Note.IsBomb || n.Note.Lane != lane) continue;   // 炸彈不當一般 note 判定
                 double d = Math.Abs(n.Note.StartTimeMs - now);
                 if (d < bestAbs && d <= _engine.Windows.MissBoundary) { bestAbs = d; best = n; }
             }
@@ -5064,6 +5135,7 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) continue;
+                if (n.Note.IsBomb) continue;   // 炸彈不會 miss(避開才對);由 TickBombs 處理
                 // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
                 // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
                 if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
@@ -5076,6 +5148,71 @@ namespace Sdo.Game
                 // boundary), else a note held into the extra tail leniency is force-missed before its release could score.
                 if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
             }
+        }
+
+        // 炸彈 (note_type 1 = avoid-note)：當炸彈進到判定線 ±miss窗 且該軌鍵**被按著** → 引爆(StepMania mine 音 + 扣血)。
+        // 沒踩到就安全通過(過窗即消失,不算 miss)。編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
+        private void TickBombs(double now)
+        {
+            double win = _engine.Windows.MissBoundary;
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + win);
+            var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
+            for (int i = _firstAlive; i < hi; i++)
+            {
+                var n = _notes[i];
+                if (n.Done || !n.Note.IsBomb) continue;
+                double dt = now - n.Note.StartTimeMs;   // >0：炸彈已過判定線
+                if (dt < -win) continue;                // 還沒進引爆窗
+                bool held = false;
+                foreach (var k in laneKeys[n.Note.Lane]) if (Input.GetKey(k)) { held = true; break; }
+                if (dt <= win && held) ExplodeBomb(n);  // 踩到 → 引爆
+                else if (dt > win) n.Done = true;        // 安全通過 → 消失
+            }
+        }
+
+        private void ExplodeBomb(RuntimeNote n)
+        {
+            PlaySe(MineSeName);                       // StepMania theme 的爆炸音 (DATA/SE/player_mine.wav)
+            SpawnBombExplosion(n.Note.Lane);          // StepMania 的 HitMine 爆炸圖 (不是受擊線按下動畫)
+            ApplyEvent(Judgment.Miss, n.Note.Lane);   // 踩炸彈 = 斷連/扣血(比照 miss)
+            n.Done = true;                            // 引爆後移除
+        }
+
+        // 引爆特效：在判定線該軌位置放一張 StepMania HitMine 爆炸圖,放大+淡出後移除。上層(order 8)、吃 note board mask。
+        private void SpawnBombExplosion(int lane)
+        {
+            if (_bombExplodeSprite == null)
+                _bombExplodeSprite = SdoExtracted.LoadImage(Path.Combine(SdoExtracted.Root, "NOTEIMAGE"), "BOMB_EXPLODE.png", bleed: true);
+            if (_bombExplodeSprite == null) return;
+            var sr = NewSR("BombExplode", _bombExplodeSprite, 8);
+            sr.transform.SetParent(NoteVisualRoot, false);
+            sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+            // StepMania 的 HitMineCommand 第一件事就是 blend,add —— 這張圖是黑底無 alpha,靠 ADDITIVE 讓黑變透明
+            // (用 Sprites/Default alpha-blend 就會看到黑方塊)。Legacy Particles/Additive 是 2×tint×tex,_TintColor 0.5 = 1× 中性。
+            var sh = Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Sprites/Default");
+            var mat = new Material(sh);
+            if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", new Color(0.5f, 0.5f, 0.5f, 0.5f));
+            sr.sharedMaterial = mat;
+            StartCoroutine(BombExplodeCo(sr, lane));
+        }
+
+        // 逐字照 StepMania noteskin metrics 的 HitMineCommand：
+        //   blend,add; diffuse,1,1,1,1; zoom,1; rotationz,0; linear,0.3; rotationz,90; linear,0.3; rotationz,180; diffusealpha,0
+        // → 大小固定(不放大)、0°→180° 等速轉(300°/s)、後半段才淡出;全長 0.6s。
+        private IEnumerator BombExplodeCo(SpriteRenderer sr, int lane)
+        {
+            const float dur = 0.6f;   // linear,0.3 ×2
+            float cx = PX(LaneLeftX[lane] + LaneCx0), cy = judgeLineY + judgeOffsetY;
+            float w = LaneW * 1.5f;   // zoom 固定
+            for (float t = 0f; t < 1f; t += Time.deltaTime / dur)
+            {
+                float a = t <= 0.5f ? 1f : Mathf.Max(0f, 1f - (t - 0.5f) * 2f);   // 前半全亮,後半 diffusealpha→0
+                sr.color = new Color(a, a, a, 1f);                                 // additive:壓 RGB 就是淡出
+                PlaceAspect(sr, cx, cy, w, -0.4f);
+                sr.transform.localRotation = Quaternion.Euler(0f, 0f, -Mathf.Lerp(0f, 180f, t));
+                yield return null;
+            }
+            if (sr != null) Destroy(sr.gameObject);
         }
 
         private void ApplyEvent(Judgment j, int lane = -1)

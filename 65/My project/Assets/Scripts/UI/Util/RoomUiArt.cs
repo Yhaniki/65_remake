@@ -21,13 +21,14 @@ namespace Sdo.UI.Util
         private static string _dir;
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
         private static readonly Dictionary<string, Sprite> _soloCache = new Dictionary<string, Sprite>();
+        private static readonly Dictionary<string, Sprite> _aaCache = new Dictionary<string, Sprite>();
         private static readonly Dictionary<string, Sprite[]> _framesCache = new Dictionary<string, Sprite[]>();
 
         /// <summary>Resolved ROOM art folder (lazy). Settable for tests.</summary>
         public static string Dir
         {
             get { return _dir ?? (_dir = ResolveDir()); }
-            set { _dir = value; _cache.Clear(); _soloCache.Clear(); _framesCache.Clear(); }
+            set { _dir = value; _cache.Clear(); _soloCache.Clear(); _aaCache.Clear(); _framesCache.Clear(); }
         }
 
         private static string ResolveDir()
@@ -70,6 +71,20 @@ namespace Sdo.UI.Util
             if (_soloCache.TryGetValue(anName, out var s) && s != null) return s;
             s = SdoExtracted.LoadAnSolo(Dir, anName, pad: 0) ?? An(anName);   // pad:0 → 尺寸同 atlas crop,不位移(見 doc)
             _soloCache[anName] = s;
+            return s;
+        }
+
+        /// <summary>As <see cref="AnSolo"/> but SUPERSAMPLED (see <see cref="SdoExtracted.LoadAnSoloMip"/>): the ROOM
+        /// buttons (開始/旁觀/房主設置…) are ~73px near 1-bit discs; at the default 800×600 window they show ~1:1 where a
+        /// hard edge is jagged and a blur is mushy. The loader clips the baked outer glow, upsamples the crop 3× onto a
+        /// mipmapped texture and returns it at ppu = 3 so it DISPLAYS at the logical size — the GPU area-downsamples it to
+        /// a crisp ~1px AA edge at any window/fullscreen scale. Falls back to the plain solo sprite if the crop fails.</summary>
+        public static Sprite AnSoloAA(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            if (_aaCache.TryGetValue(anName, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSoloMip(Dir, anName, pad: 0) ?? AnSolo(anName);
+            _aaCache[anName] = s;
             return s;
         }
 

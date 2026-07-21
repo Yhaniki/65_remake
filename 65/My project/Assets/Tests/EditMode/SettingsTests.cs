@@ -14,6 +14,16 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Default_Display_Is_Windowed_800x600()
+        {
+            // 全新安裝預設 = 遊戲畫面「窗口」= 進階「視窗化 800×600」（使用者要求；兩頁連動的一致預設）。
+            var d = new GameSettings().display;
+            Assert.AreEqual("Windowed", d.displayMode);
+            Assert.AreEqual(800, d.width);
+            Assert.AreEqual(600, d.height);
+        }
+
+        [Test]
         public void Json_RoundTrip_Preserves_Fields()
         {
             var s = new GameSettings();
@@ -64,7 +74,7 @@ namespace Sdo.Tests
             Assert.AreEqual(1f, s.display.uiScale, 1e-4f);
             Assert.AreEqual(1f, s.audio.bgm, 1e-4f);
             Assert.AreEqual(0f, s.audio.sfx, 1e-4f);
-            Assert.AreEqual("Borderless", s.display.displayMode);   // 預設全螢幕視窗化（同 GameSettings 的預設值）
+            Assert.AreEqual("Windowed", s.display.displayMode);     // 預設視窗化（同 GameSettings 的預設值，與遊戲畫面「窗口」連動）
             Assert.AreEqual("zh-TW", s.language);
         }
 

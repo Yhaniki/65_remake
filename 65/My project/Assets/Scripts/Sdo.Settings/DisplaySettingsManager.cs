@@ -83,7 +83,7 @@ namespace Sdo.Settings
             s.display.height = c.Height;
             if (s.display.uiScale <= 0f) s.display.uiScale = 1f;
             s.display.uiScale = Mathf.Clamp(s.display.uiScale, 0.5f, 3f);
-            if (string.IsNullOrEmpty(s.display.displayMode)) s.display.displayMode = "Borderless";
+            if (string.IsNullOrEmpty(s.display.displayMode)) s.display.displayMode = "Windowed";
 
             s.audio.bgm = Mathf.Clamp01(s.audio.bgm);
             s.audio.gameMusic = Mathf.Clamp01(s.audio.gameMusic);

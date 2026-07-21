@@ -176,6 +176,71 @@ namespace Sdo.Tests
         }
 
         /// <summary>
+        /// SDO online/NX frame_type 33 = 捲動速度 events fill <see cref="OsuBeatmap.ScrollSpeeds"/> with mult =
+        /// value / 1000 (1000 = 原速度 ×1.0). <see cref="OsuBeatmap.CurrentScrollSpeed"/> is a step function: 1.0
+        /// before the first event, then each event's multiplier from its time onward (the "speed changes when the
+        /// play head arrives" model, not baked SV). Marker frames must never be counted as notes.
+        /// </summary>
+        [Test]
+        public void Frame33_FillsScrollSpeedTrack_AsCurrentSpeedSteps_NotNotes()
+        {
+            var body = PlainStep(120f,
+                (meas: 0, ft: 33, u0: 2000),    // opening @ beat 0 -> ×2.0 (base 1000)
+                (meas: 1, ft: 2, u0: 1),         // a Left note (so the map isn't empty)
+                (meas: 2, ft: 33, u0: 500));     // scroll change @ beat 8 -> ×0.5
+            var map = GnChart.Load(body, difficulty: 0);
+
+            Assert.AreEqual(2, map.ScrollSpeeds.Count, "two frame_type 33 events -> two scroll-speed points");
+            Assert.AreEqual(2.0, map.ScrollSpeeds[0].Mult, 1e-6, "2000 / 1000 = ×2.0");
+            Assert.AreEqual(0.5, map.ScrollSpeeds[1].Mult, 1e-6, "500 / 1000 = ×0.5");
+
+            double beat8ms = 8.0 * (60000.0 / 120.0);   // 4000ms
+            Assert.AreEqual(1.0, map.CurrentScrollSpeed(-1.0), 1e-6, "before the first event -> ×1.0");
+            Assert.AreEqual(2.0, map.CurrentScrollSpeed(0.0), 1e-6, "from the opening event -> ×2.0");
+            Assert.AreEqual(2.0, map.CurrentScrollSpeed(beat8ms - 1.0), 1e-6, "holds until the next event");
+            Assert.AreEqual(0.5, map.CurrentScrollSpeed(beat8ms), 1e-6, "jumps to ×0.5 the instant the play head reaches beat 8");
+            Assert.AreEqual(1, map.HitObjects.Count, "type-33 frames are events, not notes");
+        }
+
+        /// <summary>
+        /// A frame_type 33 event with RampMs &gt; 0 (slot high-16 duration, e.g. sdom2818 小節7) ramps LINEARLY from
+        /// the previous multiplier to its own across the duration, then holds — the official 線性變速, not a step.
+        /// </summary>
+        [Test]
+        public void CurrentScrollSpeed_LinearRamp_InterpolatesFromPreviousMultiplier()
+        {
+            var m = new OsuBeatmap();
+            m.ScrollSpeeds.Add(new OsuScrollSpeed(0.0, 1.0));            // base ×1.0 @ 0ms
+            m.ScrollSpeeds.Add(new OsuScrollSpeed(1000.0, 3.0, 400.0)); // ramp to ×3.0 over 400ms from 1000ms
+
+            Assert.AreEqual(1.0, m.CurrentScrollSpeed(999.0), 1e-6, "before the ramp -> previous mult");
+            Assert.AreEqual(1.0, m.CurrentScrollSpeed(1000.0), 1e-6, "ramp start (t=0) -> previous mult");
+            Assert.AreEqual(2.0, m.CurrentScrollSpeed(1200.0), 1e-6, "halfway (t=0.5) -> lerp(1,3) = 2.0");
+            Assert.AreEqual(3.0, m.CurrentScrollSpeed(1400.0), 1e-6, "ramp end -> target ×3.0");
+            Assert.AreEqual(3.0, m.CurrentScrollSpeed(5000.0), 1e-6, "past the ramp -> holds target");
+        }
+
+        /// <summary>note_type 1 on a lane frame (frameType 2..5) parses as a 炸彈 (IsBomb), never a hold or normal tap.</summary>
+        [Test]
+        public void NoteType1_ParsesAsBomb_NotHoldNotTap()
+        {
+            int bodyLen = 300 + 12;
+            var b = new byte[bodyLen];
+            b[4] = (byte)'g'; b[5] = (byte)'n';
+            PutFloatAbs(b, 16, 120f);
+            PutU32Abs(b, 284, 300); PutU32Abs(b, 288, (uint)bodyLen); PutU32Abs(b, 292, (uint)bodyLen); PutU32Abs(b, 296, (uint)bodyLen);
+            int o = 300;
+            PutU32Abs(b, o, 1); PutU16Abs(b, o + 4, 2); PutU16Abs(b, o + 6, 1);   // meas 1, frameType 2 = Left, interval 1
+            PutU16Abs(b, o + 8, 1); b[o + 10] = 0; b[o + 11] = 1;                 // slot: u0=1, u1=0, note_type = 1 (BOMB)
+
+            var map = GnChart.Load(b, difficulty: 0);
+            Assert.AreEqual(1, map.HitObjects.Count);
+            Assert.IsTrue(map.HitObjects[0].IsBomb, "note_type 1 -> IsBomb");
+            Assert.IsFalse(map.HitObjects[0].IsHold, "a bomb is never a hold");
+            Assert.AreEqual(0, map.HitObjects[0].Lane, "frameType 2 = Left = lane 0");
+        }
+
+        /// <summary>
         /// Build a PLAINTEXT StepFile at offset 0 ('gn'@4, address_easy==300 -> GnChart's plain branch, no
         /// decrypt). Each frame is one slot (interval 1): (measurement, stepFrameType, u0). u1/nt are 0.
         /// </summary>

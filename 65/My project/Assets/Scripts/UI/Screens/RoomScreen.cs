@@ -384,23 +384,24 @@ namespace Sdo.UI.Screens
             Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null);                              // 信件
             Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包
             // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
-            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null);
+            // 大顆圓鈕 → alphaHit：命中判定貼齊可見圓形,透明四角不再誤觸。
+            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null, alphaHit: 0.5f);
 
             // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
-            _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null);
-            _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle);
-            _cancelReadyBtn = Btn("cancel_ready", "c_ready0", "c_ready1", "c_ready2", Win3, 706, 43, OnReadyToggle);
+            _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f);
+            _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f);
+            _cancelReadyBtn = Btn("cancel_ready", "c_ready0", "c_ready1", "c_ready2", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f);
 
             // 5) 左上「左拉」收合鈕（官方 uihide/uidisplay，同一位置 11,83）。按 ◄(BtnMaypopLeft) → 三個面板往四周滑出；
             //    收合後原地換成 ►(BtnMaypopRight) 展開鈕。掛在 Root（不隨面板收合），且最後建立 → 疊在最上層永遠可點。
             // 收合/展開鈕：滑過 Buttonfloat、按下 Interfaceout（官方 uihide/uidisplay 滑動音）。
             _uiHideBtn = UIKit.AddSpriteButton(Root, "uihide",
-                RoomUiArt.AnSolo("BtnMaypopLeft_1"), RoomUiArt.AnSolo("BtnMaypopLeft_2"), RoomUiArt.AnSolo("BtnMaypopLeft_3"), 11, 83);
+                RoomUiArt.AnSoloAA("BtnMaypopLeft_1"), RoomUiArt.AnSoloAA("BtnMaypopLeft_2"), RoomUiArt.AnSoloAA("BtnMaypopLeft_3"), 11, 83);
             UiHoverSfx.Attach(_uiHideBtn, UiSfx.ButtonFloat);
             UiSfx.AttachPress(_uiHideBtn, UiSfx.WindowSlide);
             _uiHideBtn.onClick.AddListener(() => SetCollapsed(true));
             _uiShowBtn = UIKit.AddSpriteButton(Root, "uidisplay",
-                RoomUiArt.AnSolo("BtnMaypopRight_1"), RoomUiArt.AnSolo("BtnMaypopRight_2"), RoomUiArt.AnSolo("BtnMaypopRight_3"), 11, 83);
+                RoomUiArt.AnSoloAA("BtnMaypopRight_1"), RoomUiArt.AnSoloAA("BtnMaypopRight_2"), RoomUiArt.AnSoloAA("BtnMaypopRight_3"), 11, 83);
             UiHoverSfx.Attach(_uiShowBtn, UiSfx.ButtonFloat);
             UiSfx.AttachPress(_uiShowBtn, UiSfx.WindowSlide);
             _uiShowBtn.onClick.AddListener(() => SetCollapsed(false));
@@ -3059,8 +3060,8 @@ namespace Sdo.UI.Screens
         // 組隊單選格：normal/pushed 兩態，點了把 GameSession.Team 設成 idx 並重畫（座標 = Win2 + (x,y)）
         private void BuildTeamToggle(int idx, string normalAn, string pushedAn, float x, float y)
         {
-            _teamNormal[idx] = RoomUiArt.AnSolo(normalAn);   // 自貼圖載入 → 去 atlas 鄰居白邊（同其他房間按鈕）
-            _teamPushed[idx] = RoomUiArt.AnSolo(pushedAn);
+            _teamNormal[idx] = RoomUiArt.AnSoloAA(normalAn);   // 自貼圖 + 邊緣抗鋸齒（同其他房間按鈕）
+            _teamPushed[idx] = RoomUiArt.AnSoloAA(pushedAn);
             var img = UIKit.AddSprite(_win2Root, "Team" + idx, _teamNormal[idx], Win2.x + x, Win2.y + y, raycast: true);
             var btn = img.gameObject.AddComponent<Button>();
             btn.targetGraphic = img;
@@ -3075,15 +3076,19 @@ namespace Sdo.UI.Screens
         //   pressSfx：房主設置→Buttonfloat；開始→null(由 OnStart 播 Start 音 + 漸暗)。
         //   hoverSfx：win2 中間設定塊(速度/note/組隊/掉落)→null(滑過不出聲)，其餘保留 Buttonfloat。
         private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y,
-            System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat, bool solo = true)
+            System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat, bool solo = true,
+            float alphaHit = 0f)
         {
-            // solo=true(預設) → 三態都用 AnSolo(自貼圖)載入，消掉 atlas 鄰居滲出的白邊。所有房間按鈕統一去白邊(跟商城
-            // ShopArt.An 全走自貼圖同一套)；載不到 solo crop 時 AnSolo 內部自動回退共用大圖，安全。
-            System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)RoomUiArt.AnSolo : RoomUiArt.An;
+            // solo=true(預設) → 三態都用 AnSoloAA(自貼圖 + 3× 超取樣)載入：消掉 atlas 鄰居白邊，並把官方近 1-bit 圓鈕以
+            // 3× 解析度存、用邏輯尺寸顯示 → GPU 面積降取樣出乾淨的 ~1px 抗鋸齒邊(開始/旁觀/房主設置…),不鋸齒也不糊;
+            // 載不到 solo crop 時自動回退共用大圖，安全。
+            System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)RoomUiArt.AnSoloAA : RoomUiArt.An;
             var b = UIKit.AddSpriteButton(WinRoot(win), objName, res(nrm), res(hov), res(psh), win.x + x, win.y + y);
             if (hoverSfx != null) UiHoverSfx.Attach(b, hoverSfx);
             UiSfx.AttachPress(b, pressSfx);
             if (onClick != null) b.onClick.AddListener(() => onClick());
+            // alphaHit>0：大顆圓鈕(開始/準備/旁觀)命中判定跟著可見像素走,透明四角不再誤觸。小箭頭鈕刻意不開(整塊 rect 較好按)。
+            UIKit.SetAlphaHit(b.targetGraphic, alphaHit);
             return b;
         }
 

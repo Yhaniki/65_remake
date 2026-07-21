@@ -145,6 +145,42 @@ namespace Sdo.Tests
             Assert.AreEqual("F10", OptionDlgModal.ShortKeyName("F10"));   // unknown short name passes through
         }
 
+        // ---- 遊戲畫面(全屏/窗口) ↔ 進階(顯示模式/視窗大小) 連動 (pure) ----
+
+        [Test]
+        public void AspectFill_Maps_To_Borderless_And_Windowed()
+        {
+            Assert.AreEqual(2, OptionDlgModal.AspectFillToModeIndex(true));   // 全屏 → 無邊框全螢幕(全螢幕視窗化)
+            Assert.AreEqual(0, OptionDlgModal.AspectFillToModeIndex(false));  // 窗口 → 視窗
+        }
+
+        [Test]
+        public void DisplayMode_Maps_To_Fill_By_Windowed_Vs_Fullscreen()
+        {
+            // 「主要就是看是選視窗或全螢幕」：視窗→窗口，全螢幕/無邊框全螢幕→全屏。
+            Assert.IsFalse(OptionDlgModal.ModeIndexToAspectFill(0));   // 視窗 → 窗口
+            Assert.IsTrue(OptionDlgModal.ModeIndexToAspectFill(1));    // 全螢幕 → 全屏
+            Assert.IsTrue(OptionDlgModal.ModeIndexToAspectFill(2));    // 無邊框全螢幕 → 全屏
+        }
+
+        [Test]
+        public void Fill_And_Mode_Linkage_Is_Self_Consistent()
+        {
+            // 由遊戲畫面設進階、再由進階讀回，不會互相打架(全屏↔全屏、窗口↔窗口)。
+            Assert.IsTrue(OptionDlgModal.ModeIndexToAspectFill(OptionDlgModal.AspectFillToModeIndex(true)));
+            Assert.IsFalse(OptionDlgModal.ModeIndexToAspectFill(OptionDlgModal.AspectFillToModeIndex(false)));
+        }
+
+        [Test]
+        public void Default_Settings_Fill_And_Mode_Agree()
+        {
+            // 全新安裝預設兩頁必須一致：顯示模式(視窗) ↔ 遊戲畫面(窗口)。
+            var s = new GameSettings();
+            int modeIndex = System.Array.IndexOf(new[] { "Windowed", "Fullscreen", "Borderless" }, s.display.displayMode);
+            Assert.GreaterOrEqual(modeIndex, 0);
+            Assert.AreEqual(s.gameplay.fullscreenFill, OptionDlgModal.ModeIndexToAspectFill(modeIndex));
+        }
+
         // ---- KeysArt.FileFor (pure) — KeyCode name -> LOBBYDLG/KEYS glyph filename ----
 
         [Test]

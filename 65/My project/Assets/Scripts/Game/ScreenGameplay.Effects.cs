@@ -532,6 +532,150 @@ namespace Sdo.Game
             if (hasDelayed) StartCoroutine(SpawnDelayedEftCo(placements));
         }
 
+        // Camera-facing flame billboards (SDO BillboardSet): the SCN0022 坟墓 鬼火. The official does NOT texture-animate
+        // the SHAN.MSH mesh (skipped in TryLoadMapobjs) — it draws 3 billboards that always face the camera and rebinds
+        // their texture to the next frame every 150 ms from ONE shared counter (StageScene_UpdateLightGroups_004b0b30).
+        // We reproduce that with a single shared additive material (Sdo/UnlitAdditiveOverlay = alpha-weighted additive,
+        // two-sided) cycled by one MapobjTexAnimator, drawn on 3 camera-facing quads. Smooth 32-bit TGA frames (not the
+        // DXT3 twin, whose 4-bit alpha bands the glow) → soft, transparent, non-banded flame.
+        private static Mesh _flameQuad;
+        private void SpawnSceneFlames()
+        {
+            var set = SceneFlameBillboardCatalog.ForFolder(SceneFolder());
+            if (set == null) return;
+            var dir = Path.Combine(SdoExtracted.Root, set.FramesDir.Replace('/', Path.DirectorySeparatorChar));
+            var frames = new List<Texture2D>(set.Frames.Length);
+            foreach (var fn in set.Frames)
+            {
+                var fp = Path.Combine(dir, fn);
+                if (!File.Exists(fp)) { Debug.LogWarning("[flame] missing " + fp); continue; }
+                try { var t = DdsLoader.LoadTga(File.ReadAllBytes(fp)); if (t != null) frames.Add(t); }
+                catch (Exception e) { Debug.LogWarning($"[flame] load {fn}: {e.Message}"); }
+            }
+            if (frames.Count == 0) { Debug.LogWarning("[flame] no frames under " + dir); return; }
+
+            var shader = Shader.Find("Sdo/UnlitAdditiveOverlay");
+            var mat = new Material(shader != null ? shader : Shader.Find("Sprites/Default")) { name = "FlameAdditive" };
+            mat.mainTexture = frames[0];
+            var mesh = FlameQuadMesh();
+            int layer = use3dCamera ? SceneLayer : 0;
+            foreach (var b in set.Billboards)
+            {
+                var go = new GameObject("Flame") { layer = layer };
+                go.transform.position = new Vector3(b.X, b.Y, b.Z);
+                go.transform.localScale = new Vector3(b.Size, b.Size, 1f);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var mr = go.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = mat;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                mr.receiveShadows = false;
+                go.AddComponent<SceneFlameBillboard>().Init(layer);
+            }
+            // ONE animator drives the shared material → all billboards show the same frame in sync (official: 1 counter).
+            var holder = new GameObject("FlameTexAnim");
+            holder.AddComponent<MapobjTexAnimator>().Init(new[] { mat }, frames.ToArray(), set.IntervalMs);
+            Debug.Log($"[flame] {SceneFolder()}: {set.Billboards.Length} billboard(s), {frames.Count}/{set.Frames.Length} frames @ {set.IntervalMs}ms");
+        }
+
+        // Faintness for the SCN0022 坟墓 ghost sprites (and shared with the sheguang searchlight's AlphaBlendOverlay):
+        // the DXT3 glows are bright + fairly opaque, so at full alpha they read as solid decals. Scaling alpha down makes
+        // them translucent wisps (the SCN0015 窗光 lesson — that beam used 0.2). Raise toward 1 for a stronger ghost.
+        internal const float GhostSpriteAlpha = 0.45f;
+
+        private static Mesh _ghostQuad;
+        private static Mesh FlameQuadMesh() => BillboardQuadMesh(doubleSided: true);
+
+        // Unit quad in the local XY plane (±0.5), D3D-convention UVs (V=0 at top — matches DdsLoader.LoadTga/Load so the
+        // sprite renders upright). Cached. doubleSided=true bakes BOTH windings (the additive flame is fine drawn 2×);
+        // doubleSided=false is ONE winding — the shaders are Cull Off so it still shows from both sides, but each pixel
+        // draws ONCE (an alpha-blend sprite must not compound its opacity by over-drawing). See SpawnSceneGhosts.
+        private static Mesh BillboardQuadMesh(bool doubleSided)
+        {
+            if (doubleSided && _flameQuad != null) return _flameQuad;
+            if (!doubleSided && _ghostQuad != null) return _ghostQuad;
+            var m = new Mesh { name = doubleSided ? "FlameQuad" : "GhostQuad" };
+            m.vertices = new[]
+            {
+                new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f),
+                new Vector3(0.5f,  0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f),
+            };
+            m.uv = new[] { new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(1f, 0f), new Vector2(0f, 0f) };
+            m.triangles = doubleSided
+                ? new[] { 0, 2, 1, 0, 3, 2,  0, 1, 2, 0, 2, 3 }   // front + back → drawn twice (additive flame only)
+                : new[] { 0, 2, 1, 0, 3, 2 };                     // one winding → drawn once (alpha-blend ghost)
+            m.RecalculateBounds();
+            if (doubleSided) _flameQuad = m; else _ghostQuad = m;
+            return m;
+        }
+
+        // .mot-driven camera-facing ghost sprites (SCN0022 gui/gui2). The official registers these with Billboard_AddEntry
+        // so the flat quad faces the camera while its looping .mot flies + scale-pulses it; the remake's normal mapobj path
+        // instead bakes the .mot into a fixed-orientation quad that foreshortens from the stage angle ("硬/分割"). Here an
+        // SdoAvatar plays the .mot (no mesh) and a bone-follower anchor carries its animated TRS; a camera-facing billboard
+        // quad rides that anchor (inheriting the fly + uniform scale-pulse) and swings its texture GUI01↔GUI02. Additive.
+        private void SpawnSceneGhosts()
+        {
+            var defs = SceneGhostBillboardCatalog.ForFolder(SceneFolder());
+            if (defs.Count == 0) return;
+            // SINGLE-winding quad (not the flame's double-winding): the overlay shaders are Cull Off, so one winding
+            // already shows from both sides. A double-winding quad draws every pixel TWICE — harmless 2× brightness for
+            // the additive flame, but for the ghost's ALPHA-BLEND it COMPOUNDS opacity (0.53→0.78) → the ghost reads
+            // solid with poor transparency variation. One winding keeps it a soft single-blend translucent spectre.
+            var mesh = BillboardQuadMesh(doubleSided: false);
+            // STANDARD alpha-blend, NOT additive: the ghost DXT3 is bright RGB + soft alpha, which LooksLikeAdditiveGlow
+            // false-positives (same trap as SCN0015 窗光 GUANG1_ — D3D9 there confirmed SrcAlpha/InvSrcAlpha). Additive
+            // (SrcAlpha One) ignores what's behind and produces a hard bright edge with no real transparency variation;
+            // alpha-blend (Sdo/UnlitOverlay = SrcAlpha OneMinusSrcAlpha, two-sided) gives the soft translucent spectre.
+            var shader = Shader.Find("Sdo/UnlitOverlay");
+            int layer = use3dCamera ? SceneLayer : 0;
+            foreach (var g in defs)
+            {
+                var hrc = LoadAsset(g.Dir + "/" + g.Hrc, b => HrcLoader.Load(b));
+                var mot = LoadAsset(g.Dir + "/" + g.Mot, b => MotLoader.Load(b));
+                if (hrc == null || mot == null) { Debug.LogWarning("[ghost] missing hrc/mot in " + g.Dir); continue; }
+                var dir = Path.Combine(SdoExtracted.Root, g.Dir.Replace('/', Path.DirectorySeparatorChar));
+                var frames = new List<Texture2D>(g.Frames.Length);
+                // PreserveDetail smooth: the ghost DDS has ~9 alpha levels → "tree-ring" banding on the soft body, but its
+                // FACE (eyes+mouth) is also in the alpha — the edge-preserving pass de-bands the body yet keeps the face.
+                foreach (var fn in g.Frames) { var t = ResolveDds(dir, fn, DdsLoader.AlphaSmooth.PreserveDetail); if (t != null) frames.Add(t); }
+                if (frames.Count == 0) { Debug.LogWarning("[ghost] no frames in " + dir); continue; }
+
+                // root: an SdoAvatar that just plays the looping .mot (no parts → poses the skeleton, no skinning)
+                var root = new GameObject("Ghost_" + Path.GetFileNameWithoutExtension(g.Mot));
+                var avatar = root.AddComponent<SdoAvatar>();
+                avatar.Setup(hrc, mot);                        // null DPS → auto-loops the .mot
+                // anchor rigidly follows the leaf bone's animated world TRS (fly path + uniform scale-pulse)
+                var leaves = HrcLeafBones(hrc);
+                int bone = leaves.Length > 0 ? leaves[0] : 0;
+                var anchor = new GameObject("anchor");
+                anchor.transform.SetParent(root.transform, false);
+                avatar.AddBoneFollower(bone, anchor.transform, applyBindScale: true);
+                avatar.PoseFrame(0f);                          // start posed so the first frame is placed
+
+                // camera-facing billboard quad on the anchor: inherits the fly + scale, its texture swings, alpha-blended
+                var mat = new Material(shader != null ? shader : Shader.Find("Sprites/Default")) { name = "GhostSprite" };
+                mat.mainTexture = frames[0];
+                // FAINT it: the DXT3 body is bright RGB + ~53% peak alpha → at full opacity it reads as a solid white
+                // decal. The SCN0015 窗光 fix wasn't just "alpha-blend" — it also scaled alpha DOWN (there to 0.2) so the
+                // glow is a translucent wisp. Scale the ghost's alpha here too (0.53 × GhostSpriteAlpha ≈ 0.24 peak).
+                if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, GhostSpriteAlpha);
+                var quad = new GameObject("billboard");
+                quad.transform.SetParent(anchor.transform, false);
+                // X sign is driven per-frame by SceneFlameBillboard.flipToMotion (lead with the head in the flight
+                // direction) — different ghosts fly different ways, so a fixed flip can't be right for all. Start at +X.
+                quad.transform.localScale = new Vector3(g.Size, g.Size, 1f);
+                quad.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var mr = quad.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = mat;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                mr.receiveShadows = false;
+                quad.AddComponent<SceneFlameBillboard>().Init(layer, flipToMotion: true);
+                quad.AddComponent<MapobjTexAnimator>().Init(new[] { mat }, frames.ToArray(), g.IntervalMs);
+                SetLayerRecursive(root, layer);
+                Debug.Log($"[ghost] {SceneFolder()} {g.Mot}: mot-driven billboard, bone {bone}, {frames.Count} frames @ {g.IntervalMs}ms");
+            }
+        }
+
         private void AttachSceneEftsToMapobj(string baseName, SdoAvatar avatar, Transform owner)
         {
             if (avatar == null || owner == null) return;

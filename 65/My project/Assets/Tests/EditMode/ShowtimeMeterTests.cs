@@ -93,7 +93,7 @@ namespace Sdo.Tests
             Assert.IsTrue(m.Active);
             Assert.AreEqual(1, m.ReleasedLevel);
             Assert.AreEqual(0, m.ActivationCount);                      // -1 → 0
-            Assert.AreEqual(1, m.BonusMultiplier);
+            Assert.AreEqual(4, m.BonusMultiplier);                      // released band 1 → badge ×4
             Assert.AreEqual(2000, m.WindowMs);                          // WindowDurationsMs[1], NOT the banked fill
             Assert.AreEqual(1000 + 2000, m.UntilMs);
             Assert.AreEqual(0, m.FillCount);                            // fill spent → refill from 0
@@ -125,13 +125,13 @@ namespace Sdo.Tests
         public void During_Window_Fill_Frozen_And_Bonus_Accrues()
         {
             var m = Meter();
-            for (int i = 0; i < 30; i++) m.OnJudge(Judgment.Perfect);   // band1
+            for (int i = 0; i < 30; i++) m.OnJudge(Judgment.Perfect);   // band1 → released badge ×4 → bonus coeff (4−1)=3
             m.TryActivate(0);                                          // fill → 0
             int f = m.FillCount;
-            m.OnJudge(Judgment.Perfect);                              // bonus += 1*50
-            m.OnJudge(Judgment.Perfect);                              // bonus += 1*50
+            m.OnJudge(Judgment.Perfect);                              // bonus += 3*50
+            m.OnJudge(Judgment.Perfect);                              // bonus += 3*50
             Assert.AreEqual(f, m.FillCount);                          // frozen (still 0)
-            Assert.AreEqual(100L, m.Bonus);
+            Assert.AreEqual(300L, m.Bonus);
         }
 
         // ---- timer end ----
@@ -162,20 +162,32 @@ namespace Sdo.Tests
             Assert.AreEqual(0.0, m.RemainingMs(5000));
         }
 
-        // ---- multiplier stacks across releases, capped ----
+        // ---- multiplier follows the RELEASED band = the badge (×2/×4/×8), NOT the activation count ----
 
         [Test]
-        public void Multiplier_Stacks_Each_Release_And_Caps()
+        public void Multiplier_Follows_Released_Band_Not_Activation_Count()
+        {
+            var g = Meter(); for (int i = 0; i < 10; i++) g.OnJudge(Judgment.Perfect); g.TryActivate(0);
+            Assert.AreEqual(0, g.ReleasedLevel); Assert.AreEqual(2, g.BonusMultiplier);   // band0 → ×2
+            var y = Meter(); for (int i = 0; i < 30; i++) y.OnJudge(Judgment.Perfect); y.TryActivate(0);
+            Assert.AreEqual(1, y.ReleasedLevel); Assert.AreEqual(4, y.BonusMultiplier);   // band1 → ×4
+            var r = Meter(); for (int i = 0; i < 60; i++) r.OnJudge(Judgment.Perfect); r.TryActivate(0);
+            Assert.AreEqual(2, r.ReleasedLevel); Assert.AreEqual(8, r.BonusMultiplier);   // band2 → ×8
+        }
+
+        // repeatedly releasing at the SAME band must NOT stack the multiplier (the old activation-count behaviour)
+        [Test]
+        public void Repeated_Releases_At_Same_Band_Do_Not_Stack_Multiplier()
         {
             var m = Meter();
             for (int release = 0; release < ShowtimeMeter.MaxActivations + 3; release++)
             {
                 for (int i = 0; i < 10; i++) m.OnJudge(Judgment.Perfect);  // refill to band0
                 Assert.IsTrue(m.TryActivate(release * 10000));
-                m.Tick(release * 10000 + 1000);                            // end at band0's 1000ms window
+                Assert.AreEqual(2, m.BonusMultiplier);                     // always ×2 at band0 — no stacking
+                m.Tick(release * 10000 + 1000);                           // end at band0's 1000ms window
             }
-            Assert.AreEqual(ShowtimeMeter.MaxActivations, m.ActivationCount);
-            Assert.AreEqual(ShowtimeMeter.MaxActivations + 1, m.BonusMultiplier);
+            Assert.AreEqual(ShowtimeMeter.MaxActivations, m.ActivationCount);   // counter still caps (record only)
         }
 
         // exe FUN_00643030 @348249: releasing spends the tier's cumulative cost; overflow above it carries over

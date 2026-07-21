@@ -52,6 +52,10 @@ namespace Sdo.UI.Screens
         private Image _scrollHandle;
         private const float ScrollX = 749f, ScrollTop = 180f, ScrollTrackH = 350f;
 
+        // 圓球/圓角鈕的 alpha 命中門檻：α ≥ 此值的像素才算點到，讓判定跟著可見圖形走 (不吃透明四角)。
+        // 0.5 落在球體羽化邊中段 → 命中邊界貼齊視覺邊緣;premult 貼圖 α 保留完好,取樣正確。
+        private const float OrbAlphaHit = 0.5f;
+
         // 左側 3D 試穿預覽 (官方 AvtWoman/AvtMan 是整屏 AvtShow、人物落在左側；這裡取左半區、全身取景)
         private const int PreviewLayer = 12;
         private static readonly Vector3 PreviewSpot = new Vector3(2000f, 0f, 0f);
@@ -71,8 +75,8 @@ namespace Sdo.UI.Screens
         private float _dragAngle = -DefaultYaw;         // 左側「人物」預設朝右轉 30° (卡片衣物才朝左 +DefaultYaw)
         private float _pitchAngle;                      // pitch (X)，官方 clamp [-30,15]
         private const float DragDegPerPixel = 0.4f;     // 水平每拖 1px 轉幾度 (官方 0.4)
-        private const float PitchDegPerPixel = 0.2f;    // 垂直每拖 1px 抬幾度 (官方線上 = 0.4，同 yaw)
-        private const float PitchMin = -10f, PitchMax = 10f;   // 官方 pitch clamp
+        private const float PitchDegPerPixel = 0.4f;    // 垂直每拖 1px 抬幾度 (官方線上 = 0.4，同 yaw；Frida 實測確認)
+        private const float PitchMin = -30f, PitchMax = 15f;   // 官方線上 pitch clamp [-30,15]：可下看 30°、上抬 15°
         private const float DefaultYaw = 30f;           // 官方預設朝左轉 30° (實測 -30 是朝右 → 用 +30)
         private const float PivotY = 30f;               // 轉身/抬頭的 pivot = 身體中心/腰部 (官方是繞 display-node 原點，不是腳底)
         private float _previewFeetY;                     // 綁定姿勢最低頂點 (落地用)
@@ -298,18 +302,19 @@ namespace Sdo.UI.Screens
 
             // 性別切換 (SHOP.XML：male @ 0,510 / female @ 40,510)。官方是 CheckBox：選中顯示 bgpushed(暗態)、未選 bgnormal(亮)
             // — 同 M/G 幣別 (選中=暗)。noSwap + RefreshToggles 依 _sex 換 sprite (修 user #5「男女亮暗相反」：舊版選中的性別反而亮)。
-            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => SwitchGender(ItemSex.Male),   noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
-            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => SwitchGender(ItemSex.Female), noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat);
+            _maleBtn   = SpriteBtn(_root, "male",   "Shop45.an", "Shop46.an", 0,  510, () => SwitchGender(ItemSex.Male),   noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
+            _femaleBtn = SpriteBtn(_root, "female", "Shop47.an", "Shop48.an", 40, 510, () => SwitchGender(ItemSex.Female), noSwap: true, solo: true, hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
 
             // 復原穿搭 (SHOP.XML undochange @ 74,532，紅色 ↻)：清掉試穿、還原成預設穿搭。hover 補官方亮幀 Shop16 (#5)。
             // solo:true → 自貼圖載入,去掉 atlas 鄰居滲出的白邊 (#5 左下角按鈕白邊)。
-            SpriteBtn(_root, "reset", "Shop15.an", "Shop17.an", 74, 532, DoResetOutfit, hoverAn: "Shop16.an", solo: true);
+            SpriteBtn(_root, "reset", "Shop15.an", "Shop17.an", 74, 532, DoResetOutfit, hoverAn: "Shop16.an", solo: true, alphaHit: OrbAlphaHit);
 
             // 底部：全身购买 (買下整套穿搭，有 info) / 购物车 (尚無功能) / 快速充值 (右下橘鈕)。hover 各補官方亮幀 (#3/#5)。
             // 全身购买 orb 用 solo (自貼圖) 去掉 atlas 鄰居滲出的白邊 (#1)。快速充值離線無金流後端 → 直接把三種幣一次充滿 (試玩用)。
-            SpriteBtn(_root, "buyall",   "Shop174.an",  "Shop176.an",  0,  543, DoBuyAll, hoverAn: "Shop175.an", solo: true);
-            SpriteBtn(_root, "cart",     "Shop206.an",  "Shop208.an",  98, 565, hoverAn: "Shop207.an", hoverSfx: UiSfx.ButtonFloat);
-            SpriteBtn(_root, "recharge", "chongzhi1.an","chongzhi3.an", 678,571, DoRecharge, hoverAn: "chongzhi2.an", hoverSfx: UiSfx.ButtonFloat);
+            // alphaHit：這幾顆是圓球/圓角形,命中判定跟著可見像素走,不吃透明四角 (使用者回報「部分區域不在按鈕裡面也會觸發」)。
+            SpriteBtn(_root, "buyall",   "Shop174.an",  "Shop176.an",  0,  543, DoBuyAll, hoverAn: "Shop175.an", solo: true, alphaHit: OrbAlphaHit);
+            SpriteBtn(_root, "cart",     "Shop206.an",  "Shop208.an",  98, 565, hoverAn: "Shop207.an", hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
+            SpriteBtn(_root, "recharge", "chongzhi1.an","chongzhi3.an", 678,571, DoRecharge, hoverAn: "chongzhi2.an", hoverSfx: UiSfx.ButtonFloat, alphaHit: OrbAlphaHit);
 
             // 搜尋框 (SHOP.XML SearchEdit @ 154,579) + 放大鏡 (chakan/Shop199 @ 270,576)。打字即時過濾商品名 (跨部位)。
             // 依需求：無 placeholder 文字、無半透明底 (透明但仍可點 focus)、白字白光標。
@@ -955,6 +960,10 @@ namespace Sdo.UI.Screens
                     if (m != null && m.mainTexture != null)
                     {
                         string sn = m.shader != null ? m.shader.name : "";
+                        // 真紗質/蕾絲布料 (Sdo/UnlitAvatarSheer) 已是「密度提升 alpha-blend」,分離-alpha 在透空 RT 正確合成
+                        // (opaque 底保留、紗料半透)。改成 cutout 會 clip+a→1 把 ~68% 的紗壓成實心黑 → 格子縮圖失去透明度
+                        // (使用者:「格子裡面的透明度沒改」)。跳過,讓卡片跟左側大預覽/遊戲內一致地半透。
+                        if (sn == "Sdo/UnlitAvatarSheer") continue;
                         // 髮/鏤空布料 (Sdo/UnlitDoubleSided) 本來就帶 authored _Cutoff(0.3);讀出保留,別壓到 0.05 (見 CardCutoutFor)。
                         float authored = sn == "Sdo/UnlitDoubleSided" ? m.GetFloat("_Cutoff") : 0f;
                         m.shader = cut;   // 只改有貼圖的 (無貼圖回退材質留給 ForceLightExpressionFace 處理)
@@ -1387,14 +1396,16 @@ namespace Sdo.UI.Screens
             }
         }
 
-        // 在左側人物上按住拖動：水平 → 轉身 (yaw)、垂直 → 抬頭 (pitch，官方 clamp [-30,15])。
+        // 在左側人物上按住拖動：水平 → 轉身 (yaw)、垂直 → 抬頭 (pitch，官方線上 clamp [-30,15])。
         private void OnPreviewDrag(BaseEventData ev)
         {
             if (!(ev is PointerEventData p)) return;
-            // 官方 offline 反編譯 (AvtShow_ApplyDragRotateZoom)：拖動只改 yaw(0x1e4 −=dx*0.4)，pitch(0x1e0) 完全不隨拖動變。
-            // 之前加的上下傾斜是錯的 → 移除 (人物不會因上下拖動而傾斜)。
+            // 官方版本差異 (AvtShow_ApplyDragRotateZoom)：
+            //   離線 sdo_stand_alone.exe (FUN_0042fe80)：拖動只改 yaw(0x1e4 −=dx*0.4)，垂直量存 0x1f0 但從不使用 → 無 pitch。
+            //   線上 sdo.bin        (FUN_0044f900)：yaw(0x308 −=dx*0.4) 且 pitch(0x304 −=dy*0.4，clamp[-30,15]，除非 mode@0x1b5==5)。
+            // 我們照「線上」行為 (有 pitch)。倍率/clamp 由 Frida 實錄 shop_pitch_drag_online_log 確認：0.4/px、[-30,15]、mode=2。
             _dragAngle -= p.delta.x * DragDegPerPixel;
-            // 滑鼠往上(delta.y>0) → 人往上抬 (之前 -delta.y 是反的,user 回饋修正)
+            // 滑鼠往上(Unity delta.y>0=往上) → 人往上抬 → _pitchAngle 增加(+15 上限)；往下 → -30 下限 (官方可下看多於上抬)。
             _pitchAngle = Mathf.Clamp(_pitchAngle + p.delta.y * PitchDegPerPixel, PitchMin, PitchMax);
             ApplyPreviewRotation();
         }
@@ -1406,7 +1417,12 @@ namespace Sdo.UI.Screens
             if (_avatarRoot == null) return;
             var pivot = PreviewSpot + new Vector3(0f, PivotY, 0f);
             var basePos = PreviewSpot + new Vector3(0f, -_previewFeetY, 0f);
-            var q = Quaternion.Euler(_pitchAngle, RoomMovement.FacingDegrees(2) + _dragAngle, 0f);
+            // 官方引擎 (sdo.bin 反編譯) 把節點旋轉建成 Q = quat(axis=(1,0,0),pitch) · quat(axis=(0,1,0),yaw)：
+            //   先繞「世界 Y 軸」轉身，再繞「固定的世界 X 軸」抬頭 → 轉身後抬頭是「側邊抬起」，
+            //   不是像 Quaternion.Euler(pitch,yaw,0) 那樣繞頭部朝向的局部軸點頭 (user 回饋)。
+            //   軸常數 DAT_00581760=(1,0,0) / DAT_0058176c=(0,1,0) 已從 exe 驗過。
+            float yawDeg = RoomMovement.FacingDegrees(2) + _dragAngle;
+            var q = Quaternion.AngleAxis(_pitchAngle, Vector3.right) * Quaternion.AngleAxis(yawDeg, Vector3.up);
             _avatarRoot.transform.rotation = q;
             _avatarRoot.transform.position = pivot + q * (basePos - pivot);
         }
@@ -1434,7 +1450,7 @@ namespace Sdo.UI.Screens
         // 不會有「要點一次分頁才變亮」的狀態延遲。
         // hoverAn = 官方 bghover (滑過幀，通常最亮/發光)：沒給就沿用 pushed (舊行為)。給了 → 滑過變亮而非變暗 (修 #3/#4/#5「亮暗相反」)。
         // solo = orb 類鈕用自貼圖載入 (ShopArt.AnSolo) 去掉 atlas 鄰居滲出的白邊 (#1)。
-        private Button SpriteBtn(Transform parent, string name, string normalAn, string pushedAn, float x, float y, UnityEngine.Events.UnityAction onClick = null, bool noSwap = false, string hoverAn = null, bool solo = false, string hoverSfx = null)
+        private Button SpriteBtn(Transform parent, string name, string normalAn, string pushedAn, float x, float y, UnityEngine.Events.UnityAction onClick = null, bool noSwap = false, string hoverAn = null, bool solo = false, string hoverSfx = null, float alphaHit = 0f)
         {
             System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)ShopArt.AnSolo : ShopArt.An;
             var n = res(normalAn); var p = res(pushedAn);
@@ -1446,6 +1462,8 @@ namespace Sdo.UI.Screens
                 var img = btn.targetGraphic as Image; if (img != null) { img.color = new Color(1, 1, 1, 0.001f); img.raycastTarget = true; }
                 var rt = btn.GetComponent<RectTransform>(); rt.sizeDelta = new Vector2(48, 20);
             }
+            // 圓球/圓角橫幅鈕：命中判定改「只有 α ≥ 門檻的像素才算點到」→ 透明四角不再誤觸 (使用者回報「部分區域不在按鈕裡面也會觸發」)。
+            UIKit.SetAlphaHit(btn.targetGraphic, alphaHit);
             if (onClick != null) btn.onClick.AddListener(onClick);
             UiSfx.AttachPress(btn, UiSfx.Click);                      // 所有商城按鈕按下 → SE_0001
             if (hoverSfx != null) UiHoverSfx.Attach(btn, hoverSfx);   // 指定底排鈕滑過 → Buttonfloat

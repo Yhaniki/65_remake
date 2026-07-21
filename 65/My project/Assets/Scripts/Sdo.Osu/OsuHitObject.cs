@@ -14,11 +14,18 @@ namespace Sdo.Osu
 
         public bool IsHold => EndTimeMs.HasValue;
 
-        public OsuHitObject(int lane, int startTimeMs, int? endTimeMs = null)
+        /// <summary>
+        /// SDO online/NX 炸彈 (StepFile note_type 1 on a lane): a note to AVOID, not hit. It is never a hold, never
+        /// judged as a tap; stepping on it (lane held as it reaches the judge line) detonates it. false for normal notes.
+        /// </summary>
+        public bool IsBomb { get; }
+
+        public OsuHitObject(int lane, int startTimeMs, int? endTimeMs = null, bool isBomb = false)
         {
             Lane = lane;
             StartTimeMs = startTimeMs;
             EndTimeMs = endTimeMs;
+            IsBomb = isBomb;
         }
     }
 }

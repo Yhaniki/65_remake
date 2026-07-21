@@ -58,8 +58,8 @@ namespace Sdo.Settings
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
         public static string optKeys = "A,S,W,D";
         public static string optKeysAux = "LeftArrow,DownArrow,UpArrow,RightArrow";
-        public static int optDispW = 1024, optDispH = 768, optVsync = 1;
-        public static string optDispMode = "Borderless";
+        public static int optDispW = 800, optDispH = 600, optVsync = 1;   // 預設視窗化 800×600（與遊戲畫面「窗口」連動，同 GameSettings 預設）
+        public static string optDispMode = "Windowed";
         public static string optLang = "zh-TW";
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
@@ -363,7 +363,7 @@ namespace Sdo.Settings
             sb.Append("# 視窗大小 / 顯示模式（Windowed|Fullscreen|Borderless）/ 垂直同步（0|1）/ 語言\n");
             sb.Append("opt_dispW=").Append(optDispW).Append('\n');
             sb.Append("opt_dispH=").Append(optDispH).Append('\n');
-            sb.Append("opt_dispMode=").Append(optDispMode ?? "Borderless").Append('\n');
+            sb.Append("opt_dispMode=").Append(optDispMode ?? "Windowed").Append('\n');
             sb.Append("opt_vsync=").Append(optVsync).Append('\n');
             sb.Append("opt_lang=").Append(optLang ?? "zh-TW").Append('\n');
             sb.Append("# 遊戲頁（1=開 0=關）：全屏填滿 / 泛光 / notes面板靠左 / 人物特效 / 場景特效 / 自動導播 / 呼叫卡 / 完奏模式 / 歌曲變速\n");

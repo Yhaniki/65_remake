@@ -138,7 +138,10 @@ namespace Sdo.UI.Util
         {
             if (img == null) return;
             img.sprite = s;
-            if (s != null) { img.color = Color.white; img.rectTransform.sizeDelta = s.rect.size; }
+            // Size by rect.size / pixelsPerUnit: a SUPERSAMPLED sprite (SdoExtracted.LoadAnSoloMip stores the room buttons
+            // at ppu = ButtonSupersample so a 219px texture displays at its 73px logical size) shrinks back to logical
+            // pixels here; every other sprite ships ppu = 1 so this is unchanged.
+            if (s != null) { img.color = Color.white; float ppu = s.pixelsPerUnit > 0f ? s.pixelsPerUnit : 1f; img.rectTransform.sizeDelta = s.rect.size / ppu; }
             else img.color = new Color(1f, 1f, 1f, 0f);   // missing art -> invisible, no white box
             // Premultiplied-alpha sprites (SdoExtracted.LoadAnSoloPremultiplied — e.g. all SHOP art) MUST render with the
             // premult material or the transparent matte fringes white under UI magnification (the 「方形白邊」). Auto-pair it
@@ -162,6 +165,21 @@ namespace Sdo.UI.Util
             st.selectedSprite = normal;
             btn.spriteState = st;
             return btn;
+        }
+
+        /// <summary>Make a sprite button's click hit-test follow its OPAQUE pixels instead of the full RectTransform rect:
+        /// only pixels with alpha ≥ <paramref name="threshold"/> count as a hit, so round/oval buttons stop registering
+        /// clicks in their transparent corners (使用者回報「判定區是方形,透明區也會觸發」). Use for LARGE round buttons whose
+        /// opaque area ≈ the visible button; avoid it on tiny arrow/icon buttons where a generous rect is friendlier.
+        /// No-op unless the target is an Image on a READABLE, non-tight (FullRect) sprite — Unity's alpha hit-test samples
+        /// the texture, so it needs read/write enabled. Our runtime solo/premult/mip/LoadAn1 loaders all keep the texture
+        /// readable + FullRect; a shared-atlas fallback might not, and the guard then leaves the rect hit-test rather than
+        /// letting IsRaycastLocationValid throw + spam errors on every hover.</summary>
+        public static void SetAlphaHit(Graphic target, float threshold = 0.5f)
+        {
+            if (threshold <= 0f || !(target is Image img) || img.sprite == null) return;
+            if (!(img.sprite.texture is Texture2D tex) || !tex.isReadable) return;
+            img.alphaHitTestMinimumThreshold = threshold;
         }
 
         public static TextMeshProUGUI AddText(Transform parent, string name, string text, float size, Color color,

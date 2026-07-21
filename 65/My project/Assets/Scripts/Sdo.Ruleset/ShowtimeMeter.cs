@@ -18,7 +18,10 @@ namespace Sdo.Ruleset
     /// in ms for a release at band 0/1/2 — NOT a fill threshold.</item>
     /// </list>
     /// On SPACE the window runs <see cref="WindowDurationsMs"/>[armed band] ms (forced PERFECT); the fill resets to 0.
-    /// A score bonus stacks +1 per release (cap 6×). The exe only accumulates the fill FORWARD (Bad/Miss don't reduce
+    /// The score bonus multiplier = the RELEASED BAND'S badge (TierMultipliers ×2/×4/×8 for band 0/1/2 = MyEnergy2/3/4)
+    /// — a DELIBERATE deviation from the exe (user decision 2026-07-19): the exe's own multiplier is activation-count-based
+    /// (0x408+1) and ignores the level, so every first release read ×2 while the badge advertised ×2/×4/×8; here the badge
+    /// is made truthful. The exe only accumulates the fill FORWARD (Bad/Miss don't reduce
     /// it); the per-hit increment is chart note-interval × speed, so the gains here are remake tunables.
     /// </summary>
     public sealed class ShowtimeMeter
@@ -43,7 +46,13 @@ namespace Sdo.Ruleset
         /// from the fill counter.</summary>
         public int[] WindowDurationsMs = { 8000, 12000, 18000 };
 
-        /// <summary>Activation counter caps here → bonus multiplier caps at MaxActivations+1 (exe 0x408 caps 5 → 6×).</summary>
+        /// <summary>Score multiplier by RELEASED band (0/1/2) — the on-screen MyEnergy2/3/4 badge ×2/×4/×8. The bonus
+        /// accumulator adds (mult−1)×base per note so the total effect (base ×1 + bonus) = the badge value; band 0 stays
+        /// ×2 (unchanged), band 1 → ×4, band 2 → ×8.</summary>
+        public int[] TierMultipliers = { 2, 4, 8 };
+
+        /// <summary>Release counter cap (exe 0x408 caps 5). No longer drives the multiplier (see <see cref="TierMultipliers"/>);
+        /// kept only to bound <see cref="ActivationCount"/> and record how many releases happened this song.</summary>
         public const int MaxActivations = 5;
 
         /// <summary>Cumulative fill counter, clamped [0, BandCaps[last]].</summary>
@@ -58,7 +67,8 @@ namespace Sdo.Ruleset
         /// <summary>Full length (ms) of the current window = WindowDurationsMs[released band].</summary>
         public double WindowMs { get; private set; }
 
-        /// <summary>-1 before any release; 0-based count of releases so far (exe 0x408). Caps at MaxActivations.</summary>
+        /// <summary>-1 before any release; 0-based count of releases so far (exe 0x408). Caps at MaxActivations. Recorded
+        /// for the result/history only — the score multiplier is band-based (<see cref="BonusMultiplier"/>).</summary>
         public int ActivationCount { get; private set; } = -1;
 
         /// <summary>Accumulated ShowTime bonus points (exe 0x840 / the "EnergyBonus" number).</summary>
@@ -102,8 +112,18 @@ namespace Sdo.Ruleset
         /// <summary>The bar is filled enough to release (band 0 reached) and not already running.</summary>
         public bool Ready => !Active && ArmedLevel >= 0;
 
-        /// <summary>Bonus multiplier applied to each note's points during the current/next window (1..6).</summary>
-        public int BonusMultiplier => Math.Min(ActivationCount, MaxActivations) + 1;
+        /// <summary>Score multiplier for the current/next window = the RELEASED band's badge (×2/×4/×8). Uses
+        /// <see cref="ReleasedLevel"/> while a window runs, else the armed tier that WOULD be released. The bonus
+        /// accumulator adds (this−1)×base per note (<see cref="OnJudge"/>) so the total effect equals this value.</summary>
+        public int BonusMultiplier
+        {
+            get
+            {
+                int lvl = Active ? ReleasedLevel : ArmedLevel;
+                if (lvl < 0) lvl = 0; else if (lvl > 2) lvl = 2;
+                return TierMultipliers[lvl];
+            }
+        }
 
         /// <summary>ms remaining in the active window (0 when inactive).</summary>
         public double RemainingMs(double nowMs) => Active ? Math.Max(0.0, UntilMs - nowMs) : 0.0;
@@ -135,7 +155,9 @@ namespace Sdo.Ruleset
         {
             if (Active)
             {
-                Bonus += (long)BonusMultiplier * FlatBase(j);
+                // total effect = base (×1, accrued by the main score) + bonus; bonus adds (mult−1)×base so the
+                // combined per-note value = the released band's badge multiplier (×2/×4/×8).
+                Bonus += (long)(BonusMultiplier - 1) * FlatBase(j);
                 if (Bonus < 0) Bonus = 0;
                 return;
             }

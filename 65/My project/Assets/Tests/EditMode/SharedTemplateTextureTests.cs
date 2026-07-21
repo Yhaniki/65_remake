@@ -27,6 +27,20 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void ManCoat_070025_SwapsTemplateCoatId()
+        {
+            // 使用者回報「070025 商城看是黃色,房間/選男女看變粉紅」: 070025_MAN_COAT.MSH REUSES 012983 的幾何,材質名內嵌
+            // "_texanimex(012983_man_coat)100_1.dds",但道具出了自己的黃色改色 070025_MAN_COAT.AN(+_1/2/3.dds)。商城與房間
+            // 兩條管線都要靠這條 id-swap 才會穿到 070025 自己的黃色(否則吃 012983 模板的粉紅)。
+            Assert.AreEqual("_texanimex(070025_man_coat)100_1.dds",
+                SdoAvatarBuilder.SwapLeadingId("_texanimex(012983_man_coat)100_1.dds", "070025"));
+            // 第二個材質 012989_woman_shoes 換成 070025_woman_shoes;070025 沒出該圖 → PreferOwnIdTexture 的存在檢查會
+            // 擋掉這次 swap,維持與商城相同(shop 也解到 012989),字串轉換本身仍正確。
+            Assert.AreEqual("_texanimex(070025_woman_shoes)100_1.dds",
+                SdoAvatarBuilder.SwapLeadingId("_texanimex(012989_woman_shoes)100_1.dds", "070025"));
+        }
+
+        [Test]
         public void SameId_NoSwap()
         {
             Assert.IsNull(SdoAvatarBuilder.SwapLeadingId("070030_woman_shoes.dds", "070030"));
