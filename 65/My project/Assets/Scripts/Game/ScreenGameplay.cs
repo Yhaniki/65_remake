@@ -2452,7 +2452,12 @@ namespace Sdo.Game
                     // long-intro charts. Stays negative through the READY/GO lead-in AND the intro (count-in + any
                     // musical intro before the first note) -> avatar holds the rest idle, then starts the DPS on the
                     // first downbeat.
-                    avatar.DanceTimeSec = () => (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
+                    // _clockStart is still the "not anchored yet" sentinel (-1) from here until LoadAndPlayAudio
+                    // finishes decoding the song — a second or more on an external mp3. Subtracting it would make the
+                    // dance time the WALL CLOCK since app start (a different, arbitrary point of the choreography every
+                    // run: "進遊戲先亂跳一段舞才回 idle"), so report "before the dance" until the clock is real.
+                    avatar.DanceTimeSec = () => _clockStart < 0.0 ? -1f
+                                              : (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
                     avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
                     Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
                 }
