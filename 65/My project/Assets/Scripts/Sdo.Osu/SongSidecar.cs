@@ -61,7 +61,9 @@ namespace Sdo.Osu
 
         /// <summary>Current dance generator. Bump whenever <see cref="RandomDps"/> would choreograph a song
         /// differently: a recorded dance with an older <c>#DPSVER</c> is rebuilt on the next play.</summary>
-        public const int DpsGenerator = 2;   // 2 = openings replay the official rows (slices); 1 = whole-clip openings
+        // 3 = the body replays official three-motion groups too; 2 = openings replay the official rows (slices);
+        // 1 = whole-clip openings
+        public const int DpsGenerator = 3;
 
         private const string TagVersion = "VERSION";
         private const string TagSong = "SONG";

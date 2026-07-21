@@ -29,7 +29,8 @@ namespace Sdo.Game
                     Debug.LogWarning($"[dps] no {DpsIndex.RelPath} in the data tree — external songs keep the fallback " +
                                      "dance clip (run tools/build_dps_index.py)");
                 else
-                    Debug.Log($"[dps] index: {_index.Pool.Count} dance clips, {_index.Intros.Count} official openings");
+                    Debug.Log($"[dps] index: {_index.Pool.Count} dance clips, {_index.Intros.Count} official openings, " +
+                              $"{_index.Groups.Count} three-motion groups");
                 return _index;
             }
         }
@@ -41,6 +42,10 @@ namespace Sdo.Game
         /// <summary>Openings harvested from the official choreographies: each is one dance's opening rows (up to its
         /// fourth distinct motion), with the frame slice every row plays.</summary>
         public static IReadOnlyList<IntroSlice[]> Intros => Index.Intros;
+
+        /// <summary>The rest of the official choreographies, cut into three-motion groups (openings excluded) — what
+        /// the body of a generated dance is drawn from, a whole group at a time.</summary>
+        public static IReadOnlyList<IntroSlice[]> Groups => Index.Groups;
 
         /// <summary>Frame count of a motion (&gt;= 1).</summary>
         public static int Frames(string mot) => Index.Frames(mot);

@@ -27,8 +27,15 @@ namespace Sdo.Osu
         /// <summary>Seconds of dance to fill: first note → last note (the dancer idles outside that span).</summary>
         public double DanceSeconds;
 
-        /// <summary>Motion pool to draw from (e.g. every <c>wdanceNNNN.mot</c> in MOTION/).</summary>
+        /// <summary>Motion pool to draw from (e.g. every <c>wdanceNNNN.mot</c> in MOTION/). Only used when
+        /// <see cref="Groups"/> is empty — the fallback planner of an index that carries no groups.</summary>
         public IReadOnlyList<string> Pool;
+
+        /// <summary>What the BODY of the dance is assembled from: the official choreographies' three-motion groups
+        /// (openings excluded — those are <see cref="Intros"/>), each with the frame slice every row plays. One draw
+        /// takes a WHOLE group, replayed verbatim, so the body is real choreography rather than single clips stitched
+        /// end to end. Empty → the <see cref="Pool"/> planner.</summary>
+        public IReadOnlyList<IntroSlice[]> Groups;
 
         /// <summary>Openings, one entry per official .dps: every row of its opening — the rows up to (not including)
         /// its FOURTH distinct motion, each with the frame slice it plays. One entry is picked (seeded) and replayed
@@ -67,10 +74,16 @@ namespace Sdo.Osu
     ///      not just the motion NAMES) is what makes the opening play as choreography: official rows chain through one
     ///      clip (…0-109, 110-160…), so re-starting each row at frame 0 would replay the clip from the top and snap.
     ///
-    ///   2. THE REST — <c>tools/bms_sdo/random_dps.py</c>'s mot-slice planner, verbatim (the GUI's default mode): pick
-    ///      a random motion, play it from frame 0 for as many whole <see cref="RandomDpsRequest.BeatUnit"/>-beat units
-    ///      as it can cover, discard the remainder of the clip, pick another; a motion too short for one unit places
-    ///      nothing and is re-rolled. A tail row then covers the leftover beats.
+    ///   2. THE REST — more official choreography, a THREE-MOTION GROUP at a time
+    ///      (<see cref="RandomDpsRequest.Groups"/>): one draw takes a whole group and replays its rows verbatim, the
+    ///      same way the opening does, until the song is full; the last row is truncated to land exactly on the last
+    ///      note. Groups are drawn with the seam in mind — a draw that would re-enter the clip just played at a frame
+    ///      that doesn't continue it walks on to the next group, since re-entering a clip snaps instead of blending.
+    ///      With no groups (a V2 index) this falls back to <c>tools/bms_sdo/random_dps.py</c>'s mot-slice planner,
+    ///      verbatim: pick a random motion from the pool, play it from frame 0 for as many whole
+    ///      <see cref="RandomDpsRequest.BeatUnit"/>-beat units as it can cover, discard the rest of the clip, pick
+    ///      another; a motion too short for one unit places nothing and is re-rolled, and a tail row covers the
+    ///      leftover beats.
     ///
     /// The dance is anchored on the FIRST NOTE (the span is first→last note — the engine's dance clock already starts
     /// there), not on the music-start marker.
@@ -102,30 +115,32 @@ namespace Sdo.Osu
             int beat = 0;          // beats placed so far (row preamble; the engine never reads it — it paces on DurSec)
             double cumSec = 0.0;   // seconds placed so far = Σ DurSec; always a whole number of frames
 
+            // The dance's whole length in FRAMES — what every verbatim row is truncated against. Rows are whole frames
+            // and beats are re-derived from cumSec, so measuring what is left in beats would leave (or overshoot by) up
+            // to half a beat of the song; measuring in frames lands the last row exactly on the last note.
+            int endFrames = (int)Math.Round(endBeat * 60.0 / bpm * fps);
+
             // (1) THE OPENING — one official dance's opening rows, replayed verbatim: each row is that dance's own
             // frame slice of its own clip, so the clips chain exactly as they do in the original. Not quantised and
             // never dropped (that is the whole point of having an opening); only truncated so it can't outrun the song
-            // — or, on a short song, eat more than IntroMaxSpanFraction of it and leave no room for a random row.
+            // — or, on a short song, eat more than IntroMaxSpanFraction of it and leave no room for a body row.
             int quota = FramesLeft(0.0, (int)(endBeat * req.IntroMaxSpanFraction), bpm, fps);
-            foreach (var slice in PickIntro(req.Intros, ref rng))
-            {
-                // With a slice, its length IS the row (never clamped to FrameCount: a stale index would truncate a
-                // perfectly good 284..410 slice down to the fallback length). Without one (V1 index) → the whole clip.
-                int frames = slice.HasRange ? slice.Frames : Frames(req, slice.Mot);
-                frames = Math.Min(frames, Math.Min(quota, FramesLeft(cumSec, endBeat - beat, bpm, fps)));
-                if (frames <= 0) break;   // the opening already fills the song (or its quota)
+            PlaySlices(rows, req, PickIntro(req.Intros, ref rng), ref beat, ref cumSec, quota, endBeat, endFrames, bpm, fps);
 
-                double sec = frames / fps;
-                // Beats follow the seconds actually placed (not the other way round): re-deriving the cursor from
-                // cumSec keeps the sub-beat remainder of each row from accumulating into an over-long dance.
-                int rowBeats = Math.Min(endBeat, (int)Math.Round((cumSec + sec) * bpm / 60.0)) - beat;
-                rows.Add(Row(beat, rowBeats, slice.Mot, slice.StartF, frames, fps));
-                beat += rowBeats;
-                cumSec += sec;
-                quota -= frames;
+            // (2) THE REST — official choreography too, a whole three-motion group per draw, replayed verbatim exactly
+            // like the opening. No quota: the group's rows are truncated against the song alone, so the last one lands
+            // on the last note. A draw that places nothing means the song is full (or the groups are unusable) → stop.
+            if (req.Groups != null && req.Groups.Count > 0)
+            {
+                while (Placed(cumSec, fps) < endFrames)
+                {
+                    var group = PickGroup(req.Groups, rows, ref rng);
+                    if (PlaySlices(rows, req, group, ref beat, ref cumSec, int.MaxValue, endBeat, endFrames, bpm, fps) == 0) break;
+                }
+                return rows;
             }
 
-            // (2) THE REST — random_dps.py's mot-slice planner, verbatim.
+            // (2b) NO GROUPS (a V2 index) — random_dps.py's mot-slice planner, verbatim.
             int emptyPicks = 0;
             int emptyLimit = Math.Max(1, req.Pool.Count * 2);
             while (beat + unit <= endBeat)
@@ -171,6 +186,62 @@ namespace Sdo.Osu
         }
 
         // ---- planning helpers ----
+
+        /// <summary>Replay one official entry (an opening or a body group) row by row, verbatim: every row keeps its
+        /// own clip and frame slice, so the clips chain exactly as they do in the original. Rows are truncated against
+        /// the song's remaining span (and, for the opening, against <paramref name="quota"/>); planning stops as soon
+        /// as one no longer fits. Returns how many rows were placed — 0 means the song is full.</summary>
+        private static int PlaySlices(List<RandomDpsRow> rows, RandomDpsRequest req, IEnumerable<IntroSlice> slices,
+                                      ref int beat, ref double cumSec, int quota, int endBeat, int endFrames,
+                                      double bpm, double fps)
+        {
+            if (slices == null) return 0;
+            int placed = 0;
+            foreach (var slice in slices)
+            {
+                if (string.IsNullOrEmpty(slice.Mot)) continue;
+
+                // With a slice, its length IS the row (never clamped to FrameCount: a stale index would truncate a
+                // perfectly good 284..410 slice down to the fallback length). Without one (V1 index) → the whole clip.
+                int frames = slice.HasRange ? slice.Frames : Frames(req, slice.Mot);
+                frames = Math.Min(frames, Math.Min(quota, endFrames - Placed(cumSec, fps)));
+                if (frames <= 0) break;   // no room left in the song (or in the opening's quota)
+
+                double sec = frames / fps;
+                // Beats follow the seconds actually placed (not the other way round): re-deriving the cursor from
+                // cumSec keeps the sub-beat remainder of each row from accumulating into an over-long dance.
+                int rowBeats = Math.Min(endBeat, (int)Math.Round((cumSec + sec) * bpm / 60.0)) - beat;
+                rows.Add(Row(beat, rowBeats, slice.Mot, slice.StartF, frames, fps));
+                beat += rowBeats;
+                cumSec += sec;
+                quota -= frames;
+                placed++;
+            }
+            return placed;
+        }
+
+        // One draw, then the seam: a group that opens on the clip just played, at a frame that doesn't continue it,
+        // would re-enter the SAME clip — ResolveMot hands back the one MotLoader instance, so nothing blends and the
+        // dancer snaps back mid-pose. Walk on from the draw to the first group that doesn't (one RNG draw either way,
+        // and the walk only ever runs on a collision). Every group colliding (a one-group index) → take the draw.
+        private static IntroSlice[] PickGroup(IReadOnlyList<IntroSlice[]> groups, List<RandomDpsRow> rows, ref Rng rng)
+        {
+            int start = rng.Next(groups.Count);
+            for (int i = 0; i < groups.Count; i++)
+            {
+                var pick = groups[(start + i) % groups.Count];
+                if (pick != null && pick.Length > 0 && !ReEntersLastClip(pick[0], rows)) return pick;
+            }
+            return groups[start];
+        }
+
+        private static bool ReEntersLastClip(IntroSlice next, List<RandomDpsRow> rows)
+        {
+            if (rows.Count == 0) return false;
+            var last = rows[rows.Count - 1];
+            return string.Equals(next.Mot, last.Mot, StringComparison.OrdinalIgnoreCase)
+                   && next.StartF != last.EndFrame + 1;   // resuming the clip where it stopped is exactly what we want
+        }
 
         // The remaining beats never fill a whole unit, so the last row takes them as-is: prefer a motion long enough to
         // cover them outright (so it isn't cut mid-phrase), else play whatever the picked one has.
@@ -233,6 +304,9 @@ namespace Sdo.Osu
             int start = (int)Math.Round(cumSec * fps);
             return Math.Max(0, end - start);
         }
+
+        /// <summary>Whole frames placed so far (cumSec is always a whole number of frames, so this is exact).</summary>
+        private static int Placed(double cumSec, double fps) => (int)Math.Round(cumSec * fps);
 
         private static int Quantise(double beats, int unit) => (int)Math.Floor(beats + 1e-9) / unit * unit;
 

@@ -55,6 +55,7 @@ namespace Sdo.Game
                 DanceSeconds = span,
                 Pool = DpsMotionLibrary.Pool,
                 Intros = DpsMotionLibrary.Intros,
+                Groups = DpsMotionLibrary.Groups,
                 FrameCount = DpsMotionLibrary.Frames,
                 Seed = SeedFor(folderPath, songKey),
                 ChartName = "ext_" + RandomDps.Fnv(IdentityOf(folderPath, songKey)).ToString("x8") + ".gn",
