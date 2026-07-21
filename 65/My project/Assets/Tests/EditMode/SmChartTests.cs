@@ -181,5 +181,47 @@ namespace Sdo.Tests
             var map = SmChart.ToBeatmap(SmChart.Parse(Sample), 0);
             Assert.AreEqual(0, map.Stops.Count);
         }
+
+        // StepMania 原生的炸彈 = 'M' (mine)。它要跟 .gn 的 note_type 1 走同一條路(IsBomb),才會用 ZD00..ZD03 顯示、
+        // 踩到才引爆。'M' 永遠不是長條,也不能被算成一次判定。
+        private const string Mines =
+            "#TITLE:M;\n#OFFSET:0;\n#BPMS:0=120;\n#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n" +
+            "     0,0,0,0,0:\n1000\n0M00\n00M0\n0001\n;\n";
+
+        [Test]
+        public void ToBeatmap_Mine_Becomes_Bomb()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(Mines), 0);
+            Assert.AreEqual(4, map.HitObjects.Count);   // 2 taps + 2 mines
+
+            var bombs = map.HitObjects.FindAll(h => h.IsBomb);
+            Assert.AreEqual(2, bombs.Count, "'M' → 炸彈");
+            Assert.AreEqual(1, bombs[0].Lane); Assert.AreEqual(500, bombs[0].StartTimeMs);
+            Assert.AreEqual(2, bombs[1].Lane); Assert.AreEqual(1000, bombs[1].StartTimeMs);
+            foreach (var b in bombs) Assert.IsFalse(b.IsHold, "炸彈永遠不是長條");
+
+            // 一般 note 不受影響。
+            foreach (var h in map.HitObjects.FindAll(x => !x.IsBomb)) Assert.IsFalse(h.IsBomb);
+        }
+
+        [Test]
+        public void Mines_Are_Not_Judged_Notes()
+        {
+            var s = SmChart.Parse(Mines);
+            Assert.AreEqual(2, SmChart.NoteCount(s.Charts[0].NoteData), "難度排名只看可打的音符");
+            Assert.AreEqual(2, SmChart.ToBeatmap(s, 0).TotalNotes, "炸彈不進滿分分母");
+        }
+
+        [Test]
+        public void Lowercase_Mine_Also_Becomes_Bomb()
+        {
+            const string sm =
+                "#TITLE:m;\n#OFFSET:0;\n#BPMS:0=120;\n#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n" +
+                "     0,0,0,0,0:\n000m\n;\n";
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            Assert.AreEqual(1, map.HitObjects.Count);
+            Assert.IsTrue(map.HitObjects[0].IsBomb);
+            Assert.AreEqual(3, map.HitObjects[0].Lane);
+        }
     }
 }

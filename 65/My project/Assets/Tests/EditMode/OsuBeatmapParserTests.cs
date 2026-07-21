@@ -82,6 +82,33 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void TotalNotes_Excludes_Bombs()
+        {
+            // 炸彈永遠不會被判定(踩到只扣血),算進分母的話滿分就永遠打不到。
+            var map = new OsuBeatmap { Keys = 4 };
+            map.HitObjects.Add(new OsuHitObject(0, 0));                        // tap        → 1
+            map.HitObjects.Add(new OsuHitObject(1, 500, 1500));                // hold       → 2
+            map.HitObjects.Add(new OsuHitObject(2, 1000, null, isBomb: true)); // 炸彈       → 0
+            Assert.AreEqual(3, map.TotalNotes);
+        }
+
+        [Test]
+        public void ApplyLeadIn_Keeps_The_Bomb_Flag()
+        {
+            // 外部 osu/StepMania 譜一定會走 ApplyLeadIn;重建 note 時漏掉 IsBomb 的話,炸彈會變成一般 note。
+            var map = new OsuBeatmap { Keys = 4 };
+            map.HitObjects.Add(new OsuHitObject(0, 100, null, isBomb: true));
+            map.HitObjects.Add(new OsuHitObject(1, 200, 400));
+            map.ApplyLeadIn(1000);
+
+            Assert.IsTrue(map.HitObjects[0].IsBomb);
+            Assert.AreEqual(1100, map.HitObjects[0].StartTimeMs);
+            Assert.IsFalse(map.HitObjects[1].IsBomb);
+            Assert.AreEqual(1200, map.HitObjects[1].StartTimeMs);
+            Assert.AreEqual(1400, map.HitObjects[1].EndTimeMs);
+        }
+
+        [Test]
         public void EarlyVersionTimingOffset_Only_For_FormatBelow5()
         {
             // osu adds +24ms to every time on format < 5 (EARLY_VERSION_TIMING_OFFSET); v5+ gets 0.

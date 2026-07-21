@@ -115,7 +115,7 @@ namespace Sdo.Osu
             {
                 var h = HitObjects[i];
                 HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs + leadInMs,
-                    h.EndTimeMs.HasValue ? h.EndTimeMs.Value + leadInMs : (int?)null);
+                    h.EndTimeMs.HasValue ? h.EndTimeMs.Value + leadInMs : (int?)null, h.IsBomb);   // 炸彈旗標要跟著搬,不然平移完就變普通 note
             }
             for (int i = 0; i < TimingPoints.Count; i++)
             {
@@ -181,14 +181,18 @@ namespace Sdo.Osu
             return n;
         }
 
-        /// <summary>Total judged events = taps + holdHeads + holdReleases.</summary>
+        /// <summary>Total judged events = taps + holdHeads + holdReleases. 炸彈不算 —— 它永遠不會被判定
+        /// (踩到只扣血)，算進來的話滿分就永遠打不到。</summary>
         public int TotalNotes
         {
             get
             {
                 int total = 0;
                 foreach (var h in HitObjects)
+                {
+                    if (h.IsBomb) continue;
                     total += h.IsHold ? 2 : 1;
+                }
                 return total;
             }
         }

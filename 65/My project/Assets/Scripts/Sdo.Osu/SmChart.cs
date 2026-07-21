@@ -104,7 +104,8 @@ namespace Sdo.Osu
         }
 
         /// <summary>Number of judged objects in a dance-single note body (taps + hold-heads). Pure/testable —
-        /// used to rank difficulties by note count (a hold counts once, like an osu! [HitObjects] line).</summary>
+        /// used to rank difficulties by note count (a hold counts once, like an osu! [HitObjects] line).
+        /// Mines ('M') are NOT counted: they are never judged, so they must not inflate a difficulty's rank.</summary>
         public static int NoteCount(string noteData)
         {
             if (string.IsNullOrEmpty(noteData)) return 0;
@@ -185,7 +186,12 @@ namespace Sdo.Osu
                                 openHead[c] = -1.0;
                             }
                         }
-                        // '0', 'M' (mine), and anything else → no note.
+                        else if (ch == 'M' || ch == 'm')
+                            // 'M' = mine，StepMania 原生的炸彈：要避開、踩到才有事，和 .gn 的 note_type 1 同一種東西，
+                            // 所以走同一條 IsBomb 路徑(ZD00..ZD03 外觀 + TickBombs 引爆)。永遠不是長條。
+                            map.HitObjects.Add(new OsuHitObject(c, Ms(segBeat, segBpm, segMs, stopBeat, stopMs, beat, offMs),
+                                                                null, isBomb: true));
+                        // '0' 與其他字元(lift 'L'、fake 'F'…) → 無音符。
                     }
                 }
             }
