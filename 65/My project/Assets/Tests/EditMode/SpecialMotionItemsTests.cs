@@ -201,6 +201,14 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void ScrollOffsetV_JustBelowWrap_StaysUnderOne()
+        {
+            // 2 × (0.5 - 1e-12) = 1 - 2e-12: wraps to ~0.999999999998 as a double, which rounds UP to
+            // exactly 1f on the float cast unless the wrap is re-applied after narrowing.
+            Assert.Less(SpecialMotionItems.ScrollOffsetV(0.5 - 1e-12, 2f), 1f);
+        }
+
+        [Test]
         public void UvScrollRate_MatchesMeasuredGroundTruth()
             => Assert.AreEqual(2.0f, SpecialMotionItems.UvScrollUnitsPerSec, 1e-4f);   // Frida: 1.999 units/s
     }
