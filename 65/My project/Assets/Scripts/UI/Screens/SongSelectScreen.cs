@@ -25,7 +25,7 @@ namespace Sdo.UI.Screens
     {
         public override ScreenId Id => ScreenId.SongSelect;
         private const int PageSize = 12;
-        private const int NewBadgeCount = 5;          // 最大編號的 N 首歌掛 NEW 標籤
+        private const int NewBadgeCount = 5;          // 歌單最上面 N 首(第一頁前 N 列)掛 NEW 標籤
         private const float NewBadgeFps = 12f;        // NEWSIGN.an colour-cycle speed (14 frames ≈ 1.2s loop)
         private const float PreviewVolume = 0.55f;
         private const float RoomDimBrightness = 0.8f; // 底下房間調暗到 ≈80% 亮度(黑幕 alpha = 1−此值);取代原本全黑
@@ -56,7 +56,7 @@ namespace Sdo.UI.Screens
         private SongCatalog.Entry _selected;
         private int _difficulty;   // 0=easy/1=normal/2=hard; set from Session in OnShow
         private int _page;
-        private HashSet<int> _newIds = new HashSet<int>();   // fileIds that get a NEW badge (top-N newest)
+        private HashSet<string> _newGns = new HashSet<string>();   // gn of the top-N rows of the list — those get a NEW badge
 
         // disk (song jacket, swapped per selection; jacket is circular-masked so a square cover can't sweep out)
         private RectTransform _diskRoot;
@@ -267,12 +267,9 @@ namespace Sdo.UI.Screens
 
         private void ComputeNewIds()
         {
-            // NEW badge = the highest-fileId (newest) songs. Pick the top-N by fileId explicitly
-            // (independent of the browse list's sort order) so the badge logic stays robust.
-            _newIds.Clear();
-            var byNew = new List<SongCatalog.Entry>(_model.All);
-            byNew.Sort((a, b) => b.fileId.CompareTo(a.fileId));
-            for (int i = 0; i < byNew.Count && i < NewBadgeCount; i++) _newIds.Add(byNew[i].fileId);
+            // NEW badge 只看歌單位置：全部清單第一頁的前 N 列。fileId 不參與（大 fileId 的歌可能排在清單中間，
+            // 之前照 fileId 挑會讓第 132 頁冒出 NEW）。單一來源：SongListModel.NewBadgeKeys。
+            _newGns = SongListModel.NewBadgeKeys(_model.All, NewBadgeCount);
         }
 
         // ---------------- build helpers ----------------
@@ -705,7 +702,7 @@ namespace Sdo.UI.Screens
                 foreach (var k in Favorites.NewestFirst())
                     if (byKey.TryGetValue(k, out var e)) res.Add(e);
             }
-            else if (_category == CatNewest) { foreach (var e in all) if (_newIds.Contains(e.fileId)) res.Add(e); }
+            else if (_category == CatNewest) { foreach (var e in all) if (e != null && e.gn != null && _newGns.Contains(e.gn)) res.Add(e); }
             return res;
         }
 
@@ -788,7 +785,7 @@ namespace Sdo.UI.Screens
                 int dur = e.DurationSec(_difficulty);
                 _rowTime[i].text = dur > 0 ? FormatDuration(dur) : "";
                 _rowTime[i].color = rowCol;
-                SetRowNewActive(i, _newBadgeArt && _newIds.Contains(e.fileId));
+                SetRowNewActive(i, _newBadgeArt && e.gn != null && _newGns.Contains(e.gn));
                 // 左鍵選歌：先發 SE_0001 再 focus+試聽。（RenderPage 上面 RemoveAllListeners 會連 WrapInWindow 掛的 click SFX 一起清掉 → 這裡補回）
                 // 灰列(此難度無譜面)不掛左鍵 → 點了沒反應、不會選中也不試聽。
                 if (playable)

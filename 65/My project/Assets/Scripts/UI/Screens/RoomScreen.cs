@@ -594,9 +594,9 @@ namespace Sdo.UI.Screens
             if (s == null) return;
             if (!s.HasSong)
             {
-                var model = SongListModel.FromCatalog();          // 已按 fileId 由大到小排序
+                var model = SongListModel.FromCatalog();          // 已按 gn 檔名(sdomNNNNk.gn)由大到小排序
                 if (model.All.Count == 0) return;
-                var e = model.All[0];                             // [0] = index 最大 = 清單最上面
+                var e = model.All[0];                             // [0] = 檔名編號最大 = 清單最上面
                 s.SongGn = e.gn;
                 s.SongFileId = e.fileId;
                 s.SongTitle = e.title ?? e.gn;
