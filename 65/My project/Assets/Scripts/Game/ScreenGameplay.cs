@@ -3999,14 +3999,7 @@ namespace Sdo.Game
             }
             // DEBUG（暫時停用）：切換 ShowTime（氣條）模式。註解掉避免誤觸；F7 現在給打拍音，要測時請自己挑個沒用到的鍵。
             // { showtimeMode = !showtimeMode; SetEnergyHudVisible(showtimeMode); SetTrackVisible(_trackVisible); Debug.Log("[showtime] mode=" + showtimeMode); }   // SetTrackVisible refreshes HP-bar visibility for the new mode
-            if (Input.GetKeyDown(KeyCode.B)) SpawnComboBurst(0);   // DEBUG B: fire the 100COMBO floor ring burst on demand
-            // BURST OBSERVE controls: 1-5 fire 100..500COMBO, 0 fires FINISHED; [ / ] slow/speed time, \ pause, = reset.
-            if (Input.GetKeyDown(KeyCode.Alpha1)) SpawnComboBurst(0);
-            if (Input.GetKeyDown(KeyCode.Alpha2)) SpawnComboBurst(1);
-            if (Input.GetKeyDown(KeyCode.Alpha3)) SpawnComboBurst(2);
-            if (Input.GetKeyDown(KeyCode.Alpha4)) SpawnComboBurst(3);
-            if (Input.GetKeyDown(KeyCode.Alpha5)) SpawnComboBurst(4);
-            if (Input.GetKeyDown(KeyCode.Alpha0)) SpawnNamedEft("FINISHED", 5f);
+            // (已移除) 測試用 combo 爆發按鍵 B / 1-5 / 0 —— 會在遊玩時誤觸,清掉。要觀察爆發時自己臨時加回。
             // 測試用（已停用）：F5 直接跳到結算（Shift+F5 強制 GAME OVER）
             // if (Input.GetKeyDown(KeyCode.F5) && _started && !_ended)
             // {
@@ -4019,29 +4012,33 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.F5)) StepScrollSpeed(+1);
             if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
             // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
-            // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。F9 開測試面板（滑桿＋檔位按鈕）。
+            // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。
+            // 正式遊玩已停用（會誤觸）；只留給譜面編輯器（它的 HUD 就寫著這幾個鍵）。
             // 編輯器模式的暫停/變速要走 Editor* 版本（會重新錨定 dsp↔譜面時間；SetPaused 的恢復路徑假設音源是 Pause 過的，
             // 但編輯器 seek 是 Stop→Play，直接用會恢復不了聲音）。
-            if (Input.GetKeyDown(KeyCode.LeftBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, -1)); else SetGameRate(GameRate.Step(_musicRate, -1)); }
-            if (Input.GetKeyDown(KeyCode.RightBracket)) { if (editorMode) EditorSetRate(GameRate.Step(_musicRate, +1)); else SetGameRate(GameRate.Step(_musicRate, +1)); }
-            if (Input.GetKeyDown(KeyCode.Backslash)) { if (editorMode) EditorSetPaused(!_paused); else SetPaused(!_paused); }
-            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) { if (editorMode) EditorSetRate(GameRate.Normal); else SetGameRate(GameRate.Normal); }
+            if (editorMode)
+            {
+                if (Input.GetKeyDown(KeyCode.LeftBracket)) EditorSetRate(GameRate.Step(_musicRate, -1));
+                if (Input.GetKeyDown(KeyCode.RightBracket)) EditorSetRate(GameRate.Step(_musicRate, +1));
+                if (Input.GetKeyDown(KeyCode.Backslash)) EditorSetPaused(!_paused);
+                if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadEquals)) EditorSetRate(GameRate.Normal);
+            }
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
             UpdateFlyHover();   // 飛行翅膀:跳舞時把舞者抬到 fly idle 同高(idle 靠 pose 已浮,dance 補抬)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
-            if (Input.GetKeyDown(KeyCode.F9))
-            {
-                // Shift+F9: 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依 graphicsUVStartsAtTop 自動判斷，
-                // 但萬一這台機器仍然上下顛倒就用它救）。原本掛在 F9，讓位給流速面板。
-                if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && _backdropMat != null)
-                {
-                    _backdropFlip = !_backdropFlip;
-                    _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
-                    _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
-                }
-                else _showRateUI = !_showRateUI;   // F9: 流速測試面板
-            }
+            // 測試用（已停用）：F9 開流速測試面板；Shift+F9 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依
+            // graphicsUVStartsAtTop 自動判斷，但萬一這台機器仍然上下顛倒就用它救）。遊玩時會誤觸，需要時再解開。
+            // if (Input.GetKeyDown(KeyCode.F9))
+            // {
+            //     if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && _backdropMat != null)
+            //     {
+            //         _backdropFlip = !_backdropFlip;
+            //         _backdropMat.mainTextureScale = new Vector2(1f, _backdropFlip ? -1f : 1f);
+            //         _backdropMat.mainTextureOffset = new Vector2(0f, _backdropFlip ? 1f : 0f);
+            //     }
+            //     else _showRateUI = !_showRateUI;   // F9: 流速測試面板
+            // }
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
                 // F2 (decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
