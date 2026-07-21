@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using Sdo.Game;
+using Sdo.Osu;
 using Sdo.UI.Catalog;
 
 namespace Sdo.Tests
@@ -281,5 +282,109 @@ namespace Sdo.Tests
         [Test]
         public void Externals_Null_Safe()
             => Assert.AreEqual(0, SongListModel.Externals(null).Count);
+
+        // ---- 歌包自帶的 serverconfig：排序用包自己的順序、標籤照包說的 ----
+        // (Sdo.Osu.SdoServerConfig / docs/reverse-engineering/SDO_SERVERCONFIG.md)
+
+        private static SongCatalog.Entry Pack(string gn, string group, int packOrder, SongBadge badge = SongBadge.None)
+            => new SongCatalog.Entry { gn = gn, external = true, group = group, packOrder = packOrder, badge = (int)badge, notesEasy = 1 };
+
+        [Test]
+        public void Curate_PackSongs_UseTheirOwnOrder_NewestRowOnTop()
+        {
+            // 官方選單是反序畫的：serverconfig 表的最後一列在最上面 → packOrder 降冪。
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                Pack("ext_aaak.gn", "NX", 0),
+                Pack("ext_bbbk.gn", "NX", 7),
+                Pack("ext_ccck.gn", "NX", 3),
+            });
+            Assert.AreEqual(new[] { "ext_bbbk.gn", "ext_ccck.gn", "ext_aaak.gn" }, r.ConvertAll(e => e.gn).ToArray());
+        }
+
+        [Test]
+        public void Curate_OfficialSongsStayAboveExternalOnes()
+        {
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                Pack("ext_zzzk.gn", "NX", 99),
+                new SongCatalog.Entry { gn = "sdom0001k.gn", fileId = 10001 },
+            });
+            Assert.AreEqual("sdom0001k.gn", r[0].gn);
+            Assert.AreEqual("ext_zzzk.gn", r[1].gn);
+        }
+
+        [Test]
+        public void Curate_PackWithoutServerConfig_KeepsFilenameOrder_BelowTheOrderedOnes()
+        {
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "ext_aaak.gn", external = true, group = "NX" },   // packOrder 預設 -1
+                new SongCatalog.Entry { gn = "ext_bbbk.gn", external = true, group = "NX" },
+                Pack("ext_000k.gn", "NX", 2),
+            });
+            Assert.AreEqual("ext_000k.gn", r[0].gn);      // 有序的先出
+            Assert.AreEqual("ext_bbbk.gn", r[1].gn);      // 其餘沿用檔名降冪
+            Assert.AreEqual("ext_aaak.gn", r[2].gn);
+        }
+
+        [Test]
+        public void Curate_GroupsStayTogether()
+        {
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                Pack("ext_1k.gn", "A", 1), Pack("ext_2k.gn", "B", 1),
+                Pack("ext_3k.gn", "A", 0), Pack("ext_4k.gn", "B", 0),
+            });
+            var groups = r.ConvertAll(e => e.group);
+            Assert.AreEqual(new[] { "B", "B", "A", "A" }, groups.ToArray());   // 群組不交錯
+        }
+
+        [Test]
+        public void BadgeMap_PackConfigWins_AndOfficialFallsBackToTopN()
+        {
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "sdom9002k.gn", fileId = 19002 },
+                new SongCatalog.Entry { gn = "sdom9001k.gn", fileId = 19001 },
+                new SongCatalog.Entry { gn = "sdom9000k.gn", fileId = 19000 },
+                Pack("ext_hotk.gn", "NX", 5, SongBadge.Hot),
+                Pack("ext_reck.gn", "NX", 4, SongBadge.Recommend),
+                Pack("ext_plainek.gn", "NX", 3),
+            };
+            var map = SongListModel.BadgeMap(list, 2);
+
+            Assert.AreEqual(SongBadge.New, SongListModel.BadgeOf(map, list[0]));   // 最上面 2 首官方歌 = NEW
+            Assert.AreEqual(SongBadge.New, SongListModel.BadgeOf(map, list[1]));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[2]));
+            Assert.AreEqual(SongBadge.Hot, SongListModel.BadgeOf(map, list[3]));   // 包說了算
+            Assert.AreEqual(SongBadge.Recommend, SongListModel.BadgeOf(map, list[4]));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[5]));  // 外部歌不會被 top-N 規則掃到
+        }
+
+        [Test]
+        public void BadgeMap_ExternalSongsNeverGetTheAutoNewBadge()
+        {
+            // 外部歌就算排在最上面也不掛 NEW —— 它們沒有官方編號，NEW 由歌包的 serverconfig 決定。
+            var list = new List<SongCatalog.Entry>
+            {
+                Pack("ext_1k.gn", "NX", 9),
+                Pack("ext_2k.gn", "NX", 8),
+                new SongCatalog.Entry { gn = "sdom0001k.gn", fileId = 10001 },
+            };
+            var map = SongListModel.BadgeMap(list, 2);
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[0]));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[1]));
+            Assert.AreEqual(SongBadge.New, SongListModel.BadgeOf(map, list[2]));
+        }
+
+        [Test]
+        public void BadgeMap_NullAndEmptySafe()
+        {
+            Assert.AreEqual(0, SongListModel.BadgeMap(null, 5).Count);
+            Assert.AreEqual(0, SongListModel.BadgeMap(new List<SongCatalog.Entry> { null }, 5).Count);
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(null, new SongCatalog.Entry { gn = "x.gn" }));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(new Dictionary<string, SongBadge>(), null));
+        }
     }
 }

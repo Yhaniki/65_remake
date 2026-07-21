@@ -220,6 +220,55 @@ namespace Sdo.Tests
                 new[] { "100-149", "200-249", "10000-10049" }, b.ConvertAll(x => x.Key));
         }
 
+        // ---- 歌包自帶 serverconfig 時，資料夾模式照包自己的順序（見 SDO_SERVERCONFIG.md / SdoServerConfig）----
+
+        private static SongCatalog.Entry PackSong(string gn, string title, string group, int packOrder)
+        {
+            var e = Song(gn, title, group: group);
+            e.packOrder = packOrder;
+            return e;
+        }
+
+        [Test]
+        public void Build_Folder_Bucket_Uses_The_Packs_Own_Order()
+        {
+            // 官方選單是反序畫的：serverconfig 表的最後一列在最上面 → 列號降冪，跟歌名字母序無關。
+            var list = new List<SongCatalog.Entry>
+            {
+                PackSong("ext_ak.gn", "Aloha", "NX", 3),
+                PackSong("ext_bk.gn", "Zebra", "NX", 9),
+                PackSong("ext_ck.gn", "Melody", "NX", 5),
+            };
+            var b = SongGrouping.Build(list, SongGroupMode.Folder);
+            CollectionAssert.AreEqual(new[] { "Zebra", "Melody", "Aloha" }, b[0].Songs.ConvertAll(x => x.title));
+        }
+
+        [Test]
+        public void Build_Folder_PackOrdered_Songs_Come_Before_Unordered_Ones()
+        {
+            var list = new List<SongCatalog.Entry>
+            {
+                Song("ext_zk.gn", "Aaa", group: "NX"),          // packOrder 預設 -1
+                PackSong("ext_ak.gn", "Zzz", "NX", 0),
+                Song("ext_yk.gn", "Bbb", group: "NX"),
+            };
+            var b = SongGrouping.Build(list, SongGroupMode.Folder);
+            CollectionAssert.AreEqual(new[] { "Zzz", "Aaa", "Bbb" }, b[0].Songs.ConvertAll(x => x.title));
+        }
+
+        [Test]
+        public void Build_Title_Mode_Ignores_PackOrder()
+        {
+            // 使用者明確選「歌名」時就是歌名序 —— 包的順序只管 資料夾 模式。
+            var list = new List<SongCatalog.Entry>
+            {
+                PackSong("ext_ak.gn", "Apple", "NX", 0),
+                PackSong("ext_bk.gn", "Avocado", "NX", 9),
+            };
+            var b = SongGrouping.Build(list, SongGroupMode.Title);
+            CollectionAssert.AreEqual(new[] { "Apple", "Avocado" }, b[0].Songs.ConvertAll(x => x.title));
+        }
+
         [Test]
         public void Build_Folder_Bucket_Sorts_Songs_By_Title()
         {

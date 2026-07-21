@@ -45,6 +45,12 @@ namespace Sdo.Game
             public int chartIdxEasy, chartIdxNormal, chartIdxHard;            // .sm #NOTES block index per slot (osu: 0)
             public int previewStartMs = -1;   // 試聽起點(ms)：osu PreviewTime / SM #SAMPLESTART；-1 = 未指定→中段
             public int previewLengthMs;       // 試聽長度(ms)：SM #SAMPLELENGTH；0 = 未指定→預設長度
+            // ---- 歌包自帶的 serverconfig（Sdo.Osu.SdoServerConfig；docs/reverse-engineering/SDO_SERVERCONFIG.md）----
+            /// <summary>這首歌在歌包 serverconfig 歌曲表裡的列號；-1 = 沒有（官方歌、或包裡沒這個檔）。
+            /// 官方選單反序畫，所以歌單排序用它**降冪**（表的最後一列 = 最上面）。</summary>
+            public int packOrder = -1;
+            /// <summary>歌包指定的標籤（0=無 1=NEW 2=HOT 3=推薦 4=古典，= Sdo.Osu.SongBadge）。</summary>
+            public int badge;
 
             /// <summary>Absolute chart file path for difficulty d (external songs only); "" if that slot is empty.</summary>
             public string ChartPath(int d) => d <= 0 ? chartEasy : (d == 1 ? chartNormal : chartHard);

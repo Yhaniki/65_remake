@@ -212,9 +212,44 @@ namespace Sdo.Osu
                 songs.Add(Materialize(kept[i], packGroup, songDir, tracks[i], images, sole, claimed, sidecar));
 
             Disambiguate(songs, kept);
+            ApplyServerConfig(songs, songDir);
             return songs;
         }
 
+        /// <summary>
+        /// 一個 <c>.gn</c> 歌包**自己的** serverconfig（<c>patch Datas\config2</c> / <c>ServerConfigND.dat</c>）：
+        /// 給包裡每首歌它在官方歌單裡的**列號**與**標籤**（NEW/HOT/推薦/古典）。找不到檔就什麼都不做，
+        /// 包照舊用檔名排序、沒有標籤。格式見 docs/reverse-engineering/SDO_SERVERCONFIG.md。
+        ///
+        /// 快取命中的路徑也要呼叫一次（<see cref="ExternalScanCache"/> 的簽章只看歌資料夾自己的檔案，
+        /// 而 serverconfig 住在隔壁資料夾 —— 改了它不會讓快取失效），所以這裡是 public。
+        /// </summary>
+        public static void ApplyServerConfig(List<ExternalSong> songs, string songDir)
+        {
+            if (songs == null || songs.Count == 0 || string.IsNullOrEmpty(songDir)) return;
+            bool anyPack = false;
+            foreach (var s in songs) if (s != null && s.Format == SongFormat.Gn) { anyPack = true; break; }
+            if (!anyPack) return;
+
+            byte[] raw = null;
+            foreach (var p in SdoServerConfig.ConfigCandidates(songDir))
+            {
+                try { if (File.Exists(p)) { raw = File.ReadAllBytes(p); break; } }
+                catch { /* 讀不到就換下一個候選 */ }
+            }
+            if (raw == null) return;
+
+            var byId = SdoServerConfig.ById(SdoServerConfig.Parse(raw));
+            if (byId.Count == 0) return;
+            foreach (var s in songs)
+            {
+                if (s == null || s.Format != SongFormat.Gn) continue;
+                if (!byId.TryGetValue(SdoServerConfig.SongIdOf(s.FileId), out var row)) continue;
+                s.PackOrder = row.Order;
+                s.Badge = row.Badge;
+                s.PackHidden = row.Hidden;
+            }
+        }
 
         // The discs we generate are written INTO the song folder, so on the next scan they are just more images sitting
         // next to the cover — and a folder whose cover carries no filename hint would hand the picker its own disc back

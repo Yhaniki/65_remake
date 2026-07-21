@@ -8,6 +8,7 @@ using UnityEngine.Networking;
 using UnityEngine.UI;
 using Sdo.Game;
 using Sdo.Localization;
+using Sdo.Osu;
 using Sdo.Settings;
 using Sdo.UI.Catalog;
 using Sdo.UI.Core;
@@ -39,6 +40,7 @@ namespace Sdo.UI.Screens
         private const float HiX = 299f, BadgeX = 301f, NameX = 362f, NameW = 252f;
         private const float TimeX = 622f, TimeW = 72f, LevelX = 700f, LevelW = 36f, RowH = 19f;
         private const float BadgeW = 56f, BadgeH = 23f;
+        private const float BadgeRefH = 25f;   // new.an 的高度：其他標籤圖以它為基準對齊同一個垂直中心
         // The animated NEWSIGN "New" sits in FRONT; the static new.an "★NEW!" sits BEHIND as a glow/backing (托襯).
         // Offset the animated "New" right past the backing's star and 1px up so it centres on the backing glow.
         private const float NewAnimDX = 18f, NewAnimDY = -1f;
@@ -56,7 +58,9 @@ namespace Sdo.UI.Screens
         private SongCatalog.Entry _selected;
         private int _difficulty;   // 0=easy/1=normal/2=hard; set from Session in OnShow
         private int _page;
-        private HashSet<int> _newIds = new HashSet<int>();   // fileIds that get a NEW badge (top-N newest)
+        // gn → 該列要掛的標籤（NEW/HOT/推薦/古典）。歌包自帶的 serverconfig 說了算，其餘官方歌沿用
+        // 「最上面 N 首 = NEW」的近似；見 SongListModel.BadgeMap 與 docs/reverse-engineering/SDO_SERVERCONFIG.md。
+        private Dictionary<string, SongBadge> _badges = new Dictionary<string, SongBadge>();
 
         // disk (song jacket, swapped per selection; jacket is circular-masked so a square cover can't sweep out)
         private RectTransform _diskRoot;
@@ -90,7 +94,7 @@ namespace Sdo.UI.Screens
         private int _randRange = 3;   // default = 全部
 
         // list rows
-        private Image[] _rowHi, _rowNew, _rowNewBg;
+        private Image[] _rowHi, _rowNew, _rowBadge;
         private Button[] _rowBtn;
         private PointerClickProxy[] _rowCtx;   // per-row right-click → 收藏加/刪彈出選單
         private TextMeshProUGUI[] _rowName, _rowTime, _rowLevel;
@@ -102,7 +106,10 @@ namespace Sdo.UI.Screens
         private Camera _uiCam;   // 世界空間 canvas 的相機（滑鼠螢幕座標 → 800×600 設計座標用）
         private Sprite _hiNormal, _hiPushed;
         private Sprite[] _newFrames = new Sprite[0];   // NEWSIGN.an animation frames (colour-cycling NEW tag)
-        private bool _newBadgeArt;                     // any NEW badge art (animation and/or new.an backing) loaded
+        // 四種標籤的原版美術，index = (int)SongBadge：new.an / hot.an / recommend.an / classical.an
+        // （都是 MusicSelDlg.png 的裁切；離線 Extracted 只有 new.an，其餘三個要靠線上 ROOMDLG overlay）。
+        private readonly Sprite[] _badgeArt = new Sprite[5];
+        private bool _newBadgeArt;                     // 至少載到一張標籤美術 → 才會去畫標籤
 
         // misc widgets
         private TMP_InputField _search;
@@ -147,7 +154,7 @@ namespace Sdo.UI.Screens
         protected override void BuildUI()
         {
             _model = SongListModel.FromCatalog();
-            ComputeNewIds();
+            ComputeBadges();
             _stages = new List<StageInfo>();
             foreach (var s in StageCatalog.Stages)
                 if (s.Id >= 0 && s.Id <= StageCatalog.MaxSelectableId) _stages.Add(s);
@@ -305,15 +312,13 @@ namespace Sdo.UI.Screens
             _groupPanel?.SetBusy(false);
         }
 
-        private void ComputeNewIds()
+        private void ComputeBadges()
         {
-            // NEW badge = the highest-fileId (newest) songs. Pick the top-N by fileId explicitly
-            // (independent of the browse list's sort order) so the badge logic stays robust.
-            _newIds.Clear();
-            var byNew = new List<SongCatalog.Entry>(_model.All);
-            byNew.Sort((a, b) => b.fileId.CompareTo(a.fileId));
-            for (int i = 0; i < byNew.Count && i < NewBadgeCount; i++) _newIds.Add(byNew[i].fileId);
+            // 標籤來源：歌包自帶的 serverconfig 優先，其餘官方歌用「歌單最上面 N 首 = NEW」補。
+            _badges = SongListModel.BadgeMap(_model.All, NewBadgeCount);
         }
+
+        private SongBadge BadgeOf(SongCatalog.Entry e) => SongListModel.BadgeOf(_badges, e);
 
         // ---------------- build helpers ----------------
 
@@ -476,7 +481,7 @@ namespace Sdo.UI.Screens
 
             // The catalog changed underneath us → rebuild everything derived from it.
             _model = SongListModel.FromCatalog();
-            ComputeNewIds();
+            ComputeBadges();
             _extDurDone.Clear();       // fileIds are handed out afresh by the scan; measured durations don't carry over
             _bucketSongs.Clear();      // stale Entry objects — OpenGroupPanel refills this via OnBucketPicked
 
@@ -580,9 +585,16 @@ namespace Sdo.UI.Screens
             _newFrames = RoomDlgArt.AnFrames("newsign.an");
             _rowHi = new Image[PageSize];
             _rowNew = new Image[PageSize];
-            _rowNewBg = new Image[PageSize];
-            var newBgSprite = RoomDlgArt.An("new.an");   // static ★NEW! glow plate behind the animation
-            _newBadgeArt = newBgSprite != null || _newFrames.Length > 0;
+            _rowBadge = new Image[PageSize];
+            // 四種標籤：官方一列最多掛一個，優先序 NEW > HOT > 推薦 > 古典（見 SDO_SERVERCONFIG.md §5）。
+            _badgeArt[(int)SongBadge.New] = RoomDlgArt.An("new.an");             // ★NEW!  63×25
+            _badgeArt[(int)SongBadge.Hot] = RoomDlgArt.An("hot.an");             // HOT    62×32
+            _badgeArt[(int)SongBadge.Recommend] = RoomDlgArt.An("recommend.an"); // 推薦   63×25
+            _badgeArt[(int)SongBadge.Classical] = RoomDlgArt.An("classical.an"); // 古典   71×25
+            var newBgSprite = _badgeArt[(int)SongBadge.New];
+            _newBadgeArt = false;
+            foreach (var sp in _badgeArt) if (sp != null) { _newBadgeArt = true; break; }
+            _newBadgeArt = _newBadgeArt || _newFrames.Length > 0;
             _rowBtn = new Button[PageSize];
             _rowCtx = new PointerClickProxy[PageSize];
             _rowName = new TextMeshProUGUI[PageSize];
@@ -612,17 +624,17 @@ namespace Sdo.UI.Screens
                 _rowTime[i] = AddRowText("row" + i + "time", TimeX, textTop, TimeW, ColRow, TextAlignmentOptions.Center);
                 _rowLevel[i] = AddRowText("row" + i + "lvl", LevelX, textTop, LevelW, ColRow, TextAlignmentOptions.Center);
 
-                // NEW badge: the original static new.an "★NEW!" plate, flush at the strip's left edge.
-                var nbg = UIKit.AddImage(Root, "row" + i + "newbg", Color.white);
+                // 標籤（NEW/HOT/推薦/古典 共用一個 Image，每頁 SetRowBadge 換圖），貼齊列的左緣。
+                var nbg = UIKit.AddImage(Root, "row" + i + "badge", Color.white);
                 UIKit.ApplySprite(nbg, newBgSprite);   // sizes to 63×25, hides if missing
                 float gw = newBgSprite != null ? newBgSprite.rect.width : BadgeW, gh = newBgSprite != null ? newBgSprite.rect.height : BadgeH;
-                Place(nbg.rectTransform, BadgeX - 3f, top - 2, gw, gh);   // NEW 標籤再往左 3px
+                Place(nbg.rectTransform, BadgeX - 3f, top - 2, gw, gh);   // 標籤再往左 3px
                 nbg.gameObject.SetActive(false);
-                _rowNewBg[i] = nbg;
+                _rowBadge[i] = nbg;
 
                 // NEW badge foreground (animated NEWSIGN.an "New", offset to sit over the backing glow) — DISABLED:
                 // the colour-cycling overlay didn't read well over the ★NEW! plate, so we show the static badge only.
-                // To re-enable, uncomment this block (SetRowNewActive already toggles _rowNew together with the backing).
+                // To re-enable, uncomment this block (SetRowBadge already hides _rowNew alongside the static badge).
                 // var nb = UIKit.AddImage(Root, "row" + i + "new", Color.white);
                 // Sprite nf0 = _newFrames.Length > 0 ? _newFrames[0] : null;
                 // nb.sprite = nf0;
@@ -648,11 +660,23 @@ namespace Sdo.UI.Screens
             return t;
         }
 
-        // Show/hide a row's NEW badge — the animated "New" foreground and its static new.an glow backing together.
-        private void SetRowNewActive(int i, bool on)
+        /// <summary>
+        /// 換掉一列的標籤圖（<see cref="SongBadge.None"/> = 不顯示）。四張圖尺寸不同（HOT 是 62×32、古典 71×25），
+        /// 所以連位置一起重下：水平貼齊列左緣，垂直**維持同一個中心**（以 NEW 的 25px 高為基準往上補），
+        /// 免得比較高的 HOT 掉出列外。
+        /// </summary>
+        private void SetRowBadge(int i, SongBadge badge)
         {
-            if (_rowNew[i] != null) _rowNew[i].gameObject.SetActive(on);
-            if (_rowNewBg[i] != null) _rowNewBg[i].gameObject.SetActive(on);
+            if (_rowNew[i] != null) _rowNew[i].gameObject.SetActive(false);
+            var img = _rowBadge[i];
+            if (img == null) return;
+            var sprite = badge > SongBadge.None && (int)badge < _badgeArt.Length ? _badgeArt[(int)badge] : null;
+            if (sprite == null) { img.gameObject.SetActive(false); return; }
+            UIKit.ApplySprite(img, sprite);
+            float top = RowTop0 + RowPitch * i;
+            float w = sprite.rect.width, h = sprite.rect.height;
+            Place(img.rectTransform, BadgeX - 3f, top - 2f - (h - BadgeRefH) * 0.5f, w, h);
+            img.gameObject.SetActive(true);
         }
 
         // Apply a row's strip sprite. The purple SELECTED box (MusicSelDlg73) sits 1px lower than the normal strip
@@ -839,8 +863,10 @@ namespace Sdo.UI.Screens
             else { _selected = null; StopPreview(); UpdateInfo(); UpdateDisk(); }
         }
 
-        // The song subset for the active category. 全部 = all; 收藏 = 本機 user 收藏的歌; 最新 = NEW-badge songs;
-        // 懷舊 unconfigured = empty. (隨機 never reaches here — it renders the range rows instead.)
+        // The song subset for the active category. 全部 = 官方歌; 收藏 = 本機 user 收藏的歌;
+        // 最新 = 掛 NEW 標籤的歌; 懷舊 = 掛 古典(CLASSICAL) 標籤的歌 —— 兩者都是官方 serverconfig 那張表的旗標
+        // (見 docs/reverse-engineering/SDO_SERVERCONFIG.md；歌包自帶的 config 說了算)。
+        // (隨機 never reaches here — it renders the range rows instead；勁樂 這裡改當 資料夾/分類瀏覽 用。)
         private List<SongCatalog.Entry> CategoryBase()
         {
             var all = _model.All;
@@ -858,7 +884,8 @@ namespace Sdo.UI.Screens
                 foreach (var k in Favorites.NewestFirst())
                     if (byKey.TryGetValue(k, out var e)) res.Add(e);
             }
-            else if (_category == CatNewest) { foreach (var e in all) if (_newIds.Contains(e.fileId)) res.Add(e); }
+            else if (_category == CatNewest) { foreach (var e in all) if (BadgeOf(e) == SongBadge.New) res.Add(e); }
+            else if (_category == CatNostalgia) { foreach (var e in all) if (BadgeOf(e) == SongBadge.Classical) res.Add(e); }
             return res;
         }
 
@@ -924,7 +951,7 @@ namespace Sdo.UI.Screens
                 _rowLevel[i].gameObject.SetActive(has);
                 _rowBtn[i].onClick.RemoveAllListeners();
                 if (_rowCtx[i] != null) _rowCtx[i].Clicked = null;
-                if (!has) { SetRowNewActive(i, false); continue; }
+                if (!has) { SetRowBadge(i, SongBadge.None); continue; }
 
                 var e = slice[i];
                 // 這首歌在目前難度有沒有譜面(用實際 note 數判斷,非等級)：沒有→整列灰掉、左鍵不可選。
@@ -941,7 +968,7 @@ namespace Sdo.UI.Screens
                 int dur = e.DurationSec(_difficulty);
                 _rowTime[i].text = dur > 0 ? FormatDuration(dur) : "";
                 _rowTime[i].color = rowCol;
-                SetRowNewActive(i, _newBadgeArt && _newIds.Contains(e.fileId));
+                SetRowBadge(i, _newBadgeArt ? BadgeOf(e) : SongBadge.None);
                 // 左鍵選歌：先發 SE_0001 再 focus+試聽。（RenderPage 上面 RemoveAllListeners 會連 WrapInWindow 掛的 click SFX 一起清掉 → 這裡補回）
                 // 灰列(此難度無譜面)不掛左鍵 → 點了沒反應、不會選中也不試聽。
                 if (playable)
@@ -963,7 +990,7 @@ namespace Sdo.UI.Screens
                 _rowName[i].gameObject.SetActive(has);
                 _rowTime[i].gameObject.SetActive(false);
                 _rowLevel[i].gameObject.SetActive(false);
-                SetRowNewActive(i, false);
+                SetRowBadge(i, SongBadge.None);
                 _rowBtn[i].onClick.RemoveAllListeners();
                 if (_rowCtx[i] != null) _rowCtx[i].Clicked = null;   // 隨機難度列不是歌曲 → 無收藏右鍵
                 if (!has) continue;

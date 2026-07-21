@@ -131,8 +131,9 @@ namespace Sdo.UI.Catalog
 
         /// <summary>
         /// Slice <paramref name="songs"/> into ordered buckets. Sections are ordered by <see cref="SortKey"/>;
-        /// the songs inside each bucket are ordered by what the mode groups on (title, artist then title, or
-        /// BPM then title), always tie-broken by gn so the list is stable across scans.
+        /// the songs inside each bucket are ordered by what the mode groups on — 資料夾 keeps the pack's OWN
+        /// order when it ships a serverconfig (see <see cref="ByPackOrderThenTitle"/>), 歌名 is plain title,
+        /// 歌手/BPM are artist/BPM then title — always tie-broken by gn so the list is stable across scans.
         /// </summary>
         public static List<SongBucket> Build(IReadOnlyList<SongCatalog.Entry> songs, SongGroupMode mode)
         {
@@ -191,10 +192,31 @@ namespace Sdo.UI.Catalog
                         return c != 0 ? c : ByTitle(a, b);
                     });
                     break;
-                default:   // Folder / Title: plain title order
+                case SongGroupMode.Folder:
+                    list.Sort(ByPackOrderThenTitle);   // 資料夾 = 「照這個歌包本來的樣子」
+                    break;
+                default:   // Title: plain title order
                     list.Sort(ByTitle);
                     break;
             }
+        }
+
+        /// <summary>
+        /// 資料夾模式的排序：歌包自帶 serverconfig 的（<c>packOrder &gt;= 0</c>）**照包自己的順序** ——
+        /// 官方選單是反序畫的、歌曲表的最後一列在最上面，所以列號降冪；沒有的沿用歌名序，排在有序的後面。
+        /// 使用者明確選 歌名/歌手/BPM 時不套這條（那是他指定的排序）。
+        /// 見 docs/reverse-engineering/SDO_SERVERCONFIG.md。
+        /// </summary>
+        private static int ByPackOrderThenTitle(SongCatalog.Entry a, SongCatalog.Entry b)
+        {
+            bool pa = a != null && a.packOrder >= 0, pb = b != null && b.packOrder >= 0;
+            if (pa != pb) return pa ? -1 : 1;
+            if (pa)
+            {
+                int c = b.packOrder.CompareTo(a.packOrder);
+                if (c != 0) return c;
+            }
+            return ByTitle(a, b);
         }
 
         private static int ByTitle(SongCatalog.Entry a, SongCatalog.Entry b)

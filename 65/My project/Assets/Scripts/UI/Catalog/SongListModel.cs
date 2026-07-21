@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Sdo.Game;
+using Sdo.Osu;
 
 namespace Sdo.UI.Catalog
 {
@@ -22,17 +23,96 @@ namespace Sdo.UI.Catalog
         /// <summary>
         /// Browse-list curation: keep only the keyboard ('k') chart of each sdomNNNNk/t pair
         /// (<see cref="SongCatalog.IsPrimaryVariant"/> — that's where the k/t story is written down),
-        /// then order by gn filename DESCENDING (highest sdomNNNN first / at the top).
+        /// then order by <see cref="BrowseKey"/> DESCENDING.
         /// </summary>
         public static List<SongCatalog.Entry> Curate(IEnumerable<SongCatalog.Entry> entries)
         {
             var res = new List<SongCatalog.Entry>();
             if (entries == null) return res;
+            var keyed = new List<KeyValuePair<BrowseSortKey, SongCatalog.Entry>>();
             foreach (var e in entries)
-                if (e != null && SongCatalog.IsPrimaryVariant(e.gn)) res.Add(e);
-            res.Sort((a, b) => string.CompareOrdinal(b.gn, a.gn));   // by filename sdomNNNNk.gn 降冪(最大號在最上)
+                if (e != null && SongCatalog.IsPrimaryVariant(e.gn))
+                    keyed.Add(new KeyValuePair<BrowseSortKey, SongCatalog.Entry>(BrowseKey(e), e));
+            keyed.Sort((a, b) => BrowseSortKey.Compare(a.Key, b.Key));   // 每首先算一次鍵再排：比較只看鍵 → 保證是全序
+            foreach (var kv in keyed) res.Add(kv.Value);
             return res;
         }
+
+        /// <summary>
+        /// 歌單排序鍵。三段字典序，全部**降冪**（大的在最上面）：
+        /// <list type="bullet">
+        /// <item><b>Tier</b>：官方歌 1、外部歌 0 → 官方歌永遠在外部歌上面（維持原本 "sdom…" &gt; "ext_…" 的結果）。</item>
+        /// <item><b>Group</b>：外部歌依群組(歌包)聚在一起；官方歌一律 ""。</item>
+        /// <item><b>Within</b>：官方歌 = gn 檔名（sdomNNNNk.gn 降冪，最大號在最上）；外部歌有 packOrder
+        ///   (歌包自帶 serverconfig)的照**包自己的順序** —— 官方選單是反序畫的、表的最後一列在最上面，
+        ///   所以列號補零後降冪剛好就是那個順序；沒有的沿用 gn 降冪，並排在同群組有序的下面。</item>
+        /// </list>
+        /// 用結構化的鍵而不是接成一個字串，是為了不必塞分隔字元、也不會被群組名裡的字元干擾；
+        /// 比較只看鍵 → 是嚴格全序，List.Sort 不會抱怨比較不一致。純函式，好測。
+        /// </summary>
+        public struct BrowseSortKey
+        {
+            public int Tier;
+            public string Group;
+            public string Within;
+
+            /// <summary>降冪比較（回傳 &lt;0 表示 a 應排在 b 前面／更上面）。</summary>
+            public static int Compare(BrowseSortKey a, BrowseSortKey b)
+            {
+                if (a.Tier != b.Tier) return b.Tier.CompareTo(a.Tier);
+                int c = string.CompareOrdinal(b.Group ?? "", a.Group ?? "");
+                return c != 0 ? c : string.CompareOrdinal(b.Within ?? "", a.Within ?? "");
+            }
+        }
+
+        /// <summary>一首歌的 <see cref="BrowseSortKey"/>。</summary>
+        public static BrowseSortKey BrowseKey(SongCatalog.Entry e)
+        {
+            if (e == null) return new BrowseSortKey { Tier = 0, Group = "", Within = "" };
+            if (!e.external) return new BrowseSortKey { Tier = 1, Group = "", Within = e.gn ?? "" };
+            return new BrowseSortKey
+            {
+                Tier = 0,
+                Group = e.group ?? "",
+                // "1"+列號 排在 "0"+gn 之上 → 同一包裡有序的先出，其餘照舊
+                Within = e.packOrder >= 0 ? "1" + e.packOrder.ToString("D8") : "0" + (e.gn ?? ""),
+            };
+        }
+
+        /// <summary>
+        /// 每一列要掛哪個標籤（NEW / HOT / 推薦 / 古典）。兩個來源，**歌包說了算**：
+        /// <list type="number">
+        /// <item>歌包自帶的 serverconfig（<c>entry.badge</c>，見 <see cref="Sdo.Osu.SdoServerConfig"/>）。</item>
+        /// <item>其餘的官方歌沿用近似規則「歌單最上面的 N 首 = NEW」—— 官方那份 serverconfig 不在我們手上，
+        ///       而清單本身已由 <see cref="Curate"/> 依檔名降冪排好，新歌自然在最上面。外部歌不套這條
+        ///       （它們沒有官方編號，也不該因為剛好排在頂端就變 NEW）。</item>
+        /// </list>
+        /// 回傳 gn → 標籤（gn 是唯一鍵；沒有標籤的歌不會出現在字典裡）。純函式，好測。
+        /// </summary>
+        public static Dictionary<string, SongBadge> BadgeMap(IReadOnlyList<SongCatalog.Entry> list, int autoNewCount)
+        {
+            var res = new Dictionary<string, SongBadge>(StringComparer.Ordinal);
+            if (list == null) return res;
+            foreach (var e in list)
+            {
+                if (e == null || string.IsNullOrEmpty(e.gn)) continue;
+                var b = (SongBadge)e.badge;
+                if (b != SongBadge.None) res[e.gn] = b;
+            }
+            int n = 0;
+            for (int i = 0; i < list.Count && n < autoNewCount; i++)
+            {
+                var e = list[i];
+                if (e == null || e.external || string.IsNullOrEmpty(e.gn)) continue;
+                n++;
+                if (!res.ContainsKey(e.gn)) res[e.gn] = SongBadge.New;
+            }
+            return res;
+        }
+
+        /// <summary>查一首歌的標籤（<paramref name="map"/> 來自 <see cref="BadgeMap"/>）。</summary>
+        public static SongBadge BadgeOf(Dictionary<string, SongBadge> map, SongCatalog.Entry e)
+            => map != null && e != null && !string.IsNullOrEmpty(e.gn) && map.TryGetValue(e.gn, out var b) ? b : SongBadge.None;
 
         public int Count => _all.Count;
         public IReadOnlyList<SongCatalog.Entry> All => _all;

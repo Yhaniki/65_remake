@@ -62,6 +62,19 @@ namespace Sdo.Osu
         /// gameplay generates one like it does for any other external song.</summary>
         public string DpsPath = "";
 
+        // ---- from the pack's own serverconfig (see SdoServerConfig / docs SDO_SERVERCONFIG.md) ----
+
+        /// <summary>這首歌在包的 serverconfig 歌曲表裡的列號；-1 = 這個包沒有 serverconfig（或表裡沒這首）。
+        /// 官方選單是**反序**畫的（表的最後一列在最上面），所以歌單排序用它降冪。</summary>
+        public int PackOrder = -1;
+
+        /// <summary>包自己指定的標籤（NEW/HOT/推薦/古典）。<see cref="SongBadge.None"/> = 沒指定。</summary>
+        public SongBadge Badge;
+
+        /// <summary>serverconfig 把這首標成「未開放」。官方會整首藏起來；重製版只記錄不藏
+        /// —— 玩家自己放進來的歌不該被包的旗標弄不見。</summary>
+        public bool PackHidden;
+
         // ---- from the folder's sdo.header sidecar (see SongSidecar) ----
 
         /// <summary>Absolute path of the generated CD disc image; "" = the sidecar records none (or its file is gone),

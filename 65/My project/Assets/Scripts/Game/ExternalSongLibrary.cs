@@ -268,6 +268,7 @@ namespace Sdo.Game
                             {
                                 f = ExternalScanCache.FromFolder(hit);                        // reuse — no parse
                                 foreach (var s in f) ExternalSongScanner.ReapplySidecar(s);   // pick up a disc built since caching
+                                ExternalSongScanner.ApplyServerConfig(f, sd.Path);            // 包的 serverconfig 在隔壁資料夾 → 不在快取簽章裡，每次重讀
                             }
                             else
                             {
@@ -331,6 +332,9 @@ namespace Sdo.Game
                 chartSeed = song.GnSeed,
                 previewStartMs = song.PreviewStartMs,
                 previewLengthMs = song.PreviewLengthMs,
+                // 包自帶的 serverconfig：歌單順序 + NEW/HOT/推薦/古典 標籤（見 SdoServerConfig）
+                packOrder = song.PackOrder,
+                badge = (int)song.Badge,
                 // hand-calibrated per-song offset from the folder sidecar → drives gameplay's songOffsetMs (see FrontendApp).
                 offsetMs = Mathf.Clamp(song.OffsetMs, -SongCatalog.MaxOffsetMs, SongCatalog.MaxOffsetMs),
             };
