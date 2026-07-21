@@ -1,7 +1,7 @@
 {
  "schema": "song-name-overrides/2",
  "note": "手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist/bpm 會覆蓋 k.gn 的顯示值。key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。bpm>0 會覆蓋歌單/房間顯示的 BPM 數字(只影響顯示；遊戲判定與流速一律讀譜面本身)；offsetMs = 這首歌的音訊校正(毫秒，唯一會進遊戲的欄位)：正值 = 音樂晚一點進來(音樂跑在譜面前面、音符老是慢半拍時用)，負值 = 音樂提早，0/不填 = 不動。它疊在譜面自己的音樂起點(type-10 marker)上，只挪音樂＋舞蹈；音符與判定仍在譜面時鐘上，所以調錯頂多音畫不合拍，不會影響難度。範圍夾在 ±5000ms。fileId/src 僅供辨識，runtime 不套用。此清單不決定歌單內容(歌單來自 song_catalog.json)，刪掉某首只是讓它顯示回 .gn 內嵌名，歌照樣能選。SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填(offsetMs 例外：永遠保留)。",
- "count": 2162,
+ "count": 2165,
  "songs": [
   {
    "gn": "sdom1956",
@@ -17381,7 +17381,7 @@
    "gn": "sdom1112",
    "fileId": 11112,
    "bpm": 128.0,
-   "offsetMs": 0.0,
+   "offsetMs": 1880,
    "src": "kgn",
    "title": "Monster",
    "artist": "BIGBANG"
@@ -19426,6 +19426,30 @@
    "title": "V.I.U",
    "artist": "Beast",
    "offsetMs": -44
+  },
+  {
+   "gn": "sdom1116_1",
+   "fileId": 15086,
+   "bpm": 132.0,
+   "src": "kgn",
+   "title": "I Don't Care",
+   "artist": "2NE1"
+  },
+  {
+   "gn": "sdom1118_1",
+   "fileId": 15087,
+   "bpm": 115.0,
+   "src": "kgn",
+   "title": "Sexy, Free & Single",
+   "artist": "Super Junior"
+  },
+  {
+   "gn": "sdom1119_1",
+   "fileId": 15088,
+   "bpm": 132.0,
+   "src": "kgn",
+   "title": "Gangnam Style",
+   "artist": "PSY"
   }
  ]
 }

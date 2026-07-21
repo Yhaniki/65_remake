@@ -9,7 +9,7 @@
   "en"
  ],
  "zhTW": "opencc s2twp",
- "count": 4319,
+ "count": 4322,
  "songs": [
   {
    "gn": "sdom0001k.gn",
@@ -44862,6 +44862,45 @@
    "origName": "sdom1115T.gm"
   },
   {
+   "gn": "sdom1116_1k.gn",
+   "fileId": 15086,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 132.0,
+   "levels": [
+    5,
+    10,
+    10
+   ],
+   "noteCounts": [
+    259,
+    746,
+    394
+   ],
+   "measurements": [
+    176,
+    248,
+    435
+   ],
+   "durations": [
+    107,
+    107,
+    107
+   ],
+   "title": {
+    "zhCN": "I Don't Care",
+    "zhTW": "I Don't Care",
+    "en": "I Don't Care"
+   },
+   "artist": {
+    "zhCN": "2NE1",
+    "zhTW": "2NE1",
+    "en": "2NE1"
+   },
+   "producer": "AQ",
+   "origName": "sdom1116K.gm"
+  },
+  {
    "gn": "sdom1116k.gn",
    "fileId": 11116,
    "fileType": "gn",
@@ -45057,6 +45096,45 @@
    "origName": "sdom1117T.gm"
   },
   {
+   "gn": "sdom1118_1k.gn",
+   "fileId": 15087,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 115.0,
+   "levels": [
+    7,
+    12,
+    13
+   ],
+   "noteCounts": [
+    470,
+    588,
+    656
+   ],
+   "measurements": [
+    219,
+    226,
+    229
+   ],
+   "durations": [
+    112,
+    112,
+    112
+   ],
+   "title": {
+    "zhCN": "Sexy, Free & Single",
+    "zhTW": "Sexy, Free & Single",
+    "en": "Sexy, Free & Single"
+   },
+   "artist": {
+    "zhCN": "Super Junior",
+    "zhTW": "Super Junior",
+    "en": "Super Junior"
+   },
+   "producer": "AQ",
+   "origName": "sdom1118K.gm"
+  },
+  {
    "gn": "sdom1118k.gn",
    "fileId": 11118,
    "fileType": "gn",
@@ -45133,6 +45211,45 @@
    },
    "producer": "T.Z.WANG",
    "origName": "sdom1118T.gm"
+  },
+  {
+   "gn": "sdom1119_1k.gn",
+   "fileId": 15088,
+   "fileType": "gn",
+   "mode": "K",
+   "bpm": 132.0,
+   "levels": [
+    9,
+    12,
+    28
+   ],
+   "noteCounts": [
+    490,
+    609,
+    841
+   ],
+   "measurements": [
+    359,
+    388,
+    379
+   ],
+   "durations": [
+    141,
+    141,
+    137
+   ],
+   "title": {
+    "zhCN": "Gangnam Style",
+    "zhTW": "Gangnam Style",
+    "en": "Gangnam Style"
+   },
+   "artist": {
+    "zhCN": "PSY",
+    "zhTW": "PSY",
+    "en": "PSY"
+   },
+   "producer": "AQ",
+   "origName": "sdom1119K.gm"
   },
   {
    "gn": "sdom1119k.gn",

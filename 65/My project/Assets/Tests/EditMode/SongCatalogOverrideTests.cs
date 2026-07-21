@@ -114,6 +114,25 @@ namespace Sdo.Tests
         public void MainOggName_Comes_From_The_Gn_Stem(string gn, string expected)
             => Assert.AreEqual(expected, SongCatalog.MainOggName(gn));
 
+        /// <summary>開局(FrontendApp/譜面編輯器)走 SongPaths.Ogg，選歌試聽走 SongCatalog.MainOggName —— 兩邊
+        /// 必須解到同一個檔名。SongPaths 早期自己用 <c>sdom\d+</c> regex 取號，遇到撞號插隊的
+        /// sdom1234_1k.gn 會在底線斷掉、開局放成 sdom1234.ogg（原本那首的音樂），試聽卻是對的。
+        /// 只比對檔名，不比對目錄（目錄隨 data root 變）。</summary>
+        [TestCase("sdom1197k.gn", "sdom1197.ogg")]
+        [TestCase("sdom1197T.GN", "sdom1197.ogg")]
+        [TestCase("sdom1234_1k.gn", "sdom1234_1.ogg")]
+        [TestCase("sdom1116_1k.gn", "sdom1116_1.ogg")]
+        public void SongPaths_Ogg_Agrees_With_MainOggName(string gn, string expected)
+        {
+            Assert.AreEqual(expected, System.IO.Path.GetFileName(SongPaths.Ogg(gn)));
+            Assert.AreEqual(SongCatalog.MainOggName(gn), System.IO.Path.GetFileName(SongPaths.Ogg(gn)));
+        }
+
+        [TestCase("")]
+        [TestCase(null)]
+        public void SongPaths_Ogg_Is_Null_For_Empty_Name(string gn)
+            => Assert.IsNull(SongPaths.Ogg(gn));
+
         [Test]
         public void Empty_Or_Malformed_Json_Is_A_NoOp()
         {

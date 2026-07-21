@@ -11,7 +11,7 @@
   "lcg": "state=seed; 每步 state=(state*0x3D09)&0xffffffff; k=(state>>16)&0xff; out=in-k (解密)"
  },
  "counts": {
-  "total": 4321,
+  "total": 4324,
   "ddrm": 4,
   "sdom": 3170,
   "rewu": 1172,
@@ -11980,6 +11980,16 @@
    "size": 67200
   },
   {
+   "gn": "sdom1116_1k.gn",
+   "enc": "rewu",
+   "mode": "K",
+   "seed": 3628250,
+   "fileId": 15086,
+   "bpm": 132.0,
+   "title": "I Don't Care",
+   "size": 59504
+  },
+  {
    "gn": "sdom1116k.gn",
    "enc": "sdom",
    "mode": "K",
@@ -12034,6 +12044,16 @@
    "size": 62244
   },
   {
+   "gn": "sdom1118_1k.gn",
+   "enc": "rewu",
+   "mode": "K",
+   "seed": 9458173,
+   "fileId": 15087,
+   "bpm": 115.0,
+   "title": "Sexy, Free & Single",
+   "size": 43752
+  },
+  {
    "gn": "sdom1118k.gn",
    "enc": "sdom",
    "mode": "K",
@@ -12054,6 +12074,16 @@
    "bpm": 152.03,
    "title": "INVOKE",
    "size": 71676
+  },
+  {
+   "gn": "sdom1119_1k.gn",
+   "enc": "rewu",
+   "mode": "K",
+   "seed": 5378792,
+   "fileId": 15088,
+   "bpm": 132.0,
+   "title": "Gangnam Style",
+   "size": 77372
   },
   {
    "gn": "sdom1119k.gn",

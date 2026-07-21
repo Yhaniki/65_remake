@@ -69103,6 +69103,54 @@
    "durEasy": 93,
    "durNormal": 93,
    "durHard": 93
+  },
+  {
+   "gn": "sdom1116_1k.gn",
+   "fileId": 15086,
+   "title": "I Don't Care",
+   "artist": "2NE1",
+   "bpm": 132.0,
+   "diffEasy": 5,
+   "diffNormal": 10,
+   "diffHard": 10,
+   "notesEasy": 259,
+   "notesNormal": 746,
+   "notesHard": 394,
+   "durEasy": 107,
+   "durNormal": 107,
+   "durHard": 107
+  },
+  {
+   "gn": "sdom1118_1k.gn",
+   "fileId": 15087,
+   "title": "Sexy, Free & Single",
+   "artist": "Super Junior",
+   "bpm": 115.0,
+   "diffEasy": 7,
+   "diffNormal": 12,
+   "diffHard": 13,
+   "notesEasy": 470,
+   "notesNormal": 588,
+   "notesHard": 656,
+   "durEasy": 112,
+   "durNormal": 112,
+   "durHard": 112
+  },
+  {
+   "gn": "sdom1119_1k.gn",
+   "fileId": 15088,
+   "title": "Gangnam Style",
+   "artist": "PSY",
+   "bpm": 132.0,
+   "diffEasy": 9,
+   "diffNormal": 12,
+   "diffHard": 28,
+   "notesEasy": 490,
+   "notesNormal": 609,
+   "notesHard": 841,
+   "durEasy": 141,
+   "durNormal": 141,
+   "durHard": 137
   }
  ]
 }
