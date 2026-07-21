@@ -98,6 +98,16 @@ namespace Sdo.Ruleset
             return null;
         }
 
+        /// <summary>Bomb (avoid-note) detonation window = this fraction of the Perfect window.</summary>
+        public const double BombWindowScale = 0.8;
+
+        /// <summary>
+        /// Half-width (ms) of the window in which holding a lane's key detonates a bomb on that lane.
+        /// Deliberately MUCH tighter than the miss boundary: only a press essentially ON the bomb counts,
+        /// so brushing past one just before/after it crosses the line is safe.
+        /// </summary>
+        public double BombWindow => Perfect * BombWindowScale;
+
         /// <summary>
         /// A copy with every window (Perfect/Cool/Bad/Miss) multiplied by <paramref name="factor"/>.
         /// factor &gt; 1 = more forgiving. Used for the hold-tail release window, which is deliberately

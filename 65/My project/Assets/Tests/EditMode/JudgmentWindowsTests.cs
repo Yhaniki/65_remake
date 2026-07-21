@@ -56,6 +56,24 @@ namespace Sdo.Tests
             Assert.IsNull(w.Judge(200)); // outside miss boundary -> ignored press
         }
 
+        // ---- bomb (avoid-note) detonation window ----
+
+        [Test]
+        public void Bomb_Window_Is_Eighty_Percent_Of_Perfect()
+        {
+            var w = JudgmentWindows.FromStepManiaJudge(2);
+            Assert.AreEqual(0.8, JudgmentWindows.BombWindowScale, 1e-9);
+            Assert.AreEqual(w.Perfect * 0.8, w.BombWindow, 1e-9);
+        }
+
+        [Test]
+        public void Bomb_Window_Is_Much_Tighter_Than_The_Miss_Boundary()
+        {
+            var w = JudgmentWindows.FromStepManiaJudge();
+            Assert.Less(w.BombWindow, w.Perfect);        // 比 Perfect 還嚴
+            Assert.Less(w.BombWindow, w.MissBoundary / 4);   // 遠比舊的 miss 窗窄
+        }
+
         // ---- StepMania judge levels (fixed ms, what the game uses) ----
 
         [Test]

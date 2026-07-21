@@ -395,6 +395,8 @@ namespace Sdo.Game
         private readonly SpriteRenderer[] _receptors = new SpriteRenderer[Keys];
         public float noteAnimFps = 12f;
         public float bombAnimFps = 5f;   // 炸彈 ZD00..ZD03 循環速度(比音符慢,不然轉太快)
+        public float bombExplodeGain = 3f;    // 爆炸圖亮度增益(additive 疊在亮亮的譜面板上,1× 看起來太淡)
+        public float bombExplodeZoom = 1.9f;  // 爆炸圖大小 = LaneW × 此值
 
         // ---- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----
         // notes_board_click{1..4}.png (1..4 = lane) lights the struck lane. The original tints the strip with a
@@ -5036,23 +5038,26 @@ namespace Sdo.Game
             }
         }
 
-        // 炸彈 (note_type 1 = avoid-note)：當炸彈進到判定線 ±miss窗 且該軌鍵**被按著** → 引爆(StepMania mine 音 + 扣血)。
-        // 沒踩到就安全通過(過窗即消失,不算 miss)。編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
+        // 炸彈 (note_type 1 = avoid-note)：當炸彈進到**引爆窗**(= Perfect 窗 ×0.8,見 JudgmentWindows.BombWindow)
+        // 且該軌鍵被按著 → 引爆(StepMania mine 音 + 扣血)。用 miss 窗會太寬:炸彈還離判定線老遠、
+        // 或早就過去了,只要手指還壓著就炸。退場仍看 miss 邊界(過了才收掉,不算 miss)。
+        // 編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
         private void TickBombs(double now)
         {
-            double win = _engine.Windows.MissBoundary;
-            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + win);
+            double retire = _engine.Windows.MissBoundary;   // 掃描/退場邊界(比引爆窗寬)
+            double win = _engine.Windows.BombWindow;        // 引爆窗 = Perfect × 0.8
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + retire);
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int i = _firstAlive; i < hi; i++)
             {
                 var n = _notes[i];
                 if (n.Done || !n.Note.IsBomb) continue;
                 double dt = now - n.Note.StartTimeMs;   // >0：炸彈已過判定線
-                if (dt < -win) continue;                // 還沒進引爆窗
+                if (dt > retire) { n.Done = true; continue; }   // 安全通過 → 消失
+                if (dt < -win || dt > win) continue;            // 不在引爆窗內 → 踩著也不炸
                 bool held = false;
                 foreach (var k in laneKeys[n.Note.Lane]) if (Input.GetKey(k)) { held = true; break; }
-                if (dt <= win && held) ExplodeBomb(n);  // 踩到 → 引爆
-                else if (dt > win) n.Done = true;        // 安全通過 → 消失
+                if (held) ExplodeBomb(n);
             }
         }
 
@@ -5077,7 +5082,10 @@ namespace Sdo.Game
             // (用 Sprites/Default alpha-blend 就會看到黑方塊)。Legacy Particles/Additive 是 2×tint×tex,_TintColor 0.5 = 1× 中性。
             var sh = Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Sprites/Default");
             var mat = new Material(sh);
-            if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", new Color(0.5f, 0.5f, 0.5f, 0.5f));
+            // Legacy additive = 2 × _TintColor × tex × vertexColor;0.5 = 1× 中性 → ×gain 才不會被亮譜面板吃掉。
+            // (vertexColor 走 SpriteRenderer.color,會被夾在 0..1,所以增益只能加在 _TintColor 上。)
+            float g = Mathf.Max(0f, bombExplodeGain) * 0.5f;
+            if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", new Color(g, g, g, 0.5f));
             sr.sharedMaterial = mat;
             StartCoroutine(BombExplodeCo(sr, lane));
         }
@@ -5089,7 +5097,7 @@ namespace Sdo.Game
         {
             const float dur = 0.6f;   // linear,0.3 ×2
             float cx = PX(LaneLeftX[lane] + LaneCx0), cy = judgeLineY + judgeOffsetY;
-            float w = LaneW * 1.5f;   // zoom 固定
+            float w = LaneW * bombExplodeZoom;   // zoom 固定
             for (float t = 0f; t < 1f; t += Time.deltaTime / dur)
             {
                 float a = t <= 0.5f ? 1f : Mathf.Max(0f, 1f - (t - 0.5f) * 2f);   // 前半全亮,後半 diffusealpha→0
