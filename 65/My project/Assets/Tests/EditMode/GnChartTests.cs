@@ -220,6 +220,26 @@ namespace Sdo.Tests
             Assert.AreEqual(3.0, m.CurrentScrollSpeed(5000.0), 1e-6, "past the ramp -> holds target");
         }
 
+        /// <summary>note_type 1 on a lane frame (frameType 2..5) parses as a 炸彈 (IsBomb), never a hold or normal tap.</summary>
+        [Test]
+        public void NoteType1_ParsesAsBomb_NotHoldNotTap()
+        {
+            int bodyLen = 300 + 12;
+            var b = new byte[bodyLen];
+            b[4] = (byte)'g'; b[5] = (byte)'n';
+            PutFloatAbs(b, 16, 120f);
+            PutU32Abs(b, 284, 300); PutU32Abs(b, 288, (uint)bodyLen); PutU32Abs(b, 292, (uint)bodyLen); PutU32Abs(b, 296, (uint)bodyLen);
+            int o = 300;
+            PutU32Abs(b, o, 1); PutU16Abs(b, o + 4, 2); PutU16Abs(b, o + 6, 1);   // meas 1, frameType 2 = Left, interval 1
+            PutU16Abs(b, o + 8, 1); b[o + 10] = 0; b[o + 11] = 1;                 // slot: u0=1, u1=0, note_type = 1 (BOMB)
+
+            var map = GnChart.Load(b, difficulty: 0);
+            Assert.AreEqual(1, map.HitObjects.Count);
+            Assert.IsTrue(map.HitObjects[0].IsBomb, "note_type 1 -> IsBomb");
+            Assert.IsFalse(map.HitObjects[0].IsHold, "a bomb is never a hold");
+            Assert.AreEqual(0, map.HitObjects[0].Lane, "frameType 2 = Left = lane 0");
+        }
+
         /// <summary>
         /// Build a PLAINTEXT StepFile at offset 0 ('gn'@4, address_easy==300 -> GnChart's plain branch, no
         /// decrypt). Each frame is one slot (interval 1): (measurement, stepFrameType, u0). u1/nt are 0.

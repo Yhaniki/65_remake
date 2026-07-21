@@ -295,6 +295,7 @@ namespace Sdo.Osu
                     if (openHoldMs[lane] >= 0) { map.HitObjects.Add(new OsuHitObject(lane, openHoldMs[lane], ms)); openHoldMs[lane] = -1; }
                     else map.HitObjects.Add(new OsuHitObject(lane, ms));
                 }
+                else if (nt == 1) map.HitObjects.Add(new OsuHitObject(lane, ms, null, isBomb: true)); // 炸彈 (避開,不打)
                 else map.HitObjects.Add(new OsuHitObject(lane, ms)); // tap
             }
             map.HitObjects.Sort((a, b) => a.StartTimeMs.CompareTo(b.StartTimeMs));

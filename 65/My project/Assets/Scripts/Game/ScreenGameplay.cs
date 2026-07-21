@@ -375,6 +375,9 @@ namespace Sdo.Game
         private Transform _noteVisualRoot;                                // identity origin parent so all pooled note GameObjects live under one node
         private readonly RuntimeNote[] _holding = new RuntimeNote[Keys];
         private readonly Sprite[][] _noteFrames = new Sprite[Keys][];
+        private Sprite[] _bombFrames;                              // ZD00..ZD03 炸彈動畫 (NOTEIMAGE 共用,非每軌;隨 note skin 換)
+        private Sprite _bombExplodeSprite;                        // 引爆特效圖 = StepMania 的 Fallback Tap Explosion Dim HitMine → DATA/NOTEIMAGE/BOMB_EXPLODE.png
+        private const string MineSeName = "player_mine";          // StepMania theme 的 Player mine.ogg → DATA/SE/player_mine.wav
         private readonly Texture2D[] _holdTex = new Texture2D[Keys];
         private readonly Sprite[] _holdTail = new Sprite[Keys];
         private readonly bool[] _holdTailFlipX = new bool[Keys];   // combined-name skins share one cap across a lane pair → mirror it
@@ -391,6 +394,7 @@ namespace Sdo.Game
         public float recKeydownStepSec = 0.03f;                     // per-frame hold time for the 5-frame keydown burst
         private readonly SpriteRenderer[] _receptors = new SpriteRenderer[Keys];
         public float noteAnimFps = 12f;
+        public float bombAnimFps = 5f;   // 炸彈 ZD00..ZD03 循環速度(比音符慢,不然轉太快)
 
         // ---- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----
         // notes_board_click{1..4}.png (1..4 = lane) lights the struck lane. The original tints the strip with a
@@ -1351,6 +1355,10 @@ namespace Sdo.Game
                 bool flipY = (d == "up" || d == "down") && NoteDir.EndsWith("NOTEIMAGE_8");
                 if (capSpr != null) { _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr); _holdTailFlipX[c] = false; _holdTailFlipY[c] = flipY; }
             }
+            // 炸彈 (note_type 1) 動畫：ZD00..ZD03,整組共用(非每軌);隨 note skin 一起換。
+            var zd = new List<Sprite>();
+            for (int f = 0; f < 4; f++) { var s = SdoExtracted.LoadImage(NoteDir, "ZD0" + f + ".png", bleed: true); if (s != null) zd.Add(s); }
+            _bombFrames = zd.Count > 0 ? zd.ToArray() : null;
         }
 
         // 3D-note skin: load the three beat-colour families (magenta / blue / green) from 3DNOTES\ as 4-frame glow sets.
@@ -4099,6 +4107,7 @@ namespace Sdo.Game
                 else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
                 else { HandleInput(now); AutoMiss(now); }
             }
+            TickBombs(now);   // 炸彈:踩到(該軌按著)引爆 mine 音+扣血,否則安全通過
             UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
@@ -4458,6 +4467,16 @@ namespace Sdo.Game
                 bool stWin = showtimeMode && _showtime.Active;
                 float noteScale = stWin ? showtimeNoteScale : 1f;       // notes grow a little during the auto-hit window
                 float noteW = LaneW * noteScale;
+                if (n.Note.IsBomb)
+                {
+                    // 炸彈：ZD00..ZD03 循環動畫(用較慢的 bombAnimFps),平面 sprite —— 不旋轉、不吃 3D 箭頭、無長條/尾。
+                    if (n.Head.transform.localRotation != Quaternion.identity) n.Head.transform.localRotation = Quaternion.identity;
+                    if (_bombFrames != null && _bombFrames.Length > 0)
+                        n.Head.sprite = _bombFrames[((int)(Time.time * bombAnimFps)) % _bombFrames.Length];
+                    n.Head.color = Color.white;
+                    PlaceAspect(n.Head, PX(LaneLeftX[c] + LaneCx0), y, noteW, 1f);
+                    continue;
+                }
                 // 中途放開 (Bad/Miss) 的長條不直接消失：整條 (頭/身/尾) 調暗到 holdDropDim，繼續往判定線外流走。
                 Color noteCol = showtimeMode ? _noteTint : Color.white;   // showtime: gold→red flash over the window's last 3s
                 if (n.Dropped) noteCol = new Color(noteCol.r * holdDropDim, noteCol.g * holdDropDim, noteCol.b * holdDropDim, noteCol.a);
@@ -4652,6 +4671,7 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) continue;
+                if (n.Note.IsBomb) continue;   // 炸彈自動玩時避開,不打(由 TickBombs 處理)
                 if (!n.HeadJudged && now >= n.Note.StartTimeMs)
                 {
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
@@ -4988,7 +5008,7 @@ namespace Sdo.Game
             for (int i = _firstAlive; i < hi; i++)
             {
                 var n = _notes[i];
-                if (n.Done || n.HeadJudged || n.Note.Lane != lane) continue;
+                if (n.Done || n.HeadJudged || n.Note.IsBomb || n.Note.Lane != lane) continue;   // 炸彈不當一般 note 判定
                 double d = Math.Abs(n.Note.StartTimeMs - now);
                 if (d < bestAbs && d <= _engine.Windows.MissBoundary) { bestAbs = d; best = n; }
             }
@@ -5004,6 +5024,7 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) continue;
+                if (n.Note.IsBomb) continue;   // 炸彈不會 miss(避開才對);由 TickBombs 處理
                 // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
                 // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
                 if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
@@ -5016,6 +5037,71 @@ namespace Sdo.Game
                 // boundary), else a note held into the extra tail leniency is force-missed before its release could score.
                 if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
             }
+        }
+
+        // 炸彈 (note_type 1 = avoid-note)：當炸彈進到判定線 ±miss窗 且該軌鍵**被按著** → 引爆(StepMania mine 音 + 扣血)。
+        // 沒踩到就安全通過(過窗即消失,不算 miss)。編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
+        private void TickBombs(double now)
+        {
+            double win = _engine.Windows.MissBoundary;
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + win);
+            var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
+            for (int i = _firstAlive; i < hi; i++)
+            {
+                var n = _notes[i];
+                if (n.Done || !n.Note.IsBomb) continue;
+                double dt = now - n.Note.StartTimeMs;   // >0：炸彈已過判定線
+                if (dt < -win) continue;                // 還沒進引爆窗
+                bool held = false;
+                foreach (var k in laneKeys[n.Note.Lane]) if (Input.GetKey(k)) { held = true; break; }
+                if (dt <= win && held) ExplodeBomb(n);  // 踩到 → 引爆
+                else if (dt > win) n.Done = true;        // 安全通過 → 消失
+            }
+        }
+
+        private void ExplodeBomb(RuntimeNote n)
+        {
+            PlaySe(MineSeName);                       // StepMania theme 的爆炸音 (DATA/SE/player_mine.wav)
+            SpawnBombExplosion(n.Note.Lane);          // StepMania 的 HitMine 爆炸圖 (不是受擊線按下動畫)
+            ApplyEvent(Judgment.Miss, n.Note.Lane);   // 踩炸彈 = 斷連/扣血(比照 miss)
+            n.Done = true;                            // 引爆後移除
+        }
+
+        // 引爆特效：在判定線該軌位置放一張 StepMania HitMine 爆炸圖,放大+淡出後移除。上層(order 8)、吃 note board mask。
+        private void SpawnBombExplosion(int lane)
+        {
+            if (_bombExplodeSprite == null)
+                _bombExplodeSprite = SdoExtracted.LoadImage(Path.Combine(SdoExtracted.Root, "NOTEIMAGE"), "BOMB_EXPLODE.png", bleed: true);
+            if (_bombExplodeSprite == null) return;
+            var sr = NewSR("BombExplode", _bombExplodeSprite, 8);
+            sr.transform.SetParent(NoteVisualRoot, false);
+            sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+            // StepMania 的 HitMineCommand 第一件事就是 blend,add —— 這張圖是黑底無 alpha,靠 ADDITIVE 讓黑變透明
+            // (用 Sprites/Default alpha-blend 就會看到黑方塊)。Legacy Particles/Additive 是 2×tint×tex,_TintColor 0.5 = 1× 中性。
+            var sh = Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Sprites/Default");
+            var mat = new Material(sh);
+            if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", new Color(0.5f, 0.5f, 0.5f, 0.5f));
+            sr.sharedMaterial = mat;
+            StartCoroutine(BombExplodeCo(sr, lane));
+        }
+
+        // 逐字照 StepMania noteskin metrics 的 HitMineCommand：
+        //   blend,add; diffuse,1,1,1,1; zoom,1; rotationz,0; linear,0.3; rotationz,90; linear,0.3; rotationz,180; diffusealpha,0
+        // → 大小固定(不放大)、0°→180° 等速轉(300°/s)、後半段才淡出;全長 0.6s。
+        private IEnumerator BombExplodeCo(SpriteRenderer sr, int lane)
+        {
+            const float dur = 0.6f;   // linear,0.3 ×2
+            float cx = PX(LaneLeftX[lane] + LaneCx0), cy = judgeLineY + judgeOffsetY;
+            float w = LaneW * 1.5f;   // zoom 固定
+            for (float t = 0f; t < 1f; t += Time.deltaTime / dur)
+            {
+                float a = t <= 0.5f ? 1f : Mathf.Max(0f, 1f - (t - 0.5f) * 2f);   // 前半全亮,後半 diffusealpha→0
+                sr.color = new Color(a, a, a, 1f);                                 // additive:壓 RGB 就是淡出
+                PlaceAspect(sr, cx, cy, w, -0.4f);
+                sr.transform.localRotation = Quaternion.Euler(0f, 0f, -Mathf.Lerp(0f, 180f, t));
+                yield return null;
+            }
+            if (sr != null) Destroy(sr.gameObject);
         }
 
         private void ApplyEvent(Judgment j, int lane = -1)
