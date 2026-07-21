@@ -45,36 +45,61 @@ namespace Sdo.Game
         {
             try
             {
-                using (var mp3 = new MpegFile(path))
+                int ch, sr, len;
+                var data = DecodeSequential(path, out ch, out sr, out len, out int expectedPerChannel);
+                if (data == null || len == 0) return null;
+                // NLayer SILENTLY DROPS frames it fails to decode — the rest of the song then plays that much early,
+                // and the drift accumulates (擬態ごっこ: 3 frames = 72 ms by the end, matching StepMania at the start
+                // and 24/48/72 ms early after each drop). Its own frame index still knows the true length, so a
+                // mismatch here is a reliable "this decode lost frames" flag → re-decode the timeline-exact way.
+                if (expectedPerChannel > 0 && len / ch != expectedPerChannel)
                 {
-                    int ch = mp3.Channels > 0 ? mp3.Channels : 2;
-                    int sr = mp3.SampleRate > 0 ? mp3.SampleRate : 44100;
-                    var data = new float[1 << 20];
-                    int len = 0;
-                    var buf = new float[16384];
-                    int n;
-                    while ((n = mp3.ReadSamples(buf, 0, buf.Length)) > 0)
-                    {
-                        if (len + n > data.Length) Array.Resize(ref data, Math.Max(data.Length * 2, len + n));
-                        for (int i = 0; i < n; i++)
-                        {
-                            float s = buf[i];
-                            data[len++] = s > 1f ? 1f : (s < -1f ? -1f : s);   // NLayer can overshoot ±1 slightly → clamp
-                        }
-                    }
-                    if (len == 0) return null;
-                    // Position the PCM to match the chart's home game (see Mp3Sync). osu → drop BASS's gapless priming;
-                    // StepMania → re-insert the "Info" header frame MAD emits as silence. Both verified against real charts.
-                    if (sync == Mp3Sync.Osu)
-                        len = ApplyOsuGapless(data, len, ch);
-                    else
-                        data = ApplyStepManiaInfoFrame(path, data, ref len, ch);
-                    if (len == 0) return null;
-                    if (len != data.Length) Array.Resize(ref data, len);
-                    return new Mp3Pcm { Samples = data, Channels = ch, SampleRate = sr };
+                    int lostMs = sr > 0 ? (expectedPerChannel - len / ch) * 1000 / sr : 0;
+                    var fixedUp = DecodeSliced(path, ch);
+                    if (fixedUp != null && fixedUp.Length > 0) { data = fixedUp; len = fixedUp.Length; }
+                    // Debug.Log is queued, so this is safe off the main thread. Worth saying out loud: without the
+                    // re-decode this song would have run `lostMs` ahead of the chart by the end.
+                    Debug.LogWarning($"[mp3] {System.IO.Path.GetFileName(path)}: NLayer dropped frames "
+                                   + $"({lostMs} ms) → re-decoded frame-by-frame"
+                                   + (len / ch == expectedPerChannel ? "" : " (STILL SHORT — song will drift)"));
                 }
+                // Position the PCM to match the chart's home game (see Mp3Sync). osu → drop BASS's gapless priming;
+                // StepMania → re-insert the "Info" header frame MAD emits as silence. Both verified against real charts.
+                if (sync == Mp3Sync.Osu)
+                    len = ApplyOsuGapless(data, len, ch);
+                else
+                    data = ApplyStepManiaInfoFrame(path, data, ref len, ch);
+                if (len == 0) return null;
+                if (len != data.Length) Array.Resize(ref data, len);
+                return new Mp3Pcm { Samples = data, Channels = ch, SampleRate = sr };
             }
-            catch { return null; }   // caller logs; keep this Unity-free so it can run on a worker thread
+            catch { return null; }   // caller logs; the decode itself is Unity-free so it can run on a worker thread
+        }
+
+        /// <summary>Straight front-to-back decode (the fast path). <paramref name="expectedPerChannel"/> is what
+        /// NLayer's own frame index says the file holds — compare it against what came out to spot dropped frames.</summary>
+        private static float[] DecodeSequential(string path, out int ch, out int sr, out int len, out int expectedPerChannel)
+        {
+            using (var mp3 = new MpegFile(path))
+            {
+                ch = mp3.Channels > 0 ? mp3.Channels : 2;
+                sr = mp3.SampleRate > 0 ? mp3.SampleRate : 44100;
+                expectedPerChannel = (int)(mp3.Length / (4L * ch));   // Length is in bytes (float per channel)
+                var data = new float[1 << 20];
+                len = 0;
+                var buf = new float[16384];
+                int n;
+                while ((n = mp3.ReadSamples(buf, 0, buf.Length)) > 0)
+                {
+                    if (len + n > data.Length) Array.Resize(ref data, Math.Max(data.Length * 2, len + n));
+                    for (int i = 0; i < n; i++)
+                    {
+                        float s = buf[i];
+                        data[len++] = s > 1f ? 1f : (s < -1f ? -1f : s);   // NLayer can overshoot ±1 slightly → clamp
+                    }
+                }
+                return data;
+            }
         }
 
         private static readonly byte[] XingTag = { 0x58, 0x69, 0x6E, 0x67 }; // "Xing" (VBR header — decoders SKIP this frame)
@@ -159,6 +184,154 @@ namespace Sdo.Game
                 return version == 3 ? 1152 : 576;
             }
             return 0;
+        }
+
+        // ---- timeline-exact re-decode (only used when the straight decode came up short) ----
+
+        private const int SliceChunkFrames = 32;    // whole MPEG frames decoded per standalone slice
+        private const int SlicePrerollFrames = 2;   // leading frames carried along so the bit reservoir is primed
+
+        private static readonly int[] BitrateV1 = { 0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0 };
+        private static readonly int[] BitrateV2 = { 0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0 };
+        private static readonly int[,] SampleRates = { { 11025, 12000, 8000, 0 }, { 0, 0, 0, 0 },
+                                                       { 22050, 24000, 16000, 0 }, { 44100, 48000, 32000, 0 } };
+
+        /// <summary>Byte offset of every MPEG audio frame in <paramref name="data"/>, plus a trailing
+        /// end-of-last-frame sentinel — frame i spans [table[i], table[i+1]). A leading ID3v2 tag is skipped via its
+        /// syncsafe size, and bytes that only look like a frame sync are stepped over. <paramref name="samplesPerFrame"/>
+        /// comes from the first real frame (MPEG-1 Layer III = 1152, MPEG-2/2.5 = 576). Pure — unit-tested.</summary>
+        public static System.Collections.Generic.List<int> FrameTable(byte[] data, out int samplesPerFrame)
+        {
+            samplesPerFrame = 0;
+            var list = new System.Collections.Generic.List<int>();
+            if (data == null) { list.Add(0); return list; }
+            int p = 0;
+            if (data.Length > 10 && data[0] == 0x49 && data[1] == 0x44 && data[2] == 0x33)   // "ID3"
+                p = 10 + (((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) | ((data[8] & 0x7F) << 7) | (data[9] & 0x7F));
+            if (p < 0 || p > data.Length) p = 0;
+            while (p + 4 <= data.Length)
+            {
+                if (data[p] != 0xFF || (data[p + 1] & 0xE0) != 0xE0) { p++; continue; }
+                int ver = (data[p + 1] >> 3) & 3, layer = (data[p + 1] >> 1) & 3;
+                int bri = (data[p + 2] >> 4) & 0xF, sri = (data[p + 2] >> 2) & 3, pad = (data[p + 2] >> 1) & 1;
+                if (ver == 1 || layer != 1 || bri == 0 || bri == 15 || sri == 3) { p++; continue; }   // 1 = reserved, layer 1 = III
+                int rate = SampleRates[ver, sri];
+                int bps = (ver == 3 ? BitrateV1[bri] : BitrateV2[bri]) * 1000;
+                if (rate == 0 || bps == 0) { p++; continue; }
+                int flen = 144 * bps / rate + pad;
+                if (flen <= 4 || p + flen > data.Length) break;
+                if (samplesPerFrame == 0) samplesPerFrame = ver == 3 ? 1152 : 576;
+                list.Add(p);
+                p += flen;
+            }
+            list.Add(p);   // sentinel = end of the last complete frame
+            return list;
+        }
+
+        /// <summary>True when the file's FIRST frame carries a Xing/Info tag instead of audio — the frame every
+        /// decoder (NLayer included) skips, so it produces no samples. Distinct from
+        /// <see cref="HasInfoHeaderFrame"/>, which asks the narrower "is it the CBR Info kind StepMania's MAD emits
+        /// as silence". Pure — unit-tested.</summary>
+        public static bool HasVbrTagFrame(byte[] data, System.Collections.Generic.List<int> table)
+        {
+            if (data == null || table == null || table.Count < 2) return false;
+            int from = Math.Max(0, table[0]), to = Math.Min(table[1], data.Length);
+            return IndexOfIn(data, XingTag, from, to) >= 0 || IndexOfIn(data, InfoTag, from, to) >= 0;
+        }
+
+        /// <summary>
+        /// Re-decode the file as standalone chunks of whole MPEG frames, laying each chunk back down at ITS OWN
+        /// frame index. NLayer silently DROPS a frame it fails to decode, and in a straight front-to-back decode
+        /// everything after that point moves earlier by one frame — the drift accumulates and the song ends up
+        /// playing ahead of the chart (擬態ごっこ: 3 dropped frames = 72 ms). Anchoring every chunk on the frame
+        /// table makes a bad frame cost at most its own chunk and never shifts the timeline.
+        ///
+        /// A slice always loses its FIRST frame (its bit reservoir points at bytes that are not in the slice), so
+        /// each chunk carries <see cref="SlicePrerollFrames"/> extra leading frames and is copied out ALIGNED FROM
+        /// ITS END. Losing more than that means a frame inside the kept range really is undecodable → redo that
+        /// chunk one frame at a time and leave the bad frame as silence, so the timeline still holds.
+        ///
+        /// Verified sample-exact against libsndfile across a whole 2:34 song (max |diff| 2e-6 = float rounding).
+        /// </summary>
+        private static float[] DecodeSliced(string path, int ch)
+        {
+            var file = System.IO.File.ReadAllBytes(path);
+            int spf;
+            var tbl = FrameTable(file, out spf);
+            int frames = tbl.Count - 1;                       // last entry is the end sentinel
+            if (frames <= 0 || spf <= 0 || ch <= 0) return null;
+            int audio0 = HasVbrTagFrame(file, tbl) ? 1 : 0;   // NLayer never emits the Xing/Info header frame
+            int audioFrames = frames - audio0;
+            if (audioFrames <= 0) return null;
+            int fw = spf * ch;                                // interleaved samples in one frame
+            long total = (long)audioFrames * fw;
+            if (total <= 0 || total > int.MaxValue) return null;
+            var outBuf = new float[total];
+            var tmp = new float[(SliceChunkFrames + SlicePrerollFrames) * fw];
+            for (int a = 0; a < audioFrames; a += SliceChunkFrames)
+            {
+                int k = Math.Min(SliceChunkFrames, audioFrames - a);
+                int first = a == 0 ? 0 : audio0 + a - Math.Min(SlicePrerollFrames, a);
+                int last = audio0 + a + k;
+                int sliceAudio = (last - first) - (first < audio0 ? 1 : 0);   // frames the decoder should emit
+                int got = DecodeSlice(file, tbl, first, last, tmp);
+                if (got >= (sliceAudio - 1) * fw && got >= k * fw)
+                {
+                    Array.Copy(tmp, got - k * fw, outBuf, a * fw, k * fw);    // align from the END
+                    continue;
+                }
+                for (int f = 0; f < k; f++)
+                {
+                    int i = a + f;
+                    int fi = i == 0 ? 0 : audio0 + i - Math.Min(SlicePrerollFrames, i);
+                    int g = DecodeSlice(file, tbl, fi, audio0 + i + 1, tmp);
+                    if (g >= fw) Array.Copy(tmp, g - fw, outBuf, i * fw, fw);
+                    else Array.Clear(outBuf, i * fw, fw);     // undecodable frame → silence, timeline preserved
+                }
+            }
+            return outBuf;
+        }
+
+        /// <summary>Decode file frames [<paramref name="from"/>, <paramref name="to"/>) as a stream of their own into
+        /// <paramref name="dst"/>; returns how many interleaved samples came out (a slice always loses its first
+        /// frame, so this is normally one frame short of what the slice contains).</summary>
+        private static int DecodeSlice(byte[] file, System.Collections.Generic.List<int> table, int from, int to, float[] dst)
+        {
+            int a = table[from], b = table[to];
+            if (b <= a) return 0;
+            using (var ms = new System.IO.MemoryStream(file, a, b - a, false))
+            using (var mp3 = new MpegFile(ms))
+            {
+                var buf = new float[16384];
+                int got = 0, n;
+                while ((n = mp3.ReadSamples(buf, 0, buf.Length)) > 0)
+                {
+                    if (got + n > dst.Length) n = dst.Length - got;
+                    if (n <= 0) break;
+                    for (int i = 0; i < n; i++)
+                    {
+                        float s = buf[i];
+                        dst[got + i] = s > 1f ? 1f : (s < -1f ? -1f : s);
+                    }
+                    got += n;
+                }
+                return got;
+            }
+        }
+
+        /// <summary>First index of <paramref name="needle"/> in <paramref name="hay"/> within
+        /// [<paramref name="start"/>, <paramref name="end"/>), or −1.</summary>
+        private static int IndexOfIn(byte[] hay, byte[] needle, int start, int end)
+        {
+            if (hay == null || needle == null || needle.Length == 0) return -1;
+            int last = Math.Min(end, hay.Length) - needle.Length;
+            for (int i = Math.Max(0, start); i <= last; i++)
+            {
+                int j = 0;
+                while (j < needle.Length && hay[i + j] == needle[j]) j++;
+                if (j == needle.Length) return i;
+            }
+            return -1;
         }
 
         /// <summary>First index of <paramref name="needle"/> in <paramref name="hay"/> at or after

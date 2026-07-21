@@ -67,6 +67,103 @@ namespace Sdo.Tests
             Assert.AreEqual(0, Mp3Decoder.OsuGaplessKeptLength(0, 2));
         }
 
+        // ---- frame table (drives the timeline-exact re-decode) ----
+
+        // MPEG-1 Layer III, 320 kbps, 48 kHz, no padding → 144 × 320000 / 48000 = 960 B per frame.
+        private const int FrameLen = 960;
+
+        private static byte[] Stream(int frames, int id3 = 0, string tagInFirst = null)
+        {
+            var b = new byte[id3 + frames * FrameLen];
+            if (id3 >= 10)
+            {
+                Put(b, 0, "ID3");
+                int n = id3 - 10;                                  // syncsafe size (7 bits per byte)
+                b[6] = (byte)((n >> 21) & 0x7F); b[7] = (byte)((n >> 14) & 0x7F);
+                b[8] = (byte)((n >> 7) & 0x7F);  b[9] = (byte)(n & 0x7F);
+            }
+            for (int f = 0; f < frames; f++)
+            {
+                int at = id3 + f * FrameLen;
+                b[at] = 0xFF; b[at + 1] = 0xFB; b[at + 2] = 0xE4; b[at + 3] = 0x44;
+            }
+            if (tagInFirst != null) Put(b, id3 + 36, tagInFirst);
+            return b;
+        }
+
+        [Test]
+        public void FrameTable_WalksEveryFrameAndEndsWithASentinel()
+        {
+            int spf;
+            var t = Mp3Decoder.FrameTable(Stream(4), out spf);
+            Assert.AreEqual(1152, spf);                            // MPEG-1 Layer III
+            Assert.AreEqual(5, t.Count);                           // 4 frames + end-of-last-frame sentinel
+            for (int i = 0; i < 5; i++) Assert.AreEqual(i * FrameLen, t[i], "frame " + i);
+        }
+
+        [Test]
+        public void FrameTable_SkipsAnId3Tag()
+        {
+            int spf;
+            var t = Mp3Decoder.FrameTable(Stream(3, id3: 4193), out spf);
+            Assert.AreEqual(4, t.Count);
+            Assert.AreEqual(4193, t[0]);                           // audio starts after the tag, not at byte 0
+            Assert.AreEqual(4193 + 3 * FrameLen, t[3]);
+        }
+
+        [Test]
+        public void FrameTable_StepsOverAFakeSync()
+        {
+            // 0xFF 0xEA = frame sync bits but version 1 (reserved) → not a frame; the real one after it still lands.
+            var b = new byte[8 + 2 * FrameLen];
+            b[0] = 0xFF; b[1] = 0xEA;
+            for (int f = 0; f < 2; f++)
+            {
+                int at = 8 + f * FrameLen;
+                b[at] = 0xFF; b[at + 1] = 0xFB; b[at + 2] = 0xE4; b[at + 3] = 0x44;
+            }
+            int spf;
+            var t = Mp3Decoder.FrameTable(b, out spf);
+            Assert.AreEqual(3, t.Count);
+            Assert.AreEqual(8, t[0]);
+        }
+
+        [Test]
+        public void FrameTable_EmptyInputStillReturnsASentinel()
+        {
+            int spf;
+            Assert.AreEqual(1, Mp3Decoder.FrameTable(null, out spf).Count);
+            Assert.AreEqual(0, spf);
+            Assert.AreEqual(1, Mp3Decoder.FrameTable(new byte[0], out spf).Count);
+        }
+
+        [Test]
+        public void VbrTagFrame_TrueForXingOrInfoInTheFirstFrameOnly()
+        {
+            // Either tag means frame 0 is a header, not audio — NLayer emits no samples for it, so the frame→sample
+            // accounting of the re-decode has to skip it. (HasInfoHeaderFrame is the narrower "Info only" question.)
+            int spf;
+            foreach (var tag in new[] { "Xing", "Info" })
+            {
+                var d = Stream(3, tagInFirst: tag);
+                Assert.IsTrue(Mp3Decoder.HasVbrTagFrame(d, Mp3Decoder.FrameTable(d, out spf)), tag);
+            }
+            var plain = Stream(3);
+            Assert.IsFalse(Mp3Decoder.HasVbrTagFrame(plain, Mp3Decoder.FrameTable(plain, out spf)));
+            Assert.IsFalse(Mp3Decoder.HasVbrTagFrame(null, null));
+        }
+
+        [Test]
+        public void VbrTagFrame_IgnoresATagInALaterFrame()
+        {
+            // "Xing" appearing as audio data inside frame 1 must not make frame 0 look like a header frame —
+            // that would drop a real frame's worth of samples (26 ms) off the front of every such file.
+            var d = Stream(3);
+            Put(d, FrameLen + 36, "Xing");
+            int spf;
+            Assert.IsFalse(Mp3Decoder.HasVbrTagFrame(d, Mp3Decoder.FrameTable(d, out spf)));
+        }
+
         [Test]
         public void InfoHeaderFrame_OnlyLooksInsideTheFirstFrame()
         {
