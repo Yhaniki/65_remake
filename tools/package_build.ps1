@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Assemble the clean ship layout for a built player: all SDO game data under a single DATA/ folder beside the exe.
 
@@ -91,6 +91,20 @@ function Write-ShopNames($iteminfoPath, $outPath) {
     }
     [System.IO.File]::WriteAllText($outPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))  # UTF-8, no BOM
     Write-Host "[package] wrote shop_names.tsv ($n names, UTF-8)"
+    Convert-ShopNamesToTraditional $outPath '[package]'
+}
+
+# 簡體 → 台灣正體 (OpenCC s2twp): iteminfo.dat 名稱是大陸簡體, 在此轉成台版繁體字/用詞, 讓遊戲內不再出現簡體。
+# 官方 635 筆道地台版名仍由 shop_names_tw.tsv 最後蓋頂 (AvatarItemCatalog.ApplyTwNames), 這裡只處理其餘簡體那批。
+# 需要 python + opencc; 缺任一則保留簡體、僅警告, 絕不中斷 build。轉換邏輯的唯一來源 = tools\convert_shop_names_s2t.py。
+function Convert-ShopNamesToTraditional($tsvPath, $tag) {
+    $conv = Join-Path $PSScriptRoot 'convert_shop_names_s2t.py'
+    if (-not (Test-Path $conv)) { Write-Warning "$tag convert_shop_names_s2t.py 不存在 — shop_names 保留簡體"; return }
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) { Write-Warning "$tag 無 python — shop_names 保留簡體"; return }
+    try {
+        & python -X utf8 $conv $tsvPath
+        if ($LASTEXITCODE -ne 0) { Write-Warning "$tag shop_names 簡→繁 轉換失敗 (缺 opencc?) — 保留簡體" }
+    } catch { Write-Warning "$tag shop_names 簡→繁 轉換例外: $($_.Exception.Message) — 保留簡體" }
 }
 
 # 1) Base: the offline Extracted tree -> DATA. PROFILE (per-user saves) is excluded from the mirror and

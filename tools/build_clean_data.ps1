@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Assemble a CLEAN, ship-structured DATA/ folder containing only assets the remake actually uses.
   "Safe version": full song + full costume catalogs kept; dead files pruned ONLY where statically provable
@@ -103,6 +103,18 @@ function Write-ShopNames($iteminfoPath, $outPath) {
     }
     [System.IO.File]::WriteAllText($outPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "[clean] wrote shop_names.tsv ($n names)"
+    Convert-ShopNamesToTraditional $outPath '[clean]'
+}
+# 簡體 → 台灣正體 (OpenCC s2twp), 與 tools\package_build.ps1 相同: 讓 editor 讀到的 clean shop_names.tsv 也是繁體。
+# 需要 python + opencc; 缺任一則保留簡體、僅警告, 不中斷。轉換邏輯唯一來源 = tools\convert_shop_names_s2t.py。
+function Convert-ShopNamesToTraditional($tsvPath, $tag) {
+    $conv = Join-Path $PSScriptRoot 'convert_shop_names_s2t.py'
+    if (-not (Test-Path $conv)) { Write-Warning "$tag convert_shop_names_s2t.py 不存在 — shop_names 保留簡體"; return }
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) { Write-Warning "$tag 無 python — shop_names 保留簡體"; return }
+    try {
+        & python -X utf8 $conv $tsvPath
+        if ($LASTEXITCODE -ne 0) { Write-Warning "$tag shop_names 簡→繁 轉換失敗 (缺 opencc?) — 保留簡體" }
+    } catch { Write-Warning "$tag shop_names 簡→繁 轉換例外: $($_.Exception.Message) — 保留簡體" }
 }
 
 New-Item -ItemType Directory -Force -Path $Data | Out-Null
