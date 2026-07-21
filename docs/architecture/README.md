@@ -7,6 +7,7 @@
 | [repo-structure.md](repo-structure.md) | `src/`、`tools/` 目錄樹 |
 | [chart-format.md](chart-format.md) | Canonical Chart（拍色、拍線、流速、逆流、停拍、MultiHit） |
 | [scroll-timing.md](scroll-timing.md) | 毫秒時間軸、SV 綠線、四層流速合成 |
+| [scroll-base-bpm.md](scroll-base-bpm.md) | 基準速度（base BPM）怎麼挑：osu most-common + ±3% 併群 |
 | [scoring-hybrid.md](scoring-hybrid.md) | 1e8 + SDO combo + Hold 合併 |
 | [skin-system.md](skin-system.md) | osu / SM NoteSkin |
 | [dance-vmd.md](dance-vmd.md) | VMD 舞蹈 |
