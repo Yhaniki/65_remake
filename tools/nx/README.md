@@ -24,8 +24,29 @@
 | [`dump_chart.py`](dump_chart.py) | **主力工具**：attach 執行中的 NXPatch，hook 解密函式，把明文譜面 dump 下來 |
 | [`decode_chart.py`](decode_chart.py) | 解析 dump 出來的明文譜：frame/note 統計、**捲動速度表**、**炸彈表** |
 | [`dump_nxpatch_image.py`](dump_nxpatch_image.py) | spawn NXPatch 並 dump 記憶體映像（靜態逐位址分析用；平常不需要） |
+| [`install_bomb_assets.py`](install_bomb_assets.py) | 把炸彈用的 StepMania 素材裝進打包來源樹（見下） |
 
 需求：`pip install frida`（`dump_*.py`）。`decode_chart.py` 只用標準庫。
+
+## 炸彈素材（clone 之後要跑一次）
+
+炸彈的**引爆特效圖**和**爆炸音**來自外部 StepMania，而 `assets/` 整棵被 `.gitignore`
+（本專案所有遊戲資料都不進版控），所以 **clone 之後這兩個檔不會在**，build 出來的炸彈會沒圖沒音。
+
+```
+python tools/nx/install_bomb_assets.py
+```
+
+它會裝進**打包來源樹**，之後 `tools/package_build.ps1` 就會自動鏡射進 build 的 `DATA/`
+（**不需要改打包腳本**，因為 `Extracted/` 和 `SE/` 本來就整棵複製）：
+
+| 來源（StepMania） | 裝到 | 用途 |
+|---|---|---|
+| `NoteSkins/common/default/Fallback Tap Explosion Dim HitMine.png` | `assets/sdox_offline/Extracted/NOTEIMAGE/BOMB_EXPLODE.png` | 引爆特效圖 |
+| `Themes/CyberiaStyle 6 .../Sounds/Player mine.ogg` | `assets/sdox_offline/SE/player_mine.wav` | 引爆音（轉成 wav，`PlaySe` 只讀 `SE/*.wav`；需 ffmpeg） |
+
+> 炸彈**本體**的圖不用裝 —— 那是遊戲自帶的 `NOTEIMAGE/NOTEIMAGE_*/ZD00..ZD03.PNG`，會跟著 note skin 換。
+> 編輯器吃的是 `data_root.txt` 指到的那棵 DATA，需要的話把這兩個檔一併複製過去。
 
 ## 取得解密譜面的流程
 
