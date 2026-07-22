@@ -63,8 +63,9 @@ namespace Sdo.Game
             foreach (var rel in parts)
             {
                 var path = ResolveAvatarFile(rel);
-                if (!File.Exists(path)) { Debug.LogWarning("[avatar] missing " + rel); continue; }
-                var r = MshLoader.Load(File.ReadAllBytes(path));
+                var mshBytes = AvatarAssetCache.Read(path);   // cached +背景預讀 (商城捲動時整包 msh/dds 已在 RAM)
+                if (mshBytes == null) { Debug.LogWarning("[avatar] missing " + rel); continue; }
+                var r = MshLoader.Load(mshBytes);
                 if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[avatar] parse fail " + rel); continue; }
                 var dir = Path.GetDirectoryName(path);
                 string relU = rel.ToUpperInvariant();
@@ -165,8 +166,9 @@ namespace Sdo.Game
         {
             if (string.IsNullOrEmpty(dir) || !TexAnimEx.TryParse(placeholder, out var spec)) return null;
             string anPath = Path.Combine(dir, spec.Name + ".an");
-            if (!File.Exists(anPath)) return null;
-            var frameNames = TexAnimEx.ParseAn(File.ReadAllText(anPath));
+            var anText = AvatarAssetCache.ReadText(anPath);
+            if (anText == null) return null;
+            var frameNames = TexAnimEx.ParseAn(anText);
             if (frameNames.Length == 0) return null;
             var frames = new List<Texture>(frameNames.Length);
             foreach (var fn in frameNames) { var t = ResolveAnimFrame(dir, fn); if (t != null) frames.Add(t); }
@@ -182,7 +184,7 @@ namespace Sdo.Game
                     string p0 = FindDdsPath(dir, frameNames[0]);   // 只認 .dds 幀;TGA 幀=翅膀,不會走進這個 if
                     if (p0 != null)
                     {
-                        var am = DdsLoader.GetSceneAlphaMode(File.ReadAllBytes(p0));
+                        var am = DdsLoader.GetSceneAlphaMode(AvatarAssetCache.Read(p0));
                         if (am == DdsAlphaMode.Cutout) shader = Shader.Find("Sdo/UnlitDoubleSided") ?? shader;
                         else if (am == DdsAlphaMode.Blend) shader = Shader.Find("Sdo/UnlitAvatarAlpha") ?? shader;
                     }
@@ -215,14 +217,11 @@ namespace Sdo.Game
             string hit = null;
             string direct = Path.Combine(dir, fn);
             if (File.Exists(direct)) hit = direct;
-            else
-            {
-                string stem = Path.GetFileNameWithoutExtension(fn).ToLowerInvariant();
-                foreach (var f in Directory.GetFiles(dir, "*.*"))
-                    if (Path.GetExtension(f).ToLowerInvariant() == ".tga" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) { hit = f; break; }
-            }
+            // 舊碼在此 Directory.GetFiles(dir,"*.*") 逐檔比對 —— AVATAR 資料夾有 67,000 個檔,一次未命中就是整包列舉。
+            // 改走與 DDS 同款的一次性索引 (TgaIndex),之後每次查詢 O(1)。
+            else if (TgaIndex(dir).TryGetValue(Path.GetFileNameWithoutExtension(fn).ToLowerInvariant(), out var f2)) hit = f2;
             if (hit == null) return null;
-            try { return DdsLoader.LoadTga(File.ReadAllBytes(hit)); } catch { return null; }
+            try { var b = AvatarAssetCache.Read(hit); return b != null ? DdsLoader.LoadTga(b) : null; } catch { return null; }
         }
 
         /// <summary>Resolve an Extracted-relative avatar file (e.g. "AVATAR/012657_WOMAN_SHOES.MSH") to an absolute
@@ -231,11 +230,23 @@ namespace Sdo.Game
         /// Extracted. Returns the root path (even if absent) when neither has it, so callers still log a miss.</summary>
         public static string ResolveAvatarFile(string rel)
         {
+            if (string.IsNullOrEmpty(rel)) return rel;
+            lock (_resolveLock) if (_resolved.TryGetValue(rel, out var memo)) return memo;
             var p = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(p)) return p;
-            var alt = DevDatasPath(rel);
-            return (alt != null && File.Exists(alt)) ? alt : p;
+            if (!File.Exists(p))
+            {
+                var alt = DevDatasPath(rel);
+                if (alt != null && File.Exists(alt)) p = alt;
+            }
+            lock (_resolveLock) _resolved[rel] = p;
+            return p;
         }
+
+        // rel → absolute, memoised: the 商城 asks for the same paths on every scroll step (visible cards + prefetch
+        // look-ahead) and each miss costs 1-2 File.Exists probes in a 67k-file folder. The data set never changes at
+        // runtime, so one answer per rel is enough. Locked — the prefetch worker resolves paths too.
+        private static readonly Dictionary<string, string> _resolved = new Dictionary<string, string>();
+        private static readonly object _resolveLock = new object();
 
         // Map an AVATAR-relative path to the dev full-catalog staging <repo>/assets/Datas/<rel>. Root in the editor is
         // <repo>/assets/sdox_offline/Extracted, so its grandparent is <repo>/assets. Null if that can't be derived.
@@ -299,14 +310,15 @@ namespace Sdo.Game
             if (hit == null) return null;
             try
             {
-                var bytes = File.ReadAllBytes(hit);
-                bool hasAlpha = DdsLoader.HasAlpha(bytes);
-                bool additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
-                sceneAlpha = DdsLoader.GetSceneAlphaMode(bytes);   // distribution-based (≥3% 真洞才 Cutout) → 不會被雜訊誤判
+                var bytes = AvatarAssetCache.Read(hit);
+                if (bytes == null) return null;
+                // ONE alpha walk for all five answers (was HasAlpha + glow + scene + hard + translucent = 4 full
+                // re-scans of the same texels per texture — pure repeat work on every 商城 card build).
+                var st = DdsLoader.Analyze(bytes);
+                sceneAlpha = st.Scene;   // distribution-based (≥3% 真洞才 Cutout) → 不會被雜訊誤判
                 if (bodyGarment && sceneAlpha != DdsAlphaMode.Opaque)
-                    sceneAlpha = GarmentAlphaMode(sceneAlpha, DdsLoader.HardTransparentFraction(bytes),
-                                                  DdsLoader.TranslucentFraction(bytes), true);
-                return DdsLoader.Load(bytes, bleedAlphaEdges: hasAlpha && !additiveGlow);
+                    sceneAlpha = GarmentAlphaMode(sceneAlpha, st.HardTransp, st.Translucent, true);
+                return DdsLoader.Load(bytes, bleedAlphaEdges: st.HasAlpha && !st.AdditiveGlow);
             }
             catch { return null; }
         }
@@ -403,15 +415,36 @@ namespace Sdo.Game
 
         // Cache: dir -> (normalised dds stem -> file path). The AVATAR folder holds ~40k files; the old per-call
         // Directory.GetFiles + linear stem scan was O(files) EVERY resolve. Built once per dir; also powers the fuzzy match.
+        // Lock-guarded: the 商城 background prefetch (AvatarAssetCache) resolves texture paths off the main thread, so
+        // both the lookup and the one-time build must be serialised (a torn Dictionary would throw mid-scroll).
         private static readonly Dictionary<string, Dictionary<string, string>> _ddsByNorm = new Dictionary<string, Dictionary<string, string>>();
+        private static readonly object _indexLock = new object();
         private static Dictionary<string, string> DdsIndex(string dir)
         {
-            if (_ddsByNorm.TryGetValue(dir, out var m)) return m;
-            m = new Dictionary<string, string>();
-            try { foreach (var f in Directory.GetFiles(dir, "*.dds")) { var k = NormStem(Path.GetFileNameWithoutExtension(f)); if (!m.ContainsKey(k)) m[k] = f; } }
-            catch { }
-            _ddsByNorm[dir] = m;
-            return m;
+            lock (_indexLock)
+            {
+                if (_ddsByNorm.TryGetValue(dir, out var m)) return m;
+                m = new Dictionary<string, string>();
+                try { foreach (var f in Directory.GetFiles(dir, "*.dds")) { var k = NormStem(Path.GetFileNameWithoutExtension(f)); if (!m.ContainsKey(k)) m[k] = f; } }
+                catch { }
+                _ddsByNorm[dir] = m;
+                return m;
+            }
+        }
+
+        // Same one-time index for .tga frames (翅膀 wings ship many glow frames as TGA only).
+        private static readonly Dictionary<string, Dictionary<string, string>> _tgaByStem = new Dictionary<string, Dictionary<string, string>>();
+        private static Dictionary<string, string> TgaIndex(string dir)
+        {
+            lock (_indexLock)
+            {
+                if (_tgaByStem.TryGetValue(dir, out var m)) return m;
+                m = new Dictionary<string, string>();
+                try { foreach (var f in Directory.GetFiles(dir, "*.tga")) { var k = Path.GetFileNameWithoutExtension(f).ToLowerInvariant(); if (!m.ContainsKey(k)) m[k] = f; } }
+                catch { }
+                _tgaByStem[dir] = m;
+                return m;
+            }
         }
 
         /// <summary>

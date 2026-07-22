@@ -22,6 +22,10 @@ namespace Sdo.Game
         private int _last = -1;
         private bool _warnedNoTex;   // one-shot: named a texture-less material so the log isn't spammed
 
+        /// <summary>The frame textures this animator owns. Exposed so a caller that tears down a runtime-built object
+        /// (商城縮圖) can destroy them — Unity does not free runtime textures with the GameObject.</summary>
+        public Texture[] Frames => _frames;
+
         /// <param name="mats">shared submesh materials whose _MainTex to drive (all set to the same frame)</param>
         /// <param name="frames">ordered frame textures (already loaded); cycled round-robin</param>
         /// <param name="intervalMs">ms between frames (300 in the original)</param>

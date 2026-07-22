@@ -95,9 +95,8 @@ namespace Sdo.Game
             // 用 ResolveAvatarFile(Root + dev Datas 全量) 解析,不再只找 Root —— 商城買的衣物 mesh 常只在 Datas 全量目錄,
             // Root-only 會漏(→ 房間人變光頭)。與左側預覽/遊戲內舞者同一條解析路徑,穿搭在房間才一致。
             string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel);
-            if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
-            var hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath));
-            if (hrc == null) { Debug.LogWarning("[room-avatar] HRC parse fail"); return null; }
+            var hrc = AvatarAssetCache.Hrc(hrcPath);   // 同一副骨架每張商城卡都要 → 解析一次共用 (唯讀)
+            if (hrc == null) { Debug.LogWarning("[room-avatar] HRC missing/parse fail " + hrcPath); return null; }
 
             var idle = LoadMot(male ? MaleIdleMot : IdleMot);
             var av = parent.AddComponent<SdoAvatar>();
@@ -116,8 +115,9 @@ namespace Sdo.Game
             foreach (var rel in bodyParts)
             {
                 var path = SdoAvatarBuilder.ResolveAvatarFile(rel);   // Root + dev Datas 全量 (見上;修光頭)
-                if (!File.Exists(path)) { Debug.LogWarning("[room-avatar] missing " + rel); continue; }
-                var r = MshLoader.Load(File.ReadAllBytes(path));
+                var mshBytes = AvatarAssetCache.Read(path);   // cached + 背景預讀
+                if (mshBytes == null) { Debug.LogWarning("[room-avatar] missing " + rel); continue; }
+                var r = MshLoader.Load(mshBytes);
                 if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-avatar] parse fail " + rel); continue; }
                 var dir = Path.GetDirectoryName(path);
                 // 髮/眼鏡/翅膀/項鍊都要雙面+alpha-cutout(去背),否則翅膀/眼鏡鏤空處變實心。其餘走 Unlit/Texture。
@@ -194,9 +194,8 @@ namespace Sdo.Game
                                       bool bindPoseNoIdle = false, float bodyWeight = 1f)
         {
             string hrcPath = SdoAvatarBuilder.ResolveAvatarFile(hrcRel ?? FemaleHrc);   // MALE.HRC for male outfits
-            if (!File.Exists(hrcPath)) { Debug.LogWarning("[room-avatar] missing " + hrcPath); return null; }
-            var hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath));
-            if (hrc == null) { Debug.LogWarning("[room-avatar] HRC parse fail"); return null; }
+            var hrc = AvatarAssetCache.Hrc(hrcPath);   // 同一副骨架每張商城卡都要 → 解析一次共用 (唯讀)
+            if (hrc == null) { Debug.LogWarning("[room-avatar] HRC missing/parse fail " + hrcPath); return null; }
 
             // bindPoseNoIdle (商城 shop preview): show the skeleton's BIND POSE with NO motion — exactly the official
             // AvtShow (AvtShow_LoadModelByName → AvatarHelper_Create(name,0), no .mot). The shop passes the wshop/mshop
@@ -261,12 +260,13 @@ namespace Sdo.Game
             if (hit == null) return null;
             try
             {
-                var bytes = File.ReadAllBytes(hit);
+                var bytes = AvatarAssetCache.Read(hit);
+                if (bytes == null) return null;
                 bool sheer = false;
                 if (bodyGarment)
                 {
-                    garmentAlpha = SdoAvatarBuilder.GarmentAlphaMode(DdsLoader.GetSceneAlphaMode(bytes),
-                        DdsLoader.HardTransparentFraction(bytes), DdsLoader.TranslucentFraction(bytes), true);
+                    var st = DdsLoader.Analyze(bytes);   // 一次掃描給齊三個答案 (原本掃三遍)
+                    garmentAlpha = SdoAvatarBuilder.GarmentAlphaMode(st.Scene, st.HardTransp, st.Translucent, true);
                     sheer = garmentAlpha == DdsAlphaMode.Blend;
                 }
                 return DdsLoader.Load(bytes, bleedAlphaEdges: sheer);   // sheer fabric: dilate RGB into a=0 → no black halo at the lace edges
@@ -289,7 +289,8 @@ namespace Sdo.Game
             try
             {
                 var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-                return File.Exists(path) ? MotLoader.Load(File.ReadAllBytes(path)) : null;
+                var b = AvatarAssetCache.Read(path);
+                return b != null ? MotLoader.Load(b) : null;
             }
             catch { return null; }
         }

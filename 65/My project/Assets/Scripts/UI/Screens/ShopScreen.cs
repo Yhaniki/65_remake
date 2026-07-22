@@ -42,6 +42,7 @@ namespace Sdo.UI.Screens
         // 穿搭歷史 (#6)：按歷史鈕 → 格子改列「試穿過的衣服」(最近在前，去重)。選店/選部位/打字都會退出此模式。
         private bool _showHistory;
         private readonly List<ShopItem> _history = new List<ShopItem>();
+        private int _historyRev;                            // 歷史清單版本 (順序也算改動) → 清單快取失效鍵
         // 精品屋 banner 霓虹燈動畫 (#7)：jingpin1.an 有 18 幀，Update 以 JingpinFps 循環換 sprite。
         private Image _jingpinImg; private Sprite[] _jingpinFrames; private int _jingpinIdx; private float _jingpinTimer;
         private const float JingpinFps = 12f;
@@ -104,6 +105,7 @@ namespace Sdo.UI.Screens
         private const float CardEyeDist = 110f;          // 官方 view eye=(0,0,-110)。正交下距離不影響大小,只要在 near..far 內
         private const float CardOrthoHalfW = 64f;        // 官方 ortho 半寬 (WIDTH=128 world);半高由 RT aspect 推 → 方形像素
         private const float CardNear = 5f, CardFar = 1000f;   // 官方 ortho near/far
+        private const float CardBuildBudgetMs = 6f;       // 每幀花在建縮圖的上限 (超過就等下一幀,捲動才不會頓)
         private Camera _cardCam;                          // 共用一台相機，手動 Render() 逐張畫
         private readonly GameObject[] _cardAv = new GameObject[PerPage];
         private readonly RenderTexture[] _cardRT = new RenderTexture[PerPage];
@@ -114,6 +116,12 @@ namespace Sdo.UI.Screens
         private readonly bool[] _cardUvScroll = new bool[PerPage];          // 炫 hair 卡 (model 40000-49999)：貼圖 V 捲動 → RT 每幀重畫才看得到變色
         private readonly Vector3[] _cardFramePos = new Vector3[PerPage];    // 官方 per-slot 節點位移 (模型空間,y 為負把部位往下推)
         private readonly Vector3[] _cardFrameScale = new Vector3[PerPage];  // 官方 per-slot 節點縮放 (5.5~10x)
+        // 該格目前畫的是哪一件 (Category+ModelId)。捲一列只有 GridCols 件真的換掉,其餘 6 張是「同一件搬個位置」——
+        // 有了這個鍵就能整組搬過去續用,不必砍掉重讀 (捲動慢的主因之一:每步都重建 8 張)。
+        private readonly long[] _cardKey = new long[PerPage];
+        /// <summary>「這格沒有商品」的卡片鍵 (見 <see cref="MapRetainedSlots"/>)。</summary>
+        public const long NoCardKey = long.MinValue;
+        private bool _cardLayoutBig;    // 目前這批 RT 是大卡(套装)還是小卡版面;版面一換 RT 尺寸就不同 → 不能續用
         private int _hoverCard = -1;
         private static Vector3 CardSpot(int i) => new Vector3(3000f + i * 400f, 0f, 0f);   // 各卡衣物散開放，避免互相入鏡
 
@@ -513,10 +521,86 @@ namespace Sdo.UI.Screens
 
         private void RefreshGrid()
         {
-            DestroyCardPreviews();   // 清掉上一頁的 3D 縮圖人形/RT (RawImage 隨 _grid.Clear 一起清)
-            UIKit.Clear(_grid);
-            if (_catalog == null) { _totalPages = 1; UpdateScrollHandle(); return; }
+            if (_catalog == null)
+            {
+                DestroyCardPreviews(); UIKit.Clear(_grid);
+                _totalPages = 1; UpdateScrollHandle(); return;
+            }
 
+            bool searching = !string.IsNullOrEmpty(_query);
+            var items = CachedItems();
+
+            // 套装 tab → 官方 suitwin 大卡 (2張);其餘小卡 (8張)。搜尋時是跨部位混合結果 → 一律小卡 (使用者:套装 tab 搜尋要小格)。
+            _L = (!_showHistory && !searching && _slot == EquipSlot.Outfit) ? BigLayout : SmallLayout;
+
+            // 捲軸改「逐列」捲動 (user)：往下一單位只把最上一列 (GridCols 格) 捲出、底部補進新的一列，
+            // 而非整頁 8 格全換。→ _page 現在代表「最上方可見列」的索引 (非頁碼)，每步 = 1 列 = GridCols 件；
+            // _totalPages = 可停靠的捲動位置數 (含頂端，最多捲到「最後一列貼齊底部」)。
+            int cols = GridCols;                                   // 兩種版面都是 2 欄 (小卡 2×4、大卡 2×1)
+            int visRows = Mathf.Max(1, _L.PerPage / cols);         // 一次看得到幾列 (小卡 4、大卡 1)
+            int totalRows = Mathf.Max(1, (items.Count + cols - 1) / cols);
+            int maxTopRow = Mathf.Max(0, totalRows - visRows);     // 最後一列貼齊底部時的最上列索引
+            _page = Mathf.Clamp(_page, 0, maxTopRow);
+            _totalPages = maxTopRow + 1;
+            UpdateScrollHandle();
+            int start = _page * cols;                              // 首格 = 最上列 × 欄數 → 逐列滑動
+
+            // 這一步真正要「重讀」的只有捲進來的那幾件:其餘沿用已建好的縮圖 (見 RetainCardPreviews)。
+            bool big = _L.PerPage == BigLayout.PerPage && _L.RtW == BigLayout.RtW;
+            var ready = RetainCardPreviews(items, start, big != _cardLayoutBig);
+            _cardLayoutBig = big;
+            UIKit.Clear(_grid);
+            PrefetchAround(items, start);                          // 背景先把接下來幾列的 msh/dds 讀進 RAM
+
+            for (int i = 0; i < _L.PerPage; i++)
+            {
+                int idx = start + i;
+                var pos = _L.Pos[i];
+
+                // 卡片容器。官方連沒商品的格子也畫卡底框 → 每格都先鋪卡底,沒商品就只留空框 (#8)。
+                var card = UIKit.NewRect(_grid, "card" + i);
+                card.anchorMin = card.anchorMax = new Vector2(0, 1); card.pivot = new Vector2(0, 1);
+                card.anchoredPosition = new Vector2(pos.x, -pos.y); card.sizeDelta = _L.Size;
+                AddArt(card, "bg", ShopArt.An(_L.FrameAn), 0, 0);   // 官方卡底 (空格也畫)
+
+                if (idx >= items.Count) continue;                    // 這頁沒有第 i 件商品 → 只保留空框
+                var item = items[idx];
+
+                var nm = TxtAt(card, "name", _L.NamePos.x, _L.NamePos.y, _L.TextW, 16, _L.NameFont, _L.NameColor, _L.Align);
+                nm.fontWeight = FontWeight.Thin;   // 白色細字
+                nm.text = item.Name;   // 已擁有不加勾勾/標記 (使用者指定)
+                var pr = TxtAt(card, "price", _L.PricePos.x, _L.PricePos.y, _L.TextW, 16, 12, CWhite, _L.Align);
+                pr.fontStyle = FontStyles.Bold;
+                pr.text = (item.IsPermanent ? "永久 " : item.DurationDays + "天 ") + item.Price + CurrencyZh(item.Currency);
+                var lv = TxtAt(card, "lv", _L.LvPos.x, _L.LvPos.y, _L.TextW, 16, 11, CLv, _L.Align);
+                lv.text = "等级限制:LV" + Mathf.Max(1, item.MinLevel);   // 無模型的 item 已在 RefreshGrid 過濾掉 → 不再需要「無模型」標記
+
+                var itLocal = item;
+                // 套装大卡不放中間的購物車(試穿)鈕 (user 指定) → 只有 買/送;試穿改由點卡片 (AddTryOnHit)。小卡才有 fit 鈕。
+                if (_slot != EquipSlot.Outfit)
+                    SpriteBtn(card, "fit",  "Shop148.an", "Shop150.an", _L.FitPos.x,  _L.FitPos.y,  () => DoTryOn(itLocal), hoverAn: "Shop149.an");  // 試穿 (不需擁有)
+                SpriteBtn(card, "buy",  "Shop123.an", "Shop125.an", _L.BuyPos.x,  _L.BuyPos.y,  () => DoBuy(itLocal),  hoverAn: "Shop124.an");  // 購買
+                SpriteBtn(card, "gift", "Shop126.an", "Shop128.an", _L.GiftPos.x, _L.GiftPos.y, hoverAn: "Shop127.an");                         // 送禮 (尚無功能)
+                if (ready[i]) AttachCardImage(i, card);                                    // 續用上一頁就畫好的縮圖 (零讀取)
+                else _pendingCards.Add(new PendingCard { I = i, Card = card, Item = item });   // 卡內 3D 縮圖 → 漸進建
+                AddTryOnHit(card, item, i);        // 點=試穿；滑上去=該卡縮圖放大旋轉
+            }
+        }
+
+        // 清單只跟「分頁/性別/幣別/搜尋/歷史」有關,跟捲到第幾列無關 —— 但拖捲軸時每換一列就走一次 RefreshGrid,
+        // 舊碼每次都把整個部位 (可達數千件) 重新過濾+收合+排序一遍。快取起來,捲動就只剩換格子。
+        private List<ShopItem> _itemsCache;
+        private string _itemsCacheSig;
+
+        private string ItemListSignature()
+            => (_showHistory ? 1 : 0) + "|" + _query + "|" + (int)_slot + "|" + (int)_sex
+               + "|" + (_showM ? 1 : 0) + (_showG ? 1 : 0) + "|" + _historyRev + "|" + _catalog.Count;
+
+        /// <summary>目前分頁條件下要顯示的商品清單 (過濾→收合三檔位→排序)。同一組條件只算一次。</summary>
+        private List<ShopItem> CachedItems()
+        {
+            var sig = ItemListSignature();
+            if (_itemsCache != null && _itemsCacheSig == sig) return _itemsCache;
             bool searching = !string.IsNullOrEmpty(_query);
             bool meshSlot = _slot == EquipSlot.Wings || _slot == EquipSlot.Expression;        // 翅膀/表情 = 只有 mesh 沒名字 (6 碼當名)
             IEnumerable<ShopItem> src = _showHistory ? (IEnumerable<ShopItem>)_history        // 穿搭歷史 → 只列試穿過的 (#6)
@@ -567,54 +651,31 @@ namespace Sdo.UI.Screens
             if (_showHistory) { }                        // 歷史：保留 _history 的「最近在前」順序，不 reverse/排序
             else if (!searching) items.Sort((a, b) => b.ModelId.CompareTo(a.ModelId));   // 瀏覽：ModelId 降冪合併 (含 上装/連身)
             else items.Reverse();                        // 搜尋結果：跨部位混合,維持原本反轉行為
+            _itemsCache = items; _itemsCacheSig = sig;
+            return items;
+        }
 
-            // 套装 tab → 官方 suitwin 大卡 (2張);其餘小卡 (8張)。搜尋時是跨部位混合結果 → 一律小卡 (使用者:套装 tab 搜尋要小格)。
-            _L = (!_showHistory && !searching && _slot == EquipSlot.Outfit) ? BigLayout : SmallLayout;
-
-            // 捲軸改「逐列」捲動 (user)：往下一單位只把最上一列 (GridCols 格) 捲出、底部補進新的一列，
-            // 而非整頁 8 格全換。→ _page 現在代表「最上方可見列」的索引 (非頁碼)，每步 = 1 列 = GridCols 件；
-            // _totalPages = 可停靠的捲動位置數 (含頂端，最多捲到「最後一列貼齊底部」)。
-            int cols = GridCols;                                   // 兩種版面都是 2 欄 (小卡 2×4、大卡 2×1)
-            int visRows = Mathf.Max(1, _L.PerPage / cols);         // 一次看得到幾列 (小卡 4、大卡 1)
-            int totalRows = Mathf.Max(1, (items.Count + cols - 1) / cols);
-            int maxTopRow = Mathf.Max(0, totalRows - visRows);     // 最後一列貼齊底部時的最上列索引
-            _page = Mathf.Clamp(_page, 0, maxTopRow);
-            _totalPages = maxTopRow + 1;
-            UpdateScrollHandle();
-            int start = _page * cols;                              // 首格 = 最上列 × 欄數 → 逐列滑動
-
-            for (int i = 0; i < _L.PerPage; i++)
-            {
-                int idx = start + i;
-                var pos = _L.Pos[i];
-
-                // 卡片容器。官方連沒商品的格子也畫卡底框 → 每格都先鋪卡底,沒商品就只留空框 (#8)。
-                var card = UIKit.NewRect(_grid, "card" + i);
-                card.anchorMin = card.anchorMax = new Vector2(0, 1); card.pivot = new Vector2(0, 1);
-                card.anchoredPosition = new Vector2(pos.x, -pos.y); card.sizeDelta = _L.Size;
-                AddArt(card, "bg", ShopArt.An(_L.FrameAn), 0, 0);   // 官方卡底 (空格也畫)
-
-                if (idx >= items.Count) continue;                    // 這頁沒有第 i 件商品 → 只保留空框
-                var item = items[idx];
-
-                var nm = TxtAt(card, "name", _L.NamePos.x, _L.NamePos.y, _L.TextW, 16, _L.NameFont, _L.NameColor, _L.Align);
-                nm.fontWeight = FontWeight.Thin;   // 白色細字
-                nm.text = item.Name;   // 已擁有不加勾勾/標記 (使用者指定)
-                var pr = TxtAt(card, "price", _L.PricePos.x, _L.PricePos.y, _L.TextW, 16, 12, CWhite, _L.Align);
-                pr.fontStyle = FontStyles.Bold;
-                pr.text = (item.IsPermanent ? "永久 " : item.DurationDays + "天 ") + item.Price + CurrencyZh(item.Currency);
-                var lv = TxtAt(card, "lv", _L.LvPos.x, _L.LvPos.y, _L.TextW, 16, 11, CLv, _L.Align);
-                lv.text = "等级限制:LV" + Mathf.Max(1, item.MinLevel);   // 無模型的 item 已在 RefreshGrid 過濾掉 → 不再需要「無模型」標記
-
-                var itLocal = item;
-                // 套装大卡不放中間的購物車(試穿)鈕 (user 指定) → 只有 買/送;試穿改由點卡片 (AddTryOnHit)。小卡才有 fit 鈕。
-                if (_slot != EquipSlot.Outfit)
-                    SpriteBtn(card, "fit",  "Shop148.an", "Shop150.an", _L.FitPos.x,  _L.FitPos.y,  () => DoTryOn(itLocal), hoverAn: "Shop149.an");  // 試穿 (不需擁有)
-                SpriteBtn(card, "buy",  "Shop123.an", "Shop125.an", _L.BuyPos.x,  _L.BuyPos.y,  () => DoBuy(itLocal),  hoverAn: "Shop124.an");  // 購買
-                SpriteBtn(card, "gift", "Shop126.an", "Shop128.an", _L.GiftPos.x, _L.GiftPos.y, hoverAn: "Shop127.an");                         // 送禮 (尚無功能)
-                _pendingCards.Add(new PendingCard { I = i, Card = card, Item = item });   // 卡內 3D 縮圖 → 漸進建
-                AddTryOnHit(card, item, i);        // 點=試穿；滑上去=該卡縮圖放大旋轉
-            }
+        // ---- 預讀 (「捲到才讀」→「還沒捲到就讀好」) ----
+        // 這批資料放在一個有 67,000 個檔的資料夾裡:實測冷讀一個 .msh 約 10ms、一張 .dds 約 7ms (硬碟尋道,與檔案大小
+        // 無關),而同一個檔第二次讀 (OS page cache) 只要 0.16ms。一張卡 = 骨架+1~2 個 mesh+1~3 張貼圖 ≈ 40ms 的主執行緒
+        // 阻塞,一整頁就是幾百 ms —— 這才是「捲動時服裝讀取很慢」的主因,不是解碼。
+        // 所以把「即將捲進來/剛捲出去」那幾列的檔案丟給背景執行緒先讀進 RAM;主執行緒真的要建那張卡時只剩 parse/decode。
+        private const int PrefetchRowsAhead = 4;   // 往下預讀幾列
+        private const int PrefetchRowsBack = 2;    // 往回(捲回去很常見)預讀幾列
+        private void PrefetchAround(List<ShopItem> items, int start)
+        {
+            if (items == null || items.Count == 0) return;
+            int cols = GridCols;
+            int from = Mathf.Max(0, start - cols * PrefetchRowsBack);
+            int to = Mathf.Min(items.Count, start + _L.PerPage + cols * PrefetchRowsAhead);
+            AvatarAssetCache.CancelPending();   // 上一個捲動位置的待辦已經沒意義,別跟現在這批搶執行緒
+            // 由遠而近排隊:背景 worker 取最後排進去的 (LIFO),所以最近的那幾件會最先被讀到。
+            var order = new List<int>(to - from);
+            for (int i = from; i < to; i++) if (i < start || i >= start + _L.PerPage) order.Add(i);
+            order.Sort((a, b) => Mathf.Abs(b - start).CompareTo(Mathf.Abs(a - start)));
+            foreach (var i in order)
+                foreach (var rel in ComposeCardParts(items[i]))
+                    AvatarAssetCache.PrefetchMesh(SdoAvatarBuilder.ResolveAvatarFile(rel));
         }
 
         // 購買/全身購買 = 使用者主動花錢 → 要有 info 回饋 (其餘按鈕才靜默)。
@@ -687,6 +748,7 @@ namespace Sdo.UI.Screens
             _history.RemoveAll(h => h.Id == item.Id);
             _history.Insert(0, item);
             if (_history.Count > 64) _history.RemoveRange(64, _history.Count - 64);
+            _historyRev++;   // 重新試穿舊的一件只換順序不換件數 → 用版本號讓清單快取失效 (見 ItemListSignature)
         }
 
         private void DoTryOn(ShopItem item)
@@ -908,6 +970,7 @@ namespace Sdo.UI.Screens
                     _cardFramePos[i] = fr.Pos;
                 }
                 _cardAv[i] = root;
+                _cardKey[i] = ItemKey(item);                 // 捲動時認得出「同一件」→ 整組搬格續用,不重讀
                 _cardNoSpin[i] = slot == EquipSlot.Glasses;   // 眼鏡卡：hover 不旋轉,只放大 (user 指定)
                 // 炫 hair (model 40000-49999)：AvatarUvScroll 已由 LoadParts 掛上、每幀捲 V,但卡 RT 只在 hover 重畫 →
                 // 縮圖凍結。標記此卡,Update 每幀重畫 RT,小圖也會「不斷變色」(user 指定)。SdoAvatarBuilder.IsUvScrollHair 同判準。
@@ -1195,17 +1258,125 @@ namespace Sdo.UI.Screens
 
         private void DestroyCardPreviews()
         {
+            for (int i = 0; i < PerPage; i++) DestroyCardSlot(i);
+            _pendingCards.Clear();
+            _hoverCard = -1;
+        }
+
+        // 銷毀單一格的 3D 縮圖 (人形 + RT + 它自己造出來的 mesh/material/texture)。
+        private void DestroyCardSlot(int i)
+        {
+            // DestroyImmediate (非 Destroy)：Destroy 延遲到幀尾,捲頁時同幀就重建新卡於同一 CardSpot(i)、共用相機把
+            // 舊+新兩隻一起 Render 進 RT → 頂部格(i=0,1 同幀先建)殘留前一頁。立即銷毀確保只拍到新的。這些是本畫面自建的
+            // 獨立 runtime GameObject,立即銷毀安全。
+            if (_cardAv[i] != null) { DestroyPreviewAssets(_cardAv[i]); DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
+            if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
+            _cardImg[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f; _cardNoSpin[i] = false; _cardUvScroll[i] = false;
+            _cardKey[i] = NoCardKey;
+        }
+
+        // 銷毀 GameObject 只會殺掉 component,執行期造出來的 Mesh / Material / Texture2D 是「資產」,不跟著死 → 逐格重建
+        // 的商城縮圖每張都在漏一份 mesh(~30-100KB)+貼圖(0.25-1MB);捲過幾百件就是幾百 MB 與隨之而來的 GC/分頁停頓。
+        // 這些資產都是這張卡自己 decode 出來的私有副本 (SdoAvatarBuilder 每次 new,沒有共用貼圖快取),銷毀安全。
+        private static void DestroyPreviewAssets(GameObject root)
+        {
+            foreach (var an in root.GetComponentsInChildren<MapobjTexAnimator>(true))   // 換幀貼圖:整串幀都是這張卡的
+                if (an.Frames != null)
+                    foreach (var f in an.Frames) if (f != null) Destroy(f);
+            foreach (var mf in root.GetComponentsInChildren<MeshFilter>(true))
+                if (mf.sharedMesh != null) Destroy(mf.sharedMesh);
+            foreach (var mr in root.GetComponentsInChildren<MeshRenderer>(true))
+                foreach (var m in mr.sharedMaterials)
+                {
+                    if (m == null) continue;
+                    if (m.mainTexture != null) Destroy(m.mainTexture);
+                    Destroy(m);
+                }
+        }
+
+        /// <summary>商品鍵 = (Category, ModelId)。RefreshGrid 的收合就是用這組鍵一件一張卡,所以同一鍵 = 同一張縮圖。</summary>
+        private static long ItemKey(ShopItem it) => it == null ? NoCardKey : ((long)it.Category << 32) | (uint)it.ModelId;
+
+        /// <summary>Pure: 新版面每一格要用「哪一個舊格」既有的縮圖 (-1 = 沒有,得重建)。<paramref name="have"/> 是各舊格
+        /// 目前畫著的商品鍵 (<see cref="NoCardKey"/> = 該格是空的/已銷毀),<paramref name="want"/> 是新版面各格想要的鍵。
+        /// 一個舊格只會被認領一次 (同一鍵在一頁裡只出現一次——RefreshGrid 已依 (Category,ModelId) 收合),認領不到的舊格
+        /// 由呼叫端銷毀。捲一列時 want 相對 have 只位移一格,所以絕大多數格子都對得上 → 只有真正捲進來的那幾件要重讀。</summary>
+        public static int[] MapRetainedSlots(long[] have, long[] want)
+        {
+            var src = new int[want.Length];
+            var taken = new bool[have.Length];
+            for (int i = 0; i < want.Length; i++)
+            {
+                src[i] = -1;
+                if (want[i] == NoCardKey) continue;
+                for (int j = 0; j < have.Length; j++)
+                    if (!taken[j] && have[j] != NoCardKey && have[j] == want[i]) { src[i] = j; taken[j] = true; break; }
+            }
+            return src;
+        }
+
+        /// <summary>捲動續用:新版面每格想顯示的商品若已經在某一格畫好了,就把那份 3D 縮圖(人形+RT+取景參數)整組搬過去,
+        /// 只有真的新出現的商品才重建。捲一列原本 8 張全砍全建,現在只建 GridCols 張。版面切換 (小卡↔套装大卡) RT 尺寸
+        /// 不同 → 整批重來。回傳每格是否已備妥 (true = 這格不用排進 _pendingCards)。</summary>
+        private bool[] RetainCardPreviews(List<ShopItem> items, int start, bool layoutChanged)
+        {
+            var ready = new bool[PerPage];
+            if (layoutChanged) { DestroyCardPreviews(); return ready; }
+
+            var want = new long[PerPage];
             for (int i = 0; i < PerPage; i++)
             {
-                // DestroyImmediate (非 Destroy)：Destroy 延遲到幀尾,捲頁時同幀就重建新卡於同一 CardSpot(i)、共用相機把
-                // 舊+新兩隻一起 Render 進 RT → 頂部格(i=0,1 同幀先建)殘留前一頁。立即銷毀確保只拍到新的。這些是本畫面自建的
-                // 獨立 runtime GameObject,立即銷毀安全。
-                if (_cardAv[i] != null) { DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
-                if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
-                _cardImg[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f; _cardNoSpin[i] = false; _cardUvScroll[i] = false;
+                int idx = start + i;
+                want[i] = (i < _L.PerPage && idx >= 0 && idx < items.Count) ? ItemKey(items[idx]) : NoCardKey;
+            }
+            var have = new long[PerPage];
+            for (int j = 0; j < PerPage; j++) have[j] = _cardAv[j] != null ? _cardKey[j] : NoCardKey;
+            var src = MapRetainedSlots(have, want);
+            var keep = new bool[PerPage];
+            foreach (var j in src) if (j >= 0) keep[j] = true;
+            for (int j = 0; j < PerPage; j++) if (!keep[j]) DestroyCardSlot(j);
+
+            // 先全部搬到暫存再放回,避免 A→B、B→A 這種互換被覆寫。
+            var av = (GameObject[])_cardAv.Clone(); var rt = (RenderTexture[])_cardRT.Clone();
+            var noSpin = (bool[])_cardNoSpin.Clone(); var uv = (bool[])_cardUvScroll.Clone();
+            var fpos = (Vector3[])_cardFramePos.Clone(); var fscale = (Vector3[])_cardFrameScale.Clone();
+            var key = (long[])_cardKey.Clone(); var angle = (float[])_cardAngle.Clone();
+            for (int i = 0; i < PerPage; i++)
+            {
+                int j = src[i];
+                _cardImg[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f;   // RawImage 隨舊卡片被 UIKit.Clear 砍掉 → 重掛
+                if (j < 0)
+                {
+                    _cardAv[i] = null; _cardRT[i] = null; _cardKey[i] = NoCardKey;
+                    _cardNoSpin[i] = false; _cardUvScroll[i] = false;
+                    continue;
+                }
+                _cardAv[i] = av[j]; _cardRT[i] = rt[j]; _cardKey[i] = key[j];
+                _cardNoSpin[i] = noSpin[j]; _cardUvScroll[i] = uv[j];
+                _cardFramePos[i] = fpos[j]; _cardFrameScale[i] = fscale[j];
+                // 立刻搬到新格子的世界位置:同幀若有新卡在舊的 CardSpot 上建起來並 Render,留在原地的它會一起入鏡。
+                _cardAv[i].transform.position = CardSpot(i) + _cardFramePos[i];
+                // 捲動前正在 hover 自轉的那張:角度歸零了但 RT 還停在轉一半的畫面 → 重畫一次回正 (只此一張,不影響其餘)。
+                if (angle[j] != 0f) RenderCard(i);
+                ready[i] = true;
             }
             _pendingCards.Clear();
             _hoverCard = -1;
+            return ready;
+        }
+
+        // 把既有(續用)的 RT 掛回新建的卡片上 —— 與 BuildCardPreview 尾端建 RawImage 的那段同一份版面規則。
+        private void AttachCardImage(int i, RectTransform card)
+        {
+            if (_cardRT[i] == null) return;
+            var img = new GameObject("preview", typeof(RectTransform)).AddComponent<RawImage>();
+            img.transform.SetParent(card, false);
+            var irt = img.rectTransform;
+            irt.anchorMin = irt.anchorMax = new Vector2(0, 1); irt.pivot = new Vector2(0.5f, 0.5f);
+            irt.anchoredPosition = _L.AvCenter; irt.sizeDelta = _L.AvSize;
+            img.texture = _cardRT[i]; img.raycastTarget = false;
+            _cardImg[i] = img;
+            _cardScale[i] = 1f; _cardAngle[i] = 0f;
         }
 
         // 每幀推進 hover 卡的放大 (2D 縮圖 scale) + 旋轉 (3D 人形，重畫 RT)。離開 → 縮回 1×、角度歸零。
@@ -1248,11 +1419,16 @@ namespace Sdo.UI.Screens
             float sw = Input.mouseScrollDelta.y;
             if (sw != 0f) PageBy(sw < 0f ? 1 : -1);
 
-            // 漸進建卡內縮圖：每幀最多 2 個，避免切分頁時一次建 8 個人形卡頓。
-            for (int n = 0; n < 2 && _pendingCards.Count > 0; n++)
+            // 漸進建卡內縮圖：改用「時間預算」而非固定張數。一張已預讀好的卡約 3-6ms,冷讀的可能 40ms —— 固定 2 張/幀
+            // 在冷讀時就是 80ms 的掉幀。至少做一張保證有進度,做完一張若還在預算內就再做下一張。
+            if (_pendingCards.Count > 0)
             {
-                var pc = _pendingCards[0]; _pendingCards.RemoveAt(0);
-                if (pc.Card != null) BuildCardPreview(pc.I, pc.Card, pc.Item);
+                var buildClock = System.Diagnostics.Stopwatch.StartNew();
+                do
+                {
+                    var pc = _pendingCards[0]; _pendingCards.RemoveAt(0);
+                    if (pc.Card != null) BuildCardPreview(pc.I, pc.Card, pc.Item);
+                } while (_pendingCards.Count > 0 && buildClock.Elapsed.TotalMilliseconds < CardBuildBudgetMs);
             }
 
             for (int i = 0; i < PerPage; i++)
@@ -1496,6 +1672,8 @@ namespace Sdo.UI.Screens
             if (_cg != null) { _cg.alpha = on ? 1f : 0f; _cg.interactable = on; _cg.blocksRaycasts = on; }
             if (_cam != null) _cam.enabled = on;
             if (!on && _uiCam != null) { _uiCam.cullingMask = _savedUiMask; _uiCam = null; }   // 關商城 → 還原主 UI 相機遮罩
+            // 關商城 → 預讀停手、瀏覽用的檔案快取縮回 16MB (捲動時值得幾十 MB,遊戲中不值得)。
+            if (!on) AvatarAssetCache.Trim(16L << 20);
             // 關商城 → 若底下是男女選擇畫面(modal 不會重跑其 OnShow)，叫它用最新穿搭/性別刷新預覽 (hook 只在該畫面在底下時非 null；
             // 關回房間時為 null → 由 RefreshRoomAvatar 那條處理)。修「女角商城買衣穿上，回選性別畫面沒穿上、進 room 才有」。
             if (!on) Nav.RefreshGenderPreview?.Invoke();

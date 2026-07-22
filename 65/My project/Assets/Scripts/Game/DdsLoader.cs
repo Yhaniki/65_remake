@@ -139,6 +139,42 @@ namespace Sdo.Game
         public static float TranslucentFraction(byte[] d)
             => AlphaCounts(d, out int total, out _, out _, out _, out int mid) && total > 0 ? mid / (float)total : 0f;
 
+        /// <summary>Everything the avatar/garment material pipeline needs to know about a DDS's alpha, gathered in ONE
+        /// pass. <see cref="SdoAvatarBuilder.ResolveDds"/> used to call <see cref="HasAlpha"/>, <see cref="LooksLikeAdditiveGlow"/>,
+        /// <see cref="GetSceneAlphaMode"/>, <see cref="HardTransparentFraction"/> and <see cref="TranslucentFraction"/> —
+        /// FOUR full walks of the same alpha data (plus the glow pass) per texture. At 商城 scroll rates (a card = 1-3
+        /// textures, a page = 8 cards) that was several ms of pure repeat work per card.</summary>
+        public struct AlphaStats
+        {
+            public bool HasAlpha;            // == GetAlphaMode(d) != Opaque (any texel below the 250 threshold)
+            public bool AdditiveGlow;        // == LooksLikeAdditiveGlow(d) (only probed when HasAlpha)
+            public DdsAlphaMode Scene;       // == GetSceneAlphaMode(d)
+            public float HardTransp;         // == HardTransparentFraction(d)
+            public float Translucent;        // == TranslucentFraction(d)
+        }
+
+        /// <summary>One-pass equivalent of HasAlpha + GetSceneAlphaMode + HardTransparentFraction + TranslucentFraction
+        /// (+ LooksLikeAdditiveGlow when there IS alpha). Same results as calling them individually — the alpha walk is
+        /// simply shared. Alpha-less formats (DXT1 / unsupported) report the opaque defaults.</summary>
+        public static AlphaStats Analyze(byte[] d)
+        {
+            var s = new AlphaStats { Scene = DdsAlphaMode.Opaque };
+            if (!AlphaCounts(d, out int total, out int visible, out int soft, out int hardTransp, out int mid, out int belowThresh) || total == 0)
+                return s;
+            s.HasAlpha = belowThresh > 0;
+            s.HardTransp = hardTransp / (float)total;
+            s.Translucent = mid / (float)total;
+            if (visible > 0)
+            {
+                float softOfVisible = soft / (float)visible;
+                s.Scene = (s.HardTransp >= 0.03f && softOfVisible <= 0.75f) ? DdsAlphaMode.Cutout
+                        : softOfVisible >= 0.30f ? DdsAlphaMode.Blend
+                        : DdsAlphaMode.Opaque;
+            }
+            if (s.HasAlpha) s.AdditiveGlow = LooksLikeAdditiveGlow(d);
+            return s;
+        }
+
         // "genuinely translucent" alpha band: exclude near-transparent (holes / AA fringe) AND near-opaque (solid body /
         // AA fringe) so only real sheer-fabric midtones are counted — the signal that separates lace from a solid dress.
         private const int MidLo = 32, MidHi = 224;
@@ -147,22 +183,27 @@ namespace Sdo.Game
         // (genuinely translucent, MidLo<a<MidHi). Mirrors GetAlphaMode's DXT3 / DXT5 / 32-bit-uncompressed decode paths
         // (no early-out). Returns false for formats with no alpha (DXT1 / unsupported) — caller treats those as Opaque.
         private static bool AlphaCounts(byte[] d, out int total, out int visible, out int soft, out int hardTransp, out int mid)
+            => AlphaCounts(d, out total, out visible, out soft, out hardTransp, out mid, out _);
+
+        // <paramref name="belowThresh"/> = texels with a &lt; 250, i.e. exactly what makes GetAlphaMode report non-Opaque
+        // (HasAlpha). Counted here so Analyze can answer HasAlpha from the SAME walk instead of a second early-out scan.
+        private static bool AlphaCounts(byte[] d, out int total, out int visible, out int soft, out int hardTransp, out int mid, out int belowThresh)
         {
-            total = visible = soft = hardTransp = mid = 0;
+            total = visible = soft = hardTransp = mid = belowThresh = 0;
             if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
             string fourcc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
             int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
             if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return false;
             int bw = Math.Max(1, (width + 3) / 4), bh = Math.Max(1, (height + 3) / 4), bi = 128;
-            int t = 0, v = 0, s = 0, ht = 0, mt = 0;
+            int t = 0, v = 0, s = 0, ht = 0, mt = 0, bt = 0;
             if (fourcc == "DXT3")
             {
                 for (int b = 0; b < bw * bh && bi + 16 <= d.Length; b++, bi += 16)
                     for (int k = 0; k < 8; k++)
                     {
                         int ab = d[bi + k];
-                        int a0t = (ab & 0xF) * 255 / 15; t++; if (a0t <= 8) ht++; else { v++; if (a0t < 247) s++; } if (a0t > MidLo && a0t < MidHi) mt++;
-                        int a1t = ((ab >> 4) & 0xF) * 255 / 15; t++; if (a1t <= 8) ht++; else { v++; if (a1t < 247) s++; } if (a1t > MidLo && a1t < MidHi) mt++;
+                        int a0t = (ab & 0xF) * 255 / 15; t++; if (a0t <= 8) ht++; else { v++; if (a0t < 247) s++; } if (a0t > MidLo && a0t < MidHi) mt++; if (a0t < 250) bt++;
+                        int a1t = ((ab >> 4) & 0xF) * 255 / 15; t++; if (a1t <= 8) ht++; else { v++; if (a1t < 247) s++; } if (a1t > MidLo && a1t < MidHi) mt++; if (a1t < 250) bt++;
                     }
             }
             else if (fourcc == "DXT5")
@@ -174,7 +215,7 @@ namespace Sdo.Game
                     for (int i = 0; i < 16; i++)
                     {
                         int a = Dxt5Alpha(a0, a1, (int)((bits >> (i * 3)) & 7));
-                        t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++;
+                        t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++; if (a < 250) bt++;
                     }
                 }
             }
@@ -189,10 +230,10 @@ namespace Sdo.Game
                 {
                     uint px = (uint)(d[off + i * 4] | (d[off + i * 4 + 1] << 8) | (d[off + i * 4 + 2] << 16) | (d[off + i * 4 + 3] << 24));
                     int a = max == 0 ? 255 : (int)(((px & am) >> shift) * 255 / max);
-                    t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++;
+                    t++; if (a <= 8) ht++; else { v++; if (a < 247) s++; } if (a > MidLo && a < MidHi) mt++; if (a < 250) bt++;
                 }
             }
-            total = t; visible = v; soft = s; hardTransp = ht; mid = mt;
+            total = t; visible = v; soft = s; hardTransp = ht; mid = mt; belowThresh = bt;
             return t > 0;
         }
 
