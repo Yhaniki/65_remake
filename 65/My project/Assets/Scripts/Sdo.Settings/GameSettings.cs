@@ -67,8 +67,9 @@ namespace Sdo.Settings
     /// <summary>
     /// Gameplay key bindings for the 4-key DDR lanes (order 0=Left 1=Down 2=Up 3=Right — matches
     /// ScreenGameplay.DefaultLaneKeys). Each lane has a primary (主鍵位) and an auxiliary (輔助鍵位) key,
-    /// mirroring the original OPTIONDLG keyboard tab. Keys are stored as <see cref="KeyCode"/> enum NAMES
-    /// (JsonUtility-friendly + hand-editable in settings.json). ScreenGameplay consumes <see cref="ToLaneKeys"/>.
+    /// mirroring the original OPTIONDLG keyboard tab. Keys are stored as <see cref="KeyCode"/> enum NAMES.
+    /// 這是**執行期工作副本**；落地檔是 <see cref="KeyMap"/> 的 keymaps.ini（<c>[Lane4] primary/aux</c>，
+    /// 跟遊玩功能鍵同一份、可手改）。ScreenGameplay consumes <see cref="ToLaneKeys"/>.
     /// </summary>
     [Serializable]
     public class KeyBindSettings
@@ -78,6 +79,17 @@ namespace Sdo.Settings
 
         public static readonly KeyCode[] DefaultPrimary = { KeyCode.A, KeyCode.S, KeyCode.W, KeyCode.D };
         public static readonly KeyCode[] DefaultAux = { KeyCode.LeftArrow, KeyCode.DownArrow, KeyCode.UpArrow, KeyCode.RightArrow };
+
+        // 同一組預設的名稱版（KeyMap 的 keymaps.ini 用字串存）。宣告順序不能提前 —— 讀的是上面兩個陣列。
+        public static readonly string[] DefaultPrimaryNames = NamesOf(DefaultPrimary);
+        public static readonly string[] DefaultAuxNames = NamesOf(DefaultAux);
+
+        private static string[] NamesOf(KeyCode[] keys)
+        {
+            var res = new string[keys.Length];
+            for (int i = 0; i < keys.Length; i++) res[i] = keys[i].ToString();
+            return res;
+        }
 
         /// <summary>Per-lane key sets {primary, aux} for the gameplay input loop. Pure; falls back to defaults.</summary>
         public KeyCode[][] ToLaneKeys()
@@ -118,9 +130,10 @@ namespace Sdo.Settings
         private static string At(string[] a, int i) => (a != null && i < a.Length) ? a[i] : null;
     }
 
-    /// <summary>Serializable user settings persisted to persistentDataPath/settings.json（畫面/音量/按鍵/語言，
-    /// 屬「本機裝置」層級，不隨 user 走）。註：開房間面板的預設(速度/note/組隊/掉落/模式)不放這，改放 per-user 的
-    /// config.ini（DATA/PROFILE/&lt;id&gt;/），見 <see cref="RoomConfig"/> / <see cref="ProfileManager"/>。</summary>
+    /// <summary>畫面/音量/按鍵/語言的**執行期工作副本**（屬「本機裝置」層級，不隨 user 走）。已經沒有 settings.json
+    /// 了：值落地在 DATA/PROFILE/config.ini 的 <c>[Option]</c>（<see cref="RoomConfig"/>）與 keymaps.ini
+    /// （<see cref="KeyMap"/>，鍵位），由 <see cref="DisplaySettingsManager"/> 組進來/寫回去。開房間面板的預設
+    /// (速度/note/組隊/掉落/模式)在同一份 config.ini 的 <c>[Room]</c>。</summary>
     [Serializable]
     public class GameSettings
     {

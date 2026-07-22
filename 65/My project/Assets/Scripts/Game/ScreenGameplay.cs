@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 using Sdo.Osu;
 using Sdo.Ruleset;
+using Sdo.Settings;
 
 namespace Sdo.Game
 {
@@ -3995,10 +3996,11 @@ namespace Sdo.Game
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
-            // F8：Auto（自動）模式開關 — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
-            if (Input.GetKeyDown(KeyCode.F8)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按 F8 發出 SE_0001
-            // F7：打拍音（StepMania assist tick）— 每個音符響一聲 click，方便對拍。s_assistTick = 跨歌延續（不存檔）。
-            if (Input.GetKeyDown(KeyCode.F7))
+            // 以下功能鍵的鍵位都能在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] 改（預設＝括號裡那顆），見 Sdo.Settings.KeyMap。
+            // Auto（自動）模式開關(預設 F8) — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
+            if (KeyMap.Down(Hotkey.AutoPlay)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按下發出 SE_0001
+            // 打拍音(預設 F7；StepMania assist tick)— 每個音符響一聲 click，方便對拍。s_assistTick = 跨歌延續（不存檔）。
+            if (KeyMap.Down(Hotkey.AssistTick))
             {
                 assistTick = !assistTick; s_assistTick = assistTick;
                 if (assistTick) { _tick.Rewind(_nowMs); PlayTickOnce(); }   // 從當下的音符開始響（不補播過去的）
@@ -4015,9 +4017,9 @@ namespace Sdo.Game
             //     if (!showtimeMode && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))) _failed = true;
             //     _ended = true; EnterResult();
             // }
-            // F5：加速 note（下一速度檔）／F6：減速 note（上一速度檔）— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
-            if (Input.GetKeyDown(KeyCode.F5)) StepScrollSpeed(+1);
-            if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
+            // 加速 note(預設 F5，下一速度檔)／減速 note(預設 F6，上一速度檔)— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
+            if (KeyMap.Down(Hotkey.SpeedUp)) StepScrollSpeed(+1);
+            if (KeyMap.Down(Hotkey.SpeedDown)) StepScrollSpeed(-1);
             // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
             // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。
             // 正式遊玩已停用（會誤觸）；只留給譜面編輯器（它的 HUD 就寫著這幾個鍵）。
@@ -4048,8 +4050,8 @@ namespace Sdo.Game
             // }
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
-                // F2 (decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
-                if (Input.GetKeyDown(KeyCode.F2)) CycleCamMode();
+                // 換鏡頭(預設 F2；decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
+                if (KeyMap.Down(Hotkey.Camera)) CycleCamMode();
                 Vector3 eye, tgt, up = Vector3.up;   // up = the .cv per-frame up vector (Camera_Update's LookAtLH 4th arg); non-vertical => roll/tilt
                 if (_camMode < 0 && _dirCv != null && _dirCv.Length > 0)
                 {
@@ -4710,7 +4712,8 @@ namespace Sdo.Game
                     _energyMiniT0 = Time.time;                                 // official 500ms EnergyProgress band-up flash
                 }
                 _lastArmed = armed;
-                if (Input.GetKeyDown(KeyCode.Space) && _showtime.TryActivate(now, ComputeShowtimeWindowMs())) OnShowtimeStart();
+                // 釋放氣條（預設 Space；鍵位可在 keymaps.ini 的 [Hotkeys] showtime 改）
+                if (KeyMap.Down(Hotkey.Showtime) && _showtime.TryActivate(now, ComputeShowtimeWindowMs())) OnShowtimeStart();
             }
             else
             {

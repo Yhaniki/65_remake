@@ -9,8 +9,9 @@ namespace Sdo.Settings
 {
     /// <summary>
     /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），裡面只放
-    /// 衣服/道具（profile.json）。收藏夾(favorites.json)跟 settings.json 一樣是全帳號共用，放在 PROFILE 那層
-    /// （舊版 per-user 的 favorites.json 開機時一次性併入）。目前登入的本機 user 記在 DATA/PROFILE/active.txt。
+    /// 衣服/道具（profile.json）。收藏夾(favorites.json)是全帳號共用，放在 PROFILE 那層（舊版 per-user 的
+    /// favorites.json 開機時一次性併入）。目前登入的本機 user 記在 config.ini 的 <c>[Profile] activeId</c>
+    /// （舊版是獨立的 active.txt，由 <see cref="RoomConfig.Load"/> 一次性併入後刪除）。
     ///
     /// 單機 v1 首次開機自動種兩個角色 —— 00000000(女) 與 00000001(男) —— 並以 00000000 為 active。刻意先不做
     /// 登入/選角 UI；<see cref="SetActive"/> + 編號資料夾本身就是多帳號的底層，未來線上版換掉 backing store
@@ -54,8 +55,8 @@ namespace Sdo.Settings
 
         // ---------------- boot / activate ----------------
 
-        /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且在 <see cref="RoomConfig.Load"/> 之前
-        /// （Load 會把舊位置的 config.ini 搬進 DATA/PROFILE 的全域檔，需要先有 PROFILE 資料夾）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
+        /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且在 <see cref="RoomConfig.Load"/> **之後**
+        /// （activeId 現在存在 config.ini 的 [Profile] 區，要先讀進來）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
         public static void Boot()
         {
             try
@@ -265,7 +266,22 @@ namespace Sdo.Settings
             File.WriteAllText(Path.Combine(dir, ProfileFileName), JsonUtility.ToJson(p.Sanitize(), true), new UTF8Encoding(false));
         }
 
+        // 目前登入的角色記在 config.ini 的 [Profile] activeId（以前是獨立的 active.txt，開機時由 RoomConfig.Load 併入）。
         private static string ReadActiveId()
+        {
+            var id = RoomConfig.SanitizeActiveId(RoomConfig.activeId);
+            return id.Length == 0 ? null : id;
+        }
+
+        private static void WriteActiveId(string id)
+        {
+            if (RoomConfig.activeId == id) return;   // 沒變就別重寫整份 config.ini
+            RoomConfig.activeId = id;
+            RoomConfig.Save();
+        }
+
+        /// <summary>讀舊的 active.txt；沒有/內容不合法 → null。只給 <see cref="RoomConfig.Load"/> 做一次性搬遷用。</summary>
+        public static string ReadLegacyActiveId()
         {
             try
             {
@@ -277,10 +293,17 @@ namespace Sdo.Settings
             catch { return null; }
         }
 
-        private static void WriteActiveId(string id)
+        /// <summary>刪掉舊的 active.txt（內容已併進 config.ini 的 [Profile] activeId 才呼叫）。</summary>
+        public static void DeleteLegacyActiveFile()
         {
-            try { File.WriteAllText(Path.Combine(Root, ActiveFileName), id, new UTF8Encoding(false)); }
-            catch (Exception e) { Debug.LogWarning($"[Profile] write active failed: {e.Message}"); }
+            try
+            {
+                var path = Path.Combine(Root, ActiveFileName);
+                if (!File.Exists(path)) return;
+                File.Delete(path);
+                Debug.Log($"[Profile] merged into config.ini, removed {path}");
+            }
+            catch (Exception e) { Debug.LogWarning($"[Profile] legacy active delete failed: {e.Message}"); }
         }
 
         /// <summary>目前最小編號的現存 user id；沒有任何 → null。</summary>

@@ -582,10 +582,8 @@ namespace Sdo.UI.Screens
             s.gameplay ??= new GameplaySettings();
             StoreGame(s.gameplay);
 
+            // Save() 一次落地兩個檔：[Option] 進 DATA/PROFILE/config.ini、鍵盤頁的 4 鍵鍵位進同層的 keymaps.ini。
             DisplaySettingsManager.Save();
-            // OPTION 設定也落地 per-user config.ini（DATA/PROFILE/<id>/）：抓目前值 → 寫檔（使用者要求）。
-            Sdo.Settings.RoomConfig.CaptureOptionFrom(s);
-            Sdo.Settings.RoomConfig.Save();
             if (displayChanged) DisplaySettingsManager.ApplyDisplay();   // 沒改顯示就不重建視窗(避免保存像「跳出去」)
             Sdo.Game.AudioMix.Set(_bgm, _music, _sfx);   // 三類分別套用(背景音樂/遊戲音樂/遊戲音效),非舊的全域 AudioListener
             // 遊戲畫面 (全屏/黑邊) 立即套用：其餘遊戲頁偏好（特效/視角/透明度）在下一場遊戲開局讀取。
