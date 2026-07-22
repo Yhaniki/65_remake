@@ -70,7 +70,9 @@ namespace Sdo.Tests
             var src = new GameSettings();
             src.keys.lane4 = new[] { "J", "K", "I", "L" };
             RoomConfig.CaptureOptionFrom(src);
-            StringAssert.DoesNotContain("opt_keys", RoomConfig.Serialize());
+            // 比 "opt_keys=" 而非 "opt_keys"：檔頭那行「鍵位已搬到 keymaps.ini」的註解本來就會提到這個名字。
+            StringAssert.DoesNotContain("opt_keys=", RoomConfig.Serialize());
+            StringAssert.DoesNotContain("opt_keysAux=", RoomConfig.Serialize());
         }
 
         [Test]

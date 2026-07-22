@@ -83,7 +83,8 @@ namespace Sdo.Tests
             CollectionAssert.AreEqual(new[] { "J", "K", "I", "L" }, KeyMap.lane4);
             CollectionAssert.AreEqual(new[] { "Keypad4", "Keypad2", "Keypad8", "Keypad6" }, KeyMap.lane4aux);
             RoomConfig.Save();
-            StringAssert.DoesNotContain("opt_keys", File.ReadAllText(ConfigPath), "新的 config.ini 不該再寫鍵位");
+            // 比 "opt_keys=" 而非 "opt_keys"：檔頭那行「鍵位已搬到 keymaps.ini」的註解本來就會提到這個名字。
+            StringAssert.DoesNotContain("opt_keys=", File.ReadAllText(ConfigPath), "新的 config.ini 不該再寫鍵位");
             Assert.AreEqual(1, RoomConfig.defaultTeam, "[Room] 的值不受影響");
         }
 

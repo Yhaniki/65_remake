@@ -35,18 +35,9 @@ namespace Sdo.Settings
     {
         public const string FileName = "keymaps.ini";
 
-        // ---- 當下生效的值 ----
-        /// <summary>4 鍵主鍵位（順序：左,下,上,右）。KeyCode 名稱；""＝該格刻意不綁。</summary>
-        public static string[] lane4 = (string[])KeyBindSettings.DefaultPrimaryNames.Clone();
-        /// <summary>4 鍵輔助鍵位（順序同上）。</summary>
-        public static string[] lane4aux = (string[])KeyBindSettings.DefaultAuxNames.Clone();
-        /// <summary>功能鍵名稱，索引＝(int)<see cref="Hotkey"/>。""／無效名＝不綁（<see cref="KeyCode.None"/>）。</summary>
-        public static string[] hotkeys = (string[])HotkeyDefaultNames.Clone();
-
-        // 每幀要問的東西不能每次 Enum.TryParse → Sanitize() 時解析一次快取起來。
-        private static KeyCode[] _resolved = ResolveAll(HotkeyDefaultNames);
-
-        // ---- 表：id（ini 的 key 名）/ 預設鍵 / 註解。三張表與 Hotkey enum 等長且同序。----
+        // ---- 表：id（ini 的 key 名）/ 預設鍵 / 註解。三張表與 Hotkey enum 等長且同序。
+        //      **必須宣告在下面那組可變欄位之前** —— C# 靜態欄位初始化依宣告順序跑，反過來的話
+        //      hotkeys/_resolved 會讀到還沒初始化的 null 表，整個型別在第一次被碰到就 TypeInitializationException。----
         /// <summary>[Hotkeys] 區的 key 名，索引＝(int)<see cref="Hotkey"/>。</summary>
         public static readonly string[] HotkeyIds =
         {
@@ -71,6 +62,17 @@ namespace Sdo.Settings
         };
 
         private static readonly string[] HotkeyDefaultNames = NamesOf(HotkeyDefaults);
+
+        // ---- 當下生效的值（初始化會讀上面那三張表，故一定要排在它們後面）----
+        /// <summary>4 鍵主鍵位（順序：左,下,上,右）。KeyCode 名稱；""＝該格刻意不綁。</summary>
+        public static string[] lane4 = (string[])KeyBindSettings.DefaultPrimaryNames.Clone();
+        /// <summary>4 鍵輔助鍵位（順序同上）。</summary>
+        public static string[] lane4aux = (string[])KeyBindSettings.DefaultAuxNames.Clone();
+        /// <summary>功能鍵名稱，索引＝(int)<see cref="Hotkey"/>。""／無效名＝不綁（<see cref="KeyCode.None"/>）。</summary>
+        public static string[] hotkeys = (string[])HotkeyDefaultNames.Clone();
+
+        // 每幀要問的東西不能每次 Enum.TryParse → Sanitize() 時解析一次快取起來。
+        private static KeyCode[] _resolved = ResolveAll(HotkeyDefaultNames);
 
         public static int Count => HotkeyIds.Length;
 
