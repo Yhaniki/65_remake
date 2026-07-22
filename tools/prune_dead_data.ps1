@@ -69,7 +69,7 @@ if (-not $UsedRoot) { $UsedRoot = $Data } else { $UsedRoot = $UsedRoot.TrimEnd('
 $defaultKeep = @(
     'profile\*', 'replay\*',              # per-user writable + replay output
     '*.ini', 'active.txt',                # config
-    '*.json',                             # runtime catalogs / overrides (song_name_overrides, etc.)
+    '*.json',                             # writable runtime state (favorites.json, etc.)
     'shop_names.tsv', 'clean_manifest.txt',
     'iteminfo.dat', 'setinfo.dat',        # shop data (read once at catalog load; keep regardless)
     'dress.txt', 'proifo*',               # default-outfit + profile index tables

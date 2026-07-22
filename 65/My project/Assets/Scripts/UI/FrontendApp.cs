@@ -229,7 +229,7 @@ namespace Sdo.UI
             game.gnPath = gnPath;
             game.oggPath = oggPath;
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
-            game.songOffsetMs = SongCatalog.OffsetMs(s.SongGn);  // 這首譜自己的 offset（手改在 song_name_overrides.json 的 offsetMs）
+            game.songOffsetMs = SongCatalog.OffsetMs(s.SongGn);  // 這首譜自己的 offset（手改在 song_table.csv 的 offsetMs）
             game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
             game.localPlayerMale = s.Gender == 1;
             game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;

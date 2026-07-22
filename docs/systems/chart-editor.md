@@ -95,15 +95,16 @@
 | | 動什麼 | 存在哪 | 幹嘛用的 |
 |---|---|---|---|
 | **全域** `globalOffsetMs` | **譜面時鐘**（音符與判定一起位移，音樂不動） | `config.ini`（打拍測試面板可存） | 個人偏好／跨機微調（機器延遲已自動補掉，見下） |
-| **單首** `offsetMs` | **音樂**（音符/判定線一格都不動，只有音樂前後挪；波形跟著音樂走） | `StreamingAssets/song_name_overrides.json`，**手改** | 補「這首譜跟音檔沒對齊」 |
+| **單首** `offsetMs` | **音樂**（音符/判定線一格都不動，只有音樂前後挪；波形跟著音樂走） | `StreamingAssets/song_table.csv` 的 `offsetMs` 欄，**手改** | 補「這首譜跟音檔沒對齊」 |
 
 單首 offset 用 **F11/F12** 邊聽邊調（一次 20ms，Alt 微調 1ms），但**不會自動寫檔** —— 調到滿意後，面板會印出一行
-可以直接貼進 `song_name_overrides.json` 的 JSON，自己寫進去。key 是 gn 詞幹（`sdom0001`），k/t 兩份譜共用同一筆
-（同一個音檔，本來就該共用）。
+可以直接填進 `song_table.csv` 的那一格，自己寫進去。key 是 gn 詞幹（`sdom0001`），k/t 兩份譜是兩列但共用同一個值
+（同一個音檔，本來就該共用；`song_table.py` 寫檔時會自動把兩列同步成 k 那列）。
 
-> 為什麼放在 `song_name_overrides.json`：它是**唯一**一份手改的歌曲資料。`song_catalog.json` 是工具從 .gn 重建的
-> （bpm／難度／音符數以實際譜面為準，重掃會蓋掉），所以任何「人決定的東西」都只能住在 overrides。
-> `build_song_name_overrides.py` 全量重寫時會**一律保留** `offsetMs`（連 `--reseed` 也不動它）。
+> 為什麼是 `song_table.csv` 的 `offsetMs` 欄：全部歌曲資料只有這一份表，欄位分兩類 ——
+> `title/artist/bpm/offsetMs` 是**人手改**的，`lv*／notes*／dur*／chartBpm` 等是工具從 .gn 重掃出來的
+> （以實際譜面為準，重掃會蓋掉）。重掃工具（`refresh_gn_header_stats.py`）**只碰後者**，
+> `offsetMs` 不會被洗掉。
 
 ### 音訊延遲：兩段自動補償 ＋ 一個要校的殘差
 
@@ -206,7 +207,7 @@ osu!lazer 的處境與解法完全相同（`FramedBeatmapClock.WINDOWS_BASE_AUDI
   全都是「最小變動」：只重建被改到的 (measurement, lane) frame，其餘位元不動）。
 * 存檔已定案：**以原加密覆蓋原檔，覆蓋前自動備份 `<name>.gn.bak`**。加密本身很單純（LCG `state *= 0x3D09`，
   加密就是把減改成加），對照 `bms_sdo/gn_crypto.py`：
-  * `sdom`（3170 首）：檔首明文資源表 + 內嵌 StepFile，body 用 LCG 加密（seed 在 `gn_keytable.json` 裡）；
+  * `sdom`（3170 首）：檔首明文資源表 + 內嵌 StepFile，body 用 LCG 加密（seed 在 `song_table.csv` 的 `seed` 欄）；
     原版 exe 會看大小/CRC，所以要照 `repack_sdom_gn_template` 的做法保大小並修 CRC32（末 4 bytes meet-in-the-middle）。
     重製版自己的 `GnChart.Decrypt` **不驗 CRC 也不驗大小**，所以就算只給重製版用，寫回也不難。
   * `rewu`（1172 首）：整檔 LCG。`ddrm`（4 首）：DDRM 容器（seed 在檔頭）。`plain`：直接寫。

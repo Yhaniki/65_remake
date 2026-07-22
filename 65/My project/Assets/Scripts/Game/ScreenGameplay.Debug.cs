@@ -167,10 +167,10 @@ namespace Sdo.Game
                     ? $" 音樂對齊 type-10 ON：音樂跳過 count-in（marker {(_map != null ? _map.MusicStartOffsetMs : 0):F0}ms）、舞蹈等到第一個音符才起跳（{(_map != null ? _map.FirstNoteMs : 0):F0}ms）— 下次開始生效"
                     : " 音樂對齊 type-10 OFF：音樂＋舞蹈從 beat 0 播（下次開始生效）");
                 useMusicStartOffset = mo;
-                // 這首歌在 song_name_overrides.json 手動填的音訊校正(正 = 音樂晚進來)。只顯示,調整在那份 JSON / 歌曲管理員。
+                // 這首歌在 song_table.csv 手動填的音訊校正(正 = 音樂晚進來)。只顯示,調整在那份 JSON / 歌曲管理員。
                 float songOffMs = SongCatalog.OffsetMs(gnPath);
                 if (Mathf.Abs(songOffMs) > 0.01f)
-                    GUILayout.Label($" 歌曲 offset：{songOffMs:+0;-0}ms（song_name_overrides.json）— 下次開始生效");
+                    GUILayout.Label($" 歌曲 offset：{songOffMs:+0;-0}ms（song_table.csv）— 下次開始生效");
                 GUILayout.Space(6);
                 // 體型 (fat/thin): preset buttons (faithful SDO body indices) + a fine B slider — re-shape the dancer LIVE.
                 // 按 preset 會把體型 index 寫進「這個角色」的 profile.json (bodyShapeIndex) 並存檔 → 回房間/下次進遊戲都記得。

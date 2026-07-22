@@ -1,23 +1,16 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text;
-using UnityEngine;
 
 namespace Sdo.Game
 {
     /// <summary>
-    /// Runtime lookup for per-song .gn header data, decoded GB2312 -> UTF-8 at IMPORT time
-    /// (tools/build_gn_header_catalog.py -> StreamingAssets/gn_header_catalog.json).
+    /// 每個 .gn 表頭的「原文歌名」視圖：資料來自 <see cref="SongTable"/>
+    /// （StreamingAssets/song_table.csv 的 titleZhCn / titleEn / title 等欄）。
     ///
-    /// Why a catalog (same reasoning as <see cref="SongCatalog"/>): the .gn header text is GB2312
-    /// (cp936); this runtime (.NET Standard 2.1 / IL2CPP) has no cp936 codec, so on-device decoding
-    /// would only ever produce mojibake that also shifts with the OS locale. The catalog is pure UTF-8
-    /// so the runtime only ever touches Unicode — no locale-dependent garbling on any platform.
+    /// 歌名依語言分成 <see cref="Name"/> { zhCN, zhTW, en }，UI 要換語言不必重新解碼：
+    /// zhCN 是 .gn 表頭的原字（簡中）、zhTW 是 opencc s2twp 轉出來再經人工校正的顯示名
+    /// （＝ CSV 的 title 欄，選歌畫面看到的就是它）、en 只在原名本來就是拉丁字母時才有值。
     ///
-    /// Song name / artist are stored per language as <see cref="Name"/> { zhCN, zhTW, en } so the UI
-    /// can switch language without re-decoding. zhCN is the source text, zhTW is opencc s2twp
-    /// (simplified->traditional), en is filled only when the source name is already Latin.
+    /// 表頭文字原本是 GB2312(cp936)，解碼一律在 import 時做掉 —— 理由見 <see cref="SongTable"/>。
     /// </summary>
     public static class GnHeaderCatalog
     {
@@ -39,51 +32,37 @@ namespace Sdo.Game
             }
         }
 
-        [Serializable] public class Entry
+        public class Entry
         {
-            public string gn; public int fileId; public string fileType; public string mode; public float bpm;
+            public string gn; public int fileId; public string mode; public float bpm;
             public int[] levels; public int[] noteCounts; public int[] measurements; public int[] durations;
             public Name title; public Name artist; public string producer; public string origName;
         }
-        [Serializable] private class Catalog { public Entry[] songs = new Entry[0]; }  // filled by JsonUtility
-
-        private const string FileName = "gn_header_catalog.json";
-        private static Dictionary<string, Entry> _byGn;   // key = lowercase .gn filename
 
         /// <summary>Look up by a .gn path or filename (case-insensitive). Null if absent.</summary>
         public static Entry Get(string gnPathOrName)
         {
-            if (string.IsNullOrEmpty(gnPathOrName)) return null;
-            EnsureLoaded();
-            return _byGn.TryGetValue(Path.GetFileName(gnPathOrName).ToLowerInvariant(), out var e) ? e : null;
+            var r = SongTable.Get(gnPathOrName);
+            return r == null ? null : FromRow(r);
         }
 
         public static string Title(string gnPathOrName, Lang lang = Lang.ZhTW) => Get(gnPathOrName)?.title?.For(lang);
         public static string Artist(string gnPathOrName, Lang lang = Lang.ZhTW) => Get(gnPathOrName)?.artist?.For(lang);
 
-        private static void EnsureLoaded()
+        /// <summary><see cref="SongTable.Row"/> → 表頭 entry（純轉換，有測試）。</summary>
+        public static Entry FromRow(SongTable.Row r)
         {
-            if (_byGn != null) return;
-            _byGn = new Dictionary<string, Entry>(StringComparer.Ordinal);
-
-            var path = Path.Combine(Application.streamingAssetsPath, FileName);
-            // Editor / standalone read directly; on Android read via UnityWebRequest (see ScreenGameplay ogg).
-            if (!File.Exists(path))
+            if (r == null) return null;
+            return new Entry
             {
-                Debug.LogWarning($"[GnHeaderCatalog] {path} missing — run tools/build_gn_header_catalog.py");
-                return;
-            }
-            try
-            {
-                var cat = JsonUtility.FromJson<Catalog>(File.ReadAllText(path, Encoding.UTF8));
-                if (cat?.songs == null) return;
-                foreach (var e in cat.songs)
-                    if (!string.IsNullOrEmpty(e?.gn)) _byGn[e.gn.ToLowerInvariant()] = e;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[GnHeaderCatalog] failed to load {path}: {ex.Message}");
-            }
+                gn = r.gn, fileId = r.fileId, mode = r.mode,
+                bpm = r.chartBpm > 0f ? r.chartBpm : r.bpm,
+                levels = r.levels, noteCounts = r.noteCounts,
+                measurements = r.measurements, durations = r.durations,
+                title = new Name { zhCN = r.titleZhCn, zhTW = r.title, en = r.titleEn },
+                artist = new Name { zhCN = r.artistZhCn, zhTW = r.artist, en = r.artistEn },
+                producer = r.producer, origName = r.origName,
+            };
         }
     }
 }

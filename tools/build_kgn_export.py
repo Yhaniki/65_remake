@@ -3,13 +3,13 @@
 build_kgn_export.py — 掃描三個 music 資料夾的 k.gn，整理出兩張 CSV：
 
   1) k_gn_keys.csv     — 每個 k.gn 的解密金鑰(seed/enc…)
-  2) k_gn_songlist.csv — 每首歌的歌名/歌手（song_name_overrides.csv 同格式）
+  2) k_gn_songlist.csv — 每首歌的歌名/歌手（欄位名對齊 song_table.csv 的顯示欄）
 
 規則（照使用者指定）:
   - 依「資料夾優先順序」逐一解：閉撰敃氪 → SDO-X Alchemist → Super Dance Online。
   - 去重 key = gn 詞幹(sdomNNNN，去 K.gn)。**先出現的優先**：
       * 同詞幹在較前資料夾已收 → 後面的跳過。
-      * 詞幹已存在於原本的 song_name_overrides（csv/json，660 首）→ 直接跳過（不重複收）。
+      * 詞幹已收在 song_table.csv（全部歌曲資料的唯一來源）→ 直接跳過（不重複收）。
   - 只處理 *K.gn（同首 K/T 共用一筆，K 譜即代表）。
 
 歌名編碼:
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import struct
 import sys
 from pathlib import Path
@@ -35,11 +34,8 @@ REPO = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import gn_keytable as G                                   # process_file / lcg_transform / decrypt_ddrm
+import song_table                                         # 曲庫現況（song_table.csv）
 from build_song_name_overrides import to_traditional, decode_gb, stem  # 沿用專案既有轉繁/解碼/詞幹
-
-SA = REPO / "65" / "My project" / "Assets" / "StreamingAssets"
-OVERRIDES_CSV = SA / "song_name_overrides.csv"
-OVERRIDES_JSON = SA / "song_name_overrides.json"
 
 # 資料夾優先順序（越前面越優先；同詞幹先出現者勝）
 FOLDERS = [
@@ -49,28 +45,13 @@ FOLDERS = [
 ]
 
 KEYS_COLS = ["gn", "file", "source", "enc", "seed", "innerOff", "seed1", "seed2", "fileId", "bpm"]
-SONG_COLS = ["gn", "title", "artist", "src", "bpm", "fileId"]   # 對齊 song_name_overrides.csv
+SONG_COLS = ["gn", "title", "artist", "src", "bpm", "fileId"]   # 欄位名同 song_table.csv（gn 這裡是詞幹）
 
 
-def load_override_stems() -> Set[str]:
-    """原本 song_name_overrides 的 gn 詞幹集合（csv ∪ json）；這些一律跳過。"""
-    seen: Set[str] = set()
-    if OVERRIDES_CSV.is_file():
-        raw = OVERRIDES_CSV.read_bytes()
-        txt = raw.decode("utf-8-sig") if raw[:3] == b"\xef\xbb\xbf" else raw.decode("utf-8", "replace")
-        import io
-        for r in csv.DictReader(io.StringIO(txt)):
-            g = (r.get("gn") or "").strip()
-            if g:
-                seen.add(stem(g))
-    if OVERRIDES_JSON.is_file():
-        try:
-            for r in json.loads(OVERRIDES_JSON.read_text(encoding="utf-8")).get("songs", []):
-                if r.get("gn"):
-                    seen.add(stem(r["gn"]))
-        except Exception as e:
-            print(f"[warn] 讀 song_name_overrides.json 失敗：{e}", file=sys.stderr)
-    return seen
+def load_known_stems() -> Set[str]:
+    """song_table.csv 已收的 gn 詞幹集合；這些一律跳過（本工具只負責撿「還沒入庫」的歌）。
+    一列 = 一個 .gn 檔，k/t 兩列會收斂成同一個詞幹，所以直接全掃就好。"""
+    return {stem(r["gn"]) for r in song_table.load() if r.get("gn")}
 
 
 def header_bytes(raw: bytes, entry: Dict) -> bytes | None:
@@ -108,14 +89,14 @@ def main() -> int:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    override_stems: Set[str] = load_override_stems()
-    seen: Set[str] = set(override_stems)
-    print(f"原本 song_name_overrides 已收 {len(override_stems)} 首詞幹 → 這些一律跳過")
+    known_stems: Set[str] = load_known_stems()
+    seen: Set[str] = set(known_stems)
+    print(f"song_table.csv 已收 {len(known_stems)} 首詞幹 → 這些一律跳過")
 
     seed_cache: Dict[bytes, int] = {}
     key_rows: List[Dict] = []
     song_rows: List[Dict] = []
-    stats = {"total_k": 0, "added": 0, "skip_override": 0, "skip_dupfolder": 0,
+    stats = {"total_k": 0, "added": 0, "skip_known": 0, "skip_dupfolder": 0,
              "no_header": 0, "by_enc": {}}
 
     for label, folder in FOLDERS:
@@ -126,8 +107,8 @@ def main() -> int:
             stats["total_k"] += 1
             s = stem(p.name)                       # sdomNNNN
             if s in seen:
-                # 分辨是被原始 overrides 擋掉、還是被前面資料夾擋掉
-                stats["skip_override" if s in override_stems else "skip_dupfolder"] += 1
+                # 分辨是被曲庫（song_table.csv）擋掉、還是被前面資料夾擋掉
+                stats["skip_known" if s in known_stems else "skip_dupfolder"] += 1
                 continue
             try:
                 raw = p.read_bytes()
@@ -184,7 +165,7 @@ def main() -> int:
 
     print("\n---- 完成 ----")
     print(f"  掃描 k.gn 共 {stats['total_k']}；新增 {stats['added']}；"
-          f"跳過(已在 overrides 或前資料夾) {stats['total_k'] - stats['added']}")
+          f"跳過(已在 song_table 或前資料夾) {stats['total_k'] - stats['added']}")
     print(f"  enc 分佈：{stats['by_enc']}；無表頭(未寫入 songlist) {stats['no_header']}")
     print(f"  金鑰表 → {keys_path}  ({len(key_rows)} 列)")
     print(f"  歌  單 → {song_path}  ({len(song_rows)} 列)")

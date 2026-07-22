@@ -18,7 +18,7 @@ namespace Sdo.Osu
     ///           body is LCG-encrypted. The seed is NOT in the file; it must be supplied. This runtime
     ///           keeps NO UnityEngine dependency (Sdo.Osu has noEngineReferences), so the seed list is
     ///           passed in by the caller from the precomputed key table (tools/gn_keytable.py ->
-    ///           StreamingAssets/gn_keytable.json, loaded by Sdo.Game.GnKeyTable). Because the LCG
+    ///           StreamingAssets/song_table.csv, loaded by Sdo.Game.GnKeyTable). Because the LCG
     ///           keystream depends only on the low 24 bits of state, the whole corpus uses only ~150
     ///           distinct seeds; trying them all and validating the doubled header is microseconds.
     ///   rewu  : 熱舞 Online online charts — the WHOLE file is LCG-encrypted (0x3D09) with no plaintext
@@ -174,8 +174,8 @@ namespace Sdo.Osu
             map.Level = I16(body, 20 + difficulty * 2);   // levels[3] @ offset 20 (easy/normal/hard)
             // NOTE: the .gn header carries a song title @108 but it is GB2312 (cp936). This runtime
             // (.NET Standard 2.1 / IL2CPP) has no cp936 codec, so decoding here would only ever produce
-            // mojibake. Titles are decoded GB2312->UTF-8 at import time (tools/build_song_catalog.py ->
-            // StreamingAssets/song_catalog.json) and looked up by .gn filename via SongCatalog. Title
+            // mojibake. Titles are decoded GB2312->UTF-8 at import time (tools/build_song_table.py ->
+            // StreamingAssets/song_table.csv) and looked up by .gn filename via SongCatalog. Title
             // is intentionally left empty on the .gn path; the caller fills it from the catalog.
             uint[] addr = { U32(body, 284), U32(body, 288), U32(body, 292), U32(body, 296) };
             int start = (int)addr[difficulty], end = (int)addr[difficulty + 1];

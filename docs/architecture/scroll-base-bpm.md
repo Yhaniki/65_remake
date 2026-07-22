@@ -232,8 +232,8 @@ hard 難度、`sdom5028K.gn`、表頭 BPM 169.0、最後一顆 note 90.4 s：
 
 1. **每首手動覆寫（`baseBpm`）**——目前**沒有**。StepMania 用 `#DISPLAYBPM` 解決自動規則的例外；
    我們如果之後遇到「規則怎麼調都不對」的單一譜面，最省事的做法是在
-   `StreamingAssets/song_name_overrides.json` 每首歌的物件裡加一個 `baseBpm` 欄位
-   （寫入器 `SongOverridesWriter` 已經是外科手術式編輯，加欄位不難），由譜面編輯器存檔。
+   `StreamingAssets/song_table.csv` 加一個 `baseBpm` 欄（填在那首歌的列上）
+   （寫入器 `SongTableWriter` 已經是外科手術式編輯——只換那一格，加欄位不難），由譜面編輯器存檔。
 2. **玩家端開關**——現在只有「歌曲變速」（`constantScroll`，等同 osu Constant Speed / Quaver 的
    BPM-不影響-SV）。若之後想給玩家 StepMania 那種 `Cmod / Mmod / xMod` 三選一，這份規則就是 Mmod 的底。
 3. **難度別的 base**——base 是**逐難度**算的（timing point 來自該難度的 block），easy/normal/hard

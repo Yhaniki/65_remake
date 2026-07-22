@@ -23,3 +23,4 @@
 | [localization.md](../systems/localization.md) | 文字 i18n（非原版 bitmap 語系） |
 | [game-settings.md](../systems/game-settings.md) | OPTION 三頁、視窗、keymap、offset、流速 |
 | [debug-overlay.md](../systems/debug-overlay.md) | FPS／網路除錯疊層（可開關） |
+| [song-table.md](../systems/song-table.md) | `song_table.csv`：全部歌曲資料的唯一來源（歌單／難度／歌名／seed） |

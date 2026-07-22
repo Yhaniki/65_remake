@@ -1,20 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-build_song_name_overrides.py — 產生「一份涵蓋全部歌曲、可手動編輯的歌名清單」。
+build_song_name_overrides.py — 把「權威歌名」填進 song_table.csv 的 title / artist 欄。
 
 為什麼:
   遊戲歌名原本直接取自各 .gn 內嵌 StepFile 表頭(k.gn)，但有些 .gn 表頭的歌名/歌手是錯的
   (檔位被回收、metadata 沒更新)。改成讓遊戲讀這份清單顯示歌名，方便你隨時就地改名。
 
-  清單涵蓋 song_catalog.json 裡的每一首歌(以 gn 詞幹 sdomNNNN 為 key，同首 K/T 譜共用一筆)，
+  涵蓋 song_table.csv 裡的每一首歌(以 gn 詞幹 sdomNNNN 為單位，同首 K/T 兩列共用同一組歌名)，
   每首 title/artist 預先填好:
     - 開放曲(在官方 songlist.dat 且列於 open_list.txt)      -> 用 songlist.dat 的權威歌名
     - 其餘(未開放 / songlist 未收錄 / 教學曲…)               -> 用該曲 k.gn 的名字當預設
   未開放曲「不採用」songlist.dat 的名字(那些檔位被回收、資訊不對)，改用 k.gn 的名字打底。
-  之後任何一首名字要改，直接編輯這份 json 的那一行即可。
+  之後任何一首名字要改，直接編輯 song_table.csv 那一列的 title / artist 即可。
 
-  runtime SongCatalog 會把這裡的 title/artist 覆蓋到 k.gn 名字上(見 SongCatalog.ApplyOverrides)。
-  只覆蓋顯示名(title/artist/bpm)；難度/音符數仍走實際譜面。fileId/src 只是給人辨識用的參考欄。
+  只動顯示名(title/artist/bpm/src)；難度/音符數/解密欄位全部不碰(那些是譜面本身的資料)。
 
 offsetMs(每首歌的音訊校正，唯一會真的進遊戲的欄位):
   某些歌的 .ogg 前面多/少了一小段(轉檔留的空白、來源本身就沒對準)，音樂就跟譜面差個幾十毫秒。
@@ -26,6 +25,16 @@ offsetMs(每首歌的音訊校正，唯一會真的進遊戲的欄位):
   預設為「merge-preserve」— 重跑時**保留你已手改的每一筆**，只補上新出現的歌。所以之後新增
   歌曲後可安心重跑。要「整份由來源重新填、丟棄手改」才需要 --reseed。
   offsetMs 是例外:它沒有任何來源可重建(只有人耳調得出來)，所以連 --reseed 都會保留。
+  bpm 同理只在空的時候填(它是可手改的顯示值)。
+
+SONGNAME.TXT 為什麼預設關掉:
+  那是**原版遊戲自己的**顯示歌名表(`H:\\sdo\\熱舞 Online(金富貴寶寶)\\DATA\\SONGNAME.TXT`，Big5、
+  575 首、格式 `id,flag,歌名,歌手`)，不在本 repo 裡，遊戲執行期也從不讀它 —— 它的用途只有一次性
+  「把官方歌名灌進表」。灌完之後名字就活在 song_table.csv 裡了。
+  但它是**無條件覆蓋**的(merge-preserve 保護不到，那是它身為權威表的定義)，所以只要它還開著，
+  每次重跑都會把你手改過的那 575 首打回官方版本 —— 這就是以前「周杰倫→周傑倫、七里香→七裏香」
+  的成因。既然它的活已經幹完了，預設就別再讀。真的要重新灌一次官方名才加 --songname。
+  它有錯字、而 .gn 表頭才對的那幾首，釘在 KNOWN_CORRECTIONS(最高優先，連 --songname 也蓋不掉)。
 
 編碼/繁體:
   songlist.dat 內嵌文字是 GB2312/GBK(簡中)；本工具 dev 端用 gb18030 解一次寫成 UTF-8(無 BOM)。
@@ -34,8 +43,9 @@ offsetMs(每首歌的音訊校正，唯一會真的進遊戲的欄位):
   缺套件時原樣輸出(簡中)並提示。
 
 用法:
-  python tools/build_song_name_overrides.py            # 產生 or merge-preserve(保留手改, 補新歌)
-  python tools/build_song_name_overrides.py --reseed   # 整份由 songlist.dat + k.gn 重填(丟棄手改!)
+  python tools/build_song_name_overrides.py            # merge-preserve(保留手改, 只補新歌的名字)
+  python tools/build_song_name_overrides.py --songname # 另外用原版 SONGNAME.TXT 覆蓋那 575 首
+  python tools/build_song_name_overrides.py --reseed   # 歌名整批由 songlist.dat + k.gn 重填(丟棄手改!)
 """
 from __future__ import annotations
 
@@ -48,12 +58,14 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import song_table as st  # noqa: E402
+
 REPO = HERE.parent
 SA = REPO / "65" / "My project" / "Assets" / "StreamingAssets"
-DEFAULT_CATALOG = SA / "song_catalog.json"
+DEFAULT_TABLE = st.DEFAULT_CSV
 DEFAULT_SONGLIST = Path(r"H:\sdo_tw\15熱舞 Online(金富貴寶寶)\Music\songlist.dat")
 DEFAULT_OPENLIST = Path(r"H:\sdo_tw\15熱舞 Online(金富貴寶寶)\Music\open_list.txt")
-DEFAULT_OUT = SA / "song_name_overrides.json"
 
 # songlist.dat 版面(逆向確認): u16 count @0, 之後每筆 756 bytes。內嵌 300-byte StepFile 表頭 @ +456。
 #   gn 檔名 @+0(32B)；表頭欄位(對齊 build_gn_header_catalog.py): fileId@0, bpm f32@16,
@@ -66,8 +78,14 @@ HDR_OFF = 456
 # 且是原生繁體不需 opencc。之前佔位/亂碼(975/9you/血淚remix…)的真名都在這裡。
 DEFAULT_SONGNAME = Path(r"H:\sdo\熱舞 Online(金富貴寶寶)\DATA\SONGNAME.TXT")
 
-# 人工修正表(僅供 SONGNAME 未涵蓋的曲)。目前 SONGNAME 已涵蓋所有已知需修正的曲，故留空。
-KNOWN_CORRECTIONS: Dict[str, Tuple[str, str]] = {}
+# 人工修正表 = **最高優先，蓋過 SONGNAME.TXT**。
+# SONGNAME 是「遊戲顯示用」的權威表，但它自己也有錯字；.gn 表頭反而是對的。這種曲只能在這裡釘死，
+# 因為 SONGNAME 涵蓋到的曲每次重跑都會被它覆蓋（merge-preserve 保護不到），改 song_table.csv 沒用。
+KNOWN_CORRECTIONS: Dict[str, Tuple[str, str]] = {
+    # SONGNAME 寫「有膽你就來」/「愛的主題秀」，但 .gn 表頭(titleZhCn)是「好膽你就來」/「愛的主場秀」——採表頭。
+    "sdom1947": ("好膽你就來", "張惠妹"),
+    "sdom1953": ("愛的主場秀", "羅志祥"),
+}
 
 
 def parse_songname(path: Path) -> Dict[str, Tuple[str, str]]:
@@ -164,23 +182,25 @@ def parse_songlist_open(songlist: Path, openlist: Path) -> Dict[str, Dict]:
     return out
 
 
-def catalog_by_stem(catalog: Path) -> Tuple[List[str], Dict[str, Dict]]:
-    """讀 song_catalog.json，回傳 (依 fileId 由大到小排序的 stem 清單, {stem: k.gn 名字/欄位})。
-    每個 stem 取其 K 譜條目(顯示用的主譜)當 k.gn 打底，缺則取任一。"""
-    songs = json.loads(catalog.read_text(encoding="utf-8")).get("songs", [])
+def table_by_stem(rows: List[Dict]) -> Tuple[List[str], Dict[str, Dict]]:
+    """song_table 的列 → (依 fileId 由大到小排序的 stem 清單, {stem: 該首的打底/現值})。
+
+    每個 stem 取其 K 譜那一列(顯示用的主譜)，缺則取任一。打底名字用 titleZhCn/artistZhCn
+    (.gn 表頭原字)，不是現在的 title —— 現在的 title 是「已經處理過的顯示名」，
+    拿它再跑一次 to_traditional 等於把人手改的結果又轉一次。"""
     by: Dict[str, Dict] = {}
-    for e in songs:
-        gn = e.get("gn") or ""
-        s = stem(gn)
+    for r in rows:
+        s = stem(r["gn"])
         if not s:
             continue
-        is_k = gn.lower().endswith("k.gn") or not gn.lower().rstrip(".gn").endswith("t")
-        cur = by.get(s)
-        rec = {"title": e.get("title", ""), "artist": e.get("artist", ""),
-               "fileId": int(e.get("fileId", 0)), "bpm": round(float(e.get("bpm", 0.0)), 3),
-               "_is_k": gn.lower().endswith("k.gn")}
-        if cur is None or (rec["_is_k"] and not cur.get("_is_k")):
-            by[s] = rec
+        is_k = st.is_primary(r["gn"])
+        if by.get(s) is None or (is_k and not by[s]["_is_k"]):
+            by[s] = {"title": r.get("titleZhCn") or "", "artist": r.get("artistZhCn") or "",
+                     "fileId": int(r.get("fileId") or 0),
+                     "bpm": round(float(r.get("chartBpm") or 0.0), 3),
+                     "cur": {"title": r.get("title") or "", "artist": r.get("artist") or "",
+                             "src": r.get("src") or ""},
+                     "_is_k": is_k}
     for r in by.values():
         r.pop("_is_k", None)
     order = sorted(by.keys(), key=lambda s: (-by[s]["fileId"], s))
@@ -193,52 +213,53 @@ def main() -> int:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
-    ap = argparse.ArgumentParser(description="全曲可編輯歌名清單 song_name_overrides.json")
-    ap.add_argument("catalog", nargs="?", default=str(DEFAULT_CATALOG))
+    ap = argparse.ArgumentParser(description="把權威歌名填進 song_table.csv 的 title / artist")
+    ap.add_argument("table", nargs="?", default=str(DEFAULT_TABLE))
     ap.add_argument("songlist", nargs="?", default=str(DEFAULT_SONGLIST))
     ap.add_argument("openlist", nargs="?", default=str(DEFAULT_OPENLIST))
-    ap.add_argument("-o", "--output", default=str(DEFAULT_OUT))
-    ap.add_argument("--songname", default=str(DEFAULT_SONGNAME), help="SONGNAME.TXT(權威歌名表)路徑")
+    # SONGNAME.TXT **預設不讀**（見型別註解的「為什麼預設關掉」）。要重新灌一次官方歌名才給路徑，
+    # 給 --songname 不帶值就是用原版安裝的預設位置。
+    ap.add_argument("--songname", nargs="?", const=str(DEFAULT_SONGNAME), default="",
+                    help=f"用 SONGNAME.TXT(原版權威歌名表)覆蓋歌名；不帶值 = {DEFAULT_SONGNAME}")
     ap.add_argument("--reseed", action="store_true",
                     help="整份由來源重填，丟棄既有手改(預設會保留 SONGNAME 未涵蓋曲的手改；offsetMs 一律保留)")
     args = ap.parse_args()
 
-    catalog = Path(args.catalog)
+    table_path = Path(args.table)
     songlist = Path(args.songlist)
     openlist = Path(args.openlist)
-    out = Path(args.output)
-    if not catalog.is_file():
-        print(f"找不到 song_catalog.json: {catalog}（先跑 build_song_catalog_from_gn.py）", file=sys.stderr); return 1
+    rows = st.load(table_path)
+    if not rows:
+        print(f"找不到/讀不到 {table_path}（先跑 tools/gn_keytable.py + build_gn_header_catalog.py）",
+              file=sys.stderr); return 1
 
     if _S2TWP is None:
         print("[warn] 未安裝 opencc-python-reimplemented，歌名暫以簡中原字輸出；"
               "pip install opencc-python-reimplemented 後重跑可轉繁體。", file=sys.stderr)
 
-    songname = parse_songname(Path(args.songname))
-    if songname:
-        print(f"[ok] SONGNAME.TXT 權威歌名表：{len(songname)} 首（第一順位，原生繁體）")
+    if not args.songname:
+        songname: Dict[str, Tuple[str, str]] = {}
+        print("[ok] 沒讀 SONGNAME.TXT（歌名以表裡現有的為準；要重灌官方名加 --songname）")
     else:
-        print(f"[warn] 讀不到 SONGNAME.TXT（{args.songname}），改用 songlist/k.gn。", file=sys.stderr)
+        songname = parse_songname(Path(args.songname))
+        if songname:
+            print(f"[ok] SONGNAME.TXT 權威歌名表：{len(songname)} 首（**會覆蓋表裡的手改歌名**）")
+        else:
+            print(f"[warn] 讀不到 SONGNAME.TXT（{args.songname}），改用 songlist/k.gn。", file=sys.stderr)
 
     official = parse_songlist_open(songlist, openlist) if (songlist.is_file() and openlist.is_file()) else {}
     if not official:
         print(f"[warn] 讀不到 songlist.dat/open_list.txt（{songlist}），全部用 k.gn 名字打底。", file=sys.stderr)
 
-    order, kgn = catalog_by_stem(catalog)
+    order, kgn = table_by_stem(rows)
 
-    # 既有清單：merge-preserve 用。prev_all 連 --reseed 都讀 —— offsetMs 沒有來源可重建，只能保留。
-    prev_all: Dict[str, Dict] = {}
-    if out.exists():
-        try:
-            for r in json.loads(out.read_text(encoding="utf-8")).get("songs", []):
-                if r.get("gn"):
-                    prev_all[stem(r["gn"])] = r
-        except Exception as e:
-            print(f"[warn] 舊清單解析失敗，改為全新產生：{e}", file=sys.stderr)
-    prev: Dict[str, Dict] = {} if args.reseed else dict(prev_all)   # 歌名手改：--reseed 時丟棄
+    # merge-preserve：表裡現有的 title/artist/src 就是「上一輪的結果 + 人手改過的東西」。
+    # --reseed 時丟棄(整批由來源重填)。offsetMs 本工具從頭到尾一個字都不寫 —— 那欄沒有來源
+    # 可重建(只有人耳調得出來)，不碰就不會弄丟。
+    prev: Dict[str, Dict] = {} if args.reseed else {s: kgn[s]["cur"] for s in kgn}
 
-    rows: List[Dict] = []
-    n_songname = n_official = n_kgn = n_kept = n_new = n_fixed = n_offset = 0
+    out_rows: List[Dict] = []
+    n_songname = n_official = n_kgn = n_kept = n_new = n_fixed = 0
     for s in order:
         base = kgn[s]
         off = official.get(s)
@@ -255,62 +276,55 @@ def main() -> int:
             else:
                 title, artist, src = to_traditional(base["title"]), to_traditional(base["artist"]), "kgn"
                 n_kgn += 1
-            fix = KNOWN_CORRECTIONS.get(s)
-            if fix:
-                title, artist, src = fix[0], fix[1], "fixed"
-                n_fixed += 1
             # merge-preserve：SONGNAME 未涵蓋的曲，保留既有手改(SONGNAME 涵蓋的以 SONGNAME 為準)
             keep = prev.get(s)
-            if keep is not None:
-                title = keep.get("title", title)
-                artist = keep.get("artist", artist)
-                src = keep.get("src", src)
+            if keep and (keep.get("title") or keep.get("artist")):
+                title = keep.get("title") or title
+                artist = keep.get("artist") or artist
+                src = keep.get("src") or src
                 n_kept += 1
             else:
                 n_new += 1
-        # offsetMs（每首歌的音訊校正）沒有任何來源可重建 —— 只有人耳調得出來，所以**永遠**保留，
-        # 連 --reseed 也不清（reseed 是要重填歌名，不是要毀掉你調了半天的 offset）。
-        off_ms = round(float((prev_all.get(s) or {}).get("offsetMs", 0.0) or 0.0), 1)
-        if off_ms:
-            n_offset += 1
-        rows.append({
+        # 人工修正最後套，**連 SONGNAME 也蓋** —— SONGNAME 自己有錯字的那幾首只能在這裡釘死
+        # （它涵蓋到的曲每次重跑都會被它覆蓋，merge-preserve 保護不到，改 csv 也會被打回原樣）。
+        fix = KNOWN_CORRECTIONS.get(s)
+        if fix:
+            if src == "songname":
+                n_songname -= 1
+            title, artist, src = fix[0], fix[1], "fixed"
+            n_fixed += 1
+        out_rows.append({
             "gn": s,
-            "fileId": off["fileId"] if off else base["fileId"],
             "bpm": off["bpm"] if off else base["bpm"],
-            "offsetMs": off_ms,            # 正 = 音樂晚一點進來；負 = 提早。0 = 不動
             "src": src,                    # official=官方 songlist / kgn=沿用 k.gn（給你辨識哪些較可信）
             "title": title,
             "artist": artist,
         })
 
-    doc = {
-        "schema": "song-name-overrides/2",
-        "note": ("手動可編輯的全曲歌名清單(繁體)：這裡的 title/artist/bpm 會覆蓋 k.gn 的顯示值。"
-                 "key=gn 詞幹(去 k/t)，例 sdom0001，同首 K/T 共用一筆。要改名直接改該行 title/artist。"
-                 "src=songname 來自遊戲權威歌名表 SONGNAME.TXT(原生繁體，第一順位、歌名+歌手都以它為準)；"
-                 "src=official 來自官方 songlist.dat(SONGNAME 未涵蓋的開放曲，簡轉繁)；"
-                 "src=kgn 沿用 .gn 內嵌名(可能有錯，請自行校正)；src=manual 是你手改的。"
-                 "bpm>0 會覆蓋歌單/房間顯示的 BPM 數字(只影響顯示；遊戲判定與流速一律讀譜面本身)；"
-                 "offsetMs = 這首歌的音訊校正(毫秒，唯一會進遊戲的欄位)：正值 = 音樂晚一點進來"
-                 "(音樂跑在譜面前面、音符老是慢半拍時用)，負值 = 音樂提早，0/不填 = 不動。"
-                 "它疊在譜面自己的音樂起點(type-10 marker)上，只挪音樂＋舞蹈；音符與判定仍在譜面時鐘上，"
-                 "所以調錯頂多音畫不合拍，不會影響難度。範圍夾在 ±5000ms。"
-                 "fileId/src 僅供辨識，runtime 不套用。此清單不決定歌單內容(歌單來自 song_catalog.json)，"
-                 "刪掉某首只是讓它顯示回 .gn 內嵌名，歌照樣能選。"
-                 "SONGNAME 涵蓋的曲重跑一律以 SONGNAME 為準；"
-                 "其餘曲的手改會保留(merge-preserve)，--reseed 才整份重填(offsetMs 例外：永遠保留)。"),
-        "count": len(rows),
-        "songs": rows,
-    }
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    # 寫回：一個詞幹的 K/T 兩列共用同一組顯示名（st.save 也會再同步一次）。
+    # 只碰 title/artist/bpm/src 四欄 —— fileId、難度、offsetMs、解密欄位一律原樣不動。
+    by_stem: Dict[str, List[Dict]] = {}
+    for r in rows:
+        by_stem.setdefault(stem(r["gn"]), []).append(r)
+    n_bpm = 0
+    for o in out_rows:
+        for r in by_stem.get(o["gn"], []):
+            r["title"], r["artist"], r["src"] = o["title"], o["artist"], o["src"]
+            # bpm 跟歌名一樣是可手改的顯示值 → **只在空的時候填**（--reseed 才由來源重填）。
+            # 以前是無條件覆蓋，於是每次重跑都把人調過的顯示 BPM 打回表頭原值。
+            if o["bpm"] and (args.reseed or not (r.get("bpm") or 0) > 0):
+                if r.get("bpm") != o["bpm"]:
+                    n_bpm += 1
+                r["bpm"] = o["bpm"]
+    st.save(rows, table_path)
 
-    print(f"完成：{out}")
-    print(f"  全曲 {len(rows)} 首（SONGNAME {n_songname}、官方 songlist {n_official}、沿用 k.gn {n_kgn}、人工修正 {n_fixed}）")
-    if out.exists():
-        print(f"  merge：保留既有手改 {n_kept}、新增 {n_new}" + ("（--reseed：忽略手改重填）" if args.reseed else ""))
-        print(f"  offsetMs：保留 {n_offset} 首的音訊校正（這欄無來源可重建，--reseed 也不清）")
-    for r in rows[:5]:
+    print(f"完成：{table_path}")
+    print(f"  全曲 {len(out_rows)} 首（SONGNAME {n_songname}、官方 songlist {n_official}、"
+          f"沿用 k.gn {n_kgn}、人工修正 {n_fixed}）")
+    print(f"  merge：保留既有手改 {n_kept}、新填 {n_new}" + ("（--reseed：忽略手改重填）" if args.reseed else ""))
+    print(f"  bpm：填了 {n_bpm} 首（本來就有值的不動）")
+    print("  offsetMs 完全沒動（那欄無來源可重建，只有人耳調得出來）")
+    for r in out_rows[:5]:
         print(f"    {r['gn']:12s} src={r['src']:8s} {r['title']!r} / {r['artist']!r}")
     return 0
 

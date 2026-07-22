@@ -1,28 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using UnityEngine;
 
 namespace Sdo.Game
 {
     /// <summary>
-    /// Runtime lookup for song display text (title / artist) that was decoded GB2312 -> UTF-8 at
-    /// IMPORT time.
+    /// 遊戲歌單視圖：歌名 / 曲師 / BPM / 難度 / 音符數 / 單首 offset。
     ///
-    /// Why a catalog instead of decoding in <see cref="Sdo.Osu.GnChart"/>: original SDO data
-    /// (SongList.dat and the .gn header) stores names in GB2312 (cp936). This runtime
-    /// (.NET Standard 2.1 / Android IL2CPP) ships no cp936 codec, so on-device decoding is
-    /// impossible and would only produce mojibake. tools/build_song_catalog.py decodes once on a
-    /// machine that has gb18030 and writes StreamingAssets/song_catalog.json as pure UTF-8.
-    /// Runtime therefore only ever reads Unicode -> no locale-dependent garbling, on any platform.
+    /// 資料來自 <see cref="SongTable"/>（StreamingAssets/song_table.csv，全部歌曲資料的唯一來源）；
+    /// 這個類別只負責「歌單怎麼看」——k/t 兩份譜的過濾、搜尋比對、.ogg 檔名推導。
+    /// 文字在 import 時就已經 GB2312 → UTF-8 解好（見 SongTable 的型別註解），runtime 只碰 Unicode。
     /// </summary>
     public static class SongCatalog
     {
         [Serializable] public class Entry
         {
             public string gn; public int fileId; public string title; public string artist;
-            // Optional metadata (emitted by build_song_catalog.py; absent in older catalogs -> defaults).
             public float bpm = -1f;
             public int diffEasy = -1, diffNormal = -1, diffHard = -1;
             public int notesEasy, notesNormal, notesHard;
@@ -34,9 +28,8 @@ namespace Sdo.Game
             /// 正 = 音樂延後播放（音檔跑在譜面前面時用），負 = 提早（負得比前導還多時，ScreenGameplay 走
             /// GameRate.ScheduleMusic 從 clip 中途切入）。
             ///
-            /// 來源是 song_name_overrides.json 的 <c>offsetMs</c> 欄，跟歌名一樣是**手改**的（見
-            /// <see cref="ApplyOverrides"/>）；不在 song_catalog.json（那個是工具重建的，手改會被蓋掉）。
-            /// 沒寫就是 0。key 是 stem（sdomNNNN）→ k/t 兩份譜共用同一個值（同一個音檔）。
+            /// 來源是 song_table.csv 的 <c>offsetMs</c> 欄，跟歌名一樣是**手改**的；同一首歌的 k/t 兩列共用
+            /// 同一個值（同一個音檔），寫檔的工具會自動同步兩列。沒填就是 0。
             ///
             /// 跟機器的音訊延遲**無關**（那個在 ScreenGameplay 的時鐘上自動補掉，全部歌一體適用）。
             /// </summary>
@@ -53,13 +46,6 @@ namespace Sdo.Game
             /// Those empty difficulties are greyed out / non-selectable in song-select.</summary>
             public bool HasChart(int d) => NoteCount(d) > 0;
         }
-        [Serializable] private class Catalog { public Entry[] songs = new Entry[0]; }   // populated by JsonUtility; init to silence CS0649
-
-        // Hand-editable per-song data (StreamingAssets/song_name_overrides.json), seeded from the official
-        // songlist.dat open songs. See ApplyOverrides / tools/build_song_name_overrides.py.
-        // 名字 + 顯示 bpm + 單首 offset 都住在這裡：它是**唯一**一份手改的歌曲資料，song_catalog.json 是工具重建的。
-        [Serializable] private class Override { public string gn = ""; public string title = ""; public string artist = ""; public float bpm = -1f; public float offsetMs = 0f; }   // init to silence CS0649 (JsonUtility fills these)
-        [Serializable] private class OverrideDoc { public Override[] songs = new Override[0]; }
 
         /// <summary>Sanity bound for a hand-typed offsetMs. A stray extra digit (30 -> 3000000) would otherwise
         /// push the music start minutes away / off the end of the clip. ±60 s: imported charts (osu/StepMania)
@@ -67,13 +53,11 @@ namespace Sdo.Game
         /// only guards against runaway typos. Kept in lock-step with the editor nudge clamp (ChartEditorScreen).</summary>
         public const float MaxOffsetMs = 60000f;
 
-        private const string FileName = "song_catalog.json";
-        private const string OverrideFileName = "song_name_overrides.json";
         private static Dictionary<string, Entry> _byGn;   // key = lowercase .gn filename
         private static List<Entry> _all;                  // in file order
         private static List<Entry> _primary;              // k-only view of _all (lazy)
 
-        /// <summary>All catalog entries in file order (empty if no catalog). Includes BOTH chart variants —
+        /// <summary>All catalog entries in file order (empty if no table). Includes BOTH chart variants —
         /// for a browsable list you almost always want <see cref="Primary"/> instead.</summary>
         public static IReadOnlyList<Entry> All { get { EnsureLoaded(); return _all; } }
 
@@ -82,9 +66,9 @@ namespace Sdo.Game
         /// 兩者共用同一個標題／曲師／音檔，但難度與音符數不同 —— 例 sdom0001：k = LV 3/4/5、easy 510 notes；
         /// t = LV 1/3/5、easy 284 notes（毯子譜比較鬆）。
         ///
-        /// 重製版是**純鍵盤**，所以任何「給人瀏覽的清單」都只該出現 k：不濾的話目錄的 4346 筆會讓每首歌
-        /// 在清單裡出現兩次（2175 首 × 2），而且因為 <see cref="ApplyNameOverrides"/> 是照 stem 蓋名字，
-        /// 兩列連標題都一模一樣，看起來就是整份清單重複。
+        /// 重製版是**純鍵盤**，所以任何「給人瀏覽的清單」都只該出現 k：不濾的話目錄的 4325 筆會讓每首歌
+        /// 在清單裡出現兩次（2166 首 × 2），而且因為兩列的歌名是同步的，連標題都一模一樣，
+        /// 看起來就是整份清單重複。
         ///
         /// <see cref="All"/> 刻意**不濾**：以 gn 反查標題／曲師、字型預熱都需要兩種變體都在。
         /// </summary>
@@ -97,7 +81,7 @@ namespace Sdo.Game
         }
 
         /// <summary>只有鍵盤譜（k）的清單，檔案順序。**所有給人瀏覽的清單都該用這個**（選歌畫面、譜面編輯器），
-        /// 不是 <see cref="All"/>。名字已經套過 song_name_overrides.json。</summary>
+        /// 不是 <see cref="All"/>。</summary>
         public static IReadOnlyList<Entry> Primary
         {
             get
@@ -112,7 +96,7 @@ namespace Sdo.Game
             }
         }
 
-        /// <summary>Look up by a .gn path or filename (case-insensitive). Null if absent / no catalog.</summary>
+        /// <summary>Look up by a .gn path or filename (case-insensitive). Null if absent / no table.</summary>
         public static Entry Get(string gnPathOrName)
         {
             if (string.IsNullOrEmpty(gnPathOrName)) return null;
@@ -151,82 +135,46 @@ namespace Sdo.Game
         private static bool Has(string hay, string needle)
             => !string.IsNullOrEmpty(hay) && hay.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
 
+        /// <summary>丟掉快取（改過 song_table.csv 之後用）。下次存取重新從 <see cref="SongTable"/> 建。</summary>
+        public static void Invalidate()
+        {
+            _byGn = null; _all = null; _primary = null;
+            SongTable.Invalidate();
+        }
+
         private static void EnsureLoaded()
         {
             if (_byGn != null) return;
             _byGn = new Dictionary<string, Entry>(StringComparer.Ordinal);
             _all = new List<Entry>();
-
-            var path = Path.Combine(Application.streamingAssetsPath, FileName);
-            // NOTE: direct File IO from StreamingAssets works in Editor / standalone. On Android the
-            // catalog lives compressed inside the APK and must be read via UnityWebRequest instead
-            // (same as the .ogg loader in ScreenGameplay). Wire that when packaging for Android.
-            if (!File.Exists(path))
+            _primary = null;
+            foreach (var r in SongTable.Rows)
             {
-                Debug.LogWarning($"[SongCatalog] {path} missing — run tools/build_song_catalog.py");
-                return;
+                var e = FromRow(r);
+                if (e == null) continue;
+                _byGn[e.gn] = e; _all.Add(e);
             }
-
-            try
-            {
-                // explicit UTF-8 so the read never falls back to the OS/locale default encoding
-                var cat = JsonUtility.FromJson<Catalog>(File.ReadAllText(path, Encoding.UTF8));
-                if (cat?.songs == null) return;
-                foreach (var e in cat.songs)
-                    if (!string.IsNullOrEmpty(e?.gn)) { _byGn[e.gn.ToLowerInvariant()] = e; _all.Add(e); }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[SongCatalog] failed to load {path}: {ex.Message}");
-            }
-
-            var ovPath = Path.Combine(Application.streamingAssetsPath, OverrideFileName);
-            if (File.Exists(ovPath))                                        // optional: no overrides -> keep k.gn values
-                ApplyOverrides(_all, File.ReadAllText(ovPath, Encoding.UTF8), ovPath);
         }
 
-        /// <summary>
-        /// Overlay the hand-editable list (StreamingAssets/song_name_overrides.json) onto catalog
-        /// entries: for every song whose gn-stem (sdomNNNN, without the k/t chart suffix) is listed,
-        /// replace title / artist / bpm / offsetMs. Songs absent from the list keep their k.gn-derived
-        /// values, as does any field left blank (title/artist) or &lt;= 0 (bpm).
-        ///
-        /// **這是唯一一份手改的歌曲資料** —— song_catalog.json 是工具從 .gn 重建的（bpm / 難度 / 音符數以實際
-        /// 譜面為準，重掃會蓋掉），所以任何「人決定的東西」都只能住在這裡。title/artist/bpm 只改**顯示**
-        /// （選歌資訊面板 + 房間 BPM 標籤），一個都不會 desync 遊戲時間軸（音符時間/流速仍全部來自譜面本身）。
-        /// 唯一會進到 gameplay 的是 <c>offsetMs</c>（挪音樂起點，見 <see cref="Entry.offsetMs"/>）；缺/0 = 不位移。
-        /// 檔案不存在／空的／壞掉 → 目錄原樣不動。
-
-        /// </summary>
-        public static void ApplyOverrides(IEnumerable<Entry> entries, string json, string srcLabel = OverrideFileName)
+        /// <summary><see cref="SongTable.Row"/> → 歌單 entry（純轉換，有測試）。null / 沒有 gn → null。</summary>
+        public static Entry FromRow(SongTable.Row r)
         {
-            if (entries == null || string.IsNullOrWhiteSpace(json)) return;
-
-            Dictionary<string, Override> byStem;
-            try
+            if (r == null || string.IsNullOrEmpty(r.gn)) return null;
+            return new Entry
             {
-                var doc = JsonUtility.FromJson<OverrideDoc>(json);
-                if (doc?.songs == null || doc.songs.Length == 0) return;
-                byStem = new Dictionary<string, Override>(StringComparer.Ordinal);
-                foreach (var o in doc.songs)
-                    if (!string.IsNullOrEmpty(o?.gn)) byStem[Stem(o.gn)] = o;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[SongCatalog] failed to load {srcLabel}: {ex.Message}");
-                return;
-            }
-
-            foreach (var e in entries)
-            {
-                if (e == null || string.IsNullOrEmpty(e.gn)) continue;
-                if (!byStem.TryGetValue(Stem(e.gn), out var o)) continue;   // not listed -> keep k.gn values, offset 0
-                if (!string.IsNullOrEmpty(o.title)) e.title = o.title;
-                if (!string.IsNullOrEmpty(o.artist)) e.artist = o.artist;
-                if (o.bpm > 0f) e.bpm = o.bpm;
-                e.offsetMs = ClampOffsetMs(o.offsetMs);   // 0 / 缺欄 = 不位移（k/t 共用同一個值：同一個音檔）
-            }
+                gn = r.gn.ToLowerInvariant(),
+                fileId = r.fileId,
+                title = r.title,
+                artist = r.artist,
+                bpm = r.bpm,
+                diffEasy = At(r.levels, 0, -1), diffNormal = At(r.levels, 1, -1), diffHard = At(r.levels, 2, -1),
+                notesEasy = At(r.noteCounts, 0, 0), notesNormal = At(r.noteCounts, 1, 0), notesHard = At(r.noteCounts, 2, 0),
+                durEasy = At(r.durations, 0, 0), durNormal = At(r.durations, 1, 0), durHard = At(r.durations, 2, 0),
+                offsetMs = ClampOffsetMs(r.offsetMs),
+            };
         }
+
+        private static int At(int[] a, int i, int fallback) => a != null && i < a.Length ? a[i] : fallback;
 
         /// <summary>
         /// Full-song audio filename for a chart gn: "sdom2784k.gn" -> "sdom2784.ogg" (the two charts of a
@@ -246,7 +194,7 @@ namespace Sdo.Game
 
         /// <summary>gn filename/path -> chart-pair stem, e.g. "sdom0001k.gn" / "SDOM0001T" -> "sdom0001".
         /// The k/t suffix distinguishes the two charts of one song; both share a title.</summary>
-        private static string Stem(string gnPathOrName)
+        public static string Stem(string gnPathOrName)
         {
             var name = Path.GetFileName(gnPathOrName ?? string.Empty).ToLowerInvariant();
             if (name.EndsWith(".gn")) name = name.Substring(0, name.Length - 3);
