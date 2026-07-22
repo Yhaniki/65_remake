@@ -124,6 +124,8 @@ namespace Sdo.UI.Screens
         private readonly bool[] _cardNoSpin = new bool[PerPage];            // 眼鏡卡：靜態不旋轉 (user 指定 眼鏡不轉、只 hover 放大)
         private readonly RectTransform[] _cardIcon = new RectTransform[PerPage];   // 2D 商品圖示 (沒有 3D 縮圖的那些) → hover 只放大不旋轉
         private readonly Vector3[] _cardFramePos = new Vector3[PerPage];    // 官方 per-slot 節點位移 (模型空間,y 為負把部位往下推)
+        private readonly Vector3[] _cardPivot = new Vector3[PerPage];       // 依 bbox 置中的卡 (道具/禮盒):模型空間的中心
+        private readonly bool[] _cardAutoCenter = new bool[PerPage];        // ↑ 用 pivot 每幀重算位移 (自轉才是原地轉,不會公轉)
         private readonly Vector3[] _cardFrameScale = new Vector3[PerPage];  // 官方 per-slot 節點縮放 (5.5~10x)
         private int _hoverCard = -1;
         private static Vector3 CardSpot(int i) => new Vector3(3000f + i * 400f, 0f, 0f);   // 各卡衣物散開放，避免互相入鏡
@@ -992,9 +994,9 @@ namespace Sdo.UI.Screens
                     if (!pres.Any)
                     { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
                     ApplyCardCutoutShader(root);
-                    // 沒有官方 per-slot 表可查 → 依實際幾何填滿格子 + 置中。要用**轉正之後**的 bbox:縮放/位移是在
-                    // 旋轉之後才套到世界座標的 (TRS),拿原始 bbox 會框偏、盒子跑出格子。
-                    FitCardToBounds(i, RotatedBounds(pres.Bounds, CardRotation(i)));
+                    // 沒有官方 per-slot 表可查 → 依實際幾何填滿格子 + 置中。縮放要用**轉正之後**的 bbox (縮放/位移是在
+                    // 旋轉之後才套到世界座標的,拿原始 bbox 會框偏);置中則交給 pivot=模型空間中心,每幀跟著旋轉重算。
+                    FitCardToBounds(i, RotatedBounds(pres.Bounds, CardRotation(i)), pres.Bounds.center);
                     _cardAv[i] = root;
                     _cardNoSpin[i] = false;   // hover 一樣轉 (官方 AvtShow 也會轉)
                     AddCardImage(i, card);
@@ -1097,15 +1099,19 @@ namespace Sdo.UI.Screens
             return res;
         }
 
-        // 依模型自身的 bbox 把它縮到「填滿卡片格子的 90%」並置中 (沒有官方 per-slot 表可查的東西才用：寵物/寵物裝備)。
-        private void FitCardToBounds(int i, Bounds b)
+        // 依模型自身的 bbox 把它縮到「填滿卡片格子的 90%」並置中 (沒有官方 per-slot 表可查的東西才用：道具/禮盒)。
+        // <paramref name="fit"/> = 已經轉正的 bbox (只決定縮放)；<paramref name="pivotModel"/> = **模型空間**的中心,
+        // 有給就每幀依當時的旋轉重算位移 (_cardAutoCenter) —— 見 RenderCard：hover 自轉時模型中心才不會繞著跑。
+        private void FitCardToBounds(int i, Bounds fit, Vector3? pivotModel = null)
         {
             float halfH = CardOrthoHalfW / ((float)_L.RtW / _L.RtH);
-            var size = b.size;
+            var size = fit.size;
             float s = Mathf.Min(CardOrthoHalfW * 2f * 0.9f / Mathf.Max(size.x, 1e-3f),
                                 halfH * 2f * 0.9f / Mathf.Max(size.y, 1e-3f));
             _cardFrameScale[i] = new Vector3(s, s, s);
-            _cardFramePos[i] = new Vector3(-s * b.center.x, -s * b.center.y, 0f);   // bbox 中心對到相機中心
+            _cardFramePos[i] = new Vector3(-s * fit.center.x, -s * fit.center.y, 0f);   // bbox 中心對到相機中心
+            _cardAutoCenter[i] = pivotModel.HasValue;
+            _cardPivot[i] = pivotModel ?? Vector3.zero;
         }
 
         // 把第 i 件衣物畫進它的 RT：官方=正交相機看世界 Y≈0，節點依 per-slot 表放大(scale)+位移(pos)把該部位頂進中心；
@@ -1114,11 +1120,16 @@ namespace Sdo.UI.Screens
         {
             if (_cardCam == null || _cardRT[i] == null || _cardAv[i] == null) return;
             var t = _cardAv[i].transform;
+            var rot = CardRotation(i);
             t.localScale = _cardFrameScale[i];                       // 官方 per-slot 放大
-            t.position = CardSpot(i) + _cardFramePos[i];             // 官方 per-slot 位移 (y 為負把部位往下推到相機中心)
+            // 位移:衣物走官方 per-slot 表 (y 為負把部位往下推到相機中心);道具/禮盒是依 bbox 置中的,而 Unity 是
+            // 先旋轉再位移 → 位移要跟著**當下的旋轉**重算,否則 hover 自轉時模型會繞著格子的角落公轉 (使用者回報)。
+            t.position = CardSpot(i) + (_cardAutoCenter[i]
+                ? -Vector3.Scale(_cardFrameScale[i], rot * _cardPivot[i])   // bbox 中心恆定釘在相機中心 → 原地自轉
+                : _cardFramePos[i]);
             // 基準朝向 (衣物 30°;道具另有扶正/前傾) + hover 自轉。眼鏡卡維持基準角度,只是不轉 → 靠 Update 讓
             // _cardAngle 恆 0 (_cardNoSpin)。
-            t.rotation = CardRotation(i);
+            t.rotation = rot;
             _cardCam.orthographicSize = CardOrthoHalfW / ((float)_L.RtW / _L.RtH);   // 依當前版面 RT 比例 (大小卡切換才對)
             _cardCam.transform.position = CardSpot(i) + new Vector3(0f, 0f, -CardEyeDist);   // 官方 eye=(0,0,-110),看 Y≈0
             _cardCam.transform.LookAt(CardSpot(i));
@@ -1342,7 +1353,7 @@ namespace Sdo.UI.Screens
                 if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
                 _cardImg[i] = null; _cardIcon[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f;
                 _cardYaw[i] = 0f; _cardPre[i] = Quaternion.identity; _cardPost[i] = Quaternion.identity;
-                _cardNoSpin[i] = false;
+                _cardNoSpin[i] = false; _cardAutoCenter[i] = false; _cardPivot[i] = Vector3.zero;
             }
             _pendingCards.Clear();
             _hoverCard = -1;
