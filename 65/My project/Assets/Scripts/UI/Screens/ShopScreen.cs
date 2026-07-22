@@ -98,9 +98,18 @@ namespace Sdo.UI.Screens
         private const float CardEnlargeMax = 1.5f;        // hover 放大上限 (官方 2×,但 remake 卡片矮→2× 會爆出格子,降到 1.5×;可調)
         private const float CardSpinDegPerSec = 300f;    // hover 旋轉 (官方 +5°/10ms,frame-cap 60fps ≈ 300°/s;上限 500°/s@100fps)
         private const float CardEyeDist = 110f;          // 官方 view eye=(0,0,-110)。正交下距離不影響大小,只要在 near..far 內
-        // 禮盒 (DAOJU/100400_LIHE.MSH 那類道具 mesh) 的「正面」——蝴蝶結/印刷面——在模型的 +Z 側,而卡片相機從 -Z 看過去
-        // → 沿用衣物的 30° 會拍到盒子的**背面** (使用者:「禮包顯示方向錯誤」,畫面上只剩一個素面盒子)。多轉半圈才是正面。
-        private const float PropCardYaw = 180f;
+        // ---- 道具 mesh (禮盒) 的擺法 ----
+        // DAOJU 的道具 mesh **不是站好的**:100400_LIHE (28 件禮包全借這顆,DressTable.GiftPackProxyModelId) 的盒面法線
+        // 離世界軸約 30°,直接照原樣畫就是一顆歪倒的方塊、蝴蝶結還轉到背面去 (使用者:「禮包顯示方向錯誤」)。
+        // 扶正做法:量出「盒蓋」(緞帶在上面打結、蝴蝶結那一面) 與相鄰側面的法線,把盒蓋轉到 +Y。法線是離線量的 ——
+        // 解 MSH 面法線、依方向分群 (每群取面積加權平均),盒子剛好得到 3 對:
+        //   ±(0.290,-0.321, 0.901) 面積最大 → 盒蓋/盒底 (蝴蝶結長在這面)
+        //   ±(-0.308, 0.864, 0.398) 與 ±(0.903, 0.399,-0.156) → 四個側面
+        // 扶正後再套跟衣物同一個 30° 側轉 + 前傾 25° (卡片相機是水平正交,壓下模型才看得到盒蓋),就是官方那顆
+        // 「盒子站著、蝴蝶結在上面」的禮盒。沒量過的道具 mesh → 不扶正 (identity),只套側轉/前傾。
+        private static readonly Vector3 LiheLidNormal  = new Vector3( 0.290f, -0.321f,  0.901f);
+        private static readonly Vector3 LiheSideNormal = new Vector3(-0.308f,  0.864f,  0.398f);
+        private const float PropCardPitch = -25f;
         private const float CardOrthoHalfW = 64f;        // 官方 ortho 半寬 (WIDTH=128 world);半高由 RT aspect 推 → 方形像素
         private const float CardNear = 5f, CardFar = 1000f;   // 官方 ortho near/far
         private Camera _cardCam;                          // 共用一台相機，手動 Render() 逐張畫
@@ -109,7 +118,9 @@ namespace Sdo.UI.Screens
         private readonly RawImage[] _cardImg = new RawImage[PerPage];
         private readonly float[] _cardScale = new float[PerPage];
         private readonly float[] _cardAngle = new float[PerPage];
-        private readonly float[] _cardYaw = new float[PerPage];             // 卡片模型的基準朝向 (衣物 30°;禮盒 +180° 見 PropCardYaw)
+        private readonly float[] _cardYaw = new float[PerPage];             // 卡片模型的基準側轉 (衣物/道具都 30°;hover 自轉加在這上面)
+        private readonly Quaternion[] _cardPre = new Quaternion[PerPage];   // 自轉「之前」的旋轉 = 道具 mesh 的扶正 (衣物 identity)
+        private readonly Quaternion[] _cardPost = new Quaternion[PerPage];  // 自轉「之後」的旋轉 = 道具的前傾 (衣物 identity)
         private readonly bool[] _cardNoSpin = new bool[PerPage];            // 眼鏡卡：靜態不旋轉 (user 指定 眼鏡不轉、只 hover 放大)
         private readonly RectTransform[] _cardIcon = new RectTransform[PerPage];   // 2D 商品圖示 (沒有 3D 縮圖的那些) → hover 只放大不旋轉
         private readonly Vector3[] _cardFramePos = new Vector3[PerPage];    // 官方 per-slot 節點位移 (模型空間,y 為負把部位往下推)
@@ -966,9 +977,11 @@ namespace Sdo.UI.Screens
                 _cardRT[i] = new RenderTexture(_L.RtW, _L.RtH, 16, RenderTextureFormat.ARGB32) { name = "ShopCardRT" + i, antiAliasing = 2 };
                 root = new GameObject("ShopCardAvatar" + i);
                 root.transform.position = CardSpot(i);
-                // 衣物預設朝左 30°;道具 mesh (禮盒) 的正面在 +Z → 再轉半圈才會把蝴蝶結那面轉向鏡頭 (PropCardYaw)。
-                _cardYaw[i] = RoomMovement.FacingDegrees(2) + DefaultYaw + (prop ? PropCardYaw : 0f);
-                root.transform.rotation = Quaternion.Euler(0f, _cardYaw[i], 0f);
+                // 衣物預設朝左 30°;道具 mesh 另外要「扶正 + 前傾」才站得起來 (見 LiheLidNormal 那段)。
+                _cardYaw[i] = RoomMovement.FacingDegrees(2) + DefaultYaw;
+                _cardPre[i] = prop ? PropUprightFor(propMesh) : Quaternion.identity;
+                _cardPost[i] = prop ? Quaternion.Euler(PropCardPitch, 0f, 0f) : Quaternion.identity;
+                root.transform.rotation = CardRotation(i);
                 SdoAvatarBuilder.LogLabel = string.IsNullOrEmpty(item.Name) ? item.ModelId.ToString("D6") : item.Name;   // [avtex] log 標名 (user)
                 if (prop)
                 {
@@ -979,7 +992,9 @@ namespace Sdo.UI.Screens
                     if (!pres.Any)
                     { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
                     ApplyCardCutoutShader(root);
-                    FitCardToBounds(i, pres.Bounds);   // 沒有官方 per-slot 表可查 → 依實際幾何填滿格子 + 置中
+                    // 沒有官方 per-slot 表可查 → 依實際幾何填滿格子 + 置中。要用**轉正之後**的 bbox:縮放/位移是在
+                    // 旋轉之後才套到世界座標的 (TRS),拿原始 bbox 會框偏、盒子跑出格子。
+                    FitCardToBounds(i, RotatedBounds(pres.Bounds, CardRotation(i)));
                     _cardAv[i] = root;
                     _cardNoSpin[i] = false;   // hover 一樣轉 (官方 AvtShow 也會轉)
                     AddCardImage(i, card);
@@ -1054,6 +1069,34 @@ namespace Sdo.UI.Screens
             _cardScale[i] = 1f; _cardAngle[i] = 0f;
         }
 
+        // 道具 mesh 的「扶正」旋轉：把量到的盒蓋法線轉到 +Y (見 LiheLidNormal 那段的推導)。沒量過的 mesh → identity。
+        private static Quaternion PropUprightFor(string meshRel)
+        {
+            if (meshRel == null || meshRel.IndexOf("100400_LIHE", System.StringComparison.OrdinalIgnoreCase) < 0)
+                return Quaternion.identity;
+            var lid = LiheLidNormal.normalized;
+            var right = Vector3.Cross(lid, LiheSideNormal.normalized).normalized;
+            var fwd = Vector3.Cross(right, lid);                       // 右手/左手同式 → 與離線量測那組基底一致
+            return Quaternion.Inverse(Quaternion.LookRotation(fwd, lid));   // 盒蓋 → +Y、該側面 → +Z
+        }
+
+        // 卡片模型的總旋轉：扶正 → 側轉(含 hover 自轉,繞模型自己的直立軸) → 前傾。衣物只有中間那段 (前後皆 identity)。
+        private Quaternion CardRotation(int i)
+            => _cardPost[i] * Quaternion.Euler(0f, _cardYaw[i] + _cardAngle[i], 0f) * _cardPre[i];
+
+        // bbox 轉到旋轉後的座標 (8 個角點重新包起來)。
+        private static Bounds RotatedBounds(Bounds b, Quaternion q)
+        {
+            var c = b.center; var e = b.extents;
+            var res = new Bounds(q * c, Vector3.zero);
+            for (int k = 0; k < 8; k++)
+            {
+                var p = new Vector3((k & 1) == 0 ? -e.x : e.x, (k & 2) == 0 ? -e.y : e.y, (k & 4) == 0 ? -e.z : e.z);
+                res.Encapsulate(q * (c + p));
+            }
+            return res;
+        }
+
         // 依模型自身的 bbox 把它縮到「填滿卡片格子的 90%」並置中 (沒有官方 per-slot 表可查的東西才用：寵物/寵物裝備)。
         private void FitCardToBounds(int i, Bounds b)
         {
@@ -1073,9 +1116,9 @@ namespace Sdo.UI.Screens
             var t = _cardAv[i].transform;
             t.localScale = _cardFrameScale[i];                       // 官方 per-slot 放大
             t.position = CardSpot(i) + _cardFramePos[i];             // 官方 per-slot 位移 (y 為負把部位往下推到相機中心)
-            // 基準朝向 (衣物 30°/禮盒 210°,BuildCardPreview 決定) + hover 自轉。眼鏡卡維持基準角度,只是不轉 → 靠 Update
-            // 讓 _cardAngle 恆 0 (_cardNoSpin)。
-            t.rotation = Quaternion.Euler(0f, _cardYaw[i] + _cardAngle[i], 0f);
+            // 基準朝向 (衣物 30°;道具另有扶正/前傾) + hover 自轉。眼鏡卡維持基準角度,只是不轉 → 靠 Update 讓
+            // _cardAngle 恆 0 (_cardNoSpin)。
+            t.rotation = CardRotation(i);
             _cardCam.orthographicSize = CardOrthoHalfW / ((float)_L.RtW / _L.RtH);   // 依當前版面 RT 比例 (大小卡切換才對)
             _cardCam.transform.position = CardSpot(i) + new Vector3(0f, 0f, -CardEyeDist);   // 官方 eye=(0,0,-110),看 Y≈0
             _cardCam.transform.LookAt(CardSpot(i));
@@ -1298,7 +1341,8 @@ namespace Sdo.UI.Screens
                 if (_cardAv[i] != null) { DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
                 if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
                 _cardImg[i] = null; _cardIcon[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f;
-                _cardYaw[i] = 0f; _cardNoSpin[i] = false;
+                _cardYaw[i] = 0f; _cardPre[i] = Quaternion.identity; _cardPost[i] = Quaternion.identity;
+                _cardNoSpin[i] = false;
             }
             _pendingCards.Clear();
             _hoverCard = -1;
