@@ -317,7 +317,10 @@ namespace Sdo.Game
             if (_overlay != null)
             {
                 _overlay.Peaks = peaks;
-                _overlay.PeaksOffsetMs = game.EditorMusicDelaySec * 1000.0;   // 波形第 0 格 = 音樂真正開始的譜面時間
+                // 波形第 0 格 = 音樂真正開始的譜面時間（含單首 offset）再往早補解碼暖機。**公式要跟
+                // ChartEditorOverlay.LateUpdate 一模一樣** —— 它每幀都會覆寫這個值，兩邊不同只會讓這裡的初值
+                // 閃一幀不同步（07-15 加解碼暖機補償時漏改這行）。
+                _overlay.PeaksOffsetMs = game.EditorMusicCountInMs - ScreenGameplay.WaveformDecoderDelayMs;
             }
             _peaksCo = null;
         }

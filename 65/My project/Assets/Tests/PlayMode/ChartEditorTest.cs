@@ -119,8 +119,10 @@ namespace Sdo.Tests
                 Assert.Greater(maxPeak, 0.5f, "波形全是靜音 → GetData 沒讀到 PCM");
                 // RMS 必須真的有起伏：全曲一路貼在最大值 = 畫出來會是一根實心柱（不是波形）
                 Assert.Less(minRms, 0.5f * maxRms, "RMS 沒有起伏 —— 波形會變成一根實心柱");
-                Assert.AreEqual(game.EditorMusicDelaySec * 1000.0, overlay.PeaksOffsetMs, 1.0,
-                    "波形的時間原點沒有對到音樂起點（type-10 無聲數拍）");
+                // 波形第 0 格 = 音樂起點（type-10 無聲數拍）**再往早補解碼暖機**：Unity 的 Vorbis 解碼在 clip 開頭
+                // 留了一段暖機樣本，不補的話波形瞬態整條晚到、看起來音符比波形早。純顯示修正，見 WaveformDecoderDelayMs。
+                Assert.AreEqual(game.EditorMusicDelaySec * 1000.0 - ScreenGameplay.WaveformDecoderDelayMs,
+                    overlay.PeaksOffsetMs, 1.0, "波形的時間原點沒有對到音樂起點（type-10 無聲數拍 − 解碼暖機）");
             }
 
             yield return null;
