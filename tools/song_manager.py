@@ -198,21 +198,23 @@ def add_song(*, k: Path, stem_: str, file_id: int, ogg: Path, t: Optional[Path] 
         log.append(f"  檔案已同步 {len(trees)} 棵資料樹(含 data_root.txt → {trees[-1]['dance'].parent})")
 
     if title or artist or bpm.strip():
-        doc = read_overrides()
-        row = next((e for e in doc["songs"] if e.get("gn") == st), None)
-        if row is None:
-            row = {"gn": st, "fileId": file_id, "bpm": 0.0, "src": "manual", "title": "", "artist": ""}
-            doc["songs"].append(row)
-        if title:
-            row["title"] = title
-        if artist:
-            row["artist"] = artist
-        if bpm.strip():
-            row["bpm"] = round(float(bpm), 3)
-        row["src"] = "manual"
-        row["fileId"] = file_id
-        write_overrides(doc)
-        log.append(f"  overrides 手改 {st}")
+        # add_gn_files 剛剛才寫過表(歌名是 .gn 表頭轉繁的打底值),所以要重讀再蓋上你填的。
+        # 一首歌的 K/T 兩列共用顯示值 → 兩列都寫(stbl.save 也會再同步一次)。
+        table = stbl.load(TABLE)
+        hit = [r for r in table if stem(r["gn"]) == st]
+        for row in hit:
+            if title:
+                row["title"] = title
+            if artist:
+                row["artist"] = artist
+            if bpm.strip():
+                row["bpm"] = round(float(bpm), 3)
+            row["src"] = "manual"          # 標記手改 → build_song_name_overrides 重跑時會保留
+        if hit:
+            stbl.save(table, TABLE)
+            log.append(f"  歌名/BPM 手改 {st}({len(hit)} 列)")
+        else:
+            log.append(f"  [warn] 表裡找不到 {st},歌名沒寫進去")
     return log
 
 
