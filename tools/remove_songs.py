@@ -249,6 +249,11 @@ def remove_stems(stems: Set[str], by_stem: Dict[str, Dict], dry_run: bool = Fals
         print("[DRY-RUN] 會從 song_table.csv 移除這些詞幹的列;不實際變更。")
         return
 
+    # **先寫表、再刪檔**。反過來的話,表被 Excel 鎖住時檔案已經刪光、列卻還在 →
+    # 那首歌會留在清單上但點下去沒譜沒音樂(sdom5002 就是這樣半殘掉的)。
+    # 這個順序最壞情況只是「列沒了、檔案還在」,重掃就會把它撿回來,好救得多。
+    removed = prune_table(stems)
+
     ndel = 0
     if not keep_files:
         for p in to_delete:
@@ -258,10 +263,8 @@ def remove_stems(stems: Set[str], by_stem: Dict[str, Dict], dry_run: bool = Fals
             except OSError as e:
                 print(f"  刪不掉 {p}: {e}", file=sys.stderr)
 
-    removed = prune_table(stems)
-
-    print(f"\n完成:刪檔 {ndel}{'(--keep-files 略過)' if keep_files else ''};"
-          f"song_table.csv 移除 {removed} 列")
+    print(f"\n完成:song_table.csv 移除 {removed} 列;"
+          f"刪檔 {ndel}{'(--keep-files 略過)' if keep_files else ''}")
     print("遊戲下次啟動即不再出現這些歌。")
 
 

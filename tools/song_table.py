@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -164,8 +165,33 @@ def by_gn(rows: Iterable[Dict]) -> Dict[str, Dict]:
     return {(r.get("gn") or "").lower(): r for r in rows if r.get("gn")}
 
 
+class TableLocked(OSError):
+    """表被別的程式獨佔開著（Windows 上幾乎一定是 Excel）。"""
+
+
+def check_writable(path: Path = DEFAULT_CSV) -> None:
+    """確認表待會寫得動；寫不動就**在動任何東西之前**丟 TableLocked。
+
+    為什麼要有這支：Excel 一開這個 .csv 就對它上獨佔鎖，Windows 會讓寫入直接 Errno 13。
+    而「刪歌」是先刪檔案再寫表 —— 沒有這個前置檢查的話，表寫失敗時檔案已經刪光了，
+    那首歌就變成「清單上還在、點下去沒譜沒音樂」的半殘狀態（實際發生過：sdom5002）。"""
+    p = Path(path)
+    if not p.is_file():
+        return
+    try:
+        with io.open(p, "r+b"):
+            pass
+    except OSError as e:
+        raise TableLocked(
+            f"{p.name} 現在寫不進去（{e.strerror or e}）。\n"
+            f"多半是你用 Excel 開著它 —— 關掉 Excel 再試一次。\n{p}") from e
+
+
 def save(rows: Iterable[Dict], path: Path = DEFAULT_CSV) -> int:
-    """寫回 CSV（gn 升冪排序、UTF-8-BOM、LF）。回傳列數。"""
+    """寫回 CSV（gn 升冪排序、UTF-8-BOM、LF）。回傳列數。
+
+    先寫同目錄的暫存檔再 os.replace 換過去（不是就地覆寫）—— 寫到一半斷電/被鎖，
+    留下的是完整的舊表而不是一份被截斷的 4325 列歌單。"""
     rows = sync_display(list(rows))
     rows.sort(key=lambda r: (r.get("gn") or ""))
     cols = list(COLUMNS)
@@ -175,11 +201,18 @@ def save(rows: Iterable[Dict], path: Path = DEFAULT_CSV) -> int:
                 cols.append(k)
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with io.open(p, "w", encoding="utf-8-sig", newline="") as f:
+    check_writable(p)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with io.open(tmp, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(cols)
         for r in rows:
             w.writerow([fmt(c, r.get(c)) for c in cols])
+    try:
+        os.replace(tmp, p)          # 同一顆磁碟上是原子操作
+    except OSError:
+        tmp.unlink(missing_ok=True)   # 換不過去(被鎖)就別留一個半調子的 .tmp 在那
+        raise
     return len(rows)
 
 
