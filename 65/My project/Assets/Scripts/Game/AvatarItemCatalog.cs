@@ -574,6 +574,9 @@ namespace Sdo.Game
             // 改這裡的 Price → 顯示/購買/買齊/套装 全部吃到。合成 mes-only 列 (AllMeshModels, 100M) 本就 < 5000,不受影響。
             int capped = 0;
             foreach (var it in clothing) { int p = CapCoinPrice(it.Price, it.PriceCategoryRaw); if (p != it.Price) { it.Price = p; capped++; } }
+            // 非衣服的 2D 商品 (道具/藥水/特效/寵物/禮包) 一樣壓 M 幣定價上限 —— 它們早在上面就分流進 props,沒被上面那圈
+            // 掃到 (使用者回報「超過5000的沒套用5000M」= 禮包/特效卡那些 2000000M 沒被壓)。共用同一批 ShopItem 物件 → 改到底。
+            foreach (var it in props) { int p = CapCoinPrice(it.Price, it.PriceCategoryRaw); if (p != it.Price) { it.Price = p; capped++; } }
             Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版, {capped} 件 M-幣 定價壓到 {MaxCoinPrice}), "
                       + $"{props.Count} 2D 商品 ({propGroups.Count} 頁)");
             return new AvatarItemCatalog(clothing, groups, meshFiles, sets, props, propGroups);

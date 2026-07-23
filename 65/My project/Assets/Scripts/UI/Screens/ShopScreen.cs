@@ -1057,7 +1057,13 @@ namespace Sdo.UI.Screens
                 // 有 2D 圖示的早在 RefreshGrid 就貼好圖了。
                 bool prop = item.IsProp;
                 string propMesh = prop ? DressCatalog.MeshRel(item.ModelId) : null;
-                if (prop && propMesh == null) return;                            // 官方資料就沒有模型 → 留空格 (商品仍上架)
+                if (prop && propMesh == null)
+                {
+                    // 診斷:2D 圖示 (AddPropIcon) 也沒撿到、3D mesh (DAOJU) 也沒有 → 這格永遠空白。印出 modelId + DRESS.TXT
+                    // 查到的資源名,才知道是「DRESS 沒這筆」還是「檔名對不上磁碟」還是「.an 撿不到」(使用者回報 2D 道具都沒顯示)。
+                    Debug.Log($"[shop] prop card#{i} '{item?.Name}' (model {item?.ModelId}) 無 2D 圖也無 3D mesh → 空格 (DRESS 資源='{DressCatalog.Resource(item.ModelId)}')");
+                    return;
+                }
                 if (!prop && (_catalog == null || !_catalog.IsRenderable(item)))
                 {
                     // 空格子診斷:這條路不做縮圖也不留痕跡,查「某格永遠空白」時必須知道是不是走到這裡 (037000 空卡調查)
@@ -1123,8 +1129,10 @@ namespace Sdo.UI.Screens
                     _cardFrameScale[i] = new Vector3(os, os, os);
                     _cardFramePos[i] = new Vector3(0f, -os * BodyCy, 0f);
                 }
-                else if (slot == EquipSlot.Wings)   // 單件翅膀=背飾 mesh,尺寸差異大且無 per-slot 表值 → auto-fit 填滿+置中
+                else if (slot == EquipSlot.Wings || slot == EquipSlot.Necklace)   // 翅膀/项链 mesh 尺寸與位置差異大、官方無 per-slot 表值 → auto-fit 填滿+置中
                 {
+                    // 项链(_LINGDANG)的墜飾 mesh 不在固定頸部高度,原本硬估 FrameFor(Necklace) pos(0,-400) 把它推出鏡頭
+                    // → 只剩頂端一小塊露在左上角 (使用者:「項鍊沒瞄準物品位置」)。改跟翅膀一樣依實際 bbox 縮放+置中。
                     VisibleYBounds(root, null, out float owmn, out float owmx);
                     VisibleXBounds(root, out float oxmn, out float oxmx);
                     float ofh = CardOrthoHalfW / ((float)_L.RtW / _L.RtH);
