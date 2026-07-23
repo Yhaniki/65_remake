@@ -24,16 +24,27 @@ namespace Sdo.Game
         public IReadOnlyList<ShopItem> Clothing { get; }
         public int Count => Clothing.Count;
 
+        /// <summary>非衣服的 2D 商品 (道具/藥水/人物特效/寵物/寵物頭飾/寵物衣/寵物道具/禮包) —— 沒有 avatar mesh，
+        /// 商品格畫 ITEM2D 圖示。官方 iteminfo 同樣有名字/價格/時效，所以走同一條 ShopItem 管線。</summary>
+        public IReadOnlyList<ShopItem> Props { get; }
+
         private readonly Dictionary<(ItemSex, EquipSlot), List<ShopItem>> _groups;
+        private readonly Dictionary<EquipSlot, List<ShopItem>> _propGroups;   // 2D 商品不分性別 (sex byte 皆 2/0，官方也不分頁)
         private readonly HashSet<string> _meshFiles;   // available MSH filenames across Root + dev Datas
         private readonly Dictionary<int, OutfitSet> _sets;   // 套装 setinfo: setId → component list (keyed by ShopItem.ModelId)
 
         private AvatarItemCatalog(List<ShopItem> clothing,
                                   Dictionary<(ItemSex, EquipSlot), List<ShopItem>> groups,
-                                  HashSet<string> meshFiles, Dictionary<int, OutfitSet> sets)
+                                  HashSet<string> meshFiles, Dictionary<int, OutfitSet> sets,
+                                  List<ShopItem> props, Dictionary<EquipSlot, List<ShopItem>> propGroups)
         {
             Clothing = clothing; _groups = groups; _meshFiles = meshFiles; _sets = sets;
+            Props = props; _propGroups = propGroups;
         }
+
+        /// <summary>一個 2D 商品分頁 (道具/藥水/特效/寵物…) 的商品，catalog 原序。</summary>
+        public IReadOnlyList<ShopItem> PropGroup(EquipSlot slot)
+            => _propGroups.TryGetValue(slot, out var l) ? l : (IReadOnlyList<ShopItem>)Array.Empty<ShopItem>();
 
         // 套装 mesh slot tokens (component 檔名內嵌的部位) — 用 modelId+性別+token 直接 O(1) 命中 _meshFiles。
         private static readonly string[] OutfitSlotTokens =
@@ -470,8 +481,9 @@ namespace Sdo.Game
             }
             if (_byId == null)
             {
-                _byId = new Dictionary<int, ShopItem>(Clothing.Count);
+                _byId = new Dictionary<int, ShopItem>(Clothing.Count + Props.Count);
                 foreach (var it in Clothing) _byId[it.Id] = it;
+                foreach (var it in Props) _byId[it.Id] = it;   // 買下的 2D 道具重載存檔時也要查得到 (背包/數量)
             }
             return _byId.TryGetValue(id, out var v) ? v : null;
         }
@@ -529,12 +541,22 @@ namespace Sdo.Game
 
             var clothing = new List<ShopItem>();
             var groups = new Dictionary<(ItemSex, EquipSlot), List<ShopItem>>();
+            var props = new List<ShopItem>();
+            var propGroups = new Dictionary<EquipSlot, List<ShopItem>>();
             foreach (var it in items)
             {
-                if (it.SlotType != ItemSlotType.Clothes) continue;   // skip consumables / effects
-                if (IsPlaceholderItem(it.Id)) continue;              // 伺服器測試佔位列 (「Bug Item」) 不上架
                 var slot = it.EquipSlot;
                 if (slot == EquipSlot.None) continue;
+                if (ItemTypes.IsProp(slot))
+                {
+                    // 非衣服的 2D 商品 (道具/藥水/特效/寵物/禮包) —— 以前這裡直接 continue 丟掉，所以 道具店/伙伴店/礼包店
+                    // 全是空的。現在留下來、按分頁 (slot) 分組；性別不分 (官方這幾頁沒有男女切換)。
+                    props.Add(it);
+                    if (!propGroups.TryGetValue(slot, out var pl)) propGroups[slot] = pl = new List<ShopItem>();
+                    pl.Add(it);
+                    continue;
+                }
+                if (IsPlaceholderItem(it.Id)) continue;              // 伺服器測試佔位列 (「Bug Item」) 不上架
                 clothing.Add(it);   // 重複列仍留在 Clothing → ById 查得到 (已擁有/已穿的英文 id 不會失效)
                 if (hidden.Contains(it.Id)) continue;                // …但不進商城分頁清單
                 var key = (ItemTypes.GenderOf(it.Category, it.Name), slot);   // GenderOf 修 cat203 套装 (sex byte 皆0,靠名字)
@@ -552,8 +574,9 @@ namespace Sdo.Game
             // 改這裡的 Price → 顯示/購買/買齊/套装 全部吃到。合成 mes-only 列 (AllMeshModels, 100M) 本就 < 5000,不受影響。
             int capped = 0;
             foreach (var it in clothing) { int p = CapCoinPrice(it.Price, it.PriceCategoryRaw); if (p != it.Price) { it.Price = p; capped++; } }
-            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版, {capped} 件 M-幣 定價壓到 {MaxCoinPrice})");
-            return new AvatarItemCatalog(clothing, groups, meshFiles, sets);
+            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版, {capped} 件 M-幣 定價壓到 {MaxCoinPrice}), "
+                      + $"{props.Count} 2D 商品 ({propGroups.Count} 頁)");
+            return new AvatarItemCatalog(clothing, groups, meshFiles, sets, props, propGroups);
         }
 
         /// <summary>
