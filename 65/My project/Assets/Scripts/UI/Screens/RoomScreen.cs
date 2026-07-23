@@ -96,6 +96,8 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI _roomNameLabel;
         private OutlinedLabel _songLabel;   // 歌名(白邊)
         private OutlinedLabel _floatName;       // name marker that floats above the avatar in the room (官方頭上名字)；字 rgb(250,252,214) 描黑邊
+        private OutlinedLabel _floatFamily;     // 家族名稱(白字描黑邊)，畫在名字上方那一行；config familyName 留空則不顯示
+        private Image _floatEmblem;             // 家族名稱前的小徽章(EMBLEM/SMALL*)；familyEmblem 留空或載入失敗則不顯示
         private RectTransform _chatContent;
         private ScrollRect _chatScroll;
         private ChatLineClip _chatClip;
@@ -228,6 +230,19 @@ namespace Sdo.UI.Screens
             _floatName = OutlinedLabel.Create(Root, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
                 charSpacing: -TextStyles.HeadNameTrackEm * 100f);
             _floatName.gameObject.SetActive(false);
+
+            // 家族列：家族名稱(白字描黑邊) + 名稱前的小徽章(EMBLEM/SMALL*)，畫在頭上名字的「上方」一行。
+            // 內容與顯不顯示都由 config.ini 的 familyName/familyEmblem 決定(見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
+            // 名稱用「左對齊」：徽章+名稱要作為一個群組一起水平置中，左對齊才能讓文字自群組內的固定起點畫出。預設留空 → 不顯示。
+            _floatFamily = OutlinedLabel.Create(Root, "FloatFamily", 0, 0, 160, FamilyRowH, 14, Color.white, Color.black,
+                FamilyNameEdgePx, true, TextAlignmentOptions.Left, charSpacing: -TextStyles.HeadNameTrackEm * 100f);
+            _floatFamily.gameObject.SetActive(false);
+            _floatEmblem = UIKit.AddImage(Root, "FloatEmblem", Color.white);
+            var emblemRt = _floatEmblem.rectTransform;
+            emblemRt.anchorMin = emblemRt.anchorMax = new Vector2(0f, 1f);   // 左上錨(同 AddSprite)：anchoredPosition=(x,-y)
+            emblemRt.pivot = new Vector2(0f, 1f);
+            emblemRt.sizeDelta = new Vector2(FamilyEmblemSize, FamilyEmblemSize);
+            _floatEmblem.gameObject.SetActive(false);
 
             // window containers — everything in win1/win2/win3 hangs under one of these so the collapse button can slide
             // each panel off-screen as a single unit (官方 uihide/uidisplay). Each is a full-canvas rect anchored top-left
@@ -2139,7 +2154,15 @@ namespace Sdo.UI.Screens
                 }
             }
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
-            if (_floatName != null) { _floatName.SetText(LocalName(room)); _floatName.gameObject.SetActive(true); }
+            // 名字後面接等級「Lv:N」(config.playerLevel 留空則不接)；家族列(徽章+名稱)另外畫在名字上方(UpdateFamilyRow)。
+            if (_floatName != null)
+            {
+                string nm = LocalName(room);
+                string lvl = RoomConfig.LevelLabel(RoomConfig.playerLevel);
+                _floatName.SetText(lvl.Length > 0 ? nm + "  " + lvl : nm);
+                _floatName.gameObject.SetActive(true);
+            }
+            UpdateFamilyRow();
 
             // host sees Start; guest sees Ready/Cancel (single-player host → Start visible)
             bool localReady = LocalReady(room);
@@ -2382,6 +2405,7 @@ namespace Sdo.UI.Screens
             {
                 if (_floatName != null && _floatName.gameObject.activeSelf)
                     PlaceFollow(_floatName.Rect, vp, -8f);                      // name sits just ABOVE the avatar's head
+                PlaceFamilyRow(vp);                                            // 家族列(徽章+名稱)再往上疊一行
             }
 
             bool needBubbleAnchor = _sentBubbles.Count > 0
@@ -3078,6 +3102,46 @@ namespace Sdo.UI.Screens
             rt.anchoredPosition = new Vector2(vp.x * 800f - rt.sizeDelta.x * 0.5f, -topFromTop);
         }
 
+        // 依 config.ini 設定頭上「家族列」(徽章＋家族名稱)的內容與顯示與否；實際位置每幀由 PlaceFamilyRow 跟著頭擺放。
+        //   familyName 留空 → 整條家族列(名稱+徽章)不顯示。
+        //   familyEmblem 留空或載入失敗 → 只顯示家族名稱、不放徽章。
+        private void UpdateFamilyRow()
+        {
+            bool show = !string.IsNullOrEmpty((RoomConfig.familyName ?? "").Trim());
+            if (_floatFamily != null)
+            {
+                if (show) _floatFamily.SetText(RoomConfig.familyName.Trim());
+                _floatFamily.gameObject.SetActive(show);
+            }
+            if (_floatEmblem != null)
+            {
+                Sprite em = show ? EmblemArt.Emblem(RoomConfig.familyEmblem) : null;
+                if (em != null) { _floatEmblem.sprite = em; _floatEmblem.gameObject.SetActive(true); }
+                else _floatEmblem.gameObject.SetActive(false);
+            }
+        }
+
+        // 把頭上「家族列」(徽章＋家族名稱)整組水平置中於頭部，疊在名字上方一行。徽章在左、名稱在右，兩者當「一個群組」
+        // 一起置中(而非各自置中)，才不會因徽章寬度而整體偏移。家族名稱左對齊 → 文字自群組內固定起點畫出。跟著 vp(頭部視埠)走。
+        private void PlaceFamilyRow(Vector2 vp)
+        {
+            if (_floatFamily == null || !_floatFamily.gameObject.activeSelf) return;
+            float centerX = vp.x * 800f;
+            // 名字列頂端 = (1-vp.y)*600 - 8（見 Update 內 PlaceFollow 給 _floatName 的 topOffset=-8）。家族列疊其上 → 兩行
+            // 都同高且垂直置中，所以「holder 頂端相差 FamilyLinePitch」＝「兩行文字中心相差 FamilyLinePitch」，直接調它即可。
+            float nameTop = (1f - vp.y) * 600f - 8f;
+            float rowTop = nameTop - FamilyLinePitch;
+            float textW = _floatFamily.PreferredWidth;
+            bool hasEmblem = _floatEmblem != null && _floatEmblem.gameObject.activeSelf;
+            float emblemW = hasEmblem ? FamilyEmblemSize : 0f;
+            float gap = hasEmblem ? FamilyEmblemGap : 0f;
+            float left = centerX - (emblemW + gap + textW) * 0.5f;
+            _floatFamily.Rect.anchoredPosition = new Vector2(left + emblemW + gap, -rowTop);   // 左對齊：文字起點=群組左緣+徽章+間距
+            if (hasEmblem)
+                _floatEmblem.rectTransform.anchoredPosition =
+                    new Vector2(left, -(rowTop + (FamilyRowH - FamilyEmblemSize) * 0.5f));      // 徽章垂直置中於家族列
+        }
+
         private string LocalName(RoomInfo room)
         {
             if (room == null) return "";
@@ -3156,6 +3220,14 @@ namespace Sdo.UI.Screens
 
         /// <summary>頭上漂浮名字的黑邊厚度(canvas px)。字色/粗體跟遊戲內頭頂名字共用 <see cref="Sdo.Game.TextStyles.FaceCream"/>。</summary>
         private const float HeadNameEdgePx = 1.4f;
+
+        // ---- 頭上名字牌的「家族列」（徽章＋家族名稱，畫在名字上方那行）版面 ----
+        // 字級/字距/holder 高都對齊名字(_floatName：14px、h=20、charSpacing=-HeadNameTrackEm×100)，兩行看起來才同一套。
+        private const float FamilyEmblemSize = 15f;   // 徽章顯示邊長(design px)；原圖 24×24 縮到與 14px 字相稱
+        private const float FamilyEmblemGap = 5f;     // 徽章與家族名稱之間的水平間距(design px)；調大＝徽章離字遠一點
+        private const float FamilyRowH = 20f;         // 家族列 holder 高＝同名字 holder(20)：兩行都垂直置中 → 中心距=FamilyLinePitch
+        private const float FamilyLinePitch = 15f;    // 家族列與名字「兩行中心」的垂直距離(design px)；調小＝兩行靠更近
+        private const float FamilyNameEdgePx = 1.4f;  // 家族名稱白字的黑邊厚度(canvas px)，同頭上名字
 
         /// <summary>win(Win1/Win2/Win3) → 對應的收合容器；其他一律回 Root。</summary>
         private RectTransform WinRoot(Vector2 win)

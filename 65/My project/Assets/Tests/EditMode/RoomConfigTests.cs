@@ -34,6 +34,58 @@ namespace Sdo.Tests
             RoomConfig.defaultDropDirection = 0;
             RoomConfig.defaultGameMode = 0;
             RoomConfig.judgeLevel = 2;
+            RoomConfig.familyName = "";
+            RoomConfig.familyEmblem = "SMALL43";
+            RoomConfig.playerLevel = "";
+        }
+
+        [Test]
+        public void Family_And_Level_Parse_And_RoundTrip()
+        {
+            RoomConfig.ParseInto("[Profile]\nfamilyName=天使家族\nfamilyEmblem=SMALL7\nplayerLevel=42\n");
+            Assert.AreEqual("天使家族", RoomConfig.familyName);
+            Assert.AreEqual("SMALL7", RoomConfig.familyEmblem);
+            Assert.AreEqual("42", RoomConfig.playerLevel);
+
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual("天使家族", RoomConfig.familyName);
+            Assert.AreEqual("SMALL7", RoomConfig.familyEmblem);
+            Assert.AreEqual("42", RoomConfig.playerLevel);
+        }
+
+        [Test]
+        public void Family_And_Level_Sanitize_Trims_Whitespace()
+        {
+            // 前後空白會讓「留空＝不顯示」的判定失準(看似有值其實是空白) → Sanitize 去頭尾空白。
+            RoomConfig.familyName = "  ";
+            RoomConfig.playerLevel = "  ";
+            RoomConfig.familyEmblem = "  SMALL43  ";
+            RoomConfig.Sanitize();
+            Assert.AreEqual("", RoomConfig.familyName);
+            Assert.AreEqual("", RoomConfig.playerLevel);
+            Assert.AreEqual("SMALL43", RoomConfig.familyEmblem);
+        }
+
+        [Test]
+        public void LevelLabel_Formats_NonEmpty_And_Blank_For_Empty()
+        {
+            Assert.AreEqual("LV:11", RoomConfig.LevelLabel("11"));
+            Assert.AreEqual("LV:11", RoomConfig.LevelLabel("  11  "));   // 去頭尾空白後仍成立
+            Assert.AreEqual("", RoomConfig.LevelLabel(""));              // 留空 → 不顯示
+            Assert.AreEqual("", RoomConfig.LevelLabel("   "));
+            Assert.AreEqual("", RoomConfig.LevelLabel(null));
+        }
+
+        [Test]
+        public void Defaults_Hide_Family_And_Level()
+        {
+            // 內建預設：家族名稱/等級留空 → 不顯示；徽章雖預設 SMALL43，但沒有家族名就整條不畫。
+            Assert.AreEqual("", RoomConfig.familyName);
+            Assert.AreEqual("", RoomConfig.playerLevel);
+            Assert.AreEqual("SMALL43", RoomConfig.familyEmblem);
+            Assert.AreEqual("", RoomConfig.LevelLabel(RoomConfig.playerLevel));
         }
 
         [Test]
