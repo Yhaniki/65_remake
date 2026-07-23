@@ -1130,15 +1130,12 @@ namespace Sdo.UI.Screens
                 }
                 else if (slot == EquipSlot.Wings || slot == EquipSlot.Necklace)   // 翅膀/项链 mesh 尺寸與位置差異大、官方無 per-slot 表值 → auto-fit 填滿+置中
                 {
-                    // 项链(_LINGDANG)的墜飾 mesh 不在固定頸部高度,原本硬估 FrameFor(Necklace) pos(0,-400) 把它推出鏡頭
-                    // → 只剩頂端一小塊露在左上角 (使用者:「項鍊沒瞄準物品位置」)。改跟翅膀一樣依實際 bbox 縮放+置中。
-                    VisibleYBounds(root, null, out float owmn, out float owmx);
-                    VisibleXBounds(root, out float oxmn, out float oxmx);
-                    float ofh = CardOrthoHalfW / ((float)_L.RtW / _L.RtH);
-                    float os = Mathf.Min(CardOrthoHalfW * 2f * 0.9f / Mathf.Max(oxmx - oxmn, 1e-3f),
-                                         ofh * 2f * 0.9f / Mathf.Max(owmx - owmn, 1e-3f));
-                    _cardFrameScale[i] = new Vector3(os, os, os);
-                    _cardFramePos[i] = new Vector3(-os * (oxmn + oxmx) * 0.5f, -os * (owmn + owmx) * 0.5f, 0f);
+                    // 项链(_LINGDANG)的墜飾 mesh 不在固定頸部高度,且幾何中心常偏離模型原點 (x=0,z=0)。原本只用固定 _cardFramePos
+                    // 把「不轉的」墜飾框進中心,但 hover 自轉是繞模型原點轉的 → 偏心的墜飾就繞著原點公轉甩出鏡頭 (使用者:「Rudolph
+                    // F 1 focus 時旋轉軸心不對、轉到外面」)。改跟禮盒/道具走同一條 auto-center:pivot=模型空間 bbox 中心,RenderCard
+                    // 每幀依當下旋轉重算位移把中心釘在相機中心 → 墜飾原地自轉不再甩出。縮放用轉正後的 bbox (與禮盒一致)。
+                    var vb = VisibleBounds(root);
+                    FitCardToBounds(i, RotatedBounds(vb, CardRotation(i)), vb.center);
                 }
                 else
                 {
@@ -1331,35 +1328,12 @@ namespace Sdo.UI.Screens
         private static bool IsSkinMat(Material m)
             => m != null && m.name.IndexOf("BASIC", System.StringComparison.OrdinalIgnoreCase) >= 0;
 
-        // 「看得見」幾何的模型空間 Y 範圍 (min,max)：只算仍有三角形的 submesh 頂點 (膚色被 SetTriangles 清掉的頂點仍在
-        // mesh 裡但不引用 → 不計入,裸腿/手臂不撐大)。nameFilter!=null 時只算物件名含該字串的 part (如 "FACE" 只框頭,不含
-        // 長髮 → 頭恆置中)。頂點已是 bind-pose 蒙皮後位置;parts 在 root 下 local identity → 頂點座標 = 模型空間。
-        private static bool VisibleYBounds(GameObject root, string nameFilter, out float mn, out float mx)
+        // 「看得見」幾何的完整模型空間 bbox：只算仍有三角形引用的 submesh 頂點 (膚色被 SetTriangles 清掉的頂點仍在 mesh 裡
+        // 但不引用 → 不計入,裸腿/手臂不撐大)。頂點已是 bind-pose 蒙皮後位置;parts 在 root 下 local identity → 頂點座標 = 模型
+        // 空間。項链/翅膀 auto-center 用:pivot=此 bbox 中心 (RenderCard 每幀把它釘回相機中心,hover 自轉才不甩出鏡頭)。
+        private static Bounds VisibleBounds(GameObject root)
         {
-            bool any = false; mn = 0f; mx = 0f;
-            foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
-            {
-                var mr = mf.GetComponent<MeshRenderer>(); var mesh = mf.sharedMesh;
-                if (mesh == null || mr == null || !mr.enabled) continue;
-                if (nameFilter != null && mf.name.IndexOf(nameFilter, System.StringComparison.OrdinalIgnoreCase) < 0) continue;
-                var verts = mesh.vertices;
-                for (int s = 0; s < mesh.subMeshCount; s++)
-                {
-                    var tris = mesh.GetTriangles(s);
-                    for (int k = 0; k < tris.Length; k++)
-                    {
-                        float y = verts[tris[k]].y;
-                        if (!any) { mn = mx = y; any = true; } else { if (y < mn) mn = y; if (y > mx) mx = y; }
-                    }
-                }
-            }
-            return any;
-        }
-
-        // 「看得見」幾何的模型空間 X 範圍 (min,max) — 鞋/手套水平 fit+置中用 (手套 mesh 含雙前臂,很寬)。同 VisibleYBounds 走法。
-        private static bool VisibleXBounds(GameObject root, out float mn, out float mx)
-        {
-            bool any = false; mn = 0f; mx = 0f;
+            bool any = false; Vector3 mn = Vector3.zero, mx = Vector3.zero;
             foreach (var mf in root.GetComponentsInChildren<MeshFilter>())
             {
                 var mr = mf.GetComponent<MeshRenderer>(); var mesh = mf.sharedMesh;
@@ -1370,12 +1344,14 @@ namespace Sdo.UI.Screens
                     var tris = mesh.GetTriangles(s);
                     for (int k = 0; k < tris.Length; k++)
                     {
-                        float x = verts[tris[k]].x;
-                        if (!any) { mn = mx = x; any = true; } else { if (x < mn) mn = x; if (x > mx) mx = x; }
+                        var v = verts[tris[k]];
+                        if (!any) { mn = mx = v; any = true; } else { mn = Vector3.Min(mn, v); mx = Vector3.Max(mx, v); }
                     }
                 }
             }
-            return any;
+            var b = new Bounds();
+            b.SetMinMax(mn, mx);   // any==false → 退化成原點零尺寸 bbox (FitCardToBounds 的 1e-3 夾限接手,不會除零)
+            return b;
         }
 
         // 每張卡只載「該件」的 .msh (官方=素體假人+該件+per-slot 鏡頭放大 → 視覺上只有衣物本身)。

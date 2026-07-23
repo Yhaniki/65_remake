@@ -8,7 +8,7 @@ namespace Sdo.Game
     /// far off the room, on its own layer, framed head-on (3/4 yaw) by a dedicated camera with a transparent
     /// background. The camera targets the head bone's REST position so the idle head-bob plays inside the frame instead
     /// of being chased, and auto-frames off the FACE box raised to the measured hair-top (ComputeHeadBox) so the whole
-    /// head fits, the hair is never cut, and a 長髮 mesh can't push the camera away (商城卡片同招:VisibleYBounds "FACE").
+    /// head fits, the hair is never cut, and a 長髮 mesh can't push the camera away (商城卡片同招:依可見幾何 bbox auto-fit).
     /// Owns its avatar + camera + RT; release via OnDestroy (the host destroys this GameObject).
     /// </summary>
     public sealed class RoomHeadPortrait : MonoBehaviour
