@@ -95,5 +95,47 @@ namespace Sdo.Tests
             StringAssert.EndsWith(Path.Combine("SdoAddon", "SONG"), SdoExtracted.AddonSongsDir);
             RoomConfig.addonFolder = "";   // leave clean for other tests
         }
+
+        // 外部歌「分類瀏覽」面板不透明度（config.ini 的 SongUiAlpha，預設 0.6）。
+        [Test]
+        public void ParseInto_Reads_SongUiAlpha()
+        {
+            RoomConfig.songUiAlpha = 0.6f;
+            RoomConfig.ParseInto("SongUiAlpha=0.35\n");
+            Assert.AreEqual(0.35f, RoomConfig.songUiAlpha, 1e-4f);
+            RoomConfig.songUiAlpha = 0.6f;   // leave clean for other tests
+        }
+
+        [Test]
+        public void Sanitize_Clamps_SongUiAlpha_To_0_1()
+        {
+            RoomConfig.songUiAlpha = 2f;  RoomConfig.Sanitize();  Assert.AreEqual(1f, RoomConfig.songUiAlpha, 1e-4f);
+            RoomConfig.songUiAlpha = -1f; RoomConfig.Sanitize();  Assert.AreEqual(0f, RoomConfig.songUiAlpha, 1e-4f);
+            RoomConfig.songUiAlpha = 0.6f;   // leave clean for other tests
+        }
+
+        [Test]
+        public void Serialize_RoundTrips_SongUiAlpha()
+        {
+            RoomConfig.songUiAlpha = 0.42f;
+            string ini = RoomConfig.Serialize();
+            StringAssert.Contains("SongUiAlpha=", ini);
+            RoomConfig.songUiAlpha = 0.6f;                 // clobber, then read the serialized value back
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual(0.42f, RoomConfig.songUiAlpha, 1e-3f);
+            RoomConfig.songUiAlpha = 0.6f;   // leave clean for other tests
+        }
+
+        [Test]
+        public void Schema_Upgrade_Notices_A_Missing_SongUiAlpha()
+        {
+            // 完整 config 不缺 key；把 SongUiAlpha 那行單獨拿掉後就該被判為需要補寫（證明它確實在 schema 裡，
+            // 缺了會被 Load() 的升級路徑補回）。
+            string full = RoomConfig.Serialize();
+            Assert.IsFalse(RoomConfig.IsMissingCurrentKey(full), "完整序列化不該缺任何 key");
+            var lines = full.Split('\n');
+            var trimmed = string.Join("\n", System.Array.FindAll(lines, l => !l.TrimStart().StartsWith("SongUiAlpha=")));
+            Assert.IsTrue(RoomConfig.IsMissingCurrentKey(trimmed), "少了 SongUiAlpha 的舊檔應被判為需要補寫");
+        }
     }
 }

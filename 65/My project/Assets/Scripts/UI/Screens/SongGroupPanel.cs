@@ -204,7 +204,13 @@ namespace Sdo.UI.Screens
             if (!_open) return;
             EnsureStyles();
             if (!_userSized) SizeToDiscColumn();   // default size = the disc column; once the user drags an edge it sticks
+
+            // 整體不透明度（config.ini 的 SongUiAlpha，預設 0.6）：GUI.color 的 alpha 會一路乘到視窗底板與內部文字/按鈕，
+            // 所以整個面板連同內容一起變半透明，讓底下的唱片欄若隱若現。GUI.color 會帶進 window callback（IMGUI 全域）。
+            var prevColor = GUI.color;
+            GUI.color = new Color(prevColor.r, prevColor.g, prevColor.b, prevColor.a * Mathf.Clamp01(Sdo.Settings.RoomConfig.songUiAlpha));
             _rect = GUI.Window(WindowId, _rect, DrawWindow, GUIContent.none, _winStyle);   // no title, no white frame
+            GUI.color = prevColor;
 
             // Apply a size the resize-grip drag asked for this frame (see _resizeTo), then keep the window sane: a size
             // between the minimum and the viewport, and a position that keeps it fully on screen.

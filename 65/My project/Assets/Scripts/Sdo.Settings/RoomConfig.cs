@@ -58,6 +58,10 @@ namespace Sdo.Settings
         // 資料夾（例如另一顆硬碟 D:/SdoAddon）就填一個絕對路徑；該資料夾底下就是 SONG 等子夾。見 SdoExtracted.AddonDir。
         public static string addonFolder = "";
 
+        // 外部歌曲「分類瀏覽」浮動面板（SongGroupPanel）的整體不透明度：0=全透明、1=不透明。預設 0.6 讓底下的唱片欄若隱若現。
+        // 見 SongGroupPanel.OnGUI（整個視窗連同文字/按鈕一起以此 alpha 疊繪）。
+        public static float songUiAlpha = 0.6f;
+
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
@@ -321,6 +325,7 @@ namespace Sdo.Settings
                     case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
                     case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
                     case "AddonFolder": addonFolder = NormalizeFolder(val); break;
+                    case "SongUiAlpha": songUiAlpha = ParseFloat(val, songUiAlpha); break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -366,6 +371,7 @@ namespace Sdo.Settings
             judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
             if (addonFolder == null) addonFolder = "";
+            songUiAlpha = Mathf.Clamp01(songUiAlpha);                        // 外部歌分類面板不透明度 0..1
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
             activeId = SanitizeActiveId(activeId);
@@ -425,6 +431,8 @@ namespace Sdo.Settings
             sb.Append("# 外掛(ADDON)根目錄：預設空=DATA/ADDON。想把整包外掛（SONG/NOTESKIN/THEME/MODEL）放別處就填絕對路徑，\n");
             sb.Append("# 例如 AddonFolder=D:/SdoAddon（該資料夾底下就是 SONG 等子夾）。\n");
             sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
+            sb.Append("# 選歌畫面「分類瀏覽」浮動面板（外部歌資料夾清單）的不透明度：0=全透明、1=不透明。預設 0.6。\n");
+            sb.Append("SongUiAlpha=").Append(songUiAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");

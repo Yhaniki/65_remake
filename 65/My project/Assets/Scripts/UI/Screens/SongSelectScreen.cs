@@ -87,6 +87,8 @@ namespace Sdo.UI.Screens
         private SongGroupPanel _groupPanel;
         private List<SongCatalog.Entry> _bucketSongs = new List<SongCatalog.Entry>();
         private Coroutine _rescan;   // 更新 in flight (non-null) → the button is a no-op until it finishes
+        private BootProgress _rescanProg;    // 更新掃描時，跳回「開機載入歌曲」那個全螢幕 loading 畫面（同一個 BootProgress）
+        private GameObject _rescanOverlay;   // 承載 _rescanProg 的獨立高排序 overlay canvas；掃完或離開畫面時銷毀
 
         // 隨機 difficulty ranges — shown AS the list rows when the 隨機 tab is active; OK picks a random song from the pool.
         // 範圍表 + 選池邏輯放在 SongListModel（唯一來源）：FrontendApp 進遊戲時也用同一份重抽。
@@ -310,6 +312,15 @@ namespace Sdo.UI.Screens
         {
             if (_rescan != null) { StopCoroutine(_rescan); _rescan = null; }
             _groupPanel?.SetBusy(false);
+            TeardownRescanLoading();   // 離開畫面（OnHide/進遊戲）→ 收掉可能還開著的 loading overlay，別讓它殘留
+        }
+
+        // 收掉「更新」時的全螢幕 loading 畫面（BootProgress + 它的獨立 canvas）。冪等：掃完正常結束與中途離開都呼叫。
+        private void TeardownRescanLoading()
+        {
+            _rescanProg?.Destroy();
+            _rescanProg = null;
+            if (_rescanOverlay != null) { Destroy(_rescanOverlay); _rescanOverlay = null; }
         }
 
         private void ComputeBadges()
@@ -458,9 +469,10 @@ namespace Sdo.UI.Screens
 
         // ---------------- 更新：re-scan the song folders without restarting ----------------
 
-        /// <summary>分類瀏覽面板的「更新」鈕：re-run the external-song scan so songs added / edited / removed on disk
-        /// since boot show up right away. Cheap in practice — unchanged folders come straight out of ExternalScanCache
-        /// (a file-stats signature, no chart parse), so only what actually changed is re-read.</summary>
+        /// <summary>分類瀏覽面板的「更新」鈕：跳回「開機時載入歌曲」那個全螢幕 loading 畫面（同一個 <see cref="BootProgress"/>），
+        /// 在它上面 re-run the external-song scan（磁碟上新增／改過／刪掉的歌都會被撿進來），讀取好之後再跳回原本的選歌畫面。
+        /// Cheap in practice — unchanged folders come straight out of ExternalScanCache (a file-stats signature, no chart
+        /// parse), so only what actually changed is re-read.</summary>
         private void BeginRescan()
         {
             if (_rescan == null) _rescan = StartCoroutine(RescanCo());
@@ -472,23 +484,43 @@ namespace Sdo.UI.Screens
             // away, so anything held across the scan has to be re-resolved by gn afterwards.
             string keepGn = _selected != null && _selected.external ? _selected.gn : null;
             string bucketKey = _groupPanel != null ? _groupPanel.ActiveKey : null;
+            bool panelWasOpen = _groupPanel != null && _groupPanel.Visible;   // 更新鈕在面板上→通常開著；掃完照樣開回來
 
             StopPreview();   // the file being previewed may be the one about to be rewritten/deleted
-            _groupPanel?.SetBusy(true, L("songselect.group_scanning"));
+
+            // 分類瀏覽面板是 IMGUI（GUI.Window）→ 永遠畫在所有 uGUI canvas 之上，底下的 loading 畫面會被它蓋住。
+            // 掃描期間先關掉它（讓 loading 畫面乾淨露出），掃完再開回原本的分類。
+            CloseGroupPanel();
+
+            // 跳回一開始那個載入歌曲的全螢幕畫面：在自己的高排序 overlay canvas 上放 BootProgress，蓋住選歌畫面與底下的房間。
+            _rescanOverlay = UIKit.CreateCanvas("SongRescanLoading", new Vector2(800f, 600f), short.MaxValue - 2).gameObject;
+            _rescanProg = BootProgress.Create((RectTransform)_rescanOverlay.transform);
+            yield return null;   // let the overlay render one frame before the heavy scan starts
+
+            // 進度/資料夾/明細沿用開機掃描的呈現（BootProgress 第二行顯示現正讀取的資料夾＋歌名累計）。
+            _rescanProg.Set(0.05f, "掃描歌曲資料夾…");
             yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
-                _groupPanel?.SetBusy(true, ScanLine(f, folder, detail)));
-            _groupPanel?.SetBusy(false);
+                _rescanProg?.Set(0.05f + 0.9f * Mathf.Clamp01(f),
+                                 string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
+            _rescanProg?.Set(1f, "");
+            yield return null;
 
             // The catalog changed underneath us → rebuild everything derived from it.
             _model = SongListModel.FromCatalog();
             ComputeBadges();
             _extDurDone.Clear();       // fileIds are handed out afresh by the scan; measured durations don't carry over
-            _bucketSongs.Clear();      // stale Entry objects — OpenGroupPanel refills this via OnBucketPicked
+            _bucketSongs.Clear();      // stale Entry objects — the panel reopen below refills this via OnBucketPicked
 
-            // Re-bucket the new pool and land on the same bucket (gone → the panel's first one). Reload — not
-            // OpenGroupPanel — so a panel the player closed mid-scan stays closed; either way its onPick refills
-            // _bucketSongs and re-selects a song.
-            if (_groupPanel != null) _groupPanel.Reload(_model.Externals(), bucketKey);
+            // 讀取好 → 收掉 loading 畫面，跳回原本的選歌畫面。
+            TeardownRescanLoading();
+
+            // Re-bucket the new pool and land on the same bucket (gone → the panel's first one). Reopen the panel where
+            // the player left it (it was closed for the loading screen), then Reload swaps in the freshly scanned pool.
+            if (_groupPanel != null)
+            {
+                if (panelWasOpen) _groupPanel.Open(bucketKey);
+                _groupPanel.Reload(_model.Externals(), bucketKey);
+            }
             else ApplyFilter();
 
             // If the song that was selected survived the re-scan, go back to it.
@@ -515,16 +547,6 @@ namespace Sdo.UI.Screens
             if (d.Changed > 0) parts.Add(L("songselect.group_refresh_changed", d.Changed));
             if (d.Removed > 0) parts.Add(L("songselect.group_refresh_removed", d.Removed));
             return string.Join(L("songselect.group_refresh_sep"), parts.ToArray());
-        }
-
-        // The panel's progress line: percentage + the folder being read + the running song count, all optional
-        // (the scanner reports blanks while it is still walking the tree).
-        private static string ScanLine(float f, string folder, string detail)
-        {
-            string s = L("songselect.group_scanning") + "  " + Mathf.RoundToInt(Mathf.Clamp01(f) * 100f) + "%";
-            if (!string.IsNullOrEmpty(folder)) s += "\n" + folder;
-            if (!string.IsNullOrEmpty(detail)) s += "\n" + detail;
-            return s;
         }
 
         /// <summary>Show the panel over the dialog and land it on <paramref name="key"/>'s bucket (else the first one).
