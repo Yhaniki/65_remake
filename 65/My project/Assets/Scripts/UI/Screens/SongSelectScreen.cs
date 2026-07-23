@@ -609,13 +609,27 @@ namespace Sdo.UI.Screens
             // Formation/looker use white text (no name-slice art for those values).
             var sdoModes = RoomDlgArt.AnFrames("LABEL_SDO.an");
             Sprite[] modeSprites = (sdoModes != null && sdoModes.Length >= 6) ? new[] { sdoModes[0], sdoModes[1], sdoModes[5] } : null;
-            SdoComboBox.Create(Root, "modeCombo", 289, slotY, 258, slotH, 522, arrow, listMode, listModeH,
+            // keep refs so ESC can peel an expanded dropdown before closing the whole dialog (see Update()).
+            _modeCombo = SdoComboBox.Create(Root, "modeCombo", 289, slotY, 258, slotH, 522, arrow, listMode, listModeH,
                 new[] { L("songselect.mode_free"), L("songselect.mode_normal"), L("songselect.mode_showtime") }, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 2), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
                 listAsText: true);   // expanded list = green text rows (like formation/looker); collapsed value keeps the LABEL_SDO sprite
-            SdoComboBox.Create(Root, "formCombo", 571, slotY, 56, slotH, 627, arrow, listSm, listSmH,
+            _formCombo = SdoComboBox.Create(Root, "formCombo", 571, slotY, 56, slotH, 627, arrow, listSm, listSmH,
                 new[] { L("songselect.form_basic"), L("songselect.form_fan"), L("songselect.form_ring"), L("songselect.form_random") }, null, Mathf.Clamp(Ctx.Session.Formation, 0, 3), Color.white, ColComboList, i => Ctx.Session.Formation = i);
-            SdoComboBox.Create(Root, "lookerCombo", 661, slotY, 56, slotH, 717, arrow, listSm, listSmH,
+            _lookerCombo = SdoComboBox.Create(Root, "lookerCombo", 661, slotY, 56, slotH, 717, arrow, listSm, listSmH,
                 LookerOptions(), null, Mathf.Clamp(Ctx.Session.LookerCount, 0, 10), Color.white, ColComboList, i => Ctx.Session.LookerCount = i);
+        }
+
+        // 底部三個下拉(模式/隊形/旁觀人數)的參照 — ESC 逐層收合時用來判斷/收合展開中的清單。
+        private SdoComboBox _modeCombo, _formCombo, _lookerCombo;
+
+        // ESC 開著的下拉先收合(回傳 true 表示有收到、吃掉這次 ESC)；沒有展開的就不動。
+        private bool CloseOpenCombo()
+        {
+            bool any = false;
+            if (_modeCombo != null && _modeCombo.IsOpen) { _modeCombo.CloseList(); any = true; }
+            if (_formCombo != null && _formCombo.IsOpen) { _formCombo.CloseList(); any = true; }
+            if (_lookerCombo != null && _lookerCombo.IsOpen) { _lookerCombo.CloseList(); any = true; }
+            return any;
         }
 
         private static string[] LookerOptions()
@@ -1086,6 +1100,22 @@ namespace Sdo.UI.Screens
         // 所以右鍵另一首會直接關舊選單並換到那首（Select + 重開選單）；左鍵另一首也會換過去並關選單。
         private void Update()
         {
+            // ESC → 跳回前一層，逐層剝離（與 Cancel/Close 鈕同路徑 CloseTo(Room)；選歌的上一層只有房間）：
+            //   ① IME 正在選字 → 讓輸入法先吃掉 ESC（取消候選字），不關畫面
+            //   ② 收藏右鍵選單開著 → 先收選單（第一次 ESC 收選單、第二次才返回房間）
+            //   ③ 模式/隊形/旁觀下拉展開中 → 先收下拉（下拉只在「點外面」時關，ESC 也要能收）
+            //   ④ 以上皆無 → 返回房間
+            // 只在選歌為當前畫面(它疊在房間上時 Flow.Current==SongSelect，房間自己的 ESC 因 roomIsTop 為假而不觸發)、
+            // 可見且非收合動畫中時作用。
+            if (Visible && !_closing && Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (!string.IsNullOrEmpty(Input.compositionString)) return;   // ① IME 選字中 → 交給輸入法
+                if (_favPopup != null) { CloseFavPopup(); return; }           // ② 收藏選單
+                if (CloseOpenCombo()) return;                                 // ③ 展開的下拉
+                CloseTo(ScreenId.Room);                                       // ④ 返回房間
+                return;
+            }
+
             // Keep the fallback preview (full-song middle) looping within its 20s window.
             if (_previewWindow && _preview != null && _preview.clip != null)
             {
