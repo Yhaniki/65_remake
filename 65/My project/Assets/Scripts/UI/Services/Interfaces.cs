@@ -52,6 +52,12 @@ namespace Sdo.UI.Services
         void SendExpression(int expressionId, ChatChannel channel, string leadingText, string trailingText);
         // 密語（私聊）：查對象是否在同伺服器/頻道 → 送「你對X說」+對方回「X對你說」；不在頻道→「X不在當前頻道」；查無帳號→「X無此id」。
         void SendWhisper(string target, string body, ChatChannel channel = ChatChannel.Current);
+        // 家族頻道：有家族 → 綠字「<家族>名字: 內容」+ 同族偶爾回話；沒有家族 → 紅字「你沒有家族」。皆本機專屬、不彈頭上泡。
+        void SendGuild(string text);
+        // 好友頻道沒帶 [名字] 對象就送出 → 白字「你說: 內容」，只有自己看得到、不送給任何人、不彈泡。
+        void SendSelfTalk(string text);
+        // 系統提示行（除錯/狀態回饋用）：金黃字，本機專屬。
+        void SendSystem(string text);
         // 玩家進出舞台遊戲的廣播（顏色 72c1fe）：「X 進入舞台遊戲」/「X 離開舞台」。
         void AnnounceStageEnter(string name);
         void AnnounceStageLeave(string name);

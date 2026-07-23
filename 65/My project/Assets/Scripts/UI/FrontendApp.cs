@@ -218,7 +218,8 @@ namespace Sdo.UI
             {
                 if (!_activeGame.Finished)
                 {
-                    if (Input.GetKeyDown(KeyCode.Escape)) AbortGameplay();   // quit early during play, no settlement
+                    // 中離（預設 ESC，可在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] quit 改）：不結算直接退出。
+                    if (KeyMap.Down(Hotkey.Quit)) AbortGameplay();
                 }
                 // Finished: ScreenGameplay owns the win/lose 定格 pose + STATIS result panel itself (its own ResultScreen).
                 // That sequence plays out AFTER Finished flips at song-end, so we must NOT tear down on Finished — we
@@ -289,7 +290,7 @@ namespace Sdo.UI
                 game.oggPath = oggPath;
             }
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
-            game.songOffsetMs = SongCatalog.OffsetMs(s.SongGn);  // 這首譜自己的 offset（手改在 song_name_overrides.json 的 offsetMs）
+            game.songOffsetMs = SongCatalog.OffsetMs(s.SongGn);  // 這首譜自己的 offset（手改在 song_table.csv 的 offsetMs）
             game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
             game.localPlayerMale = s.Gender == 1;
             game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;
@@ -322,9 +323,9 @@ namespace Sdo.UI
             _activeGame = game;
         }
 
-        // 遊戲中按 F2 換鏡頭 → 存進 OPTION 遊戲頁的「遊戲視角」：切到固定鏡頭就記住是第幾台且標籤變「固定」，
-        // 循環回自動導播就變回「默認」（台號保留）。落地到 settings.json（裝置層）＋ per-user config.ini 的 [Option]，
-        // 否則下次開機 config.ini 會用舊值把它蓋回去。值沒變就不寫檔。
+        // 遊戲中按換鏡頭鍵（預設 F2）→ 存進 OPTION 遊戲頁的「遊戲視角」：切到固定鏡頭就記住是第幾台且標籤變「固定」，
+        // 循環回自動導播就變回「默認」（台號保留）。落地在 config.ini 的 [Option]（DisplaySettingsManager.Save 會寫）。
+        // 值沒變就不寫檔。
         private static void PersistCamMode(int camMode)
         {
             var s = DisplaySettingsManager.Settings;
@@ -332,8 +333,6 @@ namespace Sdo.UI
             s.gameplay ??= new GameplaySettings();
             if (!s.gameplay.SetFromCamMode(camMode, ScreenGameplay.FixedCamCount)) return;
             DisplaySettingsManager.Save();
-            RoomConfig.CaptureOptionFrom(s);
-            RoomConfig.Save();
         }
 
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),

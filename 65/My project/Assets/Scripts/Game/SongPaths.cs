@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.RegularExpressions;
 
 namespace Sdo.Game
 {
@@ -13,11 +12,17 @@ namespace Sdo.Game
         public static string Gn(string songGn)
             => string.IsNullOrEmpty(songGn) ? null : Path.Combine(SdoExtracted.MusicDir, songGn);
 
-        /// <summary>音樂路徑（<c>&lt;MUSIC&gt;/sdom1197.ogg</c>）；譜名不合慣例時回 null。</summary>
+        /// <summary>音樂路徑（<c>&lt;MUSIC&gt;/sdom1197.ogg</c>）；譜名為空時回 null。
+        ///
+        /// 檔名一律交給 <see cref="SongCatalog.MainOggName"/>（全專案唯一來源，開局與選歌試聽共用）。
+        /// 這裡原本自己用 <c>sdom\d+</c> regex 取號，遇到撞號手動插隊的 <c>sdom1234_1k.gn</c> 會在底線處
+        /// 斷掉、解成 <c>sdom1234.ogg</c> —— 開局放成「原本那首」的音樂（選歌試聽卻是對的，因為它早就走
+        /// MainOggName），造成同一首歌試聽與開局不同曲。
+        /// </summary>
         public static string Ogg(string songGn)
         {
-            string b = Regex.Match(songGn ?? "", @"sdom\d+").Value;
-            return b.Length > 0 ? Path.Combine(SdoExtracted.MusicDir, b + ".ogg") : null;
+            var name = SongCatalog.MainOggName(songGn);
+            return name == null ? null : Path.Combine(SdoExtracted.MusicDir, name);
         }
     }
 }

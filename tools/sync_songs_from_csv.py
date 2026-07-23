@@ -5,8 +5,12 @@ sync_songs_from_csv.py — 用「一份歌單 CSV」管理遊戲有哪些歌:把
 流程:
   1) export : 把目前遊戲的歌匯出成 game_song_roster.csv(gn, fileId, title, artist)
   2) 用 Excel 打開,把「不要的歌那一列」整列刪掉、存檔(只刪列,別動 gn 欄)
-  3) apply  : 凡是「在遊戲(song_catalog)裡、但 CSV 已經沒有」的歌 → 徹底移除
-              (刪譜面/音樂/試聽/DANCE/icon + 清 4 張目錄表,同 remove_songs)
+  3) apply  : 凡是「在遊戲(song_table.csv)裡、但這份名冊已經沒有」的歌 → 徹底移除
+              (刪譜面/音樂/試聽/DANCE/icon + 從 song_table.csv 移除,同 remove_songs)
+
+名冊 CSV 跟 song_table.csv 是兩回事:名冊是「你要留哪些歌」的工作清單(只有 4 欄、可以放心亂刪列),
+song_table.csv 是遊戲真正讀的表。直接在 song_table.csv 刪列只會讓歌從清單消失、檔案還躺在硬碟上,
+下次重掃又活過來 —— 所以要「真的移除」請走這支或 remove_songs.py。
 
 安全:
   - apply 預設是「預覽」(只列出會移除哪些,不動手);確認無誤再加 --yes 真的移除。
@@ -22,37 +26,35 @@ from __future__ import annotations
 import argparse
 import csv
 import io
-import json
 import sys
 from pathlib import Path
 from typing import Dict, Set
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from remove_songs import load_catalog, remove_stems, stem, SA, OVERRIDES_JSON  # noqa: E402
+from remove_songs import load_catalog, remove_stems, stem, SA, TABLE  # noqa: E402
+import song_table as stbl  # noqa: E402
 
 ROSTER = HERE / "kgn_export" / "game_song_roster.csv"
 COLS = ["gn", "fileId", "title", "artist"]
 
 
-def overrides_by_stem() -> Dict[str, Dict]:
-    if not OVERRIDES_JSON.is_file():
-        return {}
-    out = {}
-    for e in json.loads(OVERRIDES_JSON.read_text(encoding="utf-8")).get("songs", []):
-        if e.get("gn"):
-            out[stem(e["gn"])] = e
+def artist_by_stem() -> Dict[str, str]:
+    """{詞幹: 歌手}(取 K 譜那列;K/T 兩列的顯示欄位本來就同步)。"""
+    out: Dict[str, str] = {}
+    for r in stbl.load(TABLE):
+        if stbl.is_primary(r["gn"]) or stem(r["gn"]) not in out:
+            out[stem(r["gn"])] = r.get("artist") or ""
     return out
 
 
 def export(path: Path) -> int:
     by_stem = load_catalog()                     # K 譜代表(fileId/title 取 K)
-    ov = overrides_by_stem()
+    artists = artist_by_stem()
     rows = []
     for s, v in by_stem.items():
-        o = ov.get(s, {})
         rows.append({"gn": s, "fileId": v["fileId"],
-                     "title": o.get("title") or v["title"], "artist": o.get("artist", "")})
+                     "title": v["title"], "artist": artists.get(s, "")})
     rows.sort(key=lambda r: (-int(r["fileId"] or 0), r["gn"]))   # 同遊戲:編號大在前
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as f:

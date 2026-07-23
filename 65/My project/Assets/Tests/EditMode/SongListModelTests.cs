@@ -109,6 +109,33 @@ namespace Sdo.Tests
         public void Curate_Null_Safe()
             => Assert.AreEqual(0, SongListModel.Curate(null).Count);
 
+        // ---- NEW 標籤 = 清單最上面 N 首（位置決定），與 fileId 無關 ----
+
+        private static List<SongCatalog.Entry> Ranked() => new List<SongCatalog.Entry>
+        {
+            new SongCatalog.Entry { gn = "sdom2400k.gn", fileId = 100 },
+            new SongCatalog.Entry { gn = "sdom2399k.gn", fileId = 101 },
+            new SongCatalog.Entry { gn = "sdom2398k.gn", fileId = 102 },
+            new SongCatalog.Entry { gn = "sdom1500k.gn", fileId = 99999 },   // 大 fileId 卻排在清單中間
+            new SongCatalog.Entry { gn = "sdom1499k.gn", fileId = 103 },
+        };
+
+        [Test]
+        public void NewBadge_Takes_Top_Of_List_Not_Highest_FileId()
+        {
+            var keys = SongListModel.NewBadgeKeys(Ranked(), 3);
+            CollectionAssert.AreEquivalent(new[] { "sdom2400k.gn", "sdom2399k.gn", "sdom2398k.gn" }, keys);
+            Assert.IsFalse(keys.Contains("sdom1500k.gn"));   // fileId 99999 排在第 4 列 → 沒有 NEW
+        }
+
+        [Test]
+        public void NewBadge_Count_Clamps_To_List_And_Is_Null_Safe()
+        {
+            Assert.AreEqual(5, SongListModel.NewBadgeKeys(Ranked(), 12).Count);
+            Assert.AreEqual(0, SongListModel.NewBadgeKeys(Ranked(), 0).Count);
+            Assert.AreEqual(0, SongListModel.NewBadgeKeys(null, 5).Count);
+        }
+
         // ---- static Filter over an arbitrary subset (category + search) ----
 
         [Test]

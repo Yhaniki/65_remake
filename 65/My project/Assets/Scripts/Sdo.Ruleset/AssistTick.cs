@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Sdo.Osu;
 
 namespace Sdo.Ruleset
 {
@@ -47,6 +48,14 @@ namespace Sdo.Ruleset
             foreach (var t in list)
                 if (outList.Count == 0 || t - outList[outList.Count - 1] > rowEpsilonMs) outList.Add(t);   // 同 row = 一聲
             return outList.ToArray();
+        }
+
+        /// <summary>這顆音符該不該發打拍音。**炸彈不發** —— 打拍音是「該打的拍」的節拍器,炸彈(avoid-note)是要
+        /// 避開的,給它一聲 clap 等於叫人去踩。StepMania 同樣只對 tap / hold-head 發 tick(PlayTicks 走
+        /// TapNoteType_Tap / TapNoteType_HoldHead,mine 不在其中)。</summary>
+        public static bool HasTick(OsuHitObject note)
+        {
+            return !note.IsBomb;
         }
 
         /// <summary>載入譜面的音符起始時間並把游標歸零。</summary>

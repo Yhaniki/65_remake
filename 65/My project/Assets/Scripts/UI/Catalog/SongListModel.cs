@@ -117,6 +117,20 @@ namespace Sdo.UI.Catalog
         public int Count => _all.Count;
         public IReadOnlyList<SongCatalog.Entry> All => _all;
 
+        /// <summary>
+        /// NEW 標籤 = 歌單「最上面」的 N 首（第一頁前 N 列），純看清單順序，不看 fileId。
+        /// 清單本身已由 <see cref="Curate"/> 依 gn 檔名降冪排好，新歌自然在最上面；fileId 與檔名順序
+        /// 並不一致（外掛/補號的歌會有大 fileId 卻排在中間），所以標籤只認位置。回傳 gn 集合（唯一鍵）。
+        /// </summary>
+        public static HashSet<string> NewBadgeKeys(IReadOnlyList<SongCatalog.Entry> list, int count)
+        {
+            var res = new HashSet<string>(StringComparer.Ordinal);
+            if (list == null) return res;
+            for (int i = 0; i < list.Count && res.Count < count; i++)
+                if (list[i] != null && !string.IsNullOrEmpty(list[i].gn)) res.Add(list[i].gn);
+            return res;
+        }
+
         public List<SongCatalog.Entry> Filter(string query) => Filter(_all, query);
 
         /// <summary>Text search (title/artist/group/gn, case-insensitive) over an arbitrary list — lets the screen

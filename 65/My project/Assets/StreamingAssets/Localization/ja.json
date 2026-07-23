@@ -189,7 +189,7 @@
   },
   {
    "k": "room.whisper_noid",
-   "v": "{0}というユーザーは存在しません"
+   "v": "{0} というプレイヤーが見つかりません"
   },
   {
    "k": "room.stage_enter",
@@ -198,6 +198,30 @@
   {
    "k": "room.stage_leave",
    "v": "{0} がステージから退場しました"
+  },
+  {
+   "k": "room.selftalk",
+   "v": "あなた: {0}"
+  },
+  {
+   "k": "room.no_guild",
+   "v": "ギルドに所属していません"
+  },
+  {
+   "k": "room.guild_command",
+   "v": "ギルド"
+  },
+  {
+   "k": "room.guild_tag",
+   "v": "<ギルド>"
+  },
+  {
+   "k": "room.debug_guild",
+   "v": "[デバッグ] ギルド: {0}"
+  },
+  {
+   "k": "room.debug_guild_none",
+   "v": "（なし）"
   },
   {
    "k": "result.clear",
@@ -340,6 +364,14 @@
    "v": "ランダム難易度 13以上"
   },
   {
+   "k": "songselect.rand_20up",
+   "v": "ランダム難易度 20以上"
+  },
+  {
+   "k": "songselect.rand_25up",
+   "v": "ランダム難易度 25以上"
+  },
+  {
    "k": "songselect.group_panel",
    "v": "カテゴリ"
   },
@@ -385,35 +417,27 @@
   },
   {
    "k": "songselect.group_refresh_done",
-   "v": "曲を更新しました：{0}"
+   "v": "曲を更新：{0}"
   },
   {
    "k": "songselect.group_refresh_none",
-   "v": "変更はありません（全 {0} 曲）"
+   "v": "変更なし（全 {0} 曲）"
   },
   {
    "k": "songselect.group_refresh_added",
-   "v": "追加 {0} 曲"
+   "v": "{0} 曲追加"
   },
   {
    "k": "songselect.group_refresh_changed",
-   "v": "更新 {0} 曲"
+   "v": "{0} 曲更新"
   },
   {
    "k": "songselect.group_refresh_removed",
-   "v": "削除 {0} 曲"
+   "v": "{0} 曲削除"
   },
   {
    "k": "songselect.group_refresh_sep",
    "v": "、"
-  },
-  {
-   "k": "songselect.rand_20up",
-   "v": "ランダム難易度 20以上"
-  },
-  {
-   "k": "songselect.rand_25up",
-   "v": "ランダム難易度 25以上"
   },
   {
    "k": "stage.name.0",

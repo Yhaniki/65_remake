@@ -23,7 +23,7 @@ namespace Sdo.Settings
     /// </summary>
     public static class SdoDataRoot
     {
-        /// <summary>存檔資料夾名（root 底下）：active.txt + settings.json + 每個使用者一個 8 位數編號資料夾。</summary>
+        /// <summary>存檔資料夾名（root 底下）：config.ini + keymaps.ini + favorites.json + 每個使用者一個 8 位數編號資料夾。</summary>
         public const string ProfileDirName = "PROFILE";
 
         private static string _root;

@@ -18,6 +18,11 @@ namespace Sdo.UI.Services
     // 玩家進出舞台遊戲的廣播行（顏色 #72c1fe，見 RoomScreen.StageHex）。
     public enum StageEventKind { None, Enter, Leave }
 
+    // 本機專屬的提示行（不送給任何人、不彈頭上泡）：
+    //   SelfTalk  好友頻道沒帶 [名字] 就送出 → 白字「你說: {內容}」，只有自己看得到。
+    //   NoGuild   家族頻道但沒有家族 → 紅字「你沒有家族」。
+    public enum ChatNotice { None, SelfTalk, NoGuild }
+
     // 訊息作用域：大廳 vs 某個房間。一般聊天/進出廣播依此隔離（房間看不到別房/大廳的訊息，大廳看不到房間訊息）。
     // 例外：密語（Whisper != None）跨作用域，大廳與所有房間都看得到（見 RoomScreen/LobbyScreen 的顯示過濾）。
     public enum ChatScope { Lobby, Room }
@@ -75,6 +80,8 @@ namespace Sdo.UI.Services
         public StageEventKind Stage = StageEventKind.None;   // 進出舞台廣播：Sender = 玩家名
         public ChatScope Scope = ChatScope.Lobby;        // 訊息作用域（大廳/房間）；密語不受此限（跨場顯示）
         public int RoomId;                               // Scope==Room 時所屬房號（隔離不同房間）
+        public ChatNotice Notice = ChatNotice.None;      // 本機提示行（你說 / 你沒有家族）：本機專屬、不彈泡、跨場、只在對應分類顯示
+        public bool Guild;                               // 家族頻道訊息：綠字「<家族>名字: 內容」，跨場、只在家族分類顯示
 
         public ChatMessage() { }
         public ChatMessage(string sender, string text, double timeMs, bool system = false, int expressionId = 0, bool local = false,

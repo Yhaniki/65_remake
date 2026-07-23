@@ -1,48 +1,37 @@
-using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Text;
-using UnityEngine;
 
 namespace Sdo.Game
 {
     /// <summary>
-    /// Runtime loader for the precomputed .gn key table (tools/gn_keytable.py ->
-    /// StreamingAssets/gn_keytable.json).
+    /// 每個 .gn 的解密資訊視圖（enc / seed / innerOff），資料來自 <see cref="SongTable"/>
+    /// （StreamingAssets/song_table.csv 的 enc/seed/seed1/seed2/innerOff 欄）。
     ///
-    /// Why: SDOM .gn charts (the ~2545 K/T files) store their LCG seed nowhere in the file; the
-    /// original engine brute-forces it (~5 s/file in pure Python). The table caches every seed so the
-    /// runtime can decrypt instantly. <see cref="Sdo.Osu.GnChart"/> is engine-free (Sdo.Osu has
-    /// noEngineReferences) and cannot read StreamingAssets, so this class loads the seeds and hands
-    /// them to GnChart.Load. Because the LCG keystream depends only on the low 24 bits of state, the
-    /// whole corpus uses only ~148 distinct seeds — trying them all + validating is microseconds, so
-    /// decryption is robust even for renamed/moved/missing-from-table SDOM files.
-    ///
-    /// Mirrors <see cref="SongCatalog"/>: pure UTF-8 JSON, JsonUtility, keyed by lowercase .gn name.
-    /// On Android the file lives compressed in the APK and must be read via UnityWebRequest (wire that
-    /// when packaging, same as the .ogg loader in ScreenGameplay).
+    /// 為什麼要預先算好：SDOM 的 .gn 把 LCG seed 藏在檔案之外，原版引擎是暴力搜出來的
+    /// （純 Python 一個檔約 5 秒）。表裡存好每個檔的 seed，runtime 就能立刻解。
+    /// <see cref="Sdo.Osu.GnChart"/> 是 engine-free（Sdo.Osu 設了 noEngineReferences）讀不到
+    /// StreamingAssets，所以由這裡把 seed 餵給 GnChart.Load。又因為 LCG keystream 只取決於 state
+    /// 的低 24 bits，整個曲庫只有約 148 個相異 seed —— 全試一輪 + 驗證只要微秒，
+    /// 所以就算檔案被改名／搬走／不在表裡也解得開。
     /// </summary>
     public static class GnKeyTable
     {
-        // seed/seed1/seed2 are uint32 (can exceed int.MaxValue) -> store as long, cast to uint on use.
-        [Serializable] public class Entry
+        // seed/seed1/seed2 是 uint32（會超過 int.MaxValue）→ 存 long，用的時候 cast 成 uint。
+        public class Entry
         {
             public string gn; public string enc; public string mode;
             public long seed; public int innerOff; public long seed1; public long seed2;
             public int fileId; public float bpm;
         }
-        [Serializable] private class Table { public Entry[] songs = new Entry[0]; }  // filled by JsonUtility
 
-        private const string FileName = "gn_keytable.json";
         private static Dictionary<string, Entry> _byGn;     // key = lowercase .gn filename
-        private static uint[] _sdomSeeds = Array.Empty<uint>();
+        private static uint[] _sdomSeeds = new uint[0];
 
         /// <summary>Look up an entry by .gn path or filename (case-insensitive). Null if absent.</summary>
         public static Entry Get(string gnPathOrName)
         {
             if (string.IsNullOrEmpty(gnPathOrName)) return null;
             EnsureLoaded();
-            return _byGn.TryGetValue(Path.GetFileName(gnPathOrName).ToLowerInvariant(), out var e) ? e : null;
+            return _byGn.TryGetValue(System.IO.Path.GetFileName(gnPathOrName).ToLowerInvariant(), out var e) ? e : null;
         }
 
         /// <summary>All distinct LCG seeds (SDOM + rewu, ~180). GnChart can decrypt any SDOM/rewu .gn by trying these.</summary>
@@ -64,36 +53,29 @@ namespace Sdo.Game
             return list.ToArray();
         }
 
+        /// <summary>丟掉快取（改過 song_table.csv 之後用）。</summary>
+        public static void Invalidate() { _byGn = null; _sdomSeeds = new uint[0]; }
+
         private static void EnsureLoaded()
         {
             if (_byGn != null) return;
-            _byGn = new Dictionary<string, Entry>(StringComparer.Ordinal);
+            _byGn = new Dictionary<string, Entry>(System.StringComparer.Ordinal);
             var seeds = new List<uint>(); var seen = new HashSet<uint>();
 
-            var path = Path.Combine(Application.streamingAssetsPath, FileName);
-            if (!File.Exists(path))
+            foreach (var r in SongTable.Rows)
             {
-                Debug.LogWarning($"[GnKeyTable] {path} missing — run tools/gn_keytable.py");
-                return;
-            }
-            try
-            {
-                var t = JsonUtility.FromJson<Table>(File.ReadAllText(path, Encoding.UTF8));
-                if (t?.songs != null)
-                    foreach (var e in t.songs)
-                    {
-                        if (string.IsNullOrEmpty(e?.gn)) continue;
-                        _byGn[e.gn.ToLowerInvariant()] = e;
-                        if (e.enc == "sdom" || e.enc == "rewu")   // both are LCG-seed encryptions; pool their seeds
-                        {
-                            uint s = (uint)e.seed;
-                            if (seen.Add(s)) seeds.Add(s);
-                        }
-                    }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[GnKeyTable] failed to load {path}: {ex.Message}");
+                if (string.IsNullOrEmpty(r?.gn)) continue;
+                _byGn[r.gn] = new Entry
+                {
+                    gn = r.gn, enc = r.enc, mode = r.mode,
+                    seed = r.seed, innerOff = r.innerOff, seed1 = r.seed1, seed2 = r.seed2,
+                    fileId = r.fileId, bpm = r.chartBpm > 0f ? r.chartBpm : r.bpm,
+                };
+                if (r.enc == "sdom" || r.enc == "rewu")   // 兩種都是 LCG seed 加密；seed 池共用
+                {
+                    uint s = (uint)r.seed;
+                    if (seen.Add(s)) seeds.Add(s);
+                }
             }
             _sdomSeeds = seeds.ToArray();
         }

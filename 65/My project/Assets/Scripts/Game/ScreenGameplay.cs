@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 using Sdo.Osu;
 using Sdo.Ruleset;
+using Sdo.Settings;
 
 namespace Sdo.Game
 {
@@ -53,7 +54,7 @@ namespace Sdo.Game
         public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
 
         /// <summary>
-        /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_name_overrides.json）：補「這首譜跟音檔沒對齊」。
+        /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_table.csv）：補「這首譜跟音檔沒對齊」。
         /// <b>動的是音樂，不是音符</b>（同 StepMania：你在調的是音樂相對譜面的位置）—— 它加在音樂的
         /// count-in 上（<see cref="MusicCountInSec"/>），所以譜面時鐘/音符/判定線都不動，只有音樂前後挪。
         /// 正 = 音樂往後（延後播放）＝ 音符相對音樂變早。
@@ -65,7 +66,7 @@ namespace Sdo.Game
         /// **全曲共用**的音樂 offset（毫秒）—— 已停用，設 0。
         /// 曾經以為官方那批 k.gn 的譜面時間軸整體跟音檔差了固定一段（每首都一樣），所以放一個全域 −25。
         /// 後來逐首手校（sdom2675 之後）發現**沒有這種全域常數**，每首的殘差各不相同，該由各自的
-        /// <see cref="songOffsetMs"/>（song_name_overrides.json 的 offsetMs）處理。於是把全域歸零，
+        /// <see cref="songOffsetMs"/>（song_table.csv 的 offsetMs）處理。於是把全域歸零，
         /// 並把原本那 −25 烘進 sdom2675 之後每首的 offsetMs，讓那批已校過的歌行為不變。
         /// 保留這個常數只為讓 <see cref="MusicCountInSec"/> 的算式與排程/波形路徑維持單一入口。
         /// </summary>
@@ -429,6 +430,8 @@ namespace Sdo.Game
         private readonly SpriteRenderer[] _receptors = new SpriteRenderer[Keys];
         public float noteAnimFps = 12f;
         public float bombAnimFps = 5f;   // 炸彈 ZD00..ZD03 循環速度(比音符慢,不然轉太快)
+        public float bombExplodeGain = 3f;    // 爆炸圖亮度增益(additive 疊在亮亮的譜面板上,1× 看起來太淡)
+        public float bombExplodeZoom = 1.9f;  // 爆炸圖大小 = LaneW × 此值
 
         // ---- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----
         // notes_board_click{1..4}.png (1..4 = lane) lights the struck lane. The original tints the strip with a
@@ -1216,9 +1219,10 @@ namespace Sdo.Game
                         + "（PlayScheduled 排的是第 0 取樣；不補的話每一聲都晚這麼多，校時會誤認成音效卡延遲）");
         }
 
+        // 該發 tick 的音符(炸彈除外,見 AssistTick.HasTick)的起始時間。
         private IEnumerable<double> NoteStartTimes()
         {
-            foreach (var n in _notes) yield return n.Note.StartTimeMs;
+            foreach (var n in _notes) if (AssistTick.HasTick(n.Note)) yield return n.Note.StartTimeMs;
         }
 
         // 每幀:把「地平線之前」的 tick 全部排進音訊時鐘。tick 的譜面時間 → dspTime 用的是**音樂本身的映射**
@@ -4149,10 +4153,11 @@ namespace Sdo.Game
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
-            // F8：Auto（自動）模式開關 — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
-            if (Input.GetKeyDown(KeyCode.F8)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按 F8 發出 SE_0001
-            // F7：打拍音（StepMania assist tick）— 每個音符響一聲 click，方便對拍。s_assistTick = 跨歌延續（不存檔）。
-            if (Input.GetKeyDown(KeyCode.F7))
+            // 以下功能鍵的鍵位都能在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] 改（預設＝括號裡那顆），見 Sdo.Settings.KeyMap。
+            // Auto（自動）模式開關(預設 F8) — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
+            if (KeyMap.Down(Hotkey.AutoPlay)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按下發出 SE_0001
+            // 打拍音(預設 F7；StepMania assist tick)— 每個音符響一聲 click，方便對拍。s_assistTick = 跨歌延續（不存檔）。
+            if (KeyMap.Down(Hotkey.AssistTick))
             {
                 assistTick = !assistTick; s_assistTick = assistTick;
                 if (assistTick) { _tick.Rewind(_nowMs); PlayTickOnce(); }   // 從當下的音符開始響（不補播過去的）
@@ -4169,9 +4174,9 @@ namespace Sdo.Game
             //     if (!showtimeMode && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))) _failed = true;
             //     _ended = true; EnterResult();
             // }
-            // F5：加速 note（下一速度檔）／F6：減速 note（上一速度檔）— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
-            if (Input.GetKeyDown(KeyCode.F5)) StepScrollSpeed(+1);
-            if (Input.GetKeyDown(KeyCode.F6)) StepScrollSpeed(-1);
+            // 加速 note(預設 F5，下一速度檔)／減速 note(預設 F6，上一速度檔)— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
+            if (KeyMap.Down(Hotkey.SpeedUp)) StepScrollSpeed(+1);
+            if (KeyMap.Down(Hotkey.SpeedDown)) StepScrollSpeed(-1);
             // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
             // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。
             // 正式遊玩已停用（會誤觸）；只留給譜面編輯器（它的 HUD 就寫著這幾個鍵）。
@@ -4202,8 +4207,8 @@ namespace Sdo.Game
             // }
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
-                // F2 (decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
-                if (Input.GetKeyDown(KeyCode.F2)) CycleCamMode();
+                // 換鏡頭(預設 F2；decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
+                if (KeyMap.Down(Hotkey.Camera)) CycleCamMode();
                 Vector3 eye, tgt, up = Vector3.up;   // up = the .cv per-frame up vector (Camera_Update's LookAtLH 4th arg); non-vertical => roll/tilt
                 if (_camMode < 0 && _dirCv != null && _dirCv.Length > 0)
                 {
@@ -4864,7 +4869,8 @@ namespace Sdo.Game
                     _energyMiniT0 = Time.time;                                 // official 500ms EnergyProgress band-up flash
                 }
                 _lastArmed = armed;
-                if (Input.GetKeyDown(KeyCode.Space) && _showtime.TryActivate(now, ComputeShowtimeWindowMs())) OnShowtimeStart();
+                // 釋放氣條（預設 Space；鍵位可在 keymaps.ini 的 [Hotkeys] showtime 改）
+                if (KeyMap.Down(Hotkey.Showtime) && _showtime.TryActivate(now, ComputeShowtimeWindowMs())) OnShowtimeStart();
             }
             else
             {
@@ -5197,23 +5203,26 @@ namespace Sdo.Game
             }
         }
 
-        // 炸彈 (note_type 1 = avoid-note)：當炸彈進到判定線 ±miss窗 且該軌鍵**被按著** → 引爆(StepMania mine 音 + 扣血)。
-        // 沒踩到就安全通過(過窗即消失,不算 miss)。編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
+        // 炸彈 (note_type 1 = avoid-note)：當炸彈進到**引爆窗**(= Perfect 窗 ×0.8,見 JudgmentWindows.BombWindow)
+        // 且該軌鍵被按著 → 引爆(StepMania mine 音 + 扣血)。用 miss 窗會太寬:炸彈還離判定線老遠、
+        // 或早就過去了,只要手指還壓著就炸。退場仍看 miss 邊界(過了才收掉,不算 miss)。
+        // 編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
         private void TickBombs(double now)
         {
-            double win = _engine.Windows.MissBoundary;
-            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + win);
+            double retire = _engine.Windows.MissBoundary;   // 掃描/退場邊界(比引爆窗寬)
+            double win = _engine.Windows.BombWindow;        // 引爆窗 = Perfect × 0.8
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + retire);
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int i = _firstAlive; i < hi; i++)
             {
                 var n = _notes[i];
                 if (n.Done || !n.Note.IsBomb) continue;
                 double dt = now - n.Note.StartTimeMs;   // >0：炸彈已過判定線
-                if (dt < -win) continue;                // 還沒進引爆窗
+                if (dt > retire) { n.Done = true; continue; }   // 安全通過 → 消失
+                if (dt < -win || dt > win) continue;            // 不在引爆窗內 → 踩著也不炸
                 bool held = false;
                 foreach (var k in laneKeys[n.Note.Lane]) if (Input.GetKey(k)) { held = true; break; }
-                if (dt <= win && held) ExplodeBomb(n);  // 踩到 → 引爆
-                else if (dt > win) n.Done = true;        // 安全通過 → 消失
+                if (held) ExplodeBomb(n);
             }
         }
 
@@ -5238,7 +5247,10 @@ namespace Sdo.Game
             // (用 Sprites/Default alpha-blend 就會看到黑方塊)。Legacy Particles/Additive 是 2×tint×tex,_TintColor 0.5 = 1× 中性。
             var sh = Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Sprites/Default");
             var mat = new Material(sh);
-            if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", new Color(0.5f, 0.5f, 0.5f, 0.5f));
+            // Legacy additive = 2 × _TintColor × tex × vertexColor;0.5 = 1× 中性 → ×gain 才不會被亮譜面板吃掉。
+            // (vertexColor 走 SpriteRenderer.color,會被夾在 0..1,所以增益只能加在 _TintColor 上。)
+            float g = Mathf.Max(0f, bombExplodeGain) * 0.5f;
+            if (mat.HasProperty("_TintColor")) mat.SetColor("_TintColor", new Color(g, g, g, 0.5f));
             sr.sharedMaterial = mat;
             StartCoroutine(BombExplodeCo(sr, lane));
         }
@@ -5250,7 +5262,7 @@ namespace Sdo.Game
         {
             const float dur = 0.6f;   // linear,0.3 ×2
             float cx = PX(LaneLeftX[lane] + LaneCx0), cy = judgeLineY + judgeOffsetY;
-            float w = LaneW * 1.5f;   // zoom 固定
+            float w = LaneW * bombExplodeZoom;   // zoom 固定
             for (float t = 0f; t < 1f; t += Time.deltaTime / dur)
             {
                 float a = t <= 0.5f ? 1f : Mathf.Max(0f, 1f - (t - 0.5f) * 2f);   // 前半全亮,後半 diffusealpha→0

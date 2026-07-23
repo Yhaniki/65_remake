@@ -140,8 +140,12 @@ namespace Sdo.UI.Util
         }
 
         // PopNormalExpression1/2.an + tab/arrow crops from ExpressionInfo.png (ROOMPOPMENU).
+        // The atlas stores the two normal pages bottom-first: the basic page (start/GO/greet/yes/no…,
+        // matching MenuExpressionIds slots 0-23) is the LOWER 132px strip (y=132), and the extended page
+        // (MenuExpressionIds 24-47) is the UPPER strip (y=0). So display page 0 → y=132, page 1 → y=0;
+        // indexing y = page*132 directly swaps the previews vs the tooltip/click order.
         public static Sprite ExpressionInfoPage(int page)
-            => AtlasCrop("EXPRESSIONINFO.PNG", 0, Mathf.Clamp(page, 0, 1) * 132, 165, 132);
+            => AtlasCrop("EXPRESSIONINFO.PNG", 0, (1 - Mathf.Clamp(page, 0, 1)) * 132, 165, 132);
 
         public static Sprite ExpressionNormalTab(bool selected)
             => AtlasCrop("EXPRESSIONINFO.PNG", selected ? 0 : 38, 396, 38, 18);

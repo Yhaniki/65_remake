@@ -794,6 +794,12 @@ namespace Sdo.UI.Screens
                 foreach (var m in mr.sharedMaterials)
                     if (m != null && m.mainTexture != null)
                     {
+                        // 真紗質/蕾絲布料 (Sdo/UnlitAvatarSheer) 保留半透明,強制 cutout 會壓成實心 (同 ShopScreen 的例外)。
+                        // 但同支 shader 也載著「官方旗標判透明、其實是實心去背布料」的衣服 → 那些要走雙面 cutout,否則卡片
+                        // 藏了身體、單面布料的領口沒東西補就透到背景 (001766 Skirt Suit;見 SdoAvatarBuilder.IsSheerFabric)。
+                        if (m.shader != null && m.shader.name == "Sdo/UnlitAvatarSheer"
+                            && SdoAvatarBuilder.IsSheerFabric(m.HasProperty(SdoAvatarBuilder.SheerFabricProp)
+                                                             ? m.GetFloat(SdoAvatarBuilder.SheerFabricProp) : 1f)) continue;
                         // OPAQUE 衣服(Unlit/Texture,含 alpha 壞掉被強制實心的布料)不可裁,否則卡片變透明線框(璀璨繁星 褲子)。
                         bool opaque = m.shader != null && m.shader.name == "Unlit/Texture";
                         m.shader = cut;

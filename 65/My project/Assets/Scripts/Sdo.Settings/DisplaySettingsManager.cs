@@ -5,67 +5,70 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// Loads/saves <see cref="GameSettings"/> (persistentDataPath/settings.json) and applies the
-    /// display settings via Screen.SetResolution. Serialization/clamping is pure and unit-testable;
-    /// only <see cref="ApplyDisplay"/> touches Unity's Screen/QualitySettings.
+    /// <see cref="GameSettings"/> 的**執行期工作副本**（畫面/音量/按鍵/遊戲頁），以及套用顯示設定
+    /// （Screen.SetResolution）。**它自己不再有檔案**：值落地在 <see cref="RoomConfig"/> 的 config.ini
+    /// （<c>[Option]</c>）與 <see cref="KeyMap"/> 的 keymaps.ini（鍵位），<see cref="Load"/>／<see cref="Save"/>
+    /// 只是把那兩份組進來／寫回去。舊的 settings.json 由 <see cref="RoomConfig.Load"/> 一次性併入後刪除
+    /// （<see cref="ReadLegacyJson"/> / <see cref="DeleteLegacyJson"/>）。
+    /// 夾值（<see cref="Sanitize"/>）是純函式可單元測試；只有 <see cref="ApplyDisplay"/> 碰 Unity 的 Screen/QualitySettings。
     /// </summary>
     public static class DisplaySettingsManager
     {
         public static GameSettings Settings { get; private set; } = new GameSettings();
         public static event Action SettingsChanged;
 
-        // settings.json 放在 DATA/PROFILE 底下（跟 active.txt 同一層；全域設定，非 per-user，不進 <id> 子資料夾），
-        // 讓所有存檔集中在專案 DATA 夾（可隨 exe 搬機），不再散落在 Unity 的 persistentDataPath。
-        private static string FilePath => Path.Combine(ProfileManager.Root, "settings.json");
-        // 舊位置（persistentDataPath/settings.json）：保留供一次性遷移。
-        private static string LegacyFilePath => Path.Combine(Application.persistentDataPath, "settings.json");
+        public const string LegacyFileName = "settings.json";
 
+        // 舊 settings.json 的位置＝存檔層 DATA/PROFILE/（更早的 persistentDataPath 版本，上一版開機時就已經搬到這裡了）。
+        // 只用於一次性搬遷進 config.ini。
+        private static string LegacyProfilePath => Path.Combine(ProfileManager.Root, LegacyFileName);
+
+        /// <summary>把 config.ini 的 <c>[Option]</c> + keymaps.ini 的鍵位組成執行期的 <see cref="Settings"/>。
+        /// **必須在 <see cref="RoomConfig.Load"/> 與 <see cref="KeyMap.Load"/> 之後**呼叫（見 <see cref="SettingsBootstrap"/>）。</summary>
         public static void Load()
         {
-            try
-            {
-                // 新位置優先；沒有就從舊的 persistentDataPath 讀進來並一次性遷移（不刪舊檔）。
-                string path = File.Exists(FilePath) ? FilePath
-                            : (File.Exists(LegacyFilePath) ? LegacyFilePath : null);
-                if (path != null)
-                {
-                    var json = File.ReadAllText(path);
-                    var s = JsonUtility.FromJson<GameSettings>(json);
-                    Settings = Sanitize(s ?? new GameSettings());
-                    if (path == LegacyFilePath) Save();   // 遷移：把舊設定寫到 DATA/PROFILE/settings.json
-                }
-                else
-                {
-                    // 首次開機 / settings.json 被刪：用內建預設，並立刻落地一份預設檔
-                    // （缺檔不能擋開機——打包版 DATA 可能不帶任何 PROFILE 存檔，開機自己生）。
-                    Settings = new GameSettings();
-                    Save();
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[Settings] load failed, using defaults: {e.Message}");
-                Settings = new GameSettings();
-            }
+            var s = new GameSettings();
+            if (RoomConfig.hasOption) RoomConfig.ApplyOptionTo(s);   // 沒有 [Option]（不該發生，Load 會補）→ 就用內建預設
+            KeyMap.ApplyTo(s.keys);
+            Settings = Sanitize(s);
         }
 
+        /// <summary>把目前的 <see cref="Settings"/> 寫回落地檔：<c>[Option]</c> 進 config.ini、鍵位進 keymaps.ini。</summary>
         public static void Save()
+        {
+            Settings = Sanitize(Settings);
+            Settings.updatedAt = DateTime.UtcNow.ToString("o");
+            RoomConfig.CaptureOptionFrom(Settings);
+            RoomConfig.Save();
+            KeyMap.CaptureFrom(Settings.keys);
+            KeyMap.Save();
+            SettingsChanged?.Invoke();
+        }
+
+        /// <summary>讀舊的 DATA/PROFILE/settings.json；沒有/壞掉 → null。只給 <see cref="RoomConfig.Load"/> 做一次性搬遷用。</summary>
+        public static GameSettings ReadLegacyJson()
         {
             try
             {
-                Directory.CreateDirectory(ProfileManager.Root);   // DATA/PROFILE 可能尚未建立（Boot 之前存檔時）
-                Settings.updatedAt = DateTime.UtcNow.ToString("o");
-                var json = JsonUtility.ToJson(Settings, true);
-                var tmp = FilePath + ".tmp";
-                File.WriteAllText(tmp, json);
-                if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null);
-                else File.Move(tmp, FilePath);
+                var path = LegacyProfilePath;
+                if (!File.Exists(path)) return null;
+                var s = JsonUtility.FromJson<GameSettings>(File.ReadAllText(path));
+                return s == null ? null : Sanitize(s);
             }
-            catch (Exception e)
+            catch (Exception e) { Debug.LogWarning($"[Settings] legacy read failed: {e.Message}"); return null; }
+        }
+
+        /// <summary>刪掉舊的 settings.json（內容已併進 config.ini 的 [Option] 才呼叫）。</summary>
+        public static void DeleteLegacyJson()
+        {
+            try
             {
-                Debug.LogError($"[Settings] save failed: {e.Message}");
+                var path = LegacyProfilePath;
+                if (!File.Exists(path)) return;
+                File.Delete(path);
+                Debug.Log($"[Settings] merged into config.ini, removed {path}");
             }
-            SettingsChanged?.Invoke();
+            catch (Exception e) { Debug.LogWarning($"[Settings] legacy delete failed: {e.Message}"); }
         }
 
         /// <summary>Repair/clamp a (possibly partial or corrupt) settings object into a valid one. Pure.</summary>

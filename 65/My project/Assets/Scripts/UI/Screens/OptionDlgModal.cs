@@ -582,6 +582,7 @@ namespace Sdo.UI.Screens
             s.gameplay ??= new GameplaySettings();
             StoreGame(s.gameplay);
 
+            // Save() 一次落地兩個檔：[Option] 進 DATA/PROFILE/config.ini、鍵盤頁的 4 鍵鍵位進同層的 keymaps.ini。
             DisplaySettingsManager.Save();
             // OPTION 設定也落地共用 config.ini（DATA/PROFILE/）：抓目前值 → 寫檔（使用者要求）。
             Sdo.Settings.RoomConfig.CaptureOptionFrom(s);

@@ -109,7 +109,10 @@ namespace Sdo.Game
         {
             double v = elapsedSec * unitsPerSec;
             v -= Math.Floor(v);           // wrap into [0,1) (Repeat sampler); also normalises negative elapsed
-            return (float)v;
+            float f = (float)v;
+            // A double just under 1 (e.g. 0.99999999997) rounds UP to 1f on the cast — re-wrap so the
+            // contract stays [0,1). Visually identical (Repeat sampler), but keeps the range exact.
+            return f >= 1f ? 0f : f;
         }
 
         /// <summary>Parse the leading 6-digit MODEL id out of an AVATAR mesh path (e.g.

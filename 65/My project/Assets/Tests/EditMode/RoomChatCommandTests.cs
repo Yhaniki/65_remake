@@ -209,5 +209,20 @@ namespace Sdo.Tests
         [TestCase("")]
         public void Rejects_Non_Whisper(string text)
             => Assert.IsFalse(RoomChatCommand.TryParseWhisper(text, out _, out _));
+
+        // 家族頻道送出時剝掉「/家族」指令前綴，取後面的內容當家族訊息。CJK 詞可緊接內容（無空白），拉丁詞需字界。
+        [TestCase("/家族 哈囉", "哈囉")]        // 標準：/家族 + 空白 + 內容
+        [TestCase("/家族哈囉", "哈囉")]          // CJK 可無空白直接接
+        [TestCase("/家族", "")]                  // 只有指令沒內容 → 空
+        [TestCase("/家族   衝排名  ", "衝排名")]  // 前後多餘空白 trim
+        [TestCase("哈囉", "哈囉")]               // 沒前綴 → 原字（trim）
+        [TestCase("  在嗎  ", "在嗎")]           // 沒前綴、含空白 → trim
+        [TestCase("/公會 hi", "hi")]             // 別名：公會
+        [TestCase("/guild hello", "hello")]      // 別名：guild（拉丁，需空白字界）
+        [TestCase("/GUILD hi", "hi")]            // 大小寫不敏感
+        [TestCase("/guildhall", "/guildhall")]   // 拉丁字無字界 → 不剝，原字回傳
+        [TestCase("", "")]                       // 空 → 空
+        public void Strips_Guild_Command(string text, string expected)
+            => Assert.AreEqual(expected, RoomChatCommand.StripGuildCommand(text));
     }
 }

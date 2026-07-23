@@ -26,7 +26,7 @@ namespace Sdo.UI.Screens
     {
         public override ScreenId Id => ScreenId.SongSelect;
         private const int PageSize = 12;
-        private const int NewBadgeCount = 5;          // 最大編號的 N 首歌掛 NEW 標籤
+        private const int NewBadgeCount = 5;          // 歌單最上面 N 首(第一頁前 N 列)掛 NEW 標籤
         private const float NewBadgeFps = 12f;        // NEWSIGN.an colour-cycle speed (14 frames ≈ 1.2s loop)
         private const float PreviewVolume = 0.55f;
         private const float RoomDimBrightness = 0.8f; // 底下房間調暗到 ≈80% 亮度(黑幕 alpha = 1−此值);取代原本全黑

@@ -71,9 +71,17 @@ STR = {
     "room.whisper_out":        ["You whisper to {0}: {1}", "你對{0}說: {1}", "你对{0}说: {1}", "{0}にささやく: {1}"],
     "room.whisper_in":         ["{0} whispers to you: {1}", "{0}對你說: {1}", "{0}对你说: {1}", "{0}があなたにささやく: {1}"],
     "room.whisper_offchannel": ["{0} is not in this channel", "{0}不在當前頻道", "{0}不在当前频道", "{0}は現在のチャンネルにいません"],
-    "room.whisper_noid":       ["No such user: {0}", "{0}查無此人", "{0}查无此人", "{0}というユーザーは存在しません"],
+    "room.whisper_noid":       ["Player {0} not found", "找不到玩家 {0}", "找不到玩家 {0}", "{0} というプレイヤーが見つかりません"],
     "room.stage_enter":        ["{0} entered the stage", "{0} 進入舞台遊戲", "{0} 进入舞台游戏", "{0} がステージに入りました"],
     "room.stage_leave":        ["{0} left the stage", "{0}離開舞台", "{0}离开舞台", "{0} がステージから退場しました"],
+
+    # 好友頻道沒帶對象 → 你說(白) / 家族頻道 → /家族 前綴 + <家族> 綠字 + 你沒有家族(紅)
+    "room.selftalk":           ["You say: {0}", "你說: {0}", "你说: {0}", "あなた: {0}"],
+    "room.no_guild":           ["You have no guild", "你沒有家族", "你没有家族", "ギルドに所属していません"],
+    "room.guild_command":      ["guild", "家族", "家族", "ギルド"],
+    "room.guild_tag":          ["<Guild>", "<家族>", "<家族>", "<ギルド>"],
+    "room.debug_guild":        ["[Debug] Guild: {0}", "[除錯] 家族: {0}", "[调试] 家族: {0}", "[デバッグ] ギルド: {0}"],
+    "room.debug_guild_none":   ["(none)", "（無）", "（无）", "（なし）"],
 
     "result.clear":     ["Clear!", "完成!", "完成!", "クリア!"],
     "result.failed":    ["Failed", "失敗", "失败", "失敗"],
@@ -117,6 +125,8 @@ STR = {
     "songselect.rand_5up":  ["Random Lv 5+",   "隨機難度 5級以上",  "随机难度 5级以上",  "ランダム難易度 5以上"],
     "songselect.rand_9up":  ["Random Lv 9+",   "隨機難度 9級以上",  "随机难度 9级以上",  "ランダム難易度 9以上"],
     "songselect.rand_13up": ["Random Lv 13+",  "隨機難度 13級以上", "随机难度 13级以上", "ランダム難易度 13以上"],
+    "songselect.rand_20up": ["Random Lv 20+",  "隨機難度 20級以上", "随机难度 20级以上", "ランダム難易度 20以上"],
+    "songselect.rand_25up": ["Random Lv 25+",  "隨機難度 25級以上", "随机难度 25级以上", "ランダム難易度 25以上"],
 
     # 分類瀏覽 — the floating group panel behind the 資料夾 category (StepMania-style sections)
     "songselect.group_panel":  ["Browse", "分類瀏覽", "分类浏览", "カテゴリ"],
@@ -129,6 +139,15 @@ STR = {
     "songselect.group_uncat":  ["(Ungrouped)", "(未分類)", "(未分类)", "(未分類)"],
     "songselect.group_bpm_unknown": ["BPM ?", "BPM 未知", "BPM 未知", "BPM 不明"],
     "songselect.group_empty":  ["No songs in Songs/", "Songs/ 裡沒有歌曲", "Songs/ 里没有歌曲", "Songs/ に曲がありません"],
+    # 分類瀏覽面板底部的「更新」鈕（重掃外部歌資料夾）與掃描狀態/結果訊息
+    "songselect.group_refresh":         ["Refresh", "更新", "更新", "更新"],
+    "songselect.group_scanning":        ["Scanning…", "掃描中…", "扫描中…", "スキャン中…"],
+    "songselect.group_refresh_done":    ["Songs updated: {0}", "歌曲已更新：{0}", "歌曲已更新：{0}", "曲を更新：{0}"],
+    "songselect.group_refresh_none":    ["No changes ({0} songs)", "歌曲沒有變更（共 {0} 首）", "歌曲没有变更（共 {0} 首）", "変更なし（全 {0} 曲）"],
+    "songselect.group_refresh_added":   ["{0} added", "新增 {0} 首", "新增 {0} 首", "{0} 曲追加"],
+    "songselect.group_refresh_changed": ["{0} changed", "更新 {0} 首", "更新 {0} 首", "{0} 曲更新"],
+    "songselect.group_refresh_removed": ["{0} removed", "移除 {0} 首", "移除 {0} 首", "{0} 曲削除"],
+    "songselect.group_refresh_sep":     [", ", "、", "、", "、"],
 
     # 3D stage names — selector scenes (ids 0..30) + special rooms (31/32/33/35/37/38/39).
     # zh-TW are the real EXE names; en/ja are translations (proper nouns like NARNIA kept as-is).

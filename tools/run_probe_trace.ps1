@@ -9,7 +9,7 @@
 .DESCRIPTION
   The probe overrides SdoExtracted.Root to -Data (via SDO_PROBE=<path>), so the used-set maps 1:1 onto the tree
   you are about to prune — no 13 GB copy / junction needed. The built player supplies its own StreamingAssets
-  (song_catalog.json etc.), so it enumerates the full song list regardless of which DATA is pointed at.
+  (song_table.csv), so it enumerates the full song list regardless of which DATA is pointed at.
 
 .PARAMETER Exe        Path to the built dance.exe (the probe player). Required.
 .PARAMETER Data       DATA tree to probe (== the tree being pruned).         Default H:\65_remake_clean\DATA

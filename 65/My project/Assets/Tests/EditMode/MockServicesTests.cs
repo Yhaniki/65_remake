@@ -399,6 +399,87 @@ namespace Sdo.Tests
             Assert.AreEqual("", outgoing.Text);           // 指令後無尾隨字
         }
 
+        // ---- 家族頻道 / 你說 / 系統 ----
+
+        // 有家族 → 綠字家族訊息：Guild=true、Channel=Family、本機、不是提示行。
+        [Test]
+        public void SendGuild_With_Guild_Emits_Guild_Message()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, () => "玩家001", localGuild: () => "熱舞家族");
+            c.SendGuild("哈囉");
+            Assert.AreEqual(1, c.History.Count);   // 第一次發言不觸發同族回話
+            var m = c.History[0];
+            Assert.IsTrue(m.Guild);
+            Assert.AreEqual(ChatChannel.Family, m.Channel);
+            Assert.AreEqual("玩家001", m.Sender);
+            Assert.AreEqual("哈囉", m.Text);
+            Assert.IsTrue(m.Local);
+            Assert.AreEqual(ChatNotice.None, m.Notice);
+        }
+
+        // 沒有家族（空字串）→ 只出一條「你沒有家族」提示（NoGuild），不是家族訊息。
+        [Test]
+        public void SendGuild_Without_Guild_Says_No_Guild()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, () => "玩家001", localGuild: () => "");
+            c.SendGuild("哈囉");
+            Assert.AreEqual(1, c.History.Count);
+            Assert.AreEqual(ChatNotice.NoGuild, c.History[0].Notice);
+            Assert.IsFalse(c.History[0].Guild);
+            Assert.IsTrue(c.History[0].Local);
+        }
+
+        // 沒給 localGuild func → 視為沒有家族。
+        [Test]
+        public void SendGuild_Null_Guild_Func_Says_No_Guild()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.SendGuild("hi");
+            Assert.AreEqual(ChatNotice.NoGuild, c.History[0].Notice);
+        }
+
+        // 只填了「/家族 」還沒打內容（空 body）→ 不送任何訊息。
+        [Test]
+        public void SendGuild_Empty_Body_Sends_Nothing()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, null, localGuild: () => "熱舞家族");
+            c.SendGuild("   ");
+            Assert.AreEqual(0, c.History.Count);
+        }
+
+        // 好友頻道沒帶 [名字] → 你說: xxx（SelfTalk 提示、本機、不是密語）。
+        [Test]
+        public void SendSelfTalk_Emits_Self_Notice()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, () => "玩家001");
+            c.SendSelfTalk("s");
+            Assert.AreEqual(1, c.History.Count);
+            Assert.AreEqual(ChatNotice.SelfTalk, c.History[0].Notice);
+            Assert.AreEqual("s", c.History[0].Text);
+            Assert.AreEqual("玩家001", c.History[0].Sender);
+            Assert.IsTrue(c.History[0].Local);
+            Assert.AreEqual(WhisperKind.None, c.History[0].Whisper);
+        }
+
+        [Test]
+        public void SendSelfTalk_Empty_Sends_Nothing()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.SendSelfTalk("  ");
+            Assert.AreEqual(0, c.History.Count);
+        }
+
+        // 系統提示行（除錯回饋）：System=true。
+        [Test]
+        public void SendSystem_Emits_System_Line()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 });
+            c.SendSystem("test");
+            Assert.AreEqual(1, c.History.Count);
+            Assert.IsTrue(c.History[0].System);
+            Assert.AreEqual("test", c.History[0].Text);
+        }
+
         // ---- stage enter/leave (進出舞台廣播) ----
 
         [Test]

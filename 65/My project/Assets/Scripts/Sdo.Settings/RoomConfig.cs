@@ -7,10 +7,17 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 開房間右側面板的可選清單與預設值 + OPTION 設定，存成 <c>config.ini</c>。**全域一份**，放在存檔層
-    /// <c>DATA/PROFILE/</c>（與 active.txt / settings.json / favorites.json 同層）—— 設定仍不跟著使用者跑
-    /// （換帳號不會換設定），只是把檔案位置搬進 PROFILE 資料夾。開機時會把舊位置的 config.ini 一次性搬進來後移除：
-    /// 舊 per-user（<c>DATA/PROFILE/&lt;id&gt;/</c>）優先，其次舊全域（執行檔同層），見 <see cref="Load"/>。
+    /// **本機設定的唯一落地檔** <c>config.ini</c>：開房間右側面板的可選清單與預設值（<c>[Room]</c>）、OPTION 對話框
+    /// 設定（<c>[Option]</c>）、以及目前登入的角色（<c>[Profile] activeId</c>）。**全域一份**，放在存檔層
+    /// <c>DATA/PROFILE/</c>（與 favorites.json / keymaps.ini 同層）—— 設定不跟著使用者跑（換帳號不會換設定）。
+    ///
+    /// 以前散成三個檔，開機時會一次性併進來後把舊檔移除（見 <see cref="Load"/>）：
+    ///   * <c>settings.json</c>（畫面/音量/遊戲頁）→ <c>[Option]</c>，本來就是同一份值存兩處。
+    ///   * <c>active.txt</c>（登入哪個角色）→ <c>[Profile] activeId</c>。
+    ///   * 舊位置的 config.ini：per-user（<c>DATA/PROFILE/&lt;id&gt;/</c>）優先，其次執行檔同層。
+    /// **鍵位不在這裡**：4 鍵鍵位與遊玩功能鍵拆去 <see cref="KeyMap"/> 的 <c>keymaps.ini</c>（舊檔的
+    /// <c>opt_keys/opt_keysAux</c> 仍讀得進來供搬遷，但不再寫出）。
+    ///
     /// 純文字、好手改：第一次跑會自動寫一份附註解的範本；之後讀檔覆蓋預設。解析/夾值是純函式可單元測試
     /// （<see cref="ParseInto"/> / <see cref="Sanitize"/> 不碰檔案）。
     /// </summary>
@@ -54,11 +61,14 @@ namespace Sdo.Settings
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
-        public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了才覆蓋 settings.json 的裝置層值）
+        public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了就不用去撿舊 settings.json）
+        public static bool hasOptUiScale = false;   // 檔案是否帶 opt_uiScale（舊檔沒有 → 從舊 settings.json 撿）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
+        // 舊檔（config.ini 還帶鍵位的年代）的 4 鍵鍵位：只讀不寫，開機時給 KeyMap 種 keymaps.ini 用，見 KeyMap.Load。
         public static string optKeys = "A,S,W,D";
         public static string optKeysAux = "LeftArrow,DownArrow,UpArrow,RightArrow";
         public static int optDispW = 800, optDispH = 600, optVsync = 1;   // 預設視窗化 800×600（與遊戲畫面「窗口」連動，同 GameSettings 預設）
+        public static float optUiScale = 1f;
         public static string optDispMode = "Windowed";
         public static string optLang = "zh-TW";
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
@@ -66,6 +76,10 @@ namespace Sdo.Settings
                            optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true;
         public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
+
+        // ---- [Profile]：目前登入的本機角色（8 位數資料夾名）。以前是獨立的 active.txt，現在併進 config.ini。
+        //      ""＝還沒決定 → ProfileManager.Boot 會挑一個並寫回。權威值仍由 ProfileManager 管，這裡只是落地欄位。----
+        public static string activeId = "";
 
         public const string FileName = "config.ini";
 
@@ -98,54 +112,70 @@ namespace Sdo.Settings
             }
         }
 
-        /// <summary>讀 config.ini（全域，放在 DATA/PROFILE/；不存在就用內建預設並寫一份範本）。開機呼叫一次即可
-        /// （<see cref="SettingsBootstrap"/>）；換 active user **不需要**重讀。新位置若還沒有，會把舊位置的 config.ini
-        /// 一次性搬進來後移除：舊 per-user（DATA/PROFILE/&lt;id&gt;/）優先，其次舊全域（執行檔同層）。</summary>
+        /// <summary>讀 config.ini（全域，放在 DATA/PROFILE/；不存在就用內建預設並寫一份範本）。開機第一個呼叫
+        /// （<see cref="SettingsBootstrap"/>，要在 <see cref="KeyMap.Load"/> 與 <see cref="ProfileManager.Boot"/> 之前，
+        /// 它們都要拿這裡解析出來的值）；換 active user **不需要**重讀。
+        ///
+        /// 同時做三個一次性搬遷（搬完把舊檔刪掉，之後每次開機都只讀 config.ini 一個檔）：舊位置的 config.ini
+        /// （per-user <c>DATA/PROFILE/&lt;id&gt;/</c> 優先，其次執行檔同層）、舊 <c>settings.json</c> → <c>[Option]</c>、
+        /// 舊 <c>active.txt</c> → <c>[Profile] activeId</c>。</summary>
         public static void Load()
         {
             try
             {
+                bool dirty = false;   // 有搬遷/補欄位 → 收尾要重寫一次 config.ini
+                bool movedLegacyIni = false;
+
                 if (File.Exists(FilePath))
                 {
                     // 新位置（DATA/PROFILE/config.ini）已就緒 → 正常讀。
                     string text = File.ReadAllText(FilePath);
                     ParseInto(text);
-                    Sanitize();
-                    // schema 升級：舊版存的 config.ini 可能缺這版新增的 key（例如 AdditionalSongFolders / AddonFolder /
-                    // opt_collapseShortHolds）。缺了就補寫一次 —— 讓新 key 以預設值出現在檔案裡可手改，舊 key 既有值照留。
-                    if (IsMissingCurrentKey(text))
-                    {
-                        if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔沒 [Option] → 先補現值再寫，別用預設蓋掉裝置層
-                        Save();
-                        Debug.Log("[RoomConfig] config.ini 缺新 key → 已補寫升級");
-                    }
+                    // schema 升級：舊版存的 config.ini 可能缺這版新增的 key（AdditionalSongFolders / AddonFolder /
+                    // opt_collapseShortHolds / SongUiAlpha…）。缺了就在收尾（if (dirty) Save()）補寫一次 ——
+                    // 讓新 key 以預設值出現在檔案裡可手改，舊 key 既有值照留。
+                    if (IsMissingCurrentKey(text)) dirty = true;
                 }
                 else
                 {
-                    // 新位置還沒有 → 只從舊「全域」位置（執行檔同層）一次性搬進來。
-                    // per-user（DATA/PROFILE/<id>/config.ini）是更早的中繼設計，已停用 —— 刻意不再讀取那裡。
-                    string legacy = FindLegacyExeConfig();
+                    // 新位置還沒有 → 找舊檔一次性搬進來：舊 per-user（DATA/PROFILE/<id>/config.ini）才是玩家實際在用的那份，
+                    // 優先；沒有再看舊全域（執行檔同層）。搬完寫進新位置並把舊檔刪掉，之後每次開機都只走上面那條。
+                    string legacy = FindProfileConfig() ?? FindLegacyExeConfig();
                     if (legacy != null)
                     {
                         ParseInto(File.ReadAllText(legacy));
-                        Sanitize();
-                        if (!hasOption) CaptureOptionFrom(DisplaySettingsManager.Settings);   // 舊檔無 [Option] → 補目前值
-                        Save();                 // 落地到新位置 DATA/PROFILE/config.ini
+                        movedLegacyIni = true;
                         Debug.Log($"[RoomConfig] moved legacy config.ini -> {FilePath}");
                     }
-                    else
-                    {
-                        Sanitize();
-                        CaptureOptionFrom(DisplaySettingsManager.Settings);   // 第一次：範本的 [Option] 反映目前 settings.json 值
-                        Save();   // 第一次：在 DATA/PROFILE 留一份可編輯的範本
-                    }
+                    dirty = true;   // 第一次：在 DATA/PROFILE 留一份可編輯的範本
+                }
+                Sanitize();
+
+                // ---- 一次性併入舊的 settings.json（同一組值以前存兩份；沒有舊檔就用內建預設）----
+                var legacyJson = DisplaySettingsManager.ReadLegacyJson();
+                if (!hasOption)
+                {
+                    CaptureOptionFrom(legacyJson ?? new GameSettings());
+                    dirty = true;
+                }
+                else if (!hasOptUiScale && legacyJson?.display != null)
+                {
+                    optUiScale = legacyJson.display.uiScale;   // config.ini 有 [Option] 但還沒這個欄位 → 從舊 json 撿
+                    dirty = true;
                 }
 
-                // 清掉殘留的舊位置 config.ini（已不再讀取那些位置，留著只會混淆）：per-user（DATA/PROFILE/<id>/）+ 執行檔同層。
-                DeleteLegacyConfigs();
+                // ---- 一次性併入舊的 active.txt（登入哪個角色）----
+                if (string.IsNullOrEmpty(activeId))
+                {
+                    var legacyActive = ProfileManager.ReadLegacyActiveId();
+                    if (!string.IsNullOrEmpty(legacyActive)) { activeId = legacyActive; dirty = true; }
+                }
 
-                // config.ini 帶了 [Option] → 以檔案值覆蓋 settings.json 的 GameSettings（見 SettingsBootstrap 隨後 ApplyDisplay）。
-                if (hasOption) ApplyOptionTo(DisplaySettingsManager.Settings);
+                if (dirty) Save();
+                if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
+                DisplaySettingsManager.DeleteLegacyJson();      // 舊 settings.json（內容已在 [Option]）
+                ProfileManager.DeleteLegacyActiveFile();        // 舊 active.txt（內容已在 [Profile] activeId）
+                // [Option] 套回 GameSettings 已移到 DisplaySettingsManager.ApplyDisplay()（SettingsBootstrap 隨後呼叫）。
             }
             catch (Exception e)
             {
@@ -177,6 +207,30 @@ namespace Sdo.Settings
                 if (eq > 0) keys.Add(line.Substring(0, eq).Trim());
             }
             return keys;
+        }
+
+        /// <summary>找一份殘留的舊 per-user config.ini：優先 active user，其次 PROFILE 下第一個找到的（只看 &lt;id&gt; 子資料夾，
+        /// 不會誤抓 PROFILE 根的新全域檔）。沒有則 null。</summary>
+        private static string FindProfileConfig()
+        {
+            try
+            {
+                var active = ProfileManager.ActiveDir;
+                if (!string.IsNullOrEmpty(active))
+                {
+                    var p = Path.Combine(active, FileName);
+                    if (File.Exists(p)) return p;
+                }
+                var root = ProfileManager.Root;
+                if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
+                    foreach (var dir in Directory.GetDirectories(root))   // 只列子資料夾 → PROFILE 根的 config.ini 不在其中
+                    {
+                        var p = Path.Combine(dir, FileName);
+                        if (File.Exists(p)) return p;
+                    }
+            }
+            catch { /* 找不到就算了，用預設 */ }
+            return null;
         }
 
         /// <summary>找舊全域位置（執行檔同層）的 config.ini。沒有、或它其實就是新位置（極端 fallback 情形）則 null。</summary>
@@ -251,9 +305,10 @@ namespace Sdo.Settings
                 if (eq <= 0) continue;
                 string key = line.Substring(0, eq).Trim();
                 string val = line.Substring(eq + 1).Trim();
-                if (key.StartsWith("opt_")) hasOption = true;   // 檔案帶 [Option] → 開機時覆蓋 settings.json 的裝置層值
+                if (key.StartsWith("opt_")) hasOption = true;   // 檔案帶 [Option] → 不必再去撿舊 settings.json
                 switch (key)
                 {
+                    case "activeId": activeId = val; break;
                     case "speedSteps": speedSteps = ParseFloatList(val); break;
                     case "defaultSpeed": defaultSpeed = ParseFloat(val, defaultSpeed); break;
                     case "defaultNoteType": defaultNoteType = ParseInt(val, defaultNoteType); break;
@@ -270,10 +325,12 @@ namespace Sdo.Settings
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
                     case "opt_sfx": optSfx = ParseFloat(val, optSfx); break;
+                    // opt_keys/opt_keysAux：舊檔殘留，只讀進來給 KeyMap 種 keymaps.ini（見 KeyMap.Load），不再寫出。
                     case "opt_keys": optKeys = val; break;
                     case "opt_keysAux": optKeysAux = val; break;
                     case "opt_dispW": optDispW = ParseInt(val, optDispW); break;
                     case "opt_dispH": optDispH = ParseInt(val, optDispH); break;
+                    case "opt_uiScale": optUiScale = ParseFloat(val, optUiScale); hasOptUiScale = true; break;
                     case "opt_dispMode": optDispMode = val; break;
                     case "opt_vsync": optVsync = ParseInt(val, optVsync); break;
                     case "opt_lang": optLang = val; break;
@@ -309,15 +366,33 @@ namespace Sdo.Settings
             judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
             if (addonFolder == null) addonFolder = "";
+            if (optUiScale <= 0f) optUiScale = 1f;
+            optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
+            activeId = SanitizeActiveId(activeId);
+        }
+
+        /// <summary>只認 8 位數編號（＝ DATA/PROFILE 下的角色資料夾名）；其它一律當「沒設定」。純函式。</summary>
+        public static string SanitizeActiveId(string id)
+        {
+            id = (id ?? "").Trim();
+            if (id.Length != 8) return "";
+            foreach (var c in id) if (c < '0' || c > '9') return "";
+            return id;
         }
 
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
         public static string Serialize()
         {
             var sb = new StringBuilder();
-            sb.Append("# 開房間右側面板預設設定 — 放在存檔資料夾 DATA/PROFILE/（與 settings.json 同層），純文字可手改。\n");
-            sb.Append("# 改完存檔，下次開遊戲生效。\n");
-            sb.Append("[Room]\n");
+            sb.Append("# 本機設定總表 — 放在存檔資料夾 DATA/PROFILE/，純文字可手改，改完存檔下次開遊戲生效。\n");
+            sb.Append("# [Profile]=登入哪個角色  [Room]=開房間右側面板預設  [Option]=遊戲內 OPTION 對話框的設定。\n");
+            sb.Append("# 鍵位不在這個檔：4 鍵鍵位與遊玩功能鍵（換鏡頭/加減速/打拍音/Auto…）在同層的 keymaps.ini。\n");
+            sb.Append("[Profile]\n");
+            sb.Append("# 目前登入的角色＝ DATA/PROFILE/ 底下的 8 位數資料夾名（00000000=女 00000001=男）。\n");
+            sb.Append("# 留空＝開遊戲時自動挑一個並寫回這裡。選角色畫面切換性別也會寫回這裡。\n");
+            sb.Append("activeId=").Append(activeId ?? "").Append('\n');
+
+            sb.Append('\n').Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
             sb.Append("speedSteps=").Append(FloatListToString(speedSteps)).Append('\n');
             sb.Append("# 預設速度（會對齊到上面最接近的檔位）。玩家在房間選了會寫回這裡\n");
@@ -357,14 +432,13 @@ namespace Sdo.Settings
             sb.Append("opt_bgm=").Append(optBgm.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("opt_music=").Append(optMusic.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("opt_sfx=").Append(optSfx.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
-            sb.Append("# 4 鍵鍵位（左,下,上,右）主鍵位 / 輔助鍵位（KeyCode 名稱，逗號分隔；空=該格不綁）\n");
-            sb.Append("opt_keys=").Append(optKeys ?? "").Append('\n');
-            sb.Append("opt_keysAux=").Append(optKeysAux ?? "").Append('\n');
-            sb.Append("# 視窗大小 / 顯示模式（Windowed|Fullscreen|Borderless）/ 垂直同步（0|1）/ 語言\n");
+            sb.Append("# 鍵位已搬到同層的 keymaps.ini（4 鍵打擊鍵位 + 遊玩中的功能鍵），這裡不再有 opt_keys。\n");
+            sb.Append("# 視窗大小 / 顯示模式（Windowed|Fullscreen|Borderless）/ 垂直同步（0|1）/ UI 縮放 / 語言\n");
             sb.Append("opt_dispW=").Append(optDispW).Append('\n');
             sb.Append("opt_dispH=").Append(optDispH).Append('\n');
             sb.Append("opt_dispMode=").Append(optDispMode ?? "Windowed").Append('\n');
             sb.Append("opt_vsync=").Append(optVsync).Append('\n');
+            sb.Append("opt_uiScale=").Append(optUiScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("opt_lang=").Append(optLang ?? "zh-TW").Append('\n');
             sb.Append("# 遊戲頁（1=開 0=關）：全屏填滿 / 泛光 / notes面板靠左 / 人物特效 / 場景特效 / 自動導播 / 呼叫卡 / 完奏模式 / 歌曲變速\n");
             sb.Append("opt_fullscreenFill=").Append(B(optFullscreenFill)).Append('\n');
@@ -401,6 +475,7 @@ namespace Sdo.Settings
         {
             if (s == null) return;
             if (s.audio != null) { optBgm = s.audio.bgm; optMusic = s.audio.gameMusic; optSfx = s.audio.sfx; }
+            // 鍵位落地在 keymaps.ini（KeyMap.CaptureFrom）；這裡只留記憶體鏡像，供舊 settings.json 搬遷時種 keymaps.ini。
             if (s.keys != null)
             {
                 optKeys = JoinKeys(s.keys.lane4);
@@ -410,6 +485,7 @@ namespace Sdo.Settings
             {
                 optDispW = s.display.width; optDispH = s.display.height;
                 optDispMode = s.display.displayMode; optVsync = s.display.vsync ? 1 : 0;
+                optUiScale = s.display.uiScale;
             }
             optLang = s.language;
             if (s.gameplay != null)
@@ -432,12 +508,11 @@ namespace Sdo.Settings
             if (s == null) return;
             if (s.audio == null) s.audio = new VolumeSettings();
             s.audio.bgm = optBgm; s.audio.gameMusic = optMusic; s.audio.sfx = optSfx;
-            if (s.keys == null) s.keys = new KeyBindSettings();
-            s.keys.lane4 = KeyBindSettings.SanitizeNames(SplitKeys(optKeys), KeyBindSettings.DefaultPrimary);
-            s.keys.lane4aux = KeyBindSettings.SanitizeNames(SplitKeys(optKeysAux), KeyBindSettings.DefaultAux);
+            // 鍵位不從這裡套 —— 權威在 keymaps.ini，由 KeyMap.ApplyTo 接手（見 DisplaySettingsManager.Load）。
             if (s.display == null) s.display = new DisplaySettings();
             s.display.width = optDispW; s.display.height = optDispH;
             s.display.displayMode = optDispMode; s.display.vsync = optVsync != 0;
+            s.display.uiScale = optUiScale;
             if (!string.IsNullOrEmpty(optLang)) s.language = optLang;
             if (s.gameplay == null) s.gameplay = new GameplaySettings();
             var g = s.gameplay;
@@ -455,15 +530,6 @@ namespace Sdo.Settings
             var sb = new StringBuilder();
             for (int i = 0; i < a.Length; i++) { if (i > 0) sb.Append(','); sb.Append(a[i] ?? ""); }
             return sb.ToString();
-        }
-
-        // 逗號切 4 格，保留空格（""=刻意清空，SanitizeNames 會原樣保留）。
-        private static string[] SplitKeys(string s)
-        {
-            var parts = (s ?? "").Split(',');
-            var res = new string[4];
-            for (int i = 0; i < 4; i++) res[i] = i < parts.Length ? parts[i].Trim() : "";
-            return res;
         }
 
         // ---- small parse helpers ----

@@ -22,7 +22,7 @@ tail(=transform_505(sdm[513:]))。可拿「已知正確、且 codebook 相同」
 common-suffix 夠長(整段 setup 都吻合,僅前 ~512B DES 區不同)才用。
 
 donor 池 = `assets/閉撰敃氪/music/exper/*.ogg`(官方已解好的試聽,約 10 種 codebook)。試聽 sdm
-來源依序:`新增資料夾/exper` → 各版本 Music/exper → SDO-X exper。成員曲目 = song_catalog.json 的 k 譜面。
+來源依序:`新增資料夾/exper` → 各版本 Music/exper → SDO-X exper。成員曲目 = song_table.csv 的 k 譜面。
 
 用法(需 PATH 有 ffprobe，或放 H:/bms/bak/tools/dist)：
   python tools/decode_previews.py
@@ -30,17 +30,17 @@ donor 池 = `assets/閉撰敃氪/music/exper/*.ogg`(官方已解好的試聽,約
 import os
 import sys
 import glob
-import json
 import subprocess
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import song_table                                              # noqa: E402
 sys.path.insert(0, r"H:/bms/tools")
 from bms_sdo.sdm_codec import transform_505, fix_ogg_serials  # noqa: E402
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 M = os.path.join(REPO, "assets", "sdox_offline", "music")
 EXPER = os.path.join(M, "exper")
-CAT = os.path.join(REPO, "65", "My project", "Assets", "StreamingAssets", "song_catalog.json")
 DONOR_DIR = os.path.join(REPO, "assets", "閉撰敃氪", "music", "exper")
 
 SDM_SRCS = [r"H:/sdo_tw/新增資料夾/Music/exper"]
@@ -155,7 +155,8 @@ def main():
     exper_sig, main_sig = build_donor_index()
     print(f"donor library: exper codebooks={len(exper_sig)}  main-song codebooks={len(main_sig)} (sig={SIG}B)")
 
-    fids = [s["fileId"] for s in json.load(open(CAT, encoding="utf-8"))["songs"] if s["gn"][:-3].endswith("k")]
+    # 一首歌只解一次試聽:k/t 兩列指到同一個 fileId(同一個音檔),取 k 那列就好。
+    fids = [r["fileId"] for r in song_table.load() if song_table.is_primary(r["gn"]) and r["fileId"]]
     os.makedirs(EXPER, exist_ok=True)
     for f in glob.glob(os.path.join(EXPER, "*.ogg")):
         os.remove(f)

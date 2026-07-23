@@ -211,15 +211,44 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 
 **原則**：**本地為準** → 有勾選的項目才 **上傳 Steam Cloud**；換機登入同一 Steam 帳號可拉回。
 
-### 本地（永遠寫入）
+### 本地（永遠寫入）— **實作現況**
+
+存檔全部在 data root 底下的 `DATA/PROFILE/`（隨 exe 搬機；root 解析見 `SdoDataRoot`，可用 `SDO_DATA_ROOT` /
+`data_root.txt` 覆寫）。**設定只有兩個 ini**，都是全域一份（不跟著使用者跑）、純文字附中文註解、可手改：
 
 ```
-{LocalAppData}/Remake/
-├── settings.json              # 視窗、音量、offset、scroll、sync 勾選狀態
-├── bindings.json              # keymap
-└── beatmaps/
-    └── {chartHash}.json       # remember_scroll_per_beatmap 時 per-map scroll
+<data root>/DATA/PROFILE/
+├── config.ini                 # ★ 設定總表（RoomConfig）
+│     [Profile] activeId       #   目前登入的角色（＝下面的 8 位數資料夾名）
+│     [Room]                   #   開房間右側面板預設：速度檔位表/note/組隊/掉落/模式/場景/判定精度/offset
+│     [Option]                 #   OPTION 對話框：音量、視窗大小/顯示模式/vsync/uiScale/語言、遊戲頁各開關
+├── keymaps.ini                # ★ 鍵位（KeyMap）
+│     [Lane4]  primary / aux   #   4 鍵打擊鍵位（OPTION 鍵盤頁改完會寫回這裡）
+│     [Hotkeys]                #   遊玩中的功能鍵，見下表
+├── favorites.json             # 收藏的歌（全帳號共用）
+└── <8 位數 id>/profile.json   # 每個角色的衣服/道具/錢包（00000000=女 00000001=男）
 ```
+
+`GameSettings`（`DisplaySettingsManager.Settings`）只是**執行期工作副本**，由上面兩個 ini 組出來，按保存時寫回去。
+
+> **歷史**：以前還有 `settings.json`（＝現在的 `[Option]`，本來就是同一組值存兩份）與 `active.txt`
+> （＝現在的 `[Profile] activeId`）。開機時 `RoomConfig.Load()` 會把它們一次性併進 `config.ini` 後刪除；
+> 舊 `config.ini` 裡的 `opt_keys/opt_keysAux` 同時搬進 `keymaps.ini`。玩家不用做任何事。
+
+#### `[Hotkeys]` — 遊玩中的功能鍵（都能自訂）
+
+| key | 預設 | 作用 |
+|-----|------|------|
+| `camera` | `F2` | 切換鏡頭：自動導播 ↔ 6 台固定鏡頭（台號寫回 `opt_cameraFixed`） |
+| `speedUp` | `F5` | note 加速一檔（依 `[Room] speedSteps`） |
+| `speedDown` | `F6` | note 減速一檔 |
+| `assistTick` | `F7` | 打拍音（每顆音符一聲 click） |
+| `autoPlay` | `F8` | Auto 自動打擊 |
+| `showtime` | `Space` | ShowTime 模式釋放氣條 |
+| `quit` | `Escape` | 中離（不結算直接退出） |
+
+值＝Unity `KeyCode` 名稱（`A`…`Z` / `F1`…`F15` / `Keypad0`…`Keypad9` / `LeftArrow` / `PageUp` …）；
+**留空＝該功能不綁鍵**；打錯的名字會退回預設鍵。譜面編輯器的鍵（F1/F3/F4/F11/F12/`[`/`]`…）不在此表，仍寫死。
 
 ### Steam Cloud（MVP+，可選）
 

@@ -243,6 +243,36 @@ namespace Sdo.UI.Services
             return true;
         }
 
+        // 家族頻道的指令字（送出時剝掉，取後面的內容當家族訊息）。CJT 詞可緊接內容（無空白），拉丁詞需字界。
+        private static readonly string[] GuildCommandWords = { "家族", "公會", "公会", "guild", "family", "ギルド" };
+
+        // 家族頻道選單自動填入的指令前綴（本地化，例：「/家族 」）。見 RoomScreen.SetChatChannel。
+        public static string GuildCommandPrefix => "/" + LocalizationManager.Get("room.guild_command") + " ";
+
+        // 家族頻道綠字行的前綴標籤（本地化，例：「<家族>」）。見 RoomScreen.AddRoomChatGuildLine。
+        public static string GuildTag => LocalizationManager.Get("room.guild_tag");
+
+        // 剝掉開頭的 `/家族`（或其他家族指令字）+ 後面空白，取內容。沒有指令前綴就原字（去頭尾空白）回傳。
+        public static string StripGuildCommand(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            string s = text.TrimStart();
+            if (s.Length >= 1 && s[0] == '/')
+            {
+                string rest = s.Substring(1);
+                foreach (var w in GuildCommandWords)
+                {
+                    if (!rest.StartsWith(w, StringComparison.OrdinalIgnoreCase)) continue;
+                    string after = rest.Substring(w.Length);
+                    // 拉丁字母指令需字界（後接空白或結尾），避免把 "/guildhall" 咬壞；CJK 詞可直接接字。
+                    bool ascii = w[0] < 128;
+                    if (ascii && after.Length > 0 && !char.IsWhiteSpace(after[0])) continue;
+                    return after.Trim();
+                }
+            }
+            return text.Trim();
+        }
+
         public static bool TryParseRoomAction(string text, out RoomChatAction action)
             => TryParseRoomAction(text, false, out action);
 

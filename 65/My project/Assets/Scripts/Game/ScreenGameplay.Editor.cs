@@ -106,8 +106,14 @@ namespace Sdo.Game
             }
         }
 
-        /// <summary>音樂目前播到第幾秒（clip 位置）。單首 offset 動的就是它 —— 測試用來確認「動的是音樂不是音符」。</summary>
-        public double EditorClipSec => (_audio != null && _audio.clip != null) ? _audio.time : 0.0;
+        /// <summary>音樂目前播到第幾秒（clip 位置）。單首 offset 動的就是它 —— 測試用來確認「動的是音樂不是音符」。
+        /// **暫停中不能問 <c>_audio.time</c>**：seek 會先 Stop() 再寫 timeSamples，但停住的音源讀回來一律是 0
+        /// （音樂是暫停時排不出去的，只有按播放才 PlayScheduled）→ 改回報 seek 當下算好的目標位置。</summary>
+        public double EditorClipSec => (_audio != null && _audio.clip != null)
+            ? (_audio.isPlaying ? _audio.time : _editorSeekClipSec) : 0.0;
+
+        // EditorSeekMs 算出來的「音樂該停在 clip 第幾秒」（負值＝還在無聲數拍裡 → 音樂從 0 起播，回報 0）。
+        private double _editorSeekClipSec;
 
         /// <summary>
         /// 顯示縮放（＝下落速度）。StepMania 編輯器的 Ctrl+↑/↓ 就是改這個：速度越快，同一段畫面涵蓋的時間越短
@@ -283,12 +289,17 @@ namespace Sdo.Game
 
             // 四個錨點一起搬（少一個就對不上）：dsp 錨點、wall 基準、音源位置、平滑時鐘。
             double startDsp = AudioSettings.dspTime + lead;   // 音樂真正開始出聲的時刻
-            _songStartDspTime = GameRate.AnchorForChartSeconds(startDsp, chartSec, _musicRate, MusicCountInSec);
+            // 譜面時鐘一律 = 音樂的譜面時間 + globalOffset（那就是 global offset 的定義，見 ApplyClockOffset）。
+            // 所以「把時鐘停在 chartSec」時，音樂要停在 chartSec − globalOffset —— 少扣這一項的話 seek 完時鐘會
+            // 停在 chartSec + globalOffset（seek 到 X 卻停在 X+offset），而且 EditorSongOffsetMs 的
+            // `EditorSeekMs(_nowMs)` 來回會把 offset 越加越多（offset 40 → 每碰一次單首 offset 就往前 40ms）。
+            double musicChartSec = chartSec - _globalOffsetMs / 1000.0;
+            _songStartDspTime = GameRate.AnchorForChartSeconds(startDsp, musicChartSec, _musicRate, MusicCountInSec);
             // 譜面時鐘也要在 startDsp 那一刻剛好等於 chartSec（timeAsDouble 吃 timeScale，所以餘裕要乘流速）。
             // 尾巴那項 = 把輸出延遲補償加回來：譜面時鐘一律減 rate×L（＝「時鐘讀的是正在出喇叭的位置」，見 ApplyClockOffset），
             // 但**暫停中根本沒有聲音在出**，時鐘只能靠 wall 自走 —— 不加回去的話「暫停 + seek 到 X」會停在 X−rate×L，
             // 編輯器就不 WYSIWYG 了（格線/波形/F11 全都讀 _nowMs）。播放中這一項不影響任何事：第一幀就會從音訊真值重新 seed。
-            _clockStart = Time.timeAsDouble - (chartSec + ClockLatencyChartMs / 1000.0 - lead * _musicRate);
+            _clockStart = Time.timeAsDouble - (chartSec + (ClockLatencyChartMs - _globalOffsetMs) / 1000.0 - lead * _musicRate);
             _pauseChartSec = chartSec;
             _clock.Reset();
             _nowMs = chartMs;
@@ -296,7 +307,8 @@ namespace Sdo.Game
             if (_audio != null && _audio.clip != null)
             {
                 _audio.Stop();
-                double clipSec = chartSec - MusicCountInSec;   // 音樂晚 count-in 秒才進來（含單首 offset）
+                double clipSec = musicChartSec - MusicCountInSec;   // 音樂晚 count-in 秒才進來（含單首 offset）
+                _editorSeekClipSec = Math.Max(0.0, clipSec);        // 暫停中 _audio.time 讀不到，EditorClipSec 回報這個
                 if (clipSec < 0.0)
                 {
                     // 還在無聲數拍裡：把音樂排在「譜面時間 = count-in」的那個 dsp 時刻（即錨點本身）。

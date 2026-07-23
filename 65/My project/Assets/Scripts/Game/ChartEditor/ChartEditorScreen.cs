@@ -119,7 +119,7 @@ namespace Sdo.Game
             _diff = Mathf.Clamp(PlayerPrefs.GetInt(PrefLastDiff, 0), 0, 2);
             _scope = PlayerPrefs.GetString(PrefScope, EditorSongScope.All);   // 上次鎖的資料夾（校時常常要分好幾天）
             if (string.IsNullOrEmpty(gn) || !File.Exists(SongPaths.Gn(gn) ?? "")) gn = PickDefaultGn();
-            if (string.IsNullOrEmpty(gn)) { _status = "找不到任何可開的 .gn（song_catalog.json 或 MUSIC 資料夾是空的）"; _showList = true; return; }
+            if (string.IsNullOrEmpty(gn)) { _status = "找不到任何可開的 .gn（song_table.csv 或 MUSIC 資料夾是空的）"; _showList = true; return; }
             LoadSong(gn, _diff);
         }
 
@@ -205,7 +205,7 @@ namespace Sdo.Game
             game.effectScene = false;            // 不放場景常駐特效
             game.scrollSpeedMul = _speed;
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
-            // 外部歌的 offset 存在歌資料夾的 sdo.header（已灌進 entry.offsetMs，見 ExternalSongLibrary.ToEntry）；官方歌走 song_name_overrides.json。
+            // 外部歌的 offset 存在歌資料夾的 sdo.header（已灌進 entry.offsetMs，見 ExternalSongLibrary.ToEntry）；官方歌走 song_table.csv 的 offsetMs。
             _songOffset = ext ? (e != null ? e.offsetMs : 0f) : SongCatalog.OffsetMs(_gn);
             game.songOffsetMs = (float)_songOffset;
             game.EditorOnHit = OnHit;             // 跟著打 → 誤差條（一般編譜模式也有，不必進打拍測試）
@@ -364,7 +364,10 @@ namespace Sdo.Game
             if (_overlay != null)
             {
                 _overlay.Peaks = peaks;
-                _overlay.PeaksOffsetMs = game.EditorMusicDelaySec * 1000.0;   // 波形第 0 格 = 音樂真正開始的譜面時間
+                // 波形第 0 格 = 音樂真正開始的譜面時間（含單首 offset）再往早補解碼暖機。**公式要跟
+                // ChartEditorOverlay.LateUpdate 一模一樣** —— 它每幀都會覆寫這個值，兩邊不同只會讓這裡的初值
+                // 閃一幀不同步（07-15 加解碼暖機補償時漏改這行）。
+                _overlay.PeaksOffsetMs = game.EditorMusicCountInMs - ScreenGameplay.WaveformDecoderDelayMs;
             }
             _peaksCo = null;
         }
@@ -413,13 +416,13 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.End)) _game.EditorSeekMs(_game.EditorEndMs);
 
             // 單首 offset（StepMania 編輯器的 F11/F12）：一次 20ms，按住 Alt 微調 1ms。正 = 音樂延後播放。
-            // **調的時候不寫檔** —— 要留下來按 Ctrl+S（下面），才寫進 song_name_overrides.json。
+            // **調的時候不寫檔** —— 要留下來按 Ctrl+S（下面），才寫進 song_table.csv。
             bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             double stepMs = alt ? SongOffsetFineStepMs : SongOffsetStepMs;
             if (Input.GetKeyDown(KeyCode.F11)) NudgeSongOffset(-stepMs);
             if (Input.GetKeyDown(KeyCode.F12)) NudgeSongOffset(+stepMs);
 
-            // Ctrl+S：把目前的單首 offset 存進 song_name_overrides.json（只動那一筆的 offsetMs，其餘位元組不變）
+            // Ctrl+S：把目前的單首 offset 存進 song_table.csv（外部歌則寫進歌資料夾的 sdo.header）—— 只動那一筆的 offsetMs，其餘位元組不變
             // Ctrl+Shift+S：外部歌 —— 把這個 offset 套到整個資料夾（整包同時跑掉時用）
             if (Input.GetKeyDown(KeyCode.S) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
             {
@@ -451,7 +454,7 @@ namespace Sdo.Game
         private const float SongOffsetMinMs = -60000f, SongOffsetMaxMs = 60000f;
 
         // 單首 offset：即時套進時鐘（音樂會當場前後挪，跟 StepMania 一樣邊聽邊調）。
-        // **不寫檔** —— 值只活在這次執行裡。要留著就自己抄進 song_name_overrides.json（面板會印出那一行）。
+        // **不寫檔** —— 值只活在這次執行裡。要留著就自己抄進 song_table.csv（面板會印出那一行）。
         private void NudgeSongOffset(double deltaMs)
         {
             if (_game == null || string.IsNullOrEmpty(_gn)) return;
@@ -475,7 +478,7 @@ namespace Sdo.Game
             return _gn;
         }
 
-        /// <summary>目前這首的 gn 詞幹（sdomNNNN）—— song_name_overrides.json 的 key，k/t 共用一筆（同一個音檔）。</summary>
+        /// <summary>目前這首的 gn 詞幹（sdomNNNN）—— song_table.csv 的 key，k/t 共用一筆（同一個音檔）。</summary>
         private string Stem()
         {
             var s = Path.GetFileNameWithoutExtension(_gn ?? "").ToLowerInvariant();
@@ -489,7 +492,7 @@ namespace Sdo.Game
         {
             if (string.IsNullOrEmpty(_gn)) return;
             if (_entry != null && _entry.external) { SaveExternalSongOffset(); return; }
-            if (SongOverridesWriter.SetOffset(Stem(), _songOffset, out string msg))
+            if (SongTableWriter.SetOffset(Stem(), _songOffset, out string msg))
             {
                 var e = SongCatalog.Get(_gn);
                 if (e != null) e.offsetMs = (float)_songOffset;   // k 這筆；t 那筆下次重載 catalog 時才會同步（同一個 stem）
@@ -710,7 +713,7 @@ namespace Sdo.Game
                     + $"　／　Ctrl+Shift+S 套用到整個「{EditorSongScope.Label(EditorSongScope.ScopeOf(_entry))}」");
             else if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
                 GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
-                    $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_name_overrides.json（{Stem()}）");
+                    $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_table.csv（{Stem()}）");
             else if (!string.IsNullOrEmpty(_status))
                 GUI.Label(new Rect(6, 52, Screen.width - 12, 20f), _status);
 
@@ -895,7 +898,7 @@ namespace Sdo.Game
         }
 
         // 歌單只列**鍵盤譜（k.gn）**：每首歌在原始資料裡有 k（鍵盤）/ t（毯子）兩份譜，共用同一個標題，
-        // 照 All 列的話 2175 首會變成 4346 列、每首重複一次（連名字都一樣 —— song_name_overrides.json 是
+        // 照 All 列的話 2175 首會變成 4346 列、每首重複一次（連名字都一樣 —— song_table.csv 是
         // 照 stem 蓋名字的）。規則寫在 SongCatalog.IsPrimaryVariant，選歌畫面走的是同一套。
         //
         // 搜尋比對交給 SongCatalog.Matches（名稱／曲師／gn／fileId 編號都吃）：打編號能直接找到歌，

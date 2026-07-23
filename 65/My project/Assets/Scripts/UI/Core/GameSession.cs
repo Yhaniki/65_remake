@@ -13,6 +13,12 @@ namespace Sdo.UI.Core
         public string LocalPlayerName = "玩家001";
         public int Gender = 0;   // 本機角色性別：0=女(WOMAN) 1=男(MAN)。由 active profile 帶入（見 AppContext.CreateMock）。
 
+        // 本機所屬家族名。離線單機沒有真正的家族系統：預設給一個示範家族名，家族頻道即可正常運作（綠字 <家族>…）；
+        // 清空（""）＝沒有家族 → 家族頻道送出顯示「你沒有家族」。房間可按 F3 在「有/沒有」之間切換（除錯用）。
+        public const string DemoGuildName = "熱舞家族";
+        public string GuildName = DemoGuildName;
+        public bool HasGuild => !string.IsNullOrWhiteSpace(GuildName);
+
         public int CurrentRoomId = -1;
 
         // 房間左上角的所在位置標示 (DDRROOM servername / channelnum)。離線單機固定 1/1，顯示「自由練習場1 頻道1」。

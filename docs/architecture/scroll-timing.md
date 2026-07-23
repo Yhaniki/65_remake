@@ -3,6 +3,7 @@
 > **原版**：GN / SM / O2Jam 系 — **小節 (measure) + BPM + 拍位置**  
 > **重製 Enhanced**：**毫秒時間軸** + osu mania **SV（綠線）** + 使用者 scroll 設定  
 > 客户端開關：[game-settings.md](../systems/game-settings.md)
+> **基準速度（哪一段算 1.0×）怎麼挑 → [scroll-base-bpm.md](scroll-base-bpm.md)**（實作現況；本文是設計規格）
 
 參考：[osu!mania wiki](https://github.com/ppy/osu-wiki/blob/master/wiki/Game_mode/osu!mania/en.md) · [SM_GN_NOTE_FORMAT.md](../reverse-engineering/SM_GN_NOTE_FORMAT.md)
 
