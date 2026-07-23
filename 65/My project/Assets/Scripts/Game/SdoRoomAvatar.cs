@@ -131,8 +131,9 @@ namespace Sdo.Game
             var wingRigs = new List<AvatarWingRig.Paths>();
             foreach (var rel0 in bodyParts)
             {
-                if (wantWings && AvatarWingRig.TryResolve(rel0, out var wrp) && WingRigFilesExist(wrp))
-                { wingRigs.Add(wrp); continue; }   // 動畫翅膀 → 收集起來待掛,靜態翅膀跳過不畫
+                if (wantWings && AvatarWingRig.TryResolve(rel0, out var wrp) && WingRigFilesExist(wrp)
+                    && !AvatarWingRig.RenderAsStatic(wrp.ModelId))
+                { wingRigs.Add(wrp); continue; }   // 動畫翅膀 → 收集待掛;RenderAsStatic(甜心飛翼)不掛 rig → 落到下方靜態渲染(隨身體動、固定貼圖、跟儲物間一樣)
                 // 「只留皮膚」件 (連身裙下補回身體幾何,見 AvatarOutfit.WithBodySkinFiller):布料 range 不畫
                 bool skinOnly = AvatarOutfit.IsSkinOnly(rel0, out var rel);
                 var path = SdoAvatarBuilder.ResolveAvatarFile(rel);   // Root + dev Datas 全量 (見上;修光頭)
@@ -222,7 +223,7 @@ namespace Sdo.Game
             if (parts == 0) { Debug.LogWarning("[room-avatar] no parts loaded"); Object.Destroy(av); return null; }
 
             av.PoseInitialIdle();           // arm the idle so the first frame isn't the bind/T-pose
-            foreach (var wrp in wingRigs) BuildWingRig(parent, wrp, useCutout);   // 動畫翅膀:掛獨立會拍動的 _G rig
+            foreach (var wrp in wingRigs) BuildWingRig(parent, av, wrp, useCutout);   // 動畫翅膀:掛獨立會拍動的 _G rig(跟身體背骨動)
             SetLayerRecursive(parent, layer);   // 也把翅膀 rig 一起收進 layer(它是 parent 的子物件)
             return av;
         }
@@ -232,16 +233,40 @@ namespace Sdo.Game
             && File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MshRel))
             && File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MotRel));
 
+        // 翅膀 _G 骨架的 root 骨(Parent<0)在 body model space 的位置(≈背部掛點)。用來挑最近的身體骨當掛點(見 BuildWingRig)。
+        private static Vector3 WingRootModelPos(HrcLoader wingHrc)
+        {
+            if (wingHrc == null || wingHrc.Parent == null || wingHrc.LocalRest == null) return Vector3.zero;
+            for (int i = 0; i < wingHrc.Parent.Length; i++)
+                if (wingHrc.Parent[i] < 0) return wingHrc.LocalRest[i].GetColumn(3);   // root: local == world
+            return Vector3.zero;
+        }
+
+        // 身體骨中 bind pose 位置離 target 最近者(翅膀掛點 → 上背/脊椎骨)。回傳骨 index,無骨 → -1。
+        private static int NearestBodyBone(SdoAvatar body, Vector3 target)
+        {
+            if (body == null) return -1;
+            int best = -1; float bestD = float.MaxValue;
+            int n = body.BoneCount;
+            for (int b = 0; b < n; b++)
+            {
+                float d = (body.BoneBindModelPos(b) - target).sqrMagnitude;
+                if (d < bestD) { bestD = d; best = b; }
+            }
+            return best;
+        }
+
         /// <summary>
         /// Mount an animated glide-wing (<c>_G</c>) rig on <paramref name="parent"/> (the body avatar root): a SECOND,
         /// self-contained <see cref="SdoAvatar"/> — its own <c>_G.HRC</c> skeleton + <c>_G.MSH</c> skinned mesh looping
-        /// its own <c>.mot</c> — parented at IDENTITY under the body root. The rig is authored in body model space (root
-        /// static at the back attach point; only the feather bones flap), so identity-parenting sits it on the back and
-        /// it flaps independently while the body inherits room position/facing/scale. Faithful port of the online
-        /// FUN_0083f540 wing mount (see <see cref="AvatarWingRig"/>). No-op on any load failure (the static wing was
-        /// already suppressed — a missing rig just means no wing, logged; <see cref="WingRigFilesExist"/> gates that).
+        /// its own <c>.mot</c>. The rig is authored in body model space (root at the back attach point; only the feather
+        /// bones flap), so it flaps independently while inheriting room position/facing/scale. It is glued to the body's
+        /// nearest BACK bone via <see cref="SdoAvatar.AddSkinFollower"/> so it rides the idle up/down bob / walk / lean —
+        /// a plain identity parent under the body root pinned it to the STATIC root and it visibly detached during the
+        /// bob (使用者回報「翅膀沒跟著身體上下動」). Faithful port of the online FUN_0083f540 wing mount (attaches the wing
+        /// skeleton to the body's wing bone; see <see cref="AvatarWingRig"/>). No-op on any load failure.
         /// </summary>
-        private static void BuildWingRig(GameObject parent, AvatarWingRig.Paths wp, bool useCutout)
+        private static void BuildWingRig(GameObject parent, SdoAvatar body, AvatarWingRig.Paths wp, bool useCutout)
         {
             var wingHrc = AvatarAssetCache.Hrc(SdoAvatarBuilder.ResolveAvatarFile(wp.HrcRel));
             if (wingHrc == null) { Debug.LogWarning("[wing-rig] HRC fail " + wp.HrcRel); return; }
@@ -254,7 +279,12 @@ namespace Sdo.Game
             if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[wing-rig] MSH fail " + wp.MshRel); return; }
 
             var wingGO = new GameObject("WingRig_" + wp.ModelId);
-            wingGO.transform.SetParent(parent.transform, false);   // identity → body model space (root static at the back)
+            wingGO.transform.SetParent(parent.transform, false);   // body model space; transform driven by the skin-follower below
+            // 讓翅膀 rig 跟著身體「背部骨」的動畫(idle 上下起伏/走路/微傾),而非釘在靜止的 body root(舊 identity 掛法 → 身體上下動
+            // 翅膀不跟,使用者回報)。挑「身體 bind pose 離翅膀根最近的骨」當掛點(≈上背/脊椎),用它的 rest-relative 剛體變換驅動
+            // wingGO(見 SdoAvatar.AddSkinFollower;bind 時為 identity → 翅膀仍坐在原本背部掛點,動起來才跟著跑)。
+            int attach = NearestBodyBone(body, WingRootModelPos(wingHrc));
+            if (body != null && attach >= 0) body.AddSkinFollower(attach, wingGO.transform);
             var wav = wingGO.AddComponent<SdoAvatar>();
             wav.Setup(wingHrc, wingMot);
             wav.RestMot = wingMot;   // the flap clip loops in LateUpdate (t = time·Fps % (MaxTime+1))

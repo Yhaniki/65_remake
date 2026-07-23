@@ -59,6 +59,18 @@ namespace Sdo.Game
         /// <summary>True if <paramref name="modelId"/> (mesh prefix) is a wing with an animated <c>_G</c> rig.</summary>
         public static bool HasAnimatedRig(int modelId) => AnimatedRigModelIds.Contains(modelId);
 
+        // Wings rendered as a STATIC wing (the base mesh, skinned to the BODY) instead of the animated _G rig. The base
+        // mesh already skins to the body skeleton (so it bobs with the idle/walk) and its material points at ONE fixed
+        // glow frame (甜心飛翼 023691/023692_*_CHIBANG.MSH → 023691_woman_chibang5.dds) — exactly what the 儲物間 / 男女選擇
+        // previews show (they render the base mesh, not the rig). So for these wings we DON'T build the _G rig: it makes
+        // the room match the wardrobe (same still texture, 維持全亮), follow the body, and stop the glow cycling — all at
+        // once (使用者:「甜心飛翼 貼圖維持全亮,跟儲物間一樣」). Add more model ids to render them static too.
+        private static readonly HashSet<int> StaticWingModelIds = new HashSet<int> { 23691, 23692 };
+
+        /// <summary>True if this wing MODEL id should be drawn as a STATIC body-skinned wing (base mesh) rather than the
+        /// animated <c>_G</c> rig — so it looks exactly like the 儲物間 / 男女選擇 preview (fixed glow frame, follows body).</summary>
+        public static bool RenderAsStatic(int modelId) => StaticWingModelIds.Contains(modelId);
+
         /// <summary>The animated-wing model ids (read-only view, for tests / diagnostics).</summary>
         public static IEnumerable<int> AnimatedWingModelIds => AnimatedRigModelIds;
 
