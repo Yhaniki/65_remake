@@ -252,26 +252,41 @@ namespace Sdo.UI.Services
         // 家族頻道綠字行的前綴標籤（本地化，例：「<家族>」）。見 RoomScreen.AddRoomChatGuildLine。
         public static string GuildTag => LocalizationManager.Get("room.guild_tag");
 
+        // 送出時的實際頻道：頭上泡打字（點空曠處起、或送出後 armed 續打）一律走「當前頻道一般說話」——即使左下
+        // 頻道選單停在家族/好友，氣泡打字都彈頭上藍泡、不被劫走成家族綠字或密語。家族/好友/回覆的專屬訊息只在
+        // 「輸入框回顯」模式（頻道選單自動填「/家族 」前綴、或直接點左下輸入框）送。見 RoomScreen.SendRoomChat。
+        public static ChatChannel ResolveSendChannel(bool bubbleTyping, ChatChannel selectedChannel)
+            => bubbleTyping ? ChatChannel.Current : selectedChannel;
+
+        // 文字是否以家族指令前綴（/家族、/公會、/guild…）開頭。用來在「當前」綜合台辨識「明打的家族訊息」：
+        // 有前綴 → 送家族綠字；沒前綴 → 一般說話（見 RoomScreen.SendRoomChat）。
+        public static bool HasGuildCommand(string text) => TryStripGuildCommand(text, out _);
+
+        // 有家族指令前綴 → out body=剝掉前綴+空白後的內容（可空，代表只打了「/家族 」還沒內容），回傳 true；
+        // 沒前綴 → body="" 回傳 false。前綴辨識規則：CJK 詞可緊接內容（無空白），拉丁詞需字界。
+        public static bool TryStripGuildCommand(string text, out string body)
+        {
+            body = "";
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string s = text.TrimStart();
+            if (s.Length < 1 || s[0] != '/') return false;
+            string rest = s.Substring(1);
+            foreach (var w in GuildCommandWords)
+            {
+                if (!rest.StartsWith(w, StringComparison.OrdinalIgnoreCase)) continue;
+                string after = rest.Substring(w.Length);
+                // 拉丁字母指令需字界（後接空白或結尾），避免把 "/guildhall" 咬壞；CJK 詞可直接接字。
+                bool ascii = w[0] < 128;
+                if (ascii && after.Length > 0 && !char.IsWhiteSpace(after[0])) continue;
+                body = after.Trim();
+                return true;
+            }
+            return false;
+        }
+
         // 剝掉開頭的 `/家族`（或其他家族指令字）+ 後面空白，取內容。沒有指令前綴就原字（去頭尾空白）回傳。
         public static string StripGuildCommand(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return "";
-            string s = text.TrimStart();
-            if (s.Length >= 1 && s[0] == '/')
-            {
-                string rest = s.Substring(1);
-                foreach (var w in GuildCommandWords)
-                {
-                    if (!rest.StartsWith(w, StringComparison.OrdinalIgnoreCase)) continue;
-                    string after = rest.Substring(w.Length);
-                    // 拉丁字母指令需字界（後接空白或結尾），避免把 "/guildhall" 咬壞；CJK 詞可直接接字。
-                    bool ascii = w[0] < 128;
-                    if (ascii && after.Length > 0 && !char.IsWhiteSpace(after[0])) continue;
-                    return after.Trim();
-                }
-            }
-            return text.Trim();
-        }
+            => TryStripGuildCommand(text, out var body) ? body : (text != null ? text.Trim() : "");
 
         public static bool TryParseRoomAction(string text, out RoomChatAction action)
             => TryParseRoomAction(text, false, out action);

@@ -224,5 +224,22 @@ namespace Sdo.Tests
         [TestCase("", "")]                       // 空 → 空
         public void Strips_Guild_Command(string text, string expected)
             => Assert.AreEqual(expected, RoomChatCommand.StripGuildCommand(text));
+
+        // 頭上泡打字（點空曠處起／送出後 armed 續打）一律走「當前頻道一般說話」，不論左下頻道選單停在哪一台：
+        // 這樣氣泡打字才會彈頭上藍泡，不會被家族/好友頻道劫走成綠字或密語（見 RoomScreen.SendRoomChat）。
+        [TestCase(ChatChannel.Family)]
+        [TestCase(ChatChannel.Friend)]
+        [TestCase(ChatChannel.Reply)]
+        [TestCase(ChatChannel.Current)]
+        public void BubbleTyping_Always_Routes_To_Current(ChatChannel selected)
+            => Assert.AreEqual(ChatChannel.Current, RoomChatCommand.ResolveSendChannel(bubbleTyping: true, selected));
+
+        // 輸入框回顯模式（非氣泡）：照左下頻道選單原樣送——家族進家族、好友進好友、當前進當前。
+        [TestCase(ChatChannel.Family, ChatChannel.Family)]
+        [TestCase(ChatChannel.Friend, ChatChannel.Friend)]
+        [TestCase(ChatChannel.Reply, ChatChannel.Reply)]
+        [TestCase(ChatChannel.Current, ChatChannel.Current)]
+        public void InputEcho_Keeps_Selected_Channel(ChatChannel selected, ChatChannel expected)
+            => Assert.AreEqual(expected, RoomChatCommand.ResolveSendChannel(bubbleTyping: false, selected));
     }
 }
