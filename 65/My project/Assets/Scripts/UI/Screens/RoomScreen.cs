@@ -2306,8 +2306,8 @@ namespace Sdo.UI.Screens
             }
 
             // F3（除錯）：切換本機「有家族 / 沒有家族」，用來測試家族頻道兩種行為（綠字 <家族>… / 你沒有家族）。
-            // 允許打字中也可按（F 鍵不會產生輸入字元）。
-            if (Input.GetKeyDown(KeyCode.F3))
+            // 允許打字中也可按（F 鍵不會產生輸入字元）。只在編輯器裡有效，打包成 build 一律關閉（見 SdoDebugFeatures）。
+            if (SdoDebugFeatures.Enabled && Input.GetKeyDown(KeyCode.F3))
             {
                 bool roomIsTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
                 if (roomIsTop && Ctx != null && Ctx.Session != null)

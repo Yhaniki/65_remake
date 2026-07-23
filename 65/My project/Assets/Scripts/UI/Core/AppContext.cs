@@ -40,8 +40,9 @@ namespace Sdo.UI.Core
             var rooms = new MockRoomService(session);
             // 聊天列表本機發言者顯示 active 使用者的名字/id（跟頭頂名字一致），不再寫死「我」。
             // localGuild 讓家族頻道知道本機有沒有家族（空 → 「你沒有家族」；見 RoomScreen F3 除錯切換）。
+            // simulateOthers：模擬他人聊天（bot 閒聊／同族閒聊／罐頭回覆）只在編輯器測試時開；打包 build 一律關閉（見 SdoDebugFeatures）。
             var chat = new MockChatService(clock, () => session.Gender == 1, () => session.LocalPlayerName,
-                localGuild: () => session.GuildName);
+                localGuild: () => session.GuildName, simulateOthers: SdoDebugFeatures.Enabled);
             return new AppContext(session, flow, rooms, players, chat);
         }
     }

@@ -23,6 +23,7 @@ namespace Sdo.UI.Services
         private readonly string[] _whisperReplies;
         private readonly string[] _guildmateNames;   // 同族成員（本機有家族時偶爾在家族頻道說話）
         private readonly string[] _guildLines;
+        private readonly bool _simulateOthers;   // 模擬他人聊天（bot 閒聊／同族閒聊／罐頭回覆）：編輯器測試開、打包 build 關
         private double _nextBotMs;
         private int _line;
         private int _whisperLine;
@@ -35,12 +36,13 @@ namespace Sdo.UI.Services
 
         public MockChatService(IClock clock, Func<bool> localIsMale = null, Func<string> localName = null,
             Func<IEnumerable<string>> onlineNames = null, Func<IEnumerable<string>> offlineNames = null,
-            Func<string> localGuild = null)
+            Func<string> localGuild = null, bool simulateOthers = true)
         {
             _clock = clock;
             _localIsMale = localIsMale;
             _localName = localName;
             _localGuild = localGuild;
+            _simulateOthers = simulateOthers;
             _guildmateNames = new[] { "大熱舞咪匠★", "舞星", "月光", "阿К" };
             _guildLines = new[] { "晚上開團嗎", "1", "22", "有人在？", "衝家族排名", "來跳一場" };
             _botNames = new[] { "小舞", "風之舞", "Neo", "櫻花", "阿傑" };
@@ -131,7 +133,8 @@ namespace Sdo.UI.Services
             }
             else outgoing.Text = msg;
             Emit(outgoing);
-            // 對方回話（示範「X 對你說」形式）——單機離線模擬，取一句罐頭回覆。
+            // 對方回話（示範「X 對你說」形式）——單機離線模擬，取一句罐頭回覆。打包 build 關閉（沒有假人回你密語）。
+            if (!_simulateOthers) return;
             string reply = _whisperReplies[_whisperLine % _whisperReplies.Length];
             _whisperLine++;
             Emit(new ChatMessage
@@ -157,7 +160,8 @@ namespace Sdo.UI.Services
                 return;
             }
             Add(new ChatMessage(LocalSender(), msg, _clock.NowMs, local: true, channel: ChatChannel.Family) { Guild = true });
-            // 同族偶爾回一句（離線模擬）：每三則家族發言回一次，取罐頭回覆。
+            // 同族偶爾回一句（離線模擬）：每三則家族發言回一次，取罐頭回覆。打包 build 關閉（沒有假的同族在講話）。
+            if (!_simulateOthers) return;
             _guildLine++;
             if (_guildLine % 3 == 0)
                 Add(new ChatMessage(_guildmateNames[_guildLine % _guildmateNames.Length],
@@ -249,6 +253,7 @@ namespace Sdo.UI.Services
 
         public void Tick()
         {
+            if (!_simulateOthers) return;   // 打包 build：不注入 bot／同族的模擬閒聊，房間/家族頻道保持真實（沒有假人在講話）
             var now = _clock.NowMs;
             if (now < _nextBotMs) return;
             _nextBotMs = now + 5000 + (_line % 6) * 1000;   // 5–10s, deterministic cadence

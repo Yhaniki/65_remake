@@ -225,6 +225,28 @@ namespace Sdo.Tests
         public void Strips_Guild_Command(string text, string expected)
             => Assert.AreEqual(expected, RoomChatCommand.StripGuildCommand(text));
 
+        // 明打的家族指令：TryStripGuildCommand 認出前綴才回 true+內容；純文字/密語/表情回 false。
+        // 用來在「當前」綜合台辨識「/家族 …」→ 送家族綠字，其餘 → 一般說話（見 RoomScreen.SendRoomChat）。
+        [TestCase("/家族 哈囉", true, "哈囉")]
+        [TestCase("/家族哈囉", true, "哈囉")]     // CJK 可無空白直接接
+        [TestCase("/家族", true, "")]             // 只有指令沒內容
+        [TestCase("/家族   衝排名  ", true, "衝排名")]
+        [TestCase("/公會 hi", true, "hi")]
+        [TestCase("/guild hello", true, "hello")]
+        [TestCase("/GUILD hi", true, "hi")]       // 大小寫不敏感
+        [TestCase("/guildhall", false, "")]       // 拉丁字無字界 → 不算家族指令
+        [TestCase("哈囉", false, "")]             // 純文字（一般說話）
+        [TestCase("在嗎", false, "")]
+        [TestCase("[小舞] 早安", false, "")]      // 密語不是家族指令
+        [TestCase("/GO", false, "")]              // 表情不是家族指令
+        [TestCase("", false, "")]
+        public void TryStrips_Guild_Command(string text, bool expectedHas, string expectedBody)
+        {
+            Assert.AreEqual(expectedHas, RoomChatCommand.TryStripGuildCommand(text, out var body));
+            Assert.AreEqual(expectedBody, body);
+            Assert.AreEqual(expectedHas, RoomChatCommand.HasGuildCommand(text));
+        }
+
         // 頭上泡打字（點空曠處起／送出後 armed 續打）一律走「當前頻道一般說話」，不論左下頻道選單停在哪一台：
         // 這樣氣泡打字才會彈頭上藍泡，不會被家族/好友頻道劫走成綠字或密語（見 RoomScreen.SendRoomChat）。
         [TestCase(ChatChannel.Family)]
