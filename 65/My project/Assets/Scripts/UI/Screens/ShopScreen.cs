@@ -1072,6 +1072,10 @@ namespace Sdo.UI.Screens
                 _cardYaw[i] = RoomMovement.FacingDegrees(2) + DefaultYaw;
                 _cardPre[i] = prop ? PropUprightFor(propMesh) : Quaternion.identity;
                 _cardPost[i] = prop ? Quaternion.Euler(PropCardPitch, 0f, 0f) : Quaternion.identity;
+                // 每次建卡都先關掉 bbox 置中 (只有道具/禮盒才開,由下面 FitCardToBounds 重新設 true)。少了這行,
+                // 逛過道具店/礼包店 (那些卡把此格設成 true) 再回服装店,衣物卡會沿用殘留的 true → RenderCard 走 pivot
+                // 分支、拿到道具的舊 _cardPivot 把衣物推出鏡頭 → 服装預覽全空白 (retain 只搬人形不會重置這格狀態)。
+                _cardAutoCenter[i] = false;
                 root.transform.rotation = CardRotation(i);
                 SdoAvatarBuilder.LogLabel = string.IsNullOrEmpty(item.Name) ? item.ModelId.ToString("D6") : item.Name;   // [avtex] log 標名 (user)
                 if (prop)
@@ -1464,6 +1468,8 @@ namespace Sdo.UI.Screens
             if (_cardAv[i] != null) { DestroyPreviewAssets(_cardAv[i]); DestroyImmediate(_cardAv[i]); _cardAv[i] = null; }
             if (_cardRT[i] != null) { _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; }
             _cardImg[i] = null; _cardIcon[i] = null; _cardScale[i] = 1f; _cardAngle[i] = 0f; _cardNoSpin[i] = false; _cardUvScroll[i] = false;
+            _cardAutoCenter[i] = false; _cardPivot[i] = Vector3.zero;   // 道具/禮盒卡的 bbox 置中狀態:銷毀時歸零,免得下一件衣物沿用殘留 true 被推出鏡頭
+            _cardYaw[i] = 0f; _cardPre[i] = Quaternion.identity; _cardPost[i] = Quaternion.identity;
             _cardKey[i] = NoCardKey;
         }
 
@@ -1533,6 +1539,9 @@ namespace Sdo.UI.Screens
             var noSpin = (bool[])_cardNoSpin.Clone(); var uv = (bool[])_cardUvScroll.Clone();
             var fpos = (Vector3[])_cardFramePos.Clone(); var fscale = (Vector3[])_cardFrameScale.Clone();
             var key = (long[])_cardKey.Clone(); var angle = (float[])_cardAngle.Clone();
+            // 道具/禮盒卡的擺法狀態 (扶正/側轉/前傾/bbox 置中) 也要跟著搬格,否則被續用的道具縮圖重畫時會拿到別格的舊值。
+            var yaw = (float[])_cardYaw.Clone(); var pre = (Quaternion[])_cardPre.Clone(); var post = (Quaternion[])_cardPost.Clone();
+            var autoC = (bool[])_cardAutoCenter.Clone(); var pivot = (Vector3[])_cardPivot.Clone();
             bool[] needRerender = new bool[PerPage];
             for (int i = 0; i < PerPage; i++)
             {
@@ -1541,12 +1550,14 @@ namespace Sdo.UI.Screens
                 if (j < 0)
                 {
                     _cardAv[i] = null; _cardRT[i] = null; _cardKey[i] = NoCardKey;
-                    _cardNoSpin[i] = false; _cardUvScroll[i] = false;
+                    _cardNoSpin[i] = false; _cardUvScroll[i] = false; _cardAutoCenter[i] = false;
                     continue;
                 }
                 _cardAv[i] = av[j]; _cardRT[i] = rt[j]; _cardKey[i] = key[j];
                 _cardNoSpin[i] = noSpin[j]; _cardUvScroll[i] = uv[j];
                 _cardFramePos[i] = fpos[j]; _cardFrameScale[i] = fscale[j];
+                _cardYaw[i] = yaw[j]; _cardPre[i] = pre[j]; _cardPost[i] = post[j];
+                _cardAutoCenter[i] = autoC[j]; _cardPivot[i] = pivot[j];
                 // 立刻搬到新格子的世界位置:同幀若有新卡在舊的 CardSpot 上建起來並 Render,留在原地的它會一起入鏡。
                 _cardAv[i].transform.position = CardSpot(i) + _cardFramePos[i];
                 needRerender[i] = angle[j] != 0f;   // 捲動前正在 hover 自轉的那張:角度歸零了但 RT 還停在轉一半 → 待重畫回正
