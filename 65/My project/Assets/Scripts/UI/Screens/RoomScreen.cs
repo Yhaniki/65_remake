@@ -257,13 +257,15 @@ namespace Sdo.UI.Screens
 
             // head-bar buttons (win1)
             // 修改(房間設定)按鈕：官方按了會跳一條半透明黑底橫幅(Toast) → 依需求拿掉，按了不做事。
-            Btn("changeroomname", "Room45", "Room46", "Room47", Win1, 461, 7, null);
-            Btn("help", "BtnHeadHelp_1", "BtnHeadHelp_2", "BtnHeadHelp_3", Win1, 654, 7, null);
-            Btn("roomangel", "roomangel_0", "roomangel_1", "roomangel_2", Win1, 616, 5, null);
-            Btn("roomexchange", "BtnHeadExchange_1", "BtnHeadExchange_2", "BtnHeadExchange_3", Win1, 652, 5, null);   // 官方是交易鈕;重製沒有交易 → 按了不做事
-            Btn("invite", "BtnHeadInvite_1", "BtnHeadInvite_2", "BtnHeadInvite_3", Win1, 688, 5, null);
-            Btn("setting", "BtnHeadOption_1", "BtnHeadOption_2", "BtnHeadOption_3", Win1, 724, 5, () => Nav.OpenSettings?.Invoke());
-            Btn("leaveroom", "BtnHeadReturn_1", "BtnHeadReturn_2", "BtnHeadReturn_3", Win1, 760, 5, OnLeave);
+            // 右上角 head-bar 圓形圖示鈕(天使/交易/邀請/設定/返回)是 34px CommonButtonNew 圓盤,盤緣是「寬軟 AA 邊」→
+            // 走 circle:true(CircleMask 平滑圓邊 + 超取樣),否則 AnSoloAA 的 α<128→0 硬裁會把軟邊裁成 1-bit 圓 → 邊緣破碎。
+            Btn("changeroomname", "Room45", "Room46", "Room47", Win1, 461, 7, null);                                 // 修改鈕:方框(WaitingRoom),非圓
+            Btn("help", "BtnHeadHelp_1", "BtnHeadHelp_2", "BtnHeadHelp_3", Win1, 654, 7, null);                      // help crop 是空的(透明) → 不套圓
+            Btn("roomangel", "roomangel_0", "roomangel_1", "roomangel_2", Win1, 616, 5, null, circle: true);
+            Btn("roomexchange", "BtnHeadExchange_1", "BtnHeadExchange_2", "BtnHeadExchange_3", Win1, 652, 5, null, circle: true);   // 官方是交易鈕;重製沒有交易 → 按了不做事
+            Btn("invite", "BtnHeadInvite_1", "BtnHeadInvite_2", "BtnHeadInvite_3", Win1, 688, 5, null, circle: true);
+            Btn("setting", "BtnHeadOption_1", "BtnHeadOption_2", "BtnHeadOption_3", Win1, 724, 5, () => Nav.OpenSettings?.Invoke(), circle: true);
+            Btn("leaveroom", "BtnHeadReturn_1", "BtnHeadReturn_2", "BtnHeadReturn_3", Win1, 760, 5, OnLeave, circle: true);
 
             // 左上角所在位置：自由練習場 / 頻道 / 房號 (DDRROOM servername/channelnum/roomid) — 白字 + 藍邊(70,74,152) 粗體。
             // 藍邊用 OutlinedLabel(位移複製)畫，不用 TMP SDF 材質描邊(那條在執行期動態 CJK 字型上畫不出來)。
@@ -3206,12 +3208,17 @@ namespace Sdo.UI.Screens
         //   hoverSfx：win2 中間設定塊(速度/note/組隊/掉落)→null(滑過不出聲)，其餘保留 Buttonfloat。
         private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y,
             System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat, bool solo = true,
-            float alphaHit = 0f)
+            float alphaHit = 0f, bool circle = false)
         {
             // solo=true(預設) → 三態都用 AnSoloAA(自貼圖 + 3× 超取樣)載入：消掉 atlas 鄰居白邊，並把官方近 1-bit 圓鈕以
             // 3× 解析度存、用邏輯尺寸顯示 → GPU 面積降取樣出乾淨的 ~1px 抗鋸齒邊(開始/旁觀/房主設置…),不鋸齒也不糊;
             // 載不到 solo crop 時自動回退共用大圖，安全。
-            System.Func<string, Sprite> res = solo ? (System.Func<string, Sprite>)RoomUiArt.AnSoloAA : RoomUiArt.An;
+            // circle=true → 右上角 head-bar 圓形圖示鈕(設定/邀請/返回/交易/天使):它們是 34px 帶「寬軟 AA 邊」的圓盤,
+            // AnSoloAA 的 α<128→0 硬裁會把軟邊裁成 1-bit 圓 → 邊緣破碎;改走 AnSoloCircleAA(CircleMask 平滑圓邊 + 超取樣)。
+            System.Func<string, Sprite> res;
+            if (circle) res = RoomUiArt.AnSoloCircleAA;
+            else if (solo) res = RoomUiArt.AnSoloAA;
+            else res = RoomUiArt.An;
             var b = UIKit.AddSpriteButton(WinRoot(win), objName, res(nrm), res(hov), res(psh), win.x + x, win.y + y);
             if (hoverSfx != null) UiHoverSfx.Attach(b, hoverSfx);
             UiSfx.AttachPress(b, pressSfx);
