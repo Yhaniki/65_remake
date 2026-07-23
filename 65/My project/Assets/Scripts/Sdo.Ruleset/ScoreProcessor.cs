@@ -114,6 +114,13 @@ namespace Sdo.Ruleset
         }
 
         /// <summary>
+        /// 斷 combo，但**不**計入任何判定統計(MissCount 不加、flat score 不動)。
+        /// 用於踩到炸彈:炸彈不是真的音符,只該斷連(HP 由 <see cref="HealthProcessor"/> 另外扣),
+        /// 不能灌進 miss 數 —— 見 ScreenGameplay.ExplodeBomb。MaxCombo 已在前面連段時記錄,這裡不受影響。
+        /// </summary>
+        public void BreakCombo() => Combo = 0;
+
+        /// <summary>
         /// Apply a hold's head + tail with head-merge:
         /// head Bad/Miss forces the release slot to Miss and is not judged separately.
         /// </summary>

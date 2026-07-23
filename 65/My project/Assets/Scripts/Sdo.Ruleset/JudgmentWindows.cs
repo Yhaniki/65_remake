@@ -98,15 +98,8 @@ namespace Sdo.Ruleset
             return null;
         }
 
-        /// <summary>Bomb (avoid-note) detonation window = this fraction of the Perfect window.</summary>
-        public const double BombWindowScale = 0.8;
-
-        /// <summary>
-        /// Half-width (ms) of the window in which holding a lane's key detonates a bomb on that lane.
-        /// Deliberately MUCH tighter than the miss boundary: only a press essentially ON the bomb counts,
-        /// so brushing past one just before/after it crosses the line is safe.
-        /// </summary>
-        public double BombWindow => Perfect * BombWindowScale;
+        // 炸彈(avoid-note)不用時間窗判定 —— 照 StepMania CrossedMineRow:只在炸彈跨過判定線的那一幀
+        // 檢查該軌鍵是否正被按著。判定邏輯在 ScreenGameplay.TickBombs,不需要這裡提供窗寬。
 
         /// <summary>
         /// A copy with every window (Perfect/Cool/Bad/Miss) multiplied by <paramref name="factor"/>.

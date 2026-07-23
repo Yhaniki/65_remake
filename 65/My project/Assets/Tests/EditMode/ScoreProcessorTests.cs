@@ -94,6 +94,36 @@ namespace Sdo.Tests
             Assert.AreEqual(2, s.MaxCombo);
         }
 
+        // ---- BreakCombo（踩炸彈：斷連但不算 miss） ----
+
+        [Test]
+        public void BreakCombo_Resets_Combo_Without_Counting_Miss()
+        {
+            var s = new ScoreProcessor();
+            s.Apply(Judgment.Perfect); s.Apply(Judgment.Perfect); s.Apply(Judgment.Perfect);
+            Assert.AreEqual(3, s.Combo);
+
+            s.BreakCombo();   // 踩炸彈
+            Assert.AreEqual(0, s.Combo);        // 連段斷掉
+            Assert.AreEqual(0, s.MissCount);    // 但沒有多一次 miss
+            Assert.AreEqual(3, s.MaxCombo);     // 先前的最高連段保留
+            Assert.AreEqual(3, s.TotalJudged);  // 炸彈不算一次判定
+        }
+
+        [Test]
+        public void BreakCombo_Does_Not_Change_Score()
+        {
+            var s = new ScoreProcessor();
+            for (int i = 0; i < 12; i++) s.Apply(Judgment.Perfect);
+            long before = s.Score;
+            long flatBefore = s.StandaloneScore;
+
+            s.BreakCombo();
+
+            Assert.AreEqual(before, s.Score);              // ServerScore 不受影響
+            Assert.AreEqual(flatBefore, s.StandaloneScore); // flat score 也不動（不像 miss 會 -10）
+        }
+
         // ---- holds ----
 
         [Test]
