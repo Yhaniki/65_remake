@@ -189,7 +189,7 @@
   },
   {
    "k": "room.whisper_noid",
-   "v": "No such user: {0}"
+   "v": "Player {0} not found"
   },
   {
    "k": "room.stage_enter",
@@ -198,6 +198,30 @@
   {
    "k": "room.stage_leave",
    "v": "{0} left the stage"
+  },
+  {
+   "k": "room.selftalk",
+   "v": "You say: {0}"
+  },
+  {
+   "k": "room.no_guild",
+   "v": "You have no guild"
+  },
+  {
+   "k": "room.guild_command",
+   "v": "guild"
+  },
+  {
+   "k": "room.guild_tag",
+   "v": "<Guild>"
+  },
+  {
+   "k": "room.debug_guild",
+   "v": "[Debug] Guild: {0}"
+  },
+  {
+   "k": "room.debug_guild_none",
+   "v": "(none)"
   },
   {
    "k": "result.clear",
@@ -338,14 +362,6 @@
   {
    "k": "songselect.rand_13up",
    "v": "Random Lv 13+"
-  },
-  {
-   "k": "songselect.rand_20up",
-   "v": "Random Lv 20+"
-  },
-  {
-   "k": "songselect.rand_25up",
-   "v": "Random Lv 25+"
   },
   {
    "k": "stage.name.0",

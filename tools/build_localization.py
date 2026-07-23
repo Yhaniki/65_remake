@@ -71,9 +71,17 @@ STR = {
     "room.whisper_out":        ["You whisper to {0}: {1}", "你對{0}說: {1}", "你对{0}说: {1}", "{0}にささやく: {1}"],
     "room.whisper_in":         ["{0} whispers to you: {1}", "{0}對你說: {1}", "{0}对你说: {1}", "{0}があなたにささやく: {1}"],
     "room.whisper_offchannel": ["{0} is not in this channel", "{0}不在當前頻道", "{0}不在当前频道", "{0}は現在のチャンネルにいません"],
-    "room.whisper_noid":       ["No such user: {0}", "{0}查無此人", "{0}查无此人", "{0}というユーザーは存在しません"],
+    "room.whisper_noid":       ["Player {0} not found", "找不到玩家 {0}", "找不到玩家 {0}", "{0} というプレイヤーが見つかりません"],
     "room.stage_enter":        ["{0} entered the stage", "{0} 進入舞台遊戲", "{0} 进入舞台游戏", "{0} がステージに入りました"],
     "room.stage_leave":        ["{0} left the stage", "{0}離開舞台", "{0}离开舞台", "{0} がステージから退場しました"],
+
+    # 好友頻道沒帶對象 → 你說(白) / 家族頻道 → /家族 前綴 + <家族> 綠字 + 你沒有家族(紅)
+    "room.selftalk":           ["You say: {0}", "你說: {0}", "你说: {0}", "あなた: {0}"],
+    "room.no_guild":           ["You have no guild", "你沒有家族", "你没有家族", "ギルドに所属していません"],
+    "room.guild_command":      ["guild", "家族", "家族", "ギルド"],
+    "room.guild_tag":          ["<Guild>", "<家族>", "<家族>", "<ギルド>"],
+    "room.debug_guild":        ["[Debug] Guild: {0}", "[除錯] 家族: {0}", "[调试] 家族: {0}", "[デバッグ] ギルド: {0}"],
+    "room.debug_guild_none":   ["(none)", "（無）", "（无）", "（なし）"],
 
     "result.clear":     ["Clear!", "完成!", "完成!", "クリア!"],
     "result.failed":    ["Failed", "失敗", "失败", "失敗"],

@@ -15,14 +15,18 @@ namespace Sdo.UI.Services
         private readonly IClock _clock;
         private readonly Func<bool> _localIsMale;   // room-action keyword table is gender-specific (再見→F act5 / M act6)
         private readonly Func<string> _localName;   // 本機發言者顯示名(active profile 的 id/名)；null → 回退 "我"
+        private readonly Func<string> _localGuild;   // 本機家族名；null/空 → 沒有家族（家族頻道 → 「你沒有家族」）
         private readonly Func<IEnumerable<string>> _onlineNames;   // 目前在同一伺服器/頻道、可被密語（會回話）的人
         private readonly Func<IEnumerable<string>> _offlineNames;  // 帳號存在但不在本頻道 → 密語會得到「不在當前頻道」
         private readonly string[] _botNames;
         private readonly string[] _botLines;
         private readonly string[] _whisperReplies;
+        private readonly string[] _guildmateNames;   // 同族成員（本機有家族時偶爾在家族頻道說話）
+        private readonly string[] _guildLines;
         private double _nextBotMs;
         private int _line;
         private int _whisperLine;
+        private int _guildLine;
         private ChatScope _scope = ChatScope.Lobby;   // 目前作用域（由畫面 SetScope 設定）
         private int _scopeRoomId;
 
@@ -30,11 +34,15 @@ namespace Sdo.UI.Services
         public IReadOnlyList<ChatMessage> History => _history;
 
         public MockChatService(IClock clock, Func<bool> localIsMale = null, Func<string> localName = null,
-            Func<IEnumerable<string>> onlineNames = null, Func<IEnumerable<string>> offlineNames = null)
+            Func<IEnumerable<string>> onlineNames = null, Func<IEnumerable<string>> offlineNames = null,
+            Func<string> localGuild = null)
         {
             _clock = clock;
             _localIsMale = localIsMale;
             _localName = localName;
+            _localGuild = localGuild;
+            _guildmateNames = new[] { "大熱舞咪匠★", "舞星", "月光", "阿К" };
+            _guildLines = new[] { "晚上開團嗎", "1", "22", "有人在？", "衝家族排名", "來跳一場" };
             _botNames = new[] { "小舞", "風之舞", "Neo", "櫻花", "阿傑" };
             _botLines = new[]
             {
@@ -137,6 +145,47 @@ namespace Sdo.UI.Services
             });
         }
 
+        // 家族頻道送出：有家族 → 綠字家族訊息 + 偶爾同族回一句；沒有家族 → 「你沒有家族」。皆本機專屬（不彈頭上泡）。
+        public void SendGuild(string text)
+        {
+            string msg = text != null ? text.Trim() : "";
+            if (msg.Length == 0) return;   // 只填了 /家族 還沒打內容 → 不送
+            if (!LocalHasGuild())
+            {
+                // 家族提示行不受作用域限制（跨場），也不需要對象；用 Add（不蓋作用域）。
+                Add(new ChatMessage { TimeMs = _clock.NowMs, Local = true, Notice = ChatNotice.NoGuild });
+                return;
+            }
+            Add(new ChatMessage(LocalSender(), msg, _clock.NowMs, local: true, channel: ChatChannel.Family) { Guild = true });
+            // 同族偶爾回一句（離線模擬）：每三則家族發言回一次，取罐頭回覆。
+            _guildLine++;
+            if (_guildLine % 3 == 0)
+                Add(new ChatMessage(_guildmateNames[_guildLine % _guildmateNames.Length],
+                    _guildLines[(_guildLine * 5 + 1) % _guildLines.Length], _clock.NowMs, channel: ChatChannel.Family) { Guild = true });
+        }
+
+        // 好友頻道沒帶 [名字] 就送出 → 白字「你說: 內容」，只有自己看得到、不送任何人、不彈泡、跨場。
+        public void SendSelfTalk(string text)
+        {
+            string msg = text != null ? text.Trim() : "";
+            if (msg.Length == 0) return;
+            Add(new ChatMessage(LocalSender(), msg, _clock.NowMs, local: true) { Notice = ChatNotice.SelfTalk });
+        }
+
+        // 系統提示行（除錯/狀態回饋）：金黃系統字，本機專屬、不彈泡。經 Emit 蓋上目前作用域 → 系統行才通過房間過濾。
+        public void SendSystem(string text)
+        {
+            string msg = text != null ? text.Trim() : "";
+            if (msg.Length == 0) return;
+            Emit(new ChatMessage("系統", msg, _clock.NowMs, system: true, local: true));
+        }
+
+        private bool LocalHasGuild()
+        {
+            string g = _localGuild != null ? _localGuild() : null;
+            return !string.IsNullOrWhiteSpace(g);
+        }
+
         public void AnnounceStageEnter(string name) => AddStage(name, StageEventKind.Enter);
         public void AnnounceStageLeave(string name) => AddStage(name, StageEventKind.Leave);
 
@@ -208,6 +257,13 @@ namespace Sdo.UI.Services
             _line++;
             // bot 閒聊固定屬「大廳」世界頻道（不論當下作用域）：在房間裡不會看到，回大廳才看得到。
             Add(new ChatMessage(name, text, now) { Scope = ChatScope.Lobby, RoomId = 0 });
+            // 本機有家族時，同族偶爾在家族頻道說話（跨場，只在家族分類看得到）——讓「有家族」狀態的家族頻道有動靜。
+            if (LocalHasGuild() && _line % 2 == 0)
+            {
+                _guildLine++;
+                Add(new ChatMessage(_guildmateNames[_guildLine % _guildmateNames.Length],
+                    _guildLines[(_guildLine * 3) % _guildLines.Length], now, channel: ChatChannel.Family) { Guild = true });
+            }
         }
 
         // 蓋上目前作用域再廣播（密語也蓋，但顯示端不看它 → 等同跨場）。

@@ -68,10 +68,12 @@ namespace Sdo.UI.Screens
         private const float ChatBubbleFollowStep = 0.33333335f;
         private const float ChatBubbleDragScale = 1f;
         private static readonly Color ChatBubbleTextColor = new Color32(0x7C, 0x01, 0x38, 0xFF);
-        // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe。
+        // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe；
+        // 家族=綠（你沒有家族也用綠；你說＝白，沿用一般行色）。
         private const string ChatSystemHex = "F0C24A";
         private const string WhisperHex = "1EFEFE";
         private const string StageHex = "72C1FE";
+        private const string GuildHex = "3CE63C";        // 家族頻道綠字「<家族>名字: 內容」＋「你沒有家族」
         private const string WhisperLinkId = "w|";   // TMP link id 前綴：<link="w|名字">名字</link> → 點名字密語
         // 行內 emoji（表情 + 字）：emoji 疊在使用者打的位置——前字後留一段固定寬空檔，emoji 疊上去。自己調這幾個像素數就好。
         private const float BubbleEmojiGapPx = 24f;       // <space=…> 在字裡預留的水平空檔
@@ -764,12 +766,39 @@ namespace Sdo.UI.Screens
 
         private void SetChatChannel(ChatChannel channel)
         {
+            var prev = _chatChannel;
             _chatChannel = channel;
             UpdateChatModeButton();
             UpdateChatListName();
             HideChatModeMenu();
             RebuildRoomChat();
+            SyncChannelInputPrefix(prev, channel);
             if (_chatInput != null) _chatInput.ActivateInputField();
+        }
+
+        // 換頻道時同步輸入框的指令前綴：進家族 → 自動填「/家族 」並切輸入框回顯模式；離開家族且草稿只剩該前綴 → 清掉。
+        // 好友頻道的 [名字] 前綴由密語流程（InsertWhisperTarget / 送出後回填）維護，這裡不動它；
+        // 進家族只在草稿為空時才填，避免蓋掉使用者打到一半的字。
+        private void SyncChannelInputPrefix(ChatChannel from, ChatChannel to)
+        {
+            if (_chatInput == null || from == to) return;
+            string draft = _chatInput.text ?? "";
+            if (to == ChatChannel.Family)
+            {
+                if (!string.IsNullOrWhiteSpace(draft)) return;
+                _chatInput.text = RoomChatCommand.GuildCommandPrefix;
+                _chatDraftWasEmpty = false;
+                _chatBubbleInputArmed = false;
+                if (_chatBubbleTyping) HideRoomChatBubble();
+                _chatInputSticky = true;
+                SetRoomChatInputEchoVisible(true);
+                FocusRoomChatInput();   // 游標移到「/家族 」結尾，接著打
+            }
+            else if (from == ChatChannel.Family && draft.Trim() == RoomChatCommand.GuildCommandPrefix.Trim())
+            {
+                _chatInput.text = "";
+                _chatDraftWasEmpty = true;
+            }
         }
 
         private void UpdateChatModeButton()
@@ -962,9 +991,10 @@ namespace Sdo.UI.Screens
             bool follow = ShouldShowChatMessage(m) && IsChatFollowingBottom();
             AddRoomChatLine(m);
             if (follow) ScrollRoomChatToBottom();
-            // 密語/進出舞台是私聊/廣播文字，不彈頭上藍泡、不觸發角色動作。
+            // 密語/進出舞台/家族/你說/你沒有家族 都是文字提示，不彈頭上藍泡、不觸發角色動作。
             if (m != null && m.Local && !m.System
-                && m.Whisper == WhisperKind.None && m.Stage == StageEventKind.None)
+                && m.Whisper == WhisperKind.None && m.Stage == StageEventKind.None
+                && m.Notice == ChatNotice.None && !m.Guild)
             {
                 ShowRoomChatBubble(m);
                 PlayRoomChatAction(m);
@@ -992,6 +1022,8 @@ namespace Sdo.UI.Screens
             if (_chatContent == null || m == null) return;
             if (!ShouldShowChatMessage(m)) return;
 
+            if (m.Notice != ChatNotice.None) { AddRoomChatNoticeLine(m); return; }
+            if (m.Guild) { AddRoomChatGuildLine(m); return; }
             if (m.Stage != StageEventKind.None) { AddRoomChatStageLine(m); return; }
             if (m.Whisper != WhisperKind.None) { AddRoomChatWhisperLine(m); return; }
 
@@ -1020,6 +1052,39 @@ namespace Sdo.UI.Screens
                 "<color=#" + StageHex + ">" + EscapeTmp(text) + "</color>", 13, Color.white, TextAlignmentOptions.TopLeft, true);
             t.richText = true;
             UIKit.Layout(t.gameObject, 16);
+        }
+
+        // 本機提示行：你說: xxx（好友頻道沒帶名字，白字）／你沒有家族（家族頻道無家族，綠字＝與家族訊息同色）。本機專屬、不彈泡。
+        private void AddRoomChatNoticeLine(ChatMessage m)
+        {
+            string text, hex;
+            if (m.Notice == ChatNotice.NoGuild)
+            {
+                text = LocalizationManager.Get("room.no_guild");
+                hex = GuildHex;   // 「你沒有家族」用家族綠字
+            }
+            else   // SelfTalk：「你說: {內容}」
+            {
+                text = LocalizationManager.Get("room.selftalk", m.Text ?? "");
+                hex = "FFFFFF";
+            }
+            var t = UIKit.AddText(_chatContent, "noticeLine",
+                "<color=#" + hex + ">" + EscapeTmp(text) + "</color>", 13, Color.white, TextAlignmentOptions.TopLeft, true);
+            t.richText = true;
+            UIKit.Layout(t.gameObject, 16);
+        }
+
+        // 家族頻道綠字行：「<家族>名字: 內容」。此環境的 TMP 不會把 &lt;/&gt; 解碼回 <>（會印出字面），
+        // 所以固定前綴 <家族> 改用 <noparse> 包住原字（不被當標籤、也不被解碼）；名字/內容仍走 EscapeTmp。名字可點密語（別人才可點）。
+        private void AddRoomChatGuildLine(ChatMessage m)
+        {
+            string open = "<color=#" + GuildHex + ">";
+            string tag = "<noparse>" + RoomChatCommand.GuildTag + "</noparse>";
+            string line = open + tag + WhisperNameLink(m) + ": " + EscapeTmp(ChatLineText(m)) + "</color>";
+            var t = UIKit.AddText(_chatContent, "guildLine", line, 13, Color.white, TextAlignmentOptions.TopLeft, true);
+            t.richText = true;
+            UIKit.Layout(t.gameObject, 16);
+            EnableWhisperNameClicks(t, m);
         }
 
         // 密語行（顏色 #1efefe）：Outgoing 你對X說 / Incoming X對你說 / OffChannel 不在當前頻道 / NoId 無此id。
@@ -1208,6 +1273,11 @@ namespace Sdo.UI.Screens
         private bool ShouldShowChatMessage(ChatMessage m)
         {
             if (m == null) return false;
+            // 本機提示行/家族訊息跨作用域（不看房號），只在對應分類顯示：
+            //   你說（SelfTalk）→ 好友；你沒有家族（NoGuild）→ 家族；家族訊息（Guild）→ 家族。
+            if (m.Notice == ChatNotice.SelfTalk) return _chatChannel == ChatChannel.Friend;
+            if (m.Notice == ChatNotice.NoGuild) return _chatChannel == ChatChannel.Family;
+            if (m.Guild) return _chatChannel == ChatChannel.Family;
             // 密語跨大廳/房間：不受作用域限制，出現在「當前」與「好友」頻道。
             if (m.Whisper != WhisperKind.None)
                 return _chatChannel == ChatChannel.Current || _chatChannel == ChatChannel.Friend;
@@ -1252,24 +1322,66 @@ namespace Sdo.UI.Screens
                     CancelRoomChatTyping();
                 return;
             }
-            // 密語 `[名字] 內容`：只選了對象還沒打內容 → 不送、不清、續打（讓使用者接著打字）。
-            bool isWhisper = RoomChatCommand.TryParseWhisper(txt, out var whisperTarget, out var whisperBody);
-            if (isWhisper && string.IsNullOrWhiteSpace(whisperBody)) return;
-            // bubble 模式送出後續留 bubble-ready(ArmRoomBubbleInput)；輸入框模式送完保持 focus，繼續打下一則不退出。
+            // 依頻道決定「要送什麼」+「送出後留在輸入框的前綴(postDraft)」。sendAction==null → 不送、續打。
+            //   家族：剝掉「/家族」→ SendGuild（有家族=綠字、沒家族=你沒有家族）；前綴「/家族 」留下。
+            //   好友：帶 [名字]→密語（[名字] 前綴留下）；沒帶名字→SendSelfTalk（白字「你說: xxx」本機專屬）。
+            //   當前/回覆：原本行為（密語 > 表情 > 一般）。
+            System.Action sendAction = null;
+            string postDraft = "";
+            switch (_chatChannel)
+            {
+                case ChatChannel.Family:
+                {
+                    string body = RoomChatCommand.StripGuildCommand(txt);
+                    if (string.IsNullOrWhiteSpace(body)) return;   // 只有「/家族 」還沒打內容 → 續打
+                    sendAction = () => Ctx.Chat.SendGuild(body);
+                    postDraft = RoomChatCommand.GuildCommandPrefix;
+                    break;
+                }
+                case ChatChannel.Friend:
+                {
+                    if (RoomChatCommand.TryParseWhisper(txt, out var target, out var body))
+                    {
+                        if (string.IsNullOrWhiteSpace(body)) return;   // 只選了對象還沒打內容 → 續打
+                        sendAction = () => Ctx.Chat.SendWhisper(target, body, ChatChannel.Friend);
+                        postDraft = "[" + target + "] ";   // [名字] 前綴留下，繼續密語同一人
+                    }
+                    else
+                    {
+                        sendAction = () => Ctx.Chat.SendSelfTalk(txt);   // 沒帶 [名字] → 你說: xxx（不送任何人、不彈泡）
+                    }
+                    break;
+                }
+                default:
+                {
+                    bool isWhisper = RoomChatCommand.TryParseWhisper(txt, out var target, out var body);
+                    if (isWhisper && string.IsNullOrWhiteSpace(body)) return;   // 只選了對象還沒打內容 → 續打
+                    if (isWhisper) sendAction = () => Ctx.Chat.SendWhisper(target, body, _chatChannel);
+                    else if (RoomChatCommand.TryParseExpression(txt, out var eid, out var lead, out var trail))
+                        sendAction = () => Ctx.Chat.SendExpression(eid, _chatChannel, lead, trail);
+                    else sendAction = () => Ctx.Chat.Send(txt, _chatChannel);
+                    break;
+                }
+            }
+            if (sendAction == null) return;
+
+            // 確定要送 → 收掉打字泡；記住是否 bubble 模式。
             bool keepBubbleInput = _chatBubbleTyping || _chatBubbleInputArmed;
             if (_chatBubbleTyping) HideRoomChatBubble();
             else _chatBubbleTyping = false;
-            // 密語優先於表情：`[X] /GO` 是把「/GO」密語給 X，不是送表情。
-            if (isWhisper)
-                Ctx.Chat.SendWhisper(whisperTarget, whisperBody, _chatChannel);
-            else if (RoomChatCommand.TryParseExpression(txt, out var expressionId, out var leading, out var trailing))
-                Ctx.Chat.SendExpression(expressionId, _chatChannel, leading, trailing);
-            else
-                Ctx.Chat.Send(txt, _chatChannel);
+
+            sendAction();
             HideChatModeMenu();
             HideExpressionMenu();
-            _chatInput.text = "";
-            if (keepBubbleInput) ArmRoomBubbleInput();
+            _chatInput.text = postDraft;
+            if (!string.IsNullOrEmpty(postDraft))
+            {
+                // 家族 / 密語：前綴留下，強制輸入框回顯模式、游標移到結尾接著打（不進頭上泡）。
+                _chatInputSticky = true;
+                SetRoomChatInputEchoVisible(true);
+                FocusRoomChatInput();
+            }
+            else if (keepBubbleInput) ArmRoomBubbleInput();
             else { _chatInputSticky = true; FocusRoomChatInput(); }   // 輸入框模式送完保持 focus 續打，不退出
         }
 
@@ -2197,6 +2309,20 @@ namespace Sdo.UI.Screens
                 if (roomIsTop && !typingChat) { UiSfx.Play(UiSfx.Click); OnStart(); }   // 按 F2 發出 SE_0001（UiSfx.Click）
             }
 
+            // F3（除錯）：切換本機「有家族 / 沒有家族」，用來測試家族頻道兩種行為（綠字 <家族>… / 你沒有家族）。
+            // 允許打字中也可按（F 鍵不會產生輸入字元）。
+            if (Input.GetKeyDown(KeyCode.F3))
+            {
+                bool roomIsTop = Ctx == null || Ctx.Flow == null || Ctx.Flow.Current == ScreenId.Room;
+                if (roomIsTop && Ctx != null && Ctx.Session != null)
+                {
+                    var s = Ctx.Session;
+                    s.GuildName = s.HasGuild ? "" : GameSession.DemoGuildName;
+                    string state = s.HasGuild ? s.GuildName : LocalizationManager.Get("room.debug_guild_none");
+                    Ctx.Chat?.SendSystem(LocalizationManager.Get("room.debug_guild", state));
+                }
+            }
+
             // ESC → 退回選角色頁面（房間的上一層）。只在房間為當前畫面、非聊天輸入中、且無 modal(商城/儲物櫃/設定)疊層、
             // 非轉場中時收——避免打字、選歌疊層、或 modal 開著時誤觸（打字中的 ESC 由 HandleRoomChatTypingKeys 取消打字）。
             if (Input.GetKeyDown(KeyCode.Escape))
@@ -2838,6 +2964,9 @@ namespace Sdo.UI.Screens
         {
             if (_chatInput == null || string.IsNullOrWhiteSpace(name)) return;
             if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            // 只有「當前」與「好友」頻道點人名才插入密語對象；家族/回覆頻道點人名不反應
+            // （否則會污染家族的「/家族 」前綴，變成 [名字] /家族）。
+            if (_chatChannel != ChatChannel.Current && _chatChannel != ChatChannel.Friend) return;
 
             // 切成輸入框打字模式（比照實體點輸入框）：取消頭上藍泡、顯示回顯、黏住 focus。
             _chatBubbleInputArmed = false;

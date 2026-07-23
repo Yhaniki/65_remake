@@ -189,7 +189,7 @@
   },
   {
    "k": "room.whisper_noid",
-   "v": "{0}というユーザーは存在しません"
+   "v": "{0} というプレイヤーが見つかりません"
   },
   {
    "k": "room.stage_enter",
@@ -198,6 +198,30 @@
   {
    "k": "room.stage_leave",
    "v": "{0} がステージから退場しました"
+  },
+  {
+   "k": "room.selftalk",
+   "v": "あなた: {0}"
+  },
+  {
+   "k": "room.no_guild",
+   "v": "ギルドに所属していません"
+  },
+  {
+   "k": "room.guild_command",
+   "v": "ギルド"
+  },
+  {
+   "k": "room.guild_tag",
+   "v": "<ギルド>"
+  },
+  {
+   "k": "room.debug_guild",
+   "v": "[デバッグ] ギルド: {0}"
+  },
+  {
+   "k": "room.debug_guild_none",
+   "v": "（なし）"
   },
   {
    "k": "result.clear",
@@ -338,14 +362,6 @@
   {
    "k": "songselect.rand_13up",
    "v": "ランダム難易度 13以上"
-  },
-  {
-   "k": "songselect.rand_20up",
-   "v": "ランダム難易度 20以上"
-  },
-  {
-   "k": "songselect.rand_25up",
-   "v": "ランダム難易度 25以上"
   },
   {
    "k": "stage.name.0",

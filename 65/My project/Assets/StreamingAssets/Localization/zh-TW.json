@@ -189,7 +189,7 @@
   },
   {
    "k": "room.whisper_noid",
-   "v": "{0}查無此人"
+   "v": "找不到玩家 {0}"
   },
   {
    "k": "room.stage_enter",
@@ -198,6 +198,30 @@
   {
    "k": "room.stage_leave",
    "v": "{0}離開舞台"
+  },
+  {
+   "k": "room.selftalk",
+   "v": "你說: {0}"
+  },
+  {
+   "k": "room.no_guild",
+   "v": "你沒有家族"
+  },
+  {
+   "k": "room.guild_command",
+   "v": "家族"
+  },
+  {
+   "k": "room.guild_tag",
+   "v": "<家族>"
+  },
+  {
+   "k": "room.debug_guild",
+   "v": "[除錯] 家族: {0}"
+  },
+  {
+   "k": "room.debug_guild_none",
+   "v": "（無）"
   },
   {
    "k": "result.clear",
@@ -338,14 +362,6 @@
   {
    "k": "songselect.rand_13up",
    "v": "隨機難度 13級以上"
-  },
-  {
-   "k": "songselect.rand_20up",
-   "v": "隨機難度 20級以上"
-  },
-  {
-   "k": "songselect.rand_25up",
-   "v": "隨機難度 25級以上"
   },
   {
    "k": "stage.name.0",
