@@ -4133,7 +4133,21 @@ namespace Sdo.Game
             // the song stays fully playable to its natural end, no GAME OVER — but HP itself latches empty (HealthProcessor
             // lockOnDeath), so a good run after HP-out no longer refills the bar; it stays dead until the song ends.
             if (!showtimeMode && !playFullSong && _health != null && _health.IsFailed) _failed = true;
-            if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; EnterResult(); }
+            // 結束判定:等「音樂播完」再 +2 秒才進結算動作,但加 10 秒上限避免長尾奏/長音檔等太久。
+            //   notesEndMs = 最後一顆音符;musicEndMs = 音檔播完的譜面時間 (MusicCountInSec + clip.length)×1000
+            //   (clip 起播被 offset 跳過一段不影響終點,終點恆為 clip.length)。
+            //   • 音檔在最後音符後 10 秒內會結束 → 以「音檔結束」為基準(等音樂放完)。
+            //   • 音檔 10 秒內不會結束(尾奏過長/音檔比譜面長很多) → 以「最後音符」為基準,不苦等尾奏。
+            //   • 沒有音檔(觀察/爆發模式)或音檔比音符短 → 一律用最後音符。
+            //   兩種基準最後都再 +2 秒緩衝才 EnterResult(音樂/最後音符播完後的定格前置)。
+            double notesEndMs = _totalMs;
+            double baseEndMs = notesEndMs;
+            if (_audio != null && _audio.clip != null)
+            {
+                double musicEndMs = (MusicCountInSec + _audio.clip.length) * 1000.0;
+                if (musicEndMs > notesEndMs && musicEndMs <= notesEndMs + 10000.0) baseEndMs = musicEndMs;
+            }
+            if (!_ended && (_failed || now > baseEndMs + 2000)) { _ended = true; EnterResult(); }
         }
 
         // Song finished (or HP-out): freeze gameplay, hide the note board, play the win/lose 定格 pose on the
