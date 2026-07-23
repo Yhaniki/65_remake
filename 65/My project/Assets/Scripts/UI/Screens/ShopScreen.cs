@@ -766,7 +766,7 @@ namespace Sdo.UI.Screens
             // (使用者:穿白色星辰套裝再選它的上衣,褲子要留著,不是整組脫回 default)。
             if (_tryOnOutfitParts != null && item.EquipSlot != EquipSlot.None)
             {
-                _tryOnOutfitParts = ComposeParts(_tryOnOutfitParts, new[] { item.MshRelPath });
+                _tryOnOutfitParts = AvatarOutfit.ComposeParts(_sex, _tryOnOutfitParts, new[] { item.MshRelPath });
                 RebuildAvatar();
                 return;
             }
@@ -919,7 +919,12 @@ namespace Sdo.UI.Screens
             GameObject root = null;
             try
             {
-                if (_catalog == null || !_catalog.IsRenderable(item)) return;   // 無模型 → 不做縮圖
+                if (_catalog == null || !_catalog.IsRenderable(item))
+                {
+                    // 空格子診斷:這條路不做縮圖也不留痕跡,查「某格永遠空白」時必須知道是不是走到這裡 (037000 空卡調查)
+                    Debug.Log($"[shop] card#{i} '{item?.Name}' (model {item?.ModelId}) not renderable → no thumbnail");
+                    return;
+                }
                 BuildCardCam();
                 _cardRT[i] = new RenderTexture(_L.RtW, _L.RtH, 16, RenderTextureFormat.ARGB32) { name = "ShopCardRT" + i, antiAliasing = 2 };
                 root = new GameObject("ShopCardAvatar" + i);
@@ -927,7 +932,7 @@ namespace Sdo.UI.Screens
                 root.transform.rotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2) + DefaultYaw, 0f);   // 衣物預設朝左 30°
                 SdoAvatarBuilder.LogLabel = string.IsNullOrEmpty(item.Name) ? item.ModelId.ToString("D6") : item.Name;   // [avtex] log 標名 (user)
                 var av = SdoRoomAvatar.Build(root, PreviewLayer, false, ComposeCardParts(item), ShopHrcFor(_sex, item.EquipSlot), bindPoseNoIdle: true);
-                if (av == null) { Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
+                if (av == null) { Debug.Log($"[shop] card#{i} '{item?.Name}' avatar build failed → no thumbnail"); Destroy(root); _cardRT[i].Release(); Destroy(_cardRT[i]); _cardRT[i] = null; return; }
                 av.enabled = false;  // 凍結 (bind pose 已在 Build 內 PoseFrame(0) 蒙皮好)
                 ApplyCardCutoutShader(root);   // 卡片畫進透空 RT → 所有部位改 cutout,衣物鏤空(alpha0)真的透空不糊成實心 (N1)
                 // 帶「頭/臉」的卡不藏膚色：女 FACE 貼圖就叫 W_Basic_face、部分假髮內嵌耳/頸膚色 range，藏了會消失/破洞；
@@ -986,6 +991,8 @@ namespace Sdo.UI.Screens
                 _cardImg[i] = img;
                 _cardScale[i] = 1f; _cardAngle[i] = 0f;
                 RenderCard(i);
+                // 空格子診斷:成功路徑的正向確認 (與上面幾條 no-thumbnail 路徑對照,查「某格永遠空白」用)
+                Debug.Log($"[shop] card#{i} '{item?.Name}' built ok");
             }
             catch (System.Exception e)
             {
@@ -1008,6 +1015,13 @@ namespace Sdo.UI.Screens
             _cardCam.transform.position = CardSpot(i) + new Vector3(0f, 0f, -CardEyeDist);   // 官方 eye=(0,0,-110),看 Y≈0
             _cardCam.transform.LookAt(CardSpot(i));
             _cardCam.targetTexture = _cardRT[i];
+            // 拍這一格前,先把「所有」卡片各自釘回它自己的 CardSpot。每張卡的世界座標橫向間隔 400,而相機正交半寬只有
+            // CardOrthoHalfW(64) → 只要每張卡都在自己的位置上,別人一定在視錐外,不可能一起入鏡(使用者:「同一個格子
+            // 裡面兩件衣服混合」)。混合只發生在「某張卡還停在別人的 CardSpot 上還沒被搬走」時,所以在這裡把全部歸位
+            // 就根治了。★不要用 SetActive 關別的卡★——那會與捲動/hover 重建搶同一批物件,把卡關掉沒開回來
+            // (使用者:「滑鼠停在衣服上放大轉、一邊滾滾輪,衣服 100% 消失」)。歸位只動 transform.position,絕不會弄丟卡。
+            for (int k = 0; k < PerPage; k++)
+                if (k != i && _cardAv[k] != null) _cardAv[k].transform.position = CardSpot(k) + _cardFramePos[k];
             _cardCam.Render();
         }
 
@@ -1026,13 +1040,22 @@ namespace Sdo.UI.Screens
                         // 真紗質/蕾絲布料 (Sdo/UnlitAvatarSheer) 已是「密度提升 alpha-blend」,分離-alpha 在透空 RT 正確合成
                         // (opaque 底保留、紗料半透)。改成 cutout 會 clip+a→1 把 ~68% 的紗壓成實心黑 → 格子縮圖失去透明度
                         // (使用者:「格子裡面的透明度沒改」)。跳過,讓卡片跟左側大預覽/遊戲內一致地半透。
-                        if (sn == "Sdo/UnlitAvatarSheer") continue;
+                        // 但同一支 shader 也載著「官方旗標判透明、實際是實心布料」的衣服(alpha 只用來去背輪廓)。卡片藏了身體,
+                        // 那些單面布料的領口就沒東西補 → 直接透到卡片背景 (使用者 001766 Skirt Suit:「領口後面應該是有衣服的」)。
+                        // 它們照舊走下面的雙面 cutout(改旗標之前它們本來就判 Cutout 走這條),領口才看得到衣服自己的另一面。
+                        if (sn == "Sdo/UnlitAvatarSheer" && SdoAvatarBuilder.IsSheerFabric(SheerFabricFlag(m))) continue;
                         // 髮/鏤空布料 (Sdo/UnlitDoubleSided) 本來就帶 authored _Cutoff(0.3);讀出保留,別壓到 0.05 (見 CardCutoutFor)。
                         float authored = sn == "Sdo/UnlitDoubleSided" ? m.GetFloat("_Cutoff") : 0f;
                         m.shader = cut;   // 只改有貼圖的 (無貼圖回退材質留給 ForceLightExpressionFace 處理)
                         m.SetFloat("_Cutoff", CardCutoutFor(sn, authored));
                     }
         }
+
+        /// <summary>The builder's "is this blended material a real sheer WEAVE" tag on a sheer material
+        /// (<see cref="SdoAvatarBuilder.SheerFabricProp"/>). Missing property → 1 = treat as sheer, i.e. leave the
+        /// material alone: an unknown material must never be silently flattened into cutout.</summary>
+        private static float SheerFabricFlag(Material m)
+            => m.HasProperty(SdoAvatarBuilder.SheerFabricProp) ? m.GetFloat(SdoAvatarBuilder.SheerFabricProp) : 1f;
 
         /// <summary>透空-RT 卡片縮圖:每個部位都被強制成 cutout shader,alpha-clip 門檻依「原本的 shader」決定。Pure → 單元測試。
         ///   • <c>Unlit/Texture</c> (opaque 衣服,含 alpha 壞掉被強制 opaque 的布料) → 0：不裁 + alpha 逼 1 (實心),
@@ -1153,59 +1176,13 @@ namespace Sdo.UI.Screens
             // 只有「試穿到身上」(useCurrent) 才把目前顯示的穿搭蓋上去 → 套裝沒涵蓋的部位沿用現況(含連續試穿上一套)。
             // 卡片縮圖(右邊假人)useCurrent=false → 純 default,不沿用玩家目前穿搭(使用者:右邊假人頭髮要用 default)。
             if (useCurrent) baseParts.AddRange(CurrentDisplayedParts());
-            return ComposeParts(baseParts, _catalog.OutfitComponentMeshes(item));
+            // ComposeParts 已抽成 AvatarOutfit 純邏輯 (連身裙→單件時補回預設上/下裝的規則也在那)。
+            return AvatarOutfit.ComposeParts(gender, baseParts, _catalog.OutfitComponentMeshes(item));
         }
 
         // 目前左側預覽實際顯示的穿搭:正在試穿套裝(或已疊過單件)→ 那份;否則 → 現有裝備。連續試穿疊加的底。
         private IEnumerable<string> CurrentDisplayedParts()
             => _tryOnOutfitParts != null ? (IEnumerable<string>)_tryOnOutfitParts : AvatarOutfit.ResolveParts(_sex, EquippedItems());
-
-        // 把 overrides(套裝組件 / 單件)逐部位疊到 baseParts 上:連身取代上下著;眼鏡/項鍊/翅膀=附加(依 mesh token 去重);
-        // 其餘覆蓋該部位。回傳完整 parts。沒被 overrides 覆蓋的部位保留 base(這就是「套裝沒有的部位沿用現況」)。
-        private string[] ComposeParts(IEnumerable<string> baseParts, IEnumerable<string> overrides)
-        {
-            var slots = new Dictionary<EquipSlot, string>();
-            var additive = new Dictionary<string, string>();   // token(GLASS/LINGDANG/CHIBANG…) → mesh,去重(base 與 override 同類只留一)
-            void Apply(string rel)
-            {
-                if (string.IsNullOrEmpty(rel)) return;
-                var s = SlotFromMeshToken(rel);
-                if (s == EquipSlot.OnePiece) { slots[EquipSlot.Top] = rel; slots.Remove(EquipSlot.Bottom); }
-                else if (s == EquipSlot.Glasses || s == EquipSlot.Necklace || s == EquipSlot.None) additive[MeshToken(rel)] = rel;
-                else { if (s == EquipSlot.Top || s == EquipSlot.Bottom) slots.Remove(EquipSlot.OnePiece); slots[s] = rel; }
-            }
-            foreach (var rel in baseParts) Apply(rel);
-            foreach (var rel in overrides) Apply(rel);
-            var list = new List<string>();
-            foreach (var s in new[] { EquipSlot.Face, EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Shoes, EquipSlot.Gloves })
-                if (slots.TryGetValue(s, out var p) && !string.IsNullOrEmpty(p)) list.Add(p);
-            list.AddRange(additive.Values);
-            return list.ToArray();
-        }
-
-        // mesh 檔名最後一段部位 token:'AVATAR/023424_WOMAN_HAIR.MSH' → 'HAIR'(附加類去重用)。
-        private static string MeshToken(string rel)
-        {
-            if (string.IsNullOrEmpty(rel)) return "";
-            var n = rel; int dot = n.LastIndexOf('.'); if (dot > 0) n = n.Substring(0, dot);
-            int us = n.LastIndexOf('_'); return (us >= 0 ? n.Substring(us + 1) : n).ToUpperInvariant();
-        }
-
-        // 從組件 mesh 檔名的部位 token 推 EquipSlot (CHIBANG 翅膀無對應 slot → None=附加)。
-        private static EquipSlot SlotFromMeshToken(string rel)
-        {
-            string u = rel.ToUpperInvariant();
-            if (u.Contains("_ONE")) return EquipSlot.OnePiece;
-            if (u.Contains("_COAT")) return EquipSlot.Top;
-            if (u.Contains("_PANT")) return EquipSlot.Bottom;
-            if (u.Contains("_HAIR")) return EquipSlot.Hair;
-            if (u.Contains("_SHOES")) return EquipSlot.Shoes;
-            if (u.Contains("_HAND")) return EquipSlot.Gloves;
-            if (u.Contains("_GLASS")) return EquipSlot.Glasses;
-            if (u.Contains("_LINGDANG")) return EquipSlot.Necklace;
-            if (u.Contains("_FACE")) return EquipSlot.Face;   // FACE / FACE_HUAN
-            return EquipSlot.None;   // CHIBANG 翅膀等 → 附加
-        }
 
         // 表情臉統一用「最白」膚色變體 (huan0)。官方 FACE_HUAN mesh 的 material[0] 各自綁不同深淺膚色——不少綁最深的 huan4
         // (亮度~51,看起來像黑人),另有一批綁到打錯字/不存在的檔名 (haun4/huan_1) → 回退平塗膚色。強制改用該 model 的
@@ -1341,6 +1318,7 @@ namespace Sdo.UI.Screens
             var noSpin = (bool[])_cardNoSpin.Clone(); var uv = (bool[])_cardUvScroll.Clone();
             var fpos = (Vector3[])_cardFramePos.Clone(); var fscale = (Vector3[])_cardFrameScale.Clone();
             var key = (long[])_cardKey.Clone(); var angle = (float[])_cardAngle.Clone();
+            bool[] needRerender = new bool[PerPage];
             for (int i = 0; i < PerPage; i++)
             {
                 int j = src[i];
@@ -1356,10 +1334,14 @@ namespace Sdo.UI.Screens
                 _cardFramePos[i] = fpos[j]; _cardFrameScale[i] = fscale[j];
                 // 立刻搬到新格子的世界位置:同幀若有新卡在舊的 CardSpot 上建起來並 Render,留在原地的它會一起入鏡。
                 _cardAv[i].transform.position = CardSpot(i) + _cardFramePos[i];
-                // 捲動前正在 hover 自轉的那張:角度歸零了但 RT 還停在轉一半的畫面 → 重畫一次回正 (只此一張,不影響其餘)。
-                if (angle[j] != 0f) RenderCard(i);
+                needRerender[i] = angle[j] != 0f;   // 捲動前正在 hover 自轉的那張:角度歸零了但 RT 還停在轉一半 → 待重畫回正
                 ready[i] = true;
             }
+            // ★重畫一律在「全部位置都搬好」之後★:若在上面的迴圈中途 RenderCard,RenderCard 內把其他卡歸位時會讀到
+            // 這個迴圈還沒處理到的半更新狀態(舊 avatar/舊 framePos),把別人移進這張卡的鏡頭 → 兩件衣服重疊+消失
+            // (使用者:「hover 放大轉一邊滾滾輪 100% 消失/重疊」)。等所有卡都在自己的 CardSpot 上,重畫才不會拍到別人。
+            for (int i = 0; i < PerPage; i++)
+                if (needRerender[i]) RenderCard(i);
             _pendingCards.Clear();
             _hoverCard = -1;
             return ready;
@@ -1428,6 +1410,8 @@ namespace Sdo.UI.Screens
                 {
                     var pc = _pendingCards[0]; _pendingCards.RemoveAt(0);
                     if (pc.Card != null) BuildCardPreview(pc.I, pc.Card, pc.Item);
+                    // 空格子診斷:cell 已被後續 Refresh 銷毀的殘項在此被無聲丟掉;若某格永遠空白要能看見它走到這裡
+                    else Debug.Log($"[shop] pending card#{pc.I} '{pc.Item?.Name}' dropped (cell destroyed)");
                 } while (_pendingCards.Count > 0 && buildClock.Elapsed.TotalMilliseconds < CardBuildBudgetMs);
             }
 

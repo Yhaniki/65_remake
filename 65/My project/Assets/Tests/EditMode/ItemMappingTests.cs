@@ -253,6 +253,17 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void IsPlaceholderItem_DropsKnownServerTestRows()
+        {
+            // 官方 iteminfo 快取殘留的伺服器測試列「Bug Item」(id 5002133, cat 109 女项链) → 整列不上架 (user)
+            Assert.IsTrue(AvatarItemCatalog.IsPlaceholderItem(5002133), "「Bug Item」 is server test data, not a product");
+            // real rows stay — including ones whose NAME merely contains "Bug"
+            Assert.IsFalse(AvatarItemCatalog.IsPlaceholderItem(1105645), "「Gold Bug」 (cat 102 top) is a real item");
+            Assert.IsFalse(AvatarItemCatalog.IsPlaceholderItem(2021275), "「EFFECT Ladybug Umbrella F」 is a real item");
+            Assert.IsFalse(AvatarItemCatalog.IsPlaceholderItem(14657), "a plain clothing id stays");
+        }
+
+        [Test]
         public void CapCoinPrice_CapsMPricesOver5000_LeavesOthers()
         {
             // user: 超過 5000M 的衣服都改成 5000 (M 幣 = Coins = priceCategory 1)

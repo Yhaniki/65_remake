@@ -18,10 +18,30 @@ namespace Sdo.Game
         {
             public Mesh Mesh; public string Dds;
             public string[] DdsNames;                          // all material names (one per attrib range)
+            public uint[] MatFlags;                            // 官方材質旗標 (record +0x194), parallel to DdsNames — see MatFlagAlphaBlend
+            public uint DdsFlags;                              // the picked Dds's material flags (0 when the pick fell back)
             public List<(int Attrib, int FStart, int FCount)> Ranges;  // material face ranges (mesh has 1 Unity submesh per range when >1)
             public Vector3[] BindVerts; public int[] BoneHrc; public float[] BoneWt;  // BoneHrc/BoneWt length = vcount*4 (HRC bone indices)
             public Dictionary<int, Matrix4x4> MshInvBindByHrc;  // HRC bone -> MSH inverse-bind (Unity space) for retarget skinning
         }
+
+        /// <summary>
+        /// 官方逐材質繪製旗標 = MSH 材質記錄 (408 bytes) 的 dword @ +0x194 (= 材質 dword index 0x65;引擎載入時複製到
+        /// 執行期材質記錄 (0xB4 stride) +0x48,見 sdo.bin 的材質載入迴圈)。全語料只有 5 種值 (0=11238, 2=18905,
+        /// 1=1709, 0x12=97, 0x11=8) —— 乾淨的小數值,不是垃圾。
+        ///
+        /// **引擎只用它做一件事**:`flags &amp; 0x3f` (= <see cref="MatFlagTransparentMask"/>)。0 → 進「不透明批」
+        /// (FUN_0042d160/FUN_0042f360 只畫這些);非 0 → 被 FUN_0042d8d0 收進**延後(透明)批**,在不透明批之後才畫並
+        /// 套上 alpha blend。所以「這個材質透不透明」= 這個遮罩是不是非零,**不是**某個單一 bit。
+        ///
+        /// 語料實測佐證 (每個旗標值的布料貼圖有多少比例帶真 alpha):flag 0 → **0.3%**(幾乎全是實心布料);
+        /// flag 1 → **99.0%**;flag 2 → 75.9%(其餘 24% 是 DXT1 之類沒 alpha 的,blend 對它們是 no-op)。
+        /// 曾經把 flag 1 當成「不透明+UV 變換」→ 蕾絲裙 024976 的內襯把同一張近全黑貼圖實心貼滿 = 使用者回報
+        /// 「比官方的黑」。bit0/bit1 之間的差異(疑似貼圖座標變換旗標)不影響透明與否。
+        /// </summary>
+        public const uint MatFlagTransparentMask = 0x3fu;
+
+        private const int MatFlagsOff = 0x194;   // flags dword within the 408-byte material record
         public sealed class Result { public List<SubMesh> Submeshes = new List<SubMesh>(); }
 
         private sealed class Range { public int Attrib, FStart, FCount, VStart, VCount; public int[] PalHrc; }
@@ -97,6 +117,70 @@ namespace Sdo.Game
             return true;
         }
 
+        /// <summary>Pure: the submesh's single-material texture pick (<see cref="SubMesh.Dds"/> — the builders use it
+        /// whenever the multi-range material split doesn't kick in, i.e. Ranges.Count &lt;= 1).
+        ///   • A SINGLE-range submesh with a valid attrib naming a NON-Basic texture uses THAT name — the
+        ///     D3DXATTRIBUTERANGE table IS the engine's material assignment. The old "first non-Basic" guess grabbed a
+        ///     NEIGHBOUR garment's texture on multi-material tables (002262_WOMAN_ONE 粉蓝 印度纱衣: the pants submesh's
+        ///     range says pant.dds (opaque) but the pick took the sheer 纱衣 coat2_ listed first → the pants turned
+        ///     translucent and flickered against the drape; 000822_MAN_PANT got 000821's COAT, 000839_WOMAN_HAIR got
+        ///     000840's COAT — 84 meshes corpus-wide).
+        ///   • An attrib naming a Basic SKIN texture is NOT honoured (fall through): 211 corpus meshes have a
+        ///     single-range table pointing at W/M_Basic while a real cloth name exists — flipping those to skin would
+        ///     undress them; keep the historical pick until each is visually verified.
+        ///   • Fallback (no/multi range table): first non-empty non-Basic name — many 2-material coats list the skin
+        ///     base FIRST (W_Basic_Coat2, garment second); picking [0] rendered the whole top as bare skin (使用者:
+        ///     「很多衣服是膚色的」). Pure-skin parts (HAND) only have a Basic name → ddsNames[0] as before.</summary>
+        public static string PickSubmeshDds(IList<string> ddsNames, IList<(int Attrib, int FStart, int FCount)> ranges)
+        {
+            int i = PickSubmeshDdsIndex(ddsNames, ranges);
+            return i >= 0 ? ddsNames[i] : null;
+        }
+
+        /// <summary>As <see cref="PickSubmeshDds"/> but returns the INDEX into <paramref name="ddsNames"/> (-1 when
+        /// empty) so the caller can read the picked material's official flags (<see cref="SubMesh.MatFlags"/>) too.</summary>
+        public static int PickSubmeshDdsIndex(IList<string> ddsNames, IList<(int Attrib, int FStart, int FCount)> ranges)
+        {
+            if (ddsNames == null || ddsNames.Count == 0) return -1;
+            if (ranges != null && ranges.Count == 1)
+            {
+                int a = ranges[0].Attrib;
+                if (a >= 0 && a < ddsNames.Count && !string.IsNullOrEmpty(ddsNames[a])
+                    && ddsNames[a].IndexOf("Basic", System.StringComparison.OrdinalIgnoreCase) < 0)
+                    return a;
+            }
+            for (int i = 0; i < ddsNames.Count; i++)
+                if (!string.IsNullOrEmpty(ddsNames[i]) && ddsNames[i].IndexOf("Basic", System.StringComparison.OrdinalIgnoreCase) < 0) return i;
+            return 0;
+        }
+
+        /// <summary>Pure header scan: every material (Name, Flags) in submesh order, no Unity mesh built — the
+        /// official-flags twin of <see cref="ReadMaterialNames"/> (same walk, same trailing probe). Tools/tests use it
+        /// to ask "what does the OFFICIAL engine do with this garment" straight from file bytes.</summary>
+        public static List<(string Name, uint Flags)> ReadMaterialTable(byte[] d)
+        {
+            var res = new List<(string, uint)>();
+            if (d == null || d.Length < 16 || System.Text.Encoding.ASCII.GetString(d, 0, 12) != "Mesh00000030") return res;
+            int p = 12;
+            int submeshCount = (int)U32(d, ref p);
+            if (submeshCount <= 0 || submeshCount > 16) return res;
+            var names = new List<string>();
+            for (int s = 0; s < submeshCount; s++)
+            {
+                names.Clear();
+                int before = p;
+                if (!ReadSubmeshMaterialNames(d, ref p, names)) break;
+                // re-walk the same records for flags: ReadSubmeshMaterialNames advanced p past the material table,
+                // whose entries sit 408 bytes apart ending at p — recover each record base from the count.
+                int recBase = p - names.Count * 408;
+                for (int m = 0; m < names.Count; m++)
+                    res.Add((names[m], recBase + m * 408 + MatFlagsOff + 4 <= d.Length ? U32At(d, recBase + m * 408 + MatFlagsOff) : 0u));
+                if (before >= p) break;   // no forward progress — malformed
+                if (s < submeshCount - 1) { int nx = ScanNextSubmesh(d, p); if (nx >= d.Length) break; p = nx; }
+            }
+            return res;
+        }
+
         private static SubMesh ParseSubmesh(byte[] d, ref int p)
         {
             uint fvf = U32(d, ref p);
@@ -116,9 +200,11 @@ namespace Sdo.Game
             int numMat = (int)U32(d, ref p);
             int firstMat = p;
             var ddsNames = new List<string>();
+            var matFlags = new List<uint>();                    // 官方旗標 (record +0x194), parallel to ddsNames
             for (int m = 0; m < numMat && p + 408 <= d.Length; m++)
             {
                 ddsNames.Add(ReadCStr(d, p + 17 * 4, 320));
+                matFlags.Add(U32At(d, p + MatFlagsOff));
                 p = firstMat + (m + 1) * 408;
             }
             // probe trailing material entries (some avatar MSH under-report numMat)
@@ -126,19 +212,9 @@ namespace Sdo.Game
             while (ddsNames.Count < 32 && probe + 408 <= d.Length)
             {
                 string nm = TryMaterialName(d, probe); if (nm == null) break;
-                ddsNames.Add(nm); probe += 408;
+                ddsNames.Add(nm); matFlags.Add(U32At(d, probe + MatFlagsOff)); probe += 408;
             }
             if (probe > p) p = probe;
-            // Single-material fallback texture: PREFER the garment/main texture over a skin BASE (W_Basic_/M_Basic_).
-            // Many 2-material coats list the skin base FIRST (ddsNames[0] = W_Basic_Coat2, garment second); when the
-            // range split doesn't kick in, the old ddsNames[0] pick rendered the WHOLE top as bare skin (使用者:「很多
-            // 衣服是膚色的」). Pick the first non-Basic name so the garment shows; fall back to ddsNames[0] (pure-skin
-            // parts like HAND have only a Basic material → unchanged). The multi-range path still uses per-range DdsNames.
-            string dds = null;
-            foreach (var nm in ddsNames)
-                if (!string.IsNullOrEmpty(nm) && nm.IndexOf("Basic", System.StringComparison.OrdinalIgnoreCase) < 0) { dds = nm; break; }
-            if (dds == null && ddsNames.Count > 0) dds = ddsNames[0];
-
             int triTotal = idxCount / 3;
             var ranges = ScanRanges(d, p, vcount, triTotal, System.Math.Max(1, numMat), out int rangeTableEnd);
             // 頂點實際引用的最高骨索引：合法骨盤必須大到能索引到它。擋掉「假的小骨盤」誤判——ScanBonePalette 會停在第一個結構
@@ -281,9 +357,13 @@ namespace Sdo.Game
             }
             var rangeList = new List<(int, int, int)>();
             foreach (var r in ranges) rangeList.Add((r.Attrib, r.FStart, r.FCount));
+            int pickIdx = PickSubmeshDdsIndex(ddsNames, rangeList);
+            string dds = pickIdx >= 0 ? ddsNames[pickIdx] : null;
             return new SubMesh
             {
                 Mesh = mesh, Dds = dds, DdsNames = ddsNames.ToArray(), Ranges = rangeList,
+                MatFlags = matFlags.ToArray(),
+                DdsFlags = (pickIdx >= 0 && pickIdx < matFlags.Count) ? matFlags[pickIdx] : 0u,
                 // Mark a submesh skinnable when it carries bone weights (stride 44/48/52 -> nW>0) OR is a SINGLE-BONE
                 // rigid skin (fvf 0x1156 / stride 40 = XYZB1+LASTBETA_UBYTE4: one UBYTE4 index at offset 12, weight 1.0).
                 // 37% of hair meshes (e.g. 037902_WOMAN_HAIR 寒風伴我) are stride-40 and bind rigidly to ONE bone

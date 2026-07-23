@@ -280,6 +280,16 @@ namespace Sdo.Game
         public static bool IsShopModelId(int modelId)
             => modelId > 0 && (modelId < DefaultModelIdBase || modelId >= PatchModelIdBase);
 
+        // 官方 CN iteminfo 快取殘留的伺服器端測試列 —「Bug Item」(id 5002133, modelId 2133, cat 109 女项链):名字是當年
+        // 伺服器 push 進快取的除錯佔位,不是真商品 (使用者:把叫 Bug Item 的項鍊刪掉)。上架前整列剔除;项链不是合成 slot
+        // (CategoryFor→0),modelId 2133 不會被 AllMeshModels 用序號名反手撿回。cat 14000 的 Test Pack 1/2 等測試列非服裝,
+        // 本就進不了目錄,不必列。
+        private static readonly HashSet<int> PlaceholderItemIds = new HashSet<int> { 5002133 };
+
+        /// <summary>True for a known server-side placeholder row (test data left in the official iteminfo cache,
+        /// e.g. 「Bug Item」 5002133) — dropped from the catalog entirely.</summary>
+        public static bool IsPlaceholderItem(int id) => PlaceholderItemIds.Contains(id);
+
         // 使用者要求:M 幣 (Coins / priceCategory 1) 定價超過 5000 的衣服一律壓到 5000;其他幣別 (G=Points / H=Bonus) 不動。
         public const int MaxCoinPrice = 5000;
 
@@ -513,18 +523,25 @@ namespace Sdo.Game
             }
             catch (Exception e) { Debug.LogWarning("[shop] setinfo load failed: " + e.Message); }
 
+            // 同一件衣服常常上架兩次:陸版中文列 + 線上版英文重上架 (同 cat+modelId → 同 mesh/貼圖 = 看起來一模一樣,
+            // 如 24976「金姬兰 女装」與「Flower Lace Dress」)。使用者:「把這種視覺完全一樣的衣服只留一組,留中文的」。
+            var hidden = DuplicateListingIds(items);
+
             var clothing = new List<ShopItem>();
             var groups = new Dictionary<(ItemSex, EquipSlot), List<ShopItem>>();
             foreach (var it in items)
             {
                 if (it.SlotType != ItemSlotType.Clothes) continue;   // skip consumables / effects
+                if (IsPlaceholderItem(it.Id)) continue;              // 伺服器測試佔位列 (「Bug Item」) 不上架
                 var slot = it.EquipSlot;
                 if (slot == EquipSlot.None) continue;
-                clothing.Add(it);
+                clothing.Add(it);   // 重複列仍留在 Clothing → ById 查得到 (已擁有/已穿的英文 id 不會失效)
+                if (hidden.Contains(it.Id)) continue;                // …但不進商城分頁清單
                 var key = (ItemTypes.GenderOf(it.Category, it.Name), slot);   // GenderOf 修 cat203 套装 (sex byte 皆0,靠名字)
                 if (!groups.TryGetValue(key, out var l)) groups[key] = l = new List<ShopItem>();
                 l.Add(it);
             }
+            if (hidden.Count > 0) Debug.Log($"[shop] {hidden.Count} 件英文重複上架列隱藏 (同 model 已有中文列)");
             // 離線無 setinfo → 依「系列基底名」把同名多件衣物合成套裝,放進 套装 分頁(使用者要求:兔乖乖/璀璨繁星…)。
             int synth = BuildSyntheticSets(clothing, groups, sets);
             // 台版官方套装 (古惑仔/卡卡西/逍遙英雄/聖誕老公公…): 名字來自台版 iteminfo 的 Outfit 列、組件來自台版 setinfo,
@@ -537,6 +554,86 @@ namespace Sdo.Game
             foreach (var it in clothing) { int p = CapCoinPrice(it.Price, it.PriceCategoryRaw); if (p != it.Price) { it.Price = p; capped++; } }
             Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版, {capped} 件 M-幣 定價壓到 {MaxCoinPrice})");
             return new AvatarItemCatalog(clothing, groups, meshFiles, sets);
+        }
+
+        /// <summary>
+        /// Pure: the ids of rows the shop should NOT list because they are a re-listing of a garment that is already
+        /// there under a Chinese name. The same (Category, ModelId) means the same mesh + textures = literally the same
+        /// clothes on screen; the client data ships thousands of them because the international/online service
+        /// re-listed the CN catalogue with English names (7,474 such rows over 6,997 models, all priced 2,000,000):
+        /// 24976 is 「金姬兰 女装」 AND "Flower Lace Dress"; 12657 is 「浪漫水粉 长靴」 AND "Kawaii Pink Boots".
+        /// 使用者:「把這種視覺完全一樣的衣服只留一組,留中文的」.
+        ///
+        /// Rule: inside one (Category, ModelId) group, if ANY row has a CJK name, every row whose name has NO CJK
+        /// character (English re-listings, and the numeric placeholder names we synthesise for unnamed rows) is hidden.
+        /// Groups that are English-only (7,794 of them — items that never existed in the CN catalogue) keep every row,
+        /// and duration tiers (7天/30天/永久, all Chinese) are untouched: they are genuinely different offers.
+        /// Hidden rows stay in <see cref="Clothing"/> so <see cref="ById"/> still resolves an owned/equipped English id.
+        /// </summary>
+        /// <summary>
+        /// Mascot COSTUME sets the user asked to pull from the shop (使用者:「panda suit f, ultraman top, chick suit f
+        /// 這系列的衣服都拿掉」). They are one contiguous family in the online catalogue — a full-body animal/hero suit
+        /// plus its matching hair, gloves and shoes — and they are listed here by MODEL id so every duration tier and
+        /// both genders go at once:
+        ///   963-966 Ultraman (hair / top / gloves / shoes), 967-973 Panda (hair M+F, suit M+F, gloves M+F),
+        ///   979-984 Chicky (Yellow Chicky hair M+F, suit M+F, shoes M+F), 15435/15436 Chicky hair.
+        /// Hidden from the shop listing only — the rows stay in <see cref="Clothing"/> so an already-owned id resolves.
+        /// </summary>
+        public static readonly HashSet<int> RemovedSeriesModelIds = new HashSet<int>
+        {
+            963, 964, 965, 966,                       // Ultraman F
+            967, 968, 969, 971, 972, 973,             // Panda M/F
+            979, 980, 981, 982, 983, 984,             // Chicky M/F
+            15435, 15436,                             // Chicky hair M/F
+        };
+
+        public static HashSet<int> DuplicateListingIds(IEnumerable<ShopItem> items)
+        {
+            var hidden = new HashSet<int>();
+            if (items == null) return hidden;
+            foreach (var it in items)
+                if (it != null && RemovedSeriesModelIds.Contains(it.ModelId)) hidden.Add(it.Id);
+            var byModel = new Dictionary<(int, int), List<ShopItem>>();
+            foreach (var it in items)
+            {
+                if (it == null) continue;
+                var key = (it.Category, it.ModelId);
+                if (!byModel.TryGetValue(key, out var l)) byModel[key] = l = new List<ShopItem>();
+                l.Add(it);
+            }
+            foreach (var kv in byModel)
+            {
+                var rows = kv.Value;
+                if (rows.Count < 2) continue;
+                bool anyChinese = false;
+                foreach (var r in rows) if (HasCjk(r.Name)) { anyChinese = true; break; }
+                if (anyChinese)
+                    foreach (var r in rows) if (!HasCjk(r.Name)) hidden.Add(r.Id);   // English/numeric twin of a Chinese row
+                // …and collapse rows that survived but are indistinguishable to the player: same worn model, same
+                // rental period, same displayed name. That happens when the Traditional-name sidecar (keyed by
+                // category+modelId, so it renames the English re-listing too) makes both rows read identically, and for
+                // the 128 CN rows the data itself duplicates. Keep the lowest id — the original CN listing.
+                var bestByLabel = new Dictionary<(int, string), ShopItem>();
+                foreach (var r in rows)
+                {
+                    if (hidden.Contains(r.Id)) continue;
+                    var label = (r.DurationDays, r.Name ?? "");
+                    if (!bestByLabel.TryGetValue(label, out var keep)) { bestByLabel[label] = r; continue; }
+                    if (r.Id < keep.Id) { hidden.Add(keep.Id); bestByLabel[label] = r; }
+                    else hidden.Add(r.Id);
+                }
+            }
+            return hidden;
+        }
+
+        /// <summary>True when the name contains a CJK ideograph — i.e. it is the Chinese listing (Simplified from the CN
+        /// iteminfo or Traditional from the TW sidecar) rather than an English re-listing / numeric placeholder.</summary>
+        public static bool HasCjk(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            foreach (var c in name)
+                if ((c >= '一' && c <= '鿿') || (c >= '㐀' && c <= '䶿')) return true;
+            return false;
         }
 
         private const int SynthSetIdBase = 80_000_000;   // 8xxxxxxx:高於 6 位 modelId、低於 SynthIdBase(9xxxxxxx),不撞

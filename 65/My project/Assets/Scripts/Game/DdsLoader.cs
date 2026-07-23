@@ -243,6 +243,80 @@ namespace Sdo.Game
         /// hard opaque silhouette. This keeps people/sign/billboard alpha blended while stage bulbs, lasers and
         /// sweeping light decals add energy to the scene like the original fixed-function render path.
         /// </summary>
+        /// <summary>
+        /// A DXT1 (alpha-less) texture that is a GLOW on a BLACK background — the form SDO ships flying-wing frames in
+        /// (FLY Pink Butterfly 008448 女翅膀: a pink/blue paisley wing + white sparkles, pure-black border). It carries
+        /// no alpha, so straight blend draws the black background as a solid rectangle and the edges never fade
+        /// (使用者:「邊緣透明度沒做出來」). The correct draw is ADDITIVE (Blend One One): black adds nothing → transparent,
+        /// the wing/sparkles show, and edges fade with their own brightness. Detected by: DXT1, a DARK outer border
+        /// (mean luminance &lt; 24 over the frame edge) AND real bright content inside (&gt;5% of texels above 120).
+        /// Returns false for DXT3/DXT5 (those carry alpha → the cutout/blend path handles them) and for solid DXT1.
+        /// </summary>
+        public static bool LooksLikeDarkGlowDxt1(byte[] d)
+        {
+            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
+            if (System.Text.Encoding.ASCII.GetString(d, 84, 4) != "DXT1") return false;
+            int h = BitConverter.ToInt32(d, 12), w = BitConverter.ToInt32(d, 16);
+            if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return false;
+            int bw = (w + 3) / 4, bh = (h + 3) / 4;
+            if (128 + bw * bh * 8 > d.Length) return false;
+            long borderLum = 0; int borderCnt = 0, bright = 0, dark = 0, total = 0;
+            for (int by = 0; by < bh; by++)
+                for (int bx = 0; bx < bw; bx++)
+                {
+                    int bo = 128 + (by * bw + bx) * 8;
+                    ushort c0 = (ushort)(d[bo] | (d[bo + 1] << 8)), c1 = (ushort)(d[bo + 2] | (d[bo + 3] << 8));
+                    int r0 = (c0 >> 11) * 255 / 31, g0 = ((c0 >> 5) & 63) * 255 / 63, b0 = (c0 & 31) * 255 / 31;
+                    int r1 = (c1 >> 11) * 255 / 31, g1 = ((c1 >> 5) & 63) * 255 / 63, b1 = (c1 & 31) * 255 / 31;
+                    uint bits = BitConverter.ToUInt32(d, bo + 4);
+                    for (int t = 0; t < 16; t++)
+                    {
+                        int px = bx * 4 + (t & 3), py = by * 4 + (t >> 2);
+                        if (px >= w || py >= h) continue;
+                        int code = (int)((bits >> (2 * t)) & 3);
+                        int r, g, b;
+                        if (code == 0) { r = r0; g = g0; b = b0; }
+                        else if (code == 1) { r = r1; g = g1; b = b1; }
+                        else if (c0 > c1) { int n = code == 2 ? 2 : 1, m = 3 - n; r = (n * r0 + m * r1) / 3; g = (n * g0 + m * g1) / 3; b = (n * b0 + m * b1) / 3; }
+                        else if (code == 2) { r = (r0 + r1) / 2; g = (g0 + g1) / 2; b = (b0 + b1) / 2; }
+                        else { r = g = b = 0; }
+                        int lum = (r * 30 + g * 59 + b * 11) / 100;
+                        total++;
+                        if (lum > 120) bright++;
+                        if (lum < 16) dark++;
+                        bool edge = px < w / 8 || px >= w - w / 8 || py < h / 8 || py >= h - h / 8;
+                        if (edge) { borderLum += lum; borderCnt++; }
+                    }
+                }
+            if (total == 0 || borderCnt == 0) return false;
+            double borderMean = borderLum / (double)borderCnt, darkFrac = dark / (double)total, brightFrac = bright / (double)total;
+            LastGlowStats = (borderMean, darkFrac, brightFrac);
+            // Glow-on-black = LOTS of bright content sitting on a LOT of near-black — a BIMODAL frame. The original "dark
+            // BORDER" test was too fragile: 008448 FLY Pink Butterfly decorates its edges with white sparkle stars, so its
+            // border mean is NOT dark (≈55) even though ~1/3 of the frame is pure black (使用者:「邊緣去背沒修好」). But a
+            // dark-BACKGROUND fraction ALONE also mis-fires: a dark opaque DXT1 (024977 鞋: darkFrac 0.40) has just as much
+            // black — what separates a glow is that it ALSO has a big BRIGHT population (butterfly brightFrac≈0.42 vs the
+            // shoe's 0.14). So require both. The original dark-border clause is kept as an OR so nothing it caught regresses.
+            return (borderMean < 24.0 && brightFrac > 0.05) || (darkFrac > 0.20 && brightFrac > 0.25);
+        }
+
+        /// <summary>Diagnostic: (border-mean-luminance, dark-texel-fraction, bright-texel-fraction) from the last
+        /// <see cref="LooksLikeDarkGlowDxt1"/> call. Lets a test calibrate the glow thresholds against real frames.</summary>
+        public static (double border, double dark, double bright) LastGlowStats;
+
+        /// <summary>Decode a glow-on-black DXT1 (a <see cref="LooksLikeDarkGlowDxt1"/> wing frame) DE-BACKED: a brightness
+        /// alpha is derived so the pure-black background is transparent and the coloured wing stays SOLID (使用者 wants a
+        /// de-backed wing, NOT the washed-out additive glow). Returns null for non-DXT1. Draw it with a normal
+        /// alpha-blend shader.</summary>
+        public static Texture2D LoadDxt1BlackKeyed(byte[] d)
+        {
+            if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return null;
+            if (System.Text.Encoding.ASCII.GetString(d, 84, 4) != "DXT1") return null;
+            int h = BitConverter.ToInt32(d, 12), w = BitConverter.ToInt32(d, 16);
+            if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return null;
+            return DecodeDxt1(d, 128, w, h, false, false, false, false, false, keyBlack: true);
+        }
+
         public static bool LooksLikeAdditiveGlow(byte[] d)
         {
             if (d == null || d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return false;
@@ -477,6 +551,87 @@ namespace Sdo.Game
         /// top-left (TGA descriptor bit 5 = 0 means bottom-left → rows are flipped) so UVs match the DDS path. Returns
         /// null on an unsupported header rather than throwing.
         /// </summary>
+        /// <summary>
+        /// The alpha class of a 32-bit TGA, using the SAME distribution buckets as <see cref="GetSceneAlphaMode"/>.
+        /// SDO ships many animated-frame textures as TGA rather than DDS — including CLOTH frame sets (the SHINE Sexy
+        /// Demon / Purple Lace garments animate from 017234_man_chibang*.tga). Those frames carry a transparent
+        /// background, so a caller that keeps its opaque shader paints that background as solid white rectangles
+        /// (使用者:「閃爍貼圖動畫沒去背」). Returns Opaque for 24-bit / unreadable data.
+        /// </summary>
+        public static DdsAlphaMode GetTgaAlphaMode(byte[] d)
+        {
+            if (d == null || d.Length < 18 || d[16] != 32) return DdsAlphaMode.Opaque;   // only 32-bit carries alpha
+            var tex = LoadTgaPixels(d, out int w, out int h);
+            if (tex == null || w <= 0 || h <= 0) return DdsAlphaMode.Opaque;
+            int total = tex.Length, visible = 0, soft = 0, hardTransp = 0;
+            for (int i = 0; i < total; i++)
+            {
+                byte a = tex[i].a;
+                if (a > 8) visible++;
+                if (a > 8 && a < 247) soft++;
+                if (a <= 8) hardTransp++;
+            }
+            if (total == 0 || visible == 0) return DdsAlphaMode.Opaque;
+            float softOfVisible = soft / (float)visible, hardFrac = hardTransp / (float)total;
+            if (hardFrac >= 0.03f && softOfVisible <= 0.75f) return DdsAlphaMode.Cutout;
+            if (softOfVisible >= 0.30f) return DdsAlphaMode.Blend;
+            return DdsAlphaMode.Opaque;
+        }
+
+        /// <summary>Decode a TGA to pixels in TOP-LEFT row order without creating a Texture2D (so the data stays
+        /// readable for analysis). Shared by <see cref="LoadTga"/> and <see cref="GetTgaAlphaMode"/>.</summary>
+        private static Color32[] LoadTgaPixels(byte[] d, out int w, out int h)
+        {
+            w = h = 0;
+            if (d == null || d.Length < 18) return null;
+            int idLen = d[0], cmapType = d[1], imgType = d[2];
+            int cmapLen = d[5] | (d[6] << 8), cmapEntBits = d[7];
+            w = d[12] | (d[13] << 8); h = d[14] | (d[15] << 8);
+            int bpp = d[16], desc = d[17];
+            if (w <= 0 || h <= 0 || (bpp != 24 && bpp != 32)) return null;
+            if (imgType != 2 && imgType != 10) return null;
+            int bytesPP = bpp / 8;
+            int off = 18 + idLen + (cmapType != 0 ? cmapLen * ((cmapEntBits + 7) / 8) : 0);
+            bool topLeft = (desc & 0x20) != 0;
+            int total = w * h;
+            var lin = new Color32[total];
+            if (imgType == 2)
+            {
+                if (off + total * bytesPP > d.Length) return null;
+                int si = off;
+                for (int i = 0; i < total; i++, si += bytesPP)
+                    lin[i] = new Color32(d[si + 2], d[si + 1], d[si], bytesPP == 4 ? d[si + 3] : (byte)255);
+            }
+            else
+            {
+                int si = off, count = 0;
+                while (count < total && si < d.Length)
+                {
+                    int packet = d[si++]; int n = (packet & 0x7f) + 1;
+                    if ((packet & 0x80) != 0)
+                    {
+                        if (si + bytesPP > d.Length) break;
+                        var c = new Color32(d[si + 2], d[si + 1], d[si], bytesPP == 4 ? d[si + 3] : (byte)255);
+                        si += bytesPP;
+                        for (int k = 0; k < n && count < total; k++) lin[count++] = c;
+                    }
+                    else
+                    {
+                        for (int k = 0; k < n && count < total; k++, si += bytesPP)
+                        {
+                            if (si + bytesPP > d.Length) break;
+                            lin[count++] = new Color32(d[si + 2], d[si + 1], d[si], bytesPP == 4 ? d[si + 3] : (byte)255);
+                        }
+                    }
+                }
+            }
+            if (topLeft) return lin;
+            var flipped = new Color32[total];                       // bottom-left origin → flip rows
+            for (int y = 0; y < h; y++)
+                System.Array.Copy(lin, (h - 1 - y) * w, flipped, y * w, w);
+            return flipped;
+        }
+
         public static Texture2D LoadTga(byte[] d)
         {
             if (d == null || d.Length < 18) return null;
@@ -565,7 +720,7 @@ namespace Sdo.Game
         // pure black (NOTES/LONG = (65,49,49); JUDGELINE = black), so a luminance threshold can't key both; keying the
         // actual bg colour removes the square and keeps the arrow. bleed dilates RGB into transparent texels; flipV
         // reverses rows so a full-rect sprite shows upright.
-        private static Texture2D DecodeDxt1(byte[] d, int off, int w, int h, bool punchAlpha = false, bool bleed = false, bool flipV = false, bool keyBg = false, bool desilver = false)
+        private static Texture2D DecodeDxt1(byte[] d, int off, int w, int h, bool punchAlpha = false, bool bleed = false, bool flipV = false, bool keyBg = false, bool desilver = false, bool keyBlack = false)
         {
             int bw = (w + 3) / 4, bh = (h + 3) / 4;
             if (off + bw * bh * 8 > d.Length) return null;
@@ -616,6 +771,18 @@ namespace Sdo.Game
                     px[i].a = (byte)(dist <= 32.0 ? 0 : dist >= 54.0 ? 255 : (int)((dist - 32.0) * 255.0 / 22.0));   // crisp ramp → no dark halo
                 }
             }
+            // BLACK key-out (glow-on-black wings): DERIVE an alpha from brightness so the pure-black background becomes
+            // transparent and the coloured wing stays SOLID — the correct de-back for a DXT1 that carries no alpha
+            // (008448 FLY Pink Butterfly). Deterministic (keys BLACK, not the histogram-dominant colour like keyBg, so a
+            // wing whose own body colour fills more than the surround can't be keyed out by mistake). Metric = max(r,g,b)
+            // ("is this texel non-black"), NOT luminance — a saturated dark colour (e.g. deep blue 0,0,180: luma≈20) must
+            // stay opaque. Ramp 8→48 gives an anti-aliased silhouette without hollowing the darker paisley of the wing.
+            if (keyBlack)
+                for (int i = 0; i < px.Length; i++)
+                {
+                    int b = Math.Max(px[i].r, Math.Max(px[i].g, px[i].b));
+                    px[i].a = (byte)(b <= 8 ? 0 : b >= 48 ? 255 : (b - 8) * 255 / 40);
+                }
             if (desilver)
             {
                 // The LONG end-cap's OUTER chevron is solid white/silver (opaque → survives the cut-out) = the 白邊.

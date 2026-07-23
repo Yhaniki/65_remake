@@ -87,15 +87,31 @@ namespace Sdo.Tests
             //      譜面時間不變（音符/判定線一格都不跳），但音樂的播放位置要往回退 = 音樂延後播出來。
             if (game.EditorClip != null)
             {
+                // ★先強制暫停★：EditorClipSec 播放中回報 _audio.time(會隨真實時間漂移),暫停中才回報 seek 當下算好的
+                // 確定值。歌單刪減後預設開的歌換人,新歌在此點恰好還在播 → offset 的 −100ms 被播放漂移稀釋成 −54ms。
+                game.EditorSetPaused(true);
+                yield return null;
+                // 再 seek 到「音檔正中央」：中位音符對某些短音檔會落在音檔尾端外,換成音檔一半的位置保證落在 clip 內部。
+                //   clipSec = chartSec − MusicCountIn(見 EditorSeekMs) → chartMs = clipTargetSec×1000 + MusicCountInMs。
+                double clipTargetSec = game.EditorClip.length * 0.5;
+                game.EditorSeekMs(clipTargetSec * 1000.0 + game.EditorMusicCountInMs);
+                yield return null;
+
+                // ★EditorSongOffsetMs 是「絕對設定」不是相加★:先歸零建立基準,再設 100 —— 這樣「變化量」一定是 +100ms。
+                // 不能只 =100 就假設變化 100ms:歌本身在 song_table.csv 帶了自己的 offsetMs(這首 ≈46ms),setter 把它整個
+                // 換掉 → 變化量 = 100 − 46 = 54ms(歌單刪減後預設開的歌換人才踩到,舊歌 offsetMs 剛好是 0)。
+                game.EditorSongOffsetMs = 0.0;
                 double chartBefore = game.EditorNowMs;
                 double clipBefore = game.EditorClipSec;
 
-                game.EditorSongOffsetMs = 100.0;   // 音樂延後 100ms
-                yield return null;
+                game.EditorSongOffsetMs = 100.0;   // 音樂延後 100ms（相對基準 0 → 正好 +100ms）
+                double clipAfter = game.EditorClipSec;
 
                 Assert.AreEqual(chartBefore, game.EditorNowMs, 3.0,
                     "單首 offset 不該移動譜面時鐘 —— 音符/判定線要待在原地");
-                Assert.AreEqual(clipBefore - 0.100, game.EditorClipSec, 0.010,
+                // 測「音樂往回退的量」而非絕對位置：offset +100ms → clip 位置正好少 100ms（差值才是真正的不變量，
+                // 不受這首歌音檔長短/seek 到哪裡影響）。
+                Assert.AreEqual(0.100, clipBefore - clipAfter, 0.010,
                     "單首 offset +100ms → 音樂要往回退 100ms（＝之後才播到現在這個位置）");
                 Assert.AreEqual(game.EditorMusicDelaySec * 1000.0 + 100.0, game.EditorMusicCountInMs, 1.0,
                     "波形的時間原點要跟著音樂走（不然波形會跟音符一起動）");

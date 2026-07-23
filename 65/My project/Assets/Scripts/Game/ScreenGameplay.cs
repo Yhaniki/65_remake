@@ -54,7 +54,7 @@ namespace Sdo.Game
         public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
 
         /// <summary>
-        /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_name_overrides.json）：補「這首譜跟音檔沒對齊」。
+        /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_table.csv）：補「這首譜跟音檔沒對齊」。
         /// <b>動的是音樂，不是音符</b>（同 StepMania：你在調的是音樂相對譜面的位置）—— 它加在音樂的
         /// count-in 上（<see cref="MusicCountInSec"/>），所以譜面時鐘/音符/判定線都不動，只有音樂前後挪。
         /// 正 = 音樂往後（延後播放）＝ 音符相對音樂變早。
@@ -66,7 +66,7 @@ namespace Sdo.Game
         /// **全曲共用**的音樂 offset（毫秒）—— 已停用，設 0。
         /// 曾經以為官方那批 k.gn 的譜面時間軸整體跟音檔差了固定一段（每首都一樣），所以放一個全域 −25。
         /// 後來逐首手校（sdom2675 之後）發現**沒有這種全域常數**，每首的殘差各不相同，該由各自的
-        /// <see cref="songOffsetMs"/>（song_name_overrides.json 的 offsetMs）處理。於是把全域歸零，
+        /// <see cref="songOffsetMs"/>（song_table.csv 的 offsetMs）處理。於是把全域歸零，
         /// 並把原本那 −25 烘進 sdom2675 之後每首的 offsetMs，讓那批已校過的歌行為不變。
         /// 保留這個常數只為讓 <see cref="MusicCountInSec"/> 的算式與排程/波形路徑維持單一入口。
         /// </summary>
@@ -1181,9 +1181,10 @@ namespace Sdo.Game
                         + "（PlayScheduled 排的是第 0 取樣；不補的話每一聲都晚這麼多，校時會誤認成音效卡延遲）");
         }
 
+        // 該發 tick 的音符(炸彈除外,見 AssistTick.HasTick)的起始時間。
         private IEnumerable<double> NoteStartTimes()
         {
-            foreach (var n in _notes) yield return n.Note.StartTimeMs;
+            foreach (var n in _notes) if (AssistTick.HasTick(n.Note)) yield return n.Note.StartTimeMs;
         }
 
         // 每幀:把「地平線之前」的 tick 全部排進音訊時鐘。tick 的譜面時間 → dspTime 用的是**音樂本身的映射**

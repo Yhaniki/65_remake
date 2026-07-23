@@ -1,5 +1,6 @@
 using System;
 using NUnit.Framework;
+using Sdo.Osu;
 using Sdo.Ruleset;
 
 namespace Sdo.Tests
@@ -82,6 +83,31 @@ namespace Sdo.Tests
             Assert.AreEqual(3, a.Count);
             Assert.AreEqual(3, a.Remaining);
             Assert.IsTrue(a.TryDequeue(1e9, out double t)); Assert.AreEqual(50.0, t);
+        }
+
+        // ── 哪些音符該響 ──
+
+        [Test]
+        public void HasTick_BombsAreSilent()   // 炸彈是要「避開」的,給它一聲 clap 等於叫人去踩
+        {
+            Assert.IsTrue(AssistTick.HasTick(new OsuHitObject(0, 1000)));                    // tap
+            Assert.IsTrue(AssistTick.HasTick(new OsuHitObject(1, 1000, 2000)));              // hold 頭
+            Assert.IsFalse(AssistTick.HasTick(new OsuHitObject(2, 1000, null, isBomb: true)));
+        }
+
+        [Test]
+        public void HasTick_BombSharingARowWithATapStillTicksOnce()
+        {
+            // 同一 row = 一顆 tap + 一顆炸彈:tap 那聲留著,炸彈不另外加一聲
+            var notes = new[]
+            {
+                new OsuHitObject(0, 1000),
+                new OsuHitObject(1, 1000, null, isBomb: true),
+                new OsuHitObject(2, 2000, null, isBomb: true),   // 整個 row 只有炸彈 → 完全不響
+            };
+            var times = new System.Collections.Generic.List<double>();
+            foreach (var n in notes) if (AssistTick.HasTick(n)) times.Add(n.StartTimeMs);
+            Assert.AreEqual(new[] { 1000.0 }, AssistTick.BuildTimeline(times));
         }
 
         // ── clap 波形（StepMania 的打拍音是一顆手拍；音檔不在 source 樹裡 → 合成） ──

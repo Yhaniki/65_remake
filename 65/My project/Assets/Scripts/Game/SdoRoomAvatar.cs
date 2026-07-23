@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
@@ -91,6 +92,16 @@ namespace Sdo.Game
             bool useCutout = mode != RenderMode.Scene;
             bool singleMaterial = mode == RenderMode.PortraitHead;
             string hrcRel = male ? MaleHrc : FemaleHrc;
+            // 連身裙把上/下裝槽拿掉,而髖部/腿的皮膚幾何就長在那兩顆 mesh 裡 → 裙子開衩、低背處後面沒東西,直接看穿到
+            // 場景 (使用者:「腳上破一個洞」「背後破一塊」)。補一件「裸腿」身體件 (AvatarOutfit.BareLegsFiller:全皮膚
+            // 材質、髖圍比裙子窄,不會穿幫)。
+            // 連身裙把上/下裝槽拿掉,而髖/腿的皮膚幾何長在那兩顆 mesh 裡 → 裙子開衩、低背處後面沒東西,直接看穿到場景
+            // (使用者:「腳上破一個洞」「背後破一塊」)。墊一件裸腿件 (AvatarOutfit.BareLegsFiller),並往內縮
+            // (SdoAvatarBuilder.BodyFillShrink) 讓它一定在衣服裡面。
+            // NOTE: body-skin filler DISABLED (2026-07-23). A backless / halter one-piece (金姬兰) leaves the upper back
+            // uncovered; a generic bare-torso mesh filler kept poking through the FRONT bodice in some poses/paths (no
+            // single extracted mesh is a nude base body that fits under ALL garments). Reverted to consistent
+            // no-filler behaviour. Proper fix = a dedicated nude base-body mesh, tracked separately.
             var bodyParts = NormalizeParts(equippedParts, male);
             // 用 ResolveAvatarFile(Root + dev Datas 全量) 解析,不再只找 Root —— 商城買的衣物 mesh 常只在 Datas 全量目錄,
             // Root-only 會漏(→ 房間人變光頭)。與左側預覽/遊戲內舞者同一條解析路徑,穿搭在房間才一致。
@@ -112,14 +123,25 @@ namespace Sdo.Game
             var fallback = Shader.Find("Unlit/Color");
 
             int parts = 0;
-            foreach (var rel in bodyParts)
+            int transparentOrder = 0;   // 透明衣物材質固定 renderQueue 用 (見 SdoAvatarBuilder.TransparentGarmentQueue)
+            // 動畫翅膀(_G rig):官方線上端(sdo.bin FUN_0083f540)在房間為「會動的翅膀」掛一副獨立骨架+自己的 .mot,在背上
+            // 自主拍動 —— 離線 exe 沒做。這裡只在 3D 場景 (房間走動的人) 做:偵測到有 _G rig 的翅膀就「不」把靜態翅膀 skin
+            // 到身體(避免雙翅/z-fight),改在最後 BuildWingRig 掛動畫版。見 AvatarWingRig(含 265 個官方 model id 表)。
+            bool wantWings = mode == RenderMode.Scene;
+            var wingRigs = new List<AvatarWingRig.Paths>();
+            foreach (var rel0 in bodyParts)
             {
+                if (wantWings && AvatarWingRig.TryResolve(rel0, out var wrp) && WingRigFilesExist(wrp))
+                { wingRigs.Add(wrp); continue; }   // 動畫翅膀 → 收集起來待掛,靜態翅膀跳過不畫
+                // 「只留皮膚」件 (連身裙下補回身體幾何,見 AvatarOutfit.WithBodySkinFiller):布料 range 不畫
+                bool skinOnly = AvatarOutfit.IsSkinOnly(rel0, out var rel);
                 var path = SdoAvatarBuilder.ResolveAvatarFile(rel);   // Root + dev Datas 全量 (見上;修光頭)
                 var mshBytes = AvatarAssetCache.Read(path);   // cached + 背景預讀
                 if (mshBytes == null) { Debug.LogWarning("[room-avatar] missing " + rel); continue; }
                 var r = MshLoader.Load(mshBytes);
                 if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-avatar] parse fail " + rel); continue; }
                 var dir = Path.GetDirectoryName(path);
+                var sheerMats = new List<Material>();   // 這個部位的透明材質;≥2 片要關 prepass (見 SdoAvatarBuilder.SheerPrepassEnabled)
                 // 髮/眼鏡/翅膀/項鍊都要雙面+alpha-cutout(去背),否則翅膀/眼鏡鏤空處變實心。其餘走 Unlit/Texture。
                 string ru = rel.ToUpperInvariant();
                 bool twoSidedAlpha = ru.Contains("HAIR") || ru.Contains("GLASS") || ru.Contains("CHIBANG") || ru.Contains("LINGDANG");
@@ -136,6 +158,7 @@ namespace Sdo.Game
                 {
                     var go = new GameObject(Path.GetFileNameWithoutExtension(rel) + "_" + si++);
                     go.transform.SetParent(parent.transform, false);
+                    if (skinOnly) SdoAvatarBuilder.ShrinkFillerMesh(sub);   // 墊底件往內縮,不從衣服裡透出來
                     go.AddComponent<MeshFilter>().mesh = sub.Mesh;
                     var mr = go.AddComponent<MeshRenderer>();
 
@@ -152,13 +175,19 @@ namespace Sdo.Game
                             // 但道具出了自己的改色貼圖(070025_MAN_COAT.AN 黃色)。換成道具自己的 id → 房間/選男女/頭貼才跟商城/儲物間
                             // 一致(否則穿成模板的粉紅色)。與 SdoAvatarBuilder.LoadParts 同一支,存在才換(見該函式)。
                             nm = SdoAvatarBuilder.PreferOwnIdTexture(dir, rel, nm);
-                            var t = ResolveDds(dir, nm, out var am, isGarment);
+                            var t = ResolveDds(dir, nm, out var am, isGarment, SdoAvatarBuilder.MatFlagAt(sub, a), out float tl);   // 官方逐材質透明旗標
                             // 翅膀(CHIBANG)的發光羽翼常是 model-embedded 換幀貼圖:材質名是佔位符 "_TexAnimEx(NAME)…"，
                             // 找不到真檔 → 交給共用的 TryBuildTexAnim 解出 <NAME>.an 幀序列並掛動畫(與遊戲內舞者/商城同一套),
                             // 否則房間/選男女的翅膀會變一坨灰色(user 回報 8448 貼圖寫不出來)。仍解不出才退 fallback 色。
                             Material texAnim = t == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, nm, sh) : null;
                             if (t == null && texAnim == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
+                            // 「補身體」件的布料 range → 單色皮膚 (與 builder 同一支,見 SdoAvatarBuilder.BodyFillSkinColor)
+                            if (skinOnly && !SdoAvatarBuilder.IsSkinMaterialName(nm)) { mats[s] = SdoAvatarBuilder.NewBodyFillMaterial(bodyShader); continue; }
                             mats[s] = t != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = t } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
+                            // 透明衣物 renderer 間的前後改固定順序 (距離排序逐幀翻轉=褲子閃爍;與商城 builder 同一支)
+                            if (isGarment && mats[s].renderQueue >= 3000) mats[s].renderQueue = SdoAvatarBuilder.TransparentGarmentQueue(transparentOrder++);
+                            // 真紗 vs 實心去背布料 — 卡片縮圖靠它決定要不要換成雙面 cutout (見 SdoAvatarBuilder.IsSheerFabric)
+                            if (mats[s].shader == sheerShader) { SdoAvatarBuilder.ApplySheerMaterialState(mats[s], tl); sheerMats.Add(mats[s]); }
                         }
                         mr.sharedMaterials = mats;
                     }
@@ -166,23 +195,115 @@ namespace Sdo.Game
                     {
                         // 共用模板 mesh:內嵌模板 id → 換成道具自己 id 的改色貼圖(見上;070025 男上衣 / 070030 女鞋)。
                         var dds = SdoAvatarBuilder.PreferOwnIdTexture(dir, rel, sub.Dds);
-                        var tex = ResolveDds(dir, dds, out var am, isGarment);
+                        uint? mf1 = (sub.MatFlags != null && sub.MatFlags.Length > 0) ? sub.DdsFlags : (uint?)null;   // 官方旗標:單材質挑到的那筆
+                        var tex = ResolveDds(dir, dds, out var am, isGarment, mf1, out float tl1);
                         // 見上:翅膀 _TexAnimEx 換幀貼圖 → 交給共用 TryBuildTexAnim(解 .an 幀序列)否則變灰色。
                         Material texAnim = tex == null ? SdoAvatarBuilder.TryBuildTexAnim(go, dir, dds, sh) : null;
                         if (tex == null && texAnim == null && !string.IsNullOrEmpty(dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{dds}' unresolved → fallback colour {PartColor(rel)}");
+                        if (skinOnly && !SdoAvatarBuilder.IsSkinMaterialName(dds)) mr.sharedMaterial = SdoAvatarBuilder.NewBodyFillMaterial(bodyShader);
+                        else
                         mr.sharedMaterial = tex != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
+                        // 透明衣物 renderer 間的前後改固定順序 (距離排序逐幀翻轉=褲子閃爍;與商城 builder 同一支)
+                        if (isGarment && mr.sharedMaterial.renderQueue >= 3000) mr.sharedMaterial.renderQueue = SdoAvatarBuilder.TransparentGarmentQueue(transparentOrder++);
+                        // 真紗 vs 實心去背布料 — 卡片縮圖靠它決定要不要換成雙面 cutout (見 SdoAvatarBuilder.IsSheerFabric)
+                        if (mr.sharedMaterial.shader == sheerShader) { SdoAvatarBuilder.ApplySheerMaterialState(mr.sharedMaterial, tl1); sheerMats.Add(mr.sharedMaterial); }
                     }
 
                     if (sub.BindVerts != null && sub.BoneHrc != null)
                         av.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
                 }
+                // 多層透明的部位關掉 depth prepass,讓層疊加 (與商城 builder 同一支;見 SheerPrepassEnabled)
+                if (!SdoAvatarBuilder.SheerPrepassEnabled(sheerMats.Count))
+                    foreach (var m in sheerMats) m.SetFloat(SdoAvatarBuilder.SheerPrepassProp, 0f);
+                // 依這個部位的透明層數補密度 (與商城 builder 同一支;見 SdoAvatarBuilder.SheerDensityFor)
+                foreach (var m in sheerMats) m.SetFloat(SdoAvatarBuilder.SheerDensityProp, SdoAvatarBuilder.SheerDensityFor(sheerMats.Count));
                 parts++;
             }
             if (parts == 0) { Debug.LogWarning("[room-avatar] no parts loaded"); Object.Destroy(av); return null; }
 
             av.PoseInitialIdle();           // arm the idle so the first frame isn't the bind/T-pose
-            SetLayerRecursive(parent, layer);
+            foreach (var wrp in wingRigs) BuildWingRig(parent, wrp, useCutout);   // 動畫翅膀:掛獨立會拍動的 _G rig
+            SetLayerRecursive(parent, layer);   // 也把翅膀 rig 一起收進 layer(它是 parent 的子物件)
             return av;
+        }
+
+        private static bool WingRigFilesExist(AvatarWingRig.Paths p)
+            => File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.HrcRel))
+            && File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MshRel))
+            && File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MotRel));
+
+        /// <summary>
+        /// Mount an animated glide-wing (<c>_G</c>) rig on <paramref name="parent"/> (the body avatar root): a SECOND,
+        /// self-contained <see cref="SdoAvatar"/> — its own <c>_G.HRC</c> skeleton + <c>_G.MSH</c> skinned mesh looping
+        /// its own <c>.mot</c> — parented at IDENTITY under the body root. The rig is authored in body model space (root
+        /// static at the back attach point; only the feather bones flap), so identity-parenting sits it on the back and
+        /// it flaps independently while the body inherits room position/facing/scale. Faithful port of the online
+        /// FUN_0083f540 wing mount (see <see cref="AvatarWingRig"/>). No-op on any load failure (the static wing was
+        /// already suppressed — a missing rig just means no wing, logged; <see cref="WingRigFilesExist"/> gates that).
+        /// </summary>
+        private static void BuildWingRig(GameObject parent, AvatarWingRig.Paths wp, bool useCutout)
+        {
+            var wingHrc = AvatarAssetCache.Hrc(SdoAvatarBuilder.ResolveAvatarFile(wp.HrcRel));
+            if (wingHrc == null) { Debug.LogWarning("[wing-rig] HRC fail " + wp.HrcRel); return; }
+            var motBytes = AvatarAssetCache.Read(SdoAvatarBuilder.ResolveAvatarFile(wp.MotRel));
+            var wingMot = motBytes != null ? MotLoader.Load(motBytes) : null;
+            if (wingMot == null) { Debug.LogWarning("[wing-rig] MOT fail " + wp.MotRel); return; }
+            var mshPath = SdoAvatarBuilder.ResolveAvatarFile(wp.MshRel);
+            var mshBytes = AvatarAssetCache.Read(mshPath);
+            var r = mshBytes != null ? MshLoader.Load(mshBytes) : null;
+            if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[wing-rig] MSH fail " + wp.MshRel); return; }
+
+            var wingGO = new GameObject("WingRig_" + wp.ModelId);
+            wingGO.transform.SetParent(parent.transform, false);   // identity → body model space (root static at the back)
+            var wav = wingGO.AddComponent<SdoAvatar>();
+            wav.Setup(wingHrc, wingMot);
+            wav.RestMot = wingMot;   // the flap clip loops in LateUpdate (t = time·Fps % (MaxTime+1))
+            wav.BlendSec = 0f;       // no idle↔walk crossfade — it only ever plays the one flap clip
+
+            // 翅膀去背發光羽翼:雙面 + alpha-cutout(場景 hairShader / RT portraitShader);貼圖多為 _TexAnimEx 換幀 →
+            // 交給共用 TryBuildTexAnim 展開 <base>.an 幀序列(與身體翅膀 part、商城/舞者同一套),否則變一坨灰色。
+            var hairShader = Shader.Find("Sdo/UnlitDoubleSided") ?? Shader.Find("Unlit/Texture");
+            var portraitShader = Shader.Find("Sdo/PortraitOpaque") ?? hairShader;
+            var fallback = Shader.Find("Unlit/Color");
+            var sh = useCutout ? portraitShader : hairShader;
+            var dir = Path.GetDirectoryName(mshPath);
+            int si = 0;
+            foreach (var sub in r.Submeshes)
+            {
+                var go = new GameObject(wingGO.name + "_" + si++);
+                go.transform.SetParent(wingGO.transform, false);
+                go.AddComponent<MeshFilter>().mesh = sub.Mesh;
+                var mr = go.AddComponent<MeshRenderer>();
+                if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
+                {
+                    var mats = new Material[sub.Ranges.Count];
+                    for (int s = 0; s < sub.Ranges.Count; s++)
+                    {
+                        int a = sub.Ranges[s].Attrib;
+                        string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
+                        mats[s] = WingMaterial(go, dir, nm, sh, fallback);
+                    }
+                    mr.sharedMaterials = mats;
+                }
+                else
+                {
+                    mr.sharedMaterial = WingMaterial(go, dir, sub.Dds, sh, fallback);
+                }
+                if (sub.BindVerts != null && sub.BoneHrc != null)
+                    wav.AddPart(sub.Mesh, sub.BindVerts, sub.BoneHrc, sub.BoneWt, sub.MshInvBindByHrc);
+            }
+            wav.PoseInitialIdle();   // pose frame 0 now (no bind pop) + arm the loop → wings flap from the first frame
+        }
+
+        // Resolve one wing submesh material: real DDS → textured (two-sided cut-out) shader; a _TexAnimEx placeholder →
+        // the shared TryBuildTexAnim frame sequence (glowing feathers); else a neutral fallback colour so a missing
+        // texture is a dim wing, not an invisible one.
+        private static Material WingMaterial(GameObject go, string dir, string nm, Shader sh, Shader fallback)
+        {
+            var t = ResolveDds(dir, nm);
+            if (t != null) return new Material(sh) { mainTexture = t };
+            var texAnim = SdoAvatarBuilder.TryBuildTexAnim(go, dir, nm, sh);
+            return texAnim ?? new Material(fallback) { color = new Color(0.72f, 0.72f, 0.78f), name = nm ?? "" };
         }
 
         /// <summary>商城 shop preview overload: builds EXACTLY the given <paramref name="parts"/> (item-only card, or a
@@ -209,6 +330,11 @@ namespace Sdo.Game
             if (bindPoseNoIdle) { av.Animate = false; }
             else { av.RestMot = idle; av.BlendSec = 0f; }   // no idle↔walk crossfade — start walking immediately
 
+            // ★連身裙的身體填充件★:穿連身裙(_ONE)時上/下裝槽被拿掉,軀幹/腿的皮膚幾何隨之消失 → 露背/開衩處直接看穿到
+            // 場景(使用者「金姬兰上背靠肩膀後面破掉」)。補一件「只留皮膚」的軀幹件(AvatarOutfit.WithBodySkinFiller)。
+            // 只給「左側玩家預覽」(!bindPoseNoIdle);商城卡片縮圖(bindPoseNoIdle)只要衣服本身,不墊身體。
+            // ★這是關鍵修正★:商城的兩條路徑都走這個 overload(非上面的 RenderMode overload),之前 filler 只加在
+            // RenderMode overload → 商城裡永遠沒生效(探針走 RenderMode 才看得到,實機走這裡看不到)。
             // Load the body/garment parts via the shared builder (same loop the in-game dancer + head portrait use).
             var built = SdoAvatarBuilder.LoadParts(parent, av, parts ?? WomanParts,
                 portraitOpaque ? SdoAvatarBuilder.SkinStyle.Portrait : SdoAvatarBuilder.SkinStyle.Gameplay);
@@ -248,8 +374,20 @@ namespace Sdo.Game
         // sheer fabric (lace/mesh) alpha-blended — the SAME classification the shop/gameplay builder uses — instead of the
         // blanket-opaque cloth this path used to force. Broken/normal alpha still come back Opaque → no regression.
         private static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode garmentAlpha, bool bodyGarment)
+            => ResolveDds(dir, ddsName, out garmentAlpha, bodyGarment, null);
+
+        // As above, plus the material's OFFICIAL flags dword (msh +0x194). Supplied for a body garment it DECIDES the
+        // alpha mode (SdoAvatarBuilder.OfficialAlphaMode = what the retail engine does); null keeps the legacy histogram.
+        private static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode garmentAlpha, bool bodyGarment, uint? matFlags)
+            => ResolveDds(dir, ddsName, out garmentAlpha, bodyGarment, matFlags, out _);
+
+        // As above, and also reports the texture's translucent-texel fraction so the caller can tag a blended material
+        // as real sheer weave vs solid cut-out cloth (SdoAvatarBuilder.IsSheerFabric — the shop card needs the split).
+        private static Texture2D ResolveDds(string dir, string ddsName, out DdsAlphaMode garmentAlpha, bool bodyGarment, uint? matFlags,
+                                            out float translucent)
         {
             garmentAlpha = DdsAlphaMode.Opaque;
+            translucent = 0f;
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
@@ -266,10 +404,15 @@ namespace Sdo.Game
                 if (bodyGarment)
                 {
                     var st = DdsLoader.Analyze(bytes);   // 一次掃描給齊三個答案 (原本掃三遍)
-                    garmentAlpha = SdoAvatarBuilder.GarmentAlphaMode(st.Scene, st.HardTransp, st.Translucent, true);
+                    translucent = st.Translucent;
+                    garmentAlpha = matFlags.HasValue
+                        ? SdoAvatarBuilder.OfficialAlphaMode(matFlags.Value, st.HasAlpha, st.Translucent)   // 旗標=透不透明,直方圖=紗/去背
+                        : SdoAvatarBuilder.GarmentAlphaMode(st.Scene, st.HardTransp, st.Translucent, true);
                     sheer = garmentAlpha == DdsAlphaMode.Blend;
                 }
-                return DdsLoader.Load(bytes, bleedAlphaEdges: sheer);   // sheer fabric: dilate RGB into a=0 → no black halo at the lace edges
+                // 紗料(Blend)才平滑 4-bit alpha 階梯(見 SdoAvatarBuilder.ResolveDds);去背/實心不套(糊邊)。
+                var smooth = sheer ? DdsLoader.AlphaSmooth.PreserveDetail : DdsLoader.AlphaSmooth.None;
+                return DdsLoader.Load(bytes, sheer, smooth);   // sheer fabric: dilate RGB into a=0 → no black halo at the lace edges
             }
             catch { return null; }
         }
