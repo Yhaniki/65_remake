@@ -103,18 +103,17 @@ namespace Sdo.UI.Screens
         private const float CardEnlargeMax = 1.5f;        // hover 放大上限 (官方 2×,但 remake 卡片矮→2× 會爆出格子,降到 1.5×;可調)
         private const float CardSpinDegPerSec = 300f;    // hover 旋轉 (官方 +5°/10ms,frame-cap 60fps ≈ 300°/s;上限 500°/s@100fps)
         private const float CardEyeDist = 110f;          // 官方 view eye=(0,0,-110)。正交下距離不影響大小,只要在 near..far 內
-        // ---- 道具 mesh (禮盒) 的擺法 ----
-        // DAOJU 的道具 mesh **不是站好的**:100400_LIHE (28 件禮包全借這顆,DressTable.GiftPackProxyModelId) 的盒面法線
-        // 離世界軸約 30°,直接照原樣畫就是一顆歪倒的方塊、蝴蝶結還轉到背面去 (使用者:「禮包顯示方向錯誤」)。
-        // 扶正做法:量出「盒蓋」(緞帶在上面打結、蝴蝶結那一面) 與相鄰側面的法線,把盒蓋轉到 +Y。法線是離線量的 ——
-        // 解 MSH 面法線、依方向分群 (每群取面積加權平均),盒子剛好得到 3 對:
-        //   ±(0.290,-0.321, 0.901) 面積最大 → 盒蓋/盒底 (蝴蝶結長在這面)
-        //   ±(-0.308, 0.864, 0.398) 與 ±(0.903, 0.399,-0.156) → 四個側面
-        // 扶正後再套跟衣物同一個 30° 側轉 + 前傾 25° (卡片相機是水平正交,壓下模型才看得到盒蓋),就是官方那顆
-        // 「盒子站著、蝴蝶結在上面」的禮盒。沒量過的道具 mesh → 不扶正 (identity),只套側轉/前傾。
-        private static readonly Vector3 LiheLidNormal  = new Vector3( 0.290f, -0.321f,  0.901f);
-        private static readonly Vector3 LiheSideNormal = new Vector3(-0.308f,  0.864f,  0.398f);
-        private const float PropCardPitch = -25f;
+        // ---- 道具/禮盒 mesh 的擺法 (官方權威做法,反編譯 + 無頭渲染定案) ----
+        // 道具 mesh 在檔案裡是「傾斜建模」的,直接畫原始頂點會躺著/歪掉 (使用者:「禮包店 道具店部份 3D 物品朝向錯誤」)。
+        // 官方客戶端 (離線 AvtShow_LoadByItemId_004313c0 / 線上 sdo.bin) 對「每一件」道具都固定載入**共用骨架 DAOJU.HRC**
+        // + 把 mesh 掛上去 (LoadModelFromArc("daoju.hrc",1) → LoadHrcB 掛 slot 1);道具的朝向 = DAOJU.HRC 最深骨
+        // (Box01 的子骨) 的 bind 世界旋轉,Euler≈(280,300,180)。**所有道具共用同一個旋轉** (官方對每件道具都掛這副骨架)。
+        // 之前的做法只離線量了 100400_LIHE 一顆的盒面法線去逼近、又只套在「檔名含 LIHE」的禮盒上,其餘道具一律不扶正
+        // (identity) → 道具店的道具全躺著/歪掉。改成直接讀 DAOJU.HRC 的骨旋轉套到全部道具 (proprepro 無頭渲染 21 件各類
+        // 道具:喇叭/藥水/卡片/鐘/金錢卡/禮盒 全部站正驗證通過)。官方道具是 Euler(0,0,0) 基準 (ApplyDisplayPreset 道具分支
+        // SetEuler(0,0,0);沒有衣物的 30° 側轉、也沒有額外前傾——bone 旋轉本身已含正確展示角度),hover 才繞垂直軸自轉。
+        private const string PropHrcRel = "DAOJU/DAOJU.HRC";
+        private static Quaternion? _propBaseRot;   // DAOJU.HRC 最深骨的 bind 旋轉 (lazy 解析一次,全道具共用) —— 見 PropBaseRotation
         private const float CardOrthoHalfW = 64f;        // 官方 ortho 半寬 (WIDTH=128 world);半高由 RT aspect 推 → 方形像素
         private const float CardNear = 5f, CardFar = 1000f;   // 官方 ortho near/far
         private const float CardBuildBudgetMs = 6f;       // 每幀花在建縮圖的上限 (超過就等下一幀,捲動才不會頓)
@@ -1073,10 +1072,11 @@ namespace Sdo.UI.Screens
                 _cardRT[i] = new RenderTexture(_L.RtW, _L.RtH, 16, RenderTextureFormat.ARGB32) { name = "ShopCardRT" + i, antiAliasing = 2 };
                 root = new GameObject("ShopCardAvatar" + i);
                 root.transform.position = CardSpot(i);
-                // 衣物預設朝左 30°;道具 mesh 另外要「扶正 + 前傾」才站得起來 (見 LiheLidNormal 那段)。
-                _cardYaw[i] = RoomMovement.FacingDegrees(2) + DefaultYaw;
-                _cardPre[i] = prop ? PropUprightFor(propMesh) : Quaternion.identity;
-                _cardPost[i] = prop ? Quaternion.Euler(PropCardPitch, 0f, 0f) : Quaternion.identity;
+                // 道具:官方 Euler(0,0,0) 基準 + DAOJU.HRC 骨旋轉扶正 (全道具統一,見 PropBaseRotation);衣物:預設朝左 30° 側轉。
+                // 前傾都不加 (道具的骨旋轉本身已含正確展示角度;衣物本來就 identity)。
+                _cardYaw[i] = prop ? 0f : (RoomMovement.FacingDegrees(2) + DefaultYaw);
+                _cardPre[i] = prop ? PropBaseRotation : Quaternion.identity;
+                _cardPost[i] = Quaternion.identity;
                 // 每次建卡都先關掉 bbox 置中 (只有道具/禮盒才開,由下面 FitCardToBounds 重新設 true)。少了這行,
                 // 逛過道具店/礼包店 (那些卡把此格設成 true) 再回服装店,衣物卡會沿用殘留的 true → RenderCard 走 pivot
                 // 分支、拿到道具的舊 _cardPivot 把衣物推出鏡頭 → 服装預覽全空白 (retain 只搬人形不會重置這格狀態)。
@@ -1085,8 +1085,8 @@ namespace Sdo.UI.Screens
                 SdoAvatarBuilder.LogLabel = string.IsNullOrEmpty(item.Name) ? item.ModelId.ToString("D6") : item.Name;   // [avtex] log 標名 (user)
                 if (prop)
                 {
-                    // 禮盒:道具自己的骨架 (DAOJU/*.hrc),不是人物假人 → 直接畫 mesh 的 bind 頂點 (avatar=null →
-                    // SdoAvatarBuilder 不註冊骨骼、不套 mot),跟卡片衣物同一條「靜態 bind」路線。
+                    // 道具/禮盒:直接畫 mesh 的原始頂點 (avatar=null → SdoAvatarBuilder 不註冊骨骼、不套 mot),朝向靠上面
+                    // 的 _cardPre = PropBaseRotation (= 官方共用 DAOJU.HRC 骨旋轉) 擺正。跟卡片衣物同一條「靜態」路線。
                     var pres = SdoAvatarBuilder.LoadParts(root, null, new[] { propMesh }, SdoAvatarBuilder.SkinStyle.Gameplay);
                     SdoRoomAvatar.SetLayerRecursive(root, PreviewLayer);
                     if (!pres.Any)
@@ -1096,7 +1096,7 @@ namespace Sdo.UI.Screens
                     // 旋轉之後才套到世界座標的,拿原始 bbox 會框偏);置中則交給 pivot=模型空間中心,每幀跟著旋轉重算。
                     FitCardToBounds(i, RotatedBounds(pres.Bounds, CardRotation(i)), pres.Bounds.center);
                     _cardAv[i] = root;
-                    _cardNoSpin[i] = false;   // hover 一樣轉 (官方 AvtShow 也會轉)
+                    _cardNoSpin[i] = true;   // 道具/禮包卡:hover 只放大、不旋轉 (user 指定) — 維持擺正的基準朝向
                     AddCardImage(i, card);
                     RenderCard(i);
                     return;
@@ -1175,17 +1175,25 @@ namespace Sdo.UI.Screens
             _cardScale[i] = 1f; _cardAngle[i] = 0f;
         }
 
-        // 道具 mesh 的「扶正」旋轉：把量到的盒蓋法線轉到 +Y (見 LiheLidNormal 那段的推導)。沒量過的 mesh → identity。
-        private static Quaternion PropUprightFor(string meshRel)
+        // 道具的擺正旋轉 = 官方共用骨架 DAOJU.HRC「最深骨」(Box01 的子骨) 的 bind 世界旋轉。官方對每一件道具都掛這副骨架
+        // (見上方註解 + AvtShow_LoadByItemId_004313c0 反編譯),所以全部道具共用這一個旋轉。lazy 解析一次快取;HRC 缺失/
+        // 解析失敗 → identity (退回照原始頂點畫,至少不會崩)。
+        private static Quaternion PropBaseRotation
         {
-            // 扶正法線是量 100400_LIHE 這顆禮盒得的,但其他禮盒 (100798_QINGRENJIELIHE 情人節禮盒等) 建模朝向一致 →
-            // 依使用者指示對「所有 LIHE 系列禮盒」都套同一組扶正 (檔名含 LIHE 即視為禮盒;若某盒不合再各別微調)。
-            if (meshRel == null || meshRel.IndexOf("LIHE", System.StringComparison.OrdinalIgnoreCase) < 0)
-                return Quaternion.identity;
-            var lid = LiheLidNormal.normalized;
-            var right = Vector3.Cross(lid, LiheSideNormal.normalized).normalized;
-            var fwd = Vector3.Cross(right, lid);                       // 右手/左手同式 → 與離線量測那組基底一致
-            return Quaternion.Inverse(Quaternion.LookRotation(fwd, lid));   // 盒蓋 → +Y、該側面 → +Z
+            get
+            {
+                if (_propBaseRot.HasValue) return _propBaseRot.Value;
+                var q = Quaternion.identity;
+                try
+                {
+                    var hrc = AvatarAssetCache.Hrc(SdoAvatarBuilder.ResolveAvatarFile(PropHrcRel));
+                    if (hrc != null && hrc.BindWorld != null && hrc.BindWorld.Length > 0)
+                        q = hrc.BindWorld[hrc.BindWorld.Length - 1].rotation;   // 最深骨 = 道具擺正旋轉 (Euler≈280/300/180)
+                }
+                catch { }
+                _propBaseRot = q;
+                return q;
+            }
         }
 
         // 卡片模型的總旋轉：扶正 → 側轉(含 hover 自轉,繞模型自己的直立軸) → 前傾。衣物只有中間那段 (前後皆 identity)。
