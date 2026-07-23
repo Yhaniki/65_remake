@@ -565,14 +565,19 @@ namespace Sdo.Game
             // 非衣服 2D 商品:同 modelId+同 SKU 常有「中文列 + 英文重上架列」兩筆 (奇妙冰激凌 / Ice Cream,model 1120005)。
             // 使用者:「道具店/礼包店只拿中文的」→ 每個 SKU 有中文名列就藏掉英文/無中文列後才建分頁清單 (props 仍全保留供 ById)。
             var propHidden = PropDuplicateListingIds(props);
+            int propNoArt = 0;
             foreach (var it in props)
             {
                 if (propHidden.Contains(it.Id)) continue;
+                // 無 2D 圖示 (DRESS/FindByPrefix) 又無 3D 禮盒 mesh (DAOJU) 的道具 = 官方沒美術的佔位/測試列 (Test Pack、
+                // VIP PERMANENT、laim…,modelId 超出官方區間、原價 2000000) → 不上架,免得礼包店/道具店整頁空卡。
+                if (DressCatalog.IconPath(it.ModelId) == null && DressCatalog.MeshRel(it.ModelId) == null) { propNoArt++; continue; }
                 var pslot = it.EquipSlot;
                 if (!propGroups.TryGetValue(pslot, out var pl)) propGroups[pslot] = pl = new List<ShopItem>();
                 pl.Add(it);
             }
             if (propHidden.Count > 0) Debug.Log($"[shop] {propHidden.Count} 筆非衣服商品英文重複列隱藏 (同 SKU 已有中文列)");
+            if (propNoArt > 0) Debug.Log($"[shop] {propNoArt} 筆道具無美術 (無 2D 圖也無 3D mesh) → 不上架");
             // 離線無 setinfo → 依「系列基底名」把同名多件衣物合成套裝,放進 套装 分頁(使用者要求:兔乖乖/璀璨繁星…)。
             int synth = BuildSyntheticSets(clothing, groups, sets);
             // 台版官方套装 (古惑仔/卡卡西/逍遙英雄/聖誕老公公…): 名字來自台版 iteminfo 的 Outfit 列、組件來自台版 setinfo,
@@ -664,17 +669,20 @@ namespace Sdo.Game
         /// <summary>Pure: ids of NON-衣服 2D 商品 rows to hide from the shop pages because they are an English/無中文
         /// re-listing of a Chinese row for the SAME SKU. Unlike <see cref="DuplicateListingIds"/> (keyed by
         /// Category+ModelId, which would fold the ×1/×50/×100 SKUs of one item together since they share a name), this
-        /// keys by the full SKU (ModelId+Quantity+Duration+幣別+Price) so distinct SKUs survive — only the CN/EN twins of
-        /// one SKU collapse to the Chinese-named row. Hidden rows stay in <see cref="Props"/> so ById still resolves.</summary>
+        /// keys by SKU MINUS price (ModelId+Quantity+Duration+幣別) so distinct SKUs (×1/×50) survive while the CN/EN
+        /// twins of one SKU — which carry DIFFERENT prices (奇妙冰激凌 500M vs the Ice Cream re-listing's 2,000,000) —
+        /// still group and collapse to the Chinese-named row. Hidden rows stay in <see cref="Props"/> so ById resolves.</summary>
         public static HashSet<int> PropDuplicateListingIds(IEnumerable<ShopItem> props)
         {
             var hidden = new HashSet<int>();
             if (props == null) return hidden;
-            var bySku = new Dictionary<(int, int, int, int, int), List<ShopItem>>();
+            // SKU 鍵**不含價格**:中文原版與英文重上架版價格常不同 (奇妙冰激凌 500M vs Ice Cream 原價 2000000),
+            // 含價格會把它們當成兩個 SKU 而漏掉去重。同 modelId+數量+時效+幣別 就視為同一件的中/英兩版。
+            var bySku = new Dictionary<(int, int, int, int), List<ShopItem>>();
             foreach (var it in props)
             {
                 if (it == null) continue;
-                var key = (it.ModelId, it.Quantity, it.DurationDays, it.PriceCategoryRaw, it.Price);
+                var key = (it.ModelId, it.Quantity, it.DurationDays, it.PriceCategoryRaw);
                 if (!bySku.TryGetValue(key, out var l)) bySku[key] = l = new List<ShopItem>();
                 l.Add(it);
             }

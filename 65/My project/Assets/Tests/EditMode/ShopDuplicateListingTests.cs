@@ -167,14 +167,15 @@ namespace Sdo.Tests
         [Test]
         public void PropEnglishRelisting_SameSku_IsHidden_ChineseKept()
         {
-            // 奇妙冰激凌 (中) 與 Ice Cream (英) 同 modelId/數量/時效/價 → 只留中文那筆 (log 實例 model 1120005)。
+            // 奇妙冰激凌 (中,原價 500) 與 Ice Cream (英,重上架佔位價 2000000) 同 modelId/數量/時效/幣別 但**價格不同**
+            // → 只留中文那筆 (log 實例 model 1120005)。價格不同也要視為同一件的中/英兩版 → SKU 鍵不含價格。
             var props = new List<ShopItem>
             {
-                Prop(1, 1120005, 1, 2000000, "奇妙冰激凌"),
+                Prop(1, 1120005, 1, 500,     "奇妙冰激凌"),
                 Prop(2, 1120005, 1, 2000000, "Ice Cream"),
             };
             var hidden = AvatarItemCatalog.PropDuplicateListingIds(props);
-            Assert.IsTrue(hidden.Contains(2), "英文重上架列要藏");
+            Assert.IsTrue(hidden.Contains(2), "英文重上架列要藏 (即使價格與中文列不同)");
             Assert.IsFalse(hidden.Contains(1), "中文列要留");
         }
 
