@@ -266,7 +266,7 @@ namespace Sdo.Game
         /// <paramref name="bleed"/> dilates the transparent-white matte to remove the bilinear white halo on edges.</summary>
         public static Sprite[] LoadAn(string folder, string anName, bool bleed = false)
         {
-            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return new Sprite[0];
             var frames = ParseAnText(File.ReadAllText(anPath));
             var sprites = new List<Sprite>(frames.Count);
@@ -334,7 +334,7 @@ namespace Sdo.Game
 
         private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false)
         {
-            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
             var frames = ParseAnText(File.ReadAllText(anPath));
             if (frames.Count == 0) return null;
@@ -437,7 +437,7 @@ namespace Sdo.Game
         /// texture keeps this off the shared BALANCE.png atlas (the OK/SAVE buttons crop it too and stay straight-alpha).</summary>
         public static Sprite LoadAnSoloPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
         {
-            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
             var frames = ParseAnText(File.ReadAllText(anPath));
             if (frames.Count == 0) return null;

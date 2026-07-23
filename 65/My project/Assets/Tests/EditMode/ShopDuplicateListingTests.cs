@@ -157,5 +157,73 @@ namespace Sdo.Tests
             var items = new List<ShopItem> { Row(7, 999, 102, "Solo English Item") };
             Assert.IsEmpty(AvatarItemCatalog.DuplicateListingIds(items));
         }
+
+        // ---- 非衣服 2D 商品 (道具/藥水/特效/禮包) 的去重:PropDuplicateListingIds ----
+        // 使用者:「道具店/礼包店只拿中文的」。跟衣服不同,不能按 (Category,ModelId) 合併 —— 消耗品有「同名不同數量」的
+        // SKU (小喇叭 ×1/×50/×100,名字都叫「小喇叭」),按 modelId 合併會把 SKU 也收成一筆。改按完整 SKU 去重。
+        private static ShopItem Prop(int id, int model, int qty, int price, string name, int dur = -1, int cat = 21000)
+            => new ShopItem { Id = id, ModelId = model, Category = cat, Quantity = qty, Price = price, PriceCategoryRaw = 1, DurationDays = dur, Name = name };
+
+        [Test]
+        public void PropEnglishRelisting_SameSku_IsHidden_ChineseKept()
+        {
+            // 奇妙冰激凌 (中) 與 Ice Cream (英) 同 modelId/數量/時效/價 → 只留中文那筆 (log 實例 model 1120005)。
+            var props = new List<ShopItem>
+            {
+                Prop(1, 1120005, 1, 2000000, "奇妙冰激凌"),
+                Prop(2, 1120005, 1, 2000000, "Ice Cream"),
+            };
+            var hidden = AvatarItemCatalog.PropDuplicateListingIds(props);
+            Assert.IsTrue(hidden.Contains(2), "英文重上架列要藏");
+            Assert.IsFalse(hidden.Contains(1), "中文列要留");
+        }
+
+        [Test]
+        public void PropDifferentQuantitySku_AllKept_EnglishTwinsHidden()
+        {
+            // 小喇叭 ×1 與 ×50 是不同 SKU (不同商品),都要保留;各自的英文重複列才藏 → 證明 SKU 不會被折疊掉。
+            var props = new List<ShopItem>
+            {
+                Prop(1, 100000, 1,  5000,  "小喇叭"),
+                Prop(2, 100000, 1,  5000,  "Small Horn"),
+                Prop(3, 100000, 50, 5000,  "小喇叭"),
+                Prop(4, 100000, 50, 5000,  "Small Horn"),
+            };
+            var hidden = AvatarItemCatalog.PropDuplicateListingIds(props);
+            Assert.IsTrue(hidden.Contains(2), "×1 的英文列要藏");
+            Assert.IsTrue(hidden.Contains(4), "×50 的英文列要藏");
+            Assert.IsFalse(hidden.Contains(1), "×1 中文列保留");
+            Assert.IsFalse(hidden.Contains(3), "×50 中文列保留 (SKU 不被折疊)");
+        }
+
+        [Test]
+        public void PropEnglishOnly_SameSku_BothKept()
+        {
+            // 同 SKU 全無中文 → 沒有中文可留,整組保留 (只有英文名的商品不能被誤刪)。
+            var props = new List<ShopItem>
+            {
+                Prop(5, 200010, 1, 100, "Sparkle Effect"),
+                Prop(3, 200010, 1, 100, "Sparkle Effect"),
+            };
+            Assert.IsEmpty(AvatarItemCatalog.PropDuplicateListingIds(props));
+        }
+
+        [Test]
+        public void PropEnglishOnly_DistinctSku_AllKept()
+        {
+            var props = new List<ShopItem>
+            {
+                Prop(1, 200010, 1, 100, "Sparkle Effect"),
+                Prop(2, 200011, 1, 100, "Bubble Effect"),
+            };
+            Assert.IsEmpty(AvatarItemCatalog.PropDuplicateListingIds(props));
+        }
+
+        [Test]
+        public void PropSingleRow_NotHidden()
+        {
+            var props = new List<ShopItem> { Prop(1, 600003, 1, 2000000, "婚庆大礼包") };
+            Assert.IsEmpty(AvatarItemCatalog.PropDuplicateListingIds(props));
+        }
     }
 }

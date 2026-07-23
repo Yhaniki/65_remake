@@ -1059,11 +1059,8 @@ namespace Sdo.UI.Screens
                 string propMesh = prop ? DressCatalog.MeshRel(item.ModelId) : null;
                 if (prop && propMesh == null)
                 {
-                    // 診斷:2D 圖示 (AddPropIcon) 也沒撿到、3D mesh (DAOJU) 也沒有 → 這格永遠空白。一次印全:DRESS 載到幾筆
-                    // (0=DRESS.TXT 沒載到→root 錯)、Resource(DRESS 有無這筆)、IconPath(FindByPrefix 有沒有撿到 .an)、實際 root。
-                    //   IconPath 非空但仍空格 → 是 LoadAn1 讀不動;IconPath 也空 → root 底下沒那批 UI/ITEM2D_PACK 檔。
-                    Debug.Log($"[shop] prop card#{i} '{item?.Name}' (model {item?.ModelId}) 空格 — DRESS筆數={DressCatalog.Count}, "
-                              + $"資源='{DressCatalog.Resource(item.ModelId)}', IconPath='{DressCatalog.IconPath(item.ModelId)}', root='{SdoExtracted.Root}'");
+                    // 撿不到 2D 圖示 (AddPropIcon) 又沒有 3D mesh (DAOJU) → 這格只能留空 (官方資料本來就沒這筆美術)。
+                    Debug.Log($"[shop] prop card#{i} '{item?.Name}' (model {item?.ModelId}) 無 2D 圖也無 3D mesh → 空格");
                     return;
                 }
                 if (!prop && (_catalog == null || !_catalog.IsRenderable(item)))
@@ -1184,7 +1181,9 @@ namespace Sdo.UI.Screens
         // 道具 mesh 的「扶正」旋轉：把量到的盒蓋法線轉到 +Y (見 LiheLidNormal 那段的推導)。沒量過的 mesh → identity。
         private static Quaternion PropUprightFor(string meshRel)
         {
-            if (meshRel == null || meshRel.IndexOf("100400_LIHE", System.StringComparison.OrdinalIgnoreCase) < 0)
+            // 扶正法線是量 100400_LIHE 這顆禮盒得的,但其他禮盒 (100798_QINGRENJIELIHE 情人節禮盒等) 建模朝向一致 →
+            // 依使用者指示對「所有 LIHE 系列禮盒」都套同一組扶正 (檔名含 LIHE 即視為禮盒;若某盒不合再各別微調)。
+            if (meshRel == null || meshRel.IndexOf("LIHE", System.StringComparison.OrdinalIgnoreCase) < 0)
                 return Quaternion.identity;
             var lid = LiheLidNormal.normalized;
             var right = Vector3.Cross(lid, LiheSideNormal.normalized).normalized;

@@ -550,10 +550,8 @@ namespace Sdo.Game
                 if (ItemTypes.IsProp(slot))
                 {
                     // 非衣服的 2D 商品 (道具/藥水/特效/寵物/禮包) —— 以前這裡直接 continue 丟掉，所以 道具店/伙伴店/礼包店
-                    // 全是空的。現在留下來、按分頁 (slot) 分組；性別不分 (官方這幾頁沒有男女切換)。
+                    // 全是空的。現在全收進 props (ById 查得到);分頁清單 propGroups 稍後去重 (中英重複) 再建。
                     props.Add(it);
-                    if (!propGroups.TryGetValue(slot, out var pl)) propGroups[slot] = pl = new List<ShopItem>();
-                    pl.Add(it);
                     continue;
                 }
                 if (IsPlaceholderItem(it.Id)) continue;              // 伺服器測試佔位列 (「Bug Item」) 不上架
@@ -564,6 +562,17 @@ namespace Sdo.Game
                 l.Add(it);
             }
             if (hidden.Count > 0) Debug.Log($"[shop] {hidden.Count} 件英文重複上架列隱藏 (同 model 已有中文列)");
+            // 非衣服 2D 商品:同 modelId+同 SKU 常有「中文列 + 英文重上架列」兩筆 (奇妙冰激凌 / Ice Cream,model 1120005)。
+            // 使用者:「道具店/礼包店只拿中文的」→ 每個 SKU 有中文名列就藏掉英文/無中文列後才建分頁清單 (props 仍全保留供 ById)。
+            var propHidden = PropDuplicateListingIds(props);
+            foreach (var it in props)
+            {
+                if (propHidden.Contains(it.Id)) continue;
+                var pslot = it.EquipSlot;
+                if (!propGroups.TryGetValue(pslot, out var pl)) propGroups[pslot] = pl = new List<ShopItem>();
+                pl.Add(it);
+            }
+            if (propHidden.Count > 0) Debug.Log($"[shop] {propHidden.Count} 筆非衣服商品英文重複列隱藏 (同 SKU 已有中文列)");
             // 離線無 setinfo → 依「系列基底名」把同名多件衣物合成套裝,放進 套装 分頁(使用者要求:兔乖乖/璀璨繁星…)。
             int synth = BuildSyntheticSets(clothing, groups, sets);
             // 台版官方套装 (古惑仔/卡卡西/逍遙英雄/聖誕老公公…): 名字來自台版 iteminfo 的 Outfit 列、組件來自台版 setinfo,
@@ -648,6 +657,35 @@ namespace Sdo.Game
                     if (r.Id < keep.Id) { hidden.Add(keep.Id); bestByLabel[label] = r; }
                     else hidden.Add(r.Id);
                 }
+            }
+            return hidden;
+        }
+
+        /// <summary>Pure: ids of NON-衣服 2D 商品 rows to hide from the shop pages because they are an English/無中文
+        /// re-listing of a Chinese row for the SAME SKU. Unlike <see cref="DuplicateListingIds"/> (keyed by
+        /// Category+ModelId, which would fold the ×1/×50/×100 SKUs of one item together since they share a name), this
+        /// keys by the full SKU (ModelId+Quantity+Duration+幣別+Price) so distinct SKUs survive — only the CN/EN twins of
+        /// one SKU collapse to the Chinese-named row. Hidden rows stay in <see cref="Props"/> so ById still resolves.</summary>
+        public static HashSet<int> PropDuplicateListingIds(IEnumerable<ShopItem> props)
+        {
+            var hidden = new HashSet<int>();
+            if (props == null) return hidden;
+            var bySku = new Dictionary<(int, int, int, int, int), List<ShopItem>>();
+            foreach (var it in props)
+            {
+                if (it == null) continue;
+                var key = (it.ModelId, it.Quantity, it.DurationDays, it.PriceCategoryRaw, it.Price);
+                if (!bySku.TryGetValue(key, out var l)) bySku[key] = l = new List<ShopItem>();
+                l.Add(it);
+            }
+            foreach (var kv in bySku)
+            {
+                var rows = kv.Value;
+                if (rows.Count < 2) continue;
+                bool anyCjk = false;
+                foreach (var r in rows) if (HasCjk(r.Name)) { anyCjk = true; break; }
+                if (!anyCjk) continue;   // 同 SKU 全無中文 → 沒有中文可留就整組保留 (別誤刪只有英文名的商品)
+                foreach (var r in rows) if (!HasCjk(r.Name)) hidden.Add(r.Id);   // 有中文列 → 藏英文/無中文重複列
             }
             return hidden;
         }
