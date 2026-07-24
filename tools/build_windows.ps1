@@ -141,6 +141,13 @@ if ($code -eq 0 -and -not $SkipData) {
     }
 }
 
+# build 完清掉 Burst / IL2CPP 的 _DoNotShip 除錯資料夾(不發布;版號戳在名字上,每次 build 會累積一堆)
+if ($code -eq 0) {
+    Get-ChildItem -LiteralPath $BuildOut -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '*_BurstDebugInformation_DoNotShip' -or $_.Name -like '*_BackUpThisFolder_*' } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force; Write-Host "[build] removed $($_.Name)" }
+}
+
 $color = if ($code -eq 0) { 'Green' } else { 'Red' }
 Write-Host ""
 Write-Host "=== Unity exit code: $code ===" -ForegroundColor $color
