@@ -340,6 +340,7 @@ namespace Sdo.Game
         private readonly List<(double tMs, bool on)> _danceTrack = new List<(double, bool)>();
         private double _replayLoopStart;          // Time.timeAsDouble the background replay loop began
         private double _replayLenMs;              // background replay loop length (song length)
+        private double _replayOffsetMs;           // where in the loop the replay STARTS — biased to the chart climax + random jitter so each settle opens on a different slice (not always the song's opening)
         private ResultScreen _result;             // 結算面板 (STATIS panel) — built lazily, shown at the settle beat
         private string _songTitle = "song";       // resolved song title (captured when the HUD song label is built)
 
@@ -4331,15 +4332,45 @@ namespace Sdo.Game
             _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
             foreach (var rib in _handTrails) if (rib) rib.Clear();    // 手在硬切處瞬移 → 清掉光條歷史，別從定格 pose 連一條光帶到回放起點；回放開始後光條自然重新累積成連續光帶（後面 mot 的手部光繼續做）
             _replayLenMs = _totalMs > 1.0 ? _totalMs : Math.Max(1.0, _replay.LengthMs);
+            // Start the loop on a GOOD slice, not always the song's opening: a ≥20s stretch where the #1 dancer is
+            // actually dancing (gate ON + within the choreography), biased to its busiest window, with per-visit jitter.
+            _replayOffsetMs = ReplayStartPicker.Pick(_noteStarts, BuildDanceIntervals(), UnityEngine.Random.value, ReplayMinRunMs);
             _replayLoopStart = Time.timeAsDouble;
             _avatar.DanceTimeSec = () => (float)((LoopMs() ) / 1000.0);
             _avatar.DanceEnabled = () => GateAt(LoopMs());
         }
 
-        // Current position within the looping background replay (ms, 0.._replayLenMs).
+        // Minimum continuous dance the replay start must have ahead of it (the #1 dancer keeps dancing ≥ this long).
+        private const double ReplayMinRunMs = 20000.0;
+
+        // Continuous [start,end] ms spans where the looped dancer is actually dancing: the recorded dance gate
+        // (_danceTrack — default ON before the first event) clamped to [0, min(loop length, choreography end)],
+        // since past Dps.Total the avatar holds idle. Feeds ReplayStartPicker so the random start lands in real dance.
+        private List<(double start, double end)> BuildDanceIntervals()
+        {
+            double ceil = _replayLenMs;
+            if (_avatar != null && _avatar.Dps != null && _avatar.Dps.Total > 0f)
+                ceil = Math.Min(ceil, _avatar.Dps.Total * 1000.0);
+            var ivs = new List<(double, double)>();
+            if (ceil <= 0.0) return ivs;
+            bool on = true; double segStart = 0.0;                    // gate defaults ON from t=0 (matches GateAt)
+            for (int i = 0; i < _danceTrack.Count; i++)
+            {
+                if (_danceTrack[i].tMs >= ceil) break;                // _danceTrack is time-ordered → rest are later too
+                if (_danceTrack[i].on == on) continue;                // no state change
+                double t = Math.Max(0.0, _danceTrack[i].tMs);
+                if (on) { if (t > segStart) ivs.Add((segStart, t)); } // ON → OFF: close the run
+                else segStart = t;                                    // OFF → ON: open a run
+                on = _danceTrack[i].on;
+            }
+            if (on && ceil > segStart) ivs.Add((segStart, ceil));     // trailing ON run to the ceiling
+            return ivs;
+        }
+
+        // Current position within the looping background replay (ms, 0.._replayLenMs), starting at _replayOffsetMs.
         private double LoopMs()
         {
-            double t = (Time.timeAsDouble - _replayLoopStart) * 1000.0;
+            double t = (Time.timeAsDouble - _replayLoopStart) * 1000.0 + _replayOffsetMs;
             return _replayLenMs > 1.0 ? (t % _replayLenMs) : t;
         }
 
