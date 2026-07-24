@@ -27,11 +27,16 @@ namespace Sdo.Game
         /// <summary>
         /// How to place a decoded mp3 so an imported chart lines up at global-offset 0 like it does in its home game.
         /// The two source games decode the SAME mp3 to DIFFERENT positions (verified by decoding real charts with NLayer):
-        ///   • <see cref="StepMania"/> — MAD keeps the LAME encoder-delay priming (NO trim) and emits a CBR "Info"
-        ///     header frame as ~26 ms of silence (RageSoundReader_MP3.cpp: <c>if(type==INFO) return false</c>).
+        ///   • <see cref="StepMania"/> — MAD keeps the LAME encoder-delay priming (NO trim) and prepends ONE leading
+        ///     silence frame (~26 ms) for every file EXCEPT a "Xing" (VBR) header. It does this literally for a CBR
+        ///     "Info" tag (RageSoundReader_MP3.cpp: <c>if(type==INFO) return false</c> → the frame is emitted as
+        ///     silence); a file with NO Xing/Info header at all is realigned to that same +1-frame position by the
+        ///     YHANIKI editor's WaveformDisplay (<c>DetectMp3FrameAlignSeconds</c>). Without it a header-less file such
+        ///     as BlythE sits exactly one frame (~26 ms) EARLY relative to every headered song in the pack, so its
+        ///     waveform/audio lands a frame before the notes. Only "Xing" (VBR) is skipped (content already at 0).
         ///   • <see cref="Osu"/> — modern BASS gapless-trims the priming (~<see cref="OsuGaplessTrim"/> samples).
-        /// Picking the wrong one shifts the song ~50 ms. Measured on Be Crazy For Me (SM, ±3 ms) and SDO Pack9's six
-        /// osu charts (clean-kick ones within ±5 ms of the grid).
+        /// Picking the wrong one shifts the song ~50 ms. Measured on Be Crazy For Me (SM Info, ±3 ms) and SDO Pack9's
+        /// six osu charts (clean-kick ones within ±5 ms of the grid).
         /// </summary>
         public enum Mp3Sync { StepMania, Osu }
 
@@ -64,11 +69,12 @@ namespace Sdo.Game
                                    + (len / ch == expectedPerChannel ? "" : " (STILL SHORT — song will drift)"));
                 }
                 // Position the PCM to match the chart's home game (see Mp3Sync). osu → drop BASS's gapless priming;
-                // StepMania → re-insert the "Info" header frame MAD emits as silence. Both verified against real charts.
+                // StepMania → prepend the one leading silence frame it keeps for everything but a Xing (VBR) header.
+                // Both verified against real charts.
                 if (sync == Mp3Sync.Osu)
                     len = ApplyOsuGapless(data, len, ch);
                 else
-                    data = ApplyStepManiaInfoFrame(path, data, ref len, ch);
+                    data = ApplyStepManiaLeadFrame(path, data, ref len, ch);
                 if (len == 0) return null;
                 if (len != data.Length) Array.Resize(ref data, len);
                 return new Mp3Pcm { Samples = data, Channels = ch, SampleRate = sr };
@@ -131,29 +137,51 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// StepMania/MAD positioning: re-insert the leading "Info"-header frame as silence so a decoded mp3 lines up the
-        /// way StepMania plays it (global-offset 0). Returns the buffer to use (grown when a frame is prepended, else
+        /// StepMania/MAD positioning: prepend the one leading silence frame so a decoded mp3 lines up the way StepMania
+        /// plays it (global-offset 0). Returns the buffer to use (grown when a frame is prepended, else
         /// <paramref name="data"/>); <paramref name="len"/> is updated. Pure w.r.t. Unity (safe off-thread).
         ///
-        /// Why: an mp3 begins with one Xing/Info header frame carrying VBR/CBR metadata, not audio. NLayer — like most
-        /// decoders — SKIPS it. StepMania's MAD reader deliberately does NOT: for a CBR "Info" tag it lets the frame
-        /// through as ~26 ms of silence to "match DWI sync" (RageSoundReader_MP3.cpp: <c>if(type==INFO) return false</c>).
-        /// So StepMania's timeline starts one frame EARLIER than NLayer's; without re-inserting it, SM charts run ~26 ms
-        /// early. A "Xing" (VBR) tag IS skipped by MAD too → no prepend. And MAD does NO gapless trim (unlike osu's
-        /// modern BASS — hence the separate <see cref="Mp3Sync.Osu"/> path). Verified on Be Crazy For Me (SM, ±3 ms).
+        /// Why: an mp3 that carries a Xing/Info header frame starts with metadata, not audio; NLayer — like most
+        /// decoders — SKIPS it. StepMania's MAD reader deliberately does NOT skip a CBR "Info" tag: it lets the frame
+        /// through as ~26 ms of silence to "match DWI sync" (RageSoundReader_MP3.cpp: <c>if(type==INFO) return false</c>),
+        /// so its timeline starts one frame EARLIER than NLayer's → without re-inserting it, SM charts run ~26 ms early.
+        /// A "Xing" (VBR) tag IS skipped by MAD too → no prepend. A file with NO header frame at all gets the SAME
+        /// leading frame: the YHANIKI editor aligns header-less MP3s to that +1-frame position (see
+        /// <see cref="ShouldPrependStepManiaLeadFrame"/>), so BlythE-style files don't sit one frame ahead of the rest
+        /// of the pack. MAD does NO gapless trim (unlike osu's modern BASS — hence the separate <see cref="Mp3Sync.Osu"/>
+        /// path). Verified on Be Crazy For Me (SM Info, ±3 ms).
         /// </summary>
-        private static float[] ApplyStepManiaInfoFrame(string path, float[] data, ref int len, int ch)
+        private static float[] ApplyStepManiaLeadFrame(string path, float[] data, ref int len, int ch)
         {
             if (ch <= 0 || len <= 0 || data == null) return data;
             byte[] region = ReadTagRegion(path);
-            if (region == null || !HasInfoHeaderFrame(region)) return data;   // Xing / no tag → NLayer already matches MAD
+            if (!ShouldPrependStepManiaLeadFrame(region)) return data;   // Xing / read failed → NLayer already matches MAD
             int frame = FrameSamplesPerChannel(region);
             if (frame <= 0) return data;
             int prepend = frame * ch;
             var grown = new float[len + prepend];
-            Array.Copy(data, 0, grown, prepend, len);   // front stays 0 = one silent header frame, exactly what MAD emits
+            Array.Copy(data, 0, grown, prepend, len);   // front stays 0 = one silent lead frame, exactly what MAD emits
             len += prepend;
             return grown;
+        }
+
+        /// <summary>
+        /// StepMania-sync: should a leading silence frame be prepended so this file sits at the same "+1 frame" position
+        /// as the rest of a pack. TRUE for a CBR "Info" header (MAD keeps it as silence) AND for a file with NO
+        /// Xing/Info header at all — the YHANIKI editor's <c>WaveformDisplay.DetectMp3FrameAlignSeconds</c> realigns
+        /// those header-less MP3s to the same +1-frame position, otherwise a file like BlythE plays/draws exactly one
+        /// frame (~26 ms) EARLY relative to every headered song. FALSE only for a "Xing" (VBR) header, which MAD/BASS
+        /// skip → content is already at 0; also FALSE when the tag region couldn't be read (leave the audio untouched).
+        /// The tag lives inside the first audio frame; only the first ~1 KB is scanned so the same 4 bytes reappearing
+        /// in real audio later can't be mistaken for it. Pure — unit-tested.
+        /// </summary>
+        public static bool ShouldPrependStepManiaLeadFrame(byte[] region)
+        {
+            if (region == null) return false;               // read failed → don't touch the decode
+            int scan = Math.Min(region.Length, 1100);       // first frame only (≤ ~1044 B even at 128 kbps)
+            int xi = IndexOf(region, XingTag, 0);
+            if (xi >= 0 && xi < scan) return false;         // Xing (VBR) → skipped by MAD/BASS, no lead frame
+            return true;                                    // Info (CBR) or no header → align to the +1-frame position
         }
 
         /// <summary>True when the file's VBR/CBR header frame is an "Info" (CBR) tag — the kind BASS/DWI emit as a silence

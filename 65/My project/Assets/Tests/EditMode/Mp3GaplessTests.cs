@@ -55,6 +55,20 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void StepManiaLeadFrame_PrependsForInfoAndNoHeader_NotForXing()
+        {
+            // Info (CBR) → MAD keeps the frame as silence → prepend, like before.
+            Assert.IsTrue(Mp3Decoder.ShouldPrependStepManiaLeadFrame(Frame(0xFB, "Info")));
+            // No header at all (BlythE / ALBIDA) → the YHANIKI editor realigns these to the same +1-frame position,
+            // so they must ALSO get the lead frame or they sit one frame (~26 ms) early vs every headered song.
+            Assert.IsTrue(Mp3Decoder.ShouldPrependStepManiaLeadFrame(Frame(0xFB, null)));
+            // Xing (VBR) → MAD/BASS skip it → content already at 0 → NO lead frame.
+            Assert.IsFalse(Mp3Decoder.ShouldPrependStepManiaLeadFrame(Frame(0xFB, "Xing")));
+            // Couldn't read the tag region → leave the decode untouched.
+            Assert.IsFalse(Mp3Decoder.ShouldPrependStepManiaLeadFrame(null));
+        }
+
+        [Test]
         public void OsuGapless_TrimsPrimingFromTheFront()
         {
             // osu/BASS drops 576+529 = 1105 frames of priming; verified to align SDO Pack9's osu charts at offset 0.
