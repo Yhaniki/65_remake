@@ -187,7 +187,7 @@ namespace Sdo.Tests
         [Test]
         public void ReapplySidecarKeepsThePacksOwnJacket()
         {
-            // Cache-hit path: the CD art comes from sdo_pack.tsv, not from sdo.header, and must survive the refresh
+            // Cache-hit path: the CD art comes from sdo_pack.tsv, not from sdoinfo.dat, and must survive the refresh
             // — otherwise every re-boot would show the whole pack with the NONE disc.
             var s = ExternalSongScanner.LoadFolder("NX Patch", Pack())[0];
             string jacket = s.CdImagePath;

@@ -13,7 +13,7 @@ namespace Sdo.Game
     /// last time we reuse the parsed result instead of re-parsing it.
     ///
     /// A folder's "unchanged" token is a <see cref="Signature"/> over its chart/audio/image files' (name, size, mtime)
-    /// — cheap file stats, no content read. Generated artifacts (the <c>sdo.header</c> sidecar, the composed
+    /// — cheap file stats, no content read. Generated artifacts (the <c>sdoinfo.dat</c> sidecar, the composed
     /// <c>cd*.png</c> disc, the <c>dance*.dps</c>) are excluded, so composing a disc or building a dance never
     /// invalidates the cache line for the very song you just played. A cache hit still re-reads the tiny sidecar
     /// (<see cref="ExternalSongScanner.ReapplySidecar"/>) so a disc built since caching is picked up.
@@ -28,7 +28,9 @@ namespace Sdo.Game
         // instead of the shared pack-label title — cached titles from v1 must be discarded to pick that up.
         // v3: the displayed LV changed from star × 5 to star × 7, so every cached `level` is stale.
         // v4: .gn song packs are scanned now — old lines for a pack folder cached it as "yields nothing".
-        public const int Version = 4;
+        // v5: Malody .mc charts are scanned now — a folder holding them was cached as "yields nothing" (and its .mc
+        //     weren't in the signature, so the .ogg/.jpg-only signature would still hit and hide the new song).
+        public const int Version = 5;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null
@@ -61,7 +63,7 @@ namespace Sdo.Game
 
         // .gn = a native SDO chart; .tsv = a pack's sdo_pack.tsv (re-running the converter must invalidate the folder,
         // since titles/seeds/art paths all come from there).
-        private static readonly string[] Chartish = { ".osu", ".sm", ".gn", ".tsv", ".ogg", ".mp3", ".wav", ".png", ".jpg", ".jpeg", ".bmp" };
+        private static readonly string[] Chartish = { ".osu", ".sm", ".gn", ".mc", ".tsv", ".ogg", ".mp3", ".wav", ".png", ".jpg", ".jpeg", ".bmp" };
 
         /// <summary>A token that changes iff the folder's SOURCE files change — file stats only, no content read.
         /// Generated files (the sidecar, composed <c>cd*.png</c> discs, <c>dance*.dps</c>) are skipped so runtime output
@@ -93,6 +95,7 @@ namespace Sdo.Game
         private static bool IsGenerated(string name)
         {
             if (string.Equals(name, SongSidecar.FileName, StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(name, SongSidecar.LegacyFileName, StringComparison.OrdinalIgnoreCase)) return true;   // pre-rename leftover
             string n = name.ToLowerInvariant();
             return n == "cd.png" || n.StartsWith("cd_") || n == "dance.dps" || n.StartsWith("dance_");
         }

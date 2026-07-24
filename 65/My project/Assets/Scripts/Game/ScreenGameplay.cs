@@ -63,6 +63,14 @@ namespace Sdo.Game
         public float songOffsetMs;
 
         /// <summary>
+        /// 單首歌的**舞蹈** offset（毫秒）—— 跟 <see cref="songOffsetMs"/> **完全獨立**。動的只有舞者：整段 DPS
+        /// 往前/往後挪（<see cref="_danceStartSec"/> 加它），音樂/音符/判定都不受影響。給「舞蹈跟音樂沒對齊、
+        /// 但音樂本身跟音符是對的」這種情況單獨微調用。來源是外部歌 sidecar 的 <c>#DPSOFFSETMS</c>（預設 0）。
+        /// 正 = 舞蹈延後。由 FrontendApp（開局，<see cref="SongCatalog.DpsOffsetMs"/>）設。
+        /// </summary>
+        public float dpsOffsetMs;
+
+        /// <summary>
         /// **全曲共用**的音樂 offset（毫秒）—— 已停用，設 0。
         /// 曾經以為官方那批 k.gn 的譜面時間軸整體跟音檔差了固定一段（每首都一樣），所以放一個全域 −25。
         /// 後來逐首手校（sdom2675 之後）發現**沒有這種全域常數**，每首的殘差各不相同，該由各自的
@@ -176,7 +184,7 @@ namespace Sdo.Game
         // 3=gn 歌曲包 (chartPath = a .gn holding all three difficulties, chartIndex = which one, chartSeed = its key).
         public string chartPath = "";
         public int chartIndex;
-        public int chartFormat;               // 0=official .gn, 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
+        public int chartFormat;               // 0=official .gn, 1=osu, 2=sm, 3=gn 歌曲包, 4=Malody .mc (Sdo.Osu.SongFormat)
         public long chartSeed;                // chartFormat 3: 該 .gn 的 LCG 金鑰（0 = 未知→只用共用 seed 池）
         /// <summary>可選：換掉「解 mp3」這一步（路徑, 對拍方式）→ PCM。譜面編輯器塞
         /// <see cref="EditorAudioCache"/> 進來，換歌就不必每首重解一次。null = 照常自己解。</summary>
@@ -185,7 +193,7 @@ namespace Sdo.Game
         /// <summary>這種譜的 mp3 該用哪一套對拍（見 <see cref="Mp3Decoder.Mp3Sync"/>）。純函式，編輯器的
         /// 預抓也要用同一套，不然預抓的 PCM 位置跟實際播的不一樣。</summary>
         public static Mp3Decoder.Mp3Sync Mp3SyncFor(int format)
-            => format == 1 || format == 3 ? Mp3Decoder.Mp3Sync.Osu : Mp3Decoder.Mp3Sync.StepMania;
+            => format == 1 || format == 3 || format == 4 ? Mp3Decoder.Mp3Sync.Osu : Mp3Decoder.Mp3Sync.StepMania;
         public int chartLevel;                // external chart LV (osu!mania 星數×7) — shown as the LV label so it matches song-select
         public string songDisplayName = "";   // external: the catalog's display title (an osu pack's real per-song name);
                                                // _map.Title would be the shared pack label ("SDO Pack8"). Official = "" (resolved from the .gn catalog).
@@ -224,10 +232,13 @@ namespace Sdo.Game
         public string restMot = "MOTION/WREST0072.MOT";        // in-game standby idle (decompiled: rest-table category 0x15, played before/after the DPS — 023_gameplay:4135). male = MREST0082.MOT. (WREST0056 was cat 0, the lobby idle — wrong here.)
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
         // External (osu/StepMania) songs have no official .dps: these two identify the song so ExternalDps can generate
-        // one — deterministically, once — into its folder and record it in the folder's sdo.header (see EnsureExternalDance).
+        // one — deterministically, once — into its folder and record it in the folder's sdoinfo.dat (see EnsureExternalDance).
         public string externalFolder = "";     // the song's folder (SongCatalog.Entry.folderPath)
         public string externalSongKey = "";    // which song in that folder ("" = its only one; ExternalSongGrouper key)
         private readonly Dictionary<string, MotLoader> _motCache = new Dictionary<string, MotLoader>();
+        // 這首歌的動作外掛樹（overlay）：一個自帶 DANCE + MOTION/AUMOTION 的歌包，查 .mot 時先贏、找不到才退回 base
+        // 資料根。由這首歌 .dps 的所在樹推導（見 MotionOverlay）；"" = 沒有外掛，只用 base 根。每次載歌前重設。
+        private string _motOverrideRoot = "";
 
         // EXACT note-board geometry (4-key, left board X=0): lane LEFT-EDGE X 0/69/138/207 (pitch 69 exact).
         // These match NOTES_BOARD1.PNG's own lane-divider columns (texture x = 14,83,152,221,290 → 69px pitch),
@@ -1590,7 +1601,7 @@ namespace Sdo.Game
         }
 
         /// <summary>An external (osu/StepMania) song ships no choreography — its DANCE/&lt;id&gt;.DPS doesn't exist — so
-        /// generate one for it (once; recorded in the song folder's sdo.header, see <see cref="ExternalDps"/>) and dance
+        /// generate one for it (once; recorded in the song folder's sdoinfo.dat, see <see cref="ExternalDps"/>) and dance
         /// that instead of looping the single fallback clip. Official songs and songs whose .dps is already there are
         /// untouched.</summary>
         private void EnsureExternalDance()
@@ -1620,6 +1631,8 @@ namespace Sdo.Game
                         // .gn 歌曲包：一個檔裝三個難度，chartIndex 就是難度。金鑰優先用這首自己的（[NX] 每首譜
                         // 一把鑰匙，共用池救不了），失敗才退回共用池。
                         _map = GnChart.Load(File.ReadAllBytes(chartPath), chartIndex, GnSeedsFor(chartSeed));
+                    else if (chartFormat == 4)
+                        _map = MalodyChart.ToBeatmap(MalodyChart.Parse(File.ReadAllText(chartPath)));       // .mc (Malody, one difficulty/file)
                     else
                         _map = chartFormat == 2
                             ? SmChart.ToBeatmap(SmChart.Parse(File.ReadAllText(chartPath)), chartIndex)   // .sm block
@@ -1790,10 +1803,12 @@ namespace Sdo.Game
             // would make it lead the song (sdom1226: marker beat 0 vs first note ~5.4 s ⇒ was 5.4 s early).
             double markerSec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
             _musicStartDelaySec = markerSec;   // 只放 type-10 無聲數拍;手動 offset(songOffsetMs)＋全曲 offset(GlobalSongOffsetMs)一律走 MusicCountInSec，別在這裡折進去(會雙重套用)
-            // 音樂被挪的總量(= MusicCountInSec − marker):正 = 音樂晚進來(音檔跑在譜面前面時用)、負 = 提早。
-            // 挪的是音樂 + 舞蹈(DPS 掛在音樂時間軸上),音符/判定仍釘在譜面時鐘 —— 填錯頂多音畫不合拍,不改難度。
-            double songOffsetSec = (songOffsetMs + GlobalSongOffsetMs) / 1000.0;
-            _danceStartSec = ((useMusicStartOffset && _map != null) ? Math.Max(markerSec, _map.FirstNoteMs / 1000.0) : 0.0) + songOffsetSec;
+            // 音樂與舞蹈的 offset **各走各的**:音樂 = songOffsetMs(→ MusicCountInSec，挪音檔位置),舞蹈 = dpsOffsetMs
+            // (只挪舞者)。兩者互不連動,預設都 0;音符/判定永遠釘在譜面時鐘。這樣「音樂對音符是準的、只有舞者
+            // 飄」可以單獨修舞者而不動音樂。正值都是往後挪。
+            double danceOffsetSec = dpsOffsetMs / 1000.0;
+            _danceStartSec = ((useMusicStartOffset && _map != null) ? Math.Max(markerSec, _map.FirstNoteMs / 1000.0) : 0.0) + danceOffsetSec;
+            Debug.Log($"[dps-offset] gn={System.IO.Path.GetFileName(gnPath ?? "?")} dps={System.IO.Path.GetFileName(dpsPath ?? "?")} songOffsetMs={songOffsetMs} dpsOffsetMs={dpsOffsetMs} marker={markerSec:F2}s firstNote={(_map != null ? _map.FirstNoteMs / 1000.0 : -1):F2}s -> danceStart={_danceStartSec:F2}s");  // TODO 診斷用，查完刪
             // 兩段前導(共用 lead + 無聲數拍 + offset)都是**譜面時間**;dspTime 是真實時間,所以除以流速換回真實秒數。
             // 開場排程走 GameRate.ScheduleMusic(能處理負 count-in:offset 負得比前導多時 clip 第 0 秒已來不及播 →
             // 從中途切入),餵的是 feat 管線的 MusicCountInSec(= marker + songOffsetMs + GlobalSongOffsetMs)。
@@ -2588,6 +2603,16 @@ namespace Sdo.Game
                 _bodyShapeB = SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody);
                 avatar.SetBodyShape(_bodyShapeB);                                             // 體型: thin/standard/fat (default thin)
                 avatar.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));   // standby idle (rest cat 0x15) — looped before the DPS starts and after it ends
+                // 動作外掛（overlay）：一個歌包把它自帶的 .dps 和 .mot 用跟 base 資料根一樣的樹狀結構擺在一起
+                // （…/patch Datas/DANCE + …/patch Datas/MOTION|AUMOTION）。這首歌的 .dps 從哪棵樹讀出來，它的 .mot
+                // 就在那棵樹 → 設成 overlay，讓 ResolveMot 先查它、找不到才退回 base（含 base 沒有的 W_00xxxx.MOT）。
+                // 必須在載 dps／PrewarmDpsMotions 之前設好；純由 dpsPath 推導，不必從歌單一路穿路徑過來。
+                string dpsFull = string.IsNullOrEmpty(dpsPath) ? ""
+                    : Path.Combine(SdoExtracted.Root, dpsPath.Replace('/', Path.DirectorySeparatorChar));
+                _motOverrideRoot = MotionOverlay.RootForDps(dpsFull, SdoExtracted.Root);
+                _motCache.Clear();   // 快取以動作名為鍵，不含樹；換歌換 overlay 時清掉，免得沿用上一包的解析結果
+                if (!string.IsNullOrEmpty(_motOverrideRoot))
+                    Debug.Log($"[avatar] 動作外掛樹: {_motOverrideRoot}（AUMOTION/MOTION 先於 base 根）");
                 // per-song choreography (DPS): sequence motion slices to the music clock (debug now dances too)
                 var dps = LoadAsset(dpsPath, b => DpsLoader.Load(b));
                 if (dps != null)
@@ -3955,25 +3980,30 @@ namespace Sdo.Game
                     ResolveMot(row.Mot);   // populates _motCache under the exact (gendered) key LateUpdate will look up
         }
 
-        // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/).
+        // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/). 每棵樹都先
+        // AUMOTION 再 MOTION；樹的順序由 MotRoots() 決定 —— 歌包外掛樹（若有）先於 base 資料根。
         private MotLoader ResolveMot(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
             name = ResolveGenderedMotName(name);
             if (_motCache.TryGetValue(name, out var cached)) return cached;
             MotLoader m = null; string triedPath = null, why = null;
-            foreach (var dir in new[] { "AUMOTION", "MOTION" })
+            foreach (var root in MotRoots())
             {
-                var p = Path.Combine(SdoExtracted.Root, dir, name);
-                if (!File.Exists(p)) continue;
-                triedPath = p;
-                try
+                foreach (var dir in new[] { "AUMOTION", "MOTION" })
                 {
-                    var bytes = File.ReadAllBytes(p);
-                    m = MotLoader.Load(bytes);
-                    if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
+                    var p = Path.Combine(root, dir, name);
+                    if (!File.Exists(p)) continue;
+                    triedPath = p;
+                    try
+                    {
+                        var bytes = File.ReadAllBytes(p);
+                        m = MotLoader.Load(bytes);
+                        if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
+                    }
+                    catch (System.Exception e) { why = e.Message; }
+                    if (m != null) break;
                 }
-                catch (System.Exception e) { why = e.Message; }
                 if (m != null) break;
             }
             if (m == null)
@@ -3987,6 +4017,14 @@ namespace Sdo.Game
             return m;
         }
 
+        /// <summary>查動作片段的資料樹，依優先順序：這首歌的外掛包（若有，<see cref="_motOverrideRoot"/>）先，
+        /// 再 base 資料根。歌包自帶的 .mot 因此能覆蓋／補足 base；base 沒有的（W_00xxxx.MOT）也找得到。</summary>
+        private IEnumerable<string> MotRoots()
+        {
+            if (!string.IsNullOrEmpty(_motOverrideRoot)) yield return _motOverrideRoot;
+            yield return SdoExtracted.Root;
+        }
+
         private string ResolveGenderedMotName(string name)
         {
             if (!localPlayerMale) return name;
@@ -3994,10 +4032,9 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(file) || file[0] != 'W') return name;
 
             string maleName = "M" + file.Substring(1);
-            foreach (var dir in new[] { "AUMOTION", "MOTION" })
-            {
-                if (File.Exists(Path.Combine(SdoExtracted.Root, dir, maleName))) return maleName;
-            }
+            foreach (var root in MotRoots())
+                foreach (var dir in new[] { "AUMOTION", "MOTION" })
+                    if (File.Exists(Path.Combine(root, dir, maleName))) return maleName;
             return name;
         }
 

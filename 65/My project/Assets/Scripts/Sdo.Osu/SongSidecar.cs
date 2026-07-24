@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Text;
 
 namespace Sdo.Osu
@@ -34,12 +35,19 @@ namespace Sdo.Osu
         /// this is where the editor's hand-calibrated correction persists so it also applies in gameplay. 0 = none.</summary>
         public float OffsetMs;
 
+        /// <summary>Per-song DANCE timing tweak in MILLISECONDS — <b>independent of <see cref="OffsetMs"/></b>. Positive
+        /// delays the dancer (shifts the whole DPS later). The music offset moves the audio; this moves ONLY the
+        /// choreography, so a song whose dance drifts against the music can be nudged without touching the audio sync.
+        /// Always written (even 0) so the knob is visible and hand-editable in every song's block. 0 = no dance shift.</summary>
+        public float DpsOffsetMs;
+
         /// <summary>Tags we don't know about, kept in order so rewriting the file never eats a user's own lines.</summary>
         public readonly List<KeyValuePair<string, string>> Extra = new List<KeyValuePair<string, string>>();
     }
 
     /// <summary>
-    /// The per-folder sidecar (<c>sdo.header</c>) that records what the game attached to the songs of a user song
+    /// The per-folder sidecar (<c>sdoinfo.dat</c>, was <c>sdo.header</c> — see <see cref="LegacyFileName"/>) that
+    /// records what the game attached to the songs of a user song
     /// folder: today the generated CD disc image, later the dance (.mot) and camera files. It is read on every scan
     /// and is what lets the disc be built ONCE — a folder with a recorded CD image never composes one again.
     ///
@@ -55,7 +63,12 @@ namespace Sdo.Osu
     public static class SongSidecar
     {
         /// <summary>Sidecar filename, one per song folder.</summary>
-        public const string FileName = "sdo.header";
+        public const string FileName = "sdoinfo.dat";
+
+        /// <summary>The pre-rename sidecar name. Still READ when a folder has no <see cref="FileName"/>, so CD discs,
+        /// generated dances and hand-calibrated offsets recorded before the rename keep applying; the next write
+        /// migrates the folder to <see cref="FileName"/> and removes this one (see <see cref="WriteText"/>).</summary>
+        public const string LegacyFileName = "sdo.header";
 
         public const int Version = 1;
 
@@ -73,6 +86,7 @@ namespace Sdo.Osu
         private const string TagMot = "MOT";
         private const string TagCamera = "CAMERA";
         private const string TagOffsetMs = "OFFSETMS";
+        private const string TagDpsOffsetMs = "DPSOFFSETMS";
 
         /// <summary>Parse a sidecar. Malformed input yields whatever blocks were readable — never throws.</summary>
         public static List<SongSidecarEntry> Parse(string text)
@@ -109,6 +123,7 @@ namespace Sdo.Osu
                     case TagMot: cur.Mot = value; break;
                     case TagCamera: cur.Camera = value; break;
                     case TagOffsetMs: cur.OffsetMs = ParseFloat(value); break;
+                    case TagDpsOffsetMs: cur.DpsOffsetMs = ParseFloat(value); break;
                     default: cur.Extra.Add(new KeyValuePair<string, string>(name, value)); break;
                 }
             }
@@ -135,6 +150,9 @@ namespace Sdo.Osu
                         sb.Append('#').Append(TagDpsVer).Append(':').Append(e.DpsVersion.ToString(CultureInfo.InvariantCulture)).Append(";\n");
                     sb.Append('#').Append(TagMot).Append(':').Append(Clean(e.Mot)).Append(";\n");
                     sb.Append('#').Append(TagCamera).Append(':').Append(Clean(e.Camera)).Append(";\n");
+                    // DPS offset is ALWAYS written (even 0), unlike OFFSETMS: it's a hand-tuning knob we want visible in
+                    // every block so a user can find and nudge it. Absent still reads back as 0 (hand-written files are fine).
+                    sb.Append('#').Append(TagDpsOffsetMs).Append(':').Append(e.DpsOffsetMs.ToString("0.###", CultureInfo.InvariantCulture)).Append(";\n");
                     if (e.OffsetMs != 0f)   // 0 = no shift → don't clutter the file (absent reads back as 0)
                         sb.Append('#').Append(TagOffsetMs).Append(':').Append(e.OffsetMs.ToString("0.###", CultureInfo.InvariantCulture)).Append(";\n");
                     foreach (var x in e.Extra)
@@ -183,6 +201,18 @@ namespace Sdo.Osu
             return Write(entries);
         }
 
+        /// <summary>Record the per-song DANCE timing offset (ms) for <paramref name="songKey"/>, independent of the music
+        /// <see cref="SetOffset"/>, leaving every other song's block — and this song's other tags — untouched.</summary>
+        public static string SetDpsOffset(string text, string songKey, float dpsOffsetMs)
+        {
+            var entries = Parse(text);
+            string key = Clean(songKey);
+            var entry = Find(entries, key);
+            if (entry == null) { entry = new SongSidecarEntry { SongKey = key }; entries.Add(entry); }
+            entry.DpsOffsetMs = dpsOffsetMs;
+            return Write(entries);
+        }
+
         /// <summary>The song's block, or null.</summary>
         public static SongSidecarEntry Find(IReadOnlyList<SongSidecarEntry> entries, string songKey)
         {
@@ -191,6 +221,42 @@ namespace Sdo.Osu
             foreach (var e in entries)
                 if (e != null && string.Equals(Clean(e.SongKey), key, StringComparison.OrdinalIgnoreCase)) return e;
             return null;
+        }
+
+        // ---- file IO: the one place that knows the on-disk name and the legacy fallback ----
+
+        /// <summary>The path a folder's sidecar should be READ from: the current <see cref="FileName"/> if it exists,
+        /// else the legacy <see cref="LegacyFileName"/> (records written before the rename), else the current path.</summary>
+        public static string ReadPath(string folder)
+        {
+            string cur = Path.Combine(folder, FileName);
+            if (File.Exists(cur)) return cur;
+            string legacy = Path.Combine(folder, LegacyFileName);
+            return File.Exists(legacy) ? legacy : cur;
+        }
+
+        /// <summary>The folder's sidecar text (current name, else the legacy one); "" when neither exists / is unreadable
+        /// (a corrupt sidecar reads back as "nothing recorded yet").</summary>
+        public static string ReadText(string folder)
+        {
+            try { string p = ReadPath(folder); return File.Exists(p) ? File.ReadAllText(p) : ""; }
+            catch { return ""; }
+        }
+
+        /// <summary>Write a folder's sidecar to the current <see cref="FileName"/> and drop a leftover
+        /// <see cref="LegacyFileName"/> so a folder never carries both — the legacy file's content was just folded into
+        /// the new one on the way in (via <see cref="ReadText"/>).</summary>
+        public static void WriteText(string folder, string text)
+        {
+            string path = Path.Combine(folder, FileName);
+            File.WriteAllText(path, text);
+            try
+            {
+                string legacy = Path.Combine(folder, LegacyFileName);
+                if (!string.Equals(path, legacy, StringComparison.OrdinalIgnoreCase) && File.Exists(legacy))
+                    File.Delete(legacy);
+            }
+            catch { /* a leftover legacy file is harmless: the current one wins reads */ }
         }
 
         /// <summary>Filename to generate the CD disc image under, inside the song's own folder. The folder's only song

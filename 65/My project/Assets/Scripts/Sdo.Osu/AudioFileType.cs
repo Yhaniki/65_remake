@@ -32,8 +32,9 @@ namespace Sdo.Osu
                 return head.Length >= 12 && head[8] == 'W' && head[9] == 'A' && head[10] == 'V' && head[11] == 'E'
                      ? AudioKind.Wav : AudioKind.Unknown;
             if (head[0] == 'I' && head[1] == 'D' && head[2] == '3') return AudioKind.Mp3;   // ID3v2 標籤
-            // 裸 MPEG frame sync：11 個 1（0xFF + 高 3 bit）。0xFF 0xFF… 之類的垃圾擋掉（layer 0 = 保留值）。
-            if (head[0] == 0xFF && (head[1] & 0xE0) == 0xE0 && (head[1] & 0x06) != 0x00) return AudioKind.Mp3;
+            // 裸 MPEG frame sync：11 個 1（0xFF + 高 3 bit）＋ layer 欄位＝01（Layer III＝mp3）。
+            // 只認 Layer III：0xFF 0xFF（layer 11 = Layer I）等非 mp3 frame 一律擋掉，才不會把垃圾猜成 mp3。
+            if (head[0] == 0xFF && (head[1] & 0xE0) == 0xE0 && (head[1] & 0x06) == 0x02) return AudioKind.Mp3;
             return AudioKind.Unknown;
         }
 

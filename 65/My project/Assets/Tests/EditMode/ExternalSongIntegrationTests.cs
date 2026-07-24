@@ -45,7 +45,7 @@ namespace Sdo.Tests
             Assert.AreEqual("", e.ChartPath(0));
         }
 
-        // The sidecar's per-song offset (ExternalSong.OffsetMs, read from sdo.header) must reach the catalog entry —
+        // The sidecar's per-song offset (ExternalSong.OffsetMs, read from sdoinfo.dat) must reach the catalog entry —
         // that's the field FrontendApp feeds into gameplay's songOffsetMs. Out-of-range values are clamped, not trusted.
         [Test]
         public void ToEntry_CarriesSidecarOffset_IntoCatalog_Clamped()

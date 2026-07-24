@@ -27,7 +27,7 @@ namespace Sdo.Game
             public string group = "";      // group folder name (the drill-in 資料夾 category groups by this)
             public string audioPath = "";  // absolute audio file (full-song ogg/mp3/wav) for gameplay + preview
             public string imagePath = "";  // absolute SOURCE cover (jacket→banner→background); "" → placeholder disc
-            public string folderPath = ""; // the song's folder — where its CD disc + sdo.header sidecar live
+            public string folderPath = ""; // the song's folder — where its CD disc + sdoinfo.dat sidecar live
             public string songKey = "";    // identity WITHIN the folder ("" = the folder's only song); see ExternalSongGrouper
             public string cdPath = "";     // absolute generated CD disc image; "" → compose it from imagePath on first use
             public int chartFormat;        // 0=none, 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
@@ -63,6 +63,11 @@ namespace Sdo.Game
             /// 跟機器的音訊延遲**無關**（那個在 ScreenGameplay 的時鐘上自動補掉，全部歌一體適用）。
             /// </summary>
             public float offsetMs;
+
+            /// <summary>單首**舞蹈** offset(毫秒)——跟 <see cref="offsetMs"/> 完全獨立。動的只有舞者(整段 DPS 前後挪),
+            /// 音樂/音符/判定都不動。來源是外部歌資料夾 sidecar 的 <c>#DPSOFFSETMS</c>(<see cref="SongSidecarEntry.DpsOffsetMs"/>);
+            /// 官方 csv 歌沒這欄 → 一律 0。正 = 舞蹈延後。給 ScreenGameplay 的 dpsOffsetMs 用(見 FrontendApp)。</summary>
+            public float dpsOffsetMs;
 
             /// <summary>Difficulty level for d (0=easy,1=normal,2=hard); -1 if unknown.</summary>
             public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
@@ -187,6 +192,9 @@ namespace Sdo.Game
 
         /// <summary>這首譜的單首 offset（毫秒）；沒設過 = 0。見 <see cref="Entry.offsetMs"/>。</summary>
         public static float OffsetMs(string gnPathOrName) => Get(gnPathOrName)?.offsetMs ?? 0f;
+
+        /// <summary>這首譜的單首**舞蹈** offset（毫秒）；跟音樂 offset 獨立，沒設過 = 0。見 <see cref="Entry.dpsOffsetMs"/>。</summary>
+        public static float DpsOffsetMs(string gnPathOrName) => Get(gnPathOrName)?.dpsOffsetMs ?? 0f;
 
         private static float ClampOffsetMs(float ms)
             => float.IsNaN(ms) ? 0f : (ms < -MaxOffsetMs ? -MaxOffsetMs : (ms > MaxOffsetMs ? MaxOffsetMs : ms));

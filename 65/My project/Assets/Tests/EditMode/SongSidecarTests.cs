@@ -5,7 +5,7 @@ using Sdo.Osu;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// The sdo.header sidecar: the file that makes a song's CD disc a build-once asset (and will carry its .mot /
+    /// The sdoinfo.dat sidecar: the file that makes a song's CD disc a build-once asset (and will carry its .mot /
     /// camera files next). What matters is that it survives a rewrite — a multi-song folder rewrites one song's block
     /// while the others (and any hand-written tags) must come out unchanged.
     /// </summary>
@@ -120,7 +120,7 @@ namespace Sdo.Tests
         [Test]
         public void SetOffset_PersistsPerSong_AndLeavesOtherTagsAlone()
         {
-            // 外部歌的單首 offset 存進 sdo.header：只動那一筆的 #OFFSETMS，別首歌與同一首的其他 tag 都不能被吃掉。
+            // 外部歌的單首 offset 存進 sdoinfo.dat：只動那一筆的 #OFFSETMS，別首歌與同一首的其他 tag 都不能被吃掉。
             var text = SongSidecar.Write(new List<SongSidecarEntry>
             {
                 new SongSidecarEntry { SongKey = "audio:a.mp3", CdImage = "cd_a.png" },
@@ -158,6 +158,48 @@ namespace Sdo.Tests
             Assert.AreEqual("cd.png", e[0].CdImage);
             // 往返後仍保留
             Assert.AreEqual(-25.5f, SongSidecar.Parse(SongSidecar.Write(e))[0].OffsetMs, 1e-3f);
+        }
+
+        [Test]
+        public void DpsOffset_IsIndependentOfMusicOffset()
+        {
+            // 舞蹈 offset 跟音樂 offset 是兩個欄位、互不影響:設一個不動另一個。
+            var text = SongSidecar.SetOffset("", "audio:a.mp3", 131f);
+            text = SongSidecar.SetDpsOffset(text, "audio:a.mp3", -40f);
+
+            var e = SongSidecar.Find(SongSidecar.Parse(text), "audio:a.mp3");
+            Assert.AreEqual(131f, e.OffsetMs, 1e-3f, "音樂 offset 被舞蹈 offset 蓋掉了");
+            Assert.AreEqual(-40f, e.DpsOffsetMs, 1e-3f);
+        }
+
+        [Test]
+        public void SetDpsOffset_TouchesOnlyThatSong()
+        {
+            var text = SongSidecar.Write(new List<SongSidecarEntry>
+            {
+                new SongSidecarEntry { SongKey = "audio:a.mp3", CdImage = "cd_a.png" },
+                new SongSidecarEntry { SongKey = "audio:b.mp3", OffsetMs = 55f },
+            });
+
+            var e = SongSidecar.Parse(SongSidecar.SetDpsOffset(text, "audio:b.mp3", 22f));
+            Assert.AreEqual(22f, SongSidecar.Find(e, "audio:b.mp3").DpsOffsetMs, 1e-3f);
+            Assert.AreEqual(55f, SongSidecar.Find(e, "audio:b.mp3").OffsetMs, 1e-3f, "同一首的音樂 offset 被動到了");
+            Assert.AreEqual("cd_a.png", SongSidecar.Find(e, "audio:a.mp3").CdImage, "別首歌被動到了");
+            Assert.AreEqual(0f, SongSidecar.Find(e, "audio:a.mp3").DpsOffsetMs, "沒設過的歌舞蹈 offset 應為 0");
+        }
+
+        [Test]
+        public void DpsOffset_Zero_IsStillWritten_SoTheKnobStaysVisible()
+        {
+            // 跟 OFFSETMS 不同:舞蹈 offset 即使 0 也要寫出來(每個區塊都看得到、可手改),讀回來是 0。
+            var text = SongSidecar.Write(new List<SongSidecarEntry> { new SongSidecarEntry { SongKey = "" } });
+            StringAssert.Contains("DPSOFFSETMS", text);
+            Assert.AreEqual(0f, SongSidecar.Parse(text)[0].DpsOffsetMs, 1e-3f);
+
+            // 手改也讀得回來(含小數/負值),往返後仍保留。
+            var e = SongSidecar.Parse("#SONG:;\n#DPSOFFSETMS:-12.5;\n");
+            Assert.AreEqual(-12.5f, e[0].DpsOffsetMs, 1e-3f);
+            Assert.AreEqual(-12.5f, SongSidecar.Parse(SongSidecar.Write(e))[0].DpsOffsetMs, 1e-3f);
         }
 
         [Test]

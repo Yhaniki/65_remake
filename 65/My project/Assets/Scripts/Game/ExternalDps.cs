@@ -8,7 +8,7 @@ namespace Sdo.Game
     /// The dance of an external (user <c>Songs/</c>) song. osu!/StepMania charts ship no choreography, so the dancer
     /// used to fall back to one looping clip; instead one is GENERATED ONCE, exactly like the CD disc:
     /// <see cref="RandomDps"/> plans it, the .dps is written into the song's own folder, and its name is recorded in
-    /// that folder's <see cref="SongSidecar"/> (<c>sdo.header</c>) — the file the disc is already recorded in. Every
+    /// that folder's <see cref="SongSidecar"/> (<c>sdoinfo.dat</c>) — the file the disc is already recorded in. Every
     /// later play reads the sidecar and loads the file; nothing is regenerated. (Delete the <c>#DPS</c> line to get a
     /// fresh one.)
     ///
@@ -34,8 +34,7 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(folderPath) || map == null || map.HitObjects.Count == 0) return "";
             songKey = songKey ?? "";
 
-            string sidecar = Path.Combine(folderPath, SongSidecar.FileName);
-            string text = ReadText(sidecar);
+            string text = SongSidecar.ReadText(folderPath);   // current name, else the legacy sdo.header
             var recorded = SongSidecar.Find(SongSidecar.Parse(text), songKey);
             if (recorded != null && !string.IsNullOrEmpty(recorded.Dps) && recorded.DpsVersion >= SongSidecar.DpsGenerator)
             {
@@ -69,7 +68,7 @@ namespace Sdo.Game
             try
             {
                 File.WriteAllBytes(path, dps);
-                File.WriteAllText(sidecar, SongSidecar.SetDps(text, songKey, file));
+                SongSidecar.WriteText(folderPath, SongSidecar.SetDps(text, songKey, file));
             }
             catch (System.Exception ex)
             {
@@ -90,12 +89,6 @@ namespace Sdo.Game
             try { leaf = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)); }
             catch { leaf = folderPath ?? ""; }
             return (leaf ?? "").ToLowerInvariant() + "|" + (songKey ?? "").ToLowerInvariant();
-        }
-
-        private static string ReadText(string path)
-        {
-            try { return File.Exists(path) ? File.ReadAllText(path) : ""; }
-            catch { return ""; }
         }
     }
 }

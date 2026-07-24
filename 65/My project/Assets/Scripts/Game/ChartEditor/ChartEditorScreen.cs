@@ -205,7 +205,7 @@ namespace Sdo.Game
             game.effectScene = false;            // 不放場景常駐特效
             game.scrollSpeedMul = _speed;
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
-            // 外部歌的 offset 存在歌資料夾的 sdo.header（已灌進 entry.offsetMs，見 ExternalSongLibrary.ToEntry）；官方歌走 song_table.csv 的 offsetMs。
+            // 外部歌的 offset 存在歌資料夾的 sdoinfo.dat（已灌進 entry.offsetMs，見 ExternalSongLibrary.ToEntry）；官方歌走 song_table.csv 的 offsetMs。
             _songOffset = ext ? (e != null ? e.offsetMs : 0f) : SongCatalog.OffsetMs(_gn);
             game.songOffsetMs = (float)_songOffset;
             game.EditorOnHit = OnHit;             // 跟著打 → 誤差條（一般編譜模式也有，不必進打拍測試）
@@ -422,7 +422,7 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.F11)) NudgeSongOffset(-stepMs);
             if (Input.GetKeyDown(KeyCode.F12)) NudgeSongOffset(+stepMs);
 
-            // Ctrl+S：把目前的單首 offset 存進 song_table.csv（外部歌則寫進歌資料夾的 sdo.header）—— 只動那一筆的 offsetMs，其餘位元組不變
+            // Ctrl+S：把目前的單首 offset 存進 song_table.csv（外部歌則寫進歌資料夾的 sdoinfo.dat）—— 只動那一筆的 offsetMs，其餘位元組不變
             // Ctrl+Shift+S：外部歌 —— 把這個 offset 套到整個資料夾（整包同時跑掉時用）
             if (Input.GetKeyDown(KeyCode.S) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
             {
@@ -500,7 +500,7 @@ namespace Sdo.Game
             _status = msg;
         }
 
-        // 外部歌：offset 寫進歌資料夾的 sdo.header（跟著歌走 → 下次開編輯器＋正式遊玩都吃得到），只動那一筆的 #OFFSETMS，
+        // 外部歌：offset 寫進歌資料夾的 sdoinfo.dat（跟著歌走 → 下次開編輯器＋正式遊玩都吃得到），只動那一筆的 #OFFSETMS，
         // 其餘位元組不變（走 SongSidecar.SetOffset 的 round-trip）。同步記憶體 catalog，這次執行的遊玩不必重掃就生效。
         private void SaveExternalSongOffset()
         {
@@ -508,9 +508,8 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(folder)) { _status = "外部歌沒有資料夾路徑，無法存 offset"; return; }
             try
             {
-                string path = Path.Combine(folder, SongSidecar.FileName);
-                string text = File.Exists(path) ? File.ReadAllText(path) : "";
-                File.WriteAllText(path, SongSidecar.SetOffset(text, _entry.songKey, (float)_songOffset));
+                string text = SongSidecar.ReadText(folder);   // 現名 sdoinfo.dat，沒有才退回舊 sdoinfo.dat
+                SongSidecar.WriteText(folder, SongSidecar.SetOffset(text, _entry.songKey, (float)_songOffset));
                 _entry.offsetMs = (float)_songOffset;   // FrontendApp 讀 SongCatalog → 這次執行的 gameplay 直接吃到
                 _status = $"已存外部歌 offset {_songOffset:+0.#;-0.#;0} ms → {SongSidecar.FileName}（跟著歌走，遊玩也生效）";
             }
@@ -535,17 +534,16 @@ namespace Sdo.Game
             int done = 0;
             try
             {
-                foreach (var kv in byFolder)   // 一個資料夾讀寫一次，不是每首歌都重讀整份 sdo.header
+                foreach (var kv in byFolder)   // 一個資料夾讀寫一次，不是每首歌都重讀整份 sidecar
                 {
-                    string path = Path.Combine(kv.Key, SongSidecar.FileName);
-                    string text = File.Exists(path) ? File.ReadAllText(path) : "";
+                    string text = SongSidecar.ReadText(kv.Key);   // 現名 sdoinfo.dat，沒有才退回舊 sdoinfo.dat
                     foreach (var e in kv.Value)
                     {
                         text = SongSidecar.SetOffset(text, e.songKey, (float)_songOffset);
                         e.offsetMs = (float)_songOffset;
                         done++;
                     }
-                    File.WriteAllText(path, text);
+                    SongSidecar.WriteText(kv.Key, text);
                 }
                 _status = $"已把 offset {_songOffset:+0.#;-0.#;0} ms 套用到「{EditorSongScope.Label(EditorSongScope.ScopeOf(_entry))}」的 {done} 首"
                         + $"（寫進 {byFolder.Count} 個 {SongSidecar.FileName}）";

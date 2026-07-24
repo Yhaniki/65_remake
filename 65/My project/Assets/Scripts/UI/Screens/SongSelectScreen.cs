@@ -1363,7 +1363,7 @@ namespace Sdo.UI.Screens
                 s.ExternalDpsPath = _selected.dpsPath;           // 包裡有官方編舞就跳舞那支，不用生成的
                 s.ExternalAudioPath = _selected.audioPath;
                 s.ExternalLevel = _selected.Diff(pickedDifficulty);   // 星數×7 等級 → 帶進遊戲顯示同一個 LV
-                s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdo.header 都寫在歌曲自己的資料夾
+                s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdoinfo.dat 都寫在歌曲自己的資料夾
                 s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
             }
             // scene: slot 0 = random -> pick an actual scene now; else the chosen stage.

@@ -454,7 +454,7 @@ namespace Sdo.Tests
             Assert.AreEqual("Mania 4K", songs[0].Title);
         }
 
-        // ---- the sdo.header sidecar: the CD disc is built once, then read back ----
+        // ---- the sdoinfo.dat sidecar: the CD disc is built once, then read back ----
 
         private static void Img(string dir, string file) => File.WriteAllBytes(Path.Combine(dir, file), new byte[] { 0 });
 
@@ -550,6 +550,63 @@ namespace Sdo.Tests
 
             Assert.AreEqual(Path.Combine(dir, "dance.mot"), songs[0].MotPath);
             Assert.AreEqual("", songs[0].CameraPath, "a named file that isn't there counts as absent");
+        }
+
+        // ---- backward compat: the pre-rename sdo.header is still read; a write migrates it to sdoinfo.dat ----
+
+        private static void LegacyHeader(string dir, string text)
+            => File.WriteAllText(Path.Combine(dir, SongSidecar.LegacyFileName), text);
+
+        [Test]
+        public void A_Legacy_Sdo_Header_Is_Still_Read_When_No_New_Sidecar_Exists()
+        {
+            // A library scanned before the rename has its records in sdo.header only — the disc it built and the
+            // offset the player calibrated must keep applying, or the rename would silently lose both.
+            var dir = Dir("Group", "Song");
+            Audio(dir, "a.mp3");
+            Osu(dir, "a.osu", "a.mp3", "Song", 100, "Hard", "bg.jpg");
+            Img(dir, "bg.jpg"); Img(dir, "cd.png");
+            LegacyHeader(dir, "#VERSION:1;\n#SONG:;\n#CDIMAGE:cd.png;\n#OFFSETMS:-42;\n");
+
+            var songs = ExternalSongScanner.LoadFolder("Group", dir);
+
+            Assert.AreEqual(Path.Combine(dir, "cd.png"), songs[0].CdImagePath, "legacy sidecar's disc must still be honored");
+            Assert.AreEqual(-42f, songs[0].OffsetMs, 1e-3f, "legacy sidecar's offset must still apply");
+        }
+
+        [Test]
+        public void The_New_Sidecar_Wins_Over_A_Leftover_Legacy_One()
+        {
+            var dir = Dir("Group", "Song");
+            Audio(dir, "a.mp3");
+            Osu(dir, "a.osu", "a.mp3", "Song", 100, "Hard", "bg.jpg");
+            Img(dir, "bg.jpg");
+            LegacyHeader(dir, "#SONG:;\n#OFFSETMS:-42;\n");             // stale
+            Header(dir, "#SONG:;\n#OFFSETMS:7;\n");                    // current sdoinfo.dat
+
+            var songs = ExternalSongScanner.LoadFolder("Group", dir);
+
+            Assert.AreEqual(7f, songs[0].OffsetMs, 1e-3f, "the current sdoinfo.dat must win over a leftover sdo.header");
+        }
+
+        [Test]
+        public void WriteText_Migrates_A_Legacy_Sidecar_To_The_New_Name()
+        {
+            var dir = Dir("Group", "Song");
+            LegacyHeader(dir, "#SONG:;\n#CDIMAGE:cd.png;\n");
+
+            // ReadText sees the legacy file; WriteText persists under the new name AND removes the legacy one, so a
+            // folder is never left carrying both.
+            var text = SongSidecar.ReadText(dir);
+            Assert.AreEqual("cd.png", SongSidecar.Parse(text)[0].CdImage, "the legacy file was read on the way in");
+
+            SongSidecar.WriteText(dir, SongSidecar.SetOffset(text, "", 12f));
+
+            Assert.IsTrue(File.Exists(Path.Combine(dir, SongSidecar.FileName)), "new sidecar written");
+            Assert.IsFalse(File.Exists(Path.Combine(dir, SongSidecar.LegacyFileName)), "legacy sidecar removed after migration");
+            var back = SongSidecar.Parse(SongSidecar.ReadText(dir));
+            Assert.AreEqual(12f, back[0].OffsetMs, 1e-3f, "the migrated file carries the new offset");
+            Assert.AreEqual("cd.png", back[0].CdImage, "migrating kept the recorded disc");
         }
     }
 }

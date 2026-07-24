@@ -110,7 +110,7 @@ namespace Sdo.Osu
                 foreach (var f in Directory.EnumerateFiles(dir))
                 {
                     var ext = Path.GetExtension(f).ToLowerInvariant();
-                    if (ext == ".osu" || ext == ".sm" || ext == ".gn") charts = true;
+                    if (ext == ".osu" || ext == ".sm" || ext == ".gn" || ext == ".mc") charts = true;
                     else if (Array.IndexOf(AudioExt, ext) >= 0) audio = true;
                     if (charts && audio) return;
                 }
@@ -152,6 +152,7 @@ namespace Sdo.Osu
             var osu = new List<string>();
             var sm = new List<string>();
             var gn = new List<string>();
+            var mc = new List<string>();
             var audio = new List<string>();
             var images = new List<string>();   // basenames
             foreach (var f in files)
@@ -160,6 +161,7 @@ namespace Sdo.Osu
                 if (ext == ".osu") osu.Add(f);
                 else if (ext == ".sm") sm.Add(f);
                 else if (ext == ".gn") gn.Add(f);
+                else if (ext == ".mc") mc.Add(f);
                 else if (Array.IndexOf(AudioExt, ext) >= 0) audio.Add(f);
                 else if (Array.IndexOf(ImageExt, ext) >= 0) images.Add(Path.GetFileName(f));
             }
@@ -171,6 +173,7 @@ namespace Sdo.Osu
                 DraftOsu(drafts, osu);
                 DraftSm(drafts, sm);
                 DraftGn(drafts, gn, pack);
+                DraftMalody(drafts, mc);
             }
             catch { /* a malformed folder must never abort the whole scan */ }
             if (drafts.Count == 0) return songs;
@@ -265,17 +268,10 @@ namespace Sdo.Osu
             images.RemoveAll(f => cds.Contains(f));
         }
 
-        /// <summary>The folder's sdo.header, or an empty list when it has none / is unreadable.</summary>
+        /// <summary>The folder's sidecar (sdoinfo.dat, or the legacy sdoinfo.dat), or an empty list when it has none /
+        /// is unreadable.</summary>
         private static List<SongSidecarEntry> ReadSidecar(string songDir)
-        {
-            try
-            {
-                var path = Path.Combine(songDir, SongSidecar.FileName);
-                if (File.Exists(path)) return SongSidecar.Parse(File.ReadAllText(path));
-            }
-            catch { /* a corrupt sidecar just means "nothing recorded yet" */ }
-            return new List<SongSidecarEntry>();
-        }
+            => SongSidecar.Parse(SongSidecar.ReadText(songDir));   // ReadText picks current name, else legacy; "" on any error
 
         /// <summary>Re-read a folder's sidecar and refresh ONLY its sidecar-derived paths (CD disc / mot / camera) on an
         /// already-built song. Used when a scan result is reused from a cache: a disc composed since the cache was
@@ -284,12 +280,12 @@ namespace Sdo.Osu
         public static void ReapplySidecar(ExternalSong song)
         {
             if (song == null || string.IsNullOrEmpty(song.FolderPath)) return;
-            // A pack song's jacket comes from sdo_pack.tsv, not from sdo.header, and it is cached alongside the song —
+            // A pack song's jacket comes from sdo_pack.tsv, not from sdoinfo.dat, and it is cached alongside the song —
             // so hold it across the clear below, or every cache hit would strip the pack's real jackets off and leave
             // the whole pack showing the NONE disc. (Its preview clip / choreography aren't sidecar fields at all, so
             // they survive untouched.) A re-run of the converter rewrites the .tsv → new signature → full re-parse.
             string packCd = song.Format == SongFormat.Gn ? song.CdImagePath ?? "" : "";
-            song.CdImagePath = ""; song.MotPath = ""; song.CameraPath = ""; song.OffsetMs = 0f;
+            song.CdImagePath = ""; song.MotPath = ""; song.CameraPath = ""; song.OffsetMs = 0f; song.DpsOffsetMs = 0f;
             var sidecar = ReadSidecar(song.FolderPath);
             ApplySidecar(song, SongSidecar.Find(sidecar, song.SongKey), song.FolderPath);
             if (packCd.Length > 0) song.CdImagePath = packCd;
@@ -562,6 +558,69 @@ namespace Sdo.Osu
             }
         }
 
+        /// <summary>Draft the Malody .mc charts in a folder. One .mc is one difficulty; charts sharing a folder + audio
+        /// (the bgm note) are the difficulties of one song, so they group by audio (<see cref="ExternalSongGrouper.GroupMalody"/>)
+        /// and each song fills its own hard/normal/easy slots from ITS highest-note-count charts. Only 4-key Key-mode
+        /// charts are kept. Runs after osu/StepMania, so the same song shipped as both stays ONE song (the earlier
+        /// format's audio shadows the .mc), exactly like .osu shadows .sm.</summary>
+        private static void DraftMalody(List<Draft> drafts, List<string> mcFiles)
+        {
+            var candFile = new List<string>();
+            var candSong = new List<MalodyChart.McSong>();
+            var candName = new List<string>();
+            foreach (var path in mcFiles)
+            {
+                MalodyChart.McSong s;
+                try { s = MalodyChart.Parse(File.ReadAllText(path)); }
+                catch { continue; }
+                if (!MalodyChart.Is4KKey(s)) continue;      // 4K Key mode only
+                if (s.Notes.Count <= 0) continue;
+                candFile.Add(path); candSong.Add(s); candName.Add(Path.GetFileName(path));
+            }
+            if (candFile.Count == 0) return;
+
+            var audioNames = new List<string>(candSong.Count);
+            var counts = new List<int>(candSong.Count);
+            foreach (var s in candSong) { audioNames.Add(ExternalSongGrouper.BaseName(s.AudioFile)); counts.Add(s.Notes.Count); }
+
+            foreach (var g in ExternalSongGrouper.GroupMalody(audioNames, counts, candName))
+            {
+                // The same song shipped as both .osu/.sm and .mc (same audio) stays ONE song — the earlier format wins.
+                string audioName = ExternalSongGrouper.AudioNameOf(g.Key);
+                if (audioName.Length > 0 && HasAudio(drafts, audioName)) continue;
+
+                var slotCounts = new List<int>(g.Charts.Count);
+                foreach (var i in g.Charts) slotCounts.Add(counts[i]);
+
+                var d = new Draft { Key = g.Key, Format = SongFormat.Malody };
+                var slots = ExternalDifficultyPicker.Assign(slotCounts);   // per SONG — never across the folder
+                for (int s = 0; s < 3; s++)
+                {
+                    int c = slots[s];
+                    if (c < 0) continue;
+                    int i = g.Charts[c];
+                    var st = MalodyStats(candFile[i]);   // 星數×N → 等級 + 譜長（同 osu/SM 一致的量尺）
+                    d.Charts[s] = new ExternalChart
+                    {
+                        FilePath = candFile[i], ChartIndex = 0, NoteCount = counts[i],
+                        Level = st.Level, DurationSec = st.DurationSec,
+                    };
+                }
+
+                int lead = g.Charts[0];
+                d.Title = First(g.Charts, i => candSong[i].Title, Path.GetFileNameWithoutExtension(candFile[lead]));
+                d.Artist = First(g.Charts, i => candSong[i].Artist, "");
+                d.Version = First(g.Charts, i => candSong[i].Version, "");
+                d.AudioName = ExternalSongGrouper.BaseName(First(g.Charts, i => candSong[i].AudioFile, ""));
+                d.BackgroundName = ExternalSongGrouper.BaseName(First(g.Charts, i => candSong[i].Background, ""));
+                foreach (var i in g.Charts) { if (candSong[i].FirstBpm > 0) { d.Bpm = candSong[i].FirstBpm; break; } }
+                d.PreviewStartMs = -1;
+                foreach (var i in g.Charts) { if (candSong[i].PreviewMs >= 0) { d.PreviewStartMs = candSong[i].PreviewMs; break; } }
+                d.PreviewLengthMs = 0;   // Malody carries no preview length → default window
+                drafts.Add(d);
+            }
+        }
+
         private static bool HasAudio(List<Draft> drafts, string audioName)
         {
             foreach (var d in drafts)
@@ -612,7 +671,7 @@ namespace Sdo.Osu
             song.DpsPath = SidecarFile(dir, dpsRel);
         }
 
-        // What the folder's sdo.header already records for this song: the CD disc built on an earlier run (skip
+        // What the folder's sdoinfo.dat already records for this song: the CD disc built on an earlier run (skip
         // composing it again) and — reserved — its dance/camera files. A recorded name whose file is gone is ignored,
         // so deleting cd.png is all it takes to have the disc rebuilt.
         private static void ApplySidecar(ExternalSong song, SongSidecarEntry e, string dir)
@@ -622,6 +681,7 @@ namespace Sdo.Osu
             song.MotPath = SidecarFile(dir, e.Mot);
             song.CameraPath = SidecarFile(dir, e.Camera);
             song.OffsetMs = e.OffsetMs;
+            song.DpsOffsetMs = e.DpsOffsetMs;
         }
 
         private static string SidecarFile(string dir, string name)
@@ -630,7 +690,8 @@ namespace Sdo.Osu
             try
             {
                 var path = Path.Combine(dir, name);
-                return File.Exists(path) ? path : "";
+                // sidecar 可能存可攜式的正斜線絕對路徑（Path.Combine 讓絕對路徑勝出）→ 回傳前正規化成本機分隔符。
+                return File.Exists(path) ? path.Replace('/', Path.DirectorySeparatorChar) : "";
             }
             catch { return ""; }
         }
@@ -732,6 +793,13 @@ namespace Sdo.Osu
         {
             try { return StatsOf(SmChart.ToBeatmap(song, blockIndex), fallbackMeter); }
             catch { return new ChartStats { Level = fallbackMeter }; }
+        }
+
+        // Malody: parse the .mc and rate it on the SAME osu!mania star scale as osu/SM. Level 0 / no duration on failure.
+        private static ChartStats MalodyStats(string mcPath)
+        {
+            try { return StatsOf(MalodyChart.ToBeatmap(MalodyChart.Parse(File.ReadAllText(mcPath))), 0); }
+            catch { return new ChartStats { Level = 0 }; }
         }
 
         /// <summary>Rating + duration of a parsed chart. Duration = the last note's time (hold ends included), which is

@@ -337,6 +337,8 @@ namespace Sdo.Game
                 badge = (int)song.Badge,
                 // hand-calibrated per-song offset from the folder sidecar → drives gameplay's songOffsetMs (see FrontendApp).
                 offsetMs = Mathf.Clamp(song.OffsetMs, -SongCatalog.MaxOffsetMs, SongCatalog.MaxOffsetMs),
+                // independent per-song DANCE offset (#DPSOFFSETMS) → gameplay's dpsOffsetMs. Moves only the dancer.
+                dpsOffsetMs = Mathf.Clamp(song.DpsOffsetMs, -SongCatalog.MaxOffsetMs, SongCatalog.MaxOffsetMs),
             };
             SetSlot(e, 0, song.Charts[0], song.AudioDurationSec);
             SetSlot(e, 1, song.Charts[1], song.AudioDurationSec);

@@ -2,8 +2,9 @@ namespace Sdo.Osu
 {
     /// <summary>On-disk chart format of an external (user-dropped) song folder.
     /// <see cref="Gn"/> = a native SDO chart pack ([NX]Patch converted by tools/nx/nx_to_gn.py, or any folder of
-    /// .gn + music laid out the same way) — one file holds all three difficulties.</summary>
-    public enum SongFormat { None = 0, Osu = 1, Sm = 2, Gn = 3 }
+    /// .gn + music laid out the same way) — one file holds all three difficulties.
+    /// <see cref="Malody"/> = a Malody <c>.mc</c> JSON chart (one difficulty per file; see <see cref="MalodyChart"/>).</summary>
+    public enum SongFormat { None = 0, Osu = 1, Sm = 2, Gn = 3, Malody = 4 }
 
     /// <summary>One playable difficulty of an external song (one .osu file, one #NOTES block in a .sm, or one
     /// difficulty of a .gn).</summary>
@@ -75,7 +76,7 @@ namespace Sdo.Osu
         /// —— 玩家自己放進來的歌不該被包的旗標弄不見。</summary>
         public bool PackHidden;
 
-        // ---- from the folder's sdo.header sidecar (see SongSidecar) ----
+        // ---- from the folder's sdoinfo.dat sidecar (see SongSidecar) ----
 
         /// <summary>Absolute path of the generated CD disc image; "" = the sidecar records none (or its file is gone),
         /// i.e. the disc still has to be composed from <see cref="ImagePath"/> the first time this song is selected.</summary>
@@ -89,6 +90,10 @@ namespace Sdo.Osu
         /// <summary>Per-song timing offset (ms) recorded in the folder's sidecar by the chart editor (F11/F12 → Ctrl+S);
         /// positive delays the music. Flows to <see cref="SongCatalog.Entry.offsetMs"/> so it also applies in gameplay.</summary>
         public float OffsetMs;
+
+        /// <summary>Per-song DANCE offset (ms) from the sidecar's <c>#DPSOFFSETMS</c> — independent of <see cref="OffsetMs"/>;
+        /// positive delays the dancer. Flows to <see cref="SongCatalog.Entry.dpsOffsetMs"/> → gameplay's dpsOffsetMs.</summary>
+        public float DpsOffsetMs;
 
         // Preview clip window (from osu PreviewTime / StepMania #SAMPLESTART+#SAMPLELENGTH). Song-select loops this
         // window of the full audio instead of a middle-of-song default.

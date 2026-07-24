@@ -11,7 +11,7 @@ namespace Sdo.Game
     /// The disc is COMPOSED ONCE, ever: <see cref="CdImageComposer"/> cuts the song's cover art into the CD
     /// (cover-cropped, never stretched — a wide StepMania banner is matched to the disc's height and its sides are cut
     /// off — then rimmed and hubbed like the official ICONS discs), the PNG is written into the SONG'S OWN FOLDER, and
-    /// its name is recorded in that folder's <see cref="SongSidecar"/> (<c>sdo.header</c>). Every later run just reads
+    /// its name is recorded in that folder's <see cref="SongSidecar"/> (<c>sdoinfo.dat</c>). Every later run just reads
     /// the sidecar during the scan and loads the file — see <see cref="ExternalSongScanner"/>.
     ///
     /// It runs on SELECTION rather than during the boot scan because composing means fully decoding the cover (song
@@ -164,11 +164,8 @@ namespace Sdo.Game
         // #CAMERA lines already written) untouched.
         private static void WriteSidecar(string folder, string songKey, string cdFile)
         {
-            string path = Path.Combine(folder, SongSidecar.FileName);
-            string text = "";
-            try { if (File.Exists(path)) text = File.ReadAllText(path); }
-            catch { text = ""; }
-            File.WriteAllText(path, SongSidecar.SetCdImage(text, songKey, cdFile));
+            string text = SongSidecar.ReadText(folder);   // current name, else the legacy sdo.header
+            SongSidecar.WriteText(folder, SongSidecar.SetCdImage(text, songKey, cdFile));
         }
 
         // Decode a cover to a readable RGBA texture. Ours is uncached and destroyed right after use: covers are

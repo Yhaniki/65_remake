@@ -82,6 +82,49 @@ namespace Sdo.Osu
         /// <summary>Song identity of a .sm file: one file = one song, so the filename IS the key.</summary>
         public static string SmKeyOf(string smFileName) => "file:" + BaseName(smFileName).ToLowerInvariant();
 
+        /// <summary>Group Malody .mc charts into songs, exactly like <see cref="GroupOsu"/>: one .mc is one difficulty, and
+        /// the difficulties of a song share its audio file (the bgm note), so the audio is the grouping key. Parallel
+        /// input lists (audio filename + note count + chart filename, one entry per .mc). Groups come out in
+        /// first-appearance order; each group's charts are sorted by note count DESC (ties keep input order), which is the
+        /// order difficulty slots and display metadata are taken in. Pure/testable.</summary>
+        public static List<SongGroup> GroupMalody(IReadOnlyList<string> audioNames, IReadOnlyList<int> noteCounts,
+            IReadOnlyList<string> chartFileNames)
+        {
+            var groups = new List<SongGroup>();
+            if (audioNames == null) return groups;
+
+            var byKey = new Dictionary<string, SongGroup>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < audioNames.Count; i++)
+            {
+                string file = chartFileNames != null && i < chartFileNames.Count ? chartFileNames[i] : "";
+                string key = McKeyOf(audioNames[i], file);
+                if (!byKey.TryGetValue(key, out var g))
+                {
+                    g = new SongGroup { Key = key };
+                    byKey[key] = g;
+                    groups.Add(g);
+                }
+                g.Charts.Add(i);
+            }
+
+            foreach (var g in groups)
+                g.Charts.Sort((a, b) =>
+                {
+                    int c = noteCounts[b].CompareTo(noteCounts[a]);
+                    return c != 0 ? c : a.CompareTo(b);
+                });
+            return groups;
+        }
+
+        /// <summary>The song identity of one .mc inside its folder: its audio file (from the bgm note) if named, else the
+        /// chart filename (rather split one song in two than merge two into one, like the osu fallback chain).</summary>
+        public static string McKeyOf(string audioName, string chartFileName)
+        {
+            string audio = BaseName(audioName);
+            if (audio.Length > 0) return "audio:" + audio.ToLowerInvariant();
+            return "file:" + BaseName(chartFileName).ToLowerInvariant();
+        }
+
         /// <summary>The audio a group plays, as a bare lower-case filename ("" = the charts name none). Used to let
         /// an .osu song shadow the .sm of the same song sitting in the same folder.</summary>
         public static string AudioNameOf(string key)
