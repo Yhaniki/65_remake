@@ -146,3 +146,6 @@ procmon_tool/runs/
 
 # gn_note_export 的輸出（5MB 生成檔，隨時能用 dotnet run --project tools/gn_note_export 重跑）
 tools/kgn_export/gn_notes.json
+
+# 開發過程的手動截圖（個人存檔，不入庫）
+/65/My project/screensave/
