@@ -24,16 +24,27 @@ namespace Sdo.Game
         public IReadOnlyList<ShopItem> Clothing { get; }
         public int Count => Clothing.Count;
 
+        /// <summary>非衣服的 2D 商品 (道具/藥水/人物特效/寵物/寵物頭飾/寵物衣/寵物道具/禮包) —— 沒有 avatar mesh，
+        /// 商品格畫 ITEM2D 圖示。官方 iteminfo 同樣有名字/價格/時效，所以走同一條 ShopItem 管線。</summary>
+        public IReadOnlyList<ShopItem> Props { get; }
+
         private readonly Dictionary<(ItemSex, EquipSlot), List<ShopItem>> _groups;
+        private readonly Dictionary<EquipSlot, List<ShopItem>> _propGroups;   // 2D 商品不分性別 (sex byte 皆 2/0，官方也不分頁)
         private readonly HashSet<string> _meshFiles;   // available MSH filenames across Root + dev Datas
         private readonly Dictionary<int, OutfitSet> _sets;   // 套装 setinfo: setId → component list (keyed by ShopItem.ModelId)
 
         private AvatarItemCatalog(List<ShopItem> clothing,
                                   Dictionary<(ItemSex, EquipSlot), List<ShopItem>> groups,
-                                  HashSet<string> meshFiles, Dictionary<int, OutfitSet> sets)
+                                  HashSet<string> meshFiles, Dictionary<int, OutfitSet> sets,
+                                  List<ShopItem> props, Dictionary<EquipSlot, List<ShopItem>> propGroups)
         {
             Clothing = clothing; _groups = groups; _meshFiles = meshFiles; _sets = sets;
+            Props = props; _propGroups = propGroups;
         }
+
+        /// <summary>一個 2D 商品分頁 (道具/藥水/特效/寵物…) 的商品，catalog 原序。</summary>
+        public IReadOnlyList<ShopItem> PropGroup(EquipSlot slot)
+            => _propGroups.TryGetValue(slot, out var l) ? l : (IReadOnlyList<ShopItem>)Array.Empty<ShopItem>();
 
         // 套装 mesh slot tokens (component 檔名內嵌的部位) — 用 modelId+性別+token 直接 O(1) 命中 _meshFiles。
         private static readonly string[] OutfitSlotTokens =
@@ -470,8 +481,9 @@ namespace Sdo.Game
             }
             if (_byId == null)
             {
-                _byId = new Dictionary<int, ShopItem>(Clothing.Count);
+                _byId = new Dictionary<int, ShopItem>(Clothing.Count + Props.Count);
                 foreach (var it in Clothing) _byId[it.Id] = it;
+                foreach (var it in Props) _byId[it.Id] = it;   // 買下的 2D 道具重載存檔時也要查得到 (背包/數量)
             }
             return _byId.TryGetValue(id, out var v) ? v : null;
         }
@@ -529,12 +541,20 @@ namespace Sdo.Game
 
             var clothing = new List<ShopItem>();
             var groups = new Dictionary<(ItemSex, EquipSlot), List<ShopItem>>();
+            var props = new List<ShopItem>();
+            var propGroups = new Dictionary<EquipSlot, List<ShopItem>>();
             foreach (var it in items)
             {
-                if (it.SlotType != ItemSlotType.Clothes) continue;   // skip consumables / effects
-                if (IsPlaceholderItem(it.Id)) continue;              // 伺服器測試佔位列 (「Bug Item」) 不上架
                 var slot = it.EquipSlot;
                 if (slot == EquipSlot.None) continue;
+                if (ItemTypes.IsProp(slot))
+                {
+                    // 非衣服的 2D 商品 (道具/藥水/特效/寵物/禮包) —— 以前這裡直接 continue 丟掉，所以 道具店/伙伴店/礼包店
+                    // 全是空的。現在全收進 props (ById 查得到);分頁清單 propGroups 稍後去重 (中英重複) 再建。
+                    props.Add(it);
+                    continue;
+                }
+                if (IsPlaceholderItem(it.Id)) continue;              // 伺服器測試佔位列 (「Bug Item」) 不上架
                 clothing.Add(it);   // 重複列仍留在 Clothing → ById 查得到 (已擁有/已穿的英文 id 不會失效)
                 if (hidden.Contains(it.Id)) continue;                // …但不進商城分頁清單
                 var key = (ItemTypes.GenderOf(it.Category, it.Name), slot);   // GenderOf 修 cat203 套装 (sex byte 皆0,靠名字)
@@ -542,6 +562,22 @@ namespace Sdo.Game
                 l.Add(it);
             }
             if (hidden.Count > 0) Debug.Log($"[shop] {hidden.Count} 件英文重複上架列隱藏 (同 model 已有中文列)");
+            // 非衣服 2D 商品:同 modelId+同 SKU 常有「中文列 + 英文重上架列」兩筆 (奇妙冰激凌 / Ice Cream,model 1120005)。
+            // 使用者:「道具店/礼包店只拿中文的」→ 每個 SKU 有中文名列就藏掉英文/無中文列後才建分頁清單 (props 仍全保留供 ById)。
+            var propHidden = PropDuplicateListingIds(props);
+            int propNoArt = 0;
+            foreach (var it in props)
+            {
+                if (propHidden.Contains(it.Id)) continue;
+                // 無 2D 圖示 (DRESS/FindByPrefix) 又無 3D 禮盒 mesh (DAOJU) 的道具 = 官方沒美術的佔位/測試列 (Test Pack、
+                // VIP PERMANENT、laim…,modelId 超出官方區間、原價 2000000) → 不上架,免得礼包店/道具店整頁空卡。
+                if (DressCatalog.IconPath(it.ModelId) == null && DressCatalog.MeshRel(it.ModelId) == null) { propNoArt++; continue; }
+                var pslot = it.EquipSlot;
+                if (!propGroups.TryGetValue(pslot, out var pl)) propGroups[pslot] = pl = new List<ShopItem>();
+                pl.Add(it);
+            }
+            if (propHidden.Count > 0) Debug.Log($"[shop] {propHidden.Count} 筆非衣服商品英文重複列隱藏 (同 SKU 已有中文列)");
+            if (propNoArt > 0) Debug.Log($"[shop] {propNoArt} 筆道具無美術 (無 2D 圖也無 3D mesh) → 不上架");
             // 離線無 setinfo → 依「系列基底名」把同名多件衣物合成套裝,放進 套装 分頁(使用者要求:兔乖乖/璀璨繁星…)。
             int synth = BuildSyntheticSets(clothing, groups, sets);
             // 台版官方套装 (古惑仔/卡卡西/逍遙英雄/聖誕老公公…): 名字來自台版 iteminfo 的 Outfit 列、組件來自台版 setinfo,
@@ -552,8 +588,12 @@ namespace Sdo.Game
             // 改這裡的 Price → 顯示/購買/買齊/套装 全部吃到。合成 mes-only 列 (AllMeshModels, 100M) 本就 < 5000,不受影響。
             int capped = 0;
             foreach (var it in clothing) { int p = CapCoinPrice(it.Price, it.PriceCategoryRaw); if (p != it.Price) { it.Price = p; capped++; } }
-            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版, {capped} 件 M-幣 定價壓到 {MaxCoinPrice})");
-            return new AvatarItemCatalog(clothing, groups, meshFiles, sets);
+            // 非衣服的 2D 商品 (道具/藥水/特效/寵物/禮包) 一樣壓 M 幣定價上限 —— 它們早在上面就分流進 props,沒被上面那圈
+            // 掃到 (使用者回報「超過5000的沒套用5000M」= 禮包/特效卡那些 2000000M 沒被壓)。共用同一批 ShopItem 物件 → 改到底。
+            foreach (var it in props) { int p = CapCoinPrice(it.Price, it.PriceCategoryRaw); if (p != it.Price) { it.Price = p; capped++; } }
+            Debug.Log($"[shop] catalog: {clothing.Count} clothing items, {groups.Count} groups, {meshFiles.Count} meshes, {sets.Count} sets (+{synth} 合成 +{twSets} 台版, {capped} 件 M-幣 定價壓到 {MaxCoinPrice}), "
+                      + $"{props.Count} 2D 商品 ({propGroups.Count} 頁)");
+            return new AvatarItemCatalog(clothing, groups, meshFiles, sets, props, propGroups);
         }
 
         /// <summary>
@@ -622,6 +662,38 @@ namespace Sdo.Game
                     if (r.Id < keep.Id) { hidden.Add(keep.Id); bestByLabel[label] = r; }
                     else hidden.Add(r.Id);
                 }
+            }
+            return hidden;
+        }
+
+        /// <summary>Pure: ids of NON-衣服 2D 商品 rows to hide from the shop pages because they are an English/無中文
+        /// re-listing of a Chinese row for the SAME SKU. Unlike <see cref="DuplicateListingIds"/> (keyed by
+        /// Category+ModelId, which would fold the ×1/×50/×100 SKUs of one item together since they share a name), this
+        /// keys by SKU MINUS price (ModelId+Quantity+Duration+幣別) so distinct SKUs (×1/×50) survive while the CN/EN
+        /// twins of one SKU — which carry DIFFERENT prices (奇妙冰激凌 500M vs the Ice Cream re-listing's 2,000,000) —
+        /// still group and collapse to the Chinese-named row. Hidden rows stay in <see cref="Props"/> so ById resolves.</summary>
+        public static HashSet<int> PropDuplicateListingIds(IEnumerable<ShopItem> props)
+        {
+            var hidden = new HashSet<int>();
+            if (props == null) return hidden;
+            // SKU 鍵**不含價格**:中文原版與英文重上架版價格常不同 (奇妙冰激凌 500M vs Ice Cream 原價 2000000),
+            // 含價格會把它們當成兩個 SKU 而漏掉去重。同 modelId+數量+時效+幣別 就視為同一件的中/英兩版。
+            var bySku = new Dictionary<(int, int, int, int), List<ShopItem>>();
+            foreach (var it in props)
+            {
+                if (it == null) continue;
+                var key = (it.ModelId, it.Quantity, it.DurationDays, it.PriceCategoryRaw);
+                if (!bySku.TryGetValue(key, out var l)) bySku[key] = l = new List<ShopItem>();
+                l.Add(it);
+            }
+            foreach (var kv in bySku)
+            {
+                var rows = kv.Value;
+                if (rows.Count < 2) continue;
+                bool anyCjk = false;
+                foreach (var r in rows) if (HasCjk(r.Name)) { anyCjk = true; break; }
+                if (!anyCjk) continue;   // 同 SKU 全無中文 → 沒有中文可留就整組保留 (別誤刪只有英文名的商品)
+                foreach (var r in rows) if (!HasCjk(r.Name)) hidden.Add(r.Id);   // 有中文列 → 藏英文/無中文重複列
             }
             return hidden;
         }

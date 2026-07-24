@@ -405,6 +405,8 @@ namespace Sdo.Game
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
         private readonly List<double> _noteStarts = new List<double>();   // _notes[i].Note.StartTimeMs, ascending — drives NoteScan.UpperBound
         private int _firstAlive;                                          // cursor: index of the earliest still-live note (see NoteScan.Advance)
+        private double _bombPrevNow;                                       // 上一幀的譜面時間,用來偵測炸彈「跨過判定線」的那一幀(見 TickBombs / StepMania CrossedMineRow)
+        private bool _bombPrevValid;                                       // false = 這首歌還沒 tick 過炸彈(第一幀把 prev 設成 now,避免把開場前就過去的炸彈誤判成剛跨線)
         private readonly Stack<NoteVisual> _visualFree = new Stack<NoteVisual>();   // returned note-visual bundles waiting to be re-rented
         private readonly List<NoteVisual> _visualAll = new List<NoteVisual>();      // every bundle ever created (for teardown/debug)
         private Transform _noteVisualRoot;                                // identity origin parent so all pooled note GameObjects live under one node
@@ -2144,6 +2146,7 @@ namespace Sdo.Game
             _noteStarts.Clear();
             foreach (var n in _notes) _noteStarts.Add(n.Note.StartTimeMs);
             _firstAlive = 0;
+            _bombPrevValid = false;   // 重新載譜:炸彈跨線游標重置(第一幀重新對齊 now)
         }
 
         private Transform NoteVisualRoot => _noteVisualRoot != null ? _noteVisualRoot
@@ -4264,13 +4267,14 @@ namespace Sdo.Game
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
+            bool manualPlay = !_failed && !_showtime.Active && !autoPlay;   // 只有真人手動打時才吃鍵盤(= 下面 HandleInput 分支的條件)
             if (!_failed)
             {
                 if (_showtime.Active) AutoPlay(now, showtime: true);   // ShowTime window: force PERFECT, ignore manual input
                 else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
                 else { HandleInput(now); AutoMiss(now); }
             }
-            TickBombs(now);   // 炸彈:踩到(該軌按著)引爆 mine 音+扣血,否則安全通過
+            TickBombs(now, detonate: manualPlay);   // 炸彈:手動打時踩到(該軌按著)引爆;F8自動/ShowTime自動避雷,只安全流過
             UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
@@ -4285,7 +4289,21 @@ namespace Sdo.Game
             // the song stays fully playable to its natural end, no GAME OVER — but HP itself latches empty (HealthProcessor
             // lockOnDeath), so a good run after HP-out no longer refills the bar; it stays dead until the song ends.
             if (!showtimeMode && !playFullSong && _health != null && _health.IsFailed) _failed = true;
-            if (!_ended && (_failed || now > _totalMs + 2000)) { _ended = true; EnterResult(); }
+            // 結束判定:等「音樂播完」再 +2 秒才進結算動作,但加 10 秒上限避免長尾奏/長音檔等太久。
+            //   notesEndMs = 最後一顆音符;musicEndMs = 音檔播完的譜面時間 (MusicCountInSec + clip.length)×1000
+            //   (clip 起播被 offset 跳過一段不影響終點,終點恆為 clip.length)。
+            //   • 音檔在最後音符後 10 秒內會結束 → 以「音檔結束」為基準(等音樂放完)。
+            //   • 音檔 10 秒內不會結束(尾奏過長/音檔比譜面長很多) → 以「最後音符」為基準,不苦等尾奏。
+            //   • 沒有音檔(觀察/爆發模式)或音檔比音符短 → 一律用最後音符。
+            //   兩種基準最後都再 +2 秒緩衝才 EnterResult(音樂/最後音符播完後的定格前置)。
+            double notesEndMs = _totalMs;
+            double baseEndMs = notesEndMs;
+            if (_audio != null && _audio.clip != null)
+            {
+                double musicEndMs = (MusicCountInSec + _audio.clip.length) * 1000.0;
+                if (musicEndMs > notesEndMs && musicEndMs <= notesEndMs + 10000.0) baseEndMs = musicEndMs;
+            }
+            if (!_ended && (_failed || now > baseEndMs + 2000)) { _ended = true; EnterResult(); }
         }
 
         // Song finished (or HP-out): freeze gameplay, hide the note board, play the win/lose 定格 pose on the
@@ -5203,26 +5221,38 @@ namespace Sdo.Game
             }
         }
 
-        // 炸彈 (note_type 1 = avoid-note)：當炸彈進到**引爆窗**(= Perfect 窗 ×0.8,見 JudgmentWindows.BombWindow)
-        // 且該軌鍵被按著 → 引爆(StepMania mine 音 + 扣血)。用 miss 窗會太寬:炸彈還離判定線老遠、
-        // 或早就過去了,只要手指還壓著就炸。退場仍看 miss 邊界(過了才收掉,不算 miss)。
+        // 炸彈 (note_type 1 = avoid-note) 引爆判定 —— 照 StepMania (YHANIKI) 官方 PlayerMinus::CrossedMineRow
+        // (src/Player.cpp:1077):炸彈**只在通過判定線的那一幀**檢查該軌鍵是否正被按著(IsButtonDown);
+        // 按著 → 引爆(mine 音 + 扣血),沒按 → 那一刻就永久算安全避開,之後手指再壓也不會回頭補炸。
+        //
+        // 關鍵:這不是對稱 ±窗、也不是「窗內任一幀按到就炸」。舊版用 ±(Perfect×0.8) 窗會誤爆:
+        //   (1) 炸彈還在判定線上方 ~48ms 就炸,看起來像「還沒到就爆」;
+        //   (2) 你其實是提早按下一顆音符,卻落在前一顆炸彈的窗內 → 被當成踩雷。
+        // 官方模型只認「炸彈抵達判定線的瞬間你的腳在不在上面」,兩個誤爆都不會發生。
+        // (StepMania 另有一條 Step 新按下路徑,但它只認「離按下點最近的音符剛好是炸彈」;近處有真音符時
+        //  炸彈會被讓過。跨線瞬間的按著檢查已涵蓋「站在上面踩爆」,又不會把打鄰近音符的按鍵誤判成踩雷,故從略。)
+        //
+        // detonate=false(F8 自動打擊 / ShowTime / 已陣亡):自動避雷 —— 照樣推進跨線游標與退場,但不引爆。
         // 編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
-        private void TickBombs(double now)
+        private void TickBombs(double now, bool detonate)
         {
-            double retire = _engine.Windows.MissBoundary;   // 掃描/退場邊界(比引爆窗寬)
-            double win = _engine.Windows.BombWindow;        // 引爆窗 = Perfect × 0.8
+            double retire = _engine.Windows.MissBoundary;   // 退場邊界:過判定線這麼久才收掉(視覺續捲到此,不算 miss)
+            if (!_bombPrevValid) { _bombPrevNow = now; _bombPrevValid = true; }   // 第一幀對齊:prev==now → 沒有任何跨線
+            double prev = _bombPrevNow;
+            _bombPrevNow = now;                             // 每幀都推進,detonate=false 時也要,才能把自動避雷期間的跨線消化掉
             int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, now + retire);
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int i = _firstAlive; i < hi; i++)
             {
                 var n = _notes[i];
                 if (n.Done || !n.Note.IsBomb) continue;
-                double dt = now - n.Note.StartTimeMs;   // >0：炸彈已過判定線
-                if (dt > retire) { n.Done = true; continue; }   // 安全通過 → 消失
-                if (dt < -win || dt > win) continue;            // 不在引爆窗內 → 踩著也不炸
+                double t = n.Note.StartTimeMs;
+                if (now - t > retire) { n.Done = true; continue; }   // 早已通過 → 消失
+                if (!detonate) continue;                             // 自動避雷:只推進/退場,不引爆
+                if (!(prev < t && t <= now)) continue;               // 只在「這一幀剛跨過判定線」時檢查一次(嚴格 < 防重複)
                 bool held = false;
                 foreach (var k in laneKeys[n.Note.Lane]) if (Input.GetKey(k)) { held = true; break; }
-                if (held) ExplodeBomb(n);
+                if (held) ExplodeBomb(n);                            // 跨線瞬間手指壓在該軌上 → 引爆(= CrossedMineRow + IsButtonDown)
             }
         }
 
@@ -5230,7 +5260,7 @@ namespace Sdo.Game
         {
             PlaySe(MineSeName);                       // StepMania theme 的爆炸音 (DATA/SE/player_mine.wav)
             SpawnBombExplosion(n.Note.Lane);          // StepMania 的 HitMine 爆炸圖 (不是受擊線按下動畫)
-            ApplyEvent(Judgment.Miss, n.Note.Lane);   // 踩炸彈 = 斷連/扣血(比照 miss)
+            ApplyEvent(Judgment.Miss, n.Note.Lane, tally: false);   // 踩炸彈 = 斷連/扣血,但不多算一次 miss
             n.Done = true;                            // 引爆後移除
         }
 
@@ -5274,14 +5304,19 @@ namespace Sdo.Game
             if (sr != null) Destroy(sr.gameObject);
         }
 
-        private void ApplyEvent(Judgment j, int lane = -1)
+        // tally=false:只斷 combo + 扣血 + 記一次 block break(給跳舞判定用),但**不**算成一次 miss ——
+        // 不進判定統計、也不彈「MISS」字樣、不觸發整排紅閃。炸彈專用:踩到炸彈只該掉血、斷連,
+        // 它本身有爆炸特效+踩雷音當回饋(比照 StepMania HitMine,雷不出 MISS 判定)。見 ExplodeBomb。
+        private void ApplyEvent(Judgment j, int lane = -1, bool tally = true)
         {
-            _score.Apply(j); _health.Apply(j);
+            if (tally) _score.Apply(j);
+            else _score.BreakCombo();   // 炸彈:斷 combo 但不計入 MissCount/flat score
+            _health.Apply(j);
             if (showtimeMode) _showtime.OnJudge(j);                               // ShowTime: fill the gauge (normal) or accrue the bonus (in a window)
             UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins
             _blockHadNote = true;                                                // a note was judged this block (-> not an empty block)
             if (j == Judgment.Bad || j == Judgment.Miss) _blockHadBreak = true;   // break -> NOT stopped now; the dancer is re-decided at the next 8-beat settlement
-            _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;
+            if (tally) { _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time; }   // 炸彈不彈判定字樣(它有自己的爆炸特效)
             if (lane >= 0 && (j == Judgment.Perfect || j == Judgment.Cool))   // tap: fire immediately, may overlap
             {
                 if (_hit3dMode) SpawnHit3d(lane);                              // 3D skin: real AU_HIT.EFT burst at the receptor
@@ -5289,7 +5324,7 @@ namespace Sdo.Game
             }
             // 3D skin: the official has NO lane click-strip glow on press and NO red board flash on miss — suppress both.
             if (lane >= 0 && j != Judgment.Miss && !_note3dMode) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
-            if (j == Judgment.Miss && !_note3dMode) TriggerMissFlash();                     // miss: flash ALL four lane strips red once
+            if (tally && j == Judgment.Miss && !_note3dMode) TriggerMissFlash();            // 炸彈不觸發整排紅閃(避免看起來像多一個 miss)
         }
 
         // Every 8 beats (the score-settlement cadence) re-decide whether the dancer keeps dancing — a break NEVER

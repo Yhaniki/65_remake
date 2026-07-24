@@ -88,6 +88,20 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        /// <summary>As <see cref="AnSoloAA"/> but for the ROUND ICON buttons in the top head-bar (設定/邀請/返回/交易/天使 —
+        /// 34px CommonButtonNew discs with a wide SOFT AA rim). Uses <see cref="SdoExtracted.LoadAnSoloCircleMip"/>: a
+        /// smoothstep circular edge (halo trimmed) THEN supersample, so the round rim stays smooth (the plain AnSoloAA
+        /// α&lt;128→0 clip binarises the soft rim → jagged/破碎). Falls back to AnSoloAA if the solo crop fails.</summary>
+        public static Sprite AnSoloCircleAA(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "circ:" + anName;
+            if (_aaCache.TryGetValue(key, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSoloCircleMip(Dir, anName, pad: 0) ?? AnSoloAA(anName);
+            _aaCache[key] = s;
+            return s;
+        }
+
         public static Sprite AnExtractedFirst(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;

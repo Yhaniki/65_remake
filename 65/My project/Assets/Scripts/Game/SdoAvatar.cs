@@ -28,6 +28,13 @@ namespace Sdo.Game
         // (full TRS). Used to carry a rigid (no-weight) mapobj mesh on a single bone so its .mot plays (e.g. a screen
         // that spins 360° yaw). The target is parented under this avatar's transform, so it picks up the instance pose.
         private readonly List<(int bone, Transform t, bool applyBindScale)> _boneFollowers = new List<(int, Transform, bool)>();
+        // Rest-relative "skin" followers: each frame the target's LOCAL transform = the bone's REST-RELATIVE rigid motion
+        // (animWorld·invBindWorld — identity at the bind pose). Unlike _boneFollowers (full bone TRS, which double-offsets a
+        // child authored in body model space), this lets a prop AUTHORED in body model space — the animated _G wing rig,
+        // whose root sits at the back attach point — rigidly TRACK a body bone: at bind it stays at its authored spot, and
+        // as the body idle bobs / walks / leans, the wing follows that bone. (Fixes "翅膀沒跟著身體上下動" — the old identity
+        // mount pinned the rig to the static body root, so the idle's vertical bob detached it.) Body-shape scale excluded.
+        private readonly List<(int bone, Transform t)> _skinFollowers = new List<(int, Transform)>();
         // Like _boneFollowers, but instead of a TRS Transform (which Unity decomposes into rotation+lossyScale and
         // CANNOT reconstruct a rotation+non-uniform-scale matrix — a spinning DING wheel sheared/squished each frame),
         // these BAKE the bone's FULL model-space matrix into the mesh verts every frame (faithful for any matrix).
@@ -307,6 +314,24 @@ namespace Sdo.Game
             if (bone >= 0 && t != null) _boneFollowers.Add((bone, t, applyBindScale));
         }
 
+        /// <summary>Number of skeleton bones (for iterating <see cref="BoneBindModelPos"/> to pick an attach bone).</summary>
+        public int BoneCount => _hrc != null && _hrc.InvBindWorld != null ? _hrc.InvBindWorld.Length : 0;
+
+        /// <summary>Model-space (bind pose) position of <paramref name="bone"/> — lets a caller pick the body bone nearest
+        /// a prop's authored anchor (e.g. the wing rig's back attach point) without hard-coding a bone name.</summary>
+        public Vector3 BoneBindModelPos(int bone)
+            => (_hrc != null && _hrc.InvBindWorld != null && bone >= 0 && bone < _hrc.InvBindWorld.Length)
+                ? (Vector3)_hrc.InvBindWorld[bone].inverse.GetColumn(3) : Vector3.zero;
+
+        /// <summary>Make <paramref name="t"/> rigidly follow <paramref name="bone"/>'s REST-RELATIVE motion each frame
+        /// (identity at the bind pose), so a child authored in this avatar's body model space (the animated <c>_G</c> wing
+        /// rig) stays glued to that bone as the body animates — without the double-offset a full-TRS
+        /// <see cref="AddBoneFollower"/> would cause. Body-shape scale is excluded (clean rotation+translation follow).</summary>
+        public void AddSkinFollower(int bone, Transform t)
+        {
+            if (bone >= 0 && t != null) _skinFollowers.Add((bone, t));
+        }
+
         /// <summary>Rigidly attach a mesh to a bone by BAKING the bone's full model-space matrix into the mesh verts each
         /// frame (no TRS decomposition) — use for animated rigid props that ROTATE on a scaled chain, where a Transform
         /// follower would shear/squish (the SCN0011 DING wheel). <paramref name="mesh"/> is a per-instance clone whose
@@ -332,6 +357,24 @@ namespace Sdo.Game
                 for (int i = 0; i < n; i++) dst[i] = m.MultiplyPoint3x4(src[i]);
                 mesh.vertices = dst;
                 mesh.RecalculateBounds();
+            }
+        }
+
+        // Drive each rest-relative follower from animWorld·invBindWorld (= the bone's motion DELTA from its bind pose —
+        // identity at bind, so a child authored in body model space stays at its authored spot at rest and tracks the bone
+        // as the body animates). Body-shape scale is excluded → a clean rigid (rotation+translation) follow. Called from
+        // Pose after the FK loop, on both the CPU and GPU paths (same site as UpdateBoneFollowers).
+        private void UpdateSkinFollowers()
+        {
+            if (_skinFollowers.Count == 0 || _animWorld == null || _hrc == null || _hrc.InvBindWorld == null) return;
+            for (int k = 0; k < _skinFollowers.Count; k++)
+            {
+                var (bone, t) = _skinFollowers[k];
+                if (t == null || bone < 0 || bone >= _animWorld.Length || bone >= _hrc.InvBindWorld.Length) continue;
+                Matrix4x4 m = _animWorld[bone] * _hrc.InvBindWorld[bone];
+                t.localPosition = m.GetColumn(3);
+                t.localRotation = m.rotation;
+                t.localScale = Vector3.one;
             }
         }
 
@@ -527,6 +570,7 @@ namespace Sdo.Game
                                             : _animWorld[i] * _hrc.InvBindWorld[i];
             }
             UpdateBoneFollowers();   // rigid mapobj props carried on a single bone (e.g. the spinning sea screen)
+            UpdateSkinFollowers();   // rest-relative followers — the animated _G wing rig tracks the body's back bone (idle bob/walk)
             UpdateMeshBakers();      // rotation-on-scaled-chain props (DING wheel) — bake the full matrix, no TRS shear
             if (GpuSkinning) { WriteGpuBones(); _haveDisp = true;   // GPU: drive the SMR bones; the GPU does the vertex blend
                 foreach (var (bone, at) in _anchors) if (at) at.position = transform.TransformPoint((Vector3)_animWorld[bone].GetColumn(3));

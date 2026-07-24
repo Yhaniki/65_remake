@@ -41,6 +41,9 @@ namespace Sdo.UI.Util
 
         public int Index => _index;
 
+        /// <summary>True while the dropdown list is expanded (used by hosts to peel it on ESC before closing themselves).</summary>
+        public bool IsOpen => _popup != null;
+
         /// <summary>
         /// Build a collapsed dropdown: a value slot at (slotX,slotY,slotW,slotH) with the ▲ arrow at arrowX.
         /// <paramref name="valueSprites"/> (optional) renders each option as a sprite instead of text.

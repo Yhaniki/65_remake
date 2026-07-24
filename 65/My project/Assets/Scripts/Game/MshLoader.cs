@@ -42,6 +42,17 @@ namespace Sdo.Game
         public const uint MatFlagTransparentMask = 0x3fu;
 
         private const int MatFlagsOff = 0x194;   // flags dword within the 408-byte material record
+
+        /// <summary>Upper bound on the submesh count read from the header (offset 12). This is only a cheap early
+        /// reject against a corrupt/garbage count in a non-mesh buffer that happens to share the "Mesh00000030" magic —
+        /// the parse loop is self-terminating (a bad submesh breaks it, <see cref="ScanNextSubmesh"/> stops at EOF), so
+        /// it is NOT a correctness limit. Most avatar parts are 1–4 submeshes, but a few complex MOUNTS ship far more:
+        /// 029157_WOMAN_CHIBANG「FLY Sheep Sled F」(綿羊雪橇) is 56 submeshes — a sled+sheep+harness authored as 55 rigid
+        /// stage-prop submeshes (fvf 0x112, rendered verbatim) plus 1 skinned. The former cap of 16 made
+        /// <see cref="Load"/> return null for it → the item's shop card / room wing rendered nothing. 128 covers every
+        /// shipped avatar mesh (verified: the max on disk is that 56) with &gt;2× headroom.</summary>
+        public const int MaxSubmeshCount = 128;
+
         public sealed class Result { public List<SubMesh> Submeshes = new List<SubMesh>(); }
 
         private sealed class Range { public int Attrib, FStart, FCount, VStart, VCount; public int[] PalHrc; }
@@ -51,7 +62,7 @@ namespace Sdo.Game
             if (d == null || d.Length < 16 || System.Text.Encoding.ASCII.GetString(d, 0, 12) != "Mesh00000030") return null;
             int p = 12;
             int submeshCount = (int)U32(d, ref p);
-            if (submeshCount <= 0 || submeshCount > 16) return null;
+            if (submeshCount <= 0 || submeshCount > MaxSubmeshCount) return null;
             var res = new Result();
             for (int s = 0; s < submeshCount; s++)
             {
@@ -75,7 +86,7 @@ namespace Sdo.Game
             if (d == null || d.Length < 16 || System.Text.Encoding.ASCII.GetString(d, 0, 12) != "Mesh00000030") return res;
             int p = 12;
             int submeshCount = (int)U32(d, ref p);
-            if (submeshCount <= 0 || submeshCount > 16) return res;
+            if (submeshCount <= 0 || submeshCount > MaxSubmeshCount) return res;
             for (int s = 0; s < submeshCount; s++)
             {
                 if (!ReadSubmeshMaterialNames(d, ref p, res)) break;
@@ -163,7 +174,7 @@ namespace Sdo.Game
             if (d == null || d.Length < 16 || System.Text.Encoding.ASCII.GetString(d, 0, 12) != "Mesh00000030") return res;
             int p = 12;
             int submeshCount = (int)U32(d, ref p);
-            if (submeshCount <= 0 || submeshCount > 16) return res;
+            if (submeshCount <= 0 || submeshCount > MaxSubmeshCount) return res;
             var names = new List<string>();
             for (int s = 0; s < submeshCount; s++)
             {

@@ -64,6 +64,48 @@ namespace Sdo.Tests
             Assert.AreEqual(EquipSlot.Outfit, Item(1, ItemCategory.OutfitMixed).EquipSlot);      // 203 = 混性別套装
         }
 
+        // ---- 非衣服的 2D 商品 (道具店 / 伙伴店 / 礼包店)。category 值取自實檔 iteminfo.dat 的分布 ----
+
+        [Test]
+        public void PropCategories_MapToTheirShopPage()
+        {
+            Assert.AreEqual(EquipSlot.Consumable, Item(1, ItemCategory.MainConsumables).EquipSlot);  // 21000 功能道具 (小喇叭)
+            Assert.AreEqual(EquipSlot.Potion,     Item(1, ItemCategory.Potions).EquipSlot);          // 22000 药水 (胖胖/纤瘦)
+            Assert.AreEqual(EquipSlot.Effect,     Item(1, ItemCategory.AvatarEffects).EquipSlot);    // 24000 人物特效 (背景卡)
+            Assert.AreEqual(EquipSlot.GiftPack,   Item(1, ItemCategory.GiftPacks).EquipSlot);        // 14000 礼包
+            Assert.AreEqual(EquipSlot.Pet,        Item(1, ItemCategory.Pets).EquipSlot);             // 41000 宠物
+            Assert.AreEqual(EquipSlot.PetHead,    Item(1, ItemCategory.PetHeadwear).EquipSlot);      // 42000 宠物头饰
+            Assert.AreEqual(EquipSlot.PetClothes, Item(1, ItemCategory.PetClothes).EquipSlot);       // 43000 宠物衣服
+            Assert.AreEqual(EquipSlot.PetProp,    Item(1, ItemCategory.PetProps).EquipSlot);         // 44000 宠物道具 (饼干)
+        }
+
+        [Test]
+        public void Props_GoToItemsBucket_AndHaveNoMesh()
+        {
+            foreach (var cat in new[] { ItemCategory.MainConsumables, ItemCategory.Potions, ItemCategory.AvatarEffects,
+                                        ItemCategory.GiftPacks, ItemCategory.Pets, ItemCategory.PetHeadwear,
+                                        ItemCategory.PetClothes, ItemCategory.PetProps })
+            {
+                var it = Item(100, cat);
+                Assert.IsTrue(it.IsProp, "cat " + cat + " 應是 2D 商品");
+                Assert.AreEqual(ItemSlotType.Items, it.SlotType, "cat " + cat + " 應進背包桶");
+                Assert.IsNull(it.MshRelPath, "cat " + cat + " 不該有 avatar mesh");
+            }
+            Assert.IsFalse(Item(100, ItemCategory.TopFemale).IsProp);   // 衣服不是 2D 商品
+        }
+
+        [Test]
+        public void Stackable_OnlyConsumables()
+        {
+            Assert.IsTrue(Item(1, ItemCategory.MainConsumables).IsConsumable);   // 道具會疊
+            Assert.IsTrue(Item(1, ItemCategory.Potions).IsConsumable);           // 藥水會疊
+            Assert.IsTrue(Item(1, ItemCategory.PetProps).IsConsumable);          // 寵物食物會疊
+            Assert.IsTrue(Item(1, ItemCategory.GiftPacks).IsConsumable);         // 禮包會疊
+            Assert.IsFalse(Item(1, ItemCategory.Pets).IsConsumable);             // 寵物本體只擁有一份
+            Assert.IsFalse(Item(1, ItemCategory.AvatarEffects).IsConsumable);    // 人物特效只擁有一份
+            Assert.IsFalse(Item(1, ItemCategory.TopFemale).IsConsumable);        // 衣服不是消耗品
+        }
+
         [Test]
         public void GenderOf_Outfit_FromNameForMixedCategory()
         {

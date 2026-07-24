@@ -5,6 +5,11 @@ Desktop.ini
 
 # Local machine-specific data-root override (SdoExtracted.ConfiguredRoot) — points the game at a prepared DATA tree
 data_root.txt
+# 本機用 junction 組出來的 DATA 樹 + 其掛載清單 (tools/link_data_root.ps1 重建；含絕對路徑，不入庫)
+/DATA/
+/DATA_MANIFEST.csv
+# 載入追蹤輸出 (SDO_TRACE_LOADS) — 用來抽「乾淨資料包」
+/used_files*.txt
 
 # IDE / Editor
 .vs/
@@ -144,3 +149,6 @@ procmon_tool/runs/
 
 # gn_note_export 的輸出（5MB 生成檔，隨時能用 dotnet run --project tools/gn_note_export 重跑）
 tools/kgn_export/gn_notes.json
+
+# 開發過程的手動截圖（個人存檔，不入庫）
+/65/My project/screensave/

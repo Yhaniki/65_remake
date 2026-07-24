@@ -57,6 +57,50 @@ namespace Sdo.Tests
             Assert.AreEqual(0, glow, "no partially-transparent bright-cyan texels should remain (outer glow must be clipped)");
         }
 
+        // The top head-bar round ICON buttons (設定/邀請/返回/交易/天使) are 34px CommonButtonNew discs whose rim is a WIDE
+        // SOFT AA edge (α 145→87→30 over ~3 rings). Feeding them through the plain-mip α<128→0 clip BINARISES that rim into
+        // a 1-bit circle → the edge reads jagged/破碎 (使用者回報「右上角圓形按鈕邊緣非常破碎」). LoadAnSoloCircleMip runs
+        // CircleMask (smoothstep round edge, halo trimmed) and supersamples WITHOUT clipping, so the soft rim survives.
+        private const string HeadBarDisc = "BtnHeadOption_1";   // the gear/settings disc (a CommonButtonNew 34px round button)
+
+        [Test]
+        public void LoadAnSoloCircleMip_HeadBar_IsSupersampledMipmappedTrilinear()
+        {
+            var dir = RoomDir();
+            if (dir == null) Assert.Ignore("ROOM art not present in this environment.");
+            var solo = SdoExtracted.LoadAnSolo(dir, HeadBarDisc, 0);
+            var sprite = SdoExtracted.LoadAnSoloCircleMip(dir, HeadBarDisc, 0);
+            if (solo == null || sprite == null) Assert.Ignore("head-bar disc crop not present.");
+            int ss = SdoExtracted.ButtonSupersample;
+            Assert.Greater(sprite.texture.mipmapCount, 1, "circular-AA texture must carry a mip chain");
+            Assert.AreEqual(FilterMode.Trilinear, sprite.texture.filterMode, "must sample trilinear across mips");
+            Assert.AreEqual(solo.rect.width * ss, sprite.texture.width, "texture width should be SS× the crop");
+            Assert.AreEqual((float)ss, sprite.pixelsPerUnit, "ppu = SS so it displays at the logical size");
+        }
+
+        [Test]
+        public void LoadAnSoloCircleMip_HeadBar_KeepsSoftRim_NotBinarised()
+        {
+            // The FIX: the circular path must preserve a SOFT anti-aliased rim, unlike the clip path which binarises it.
+            // Count transition (mid-alpha) texels on each SS'd texture — the smoothstep rim yields far more than a
+            // clipped-then-upsampled 1-bit edge. Strictly more mid-alpha ⇒ the round edge is smooth, not stair-stepped.
+            var dir = RoomDir();
+            if (dir == null) Assert.Ignore("ROOM art not present in this environment.");
+            var circ = SdoExtracted.LoadAnSoloCircleMip(dir, HeadBarDisc, 0);
+            var clip = SdoExtracted.LoadAnSoloMip(dir, HeadBarDisc, 0);
+            if (circ == null || clip == null) Assert.Ignore("head-bar disc crop not present.");
+
+            int Mid(Sprite s)
+            {
+                int n = 0;
+                foreach (var c in s.texture.GetPixels32()) if (c.a >= 40 && c.a <= 215) n++;
+                return n;
+            }
+            int circMid = Mid(circ), clipMid = Mid(clip);
+            Assert.Greater(circMid, 0, "circular path must keep a soft AA rim (mid-alpha texels present)");
+            Assert.Greater(circMid, clipMid, "circular smoothstep rim must be softer (more transition texels) than the binarised clip edge");
+        }
+
         [Test]
         public void LoadAnSolo_Room15_IsPlainNativeBilinear()
         {

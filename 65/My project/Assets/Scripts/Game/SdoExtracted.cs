@@ -328,7 +328,7 @@ namespace Sdo.Game
         /// <paramref name="bleed"/> dilates the transparent-white matte to remove the bilinear white halo on edges.</summary>
         public static Sprite[] LoadAn(string folder, string anName, bool bleed = false)
         {
-            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return new Sprite[0];
             var frames = ParseAnText(File.ReadAllText(anPath));
             var sprites = new List<Sprite>(frames.Count);
@@ -377,6 +377,14 @@ namespace Sdo.Game
         public static Sprite LoadAnSoloMip(string folder, string anName, int pad = 0)
             => LoadAnSoloImpl(folder, anName, pad, circular: false, mip: true);
 
+        /// <summary>As <see cref="LoadAnSoloMip"/> but for ROUND ICON buttons whose disc has a wide SOFT anti-aliased rim
+        /// (房間右上角 head-bar:設定/邀請/返回/交易/天使 — 34px CommonButtonNew discs). The plain-mip α&lt;128→0 clip binarises
+        /// that soft rim → a jagged/破碎 circle; instead this runs <see cref="CircleMask"/> (a smoothstep round edge fitted
+        /// to the disc radius, halo trimmed) and THEN supersamples, so the round edge stays smooth AND crisp when the
+        /// 800×600 design is magnified fullscreen. Falls back to the plain mip button path if the crop fails.</summary>
+        public static Sprite LoadAnSoloCircleMip(string folder, string anName, int pad = 0)
+            => LoadAnSoloImpl(folder, anName, pad, circular: true, mip: true);
+
         /// <summary>Supersample factor for room-button textures (see <see cref="LoadAnSoloMip"/>). 3× keeps the button
         /// crisp from 1:1 up to ~3× fullscreen stretch; higher just costs memory (a 73px crop → 219²·RGBA·mips ≈ 255 KB).</summary>
         public const int ButtonSupersample = 3;
@@ -388,7 +396,7 @@ namespace Sdo.Game
 
         private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false)
         {
-            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
             var frames = ParseAnText(File.ReadAllText(anPath));
             if (frames.Count == 0) return null;
@@ -414,6 +422,18 @@ namespace Sdo.Game
             {
                 AlphaFlood(outTex);  // flood orb colour into the ENTIRE transparent region → no white RGB left to bleed
                 CircleMask(outTex);  // soft inscribed-circle alpha cut-off → clean round edge under magnification
+                if (mip)
+                {
+                    // Round ICON buttons (房間右上角 head-bar:設定/邀請/返回/交易/天使…) are 34px CommonButtonNew discs
+                    // with a genuine ~3px SOFT AA rim (α 145→87→30 over three rings). The non-circular mip path's
+                    // α<128→0 clip would BINARISE that rim into a 1-bit circle → jagged/破碎 at the fullscreen-magnified
+                    // 800×600 design. CircleMask already gave a clean smoothstep round edge (halo trimmed); supersample it
+                    // the SAME way as the plain button path so it stays crisp when stretched — NO α-clip, the smoothstep IS
+                    // the anti-aliasing we must keep. (Room15-style near-1-bit discs stay on the clip path via mip-only.)
+                    int ssc = ButtonSupersample;
+                    var upc = UpsampleBilinear(outTex.GetPixels32(), W, H, ssc);
+                    return Sprite.Create(upc, new Rect(0, 0, W * ssc, H * ssc), new Vector2(0.5f, 0.5f), ssc, 0, SpriteMeshType.FullRect);
+                }
                 return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
             }
             if (mip)
@@ -479,7 +499,7 @@ namespace Sdo.Game
         /// texture keeps this off the shared BALANCE.png atlas (the OK/SAVE buttons crop it too and stay straight-alpha).</summary>
         public static Sprite LoadAnSoloPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
         {
-            var anPath = Path.Combine(folder, anName.EndsWith(".an") ? anName : anName + ".an");
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
             var frames = ParseAnText(File.ReadAllText(anPath));
             if (frames.Count == 0) return null;

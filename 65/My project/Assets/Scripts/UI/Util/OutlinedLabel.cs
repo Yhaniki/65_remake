@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Sdo.Game;
 using TMPro;
 using UnityEngine;
@@ -22,6 +23,7 @@ namespace Sdo.UI.Util
         private float _edgePx;
         private int _lastW, _lastH;
         private AspectMode _lastMode;
+        private Vector2[] _dirs = Dirs16;    // edge-copy directions (Create=16-ring; CreateRich picks its own count)
 
         /// <summary>The front-face text (read-only access for callers that need the TMP itself).</summary>
         public TextMeshProUGUI Face => _face;
@@ -66,6 +68,7 @@ namespace Sdo.UI.Util
 
             var ol = holder.gameObject.AddComponent<OutlinedLabel>();
             ol._edgePx = edgePx;
+            ol._dirs = Dirs16;
             ol._edges = new TextMeshProUGUI[Dirs16.Length];
             for (int i = 0; i < Dirs16.Length; i++)           // edges first → they sit BEHIND the face (UGUI sibling order)
                 ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale, charSpacing);
@@ -87,6 +90,50 @@ namespace Sdo.UI.Util
             return t;
         }
 
+        // <color=..>/</color> and the <#rrggbb[aa]> shorthand — the ONLY colour markup our chat lines emit. Stripping
+        // it (and nothing else: <noparse>, <link> stay) lets the edge copies render the exact same glyphs in a single
+        // solid colour, so a green/cyan/white rich line still gets a truly BLACK ring instead of tinted offset ghosts.
+        private static readonly Regex ColorTagRx =
+            new Regex(@"</?color[^>]*>|<#[0-9a-fA-F]{3,8}>", RegexOptions.IgnoreCase);
+
+        /// <summary>Remove TMP colour markup from <paramref name="s"/>, leaving every other tag intact. Pure — unit-tested.</summary>
+        public static string StripColorTags(string s)
+            => string.IsNullOrEmpty(s) ? (s ?? "") : ColorTagRx.Replace(s, "");
+
+        /// <summary>Outline a RICH-TEXT line (colour tags, <c>&lt;link&gt;</c>, <c>&lt;noparse&gt;</c> preserved): the face keeps
+        /// the markup, the <paramref name="dirs"/> edge copies get the same string with colour tags stripped so they draw a
+        /// solid <paramref name="edge"/>-coloured ring. Used for the room's bottom-left chat log, whose transparent backing
+        /// lets the small coloured text blend into the busy 3D room. The holder carries no LayoutElement — the caller sets
+        /// its layout (VLG preferredHeight / HLG preferredWidth) exactly as it did for the bare TMP it replaces. Returns the
+        /// component; <see cref="Face"/> is the front TMP (measure it, or wire name-link clicks onto it).</summary>
+        public static OutlinedLabel CreateRich(Transform parent, string name, string rich, float size,
+            Color32 edge, float edgePx, int dirs, bool wrap = true,
+            TextAlignmentOptions align = TextAlignmentOptions.TopLeft)
+        {
+            var holder = UIKit.NewRect(parent, name);
+            var ol = holder.gameObject.AddComponent<OutlinedLabel>();
+            ol._edgePx = edgePx;
+            ol._dirs = NameplateMetrics.Ring(1f, Mathf.Max(1, dirs));
+            ol._edges = new TextMeshProUGUI[ol._dirs.Length];
+            string edgeText = StripColorTags(rich);
+            for (int i = 0; i < ol._dirs.Length; i++)         // edges first → behind the face (UGUI sibling order)
+                ol._edges[i] = MakeRich(holder, "Edge" + i, edgeText, size, edge, wrap, align);
+            ol._face = MakeRich(holder, "Face", rich, size, Color.white, wrap, align);   // <color> tags override white where present
+            ol.ApplyEdgeOffsets(true);
+            return ol;
+        }
+
+        private static TextMeshProUGUI MakeRich(Transform parent, string name, string text, float size, Color32 color, bool wrap, TextAlignmentOptions align)
+        {
+            var t = UIKit.AddText(parent, name, text, size, color, align, wrap);
+            t.richText = true;
+            var rt = t.rectTransform;
+            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;   // stretch to the holder; edges get shifted by ApplyEdgeOffsets
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            return t;
+        }
+
         private void LateUpdate() => ApplyEdgeOffsets(false);         // labels live across fullscreen toggles
 
         /// <summary>(Re)apply the edge-copy offsets, compressing x by the current stretch anisotropy so the
@@ -102,7 +149,7 @@ namespace Sdo.UI.Util
             {
                 if (_edges[i] == null) continue;
                 var rt = _edges[i].rectTransform;
-                Vector2 o = NameplateMetrics.Compensate(Dirs16[i] * _edgePx, ax);
+                Vector2 o = NameplateMetrics.Compensate(_dirs[i] * _edgePx, ax);
                 rt.offsetMin = o;                                     // shift the whole stretched rect by the offset
                 rt.offsetMax = o;
             }

@@ -34,6 +34,12 @@ MESH_CATS = {1,2,3,4,5,6,7,8,9,50, 101,102,103,104,105,106,107,108,109,150}
 SLOT = {1:"髮型",2:"上衣",3:"下裝",4:"手套",5:"鞋子",6:"表情",7:"眼鏡",8:"翅膀",9:"项链",50:"連身",
         101:"髮型",102:"上衣",103:"下裝",104:"手套",105:"鞋子",106:"表情",107:"眼鏡",108:"翅膀",109:"项链",150:"連身"}
 
+# 道具店 + 禮包店 rows. The TW「櫻式搖滾」client has NONE of these categories, so their Traditional
+# names cannot come from an official TW build — they are taken from the CN client (--cn-in) and
+# converted Simplified→Traditional with OpenCC s2twp (same config as tools/convert_shop_names_s2t.py).
+PROP_CATS = {14000: "禮包", 21000: "道具", 22000: "藥水", 24000: "特效"}
+DEFAULT_CN_IN = os.path.join(REPO, "assets", "閉撰敃氪", "iteminfo.dat")
+
 
 def crypt(b): return (0x1F9 - b) & 0xFF
 
@@ -109,6 +115,8 @@ def parse_setinfo(path, encs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", default=DEFAULT_IN)
+    ap.add_argument("--cn-in", dest="cn_in", default=DEFAULT_CN_IN,
+                    help="CN client iteminfo for 道具/禮包 names (converted S→T); pass '' to skip")
     ap.add_argument("--out", dest="out", action="append", default=None)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -151,6 +159,34 @@ def main():
         seen[key] = name
         kept.append((cat, modelId, name))
         per[cat] = per.get(cat, 0) + 1
+
+    # ---- 道具店 + 禮包店 rows from the CN client, Simplified→Traditional (OpenCC s2twp) ----
+    prop_per = {}
+    if args.cn_in and os.path.isfile(args.cn_in):
+        cc = None
+        try:
+            import opencc
+            cc = opencc.OpenCC("s2twp")
+        except Exception as e:
+            print("[tw] WARNING: opencc unavailable (%s) — 道具/禮包 names skipped" % e)
+        if cc is not None:
+            cn_rows, _ = parse(args.cn_in)
+            seen_prop = set()
+            for iid, modelId, cat, name in cn_rows:
+                # props/gift packs have no 900xxx default-mesh problem, so the clothing <900000 cap
+                # does NOT apply — some real 道具 sit at modelId 112xxxx (神奇大禮盒/蛋糕/棒棒糖…).
+                if cat not in PROP_CATS or not name or modelId <= 0:
+                    continue
+                key = (cat, modelId)
+                if key in seen_prop:          # dedup by (cat, modelId), first wins (dur/price SKUs share a name)
+                    continue
+                seen_prop.add(key)
+                kept.append((cat, modelId, cc.convert(name)))
+                prop_per[cat] = prop_per.get(cat, 0) + 1
+            print("[tw] 道具/禮包 from CN (%s): %s" % (os.path.basename(args.cn_in),
+                  "  ".join("%s=%d" % (PROP_CATS[c], prop_per.get(c, 0)) for c in (21000, 22000, 24000, 14000))))
+    elif args.cn_in:
+        print("[tw] WARNING: --cn-in not found (%s) — 道具/禮包 names skipped" % args.cn_in)
 
     kept.sort(key=lambda r: (r[0], r[1]))
     text = "".join("%d\t%d\t%s\n" % (c, m, n) for c, m, n in kept)

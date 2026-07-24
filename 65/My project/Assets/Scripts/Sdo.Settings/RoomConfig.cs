@@ -66,6 +66,7 @@ namespace Sdo.Settings
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
         public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了就不用去撿舊 settings.json）
+        public static bool hasFamilyKeys = false;   // 檔案是否帶家族/等級鍵（沒有＝舊檔 → Load 補寫模板，讓使用者有鍵可手改）
         public static bool hasOptUiScale = false;   // 檔案是否帶 opt_uiScale（舊檔沒有 → 從舊 settings.json 撿）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
         // 舊檔（config.ini 還帶鍵位的年代）的 4 鍵鍵位：只讀不寫，開機時給 KeyMap 種 keymaps.ini 用，見 KeyMap.Load。
@@ -84,6 +85,15 @@ namespace Sdo.Settings
         // ---- [Profile]：目前登入的本機角色（8 位數資料夾名）。以前是獨立的 active.txt，現在併進 config.ini。
         //      ""＝還沒決定 → ProfileManager.Boot 會挑一個並寫回。權威值仍由 ProfileManager 管，這裡只是落地欄位。----
         public static string activeId = "";
+
+        // ---- [Profile]：房間裡頭上名字牌要顯示的「家族 / 等級」（本機顯示；任一留空＝不顯示該項，見 RoomScreen 的頭上名字牌）----
+        // 家族名稱：白字描邊，畫在名字上方那一行。留空 → 整條家族列（徽章＋名稱）都不顯示。
+        public static string familyName = "";
+        // 家族名稱前的小徽章：DATA/EMBLEM 底下的檔名(不含副檔名，如 SMALL43)，預設 SMALL43。只在 familyName 非空時顯示；
+        // 這欄留空 → 只顯示家族名稱、不放徽章。
+        public static string familyEmblem = "SMALL43";
+        // 玩家等級：顯示成「LV:N」跟在名字後面。留空 → 不顯示等級。存字串，讓「留空＝不顯示」最自然（不必用哨兵值）。
+        public static string playerLevel = "";
 
         public const string FileName = "config.ini";
 
@@ -174,6 +184,9 @@ namespace Sdo.Settings
                     var legacyActive = ProfileManager.ReadLegacyActiveId();
                     if (!string.IsNullOrEmpty(legacyActive)) { activeId = legacyActive; dirty = true; }
                 }
+
+                // 舊 config.ini 沒有家族/等級鍵 → 補寫一次模板（含註解），讓使用者有鍵可手改（預設值＝留空不顯示）。
+                if (!hasFamilyKeys) dirty = true;
 
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
@@ -313,6 +326,9 @@ namespace Sdo.Settings
                 switch (key)
                 {
                     case "activeId": activeId = val; break;
+                    case "familyName": familyName = val; hasFamilyKeys = true; break;
+                    case "familyEmblem": familyEmblem = val; hasFamilyKeys = true; break;
+                    case "playerLevel": playerLevel = val; hasFamilyKeys = true; break;
                     case "speedSteps": speedSteps = ParseFloatList(val); break;
                     case "defaultSpeed": defaultSpeed = ParseFloat(val, defaultSpeed); break;
                     case "defaultNoteType": defaultNoteType = ParseInt(val, defaultNoteType); break;
@@ -375,6 +391,17 @@ namespace Sdo.Settings
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
             activeId = SanitizeActiveId(activeId);
+            // 家族/等級：純顯示字串，只去頭尾空白（前後空白對「留空＝不顯示」判定會造成假陽性）。
+            familyName = (familyName ?? "").Trim();
+            familyEmblem = (familyEmblem ?? "").Trim();
+            playerLevel = (playerLevel ?? "").Trim();
+        }
+
+        /// <summary>房間頭上的等級標籤文字：等級字串非空 → 「LV:{值}」（LV 兩字都大寫），留空 → 空字串（＝不顯示等級）。純函式。</summary>
+        public static string LevelLabel(string level)
+        {
+            level = (level ?? "").Trim();
+            return level.Length == 0 ? "" : "LV:" + level;
         }
 
         /// <summary>只認 8 位數編號（＝ DATA/PROFILE 下的角色資料夾名）；其它一律當「沒設定」。純函式。</summary>
@@ -397,6 +424,13 @@ namespace Sdo.Settings
             sb.Append("# 目前登入的角色＝ DATA/PROFILE/ 底下的 8 位數資料夾名（00000000=女 00000001=男）。\n");
             sb.Append("# 留空＝開遊戲時自動挑一個並寫回這裡。選角色畫面切換性別也會寫回這裡。\n");
             sb.Append("activeId=").Append(activeId ?? "").Append('\n');
+            sb.Append("# 房間裡頭上名字牌要顯示的「家族 / 等級」（本機顯示；任一留空＝不顯示該項）。\n");
+            sb.Append("# 家族名稱（白字描邊，畫在名字上方那行）。留空＝不顯示家族（連同下面的徽章一起隱藏）。\n");
+            sb.Append("familyName=").Append(familyName ?? "").Append('\n');
+            sb.Append("# 家族名稱前的小徽章：DATA/EMBLEM 底下的檔名(不含副檔名，如 SMALL43)，預設 SMALL43。留空＝只顯示名稱不放徽章。\n");
+            sb.Append("familyEmblem=").Append(familyEmblem ?? "").Append('\n');
+            sb.Append("# 玩家等級：顯示成「LV:N」跟在名字後面。留空＝不顯示等級。\n");
+            sb.Append("playerLevel=").Append(playerLevel ?? "").Append('\n');
 
             sb.Append('\n').Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
