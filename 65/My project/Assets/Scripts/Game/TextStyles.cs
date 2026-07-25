@@ -21,12 +21,12 @@ namespace Sdo.Game
         /// <see cref="Label3D"/> (per-char TextMesh layout) AND the room <c>OutlinedLabel</c> (TMP characterSpacing)
         /// so the two match. Value = fraction of an em REMOVED from every inter-character gap — TRUE tracking, glyphs
         /// keep full width (NOT a squash/condense). 0 = natural spacing; raise toward ~0.15 for tighter.</summary>
-        public const float HeadNameTrackEm = 0.15f;
+        public const float HeadNameTrackEm = 0.1f;
 
         /// <summary>Same true-tracking as <see cref="HeadNameTrackEm"/> but for the right-side ranking roster
         /// (name + score rows, <see cref="Style.ListLocal"/>/<see cref="Style.ListOther"/>). Independently tunable.
         /// 0 = natural spacing.</summary>
-        public const float RosterTrackEm = 0.15f;
+        public const float RosterTrackEm = 0.1f;
 
         /// <summary>True-tracking (em-fraction removed per inter-char gap) for the song-select list-row song names
         /// (TMP characterSpacing). 0 = natural spacing.</summary>

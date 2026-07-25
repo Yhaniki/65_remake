@@ -41,8 +41,8 @@ namespace Sdo.Game
         // (kill all variation) — wired to OPTION 進階「歌曲變速」關閉 (GameplaySettings.songSpeed == false).
         public float scrollSpeedMul = 2.5f;   // 速度 step (1.0..8.0); FrontendApp wires GameSession.Speed in
         // Room win2 "note" selection (GameSession.NoteType) → the gameplay skin applied at boot via SelectSkin.
-        // -2 = unset (standalone/F4 boot: keep stock); -1 = 隨機 (random skin); 0..10 = the specific note skin
-        // (0..9 = the 2D skins in NoteTypeEftSuffix order, 10 = the 3D hiteft3D skin) — same order as the room's NoteEftArt.
+        // -2 = unset (standalone/F4 boot: keep stock); -1 = 隨機 (random skin); 0..11 = the specific note skin
+        // (0..10 = the 2D skins in NoteTypeEftSuffix order, 11 = the 3D hiteft3D skin) — same order as the room's NoteEftArt.
         public int roomNoteType = -2;
         public float referenceBpm = 130f;     // base-tempo anchor when NOT following the song's BPM
         public bool scrollFollowsSongBpm = false; // true = base speed follows the song's own BPM (official px/s = BPM×speed×1.6); false = fixed referenceBpm for every song
@@ -548,6 +548,15 @@ namespace Sdo.Game
         // 向下置中：血條從頂端移到 note board 下面（受擊線在底部，血條跟著鏡射到底部框上；置中時橫向留在中央、避開左下歌名/右下LV）。
         private float _hpYOffset = 0f;             // 血條整組 Y 位移（design px）；ApplyPanelLayout 依模式設定
         public float hudHpDownYOffset = 552f;      // 向下置中的血條下移量（≈ 15→567，把頂端血條鏡射到板底）
+        // 向下（受擊線在板底）時「判定字 → COMBO 字樣 → 連段數字」**整組**上移，離下方的受擊線/音符遠一點。
+        // 負值＝往上（design y 往下長）。**三行必須用同一個位移**：它們的間距是照 JudgeWordCenter/ComboWordY/
+        // ComboDigitY 排好的一整叢，只搬其中一行就會把間距吃掉 —— 彈跳(pop)放到最大時判定字和 COMBO 會疊在一起。
+        private float _judgeComboYOffset = 0f;         // 目前生效的整組 Y 位移；ApplyPanelLayout 依掉落方式設定
+        public float hudJudgeComboDownYOffset = -20f;  // 向下模式的上移量（design px）
+        // 文字整體大小比例（config.ini [Room]，1.0 = 官方原尺寸）。comboTextScale 縮放的是「COMBO 字樣＋數字」整組
+        // （位置與字距一起等比例，見 UpdateComboDigits 的共用支點），judgeTextScale 縮放 PERFECT/COOL/BAD/MISS。
+        public float comboTextScale = Sdo.Settings.RoomConfig.comboTextScale;
+        public float judgeTextScale = Sdo.Settings.RoomConfig.judgeTextScale;
         public float burstSize = 1.3f;      // hit-burst size multiplier
         public float burstBright = 1.5f;    // hit-burst brightness (additive _TintColor; 1.0 = stock)
         public float holdDropDim = 0.5f;    // 中途放開(Bad/Miss)的長條不消失，改用這個亮度繼續流走 (0.5 = 50%)
@@ -587,24 +596,26 @@ namespace Sdo.Game
         // up-arrow → per-lane rotation (Unity Z, CCW+). Lanes: 0=left(←) 1=down(↓) 2=up(↑) 3=right(→).
         private static readonly float[] Note3dRot = { 90f, 180f, 0f, -90f };
         public bool note3dFlip180;                                   // F4 safety: +180° all note rotations if the glyph loads pointing the wrong way
-        public float receptor3dScale = 0.82f;                        // 3D receptor (JUDGELINE) size × ReceptorW — bumped to visually match the note mesh (sprite has more tile margin); × note3dMaster; F4-tunable
+        // 3D receptor (JUDGELINE) 顯示寬度 × ReceptorW × note3dMaster；F4 可調。
+        // 官方 JUDGELINE.MSH 與 NOTES.MSH 是**同一組頂點**（x ±10.9845 / z ±10.4824 完全相同）→ 受擊區箭頭跟落下的
+        // 音符**一樣大**。我們的受擊區畫的是整張 128px JUDGELINE 精靈，而 mesh 只覆蓋它 u 0.0217..0.9948（97.31%），
+        // 所以：精靈寬 = 音符寬 ÷ 0.9731 = (LaneW 82 × Note3dHighway.noteSize 0.73) ÷ 0.9731 ≈ 61.5 → ÷ ReceptorW 92
+        // ≈ 0.669。（舊值 0.82 是目測「補回精靈邊界」補過頭，實機看起來就是判定區圖案太大。）
+        public float receptor3dScale = 0.669f;
         public float note3dHoldWidth = 0.73f;                        // 3D hold body/cap width × LaneW (matches the 0.73 note mesh)
         public float note3dHoldHeadGap = 0f;                         // 3D hold body TOP offset from the note head (0 = connect; +px tucks the long lower)
         public float note3dCapOffset = 0f;                           // 3D tail-cap fine offset (design px) on top of the auto weld at the tail edge
-        // ── OFFICIAL LONG.MSH constants (reverse-engineered — FUN_0041a7e0 body rebuild + the mesh's baked vertices).
-        // The official hold draws the FULLY-OPAQUE LONG textures (ColorKey=0, zero transparent texels — the dark interior
-        // is meant to show; silhouette = geometry, NOT alpha): a body quad sampling ONLY U 0.2243..0.7683 of LONG_0_1
-        // (the fat outer silver rails sit OUTSIDE this band and are never drawn), V = 1 − z·0.03205128 anchored at the
-        // TAIL end (z in mesh units; texture repeats every 31.2 units on a 22.0074-wide strip → wrap addressing), plus a
-        // WELDED cap TRIANGLE (base ±11.0037 at z≈0, tip at z=−10.815) sampling LONG_0_0 v 0.5574→0.8939. The V anchor
-        // makes the chevrons stay glued to the cap; the junction rows of the two textures are identical → seamless.
-        private const float LongU0 = 0.2243f, LongU1 = 0.7683f;      // body U band (official mesh verts)
-        private const float LongVPerUnit = 0.03205128f;              // V per mesh z-unit (1/31.2)
-        private const float LongMeshW = 22.0074f;                    // strip width in mesh units (≈ note width 21.97)
-        private const float LongZBase = 0.0287f;                     // cap/body weld z
-        private const float LongCapLenRatio = 10.844f / 22.0074f;    // cap length ÷ strip width (tip z −10.8154 … base 0.0287)
-        private const float LongCapU0 = 0.2255f, LongCapU1 = 0.7666f, LongCapUTip = 0.4964f;
-        private const float LongCapV0 = 0.5574f, LongCapVTip = 0.8939f;
+        // ── OFFICIAL LONG.MSH constants. The official hold draws the FULLY-OPAQUE LONG textures (ColorKey=0, zero
+        // transparent texels — the dark interior is meant to show; silhouette = geometry, NOT alpha): a body quad
+        // sampling only the chevron band of LONG_0_1 (the fat outer silver rails sit OUTSIDE it and are never drawn),
+        // V = 1 − z·0.03205128 anchored at the TAIL end (z in mesh units; the texture repeats every 31.2 units on a
+        // 22.0074-wide strip → wrap addressing), plus a WELDED cap TRIANGLE (base ±11.0037 at z≈0, tip at z=−10.815)
+        // sampling LONG_0_0 v 0.5574→0.8939. The V anchor makes the chevrons stay glued to the cap.
+        // 規則與常數的推導都在 HoldBodyUv（純函式、有單元測試）；這裡只是本檔用的短別名。
+        private const float LongU0 = HoldBodyUv.U0, LongU1 = HoldBodyUv.U1;
+        private const float LongCapLenRatio = HoldBodyUv.CapLenRatio;
+        private const float LongCapU0 = HoldBodyUv.CapU0, LongCapU1 = HoldBodyUv.CapU1, LongCapUTip = HoldBodyUv.CapUTip;
+        private const float LongCapV0 = HoldBodyUv.CapV0, LongCapVTip = HoldBodyUv.CapVTip;
         private Texture2D _capTex;                                   // LONG_0_0 (opaque) — the cap triangle's texture
         private Material _capMeshMat;                                // shared material for all cap triangles (solid, opaque texture)
         private string _note3dDir;                                   // 3DNOTES dir (body/cap textures loaded from here)
@@ -2016,6 +2027,8 @@ namespace Sdo.Game
             _clipBottomY = layout.ClipBottomY;
             // 向下置中：血條移到 note board 下面（板底受擊線那頭）；其餘模式血條留頂端。
             _hpYOffset = (layout.Bottom && !notesPanelLeft) ? hudHpDownYOffset : 0f;
+            // 向下（含傾斜）：受擊線在板底，判定字＋COMBO＋數字整組往上讓開一點（左邊/置中都一樣）。
+            _judgeComboYOffset = layout.Bottom ? hudJudgeComboDownYOffset : 0f;
         }
 
         /// <summary>Arrange the surrounding HUD (大分數 / 粉紅名次 N/M / 小人名+分數名單 / 底部 LV·時間) around the note
@@ -2175,6 +2188,10 @@ namespace Sdo.Game
                 if (_receptors[c]) _receptors[c].enabled = on;
                 if (!on && _clickFlashSr[c] != null) _clickFlashSr[c].enabled = false;
             }
+            // 3D-mesh 音符不是 SpriteRenderer，不吃上面那些 enabled；而且藏板子之後 ScrollNotes 通常也不會再被呼叫
+            // （EnterResult → Update 直接 return），沒人幫它收 → 最後一幀的箭頭會留在畫面上。這裡直接收起整個 pool；
+            // 要再顯示不必做事，ScrollNotes 每幀都會自己打開。
+            if (!on && _highway != null) _highway.visible = false;
             SetRankingVisible(on);   // hide the roster list + rank during the opening hold / observe mode
         }
 
@@ -4859,7 +4876,10 @@ namespace Sdo.Game
                 {
                     float holdW = LaneW * (_note3dMode ? note3dHoldWidth * note3dMaster : 1f) * noteScale;   // 3D skin: hold width matches the note, scaled by the master (+ showtime grow)
                     float cx = PX(LaneLeftX[c] + 34.5f);
-                    float tailY = Mathf.Max(y, yEnd);                                   // true tail edge (below the head in upscroll)
+                    // 尾端 = 離判定線最遠的那一頭（帽子焊在這裡，貼圖也以這裡為錨）。向上捲時在下方(較大 design y)，
+                    // 向下捲時在上方(較小 y) —— 舊版一律取 Max，於是 向下 模式錨到了「頭」那一端，造成兩個 bug：
+                    // ① 圖樣方向跟帽子相反；② 頭被按住釘在判定線、長條又長到兩端都被裁時，兩個 V 都變常數 → 整條凍住不捲動。
+                    float tailY = HoldBodyUv.TailY(y, yEnd, _scrollSign);
                     if (_note3dMode)
                     {
                         // OFFICIAL cap = a welded TRIANGLE at the tail end (LONG.MSH verts 0/1/2), pointing away from the
@@ -4868,11 +4888,10 @@ namespace Sdo.Game
                         if (n.Cap3d == null && _capMeshMat != null) n.Cap3d = CreateHoldCap();
                         if (n.Cap3d != null)
                         {
-                            // cap sits at the note's END on the side AWAY from the judge line. 向下 (down-scroll): the tail
-                            // is ABOVE the head → take the min edge, push the offset the other way, and flip the triangle
+                            // cap sits at the note's END on the side AWAY from the judge line (= tailY). 向下 (down-scroll):
+                            // the tail is ABOVE the head → the offset pushes the other way and the triangle flips
                             // (scale.y·_scrollSign) so it still points away from the (now bottom) judge line.
-                            float capEndY = _scrollSign > 0 ? Mathf.Max(y, yEnd) : Mathf.Min(y, yEnd);
-                            float capBaseY = capEndY + _scrollSign * note3dCapOffset;
+                            float capBaseY = tailY + _scrollSign * note3dCapOffset;
                             float capLen = holdW * LongCapLenRatio;
                             float capFar = capBaseY + _scrollSign * capLen;   // the tip end (design y)
                             bool capVis = Mathf.Max(capBaseY, capFar) >= _clipTopY && Mathf.Min(capBaseY, capFar) <= _clipBottomY;
@@ -4904,31 +4923,33 @@ namespace Sdo.Game
                             n.Body.transform.position = SdoLayout.ToWorld(cx, midY, 0.6f);
                             n.Body.transform.localScale = new Vector3(holdW, len, 1);
                             var m = n.Body.GetComponent<MeshFilter>().mesh; var uv = m.uv;
+                            // 兩條邊離**尾端**多遠（design px，恆 ≥0）：用未裁切的 tailY 當錨，長條再長、頭再怎麼被
+                            // 釘在判定線上，圖樣都會跟著音符流動（見 HoldBodyUv）。
+                            float dBot = HoldBodyUv.DistFromTail(tailY, bot, _scrollSign);
+                            float dTop = HoldBodyUv.DistFromTail(tailY, top, _scrollSign);
                             if (_note3dMode)
                             {
-                                // OFFICIAL body mapping (FUN_0041a7e0): sample ONLY U 0.2243..0.7683 of LONG_0_1 (the fat
-                                // outer silver rails are outside the band, never drawn) and V = 1 − z·(1/31.2) with z
-                                // ANCHORED AT THE TAIL (cap weld z=0.0287 → V≈0.999) — the chevrons stay glued to the cap
-                                // no matter how the body is clamped/consumed. z = design px × (22.0074 mesh units / holdW).
-                                float k = LongMeshW / Mathf.Max(holdW, 1e-3f);
-                                float vBot = 1f - (LongZBase + (tailY - bot) * k) * LongVPerUnit;
-                                float vTop = 1f - (LongZBase + (tailY - top) * k) * LongVPerUnit;
+                                // OFFICIAL body mapping (NoteMesh_ClampVertexAlpha_004c28d0): sample ONLY the chevron U
+                                // band of LONG_0_1 (the fat outer silver rails are outside it, never drawn) and
+                                // V = 1 − z·(1/31.2) with z ANCHORED AT THE TAIL (cap weld z=0.0287 → V≈0.999) — the
+                                // chevrons stay glued to the cap and point the same way it does, no matter how the body is
+                                // clamped/consumed.
+                                float vBot = HoldBodyUv.BodyV(dBot, holdW), vTop = HoldBodyUv.BodyV(dTop, holdW);
                                 uv[0].x = LongU0; uv[3].x = LongU0; uv[1].x = LongU1; uv[2].x = LongU1;
                                 uv[0].y = vBot; uv[1].y = vBot; uv[2].y = vTop; uv[3].y = vTop;
                             }
                             else
                             {
                                 // 2D skin: tile the body texture square along the length (拼接, not stretch).
-                                // Anchor the tile phase to the (UNCLAMPED) tailY, NOT to the clamped bottom edge —
-                                // otherwise, on a hold long enough that BOTH ends clamp to the clip band, the quad
-                                // and its V=0..tiles UV render identically every frame and the body looks FROZEN in
-                                // place. Phasing off tailY makes the pattern flow with the note (same fix as the 3D
-                                // branch above). wrapMode=Repeat (set at load) tiles the out-of-range V.
+                                // Anchor the tile phase to the (UNCLAMPED) tail, NOT to the clamped edge — otherwise, on a
+                                // hold long enough that BOTH ends clamp to the clip band, the quad and its V=0..tiles UV
+                                // render identically every frame and the body looks FROZEN in place. Phasing off the tail
+                                // makes the pattern flow with the note. wrapMode=Repeat (set at load) tiles the out-of-range V.
                                 float tileH = holdW * (_holdTex[c].height / (float)_holdTex[c].width);
                                 float invTile = 1f / Mathf.Max(tileH, 1e-3f);
                                 uv[0].x = 0f; uv[3].x = 0f; uv[1].x = 1f; uv[2].x = 1f;
-                                uv[0].y = (tailY - bot) * invTile; uv[1].y = uv[0].y;
-                                uv[2].y = (tailY - top) * invTile; uv[3].y = uv[2].y;
+                                uv[0].y = dBot * invTile; uv[1].y = uv[0].y;
+                                uv[2].y = dTop * invTile; uv[3].y = uv[2].y;
                             }
                             m.uv = uv;
                         }

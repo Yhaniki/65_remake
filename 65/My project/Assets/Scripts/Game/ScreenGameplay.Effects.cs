@@ -50,11 +50,11 @@ namespace Sdo.Game
 
         // Apply the room's win2 "note" selection (roomNoteType = GameSession.NoteType) at boot so gameplay uses the SAME
         // skin the player picked in the room. The room's NoteEftArt order (hiteft2..pet, then hiteft3D) matches the
-        // SelectSkin index space 1:1 (0..9 = 2D skins, 10 = 3D). -2 = unset (F4/standalone → keep stock); -1 = 隨機.
+        // SelectSkin index space 1:1 (0..10 = 2D skins, 11 = 3D). -2 = unset (F4/standalone → keep stock); -1 = 隨機.
         private void ApplyRoomNoteSkin()
         {
             if (roomNoteType == -2) return;
-            int total = NoteTypeEftSuffix.Length + 1;                 // 10 2D skins + the 3D skin = 11 (== room NoteEftArt count)
+            int total = NoteTypeEftSuffix.Length + 1;                 // 11 2D skins + the 3D skin = 12 (== room NoteEftArt count)
             int idx = roomNoteType >= 0 ? Mathf.Clamp(roomNoteType, 0, total - 1)
                                         : UnityEngine.Random.Range(0, total);   // 隨機
             SelectSkin(idx);
@@ -275,6 +275,10 @@ namespace Sdo.Game
             for (int lane = 0; lane < Keys; lane++)
             {
                 _holdBurst[lane] = null; _holding[lane] = null;
+                // 3D 皮的命中特效是獨立的 EftEffect 物件，不在 _fx 裡；HIT_LONG 又是**自我循環**的（負 life 的
+                // emitter 永不死，本來只靠放開鍵時 StopHit3dLong 收掉）。按著長條時血條見底 → 沒人收，那團金光會
+                // 一直燒在受擊線上。這裡直接砍掉（不走 StopHit3dLong：死掉不該再放 HIT_SUO 那聲放開的煙）。
+                if (_hit3dLive[lane] != null) { Destroy(_hit3dLive[lane].gameObject); _hit3dLive[lane] = null; }
                 if (_clickFlashSr[lane]) _clickFlashSr[lane].enabled = false; _clickFlashStart[lane] = -1f;
             }
             _missFlashStart = -1f;
@@ -369,8 +373,9 @@ namespace Sdo.Game
             {
                 _judgeWord.color = new Color(1, 1, 1, Mathf.Clamp01(1f - age / 0.5f));
                 float pop = (1f + Mathf.Clamp01(1f - age * 6f) * 1.0f) * 0.8f; // 2.0->1.0 ×0.8 (decompiled)
-                PlaceAspect(_judgeWord, PX(JudgeWordCenter.x), JudgeWordCenter.y, _judgeWord.sprite.bounds.size.x, -2);
-                _judgeWord.transform.localScale *= pop;
+                // 判定字跟 COMBO/數字是同一叢，向下模式套同一個 _judgeComboYOffset —— 只搬 COMBO 會把兩行的間距吃掉。
+                PlaceAspect(_judgeWord, PX(JudgeWordCenter.x), JudgeWordCenter.y + _judgeComboYOffset, _judgeWord.sprite.bounds.size.x, -2);
+                _judgeWord.transform.localScale *= pop * judgeTextScale;   // judgeTextScale = config.ini 的判定字大小比例（單張圖、繞自身中心縮放）
             }
             else _judgeWord.color = new Color(1, 1, 1, 0);
 

@@ -88,12 +88,16 @@ namespace Sdo.Game
             float pop = (1f + Mathf.Clamp01(1f - (Time.time - _comboPopAt) * 9f) * 1.0f) * 0.8f;
             string s = combo.ToString();
             // The COMBO word + the number are ONE rigid group: scale every element's position AND size about a single
-            // shared pivot (TrackCenterX, comboPivotY = the group's centre) by `pop`. Because the word→number gap and
-            // the inter-digit gaps all scale by the same `pop` about the same point, the whole thing grows/shrinks as a
+            // shared pivot (TrackCenterX, comboPivotY = the group's centre) by `grow`. Because the word→number gap and
+            // the inter-digit gaps all scale by the same `grow` about the same point, the whole thing grows/shrinks as a
             // unit and the spacing never drifts. (Previously the word popped about its own centre ComboWordY and the
             // digits about ComboDigitY — two separate pivots — so glyphs grew while the vertical gap stayed fixed and the
-            // rows fought.)
-            const float comboPivotY = (ComboWordY + ComboDigitY) / 2f;
+            // rows fought.) comboTextScale (config.ini) rides the SAME factor, so the player's size setting scales the
+            // group as one piece too.
+            // 向下模式整組上移 _judgeComboYOffset（支點跟著移，pop 動畫的中心才不會偏；判定字套同一個位移，見該欄位）。
+            float wordY = ComboWordY + _judgeComboYOffset, digitY = ComboDigitY + _judgeComboYOffset;
+            float comboPivotY = (wordY + digitY) / 2f;
+            float grow = pop * comboTextScale;
             float cxTrack = PX(TrackCenterX);   // track centre X shifted by the 面板位置 (左/中)
             float startX = cxTrack - (s.Length - 1) * ComboDigitStep / 2f;   // centred on the track
             for (int i = 0; i < _comboDigits.Count; i++)
@@ -104,16 +108,16 @@ namespace Sdo.Game
                 d.enabled = spr != null; d.sprite = spr;
                 if (spr != null)
                 {
-                    float dx = cxTrack + (startX + i * ComboDigitStep - cxTrack) * pop;
-                    float dy = comboPivotY + (ComboDigitY - comboPivotY) * pop;
-                    PlaceAspect(d, dx, dy, ComboDigitW, -2); d.transform.localScale *= pop;
+                    float dx = cxTrack + (startX + i * ComboDigitStep - cxTrack) * grow;
+                    float dy = comboPivotY + (digitY - comboPivotY) * grow;
+                    PlaceAspect(d, dx, dy, ComboDigitW, -2); d.transform.localScale *= grow;
                 }
             }
             if (_comboWord && _comboWord.sprite != null)
             {
                 _comboWord.enabled = true;
-                float wy = comboPivotY + (ComboWordY - comboPivotY) * pop;
-                PlaceAspect(_comboWord, cxTrack, wy, ComboWordW); _comboWord.transform.localScale *= pop;
+                float wy = comboPivotY + (wordY - comboPivotY) * grow;
+                PlaceAspect(_comboWord, cxTrack, wy, ComboWordW); _comboWord.transform.localScale *= grow;
             }
         }
 

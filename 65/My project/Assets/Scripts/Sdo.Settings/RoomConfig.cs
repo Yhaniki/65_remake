@@ -70,12 +70,18 @@ namespace Sdo.Settings
         // 只影響「難度得自己重算」的外部譜面(osu / StepMania / Malody)：官方 DATA/MUSIC 的 .gn 和外部資料夾裡的
         // .gn 歌包都自帶檔頭難度，兩套計算器都不會動它們（見 SongCatalog.Entry.DisplayLevel）。
         public static string difficultyCalc = "osu";
+        // 遊戲中兩組文字的整體大小比例（1.0 = 官方原尺寸）。純顯示，不影響判定/分數。
+        // comboTextScale：COMBO 字樣＋連段數字（整組一起縮放，字距/行距同比例，不會散開）。
+        // judgeTextScale：PERFECT / COOL / BAD / MISS 判定字樣。
+        public static float comboTextScale = 1f;
+        public static float judgeTextScale = 1f;
 
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
         public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了就不用去撿舊 settings.json）
         public static bool hasFamilyKeys = false;   // 檔案是否帶家族/等級鍵（沒有＝舊檔 → Load 補寫模板，讓使用者有鍵可手改）
+        public static bool hasTextScaleKeys = false;   // 同上：檔案是否帶 combo/判定文字大小鍵
         public static bool hasOptUiScale = false;   // 檔案是否帶 opt_uiScale（舊檔沒有 → 從舊 settings.json 撿）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
         // 舊檔（config.ini 還帶鍵位的年代）的 4 鍵鍵位：只讀不寫，開機時給 KeyMap 種 keymaps.ini 用，見 KeyMap.Load。
@@ -197,6 +203,8 @@ namespace Sdo.Settings
 
                 // 舊 config.ini 沒有家族/等級鍵 → 補寫一次模板（含註解），讓使用者有鍵可手改（預設值＝留空不顯示）。
                 if (!hasFamilyKeys) dirty = true;
+                // 同理：舊檔沒有 combo/判定文字大小鍵 → 補寫一次，不然使用者在檔案裡找不到可改的鍵。
+                if (!hasTextScaleKeys) dirty = true;
 
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
@@ -353,6 +361,8 @@ namespace Sdo.Settings
                     case "AddonFolder": addonFolder = NormalizeFolder(val); break;
                     case "SongUiAlpha": songUiAlpha = ParseFloat(val, songUiAlpha); break;
                     case "DifficultyCalc": difficultyCalc = val; break;
+                    case "comboTextScale": comboTextScale = ParseFloat(val, comboTextScale); hasTextScaleKeys = true; break;
+                    case "judgeTextScale": judgeTextScale = ParseFloat(val, judgeTextScale); hasTextScaleKeys = true; break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -402,6 +412,8 @@ namespace Sdo.Settings
             songUiAlpha = Mathf.Clamp01(songUiAlpha);                        // 外部歌分類面板不透明度 0..1
             difficultyCalc = (difficultyCalc ?? "osu").Trim().ToLowerInvariant();   // 只認 osu / minacalc，其餘回退 osu
             if (difficultyCalc != "minacalc") difficultyCalc = "osu";
+            comboTextScale = Mathf.Clamp(comboTextScale, 0.2f, 3f);          // 再小看不見、再大蓋滿整塊面板
+            judgeTextScale = Mathf.Clamp(judgeTextScale, 0.2f, 3f);
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
             activeId = SanitizeActiveId(activeId);
@@ -485,6 +497,11 @@ namespace Sdo.Settings
             sb.Append("# 選了哪套就整體都照那套：顯示的數字、隨機難度的範圍、哪張譜排進簡單/普通/困難，全部一致；改回 osu 即復原。\n");
             sb.Append("# 只影響 osu/StepMania/Malody 這類要自己算難度的外部譜；.gn（官方 DATA/MUSIC 或外部歌包）一律保留原難度。\n");
             sb.Append("DifficultyCalc=").Append(difficultyCalc ?? "osu").Append('\n');
+            sb.Append("# 遊戲中文字的整體大小比例（1.0 = 官方原尺寸，範圍 0.2~3.0）。純顯示，不影響判定與分數。\n");
+            sb.Append("#   comboTextScale = COMBO 字樣＋連段數字（整組等比例縮放，字距不會散開）\n");
+            sb.Append("#   judgeTextScale = PERFECT / COOL / BAD / MISS 判定字樣\n");
+            sb.Append("comboTextScale=").Append(comboTextScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("judgeTextScale=").Append(judgeTextScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");
