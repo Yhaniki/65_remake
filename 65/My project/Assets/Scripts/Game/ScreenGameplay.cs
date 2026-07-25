@@ -3983,12 +3983,22 @@ namespace Sdo.Game
 
         // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/). 每棵樹都先
         // AUMOTION 再 MOTION；樹的順序由 MotRoots() 決定 —— 歌包外掛樹（若有）先於 base 資料根。
-        private MotLoader ResolveMot(string name)
+        private MotLoader ResolveMot(string rawName)
         {
-            if (string.IsNullOrEmpty(name)) return null;
-            name = ResolveGenderedMotName(name);
+            if (string.IsNullOrEmpty(rawName)) return null;
+            string name = ResolveGenderedMotName(rawName);
             if (_motCache.TryGetValue(name, out var cached)) return cached;
             MotLoader m = null; string triedPath = null, why = null;
+
+            // 歌曲資料夾最優先：dps 點名的 .mot 若就放在這首歌自己的資料夾（外部 osu/SM 歌 = 歌曲當下所在
+            // 資料夾），直接用它 —— 先於 overlay 樹與 base 根。這讓使用者把自訂舞步 .mot 丟進歌資料夾即可覆蓋
+            // 該片段（外部歌的 .dps 直接躺在歌資料夾、不在 DANCE/ 下，本來拿不到 overlay，此路補上）。先試
+            // gendered 名（尊重男版），再試原始 dps 名（讓歌自帶的女版 .mot 對男玩家也生效）。
+            m = TryLoadMotFromSongFolder(name, ref triedPath, ref why);
+            if (m == null && !string.Equals(name, rawName, System.StringComparison.Ordinal))
+                m = TryLoadMotFromSongFolder(rawName, ref triedPath, ref why);
+
+            if (m == null)
             foreach (var root in MotRoots())
             {
                 foreach (var dir in new[] { "AUMOTION", "MOTION" })
@@ -4016,6 +4026,32 @@ namespace Sdo.Game
             }
             _motCache[name] = m;   // cache even null to avoid re-probing missing files
             return m;
+        }
+
+        /// <summary>在這首歌自己的資料夾（<see cref="externalFolder"/>；官方歌為 ""）裡直接找 <paramref name="name"/>
+        /// 這顆 .mot 並載入，找不到／載入失敗回 null。不分大小寫（<c>WDANCE0531.MOT</c> ↔ <c>wdance0531.mot</c>）。
+        /// 命中時把路徑寫進 <paramref name="triedPath"/>，載入失敗把原因寫進 <paramref name="why"/>（供 ResolveMot 記錄）。</summary>
+        private MotLoader TryLoadMotFromSongFolder(string name, ref string triedPath, ref string why)
+        {
+            if (string.IsNullOrEmpty(externalFolder) || string.IsNullOrEmpty(name)) return null;
+            string folder = Path.IsPathRooted(externalFolder) ? externalFolder
+                            : Path.Combine(SdoExtracted.Root, externalFolder);
+            if (!Directory.Exists(folder)) return null;
+
+            string hit = Path.Combine(folder, name);
+            if (!File.Exists(hit))
+                hit = MotionOverlay.MatchFileName(Directory.GetFiles(folder), name);   // 大小寫不同也命中
+            if (string.IsNullOrEmpty(hit) || !File.Exists(hit)) return null;
+
+            triedPath = hit;
+            try
+            {
+                var bytes = File.ReadAllBytes(hit);
+                var m = MotLoader.Load(bytes);
+                if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
+                return m;
+            }
+            catch (System.Exception e) { why = e.Message; return null; }
         }
 
         /// <summary>查動作片段的資料樹，依優先順序：這首歌的外掛包（若有，<see cref="_motOverrideRoot"/>）先，

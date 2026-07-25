@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace Sdo.Game
@@ -45,6 +46,23 @@ namespace Sdo.Game
                 return Path.GetFullPath(tree);                                       // 正規化（收掉 ".."）後回傳
             }
             catch { return ""; }
+        }
+
+        /// <summary>在一批完整路徑 <paramref name="files"/> 裡，找出檔名與 <paramref name="wanted"/> 相同
+        /// （不分大小寫、只比檔名不比目錄）的第一個，沒有回 <c>null</c>。用來讓歌曲資料夾裡大小寫寫法不同的
+        /// <c>.mot</c>（<c>WDANCE0531.MOT</c> ↔ <c>wdance0531.mot</c>）也能命中。純函式，好測。</summary>
+        public static string MatchFileName(IEnumerable<string> files, string wanted)
+        {
+            if (files == null || string.IsNullOrEmpty(wanted)) return null;
+            string target = Path.GetFileName(wanted.Replace('\\', '/'));
+            if (string.IsNullOrEmpty(target)) return null;
+            foreach (var f in files)
+            {
+                if (string.IsNullOrEmpty(f)) continue;
+                if (string.Equals(Path.GetFileName(f.Replace('\\', '/')), target, StringComparison.OrdinalIgnoreCase))
+                    return f;
+            }
+            return null;
         }
 
         /// <summary>兩個路徑指向同一個資料夾嗎（正規化 + 去尾分隔符 + 不分大小寫）。任一無法正規化就當「不同」。</summary>

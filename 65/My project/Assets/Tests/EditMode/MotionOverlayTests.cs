@@ -79,5 +79,36 @@ namespace Sdo.Tests
             Assert.IsFalse(MotionOverlay.SamePath(a, Abs("a", "C")));
             Assert.IsFalse(MotionOverlay.SamePath("", a));
         }
+
+        // ---- MatchFileName：歌曲資料夾裡不分大小寫找同名 .mot（讓使用者丟進歌旁的 .mot 覆蓋 dps 片段）----
+
+        [Test]
+        public void MatchFileName_IsCaseInsensitiveOnFileNameOnly()
+        {
+            var files = new[]
+            {
+                Abs("songs", "MySong", "WDANCE0531.MOT"),
+                Abs("songs", "MySong", "Gokuraku Jodo.mp3"),
+            };
+            // dps 點名的是小寫 "wdance0531.mot"；資料夾裡是大寫 → 仍要命中，且回傳資料夾內的原始寫法。
+            Assert.AreEqual(files[0], MotionOverlay.MatchFileName(files, "wdance0531.mot"));
+        }
+
+        [Test]
+        public void MatchFileName_MatchesBareNameAgainstFullPaths_AndIgnoresDirComponent()
+        {
+            var files = new[] { Abs("songs", "MySong", "WDANCE0542.MOT") };
+            // wanted 帶了路徑分量也只比檔名（dps 列的名字有時帶目錄）。
+            Assert.AreEqual(files[0], MotionOverlay.MatchFileName(files, "MOTION/wdance0542.mot"));
+        }
+
+        [Test]
+        public void MatchFileName_ReturnsNullWhenAbsent()
+        {
+            var files = new[] { Abs("songs", "MySong", "WDANCE0531.MOT") };
+            Assert.IsNull(MotionOverlay.MatchFileName(files, "wdance9999.mot"));   // 資料夾沒有這顆
+            Assert.IsNull(MotionOverlay.MatchFileName(files, ""));                 // 空名
+            Assert.IsNull(MotionOverlay.MatchFileName(null, "wdance0531.mot"));    // 空清單
+        }
     }
 }
