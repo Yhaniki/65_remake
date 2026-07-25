@@ -51,6 +51,30 @@ namespace Sdo.Game
         {
             try
             {
+                // (1) 首選 libmad —— **StepMania 用的同一個解碼器**(Assets/Plugins/x86_64/sdomad.dll)。
+                // 只有它能同時做到「壞幀整幀丟棄、不佔時間軸」和「reservoir 指不到的幀照樣輸出一幀」,
+                // 而那兩件事正是外部歌對不上音樂的兩個根因 —— 詳見 MadDecoder 的註解。
+                var mad = MadDecoder.Decode(path, out int droppedFrames, out int pretendFrames);
+                if (mad != null)
+                {
+                    if (droppedFrames > 0 || pretendFrames > 0)
+                        Debug.Log($"[mp3] {System.IO.Path.GetFileName(path)}: libmad 丟棄 {droppedFrames} 個壞幀"
+                                + $"、{pretendFrames} 幀 pretend-success(與 StepMania 逐位相同)");
+                    // osu 譜的音訊要照 BASS 的 gapless 修掉 priming。StepMania 譜**不再補前導幀** ——
+                    // 那個補償當初是為了讓 NLayer 的輸出對上 MAD;現在解碼器就是 MAD,補了反而多 26ms。
+                    if (sync == Mp3Sync.Osu)
+                    {
+                        var d = mad.Samples;
+                        int keep = ApplyOsuGapless(d, d.Length, mad.Channels);
+                        if (keep == 0) return null;
+                        if (keep != d.Length) Array.Resize(ref d, keep);
+                        mad.Samples = d;
+                    }
+                    NormalizeIfHot(mad.Samples, mad.Samples.Length);
+                    return mad;
+                }
+
+                // (2) 退回 NLayer(純 C#):DLL 載不到時才走這裡,行為與加入 libmad 之前相同。
                 int ch, sr, len;
                 // 照搬 StepMania/MAD:單次循序解碼,檔案有幾個音訊幀就輸出幾幀,解不出來的送靜音、時間軸不動。
                 var data = DecodeFramewise(path, out ch, out sr, out len, out int silencedFrames);
