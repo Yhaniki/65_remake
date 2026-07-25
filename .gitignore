@@ -152,3 +152,8 @@ tools/kgn_export/gn_notes.json
 
 # 開發過程的手動截圖（個人存檔，不入庫）
 /65/My project/screensave/
+
+# Magica Cloth 2 外掛本體在私人 repo（Yhaniki/Magica-Cloth-2），不入庫；
+# Unity 產生的資料夾 meta 也一併忽略。
+65/My project/Assets/MagicaCloth2/
+65/My project/Assets/MagicaCloth2.meta
