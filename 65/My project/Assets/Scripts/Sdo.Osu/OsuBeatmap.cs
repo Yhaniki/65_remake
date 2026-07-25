@@ -102,6 +102,18 @@ namespace Sdo.Osu
         public List<ScrollStop> Stops { get; } = new List<ScrollStop>();
 
         /// <summary>
+        /// 編輯器格線用的「拍 ↔ **真實**歌曲時間」（<see cref="BeatGrid"/>）。空 = 沒有，格線退回從
+        /// <see cref="TimingPoints"/> 反推（.gn/.osu 走這條，行為不變）。
+        ///
+        /// 為什麼不能只靠 <see cref="TimingPoints"/>：那是**捲動**用的顯示時間軸 ——
+        /// StepMania 的負 BPM(warp)在上面被壓成 1ms 的超高速窗，而 <see cref="Stops"/> 的定格時間根本不在
+        /// 裡面。BeatGrid 是拿「ms 差 ÷ beatLength」反推 beat 編號的，於是每經過一個停拍就多算
+        /// 停拍長度 ÷ 一拍的拍數，warp 後面那段更是把定格的 200 多 ms 當成超高速段（一拍 0.125ms）換算 →
+        /// 一次多算上千拍。engine[Blue] 實測第 48 小節起就開始歪，第 64 小節差 6.6 秒、之後格線整個卡住。
+        /// </summary>
+        public List<GridSegment> GridSegments { get; } = new List<GridSegment>();
+
+        /// <summary>
         /// Shift every note + timing point LATER by <paramref name="leadInMs"/> and add the same to
         /// <see cref="MusicStartOffsetMs"/> (which the engine treats as a silent count-in that delays the audio).
         /// External osu/StepMania charts carry no count-in, so an early first note would pop in mid-highway; a lead-in
@@ -128,6 +140,11 @@ namespace Sdo.Osu
             {
                 var s = Stops[i];
                 Stops[i] = new ScrollStop(s.TimeMs + leadInMs, s.DurationMs);
+            }
+            for (int i = 0; i < GridSegments.Count; i++)
+            {
+                var g = GridSegments[i];
+                GridSegments[i] = new GridSegment(g.StartBeat, g.StartMs + leadInMs, g.StopMs, g.BeatLengthMs);
             }
             MusicStartOffsetMs += leadInMs;
         }
@@ -180,6 +197,25 @@ namespace Sdo.Osu
                 // 長條 → 一般 note(頭部的判定/顯示時間原封不動,尾端跟著收回頭部)
                 HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs, null, h.IsBomb, h.IsFake,
                     h.ScrollTimeMs, h.ScrollTimeMs);
+                n++;
+            }
+            return n;
+        }
+
+        /// <summary>
+        /// 把譜面上的炸彈(mine / avoid-note)整顆拿掉，回傳移除的顆數。給 OPTION 進階「停用炸彈」用
+        /// （GameplaySettings.disableBombs）：踩到炸彈只會斷 combo 扣血、
+        /// 永遠不計分也不計 miss，所以移除它**不影響**滿分、TotalNotes 或任何判定數字（<see cref="TotalNotes"/>
+        /// 本來就跳過炸彈）——差別只在「地上不再有雷」。純函式（只動 HitObjects，不碰時間/BPM/timing points），
+        /// 呼叫端用開關 gating（見 ScreenGameplay.LoadChart）。
+        /// </summary>
+        public int RemoveBombs()
+        {
+            int n = 0;
+            for (int i = HitObjects.Count - 1; i >= 0; i--)
+            {
+                if (!HitObjects[i].IsBomb) continue;
+                HitObjects.RemoveAt(i);
                 n++;
             }
             return n;
@@ -253,6 +289,28 @@ namespace Sdo.Osu
         {
             TimeMs = timeMs;
             DurationMs = durationMs;
+        }
+    }
+
+    /// <summary>
+    /// 一段「拍 ↔ 真實歌曲時間」（給編輯器格線用，見 <see cref="OsuBeatmap.GridSegments"/> 與 <see cref="BeatGrid"/>）。
+    /// 語意就是 StepMania <c>TimingData::GetElapsedTimeFromBeat</c> 的分段形式：播放頭在 <see cref="StartMs"/>
+    /// 到達 <see cref="StartBeat"/>，在那一拍上停 <see cref="StopMs"/>，之後每一拍走 <see cref="BeatLengthMs"/>。
+    /// </summary>
+    public readonly struct GridSegment
+    {
+        /// <summary>這一段從哪一拍開始。</summary>
+        public double StartBeat { get; }
+        /// <summary>播放頭**到達**那一拍的時刻（ms；停拍還沒開始）。</summary>
+        public double StartMs { get; }
+        /// <summary>這一拍上停多久（#STOPS 定格；沒有就 0）。</summary>
+        public double StopMs { get; }
+        /// <summary>停完之後每一拍幾 ms。**0 = warp**：拍子繼續走但時間不前進（負 BPM 被瞬間跳過的那段）。</summary>
+        public double BeatLengthMs { get; }
+
+        public GridSegment(double startBeat, double startMs, double stopMs, double beatLengthMs)
+        {
+            StartBeat = startBeat; StartMs = startMs; StopMs = stopMs; BeatLengthMs = beatLengthMs;
         }
     }
 }

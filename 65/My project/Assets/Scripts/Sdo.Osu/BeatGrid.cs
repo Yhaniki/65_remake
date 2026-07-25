@@ -16,9 +16,10 @@ namespace Sdo.Osu
         /// <summary>.gn 固定 4/4：一小節 4 拍。</summary>
         public const int BeatsPerMeasure = 4;
 
-        private readonly double[] _segMs;     // 段起點（毫秒）
+        private readonly double[] _segMs;     // 段起點（毫秒；播放頭「到達」那一拍的時刻，停拍還沒開始）
         private readonly double[] _segBeat;   // 段起點（拍）
-        private readonly double[] _beatLen;   // 該段一拍幾毫秒
+        private readonly double[] _segStop;   // 該起拍上定格幾毫秒（#STOPS；沒有就 0）
+        private readonly double[] _beatLen;   // 停完之後一拍幾毫秒（0 = warp：拍子走、時間不走）
 
         /// <summary>格線種類：小節線 / 拍線 / 細分線。</summary>
         public enum LineKind { Measure, Beat, Sub }
@@ -57,9 +58,39 @@ namespace Sdo.Osu
 
         public int SegmentCount => _segMs.Length;
 
-        /// <summary>由 <see cref="OsuBeatmap"/> 建格線（沒有 timing point 時退回 <see cref="OsuBeatmap.Bpm"/>）。</summary>
+        /// <summary>
+        /// 由 <see cref="OsuBeatmap"/> 建格線。譜面帶了 <see cref="OsuBeatmap.GridSegments"/>（真實時間軸，
+        /// StepMania 的負 BPM / #STOPS 都在裡面）就用它；否則從 <see cref="OsuBeatmap.TimingPoints"/> 反推
+        /// （.gn/.osu 的老路，沒有 warp 也沒有停拍，兩者等價），沒有 timing point 時退回 <see cref="OsuBeatmap.Bpm"/>。
+        /// </summary>
         public static BeatGrid From(OsuBeatmap map)
-            => new BeatGrid(map?.TimingPoints, map != null && map.Bpm > 0 ? map.Bpm : 120.0);
+            => map != null && map.GridSegments != null && map.GridSegments.Count > 0
+                ? new BeatGrid(map.GridSegments)
+                : new BeatGrid(map?.TimingPoints, map != null && map.Bpm > 0 ? map.Bpm : 120.0);
+
+        /// <summary>
+        /// 直接吃「拍 ↔ 真實時間」分段（<see cref="GridSegment"/>，由 <see cref="SmChart"/> 產生）。
+        /// 分段必須依拍遞增，時間也遞增（warp 是時間不動的垂直跳、停拍是拍不動的水平段）。
+        /// </summary>
+        public BeatGrid(IReadOnlyList<GridSegment> segments)
+        {
+            int n = segments != null ? segments.Count : 0;
+            if (n == 0)
+            {
+                _segBeat = new[] { 0.0 }; _segMs = new[] { 0.0 };
+                _segStop = new[] { 0.0 }; _beatLen = new[] { 500.0 };
+                return;
+            }
+            _segBeat = new double[n]; _segMs = new double[n];
+            _segStop = new double[n]; _beatLen = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                var g = segments[i];
+                _segBeat[i] = g.StartBeat; _segMs[i] = g.StartMs;
+                _segStop[i] = g.StopMs > 0.0 ? g.StopMs : 0.0;
+                _beatLen[i] = g.BeatLengthMs > 0.0 ? g.BeatLengthMs : 0.0;
+            }
+        }
 
         public BeatGrid(IReadOnlyList<OsuTimingPoint> points, double fallbackBpm = 120.0)
         {
@@ -85,6 +116,7 @@ namespace Sdo.Osu
 
             _segMs = ms.ToArray();
             _beatLen = len.ToArray();
+            _segStop = new double[_segMs.Length];   // timing point 反推的路上沒有停拍可言（.gn/.osu 沒有 #STOPS）
             _segBeat = new double[_segMs.Length];
             _segBeat[0] = 0.0;
             for (int s = 1; s < _segMs.Length; s++)
@@ -105,20 +137,32 @@ namespace Sdo.Osu
             return s;
         }
 
+        /// <summary>這一拍在畫面上的時刻。定格（#STOPS）發生在那一拍**之後**，所以站在停拍上回的是定格的起點。</summary>
         public double BeatToMs(double beat)
         {
             int s = SegAtBeat(beat);
-            return _segMs[s] + (beat - _segBeat[s]) * _beatLen[s];
+            double ms = _segMs[s] + (beat - _segBeat[s]) * _beatLen[s];
+            if (_segStop[s] > 0.0 && beat > _segBeat[s]) ms += _segStop[s];
+            return ms;
         }
 
+        /// <summary>這個時刻播放頭停在哪一拍。定格中回定格的那一拍；warp（時間不前進）回起跳拍。</summary>
         public double MsToBeat(double ms)
         {
             int s = SegAtMs(ms);
-            return _segBeat[s] + (ms - _segMs[s]) / _beatLen[s];
+            double t = ms - _segMs[s];
+            if (t <= _segStop[s]) return _segBeat[s];      // 定格中：拍子不動
+            t -= _segStop[s];
+            if (_beatLen[s] <= 0.0) return _segBeat[s];    // warp：這一段在時間軸上沒有厚度
+            return _segBeat[s] + t / _beatLen[s];
         }
 
-        /// <summary>該毫秒位置的 BPM（分段常數）。</summary>
-        public double BpmAt(double ms) => 60000.0 / _beatLen[SegAtMs(ms)];
+        /// <summary>該毫秒位置的 BPM（分段常數）；定格/warp 段沒有速度可言 → 0。</summary>
+        public double BpmAt(double ms)
+        {
+            double bl = _beatLen[SegAtMs(ms)];
+            return bl > 0.0 ? 60000.0 / bl : 0.0;
+        }
 
         /// <summary>小節 m 的起點毫秒。</summary>
         public double MeasureStartMs(int measure) => BeatToMs(measure * (double)BeatsPerMeasure);

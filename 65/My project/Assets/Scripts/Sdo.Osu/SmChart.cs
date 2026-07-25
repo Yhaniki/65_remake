@@ -272,6 +272,8 @@ namespace Sdo.Osu
             // its freeze duration. A note sitting exactly on the stop beat is hit right as the freeze begins.
             // 負 BPM 的譜還要多兩件事(warp 內的 stop 不凍結、warp 的顯示窗要讓出來)—— 見 Timeline.DisplayStops。
             map.Stops.AddRange(tl.DisplayStops());
+            // 編輯器格線走「真實時間軸」,不能拿上面那些捲動用的 timing point 反推(warp 壓成 1ms、停拍不在裡面)。
+            tl.FillGridSegments(map);
             return map;
         }
 
@@ -362,6 +364,45 @@ namespace Sdo.Osu
                     if (beat <= w.EndBeat + BeatEps) return w.TimeMs;
                 }
                 return RawMs(beat);
+            }
+
+            /// <summary>
+            /// 填 <see cref="OsuBeatmap.GridSegments"/> —— 編輯器格線用的「拍 ↔ **真實**歌曲時間」。
+            /// 切點 = BPM 段起拍 ∪ #STOPS 拍 ∪ warp 頭尾;每一段的斜率直接用**播放頭**時刻(<see cref="PlayMs"/>)
+            /// 相減算出來,所以負 BPM 被跳過的那段自動變成 `BeatLengthMs = 0`(拍子繼續走、時間不動),
+            /// 停拍則落在 `StopMs` 上。這條時間軸和音符的判定時刻是同一個,格線才會真的長在音符上。
+            /// </summary>
+            public void FillGridSegments(OsuBeatmap map)
+            {
+                var knots = new List<double>(SegBeat.Length + StopBeat.Length + Warps.Length * 2);
+                for (int i = 0; i < SegBeat.Length; i++) knots.Add(SegBeat[i]);
+                for (int i = 0; i < StopBeat.Length; i++) knots.Add(StopBeat[i]);
+                for (int i = 0; i < Warps.Length; i++) { knots.Add(Warps[i].StartBeat); knots.Add(Warps[i].EndBeat); }
+                knots.Sort();
+
+                for (int i = 0; i < knots.Count; i++)
+                {
+                    double b = knots[i];
+                    if (b < 0.0) continue;
+                    if (i > 0 && b - knots[i - 1] <= BeatEps) continue;              // 去重
+                    double startMs = PlayMs(b);
+                    // warp **內部**的停拍不定格(播放頭是瞬間跳過那段拍子的)—— 和 DisplayStops 同一條規則。
+                    double stop = IsWarped(b) ? 0.0 : StopAt(b);
+                    double bl;
+                    int next = i + 1;
+                    while (next < knots.Count && knots[next] - b <= BeatEps) next++;
+                    if (next < knots.Count)
+                    {
+                        bl = (PlayMs(knots[next]) - startMs - stop) / (knots[next] - b);
+                        if (bl < 0.0) bl = 0.0;   // 落地拍的 RawMs 可能比 warp 的時刻早零點幾 ms(見 DisplayMs)
+                    }
+                    else
+                    {
+                        double bpm = SegBpm[SegIndex(b)];
+                        bl = bpm > 0.0 ? 60000.0 / bpm : 0.0;   // 收在譜尾的 warp(負 BPM 沒被抵銷)→ 時間不再前進
+                    }
+                    map.GridSegments.Add(new GridSegment(b, startMs, stop, bl));
+                }
             }
 
             /// <summary>
