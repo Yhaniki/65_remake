@@ -248,23 +248,32 @@ namespace Sdo.Tests
             Assert.AreEqual(0, Mp3Decoder.FileAudioFrameCount(new byte[0], out _));
         }
 
-        // 這一題是「歌會不會越播越提早」的總驗收:解出來的幀數必須等於檔案裡的音訊幀數,一幀都不能少。
-        // StepMania/MAD 就是這樣 —— bit reservoir 指不到資料的壞幀它照樣送一幀出去(RageSoundReader_MP3.cpp:429
-        // 的 `ret = 0; /* pretend success */`),時間軸一格不動;NLayer 的高階 MpegFile 卻是靜默跳過那一幀,
-        // 跳一幀那之後整首就提前 26 ms(engine[Blue] 37.5 秒起、Amanojaku 24 秒起就是這樣漂掉的)。
+        // 這一題是「歌會不會越播越提早」的總驗收:**解出來的幀數不准比檔案裡的音訊幀數少**。
+        // 少一幀,那之後整首就提前 26 ms 並一路帶到歌尾(engine[Blue] 37.5 秒起、Amanojaku 24 秒起
+        // 就是這樣漂掉的 —— NLayer 的高階 MpegFile 會靜默跳過 bit reservoir 指不到資料的幀)。
+        // libmad 對那種幀是 `ret = 0; /* pretend success */`(RageSoundReader_MP3.cpp:429),照樣送一幀。
+        //
+        // 上限則是「總幀數」(含 Xing/Info 表頭幀):表頭幀要不要輸出,StepMania 兩種都有 ——
+        // Xing 會被 handle_first_frame 跳過,Info 則刻意留著當一幀靜音送出去(為了對上 DWI/BASS 的 sync,
+        // 見 handle_first_frame 裡 `if( type == INFO ) return false;` 的註解)。所以兩端都要容許。
         [Test]
         public void Decode_EmitsOneFrameForEveryFrameInTheFile()
         {
             string path = System.IO.Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
             if (!System.IO.File.Exists(path)) Assert.Ignore("找不到 StreamingAssets/Step1/Bassdrop.mp3");
-            int fileFrames = Mp3Decoder.FileAudioFrameCount(System.IO.File.ReadAllBytes(path), out int spf);
-            Assert.Greater(fileFrames, 0, "測試檔要讀得出幀表");
+            var bytes = System.IO.File.ReadAllBytes(path);
+            int audioFrames = Mp3Decoder.FileAudioFrameCount(bytes, out int spf);   // 扣掉 Xing/Info 表頭幀
+            int totalFrames = Mp3Decoder.FrameTable(bytes, out _).Count - 1;        // 含表頭幀(最後一筆是哨兵)
+            Assert.Greater(audioFrames, 0, "測試檔要讀得出幀表");
 
             var pcm = Mp3Decoder.Decode(path, Mp3Decoder.Mp3Sync.Osu);   // Osu = 不補前導幀,幀數才好直接比
             Assert.IsNotNull(pcm);
             int perChannel = pcm.Samples.Length / pcm.Channels + Mp3Decoder.OsuGaplessTrim;   // 把 gapless 剪掉的加回來
-            Assert.AreEqual(fileFrames, perChannel / spf,
-                "解出來的幀數要跟檔案裡的音訊幀數一樣 —— 少一幀,那之後整首就提前一幀(26 ms)");
+            int decoded = perChannel / spf;
+            Assert.GreaterOrEqual(decoded, audioFrames,
+                $"解出 {decoded} 幀但檔案有 {audioFrames} 個音訊幀 —— 少一幀,那之後整首就提前一幀(26 ms)");
+            Assert.LessOrEqual(decoded, totalFrames,
+                $"解出 {decoded} 幀但檔案總共才 {totalFrames} 幀(含表頭幀)—— 憑空多出來的幀會讓整首延後");
         }
 
         // ---- overload protection (hot masters like Amanojaku.mp3 decode to > ±1) ----
