@@ -50,11 +50,11 @@ namespace Sdo.Game
 
         // Apply the room's win2 "note" selection (roomNoteType = GameSession.NoteType) at boot so gameplay uses the SAME
         // skin the player picked in the room. The room's NoteEftArt order (hiteft2..pet, then hiteft3D) matches the
-        // SelectSkin index space 1:1 (0..9 = 2D skins, 10 = 3D). -2 = unset (F4/standalone → keep stock); -1 = 隨機.
+        // SelectSkin index space 1:1 (0..10 = 2D skins, 11 = 3D). -2 = unset (F4/standalone → keep stock); -1 = 隨機.
         private void ApplyRoomNoteSkin()
         {
             if (roomNoteType == -2) return;
-            int total = NoteTypeEftSuffix.Length + 1;                 // 10 2D skins + the 3D skin = 11 (== room NoteEftArt count)
+            int total = NoteTypeEftSuffix.Length + 1;                 // 11 2D skins + the 3D skin = 12 (== room NoteEftArt count)
             int idx = roomNoteType >= 0 ? Mathf.Clamp(roomNoteType, 0, total - 1)
                                         : UnityEngine.Random.Range(0, total);   // 隨機
             SelectSkin(idx);
@@ -369,8 +369,9 @@ namespace Sdo.Game
             {
                 _judgeWord.color = new Color(1, 1, 1, Mathf.Clamp01(1f - age / 0.5f));
                 float pop = (1f + Mathf.Clamp01(1f - age * 6f) * 1.0f) * 0.8f; // 2.0->1.0 ×0.8 (decompiled)
-                PlaceAspect(_judgeWord, PX(JudgeWordCenter.x), JudgeWordCenter.y, _judgeWord.sprite.bounds.size.x, -2);
-                _judgeWord.transform.localScale *= pop;
+                // 判定字跟 COMBO/數字是同一叢，向下模式套同一個 _judgeComboYOffset —— 只搬 COMBO 會把兩行的間距吃掉。
+                PlaceAspect(_judgeWord, PX(JudgeWordCenter.x), JudgeWordCenter.y + _judgeComboYOffset, _judgeWord.sprite.bounds.size.x, -2);
+                _judgeWord.transform.localScale *= pop * judgeTextScale;   // judgeTextScale = config.ini 的判定字大小比例（單張圖、繞自身中心縮放）
             }
             else _judgeWord.color = new Color(1, 1, 1, 0);
 

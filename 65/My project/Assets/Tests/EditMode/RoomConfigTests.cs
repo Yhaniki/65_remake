@@ -37,6 +37,46 @@ namespace Sdo.Tests
             RoomConfig.familyName = "";
             RoomConfig.familyEmblem = "SMALL43";
             RoomConfig.playerLevel = "";
+            RoomConfig.comboTextScale = 1f;
+            RoomConfig.judgeTextScale = 1f;
+            RoomConfig.hasTextScaleKeys = false;
+        }
+
+        [Test]
+        public void TextScales_Missing_From_An_Old_File_Flag_A_Template_TopUp()
+        {
+            // 舊 config.ini 沒有這兩個鍵 → Load 要重寫一次模板，否則使用者在檔案裡根本找不到鍵可以改。
+            RoomConfig.ParseInto("[Room]\njudgeLevel=4\n");
+            Assert.IsFalse(RoomConfig.hasTextScaleKeys);
+            RoomConfig.ParseInto("[Room]\ncomboTextScale=1.2\n");
+            Assert.IsTrue(RoomConfig.hasTextScaleKeys);
+            // 自己寫出來的模板一定帶鍵（補寫一次之後不會每次開機都重寫）。
+            Reset();
+            RoomConfig.ParseInto(RoomConfig.Serialize());
+            Assert.IsTrue(RoomConfig.hasTextScaleKeys);
+        }
+
+        [Test]
+        public void TextScales_Default_To_One_Parse_Clamp_And_RoundTrip()
+        {
+            Assert.AreEqual(1f, RoomConfig.comboTextScale, 1e-4f, "預設＝官方原尺寸");
+            Assert.AreEqual(1f, RoomConfig.judgeTextScale, 1e-4f);
+
+            RoomConfig.ParseInto("[Room]\ncomboTextScale=1.35\njudgeTextScale=0.75\n");
+            Assert.AreEqual(1.35f, RoomConfig.comboTextScale, 1e-4f);
+            Assert.AreEqual(0.75f, RoomConfig.judgeTextScale, 1e-4f);
+
+            RoomConfig.comboTextScale = 0f;  RoomConfig.judgeTextScale = 99f;   // 0 會整組消失、99 會蓋滿畫面
+            RoomConfig.Sanitize();
+            Assert.AreEqual(0.2f, RoomConfig.comboTextScale, 1e-4f);
+            Assert.AreEqual(3f, RoomConfig.judgeTextScale, 1e-4f);
+
+            RoomConfig.comboTextScale = 1.5f; RoomConfig.judgeTextScale = 0.8f;
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual(1.5f, RoomConfig.comboTextScale, 1e-4f);
+            Assert.AreEqual(0.8f, RoomConfig.judgeTextScale, 1e-4f);
         }
 
         [Test]
