@@ -112,6 +112,31 @@ namespace Sdo.Tests
             Assert.AreEqual("Song: The Remix", SmChart.Parse("#TITLE:Song: The Remix;\n").Title);
         }
 
+        // Real file: "(Barry) M@GIC☆.sm" (IDOLM@STER CINDERELLA GIRLS pack) drops the ';' after #TITLE and after
+        // #SUBTITLE, so a ';'-only tokenizer glues all three header lines into the title and the song list overflows
+        // with "M@GIC☆ #SUBTITLE:... #ARTIST:...". A '#' starting a line ends the previous value (as StepMania does).
+        [Test]
+        public void Missing_Semicolon_Ends_Tag_At_Next_Line_Leading_Hash()
+        {
+            var song = SmChart.Parse(
+                "#TITLE:M@GIC☆\r\n" +
+                "#SUBTITLE:THE IDOLM@STER CINDERELLA GIRLS ANIMATION PROJECT 2nd Season 07 M@GIC☆\r\n" +
+                "#ARTIST:CINDERELLA PROJECT;\r\n" +
+                "#MUSIC:M@GIC☆.mp3;\r\n" +
+                "#OFFSET:0.100;\r\n");
+            Assert.AreEqual("M@GIC☆", song.Title);
+            Assert.AreEqual("CINDERELLA PROJECT", song.Artist);
+            Assert.AreEqual("M@GIC☆.mp3", song.Music);
+            Assert.AreEqual(0.100, song.Offset, 1e-9);
+        }
+
+        // The implicit cut is only for a '#' at the start of a line — one inside a value is an ordinary character.
+        [Test]
+        public void Hash_Inside_A_Value_Is_Literal()
+        {
+            Assert.AreEqual("C# Sharp #1", SmChart.Parse("#TITLE:C# Sharp #1;\n#ARTIST:A;\n").Title);
+        }
+
         [Test]
         public void IsDanceSingle_Rejects_Double()
         {

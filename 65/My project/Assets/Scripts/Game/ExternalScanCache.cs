@@ -31,7 +31,9 @@ namespace Sdo.Game
         // v5: Malody .mc charts are scanned now — a folder holding them was cached as "yields nothing" (and its .mc
         //     weren't in the signature, so the .ogg/.jpg-only signature would still hit and hide the new song).
         // v6: each chart now carries an Etterna MinaCalc `msd` (for the MinaCalc difficulty display) — old lines lack it.
-        public const int Version = 6;
+        // v7: .sm tags missing their ';' no longer swallow the following lines (SmChart tolerates a leading-'#' cut),
+        //     so folders cached with a mangled title ("M@GIC☆ #SUBTITLE:… #ARTIST:…") must re-parse.
+        public const int Version = 7;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

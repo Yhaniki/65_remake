@@ -252,7 +252,7 @@ namespace Sdo.Osu
         private static IEnumerable<string[]> Statements(string text)
         {
             var noComments = StripComments(text);
-            foreach (var chunk in noComments.Split(';'))
+            foreach (var chunk in SplitStatements(noComments))
             {
                 int hash = chunk.IndexOf('#');
                 if (hash < 0) continue;
@@ -262,6 +262,36 @@ namespace Sdo.Osu
                 parts[0] = parts[0].Trim().ToUpperInvariant();
                 yield return parts;
             }
+        }
+
+        // Cut the (comment-free) text into statements. A ';' ends a statement — but plenty of real simfiles drop the
+        // terminator on a header tag, e.g. "#TITLE:M@GIC☆" followed on the next line by "#SUBTITLE:...". StepMania
+        // treats a '#' that is the first non-blank character of a line as an implicit end of the value it is reading
+        // ("Unfortunately, many of these files are missing ';'s" — MsdFile::ReadBuf), so we cut there too; otherwise
+        // every following tag line gets swallowed into the title. A '#' in mid-line stays a literal character (titles
+        // do contain them), and a note body never starts a line with '#', so #NOTES is unaffected.
+        private static IEnumerable<string> SplitStatements(string text)
+        {
+            int start = 0;
+            bool atLineStart = true;   // no non-blank character seen yet on the current line
+            bool hasContent = false;   // the statement being read already holds a non-blank character
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == ';')
+                {
+                    yield return text.Substring(start, i - start);
+                    start = i + 1; hasContent = false; atLineStart = false;
+                }
+                else if (c == '#' && atLineStart && hasContent)
+                {
+                    yield return text.Substring(start, i - start);
+                    start = i; hasContent = true; atLineStart = false;
+                }
+                else if (c == '\n') atLineStart = true;
+                else if (!char.IsWhiteSpace(c)) { atLineStart = false; hasContent = true; }
+            }
+            if (start < text.Length) yield return text.Substring(start);
         }
 
         private static string StripComments(string text)
