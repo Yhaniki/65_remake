@@ -43,17 +43,19 @@ namespace Sdo.Osu
         // ---- displayed difficulty number (MinaCalc mode) ----
         // The raw MSD (~10..30) is mapped to a shown difficulty by MSD^Exponent × Scale. Tunables — retune here to
         // recalibrate the whole scale. UNCAPPED on purpose (no 1..99 ceiling like the osu level): a very hard chart
-        // reads above 99.
-        public const double LevelExponent = 2.0;
+        // reads above 99. FLOOR at the raw MSD: for low MSD the curve compresses below the raw value, and we don't
+        // want an easy chart to read lower than its own MSD — so the shown value is max(curve, raw MSD).
+        public const double LevelExponent = 1.9;
         public const double LevelScale = 0.1;
 
-        /// <summary>Displayed difficulty for a raw overall MSD: round(MSD^<see cref="LevelExponent"/> ×
-        /// <see cref="LevelScale"/>). No upper cap. 0 for a non-computed / zero MSD.</summary>
+        /// <summary>Displayed difficulty for a raw overall MSD: round(max(MSD^<see cref="LevelExponent"/> ×
+        /// <see cref="LevelScale"/>, MSD)). No upper cap. 0 for a non-computed / zero MSD.</summary>
         public static int ToLevel(float msd)
         {
             if (msd <= 0f) return 0;
-            return (int)System.Math.Round(System.Math.Pow(msd, LevelExponent) * LevelScale,
-                                          System.MidpointRounding.AwayFromZero);
+            double v = System.Math.Pow(msd, LevelExponent) * LevelScale;
+            if (v < msd) v = msd;   // 算出來比原始 MSD 小 → 用原始 MSD
+            return (int)System.Math.Round(v, System.MidpointRounding.AwayFromZero);
         }
 
         /// <summary>
