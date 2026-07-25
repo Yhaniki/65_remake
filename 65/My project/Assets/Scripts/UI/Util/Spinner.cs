@@ -3,14 +3,14 @@ using UnityEngine;
 namespace Sdo.UI.Util
 {
     /// <summary>
-    /// Z rotation for the ROOMDLG vinyl disk. Steady state reproduces the original <c>Circumgyrate</c>
-    /// (360° per 1000ms, repeat −1; negative = clockwise). <see cref="Restart"/> makes the disk hold still for
+    /// Z rotation for the ROOMDLG vinyl disk. Steady state runs at half the original <c>Circumgyrate</c>
+    /// (original was 360° per 1000ms; here 180°/1000ms, repeat −1; negative = clockwise). <see cref="Restart"/> makes the disk hold still for
     /// <see cref="PauseSec"/> then ease up to full speed over <see cref="RampSec"/> — the "stop, then spin up"
     /// feel the original plays when the selected song (cover) changes. Unscaled time, so it ignores timeScale.
     /// </summary>
     public sealed class Spinner : MonoBehaviour
     {
-        public float DegPerSec = -360f;
+        public float DegPerSec = -180f;   // half of the original 360°/s
         public float PauseSec = 1f;
         public float RampSec = 2f;
 
