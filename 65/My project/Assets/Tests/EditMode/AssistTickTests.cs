@@ -96,6 +96,13 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void HasTick_WarpedNotesAreSilent()   // 負 BPM 掃過去的裝飾音打不到,一整批同時響會變雜音
+        {
+            Assert.IsFalse(AssistTick.HasTick(new OsuHitObject(0, 1000, null, false, isFake: true)));
+            Assert.IsTrue(AssistTick.HasTick(new OsuHitObject(0, 1000, null, false, isFake: false)));
+        }
+
+        [Test]
         public void HasTick_BombSharingARowWithATapStillTicksOnce()
         {
             // 同一 row = 一顆 tap + 一顆炸彈:tap 那聲留著,炸彈不另外加一聲

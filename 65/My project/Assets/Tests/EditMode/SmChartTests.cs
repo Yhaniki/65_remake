@@ -248,5 +248,168 @@ namespace Sdo.Tests
             Assert.IsTrue(map.HitObjects[0].IsBomb);
             Assert.AreEqual(3, map.HitObjects[0].Lane);
         }
+
+        // ---------------------------------------------------------------------------------------------------
+        // 負 BPM (warp)。StepMania 的 #BPMS 允許負值:那一段的經過時間是負的(時間倒退),要等後面**同樣時間長度**
+        // 的正 BPM 把它加回來,播放頭才回到原本的時刻 —— 中間那整段拍子是一瞬間跳過去的
+        // (TimingData::GetBeatAndBPSFromElapsedTime),裡面的音符看得到但連一幀判定機會都沒有。
+        // ---------------------------------------------------------------------------------------------------
+
+        // 120 BPM(1 拍 = 500ms)。beats 4..8 是 -120(倒退 2000ms),beats 8..12 是 120(補回 2000ms)→
+        // 播放頭在 2000ms 這一瞬間從 beat 4 直接跳到 beat 12。每拍一顆 note,共 4 小節(beats 0..15)。
+        private const string Warp =
+            "#TITLE:W;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120;\n" +
+            "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n" +
+            "1000\n1000\n1000\n1000\n,\n" +   // beats 0,1,2,3
+            "1000\n1000\n1000\n1000\n,\n" +   // beats 4,5,6,7   ← 負 BPM 段
+            "1000\n1000\n1000\n1000\n,\n" +   // beats 8,9,10,11 ← 被拿去抵銷的正 BPM 段
+            "1000\n1000\n1000\n1000\n;\n";    // beats 12..15    ← 譜面從這裡照原時間接上
+
+        [Test]
+        public void Parses_Negative_Bpm()
+        {
+            var s = SmChart.Parse(Warp);
+            Assert.AreEqual(3, s.BpmValues.Count);
+            Assert.AreEqual(-120.0, s.BpmValues[1], 1e-9, "負 BPM 不能被當成壞資料丟掉");
+            Assert.IsTrue(s.HasNegativeBpm);
+            Assert.AreEqual(120.0, s.FirstPositiveBpm, 1e-9);
+        }
+
+        [Test]
+        public void Warp_Spans_The_Negative_Segment_Plus_The_Positive_Span_That_Cancels_It()
+        {
+            var warps = SmChart.Warps(SmChart.Parse(Warp), 16);
+            Assert.AreEqual(1, warps.Count);
+            Assert.AreEqual(4.0, warps[0].StartBeat, 1e-9);    // 起跳 = 負 BPM 開始的那一拍
+            Assert.AreEqual(12.0, warps[0].EndBeat, 1e-9);     // 落地 = 倒退的時間被補回來的那一拍
+            Assert.AreEqual(8.0, warps[0].Beats, 1e-9);        // 負 4 拍 + 抵銷用的正 4 拍
+            Assert.AreEqual(2000.0, warps[0].TimeMs, 1e-6);    // 起跳與落地是**同一個**歌曲時刻
+            Assert.IsTrue(warps[0].Contains(7.0));
+            Assert.IsFalse(warps[0].Contains(4.0), "起跳那一拍打得到");
+            Assert.IsFalse(warps[0].Contains(12.0), "落地那一拍打得到");
+        }
+
+        [Test]
+        public void Warped_Notes_Are_Fake_And_The_Chart_Resumes_At_The_Same_Song_Time()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(Warp), 0);
+            Assert.AreEqual(16, map.HitObjects.Count, "音符一顆都不會消失 —— 看得到,只是打不到");
+            Assert.AreEqual(120.0, map.Bpm, 1e-9);
+
+            // beats 0..3:一般音符
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.AreEqual(i * 500, map.HitObjects[i].StartTimeMs);
+                Assert.IsFalse(map.HitObjects[i].IsFake);
+            }
+            // beat 4(起跳)、beats 5..11(被跳過)、beat 12(落地) 判定時刻全部是 2000ms
+            for (int i = 4; i <= 12; i++) Assert.AreEqual(2000, map.HitObjects[i].StartTimeMs);
+            Assert.IsFalse(map.HitObjects[4].IsFake, "起跳那一拍打得到");
+            for (int i = 5; i <= 11; i++) Assert.IsTrue(map.HitObjects[i].IsFake, $"beat {i} 被 warp 掃掉");
+            Assert.IsFalse(map.HitObjects[12].IsFake, "落地那一拍打得到");
+
+            // 後面的譜照原本的時間接上 —— beat 13/14/15 = 2500/3000/3500ms
+            Assert.AreEqual(2500, map.HitObjects[13].StartTimeMs);
+            Assert.AreEqual(3000, map.HitObjects[14].StartTimeMs);
+            Assert.AreEqual(3500, map.HitObjects[15].StartTimeMs);
+        }
+
+        [Test]
+        public void Warped_Notes_Do_Not_Count_Towards_The_Total()
+        {
+            var song = SmChart.Parse(Warp);
+            // 16 顆裡有 7 顆在 warp 內 → 實際要打的只有 9 顆。
+            // (StepMania 3.9 其實會把那 7 顆算進 note 總數,但它們永遠打不到 —— 這裡刻意不算。)
+            Assert.AreEqual(9, SmChart.ToBeatmap(song, 0).TotalNotes);
+            Assert.AreEqual(9, SmChart.PlayableNoteCount(song, 0));
+            Assert.AreEqual(16, SmChart.NoteCount(song.Charts[0].NoteData), "逐字掃 note body 的顆數不變");
+        }
+
+        // warp 在時間軸上沒有厚度,但畫面上仍然要照拍子鋪開(StepMania 3.9 用 beat spacing 擺音符),
+        // 所以顯示用時間 (ScrollTimeMs) 會和判定時間分家:整段被跳過的拍子攤在判定時刻前 1ms 的窗裡。
+        [Test]
+        public void Warped_Notes_Keep_Beat_Spacing_On_The_Highway()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(Warp), 0);
+            for (int i = 0; i < 3; i++)
+                Assert.AreEqual(map.HitObjects[i].StartTimeMs, map.HitObjects[i].ScrollTimeMs, 1e-9,
+                    "warp 以外的音符,顯示時間就是判定時間");
+
+            // 起跳拍 → 窗頭;warp 內第 k 拍 → 窗內第 k/8;落地拍 → 窗尾(= warp 的時刻)
+            double win = 2000.0 - SmChart.WarpDisplayMs;
+            for (int i = 4; i <= 12; i++)
+                Assert.AreEqual(win + SmChart.WarpDisplayMs * (i - 4) / 8.0, map.HitObjects[i].ScrollTimeMs, 1e-9);
+
+            // 位置照拍子等距展開:warp 前 1.5ms(播放頭還沒跳)時,相鄰兩顆的距離都等於「一拍」。
+            var scroll = ManiaScroll.Build(map, 1.0);
+            double now = win - 0.5;
+            double oneBeat = scroll.PixelDistance(now, 500) - scroll.PixelDistance(now, 0);   // 120bpm 的一拍
+            Assert.Greater(oneBeat, 0.0);
+            for (int i = 4; i < 12; i++)
+            {
+                double d = scroll.PixelDistance(now, map.HitObjects[i + 1].ScrollTimeMs)
+                         - scroll.PixelDistance(now, map.HitObjects[i].ScrollTimeMs);
+                Assert.AreEqual(oneBeat, d, oneBeat * 1e-6, $"beat {i}→{i + 1} 在畫面上就是一拍的距離");
+            }
+
+            // 播放頭掃過那 1ms 之後,整批 warp 音符瞬間到判定線後方,落地那一拍剛好落在判定線上。
+            Assert.AreEqual(0.0, scroll.PixelDistance(2000.0, map.HitObjects[12].ScrollTimeMs), 1e-6);
+            for (int i = 4; i <= 11; i++)
+                Assert.Less(scroll.PixelDistance(2000.0, map.HitObjects[i].ScrollTimeMs), 0.0);
+        }
+
+        [Test]
+        public void Warped_Mine_Is_Fake_Too()
+        {
+            // beat 5(warp 內)放一顆 mine:看得到,但播放頭是瞬間跳過的 → 踩不到,也不該引爆。
+            const string sm =
+                "#TITLE:WM;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120;\n" +
+                "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n" +
+                "0000\n0000\n0000\n0000\n,\n0000\nM000\n0000\n0000\n,\n0000\n0000\n0000\n0000\n,\n1000\n;\n";
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            var mine = map.HitObjects.Find(h => h.IsBomb);
+            Assert.IsTrue(mine.IsBomb);
+            Assert.IsTrue(mine.IsFake, "warp 裡的炸彈也是裝飾");
+            Assert.AreEqual(1, map.TotalNotes, "beat 12 的那顆 tap;炸彈與 warp 音符都不算");
+        }
+
+        [Test]
+        public void Unterminated_Negative_Bpm_Warps_To_The_End_Of_The_Chart()
+        {
+            // beat 8 之後一路負 BPM,永遠沒有正 BPM 來抵銷 → 後面整段都是打不到的裝飾音。
+            const string sm =
+                "#TITLE:U;\n#OFFSET:0;\n#BPMS:0=120,8=-120;\n" +
+                "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n" +
+                "1000\n1000\n1000\n1000\n,\n1000\n1000\n1000\n1000\n,\n1000\n1000\n1000\n1000\n;\n";
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            Assert.AreEqual(12, map.HitObjects.Count);
+            for (int i = 0; i <= 8; i++) Assert.IsFalse(map.HitObjects[i].IsFake, $"beat {i} 還打得到");
+            for (int i = 9; i < 12; i++) Assert.IsTrue(map.HitObjects[i].IsFake, $"beat {i} 被 warp 掃掉");
+            Assert.AreEqual(9, map.TotalNotes);
+        }
+
+        [Test]
+        public void Negative_Bpm_At_Beat_Zero_Still_Reports_A_Positive_Header_Bpm()
+        {
+            // 表頭 BPM 是判定窗(依 BPM 換算 tick)與選歌畫面的來源,拿到負數整個會壞掉 → 取第一個正的。
+            var s = SmChart.Parse("#TITLE:N;\n#OFFSET:0;\n#BPMS:0=-200,1=150;\n");
+            Assert.AreEqual(-200.0, s.FirstBpm, 1e-9);
+            Assert.AreEqual(150.0, s.FirstPositiveBpm, 1e-9);
+        }
+
+        [Test]
+        public void Charts_Without_Negative_Bpm_Have_No_Warps_And_No_Fake_Notes()
+        {
+            var song = SmChart.Parse(Sample);
+            Assert.IsFalse(song.HasNegativeBpm);
+            Assert.AreEqual(0, SmChart.Warps(song, 4).Count);
+            var map = SmChart.ToBeatmap(song, 0);
+            foreach (var h in map.HitObjects)
+            {
+                Assert.IsFalse(h.IsFake);
+                Assert.AreEqual(h.StartTimeMs, h.ScrollTimeMs, 1e-9);
+            }
+            Assert.AreEqual(1, map.TimingPoints.Count, "沒有 warp 就不會多送 timing point");
+        }
     }
 }

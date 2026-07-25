@@ -527,7 +527,7 @@ namespace Sdo.Osu
                 {
                     var ch = smSong.Charts[i];
                     if (!SmChart.IsDanceSingle(ch)) continue;
-                    int notes = SmChart.NoteCount(ch.NoteData);
+                    int notes = SmChart.PlayableNoteCount(smSong, i);   // warp(負 BPM)掃掉的音符打不到 → 不算
                     if (notes <= 0) continue;
                     candIndex.Add(i); candCount.Add(notes); candMeter.Add(ch.Meter);
                 }
@@ -562,7 +562,7 @@ namespace Sdo.Osu
                 d.Title = Coalesce(smSong.Title, Path.GetFileNameWithoutExtension(smPath));
                 d.Artist = smSong.Artist ?? "";
                 d.Version = "";
-                d.Bpm = smSong.FirstBpm;
+                d.Bpm = smSong.FirstPositiveBpm;   // 負 BPM 開頭的譜要顯示第一個正的,不然選歌畫面會出現負 BPM
                 d.AudioName = audioName;
                 d.BannerName = ExternalSongGrouper.BaseName(smSong.Banner);
                 d.BackgroundName = ExternalSongGrouper.BaseName(smSong.Background);

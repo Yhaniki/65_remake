@@ -109,6 +109,7 @@ namespace Sdo.Osu
             for (int i = 0; i < n; i++)
             {
                 var o = bm.HitObjects[i];
+                if (o.IsFake) continue;   // warp(負 BPM)掃掉的音符打不到,算進來星數會虛高
                 int col = o.Lane; if (col < 0) col = 0; if (col > keyCount - 1) col = keyCount - 1;
                 double start = o.StartTimeMs;
                 double end = o.EndTimeMs ?? o.StartTimeMs;

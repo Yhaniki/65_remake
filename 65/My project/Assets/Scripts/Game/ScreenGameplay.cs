@@ -2158,7 +2158,14 @@ namespace Sdo.Game
         {
             foreach (var h in _map.HitObjects)
                 _notes.Add(new RuntimeNote(h, NoteBeatColor.Family(h.StartTimeMs, _map)));   // beat-quantization colour precomputed (used only in 3D skin)
-            _notes.Sort((a, b) => a.Note.StartTimeMs.CompareTo(b.Note.StartTimeMs));   // window/break rely on ascending start (loaders sort, but be defensive)
+            // window/break rely on ascending start (loaders sort, but be defensive). 判定時間相同時再比顯示時間 ——
+            // StepMania warp(負 BPM)那一批音符判定時刻全部一樣、只有畫面位置不同,ScrollNotes 的提早 break 是照
+            // 顯示順序走的,排錯會讓 warp 那批少畫幾顆。
+            _notes.Sort((a, b) =>
+            {
+                int c = a.Note.StartTimeMs.CompareTo(b.Note.StartTimeMs);
+                return c != 0 ? c : a.Note.ScrollTimeMs.CompareTo(b.Note.ScrollTimeMs);
+            });
             _noteStarts.Clear();
             foreach (var n in _notes) _noteStarts.Add(n.Note.StartTimeMs);
             _firstAlive = 0;
@@ -4713,7 +4720,7 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) { ReturnVisual(n); continue; }
-                if (n.Note.StartTimeMs > now && ScrollPx(now, n.Note.StartTimeMs) > aheadPx)
+                if (n.Note.ScrollTimeMs > now && ScrollPx(now, n.Note.ScrollTimeMs) > aheadPx)
                 {
                     // Note is past the far edge of the board. With frame_type 33 捲動速度 the current speed can jump/
                     // ramp, so a note that's off-board this frame may be back on it the next — we must keep hiding it
@@ -4727,8 +4734,10 @@ namespace Sdo.Game
                 // 長條頭按住時釘在判定線；一旦尾端(END)通過判定線 (now ≥ EndTimeMs) 就整條隱藏 — 判定仍在跑
                 // (還按著 → 等放開評 tail，或 release 窗口過了才 AutoMiss)，但畫面上直接消失，不留一顆釘在判定線的頭。
                 if (held && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { ReturnVisual(n); continue; }
-                float yRaw = held ? judgeLineY : YForTime(n.Note.StartTimeMs, now);
-                float yEnd = n.Note.EndTimeMs.HasValue ? YForTime(n.Note.EndTimeMs.Value, now) : yRaw;
+                // 位置一律用 ScrollTimeMs(顯示用時間),而不是判定時間 —— 兩者只有 StepMania warp(負 BPM)會不一樣:
+                // warp 是零秒跳過一段拍子,那段音符判定時刻全部擠在同一瞬間,但畫面上仍要照拍子鋪開(見 OsuHitObject)。
+                float yRaw = held ? judgeLineY : YForTime(n.Note.ScrollTimeMs, now);
+                float yEnd = n.Note.EndTimeMs.HasValue ? YForTime(n.Note.ScrollEndTimeMs, now) : yRaw;
                 // a note that has flowed off the top (above the clip band, past the HP bar) is no longer VISIBLE,
                 // but it is NOT retired yet: it stays alive and judgeable until its miss window actually elapses.
                 // On slow songs the off-top point comes BEFORE MissBoundary, so retiring it here would skip the
@@ -4740,7 +4749,9 @@ namespace Sdo.Game
                 if (offPast)
                 {
                     ReturnVisual(n);
-                    if (n.HeadJudged) n.Done = true;   // hit late / auto-missed -> now fully retired
+                    // hit late / auto-missed -> now fully retired. warp 掃掉的裝飾音永遠不會被判定,流出畫面就直接收掉
+                    // (不收的話它會一直卡在 _firstAlive 前面,每幀都被掃到)。
+                    if (n.HeadJudged || n.Note.IsFake) n.Done = true;
                     continue;
                 }
                 bool visible = held || (_scrollSign > 0
@@ -4959,6 +4970,7 @@ namespace Sdo.Game
                 var n = _notes[i];
                 if (n.Done) continue;
                 if (n.Note.IsBomb) continue;   // 炸彈自動玩時避開,不打(由 TickBombs 處理)
+                if (n.Note.IsFake) continue;   // warp 掃掉的裝飾音不判定,自動玩也不打
                 if (!n.HeadJudged && now >= n.Note.StartTimeMs)
                 {
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
@@ -5296,7 +5308,8 @@ namespace Sdo.Game
             for (int i = _firstAlive; i < hi; i++)
             {
                 var n = _notes[i];
-                if (n.Done || n.HeadJudged || n.Note.IsBomb || n.Note.Lane != lane) continue;   // 炸彈不當一般 note 判定
+                // 炸彈不當一般 note 判定;warp(負 BPM)掃掉的裝飾音也不判定 —— 播放頭是瞬間跳過那段拍子的,不用打
+                if (n.Done || n.HeadJudged || n.Note.IsBomb || n.Note.IsFake || n.Note.Lane != lane) continue;
                 double d = Math.Abs(n.Note.StartTimeMs - now);
                 if (d < bestAbs && d <= _engine.Windows.MissBoundary) { bestAbs = d; best = n; }
             }
@@ -5313,6 +5326,7 @@ namespace Sdo.Game
                 var n = _notes[i];
                 if (n.Done) continue;
                 if (n.Note.IsBomb) continue;   // 炸彈不會 miss(避開才對);由 TickBombs 處理
+                if (n.Note.IsFake) continue;   // warp 掃掉的裝飾音不會 miss(打不到也不用打);流出畫面時由 ScrollNotes 收掉
                 // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
                 // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
                 if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
@@ -5352,6 +5366,7 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done || !n.Note.IsBomb) continue;
+                if (n.Note.IsFake) continue;   // warp 掃掉的炸彈不會爆:播放頭是瞬間跳過那段拍子的,踩不到
                 double t = n.Note.StartTimeMs;
                 if (now - t > retire) { n.Done = true; continue; }   // 早已通過 → 消失
                 if (!detonate) continue;                             // 自動避雷:只推進/退場,不引爆

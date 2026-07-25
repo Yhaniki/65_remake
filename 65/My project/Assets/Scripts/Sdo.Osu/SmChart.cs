@@ -20,6 +20,12 @@ namespace Sdo.Osu
     ///   #STOPS/#FREEZES whose start beat is < the note's beat — a stop exactly AT the beat comes before the stop,
     ///   so it is NOT added; verified NotesLoaderSM.cpp:141 + TimingData.cpp:162-174.) A stop also freezes the
     ///   highway for its duration — carried on <see cref="OsuBeatmap.Stops"/> and applied by <see cref="ManiaScroll"/>.
+    ///
+    /// 負 BPM (warp) —— 見 <see cref="Warps"/>:StepMania 的 #BPMS 允許負值,那一段的「經過時間」是**負的**,
+    /// 所以歌曲時間會倒退;要等後面同樣長度的正 BPM 把它加回來,播放頭才回到原本的時刻,後面的譜就照原時間接上。
+    /// 這中間的拍子播放頭是**一瞬間跳過去**的(TimingData::GetBeatAndBPSFromElapsedTime 在負段
+    /// `fSecondsInThisSegment` 為負 → 條件不成立 → 直接 `fElapsedTime -= fSecondsInThisSegment` 把時間加回去,
+    /// 一口氣跳到後面),裡面的音符看得到卻連一幀判定機會都沒有 → 標成 <see cref="OsuHitObject.IsFake"/>。
     /// See doc/SM_GN_NOTE_FORMAT.md.
     /// </summary>
     public static class SmChart
@@ -51,6 +57,51 @@ namespace Sdo.Osu
             public readonly List<SmNotes> Charts = new List<SmNotes>();
 
             public double FirstBpm => BpmValues.Count > 0 ? BpmValues[0] : 0.0;
+
+            /// <summary>第一個**正的** BPM —— 選歌畫面顯示、判定窗換算都要用它。首段就是負 BPM (warp) 的譜
+            /// 若直接用 <see cref="FirstBpm"/> 會拿到負數,判定窗會整個壞掉。全負/空 → 0。</summary>
+            public double FirstPositiveBpm
+            {
+                get
+                {
+                    for (int i = 0; i < BpmValues.Count; i++) if (BpmValues[i] > 0.0) return BpmValues[i];
+                    return 0.0;
+                }
+            }
+
+            /// <summary>這首有沒有負 BPM(要走 warp 那條路)。</summary>
+            public bool HasNegativeBpm
+            {
+                get
+                {
+                    for (int i = 0; i < BpmValues.Count; i++) if (BpmValues[i] < 0.0) return true;
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 一段 warp:歌曲時間走到 <see cref="TimeMs"/> 的那一瞬間,播放頭的拍子從 <see cref="StartBeat"/>
+        /// 直接跳到 <see cref="EndBeat"/>(中間不花任何時間)。負 BPM 段先讓時間倒退,後面的正 BPM 段再把它加回來,
+        /// 「倒退 + 加回來」這整段拍子就是被跳過的範圍 —— 使用者說的「要有一段正 BPM 同樣時間長度的才能抵銷」。
+        /// </summary>
+        public readonly struct SmWarp
+        {
+            /// <summary>開始跳過的拍(這一拍本身還打得到 —— 播放頭正是在這裡起跳的)。</summary>
+            public double StartBeat { get; }
+            /// <summary>落地的拍(這一拍打得到,後面的譜從這裡照原時間接上)。</summary>
+            public double EndBeat { get; }
+            /// <summary>起跳/落地共用的歌曲時刻 (ms, note clock)。</summary>
+            public double TimeMs { get; }
+
+            public SmWarp(double startBeat, double endBeat, double timeMs)
+            { StartBeat = startBeat; EndBeat = endBeat; TimeMs = timeMs; }
+
+            /// <summary>被跳過的拍數(= 畫面上要瞬間刷過去的距離)。</summary>
+            public double Beats => EndBeat - StartBeat;
+
+            /// <summary>這一拍是不是落在 warp 內部(頭尾兩拍不算 —— 那兩拍打得到)。</summary>
+            public bool Contains(double beat) => beat > StartBeat && beat < EndBeat;
         }
 
         /// <summary>True for a 4-panel single chart (the only kind the 4K highway can play).</summary>
@@ -124,6 +175,33 @@ namespace Sdo.Osu
             return count;
         }
 
+        /// <summary>
+        /// 這張譜**實際打得到**的音符顆數(炸彈與 warp 內的裝飾音都不算)——選歌畫面顯示的 note 數、難度排序都用它。
+        /// 沒有負 BPM 的譜直接走便宜的 <see cref="NoteCount(string)"/>(逐字掃 note body,不必建時間軸)。
+        /// </summary>
+        public static int PlayableNoteCount(SmSong song, int chartIndex)
+        {
+            if (song == null || chartIndex < 0 || chartIndex >= song.Charts.Count) return 0;
+            if (!song.HasNegativeBpm) return NoteCount(song.Charts[chartIndex].NoteData);
+            int n = 0;
+            foreach (var h in ToBeatmap(song, chartIndex).HitObjects)
+                if (!h.IsBomb && !h.IsFake) n++;
+            return n;
+        }
+
+        /// <summary>
+        /// 這首歌的 warp 清單(依時間遞增);沒有負 BPM → 空清單。<paramref name="lastBeat"/> 是譜面最後一拍,
+        /// 只有「負 BPM 一路到譜尾、永遠沒被抵銷」時才用得到(那種 warp 收在譜尾)。純函式,給測試/工具用。
+        /// </summary>
+        public static List<SmWarp> Warps(SmSong song, double lastBeat = 0.0)
+        {
+            var list = new List<SmWarp>();
+            if (song == null) return list;
+            double headerBpm = song.FirstPositiveBpm > 0 ? song.FirstPositiveBpm : 120.0;
+            list.AddRange(Timeline.Build(song, headerBpm, lastBeat).Warps);
+            return list;
+        }
+
         /// <summary>Convert one dance-single chart to a playable <see cref="OsuBeatmap"/> (4 lanes).</summary>
         public static OsuBeatmap ToBeatmap(SmSong song, int chartIndex)
         {
@@ -131,34 +209,23 @@ namespace Sdo.Osu
             if (song == null || chartIndex < 0 || chartIndex >= song.Charts.Count) return map;
             var chart = song.Charts[chartIndex];
 
-            float headerBpm = (float)(song.FirstBpm > 0 ? song.FirstBpm : 120.0);
+            // 表頭 BPM 取第一個**正的**值:負 BPM 開頭的譜若拿到負數,判定窗(依 BPM 換算 tick)會整個壞掉。
+            double headerBpm = song.FirstPositiveBpm > 0 ? song.FirstPositiveBpm : 120.0;
             map.Bpm = headerBpm;
             map.Level = chart.Meter;
             map.Title = song.Title;
             map.MusicStartOffsetMs = 0.0;   // audio starts at note-clock 0; the OFFSET is folded into each note's ms.
 
-            // Piecewise-constant BPM timeline (reuses the .gn builder — same domain, same assembly).
-            GnChart.BuildBpmTimeline(headerBpm, song.BpmBeats, song.BpmValues,
-                out double[] segBeat, out double[] segBpm, out double[] segMs);
-            double offMs = song.Offset * 1000.0;
+            var measures = SplitMeasures(chart.NoteData);
+            var tl = Timeline.Build(song, headerBpm, measures.Count * 4.0);
 
-            // #STOPS/#FREEZES sorted by beat (freeze ms alongside), so every beat→ms conversion can add the
-            // cumulative freeze before it — StepMania folds stops into note times (TimingData::GetElapsedTimeFromBeat).
-            BuildStops(song.StopBeats, song.StopSeconds, out double[] stopBeat, out double[] stopMs);
-
-            // timing points (ms): one uninherited point per BPM segment (drives ManiaScroll BPM-change scrolling).
-            // Shift by the cumulative freeze at each segment's start beat so a BPM change after a stop lands at its
-            // real song time (else the scroll segments would drift by the stop duration).
-            for (int s = 0; s < segBeat.Length; s++)
-            {
-                double t = GnChart.BeatToMs(segBeat, segBpm, segMs, segBeat[s]) - offMs
-                           + CumulativeStopMs(stopBeat, stopMs, segBeat[s]);
-                map.TimingPoints.Add(new OsuTimingPoint(t, 60000.0 / Math.Max(1.0, segBpm[s])));
-            }
+            // timing points (ms): one uninherited point per BPM segment (drives ManiaScroll BPM-change scrolling),
+            // shifted by the cumulative freeze at each segment's start beat so a BPM change after a stop lands at its
+            // real song time. Warps add their own super-fast 1ms segment — see Timeline.FillTimingPoints.
+            tl.FillTimingPoints(map);
 
             // --- parse the note body: measures split on ',', rows split on '\n' ---
             var openHead = new double[4]; for (int i = 0; i < 4; i++) openHead[i] = -1.0;
-            var measures = SplitMeasures(chart.NoteData);
             for (int m = 0; m < measures.Count; m++)
             {
                 var rows = measures[m];
@@ -173,52 +240,324 @@ namespace Sdo.Osu
                     {
                         char ch = row[c];
                         if (ch == '1')
-                            map.HitObjects.Add(new OsuHitObject(c, Ms(segBeat, segBpm, segMs, stopBeat, stopMs, beat, offMs)));
+                            map.HitObjects.Add(tl.Tap(c, beat));
                         else if (ch == '2' || ch == '4')
                             openHead[c] = beat;
                         else if (ch == '3')
                         {
                             if (openHead[c] >= 0.0)
                             {
-                                int start = Ms(segBeat, segBpm, segMs, stopBeat, stopMs, openHead[c], offMs);
-                                int end = Ms(segBeat, segBpm, segMs, stopBeat, stopMs, beat, offMs);
-                                map.HitObjects.Add(new OsuHitObject(c, start, end > start ? end : (int?)null));
+                                map.HitObjects.Add(tl.Hold(c, openHead[c], beat));
                                 openHead[c] = -1.0;
                             }
                         }
                         else if (ch == 'M' || ch == 'm')
                             // 'M' = mine，StepMania 原生的炸彈：要避開、踩到才有事，和 .gn 的 note_type 1 同一種東西，
                             // 所以走同一條 IsBomb 路徑(ZD00..ZD03 外觀 + TickBombs 引爆)。永遠不是長條。
-                            map.HitObjects.Add(new OsuHitObject(c, Ms(segBeat, segBpm, segMs, stopBeat, stopMs, beat, offMs),
-                                                                null, isBomb: true));
+                            map.HitObjects.Add(tl.Tap(c, beat, isBomb: true));
                         // '0' 與其他字元(lift 'L'、fake 'F'…) → 無音符。
                     }
                 }
             }
-            map.HitObjects.Sort((a, b) => a.StartTimeMs.CompareTo(b.StartTimeMs));
+            // 判定時間相同時(warp 內的音符全部落在同一個瞬間)再比顯示時間 —— ScreenGameplay 的「後面的都還沒進場
+            // 就 break」提早結束是靠這個順序,排錯會讓 warp 那批音符少畫幾顆。
+            map.HitObjects.Sort((a, b) =>
+            {
+                int c = a.StartTimeMs.CompareTo(b.StartTimeMs);
+                return c != 0 ? c : a.ScrollTimeMs.CompareTo(b.ScrollTimeMs);
+            });
 
             // Freeze windows for the highway (ManiaScroll): each stop begins at its own note-clock time — the
             // cumulative freeze BEFORE it (a stop's own duration is not yet applied at its start beat) — and lasts
             // its freeze duration. A note sitting exactly on the stop beat is hit right as the freeze begins.
-            for (int i = 0; i < stopBeat.Length; i++)
+            // warp 內的 stop 不送:那一段拍子播放頭是瞬間跳過的,凍結窗會落在「已經過去的時刻」反而卡到畫面。
+            for (int i = 0; i < tl.StopBeat.Length; i++)
             {
-                double startMs = GnChart.BeatToMs(segBeat, segBpm, segMs, stopBeat[i]) - offMs
-                                 + CumulativeStopMs(stopBeat, stopMs, stopBeat[i]);
+                if (tl.IsWarped(tl.StopBeat[i])) continue;
+                double startMs = tl.RawMs(tl.StopBeat[i]);
                 if (startMs < 0) startMs = 0;
-                map.Stops.Add(new ScrollStop(startMs, stopMs[i]));
+                map.Stops.Add(new ScrollStop(startMs, tl.StopMs[i]));
             }
             return map;
         }
 
-        // Cumulative freeze (ms) that applies to a note at <paramref name="beat"/>: the sum of every stop whose
-        // start beat is STRICTLY before it. StepMania breaks on `stopBeat >= beat` (TimingData.cpp:171), i.e. a
-        // stop exactly on the note's beat comes before the freeze, so it is not counted. stopBeat is ascending.
-        private static double CumulativeStopMs(double[] stopBeat, double[] stopMs, double beat)
+        /// <summary>
+        /// warp 在**畫面**上被壓成多短的一個「超高速捲動窗」(ms)。warp 在時間軸上沒有厚度(播放頭瞬間跳過),
+        /// 但 StepMania 3.9 的音符位置是 beat spacing(ArrowEffects::ArrowGetYOffset),warp 內的音符進場時
+        /// 仍然照拍子一顆顆排開往下捲、到了那個瞬間整批刷過判定線。要在「用時間定位音符」的引擎裡重現這件事,
+        /// 就把整段被跳過的拍數塞進判定時刻前這麼短的一個窗裡:1ms 短到播放頭幾乎不可能停在裡面(一幀 ~16ms),
+        /// 看起來就是瞬間跳過,又足以把窗內的音符按拍子分開來擺。
+        /// </summary>
+        public const double WarpDisplayMs = 1.0;
+
+        /// <summary>時間比較的容差 (ms) —— 判斷「負 BPM 倒退的時間有沒有被加回來」用。</summary>
+        private const double TimeEps = 1e-6;
+
+        /// <summary>
+        /// 一張 .sm 的時間軸:拍 → 時間,含 #BPMS(可為負)、#STOPS,以及由負 BPM 推導出來的 warp。
+        /// 三種「時間」要分清楚:
+        ///   <see cref="RawMs"/>     = StepMania TimingData::GetElapsedTimeFromBeat 原式(負 BPM 會讓它倒退);
+        ///   <see cref="PlayMs"/>    = 播放頭**真的**經過那一拍的時刻(warp 內一律等於 warp 那一瞬間)→ 判定時間;
+        ///   <see cref="DisplayMs"/> = 畫面定位用的時間(warp 內攤在 <see cref="WarpDisplayMs"/> 的窗裡)。
+        /// </summary>
+        private sealed class Timeline
         {
-            double acc = 0.0;
-            for (int i = 0; i < stopBeat.Length && stopBeat[i] < beat; i++) acc += stopMs[i];
-            return acc;
+            public readonly double[] SegBeat, SegBpm, SegMs;   // BPM 段起拍 / BPM(可為負) / 該起拍的累計 ms
+            public readonly double[] StopBeat, StopMs;         // #STOPS,依拍遞增
+            public readonly double OffMs;                      // #OFFSET × 1000(StepMania 是「減」)
+            public readonly SmWarp[] Warps;                    // 依 StartBeat 遞增
+            public readonly double[] WinStartMs;               // 每個 warp 的顯示窗起點(窗尾 = warp.TimeMs)
+
+            public static Timeline Build(SmSong song, double headerBpm, double lastBeat)
+            {
+                BuildBpmSegments(headerBpm, song.BpmBeats, song.BpmValues,
+                    out double[] segBeat, out double[] segBpm, out double[] segMs);
+                BuildStops(song.StopBeats, song.StopSeconds, out double[] stopBeat, out double[] stopMs);
+                return new Timeline(segBeat, segBpm, segMs, stopBeat, stopMs, song.Offset * 1000.0, lastBeat);
+            }
+
+            private Timeline(double[] segBeat, double[] segBpm, double[] segMs,
+                double[] stopBeat, double[] stopMs, double offMs, double lastBeat)
+            {
+                SegBeat = segBeat; SegBpm = segBpm; SegMs = segMs;
+                StopBeat = stopBeat; StopMs = stopMs; OffMs = offMs;
+                Warps = DetectWarps(lastBeat);      // 只用 Seg*/Stop*/OffMs,不碰下面兩個欄位
+                WinStartMs = BuildWindows(Warps);
+            }
+
+            /// <summary>StepMania 的原式:beat → 秒(TimingData.cpp:162)。負 BPM 段的貢獻是負的,所以會倒退。</summary>
+            public double RawMs(double beat)
+            {
+                int s = SegIndex(beat);
+                return SegMs[s] + (beat - SegBeat[s]) * 60000.0 / SegBpm[s] - OffMs + StopSum(beat, false);
+            }
+
+            /// <summary>播放頭經過這一拍的時刻。warp 內的拍子播放頭是一瞬間跳過的 → 全部等於 warp 的時刻。</summary>
+            public double PlayMs(double beat)
+            {
+                for (int i = 0; i < Warps.Length; i++)
+                {
+                    if (beat <= Warps[i].StartBeat) break;
+                    if (beat < Warps[i].EndBeat) return Warps[i].TimeMs;
+                }
+                return RawMs(beat);
+            }
+
+            /// <summary>畫面定位用的時間:warp 內依拍數等比攤在 [WinStart, warp.TimeMs) 這個超短窗裡。</summary>
+            public double DisplayMs(double beat)
+            {
+                for (int i = 0; i < Warps.Length; i++)
+                {
+                    var w = Warps[i];
+                    // warp 起跳拍(含)之前:照原時間,但不得踩進窗裡(不然會跟窗內的音符位置對調)。
+                    if (beat <= w.StartBeat) return Math.Min(RawMs(beat), WinStartMs[i]);
+                    if (beat < w.EndBeat)
+                    {
+                        double span = w.Beats;
+                        double f = span > 0.0 ? (beat - w.StartBeat) / span : 0.0;
+                        return WinStartMs[i] + (w.TimeMs - WinStartMs[i]) * f;
+                    }
+                }
+                return RawMs(beat);
+            }
+
+            /// <summary>這一拍是否被 warp 掃掉(看得到、打不到)。</summary>
+            public bool IsWarped(double beat)
+            {
+                for (int i = 0; i < Warps.Length; i++)
+                {
+                    if (beat <= Warps[i].StartBeat) break;
+                    if (beat < Warps[i].EndBeat) return true;
+                }
+                return false;
+            }
+
+            public OsuHitObject Tap(int lane, double beat, bool isBomb = false)
+                => new OsuHitObject(lane, JudgeMs(beat), null, isBomb, IsWarped(beat), ShowMs(beat), ShowMs(beat));
+
+            public OsuHitObject Hold(int lane, double headBeat, double tailBeat)
+            {
+                int start = JudgeMs(headBeat), end = JudgeMs(tailBeat);
+                bool bar = end > start;
+                return new OsuHitObject(lane, start, bar ? end : (int?)null, false, IsWarped(headBeat),
+                    ShowMs(headBeat), bar ? ShowMs(tailBeat) : ShowMs(headBeat));
+            }
+
+            // 判定/顯示時間都夾在 0 以上（#OFFSET 為正時開頭幾拍會落在 0 之前,沿用既有行為）。
+            private int JudgeMs(double beat) { double ms = PlayMs(beat); return (int)Math.Round(ms < 0.0 ? 0.0 : ms); }
+            private double ShowMs(double beat) { double ms = DisplayMs(beat); return ms < 0.0 ? 0.0 : ms; }
+
+            /// <summary>
+            /// 產生 ManiaScroll 用的 timing point。切點 = BPM 段起拍 ∪ warp 頭尾;每一段的 ms/beat 由
+            /// <see cref="BeatLengthAt"/> 決定(warp 段 = 整段拍數壓進顯示窗 → 超短 beat length = 超快捲動)。
+            /// 沒有 warp 時輸出與舊版逐段送 timing point 完全相同。
+            /// </summary>
+            public void FillTimingPoints(OsuBeatmap map)
+            {
+                var cuts = new List<double>(SegBeat.Length + Warps.Length * 2);
+                for (int i = 0; i < SegBeat.Length; i++) cuts.Add(SegBeat[i]);
+                for (int i = 0; i < Warps.Length; i++) { cuts.Add(Warps[i].StartBeat); cuts.Add(Warps[i].EndBeat); }
+                cuts.Sort();
+                for (int i = 0; i < cuts.Count; i++)
+                {
+                    if (i > 0 && cuts[i] - cuts[i - 1] <= 1e-9) continue;    // 去重
+                    double bl = BeatLengthAt(cuts[i]);
+                    if (bl > 0.0) map.TimingPoints.Add(new OsuTimingPoint(DisplayMs(cuts[i]), bl));
+                }
+            }
+
+            // 從這一拍起算,那一段在**顯示時間軸**上的 ms/beat。
+            private double BeatLengthAt(double beat)
+            {
+                for (int i = 0; i < Warps.Length; i++)
+                {
+                    var w = Warps[i];
+                    if (beat < w.StartBeat) break;
+                    if (beat < w.EndBeat && w.Beats > 0.0) return (w.TimeMs - WinStartMs[i]) / w.Beats;
+                }
+                double bpm = SegBpm[SegIndex(beat)];
+                return bpm > 0.0 ? 60000.0 / bpm : 0.0;   // 負 BPM 段一定在 warp 內,不會走到這裡
+            }
+
+            /// <summary>
+            /// 找出所有 warp。走訪「斜率會變(BPM 段起拍)或時間會跳(stop 起拍)」的拍點,把譜面切成一段段線性:
+            ///   斜率為負 → 時間開始倒退,warp 從這一拍起跳(記下起跳時刻 wMs);
+            ///   之後第一次回到 wMs 的那一拍 → 落地,warp 結束(= 使用者說的「同樣時間長度的正 BPM 抵銷掉」)。
+            /// 收不回來(負 BPM 一路到譜尾)就收在譜尾,後面全部是打不到的裝飾音。
+            /// </summary>
+            private SmWarp[] DetectWarps(double lastBeat)
+            {
+                var knots = new List<double>(SegBeat.Length + StopBeat.Length + 1);
+                for (int i = 0; i < SegBeat.Length; i++) knots.Add(SegBeat[i]);
+                for (int i = 0; i < StopBeat.Length; i++) knots.Add(StopBeat[i]);
+                double end = Math.Max(lastBeat, SegBeat[SegBeat.Length - 1]) + 4.0;
+                knots.Add(end);
+                knots.Sort();
+
+                var warps = new List<SmWarp>();
+                bool inWarp = false; double wStart = 0.0, wMs = 0.0;
+                for (int k = 0; k + 1 < knots.Count; k++)
+                {
+                    double b0 = knots[k], b1 = knots[k + 1];
+                    if (b1 - b0 <= 1e-9) continue;                  // 同一拍上的重複切點
+                    double v0 = RawMs(b0) + StopAt(b0);             // 含這一拍上的 stop(往上跳,只會提早結束 warp)
+                    if (inWarp && v0 >= wMs - TimeEps) { Close(warps, wStart, b0, wMs); inWarp = false; }
+
+                    double slope = 60000.0 / SegBpm[SegIndex(b0)];  // ms/beat;負 BPM → 負斜率 = 時間倒退
+                    double v1 = v0 + (b1 - b0) * slope;
+                    if (inWarp)
+                    {
+                        if (slope > 0.0 && v1 >= wMs - TimeEps)     // 這一段裡把倒退的時間補回來了 → 落地
+                        {
+                            double bEnd = b0 + (wMs - v0) / slope;
+                            if (bEnd < wStart) bEnd = wStart;
+                            if (bEnd > b1) bEnd = b1;
+                            Close(warps, wStart, bEnd, wMs);
+                            inWarp = false;
+                        }
+                    }
+                    else if (slope < 0.0) { inWarp = true; wStart = b0; wMs = v0; }
+                }
+                if (inWarp) Close(warps, wStart, end, wMs);
+                return warps.ToArray();
+            }
+
+            // 接在上一段 warp 尾巴、且落在同一個時刻的(例:負 BPM 段中間夾了一個 stop 把它切成兩半),
+            // 其實是同一次跳躍 —— 併回去,免得產生兩個時刻相同、顯示窗會重疊的 warp。
+            private static void Close(List<SmWarp> warps, double startBeat, double endBeat, double timeMs)
+            {
+                if (endBeat <= startBeat) return;
+                int last = warps.Count - 1;
+                if (last >= 0 && Math.Abs(warps[last].TimeMs - timeMs) <= TimeEps &&
+                    Math.Abs(warps[last].EndBeat - startBeat) <= 1e-9)
+                {
+                    warps[last] = new SmWarp(warps[last].StartBeat, endBeat, warps[last].TimeMs);
+                    return;
+                }
+                warps.Add(new SmWarp(startBeat, endBeat, timeMs));
+            }
+
+            // 每個 warp 的顯示窗 = [TimeMs − ε, TimeMs)。ε 預設 WarpDisplayMs,但兩個 warp 靠得太近時縮到一半的
+            // 間距,窗才不會互相重疊(重疊 → timing point 時間倒退 → 捲動整個亂掉)。
+            private static double[] BuildWindows(SmWarp[] warps)
+            {
+                var win = new double[warps.Length];
+                for (int i = 0; i < warps.Length; i++)
+                {
+                    double eps = WarpDisplayMs;
+                    if (i > 0)
+                    {
+                        double room = warps[i].TimeMs - warps[i - 1].TimeMs;
+                        if (room < 2.0 * eps) eps = Math.Max(1e-4, room * 0.5);
+                    }
+                    win[i] = warps[i].TimeMs - eps;
+                }
+                return win;
+            }
+
+            private int SegIndex(double beat)
+            {
+                int lo = 0, hi = SegBeat.Length - 1, s = 0;
+                while (lo <= hi) { int mid = (lo + hi) >> 1; if (SegBeat[mid] <= beat) { s = mid; lo = mid + 1; } else hi = mid - 1; }
+                return s;
+            }
+
+            // 這一拍之前的 #STOPS 總和 (ms)。StepMania 在 `stopBeat >= beat` 就 break(TimingData.cpp:171):
+            // 正好落在 stop 拍上的音符是「停之前」打的,所以不含自己那一拍 —— inclusive=true 才把它算進去。
+            private double StopSum(double beat, bool inclusive)
+            {
+                double acc = 0.0;
+                for (int i = 0; i < StopBeat.Length; i++)
+                {
+                    if (inclusive ? StopBeat[i] > beat : StopBeat[i] >= beat) break;
+                    acc += StopMs[i];
+                }
+                return acc;
+            }
+
+            private double StopAt(double beat)
+            {
+                double acc = 0.0;
+                for (int i = 0; i < StopBeat.Length; i++) if (Math.Abs(StopBeat[i] - beat) <= 1e-9) acc += StopMs[i];
+                return acc;
+            }
         }
+
+        // Piecewise-constant BPM timeline that KEEPS negative BPMs (unlike GnChart.BuildBpmTimeline, whose domain —
+        // .gn charts — has none and clamps to ≥1). Parallel arrays sorted by start beat; segMs = cumulative ms at
+        // that start beat, which is NOT monotonic once a negative segment shows up (that's the whole point).
+        private static void BuildBpmSegments(double headerBpm, List<double> beats, List<double> bpms,
+            out double[] segBeat, out double[] segBpm, out double[] segMs)
+        {
+            int n = beats?.Count ?? 0;
+            var idx = new int[n];
+            for (int i = 0; i < n; i++) idx[i] = i;
+            Array.Sort(idx, (a, b) =>
+            {
+                int c = beats[a].CompareTo(beats[b]);
+                return c != 0 ? c : a.CompareTo(b);
+            });
+
+            var sb = new List<double> { 0.0 };
+            var sp = new List<double> { ClampBpm(headerBpm) };      // leading segment = header BPM
+            for (int j = 0; j < n; j++)
+            {
+                double b = beats[idx[j]];
+                double v = ClampBpm(bpms[idx[j]]);
+                if (b <= 0.0) { sp[0] = v; continue; }               // event at/before 0 overrides the lead
+                if (b == sb[sb.Count - 1]) sp[sp.Count - 1] = v;     // same beat as last → keep latest
+                else { sb.Add(b); sp.Add(v); }
+            }
+
+            segBeat = sb.ToArray();
+            segBpm = sp.ToArray();
+            segMs = new double[segBeat.Length];
+            for (int s = 1; s < segBeat.Length; s++)
+                segMs[s] = segMs[s - 1] + (segBeat[s] - segBeat[s - 1]) * 60000.0 / segBpm[s - 1];
+        }
+
+        // |BPM| 至少 1（沿用 GnChart 對正 BPM 的下限，負的鏡像過去）。0 進不來（ParseBpms 已擋）。
+        private static double ClampBpm(double bpm) => bpm >= 0.0 ? Math.Max(1.0, bpm) : Math.Min(-1.0, bpm);
 
         // Sort the parsed stops by beat and convert seconds→ms into parallel ascending arrays.
         private static void BuildStops(List<double> beats, List<double> seconds,
@@ -235,13 +574,6 @@ namespace Sdo.Osu
             stopBeat = new double[n];
             stopMs = new double[n];
             for (int i = 0; i < n; i++) { stopBeat[i] = beats[idx[i]]; stopMs[i] = seconds[idx[i]] * 1000.0; }
-        }
-
-        private static int Ms(double[] sb, double[] sp, double[] sm, double[] stopBeat, double[] stopMs, double beat, double offMs)
-        {
-            double ms = GnChart.BeatToMs(sb, sp, sm, beat) - offMs + CumulativeStopMs(stopBeat, stopMs, beat);
-            if (ms < 0) ms = 0;
-            return (int)Math.Round(ms);
         }
 
         // ---- MSD tokenizer ----
@@ -321,6 +653,9 @@ namespace Sdo.Osu
             return measures;
         }
 
+        // #BPMS:beat=bpm,... —— **負值要留著**:StepMania 用負 BPM 做 warp(那一段的經過時間是負的,等後面同樣
+        // 時間長度的正 BPM 抵銷掉,播放頭就一瞬間跳過中間那段拍子)。見 SmWarp / Timeline.DetectWarps。
+        // 0 沒有意義(除以 0),直接丟掉。
         private static void ParseBpms(string val, SmSong song)
         {
             if (string.IsNullOrEmpty(val)) return;
@@ -329,7 +664,7 @@ namespace Sdo.Osu
                 int eq = pair.IndexOf('=');
                 if (eq <= 0) continue;
                 if (TryDouble(pair.Substring(0, eq), out double beat) &&
-                    TryDouble(pair.Substring(eq + 1), out double bpm) && bpm > 0)
+                    TryDouble(pair.Substring(eq + 1), out double bpm) && Math.Abs(bpm) > 1e-9)
                 {
                     song.BpmBeats.Add(beat);
                     song.BpmValues.Add(bpm);

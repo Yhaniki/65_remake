@@ -114,8 +114,10 @@ namespace Sdo.Osu
             for (int i = 0; i < HitObjects.Count; i++)
             {
                 var h = HitObjects[i];
+                // 炸彈/warp 旗標與顯示用時間都要跟著搬,不然平移完炸彈變普通 note、warp 音符的位置會脫節。
                 HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs + leadInMs,
-                    h.EndTimeMs.HasValue ? h.EndTimeMs.Value + leadInMs : (int?)null, h.IsBomb);   // 炸彈旗標要跟著搬,不然平移完就變普通 note
+                    h.EndTimeMs.HasValue ? h.EndTimeMs.Value + leadInMs : (int?)null, h.IsBomb,
+                    h.IsFake, h.ScrollTimeMs + leadInMs, h.ScrollEndTimeMs + leadInMs);
             }
             for (int i = 0; i < TimingPoints.Count; i++)
             {
@@ -175,14 +177,17 @@ namespace Sdo.Osu
                 if (!h.IsHold) continue;
                 double dur = h.EndTimeMs.Value - h.StartTimeMs;
                 if (dur >= cutoff) continue;
-                HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs);   // 長條 → 一般 note
+                // 長條 → 一般 note(頭部的判定/顯示時間原封不動,尾端跟著收回頭部)
+                HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs, null, h.IsBomb, h.IsFake,
+                    h.ScrollTimeMs, h.ScrollTimeMs);
                 n++;
             }
             return n;
         }
 
         /// <summary>Total judged events = taps + holdHeads + holdReleases. 炸彈不算 —— 它永遠不會被判定
-        /// (踩到只扣血)，算進來的話滿分就永遠打不到。</summary>
+        /// (踩到只扣血)，算進來的話滿分就永遠打不到。StepMania warp (負 BPM) 掃過去的
+        /// <see cref="OsuHitObject.IsFake"/> 音符同理:播放頭是瞬間跳過那一段的,玩家連按的機會都沒有。</summary>
         public int TotalNotes
         {
             get
@@ -190,7 +195,7 @@ namespace Sdo.Osu
                 int total = 0;
                 foreach (var h in HitObjects)
                 {
-                    if (h.IsBomb) continue;
+                    if (h.IsBomb || h.IsFake) continue;
                     total += h.IsHold ? 2 : 1;
                 }
                 return total;

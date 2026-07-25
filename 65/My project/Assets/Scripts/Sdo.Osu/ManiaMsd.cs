@@ -72,7 +72,7 @@ namespace Sdo.Osu
                 int keys = bm.Keys > 0 ? bm.Keys : 4;
                 foreach (var h in bm.HitObjects)
                 {
-                    if (h.IsBomb) continue;
+                    if (h.IsBomb || h.IsFake) continue;   // 炸彈不判定;warp 掃掉的音符打不到,算進去難度會虛高
                     int lane = h.Lane;
                     if (lane < 0) lane = 0;
                     if (lane > keys - 1) lane = keys - 1;
