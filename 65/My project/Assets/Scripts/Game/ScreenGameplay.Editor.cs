@@ -217,6 +217,53 @@ namespace Sdo.Game
         public float EditorTrackLeftPx => PX(LaneLeftX[0]);
         public float EditorTrackRightPx => PX(LaneLeftX[Keys - 1] + 69f);
 
+        // ---- 視野：整塊板子往下讓出頂欄 ----
+
+        /// <summary>頂欄下緣與板頂之間再多留的 design px（眼睛的餘裕，不是幾何需求）。</summary>
+        public const float EditorViewShiftPad = 12f;
+        /// <summary>再怎麼推也不超過這麼多 —— 板高就 600，推過頭等於把整塊板子推出畫面。</summary>
+        public const float EditorViewShiftMax = 200f;
+
+        private float _editorViewShiftY = -1f;
+
+        /// <summary>頂欄佔了 <paramref name="topBarScreenPx"/> 個螢幕像素時，板子要往下推幾個 design px。
+        /// design px ↔ 螢幕 px 的比例隨視窗大小/pillarbox 而變，所以拿相機自己的 pixelHeight 換算。
+        /// <paramref name="scrollSign"/> 為 −1（向下捲）時受擊線在板底、頂欄本來就擋不到它，往下推只會把它推出畫面 → 不推。</summary>
+        public static float EditorViewShiftFor(float topBarScreenPx, float orthoSize, float camPixelHeight, int scrollSign)
+        {
+            if (scrollSign < 0) return 0f;
+            float designPerScreenPx = camPixelHeight > 1f ? (2f * orthoSize) / camPixelHeight : 1f;
+            return Mathf.Clamp(topBarScreenPx * designPerScreenPx + EditorViewShiftPad, 0f, EditorViewShiftMax);
+        }
+
+        /// <summary>
+        /// 把整塊音符板（受擊線、音符、格線、波形一起）往下推，讓出畫面頂端給編輯器的 IMGUI 頂欄。
+        /// 受擊線在 design y=70、判定帶 [24,116]，不讓位的話頂欄那幾行讀數正好壓在判定區上，
+        /// 校 offset 時看不出音符落在線的哪一邊。
+        ///
+        /// 做法是推相機（相機往上 = 內容往下），不動任何版面座標：board / receptor / note / 格線 / 波形
+        /// 都在同一台正交相機下，一起移動就沒有相對位移，YForTime 那套時間→Y 的數學完全不用改。
+        /// 代價是板底同量移出畫面 —— 那頭是音符剛冒出來的地方，對校時沒有影響。
+        /// </summary>
+        public void EditorSetTopBarClearance(float topBarScreenPx)
+        {
+            if (!editorMode || _cam == null) return;
+            float shift = EditorViewShiftFor(topBarScreenPx, _cam.orthographicSize, _cam.pixelHeight, _scrollSign);
+            if (Mathf.Abs(shift - _editorViewShiftY) < 0.5f) return;   // 每幀微調會讓板子抖
+            _editorViewShiftY = shift;
+            var p = _cam.transform.position;
+            _cam.transform.position = new Vector3(p.x, shift, p.z);
+        }
+
+        // 相機可能是前端本來就在的那一台（Camera.main）：編輯器收掉時沒推回去，回到前端整個畫面就是歪的。
+        private void EditorRestoreCameraShift()
+        {
+            if (_cam == null || _editorViewShiftY <= 0f) return;
+            var p = _cam.transform.position;
+            _cam.transform.position = new Vector3(p.x, 0f, p.z);
+            _editorViewShiftY = 0f;
+        }
+
         // ---------- boot ----------
 
         // 編輯器的開場：不放 READY/GO、不排 lead-in，直接停在 0ms（暫停）等使用者按播放。

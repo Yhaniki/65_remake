@@ -153,6 +153,7 @@ namespace Sdo.Game
         // 不解除的話舊實例會留在委派鏈上（洩漏；裝置一變就對著已銷毀的物件呼叫）。
         private void OnDestroy()
         {
+            EditorRestoreCameraShift();   // 編輯器把相機推下去過的話要推回來（相機可能是前端共用的那一台）
             AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
             if (_noteVisualRoot) Destroy(_noteVisualRoot.gameObject);   // tear down the pooled note visuals (root-level like the old per-note objects) with this screen
         }
