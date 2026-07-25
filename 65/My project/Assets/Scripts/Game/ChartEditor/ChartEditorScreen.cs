@@ -376,6 +376,10 @@ namespace Sdo.Game
 
         private void Update()
         {
+            // 頂欄是螢幕座標、畫在畫面最上層 → 叫板子往下讓出那塊高度，判定區才不會被讀數蓋住。
+            // 固定用「三列」的高度算（不是當下的 barH），不然第三列一出現／消失板子就跳一下。
+            if (_game != null) _game.EditorSetTopBarClearance(_beatTest ? BeatTestBarH : TopBarThreeRowH);
+
             if (Input.GetKeyDown(KeyCode.F1)) _showList = !_showList;
             if (Input.GetKeyDown(KeyCode.F4)) ToggleBeatTest();   // 打拍測試切換（雙向）—— 要在 _beatTest 的 return 之前，才切得出來
             // ESC 逐層退出：歌單開著→關歌單；打拍測試中→回譜面；都不是→退出編輯器回前端(男女選擇)。
@@ -623,112 +627,182 @@ namespace Sdo.Game
 
         // ---------- IMGUI ----------
 
+        // 頂欄的排版規則：一律用「內容量出來的寬度」，不要寫死 GUILayout.Width。
+        // 寫死的寬度是照英數字估的，中文一個字約等於兩個英數字寬 → 中文標籤一定被裁一半；
+        // 而且一整列固定寬加起來會超過畫面寬，右邊的欄位就整格跑到畫面外。
+        // 可變長度的只有歌名，讓它吃「剩下的寬度」並在放不下時打點（Elide）→ 這一列永遠剛好塞在畫面裡。
+        private const float TopBarPad = 6f;                        // 頂欄左右留白（BeginArea 的 x）
+        private const float TopBarTwoRowH = 52f;                   // 兩列（歌曲列 + transport）
+        private const float TopBarThreeRowH = 74f;                 // 加上第三列（統計／存檔提示／狀態）
+        private const float BeatTestBarH = 30f;                    // 打拍測試只有一列
+        private static void Chip(GUIStyle box, string text) => GUILayout.Label(text, box, GUILayout.ExpandWidth(false));
+        private static float Wd(GUIStyle st, string text) => st.CalcSize(new GUIContent(text)).x + 6f;   // +6 = 元素間距
+
+        // Label 放不下時 IMGUI 會硬裁（中文剛好切一半）→ 自己二分找放得下的長度，尾巴補省略號。
+        private static string Elide(GUIStyle st, string s, float maxW)
+        {
+            if (st.CalcSize(new GUIContent(s)).x <= maxW) return s;
+            int lo = 0, hi = s.Length;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                if (st.CalcSize(new GUIContent(s.Substring(0, mid) + "…")).x <= maxW) lo = mid; else hi = mid - 1;
+            }
+            return lo > 0 ? s.Substring(0, lo) + "…" : "";
+        }
+
         private void OnGUI()
         {
             var box = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.MiddleLeft, padding = new RectOffset(8, 8, 4, 4) };
             if (_beatTest) { DrawBeatTestGui(box); return; }
 
-            GUI.Box(new Rect(0, 0, Screen.width, 54), GUIContent.none);
-
             bool ready = _game != null && _game.EditorReady;
             var map = ready ? _game.EditorMap : null;
             string title = _entry != null && !string.IsNullOrEmpty(_entry.title) ? _entry.title : _gn;
             string[] diffNames = { "簡單", "普通", "困難" };
+            var btn = GUI.skin.button;
 
-            GUILayout.BeginArea(new Rect(6, 4, Screen.width - 12, 46));
+            // 第三列（打擊統計／存檔提示／狀態）只有有東西時才佔位 → 頂欄高度跟著長高，平常不吃畫面。
+            string info = StatusLine();
+            float barH = string.IsNullOrEmpty(info) ? TopBarTwoRowH : TopBarThreeRowH;
+            GUI.Box(new Rect(0, 0, Screen.width, barH), GUIContent.none);
+
+            // 歌名以外的元素先量寬度，剩下的才是歌名能用的
+            // LV 用 DisplayLevel（不是 Diff）——config DifficultyCalc=minacalc 時外部歌顯示的是 MSD 換算等級，
+            // 用 Diff 會秀出 osu 星數等級，跟選歌畫面的數字對不起來。
+            string[] diffLabels = new string[3];
+            for (int d = 0; d < 3; d++)
+            {
+                bool h0 = _entry == null || _entry.HasChart(d);
+                diffLabels[d] = diffNames[d] + (_entry != null && h0 ? $" LV{_entry.DisplayLevel(d)}" : "");
+            }
+            string bpmText = map != null ? $"BPM {map.Bpm:0.##}  {map.TotalNotes} 音符" : null;
+            float used = 0f;
+            foreach (var s in TopButtons) used += Wd(btn, s);
+            foreach (var s in diffLabels) used += Wd(btn, s);
+            if (bpmText != null) used += Wd(box, bpmText);
+            float titleRoom = Screen.width - TopBarPad * 2f - used - 6f;
+
+            GUILayout.BeginArea(new Rect(TopBarPad, 4, Screen.width - TopBarPad * 2f, 46));
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("歌單 (F1)", GUILayout.Width(80))) _showList = !_showList;
+            if (GUILayout.Button(TopButtons[0])) _showList = !_showList;
             GUI.enabled = !_loading;
-            if (GUILayout.Button("◀ 上一首 (Q)", GUILayout.Width(84))) StepSong(-1);
-            if (GUILayout.Button("下一首 (E) ▶", GUILayout.Width(84))) StepSong(+1);
+            if (GUILayout.Button(TopButtons[1])) StepSong(-1);
+            if (GUILayout.Button(TopButtons[2])) StepSong(+1);
             GUI.enabled = true;
-            if (GUILayout.Button("打拍測試 (F4)", GUILayout.Width(100))) ToggleBeatTest();
-            GUILayout.Label($"♪ {title}   [{ChartFileLabel()}]", box, GUILayout.Width(280));
+            if (GUILayout.Button(TopButtons[3])) ToggleBeatTest();
+
+            if (titleRoom >= 60f)      // 窄到連省略號版都沒意義時就整格不畫（歌名在歌單裡看得到）
+            {
+                string t = $"♪ {title}   [{ChartFileLabel()}]";
+                float w = Mathf.Min(titleRoom, box.CalcSize(new GUIContent(t)).x);
+                GUILayout.Label(Elide(box, t, w), box, GUILayout.Width(w));
+            }
 
             for (int d = 0; d < 3; d++)
             {
                 bool has = _entry == null || _entry.HasChart(d);
                 GUI.enabled = has && ready;
                 bool on = d == _diff;
-                string lv = _entry != null && has ? $" LV{_entry.Diff(d)}" : "";
-                if (GUILayout.Toggle(on, diffNames[d] + lv, GUI.skin.button, GUILayout.Width(78)) && !on) LoadSong(_gn, d);
+                if (GUILayout.Toggle(on, diffLabels[d], btn) && !on) LoadSong(_gn, d);
                 GUI.enabled = true;
             }
 
-            if (map != null)
-                GUILayout.Label($"BPM {map.Bpm:0.##}   {map.TotalNotes} notes", box, GUILayout.Width(180));
-
-            // 跟著打的即時統計（誤差條畫在軌道右邊）。A/S/W/D 打擊 —— 方向鍵在編譜模式歸 seek/縮放。
-            if (_stats.Count > 0)
-            {
-                double mean = _stats.Mean;
-                GUILayout.Label($"打擊 {_stats.Count}   平均 {mean:+0.0;-0.0;0.0} ms（{(mean < 0 ? "偏早" : "偏晚")}）   UR {_stats.UnstableRate:0}   [Backspace 清除]",
-                    box, GUILayout.Width(330));
-            }
-            else GUILayout.Label("跟著打 A/S/W/D → 右邊誤差條記錄偏早/偏晚", box, GUILayout.Width(280));
-
-            if (!string.IsNullOrEmpty(_status))
-                GUILayout.Label(_status, box);
+            if (bpmText != null) Chip(box, bpmText);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
             // ---- transport ----
-            GUILayout.BeginHorizontal();
-            GUI.enabled = ready;
-            if (GUILayout.Button(ready && !_game.EditorPaused ? "❚❚ 暫停" : "▶ 播放", GUILayout.Width(80)))
-                _game.EditorSetPaused(!_game.EditorPaused);
-            if (GUILayout.Button("⏮ 開頭", GUILayout.Width(70))) _game.EditorSeekMs(0);
-
+            // 讀數全部走內容寬，進度條 stretch 吃剩下的空間（原本是用 Screen.width - 900 手算，畫面一窄就互相擠）。
+            // 括號裡的快捷鍵提示移到最下面那兩行說明，這一列只留數字。
             double now = ready ? _game.EditorNowMs : 0.0;
             double end = ready ? Math.Max(1.0, _game.EditorEndMs) : 1.0;
-            // 這一列右邊還有 時間/小節拍/縮放/流速/單首offset 幾格固定寬的讀數 → 進度條吃剩下的寬度
-            float pos = GUILayout.HorizontalSlider((float)now, 0f, (float)end, GUILayout.Width(Mathf.Max(120, Screen.width - 900)));
+            var g = ready ? Grid() : null;
+            float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
+            string playLabel = ready && !_game.EditorPaused ? "❚❚ 暫停" : "▶ 播放";
+            // 播放位置給 6 位小數，對齊 StepMania 的 CURRENT SECOND，方便逐拍核對匯入的譜
+            // （＝真實音檔時間：外部譜編輯器不套 lead-in，見 ScreenGameplay.ExternalLeadInMsFor → 應與 .sm 的秒數一致）。
+            string timeText = $"{Fmt(now, 6)} / {Fmt(end)} 秒";
+            string gridText = g != null ? $"小節 {g.MeasureAt(now)}  拍 {BeatInMeasure(g, now):0.000000}" : null;
+            string zoomText = $"縮放 {speed:0.00}×";
+            string rateText = $"流速 {(ready ? _game.EditorRate : 1.0):0.00}×";
+            string offText = $"offset {_songOffset:+0.#;-0.#;0} ms";
+            string scopeText = $"資料夾 {EditorSongScope.Label(_scope)}";
+
+            // 這一列讀數多，窄視窗塞不下時最先讓位的是「資料夾」（F1 的歌單窗裡本來就看得到，F8 可切）
+            const float SliderMinW = 90f;
+            float row2 = Wd(btn, playLabel) + Wd(btn, "⏮ 開頭") + SliderMinW
+                       + Wd(box, timeText) + (gridText != null ? Wd(box, gridText) : 0f)
+                       + Wd(box, zoomText) + Wd(box, rateText) + Wd(box, offText);
+            bool showScope = row2 + Wd(box, scopeText) <= Screen.width - TopBarPad * 2f;
+
+            GUILayout.BeginHorizontal();
+            GUI.enabled = ready;
+            if (GUILayout.Button(playLabel)) _game.EditorSetPaused(!_game.EditorPaused);
+            if (GUILayout.Button("⏮ 開頭")) _game.EditorSeekMs(0);
+
+            float pos = GUILayout.HorizontalSlider((float)now, 0f, (float)end, GUILayout.MinWidth(SliderMinW), GUILayout.ExpandWidth(true));
             if (ready && Mathf.Abs(pos - (float)now) > 1f) _game.EditorSeekMs(pos);   // 拖 slider = seek（暫停中也可以）
 
-            GUILayout.Label($"{Fmt(now)} / {Fmt(end)}", box, GUILayout.Width(110));
-            var g = ready ? Grid() : null;
-            if (g != null)
-            {
-                double beat = g.MsToBeat(now);
-                // 秒/拍都給 6 位小數，對齊 StepMania 的 CURRENT SECOND / CURRENT BEAT，方便逐拍核對匯入的譜。
-                // 秒＝真實音檔時間（外部譜編輯器不套 lead-in，見 ScreenGameplay.ExternalLeadInMsFor）→ 應與 .sm 的秒數一致。
-                GUILayout.Label($"秒 {now / 1000.0:0.000000}  小節 {g.MeasureAt(now)}  拍 {(beat % 4 + 4) % 4 + 1:0.000000}",
-                    box, GUILayout.Width(280));
-            }
-            float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
-            GUILayout.Label($"縮放 {speed:0.00}× (Ctrl+↑↓/F5F6)", box, GUILayout.Width(150));
-            GUILayout.Label($"流速 {(ready ? _game.EditorRate : 1.0):0.00}× ([ ]，= 回 1×)", box, GUILayout.Width(150));
-            GUILayout.Label($"單首offset {_songOffset:+0.#;-0.#;0} ms (F11/F12){((_entry != null && _entry.external) ? " 外部歌·Ctrl+S存" : "")}", box, GUILayout.Width(220));
-            GUILayout.Label($"資料夾 {EditorSongScope.Label(_scope)} (F8/F1)", box, GUILayout.Width(240));
+            Chip(box, timeText);
+            if (gridText != null) Chip(box, gridText);
+            Chip(box, zoomText);
+            Chip(box, rateText);
+            Chip(box, offText);
+            if (showScope) Chip(box, scopeText);
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
 
-            // 存檔提示 / 存檔結果：offset 調了但還沒存 → 提醒 Ctrl+S（存完 _status 會蓋掉這行）
-            if (_entry != null && _entry.external && Mathf.Abs((float)_songOffset - _entry.offsetMs) > 0.0005f)
-                GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
-                    $"外部歌單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 {Path.Combine(_entry.folderPath ?? "", SongSidecar.FileName)}"
-                    + $"　／　Ctrl+Shift+S 套用到整個「{EditorSongScope.Label(EditorSongScope.ScopeOf(_entry))}」");
-            else if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
-                GUI.Label(new Rect(6, 52, Screen.width - 12, 20f),
-                    $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_table.csv（{Stem()}）");
-            else if (!string.IsNullOrEmpty(_status))
-                GUI.Label(new Rect(6, 52, Screen.width - 12, 20f), _status);
+            if (!string.IsNullOrEmpty(info)) GUI.Label(new Rect(8, 52, Screen.width - 16, 20f), info);
 
+            // 說明拆兩行 —— 一行塞不下就直接被畫面右緣切掉
+            GUI.Label(new Rect(8, Screen.height - 40, Screen.width - 16, 20f),
+                "空白=播放/暫停  ↑↓=一格  Ctrl+↑↓/F5F6=縮放  PgUp/PgDn=一小節  [ ]=流速(= 回 1×)  ←→=格線細分" +
+                (_overlay != null ? $"（每拍 {_overlay.subdivisions} 格）" : ""));
             GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
-                "空白=播放/暫停  ↑↓=一格  Ctrl+↑↓=區域窄/寬  PgUp/PgDn=一小節  ←→=格線細分" +
-                (_overlay != null ? $"（每拍 {_overlay.subdivisions} 格）" : "") +
-                "  A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  Ctrl+S=存offset  Ctrl+Shift+S=整個資料夾套用" +
+                "A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  Ctrl+S=存offset  Ctrl+Shift+S=整個資料夾套用" +
                 "  F1=歌單/選資料夾  F8=鎖資料夾  Q/E=上/下一首  F4=打拍測試  F3=波形  F2=誤差條  G=格線  Tab=難度");
 
             if (_showList) DrawSongList();
         }
 
-        private static string Fmt(double ms)
+        private static readonly string[] TopButtons = { "歌單 F1", "◀ 上一首 Q", "下一首 E ▶", "打拍測試 F4" };
+
+        /// <summary>小節內的拍序（1~4）。BeatGrid 給的是從曲首起算的絕對拍，顯示要的是 StepMania 那種小節內位置。</summary>
+        public static double BeatInMeasure(BeatGrid g, double ms)
+        {
+            const int m = BeatGrid.BeatsPerMeasure;
+            double b = g.MsToBeat(ms);
+            return (b % m + m) % m + 1;
+        }
+
+        // 頂欄第三列：跟著打的即時統計（誤差條畫在軌道右邊，A/S/W/D 打擊）＋ 存檔提示／狀態。
+        // offset 調了但還沒存 → 提醒 Ctrl+S（存完 _status 會蓋掉提示）。外部歌寫 sidecar、內建歌寫 song_table.csv。
+        private string StatusLine()
+        {
+            string hits = null, note = null;
+            if (_stats.Count > 0)
+            {
+                double mean = _stats.Mean;
+                hits = $"打擊 {_stats.Count}   平均 {mean:+0.0;-0.0;0.0} ms（{(mean < 0 ? "偏早" : "偏晚")}）   UR {_stats.UnstableRate:0}   [Backspace 清除]";
+            }
+            if (_entry != null && _entry.external && Mathf.Abs((float)_songOffset - _entry.offsetMs) > 0.0005f)
+                note = $"外部歌單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 {Path.Combine(_entry.folderPath ?? "", SongSidecar.FileName)}"
+                     + $"　／　Ctrl+Shift+S 套用到整個「{EditorSongScope.Label(EditorSongScope.ScopeOf(_entry))}」";
+            else if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
+                note = $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_table.csv（{Stem()}）";
+            else if (!string.IsNullOrEmpty(_status)) note = _status;
+
+            if (hits == null) return note ?? "";
+            return note == null ? hits : hits + "　│　" + note;
+        }
+
+        /// <summary>音樂時間一律以「秒」顯示（編譜/對拍都在算毫秒，換算成分秒只是多一道心算）。</summary>
+        public static string Fmt(double ms, int decimals = 3)
         {
             if (ms < 0) ms = 0;
-            int t = (int)(ms / 1000.0);
-            return $"{t / 60:00}:{t % 60:00}.{(int)(ms % 1000) / 100}";
+            return (ms / 1000.0).ToString("0." + new string('0', decimals), System.Globalization.CultureInfo.InvariantCulture);
         }
 
         // ---------- 打拍測試的面板 ----------
@@ -737,21 +811,21 @@ namespace Sdo.Game
         private void DrawBeatTestGui(GUIStyle box)
         {
             bool ready = _game != null && _game.EditorReady;
-            GUI.Box(new Rect(0, 0, Screen.width, 30), GUIContent.none);
+            GUI.Box(new Rect(0, 0, Screen.width, BeatTestBarH), GUIContent.none);
 
             GUILayout.BeginArea(new Rect(6, 3, Screen.width - 12, 26));
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("← 回譜面 (F4)", GUILayout.Width(110))) ToggleBeatTest();
-            GUILayout.Label("打拍測試：跟著節拍音打 R 軌（D 或 →）", box, GUILayout.Width(260));
+            if (GUILayout.Button("← 回譜面 F4")) ToggleBeatTest();      // 同頂欄：一律內容寬，寫死寬度會裁中文
+            Chip(box, "打拍測試：跟著節拍音打 R 軌（D 或 →）");
 
-            GUILayout.Label("BPM", GUILayout.Width(32));
+            GUILayout.Label("BPM", GUILayout.ExpandWidth(false));
             _beatBpmPending = Mathf.Round(GUILayout.HorizontalSlider(_beatBpmPending, 60f, 240f, GUILayout.Width(140)));
-            GUILayout.Label($"{_beatBpmPending:0}", box, GUILayout.Width(36));
+            Chip(box, $"{_beatBpmPending:0}");
 
-            GUILayout.Label("音符", GUILayout.Width(32));
-            _beatDivPending = GUILayout.Toggle(_beatDivPending < 0.75f, "8 分", GUI.skin.button, GUILayout.Width(50)) ? 0.5f : 1f;
+            GUILayout.Label("音符", GUILayout.ExpandWidth(false));
+            _beatDivPending = GUILayout.Toggle(_beatDivPending < 0.75f, "8 分", GUI.skin.button) ? 0.5f : 1f;
 
-            if (GUILayout.Button("重來 (Backspace)", GUILayout.Width(120)))
+            if (GUILayout.Button("重來 Backspace"))
             { _stats.Clear(); _misses = 0; _overlay?.ClearHits(); }
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
@@ -817,10 +891,10 @@ namespace Sdo.Game
                     ? $"建議 offset：{suggested:+0;-0;0} ms（依中位數，打太亂會自動保守）"
                     : $"再打幾下（至少 20 下）才給建議…目前 {n}");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("套用建議值", GUILayout.Width(110)))
+            if (GUILayout.Button("套用建議值"))
             { _globalOffset = Math.Round(suggested); if (ready) _game.EditorGlobalOffsetMs = _globalOffset; }
             GUI.enabled = true;
-            if (GUILayout.Button("存進 config.ini", GUILayout.Width(120)))
+            if (GUILayout.Button("存進 config.ini"))
             {
                 RoomConfig.globalOffsetMs = (float)_globalOffset;
                 RoomConfig.judgeOffsetY = _judgeOffsetY;
@@ -887,7 +961,7 @@ namespace Sdo.Game
             foreach (var e in _filtered)
             {
                 if (shown++ > 400) { GUILayout.Label("…（太多了，打字縮小範圍）"); break; }
-                string lvs = $"{(e.HasChart(0) ? e.Diff(0).ToString() : "-")}/{(e.HasChart(1) ? e.Diff(1).ToString() : "-")}/{(e.HasChart(2) ? e.Diff(2).ToString() : "-")}";
+                string lvs = $"{(e.HasChart(0) ? e.DisplayLevel(0).ToString() : "-")}/{(e.HasChart(1) ? e.DisplayLevel(1).ToString() : "-")}/{(e.HasChart(2) ? e.DisplayLevel(2).ToString() : "-")}";
                 if (GUILayout.Button($"{e.title}  —  {e.artist}\n#{e.fileId}   {e.gn}   BPM {e.bpm:0.#}   LV {lvs}", GUILayout.Height(38)))
                 { LoadSong(e.gn, _diff); _showList = false; }
             }
