@@ -275,6 +275,10 @@ namespace Sdo.Game
             for (int lane = 0; lane < Keys; lane++)
             {
                 _holdBurst[lane] = null; _holding[lane] = null;
+                // 3D 皮的命中特效是獨立的 EftEffect 物件，不在 _fx 裡；HIT_LONG 又是**自我循環**的（負 life 的
+                // emitter 永不死，本來只靠放開鍵時 StopHit3dLong 收掉）。按著長條時血條見底 → 沒人收，那團金光會
+                // 一直燒在受擊線上。這裡直接砍掉（不走 StopHit3dLong：死掉不該再放 HIT_SUO 那聲放開的煙）。
+                if (_hit3dLive[lane] != null) { Destroy(_hit3dLive[lane].gameObject); _hit3dLive[lane] = null; }
                 if (_clickFlashSr[lane]) _clickFlashSr[lane].enabled = false; _clickFlashStart[lane] = -1f;
             }
             _missFlashStart = -1f;

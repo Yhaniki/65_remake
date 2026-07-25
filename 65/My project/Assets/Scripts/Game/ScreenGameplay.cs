@@ -1986,6 +1986,10 @@ namespace Sdo.Game
                 if (_receptors[c]) _receptors[c].enabled = on;
                 if (!on && _clickFlashSr[c] != null) _clickFlashSr[c].enabled = false;
             }
+            // 3D-mesh 音符不是 SpriteRenderer，不吃上面那些 enabled；而且藏板子之後 ScrollNotes 通常也不會再被呼叫
+            // （EnterResult → Update 直接 return），沒人幫它收 → 最後一幀的箭頭會留在畫面上。這裡直接收起整個 pool；
+            // 要再顯示不必做事，ScrollNotes 每幀都會自己打開。
+            if (!on && _highway != null) _highway.visible = false;
             SetRankingVisible(on);   // hide the roster list + rank during the opening hold / observe mode
         }
 

@@ -21,7 +21,16 @@ namespace Sdo.Game
         public float flattenX = 90f;       // rotate the XZ arrow mesh flat into the screen (±90); F4 toggle if it faces away
         public float baseRotZ = 180f;      // global spin added to every arrow (0/90/180/270) to fix the base direction (180 = un-reverse)
         public float noteSize = 0.73f;     // note mesh size × the 2D lane width (the mesh fills its bounds, unlike the padded sprite)
-        public bool visible;
+
+        bool _visible;
+        /// <summary>顯示/隱藏整個 mesh pool。**設下去立刻生效**，不等下一次 <see cref="SetItems"/> —— 歌曲結束或血條
+        /// 用完之後 <c>ScreenGameplay.Update</c> 就直接 return、不再呼叫 SetItems 了，只把旗標放著會讓最後一幀畫的
+        /// 那批箭頭原地留在畫面上（死亡字幕/結算面板後面還飄著音符）。F4 關掉「真 3D mesh」時同理。</summary>
+        public bool visible
+        {
+            get => _visible;
+            set { _visible = value; if (_root != null) _root.gameObject.SetActive(value); }
+        }
 
         // note mesh native half-width (X ±10.98) → the item Size (design px) maps to scale = Size / (2*meshHalfW).
         const float MeshHalfW = 10.98f;
@@ -51,6 +60,7 @@ namespace Sdo.Game
             _addTemplate = new Material(Shader.Find("Sdo/NoteCutout") ?? Shader.Find("Sprites/Default"));
             if (!LoadAssets()) { Debug.LogWarning("[note3d] mesh assets failed to load"); return; }
             _root = new GameObject("Note3dMeshes_root").transform;
+            _root.gameObject.SetActive(_visible);   // 新 GameObject 預設 active → 補套目前的旗標（Build 前就設過 visible 的情形）
             _built = true;
         }
 
@@ -76,9 +86,7 @@ namespace Sdo.Game
         /// <summary>Draw the frame's note + receptor glyphs at their (already-computed 2D) world positions.</summary>
         public void SetItems(List<Item> items)
         {
-            if (!_built) return;
-            _root.gameObject.SetActive(visible);
-            if (!visible) { return; }
+            if (!_built || !visible) return;   // visible 的 setter 已經把 _root 收起來了
             int frame = noteFrameFps > 0f ? (int)(Time.time * noteFrameFps) : 0;
             _used = 0;
             for (int i = 0; i < items.Count; i++) Place(items[i], frame);
