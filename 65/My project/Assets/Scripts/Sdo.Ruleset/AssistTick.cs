@@ -87,6 +87,37 @@ namespace Sdo.Ruleset
             return false;
         }
 
+        /// <summary>寬度 <paramref name="windowMs"/> 的滑動視窗裡最多會出現幾個 tick(半開區間:相隔剛好
+        /// windowMs 的兩顆算不同視窗)。這就是**同時「已排程、還沒響完」的 tick 上限** —— 呼叫端每一幀把
+        /// 「地平線(now+lookahead)之前」的 tick 全部排進音訊時鐘,一顆 tick 從被排程到播完會佔住一個音源
+        /// lookahead + 音檔長度 那麼久。密集段(16 分連打 / dump)一個視窗裡塞十幾顆是常態,音源池小於這個數字
+        /// 就會輪回去蓋掉「還沒響的排程」—— 那一聲直接消失(不是被截斷),聽起來就是「按鍵很密的時候沒有打拍音」。
+        /// 純函式。</summary>
+        public static int PeakInWindow(double[] times, double windowMs)
+        {
+            if (times == null || times.Length == 0) return 0;
+            if (windowMs <= 0.0) return 1;
+            int peak = 1, lo = 0;
+            for (int hi = 0; hi < times.Length; hi++)
+            {
+                while (times[hi] - times[lo] >= windowMs) lo++;
+                int n = hi - lo + 1;
+                if (n > peak) peak = n;
+            }
+            return peak;
+        }
+
+        /// <summary>這張譜要幾個打拍音源才不會蓋掉自己(<see cref="PeakInWindow"/>,夾在 min..max 之間)。純函式。</summary>
+        public static int VoicesNeeded(double[] times, double windowMs, int min, int max)
+        {
+            if (max < min) max = min;
+            int need = PeakInWindow(times, windowMs);
+            return need < min ? min : (need > max ? max : need);
+        }
+
+        /// <summary>已載入的時間軸版 <see cref="VoicesNeeded(double[],double,int,int)"/>。</summary>
+        public int VoicesNeeded(double windowMs, int min, int max) => VoicesNeeded(_times, windowMs, min, max);
+
         /// <summary>StepMania 的打拍音是一顆**手拍(clap)**(theme 的 "assist tick" 音檔,DDR 系的 clap);
         /// 那顆 wav 不在這份 source 樹裡(SM-YHANIKI-master 只有 src/ 和 Program/,沒有 Themes/),SDO 的 SE 音色庫
         /// 也沒有 clap,所以照 clap 的物理模型**合成**一顆(單聲道 PCM,[-1,1]):

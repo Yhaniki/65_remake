@@ -85,6 +85,61 @@ namespace Sdo.Tests
             Assert.IsTrue(a.TryDequeue(1e9, out double t)); Assert.AreEqual(50.0, t);
         }
 
+        // ── 音源池要幾個(密集段的打拍音會不會消失) ──
+
+        [Test]
+        public void PeakInWindow_CountsTicksInFlight()
+        {
+            // 每 100ms 一顆 → 500ms 的視窗裡最多 5 顆同時「已排程還沒響完」
+            var t = new[] { 0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0 };
+            Assert.AreEqual(5, AssistTick.PeakInWindow(t, 500.0));   // 半開:0 與 500 不同視窗
+            Assert.AreEqual(3, AssistTick.PeakInWindow(t, 250.0));
+            Assert.AreEqual(1, AssistTick.PeakInWindow(t, 50.0));    // 視窗比間隔還短 → 一次只有一顆
+        }
+
+        [Test]
+        public void PeakInWindow_FindsTheDensestBurst()   // 稀疏開頭 + 一段 20ms 的 dump
+        {
+            var t = new[] { 0.0, 1000.0, 2000.0, 3000.0, 3020.0, 3040.0, 3060.0, 3080.0, 3100.0 };
+            Assert.AreEqual(6, AssistTick.PeakInWindow(t, 120.0), "峰值要看最密的那一段,不是平均密度");
+        }
+
+        [Test]
+        public void PeakInWindow_Degenerate()
+        {
+            Assert.AreEqual(0, AssistTick.PeakInWindow(null, 500.0));
+            Assert.AreEqual(0, AssistTick.PeakInWindow(new double[0], 500.0));
+            Assert.AreEqual(1, AssistTick.PeakInWindow(new[] { 0.0, 100.0 }, 0.0));   // 視窗 0 → 不重疊
+        }
+
+        [Test]
+        public void VoicesNeeded_ClampedToPoolLimits()
+        {
+            var sparse = new[] { 0.0, 1000.0, 2000.0 };
+            Assert.AreEqual(8, AssistTick.VoicesNeeded(sparse, 500.0, 8, 24), "稀疏譜也至少給最小池");
+
+            // 500ms 視窗、每 10ms 一顆 → 50 顆同時在飛,但池有上限
+            var dump = new double[200];
+            for (int i = 0; i < dump.Length; i++) dump[i] = i * 10.0;
+            Assert.AreEqual(24, AssistTick.VoicesNeeded(dump, 500.0, 8, 24));
+
+            // 中間密度:每 50ms 一顆 → 10 顆
+            var stream = new double[50];
+            for (int i = 0; i < stream.Length; i++) stream[i] = i * 50.0;
+            Assert.AreEqual(10, AssistTick.VoicesNeeded(stream, 500.0, 8, 24));
+        }
+
+        [Test]
+        public void VoicesNeeded_InstanceUsesLoadedTimeline()
+        {
+            var a = new AssistTick();
+            var stream = new double[40];
+            for (int i = 0; i < stream.Length; i++) stream[i] = i * 50.0;
+            a.Load(stream);
+            Assert.AreEqual(10, a.VoicesNeeded(500.0, 8, 24));
+            Assert.AreEqual(8, new AssistTick().VoicesNeeded(500.0, 8, 24), "空譜 → 最小池");
+        }
+
         // ── 哪些音符該響 ──
 
         [Test]

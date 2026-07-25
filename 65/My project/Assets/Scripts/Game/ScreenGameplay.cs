@@ -310,9 +310,14 @@ namespace Sdo.Game
         private readonly AssistTick _tick = new AssistTick();
         private AudioClip _tickClip;
         private double _tickOnsetSec;           // 打拍音檔開頭的前導靜音(秒) —— 排程要提早這麼多,見 MeasureOnsetSec
-        private AudioSource[] _tickVoices;      // 小型輪替池:密集 16 分音符時,前一聲還在響就換下一個音源
-        private int _tickVoice;
-        private const int TickVoices = 8;
+        private AudioSource[] _tickVoices;      // 音源池:密集 16 分音符時,前一聲還在響(或還沒響)就換下一個音源
+        private double[] _tickBusyUntil;        // 每個音源忙到哪個 dspTime(排程落點 + 音檔長度);<= 現在 = 空閒
+        private double _tickClipLenSec;         // 目前打拍音檔的長度(秒)——音源要被佔住這麼久
+        // 池的大小**看譜面**決定(見 BuildAssistTick):一顆 tick 從被排程到播完會佔住一個音源
+        // lookahead + 音檔長度 那麼久,密集段一個視窗內十幾顆是常態。固定 8 個會輪回去蓋掉還沒響的排程 → 那幾聲
+        // 直接消失(「按鍵很密的時候沒有打拍音」)。上限 24 是留給音樂/音效的發聲數(Unity Real Voices 預設 32)。
+        private const int MinTickVoices = 8, MaxTickVoices = 24;
+        private const double TickVoiceWindowMs = AssistTick.DefaultLookaheadMs + 250.0;   // 250 = 音檔長度上限(合成 clap 150ms)+餘裕
         // Per-scene ambient SE (decompiled SeMgr_PlayVoiceTimed, gated on scene id in Gameplay_Update): only a few
         // scenes carry an intermittent ambience (sea waves / stadium crowd / underwater bubbles / garden); see
         // AmbientSeName + TickAmbient. Most scenes are BGM/song-only.
@@ -1148,11 +1153,18 @@ namespace Sdo.Game
         private void BuildAssistTick()
         {
             _tick.Load(NoteStartTimes());
-            _tickVoices = new AudioSource[TickVoices];
-            for (int i = 0; i < TickVoices; i++)
+            // 池大小 = 這張譜在一個「排程視窗」內最多幾顆 tick 同時在飛(AssistTick.PeakInWindow),夾在 8..24。
+            // 一般譜 8 個綽綽有餘;16 分連打/dump 段落要十幾個,不夠就會蓋掉自己還沒響的排程 → 密集段沒聲音。
+            int voices = _tick.VoicesNeeded(TickVoiceWindowMs, MinTickVoices, MaxTickVoices);
+            _tickVoices = new AudioSource[voices];
+            _tickBusyUntil = new double[voices];
+            for (int i = 0; i < voices; i++)
             {
                 var a = gameObject.AddComponent<AudioSource>();
                 a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
+                // 優先度壓在音樂/音效之下(預設 128;數字越大越低)：發聲數上限是全域的(專案 Real Voices = 32),
+                // 極密的譜真的把池吃滿時,該被虛擬化掉的是一聲 clap,不能是歌。
+                a.priority = 200;
                 _tickVoices[i] = a;
             }
             SetTickClip(SynthClapClip());         // 先掛 fallback,音源池才有 clip 可用(合成的 clap 沒有前導靜音)
@@ -1228,6 +1240,7 @@ namespace Sdo.Game
         {
             _tickClip = clip;
             _tickOnsetSec = MeasureOnsetSec(clip);
+            _tickClipLenSec = clip != null ? clip.length : 0.0;   // 音源被佔住多久(排程落點 + 這個長度)
             if (_tickVoices != null) foreach (var v in _tickVoices) if (v != null) v.clip = clip;
             if (_tickOnsetSec > 0.001)
                 Debug.Log($"[tick] 前導靜音 {_tickOnsetSec * 1000.0:0.0} ms → 排程提早這麼多"
@@ -1271,11 +1284,30 @@ namespace Sdo.Game
                 // 再減掉音檔的前導靜音 → 起音(而不是第 0 取樣)才落在音符上。
                 double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, MusicCountInSec)
                            - _tickOnsetSec;
-                var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+                double at = Math.Max(dsp, AudioSettings.dspTime);
+                int i = PickTickVoice();
+                var v = _tickVoices[i];
+                _tickBusyUntil[i] = at + _tickClipLenSec;
                 v.volume = AudioMix.Sfx;
                 v.Stop();   // 輪到的音源可能還在響上一聲(超密集譜)→ 蓋掉
-                v.PlayScheduled(Math.Max(dsp, AudioSettings.dspTime));
+                v.PlayScheduled(at);
             }
+        }
+
+        // 挑一個音源來排這一聲。**先挑真正空閒的**(排程已經播完的);全都忙 → 挑最早結束的那個,蓋掉的
+        // 才會是最舊的一聲。舊版是無條件輪替 —— 密集段一輪回來時,那個音源上的排程往往還沒響,Stop() 會把
+        // 排程**取消**掉(不是截斷),於是整聲不見。池夠大時這裡幾乎永遠拿得到空閒音源。
+        private int PickTickVoice()
+        {
+            double now = AudioSettings.dspTime;
+            int best = 0; double bestUntil = double.MaxValue;
+            for (int i = 0; i < _tickVoices.Length; i++)
+            {
+                double until = _tickBusyUntil[i];
+                if (until <= now) return i;
+                if (until < bestUntil) { bestUntil = until; best = i; }
+            }
+            return best;
         }
 
         // 作廢所有「已排程但還沒響」的打拍音(改流速/暫停時它們的 dsp 落點已經失效),游標退回現在重排。
@@ -1283,6 +1315,7 @@ namespace Sdo.Game
         {
             if (_tickVoices == null) return;
             foreach (var v in _tickVoices) if (v != null) v.Stop();
+            for (int i = 0; i < _tickBusyUntil.Length; i++) _tickBusyUntil[i] = 0.0;   // 全部音源重新算空閒
             _tick.Rewind(_nowMs + TickLeadChartMs);   // 同 TickAssist:早於此的 tick 已經來不及排準,別撿
         }
 
@@ -1290,7 +1323,9 @@ namespace Sdo.Game
         private void PlayTickOnce()
         {
             if (_tickVoices == null || _tickClip == null) return;
-            var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+            int i = PickTickVoice();
+            var v = _tickVoices[i];
+            _tickBusyUntil[i] = AudioSettings.dspTime + _tickClipLenSec;
             v.Stop(); v.volume = AudioMix.Sfx; v.Play();
         }
 
