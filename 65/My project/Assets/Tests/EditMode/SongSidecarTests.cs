@@ -138,14 +138,15 @@ namespace Sdo.Tests
         public void Offset_Zero_IsNotWritten_ButReadsBackAsZero()
         {
             // 0 = 不位移 → 不寫進檔（不要污染），讀回來還是 0。設過再設回 0 也一樣清掉。
+            // 比對用 "#OFFSETMS"（帶 #）才不會誤中一律會寫的 "#DPSOFFSETMS:0;"（那是另一個永遠寫的手調旋鈕）。
             var text = SongSidecar.SetOffset("", "", 0f);
-            StringAssert.DoesNotContain("OFFSETMS", text);
+            StringAssert.DoesNotContain("#OFFSETMS", text);
             Assert.AreEqual(0f, SongSidecar.Parse(text).Count == 0 ? 0f : SongSidecar.Parse(text)[0].OffsetMs);
 
             var set = SongSidecar.SetOffset("", "", 42f);
-            StringAssert.Contains("OFFSETMS", set);
+            StringAssert.Contains("#OFFSETMS", set);
             var cleared = SongSidecar.SetOffset(set, "", 0f);
-            StringAssert.DoesNotContain("OFFSETMS", cleared);
+            StringAssert.DoesNotContain("#OFFSETMS", cleared);
             Assert.AreEqual(0f, SongSidecar.Parse(cleared)[0].OffsetMs);
         }
 
