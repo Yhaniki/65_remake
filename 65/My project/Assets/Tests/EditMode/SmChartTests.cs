@@ -397,6 +397,122 @@ namespace Sdo.Tests
             Assert.AreEqual(150.0, s.FirstPositiveBpm, 1e-9);
         }
 
+        // ---------------------------------------------------------------------------------------------------
+        // 負 BPM 中間夾 #STOPS —— gimmick 譜的正戲(engine[Blue] 那種:一連串 4 拍負 / 4 拍正,接縫上各放一個
+        // 停拍)。StepMania 在停拍那一拍**定格**(GetBeatAndBPSFromElapsedTime 走到停拍時 bFreezeOut=true),
+        // 玩家看得到「停住的那一瞬間」;停完才一口氣跳過下一段拍子。畫面上就是一格一格的定格動畫。
+        // ---------------------------------------------------------------------------------------------------
+
+        // 120 BPM。beats 4..8 負、8..12 正抵銷(warp 1);beat 12 停 0.5 秒;beats 12..16 負、16..20 正(warp 2)。
+        private const string WarpStopBody =
+            "1000\n1000\n1000\n1000\n,\n" +   // 0..3
+            "1000\n1000\n1000\n1000\n,\n" +   // 4..7    ← 負 BPM(warp 1)
+            "1000\n1000\n1000\n1000\n,\n" +   // 8..11   ← 抵銷 warp 1 的正 BPM
+            "1000\n1000\n1000\n1000\n,\n" +   // 12..15  ← 定格在 beat 12,然後又是負 BPM(warp 2)
+            "1000\n1000\n1000\n1000\n,\n" +   // 16..19  ← 抵銷 warp 2 的正 BPM
+            "1000\n1000\n1000\n1000\n;\n";    // 20..23  ← 照原時間接上
+
+        private const string WarpStopHead =
+            "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n";
+
+        private const string WarpStop =
+            "#TITLE:WS;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120,12=-120,16=120;\n#STOPS:12.000=0.500;\n" +
+            WarpStopHead + WarpStopBody;
+
+        // 真實譜的寫法:停拍被寫在負 BPM 段起拍**之後**零點幾拍(engine[Blue] 是 #BPMS 204.667=-174 配
+        // #STOPS 204.668),好讓 StepMania 認定它落在負段裡。作者要的是「停拍與負 BPM 同時」,那零點幾拍
+        // 純粹是精度 —— 兩種寫法的畫面必須一模一樣。
+        private const string WarpStopOffByAHair =
+            "#TITLE:WS2;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120,12=-120,16=120;\n#STOPS:12.001=0.500;\n" +
+            WarpStopHead + WarpStopBody;
+
+        [Test]
+        public void Stop_On_A_Negative_Bpm_Beat_Freezes_The_Highway_And_Leaves_The_Warp_Window_Alone()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(WarpStop), 0);
+            Assert.AreEqual(1, map.Stops.Count);
+            Assert.AreEqual(2000.0, map.Stops[0].TimeMs, 1e-6, "定格從 warp 落地的那一刻開始");
+            Assert.AreEqual(500.0 - SmChart.WarpDisplayMs, map.Stops[0].DurationMs, 1e-6,
+                "最後 1ms 要讓給下一段 warp 的超高速窗 —— 蓋住的話那段音符會全部疊在判定線上,定格畫面等於空白");
+        }
+
+        [Test]
+        public void The_Beat_The_Chart_Freezes_On_Is_Still_Hittable()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(WarpStop), 0);
+            Assert.AreEqual(24, map.HitObjects.Count);
+            Assert.AreEqual(2000, map.HitObjects[12].StartTimeMs);
+            Assert.AreEqual(2000.0, map.HitObjects[12].ScrollTimeMs, 1e-6);
+            Assert.IsFalse(map.HitObjects[12].IsFake, "定格時播放頭就停在這一拍上 —— 打得到");
+            for (int i = 13; i <= 19; i++) Assert.IsTrue(map.HitObjects[i].IsFake, $"beat {i} 被第二段 warp 掃掉");
+            Assert.IsFalse(map.HitObjects[20].IsFake, "第二段 warp 的落地拍");
+            Assert.AreEqual(3000, map.HitObjects[21].StartTimeMs, "停完之後照原時間接上(2500 + 停的 500)");
+        }
+
+        // 這一題就是使用者回報的畫面:定格的那 0.5 秒,畫面上要看得到「停住的那一瞬間」——
+        // 判定線上是定格的那一拍,後面被 warp 掃掉的拍子照拍距排在上方,而且完全不動。
+        [Test]
+        public void Frozen_Frame_Shows_The_Warped_Notes_Spread_By_Beat_And_Standing_Still()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(WarpStop), 0);
+            var scroll = ManiaScroll.Build(map, 1.0);
+            double oneBeat = scroll.PixelDistance(0.0, 500.0);   // 120bpm 的一拍
+            Assert.Greater(oneBeat, 0.0);
+
+            foreach (double now in new[] { 2000.0, 2000.5, 2100.0, 2400.0, 2498.0 })
+            {
+                Assert.AreEqual(0.0, scroll.PixelDistance(now, map.HitObjects[12].ScrollTimeMs), 1e-6,
+                    $"now={now}:定格的那一拍停在判定線上");
+                for (int i = 13; i <= 19; i++)
+                    Assert.AreEqual(oneBeat * (i - 12),
+                        scroll.PixelDistance(now, map.HitObjects[i].ScrollTimeMs), oneBeat * 1e-6,
+                        $"now={now}:beat {i} 停在判定線上方 {i - 12} 拍");
+            }
+
+            // 定格結束、第二段 warp 刷過去之後:整批到判定線後方,落地那一拍剛好在判定線上。
+            Assert.AreEqual(0.0, scroll.PixelDistance(2500.0, map.HitObjects[20].ScrollTimeMs), 1e-6);
+            for (int i = 13; i <= 19; i++)
+                Assert.Less(scroll.PixelDistance(2500.0, map.HitObjects[i].ScrollTimeMs), 0.0);
+        }
+
+        [Test]
+        public void A_Stop_Written_A_Hair_After_The_Negative_Bpm_Freezes_The_Same_Frame()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(WarpStopOffByAHair), 0);
+            var scroll = ManiaScroll.Build(map, 1.0);
+            double oneBeat = scroll.PixelDistance(0.0, 500.0);
+
+            Assert.IsFalse(map.HitObjects[12].IsFake, "停拍晚寫那 0.001 拍,不能讓這一拍變成打不到的裝飾音");
+            Assert.AreEqual(2000.0, map.HitObjects[12].ScrollTimeMs, 1e-6, "定格那一拍對齊 warp 落地的時刻");
+            Assert.AreEqual(2000.0, map.Stops[0].TimeMs, 1e-6);
+
+            // 定格中的畫面與「停拍寫在同一拍」完全一樣(容差取一拍的 0.2% —— 就是那 0.001 拍的精度)。
+            foreach (double now in new[] { 2100.0, 2400.0 })
+            {
+                Assert.AreEqual(0.0, scroll.PixelDistance(now, map.HitObjects[12].ScrollTimeMs), 1e-6);
+                for (int i = 13; i <= 19; i++)
+                    Assert.AreEqual(oneBeat * (i - 12),
+                        scroll.PixelDistance(now, map.HitObjects[i].ScrollTimeMs), oneBeat * 0.002,
+                        $"now={now}:beat {i} 停在判定線上方 {i - 12} 拍");
+            }
+        }
+
+        [Test]
+        public void A_Stop_Buried_Inside_A_Warp_Does_Not_Freeze_The_Highway()
+        {
+            // beat 6 的停拍埋在 warp(4→11.8)裡面:播放頭是瞬間跳過那段拍子的,StepMania 只把它的秒數
+            // 扣掉(負段算出來的 fFreezeStartSecond 是負的 → 定格條件不成立),畫面不會停。
+            const string sm =
+                "#TITLE:WB;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120;\n#STOPS:6.000=0.100;\n" +
+                WarpStopHead + "1000\n1000\n1000\n1000\n,\n1000\n1000\n1000\n1000\n,\n" +
+                "1000\n1000\n1000\n1000\n,\n1000\n1000\n1000\n1000\n;\n";
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            Assert.AreEqual(0, map.Stops.Count, "warp 內部的停拍不定格");
+            var warps = SmChart.Warps(SmChart.Parse(sm), 16);
+            Assert.AreEqual(1, warps.Count);
+            Assert.AreEqual(11.8, warps[0].EndBeat, 1e-9, "那 100ms 讓 warp 晚 0.2 拍才落地");
+        }
+
         [Test]
         public void Charts_Without_Negative_Bpm_Have_No_Warps_And_No_Fake_Notes()
         {

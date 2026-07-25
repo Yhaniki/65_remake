@@ -270,14 +270,8 @@ namespace Sdo.Osu
             // Freeze windows for the highway (ManiaScroll): each stop begins at its own note-clock time — the
             // cumulative freeze BEFORE it (a stop's own duration is not yet applied at its start beat) — and lasts
             // its freeze duration. A note sitting exactly on the stop beat is hit right as the freeze begins.
-            // warp 內的 stop 不送:那一段拍子播放頭是瞬間跳過的,凍結窗會落在「已經過去的時刻」反而卡到畫面。
-            for (int i = 0; i < tl.StopBeat.Length; i++)
-            {
-                if (tl.IsWarped(tl.StopBeat[i])) continue;
-                double startMs = tl.RawMs(tl.StopBeat[i]);
-                if (startMs < 0) startMs = 0;
-                map.Stops.Add(new ScrollStop(startMs, tl.StopMs[i]));
-            }
+            // 負 BPM 的譜還要多兩件事(warp 內的 stop 不凍結、warp 的顯示窗要讓出來)—— 見 Timeline.DisplayStops。
+            map.Stops.AddRange(tl.DisplayStops());
             return map;
         }
 
@@ -292,6 +286,9 @@ namespace Sdo.Osu
 
         /// <summary>時間比較的容差 (ms) —— 判斷「負 BPM 倒退的時間有沒有被加回來」用。</summary>
         private const double TimeEps = 1e-6;
+
+        /// <summary>拍數比較的容差 —— 判斷某一拍是不是正好落在 warp 的頭/尾上。</summary>
+        private const double BeatEps = 1e-9;
 
         /// <summary>
         /// 一張 .sm 的時間軸:拍 → 時間,含 #BPMS(可為負)、#STOPS,以及由負 BPM 推導出來的 warp。
@@ -351,14 +348,65 @@ namespace Sdo.Osu
                     var w = Warps[i];
                     // warp 起跳拍(含)之前:照原時間,但不得踩進窗裡(不然會跟窗內的音符位置對調)。
                     if (beat <= w.StartBeat) return Math.Min(RawMs(beat), WinStartMs[i]);
-                    if (beat < w.EndBeat)
+                    if (beat < w.EndBeat - BeatEps)
                     {
                         double span = w.Beats;
                         double f = span > 0.0 ? (beat - w.StartBeat) / span : 0.0;
                         return WinStartMs[i] + (w.TimeMs - WinStartMs[i]) * f;
                     }
+                    // 落地拍一律對齊窗尾(= warp 的時刻)。這一拍的 RawMs 有可能還差那麼一點點:譜面把 stop
+                    // 寫在負 BPM 段起拍之後零點幾拍(#BPMS 204.667=-174 配 #STOPS 204.668,作者要的是「同時」),
+                    // 那零點幾拍的負 BPM 讓 RawMs 比落地時刻早零點幾 ms。照 RawMs 擺的話,這一拍的音符會掉進
+                    // 上一段 warp 的超高速窗裡 —— 定格時它不是停在判定線上,而是被那零點幾 ms × 超高速甩到
+                    // 判定線下方好幾拍。stop 的凍結窗也是從這個時刻起算(見 DisplayStops)。
+                    if (beat <= w.EndBeat + BeatEps) return w.TimeMs;
                 }
                 return RawMs(beat);
+            }
+
+            /// <summary>
+            /// 高速公路要凍結的窗(**顯示**時間軸)。一段 #STOPS 就是播放頭在那一拍上停住 —— 畫面定格,
+            /// 玩家看得到「停住的那一瞬間」;負 BPM 段中間夾 stop 的譜(engine[Blue] 那種)整段 gimmick
+            /// 就是這樣一格一格看出來的。
+            ///
+            /// 兩件事和單純的「stop → 凍結」不一樣:
+            ///  • warp **內部**的 stop 不凍結。那段拍子播放頭是瞬間跳過的,StepMania 也只是把它的秒數扣掉
+            ///    (GetBeatAndBPSFromElapsedTime 在負段算出來的 fFreezeStartSecond 是負的 → 凍結條件不成立);
+            ///    只有 warp 頭尾那一拍上的 stop 才會定格 —— 而那正是「負 BPM 被 stop 切成兩段」的接縫。
+            ///  • 每個 warp 的顯示窗(<see cref="WarpDisplayMs"/>)要從凍結窗裡**挖掉**。那 1 ms 是「整段被
+            ///    跳過的拍子瞬間刷過畫面」用的超高速捲動;被凍結蓋住的話那段捲動就沒了,窗內的音符會全部
+            ///    疊在判定線上(定格時畫面等於空白),停完才在下一段 warp 一次冒出來。
+            /// </summary>
+            public List<ScrollStop> DisplayStops()
+            {
+                var list = new List<ScrollStop>();
+                for (int i = 0; i < StopBeat.Length; i++)
+                {
+                    if (IsWarped(StopBeat[i])) continue;
+                    double s = DisplayMs(StopBeat[i]);
+                    if (s < 0.0) s = 0.0;
+                    AddFreeze(list, s, s + StopMs[i]);
+                }
+                return list;
+            }
+
+            // 把 [s, e) 這段凍結加進 list,跳過每一個 warp 的顯示窗。warp 依時刻遞增,窗尾也遞增,
+            // 所以一次線性掃描就夠(窗互相重疊也沒關係 —— s 只會往前走)。
+            private void AddFreeze(List<ScrollStop> list, double s, double e)
+            {
+                for (int i = 0; i < Warps.Length && s < e; i++)
+                {
+                    double ws = WinStartMs[i], we = Warps[i].TimeMs;
+                    if (we <= s || ws >= e) continue;
+                    if (ws > s) AddSpan(list, s, ws);
+                    s = we;
+                }
+                AddSpan(list, s, e);
+            }
+
+            private static void AddSpan(List<ScrollStop> list, double s, double e)
+            {
+                if (e - s > 1e-9) list.Add(new ScrollStop(s, e - s));
             }
 
             /// <summary>這一拍是否被 warp 掃掉(看得到、打不到)。</summary>
@@ -462,18 +510,13 @@ namespace Sdo.Osu
                 return warps.ToArray();
             }
 
-            // 接在上一段 warp 尾巴、且落在同一個時刻的(例:負 BPM 段中間夾了一個 stop 把它切成兩半),
-            // 其實是同一次跳躍 —— 併回去,免得產生兩個時刻相同、顯示窗會重疊的 warp。
+            // 接在上一段 warp 尾巴、時刻又相同的兩段(例:負 BPM 段起拍之後零點幾拍才寫 stop —— 中間那
+            // 零點幾拍會自成一段極短的 warp)**不併回去**:併了之後接縫那一拍就變成 warp 的**內部**,
+            // 那一拍上的音符會被誤標成打不到的裝飾音,而 StepMania 是打得到的(定格時播放頭就停在那裡,
+            // 判定窗涵蓋得到)。窗會不會重疊由 BuildWindows 收尾。
             private static void Close(List<SmWarp> warps, double startBeat, double endBeat, double timeMs)
             {
                 if (endBeat <= startBeat) return;
-                int last = warps.Count - 1;
-                if (last >= 0 && Math.Abs(warps[last].TimeMs - timeMs) <= TimeEps &&
-                    Math.Abs(warps[last].EndBeat - startBeat) <= 1e-9)
-                {
-                    warps[last] = new SmWarp(warps[last].StartBeat, endBeat, warps[last].TimeMs);
-                    return;
-                }
                 warps.Add(new SmWarp(startBeat, endBeat, timeMs));
             }
 
