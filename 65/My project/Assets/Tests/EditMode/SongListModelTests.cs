@@ -223,6 +223,48 @@ namespace Sdo.Tests
             Assert.AreEqual(5, SongListModel.RandomCandidates(Levelled(), RngAll).Count);
         }
 
+        // 隨機難度的範圍比的是「螢幕上那個數字」→ 跟著 RoomConfig.difficultyCalc 走（選了哪套就整體照那套）。
+        // 外部 osu 譜：osu 等級 3（低），但 MSD 27 換算後 ≈53（高）→ 同一首歌在兩套算法下落在完全不同的範圍。
+        private static List<SongCatalog.Entry> ExternalFlipped() => new List<SongCatalog.Entry>
+        {
+            new SongCatalog.Entry { gn = "x.gn", external = true, chartFormat = (int)SongFormat.Osu,
+                                    diffEasy = 3, notesEasy = 100, msdEasy = 27f },
+        };
+
+        [Test]
+        public void RandomCandidates_Uses_The_Active_DifficultyCalc()
+        {
+            var saved = Sdo.Settings.RoomConfig.difficultyCalc;
+            try
+            {
+                Sdo.Settings.RoomConfig.difficultyCalc = "osu";
+                Assert.AreEqual(1, SongListModel.RandomCandidates(ExternalFlipped(), Rng1to5).Count, "osu 等級 3 → 落在 1-5");
+                Assert.AreEqual(0, SongListModel.RandomCandidates(ExternalFlipped(), Rng25up).Count);
+
+                Sdo.Settings.RoomConfig.difficultyCalc = "minacalc";
+                Assert.AreEqual(0, SongListModel.RandomCandidates(ExternalFlipped(), Rng1to5).Count, "顯示的已經不是 3");
+                Assert.AreEqual(1, SongListModel.RandomCandidates(ExternalFlipped(), Rng25up).Count, "換算後 ≈53 → 25以上");
+            }
+            finally { Sdo.Settings.RoomConfig.difficultyCalc = saved; }
+        }
+
+        [Test]
+        public void InLevelRange_Uses_The_Active_DifficultyCalc()
+        {
+            var saved = Sdo.Settings.RoomConfig.difficultyCalc;
+            try
+            {
+                Sdo.Settings.RoomConfig.difficultyCalc = "osu";
+                Assert.AreEqual(1, SongListModel.InLevelRange(ExternalFlipped(), 0, 1, 5).Count);
+                Assert.AreEqual(0, SongListModel.InLevelRange(ExternalFlipped(), 0, 25, 99).Count);
+
+                Sdo.Settings.RoomConfig.difficultyCalc = "minacalc";
+                Assert.AreEqual(0, SongListModel.InLevelRange(ExternalFlipped(), 0, 1, 5).Count);
+                Assert.AreEqual(1, SongListModel.InLevelRange(ExternalFlipped(), 0, 25, 99).Count);
+            }
+            finally { Sdo.Settings.RoomConfig.difficultyCalc = saved; }
+        }
+
         [Test]
         public void RandomCandidates_Clamps_Range_And_Is_Null_Safe()
         {

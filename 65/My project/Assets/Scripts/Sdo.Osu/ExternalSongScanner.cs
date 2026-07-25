@@ -14,8 +14,8 @@ namespace Sdo.Osu
     /// more folder level is still found, while a song folder's own subfolders (a StepMania editor's FileBackup/, an osu
     /// storyboard dir) stay assets rather than becoming songs. One such folder may hold MORE THAN ONE song: several
     /// beatmap sets dropped in flat, or several .sm files. <see cref="ExternalSongGrouper"/> splits them by audio file;
-    /// each song then fills its own hard/normal/easy slots from ITS three highest-note-count 4K difficulties
-    /// (<see cref="ExternalDifficultyPicker"/>). Only 4K is used (osu CircleSize==4 &amp; Mode==3; StepMania
+    /// each song then fills its own hard/normal/easy slots from ITS three HARDEST 4K difficulties
+    /// (<see cref="ExternalDifficultyPicker"/>; 「最難」依目前那套難度算法 — 見 <see cref="SlotByMsd"/>). Only 4K is used (osu CircleSize==4 &amp; Mode==3; StepMania
     /// dance-single), and only songs whose audio file is actually present. Missing dance choreography is fine —
     /// gameplay falls back to a generic dance.
     /// </summary>
@@ -24,6 +24,28 @@ namespace Sdo.Osu
         public sealed class SongDir { public string Group = ""; public string Path = ""; }
 
         public sealed class ScanProgress { public int Done; public int Total; public string Current = ""; }
+
+        /// <summary>
+        /// 分槽（哪張譜進簡單/普通/困難）要用哪套難度：false = osu 星數等級（預設），true = MinaCalc 的 MSD 換算等級。
+        /// 由呼叫端在掃描前灌進來（<c>RoomConfig.difficultyCalc</c>；這個組件不認得設定層）。玩家選了哪套算法，
+        /// 連「一首歌有 4 個以上難度時要留哪三張」都照那套 —— 兩套的高低順序不一定一樣。
+        ///
+        /// 掃描結果會進快取，所以快取也記著它是用哪套算的（<c>ExternalScanCache</c>）：換一套 → 冷快取重掃一次，
+        /// 之後照常吃快取。
+        /// </summary>
+        public static bool SlotByMsd;
+
+        /// <summary>分槽用的等級表。<paramref name="byMsd"/> 且**每張譜都算得出 MSD** → 用 MSD 換算等級；只要有一張
+        /// 缺（空譜/太短算不出來）就整首退回 osu 等級 —— 兩種尺度混在一起比，排出來只會更亂。純函式。</summary>
+        public static List<int> SlotLevels(IReadOnlyList<ChartStats> stats, bool byMsd)
+        {
+            var lv = new List<int>(stats?.Count ?? 0);
+            if (stats == null) return lv;
+            bool useMsd = byMsd;
+            if (useMsd) foreach (var s in stats) if (s.Msd <= 0f) { useMsd = false; break; }
+            foreach (var s in stats) lv.Add(useMsd ? ManiaMsd.ToLevel(s.Msd) : s.Level);
+            return lv;
+        }
 
         private static readonly string[] AudioExt = { ".ogg", ".mp3", ".wav" };
         private static readonly string[] ImageExt = { ".png", ".jpg", ".jpeg", ".bmp" };
@@ -351,6 +373,11 @@ namespace Sdo.Osu
         /// Everything numeric is read from the .gn's own PLAINTEXT header (<see cref="GnHeader"/>) — no decryption, no
         /// note parsing, so a 199-song pack scans as fast as reading 199 file headers. The sidecar only adds what the
         /// file can't say: the decryption seed, the UTF-8 title/artist, and where the pack keeps art/preview/dance.
+        ///
+        /// That header level is also the FINAL level: a .gn is never re-rated (no <see cref="StatsOf"/>, so no
+        /// <see cref="ManiaStarRating"/> and <see cref="ExternalChart.Msd"/> stays 0). The star / MinaCalc calculators
+        /// exist to give osu/StepMania/Malody charts a level they don't have — a .gn already has one, official or
+        /// user-dropped alike, and it stays exactly as the chart author wrote it.
         /// </summary>
         private static void DraftGn(List<Draft> drafts, List<string> gnFiles, Dictionary<string, SdoPackSong> pack)
         {
@@ -478,9 +505,9 @@ namespace Sdo.Osu
                 // not by note count — so the hard slot is the genuinely hardest chart. (Full-parses every diff of
                 // the song rather than only the chosen 3; the scan cache absorbs the cost on every rescan.)
                 var stats = new List<ChartStats>(g.Charts.Count);
-                var levels = new List<int>(g.Charts.Count);
-                foreach (var i in g.Charts) { var st = OsuStats(candFile[i]); stats.Add(st); levels.Add(st.Level); }
-                var slots = ExternalDifficultyPicker.Assign(levels, counts);   // per SONG — never across the folder
+                foreach (var i in g.Charts) stats.Add(OsuStats(candFile[i]));
+                // 分槽用目前那套難度算法（見 SlotByMsd）—— 選了 minacalc 就連「留哪三張」都照 MSD 排。
+                var slots = ExternalDifficultyPicker.Assign(SlotLevels(stats, SlotByMsd), counts);   // per SONG — never across the folder
                 for (int s = 0; s < 3; s++)
                 {
                     int c = slots[s];
@@ -541,13 +568,8 @@ namespace Sdo.Osu
                 // Rate EVERY candidate (same star scale as osu; meter fallback), then slot hard/normal/easy by that
                 // level — not by note count — so the hard slot is always the genuinely hardest chart.
                 var candStats = new List<ChartStats>(candIndex.Count);
-                var candLevel = new List<int>(candIndex.Count);
-                for (int k = 0; k < candIndex.Count; k++)
-                {
-                    var st = SmStats(smSong, candIndex[k], candMeter[k]);
-                    candStats.Add(st); candLevel.Add(st.Level);
-                }
-                var slots = ExternalDifficultyPicker.Assign(candLevel, candCount);
+                for (int k = 0; k < candIndex.Count; k++) candStats.Add(SmStats(smSong, candIndex[k], candMeter[k]));
+                var slots = ExternalDifficultyPicker.Assign(SlotLevels(candStats, SlotByMsd), candCount);
                 for (int s = 0; s < 3; s++)
                 {
                     int c = slots[s];
@@ -611,9 +633,8 @@ namespace Sdo.Osu
                 // Rate EVERY chart in the group (星數×N → 等級 + 譜長；同 osu/SM 一致的量尺), then slot by that level —
                 // not by note count — so the hard slot is the genuinely hardest chart.
                 var mStats = new List<ChartStats>(g.Charts.Count);
-                var mLevels = new List<int>(g.Charts.Count);
-                foreach (var i in g.Charts) { var st = MalodyStats(candFile[i]); mStats.Add(st); mLevels.Add(st.Level); }
-                var slots = ExternalDifficultyPicker.Assign(mLevels, slotCounts);   // per SONG — never across the folder
+                foreach (var i in g.Charts) mStats.Add(MalodyStats(candFile[i]));
+                var slots = ExternalDifficultyPicker.Assign(SlotLevels(mStats, SlotByMsd), slotCounts);   // per SONG — never across the folder
                 for (int s = 0; s < 3; s++)
                 {
                     int c = slots[s];

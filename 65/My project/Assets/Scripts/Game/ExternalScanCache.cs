@@ -60,7 +60,10 @@ namespace Sdo.Game
             public List<Song> songs = new List<Song>();
         }
 
-        [Serializable] private sealed class CacheData { public int version = Version; public List<Folder> folders = new List<Folder>(); }
+        // calc = 產生這份快取時用的難度算法（RoomConfig.difficultyCalc）。分槽（哪三張譜留下、誰是困難）是掃描期
+        // 用那套算法決定的，所以換一套就得整份作廢重掃一次 —— 快取裡每首歌只留三張譜，第四張的資料根本不在裡面，
+        // 不重讀就不可能知道它在新算法下是不是更難。重掃只有換算法後那一次，之後照常吃快取。
+        [Serializable] private sealed class CacheData { public int version = Version; public string calc = ""; public List<Folder> folders = new List<Folder>(); }
 
         // ---- signature: what makes a folder's parse result stale ----
 
@@ -112,8 +115,9 @@ namespace Sdo.Game
 
         // ---- load / save ----
 
-        /// <summary>Read the cache into a path → folder map (case-insensitive). Empty on any failure / version bump.</summary>
-        public static Dictionary<string, Folder> Load(string cacheFilePath)
+        /// <summary>Read the cache into a path → folder map (case-insensitive). Empty on any failure / version bump /
+        /// 難度算法換過（<paramref name="calc"/> 與寫檔時那次不同 → 分槽結果已經不能用了，見 <see cref="CacheData"/>）。</summary>
+        public static Dictionary<string, Folder> Load(string cacheFilePath, string calc)
         {
             var map = new Dictionary<string, Folder>(StringComparer.OrdinalIgnoreCase);
             try
@@ -121,6 +125,7 @@ namespace Sdo.Game
                 if (string.IsNullOrEmpty(cacheFilePath) || !File.Exists(cacheFilePath)) return map;
                 var data = JsonUtility.FromJson<CacheData>(File.ReadAllText(cacheFilePath));
                 if (data == null || data.version != Version || data.folders == null) return map;
+                if (!string.Equals(data.calc ?? "", calc ?? "", StringComparison.Ordinal)) return map;
                 foreach (var f in data.folders)
                     if (f != null && !string.IsNullOrEmpty(f.path)) map[f.path] = f;
             }
@@ -128,13 +133,14 @@ namespace Sdo.Game
             return map;
         }
 
-        /// <summary>Persist the current scan's folder lines (best-effort — a write failure just makes next boot cold).</summary>
-        public static void Save(string cacheFilePath, List<Folder> folders)
+        /// <summary>Persist the current scan's folder lines (best-effort — a write failure just makes next boot cold).
+        /// <paramref name="calc"/> = 這次掃描用的難度算法，下次開機用它比對（見 <see cref="Load"/>）。</summary>
+        public static void Save(string cacheFilePath, List<Folder> folders, string calc)
         {
             try
             {
                 if (string.IsNullOrEmpty(cacheFilePath)) return;
-                var data = new CacheData { version = Version, folders = folders ?? new List<Folder>() };
+                var data = new CacheData { version = Version, calc = calc ?? "", folders = folders ?? new List<Folder>() };
                 var dir = Path.GetDirectoryName(cacheFilePath);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 File.WriteAllText(cacheFilePath, JsonUtility.ToJson(data));

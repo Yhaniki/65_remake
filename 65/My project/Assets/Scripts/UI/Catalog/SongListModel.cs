@@ -191,7 +191,9 @@ namespace Sdo.UI.Catalog
                 {
                     if (!e.HasChart(d)) continue;   // empty difficulty can't be a random pick
                     if (all) { res.Add(new RandomCandidate { Song = e, Difficulty = d }); continue; }
-                    int lvl = e.Diff(d);
+                    // 用 DisplayLevel（＝目前那套難度算法）比範圍：畫面上寫「難度 13 以上」，挑出來的就該是
+                    // 螢幕上顯示 13 以上的歌。用 Diff() 會在 minacalc 模式下拿 osu 等級去比 minacalc 的數字。
+                    int lvl = e.DisplayLevel(d);
                     if (lvl >= r.Min && lvl <= r.Max) res.Add(new RandomCandidate { Song = e, Difficulty = d });
                 }
             }
@@ -209,7 +211,7 @@ namespace Sdo.UI.Catalog
             {
                 if (e == null) continue;
                 if (all) { res.Add(e); continue; }
-                int lvl = e.Diff(difficulty);
+                int lvl = e.DisplayLevel(difficulty);   // 同 RandomCandidates：範圍比的是螢幕上看到的那個數字
                 if (lvl >= min && lvl <= max) res.Add(e);
             }
             return res;

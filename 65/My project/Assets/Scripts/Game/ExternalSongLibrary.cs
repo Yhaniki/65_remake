@@ -88,7 +88,10 @@ namespace Sdo.Game
             // Cache I/O (JsonUtility + persistentDataPath) stays on the main thread; the worker does only pure
             // System.IO + arithmetic. Load the previous scan, hand it to the worker, save the fresh one when it returns.
             string cacheFile = CacheFilePath();
-            var job = new ScanJob(Roots(), ExternalScanCache.Load(cacheFile));
+            // 分槽（哪三張譜留下、誰是困難）用目前那套難度算法；快取也記著它是用哪套算的 → 換一套就重掃一次。
+            string calc = RoomConfig.difficultyCalc ?? "osu";
+            ExternalSongScanner.SlotByMsd = calc == "minacalc";
+            var job = new ScanJob(Roots(), ExternalScanCache.Load(cacheFile, calc));
             // The flag is cleared by the WORKER's continuation, not by this coroutine: a refresh coroutine dies with
             // its screen (leaving the scene mid-scan), and clearing it here would then leave Scanning stuck true and
             // every later scan waiting forever on a worker that finished long ago.
@@ -101,7 +104,7 @@ namespace Sdo.Game
                 yield return null;
             }
 
-            ExternalScanCache.Save(cacheFile, job.CacheLines);   // rewrite (prunes folders that are gone now)
+            ExternalScanCache.Save(cacheFile, job.CacheLines, calc);   // rewrite (prunes folders that are gone now)
 
             var entries = new List<SongCatalog.Entry>();
             foreach (var song in job.Songs)   // ToEntry + the catalog are main-thread only
@@ -185,9 +188,14 @@ namespace Sdo.Game
               // pack-supplied files: swapping in a folder whose .tsv now points at real jackets / previews / dances IS
               // a change the player can see, even though every chart file stayed the same.
               .Append(e.previewPath).Append(sep).Append(e.dpsPath).Append(sep).Append(e.chartSeed);
+            // 三個槽**排序後**才串進指紋：哪張譜排在簡單/普通/困難是跟著難度算法走的（見
+            // SongCatalog.Entry.SortSlotsByDisplayLevel），玩家在 config.ini 換一套算法時磁碟上什麼都沒變 —— 指紋
+            // 若跟著槽位順序跑，換一次算法就會把整個歌庫報成「已更新」。
+            var slots = new List<string>(3);
             for (int d = 0; d < 3; d++)
-                sb.Append(sep).Append(e.ChartPath(d)).Append(sep).Append(e.ChartIndex(d))
-                  .Append(sep).Append(e.NoteCount(d)).Append(sep).Append(e.Diff(d));
+                slots.Add(e.ChartPath(d) + sep + e.ChartIndex(d) + sep + e.NoteCount(d) + sep + e.Diff(d));
+            slots.Sort(StringComparer.Ordinal);
+            foreach (var s in slots) sb.Append(sep).Append(s);
             return sb.ToString();
         }
 
@@ -343,6 +351,10 @@ namespace Sdo.Game
             SetSlot(e, 0, song.Charts[0], song.AudioDurationSec);
             SetSlot(e, 1, song.Charts[1], song.AudioDurationSec);
             SetSlot(e, 2, song.Charts[2], song.AudioDurationSec);
+            // 槽是掃描期用 osu 等級分的（快取/sidecar 都照那個順序存）。顯示若切成 minacalc，高低順序可能不同 →
+            // 這裡照**目前這套算法**重排一次，困難格永遠是這套算法下最難的那張（見 Entry.SortSlotsByDisplayLevel）。
+            // 純記憶體重排，不必重掃、不寫檔；切回 osu 下次載入自然排回去。
+            e.SortSlotsByDisplayLevel();
             return e;
         }
 

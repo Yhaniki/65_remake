@@ -15,8 +15,10 @@ namespace Sdo.Osu
         public int NoteCount;          // objects (taps + holds) — used to rank difficulties
         public int Level;              // .sm meter / .osu unknown(0) — shown as the LV label
         public int DurationSec;        // last note's time — the 時間 column, same measure as the official catalog's dur*
-        public float Msd;              // Etterna MinaCalc overall MSD (raw, unscaled); 0 = not computed (.gn packs).
-                                       // Shown instead of LV when the difficulty calculator is set to MinaCalc.
+        public float Msd;              // Etterna MinaCalc overall MSD (raw, unscaled); 0 = not computed. Shown instead
+                                       // of LV when the difficulty calculator is set to MinaCalc — so it is deliberately
+                                       // left 0 for .gn packs: a .gn already ships its own level in its header and must
+                                       // keep it, whatever difficulty calculator is selected.
     }
 
     /// <summary>

@@ -21,8 +21,9 @@ namespace Sdo.Game
             public int diffEasy = -1, diffNormal = -1, diffHard = -1;
             public int notesEasy, notesNormal, notesHard;
             public int durEasy, durNormal, durHard;   // seconds per difficulty
-            // Etterna MinaCalc raw overall MSD per difficulty (external osu/sm/mc songs only; 0 = none). Shown instead
-            // of the osu level when RoomConfig.difficultyCalc == "minacalc". See ManiaMsd / Sdo.Osu.Mina.
+            // Etterna MinaCalc raw overall MSD per difficulty (external osu/sm/mc songs only; 0 = none — .gn packs
+            // keep their own header level and are never rated). Shown instead of the osu level when
+            // RoomConfig.difficultyCalc == "minacalc". See ManiaMsd / Sdo.Osu.Mina.
             public float msdEasy, msdNormal, msdHard;
 
             // ---- external (user Songs/ folder: osu / StepMania) — absent/false for the official .gn catalog ----
@@ -77,11 +78,17 @@ namespace Sdo.Game
             public float Msd(int d) => d <= 0 ? msdEasy : (d == 1 ? msdNormal : msdHard);
 
             /// <summary>難度數字的「顯示值」——依 <see cref="Sdo.Settings.RoomConfig.difficultyCalc"/> 決定：
-            /// minacalc → round(MSD^2×0.1) 無 99 上限（<see cref="Sdo.Osu.ManiaMsd.ToLevel"/>，僅外部歌且已算出 MSD）；
-            /// 否則 osu 星數×7 等級（<see cref="Diff"/>）。**選歌 / 房間 / 遊戲一律用這個**,才不會切畫面時數字跳掉。</summary>
+            /// minacalc → round(max(MSD^1.9×0.1, MSD)) 無 99 上限（<see cref="Sdo.Osu.ManiaMsd.ToLevel"/>）；
+            /// 否則 osu 星數×7 等級（<see cref="Diff"/>）。**選歌 / 房間 / 遊戲一律用這個**,才不會切畫面時數字跳掉。
+            ///
+            /// **新的等級算法只套用在「難度得自己重算」的外部譜面(osu / StepMania / Malody)。.gn 一律不動**：
+            /// 官方 DATA/MUSIC 的 .gn 是 <c>external == false</c>，外部資料夾裡的 .gn 歌包則是
+            /// <c>chartFormat == SongFormat.Gn</c>——兩者都自帶檔頭寫死的難度(<see cref="Sdo.Osu.GnHeader"/>)，
+            /// 那是這首歌本來的等級，換算計器不該把它改掉。</summary>
             public int DisplayLevel(int d)
             {
-                if (external && Sdo.Settings.RoomConfig.difficultyCalc == "minacalc")
+                if (external && chartFormat != (int)Sdo.Osu.SongFormat.Gn &&
+                    Sdo.Settings.RoomConfig.difficultyCalc == "minacalc")
                 {
                     float m = Msd(d);
                     if (m > 0f) return Sdo.Osu.ManiaMsd.ToLevel(m);
@@ -96,6 +103,70 @@ namespace Sdo.Game
             /// difficulty that carries no notes (e.g. 動畫歌曲串燒 sdom2140k: easy=3417 notes, normal/hard=0).
             /// Those empty difficulties are greyed out / non-selectable in song-select.</summary>
             public bool HasChart(int d) => NoteCount(d) > 0;
+
+            // 一個難度槽的完整內容（重排時整組搬，不能只搬數字 —— 譜面路徑/#NOTES 索引跟著走才不會選到別張譜）。
+            private struct Slot
+            {
+                public int Diff, Notes, Dur, ChartIdx;
+                public float Msd;
+                public string Chart;
+                public static Slot Empty => new Slot { Diff = -1, Chart = "" };   // 同 Entry 的欄位預設（-1 = 未知等級）
+            }
+
+            private Slot ReadSlot(int d)
+            {
+                if (d <= 0) return new Slot { Diff = diffEasy, Notes = notesEasy, Dur = durEasy, ChartIdx = chartIdxEasy, Msd = msdEasy, Chart = chartEasy };
+                if (d == 1) return new Slot { Diff = diffNormal, Notes = notesNormal, Dur = durNormal, ChartIdx = chartIdxNormal, Msd = msdNormal, Chart = chartNormal };
+                return new Slot { Diff = diffHard, Notes = notesHard, Dur = durHard, ChartIdx = chartIdxHard, Msd = msdHard, Chart = chartHard };
+            }
+
+            private void WriteSlot(int d, Slot s)
+            {
+                if (d <= 0) { diffEasy = s.Diff; notesEasy = s.Notes; durEasy = s.Dur; chartIdxEasy = s.ChartIdx; msdEasy = s.Msd; chartEasy = s.Chart ?? ""; }
+                else if (d == 1) { diffNormal = s.Diff; notesNormal = s.Notes; durNormal = s.Dur; chartIdxNormal = s.ChartIdx; msdNormal = s.Msd; chartNormal = s.Chart ?? ""; }
+                else { diffHard = s.Diff; notesHard = s.Notes; durHard = s.Dur; chartIdxHard = s.ChartIdx; msdHard = s.Msd; chartHard = s.Chart ?? ""; }
+            }
+
+            /// <summary>
+            /// 把三個難度槽重排成 easy ≤ normal ≤ hard —— **依 <see cref="DisplayLevel"/>，也就是目前那套難度算法**
+            /// （<see cref="Sdo.Settings.RoomConfig.difficultyCalc"/>）。
+            ///
+            /// 掃描期是用 osu 等級把譜面分進三個槽的（<see cref="Sdo.Osu.ExternalDifficultyPicker"/>）。兩套算法對
+            /// 同一首歌的高低順序不見得一樣，所以切成 minacalc 之後,困難格的數字可能反而比普通格小 —— 選了哪套算法
+            /// 就整體都照那套，包含「哪張譜是困難」。重排只是換槽（同一首歌的同三張譜，路徑/索引跟著搬），
+            /// 不必重掃、也不動任何檔案。
+            ///
+            /// 排法沿用掃描期那支 hard-first 的純函式：等級高的先拿 hard，同級用音符數多的，再同就保持原順序；
+            /// 譜不足三張時**低位留空**（跟掃描期一致 —— 只有一張譜就是「只有困難」，易/普灰掉）。
+            ///
+            /// **.gn 一律不重排**（官方 DATA/MUSIC 的歌、以及外部資料夾裡的 .gn 歌包）：那三格是譜面自己的
+            /// 易/普/難，不是算出來的名次 —— 有些歌只有簡單格有譜（例：sdom2140k easy 3417 notes、其餘 0），
+            /// 拿去 hard-first 重排會把它搬進困難格。這跟 <see cref="DisplayLevel"/> 不動 .gn 是同一條規則。
+            /// </summary>
+            public void SortSlotsByDisplayLevel()
+            {
+                if (!external || chartFormat == (int)Sdo.Osu.SongFormat.Gn) return;
+                // 顯示用的就是掃描期分槽用的那套（osu 等級）→ 槽位本來就對，一個位元組都不要動。
+                if (Sdo.Settings.RoomConfig.difficultyCalc != "minacalc") return;
+
+                var lv = new List<int>(3); var notes = new List<int>(3); var data = new List<Slot>(3);
+                for (int d = 0; d < 3; d++)
+                {
+                    if (!HasChart(d)) continue;
+                    // 有譜卻沒 MSD（空譜/太短算不出來 → DisplayLevel 退回 osu 等級）：整首歌就會拿兩種尺度互比，
+                    // 排出來只會更亂 → 維持掃描期的順序。
+                    if (Msd(d) <= 0f) return;
+                    lv.Add(DisplayLevel(d)); notes.Add(NoteCount(d)); data.Add(ReadSlot(d));
+                }
+                if (data.Count < 2) return;
+                // 已經是遞增就不要動：同分時 Assign 會照音符數重排，那種「同級但換位」的搬動是沒必要的雜訊。
+                bool ascending = true;
+                for (int i = 1; i < lv.Count; i++) if (lv[i] < lv[i - 1]) { ascending = false; break; }
+                if (ascending) return;
+
+                var order = Sdo.Osu.ExternalDifficultyPicker.Assign(lv, notes);   // [easyIdx, normalIdx, hardIdx]
+                for (int d = 0; d < 3; d++) WriteSlot(d, order[d] >= 0 ? data[order[d]] : Slot.Empty);
+            }
         }
 
         /// <summary>Sanity bound for a hand-typed offsetMs. A stray extra digit (30 -> 3000000) would otherwise

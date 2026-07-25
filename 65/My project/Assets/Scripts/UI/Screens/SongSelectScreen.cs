@@ -999,8 +999,9 @@ namespace Sdo.UI.Screens
                 // 太長的歌名（外部歌常見）會畫出欄位框、壓到時間／音符數欄 → 砍到上限字數（資料仍是全名）
                 _rowName[i].text = SongTextLimits.ClampTitle(e.title ?? e.gn);
                 _rowName[i].color = rowCol;
-                // 難度數字：config DifficultyCalc=minacalc 時外部歌顯示 MinaCalc 換算等級(MSD^2×0.1 無上限),否則 osu
-                // 星數等級。房間/遊戲共用 Entry.DisplayLevel,切畫面數字才一致。難度「排序」不受影響(仍用 osu 等級)。
+                // 難度數字：config DifficultyCalc=minacalc 時外部歌顯示 MinaCalc 換算等級,否則 osu 星數等級。
+                // 房間/遊戲/編輯器共用 Entry.DisplayLevel,切畫面數字才一致；隨機難度的範圍篩選、以及哪張譜排進
+                // 簡單/普通/困難也都跟著同一套算法走(見 SongListModel / Entry.SortSlotsByDisplayLevel)。
                 int lvl = e.DisplayLevel(_difficulty);
                 _rowLevel[i].text = lvl >= 0 ? lvl.ToString() : "-";
                 _rowLevel[i].color = rowCol;

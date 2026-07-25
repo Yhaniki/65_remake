@@ -62,9 +62,13 @@ namespace Sdo.Settings
         // 見 SongGroupPanel.OnGUI（整個視窗連同文字/按鈕一起以此 alpha 疊繪）。
         public static float songUiAlpha = 0.6f;
 
-        // 外部歌難度用哪套計算來「顯示」：osu=osu!mania 星數×7 的等級(預設，見 ManiaStarRating)；
-        // minacalc=Etterna MinaCalc 的原始 MSD 值(未縮放；見 ManiaMsd / Sdo.Osu.Mina)。換成 minacalc 會在選歌難度處
-        // 直接顯示原始 MSD(如 17.9)，方便先看數字再決定要不要乘比例換算成等級。改回 osu 即復原。難度「排序」永遠用 osu 等級。
+        // 外部歌難度用哪套計算：osu=osu!mania 星數×7 的等級(預設，見 ManiaStarRating)；
+        // minacalc=Etterna MinaCalc 的 MSD 換算等級(見 ManiaMsd.ToLevel / Sdo.Osu.Mina)。改回 osu 即復原。
+        // **選了哪一套就整體都照那套**：選歌/房間/遊戲/編輯器顯示的數字、隨機難度的範圍篩選、以及外部歌
+        // 「哪張譜排進簡單/普通/困難」（SongCatalog.Entry.SortSlotsByDisplayLevel）全部同一個來源，
+        // 不會有兩套數字混用。切換不需重掃歌曲（槽位是載入時重排的）。
+        // 只影響「難度得自己重算」的外部譜面(osu / StepMania / Malody)：官方 DATA/MUSIC 的 .gn 和外部資料夾裡的
+        // .gn 歌包都自帶檔頭難度，兩套計算器都不會動它們（見 SongCatalog.Entry.DisplayLevel）。
         public static string difficultyCalc = "osu";
 
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
@@ -477,8 +481,9 @@ namespace Sdo.Settings
             sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
             sb.Append("# 選歌畫面「分類瀏覽」浮動面板（外部歌資料夾清單）的不透明度：0=全透明、1=不透明。預設 0.6。\n");
             sb.Append("SongUiAlpha=").Append(songUiAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
-            sb.Append("# 外部歌難度顯示用哪套：osu=osu!mania 星數等級(預設)，minacalc=Etterna MinaCalc 原始 MSD 值(未縮放，先看數字用)。\n");
-            sb.Append("# 換成 minacalc 只改「顯示」，難度排序仍用 osu 等級；改回 osu 即復原。\n");
+            sb.Append("# 外部歌難度用哪套算：osu=osu!mania 星數等級(預設)，minacalc=Etterna MinaCalc 的 MSD 換算等級。\n");
+            sb.Append("# 選了哪套就整體都照那套：顯示的數字、隨機難度的範圍、哪張譜排進簡單/普通/困難，全部一致；改回 osu 即復原。\n");
+            sb.Append("# 只影響 osu/StepMania/Malody 這類要自己算難度的外部譜；.gn（官方 DATA/MUSIC 或外部歌包）一律保留原難度。\n");
             sb.Append("DifficultyCalc=").Append(difficultyCalc ?? "osu").Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
