@@ -53,11 +53,19 @@ namespace Sdo.Game
                 int ch, sr, len;
                 var data = DecodeSequential(path, out ch, out sr, out len, out int expectedPerChannel);
                 if (data == null || len == 0) return null;
-                // NLayer SILENTLY DROPS frames it fails to decode — the rest of the song then plays that much early,
-                // and the drift accumulates (擬態ごっこ: 3 frames = 72 ms by the end, matching StepMania at the start
-                // and 24/48/72 ms early after each drop). Its own frame index still knows the true length, so a
-                // mismatch here is a reliable "this decode lost frames" flag → re-decode the timeline-exact way.
-                if (expectedPerChannel > 0 && len / ch != expectedPerChannel)
+                // The straight front-to-back decode above IS the right answer, and it's exactly what StepMania does:
+                // MAD decodes the whole file in ONE sequential pass, carrying the bit reservoir across frames, so every
+                // frame is primed and nothing drifts (RageSoundReader_MP3.cpp — it only mutes a genuinely-cut frame on
+                // MAD_ERROR_BADDATAPTR and keeps going; it NEVER re-decodes the song in isolated chunks). NLayer's
+                // DecodeSequential is the same single-pass shape, so trust it. The frame-anchored re-decode below is a
+                // last resort for the rare file where NLayer really drops frames (擬態ごっこ: 3 frames = 72 ms of
+                // accumulating drift). Crucially it must NOT fire on NLayer's mp3.Length ROUNDING — that value
+                // over-reports (it counts the Xing/Info header frame + LAME padding it never emits as PCM), so a
+                // perfect decode legitimately lands ~1 frame under it. Firing on that ±1 frame is what broke
+                // Amanojaku.mp3: DecodeSliced re-primes the reservoir per chunk and fills any frame it then can't
+                // decode standalone with SILENCE → 70× ~26 ms dropouts (the 「漏封包 / 收音機」 爆), even though the
+                // one-pass decode was already clean. So only re-decode on a multi-frame shortfall — ShouldReDecode…().
+                if (ShouldReDecodeFrameByFrame(expectedPerChannel, len / ch, sr))
                 {
                     int lostMs = sr > 0 ? (expectedPerChannel - len / ch) * 1000 / sr : 0;
                     var fixedUp = DecodeSliced(path, ch);
@@ -77,6 +85,10 @@ namespace Sdo.Game
                     data = ApplyStepManiaLeadFrame(path, data, ref len, ch);
                 if (len == 0) return null;
                 if (len != data.Length) Array.Resize(ref data, len);
+                // 過載母帶(峰值 > 1,如 Amanojaku.mp3 做到 +2.2 dBFS)靠**整段透明降增益**處理,而不是靠上面
+                // 那個每取樣硬 clamp 成 ±1 —— clamp 把峰削平成方波,會在最響的地方冒出刺耳諧波。乘一個常數增益
+                // 是純線性、零失真。
+                NormalizeIfHot(data, len);
                 return new Mp3Pcm { Samples = data, Channels = ch, SampleRate = sr };
             }
             catch { return null; }   // caller logs; the decode itself is Unity-free so it can run on a worker thread
@@ -106,6 +118,34 @@ namespace Sdo.Game
                 }
                 return data;
             }
+        }
+
+        /// <summary>
+        /// 該不該丟掉直解、改跑逐幀重解(<see cref="DecodeSliced"/>)?只在直解「短少超過兩個 MPEG 幀」時才要 ——
+        /// 也就是 NLayer 真的掉了幀(漂移會累積:擬態ごっこ 3 幀 = 72 ms)。NLayer 的 mp3.Length 在很多檔會**多報**
+        /// (把它從不輸出成 PCM 的 Xing/Info 表頭幀 + 尾端 LAME padding 也算進去),所以一次完美的解碼本來就會比
+        /// <paramref name="expectedPerChannel"/> 少約 1 幀;拿這 ±1 幀去觸發重解反而有害 —— DecodeSliced 會把它
+        /// 單獨解不出來的 bit-reservoir 幀填成靜音,變成週期性 ~26 ms 斷音(漏封包 / 收音機 的爆)。純函式、可測。
+        /// </summary>
+        public static bool ShouldReDecodeFrameByFrame(int expectedPerChannel, int decodedPerChannel, int sampleRate)
+        {
+            if (expectedPerChannel <= 0) return false;
+            int frameSpc = sampleRate >= 32000 ? 1152 : 576;   // MPEG-1 vs MPEG-2/2.5 每聲道每幀取樣數
+            return expectedPerChannel - decodedPerChannel > 2 * frameSpc;
+        }
+
+        /// <summary>過載保護:整段峰值 &gt; 1 時,乘一個增益把峰壓到 <paramref name="target"/>(預設 0.98)。這是純線性
+        /// 縮放,<b>完全不改波形形狀(零失真)</b>,用來取代「硬 clamp 成平頂」對過載母帶造成的方波削波爆音。峰值
+        /// 已在 <paramref name="target"/> 以下就原封不動。就地處理。純函式 —— 有單元測試。</summary>
+        public static void NormalizeIfHot(float[] data, int len, float target = 0.98f)
+        {
+            if (data == null || len <= 0) return;
+            int n = Math.Min(len, data.Length);
+            float peak = 0f;
+            for (int i = 0; i < n; i++) { float a = data[i] < 0f ? -data[i] : data[i]; if (a > peak) peak = a; }
+            if (peak <= target || peak <= 0f) return;
+            float g = target / peak;
+            for (int i = 0; i < n; i++) data[i] *= g;
         }
 
         private static readonly byte[] XingTag = { 0x58, 0x69, 0x6E, 0x67 }; // "Xing" (VBR header — decoders SKIP this frame)

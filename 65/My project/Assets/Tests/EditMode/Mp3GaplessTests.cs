@@ -190,5 +190,74 @@ namespace Sdo.Tests
             Put(b, 36, "Info");
             Assert.IsTrue(Mp3Decoder.HasInfoHeaderFrame(b));
         }
+
+        // ---- re-decode trigger (must NOT fire on NLayer's ±1-frame Length over-report) ----
+
+        [Test]
+        public void ShouldReDecode_IgnoresTheOneFrameLengthOverReport()
+        {
+            // Amanojaku.mp3: mp3.Length reports 5,340,672/ch but a clean decode yields 5,339,520 — exactly ONE
+            // MPEG-1 frame (1152) short, pure Length rounding, NOT a dropped frame. Re-decoding it made DecodeSliced
+            // punch 70 silence holes into the song (漏封包 爆). This must stay false.
+            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(5_340_672, 5_339_520, 44100));
+            // even a 2-frame accounting slack (Info frame + a padding frame) is tolerated.
+            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(1_000_000 + 2 * 1152, 1_000_000, 44100));
+        }
+
+        [Test]
+        public void ShouldReDecode_FiresOnAGenuineMultiFrameDrop()
+        {
+            // A real NLayer drop loses frames that accumulate (擬態ごっこ 3 frames = 72 ms) → well past the 2-frame
+            // slack → re-decode the timeline-exact way.
+            Assert.IsTrue(Mp3Decoder.ShouldReDecodeFrameByFrame(1_000_000, 1_000_000 - 3 * 1152, 44100));
+            // MPEG-2/2.5 uses 576-sample frames, so its slack is half as wide.
+            Assert.IsTrue(Mp3Decoder.ShouldReDecodeFrameByFrame(500_000, 500_000 - 3 * 576, 22050));
+            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(500_000, 500_000 - 1 * 576, 22050));
+        }
+
+        [Test]
+        public void ShouldReDecode_FalseWhenLengthUnknown()
+        {
+            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(0, 0, 44100));
+            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(-1, 100, 44100));
+        }
+
+        // ---- overload protection (hot masters like Amanojaku.mp3 decode to > ±1) ----
+
+        [Test]
+        public void NormalizeIfHot_ScalesAnOverloadedBufferDownToTarget_PreservingShape()
+        {
+            // Amanojaku.mp3 decodes to a sample peak of ~1.29 (+2.2 dBFS). The old per-sample clamp flattened those
+            // peaks into a square wave (harsh 爆音); a plain gain fixes it with ZERO waveform distortion.
+            var d = new[] { 1.29f, -0.645f, 0f, 0.129f };   // peak 1.29
+            Mp3Decoder.NormalizeIfHot(d, d.Length);          // default target 0.98
+            Assert.AreEqual(0.98f, d[0], 1e-5f);             // loudest sample lands exactly on target
+            float g = 0.98f / 1.29f;
+            Assert.AreEqual(-0.645f * g, d[1], 1e-5f);       // everything scaled by the SAME gain → shape intact
+            Assert.AreEqual(0f, d[2], 1e-6f);
+            Assert.AreEqual(0.129f * g, d[3], 1e-6f);
+        }
+
+        [Test]
+        public void NormalizeIfHot_LeavesAlreadySafeAudioUntouched()
+        {
+            // Peak ≤ target → bit-transparent, no gain applied (don't quietly turn down normal songs).
+            var d = new[] { 0.5f, -0.98f, 0.1f };
+            var copy = (float[])d.Clone();
+            Mp3Decoder.NormalizeIfHot(d, d.Length);
+            CollectionAssert.AreEqual(copy, d);
+        }
+
+        [Test]
+        public void NormalizeIfHot_OnlyLooksAtTheUsedPrefix_AndHandlesEmptyOrNull()
+        {
+            // len < array length: the tail is scratch space and must not count toward the peak.
+            var d = new[] { 1.2f, -0.6f, 9f /* garbage past len */ };
+            Mp3Decoder.NormalizeIfHot(d, 2);
+            Assert.AreEqual(0.98f, d[0], 1e-5f);             // scaled to the 1.2 peak, not the 9
+            Assert.AreEqual(9f, d[2], 0f);                   // untouched
+            Assert.DoesNotThrow(() => Mp3Decoder.NormalizeIfHot(null, 4));
+            Assert.DoesNotThrow(() => Mp3Decoder.NormalizeIfHot(new float[0], 0));
+        }
     }
 }
