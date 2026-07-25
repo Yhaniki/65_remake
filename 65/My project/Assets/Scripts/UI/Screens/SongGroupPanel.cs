@@ -30,6 +30,7 @@ namespace Sdo.UI.Screens
         private const int WindowId = 0x5D60;
         // The window is sized/placed off the dialog's DISC COLUMN (MusicSelDlg diskwin: x44 w237), so it is exactly as
         // wide as the CD panel underneath it at any resolution; the height runs down to just above 場景選擇 (y399).
+        // 以下全部是「設計座標(800×600)」的尺寸，畫之前一律過 PX() 換成實際螢幕像素(見 _s)。
         private const float DesignX = 44f, DesignY = 84f, DesignW = 237f, DesignH = 300f;
         private const float RowH = 22f, RowGap = 2f;
         private const float TopH = 20f, TabH = 22f, Pad = 6f;   // TopH = the close-button strip / drag handle (no title)
@@ -68,7 +69,15 @@ namespace Sdo.UI.Screens
         private bool _busy;
         private string _busyLine = "";
 
+        // 解析度縮放。IMGUI 一律以**實際螢幕像素**作畫，而遊戲畫面是 800×600 的設計框被拉伸/加黑邊後鋪滿螢幕
+        // (AspectController)。視窗外框本來就跟著解析度長大(SizeToDiscColumn)，但裡面的列高/頁籤/字級/捲軸若照舊
+        // 用固定像素，畫面一放大就只有框變大、字還是那麼小。_s = 設計像素→螢幕像素的倍率，畫面裡每個尺寸都乘上它。
+        private float _s = 1f;
+        private float PX(float design) => design * _s;
+
         private GUIStyle _winStyle, _rowStyle, _countStyle, _emptyStyle;
+        private GUISkin _baseSkin, _skin;   // _skin = 依 _s 放大過的內建 skin 複本(字級、捲軸寬…)
+        private float _skinScale = -1f;     // _skin 是用哪個 _s 做的（變了才重做）
         private Texture2D _bgTex;       // flat plate behind the window (replaces the skin's framed background)
         private string[] _tabLabels;
 
@@ -145,6 +154,7 @@ namespace Sdo.UI.Screens
         {
             _open = true;
             transform.SetAsLastSibling();   // blocker above the dialog, so it wins the raycast
+            RefreshScale();                 // PickByKey → ScrollTo 會用到 _s，先量好（OnGUI 還沒跑過）
             PlaceDefault();
             Rebuild();
             PickByKey(key);
@@ -191,9 +201,9 @@ namespace Sdo.UI.Screens
         /// <summary>Scroll bucket <paramref name="index"/> into view (a restored bucket can be far down the list).</summary>
         private void ScrollTo(int index)
         {
-            float viewH = Mathf.Max(RowH, _rect.height - ListTop - Pad);
-            float y = index * (RowH + RowGap);
-            float max = Mathf.Max(0f, _buckets.Count * (RowH + RowGap) - viewH);
+            float viewH = Mathf.Max(PX(RowH), _rect.height - PX(ListTop) - PX(Pad));
+            float y = index * PX(RowH + RowGap);
+            float max = Mathf.Max(0f, _buckets.Count * PX(RowH + RowGap) - viewH);
             _scroll.y = Mathf.Clamp(y - viewH * 0.5f, 0f, max);
         }
 
@@ -202,21 +212,26 @@ namespace Sdo.UI.Screens
         private void OnGUI()
         {
             if (!_open) return;
+            RefreshScale();   // 先量這一幀的「設計像素→螢幕像素」倍率，下面所有尺寸/字級都跟著它
+            EnsureSkin();
             EnsureStyles();
             if (!_userSized) SizeToDiscColumn();   // default size = the disc column; once the user drags an edge it sticks
 
             // 整體不透明度（config.ini 的 SongUiAlpha，預設 0.6）：GUI.color 的 alpha 會一路乘到視窗底板與內部文字/按鈕，
             // 所以整個面板連同內容一起變半透明，讓底下的唱片欄若隱若現。GUI.color 會帶進 window callback（IMGUI 全域）。
             var prevColor = GUI.color;
+            var prevSkin = GUI.skin;
+            GUI.skin = _skin;   // 放大版 skin：捲軸/按鈕/字級都照 _s（GUI.skin 是 IMGUI 全域，畫完要換回去）
             GUI.color = new Color(prevColor.r, prevColor.g, prevColor.b, prevColor.a * Mathf.Clamp01(Sdo.Settings.RoomConfig.songUiAlpha));
             _rect = GUI.Window(WindowId, _rect, DrawWindow, GUIContent.none, _winStyle);   // no title, no white frame
             GUI.color = prevColor;
+            GUI.skin = prevSkin;
 
             // Apply a size the resize-grip drag asked for this frame (see _resizeTo), then keep the window sane: a size
             // between the minimum and the viewport, and a position that keeps it fully on screen.
             if (_userSized) { _rect.width = _resizeTo.x; _rect.height = _resizeTo.y; }
-            _rect.width = Mathf.Clamp(_rect.width, MinW, Screen.width);
-            _rect.height = Mathf.Clamp(_rect.height, MinH, Screen.height);
+            _rect.width = Mathf.Clamp(_rect.width, PX(MinW), Screen.width);
+            _rect.height = Mathf.Clamp(_rect.height, PX(MinH), Screen.height);
             _rect.x = Mathf.Clamp(_rect.x, 0f, Mathf.Max(0f, Screen.width - _rect.width));
             _rect.y = Mathf.Clamp(_rect.y, 0f, Mathf.Max(0f, Screen.height - _rect.height));
         }
@@ -228,7 +243,7 @@ namespace Sdo.UI.Screens
             // 更新 (re-scan the song folders) sits left of 關閉, so songs added / edited / removed on disk can be
             // picked up without restarting the game. Inert while a scan is running (its label becomes the progress).
             GUI.enabled = !_busy;
-            if (GUI.Button(new Rect(w - 108f, 2f, 52f, 16f), L("songselect.group_refresh")))
+            if (GUI.Button(new Rect(w - PX(108f), PX(2f), PX(52f), PX(16f)), L("songselect.group_refresh")))
             {
                 UiSfx.Play(UiSfx.Click);
                 GUI.enabled = true;
@@ -237,7 +252,7 @@ namespace Sdo.UI.Screens
             }
             GUI.enabled = true;
 
-            if (GUI.Button(new Rect(w - 52f, 2f, 46f, 16f), L("common.close")))
+            if (GUI.Button(new Rect(w - PX(52f), PX(2f), PX(46f), PX(16f)), L("common.close")))
             {
                 UiSfx.Play(UiSfx.Click);
                 Close();
@@ -248,39 +263,39 @@ namespace Sdo.UI.Screens
             // whole body is swapped for the progress line and nothing below is drawn (nothing to click, nothing stale).
             if (_busy)
             {
-                GUI.Label(new Rect(Pad, ListTop, w - Pad * 2f, h - ListTop - Pad), _busyLine, _emptyStyle);
+                GUI.Label(new Rect(PX(Pad), PX(ListTop), w - PX(Pad * 2f), h - PX(ListTop) - PX(Pad)), _busyLine, _emptyStyle);
                 HandleResizeGrip(w, h);
-                GUI.DragWindow(new Rect(0f, 0f, w, TopH));
+                GUI.DragWindow(new Rect(0f, 0f, w, PX(TopH)));
                 return;
             }
 
             // grouping tabs — Group / Song / Artist / BPM
             int cur = Array.IndexOf(SongGrouping.Modes, _mode);
-            int next = GUI.Toolbar(new Rect(Pad, TopH, w - Pad * 2f, TabH), cur, _tabLabels);
+            int next = GUI.Toolbar(new Rect(PX(Pad), PX(TopH), w - PX(Pad * 2f), PX(TabH)), cur, _tabLabels);
             if (next != cur && next >= 0)
             {
                 UiSfx.Play(UiSfx.Click);
                 SetMode(SongGrouping.Modes[next]);
             }
 
-            var view = new Rect(Pad, ListTop, w - Pad * 2f, h - ListTop - Pad);
+            var view = new Rect(PX(Pad), PX(ListTop), w - PX(Pad * 2f), h - PX(ListTop) - PX(Pad));
             if (_buckets.Count == 0)
             {
                 GUI.Label(view, L("songselect.group_empty"), _emptyStyle);
                 HandleResizeGrip(w, h);
-                GUI.DragWindow(new Rect(0f, 0f, w, TopH));
+                GUI.DragWindow(new Rect(0f, 0f, w, PX(TopH)));
                 return;
             }
 
             // bucket list — one row per section, scrolled by IMGUI's own draggable slider on the right
-            float rowW = view.width - BarW;
-            var content = new Rect(0f, 0f, rowW, _buckets.Count * (RowH + RowGap));
+            float rowW = view.width - PX(BarW);
+            var content = new Rect(0f, 0f, rowW, _buckets.Count * PX(RowH + RowGap));
             _scroll = GUI.BeginScrollView(view, _scroll, content);
             var bg = GUI.backgroundColor;
             for (int i = 0; i < _buckets.Count; i++)
             {
                 var b = _buckets[i];
-                var r = new Rect(0f, i * (RowH + RowGap), rowW, RowH);
+                var r = new Rect(0f, i * PX(RowH + RowGap), rowW, PX(RowH));
                 bool sel = string.Equals(b.Key, _activeKey, StringComparison.OrdinalIgnoreCase);
                 GUI.backgroundColor = sel ? new Color(1f, 0.45f, 0.75f) : bg;   // picked bucket tints pink
                 if (GUI.Button(r, LabelOf(b.Key, _mode), _rowStyle))
@@ -294,7 +309,7 @@ namespace Sdo.UI.Screens
             GUI.EndScrollView();
 
             HandleResizeGrip(w, h);   // AFTER the scroll view, so its scrollbar claims its own gutter first
-            GUI.DragWindow(new Rect(0f, 0f, w, TopH));   // drag by the top strip (where the close button sits)
+            GUI.DragWindow(new Rect(0f, 0f, w, PX(TopH)));   // drag by the top strip (where the close button sits)
         }
 
         // Free resize: the window's right edge / bottom edge / bottom-right corner are drag handles (each a thin strip
@@ -303,8 +318,8 @@ namespace Sdo.UI.Screens
         // OnGUI (setting _rect.width/height here would be overwritten by GUI.Window's own return value).
         private void HandleResizeGrip(float w, float h)
         {
-            var rightEdge  = new Rect(w - EdgeGrab, TopH, EdgeGrab, h - TopH);   // below the close strip
-            var bottomEdge = new Rect(0f, h - EdgeGrab, w, EdgeGrab);
+            var rightEdge  = new Rect(w - PX(EdgeGrab), PX(TopH), PX(EdgeGrab), h - PX(TopH));   // below the close strip
+            var bottomEdge = new Rect(0f, h - PX(EdgeGrab), w, PX(EdgeGrab));
             int id = GUIUtility.GetControlID(FocusType.Passive);
             var e = Event.current;
             switch (e.GetTypeForControl(id))
@@ -350,8 +365,56 @@ namespace Sdo.UI.Screens
             }
         }
 
-        private static void Dot(float w, float h, float dx, float dy)
-            => GUI.DrawTexture(new Rect(w - dx, h - dy, 2f, 2f), Texture2D.whiteTexture);
+        private void Dot(float w, float h, float dx, float dy)
+            => GUI.DrawTexture(new Rect(w - PX(dx), h - PX(dy), PX(2f), PX(2f)), Texture2D.whiteTexture);
+
+        /// <summary>
+        /// 依 <see cref="_s"/> 做一份放大版的內建 skin。IMGUI 內建 skin 的字級、捲軸寬度、按鈕內距全是固定像素，
+        /// 解析度拉大時完全不會跟著長大 —— 這是「視窗變大但字還是小小的」的根因。
+        /// 字級走「基準字級 × 倍率」重新點陣化(不是把小字拉大)，所以放大後依然銳利；用 GUI.matrix 硬縮則會糊掉。
+        /// 只有倍率變了(改解析度/切視窗)才重做，平常一幀都不花。
+        /// </summary>
+        private void EnsureSkin()
+        {
+            if (_baseSkin == null) _baseSkin = GUI.skin;   // 內建 skin：一定要在換上自己那份之前抓
+            if (_skin != null && Mathf.Abs(_skinScale - _s) < 0.02f) return;
+
+            if (_skin != null) Destroy(_skin);
+            _skin = Instantiate(_baseSkin);               // 深複製(GUIStyle 是純資料，不是 UnityEngine.Object)
+            _skin.hideFlags = HideFlags.HideAndDontSave;
+            _skinScale = _s;
+
+            ScaleStyle(_skin.label); ScaleStyle(_skin.button);
+            ScaleStyle(_skin.box); ScaleStyle(_skin.window);
+            ScaleStyle(_skin.toggle); ScaleStyle(_skin.textField);
+            ScaleStyle(_skin.verticalScrollbar); ScaleStyle(_skin.verticalScrollbarThumb);
+            ScaleStyle(_skin.verticalScrollbarUpButton); ScaleStyle(_skin.verticalScrollbarDownButton);
+            ScaleStyle(_skin.horizontalScrollbar); ScaleStyle(_skin.horizontalScrollbarThumb);
+            ScaleStyle(_skin.horizontalScrollbarLeftButton); ScaleStyle(_skin.horizontalScrollbarRightButton);
+
+            _rowStyle = null;   // 自己的樣式是從 skin 複製出來的 → 一起重建（EnsureStyles 以 _rowStyle 當旗標）
+        }
+
+        // 只放大「跟著解析度該變大」的量：字級、固定寬高(捲軸粗細)、內距/外距。
+        // border 不動 —— 那是九宮格對應到來源貼圖的像素數，乘上去只會把邊框拉糊。
+        private void ScaleStyle(GUIStyle st)
+        {
+            if (st == null) return;
+            // fontSize 0 = 「用字型自己的預設級數」→ 先問出那個級數當基準(自己的 font > skin 的 font > 12)，
+            // ×倍率後寫回去。倍率 1 時寫回去的就是原本那個級數 = 完全沒動（800×600 不會有任何改變）。
+            int basePt = st.fontSize > 0 ? st.fontSize
+                       : st.font != null && st.font.fontSize > 0 ? st.font.fontSize
+                       : _baseSkin.font != null && _baseSkin.font.fontSize > 0 ? _baseSkin.font.fontSize : 12;
+            st.fontSize = Mathf.Max(1, Mathf.RoundToInt(basePt * _s));
+            if (st.fixedWidth > 0f) st.fixedWidth = PX(st.fixedWidth);
+            if (st.fixedHeight > 0f) st.fixedHeight = PX(st.fixedHeight);
+            st.padding = ScaleOffset(st.padding);
+            st.margin = ScaleOffset(st.margin);
+        }
+
+        private RectOffset ScaleOffset(RectOffset r)
+            => new RectOffset(Mathf.RoundToInt(PX(r.left)), Mathf.RoundToInt(PX(r.right)),
+                              Mathf.RoundToInt(PX(r.top)), Mathf.RoundToInt(PX(r.bottom)));
 
         private void EnsureStyles()
         {
@@ -359,10 +422,14 @@ namespace Sdo.UI.Screens
 
             // Flat, borderless window plate: the built-in window style draws a light 3D frame ("white edge"), so the
             // background is swapped for a plain 1×1 texture and every border/padding zeroed.
-            _bgTex = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
-            _bgTex.SetPixel(0, 0, new Color(0.10f, 0.07f, 0.14f, 0.94f));
-            _bgTex.Apply();
-            _winStyle = new GUIStyle(GUI.skin.window)
+            if (_bgTex == null)
+            {
+                _bgTex = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
+                _bgTex.SetPixel(0, 0, new Color(0.10f, 0.07f, 0.14f, 0.94f));
+                _bgTex.Apply();
+            }
+            // 一律從**放大過的** _skin 複製（不是內建 GUI.skin），字級才會是這個解析度該有的大小。
+            _winStyle = new GUIStyle(_skin.window)
             {
                 border = new RectOffset(0, 0, 0, 0),
                 padding = new RectOffset(0, 0, 0, 0),
@@ -374,11 +441,11 @@ namespace Sdo.UI.Screens
             _winStyle.focused.background = _bgTex;
             _winStyle.onFocused.background = _bgTex;
 
-            _rowStyle = new GUIStyle(GUI.skin.button) { alignment = TextAnchor.MiddleLeft };
-            _rowStyle.padding = new RectOffset(8, 34, 2, 2);   // keep the label clear of the count on the right
-            _countStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleRight };
-            _countStyle.padding = new RectOffset(0, 8, 0, 0);
-            _emptyStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, wordWrap = true };
+            _rowStyle = new GUIStyle(_skin.button) { alignment = TextAnchor.MiddleLeft };
+            _rowStyle.padding = ScaleOffset(new RectOffset(8, 34, 2, 2));   // keep the label clear of the count on the right
+            _countStyle = new GUIStyle(_skin.label) { alignment = TextAnchor.MiddleRight };
+            _countStyle.padding = ScaleOffset(new RectOffset(0, 8, 0, 0));
+            _emptyStyle = new GUIStyle(_skin.label) { alignment = TextAnchor.MiddleCenter, wordWrap = true };
 
             _tabLabels = new string[SongGrouping.Modes.Length];
             for (int i = 0; i < _tabLabels.Length; i++) _tabLabels[i] = L(TabKey(SongGrouping.Modes[i]));
@@ -387,6 +454,19 @@ namespace Sdo.UI.Screens
         private void OnDestroy()
         {
             if (_bgTex != null) Destroy(_bgTex);
+            if (_skin != null) Destroy(_skin);
+        }
+
+        /// <summary>
+        /// 量出這一幀「設計像素(800×600) → 螢幕像素」的倍率。拉伸模式(<see cref="AspectMode.Stretch"/>)下 x/y 倍率
+        /// 不一樣(例:1920×1080 是 2.4 / 1.8)，取小的當統一倍率，內容才不會在窄的那一軸被撐爆。量不到(還沒有
+        /// host/相機)就沿用上一次的值。
+        /// </summary>
+        private void RefreshScale()
+        {
+            if (!DesignToGui(Vector2.zero, out var a) || !DesignToGui(new Vector2(DesignW, DesignH), out var b)) return;
+            float s = Mathf.Min(Mathf.Abs(b.x - a.x) / DesignW, Mathf.Abs(b.y - a.y) / DesignH);
+            if (s > 0.05f) _s = s;
         }
 
         /// <summary>Default size = the width of the dialog's CD column beneath it (re-derived each frame so it tracks

@@ -5378,11 +5378,15 @@ namespace Sdo.Game
             }
         }
 
+        // 踩到炸彈的代價**只有扣血**(等同一次 Miss 的 HP 量),其餘一律不動:不斷 combo、不計 miss、
+        // 不進判定統計/分數、不彈判定字樣、不觸發整排紅閃、不算跳舞判定的 break、不影響 ShowTime 氣條。
+        // 所以它不走 ApplyEvent(那是「判定」的入口),直接扣 HP —— 死亡照樣由 Update 的 _health.IsFailed 接手。
+        // 回饋只留爆炸特效 + 踩雷音(比照 StepMania HitMine,雷本來就不出判定)。
         private void ExplodeBomb(RuntimeNote n)
         {
             PlaySe(MineSeName);                       // StepMania theme 的爆炸音 (DATA/SE/player_mine.wav)
             SpawnBombExplosion(n.Note.Lane);          // StepMania 的 HitMine 爆炸圖 (不是受擊線按下動畫)
-            ApplyEvent(Judgment.Miss, n.Note.Lane, tally: false);   // 踩炸彈 = 斷連/扣血,但不多算一次 miss
+            _health.Apply(Judgment.Miss);             // 只扣血 (level 0 = -50);combo/統計完全不受影響
             n.Done = true;                            // 引爆後移除
         }
 
@@ -5426,19 +5430,17 @@ namespace Sdo.Game
             if (sr != null) Destroy(sr.gameObject);
         }
 
-        // tally=false:只斷 combo + 扣血 + 記一次 block break(給跳舞判定用),但**不**算成一次 miss ——
-        // 不進判定統計、也不彈「MISS」字樣、不觸發整排紅閃。炸彈專用:踩到炸彈只該掉血、斷連,
-        // 它本身有爆炸特效+踩雷音當回饋(比照 StepMania HitMine,雷不出 MISS 判定)。見 ExplodeBomb。
-        private void ApplyEvent(Judgment j, int lane = -1, bool tally = true)
+        // 一次「判定」的統一出口:計分/扣血/氣條/表情/跳舞判定/判定字樣/特效全在這裡。
+        // (炸彈不是判定,不走這裡 —— 它只扣血,見 ExplodeBomb。)
+        private void ApplyEvent(Judgment j, int lane = -1)
         {
-            if (tally) _score.Apply(j);
-            else _score.BreakCombo();   // 炸彈:斷 combo 但不計入 MissCount/flat score
+            _score.Apply(j);
             _health.Apply(j);
             if (showtimeMode) _showtime.OnJudge(j);                               // ShowTime: fill the gauge (normal) or accrue the bonus (in a window)
             UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins
             _blockHadNote = true;                                                // a note was judged this block (-> not an empty block)
             if (j == Judgment.Bad || j == Judgment.Miss) _blockHadBreak = true;   // break -> NOT stopped now; the dancer is re-decided at the next 8-beat settlement
-            if (tally) { _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time; }   // 炸彈不彈判定字樣(它有自己的爆炸特效)
+            _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;
             if (lane >= 0 && (j == Judgment.Perfect || j == Judgment.Cool))   // tap: fire immediately, may overlap
             {
                 if (_hit3dMode) SpawnHit3d(lane);                              // 3D skin: real AU_HIT.EFT burst at the receptor
@@ -5446,7 +5448,7 @@ namespace Sdo.Game
             }
             // 3D skin: the official has NO lane click-strip glow on press and NO red board flash on miss — suppress both.
             if (lane >= 0 && j != Judgment.Miss && !_note3dMode) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
-            if (tally && j == Judgment.Miss && !_note3dMode) TriggerMissFlash();            // 炸彈不觸發整排紅閃(避免看起來像多一個 miss)
+            if (j == Judgment.Miss && !_note3dMode) TriggerMissFlash();
         }
 
         // Every 8 beats (the score-settlement cadence) re-decide whether the dancer keeps dancing — a break NEVER
