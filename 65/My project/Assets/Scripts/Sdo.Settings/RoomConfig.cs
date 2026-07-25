@@ -83,7 +83,8 @@ namespace Sdo.Settings
         public static string optLang = "zh-TW";
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
-                           optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true;
+                           optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true,
+                           optDisableBombs = false;
         public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
 
@@ -371,6 +372,7 @@ namespace Sdo.Settings
                     case "opt_callCardInGame": optCallCard = ParseBool(val, optCallCard); break;
                     case "opt_playFullSong": optPlayFullSong = ParseBool(val, optPlayFullSong); break;
                     case "opt_songSpeed": optSongSpeed = ParseBool(val, optSongSpeed); break;
+                    case "opt_disableBombs": optDisableBombs = ParseBool(val, optDisableBombs); break;
                     case "opt_collapseShortHolds": optCollapseShortHolds = ParseBool(val, optCollapseShortHolds); break;
                     case "opt_panelOpacity": optPanelOpacity = ParseFloat(val, optPanelOpacity); break;
                 }
@@ -505,6 +507,8 @@ namespace Sdo.Settings
             sb.Append("opt_callCardInGame=").Append(B(optCallCard)).Append('\n');
             sb.Append("opt_playFullSong=").Append(B(optPlayFullSong)).Append('\n');
             sb.Append("opt_songSpeed=").Append(B(optSongSpeed)).Append('\n');
+            sb.Append("# 停用炸彈（1=譜面上的炸彈開局直接拿掉 0=照譜面原樣，預設）。炸彈不計分也不計 miss，拿掉不影響滿分。\n");
+            sb.Append("opt_disableBombs=").Append(B(optDisableBombs)).Append('\n');
             sb.Append("# 無理短長條收成一般 note（短於 180BPM 16 分音符 ≈83ms 的 long note → note；1=開 預設 0=關）\n");
             sb.Append("opt_collapseShortHolds=").Append(B(optCollapseShortHolds)).Append('\n');
             sb.Append("# 面板透明度 0.0~1.6\n");
@@ -549,6 +553,7 @@ namespace Sdo.Settings
                 optCameraFixed = g.cameraFixed;
                 optCallCard = g.callCardInGame; optPlayFullSong = g.playFullSong; optSongSpeed = g.songSpeed;
                 optCollapseShortHolds = g.collapseShortHolds;
+                optDisableBombs = g.disableBombs;
                 optPanelOpacity = g.panelOpacity;
             }
             hasOption = true;
@@ -574,6 +579,7 @@ namespace Sdo.Settings
             g.cameraFixed = optCameraFixed;
             g.callCardInGame = optCallCard; g.playFullSong = optPlayFullSong; g.songSpeed = optSongSpeed;
             g.collapseShortHolds = optCollapseShortHolds;
+            g.disableBombs = optDisableBombs;
             g.panelOpacity = optPanelOpacity;
         }
 

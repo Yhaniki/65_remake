@@ -20,6 +20,7 @@ namespace Sdo.Tests
             src.language = "en";
             src.gameplay.fullscreenFill = true; src.gameplay.cameraAuto = false; src.gameplay.cameraFixed = 4;
             src.gameplay.playFullSong = true;
+            src.gameplay.disableBombs = true;
             src.gameplay.panelOpacity = 1.1f; src.gameplay.effectScene = false;
 
             RoomConfig.CaptureOptionFrom(src);
@@ -30,7 +31,7 @@ namespace Sdo.Tests
             RoomConfig.optBgm = RoomConfig.optMusic = RoomConfig.optSfx = 0.5f;
             RoomConfig.optDispW = 1024; RoomConfig.optLang = "zh-TW"; RoomConfig.optUiScale = 1f;
             RoomConfig.optFullscreenFill = false; RoomConfig.optCameraAuto = true; RoomConfig.optCameraFixed = 0;
-            RoomConfig.optPlayFullSong = false;
+            RoomConfig.optPlayFullSong = false; RoomConfig.optDisableBombs = false;
             RoomConfig.ParseInto(ini);
             Assert.IsTrue(RoomConfig.hasOption, "[Option] 區應被辨識");
             Assert.IsTrue(RoomConfig.hasOptUiScale, "opt_uiScale 應被寫出且辨識得到");
@@ -51,6 +52,7 @@ namespace Sdo.Tests
             Assert.IsFalse(dst.gameplay.cameraAuto);
             Assert.AreEqual(4, dst.gameplay.cameraFixed, "F2 記住的固定鏡頭台號要跟著 config.ini 走");
             Assert.IsTrue(dst.gameplay.playFullSong);
+            Assert.IsTrue(dst.gameplay.disableBombs, "進階「停用炸彈」要跟著 config.ini 走");
             Assert.IsFalse(dst.gameplay.effectScene);
             Assert.AreEqual(1.1f, dst.gameplay.panelOpacity, 1e-4f);
         }

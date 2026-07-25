@@ -209,6 +209,7 @@ STR = {
     "settings.language":     ["Language", "語言", "语言", "言語"],
     "settings.play_full_song": ["Full Play Mode", "完奏模式", "完奏模式", "完奏モード"],
     "settings.song_speed":     ["Song Speed", "歌曲變速", "歌曲变速", "曲の変速"],
+    "settings.disable_bomb":   ["Disable Mines", "停用炸彈", "停用炸弹", "爆弾を無効化"],
 
     "display.windowed":   ["Windowed", "視窗", "窗口", "ウィンドウ"],
     "display.fullscreen": ["Fullscreen", "全螢幕", "全屏", "フルスクリーン"],

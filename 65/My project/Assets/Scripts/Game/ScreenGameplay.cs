@@ -517,6 +517,9 @@ namespace Sdo.Game
         // 無理短長條 → 一般 note（預設開；OPTION 尚未接 UI，先由 GameplaySettings.collapseShortHolds / config.ini 灌進來）：
         // 載譜後把長度短於 180 BPM 16 分音符 (OsuBeatmap.ShortHoldMaxMs ≈83ms) 的 long note 收成單顆 note，見 LoadChart。
         public bool collapseShortHolds = true;
+        // 進階「停用炸彈」（OPTION 進階頁 → GameplaySettings.disableBombs）：載譜後把譜面上的炸彈整顆拿掉
+        // （OsuBeatmap.RemoveBombs，見 LoadChart）。炸彈不計分也不計 miss，拿掉不動滿分／TotalNotes。
+        public bool disableBombs = false;
         // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖 cameraFixedIndex 那台，無開場運鏡)。
         public bool cameraAuto = true;
         public int cameraFixedIndex = 0;    // 固定視角鎖第幾台（0..FixedCamCount-1）＝上次在遊戲中用 F2 切到的那台
@@ -1623,8 +1626,8 @@ namespace Sdo.Game
         }
 
         /// <summary>載譜（官方 .gn / 外部 osu·sm），成功後套用譜面修整：<see cref="collapseShortHolds"/> 開著時把
-        /// 「無理的短 long note」(短於 180 BPM 的 16 分音符) 收成一般 note。修整必須在這裡、在任何吃 _map 的東西
-        /// (判定、TotalNotes→滿分、捲動、note 皮) 建起來之前做完。</summary>
+        /// 「無理的短 long note」(短於 180 BPM 的 16 分音符) 收成一般 note；<see cref="disableBombs"/> 開著時把炸彈
+        /// 整顆拿掉。修整必須在這裡、在任何吃 _map 的東西 (判定、TotalNotes→滿分、捲動、note 皮) 建起來之前做完。</summary>
         private bool LoadChart()
         {
             if (!LoadChartRaw()) return false;
@@ -1634,6 +1637,14 @@ namespace Sdo.Game
                 if (collapsed > 0) Debug.Log($"[Step1] collapsed {collapsed} short hold(s) (< {OsuBeatmap.ShortHoldMaxMs:0.#} ms) into taps");
             }
             EnsureExternalDance();
+            // 炸彈**在生成外部舞蹈之後**才拿掉：ExternalDps 用 HitObjects 的頭尾時間當舞蹈長度，而它只生一次
+            // 就寫進歌資料夾（同一首歌永遠同一支舞）—— 開/關這個選項不該讓同一首歌生出兩種舞。
+            // 之後才建的東西（判定、TotalNotes→滿分、打拍音時間軸、note 皮）看到的就是一張沒有炸彈的譜。
+            if (disableBombs && _map != null)
+            {
+                int bombs = _map.RemoveBombs();
+                if (bombs > 0) Debug.Log($"[Step1] 停用炸彈：移除 {bombs} 顆 mine");
+            }
             return true;
         }
 

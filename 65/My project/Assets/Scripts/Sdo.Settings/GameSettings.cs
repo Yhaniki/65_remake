@@ -41,6 +41,9 @@ namespace Sdo.Settings
         public bool callCardInGame = true;   // 呼叫卡遊戲中顯示（預設開；暫未接功能）
         public bool playFullSong = false;    // 進階「完奏模式」（原無失敗模式）：HP 歸零不判失敗，整首照打到曲末，結算走正常名次（不出 GAME OVER）
         public bool songSpeed = true;        // 進階「歌曲變速」：true=譜面中途的 BPM 變化/SV 照樣改變 note 流速（預設，官方玩法）；false=整首固定流速（ScreenGameplay.constantScroll）
+        // 進階「停用炸彈」：開局載譜時把譜面上的炸彈(mine)整顆拿掉（OsuBeatmap.RemoveBombs）。炸彈踩到只扣血
+        // （不斷 combo、不計分也不計 miss），所以拿掉不影響滿分/TotalNotes——差別只在地上不再有雷。預設 false（照譜面原樣）。
+        public bool disableBombs = false;
         public float panelOpacity = 1.4f;    // 面板透明度：note 面板 alpha 倍率(=boardAlpha)，範圍 0..1.4（1.4=官方＝上限）
         // 無理短長條 → 一般 note：長度短於 180 BPM 的 16 分音符 (≈83 ms, OsuBeatmap.ShortHoldMaxMs) 的 long note，
         // 開局載譜時直接收成單顆 note（頭尾判定擠在同一個判定窗內＝按不出來，多半是外部譜把裝飾音寫成極短 hold）。
