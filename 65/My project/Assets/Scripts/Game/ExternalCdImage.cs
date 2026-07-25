@@ -63,58 +63,36 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// A .dds disc, straight from an SDO pack's UI/MUSIC/ICONS. The shared image loader only knows PNG/JPG/BMP, and
-        /// <see cref="DdsLoader"/> can't be reused here: every one of its decoders ends in
-        /// <c>Apply(false, makeNoLongerReadable: true)</c>, so the pixels can't be read back — and they MUST be, because
-        /// DDS stores the TOP row first while a Unity texture's row 0 is the BOTTOM. A mesh cancels that out with its
-        /// D3D-era UVs; a full-rect sprite has nothing to cancel it with, so the disc would come out upside down.
-        ///
-        /// Only the 32-bit UNCOMPRESSED layout is decoded — which is what SDO song icons actually are (all 134 .dds in
-        /// the [NX] pack are A8R8G8B8 237×237). Anything else returns null: run tools/nx/nx_to_gn.py over the pack and
-        /// it converts every icon to PNG up front (smaller, and no decoding at all at runtime).
+        /// A .dds disc, straight from an SDO pack's UI/MUSIC/ICONS or dropped into the song folder and pointed at by the
+        /// sidecar (<c>#CDIMAGE:12956.DDS</c>). The shared image loader only knows PNG/JPG/BMP; DDS goes through
+        /// <see cref="DdsLoader.DecodeToPixels"/>, which handles every layout a disc ships as (DXT1/DXT3/DXT5 and 32-bit
+        /// uncompressed A8R8G8B8 — the [NX]-pack icons are the latter, but a folder disc such as lapis/12956.DDS is DXT3).
+        /// The rows are flipped here because DDS stores the TOP row first while a Unity texture's row 0 is the BOTTOM: a
+        /// mesh cancels that with its D3D-era UVs, a full-rect sprite has nothing to cancel it with, so the disc would
+        /// otherwise come out upside down.
         /// </summary>
         private static Sprite LoadDdsSprite(string absPath)
         {
-            var d = File.ReadAllBytes(absPath);
-            if (d.Length < 128 || d[0] != 'D' || d[1] != 'D' || d[2] != 'S' || d[3] != ' ') return null;
-            int h = System.BitConverter.ToInt32(d, 12), w = System.BitConverter.ToInt32(d, 16);
-            uint pf = System.BitConverter.ToUInt32(d, 80);
-            int bits = System.BitConverter.ToInt32(d, 88);
-            if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return null;
-            if ((pf & 0x4u) != 0 || (pf & 0x40u) == 0 || bits != 32 || 128 + w * h * 4 > d.Length)
-            {
-                SdoLog.MissingAsset("cd-dds", absPath, "compressed/unsupported DDS — run tools/nx/nx_to_gn.py");
-                return null;
-            }
-            uint rm = System.BitConverter.ToUInt32(d, 92), gm = System.BitConverter.ToUInt32(d, 96);
-            uint bm = System.BitConverter.ToUInt32(d, 100), am = System.BitConverter.ToUInt32(d, 104);
-            int rs = MaskShift(rm), gs = MaskShift(gm), bs = MaskShift(bm), as_ = MaskShift(am);
-
-            var px = new Color32[w * h];
-            for (int y = 0; y < h; y++)
-            {
-                int src = 128 + y * w * 4;
-                int dst = (h - 1 - y) * w;          // DDS row 0 = top → Unity row 0 = bottom
-                for (int x = 0; x < w; x++, src += 4)
-                {
-                    uint v = (uint)(d[src] | (d[src + 1] << 8) | (d[src + 2] << 16) | (d[src + 3] << 24));
-                    px[dst + x] = new Color32((byte)((v & rm) >> rs), (byte)((v & gm) >> gs), (byte)((v & bm) >> bs),
-                                              am != 0 ? (byte)((v & am) >> as_) : (byte)255);
-                }
-            }
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
-            { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
-            tex.SetPixels32(px);
-            tex.Apply();
-            return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            var tex = LoadDdsTexture(File.ReadAllBytes(absPath));
+            if (tex == null) { SdoLog.MissingAsset("cd-dds", absPath, "unsupported DDS layout"); return null; }
+            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
-        private static int MaskShift(uint mask)
+        /// <summary>Decode a DDS into a readable, display-correct RGBA32 texture (rows flipped so the image is upright),
+        /// or null for an unsupported layout. Shared by the sprite path and <see cref="Decode"/> (a .dds cover feeding
+        /// the composer) so a .dds arrives in the SAME bottom-first orientation Unity's <c>LoadImage</c> gives a PNG.</summary>
+        private static Texture2D LoadDdsTexture(byte[] bytes)
         {
-            if (mask == 0) return 0;
-            int s = 0;
-            while ((mask & 1) == 0) { mask >>= 1; s++; }
-            return s;
+            var px = DdsLoader.DecodeToPixels(bytes, out int w, out int h);
+            if (px == null) return null;
+            var flipped = new Color32[px.Length];
+            for (int y = 0; y < h; y++)
+                System.Array.Copy(px, y * w, flipped, (h - 1 - y) * w, w);   // DDS row 0 = top → Unity row 0 = bottom
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            tex.SetPixels32(flipped);
+            tex.Apply();
+            return tex;
         }
 
         // Compose the disc from the song's cover art and persist it (PNG + sidecar entry). Returns the disc's absolute
@@ -177,6 +155,13 @@ namespace Sdo.Game
             byte[] bytes;
             try { if (!File.Exists(absPath)) return null; bytes = File.ReadAllBytes(absPath); }
             catch { return null; }
+
+            if (absPath.EndsWith(".dds", System.StringComparison.OrdinalIgnoreCase))
+            {
+                var dds = LoadDdsTexture(bytes);   // DXT1/3/5 + uncompressed, already display-correct
+                if (dds != null) { owned = true; return dds; }
+                return null;
+            }
 
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             if (tex.LoadImage(bytes)) { owned = true; return tex; }   // PNG / JPG
