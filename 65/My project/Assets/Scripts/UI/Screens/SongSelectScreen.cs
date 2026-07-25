@@ -996,7 +996,8 @@ namespace Sdo.UI.Screens
                 ApplyRowHi(i, sel);
                 Color rowCol = playable ? ColRow : ColRowDisabled;
                 _rowName[i].alignment = TextAlignmentOptions.Left;
-                _rowName[i].text = e.title ?? e.gn;
+                // 太長的歌名（外部歌常見）會畫出欄位框、壓到時間／音符數欄 → 砍到上限字數（資料仍是全名）
+                _rowName[i].text = SongTextLimits.ClampTitle(e.title ?? e.gn);
                 _rowName[i].color = rowCol;
                 // 難度數字：config DifficultyCalc=minacalc 時外部歌顯示 MinaCalc 換算等級(MSD^2×0.1 無上限),否則 osu
                 // 星數等級。房間/遊戲共用 Entry.DisplayLevel,切畫面數字才一致。難度「排序」不受影響(仍用 osu 等級)。
@@ -1071,7 +1072,8 @@ namespace Sdo.UI.Screens
         private void UpdateInfo()
         {
             // Values only — labels are baked into the art (演唱者/BPM) or drawn as the lbl_notes sprite (音符數).
-            _infoArtist.text = _selected != null ? (_selected.artist ?? "") : "";
+            // 歌手同理：值只有 160px 寬,長名字會蓋掉右邊的唱片／版型 → 砍到上限字數
+            _infoArtist.text = _selected != null ? SongTextLimits.ClampArtist(_selected.artist) : "";
             _infoBpm.text = (_selected != null && _selected.bpm > 0f) ? Mathf.RoundToInt(_selected.bpm).ToString() : "";
             _infoNotes.text = _selected != null ? _selected.NoteCount(_difficulty).ToString() : "";
         }

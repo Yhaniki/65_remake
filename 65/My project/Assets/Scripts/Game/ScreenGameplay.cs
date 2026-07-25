@@ -2304,6 +2304,8 @@ namespace Sdo.Game
             var songTitle = chartFormat != 0 && !string.IsNullOrEmpty(songDisplayName) ? songDisplayName : SongCatalog.Title(gnPath);
             if (string.IsNullOrEmpty(songTitle)) songTitle = _map.Title;
             if (string.IsNullOrEmpty(songTitle)) songTitle = "song";
+            // 「歌曲名:」後面那格是固定寬（右邊緊接 LV / 时间），長標題會直接壓過去 → 砍到跟選歌清單同一個上限
+            songTitle = SongTextLimits.ClampTitle(songTitle);
             // song name / LV / time value text — white, two sizes smaller (13 -> 11) per request.
             // Same font/size as NewText (LegacyRuntime, fontSize 64, characterSize 11×0.2, order 42, MiddleLeft) but
             // laid out per-glyph so the letter-spacing can be tightened (字靠緊一點).
