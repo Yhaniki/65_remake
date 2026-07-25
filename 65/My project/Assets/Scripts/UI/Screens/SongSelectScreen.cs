@@ -1353,6 +1353,10 @@ namespace Sdo.UI.Screens
             s.IsExternalSong = _selected.external;
             if (_selected.external)
             {
+                // 進遊戲時外部歌的 mp3 要用 NLayer 整首解 ~1.4s(桌面版 Unity 不解 mp3)—— 趁玩家從這裡回房間、
+                // 房主按 Start 的空檔先背景解好,真的按下 Start 時 PCM 已在快取裡就秒進(見 GameplaySongAudioCache)。
+                // sync 用 gameplay 進場同一個 Mp3SyncFor,不然預抓的 PCM 位置跟實際播的不一樣;非 mp3(ogg/wav)自己會跳過。
+                Sdo.Game.GameplaySongAudioCache.Prefetch(_selected.audioPath, Sdo.Game.ScreenGameplay.Mp3SyncFor(_selected.chartFormat));
                 s.ExternalChartFormat = _selected.chartFormat;
                 s.ExternalChartPath = _selected.ChartPath(pickedDifficulty);
                 s.ExternalChartIndex = _selected.ChartIndex(pickedDifficulty);

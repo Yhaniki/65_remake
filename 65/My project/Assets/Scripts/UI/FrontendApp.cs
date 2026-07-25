@@ -273,6 +273,10 @@ namespace Sdo.UI
                 // bypassing .gn; audio is the resolved file (ogg/mp3/wav). There is no official DANCE/<negId>.DPS, so
                 // LoadChart generates the song's choreography from these two (ExternalDps: once, deterministically,
                 // recorded in the song folder's sdoinfo.dat) instead of looping the single fallback clip.
+                // 外部歌才需要:把「解 mp3」換成有快取/預抓的版本 —— 選歌確認時(OnConfirm)已背景預解,這裡
+                // 命中就秒進;沒命中(random 歌 / retry)也只是照常背景解,不會更糟。sync 由 LoadAndPlayAudio
+                // 自己用 Mp3SyncFor 算,GameplaySongAudioCache 只照收到的 sync 存取,key 也含 sync,不會串位置。
+                game.mp3Decoder = GameplaySongAudioCache.Get;
                 game.chartFormat = s.ExternalChartFormat;
                 game.chartPath = s.ExternalChartPath;
                 game.chartIndex = s.ExternalChartIndex;
