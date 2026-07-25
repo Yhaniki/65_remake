@@ -998,7 +998,9 @@ namespace Sdo.UI.Screens
                 _rowName[i].alignment = TextAlignmentOptions.Left;
                 _rowName[i].text = e.title ?? e.gn;
                 _rowName[i].color = rowCol;
-                int lvl = e.Diff(_difficulty);
+                // 難度數字：config DifficultyCalc=minacalc 時外部歌顯示 MinaCalc 換算等級(MSD^2×0.1 無上限),否則 osu
+                // 星數等級。房間/遊戲共用 Entry.DisplayLevel,切畫面數字才一致。難度「排序」不受影響(仍用 osu 等級)。
+                int lvl = e.DisplayLevel(_difficulty);
                 _rowLevel[i].text = lvl >= 0 ? lvl.ToString() : "-";
                 _rowLevel[i].color = rowCol;
                 int dur = e.DurationSec(_difficulty);
@@ -1227,9 +1229,7 @@ namespace Sdo.UI.Screens
             }
             _previewCo = null;
 
-            // The scan never read this song's audio (boot speed) → its 時間 is only the chart length so far. Now that
-            // it is the committed selection, measure the real track length once, in the background, and refresh the row.
-            if (e.external) EnsureExternalDuration(e);
+            // (音檔真長度不在「選到」時量 —— 那會讓瀏覽時 時間欄 從譜長跳成音檔長。改到「確認進遊戲」時才量,見 ConfirmSelection。)
 
             EnsurePreviewSource();
             _preview.clip = clip;
@@ -1277,29 +1277,26 @@ namespace Sdo.UI.Screens
             }
         }
 
-        // Measure an external song's real audio length once (the scan skipped it — mp3 needs a full decode), off the
-        // main thread, then upgrade its 時間 column from the chart-length placeholder to the true track length.
+        // Measure an external song's real audio length once (the scan skipped it — mp3 needs a full decode) and write
+        // it back onto the catalog entry's 時間. Called at CONFIRM (entering gameplay), NOT on selection: measuring on
+        // select made the 時間 column visibly jump from chart-length to track-length while merely browsing. Fire-and-
+        // forget on a worker thread — the screen is leaving for gameplay, so there's nothing to repaint; the entry is a
+        // shared catalog object that persists, so the true length shows next time song-select is opened. Only plain int
+        // fields are written (no Unity API off-thread).
         private void EnsureExternalDuration(SongCatalog.Entry e)
         {
             if (e == null || !e.external || string.IsNullOrEmpty(e.audioPath)) return;
             if (!_extDurDone.Add(e.fileId)) return;   // already measured this song
-            StartCoroutine(MeasureExternalDurationCo(e, e.audioPath));
-        }
-
-        private IEnumerator MeasureExternalDurationCo(SongCatalog.Entry e, string path)
-        {
-            // ogg/wav read only the file header (cheap); mp3 decodes the whole file (the slow case) — so always run it
-            // on a worker thread and just poll, exactly like the boot scan does, to never stall a frame.
-            var task = System.Threading.Tasks.Task.Run(() => Sdo.Osu.AudioDuration.Seconds(path));
-            while (!task.IsCompleted) yield return null;
-            int sec; try { sec = task.Result; } catch { sec = 0; }
-            if (sec <= 0) yield break;   // unreadable/odd format → keep the chart-length fallback
-
-            // One song → one length; only overwrite difficulties that actually have a chart (empty slots stay 0 = blank).
-            if (e.notesEasy > 0) e.durEasy = sec;
-            if (e.notesNormal > 0) e.durNormal = sec;
-            if (e.notesHard > 0) e.durHard = sec;
-            if (isActiveAndEnabled) RenderPage();   // repaint the current page's 時間 column with the real length
+            string path = e.audioPath;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                int sec; try { sec = Sdo.Osu.AudioDuration.Seconds(path); } catch { sec = 0; }
+                if (sec <= 0) return;   // unreadable/odd format → keep the chart-length fallback
+                // One song → one length; only overwrite difficulties that actually have a chart (empty slots stay 0).
+                if (e.notesEasy > 0) e.durEasy = sec;
+                if (e.notesNormal > 0) e.durNormal = sec;
+                if (e.notesHard > 0) e.durHard = sec;
+            });
         }
 
         private void EnsurePreviewSource()
@@ -1362,9 +1359,10 @@ namespace Sdo.UI.Screens
                 s.ExternalChartSeed = _selected.chartSeed;       // .gn 歌曲包：每首譜自己的金鑰
                 s.ExternalDpsPath = _selected.dpsPath;           // 包裡有官方編舞就跳舞那支，不用生成的
                 s.ExternalAudioPath = _selected.audioPath;
-                s.ExternalLevel = _selected.Diff(pickedDifficulty);   // 星數×7 等級 → 帶進遊戲顯示同一個 LV
+                s.ExternalLevel = _selected.DisplayLevel(pickedDifficulty);   // 顯示等級(osu 或 minacalc)→ 帶進遊戲顯示同一個 LV
                 s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdoinfo.dat 都寫在歌曲自己的資料夾
                 s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
+                EnsureExternalDuration(_selected);               // 進遊戲時才量真正音檔長度(選歌瀏覽時保持譜長不跳);寫回目錄,下次回選歌顯示真長度
             }
             // scene: slot 0 = random -> pick an actual scene now; else the chosen stage.
             bool randomScene = _sceneIndex <= 0 && _stages.Count > 0;

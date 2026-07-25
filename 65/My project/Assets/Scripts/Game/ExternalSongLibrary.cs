@@ -356,9 +356,9 @@ namespace Sdo.Game
             int dur = audioSec > 0 ? audioSec : c.DurationSec;
             switch (d)
             {
-                case 0: e.notesEasy = c.NoteCount; e.diffEasy = level; e.chartEasy = c.FilePath; e.chartIdxEasy = c.ChartIndex; e.durEasy = dur; break;
-                case 1: e.notesNormal = c.NoteCount; e.diffNormal = level; e.chartNormal = c.FilePath; e.chartIdxNormal = c.ChartIndex; e.durNormal = dur; break;
-                default: e.notesHard = c.NoteCount; e.diffHard = level; e.chartHard = c.FilePath; e.chartIdxHard = c.ChartIndex; e.durHard = dur; break;
+                case 0: e.notesEasy = c.NoteCount; e.diffEasy = level; e.chartEasy = c.FilePath; e.chartIdxEasy = c.ChartIndex; e.durEasy = dur; e.msdEasy = c.Msd; break;
+                case 1: e.notesNormal = c.NoteCount; e.diffNormal = level; e.chartNormal = c.FilePath; e.chartIdxNormal = c.ChartIndex; e.durNormal = dur; e.msdNormal = c.Msd; break;
+                default: e.notesHard = c.NoteCount; e.diffHard = level; e.chartHard = c.FilePath; e.chartIdxHard = c.ChartIndex; e.durHard = dur; e.msdHard = c.Msd; break;
             }
         }
 

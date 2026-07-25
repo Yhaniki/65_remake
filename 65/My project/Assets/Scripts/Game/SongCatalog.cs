@@ -21,6 +21,9 @@ namespace Sdo.Game
             public int diffEasy = -1, diffNormal = -1, diffHard = -1;
             public int notesEasy, notesNormal, notesHard;
             public int durEasy, durNormal, durHard;   // seconds per difficulty
+            // Etterna MinaCalc raw overall MSD per difficulty (external osu/sm/mc songs only; 0 = none). Shown instead
+            // of the osu level when RoomConfig.difficultyCalc == "minacalc". See ManiaMsd / Sdo.Osu.Mina.
+            public float msdEasy, msdNormal, msdHard;
 
             // ---- external (user Songs/ folder: osu / StepMania) — absent/false for the official .gn catalog ----
             public bool external;          // true → this row is a scanned external song, not an official .gn
@@ -71,6 +74,20 @@ namespace Sdo.Game
 
             /// <summary>Difficulty level for d (0=easy,1=normal,2=hard); -1 if unknown.</summary>
             public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
+            public float Msd(int d) => d <= 0 ? msdEasy : (d == 1 ? msdNormal : msdHard);
+
+            /// <summary>難度數字的「顯示值」——依 <see cref="Sdo.Settings.RoomConfig.difficultyCalc"/> 決定：
+            /// minacalc → round(MSD^2×0.1) 無 99 上限（<see cref="Sdo.Osu.ManiaMsd.ToLevel"/>，僅外部歌且已算出 MSD）；
+            /// 否則 osu 星數×7 等級（<see cref="Diff"/>）。**選歌 / 房間 / 遊戲一律用這個**,才不會切畫面時數字跳掉。</summary>
+            public int DisplayLevel(int d)
+            {
+                if (external && Sdo.Settings.RoomConfig.difficultyCalc == "minacalc")
+                {
+                    float m = Msd(d);
+                    if (m > 0f) return Sdo.Osu.ManiaMsd.ToLevel(m);
+                }
+                return Diff(d);
+            }
             public int NoteCount(int d) => d <= 0 ? notesEasy : (d == 1 ? notesNormal : notesHard);
             public int DurationSec(int d) => d <= 0 ? durEasy : (d == 1 ? durNormal : durHard);
 

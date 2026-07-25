@@ -474,17 +474,23 @@ namespace Sdo.Osu
                 foreach (var i in g.Charts) counts.Add(candMeta[i].NoteCount);
 
                 var d = new Draft { Key = g.Key, Format = SongFormat.Osu };
-                var slots = ExternalDifficultyPicker.Assign(counts);   // per SONG — never across the folder
+                // Rate EVERY chart in the group (星數×7 → 等級 + 譜長), then slot hard/normal/easy by that level —
+                // not by note count — so the hard slot is the genuinely hardest chart. (Full-parses every diff of
+                // the song rather than only the chosen 3; the scan cache absorbs the cost on every rescan.)
+                var stats = new List<ChartStats>(g.Charts.Count);
+                var levels = new List<int>(g.Charts.Count);
+                foreach (var i in g.Charts) { var st = OsuStats(candFile[i]); stats.Add(st); levels.Add(st.Level); }
+                var slots = ExternalDifficultyPicker.Assign(levels, counts);   // per SONG — never across the folder
                 for (int s = 0; s < 3; s++)
                 {
                     int c = slots[s];
                     if (c < 0) continue;
                     int i = g.Charts[c];
-                    var st = OsuStats(candFile[i]);   // 星數×7 → 等級 + 譜長（只對選中的 3 張全解析，掃描才不慢）
+                    var st = stats[c];
                     d.Charts[s] = new ExternalChart
                     {
                         FilePath = candFile[i], ChartIndex = 0, NoteCount = candMeta[i].NoteCount,
-                        Level = st.Level, DurationSec = st.DurationSec,
+                        Level = st.Level, DurationSec = st.DurationSec, Msd = st.Msd,
                     };
                 }
 
@@ -516,14 +522,14 @@ namespace Sdo.Osu
 
                 var candIndex = new List<int>();
                 var candCount = new List<int>();
-                var candLevel = new List<int>();
+                var candMeter = new List<int>();
                 for (int i = 0; i < smSong.Charts.Count; i++)
                 {
                     var ch = smSong.Charts[i];
                     if (!SmChart.IsDanceSingle(ch)) continue;
                     int notes = SmChart.NoteCount(ch.NoteData);
                     if (notes <= 0) continue;
-                    candIndex.Add(i); candCount.Add(notes); candLevel.Add(ch.Meter);
+                    candIndex.Add(i); candCount.Add(notes); candMeter.Add(ch.Meter);
                 }
                 if (candIndex.Count == 0) continue;
 
@@ -532,16 +538,25 @@ namespace Sdo.Osu
                 if (audioName.Length > 0 && HasAudio(drafts, audioName)) continue;
 
                 var d = new Draft { Key = ExternalSongGrouper.SmKeyOf(Path.GetFileName(smPath)), Format = SongFormat.Sm };
-                var slots = ExternalDifficultyPicker.Assign(candCount);
+                // Rate EVERY candidate (same star scale as osu; meter fallback), then slot hard/normal/easy by that
+                // level — not by note count — so the hard slot is always the genuinely hardest chart.
+                var candStats = new List<ChartStats>(candIndex.Count);
+                var candLevel = new List<int>(candIndex.Count);
+                for (int k = 0; k < candIndex.Count; k++)
+                {
+                    var st = SmStats(smSong, candIndex[k], candMeter[k]);
+                    candStats.Add(st); candLevel.Add(st.Level);
+                }
+                var slots = ExternalDifficultyPicker.Assign(candLevel, candCount);
                 for (int s = 0; s < 3; s++)
                 {
                     int c = slots[s];
                     if (c < 0) continue;
-                    var st = SmStats(smSong, candIndex[c], candLevel[c]);   // 同 osu 一致的星數量尺；失敗回退譜面 meter
+                    var st = candStats[c];
                     d.Charts[s] = new ExternalChart
                     {
                         FilePath = smPath, ChartIndex = candIndex[c], NoteCount = candCount[c],
-                        Level = st.Level, DurationSec = st.DurationSec,
+                        Level = st.Level, DurationSec = st.DurationSec, Msd = st.Msd,
                     };
                 }
                 d.Title = Coalesce(smSong.Title, Path.GetFileNameWithoutExtension(smPath));
@@ -593,17 +608,22 @@ namespace Sdo.Osu
                 foreach (var i in g.Charts) slotCounts.Add(counts[i]);
 
                 var d = new Draft { Key = g.Key, Format = SongFormat.Malody };
-                var slots = ExternalDifficultyPicker.Assign(slotCounts);   // per SONG — never across the folder
+                // Rate EVERY chart in the group (星數×N → 等級 + 譜長；同 osu/SM 一致的量尺), then slot by that level —
+                // not by note count — so the hard slot is the genuinely hardest chart.
+                var mStats = new List<ChartStats>(g.Charts.Count);
+                var mLevels = new List<int>(g.Charts.Count);
+                foreach (var i in g.Charts) { var st = MalodyStats(candFile[i]); mStats.Add(st); mLevels.Add(st.Level); }
+                var slots = ExternalDifficultyPicker.Assign(mLevels, slotCounts);   // per SONG — never across the folder
                 for (int s = 0; s < 3; s++)
                 {
                     int c = slots[s];
                     if (c < 0) continue;
                     int i = g.Charts[c];
-                    var st = MalodyStats(candFile[i]);   // 星數×N → 等級 + 譜長（同 osu/SM 一致的量尺）
+                    var st = mStats[c];
                     d.Charts[s] = new ExternalChart
                     {
                         FilePath = candFile[i], ChartIndex = 0, NoteCount = counts[i],
-                        Level = st.Level, DurationSec = st.DurationSec,
+                        Level = st.Level, DurationSec = st.DurationSec, Msd = st.Msd,
                     };
                 }
 
@@ -778,7 +798,7 @@ namespace Sdo.Osu
 
         /// <summary>Level + play time of ONE chart. Both come from the same full parse — the star rating already needs
         /// it, so the 時間 column costs nothing extra (the scan still only full-parses the 3 chosen charts).</summary>
-        public struct ChartStats { public int Level; public int DurationSec; }
+        public struct ChartStats { public int Level; public int DurationSec; public float Msd; }
 
         // Level from osu!mania star rating (star × 7, clamped). Level 0 / no duration on failure.
         private static ChartStats OsuStats(string osuPath)
@@ -811,6 +831,9 @@ namespace Sdo.Osu
             {
                 Level = ManiaStarRating.Level(beatmap),
                 DurationSec = (int)Math.Round(Math.Max(0.0, beatmap.LastNoteMs) / 1000.0),
+                // Etterna MinaCalc overall MSD (raw). Computed from the same parsed beatmap — the slot ordering still
+                // uses the osu star LEVEL; this is carried alongside for the MinaCalc difficulty display.
+                Msd = ManiaMsd.Overall(beatmap),
             };
         }
 

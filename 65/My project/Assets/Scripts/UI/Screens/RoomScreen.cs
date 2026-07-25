@@ -2209,7 +2209,7 @@ namespace Sdo.UI.Screens
                 _songLabel.SetText(s.HasSong ? (s.SongTitle ?? "") : L("room.no_song"));
             if (_levelLabel != null)
             {
-                int lvl = entry != null ? entry.Diff((int)s.Difficulty) : -1;
+                int lvl = entry != null ? entry.DisplayLevel((int)s.Difficulty) : -1;
                 _levelLabel.SetText(lvl >= 0 ? lvl.ToString() : "");
             }
             if (_bpmLabel != null)

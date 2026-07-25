@@ -191,7 +191,7 @@ namespace Sdo.Game
                 game.chartPath = e.ChartPath(_diff);
                 game.chartIndex = e.ChartIndex(_diff); // .sm 的 #NOTES 區塊序號；.gn 是難度（osu 恆 0）
                 game.chartSeed = e.chartSeed;          // .gn 歌曲包：每首譜自己的金鑰。漏掉的話共用 seed 池一把都開不了 → 整張譜空白
-                game.chartLevel = e.Diff(_diff);       // 星數×7 等級 → LV 標籤
+                game.chartLevel = e.DisplayLevel(_diff);   // 顯示等級(osu 星數×7 或 minacalc)→ LV 標籤,與選歌一致
                 game.gnPath = "";
                 game.externalFolder = e.folderPath;    // LoadChart 認得出是外部歌；editorMode 下不會生成/寫 .dps（見 EnsureExternalDance）
                 game.externalSongKey = e.songKey;

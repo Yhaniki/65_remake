@@ -62,6 +62,11 @@ namespace Sdo.Settings
         // 見 SongGroupPanel.OnGUI（整個視窗連同文字/按鈕一起以此 alpha 疊繪）。
         public static float songUiAlpha = 0.6f;
 
+        // 外部歌難度用哪套計算來「顯示」：osu=osu!mania 星數×7 的等級(預設，見 ManiaStarRating)；
+        // minacalc=Etterna MinaCalc 的原始 MSD 值(未縮放；見 ManiaMsd / Sdo.Osu.Mina)。換成 minacalc 會在選歌難度處
+        // 直接顯示原始 MSD(如 17.9)，方便先看數字再決定要不要乘比例換算成等級。改回 osu 即復原。難度「排序」永遠用 osu 等級。
+        public static string difficultyCalc = "osu";
+
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
@@ -342,6 +347,7 @@ namespace Sdo.Settings
                     case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
                     case "AddonFolder": addonFolder = NormalizeFolder(val); break;
                     case "SongUiAlpha": songUiAlpha = ParseFloat(val, songUiAlpha); break;
+                    case "DifficultyCalc": difficultyCalc = val; break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -388,6 +394,8 @@ namespace Sdo.Settings
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
             if (addonFolder == null) addonFolder = "";
             songUiAlpha = Mathf.Clamp01(songUiAlpha);                        // 外部歌分類面板不透明度 0..1
+            difficultyCalc = (difficultyCalc ?? "osu").Trim().ToLowerInvariant();   // 只認 osu / minacalc，其餘回退 osu
+            if (difficultyCalc != "minacalc") difficultyCalc = "osu";
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
             activeId = SanitizeActiveId(activeId);
@@ -467,6 +475,9 @@ namespace Sdo.Settings
             sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
             sb.Append("# 選歌畫面「分類瀏覽」浮動面板（外部歌資料夾清單）的不透明度：0=全透明、1=不透明。預設 0.6。\n");
             sb.Append("SongUiAlpha=").Append(songUiAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 外部歌難度顯示用哪套：osu=osu!mania 星數等級(預設)，minacalc=Etterna MinaCalc 原始 MSD 值(未縮放，先看數字用)。\n");
+            sb.Append("# 換成 minacalc 只改「顯示」，難度排序仍用 osu 等級；改回 osu 即復原。\n");
+            sb.Append("DifficultyCalc=").Append(difficultyCalc ?? "osu").Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");

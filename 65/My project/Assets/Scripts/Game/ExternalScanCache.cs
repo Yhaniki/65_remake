@@ -30,12 +30,13 @@ namespace Sdo.Game
         // v4: .gn song packs are scanned now — old lines for a pack folder cached it as "yields nothing".
         // v5: Malody .mc charts are scanned now — a folder holding them was cached as "yields nothing" (and its .mc
         //     weren't in the signature, so the .ogg/.jpg-only signature would still hit and hide the new song).
-        public const int Version = 5;
+        // v6: each chart now carries an Etterna MinaCalc `msd` (for the MinaCalc difficulty display) — old lines lack it.
+        public const int Version = 6;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null
         // array element (which JsonUtility can't represent).
-        [Serializable] public sealed class Chart { public int slot; public string file = ""; public int idx, notes, level, dur; }
+        [Serializable] public sealed class Chart { public int slot; public string file = ""; public int idx, notes, level, dur; public float msd; }
 
         [Serializable]
         public sealed class Song
@@ -169,7 +170,7 @@ namespace Sdo.Game
             {
                 var c = s.Charts[i];
                 if (c == null) continue;
-                o.charts.Add(new Chart { slot = i, file = c.FilePath ?? "", idx = c.ChartIndex, notes = c.NoteCount, level = c.Level, dur = c.DurationSec });
+                o.charts.Add(new Chart { slot = i, file = c.FilePath ?? "", idx = c.ChartIndex, notes = c.NoteCount, level = c.Level, dur = c.DurationSec, msd = c.Msd });
             }
             return o;
         }
@@ -203,7 +204,7 @@ namespace Sdo.Game
                     if (c != null && c.slot >= 0 && c.slot < 3)
                         s.Charts[c.slot] = new ExternalChart
                         {
-                            FilePath = c.file ?? "", ChartIndex = c.idx, NoteCount = c.notes, Level = c.level, DurationSec = c.dur,
+                            FilePath = c.file ?? "", ChartIndex = c.idx, NoteCount = c.notes, Level = c.level, DurationSec = c.dur, Msd = c.msd,
                         };
             return s;
         }
