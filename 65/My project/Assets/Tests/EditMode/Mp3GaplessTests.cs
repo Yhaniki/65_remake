@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Sdo.Game;
+using UnityEngine;
 
 namespace Sdo.Tests
 {
@@ -191,35 +192,79 @@ namespace Sdo.Tests
             Assert.IsTrue(Mp3Decoder.HasInfoHeaderFrame(b));
         }
 
-        // ---- re-decode trigger (must NOT fire on NLayer's ±1-frame Length over-report) ----
+        // ---- 漏幀對帳 ----
+        //
+        // 「解出來的樣本比 mp3.Length 少」**不能**當判準:mp3.Length 會多報(它把從不輸出成 PCM 的
+        // Xing/Info 表頭幀和尾端 LAME padding 也算進去),所以一次完美的解碼本來就會少約 1 幀。
+        // 而 NLayer 真的漏解一幀時,樣本數上長得一模一樣 —— 唯一能分辨的是去數檔案裡實際有幾個 MPEG 幀。
 
         [Test]
-        public void ShouldReDecode_IgnoresTheOneFrameLengthOverReport()
+        public void ShortOfDeclaredLength_IsOnlyACheapPreScreen()
         {
-            // Amanojaku.mp3: mp3.Length reports 5,340,672/ch but a clean decode yields 5,339,520 — exactly ONE
-            // MPEG-1 frame (1152) short, pure Length rounding, NOT a dropped frame. Re-decoding it made DecodeSliced
-            // punch 70 silence holes into the song (漏封包 爆). This must stay false.
-            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(5_340_672, 5_339_520, 44100));
-            // even a 2-frame accounting slack (Info frame + a padding frame) is tolerated.
-            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(1_000_000 + 2 * 1152, 1_000_000, 44100));
+            // 少了 → 值得再掃一次幀表(但還不代表漏幀)
+            Assert.IsTrue(Mp3Decoder.IsShortOfDeclaredLength(5_340_672, 5_339_520));
+            // 沒少 → 一定沒漏,連掃都不必掃
+            Assert.IsFalse(Mp3Decoder.IsShortOfDeclaredLength(1_000_000, 1_000_000));
+            Assert.IsFalse(Mp3Decoder.IsShortOfDeclaredLength(1_000_000, 1_000_001));
+            // 長度不明 → 不做事
+            Assert.IsFalse(Mp3Decoder.IsShortOfDeclaredLength(0, 0));
+            Assert.IsFalse(Mp3Decoder.IsShortOfDeclaredLength(-1, 100));
         }
 
         [Test]
-        public void ShouldReDecode_FiresOnAGenuineMultiFrameDrop()
+        public void DroppedFrames_IsZeroWhenTheLengthMerelyOverReports()
         {
-            // A real NLayer drop loses frames that accumulate (擬態ごっこ 3 frames = 72 ms) → well past the 2-frame
-            // slack → re-decode the timeline-exact way.
-            Assert.IsTrue(Mp3Decoder.ShouldReDecodeFrameByFrame(1_000_000, 1_000_000 - 3 * 1152, 44100));
-            // MPEG-2/2.5 uses 576-sample frames, so its slack is half as wide.
-            Assert.IsTrue(Mp3Decoder.ShouldReDecodeFrameByFrame(500_000, 500_000 - 3 * 576, 22050));
-            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(500_000, 500_000 - 1 * 576, 22050));
+            // Amanojaku.mp3:mp3.Length 說 5,340,672/ch,乾淨的直解吐 5,339,520(剛好少一個 1152 幀),
+            // 但檔案裡的音訊幀數就是 4635 —— 一幀都沒漏。重解它會讓 DecodeSliced 打出 70 個靜音洞(漏封包 爆)。
+            Assert.AreEqual(0, Mp3Decoder.DroppedFrames(4635, 5_339_520, 1152));
+            Assert.AreEqual(4635, 5_339_520 / 1152);
         }
 
         [Test]
-        public void ShouldReDecode_FalseWhenLengthUnknown()
+        public void DroppedFrames_CountsAGenuineDrop()
         {
-            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(0, 0, 44100));
-            Assert.IsFalse(Mp3Decoder.ShouldReDecodeFrameByFrame(-1, 100, 44100));
+            // engine[Blue]:檔案有 4859 個音訊幀,NLayer 直解只吐 4858 —— 漏掉的第 1434 幀讓 37.5 秒之後
+            // 整首音樂提前 26 ms。樣本數的短少量和上面的 Amanojaku 一模一樣,只有幀表分得出來。
+            Assert.AreEqual(1, Mp3Decoder.DroppedFrames(4859, 4858 * 1152, 1152));
+            // 累積型的漏幀(擬態ごっこ 3 幀 = 72 ms)
+            Assert.AreEqual(3, Mp3Decoder.DroppedFrames(1000, 997 * 1152, 1152));
+            // MPEG-2/2.5 一幀 576 取樣
+            Assert.AreEqual(2, Mp3Decoder.DroppedFrames(500, 498 * 576, 576));
+        }
+
+        [Test]
+        public void DroppedFrames_IsZeroWhenTheFrameTableIsUnreadable()
+        {
+            Assert.AreEqual(0, Mp3Decoder.DroppedFrames(0, 1_000_000, 1152));
+            Assert.AreEqual(0, Mp3Decoder.DroppedFrames(100, 1_000_000, 0));
+            Assert.AreEqual(0, Mp3Decoder.DroppedFrames(100, -1, 1152));
+        }
+
+        [Test]
+        public void FileAudioFrameCount_SkipsTheVbrTagFrame()
+        {
+            Assert.AreEqual(0, Mp3Decoder.FileAudioFrameCount(null, out int spf));
+            Assert.AreEqual(0, spf);
+            Assert.AreEqual(0, Mp3Decoder.FileAudioFrameCount(new byte[0], out _));
+        }
+
+        // 這一題是「歌會不會越播越提早」的總驗收:解出來的幀數必須等於檔案裡的音訊幀數,一幀都不能少。
+        // StepMania/MAD 就是這樣 —— bit reservoir 指不到資料的壞幀它照樣送一幀出去(RageSoundReader_MP3.cpp:429
+        // 的 `ret = 0; /* pretend success */`),時間軸一格不動;NLayer 的高階 MpegFile 卻是靜默跳過那一幀,
+        // 跳一幀那之後整首就提前 26 ms(engine[Blue] 37.5 秒起、Amanojaku 24 秒起就是這樣漂掉的)。
+        [Test]
+        public void Decode_EmitsOneFrameForEveryFrameInTheFile()
+        {
+            string path = System.IO.Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
+            if (!System.IO.File.Exists(path)) Assert.Ignore("找不到 StreamingAssets/Step1/Bassdrop.mp3");
+            int fileFrames = Mp3Decoder.FileAudioFrameCount(System.IO.File.ReadAllBytes(path), out int spf);
+            Assert.Greater(fileFrames, 0, "測試檔要讀得出幀表");
+
+            var pcm = Mp3Decoder.Decode(path, Mp3Decoder.Mp3Sync.Osu);   // Osu = 不補前導幀,幀數才好直接比
+            Assert.IsNotNull(pcm);
+            int perChannel = pcm.Samples.Length / pcm.Channels + Mp3Decoder.OsuGaplessTrim;   // 把 gapless 剪掉的加回來
+            Assert.AreEqual(fileFrames, perChannel / spf,
+                "解出來的幀數要跟檔案裡的音訊幀數一樣 —— 少一幀,那之後整首就提前一幀(26 ms)");
         }
 
         // ---- overload protection (hot masters like Amanojaku.mp3 decode to > ±1) ----

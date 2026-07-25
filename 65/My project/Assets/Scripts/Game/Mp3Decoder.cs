@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using NLayer;
 using UnityEngine;
 
@@ -51,31 +52,27 @@ namespace Sdo.Game
             try
             {
                 int ch, sr, len;
-                var data = DecodeSequential(path, out ch, out sr, out len, out int expectedPerChannel);
-                if (data == null || len == 0) return null;
-                // The straight front-to-back decode above IS the right answer, and it's exactly what StepMania does:
-                // MAD decodes the whole file in ONE sequential pass, carrying the bit reservoir across frames, so every
-                // frame is primed and nothing drifts (RageSoundReader_MP3.cpp — it only mutes a genuinely-cut frame on
-                // MAD_ERROR_BADDATAPTR and keeps going; it NEVER re-decodes the song in isolated chunks). NLayer's
-                // DecodeSequential is the same single-pass shape, so trust it. The frame-anchored re-decode below is a
-                // last resort for the rare file where NLayer really drops frames (擬態ごっこ: 3 frames = 72 ms of
-                // accumulating drift). Crucially it must NOT fire on NLayer's mp3.Length ROUNDING — that value
-                // over-reports (it counts the Xing/Info header frame + LAME padding it never emits as PCM), so a
-                // perfect decode legitimately lands ~1 frame under it. Firing on that ±1 frame is what broke
-                // Amanojaku.mp3: DecodeSliced re-primes the reservoir per chunk and fills any frame it then can't
-                // decode standalone with SILENCE → 70× ~26 ms dropouts (the 「漏封包 / 收音機」 爆), even though the
-                // one-pass decode was already clean. So only re-decode on a multi-frame shortfall — ShouldReDecode…().
-                if (ShouldReDecodeFrameByFrame(expectedPerChannel, len / ch, sr))
+                // 照搬 StepMania/MAD:單次循序解碼,檔案有幾個音訊幀就輸出幾幀,解不出來的送靜音、時間軸不動。
+                var data = DecodeFramewise(path, out ch, out sr, out len, out int silencedFrames);
+                if (data != null && silencedFrames > 0)
+                    Debug.LogWarning($"[mp3] {System.IO.Path.GetFileName(path)}: {silencedFrames} 個幀解不出來 → "
+                                   + "當靜音送出(和 MAD 一樣),時間軸不受影響");
+                if (data == null)
                 {
-                    int lostMs = sr > 0 ? (expectedPerChannel - len / ch) * 1000 / sr : 0;
-                    var fixedUp = DecodeSliced(path, ch);
-                    if (fixedUp != null && fixedUp.Length > 0) { data = fixedUp; len = fixedUp.Length; }
-                    // Debug.Log is queued, so this is safe off the main thread. Worth saying out loud: without the
-                    // re-decode this song would have run `lostMs` ahead of the chart by the end.
-                    Debug.LogWarning($"[mp3] {System.IO.Path.GetFileName(path)}: NLayer dropped frames "
-                                   + $"({lostMs} ms) → re-decoded frame-by-frame"
-                                   + (len / ch == expectedPerChannel ? "" : " (STILL SHORT — song will drift)"));
+                    // 反射拿不到 NLayer 的內部 reader(例如 IL2CPP 把它剝了)→ 退回高階 API。它會把解不出來的幀
+                    // **靜默跳過**,那之後整首每漏一幀就提前 26 ms,只能記個警告讓人知道。
+                    data = DecodeSequential(path, out ch, out sr, out len, out int expectedPerChannel);
+                    if (data == null || len == 0) return null;
+                    if (IsShortOfDeclaredLength(expectedPerChannel, len / ch))
+                    {
+                        int dropped = DroppedFrames(FileAudioFrameCount(System.IO.File.ReadAllBytes(path), out int spf),
+                                                    len / ch, spf);
+                        if (dropped > 0)
+                            Debug.LogWarning($"[mp3] {System.IO.Path.GetFileName(path)}: 退回高階解碼且漏了 {dropped} 幀"
+                                           + $" → 歌會提前 {(sr > 0 ? dropped * spf * 1000 / sr : 0)} ms");
+                    }
                 }
+                if (len == 0) return null;
                 // Position the PCM to match the chart's home game (see Mp3Sync). osu → drop BASS's gapless priming;
                 // StepMania → prepend the one leading silence frame it keeps for everything but a Xing (VBR) header.
                 // Both verified against real charts.
@@ -92,6 +89,83 @@ namespace Sdo.Game
                 return new Mp3Pcm { Samples = data, Channels = ch, SampleRate = sr };
             }
             catch { return null; }   // caller logs; the decode itself is Unity-free so it can run on a worker thread
+        }
+
+        // ---- 單次循序解碼(照搬 StepMania/MAD)----
+        //
+        // MAD 解 mp3 是「從頭到尾一次過」:bit reservoir 跨幀保留,而**每一個檔案幀都會產生一幀輸出** ——
+        // 連 bit reservoir 指不到資料的壞幀也是,它 `ret = 0; /* pretend success */` 讓那一幀當靜音送出去
+        // (RageSoundReader_MP3.cpp:429,註解寫著 "BASS pretends the bad frames are silent")。所以 SM 既不爆音
+        // (不切塊 → 每幀都 prime 得起來)也不會跑掉(壞幀不吃掉時間)。
+        //
+        // NLayer 的高階 MpegFile.ReadSamples 差別就在最後一步:它把解不出來的幀**靜默跳過**,一跳整首就提前
+        // 26 ms —— engine[Blue](37.5 秒起)和 Amanojaku(24 秒起)漂掉就是這樣來的,而且外部歌有一半以上
+        // 中招。低階的 MpegStreamReader.NextFrame() + MpegFrameDecoder 才能逐幀對帳,可惜前者是 internal,
+        // 只好用反射拿(拿不到就退回高階 API,見 DecodeSequential)。
+        private static readonly ConstructorInfo _readerCtor;
+        private static readonly MethodInfo _nextFrame;
+
+        static Mp3Decoder()
+        {
+            try
+            {
+                var t = typeof(MpegFrameDecoder).Assembly.GetType("NLayer.Decoder.MpegStreamReader");
+                if (t == null) return;
+                const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+                foreach (var c in t.GetConstructors(Any))
+                {
+                    var ps = c.GetParameters();
+                    if (ps.Length == 1 && ps[0].ParameterType == typeof(System.IO.Stream)) { _readerCtor = c; break; }
+                }
+                _nextFrame = t.GetMethod("NextFrame", Any);
+            }
+            catch { _readerCtor = null; _nextFrame = null; }   // 反射不通(IL2CPP 剝掉了)→ 退回高階 API
+        }
+
+        /// <summary>
+        /// 逐幀循序解碼 —— 和 MAD 一樣,檔案裡有幾個音訊幀就輸出幾幀,解不出來的那一幀送靜音(時間軸不動)。
+        /// 回 null 表示這條路走不通(反射拿不到 NLayer 的內部 reader),呼叫端要退回高階 API。
+        /// </summary>
+        private static float[] DecodeFramewise(string path, out int ch, out int sr, out int len, out int silencedFrames)
+        {
+            ch = 0; sr = 0; len = 0; silencedFrames = 0;
+            if (_readerCtor == null || _nextFrame == null) return null;
+            using (var fs = System.IO.File.OpenRead(path))
+            {
+                var reader = _readerCtor.Invoke(new object[] { fs });
+                var dec = new MpegFrameDecoder();
+                var data = new float[1 << 20];
+                float[] buf = null;
+                while (true)
+                {
+                    var frame = _nextFrame.Invoke(reader, null) as IMpegFrame;
+                    if (frame == null) break;
+                    if (ch == 0)
+                    {
+                        ch = frame.ChannelMode == MpegChannelMode.Mono ? 1 : 2;
+                        sr = frame.SampleRate > 0 ? frame.SampleRate : 44100;
+                    }
+                    int fw = frame.SampleCount * ch;                       // 這一幀該有幾個交錯樣本
+                    if (buf == null || buf.Length < fw) buf = new float[fw * 2];
+                    if (len + fw > data.Length) Array.Resize(ref data, Math.Max(data.Length * 2, len + fw));
+                    int n = 0;
+                    try { n = dec.DecodeFrame(frame, buf, 0); } catch { n = 0; }
+                    if (n > 0)
+                        for (int i = 0; i < n && i < fw; i++)
+                        {
+                            float s = buf[i];
+                            data[len + i] = s > 1f ? 1f : (s < -1f ? -1f : s);   // NLayer can overshoot ±1 → clamp
+                        }
+                    if (n < fw)
+                    {
+                        Array.Clear(data, len + Math.Max(0, n), fw - Math.Max(0, n));
+                        if (n <= 0) silencedFrames++;      // MAD 的 pretend success:壞幀當靜音,時間軸照走
+                    }
+                    len += fw;                             // ← 關鍵:不管解不解得出來,時間軸一定前進一幀
+                }
+                if (ch == 0 || len == 0) return null;
+                return data;
+            }
         }
 
         /// <summary>Straight front-to-back decode (the fast path). <paramref name="expectedPerChannel"/> is what
@@ -121,17 +195,40 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// 該不該丟掉直解、改跑逐幀重解(<see cref="DecodeSliced"/>)?只在直解「短少超過兩個 MPEG 幀」時才要 ——
-        /// 也就是 NLayer 真的掉了幀(漂移會累積:擬態ごっこ 3 幀 = 72 ms)。NLayer 的 mp3.Length 在很多檔會**多報**
-        /// (把它從不輸出成 PCM 的 Xing/Info 表頭幀 + 尾端 LAME padding 也算進去),所以一次完美的解碼本來就會比
-        /// <paramref name="expectedPerChannel"/> 少約 1 幀;拿這 ±1 幀去觸發重解反而有害 —— DecodeSliced 會把它
-        /// 單獨解不出來的 bit-reservoir 幀填成靜音,變成週期性 ~26 ms 斷音(漏封包 / 收音機 的爆)。純函式、可測。
+        /// 直解出來的樣本數比 NLayer 自報的 <c>mp3.Length</c> 少嗎?這**只是初篩** —— 少了不代表漏幀
+        /// (mp3.Length 會多報:它把從不輸出成 PCM 的 Xing/Info 表頭幀和尾端 LAME padding 也算進去),
+        /// 但沒少就一定沒漏。少了才值得去掃一次檔案的實際幀表(<see cref="FileAudioFrameCount"/>)。純函式。
         /// </summary>
-        public static bool ShouldReDecodeFrameByFrame(int expectedPerChannel, int decodedPerChannel, int sampleRate)
+        public static bool IsShortOfDeclaredLength(int expectedPerChannel, int decodedPerChannel)
+            => expectedPerChannel > 0 && decodedPerChannel < expectedPerChannel;
+
+        /// <summary>
+        /// 檔案裡實際有幾個**音訊** MPEG 幀(掃幀表,扣掉 Xing/Info 表頭幀 —— 解碼器不會把它輸出成 PCM)。
+        /// 這是唯一能分辨「mp3.Length 多報」和「NLayer 真的漏解」的東西。掃不出來回 0。
+        /// </summary>
+        public static int FileAudioFrameCount(byte[] file, out int samplesPerFrame)
         {
-            if (expectedPerChannel <= 0) return false;
-            int frameSpc = sampleRate >= 32000 ? 1152 : 576;   // MPEG-1 vs MPEG-2/2.5 每聲道每幀取樣數
-            return expectedPerChannel - decodedPerChannel > 2 * frameSpc;
+            samplesPerFrame = 0;
+            if (file == null || file.Length == 0) return 0;
+            var tbl = FrameTable(file, out samplesPerFrame);
+            if (samplesPerFrame <= 0 || tbl == null || tbl.Count < 2) return 0;
+            int frames = tbl.Count - 1;                                  // 最後一筆是結尾哨兵
+            return frames - (HasVbrTagFrame(file, tbl) ? 1 : 0);
+        }
+
+        /// <summary>
+        /// 直解漏了幾個 MPEG 幀(0 = 一個都沒漏)。漏一幀 = 那之後整首提前一幀的時間(44.1kHz 是 26 ms),
+        /// 而且會一路帶到歌尾 —— engine[Blue] 就是漏了第 1434 幀,37.5 秒之後音樂全部早 26 ms。
+        ///
+        /// StepMania/MAD 從來不會漏:遇到 bit reservoir 指不到資料(MAD_ERROR_BADDATAPTR)時它
+        /// <c>ret = 0; /* pretend success */</c>,那一幀照樣輸出(內容當靜音)、時間軸一格都不動
+        /// (RageSoundReader_MP3.cpp:429)。NLayer 則是直接跳過那一幀,所以才需要這個對帳。純函式。
+        /// </summary>
+        public static int DroppedFrames(int fileAudioFrames, int decodedPerChannel, int samplesPerFrame)
+        {
+            if (fileAudioFrames <= 0 || samplesPerFrame <= 0 || decodedPerChannel < 0) return 0;
+            int decodedFrames = decodedPerChannel / samplesPerFrame;
+            return fileAudioFrames > decodedFrames ? fileAudioFrames - decodedFrames : 0;
         }
 
         /// <summary>過載保護:整段峰值 &gt; 1 時,乘一個增益把峰壓到 <paramref name="target"/>(預設 0.98)。這是純線性
@@ -254,10 +351,7 @@ namespace Sdo.Game
             return 0;
         }
 
-        // ---- timeline-exact re-decode (only used when the straight decode came up short) ----
-
-        private const int SliceChunkFrames = 32;    // whole MPEG frames decoded per standalone slice
-        private const int SlicePrerollFrames = 2;   // leading frames carried along so the bit reservoir is primed
+        // ---- 檔案幀表(給 FileAudioFrameCount 對帳、以及 Xing/Info 判定用)----
 
         private static readonly int[] BitrateV1 = { 0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0 };
         private static readonly int[] BitrateV2 = { 0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0 };
@@ -307,85 +401,6 @@ namespace Sdo.Game
             return IndexOfIn(data, XingTag, from, to) >= 0 || IndexOfIn(data, InfoTag, from, to) >= 0;
         }
 
-        /// <summary>
-        /// Re-decode the file as standalone chunks of whole MPEG frames, laying each chunk back down at ITS OWN
-        /// frame index. NLayer silently DROPS a frame it fails to decode, and in a straight front-to-back decode
-        /// everything after that point moves earlier by one frame — the drift accumulates and the song ends up
-        /// playing ahead of the chart (擬態ごっこ: 3 dropped frames = 72 ms). Anchoring every chunk on the frame
-        /// table makes a bad frame cost at most its own chunk and never shifts the timeline.
-        ///
-        /// A slice always loses its FIRST frame (its bit reservoir points at bytes that are not in the slice), so
-        /// each chunk carries <see cref="SlicePrerollFrames"/> extra leading frames and is copied out ALIGNED FROM
-        /// ITS END. Losing more than that means a frame inside the kept range really is undecodable → redo that
-        /// chunk one frame at a time and leave the bad frame as silence, so the timeline still holds.
-        ///
-        /// Verified sample-exact against libsndfile across a whole 2:34 song (max |diff| 2e-6 = float rounding).
-        /// </summary>
-        private static float[] DecodeSliced(string path, int ch)
-        {
-            var file = System.IO.File.ReadAllBytes(path);
-            int spf;
-            var tbl = FrameTable(file, out spf);
-            int frames = tbl.Count - 1;                       // last entry is the end sentinel
-            if (frames <= 0 || spf <= 0 || ch <= 0) return null;
-            int audio0 = HasVbrTagFrame(file, tbl) ? 1 : 0;   // NLayer never emits the Xing/Info header frame
-            int audioFrames = frames - audio0;
-            if (audioFrames <= 0) return null;
-            int fw = spf * ch;                                // interleaved samples in one frame
-            long total = (long)audioFrames * fw;
-            if (total <= 0 || total > int.MaxValue) return null;
-            var outBuf = new float[total];
-            var tmp = new float[(SliceChunkFrames + SlicePrerollFrames) * fw];
-            for (int a = 0; a < audioFrames; a += SliceChunkFrames)
-            {
-                int k = Math.Min(SliceChunkFrames, audioFrames - a);
-                int first = a == 0 ? 0 : audio0 + a - Math.Min(SlicePrerollFrames, a);
-                int last = audio0 + a + k;
-                int sliceAudio = (last - first) - (first < audio0 ? 1 : 0);   // frames the decoder should emit
-                int got = DecodeSlice(file, tbl, first, last, tmp);
-                if (got >= (sliceAudio - 1) * fw && got >= k * fw)
-                {
-                    Array.Copy(tmp, got - k * fw, outBuf, a * fw, k * fw);    // align from the END
-                    continue;
-                }
-                for (int f = 0; f < k; f++)
-                {
-                    int i = a + f;
-                    int fi = i == 0 ? 0 : audio0 + i - Math.Min(SlicePrerollFrames, i);
-                    int g = DecodeSlice(file, tbl, fi, audio0 + i + 1, tmp);
-                    if (g >= fw) Array.Copy(tmp, g - fw, outBuf, i * fw, fw);
-                    else Array.Clear(outBuf, i * fw, fw);     // undecodable frame → silence, timeline preserved
-                }
-            }
-            return outBuf;
-        }
-
-        /// <summary>Decode file frames [<paramref name="from"/>, <paramref name="to"/>) as a stream of their own into
-        /// <paramref name="dst"/>; returns how many interleaved samples came out (a slice always loses its first
-        /// frame, so this is normally one frame short of what the slice contains).</summary>
-        private static int DecodeSlice(byte[] file, System.Collections.Generic.List<int> table, int from, int to, float[] dst)
-        {
-            int a = table[from], b = table[to];
-            if (b <= a) return 0;
-            using (var ms = new System.IO.MemoryStream(file, a, b - a, false))
-            using (var mp3 = new MpegFile(ms))
-            {
-                var buf = new float[16384];
-                int got = 0, n;
-                while ((n = mp3.ReadSamples(buf, 0, buf.Length)) > 0)
-                {
-                    if (got + n > dst.Length) n = dst.Length - got;
-                    if (n <= 0) break;
-                    for (int i = 0; i < n; i++)
-                    {
-                        float s = buf[i];
-                        dst[got + i] = s > 1f ? 1f : (s < -1f ? -1f : s);
-                    }
-                    got += n;
-                }
-                return got;
-            }
-        }
 
         /// <summary>First index of <paramref name="needle"/> in <paramref name="hay"/> within
         /// [<paramref name="start"/>, <paramref name="end"/>), or −1.</summary>
