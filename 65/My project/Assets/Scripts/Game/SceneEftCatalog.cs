@@ -41,9 +41,15 @@ namespace Sdo.Game
             return new Dictionary<string, SceneEftPlacement[]>
             {
                 ["SCN0003"] = MainStageLights(),   // 主舞台 (BOX disco floor): 6 靜態 stage_3_light + 24 擺動聚光燈
-                ["SCN0005"] = new[]   // 聖誕夜: snow
+                ["SCN0005"] = new[]   // 聖誕夜: snow + 天上輪流亮起的三支極光柱
                 {
                     new SceneEftPlacement("snow", 0, 0, 0, 0, 0, 0, 30f),
+                    // grav_1/2/3 (Effect_Play 0x10/0x11/0x12) scale 8.0 (0x41000000)。官方是每 2 秒接力播下一支、
+                    // 而且無限循環;remake 這裡用既有的 SpawnDelay 把三支錯開 2 秒,再靠 EftEffect.Persistent
+                    // 各自照 EFT 自身壽命循環 —— 相位差保留住「輪流亮」的節奏,但重播週期由 EFT 決定而非固定 6 秒。
+                    new SceneEftPlacement("grav_1", -255, 230, 780, 0, 0, 0, 8f, 2000),
+                    new SceneEftPlacement("grav_2", -140, 190, 829, 0, 0, 0, 8f, 4000),
+                    new SceneEftPlacement("grav_3",  200, 237, 850, 0, 0, 0, 8f, 6000),
                 },
                 ["SCN0007"] = new[]   // 極地花園: aurora + petals
                 {
@@ -90,11 +96,7 @@ namespace Sdo.Game
                     new SceneEftPlacement("snow", 0, 0, 0, 0, 0, 0, 30f),
                 },
                 ["SCN0028"] = Niaochao(),   // 北京之夜 (鸟巢): 遠景四道光柱 + 六團城市光暈
-                ["SCN0029"] = new[]   // 激舞酒吧: carnival glow
-                {
-                    new SceneEftPlacement("kuanghuan1", 0, 50, 0, 0, 0, 0, 10f),
-                    new SceneEftPlacement("kuanghuan2", 0, 50, 0, 0, 0, 0, 10f),
-                },
+                ["SCN0029"] = Jiku(),   // 飛機場: 兩排共 10 支街燈光暈 + carnival glow
                 ["SCN0037"] = PersonalRoom(),
                 ["SCN0038"] = PersonalRoom(),
             };
@@ -175,6 +177,31 @@ namespace Sdo.Game
             new SceneEftPlacement("stage28_guangyun",  827.307f, 516.805f, 2233.711f, 0, 0, 90, 1500f),
             new SceneEftPlacement("stage28_guangyun", 1293.569f, 516.805f, 2161.466f, 0, 0, 90, 1500f),
             new SceneEftPlacement("stage28_guangyun", 1829.695f, 516.805f, 2380.157f, 0, 0, 90, 1500f),
+        };
+
+        // SCN0029 飛機場 (jiku)。和 SCN0003 主舞台同一種漏法:remake 當初只從 StageSceneNN_ctor 抽特效,
+        // 所以只收到 StageScene09_ctor_004b3ae0 的 kuanghuan1/2 (Effect_Play 0x2c/0x2d),而 case body 裡
+        // 那 10 支街燈光暈一支都沒收 —— 這就是使用者說的「路燈沒有光線」。
+        // 官方 Scene_LoadBackground case 0x1d 先 operator_new(0x2fc) 配 10 個 0x4c bytes 的 effect slot,
+        // 再 `do { Effect_Play(0x65,1,0,0,0,0); i += 0x4c; } while (i < 0x2f8)` = 10 支;0x65 = 101 =
+        // dengguang.eft。座標由每幀更新 StageScene_UpdateFlashCycle_004b1890 從 VA 0x588d30..0x588da8
+        // (10×vec3) 無條件寫回,旋轉恆 (0,0,0)、縮放 0x42c80000 = 100,沒有 SCN0028 光柱那種分批延遲。
+        // 十支分成兩排(x −405..−205 一排五支、x 473..628 一排五支),全部 y = 251,夾著舞池。
+        private static SceneEftPlacement[] Jiku() => new[]
+        {
+            new SceneEftPlacement("dengguang", -405f, 251f, 446f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang", -356f, 251f, 485f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang", -306f, 251f, 523f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang", -254f, 251f, 562f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang", -205f, 251f, 600f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang",  473f, 251f, 219f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang",  510f, 251f, 167f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang",  547f, 251f, 116f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang",  588f, 251f,  67f, 0, 0, 0, 100f),
+            new SceneEftPlacement("dengguang",  628f, 251f,  16f, 0, 0, 0, 100f),
+            // StageScene09_ctor 的兩支(官方順序:case body 的 dengguang 先播、ctor 的 kuanghuan 後播)
+            new SceneEftPlacement("kuanghuan1", 0, 50, 0, 0, 0, 0, 10f),
+            new SceneEftPlacement("kuanghuan2", 0, 50, 0, 0, 0, 0, 10f),
         };
 
         // 個人房 / 婚禮大廳: star light + two pillar glows (StageScene10 ctor)

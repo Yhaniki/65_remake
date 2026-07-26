@@ -66,6 +66,24 @@ namespace Sdo.Game
                     Cj(3,  150.00f, -2f,  45f,  0.61f),
                     Cj(4, -164.80f, -2f, 107f, -0.99f),   // the DJ (animated)
                 },
+                // SCN0018 豪華郵輪: 9 名甲板乘客 (case 0x12 結尾 StageScene_LoadAvatarsAndMotions(param_1+0x3e, 9,
+                // DAT_005518d8, DAT_00588c50, DAT_00588cc0))。type[9]={2,1,1,0,0,3,1,0,1},沒有 DJ。
+                // 每幀更新 StageScene_UpdateManyBillboards_004b0740 結尾也有
+                // StageScene_LoadMotionsCycle_004ae160(param_1+0xf8, 9, DAT_005518d8)(0xf8/4 = 0x3e),
+                // 所以九個全部會套循環動作,和 SCN0017 一樣。座標/朝向逐筆取自 exe 的表(朝向是弧度、只有 Y)。
+                // y=-15 四人是下層甲板、y=120/115 五人是上層甲板 —— 少了這筆整艘船的甲板都是空的。
+                ["SCN0018"] = new[]
+                {
+                    Cj(2, -175f, -15f, 148f, -1.0471976f),
+                    Cj(1, -182f, -15f, 227f, -0.5235988f),
+                    Cj(1,  175f, -15f, 120f,  0f),
+                    Cj(0,  172f, -15f, 230f,  0.5235988f),
+                    Cj(0,   44f, 120f, 345f,  0f),
+                    Cj(3,  -38f, 120f, 341f,  0f),
+                    Cj(1, -112f, 120f, 335f,  0f),
+                    Cj(0,   -5f, 115f, 392f,  0f),
+                    Cj(1,   88f, 115f, 388f,  0f),
+                },
             };
 
         /// <summary>Background NPCs for a scene folder (e.g. "SCN0017"); empty if none.</summary>

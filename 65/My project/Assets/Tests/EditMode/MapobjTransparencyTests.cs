@@ -1049,5 +1049,237 @@ namespace Sdo.Tests
                 Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(SdoExtracted.Root, "3DEFT"), name)),
                     "3DEFT/" + name + " 不在 → 遠景光柱/光暈生不出來");
         }
+
+        // ── 其餘場景漏掛的動態(反編譯逐場景比對後補齊) ──────────────────────────────────────────
+        // 一次掃完 SCN0000..SCN0030 的 Scene_LoadBackground case 與每幀更新函式,把「官方有、remake 沒有」
+        // 的換幀/UV 捲動/光暈 billboard/EFT 全部補上。以下每條釘住一個場景的參數來源。
+
+        [Test]
+        public void SceneTexAnim_Scn0019_CeilingRig_Cycles_Three_Frames_At_200ms()
+        {
+            var rig = SceneMapobjTexAnimCatalog.Find("SCN0019", "SHAN");
+            Assert.IsNotNull(rig, "少了換幀 → 燈架卡在第 1 幀不閃");
+            Assert.AreEqual(3, rig.Frames.Length, "param_1[0x4e] 是 3 格");
+            Assert.AreEqual(200f, rig.IntervalMs, 1e-3f, "StageScene_Update3Frame_004b0940 的計時器是 200 ms");
+            Assert.IsTrue(rig.Transparent, "官方材質旗標 0x1 = 透明批");
+            Assert.IsFalse(rig.HoldLast);
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0019", "ZHUAN"), "只有燈架換幀");
+        }
+
+        [Test]
+        public void SceneTexAnim_Scn0022_Two_Tombs_Alternate_Every_Second_In_Antiphase()
+        {
+            var d1 = SceneMapobjTexAnimCatalog.Find("SCN0022", "GUANG4");
+            var d2 = SceneMapobjTexAnimCatalog.Find("SCN0022", "DONGHUA2");
+            Assert.IsNotNull(d1, "第一座墓穴少了換幀 → 火光凍住");
+            Assert.IsNotNull(d2, "第二座墓穴少了換幀");
+            foreach (var d in new[] { d1, d2 })
+            {
+                Assert.AreEqual(2, d.Frames.Length, "兩張來回");
+                Assert.AreEqual(1000f, d.IntervalMs, 1e-3f, "共用計數器 DAT_00678588,1000 ms 一次");
+                Assert.IsFalse(d.Transparent, "兩幀 alpha 全 255 → 不透明換幀");
+            }
+            // 反相是「檔案內容對調」做出來的:兩支都照 01_ → 02_ 的檔名順序填,不能自己再加相位偏移。
+            StringAssert.Contains("mubei01_", d1.Frames[0]);
+            StringAssert.Contains("mubei02_", d1.Frames[1]);
+            StringAssert.Contains("Dong2_mubei01_", d2.Frames[0]);
+            StringAssert.Contains("Dong2_mubei02_", d2.Frames[1]);
+            // 鬼火/飛鬼走 billboard 目錄,不能也被掛上 mapobj 換幀。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0022", "SHAN"));
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0022", "LABA11"));
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0022", "SHEGUANG"), "射光不換貼圖");
+        }
+
+        [Test]
+        public void SceneTexAnim_Scn0026_Bonfire_And_Sidelights_Run_At_Their_Own_Rates()
+        {
+            var fire = SceneMapobjTexAnimCatalog.Find("SCN0026", "HUO");
+            Assert.IsNotNull(fire, "營火少了換幀 → 火焰靜止,而且畫的是佔位的第 10 張圖");
+            Assert.AreEqual(9, fire.Frames.Length);
+            Assert.AreEqual("lanqiuchang_huo001.dds", fire.Frames[0]);
+            Assert.AreEqual("lanqiuchang_huo009.dds", fire.Frames[8]);
+            Assert.AreEqual(50f, fire.IntervalMs, 1e-3f, "0x32 = 50 ms");
+            Assert.IsTrue(fire.Transparent);
+
+            var lamp = SceneMapobjTexAnimCatalog.Find("SCN0026", "XIAODENG");
+            Assert.IsNotNull(lamp, "小燈少了換幀 → 停在第 1 幀");
+            Assert.AreEqual(3, lamp.Frames.Length);
+            Assert.AreEqual(500f, lamp.IntervalMs, 1e-3f);
+            Assert.IsTrue(lamp.Transparent);
+            // 車子是 .mot 驅動的,不換幀。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0026", "CHE1"));
+        }
+
+        [Test]
+        public void SceneTexAnim_Scn0029_BarNeon_Cycles_Eight_Frames_At_200ms()
+        {
+            var neon = SceneMapobjTexAnimCatalog.Find("SCN0029", "JIUBA");
+            Assert.IsNotNull(neon, "吧台霓虹少了換幀 → 永遠停在 MSH 材質那張 00014.dds");
+            Assert.AreEqual(8, neon.Frames.Length, "索引 (i+1)&7 → 8 張");
+            Assert.AreEqual("00014.dds", neon.Frames[0], "第 0 張就是 MSH 的佔位材質");
+            Assert.AreEqual("0008_.dds", neon.Frames[7]);
+            Assert.AreEqual(200f, neon.IntervalMs, 1e-3f);
+            Assert.IsFalse(neon.Transparent, "0002_~0008_ 的 alpha 全 255 → 不透明畫面");
+            // 大螢幕走 UV 捲動(而且是階梯式),不是換幀。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0029", "PINGMU"));
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0018_RotatingLight_Scrolls_U_And_Keeps_Its_Material()
+        {
+            var speed = SceneMapobjUvScrollCatalog.Find("SCN0018", "ZHUANDENG");
+            Assert.AreEqual(0.3f, speed.x, 1e-6f, "_DAT_0058903c = 0.03 / 100 ms");
+            Assert.AreEqual(0f, speed.y, 1e-6f, "官方 V 明確寫 0");
+            // 材質旗標是 0x0(不透明批)→ 套 OfficialMaterialAlpha 會是 no-op,徒增混淆。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0018", "ZHUANDENG"));
+            // 同場景四個換幀道具不捲。
+            foreach (var other in new[] { "NIHONG", "BOAT_SCREEN", "SHUIMO", "WATER" })
+                Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0018", other).sqrMagnitude, 1e-6f, other);
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0016_Skyline_Is_The_Only_Officially_Forced_Additive_Prop()
+        {
+            // 官方 case 0x10 對 objects[30]=chengshi 手寫 +0xc=4 / +0x10=1 → SRCALPHA/ONE = 加法。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.AdditiveOverlay,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0016", "CHENGSHI"));
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0016", "CHENGSHI"));
+            Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0016", "CHENGSHI").sqrMagnitude, 1e-6f,
+                "天際線不捲 UV,這筆只帶 render mode");
+            // 同場景的探照燈仍走 SpotGlow,不能被改成加法。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0016", "JIGUANG1"));
+        }
+
+        [Test]
+        public void SceneFlames_Scn0001_And_Scn0005_Have_Static_Guangxiao_Halos()
+        {
+            var street = SceneFlameBillboardCatalog.ForFolder("SCN0001");
+            Assert.IsNotNull(street, "兩盞路燈的燈頭光暈是 billboard,不是 mesh → 少了就只有燈桿");
+            Assert.AreEqual("SCENE/SCN0001", street.FramesDir);
+            Assert.AreEqual("GUANGXIAO_.TGA", street.Frames[0]);
+            Assert.AreEqual(2, street.Billboards.Length);
+            Assert.AreEqual(77.000f, street.Billboards[0].X, 1e-3f);
+            Assert.AreEqual(-626.482f, street.Billboards[1].X, 1e-3f);
+            foreach (var b in street.Billboards)
+            {
+                Assert.AreEqual(147.475f, b.Y, 1e-3f, "兩盞同高");
+                Assert.AreEqual(100f, b.Size, 1e-3f, "0x42c80000 = 100");
+            }
+
+            var xmas = SceneFlameBillboardCatalog.ForFolder("SCN0005");
+            Assert.IsNotNull(xmas);
+            Assert.AreEqual(1, xmas.Billboards.Length);
+            Assert.AreEqual(-97.7f, xmas.Billboards[0].X, 1e-3f);
+            Assert.AreEqual(100f, xmas.Billboards[0].Size, 1e-3f);
+            // 沒有光暈的場景仍要回 null(這張表是白名單,不能變成「每個場景都給一顆」)。
+            Assert.IsNull(SceneFlameBillboardCatalog.ForFolder("SCN0000"));
+            Assert.IsNull(SceneFlameBillboardCatalog.ForFolder("SCN0023"));
+        }
+
+        [Test]
+        public void SceneEft_Scn0029_Has_Ten_Streetlamp_Glows_Plus_The_Ctor_Carnival_Pair()
+        {
+            var fx = SceneEftCatalog.ForFolder("SCN0029");
+            Assert.AreEqual(12, fx.Count, "10 支 dengguang + ctor 的 2 支 kuanghuan");
+            int lamps = 0;
+            foreach (var e in fx)
+            {
+                if (e.Eft != "dengguang") continue;
+                lamps++;
+                Assert.AreEqual(251f, e.Y, 1e-3f, "十支同高(y 常數)");
+                Assert.AreEqual(100f, e.Scale, 1e-3f, "0x42c80000 = 100");
+                Assert.AreEqual(0, e.SpawnDelay, "十支載入時一起播,沒有 SCN0028 那種分批延遲");
+                Assert.AreEqual(0f, e.Ex + e.Ey + e.Ez, 1e-3f, "旋轉恆 0");
+            }
+            Assert.AreEqual(10, lamps);
+            Assert.AreEqual(-405f, fx[0].X, 1e-3f);
+            Assert.AreEqual(628f, fx[9].X, 1e-3f);
+            Assert.AreEqual("kuanghuan1", fx[10].Eft, "ctor 那兩支排在 case body 之後");
+            Assert.AreEqual("kuanghuan2", fx[11].Eft);
+        }
+
+        [Test]
+        public void SceneEft_Scn0005_Adds_Three_Staggered_Grav_Pillars_Next_To_The_Snow()
+        {
+            var fx = SceneEftCatalog.ForFolder("SCN0005");
+            Assert.AreEqual(4, fx.Count, "snow + grav_1/2/3");
+            Assert.AreEqual("snow", fx[0].Eft);
+            Assert.AreEqual(30f, fx[0].Scale, 1e-3f, "雪的 scale 不能被動到");
+            var expect = new[] { ("grav_1", 2000), ("grav_2", 4000), ("grav_3", 6000) };
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.AreEqual(expect[i].Item1, fx[i + 1].Eft);
+                Assert.AreEqual(expect[i].Item2, fx[i + 1].SpawnDelay, "每 2 秒接力一支");
+                Assert.AreEqual(8f, fx[i + 1].Scale, 1e-3f, "0x41000000 = 8.0");
+            }
+        }
+
+        [Test]
+        public void SceneAvatars_Scn0018_Has_Nine_Deck_Passengers_On_Two_Levels()
+        {
+            var npcs = SceneAvatarCatalog.ForFolder("SCN0018");
+            Assert.AreEqual(9, npcs.Count, "少了整組,甲板是空的");
+            int lower = 0, upper = 0;
+            foreach (var n in npcs)
+            {
+                if (n.Pos.y < 0f) lower++; else upper++;
+                Assert.IsNotNull(n.Mot, "更新函式每幀跑 LoadMotionsCycle → 九個都會動");
+                StringAssert.DoesNotContain("DJ", n.Msh, "SCN0018 的 type 表沒有 4 (DJ)");
+            }
+            Assert.AreEqual(4, lower, "下層甲板 y=-15 四人");
+            Assert.AreEqual(5, upper, "上層甲板 y=120/115 五人");
+            // SCN0017 那組不能被動到(同一張表)。
+            Assert.AreEqual(10, SceneAvatarCatalog.ForFolder("SCN0017").Count);
+        }
+
+        [Test]
+        public void RealData_OtherScenes_Missing_Animation_Assets_All_Resolve_On_Disk()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found — real-data row needs the game data (data_root.txt)");
+
+            // 1) 新補的每一組換幀,幀檔都要在該道具自己的資料夾裡(runtime 就是這樣找的)。
+            var expectGroups = new System.Collections.Generic.Dictionary<string, int>
+            { ["SCN0019"] = 1, ["SCN0022"] = 2, ["SCN0026"] = 2, ["SCN0029"] = 1 };
+            foreach (var kv in expectGroups)
+            {
+                int found = 0;
+                foreach (var g in SceneMapobjCatalog.ForFolder(kv.Key))
+                {
+                    var anim = SceneMapobjTexAnimCatalog.Find(kv.Key, Path.GetFileNameWithoutExtension(g.Msh));
+                    if (anim == null) continue;
+                    found++;
+                    foreach (var f in anim.Frames)
+                        Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(root, g.Folder), f)),
+                            g.Folder + "/" + f + " 不存在 → 換幀會退回佔位貼圖");
+                }
+                Assert.AreEqual(kv.Value, found, kv.Key + " 接上換幀的道具數不對");
+            }
+
+            // 2) 兩顆/一顆 guangxiao 光暈的 TGA 在場景資料夾裡(不是 MAPOBJ 下)。
+            foreach (var folder in new[] { "SCN0001", "SCN0005" })
+            {
+                var set = SceneFlameBillboardCatalog.ForFolder(folder);
+                Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(SdoExtracted.Root, "SCENE/" + folder), set.Frames[0])),
+                    "SCENE/" + folder + "/" + set.Frames[0] + " 不在 → 光暈不會生出來");
+            }
+
+            // 3) 新引用的 EFT 檔都在。
+            foreach (var name in new[] { "DENGGUANG.EFT", "GRAV_1.EFT", "GRAV_2.EFT", "GRAV_3.EFT" })
+                Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(SdoExtracted.Root, "3DEFT"), name)),
+                    "3DEFT/" + name + " 不在");
+
+            // 4) SCN0018 旋轉燈的官方材質旗標必須是 0x0(不透明批)—— 這是「不套 OfficialMaterialAlpha」的前提。
+            var zd = Path.Combine(root, "18_BOAT/ZHUANDENG");
+            var zdMats = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(zd, "ZHUANDENG.MSH")));
+            Assert.IsFalse(MshLoader.IsOfficialTransparent(FlagOf(zdMats, "di1.dds")), "旗標若變成透明批要重新評估 render mode");
+
+            // 5) SCN0018 的 9 個 NPC 用的是 SCN0017 已在用的同一組資產,不需要新檔案。
+            var avatarDir = Path.Combine(SdoExtracted.Root, "AVATAR");
+            foreach (var n in SceneAvatarCatalog.ForFolder("SCN0018"))
+                Assert.IsTrue(File.Exists(Path.Combine(avatarDir, n.Msh)), "AVATAR/" + n.Msh + " 不在");
+        }
     }
 }

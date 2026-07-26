@@ -43,6 +43,32 @@ namespace Sdo.Game
     {
         private static readonly Dictionary<string, SceneFlameSet> ByFolder = new Dictionary<string, SceneFlameSet>
         {
+            // SCN0001 新天地:街上兩盞路燈燈頭的光暈。Scene_LoadBackground case 1 切封裝到 Datas\Scene\scn0001.bin、
+            // 載入 guangxiao_.tga 存 param_1[0x10],再 BillboardSet_Create ×2 → param_1[0xe]/[0xf],尺寸都是
+            // 0x42c80000 = 100,旗標 +0x80=2 / +0x84=4 / +0x88=1 與 SCN0022/0024/0028 逐欄位相同。
+            // 每幀更新的 switch 從 case 3 才開始、沒有 case 1 → 這兩顆是靜態光暈,不換幀。
+            // 燈桿本體在 SCENE.MSH 裡(材質 ludeng.dds),少了這筆就只有桿子、燈頭不發光。
+            ["SCN0001"] = new SceneFlameSet(
+                "SCENE/SCN0001",
+                new[] { "GUANGXIAO_.TGA" },
+                1000f,   // 單張:間隔不影響畫面
+                new[]
+                {
+                    new FlameBillboard(77.000f, 147.475f, 336.240f, 100f),
+                    new FlameBillboard(-626.482f, 147.475f, 336.349f, 100f),
+                }),
+
+            // SCN0005 聖誕夜:同一張 guangxiao_.tga 的單顆光暈,100×100,同樣是靜態(case 5 的每幀更新
+            // StageScene_UpdateDualBillboard_004afeb0 不碰它)。
+            ["SCN0005"] = new SceneFlameSet(
+                "SCENE/SCN0005",
+                new[] { "GUANGXIAO_.TGA" },
+                1000f,
+                new[]
+                {
+                    new FlameBillboard(-97.7f, 115.0f, 222.4f, 100f),
+                }),
+
             ["SCN0022"] = new SceneFlameSet(
                 "SCENE/MAPOBJ/FENMU/LANHUO",
                 new[] { "FENMUOBJ_LANHUO_01_.TGA", "FENMUOBJ_LANHUO_02_.TGA", "FENMUOBJ_LANHUO_03_.TGA" },

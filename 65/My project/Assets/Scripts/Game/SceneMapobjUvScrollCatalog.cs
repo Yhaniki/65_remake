@@ -87,6 +87,18 @@ namespace Sdo.Game
             // (it matches the "soft alpha, low opaque, mid lum" heuristic for radial glow sprites), so without
             // the override the material becomes Sdo/UnlitAdditiveOverlay, producing a hard bright mesh-edge band.
             new Target("SCN0015", "15_UV", -1, Scn0015WindowUv, RenderMode.ForceAlphaBlend),
+            // SCN0018 豪華郵輪 旋轉燈 (18_Boat/zhuandeng):case 0x12 的 9 個 mapobj 裡只有 index 8 (zhuandeng)
+            // 走 AvatarScene_Create(..., param3=1) 註冊成貼圖座標捲動目標,其餘 8 個都傳 0(同 SCN0011 CAIDAI 的慣例)。
+            // StageScene_UpdateManyBillboards_004b0740 每 100 ms 設 +0x48 |= 0x10000,U = 累加值
+            // (_DAT_0058903c = 0.03,到 1.0 歸零)、V 明確寫 0 ⇒ +0.3 UV/s 在 U。mesh 的 U 跑到 -0.918..1.381
+            // (超出 0..1 → 在 U 方向 tiling),正是「燈光沿著燈條跑」的軸。
+            // 官方材質旗標 +0x194 = 0x0(不透明批)→ 保持 KeepMaterial,別套 OfficialMaterialAlpha(會變成 no-op)。
+            new Target("SCN0018", "ZHUANDENG", -1, new Vector2(0.3f, 0f)),
+            // SCN0016 繁華街道 遠景天際線 (16/FANGZI/CHENGSHI):官方 case 0x10 對 objects[30] 的 NoteGroup
+            // 手寫 +0xc=4 / +0x10=1 → RenderSysD3D_SetBlendMode 的 SRCALPHA/ONE = 加法。它自己的 MSH 材質旗標
+            // 只有 0x1(一般透明批),所以這是整份反編譯裡唯一一支被官方「硬改混色」的道具 —— 走 alpha blend
+            // 的話夜裡的城市燈火會變成暗剪影。Speed = 0:這筆只帶 render mode,天際線不捲 UV。
+            new Target("SCN0016", "CHENGSHI", -1, Vector2.zero, RenderMode.AdditiveOverlay),
             // SCN0016 spotlights (JIGUANG1/2/3): guang1_.dds has a narrow (~3-texel) alpha edge, so a plain additive
             // beam reads hard at its left/right. SpotGlow blurs the texture along its width to spread the light
             // sideways into a soft falloff. Speed=0 — these don't UV-scroll; the entry only carries the render mode.
