@@ -69,8 +69,16 @@ warp 在時間軸上沒有厚度，若直接拿判定時間去擺，整段音符
 那條分支（`beat <= w.EndBeat + BeatEps`），永遠到不了下一個 warp 的窗首分支 —— 窗首因此一個點都沒有，
 前半窗會沿用上一點的速率。`deadsoul[Blue]` 的 `-4224` 段實測前半窗只跑 mult 32（該是 1818），
 1/6 拍的炸彈間距 39.4 px 被壓成 0.69 px，畫面上就是一疊擠在判定線上的炸彈。
-補窗首的點放在**最後** append：`ManiaScroll.BuildMultiplierPoints` 同時刻保留最後一個，窗首才由 warp
+補窗首的點放在切點**後面** append：`ManiaScroll.BuildMultiplierPoints` 同時刻保留最後一個，窗首才由 warp
 自己的速率作主；沒有接縫問題的 warp 本來就有一個同時刻同值的點，重複一次不影響行為。
+
+但 `FillTimingPoints` 收尾**一定要穩定重排**（`List.Sort` 不穩定 → 帶原索引當第二鍵）：窗首那些點的
+時刻比清單尾端早，不排序 `OsuBeatmap.TimingPoints` 就不是時間遞增的，而
+[`NoteBeatColor.ResolveTempo`](../../65/My%20project/Assets/Scripts/Sdo.Osu/NoteBeatColor.cs) 是照順序往前走、
+遇到比音符晚的點才 `break`（它的註解寫的就是「TimingPoints are time-sorted」）——
+清單沒排序時它會抓到最後那個窗首點的 `beatLength`/`phase`，3D note 皮的節拍顏色整批跑掉
+（實測出貨譜 107 張、4609 顆音符變色）。穩定排序同時保住「同時刻窗首的點排在切點後面」這件事，
+所以捲動速率不受影響。
 
 `120 BPM`、跳 8 拍的例子（`vBase` 208 px/s，一拍 104 px）：
 

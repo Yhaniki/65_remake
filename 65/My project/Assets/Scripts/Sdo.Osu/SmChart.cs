@@ -509,6 +509,7 @@ namespace Sdo.Osu
             /// </summary>
             public void FillTimingPoints(OsuBeatmap map)
             {
+                var pts = new List<OsuTimingPoint>(SegBeat.Length + Warps.Length * 2);
                 var cuts = new List<double>(SegBeat.Length + Warps.Length * 2);
                 for (int i = 0; i < SegBeat.Length; i++) cuts.Add(SegBeat[i]);
                 for (int i = 0; i < Warps.Length; i++) { cuts.Add(Warps[i].StartBeat); cuts.Add(Warps[i].EndBeat); }
@@ -517,17 +518,31 @@ namespace Sdo.Osu
                 {
                     if (i > 0 && cuts[i] - cuts[i - 1] <= 1e-9) continue;    // 去重
                     double bl = BeatLengthAt(cuts[i]);
-                    if (bl > 0.0) map.TimingPoints.Add(new OsuTimingPoint(DisplayMs(cuts[i]), bl));
+                    if (bl > 0.0) pts.Add(new OsuTimingPoint(DisplayMs(cuts[i]), bl));
                 }
-                // 窗首的點放在最後 append:ManiaScroll.BuildMultiplierPoints 同時刻取**後面**那個,所以窗首
+                // 窗首的點放在切點**後面** append:ManiaScroll.BuildMultiplierPoints 同時刻取後面那個,所以窗首
                 // 一定由 warp 自己的速率作主。沒有接縫問題的 warp 本來就有一個同時刻同值的點,這裡只是重複一次
                 // (BuildMultiplierPoints 會併掉),行為不變。
                 for (int i = 0; i < Warps.Length; i++)
                 {
                     double beats = Warps[i].Beats;
                     if (beats <= 0.0) continue;
-                    map.TimingPoints.Add(new OsuTimingPoint(WinStartMs[i], (Warps[i].TimeMs - WinStartMs[i]) / beats));
+                    pts.Add(new OsuTimingPoint(WinStartMs[i], (Warps[i].TimeMs - WinStartMs[i]) / beats));
                 }
+                // 送出去的清單一定要**依時間遞增**。窗首那些點的時刻比清單尾端早,不排序就會讓
+                // NoteBeatColor.ResolveTempo 壞掉 —— 它是照順序往前走、遇到比音符晚的點才 break
+                // (那裡的註解寫的就是「TimingPoints are time-sorted」),清單沒排序的話它會抓到最後那個
+                // 窗首點的 beatLength/phase,整個 3D note 皮的節拍顏色跟著錯(實測出貨譜 107 張、4609 顆)。
+                // 必須是**穩定**排序(List.Sort 不穩定 → 帶原索引當第二鍵):同時刻維持 append 順序,窗首的點
+                // 才會留在同時刻的切點後面,BuildMultiplierPoints 的「同時刻取最後一個」仍然取到窗的速率。
+                var order = new int[pts.Count];
+                for (int i = 0; i < order.Length; i++) order[i] = i;
+                Array.Sort(order, (a, b) =>
+                {
+                    int c = pts[a].TimeMs.CompareTo(pts[b].TimeMs);
+                    return c != 0 ? c : a.CompareTo(b);
+                });
+                for (int i = 0; i < order.Length; i++) map.TimingPoints.Add(pts[order[i]]);
             }
 
             // 從這一拍起算,那一段在**顯示時間軸**上的 ms/beat。

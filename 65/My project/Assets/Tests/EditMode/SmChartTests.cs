@@ -756,6 +756,23 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Timing_Points_Stay_Time_Sorted_So_The_Note_Colour_Resolver_Works()
+        {
+            // 窗首那些點是接在切點**後面** append 的(同時刻要贏),時刻卻比清單尾端早 —— 所以
+            // FillTimingPoints 收尾一定要**穩定**重排。沒排的話 NoteBeatColor.ResolveTempo 會壞:
+            // 它照順序往前走、遇到比音符晚的點才 break(那裡的註解寫的就是「TimingPoints are
+            // time-sorted」),清單沒排序時它會抓到最後那個窗首點的 beatLength/phase,3D note 皮的
+            // 節拍顏色整批跑掉(實測出貨譜 107 張、4609 顆音符變色)。
+            foreach (var sm in new[] { Warp, WarpStop, ChainedWarps, WarpLandingOnBpmChange })
+            {
+                var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+                for (int i = 1; i < map.TimingPoints.Count; i++)
+                    Assert.GreaterOrEqual(map.TimingPoints[i].TimeMs, map.TimingPoints[i - 1].TimeMs,
+                        "timing point 一定要依時間遞增");
+            }
+        }
+
+        [Test]
         public void The_Editor_Grid_Line_On_A_Chained_Seam_Sits_At_The_Start_Of_Its_Freeze()
         {
             // 同一個浮點刀鋒也會打壞**編輯器格線**,症狀完全不同:不是速率,是格線整體晚了一整個 #STOPS。
