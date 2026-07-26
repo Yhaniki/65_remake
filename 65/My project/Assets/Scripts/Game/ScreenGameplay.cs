@@ -2918,8 +2918,14 @@ namespace Sdo.Game
             // Glow props flagged AlphaBlendOverlay (SCN0022 sheguang searchlight) have a banded DXT3 alpha → smooth it so
             // the beam gradient doesn't show concentric "tree-ring" steps (年輪). FULL strength: the beam is a pure gradient
             // with no detail to protect, so flatten every step (the ghost uses PreserveDetail to keep its face). Scoped.
-            var glowSmooth = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName)
-                              == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay
+            // SpotGlow 也要去階梯:DXT3 只有 4-bit alpha(16 階),光錐那種平滑衰減會被量化成一圈一圈的
+            // 同心台階,邊緣讀起來就是硬的 —— 實測 SCN0019 的 dengzhu_.dds 只有 14 個相異 alpha 值、
+            // SCN0016 的 guang1_.dds 只有 12 個,而且全是 17 的倍數(= 純 4-bit 量化)。這才是「聚光燈很硬」
+            // 的來源;shader 的 _Spread 只在光錐「外面」補一圈暈,救不了光錐自己的台階,所以先前調 spread
+            // 完全沒有改善。
+            var glowMode = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName);
+            var glowSmooth = glowMode == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay ||
+                             glowMode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow
                               ? DdsLoader.AlphaSmooth.Full : DdsLoader.AlphaSmooth.None;
             var subMats = new List<Material[]>(r.Submeshes.Count);
             // official per-material flags (MSH record +0x194), parallel to subMats — RenderMode.OfficialMaterialAlpha

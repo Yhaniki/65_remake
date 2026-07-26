@@ -212,7 +212,12 @@ namespace Sdo.Game
                         if (name.Length > 0 && File.Exists(ddsPath))
                         {
                             var bytes = File.ReadAllBytes(ddsPath);
-                            tex = DdsLoader.Load(bytes);
+                            // 漸層光暈存成 DXT3 只有 4-bit alpha(16 階),平滑的衰減會被量化成一圈一圈的
+                            // 同心台階,邊緣讀起來就是硬的 —— SCN0029 機庫吊燈的光錐正是這樣(解出貼圖可以
+                            // 直接看到階梯)。這些貼圖用 AlphaSmooth.Full 去階梯,還原成連續衰減。
+                            // 白名單制:只點名確定是「漸層光暈」的材質,不動已驗過的其他場景。
+                            tex = DdsLoader.Load(bytes, false, SmoothAlpha(sceneFolder, name)
+                                                 ? DdsLoader.AlphaSmooth.Full : DdsLoader.AlphaSmooth.None);
                             mode = histoAlpha ? DdsLoader.GetSceneAlphaMode(bytes) : DdsLoader.GetAlphaMode(bytes);
                         }
                         tm = (tex, mode); texCache[name] = tm;
@@ -238,6 +243,16 @@ namespace Sdo.Game
             mesh.RecalculateBounds();
             return new Result { Mesh = mesh, Materials = subMats.ToArray(), MaterialIds = subMatIds.ToArray() };
         }
+
+        /// <summary>SCENE.MSH 材質裡「漸層光暈」的白名單 —— 這些貼圖要去掉 DXT3 4-bit alpha 的階梯。
+        /// 為什麼要白名單而不是通則:DXT3 的 16 階 alpha 對硬去背的剪影(人群/招牌/欄杆)完全無害,只有
+        /// 平滑衰減的光暈會被量化成一圈一圈的同心台階。逐筆點名才不會動到已經驗過的其他場景。
+        ///   SCN0029 飛機場 diaodeng_.dds — 機庫天花板吊燈往下打的光錐(貼圖 128×128,光錐佔
+        ///     x 52..86 / y 71..119,四邊 alpha 全 0),alpha 峰值只有 170 卻被切成約 8 個可見台階,
+        ///     所以光暈邊緣讀起來「非常硬」。</summary>
+        private static bool SmoothAlpha(string sceneFolder, string ddsName) =>
+            string.Equals(sceneFolder, "SCN0029", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(ddsName, "diaodeng_.dds", StringComparison.OrdinalIgnoreCase);
 
         private static uint U(byte[] d, int o) => (uint)(d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24));
         private static float F(byte[] d, int o) => BitConverter.ToSingle(d, o);

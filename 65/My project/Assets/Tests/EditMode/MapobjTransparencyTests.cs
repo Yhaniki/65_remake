@@ -1411,6 +1411,45 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void RealData_Spotlight_Textures_Are_4bit_Banded_So_SpotGlow_Must_Smooth_Alpha()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            // ★「聚光燈很硬」的真正來源:DXT3 只有 4-bit alpha(16 階),光錐那種平滑衰減被量化成一圈一圈的
+            // 同心台階。shader 的 _Spread 只在光錐「外面」補一圈暈,救不了光錐自己的台階 —— 所以先前只調
+            // spread 完全沒有改善。ScreenGameplay 因此把去階梯(AlphaSmooth.Full)從只給 AlphaBlendOverlay
+            // 擴到 SpotGlow。這條測試釘住前提:這兩張貼圖的 alpha 真的是 4-bit 量化(全是 17 的倍數)。
+            foreach (var rel in new[] { "PK/GUANG1/DENGZHU_.DDS", "16/JIGUANG1/GUANG1_.DDS" })
+            {
+                var p = Path.Combine(root, rel);
+                if (!File.Exists(p)) { Assert.Ignore(rel + " 不在"); return; }
+                var d = File.ReadAllBytes(p);
+                Assert.AreEqual("DXT3", System.Text.Encoding.ASCII.GetString(d, 84, 4), rel);
+                int h = BitConverter.ToInt32(d, 12), w = BitConverter.ToInt32(d, 16);
+                var seen = new bool[256];
+                int bw = (w + 3) / 4, bh = (h + 3) / 4, levels = 0;
+                for (int b = 0; b < bw * bh; b++)
+                    for (int k = 0; k < 8; k++)
+                    {
+                        int ab = d[128 + b * 16 + k];
+                        foreach (var a4 in new[] { ab & 0xF, ab >> 4 })
+                        {
+                            int a = a4 * 17;
+                            if (!seen[a]) { seen[a] = true; levels++; }
+                        }
+                    }
+                Assert.LessOrEqual(levels, 16, rel + " 的 alpha 階數(4-bit 上限 16)");
+                Assert.GreaterOrEqual(levels, 5, rel + " 確實是漸層而非二值剪影,所以台階才看得出來");
+            }
+            // 而 SpotGlow 這條 render mode 就是觸發去階梯的旗標(ScreenGameplay 的 glowSmooth)。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0019", "GUANG1"));
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0016", "JIGUANG1"));
+        }
+
+        [Test]
         public void RealData_Scn0019_Spotlight_Texture_Is_A_Two_Cone_Atlas()
         {
             var root = MapobjDir();
