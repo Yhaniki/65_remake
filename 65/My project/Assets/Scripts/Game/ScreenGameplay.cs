@@ -274,6 +274,9 @@ namespace Sdo.Game
         private AudioClip _ambientClip;          // loaded ambient clip (null = this scene has no ambience)
         private float _nextAmbientAt = -1f;      // realtime when the next ambient one-shot may fire (<0 = not armed yet)
         private bool _started, _failed, _ended;
+        // HP 曾經歸零(一次性 latch,整首不再清除)。_failed = 「立刻中斷遊玩」,完奏模式不會設;_hpDead = 「這局死過」,
+        // 兩種模式都會設 —— 結算的 GAME OVER / 評分 F 看的是它,完奏模式打完整首照樣算輸。見 Update 的 HP-out 段。
+        private bool _hpDead;
         private double _songStartDspTime, _clockStart = -1;
         // The chart's music-start offset (type-10 音樂起止 marker) in seconds — the silent count-in the notes
         // scroll through before the audio comes in. This holds the MARKER ONLY (always >= 0); the hand-set
@@ -463,7 +466,9 @@ namespace Sdo.Game
         // OPTION 遊戲頁「遊戲特效」兩個勾選（FrontendApp 開局前設定）：關掉就不生對應特效。預設 true = 全開。
         public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
-        public bool playFullSong = false;   // 進階「無失敗模式」：HP 歸零不判失敗，整首照打(判定/舞蹈續行)到曲末，結算走正常名次(不出 GAME OVER)
+        // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打(判定/舞蹈續行)到曲末 —— 但死亡照算：從歸零那刻起分數凍結
+        // (P/C/B/M 判定統計仍繼續記錄)，結算一樣出 GAME OVER、評分 F。見 Update 的 HP-out 段與 _hpDead。
+        public bool playFullSong = false;
         // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖 cameraFixedIndex 那台，無開場運鏡)。
         public bool cameraAuto = true;
         public int cameraFixedIndex = 0;    // 固定視角鎖第幾台（0..FixedCamCount-1）＝上次在遊戲中用 F2 切到的那台
@@ -2684,7 +2689,7 @@ namespace Sdo.Game
         // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
         // stays readable after this GameObject is destroyed as long as the caller grabs the reference first.
         public bool Finished => _ended;          // song played out (or failed) — time to settle
-        public bool Failed => _failed;           // HP ran out
+        public bool Failed => _hpDead;           // HP ran out (完奏模式也算 —— 歌只是沒被切斷)
         public ScoreProcessor Score => _score;   // final judgement tallies + score (null only if Start() bailed early)
         // Set when the player confirms (OK / Enter / Esc) on the STATIS result panel. The front-end (FrontendApp)
         // polls this to know the run is fully done — Finished alone fires at song-end, BEFORE the win/lose pose +
@@ -4386,11 +4391,20 @@ namespace Sdo.Game
             UpdateClickFlash();
             UpdateFx(); UpdateHud();
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
-            // HP-out; it only ends naturally at the song's end (below). Normal mode still fails on HP-out.
-            // HP-out. Normally fails immediately (freezes judging + cuts to GAME OVER). playFullSong = 無失敗模式:
-            // the song stays fully playable to its natural end, no GAME OVER — but HP itself latches empty (HealthProcessor
-            // lockOnDeath), so a good run after HP-out no longer refills the bar; it stays dead until the song ends.
-            if (!showtimeMode && !playFullSong && _health != null && _health.IsFailed) _failed = true;
+            // HP-out; it only ends naturally at the song's end (below).
+            // HP-out (一次性 latch _hpDead):
+            //   • 一般模式:立刻 _failed —— 判定/舞蹈凍結,馬上切進 GAME OVER 結算。
+            //   • 完奏模式(playFullSong):歌不切斷,整首照打到曲末 —— 但「死了就是死了」:
+            //       (1) 分數就地凍結 (ScoreProcessor.FreezeScore) —— 之後打再好都不再加分;
+            //       (2) P/C/B/M 判定統計、combo、特效照常繼續累計(結算的判定數是整首的);
+            //       (3) HP 鎖在地板 (HealthProcessor lockOnDeath),不會被後面的 combo 補回來;
+            //       (4) 曲末結算一樣算 GAME OVER / 輸(見 EnterResult 的 _gameOver 與評分 F)。
+            if (!showtimeMode && !_hpDead && _health != null && _health.IsFailed)
+            {
+                _hpDead = true;
+                if (playFullSong) _score?.FreezeScore();
+                else _failed = true;
+            }
             // 結束判定:等「音樂播完」再 +1 秒才進結算動作,但加 10 秒上限避免長尾奏/長音檔等太久。
             //   notesEndMs = 最後一顆音符;musicEndMs = 音檔播完的譜面時間 (MusicCountInSec + clip.length)×1000
             //   (clip 起播被 offset 跳過一段不影響終點,終點恆為 clip.length)。
@@ -4418,7 +4432,7 @@ namespace Sdo.Game
             RebuildRoster();                                  // finalize scores so the rank/winner is current
             var (rank, _) = RankingBoard.LocalRank(_roster);
             _localWon = rank <= 1;                            // rank 1 = highest score = winner
-            _gameOver = _failed;                              // HP-out → GAME OVER (overrides win/lose banner)
+            _gameOver = _hpDead;                              // HP-out → GAME OVER (overrides win/lose banner);完奏模式打完整首也算
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
             SetTrackVisible(false);                           // note board + HP + receptors + click strips
@@ -4691,8 +4705,8 @@ namespace Sdo.Game
                 }
                 r.Rank = i + 1; r.Name = p.Name; r.IsLocal = p.IsLocal;
                 r.FullCombo = (r.Bad + r.Miss) == 0;
-                // HP-out (failed) → 評分 F for the local player; everyone else by accuracy band.
-                r.Grade = (p.IsLocal && _failed) ? "F" : Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
+                // HP-out (死過就算) → 評分 F for the local player; everyone else by accuracy band.
+                r.Grade = (p.IsLocal && _hpDead) ? "F" : Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
                 rows[i] = r;
             }
             return rows;

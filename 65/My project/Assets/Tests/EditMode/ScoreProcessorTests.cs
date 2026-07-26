@@ -147,6 +147,70 @@ namespace Sdo.Tests
             Assert.AreEqual(2, s.TotalJudged);
         }
 
+        // ---- FreezeScore（完奏模式：血用完後不再加分，但判定統計繼續記錄） ----
+
+        [Test]
+        public void FreezeScore_Stops_Score_But_Keeps_Counting_Judgements()
+        {
+            var s = new ScoreProcessor();
+            for (int i = 0; i < 20; i++) s.Apply(Judgment.Perfect);
+            long atDeath = s.Score;
+            long flatAtDeath = s.StandaloneScore;
+
+            s.FreezeScore();   // 血歸零
+            Assert.IsTrue(s.ScoreFrozen);
+
+            for (int i = 0; i < 30; i++) s.Apply(Judgment.Perfect);
+            s.Apply(Judgment.Cool); s.Apply(Judgment.Bad); s.Apply(Judgment.Miss);
+
+            Assert.AreEqual(atDeath, s.Score);              // 分數釘死在死亡當下
+            Assert.AreEqual(flatAtDeath, s.StandaloneScore);
+            Assert.AreEqual(50, s.PerfectCount);            // 判定統計照常累計
+            Assert.AreEqual(1, s.CoolCount);
+            Assert.AreEqual(1, s.BadCount);
+            Assert.AreEqual(1, s.MissCount);
+            Assert.AreEqual(53, s.TotalJudged);
+            Assert.AreEqual(51, s.MaxCombo);                // 連段也照常長（50 perfect + 1 cool 才被 bad 斷）
+        }
+
+        [Test]
+        public void FreezeScore_Later_Combo_Does_Not_Retroactively_Raise_Score()
+        {
+            // ServerScore = P*C（C 跟著 MaxCombo 長），所以「不加分」必須是快照：
+            // 死後把連段從 12 打到 68，先前那 12 個 perfect 的倍率也不能跟著漲。
+            var s = new ScoreProcessor();
+            for (int i = 0; i < 12; i++) s.Apply(Judgment.Perfect);
+            Assert.AreEqual(12L * 12, s.Score);
+
+            s.FreezeScore();
+            for (int i = 0; i < 100; i++) s.Apply(Judgment.Perfect);
+
+            Assert.AreEqual(12L * 12, s.Score);
+        }
+
+        [Test]
+        public void FreezeScore_Is_Idempotent()
+        {
+            var s = new ScoreProcessor();
+            for (int i = 0; i < 15; i++) s.Apply(Judgment.Perfect);
+            s.FreezeScore();
+            long frozen = s.Score;
+
+            for (int i = 0; i < 15; i++) s.Apply(Judgment.Perfect);
+            s.FreezeScore();   // 再凍一次不能重新取樣（否則死後的分數會被補進來）
+
+            Assert.AreEqual(frozen, s.Score);
+        }
+
+        [Test]
+        public void ScoreFrozen_Defaults_False_And_Score_Tracks_Play()
+        {
+            var s = new ScoreProcessor();
+            Assert.IsFalse(s.ScoreFrozen);
+            for (int i = 0; i < 12; i++) s.Apply(Judgment.Perfect);
+            Assert.AreEqual(12L * 12, s.Score);   // 沒凍結就照常加
+        }
+
         // ---- online server score (kept for hybrid path) ----
 
         [Test]

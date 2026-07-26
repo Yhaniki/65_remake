@@ -39,7 +39,7 @@ namespace Sdo.Settings
         public bool cameraAuto = true;       // 遊戲視角：true=默認(自動導播) / false=固定(第 cameraFixed 台)
         public int cameraFixed = 0;          // 固定視角用哪一台：0..5＝遊戲中 F2 循環的 6 台固定鏡頭。遊戲中按 F2 切鏡頭會寫回這裡
         public bool callCardInGame = true;   // 呼叫卡遊戲中顯示（預設開；暫未接功能）
-        public bool playFullSong = false;    // 進階「完奏模式」（原無失敗模式）：HP 歸零不判失敗，整首照打到曲末，結算走正常名次（不出 GAME OVER）
+        public bool playFullSong = false;    // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打到曲末；但血一空就不再加分（判定統計照記），結算仍算 GAME OVER／輸
         public bool songSpeed = true;        // 進階「歌曲變速」：true=譜面中途的 BPM 變化/SV 照樣改變 note 流速（預設，官方玩法）；false=整首固定流速（ScreenGameplay.constantScroll）
         public float panelOpacity = 1.4f;    // 面板透明度：note 面板 alpha 倍率(=boardAlpha)，範圍 0..1.4（1.4=官方＝上限）
 
