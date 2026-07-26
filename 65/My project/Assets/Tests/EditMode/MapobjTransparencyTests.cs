@@ -676,8 +676,10 @@ namespace Sdo.Tests
         [Test]
         public void SceneUvScroll_Scn0014_ProjectorBeams_Defer_To_Official_Flags()
         {
-            // 舞台中間的 GUANG 與旋轉電視射出的光都貼 TOUYINGGUANG_.DDS(亮 RGB + 幾乎全軟 alpha)→
-            // LooksLikeAdditiveGlow 誤判成加法 → 疊出一塊死白(使用者:「光沒去背」)。官方旗標說它是一般透明批。
+            // 舞台中間的 GUANG 與旋轉電視射出的光都貼 TOUYINGGUANG_.DDS(亮 RGB + 82% 軟 alpha),但壞法不同:
+            // GUANG 自己 14 頂點 → 非 volumetric → LooksLikeAdditiveGlow 勝出 → 加法疊成死白;電視那道光是 773 頂點
+            // submesh 裡的一個 range,而 volumetric 是逐 SUBMESH 算的 → cutout 勝過加法 → 12 個三角形的光柱被
+            // clip(a-0.5) 切成硬邊。兩種都讀作「光沒去背」,官方旗標(都是 1 = 透明批)一次修掉兩種。
             foreach (var key in new[] { "GUANG", "TV" })
                 Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha,
                     SceneMapobjUvScrollCatalog.FindRenderMode("SCN0014", key), key);
@@ -721,7 +723,8 @@ namespace Sdo.Tests
             var speed = SceneMapobjUvScrollCatalog.Find("SCN0025", "CHUNTIANDONGHUA");
             Assert.AreEqual(0f, speed.x, 1e-6f);
             Assert.AreEqual(1.0f, speed.y, 1e-6f);
-            // 水的官方旗標是 0x11(透明批);啟發式把它當加法輝光 → 噴出來的水變成死白一片。
+            // 水的官方旗標是 0x11(透明批)。它 227 頂點、包圍盒 364×109×358 → volumetric,所以跟電視那道光一樣
+            // 走 alpha-test:SHUI_C_ 只有 33% 的 texel 過得了 clip(a-0.5),RGB 又近乎純白 → 死白一片的硬邊水花。
             Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha,
                 SceneMapobjUvScrollCatalog.FindRenderMode("SCN0025", "CHUNTIANDONGHUA"));
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0025", "CHUNTIANDONGHUA"));

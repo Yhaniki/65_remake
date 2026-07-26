@@ -102,9 +102,15 @@ namespace Sdo.Game
             new Target("SCN0022", "SHEGUANG2", -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
             new Target("SCN0022", "SHEGUANG3", -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
             // SCN0014 海底 projector beams (TOUYINGGUANG_.DDS): the stage-centre GUANG prop and the beam material
-            // inside the spinning TV prop. Their DXT3 is a bright (meanLum 186) mostly-soft-alpha glow, so
-            // LooksLikeAdditiveGlow classes them additive → the overlapping beam quads saturate to a solid white
-            // blob ("光沒去背"). The OFFICIAL material flags say otherwise: GUANG mat0 = 1 and TV mat1 = 1
+            // inside the spinning TV prop. Both were wrong before, but by DIFFERENT heuristics — the texture is a
+            // bright (meanLum 186) 82%-soft-alpha glow, and NewMapobjMat's ternary is
+            // `alpha && additiveGlow && !cutout ? additive : cutout ? alpha-test : ...`:
+            //   • GUANG = its own 14-vertex mesh → not volumetric → additiveGlow WINS → additive, and the overlapping
+            //     beam quads saturate to a solid white blob.
+            //   • TV's beam = ONE range inside a 773-vertex submesh whose bounds are 298×262×452, and `volumetric`
+            //     is computed PER-SUBMESH (outside the range loop) → cutout WINS over additive for every range that
+            //     has alpha → the 12-triangle beam got clip(a-0.5)+ZWrite On, i.e. a hard speckled edge.
+            // Both read as "光沒去背". The OFFICIAL material flags cut through both: GUANG mat0 = 1 and TV mat1 = 1
             // (transparent batch = standard alpha blend), while TV's zhuanpan/gangjia/tv/touyingji_c are all 0
             // (opaque). Per-material so only the beam changes.
             // GUANG additionally SPINS: it is the 7th (U, 4×) target of FUN_004b0330 — see BeamSpinU. Its .mot only
@@ -113,7 +119,9 @@ namespace Sdo.Game
             new Target("SCN0014", "GUANG", -1, BeamSpinU, RenderMode.OfficialMaterialAlpha),
             new Target("SCN0014", "TV", -1, Vector2.zero, RenderMode.OfficialMaterialAlpha),
             // SCN0025 春天 fountain water (CHUNTIANDONGHUA / SHUI_C_.DDS, official flags = 0x11 → transparent batch):
-            // same additive false positive (meanLum 252, 98% soft alpha) painted the fountain as a solid white splash.
+            // 227 verts / bounds 364×109×358 → volumetric, so like the TV beam it took the alpha-TEST branch, not the
+            // additive one. Only 33% of SHUI_C_'s texels survive clip(a-0.5) and its RGB is near-white (meanLum 252,
+            // 98% soft alpha), so the fountain rendered as a hard speckled white splash instead of flowing water.
             // It also FLOWS: FUN_004b0d20's last block sets texture-transform U=0, V += _DAT_00589044 (=0.05) every
             // 50 ms ⇒ +1.0 UV/s in V, wrapping at 1.0. Positive sign copied verbatim (like SCN0015's window beam).
             new Target("SCN0025", "CHUNTIANDONGHUA", -1, new Vector2(0f, 1.0f), RenderMode.OfficialMaterialAlpha),
