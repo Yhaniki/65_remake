@@ -324,6 +324,9 @@ namespace Sdo.Game
         private AudioClip _ambientClip;          // loaded ambient clip (null = this scene has no ambience)
         private float _nextAmbientAt = -1f;      // realtime when the next ambient one-shot may fire (<0 = not armed yet)
         private bool _started, _failed, _ended;
+        // HP 曾經歸零(一次性 latch,整首不再清除)。_failed = 「立刻中斷遊玩」,完奏模式不會設;_hpDead = 「這局死過」,
+        // 兩種模式都會設 —— 結算的 GAME OVER / 評分 F 看的是它,完奏模式打完整首照樣算輸。見 Update 的 HP-out 段。
+        private bool _hpDead;
         private double _songStartDspTime, _clockStart = -1;
         // The chart's music-start offset (type-10 音樂起止 marker) in seconds — the silent count-in the notes
         // scroll through before the audio comes in. This holds the MARKER ONLY (always >= 0); the hand-set
@@ -513,7 +516,9 @@ namespace Sdo.Game
         // OPTION 遊戲頁「遊戲特效」兩個勾選（FrontendApp 開局前設定）：關掉就不生對應特效。預設 true = 全開。
         public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
-        public bool playFullSong = false;   // 進階「無失敗模式」：HP 歸零不判失敗，整首照打(判定/舞蹈續行)到曲末，結算走正常名次(不出 GAME OVER)
+        // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打(判定/舞蹈續行)到曲末 —— 但死亡照算：從歸零那刻起分數凍結
+        // (P/C/B/M 判定統計仍繼續記錄)，結算一樣出 GAME OVER、評分 F。見 Update 的 HP-out 段與 _hpDead。
+        public bool playFullSong = false;
         // 無理短長條 → 一般 note（預設開；OPTION 尚未接 UI，先由 GameplaySettings.collapseShortHolds / config.ini 灌進來）：
         // 載譜後把長度短於 180 BPM 16 分音符 (OsuBeatmap.ShortHoldMaxMs ≈83ms) 的 long note 收成單顆 note，見 LoadChart。
         // 這開關只管**外部轉檔譜**(chartFormat 1/2/4 = osu/sm/mc)：官方 k.gn (chartFormat 0) 與 .gn 歌曲包 (3) 是
@@ -1640,9 +1645,12 @@ namespace Sdo.Game
             var gf = new List<Sprite>(); for (int i = 1; i <= 6; i++) { var s = SdoExtracted.Eft("GO0" + i + ".PNG"); if (s != null) gf.Add(s); } _goFrames = gf.ToArray(); // GO01..GO06 only
             LoadEmojiArt();   // head-emoji cut-in PNG sequences (UI/PLAYINGEXP)
             // EFT_HIT bursts are opaque-on-black -> additive blending so black reads as transparent glow.
-            // The Particles/Additive shader's _MainTex is NOT [PerRendererData], so SpriteRenderers SHARING one
-            // material all sample the last-written sprite -> bursts cross-bleed & jitter. Each burst clones its
-            // OWN instance of this template (see SpawnBurst) so every burst animates independently.
+            // SpriteRenderers SHARING one custom material instance all sample the last-written sprite -> bursts
+            // cross-bleed & jitter. Each burst clones its OWN instance of this template (see SpawnBurst) so every burst
+            // animates independently. (This is NOT a [PerRendererData] question — measured on 6000.4.11f1, a shared
+            // instance of Sprites/Default bleeds identically even though it does tag _MainTex that way. The rule is:
+            // one material instance may only serve renderers drawing the SAME texture; no material at all is safe.
+            // See SdoExtracted.PremultSpriteMaterial — the 結算 panel shipped this exact bug once.)
             var sh = Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Sprites/Default");
             _addMat = new Material(sh);
             // HP glow gets its OWN clip-capable additive instance: same look as Particles/Additive, plus a world-X
@@ -2841,6 +2849,9 @@ namespace Sdo.Game
         private bool _camReady;                        // director shots loaded
         private float _camSwitchTime;                  // F2 label/timing only
         private Camera _sceneCam;
+        private RenderTexture _sceneRT;                // the stage backdrop RT (window-shaped; see MaintainSceneRt)
+        private RtResizeTracker _sceneRtTrack;         // debounced window-resize → RT re-allocation
+        public float sceneSupersample = RtSizing.DefaultSupersample;   // set to 1 to render at window-native resolution
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
         // 飛行翅膀跳舞抬升:flystay 浮空 idle 靠自身 pose 已浮 Δ,dance 貼地 → 跳舞時把 root 抬 Δ,讓跳舞與 fly idle 同高。
@@ -2906,7 +2917,7 @@ namespace Sdo.Game
         // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
         // stays readable after this GameObject is destroyed as long as the caller grabs the reference first.
         public bool Finished => _ended;          // song played out (or failed) — time to settle
-        public bool Failed => _failed;           // HP ran out
+        public bool Failed => _hpDead;           // HP ran out (完奏模式也算 —— 歌只是沒被切斷)
         public ScoreProcessor Score => _score;   // final judgement tallies + score (null only if Start() bailed early)
         // Set when the player confirms (OK / Enter / Esc) on the STATIS result panel. The front-end (FrontendApp)
         // polls this to know the run is fully done — Finished alone fires at song-end, BEFORE the win/lose pose +
@@ -3092,6 +3103,9 @@ namespace Sdo.Game
             // material path — they must NOT pulse in lockstep). See BoxFloorPattern / BoxFloorAnimator.
             if (instances.Length == BoxFloorPattern.Tiles && baseName.ToUpperInvariant() == "BOX" && SceneFolder().ToUpperInvariant() == "SCN0003")
             { SpawnBoxFloor(dir, r, hrc, instances); return; }
+            // SCN0006 遊樂場拱門: 72 顆燈泡跑馬燈,同樣需要「每顆自己的 material」。見 ArchDengMarquee。
+            if (instances.Length == ArchDengMarquee.Bulbs && baseName.ToUpperInvariant() == "DENG" && SceneFolder().ToUpperInvariant() == "SCN0006")
+            { SpawnArchDeng(dir, r, hrc, instances); return; }
             // motFile may be null (static prop — e.g. SCN0010 house): skinned to the bind pose once, then frozen.
             // motRelDir lets the .mot live in a different tree than the mesh (scene NPCs: mesh in AVATAR/, .mot in MOTION/).
             MotLoader mot = string.IsNullOrEmpty(motFile) ? null : LoadAsset((motRelDir ?? relDir) + "/" + motFile, b => MotLoader.Load(b));
@@ -3143,13 +3157,23 @@ namespace Sdo.Game
             // Glow props flagged AlphaBlendOverlay (SCN0022 sheguang searchlight) have a banded DXT3 alpha → smooth it so
             // the beam gradient doesn't show concentric "tree-ring" steps (年輪). FULL strength: the beam is a pure gradient
             // with no detail to protect, so flatten every step (the ghost uses PreserveDetail to keep its face). Scoped.
-            var glowSmooth = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName)
-                              == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay
+            // SpotGlow 也要去階梯:DXT3 只有 4-bit alpha(16 階),光錐那種平滑衰減會被量化成一圈一圈的
+            // 同心台階,邊緣讀起來就是硬的 —— 實測 SCN0019 的 dengzhu_.dds 只有 14 個相異 alpha 值、
+            // SCN0016 的 guang1_.dds 只有 12 個,而且全是 17 的倍數(= 純 4-bit 量化)。這才是「聚光燈很硬」
+            // 的來源;shader 的 _Spread 只在光錐「外面」補一圈暈,救不了光錐自己的台階,所以先前調 spread
+            // 完全沒有改善。
+            var glowMode = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName);
+            var glowSmooth = glowMode == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay ||
+                             glowMode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow
                               ? DdsLoader.AlphaSmooth.Full : DdsLoader.AlphaSmooth.None;
             var subMats = new List<Material[]>(r.Submeshes.Count);
+            // official per-material flags (MSH record +0x194), parallel to subMats — RenderMode.OfficialMaterialAlpha
+            // consults them so a multi-material prop only re-blends the materials the artist marked transparent.
+            var subMatFlags = new List<uint[]>(r.Submeshes.Count);
             foreach (var sub in r.Submeshes)
             {
                 Material[] mats;
+                uint[] flags;
                 // Only the rigid no-weight stage props (billboards / decals / glows — corals, lights, banners,
                 // ground decals) take the alpha-blend treatment; SKINNED props (GUATAN platform, MAO cats) keep the
                 // opaque path verbatim so the validated scenes don't regress. (All the reported "沒去背" props are rigid.)
@@ -3170,10 +3194,12 @@ namespace Sdo.Game
                 if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
                 {
                     mats = new Material[sub.Ranges.Count];
+                    flags = new uint[sub.Ranges.Count];
                     for (int s = 0; s < sub.Ranges.Count; s++)
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
+                        flags[s] = (sub.MatFlags != null && a >= 0 && a < sub.MatFlags.Length) ? sub.MatFlags[a] : sub.DdsFlags;
                         var tex = ResolveDds(dir, nm, out bool a2, out bool glow2, out bool hc2, glowSmooth);
                         // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯): a
                         // moving alpha-blend banner has no ZWrite, so its folds + the scene behind bleed through ("穿模").
@@ -3185,8 +3211,10 @@ namespace Sdo.Game
                     var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1, out bool hc1, glowSmooth);
                     // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯) — see above.
                     mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && (volumetric || (animated && hc1)), a1 && !opaque && singleSidedAlpha, glow1) };
+                    flags = new[] { sub.DdsFlags };
                 }
                 subMats.Add(mats);
+                subMatFlags.Add(flags);
             }
 
             // SCN0021 saloon ceiling light bars: the 12 deng meshes are NOT independently animated — they share ONE
@@ -3288,22 +3316,50 @@ namespace Sdo.Game
             var renderMode = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName);
             if (renderMode != SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial)
             {
-                foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) ApplyMapobjRenderMode(m, renderMode);
+                // OfficialMaterialAlpha is PER-MATERIAL: only the materials the artist flagged transparent get
+                // re-blended (SCN0014 TV = beam only, its screen/frame/projector stay opaque). Every other mode keeps
+                // the historical prop-wide behaviour.
+                for (int si = 0; si < subMats.Count; si++)
+                {
+                    var ms = subMats[si]; if (ms == null) continue;
+                    var fl = si < subMatFlags.Count ? subMatFlags[si] : null;
+                    for (int mi = 0; mi < ms.Length; mi++)
+                    {
+                        if (ms[mi] == null) continue;
+                        if (!SceneMapobjUvScrollCatalog.AppliesToMaterial(renderMode, fl != null && mi < fl.Length ? fl[mi] : 0u)) continue;
+                        ApplyMapobjRenderMode(ms[mi], renderMode);
+                    }
+                }
                 Debug.Log($"[mapobj] {baseName}: render-mode {renderMode}");
+            }
+
+            // Explicit render-queue override (Target.Queue). Separate from the render MODE because it answers a
+            // different question — not "how is it blended" but "who wins when it overlaps the stage". SCN0004's
+            // sea/shore water must sit BEHIND the huts and the pier: pushing a ZWrite-off transparent prop before
+            // the stage's AlphaTest pass (2450) means the stage is drawn afterwards and simply paints over it
+            // wherever the stage has geometry. MUST run AFTER ApplyMapobjRenderMode — assigning Material.shader
+            // resets a custom renderQueue back to the shader's default, so setting it earlier would be undone.
+            if (SceneMapobjUvScrollCatalog.TryFindTarget(SceneFolder(), baseName, out var queueTarget) && queueTarget.Queue > 0)
+            {
+                foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) m.renderQueue = queueTarget.Queue;
+                Debug.Log($"[mapobj] {baseName}: render-queue {queueTarget.Queue}");
             }
 
             // UV-scroll (the original streams texture coords on some props): e.g. SCN0014 corals scroll V so their glow
             // marquees. Drive the shared submesh materials' main-tex offset. Needs Repeat wrap (DdsLoader sets it).
-            Vector2 uvScroll = SceneMapobjUvScrollCatalog.Find(SceneFolder(), baseName);
-            if (uvScroll != Vector2.zero)
+            // Motion is per-entry: most props stream linearly, but SCN0004's sea/wave ROCK (sine) and the
+            // SCN0012/0013 ad boards + SCN0029 screen HOLD-then-WIPE (dwell-step). Entries that exist only to carry
+            // a RenderMode (SCN0016 JIGUANG, SCN0022 SHEGUANG, SCN0024 DONGHUA) report Animates == false and are skipped.
+            if (SceneMapobjUvScrollCatalog.TryFindTarget(SceneFolder(), baseName, out var uvTarget) && uvTarget.Animates)
             {
                 var scrollMats = new List<Material>();
                 foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) scrollMats.Add(m);
                 if (scrollMats.Count > 0)
                 {
                     var holder = new GameObject(baseName + "_uvscroll");
-                    holder.AddComponent<MapobjUvScroll>().Init(scrollMats.ToArray(), uvScroll);
-                    Debug.Log($"[mapobj] {baseName}: uv-scroll {uvScroll}");
+                    holder.AddComponent<MapobjUvScroll>().Init(scrollMats.ToArray(), uvTarget);
+                    Debug.Log($"[mapobj] {baseName}: uv-{uvTarget.Motion} speed={uvTarget.Speed} " +
+                              $"amp={uvTarget.Amplitude} step={uvTarget.Step} dwell={uvTarget.DwellMs}ms");
                 }
             }
 
@@ -3338,7 +3394,8 @@ namespace Sdo.Game
                         // rotating non-uniform-scale prop (the spinning DING wheel went elliptical/變形); baking the full
                         // matrix is faithful for any matrix and identical for uniform-scale props (sea screen / trees).
                         AddMapobjMeshChild(parent.transform, baseName + "_mesh", bakeMesh, subMats[s]);
-                        avatar.AddBoneMeshBaker(bone, bakeMesh, src, ShouldApplyRigidBindScale(srcMesh, hrc.BindWorld[bone].lossyScale));
+                        avatar.AddBoneMeshBaker(bone, bakeMesh, src,
+                            ShouldApplyRigidBindScale(SceneFolder(), baseName, srcMesh, hrc.BindWorld[bone].lossyScale));
                     }
                     SetLayerRecursive(parent, SceneLayer);
                 }
@@ -3380,6 +3437,7 @@ namespace Sdo.Game
                 return;
             }
 
+            var placed = new List<Transform>(instances.Length);   // for the position-scroll driver below
             for (int idx = 0; idx < instances.Length; idx++)
             {
                 var parent = new GameObject($"{baseName}_{idx}");
@@ -3414,8 +3472,113 @@ namespace Sdo.Game
                     foreach (var sub in r.Submeshes) AddMapobjMeshChild(parent.transform, baseName + "_mesh", sub.Mesh, subMats[si++]);
                 }
                 SetLayerRecursive(parent, SceneLayer);
+                placed.Add(parent.transform);
             }
+            // Props the original SLIDES every tick (SCN0010 花車's two street-front HOUSEs loop past the parade).
+            // Nothing else in the remake moves a prop's transform without a .mot, so it gets its own tiny driver.
+            var posScroll = SceneMapobjPositionScrollCatalog.Find(SceneFolder(), baseName);
+            if (posScroll != null && placed.Count == posScroll.Start.Length)
+            {
+                var holder = new GameObject(baseName + "_posscroll");
+                holder.AddComponent<MapobjPositionScroll>()
+                      .Init(placed.ToArray(), posScroll.Start, posScroll.Axis, posScroll.Step,
+                            posScroll.TickMs, posScroll.WrapAt, posScroll.WrapTo);
+                Debug.Log($"[mapobj] {baseName}: position-scroll {posScroll.PerSecond:0.###}/s, lap {posScroll.LapSeconds:0.##}s");
+            }
+            else if (posScroll != null)
+                Debug.LogWarning($"[mapobj] {baseName}: position-scroll expects {posScroll.Start.Length} instance(s), got {placed.Count}");
             Debug.Log($"[mapobj] {baseName}: {instances.Length}× {(animated ? "animated(shared)" : hrc != null ? "static-skinned" : "static")}, {(hrc != null ? hrc.Names.Length + " bones" : "no skel")}");
+        }
+
+        // SCN0001 新天地 的兩面霓虹招牌。每個字是 SCENE.MSH 裡獨立的一個材質/range,所以逐字綁定就是
+        // 「照材質名找到那個 submesh」—— SceneLoader.Result.MaterialNames 就是為此存在。
+        // 亮版 = SceneLoader 原本建好的 material(貼圖就是材質名那張);暗版另外複製一份,換上少一條底線的
+        // DDS,並照官方切成 alpha-test GREATER 160 的 cutout(官方暗態是關混色 + alphatest ref 160,
+        // 只留最亮的核心;只換貼圖不換狀態的話,暗版的外暈殘影會糊在招牌上)。
+        private void SpawnNeonSigns(MeshRenderer mr, SceneLoader.Result res, string dir)
+        {
+            var signs = SceneNeonSignCatalog.ForFolder(SceneFolder());
+            if (signs.Count == 0 || mr == null || res.MaterialNames == null) return;
+            var cutout = Shader.Find("Sdo/SceneVertexCutout");
+            SceneNeonSign driver = null;
+            int bound = 0;
+            foreach (var sign in signs)
+            {
+                var idx = new int[sign.Length];
+                var lit = new Material[sign.Length];
+                var dark = new Material[sign.Length];
+                bool ok = true;
+                for (int i = 0; i < sign.Length && ok; i++)
+                {
+                    idx[i] = System.Array.FindIndex(res.MaterialNames,
+                        n => string.Equals(n, sign.LitDds[i], System.StringComparison.OrdinalIgnoreCase));
+                    if (idx[i] < 0) { Debug.LogWarning($"[neon] {SceneFolder()}: 找不到材質 {sign.LitDds[i]}"); ok = false; break; }
+                    lit[i] = res.Materials[idx[i]];
+                    var darkTex = ResolveDds(dir, sign.DarkDds[i]);
+                    if (darkTex == null) { Debug.LogWarning($"[neon] 缺暗版貼圖 {sign.DarkDds[i]}"); ok = false; break; }
+                    dark[i] = new Material(lit[i]) { name = "neon_dark_" + sign.DarkDds[i], mainTexture = darkTex };
+                    if (cutout != null) dark[i].shader = cutout;
+                    if (dark[i].HasProperty("_Cutoff")) dark[i].SetFloat("_Cutoff", 160f / 255f);   // 官方 ALPHAREF 0xA0
+                }
+                if (!ok) continue;
+                if (driver == null) driver = new GameObject("NeonSigns").AddComponent<SceneNeonSign>();
+                driver.AddSign(mr, idx, lit, dark);
+                bound++;
+            }
+            if (driver != null)
+                Debug.Log($"[neon] {SceneFolder()}: {bound}/{signs.Count} 面招牌接上 (blink {SceneNeonSign.BlinkMs}ms / wipe {SceneNeonSign.WipeMs}ms)");
+        }
+
+        // SCN0006 遊樂場 拱門燈泡: 72 個 placement 各自一份 material,交給一個共用的 ArchDengMarquee 驅動。
+        // 為什麼要特例:一般的 placement 迴圈讓所有 instance 共用同一組 material,而跑馬燈的定義就是
+        // 「這一 tick 第 12 顆亮、第 13 顆暗」—— 共用材質根本表達不出來。與 SCN0003 的 BoxFloor 同一種處理。
+        // 燈泡是 4 頂點的平面 quad,靠自己 HRC leaf 的 bind-world 擺到拱門上,所以先把 bind 烘進共用 mesh
+        // (和 BoxFloor 一樣;不烘的話 72 顆會全部疊在原點)。
+        private void SpawnArchDeng(string dir, MshLoader.Result r, HrcLoader hrc, MapobjInstance[] instances)
+        {
+            var dim = ResolveDds(dir, "1.dds", out bool dimAlpha, out bool dimGlow, out _);
+            var lit = ResolveDds(dir, "2_.dds");
+            if (dim == null || lit == null)
+            {
+                Debug.LogWarning($"[mapobj] ArchDeng: 少了貼圖 (1.dds={dim != null}, 2_.dds={lit != null}) — 退回一般路徑");
+                return;
+            }
+            var mesh = r.Submeshes[0].Mesh;
+            if (hrc != null && hrc.BindWorld != null)
+            {
+                int[] leaves = HrcLeafBones(hrc);
+                if (leaves.Length > 0)
+                {
+                    Matrix4x4 m = hrc.BindWorld[leaves[0]];
+                    if (!m.isIdentity)
+                    {
+                        var vts = mesh.vertices;
+                        for (int i = 0; i < vts.Length; i++) vts[i] = m.MultiplyPoint3x4(vts[i]);
+                        mesh.vertices = vts; mesh.RecalculateBounds();
+                    }
+                }
+            }
+            var holder = new GameObject("DENG_marquee");
+            var marquee = holder.AddComponent<ArchDengMarquee>();
+            marquee.SetFrames(dim, lit);
+            var fallbackCol = new Color(0.72f, 0.70f, 0.66f);
+            int n = Mathf.Min(instances.Length, ArchDengMarquee.Bulbs);
+            for (int idx = 0; idx < n; idx++)
+            {
+                var go = new GameObject("DENG_" + idx);
+                go.transform.SetParent(holder.transform, false);
+                go.transform.localPosition = instances[idx].Pos;
+                go.transform.localScale = Vector3.one * instances[idx].Scale;
+                go.AddComponent<MeshFilter>().mesh = mesh;
+                // 每顆燈自己一份 material — 這正是特例存在的理由。1.dds/2_.dds 都是 32×32 DXT3 帶 alpha 的
+                // 小燈泡,走一般的 alpha-blend 判定即可(平面 4 頂點 → 不是 volumetric,不會被判成 cutout)。
+                var mat = NewMapobjMat(lit, fallbackCol, dimAlpha, false, false, dimGlow);
+                go.AddComponent<MeshRenderer>().sharedMaterial = mat;
+                marquee.Register(idx, new[] { mat });
+            }
+            SetLayerRecursive(holder, SceneLayer);
+            Debug.Log($"[mapobj] DENG arch marquee: {n}/{instances.Length} bulbs, {ArchDengMarquee.IntervalMs}ms, " +
+                      $"groups {ArchDengMarquee.GroupACount}%{ArchDengMarquee.GroupACount + 3} + {ArchDengMarquee.GroupBCount}%{ArchDengMarquee.GroupBCount + 3}");
         }
 
         // SCN0003 disco floor: place the box tile mesh at all 256 instance transforms, each with its OWN opaque
@@ -3531,6 +3694,15 @@ namespace Sdo.Game
                 // it further so the overall opacity can be tuned without touching the DDS asset.
                 if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, 0.2f);
             }
+            else if (mode == SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha)
+            {
+                // The artist flagged this material transparent (MSH +0x194 & 0x3f). The engine has ONE transparent
+                // mode — standard SrcAlpha/InvSrcAlpha at full texture alpha — so drop whatever the heuristics chose
+                // (additive glow / alpha-test cutout) for the plain instanced alpha-blend material.
+                var shader = Shader.Find("Sdo/UnlitInstancedAlpha");
+                if (shader != null) mat.shader = shader;
+                if (mat.HasProperty("_Color")) mat.color = Color.white;
+            }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow)
             {
                 // Soft searchlight beam (SCN0016 spotlights): additive shader that blurs the texture along its
@@ -3553,8 +3725,19 @@ namespace Sdo.Game
             else if (mats != null && mats.Length > 1) mr.sharedMaterials = mats;
         }
 
-        private static bool ShouldApplyRigidBindScale(Mesh mesh, Vector3 bindScale)
+        // Props whose bind/.mot scale IS the effect and must survive the generic guard below. Scene folder + mesh
+        // base name (both upper-invariant), so the exception can never leak to a same-named prop in another scene.
+        //   SCN0024/DONGHUA — 雪景的探照燈。它是一片 94×443.5 的光錐 quad,長軸(local Z)被 HRC rest bind 與
+        //     .mot 的常數 scale key 同時拉長 ×3.93,那個拉長「就是光柱本身」。通用防呆會丟掉它(maxScale 3.88 > 2,
+        //     且 mesh 443 單位不小於 80),結果只剩一截 453 單位的短樁埋在背景建築裡 —— 使用者看到的「探照燈沒做出來」。
+        //     只放行這一支:整條規則放寬會一併改到 17_DITIE/SKY(×18.7)與 FIFA_QIUBEI(×2.17),那兩個現在是對的。
+        private static bool IsRigidBindScaleException(string folder, string baseName) =>
+            string.Equals(folder, "SCN0024", System.StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(baseName, "DONGHUA", System.StringComparison.OrdinalIgnoreCase);
+
+        private static bool ShouldApplyRigidBindScale(string folder, string baseName, Mesh mesh, Vector3 bindScale)
         {
+            if (IsRigidBindScaleException(folder, baseName)) return true;
             if (mesh == null) return true;
             if (HasSeparatedOpposingFaces(mesh)) return true;
 
@@ -3693,6 +3876,8 @@ namespace Sdo.Game
                 go.AddComponent<MeshFilter>().mesh = res.Mesh;
                 go.AddComponent<MeshRenderer>().sharedMaterials = res.Materials;
                 ApplySceneMaterialUvScroll(SceneFolder(), res.Materials, res.MaterialIds);
+                SpawnNeonSigns(go.GetComponent<MeshRenderer>(), res, dir);   // SCN0001 兩面招牌的逐字閃爍
+                _pendingLensFlareDir = SceneLensFlareCatalog.Has(SceneFolder()) ? dir : null;   // SCN0004 太陽光斑
                 b = res.Mesh.bounds;
                 // render at NATIVE SDO world coords (no lift). The .cv cameras + the avatar dance spot (_avatarChest)
                 // are authored in this same space with the dancer standing on the native floor, so they line up.
@@ -3706,11 +3891,16 @@ namespace Sdo.Game
 
             // Perspective camera renders the stage(+avatar, same layer) to a RenderTexture; a full-screen background
             // quad in the main ortho cam shows that RT (reliably displays; depth-stacked cameras came out all-black).
-            // Size the RT to the on-screen 4:3 region (≈1:1 at fullscreen instead of upscaling a flat 800×600) and give
-            // it 4× MSAA, so the 3D avatar/stage edges stay smooth fullscreen rather than jagged.
-            int rtH = Mathf.Clamp(Screen.height, 600, 1600);
-            int rtW = Mathf.RoundToInt(rtH * (4f / 3f));
+            // The RT is WINDOW-shaped and oversampled (RtSizing) — sizing it 4:3 (the old height×4/3) made it narrower
+            // than the pixels the Stretch-mode quad spreads it over, so the stage/avatar got magnified horizontally.
+            // The 4:3 projection is pinned below instead of being inferred from the RT shape. 4× MSAA on top keeps the
+            // avatar/stage edges smooth. Re-allocated on window resize by MaintainSceneRt().
+            RtSizing.SlotRtSize(Screen.width, Screen.height, RtSizing.LogicalW, RtSizing.LogicalH,
+                                sceneSupersample, out int rtW, out int rtH);
             var sceneRT = new RenderTexture(rtW, rtH, 24) { name = "sceneRT", antiAliasing = 4, filterMode = FilterMode.Bilinear };
+            _sceneRT = sceneRT;
+            _sceneRtTrack.Reset(Screen.width, Screen.height);
+            Debug.Log($"[scene] backdrop RT {rtW}x{rtH} (window {Screen.width}x{Screen.height}, ss={sceneSupersample:0.##})");
             var camGo = new GameObject("SceneCam") { layer = sceneLayer };
             var cam = camGo.AddComponent<Camera>();
             cam.orthographic = false; cam.fieldOfView = 45f;
@@ -3774,6 +3964,28 @@ namespace Sdo.Game
             };
             _backdropMat = new Material(Shader.Find("Unlit/Texture")) { mainTexture = sceneRT };
             quad.AddComponent<MeshRenderer>().sharedMaterial = _backdropMat;
+            SpawnLensFlare(quad.layer);
+        }
+
+        // SCN0004 太陽的鏡頭光斑鏈。畫在合成 quad(z=90)前面的 z=89，也就是「3D 場景之後、2D HUD 之前」——
+        // 與官方 Gameplay_PostRender 的呼叫位置等價(HUD 在另一台相機，之後才畫)。
+        private string _pendingLensFlareDir;
+        private void SpawnLensFlare(int backdropLayer)
+        {
+            if (string.IsNullOrEmpty(_pendingLensFlareDir)) return;
+            var atlas = SceneLensFlare.LoadAtlas(_pendingLensFlareDir);
+            if (atlas == null) { Debug.LogWarning("[flare] 缺 LENSFLARE.BMP: " + _pendingLensFlareDir); return; }
+            // 一定要用 _sceneCam(渲染到 sceneRT 的那台舞台相機)。掃 Camera.allCameras 取第一台透視相機
+            // 會抓到別的東西 —— 實測抓到一台停在 (0,34,3794) 朝 +Z 的相機，太陽在它正後方 177.8°，
+            // 於是可見性判定永遠不過、光斑一次都沒畫出來。
+            var stage = _sceneCam;
+            if (stage == null) { Debug.LogWarning("[flare] _sceneCam 還沒建立"); return; }
+            var go = new GameObject("SunLensFlare");
+            var lf = go.AddComponent<SceneLensFlare>();
+            lf.Init(stage, atlas, backdropLayer);
+            if (!string.IsNullOrEmpty(DevVar("SDO_FLARE_DIAG"))) lf.DiagEverySec = 1f;
+            Debug.Log($"[flare] {SceneFolder()}: {SceneLensFlare.Elements.Length} 顆光斑, 壽命 {lf.LifetimeSec}s (官方 10s 後永遠消失)");
+            _pendingLensFlareDir = null;
         }
 
         private static Sprite _piyoriSprite;
@@ -3964,6 +4176,11 @@ namespace Sdo.Game
         // ---- head emoji cut-ins (UI/PLAYINGEXP) -------------------------------------------------------------------
         private static readonly string PlayingExpDir = Path.Combine(SdoExtracted.Root, "UI", "PLAYINGEXP");
 
+        // The frames were AUTHORED 64×64; the shipped PNGs may be an hq3x upscale (192×192, tools/upscale_playingexp.py).
+        // LoadImageAtDesignWidth pins pixelsPerUnit to tex.width/64, so a 192px frame draws at the SAME world size as
+        // the 64px original — only sharper. Never hard-code 1 here or an upscaled set would pop out 3× too big.
+        private const int EmojiDesignPx = 64;
+
         // Load a <prefix>NNN.PNG sequence (000..count-1) as sprites. Cut-ins hold each frame 50ms and last ~4s, so the
         // short sequence loops (PlayingEmoji does the looping); we just load the frames once here.
         // bleed:true dilates the transparent-WHITE matte — these frames store a (255,255,255) matte with HARD binary
@@ -3973,7 +4190,8 @@ namespace Sdo.Game
             var arr = new List<Sprite>(count);
             for (int i = 0; i < count; i++)
             {
-                var s = SdoExtracted.LoadImage(PlayingExpDir, $"{prefix}{i:D3}.PNG", bleed: true);
+                var s = SdoExtracted.LoadImageAtDesignWidth(PlayingExpDir, $"{prefix}{i:D3}.PNG", EmojiDesignPx,
+                                                            bleed: true, mip: true);
                 if (s != null) arr.Add(s);
             }
             return arr.Count > 0 ? arr.ToArray() : null;
@@ -4312,9 +4530,24 @@ namespace Sdo.Game
         // 舊名保留(F4 面板/觀察模式在用):現在等同「改流速」,音樂會跟著變 —— 以前只動 timeScale,音樂照原速播,是會走音的。
         private void SetTimeScale(float s) => SetGameRate(s);
 
+        // Stage backdrop RT upkeep: re-allocate it when the window settles at a new size (the same RenderTexture instance
+        // is kept, so _backdropMat's texture reference stays wired), and pin the official 4:3 projection every frame.
+        // The RT follows the WINDOW shape now (RtSizing), so without the pin the camera would infer its aspect from the
+        // RT and a wide window would widen the field of view — the decompiled Camera_ctor aspect is exactly 4/3.
+        private void MaintainSceneRt()
+        {
+            if (_sceneCam != null) _sceneCam.aspect = RtSizing.LogicalW / RtSizing.LogicalH;
+            if (_sceneRT == null) return;
+            if (!_sceneRtTrack.Tick(Screen.width, Screen.height, Time.unscaledTime)) return;
+            RtSizing.SlotRtSize(Screen.width, Screen.height, RtSizing.LogicalW, RtSizing.LogicalH,
+                                sceneSupersample, out int w, out int h);
+            RtSizing.Apply(_sceneRT, w, h);
+        }
+
         private void Update()
         {
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
+            MaintainSceneRt();
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
@@ -4447,11 +4680,20 @@ namespace Sdo.Game
             UpdateClickFlash();
             UpdateFx(); UpdateHud();
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
-            // HP-out; it only ends naturally at the song's end (below). Normal mode still fails on HP-out.
-            // HP-out. Normally fails immediately (freezes judging + cuts to GAME OVER). playFullSong = 無失敗模式:
-            // the song stays fully playable to its natural end, no GAME OVER — but HP itself latches empty (HealthProcessor
-            // lockOnDeath), so a good run after HP-out no longer refills the bar; it stays dead until the song ends.
-            if (!showtimeMode && !playFullSong && _health != null && _health.IsFailed) _failed = true;
+            // HP-out; it only ends naturally at the song's end (below).
+            // HP-out (一次性 latch _hpDead):
+            //   • 一般模式:立刻 _failed —— 判定/舞蹈凍結,馬上切進 GAME OVER 結算。
+            //   • 完奏模式(playFullSong):歌不切斷,整首照打到曲末 —— 但「死了就是死了」:
+            //       (1) 分數就地凍結 (ScoreProcessor.FreezeScore) —— 之後打再好都不再加分;
+            //       (2) P/C/B/M 判定統計、combo、特效照常繼續累計(結算的判定數是整首的);
+            //       (3) HP 鎖在地板 (HealthProcessor lockOnDeath),不會被後面的 combo 補回來;
+            //       (4) 曲末結算一樣算 GAME OVER / 輸(見 EnterResult 的 _gameOver 與評分 F)。
+            if (!showtimeMode && !_hpDead && _health != null && _health.IsFailed)
+            {
+                _hpDead = true;
+                if (playFullSong) _score?.FreezeScore();
+                else _failed = true;
+            }
             // 結束判定:等「音樂播完」再 +1 秒才進結算動作,但加 10 秒上限避免長尾奏/長音檔等太久。
             //   notesEndMs = 最後一顆音符;musicEndMs = 音檔播完的譜面時間 (MusicCountInSec + clip.length)×1000
             //   (clip 起播被 offset 跳過一段不影響終點,終點恆為 clip.length)。
@@ -4479,7 +4721,7 @@ namespace Sdo.Game
             RebuildRoster();                                  // finalize scores so the rank/winner is current
             var (rank, _) = RankingBoard.LocalRank(_roster);
             _localWon = rank <= 1;                            // rank 1 = highest score = winner
-            _gameOver = _failed;                              // HP-out → GAME OVER (overrides win/lose banner)
+            _gameOver = _hpDead;                              // HP-out → GAME OVER (overrides win/lose banner);完奏模式打完整首也算
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
             SetTrackVisible(false);                           // note board + HP + receptors + click strips
@@ -4752,8 +4994,8 @@ namespace Sdo.Game
                 }
                 r.Rank = i + 1; r.Name = p.Name; r.IsLocal = p.IsLocal;
                 r.FullCombo = (r.Bad + r.Miss) == 0;
-                // HP-out (failed) → 評分 F for the local player; everyone else by accuracy band.
-                r.Grade = (p.IsLocal && _failed) ? "F" : Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
+                // HP-out (死過就算) → 評分 F for the local player; everyone else by accuracy band.
+                r.Grade = (p.IsLocal && _hpDead) ? "F" : Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
                 rows[i] = r;
             }
             return rows;
@@ -5607,6 +5849,10 @@ namespace Sdo.Game
             if (doubleLayer)
             {
                 sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
+                // INVARIANT: both layers must always be set to the SAME sprite (see the advance in
+                // ScreenGameplay.Effects: `fx.Sr.sprite = spr; if (fx.Sr2) fx.Sr2.sprite = spr;`). They share ONE
+                // material instance, and a shared instance across DIFFERENT textures makes both draw the last-written
+                // one — offsetting layer 2 by a frame for a trail effect would silently corrupt the animation.
                 if (mat != null) sr2.sharedMaterial = mat;
                 sr2.transform.SetParent(sr.transform, false);
             }

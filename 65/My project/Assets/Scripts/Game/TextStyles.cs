@@ -29,8 +29,15 @@ namespace Sdo.Game
         public const float RosterTrackEm = 0.1f;
 
         /// <summary>True-tracking (em-fraction removed per inter-char gap) for the song-select list-row song names
-        /// (TMP characterSpacing). 0 = natural spacing.</summary>
+        /// (TMP characterSpacing). 0 = natural spacing. This is the amount ASKED FOR — the song list clamps it per
+        /// string so glyphs never touch (see <c>Sdo.UI.Util.TextTracking</c>).</summary>
         public const float SongTitleTrackEm = 0.05f;
+
+        /// <summary>Ink gap (em) that must survive any tightening. SimSun's Latin is HALF-WIDTH MONOSPACED (every
+        /// letter advances 0.5em) with almost no sidebearing, so "TA" is born with only 0.043em of air and a flat
+        /// 0.05em tightening welds the two letters together (SOLID ST[A]TE SQUAD). Full-width CJK has ≥0.08em, which
+        /// is why only capital A/T/V/W combos showed it. Keep a little slack for the faux-bold dilate on top.</summary>
+        public const float MinInkGapEm = 0.03f;
 
         /// <summary>Same, but for the gameplay HUD bottom song title (<see cref="TrackedTextMesh"/>) — kept separate
         /// because that label reads tighter at the same value, so it wants a gentler amount.</summary>

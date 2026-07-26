@@ -69,6 +69,8 @@ namespace Sdo.UI.Screens
         private static readonly Vector2 PreviewRectPos = new Vector2(25f, 112f - PreviewTopHeadroom);          // 框頂上移 (避開右側 Shop7 面板 x≥312)
         private static readonly Vector2 PreviewRectSize = new Vector2(272f, PreviewBodyH + PreviewTopHeadroom); // 直立框 + 上方翅膀留白，RT 同尺寸避免拉伸
         private Camera _cam; private RenderTexture _rt; private RawImage _previewImg; private GameObject _avatarRoot;
+        private RtResizeTracker _rtTrack;   // 防抖的「視窗 resize → 重配預覽 RT」(見 MaintainPreviewRt)
+        public float previewSupersample = RtSizing.DefaultSupersample;   // 設 1 = 視窗原生解析度
         private string[] _tryOnOutfitParts;   // 非 null = 正在試穿整套 (該套組件 mesh),RebuildAvatar 直接用它覆蓋逐部位裝備
         private Camera _uiCam; private int _savedUiMask;   // 開商城時遮掉主 UI 相機的預覽層(12)，避免 3D 假人被畫平在 UI 上
 
@@ -1583,6 +1585,7 @@ namespace Sdo.UI.Screens
         // 每幀推進 hover 卡的放大 (2D 縮圖 scale) + 旋轉 (3D 人形，重畫 RT)。離開 → 縮回 1×、角度歸零。
         private void Update()
         {
+            MaintainPreviewRt();   // 視窗大小改變 → 重配預覽 RT (放在 enabled 檢查前:商城關著時視窗變了也要跟上)
             if (_cam == null || !_cam.enabled) return;
 
             // 輸入法選字框跟著搜尋框:World-Space canvas 下 Unity 不會自動設候選框位置 → 跑到螢幕左上角。聚焦時把
@@ -1713,7 +1716,12 @@ namespace Sdo.UI.Screens
         private void BuildPreview()
         {
             if (_cam != null) return;
-            int rtW = Mathf.RoundToInt(PreviewRectSize.x), rtH = Mathf.RoundToInt(PreviewRectSize.y);
+            // RT 依「這個槽位在視窗上實際佔多少像素」算並超取樣 (RtSizing) —— 舊寫法等於邏輯尺寸 272×N,視窗放大後
+            // 就被 RawImage 放大成糊的。這裡不必釘 cam.aspect:下面明確給了 projectionMatrix (oblique frustum),
+            // 投影完全不看 RT 形狀。
+            RtSizing.SlotRtSize(Screen.width, Screen.height, PreviewRectSize.x, PreviewRectSize.y,
+                                previewSupersample, out int rtW, out int rtH);
+            _rtTrack.Reset(Screen.width, Screen.height);
             _rt = new RenderTexture(rtW, rtH, 16, RenderTextureFormat.ARGB32) { name = "ShopPreviewRT", antiAliasing = 4 };
             var camGo = new GameObject("ShopPreviewCam");
             _cam = camGo.AddComponent<Camera>();
@@ -1807,6 +1815,17 @@ namespace Sdo.UI.Screens
             var q = Quaternion.AngleAxis(_pitchAngle, Vector3.right) * Quaternion.AngleAxis(yawDeg, Vector3.up);
             _avatarRoot.transform.rotation = q;
             _avatarRoot.transform.position = pivot + q * (basePos - pivot);
+        }
+
+        /// <summary>視窗大小改變 → 重配預覽 RT(保留同一個 RenderTexture 實例,_previewImg 的引用不用重接)。
+        /// 不動 aspect:BuildPreview 給了明確的 oblique projectionMatrix,投影不看 RT 形狀。</summary>
+        private void MaintainPreviewRt()
+        {
+            if (_rt == null) return;
+            if (!_rtTrack.Tick(Screen.width, Screen.height, Time.unscaledTime)) return;
+            RtSizing.SlotRtSize(Screen.width, Screen.height, PreviewRectSize.x, PreviewRectSize.y,
+                                previewSupersample, out int w, out int h);
+            RtSizing.Apply(_rt, w, h);
         }
 
         private void ApplyCamera()

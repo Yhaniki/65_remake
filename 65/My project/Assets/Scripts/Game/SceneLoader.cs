@@ -22,7 +22,15 @@ namespace Sdo.Game
     /// </summary>
     public static class SceneLoader
     {
-        public sealed class Result { public Mesh Mesh; public Material[] Materials; public int[] MaterialIds; }
+        public sealed class Result
+        {
+            public Mesh Mesh;
+            public Material[] Materials;
+            public int[] MaterialIds;
+            /// <summary>每個 submesh 的材質名(= MSH 材質記錄裡的貼圖檔名),與 Materials 一一對應。
+            /// 讓「依材質名綁某幾個 submesh」成為可能 —— SCN0001 的霓虹招牌就是靠這個逐字綁。</summary>
+            public string[] MaterialNames;
+        }
 
         public struct SceneSubset { public int MatId; public int FaceStart; public int FaceCount; }
 
@@ -38,6 +46,7 @@ namespace Sdo.Game
             public int VertCount;
             public int Stride;        // vertex stride in bytes
             public string[] DdsNames; // per-material .dds filename
+            public uint[] MatFlags;   // 官方逐材質繪製旗標 (material record +0x194) — 見 MshLoader.IsOfficialTransparent
             public SceneSubset[] Subsets;
             public int Type;          // footer mesh type (0 skin / 1 plain / 2 bone-or-static)
             public int Next;          // byte offset of the next block, or -1 if last/unparseable
@@ -77,7 +86,12 @@ namespace Sdo.Game
                 int matnames = post + 28;
                 if ((long)matnames + (long)numMat * 408 + 16 > d.Length) break;
                 b.DdsNames = new string[numMat];
-                for (int m = 0; m < numMat; m++) b.DdsNames[m] = ReadCStr(d, matnames + m * 408 + 17 * 4, 48);
+                b.MatFlags = new uint[numMat];
+                for (int m = 0; m < numMat; m++)
+                {
+                    b.DdsNames[m] = ReadCStr(d, matnames + m * 408 + 17 * 4, 48);
+                    b.MatFlags[m] = U(d, matnames + m * 408 + 0x194);   // 官方透明批旗標,和 mapobj 的 MshLoader 同欄位
+                }
 
                 int fp = matnames + numMat * 408;                 // footer
                 b.Type = (int)U(d, fp);
@@ -135,8 +149,19 @@ namespace Sdo.Game
             // truss GANGJIA, the dance floor WUTAIDIMIAN, the PANGGUAN spectators) render as depth-writing
             // Cutout/Opaque instead of non-occluding alpha-Blend. Scoped to this scene to avoid touching the
             // validated去背 of other maps.
-            bool histoAlpha = string.Equals(Path.GetFileName(sceneDir?.TrimEnd('/', '\\') ?? ""), "SCN0020",
-                                             StringComparison.OrdinalIgnoreCase);
+            string sceneFolder = Path.GetFileName(sceneDir?.TrimEnd('/', '\\') ?? "");
+            bool histoAlpha = string.Equals(sceneFolder, "SCN0020", StringComparison.OrdinalIgnoreCase);
+            // ★ 為什麼「照官方材質旗標分類」在這裡行不通(2026-07-26 實測後放棄,別再試一次):
+            // SCENE.MSH 每顆材質記錄 +0x194 帶官方繪製旗標,而官方引擎沒有 alpha test —— 旗標非 0 就是丟進
+            // 延後透明批(一般 SrcAlpha/InvSrcAlpha),旗標 0 才是不透明。以 SCN0005 為例,46 顆材質裡有 15 顆
+            // 旗標 0x2、其餘 32 顆旗標 0 且全是 DXT1(根本沒有 alpha),所以照旗標分類等於「把其中 14 顆從
+            // cutout 改成 alpha-blend」(另一顆 yizi2 本來就已經是 blend)。實際套下去截圖比對:**畫面更糟**。因為我們的 Sdo/SceneVertexAlpha 是
+            // ZWrite Off + Transparent 佇列,而它們多半是實心道具(雪松/鐘樓/椅子/松鼠/雪人),不寫深度後
+            // 同一個 renderer 內的 submesh 只能照順序畫、無法逐像素排序 → 雪松與雪橇前後關係翻掉、還多出一塊
+            // 硬邊矩形。cutout 對這種近乎二值的 alpha(guang.dds 有 30% ≥250、60% ≤8,中間只剩 9%)視覺上與
+            // blend 幾乎一樣,卻保住了深度寫入。
+            // 結論:旗標仍然解析出來放在 SceneBlock.MatFlags(格式事實,測試有釘),但**不拿來選 shader** ——
+            // 真要照官方走,得先讓場景的透明批能正確排序(拆 renderer 或做深度預繪),那是另一件事。
             // cutout × VERTEX COLOUR: walls stay opaque, DXT3 audience billboards discard their transparent
             // background, and the per-vertex baked lighting/tint darkens the scene (e.g. SCN0008 night).
             var cutoutShader = Shader.Find("Sdo/SceneVertexCutout") ?? Shader.Find("Unlit/Transparent Cutout") ?? Shader.Find("Unlit/Texture");
@@ -149,6 +174,7 @@ namespace Sdo.Game
             var subTris = new List<int[]>();
             var subMats = new List<Material>();
             var subMatIds = new List<int>();
+            var subMatNames = new List<string>();
             // Decode each .dds once even when several blocks reuse it (SCN0026 1.dds spans 3 blocks); a fresh
             // Material per subset still references the shared texture (matches the original per-subset draw).
             var texCache = new Dictionary<string, (Texture2D tex, DdsAlphaMode mode)>(StringComparer.OrdinalIgnoreCase);
@@ -195,18 +221,24 @@ namespace Sdo.Game
                         if (name.Length > 0 && File.Exists(ddsPath))
                         {
                             var bytes = File.ReadAllBytes(ddsPath);
-                            tex = DdsLoader.Load(bytes);
+                            // 漸層光暈存成 DXT3 只有 4-bit alpha(16 階),平滑的衰減會被量化成一圈一圈的
+                            // 同心台階,邊緣讀起來就是硬的 —— SCN0029 機庫吊燈的光錐正是這樣(解出貼圖可以
+                            // 直接看到階梯)。這些貼圖用 AlphaSmooth.Full 去階梯,還原成連續衰減。
+                            // 白名單制:只點名確定是「漸層光暈」的材質,不動已驗過的其他場景。
+                            tex = DdsLoader.Load(bytes, false, SmoothAlpha(sceneFolder, name)
+                                                 ? DdsLoader.AlphaSmooth.Full : DdsLoader.AlphaSmooth.None);
                             mode = histoAlpha ? DdsLoader.GetSceneAlphaMode(bytes) : DdsLoader.GetAlphaMode(bytes);
                         }
                         tm = (tex, mode); texCache[name] = tm;
                     }
 
-                    var shader = tm.mode == DdsAlphaMode.Blend ? alphaShader : cutoutShader;
+                    var drawMode = tm.mode;
+                    var shader = drawMode == DdsAlphaMode.Blend ? alphaShader : cutoutShader;
                     var mat = tm.tex != null ? new Material(shader) { mainTexture = tm.tex } : new Material(shader) { color = new Color(0.3f, 0.3f, 0.35f) };
                     // Soft DDS alpha is alpha-blended. Pure hard alpha stays a cutout. Opaque DDS disables clipping.
-                    if (tm.mode != DdsAlphaMode.Blend)
-                        mat.SetFloat("_Cutoff", tm.mode == DdsAlphaMode.Cutout ? 0.5f : -1f);
-                    subTris.Add(sub); subMats.Add(mat); subMatIds.Add(s.MatId);
+                    if (drawMode != DdsAlphaMode.Blend)
+                        mat.SetFloat("_Cutoff", drawMode == DdsAlphaMode.Cutout ? 0.5f : -1f);
+                    subTris.Add(sub); subMats.Add(mat); subMatIds.Add(s.MatId); subMatNames.Add(name);
                 }
             }
             if (subTris.Count == 0) return null;
@@ -218,8 +250,19 @@ namespace Sdo.Game
             mesh.subMeshCount = subTris.Count;
             for (int s = 0; s < subTris.Count; s++) mesh.SetTriangles(subTris[s], s);
             mesh.RecalculateBounds();
-            return new Result { Mesh = mesh, Materials = subMats.ToArray(), MaterialIds = subMatIds.ToArray() };
+            return new Result { Mesh = mesh, Materials = subMats.ToArray(), MaterialIds = subMatIds.ToArray(),
+                               MaterialNames = subMatNames.ToArray() };
         }
+
+        /// <summary>SCENE.MSH 材質裡「漸層光暈」的白名單 —— 這些貼圖要去掉 DXT3 4-bit alpha 的階梯。
+        /// 為什麼要白名單而不是通則:DXT3 的 16 階 alpha 對硬去背的剪影(人群/招牌/欄杆)完全無害,只有
+        /// 平滑衰減的光暈會被量化成一圈一圈的同心台階。逐筆點名才不會動到已經驗過的其他場景。
+        ///   SCN0029 飛機場 diaodeng_.dds — 機庫天花板吊燈往下打的光錐(貼圖 128×128,光錐佔
+        ///     x 52..86 / y 71..119,四邊 alpha 全 0),alpha 峰值只有 170 卻被切成約 8 個可見台階,
+        ///     所以光暈邊緣讀起來「非常硬」。</summary>
+        private static bool SmoothAlpha(string sceneFolder, string ddsName) =>
+            string.Equals(sceneFolder, "SCN0029", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(ddsName, "diaodeng_.dds", StringComparison.OrdinalIgnoreCase);
 
         private static uint U(byte[] d, int o) => (uint)(d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24));
         private static float F(byte[] d, int o) => BitConverter.ToSingle(d, o);

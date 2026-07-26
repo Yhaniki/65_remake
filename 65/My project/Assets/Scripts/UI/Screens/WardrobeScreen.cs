@@ -65,6 +65,8 @@ namespace Sdo.UI.Screens
         private static readonly Vector2 PreviewRectSize = new Vector2(220f, 320f);
         private const float PreviewBodyH = 320f;
         private Camera _cam; private RenderTexture _rt; private RawImage _previewImg; private GameObject _avatarRoot;
+        private RtResizeTracker _rtTrack;   // 防抖的「視窗 resize → 重配預覽 RT」(見 MaintainPreviewRt)
+        public float previewSupersample = RtSizing.DefaultSupersample;   // 設 1 = 視窗原生解析度
         private Camera _uiCam; private int _savedUiMask;
         private SdoAvatar _previewAv; private float _idleLen; private float _idleStart;   // #4：預覽 idle 播完一輪換一支隨機
         private float _dragAngle = 0f; private float _pitchAngle;   // 預設 0 = 人物正面朝相機 (#6)
@@ -534,7 +536,12 @@ namespace Sdo.UI.Screens
         private void BuildPreview()
         {
             if (_cam != null) return;
-            int rtW = Mathf.RoundToInt(PreviewRectSize.x), rtH = Mathf.RoundToInt(PreviewRectSize.y);
+            // RT 依槽位在視窗上的實際像素算並超取樣 (RtSizing);舊寫法固定 220×320 邏輯尺寸,視窗放大就糊。
+            // 這裡沒有明確 projectionMatrix (只有 fieldOfView),所以 aspect 原本是從 RT 形狀推導的 → 必須釘住槽位比例,
+            // 否則 RT 一變成視窗形狀,人物就會被橫向拉寬。
+            RtSizing.SlotRtSize(Screen.width, Screen.height, PreviewRectSize.x, PreviewRectSize.y,
+                                previewSupersample, out int rtW, out int rtH);
+            _rtTrack.Reset(Screen.width, Screen.height);
             _rt = new RenderTexture(rtW, rtH, 16, RenderTextureFormat.ARGB32) { name = "WardrobePreviewRT", antiAliasing = 4 };
             var camGo = new GameObject("WardrobePreviewCam");
             _cam = camGo.AddComponent<Camera>();
@@ -544,8 +551,20 @@ namespace Sdo.UI.Screens
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
             _cam.targetTexture = _rt;
+            _cam.aspect = PreviewRectSize.x / PreviewRectSize.y;   // 釘槽位比例 (RT 現在是視窗形狀)
             if (_previewImg != null) _previewImg.texture = _rt;
             ApplyCamera();
+        }
+
+        /// <summary>視窗大小改變 → 重配預覽 RT(保留同一個 RenderTexture 實例,_previewImg 的引用不用重接)。</summary>
+        private void MaintainPreviewRt()
+        {
+            if (_cam != null) _cam.aspect = PreviewRectSize.x / PreviewRectSize.y;
+            if (_rt == null) return;
+            if (!_rtTrack.Tick(Screen.width, Screen.height, Time.unscaledTime)) return;
+            RtSizing.SlotRtSize(Screen.width, Screen.height, PreviewRectSize.x, PreviewRectSize.y,
+                                previewSupersample, out int w, out int h);
+            RtSizing.Apply(_rt, w, h);
         }
 
         private void RebuildAvatar()
@@ -604,6 +623,7 @@ namespace Sdo.UI.Screens
 
         private void Update()
         {
+            MaintainPreviewRt();   // 視窗大小改變 → 重配預覽 RT (放在開關檢查前:關著時視窗變了也要跟上)
             if (_cg == null || _cg.alpha <= 0f) return;   // 只在儲物櫃開著時
             // X 鍵：跟按關閉一樣旋轉出去 (使用者指定)。
             if (!_closing && Input.GetKeyDown(KeyCode.X)) { Close(); return; }

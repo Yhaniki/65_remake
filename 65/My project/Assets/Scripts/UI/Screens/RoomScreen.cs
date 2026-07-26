@@ -395,25 +395,29 @@ namespace Sdo.UI.Screens
             }
             if (_chatInput.targetGraphic is Image chatInputBg)
                 chatInputBg.color = new Color(0f, 0f, 0f, 0f);
-            Btn("OpenRecord", "OpenRecord_a", "OpenRecord_b", "OpenRecord_c", Win3, 279, 82, null);           // 錄製
-            _expressionBtn = Btn("expression1", "BtnExpression_1", "BtnExpression_2", "BtnExpression_3", Win3, 311, 82, ToggleExpressionMenu); // 表情
-            Btn("ChatSendButton", "BtnSpeaker_1", "BtnSpeaker_2", "BtnSpeaker_3", Win3, 343, 82, SendRoomChat);       // 喇叭/送出
-            Btn("LoudSpeaker", "LoudSpeaker_1", "LoudSpeaker_2", "LoudSpeaker_3", Win3, 376, 82, null);       // 大聲公
-            Btn("RoomPet", "BtnPet_1", "BtnPet_2", "BtnPet_3", Win3, 411, 83, null);                         // 寵物
-            Btn("WingButton", "RoomWing", "RoomWing1", "RoomWing", Win3, 447, 82, null);                     // 翅膀
+            // 下排功能鈕(泡泡/表情/喇叭/大聲公/寵物/翅膀/衣櫥/手環/信件)都是 31~33px 的紫色圓盤,盤緣是軟 AA 邊
+            // (半徑剖面 α 237→138→10):跟右上 head-bar 同類 → circle:true(CircleMask 平滑圓邊 + 超取樣)。走預設的
+            // AnSoloAA(α<128→0 硬裁)會把 α≈138 那圈軟邊 binarise 成 1-bit 圓 → 邊緣鋸齒/破碎。
+            // 例外:聊天模式(Room4)與道具包(Room55)是膠囊/長條,不是圓 → 留在 clip 路徑(套圓遮罩會把兩端裁掉)。
+            Btn("OpenRecord", "OpenRecord_a", "OpenRecord_b", "OpenRecord_c", Win3, 279, 82, null, circle: true);           // 錄製
+            _expressionBtn = Btn("expression1", "BtnExpression_1", "BtnExpression_2", "BtnExpression_3", Win3, 311, 82, ToggleExpressionMenu, circle: true); // 表情
+            Btn("ChatSendButton", "BtnSpeaker_1", "BtnSpeaker_2", "BtnSpeaker_3", Win3, 343, 82, SendRoomChat, circle: true);       // 喇叭/送出
+            Btn("LoudSpeaker", "LoudSpeaker_1", "LoudSpeaker_2", "LoudSpeaker_3", Win3, 376, 82, null, circle: true);       // 大聲公
+            Btn("RoomPet", "BtnPet_1", "BtnPet_2", "BtnPet_3", Win3, 411, 83, null, circle: true);                         // 寵物
+            Btn("WingButton", "RoomWing", "RoomWing1", "RoomWing", Win3, 447, 82, null, circle: true);                     // 翅膀
             // 衣櫥 → 儲物櫃 (WardrobeScreen)。比照選歌鈕：按下用滑動音(ButtonFloat)，開櫃的 Frameround whoosh 由 WardrobeScreen.Open 播 → 服飾欄旋轉進場。
-            Btn("ClosetButton", "RoomCloset001", "RoomCloset002", "RoomCloset003", Win3, 480, 81, () => Nav.OpenWardrobe?.Invoke(), UiSfx.ButtonFloat);
-            Btn("BangleButton", "Bangle0", "Bangle1", "Bangle0", Win3, 514, 82, null);                       // 手環
-            Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null);                              // 信件
-            Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包
+            Btn("ClosetButton", "RoomCloset001", "RoomCloset002", "RoomCloset003", Win3, 480, 81, () => Nav.OpenWardrobe?.Invoke(), UiSfx.ButtonFloat, circle: true);
+            Btn("BangleButton", "Bangle0", "Bangle1", "Bangle0", Win3, 514, 82, null, circle: true);                       // 手環
+            Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null, circle: true);                              // 信件
+            Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包(膠囊,非圓)
             // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
-            // 大顆圓鈕 → alphaHit：命中判定貼齊可見圓形,透明四角不再誤觸。
-            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null, alphaHit: 0.5f);
+            // 大顆圓鈕 → alphaHit：命中判定貼齊可見圓形,透明四角不再誤觸;disc：手繪圓盤的階梯描邊沿圓周低通抹平(見 Btn 註解)。
+            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null, alphaHit: 0.5f, disc: true);
 
             // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
-            _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f);
-            _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f);
-            _cancelReadyBtn = Btn("cancel_ready", "c_ready0", "c_ready1", "c_ready2", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f);
+            _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f, disc: true);
+            _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f, disc: true);
+            _cancelReadyBtn = Btn("cancel_ready", "c_ready0", "c_ready1", "c_ready2", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f, disc: true);
 
             // 5) 左上「左拉」收合鈕（官方 uihide/uidisplay，同一位置 11,83）。按 ◄(BtnMaypopLeft) → 三個面板往四周滑出；
             //    收合後原地換成 ►(BtnMaypopRight) 展開鈕。掛在 Root（不隨面板收合），且最後建立 → 疊在最上層永遠可點。
@@ -3281,15 +3285,21 @@ namespace Sdo.UI.Screens
         //   hoverSfx：win2 中間設定塊(速度/note/組隊/掉落)→null(滑過不出聲)，其餘保留 Buttonfloat。
         private Button Btn(string objName, string nrm, string hov, string psh, Vector2 win, float x, float y,
             System.Action onClick, string pressSfx = UiSfx.Click, string hoverSfx = UiSfx.ButtonFloat, bool solo = true,
-            float alphaHit = 0f, bool circle = false)
+            float alphaHit = 0f, bool circle = false, bool disc = false)
         {
             // solo=true(預設) → 三態都用 AnSoloAA(自貼圖 + 3× 超取樣)載入：消掉 atlas 鄰居白邊，並把官方近 1-bit 圓鈕以
             // 3× 解析度存、用邏輯尺寸顯示 → GPU 面積降取樣出乾淨的 ~1px 抗鋸齒邊(開始/旁觀/房主設置…),不鋸齒也不糊;
             // 載不到 solo crop 時自動回退共用大圖，安全。
-            // circle=true → 右上角 head-bar 圓形圖示鈕(設定/邀請/返回/交易/天使):它們是 34px 帶「寬軟 AA 邊」的圓盤,
-            // AnSoloAA 的 α<128→0 硬裁會把軟邊裁成 1-bit 圓 → 邊緣破碎;改走 AnSoloCircleAA(CircleMask 平滑圓邊 + 超取樣)。
+            // circle=true → 圓形圖示鈕(右上 head-bar 的設定/邀請/返回/交易/天使,以及下排工具列的泡泡/表情/喇叭/大聲公/
+            // 寵物/翅膀/衣櫥/手環/信件):它們是 31~34px 帶「軟 AA 邊」的圓盤,AnSoloAA 的 α<128→0 硬裁會把軟邊裁成
+            // 1-bit 圓 → 邊緣鋸齒/破碎;改走 AnSoloCircleAA(CircleMask 平滑圓邊 + 超取樣)。只給真正是圓的鈕:膠囊/長條
+            // (聊天模式 Room4、道具包 Room55)留在預設路徑。
+            // disc=true → 大顆實心圓球(開始/準備/取消/旁觀):55~73px 手繪圓盤,深色描邊本身就是「階梯」(這邊 1 texel、那邊
+            // 2 texel),放大就是一圈黑色缺口。alpha 遮罩救不了(只會減、補不回缺口,而且階梯也在 RGB 描邊上)→ 走
+            // AnSoloDiscAA:沿圓周方向低通把階梯抹平 + alpha 用解析圓重建。
             System.Func<string, Sprite> res;
-            if (circle) res = RoomUiArt.AnSoloCircleAA;
+            if (disc) res = RoomUiArt.AnSoloDiscAA;
+            else if (circle) res = RoomUiArt.AnSoloCircleAA;
             else if (solo) res = RoomUiArt.AnSoloAA;
             else res = RoomUiArt.An;
             var b = UIKit.AddSpriteButton(WinRoot(win), objName, res(nrm), res(hov), res(psh), win.x + x, win.y + y);

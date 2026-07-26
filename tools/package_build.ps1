@@ -177,6 +177,18 @@ if (Test-Path $twSets) {
     Write-Warning "[package] shop_sets_tw.tsv not found at $twSets — built shop has no 台版套装 (run tools\build_shop_names_tw.py)"
 }
 
+# 2c) Upscaled art overlay: art\upscaled mirrors the DATA layout and carries higher-resolution replacements for art
+# whose shipped resolution is too low for today's screens (UI\PLAYINGEXP 表情 cut-in: 64px 原圖 -> 192px hq3x,
+# tools\upscale_playingexp.py). Copied ON TOP of the Extracted base, so only the named files are replaced.
+# The on-screen SIZE is unchanged — the loaders divide it back out (SdoExtracted.LoadImageAtDesignWidth, guarded by
+# EmojiUpscaleTests). Never mirror/mirror-delete here: the folders it lands in also hold art we must not touch.
+$upscaled = Join-Path $Repo 'art\upscaled'
+if (Test-Path $upscaled) {
+    Copy-Tree $upscaled $Data 'upscaled art overlay'
+} else {
+    Write-Warning "[package] art\upscaled not found — 表情 cut-in 維持 64px 原圖 (run tools\upscale_playingexp.py)"
+}
+
 # 3) Audio + song trees -> DATA (folder names normalized to UPPERCASE)
 Copy-Tree (Join-Path $Off 'SE')    (Join-Path $Data 'SE')    'SE'
 # BGM: the lobby/room random playlist lives in Extracted/UI/BGM (bgm_000..007.ogg) — ship it at DATA/BGM (UiBgmDir's

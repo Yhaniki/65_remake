@@ -11,6 +11,9 @@ Shader "Sdo/UnlitSpotGlow"
         _MainTex ("Texture", 2D) = "white" {}
         _Color ("Color", Color) = (1,1,1,1)
         _Spread ("Sideways spread (UV)", Range(0,0.4)) = 0.2
+        // 光錐貼圖的 alpha 在 quad 邊界仍有殘值(4-bit 的一階 = 17/255)，加法下就是一條硬階。
+        // 抬黑點把它壓到 0，核心幾乎不受影響。0.09 略高於一個 4-bit 階(0.067)。
+        _AlphaFloor ("Alpha black point", Range(0,0.3)) = 0.09
     }
     SubShader
     {
@@ -46,6 +49,7 @@ Shader "Sdo/UnlitSpotGlow"
             float4 _MainTex_ST;
             fixed4 _Color;
             float _Spread;
+            float _AlphaFloor;
 
             v2f vert (appdata v)
             {
@@ -81,6 +85,14 @@ Shader "Sdo/UnlitSpotGlow"
                 fixed4 c;
                 c.rgb = orig.rgb;                              // interior colour unchanged
                 c.a = max(orig.a, blurA);                     // core kept; soft halo only added where the edge cut off
+                // ALPHA FLOOR — this is what actually kills the razor edge. The beam texture is a DXT3 atlas whose
+                // cone runs flush to the quad's UV rect: SCN0019's dengzhu_ still has alpha 17 (= one 4-bit step,
+                // 6.7%) in the very column the quad ends on. Additive over a dark stage that is a ~45-luminance
+                // jump in ONE pixel — measured on a capture — and no amount of sideways _Spread can fix it,
+                // because the quad has no spare area for the halo to live in. Lifting the black point maps that
+                // residual step to 0 and turns the neighbouring 34/51/68 texels into a ramp that starts at zero,
+                // while the bright core (0.4→0.35, 0.87→0.86) is barely touched.
+                c.a = saturate((c.a - _AlphaFloor) / max(1e-4, 1.0 - _AlphaFloor));
                 c *= _Color;
                 c.rgb *= i.col.rgb;
                 return c;

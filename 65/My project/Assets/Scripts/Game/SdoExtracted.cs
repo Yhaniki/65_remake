@@ -385,6 +385,19 @@ namespace Sdo.Game
         public static Sprite LoadAnSoloCircleMip(string folder, string anName, int pad = 0)
             => LoadAnSoloImpl(folder, anName, pad, circular: true, mip: true);
 
+        /// <summary>As <see cref="LoadAnSoloMip"/> but for the BIG near-1-bit discs (開始/準備/取消/旁觀 — 55~73px
+        /// WaitingRoom balls). Their rim is drawn as a STAIRCASE: the dark outline is 1 texel here, 2 there, and the
+        /// coverage is almost binary (α is 0 or 255 for ~2/3 of the circumference), so magnifying the 800×600 design
+        /// shows black notches marching around the edge (使用者回報「開始和旁觀的大圓 邊緣還是鋸齒很破碎」). Neither the
+        /// clip path nor <see cref="CircleMask"/> can fix that: an alpha mask only SUBTRACTS, so it cannot fill the
+        /// notches, and the stairs live in the RGB outline as much as in the alpha. <see cref="SmoothDiscUpsample"/>
+        /// works in polar coordinates instead — along the circumference the staircase is high-frequency noise while the
+        /// real art (rim colour, sphere shading) barely changes, so a 1D low-pass in θ over the rim band erases the
+        /// stairs and keeps the artwork, and the alpha edge is rebuilt as an analytic circle. Use ONLY for solid round
+        /// discs (a pill/oval would be dragged into a circle).</summary>
+        public static Sprite LoadAnSoloSmoothDiscMip(string folder, string anName, int pad = 0)
+            => LoadAnSoloImpl(folder, anName, pad, circular: false, mip: true, smoothDisc: true);
+
         /// <summary>Supersample factor for room-button textures (see <see cref="LoadAnSoloMip"/>). 3× keeps the button
         /// crisp from 1:1 up to ~3× fullscreen stretch; higher just costs memory (a 73px crop → 219²·RGBA·mips ≈ 255 KB).</summary>
         public const int ButtonSupersample = 3;
@@ -394,7 +407,7 @@ namespace Sdo.Game
         /// 128 is safe: the α≥128 region of the button crops is a single stable contour (barely moves over α 110-150).</summary>
         private const byte SolidAlphaThreshold = 128;
 
-        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false)
+        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false, bool smoothDisc = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
@@ -418,6 +431,15 @@ namespace Sdo.Game
             // transparent region (光球鈕的透明區是白/淺 → 整顆在白底上合成 → mid-alpha 邊是「帶色的白暈」). AlphaBleed 之後
             // 透明區被填成不透明色,偵測就失效了。順序:先 demat 邊,再把 (demated) 邊色 dilate 進透明 pad。
             DeMatteWhite(outTex);    // un-composite the white matte on the crop's own AA edges (kills the light halo)
+            if (smoothDisc)
+            {
+                // Big staircase disc: flood first (so the rim band never samples the matte, and the mip chain has no
+                // white to average in), then de-stair the rim in polar space while supersampling. See LoadAnSoloSmoothDiscMip.
+                AlphaFlood(outTex);
+                int ssd = ButtonSupersample;
+                var upd = SmoothDiscUpsample(outTex.GetPixels32(), W, H, ssd);
+                return Sprite.Create(upd, new Rect(0, 0, W * ssd, H * ssd), new Vector2(0.5f, 0.5f), ssd, 0, SpriteMeshType.FullRect);
+            }
             if (circular)
             {
                 AlphaFlood(outTex);  // flood orb colour into the ENTIRE transparent region → no white RGB left to bleed
@@ -484,6 +506,94 @@ namespace Sdo.Game
             return t;
         }
 
+        /// <summary>Supersample a solid ROUND button by <paramref name="ss"/>× while DE-STAIRING its rim: the outline of
+        /// a 55~73px hand-drawn disc steps in and out by a texel around the circumference, which magnification turns into
+        /// black notches. Fit the disc (α≥128 centroid + radius from its area), then for every output texel inside the rim
+        /// band take a Gaussian-weighted average of the SOURCE along the circumference at the same radius
+        /// (<paramref name="arcPx"/> source texels per tap) — constant art survives, the staircase averages away. The
+        /// radius is clamped just inside the disc so the taps never reach the matte. Alpha is rebuilt as an analytic
+        /// circle (1 supersampled texel of feather), which also drops the baked outer glow; interior alpha is kept as-is
+        /// so any transparency the art has inside the disc survives. Returns a mipmapped/Trilinear/Clamp texture, to be
+        /// handed out at pixelsPerUnit = ss (see <see cref="LoadAnSoloSmoothDiscMip"/>).</summary>
+        private static Texture2D SmoothDiscUpsample(Color32[] src, int w, int h, int ss,
+            float rimPx = 5f, float arcPx = 1.6f, int taps = 9)
+        {
+            double sxs = 0, sys = 0; int n = 0;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    if (src[y * w + x].a >= SolidAlphaThreshold) { sxs += x; sys += y; n++; }
+            if (n < 16) return UpsampleBilinear(src, w, h, ss);   // not a disc (empty/near-empty crop) — plain path
+            float cx = (float)(sxs / n), cy = (float)(sys / n);
+            float R = Mathf.Sqrt(n / Mathf.PI);
+
+            int half = Mathf.Max(1, taps / 2);
+            var wt = new float[half * 2 + 1];
+            float wsum = 0f;
+            for (int k = -half; k <= half; k++)
+            {
+                float g = Mathf.Exp(-0.5f * (k / (taps / 4f)) * (k / (taps / 4f)));
+                wt[k + half] = g; wsum += g;
+            }
+            float dth = arcPx / Mathf.Max(R, 1f);
+
+            int W = w * ss, H = h * ss;
+            var dst = new Color32[W * H];
+            for (int y = 0; y < H; y++)
+            {
+                float syc = (y + 0.5f) / ss - 0.5f;
+                for (int x = 0; x < W; x++)
+                {
+                    float sxc = (x + 0.5f) / ss - 0.5f;
+                    float dx = sxc - cx, dy = syc - cy;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    float r, g2, b;
+                    if (d >= R - rimPx && d <= R + 2f)
+                    {
+                        float th = Mathf.Atan2(dy, dx);
+                        float dc = Mathf.Min(d, R - 0.6f);          // stay inside the disc: never sample the matte
+                        float ar = 0f, ag = 0f, ab = 0f;
+                        for (int k = -half; k <= half; k++)
+                        {
+                            float t = th + k * dth;
+                            SampleBilinearRgb(src, w, h, cx + dc * Mathf.Cos(t), cy + dc * Mathf.Sin(t),
+                                out float pr, out float pg, out float pb);
+                            float wk = wt[k + half];
+                            ar += wk * pr; ag += wk * pg; ab += wk * pb;
+                        }
+                        r = ar / wsum; g2 = ag / wsum; b = ab / wsum;
+                    }
+                    else SampleBilinearRgb(src, w, h, sxc, syc, out r, out g2, out b);
+
+                    float cov = Mathf.Clamp01(R * ss + 0.5f - d * ss);
+                    float a = cov >= 1f ? SampleBilinearAlpha(src, w, h, sxc, syc) : 255f * cov;
+                    dst[y * W + x] = new Color32((byte)(r + 0.5f), (byte)(g2 + 0.5f), (byte)(b + 0.5f), (byte)(a + 0.5f));
+                }
+            }
+            var tex = new Texture2D(W, H, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
+            tex.SetPixels32(dst); tex.Apply(true);
+            return tex;
+        }
+
+        private static void SampleBilinearRgb(Color32[] src, int w, int h, float x, float y, out float r, out float g, out float b)
+        {
+            x = Mathf.Clamp(x, 0f, w - 1.001f); y = Mathf.Clamp(y, 0f, h - 1.001f);
+            int x0 = (int)x, y0 = (int)y, x1 = Mathf.Min(x0 + 1, w - 1), y1 = Mathf.Min(y0 + 1, h - 1);
+            float fx = x - x0, fy = y - y0;
+            Color32 c00 = src[y0 * w + x0], c10 = src[y0 * w + x1], c01 = src[y1 * w + x0], c11 = src[y1 * w + x1];
+            r = Mathf.Lerp(Mathf.Lerp(c00.r, c10.r, fx), Mathf.Lerp(c01.r, c11.r, fx), fy);
+            g = Mathf.Lerp(Mathf.Lerp(c00.g, c10.g, fx), Mathf.Lerp(c01.g, c11.g, fx), fy);
+            b = Mathf.Lerp(Mathf.Lerp(c00.b, c10.b, fx), Mathf.Lerp(c01.b, c11.b, fx), fy);
+        }
+
+        private static float SampleBilinearAlpha(Color32[] src, int w, int h, float x, float y)
+        {
+            x = Mathf.Clamp(x, 0f, w - 1.001f); y = Mathf.Clamp(y, 0f, h - 1.001f);
+            int x0 = (int)x, y0 = (int)y, x1 = Mathf.Min(x0 + 1, w - 1), y1 = Mathf.Min(y0 + 1, h - 1);
+            float fx = x - x0, fy = y - y0;
+            return Mathf.Lerp(Mathf.Lerp(src[y0 * w + x0].a, src[y0 * w + x1].a, fx),
+                              Mathf.Lerp(src[y1 * w + x0].a, src[y1 * w + x1].a, fx), fy);
+        }
+
         /// <summary>First frame of an .an cropped onto its OWN texture with its RGB PREMULTIPLIED by alpha (bilinear, no
         /// mipmaps, 1px transparent pad). Pair with a premultiplied-alpha material (Blend One OneMinusSrcAlpha —
         /// <c>Sdo/SpritePremultiply</c>). For a sprite that gets MAGNIFIED on screen (the result 「YOU WIN／LOSE」 banner
@@ -503,13 +613,63 @@ namespace Sdo.Game
             if (!File.Exists(anPath)) return null;
             var frames = ParseAnText(File.ReadAllText(anPath));
             if (frames.Count == 0) return null;
-            var fr = frames[0];
-            var src = LoadTexture(Path.Combine(folder, fr.Image));
+            return PremultipliedFrame(folder, frames[0], pad, cleanMatte);
+        }
+
+        /// <summary>EVERY frame of an .an, each on its OWN premultiplied texture (see <see cref="LoadAnSoloPremultiplied"/>).
+        /// Use for the 結算 digit strips — their frames are separate PNGs anyway (Num8.an → 08\0.png …), so giving each its
+        /// own texture costs no extra draw calls. Empty array if the .an is missing.</summary>
+        public static Sprite[] LoadAnPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
+        {
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
+            if (!File.Exists(anPath)) return new Sprite[0];
+            var frames = ParseAnText(File.ReadAllText(anPath));
+            var sprites = new List<Sprite>(frames.Count);
+            foreach (var fr in frames)
+            {
+                var s = PremultipliedFrame(folder, fr, pad, cleanMatte);
+                if (s != null) sprites.Add(s);
+            }
+            return sprites.ToArray();
+        }
+
+        /// <summary>A bare image file (no .an) as one premultiplied sprite (see <see cref="LoadAnSoloPremultiplied"/>).
+        /// Used for the 結算 成績字 (02\) and rank badges (RANK\), which are addressed as plain PNGs.</summary>
+        public static Sprite LoadImagePremultiplied(string folder, string imageName, int pad = 1, bool cleanMatte = false)
+        {
+            string path = Path.Combine(folder, imageName);
+            var src = LoadTexture(path);
+            return src == null ? null : PremultiplyCrop(src, 0, 0, src.width, src.height, pad, cleanMatte, path);
+        }
+
+        private static Sprite PremultipliedFrame(string folder, AnFrame fr, int pad, bool cleanMatte)
+        {
+            string path = Path.Combine(folder, fr.Image);
+            var src = LoadTexture(path);
             if (src == null) return null;
             int cx, cy, cw, ch;
             if (fr.HasCrop) { cx = fr.X; cy = src.height - fr.Y - fr.H; cw = fr.W; ch = fr.H; }   // top-left -> bottom-left
             else { cx = 0; cy = 0; cw = src.width; ch = src.height; }
+            // Same guard as SpriteFromFrame: some .an files declare the ORIGINAL DDS canvas while the extracted PNG is
+            // the trimmed content, so an out-of-bounds crop must fall back to the whole texture. Without it a strip
+            // silently loses a frame — and a digit strip that comes back 9 long makes the whole number vanish (callers
+            // bail on digits.Length < 10), or worse, comes back 10 long with every digit shifted by one.
+            if (cx < 0 || cy < 0 || cw <= 0 || ch <= 0 || cx + cw > src.width || cy + ch > src.height)
+            { cx = 0; cy = 0; cw = src.width; ch = src.height; }
+            return PremultiplyCrop(src, cx, cy, cw, ch, pad, cleanMatte, path);
+        }
+
+        private static Sprite PremultiplyCrop(Texture2D src, int cx, int cy, int cw, int ch, int pad, bool cleanMatte,
+                                              string cacheKeyPath = null)
+        {
             if (cw <= 0 || ch <= 0 || cx < 0 || cy < 0 || cx + cw > src.width || cy + ch > src.height) return null;
+            // Cache by (source file, crop, pad, cleanMatte). ResultScreen.Build runs once PER SONG and pulls ~55 crops;
+            // without this every round would leak a fresh batch of RGBA32 textures (and their materials), which the
+            // static premult registries below hold alive forever — Resources.UnloadUnusedAssets can never reclaim them.
+            string key = cacheKeyPath == null ? null
+                       : $"{cacheKeyPath}|{cx},{cy},{cw},{ch}|{pad}|{(cleanMatte ? 1 : 0)}";
+            if (key != null && _premultCache.TryGetValue(key, out var cached) && cached != null && cached.texture != null)
+                return cached;
             int W = cw + pad * 2, H = ch + pad * 2;
             var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             outTex.SetPixels(new Color[W * H]);           // (0,0,0,0) transparent border — premult-clean under bilinear
@@ -523,6 +683,9 @@ namespace Sdo.Game
                 // cleanMatte: 白底出圖在鈕外緣(尤其右上角)留一圈「低透明度純白」matte (a<~48)。premult 會把它「正確」合成成一層
                 // 淡白霧 —— 疊在深色商城 UI 上就顯出「右上外圍沒清乾淨的白邊」。這種低-alpha 泛白像素是 matte 殘留(鈕本身 AA 邊
                 // a≥59、白色圖示 a=255 都在門檻外),直接清成全透明。純白條件避免誤傷帶色 AA 邊。
+                // 結算的白色小圖(%、100、數字、成績字)沒有孤立 matte,那圈低-alpha 白是美術「烘進圖裡」的柔邊 —— 官方 1:1 看
+                // 起來正常,我們把 800×600 放大到視窗就變成一圈白霧(量測:premult 本身只降 12%,清掉才降 65~80%)。所以那些圖
+                // 也開 cleanMatte:字身(a≥48)一個像素都不動,只削掉最外那層柔白 → 放大後回到官方 1:1 的銳利度。
                 if (cleanMatte && a < 48f / 255f && c.r > 170f / 255f && c.g > 170f / 255f && c.b > 170f / 255f)
                 { cols[i] = new Color(0f, 0f, 0f, 0f); continue; }
                 var lin = c.linear;                       // sRGB → linear (A untouched)
@@ -532,9 +695,15 @@ namespace Sdo.Game
                 cols[i] = outc;
             }
             outTex.SetPixels(cols); outTex.Apply(false);
-            _premultTextures.Add(outTex);                 // mark so UGUI can pair it with the premult material (UIKit.ApplySprite)
-            return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            _premultTextures.Add(outTex);                 // mark so callers can pair it with a premult material
+            var sprite = Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            if (key != null) _premultCache[key] = sprite;
+            return sprite;
         }
+
+        // Premult crops keyed by (source file, crop, pad, cleanMatte) — see PremultiplyCrop. Keeps a re-entered screen
+        // (ResultScreen.Build runs once per song) reusing one batch of textures instead of minting a new one each time.
+        private static readonly Dictionary<string, Sprite> _premultCache = new Dictionary<string, Sprite>();
 
         // Textures produced by LoadAnSoloPremultiplied (RGB already × alpha). A sprite on one of these MUST render with a
         // premultiplied-alpha material (Blend One OneMinusSrcAlpha) or it looks wrong — UIKit.ApplySprite auto-pairs them.
@@ -544,9 +713,11 @@ namespace Sdo.Game
 
         private static Material _premultUiMat;
         /// <summary>Shared premultiplied-alpha material (<c>Sdo/SpritePremultiply</c>, Blend One OneMinusSrcAlpha) for
-        /// UI Images / SpriteRenderers showing a premult texture. One instance serves all — UGUI binds each renderer's own
-        /// texture, and SpriteRenderers set their own. Null if the shader was stripped (caller keeps the default material,
-        /// which shows the premult texture too dark — so registration in BuildScript.RequiredShaders matters).</summary>
+        /// <b>UGUI Images only</b>. One instance serves every Image: a CanvasRenderer uploads its OWN texture with each
+        /// draw, so they never fight over the material's <c>_MainTex</c>. A <see cref="SpriteRenderer"/> does NOT — hand
+        /// several of them this same instance and they all sample whichever texture was written to it last. Use
+        /// <see cref="PremultSpriteMaterial"/> there instead. Null if the shader was stripped (caller keeps the default
+        /// material, which shows a premult texture too dark — so BuildScript.RequiredShaders registration matters).</summary>
         public static Material PremultUiMaterial
         {
             get
@@ -560,6 +731,27 @@ namespace Sdo.Game
             }
         }
 
+        private static readonly Dictionary<Texture, Material> _premultSpriteMats = new Dictionary<Texture, Material>();
+        /// <summary>Premultiplied-alpha material BOUND TO ONE TEXTURE — what a <see cref="SpriteRenderer"/> needs.
+        /// THE RULE (measured on 6000.4.11f1, five renderers × five textures): <b>one Material INSTANCE may only be
+        /// given to SpriteRenderers that draw the SAME texture.</b> Share an instance across different textures and they
+        /// all end up sampling whichever texture was written to it last — 使用者回報「結算數字的位置畫出 YOU WIN 旗、確定鈕
+        /// 畫成保存錄像、排名欄畫出 GAME OVER」就是這個。It is NOT about <c>[PerRendererData]</c>: <c>Sprites/Default</c>
+        /// tags <c>_MainTex</c> that way too and a shared instance of it bleeds just the same. Assigning NO material
+        /// (letting the renderer use the engine's own sprite material) is safe; a shared CUSTOM instance is not.
+        /// So: one material per texture, cached — renderers that do share a texture still share one material and still
+        /// batch. Null if the shader was stripped — the caller must then keep the default material.</summary>
+        public static Material PremultSpriteMaterial(Texture tex)
+        {
+            if (tex == null) return null;
+            if (_premultSpriteMats.TryGetValue(tex, out var m) && m != null) return m;
+            var sh = Shader.Find("Sdo/SpritePremultiply");
+            if (sh == null) return null;
+            m = new Material(sh) { name = "SdoPremultSprite", mainTexture = tex };
+            _premultSpriteMats[tex] = m;
+            return m;
+        }
+
         /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.
         /// <paramref name="bleed"/> dilates the transparent-white matte to remove the bilinear white halo on edges.</summary>
         public static Sprite LoadImage(string folder, string imageName, bool bleed = false)
@@ -568,6 +760,46 @@ namespace Sdo.Game
             return tex == null ? null
                 : Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
                                 new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
+
+        /// <summary>
+        /// As <see cref="LoadImage"/>, but the sprite's WORLD size is pinned to <paramref name="designWidth"/> source
+        /// pixels no matter what resolution the file on disk actually is (pixelsPerUnit = tex.width / designWidth).
+        /// Use for art that may be shipped upscaled: e.g. the PLAYINGEXP cut-ins were authored 64×64 and are now
+        /// stored 192×192 (tools/upscale_playingexp.py) — at designWidth 64 they draw 3× sharper at the SAME size.
+        /// <paramref name="mip"/> re-uploads the pixels on a mipmapped/Trilinear texture: an upscaled sprite is
+        /// MINIFIED on screen (192 texels into ~150 px), and without a mip chain that shimmers/aliases as the camera
+        /// moves — the same lesson as the supersampled room buttons (see <see cref="LoadAnSoloMip"/>).
+        /// </summary>
+        public static Sprite LoadImageAtDesignWidth(string folder, string imageName, int designWidth,
+                                                    bool bleed = false, bool mip = false)
+        {
+            var path = Path.Combine(folder, imageName);
+            var tex = bleed ? LoadTextureBled(path) : LoadTexture(path);
+            if (tex == null) return null;
+            if (mip) tex = ToMipmapped(path, tex);
+            float ppu = designWidth > 0 ? Mathf.Max(0.0001f, tex.width / (float)designWidth) : 1f;
+            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                                 new Vector2(0.5f, 0.5f), ppu, 0, SpriteMeshType.FullRect);
+        }
+
+        // Mipmapped copies, keyed by source path. Cached because gameplay re-loads its art on EVERY song start —
+        // building a fresh 192²·RGBA·mips texture per emoji frame per play would just leak (81 frames ≈ 16 MB a round).
+        private static readonly Dictionary<string, Texture2D> _mipCache = new Dictionary<string, Texture2D>();
+
+        /// <summary>A mipmapped/Trilinear twin of <paramref name="src"/> (Unity can't add mips to an existing texture).
+        /// Call AFTER any alpha-bleed: mip levels average RGB across the alpha edge, so an un-bled white matte would be
+        /// averaged INTO the glyph as a halo that grows with distance.</summary>
+        private static Texture2D ToMipmapped(string key, Texture2D src)
+        {
+            if (src == null) return null;
+            if (_mipCache.TryGetValue(key, out var cached) && cached != null) return cached;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, true)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
+            tex.SetPixels32(src.GetPixels32());
+            tex.Apply(true);
+            _mipCache[key] = tex;
+            return tex;
         }
 
         /// <summary>

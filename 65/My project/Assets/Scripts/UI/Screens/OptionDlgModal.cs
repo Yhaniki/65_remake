@@ -186,7 +186,7 @@ namespace Sdo.UI.Screens
             float yFull = y0, ySpeed = y0 + step, yBomb = y0 + step * 2f, yVsync = y0 + step * 3f;
             float yRes = y0 + step * 4f, yMode = y0 + step * 5f, yLang = y0 + step * 6f;
 
-            // Row 1 — 完奏模式（原「無失敗模式」，移到最上面）：HP 歸零不判失敗，整首照打到曲末。用 board 烘好的模板 pill + 兩顆圈。
+            // Row 1 — 完奏模式（移到最上面）：HP 歸零不切斷歌曲，整首照打到曲末（血空後不再加分、結算仍算 GAME OVER）。用 board 烘好的模板 pill + 兩顆圈。
             AdvLabel(b, yFull, "settings.play_full_song", bakedPill: true);
             AdvDot(b, 392f, yFull + dotDown, "common.enabled", () => _gpPlayFullSong, () => { _gpPlayFullSong = true; RefreshAdv(); });
             AdvDot(b, 481f, yFull + dotDown, "common.disabled", () => !_gpPlayFullSong, () => { _gpPlayFullSong = false; RefreshAdv(); });
