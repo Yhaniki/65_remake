@@ -21,7 +21,11 @@ namespace Sdo.Osu
     ///   so it is NOT added; verified NotesLoaderSM.cpp:141 + TimingData.cpp:162-174.) A stop also freezes the
     ///   highway for its duration — carried on <see cref="OsuBeatmap.Stops"/> and applied by <see cref="ManiaScroll"/>.
     ///
-    /// 負 BPM (warp) —— 見 <see cref="Warps"/>:StepMania 的 #BPMS 允許負值,那一段的「經過時間」是**負的**,
+    /// warp 有**兩種**寫法,走同一條路(見 <see cref="Warps"/> / Timeline.DetectWarps):負 BPM(下一段)
+    /// 與**負停拍**(#STOPS 寫負秒數,見 <see cref="ParseStops"/>)。後者不是壞資料 —— 它在單一拍點上讓時間
+    /// 瞬間下跳,效果等同一段跳過 |stopSec| × BPS 拍的 warp。
+    ///
+    /// 負 BPM (warp):StepMania 的 #BPMS 允許負值,那一段的「經過時間」是**負的**,
     /// 所以歌曲時間會倒退;要等後面同樣長度的正 BPM 把它加回來,播放頭才回到原本的時刻,後面的譜就照原時間接上。
     /// 這中間的拍子播放頭是**一瞬間跳過去**的(TimingData::GetBeatAndBPSFromElapsedTime 在負段
     /// `fSecondsInThisSegment` 為負 → 條件不成立 → 直接 `fElapsedTime -= fSecondsInThisSegment` 把時間加回去,
@@ -78,6 +82,20 @@ namespace Sdo.Osu
                     return false;
                 }
             }
+
+            /// <summary>這首有沒有負停拍 —— 另一種寫法的 warp,見 <see cref="ParseStops"/>。</summary>
+            public bool HasNegativeStop
+            {
+                get
+                {
+                    for (int i = 0; i < StopSeconds.Count; i++) if (StopSeconds[i] < 0.0) return true;
+                    return false;
+                }
+            }
+
+            /// <summary>這首有沒有 warp gimmick(負 BPM 或負停拍)—— 有的話拍→時間不再單調,
+            /// 便宜的逐字掃譜(<see cref="NoteCount(string)"/>)就不能用了。</summary>
+            public bool HasWarps => HasNegativeBpm || HasNegativeStop;
         }
 
         /// <summary>
@@ -181,12 +199,12 @@ namespace Sdo.Osu
 
         /// <summary>
         /// 這張譜**實際打得到**的音符顆數(炸彈與 warp 內的裝飾音都不算)——選歌畫面顯示的 note 數、難度排序都用它。
-        /// 沒有負 BPM 的譜直接走便宜的 <see cref="NoteCount(string)"/>(逐字掃 note body,不必建時間軸)。
+        /// 沒有 warp gimmick 的譜直接走便宜的 <see cref="NoteCount(string)"/>(逐字掃 note body,不必建時間軸)。
         /// </summary>
         public static int PlayableNoteCount(SmSong song, int chartIndex)
         {
             if (song == null || chartIndex < 0 || chartIndex >= song.Charts.Count) return 0;
-            if (!song.HasNegativeBpm) return NoteCount(song.Charts[chartIndex].NoteData);
+            if (!song.HasWarps) return NoteCount(song.Charts[chartIndex].NoteData);
             int n = 0;
             foreach (var h in ToBeatmap(song, chartIndex).HitObjects)
                 if (!h.IsBomb && !h.IsFake) n++;
@@ -399,7 +417,9 @@ namespace Sdo.Osu
                     if (i > 0 && b - knots[i - 1] <= BeatEps) continue;              // 去重
                     double startMs = PlayMs(b);
                     // warp **內部**的停拍不定格(播放頭是瞬間跳過那段拍子的)—— 和 DisplayStops 同一條規則。
-                    double stop = IsWarped(b) ? 0.0 : StopAt(b);
+                    // 負停拍也不是定格(它是 warp 起跳點),夾成 0:留著負值會讓這一段的 BeatLengthMs 反而變大,
+                    // 編輯器格線就會在該跳過的地方拉開。
+                    double stop = IsWarped(b) ? 0.0 : Math.Max(0.0, StopAt(b));
                     double bl;
                     int next = i + 1;
                     while (next < knots.Count && knots[next] - b <= BeatEps) next++;
@@ -435,6 +455,9 @@ namespace Sdo.Osu
                 var list = new List<ScrollStop>();
                 for (int i = 0; i < StopBeat.Length; i++)
                 {
+                    // 負停拍不是凍結,是 warp 的**起跳點**(播放頭在這裡瞬間往前跳,畫面不定格)——
+                    // 它造成的超高速捲動由 warp 的顯示窗負責,見 DetectWarps / FillTimingPoints。
+                    if (StopMs[i] <= 0.0) continue;
                     if (IsWarped(StopBeat[i])) continue;
                     double s = DisplayMs(StopBeat[i]);
                     if (s < 0.0) s = 0.0;
@@ -559,10 +582,13 @@ namespace Sdo.Osu
             }
 
             /// <summary>
-            /// 找出所有 warp。走訪「斜率會變(BPM 段起拍)或時間會跳(stop 起拍)」的拍點,把譜面切成一段段線性:
-            ///   斜率為負 → 時間開始倒退,warp 從這一拍起跳(記下起跳時刻 wMs);
-            ///   之後第一次回到 wMs 的那一拍 → 落地,warp 結束(= 使用者說的「同樣時間長度的正 BPM 抵銷掉」)。
-            /// 收不回來(負 BPM 一路到譜尾)就收在譜尾,後面全部是打不到的裝飾音。
+            /// 找出所有 warp。走訪「斜率會變(BPM 段起拍)或時間會跳(stop 起拍)」的拍點,把譜面切成一段段線性。
+            /// 時間會倒退的寫法有**兩種**,都在這裡開 warp:
+            ///   • 負 BPM —— 斜率為負,時間一路往回走;
+            ///   • 負停拍 —— 斜率照舊,但在那一個拍點上時間**瞬間下跳** |stopSec|(見 <see cref="ParseStops"/>)。
+            /// 兩者都是「記下起跳時刻 wMs,之後第一次回到 wMs 的那一拍就落地」(= 倒退的時間被後面的正 BPM
+            /// 補回來),中間的拍子播放頭是一瞬間跳過去的。
+            /// 收不回來(倒退一路到譜尾都沒補回來)就收在譜尾,後面全部是打不到的裝飾音。
             /// </summary>
             private SmWarp[] DetectWarps(double lastBeat)
             {
@@ -579,11 +605,25 @@ namespace Sdo.Osu
                 {
                     double b0 = knots[k], b1 = knots[k + 1];
                     if (b1 - b0 <= 1e-9) continue;                  // 同一拍上的重複切點
-                    double v0 = RawMs(b0) + StopAt(b0);             // 含這一拍上的 stop(往上跳,只會提早結束 warp)
+                    double preStop = RawMs(b0);                     // 這一拍上的 stop 還沒套用時的時刻
+                    double stopAt = StopAt(b0);
+                    double v0 = preStop + stopAt;                   // 含這一拍上的 stop(正的往上跳,只會提早結束 warp)
                     if (inWarp && v0 >= wMs - TimeEps) { Close(warps, wStart, b0, wMs); inWarp = false; }
 
                     double slope = 60000.0 / SegBpm[SegIndex(b0)];  // ms/beat;負 BPM → 負斜率 = 時間倒退
                     double v1 = v0 + (b1 - b0) * slope;
+                    // 先開 warp,再在**同一輪**檢查落地 —— 負停拍的 warp 通常在同一個 BPM 段裡就落地
+                    // (時間瞬間下跳、斜率照舊往上補),中間沒有任何切點可等。負 BPM 的 warp 起跳那一輪
+                    // slope < 0,落地條件本來就不成立,行為不變。
+                    if (!inWarp && (slope < 0.0 || stopAt < 0.0))
+                    {
+                        inWarp = true; wStart = b0;
+                        // 起跳時刻。負停拍要用**還沒扣掉**那段負秒數的時刻(preStop):StepMania 的
+                        // GetElapsedTimeFromBeat 在 `stopBeat >= beat` 就 break(TimingData.cpp:170),
+                        // 正好落在停拍那一拍上的音符算在「停之前」,所以它是起跳點而不是落地點。
+                        // 正停拍照舊用含 stop 的 v0。
+                        wMs = stopAt < 0.0 ? preStop : v0;
+                    }
                     if (inWarp)
                     {
                         if (slope > 0.0 && v1 >= wMs - TimeEps)     // 這一段裡把倒退的時間補回來了 → 落地
@@ -604,7 +644,6 @@ namespace Sdo.Osu
                             inWarp = false;
                         }
                     }
-                    else if (slope < 0.0) { inWarp = true; wStart = b0; wMs = v0; }
                 }
                 if (inWarp) Close(warps, wStart, end, wMs);
                 return warps.ToArray();
@@ -815,8 +854,17 @@ namespace Sdo.Osu
             }
         }
 
-        // #STOPS:beat=seconds,beat=seconds,...  (same grammar as #BPMS). A non-positive freeze is ignored
-        // (StepMania keeps 0-length stops but they are a no-op for timing and would only add a dead scroll point).
+        // #STOPS:beat=seconds,beat=seconds,...  (same grammar as #BPMS).
+        // **負值要留著** —— 負停拍是另一種寫法的 warp,不是壞資料:StepMania 對它完全不過濾
+        // (NotesLoaderSM.cpp:181 直接 `new_seg.m_fStopSeconds = fFreezeSeconds`),然後
+        //   • 判定時間 TimingData.cpp:172 `fElapsedTime += m_fStopSeconds` → 負的就是**時間倒退**;
+        //   • 播放頭 TimingData.cpp:133 `fElapsedTime -= m_fStopSeconds` → 負的變成時間往前推,
+        //     beat 一口氣跳過 |stopSec| × BPS 拍,而下一行的凍結條件 `fFreezeStartSecond >= fElapsedTime`
+        //     因此必然不成立 → **不定格**。
+        // 也就是說負停拍和負 BPM 是同一個東西,只差偵測方式(單一拍點上的不連續下跳 vs 負斜率),
+        // 走同一條 warp 路徑 —— 見 Timeline.DetectWarps。丟掉的話整首歌的時間軸會整段錯位
+        // (Elisha 有 261 個 -3.89 秒的負停拍,總計 -1015 秒:譜末時刻會從 122 秒變成 1137 秒)。
+        // 0 秒沒有意義(對時間沒有影響,只會多一個死的捲動點),丟掉。
         private static void ParseStops(string val, SmSong song)
         {
             if (string.IsNullOrEmpty(val)) return;
@@ -825,7 +873,7 @@ namespace Sdo.Osu
                 int eq = pair.IndexOf('=');
                 if (eq <= 0) continue;
                 if (TryDouble(pair.Substring(0, eq), out double beat) &&
-                    TryDouble(pair.Substring(eq + 1), out double sec) && sec > 0)
+                    TryDouble(pair.Substring(eq + 1), out double sec) && Math.Abs(sec) > 1e-9)
                 {
                     song.StopBeats.Add(beat);
                     song.StopSeconds.Add(sec);

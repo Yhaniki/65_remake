@@ -398,6 +398,145 @@ namespace Sdo.Tests
         }
 
         // ---------------------------------------------------------------------------------------------------
+        // 負停拍(#STOPS 寫負秒數)—— 另一種寫法的 warp。StepMania 對它完全不過濾(NotesLoaderSM.cpp:181),
+        // 判定時間 TimingData.cpp:172 是 `fElapsedTime += m_fStopSeconds`(負的 → 時間倒退),播放頭
+        // TimingData.cpp:133 是 `fElapsedTime -= m_fStopSeconds`(負的 → 時間往前推,beat 一口氣跳過
+        // |stopSec| × BPS 拍),而且下一行的凍結條件必然不成立 → **不定格**。
+        // 真實譜:[Zelda-YEH - 100000 hit] Elisha 有 261 個 -3.890 秒的負停拍,總計 -1015 秒。
+        // ---------------------------------------------------------------------------------------------------
+
+        // 120 BPM(1 拍 = 500ms、BPS = 2)。beat 4 上一個 -2 秒的停拍 → 從 beat 4 跳過 2×2 = 4 拍到 beat 8。
+        // 每拍一顆 note,共 4 小節(beats 0..15)。
+        private const string NegStop =
+            "#TITLE:NS;\n#OFFSET:0;\n#BPMS:0=120;\n#STOPS:4.000=-2.000;\n" +
+            "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n" +
+            "1000\n1000\n1000\n1000\n,\n" +   // beats 0..3
+            "1000\n1000\n1000\n1000\n,\n" +   // beats 4..7   ← beat 4 起跳,5/6/7 被跳過
+            "1000\n1000\n1000\n1000\n,\n" +   // beats 8..11  ← beat 8 落地
+            "1000\n1000\n1000\n1000\n;\n";    // beats 12..15
+
+        [Test]
+        public void Parses_Negative_Stop()
+        {
+            var s = SmChart.Parse(NegStop);
+            Assert.AreEqual(1, s.StopBeats.Count, "負停拍不能被當成壞資料丟掉");
+            Assert.AreEqual(4.0, s.StopBeats[0], 1e-9);
+            Assert.AreEqual(-2.0, s.StopSeconds[0], 1e-9);
+            Assert.IsTrue(s.HasNegativeStop);
+            Assert.IsFalse(s.HasNegativeBpm, "這首沒有負 BPM —— warp 完全來自負停拍");
+            Assert.IsTrue(s.HasWarps);
+        }
+
+        [Test]
+        public void Zero_Length_Stop_Is_Still_Dropped()
+        {
+            // 0 秒對時間沒有影響,留著只會多一個死的捲動點。
+            var s = SmChart.Parse("#TITLE:Z;\n#OFFSET:0;\n#BPMS:0=120;\n#STOPS:4.000=0.000;\n");
+            Assert.AreEqual(0, s.StopBeats.Count);
+        }
+
+        [Test]
+        public void Negative_Stop_Warps_By_Its_Seconds_Times_The_Bps()
+        {
+            var warps = SmChart.Warps(SmChart.Parse(NegStop), 16);
+            Assert.AreEqual(1, warps.Count);
+            Assert.AreEqual(4.0, warps[0].StartBeat, 1e-9);    // 起跳 = 停拍那一拍(音符算在「停之前」)
+            Assert.AreEqual(8.0, warps[0].EndBeat, 1e-9);      // 落地 = 2 秒 × BPS 2 = 4 拍之後
+            Assert.AreEqual(4.0, warps[0].Beats, 1e-9);
+            Assert.AreEqual(2000.0, warps[0].TimeMs, 1e-6);    // 起跳與落地是**同一個**歌曲時刻
+            Assert.IsFalse(warps[0].Contains(4.0), "起跳那一拍打得到");
+            Assert.IsTrue(warps[0].Contains(6.0));
+            Assert.IsFalse(warps[0].Contains(8.0), "落地那一拍打得到");
+        }
+
+        [Test]
+        public void Negative_Stop_Notes_Are_Fake_And_The_Chart_Resumes_At_The_Same_Song_Time()
+        {
+            var map = SmChart.ToBeatmap(SmChart.Parse(NegStop), 0);
+            Assert.AreEqual(16, map.HitObjects.Count, "音符一顆都不會消失 —— 看得到,只是打不到");
+
+            for (int i = 0; i < 4; i++) Assert.AreEqual(i * 500, map.HitObjects[i].StartTimeMs);
+            // beat 4(起跳)、5/6/7(被跳過)、8(落地) 判定時刻全部是 2000ms
+            for (int i = 4; i <= 8; i++) Assert.AreEqual(2000, map.HitObjects[i].StartTimeMs);
+            Assert.IsFalse(map.HitObjects[4].IsFake, "起跳那一拍打得到");
+            for (int i = 5; i <= 7; i++) Assert.IsTrue(map.HitObjects[i].IsFake, $"beat {i} 被負停拍掃掉");
+            Assert.IsFalse(map.HitObjects[8].IsFake, "落地那一拍打得到");
+            // 後面照原時間接上 —— beat 9 = 9×500 − 2000 = 2500ms
+            Assert.AreEqual(2500, map.HitObjects[9].StartTimeMs);
+            Assert.AreEqual(5500, map.HitObjects[15].StartTimeMs);
+            Assert.AreEqual(13, map.TotalNotes, "16 顆扣掉 warp 內的 3 顆");
+            Assert.AreEqual(13, SmChart.PlayableNoteCount(SmChart.Parse(NegStop), 0),
+                "只有負停拍、沒有負 BPM 的譜也要走時間軸這條路,不能退回逐字掃");
+        }
+
+        [Test]
+        public void Negative_Stop_Does_Not_Freeze_The_Highway()
+        {
+            // 官方在負停拍上不定格:GetBeatAndBPSFromElapsedTime 的 `fElapsedTime -= m_fStopSeconds` 把時間
+            // **往前**推,凍結條件 `fFreezeStartSecond >= fElapsedTime` 因此必然不成立。
+            var map = SmChart.ToBeatmap(SmChart.Parse(NegStop), 0);
+            Assert.AreEqual(0, map.Stops.Count);
+        }
+
+        [Test]
+        public void Negative_Stop_Notes_Keep_Beat_Spacing_On_The_Highway()
+        {
+            // 和負 BPM 的 warp 同一條顯示路徑:被跳過的拍子攤在判定時刻前 WarpDisplayMs 的窗裡。
+            var map = SmChart.ToBeatmap(SmChart.Parse(NegStop), 0);
+            double win = 2000.0 - SmChart.WarpDisplayMs;
+            for (int i = 4; i <= 8; i++)
+                Assert.AreEqual(win + SmChart.WarpDisplayMs * (i - 4) / 4.0, map.HitObjects[i].ScrollTimeMs, 1e-9);
+
+            var scroll = ManiaScroll.Build(map, 1.0);
+            double now = win - 0.5;
+            double oneBeat = scroll.PixelDistance(now, 500) - scroll.PixelDistance(now, 0);
+            for (int i = 4; i < 8; i++)
+            {
+                double d = scroll.PixelDistance(now, map.HitObjects[i + 1].ScrollTimeMs)
+                         - scroll.PixelDistance(now, map.HitObjects[i].ScrollTimeMs);
+                Assert.AreEqual(oneBeat, d, oneBeat * 1e-6, $"beat {i}→{i + 1} 在畫面上就是一拍的距離");
+            }
+            Assert.AreEqual(0.0, scroll.PixelDistance(2000.0, map.HitObjects[8].ScrollTimeMs), 1e-6);
+        }
+
+        [Test]
+        public void Repeated_Negative_Stops_Each_Open_Their_Own_Warp()
+        {
+            // Elisha 的形狀:同一個 BPM 段裡一連串等距的負停拍,每一個都自成一段 warp。
+            // 120 BPM、每 8 拍一個 -3 秒的停拍 → 每次跳 3×2 = 6 拍,下一個停拍前 2 拍落地。
+            const string sm =
+                "#TITLE:RS;\n#OFFSET:0;\n#BPMS:0=120;\n#STOPS:8.000=-3.000\n,16.000=-3.000\n,24.000=-3.000;\n" +
+                "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n" +
+                "1000\n,\n1000\n,\n1000\n,\n1000\n,\n1000\n,\n1000\n,\n1000\n,\n1000\n;\n";
+            var song = SmChart.Parse(sm);
+            Assert.AreEqual(3, song.StopBeats.Count);
+            var warps = SmChart.Warps(song, 32);
+            Assert.AreEqual(3, warps.Count);
+            for (int i = 0; i < 3; i++)
+            {
+                double stopBeat = 8.0 * (i + 1);
+                Assert.AreEqual(stopBeat, warps[i].StartBeat, 1e-9);
+                Assert.AreEqual(stopBeat + 6.0, warps[i].EndBeat, 1e-9, "每個負停拍跳 3 秒 × BPS 2 = 6 拍");
+                // 起跳時刻 = 那一拍的原始時間扣掉**前面**幾個停拍(不含自己)
+                Assert.AreEqual(stopBeat * 500.0 - 3000.0 * i, warps[i].TimeMs, 1e-6);
+            }
+        }
+
+        [Test]
+        public void Negative_Stop_Cancelled_By_A_Positive_Stop_On_The_Same_Beat_Is_Not_A_Warp()
+        {
+            // 同一拍上正負相消 → 淨值 0,時間不動,沒有 warp(StopSum/StopAt 都是總和)。
+            var song = SmChart.Parse(
+                "#TITLE:C;\n#OFFSET:0;\n#BPMS:0=120;\n#STOPS:4.000=-1.000\n,4.000=1.000;\n" +
+                "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n" +
+                "1000\n,\n1000\n,\n1000\n;\n");
+            Assert.AreEqual(0, SmChart.Warps(song, 12).Count);
+            var map = SmChart.ToBeatmap(song, 0);
+            Assert.AreEqual(3, map.TotalNotes);
+            foreach (var h in map.HitObjects) Assert.IsFalse(h.IsFake);
+        }
+
+        // ---------------------------------------------------------------------------------------------------
         // 負 BPM 中間夾 #STOPS —— gimmick 譜的正戲(engine[Blue] 那種:一連串 4 拍負 / 4 拍正,接縫上各放一個
         // 停拍)。StepMania 在停拍那一拍**定格**(GetBeatAndBPSFromElapsedTime 走到停拍時 bFreezeOut=true),
         // 玩家看得到「停住的那一瞬間」;停完才一口氣跳過下一段拍子。畫面上就是一格一格的定格動畫。
