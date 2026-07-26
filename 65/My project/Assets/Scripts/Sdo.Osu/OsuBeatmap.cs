@@ -180,9 +180,20 @@ namespace Sdo.Osu
         private const double ShortHoldRoundingMs = 1.0;
 
         /// <summary>
+        /// 這個格式的譜「可不可以」套 <see cref="CollapseShortHolds"/>。**只有從別的遊戲轉過來的譜**
+        /// (osu / StepMania / Malody) 可以：極短 hold 是它們的裝飾音寫法，搬到這個引擎按不出來。
+        /// SDO 原生的 .gn 一律不動——官方 k.gn (<see cref="SongFormat.None"/>，DATA/MUSIC) 與 Songs/ 底下的
+        /// .gn 歌曲包 (<see cref="SongFormat.Gn"/>，[NX]Patch 轉出來的官方譜) 都是照這個引擎的判定打的，
+        /// 譜上多短的長條都是作者的原意，改了就是改官方譜。純函式。
+        /// </summary>
+        public static bool AllowsShortHoldCollapse(SongFormat format)
+            => format == SongFormat.Osu || format == SongFormat.Sm || format == SongFormat.Malody;
+
+        /// <summary>
         /// 把「無理的短 long note」原地改成一般 note（清掉 EndTimeMs，只留頭部判定）：長度 &lt;
         /// <paramref name="maxHoldMs"/> 的長條 → tap。回傳被轉換的顆數。純函式（只動 HitObjects，不碰時間/BPM/timing
-        /// points），呼叫端用開關 gating（見 GameplaySettings.collapseShortHolds）。長度剛好等於門檻的長條保留。
+        /// points），呼叫端用開關 gating（見 GameplaySettings.collapseShortHolds）＋格式 gating
+        /// （<see cref="AllowsShortHoldCollapse"/>：只有外部轉檔譜能套）。長度剛好等於門檻的長條保留。
         /// </summary>
         public int CollapseShortHolds(double maxHoldMs = ShortHoldMaxMs)
         {

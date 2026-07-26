@@ -516,6 +516,8 @@ namespace Sdo.Game
         public bool playFullSong = false;   // 進階「無失敗模式」：HP 歸零不判失敗，整首照打(判定/舞蹈續行)到曲末，結算走正常名次(不出 GAME OVER)
         // 無理短長條 → 一般 note（預設開；OPTION 尚未接 UI，先由 GameplaySettings.collapseShortHolds / config.ini 灌進來）：
         // 載譜後把長度短於 180 BPM 16 分音符 (OsuBeatmap.ShortHoldMaxMs ≈83ms) 的 long note 收成單顆 note，見 LoadChart。
+        // 這開關只管**外部轉檔譜**(chartFormat 1/2/4 = osu/sm/mc)：官方 k.gn (chartFormat 0) 與 .gn 歌曲包 (3) 是
+        // SDO 原生譜，開著也不會被改（格式 gating 見 OsuBeatmap.AllowsShortHoldCollapse）。
         public bool collapseShortHolds = true;
         // 進階「歌曲炸彈」（OPTION 進階頁 → GameplaySettings.songBombs）：true=照譜面原樣有雷（預設）；
         // false=載譜後把譜面上的炸彈整顆拿掉（OsuBeatmap.RemoveBombs，見 LoadChart）。
@@ -1648,13 +1650,15 @@ namespace Sdo.Game
             _hpGlowMat = new Material(Shader.Find("Sdo/HpGlowClip") ?? sh);
         }
 
-        /// <summary>載譜（官方 .gn / 外部 osu·sm），成功後套用譜面修整：<see cref="collapseShortHolds"/> 開著時把
-        /// 「無理的短 long note」(短於 180 BPM 的 16 分音符) 收成一般 note；<see cref="songBombs"/> **關著**時把炸彈
-        /// 整顆拿掉。修整必須在這裡、在任何吃 _map 的東西 (判定、TotalNotes→滿分、捲動、note 皮) 建起來之前做完。</summary>
+        /// <summary>載譜（官方 .gn / 外部 osu·sm），成功後套用譜面修整：<see cref="collapseShortHolds"/> 開著、
+        /// **且這首是外部轉檔譜 (osu/sm/mc)** 時把「無理的短 long note」(短於 180 BPM 的 16 分音符) 收成一般 note
+        /// ——官方 k.gn 與 .gn 歌曲包是原生譜，一律照原樣打（見 OsuBeatmap.AllowsShortHoldCollapse）；
+        /// <see cref="songBombs"/> **關著**時把炸彈整顆拿掉。
+        /// 修整必須在這裡、在任何吃 _map 的東西 (判定、TotalNotes→滿分、捲動、note 皮) 建起來之前做完。</summary>
         private bool LoadChart()
         {
             if (!LoadChartRaw()) return false;
-            if (collapseShortHolds && _map != null)
+            if (collapseShortHolds && _map != null && OsuBeatmap.AllowsShortHoldCollapse((SongFormat)chartFormat))
             {
                 int collapsed = _map.CollapseShortHolds();
                 if (collapsed > 0) Debug.Log($"[Step1] collapsed {collapsed} short hold(s) (< {OsuBeatmap.ShortHoldMaxMs:0.#} ms) into taps");

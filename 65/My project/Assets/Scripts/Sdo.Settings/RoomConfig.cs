@@ -573,6 +573,7 @@ namespace Sdo.Settings
             sb.Append("# 歌曲炸彈（1=照譜面原樣有雷，預設；0=開局載譜時把炸彈整顆拿掉）。炸彈不計分也不計 miss，拿掉不影響滿分。\n");
             sb.Append("opt_songBombs=").Append(B(optSongBombs)).Append('\n');
             sb.Append("# 無理短長條收成一般 note（短於 180BPM 16 分音符 ≈83ms 的 long note → note；1=開 預設 0=關）\n");
+            sb.Append("# 只對外部轉檔譜（osu/StepMania/Malody）生效；官方 k.gn 與 .gn 歌曲包是原生譜，永遠照原樣打。\n");
             sb.Append("opt_collapseShortHolds=").Append(B(optCollapseShortHolds)).Append('\n');
             sb.Append("# 面板透明度 0.0~1.6\n");
             sb.Append("opt_panelOpacity=").Append(optPanelOpacity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');

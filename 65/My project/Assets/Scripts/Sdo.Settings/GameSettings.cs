@@ -48,7 +48,9 @@ namespace Sdo.Settings
         public float panelOpacity = 1.4f;    // 面板透明度：note 面板 alpha 倍率(=boardAlpha)，範圍 0..1.4（1.4=官方＝上限）
         // 無理短長條 → 一般 note：長度短於 180 BPM 的 16 分音符 (≈83 ms, OsuBeatmap.ShortHoldMaxMs) 的 long note，
         // 開局載譜時直接收成單顆 note（頭尾判定擠在同一個判定窗內＝按不出來，多半是外部譜把裝飾音寫成極短 hold）。
-        // 預設開。OPTION 尚未接 UI，先走這個欄位/config.ini(opt_collapseShortHolds) 當開關接口。
+        // **只對外部轉檔譜（osu/sm/mc）生效**：官方 k.gn 與 Songs/ 的 .gn 歌曲包都是 SDO 原生譜，這開關開著也不動
+        // （見 OsuBeatmap.AllowsShortHoldCollapse）。預設開。OPTION 尚未接 UI，先走這個欄位/config.ini
+        // (opt_collapseShortHolds) 當開關接口。
         public bool collapseShortHolds = true;
 
         public const float MaxPanelOpacity = 1.4f;   // OPTION 面板透明度滑桿最高 1.4X

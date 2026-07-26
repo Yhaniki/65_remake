@@ -94,6 +94,22 @@ namespace Sdo.Tests
             Assert.AreEqual(0, new OsuBeatmap().CollapseShortHolds());
         }
 
+        // ── 格式 gating：只有「別的遊戲轉過來的譜」能收短長條；SDO 原生 .gn 一律照原樣打 ──────────────
+        [Test]
+        public void Only_Converted_External_Formats_May_Collapse()
+        {
+            Assert.IsTrue(OsuBeatmap.AllowsShortHoldCollapse(SongFormat.Osu), "osu 轉檔譜 → 收");
+            Assert.IsTrue(OsuBeatmap.AllowsShortHoldCollapse(SongFormat.Sm), "StepMania → 收");
+            Assert.IsTrue(OsuBeatmap.AllowsShortHoldCollapse(SongFormat.Malody), "Malody .mc → 收");
+        }
+
+        [Test]
+        public void Native_Gn_Charts_Are_Never_Collapsed()
+        {
+            Assert.IsFalse(OsuBeatmap.AllowsShortHoldCollapse(SongFormat.None), "官方 k.gn（DATA/MUSIC）不修改");
+            Assert.IsFalse(OsuBeatmap.AllowsShortHoldCollapse(SongFormat.Gn), ".gn 歌曲包（[NX] 轉出來的原生譜）也不修改");
+        }
+
         [Test]
         public void Timing_Points_And_Stops_Are_Not_Touched()
         {
