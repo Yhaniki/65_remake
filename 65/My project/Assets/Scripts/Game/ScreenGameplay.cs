@@ -3094,10 +3094,24 @@ namespace Sdo.Game
             // the stage's AlphaTest pass (2450) means the stage is drawn afterwards and simply paints over it
             // wherever the stage has geometry. MUST run AFTER ApplyMapobjRenderMode — assigning Material.shader
             // resets a custom renderQueue back to the shader's default, so setting it earlier would be undone.
-            if (SceneMapobjUvScrollCatalog.TryFindTarget(SceneFolder(), baseName, out var queueTarget) && queueTarget.Queue > 0)
+            if (SceneMapobjUvScrollCatalog.TryFindTarget(SceneFolder(), baseName, out var queueTarget))
             {
-                foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) m.renderQueue = queueTarget.Queue;
-                Debug.Log($"[mapobj] {baseName}: render-queue {queueTarget.Queue}");
+                if (queueTarget.Queue > 0)
+                {
+                    foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) m.renderQueue = queueTarget.Queue;
+                    Debug.Log($"[mapobj] {baseName}: render-queue {queueTarget.Queue}");
+                }
+                // SpotGlow sideways blur width. Must also run AFTER ApplyMapobjRenderMode (which assigns the
+                // shader). Needed when the beam texture is an ATLAS of several cones — SCN0019's dengzhu_.dds
+                // holds two side by side, and the shader's default 0.2 UV spread reaches past the quad's own
+                // cone into the neighbour (Repeat wrap), painting a phantom halo along one edge.
+                if (queueTarget.SpotSpread > 0f)
+                {
+                    foreach (var ms in subMats)
+                        if (ms != null) foreach (var m in ms)
+                            if (m != null && m.HasProperty("_Spread")) m.SetFloat("_Spread", queueTarget.SpotSpread);
+                    Debug.Log($"[mapobj] {baseName}: spot-spread {queueTarget.SpotSpread}");
+                }
             }
 
             // UV-scroll (the original streams texture coords on some props): e.g. SCN0014 corals scroll V so their glow

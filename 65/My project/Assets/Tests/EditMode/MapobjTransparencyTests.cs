@@ -1388,6 +1388,51 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void SceneUvScroll_Scn0019_Spotlights_Use_SpotGlow_With_A_Narrowed_Spread()
+        {
+            // 四支場後聚光燈和 SCN0016 的 JIGUANG 是同一種東西(4 頂點光錐 quad + 全軟 alpha 的亮色貼圖 +
+            // .MOT 掃動 + 官方旗標 0x1),必然被 LooksLikeAdditiveGlow 判成加法 → 左右硬邊。走同一條 SpotGlow。
+            foreach (var key in new[] { "GUANG1", "GUANG2", "GUANG3", "GUANG4" })
+            {
+                Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0019", key, out var t), key);
+                Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow, t.Mode, key);
+                Assert.IsFalse(t.Animates, key + " 只帶 render mode,不捲 UV");
+                // ★ dengzhu_.dds 是一張圖並排兩個光錐(左 U 0.125~0.375、右 0.625~0.875),mesh 分別取
+                // 0.085~0.418 與 0.590~0.923。shader 預設 spread 0.2 會從 quad 邊緣往外取到 −0.115,
+                // 貼圖 Repeat 繞回 0.885 = 隔壁光錐的尾巴 → 左緣多一條假光暈。0.1 兩邊都落在空白區。
+                Assert.AreEqual(0.15f, t.SpotSpread, 1e-6f, key + " 的橫向模糊要縮到 0.15,否則會繞取到隔壁光錐");
+            }
+            // SCN0016 是單錐貼圖,維持 shader 預設(0 = 不覆寫)。
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0016", "JIGUANG1", out var ji));
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow, ji.Mode);
+            Assert.AreEqual(0f, ji.SpotSpread, 1e-6f, "單錐貼圖不需要縮,維持 shader 預設");
+            // 同場景的燈架走換幀,不能被掃成聚光燈。
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0019", "SHAN", out _));
+            // 別的場景叫 GUANG4 的道具不能被這條規則掃到(SCN0022 墓穴、SCN0014 投影光都叫 GUANG*)。
+            Assert.AreNotEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0022", "GUANG4"));
+            Assert.AreNotEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0014", "GUANG"));
+        }
+
+        [Test]
+        public void RealData_Scn0019_Spotlight_Texture_Is_A_Two_Cone_Atlas()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            // 縮小 spread 的前提:四支共用的 dengzhu_.dds 真的是「並排兩個光錐」,而 mesh 各取一半。
+            // 若哪天貼圖換成單錐(或 UV 改了),這條會紅,提醒重新評估 0.1 這個值。
+            foreach (var n in new[] { 1, 2, 3, 4 })
+            {
+                var dir = Path.Combine(root, "PK/GUANG" + n);
+                var mats = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(dir, "GUANG" + n + ".MSH")));
+                Assert.AreEqual(1, mats.Count, "GUANG" + n + " 只有一顆材質");
+                Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(mats, "dengzhu_.dds")), "官方透明批");
+            }
+        }
+
+        [Test]
         public void SceneUvScroll_RenderModeOnly_Entries_Do_Not_Animate()
         {
             // 只為了帶 render mode 而存在的條目不能生出 MapobjUvScroll(ScreenGameplay 用 Animates 當守門)。
