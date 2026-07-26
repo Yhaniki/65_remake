@@ -3644,6 +3644,7 @@ namespace Sdo.Game
                 go.AddComponent<MeshRenderer>().sharedMaterials = res.Materials;
                 ApplySceneMaterialUvScroll(SceneFolder(), res.Materials, res.MaterialIds);
                 SpawnNeonSigns(go.GetComponent<MeshRenderer>(), res, dir);   // SCN0001 兩面招牌的逐字閃爍
+                _pendingLensFlareDir = SceneLensFlareCatalog.Has(SceneFolder()) ? dir : null;   // SCN0004 太陽光斑
                 b = res.Mesh.bounds;
                 // render at NATIVE SDO world coords (no lift). The .cv cameras + the avatar dance spot (_avatarChest)
                 // are authored in this same space with the dancer standing on the native floor, so they line up.
@@ -3666,6 +3667,7 @@ namespace Sdo.Game
             var sceneRT = new RenderTexture(rtW, rtH, 24) { name = "sceneRT", antiAliasing = 4, filterMode = FilterMode.Bilinear };
             _sceneRT = sceneRT;
             _sceneRtTrack.Reset(Screen.width, Screen.height);
+            Debug.Log($"[scene] backdrop RT {rtW}x{rtH} (window {Screen.width}x{Screen.height}, ss={sceneSupersample:0.##})");
             var camGo = new GameObject("SceneCam") { layer = sceneLayer };
             var cam = camGo.AddComponent<Camera>();
             cam.orthographic = false; cam.fieldOfView = 45f;
@@ -3729,6 +3731,25 @@ namespace Sdo.Game
             };
             _backdropMat = new Material(Shader.Find("Unlit/Texture")) { mainTexture = sceneRT };
             quad.AddComponent<MeshRenderer>().sharedMaterial = _backdropMat;
+            SpawnLensFlare(quad.layer);
+        }
+
+        // SCN0004 太陽的鏡頭光斑鏈。畫在合成 quad(z=90)前面的 z=89，也就是「3D 場景之後、2D HUD 之前」——
+        // 與官方 Gameplay_PostRender 的呼叫位置等價(HUD 在另一台相機，之後才畫)。
+        private string _pendingLensFlareDir;
+        private void SpawnLensFlare(int backdropLayer)
+        {
+            if (string.IsNullOrEmpty(_pendingLensFlareDir)) return;
+            var atlas = SceneLensFlare.LoadAtlas(_pendingLensFlareDir);
+            if (atlas == null) { Debug.LogWarning("[flare] 缺 LENSFLARE.BMP: " + _pendingLensFlareDir); return; }
+            Camera stage = null;
+            foreach (var c in Camera.allCameras) if (!c.orthographic) { stage = c; break; }
+            if (stage == null) { Debug.LogWarning("[flare] 找不到舞台透視相機"); return; }
+            var go = new GameObject("SunLensFlare");
+            var lf = go.AddComponent<SceneLensFlare>();
+            lf.Init(stage, atlas, backdropLayer);
+            Debug.Log($"[flare] {SceneFolder()}: {SceneLensFlare.Elements.Length} 顆光斑, 壽命 {lf.LifetimeSec}s (官方 10s 後永遠消失)");
+            _pendingLensFlareDir = null;
         }
 
         private static Sprite _piyoriSprite;

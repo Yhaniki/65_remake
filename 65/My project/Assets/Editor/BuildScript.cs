@@ -39,6 +39,7 @@ public static class BuildScript
         "Sdo/AdditiveRGB",       // ShowTime gauge RT composite (One-One add of the POWER EFT camera render)
         "Sdo/NoteCutout",        // 3D note highway cut-out sprites; stripped -> notes fall back to opaque (Note3dHighway/ScreenGameplay)
         "Sdo/UnlitSpotGlow",     // gameplay spotlight glow; stripped -> glow renders wrong (ScreenGameplay)
+        "Sdo/LensFlare",         // SCN0004 太陽鏡頭光斑(ONE/ONE 純加法); stripped -> Shader.Find null -> 退回 Unlit/Texture 變成不透明黑方塊
         "Sdo/PortraitOpaque",
         "Sdo/UnlitDoubleSided",
 
