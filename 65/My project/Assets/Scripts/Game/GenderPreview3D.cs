@@ -25,6 +25,10 @@ namespace Sdo.Game
         public float avatarYOffset = -5f;      // DDRLOBBYSEL AvtShow writes model position y = -5.
         public float verticalBias = 2f;        // shift the framing window up (+) / down (−) in model units
         public float nominalHeight = 55f;      // fallback body height if the head bone can't be read (model units)
+        // DDRLOBBYSEL's AvtShow slot is 400×600 within the logical 800×600 frame → 2:3. Drives both the RT size and the
+        // pinned camera aspect (see BuildCamera / RtSizing).
+        public const float SlotW = 400f, SlotH = 600f;
+        public float previewSupersample = RtSizing.DefaultSupersample;   // set to 1 for window-native resolution
 
         // off-stage park spot (own layer + own camera → no conflict with anything; a far spot is just tidy)
         private static readonly Vector3 Park = new Vector3(0f, 0f, 4000f);
@@ -43,6 +47,7 @@ namespace Sdo.Game
 
         private Camera _cam;
         private RenderTexture _rt;
+        private RtResizeTracker _rtTrack;   // debounced window-resize → RT re-allocation (see MaintainRt)
         private Transform _female, _male;
         private int _gender = -1;
         private MotLoader[] _femalePreviewMots, _malePreviewMots;
@@ -131,6 +136,7 @@ namespace Sdo.Game
 
         private void Update()
         {
+            MaintainRt();
             TickRandomMotion(_female, male: false);
             TickRandomMotion(_male, male: true);
         }
@@ -217,8 +223,11 @@ namespace Sdo.Game
 
         private void BuildCamera()
         {
-            int rtH = Mathf.Clamp(Screen.height, 600, 1600);
-            int rtW = Mathf.RoundToInt(rtH * (2f / 3f));   // AvtShow is 400×600 → 2:3, so the dancer isn't stretched
+            // RT follows the WINDOW (oversampled), not the slot's 2:3 aspect — the AvtShow slot is 400×600 of the logical
+            // 800×600 frame, and Stretch mode scales those two axes by DIFFERENT factors, so a 2:3 RT ends up narrower
+            // than the pixels it's shown across (see RtSizing). The 2:3 PROJECTION is pinned below instead.
+            RtSizing.SlotRtSize(Screen.width, Screen.height, SlotW, SlotH, previewSupersample, out int rtW, out int rtH);
+            _rtTrack.Reset(Screen.width, Screen.height);
             _rt = new RenderTexture(rtW, rtH, 24) { name = "genderPreviewRT", antiAliasing = 4, filterMode = FilterMode.Bilinear };
             var camGo = new GameObject("GenderPreviewCam") { layer = PreviewLayer };
             camGo.transform.SetParent(transform, false);
@@ -230,6 +239,18 @@ namespace Sdo.Game
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = new Color(0f, 0f, 0f, 0f);   // transparent → only the dancer shows over the LOBBYSEL art
+            _cam.aspect = SlotW / SlotH;                        // pin the slot's 2:3 (the RT is window-shaped now)
+        }
+
+        /// <summary>Window resize → re-allocate the preview RT (same instance, so the screen's RawImage stays wired).
+        /// Debounced via <see cref="RtResizeTracker"/>; the aspect pin is re-applied in case anything reset it.</summary>
+        private void MaintainRt()
+        {
+            if (_cam != null) _cam.aspect = SlotW / SlotH;
+            if (_rt == null) return;
+            if (!_rtTrack.Tick(Screen.width, Screen.height, Time.unscaledTime)) return;
+            RtSizing.SlotRtSize(Screen.width, Screen.height, SlotW, SlotH, previewSupersample, out int w, out int h);
+            RtSizing.Apply(_rt, w, h);
         }
 
         // Frame the dancer head-to-toe: feet rest on y=0 (set at build), the head bone (+ hair pad) is the top. Place a

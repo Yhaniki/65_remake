@@ -26,6 +26,14 @@ namespace Sdo.Game
                                                  // true to drop the same avatar on the other 15 slots for layout testing.
         public bool overview = false;            // frame the whole room from a fixed high vantage (verification captures)
 
+        /// <summary>Oversample factor for the room render target (1 = window-native, 1.5 = 1.5× then filtered down).
+        /// The backdrop is upscaled to the window by the RawImage, so rendering ABOVE window size is what actually makes
+        /// the avatar/room crisp — same trick the head portrait uses (192×152 RT in a 96×76 slot). Turn down to 1 if
+        /// fill-rate ever matters on a big window. See <see cref="SceneRtSize"/>.</summary>
+        public float sceneSupersample = 1.5f;
+        public const int SceneRtMaxDim = RtSizing.MaxDim;     // per-axis RT cap (a 4K window ×1.5 would be 5760 wide)
+        public const float ProjectionAspect = 800f / 600f;   // official 4:3 frame — pinned regardless of RT/window shape
+
         // ---- tunables (floor height / back distance need one visual calibration pass; see risks) ----
         public float floorY = RoomLayout.FloorY;                 // plane the local avatar stands on (EXE looker tables = 0)
         // EXE StateRoom_UpdateCameraTarget: look-target = (avatarX, avatarY+50, avatarZ); eye.x locked to avatarX,
@@ -51,6 +59,7 @@ namespace Sdo.Game
         private Transform _avatarRoot;
         private Camera _cam;
         private RenderTexture _rt;
+        private RtResizeTracker _rtTrack;     // debounced window-resize → RT re-allocation (see LateUpdate)
         private MotLoader _walkMot, _idleMot;
         private bool _flying;   // 飛行翅膀已裝備:idle=flystay、走路=fly 前傾滑動、移動時 +10 懸浮 (SpecialMotionItems)
         private readonly Dictionary<string, MotLoader> _chatActionMots = new Dictionary<string, MotLoader>(System.StringComparer.OrdinalIgnoreCase);
@@ -349,20 +358,48 @@ namespace Sdo.Game
 
         private void BuildCamera()
         {
-            int rtH = Mathf.Clamp(Screen.height, 600, 1600);
-            int rtW = Mathf.RoundToInt(rtH * (4f / 3f));
+            SceneRtSize(Screen.width, Screen.height, sceneSupersample, out int rtW, out int rtH);
+            _rtTrack.Reset(Screen.width, Screen.height);
             _rt = new RenderTexture(rtW, rtH, 24) { name = "roomSceneRT", antiAliasing = 4, filterMode = FilterMode.Bilinear };
             var camGo = new GameObject("RoomSceneCam") { layer = SceneLayer };
             camGo.transform.SetParent(transform, false);
             _cam = camGo.AddComponent<Camera>();
             _cam.orthographic = false;
             _cam.fieldOfView = 45f;                                 // EXACT decompiled projection (Camera_ctor): fovY=45,
-            _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500 (4:3 implied by the RT aspect)
+            _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500
             _cam.cullingMask = 1 << SceneLayer;
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = Color.black;
             UpdateCamera();
+        }
+
+        /// <summary>
+        /// Pixel size of the room-render RT for a given window size. The RT is NOT 4:3 — it matches the WINDOW shape and
+        /// is oversampled by <paramref name="supersample"/>, because the backdrop RawImage covers the whole window and
+        /// AspectController runs in Stretch mode (the 4:3 frame is non-uniformly stretched to fill it). Sizing the RT
+        /// 4:3 (the old <c>height×4/3</c>) left it NARROWER than the window on any wide screen, so the backdrop was
+        /// magnified horizontally — the reason the room looked soft while the 192×152 head-portrait RT (rendered ABOVE
+        /// its 96×76 slot, i.e. downsampled) stayed crisp. The 4:3 PROJECTION is preserved by pinning
+        /// <see cref="Camera.aspect"/> in <see cref="UpdateCamera"/>, so framing is unchanged — only sharper.
+        /// Floors at 800×600 (the official frame; keeps small windows from going below the original) and caps each axis
+        /// at <see cref="SceneRtMaxDim"/> so a 4K window can't blow up VRAM/fill-rate.
+        /// </summary>
+        public static void SceneRtSize(int screenW, int screenH, float supersample, out int w, out int h)
+            => RtSizing.SlotRtSize(screenW, screenH, RtSizing.LogicalW, RtSizing.LogicalH, supersample, out w, out h);
+
+        /// <summary>Window resize / fullscreen toggle → re-allocate the RT at the new size. The SAME RenderTexture
+        /// instance is kept (Release → set width/height → Create), so RoomScreen's backdrop RawImage and the head-slot
+        /// references stay valid without re-wiring — the texture was only assigned once, in RoomScreen.OnShow.
+        /// Debounced: dragging a window edge changes Screen.width/height EVERY frame, and re-allocating a multi-megabyte
+        /// 4×MSAA RT per frame would stutter the drag. During the drag the old RT just keeps being upscaled (i.e. it
+        /// looks like it did before this fix), then snaps sharp once the size holds still.</summary>
+        private void LateUpdate()
+        {
+            if (_rt == null) return;
+            if (!_rtTrack.Tick(Screen.width, Screen.height, Time.unscaledTime)) return;
+            SceneRtSize(Screen.width, Screen.height, sceneSupersample, out int w, out int h);
+            RtSizing.Apply(_rt, w, h);
         }
 
         private void Update()
@@ -434,6 +471,12 @@ namespace Sdo.Game
         private void UpdateCamera()
         {
             if (_cam == null) return;
+            // Pin the official 4:3 projection: the RT is window-shaped (see SceneRtSize), so WITHOUT this the aspect
+            // would be inferred from the RT and a wide window would widen the field of view — the framing would change.
+            // Forcing 4:3 into a wide viewport reproduces exactly what AspectController does for the gameplay camera in
+            // Stretch mode, so the backdrop keeps the same composition it has today. (Set every frame: it's free, and
+            // an aspect assignment is undone by any ResetAspect elsewhere.)
+            _cam.aspect = ProjectionAspect;
             if (overview)
             {
                 // fixed high-back vantage that frames the whole room (all 16 slots span ~X[-185,168] Z[-168,110]) for
