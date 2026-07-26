@@ -59,17 +59,14 @@ namespace Sdo.Game
             public readonly float DwellMs;     // DwellStep only
             public readonly Vector2 Start;     // DwellStep only: UV offset the prop rests at before the first sweep
             public readonly int Queue;         // 0 = leave the shader's queue alone; else force this render queue
-            public readonly float SpotSpread;  // SpotGlow only: sideways blur in UV; 0 = the shader's own default
 
-            public Target(string folder, string objectKey, int materialId, Vector2 speed,
-                          RenderMode mode = RenderMode.KeepMaterial, float spotSpread = 0f)
-                : this(folder, objectKey, materialId, speed, mode, Motion.Linear, Vector2.zero, Vector2.zero, 0f, Vector2.zero, 0, spotSpread)
+            public Target(string folder, string objectKey, int materialId, Vector2 speed, RenderMode mode = RenderMode.KeepMaterial)
+                : this(folder, objectKey, materialId, speed, mode, Motion.Linear, Vector2.zero, Vector2.zero, 0f, Vector2.zero, 0)
             {
             }
 
             private Target(string folder, string objectKey, int materialId, Vector2 speed, RenderMode mode,
-                           Motion motion, Vector2 amplitude, Vector2 step, float dwellMs, Vector2 start, int queue,
-                           float spotSpread = 0f)
+                           Motion motion, Vector2 amplitude, Vector2 step, float dwellMs, Vector2 start, int queue)
             {
                 Folder = folder;
                 ObjectKey = objectKey;
@@ -82,7 +79,6 @@ namespace Sdo.Game
                 DwellMs = dwellMs;
                 Start = start;
                 Queue = queue;
-                SpotSpread = spotSpread;
             }
 
             /// <summary>Sinusoidal rocking: offset = <paramref name="amplitude"/>·sin(phase), phase advancing at
@@ -235,17 +231,14 @@ namespace Sdo.Game
             // 會讓光錐左右兩側出現硬邊 —— 使用者說的「後面的聚光燈很硬」。走和其他聚光燈一樣的 SpotGlow:
             // 沿光錐寬度(U)把光暈往外抹開,內部核心不動、只在邊緣補上漸層衰減。
             //
-            // ★ 但這裡要縮小 _Spread:dengzhu_.dds 是「一張圖並排兩個光錐」(左錐 U 0.125~0.375、右錐
-            //   0.625~0.875),GUANG1/2 取左錐 (mesh U 0.085~0.418)、GUANG3/4 取右錐 (0.590~0.923)。
-            //   shader 預設 spread 0.2 會從 quad 邊緣往外取到 −0.115 → 貼圖 Repeat 繞回 0.885,那裡正好是
-            //   隔壁光錐的尾巴,會在左緣多出一條假光暈。0.15 兩邊都還安全:GUANG1/2 左緣 0.085−0.15 → 繞回
-            //   0.935(右錐 0.625~0.875 之外,alpha 0)、GUANG3/4 右緣 0.923+0.15 → 繞回 0.073(左錐 0.125
-            //   之前,alpha 0);再往上加到 0.2 時 GUANG3/4 會繞到 0.123,只差 0.002 就吃到左錐,太貼邊。
-            //   SCN0016 是單錐貼圖,不受影響,維持 shader 預設。
-            new Target("SCN0019", "GUANG1", -1, Vector2.zero, RenderMode.SpotGlow, spotSpread: 0.15f),
-            new Target("SCN0019", "GUANG2", -1, Vector2.zero, RenderMode.SpotGlow, spotSpread: 0.15f),
-            new Target("SCN0019", "GUANG3", -1, Vector2.zero, RenderMode.SpotGlow, spotSpread: 0.15f),
-            new Target("SCN0019", "GUANG4", -1, Vector2.zero, RenderMode.SpotGlow, spotSpread: 0.15f),
+            // 逐字比照 SCN0016 的 JIGUANG 三筆(不另外調 shader 的 _Spread):使用者要求「跟其他聚光燈
+            // 用一樣方式」。註:dengzhu_.dds 是「一張圖並排兩個光錐」(左 U 0.125~0.375、右 0.625~0.875),
+            // GUANG1/2 取左錐(mesh U 0.085~0.418)、GUANG3/4 取右錐(0.590~0.923);shader 預設的 0.2 橫向
+            // 模糊在 GUANG3/4 右緣會繞回 0.123,離左錐起點 0.125 只差 0.002 —— 貼邊但沒吃到,所以安全。
+            new Target("SCN0019", "GUANG1", -1, Vector2.zero, RenderMode.SpotGlow),
+            new Target("SCN0019", "GUANG2", -1, Vector2.zero, RenderMode.SpotGlow),
+            new Target("SCN0019", "GUANG3", -1, Vector2.zero, RenderMode.SpotGlow),
+            new Target("SCN0019", "GUANG4", -1, Vector2.zero, RenderMode.SpotGlow),
             // SCN0022 坟墓 射光 (sheguang1-3 = light-ray spotlights): the MSH loader makes these DXT3 glows ADDITIVE
             // (LooksLikeAdditiveGlow: bright RGB + all-soft alpha), but that's the SCN0015-窗光 false-positive — additive
             // reads as a hard, edgy beam with no transparency variation. Force TWO-SIDED standard alpha-blend so the ray

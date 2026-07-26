@@ -1388,7 +1388,7 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void SceneUvScroll_Scn0019_Spotlights_Use_SpotGlow_With_A_Narrowed_Spread()
+        public void SceneUvScroll_Scn0019_Spotlights_Use_SpotGlow_Exactly_Like_Scn0016()
         {
             // 四支場後聚光燈和 SCN0016 的 JIGUANG 是同一種東西(4 頂點光錐 quad + 全軟 alpha 的亮色貼圖 +
             // .MOT 掃動 + 官方旗標 0x1),必然被 LooksLikeAdditiveGlow 判成加法 → 左右硬邊。走同一條 SpotGlow。
@@ -1397,15 +1397,10 @@ namespace Sdo.Tests
                 Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0019", key, out var t), key);
                 Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow, t.Mode, key);
                 Assert.IsFalse(t.Animates, key + " 只帶 render mode,不捲 UV");
-                // ★ dengzhu_.dds 是一張圖並排兩個光錐(左 U 0.125~0.375、右 0.625~0.875),mesh 分別取
-                // 0.085~0.418 與 0.590~0.923。shader 預設 spread 0.2 會從 quad 邊緣往外取到 −0.115,
-                // 貼圖 Repeat 繞回 0.885 = 隔壁光錐的尾巴 → 左緣多一條假光暈。0.1 兩邊都落在空白區。
-                Assert.AreEqual(0.15f, t.SpotSpread, 1e-6f, key + " 的橫向模糊要縮到 0.15,否則會繞取到隔壁光錐");
             }
             // SCN0016 是單錐貼圖,維持 shader 預設(0 = 不覆寫)。
             Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0016", "JIGUANG1", out var ji));
             Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.SpotGlow, ji.Mode);
-            Assert.AreEqual(0f, ji.SpotSpread, 1e-6f, "單錐貼圖不需要縮,維持 shader 預設");
             // 同場景的燈架走換幀,不能被掃成聚光燈。
             Assert.IsFalse(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0019", "SHAN", out _));
             // 別的場景叫 GUANG4 的道具不能被這條規則掃到(SCN0022 墓穴、SCN0014 投影光都叫 GUANG*)。
