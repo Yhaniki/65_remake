@@ -35,7 +35,9 @@ namespace Sdo.Game
         //     so folders cached with a mangled title ("M@GIC☆ #SUBTITLE:… #ARTIST:…") must re-parse.
         // v8: 顯示等級的天花板從 99 放寬到 999（ManiaStarRating.LevelMax / ManiaMsd.LevelMax）。舊快取裡撞到 99 的
         //     `level` 都是被壓過的死值，不整份作廢重掃就永遠停在 99。
-        public const int Version = 8;
+        // v9: osu 星數等級不再把炸彈當成可打音符（ManiaStarRating 現在跟 ManiaMsd 一樣跳過 IsBomb）。舊快取裡
+        //     炸彈多的譜 `level` 被灌水過（灑滿雷的慢譜可以虛高好幾十級），得整份作廢重算。
+        public const int Version = 9;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

@@ -44,6 +44,35 @@ namespace Sdo.Tests
             Assert.GreaterOrEqual(ManiaStarRating.Level(dense), 1);
         }
 
+        // 炸彈是要避開的（永遠不判定，踩到只扣血），所以完全不能進星數 —— 它進去會雙重灌水：自己加一份
+        // strain，又縮短後面真音符的間隔讓衰減來不及發生。灑滿雷的慢譜曾經因此從 LV6 虛高到 LV44。
+        [Test]
+        public void Bombs_Do_Not_Change_The_Star_Rating()
+        {
+            var plain = Stream(40, 300);
+            var mined = Stream(40, 300);
+            // 每個真音符之間塞 3 顆炸彈（其餘三條 lane），密度是音符的三倍
+            for (int i = 0; i < 40; i++)
+                for (int lane = 0; lane < 4; lane++)
+                    if (lane != i % 4)
+                        mined.HitObjects.Add(new OsuHitObject(lane, 500 + i * 300 + 150, null, isBomb: true));
+            mined.HitObjects.Sort((a, b) => a.StartTimeMs.CompareTo(b.StartTimeMs));
+
+            Assert.AreEqual(ManiaStarRating.Calculate(plain), ManiaStarRating.Calculate(mined), 1e-9,
+                "炸彈不判定，不能影響星數");
+            Assert.AreEqual(ManiaStarRating.Level(plain), ManiaStarRating.Level(mined));
+        }
+
+        // 只有炸彈的譜＝沒有一顆打得到的音符 → 0 星（跟空譜同義）。
+        [Test]
+        public void All_Bomb_Chart_Is_Zero_Star()
+        {
+            var bm = new OsuBeatmap { Keys = 4 };
+            for (int i = 0; i < 40; i++)
+                bm.HitObjects.Add(new OsuHitObject(i % 4, 500 + i * 120, null, isBomb: true));
+            Assert.AreEqual(0.0, ManiaStarRating.Calculate(bm), 1e-9);
+        }
+
         private static OsuBeatmap Stream(int count, int stepMs)
         {
             var bm = new OsuBeatmap { Keys = 4 };

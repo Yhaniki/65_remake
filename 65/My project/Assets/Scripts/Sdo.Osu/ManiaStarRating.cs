@@ -111,7 +111,11 @@ namespace Sdo.Osu
             for (int i = 0; i < n; i++)
             {
                 var o = bm.HitObjects[i];
-                if (o.IsFake) continue;   // warp(負 BPM)掃掉的音符打不到,算進來星數會虛高
+                // 炸彈是「要避開的」,永遠不判定(踩到只扣血),把它當成一次擊打會雙重灌水:炸彈自己加一份
+                // strain,又縮短後面真音符的 DeltaTime/ColumnStrainTime 讓衰減來不及發生 —— 灑滿雷的慢譜
+                // 可以從 LV6 灌到 LV44。warp(負 BPM)掃掉的音符同理:玩家連一幀按的機會都沒有。
+                // 這條和 ManiaMsd.ToNoteInfo / OsuBeatmap.TotalNotes / SmChart.PlayableNoteCount 是同一個合約。
+                if (o.IsBomb || o.IsFake) continue;
                 int col = o.Lane; if (col < 0) col = 0; if (col > keyCount - 1) col = keyCount - 1;
                 double start = o.StartTimeMs;
                 double end = o.EndTimeMs ?? o.StartTimeMs;
