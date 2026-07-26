@@ -106,6 +106,33 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Atlas_Rows_Are_Mapped_Top_Down_Like_D3D9_Not_Unity_Bottom_Up()
+        {
+            // ★ 官方是 D3D9 慣例:V=0 在**影像頂端**、V 增加往下走;Unity 的 V=0 在貼圖**底端**。
+            // 直接照抄 V 會取到鏡射後的列 —— 而 LENSFLARE.BMP 的內容只在「由上往下」的第 0..4 列
+            // (第 5..7 列整片全黑),所以照抄會讓好幾顆光斑取到全黑完全不出現(最明顯的是 idx 17 那個
+            // 半邊長 130.5 的大亮環),其餘的也取到錯的圖形。
+            // 這條測試釘住換算:影像第 r 列(由上往下) → Unity V ∈ [1−(r+1)/8, 1−r/8]。
+            for (int r = 0; r < 5; r++)
+            {
+                float officialV = r / 8f;
+                float unityTop = 1f - officialV;                 // quad 上緣
+                float unityBottom = 1f - (officialV + 0.125f);   // quad 下緣
+                Assert.Greater(unityTop, unityBottom, "上緣的 Unity V 必須大於下緣(V 往上長)");
+                Assert.AreEqual(0.125f, unityTop - unityBottom, 1e-6f, "一列剛好 1/8");
+                Assert.LessOrEqual(unityTop, 1f + 1e-6f);
+                Assert.GreaterOrEqual(unityBottom, 0.375f - 1e-6f, "有內容的 5 列都落在貼圖上半部");
+            }
+            // 全黑的第 5..7 列對應 Unity V < 0.375 —— 任何元素都不該取到那裡。
+            foreach (var e in SceneLensFlare.Elements)
+                Assert.GreaterOrEqual(1f - (e.V + SceneLensFlare.RowV), 0.375f - 1e-6f,
+                    $"v={e.V} 會取到 BMP 全黑的列(第 5..7 列) —— V 軸翻反了");
+            // 官方表裡確實用到了「細亮環」那一列(v=0.125),而且是最大的那顆(半邊長 130.5)。
+            var bigRing = System.Array.Find(SceneLensFlare.Elements, x => x.Size > 130f);
+            Assert.AreEqual(0.125f, bigRing.V, 1e-6f, "最大的那顆是細亮環(BMP 由上往下第 1 列)");
+        }
+
+        [Test]
         public void Only_Scn0004_Has_A_Lens_Flare()
         {
             Assert.IsTrue(SceneLensFlareCatalog.Has("SCN0004"));

@@ -96,10 +96,14 @@ namespace Sdo.Game
             var tris = new int[n * 6];
             for (int i = 0; i < n; i++)
             {
-                float v0 = Elements[i].V, v1 = v0 + RowV;
-                // 官方 v0/v1 = 上排、v2/v3 = 下排;貼圖載入器已把 BMP 翻正，所以這裡 V 直接照抄。
-                uv[i * 4 + 0] = new Vector2(0f, v0); uv[i * 4 + 1] = new Vector2(1f, v0);
-                uv[i * 4 + 2] = new Vector2(0f, v1); uv[i * 4 + 3] = new Vector2(1f, v1);
+                // ★ V 軸要翻。官方是 D3D9 慣例:V=0 在**影像頂端**、V 增加往下走;Unity 的 V=0 在貼圖
+                // **底端**、V 增加往上走。直接照抄 V 會把元素對到鏡射後的列 —— 而 LENSFLARE.BMP 的內容
+                // 只在「由上往下」的第 0..4 列(第 5..7 列整片全黑)，所以照抄的結果是好幾顆光斑取到全黑、
+                // 完全不出現，其餘的也取到錯的圖形(官方的亮環變成我們的柔和實心盤)。
+                // quad 上緣取該列的上緣 → Unity V = 1 − V;下緣 → 1 − (V + 0.125)。
+                float v0 = 1f - Elements[i].V, v1 = 1f - (Elements[i].V + RowV);
+                uv[i * 4 + 0] = new Vector2(0f, v0); uv[i * 4 + 1] = new Vector2(1f, v0);   // 上排
+                uv[i * 4 + 2] = new Vector2(0f, v1); uv[i * 4 + 3] = new Vector2(1f, v1);   // 下排
                 int b = i * 4, o = i * 6;
                 tris[o] = b; tris[o + 1] = b + 2; tris[o + 2] = b + 1;
                 tris[o + 3] = b + 1; tris[o + 4] = b + 2; tris[o + 5] = b + 3;
@@ -284,7 +288,11 @@ namespace Sdo.Game
                     px[dstRow * w + x] = new Color32(d[s + 2], d[s + 1], d[s], 255);   // BGR → RGB
                 }
             }
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            // ★ linear: true —— 專案跑在 Linear 色彩空間(m_ActiveColorSpace = 1),而官方是 D3D9、
+            // gamma-unaware:它直接把位元組值相加。若把這張圖當成 sRGB,取樣時會先做 sRGB→linear
+            // 轉換(200/255 → 0.57),疊在明亮的天空上就明顯比官方暗 —— 這正是「unity 做的沒有發光」。
+            // 標成 linear 資料後,取樣拿到的就是原始值/255,加法的數值行為貼近官方。
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false, true);
             tex.SetPixels32(px);
             tex.Apply(false, false);
             return tex;
