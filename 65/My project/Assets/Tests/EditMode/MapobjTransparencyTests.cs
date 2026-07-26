@@ -1306,6 +1306,30 @@ namespace Sdo.Tests
             Assert.AreEqual(Vector2.zero, SceneMapobjUvScrollCatalog.Find("SCN0004", "LANG"));
             // 同場景的換幀道具不能被掃到。
             Assert.IsFalse(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0004", "SEA_UP", out _));
+
+            // ★ 兩支都必須是 OfficialMaterialAlpha。wave_.dds 會被 LooksLikeAdditiveGlow 誤判成加法,而加法那支
+            // shader(Sdo/UnlitAdditiveOverlay)帶 Offset -1,-1 深度偏移 —— 岸浪是一片 1261×3051、幾乎與視線
+            // 平行的大水面,斜率式偏移會把它整片往鏡頭方向擠、穿過棧橋與房子,再用加法把藍白刷上去
+            // (實機截圖確認過:房子下緣與棧橋交界整條被霧化)。這條測試釘住修正,免得又被改回 KeepMaterial。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha, sea.Mode, "海面");
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha, wave.Mode, "岸浪");
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0004", "LANG"), "岸浪絕不能是加法");
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0004", "SEA"));
+        }
+
+        [Test]
+        public void RealData_Scn0004_Water_Materials_Are_Officially_Transparent_Not_Additive()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            // OfficialMaterialAlpha 只對「官方旗標標成透明」的材質生效,所以這兩支的旗標必須真的是非 0 ——
+            // 那正是「官方畫的是一般 SrcAlpha/InvSrcAlpha,不是加法」的證據。旗標若哪天變 0,上面那條
+            // render-mode 就會靜默失效(變成 no-op),這條會先紅出來。
+            var sea = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(Path.Combine(root, "SEA"), "SEA.MSH")));
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(sea, "haishuei2_.dds")), "海面是官方透明批");
+            var lang = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(Path.Combine(root, "BEACH"), "LANG.MSH")));
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(lang, "wave_.dds")), "岸浪是官方透明批");
         }
 
         [Test]

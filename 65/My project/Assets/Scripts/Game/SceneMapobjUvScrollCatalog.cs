@@ -142,10 +142,20 @@ namespace Sdo.Game
             // 每幀累加換算成秒沿用本檔既有的官方幀率慣例(SCN0011 CAIDAI 的 0.003×593):
             //   浪 0.004×593 = 2.372 rad/s(週期約 2.65 s)、海 0.001×593 = 0.593 rad/s(週期約 10.6 s)。
             // 軸的選擇有 mesh 依據:SEA 的 U 跑到 −1.772..2.312(在 U 上 tiling)、LANG 的 V 是 −0.215..0.617。
-            // 兩支的官方材質旗標都是 0x1(透明批),但這裡刻意不套 OfficialMaterialAlpha:海與浪目前的
-            // 渲染是既有驗過的樣子,這筆只補「會動」,不順手改混色(要改請另外單獨驗一次)。
-            Target.Sine("SCN0004", "SEA",  new Vector2(0.5f, 0f), new Vector2(0.593f, 0f)),
-            Target.Sine("SCN0004", "LANG", new Vector2(0f, -0.25f), new Vector2(0f, 2.372f)),
+            //
+            // ★ 兩支都必須套 OfficialMaterialAlpha(官方旗標都是 0x1 = 一般透明批)。LANG 的 wave_.dds 是
+            //   「亮 RGB + 幾乎全軟 alpha」(min 0 / mean 11.6)——正是 LooksLikeAdditiveGlow 的誤判樣本
+            //   (同 SCN0014 投影光 / SCN0015 窗光 / SCN0024 探照燈)。被誤判成加法之後套上的
+            //   Sdo/UnlitAdditiveOverlay 除了 Blend SrcAlpha One,還帶 **Offset -1,-1 深度偏移**;
+            //   岸浪是一片 1261×3051、幾乎與視線平行的大水面,斜率式深度偏移會把它整片往鏡頭方向擠、
+            //   穿過棧道與房子,再用加法把藍白刷上去 = 使用者看到的「海浪漫到房子上」。
+            //   實測截圖(Scn0004CaptureTest)確認:誤判前藍色浪片直接畫在木棧道上。
+            //   改成 OfficialMaterialAlpha → Sdo/UnlitInstancedAlpha(標準 SrcAlpha/InvSrcAlpha、**沒有**
+            //   polygon offset),深度穿透與加法過曝一次解決。SEA 本來就落在同一支 shader,套上去是 no-op,
+            //   但把「官方說它是一般透明批」這件事釘住,免得日後 heuristic 漂移又把它改成加法。
+            //   教訓:這兩支之前看起來「沒問題」只是因為它們不會動;一旦 UV 開始動,誤判就藏不住了。
+            Target.Sine("SCN0004", "SEA",  new Vector2(0.5f, 0f), new Vector2(0.593f, 0f), RenderMode.OfficialMaterialAlpha),
+            Target.Sine("SCN0004", "LANG", new Vector2(0f, -0.25f), new Vector2(0f, 2.372f), RenderMode.OfficialMaterialAlpha),
             // ── SCN0012/0013 足球場:廣告看板每 2 秒換一幅 ───────────────────────────────────────
             // StageScene_UpdatePulse_004b0090(case 0xc 與 0xd 共用)是一台「停→快掃」的狀態機:
             //   v>=1 → v=0;若 v!=0 且 (v<=0.5 或 prev>=0.5) → 每幀 v += _DAT_00589030 (0.003) 並寫出;
