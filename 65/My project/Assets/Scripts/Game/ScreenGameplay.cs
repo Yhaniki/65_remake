@@ -3736,6 +3736,11 @@ namespace Sdo.Game
         // ---- head emoji cut-ins (UI/PLAYINGEXP) -------------------------------------------------------------------
         private static readonly string PlayingExpDir = Path.Combine(SdoExtracted.Root, "UI", "PLAYINGEXP");
 
+        // The frames were AUTHORED 64×64; the shipped PNGs may be an hq3x upscale (192×192, tools/upscale_playingexp.py).
+        // LoadImageAtDesignWidth pins pixelsPerUnit to tex.width/64, so a 192px frame draws at the SAME world size as
+        // the 64px original — only sharper. Never hard-code 1 here or an upscaled set would pop out 3× too big.
+        private const int EmojiDesignPx = 64;
+
         // Load a <prefix>NNN.PNG sequence (000..count-1) as sprites. Cut-ins hold each frame 50ms and last ~4s, so the
         // short sequence loops (PlayingEmoji does the looping); we just load the frames once here.
         // bleed:true dilates the transparent-WHITE matte — these frames store a (255,255,255) matte with HARD binary
@@ -3745,7 +3750,8 @@ namespace Sdo.Game
             var arr = new List<Sprite>(count);
             for (int i = 0; i < count; i++)
             {
-                var s = SdoExtracted.LoadImage(PlayingExpDir, $"{prefix}{i:D3}.PNG", bleed: true);
+                var s = SdoExtracted.LoadImageAtDesignWidth(PlayingExpDir, $"{prefix}{i:D3}.PNG", EmojiDesignPx,
+                                                            bleed: true, mip: true);
                 if (s != null) arr.Add(s);
             }
             return arr.Count > 0 ? arr.ToArray() : null;

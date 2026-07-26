@@ -146,6 +146,14 @@ Copy-Tree (Join-Path $Ds 'UI\MYHOUSEDLG')       (Join-Path $Data 'UI\MYHOUSEDLG'
 Copy-Tree (Join-Path $Ds 'UI\LOBBYDLG\KEYS')    (Join-Path $Data 'UI\LOBBYDLG\KEYS')    'online KEYS'
 Copy-Tree (Join-Path $Ds 'LOADING')             (Join-Path $Data 'LOADING')             'online LOADING'
 
+# 3b) upscaled art overlay — EXACTLY package_build's step, so editor and shipped player see the same art.
+# art\upscaled mirrors the DATA layout with higher-resolution replacements (UI\PLAYINGEXP 表情 cut-in: 64px -> 192px
+# hq3x, tools\upscale_playingexp.py). On-screen size is unchanged: the loader divides the extra resolution back out
+# (SdoExtracted.LoadImageAtDesignWidth; EmojiUpscaleTests guards it).
+$Upscaled = Join-Path $Repo 'art\upscaled'
+if (Test-Path $Upscaled) { Copy-Tree $Upscaled $Data 'upscaled art overlay' }
+else { Write-Warning "[clean] art\upscaled 不存在 — 表情 cut-in 維持 64px (run tools\upscale_playingexp.py)" }
+
 # 4) shop item data
 foreach ($f in 'iteminfo.dat','setinfo.dat') {
     $src = Join-Path $OnlineDir $f
@@ -172,6 +180,7 @@ $mf = New-Object System.Text.StringBuilder
 [void]$mf.AppendLine("KEPT WHOLE (content, reachable ~= all with full song/costume catalogs):")
 [void]$mf.AppendLine("  MOTION AUMOTION DANCE SCENE CAMERA 3DEFT EFFECT NOTEIMAGE 3DNOTES  (from Extracted)")
 [void]$mf.AppendLine("  UI/* (Extracted) + online overlays ICONS/STATISTIC/ROOMDLG/OPTIONDLG/SHOP/MYHOUSEDLG/KEYS")
+[void]$mf.AppendLine("  UI/PLAYINGEXP 表情 cut-in: 81 frames replaced by the art/upscaled 3x (192px hq3x) set — same on-screen size")
 [void]$mf.AppendLine("  BGM (8 ogg, lobby/room random playlist) — MOVED out of UI/BGM to the DATA root (DATA/BGM)")
 [void]$mf.AppendLine("  AVATAR = Extracted(120) + Datas/AVATAR(full 38k costume catalog)")
 [void]$mf.AppendLine("  MUSIC = full song tree")

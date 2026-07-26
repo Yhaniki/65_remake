@@ -509,6 +509,46 @@ namespace Sdo.Game
         }
 
         /// <summary>
+        /// As <see cref="LoadImage"/>, but the sprite's WORLD size is pinned to <paramref name="designWidth"/> source
+        /// pixels no matter what resolution the file on disk actually is (pixelsPerUnit = tex.width / designWidth).
+        /// Use for art that may be shipped upscaled: e.g. the PLAYINGEXP cut-ins were authored 64×64 and are now
+        /// stored 192×192 (tools/upscale_playingexp.py) — at designWidth 64 they draw 3× sharper at the SAME size.
+        /// <paramref name="mip"/> re-uploads the pixels on a mipmapped/Trilinear texture: an upscaled sprite is
+        /// MINIFIED on screen (192 texels into ~150 px), and without a mip chain that shimmers/aliases as the camera
+        /// moves — the same lesson as the supersampled room buttons (see <see cref="LoadAnSoloMip"/>).
+        /// </summary>
+        public static Sprite LoadImageAtDesignWidth(string folder, string imageName, int designWidth,
+                                                    bool bleed = false, bool mip = false)
+        {
+            var path = Path.Combine(folder, imageName);
+            var tex = bleed ? LoadTextureBled(path) : LoadTexture(path);
+            if (tex == null) return null;
+            if (mip) tex = ToMipmapped(path, tex);
+            float ppu = designWidth > 0 ? Mathf.Max(0.0001f, tex.width / (float)designWidth) : 1f;
+            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                                 new Vector2(0.5f, 0.5f), ppu, 0, SpriteMeshType.FullRect);
+        }
+
+        // Mipmapped copies, keyed by source path. Cached because gameplay re-loads its art on EVERY song start —
+        // building a fresh 192²·RGBA·mips texture per emoji frame per play would just leak (81 frames ≈ 16 MB a round).
+        private static readonly Dictionary<string, Texture2D> _mipCache = new Dictionary<string, Texture2D>();
+
+        /// <summary>A mipmapped/Trilinear twin of <paramref name="src"/> (Unity can't add mips to an existing texture).
+        /// Call AFTER any alpha-bleed: mip levels average RGB across the alpha edge, so an un-bled white matte would be
+        /// averaged INTO the glyph as a halo that grows with distance.</summary>
+        private static Texture2D ToMipmapped(string key, Texture2D src)
+        {
+            if (src == null) return null;
+            if (_mipCache.TryGetValue(key, out var cached) && cached != null) return cached;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, true)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
+            tex.SetPixels32(src.GetPixels32());
+            tex.Apply(true);
+            _mipCache[key] = tex;
+            return tex;
+        }
+
+        /// <summary>
         /// Load an image treating near-black pixels as TRANSPARENT — the SDO engine's color-key for
         /// no-alpha (RGB) sprites like MyHpBack.png (a black-centred frame). Returns a copy.
         /// </summary>
