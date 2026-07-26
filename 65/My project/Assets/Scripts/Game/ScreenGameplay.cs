@@ -3078,8 +3078,7 @@ namespace Sdo.Game
                     for (int mi = 0; mi < ms.Length; mi++)
                     {
                         if (ms[mi] == null) continue;
-                        if (renderMode == SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha &&
-                            !MshLoader.IsOfficialTransparent(fl != null && mi < fl.Length ? fl[mi] : 0u)) continue;
+                        if (!SceneMapobjUvScrollCatalog.AppliesToMaterial(renderMode, fl != null && mi < fl.Length ? fl[mi] : 0u)) continue;
                         ApplyMapobjRenderMode(ms[mi], renderMode);
                     }
                 }
@@ -3132,7 +3131,8 @@ namespace Sdo.Game
                         // rotating non-uniform-scale prop (the spinning DING wheel went elliptical/變形); baking the full
                         // matrix is faithful for any matrix and identical for uniform-scale props (sea screen / trees).
                         AddMapobjMeshChild(parent.transform, baseName + "_mesh", bakeMesh, subMats[s]);
-                        avatar.AddBoneMeshBaker(bone, bakeMesh, src, ShouldApplyRigidBindScale(srcMesh, hrc.BindWorld[bone].lossyScale));
+                        avatar.AddBoneMeshBaker(bone, bakeMesh, src,
+                            ShouldApplyRigidBindScale(SceneFolder(), baseName, srcMesh, hrc.BindWorld[bone].lossyScale));
                     }
                     SetLayerRecursive(parent, SceneLayer);
                 }
@@ -3356,8 +3356,19 @@ namespace Sdo.Game
             else if (mats != null && mats.Length > 1) mr.sharedMaterials = mats;
         }
 
-        private static bool ShouldApplyRigidBindScale(Mesh mesh, Vector3 bindScale)
+        // Props whose bind/.mot scale IS the effect and must survive the generic guard below. Scene folder + mesh
+        // base name (both upper-invariant), so the exception can never leak to a same-named prop in another scene.
+        //   SCN0024/DONGHUA — 雪景的探照燈。它是一片 94×443.5 的光錐 quad,長軸(local Z)被 HRC rest bind 與
+        //     .mot 的常數 scale key 同時拉長 ×3.93,那個拉長「就是光柱本身」。通用防呆會丟掉它(maxScale 3.88 > 2,
+        //     且 mesh 443 單位不小於 80),結果只剩一截 453 單位的短樁埋在背景建築裡 —— 使用者看到的「探照燈沒做出來」。
+        //     只放行這一支:整條規則放寬會一併改到 17_DITIE/SKY(×18.7)與 FIFA_QIUBEI(×2.17),那兩個現在是對的。
+        private static bool IsRigidBindScaleException(string folder, string baseName) =>
+            string.Equals(folder, "SCN0024", System.StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(baseName, "DONGHUA", System.StringComparison.OrdinalIgnoreCase);
+
+        private static bool ShouldApplyRigidBindScale(string folder, string baseName, Mesh mesh, Vector3 bindScale)
         {
+            if (IsRigidBindScaleException(folder, baseName)) return true;
             if (mesh == null) return true;
             if (HasSeparatedOpposingFaces(mesh)) return true;
 

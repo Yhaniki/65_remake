@@ -119,6 +119,26 @@ namespace Sdo.Game
                     new MapobjTexAnim("SHUIMO", Seq("SHUIMO", 5), 125f, true),          // water-ink ripple, alpha
                     new MapobjTexAnim("WATER", Seq("WATER", 10), 150f, false),          // river surface, opaque
                 },
+                ["SCN0024"] = new[]
+                {
+                    // 雪景 (SCN0024) 的 Harrahs 光球招牌:整塊招牌是「變色」而不是換形狀。
+                    // Scene_LoadBackground case 0x18 先切到 biaodonghua 的封裝,再把 Xuejing_Donghua_biao01_.dds..
+                    // biao05_.dds 這 5 張讀進 param_1[0x59](= +0x164);場景 0x18 唯一的每幀更新 FUN_004b0cc0
+                    // 每 500 ms 讓索引 (i+1) % 5,把該張綁到「第二個載入的道具」(objects[1] = biaodonghua)的
+                    // 材質槽 0 —— 反編譯出來就是 mov edx,[ecx+4] / mov ecx,[edx+0C0h] 那串。
+                    // 5 張裡 01 與 03 位元組完全相同,所以看起來是 粉紅→洋紅→粉紅→深藍→青藍,一輪 2.5 秒。
+                    // 與 SCN0005/0014/0025 不同的是:MSH 材質 biao1_.dds 在磁碟上「真的存在」,所以少了這筆
+                    // 條目招牌不會變白,而是「卡在同一個顏色不動」——正是使用者回報的症狀。
+                    // DXT3 硬去背(55% alpha=0、LooksLikeAdditiveGlow=false)→ Transparent。
+                    new MapobjTexAnim("BIAODONGHUA", new[]
+                    {
+                        "XUEJING_DONGHUA_BIAO01_.dds", "XUEJING_DONGHUA_BIAO02_.dds", "XUEJING_DONGHUA_BIAO03_.dds",
+                        "XUEJING_DONGHUA_BIAO04_.dds", "XUEJING_DONGHUA_BIAO05_.dds",
+                    }, 500f, true),
+                    // 同場景的 XUEJING/DONGHUA(探照燈)不在這裡:它不換貼圖,是靠 DONGHUA.MOT 的 182 支旋轉
+                    // key 掃動,見 ScreenGameplay.ShouldApplyRigidBindScale 的 SCN0024 例外與 UvScroll 的
+                    // OfficialMaterialAlpha;背景那三顆光暈是 GUANG_.TGA billboard,見 SceneFlameBillboardCatalog。
+                },
                 ["SCN0025"] = new[]
                 {
                     // 春天 butterflies: four flocks, each a .mot-flown quad whose WING FLAP is a 4-frame texture cycle

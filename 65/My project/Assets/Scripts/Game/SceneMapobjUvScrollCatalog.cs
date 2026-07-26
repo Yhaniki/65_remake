@@ -117,6 +117,12 @@ namespace Sdo.Game
             // It also FLOWS: FUN_004b0d20's last block sets texture-transform U=0, V += _DAT_00589044 (=0.05) every
             // 50 ms ⇒ +1.0 UV/s in V, wrapping at 1.0. Positive sign copied verbatim (like SCN0015's window beam).
             new Target("SCN0025", "CHUNTIANDONGHUA", -1, new Vector2(0f, 1.0f), RenderMode.OfficialMaterialAlpha),
+            // SCN0024 雪景 探照燈 (XUEJING/DONGHUA / DENGGUANG_.DDS): 128×128 DXT3 的暖色光錐,alpha 最高只有 238、
+            // 平均 34.8、45.5% 全透明 —— 又是 LooksLikeAdditiveGlow 的誤判樣本(亮 RGB + 全軟 alpha)。官方材質
+            // 旗標 +0x194 = 0x1 = 延後透明批 = 一般 SrcAlpha/InvSrcAlpha,不是加法。這支只有一個材質,
+            // 但仍用 per-material 的 OfficialMaterialAlpha,和 SCN0014/SCN0025 同一條規則。Speed=0:場景 0x18
+            // 的每幀更新只換招牌貼圖,完全沒有 0x58/0x5c 貼圖座標寫入,光柱的動全部來自 .mot。
+            new Target("SCN0024", "DONGHUA", -1, Vector2.zero, RenderMode.OfficialMaterialAlpha),
             // SCN0014 FUN_004b0330 coral glow: the three TREES scroll V at 1×, the three BRANCHES at 2× (verbatim
             // −t / −2t groups; the branches used to share the trees' rate).
             new Target(null, "SHANHU-BAI", -1, CoralV),
@@ -137,6 +143,13 @@ namespace Sdo.Game
         {
             return TryFind(folder, objectKey, materialId, out var target) ? target.Mode : RenderMode.KeepMaterial;
         }
+
+        /// <summary>Does <paramref name="mode"/> apply to a material whose OFFICIAL flags are <paramref name="matFlags"/>
+        /// (MSH record +0x194)? <see cref="RenderMode.OfficialMaterialAlpha"/> is the only PER-MATERIAL mode — it only
+        /// touches materials the artist marked transparent, so a multi-material prop (SCN0014 TV: beam transparent,
+        /// screen/frame/projector opaque) keeps its opaque parts opaque. Every other mode is prop-wide as before.</summary>
+        public static bool AppliesToMaterial(RenderMode mode, uint matFlags)
+            => mode != RenderMode.OfficialMaterialAlpha || MshLoader.IsOfficialTransparent(matFlags);
 
         public static bool UsesAdditiveOverlay(string folder, string objectKey, int materialId = -1)
         {

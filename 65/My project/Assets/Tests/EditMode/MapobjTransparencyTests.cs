@@ -543,6 +543,11 @@ namespace Sdo.Tests
             Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(tv, "touyingguang_.dds")), "電視射出來的光");
             foreach (var opaque in new[] { "zhuanpan.dds", "gangjia.dds", "tv.dds", "touyingji_c.dds" })
                 Assert.IsFalse(MshLoader.IsOfficialTransparent(FlagOf(tv, opaque)), opaque + " 官方是實心的");
+            // 逐材質閘門真正依賴的不變量:整張表「恰好一個」透明材質。只點名那 5 個的話,ReadMaterialTable
+            // 尾端探測若多吐一筆非 0 的記錄,上面每條斷言都還是綠的,但電視在遊戲裡會變半透明。
+            int transparentCount = 0;
+            foreach (var m in tv) if (MshLoader.IsOfficialTransparent(m.Flags)) transparentCount++;
+            Assert.AreEqual(1, transparentCount, "TV.MSH 只有一個材質是官方透明批");
 
             // 噴水池的水:旗標 0x11。
             var water = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(root, "CHUNTIAN/DONGHUA/CHUNTIANDONGHUA.MSH")));
@@ -555,24 +560,82 @@ namespace Sdo.Tests
             var root = MapobjDir();
             if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
 
-            // 光是 6 段圓錐:U 沿著繞軸方向鋪滿 0..1、V 只有兩排(頂圈/底圈)。這就是為什麼官方捲的是 U —— 捲 U
-            // 才會讀成「光紋繞著光軸轉」。若哪天有人把 BeamSpinU 改成捲 V,這條會擋下來。
-            var r = MshLoader.Load(File.ReadAllBytes(Path.Combine(root, "14_HAIDI/GUANG/GUANG.MSH")));
-            Assert.IsNotNull(r);
-            Assert.AreEqual(1, r.Submeshes.Count);
-            var uv = r.Submeshes[0].Mesh.uv;
-            Assert.AreEqual(14, uv.Length, "6 段圓錐 = 14 頂點 / 12 三角形");
-            float uMin = 1f, uMax = 0f;
-            var vs = new System.Collections.Generic.HashSet<int>();
-            foreach (var t in uv)
+            // 光是 6 段圓錐:U 沿著繞軸方向鋪滿 0..1、V 只有兩排(頂圈/底圈)。這就是為什麼官方捲的是 U ——
+            // 捲 U 才會讀成「光紋繞著光軸轉」。這條把「磁碟上的幾何」和「catalog 捲哪個軸」綁在一起:
+            // 幾何說可捲的是 U,catalog 就必須捲 U(有人改成捲 V 這裡會紅)。
+            MshLoader.Result r = null;
+            try
             {
-                uMin = Mathf.Min(uMin, t.x); uMax = Mathf.Max(uMax, t.x);
-                vs.Add(Mathf.RoundToInt(t.y * 1000f));
+                r = MshLoader.Load(File.ReadAllBytes(Path.Combine(root, "14_HAIDI/GUANG/GUANG.MSH")));
+                Assert.IsNotNull(r);
+                Assert.AreEqual(1, r.Submeshes.Count);
+                var uv = r.Submeshes[0].Mesh.uv;
+                Assert.AreEqual(14, uv.Length, "6 段圓錐 = 14 頂點 / 12 三角形");
+                float uMin = 1f, uMax = 0f;
+                var vs = new System.Collections.Generic.HashSet<int>();
+                foreach (var t in uv)
+                {
+                    uMin = Mathf.Min(uMin, t.x); uMax = Mathf.Max(uMax, t.x);
+                    vs.Add(Mathf.RoundToInt(t.y * 1000f));
+                }
+                Assert.Less(uMin, 0.05f, "U 從接近 0 開始");
+                Assert.Greater(uMax, 0.95f, "U 鋪到接近 1(繞完一圈)");
+                Assert.AreEqual(2, vs.Count, "V 只有兩排 → V 不是可捲的方向");
+
+                // 幾何 → catalog:可捲的軸是 U,所以 catalog 也必須捲 U 而不是 V。
+                var beam = SceneMapobjUvScrollCatalog.Find("SCN0014", "GUANG");
+                Assert.Greater(Mathf.Abs(beam.x), 0f, "光要捲 U(繞軸自轉)");
+                Assert.AreEqual(0f, beam.y, 1e-6f, "V 只有兩排,捲 V 沒有意義");
             }
-            Assert.Less(uMin, 0.05f, "U 從接近 0 開始");
-            Assert.Greater(uMax, 0.95f, "U 鋪到接近 1(繞完一圈)");
-            Assert.AreEqual(2, vs.Count, "V 只有兩排 → V 不是可捲的方向");
-            foreach (var sub in r.Submeshes) UnityEngine.Object.DestroyImmediate(sub.Mesh);
+            finally
+            {
+                if (r != null) foreach (var sub in r.Submeshes) if (sub.Mesh != null) UnityEngine.Object.DestroyImmediate(sub.Mesh);
+            }
+        }
+
+        [Test]
+        public void RenderMode_OfficialMaterialAlpha_Is_The_Only_PerMaterial_Mode()
+        {
+            // 這次修正的核心設計:OfficialMaterialAlpha 逐材質看官方旗標,其餘模式維持整支道具一起套。
+            // 沒有這條的話,把 AddMapobj 的逐材質迴圈改回舊的 prop-wide foreach,其他測試都還是綠的。
+            var perMat = SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha;
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.AppliesToMaterial(perMat, 0u), "旗標 0 的材質不能被改成透明");
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.AppliesToMaterial(perMat, 1u));
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.AppliesToMaterial(perMat, 0x11u));
+            // 其餘模式是整支道具的:旗標不影響它們(維持既有已驗收的場景行為)。
+            foreach (var mode in new[]
+            {
+                SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                SceneMapobjUvScrollCatalog.RenderMode.AdditiveOverlay,
+                SceneMapobjUvScrollCatalog.RenderMode.ForceAlphaBlend,
+                SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay,
+                SceneMapobjUvScrollCatalog.RenderMode.SpotGlow,
+            })
+            {
+                Assert.IsTrue(SceneMapobjUvScrollCatalog.AppliesToMaterial(mode, 0u), mode + " 是整支道具套用");
+                Assert.IsTrue(SceneMapobjUvScrollCatalog.AppliesToMaterial(mode, 2u), mode.ToString());
+            }
+        }
+
+        [Test]
+        public void RealData_Scn0014_Tv_Beam_Is_The_Only_Material_The_Mode_Touches()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            // 端到端釘住:拿 TV.MSH 真正的材質表跑閘門,5 個材質中只有那道光會被換成 alpha-blend。
+            var tv = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(root, "14_HAIDI/TV/TV.MSH")));
+            var mode = SceneMapobjUvScrollCatalog.FindRenderMode("SCN0014", "TV");
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha, mode);
+            int touched = 0;
+            foreach (var m in tv)
+                if (SceneMapobjUvScrollCatalog.AppliesToMaterial(mode, m.Flags))
+                {
+                    touched++;
+                    Assert.IsTrue(m.Name.ToLowerInvariant().Contains("touyingguang"),
+                        "只有投影光該被改;被改到的是 " + m.Name);
+                }
+            Assert.AreEqual(1, touched, "螢幕/鋼架/電視/投影機必須維持實心");
         }
 
         [Test]
@@ -581,22 +644,21 @@ namespace Sdo.Tests
             var root = MapobjDir();
             if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
 
-            // catalog 的幀名要真的對得上磁碟(這正是「MSH 材質 01.dds 只是佔位第一幀」的那組)。
-            var groups = new (string Folder, string Mesh)[]
+            // 幀是從「道具自己那個資料夾」解析的(AddMapobj: SCENE/MAPOBJ/<group.Folder>),所以資料夾要從
+            // SceneMapobjCatalog 推導、不能在測試裡另外硬編一份 —— 否則搬動道具時這條抓不到真正的失效模式
+            // (幀名對、但在 runtime 實際搜尋的資料夾裡找不到)。
+            int checkedGroups = 0;
+            foreach (var g in SceneMapobjCatalog.ForFolder("SCN0025"))
             {
-                ("CHUNTIAN/HUTEIDONGHUA", "HUDEICHUNTIANDONGHUA"),
-                ("CHUNTIAN/HUDIEDONGHUA2", "HUDEICHUNTIANDONGHUA2"),
-                ("CHUNTIAN/HUDIEDONGHUA3", "HUDEICHUNTIANDONGHUA3"),
-                ("CHUNTIAN/HUDIEDONGHUA4", "HUDEICHUNTIANDONGHUA4"),
-            };
-            foreach (var (folder, mesh) in groups)
-            {
-                var anim = SceneMapobjTexAnimCatalog.Find("SCN0025", mesh);
-                Assert.IsNotNull(anim, mesh);
+                string meshBase = Path.GetFileNameWithoutExtension(g.Msh);
+                var anim = SceneMapobjTexAnimCatalog.Find("SCN0025", meshBase);
+                if (anim == null) continue;                    // 水/草不是換幀道具
+                checkedGroups++;
                 foreach (var f in anim.Frames)
-                    Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(root, folder), f)),
-                        folder + "/" + f + " 不存在 → 換幀會退回佔位貼圖");
+                    Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(root, g.Folder), f)),
+                        g.Folder + "/" + f + " 不存在 → 換幀會退回佔位貼圖(蝴蝶不拍翅膀)");
             }
+            Assert.AreEqual(4, checkedGroups, "四群蝴蝶都要接上換幀");
         }
 
         [Test]
@@ -622,7 +684,9 @@ namespace Sdo.Tests
             // 不能外溢到同場景其他道具/別的場景。
             Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
                 SceneMapobjUvScrollCatalog.FindRenderMode("SCN0014", "SEA_SCREEN"));
-            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+            // 別的場景叫 TV* 的道具不能被這條規則掃到(用 AreNotEqual,免得日後 SCN0020 自己加了別的 render
+            // mode 就讓這條 SCN0014 的測試莫名其妙變紅)。
+            Assert.AreNotEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha,
                 SceneMapobjUvScrollCatalog.FindRenderMode("SCN0020", "TV1"), "只有海底那台電視");
         }
 
@@ -708,6 +772,114 @@ namespace Sdo.Tests
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0015", "15_UV"));
             Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0015", "15_HUA").sqrMagnitude, 1e-6f);
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0015", "15_HUA"));
+        }
+
+        // ── SCN0024 雪景:光球招牌變色 + 背景探照燈 ────────────────────────────────────────────────
+        // 官方 Scene_LoadBackground case 0x18 做三件事:載入 donghua/biaodonghua 兩個道具、把 5 張
+        // Xuejing_Donghua_biao0N_.dds 讀進 param_1[0x59],再建三顆 guang_.tga 的 200×200 光暈 billboard。
+        // 每幀更新 FUN_004b0cc0 只做一件事:每 500 ms 把第 idx=(i+1)%5 張綁到 biaodonghua 的材質槽 0。
+
+        [Test]
+        public void SceneTexAnim_Scn0024_Sign_Cycles_Five_Frames_At_500ms()
+        {
+            var sign = SceneMapobjTexAnimCatalog.Find("SCN0024", "BIAODONGHUA");
+            Assert.IsNotNull(sign, "招牌沒有換幀條目 → 卡在 MSH 的 biao1_.dds 不變色");
+            Assert.AreEqual(5, sign.Frames.Length, "param_1[0x59] 是 0x14 bytes = 5 個指標");
+            Assert.AreEqual("XUEJING_DONGHUA_BIAO01_.dds", sign.Frames[0]);
+            Assert.AreEqual("XUEJING_DONGHUA_BIAO05_.dds", sign.Frames[4]);
+            Assert.AreEqual(500f, sign.IntervalMs, 1e-3f, "FUN_004b0cc0 的計時器參數是 500 ms");
+            Assert.IsTrue(sign.Transparent, "DXT3 硬去背招牌,不是實心螢幕");
+            Assert.IsFalse(sign.HoldLast, "(i+1) % 5 是無限循環,不是播一次");
+
+            // 換幀只綁在 biaodonghua(objects[1])的材質槽 0;探照燈是 .mot 驅動,不能也被掛上換幀。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0024", "DONGHUA"), "探照燈不換貼圖");
+            // 名字別的場景不能撿到(BIAODONGHUA 只有雪景有)。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0025", "BIAODONGHUA"));
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0024_Searchlight_Defers_To_Official_Flags_And_Does_Not_Scroll()
+        {
+            // DENGGUANG_.DDS 是亮色 + 全軟 alpha 的光錐 → LooksLikeAdditiveGlow 誤判成加法;官方旗標是 0x1。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0024", "DONGHUA"));
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0024", "DONGHUA"));
+            // 場景 0x18 的更新完全沒寫 0x58/0x5c,所以光柱不捲 UV(動作全來自 .mot)。
+            Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0024", "DONGHUA").sqrMagnitude, 1e-6f);
+            // 招牌不套 render mode:它靠換幀,材質由 texAnim.Transparent 決定。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0024", "BIAODONGHUA"));
+        }
+
+        [Test]
+        public void SceneFlames_Scn0024_Has_Three_Static_Guang_Halos()
+        {
+            var set = SceneFlameBillboardCatalog.ForFolder("SCN0024");
+            Assert.IsNotNull(set, "三顆招牌光暈是 billboard,不是 mapobj mesh → 少了整組就不見");
+            Assert.AreEqual("SCENE/SCN0024", set.FramesDir, "guang_.tga 在場景自己的資料夾,不在 MAPOBJ 下");
+            Assert.AreEqual(1, set.Frames.Length, "官方只載一張,FUN_004b0cc0 沒有換它");
+            Assert.AreEqual("GUANG_.TGA", set.Frames[0]);
+            Assert.AreEqual(3, set.Billboards.Length);
+            foreach (var b in set.Billboards) Assert.AreEqual(200f, b.Size, 1e-3f, "0x43480000 = 200");
+            Assert.AreEqual(432.109f, set.Billboards[0].X, 1e-3f);
+            Assert.AreEqual(210.371f, set.Billboards[0].Y, 1e-3f);
+            Assert.AreEqual(-3.208f, set.Billboards[0].Z, 1e-3f);
+            Assert.AreEqual(-498.497f, set.Billboards[1].X, 1e-3f);
+            Assert.AreEqual(75.41f, set.Billboards[2].X, 1e-3f);
+            Assert.AreEqual(314.22f, set.Billboards[2].Z, 1e-3f);
+            // SCN0022 那組不能被動到(同一張表,不同場景)。
+            Assert.AreEqual(3, SceneFlameBillboardCatalog.ForFolder("SCN0022").Frames.Length);
+            Assert.IsNull(SceneFlameBillboardCatalog.ForFolder("SCN0023"));
+        }
+
+        [Test]
+        public void RealData_Scn0024_Sign_Frames_And_Searchlight_Match_The_Original()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found — real-data row needs the game data (data_root.txt)");
+
+            // 1) 5 張換幀貼圖真的在 biaodonghua 資料夾裡(catalog 幀名對得上磁碟)。
+            var signDir = Path.Combine(root, "XUEJING/BIAODONGHUA");
+            var sign = SceneMapobjTexAnimCatalog.Find("SCN0024", "BIAODONGHUA");
+            foreach (var f in sign.Frames)
+                Assert.IsTrue(File.Exists(Path.Combine(signDir, f)), "XUEJING/BIAODONGHUA/" + f + " 不存在 → 換幀會退回佔位貼圖");
+            // 官方硬編的 5 張裡 01 與 03 是同一個檔,所以視覺上只有 4 個顏色 —— 這是資料本身的事實,
+            // 不是我們漏抄:若哪天檔案不同了,這條會紅,提醒重新確認 catalog。
+            Assert.AreEqual(new FileInfo(Path.Combine(signDir, "XUEJING_DONGHUA_BIAO01_.DDS")).Length,
+                            new FileInfo(Path.Combine(signDir, "XUEJING_DONGHUA_BIAO03_.DDS")).Length);
+
+            // 2) MSH 材質 biao1_.dds 只是作者留的佔位:它存在(所以招牌不會變白),但 exe 從來不用它。
+            var signMats = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(signDir, "BIAODONGHUA.MSH")));
+            Assert.AreEqual(1, signMats.Count);
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(signMats, "biao1_.dds")), "招牌是官方透明批");
+            Assert.IsTrue(File.Exists(Path.Combine(signDir, "BIAO1_.DDS")), "佔位圖存在 → 症狀是「不變色」而不是「變白」");
+
+            // 3) 探照燈:官方旗標 0x1(所以 OfficialMaterialAlpha 才對,不是 additive)。
+            var beamDir = Path.Combine(root, "XUEJING/DONGHUA");
+            var beamMats = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(beamDir, "DONGHUA.MSH")));
+            Assert.AreEqual(1, beamMats.Count);
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(beamMats, "dengguang_.dds")));
+
+            // 4) 三顆光暈的 guang_.tga 在場景資料夾(不是 MAPOBJ 下)。
+            var guang = Path.Combine(Path.Combine(SdoExtracted.Root, "SCENE/SCN0024"), "GUANG_.TGA");
+            Assert.IsTrue(File.Exists(guang), "SCENE/SCN0024/GUANG_.TGA 不在 → 三顆光暈不會生出來");
+        }
+
+        [Test]
+        public void RealData_Scn0024_Searchlight_Bind_Scale_Must_Not_Be_Dropped()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            // 探照燈的長軸被 HRC rest bind 拉長 ~3.9 倍 —— 那個拉長就是光柱本身。通用防呆
+            // (maxScale > 2 且 mesh 不小於 80 單位就丟掉 scale)剛好會誤殺它,所以 ScreenGameplay 開了
+            // SCN0024/DONGHUA 的例外。這條測試釘住「例外仍然必要」的前提:bind scale 真的 > 2、
+            // mesh 真的 >= 80,一旦哪天 loader 改了讓通用規則自己就會放行,這條會紅,提醒把例外拿掉。
+            var hrc = HrcLoader.Load(File.ReadAllBytes(Path.Combine(Path.Combine(root, "XUEJING/DONGHUA"), "DONGHUA.HRC")));
+            Assert.AreEqual(3, hrc.BindWorld.Length, "DONGHUA.HRC 有 3 根骨(root / Plane01 / leaf)");
+            var s = hrc.BindWorld[hrc.BindWorld.Length - 1].lossyScale;
+            float maxScale = Mathf.Max(Mathf.Abs(s.x), Mathf.Max(Mathf.Abs(s.y), Mathf.Abs(s.z)));
+            Assert.Greater(maxScale, 2f, "葉骨的 bind scale 是 ~3.9 的長軸拉伸");
         }
     }
 }

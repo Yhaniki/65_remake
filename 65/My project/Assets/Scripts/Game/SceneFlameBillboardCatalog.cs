@@ -34,6 +34,8 @@ namespace Sdo.Game
     ///     advanced by a 0x96 = 150 ms timer, index = (i+1) % 3, and written to all three from one shared counter
     ///     (DAT_00678578) — so they flicker in sync. Frames are the smooth 32-bit TGA (the DXT3 twin's 4-bit alpha
     ///     bands the soft glow); render additively (Sdo/UnlitAdditiveOverlay = alpha-weighted additive, two-sided).
+    ///   SCN0024 雪景 招牌光暈 (Scene_LoadBackground case 0x18): 3 static glow panels of the scene folder's own
+    ///     GUANG_.TGA, size 200 (0x43480000), same +0x80/0x84/0x88 field values as SCN0022 — one frame, no cycle.
     ///
     /// Keyed by scene FOLDER (SceneMapobjCatalog's key). Spawned by ScreenGameplay.SpawnSceneFlames.
     /// </summary>
@@ -50,6 +52,24 @@ namespace Sdo.Game
                     new FlameBillboard(-163.43f, 40f, 135.51f, 100f),
                     new FlameBillboard(-11.6f, 30f, 200.11f, 100f),
                     new FlameBillboard(182.96f, 28f, 21.6f, 100f),
+                }),
+
+            // SCN0024 雪景街景:招牌上的三顆暖黃光暈。同一套 CBillboardSet,但只有「一張」貼圖 —— 場景 0x18 的
+            // 每幀更新 (FUN_004b0cc0) 只換招牌那 5 張,完全沒碰這三顆,所以它們是靜態光暈,不是換幀動畫。
+            // 官方 case 0x18 把當前封裝切到 Datas/Scene/scn0024,載入 guang_.tga,建三個物件
+            // (param_1[0x56/0x57/0x58]),寫入座標 +0x28/0x2c/0x30、尺寸 200×200,並設 +0x80=2 / +0x84=4 /
+            // +0x88=1 —— 與 SCN0022 鬼火那三顆逐欄位相同,所以照樣走加法混色的相機朝向 quad。
+            // 貼圖是 256×256 32-bit TGA 的柔和放射狀光暈(alpha 最高只有 189,永遠不會全不透明),
+            // 三顆都貼在 y≈210 的建築燈具上;真正會掃的那道光是 XUEJING/DONGHUA 的 mesh,不是這個。
+            ["SCN0024"] = new SceneFlameSet(
+                "SCENE/SCN0024",
+                new[] { "GUANG_.TGA" },
+                1000f,   // 單張:間隔不影響畫面(MapobjTexAnimator 的 idx % 1 永遠是 0)
+                new[]
+                {
+                    new FlameBillboard(432.109f, 210.371f, -3.208f, 200f),
+                    new FlameBillboard(-498.497f, 212.36f, 192.66f, 200f),
+                    new FlameBillboard(75.41f, 213.7f, 314.22f, 200f),
                 }),
         };
 
