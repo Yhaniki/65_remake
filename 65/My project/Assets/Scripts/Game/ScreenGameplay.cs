@@ -2919,9 +2919,13 @@ namespace Sdo.Game
                               == SceneMapobjUvScrollCatalog.RenderMode.AlphaBlendOverlay
                               ? DdsLoader.AlphaSmooth.Full : DdsLoader.AlphaSmooth.None;
             var subMats = new List<Material[]>(r.Submeshes.Count);
+            // official per-material flags (MSH record +0x194), parallel to subMats — RenderMode.OfficialMaterialAlpha
+            // consults them so a multi-material prop only re-blends the materials the artist marked transparent.
+            var subMatFlags = new List<uint[]>(r.Submeshes.Count);
             foreach (var sub in r.Submeshes)
             {
                 Material[] mats;
+                uint[] flags;
                 // Only the rigid no-weight stage props (billboards / decals / glows — corals, lights, banners,
                 // ground decals) take the alpha-blend treatment; SKINNED props (GUATAN platform, MAO cats) keep the
                 // opaque path verbatim so the validated scenes don't regress. (All the reported "沒去背" props are rigid.)
@@ -2942,10 +2946,12 @@ namespace Sdo.Game
                 if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
                 {
                     mats = new Material[sub.Ranges.Count];
+                    flags = new uint[sub.Ranges.Count];
                     for (int s = 0; s < sub.Ranges.Count; s++)
                     {
                         int a = sub.Ranges[s].Attrib;
                         string nm = (sub.DdsNames != null && a >= 0 && a < sub.DdsNames.Length && !string.IsNullOrEmpty(sub.DdsNames[a])) ? sub.DdsNames[a] : sub.Dds;
+                        flags[s] = (sub.MatFlags != null && a >= 0 && a < sub.MatFlags.Length) ? sub.MatFlags[a] : sub.DdsFlags;
                         var tex = ResolveDds(dir, nm, out bool a2, out bool glow2, out bool hc2, glowSmooth);
                         // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯): a
                         // moving alpha-blend banner has no ZWrite, so its folds + the scene behind bleed through ("穿模").
@@ -2957,8 +2963,10 @@ namespace Sdo.Game
                     var tex = ResolveDds(dir, sub.Dds, out bool a1, out bool glow1, out bool hc1, glowSmooth);
                     // depth-write (cutout) a VOLUMETRIC solid OR an ANIMATED hard-cutout cloth (GUATAN 掛毯) — see above.
                     mats = new[] { NewMapobjMat(tex, fallbackCol, a1 && !opaque, a1 && !opaque && (volumetric || (animated && hc1)), a1 && !opaque && singleSidedAlpha, glow1) };
+                    flags = new[] { sub.DdsFlags };
                 }
                 subMats.Add(mats);
+                subMatFlags.Add(flags);
             }
 
             // SCN0021 saloon ceiling light bars: the 12 deng meshes are NOT independently animated — they share ONE
@@ -3060,7 +3068,21 @@ namespace Sdo.Game
             var renderMode = SceneMapobjUvScrollCatalog.FindRenderMode(SceneFolder(), baseName);
             if (renderMode != SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial)
             {
-                foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) ApplyMapobjRenderMode(m, renderMode);
+                // OfficialMaterialAlpha is PER-MATERIAL: only the materials the artist flagged transparent get
+                // re-blended (SCN0014 TV = beam only, its screen/frame/projector stay opaque). Every other mode keeps
+                // the historical prop-wide behaviour.
+                for (int si = 0; si < subMats.Count; si++)
+                {
+                    var ms = subMats[si]; if (ms == null) continue;
+                    var fl = si < subMatFlags.Count ? subMatFlags[si] : null;
+                    for (int mi = 0; mi < ms.Length; mi++)
+                    {
+                        if (ms[mi] == null) continue;
+                        if (renderMode == SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha &&
+                            !MshLoader.IsOfficialTransparent(fl != null && mi < fl.Length ? fl[mi] : 0u)) continue;
+                        ApplyMapobjRenderMode(ms[mi], renderMode);
+                    }
+                }
                 Debug.Log($"[mapobj] {baseName}: render-mode {renderMode}");
             }
 
@@ -3302,6 +3324,15 @@ namespace Sdo.Game
                 // Alpha multiplier for the window beam. Texture max alpha is 33%; this value scales
                 // it further so the overall opacity can be tuned without touching the DDS asset.
                 if (mat.HasProperty("_Color")) mat.color = new Color(1f, 1f, 1f, 0.2f);
+            }
+            else if (mode == SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha)
+            {
+                // The artist flagged this material transparent (MSH +0x194 & 0x3f). The engine has ONE transparent
+                // mode — standard SrcAlpha/InvSrcAlpha at full texture alpha — so drop whatever the heuristics chose
+                // (additive glow / alpha-test cutout) for the plain instanced alpha-blend material.
+                var shader = Shader.Find("Sdo/UnlitInstancedAlpha");
+                if (shader != null) mat.shader = shader;
+                if (mat.HasProperty("_Color")) mat.color = Color.white;
             }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow)
             {

@@ -40,6 +40,15 @@ namespace Sdo.Game
             return a;
         }
 
+        // single-digit "<prefix>N.dds" sequence, 0..count-1 (e.g. SeqFrom0("CHUNTIAN_HUDEI1",4) ->
+        // CHUNTIAN_HUDEI10.dds..13.dds — the original's frame arrays are indexed 0..3)
+        private static string[] SeqFrom0(string prefix, int count)
+        {
+            var a = new string[count];
+            for (int i = 0; i < count; i++) a[i] = prefix + i.ToString() + ".dds";
+            return a;
+        }
+
         // 2-digit "<prefix>NN.dds" sequence, 1..count (e.g. Seq2("19_SUBWAY_VT6",24) -> 19_SUBWAY_VT601.dds..624.dds)
         private static string[] Seq2(string prefix, int count)
         {
@@ -109,6 +118,18 @@ namespace Sdo.Game
                     new MapobjTexAnim("BOAT_SCREEN", Seq("BOAT_SCREEN", 4), 500f, false),// opaque screen
                     new MapobjTexAnim("SHUIMO", Seq("SHUIMO", 5), 125f, true),          // water-ink ripple, alpha
                     new MapobjTexAnim("WATER", Seq("WATER", 10), 150f, false),          // river surface, opaque
+                },
+                ["SCN0025"] = new[]
+                {
+                    // 春天 butterflies: four flocks, each a .mot-flown quad whose WING FLAP is a 4-frame texture cycle
+                    // (Scene_LoadBackground case 0x19 loads CHUNTIAN_HUDEI<N>0..3 into param_1[0x5a..0x5d];
+                    // FUN_004b0d20 advances each with its OWN timer: 0x32/0x28/0x3c/0x1e ms, index +1 & 3).
+                    // Their MSH material is the placeholder 01.dds (= a copy of frame 0), so without this they fly
+                    // with frozen wings. Alpha cut-out sprites on a transparent field -> Transparent.
+                    new MapobjTexAnim("HUDEICHUNTIANDONGHUA", SeqFrom0("CHUNTIAN_HUDEI1", 4), 50f, true),
+                    new MapobjTexAnim("HUDEICHUNTIANDONGHUA2", SeqFrom0("CHUNTIAN_HUDEI2", 4), 40f, true),
+                    new MapobjTexAnim("HUDEICHUNTIANDONGHUA3", SeqFrom0("CHUNTIAN_HUDEI3", 4), 60f, true),
+                    new MapobjTexAnim("HUDEICHUNTIANDONGHUA4", SeqFrom0("CHUNTIAN_HUDEI4", 4), 30f, true),
                 },
                 // SCN0022 坟墓 is NOT here: the flame (鬼火) is 3 camera-facing BillboardSet sprites
                 // (SceneFlameBillboardCatalog), and the flying ghosts (gui/gui2) are .mot-driven camera-facing billboards

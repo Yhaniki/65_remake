@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using NUnit.Framework;
 using Sdo.Game;
 using UnityEngine;
@@ -502,6 +503,196 @@ namespace Sdo.Tests
             Assert.AreEqual(1f, book.AlphaMul, 1e-3f);
             Assert.Greater(book.ScaleMul.x, 2f);
             Assert.AreEqual(1f, SceneEftRenderCatalog.Find("booklight", 0, 0).ScaleMul.x, 1e-3f);
+        }
+
+        /// <summary>SCENE/MAPOBJ under the real data root, or null when the game data isn't present.</summary>
+        private static string MapobjDir()
+        {
+            try
+            {
+                var dir = Path.Combine(SdoExtracted.Root, Path.Combine("SCENE", "MAPOBJ"));
+                return Directory.Exists(dir) ? dir : null;
+            }
+            catch { return null; }
+        }
+
+        private static uint FlagOf(System.Collections.Generic.List<(string Name, uint Flags)> table, string dds)
+        {
+            foreach (var m in table)
+                if (string.Equals(Path.GetFileName(m.Name.Replace('\\', '/')), dds, StringComparison.OrdinalIgnoreCase))
+                    return m.Flags;
+            Assert.Fail("material '" + dds + "' not in the mesh's material table");
+            return 0u;
+        }
+
+        [Test]
+        public void RealData_Scn0014_Beam_And_Scn0025_Water_Are_Official_Transparent()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found — real-data row needs the game data (data_root.txt)");
+
+            // 舞台中間的投影光:單材質,官方旗標 1 = 透明批。
+            var guang = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(root, "14_HAIDI/GUANG/GUANG.MSH")));
+            Assert.IsNotEmpty(guang);
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(guang, "touyingguang_.dds")));
+
+            // 旋轉小電視:5 個材質,只有那道光是透明的 —— 所以 OfficialMaterialAlpha 必須逐材質套,
+            // 不然螢幕/框架/投影機也會跟著變半透明。
+            var tv = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(root, "14_HAIDI/TV/TV.MSH")));
+            Assert.GreaterOrEqual(tv.Count, 5);
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(tv, "touyingguang_.dds")), "電視射出來的光");
+            foreach (var opaque in new[] { "zhuanpan.dds", "gangjia.dds", "tv.dds", "touyingji_c.dds" })
+                Assert.IsFalse(MshLoader.IsOfficialTransparent(FlagOf(tv, opaque)), opaque + " 官方是實心的");
+
+            // 噴水池的水:旗標 0x11。
+            var water = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(root, "CHUNTIAN/DONGHUA/CHUNTIANDONGHUA.MSH")));
+            Assert.AreEqual(0x11u, FlagOf(water, "shui_c_.dds"));
+        }
+
+        [Test]
+        public void RealData_Scn0014_Beam_Mesh_Unwraps_Around_Its_Axis_In_U()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            // 光是 6 段圓錐:U 沿著繞軸方向鋪滿 0..1、V 只有兩排(頂圈/底圈)。這就是為什麼官方捲的是 U —— 捲 U
+            // 才會讀成「光紋繞著光軸轉」。若哪天有人把 BeamSpinU 改成捲 V,這條會擋下來。
+            var r = MshLoader.Load(File.ReadAllBytes(Path.Combine(root, "14_HAIDI/GUANG/GUANG.MSH")));
+            Assert.IsNotNull(r);
+            Assert.AreEqual(1, r.Submeshes.Count);
+            var uv = r.Submeshes[0].Mesh.uv;
+            Assert.AreEqual(14, uv.Length, "6 段圓錐 = 14 頂點 / 12 三角形");
+            float uMin = 1f, uMax = 0f;
+            var vs = new System.Collections.Generic.HashSet<int>();
+            foreach (var t in uv)
+            {
+                uMin = Mathf.Min(uMin, t.x); uMax = Mathf.Max(uMax, t.x);
+                vs.Add(Mathf.RoundToInt(t.y * 1000f));
+            }
+            Assert.Less(uMin, 0.05f, "U 從接近 0 開始");
+            Assert.Greater(uMax, 0.95f, "U 鋪到接近 1(繞完一圈)");
+            Assert.AreEqual(2, vs.Count, "V 只有兩排 → V 不是可捲的方向");
+            foreach (var sub in r.Submeshes) UnityEngine.Object.DestroyImmediate(sub.Mesh);
+        }
+
+        [Test]
+        public void RealData_Scn0025_Butterfly_Wing_Frames_Exist_On_Disk()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            // catalog 的幀名要真的對得上磁碟(這正是「MSH 材質 01.dds 只是佔位第一幀」的那組)。
+            var groups = new (string Folder, string Mesh)[]
+            {
+                ("CHUNTIAN/HUTEIDONGHUA", "HUDEICHUNTIANDONGHUA"),
+                ("CHUNTIAN/HUDIEDONGHUA2", "HUDEICHUNTIANDONGHUA2"),
+                ("CHUNTIAN/HUDIEDONGHUA3", "HUDEICHUNTIANDONGHUA3"),
+                ("CHUNTIAN/HUDIEDONGHUA4", "HUDEICHUNTIANDONGHUA4"),
+            };
+            foreach (var (folder, mesh) in groups)
+            {
+                var anim = SceneMapobjTexAnimCatalog.Find("SCN0025", mesh);
+                Assert.IsNotNull(anim, mesh);
+                foreach (var f in anim.Frames)
+                    Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(root, folder), f)),
+                        folder + "/" + f + " 不存在 → 換幀會退回佔位貼圖");
+            }
+        }
+
+        [Test]
+        public void MshLoader_IsOfficialTransparent_Matches_Engine_Mask()
+        {
+            // 引擎唯一的判定是 flags & 0x3f != 0(非 0 → 延後透明批)。全語料只有 0/1/2/0x11/0x12 五種值。
+            Assert.IsFalse(MshLoader.IsOfficialTransparent(0u), "0 = 不透明批");
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(1u), "SCN0014 投影光 / SCN0016 地板光條");
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(2u));
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(0x11u), "SCN0025 噴水池的水");
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(0x12u));
+            Assert.IsFalse(MshLoader.IsOfficialTransparent(0x40u), "遮罩外的高位元不算透明");
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0014_ProjectorBeams_Defer_To_Official_Flags()
+        {
+            // 舞台中間的 GUANG 與旋轉電視射出的光都貼 TOUYINGGUANG_.DDS(亮 RGB + 幾乎全軟 alpha)→
+            // LooksLikeAdditiveGlow 誤判成加法 → 疊出一塊死白(使用者:「光沒去背」)。官方旗標說它是一般透明批。
+            foreach (var key in new[] { "GUANG", "TV" })
+                Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha,
+                    SceneMapobjUvScrollCatalog.FindRenderMode("SCN0014", key), key);
+            // 不能外溢到同場景其他道具/別的場景。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0014", "SEA_SCREEN"));
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0020", "TV1"), "只有海底那台電視");
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0014_Beam_Spins_In_U_And_Coral_Splits_Into_Two_Rates()
+        {
+            // FUN_004b0330 每 50 ms 寫 7 個貼圖座標:3× 珊瑚樹 V=−t、3× 珊瑚枝 V=−2t、第 7 個(唯一寫 U、4× 速率)
+            // = 投影光。光的 mesh 是 6 段圓錐展開(U 0.018‥0.976、V 只有兩排),所以捲 U = 光紋繞著光軸自轉,
+            // 疊在 .mot 帶著整支道具繞場公轉之上(它的 .mot 只有一根動畫骨,不可能另外自轉)。
+            var beam = SceneMapobjUvScrollCatalog.Find("SCN0014", "GUANG");
+            Assert.AreEqual(0.32f, beam.x, 1e-6f, "U += 0.016 per 50 ms = 4× 珊瑚速率");
+            Assert.AreEqual(0f, beam.y, 1e-6f, "光只捲 U(官方 V 明確寫 0)");
+
+            foreach (var tree in new[] { "SHANHU-BAI", "SHANHU-HONG", "SHANHU-LV" })
+            {
+                var s = SceneMapobjUvScrollCatalog.Find("SCN0014", tree);
+                Assert.AreEqual(0f, s.x, 1e-6f, tree);
+                Assert.AreEqual(-0.08f, s.y, 1e-6f, tree + " 是 1× 那組");
+            }
+            foreach (var branch in new[] { "SHANHUZHI-BAI", "SHANHUZHI-HONG", "SHANHUZHI-LV" })
+            {
+                var s = SceneMapobjUvScrollCatalog.Find("SCN0014", branch);
+                Assert.AreEqual(0f, s.x, 1e-6f, branch);
+                Assert.AreEqual(-0.16f, s.y, 1e-6f, branch + " 是 2× 那組");
+            }
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0025_Fountain_Flows_And_Defers_To_Official_Flags()
+        {
+            // FUN_004b0d20 最後一段:每 50 ms 設 U=0、V += _DAT_00589044(0.05)⇒ +1.0 UV/s(到 1.0 歸零)。
+            var speed = SceneMapobjUvScrollCatalog.Find("SCN0025", "CHUNTIANDONGHUA");
+            Assert.AreEqual(0f, speed.x, 1e-6f);
+            Assert.AreEqual(1.0f, speed.y, 1e-6f);
+            // 水的官方旗標是 0x11(透明批);啟發式把它當加法輝光 → 噴出來的水變成死白一片。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0025", "CHUNTIANDONGHUA"));
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0025", "CHUNTIANDONGHUA"));
+            // 同場景的蝴蝶/草不捲、不改材質(蝴蝶走換幀)。
+            Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0025", "HUDEICHUNTIANDONGHUA").sqrMagnitude, 1e-6f);
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0025", "CAOCHUNTIANDONGHUA"));
+        }
+
+        [Test]
+        public void TexAnim_Scn0025_Butterflies_Flap_At_Official_Intervals()
+        {
+            // 四群蝴蝶各自一組 4 幀翅膀(Scene_LoadBackground case 0x19 載 CHUNTIAN_HUDEI<N>0..3),
+            // FUN_004b0d20 用各自的計時器推進:0x32/0x28/0x3c/0x1e ms、index = (i+1) & 3。
+            var expect = new (string Mesh, string Prefix, float Ms)[]
+            {
+                ("HUDEICHUNTIANDONGHUA",  "CHUNTIAN_HUDEI1", 50f),
+                ("HUDEICHUNTIANDONGHUA2", "CHUNTIAN_HUDEI2", 40f),
+                ("HUDEICHUNTIANDONGHUA3", "CHUNTIAN_HUDEI3", 60f),
+                ("HUDEICHUNTIANDONGHUA4", "CHUNTIAN_HUDEI4", 30f),
+            };
+            foreach (var (mesh, prefix, ms) in expect)
+            {
+                var anim = SceneMapobjTexAnimCatalog.Find("SCN0025", mesh);
+                Assert.IsNotNull(anim, mesh + " 少了翅膀換幀 → 蝴蝶飛但不拍翅膀");
+                Assert.AreEqual(4, anim.Frames.Length, mesh);
+                Assert.AreEqual(prefix + "0.dds", anim.Frames[0], mesh + " 幀從 0 起算");
+                Assert.AreEqual(prefix + "3.dds", anim.Frames[3], mesh);
+                Assert.AreEqual(ms, anim.IntervalMs, 1e-3f, mesh);
+                Assert.IsTrue(anim.Transparent, mesh + " 是去背的蝴蝶剪影");
+                Assert.IsFalse(anim.HoldLast, mesh + " 是循環拍翅膀,不是播一次");
+            }
+            // 水/草不是換幀(水靠 UV 捲動、草靠 .mot)。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0025", "CHUNTIANDONGHUA"));
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0025", "CAOCHUNTIANDONGHUA"));
         }
 
         [Test]

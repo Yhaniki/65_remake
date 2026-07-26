@@ -25,6 +25,13 @@ namespace Sdo.Game
             // Soft searchlight beam: additive, but blur the texture along its width so the light spreads sideways
             // and the narrow hard alpha edge becomes a gradual soft falloff (SCN0016 JIGUANG spotlights).
             SpotGlow,
+            // Let the prop's OFFICIAL per-material flag decide (MSH material record +0x194): a material the artist
+            // marked transparent (flags & 0x3f != 0) renders as STANDARD alpha-blend, one marked 0 keeps whatever the
+            // opaque path gave it. The engine has no alpha-test and no additive material mode, so this both undoes the
+            // LooksLikeAdditiveGlow false positives (a bright soft-alpha glow blown out to solid white) and the
+            // cutout heuristic. Unlike ForceAlphaBlend/AlphaBlendOverlay this is PER-MATERIAL, so a multi-material
+            // prop (SCN0014 TV: screen + frame + projector opaque, only the light beam transparent) stays correct.
+            OfficialMaterialAlpha,
         }
 
         public readonly struct Target
@@ -45,7 +52,15 @@ namespace Sdo.Game
             }
         }
 
-        private static readonly Vector2 CoralV = new Vector2(0f, -0.08f); // V += 0.004 per 50 ms
+        // SCN0014 FUN_004b0330 writes SEVEN texture-coord targets every 50 ms, in three groups that line up exactly
+        // with the scene's props: the 3 coral TREES get V = −t, the 3 coral BRANCHES get V = −2t, and the 7th — the
+        // only one written in U, at 4× the rate — is the projector BEAM (t += _DAT_00589034 = 0.004 per 50 ms).
+        // U is the beam's around-the-axis coordinate (its mesh is a 6-segment cone unwrapped U 0.018‥0.976 with only
+        // two V rows), so scrolling U spins the light pattern about the beam axis — the "光自己也在轉" on top of the
+        // whole prop orbiting the stage on its .mot. Coral UVs are not cylindrical, so U scroll only makes sense there.
+        private static readonly Vector2 CoralV = new Vector2(0f, -0.08f);        // trees:    V += 0.004 per 50 ms
+        private static readonly Vector2 CoralBranchV = new Vector2(0f, -0.16f);  // branches: V += 0.008 per 50 ms (2×)
+        private static readonly Vector2 BeamSpinU = new Vector2(0.32f, 0f);      // beam:     U += 0.016 per 50 ms (4×)
         // D3D9 V += 0.003/50ms = +0.06/s. Test confirmed positive sign is correct (unlike CoralV).
         // Angular-edge issue tracked in decomp doc; suspect UV scale transform not yet captured.
         private static readonly Vector2 Scn0015WindowUv = new Vector2(0f, 0.06f);
@@ -86,13 +101,30 @@ namespace Sdo.Game
             new Target("SCN0022", "SHEGUANG",  -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
             new Target("SCN0022", "SHEGUANG2", -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
             new Target("SCN0022", "SHEGUANG3", -1, Vector2.zero, RenderMode.AlphaBlendOverlay),
-            // SCN0014 FUN_004b0330: coral glow scrolls V by 0.004 every 50 ms.
+            // SCN0014 海底 projector beams (TOUYINGGUANG_.DDS): the stage-centre GUANG prop and the beam material
+            // inside the spinning TV prop. Their DXT3 is a bright (meanLum 186) mostly-soft-alpha glow, so
+            // LooksLikeAdditiveGlow classes them additive → the overlapping beam quads saturate to a solid white
+            // blob ("光沒去背"). The OFFICIAL material flags say otherwise: GUANG mat0 = 1 and TV mat1 = 1
+            // (transparent batch = standard alpha blend), while TV's zhuanpan/gangjia/tv/touyingji_c are all 0
+            // (opaque). Per-material so only the beam changes.
+            // GUANG additionally SPINS: it is the 7th (U, 4×) target of FUN_004b0330 — see BeamSpinU. Its .mot only
+            // carries ONE animated bone ('Box02', 550 keys of yaw) which orbits the whole prop around the stage, so
+            // the light pattern turning about its own axis is this U scroll, nothing else.
+            new Target("SCN0014", "GUANG", -1, BeamSpinU, RenderMode.OfficialMaterialAlpha),
+            new Target("SCN0014", "TV", -1, Vector2.zero, RenderMode.OfficialMaterialAlpha),
+            // SCN0025 春天 fountain water (CHUNTIANDONGHUA / SHUI_C_.DDS, official flags = 0x11 → transparent batch):
+            // same additive false positive (meanLum 252, 98% soft alpha) painted the fountain as a solid white splash.
+            // It also FLOWS: FUN_004b0d20's last block sets texture-transform U=0, V += _DAT_00589044 (=0.05) every
+            // 50 ms ⇒ +1.0 UV/s in V, wrapping at 1.0. Positive sign copied verbatim (like SCN0015's window beam).
+            new Target("SCN0025", "CHUNTIANDONGHUA", -1, new Vector2(0f, 1.0f), RenderMode.OfficialMaterialAlpha),
+            // SCN0014 FUN_004b0330 coral glow: the three TREES scroll V at 1×, the three BRANCHES at 2× (verbatim
+            // −t / −2t groups; the branches used to share the trees' rate).
             new Target(null, "SHANHU-BAI", -1, CoralV),
             new Target(null, "SHANHU-HONG", -1, CoralV),
             new Target(null, "SHANHU-LV", -1, CoralV),
-            new Target(null, "SHANHUZHI-BAI", -1, CoralV),
-            new Target(null, "SHANHUZHI-HONG", -1, CoralV),
-            new Target(null, "SHANHUZHI-LV", -1, CoralV),
+            new Target(null, "SHANHUZHI-BAI", -1, CoralBranchV),
+            new Target(null, "SHANHUZHI-HONG", -1, CoralBranchV),
+            new Target(null, "SHANHUZHI-LV", -1, CoralBranchV),
         };
 
         /// <summary>UV-scroll speed (UV/s) for a scene object/material slot, or Vector2.zero if it does not scroll.</summary>

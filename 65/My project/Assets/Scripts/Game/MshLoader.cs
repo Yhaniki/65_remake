@@ -41,6 +41,10 @@ namespace Sdo.Game
         /// </summary>
         public const uint MatFlagTransparentMask = 0x3fu;
 
+        /// <summary>官方判定:這個材質旗標是不是「透明批」(<c>flags &amp; 0x3f != 0</c>)。舞台道具用它決定要不要
+        /// alpha blend(取代貼圖直方圖啟發式),與 <see cref="SdoAvatarBuilder.OfficialAlphaMode"/> 同一個規則。</summary>
+        public static bool IsOfficialTransparent(uint matFlags) => (matFlags & MatFlagTransparentMask) != 0u;
+
         private const int MatFlagsOff = 0x194;   // flags dword within the 408-byte material record
 
         /// <summary>Upper bound on the submesh count read from the header (offset 12). This is only a cheap early
