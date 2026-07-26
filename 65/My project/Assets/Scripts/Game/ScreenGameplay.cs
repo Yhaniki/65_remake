@@ -3085,6 +3085,18 @@ namespace Sdo.Game
                 Debug.Log($"[mapobj] {baseName}: render-mode {renderMode}");
             }
 
+            // Explicit render-queue override (Target.Queue). Separate from the render MODE because it answers a
+            // different question — not "how is it blended" but "who wins when it overlaps the stage". SCN0004's
+            // sea/shore water must sit BEHIND the huts and the pier: pushing a ZWrite-off transparent prop before
+            // the stage's AlphaTest pass (2450) means the stage is drawn afterwards and simply paints over it
+            // wherever the stage has geometry. MUST run AFTER ApplyMapobjRenderMode — assigning Material.shader
+            // resets a custom renderQueue back to the shader's default, so setting it earlier would be undone.
+            if (SceneMapobjUvScrollCatalog.TryFindTarget(SceneFolder(), baseName, out var queueTarget) && queueTarget.Queue > 0)
+            {
+                foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) m.renderQueue = queueTarget.Queue;
+                Debug.Log($"[mapobj] {baseName}: render-queue {queueTarget.Queue}");
+            }
+
             // UV-scroll (the original streams texture coords on some props): e.g. SCN0014 corals scroll V so their glow
             // marquees. Drive the shared submesh materials' main-tex offset. Needs Repeat wrap (DdsLoader sets it).
             // Motion is per-entry: most props stream linearly, but SCN0004's sea/wave ROCK (sine) and the

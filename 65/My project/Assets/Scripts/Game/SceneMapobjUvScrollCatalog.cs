@@ -58,14 +58,15 @@ namespace Sdo.Game
             public readonly Vector2 Step;      // DwellStep only: signed UV covered by one leg
             public readonly float DwellMs;     // DwellStep only
             public readonly Vector2 Start;     // DwellStep only: UV offset the prop rests at before the first sweep
+            public readonly int Queue;         // 0 = leave the shader's queue alone; else force this render queue
 
             public Target(string folder, string objectKey, int materialId, Vector2 speed, RenderMode mode = RenderMode.KeepMaterial)
-                : this(folder, objectKey, materialId, speed, mode, Motion.Linear, Vector2.zero, Vector2.zero, 0f, Vector2.zero)
+                : this(folder, objectKey, materialId, speed, mode, Motion.Linear, Vector2.zero, Vector2.zero, 0f, Vector2.zero, 0)
             {
             }
 
             private Target(string folder, string objectKey, int materialId, Vector2 speed, RenderMode mode,
-                           Motion motion, Vector2 amplitude, Vector2 step, float dwellMs, Vector2 start)
+                           Motion motion, Vector2 amplitude, Vector2 step, float dwellMs, Vector2 start, int queue)
             {
                 Folder = folder;
                 ObjectKey = objectKey;
@@ -77,19 +78,20 @@ namespace Sdo.Game
                 Step = step;
                 DwellMs = dwellMs;
                 Start = start;
+                Queue = queue;
             }
 
             /// <summary>Sinusoidal rocking: offset = <paramref name="amplitude"/>·sin(phase), phase advancing at
             /// <paramref name="radPerSec"/>. Per-axis, so the unused axis is simply left at 0 in both vectors.</summary>
             public static Target Sine(string folder, string objectKey, Vector2 amplitude, Vector2 radPerSec,
-                                      RenderMode mode = RenderMode.KeepMaterial)
-                => new Target(folder, objectKey, -1, radPerSec, mode, Motion.Sine, amplitude, Vector2.zero, 0f, Vector2.zero);
+                                      RenderMode mode = RenderMode.KeepMaterial, int queue = 0)
+                => new Target(folder, objectKey, -1, radPerSec, mode, Motion.Sine, amplitude, Vector2.zero, 0f, Vector2.zero, queue);
 
             /// <summary>Hold, then wipe: rest at <paramref name="start"/> for <paramref name="dwellMs"/>, sweep one
             /// signed <paramref name="step"/> at <paramref name="sweepPerSec"/>, hold again, forever.</summary>
             public static Target Dwell(string folder, string objectKey, Vector2 sweepPerSec, Vector2 step,
-                                       float dwellMs, Vector2 start, RenderMode mode = RenderMode.KeepMaterial)
-                => new Target(folder, objectKey, -1, sweepPerSec, mode, Motion.DwellStep, Vector2.zero, step, dwellMs, start);
+                                       float dwellMs, Vector2 start, RenderMode mode = RenderMode.KeepMaterial, int queue = 0)
+                => new Target(folder, objectKey, -1, sweepPerSec, mode, Motion.DwellStep, Vector2.zero, step, dwellMs, start, queue);
 
             /// <summary>Does this entry actually move the UVs? (Entries that exist only to carry a
             /// <see cref="RenderMode"/> — SCN0016 JIGUANG, SCN0022 SHEGUANG, SCN0024 DONGHUA — do not.)</summary>
@@ -111,6 +113,12 @@ namespace Sdo.Game
         // D3D9 V += 0.003/50ms = +0.06/s. Test confirmed positive sign is correct (unlike CoralV).
         // Angular-edge issue tracked in decomp doc; suspect UV scale transform not yet captured.
         private static readonly Vector2 Scn0015WindowUv = new Vector2(0f, 0.06f);
+
+        /// <summary>Render queue that puts a transparent prop BEHIND the stage. The base scene mesh renders with
+        /// Sdo/SceneVertexCutout at AlphaTest (2450) and writes depth; a ZWrite-off prop placed before it is drawn
+        /// first and then simply painted over wherever the stage has geometry — i.e. the stage always wins.
+        /// Used for SCN0004's sea/shore water, which must never appear in front of the huts or the pier.</summary>
+        public const int WaterBehindSceneQueue = 2400;
 
         private static readonly Target[] Targets =
         {
@@ -154,8 +162,17 @@ namespace Sdo.Game
             //   polygon offset),深度穿透與加法過曝一次解決。SEA 本來就落在同一支 shader,套上去是 no-op,
             //   但把「官方說它是一般透明批」這件事釘住,免得日後 heuristic 漂移又把它改成加法。
             //   教訓:這兩支之前看起來「沒問題」只是因為它們不會動;一旦 UV 開始動,誤判就藏不住了。
-            Target.Sine("SCN0004", "SEA",  new Vector2(0.5f, 0f), new Vector2(0.593f, 0f), RenderMode.OfficialMaterialAlpha),
-            Target.Sine("SCN0004", "LANG", new Vector2(0f, -0.25f), new Vector2(0f, 2.372f), RenderMode.OfficialMaterialAlpha),
+            //
+            // ★ Queue = WaterBehindSceneQueue:光把混色改對還不夠 —— 官方的海浪永遠在房子後面(使用者對過原版
+            //   確認)。這兩片水面是 ZWrite Off 的透明批,原本排在 Transparent(3000),也就是「場景畫完之後」才畫,
+            //   所以只要哪個像素比場景近就會蓋上去;水面又大又掠角,棧橋/房子基座那一帶就一直被水紋刷到。
+            //   把它們壓到場景(Sdo/SceneVertexCutout,queue 2450)之前 → 水面先畫、又不寫深度,接著場景以
+            //   不透明/alpha-test 覆蓋上去,結果就是「有場景幾何的地方一律是場景贏」= 水永遠在房子後面。
+            //   水面本身在 y ≈ −49、比整個棧橋都低,沒有任何它「應該」擋住的東西,所以這個取捨沒有副作用。
+            Target.Sine("SCN0004", "SEA",  new Vector2(0.5f, 0f), new Vector2(0.593f, 0f),
+                        RenderMode.OfficialMaterialAlpha, WaterBehindSceneQueue),
+            Target.Sine("SCN0004", "LANG", new Vector2(0f, -0.25f), new Vector2(0f, 2.372f),
+                        RenderMode.OfficialMaterialAlpha, WaterBehindSceneQueue),
             // ── SCN0012/0013 足球場:廣告看板每 2 秒換一幅 ───────────────────────────────────────
             // StageScene_UpdatePulse_004b0090(case 0xc 與 0xd 共用)是一台「停→快掃」的狀態機:
             //   v>=1 → v=0;若 v!=0 且 (v<=0.5 或 prev>=0.5) → 每幀 v += _DAT_00589030 (0.003) 並寫出;
