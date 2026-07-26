@@ -31,7 +31,7 @@ flowchart TB
 |------|------|
 | 游戏画面 | 全屏 / **窗口**（實質 **800×600**） |
 | 全屏泛光效果 | 开启 / 关闭 |
-| NOTES面板位置 | 屏幕左边 / 屏幕中央 |
+| NOTES面板位置 | 屏幕左边 / 屏幕中央（**ShowTime 模式一律靠左**：氣條/徽章/SPACE/ENERGYSCORE 是官方絕對座標，board 置中會被壓到 → `NotePanelLayout.EffectivePanelLeft`） |
 | 游戏特效 | 人物特效 / 场景特效 |
 | 游戏视角 | 固定 / 默认 |
 | 面板透明度 | MIN～MAX 滑桿 |
@@ -221,6 +221,9 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 ├── config.ini                 # ★ 設定總表（RoomConfig）
 │     [Profile] activeId       #   目前登入的角色（＝下面的 8 位數資料夾名）
 │     [Room]                   #   開房間右側面板預設：速度檔位表/note/組隊/掉落/模式/場景/判定精度/offset
+│                              #   ＋ COMBO/判定字的大小(comboTextScale/judgeTextScale)、不透明度
+│                              #     (comboTextAlpha/judgeTextAlpha，預設 0.6，不擋住下落中的音符)、
+│                              #     打中彈跳峰值倍率(comboTextPop/judgeTextPop，官方 2.0，1.0=不彈跳)
 │     [Option]                 #   OPTION 對話框：音量、視窗大小/顯示模式/vsync/uiScale/語言、遊戲頁各開關
 ├── keymaps.ini                # ★ 鍵位（KeyMap）
 │     [Lane4]  primary / aux   #   4 鍵打擊鍵位（OPTION 鍵盤頁改完會寫回這裡）

@@ -371,8 +371,9 @@ namespace Sdo.Game
             float age = Time.time - _judgeWordAt;
             if (_judgeWord.sprite != null && age < 0.5f)
             {
-                _judgeWord.color = new Color(1, 1, 1, Mathf.Clamp01(1f - age / 0.5f));
-                float pop = (1f + Mathf.Clamp01(1f - age * 6f) * 1.0f) * 0.8f; // 2.0->1.0 ×0.8 (decompiled)
+                // 0.5 秒淡出 × judgeTextAlpha（config.ini 的整體不透明度＝這條淡出曲線的起始亮度）
+                _judgeWord.color = new Color(1, 1, 1, Mathf.Clamp01(1f - age / 0.5f) * judgeTextAlpha);
+                float pop = PopScale(age, 6f, judgeTextPop);   // 官方 2.0->1.0 ×0.8；峰值倍率由 config.ini 的 judgeTextPop 給
                 // 判定字跟 COMBO/數字是同一叢，向下模式套同一個 _judgeComboYOffset —— 只搬 COMBO 會把兩行的間距吃掉。
                 PlaceAspect(_judgeWord, PX(JudgeWordCenter.x), JudgeWordCenter.y + _judgeComboYOffset, _judgeWord.sprite.bounds.size.x, -2);
                 _judgeWord.transform.localScale *= pop * judgeTextScale;   // judgeTextScale = config.ini 的判定字大小比例（單張圖、繞自身中心縮放）

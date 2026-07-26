@@ -76,12 +76,26 @@ namespace Sdo.Settings
         public static float comboTextScale = 1f;
         public static float judgeTextScale = 1f;
 
+        // 同兩組文字的整體不透明度（1.0 = 全不透明，0 = 完全看不見）。預設 0.6 —— 這兩叢字就疊在音符板正上方，
+        // 全不透明會擋住下落中的音符；淡一點看得到連段又不吃視線。純顯示，不影響判定/分數。
+        // 判定字本來就有 0.5 秒淡出，這個值是它的「起始亮度」（整條淡出曲線等比例壓下來）。
+        public static float comboTextAlpha = 0.6f;
+        public static float judgeTextAlpha = 0.6f;
+
+        // 打中時「彈跳」放到最大那一瞬間的倍率（＝峰值大小 ÷ 靜止大小）。官方是 2.0（彈到兩倍再收回），
+        // 1.0 = 完全不彈跳（維持靜止大小）。收回的速度是官方寫死的（COMBO 快、判定字慢），這裡只調幅度。
+        // 與 comboTextScale/judgeTextScale 相乘：整體大小 × 這一刻的彈跳倍率。純顯示，不影響判定/分數。
+        public static float comboTextPop = 2f;
+        public static float judgeTextPop = 2f;
+
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
         public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了就不用去撿舊 settings.json）
         public static bool hasFamilyKeys = false;   // 檔案是否帶家族/等級鍵（沒有＝舊檔 → Load 補寫模板，讓使用者有鍵可手改）
         public static bool hasTextScaleKeys = false;   // 同上：檔案是否帶 combo/判定文字大小鍵
+        public static bool hasTextAlphaKeys = false;   // 同上：檔案是否帶 combo/判定文字透明度鍵（比大小鍵晚加，得各自記）
+        public static bool hasTextPopKeys = false;     // 同上：檔案是否帶 combo/判定文字彈跳倍率鍵（又比透明度鍵晚加）
         public static bool hasOptUiScale = false;   // 檔案是否帶 opt_uiScale（舊檔沒有 → 從舊 settings.json 撿）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
         // 舊檔（config.ini 還帶鍵位的年代）的 4 鍵鍵位：只讀不寫，開機時給 KeyMap 種 keymaps.ini 用，見 KeyMap.Load。
@@ -205,6 +219,8 @@ namespace Sdo.Settings
                 if (!hasFamilyKeys) dirty = true;
                 // 同理：舊檔沒有 combo/判定文字大小鍵 → 補寫一次，不然使用者在檔案裡找不到可改的鍵。
                 if (!hasTextScaleKeys) dirty = true;
+                if (!hasTextAlphaKeys) dirty = true;   // 透明度鍵比大小鍵晚加，只有大小鍵的檔一樣要補寫
+                if (!hasTextPopKeys) dirty = true;     // 彈跳倍率鍵又更晚加，同理
 
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
@@ -363,6 +379,10 @@ namespace Sdo.Settings
                     case "DifficultyCalc": difficultyCalc = val; break;
                     case "comboTextScale": comboTextScale = ParseFloat(val, comboTextScale); hasTextScaleKeys = true; break;
                     case "judgeTextScale": judgeTextScale = ParseFloat(val, judgeTextScale); hasTextScaleKeys = true; break;
+                    case "comboTextAlpha": comboTextAlpha = ParseFloat(val, comboTextAlpha); hasTextAlphaKeys = true; break;
+                    case "judgeTextAlpha": judgeTextAlpha = ParseFloat(val, judgeTextAlpha); hasTextAlphaKeys = true; break;
+                    case "comboTextPop": comboTextPop = ParseFloat(val, comboTextPop); hasTextPopKeys = true; break;
+                    case "judgeTextPop": judgeTextPop = ParseFloat(val, judgeTextPop); hasTextPopKeys = true; break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -414,6 +434,10 @@ namespace Sdo.Settings
             if (difficultyCalc != "minacalc") difficultyCalc = "osu";
             comboTextScale = Mathf.Clamp(comboTextScale, 0.2f, 3f);          // 再小看不見、再大蓋滿整塊面板
             judgeTextScale = Mathf.Clamp(judgeTextScale, 0.2f, 3f);
+            comboTextAlpha = Mathf.Clamp01(comboTextAlpha);                  // 0=完全隱藏（合法用法：不想看到連段字）
+            judgeTextAlpha = Mathf.Clamp01(judgeTextAlpha);
+            comboTextPop = Mathf.Clamp(comboTextPop, 1f, 4f);                // 1=不彈跳；>4 峰值會衝出面板
+            judgeTextPop = Mathf.Clamp(judgeTextPop, 1f, 4f);
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
             activeId = SanitizeActiveId(activeId);
@@ -502,6 +526,14 @@ namespace Sdo.Settings
             sb.Append("#   judgeTextScale = PERFECT / COOL / BAD / MISS 判定字樣\n");
             sb.Append("comboTextScale=").Append(comboTextScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("judgeTextScale=").Append(judgeTextScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 同兩組文字的不透明度（1.0=全不透明 0=完全看不見，範圍 0.0~1.0）。預設 0.6：字就疊在音符板上，\n");
+            sb.Append("# 淡一點才不會擋住下落中的音符。判定字本來就會淡出，這裡是它的起始亮度。\n");
+            sb.Append("comboTextAlpha=").Append(comboTextAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("judgeTextAlpha=").Append(judgeTextAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 打中時「彈跳」放到最大那一瞬間的倍率＝峰值大小 ÷ 靜止大小（官方 2.0＝彈到兩倍再收回，\n");
+            sb.Append("# 1.0＝完全不彈跳，範圍 1.0~4.0）。收回速度是官方寫死的，這裡只調幅度。\n");
+            sb.Append("comboTextPop=").Append(comboTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("judgeTextPop=").Append(judgeTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");
