@@ -1281,5 +1281,165 @@ namespace Sdo.Tests
             foreach (var n in SceneAvatarCatalog.ForFolder("SCN0018"))
                 Assert.IsTrue(File.Exists(Path.Combine(avatarDir, n.Msh)), "AVATAR/" + n.Msh + " 不在");
         }
+
+        // ── UV 動作的兩種新模式:正弦擺盪 / 停頓+快掃 ─────────────────────────────────────────────
+        // 官方有三種 UV 動作,remake 原本只有等速一種,所以 SCN0004(海面/浪來回盪)、SCN0012/0013(廣告看板
+        // 停 2 秒換一幅)、SCN0029(大螢幕停 5 秒滑一格)這四個場景連條目都放不進去、完全是死的。
+
+        [Test]
+        public void SceneUvScroll_Scn0004_Sea_And_Shore_Rock_As_Sine_Not_Scroll()
+        {
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0004", "SEA", out var sea));
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.Motion.Sine, sea.Motion);
+            Assert.AreEqual(0.5f, sea.Amplitude.x, 1e-6f, "海面是 U 軸 ±0.5(mesh 的 U 才 tiling)");
+            Assert.AreEqual(0f, sea.Amplitude.y, 1e-6f);
+            Assert.AreEqual(0.593f, sea.Speed.x, 1e-6f, "0.001 rad/frame × 593 fps");
+            Assert.IsTrue(sea.Animates);
+
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0004", "LANG", out var wave));
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.Motion.Sine, wave.Motion);
+            Assert.AreEqual(-0.25f, wave.Amplitude.y, 1e-6f, "岸浪是 V 軸 −0.25(官方 −sin×0.25)");
+            Assert.AreEqual(2.372f, wave.Speed.y, 1e-6f, "0.004 rad/frame × 593 fps = 浪比海快 4 倍");
+
+            // Find() 只回報「等速」速度 —— 正弦目標的 Speed 是 rad/s,餵給等速捲動會是錯的,所以必須回 zero。
+            Assert.AreEqual(Vector2.zero, SceneMapobjUvScrollCatalog.Find("SCN0004", "SEA"));
+            Assert.AreEqual(Vector2.zero, SceneMapobjUvScrollCatalog.Find("SCN0004", "LANG"));
+            // 同場景的換幀道具不能被掃到。
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0004", "SEA_UP", out _));
+        }
+
+        [Test]
+        public void SceneUvScroll_AdBoards_And_Screen_Are_DwellStep_With_Official_Timings()
+        {
+            foreach (var folder in new[] { "SCN0012", "SCN0013" })
+            {
+                Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget(folder, "FIFA_GUANGGAO", out var board), folder);
+                Assert.AreEqual(SceneMapobjUvScrollCatalog.Motion.DwellStep, board.Motion, folder);
+                Assert.AreEqual(2000f, board.DwellMs, 1e-3f, folder + " 停 2 秒");
+                Assert.AreEqual(0.5f, board.Step.y, 1e-6f, folder + " 一次掃半格(貼圖上下各一幅廣告)");
+                Assert.AreEqual(0f, board.Step.x, 1e-6f, folder + " U 恆 0");
+                Assert.AreEqual(1.775f, board.Speed.y, 1e-6f, folder + " 0.003/frame × 593 fps");
+                Assert.AreEqual(Vector2.zero, board.Start, folder + " 從 V=0 那幅開始");
+                Assert.IsTrue(board.Animates, folder);
+                Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial, board.Mode, folder + " 材質旗標 0x0");
+            }
+            // 兩列同 key 不同 folder,不能互相干擾。
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0014", "FIFA_GUANGGAO", out _));
+
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0029", "PINGMU", out var screen));
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.Motion.DwellStep, screen.Motion);
+            Assert.AreEqual(5000f, screen.DwellMs, 1e-3f, "每格停 5 秒");
+            Assert.AreEqual(-0.25f, screen.Step.y, 1e-6f, "四格 → 一階 0.25,而且官方是遞減(-=)");
+            Assert.Less(screen.Speed.y, 0f, "方向必須是負的,寫成正的會反著跑");
+            Assert.AreEqual(-0.593f, screen.Speed.y, 1e-6f, "0.001/frame × 593 fps");
+            // 同場景的吧台霓虹走換幀,不是 UV。
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0029", "JIUBA", out _));
+        }
+
+        [Test]
+        public void SceneUvScroll_RenderModeOnly_Entries_Do_Not_Animate()
+        {
+            // 只為了帶 render mode 而存在的條目不能生出 MapobjUvScroll(ScreenGameplay 用 Animates 當守門)。
+            foreach (var (folder, key) in new[]
+                     { ("SCN0016", "JIGUANG1"), ("SCN0022", "SHEGUANG"), ("SCN0024", "DONGHUA"), ("SCN0016", "CHENGSHI") })
+            {
+                Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget(folder, key, out var t), folder + "/" + key);
+                Assert.IsFalse(t.Animates, folder + "/" + key + " 不該被當成會動的目標");
+            }
+            // 會動的那些仍然回 true。
+            foreach (var (folder, key) in new[]
+                     { ("SCN0025", "CHUNTIANDONGHUA"), ("SCN0028", "PENGSHUI_"), ("SCN0018", "ZHUANDENG") })
+            {
+                Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget(folder, key, out var t), folder + "/" + key);
+                Assert.IsTrue(t.Animates, folder + "/" + key);
+            }
+        }
+
+        private static MapobjUvScroll NewScroller(SceneMapobjUvScrollCatalog.Target t)
+        {
+            var go = new GameObject("uvscroll-test");
+            var s = go.AddComponent<MapobjUvScroll>();
+            s.Init(new Material[0], t);   // 空材質陣列:狀態機照跑,不需要 shader
+            return s;
+        }
+
+        [Test]
+        public void MapobjUvScroll_DwellStep_Holds_First_Then_Wipes_One_Step_And_Wraps()
+        {
+            SceneMapobjUvScrollCatalog.TryFindTarget("SCN0012", "FIFA_GUANGGAO", out var board);
+            var s = NewScroller(board);
+            try
+            {
+                Assert.AreEqual(0f, s.Offset.y, 1e-5f, "官方是先停再掃,不是一開場就掃");
+                s.Step(2.0f);
+                Assert.AreEqual(0f, s.Offset.y, 1e-5f, "剛好停滿 2 秒,還沒開始掃");
+                // 一秒足夠掃完 0.5 格(0.5 / 1.775 ≈ 0.282 s),掃完就停住,剩下的時間滾進停頓
+                s.Step(1.0f);
+                Assert.AreEqual(0.5f, s.Offset.y, 1e-4f, "掃完剛好落在 0.5 —— 不會衝過頭");
+                s.Step(1.0f);
+                Assert.AreEqual(0.5f, s.Offset.y, 1e-4f, "還在停頓");
+                s.Step(1.0f);   // 停頓滿 2 秒後再掃 0.5 → 1.0 → 折回 0
+                Assert.AreEqual(0f, s.Offset.y, 1e-4f, "第二段掃完回到 0(1.0 折回)");
+                Assert.AreEqual(0f, s.Offset.x, 1e-6f, "U 全程不動");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(s.gameObject); }
+        }
+
+        [Test]
+        public void MapobjUvScroll_DwellStep_Negative_Direction_Steps_Downward()
+        {
+            SceneMapobjUvScrollCatalog.TryFindTarget("SCN0029", "PINGMU", out var screen);
+            var s = NewScroller(screen);
+            try
+            {
+                s.Step(5.0f);
+                Assert.AreEqual(0f, s.Offset.y, 1e-5f, "先停 5 秒");
+                s.Step(1.0f);   // 0.25 / 0.593 ≈ 0.42 s 掃完
+                Assert.AreEqual(0.75f, s.Offset.y, 1e-4f, "遞減 0.25 → 折回後是 0.75,不是 0.25");
+                s.Step(6.0f);
+                Assert.AreEqual(0.5f, s.Offset.y, 1e-4f);
+                s.Step(6.0f);
+                Assert.AreEqual(0.25f, s.Offset.y, 1e-4f);
+                s.Step(6.0f);
+                Assert.AreEqual(0f, s.Offset.y, 1e-4f, "四格一輪回到起點");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(s.gameObject); }
+        }
+
+        [Test]
+        public void MapobjUvScroll_Sine_Oscillates_Around_Zero_And_Is_Never_Folded()
+        {
+            SceneMapobjUvScrollCatalog.TryFindTarget("SCN0004", "SEA", out var sea);
+            var s = NewScroller(sea);
+            try
+            {
+                Assert.AreEqual(0f, s.Offset.x, 1e-5f);
+                // 四分之一週期 → 正峰值。ω = 0.593 rad/s,所以 π/2 在 t ≈ 2.649 s。
+                s.Step(Mathf.PI * 0.5f / 0.593f);
+                Assert.AreEqual(0.5f, s.Offset.x, 1e-3f, "峰值 = 振幅");
+                // 再半個週期 → 負峰值。負的偏移「不能」被折進 [0,1),否則零交越時貼圖會瞬移。
+                s.Step(Mathf.PI / 0.593f);
+                Assert.AreEqual(-0.5f, s.Offset.x, 1e-3f, "負峰值必須保持負值");
+                Assert.AreEqual(0f, s.Offset.y, 1e-6f, "V 全程不動");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(s.gameObject); }
+        }
+
+        [Test]
+        public void MapobjUvScroll_Linear_Path_Still_Accumulates_And_Wraps()
+        {
+            // 既有的等速目標不能被新模式弄壞(SCN0028 噴水池 U = +0.5 UV/s)。
+            SceneMapobjUvScrollCatalog.TryFindTarget("SCN0028", "PENGSHUI_", out var fountain);
+            var s = NewScroller(fountain);
+            try
+            {
+                s.Step(1.0f);
+                Assert.AreEqual(0.5f, s.Offset.x, 1e-4f);
+                s.Step(1.5f);   // 累積 1.25 → 折回 0.25
+                Assert.AreEqual(0.25f, s.Offset.x, 1e-4f, "超過 1 要折回");
+                Assert.AreEqual(0f, s.Offset.y, 1e-6f);
+            }
+            finally { UnityEngine.Object.DestroyImmediate(s.gameObject); }
+        }
     }
 }

@@ -34,22 +34,69 @@ namespace Sdo.Game
             OfficialMaterialAlpha,
         }
 
+        /// <summary>How a target's UV offset moves. The original uses all three; a single "UV/s" cannot express
+        /// the last two, which is why SCN0004 / SCN0012 / SCN0013 / SCN0029 had no entry at all before.</summary>
+        public enum Motion
+        {
+            // offset += Speed·dt, wrapping at 1 (the common streaming case)
+            Linear,
+            // offset = Amplitude·sin(phase), phase += Speed(rad/s)·dt, phase wrapping at 2π — rocks back and forth
+            Sine,
+            // hold Dwell ms at rest, then sweep one signed Step at Speed UV/s, repeat — a cut with a wipe
+            DwellStep,
+        }
+
         public readonly struct Target
         {
             public readonly string Folder;     // null/empty = any scene
             public readonly string ObjectKey;
             public readonly int MaterialId;    // -1 = all materials on the object
-            public readonly Vector2 Speed;
+            public readonly Vector2 Speed;     // Linear: UV/s · Sine: rad/s · DwellStep: UV/s while sweeping
             public readonly RenderMode Mode;
+            public readonly Motion Motion;
+            public readonly Vector2 Amplitude; // Sine only: peak signed UV offset per axis
+            public readonly Vector2 Step;      // DwellStep only: signed UV covered by one leg
+            public readonly float DwellMs;     // DwellStep only
+            public readonly Vector2 Start;     // DwellStep only: UV offset the prop rests at before the first sweep
 
             public Target(string folder, string objectKey, int materialId, Vector2 speed, RenderMode mode = RenderMode.KeepMaterial)
+                : this(folder, objectKey, materialId, speed, mode, Motion.Linear, Vector2.zero, Vector2.zero, 0f, Vector2.zero)
+            {
+            }
+
+            private Target(string folder, string objectKey, int materialId, Vector2 speed, RenderMode mode,
+                           Motion motion, Vector2 amplitude, Vector2 step, float dwellMs, Vector2 start)
             {
                 Folder = folder;
                 ObjectKey = objectKey;
                 MaterialId = materialId;
                 Speed = speed;
                 Mode = mode;
+                Motion = motion;
+                Amplitude = amplitude;
+                Step = step;
+                DwellMs = dwellMs;
+                Start = start;
             }
+
+            /// <summary>Sinusoidal rocking: offset = <paramref name="amplitude"/>·sin(phase), phase advancing at
+            /// <paramref name="radPerSec"/>. Per-axis, so the unused axis is simply left at 0 in both vectors.</summary>
+            public static Target Sine(string folder, string objectKey, Vector2 amplitude, Vector2 radPerSec,
+                                      RenderMode mode = RenderMode.KeepMaterial)
+                => new Target(folder, objectKey, -1, radPerSec, mode, Motion.Sine, amplitude, Vector2.zero, 0f, Vector2.zero);
+
+            /// <summary>Hold, then wipe: rest at <paramref name="start"/> for <paramref name="dwellMs"/>, sweep one
+            /// signed <paramref name="step"/> at <paramref name="sweepPerSec"/>, hold again, forever.</summary>
+            public static Target Dwell(string folder, string objectKey, Vector2 sweepPerSec, Vector2 step,
+                                       float dwellMs, Vector2 start, RenderMode mode = RenderMode.KeepMaterial)
+                => new Target(folder, objectKey, -1, sweepPerSec, mode, Motion.DwellStep, Vector2.zero, step, dwellMs, start);
+
+            /// <summary>Does this entry actually move the UVs? (Entries that exist only to carry a
+            /// <see cref="RenderMode"/> — SCN0016 JIGUANG, SCN0022 SHEGUANG, SCN0024 DONGHUA — do not.)</summary>
+            public bool Animates =>
+                Motion == Motion.Sine ? Amplitude != Vector2.zero
+              : Motion == Motion.DwellStep ? Step != Vector2.zero
+              : Speed != Vector2.zero;
         }
 
         // SCN0014 FUN_004b0330 writes SEVEN texture-coord targets every 50 ms, in three groups that line up exactly
@@ -87,6 +134,41 @@ namespace Sdo.Game
             // (it matches the "soft alpha, low opaque, mid lum" heuristic for radial glow sprites), so without
             // the override the material becomes Sdo/UnlitAdditiveOverlay, producing a hard bright mesh-edge band.
             new Target("SCN0015", "15_UV", -1, Scn0015WindowUv, RenderMode.ForceAlphaBlend),
+            // ── SCN0004 海灘:海面與岸浪的正弦擺盪 ────────────────────────────────────────────────
+            // StageScene_UpdateWaveTilt_004afd30 每一幀(沒有計時器)推兩個獨立相位,各自 2π 歸零,然後:
+            //   objects[3] = beach/LANG (岸浪): U 寫 0、V = −sin(b)×0.25,b += _DAT_00589020 = 0.004/frame
+            //   objects[4] = SEA     (海面): V 寫 0、U = +sin(a)×0.5 ,a += _DAT_00589024 = 0.001/frame
+            // 這是「來回盪」不是「單向流」—— 用等速捲動根本表達不出來,所以這兩支之前完全沒有條目、海面是死的。
+            // 每幀累加換算成秒沿用本檔既有的官方幀率慣例(SCN0011 CAIDAI 的 0.003×593):
+            //   浪 0.004×593 = 2.372 rad/s(週期約 2.65 s)、海 0.001×593 = 0.593 rad/s(週期約 10.6 s)。
+            // 軸的選擇有 mesh 依據:SEA 的 U 跑到 −1.772..2.312(在 U 上 tiling)、LANG 的 V 是 −0.215..0.617。
+            // 兩支的官方材質旗標都是 0x1(透明批),但這裡刻意不套 OfficialMaterialAlpha:海與浪目前的
+            // 渲染是既有驗過的樣子,這筆只補「會動」,不順手改混色(要改請另外單獨驗一次)。
+            Target.Sine("SCN0004", "SEA",  new Vector2(0.5f, 0f), new Vector2(0.593f, 0f)),
+            Target.Sine("SCN0004", "LANG", new Vector2(0f, -0.25f), new Vector2(0f, 2.372f)),
+            // ── SCN0012/0013 足球場:廣告看板每 2 秒換一幅 ───────────────────────────────────────
+            // StageScene_UpdatePulse_004b0090(case 0xc 與 0xd 共用)是一台「停→快掃」的狀態機:
+            //   v>=1 → v=0;若 v!=0 且 (v<=0.5 或 prev>=0.5) → 每幀 v += _DAT_00589030 (0.003) 並寫出;
+            //   否則走 2000 ms 計時器,時間到才寫出並 bump 一次。
+            // 展開就是:停在 V=0 兩秒 → 用 0.003/frame 快掃到 0.5 → 停兩秒 → 快掃到 1.0 → 回 0。
+            // 官方同時寫 slot 0 與 slot 1 —— FIFA_GUANGGAO.MSH 正好是一個 submesh 兩顆材質
+            // (biaozhi.dds / biaozhi1.dds),而 mesh 的 V 只吃 0..0.493,所以 +0.5 就是切到貼圖下半張的
+            // 另一幅廣告。remake 這邊本來就把整支道具的材質一起餵給 MapobjUvScroll,對得上。
+            // 0.003×593 = 1.775 UV/s ⇒ 半格快掃約 0.28 秒。材質旗標 0x0 → 不要動 RenderMode。
+            // ObjectKey 是 MSH 檔名:兩個場景的 mesh 都叫 FIFA_GUANGGAO.MSH(夜間版只有貼圖換名)。
+            Target.Dwell("SCN0012", "FIFA_GUANGGAO", new Vector2(0f, 1.775f), new Vector2(0f, 0.5f), 2000f, Vector2.zero),
+            Target.Dwell("SCN0013", "FIFA_GUANGGAO", new Vector2(0f, 1.775f), new Vector2(0f, 0.5f), 2000f, Vector2.zero),
+            // ── SCN0029 飛機場:大螢幕四格輪播 ──────────────────────────────────────────────────
+            // StageScene_UpdateFlashCycle_004b1890 的前半段:DAT_00589050 從 1.0 起每幀 −= _DAT_0058904c
+            // (0.001);每當 (邊界 − v) 落在 (0, 0.001] —— 邊界是 1.0/0.75/0.5/0.25 —— 就把 DAT_006785fc
+            // 設 1 並記時,持續到 5000 ms 過去才解除並補減一次;v<=0 時回 1.0。寫出 U=0、V=v。
+            // 也就是四個停格、每格停 5 秒、之間用 0.001/frame(= 0.593 UV/s)滑 0.25。
+            // PINGMU.MSH 是單一 quad,U 幾乎滿幅、V 只吃 0..0.25,而 PINGMU7.DDS 是 256×1024 —— 直排四張
+            // 256×256,所以 V 每階 0.25 剛好切一張。**方向是遞減**(官方 `-=`,和 SCN0011 的 `+=` 相反)。
+            // 官方實際停在 0.999/0.749/0.499/0.249(判定式的 0.001 誤差),這裡取整到 1.0/0.75/0.5/0.25 ——
+            // 差 0.001 UV 在 1024 高的貼圖上是 1 texel,肉眼無差。Start 用 0(≡1.0,貼圖 Repeat)。
+            // PINGMU7.DDS 是 DXT1 無 alpha → RenderMode 保持 KeepMaterial。
+            Target.Dwell("SCN0029", "PINGMU", new Vector2(0f, -0.593f), new Vector2(0f, -0.25f), 5000f, Vector2.zero),
             // SCN0018 豪華郵輪 旋轉燈 (18_Boat/zhuandeng):case 0x12 的 9 個 mapobj 裡只有 index 8 (zhuandeng)
             // 走 AvatarScene_Create(..., param3=1) 註冊成貼圖座標捲動目標,其餘 8 個都傳 0(同 SCN0011 CAIDAI 的慣例)。
             // StageScene_UpdateManyBillboards_004b0740 每 100 ms 設 +0x48 |= 0x10000,U = 累加值
@@ -163,10 +245,19 @@ namespace Sdo.Game
             new Target(null, "SHANHUZHI-LV", -1, CoralBranchV),
         };
 
-        /// <summary>UV-scroll speed (UV/s) for a scene object/material slot, or Vector2.zero if it does not scroll.</summary>
+        /// <summary>LINEAR UV-scroll speed (UV/s) for a scene object/material slot, or Vector2.zero if it does not
+        /// linearly scroll. Sine / DwellStep targets report zero here — their Speed means something else (rad/s,
+        /// sweep rate), so handing it to a linear scroller would be wrong. Use <see cref="TryFindTarget"/> for those.</summary>
         public static Vector2 Find(string folder, string objectKey, int materialId = -1)
         {
-            return TryFind(folder, objectKey, materialId, out var target) ? target.Speed : Vector2.zero;
+            return TryFind(folder, objectKey, materialId, out var target) && target.Motion == Motion.Linear
+                ? target.Speed : Vector2.zero;
+        }
+
+        /// <summary>The full entry for a scene object/material slot (any motion).</summary>
+        public static bool TryFindTarget(string folder, string objectKey, out Target target, int materialId = -1)
+        {
+            return TryFind(folder, objectKey, materialId, out target);
         }
 
         public static RenderMode FindRenderMode(string folder, string objectKey, int materialId = -1)

@@ -3087,16 +3087,19 @@ namespace Sdo.Game
 
             // UV-scroll (the original streams texture coords on some props): e.g. SCN0014 corals scroll V so their glow
             // marquees. Drive the shared submesh materials' main-tex offset. Needs Repeat wrap (DdsLoader sets it).
-            Vector2 uvScroll = SceneMapobjUvScrollCatalog.Find(SceneFolder(), baseName);
-            if (uvScroll != Vector2.zero)
+            // Motion is per-entry: most props stream linearly, but SCN0004's sea/wave ROCK (sine) and the
+            // SCN0012/0013 ad boards + SCN0029 screen HOLD-then-WIPE (dwell-step). Entries that exist only to carry
+            // a RenderMode (SCN0016 JIGUANG, SCN0022 SHEGUANG, SCN0024 DONGHUA) report Animates == false and are skipped.
+            if (SceneMapobjUvScrollCatalog.TryFindTarget(SceneFolder(), baseName, out var uvTarget) && uvTarget.Animates)
             {
                 var scrollMats = new List<Material>();
                 foreach (var ms in subMats) if (ms != null) foreach (var m in ms) if (m != null) scrollMats.Add(m);
                 if (scrollMats.Count > 0)
                 {
                     var holder = new GameObject(baseName + "_uvscroll");
-                    holder.AddComponent<MapobjUvScroll>().Init(scrollMats.ToArray(), uvScroll);
-                    Debug.Log($"[mapobj] {baseName}: uv-scroll {uvScroll}");
+                    holder.AddComponent<MapobjUvScroll>().Init(scrollMats.ToArray(), uvTarget);
+                    Debug.Log($"[mapobj] {baseName}: uv-{uvTarget.Motion} speed={uvTarget.Speed} " +
+                              $"amp={uvTarget.Amplitude} step={uvTarget.Step} dwell={uvTarget.DwellMs}ms");
                 }
             }
 
