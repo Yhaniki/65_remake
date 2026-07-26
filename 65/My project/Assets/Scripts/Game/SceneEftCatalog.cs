@@ -89,6 +89,7 @@ namespace Sdo.Game
                 {
                     new SceneEftPlacement("snow", 0, 0, 0, 0, 0, 0, 30f),
                 },
+                ["SCN0028"] = Niaochao(),   // 北京之夜 (鸟巢): 遠景四道光柱 + 六團城市光暈
                 ["SCN0029"] = new[]   // 激舞酒吧: carnival glow
                 {
                     new SceneEftPlacement("kuanghuan1", 0, 50, 0, 0, 0, 0, 10f),
@@ -150,7 +151,39 @@ namespace Sdo.Game
             new SceneEftPlacement("light_left",   160.761f, 127.588f, 329.097f, 0, 0, 0, 15f, 4000),
         };
 
+        // SCN0028 北京之夜 (鸟巢)。特效 id 由 exe 的名稱表解出:0x5d = stage28_dengzhu.eft(名字就寫著
+        // stage28)、0x5e = stage28_guangyun.eft。兩者都在 Scene_LoadBackground case 0x1c 起手播,
+        // 座標/旋轉/縮放由 StageScene_UpdateBigBillboardSet_004b0fc0 每幀寫回(旋轉恆為 (0,0,90))。
+        //
+        //   光柱 dengzhu(scale 90):載入時先播 1 支並把計數器設成 1,之後更新函式在
+        //   (t−載入時刻) > 2000 / 4000 / 6000 ms 時各再播一支,計數器 1→2→3→4;第 N 支的座標只在
+        //   「計數器 > N−1」時才寫入 —— 所以是四支光柱每兩秒亮起一支,由遠而近排在長安街方向。
+        //   光暈 guangyun(scale 1500):載入時一口氣播 6 支,座標每幀無條件寫入,是城市天際線上的
+        //   六團大光暈(z 2100~3400,場景本體 z 一路到 6389,所以這幾團落在遠景建築上)。
+        // 少了這一整組,北京之夜的遠景就是一片死黑,只剩貼圖 —— 使用者說的「沒有光線」的另一半。
+        private static SceneEftPlacement[] Niaochao() => new[]
+        {
+            // 4 × 光柱,每 2 秒亮一支 (Effect_Play(0x5d) ×4)
+            new SceneEftPlacement("stage28_dengzhu",  293.920f, 219.362f, 3488.677f, 0, 0, 90, 90f),
+            new SceneEftPlacement("stage28_dengzhu",  714.099f, 219.362f, 3188.506f, 0, 0, 90, 90f, 2000),
+            new SceneEftPlacement("stage28_dengzhu", 1135.853f, 219.362f, 2957.402f, 0, 0, 90, 90f, 4000),
+            new SceneEftPlacement("stage28_dengzhu", 1509.139f, 219.362f, 3284.658f, 0, 0, 90, 90f, 6000),
+            // 6 × 城市光暈 (Effect_Play(0x5e) ×6,載入時全部一起播)
+            new SceneEftPlacement("stage28_guangyun",    7.095f, 329.066f, 3330.379f, 0, 0, 90, 1500f),
+            new SceneEftPlacement("stage28_guangyun",  110.831f, 425.370f, 2948.400f, 0, 0, 90, 1500f),
+            new SceneEftPlacement("stage28_guangyun",  373.760f, 425.370f, 2576.073f, 0, 0, 90, 1500f),
+            new SceneEftPlacement("stage28_guangyun",  827.307f, 516.805f, 2233.711f, 0, 0, 90, 1500f),
+            new SceneEftPlacement("stage28_guangyun", 1293.569f, 516.805f, 2161.466f, 0, 0, 90, 1500f),
+            new SceneEftPlacement("stage28_guangyun", 1829.695f, 516.805f, 2380.157f, 0, 0, 90, 1500f),
+        };
+
         // 個人房 / 婚禮大廳: star light + two pillar glows (StageScene10 ctor)
+        // 注意:只有第一筆 star_light1 有反編譯依據 (StageScene_SpawnPlacement4f_004ae0a0: Effect_Play(0x4f)
+        // 於 (126.69, 36.56, −60.95) scale 25)。後兩筆的座標 (293.92,219.36,3488.68) 與 (714.1,219.36,3188.51)
+        // 在整份反編譯裡只出現在 SCN0028 的 StageScene_UpdateBigBillboardSet_004b0fc0 —— 它們是北京之夜的
+        // 前兩支 stage28_dengzhu 光柱,被誤掛到個人房。目前無害:SceneFolder() 取的是場景路徑最後一段
+        // (SCNROOM / SCNMYHOUSE / SCNMERRYROOM),永遠不會是 "SCN0037"/"SCN0038",所以這兩個 key 從未命中。
+        // 若日後真要接個人房特效,請先重新從 StageScene10 相關的 ctor 取座標,別沿用這兩筆。
         private static SceneEftPlacement[] PersonalRoom() => new[]
         {
             new SceneEftPlacement("star_light1", 126.69f, 36.56f, -60.95f, 0, 0, 0, 25f),

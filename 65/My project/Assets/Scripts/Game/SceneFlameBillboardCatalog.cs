@@ -71,6 +71,26 @@ namespace Sdo.Game
                     new FlameBillboard(-498.497f, 212.36f, 192.66f, 200f),
                     new FlameBillboard(75.41f, 213.7f, 314.22f, 200f),
                 }),
+
+            // SCN0028 北京之夜 (鸟巢):舞台四周四顆燈光暈(y 126~164,圍在舞台外圈,和遠處那四組
+            // niaochao/dengN 光暈片是兩回事)。與 SCN0024 是同一條路子 —— Scene_LoadBackground
+            // case 0x1c 把當前封裝切到 Datas/Scene/scn0028、載入 guang_.tga(param_1[0x10]),建四個
+            // CBillboardSet(param_1[0x65..0x68]),寫入座標 +0x28/+0x2c/+0x30,尺寸 100×100(0x42c80000),
+            // 四顆共用同一張貼圖,並設 +0x80=2 / +0x84=4 / +0x88=1 —— 和 SCN0022 鬼火、SCN0024 招牌光暈
+            // 逐欄位相同,所以照樣是加法混色的相機朝向 quad。場景 0x1c 的每幀更新完全沒碰這四顆,
+            // 只換遠處那四組光暈片的貼圖(見 SceneMapobjTexAnimCatalog 的 DENG1_~DENG4_),所以這是靜態光暈。
+            // 少了這筆,場景裡的路燈桿(在 SCENE.MSH 裡,貼 LUDENG_.DDS)就只有燈桿、燈頭不發光。
+            ["SCN0028"] = new SceneFlameSet(
+                "SCENE/SCN0028",
+                new[] { "GUANG_.TGA" },
+                1000f,   // 單張:間隔不影響畫面(MapobjTexAnimator 的 idx % 1 永遠是 0)
+                new[]
+                {
+                    new FlameBillboard(468.834f, 137.709f, 467.449f, 100f),
+                    new FlameBillboard(-185.057f, 131.230f, 463.951f, 100f),
+                    new FlameBillboard(-269.018f, 163.505f, -180.453f, 100f),
+                    new FlameBillboard(243.408f, 125.984f, -48.953f, 100f),
+                }),
         };
 
         /// <summary>The flame billboard set for a scene folder (e.g. "SCN0022"), or null if the scene has none.</summary>

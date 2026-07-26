@@ -884,5 +884,170 @@ namespace Sdo.Tests
             float maxScale = Mathf.Max(Mathf.Abs(s.x), Mathf.Max(Mathf.Abs(s.y), Mathf.Abs(s.z)));
             Assert.Greater(maxScale, 2f, "葉骨的 bind scale 是 ~3.9 的長軸拉伸");
         }
+
+        // ── SCN0028 北京之夜 (鸟巢):噴水池水流 + 路燈光暈脈動 + 舞台四顆燈光暈 + 遠景光柱/城市光暈 ──
+        // 官方 Scene_LoadBackground case 0x1c 載入七個 niaochao 道具(chuan/deng1~4/feichuan/pengshui)、
+        // 四組路燈光暈幀、一張 guang_.tga 光暈與四顆 billboard,並播 1+6 支 EFT;每幀更新
+        // StageScene_UpdateBigBillboardSet_004b0fc0 推四個 200 ms 換幀計時器、每 2 秒補一支光柱,
+        // 最後每 100 ms 捲噴水池的 U。remake 原本這四項全缺 —— 噴水池不動、路燈沒光、遠景死黑。
+
+        [Test]
+        public void SceneTexAnim_Scn0028_Four_Streetlamp_Halos_Pulse_At_200ms()
+        {
+            // 四組的第 0 張都叫 001_.dds(每組資料夾各有一份),deng1/deng2 三張、deng3/deng4 兩張。
+            var expect = new (string Mesh, int Count, string Last)[]
+            {
+                ("DENG1_", 3, "NIAOCHAO_DENG1003_.dds"),
+                ("DENG2_", 3, "NIAOCHAO_DENG2003_.dds"),
+                ("DENG3_", 2, "NIAOCHAO_DENG3002_.dds"),
+                ("DENG4_", 2, "NIAOCHAO_DENG4002_.dds"),
+            };
+            foreach (var (mesh, count, last) in expect)
+            {
+                var anim = SceneMapobjTexAnimCatalog.Find("SCN0028", mesh);
+                Assert.IsNotNull(anim, mesh + " 少了換幀 → 路燈光暈卡在佔位的 001_.dds 不脈動");
+                Assert.AreEqual(count, anim.Frames.Length, mesh);
+                Assert.AreEqual("001_.dds", anim.Frames[0], mesh + " 第 0 張是 MSH 材質同名的佔位圖");
+                Assert.AreEqual(last, anim.Frames[count - 1], mesh);
+                Assert.AreEqual(200f, anim.IntervalMs, 1e-3f, mesh + " 四個計時器都是 200 ms");
+                Assert.IsTrue(anim.Transparent, mesh + " 是 DXT3 去背的光暈片(各幀 RGB 相同、只有 alpha 不同)");
+                Assert.IsFalse(anim.HoldLast, mesh + " 是無限循環");
+            }
+            // 噴水池靠 UV 捲動、船/飛船靠 .mot —— 都不能被掛上換幀。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0028", "PENGSHUI_"));
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0028", "CHUAN"));
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0028", "FEICHUAN"));
+            // 名字不能外溢:SCN0021 酒吧的 DENG1 走 SaloonDengMarquee,不是這張表。
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0021", "DENG1_"));
+            Assert.IsNull(SceneMapobjTexAnimCatalog.Find("SCN0024", "DENG1_"));
+        }
+
+        [Test]
+        public void SceneUvScroll_Scn0028_Fountain_Flows_In_U_And_Defers_To_Official_Flags()
+        {
+            // 每 100 ms:U += _DAT_00589048 (0.05)、V 明確寫 0 ⇒ +0.5 UV/s 在 U(到 1.0 歸零)。
+            // 捲 U 而不是 V:mesh 的 U 跑到 1.364(超過 1 → 在 U 上重複),V 只有 0.024~0.896 一段。
+            var speed = SceneMapobjUvScrollCatalog.Find("SCN0028", "PENGSHUI_");
+            Assert.AreEqual(0.5f, speed.x, 1e-6f, "噴水池沒在流 → 少了這筆");
+            Assert.AreEqual(0f, speed.y, 1e-6f, "官方 V 明確寫 0");
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.OfficialMaterialAlpha,
+                SceneMapobjUvScrollCatalog.FindRenderMode("SCN0028", "PENGSHUI_"));
+            Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0028", "PENGSHUI_"));
+            // 同場景其他道具不捲、不改材質。
+            foreach (var other in new[] { "DENG1_", "DENG2_", "DENG3_", "DENG4_", "CHUAN", "FEICHUAN" })
+            {
+                Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0028", other).sqrMagnitude, 1e-6f, other);
+                Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.KeepMaterial,
+                    SceneMapobjUvScrollCatalog.FindRenderMode("SCN0028", other), other);
+            }
+            // 春天那座噴水池是捲 V,不能被這條 U 覆蓋(兩座是不同軸)。
+            Assert.AreEqual(0f, SceneMapobjUvScrollCatalog.Find("SCN0025", "CHUNTIANDONGHUA").x, 1e-6f);
+        }
+
+        [Test]
+        public void SceneFlames_Scn0028_Has_Four_Static_Streetlamp_Halos()
+        {
+            var set = SceneFlameBillboardCatalog.ForFolder("SCN0028");
+            Assert.IsNotNull(set, "四顆光暈是 billboard,不是 mapobj mesh → 少了整組,燈桿就只有桿子不發光");
+            Assert.AreEqual("SCENE/SCN0028", set.FramesDir, "guang_.tga 在場景自己的資料夾");
+            Assert.AreEqual(1, set.Frames.Length, "場景 0x1c 的更新沒有換這張");
+            Assert.AreEqual("GUANG_.TGA", set.Frames[0]);
+            Assert.AreEqual(4, set.Billboards.Length, "param_1[0x65..0x68] 四顆");
+            foreach (var b in set.Billboards) Assert.AreEqual(100f, b.Size, 1e-3f, "0x42c80000 = 100");
+            Assert.AreEqual(468.834f, set.Billboards[0].X, 1e-3f);
+            Assert.AreEqual(137.709f, set.Billboards[0].Y, 1e-3f);
+            Assert.AreEqual(467.449f, set.Billboards[0].Z, 1e-3f);
+            Assert.AreEqual(-185.057f, set.Billboards[1].X, 1e-3f);
+            Assert.AreEqual(-269.018f, set.Billboards[2].X, 1e-3f);
+            Assert.AreEqual(-180.453f, set.Billboards[2].Z, 1e-3f);
+            Assert.AreEqual(243.408f, set.Billboards[3].X, 1e-3f);
+            Assert.AreEqual(-48.953f, set.Billboards[3].Z, 1e-3f);
+            // 別的場景那兩組不能被動到(同一張表)。
+            Assert.AreEqual(3, SceneFlameBillboardCatalog.ForFolder("SCN0024").Billboards.Length);
+            Assert.AreEqual(3, SceneFlameBillboardCatalog.ForFolder("SCN0022").Billboards.Length);
+        }
+
+        [Test]
+        public void SceneEft_Scn0028_Pillars_Stagger_Every_Two_Seconds_And_Six_City_Halos_Start_Together()
+        {
+            var fx = SceneEftCatalog.ForFolder("SCN0028");
+            Assert.AreEqual(10, fx.Count, "4 支光柱 + 6 團光暈");
+
+            var pillars = new System.Collections.Generic.List<SceneEftPlacement>();
+            var halos = new System.Collections.Generic.List<SceneEftPlacement>();
+            foreach (var e in fx)
+            {
+                if (e.Eft == "stage28_dengzhu") pillars.Add(e);
+                else if (e.Eft == "stage28_guangyun") halos.Add(e);
+                else Assert.Fail("SCN0028 只該有 stage28_dengzhu / stage28_guangyun,出現了 " + e.Eft);
+            }
+            Assert.AreEqual(4, pillars.Count);
+            Assert.AreEqual(6, halos.Count);
+
+            // 光柱:載入時 1 支,之後 >2000/4000/6000 ms 各補一支;scale 90 (0x42b40000)、Euler (0,0,90)。
+            var delays = new[] { 0, 2000, 4000, 6000 };
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.AreEqual(delays[i], pillars[i].SpawnDelay, "第 " + (i + 1) + " 支光柱的延遲");
+                Assert.AreEqual(90f, pillars[i].Scale, 1e-3f);
+                Assert.AreEqual(219.362f, pillars[i].Y, 1e-3f, "四支同高(y 常數 0x435b5cac)");
+                Assert.AreEqual(90f, pillars[i].Ez, 1e-3f);
+            }
+            Assert.AreEqual(293.920f, pillars[0].X, 1e-3f);
+            Assert.AreEqual(3488.677f, pillars[0].Z, 1e-3f);
+            Assert.AreEqual(1509.139f, pillars[3].X, 1e-3f);
+
+            // 光暈:六團全部在載入時一起播(無延遲),scale 1500 (0x44bb8000)。
+            foreach (var h in halos)
+            {
+                Assert.AreEqual(0, h.SpawnDelay, "光暈不分批");
+                Assert.AreEqual(1500f, h.Scale, 1e-3f);
+                Assert.AreEqual(90f, h.Ez, 1e-3f);
+            }
+            Assert.AreEqual(7.095f, halos[0].X, 1e-3f);
+            Assert.AreEqual(329.066f, halos[0].Y, 1e-3f);
+            Assert.AreEqual(1829.695f, halos[5].X, 1e-3f);
+            Assert.AreEqual(2380.157f, halos[5].Z, 1e-3f);
+        }
+
+        [Test]
+        public void RealData_Scn0028_Streetlamp_And_Fountain_Assets_Match_The_Original()
+        {
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found — real-data row needs the game data (data_root.txt)");
+
+            // 1) 四組換幀貼圖真的在各自的道具資料夾裡。資料夾從 SceneMapobjCatalog 推導(runtime 就是這樣找的),
+            //    不在測試裡另外硬編一份 —— 否則「幀名對、但資料夾錯」這種失效模式抓不到。
+            int checkedGroups = 0;
+            foreach (var g in SceneMapobjCatalog.ForFolder("SCN0028"))
+            {
+                var anim = SceneMapobjTexAnimCatalog.Find("SCN0028", Path.GetFileNameWithoutExtension(g.Msh));
+                if (anim == null) continue;
+                checkedGroups++;
+                foreach (var f in anim.Frames)
+                    Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(root, g.Folder), f)),
+                        g.Folder + "/" + f + " 不存在 → 換幀會退回佔位貼圖(路燈光暈不脈動)");
+            }
+            Assert.AreEqual(4, checkedGroups, "四盞路燈都要接上換幀");
+
+            // 2) 噴水池:官方材質旗標必須是透明批(OfficialMaterialAlpha 才成立),而且它「沒有」.mot ——
+            //    這正是「它只能靠 UV 捲動來動」的前提。哪天資料變了,這條會紅。
+            var fountainDir = Path.Combine(root, "NIAOCHAO/PENGSHUI");
+            var fountainMats = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(fountainDir, "PENGSHUI_.MSH")));
+            Assert.AreEqual(1, fountainMats.Count);
+            Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(fountainMats, "pengshui_.dds")), "噴水池是官方透明批");
+            foreach (var g in SceneMapobjCatalog.ForFolder("SCN0028"))
+                if (g.Folder.EndsWith("PENGSHUI", StringComparison.OrdinalIgnoreCase))
+                    Assert.IsNull(g.Mot, "噴水池沒有 .mot,它的動全靠 UV 捲動");
+
+            // 3) 四顆光暈的 guang_.tga 在場景資料夾(不是 MAPOBJ 下)。
+            Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(SdoExtracted.Root, "SCENE/SCN0028"), "GUANG_.TGA")),
+                "SCENE/SCN0028/GUANG_.TGA 不在 → 舞台四周四顆光暈不會生出來");
+
+            // 4) 兩支 EFT 檔真的存在(id 0x5d/0x5e 從 exe 名稱表解出來的名字)。
+            foreach (var name in new[] { "STAGE28_DENGZHU.EFT", "STAGE28_GUANGYUN.EFT" })
+                Assert.IsTrue(File.Exists(Path.Combine(Path.Combine(SdoExtracted.Root, "3DEFT"), name)),
+                    "3DEFT/" + name + " 不在 → 遠景光柱/光暈生不出來");
+        }
     }
 }

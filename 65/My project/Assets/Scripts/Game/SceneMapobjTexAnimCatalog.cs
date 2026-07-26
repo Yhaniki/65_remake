@@ -151,6 +151,23 @@ namespace Sdo.Game
                     new MapobjTexAnim("HUDEICHUNTIANDONGHUA3", SeqFrom0("CHUNTIAN_HUDEI3", 4), 60f, true),
                     new MapobjTexAnim("HUDEICHUNTIANDONGHUA4", SeqFrom0("CHUNTIAN_HUDEI4", 4), 30f, true),
                 },
+                ["SCN0028"] = new[]
+                {
+                    // 北京之夜 (鸟巢) 遠處街道/建築上的四組路燈光暈。每支 MSH 只是 2~3 片 250×250 的平面
+                    // quad,靠自己 HRC 的 bind 擺到街上(y 72~195、z 1730~2110),材質寫死佔位的 001_.dds。
+                    // Scene_LoadBackground case 0x1c 把四個 niaochao/dengN.bin 的幀讀進 param_1[0x61..0x64]
+                    // (= +0x184/0x188/0x18c/0x190),每組第 0 張都叫 001_.dds、之後才是 niaochao_dengN00M_.dds;
+                    // 場景 0x1c 的每幀更新 StageScene_UpdateBigBillboardSet_004b0fc0 用四個獨立計時器、
+                    // 全部 200 ms 換一張:deng1/deng2 三張、索引 (i+1)%3;deng3/deng4 兩張、索引 (i-1)&1
+                    // (兩張時等同來回切)。四組的每一張 128×128 DXT3 的 RGB 完全相同(meanLum 199.4),
+                    // 只有 alpha 不同(平均 13.4 / 26.6 / 35.3)—— 也就是說這個「動畫」是燈光的明暗脈動,
+                    // 不是換圖案。少了這幾筆,四盞路燈就固定停在第一張的亮度,完全不會呼吸。
+                    // DXT3 硬去背 → Transparent。
+                    new MapobjTexAnim("DENG1_", new[] { "001_.dds", "NIAOCHAO_DENG1002_.dds", "NIAOCHAO_DENG1003_.dds" }, 200f, true),
+                    new MapobjTexAnim("DENG2_", new[] { "001_.dds", "NIAOCHAO_DENG2002_.dds", "NIAOCHAO_DENG2003_.dds" }, 200f, true),
+                    new MapobjTexAnim("DENG3_", new[] { "001_.dds", "NIAOCHAO_DENG3002_.dds" }, 200f, true),
+                    new MapobjTexAnim("DENG4_", new[] { "001_.dds", "NIAOCHAO_DENG4002_.dds" }, 200f, true),
+                },
                 // SCN0022 坟墓 is NOT here: the flame (鬼火) is 3 camera-facing BillboardSet sprites
                 // (SceneFlameBillboardCatalog), and the flying ghosts (gui/gui2) are .mot-driven camera-facing billboards
                 // whose GUI01↔GUI02 texture swing is carried by SceneGhostBillboardCatalog — neither is a mapobj-mesh anim.

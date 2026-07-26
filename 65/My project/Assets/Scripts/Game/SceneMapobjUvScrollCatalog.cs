@@ -125,6 +125,16 @@ namespace Sdo.Game
             // It also FLOWS: FUN_004b0d20's last block sets texture-transform U=0, V += _DAT_00589044 (=0.05) every
             // 50 ms ⇒ +1.0 UV/s in V, wrapping at 1.0. Positive sign copied verbatim (like SCN0015's window beam).
             new Target("SCN0025", "CHUNTIANDONGHUA", -1, new Vector2(0f, 1.0f), RenderMode.OfficialMaterialAlpha),
+            // SCN0028 北京之夜 (鸟巢) 噴水池 (NIAOCHAO/PENGSHUI / PENGSHUI_.DDS,官方材質旗標 = 0x1 → 透明批)。
+            // 這支 mapobj 沒有 .mot、也沒有換幀序列 —— case 0x1c 載入的七個道具裡,chuan/feichuan 靠 .mot 飛,
+            // deng1~4 靠換幀閃,只剩 pengshui 什麼都沒有;它的動全部來自 StageScene_UpdateBigBillboardSet_004b0fc0
+            // 最後那段:每 100 ms 設 render state +0x48 |= 0x10000(貼圖座標轉換),U = 累加值、V = 0,
+            // 累加量 _DAT_00589048 = 0.05、到 1.0 歸零 ⇒ +0.5 UV/s 在 U。U 是水流方向:mesh 的 U 跑到 1.364
+            // (超過 1 → 貼圖在 U 上重複),V 只有 0.024~0.896 一段,所以捲 U 才是「水往下沖」,和 SCN0025 春天
+            // 噴水池捲 V 是不同軸。正負號照抄官方(與 SCN0015/SCN0025 同慣例)。
+            // OfficialMaterialAlpha:唯一那顆材質旗標 0x1 = 延後透明批 = 一般 SrcAlpha/InvSrcAlpha,
+            // 不是加法、也不是 alpha-test —— 和 SCN0025 噴水池同一條規則,免得柔和水花被 clip 成硬白斑。
+            new Target("SCN0028", "PENGSHUI_", -1, new Vector2(0.5f, 0f), RenderMode.OfficialMaterialAlpha),
             // SCN0024 雪景 探照燈 (XUEJING/DONGHUA / DENGGUANG_.DDS): 128×128 DXT3 的暖色光錐,alpha 最高只有 238、
             // 平均 34.8、45.5% 全透明 —— 又是 LooksLikeAdditiveGlow 的誤判樣本(亮 RGB + 全軟 alpha)。官方材質
             // 旗標 +0x194 = 0x1 = 延後透明批 = 一般 SrcAlpha/InvSrcAlpha,不是加法。這支只有一個材質,
