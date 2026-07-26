@@ -33,7 +33,8 @@ namespace Sdo.Game
         /// string so glyphs never touch (see <c>Sdo.UI.Util.TextTracking</c>).</summary>
         public const float SongTitleTrackEm = 0.05f;
 
-        /// <summary>Ink gap (em) that must survive any tightening. SimSun's Latin is HALF-WIDTH MONOSPACED (every
+        /// <summary>Ink gap (em) that must survive any tightening — the shared floor for EVERY tracked label here
+        /// (song list 0.05, head nameplate + ranking roster 0.1). SimSun's Latin is HALF-WIDTH MONOSPACED (every
         /// letter advances 0.5em) with almost no sidebearing, so "TA" is born with only 0.043em of air and a flat
         /// 0.05em tightening welds the two letters together (SOLID ST[A]TE SQUAD). Full-width CJK has ≥0.08em, which
         /// is why only capital A/T/V/W combos showed it. Keep a little slack for the faux-bold dilate on top.</summary>
@@ -230,7 +231,9 @@ namespace Sdo.Game
         /// <summary>Lay out the per-char cells left-to-right, tightening each inter-char gap by <see cref="_trackEm"/>
         /// of an em. World units per raster pixel = characterSize×0.1 (Unity's fixed TextMesh scale), so a glyph's
         /// world advance = its pixel advance × that — placing cell k+1 at cell k's advance reproduces the native
-        /// string exactly at trackEm 0, then a constant reduction pulls the characters closer.</summary>
+        /// string exactly at trackEm 0, then a constant reduction pulls the characters closer. The reduction is
+        /// clamped per string so no two glyphs' ink touches — SimSun's Latin is half-width monospaced with almost no
+        /// sidebearing ("TA" has only 0.043em of air), see <see cref="TextTracking"/>.</summary>
         private void ReflowCells(int fontPx, float c, float ax)
         {
             string s = _text;
@@ -238,7 +241,8 @@ namespace Sdo.Game
             if (n == 0) return;
             _font.RequestCharactersInTexture(s, fontPx, _fontStyle);   // ensure advances are available at this raster size
             float worldPerPx = 0.1f * c;
-            float reduce = _trackEm * fontPx * worldPerPx;             // constant world gap removed between every pair
+            float trackEm = TextTracking.SafeTrackEm(_font, s, fontPx, _fontStyle, _trackEm, TextStyles.MinInkGapEm);
+            float reduce = trackEm * fontPx * worldPerPx;              // constant world gap removed between every pair
 
             var adv = new float[n];
             float total = 0f;
@@ -430,7 +434,9 @@ namespace Sdo.Game
             if (n == 0) return;
             _font.RequestCharactersInTexture(_text, _fontSize, FontStyle.Normal);
             float worldPerPx = 0.1f * _charSize;
-            float reduce = _trackEm * _fontSize * worldPerPx;
+            // 收緊量逐字串 clamp，字母不會黏在一起（SimSun 半形西文的 "TA" 天生只有 0.043em）→ 見 TextTracking。
+            float trackEm = TextTracking.SafeTrackEm(_font, _text, _fontSize, FontStyle.Normal, _trackEm, TextStyles.MinInkGapEm);
+            float reduce = trackEm * _fontSize * worldPerPx;
             var adv = new float[n];
             float total = 0f;
             for (int k = 0; k < n; k++)

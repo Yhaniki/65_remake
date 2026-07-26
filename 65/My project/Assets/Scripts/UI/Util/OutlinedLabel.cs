@@ -21,6 +21,7 @@ namespace Sdo.UI.Util
         private TextMeshProUGUI _face;
         private TextMeshProUGUI[] _edges;
         private float _edgePx;
+        private float _trackEm;              // 想收緊的字距(em);實際收多少每次 SetText 重算 → ApplyTracking
         private int _lastW, _lastH;
         private AspectMode _lastMode;
         private Vector2[] _dirs = Dirs16;    // edge-copy directions (Create=16-ring; CreateRich picks its own count)
@@ -50,10 +51,13 @@ namespace Sdo.UI.Util
         /// <param name="glyphScaleX">Horizontal squash of the glyphs (1 = none). &lt;1 makes the text narrower/taller-looking
         /// — e.g. 0.75 cancels the 4:3→16:9 stretch. Applied as the holder's localScale, so face + all edges squash together.</param>
         /// <param name="glyphScaleY">Vertical stretch of the glyphs (1 = none). &gt;1 makes the text taller.</param>
+        /// <param name="trackEm">Letter-spacing tightening ASKED FOR, as a fraction of an em (0 = natural spacing,
+        /// glyphs never distort). How much actually gets applied is re-derived from the string on every
+        /// <see cref="SetText"/> so no two glyphs' ink touches — see <see cref="TextTracking"/>.</param>
         public static OutlinedLabel Create(Transform parent, string name, float x, float y, float w, float h,
             float size, Color32 face, Color32 edge, float edgePx, bool bold,
             TextAlignmentOptions align = TextAlignmentOptions.Center,
-            float glyphScaleX = 1f, float glyphScaleY = 1f, float charSpacing = 0f)
+            float glyphScaleX = 1f, float glyphScaleY = 1f, float trackEm = 0f)
         {
             var holder = UIKit.NewRect(parent, name);
             holder.anchorMin = holder.anchorMax = new Vector2(0f, 1f);
@@ -68,20 +72,20 @@ namespace Sdo.UI.Util
 
             var ol = holder.gameObject.AddComponent<OutlinedLabel>();
             ol._edgePx = edgePx;
+            ol._trackEm = trackEm;
             ol._dirs = Dirs16;
             ol._edges = new TextMeshProUGUI[Dirs16.Length];
             for (int i = 0; i < Dirs16.Length; i++)           // edges first → they sit BEHIND the face (UGUI sibling order)
-                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale, charSpacing);
-            ol._face = Make(holder, "Face", size, face, bold, align, glyphScale, charSpacing);
+                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale);
+            ol._face = Make(holder, "Face", size, face, bold, align, glyphScale);
             ol.ApplyEdgeOffsets(true);
             return ol;
         }
 
-        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, TextAlignmentOptions align, Vector3 glyphScale, float charSpacing)
+        private static TextMeshProUGUI Make(Transform parent, string name, float size, Color32 color, bool bold, TextAlignmentOptions align, Vector3 glyphScale)
         {
             var t = UIKit.AddText(parent, name, "", size, color, align);
             if (bold) t.fontStyle = FontStyles.Bold;
-            t.characterSpacing = charSpacing;   // TMP letter-spacing: adds charSpacing×fontSize/100 px per gap (negative = tighter)
             var rt = t.rectTransform;
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;   // stretch to the holder; edges get shifted by ApplyEdgeOffsets
             rt.offsetMin = Vector2.zero;
@@ -162,6 +166,20 @@ namespace Sdo.UI.Util
             if (_edges != null)
                 for (int i = 0; i < _edges.Length; i++)
                     if (_edges[i] != null) _edges[i].text = s;
+            ApplyTracking();
+        }
+
+        /// <summary>Re-derive the letter-spacing for the CURRENT string and apply it to the face + every edge copy
+        /// (they must match or the ring drifts off the glyphs). A flat tightening welds SimSun's half-width Latin
+        /// together — "TA" only has 0.043em of air — so the amount is clamped per string (<see cref="TextTracking"/>).</summary>
+        private void ApplyTracking()
+        {
+            if (_trackEm <= 0f || _face == null) return;
+            float cs = -TextTracking.SafeTrackEm(_face.font, _face.text, _trackEm, TextStyles.MinInkGapEm) * 100f;
+            _face.characterSpacing = cs;
+            if (_edges != null)
+                for (int i = 0; i < _edges.Length; i++)
+                    if (_edges[i] != null) _edges[i].characterSpacing = cs;
         }
     }
 }

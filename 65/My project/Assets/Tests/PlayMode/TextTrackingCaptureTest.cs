@@ -15,9 +15,11 @@ namespace Sdo.Tests
     /// metrics 不夠。三行同一首歌名(SimSun / 14px / Bold,跟歌單一模一樣),分別用:
     ///   0 固定收緊(舊行為,"STATE" 的 T 和 A 會連成一塊)/ 1 逐字串安全收緊(現在的行為)/ 2 自然字距(對照組)。
     /// 判定用「墨塊數」:掃描每一直行有沒有墨,字與字之間有空隙就多一塊。安全收緊必須跟自然字距一樣多塊。
-    /// 順便存一張 PNG 給人眼複核。跑法:-runTests -testPlatform PlayMode -testFilter Sdo.Tests.SongTitleTrackingCaptureTest
+    /// 第二個測試同樣把遊戲內名牌(legacy <see cref="TextMesh"/> 逐字佈局的 <see cref="Label3D"/>,收得更狠的
+    /// 0.1em)畫出來存檔,給人眼複核中文/西文名字現在的鬆緊。
+    /// 順便存 PNG 給人眼複核。跑法:-runTests -testPlatform PlayMode -testFilter Sdo.Tests.TextTrackingCaptureTest
     /// </summary>
-    public class SongTitleTrackingCaptureTest
+    public class TextTrackingCaptureTest
     {
         private const string Title = "SOLID STATE SQUAD";   // 使用者回報的那一首:STATE 的 TA 黏在一起
         private const float Zoom = 6f;                      // 放大渲染,字縫的有無看得出來(幾何比例不變)
@@ -89,6 +91,64 @@ namespace Sdo.Tests
             Assert.AreEqual(blocksNat, blocksSafe, "安全收緊後字母必須跟自然字距一樣各自分開(沒有任何兩個字黏成一塊)");
         }
 
+        /// <summary>遊戲內名牌那條路(legacy TextMesh 逐字佈局):把中文名和西文名各排一行拍下來。西文的字縫
+        /// 不夠 0.1em 可收 → 退回自然字距;中文照收。存 PNG 供人眼複核鬆緊,並確認沒有排成反向(cell 亂序)。</summary>
+        [UnityTest]
+        public IEnumerator HeadNameLabel3D_Capture()
+        {
+            var font = TextStyles.CjkFont();
+            if (font == null || UIFont.Cjk == null) Assert.Ignore("沒有可用的 CJK 字型,跳過");
+            TextTracking.MeasureFont = UIFont.Cjk;   // runtime 由 UIFont 掛上,這裡明確設定不依賴測試順序
+
+            const int Layer = 31;                    // 空 layer:相機只拍名牌,房間場景不會入鏡
+            var rt = new RenderTexture(1200, 300, 24);
+            var camGo = new GameObject("hn_cam");
+            var cam = camGo.AddComponent<Camera>();
+            cam.orthographic = true;
+            cam.orthographicSize = 60f;              // 1 world unit = 1 design px(Label3D 的慣例)
+            cam.transform.position = new Vector3(90f, 0f, -10f);
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = Color.black;
+            cam.cullingMask = 1 << Layer;
+            cam.targetTexture = rt;
+
+            var cjk = TextStyles.NewLabel("hn_cjk", TextStyles.Style.HeadName, 0, 22f, TextAnchor.MiddleLeft, Layer);
+            cjk.Text = "戀愛達人的祕密";
+            cjk.Position = new Vector3(0f, 24f, 0f);
+            var latin = TextStyles.NewLabel("hn_latin", TextStyles.Style.HeadName, 0, 22f, TextAnchor.MiddleLeft, Layer);
+            latin.Text = "SOLID STATE SQUAD";
+            latin.Position = new Vector3(0f, -24f, 0f);
+
+            for (int i = 0; i < 3; i++) yield return null;
+            cam.Render();
+
+            var prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            var shot = new Texture2D(rt.width, rt.height, TextureFormat.RGBA32, false);
+            shot.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0); shot.Apply();
+            RenderTexture.active = prev;
+            Directory.CreateDirectory(OutDir);
+            string path = Path.Combine(OutDir, "headname-tracking.png");
+            File.WriteAllBytes(path, shot.EncodeToPNG());
+
+            // 名牌帶 16 向黑色描邊,字與字之間會被描邊填掉 → 墨塊數在這裡沒有判讀價值(那是歌名那條測試的手法)。
+            // 這張圖是給人眼複核鬆緊的;自動斷言只確認兩行真的畫出來了(收緊量本身由 EditMode 的幾何測試鎖住)。
+            var px = shot.GetPixels32();
+            float pxPerUnit = rt.height / (2f * cam.orthographicSize);   // world y → 圖上的像素 y
+            int cjkY = Mathf.RoundToInt(rt.height / 2f + 24f * pxPerUnit);
+            int latinY = Mathf.RoundToInt(rt.height / 2f - 24f * pxPerUnit);
+            int half = Mathf.RoundToInt(11f * pxPerUnit);                // 大寫字高的一半(pxSize 22)
+            int cjkBlocks = CountInk(px, rt.width, cjkY - half, cjkY + half);
+            int latinBlocks = CountInk(px, rt.width, latinY - half, latinY + half);
+            Debug.Log($"[HeadNameTracking] 亮像素 中文={cjkBlocks} 西文={latinBlocks} → {path}");
+
+            Object.Destroy(shot); Object.Destroy(cjk.root); Object.Destroy(latin.root); Object.Destroy(camGo);
+            cam.targetTexture = null; rt.Release();
+
+            Assert.Greater(cjkBlocks, 100, "中文名字沒畫出來");
+            Assert.Greater(latinBlocks, 100, "西文名字沒畫出來");
+        }
+
         private static TextMeshProUGUI MakeRow(Transform parent, string name, float y)
         {
             var go = new GameObject(name);
@@ -105,6 +165,19 @@ namespace Sdo.Tests
             t.text = Title;
             t.ForceMeshUpdate();
             return t;
+        }
+
+        /// <summary>一條水平帶裡「夠亮」的像素數 —— 只用來確認東西真的畫出來了。</summary>
+        private static int CountInk(Color32[] px, int w, int yFrom, int yTo)
+        {
+            int n = 0;
+            for (int y = yFrom; y <= yTo; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    var c = px[y * w + x];
+                    if ((c.r + c.g + c.b) / 3f / 255f > Thr) n++;
+                }
+            return n;
         }
 
         /// <summary>一條水平帶裡的「墨塊數」:一整直行只要有一個像素夠亮就算有墨,連續有墨的直行算一塊。

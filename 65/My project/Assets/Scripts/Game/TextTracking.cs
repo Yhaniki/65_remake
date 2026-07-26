@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
-namespace Sdo.UI.Util
+namespace Sdo.Game
 {
     /// <summary>
     /// 字距收緊(tracking)的安全上限 —— 收緊到「字母不會互相黏住」為止。
@@ -17,9 +17,23 @@ namespace Sdo.UI.Util
     /// 對策:收緊量改成逐字串計算 —— 量出這串字每個字縫的真實墨水間距,收緊後至少要留下
     /// <c>minGapEm</c>。純中文歌名維持原本的收緊量,含 TA/AT 的英文歌名自動退回接近自然字距。
     /// 這只調整字元間距,字形本身永遠不縮放(真字距,不變形)。
+    ///
+    /// 兩條字型路徑都走這裡:TMP(選歌歌名、房間頭頂名字 <c>OutlinedLabel</c>)用 <see cref="TMP_FontAsset"/> 版,
+    /// 遊戲內名牌/排名榜的 legacy <see cref="TextMesh"/> 逐字佈局(<see cref="Label3D"/>)用 <see cref="Font"/> 版。
+    /// 兩邊都是「整串取最窄的字縫」而不是每個字縫各自收 —— 房間(TMP)和遊戲內(TextMesh)顯示同一個名字,
+    /// 收緊策略一致,兩邊的寬度才會一致。
     /// </summary>
     public static class TextTracking
     {
+        /// <summary>量字縫用的字型,由 UI 端在建好 CJK 字型時掛上來(<c>UIFont.Cjk</c>)。
+        ///
+        /// 為什麼 legacy <see cref="Font"/> 不能自己量:它回報的是「圖集裡那格點陣的大小」——含 1px 光柵化留白,
+        /// 而且 SimSun 沒有粗體字面、Bold 是 GDI 現場塗粗的,塗完 glyph 比字身還寬(48px 下 'A' 的 glyphWidth 27 &gt;
+        /// advance 24)。照它算,連中文的字縫都會變成負的 → 收緊量一律歸零,「字靠緊一點」整個失效。
+        /// TMP 的 font asset 走 FreeType,拿到的是字型檔裡的真 metrics(和用 fontTools 直接讀 simsun.ttc 對得上),
+        /// 所以兩條路徑都用它量 —— 順便讓房間(TMP)和遊戲內(TextMesh)的同一個名字收一樣多。</summary>
+        public static TMP_FontAsset MeasureFont;
+
         /// <summary>純幾何:給定每個字縫的自然墨水間距(em)、想收緊的量、收緊後必須留下的最小間距,
         /// 回傳實際可用的收緊量。本函式只收緊不撐開,所以結果永遠 ≥ 0;字縫不足時退回 0(自然字距)。</summary>
         public static float ClampTrackEm(IList<float> naturalGapsEm, float desiredTrackEm, float minGapEm)
@@ -48,6 +62,28 @@ namespace Sdo.UI.Util
                 if (!TryMetrics(font, text[i], out _, out float rsb)) continue;
                 if (!TryMetrics(font, text[i + 1], out float lsb, out _)) continue;
                 allowed = Mathf.Min(allowed, rsb + lsb - minGapEm);
+            }
+            return Mathf.Max(0f, allowed);
+        }
+
+        /// <summary>同上,但給 legacy <see cref="TextMesh"/> 的逐字佈局用(<see cref="Label3D"/>)。優先用
+        /// <see cref="MeasureFont"/> 的真 metrics 量,這樣跟 TMP 那邊收一樣多;沒掛字型時退回 legacy
+        /// <see cref="Font"/> 自己的點陣 metrics —— 那份含光柵化留白又被 GDI 塗粗過,只夠拿來要求「別重疊」
+        /// (minGap 當 0),量出來會比實際保守。</summary>
+        public static float SafeTrackEm(Font font, string text, int fontSize, FontStyle style, float desiredTrackEm, float minGapEm)
+        {
+            if (desiredTrackEm <= 0f) return 0f;
+            if (MeasureFont != null) return SafeTrackEm(MeasureFont, text, desiredTrackEm, minGapEm);
+            if (font == null || string.IsNullOrEmpty(text) || text.Length < 2 || fontSize <= 0) return desiredTrackEm;
+            font.RequestCharactersInTexture(text, fontSize, style);   // 沒進 atlas 就量不到 metrics
+
+            float allowed = desiredTrackEm;
+            for (int i = 0; i + 1 < text.Length; i++)
+            {
+                if (!font.GetCharacterInfo(text[i], out CharacterInfo a, fontSize, style)) continue;
+                if (!font.GetCharacterInfo(text[i + 1], out CharacterInfo b, fontSize, style)) continue;
+                float gap = ((a.advance - a.bearing - a.glyphWidth) + b.bearing) / (float)fontSize;
+                allowed = Mathf.Min(allowed, gap);   // 這份 metrics 已經很胖了,再扣 minGap 會把中文也歸零
             }
             return Mathf.Max(0f, allowed);
         }
