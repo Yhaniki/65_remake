@@ -3198,6 +3198,7 @@ namespace Sdo.Game
                 return;
             }
 
+            var placed = new List<Transform>(instances.Length);   // for the position-scroll driver below
             for (int idx = 0; idx < instances.Length; idx++)
             {
                 var parent = new GameObject($"{baseName}_{idx}");
@@ -3232,7 +3233,21 @@ namespace Sdo.Game
                     foreach (var sub in r.Submeshes) AddMapobjMeshChild(parent.transform, baseName + "_mesh", sub.Mesh, subMats[si++]);
                 }
                 SetLayerRecursive(parent, SceneLayer);
+                placed.Add(parent.transform);
             }
+            // Props the original SLIDES every tick (SCN0010 花車's two street-front HOUSEs loop past the parade).
+            // Nothing else in the remake moves a prop's transform without a .mot, so it gets its own tiny driver.
+            var posScroll = SceneMapobjPositionScrollCatalog.Find(SceneFolder(), baseName);
+            if (posScroll != null && placed.Count == posScroll.Start.Length)
+            {
+                var holder = new GameObject(baseName + "_posscroll");
+                holder.AddComponent<MapobjPositionScroll>()
+                      .Init(placed.ToArray(), posScroll.Start, posScroll.Axis, posScroll.Step,
+                            posScroll.TickMs, posScroll.WrapAt, posScroll.WrapTo);
+                Debug.Log($"[mapobj] {baseName}: position-scroll {posScroll.PerSecond:0.###}/s, lap {posScroll.LapSeconds:0.##}s");
+            }
+            else if (posScroll != null)
+                Debug.LogWarning($"[mapobj] {baseName}: position-scroll expects {posScroll.Start.Length} instance(s), got {placed.Count}");
             Debug.Log($"[mapobj] {baseName}: {instances.Length}× {(animated ? "animated(shared)" : hrc != null ? "static-skinned" : "static")}, {(hrc != null ? hrc.Names.Length + " bones" : "no skel")}");
         }
 
