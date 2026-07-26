@@ -40,6 +40,24 @@ namespace Sdo.Game
         /// is why only capital A/T/V/W combos showed it. Keep a little slack for the faux-bold dilate on top.</summary>
         public const float MinInkGapEm = 0.03f;
 
+        /// <summary>字縫窄到這個程度(顯示像素)就不是「收緊過頭」,而是字型本身給不起 —— 這種字縫要**撐開**。
+        /// 量到的真相(SimSun,無頭渲染逐像素驗):西文 "TA" 天生只有 0.60px@14、"AT" 0.66px、"UA" 0.44px,
+        /// 而全形中文最窄的相鄰組合(達/語)仍有 0.88px、典型 1.37px。門檻壓在 0.75px 剛好把兩邊切開:
+        /// 窄西文對觸發撐開,中文一個都不觸發 → 中文歌名維持原本的收緊量,不會突然變鬆。</summary>
+        public const float NarrowInkGapPx = 0.75f;
+
+        /// <summary>過窄的字縫要撐開到幾個顯示像素。1.2px 是「二值化後看得到一條 2px 暗縫」的下限
+        /// (14px 字級、faux bold、逐像素量到的谷寬:0.60px 的自然 TA 只有 1px 半亮縫 —— 看起來就是黏著)。
+        /// 只作用在 <see cref="NarrowInkGapPx"/> 以下的字縫,所以中文與寬字縫的西文完全不受影響。</summary>
+        public const float SafeInkGapPx = 1.2f;
+
+        /// <summary>歌名的**逐字對**光學字距目標(顯示像素):每一對半形西文之間至少要有這麼寬的墨水縫。
+        /// 為什麼比 <see cref="SafeInkGapPx"/> 大:那是「整串共用一個收緊量」時的下限,而整串撐開會被最窄的那對
+        /// (甚至是空白對)綁住 —— 實測撐到 UA 有 1.2px 時,TA 也才 1.36px,實機上仍然看不出分開,倒是 SO 被撐到
+        /// 2.08px 顯得很鬆。改成逐字對之後每對各自補足,才能把真正黏著的那對撐到看得見,又不必動其他縫。
+        /// 1.9px 的依據:使用者實機截圖裡 2.08px 的縫看得見、1.36px 的看不見,取中間偏保守。</summary>
+        public const float SongTitleOpticalGapPx = 1.9f;
+
         /// <summary>Same, but for the gameplay HUD bottom song title (<see cref="TrackedTextMesh"/>) — kept separate
         /// because that label reads tighter at the same value, so it wants a gentler amount.</summary>
         public const float GameSongTitleTrackEm = 0.0f;
@@ -241,7 +259,10 @@ namespace Sdo.Game
             if (n == 0) return;
             _font.RequestCharactersInTexture(s, fontPx, _fontStyle);   // ensure advances are available at this raster size
             float worldPerPx = 0.1f * c;
-            float trackEm = TextTracking.SafeTrackEm(_font, s, fontPx, _fontStyle, _trackEm, TextStyles.MinInkGapEm);
+            // 顯示像素 = 光柵尺寸 × 每像素的世界單位(Label3D 的慣例是 1 world unit = 1 design px)——
+            // 判斷「字縫窄到會黏」要用畫出來的大小,不是 atlas 的光柵尺寸。
+            float displayPx = fontPx * worldPerPx;
+            float trackEm = TextTracking.SafeTrackEm(_font, s, fontPx, _fontStyle, _trackEm, TextStyles.MinInkGapEm, displayPx);
             float reduce = trackEm * fontPx * worldPerPx;              // constant world gap removed between every pair
 
             var adv = new float[n];
@@ -435,7 +456,8 @@ namespace Sdo.Game
             _font.RequestCharactersInTexture(_text, _fontSize, FontStyle.Normal);
             float worldPerPx = 0.1f * _charSize;
             // 收緊量逐字串 clamp，字母不會黏在一起（SimSun 半形西文的 "TA" 天生只有 0.043em）→ 見 TextTracking。
-            float trackEm = TextTracking.SafeTrackEm(_font, _text, _fontSize, FontStyle.Normal, _trackEm, TextStyles.MinInkGapEm);
+            float trackEm = TextTracking.SafeTrackEm(_font, _text, _fontSize, FontStyle.Normal, _trackEm,
+                                                     TextStyles.MinInkGapEm, _fontSize * worldPerPx);
             float reduce = trackEm * _fontSize * worldPerPx;
             var adv = new float[n];
             float total = 0f;

@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using NUnit.Framework;
 using TMPro;
@@ -57,7 +58,9 @@ namespace Sdo.Tests
             var tight = MakeRow(canvas.transform, "old_fixed", 22f);
             tight.characterSpacing = -TextStyles.SongTitleTrackEm * 100f;              // 舊行為
             var safe = MakeRow(canvas.transform, "new_safe", 0f);
-            TextTracking.ApplyTightening(safe, TextStyles.SongTitleTrackEm, TextStyles.MinInkGapEm);   // 現在的行為
+            // 現在的行為:characterSpacing 只收緊,撐開交給逐字對的 <cspace>(歌單走的就是這條)
+            TextTracking.ApplyOpticalTracking(safe, Title, TextStyles.SongTitleTrackEm, TextStyles.MinInkGapEm,
+                                              TextStyles.SongTitleOpticalGapPx);
             var natural = MakeRow(canvas.transform, "natural", -22f);
             natural.characterSpacing = 0f;                                              // 對照組
 
@@ -77,18 +80,22 @@ namespace Sdo.Tests
 
             var px = shot.GetPixels32();
             int yMid = rt.height / 2, band = (int)(9f * Zoom);   // 大寫字高 ≈ 9px @ fontSize 14
-            int blocksOld = InkBlocks(px, rt.width, yMid + (int)(22f * Zoom) - band, yMid + (int)(22f * Zoom) + band);
-            int blocksSafe = InkBlocks(px, rt.width, yMid - band, yMid + band);
-            int blocksNat = InkBlocks(px, rt.width, yMid - (int)(22f * Zoom) - band, yMid - (int)(22f * Zoom) + band);
-            Debug.Log($"[SongTitleTracking] 墨塊數 固定收緊={blocksOld} 安全收緊={blocksSafe} 自然字距={blocksNat}" +
+            int blocksOld = InkBlocks(px, rt.width, yMid + (int)(22f * Zoom) - band, yMid + (int)(22f * Zoom) + band, out _);
+            int blocksSafe = InkBlocks(px, rt.width, yMid - band, yMid + band, out int valleySafe);
+            int blocksNat = InkBlocks(px, rt.width, yMid - (int)(22f * Zoom) - band, yMid - (int)(22f * Zoom) + band, out int valleyNat);
+            Debug.Log($"[SongTitleTracking] 墨塊數 固定收緊={blocksOld} 安全字距={blocksSafe} 自然字距={blocksNat}" +
+                      $" / 最窄字縫(px) 安全={valleySafe} 自然={valleyNat}" +
                       $" / characterSpacing 固定={tight.characterSpacing:0.###} 安全={safe.characterSpacing:0.###}" +
                       $" → {Path.Combine(OutDir, "songtitle-tracking.png")}");
 
             Object.Destroy(shot); Object.Destroy(canvasGo); Object.Destroy(camGo);
             cam.targetTexture = null; rt.Release();
 
-            Assert.GreaterOrEqual(blocksNat, 14, "自然字距下應該量得到 15 個字母各自分開(渲染沒出來就不用比了)");
-            Assert.AreEqual(blocksNat, blocksSafe, "安全收緊後字母必須跟自然字距一樣各自分開(沒有任何兩個字黏成一塊)");
+            // 15 個字母(SOLID/STATE/SQUAD)—— 只要有任何一對黏成一塊就會少一塊,所以這裡要的是「剛好 15」。
+            // 舊的 >=14 正好放行一對黏著,是這個 bug 當初測試綠燈卻沒修好的原因。
+            Assert.AreEqual(15, blocksSafe, "安全字距下必須 15 個字母各自分開(少一塊 = 有兩個字黏在一起)");
+            // 光是「跟自然字距一樣」不夠:SimSun 的 TA 天生只有 0.60px,自然字距下也只剩一個半亮的像素縫。
+            Assert.Greater(valleySafe, valleyNat, "最窄的字縫必須比自然字距更寬(天生不夠的字縫要撐開,不是只有不收緊)");
         }
 
         /// <summary>遊戲內名牌那條路(legacy TextMesh 逐字佈局):把中文名和西文名各排一行拍下來。西文的字縫
@@ -181,10 +188,13 @@ namespace Sdo.Tests
         }
 
         /// <summary>一條水平帶裡的「墨塊數」:一整直行只要有一個像素夠亮就算有墨,連續有墨的直行算一塊。
-        /// 兩個字母之間留得住空隙就會被算成兩塊,黏在一起就併成一塊。</summary>
-        private static int InkBlocks(Color32[] px, int w, int yFrom, int yTo)
+        /// 兩個字母之間留得住空隙就會被算成兩塊,黏在一起就併成一塊。
+        /// <paramref name="narrowestValley"/> 回傳最窄的那條字縫有幾個像素寬 —— 字母是不是「只差一點點沒黏到」
+        /// 看的是這個數字(墨塊數只分黏 / 不黏,分不出 1 個半亮像素和 3 個全暗像素的差別)。</summary>
+        private static int InkBlocks(Color32[] px, int w, int yFrom, int yTo, out int narrowestValley)
         {
-            int blocks = 0; bool inBlock = false;
+            var runs = new List<int[]>();
+            bool inBlock = false; int start = 0;
             for (int x = 0; x < w; x++)
             {
                 bool ink = false;
@@ -193,10 +203,19 @@ namespace Sdo.Tests
                     var c = px[y * w + x];
                     if ((c.r + c.g + c.b) / 3f / 255f > Thr) ink = true;
                 }
-                if (ink && !inBlock) { blocks++; inBlock = true; }
-                else if (!ink) inBlock = false;
+                if (ink && !inBlock) { inBlock = true; start = x; }
+                else if (!ink && inBlock) { inBlock = false; runs.Add(new[] { start, x - 1 }); }
             }
-            return blocks;
+            if (inBlock) runs.Add(new[] { start, w - 1 });
+
+            narrowestValley = int.MaxValue;
+            for (int i = 0; i + 1 < runs.Count; i++)
+            {
+                int gap = runs[i + 1][0] - runs[i][1] - 1;
+                if (gap > 0 && gap < narrowestValley) narrowestValley = gap;
+            }
+            if (narrowestValley == int.MaxValue) narrowestValley = 0;
+            return runs.Count;
         }
     }
 }

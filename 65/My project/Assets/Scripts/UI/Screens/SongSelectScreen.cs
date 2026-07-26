@@ -681,8 +681,8 @@ namespace Sdo.UI.Screens
         {
             var t = _rowName[i];
             if (t == null) return;
-            t.text = s ?? "";
-            TextTracking.ApplyTightening(t, TextStyles.SongTitleTrackEm, TextStyles.MinInkGapEm);
+            TextTracking.ApplyOpticalTracking(t, s, TextStyles.SongTitleTrackEm, TextStyles.MinInkGapEm,
+                                              TextStyles.SongTitleOpticalGapPx);
         }
 
         private TextMeshProUGUI AddRowText(string name, float x, float y, float w, Color col, TextAlignmentOptions align)
