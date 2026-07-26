@@ -1,8 +1,9 @@
 # StepMania 負 BPM（warp）
 
 > 實作：[`SmChart.cs`](../../65/My%20project/Assets/Scripts/Sdo.Osu/SmChart.cs)（`SmWarp` / `Timeline` / `DisplayStops`）、
-> [`OsuHitObject.cs`](../../65/My%20project/Assets/Scripts/Sdo.Osu/OsuHitObject.cs)（`IsFake` / `ScrollTimeMs`）、
-> `ScreenGameplay.ScrollNotes`。測試：`Assets/Tests/EditMode/SmChartTests.cs`。
+> [`OsuHitObject.cs`](../../65/My%20project/Assets/Scripts/Sdo.Osu/OsuHitObject.cs)（`IsFake` / `IsFakeTail` / `ScrollTimeMs`）、
+> [`ManiaScroll.cs`](../../65/My%20project/Assets/Scripts/Sdo.Osu/ManiaScroll.cs)（`MergeStops` / `BaseBeatLength` 的同時刻 tie-break）、
+> `ScreenGameplay.ScrollNotes`。測試：`Assets/Tests/EditMode/SmChartTests.cs`、`ManiaScrollTests.cs`。
 > 出處：`assets/SM-YHANIKI-master/src/TimingData.cpp`（StepMania 3.9）。
 
 ## 1. 這是什麼
@@ -63,6 +64,14 @@ warp 在時間軸上沒有厚度，若直接拿判定時間去擺，整段音符
 * warp 內的音符 `ScrollTimeMs` 依拍數等比落在窗裡 → 進場時的間距**就是**正常的一拍
 * 一幀約 16 ms，播放頭幾乎不可能停在那 1 ms 裡 → 看起來就是瞬間跳過
 
+那個 timing point 是 `FillTimingPoints` **針對每個 warp 的窗首單獨補**的，不能靠「起跳拍那個切點」代勞。
+兩個 warp 首尾相接時（§4 的乒乓寫法），接縫那一拍的 `DisplayMs` 走的是「上一個 warp 的**落地**時刻」
+那條分支（`beat <= w.EndBeat + BeatEps`），永遠到不了下一個 warp 的窗首分支 —— 窗首因此一個點都沒有，
+前半窗會沿用上一點的速率。`deadsoul[Blue]` 的 `-4224` 段實測前半窗只跑 mult 32（該是 1818），
+1/6 拍的炸彈間距 39.4 px 被壓成 0.69 px，畫面上就是一疊擠在判定線上的炸彈。
+補窗首的點放在**最後** append：`ManiaScroll.BuildMultiplierPoints` 同時刻保留最後一個，窗首才由 warp
+自己的速率作主；沒有接縫問題的 warp 本來就有一個同時刻同值的點，重複一次不影響行為。
+
 `120 BPM`、跳 8 拍的例子（`vBase` 208 px/s，一拍 104 px）：
 
 ```
@@ -71,6 +80,18 @@ now=2000.0ms : [R -832.0] [F -728.0] [F -624.0] … [F -104.0] [R    0.0]   ← 
 ```
 
 長條的尾端另有 `ScrollEndTimeMs`（頭在 warp 外、尾在 warp 內時兩者不同）。
+
+### 落地拍要貼齊譜面的切點
+
+`60000 ÷ BPM` 大多**不能精確表示**（`4224` → `14.204545…`），所以「負 N 拍再正 N 拍抵銷」算出來的落地拍
+常常比譜面的切點差幾個 ULP（實測 `1119.9999999999998` vs `1116 + 4`）。`DetectWarps` 因此在 `Close` 之前
+把距下一個切點 `<= BeatEps` 的落地拍**貼上去**。不貼的話，那幾個 ULP 會讓三個地方讀到「切點**左邊**」那一段：
+
+| 讀錯的地方 | 症狀 |
+|---|---|
+| `FillTimingPoints` 的去重留下小的那個拍 → `BeatLengthAt` 在 `beat < w.StartBeat` 提早 break | warp **落地之後**的捲動速率抓成 warp 前的 BPM（`Ops Code-Rapture-` 1950→195 落地後整段快 10 倍） |
+| `FillGridSegments` 同一個去重 → `GridSegment.StartBeat` 是髒拍，而 `BeatGrid.BeatToMs` 的「站在停拍上」是**沒有容差**的 `beat > _segBeat[s]` | 編輯器小節線被畫到定格**結束**的位置，離它自己的音符整整一個 `#STOPS`（`deadsoul[Blue]` 228 ms；出貨譜 3 首共 22 條線） |
+| 反方向 round（落地拍比切點**大**）時 `IsWarped(接縫)` 變 true → `DisplayStops` 把接縫上的 `#STOPS` 當 warp 內部丟掉 | 窗前冒出 227～454 ms 未凍結的超高速區（模擬最壞單段捲動 858,473 px）。語料現況 0 檔往上 round，屬潛在風險 |
 
 ## 4. 負 BPM 中間的停拍 = 定格
 
@@ -128,8 +149,51 @@ StepMania 3.9 其實**會**把它們算進 note 總數（`Player` 的 miss 邏�
 | 負 BPM 段中間夾 `#STOPS` | stop 把時間往上跳、結束這一段 warp → 定格 → 下一段 warp（§4） |
 | warp 內部的 `#STOPS` | 不定格，只是讓 warp 晚一點落地（§4） |
 | warp 內的 mine | 一樣是 `IsFake` → 不會爆 |
-| 兩個 warp 時刻靠得很近 | 顯示窗的 ε 縮到間距的一半，窗不會重疊（重疊會讓 timing point 時間倒退） |
+| 長條的 cap 落在 warp 內、頭部在 warp 外 | `OsuHitObject.IsFakeTail`：整條照 beat 間距畫出來，但**結尾不判定**（不用放開、不會 miss、只算頭部一個判定）。StepMania 也是這樣：播放頭 warp 過 `iEndRow` 時 `Player.cpp:407` 直接給 `HNS_OK`。這種長條的**判定**長度只剩幾十 ms，所以 `CollapseShortHolds` 必須跳過它，不然整條裝飾長條會被收成 tap 而消失 |
+| 兩個 warp 時刻靠得很近（間距 > 0） | 顯示窗的 ε 縮到間距的一半，窗不會重疊（重疊會讓 timing point 時間倒退） |
+| 多個 warp 時刻**完全相同** | ε 觸到 `1e-4` 的下限，它們**共用同一個顯示窗** → 見 §7，已知限制 |
+| 同一個 ms 上堆了好幾個 timing point | warp 譜很容易這樣（好幾個 warp 共用一個落地時刻）。`ManiaScroll.BaseBeatLength` 的排序必須以**宣告順序**收尾：最後一段的長度是「這一點 → `lastObjMs`」，同時刻誰排最後就吃掉整首剩下的時間、直接決定基準速度。只比時間的話 `Array.Sort` 是不穩定排序 → 基準會隨機跳（實測 `Dreadnought` 在 `312.5` 與 `1.25e-5` ms/beat 之間跳，整首捲動差 2500 萬倍）。取「後宣告的贏」與 `BuildMultiplierPoints` 一致 —— 見 [scroll-base-bpm.md](scroll-base-bpm.md) |
 | 沒有負 BPM 的譜 | 完全不走這條路：timing points、音符時間、`ScrollTimeMs == StartTimeMs` 都與改動前逐位相同 |
+
+## 7. 已知限制：多個 warp 共用同一個落地時刻（**未修**）
+
+`Timeline.BuildWindows` 只拿 warp `i` 跟 `i-1` 比間距：
+
+```csharp
+double room = warps[i].TimeMs - warps[i - 1].TimeMs;
+if (room < 2.0 * eps) eps = Math.Max(1e-4, room * 0.5);
+```
+
+好幾個 warp 落在**同一個歌曲時刻**（`room == 0`）時，`eps` 全部觸到 `1e-4` 的下限，於是它們拿到的
+`WinStartMs` 完全一樣 —— **共用同一個顯示窗**。一個時刻只能有一個 timing point 生效
+（`BuildMultiplierPoints` 同時刻保留最後一個），所以那一組裡只有一個 warp 的拍數會被正確攤開，
+其餘的沿用它的速率：拍數比它多的被壓縮、比它少的被拉開。§3 補窗首的點治不到這個 ——
+那需要在同一個瞬間同時提供 K 個不同的速率。
+
+什麼時候會發生：`room == 0` 表示兩個 warp 之間**沒有任何真實時間流逝**。§4 的乒乓寫法只要接縫上
+**沒有** `#STOPS`（或停拍被寫在別的拍上），接連幾段負 BPM 就會全部塌在同一刻。
+
+實測（`D:\StepMania做譜\Songs`）：
+
+| 範圍 | 檔數 | warp 數 |
+|---|---|---|
+| 可播放的出貨譜 | 6 | 15 |
+| 含編輯器 `FileBackup` 自動存檔 | 226 | 886 |
+
+出貨譜的實際可見程度**很輕**，所以先不修：
+
+* `Lune Noir` `@7048ms`（8+8 拍）：那一叢 62 顆音符鋪成 12.87 拍而不是 16 拍 —— 整叢略微擠壓，
+  不是「壓成一疊」；`@69446ms`（8+4 拍）同理（11.62 拍 / 12 拍）
+* `engine[Blue]` `@54051ms`（8+0.001 拍）、`@64856ms`（8+8 拍）與 `DataErr0r[Blue]` `@14727ms`（0.5+4 拍）：
+  窗內幾乎沒有音符（0～4 顆且都落在同一個 `ScrollTimeMs`），畫面上看不出來
+* 嚴重案例（最多 30 個 warp 共用一個窗）全在 `FileBackup` 裡，那些不是可播放的譜
+
+要修的話兩條路，都會動到 warp 的語意，所以要單獨評估：
+
+1. **分窗**：把共用時刻的那一組 warp 依各自的拍數，在同一個 `WarpDisplayMs` 內切成連續的子窗
+   （拍數比例分配），每個子窗各送一個 timing point。
+2. **合併**：把它們併成一個 warp，`StartBeat` 取第一個、`EndBeat` 取最後一個 —— 但這會讓接縫那幾拍
+   變成 warp 的**內部**，被誤標成打不到的裝飾音（§4 最後一段講的正是為什麼現在刻意不合併）。
 
 ## 相關
 

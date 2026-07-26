@@ -129,7 +129,7 @@ namespace Sdo.Osu
                 // 炸彈/warp 旗標與顯示用時間都要跟著搬,不然平移完炸彈變普通 note、warp 音符的位置會脫節。
                 HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs + leadInMs,
                     h.EndTimeMs.HasValue ? h.EndTimeMs.Value + leadInMs : (int?)null, h.IsBomb,
-                    h.IsFake, h.ScrollTimeMs + leadInMs, h.ScrollEndTimeMs + leadInMs);
+                    h.IsFake, h.ScrollTimeMs + leadInMs, h.ScrollEndTimeMs + leadInMs, h.IsFakeTail);
             }
             for (int i = 0; i < TimingPoints.Count; i++)
             {
@@ -203,6 +203,10 @@ namespace Sdo.Osu
             {
                 var h = HitObjects[i];
                 if (!h.IsHold) continue;
+                // cap 落在 StepMania warp 裡的長條**不收**:它的判定長度短只是因為尾端被夾到 warp 那一瞬間
+                // (整條在拍子上是正常長度,StepMania 也照 beat 間距整條畫出來)。收成 tap 會把那一整條裝飾
+                // 長條從畫面上抹掉 —— deadsoul[Blue] 有 64 條這種,判定長度只剩 ~57ms,一收就全沒了。
+                if (h.IsFakeTail) continue;
                 double dur = h.EndTimeMs.Value - h.StartTimeMs;
                 if (dur >= cutoff) continue;
                 // 長條 → 一般 note(頭部的判定/顯示時間原封不動,尾端跟著收回頭部)
@@ -234,7 +238,9 @@ namespace Sdo.Osu
 
         /// <summary>Total judged events = taps + holdHeads + holdReleases. 炸彈不算 —— 它永遠不會被判定
         /// (踩到只扣血)，算進來的話滿分就永遠打不到。StepMania warp (負 BPM) 掃過去的
-        /// <see cref="OsuHitObject.IsFake"/> 音符同理:播放頭是瞬間跳過那一段的,玩家連按的機會都沒有。</summary>
+        /// <see cref="OsuHitObject.IsFake"/> 音符同理:播放頭是瞬間跳過那一段的,玩家連按的機會都沒有。
+        /// cap 被 warp 掃掉的長條(<see cref="OsuHitObject.IsFakeTail"/>)只算**頭部一個**判定:結尾不用放開,
+        /// 算兩個的話滿分永遠差那一下。</summary>
         public int TotalNotes
         {
             get
@@ -243,7 +249,7 @@ namespace Sdo.Osu
                 foreach (var h in HitObjects)
                 {
                     if (h.IsBomb || h.IsFake) continue;
-                    total += h.IsHold ? 2 : 1;
+                    total += (h.IsHold && !h.IsFakeTail) ? 2 : 1;
                 }
                 return total;
             }

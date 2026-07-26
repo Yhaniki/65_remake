@@ -29,6 +29,16 @@ namespace Sdo.Osu
         public bool IsFake { get; }
 
         /// <summary>
+        /// 長條的**尾端**(cap / 放開點)落在 StepMania warp (負 BPM) 裡:頭部在真實時間上打得到,但播放頭是
+        /// 一瞬間跳過那段拍子的,永遠不會經過「該放開」的時刻 —— 所以尾端**不判定**(不用放開、也不會 miss、
+        /// 不進滿分分母,見 <see cref="OsuBeatmap.TotalNotes"/>),整條仍然照 <see cref="ScrollEndTimeMs"/>
+        /// 的 beat 間距畫出來(StepMania 就是這樣顯示的:長條看得到,結尾被 warp 刷掉)。
+        /// 判定時刻 <see cref="EndTimeMs"/> 只剩「什麼時候該從畫面上收掉」的意義。
+        /// 頭部本身就在 warp 內(整條都是裝飾)時走 <see cref="IsFake"/>，不重複標這個。
+        /// </summary>
+        public bool IsFakeTail { get; }
+
+        /// <summary>
         /// **顯示用**時間 (ms, 可含小數):音符捲到判定線的時刻,預設 == <see cref="StartTimeMs"/>。
         /// 只有 StepMania warp 會讓它和判定時間分家 —— warp 是「零秒內跳過一段拍子」,那段拍子在時間軸上沒有厚度,
         /// 但在**畫面上**仍然要照拍子鋪開(StepMania 3.9 的 note 位置是 beat spacing,見 ArrowEffects::ArrowGetYOffset),
@@ -43,14 +53,17 @@ namespace Sdo.Osu
         /// <param name="scrollTimeMs">顯示用時間;null = 跟判定時間一樣(.gn/.osu/沒有 warp 的 .sm 都走這條)。</param>
         /// <param name="scrollEndTimeMs">顯示用尾端時間;null = 長條取 <paramref name="endTimeMs"/>、tap 取頭部顯示時間。
         /// 有給 <paramref name="scrollTimeMs"/> 的長條請把這個也一起給,不然尾端會落回判定時間。</param>
+        /// <param name="isFakeTail">長條的 cap 落在 warp 裡 → 結尾不用放開;見 <see cref="IsFakeTail"/>。</param>
         public OsuHitObject(int lane, int startTimeMs, int? endTimeMs = null, bool isBomb = false,
-            bool isFake = false, double? scrollTimeMs = null, double? scrollEndTimeMs = null)
+            bool isFake = false, double? scrollTimeMs = null, double? scrollEndTimeMs = null,
+            bool isFakeTail = false)
         {
             Lane = lane;
             StartTimeMs = startTimeMs;
             EndTimeMs = endTimeMs;
             IsBomb = isBomb;
             IsFake = isFake;
+            IsFakeTail = isFakeTail;
             ScrollTimeMs = scrollTimeMs ?? startTimeMs;
             ScrollEndTimeMs = scrollEndTimeMs
                 ?? (endTimeMs.HasValue && !scrollTimeMs.HasValue ? endTimeMs.Value : ScrollTimeMs);

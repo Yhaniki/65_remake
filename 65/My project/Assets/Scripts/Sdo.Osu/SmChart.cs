@@ -156,11 +156,13 @@ namespace Sdo.Osu
 
         /// <summary>Number of judged objects in a dance-single note body (taps + hold-heads). Pure/testable —
         /// used to rank difficulties by note count (a hold counts once, like an osu! [HitObjects] line).
-        /// Mines ('M') are NOT counted: they are never judged, so they must not inflate a difficulty's rank.</summary>
+        /// Mines ('M') are NOT counted: they are never judged, so they must not inflate a difficulty's rank.
+        /// 落單的 '3'(hold cap 沒有配對的頭)算一顆 —— StepMania 把它當一般箭頭,見 <see cref="ToBeatmap"/>。</summary>
         public static int NoteCount(string noteData)
         {
             if (string.IsNullOrEmpty(noteData)) return 0;
             int count = 0;
+            var open = new bool[4];   // 該軌有沒有還沒收尾的 '2'/'4' 頭 —— 用來分辨「配對的 cap」與「落單的 cap」
             foreach (var line in noteData.Replace("\r", "").Split('\n'))
             {
                 var row = line.Trim();
@@ -169,7 +171,9 @@ namespace Sdo.Osu
                 for (int c = 0; c < cols; c++)
                 {
                     char ch = row[c];
-                    if (ch == '1' || ch == '2' || ch == '4') count++;   // tap / hold-head / roll-head
+                    if (ch == '1') count++;                                   // tap
+                    else if (ch == '2' || ch == '4') { count++; open[c] = true; }   // hold-head / roll-head
+                    else if (ch == '3') { if (open[c]) open[c] = false; else count++; }   // 配對的 cap 不另計;落單的 = 一顆 tap
                 }
             }
             return count;
@@ -250,6 +254,14 @@ namespace Sdo.Osu
                                 map.HitObjects.Add(tl.Hold(c, openHead[c], beat));
                                 openHead[c] = -1.0;
                             }
+                            else
+                                // **落單的 '3'**(hold cap 沒有配對的 '2'/'4' 頭)不能丟掉 —— StepMania 會把它當一顆
+                                // 普通箭頭:NoteData::Convert2sAnd3sToHoldNotes 只把「有頭的那一對」清成 TAP_EMPTY,
+                                // 落單的 '3' 原封不動留在譜上(type = TapNote::hold_tail),NoteField.cpp:645 的 DrawTap
+                                // 不看 hold_tail(只分 mine/attack)→ 畫成一般箭頭,GetNumTapNotes 也照樣算它一顆。
+                                // 這是 .dwi 轉檔常見的裝飾音寫法:deadsoul[Blue](Blue's 6th step)整段負 BPM 的
+                                // 假 note 全是落單 '3'(964 顆),丟掉的話那段 gimmick 在畫面上完全是空的。
+                                map.HitObjects.Add(tl.Tap(c, beat));
                         }
                         else if (ch == 'M' || ch == 'm')
                             // 'M' = mine，StepMania 原生的炸彈：要避開、踩到才有事，和 .gn 的 note_type 1 同一種東西，
@@ -468,8 +480,15 @@ namespace Sdo.Osu
             {
                 int start = JudgeMs(headBeat), end = JudgeMs(tailBeat);
                 bool bar = end > start;
-                return new OsuHitObject(lane, start, bar ? end : (int?)null, false, IsWarped(headBeat),
-                    ShowMs(headBeat), bar ? ShowMs(tailBeat) : ShowMs(headBeat));
+                bool headFake = IsWarped(headBeat);
+                // cap(放開點)落在 warp 內:頭部在真實時間上打得到,但播放頭是一瞬間跳過那段拍子的 —— 玩家永遠
+                // 碰不到「該放開」的時刻,所以結尾不判定(見 OsuHitObject.IsFakeTail)。StepMania 也是這樣:
+                // 播放頭 warp 過 iEndRow 時 Player.cpp:407 直接給 HNS_OK(踩到頭 + 血還沒歸零就算完成),
+                // 放不放開根本不影響。整條仍照 beat 間距畫出來(ShowMs 已經把 cap 擺進 warp 的顯示窗)。
+                // 頭部本身就在 warp 裡的話整條都是裝飾 → 走 IsFake,不再標這個。
+                bool tailFake = bar && !headFake && IsWarped(tailBeat);
+                return new OsuHitObject(lane, start, bar ? end : (int?)null, false, headFake,
+                    ShowMs(headBeat), bar ? ShowMs(tailBeat) : ShowMs(headBeat), tailFake);
             }
 
             // 判定/顯示時間都夾在 0 以上（#OFFSET 為正時開頭幾拍會落在 0 之前,沿用既有行為）。
@@ -480,6 +499,13 @@ namespace Sdo.Osu
             /// 產生 ManiaScroll 用的 timing point。切點 = BPM 段起拍 ∪ warp 頭尾;每一段的 ms/beat 由
             /// <see cref="BeatLengthAt"/> 決定(warp 段 = 整段拍數壓進顯示窗 → 超短 beat length = 超快捲動)。
             /// 沒有 warp 時輸出與舊版逐段送 timing point 完全相同。
+            ///
+            /// **每個 warp 的顯示窗起點一定要自己送一個 timing point**,不能靠「起跳拍那個切點」代勞:
+            /// 兩個 warp 首尾相接時(±BPM 乒乓,中間夾一個 stop —— deadsoul[Blue] 的 -4224 段就是這樣),
+            /// 接縫那一拍的 <see cref="DisplayMs"/> 走的是「上一個 warp 的落地時刻」那條分支(見 DisplayMs
+            /// 的第三個 if),永遠到不了下一個 warp 的「窗首」分支 → 窗首沒有任何 timing point,前半窗就沿用
+            /// 上一點的速率。實測 deadsoul[Blue] beats 1116→1120 的窗前半只跑 mult 32(該是 1818),
+            /// 1/6 拍的炸彈間距 39.4px 被壓成 0.69px(1/57),看起來就是一疊擠在判定線上的炸彈。
             /// </summary>
             public void FillTimingPoints(OsuBeatmap map)
             {
@@ -492,6 +518,15 @@ namespace Sdo.Osu
                     if (i > 0 && cuts[i] - cuts[i - 1] <= 1e-9) continue;    // 去重
                     double bl = BeatLengthAt(cuts[i]);
                     if (bl > 0.0) map.TimingPoints.Add(new OsuTimingPoint(DisplayMs(cuts[i]), bl));
+                }
+                // 窗首的點放在最後 append:ManiaScroll.BuildMultiplierPoints 同時刻取**後面**那個,所以窗首
+                // 一定由 warp 自己的速率作主。沒有接縫問題的 warp 本來就有一個同時刻同值的點,這裡只是重複一次
+                // (BuildMultiplierPoints 會併掉),行為不變。
+                for (int i = 0; i < Warps.Length; i++)
+                {
+                    double beats = Warps[i].Beats;
+                    if (beats <= 0.0) continue;
+                    map.TimingPoints.Add(new OsuTimingPoint(WinStartMs[i], (Warps[i].TimeMs - WinStartMs[i]) / beats));
                 }
             }
 
@@ -541,6 +576,15 @@ namespace Sdo.Osu
                             double bEnd = b0 + (wMs - v0) / slope;
                             if (bEnd < wStart) bEnd = wStart;
                             if (bEnd > b1) bEnd = b1;
+                            // 落地拍幾乎正好落在下一個切點上時**貼上去**。60000/BPM 大多不能精確表示
+                            // (4224 → 14.204545…),所以「-N 拍再 +N 拍抵銷」算出來的落地拍常常比切點差幾個
+                            // ULP(實測 1119.9999999999998 vs 1116+4)。差這幾個 ULP 會讓後面兩件事讀到**切點
+                            // 左邊**那一段:(1) FillTimingPoints 的去重留下小的那個拍,BeatLengthAt 在
+                            // `beat < w.StartBeat` 提早 break → 落地後的捲動速率抓成 warp 前的 BPM
+                            // (實測 Ops Code-Rapture- 落地後整段快 10 倍);(2) 反方向 round 的話 IsWarped(接縫)
+                            // 會變 true,DisplayStops 就把接縫上的 #STOPS 當成 warp 內部丟掉,窗前冒出幾百 ms
+                            // 的超高速區。貼齊切點把這個浮點刀鋒整個拿掉。
+                            if (b1 - bEnd <= BeatEps) bEnd = b1;
                             Close(warps, wStart, bEnd, wMs);
                             inWarp = false;
                         }

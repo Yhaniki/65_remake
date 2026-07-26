@@ -110,6 +110,38 @@ namespace Sdo.Tests
             Assert.IsFalse(OsuBeatmap.AllowsShortHoldCollapse(SongFormat.Gn), ".gn 歌曲包（[NX] 轉出來的原生譜）也不修改");
         }
 
+        // cap 被 StepMania warp(負 BPM)掃掉的長條**不收**：它的判定長度短只是因為尾端被夾到 warp 那一瞬間，
+        // 拍子上整條是正常長度（StepMania 照 beat 間距整條畫出來）。收成 tap 就把整條裝飾長條抹掉了。
+        // 真實案例：deadsoul[Blue]（Blue's 6th step）有 62 條，判定長度只剩 ~57 ms。見 SmChartTests。
+        [Test]
+        public void A_Hold_Whose_Cap_Was_Warped_Away_Is_Never_Collapsed()
+        {
+            var m = Map(new OsuHitObject(0, 1000, 1057, false, false, 1000.0, 1057.0, isFakeTail: true),
+                        new OsuHitObject(1, 2000, 2057));   // 同樣長度、沒有 warp → 照收
+            Assert.AreEqual(1, m.CollapseShortHolds());
+            Assert.IsTrue(m.HitObjects[0].IsHold, "cap 被 warp 掃掉的長條整條留著");
+            Assert.IsFalse(m.HitObjects[1].IsHold);
+        }
+
+        [Test]
+        public void A_Warped_Cap_Hold_Only_Counts_Its_Head_Towards_The_Total()
+        {
+            // 結尾不用放開（見 OsuHitObject.IsFakeTail）→ 只有頭部一個判定；算兩個滿分就永遠差那一下。
+            var m = Map(new OsuHitObject(0, 1000, 1500, false, false, 1000.0, 1500.0, isFakeTail: true),
+                        new OsuHitObject(1, 2000, 2500));
+            Assert.AreEqual(1 + 2, m.TotalNotes);
+        }
+
+        [Test]
+        public void Lead_In_Keeps_The_Warped_Cap_Flag()
+        {
+            var m = Map(new OsuHitObject(0, 1000, 1057, false, false, 1000.0, 1057.0, isFakeTail: true));
+            m.ApplyLeadIn(2000);
+            Assert.IsTrue(m.HitObjects[0].IsFakeTail, "平移之後旗標不能掉 —— 掉了就變成要按結尾的短長條");
+            Assert.AreEqual(3000, m.HitObjects[0].StartTimeMs);
+            Assert.AreEqual(3057, m.HitObjects[0].EndTimeMs.Value);
+        }
+
         [Test]
         public void Timing_Points_And_Stops_Are_Not_Touched()
         {

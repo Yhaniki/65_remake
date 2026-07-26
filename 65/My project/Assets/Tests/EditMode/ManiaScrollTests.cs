@@ -102,6 +102,33 @@ namespace Sdo.Tests
             Assert.AreEqual(v * 0.05, scroll.PixelDistance(5000, 5050), 1e-3);   // base segment (would be ×0.5 without the fix)
         }
 
+        [Test]
+        public void Same_Time_Timing_Points_Resolve_By_Declaration_Order_Not_Sort_Luck()
+        {
+            // 同一個 ms 上有好幾個 uninherited 點時，**最後宣告**的那個才是真正生效的速度
+            // （BuildMultiplierPoints 同時刻保留最後一個）。基準速度的投票必須用同一條規則：
+            // 最後一段的長度是「這一點 → lastObjMs」，同時刻誰排最後就吃掉整首剩下的時間、直接決定基準。
+            // Array.Sort 是不穩定排序，只比時間的話這裡是隨機的 —— StepMania warp 的譜很容易在一個 ms 上
+            // 塞好幾個點（好幾個 warp 共用同一個落地時刻），實測整首捲動速度會差兩千五百萬倍。
+            var tps = new System.Collections.Generic.List<OsuTimingPoint>
+            {
+                new OsuTimingPoint(0, 500.0),        // 120 BPM，只涵蓋 [0,1000)
+                new OsuTimingPoint(1000, 1e-4),      // 同一刻的超短 beat length（warp 顯示窗那種）
+                new OsuTimingPoint(1000, 312.5),     // 後宣告 → 這才是 1000ms 之後真正生效的速度
+            };
+            Assert.AreEqual(312.5, ManiaScroll.MostCommonBeatLength(tps, 200000.0), 1e-9,
+                "1000ms 之後的 199 秒屬於後宣告的那一點");
+
+            // 反過來宣告 → 換成超短的那個吃掉尾段（也就是說結果真的跟著宣告順序走，不是碰巧）
+            var flipped = new System.Collections.Generic.List<OsuTimingPoint>
+            {
+                new OsuTimingPoint(0, 500.0),
+                new OsuTimingPoint(1000, 312.5),
+                new OsuTimingPoint(1000, 1e-4),
+            };
+            Assert.AreEqual(1e-4, ManiaScroll.MostCommonBeatLength(flipped, 200000.0), 1e-12);
+        }
+
         // ---- 基準速度 (base tempo) 的挑選：osu most-common + ±3% 併群，見 docs/architecture/scroll-base-bpm.md ----
 
         /// <summary>在 [t0,t1) 之間每 gapMs 放一顆 note（讓某段的 note 佔比夠高、能通過基準速度的 note 門檻）。</summary>

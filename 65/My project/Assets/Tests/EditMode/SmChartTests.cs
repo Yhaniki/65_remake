@@ -527,5 +527,298 @@ namespace Sdo.Tests
             }
             Assert.AreEqual(1, map.TimingPoints.Count, "沒有 warp 就不會多送 timing point");
         }
+
+        // ---------------------------------------------------------------------------------------------------
+        // 落單的 '3'(hold cap 沒有配對的 '2'/'4' 頭)。StepMania **不會**丟掉它:
+        // NoteData::Convert2sAnd3sToHoldNotes 只把「有頭的那一對」清成 TAP_EMPTY,落單的 '3' 原封不動留在譜上
+        // (type = TapNote::hold_tail),NoteField.cpp:645 的 DrawTap 只分 mine/attack → 畫成一般箭頭,
+        // GetNumTapNotes 也照樣算它一顆。這是 .dwi 轉檔常見的裝飾音寫法:deadsoul[Blue](Blue's 6th step)
+        // 整段負 BPM 的假 note 全是落單 '3'(964 顆),丟掉的話那段 gimmick 在畫面上完全是空的。
+        // ---------------------------------------------------------------------------------------------------
+
+        // 16 分格線的一小節(16 行);第 row 行放 cells,其餘空白。row < 0 → 整節空白。
+        private static string Measure16(int row, string cells)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < 16; i++) sb.Append(i == row ? cells : "0000").Append('\n');
+            return sb.ToString();
+        }
+
+        private const string Head =
+            "#NOTES:\n     dance-single:\n     :\n     Easy:\n     1:\n     0,0,0,0,0:\n";
+
+        [Test]
+        public void Orphan_Hold_Cap_Is_A_Normal_Tap()
+        {
+            // lane 0:beat 0 一顆 tap、beat 2 一顆**沒有頭**的 cap。120 BPM → 一拍 500ms。
+            const string sm = "#TITLE:OC;\n#OFFSET:0;\n#BPMS:0=120;\n" + Head + "1000\n0000\n3000\n0000\n;\n";
+            var song = SmChart.Parse(sm);
+            var map = SmChart.ToBeatmap(song, 0);
+            Assert.AreEqual(2, map.HitObjects.Count, "落單的 cap 不能被丟掉");
+            Assert.IsFalse(map.HitObjects[1].IsHold, "沒有配對的頭 → 就是一顆一般 note");
+            Assert.AreEqual(0, map.HitObjects[1].Lane);
+            Assert.AreEqual(1000, map.HitObjects[1].StartTimeMs);
+            Assert.IsFalse(map.HitObjects[1].IsFake, "不在 warp 裡 → 打得到");
+            Assert.AreEqual(2, map.TotalNotes);
+            Assert.AreEqual(2, SmChart.NoteCount(song.Charts[0].NoteData));
+            Assert.AreEqual(2, SmChart.PlayableNoteCount(song, 0));
+        }
+
+        [Test]
+        public void NoteCount_Counts_An_Orphan_Cap_But_Not_A_Paired_One()
+        {
+            // lane 0:beat 0 '2' → beat 2 '3'(配對 = 一個長條,算一顆);lane 1:beat 3 落單的 '3'(算一顆)
+            const string sm = "#TITLE:PC;\n#OFFSET:0;\n#BPMS:0=120;\n" + Head + "2000\n0000\n3000\n0300\n;\n";
+            var song = SmChart.Parse(sm);
+            Assert.AreEqual(2, SmChart.NoteCount(song.Charts[0].NoteData));
+            var map = SmChart.ToBeatmap(song, 0);
+            Assert.AreEqual(2, map.HitObjects.Count);
+            Assert.IsTrue(map.HitObjects[0].IsHold, "配對的那一組 = 長條");
+            Assert.IsFalse(map.HitObjects[1].IsHold, "落單的那一顆 = tap");
+            Assert.AreEqual(1, map.HitObjects[1].Lane);
+            Assert.AreEqual(1500, map.HitObjects[1].StartTimeMs);
+        }
+
+        [Test]
+        public void Orphan_Hold_Caps_Inside_A_Warp_Are_The_Fake_Notes_You_See_But_Cannot_Hit()
+        {
+            // deadsoul[Blue](Blue's 6th step)的寫法:負 BPM 那一段的裝飾音全是落單的 '3'。
+            // 時序與 Warp 一樣:beats 4..12 一瞬間跳過(2000ms)。
+            const string sm =
+                "#TITLE:OW;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120;\n" + Head +
+                "0000\n0000\n0000\n0000\n,\n" +   // beats 0..3
+                "3000\n3000\n3000\n3000\n,\n" +   // beats 4..7   ← 負 BPM 段的裝飾音
+                "3000\n3000\n3000\n3000\n,\n" +   // beats 8..11  ← 抵銷段,也是裝飾音
+                "1000\n0000\n0000\n0000\n;\n";    // beat 12      ← 落地,打得到
+            var song = SmChart.Parse(sm);
+            var map = SmChart.ToBeatmap(song, 0);
+            Assert.AreEqual(9, map.HitObjects.Count, "8 顆落單 cap + beat 12 的 tap,一顆都不能少");
+            foreach (var h in map.HitObjects)
+            {
+                Assert.IsFalse(h.IsHold, "沒有頭的 cap 不是長條");
+                Assert.AreEqual(2000, h.StartTimeMs, "warp 內的判定時刻全部是同一瞬間");
+            }
+            Assert.IsFalse(map.HitObjects[0].IsFake, "beat 4 是起跳拍,打得到");
+            for (int i = 1; i <= 7; i++) Assert.IsTrue(map.HitObjects[i].IsFake, $"beat {i + 4} 被 warp 掃掉");
+            Assert.IsFalse(map.HitObjects[8].IsFake, "beat 12 是落地拍,打得到");
+            Assert.AreEqual(2, map.TotalNotes, "起跳拍 + 落地拍;warp 內那 7 顆是裝飾");
+
+            // 畫面上照拍子鋪開(和一般 warp 音符同一條規則)
+            double win = 2000.0 - SmChart.WarpDisplayMs;
+            for (int i = 0; i <= 8; i++)
+                Assert.AreEqual(win + SmChart.WarpDisplayMs * i / 8.0, map.HitObjects[i].ScrollTimeMs, 1e-9);
+        }
+
+        // ---------------------------------------------------------------------------------------------------
+        // 長條的 cap(放開點)落在 warp 裡:頭部在真實時間上打得到,但播放頭是一瞬間跳過那段拍子的 ——
+        // 玩家永遠碰不到「該放開」的時刻,所以結尾不判定(StepMania Player.cpp:407 直接給 HNS_OK)。
+        // 整條仍然照 beat 間距畫出來。deadsoul[Blue] 有 62 條這種。
+        // ---------------------------------------------------------------------------------------------------
+
+        [Test]
+        public void A_Hold_Whose_Cap_Is_Warped_Keeps_Its_Bar_And_Needs_No_Release()
+        {
+            // 頭在 beat 3(1500ms,打得到)、cap 在 beat 6(warp 內)。
+            const string sm =
+                "#TITLE:HW;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120;\n" + Head +
+                "0000\n0000\n0000\n2000\n,\n" +   // beat 3  = 長條頭
+                "0000\n0000\n3000\n0000\n,\n" +   // beat 6  = cap(warp 內)
+                "0000\n0000\n0000\n0000\n,\n" +
+                "1000\n0000\n0000\n0000\n;\n";    // beat 12 = 落地拍的 tap
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            Assert.AreEqual(2, map.HitObjects.Count);
+            var hold = map.HitObjects[0];
+            Assert.IsTrue(hold.IsHold, "整條長條還在 —— 看得到");
+            Assert.IsFalse(hold.IsFake, "頭部在真實時間上,打得到");
+            Assert.IsTrue(hold.IsFakeTail, "cap 被 warp 掃掉 → 結尾不用放開");
+            Assert.AreEqual(1500, hold.StartTimeMs);
+            Assert.AreEqual(2000, hold.EndTimeMs.Value, "判定上的尾端 = warp 那一瞬間(只用來決定何時從畫面收掉)");
+            Assert.AreEqual(1500.0, hold.ScrollTimeMs, 1e-9);
+            Assert.AreEqual(2000.0 - SmChart.WarpDisplayMs + SmChart.WarpDisplayMs * (6.0 - 4.0) / 8.0,
+                hold.ScrollEndTimeMs, 1e-9, "cap 照拍子擺在 warp 的顯示窗裡");
+            Assert.AreEqual(2, map.TotalNotes, "長條只算頭部一個判定 + beat 12 的 tap");
+        }
+
+        [Test]
+        public void A_Warped_Cap_Hold_Is_Not_Collapsed_By_The_Short_Hold_Rule()
+        {
+            // 480 BPM(一拍 125ms):頭在 beat 3.75 (469ms)、cap 在 beat 6(warp 內 → 判定尾端 = 500ms)。
+            // 判定長度只有 31ms,遠低於「無理短長條」門檻 —— 但它短只是因為尾端被夾到 warp 那一瞬間,
+            // 拍子上整條是 2.25 拍;收成 tap 就把整條裝飾長條從畫面上抹掉了。
+            string sm =
+                "#TITLE:HS;\n#OFFSET:0;\n#BPMS:0=480,4=-480,8=480;\n" + Head +
+                Measure16(15, "2000") + ",\n" +   // beat 3.75 = 長條頭
+                Measure16(8, "3000") + ",\n" +    // beat 6    = cap(warp 內)
+                Measure16(-1, "") + ",\n" +
+                "1000\n0000\n0000\n0000\n;\n";    // beat 12   = 落地拍的 tap
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            var hold = map.HitObjects[0];
+            Assert.IsTrue(hold.IsHold);
+            Assert.IsTrue(hold.IsFakeTail);
+            Assert.Less(hold.EndTimeMs.Value - hold.StartTimeMs, OsuBeatmap.ShortHoldMaxMs,
+                "判定長度確實短到會踩進「無理短長條」門檻");
+            Assert.AreEqual(0, map.CollapseShortHolds(), "cap 被 warp 掃掉的長條不收");
+            Assert.IsTrue(map.HitObjects[0].IsHold, "整條還在");
+        }
+
+        // ---------------------------------------------------------------------------------------------------
+        // warp 的顯示窗速率。兩個坑都來自同一件事:60000/BPM 大多不能精確表示(4224 → 14.204545…),所以
+        // 「-N 拍再 +N 拍抵銷」算出來的落地拍常常比譜面的切點差幾個 ULP,而 FillTimingPoints 的去重
+        // (<= 1e-9)會把精確的那個切點吃掉,只留下差幾個 ULP 的那個 —— 於是速率被讀成「切點左邊」那一段。
+        //   坑 1:兩個 warp 首尾相接(±BPM 乒乓 + 中間夾 stop)→ 後一個 warp 的**窗首沒有 timing point**,
+        //         前半窗沿用上一點的速率 → 窗內音符被壓成一疊(使用者看到的「炸彈被壓扁」)。
+        //   坑 2:warp 落地在一個 BPM 變化上 → 落地後整段用**warp 前**的 BPM 捲動(實測快 10 倍)。
+        // ---------------------------------------------------------------------------------------------------
+
+        // 5 小節四分音符,每拍換一軌 —— warp 窗裡才會有好幾顆可以量間距的音符。
+        private const string Body20 =
+            "1000\n0100\n0010\n0001\n,\n" +
+            "1000\n0100\n0010\n0001\n,\n" +
+            "1000\n0100\n0010\n0001\n,\n" +
+            "1000\n0100\n0010\n0001\n,\n" +
+            "1000\n0100\n0010\n0001\n;\n";
+
+        // 157 BPM(一拍 382.1656ms,60000/157 不能精確表示)。beats 12..14.5 與 14.5..17 是兩個首尾相接的
+        // warp(-157 走 1.25 拍、+157 補 1.25 拍),接縫 beat 14.5 上放一個 0.5 秒的 stop 把兩個 warp 在
+        // 時間上分開 —— 和 deadsoul[Blue] 的 -4224 段同一個寫法。落地拍會算出 14.499999999999998。
+        private const string ChainedWarps =
+            "#TITLE:CW;\n#OFFSET:0;\n#BPMS:0=157,12=-157,13.25=157,14.5=-157,15.75=157,17=157;\n" +
+            "#STOPS:14.500=0.500;\n" + Head + Body20;
+
+        // 195 BPM 主速度;beats 16..18 是一個 warp(-1950 走 1 拍、+1950 補 1 拍),落地拍 18 正好是
+        // 「BPM 回到 195」的切點。落地拍會算出 17.99999999999999。
+        private const string WarpLandingOnBpmChange =
+            "#TITLE:PW;\n#OFFSET:0;\n#BPMS:0=195,16=-1950,17=1950,18=195;\n" + Head + Body20;
+
+        // 一拍在畫面上的距離(px)。基準速度 = ManiaScroll 解出來的 base beat length,和 warp 無關。
+        private static double OneBeatPx(OsuBeatmap map, ManiaScroll scroll)
+        {
+            var noteMs = new System.Collections.Generic.List<double>();
+            double last = 0.0;
+            foreach (var h in map.HitObjects)
+            {
+                noteMs.Add(h.StartTimeMs);
+                double t = h.EndTimeMs ?? h.StartTimeMs;
+                if (t > last) last = t;
+            }
+            return scroll.BaseVelocity / 1000.0
+                 * ManiaScroll.BaseBeatLength(map.TimingPoints, noteMs, last, map.Bpm);
+        }
+
+        [Test]
+        public void Chained_Warps_Each_Keep_Their_Own_Full_Speed_Display_Window()
+        {
+            var song = SmChart.Parse(ChainedWarps);
+            var warps = SmChart.Warps(song, 20.0);
+            Assert.AreEqual(2, warps.Count);
+            Assert.AreEqual(14.5, warps[0].EndBeat, 1e-9);
+            Assert.AreEqual(14.5, warps[1].StartBeat, 1e-9, "兩個 warp 首尾相接(接縫在 beat 14.5)");
+
+            var map = SmChart.ToBeatmap(song, 0);
+            var scroll = ManiaScroll.Build(map, 1.0);
+            double oneBeat = OneBeatPx(map, scroll);
+            Assert.Greater(oneBeat, 0.0);
+
+            // 每個 warp 的整個顯示窗都要照拍子鋪滿 —— 而且是**線性**的(四等分各佔四分之一)。
+            // 修好之前:第二個 warp 的前半窗只有 0.05px(該有 49.68px),整窗 99.5px(該有 198.7px)。
+            for (int i = 0; i < warps.Count; i++)
+            {
+                double we = warps[i].TimeMs, ws = we - SmChart.WarpDisplayMs;
+                double want = warps[i].Beats * oneBeat;
+                Assert.AreEqual(want, scroll.PixelDistance(ws, we), want * 1e-6,
+                    $"warp[{i}] 的顯示窗要剛好等於 {warps[i].Beats} 拍");
+                for (int k = 0; k < 4; k++)
+                    Assert.AreEqual(want / 4.0,
+                        scroll.PixelDistance(ws + (we - ws) * k / 4.0, ws + (we - ws) * (k + 1) / 4.0),
+                        want * 1e-6, $"warp[{i}] 窗內第 {k + 1}/4 段:速率不能中途變(變了就是一半被壓扁)");
+            }
+        }
+
+        [Test]
+        public void Every_Warp_Window_Gets_Its_Own_Timing_Point()
+        {
+            // 窗首一定要有自己的 timing point(值 = 整段拍數壓進 WarpDisplayMs)。接縫那一拍的 DisplayMs
+            // 指向的是**上一個** warp 的落地時刻,所以靠切點是拿不到窗首的。
+            var song = SmChart.Parse(ChainedWarps);
+            var warps = SmChart.Warps(song, 20.0);
+            var map = SmChart.ToBeatmap(song, 0);
+            foreach (var w in warps)
+            {
+                double ws = w.TimeMs - SmChart.WarpDisplayMs;
+                double wantBl = SmChart.WarpDisplayMs / w.Beats;
+                bool found = false;
+                foreach (var tp in map.TimingPoints)
+                    if (System.Math.Abs(tp.TimeMs - ws) <= 1e-9 &&
+                        System.Math.Abs(tp.BeatLength - wantBl) <= wantBl * 1e-9)
+                        found = true;
+                Assert.IsTrue(found, $"warp {w.StartBeat}→{w.EndBeat} 的窗首 {ws} 少了 beatLength {wantBl} 的 timing point");
+            }
+        }
+
+        [Test]
+        public void The_Editor_Grid_Line_On_A_Chained_Seam_Sits_At_The_Start_Of_Its_Freeze()
+        {
+            // 同一個浮點刀鋒也會打壞**編輯器格線**,症狀完全不同:不是速率,是格線整體晚了一整個 #STOPS。
+            // BeatGrid.BeatToMs 判斷「站在停拍上」用的是沒有容差的 `beat > _segBeat[s]`(BeatGrid.cs),
+            // 所以 GridSegment.StartBeat 只要比切點小幾個 ULP,問 BeatToMs(切點) 就會把定格加進去 ——
+            // 小節線被畫到定格**結束**的位置,離它自己的音符整整一個停拍。實測出貨譜 3 首共 22 條線會歪
+            // (deadsoul[Blue] 是 228/228/228/228/223 ms)。
+            var song = SmChart.Parse(ChainedWarps);
+            var warps = SmChart.Warps(song, 20.0);
+            var map = SmChart.ToBeatmap(song, 0);
+
+            GridSegment seam = default(GridSegment);
+            bool found = false;
+            foreach (var g in map.GridSegments)
+                if (g.StopMs > 0.0) { seam = g; found = true; break; }
+            Assert.IsTrue(found, "接縫上的停拍要有自己的 grid segment");
+            Assert.AreEqual(14.5, seam.StartBeat, 0.0, "grid segment 的 StartBeat 要**精確**落在譜面的切點上");
+
+            var grid = new BeatGrid(map.GridSegments);
+            Assert.AreEqual(warps[0].TimeMs, grid.BeatToMs(14.5), 1e-9,
+                "beat 14.5 的小節線要畫在定格**開始**(= 前一個 warp 落地那一刻),不是定格結束");
+            Assert.AreEqual(warps[1].TimeMs, grid.BeatToMs(15.0), 1e-9,
+                "定格之後的拍子才落在定格結束之後");
+        }
+
+        [Test]
+        public void A_Warp_Landing_On_A_Bpm_Change_Resumes_At_The_New_Tempo()
+        {
+            var song = SmChart.Parse(WarpLandingOnBpmChange);
+            var warps = SmChart.Warps(song, 20.0);
+            Assert.AreEqual(1, warps.Count);
+            Assert.AreEqual(16.0, warps[0].StartBeat, 1e-9);
+            Assert.AreEqual(18.0, warps[0].EndBeat, 0.0,
+                "落地拍要**精確**貼在譜面的切點上 —— 差幾個 ULP 就會讀到切點左邊那一段的速度");
+
+            var map = SmChart.ToBeatmap(song, 0);
+            var scroll = ManiaScroll.Build(map, 1.0);
+            double oneBeat = OneBeatPx(map, scroll);
+            double beatMs = 60000.0 / 195.0;   // 落地之後回到 195 BPM
+
+            // 落地後一拍的距離就是「一拍」。修好之前這裡是 10 倍(拿到 warp 內 1950 BPM 那段的速率)。
+            double t0 = warps[0].TimeMs + 0.01;
+            Assert.AreEqual(oneBeat, scroll.PixelDistance(t0, t0 + beatMs), oneBeat * 1e-6,
+                "warp 落地之後要用落地拍那一段的 BPM 捲動,不是 warp 裡面那個超快 BPM");
+        }
+
+        [Test]
+        public void A_Hold_Entirely_Inside_A_Warp_Is_Plain_Decoration()
+        {
+            // 頭在 beat 5、cap 在 beat 7,兩端都在 warp 內:判定時刻一樣(都是 warp 那一瞬間)→ 沒有長度可言,
+            // 整顆就是打不到的裝飾(IsFake)。IsFakeTail 是給「頭打得到、只有結尾被掃掉」用的,這裡不標。
+            const string sm =
+                "#TITLE:HI;\n#OFFSET:0;\n#BPMS:0=120,4=-120,8=120;\n" + Head +
+                "0000\n0000\n0000\n0000\n,\n" +
+                "0000\n2000\n0000\n3000\n,\n" +   // beat 5 = 頭, beat 7 = cap(都在 warp 內)
+                "0000\n0000\n0000\n0000\n,\n" +
+                "1000\n0000\n0000\n0000\n;\n";
+            var map = SmChart.ToBeatmap(SmChart.Parse(sm), 0);
+            Assert.AreEqual(2, map.HitObjects.Count);
+            Assert.IsTrue(map.HitObjects[0].IsFake);
+            Assert.IsFalse(map.HitObjects[0].IsFakeTail, "整條都打不到 → 走 IsFake,不重複標");
+            Assert.IsFalse(map.HitObjects[0].IsHold, "頭尾判定時刻相同 → 沒有長條可判定");
+            Assert.AreEqual(1, map.TotalNotes, "只有 beat 12 那顆 tap");
+        }
     }
 }

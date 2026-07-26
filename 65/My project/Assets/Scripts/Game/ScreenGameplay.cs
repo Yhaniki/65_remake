@@ -5065,7 +5065,12 @@ namespace Sdo.Game
                 }
                 if (n.HeadJudged && !n.Done && grade != Judgment.Miss && n.Note.IsHold && _holding[n.Note.Lane] == n
                     && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value)
-                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); EndHold(n.Note.Lane, n, grade); }
+                {
+                    // cap 被 warp 掃掉的長條結尾不判定(不進滿分分母)→ 自動玩也不能補一個評價,不然分母對不上。
+                    _holding[n.Note.Lane] = null;
+                    if (!n.Note.IsFakeTail) ApplyEvent(grade, n.Note.Lane);
+                    EndHold(n.Note.Lane, n, n.Note.IsFakeTail ? Judgment.Perfect : grade);
+                }
             }
         }
 
@@ -5342,6 +5347,7 @@ namespace Sdo.Game
             if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
             if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; return; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
             if (held) { _holding[lane] = n; return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
+            if (n.Note.IsFakeTail) { EndHold(lane, n, Judgment.Perfect); return; }   // cap 被 warp 掃掉 → 結尾不判定(見 ReleaseLane)
             // player already let go INSIDE the window → judge the tail at the TRUE release time (clamped ≤ seam), not a lingering auto-Perfect and not the over-lenient seam time
             double relMs = _stReleaseMs[lane] >= 0.0 ? Math.Min(_stReleaseMs[lane], now) : now;
             var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss;
@@ -5365,6 +5371,10 @@ namespace Sdo.Game
         {
             var n = _holding[lane]; if (n == null) return;
             _holding[lane] = null;
+            // cap 被 warp 掃掉的長條:結尾**不判定**(見 OsuHitObject.IsFakeTail)。放開得再早也不算 Bad/Miss ——
+            // 播放頭永遠不會經過那個放開時刻,玩家沒有「按對結尾」的機會。整條不設 Dropped(不調暗),就照原亮度
+            // 繼續往判定線外流,ScrollNotes 流出畫面時收掉。
+            if (n.Note.IsFakeTail) { StopHit3dLong(lane); return; }
             var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss;
             ApplyEvent(tail, lane);
             EndHold(lane, n, tail);
@@ -5413,15 +5423,23 @@ namespace Sdo.Game
                 if (n.Note.IsFake) continue;   // warp 掃掉的裝飾音不會 miss(打不到也不用打);流出畫面時由 ScrollNotes 收掉
                 // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
                 // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
-                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
+                // (cap 被 warp 掃掉的長條只 miss 頭部 —— 結尾不在滿分分母裡,補一次 Miss 會多扣一下。)
+                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { if (!n.Note.IsFakeTail) ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
                 // bad head → the tail misses too once it passes. Score it ONCE (clear the flag), but do NOT retire the note:
                 // the dimmed bar keeps scrolling like every other failed hold, and ScrollNotes retires it off the board.
-                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
+                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { if (!n.Note.IsFakeTail) ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
                 // A long note's END is judged on the RELEASE — a real release inside the (widened) tail window is
                 // graded by ReleaseLane. Holding through without letting go earns NOTHING: once the tail release window
                 // has fully passed with the key still held, the tail is a MISS. Gate on the TAIL boundary (not the press
                 // boundary), else a note held into the extra tail leniency is force-missed before its release could score.
-                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
+                // cap 被 warp 掃掉的長條例外:按著頭一路撐到 cap 那一瞬間就算完成(StepMania Player.cpp:407 的
+                // HNS_OK),不判定、也不 miss —— 只放 LnEnd 特效並收掉整條。
+                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now))
+                {
+                    _holding[n.Note.Lane] = null;
+                    if (n.Note.IsFakeTail) { EndHold(n.Note.Lane, n, Judgment.Perfect); continue; }
+                    ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss);   // never released → tail miss
+                }
             }
         }
 

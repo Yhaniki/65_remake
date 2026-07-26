@@ -298,7 +298,17 @@ namespace Sdo.Osu
 
             var order = new int[m];
             for (int i = 0; i < m; i++) order[i] = i;
-            Array.Sort(order, (a, b) => times[a].CompareTo(times[b]));
+            // 同一時刻的點要以**宣告順序**收尾（Array.Sort 是不穩定排序，光比時間的話同時刻誰排最後是隨機的）。
+            // 這不是潔癖：最後一段的長度是「這一點 → lastObjMs」，同時刻有好幾點時誰排最後就吃掉整首剩下的
+            // 時間、直接決定基準速度。StepMania warp 的譜很容易在同一個 ms 上塞好幾個點（好幾個 warp 共用一個
+            // 落地時刻），實測 Dreadnought 的譜只要點數一變（動了別的地方）基準就會在 312.5 與 1.25e-5 ms/beat
+            // 之間亂跳 —— 整首捲動速度差兩千五百萬倍。取「後宣告的贏」與 BuildMultiplierPoints 的同時刻規則一致
+            // （那邊也是保留最後一個），基準才會跟真正生效的那個速度同一個。
+            Array.Sort(order, (a, b) =>
+            {
+                int c = times[a].CompareTo(times[b]);
+                return c != 0 ? c : a.CompareTo(b);
+            });
 
             // 每段的 [t0,t1)：第一段一律從 0 起算（osu GetMostCommonBeatLength 的 `i==0 ? 0 : t.Time`），
             // 所以開頭那段就算 timing point 不在 0 也從歌曲起點開始計。
