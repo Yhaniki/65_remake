@@ -5073,7 +5073,15 @@ namespace Sdo.Game
                     ReturnVisual(n);
                     // hit late / auto-missed -> now fully retired. warp 掃掉的裝飾音永遠不會被判定,流出畫面就直接收掉
                     // (不收的話它會一直卡在 _firstAlive 前面,每幀都被掃到)。
-                    if (n.HeadJudged || n.Note.IsFake) n.Done = true;
+                    //
+                    // 例外:warp 內的**炸彈**是「按住自動打擊」的觸發器(TickBombs → WarpMineStep),而
+                    // ScrollNotes 跑在 TickBombs 前面(見 Tick 的呼叫順序)。warp 的顯示窗只有
+                    // WarpDisplayMs(1ms)、遠短於一幀,所以播放頭跨過 warp 時刻的那一幀,這批炸彈已經被超高速
+                    // 捲動甩出畫面 —— offPast 與 TickBombs 的跨線偵測落在**同一幀**。這裡先收掉的話,同一幀的
+                    // TickBombs 只會看到 Done 而整批跳過,gimmick 永遠不會發生(實測 [blue]Dreadnought
+                    // 按住穿 warp 全 miss)。等跨線游標 _bombPrevNow 真的越過它之後再收,下一幀就收得到。
+                    bool bombPending = n.Note.IsBomb && n.Note.IsFake && n.Note.StartTimeMs > _bombPrevNow;
+                    if ((n.HeadJudged || n.Note.IsFake) && !bombPending) n.Done = true;
                     continue;
                 }
                 bool visible = held || (_scrollSign > 0
@@ -5734,27 +5742,56 @@ namespace Sdo.Game
         //   2. CrossedMineRow:1077 —— 註解寫的是「Hold the panel while crossing a mine will cause the mine to
         //      explode」,但它按住時呼叫的是 `Step(t, now)`,也就是**完整的按鍵判定流程**,不是只引爆;
         //   3. Step:662 —— `GetClosestNote` 撿該軌最近的**還沒判定**的音符,照 GetElapsedTimeFromBeat 算誤差給分。
-        // 所以譜面作者在 warp 裡鋪炸彈 = 給玩家「按住就自動打掉落地點附近音符」的獎勵。
-        // 實測 [blue]Dreadnought:108 段 warp、每段剛好 2 顆炸彈,落地判定窗內剛好 2 顆音符 → 按住白賺
-        // 214 顆(全譜 16.2%),是精確設計出來的 gimmick。
+        // 譜面長這樣([blue]Dreadnought 的 gimmick 段,[blue]bbkkbkk beat 95 也是同一招):同一軌上每 78ms
+        // 一組「warp 內的炸彈 + 一條 78ms 短長條」,炸彈與長條頭**落在同一個判定時刻**,連成一長串。
+        // 玩家按住不放時沒有新的 keydown,那一串長條頭本來永遠沒人判定 → 全部 miss;炸彈就是用來**補按**的。
         //
-        // 官方那條路有個天然剎車,這裡照樣保留:撿到的音符若超出判定窗,score = TNS_NONE 等於沒判定,
-        // 下一次觸發又撿到同一顆 → 空轉,不會無限刷。實測 Elisha(261 個負停拍的 warp)落地窗內一顆音符也
-        // 沒有,2765 顆炸彈一顆都換不到判定,反而會一路踩爆 —— 同一套規則在那首歌是**懲罰**。
+        // 為什麼官方撿到的是長條頭、不是炸彈(所以**不會爆炸**):GetClosestNote 從「現在的 beat」往外找第一顆
+        // 還沒判定的音符。長條頭就在落地拍上(距離 0),炸彈在 warp 內側(beat 更遠),所以先撿到長條頭。
+        // 正在按著的前一條長條頭早就判定過了,GetClosestNoteDirectional 的 `GetTapNoteScore != TNS_NONE`
+        // 會跳過它 —— 官方不需要、也沒有「這一軌正被佔用」的概念。
+        //
+        // **觸發什麼由落地點決定**:接回正 BPM 的那個位置上是 tap 就判 tap、是長條就判長條頭、是炸彈就爆炸,
+        // 那裡什麼都沒有就**空轉**(絕不能拿觸發器自己來爆 —— 大多數 warp 炸彈只是被跳過的裝飾牆)。
+        // 這也正是官方 GetClosestNote 的結果:它從「現在的 beat」往外找第一顆還沒判定的音符,落地拍上的距離 0
+        // 必然最先撿到;撿到 mine 才走 Step 的 mine 分支爆炸,撿不到就 score = TNS_NONE 什麼也沒發生。
+        // 實測落地點分布 —— Dreadnought 213/216 是長條;bbkkbkk 15 個 tap、2 個長條、1 個炸彈,其餘 874 是空的;
+        // Elisha 2765 顆全部是空的(那面炸彈牆純粹是視覺裝飾)。
         //
         // 和官方的兩點差異(都是為了不破壞 remake 既有的不變式):
-        //  • 只撿**真音符**。warp 內的裝飾音(IsFake)不在滿分分母裡(OsuBeatmap.TotalNotes 排除 IsFake),
-        //    讓它們被判定會多出分子、打破滿分。撿不到真音符時這顆炸彈就當一般炸彈踩爆。
-        //  • 該軌正按著長條時不換判定:那根手指是為了長條而壓的,拿它去換一顆判定會把 _holding 洗掉,
-        //    原本那條長條就變成沒人收尾的孤兒。這種情況照一般炸彈引爆(玩家確實踩在上面)。
+        //  • 落地點只認**非 IsFake** 的音符。warp 內的裝飾音不在滿分分母裡(OsuBeatmap.TotalNotes 排除 IsFake),
+        //    判定它們會多出分子、打破滿分;而且它們是「被跳過的那段」,本來就不是「接回去」的位置。
+        //  • 換手前要先把該軌正按著的長條收尾。官方每條 hold 各自由 IsButtonDown 續命,remake 只有單一
+        //    `_holding[lane]` 插槽,直接被 PressLane 覆蓋的話舊那條就成了沒人判定的孤兒。這裡走 ReleaseLane
+        //    (等同「放開舊的、按下新的」),而這串 gimmick 長條的 cap 全都落在下一段 warp 裡 → IsFakeTail
+        //    → ReleaseLane 乾淨放手、不判定也不扣分,正是官方 hold 不必放開就算完成的效果。
+        //    (實測 Dreadnought 213 顆目標全撿得到,舊長條收尾 211 顆、來不及 0 顆。)
         private void WarpMineStep(RuntimeNote bomb, double now)
         {
+            var target = LandingNote(bomb);
+            if (target == null) return;                                   // 落地點是空的 → 空轉,不爆炸
+            if (target.Note.IsBomb) { ExplodeBomb(target); return; }      // 落地點是炸彈 → 爆的是**那一顆**
             int lane = bomb.Note.Lane;
-            if (_holding[lane] != null) { ExplodeBomb(bomb); return; }
-            if (NearestHittable(lane, now) == null) { ExplodeBomb(bomb); return; }
-            PressLane(lane, now);   // = 官方的 Step():撿最近的未判定音符,照真實誤差給分(窗外則空轉)
+            if (_holding[lane] != null) ReleaseLane(lane, now);           // 舊長條先收尾,再把該軌交給新的
+            PressLane(lane, now);   // = 官方的 Step():照真實誤差給分(落地點與觸發器同時刻 → 誤差只有一幀)
             // 觸發器本身不動:官方的 Step 撿到的是別顆音符時,這顆炸彈原封不動留在譜上照樣畫出來
             // (只有 GetClosestNote 真的撿到它才會 SetTapNote(TAP_EMPTY))。跨線那一幀只成立一次,不會重複觸發。
+        }
+
+        /// <summary>warp「接回正 BPM 的那個位置」上、與觸發器同軌的那顆音符(還沒判定的)。判定時刻和觸發器
+        /// 完全相同 —— warp 內的東西被壓在同一個瞬間,而落地拍就是那個瞬間的出口。IsFake 的不算(那是被跳過的
+        /// 裝飾,不是接回去的位置)。找不到 = 落地點是空的。</summary>
+        private RuntimeNote LandingNote(RuntimeNote bomb)
+        {
+            int t = bomb.Note.StartTimeMs;
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, t);   // 落地點的 StartTimeMs 正好等於 t
+            for (int i = _firstAlive; i < hi; i++)
+            {
+                var n = _notes[i];
+                if (n.Done || n.HeadJudged || n.Note.IsFake) continue;
+                if (n.Note.Lane == bomb.Note.Lane && n.Note.StartTimeMs == t) return n;
+            }
+            return null;
         }
 
         // 踩到炸彈的代價**只有扣血**(等同一次 Miss 的 HP 量),其餘一律不動:不斷 combo、不計 miss、
