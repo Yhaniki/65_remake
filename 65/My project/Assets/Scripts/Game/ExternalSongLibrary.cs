@@ -89,7 +89,7 @@ namespace Sdo.Game
             // System.IO + arithmetic. Load the previous scan, hand it to the worker, save the fresh one when it returns.
             string cacheFile = CacheFilePath();
             // 分槽（哪三張譜留下、誰是困難）用目前那套難度算法；快取也記著它是用哪套算的 → 換一套就重掃一次。
-            string calc = RoomConfig.difficultyCalc ?? "osu";
+            string calc = RoomConfig.difficultyCalc ?? "minacalc";   // 同 RoomConfig 的預設（Sanitize 後理論上不會是 null）
             ExternalSongScanner.SlotByMsd = calc == "minacalc";
             var job = new ScanJob(Roots(), ExternalScanCache.Load(cacheFile, calc));
             // The flag is cleared by the WORKER's continuation, not by this coroutine: a refresh coroutine dies with

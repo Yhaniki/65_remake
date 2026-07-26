@@ -62,14 +62,14 @@ namespace Sdo.Settings
         // 見 SongGroupPanel.OnGUI（整個視窗連同文字/按鈕一起以此 alpha 疊繪）。
         public static float songUiAlpha = 0.6f;
 
-        // 外部歌難度用哪套計算：osu=osu!mania 星數×7 的等級(預設，見 ManiaStarRating)；
-        // minacalc=Etterna MinaCalc 的 MSD 換算等級(見 ManiaMsd.ToLevel / Sdo.Osu.Mina)。改回 osu 即復原。
+        // 外部歌難度用哪套計算：minacalc=Etterna MinaCalc 的 MSD 換算等級(預設，見 ManiaMsd.ToLevel / Sdo.Osu.Mina)；
+        // osu=osu!mania 星數×7 的等級(見 ManiaStarRating)。想要 osu 星數那套就把這個鍵改成 osu。
         // **選了哪一套就整體都照那套**：選歌/房間/遊戲/編輯器顯示的數字、隨機難度的範圍篩選、以及外部歌
         // 「哪張譜排進簡單/普通/困難」（SongCatalog.Entry.SortSlotsByDisplayLevel）全部同一個來源，
         // 不會有兩套數字混用。切換不需重掃歌曲（槽位是載入時重排的）。
         // 只影響「難度得自己重算」的外部譜面(osu / StepMania / Malody)：官方 DATA/MUSIC 的 .gn 和外部資料夾裡的
         // .gn 歌包都自帶檔頭難度，兩套計算器都不會動它們（見 SongCatalog.Entry.DisplayLevel）。
-        public static string difficultyCalc = "osu";
+        public static string difficultyCalc = "minacalc";
         // 遊戲中兩組文字的整體大小比例（1.0 = 官方原尺寸）。純顯示，不影響判定/分數。
         // comboTextScale：COMBO 字樣＋連段數字（整組一起縮放，字距/行距同比例，不會散開）。
         // judgeTextScale：PERFECT / COOL / BAD / MISS 判定字樣。
@@ -430,8 +430,9 @@ namespace Sdo.Settings
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
             if (addonFolder == null) addonFolder = "";
             songUiAlpha = Mathf.Clamp01(songUiAlpha);                        // 外部歌分類面板不透明度 0..1
-            difficultyCalc = (difficultyCalc ?? "osu").Trim().ToLowerInvariant();   // 只認 osu / minacalc，其餘回退 osu
-            if (difficultyCalc != "minacalc") difficultyCalc = "osu";
+            difficultyCalc = (difficultyCalc ?? "").Trim().ToLowerInvariant();      // 只認 minacalc / osu
+            if (difficultyCalc != "minacalc" && difficultyCalc != "osu")
+                difficultyCalc = "minacalc";                                        // 打錯字/空的 → 回退預設
             comboTextScale = Mathf.Clamp(comboTextScale, 0.2f, 3f);          // 再小看不見、再大蓋滿整塊面板
             judgeTextScale = Mathf.Clamp(judgeTextScale, 0.2f, 3f);
             comboTextAlpha = Mathf.Clamp01(comboTextAlpha);                  // 0=完全隱藏（合法用法：不想看到連段字）
@@ -517,10 +518,10 @@ namespace Sdo.Settings
             sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
             sb.Append("# 選歌畫面「分類瀏覽」浮動面板（外部歌資料夾清單）的不透明度：0=全透明、1=不透明。預設 0.6。\n");
             sb.Append("SongUiAlpha=").Append(songUiAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
-            sb.Append("# 外部歌難度用哪套算：osu=osu!mania 星數等級(預設)，minacalc=Etterna MinaCalc 的 MSD 換算等級。\n");
-            sb.Append("# 選了哪套就整體都照那套：顯示的數字、隨機難度的範圍、哪張譜排進簡單/普通/困難，全部一致；改回 osu 即復原。\n");
+            sb.Append("# 外部歌難度用哪套算：minacalc=Etterna MinaCalc 的 MSD 換算等級(預設)，osu=osu!mania 星數等級。\n");
+            sb.Append("# 選了哪套就整體都照那套：顯示的數字、隨機難度的範圍、哪張譜排進簡單/普通/困難，全部一致。\n");
             sb.Append("# 只影響 osu/StepMania/Malody 這類要自己算難度的外部譜；.gn（官方 DATA/MUSIC 或外部歌包）一律保留原難度。\n");
-            sb.Append("DifficultyCalc=").Append(difficultyCalc ?? "osu").Append('\n');
+            sb.Append("DifficultyCalc=").Append(difficultyCalc ?? "minacalc").Append('\n');
             sb.Append("# 遊戲中文字的整體大小比例（1.0 = 官方原尺寸，範圍 0.2~3.0）。純顯示，不影響判定與分數。\n");
             sb.Append("#   comboTextScale = COMBO 字樣＋連段數字（整組等比例縮放，字距不會散開）\n");
             sb.Append("#   judgeTextScale = PERFECT / COOL / BAD / MISS 判定字樣\n");

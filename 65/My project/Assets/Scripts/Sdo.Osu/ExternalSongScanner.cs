@@ -26,7 +26,8 @@ namespace Sdo.Osu
         public sealed class ScanProgress { public int Done; public int Total; public string Current = ""; }
 
         /// <summary>
-        /// 分槽（哪張譜進簡單/普通/困難）要用哪套難度：false = osu 星數等級（預設），true = MinaCalc 的 MSD 換算等級。
+        /// 分槽（哪張譜進簡單/普通/困難）要用哪套難度：true = MinaCalc 的 MSD 換算等級（<c>DifficultyCalc</c> 的預設），
+        /// false = osu 星數等級。**這個欄位本身預設 false**（純資料組件，不讀設定層），呼叫端每次掃描前都要灌值。
         /// 由呼叫端在掃描前灌進來（<c>RoomConfig.difficultyCalc</c>；這個組件不認得設定層）。玩家選了哪套算法，
         /// 連「一首歌有 4 個以上難度時要留哪三張」都照那套 —— 兩套的高低順序不一定一樣。
         ///
