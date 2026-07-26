@@ -551,12 +551,46 @@ namespace Sdo.Game
             if (!File.Exists(anPath)) return null;
             var frames = ParseAnText(File.ReadAllText(anPath));
             if (frames.Count == 0) return null;
-            var fr = frames[0];
+            return PremultipliedFrame(folder, frames[0], pad, cleanMatte);
+        }
+
+        /// <summary>EVERY frame of an .an, each on its OWN premultiplied texture (see <see cref="LoadAnSoloPremultiplied"/>).
+        /// Use for the 結算 digit strips — their frames are separate PNGs anyway (Num8.an → 08\0.png …), so giving each its
+        /// own texture costs no extra draw calls. Empty array if the .an is missing.</summary>
+        public static Sprite[] LoadAnPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
+        {
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
+            if (!File.Exists(anPath)) return new Sprite[0];
+            var frames = ParseAnText(File.ReadAllText(anPath));
+            var sprites = new List<Sprite>(frames.Count);
+            foreach (var fr in frames)
+            {
+                var s = PremultipliedFrame(folder, fr, pad, cleanMatte);
+                if (s != null) sprites.Add(s);
+            }
+            return sprites.ToArray();
+        }
+
+        /// <summary>A bare image file (no .an) as one premultiplied sprite (see <see cref="LoadAnSoloPremultiplied"/>).
+        /// Used for the 結算 成績字 (02\) and rank badges (RANK\), which are addressed as plain PNGs.</summary>
+        public static Sprite LoadImagePremultiplied(string folder, string imageName, int pad = 1, bool cleanMatte = false)
+        {
+            var src = LoadTexture(Path.Combine(folder, imageName));
+            return src == null ? null : PremultiplyCrop(src, 0, 0, src.width, src.height, pad, cleanMatte);
+        }
+
+        private static Sprite PremultipliedFrame(string folder, AnFrame fr, int pad, bool cleanMatte)
+        {
             var src = LoadTexture(Path.Combine(folder, fr.Image));
             if (src == null) return null;
             int cx, cy, cw, ch;
             if (fr.HasCrop) { cx = fr.X; cy = src.height - fr.Y - fr.H; cw = fr.W; ch = fr.H; }   // top-left -> bottom-left
             else { cx = 0; cy = 0; cw = src.width; ch = src.height; }
+            return PremultiplyCrop(src, cx, cy, cw, ch, pad, cleanMatte);
+        }
+
+        private static Sprite PremultiplyCrop(Texture2D src, int cx, int cy, int cw, int ch, int pad, bool cleanMatte)
+        {
             if (cw <= 0 || ch <= 0 || cx < 0 || cy < 0 || cx + cw > src.width || cy + ch > src.height) return null;
             int W = cw + pad * 2, H = ch + pad * 2;
             var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
@@ -571,6 +605,9 @@ namespace Sdo.Game
                 // cleanMatte: 白底出圖在鈕外緣(尤其右上角)留一圈「低透明度純白」matte (a<~48)。premult 會把它「正確」合成成一層
                 // 淡白霧 —— 疊在深色商城 UI 上就顯出「右上外圍沒清乾淨的白邊」。這種低-alpha 泛白像素是 matte 殘留(鈕本身 AA 邊
                 // a≥59、白色圖示 a=255 都在門檻外),直接清成全透明。純白條件避免誤傷帶色 AA 邊。
+                // 結算的白色小圖(%、100、數字、成績字)沒有孤立 matte,那圈低-alpha 白是美術「烘進圖裡」的柔邊 —— 官方 1:1 看
+                // 起來正常,我們把 800×600 放大到視窗就變成一圈白霧(量測:premult 本身只降 12%,清掉才降 65~80%)。所以那些圖
+                // 也開 cleanMatte:字身(a≥48)一個像素都不動,只削掉最外那層柔白 → 放大後回到官方 1:1 的銳利度。
                 if (cleanMatte && a < 48f / 255f && c.r > 170f / 255f && c.g > 170f / 255f && c.b > 170f / 255f)
                 { cols[i] = new Color(0f, 0f, 0f, 0f); continue; }
                 var lin = c.linear;                       // sRGB → linear (A untouched)

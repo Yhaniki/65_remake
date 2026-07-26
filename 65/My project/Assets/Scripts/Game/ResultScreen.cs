@@ -108,33 +108,34 @@ namespace Sdo.Game
                 if (s != null) Place(NewSR("Bg" + i, s, OrderBg), (i % 4) * 256, (i < 4) ? 115 : 371);
             }
 
-            // bleed: true on every glyph/badge/button below — the source PNGs store transparent-WHITE in the matte, so
-            // bilinear filtering drags that white into the sprite edges (a white fringe). AlphaBleed removes it.
-            _num8 = SdoExtracted.LoadAn(dir, "Num8.an", bleed: true);
-            _num3 = SdoExtracted.LoadAn(dir, "Num3.an", bleed: true);
-            _scoreNum = SdoExtracted.LoadAn(dir, "score_num.an", bleed: true);
-            _scoreNumS = SdoExtracted.LoadAn(dir, "score_numS.an", bleed: true);
-            _percent = SdoExtracted.LoadAn1(dir, "percent.an", bleed: true);
-            _dot = SdoExtracted.LoadAn1(dir, "dot.an", bleed: true);
-            _allCombo = SdoExtracted.LoadAn1(dir, "100.an", bleed: true);
+            // Every glyph/badge/button below goes through the matte-cleaning premultiplied path (see LoadPanelSprite):
+            // the art carries a low-alpha whitish rim that reads fine at the official 1:1 but blooms into a white haze
+            // once the 800×600 design is magnified to the window.
+            _num8 = LoadPanelSprites(dir, "Num8.an");
+            _num3 = LoadPanelSprites(dir, "Num3.an");
+            _scoreNum = LoadPanelSprites(dir, "score_num.an");
+            _scoreNumS = LoadPanelSprites(dir, "score_numS.an");
+            _percent = LoadPanelSprite(dir, "percent.an");
+            _dot = LoadPanelSprite(dir, "dot.an");
+            _allCombo = LoadPanelSprite(dir, "100.an");
             // 成績 letters (02/): map our grade band → the official sprite (A0=A++, A1=A+, A2=A, …).
-            _gradeSprites["S"]  = SdoExtracted.LoadImage(dir, "02/A0.PNG", bleed: true);
-            _gradeSprites["A+"] = SdoExtracted.LoadImage(dir, "02/A1.PNG", bleed: true);
-            _gradeSprites["A"]  = SdoExtracted.LoadImage(dir, "02/A2.PNG", bleed: true);
-            _gradeSprites["B"]  = SdoExtracted.LoadImage(dir, "02/B2.PNG", bleed: true);
-            _gradeSprites["C"]  = SdoExtracted.LoadImage(dir, "02/C2.PNG", bleed: true);
-            _gradeSprites["D"]  = SdoExtracted.LoadImage(dir, "02/D2.PNG", bleed: true);
-            _gradeSprites["F"]  = SdoExtracted.LoadImage(dir, "02/F0.PNG", bleed: true);   // HP-out fail grade
+            _gradeSprites["S"]  = LoadPanelImage(dir, "02/A0.PNG");
+            _gradeSprites["A+"] = LoadPanelImage(dir, "02/A1.PNG");
+            _gradeSprites["A"]  = LoadPanelImage(dir, "02/A2.PNG");
+            _gradeSprites["B"]  = LoadPanelImage(dir, "02/B2.PNG");
+            _gradeSprites["C"]  = LoadPanelImage(dir, "02/C2.PNG");
+            _gradeSprites["D"]  = LoadPanelImage(dir, "02/D2.PNG");
+            _gradeSprites["F"]  = LoadPanelImage(dir, "02/F0.PNG");   // HP-out fail grade
 
             // win/lose banners — single sprites cropped from BALANCE.png (Statis28 = win @ design (487,38), Statis30 = lose @ (488,38)).
             _bannerWin = BuildBanner("BannerWin", dir, "Statis28.an", 487, 38);
             _bannerLose = BuildBanner("BannerLose", dir, "Statis30.an", 488, 38);
             // GAME OVER (RANK/7.png) — drawn in the failed player's rank column (see BuildRow), not a separate banner.
-            _overSprite = SdoExtracted.LoadImage(dir, "RANK/7.PNG", bleed: true);
+            _overSprite = LoadPanelImage(dir, "RANK/7.PNG");
 
-            // buttons (OK = Statis25, save-record = Statis22), bottom-right.
-            _okBtn = NewSR("OkBtn", SdoExtracted.LoadAn1(dir, "Statis25.an", bleed: true), OrderBtn); Place(_okBtn, 694, 493);
-            _saveBtn = NewSR("SaveBtn", SdoExtracted.LoadAn1(dir, "Statis22.an", bleed: true), OrderBtn); Place(_saveBtn, 595, 493);
+            // buttons (OK = Statis25, save-record = Statis22), bottom-right — same premultiplied path as the banner.
+            _okBtn = BuildButton("OkBtn", dir, "Statis25.an", 694, 493);
+            _saveBtn = BuildButton("SaveBtn", dir, "Statis22.an", 595, 493);
 
             // 1×1 white sprite used (tinted) as the placeholder head box for rows without a live portrait.
             var pht = new Texture2D(1, 1); pht.SetPixel(0, 0, Color.white); pht.Apply();
@@ -143,24 +144,71 @@ namespace Sdo.Game
             _root.SetActive(false);
         }
 
+        /// <summary>Load one 結算 graphic with its baked whitish rim removed and its RGB premultiplied.
+        /// 使用者回報「按鈕角落有白邊、沒去背」。兩種病因在這裡一起治:
+        ///  (1) 真 matte —— 確定/保存錄像 兩顆鈕在圓角外有一圈孤立的「低透明度純白」(a=1..21,離鈕身 2px 以上還有,四角最厚)。
+        ///      AlphaBleed 只改 a≤8 的 RGB、alpha 一律留著,所以那圈白照樣畫;straight-alpha 下 bilinear 把 800×600 放大到
+        ///      視窗時「顏色與覆蓋率分開內插」,白就被拉進邊緣 → 圓角外顯出方形白邊。兩顆鈕還多一層:它們是共用 BALANCE.png
+        ///      上下緊鄰的 crop(Statis25 y=1、Statis22 y=55,右邊還接著 hover/pushed 態),邊界取樣會吃到隔壁。
+        ///  (2) 烘進圖裡的柔白邊 —— %、100、數字、成績字、名次牌沒有孤立 matte,但字身外那一圈 a&lt;48 的白是美術畫上去的。
+        ///      官方 1:1 看起來正常,放大後整圈糊成白霧。量測顯示光靠 premult 只降 12%(它本來就是「正確」的像素),把那層清掉
+        ///      才降 65~80%,而字身(a≥48)一個像素都不動。
+        /// 修法與 WIN/LOSE 旗一致:裁到自己的 texture(不再與鄰居相鄰)、cleanMatte 清掉純白低-alpha、RGB 預乘 alpha(透明處變
+        /// (0,0,0,0))。<see cref="NewSR"/> 會自動把這種 texture 配上 premult 材質。pad = 0:版面依 sprite 尺寸對齊,加 pad 會
+        /// 讓圖位移 1px;crop 最外圈本來就接近全透明,不需要留邊。shader 被 build 剝掉時退回原本的 straight-alpha 路徑
+        /// (見 BuildScript.RequiredShaders)。</summary>
+        private static Sprite LoadPanelSprite(string dir, string an)
+        {
+            if (SdoExtracted.PremultUiMaterial != null)
+            {
+                var s = SdoExtracted.LoadAnSoloPremultiplied(dir, an, pad: 0, cleanMatte: true);
+                if (s != null) return s;
+            }
+            return SdoExtracted.LoadAn1(dir, an, bleed: true);
+        }
+
+        /// <summary>Every frame of a digit strip through <see cref="LoadPanelSprite"/>'s treatment.</summary>
+        private static Sprite[] LoadPanelSprites(string dir, string an)
+        {
+            if (SdoExtracted.PremultUiMaterial != null)
+            {
+                var s = SdoExtracted.LoadAnPremultiplied(dir, an, pad: 0, cleanMatte: true);
+                if (s.Length > 0) return s;
+            }
+            return SdoExtracted.LoadAn(dir, an, bleed: true);
+        }
+
+        /// <summary>A bare PNG (成績字 02\, 名次牌 RANK\) through <see cref="LoadPanelSprite"/>'s treatment.</summary>
+        private static Sprite LoadPanelImage(string dir, string image)
+        {
+            if (SdoExtracted.PremultUiMaterial != null)
+            {
+                var s = SdoExtracted.LoadImagePremultiplied(dir, image, pad: 0, cleanMatte: true);
+                if (s != null) return s;
+            }
+            return SdoExtracted.LoadImage(dir, image, bleed: true);
+        }
+
+        /// <summary>確定 / 保存錄像 button at design (x,y), top-left placed (see <see cref="LoadPanelSprite"/>).</summary>
+        private SpriteRenderer BuildButton(string name, string dir, string an, float x, float y)
+        {
+            var sr = NewSR(name, LoadPanelSprite(dir, an), OrderBtn);
+            Place(sr, x, y);
+            return sr;
+        }
+
         // A banner placed at design (x,y) under its own root whose origin is the banner centre, so localScale
         // pivots there for the 3→1 scale-in.
         private GameObject BuildBanner(string name, string dir, string an, float x, float y)
         {
             var go = new GameObject(name); go.transform.SetParent(_root.transform, false);
-            // The banner is magnified on screen (zooms screen-width→1, plus the 800×600→window stretch), and with the
-            // default STRAIGHT-alpha sprite material bilinear MAGNIFICATION interpolates colour and coverage separately
-            // across each glyph's opaque→transparent edge, smearing the bright candy bevel / white matte outward as a
-            // pale 「白邊」 halo (worst on the U's flat top). The art is clean (composites fine over black at native size),
-            // so it's a GPU-sampler artifact, not a matte to scrub — bleed:true only touches the a≤8 matte and can't
-            // stop it. Fix = PREMULTIPLIED alpha: its own premult texture + a premult-blend material (Blend One
-            // OneMinusSrcAlpha) make the edge interpolate correctly → no halo, and it stays SMOOTH through the zoom
-            // (unlike point filtering). Fall back to the old straight-alpha path if the shader was stripped.
-            var premultSh = Shader.Find("Sdo/SpritePremultiply");
-            Sprite spr = premultSh != null ? SdoExtracted.LoadAnSoloPremultiplied(dir, an)
-                                           : SdoExtracted.LoadAn1(dir, an, bleed: true);
-            var sr = NewSR(name + "Img", spr, OrderBanner);
-            if (premultSh != null && spr != null) sr.sharedMaterial = new Material(premultSh) { mainTexture = spr.texture };
+            // The banner is magnified harder than anything else on the panel (zooms screen-width→1, on top of the
+            // 800×600→window stretch), so it was the first thing to get the premultiplied treatment — with the default
+            // STRAIGHT-alpha material bilinear interpolates colour and coverage separately across each glyph's
+            // opaque→transparent edge, smearing the bright candy bevel outward as a pale 「白邊」 halo (worst on the U's
+            // flat top). It now shares the whole panel's loader, which ALSO scrubs the baked whitish rim the art carries
+            // outside the letters (363 / 281 texels sit more than 2px clear of the glyphs — a real matte, not AA).
+            var sr = NewSR(name + "Img", LoadPanelSprite(dir, an), OrderBanner);
             Place(sr, x, y);
             go.transform.position = sr.transform.position;        // root at the banner centre
             sr.transform.SetParent(go.transform, true);
@@ -223,7 +271,7 @@ namespace Sdo.Game
             else
             {
                 if (_rankBadge.TryGetValue(r.Rank, out var badge) == false)
-                { badge = SdoExtracted.LoadImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG", bleed: true); _rankBadge[r.Rank] = badge; }
+                { badge = LoadPanelImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG"); _rankBadge[r.Rank] = badge; }
                 if (badge) Child(rowRoot, NewSR("Rank", badge, OrderRow), 0, y - 8);
             }
 
@@ -430,6 +478,9 @@ namespace Sdo.Game
             var sr = new GameObject(name).AddComponent<SpriteRenderer>();
             sr.transform.SetParent(_root.transform, false);
             sr.sprite = spr; sr.sortingOrder = order;
+            // A LoadPanelSprite crop has its RGB already × alpha and MUST draw with Blend One OneMinusSrcAlpha, or it
+            // comes out dark. Pair it here so every caller (buttons, %, the 100 marker) gets it without thinking.
+            if (spr != null && SdoExtracted.IsPremultTexture(spr.texture)) sr.sharedMaterial = SdoExtracted.PremultUiMaterial;
             return sr;
         }
 
