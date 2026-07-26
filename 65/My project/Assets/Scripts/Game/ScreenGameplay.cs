@@ -5696,6 +5696,9 @@ namespace Sdo.Game
         // (StepMania 另有一條 Step 新按下路徑,但它只認「離按下點最近的音符剛好是炸彈」;近處有真音符時
         //  炸彈會被讓過。跨線瞬間的按著檢查已涵蓋「站在上面踩爆」,又不會把打鄰近音符的按鍵誤判成踩雷,故從略。)
         //
+        // 唯一的例外是 **warp 內的炸彈**:那裡官方的 Step 路徑不是誤爆來源,而是整個 gimmick 的本體
+        // (按住穿過 warp = 自動打擊)。它只對 IsFake 的炸彈開,一般炸彈維持上面的模型 —— 見 WarpMineStep。
+        //
         // detonate=false(F8 自動打擊 / ShowTime / 已陣亡):自動避雷 —— 照樣推進跨線游標與退場,但不引爆。
         // 編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
         private void TickBombs(double now, bool detonate)
@@ -5710,15 +5713,48 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done || !n.Note.IsBomb) continue;
-                if (n.Note.IsFake) continue;   // warp 掃掉的炸彈不會爆:播放頭是瞬間跳過那段拍子的,踩不到
                 double t = n.Note.StartTimeMs;
-                if (now - t > retire) { n.Done = true; continue; }   // 早已通過 → 消失
+                // 早已通過 → 消失。warp 內的炸彈例外:它和同一批 warp 裝飾音是一起被超高速刷過判定線的,
+                // 退場交給 ScrollNotes(流出畫面才收,見那裡的 IsFake 分支),才不會只有炸彈提早幾百 ms 憑空消失。
+                if (now - t > retire) { if (!n.Note.IsFake) n.Done = true; continue; }
                 if (!detonate) continue;                             // 自動避雷:只推進/退場,不引爆
                 if (!(prev < t && t <= now)) continue;               // 只在「這一幀剛跨過判定線」時檢查一次(嚴格 < 防重複)
                 bool held = false;
                 foreach (var k in laneKeys[n.Note.Lane]) if (Input.GetKey(k)) { held = true; break; }
-                if (held) ExplodeBomb(n);                            // 跨線瞬間手指壓在該軌上 → 引爆(= CrossedMineRow + IsButtonDown)
+                if (!held) continue;
+                if (n.Note.IsFake) WarpMineStep(n, now);             // warp 內的炸彈是**觸發器**,見 WarpMineStep
+                else ExplodeBomb(n);                                 // 跨線瞬間手指壓在該軌上 → 引爆(= CrossedMineRow + IsButtonDown)
             }
+        }
+
+        // 「按住穿過 warp 會自動打擊」—— StepMania 的炸彈在 warp 裡是**觸發器**,不是目標。
+        // 官方鏈路(Player.cpp):
+        //   1. Update:458 `for(; m_iMineRowLastCrossed <= iRowNow; ++) CrossedMineRow(...)` —— warp 讓 beat 一瞬間
+        //      跳過幾百拍,這個迴圈會把中間**每一個 row 逐一補呼叫**,所以一幀內觸發幾十次;
+        //   2. CrossedMineRow:1077 —— 註解寫的是「Hold the panel while crossing a mine will cause the mine to
+        //      explode」,但它按住時呼叫的是 `Step(t, now)`,也就是**完整的按鍵判定流程**,不是只引爆;
+        //   3. Step:662 —— `GetClosestNote` 撿該軌最近的**還沒判定**的音符,照 GetElapsedTimeFromBeat 算誤差給分。
+        // 所以譜面作者在 warp 裡鋪炸彈 = 給玩家「按住就自動打掉落地點附近音符」的獎勵。
+        // 實測 [blue]Dreadnought:108 段 warp、每段剛好 2 顆炸彈,落地判定窗內剛好 2 顆音符 → 按住白賺
+        // 214 顆(全譜 16.2%),是精確設計出來的 gimmick。
+        //
+        // 官方那條路有個天然剎車,這裡照樣保留:撿到的音符若超出判定窗,score = TNS_NONE 等於沒判定,
+        // 下一次觸發又撿到同一顆 → 空轉,不會無限刷。實測 Elisha(261 個負停拍的 warp)落地窗內一顆音符也
+        // 沒有,2765 顆炸彈一顆都換不到判定,反而會一路踩爆 —— 同一套規則在那首歌是**懲罰**。
+        //
+        // 和官方的兩點差異(都是為了不破壞 remake 既有的不變式):
+        //  • 只撿**真音符**。warp 內的裝飾音(IsFake)不在滿分分母裡(OsuBeatmap.TotalNotes 排除 IsFake),
+        //    讓它們被判定會多出分子、打破滿分。撿不到真音符時這顆炸彈就當一般炸彈踩爆。
+        //  • 該軌正按著長條時不換判定:那根手指是為了長條而壓的,拿它去換一顆判定會把 _holding 洗掉,
+        //    原本那條長條就變成沒人收尾的孤兒。這種情況照一般炸彈引爆(玩家確實踩在上面)。
+        private void WarpMineStep(RuntimeNote bomb, double now)
+        {
+            int lane = bomb.Note.Lane;
+            if (_holding[lane] != null) { ExplodeBomb(bomb); return; }
+            if (NearestHittable(lane, now) == null) { ExplodeBomb(bomb); return; }
+            PressLane(lane, now);   // = 官方的 Step():撿最近的未判定音符,照真實誤差給分(窗外則空轉)
+            // 觸發器本身不動:官方的 Step 撿到的是別顆音符時,這顆炸彈原封不動留在譜上照樣畫出來
+            // (只有 GetClosestNote 真的撿到它才會 SetTapNote(TAP_EMPTY))。跨線那一幀只成立一次,不會重複觸發。
         }
 
         // 踩到炸彈的代價**只有扣血**(等同一次 Miss 的 HP 量),其餘一律不動:不斷 combo、不計 miss、
