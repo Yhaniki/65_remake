@@ -71,6 +71,15 @@ namespace Sdo.Game
                 int ci = _rightAlign ? (n - 1 - slot) : slot;
                 int d = s[ci] - '0';
                 sr.sprite = _digits[d]; sr.enabled = true;
+                // Digit strips can be premultiplied (結算 walks score_num through the matte-cleaning premult path), and a
+                // premult texture drawn with the default straight-alpha material has its alpha applied TWICE — the glyph
+                // edges go dark. Re-pair on EVERY sprite change, not once in the constructor: each digit is its own
+                // texture, so a slot that switches 7→3 needs the material bound to 3's texture.
+                if (SdoExtracted.IsPremultTexture(_digits[d].texture))
+                {
+                    var mat = SdoExtracted.PremultSpriteMaterial(_digits[d].texture);
+                    if (mat != null && sr.sharedMaterial != mat) sr.sharedMaterial = mat;
+                }
                 float w = _digits[d].bounds.size.x, h = _digits[d].bounds.size.y;
                 float topLeftX = _rightAlign ? _rightX - (slot + 1) * _pitch : _rightX + slot * _pitch;
                 sr.transform.localScale = Vector3.one * pop;   // position by CENTRE so the pop scales in place

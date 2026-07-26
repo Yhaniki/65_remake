@@ -1550,9 +1550,12 @@ namespace Sdo.Game
             var gf = new List<Sprite>(); for (int i = 1; i <= 6; i++) { var s = SdoExtracted.Eft("GO0" + i + ".PNG"); if (s != null) gf.Add(s); } _goFrames = gf.ToArray(); // GO01..GO06 only
             LoadEmojiArt();   // head-emoji cut-in PNG sequences (UI/PLAYINGEXP)
             // EFT_HIT bursts are opaque-on-black -> additive blending so black reads as transparent glow.
-            // The Particles/Additive shader's _MainTex is NOT [PerRendererData], so SpriteRenderers SHARING one
-            // material all sample the last-written sprite -> bursts cross-bleed & jitter. Each burst clones its
-            // OWN instance of this template (see SpawnBurst) so every burst animates independently.
+            // SpriteRenderers SHARING one custom material instance all sample the last-written sprite -> bursts
+            // cross-bleed & jitter. Each burst clones its OWN instance of this template (see SpawnBurst) so every burst
+            // animates independently. (This is NOT a [PerRendererData] question — measured on 6000.4.11f1, a shared
+            // instance of Sprites/Default bleeds identically even though it does tag _MainTex that way. The rule is:
+            // one material instance may only serve renderers drawing the SAME texture; no material at all is safe.
+            // See SdoExtracted.PremultSpriteMaterial — the 結算 panel shipped this exact bug once.)
             var sh = Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Sprites/Default");
             _addMat = new Material(sh);
             // HP glow gets its OWN clip-capable additive instance: same look as Particles/Additive, plus a world-X
@@ -5353,6 +5356,10 @@ namespace Sdo.Game
             if (doubleLayer)
             {
                 sr2 = NewSR("Burst+", frames[0], 6);                   // 2nd additive layer -> vivid in-game glow
+                // INVARIANT: both layers must always be set to the SAME sprite (see the advance in
+                // ScreenGameplay.Effects: `fx.Sr.sprite = spr; if (fx.Sr2) fx.Sr2.sprite = spr;`). They share ONE
+                // material instance, and a shared instance across DIFFERENT textures makes both draw the last-written
+                // one — offsetting layer 2 by a frame for a trail effect would silently corrupt the animation.
                 if (mat != null) sr2.sharedMaterial = mat;
                 sr2.transform.SetParent(sr.transform, false);
             }

@@ -117,6 +117,49 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void PremultStrips_KeepEveryFrame_LikeTheOldPath([ValueSource(nameof(Strips))] string an)
+        {
+            // The premult path must never silently DROP a frame. The old SpriteFromFrame falls back to the whole
+            // texture when an .an declares a crop bigger than its PNG; if the premult crop just returned null instead,
+            // a strip could come back 9 long — and every caller bails on digits.Length < 10, so the number would
+            // vanish — or come back 10 long with every digit shifted by one, drawing wrong figures silently.
+            var dir = StatisticDir();
+            if (dir == null) Assert.Ignore("結算 STATISTIC art not present in this environment.");
+
+            var old = SdoExtracted.LoadAn(dir, an, bleed: true);
+            var premult = SdoExtracted.LoadAnPremultiplied(dir, an, pad: 0, cleanMatte: true);
+            Assert.AreEqual(old.Length, premult.Length, an + ": the premult path lost (or gained) a frame");
+            for (int i = 0; i < premult.Length; i++)
+            {
+                Assert.AreEqual(old[i].rect.width, premult[i].rect.width, $"{an} frame {i}: width changed");
+                Assert.AreEqual(old[i].rect.height, premult[i].rect.height, $"{an} frame {i}: height changed");
+            }
+        }
+
+        [Test]
+        public void PremultCrops_AreCached_SoReenteringTheScreenDoesNotLeak()
+        {
+            // ResultScreen.Build runs once PER SONG and pulls ~55 crops. Every crop used to mint a fresh RGBA32 texture
+            // that the static premult registries then held alive forever, so each round leaked a batch that
+            // Resources.UnloadUnusedAssets could never reclaim. The same request must now hand back the same sprite.
+            var dir = StatisticDir();
+            if (dir == null) Assert.Ignore("結算 STATISTIC art not present in this environment.");
+
+            var a1 = SdoExtracted.LoadAnSoloPremultiplied(dir, "Statis25.an", pad: 0, cleanMatte: true);
+            var a2 = SdoExtracted.LoadAnSoloPremultiplied(dir, "Statis25.an", pad: 0, cleanMatte: true);
+            Assert.AreSame(a1, a2, "repeat crop requests must reuse the cached sprite");
+            Assert.AreSame(a1.texture, a2.texture, "…and therefore the same texture");
+
+            var i1 = SdoExtracted.LoadImagePremultiplied(dir, "RANK/7.PNG", pad: 0, cleanMatte: true);
+            var i2 = SdoExtracted.LoadImagePremultiplied(dir, "RANK/7.PNG", pad: 0, cleanMatte: true);
+            Assert.AreSame(i1, i2, "bare-image crops must be cached too");
+
+            // A DIFFERENT request (cleanMatte off) must still get its own crop, not the cleaned one.
+            Assert.AreNotSame(a1, SdoExtracted.LoadAnSoloPremultiplied(dir, "Statis25.an", pad: 0, cleanMatte: false),
+                "the cache key must include cleanMatte");
+        }
+
+        [Test]
         public void EveryPanelSprite_IsOnThePremultPath()
         {
             // Whole-panel sweep: anything ResultScreen loads must come back premultiplied, so a graphic added later
@@ -172,11 +215,12 @@ namespace Sdo.Tests
         public void PremultSpriteRenderers_EachBindTheirOwnTexture()
         {
             // THE regression that shipped in f4245f7 and 使用者 caught immediately: NewSR handed every premultiplied
-            // SpriteRenderer the SAME shared material. A SpriteRenderer with a CUSTOM material does not rebind _MainTex
-            // per renderer ([PerRendererData] only drives UGUI's CanvasRenderer), so the whole panel drew whichever
-            // texture was written to that material last — 數字位置畫出 YOU WIN 旗、確定鈕變成保存錄像、排名欄畫出 GAME OVER.
+            // SpriteRenderer the SAME shared material. One material INSTANCE may only serve renderers drawing the SAME
+            // texture — share it across textures and they all sample whichever was written last, so the whole panel drew
+            // one image (數字位置畫出 YOU WIN 旗、確定鈕變成保存錄像、排名欄畫出 GAME OVER).
             // Structural guard: no two renderers whose sprites differ may share a material, and every material must be
-            // bound to exactly the texture its own sprite uses.
+            // bound to exactly the texture its own sprite uses. Build() alone only makes 4 premult renderers, so this
+            // populates a row too — the rank badge, digits, %, 成績字 and the rolling totals are all Show()-time.
             var dir = StatisticDir();
             if (dir == null) Assert.Ignore("結算 STATISTIC art not present in this environment.");
 
@@ -187,6 +231,24 @@ namespace Sdo.Tests
                 var hud = hudGo.AddComponent<Camera>(); hud.enabled = false;
                 var result = new ResultScreen();
                 result.Build(hud);
+                result.Show("Identic Conflict", "5", new[]
+                {
+                    new ResultScreen.Row { Rank = 1, Name = "飄漂o", Perfect = 111, Cool = 111, Bad = 1, Miss = 11,
+                                           MaxCombo = 111, Accuracy = 98.76, Score = 111111, Grade = "A", IsLocal = true },
+                    new ResultScreen.Row { Rank = 2, Name = "P2", Perfect = 90, Cool = 80, Bad = 7, Miss = 6,
+                                           MaxCombo = 70, Accuracy = 100.0, Score = 90210, Grade = "B", FullCombo = true },
+                }, localWon: true, expGained: 24, coinsGained: 7);
+                // The EXP / G totals only arm once the rows have finished sliding in, and EditMode has no ticking clock,
+                // so drive the two RollingDigits directly — otherwise their slots keep a null sprite and the sweep below
+                // skips them entirely, which is exactly how the "totals drawn with the default material" defect hid.
+                foreach (var f in new[] { "_expTotal", "_gTotal" })
+                {
+                    var rd = Field(f).GetValue(result);
+                    Assert.IsNotNull(rd, f + " not built");
+                    var t = rd.GetType();
+                    t.GetMethod("SetTarget").Invoke(rd, new object[] { 123456L, 0f });
+                    t.GetMethod("Tick").Invoke(rd, new object[] { 999f });   // long past the roll → settles on the target
+                }
                 root = (GameObject)Field("_root").GetValue(result);
 
                 var byMaterial = new Dictionary<Material, Texture>();
@@ -205,7 +267,10 @@ namespace Sdo.Tests
                             "draw the same image");
                     else byMaterial[mat] = sr.sprite.texture;
                 }
-                Assert.Greater(checkedRenderers, 1, "expected several premultiplied sprites on the panel");
+                // Floor well above what Build() alone yields (4), so the guard can never quietly shrink back to
+                // "only the buttons and banners" and miss a Show()-time regression like the RollingDigits one.
+                Assert.Greater(checkedRenderers, 20,
+                    $"only {checkedRenderers} premultiplied renderers were checked — the populated row is missing");
                 Assert.AreNotSame(SdoExtracted.PremultUiMaterial, null);
                 foreach (var mat in byMaterial.Keys)
                     Assert.AreNotSame(SdoExtracted.PremultUiMaterial, mat,

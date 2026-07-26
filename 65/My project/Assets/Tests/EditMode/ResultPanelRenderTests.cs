@@ -180,6 +180,15 @@ namespace Sdo.Tests
                     var lp = rr.transform.localPosition; lp.x = 0f; rr.transform.localPosition = lp;
                 }
                 result.PreviewBanner(win: true, atStart: false);   // park the YOU WIN banner at its final spot
+                // Same for the EXP / G rolling totals: no clock in EditMode, so settle them by hand. They are drawn by
+                // RollingDigits, which builds its own SpriteRenderers outside NewSR — the path that shipped un-paired.
+                foreach (var f in new[] { "_expTotal", "_gTotal" })
+                {
+                    var rd = typeof(ResultScreen).GetField(f, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(result);
+                    if (rd == null) continue;
+                    rd.GetType().GetMethod("SetTarget").Invoke(rd, new object[] { 123456L, 0f });
+                    rd.GetType().GetMethod("Tick").Invoke(rd, new object[] { 999f });
+                }
 
                 // Snapshot what every premultiplied renderer is showing and where, before we tear the panel down.
                 var placed = new List<(string name, Sprite spr, Vector3 pos, int order)>();

@@ -575,23 +575,39 @@ namespace Sdo.Game
         /// Used for the 結算 成績字 (02\) and rank badges (RANK\), which are addressed as plain PNGs.</summary>
         public static Sprite LoadImagePremultiplied(string folder, string imageName, int pad = 1, bool cleanMatte = false)
         {
-            var src = LoadTexture(Path.Combine(folder, imageName));
-            return src == null ? null : PremultiplyCrop(src, 0, 0, src.width, src.height, pad, cleanMatte);
+            string path = Path.Combine(folder, imageName);
+            var src = LoadTexture(path);
+            return src == null ? null : PremultiplyCrop(src, 0, 0, src.width, src.height, pad, cleanMatte, path);
         }
 
         private static Sprite PremultipliedFrame(string folder, AnFrame fr, int pad, bool cleanMatte)
         {
-            var src = LoadTexture(Path.Combine(folder, fr.Image));
+            string path = Path.Combine(folder, fr.Image);
+            var src = LoadTexture(path);
             if (src == null) return null;
             int cx, cy, cw, ch;
             if (fr.HasCrop) { cx = fr.X; cy = src.height - fr.Y - fr.H; cw = fr.W; ch = fr.H; }   // top-left -> bottom-left
             else { cx = 0; cy = 0; cw = src.width; ch = src.height; }
-            return PremultiplyCrop(src, cx, cy, cw, ch, pad, cleanMatte);
+            // Same guard as SpriteFromFrame: some .an files declare the ORIGINAL DDS canvas while the extracted PNG is
+            // the trimmed content, so an out-of-bounds crop must fall back to the whole texture. Without it a strip
+            // silently loses a frame — and a digit strip that comes back 9 long makes the whole number vanish (callers
+            // bail on digits.Length < 10), or worse, comes back 10 long with every digit shifted by one.
+            if (cx < 0 || cy < 0 || cw <= 0 || ch <= 0 || cx + cw > src.width || cy + ch > src.height)
+            { cx = 0; cy = 0; cw = src.width; ch = src.height; }
+            return PremultiplyCrop(src, cx, cy, cw, ch, pad, cleanMatte, path);
         }
 
-        private static Sprite PremultiplyCrop(Texture2D src, int cx, int cy, int cw, int ch, int pad, bool cleanMatte)
+        private static Sprite PremultiplyCrop(Texture2D src, int cx, int cy, int cw, int ch, int pad, bool cleanMatte,
+                                              string cacheKeyPath = null)
         {
             if (cw <= 0 || ch <= 0 || cx < 0 || cy < 0 || cx + cw > src.width || cy + ch > src.height) return null;
+            // Cache by (source file, crop, pad, cleanMatte). ResultScreen.Build runs once PER SONG and pulls ~55 crops;
+            // without this every round would leak a fresh batch of RGBA32 textures (and their materials), which the
+            // static premult registries below hold alive forever — Resources.UnloadUnusedAssets can never reclaim them.
+            string key = cacheKeyPath == null ? null
+                       : $"{cacheKeyPath}|{cx},{cy},{cw},{ch}|{pad}|{(cleanMatte ? 1 : 0)}";
+            if (key != null && _premultCache.TryGetValue(key, out var cached) && cached != null && cached.texture != null)
+                return cached;
             int W = cw + pad * 2, H = ch + pad * 2;
             var outTex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             outTex.SetPixels(new Color[W * H]);           // (0,0,0,0) transparent border — premult-clean under bilinear
@@ -617,9 +633,15 @@ namespace Sdo.Game
                 cols[i] = outc;
             }
             outTex.SetPixels(cols); outTex.Apply(false);
-            _premultTextures.Add(outTex);                 // mark so UGUI can pair it with the premult material (UIKit.ApplySprite)
-            return Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            _premultTextures.Add(outTex);                 // mark so callers can pair it with a premult material
+            var sprite = Sprite.Create(outTex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            if (key != null) _premultCache[key] = sprite;
+            return sprite;
         }
+
+        // Premult crops keyed by (source file, crop, pad, cleanMatte) — see PremultiplyCrop. Keeps a re-entered screen
+        // (ResultScreen.Build runs once per song) reusing one batch of textures instead of minting a new one each time.
+        private static readonly Dictionary<string, Sprite> _premultCache = new Dictionary<string, Sprite>();
 
         // Textures produced by LoadAnSoloPremultiplied (RGB already × alpha). A sprite on one of these MUST render with a
         // premultiplied-alpha material (Blend One OneMinusSrcAlpha) or it looks wrong — UIKit.ApplySprite auto-pairs them.
@@ -649,12 +671,14 @@ namespace Sdo.Game
 
         private static readonly Dictionary<Texture, Material> _premultSpriteMats = new Dictionary<Texture, Material>();
         /// <summary>Premultiplied-alpha material BOUND TO ONE TEXTURE — what a <see cref="SpriteRenderer"/> needs.
-        /// A SpriteRenderer given a CUSTOM material does not rebind <c>_MainTex</c> per renderer; the
-        /// <c>[PerRendererData]</c> tag only drives UGUI's CanvasRenderer (and the built-in sprite material path).
-        /// Giving every renderer the shared <see cref="PremultUiMaterial"/> therefore makes them all draw ONE texture —
-        /// 使用者回報「結算數字的位置畫出 YOU WIN 旗、確定鈕畫成保存錄像、排名欄畫出 GAME OVER」就是這個。One material per
-        /// texture fixes it; they are cached, so a texture reused across renderers still shares a single material (and
-        /// still batches). Null if the shader was stripped — the caller must then keep the default material.</summary>
+        /// THE RULE (measured on 6000.4.11f1, five renderers × five textures): <b>one Material INSTANCE may only be
+        /// given to SpriteRenderers that draw the SAME texture.</b> Share an instance across different textures and they
+        /// all end up sampling whichever texture was written to it last — 使用者回報「結算數字的位置畫出 YOU WIN 旗、確定鈕
+        /// 畫成保存錄像、排名欄畫出 GAME OVER」就是這個。It is NOT about <c>[PerRendererData]</c>: <c>Sprites/Default</c>
+        /// tags <c>_MainTex</c> that way too and a shared instance of it bleeds just the same. Assigning NO material
+        /// (letting the renderer use the engine's own sprite material) is safe; a shared CUSTOM instance is not.
+        /// So: one material per texture, cached — renderers that do share a texture still share one material and still
+        /// batch. Null if the shader was stripped — the caller must then keep the default material.</summary>
         public static Material PremultSpriteMaterial(Texture tex)
         {
             if (tex == null) return null;
