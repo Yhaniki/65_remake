@@ -660,8 +660,8 @@
    "v": "歌曲變速"
   },
   {
-   "k": "settings.disable_bomb",
-   "v": "停用炸彈"
+   "k": "settings.song_bomb",
+   "v": "歌曲炸彈"
   },
   {
    "k": "display.windowed",

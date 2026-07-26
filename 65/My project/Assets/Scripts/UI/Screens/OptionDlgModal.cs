@@ -63,7 +63,7 @@ namespace Sdo.UI.Screens
         private int _gpViewFixed;       // 「固定」視角鎖第幾台鏡頭（遊戲中 F2 切到哪台就記哪台；這裡只是跟著存/還原）
         private bool _gpPlayFullSong;   // 進階「完奏模式」（放在進階頁最上面，存 settings.gameplay.playFullSong）
         private bool _gpSongSpeed;      // 進階「歌曲變速」（存 settings.gameplay.songSpeed）
-        private bool _gpDisableBombs;   // 進階「停用炸彈」（存 settings.gameplay.disableBombs）
+        private bool _gpSongBombs;      // 進階「歌曲炸彈」（存 settings.gameplay.songBombs；開＝譜面有雷）
         private float _gpPanelOpacity;
         private Slider _gpOpacitySlider;
         private readonly List<Action> _gameRefresh = new List<Action>();   // re-paint every game-tab dot from its bool
@@ -180,7 +180,7 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < resNames.Length; i++) resNames[i] = ResolutionPreset.Presets[i].ToString();
 
             // 七列，起始 y=238（比原本 243 高 5px，連同進階板一起上移）、列距 26（沿用「遊戲」頁 GameRowY 的列距）。radio 圓點在列頂 +12。
-            // 玩法三列（完奏模式/歌曲變速/停用炸彈）在上，系統四列（垂直同步/視窗大小/顯示模式/語言）在下。
+            // 玩法三列（完奏模式/歌曲變速/歌曲炸彈）在上，系統四列（垂直同步/視窗大小/顯示模式/語言）在下。
             // 板高 214（AdvBoard 放在 y=220 → 底邊 434），最後一列 y=394 + 圓點 12 仍在板內。
             const float y0 = 238f, step = 26f, dotDown = 12f;
             float yFull = y0, ySpeed = y0 + step, yBomb = y0 + step * 2f, yVsync = y0 + step * 3f;
@@ -196,10 +196,10 @@ namespace Sdo.UI.Screens
             AdvDot(b, 392f, ySpeed + dotDown, "common.enabled", () => _gpSongSpeed, () => { _gpSongSpeed = true; RefreshAdv(); }, ownFrame: true);
             AdvDot(b, 481f, ySpeed + dotDown, "common.disabled", () => !_gpSongSpeed, () => { _gpSongSpeed = false; RefreshAdv(); }, ownFrame: true);
 
-            // Row 3 — 停用炸彈：開啟＝載譜時把譜面上的炸彈整顆拿掉（GameplaySettings.disableBombs）。預設關閉。
-            AdvLabel(b, yBomb, "settings.disable_bomb", bakedPill: false);
-            AdvDot(b, 392f, yBomb + dotDown, "common.enabled", () => _gpDisableBombs, () => { _gpDisableBombs = true; RefreshAdv(); }, ownFrame: true);
-            AdvDot(b, 481f, yBomb + dotDown, "common.disabled", () => !_gpDisableBombs, () => { _gpDisableBombs = false; RefreshAdv(); }, ownFrame: true);
+            // Row 3 — 歌曲炸彈：開啟＝照譜面原樣有雷（預設）；關閉＝載譜時把炸彈整顆拿掉（GameplaySettings.songBombs）。
+            AdvLabel(b, yBomb, "settings.song_bomb", bakedPill: false);
+            AdvDot(b, 392f, yBomb + dotDown, "common.enabled", () => _gpSongBombs, () => { _gpSongBombs = true; RefreshAdv(); }, ownFrame: true);
+            AdvDot(b, 481f, yBomb + dotDown, "common.disabled", () => !_gpSongBombs, () => { _gpSongBombs = false; RefreshAdv(); }, ownFrame: true);
 
             // Row 4 — 垂直同步：開啟/關閉。非模板列 → 自繪深紫空心圓框。
             AdvLabel(b, yVsync, "settings.vsync", bakedPill: false);
@@ -637,7 +637,7 @@ namespace Sdo.UI.Screens
             _gpCallShow = g.callCardInGame;
             _gpPlayFullSong = g.playFullSong;
             _gpSongSpeed = g.songSpeed;
-            _gpDisableBombs = g.disableBombs;
+            _gpSongBombs = g.songBombs;
             _gpPanelOpacity = Mathf.Clamp(g.panelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
         }
 
@@ -649,7 +649,7 @@ namespace Sdo.UI.Screens
             g.callCardInGame = _gpCallShow;
             g.playFullSong = _gpPlayFullSong;
             g.songSpeed = _gpSongSpeed;
-            g.disableBombs = _gpDisableBombs;
+            g.songBombs = _gpSongBombs;
             g.panelOpacity = Mathf.Clamp(_gpPanelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
         }
 

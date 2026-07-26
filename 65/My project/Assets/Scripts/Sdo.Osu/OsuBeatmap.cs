@@ -203,8 +203,8 @@ namespace Sdo.Osu
         }
 
         /// <summary>
-        /// 把譜面上的炸彈(mine / avoid-note)整顆拿掉，回傳移除的顆數。給 OPTION 進階「停用炸彈」用
-        /// （GameplaySettings.disableBombs）：踩到炸彈只會扣血（不斷 combo）、
+        /// 把譜面上的炸彈(mine / avoid-note)整顆拿掉，回傳移除的顆數。給 OPTION 進階「歌曲炸彈」**關掉**時用
+        /// （GameplaySettings.songBombs=false）：踩到炸彈只會扣血（不斷 combo）、
         /// 永遠不計分也不計 miss，所以移除它**不影響**滿分、TotalNotes 或任何判定數字（<see cref="TotalNotes"/>
         /// 本來就跳過炸彈）——差別只在「地上不再有雷」。純函式（只動 HitObjects，不碰時間/BPM/timing points），
         /// 呼叫端用開關 gating（見 ScreenGameplay.LoadChart）。

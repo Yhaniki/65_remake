@@ -660,8 +660,8 @@
    "v": "Song Speed"
   },
   {
-   "k": "settings.disable_bomb",
-   "v": "Disable Mines"
+   "k": "settings.song_bomb",
+   "v": "Song Mines"
   },
   {
    "k": "display.windowed",

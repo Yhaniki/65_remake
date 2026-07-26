@@ -97,6 +97,8 @@ namespace Sdo.Settings
         public static bool hasTextAlphaKeys = false;   // 同上：檔案是否帶 combo/判定文字透明度鍵（比大小鍵晚加，得各自記）
         public static bool hasTextPopKeys = false;     // 同上：檔案是否帶 combo/判定文字彈跳倍率鍵（又比透明度鍵晚加）
         public static bool hasOptUiScale = false;   // 檔案是否帶 opt_uiScale（舊檔沒有 → 從舊 settings.json 撿）
+        public static bool hasSongBombsKey = false; // 檔案是否帶 opt_songBombs（沒有＝舊檔只有語意相反的 opt_disableBombs
+                                                    // → Load 重寫一次模板，把舊鍵換成新鍵）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
         // 舊檔（config.ini 還帶鍵位的年代）的 4 鍵鍵位：只讀不寫，開機時給 KeyMap 種 keymaps.ini 用，見 KeyMap.Load。
         public static string optKeys = "A,S,W,D";
@@ -108,7 +110,7 @@ namespace Sdo.Settings
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
                            optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true,
-                           optDisableBombs = false;
+                           optSongBombs = true;   // 歌曲炸彈：預設開（照譜面原樣有雷）
         public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
 
@@ -221,6 +223,9 @@ namespace Sdo.Settings
                 if (!hasTextScaleKeys) dirty = true;
                 if (!hasTextAlphaKeys) dirty = true;   // 透明度鍵比大小鍵晚加，只有大小鍵的檔一樣要補寫
                 if (!hasTextPopKeys) dirty = true;     // 彈跳倍率鍵又更晚加，同理
+                // 舊檔只有語意相反的 opt_disableBombs（值已在 ParseInto 反過來搬進 optSongBombs）→ 重寫一次，
+                // 把它換成 opt_songBombs，之後檔案裡不再有舊鍵。
+                if (!hasSongBombsKey) dirty = true;
 
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
@@ -406,7 +411,10 @@ namespace Sdo.Settings
                     case "opt_callCardInGame": optCallCard = ParseBool(val, optCallCard); break;
                     case "opt_playFullSong": optPlayFullSong = ParseBool(val, optPlayFullSong); break;
                     case "opt_songSpeed": optSongSpeed = ParseBool(val, optSongSpeed); break;
-                    case "opt_disableBombs": optDisableBombs = ParseBool(val, optDisableBombs); break;
+                    case "opt_songBombs": optSongBombs = ParseBool(val, optSongBombs); hasSongBombsKey = true; break;
+                    // 舊鍵（語意相反）：opt_disableBombs=1 表示「把炸彈拿掉」→ 搬成 opt_songBombs=0。只讀不寫，
+                    // Load 會因為 hasSongBombsKey=false 重寫一次模板，之後檔案裡只剩新鍵。
+                    case "opt_disableBombs": optSongBombs = !ParseBool(val, !optSongBombs); break;
                     case "opt_collapseShortHolds": optCollapseShortHolds = ParseBool(val, optCollapseShortHolds); break;
                     case "opt_panelOpacity": optPanelOpacity = ParseFloat(val, optPanelOpacity); break;
                 }
@@ -562,8 +570,8 @@ namespace Sdo.Settings
             sb.Append("opt_callCardInGame=").Append(B(optCallCard)).Append('\n');
             sb.Append("opt_playFullSong=").Append(B(optPlayFullSong)).Append('\n');
             sb.Append("opt_songSpeed=").Append(B(optSongSpeed)).Append('\n');
-            sb.Append("# 停用炸彈（1=譜面上的炸彈開局直接拿掉 0=照譜面原樣，預設）。炸彈不計分也不計 miss，拿掉不影響滿分。\n");
-            sb.Append("opt_disableBombs=").Append(B(optDisableBombs)).Append('\n');
+            sb.Append("# 歌曲炸彈（1=照譜面原樣有雷，預設；0=開局載譜時把炸彈整顆拿掉）。炸彈不計分也不計 miss，拿掉不影響滿分。\n");
+            sb.Append("opt_songBombs=").Append(B(optSongBombs)).Append('\n');
             sb.Append("# 無理短長條收成一般 note（短於 180BPM 16 分音符 ≈83ms 的 long note → note；1=開 預設 0=關）\n");
             sb.Append("opt_collapseShortHolds=").Append(B(optCollapseShortHolds)).Append('\n');
             sb.Append("# 面板透明度 0.0~1.6\n");
@@ -608,7 +616,7 @@ namespace Sdo.Settings
                 optCameraFixed = g.cameraFixed;
                 optCallCard = g.callCardInGame; optPlayFullSong = g.playFullSong; optSongSpeed = g.songSpeed;
                 optCollapseShortHolds = g.collapseShortHolds;
-                optDisableBombs = g.disableBombs;
+                optSongBombs = g.songBombs;
                 optPanelOpacity = g.panelOpacity;
             }
             hasOption = true;
@@ -634,7 +642,7 @@ namespace Sdo.Settings
             g.cameraFixed = optCameraFixed;
             g.callCardInGame = optCallCard; g.playFullSong = optPlayFullSong; g.songSpeed = optSongSpeed;
             g.collapseShortHolds = optCollapseShortHolds;
-            g.disableBombs = optDisableBombs;
+            g.songBombs = optSongBombs;
             g.panelOpacity = optPanelOpacity;
         }
 

@@ -324,7 +324,7 @@ namespace Sdo.UI
                 game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
                 game.collapseShortHolds = gp.collapseShortHolds; // 無理短長條(<180BPM 16分)收成一般 note（預設開，尚未接 UI）
                 game.constantScroll = !gp.songSpeed;             // 進階「歌曲變速」關 → 整首固定流速（忽略譜面 BPM 變化 / SV）
-                game.disableBombs = gp.disableBombs;             // 進階「停用炸彈」開 → 載譜時把譜面上的炸彈整顆拿掉
+                game.songBombs = gp.songBombs;                   // 進階「歌曲炸彈」關 → 載譜時把譜面上的炸彈整顆拿掉
             }
             _activeGame = game;
         }

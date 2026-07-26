@@ -660,8 +660,8 @@
    "v": "曲の変速"
   },
   {
-   "k": "settings.disable_bomb",
-   "v": "爆弾を無効化"
+   "k": "settings.song_bomb",
+   "v": "曲の爆弾"
   },
   {
    "k": "display.windowed",
