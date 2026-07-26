@@ -38,6 +38,7 @@ namespace Sdo.Game
             public int VertCount;
             public int Stride;        // vertex stride in bytes
             public string[] DdsNames; // per-material .dds filename
+            public uint[] MatFlags;   // 官方逐材質繪製旗標 (material record +0x194) — 見 MshLoader.IsOfficialTransparent
             public SceneSubset[] Subsets;
             public int Type;          // footer mesh type (0 skin / 1 plain / 2 bone-or-static)
             public int Next;          // byte offset of the next block, or -1 if last/unparseable
@@ -77,7 +78,12 @@ namespace Sdo.Game
                 int matnames = post + 28;
                 if ((long)matnames + (long)numMat * 408 + 16 > d.Length) break;
                 b.DdsNames = new string[numMat];
-                for (int m = 0; m < numMat; m++) b.DdsNames[m] = ReadCStr(d, matnames + m * 408 + 17 * 4, 48);
+                b.MatFlags = new uint[numMat];
+                for (int m = 0; m < numMat; m++)
+                {
+                    b.DdsNames[m] = ReadCStr(d, matnames + m * 408 + 17 * 4, 48);
+                    b.MatFlags[m] = U(d, matnames + m * 408 + 0x194);   // 官方透明批旗標,和 mapobj 的 MshLoader 同欄位
+                }
 
                 int fp = matnames + numMat * 408;                 // footer
                 b.Type = (int)U(d, fp);
@@ -135,8 +141,19 @@ namespace Sdo.Game
             // truss GANGJIA, the dance floor WUTAIDIMIAN, the PANGGUAN spectators) render as depth-writing
             // Cutout/Opaque instead of non-occluding alpha-Blend. Scoped to this scene to avoid touching the
             // validated去背 of other maps.
-            bool histoAlpha = string.Equals(Path.GetFileName(sceneDir?.TrimEnd('/', '\\') ?? ""), "SCN0020",
-                                             StringComparison.OrdinalIgnoreCase);
+            string sceneFolder = Path.GetFileName(sceneDir?.TrimEnd('/', '\\') ?? "");
+            bool histoAlpha = string.Equals(sceneFolder, "SCN0020", StringComparison.OrdinalIgnoreCase);
+            // ★ 為什麼「照官方材質旗標分類」在這裡行不通(2026-07-26 實測後放棄,別再試一次):
+            // SCENE.MSH 每顆材質記錄 +0x194 帶官方繪製旗標,而官方引擎沒有 alpha test —— 旗標非 0 就是丟進
+            // 延後透明批(一般 SrcAlpha/InvSrcAlpha),旗標 0 才是不透明。以 SCN0005 為例,46 顆材質裡有 15 顆
+            // 旗標 0x2、其餘 32 顆旗標 0 且全是 DXT1(根本沒有 alpha),所以照旗標分類等於「把其中 14 顆從
+            // cutout 改成 alpha-blend」(另一顆 yizi2 本來就已經是 blend)。實際套下去截圖比對:**畫面更糟**。因為我們的 Sdo/SceneVertexAlpha 是
+            // ZWrite Off + Transparent 佇列,而它們多半是實心道具(雪松/鐘樓/椅子/松鼠/雪人),不寫深度後
+            // 同一個 renderer 內的 submesh 只能照順序畫、無法逐像素排序 → 雪松與雪橇前後關係翻掉、還多出一塊
+            // 硬邊矩形。cutout 對這種近乎二值的 alpha(guang.dds 有 30% ≥250、60% ≤8,中間只剩 9%)視覺上與
+            // blend 幾乎一樣,卻保住了深度寫入。
+            // 結論:旗標仍然解析出來放在 SceneBlock.MatFlags(格式事實,測試有釘),但**不拿來選 shader** ——
+            // 真要照官方走,得先讓場景的透明批能正確排序(拆 renderer 或做深度預繪),那是另一件事。
             // cutout × VERTEX COLOUR: walls stay opaque, DXT3 audience billboards discard their transparent
             // background, and the per-vertex baked lighting/tint darkens the scene (e.g. SCN0008 night).
             var cutoutShader = Shader.Find("Sdo/SceneVertexCutout") ?? Shader.Find("Unlit/Transparent Cutout") ?? Shader.Find("Unlit/Texture");
@@ -201,11 +218,12 @@ namespace Sdo.Game
                         tm = (tex, mode); texCache[name] = tm;
                     }
 
-                    var shader = tm.mode == DdsAlphaMode.Blend ? alphaShader : cutoutShader;
+                    var drawMode = tm.mode;
+                    var shader = drawMode == DdsAlphaMode.Blend ? alphaShader : cutoutShader;
                     var mat = tm.tex != null ? new Material(shader) { mainTexture = tm.tex } : new Material(shader) { color = new Color(0.3f, 0.3f, 0.35f) };
                     // Soft DDS alpha is alpha-blended. Pure hard alpha stays a cutout. Opaque DDS disables clipping.
-                    if (tm.mode != DdsAlphaMode.Blend)
-                        mat.SetFloat("_Cutoff", tm.mode == DdsAlphaMode.Cutout ? 0.5f : -1f);
+                    if (drawMode != DdsAlphaMode.Blend)
+                        mat.SetFloat("_Cutoff", drawMode == DdsAlphaMode.Cutout ? 0.5f : -1f);
                     subTris.Add(sub); subMats.Add(mat); subMatIds.Add(s.MatId);
                 }
             }

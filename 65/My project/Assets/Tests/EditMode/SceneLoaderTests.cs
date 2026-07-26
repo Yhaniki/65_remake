@@ -112,5 +112,34 @@ namespace Sdo.Tests
             Assert.AreEqual(0, SceneLoader.ParseBlocks(null).Count);
             Assert.AreEqual(0, SceneLoader.ParseBlocks(new byte[4]).Count);
         }
+
+        [Test]
+        public void RealData_Scn0005_MaterialFlags_Say_Blend_But_We_Deliberately_Keep_Cutout()
+        {
+            var dir = System.IO.Path.Combine(SdoExtracted.Root, System.IO.Path.Combine("SCENE", "SCN0005"));
+            var msh = System.IO.Path.Combine(dir, "SCENE.MSH");
+            if (!System.IO.File.Exists(msh)) Assert.Ignore("SCENE/SCN0005 data root not found (data_root.txt)");
+
+            var blocks = SceneLoader.ParseBlocks(System.IO.File.ReadAllBytes(msh));
+            Assert.AreEqual(1, blocks.Count, "聖誕夜是單一區塊");
+            var b = blocks[0];
+            Assert.AreEqual(46, b.DdsNames.Length);
+            Assert.AreEqual(b.DdsNames.Length, b.MatFlags.Length, "旗標要和材質名一一對應");
+
+            int transparent = 0;
+            for (int m = 0; m < b.MatFlags.Length; m++) if (MshLoader.IsOfficialTransparent(b.MatFlags[m])) transparent++;
+            Assert.AreEqual(15, transparent, "官方標成透明批的材質數 —— 旗標解析位置(+0x194)對不對就看這個");
+
+            int guang = System.Array.FindIndex(b.DdsNames, n => string.Equals(n, "guang.dds", System.StringComparison.OrdinalIgnoreCase));
+            Assert.Greater(guang, -1, "找不到 guang.dds");
+            Assert.AreEqual(0x2u, b.MatFlags[guang], "樹上那道光官方是 0x2 = 透明批");
+
+            // ★ 但我們**故意不照旗標選 shader**。實測(Scn0005CaptureTest 截圖比對)把這 15 顆(其中 14 顆現在是 cutout)改成
+            // Sdo/SceneVertexAlpha 之後畫面更糟:那支 shader 是 ZWrite Off + Transparent 佇列,而它們多半
+            // 是實心道具(雪松/鐘樓/椅子/松鼠/雪人),不寫深度就沒辦法在同一個 renderer 內正確排序 —— 雪松與
+            // 雪橇的前後關係會翻掉、還多出硬邊矩形。這條測試存在的意義是把「我們知道官方怎麼說、也知道為什麼
+            // 不照做」寫死,免得日後有人看到旗標就直接接上去。真要照官方走,得先讓場景透明批能排序。
+            Assert.IsFalse(MshLoader.IsOfficialTransparent(0u), "旗標 0 = 不透明批(其餘 32 顆都是,且全是 DXT1)");
+        }
     }
 }
