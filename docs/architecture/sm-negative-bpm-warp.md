@@ -3,7 +3,8 @@
 > 實作：[`SmChart.cs`](../../65/My%20project/Assets/Scripts/Sdo.Osu/SmChart.cs)（`SmWarp` / `Timeline` / `DisplayStops`）、
 > [`OsuHitObject.cs`](../../65/My%20project/Assets/Scripts/Sdo.Osu/OsuHitObject.cs)（`IsFake` / `IsFakeTail` / `ScrollTimeMs`）、
 > [`ManiaScroll.cs`](../../65/My%20project/Assets/Scripts/Sdo.Osu/ManiaScroll.cs)（`MergeStops` / `BaseBeatLength` 的同時刻 tie-break）、
-> `ScreenGameplay.ScrollNotes`。測試：`Assets/Tests/EditMode/SmChartTests.cs`、`ManiaScrollTests.cs`。
+> [`WarpDecoration.cs`](../../65/My%20project/Assets/Scripts/Sdo.Ruleset/WarpDecoration.cs)（「歌曲變速」關閉時不畫，§6）、
+> `ScreenGameplay.ScrollNotes`。測試：`Assets/Tests/EditMode/SmChartTests.cs`、`ManiaScrollTests.cs`、`WarpDecorationTests.cs`。
 > 出處：`assets/SM-YHANIKI-master/src/TimingData.cpp`（StepMania 3.9）。
 
 ## 1. 這是什麼
@@ -148,7 +149,28 @@ StepMania 3.9 其實**會**把它們算進 note 總數（`Player` 的 miss 邏�
 選歌畫面的 note 數走 `SmChart.PlayableNoteCount()`，同樣扣掉 warp 內的音符；
 沒有負 BPM 的譜直接走原本便宜的 `NoteCount(noteData)`，行為與輸出完全不變。
 
-## 6. 邊界情形
+## 6. 「歌曲變速」關閉時不畫
+
+> 實作：[`WarpDecoration.cs`](../../65/My%20project/Assets/Scripts/Sdo.Ruleset/WarpDecoration.cs)、
+> `ScreenGameplay.ScrollNotes` 的第一個分支。測試：`Assets/Tests/EditMode/WarpDecorationTests.cs`。
+
+OPTION 進階的「歌曲變速」關 = `ScreenGameplay.constantScroll` = osu 的 Constant Speed。這個模式下
+`ManiaScroll.Build` 把**所有** timing point 丟掉（`pts = null`），連 §3 那個 1ms 的超高速顯示窗也一起沒了 ——
+而那個窗正是「被跳過的拍子照拍距鋪開、再瞬間刷過判定線」的唯一機制。少了它，warp 內幾十上百顆音符的
+`ScrollTimeMs` 相差不到 1 ms，線性捲動下**全部疊在同一個位置**一起捲進來：畫面上是一坨互相重疊、
+打不到的音符（`120 BPM` 跳 8 拍的例子，相鄰兩拍的間距從 104 px 掉到 0.2 px）。
+
+官方（StepMania 3.9）沒有這個模式，沒有「正確的畫法」可抄 —— 這裡選擇**不畫**（使用者定奪）。
+
+* **判定一個字都不動**：`IsFake` 本來就不判定/不 miss/不進滿分分母，warp 炸彈的「按住穿過 = 自動打擊」
+  （`TickBombs` → `WarpMineStep`）照跑。關掉變速不會改變任何一分，只是那批裝飾音看不到。
+* **退場改由這條分支自己負責**（`WarpDecoration.CanRetire`）：藏起來的音符走不到「流出畫面才收」那條路徑，
+  而 `TickBombs` 又把 `IsFake` 的退場整個讓給顯示端 —— 沒接的話那批音符會永遠卡在存活游標前面，每幀重掃。
+  炸彈要等跨線游標 `_bombPrevNow` 真的越過它之後才收，理由同 §3 的「顯示端跑在 `TickBombs` 前面」。
+* **編輯器不藏**（`editorMode`）：做譜時要看得到譜上所有東西。
+* 「歌曲變速」開（預設）時這條分支完全不成立，行為與改動前逐位相同。
+
+## 7. 邊界情形
 
 | 情形 | 處理 |
 |------|------|
@@ -159,11 +181,11 @@ StepMania 3.9 其實**會**把它們算進 note 總數（`Player` 的 miss 邏�
 | warp 內的 mine | 一樣是 `IsFake` → 不會爆 |
 | 長條的 cap 落在 warp 內、頭部在 warp 外 | `OsuHitObject.IsFakeTail`：整條照 beat 間距畫出來，但**結尾不判定**（不用放開、不會 miss、只算頭部一個判定）。StepMania 也是這樣：播放頭 warp 過 `iEndRow` 時 `Player.cpp:407` 直接給 `HNS_OK`。這種長條的**判定**長度只剩幾十 ms，所以 `CollapseShortHolds` 必須跳過它，不然整條裝飾長條會被收成 tap 而消失 |
 | 兩個 warp 時刻靠得很近（間距 > 0） | 顯示窗的 ε 縮到間距的一半，窗不會重疊（重疊會讓 timing point 時間倒退） |
-| 多個 warp 時刻**完全相同** | ε 觸到 `1e-4` 的下限，它們**共用同一個顯示窗** → 見 §7，已知限制 |
+| 多個 warp 時刻**完全相同** | ε 觸到 `1e-4` 的下限，它們**共用同一個顯示窗** → 見 §8，已知限制 |
 | 同一個 ms 上堆了好幾個 timing point | warp 譜很容易這樣（好幾個 warp 共用一個落地時刻）。`ManiaScroll.BaseBeatLength` 的排序必須以**宣告順序**收尾：最後一段的長度是「這一點 → `lastObjMs`」，同時刻誰排最後就吃掉整首剩下的時間、直接決定基準速度。只比時間的話 `Array.Sort` 是不穩定排序 → 基準會隨機跳（實測 `Dreadnought` 在 `312.5` 與 `1.25e-5` ms/beat 之間跳，整首捲動差 2500 萬倍）。取「後宣告的贏」與 `BuildMultiplierPoints` 一致 —— 見 [scroll-base-bpm.md](scroll-base-bpm.md) |
 | 沒有負 BPM 的譜 | 完全不走這條路：timing points、音符時間、`ScrollTimeMs == StartTimeMs` 都與改動前逐位相同 |
 
-## 7. 已知限制：多個 warp 共用同一個落地時刻（**未修**）
+## 8. 已知限制：多個 warp 共用同一個落地時刻（**未修**）
 
 `Timeline.BuildWindows` 只拿 warp `i` 跟 `i-1` 比間距：
 

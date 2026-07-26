@@ -41,6 +41,7 @@ namespace Sdo.Settings
         public bool callCardInGame = true;   // 呼叫卡遊戲中顯示（預設開；暫未接功能）
         public bool playFullSong = false;    // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打到曲末；但血一空就不再加分（判定統計照記），結算仍算 GAME OVER／輸
         public bool songSpeed = true;        // 進階「歌曲變速」：true=譜面中途的 BPM 變化/SV 照樣改變 note 流速（預設，官方玩法）；false=整首固定流速（ScreenGameplay.constantScroll）
+                                             // 關閉時 StepMania warp（負 BPM）掃掉的裝飾音**不畫**：那個模式連 warp 的 1ms 超高速顯示窗都沒了，整段會疊成一坨（見 Sdo.Ruleset.WarpDecoration）。判定不受影響
         // 進階「歌曲炸彈」：譜面上的炸彈(mine)要不要留著。true=照譜面原樣有雷（預設）；false=開局載譜時整顆拿掉
         // （OsuBeatmap.RemoveBombs）。炸彈踩到只扣血（不斷 combo、不計分也不計 miss），所以拿掉不影響滿分/TotalNotes
         // ——差別只在地上有沒有雷。（舊名 disableBombs，語意相反；config.ini 的舊鍵 opt_disableBombs 仍讀得進來搬遷。）

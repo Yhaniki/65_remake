@@ -5042,6 +5042,17 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) { ReturnVisual(n); continue; }
+                // 「歌曲變速」關(constantScroll)→ warp(負 BPM)掃掉的裝飾音**不畫**:那個模式把所有 timing point
+                // 丟掉,連 warp 的 1ms 超高速顯示窗都沒了,整段被跳過的拍子會疊成一坨捲進來(見 WarpDecoration)。
+                // 判定不受影響 —— IsFake 本來就不判定,warp 炸彈的「按住穿過 = 自動打擊」照跑。
+                if (WarpDecoration.IsHidden(n.Note, constantScroll, editorMode))
+                {
+                    ReturnVisual(n);
+                    // 退場得自己負責:TickBombs 把 IsFake 的退場讓給顯示端,而下面那條「流出畫面才收」的路徑
+                    // 這一顆永遠走不到了。炸彈要等跨線游標真的越過它才收(理由同 offPast 的 bombPending)。
+                    if (WarpDecoration.CanRetire(n.Note, now, _bombPrevNow)) n.Done = true;
+                    continue;
+                }
                 if (n.Note.ScrollTimeMs > now && ScrollPx(now, n.Note.ScrollTimeMs) > aheadPx)
                 {
                     // Note is past the far edge of the board. With frame_type 33 捲動速度 the current speed can jump/
