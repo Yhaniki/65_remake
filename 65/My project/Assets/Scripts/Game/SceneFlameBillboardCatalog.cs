@@ -18,8 +18,15 @@ namespace Sdo.Game
         public readonly string[] Frames;         // ordered frame file names (cycle order)
         public readonly float IntervalMs;        // ms per frame
         public readonly FlameBillboard[] Billboards;
-        public SceneFlameSet(string framesDir, string[] frames, float intervalMs, FlameBillboard[] billboards)
-        { FramesDir = framesDir; Frames = frames; IntervalMs = intervalMs; Billboards = billboards; }
+        /// <summary>Bake BOTH quad windings, so the additive sprite is drawn TWICE (2× brightness).
+        /// The official draws each billboard ONCE — this is a legacy brightness hack, kept only for the two sets that
+        /// were visually validated with it (SCN0022 鬼火 / SCN0024 招牌光暈). For a SMOOTH radial glow it is actively
+        /// wrong: doubling a bell-curve alpha clips the whole middle of the sprite to white, so the soft falloff
+        /// collapses into a flat disc with a hard rim ("發光太硬"). New sets should leave this false.</summary>
+        public readonly bool DoubleDraw;
+        public SceneFlameSet(string framesDir, string[] frames, float intervalMs, FlameBillboard[] billboards,
+                             bool doubleDraw = true)
+        { FramesDir = framesDir; Frames = frames; IntervalMs = intervalMs; Billboards = billboards; DoubleDraw = doubleDraw; }
     }
 
     /// <summary>
@@ -56,7 +63,11 @@ namespace Sdo.Game
                 {
                     new FlameBillboard(77.000f, 147.475f, 336.240f, 100f),
                     new FlameBillboard(-626.482f, 147.475f, 336.349f, 100f),
-                }),
+                },
+                // guangxiao_.tga 是一張平滑的放射漸層(alpha 由邊緣 6 → 中心 248 → 18 的鐘形,RGB 全圖固定
+                // 暖橘 (234,158,27))。畫兩次的話中心 0.97×0.92 加倍後直接爆掉,整片中段被 clip 成純色,
+                // 柔和的衰減塌成一顆硬邊圓盤 —— 這種漸層光暈必須只畫一次。
+                doubleDraw: false),
 
             // SCN0005 聖誕夜:同一張 guangxiao_.tga 的單顆光暈,100×100,同樣是靜態(case 5 的每幀更新
             // StageScene_UpdateDualBillboard_004afeb0 不碰它)。
@@ -67,7 +78,8 @@ namespace Sdo.Game
                 new[]
                 {
                     new FlameBillboard(-97.7f, 115.0f, 222.4f, 100f),
-                }),
+                },
+                doubleDraw: false),   // 同 SCN0001:漸層光暈畫兩次會爆成硬邊圓盤
 
             ["SCN0022"] = new SceneFlameSet(
                 "SCENE/MAPOBJ/FENMU/LANHUO",

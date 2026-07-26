@@ -563,7 +563,10 @@ namespace Sdo.Game
             var shader = Shader.Find("Sdo/UnlitAdditiveOverlay");
             var mat = new Material(shader != null ? shader : Shader.Find("Sprites/Default")) { name = "FlameAdditive" };
             mat.mainTexture = frames[0];
-            var mesh = FlameQuadMesh();
+            // Per-set winding: SCN0022/SCN0024 keep the legacy double-draw they were validated with; a smooth radial
+            // glow (SCN0001/SCN0005 guangxiao) must be drawn ONCE or the additive doubling clips its bell-curve alpha
+            // into a flat hard-rimmed disc. Cull Off means one winding still shows from both sides either way.
+            var mesh = BillboardQuadMesh(doubleSided: set.DoubleDraw);
             int layer = use3dCamera ? SceneLayer : 0;
             foreach (var b in set.Billboards)
             {

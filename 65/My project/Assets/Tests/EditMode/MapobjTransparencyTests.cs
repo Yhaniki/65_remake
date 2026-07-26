@@ -1176,6 +1176,16 @@ namespace Sdo.Tests
             // 沒有光暈的場景仍要回 null(這張表是白名單,不能變成「每個場景都給一顆」)。
             Assert.IsNull(SceneFlameBillboardCatalog.ForFolder("SCN0000"));
             Assert.IsNull(SceneFlameBillboardCatalog.ForFolder("SCN0023"));
+
+            // ★ 這兩組是平滑的放射漸層(guangxiao_.tga:alpha 由邊緣 6 → 中心 248 → 18 的鐘形,RGB 全圖固定
+            // 暖橘 234,158,27),必須只畫一次。官方本來就只畫一次;雙繞序是舊的加倍亮度手法,對漸層光暈來說
+            // 會把中段 clip 成純色、柔和衰減塌成硬邊圓盤 =「發光太硬」。
+            Assert.IsFalse(street.DoubleDraw, "SCN0001 漸層光暈只能畫一次");
+            Assert.IsFalse(xmas.DoubleDraw, "SCN0005 漸層光暈只能畫一次");
+            // 既有兩組是拿雙繞序驗過的,不能被順手改掉(SCN0022 鬼火 / SCN0024 招牌光暈)。
+            Assert.IsTrue(SceneFlameBillboardCatalog.ForFolder("SCN0022").DoubleDraw);
+            Assert.IsTrue(SceneFlameBillboardCatalog.ForFolder("SCN0024").DoubleDraw);
+            Assert.IsTrue(SceneFlameBillboardCatalog.ForFolder("SCN0028").DoubleDraw);
         }
 
         [Test]
