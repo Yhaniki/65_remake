@@ -50,6 +50,22 @@ namespace Sdo.Tests
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.6f);
 
+            // SDO_SHOT_CAMSWEEP=1:輪過每一個固定機位停一下,讓各元件的診斷 log(例如 lens flare 的
+            // 可見性判定)有機會在每個機位各印一次 —— 用來回答「是實作壞了還是這個機位本來就看不到」。
+            if (System.Environment.GetEnvironmentVariable("SDO_SHOT_CAMSWEEP") == "1")
+            {
+                int cams = game.FixedCamCountForTest;
+                Debug.Log($"[shot-probe] cam sweep: {cams} 個固定機位");
+                for (int c = 0; c < cams; c++)
+                {
+                    game.SetCamModeForTest(c);
+                    Debug.Log($"[shot-probe] === cam {c} ===");
+                    yield return new WaitForSecondsRealtime(1.2f);
+                }
+                game.SetCamModeForTest(0);
+                yield return new WaitForSecondsRealtime(0.4f);
+            }
+
             // 探針 + 場景包圍盒(自由機位要靠它決定拍多遠)
             var all = Object.FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None);
             var world = new Bounds();

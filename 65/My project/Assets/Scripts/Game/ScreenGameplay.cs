@@ -3742,12 +3742,15 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(_pendingLensFlareDir)) return;
             var atlas = SceneLensFlare.LoadAtlas(_pendingLensFlareDir);
             if (atlas == null) { Debug.LogWarning("[flare] 缺 LENSFLARE.BMP: " + _pendingLensFlareDir); return; }
-            Camera stage = null;
-            foreach (var c in Camera.allCameras) if (!c.orthographic) { stage = c; break; }
-            if (stage == null) { Debug.LogWarning("[flare] 找不到舞台透視相機"); return; }
+            // 一定要用 _sceneCam(渲染到 sceneRT 的那台舞台相機)。掃 Camera.allCameras 取第一台透視相機
+            // 會抓到別的東西 —— 實測抓到一台停在 (0,34,3794) 朝 +Z 的相機，太陽在它正後方 177.8°，
+            // 於是可見性判定永遠不過、光斑一次都沒畫出來。
+            var stage = _sceneCam;
+            if (stage == null) { Debug.LogWarning("[flare] _sceneCam 還沒建立"); return; }
             var go = new GameObject("SunLensFlare");
             var lf = go.AddComponent<SceneLensFlare>();
             lf.Init(stage, atlas, backdropLayer);
+            if (!string.IsNullOrEmpty(DevVar("SDO_FLARE_DIAG"))) lf.DiagEverySec = 1f;
             Debug.Log($"[flare] {SceneFolder()}: {SceneLensFlare.Elements.Length} 顆光斑, 壽命 {lf.LifetimeSec}s (官方 10s 後永遠消失)");
             _pendingLensFlareDir = null;
         }

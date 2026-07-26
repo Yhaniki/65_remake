@@ -43,7 +43,11 @@ namespace Sdo.Tests
             yield return GameplayBoot.Boot(g => game = g, SceneOnlyScn0004);
             Assert.IsTrue(game.observeBurstMode && game.scenePath.ToUpperInvariant().Contains("SCN0004"),
                 $"not a clean SCN0004 scene-only boot (scenePath={game.scenePath}, observe={game.observeBurstMode})");
-            game.SetCamModeForTest(0);
+            // SDO_SHOT_CAM 指定固定機位(預設 0)。太陽 lens flare 只有在鏡頭抬起來的機位才進得了畫面
+            // (cam 4/5)，預設機位的太陽投影在畫面上緣之外 —— 官方自己的出界判定就會擋掉。
+            int camMode = 0;
+            int.TryParse(System.Environment.GetEnvironmentVariable("SDO_SHOT_CAM") ?? "0", out camMode);
+            game.SetCamModeForTest(camMode);
             yield return new WaitForSecondsRealtime(0.5f);
 
             Probe();

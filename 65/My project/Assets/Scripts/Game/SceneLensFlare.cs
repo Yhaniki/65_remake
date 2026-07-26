@@ -117,8 +117,28 @@ namespace Sdo.Game
             _mr.enabled = false;
         }
 
+        /// <summary>診斷用:每 N 秒印一次可見性判定的每一步(為什麼沒畫出來)。0 = 不印。</summary>
+        public float DiagEverySec = 0f;
+        private float _lastDiag = -999f;
+
+        private void Diag()
+        {
+            if (DiagEverySec <= 0f || Time.time - _lastDiag < DiagEverySec) return;
+            _lastDiag = Time.time;
+            var cam = _stageCam;
+            if (cam == null) { Debug.Log("[flare.diag] 沒有相機"); return; }
+            float age = Time.time - _bornTime;
+            float ang = AngleDeg(cam.transform.position, cam.transform.forward, SunPos);
+            var ndc4 = cam.projectionMatrix * cam.worldToCameraMatrix * new Vector4(SunPos.x, SunPos.y, SunPos.z, 1f);
+            string scr = ndc4.w > 0f ? ToScreen(new Vector2(ndc4.x / ndc4.w, ndc4.y / ndc4.w)).ToString("F1") : "(相機背後)";
+            Debug.Log($"[flare.diag] age={age:F1}s/{LifetimeSec}s  eye={cam.transform.position.ToString("F0")} " +
+                      $"fwd={cam.transform.forward.ToString("F2")}  ang={ang:F1}° (需 0<ang<40)  w={ndc4.w:F1}  screen={scr}  " +
+                      $"drawn={(_mr != null && _mr.enabled)}");
+        }
+
         private void LateUpdate()
         {
+            Diag();
             if (_mr == null) return;
             if (LifetimeSec > 0f && Time.time - _bornTime > LifetimeSec)
             {
