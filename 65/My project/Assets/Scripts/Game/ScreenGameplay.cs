@@ -478,6 +478,10 @@ namespace Sdo.Game
         // judgeLineY (受擊線 Y, top↔bottom), _scrollSign (+1 上捲 / −1 下捲). Standalone/F4 boot keeps the defaults (向上左邊).
         public int dropDirection = 0;        // 掉落方式：0=向上 1=向下 2=傾斜
         public bool notesPanelLeft = true;   // NOTES面板位置：true=左邊(預設) / false=置中
+        /// <summary>實際生效的面板位置＝<see cref="NotePanelLayout.EffectivePanelLeft"/>(玩家設定, ShowTime)：
+        /// **ShowTime 一律靠左**（該模式的 HUD 是絕對座標，board 置中會被壓到；理由詳見該函式）。板面幾何、周邊 HUD
+        /// 級聯、血條位移全部讀這個值，不要再直接讀 <see cref="notesPanelLeft"/>（那是玩家原始設定，不改）。</summary>
+        public bool PanelLeftEffective => NotePanelLayout.EffectivePanelLeft(notesPanelLeft, showtimeMode);
         private float _panelOffsetX = 0f;    // resolved 水平位移 (design px)：0=左, +242.5=中
         private int _scrollSign = +1;        // +1=notes rise up to the judge line (向上), −1=notes fall down (向下)
         // ── 周邊 HUD 隨面板位置左右重排（大分數/名次/名單/LV·時間 不跟著 board 平移；置中時要讓開中央的 board）。官方
@@ -501,6 +505,13 @@ namespace Sdo.Game
         // （位置與字距一起等比例，見 UpdateComboDigits 的共用支點），judgeTextScale 縮放 PERFECT/COOL/BAD/MISS。
         public float comboTextScale = Sdo.Settings.RoomConfig.comboTextScale;
         public float judgeTextScale = Sdo.Settings.RoomConfig.judgeTextScale;
+        // 同兩組文字的不透明度（config.ini [Room]，1.0 = 全不透明；預設 0.6 讓字不擋住下落中的音符）。
+        // 判定字的 0.5 秒淡出是乘上去的（起始亮度 = judgeTextAlpha）。
+        public float comboTextAlpha = Sdo.Settings.RoomConfig.comboTextAlpha;
+        public float judgeTextAlpha = Sdo.Settings.RoomConfig.judgeTextAlpha;
+        // 打中彈跳的峰值倍率（config.ini [Room]，官方 2.0＝彈到靜止大小的兩倍；1.0＝不彈跳）。見 PopScale。
+        public float comboTextPop = Sdo.Settings.RoomConfig.comboTextPop;
+        public float judgeTextPop = Sdo.Settings.RoomConfig.judgeTextPop;
         public float burstSize = 1.3f;      // hit-burst size multiplier
         public float burstBright = 1.5f;    // hit-burst brightness (additive _TintColor; 1.0 = stock)
         public float holdDropDim = 0.5f;    // 中途放開(Bad/Miss)的長條不消失，改用這個亮度繼續流走 (0.5 = 50%)
@@ -1817,7 +1828,7 @@ namespace Sdo.Game
         /// the settings change (the board re-places its X every frame, so a live change of just the offset also takes).</summary>
         private void ApplyPanelLayout()
         {
-            var layout = NotePanelLayout.Resolve(dropDirection, notesPanelLeft);
+            var layout = NotePanelLayout.Resolve(dropDirection, PanelLeftEffective);
             _panelOffsetX = layout.OffsetX;
             judgeLineY = layout.JudgeLineY;
             _scrollSign = layout.ScrollSign;
@@ -1825,7 +1836,7 @@ namespace Sdo.Game
             _clipTopY = layout.ClipTopY;
             _clipBottomY = layout.ClipBottomY;
             // 向下置中：血條移到 note board 下面（板底受擊線那頭）；其餘模式血條留頂端。
-            _hpYOffset = (layout.Bottom && !notesPanelLeft) ? hudHpDownYOffset : 0f;
+            _hpYOffset = (layout.Bottom && !PanelLeftEffective) ? hudHpDownYOffset : 0f;
             // 向下（含傾斜）：受擊線在板底，判定字＋COMBO＋數字整組往上讓開一點（左邊/置中都一樣）。
             _judgeComboYOffset = layout.Bottom ? hudJudgeComboDownYOffset : 0f;
         }
@@ -1839,7 +1850,7 @@ namespace Sdo.Game
         /// Called at the end of BuildHud (after the elements exist) and safe to re-call if the layout changes.</summary>
         private void LayoutSideHud()
         {
-            bool center = !notesPanelLeft;
+            bool center = !PanelLeftEffective;   // ShowTime 一律靠左 → 周邊 HUD 也照左邊模式的官方級聯排
             bool down = _scrollSign < 0;
             float scoreX, rankX, rNameX, rScoreX, attrX;
             if (!center) { scoreX = 290f; rankX = 429f; rNameX = 577f; rScoreX = 781f; attrX = hudAttrLeftX; }          // 左邊：官方預設

@@ -80,12 +80,19 @@ namespace Sdo.Game
             return 1f + 0.3f * Mathf.SmoothStep(0f, 1f, tri);  // ease in/out = 緩慢放大/縮小
         }
 
+        // 判定字 / COMBO 的「打中就彈一下」曲線（decompiled）：命中瞬間放到 PopRest×peak，之後線性收回 PopRest，
+        // rate 決定收多快（COMBO 9 → ~111ms，判定字 6 → ~167ms；官方寫死，只有 peak 開放給玩家調）。
+        // peak = 峰值 ÷ 靜止大小：官方 2.0，1.0 = 完全不彈跳。純函式（給 EditMode 測）。
+        public const float PopRest = 0.8f;   // 兩叢字的靜止尺寸都是原圖 ×0.8 (decompiled)
+        public static float PopScale(float age, float rate, float peak)
+            => (1f + Mathf.Clamp01(1f - age * rate) * (peak - 1f)) * PopRest;
+
         private void UpdateComboDigits()
         {
             int combo = _score.Combo;
             if (combo < 2) { foreach (var d in _comboDigits) d.enabled = false; if (_comboWord) _comboWord.enabled = false; _lastComboShown = combo; return; }
             if (combo != _lastComboShown) { _comboPopAt = Time.time; _lastComboShown = combo; }
-            float pop = (1f + Mathf.Clamp01(1f - (Time.time - _comboPopAt) * 9f) * 1.0f) * 0.8f;
+            float pop = PopScale(Time.time - _comboPopAt, 9f, comboTextPop);
             string s = combo.ToString();
             // The COMBO word + the number are ONE rigid group: scale every element's position AND size about a single
             // shared pivot (TrackCenterX, comboPivotY = the group's centre) by `grow`. Because the word→number gap and
@@ -98,6 +105,8 @@ namespace Sdo.Game
             float wordY = ComboWordY + _judgeComboYOffset, digitY = ComboDigitY + _judgeComboYOffset;
             float comboPivotY = (wordY + digitY) / 2f;
             float grow = pop * comboTextScale;
+            // comboTextAlpha (config.ini)：COMBO 字樣＋數字整組同一個不透明度（預設 0.6，不擋住下落中的音符）。
+            var comboTint = new Color(1f, 1f, 1f, comboTextAlpha);
             float cxTrack = PX(TrackCenterX);   // track centre X shifted by the 面板位置 (左/中)
             float startX = cxTrack - (s.Length - 1) * ComboDigitStep / 2f;   // centred on the track
             for (int i = 0; i < _comboDigits.Count; i++)
@@ -110,14 +119,14 @@ namespace Sdo.Game
                 {
                     float dx = cxTrack + (startX + i * ComboDigitStep - cxTrack) * grow;
                     float dy = comboPivotY + (digitY - comboPivotY) * grow;
-                    PlaceAspect(d, dx, dy, ComboDigitW, -2); d.transform.localScale *= grow;
+                    PlaceAspect(d, dx, dy, ComboDigitW, -2); d.transform.localScale *= grow; d.color = comboTint;
                 }
             }
             if (_comboWord && _comboWord.sprite != null)
             {
                 _comboWord.enabled = true;
                 float wy = comboPivotY + (wordY - comboPivotY) * grow;
-                PlaceAspect(_comboWord, cxTrack, wy, ComboWordW); _comboWord.transform.localScale *= grow;
+                PlaceAspect(_comboWord, cxTrack, wy, ComboWordW); _comboWord.transform.localScale *= grow; _comboWord.color = comboTint;
             }
         }
 

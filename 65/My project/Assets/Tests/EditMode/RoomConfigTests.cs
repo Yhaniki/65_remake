@@ -40,6 +40,12 @@ namespace Sdo.Tests
             RoomConfig.comboTextScale = 1f;
             RoomConfig.judgeTextScale = 1f;
             RoomConfig.hasTextScaleKeys = false;
+            RoomConfig.comboTextAlpha = 0.6f;
+            RoomConfig.judgeTextAlpha = 0.6f;
+            RoomConfig.hasTextAlphaKeys = false;
+            RoomConfig.comboTextPop = 2f;
+            RoomConfig.judgeTextPop = 2f;
+            RoomConfig.hasTextPopKeys = false;
         }
 
         [Test]
@@ -77,6 +83,84 @@ namespace Sdo.Tests
             RoomConfig.ParseInto(ini);
             Assert.AreEqual(1.5f, RoomConfig.comboTextScale, 1e-4f);
             Assert.AreEqual(0.8f, RoomConfig.judgeTextScale, 1e-4f);
+        }
+
+        [Test]
+        public void TextAlphas_Missing_From_An_Old_File_Flag_A_Template_TopUp()
+        {
+            // 透明度鍵比大小鍵晚加：只有 comboTextScale/judgeTextScale 的檔一樣要補寫模板，
+            // 否則使用者在檔案裡找不到透明度可以改（hasTextScaleKeys 不能拿來代表這兩個鍵）。
+            RoomConfig.ParseInto("[Room]\ncomboTextScale=1.2\njudgeTextScale=0.8\n");
+            Assert.IsTrue(RoomConfig.hasTextScaleKeys);
+            Assert.IsFalse(RoomConfig.hasTextAlphaKeys, "只有大小鍵的舊檔仍要補寫透明度鍵");
+
+            RoomConfig.ParseInto("[Room]\ncomboTextAlpha=0.4\n");
+            Assert.IsTrue(RoomConfig.hasTextAlphaKeys);
+
+            Reset();
+            RoomConfig.ParseInto(RoomConfig.Serialize());   // 自己寫出來的模板一定帶鍵 → 補寫一次就不再重寫
+            Assert.IsTrue(RoomConfig.hasTextAlphaKeys);
+        }
+
+        [Test]
+        public void TextAlphas_Default_To_Six_Tenths_Parse_Clamp_And_RoundTrip()
+        {
+            Assert.AreEqual(0.6f, RoomConfig.comboTextAlpha, 1e-4f, "預設 0.6：字疊在音符板上，全不透明會擋住音符");
+            Assert.AreEqual(0.6f, RoomConfig.judgeTextAlpha, 1e-4f);
+
+            RoomConfig.ParseInto("[Room]\ncomboTextAlpha=0.35\njudgeTextAlpha=1\n");
+            Assert.AreEqual(0.35f, RoomConfig.comboTextAlpha, 1e-4f);
+            Assert.AreEqual(1f, RoomConfig.judgeTextAlpha, 1e-4f);
+
+            RoomConfig.comboTextAlpha = -0.5f; RoomConfig.judgeTextAlpha = 4f;   // 只有 0~1 有意義
+            RoomConfig.Sanitize();
+            Assert.AreEqual(0f, RoomConfig.comboTextAlpha, 1e-4f, "0＝完全隱藏，是合法用法不是錯誤值");
+            Assert.AreEqual(1f, RoomConfig.judgeTextAlpha, 1e-4f);
+
+            RoomConfig.comboTextAlpha = 0.75f; RoomConfig.judgeTextAlpha = 0.2f;
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual(0.75f, RoomConfig.comboTextAlpha, 1e-4f);
+            Assert.AreEqual(0.2f, RoomConfig.judgeTextAlpha, 1e-4f);
+        }
+
+        [Test]
+        public void TextPops_Default_To_Official_Two_Parse_Clamp_And_RoundTrip()
+        {
+            Assert.AreEqual(2f, RoomConfig.comboTextPop, 1e-4f, "官方＝彈到靜止大小的兩倍再收回");
+            Assert.AreEqual(2f, RoomConfig.judgeTextPop, 1e-4f);
+
+            RoomConfig.ParseInto("[Room]\ncomboTextPop=3\njudgeTextPop=1\n");
+            Assert.AreEqual(3f, RoomConfig.comboTextPop, 1e-4f);
+            Assert.AreEqual(1f, RoomConfig.judgeTextPop, 1e-4f, "1＝完全不彈跳，是合法設定");
+            Assert.IsTrue(RoomConfig.hasTextPopKeys);
+
+            RoomConfig.comboTextPop = 0.3f; RoomConfig.judgeTextPop = 99f;   // <1 會變成先縮再放、99 直接衝出面板
+            RoomConfig.Sanitize();
+            Assert.AreEqual(1f, RoomConfig.comboTextPop, 1e-4f);
+            Assert.AreEqual(4f, RoomConfig.judgeTextPop, 1e-4f);
+
+            RoomConfig.comboTextPop = 2.5f; RoomConfig.judgeTextPop = 1.4f;
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual(2.5f, RoomConfig.comboTextPop, 1e-4f);
+            Assert.AreEqual(1.4f, RoomConfig.judgeTextPop, 1e-4f);
+        }
+
+        [Test]
+        public void TextPops_Missing_From_An_Old_File_Flag_A_Template_TopUp()
+        {
+            // 彈跳鍵比大小/透明度鍵都晚加 → 已經帶那兩組的檔仍要補寫一次，不然找不到鍵可改。
+            RoomConfig.ParseInto("[Room]\ncomboTextScale=1.2\ncomboTextAlpha=0.5\n");
+            Assert.IsTrue(RoomConfig.hasTextScaleKeys);
+            Assert.IsTrue(RoomConfig.hasTextAlphaKeys);
+            Assert.IsFalse(RoomConfig.hasTextPopKeys);
+
+            Reset();
+            RoomConfig.ParseInto(RoomConfig.Serialize());
+            Assert.IsTrue(RoomConfig.hasTextPopKeys);
         }
 
         [Test]

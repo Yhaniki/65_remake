@@ -167,6 +167,39 @@ namespace Sdo.Tests
             }
         }
 
+        // ---- ShowTime 一律靠左（氣條/徽章/SPACE/ENERGYSCORE 是絕對座標，board 置中會壓到它們）----
+
+        [Test]
+        public void Showtime_Forces_Left_Even_When_The_Player_Picked_Centre()
+        {
+            Assert.IsTrue(NotePanelLayout.EffectivePanelLeft(panelLeft: false, showtime: true), "ShowTime 忽略置中");
+            Assert.AreEqual(NotePanelLayout.LeftOffsetX,
+                            NotePanelLayout.Resolve(NoteDropDirection.Up,
+                                NotePanelLayout.EffectivePanelLeft(false, true)).OffsetX, 1e-4f);
+        }
+
+        [Test]
+        public void Non_Showtime_Keeps_The_Player_Setting()
+        {
+            // 一般模式完全照舊：置中就是置中、靠左就是靠左（這條壞掉＝把所有人的置中都吃掉了）。
+            Assert.IsFalse(NotePanelLayout.EffectivePanelLeft(panelLeft: false, showtime: false));
+            Assert.IsTrue(NotePanelLayout.EffectivePanelLeft(panelLeft: true, showtime: false));
+            Assert.AreEqual(NotePanelLayout.CenterOffsetX,
+                            NotePanelLayout.Resolve(NoteDropDirection.Up,
+                                NotePanelLayout.EffectivePanelLeft(false, false)).OffsetX, 1e-4f);
+        }
+
+        [Test]
+        public void Showtime_Does_Not_Touch_The_Drop_Direction()
+        {
+            // 只擋水平位置；ShowTime 一樣能向下（受擊線/捲動方向不受影響）。
+            var st = NotePanelLayout.Resolve(NoteDropDirection.Down, NotePanelLayout.EffectivePanelLeft(false, true));
+            Assert.AreEqual(NotePanelLayout.LeftOffsetX, st.OffsetX, 1e-4f);
+            Assert.AreEqual(NotePanelLayout.BottomJudgeY, st.JudgeLineY, 1e-4f);
+            Assert.AreEqual(-1, st.ScrollSign);
+            Assert.IsTrue(st.Bottom);
+        }
+
         [Test]
         public void IntOverload_Clamps_OutOfRange()
         {

@@ -91,6 +91,15 @@ namespace Sdo.Game
         public static NotePanelLayout Resolve(int dropDirection, bool panelLeft)
             => Resolve((NoteDropDirection)Clamp(dropDirection, 0, 2), panelLeft);
 
+        /// <summary>實際生效的「NOTES面板位置」：**ShowTime 模式一律靠左**，玩家選的置中在該模式直接忽略。
+        /// 理由是 ShowTime 專屬 HUD（氣條 MyEnergy 框、×2/×4/×8 徽章、SPACE 提示、ENERGYSCORE/ENERGYBONUS 數字）
+        /// 全部照官方 PLAYSHOWTIME XML 的**絕對座標**擺，不吃 <see cref="OffsetX"/> 的面板位移 —— board 一移到中央
+        /// (+242.5) 就會壓在那一整組上。只擋遊戲內取用，不動使用者存的設定（下一局非 ShowTime 仍然置中）。
+        /// 掉落方式（向上/向下/傾斜）不受影響，ShowTime 一樣可以向下。</summary>
+        /// <param name="panelLeft">玩家在 OPTION 遊戲頁選的：<c>true</c>=屏幕左邊 / <c>false</c>=屏幕中央.</param>
+        /// <param name="showtime">是否 ShowTime 模式（房間/選歌 模式＝2）.</param>
+        public static bool EffectivePanelLeft(bool panelLeft, bool showtime) => panelLeft || showtime;
+
         private static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
     }
 }
