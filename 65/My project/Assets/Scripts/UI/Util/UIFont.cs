@@ -28,31 +28,40 @@ namespace Sdo.UI.Util
             {
                 if (_tried) return _cjk;
                 _tried = true;
-                var bundled = BuildBundled();
-                // Primary: OS SimSun, the official client's hardcoded face.
-                var simsun = BuildOs(new[] { "SimSun", "NSimSun", "宋体" });
-                if (simsun != null)
-                {
-                    simsun.name = "OS_SimSun";
-                    // Rare glyphs outside SimSun's GBK coverage fall through to the bundled face.
-                    if (bundled != null) AddFallback(simsun, bundled);
-                    _cjk = simsun;
-                    return _cjk;
-                }
-                // Fallback: bundled Source Han Sans (imported → TMP can rasterize a dynamic CJK atlas from it).
-                if (bundled != null) { _cjk = bundled; return _cjk; }
-                // Last resort: any installed OS face that survives the probe.
-                _cjk = BuildOs(new[] { "Microsoft JhengHei", "Microsoft YaHei", "PMingLiU", "SimHei", "Arial" });
-                if (_cjk == null) return null;
-                _cjk.name = "OS_CJK_Primary";
-                // Japanese kana/glyph fallback.
-                var jp = BuildOs(new[] { "Yu Gothic", "Meiryo", "MS Gothic" });
-                if (jp != null) { jp.name = "OS_JP_Fallback"; AddFallback(_cjk, jp); }
-                // Simplified Chinese fallback.
-                var sc = BuildOs(new[] { "Microsoft YaHei", "SimSun" });
-                if (sc != null) { sc.name = "OS_SC_Fallback"; AddFallback(_cjk, sc); }
+                _cjk = BuildCjk();
+                // 這份字型也是「量字縫」的依據:字距收緊要靠真 metrics 才算得準(legacy Font 的點陣 metrics 含
+                // 光柵化留白又被 GDI 塗粗過,太胖)。遊戲內名牌/排名榜(legacy TextMesh)因此跟房間(TMP)收一樣多。
+                Sdo.Game.TextTracking.MeasureFont = _cjk;
                 return _cjk;
             }
+        }
+
+        /// <summary>Resolve the CJK face: OS SimSun → bundled Source Han Sans → any OS face that survives the probe.</summary>
+        private static TMP_FontAsset BuildCjk()
+        {
+            var bundled = BuildBundled();
+            // Primary: OS SimSun, the official client's hardcoded face.
+            var simsun = BuildOs(new[] { "SimSun", "NSimSun", "宋体" });
+            if (simsun != null)
+            {
+                simsun.name = "OS_SimSun";
+                // Rare glyphs outside SimSun's GBK coverage fall through to the bundled face.
+                if (bundled != null) AddFallback(simsun, bundled);
+                return simsun;
+            }
+            // Fallback: bundled Source Han Sans (imported → TMP can rasterize a dynamic CJK atlas from it).
+            if (bundled != null) return bundled;
+            // Last resort: any installed OS face that survives the probe.
+            var fa = BuildOs(new[] { "Microsoft JhengHei", "Microsoft YaHei", "PMingLiU", "SimHei", "Arial" });
+            if (fa == null) return null;
+            fa.name = "OS_CJK_Primary";
+            // Japanese kana/glyph fallback.
+            var jp = BuildOs(new[] { "Yu Gothic", "Meiryo", "MS Gothic" });
+            if (jp != null) { jp.name = "OS_JP_Fallback"; AddFallback(fa, jp); }
+            // Simplified Chinese fallback.
+            var sc = BuildOs(new[] { "Microsoft YaHei", "SimSun" });
+            if (sc != null) { sc.name = "OS_SC_Fallback"; AddFallback(fa, sc); }
+            return fa;
         }
 
         // 華康儷中黑 (DFLiHei) — the face the user hand-baked the OPTION dialog text in. BUNDLED with the game

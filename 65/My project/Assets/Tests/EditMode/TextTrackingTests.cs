@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using TMPro;
+using UnityEngine;
 using Sdo.Game;
 using Sdo.UI.Util;
 
@@ -14,6 +15,11 @@ namespace Sdo.Tests
     public class TextTrackingTests
     {
         private static List<float> Gaps(params float[] g) => new List<float>(g);
+
+        private TMP_FontAsset _savedMeasureFont;
+
+        [SetUp] public void SaveMeasureFont() => _savedMeasureFont = TextTracking.MeasureFont;
+        [TearDown] public void RestoreMeasureFont() => TextTracking.MeasureFont = _savedMeasureFont;
 
         [Test]
         public void WideGaps_KeepTheFullTightening()
@@ -96,6 +102,106 @@ namespace Sdo.Tests
                 float room = System.Math.Max(0f, NarrowestGapEm(font, s) - TextStyles.MinInkGapEm);
                 Assert.LessOrEqual(track, room + 1e-5f, s + " 收得比最窄的字縫還多 → 字會黏在一起");
             }
+        }
+
+        // ---- legacy TextMesh 那條路(遊戲內頭頂名字 / 排名榜,Label3D 逐字佈局)----
+
+        [Test]
+        public void LegacyFont_MeasuresWithTheRealMetrics_SoBothPathsTightenTheSame()
+        {
+            var font = TextStyles.CjkFont();
+            var tmp = UIFont.Cjk;
+            if (font == null || tmp == null) Assert.Ignore("沒有可用的 CJK 字型,跳過");
+            TextTracking.MeasureFont = tmp;
+
+            foreach (var s in new[] { "SOLID STATE SQUAD", "戀愛達人的祕密" })
+            {
+                float legacy = TextTracking.SafeTrackEm(font, s, 48, FontStyle.Bold, TextStyles.HeadNameTrackEm, TextStyles.MinInkGapEm);
+                float viaTmp = TextTracking.SafeTrackEm(tmp, s, TextStyles.HeadNameTrackEm, TextStyles.MinInkGapEm);
+                Assert.AreEqual(viaTmp, legacy, 1e-5f, s + ":房間(TMP)和遊戲內(TextMesh)必須收一樣多");
+            }
+        }
+
+        [Test]
+        public void LegacyFont_WithoutMeasureFont_FallsBackToItsOwnBitmapMetrics()
+        {
+            var font = TextStyles.CjkFont();
+            if (font == null) Assert.Ignore("沒有可用的 CJK 字型,跳過");
+            TextTracking.MeasureFont = null;   // 沒掛量測字型 → 只能用 legacy 自己那份(含光柵留白 + GDI 塗粗,偏胖)
+
+            float latin = TextTracking.SafeTrackEm(font, "SOLID STATE SQUAD", 48, FontStyle.Bold, TextStyles.HeadNameTrackEm, TextStyles.MinInkGapEm);
+            float cjk = TextTracking.SafeTrackEm(font, "戀愛達人的祕密", 48, FontStyle.Bold, TextStyles.HeadNameTrackEm, TextStyles.MinInkGapEm);
+
+            Assert.GreaterOrEqual(latin, 0f, "收緊量不會是負的");
+            Assert.LessOrEqual(latin, cjk, "含 TA 的西文名字必須收得比中文名字少");
+            Assert.LessOrEqual(cjk, TextStyles.HeadNameTrackEm + 1e-5f, "收緊量不會超過要求的量");
+        }
+
+        [Test]
+        public void HeadNameLabel_LatinFallsBackToNaturalAdvance_ChineseStillTightens()
+        {
+            var font = TextStyles.CjkFont();
+            if (font == null || UIFont.Cjk == null) Assert.Ignore("沒有可用的 CJK 字型,跳過");
+            TextTracking.MeasureFont = UIFont.Cjk;
+
+            // 名牌收得比歌名更狠(0.1em):西文的字縫根本沒有 0.1em 可收 → 退回自然字距;中文的字縫夠寬 → 照收。
+            float latinSlack = AdvanceSlack("SOLID STATE SQUAD", font);
+            float cjkSlack = AdvanceSlack("戀愛達人的祕密", font);
+
+            Assert.Less(latinSlack, 0.02f, "西文名字幾乎不能再收（字縫不夠）→ 位置應該貼著自然 advance");
+            Assert.Greater(cjkSlack, 0.02f, "中文名字的字縫夠寬 → 還是要看得出收緊");
+        }
+
+        /// <summary>把一個 <see cref="Label3D"/> 排出來,回傳「每個字縫實際收掉了幾個 em」(0 = 自然字距)。</summary>
+        private static float AdvanceSlack(string text, Font font)
+        {
+            var label = TextStyles.NewLabel("tt", TextStyles.Style.HeadName, 0, 22f, TextAnchor.MiddleLeft);
+            try
+            {
+                label.Text = text;
+                var a = Cell(label, 0); var b = Cell(label, 1);
+                if (a == null || b == null) Assert.Ignore("Label3D 沒有建出逐字 cell,跳過");
+                if (!font.GetCharacterInfo(text[0], out CharacterInfo ia, a.fontSize, FontStyle.Bold))
+                    Assert.Ignore("量不到 legacy 字型 metrics,跳過");
+                float worldPerPx = 0.1f * a.characterSize;
+                float natural = ia.advance * worldPerPx;
+                float actual = b.transform.localPosition.x - a.transform.localPosition.x;
+                return (natural - actual) / (a.fontSize * worldPerPx);   // 收掉的量,換算成 em
+            }
+            finally { Object.DestroyImmediate(label.root); }
+        }
+
+        private static TextMesh Cell(Label3D label, int k)
+        {
+            var tr = label.root.transform.Find("c" + k);
+            return tr != null ? tr.GetComponent<TextMesh>() : null;
+        }
+
+        // ---- 房間頭頂名字(TMP OutlinedLabel)----
+
+        [Test]
+        public void OutlinedLabel_ReDerivesTheTighteningPerString()
+        {
+            var rootGo = new GameObject("tt_root", typeof(RectTransform));
+            try
+            {
+                var label = OutlinedLabel.Create(rootGo.transform, "n", 0f, 0f, 160f, 20f, 14f,
+                    Color.white, Color.black, 1.4f, true, trackEm: TextStyles.HeadNameTrackEm);
+                if (label.Face == null || label.Face.font == null) Assert.Ignore("沒有可用的 CJK 字型,跳過");
+
+                label.SetText("戀愛達人的祕密");
+                float cjk = -label.Face.characterSpacing / 100f;
+                label.SetText("SOLID STATE SQUAD");
+                float latin = -label.Face.characterSpacing / 100f;
+
+                Assert.GreaterOrEqual(latin, 0f, "收緊量不會是負的");
+                Assert.Less(latin, cjk, "含 TA 的西文名字必須收得比中文名字少");
+
+                // 描邊層是臉層的偏移複本 → 字距不同步的話,黑邊會從字上飄開。
+                foreach (var t in rootGo.GetComponentsInChildren<TextMeshProUGUI>(true))
+                    Assert.AreEqual(label.Face.characterSpacing, t.characterSpacing, 1e-4f, "描邊層的字距沒跟著臉層");
+            }
+            finally { Object.DestroyImmediate(rootGo); }
         }
 
         /// <summary>獨立重算一次字串裡最窄的墨水字縫(em),當作上面那條斷言的對照組。</summary>

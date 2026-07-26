@@ -225,17 +225,17 @@ namespace Sdo.UI.Screens
 
             // name marker that floats above the avatar's head in the room (positioned each frame in Update).
             // 跟遊戲內頭頂名字同款:共用色 TextStyles.FaceCream(rgb 250,252,214)+ 黑邊 + 粗體 + 8 向描邊。
-            // charSpacing = 字靠緊一點（真・字距，字不變形）。TMP 的 characterSpacing 每格加 值×fontSize/100 px，
-            // 要移除 HeadNameTrackEm 個 em → characterSpacing = -HeadNameTrackEm×100（與字級無關，跟遊戲內頭頂名字同款）。
+            // trackEm = 字靠緊一點（真・字距，字不變形），跟遊戲內頭頂名字同一個值；實際收多少由 OutlinedLabel
+            // 每次 SetText 依字串重算（固定收緊會把 SimSun 半形西文的 "TA" 黏成一塊 → 見 TextTracking）。
             _floatName = OutlinedLabel.Create(Root, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
-                charSpacing: -TextStyles.HeadNameTrackEm * 100f);
+                trackEm: TextStyles.HeadNameTrackEm);
             _floatName.gameObject.SetActive(false);
 
             // 家族列：家族名稱(白字描黑邊) + 名稱前的小徽章(EMBLEM/SMALL*)，畫在頭上名字的「上方」一行。
             // 內容與顯不顯示都由 config.ini 的 familyName/familyEmblem 決定(見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
             // 名稱用「左對齊」：徽章+名稱要作為一個群組一起水平置中，左對齊才能讓文字自群組內的固定起點畫出。預設留空 → 不顯示。
             _floatFamily = OutlinedLabel.Create(Root, "FloatFamily", 0, 0, 160, FamilyRowH, 14, Color.white, Color.black,
-                FamilyNameEdgePx, true, TextAlignmentOptions.Left, charSpacing: -TextStyles.HeadNameTrackEm * 100f);
+                FamilyNameEdgePx, true, TextAlignmentOptions.Left, trackEm: TextStyles.HeadNameTrackEm);
             _floatFamily.gameObject.SetActive(false);
             _floatEmblem = UIKit.AddImage(Root, "FloatEmblem", Color.white);
             var emblemRt = _floatEmblem.rectTransform;
@@ -3226,7 +3226,7 @@ namespace Sdo.UI.Screens
         private const float HeadNameEdgePx = 1.4f;
 
         // ---- 頭上名字牌的「家族列」（徽章＋家族名稱，畫在名字上方那行）版面 ----
-        // 字級/字距/holder 高都對齊名字(_floatName：14px、h=20、charSpacing=-HeadNameTrackEm×100)，兩行看起來才同一套。
+        // 字級/字距/holder 高都對齊名字(_floatName：14px、h=20、trackEm=HeadNameTrackEm)，兩行看起來才同一套。
         private const float FamilyEmblemSize = 15f;   // 徽章顯示邊長(design px)；原圖 24×24 縮到與 14px 字相稱
         private const float FamilyEmblemGap = 5f;     // 徽章與家族名稱之間的水平間距(design px)；調大＝徽章離字遠一點
         private const float FamilyRowH = 20f;         // 家族列 holder 高＝同名字 holder(20)：兩行都垂直置中 → 中心距=FamilyLinePitch
