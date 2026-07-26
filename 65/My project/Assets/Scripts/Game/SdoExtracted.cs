@@ -323,6 +323,19 @@ namespace Sdo.Game
         public static Sprite LoadAnSoloCircleMip(string folder, string anName, int pad = 0)
             => LoadAnSoloImpl(folder, anName, pad, circular: true, mip: true);
 
+        /// <summary>As <see cref="LoadAnSoloMip"/> but for the BIG near-1-bit discs (開始/準備/取消/旁觀 — 55~73px
+        /// WaitingRoom balls). Their rim is drawn as a STAIRCASE: the dark outline is 1 texel here, 2 there, and the
+        /// coverage is almost binary (α is 0 or 255 for ~2/3 of the circumference), so magnifying the 800×600 design
+        /// shows black notches marching around the edge (使用者回報「開始和旁觀的大圓 邊緣還是鋸齒很破碎」). Neither the
+        /// clip path nor <see cref="CircleMask"/> can fix that: an alpha mask only SUBTRACTS, so it cannot fill the
+        /// notches, and the stairs live in the RGB outline as much as in the alpha. <see cref="SmoothDiscUpsample"/>
+        /// works in polar coordinates instead — along the circumference the staircase is high-frequency noise while the
+        /// real art (rim colour, sphere shading) barely changes, so a 1D low-pass in θ over the rim band erases the
+        /// stairs and keeps the artwork, and the alpha edge is rebuilt as an analytic circle. Use ONLY for solid round
+        /// discs (a pill/oval would be dragged into a circle).</summary>
+        public static Sprite LoadAnSoloSmoothDiscMip(string folder, string anName, int pad = 0)
+            => LoadAnSoloImpl(folder, anName, pad, circular: false, mip: true, smoothDisc: true);
+
         /// <summary>Supersample factor for room-button textures (see <see cref="LoadAnSoloMip"/>). 3× keeps the button
         /// crisp from 1:1 up to ~3× fullscreen stretch; higher just costs memory (a 73px crop → 219²·RGBA·mips ≈ 255 KB).</summary>
         public const int ButtonSupersample = 3;
@@ -332,7 +345,7 @@ namespace Sdo.Game
         /// 128 is safe: the α≥128 region of the button crops is a single stable contour (barely moves over α 110-150).</summary>
         private const byte SolidAlphaThreshold = 128;
 
-        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false)
+        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false, bool smoothDisc = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!File.Exists(anPath)) return null;
@@ -356,6 +369,15 @@ namespace Sdo.Game
             // transparent region (光球鈕的透明區是白/淺 → 整顆在白底上合成 → mid-alpha 邊是「帶色的白暈」). AlphaBleed 之後
             // 透明區被填成不透明色,偵測就失效了。順序:先 demat 邊,再把 (demated) 邊色 dilate 進透明 pad。
             DeMatteWhite(outTex);    // un-composite the white matte on the crop's own AA edges (kills the light halo)
+            if (smoothDisc)
+            {
+                // Big staircase disc: flood first (so the rim band never samples the matte, and the mip chain has no
+                // white to average in), then de-stair the rim in polar space while supersampling. See LoadAnSoloSmoothDiscMip.
+                AlphaFlood(outTex);
+                int ssd = ButtonSupersample;
+                var upd = SmoothDiscUpsample(outTex.GetPixels32(), W, H, ssd);
+                return Sprite.Create(upd, new Rect(0, 0, W * ssd, H * ssd), new Vector2(0.5f, 0.5f), ssd, 0, SpriteMeshType.FullRect);
+            }
             if (circular)
             {
                 AlphaFlood(outTex);  // flood orb colour into the ENTIRE transparent region → no white RGB left to bleed
@@ -420,6 +442,94 @@ namespace Sdo.Game
             var t = new Texture2D(W, H, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
             t.SetPixels32(dst); t.Apply(true);
             return t;
+        }
+
+        /// <summary>Supersample a solid ROUND button by <paramref name="ss"/>× while DE-STAIRING its rim: the outline of
+        /// a 55~73px hand-drawn disc steps in and out by a texel around the circumference, which magnification turns into
+        /// black notches. Fit the disc (α≥128 centroid + radius from its area), then for every output texel inside the rim
+        /// band take a Gaussian-weighted average of the SOURCE along the circumference at the same radius
+        /// (<paramref name="arcPx"/> source texels per tap) — constant art survives, the staircase averages away. The
+        /// radius is clamped just inside the disc so the taps never reach the matte. Alpha is rebuilt as an analytic
+        /// circle (1 supersampled texel of feather), which also drops the baked outer glow; interior alpha is kept as-is
+        /// so any transparency the art has inside the disc survives. Returns a mipmapped/Trilinear/Clamp texture, to be
+        /// handed out at pixelsPerUnit = ss (see <see cref="LoadAnSoloSmoothDiscMip"/>).</summary>
+        private static Texture2D SmoothDiscUpsample(Color32[] src, int w, int h, int ss,
+            float rimPx = 5f, float arcPx = 1.6f, int taps = 9)
+        {
+            double sxs = 0, sys = 0; int n = 0;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    if (src[y * w + x].a >= SolidAlphaThreshold) { sxs += x; sys += y; n++; }
+            if (n < 16) return UpsampleBilinear(src, w, h, ss);   // not a disc (empty/near-empty crop) — plain path
+            float cx = (float)(sxs / n), cy = (float)(sys / n);
+            float R = Mathf.Sqrt(n / Mathf.PI);
+
+            int half = Mathf.Max(1, taps / 2);
+            var wt = new float[half * 2 + 1];
+            float wsum = 0f;
+            for (int k = -half; k <= half; k++)
+            {
+                float g = Mathf.Exp(-0.5f * (k / (taps / 4f)) * (k / (taps / 4f)));
+                wt[k + half] = g; wsum += g;
+            }
+            float dth = arcPx / Mathf.Max(R, 1f);
+
+            int W = w * ss, H = h * ss;
+            var dst = new Color32[W * H];
+            for (int y = 0; y < H; y++)
+            {
+                float syc = (y + 0.5f) / ss - 0.5f;
+                for (int x = 0; x < W; x++)
+                {
+                    float sxc = (x + 0.5f) / ss - 0.5f;
+                    float dx = sxc - cx, dy = syc - cy;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    float r, g2, b;
+                    if (d >= R - rimPx && d <= R + 2f)
+                    {
+                        float th = Mathf.Atan2(dy, dx);
+                        float dc = Mathf.Min(d, R - 0.6f);          // stay inside the disc: never sample the matte
+                        float ar = 0f, ag = 0f, ab = 0f;
+                        for (int k = -half; k <= half; k++)
+                        {
+                            float t = th + k * dth;
+                            SampleBilinearRgb(src, w, h, cx + dc * Mathf.Cos(t), cy + dc * Mathf.Sin(t),
+                                out float pr, out float pg, out float pb);
+                            float wk = wt[k + half];
+                            ar += wk * pr; ag += wk * pg; ab += wk * pb;
+                        }
+                        r = ar / wsum; g2 = ag / wsum; b = ab / wsum;
+                    }
+                    else SampleBilinearRgb(src, w, h, sxc, syc, out r, out g2, out b);
+
+                    float cov = Mathf.Clamp01(R * ss + 0.5f - d * ss);
+                    float a = cov >= 1f ? SampleBilinearAlpha(src, w, h, sxc, syc) : 255f * cov;
+                    dst[y * W + x] = new Color32((byte)(r + 0.5f), (byte)(g2 + 0.5f), (byte)(b + 0.5f), (byte)(a + 0.5f));
+                }
+            }
+            var tex = new Texture2D(W, H, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear };
+            tex.SetPixels32(dst); tex.Apply(true);
+            return tex;
+        }
+
+        private static void SampleBilinearRgb(Color32[] src, int w, int h, float x, float y, out float r, out float g, out float b)
+        {
+            x = Mathf.Clamp(x, 0f, w - 1.001f); y = Mathf.Clamp(y, 0f, h - 1.001f);
+            int x0 = (int)x, y0 = (int)y, x1 = Mathf.Min(x0 + 1, w - 1), y1 = Mathf.Min(y0 + 1, h - 1);
+            float fx = x - x0, fy = y - y0;
+            Color32 c00 = src[y0 * w + x0], c10 = src[y0 * w + x1], c01 = src[y1 * w + x0], c11 = src[y1 * w + x1];
+            r = Mathf.Lerp(Mathf.Lerp(c00.r, c10.r, fx), Mathf.Lerp(c01.r, c11.r, fx), fy);
+            g = Mathf.Lerp(Mathf.Lerp(c00.g, c10.g, fx), Mathf.Lerp(c01.g, c11.g, fx), fy);
+            b = Mathf.Lerp(Mathf.Lerp(c00.b, c10.b, fx), Mathf.Lerp(c01.b, c11.b, fx), fy);
+        }
+
+        private static float SampleBilinearAlpha(Color32[] src, int w, int h, float x, float y)
+        {
+            x = Mathf.Clamp(x, 0f, w - 1.001f); y = Mathf.Clamp(y, 0f, h - 1.001f);
+            int x0 = (int)x, y0 = (int)y, x1 = Mathf.Min(x0 + 1, w - 1), y1 = Mathf.Min(y0 + 1, h - 1);
+            float fx = x - x0, fy = y - y0;
+            return Mathf.Lerp(Mathf.Lerp(src[y0 * w + x0].a, src[y0 * w + x1].a, fx),
+                              Mathf.Lerp(src[y1 * w + x0].a, src[y1 * w + x1].a, fx), fy);
         }
 
         /// <summary>First frame of an .an cropped onto its OWN texture with its RGB PREMULTIPLIED by alpha (bilinear, no

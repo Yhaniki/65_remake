@@ -102,6 +102,22 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        /// <summary>As <see cref="AnSoloAA"/> but for the BIG round balls (開始/準備/取消/旁觀). Those crops are 55~73px
+        /// hand-drawn discs whose dark outline STEPS in and out by a texel around the circumference; the plain clip+SS
+        /// path faithfully reproduces those stairs (使用者回報「大圓邊緣還是鋸齒很破碎」) and a circular alpha mask can't
+        /// help (it only subtracts — the stairs are in the RGB outline too). <see cref="SdoExtracted.LoadAnSoloSmoothDiscMip"/>
+        /// low-passes the rim ALONG the circumference and rebuilds the alpha edge as an analytic circle. Falls back to
+        /// AnSoloAA if the solo crop fails.</summary>
+        public static Sprite AnSoloDiscAA(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "disc:" + anName;
+            if (_aaCache.TryGetValue(key, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSoloSmoothDiscMip(Dir, anName, pad: 0) ?? AnSoloAA(anName);
+            _aaCache[key] = s;
+            return s;
+        }
+
         public static Sprite AnExtractedFirst(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;
