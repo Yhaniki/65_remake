@@ -22,7 +22,15 @@ namespace Sdo.Game
     /// </summary>
     public static class SceneLoader
     {
-        public sealed class Result { public Mesh Mesh; public Material[] Materials; public int[] MaterialIds; }
+        public sealed class Result
+        {
+            public Mesh Mesh;
+            public Material[] Materials;
+            public int[] MaterialIds;
+            /// <summary>每個 submesh 的材質名(= MSH 材質記錄裡的貼圖檔名),與 Materials 一一對應。
+            /// 讓「依材質名綁某幾個 submesh」成為可能 —— SCN0001 的霓虹招牌就是靠這個逐字綁。</summary>
+            public string[] MaterialNames;
+        }
 
         public struct SceneSubset { public int MatId; public int FaceStart; public int FaceCount; }
 
@@ -166,6 +174,7 @@ namespace Sdo.Game
             var subTris = new List<int[]>();
             var subMats = new List<Material>();
             var subMatIds = new List<int>();
+            var subMatNames = new List<string>();
             // Decode each .dds once even when several blocks reuse it (SCN0026 1.dds spans 3 blocks); a fresh
             // Material per subset still references the shared texture (matches the original per-subset draw).
             var texCache = new Dictionary<string, (Texture2D tex, DdsAlphaMode mode)>(StringComparer.OrdinalIgnoreCase);
@@ -229,7 +238,7 @@ namespace Sdo.Game
                     // Soft DDS alpha is alpha-blended. Pure hard alpha stays a cutout. Opaque DDS disables clipping.
                     if (drawMode != DdsAlphaMode.Blend)
                         mat.SetFloat("_Cutoff", drawMode == DdsAlphaMode.Cutout ? 0.5f : -1f);
-                    subTris.Add(sub); subMats.Add(mat); subMatIds.Add(s.MatId);
+                    subTris.Add(sub); subMats.Add(mat); subMatIds.Add(s.MatId); subMatNames.Add(name);
                 }
             }
             if (subTris.Count == 0) return null;
@@ -241,7 +250,8 @@ namespace Sdo.Game
             mesh.subMeshCount = subTris.Count;
             for (int s = 0; s < subTris.Count; s++) mesh.SetTriangles(subTris[s], s);
             mesh.RecalculateBounds();
-            return new Result { Mesh = mesh, Materials = subMats.ToArray(), MaterialIds = subMatIds.ToArray() };
+            return new Result { Mesh = mesh, Materials = subMats.ToArray(), MaterialIds = subMatIds.ToArray(),
+                               MaterialNames = subMatNames.ToArray() };
         }
 
         /// <summary>SCENE.MSH 材質裡「漸層光暈」的白名單 —— 這些貼圖要去掉 DXT3 4-bit alpha 的階梯。

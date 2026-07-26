@@ -2616,6 +2616,9 @@ namespace Sdo.Game
         private bool _camReady;                        // director shots loaded
         private float _camSwitchTime;                  // F2 label/timing only
         private Camera _sceneCam;
+        private RenderTexture _sceneRT;                // the stage backdrop RT (window-shaped; see MaintainSceneRt)
+        private RtResizeTracker _sceneRtTrack;         // debounced window-resize → RT re-allocation
+        public float sceneSupersample = RtSizing.DefaultSupersample;   // set to 1 to render at window-native resolution
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
         // 飛行翅膀跳舞抬升:flystay 浮空 idle 靠自身 pose 已浮 Δ,dance 貼地 → 跳舞時把 root 抬 Δ,讓跳舞與 fly idle 同高。
@@ -3254,6 +3257,45 @@ namespace Sdo.Game
             Debug.Log($"[mapobj] {baseName}: {instances.Length}× {(animated ? "animated(shared)" : hrc != null ? "static-skinned" : "static")}, {(hrc != null ? hrc.Names.Length + " bones" : "no skel")}");
         }
 
+        // SCN0001 新天地 的兩面霓虹招牌。每個字是 SCENE.MSH 裡獨立的一個材質/range,所以逐字綁定就是
+        // 「照材質名找到那個 submesh」—— SceneLoader.Result.MaterialNames 就是為此存在。
+        // 亮版 = SceneLoader 原本建好的 material(貼圖就是材質名那張);暗版另外複製一份,換上少一條底線的
+        // DDS,並照官方切成 alpha-test GREATER 160 的 cutout(官方暗態是關混色 + alphatest ref 160,
+        // 只留最亮的核心;只換貼圖不換狀態的話,暗版的外暈殘影會糊在招牌上)。
+        private void SpawnNeonSigns(MeshRenderer mr, SceneLoader.Result res, string dir)
+        {
+            var signs = SceneNeonSignCatalog.ForFolder(SceneFolder());
+            if (signs.Count == 0 || mr == null || res.MaterialNames == null) return;
+            var cutout = Shader.Find("Sdo/SceneVertexCutout");
+            SceneNeonSign driver = null;
+            int bound = 0;
+            foreach (var sign in signs)
+            {
+                var idx = new int[sign.Length];
+                var lit = new Material[sign.Length];
+                var dark = new Material[sign.Length];
+                bool ok = true;
+                for (int i = 0; i < sign.Length && ok; i++)
+                {
+                    idx[i] = System.Array.FindIndex(res.MaterialNames,
+                        n => string.Equals(n, sign.LitDds[i], System.StringComparison.OrdinalIgnoreCase));
+                    if (idx[i] < 0) { Debug.LogWarning($"[neon] {SceneFolder()}: 找不到材質 {sign.LitDds[i]}"); ok = false; break; }
+                    lit[i] = res.Materials[idx[i]];
+                    var darkTex = ResolveDds(dir, sign.DarkDds[i]);
+                    if (darkTex == null) { Debug.LogWarning($"[neon] 缺暗版貼圖 {sign.DarkDds[i]}"); ok = false; break; }
+                    dark[i] = new Material(lit[i]) { name = "neon_dark_" + sign.DarkDds[i], mainTexture = darkTex };
+                    if (cutout != null) dark[i].shader = cutout;
+                    if (dark[i].HasProperty("_Cutoff")) dark[i].SetFloat("_Cutoff", 160f / 255f);   // 官方 ALPHAREF 0xA0
+                }
+                if (!ok) continue;
+                if (driver == null) driver = new GameObject("NeonSigns").AddComponent<SceneNeonSign>();
+                driver.AddSign(mr, idx, lit, dark);
+                bound++;
+            }
+            if (driver != null)
+                Debug.Log($"[neon] {SceneFolder()}: {bound}/{signs.Count} 面招牌接上 (blink {SceneNeonSign.BlinkMs}ms / wipe {SceneNeonSign.WipeMs}ms)");
+        }
+
         // SCN0006 遊樂場 拱門燈泡: 72 個 placement 各自一份 material,交給一個共用的 ArchDengMarquee 驅動。
         // 為什麼要特例:一般的 placement 迴圈讓所有 instance 共用同一組 material,而跑馬燈的定義就是
         // 「這一 tick 第 12 顆亮、第 13 顆暗」—— 共用材質根本表達不出來。與 SCN0003 的 BoxFloor 同一種處理。
@@ -3601,6 +3643,7 @@ namespace Sdo.Game
                 go.AddComponent<MeshFilter>().mesh = res.Mesh;
                 go.AddComponent<MeshRenderer>().sharedMaterials = res.Materials;
                 ApplySceneMaterialUvScroll(SceneFolder(), res.Materials, res.MaterialIds);
+                SpawnNeonSigns(go.GetComponent<MeshRenderer>(), res, dir);   // SCN0001 兩面招牌的逐字閃爍
                 b = res.Mesh.bounds;
                 // render at NATIVE SDO world coords (no lift). The .cv cameras + the avatar dance spot (_avatarChest)
                 // are authored in this same space with the dancer standing on the native floor, so they line up.
@@ -3614,11 +3657,15 @@ namespace Sdo.Game
 
             // Perspective camera renders the stage(+avatar, same layer) to a RenderTexture; a full-screen background
             // quad in the main ortho cam shows that RT (reliably displays; depth-stacked cameras came out all-black).
-            // Size the RT to the on-screen 4:3 region (≈1:1 at fullscreen instead of upscaling a flat 800×600) and give
-            // it 4× MSAA, so the 3D avatar/stage edges stay smooth fullscreen rather than jagged.
-            int rtH = Mathf.Clamp(Screen.height, 600, 1600);
-            int rtW = Mathf.RoundToInt(rtH * (4f / 3f));
+            // The RT is WINDOW-shaped and oversampled (RtSizing) — sizing it 4:3 (the old height×4/3) made it narrower
+            // than the pixels the Stretch-mode quad spreads it over, so the stage/avatar got magnified horizontally.
+            // The 4:3 projection is pinned below instead of being inferred from the RT shape. 4× MSAA on top keeps the
+            // avatar/stage edges smooth. Re-allocated on window resize by MaintainSceneRt().
+            RtSizing.SlotRtSize(Screen.width, Screen.height, RtSizing.LogicalW, RtSizing.LogicalH,
+                                sceneSupersample, out int rtW, out int rtH);
             var sceneRT = new RenderTexture(rtW, rtH, 24) { name = "sceneRT", antiAliasing = 4, filterMode = FilterMode.Bilinear };
+            _sceneRT = sceneRT;
+            _sceneRtTrack.Reset(Screen.width, Screen.height);
             var camGo = new GameObject("SceneCam") { layer = sceneLayer };
             var cam = camGo.AddComponent<Camera>();
             cam.orthographic = false; cam.fieldOfView = 45f;
@@ -4165,9 +4212,24 @@ namespace Sdo.Game
         // 舊名保留(F4 面板/觀察模式在用):現在等同「改流速」,音樂會跟著變 —— 以前只動 timeScale,音樂照原速播,是會走音的。
         private void SetTimeScale(float s) => SetGameRate(s);
 
+        // Stage backdrop RT upkeep: re-allocate it when the window settles at a new size (the same RenderTexture instance
+        // is kept, so _backdropMat's texture reference stays wired), and pin the official 4:3 projection every frame.
+        // The RT follows the WINDOW shape now (RtSizing), so without the pin the camera would infer its aspect from the
+        // RT and a wide window would widen the field of view — the decompiled Camera_ctor aspect is exactly 4/3.
+        private void MaintainSceneRt()
+        {
+            if (_sceneCam != null) _sceneCam.aspect = RtSizing.LogicalW / RtSizing.LogicalH;
+            if (_sceneRT == null) return;
+            if (!_sceneRtTrack.Tick(Screen.width, Screen.height, Time.unscaledTime)) return;
+            RtSizing.SlotRtSize(Screen.width, Screen.height, RtSizing.LogicalW, RtSizing.LogicalH,
+                                sceneSupersample, out int w, out int h);
+            RtSizing.Apply(_sceneRT, w, h);
+        }
+
         private void Update()
         {
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
+            MaintainSceneRt();
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
