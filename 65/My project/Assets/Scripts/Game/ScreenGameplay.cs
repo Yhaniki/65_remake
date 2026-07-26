@@ -2867,6 +2867,9 @@ namespace Sdo.Game
             // material path — they must NOT pulse in lockstep). See BoxFloorPattern / BoxFloorAnimator.
             if (instances.Length == BoxFloorPattern.Tiles && baseName.ToUpperInvariant() == "BOX" && SceneFolder().ToUpperInvariant() == "SCN0003")
             { SpawnBoxFloor(dir, r, hrc, instances); return; }
+            // SCN0006 遊樂場拱門: 72 顆燈泡跑馬燈,同樣需要「每顆自己的 material」。見 ArchDengMarquee。
+            if (instances.Length == ArchDengMarquee.Bulbs && baseName.ToUpperInvariant() == "DENG" && SceneFolder().ToUpperInvariant() == "SCN0006")
+            { SpawnArchDeng(dir, r, hrc, instances); return; }
             // motFile may be null (static prop — e.g. SCN0010 house): skinned to the bind pose once, then frozen.
             // motRelDir lets the .mot live in a different tree than the mesh (scene NPCs: mesh in AVATAR/, .mot in MOTION/).
             MotLoader mot = string.IsNullOrEmpty(motFile) ? null : LoadAsset((motRelDir ?? relDir) + "/" + motFile, b => MotLoader.Load(b));
@@ -3249,6 +3252,58 @@ namespace Sdo.Game
             else if (posScroll != null)
                 Debug.LogWarning($"[mapobj] {baseName}: position-scroll expects {posScroll.Start.Length} instance(s), got {placed.Count}");
             Debug.Log($"[mapobj] {baseName}: {instances.Length}× {(animated ? "animated(shared)" : hrc != null ? "static-skinned" : "static")}, {(hrc != null ? hrc.Names.Length + " bones" : "no skel")}");
+        }
+
+        // SCN0006 遊樂場 拱門燈泡: 72 個 placement 各自一份 material,交給一個共用的 ArchDengMarquee 驅動。
+        // 為什麼要特例:一般的 placement 迴圈讓所有 instance 共用同一組 material,而跑馬燈的定義就是
+        // 「這一 tick 第 12 顆亮、第 13 顆暗」—— 共用材質根本表達不出來。與 SCN0003 的 BoxFloor 同一種處理。
+        // 燈泡是 4 頂點的平面 quad,靠自己 HRC leaf 的 bind-world 擺到拱門上,所以先把 bind 烘進共用 mesh
+        // (和 BoxFloor 一樣;不烘的話 72 顆會全部疊在原點)。
+        private void SpawnArchDeng(string dir, MshLoader.Result r, HrcLoader hrc, MapobjInstance[] instances)
+        {
+            var dim = ResolveDds(dir, "1.dds", out bool dimAlpha, out bool dimGlow, out _);
+            var lit = ResolveDds(dir, "2_.dds");
+            if (dim == null || lit == null)
+            {
+                Debug.LogWarning($"[mapobj] ArchDeng: 少了貼圖 (1.dds={dim != null}, 2_.dds={lit != null}) — 退回一般路徑");
+                return;
+            }
+            var mesh = r.Submeshes[0].Mesh;
+            if (hrc != null && hrc.BindWorld != null)
+            {
+                int[] leaves = HrcLeafBones(hrc);
+                if (leaves.Length > 0)
+                {
+                    Matrix4x4 m = hrc.BindWorld[leaves[0]];
+                    if (!m.isIdentity)
+                    {
+                        var vts = mesh.vertices;
+                        for (int i = 0; i < vts.Length; i++) vts[i] = m.MultiplyPoint3x4(vts[i]);
+                        mesh.vertices = vts; mesh.RecalculateBounds();
+                    }
+                }
+            }
+            var holder = new GameObject("DENG_marquee");
+            var marquee = holder.AddComponent<ArchDengMarquee>();
+            marquee.SetFrames(dim, lit);
+            var fallbackCol = new Color(0.72f, 0.70f, 0.66f);
+            int n = Mathf.Min(instances.Length, ArchDengMarquee.Bulbs);
+            for (int idx = 0; idx < n; idx++)
+            {
+                var go = new GameObject("DENG_" + idx);
+                go.transform.SetParent(holder.transform, false);
+                go.transform.localPosition = instances[idx].Pos;
+                go.transform.localScale = Vector3.one * instances[idx].Scale;
+                go.AddComponent<MeshFilter>().mesh = mesh;
+                // 每顆燈自己一份 material — 這正是特例存在的理由。1.dds/2_.dds 都是 32×32 DXT3 帶 alpha 的
+                // 小燈泡,走一般的 alpha-blend 判定即可(平面 4 頂點 → 不是 volumetric,不會被判成 cutout)。
+                var mat = NewMapobjMat(lit, fallbackCol, dimAlpha, false, false, dimGlow);
+                go.AddComponent<MeshRenderer>().sharedMaterial = mat;
+                marquee.Register(idx, new[] { mat });
+            }
+            SetLayerRecursive(holder, SceneLayer);
+            Debug.Log($"[mapobj] DENG arch marquee: {n}/{instances.Length} bulbs, {ArchDengMarquee.IntervalMs}ms, " +
+                      $"groups {ArchDengMarquee.GroupACount}%{ArchDengMarquee.GroupACount + 3} + {ArchDengMarquee.GroupBCount}%{ArchDengMarquee.GroupBCount + 3}");
         }
 
         // SCN0003 disco floor: place the box tile mesh at all 256 instance transforms, each with its OWN opaque
