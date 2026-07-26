@@ -168,6 +168,56 @@ namespace Sdo.Tests
             }
         }
 
+        [Test]
+        public void PremultSpriteRenderers_EachBindTheirOwnTexture()
+        {
+            // THE regression that shipped in f4245f7 and 使用者 caught immediately: NewSR handed every premultiplied
+            // SpriteRenderer the SAME shared material. A SpriteRenderer with a CUSTOM material does not rebind _MainTex
+            // per renderer ([PerRendererData] only drives UGUI's CanvasRenderer), so the whole panel drew whichever
+            // texture was written to that material last — 數字位置畫出 YOU WIN 旗、確定鈕變成保存錄像、排名欄畫出 GAME OVER.
+            // Structural guard: no two renderers whose sprites differ may share a material, and every material must be
+            // bound to exactly the texture its own sprite uses.
+            var dir = StatisticDir();
+            if (dir == null) Assert.Ignore("結算 STATISTIC art not present in this environment.");
+
+            GameObject hudGo = null, root = null;
+            try
+            {
+                hudGo = new GameObject("HudCamProbe");
+                var hud = hudGo.AddComponent<Camera>(); hud.enabled = false;
+                var result = new ResultScreen();
+                result.Build(hud);
+                root = (GameObject)Field("_root").GetValue(result);
+
+                var byMaterial = new Dictionary<Material, Texture>();
+                int checkedRenderers = 0;
+                foreach (var sr in root.GetComponentsInChildren<SpriteRenderer>(true))
+                {
+                    if (sr.sprite == null || !SdoExtracted.IsPremultTexture(sr.sprite.texture)) continue;
+                    checkedRenderers++;
+                    var mat = sr.sharedMaterial;
+                    Assert.IsNotNull(mat, sr.name + " has no material");
+                    Assert.AreEqual(sr.sprite.texture, mat.mainTexture,
+                        sr.name + ": its material must be bound to its OWN texture, not another sprite's");
+                    if (byMaterial.TryGetValue(mat, out var already))
+                        Assert.AreEqual(already, sr.sprite.texture,
+                            sr.name + " shares a material with a renderer using a DIFFERENT texture — they will both " +
+                            "draw the same image");
+                    else byMaterial[mat] = sr.sprite.texture;
+                }
+                Assert.Greater(checkedRenderers, 1, "expected several premultiplied sprites on the panel");
+                Assert.AreNotSame(SdoExtracted.PremultUiMaterial, null);
+                foreach (var mat in byMaterial.Keys)
+                    Assert.AreNotSame(SdoExtracted.PremultUiMaterial, mat,
+                        "SpriteRenderers must NOT use the shared UGUI material — that is exactly the bug");
+            }
+            finally
+            {
+                if (root != null) Object.DestroyImmediate(root);
+                if (hudGo != null) Object.DestroyImmediate(hudGo);
+            }
+        }
+
         private static FieldInfo Field(string name) =>
             typeof(ResultScreen).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
 

@@ -629,9 +629,11 @@ namespace Sdo.Game
 
         private static Material _premultUiMat;
         /// <summary>Shared premultiplied-alpha material (<c>Sdo/SpritePremultiply</c>, Blend One OneMinusSrcAlpha) for
-        /// UI Images / SpriteRenderers showing a premult texture. One instance serves all — UGUI binds each renderer's own
-        /// texture, and SpriteRenderers set their own. Null if the shader was stripped (caller keeps the default material,
-        /// which shows the premult texture too dark — so registration in BuildScript.RequiredShaders matters).</summary>
+        /// <b>UGUI Images only</b>. One instance serves every Image: a CanvasRenderer uploads its OWN texture with each
+        /// draw, so they never fight over the material's <c>_MainTex</c>. A <see cref="SpriteRenderer"/> does NOT — hand
+        /// several of them this same instance and they all sample whichever texture was written to it last. Use
+        /// <see cref="PremultSpriteMaterial"/> there instead. Null if the shader was stripped (caller keeps the default
+        /// material, which shows a premult texture too dark — so BuildScript.RequiredShaders registration matters).</summary>
         public static Material PremultUiMaterial
         {
             get
@@ -643,6 +645,25 @@ namespace Sdo.Game
                 }
                 return _premultUiMat;
             }
+        }
+
+        private static readonly Dictionary<Texture, Material> _premultSpriteMats = new Dictionary<Texture, Material>();
+        /// <summary>Premultiplied-alpha material BOUND TO ONE TEXTURE — what a <see cref="SpriteRenderer"/> needs.
+        /// A SpriteRenderer given a CUSTOM material does not rebind <c>_MainTex</c> per renderer; the
+        /// <c>[PerRendererData]</c> tag only drives UGUI's CanvasRenderer (and the built-in sprite material path).
+        /// Giving every renderer the shared <see cref="PremultUiMaterial"/> therefore makes them all draw ONE texture —
+        /// 使用者回報「結算數字的位置畫出 YOU WIN 旗、確定鈕畫成保存錄像、排名欄畫出 GAME OVER」就是這個。One material per
+        /// texture fixes it; they are cached, so a texture reused across renderers still shares a single material (and
+        /// still batches). Null if the shader was stripped — the caller must then keep the default material.</summary>
+        public static Material PremultSpriteMaterial(Texture tex)
+        {
+            if (tex == null) return null;
+            if (_premultSpriteMats.TryGetValue(tex, out var m) && m != null) return m;
+            var sh = Shader.Find("Sdo/SpritePremultiply");
+            if (sh == null) return null;
+            m = new Material(sh) { name = "SdoPremultSprite", mainTexture = tex };
+            _premultSpriteMats[tex] = m;
+            return m;
         }
 
         /// <summary>Load a bare image file (png/bmp) under a folder as one sprite.

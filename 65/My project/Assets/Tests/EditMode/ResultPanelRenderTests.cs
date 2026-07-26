@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using NUnit.Framework;
@@ -89,6 +90,203 @@ namespace Sdo.Tests
                     "the old straight-alpha path should still leak the white matte into the corners (control group)");
             }
             finally { Cleanup(shot, root, null); }
+        }
+
+        [Test]
+        public void ResultScreenButtons_DrawTheirOwnArt_NotEachOthers()
+        {
+            // THE regression 使用者 caught in-game: with one SHARED premult material every SpriteRenderer on the panel
+            // sampled the same _MainTex, so both buttons came out reading 保存錄像 (and the digits drew the YOU WIN
+            // banner). A single-sprite render can never catch it — the buttons have to be photographed TOGETHER, and
+            // each compared against what that art looks like on its own.
+            if (!DataPresent()) Assert.Ignore("結算 STATISTIC art not present in this environment.");
+
+            GameObject hudGo = null, root = null, refGo = null;
+            Texture2D panel = null, okRef = null, saveRef = null;
+            try
+            {
+                hudGo = new GameObject("HudCamProbe");
+                var hud = hudGo.AddComponent<Camera>(); hud.enabled = false;
+                var result = new ResultScreen();
+                result.Build(hud);
+                root = (GameObject)typeof(ResultScreen)
+                    .GetField("_root", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(result);
+                root.SetActive(true);
+                panel = Photograph(ButtonView, "regress-panel.png");
+                Object.DestroyImmediate(root); root = null;
+
+                // Reference shots: the same two crops, ONE AT A TIME, each drawn the correct way.
+                string dir = SdoExtracted.ResultStatisDir;
+                okRef = ShootAlone(dir, "Statis25.an", OkRect, "regress-ok-alone.png", ref refGo);
+                saveRef = ShootAlone(dir, "Statis22.an", SaveRect, "regress-save-alone.png", ref refGo);
+
+                // Sanity: the two buttons genuinely look different, so the comparison below can tell them apart.
+                Assert.Greater(MeanDiff(okRef, saveRef, OkRect), 0.02f,
+                    "the two button crops should differ where the 確定 / 保存錄像 text sits");
+
+                float okErr = MeanDiff(panel, okRef, OkRect);
+                float saveErr = MeanDiff(panel, saveRef, SaveRect);
+                float okWrong = MeanDiff(panel, saveRef, OkRect);   // panel's OK slot vs the SAVE art at that slot
+                TestContext.Out.WriteLine($"ok vs own {okErr:F4} | save vs own {saveErr:F4} | ok vs wrong art {okWrong:F4}");
+
+                Assert.Less(okErr, 0.01f, "確定 button does not match the 確定 art — it is drawing another sprite's texture");
+                Assert.Less(saveErr, 0.01f, "保存錄像 button does not match its own art");
+                Assert.Greater(okWrong, okErr * 2f, "the 確定 slot matches the WRONG art as well as its own — textures are bleeding");
+            }
+            finally
+            {
+                if (panel != null) Object.DestroyImmediate(panel);
+                if (okRef != null) Object.DestroyImmediate(okRef);
+                if (saveRef != null) Object.DestroyImmediate(saveRef);
+                if (refGo != null) Object.DestroyImmediate(refGo);
+                Cleanup(null, root, hudGo);
+            }
+        }
+
+        [Test]
+        public void FullPanel_EveryPremultSprite_MatchesItsOwnArtInPlace()
+        {
+            // The broadest form: build the panel WITH a populated row (rank badge, digits, hit-rate, grade — the very
+            // elements 使用者 saw drawing GAME OVER and YOU WIN), photograph the whole 800×600 design, then re-photograph
+            // each premultiplied sprite ALONE at the exact same spot and require the two to agree. Any texture bleeding
+            // anywhere on the panel shows up here, not just on the two buttons.
+            if (!DataPresent()) Assert.Ignore("結算 STATISTIC art not present in this environment.");
+
+            var full = new Rect(0, 0, 800, 600);
+            GameObject hudGo = null, root = null, lone = null;
+            Texture2D panel = null;
+            try
+            {
+                hudGo = new GameObject("HudCamProbe");
+                var hud = hudGo.AddComponent<Camera>(); hud.enabled = false;
+                var result = new ResultScreen();
+                result.Build(hud);
+                result.Show("Identic Conflict", "5", new[]
+                {
+                    new ResultScreen.Row { Rank = 1, Name = "飄漂o", Perfect = 111, Cool = 111, Bad = 1, Miss = 11,
+                                           MaxCombo = 111, Accuracy = 98.76, Score = 111111, Grade = "A", IsLocal = true },
+                }, localWon: true, expGained: 24, coinsGained: 0);
+                root = (GameObject)typeof(ResultScreen)
+                    .GetField("_root", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(result);
+                root.SetActive(true);
+
+                // The rank rows start off-screen at x = +800 and slide in over time; EditMode has no ticking clock, so
+                // land them by hand — otherwise the very elements 使用者 saw corrupted (rank badge, digits, %, 成績字)
+                // would sit outside the frame and never be compared.
+                var rowRoots = (List<GameObject>)typeof(ResultScreen)
+                    .GetField("_rowRoots", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(result);
+                foreach (var rr in rowRoots)
+                {
+                    var lp = rr.transform.localPosition; lp.x = 0f; rr.transform.localPosition = lp;
+                }
+                result.PreviewBanner(win: true, atStart: false);   // park the YOU WIN banner at its final spot
+
+                // Snapshot what every premultiplied renderer is showing and where, before we tear the panel down.
+                var placed = new List<(string name, Sprite spr, Vector3 pos, int order)>();
+                foreach (var sr in root.GetComponentsInChildren<SpriteRenderer>(true))
+                    if (sr.sprite != null && SdoExtracted.IsPremultTexture(sr.sprite.texture) && sr.gameObject.activeInHierarchy)
+                        placed.Add((sr.name, sr.sprite, sr.transform.position, sr.sortingOrder));
+                Assert.Greater(placed.Count, 5, "expected the populated panel to carry many premultiplied sprites");
+
+                panel = PhotographRect(full, "regress-full-panel.png");
+                Object.DestroyImmediate(root); root = null;
+
+                int compared = 0;
+                foreach (var (name, spr, pos, order) in placed)
+                {
+                    // A design-space rect for this sprite, clipped to the panel; skip anything off-screen.
+                    var size = spr.bounds.size;
+                    var design = new Rect(SdoLayout.Width / 2f + pos.x - size.x / 2f,
+                                          SdoLayout.Height / 2f - pos.y - size.y / 2f, size.x, size.y);
+                    design = Rect.MinMaxRect(Mathf.Max(1, design.xMin), Mathf.Max(1, design.yMin),
+                                             Mathf.Min(799, design.xMax), Mathf.Min(599, design.yMax));
+                    if (design.width < 4f || design.height < 4f) continue;
+
+                    lone = new GameObject("Lone");
+                    var sr2 = new GameObject(name).AddComponent<SpriteRenderer>();
+                    sr2.transform.SetParent(lone.transform, false);
+                    sr2.sprite = spr; sr2.sortingOrder = order;
+                    sr2.sharedMaterial = SdoExtracted.PremultSpriteMaterial(spr.texture);
+                    sr2.transform.position = pos;
+                    var alone = PhotographRect(full, null);
+                    Object.DestroyImmediate(lone); lone = null;
+
+                    // The panel has other art behind/around this sprite, so compare only where the sprite is OPAQUE.
+                    float err = MaskedDiff(panel, alone, design, full);
+                    Object.DestroyImmediate(alone);
+                    compared++;
+                    Assert.Less(err, 0.05f,
+                        $"{name} on the full panel does not match the same sprite drawn alone (err {err:F4}) — " +
+                        "its texture is bleeding from / into another renderer");
+                }
+                TestContext.Out.WriteLine($"full-panel sprites compared: {compared}");
+                Assert.Greater(compared, 5, "expected to compare many sprites");
+            }
+            finally
+            {
+                if (panel != null) Object.DestroyImmediate(panel);
+                if (lone != null) Object.DestroyImmediate(lone);
+                Cleanup(null, root, hudGo);
+            }
+        }
+
+        [Test]
+        public void ManyPremultSprites_Together_EachKeepsItsOwnTexture()
+        {
+            // The general form of the same rule, with no ResultScreen involved: put several DIFFERENT premultiplied
+            // sprites on screen at once through the supported pairing, and every one must still show its own art.
+            if (!DataPresent()) Assert.Ignore("結算 STATISTIC art not present in this environment.");
+
+            string dir = SdoExtracted.ResultStatisDir;
+            var ans = new[] { "Statis25.an", "Statis22.an", "100.an", "percent.an" };
+            var slots = new Rect[ans.Length];
+            var sprites = new Sprite[ans.Length];
+            float x = 300f;
+            for (int i = 0; i < ans.Length; i++)
+            {
+                sprites[i] = SdoExtracted.LoadAnSoloPremultiplied(dir, ans[i], pad: 0, cleanMatte: true);
+                Assert.IsNotNull(sprites[i], ans[i] + " failed to load");
+                slots[i] = new Rect(x, 300f, sprites[i].rect.width, sprites[i].rect.height);
+                x += sprites[i].rect.width + 4f;
+            }
+            var view = Rect.MinMaxRect(slots[0].xMin - 6, 300f - 6, slots[ans.Length - 1].xMax + 6, 300f + 60f);
+
+            GameObject all = null, one = null;
+            Texture2D together = null;
+            var alone = new Texture2D[ans.Length];
+            try
+            {
+                all = new GameObject("AllPremult");
+                for (int i = 0; i < ans.Length; i++)
+                    NewSprite(all, ans[i], sprites[i], slots[i].x, slots[i].y,
+                              SdoExtracted.PremultSpriteMaterial(sprites[i].texture));
+                together = Photograph(view, "regress-many-together.png");
+                Object.DestroyImmediate(all); all = null;
+
+                for (int i = 0; i < ans.Length; i++)
+                {
+                    one = new GameObject("OnePremult");
+                    NewSprite(one, ans[i], sprites[i], slots[i].x, slots[i].y,
+                              SdoExtracted.PremultSpriteMaterial(sprites[i].texture));
+                    alone[i] = Photograph(view, null);
+                    Object.DestroyImmediate(one); one = null;
+                }
+
+                for (int i = 0; i < ans.Length; i++)
+                {
+                    float err = MeanDiff(together, alone[i], slots[i], view);
+                    TestContext.Out.WriteLine($"{ans[i]} together-vs-alone {err:F4}");
+                    Assert.Less(err, 0.01f, $"{ans[i]} changed when other premultiplied sprites were on screen — " +
+                                            "they are sharing one material's _MainTex");
+                }
+            }
+            finally
+            {
+                if (together != null) Object.DestroyImmediate(together);
+                foreach (var t in alone) if (t != null) Object.DestroyImmediate(t);
+                if (all != null) Object.DestroyImmediate(all);
+                if (one != null) Object.DestroyImmediate(one);
+            }
         }
 
         // ---------------------------------------------------------------- glyphs & banners
@@ -183,6 +381,87 @@ namespace Sdo.Tests
             return sr;
         }
 
+        /// <summary>Photograph one crop on its own, drawn the supported way, framed by <see cref="ButtonView"/>.</summary>
+        private static Texture2D ShootAlone(string dir, string an, Rect place, string dump, ref GameObject holder)
+        {
+            if (holder != null) Object.DestroyImmediate(holder);
+            holder = new GameObject("Alone");
+            var spr = SdoExtracted.LoadAnSoloPremultiplied(dir, an, pad: 0, cleanMatte: true);
+            Assert.IsNotNull(spr, an + " failed to load");
+            NewSprite(holder, an, spr, place.x, place.y, SdoExtracted.PremultSpriteMaterial(spr.texture));
+            var shot = Photograph(ButtonView, dump);
+            Object.DestroyImmediate(holder); holder = null;
+            return shot;
+        }
+
+        /// <summary>Photograph a design-space rect 1:1 (no zoom) — used for the whole 800×600 panel.</summary>
+        private static Texture2D PhotographRect(Rect view, string dumpName)
+        {
+            int rw = Mathf.RoundToInt(view.width), rh = Mathf.RoundToInt(view.height);
+            var rt = new RenderTexture(rw, rh, 16, RenderTextureFormat.ARGB32);
+            var camGo = new GameObject("ResultPanelFullCam");
+            try
+            {
+                var cam = camGo.AddComponent<Camera>();
+                cam.orthographic = true;
+                cam.orthographicSize = view.height / 2f;
+                cam.transform.position = new Vector3(SdoLayout.WorldX(view.center.x), SdoLayout.WorldY(view.center.y), -100f);
+                cam.clearFlags = CameraClearFlags.SolidColor;
+                cam.backgroundColor = Color.black;
+                cam.targetTexture = rt;
+                cam.Render();
+
+                var prev = RenderTexture.active; RenderTexture.active = rt;
+                var shot = new Texture2D(rw, rh, TextureFormat.RGBA32, false);
+                shot.ReadPixels(new Rect(0, 0, rw, rh), 0, 0); shot.Apply();
+                RenderTexture.active = prev;
+
+                var dump = System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR");
+                if (dumpName != null && !string.IsNullOrEmpty(dump) && Directory.Exists(dump))
+                    File.WriteAllBytes(Path.Combine(dump, dumpName), shot.EncodeToPNG());
+                return shot;
+            }
+            finally
+            {
+                RenderTexture.active = null;
+                Object.DestroyImmediate(camGo);
+                rt.Release(); Object.DestroyImmediate(rt);
+            }
+        }
+
+        /// <summary>Difference between two shots over a rect, measured ONLY where the reference shot is lit — so panel
+        /// art sitting behind/around the sprite does not count against it. Zoom is 1 here (PhotographRect).</summary>
+        private static float MaskedDiff(Texture2D panel, Texture2D alone, Rect design, Rect view)
+        {
+            int x = Mathf.RoundToInt(design.xMin - view.xMin);
+            int y = Mathf.RoundToInt(view.yMax - design.yMax);
+            int w = Mathf.RoundToInt(design.width), h = Mathf.RoundToInt(design.height);
+            var pa = panel.GetPixels(x, y, w, h);
+            var pb = alone.GetPixels(x, y, w, h);
+            float sum = 0f; int n = 0;
+            for (int i = 0; i < pa.Length; i++)
+            {
+                if (Lum(pb[i]) < 0.05f) continue;              // reference is dark here → the sprite is not covering it
+                sum += Mathf.Abs(pa[i].r - pb[i].r) + Mathf.Abs(pa[i].g - pb[i].g) + Mathf.Abs(pa[i].b - pb[i].b);
+                n += 3;
+            }
+            return n == 0 ? 0f : sum / n;
+        }
+
+        /// <summary>Mean per-channel absolute difference between two shots over a design-space rect (frame = ButtonView).</summary>
+        private static float MeanDiff(Texture2D a, Texture2D b, Rect design) => MeanDiff(a, b, design, ButtonView);
+
+        private static float MeanDiff(Texture2D a, Texture2D b, Rect design, Rect view)
+        {
+            var p = ToPixels(view, design);
+            var pa = a.GetPixels(p.x, p.y, p.width, p.height);
+            var pb = b.GetPixels(p.x, p.y, p.width, p.height);
+            float sum = 0f;
+            for (int i = 0; i < pa.Length; i++)
+                sum += Mathf.Abs(pa[i].r - pb[i].r) + Mathf.Abs(pa[i].g - pb[i].g) + Mathf.Abs(pa[i].b - pb[i].b);
+            return sum / (pa.Length * 3f);
+        }
+
         private static void Cleanup(Texture2D shot, GameObject root, GameObject hudGo)
         {
             if (shot != null) Object.DestroyImmediate(shot);
@@ -215,7 +494,7 @@ namespace Sdo.Tests
                 RenderTexture.active = prev;
 
                 var dump = System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR");
-                if (!string.IsNullOrEmpty(dump) && Directory.Exists(dump))
+                if (dumpName != null && !string.IsNullOrEmpty(dump) && Directory.Exists(dump))
                     File.WriteAllBytes(Path.Combine(dump, dumpName), shot.EncodeToPNG());
                 return shot;
             }

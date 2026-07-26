@@ -479,8 +479,15 @@ namespace Sdo.Game
             sr.transform.SetParent(_root.transform, false);
             sr.sprite = spr; sr.sortingOrder = order;
             // A LoadPanelSprite crop has its RGB already × alpha and MUST draw with Blend One OneMinusSrcAlpha, or it
-            // comes out dark. Pair it here so every caller (buttons, %, the 100 marker) gets it without thinking.
-            if (spr != null && SdoExtracted.IsPremultTexture(spr.texture)) sr.sharedMaterial = SdoExtracted.PremultUiMaterial;
+            // comes out dark. Pair it here so every caller (buttons, banners, digits, badges) gets it without thinking.
+            // PER-TEXTURE material, never the shared UI one: a SpriteRenderer with a custom material does not rebind
+            // _MainTex per renderer, so one shared instance would make every sprite on this panel draw the SAME texture
+            // (使用者回報「數字位置畫出 YOU WIN、確定鈕變成保存錄像」). See SdoExtracted.PremultSpriteMaterial.
+            if (spr != null && SdoExtracted.IsPremultTexture(spr.texture))
+            {
+                var mat = SdoExtracted.PremultSpriteMaterial(spr.texture);
+                if (mat != null) sr.sharedMaterial = mat;
+            }
             return sr;
         }
 
