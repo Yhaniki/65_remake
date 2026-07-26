@@ -461,7 +461,8 @@ namespace Sdo.UI.Screens
                 // song name / time / level nudged down 2px to sit centred in the row strip (was at `top`).
                 float textTop = top + 2f;
                 _rowName[i] = AddRowText("row" + i + "name", NameX, textTop, NameW, ColRow, TextAlignmentOptions.Left);
-                _rowName[i].characterSpacing = -TextStyles.SongTitleTrackEm * 100f;   // 歌名字靠緊一點（TMP 真字距，不變形）
+                // 歌名字靠緊一點（TMP 真字距，不變形）：實際收緊量由 SetRowName 逐字串算 —— 固定收緊會把
+                // SimSun 半形西文的 "TA"/"AT" 黏成一塊（見 TextTracking）。
                 _rowTime[i] = AddRowText("row" + i + "time", TimeX, textTop, TimeW, ColRow, TextAlignmentOptions.Center);
                 _rowLevel[i] = AddRowText("row" + i + "lvl", LevelX, textTop, LevelW, ColRow, TextAlignmentOptions.Center);
 
@@ -491,6 +492,16 @@ namespace Sdo.UI.Screens
                 // nb.gameObject.SetActive(false);
                 // _rowNew[i] = nb;
             }
+        }
+
+        /// <summary>設一列的歌名，並把「安全收緊量」重算一次 —— 收緊多少取決於這串字裡最窄的字縫
+        /// （SimSun 的西文是半形等寬且幾乎沒有側距，"TA" 天生只有 0.043em），所以每次換字都要重算。</summary>
+        private void SetRowName(int i, string s)
+        {
+            var t = _rowName[i];
+            if (t == null) return;
+            t.text = s ?? "";
+            TextTracking.ApplyTightening(t, TextStyles.SongTitleTrackEm, TextStyles.MinInkGapEm);
         }
 
         private TextMeshProUGUI AddRowText(string name, float x, float y, float w, Color col, TextAlignmentOptions align)
@@ -791,7 +802,7 @@ namespace Sdo.UI.Screens
                 ApplyRowHi(i, sel);
                 Color rowCol = playable ? ColRow : ColRowDisabled;
                 _rowName[i].alignment = TextAlignmentOptions.Left;
-                _rowName[i].text = e.title ?? e.gn;
+                SetRowName(i, e.title ?? e.gn);
                 _rowName[i].color = rowCol;
                 int lvl = e.Diff(_difficulty);
                 _rowLevel[i].text = lvl >= 0 ? lvl.ToString() : "-";
@@ -828,7 +839,7 @@ namespace Sdo.UI.Screens
 
                 ApplyRowHi(i, i == _randRange);
                 _rowName[i].alignment = TextAlignmentOptions.Left;   // same left indent as song names
-                _rowName[i].text = L(RandRanges[i].Key);
+                SetRowName(i, L(RandRanges[i].Key));
                 int idx = i;
                 // RemoveAllListeners 上面清掉了 WrapInWindow 掛的 click SFX → 這裡補回（對齊歌曲列 line 796）
                 _rowBtn[i].onClick.AddListener(() => { UiSfx.Play(UiSfx.Click); SelectRandRange(idx); });
