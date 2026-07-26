@@ -33,7 +33,9 @@ namespace Sdo.Game
         // v6: each chart now carries an Etterna MinaCalc `msd` (for the MinaCalc difficulty display) — old lines lack it.
         // v7: .sm tags missing their ';' no longer swallow the following lines (SmChart tolerates a leading-'#' cut),
         //     so folders cached with a mangled title ("M@GIC☆ #SUBTITLE:… #ARTIST:…") must re-parse.
-        public const int Version = 7;
+        // v8: 顯示等級的天花板從 99 放寬到 999（ManiaStarRating.LevelMax / ManiaMsd.LevelMax）。舊快取裡撞到 99 的
+        //     `level` 都是被壓過的死值，不整份作廢重掃就永遠停在 99。
+        public const int Version = 8;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

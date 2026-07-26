@@ -5,7 +5,7 @@ namespace Sdo.Tests
 {
     public class ManiaStarRatingTests
     {
-        // Level = round(star × 7) clamped 1..99.
+        // Level = round(star × 7) clamped 1..999.
         [Test]
         public void LevelFromStar_Examples_And_Clamps()
         {
@@ -14,8 +14,17 @@ namespace Sdo.Tests
             Assert.AreEqual(56, ManiaStarRating.LevelFromStar(8.0));
             Assert.AreEqual(4, ManiaStarRating.LevelFromStar(0.5));     // 3.5 → 4 (rounds away from zero)
             Assert.AreEqual(1, ManiaStarRating.LevelFromStar(0.0));     // clamp min
-            Assert.AreEqual(99, ManiaStarRating.LevelFromStar(50.0));   // clamp max (350)
-            Assert.AreEqual(99, ManiaStarRating.LevelFromStar(14.2));   // 99.4 → 99, still inside the band
+            Assert.AreEqual(350, ManiaStarRating.LevelFromStar(50.0));  // 天花板 999 → 350 是真的值，不再被壓成 99
+            Assert.AreEqual(999, ManiaStarRating.LevelFromStar(200.0)); // clamp max (1400)
+        }
+
+        // 99 以前是天花板，星數 ≥ 14.15 的譜全部擠在同一個數字上；現在它只是個普通等級。
+        [Test]
+        public void LevelFromStar_Above_99_Is_Not_Flattened()
+        {
+            Assert.AreEqual(99, ManiaStarRating.LevelFromStar(14.2));    // 99.4 → 99
+            Assert.AreEqual(100, ManiaStarRating.LevelFromStar(14.3));   // 100.1 → 100，會超過舊上限
+            Assert.AreEqual(140, ManiaStarRating.LevelFromStar(20.0));
         }
 
         [Test]

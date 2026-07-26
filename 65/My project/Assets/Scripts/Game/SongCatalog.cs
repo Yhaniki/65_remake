@@ -78,7 +78,7 @@ namespace Sdo.Game
             public float Msd(int d) => d <= 0 ? msdEasy : (d == 1 ? msdNormal : msdHard);
 
             /// <summary>難度數字的「顯示值」——依 <see cref="Sdo.Settings.RoomConfig.difficultyCalc"/> 決定：
-            /// minacalc → round(max(MSD^1.9×0.1, MSD)) 無 99 上限（<see cref="Sdo.Osu.ManiaMsd.ToLevel"/>）；
+            /// minacalc → round(max(MSD^1.9×0.1, MSD))，上限 999（<see cref="Sdo.Osu.ManiaMsd.ToLevel"/>）；
             /// 否則 osu 星數×7 等級（<see cref="Diff"/>）。**選歌 / 房間 / 遊戲一律用這個**,才不會切畫面時數字跳掉。
             ///
             /// **新的等級算法只套用在「難度得自己重算」的外部譜面(osu / StepMania / Malody)。.gn 一律不動**：

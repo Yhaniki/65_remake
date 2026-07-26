@@ -159,12 +159,25 @@ namespace Sdo.Tests
             // Sample()[0] is easy3/normal6/hard9; the others have no level data (Diff -> -1).
             Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 0, 1, 5).Count);   // easy 3 in 1-5
             Assert.AreEqual(0, SongListModel.InLevelRange(Sample(), 0, 5, 9).Count);   // easy 3 not in 5-9
-            Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 2, 9, 99).Count);  // hard 9 >= 9
+            // 「9 以上」的上界是 NoMax,不是等級天花板 —— 天花板從 99 放寬到 999 之後這裡不能再寫死數字。
+            Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 2, 9, SongListModel.NoMax).Count);  // hard 9 >= 9
         }
 
         [Test]
         public void InLevelRange_All_Includes_Unknown_Levels()
-            => Assert.AreEqual(3, SongListModel.InLevelRange(Sample(), 1, 0, 99).Count);
+            => Assert.AreEqual(3, SongListModel.InLevelRange(Sample(), 1, 0, SongListModel.NoMax).Count);
+
+        [Test]
+        public void InLevelRange_Keeps_Levels_Above_99()
+        {
+            // 回歸:哨兵曾經是 99(＝當時的等級上限),100 等以上的歌會被「X 以上」整批篩掉。
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "boss.gn", fileId = 9, diffEasy = 3, diffNormal = 60, diffHard = 150 },
+            };
+            Assert.AreEqual(1, SongListModel.InLevelRange(list, 2, 25, SongListModel.NoMax).Count);
+            Assert.AreEqual(0, SongListModel.InLevelRange(list, 2, 25, 99).Count, "明確給的上界 99 還是要擋住 150");
+        }
 
         [Test]
         public void InLevelRange_Null_Safe()
@@ -221,6 +234,20 @@ namespace Sdo.Tests
         {
             // 全部: a has 3 playable charts, hi has 2 (easy empty) -> 5 candidates.
             Assert.AreEqual(5, SongListModel.RandomCandidates(Levelled(), RngAll).Count);
+        }
+
+        [Test]
+        public void RandomCandidates_High_Range_Keeps_Songs_Above_99()
+        {
+            // 回歸:RandRanges 的「X 以上」以前用 Max=99 當無上界的哨兵,而 99 同時是等級天花板。天花板放寬到
+            // 999 之後,150 等的譜就會落在 [25,99] 之外 → 隨機池裡整批消失。哨兵改成 NoMax 才不會。
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "boss.gn", fileId = 9, diffEasy = 3, diffNormal = 60, diffHard = 150,
+                                        notesEasy = 100, notesNormal = 200, notesHard = 300 },
+            };
+            var c = SongListModel.RandomCandidates(list, Rng25up);
+            CollectionAssert.AreEquivalent(new[] { 1, 2 }, c.ConvertAll(x => x.Difficulty), "60 跟 150 都要留在池子裡");
         }
 
         // 隨機難度的範圍比的是「螢幕上那個數字」→ 跟著 RoomConfig.difficultyCalc 走（選了哪套就整體照那套）。

@@ -9,8 +9,8 @@ namespace Sdo.Osu
     /// StepMania charts (converted to an OsuBeatmap by <see cref="SmChart.ToBeatmap"/>) get a star rating on the SAME
     /// scale as osu maps — that's how both get a displayed LEVEL.
     ///
-    /// <see cref="Level"/> = round(star × 7), clamped 1..99 (2.35★→16, 5.0★→35, 8.0★→56). The scale factor is a
-    /// display convention only — it stretches the usable star range over more of the 1..99 LV band than the
+    /// <see cref="Level"/> = round(star × 7), clamped 1..999 (2.35★→16, 5.0★→35, 8.0★→56). The scale factor is a
+    /// display convention only — it stretches the usable star range over more of the 1..999 LV band than the
     /// reference tool's ×5 did. Engine-free / unit-testable.
     /// </summary>
     public static class ManiaStarRating
@@ -21,13 +21,15 @@ namespace Sdo.Osu
         private const double OverallDecayBase = 0.30;
         private const double DifficultyMultiplier = 0.018;
         private const double Eps = 1.0;              // osu Precision.DefinitelyBigger default (1 ms)
-        private const int LevelMin = 1, LevelMax = 99;
+        // 顯示等級的天花板。原本是 99，但 star ≥ 14.15 的譜全部被壓成同一個 99（歌單上一整排 99，看不出誰更難）→
+        // 拉到 999，跟 .gn 檔頭自己接受的 0..999 同一個量程（見 GnHeader.Parse）。
+        private const int LevelMin = 1, LevelMax = 999;
         private const double LevelPerStar = 7.0;     // display scale: LV = round(star × this)
 
-        /// <summary>GN level for a chart = round(star × 7), clamped 1..99. 0-note charts → LevelMin.</summary>
+        /// <summary>GN level for a chart = round(star × 7), clamped 1..999. 0-note charts → LevelMin.</summary>
         public static int Level(OsuBeatmap bm) => LevelFromStar(Calculate(bm));
 
-        /// <summary>round(star × 7) clamped to 1..99.</summary>
+        /// <summary>round(star × 7) clamped to 1..999.</summary>
         public static int LevelFromStar(double star)
         {
             int v = (int)Math.Round(star * LevelPerStar, MidpointRounding.AwayFromZero);

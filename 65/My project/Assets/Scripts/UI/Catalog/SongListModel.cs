@@ -153,17 +153,23 @@ namespace Sdo.UI.Catalog
         /// label carried into the room ("隨機難度 X"). Min/Max are inclusive level bounds at the active difficulty;
         /// Key is the localization key. Single source of truth: the screen renders it, FrontendApp re-rolls off it.</summary>
         public struct RandRange { public string Key; public int Min, Max; }
+
+        /// <summary>「X 以上」沒有上界時填這個。**不要拿等級天花板當哨兵**：以前這裡寫 99，而顯示等級的上限也剛好
+        /// 是 99，兩件事一綁死，等級上限一放寬(現在 999，見 <see cref="Sdo.Osu.ManiaStarRating"/> /
+        /// <see cref="Sdo.Osu.ManiaMsd"/>)，「25 以上」就會把 100 等以上的歌通通篩掉。</summary>
+        public const int NoMax = int.MaxValue;
+
         public static readonly RandRange[] RandRanges =
         {
             new RandRange { Key = "songselect.rand_1_5",  Min = 1,  Max = 5 },
             new RandRange { Key = "songselect.rand_1_9",  Min = 1,  Max = 9 },
             new RandRange { Key = "songselect.rand_5_9",  Min = 5,  Max = 9 },
-            new RandRange { Key = "songselect.rand_all",  Min = 0,  Max = 99 },
-            new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = 99 },
-            new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = 99 },
-            new RandRange { Key = "songselect.rand_13up", Min = 13, Max = 99 },
-            new RandRange { Key = "songselect.rand_20up", Min = 20, Max = 99 },
-            new RandRange { Key = "songselect.rand_25up", Min = 25, Max = 99 },
+            new RandRange { Key = "songselect.rand_all",  Min = 0,  Max = NoMax },
+            new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = NoMax },
+            new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = NoMax },
+            new RandRange { Key = "songselect.rand_13up", Min = 13, Max = NoMax },
+            new RandRange { Key = "songselect.rand_20up", Min = 20, Max = NoMax },
+            new RandRange { Key = "songselect.rand_25up", Min = 25, Max = NoMax },
         };
 
         /// <summary>Clamp an arbitrary index into <see cref="RandRanges"/>.</summary>
@@ -183,7 +189,7 @@ namespace Sdo.UI.Catalog
             var res = new List<RandomCandidate>();
             if (list == null) return res;
             var r = RandRanges[ClampRange(rangeIndex)];
-            bool all = r.Min <= 0 && r.Max >= 99;
+            bool all = r.Min <= 0 && r.Max >= NoMax;
             foreach (var e in list)
             {
                 if (e == null) continue;
@@ -201,12 +207,13 @@ namespace Sdo.UI.Catalog
         }
 
         /// <summary>Songs whose level at <paramref name="difficulty"/> is within [min,max] — the pool for the
-        /// 隨機 (random) ranges. min&lt;=0 &amp;&amp; max&gt;=99 means "全部" (no level filter; unknown levels included).</summary>
+        /// 隨機 (random) ranges. min&lt;=0 &amp;&amp; max&gt;=<see cref="NoMax"/> means "全部" (no level filter; unknown
+        /// levels included).</summary>
         public static List<SongCatalog.Entry> InLevelRange(IReadOnlyList<SongCatalog.Entry> list, int difficulty, int min, int max)
         {
             var res = new List<SongCatalog.Entry>();
             if (list == null) return res;
-            bool all = min <= 0 && max >= 99;
+            bool all = min <= 0 && max >= NoMax;
             foreach (var e in list)
             {
                 if (e == null) continue;
