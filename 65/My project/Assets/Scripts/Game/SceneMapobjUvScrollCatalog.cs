@@ -169,10 +169,20 @@ namespace Sdo.Game
             //   把它們壓到場景(Sdo/SceneVertexCutout,queue 2450)之前 → 水面先畫、又不寫深度,接著場景以
             //   不透明/alpha-test 覆蓋上去,結果就是「有場景幾何的地方一律是場景贏」= 水永遠在房子後面。
             //   水面本身在 y ≈ −49、比整個棧橋都低,沒有任何它「應該」擋住的東西,所以這個取捨沒有副作用。
+            // ★ 只有 SEA 壓到場景之前,LANG 不動 —— 兩片水面的角色不同:
+            //   SEA  是那片 2816×3362、平躺在 y = −48.9 的大洋,一路延伸到地平線、穿過整座村子的下方。
+            //        它排在 Transparent(3000) 時,只要哪個像素比場景近就會蓋上去,棧橋與房子基座那一帶
+            //        就一直被水紋刷到(官方的海浪是在房子後面 —— 使用者對過原版確認)。壓到 2400(場景本體
+            //        Sdo/SceneVertexCutout 的 AlphaTest 2450 之前)後,水面先畫又不寫深度,場景後畫覆蓋上去,
+            //        於是「有場景幾何的地方一律場景贏」= 海面永遠在房子後面。
+            //   LANG 是岸邊那條浪,它**本來就該蓋在沙灘上**(浪打上沙灘),所以維持預設佇列走正常深度測試。
+            //        兩片一起壓 2400 的話,沙灘會反過來蓋住浪 —— 那是錯的。
+            //   房子與沙灘同屬一顆 SCENE.MSH(單一 renderer、單一佇列),沒辦法用佇列分開,所以只能從
+            //   「哪一片水」下手:分開設定是這裡唯一能表達這個差異的維度。
             Target.Sine("SCN0004", "SEA",  new Vector2(0.5f, 0f), new Vector2(0.593f, 0f),
                         RenderMode.OfficialMaterialAlpha, WaterBehindSceneQueue),
             Target.Sine("SCN0004", "LANG", new Vector2(0f, -0.25f), new Vector2(0f, 2.372f),
-                        RenderMode.OfficialMaterialAlpha, WaterBehindSceneQueue),
+                        RenderMode.OfficialMaterialAlpha),
             // ── SCN0012/0013 足球場:廣告看板每 2 秒換一幅 ───────────────────────────────────────
             // StageScene_UpdatePulse_004b0090(case 0xc 與 0xd 共用)是一台「停→快掃」的狀態機:
             //   v>=1 → v=0;若 v!=0 且 (v<=0.5 或 prev>=0.5) → 每幀 v += _DAT_00589030 (0.003) 並寫出;

@@ -72,6 +72,58 @@ namespace Sdo.Tests
             Probe();   // 動完再印一次:offset 有沒有真的在跑
         }
 
+        /// <summary>
+        /// 自由機位俯瞰:固定機位一律盯著舞者(棧橋上),看不到沙灘那一側。判斷「水該蓋住沙灘、但不該蓋住
+        /// 房子」必須同時看到兩者,所以另外拉一台相機從幾個角度照整片海岸。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Capture_Scn0004_Shoreline_Overview()
+        {
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g, SceneOnlyScn0004);
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            var camGo = new GameObject("Scn0004FreeCam");
+            var free = camGo.AddComponent<Camera>();
+            free.fieldOfView = 55f; free.nearClipPlane = 1f; free.farClipPlane = 20000f;
+            var stage = Camera.allCameras;
+            foreach (var c in stage) if (!c.orthographic) { free.cullingMask = c.cullingMask; free.clearFlags = c.clearFlags; free.backgroundColor = c.backgroundColor; break; }
+            // SceneBackdrop 是主 ortho 相機用來合成場景 RT 的全螢幕 quad(z=90 的 800×600 平面)。自由機位若
+            // 收到它,畫面正中央會多一塊「天空面板」擋住海岸線 —— 那是測試自己的假象,不是場景問題。剔掉它的 layer。
+            var backdrop = GameObject.Find("SceneBackdrop");
+            if (backdrop != null) free.cullingMask &= ~(1 << backdrop.layer);
+
+            // 場景包圍盒約 x[−1339..1614] y[−114..1343] z[−1055..2056];岸浪 LANG 在 x[−400..862] z[−1018..2033]。
+            var shots = new (string Tag, Vector3 Pos, Vector3 Look)[]
+            {
+                ("far",   new Vector3(-1400f,  700f, -900f),  new Vector3(200f, -40f,  700f)),
+                ("shore", new Vector3( 1500f,  350f, -600f),  new Vector3(  0f, -40f,  700f)),
+                ("top",   new Vector3(  200f, 1400f,  -600f), new Vector3(200f, -40f,  700f)),
+            };
+            for (int i = 0; i < shots.Length; i++)
+            {
+                camGo.transform.position = shots[i].Pos;
+                camGo.transform.rotation = Quaternion.LookRotation(shots[i].Look - shots[i].Pos, Vector3.up);
+                // 浪一輪 2.65 s:每個機位取 2 個相位就夠判斷遮蔽關係。
+                for (int k = 0; k < 2; k++)
+                {
+                    CapFrom(free, $"{OutDir}/{Tag}-ov-{shots[i].Tag}{k}.png");
+                    yield return new WaitForSecondsRealtime(1.3f);
+                }
+            }
+            Object.Destroy(camGo);
+        }
+
+        private static void CapFrom(Camera cam, string path)
+        {
+            var rt = new RenderTexture(W, H, 24);
+            cam.targetTexture = rt; cam.Render(); cam.targetTexture = null;
+            var tex = ReadRGBA(rt);
+            File.WriteAllBytes(path, tex.EncodeToPNG());
+            Object.Destroy(tex); Object.Destroy(rt);
+            Debug.Log("[scn0004-cap] saved " + path);
+        }
+
         // 把水面片與場景本體的排序資訊全部印出來。renderQueue 才是「誰蓋誰」的答案。
         private static void Probe()
         {

@@ -1316,15 +1316,15 @@ namespace Sdo.Tests
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0004", "LANG"), "岸浪絕不能是加法");
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0004", "SEA"));
 
-            // ★ 而且兩片水面必須排在場景之前 —— 官方的海浪永遠在房子後面(對過原版確認)。場景本體是
-            // Sdo/SceneVertexCutout 的 AlphaTest(2450) 且會寫深度;水面是 ZWrite Off 的透明批,只要排在
-            // 2450 之後就會蓋到棧橋與房子基座上。壓到 2400 → 水面先畫、場景後畫並覆蓋,場景一律贏。
-            foreach (var t in new[] { sea, wave })
-            {
-                Assert.AreEqual(SceneMapobjUvScrollCatalog.WaterBehindSceneQueue, t.Queue, "水面要排在場景之前");
-                Assert.Less(t.Queue, 2450, "必須小於場景 SceneVertexCutout 的 AlphaTest 佇列,否則會蓋到房子");
-                Assert.Greater(t.Queue, 2000, "又不能低到被不透明批之前的東西蓋掉");
-            }
+            // ★ 只有 SEA 排到場景之前,LANG 不能跟著壓 —— 這是兩個相反的需求同時成立的唯一寫法:
+            //   官方的海浪在房子後面(對過原版確認),但浪本來就該打上沙灘。房子與沙灘同屬一顆 SCENE.MSH
+            //   (單一 renderer、單一佇列),佇列分不開它們,所以只能分「哪一片水」:大洋 SEA 壓到場景之前
+            //   (2400 < SceneVertexCutout 的 AlphaTest 2450)讓場景一律贏;岸浪 LANG 留在預設佇列走正常
+            //   深度測試,才蓋得到沙灘。兩片一起壓的話沙灘會反過來蓋住浪。
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.WaterBehindSceneQueue, sea.Queue, "大洋要排在場景之前");
+            Assert.Less(sea.Queue, 2450, "必須小於場景 SceneVertexCutout 的 AlphaTest 佇列,否則會蓋到房子");
+            Assert.Greater(sea.Queue, 2000, "又不能低到被不透明批之前的東西蓋掉");
+            Assert.AreEqual(0, wave.Queue, "岸浪不能壓佇列 —— 壓了沙灘就會反過來蓋住浪");
             // 其他場景的水/透明道具沒有這個覆寫(預設 0 = 沿用 shader 佇列),別讓它外溢。
             SceneMapobjUvScrollCatalog.TryFindTarget("SCN0025", "CHUNTIANDONGHUA", out var spring);
             Assert.AreEqual(0, spring.Queue, "春天噴水池不套佇列覆寫");
