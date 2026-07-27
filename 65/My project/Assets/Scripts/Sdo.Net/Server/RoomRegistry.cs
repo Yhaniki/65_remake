@@ -13,7 +13,10 @@ namespace Sdo.Net.Server
 
         /// <summary>
         /// 因為關房而被清出去的其他人 —— 他們要收到 <c>kicked{roomClosed}</c>。
-        /// 只會是旁觀者(座位玩家全走了才會關房)。
+        ///
+        /// 正常路徑下**這個陣列是空的**:關房的條件是「一個人都不剩」,所以沒有人需要被清。
+        /// 它存在是為了兩件事 —— (a) 防禦性:萬一狀態不同步,關房時還有人在,那些人要被通知;
+        /// (b) 將來的「server 關機 / 房間閒置太久」那類強制關房路徑。
         /// </summary>
         public int[] EvictedUserIds;
 
@@ -165,8 +168,9 @@ namespace Sdo.Net.Server
         /// <summary>
         /// 離開房間。**斷線也走這條**(R6:斷線 == leaveRoom,idempotent)。
         ///
-        /// 座位全空時關房並回收房號;剩下的旁觀者一併清出(<see cref="LeaveResult.EvictedUserIds"/>),
-        /// Hub 要發 <c>kicked{roomClosed}</c> 給他們。
+        /// **只有「一個人都不剩」時才關房並回收房號** —— 旁觀者算人,所以
+        /// 「六個座位全空但還有旁觀者」的房間會繼續存在(只是沒有房主)。
+        /// 房主離開時若還有座位玩家就自動轉移(<see cref="LeaveResult.NewHostUserId"/>)。
         /// </summary>
         public LeaveResult Leave(int userId)
         {

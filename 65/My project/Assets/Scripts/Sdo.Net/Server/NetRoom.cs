@@ -36,6 +36,25 @@ namespace Sdo.Net.Server
         public NetMatchInfo Match => _match;
 
         /// <summary>
+        /// 一個人都不剩了嗎?(座位與旁觀都空)—— **這才是關房的條件**。
+        /// 旁觀者算人:「六個座位全空但有旁觀者」是合法狀態,那間房繼續存在,
+        /// 只是**沒有房主**(見 <see cref="HasHost"/>),等有人坐上座位就由他接手。
+        /// </summary>
+        public bool IsEmpty => _state.SeatedCount == 0 && _spectators.Count == 0;
+
+        /// <summary>
+        /// 現在有房主嗎?
+        ///
+        /// **座位全空時沒有房主**(<c>hostUserId == 0</c>)—— 旁觀者不能當房主。
+        /// 那個狀態下所有 host-only 操作都會被拒(沒有舞者,也就不需要選歌或開始);
+        /// **第一個坐上座位的人自動成為房主**(見 <see cref="SeatPlayer"/>)。
+        /// </summary>
+        public bool HasHost => _state.HostUserId != 0;
+
+        /// <summary>房內總人數(座位 + 旁觀)。</summary>
+        public int TotalOccupants => _state.SeatedCount + _spectators.Count;
+
+        /// <summary>
         /// 建房。呼叫者自動成為房主並坐上座位 0。
         /// (座位 0 只是「第一個空位」的自然結果 —— 房主身分是靠 <see cref="NetRoomSnapshot.HostUserId"/>
         /// 記的,不是靠座位索引。見 R4。)
@@ -114,14 +133,14 @@ namespace Sdo.Net.Server
                 // 已經進入遊戲流程(載入中/遊玩中/看結算)也不能切 —— 它正在這一場裡面。
                 if (s.PlayState != PlayState.Idle) return NetRoomOp.BadState;
 
-                // **房主可以旁觀,但要先把 host 交給下一個人**(使用者要求)。
-                // 找不到接手的人(它是唯一的座位玩家)就不行 —— 沒有房主的房間沒人能開始遊戲,
-                // 而且座位全空的房間本來就會被關掉。
+                // **房主可以旁觀,並且把 host 交給下一個人**(使用者要求)。
+                // 沒有其他座位玩家可以接手時 → **房間變成沒有房主**(hostUserId = 0),
+                // 而不是讓旁觀者當房主。六個座位全空是合法狀態,那時候本來就不需要
+                // 選歌或開始;下一個坐上座位的人會自動接手(見 SeatPlayer)。
                 if (_state.IsHost(user.UserId))
                 {
                     int heir = FindHeirSeat(seat);
-                    if (heir < 0) return NetRoomOp.BadState;
-                    _state.HostUserId = _state.Seats[heir].UserId;
+                    _state.HostUserId = heir >= 0 ? _state.Seats[heir].UserId : 0;
                 }
 
                 s.Clear();
@@ -163,13 +182,14 @@ namespace Sdo.Net.Server
         /// <summary>
         /// 離開房間。斷線也走這條(R6:斷線 == leaveRoom,idempotent)。
         ///
-        /// 回傳 true = **這間房該關掉了**。關房條件是「沒有任何座位玩家了」——
-        /// 即使還有旁觀者也要關(R5:旁觀者不能擁有房間),Hub 收到 true 之後要把
-        /// 剩下的旁觀者踢掉並發 <c>kicked{roomClosed}</c>。
+        /// 回傳 true = **這間房該關掉了**。關房條件是「**完全沒有人**」——
+        /// 座位與旁觀都空。**旁觀者算人**(使用者:「只要房間有人 旁觀也算 房間就不會被關閉」),
+        /// 所以「六個座位全空但有旁觀者」是合法狀態。
         ///
-        /// **房主離開會自動轉移**給剩下 Taken 座位中索引最小的人(R5)。這是與離線
-        /// <c>MockRoomService.LeaveRoom</c>(host 走 = 整房解散)的**刻意分歧** ——
-        /// 需求 12 要有「切換房主」，線上就該自動轉移而不是把大家踢光。
+        /// **房主離開會自動轉移**(R5):優先給剩下 Taken 座位中索引最小的人;
+        /// 座位都空了就給第一個旁觀者(旁觀著的房主仍能選歌/踢人/改設定,
+        /// 只是要等有人坐下才開得了場)。這是與離線 <c>MockRoomService.LeaveRoom</c>
+        /// (host 走 = 整房解散)的**刻意分歧** —— 需求 12 要有「切換房主」。
         /// </summary>
         public bool Leave(int userId)
         {
@@ -186,11 +206,11 @@ namespace Sdo.Net.Server
             // 把離開的人從進行中的場次移除(R15:遊玩中斷線 → 逐出本場)。
             RemoveFromMatch(userId);
 
-            if (_state.SeatedCount == 0)
+            if (IsEmpty)
             {
                 _state.Status = RoomStatus.Closed;
                 Touch();
-                return true;   // 沒有座位玩家了 → 關房
+                return true;   // 一個人都不剩了 → 關房
             }
 
             if (wasHost) PromoteNewHost();
@@ -741,8 +761,17 @@ namespace Sdo.Net.Server
             _state.Rev++;
         }
 
+        /// <summary>
+        /// 把一個人放進座位。
+        ///
+        /// **如果這時候沒有房主(座位本來全空),他就成為房主。**
+        /// 所有「坐下」的路徑都經過這裡(建房 / 加入 / 旁觀者搶回座位),所以不會漏。
+        /// </summary>
         private void SeatPlayer(int seat, NetJoinUser user)
         {
+            // 座位全空 → 沒有房主 → 第一個坐下的人接手。
+            if (_state.HostUserId == 0) _state.HostUserId = user.UserId;
+
             var s = _state.Seats[seat];
             s.State = SeatState.Taken;
             s.UserId = user.UserId;
@@ -763,14 +792,19 @@ namespace Sdo.Net.Server
             _state.Spectators = _spectators.ToArray();
         }
 
-        /// <summary>房主走了 → 給剩下 Taken 座位中**索引最小**的人(R5)。</summary>
+        /// <summary>
+        /// 重新指派房主(R5)。給剩下 Taken 座位中**索引最小**的人。
+        ///
+        /// **座位全空就沒有房主**(<c>hostUserId = 0</c>)—— 旁觀者不能當房主。
+        /// 那不是壞狀態:沒有舞者的房間本來就不需要選歌或開始,而
+        /// <see cref="SeatPlayer"/> 會讓下一個坐上座位的人自動接手。
+        /// </summary>
         private void PromoteNewHost()
         {
             int heir = FindHeirSeat(-1);
-            if (heir < 0) return;
-            _state.HostUserId = _state.Seats[heir].UserId;
             // 不動它的 Ready —— 它現在是房主,Ready 對它已經不適用(見 IsClearedToStart)。
             // 若它原本已按準備,那個 true 也無害:IsClearedToStart 對房主一律放行。
+            _state.HostUserId = heir >= 0 ? _state.Seats[heir].UserId : 0;
         }
 
         /// <summary>

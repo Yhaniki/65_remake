@@ -261,25 +261,89 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void R5_Room_Closes_When_The_Last_Seated_Player_Leaves()
+        public void R5_Room_Closes_Only_When_Nobody_Is_Left()
         {
             var r = MakeRoom();
-            Assert.IsTrue(r.Leave(Host), "最後一個座位玩家離開 → 關房");
+            Assert.IsTrue(r.Leave(Host), "一個人都不剩 → 關房");
             Assert.AreEqual(RoomStatus.Closed, r.Status);
         }
 
         [Test]
-        public void R5_Room_Closes_Even_If_Spectators_Remain()
+        public void R5_Room_Stays_Open_With_Only_Spectators()
         {
-            // 旁觀者不能擁有房間 —— 沒有舞者的房間沒有意義,而且沒人能開始遊戲。
-            // Hub 收到 true 之後要把剩下的旁觀者踢掉並發 kicked{roomClosed}。
+            // 使用者的規則:「只要房間有人 旁觀也算 房間就不會被關閉,
+            // 6 個遊戲的位置全空也是合法的」。
             var r = MakeRoom();
             JoinMany(r, Bob);
             Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Bob)));
             Assert.AreEqual(1, r.State.Spectators.Length);
-            Assert.AreEqual(1, r.State.SeatedCount, "只剩房主坐著");
 
-            Assert.IsTrue(r.Leave(Host), "座位全空 → 關房,即使還有旁觀者");
+            Assert.IsFalse(r.Leave(Host), "還有旁觀者 → 房間不關");
+            Assert.AreEqual(RoomStatus.Open, r.Status);
+            Assert.AreEqual(0, r.State.SeatedCount, "六個座位全空是合法狀態");
+            Assert.IsFalse(r.IsEmpty);
+            Assert.AreEqual(1, r.TotalOccupants);
+        }
+
+        [Test]
+        public void R5_No_Seated_Players_Means_No_Host()
+        {
+            // 使用者的規則:「座位全空的時候就是沒有 host」—— 旁觀者不當房主。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            r.TrySpectate(User(Bob));
+            r.Leave(Host);
+
+            Assert.IsFalse(r.HasHost, "座位全空 → 沒有房主");
+            Assert.AreEqual(0, r.State.HostUserId);
+            Assert.IsFalse(r.State.IsHost(Bob), "旁觀者不是房主");
+        }
+
+        [Test]
+        public void R5_First_Player_To_Take_A_Seat_Becomes_Host()
+        {
+            // 「上來座位的人會變成 host」。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            r.TrySpectate(User(Bob));
+            r.Leave(Host);
+            Assert.IsFalse(r.HasHost);
+
+            // 旁觀者坐回座位 → 它成為房主。
+            int seat;
+            Assert.AreEqual(NetRoomOp.Ok, r.TryUnspectate(User(Bob), out seat));
+            Assert.IsTrue(r.HasHost);
+            Assert.AreEqual(Bob, r.State.HostUserId);
+        }
+
+        [Test]
+        public void R5_A_New_Joiner_Becomes_Host_When_Seats_Were_Empty()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            r.TrySpectate(User(Bob));
+            r.Leave(Host);
+            Assert.IsFalse(r.HasHost);
+
+            int seat;
+            Assert.AreEqual(NetRoomOp.Ok, r.TryJoin(User(Cid), out seat));
+            Assert.AreEqual(Cid, r.State.HostUserId, "第一個坐下的人接手房主");
+        }
+
+        [Test]
+        public void R5_Host_Only_Operations_Are_Refused_While_There_Is_No_Host()
+        {
+            // 沒有房主的房間沒有舞者,本來就不需要選歌或開始 —— 全部拒絕是正確的。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            r.TrySpectate(User(Bob));
+            r.Leave(Host);
+
+            Assert.AreEqual(NetRoomOp.NotHost, r.SetSong(Bob, OfficialSong()));
+            Assert.AreEqual(NetRoomOp.NotHost, r.SetRoomName(Bob, "旁觀者的房"));
+
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.NotHost, r.RequestStart(Bob, true, Resolved(), 0, out m));
         }
 
         // ==================== R6:離開 idempotent ====================
@@ -729,26 +793,28 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Lone_Host_Cannot_Spectate()
+        public void Lone_Host_Can_Spectate_Leaving_The_Room_Hostless()
         {
-            // 沒有人可以接手 host —— 而且座位全空的房間本來就會被關掉,
-            // 「房主想旁觀結果房間關了」不是合理的結果。
+            // 房間只剩房主一個人,它也可以旁觀 —— 房間不會關(還有它自己在),
+            // 只是變成「六個座位全空、沒有房主」的合法狀態。
             var r = MakeRoom();
-            Assert.AreEqual(NetRoomOp.BadState, r.TrySpectate(User(Host)));
-            Assert.AreEqual(Host, r.HostUserId, "失敗時 host 不該被交出去");
-            Assert.AreEqual(0, r.State.SeatIndexOf(Host));
+
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Host)));
+
+            Assert.AreEqual(0, r.State.SeatedCount);
+            Assert.IsFalse(r.HasHost, "座位全空 → 沒有房主");
+            Assert.IsFalse(r.IsEmpty, "但房間還有人,不該關");
+            Assert.AreEqual(0, r.State.SpectatorIndexOf(Host));
         }
 
         [Test]
-        public void Host_Cannot_Spectate_If_Only_Spectators_Remain()
+        public void Host_Spectating_Hands_Off_To_A_Seated_Player_When_One_Exists()
         {
-            // 旁觀者不能接手 host(它沒有座位)。
             var r = MakeRoom();
-            JoinMany(r, Bob);
-            r.TrySpectate(User(Bob));   // Bob 變旁觀,只剩房主坐著
+            JoinMany(r, Bob, Cid);
 
-            Assert.AreEqual(NetRoomOp.BadState, r.TrySpectate(User(Host)));
-            Assert.AreEqual(Host, r.HostUserId);
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Host)));
+            Assert.AreEqual(Bob, r.HostUserId, "有座位玩家就交給索引最小的那個");
         }
 
         [Test]

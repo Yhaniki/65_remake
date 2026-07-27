@@ -209,9 +209,10 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Closing_A_Room_Evicts_Remaining_Spectators_And_Clears_Their_Index()
+        public void Room_With_Only_Spectators_Stays_Open_And_Hostless()
         {
-            // 旁觀者不能擁有房間 —— 座位全空就關房,剩下的旁觀者要收 kicked{roomClosed}。
+            // 使用者的規則:「只要房間有人 旁觀也算 房間就不會被關閉,
+            // 6 個遊戲的位置全空也是合法的」;而「座位全空的時候就是沒有 host」。
             var reg = Reg();
             var room = Create(reg, Host);
             NetRoom j; int seat; LeaveResult l;
@@ -220,15 +221,54 @@ namespace Sdo.Tests
             NetRoom sr;
             LeaveResult sl;
             Assert.AreEqual(NetRoomOp.Ok, reg.TrySpectate(room.Code, User(Bob), out sr, out sl));
-            Assert.AreEqual(1, room.State.Spectators.Length);
-            Assert.AreEqual(1, room.State.SeatedCount, "只剩房主坐著");
 
             var left = reg.Leave(Host);
 
+            Assert.IsFalse(left.RoomClosed, "還有旁觀者 → 房間不關");
+            Assert.AreEqual(1, reg.RoomCount);
+            Assert.IsTrue(reg.IsInAnyRoom(Bob), "旁觀者還在房裡,索引要留著");
+            Assert.AreEqual(0, room.State.SeatedCount);
+            Assert.IsFalse(room.HasHost, "座位全空 → 沒有房主");
+        }
+
+        [Test]
+        public void Room_Closes_And_Recycles_Its_Code_Only_When_Everyone_Left()
+        {
+            var reg = Reg();
+            var room = Create(reg, Host);
+            int code = room.Code;
+            NetRoom j; int seat; LeaveResult l;
+            reg.TryJoin(room.Code, User(Bob), out j, out seat, out l);
+
+            NetRoom sr; LeaveResult sl;
+            reg.TrySpectate(room.Code, User(Bob), out sr, out sl);
+
+            reg.Leave(Host);                    // 座位空了,旁觀者還在 → 不關
+            Assert.AreEqual(1, reg.RoomCount);
+
+            var left = reg.Leave(Bob);          // 最後一個人也走了 → 關
             Assert.IsTrue(left.RoomClosed);
-            Assert.Contains(Bob, left.EvictedUserIds, "旁觀者要被清出並通知");
-            Assert.IsFalse(reg.IsInAnyRoom(Bob), "索引也要清掉 —— 否則他永遠加不進別的房");
             Assert.AreEqual(0, reg.RoomCount);
+            Assert.IsNull(reg.Find(code));
+            Assert.IsFalse(reg.IsInAnyRoom(Bob));
+        }
+
+        [Test]
+        public void Seating_Into_A_Hostless_Room_Claims_The_Host_Role()
+        {
+            // 「上來座位的人會變成 host」。
+            var reg = Reg();
+            var room = Create(reg, Host);
+            NetRoom j; int seat; LeaveResult l;
+            reg.TryJoin(room.Code, User(Bob), out j, out seat, out l);
+            NetRoom sr; LeaveResult sl;
+            reg.TrySpectate(room.Code, User(Bob), out sr, out sl);
+            reg.Leave(Host);
+            Assert.IsFalse(room.HasHost);
+
+            NetRoom jr; int newSeat; LeaveResult jl;
+            Assert.AreEqual(NetRoomOp.Ok, reg.TryJoin(room.Code, User(Cid), out jr, out newSeat, out jl));
+            Assert.AreEqual(Cid, room.State.HostUserId, "第一個坐下的人接手房主");
         }
 
         [Test]
