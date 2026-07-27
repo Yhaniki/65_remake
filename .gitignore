@@ -46,6 +46,14 @@ artifacts/
 *.unityproj
 *.csproj.AssemblyInfo.cs
 
+# 例外：server/ 與 tools/ 底下的專案檔是**手寫的**，必須進版控。
+# 上面那兩條 *.sln / *.csproj 是為了排除 Unity 每次重開就重建的那批（65/My project 底下），
+# 但它們是無路徑的 pattern，會一併吃掉我們自己寫的 —— server 的 csproj 裡有共用原始碼的
+# <Compile Include> 清單與 LangVersion 鎖定，漏掉的話別人 clone 下來根本編不出 server。
+!server/**/*.csproj
+!server/**/*.sln
+!tools/**/*.csproj
+
 # Unity（任意子目錄下的 Unity 專案）
 [Ll]ibrary/
 [Tt]emp/

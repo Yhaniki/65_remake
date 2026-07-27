@@ -102,13 +102,12 @@ namespace Sdo.Game
 
         // The scan's own output living in the song folder: the sidecar, and the disc / dance it names (SongSidecar's
         // CdFileName/DpsFileName produce exactly these — "cd.png"/"cd_<slug>_<hash>.png", "dance.dps"/"dance_<…>.dps").
-        private static bool IsGenerated(string name)
-        {
-            if (string.Equals(name, SongSidecar.FileName, StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(name, SongSidecar.LegacyFileName, StringComparison.OrdinalIgnoreCase)) return true;   // pre-rename leftover
-            string n = name.ToLowerInvariant();
-            return n == "cd.png" || n.StartsWith("cd_") || n == "dance.dps" || n.StartsWith("dance_");
-        }
+        //
+        // 這份判定搬到了 Sdo.Osu.SongPackFilter.IsGenerated,因為多人連線的「哪些檔要傳給別人」
+        // 需要同一份答案,而那邊 server(net8.0)也編得到。兩處各留一份的話,將來多一種生成物
+        // 只改了一邊 —— 快取這邊會變成「播完一首歌就讓自己的快取失效」,傳輸那邊會變成「把收端
+        // 自己會重生的東西傳過去」,而且兩種都不會有測試抓到。
+        private static bool IsGenerated(string name) => SongPackFilter.IsGenerated(name);
 
         private static string Hash(string s)   // FNV-1a 64-bit
         {

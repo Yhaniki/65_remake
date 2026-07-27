@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Sdo.Server — 勁舞團重製版的 standalone 連線伺服器。跑在 Linux(也能在 Windows 跑來測)。
+
+    ★ 關鍵設計:它**直接編譯遊戲實際在用的那份原始碼**(Sdo.Net + Sdo.Osu),不另外寫一份
+      協定實作。兩邊各寫一份 parser / 一份房間規則的話，分歧會變成整個專案最難查的那種 bug ——
+      封包在 client 看起來對、在 server 看起來對，但兩邊對同一個 byte 的解讀不一樣。
+      這個手法沿用 tools\gn_note_export\gn_note_export.csproj(它為了同樣的理由直接編 GnChart.cs)。
+
+    ★ 為什麼 include 整個 Sdo.Osu 而不是逐檔列舉:Sdo.Osu 的 asmdef 是 noEngineReferences，
+      整包保證零 UnityEngine 依賴，所以整包都編得過。逐檔列舉的話每次那邊加一個檔就要回來改
+      這份 csproj，忘了就是編譯錯誤(而且錯誤訊息會指向缺失的型別，不會告訴你「你忘了更新 csproj」)。
+      代價只是多編一些純邏輯檔，net8.0 編起來很快。
+      附帶好處:將來 server 若要自己驗譜面(算 note 數、對難度)，整套解析器已經在手上。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+
+    <!--
+      ⚠️ LangVersion 8.0 不是筆誤。Unity 產生的 csproj 全部是 LangVersion 8.0，
+      而 Sdo.Net / Sdo.Osu 的原始碼是兩邊共用的 —— 如果共用檔裡用了 C# 9+ 的語法
+      (record、target-typed new、init-only、file-scoped namespace…)，Unity 那邊會編不過。
+      在這裡鎖成同一版，讓 `dotnet build` 先把問題擋下來，而不是等到開 Unity 才發現。
+    -->
+    <LangVersion>8.0</LangVersion>
+
+    <Nullable>disable</Nullable>
+    <AssemblyName>sdo-server</AssemblyName>
+    <RootNamespace>Sdo.Server</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <!-- 把警告當回事:協定層的型別/精度警告通常代表真的寫錯了。 -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- server 自己的程式碼 -->
+    <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
+
+    <!-- 與遊戲共用的協定 + 房間規則(純邏輯，零 UnityEngine) -->
+    <Compile Include="../../65/My project/Assets/Scripts/Sdo.Net/**/*.cs" />
+
+    <!--
+      與遊戲共用的歌曲解析 / 指紋 / 過濾(同上)。
+
+      ⚠️ 排除清單:Sdo.Osu 雖然是 noEngineReferences(沒有 UnityEngine),但**不代表它零外部依賴** ——
+      少數幾個檔用了放在 Unity Plugins 底下的 managed DLL。server 完全不需要那些功能，直接排掉。
+      (這是實際編過才發現的:一開始以為整包都能編。)
+
+        AudioDuration.cs  → NLayer(mp3 解碼)。server 不需要知道音檔多長。
+    -->
+    <Compile Include="../../65/My project/Assets/Scripts/Sdo.Osu/**/*.cs"
+             Exclude="../../65/My project/Assets/Scripts/Sdo.Osu/AudioDuration.cs" />
+  </ItemGroup>
+</Project>

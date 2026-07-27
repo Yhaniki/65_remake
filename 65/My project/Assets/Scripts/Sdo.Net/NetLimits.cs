@@ -1,0 +1,154 @@
+namespace Sdo.Net
+{
+    /// <summary>
+    /// 連線相關的所有上限與節奏常數，集中一處。client 與 server **編譯同一份這個檔**
+    /// (server csproj 用 &lt;Compile Include&gt; 直接拉這份原始碼)，所以兩邊不可能漂移。
+    ///
+    /// 每個數字都註明來源:標「osu」的是從 osu! lazer 抄過來的(assets/osu-master，已驗證過的
+    /// 實務值，不要憑感覺改);標「我們定的」的是本專案的選擇，改之前先想清楚後果。
+    /// </summary>
+    public static class NetLimits
+    {
+        // ---- 框架層 ----
+
+        /// <summary>
+        /// 單一 frame 的 payload 上限。**收端必須在 allocate 之前就檢查這個上限** ——
+        /// 否則一個壞掉(或惡意)的 length 欄位就能讓對方直接 OOM。
+        /// 256 KiB 對 control 訊息(最大的是 6 人的整份 roomState snapshot，約 1-2 KB)綽綽有餘，
+        /// 對 binary chunk 也夠(我們一塊只送 <see cref="BlobChunkBytes"/>)。
+        /// </summary>
+        public const int MaxFramePayload = 256 * 1024;
+
+        /// <summary>JSON control 訊息。</summary>
+        public const byte FrameKindJson = 0;
+
+        /// <summary>檔案傳輸的原始位元組(不 base64 —— 省 33% 而且不炸 GC)。</summary>
+        public const byte FrameKindChunk = 1;
+
+        // ---- 房間 ----
+
+        /// <summary>座位數。官方 ROOM 版面就是 6 格頭貼(DDRROOM.XML AvatarView1..6)，PKSCORE 數字也只到 6。</summary>
+        public const int RoomCapacity = 6;
+
+        /// <summary>旁觀位。官方 EXE .data @0x00583af0 有 10 個旁觀座標(RoomLayout.SpectatorAnchors)。</summary>
+        public const int MaxSpectators = 10;
+
+        /// <summary>房號範圍(含)。5 位數是使用者要求的。</summary>
+        public const int MinRoomCode = 10000;
+        public const int MaxRoomCode = 99999;
+
+        /// <summary>
+        /// 可選場景 id 上限。**必須等於 Sdo.UI.Catalog.StageCatalog.MaxSelectableId** ——
+        /// server 收 requestStart 時要驗 host 抽出來的 sceneId 在範圍內，但 server 編不到
+        /// StageCatalog(它在 Sdo.UI，有 UnityEngine 依賴)，所以在這裡複製一份。
+        /// 有一個 EditMode 測試(NetLimitsBridgeTests)斷言兩邊相等，防止漂移。
+        /// </summary>
+        public const int MaxSceneId = 30;
+
+        // ---- 字數 ----
+
+        /// <summary>玩家暱稱。超過就截斷(不是拒絕 —— 名字不該讓人連不進來)。</summary>
+        public const int MaxNameChars = 16;
+
+        /// <summary>自訂房名。</summary>
+        public const int MaxRoomNameChars = 20;
+
+        /// <summary>單則聊天。</summary>
+        public const int MaxChatChars = 100;
+
+        // ---- 開場 / 同步進場 ----
+
+        /// <summary>
+        /// 載入逾時:從 host 的 requestStart 起算。到期時還在 waitingForLoad 的人被逐出本場
+        /// (gameplayAborted{loadTookTooLong})，卡在 loaded 的被強制推進 playing。
+        /// 對應 osu 的 ForceGameplayStartCountdown。**這個逃生門是必要的** —— 沒有它，
+        /// 一個人載入卡住就會讓整房永遠停在 loading 畫面(ScreenGameplay.BootRevealCo 的
+        /// ReadyGate 迴圈本身沒有 timeout)。
+        /// </summary>
+        public const int LoadTimeoutMs = 30000;
+
+        /// <summary>
+        /// client 端的硬逾時，比 server 的 <see cref="LoadTimeoutMs"/> 多留 5 秒緩衝。
+        /// 兩層都要有:server 的訊息也可能掉包。
+        /// </summary>
+        public const int ClientLoadTimeoutMs = LoadTimeoutMs + 5000;
+
+        // ---- 心跳 ----
+
+        /// <summary>ping 間隔。</summary>
+        public const int PingIntervalMs = 5000;
+
+        /// <summary>多久沒收到對方任何訊息就當斷線(= 隱含的 leaveRoom)。</summary>
+        public const int PingTimeoutMs = 15000;
+
+        // ---- 遊玩中的分數流 ----
+
+        /// <summary>
+        /// client 送 frame 的間隔。**另外在每個 8 拍結算點也一定要送一筆** ——
+        /// 遠端舞者的跳/停 gate 是在 8 拍邊界判定的(見 Sdo.Ruleset.DanceGate)，
+        /// 邊界上沒有資料的話 gate 會算錯。取「200ms 或 8 拍邊界，先到者」。
+        /// osu 的 SpectatorClient 用的也是 200ms(TIME_BETWEEN_SENDS)。
+        /// </summary>
+        public const int ClientFrameIntervalMs = 200;
+
+        /// <summary>
+        /// server 彙整後推 frames 的頻率(Hz)。server 攢所有人的最新一筆，固定頻率推一次 ——
+        /// N 人的下行是 N×5 訊息/秒，而不是 N² 的轉發風暴。
+        /// </summary>
+        public const int ServerFrameHz = 5;
+
+        // ---- 缺歌 / 檔案傳輸 ----
+
+        /// <summary>
+        /// 下載/上傳進度回報的節流。osu 的 OnlinePlayBeatmapAvailabilityTracker 就是 500ms，
+        /// 它的註解寫得很直白:「we don't want to flood the network with this」。
+        /// **client 與 server 兩邊都要擋** —— client 自律，server 防惡意。
+        /// </summary>
+        public const int AvailProgressThrottleMs = 500;
+
+        /// <summary>單首歌(過濾後)的總大小上限。預設 200 MB，可由 ServerOptions 覆寫。</summary>
+        public const long DefaultMaxBlobBytes = 200L * 1024 * 1024;
+
+        // 以下三個的真相在 Sdo.Osu.NetPackLimits —— 歌曲過濾邏輯(SongPackFilter)需要它們，
+        // 而依賴方向是 Sdo.Net → Sdo.Osu，不能反過來。這裡只是轉發，讓連線層的呼叫端
+        // 不用為了一個大小上限去 using Sdo.Osu。**不要在這裡改數字**,改那邊。
+
+        /// <summary>單首歌的檔案數上限。正常的 osu/SM 資料夾遠低於此。</summary>
+        public const int MaxPackFiles = Osu.NetPackLimits.MaxPackFiles;
+
+        /// <summary>單檔上限。擋「改名成 .ogg 的影片」。</summary>
+        public const long MaxSingleFileBytes = Osu.NetPackLimits.MaxSingleFileBytes;
+
+        /// <summary>圖片單檔上限。擋 4K 背景圖(對 800×600 的遊戲毫無意義)。</summary>
+        public const long MaxImageFileBytes = Osu.NetPackLimits.MaxImageFileBytes;
+
+        /// <summary>binary chunk 大小。</summary>
+        public const int BlobChunkBytes = 64 * 1024;
+
+        /// <summary>server 上的歌曲檔案保留時數。使用者要求「最多留一天」。</summary>
+        public const int DefaultBlobTtlHours = 24;
+
+        /// <summary>每人同時下載數上限。</summary>
+        public const int MaxConcurrentDownloadsPerUser = 2;
+
+        // ---- rate limit(每連線) ----
+
+        /// <summary>control 訊息/秒。</summary>
+        public const int RateControlPerSec = 32;
+
+        /// <summary>frame 訊息/秒。client 正常是 5/s(200ms)，給到 20 是留給 8 拍邊界那些額外的筆。</summary>
+        public const int RateFramePerSec = 20;
+
+        /// <summary>聊天:每 <see cref="RateChatWindowMs"/> 最多幾則。</summary>
+        public const int RateChatPerWindow = 5;
+        public const int RateChatWindowMs = 3000;
+
+        // ---- server 容量 ----
+
+        public const int DefaultMaxRooms = 200;
+        public const int DefaultMaxConnections = 256;
+
+        /// <summary>blob 目錄的總容量上限(GB)。超過時先刪最舊的未 pinned pack。</summary>
+        public const int DefaultMaxTotalBlobGb = 20;
+    }
+}

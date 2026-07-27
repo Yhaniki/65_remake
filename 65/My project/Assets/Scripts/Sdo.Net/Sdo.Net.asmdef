@@ -1,0 +1,16 @@
+{
+    "name": "Sdo.Net",
+    "rootNamespace": "Sdo.Net",
+    "references": [
+        "Sdo.Osu"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}
