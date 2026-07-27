@@ -524,6 +524,25 @@ namespace Sdo.Game.Net
                 .Int("combo", combo).Int("maxCombo", maxCombo)
                 .Int("p", p).Int("c", c).Int("b", b).Int("m", m));
 
+        /// <summary>
+        /// 回報自己的外觀(性別 / 體型 / 穿戴部件)。**進房前與換裝後都要送一次。**
+        ///
+        /// 握手(hello)帶的那份是開機時的狀態 —— 那時玩家還沒選性別、穿搭也還沒解析(要讀 profile.json)。
+        /// 別人是靠這份資料把你的角色建出來的,不送的話你在別人畫面上會是預設的女角。
+        /// </summary>
+        public void SendLook(int gender, int bodyIndex, string[] parts)
+        {
+            var look = JObj.New().Int("gender", gender).Int("bodyIndex", bodyIndex);
+            var arr = JArr.New();
+            if (parts != null)
+            {
+                int n = parts.Length < NetAvatarLook.MaxParts ? parts.Length : NetAvatarLook.MaxParts;
+                for (int i = 0; i < n; i++) arr.Add(parts[i] ?? "");
+            }
+            look.Put("parts", arr);
+            Send(JObj.New().Str(NetProto.FieldType, NetProto.SetLook).Put("look", look));
+        }
+
         public void SendChat(string text, string channel = "current", int expressionId = 0, string leading = null)
             => Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.ChatSay)

@@ -64,7 +64,10 @@ namespace Sdo.UI.Core
             net.Connect(RoomConfig.serverAddress, RoomConfig.serverPort, RoomConfig.serverPassword, identity);
 
             var rooms = new OnlineRoomService(net, offline.Session);
-            return new AppContext(offline.Session, offline.Flow, rooms, offline.Players, offline.Chat, net);
+            // 聊天:同房的公開發言走 server 廣播;密語/家族/系統/「你說」那些本機專屬的行仍由離線實作產生
+            // (見 OnlineChatService 的註解)。所以是「包在外面」而不是整個換掉。
+            var chat = new OnlineChatService(net, offline.Chat, () => offline.Session.Gender == 1);
+            return new AppContext(offline.Session, offline.Flow, rooms, offline.Players, chat, net);
         }
 
         private static int ParseLevel(string s)

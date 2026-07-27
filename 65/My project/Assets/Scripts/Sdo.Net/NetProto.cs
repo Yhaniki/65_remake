@@ -101,6 +101,15 @@ namespace Sdo.Net
         public const string GameplayAborted = "gameplayAborted";
         public const string ResultsReady = "resultsReady";
 
+        /// <summary>
+        /// C→S。回報自己的外觀(性別 / 體型 / 穿戴部件)。
+        ///
+        /// 為什麼不只靠 <see cref="Hello"/> 帶:握手發生在開機時,那時玩家還沒在選角色畫面選性別、
+        /// 穿搭也還沒解析(要讀 profile.json)。而別人要把你的角色建出來就是靠這份資料 ——
+        /// 沒有它,房間裡每個人在別人畫面上都是預設的女角。進房前與換裝後都要重送一次。
+        /// </summary>
+        public const string SetLook = "setLook";
+
         // ---- 缺歌上報與傳檔 ----
 
         public const string SetAvailability = "setAvailability";

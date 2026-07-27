@@ -314,6 +314,11 @@ namespace Sdo.UI.Screens
                 Ctx.Session.Gender = _gender;
                 Ctx.Session.SeedRoomDefaults();      // 房間面板預設是 per-user（換帳號要重種）
             }
+            // 連線模式:把外觀報給 server —— 別人是靠這份資料把你的角色建出來的。
+            // 握手時報的那份是開機狀態(還沒選性別、穿搭也還沒解析),所以這裡一定要再報一次,
+            // 否則你在別人的房間畫面上會是預設的女角。
+            if (Ctx != null && Ctx.Net != null)
+                Ctx.Net.SendLook(_gender, BodyIndexForGender(_gender), PartsForGender(_gender));
         }
 
         // 進入：切 active 使用者、建/進房間（不經大廳列表，直接進房）。

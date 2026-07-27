@@ -437,6 +437,31 @@ namespace Sdo.Net.Server
         /// **房主沒有準備這個狀態** —— 它的頭貼顯示 host 徽章,而它按的是「開始」。
         /// 所以房主送這個訊息是不合法的(見 <see cref="IsClearedToStart"/>)。
         /// </summary>
+        /// <summary>
+        /// 更新某個人的外觀(性別 / 體型 / 穿戴部件)。座位玩家與旁觀者都可能送。
+        ///
+        /// 沒有權限檢查 —— 外觀就是「我自己長什麼樣」,誰都能改自己的。
+        /// 不在這個房裡回 <see cref="NetRoomOp.NotInRoom"/>(那不是錯誤,是正常的競態:
+        /// 剛離房的人送出的最後一筆)。
+        /// </summary>
+        public NetRoomOp SetLook(int userId, NetAvatarLook look)
+        {
+            if (look == null) return NetRoomOp.BadState;
+
+            var seat = _state.SeatOf(userId);
+            if (seat != null) { seat.Look = look; Touch(); return NetRoomOp.Ok; }
+
+            for (int i = 0; i < _spectators.Count; i++)
+                if (_spectators[i].UserId == userId)
+                {
+                    _spectators[i].Look = look;
+                    SyncSpectators();
+                    Touch();
+                    return NetRoomOp.Ok;
+                }
+            return NetRoomOp.NotInRoom;
+        }
+
         public NetRoomOp SetReady(int userId, bool ready)
         {
             var s = _state.SeatOf(userId);

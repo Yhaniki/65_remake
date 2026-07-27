@@ -590,6 +590,8 @@ namespace Sdo.UI.Screens
                 : null;
             int body = ProfileManager.Active != null ? ProfileManager.Active.bodyShapeIndex : 0;   // 本機角色自己的體型 (胖瘦)
             if (_scene != null) _scene.RebuildLocalAvatar(male, parts, body);
+            // 換裝後要重報一次外觀,否則別人畫面上的你還穿著舊衣服。
+            if (Ctx != null && Ctx.Net != null) Ctx.Net.SendLook(male ? 1 : 0, body, parts);
             // 頭貼要「整個重建」：RoomHeadPortrait.Init 每次都新建一隻頭 avatar/相機/RT 卻不清舊的 → 直接再 Init 只會疊一隻
             // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
             // (Destroy 幀尾才生效 → 先 SetActive(false)，否則舊頭 avatar 這一幀還在同一個 parkSpot，新頭相機會同時拍到兩顆。)
@@ -2377,6 +2379,7 @@ namespace Sdo.UI.Screens
             // 六格頭貼每幀重畫一次(見 RenderSlots 的註解:F2 面板要能即時拉位置/尺寸,
             // 而且連線模式的座位狀態是 server 推來的,不能只在 Render() 那一刻套一次)。
             RenderSlots(Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null);
+            SyncRemoteRoomAvatars();
 
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
@@ -3177,6 +3180,41 @@ namespace Sdo.UI.Screens
                                                           : (seat.Player != null ? seat.Player.DisplayName : "");
                 }
             }
+        }
+
+        // 房間 3D 裡「其他玩家」的角色。只在 server 的 rev 變動時重建 —— 生一隻 avatar 要讀十幾個部件檔,
+        // 每幀重來會卡死;而座位表只在有人進出/換裝時才變,rev 正好是那個變動的訊號。
+        private int _remoteAvatarRev = -1;
+        private readonly List<RoomScene3D.RemotePlayer> _remoteBuf = new List<RoomScene3D.RemotePlayer>();
+
+        private void SyncRemoteRoomAvatars()
+        {
+            if (_scene == null || Ctx == null || Ctx.Net == null) return;   // 單機沒有別人
+            var snap = Ctx.Net.Room;
+            if (snap == null)
+            {
+                if (_remoteAvatarRev != -1) { _scene.SyncRemotePlayers(null); _remoteAvatarRev = -1; }
+                return;
+            }
+            if (snap.Rev == _remoteAvatarRev) return;
+            _remoteAvatarRev = snap.Rev;
+
+            int me = Ctx.Net.UserId;
+            _remoteBuf.Clear();
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var s = snap.Seats[i];
+                if (!s.IsTaken || s.UserId == me) continue;   // 自己那隻是可走動的本機 avatar,不重複生
+                _remoteBuf.Add(new RoomScene3D.RemotePlayer
+                {
+                    UserId = s.UserId,
+                    Seat = i,
+                    Male = s.Look != null && s.Look.Male,
+                    Parts = s.Look != null ? s.Look.Parts : null,
+                    BodyIndex = s.Look != null ? s.Look.BodyIndex : 0,
+                });
+            }
+            _scene.SyncRemotePlayers(_remoteBuf);
         }
 
         /// <summary>本機玩家坐在第幾格?找不到回 -1(旁觀或還沒進座位)。</summary>

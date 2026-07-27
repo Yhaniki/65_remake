@@ -211,6 +211,112 @@ namespace Sdo.Game
             }
         }
 
+        // ---- 房間裡的其他玩家(連線模式)----
+
+        /// <summary>房間裡一位遠端玩家的外觀。位置不在裡面 —— 站哪由座位編號決定(見 <see cref="SyncRemotePlayers"/>)。</summary>
+        public struct RemotePlayer
+        {
+            public int UserId;
+            public int Seat;          // 0..5:決定他站哪(每台算出來一樣)
+            public bool Male;
+            public string[] Parts;    // 穿搭;null → 預設整套
+            public int BodyIndex;     // 體型 0..4
+        }
+
+        private readonly Dictionary<int, GameObject> _remotes = new Dictionary<int, GameObject>();
+        private readonly Dictionary<int, SdoAvatar> _remoteAvatars = new Dictionary<int, SdoAvatar>();
+        private readonly HashSet<int> _remoteScratch = new HashSet<int>();
+        private readonly List<int> _remoteGone = new List<int>();
+        private Vector3[] _remoteSpots;
+
+        /// <summary>
+        /// 讓房間裡站著的其他玩家與 server 的座位表一致:名單裡新出現的生出來、不在名單裡的拆掉。
+        ///
+        /// 位置怎麼決定:協定裡**還沒有走路封包**(官方是 server 發 move packet 移動每個舞者),
+        /// 所以遠端玩家先站在「由座位編號決定的固定點」—— 那組點是同一顆固定種子在同一份遮罩上取樣出來的,
+        /// 所以每台算出來都一樣,不會出現「你看他站在沙發上、他看自己站在中間」。
+        /// (官方離線的 EXE 其實也是把六個舞者都生在 HostSpawn,再靠 server 挪開。)
+        ///
+        /// 只有 idle:房間裡不跳舞(沒有 DPS),所以遠端角色一律播站立待機動作。
+        /// </summary>
+        public void SyncRemotePlayers(List<RemotePlayer> players)
+        {
+            if (!_ready) return;
+
+            // 先拆走掉的人、再生新來的 —— 反過來的話「有人剛走又有人剛進」會多佔一個位置。
+            _remoteScratch.Clear();
+            if (players != null) foreach (var p in players) _remoteScratch.Add(p.UserId);
+            _remoteGone.Clear();
+            foreach (var kv in _remotes) if (!_remoteScratch.Contains(kv.Key)) _remoteGone.Add(kv.Key);
+            foreach (var id in _remoteGone)
+            {
+                if (_remotes[id] != null) Destroy(_remotes[id]);
+                _remotes.Remove(id);
+                _remoteAvatars.Remove(id);
+            }
+
+            if (players == null) return;
+            foreach (var p in players)
+            {
+                if (p.UserId == 0 || _remotes.ContainsKey(p.UserId)) continue;
+                SpawnRemote(p);
+            }
+        }
+
+        private void SpawnRemote(RemotePlayer p)
+        {
+            var parent = new GameObject("RoomRemoteAvatar" + p.UserId);
+            parent.transform.SetParent(transform, false);
+            var av = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false,
+                                         male: p.Male, equippedParts: p.Parts, bodyIndex: p.BodyIndex);
+            if (av == null) { Destroy(parent); return; }
+
+            // 腳的偏移要在換 clip **之前**量:彎腰姿勢的第 0 幀最低點不是腳,會把人埋進地板。
+            float feet = av.FeetYAt(0f);
+            av.DanceEnabled = () => false;
+            av.DanceTimeSec = () => -1f;
+            // 飛行翅膀的浮空 idle 也照本機那套判斷 —— 不然穿翅膀的人在別人畫面上是站著的。
+            string idleRel = SpecialMotionItems.IdleMotFor(p.Parts, p.Male,
+                p.Male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            var mot = SdoRoomAvatar.LoadMot(idleRel);
+            if (mot != null)
+            {
+                av.RestMot = mot;
+                av.SetClip(mot);
+                av.PhaseOffsetSec = (p.Seat + 1) * 0.37f;   // 同一段 clip 不要整齊得像複製人
+            }
+
+            Vector3 spot = RemoteSpot(p.Seat);
+            parent.transform.position = new Vector3(spot.x, floorY - feet, spot.z);
+            parent.transform.localRotation = Quaternion.Euler(0f, RoomMovement.FacingDegrees(2), 0f);   // 面向鏡頭
+            _remotes[p.UserId] = parent;
+            _remoteAvatars[p.UserId] = av;
+        }
+
+        /// <summary>座位 → 站位。固定種子 + 同一份遮罩 → 每台算出來都一樣。</summary>
+        private Vector3 RemoteSpot(int seat)
+        {
+            if (_remoteSpots == null) _remoteSpots = RandomDancerSpots(RoomLayout.SeatCount);
+            if (_remoteSpots.Length == 0) return RoomLayout.HostSpawn;
+            return _remoteSpots[seat >= 0 ? seat % _remoteSpots.Length : 0];
+        }
+
+        /// <summary>某位遠端玩家頭頂在畫面上的位置(viewport 0..1),用來擺他的名字牌。看不到 → false。</summary>
+        public bool TryRemoteHeadViewport(int userId, out Vector2 vp)
+        {
+            vp = default;
+            SdoAvatar av; GameObject go;
+            if (_cam == null || !_remoteAvatars.TryGetValue(userId, out av) || av == null
+                || !_remotes.TryGetValue(userId, out go) || go == null) return false;
+            Vector3 hm = av.BoneModelPos("Bip01_Head");
+            if (hm == Vector3.zero) hm = av.BoneModelPos("Bip01_Neck");
+            if (hm == Vector3.zero) return false;
+            Vector3 v = _cam.WorldToViewportPoint(go.transform.TransformPoint(hm) + new Vector3(0f, headMarkerRise, 0f));
+            if (v.z <= 0f) return false;
+            vp = new Vector2(v.x, v.y);
+            return true;
+        }
+
         // Pick <count> RANDOM WALKABLE spots for the filler dancers, clustered (uniform-in-disk) around the central
         // dance area, kept apart by dancerSpacing and clear of the host. Rejection-samples the SCNROOM mask so none land
         // on the sofa/furniture or off-map. Fixed seed → reproducible spread (change the seed for a different layout).

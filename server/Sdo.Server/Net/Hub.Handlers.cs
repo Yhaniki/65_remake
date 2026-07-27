@@ -83,6 +83,7 @@ namespace Sdo.Server.Net
                 case NetProto.AssignTeams: OnAssignTeams(conn, node, rq); break;
                 case NetProto.SetOwnTeam: OnSetOwnTeam(conn, node, rq); break;
                 case NetProto.SetReady: OnSetReady(conn, node, rq); break;
+                case NetProto.SetLook: OnSetLook(conn, node); break;
                 case NetProto.SetAvailability: OnSetAvailability(conn, node, now); break;
 
                 case NetProto.KickUser: OnKickUser(conn, node, rq); break;
@@ -407,6 +408,23 @@ namespace Sdo.Server.Net
             var op = room.SetReady(conn.UserId, NetJson.Bool(node, "ready"));
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
             BroadcastRoomState(room);
+        }
+
+        /// <summary>
+        /// 玩家回報自己的外觀(性別 / 體型 / 穿戴部件)。
+        ///
+        /// 不回 error:不在房裡就只更新這條連線上記著的那份 —— 那是正常的競態(還沒進房就先報了、
+        /// 或剛離房送出的最後一筆),而且進房時會拿 <c>conn.Look</c> 去填座位,所以不會漏。
+        /// </summary>
+        private void OnSetLook(Connection conn, object node)
+        {
+            var look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
+            if (look == null) return;
+            conn.Look = look;
+
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return;
+            if (room.SetLook(conn.UserId, look) == NetRoomOp.Ok) BroadcastRoomState(room);
         }
 
         private void OnSetAvailability(Connection conn, object node, long now)

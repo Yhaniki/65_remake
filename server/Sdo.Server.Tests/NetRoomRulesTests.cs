@@ -1448,6 +1448,59 @@ namespace Sdo.Tests
             Assert.AreEqual("", r.State.Name);
         }
 
+        // ==================== 外觀(setLook)====================
+
+        [Test]
+        public void SetLook_Updates_The_Seat_And_Bumps_Rev()
+        {
+            // 別人是靠座位上的 Look 把你的角色建出來的。握手帶的那份是開機狀態
+            // (還沒選性別、穿搭還沒解析)→ 進房前會再報一次,這條就是那條路徑。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            int rev = r.State.Rev;
+
+            var look = new NetAvatarLook { Gender = 1, BodyIndex = 2, Parts = new[] { "A", "B" } };
+            Assert.AreEqual(NetRoomOp.Ok, r.SetLook(Bob, look));
+
+            var seat = r.State.SeatOf(Bob);
+            Assert.AreEqual(1, seat.Look.Gender, "性別要換過來(不然別人看到的是預設女角)");
+            Assert.AreEqual(2, seat.Look.BodyIndex);
+            Assert.AreEqual(2, seat.Look.Parts.Length);
+            Assert.Greater(r.State.Rev, rev, "外觀變了也要 rev++,否則 client 會丟掉這份快照");
+        }
+
+        [Test]
+        public void SetLook_Works_For_A_Spectator_Too()
+        {
+            // 旁觀者在房間 3D 裡也是站在那邊的人,一樣要有正確外觀。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Bob)));
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetLook(Bob, new NetAvatarLook { Gender = 1 }));
+            var snap = r.State;
+            Assert.AreEqual(1, snap.Spectators.Length);
+            Assert.AreEqual(1, snap.Spectators[0].Look.Gender);
+        }
+
+        [Test]
+        public void SetLook_Needs_You_To_Be_In_The_Room()
+        {
+            // 正常的競態:剛離房的人送出的最後一筆。回 NotInRoom(server 端會靜默忽略)。
+            var r = MakeRoom();
+            Assert.AreEqual(NetRoomOp.NotInRoom, r.SetLook(Bob, new NetAvatarLook()));
+        }
+
+        [Test]
+        public void SetLook_Rejects_A_Null_Look()
+        {
+            // 壞掉/被改過的 client 可能送出沒有 look 欄位的訊息 —— 不能讓座位的 Look 變成 null,
+            // 那會讓每個讀它的地方都要記得判 null(而且忘一處就 NRE)。
+            var r = MakeRoom();
+            Assert.AreEqual(NetRoomOp.BadState, r.SetLook(Host, null));
+            Assert.IsNotNull(r.State.SeatOf(Host).Look);
+        }
+
         // ---- helper ----
 
         /// <summary>把 JSON 字串解成 setRoomSettings 的 patch 節點。</summary>
