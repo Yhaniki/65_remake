@@ -127,6 +127,29 @@ namespace Sdo.Settings
         // 玩家等級：顯示成「LV:N」跟在名字後面。留空 → 不顯示等級。存字串，讓「留空＝不顯示」最自然（不必用哨兵值）。
         public static string playerLevel = "";
 
+        // ---- [Net]：多人連線。★ serverAddress 是整個連線功能的總開關：留空＝純單機（走 MockRoomService，
+        //      體驗與加連線之前完全一樣）；填了才會去連。連不上會提示並自動退回單機，不會卡在連線畫面。----
+        // 伺服器位址：IP 或主機名（例如 192.168.1.10 或 dance.example.com）。留空＝不連線（單機）。
+        public static string serverAddress = "";
+        // 伺服器 port。預設 27015（沒有官方值可循，挑一個常見的遊戲 port 區間）。
+        public static int serverPort = 27015;
+        // 房間密碼／進站密碼：對應 server 的 -password。server 沒設就留空。
+        // ⚠️ MVP 階段這只是個門檛，不是認證：playerId 完全由 client 自稱、連線沒有加密。
+        //    只在 LAN／信任的朋友之間用，不要開在公網（見 docs/systems/networking.md）。
+        public static string serverPassword = "";
+        // 缺歌時要不要自動從伺服器下載。true＝座位玩家自動下載（旁觀者一律不自動下載）。
+        public static bool netAutoDownload = true;
+        // 自動下載的單首歌大小上限（MB）。超過就不下載，只顯示缺歌，避免在慢速網路上卡很久。
+        public static int netMaxDownloadMb = 200;
+
+        /// <summary>
+        /// 要走連線嗎? = <see cref="serverAddress"/> 有填東西。
+        ///
+        /// 這是**唯一**的離線/連線判斷點（<c>AppContext.Create</c> 用它決定要建 MockRoomService
+        /// 還是 OnlineRoomService）。留空時整個連線層都不會被建起來，單機體驗一字不動。
+        /// </summary>
+        public static bool OnlineEnabled => !string.IsNullOrWhiteSpace(serverAddress);
+
         public const string FileName = "config.ini";
 
         /// <summary>config.ini 的完整路徑：**全域一份**，放在存檔層 <c>DATA/PROFILE/</c>（＝<see cref="ProfileManager.Root"/>，
@@ -368,6 +391,12 @@ namespace Sdo.Settings
                     case "familyName": familyName = val; hasFamilyKeys = true; break;
                     case "familyEmblem": familyEmblem = val; hasFamilyKeys = true; break;
                     case "playerLevel": playerLevel = val; hasFamilyKeys = true; break;
+                    // [Net]：大小寫敏感,要與 Serialize 寫出的 key 一字不差
+                    case "serverAddress": serverAddress = val; break;
+                    case "serverPort": serverPort = ParseInt(val, serverPort); break;
+                    case "serverPassword": serverPassword = val; break;
+                    case "netAutoDownload": netAutoDownload = ParseBool(val, netAutoDownload); break;
+                    case "netMaxDownloadMb": netMaxDownloadMb = ParseInt(val, netMaxDownloadMb); break;
                     case "speedSteps": speedSteps = ParseFloatList(val); break;
                     case "defaultSpeed": defaultSpeed = ParseFloat(val, defaultSpeed); break;
                     case "defaultNoteType": defaultNoteType = ParseInt(val, defaultNoteType); break;
@@ -454,6 +483,12 @@ namespace Sdo.Settings
             familyName = (familyName ?? "").Trim();
             familyEmblem = (familyEmblem ?? "").Trim();
             playerLevel = (playerLevel ?? "").Trim();
+            // [Net]：位址一定要 Trim —— 手改設定檔很容易留下尾端空白，那會讓 OnlineEnabled
+            // 誤判成「有填」然後拿一個含空白的主機名去解析,錯誤訊息會很莫名。
+            serverAddress = (serverAddress ?? "").Trim();
+            serverPassword = (serverPassword ?? "").Trim();
+            serverPort = Mathf.Clamp(serverPort, 1, 65535);
+            netMaxDownloadMb = Mathf.Clamp(netMaxDownloadMb, 1, 2048);
         }
 
         /// <summary>房間頭上的等級標籤文字：等級字串非空 → 「LV:{值}」（LV 兩字都大寫），留空 → 空字串（＝不顯示等級）。純函式。</summary>
@@ -477,7 +512,7 @@ namespace Sdo.Settings
         {
             var sb = new StringBuilder();
             sb.Append("# 本機設定總表 — 放在存檔資料夾 DATA/PROFILE/，純文字可手改，改完存檔下次開遊戲生效。\n");
-            sb.Append("# [Profile]=登入哪個角色  [Room]=開房間右側面板預設  [Option]=遊戲內 OPTION 對話框的設定。\n");
+            sb.Append("# [Profile]=登入哪個角色  [Net]=多人連線  [Room]=開房間右側面板預設  [Option]=遊戲內 OPTION 對話框的設定。\n");
             sb.Append("# 鍵位不在這個檔：4 鍵鍵位與遊玩功能鍵（換鏡頭/加減速/打拍音/Auto…）在同層的 keymaps.ini。\n");
             sb.Append("[Profile]\n");
             sb.Append("# 目前登入的角色＝ DATA/PROFILE/ 底下的 8 位數資料夾名（00000000=女 00000001=男）。\n");
@@ -490,6 +525,22 @@ namespace Sdo.Settings
             sb.Append("familyEmblem=").Append(familyEmblem ?? "").Append('\n');
             sb.Append("# 玩家等級：顯示成「LV:N」跟在名字後面。留空＝不顯示等級。\n");
             sb.Append("playerLevel=").Append(playerLevel ?? "").Append('\n');
+
+            sb.Append('\n').Append("[Net]\n");
+            sb.Append("# 多人連線。★ serverAddress 是總開關：留空＝純單機（與加連線之前完全一樣）。\n");
+            sb.Append("# 填了才會去連；連不上會提示並自動退回單機，不會卡住。\n");
+            sb.Append("# 伺服器位址：IP 或主機名（例如 192.168.1.10 或 dance.example.com）。\n");
+            sb.Append("serverAddress=").Append(serverAddress ?? "").Append('\n');
+            sb.Append("# 伺服器 port（1~65535）。\n");
+            sb.Append("serverPort=").Append(serverPort).Append('\n');
+            sb.Append("# 進站密碼：對應 server 的 -password。server 沒設就留空。\n");
+            sb.Append("# ⚠️ MVP 階段這只是門檻不是認證（身分由 client 自稱、連線沒加密）——\n");
+            sb.Append("#    只在 LAN／信任的朋友之間用，不要開在公網。\n");
+            sb.Append("serverPassword=").Append(serverPassword ?? "").Append('\n');
+            sb.Append("# 缺歌時自動從伺服器下載（1=開 0=關）。旁觀者一律不自動下載。\n");
+            sb.Append("netAutoDownload=").Append(B(netAutoDownload)).Append('\n');
+            sb.Append("# 自動下載的單首歌上限（MB）。超過只顯示缺歌，避免在慢速網路上卡很久。\n");
+            sb.Append("netMaxDownloadMb=").Append(netMaxDownloadMb).Append('\n');
 
             sb.Append('\n').Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
