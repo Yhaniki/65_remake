@@ -12,7 +12,9 @@ namespace Sdo.Osu
     {
         public string FilePath = "";   // absolute path to the .osu / .sm / .gn file
         public int ChartIndex;         // .sm: index of the #NOTES block; .gn: the difficulty (0/1/2); .osu: 0
-        public int NoteCount;          // objects (taps + holds) — used to rank difficulties
+        public int NoteCount;          // 判定次數 = 全接時的最大 combo（長條的頭與放開各一次，炸彈/warp 裝飾音不算；
+                                       // 見 ExternalSongScanner.ChartStats.JudgedNotes）。選歌畫面那欄顯示的就是它，
+                                       // 語意與官方 .gn 表頭的 notes 一致；也拿來當難度排序的 tie-break
         public int Level;              // .sm meter / .osu unknown(0) — shown as the LV label
         public int DurationSec;        // last note's time — the 時間 column, same measure as the official catalog's dur*
         public float Msd;              // Etterna MinaCalc overall MSD (raw, unscaled); 0 = not computed. Shown instead

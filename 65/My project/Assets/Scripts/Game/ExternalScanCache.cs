@@ -37,7 +37,9 @@ namespace Sdo.Game
         //     `level` 都是被壓過的死值，不整份作廢重掃就永遠停在 99。
         // v9: osu 星數等級不再把炸彈當成可打音符（ManiaStarRating 現在跟 ManiaMsd 一樣跳過 IsBomb）。舊快取裡
         //     炸彈多的譜 `level` 被灌水過（灑滿雷的慢譜可以虛高好幾十級），得整份作廢重算。
-        public const int Version = 9;
+        // v10: `notes` 的語意換成**判定次數**（長條的放開也算一次，＝全接的最大 combo，也＝官方 .gn 表頭 notes 的
+        //     算法）。舊快取存的是「物件數」（長條算一顆），長條多的譜會少報好幾十顆，得整份作廢重算。
+        public const int Version = 10;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null
@@ -64,9 +66,11 @@ namespace Sdo.Game
             public List<Song> songs = new List<Song>();
         }
 
-        // calc = 產生這份快取時用的難度算法（RoomConfig.difficultyCalc）。分槽（哪三張譜留下、誰是困難）是掃描期
-        // 用那套算法決定的，所以換一套就得整份作廢重掃一次 —— 快取裡每首歌只留三張譜，第四張的資料根本不在裡面，
-        // 不重讀就不可能知道它在新算法下是不是更難。重掃只有換算法後那一次，之後照常吃快取。
+        // calc = 產生這份快取時用的**掃描設定鍵**（見 ExternalSongLibrary：難度算法 RoomConfig.difficultyCalc ＋
+        // 「無理短長條收合」opt_collapseShortHolds，串成 "minacalc|ch1" 這種字串）。分槽（哪三張譜留下、誰是困難）
+        // 是掃描期用那套算法決定的，所以換一套就得整份作廢重掃一次 —— 快取裡每首歌只留三張譜，第四張的資料根本不在
+        // 裡面，不重讀就不可能知道它在新算法下是不是更難。收合開關同理：它會改變存起來的 `notes`（少掉幾次放開判定）。
+        // 重掃只有換設定後那一次，之後照常吃快取。
         [Serializable] private sealed class CacheData { public int version = Version; public string calc = ""; public List<Folder> folders = new List<Folder>(); }
 
         // ---- signature: what makes a folder's parse result stale ----

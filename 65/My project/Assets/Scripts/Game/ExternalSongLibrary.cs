@@ -91,7 +91,11 @@ namespace Sdo.Game
             // 分槽（哪三張譜留下、誰是困難）用目前那套難度算法；快取也記著它是用哪套算的 → 換一套就重掃一次。
             string calc = RoomConfig.difficultyCalc ?? "minacalc";   // 同 RoomConfig 的預設（Sanitize 後理論上不會是 null）
             ExternalSongScanner.SlotByMsd = calc == "minacalc";
-            var job = new ScanJob(Roots(), ExternalScanCache.Load(cacheFile, calc));
+            // 選歌那欄的音符數＝判定次數，而「無理短長條→一般 note」會少掉幾次放開判定（ScreenGameplay.LoadChart 也
+            // 是這個開關）→ 掃描要照同一個設定算，數字才等於玩家打得到的 combo。設定進快取鍵：改了就重掃一次。
+            ExternalSongScanner.CollapseShortHolds = RoomConfig.optCollapseShortHolds;
+            string cacheKey = calc + (RoomConfig.optCollapseShortHolds ? "|ch1" : "|ch0");
+            var job = new ScanJob(Roots(), ExternalScanCache.Load(cacheFile, cacheKey));
             // The flag is cleared by the WORKER's continuation, not by this coroutine: a refresh coroutine dies with
             // its screen (leaving the scene mid-scan), and clearing it here would then leave Scanning stuck true and
             // every later scan waiting forever on a worker that finished long ago.
@@ -104,7 +108,7 @@ namespace Sdo.Game
                 yield return null;
             }
 
-            ExternalScanCache.Save(cacheFile, job.CacheLines, calc);   // rewrite (prunes folders that are gone now)
+            ExternalScanCache.Save(cacheFile, job.CacheLines, cacheKey);   // rewrite (prunes folders that are gone now)
 
             var entries = new List<SongCatalog.Entry>();
             foreach (var song in job.Songs)   // ToEntry + the catalog are main-thread only

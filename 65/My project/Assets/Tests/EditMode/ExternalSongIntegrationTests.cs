@@ -160,6 +160,46 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void StatsOf_JudgedNotes_Is_The_Max_Combo_Not_The_Object_Count()
+        {
+            // 選歌那欄用的就是這個數：長條的頭與放開各算一次（＝ OsuBeatmap.TotalNotes ＝ 全接的最大 combo，
+            // 也是官方 .gn 表頭 notes 的算法）。炸彈與 warp 掃掉的裝飾音兩邊都不算。
+            var bm = new OsuBeatmap { Keys = 4 };
+            bm.HitObjects.Add(new OsuHitObject(0, 1000));                                  // tap
+            bm.HitObjects.Add(new OsuHitObject(1, 2000, 3000));                            // 長條 → 2 次判定
+            bm.HitObjects.Add(new OsuHitObject(2, 4000, isBomb: true));                    // 炸彈 → 不判定
+            bm.HitObjects.Add(new OsuHitObject(3, 5000, null, false, true));               // warp 裝飾音 → 不判定
+
+            Assert.AreEqual(3, ExternalSongScanner.StatsOf(bm, 0).JudgedNotes);
+            Assert.AreEqual(0, ExternalSongScanner.StatsOf(null, 7).JudgedNotes, "解析失敗 → 0（呼叫端退回自己的物件數）");
+        }
+
+        [Test]
+        public void StatsOf_JudgedNotes_Follows_The_Short_Hold_Collapse_Setting_Without_Moving_The_Level()
+        {
+            // 收合開著時（預設）短長條被收成 tap，少一次放開判定 —— 但難度是**收合前**算的：
+            // 讓幾條無理短長條去動星等/MSD，只會讓顯示的 LV 無聲飄一格。
+            OsuBeatmap Build()
+            {
+                var m = new OsuBeatmap { Keys = 4 };
+                for (int i = 0; i < 40; i++) m.HitObjects.Add(new OsuHitObject(i % 4, 1000 + i * 200));
+                m.HitObjects.Add(new OsuHitObject(0, 9000, 9040));    // 40 ms — 短於 83 ms 的門檻
+                return m;
+            }
+
+            ExternalSongScanner.CollapseShortHolds = false;
+            var loose = ExternalSongScanner.StatsOf(Build(), 0);
+            ExternalSongScanner.CollapseShortHolds = true;
+            var tight = ExternalSongScanner.StatsOf(Build(), 0);
+            ExternalSongScanner.CollapseShortHolds = false;
+
+            Assert.AreEqual(42, loose.JudgedNotes, "40 taps + 長條的頭與放開");
+            Assert.AreEqual(41, tight.JudgedNotes, "短長條收成 tap → 少一次放開判定");
+            Assert.AreEqual(loose.Level, tight.Level, "難度在收合前就算完了，不該跟著動");
+            Assert.AreEqual(loose.Msd, tight.Msd, 1e-6f);
+        }
+
+        [Test]
         public void ToEntry_Gn_Is_Stable_Per_Song()
         {
             var a = ExternalSongLibrary.ToEntry(new ExternalSong { FolderPath = "C:/x" }, 0);
