@@ -215,6 +215,51 @@ namespace Sdo.Net
         }
     }
 
+    /// <summary>
+    /// 房間裡某個人的最新位置(server 攢好後一批一批推)。
+    ///
+    /// <see cref="Walking"/> 是收端決定播走路還是待機 clip 的依據 —— 不能只靠「位置有沒有變」推:
+    /// 10 Hz 的取樣在慢走時兩筆之間可能只差不到一個像素,那樣角色會走一下停一下地抽動。
+    /// </summary>
+    public struct NetMoveRow
+    {
+        public int UserId;
+        public float X, Z, Facing;
+        public bool Walking;
+
+        public static NetMoveRow Decode(object node)
+        {
+            var r = new NetMoveRow();
+            r.UserId = NetJson.Int(node, "userId");
+            r.X = Sane(NetJson.Num(node, "x"), NetLimits.RoomWalkMinX, NetLimits.RoomWalkMaxX);
+            r.Z = Sane(NetJson.Num(node, "z"), NetLimits.RoomWalkMinZ, NetLimits.RoomWalkMaxZ);
+            r.Facing = Sane(NetJson.Num(node, "f"), -3600f, 3600f);
+            r.Walking = NetJson.Bool(node, "w");
+            return r;
+        }
+
+        /// <summary>
+        /// 位置的消毒:NaN/Inf → 0,其餘夾進房間框。
+        ///
+        /// 🔴 這不是防禦性程式碼的儀式,是真的會炸:一個 NaN 寫進 <c>Transform.position</c>
+        /// 會污染整棵 avatar hierarchy,而 <c>Camera.LookAt</c> 吃到 NaN 之後整個房間 RT 變黑
+        /// (而且看起來像「渲染壞了」,完全指不到「某人送了壞位置」這個原因)。
+        /// </summary>
+        private static float Sane(double v, float min, float max)
+        {
+            if (double.IsNaN(v) || double.IsInfinity(v)) return 0f;
+            return v < min ? min : (v > max ? max : (float)v);
+        }
+
+        public static NetMoveRow[] DecodeAll(List<object> arr)
+        {
+            if (arr == null || arr.Count == 0) return new NetMoveRow[0];
+            var rows = new NetMoveRow[arr.Count];
+            for (int i = 0; i < arr.Count; i++) rows[i] = Decode(arr[i]);
+            return rows;
+        }
+    }
+
     /// <summary>房間列表的一列。</summary>
     public struct NetRoomListEntry
     {

@@ -102,6 +102,19 @@ namespace Sdo.Net
         public const string ResultsReady = "resultsReady";
 
         /// <summary>
+        /// C→S。回報自己在房間裡的位置與朝向(走動時才送)。
+        ///
+        /// 為什麼不塞進 <see cref="RoomState"/> 快照:那份快照的 <c>rev</c> 是「房間設定變了」的訊號 ——
+        /// client 靠它決定要不要**重建遠端角色**(生一隻 avatar 要讀十幾個部件檔)。
+        /// 走路一秒十次,塞進去等於一秒重建十次遠端角色,而且座位/準備狀態的廣播頻率也被一起拉高。
+        /// 所以位置走自己的一條流,與分數流(<see cref="Frame"/>)完全同一個形狀。
+        /// </summary>
+        public const string Move = "move";
+
+        /// <summary>S→C。server 攢好房內所有人的最新位置,固定頻率推一次(見 <see cref="Frames"/> 的理由)。</summary>
+        public const string Moves = "moves";
+
+        /// <summary>
         /// C→S。回報自己的外觀(性別 / 體型 / 穿戴部件)。
         ///
         /// 為什麼不只靠 <see cref="Hello"/> 帶:握手發生在開機時,那時玩家還沒在選角色畫面選性別、

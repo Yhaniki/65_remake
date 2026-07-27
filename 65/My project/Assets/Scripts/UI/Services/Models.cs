@@ -135,6 +135,24 @@ namespace Sdo.UI.Services
 
     public sealed class ChatMessage
     {
+        /// <summary>
+        /// 發言者的 server userId。**0 = 離線模式 / 系統行 / 本機專屬提示行。**
+        ///
+        /// 為什麼不能只靠 <see cref="Sender"/>(顯示名):名字可以重複,而「這句話的頭上泡與舞蹈動作
+        /// 要掛到**哪一個** 3D 角色身上」必須是唯一的。連線版的遠端頭上泡就是靠它找到人的。
+        /// </summary>
+        public int SenderUserId;
+
+        /// <summary>
+        /// 發言者是男的嗎?**動作 clip 與語音必須用這個**,不是本機玩家的性別。
+        ///
+        /// 房間動作的關鍵字表是分性別的(「再見」女→act5/WREST0063/WOMAN_5、「88」男→act6/MREST0076/MAN_6),
+        /// 而 <c>OnlineChatService</c> 在收端就是用發言者的性別解出 <see cref="RoomActionId"/> 的。
+        /// 顯示端若改用本機性別去取 clip/語音,就會出現「用女生的 id 解出來、卻播男生的動作與 MAN_n 語音」
+        /// 這種不自洽 —— 所以把已經查過的那個值順手帶下來。
+        /// </summary>
+        public bool SenderMale;
+
         public string Sender;
         public string Text;
         public double TimeMs;

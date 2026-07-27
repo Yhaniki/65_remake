@@ -125,6 +125,16 @@ namespace Sdo.Game.Net
         /// <summary>聊天訊息。</summary>
         public event Action<NetChatMessage> ChatReceived;
 
+        /// <summary>
+        /// 房間裡每個人的最新位置(userId → row),自己那筆已經濾掉。
+        ///
+        /// 為什麼是**可輪詢的字典**而不是事件:房間畫面是 OnShow/OnHide 建拆的,而位置是
+        /// **狀態**不是事件 —— 用字典的話,晚建起來的 3D 房間可以立刻把每個人放到對的位置,
+        /// 不必等對方下一次走動(而站著不動的人根本不會再送)。
+        /// 也順便省掉「OnShow 訂閱 / OnHide 退訂」那一類很容易漏的配對。
+        /// </summary>
+        public readonly Dictionary<int, NetMoveRow> Moves = new Dictionary<int, NetMoveRow>();
+
         // ---- 連線 ----
 
         /// <summary>
@@ -146,6 +156,8 @@ namespace Sdo.Game.Net
             _link.Close(reason);
             UserId = 0;
             Room = null;
+            _sentLook = null;   // 重連後要重送外觀(server 那邊的 conn 已經沒了)
+            Moves.Clear();
         }
 
         private NetHelloIdentity _identity;
@@ -201,6 +213,7 @@ namespace Sdo.Game.Net
                 var wasInRoom = Room != null;
                 Room = null;
                 UserId = 0;
+                Moves.Clear();
                 if (wasInRoom) Raise(RoomLeft, "disconnected");
                 Raise(Disconnected, string.IsNullOrEmpty(_link.LastError) ? "連線中斷" : _link.LastError);
             }
@@ -280,6 +293,7 @@ namespace Sdo.Game.Net
                         string reason = NetJson.Str(node, "reason");
                         Room = null;
                         _lastSeenRev = 0;
+                        Moves.Clear();
                         Raise(Kicked, reason);
                         Raise(RoomLeft, "kicked:" + reason);
                         break;
@@ -321,6 +335,19 @@ namespace Sdo.Game.Net
                 case NetProto.ChatMsg:
                     Raise(ChatReceived, NetChatMessage.Decode(node));
                     break;
+
+                case NetProto.Moves:
+                    {
+                        var rows = NetJson.Arr(node, "m");
+                        if (rows != null)
+                            for (int i = 0; i < rows.Count; i++)
+                            {
+                                var row = NetMoveRow.Decode(rows[i]);
+                                if (row.UserId == 0 || row.UserId == UserId) continue;   // 自己那筆不用
+                                Moves[row.UserId] = row;
+                            }
+                        break;
+                    }
 
                 default:
                     // 不認得的訊息:可能是新版 server。忽略比斷線好。
@@ -393,6 +420,7 @@ namespace Sdo.Game.Net
         /// <summary>建房。<paramref name="onResult"/> 收到 (result, code)。</summary>
         public void CreateRoom(string name, Action<string, int> onResult)
         {
+            PublishLook();   // 🔴 一定要在 createRoom **之前** —— 見 PublishLook 的註解
             Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.CreateRoom)
                 .Int(NetProto.FieldRequest, NextRq(node => ReportJoin(node, onResult)))
@@ -402,6 +430,7 @@ namespace Sdo.Game.Net
         /// <summary>用房號加入。<paramref name="onResult"/> 收到 (result, code)。</summary>
         public void JoinRoom(int code, Action<string, int> onResult)
         {
+            PublishLook();   // 🔴 一定要在 joinRoom **之前** —— 見 PublishLook 的註解
             Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.JoinRoom)
                 .Int(NetProto.FieldRequest, NextRq(node => ReportJoin(node, onResult)))
@@ -422,6 +451,7 @@ namespace Sdo.Game.Net
             Send(JObj.New().Str(NetProto.FieldType, NetProto.LeaveRoom));
             Room = null;
             _lastSeenRev = 0;
+            Moves.Clear();   // 位置是「這間房裡的狀態」,離房就沒有意義了(留著會變幽靈)
         }
 
         public void SetReady(bool ready)
@@ -464,8 +494,11 @@ namespace Sdo.Game.Net
                 .Int(NetProto.FieldRequest, NextRq(null)).Int("userId", userId));
 
         public void Spectate(int code = 0)
-            => Send(JObj.New().Str(NetProto.FieldType, NetProto.Spectate)
+        {
+            PublishLook();   // 旁觀者在房間 3D 裡也是站在那邊的人,外觀一樣要對
+            Send(JObj.New().Str(NetProto.FieldType, NetProto.Spectate)
                 .Int(NetProto.FieldRequest, NextRq(null)).Int("code", code));
+        }
 
         public void StopSpectate()
             => Send(JObj.New().Str(NetProto.FieldType, NetProto.StopSpectate)
@@ -525,10 +558,48 @@ namespace Sdo.Game.Net
                 .Int("p", p).Int("c", c).Int("b", b).Int("m", m));
 
         /// <summary>
-        /// 回報自己的外觀(性別 / 體型 / 穿戴部件)。**進房前與換裝後都要送一次。**
+        /// 回報自己在房間裡的位置與朝向。**只在走動時送**(見 <see cref="NetLimits.ClientMoveIntervalMs"/>),
+        /// 停下來時送最後一筆就不再送 —— 站著不動的人不需要每 100ms 提醒別人他還在那裡。
+        /// </summary>
+        public void SendMove(float x, float z, float facing, bool walking)
+            => Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Move)
+                .Num("x", x).Num("z", z).Num("f", facing).Bool("w", walking));
+
+        /// <summary>
+        /// 「我現在長什麼樣」的提供者,由 <c>AppContext</c> 注入(它是唯一知道 profile / 穿搭解析的地方)。
+        /// null → <see cref="PublishLook"/> 什麼都不做。
+        /// </summary>
+        public Func<NetAvatarLook> LocalLook;
+
+        private NetAvatarLook _sentLook;
+
+        /// <summary>
+        /// 把自己的外觀報給 server。**進房的三個出口(建房/加入/旁觀)都在第一行呼叫它。**
         ///
-        /// 握手(hello)帶的那份是開機時的狀態 —— 那時玩家還沒選性別、穿搭也還沒解析(要讀 profile.json)。
-        /// 別人是靠這份資料把你的角色建出來的,不送的話你在別人畫面上會是預設的女角。
+        /// 🔴 為什麼一定要在 join **之前**:server 開座位時吃的是這條連線上記著的那份外觀
+        /// (<c>Hub.Handlers.JoinUserOf(conn)</c>),所以先送 = **第一份廣播出去的快照就是對的**。
+        /// 晚送的話別人會先看到一隻預設外觀的角色,然後才「pop」一下換裝 —— 而換裝意味著
+        /// 重新讀十幾個部件檔(50-100ms hitch)。更糟的是:如果收端沒做「外觀變了要重建」,
+        /// 那一下 pop 根本不會發生,遠端角色就**永遠**是預設的女角(實測踩過)。
+        ///
+        /// 進房前送、換裝後送,兩者都經過這裡;內容沒變就不送(見下面的去重理由)。
+        /// </summary>
+        public void PublishLook()
+        {
+            if (LocalLook == null) return;
+            var look = LocalLook();
+            if (look == null) return;
+            // 去重:每送一次 server 都會 rev++ 並向全房廣播一份完整快照(6 人 × 1-2 KB)。
+            // 「進房 / 打完歌回房 / 每次換裝面板關閉」都會呼叫這裡,而多數時候外觀根本沒變。
+            if (_sentLook != null && _sentLook.SameAs(look)) return;
+            _sentLook = look;
+            SendLook(look.Gender, look.BodyIndex, look.Parts);
+        }
+
+        /// <summary>
+        /// 回報自己的外觀(性別 / 體型 / 穿戴部件)。一般走 <see cref="PublishLook"/>(有去重);
+        /// 這個多載留給「就是要強制送一次」的呼叫端。
         /// </summary>
         public void SendLook(int gender, int bodyIndex, string[] parts)
         {

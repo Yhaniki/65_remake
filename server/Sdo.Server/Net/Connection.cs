@@ -235,6 +235,9 @@ namespace Sdo.Server.Net
         private long _chatWindowStart;
         private int _chatCount;
 
+        private long _moveWindowStart;
+        private int _moveCount;
+
         private long _availLastMs;
 
         /// <summary>連續超限的次數 —— 偶爾爆一下丟訊息就好,一直爆就斷線。</summary>
@@ -248,6 +251,10 @@ namespace Sdo.Server.Net
 
         public bool AllowChat(long nowMs)
             => Allow(nowMs, ref _chatWindowStart, ref _chatCount, NetLimits.RateChatWindowMs, NetLimits.RateChatPerWindow);
+
+        /// <summary>房間裡走動的位置回報(10 Hz + 餘裕)。超限就丟這一筆 —— 位置是狀態快照,丟掉下一筆就補上了。</summary>
+        public bool AllowMove(long nowMs)
+            => Allow(nowMs, ref _moveWindowStart, ref _moveCount, 1000, NetLimits.RateMovePerSec);
 
         /// <summary>
         /// 下載/上傳進度回報的節流(每 500ms 一筆)。

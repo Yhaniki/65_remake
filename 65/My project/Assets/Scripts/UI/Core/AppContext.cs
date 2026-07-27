@@ -1,4 +1,6 @@
+using Sdo.Game;
 using Sdo.Game.Net;
+using Sdo.Net;
 using Sdo.Settings;
 using Sdo.UI.Services;
 
@@ -58,16 +60,43 @@ namespace Sdo.UI.Core
                 Guild = offline.Session.GuildName,
                 Level = ParseLevel(RoomConfig.playerLevel),
                 Gender = offline.Session.Gender,
-                BodyIndex = 0,
-                AvatarParts = null,   // 穿搭在進房前才解析(要讀 profile.json)
+                // 握手就帶上真的體型與穿搭 —— 用 profile 的**快取**那份(EquippedAvatarParts),
+                // 不要在開機時去碰 AvatarItemCatalog(那會提早觸發整份商城目錄載入,很貴)。
+                // 飾品之類需要 catalog 才算得出來的差異,由進房前的 setLook 修正(見 net.LocalLook)。
+                BodyIndex = Sdo.Settings.ProfileManager.Active != null
+                    ? Sdo.Settings.ProfileManager.Active.bodyShapeIndex : 0,
+                AvatarParts = Sdo.Settings.ProfileManager.Active != null
+                    ? Sdo.Settings.ProfileManager.Active.EquippedAvatarParts() : null,
             };
             net.Connect(RoomConfig.serverAddress, RoomConfig.serverPort, RoomConfig.serverPassword, identity);
+
+            // 「我現在長什麼樣」的唯一來源。NetClient 在建房/加入/旁觀的第一行呼叫它(PublishLook),
+            // 所以第一份廣播出去的房間快照就已經帶對的外觀 —— 別人不會先看到一隻預設的女角。
+            // 放在 AppContext 是因為它是唯一的離線/連線分流點,也是唯一該知道 profile/穿搭怎麼解析的地方。
+            net.LocalLook = () => LocalLookNow(offline.Session);
 
             var rooms = new OnlineRoomService(net, offline.Session);
             // 聊天:同房的公開發言走 server 廣播;密語/家族/系統/「你說」那些本機專屬的行仍由離線實作產生
             // (見 OnlineChatService 的註解)。所以是「包在外面」而不是整個換掉。
             var chat = new OnlineChatService(net, offline.Chat, () => offline.Session.Gender == 1);
             return new AppContext(offline.Session, offline.Flow, rooms, offline.Players, chat, net);
+        }
+
+        /// <summary>
+        /// 現在的本機外觀:性別看 session(選角色畫面可能剛切過)、體型與穿搭看 active profile。
+        ///
+        /// 穿搭走 <c>WardrobeStore.ResolveEquippedParts</c> 而不是 profile 的 <c>equippedParts</c> 快取 ——
+        /// 前者會把合成的翅膀/表情/項鍊算進去(那條路與房間、選角色畫面建本機 avatar 用的是同一個函式,
+        /// 所以「別人看到的我」與「我看到的我」保證一致)。
+        /// </summary>
+        private static NetAvatarLook LocalLookNow(GameSession session)
+        {
+            var p = Sdo.Settings.ProfileManager.Active;
+            int gender = session != null && session.Gender == 1 ? 1 : 0;
+            var look = new NetAvatarLook { Gender = gender, BodyIndex = p != null ? p.bodyShapeIndex : 0 };
+            if (p != null)
+                look.Parts = WardrobeStore.ResolveEquippedParts(p, gender, id => AvatarItemCatalog.Instance.ById(id));
+            return look;
         }
 
         private static int ParseLevel(string s)

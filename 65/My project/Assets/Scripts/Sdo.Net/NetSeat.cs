@@ -69,6 +69,40 @@ namespace Sdo.Net
             return look;
         }
 
+        /// <summary>
+        /// 兩份外觀一樣嗎?<c>null</c> 與空陣列視為相等(兩者都代表「用預設整套」)。
+        ///
+        /// 為什麼需要它:client 有兩個地方要判斷「外觀變了沒」——
+        /// ① **送出去重**:每送一次 setLook,server 就 <c>rev++</c> 並向全房廣播一份完整快照,不能白送。
+        /// ② **遠端角色要不要重建**:生一隻要讀十幾個部件檔(50-100ms 的 hitch),
+        ///    絕不能因為別人按了準備、換了歌之類的 rev 變動就重建。
+        /// 兩處必須用同一套規則,所以放在這裡(零 Unity 依賴 → 可單元測試)。
+        /// </summary>
+        public bool SameAs(NetAvatarLook o)
+        {
+            if (o == null) return false;
+            if (Gender != o.Gender || BodyIndex != o.BodyIndex) return false;
+            int a = Parts != null ? Parts.Length : 0;
+            int b = o.Parts != null ? o.Parts.Length : 0;
+            if (a != b) return false;
+            for (int i = 0; i < a; i++)
+                if (!string.Equals(Parts[i], o.Parts[i], System.StringComparison.Ordinal)) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// 外觀的比較鍵(給「用字典記住上一次長相」的地方用)。
+        /// **順序有意義** —— 部件的疊圖順序會影響外觀,所以不排序。null 與空陣列產生同一個鍵。
+        /// </summary>
+        public string Key()
+        {
+            var sb = new System.Text.StringBuilder(64);
+            sb.Append(Gender).Append('/').Append(BodyIndex);
+            if (Parts != null)
+                for (int i = 0; i < Parts.Length; i++) sb.Append('|').Append(Parts[i] ?? "");
+            return sb.ToString();
+        }
+
         private static string Clip(string s)
         {
             if (string.IsNullOrEmpty(s)) return "";

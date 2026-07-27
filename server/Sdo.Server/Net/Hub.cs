@@ -53,6 +53,7 @@ namespace Sdo.Server.Net
         private int _nextUserId = 1;
         private long _lastPingSweepMs;
         private long _lastFramePushMs;
+        private long _lastMovePushMs;
         private TcpListener _listener;
 
         public Hub(ServerOptions opts)
@@ -203,6 +204,13 @@ namespace Sdo.Server.Net
             {
                 _lastFramePushMs = now;
                 PushPendingFrames();
+            }
+
+            // 2b) 房間裡走動的位置流:同樣攢起來定頻推,但比分數流密(位置是連續量,太疏會一格一格跳)
+            if (now - _lastMovePushMs >= 1000 / NetLimits.ServerMoveHz)
+            {
+                _lastMovePushMs = now;
+                PushPendingMoves();
             }
 
             // 3) ping 逾時 = 斷線 = 離房(每秒掃一次就夠)

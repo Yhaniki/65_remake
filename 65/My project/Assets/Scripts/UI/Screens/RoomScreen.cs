@@ -528,11 +528,23 @@ namespace Sdo.UI.Screens
                 : null;
             int localBody = ProfileManager.Active != null ? ProfileManager.Active.bodyShapeIndex : 0;   // 本機角色自己的體型 (胖瘦)
 
+            // 🔴 連線模式:進房就把自己的外觀報一次給 server —— 別人是靠這份資料把你的角色建出來的。
+            // 這裡是**唯一保證會跑到的地方**:本機 avatar 的穿搭就是在上面這三行解析出來的,
+            // 而不管你是按「開房」、按「加入」、從遊戲打完回房、還是走 dev 的直達路徑,都會經過 OnShow。
+            // (原本只掛在選男女畫面的 CommitIdentity 上 → dev 的 SDO_ROOM/SDO_JOINFIRST 兩條路徑
+            //  完全繞過它,實測 server 一次 setLook 都沒收到,遠端角色全是預設的女角。)
+            int localSeat = Ctx != null && Ctx.Rooms != null ? Mathf.Max(0, LocalSeatIndex(Ctx.Rooms.CurrentRoom)) : 0;
+            if (Ctx != null && Ctx.Net != null)
+            {
+                Ctx.Net.PublishLook();        // 去重過;進房前 NetClient 已經送過一次,這裡是補網
+                _moveThrottle.Reset();
+            }
+
             if (_scene == null)
             {
                 var sceneGo = new GameObject("RoomScene3D");
                 _scene = sceneGo.AddComponent<RoomScene3D>();
-                _scene.Build(localMale, localAvatarParts, localBody);
+                _scene.Build(localMale, localAvatarParts, localBody, localSeat);
                 if (_backdrop != null && _scene.SceneTexture != null)
                 {
                     _backdrop.texture = _scene.SceneTexture;
@@ -1046,29 +1058,43 @@ namespace Sdo.UI.Screens
             AddRoomChatLine(m);
             if (follow) ScrollRoomChatToBottom();
             // 密語/進出舞台/家族/你說/你沒有家族 都是文字提示，不彈頭上藍泡、不觸發角色動作。
-            if (m != null && m.Local && !m.System
+            if (m != null && !m.System
                 && m.Whisper == WhisperKind.None && m.Stage == StageEventKind.None
                 && m.Notice == ChatNotice.None && !m.Guild)
             {
-                ShowRoomChatBubble(m);
-                PlayRoomChatAction(m);
+                // owner 0 = 本機。遠端要先確認「他真的有一隻 3D 角色」——
+                // 旁觀者不在座位上,SyncRemoteRoomAvatars 不會生角色,泡沒有地方可掛。
+                int owner = m.Local ? 0 : m.SenderUserId;
+                if (owner == 0 || (_scene != null && _scene.HasRemote(owner)))
+                {
+                    ShowRoomChatBubble(m, owner);
+                    PlayRoomChatAction(m, owner);
+                }
             }
         }
 
-        private void PlayRoomChatAction(ChatMessage m)
+        /// <param name="owner">0 = 本機;其餘 = 遠端玩家的 userId(動作播在他的角色上)。</param>
+        private void PlayRoomChatAction(ChatMessage m, int owner = 0)
         {
             if (m == null || string.IsNullOrEmpty(m.RoomActionId)) return;
             if (!RoomChatCommand.TryGetRoomAction(m.RoomActionId, out var action) || action == null) return;
             // Gender picks BOTH the motion clip and the SE — same gender the id was parsed with (see MockChatService),
             // so female "再見"→action5→WREST0063+WOMAN_5 while male "88"→action6→MREST0076+MAN_6 stay self-consistent.
-            bool male = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
+            // 🔴 性別要用**發言者**的,不是本機玩家的:動作 id 是收端用發言者性別解出來的
+            // (見 ChatMessage.SenderMale 的註解),這裡若用本機性別就會「用女生的 id 播男生的動作」。
+            // 離線模式 SenderMale 由 MockChatService 填,值與這裡原本的本機性別相同 → 行為不變。
+            bool male = m.SenderMale;
             string motion = action.MotionFor(male);
             if (!string.IsNullOrEmpty(motion))
             {
-                if (_scene != null) _scene.PlayChatAction(motion);
-                if (_localHead != null) _localHead.PlayChatAction(motion);   // 上面的頭貼跟著做同一個動作
+                if (owner == 0)
+                {
+                    if (_scene != null) _scene.PlayChatAction(motion);
+                    if (_localHead != null) _localHead.PlayChatAction(motion);   // 上面的頭貼跟著做同一個動作
+                }
+                else if (_scene != null) _scene.PlayRemoteChatAction(owner, motion);
             }
-            UiSfx.Play(action.SoundFor(male));
+            UiSfx.Play(action.SoundFor(male));   // 語音房內所有人都聽得到(官方也是)
         }
 
         // 左下聊天：一整行帶黑邊的 rich 文字（VLG block，固定行高 16）。回傳 face TMP 供掛名字點擊。
@@ -1427,13 +1453,15 @@ namespace Sdo.UI.Screens
             else { _chatInputSticky = true; FocusRoomChatInput(); }   // 輸入框模式送完保持 focus 續打，不退出
         }
 
-        private void ShowRoomChatBubble(ChatMessage m)
+        private void ShowRoomChatBubble(ChatMessage m, int ownerUserId = 0)
         {
             if (Root == null || m == null) return;
             // 舊泡保留：新泡另開一顆，串起來各自計時。
-            if (_chatBubbleTyping) HideRoomChatBubble();
+            // 🔴 只有**自己**送出時才收掉打字泡 —— 那是「我送出了 → 打字泡變成已送出泡」的語意。
+            //    不加 owner 守門的話,別人講一句話就會把我正在打的字泡吃掉。
+            if (ownerUserId == 0 && _chatBubbleTyping) HideRoomChatBubble();
 
-            var bubble = SpawnSentRoomBubble();
+            var bubble = SpawnSentRoomBubble(ownerUserId);
             bubble.PendingShow = true;
             bubble.ShownAt = Time.unscaledTime;   // 每顆泡以此為「年齡」起點，各自從肩錨往上飄
             bubble.HideAt = bubble.ShownAt + ChatBubbleLifetime;
@@ -1450,7 +1478,13 @@ namespace Sdo.UI.Screens
             ApplySentBubbleStyle(bubble, style, entering: true);
             var enterFrames = RoomBubbleArt.EnterFrames(style);
             bubble.TalkAt = bubble.ShownAt + Mathf.Clamp((enterFrames != null ? enterFrames.Length : 0) / 12f, 0.5f, 1.2f);
-            if (string.IsNullOrEmpty(m.RoomActionId)) UiSfx.Play(UiSfx.Bubble);
+            // pop 音節流:server 的聊天限制是每人 5 則/3 秒,六人房最壞 10 則/秒全部疊在同一個
+            // AudioSource 上 → 音量疊加爆音。0.12s 以內只放一次。
+            if (string.IsNullOrEmpty(m.RoomActionId) && Time.unscaledTime - _lastBubblePopAt >= 0.12f)
+            {
+                _lastBubblePopAt = Time.unscaledTime;
+                UiSfx.Play(UiSfx.Bubble);
+            }
             if (bubble.Add != null) bubble.Add.gameObject.SetActive(false);
             if (bubble.AddAnim != null) bubble.AddAnim.Frames = null;
             bubble.EmojiInlineLeadLen = -1;   // 預設不做行內 emoji 疊圖
@@ -1518,24 +1552,40 @@ namespace Sdo.UI.Screens
             }
 
             _sentBubbles.Add(bubble);
-            // 防洗版：太舊先踢（仍各自壽命為主）
-            while (_sentBubbles.Count > 8)
-                DestroySentRoomBubble(_sentBubbles[0]);
+            // 防洗版:**per-owner** 計數。全域計數的話一個人洗頻會把別人的泡全踢光。
+            // 上限從 8 降到 4:最壞 6 人 × 4 = 24 顆泡(每顆是 1 個 GameObject + 3 Image + 1 TMP),
+            // 8 的話在六人房會實際掉幀。
+            int mine = 0;
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+                if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == bubble.OwnerUserId) mine++;
+            while (mine > 4)
+            {
+                for (int i = 0; i < _sentBubbles.Count; i++)
+                    if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == bubble.OwnerUserId)
+                    { DestroySentRoomBubble(_sentBubbles[i]); break; }
+                mine--;
+            }
         }
 
-        private SentRoomBubble SpawnSentRoomBubble()
+        private SentRoomBubble SpawnSentRoomBubble(int ownerUserId = 0)
         {
             var root = UIKit.NewRect(_bubbleLayer, "RoomChatBubble");   // 掛在 _bubbleLayer(UI 底下)
             root.anchorMin = root.anchorMax = new Vector2(0f, 1f);
             root.pivot = new Vector2(0f, 1f);
             root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
 
-            var bubble = new SentRoomBubble { Root = root };
-            var drag = root.gameObject.AddComponent<RoomBubbleDragHandle>();
-            drag.Owner = this;
-            drag.Sent = bubble;
+            var bubble = new SentRoomBubble { Root = root, OwnerUserId = ownerUserId };
+            // 🔴 只有自己的泡能拖。拖曳狀態是**全域單一**的(_chatBubbleChainDragging /
+            //    _chatBubbleDraggedSent),而拖住時的補償會延長**那條鏈上所有泡**的壽命 ——
+            //    跨人就變成「你按住不放,別人的泡也不會消失」。官方也沒有拖別人的泡這回事。
+            if (ownerUserId == 0)
+            {
+                var drag = root.gameObject.AddComponent<RoomBubbleDragHandle>();
+                drag.Owner = this;
+                drag.Sent = bubble;
+            }
 
-            bubble.Frame = UIKit.AddImage(root, "Frame", Color.white, raycast: true);
+            bubble.Frame = UIKit.AddImage(root, "Frame", Color.white, raycast: ownerUserId == 0);
             UIKit.Stretch(bubble.Frame.rectTransform);
             UIKit.ApplySprite(bubble.Frame, RoomBubbleArt.Base(1));
             Place(bubble.Frame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
@@ -2405,8 +2455,15 @@ namespace Sdo.UI.Screens
             // 而且連線模式的座位狀態是 server 推來的,不能只在 Render() 那一刻套一次)。
             RenderSlots(Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null);
             EnsureChatScope();          // 房間資料可能比進場晚到(見那邊的註解);設好之後就是純比較,不花成本
+            // 🔴 這五行的順序是定案的,不要重排:
+            //   SyncRemoteRoomAvatars 有 rev-gate(只在房間快照變時跑) → 生/拆/換裝遠端角色
+            //   ApplyRemoteMoves / SendLocalMove **不能**放進去 —— 位置每幀都要套,rev 不會每幀變
+            //   名字牌與頭上泡要在位置套完之後才擺,否則會慢一幀(走動時看得出來)
             SyncRemoteRoomAvatars();
+            ApplyRemoteMoves();
+            SendLocalMove();
             PlaceRemoteNamePlates();
+            PlaceRemoteChatBubbles();
 
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
@@ -2418,15 +2475,61 @@ namespace Sdo.UI.Screens
                 PlaceFamilyRow(vp);                                            // 家族列(徽章+名稱)再往上疊一行
             }
 
-            bool needBubbleAnchor = _sentBubbles.Count > 0
+            bool needBubbleAnchor = HasBubbleOf(0)
                 || (_chatBubbleRoot != null && (_chatBubbleRoot.gameObject.activeSelf || _chatBubblePendingShow));
             if (needBubbleAnchor)
             {
                 if (_scene.TryChatBubbleViewport(out var bubbleVp))
-                    PlaceRoomChatBubbles(bubbleVp);
+                    PlaceRoomChatBubbles(bubbleVp, 0, true);
                 else if (_scene.TryHeadViewport(out var fallbackVp))
-                    PlaceRoomChatBubbles(fallbackVp);
+                    PlaceRoomChatBubbles(fallbackVp, 0, true);
             }
+        }
+
+        private bool HasBubbleOf(int owner)
+        {
+            for (int i = 0; i < _sentBubbles.Count; i++)
+                if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == owner) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 遠端玩家的泡:每人一條鏈,掛在**他自己**角色的肩膀上。
+        /// 角色在鏡頭後面(看不到)時把泡藏起來 —— 不藏的話泡會黏在畫面邊角。
+        /// </summary>
+        private void PlaceRemoteChatBubbles()
+        {
+            if (_scene == null || _sentBubbles.Count == 0) return;
+            _bubbleOwners.Clear();
+            for (int i = 0; i < _sentBubbles.Count; i++)
+            {
+                var b = _sentBubbles[i];
+                if (b != null && b.OwnerUserId != 0) _bubbleOwners.Add(b.OwnerUserId);
+            }
+            if (_bubbleOwners.Count == 0) return;
+
+            foreach (int owner in _bubbleOwners)
+            {
+                Vector2 vp;
+                if (_scene.TryRemoteBubbleViewport(owner, out vp)) { PlaceRoomChatBubbles(vp, owner, false); continue; }
+                for (int i = 0; i < _sentBubbles.Count; i++)
+                {
+                    var b = _sentBubbles[i];
+                    if (b != null && b.OwnerUserId == owner && b.Root != null && b.Root.gameObject.activeSelf)
+                        b.Root.gameObject.SetActive(false);
+                }
+            }
+        }
+
+        private readonly HashSet<int> _bubbleOwners = new HashSet<int>();
+        private float _lastBubblePopAt = -1f;
+
+        /// <summary>某個人離房 → 清掉他所有的泡(角色已經被拆了,泡留著會孤兒地掛到壽命結束)。</summary>
+        private void DestroySentBubblesOf(int owner)
+        {
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+                if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == owner)
+                    DestroySentRoomBubble(_sentBubbles[i]);
         }
 
         private void LateUpdate()
@@ -2477,13 +2580,15 @@ namespace Sdo.UI.Screens
             }
         }
 
-        private void PlaceRoomChatBubbles(Vector2 vp)
+        /// <param name="owner">只排這個人的泡(0 = 本機鏈)。每個人的泡各自成一條鏈,掛在自己的肩膀上。</param>
+        /// <param name="includeTyping">要不要把打字泡算進這條鏈(只有本機鏈才有打字泡)。</param>
+        private void PlaceRoomChatBubbles(Vector2 vp, int owner = 0, bool includeTyping = true)
         {
             float anchorTop = (1f - vp.y) * 600f;
             float visibleLeft = vp.x * 800f + ChatBubbleAnchorVisibleLeft;
             float visibleTop = anchorTop + ChatBubbleAnchorVisibleTop;
 
-            bool typingVisible = _chatBubbleRoot != null
+            bool typingVisible = includeTyping && _chatBubbleRoot != null
                 && (_chatBubbleTyping || _chatBubbleRoot.gameObject.activeSelf || _chatBubblePendingShow);
 
             bool hasTypingNode = false;
@@ -2504,11 +2609,14 @@ namespace Sdo.UI.Screens
                 hasTypingNode = true;
             }
 
-            var nodes = new List<RoomBubbleLayoutNode>(_sentBubbles.Count);
+            // 可重用的清單:這個方法現在會被呼叫「1 + 遠端人數」次/幀,每次 new 一個 List 就是 6 倍垃圾。
+            _bubbleNodes.Clear();
+            var nodes = _bubbleNodes;
             for (int i = _sentBubbles.Count - 1; i >= 0; i--)
             {
                 var b = _sentBubbles[i];
                 if (b == null || b.Root == null) continue;
+                if (b.OwnerUserId != owner) continue;
                 nodes.Add(new RoomBubbleLayoutNode
                 {
                     Sent = b,
@@ -2892,6 +3000,12 @@ namespace Sdo.UI.Screens
             public bool HasPhysics;
             public Vector2 PhysicsPos, PhysicsVel;
             public int EmojiInlineLeadLen = -1;   // >=0：泡活化後把 Expression 疊到 Text 第 leadLen 個字之後；-1=不做
+
+            /// <summary>
+            /// 這顆泡是誰的?**0 = 本機**(它與打字泡共用同一條鏈),其餘 = 遠端玩家的 userId。
+            /// 每個人的泡各自成一條鏈,掛在各自角色的肩膀上。
+            /// </summary>
+            public int OwnerUserId;
         }
 
         private sealed class RoomBubbleDragHandle : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
@@ -3276,6 +3390,7 @@ namespace Sdo.UI.Screens
             {
                 if (_remoteNames[id] != null) Destroy(_remoteNames[id].gameObject);
                 _remoteNames.Remove(id);
+                DestroySentBubblesOf(id);   // 角色已被拆掉,泡不清會孤兒地掛到壽命結束
             }
         }
 
@@ -3301,6 +3416,49 @@ namespace Sdo.UI.Screens
                 if (lbl.gameObject.activeSelf != visible) lbl.gameObject.SetActive(visible);
                 if (visible) PlaceFollow(lbl.Rect, vp, -8f);
             }
+        }
+
+
+        // ---- 房間裡的走動同步 ----
+
+        private readonly Sdo.Net.MoveThrottle _moveThrottle = new Sdo.Net.MoveThrottle();
+
+        // 泡鏈排版用的可重用暫存(見 PlaceRoomChatBubbles 的註解:一幀會被呼叫多次)。
+        private readonly List<RoomBubbleLayoutNode> _bubbleNodes = new List<RoomBubbleLayoutNode>();
+
+        /// <summary>
+        /// 把 server 推來的位置套到遠端角色上。**每幀都要跑** —— 位置流不受
+        /// <see cref="SyncRemoteRoomAvatars"/> 的 rev-gate 管(rev 不會每幀變,但位置會)。
+        ///
+        /// 讀的是 <c>NetClient.Moves</c> 這張「每個人的最新位置」字典而不是事件:
+        /// 站著不動的人永不回報,所以晚建起來的 3D 房間只能靠這張表把他們放到對的位置。
+        /// </summary>
+        private void ApplyRemoteMoves()
+        {
+            if (_scene == null || Ctx == null || Ctx.Net == null) return;
+            var moves = Ctx.Net.Moves;
+            if (moves.Count == 0) return;
+            foreach (var kv in moves)
+            {
+                var r = kv.Value;
+                _scene.ApplyRemoteMove(r.UserId, r.X, r.Z, r.Facing, r.Walking);
+            }
+        }
+
+        /// <summary>
+        /// 把本機的位置送上網。真正要不要送由 <see cref="Sdo.Net.MoveThrottle"/> 決定
+        /// (站著不動就完全不送;開始走/停下/轉向立刻送;走動中 10 Hz)。
+        ///
+        /// 放在 RoomScreen 而不是 RoomScene3D:後者在 <c>Sdo.Game</c>,不認識連線層。
+        /// 這裡是唯一的黏合層,而且離線(<c>Ctx.Net == null</c>)時整段跳過、零成本。
+        /// </summary>
+        private void SendLocalMove()
+        {
+            if (_scene == null || Ctx == null || Ctx.Net == null || !Ctx.Net.InRoom) return;
+            long now = (long)(Time.realtimeSinceStartupAsDouble * 1000.0);
+            float x = _scene.LocalWalkX, z = _scene.LocalWalkZ, f = _scene.AvatarFacing;
+            bool walking = _scene.IsWalking;
+            if (_moveThrottle.ShouldSend(x, z, f, walking, now)) Ctx.Net.SendMove(x, z, f, walking);
         }
 
         /// <summary>本機玩家坐在第幾格?找不到回 -1(旁觀或還沒進座位)。</summary>

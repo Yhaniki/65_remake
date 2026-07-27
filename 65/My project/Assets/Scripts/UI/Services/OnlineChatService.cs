@@ -109,8 +109,14 @@ namespace Sdo.UI.Services
 
         private void OnNetChat(NetChatMessage m)
         {
+            // 發言者的性別查一次就好 —— 解 RoomActionId 與顯示端取 clip/語音都要用同一個值,
+            // 否則會出現「用女生的 id 解出來、卻播男生的動作」那種不自洽。
+            bool senderMale = SenderIsMale(m.SenderUserId);
+
             var msg = new ChatMessage
             {
+                SenderUserId = m.SenderUserId,   // 頭上泡/動作要掛到哪一個 3D 角色身上,靠這個找人
+                SenderMale = senderMale,
                 Sender = m.Sender ?? "",
                 Text = m.Text ?? "",
                 TimeMs = NowMs(),
@@ -129,7 +135,7 @@ namespace Sdo.UI.Services
             if (msg.ExpressionId == 0 && !string.IsNullOrEmpty(msg.Text))
             {
                 RoomChatAction action;
-                if (RoomChatCommand.TryParseRoomAction(msg.Text, SenderIsMale(m.SenderUserId), out action) && action != null)
+                if (RoomChatCommand.TryParseRoomAction(msg.Text, senderMale, out action) && action != null)
                     msg.RoomActionId = action.Id;
             }
 

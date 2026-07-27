@@ -18,6 +18,13 @@ namespace Sdo.Server.Net
         private readonly Dictionary<int, Dictionary<int, FrameSample>> _frames
             = new Dictionary<int, Dictionary<int, FrameSample>>();
 
+        /// <summary>roomCode → (userId → 最新一筆房間內位置)。同上,見 <see cref="PushPendingMoves"/>。</summary>
+        private readonly Dictionary<int, Dictionary<int, MoveSample>> _moves
+            = new Dictionary<int, Dictionary<int, MoveSample>>();
+
+        /// <summary>這一輪有人動過的房間。位置表不清空(要留最新位置給後進房的人),所以用它決定要不要推。</summary>
+        private readonly HashSet<int> _movesDirty = new HashSet<int>();
+
         // ================= frame 進入點 =================
 
         private void HandleFrame(Connection conn, byte kind, byte[] payload)
@@ -50,8 +57,13 @@ namespace Sdo.Server.Net
                 return;
             }
 
-            // rate limit:frame 走寬鬆的那條,其餘走 control。
-            bool ok = type == NetProto.Frame ? conn.Rate.AllowFrame(now) : conn.Rate.AllowControl(now);
+            // rate limit:三個獨立的 bucket。
+            // 🔴 move 一定要有自己的:走動是 10/s + 換方向的 edge,吃 control 的 32/s 會與
+            // setReady / chatSay / setLook 搶同一個窗,搶輸的被靜默丟掉(而且 Strikes 累積還會斷線)。
+            // 這與 frame 為什麼要獨立是同一個理由。
+            bool ok = type == NetProto.Frame ? conn.Rate.AllowFrame(now)
+                    : type == NetProto.Move ? conn.Rate.AllowMove(now)
+                    : conn.Rate.AllowControl(now);
             if (!ok)
             {
                 conn.Rate.Strikes++;
@@ -84,6 +96,7 @@ namespace Sdo.Server.Net
                 case NetProto.SetOwnTeam: OnSetOwnTeam(conn, node, rq); break;
                 case NetProto.SetReady: OnSetReady(conn, node, rq); break;
                 case NetProto.SetLook: OnSetLook(conn, node); break;
+                case NetProto.Move: OnRoomMove(conn, node, now); break;
                 case NetProto.SetAvailability: OnSetAvailability(conn, node, now); break;
 
                 case NetProto.KickUser: OnKickUser(conn, node, rq); break;
@@ -283,8 +296,29 @@ namespace Sdo.Server.Net
             if (op == NetRoomOp.Ok)
             {
                 BroadcastRoomState(room);
+                SendMoveSnapshot(conn, room);   // 讓他立刻知道大家站在哪裡(見那個方法的註解)
                 Log("user " + conn.UserId + " 加入房 " + code + " 座位 " + seat);
             }
+        }
+
+        /// <summary>
+        /// 把房裡每個人**目前**的位置一次送給某一條連線。
+        ///
+        /// 為什麼需要它:位置流只在有人動的時候推,而站著不動的人永不回報 ——
+        /// 所以剛進房的人若不補這一發,他會看到所有人站在「座位算出來的 fallback 點」上,
+        /// 而那些點與別人畫面上的位置完全不同(症狀:同一間房每台看到的站位都不一樣)。
+        /// </summary>
+        private void SendMoveSnapshot(Connection conn, NetRoom room)
+        {
+            if (room == null || conn == null) return;
+            Dictionary<int, MoveSample> byUser;
+            if (!_moves.TryGetValue(room.Code, out byUser) || byUser.Count == 0) return;
+
+            var arr = JArr.New();
+            foreach (var mv in byUser)
+                if (mv.Key != conn.UserId) arr.Add(mv.Value.Encode(mv.Key));
+
+            conn.Send(JObj.New().Str(NetProto.FieldType, NetProto.Moves).Put("m", arr));
         }
 
         private void OnLeaveRoom(Connection conn)
@@ -304,7 +338,7 @@ namespace Sdo.Server.Net
                 // 但若狀態不同步還有人在,要通知他們。
                 var evicted = left.EvictedUserIds;
                 for (int i = 0; i < evicted.Length; i++) SendKicked(evicted[i], NetProto.KickedRoomClosed);
-                _frames.Remove(left.Room.Code);
+                DropRoomScratch(left.Room.Code);
                 Log("房 " + left.Room.Code + " 已關閉(沒人了)");
                 return;
             }
@@ -323,7 +357,7 @@ namespace Sdo.Server.Net
             {
                 var evicted = left.EvictedUserIds;
                 for (int i = 0; i < evicted.Length; i++) SendKicked(evicted[i], NetProto.KickedRoomClosed);
-                _frames.Remove(left.Room.Code);
+                DropRoomScratch(left.Room.Code);
                 return;
             }
             BroadcastRoomState(left.Room);
@@ -455,7 +489,7 @@ namespace Sdo.Server.Net
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
 
             SendKicked(target, NetProto.KickedByHost);
-            if (left.RoomClosed) { _frames.Remove(room.Code); return; }
+            if (left.RoomClosed) { DropRoomScratch(room.Code); return; }
             BroadcastRoomState(room);
             Log("user " + target + " 被房主踢出房 " + room.Code);
         }
@@ -618,6 +652,110 @@ namespace Sdo.Server.Net
 
         // ================= 遊玩中的分數流 =================
 
+        // ================= 房間裡的走動 =================
+
+        /// <summary>
+        /// 玩家在房間裡走動的位置回報。與分數流(<see cref="OnGameplayFrame"/>)是同一個形狀:
+        /// 只留每個人的最新一筆,固定頻率彙整推出去。
+        ///
+        /// **server 不驗證位置** —— 可走區的遮罩(MASK.MSK)只有 client 有,而房間裡走到牆裡面
+        /// 不影響任何人的遊玩結果。這是刻意的取捨(離線重製沒有防作弊需求),寫在這裡免得
+        /// 以後有人以為是漏掉了。
+        /// </summary>
+        private void OnRoomMove(Connection conn, object node, long now)
+        {
+            // rate limit 已經在 Dispatch 的入口扣過了(move 有自己的 bucket),這裡不要再扣一次。
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return;
+
+            Dictionary<int, MoveSample> byUser;
+            if (!_moves.TryGetValue(room.Code, out byUser))
+            {
+                byUser = new Dictionary<int, MoveSample>();
+                _moves[room.Code] = byUser;
+            }
+            byUser[conn.UserId] = MoveSample.Decode(node);
+            _movesDirty.Add(room.Code);
+        }
+
+        /// <summary>固定頻率把每個房間彙整好的 moves 推出去(N×ServerMoveHz,不是 N² 轉發風暴)。</summary>
+        private void PushPendingMoves()
+        {
+            if (_moves.Count == 0) return;
+
+            List<int> emptied = null;
+            foreach (var kv in _moves)
+            {
+                var byUser = kv.Value;
+                if (byUser.Count == 0) continue;
+
+                var room = _rooms.Find(kv.Key);
+                if (room == null)
+                {
+                    if (emptied == null) emptied = new List<int>();
+                    emptied.Add(kv.Key);
+                    continue;
+                }
+
+                // 🔴 只推「這一輪有人動過」的房間,但**不清空表** —— 表裡留著每個人的最新位置,
+                // 因為後進房的人要靠它知道大家站在哪裡(清掉的話他只會看到所有人站在座位 fallback 點)。
+                if (!_movesDirty.Contains(kv.Key)) continue;
+
+                var arr = JArr.New();
+                foreach (var mv in byUser) arr.Add(mv.Value.Encode(mv.Key));
+
+                var bytes = JObj.New()
+                    .Str(NetProto.FieldType, NetProto.Moves)
+                    .Put("m", arr)
+                    .Utf8();
+
+                // lossy:佇列滿了寧可丟掉這一輪,也不要斷線或拖慢 actor loop(位置下一輪就補上了)。
+                ForEachInRoom(room, c => c.SendPreEncoded(bytes, critical: false));
+            }
+            _movesDirty.Clear();
+
+            if (emptied != null)
+                for (int i = 0; i < emptied.Count; i++) _moves.Remove(emptied[i]);
+        }
+
+        /// <summary>房間裡某個人的最新位置。<c>W</c> = 正在走(收端用它決定播走路還是待機 clip)。</summary>
+        private struct MoveSample
+        {
+            public float X, Z, Facing;
+            public bool W;
+
+            public static MoveSample Decode(object node)
+            {
+                var m = new MoveSample();
+                m.X = (float)NetJson.Num(node, "x");
+                m.Z = (float)NetJson.Num(node, "z");
+                m.Facing = (float)NetJson.Num(node, "f");
+                m.W = NetJson.Bool(node, "w");
+                return m;
+            }
+
+            public JObj Encode(int userId)
+                => JObj.New()
+                    .Int("userId", userId)
+                    .Num("x", X)
+                    .Num("z", Z)
+                    .Num("f", Facing)
+                    .Bool("w", W);
+        }
+
+        /// <summary>
+        /// 房間沒了 → 清掉它的暫存流(分數 + 位置)。
+        ///
+        /// 為什麼要抽出來:`_frames.Remove` 原本散在 5 個地方,加了 `_moves` 之後
+        /// 「改了一處忘了另一處」就會留下幽靈 —— 舊 userId 的殘留位置會把新生的角色瞬移到上一場的位置。
+        /// </summary>
+        private void DropRoomScratch(int roomCode)
+        {
+            _frames.Remove(roomCode);
+            _moves.Remove(roomCode);
+            _movesDirty.Remove(roomCode);
+        }
+
         private void OnGameplayFrame(Connection conn, object node)
         {
             var room = _rooms.RoomOf(conn.UserId);
@@ -722,7 +860,7 @@ namespace Sdo.Server.Net
                     .Str("reason", NetProto.AbortNoParticipants)
                     .Utf8();
                 ForEachInRoom(room, c => c.SendPreEncoded(bytes));
-                _frames.Remove(room.Code);
+                DropRoomScratch(room.Code);
                 Log("房 " + room.Code + ":沒有人載入成功,本場取消");
             }
 
@@ -741,7 +879,7 @@ namespace Sdo.Server.Net
             {
                 SendResultsReady(room, tick.MatchId);
                 room.ClearResults();
-                _frames.Remove(room.Code);
+                DropRoomScratch(room.Code);
             }
 
             if (tick.Changed) BroadcastRoomState(room);

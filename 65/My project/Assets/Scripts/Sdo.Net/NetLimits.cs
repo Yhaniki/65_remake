@@ -112,6 +112,33 @@ namespace Sdo.Net
         /// </summary>
         public const int ServerFrameHz = 5;
 
+        // ---- 房間裡的走動 ----
+
+        /// <summary>
+        /// 房間裡走動時,client 送位置的間隔(ms)。10 Hz —— 比分數流(200ms)密,因為位置是連續量:
+        /// 太疏的話遠端角色會一格一格跳,插值也補不出中間的轉彎。停下來時送最後一筆就不再送。
+        /// </summary>
+        public const int ClientMoveIntervalMs = 100;
+
+        /// <summary>server 彙整後推 moves 的頻率(Hz)。與 <see cref="ServerFrameHz"/> 同樣的理由:攢起來定頻推。</summary>
+        public const int ServerMoveHz = 10;
+
+        /// <summary>
+        /// 位置訊息的速率上限(每秒)。比 <see cref="ClientMoveIntervalMs"/> 換算的 10 留一點餘裕
+        /// (幀率抖動會讓實際間隔略小於 100ms),但擋得住「每幀都送」那種壞掉的 client。
+        /// </summary>
+        public const int RateMovePerSec = 15;
+
+        /// <summary>
+        /// 房間走動框(鏡射 <c>Sdo.Game.RoomLayout.Min/MaxX/Z</c> —— server 編不到那個 assembly)。
+        /// 收到的位置一律夾進這個框:壞掉或被改過的 client 送 ±1e30 的話,
+        /// 那個值會被寫進 Transform,而 NaN/Inf 會污染整棵 avatar hierarchy,
+        /// 連 <c>Camera.LookAt</c> 都會壞掉 → 整個房間畫面變黑。
+        /// 有一個 EditMode 測試斷言這四個數與 RoomLayout 相同(NetLimitsBridgeTests)。
+        /// </summary>
+        public const float RoomWalkMinX = -278f, RoomWalkMaxX = 100f;
+        public const float RoomWalkMinZ = -279f, RoomWalkMaxZ = 100f;
+
         // ---- 缺歌 / 檔案傳輸 ----
 
         /// <summary>
