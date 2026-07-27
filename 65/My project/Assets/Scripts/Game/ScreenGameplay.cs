@@ -354,22 +354,22 @@ namespace Sdo.Game
         // 結算頭像: render the LOCAL avatar's head into a RenderTexture for its result row (45° 3/4 view, idle moves).
         public bool resultHeadPortrait = true;
         public int headPortraitLayer = 11;        // dedicated layer for the ISOLATED idle head avatar (head cam renders only this)
-        // The cam FOLLOWS the avatar's head bone (so the head is ALWAYS framed); the avatar is yawed/scaled for the 3/4
-        // angle. Tune yaw (angle) + dist/fov (zoom) + a small aim offset (centre the face). All F4-tunable (Result tab).
+        // 取景基準 = **頭骨 (Bip01_Head) 的 rest 位置，而且只有它**（使用者：「不該算臉或頭髮，就是對頭的骨骼的位置就好」）。
+        // 骨架每套裝扮都同一副 → 換髮型、戴帽子、穿翅膀，頭都恆等大、恆等位置；相機不再依賴任何 mesh 的 bounds。
+        // 舊版量 renderer bounds 的「髮頂」自動算距離：穿「Ribbon Star M」(037939 翅膀) 時翅膀比頭高一大截，量到的高度
+        // 變 2.5 倍（12.6→31.5）→ 相機被甩遠 → 結算大頭貼變成框裡的小人。量幾何就會有這種事，所以不量了。
         // Camera matched to the official AvatarShow render (RE'd from sdo.bin.c). The shared 3D cam is PerspectiveFovLH
         // fovY=π/4=45°, LookAtLH eye(-3,46,-181)→at(-2,38,21) up(0,1,0) → +Z view tilted DOWN ~2.27° (Δy −8/202).
         // Per the OFFICIAL screenshots the result/ranking heads are a 3/4-ANGLED HEAD CLOSE-UP (head ~fills the frame, hair/
         // accessories spill above the top, only a sliver of shoulder shows) — i.e. the head-closeup mode (mode 7: model yaw
-        // −30°, scale 2.6), NOT a frontal full-body framing. The official zooms via a per-costume scale TABLE (no single
-        // value), so we MEASURE this avatar's hair-top and compute a TIGHT distance: head fills the frame with the hair
-        // captured inside the RT (margin above → never cut). headAutoFrame does that; headZoom fine-tunes. Yaw gives the 3/4.
-        public bool headAutoFrame = true;          // auto distance+aim from the measured head bounds (no magic numbers)
-        public float headZoom = 1f;                // auto-frame fine multiplier: >1 = zoom OUT (smaller head, more top margin)
-        public float headPortraitDist = 28f;       // manual cam distance (used only when headAutoFrame is OFF)
+        // −30°, scale 2.6), NOT a frontal full-body framing. Yaw gives the 3/4. 官方是逐 costume 的 scale 表（無單一值），
+        // 我們改成「相對頭骨的固定取景」：下面兩個常數照那個正確構圖（翅膀不算進去時）反推，模型單位，世界值 = ×headAvatarScale。
+        public float headZoom = 1f;                // 微調：>1 = 拉遠（頭變小、上方留白更多）；<1 = 放大
+        public float headPortraitDist = HeadBoneFraming.DistModel;     // 相機距離（模型單位，相對頭骨）
         public float headPortraitFov = 45f;        // 官方 fovY = π/4 = 45°（已對齊）
         public float headPitchDeg = 2.3f;          // 官方相機俯角 atan(8/202)≈2.27°（略俯視頭部）
-        public Vector3 headAimOffset = new Vector3(-2.1f, 9f, 0f);     // manual look-target offset (used only when auto OFF; X
-                                                   // is always applied to centre the face horizontally)
+        public Vector3 headAimOffset = new Vector3(-2f, HeadBoneFraming.AimUpModel, 0f);   // 瞄準點相對頭骨的偏移（模型
+                                                   // 單位）：X 把臉擺正，Y 抬到臉／髮之間，臉才落在框內、頭髮往上溢出
         public float headAvatarScale = 1.05f;     // idle avatar uniform scale — tuned
         public float headAvatarYaw = 30f;         // 模型 Y 旋轉 = 3/4 斜角（官方頭部近拍 mode7 = −30°；轉模型不轉相機）。可調/翻號
         private Camera _headCam; private RenderTexture _headRt; private SdoAvatar _headAvatar;
