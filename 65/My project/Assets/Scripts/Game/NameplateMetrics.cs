@@ -20,6 +20,11 @@ namespace Sdo.Game
         /// unit of characterSize, so px × 0.11 ≈ px tall on screen (calibrated against the offscreen capture).</summary>
         public const float PxToCharSizeAt64 = 0.11f;
 
+        /// <summary>Same calibration for the builtin LegacyRuntime (Arial) face used by the gameplay HUD's bottom
+        /// row (歌名 / LV / 時間) — those were authored as fontSize 64 with characterSize = designPx × 0.2, so this
+        /// keeps their on-screen size EXACTLY as before while the raster size follows the physical pixels.</summary>
+        public const float PxToCharSizeLegacyAt64 = 0.2f;
+
         /// <summary>N evenly-spaced offsets of length <paramref name="radius"/>, starting at +X so the four
         /// cardinals are exact whenever N is a multiple of 4. 16 directions close the scalloped notches an
         /// 8-copy ring shows once fullscreen magnifies the offsets to 2–3 physical px.</summary>
@@ -65,8 +70,8 @@ namespace Sdo.Game
 
         /// <summary>TextMesh characterSize that keeps the on-screen height at <paramref name="designPx"/> for a
         /// bitmap rasterized at <paramref name="fontPx"/>: quad size scales with BOTH fontSize and characterSize,
-        /// so the 0.11-at-64 calibration is rescaled by 64/fontSize.</summary>
-        public static float CharacterSizeFor(float designPx, int fontPx)
-            => designPx * PxToCharSizeAt64 * (CalibrationFontPx / (float)Mathf.Max(1, fontPx));
+        /// so the calibration (<paramref name="pxToCharSizeAt64"/>, per typeface) is rescaled by 64/fontSize.</summary>
+        public static float CharacterSizeFor(float designPx, int fontPx, float pxToCharSizeAt64 = PxToCharSizeAt64)
+            => designPx * pxToCharSizeAt64 * (CalibrationFontPx / (float)Mathf.Max(1, fontPx));
     }
 }

@@ -2187,8 +2187,9 @@ namespace Sdo.Game
             // song name / LV / time value text — white, two sizes smaller (13 -> 11) per request.
             // Same font/size as NewText (LegacyRuntime, fontSize 64, characterSize 11×0.2, order 42, MiddleLeft) but
             // laid out per-glyph so the letter-spacing can be tightened (字靠緊一點).
+            // designPx 11 = 舊的 characterSize 11×0.2 換算過來的同一個顯示高度；光柵尺寸現在由螢幕決定(見 TrackedTextMesh)。
             _musicName = new TrackedTextMesh("MusicName", Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"),
-                64, 11 * 0.2f, Color.white, 42, TextAnchor.MiddleLeft, TextStyles.GameSongTitleTrackEm);
+                11f, Color.white, 42, TextAnchor.MiddleLeft, TextStyles.GameSongTitleTrackEm);
             _musicName.Position = SdoLayout.ToWorld(80, 585, -1);
             _musicName.Text = songTitle;
             _songTitle = songTitle;   // keep for the result panel
@@ -4265,6 +4266,7 @@ namespace Sdo.Game
         {
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
             MaintainSceneRt();
+            _musicName?.Tick();            // 視窗/全螢幕一變就重新以實體 px 光柵化歌名（否則縮小取樣 → 糊出殘影）
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
