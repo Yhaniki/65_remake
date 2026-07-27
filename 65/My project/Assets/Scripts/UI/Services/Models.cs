@@ -43,10 +43,41 @@ namespace Sdo.UI.Services
         public bool IsHost;
         public bool IsReady;
         public bool IsEmpty => Player == null;
+
+        // ---- 以下是連線才用得到的欄位。離線(MockRoomService)填中性值，
+        //      所以讀它們的 UI 程式碼不需要分辨自己在哪個模式。----
+
+        /// <summary>server 配發的使用者 id。0 = 空位或離線模式。</summary>
+        public int UserId;
+
+        /// <summary>被房主關閉的座位(需求 12 的「鎖格子」)。空位 + 關閉 → 畫 🚫 覆蓋圖。</summary>
+        public bool IsClosed;
+
+        /// <summary>隊伍 0=A 1=B 2=C 3=自由。對映 <c>GameSession.Team</c> 的編碼。</summary>
+        public int Team = 3;
+
+        /// <summary>有沒有房主選的那首歌 —— 頭貼上的「缺歌 / 下載」徽章看這個。</summary>
+        public Sdo.Net.Availability Avail = Sdo.Net.Availability.Have;
+
+        /// <summary>下載進度 0..1(只在 <c>Downloading</c> 時有意義)。</summary>
+        public float AvailProgress;
+
+        /// <summary>遊玩狀態 —— 頭貼上的「遊戲中」徽章看這個(需求 9)。</summary>
+        public Sdo.Net.PlayState PlayState = Sdo.Net.PlayState.Idle;
+    }
+
+    /// <summary>房間裡的旁觀者(不佔座位)。離線模式永遠是空的。</summary>
+    public sealed class SpectatorInfo
+    {
+        public int UserId;
+        public string DisplayName;
+        public int Level;
+        public Sdo.Net.Availability Avail = Sdo.Net.Availability.Unknown;
     }
 
     public sealed class RoomInfo
     {
+        /// <summary>房號。**連線模式下是 5 位數**(10000..99999);離線也配 5 位數讓兩邊一致。</summary>
         public int Id;
         public string HostName;
         public string Name;        // 玩家自訂房名；空 → 用「房主名 + 的舞蹈室」預設 (見 RoomLabels.DisplayName)
@@ -56,12 +87,40 @@ namespace Sdo.UI.Services
         public List<SeatInfo> Seats = new List<SeatInfo>();
         public string SongTitle;   // currently selected song label (null = none)
 
+        // ---- 連線才用得到的欄位 ----
+
+        /// <summary>
+        /// 房主的 userId。0 = 沒有房主(座位全空;連線模式才可能出現)。
+        ///
+        /// 🔴 **房主徽章要跟著這個欄位畫,不要假設「座位 0 是房主」** —— 轉移房主時
+        /// 只換這個值、不搬座位。離線模式下它等於座位 0 那個人的 UserId。
+        /// </summary>
+        public int HostUserId;
+
+        /// <summary>server 的修訂號(離線恆 0)。除錯用。</summary>
+        public int Rev;
+
+        /// <summary>旁觀者(離線永遠是空的)。</summary>
+        public List<SpectatorInfo> Spectators = new List<SpectatorInfo>();
+
         public int Count
         {
             get { int n = 0; foreach (var s in Seats) if (!s.IsEmpty) n++; return n; }
         }
 
         public bool IsFull => Count >= Capacity;
+
+        /// <summary>這個人是房主嗎?</summary>
+        public bool IsHostUser(int userId) => userId != 0 && userId == HostUserId;
+
+        /// <summary>這個人坐在哪一格?不在座位上回 -1。</summary>
+        public int SeatIndexOfUser(int userId)
+        {
+            if (userId == 0) return -1;
+            for (int i = 0; i < Seats.Count; i++)
+                if (!Seats[i].IsEmpty && Seats[i].UserId == userId) return i;
+            return -1;
+        }
     }
 
     public sealed class ChatMessage

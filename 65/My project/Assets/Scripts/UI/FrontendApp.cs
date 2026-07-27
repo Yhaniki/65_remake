@@ -4,6 +4,7 @@ using System.Text;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Sdo.Game;
+using Sdo.Game.Net;
 using Sdo.Localization;
 using Sdo.Settings;
 using Sdo.UI.Catalog;
@@ -91,7 +92,9 @@ namespace Sdo.UI
             var vol = DisplaySettingsManager.Settings?.audio;   // 開機即把已存的三個音量套進 AudioMix(BGM/歌曲/SE 一開始就對)
             if (vol != null) AudioMix.Set(vol.bgm, vol.gameMusic, vol.sfx);
 
-            _ctx = AppContext.CreateMock();
+            // 依 config.ini 的 [Net] serverAddress 決定單機還是連線 —— 這是唯一的分流點。
+            // 留空(預設)＝完全走原本的單機路徑,連線層一行都不會被建起來。
+            _ctx = AppContext.Create();
 
             // OPTION 遊戲頁「遊戲畫面」偏好：全屏(填滿) = Stretch，視窗化(左右黑邊) = Pillarbox。必須在 CreateWorldCanvas
             // 註冊 UI 相機（→ AspectController 首次 Apply）之前設好靜態 Mode，之後開的遊戲相機也沿用同一個 Mode。
@@ -178,6 +181,11 @@ namespace Sdo.UI
             prog.Set(0.92f, "準備字型…");
             yield return null;
             WarmupFont();
+
+            // Phase 6 —— 連線(只有 config.ini 填了 [Net] serverAddress 才會走到)。
+            // 連線在 AppContext.Create 就已經開始了(背景 thread),這裡只是等它完成並顯示進度。
+            yield return WaitForConnectionCo(prog);
+
             prog.Set(1f, "");
             yield return null;
 
@@ -192,6 +200,54 @@ namespace Sdo.UI
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SHOP"))) { EnterRoom(); Nav.OpenShop?.Invoke(); }
         }
 
+        /// <summary>
+        /// 等連線握手完成。單機模式(<c>_ctx.Net == null</c>)直接跳過。
+        ///
+        /// **連不上就退回單機,不會卡在開機畫面** —— 這很重要:玩家可能只是忘了關掉
+        /// config.ini 的 serverAddress,或伺服器剛好沒開。那種情況下讓他能照常單機玩,
+        /// 遠比讓他盯著一個永遠不動的進度條好。
+        /// </summary>
+        private IEnumerator WaitForConnectionCo(BootProgress prog)
+        {
+            var net = _ctx.Net;
+            if (net == null) yield break;
+
+            prog.Set(0.95f, "連線伺服器…", Sdo.Settings.RoomConfig.serverAddress);
+
+            float deadline = Time.realtimeSinceStartup + ConnectTimeoutSec;
+            while (Time.realtimeSinceStartup < deadline)
+            {
+                net.Pump();   // 握手是在 Pump 裡送出與收下的
+
+                if (net.IsConnected)
+                {
+                    prog.Set(0.98f, "已連上伺服器", Sdo.Settings.RoomConfig.serverAddress);
+                    _netReady = true;
+                    yield break;
+                }
+
+                if (net.LinkState == NetLinkState.Failed || net.LinkState == NetLinkState.Closed)
+                    break;
+
+                yield return null;
+            }
+
+            // 逾時或失敗 → 退回單機。
+            string why = string.IsNullOrEmpty(net.LastError) ? "連線逾時" : net.LastError;
+            Debug.LogWarning("[net] 連不上伺服器,改用單機模式:" + why);
+            net.Disconnect("bootFailed");
+            _ctx = AppContext.CreateMock();
+            _netFellBackReason = why;
+        }
+
+        /// <summary>開機連線的等待上限。超過就退回單機。</summary>
+        private const float ConnectTimeoutSec = 6f;
+
+        private bool _netReady;
+
+        /// <summary>非空 = 開機時連不上,已退回單機(進到畫面後用 Toast 告知玩家)。</summary>
+        private string _netFellBackReason;
+
         // 大廳系畫面(男/女選擇 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複)並淡回;選歌畫面=淡出禁音但軌道繼續播
         // (離開選歌回房間再淡回同一首);遊戲(有歌)/Lobby 才真的停。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 持續。
         private static void UpdateBgm(ScreenId to)
@@ -201,17 +257,57 @@ namespace Sdo.UI
             else BgmPlayer.Stop();
         }
 
+        /// <summary>
+        /// 關掉連線。正常退出時呼叫 —— 讓 server 立刻知道我們走了,
+        /// 而不是等 15 秒的 ping 逾時才把座位清掉(那段時間別人會看到一個不動的幽靈玩家)。
+        /// </summary>
+        private void OnApplicationQuit()
+        {
+            if (_ctx != null && _ctx.Net != null) _ctx.Net.Disconnect("appQuit");
+        }
+
+        private void OnDestroy()
+        {
+            if (_ctx != null && _ctx.Net != null) _ctx.Net.Disconnect("appDestroy");
+        }
+
         /// <summary>Create a mock room (host = local player) if none, and show the waiting room. Used by the SDO_ROOM
         /// dev hook and the room capture test.</summary>
         public void EnterRoom()
         {
             if (_ctx == null) return;
-            if (_ctx.Rooms.CurrentRoom == null) _ctx.Rooms.CreateRoom(Sdo.UI.Services.GameMode.Normal);
+            if (_ctx.Rooms.CurrentRoom != null) { _ctx.Flow.GoTo(ScreenId.Room); return; }
+
+            // 線上模式:建房是非同步的(要等 server 配房號),所以在回呼裡才切畫面。
+            if (_ctx.Net != null)
+            {
+                _ctx.Net.CreateRoom("", (result, code) =>
+                {
+                    if (result == Sdo.Net.NetProto.JoinOk) _ctx.Flow.GoTo(ScreenId.Room);
+                    else Toast.Show("建立房間失敗:" + result);
+                });
+                return;
+            }
+
+            _ctx.Rooms.CreateRoom(Sdo.UI.Services.GameMode.Normal);
             _ctx.Flow.GoTo(ScreenId.Room);
         }
 
         private void Update()
         {
+            // 🔴 連線 pump 必須在最前面,而且在 `if (_activeGame != null)` **之外** ——
+            // 房間狀態、聊天、開場通知在遊戲中與不在遊戲中都要收。
+            // (原本整個 hotkey 區塊被圈在「遊戲中」,很容易誤把 pump 也放進去。)
+            if (_ctx != null && _ctx.Net != null) _ctx.Net.Pump();
+
+            // 開機時連不上 → 已退回單機,進到畫面後告知玩家一次。
+            if (_netFellBackReason != null)
+            {
+                var why = _netFellBackReason;
+                _netFellBackReason = null;
+                Toast.Show("連不上伺服器,改用單機模式\n" + why);
+            }
+
             _ctx?.Chat?.Tick();
             if (_killGuardFrames > 0 && _activeGame == null) { _killGuardFrames--; KillStrayGameplay(); }
             if (_activeGame != null)
