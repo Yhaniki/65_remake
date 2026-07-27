@@ -1,4 +1,7 @@
+using System.Collections.Generic;
+using System.Reflection;
 using NUnit.Framework;
+using UnityEngine;
 using Sdo.Game;
 
 namespace Sdo.Tests
@@ -119,6 +122,87 @@ namespace Sdo.Tests
             Assert.IsTrue(SdoAvatar.PoseSourceChanged(clip, clip, null, dps, -1, 0));   // idle -> first slice
             Assert.IsTrue(SdoAvatar.PoseSourceChanged(clip, clip, dps, null, 7, -1));   // slice -> idle (dance gate stop)
             Assert.IsFalse(SdoAvatar.PoseSourceChanged(clip, clip, null, null, -1, -1)); // idle keeps looping
+        }
+
+        // ---- end-to-end: LateUpdate really has to feed (Dps, row) into the blend decision ----
+        // Sampling and the truth table are both correct in isolation; what regressed was the WIRING between them, so
+        // these drive a live SdoAvatar and watch _blendStart. Deleting "dps = Dps; dpsRow = row;" from LateUpdate, or
+        // restoring the old "if (_mot == _lastMot) return;", turns them red — the pure tests above stay green.
+
+        private static HrcLoader OneBone() => new HrcLoader
+        {
+            Names = new[] { "Bip01" }, Parent = new[] { -1 },
+            RawRest = new[] { Matrix4x4.identity }, LocalRest = new[] { Matrix4x4.identity },
+            BindWorld = new[] { Matrix4x4.identity }, InvBindWorld = new[] { Matrix4x4.identity },
+            Index = new Dictionary<string, int> { { "Bip01", 0 } },
+        };
+
+        private static void Frame(SdoAvatar a) => typeof(SdoAvatar)
+            .GetMethod("LateUpdate", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(a, null);
+
+        private static bool Blending(SdoAvatar a) => (float)typeof(SdoAvatar)
+            .GetField("_blendStart", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(a) >= 0f;
+
+        // One clip for every row -> MotResolver hands back the SAME MotLoader, which is exactly the case the old
+        // reference test could not see. RestMot stays null so the idle branch never takes over.
+        private static SdoAvatar Dancer(GameObject go, DpsLoader dps, System.Func<float> clock)
+        {
+            var av = go.AddComponent<SdoAvatar>();
+            var clip = new MotLoader();
+            av.Setup(OneBone(), clip);
+            av.Dps = dps; av.MotResolver = _ => clip; av.DanceTimeSec = clock;
+            return av;
+        }
+
+        [Test]
+        public void LateUpdate_ArmsTheCrossfadeOnASameClipRowChange()
+        {
+            var go = new GameObject("dancer");
+            try
+            {
+                float t = 0.5f;
+                var av = Dancer(go, SameClipRewind(), () => t);
+                Frame(av);                                  // first pose: nothing to blend FROM yet
+                Frame(av);                                  // still row 0
+                Assert.IsFalse(Blending(av), "同一個 slice 內不該每幀重新起混色");
+                t = 1.5f; Frame(av);                        // same .mot, row 0 -> 1 (the rewinding seam)
+                Assert.IsTrue(Blending(av), "同一個 mot 換 row 必須混色 — 這就是回朔 bug 的正本");
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [Test]
+        public void LateUpdate_StaysContinuousWhileOneSlicePlays()
+        {
+            var go = new GameObject("dancer");
+            try
+            {
+                float t = 0.5f;
+                var av = Dancer(go, SameClipRewind(), () => t);
+                Frame(av); Frame(av);
+                t = 0.6f; Frame(av);                        // advanced within row 0
+                t = 0.9f; Frame(av);
+                Assert.IsFalse(Blending(av), "slice 內推進時間不該起混色(否則整首舞被混糊)");
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [Test]
+        public void LateUpdate_ArmsTheCrossfadeWhenTheChoreographySwaps()
+        {
+            // ShowTime swaps in a breakdance DPS mid-song; its row 0 can collide with the row already playing.
+            var go = new GameObject("dancer");
+            try
+            {
+                float t = 0.5f;
+                var av = Dancer(go, SameClipRewind(), () => t);
+                Frame(av); Frame(av);
+                Assert.IsFalse(Blending(av));
+                av.Dps = SameClipRewind();                  // different DpsLoader, still row 0, still one clip
+                Frame(av);
+                Assert.IsTrue(Blending(av), "換一份編舞就算 row 索引撞號也要混色");
+            }
+            finally { Object.DestroyImmediate(go); }
         }
     }
 }

@@ -2474,11 +2474,15 @@ namespace Sdo.Game
                                  new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
-        // Pose crossfade length for the dancer. The original re-arms a blend on EVERY DPS slice boundary and decays its
-        // weight at a per-clip rate (MotionDriver tick: blendW -= dt·clip.blendRate) whose constant isn't recovered from
-        // the decomp; 0.15s (≈4-5 frames @30fps) hands the pose over without smearing the shortest slices (some run
-        // <0.3s). SdoAvatar's 1.0s default was written for the room's idle↔walk, and is far too long for choreography.
-        private const float DanceBlendSec = 0.15f;
+        // Pose crossfade length for the dancer — the original's 500ms, recovered from the decomp:
+        //   · the MotionDriver tick decays the weight linearly, blendW -= dt·clip.blendRate (FUN_0040a890)
+        //   · EVERY clip carries the SAME rate: the MOT-clip ctor hard-codes 0.002f (FUN_004093c0 writes 0x3b03126f
+        //     to +0xc) and the .MOT parser only ever fills +8/+0x10/+0x14, never that field
+        //   · dt is MILLISECONDS — the driver ctor's default cursor speed is 0.03 frames/dt (FUN_00409c60 writes
+        //     0x3cf5c28f), i.e. exactly 30fps, matching the per-slice speed (EndF-StartF)/durSec·0.001
+        // so the weight falls 1→0 in 1/0.002 = 500ms. We ease with smoothstep where the original ramps linearly: same
+        // hand-off window, softer ends. SdoAvatar's own 1.0s default was written for the room's idle↔walk.
+        private const float DanceBlendSec = 0.5f;
 
         private void TryLoadAvatar()
         {
