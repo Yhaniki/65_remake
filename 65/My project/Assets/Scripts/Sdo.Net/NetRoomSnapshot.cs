@@ -92,8 +92,19 @@ namespace Sdo.Net
         /// <summary>修訂號,每次變更 +1。</summary>
         public int Rev;
 
-        /// <summary>5 位數房號。</summary>
+        /// <summary>
+        /// **5 位數房號** —— 玩家要唸給朋友聽、用來加入房間的那個。顯示在房名後面的括弧裡。
+        /// </summary>
         public int Code;
+
+        /// <summary>
+        /// **房間序號** —— 房間左上角那排「自由練習場1 頻道1 <b>N</b>」的 N,官方的顯示習慣是
+        /// 一個小數字(第幾間房),不是 5 位數房號。由 server 依建房順序遞增配發。
+        ///
+        /// 與 <see cref="Code"/> 是**兩件不同的事**:Code 是加入房間的鑰匙(全域唯一、5 位數),
+        /// Seq 只是給人看的門牌號(小、好唸、可能在 server 重啟後從 1 重新算)。
+        /// </summary>
+        public int Seq;
 
         /// <summary>自訂房名。空 = client 用「房主名 + 的舞蹈室」(見 <c>RoomLabels.DisplayName</c>)。</summary>
         public string Name = "";
@@ -215,6 +226,7 @@ namespace Sdo.Net
                 .Str(NetProto.FieldType, NetProto.RoomState)
                 .Int("rev", Rev)
                 .Int("code", Code)
+                .Int("seq", Seq)
                 .Str("name", Name)
                 .Int("hostUserId", HostUserId)
                 .Str("status", NetState.ToWire(Status))
@@ -240,6 +252,7 @@ namespace Sdo.Net
 
             r.Rev = NetJson.Int(node, "rev");
             r.Code = NetJson.Int(node, "code");
+            r.Seq = NetJson.Int(node, "seq");
             r.Name = Clip(NetJson.Str(node, "name"));
             r.HostUserId = NetJson.Int(node, "hostUserId");
 

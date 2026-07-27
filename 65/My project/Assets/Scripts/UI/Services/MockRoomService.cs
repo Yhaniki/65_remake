@@ -30,6 +30,12 @@ namespace Sdo.UI.Services
         /// <summary>離線的 userId 產生器。連線模式由 server 配;離線自己給,讓兩邊的對映邏輯一致。</summary>
         private int _nextUserId = 1;
 
+        /// <summary>
+        /// 房間序號 —— 左上角「自由練習場1　頻道1　N」的那個小數字。
+        /// 與房號(5 位數)是兩件不同的事:序號是給人看的門牌,房號才是加入房間的鑰匙。
+        /// </summary>
+        private int _nextSeq = 1;
+
         private RoomInfo _current;
 
         /// <summary>配一個 5 位數房號(池子理論上不會耗盡 —— 離線最多幾間房)。</summary>
@@ -54,7 +60,7 @@ namespace Sdo.UI.Services
 
         private RoomInfo AddAiRoom(string host, GameMode mode, RoomStatus status, int filled)
         {
-            var r = new RoomInfo { Id = NextCode(), HostName = host, Mode = mode, Status = status, Capacity = 6 };
+            var r = new RoomInfo { Id = NextCode(), Seq = _nextSeq++, HostName = host, Mode = mode, Status = status, Capacity = 6 };
             for (int i = 0; i < r.Capacity; i++) r.Seats.Add(new SeatInfo());
 
             r.Seats[0].Player = new PlayerProfile("ai_" + host, host, _rng.Next(5, 60));
@@ -89,7 +95,7 @@ namespace Sdo.UI.Services
 
         public RoomInfo CreateRoom(GameMode mode)
         {
-            var r = new RoomInfo { Id = NextCode(), HostName = _session.LocalPlayerName, Mode = mode, Status = RoomStatus.Waiting, Capacity = 6 };
+            var r = new RoomInfo { Id = NextCode(), Seq = _nextSeq++, HostName = _session.LocalPlayerName, Mode = mode, Status = RoomStatus.Waiting, Capacity = 6 };
             for (int i = 0; i < r.Capacity; i++) r.Seats.Add(new SeatInfo());
             r.Seats[0].Player = Local();
             r.Seats[0].UserId = _nextUserId++;

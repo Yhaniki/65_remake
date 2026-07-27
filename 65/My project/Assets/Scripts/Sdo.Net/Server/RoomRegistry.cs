@@ -53,6 +53,13 @@ namespace Sdo.Net.Server
         private readonly RoomCodePool _codes;
         private readonly int _maxRooms;
 
+        /// <summary>
+        /// 房間序號產生器 —— 左上角「自由練習場1 頻道1 <b>N</b>」顯示的那個小數字。
+        /// 與房號(<see cref="RoomCodePool"/> 配的 5 位數)是兩件不同的事:序號只是給人看的門牌,
+        /// 所以單純遞增、關房不回收(重用序號會讓人以為是同一間房)。
+        /// </summary>
+        private int _nextSeq = 1;
+
         public RoomRegistry(int maxRooms = NetLimits.DefaultMaxRooms, int seed = 0)
         {
             _maxRooms = maxRooms > 0 ? maxRooms : NetLimits.DefaultMaxRooms;
@@ -102,7 +109,7 @@ namespace Sdo.Net.Server
             int code;
             if (!_codes.TryRent(out code)) return NetRoomOp.Full;   // 90000 間房都開滿了
 
-            room = new NetRoom(code, host, name);
+            room = new NetRoom(code, host, name, _nextSeq++);
             _rooms[code] = room;
             _userRoom[host.UserId] = code;
             return NetRoomOp.Ok;

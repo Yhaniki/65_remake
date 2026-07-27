@@ -77,8 +77,18 @@ namespace Sdo.UI.Services
 
     public sealed class RoomInfo
     {
-        /// <summary>房號。**連線模式下是 5 位數**(10000..99999);離線也配 5 位數讓兩邊一致。</summary>
+        /// <summary>
+        /// **房號** —— 5 位數(10000..99999),玩家要唸給朋友聽、用來加入房間的那個。
+        /// 顯示在房名後面的括弧裡:「飄漂o的舞蹈室(40444)」。離線也配 5 位數讓兩邊一致。
+        /// </summary>
         public int Id;
+
+        /// <summary>
+        /// **房間序號** —— 左上角那排「自由練習場1　頻道1　<b>N</b>」的 N。官方的顯示習慣是
+        /// 一個小數字(第幾間房),所以它跟 <see cref="Id"/> 是兩件不同的事:
+        /// Id 是加入房間的鑰匙(5 位數、全域唯一),Seq 只是給人看的門牌號。
+        /// </summary>
+        public int Seq;
         public string HostName;
         public string Name;        // 玩家自訂房名；空 → 用「房主名 + 的舞蹈室」預設 (見 RoomLabels.DisplayName)
         public GameMode Mode = GameMode.Normal;

@@ -59,10 +59,11 @@ namespace Sdo.Net.Server
         /// (座位 0 只是「第一個空位」的自然結果 —— 房主身分是靠 <see cref="NetRoomSnapshot.HostUserId"/>
         /// 記的,不是靠座位索引。見 R4。)
         /// </summary>
-        public NetRoom(int code, NetJoinUser host, string name)
+        public NetRoom(int code, NetJoinUser host, string name, int seq = 0)
         {
             _state = new NetRoomSnapshot();
             _state.Code = code;
+            _state.Seq = seq;
             _state.Name = ClipRoomName(name);
             _state.HostUserId = host.UserId;
             _state.Status = RoomStatus.Open;

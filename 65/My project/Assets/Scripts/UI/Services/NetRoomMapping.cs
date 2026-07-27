@@ -36,6 +36,7 @@ namespace Sdo.UI.Services
             if (snap == null) return info;
 
             info.Id = snap.Code;
+            info.Seq = snap.Seq;
             info.Name = snap.Name ?? "";
             info.Rev = snap.Rev;
             info.HostUserId = snap.HostUserId;
