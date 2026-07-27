@@ -2140,28 +2140,7 @@ namespace Sdo.UI.Screens
 
             RenderWin2();   // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落 全部依 session 重畫
 
-            // Head portrait lives in the FIXED top-left frame slot 0 (官方: 頭貼在頭像框裡), rendering the avatar's head
-            // doing its live motion (RoomHeadPortrait mirrors the room avatar's walk/idle). Slots 1-5 are empty covers.
-            for (int i = 0; i < RoomLayout.SeatCount; i++)
-            {
-                bool occupied = i == 0;
-                if (_slotHead[i] != null)
-                {
-                    if (occupied && _localHead != null && _localHead.Texture != null)
-                    {
-                        _slotHead[i].texture = _localHead.Texture;
-                        _slotHead[i].enabled = true;
-                    }
-                    else _slotHead[i].enabled = false;
-                }
-                if (_slotClose[i] != null) _slotClose[i].enabled = showEmptySeatCovers && !occupied;
-                if (_slotMaster[i] != null) _slotMaster[i].enabled = occupied && isHost;
-                if (_slotName[i] != null)
-                {
-                    _slotName[i].gameObject.SetActive(occupied);
-                    if (occupied) _slotName[i].text = LocalName(room);
-                }
-            }
+            RenderSlots(room);
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
             // 名字後面接等級「Lv:N」(config.playerLevel 留空則不接)；家族列(徽章+名稱)另外畫在名字上方(UpdateFamilyRow)。
             if (_floatName != null)
@@ -2395,18 +2374,9 @@ namespace Sdo.UI.Screens
                 || _chatBubbleInputArmed
                 || (_chatInput != null && _chatInput.isFocused);
             _scene.InputEnabled = roomTop && !chatCapturingKeys;
-            // panel every slot shows the head (to check alignment); normally only slot 0 (the local player) does.
-            Texture headTex = _localHead != null ? _localHead.Texture : null;
-            for (int i = 0; i < RoomLayout.SeatCount; i++)
-            {
-                if (_slotHead[i] == null) continue;
-                var rt = _slotHead[i].rectTransform;
-                rt.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x, -(RoomLayout.HeadSlotY + headSlotOffset.y));
-                rt.sizeDelta = headSlotSize;
-                bool occ = (i == 0) || _debugOpen;
-                if (occ && headTex != null) { _slotHead[i].texture = headTex; _slotHead[i].enabled = true; if (_slotClose[i] != null) _slotClose[i].enabled = false; }
-                else { _slotHead[i].enabled = false; if (_slotClose[i] != null) _slotClose[i].enabled = showEmptySeatCovers; }
-            }
+            // 六格頭貼每幀重畫一次(見 RenderSlots 的註解:F2 面板要能即時拉位置/尺寸,
+            // 而且連線模式的座位狀態是 server 推來的,不能只在 Render() 那一刻套一次)。
+            RenderSlots(Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null);
 
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
@@ -3150,6 +3120,76 @@ namespace Sdo.UI.Screens
             if (hasEmblem)
                 _floatEmblem.rectTransform.anchoredPosition =
                     new Vector2(left, -(rowTop + (FamilyRowH - FamilyEmblemSize) * 0.5f));      // 徽章垂直置中於家族列
+        }
+
+        /// <summary>
+        /// 六格頭貼的**唯一**繪製點:頭貼、名字、房主徽章、關閉座位的 🚫 覆蓋圖。
+        ///
+        /// 🔴 這件事以前在 <c>Render()</c> 與 <c>Update()</c> 各做了一次,而 <c>Update()</c> 那份每幀重套
+        /// 位置/尺寸/顯示 —— 所以任何「只寫在 Render() 的座位狀態」都會被下一幀蓋回去。
+        /// 合成一個之後就只有一條路徑,新的狀態(缺歌/遊戲中/下載中徽章)加在這裡就不會被覆蓋。
+        ///
+        /// 位置與尺寸為什麼要每幀套:F2 除錯面板能即時拉 <see cref="headSlotOffset"/>/<see cref="headSlotSize"/>
+        /// 對位,所以不能只在建立時套一次。
+        /// </summary>
+        private void RenderSlots(RoomInfo room)
+        {
+            Texture localHeadTex = _localHead != null ? _localHead.Texture : null;
+            int localSeat = LocalSeatIndex(room);
+
+            for (int i = 0; i < RoomLayout.SeatCount; i++)
+            {
+                var seat = room != null && i < room.Seats.Count ? room.Seats[i] : null;
+                bool taken = seat != null && !seat.IsEmpty;
+                bool closed = seat != null && seat.IsClosed;
+                bool isLocal = i == localSeat;
+
+                if (_slotHead[i] != null)
+                {
+                    var rt = _slotHead[i].rectTransform;
+                    rt.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x,
+                                                      -(RoomLayout.HeadSlotY + headSlotOffset.y));
+                    rt.sizeDelta = headSlotSize;
+                    // 只有本機玩家有即時 3D 頭貼(RoomHeadPortrait 跟著房間裡的角色動)。
+                    // 遠端玩家的頭貼要再開五組 3D 頭部渲染 —— 那是 M8(多舞者)那批效能功課的一部分,
+                    // 現階段遠端座位只畫名字與徽章。_debugOpen(F2 對位面板)時六格都畫本機的頭貼。
+                    bool showHead = (isLocal || _debugOpen) && localHeadTex != null;
+                    _slotHead[i].texture = showHead ? localHeadTex : null;
+                    _slotHead[i].enabled = showHead;
+                }
+
+                // 🚫 覆蓋圖:被房主「關閉」的位子一定畫。空但開放的位子只有 showEmptySeatCovers 開著才畫
+                // (那個欄位的原意就是這樣;離線單人房預設關掉,畫面比較乾淨)。有人坐的位子絕不畫。
+                if (_slotClose[i] != null) _slotClose[i].enabled = !taken && (closed || showEmptySeatCovers);
+
+                // 🔴 房主徽章跟 HostUserId 走,不是「座位 0」—— 轉移房主時 server 只換那個值、不搬座位。
+                // 離線模式沒有 userId(恆 0),那時退回 SeatInfo.IsHost。
+                if (_slotMaster[i] != null)
+                    _slotMaster[i].enabled = taken && (seat.UserId != 0 && room != null
+                        ? room.IsHostUser(seat.UserId)
+                        : seat.IsHost);
+
+                if (_slotName[i] != null)
+                {
+                    _slotName[i].gameObject.SetActive(taken);
+                    // 本機那格用 LocalName():離線模式的座位名可能還沒同步到改過的名字。
+                    if (taken) _slotName[i].text = isLocal ? LocalName(room)
+                                                          : (seat.Player != null ? seat.Player.DisplayName : "");
+                }
+            }
+        }
+
+        /// <summary>本機玩家坐在第幾格?找不到回 -1(旁觀或還沒進座位)。</summary>
+        private int LocalSeatIndex(RoomInfo room)
+        {
+            if (room == null) return -1;
+            // 連線模式用 server 配的 userId 比對(名字可能重複,id 不會)。
+            int uid = Ctx != null && Ctx.Net != null ? Ctx.Net.UserId : 0;
+            if (uid != 0) return room.SeatIndexOfUser(uid);
+            string me = Ctx != null && Ctx.Session != null ? Ctx.Session.LocalPlayerId : null;
+            for (int i = 0; i < room.Seats.Count; i++)
+                if (!room.Seats[i].IsEmpty && room.Seats[i].Player.Id == me) return i;
+            return -1;
         }
 
         private string LocalName(RoomInfo room)
