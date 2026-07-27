@@ -18,7 +18,7 @@ namespace Sdo.Tests
         {
             RoomConfig.serverAddress = "";
             RoomConfig.serverPort = 27015;
-            RoomConfig.serverPassword = "";
+            RoomConfig.serverPassword = RoomConfig.DefaultServerPassword;
             RoomConfig.netAutoDownload = true;
             RoomConfig.netMaxDownloadMb = 200;
         }
@@ -51,6 +51,45 @@ namespace Sdo.Tests
 
             RoomConfig.serverAddress = "\t";
             Assert.IsFalse(RoomConfig.OnlineEnabled);
+        }
+
+        // ---- 進站密碼 ----
+
+        [Test]
+        public void Default_Password_Comes_From_The_Shared_Constant()
+        {
+            // 「兩邊都不改就能連上」是設計意圖:client 與 server 的預設密碼指向**同一個**
+            // 共用常數(Sdo.Net.NetLimits.DefaultServerPassword),所以漂移在結構上不可能發生。
+            //
+            // 這條測試釘住的是「有人把它改成硬編字串」那種退步 —— 那之後兩邊會各自漂移,
+            // 而症狀(誰都連不進來)完全看不出根因。
+            // (server 那一半在 dotnet test 驗:ServerOptions.DefaultPassword。)
+            Assert.AreEqual(Sdo.Net.NetLimits.DefaultServerPassword, RoomConfig.DefaultServerPassword);
+            Assert.IsNotEmpty(RoomConfig.DefaultServerPassword, "預設要有密碼,不是空密碼放行");
+        }
+
+        [Test]
+        public void Fresh_Config_Ships_With_The_Default_Password()
+        {
+            // 新裝的玩家 config.ini 會寫出預設密碼 → 對上預設的 server 就能直接連。
+            RoomConfig.serverPassword = RoomConfig.DefaultServerPassword;
+            string ini = RoomConfig.Serialize();
+            Assert.IsTrue(ini.Contains("serverPassword=" + RoomConfig.DefaultServerPassword),
+                "Serialize 要寫出實際的密碼值,得到的是:" + ini);
+        }
+
+        [Test]
+        public void Empty_Password_Is_Preserved_Not_Replaced_By_The_Default()
+        {
+            // 玩家刻意留空(要連沒設密碼的 server)時不能被「補回預設值」——
+            // 那會讓「我就是要空密碼」變成做不到。
+            RoomConfig.serverPassword = "";
+            RoomConfig.Sanitize();
+            Assert.AreEqual("", RoomConfig.serverPassword);
+
+            RoomConfig.ParseInto("serverPassword=\n");
+            RoomConfig.Sanitize();
+            Assert.AreEqual("", RoomConfig.serverPassword, "檔案裡留空就是留空");
         }
 
         // ---- 解析 ----

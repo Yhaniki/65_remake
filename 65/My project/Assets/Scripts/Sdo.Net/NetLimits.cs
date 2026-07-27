@@ -81,6 +81,21 @@ namespace Sdo.Net
         /// <summary>多久沒收到對方任何訊息就當斷線(= 隱含的 leaveRoom)。</summary>
         public const int PingTimeoutMs = 15000;
 
+        // ---- 進站密碼 ----
+
+        /// <summary>
+        /// 預設進站密碼。**client 的 <c>config.ini [Net] serverPassword</c> 與 server 的
+        /// <c>--password</c> 都以這個為預設值**,所以兩邊都不改就能直接連上,
+        /// 而且密碼機制是啟用的(不是空密碼放行)。
+        ///
+        /// 放在這個共用檔而不是各自寫一份字串 —— 那樣「改了一邊忘了另一邊」在結構上就不可能發生。
+        /// (兩邊各自硬編的話,漂移的症狀是「誰都連不進來」,而錯誤訊息只會說密碼不對,
+        ///  不會告訴你是預設值不一樣了。與其寫測試偵測,不如讓它無法發生。)
+        ///
+        /// 要公開的 server 請兩邊都改掉 —— 這只是個門檻,不是認證。
+        /// </summary>
+        public const string DefaultServerPassword = "abab123";
+
         // ---- 遊玩中的分數流 ----
 
         /// <summary>

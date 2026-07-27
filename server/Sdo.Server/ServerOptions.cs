@@ -22,10 +22,22 @@ namespace Sdo.Server
         public string DataDir = "data";
 
         /// <summary>
-        /// 進站密碼。空 = 不檢查。
+        /// 進站密碼。空 = 不檢查(用 <c>--password ""</c> 明確關掉)。
+        ///
+        /// 預設值與 client 的 <c>RoomConfig.DefaultServerPassword</c> **必須一致** ——
+        /// 兩邊都不改就能直接連上,而且密碼機制是啟用的(不是空密碼放行)。
+        /// 有一個測試釘住這件事:改了一邊忘了另一邊的話,誰都連不進來,
+        /// 而錯誤訊息只會說「密碼不對」,不會告訴你是預設值漂移了。
+        ///
         /// ⚠️ 這只是個門檻,不是認證 —— <c>playerId</c> 完全由 client 自稱,連線也沒有加密。
         /// </summary>
-        public string Password = "";
+        public string Password = DefaultPassword;
+
+        /// <summary>
+        /// 預設進站密碼。**指向共用的 <see cref="NetLimits.DefaultServerPassword"/>** ——
+        /// client 端(<c>RoomConfig</c>)也是指同一個常數,所以兩邊不可能漂移。
+        /// </summary>
+        public const string DefaultPassword = NetLimits.DefaultServerPassword;
 
         public int MaxRooms = NetLimits.DefaultMaxRooms;
         public int MaxConnections = NetLimits.DefaultMaxConnections;
@@ -53,7 +65,7 @@ namespace Sdo.Server
             "  --port <n>           監聽 port(預設 27015)\n" +
             "  --bind <addr>        綁定位址(預設 0.0.0.0 = 全部介面;127.0.0.1 = 只聽本機)\n" +
             "  --data <dir>         資料目錄(預設 ./data)\n" +
-            "  --password <pw>      進站密碼(預設無)\n" +
+            "  --password <pw>      進站密碼(預設 " + DefaultPassword + ";給空字串 \"\" = 不檢查)\n" +
             "  --max-rooms <n>      同時開房上限(預設 " + NetLimits.DefaultMaxRooms + ")\n" +
             "  --max-conns <n>      連線數上限(預設 " + NetLimits.DefaultMaxConnections + ")\n" +
             "  --ttl-hours <n>      歌曲暫存保留時數(預設 " + NetLimits.DefaultBlobTtlHours + ")\n" +

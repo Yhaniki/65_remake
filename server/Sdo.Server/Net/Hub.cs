@@ -76,6 +76,12 @@ namespace Sdo.Server.Net
         /// <summary>已經在監聽了嗎?(整合測試等這個變 true 才開始連)</summary>
         public bool IsListening => ActualPort != 0;
 
+        /// <summary>目前開著幾間房。診斷與測試用(唯讀)。</summary>
+        public int RoomCount => _rooms.RoomCount;
+
+        /// <summary>目前有幾條連線。診斷與測試用(唯讀)。</summary>
+        public int ConnectionCount => _conns.Count;
+
         /// <summary>把工作排進 actor loop。**任何執行緒都可以呼叫。**</summary>
         public void Post(Action work)
         {

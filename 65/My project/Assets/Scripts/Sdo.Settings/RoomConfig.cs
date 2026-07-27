@@ -133,10 +133,19 @@ namespace Sdo.Settings
         public static string serverAddress = "";
         // 伺服器 port。預設 27015（沒有官方值可循，挑一個常見的遊戲 port 區間）。
         public static int serverPort = 27015;
-        // 房間密碼／進站密碼：對應 server 的 -password。server 沒設就留空。
-        // ⚠️ MVP 階段這只是個門檛，不是認證：playerId 完全由 client 自稱、連線沒有加密。
-        //    只在 LAN／信任的朋友之間用，不要開在公網（見 docs/systems/networking.md）。
-        public static string serverPassword = "";
+        // 進站密碼：要與 server 的 --password 一致才連得上。留空＝連到沒設密碼的 server。
+        // 預設 abab123 —— server 端的預設值也是同一個，所以「兩邊都不改」就能直接連上，
+        // 而且密碼機制是**啟用**的（不是空密碼放行）。要公開的 server 請兩邊都改掉。
+        // ⚠️ MVP 階段這只是個門檻，不是認證：playerId 完全由 client 自稱、連線沒有加密。
+        //    只在 LAN／信任的朋友之間用，不要開在公網（見 server/README.md）。
+        public static string serverPassword = DefaultServerPassword;
+
+        /// <summary>
+        /// 預設進站密碼。**指向共用的 <see cref="Sdo.Net.NetLimits.DefaultServerPassword"/>** ——
+        /// server 端的 <c>ServerOptions.DefaultPassword</c> 也是指同一個常數,
+        /// 所以「改了一邊忘了另一邊」在結構上就不可能發生。
+        /// </summary>
+        public const string DefaultServerPassword = Sdo.Net.NetLimits.DefaultServerPassword;
         // 缺歌時要不要自動從伺服器下載。true＝座位玩家自動下載（旁觀者一律不自動下載）。
         public static bool netAutoDownload = true;
         // 自動下載的單首歌大小上限（MB）。超過就不下載，只顯示缺歌，避免在慢速網路上卡很久。
@@ -533,7 +542,8 @@ namespace Sdo.Settings
             sb.Append("serverAddress=").Append(serverAddress ?? "").Append('\n');
             sb.Append("# 伺服器 port（1~65535）。\n");
             sb.Append("serverPort=").Append(serverPort).Append('\n');
-            sb.Append("# 進站密碼：對應 server 的 -password。server 沒設就留空。\n");
+            sb.Append("# 進站密碼：要與 server 的 --password 一致才連得上。留空＝連到沒設密碼的 server。\n");
+            sb.Append("# 預設 ").Append(DefaultServerPassword).Append(" —— server 端預設值也是同一個，兩邊都不改就能直接連上。\n");
             sb.Append("# ⚠️ MVP 階段這只是門檻不是認證（身分由 client 自稱、連線沒加密）——\n");
             sb.Append("#    只在 LAN／信任的朋友之間用，不要開在公網。\n");
             sb.Append("serverPassword=").Append(serverPassword ?? "").Append('\n');

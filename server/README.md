@@ -56,13 +56,30 @@ dotnet publish server/Sdo.Server -c Release -r win-x64 \
 ```bash
 ./sdo-server                          # 預設 0.0.0.0:27015,資料放 ./data
 ./sdo-server --port 30000 --data /var/lib/sdo
-./sdo-server --password mysecret      # 加一道進站門檻
+./sdo-server --password mysecret      # 換掉預設的進站門檻
+./sdo-server --password ""            # 不檢查密碼(誰都能進)
 ./sdo-server --bind 127.0.0.1         # 只聽本機
 ./sdo-server -v                       # 印出每一筆訊息(除錯用,量大時很吵)
 ./sdo-server --help
 ```
 
 `--port 0` 會讓系統挑一個空閒 port(整合測試用的;正式部署請給明確的 port)。
+
+### 進站密碼
+
+**預設值是 `abab123`,而且是啟用狀態**(不是空密碼放行)。client 的 `config.ini`
+預設也是同一個值 —— 所以「兩邊都不改」就能直接連上,而密碼機制一開始就是開著的。
+
+這個「兩邊一致」不是靠人記住:兩邊都指向同一個常數
+`Sdo.Net.NetLimits.DefaultServerPassword`(`ServerOptions.DefaultPassword` 與
+`RoomConfig.DefaultServerPassword`),各有一條測試釘住。理由是密碼漂移的症狀
+**完全看不出根因** —— 玩家只會收到「密碼不符」,不會知道是預設值兩邊不一樣了。
+
+要自己開一台給別人連的,請兩邊都改掉;要開沒密碼的,server 給 `--password ""`、
+client 的 `serverPassword=` 留空(留空不會被自動補回預設值)。
+
+密碼不符時 server 會 log 一行,但**只寫「空值 / 另一個值」,不印密碼本體** ——
+log 常常被貼進 issue 或截圖。
 
 ## systemd
 
@@ -116,13 +133,16 @@ journalctl -u sdo-server -f
 [Net]
 serverAddress=192.168.1.10     ← 留空＝純單機(總開關)
 serverPort=27015
-serverPassword=
+serverPassword=abab123         ← 預設值,與 server 的 --password 預設值相同
 netAutoDownload=1
 netMaxDownloadMb=200
 ```
 
 `serverAddress` 留空時整個連線層都不會被建起來 —— 單機體驗與加連線之前完全一樣。
 連不上會提示並自動退回單機,不會卡在開機畫面。
+
+密碼不符會在開機時被 server 擋掉,client 顯示
+「密碼不符 —— 請確認 config.ini 的 `[Net] serverPassword` 與伺服器一致」然後退回單機。
 
 ## 在同一台機器上開兩份 client 測試
 

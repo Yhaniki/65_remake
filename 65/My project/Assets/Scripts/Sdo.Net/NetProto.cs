@@ -165,6 +165,9 @@ namespace Sdo.Net
         public const string ErrBadJson = "badJson";
         public const string ErrLookerFull = "lookerFull";
 
+        /// <summary>進站密碼不符(<c>bye</c> 的 reason)。client 要翻成人看得懂的提示。</summary>
+        public const string ErrBadPassword = "badPassword";
+
         // ---- blob error code ----
 
         public const string BlobErrNotFound = "notFound";

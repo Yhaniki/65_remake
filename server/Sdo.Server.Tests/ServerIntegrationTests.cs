@@ -41,6 +41,7 @@ namespace Sdo.Tests
                 Bind = "127.0.0.1",
                 DataDir = _dataDir,
                 CodeSeed = 4242,          // 固定種子 → 房號可重現
+                Password = "",            // 這批測試不驗密碼(密碼有自己的測試,見下面)
             };
             string err;
             Assert.IsTrue(opts.Validate(out err), err);
@@ -131,6 +132,21 @@ namespace Sdo.Tests
 
             var bye = c.WaitFor(NetProto.Bye);
             Assert.IsNotNull(bye, "握手之前只准 hello");
+        }
+
+        [Test]
+        public void Server_Default_Password_Comes_From_The_Shared_Constant()
+        {
+            // 「兩邊都不改就能連上」是設計意圖。預設密碼放在共用的 NetLimits,
+            // client(RoomConfig.DefaultServerPassword)與 server 都指向它 ——
+            // 所以漂移在結構上就不可能發生。
+            //
+            // 這條測試釘住的是「有人把它改成硬編字串」那種退步:
+            // 那之後兩邊就會各自漂移,而症狀(誰都連不進來)完全看不出根因。
+            //
+            // (client 端那一半在 Unity EditMode 測 —— RoomConfig 有 UnityEngine 依賴,server 編不到。)
+            Assert.AreEqual(NetLimits.DefaultServerPassword, ServerOptions.DefaultPassword);
+            Assert.IsNotEmpty(ServerOptions.DefaultPassword, "預設要有密碼(不是空密碼放行)");
         }
 
         [Test]

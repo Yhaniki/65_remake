@@ -125,7 +125,11 @@ namespace Sdo.Server.Net
                 string pw = NetJson.Str(node, "password");
                 if (!string.Equals(pw, _opts.Password, StringComparison.Ordinal))
                 {
-                    conn.Kill("badPassword");
+                    // 記下來但**不印出密碼本身** —— log 常常會被貼到 issue 或截圖分享。
+                    // 只說「空的」還是「不對」就夠診斷了(最常見的原因就是 client 那邊留空)。
+                    Log("連線 #" + conn.ConnId + " 密碼不符,拒絕(client 送的是" +
+                        (string.IsNullOrEmpty(pw) ? "空值" : "另一個值") + ")");
+                    conn.Kill(NetProto.ErrBadPassword);
                     return;
                 }
             }

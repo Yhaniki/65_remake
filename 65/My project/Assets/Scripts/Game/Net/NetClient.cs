@@ -32,7 +32,34 @@ namespace Sdo.Game.Net
         // ---- 狀態 ----
 
         public NetLinkState LinkState => _link.State;
-        public string LastError => _link.LastError;
+
+        /// <summary>
+        /// 給玩家看的失敗原因。優先用 server 送來的 <c>bye</c> 理由(那比「連線中斷」精確得多 ——
+        /// 例如「密碼不符」直接告訴他要去改 config.ini),沒有才退回連線層的錯誤。
+        /// </summary>
+        public string LastError => !string.IsNullOrEmpty(_byeReason) ? _byeReason : _link.LastError;
+
+        private string _byeReason;
+
+        /// <summary>把 server 的 <c>bye</c> reason 翻成人看得懂的話。</summary>
+        private static string ExplainBye(string reason)
+        {
+            switch (reason)
+            {
+                case NetProto.ErrBadPassword:
+                    return "密碼不符 —— 請確認 config.ini 的 [Net] serverPassword 與伺服器一致";
+                case NetProto.ErrProto:
+                    return "協定版本不合 —— 遊戲與伺服器的版本不一樣,需要更新其中一邊";
+                case NetProto.ErrRateLimit:
+                    return "訊息過於頻繁,被伺服器中斷連線";
+                case "serverFull":
+                    return "伺服器連線數已滿";
+                case "pingTimeout":
+                    return "連線逾時(網路中斷?)";
+                default:
+                    return string.IsNullOrEmpty(reason) ? "" : "伺服器中斷連線(" + reason + ")";
+            }
+        }
         public bool IsConnected => _link.IsConnected && UserId != 0;
 
         /// <summary>server 配的使用者 id。0 = 還沒握手完成。</summary>
@@ -228,6 +255,10 @@ namespace Sdo.Game.Net
                     {
                         string reason = NetJson.Str(node, "reason");
                         Debug.LogWarning("[net] server 要求斷線:" + reason);
+                        // 把協定 code 翻成人看得懂的話 —— 這條訊息會直接顯示給玩家看
+                        // (開機連不上時的 Toast)。「badPassword」對玩家毫無意義,
+                        // 「密碼不符」他才知道要去改 config.ini。
+                        _byeReason = ExplainBye(reason);
                         _link.Close("bye:" + reason);
                         break;
                     }
