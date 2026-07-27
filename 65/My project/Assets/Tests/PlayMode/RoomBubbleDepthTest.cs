@@ -137,6 +137,119 @@ namespace Sdo.Tests
             }
         }
 
+        /// <summary>
+        /// 擋在泡前面的是**真的紗質衣物**時也要遮住泡。
+        ///
+        /// 為什麼要單獨驗:紗質/蕾絲是 alpha-blend 材質,而 alpha-blend 的東西**預設不寫深度** ——
+        /// 不寫深度就不會遮任何東西,泡會直接畫在裙子前面(明明人站在前面)。這件事完全取決於
+        /// <see cref="SdoAvatarBuilder.ApplySheerMaterialState"/> 有沒有把 <c>_ZWriteMode</c> 開起來,
+        /// 而那支函式的目的是別的(修「背面看得到前面」),隨時可能因為別的衣服問題被改回去。
+        /// 所以這裡用衣服回歸套裡那件真的多層蕾絲裙(024976 金姬兰)當遮擋物,把這個相依性釘住。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator A_Real_Sheer_Garment_In_Front_Also_Occludes_The_Bubble()
+        {
+            if (!HaveData()) { Assert.Ignore("no AVATAR/SCENE data root"); yield break; }
+            if (!HaveGarment(SheerGarment)) { Assert.Ignore("missing " + SheerGarment); yield break; }
+
+            var sceneGo = new GameObject("RoomScene3D_sheerBlock");
+            var scene = sceneGo.AddComponent<RoomScene3D>();
+            scene.Build();
+            for (int i = 0; i < 12; i++) yield return null;
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            GameObject holder = null, blocker = null;
+            try
+            {
+                var cam = scene.SceneCamera;
+                var rt = scene.SceneTexture as RenderTexture;
+                Assert.IsNotNull(cam); Assert.IsNotNull(rt);
+                Assert.IsTrue(scene.TryChatBubbleAnchorWorld(out Vector3 anchorWorld));
+
+                holder = new GameObject("BubbleWorldHolder2") { layer = RoomScene3D.BubbleLayer };
+                var canvas = UIKit.CreateBubbleWorldCanvas("BubbleCanvasSheer", holder.transform,
+                                                           RoomScene3D.BubbleLayer, new Vector2(DesignW, DesignH));
+                Vector3 fwd = cam.transform.forward;
+                var plane = RoomBubbleWorldAnchor.Solve(cam.transform.position, fwd, cam.projectionMatrix.m11,
+                                                        cam.nearClipPlane, anchorWorld,
+                                                        scene.OwnerDepthExtent(0, fwd) + 2f, DesignH);
+                Assert.IsTrue(plane.Valid);
+                canvas.position = plane.Position;
+                canvas.rotation = cam.transform.rotation;
+                canvas.localScale = new Vector3(plane.Scale, plane.Scale, plane.Scale);
+                canvas.GetComponent<Canvas>().sortingOrder = 100;
+
+                var mark = UIKit.AddImage(canvas, "Mark", new Color32(255, 0, 255, 255));
+                mark.rectTransform.anchorMin = mark.rectTransform.anchorMax = new Vector2(0f, 1f);
+                mark.rectTransform.pivot = new Vector2(0f, 1f);
+                mark.rectTransform.sizeDelta = new Vector2(MarkerW, MarkerH);
+                mark.rectTransform.anchoredPosition = Vector2.zero;
+                SetLayer(canvas.gameObject, RoomScene3D.BubbleLayer);
+                yield return null;
+
+                Measure(cam, rt, mark, out Vector2 _, out int before);
+                Assert.Greater(before, 500, "標記塊沒畫出來,後面的斷言就沒有意義");
+
+                // 紗裙:走與房間角色完全同一條建置路徑(材質狀態才會一致)。
+                blocker = new GameObject("sheerBlocker");
+                var gav = SdoRoomAvatar.Build(blocker, RoomScene3D.SceneLayer, portraitOpaque: false, male: false,
+                                              equippedParts: new[] { SheerGarment });
+                Assert.IsNotNull(gav, "紗裙 avatar 建不起來");
+                gav.enabled = false;   // 凍住姿勢:量測期間剪影不要變
+
+                var b = MergedBounds(blocker);
+                Assert.Greater(b.size.magnitude, 0.01f, "紗裙沒有任何 renderer bounds");
+
+                // 擺到「相機 → 標記塊中心」那條線的一半距離,並放大到遠遠蓋過標記塊。
+                Vector3 markCenter = canvas.TransformPoint(new Vector3(MarkerW * 0.5f, -MarkerH * 0.5f, 0f));
+                float dMark = Vector3.Dot(markCenter - cam.transform.position, fwd);
+                float dBlock = Mathf.Max(cam.nearClipPlane + 2f, dMark * 0.5f);
+                float needWorld = MarkerH * (2f * dBlock / (DesignH * cam.projectionMatrix.m11)) * 8f;
+                float scale = needWorld / Mathf.Max(0.01f, b.size.y);
+                blocker.transform.localScale = Vector3.one * scale;
+                blocker.transform.rotation = cam.transform.rotation;
+                // 縮放/旋轉之後 bounds 會變 → 重新量,把 bounds 中心對到那條視線上。
+                var b2 = MergedBounds(blocker);
+                Vector3 want = cam.transform.position + (markCenter - cam.transform.position) * (dBlock / dMark);
+                blocker.transform.position += want - b2.center;
+                yield return null;
+
+                Measure(cam, rt, mark, out Vector2 _, out int after);
+                Assert.Less(after, before * 0.35f,
+                    "真的紗質衣物擋在泡前面時沒有遮住泡(剩 " + after + " / 原 " + before + " 個像素)。"
+                    + "alpha-blend 材質預設不寫深度 → 檢查 SdoAvatarBuilder.ApplySheerMaterialState 是否還在把 "
+                    + "_ZWriteMode 設成 1;若那裡因為別的衣服問題必須關掉,泡就要改用另外一顆「只寫深度」的代理 renderer。");
+            }
+            finally
+            {
+                if (blocker != null) Object.DestroyImmediate(blocker);
+                if (holder != null) Object.DestroyImmediate(holder);
+                if (sceneGo != null) Object.DestroyImmediate(sceneGo);
+            }
+        }
+
+        /// <summary>衣服回歸套裡那件真的多層蕾絲裙([[sdo-garment-regression-suite]] 的 024976 金姬兰)。</summary>
+        private const string SheerGarment = "AVATAR/024976_WOMAN_ONE.MSH";
+
+        private static Bounds MergedBounds(GameObject root)
+        {
+            var rends = root.GetComponentsInChildren<Renderer>();
+            bool any = false;
+            var b = new Bounds();
+            foreach (var r in rends)
+            {
+                if (r == null) continue;
+                if (!any) { b = r.bounds; any = true; } else b.Encapsulate(r.bounds);
+            }
+            return any ? b : new Bounds();
+        }
+
+        private static bool HaveGarment(string rel)
+        {
+            var p = SdoAvatarBuilder.ResolveAvatarFile(rel);
+            return !string.IsNullOrEmpty(p) && File.Exists(p);
+        }
+
         private static bool HaveData()
         {
             var probe = SdoAvatarBuilder.ResolveAvatarFile("AVATAR/900007_WOMAN_FACE.MSH");
