@@ -29,6 +29,7 @@ namespace Sdo.UI.Util
                 if (_tried) return _cjk;
                 _tried = true;
                 _cjk = BuildCjk();
+                ClearBrokenKerning(_cjk);
                 // 這份字型也是「量字縫」的依據:字距收緊要靠真 metrics 才算得準(legacy Font 的點陣 metrics 含
                 // 光柵化留白又被 GDI 塗粗過,太胖)。遊戲內名牌/排名榜(legacy TextMesh)因此跟房間(TMP)收一樣多。
                 Sdo.Game.TextTracking.MeasureFont = _cjk;
@@ -132,6 +133,43 @@ namespace Sdo.UI.Util
             if (f == null) return null;
             try { var fa = TMP_FontAsset.CreateFontAsset(f); if (fa != null && Probe(fa)) return fa; } catch { }
             return null;
+        }
+
+        /// <summary>
+        /// 關掉這個標籤的 kerning。必須做在**標籤**上而不是字型上:字型的 kerning 表是執行期
+        /// <c>TryAddCharacters</c> 時才被填的,在建字型當下清空,之後載入新字元又會被填回來(實測清完仍是 62 對)。
+        /// 關掉 <c>kern</c> feature 則是 TMP 排版時查不查那張表的開關,一勞永逸。
+        /// 詳細原因見 <see cref="ClearBrokenKerning"/>。
+        /// </summary>
+        public static void DisableKerning(TMP_Text label)
+        {
+            if (label == null) return;
+            var feats = label.fontFeatures;
+            if (feats != null) feats.Clear();
+        }
+
+        /// <summary>
+        /// 丟掉 TMP 從 OS 字型讀進來的 kerning(字距對)調整表。
+        ///
+        /// 為什麼:官方字體 SimSun 的西文是「半形等寬」(upem 只有 256、每個拉丁字母一律 advance 0.5em),
+        /// 本來就沒有、也不需要 kerning。但 TMP 的動態字型會把字型檔裡的 GPOS/kern 讀出來套用,而讀到的值
+        /// 完全不成比例 —— 實機診斷印出來是 <c>xAdvance = -35.15625</c> font units,除以 pointSize 90 = **-0.39 em**,
+        /// 在 14px 字級下就是 **-5.47px**:一個字母的前進量只剩 2.5px(正常 7.9px),於是 "AT"、"AV" 這種
+        /// 組合直接疊在一起變成一個字。
+        ///
+        /// 這也是「同一份程式碼在兩個 branch 長不一樣」的真正原因:kerning 表是**執行期**才被填的,
+        /// 載入的字元夠多才會觸發(song-loader 開機要掃 176 頁歌單、warmup 幾百個字,atlas 用到 8 張),
+        /// 字元少的那邊表是空的、看起來就正常。清掉之後兩邊的排版逐像素一致。
+        /// </summary>
+        private static void ClearBrokenKerning(TMP_FontAsset fa, int depth = 0)
+        {
+            if (fa == null || depth > 4) return;               // depth:防 fallback 互指造成無限遞迴
+            var recs = fa.fontFeatureTable != null ? fa.fontFeatureTable.glyphPairAdjustmentRecords : null;
+            if (recs != null) recs.Clear();
+            var fb = fa.fallbackFontAssetTable;
+            if (fb != null)
+                foreach (var f in fb)
+                    if (f != null && f != fa) ClearBrokenKerning(f, depth + 1);
         }
 
         // fallbackFontAssetTable is NULL on runtime-created assets (TMP only allocates it for serialized ones);

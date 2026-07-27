@@ -175,7 +175,7 @@ namespace Sdo.UI.Util
         private void ApplyTracking()
         {
             if (_trackEm <= 0f || _face == null) return;
-            float cs = -TextTracking.SafeTrackEm(_face.font, _face.text, _trackEm, TextStyles.MinInkGapEm, _face.fontSize) * 100f;
+            float cs = -TextTracking.SafeTrackEm(_face.font, _face.text, _trackEm, TextStyles.MinInkGapEm) * 100f;
             _face.characterSpacing = cs;
             if (_edges != null)
                 for (int i = 0; i < _edges.Length; i++)

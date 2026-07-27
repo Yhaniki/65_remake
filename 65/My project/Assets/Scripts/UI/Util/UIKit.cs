@@ -188,6 +188,7 @@ namespace Sdo.UI.Util
             var rt = NewRect(parent, name);
             var t = rt.gameObject.AddComponent<TextMeshProUGUI>();
             var f = UIFont.Cjk; if (f != null) t.font = f;
+            UIFont.DisableKerning(t);   // SimSun 半形等寬不該有 kerning,TMP 讀出來的值是壞的 → 會把 "AT"/"AV" 疊在一起
             t.text = text ?? "";
             t.fontSize = size;
             t.color = color;
