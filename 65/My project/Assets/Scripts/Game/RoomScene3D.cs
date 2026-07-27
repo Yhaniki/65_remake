@@ -19,6 +19,16 @@ namespace Sdo.Game
     public sealed class RoomScene3D : MonoBehaviour
     {
         public const int SceneLayer = 4;   // the perspective stage layer (same as gameplay; the play screen isn't alive here)
+
+        /// <summary>
+        /// 遠端玩家角色專屬的 layer。
+        ///
+        /// 為什麼要與場景分開:六格頭貼的相機要拍「某一個人的臉」,而房間的家具(沙發/喇叭/電視)
+        /// 與角色若同層,頭貼就會拍到家具。分層之後頭貼相機只看這一層 ——
+        /// 家具留在 <see cref="SceneLayer"/>(那是對的,家具不該入頭貼)。
+        /// 房間主相機兩層都看,所以畫面完全不變。
+        /// </summary>
+        public const int RemoteAvatarLayer = 13;
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
         public bool loadMapobjs = true;          // load the Room_obj stage props (dianshi/laba/guang/taizi)
@@ -73,6 +83,7 @@ namespace Sdo.Game
         private bool _walking;
         private bool _ready;
         private int _localSeat;       // 本機座位 → 出生點(見 SpawnSpot);離線恆 0
+        private bool _hasWalked;      // 本機走過一步了嗎 —— 走過之後就不許再被 SetLocalSeat 挪動
 
         public float headMarkerRise = 18f;   // world Y above the head bone for the floating head portrait (EXE +15)
 
@@ -88,6 +99,23 @@ namespace Sdo.Game
         // 不認識連線層;RoomScreen 是唯一的黏合層,離線時整段跳過)。
         public float LocalWalkX => _walkPos.x;
         public float LocalWalkZ => _walkPos.z;
+
+        /// <summary>
+        /// 晚到的本機座位。
+        ///
+        /// 🔴 連線模式下「進房」與「拿到房間快照」是兩件事:<c>OnShow</c> 那一刻 <c>CurrentRoom</c>
+        /// 常常還是 null,座位查不到就會退回 0 —— 而座位 0 的出生點是房主的位置,
+        /// 於是**客戶端會生在房主身上**(實測:兩隻角色完全疊在一起,兩張名字牌重疊)。
+        /// 所以座位一確定就要補正一次。已經走過一步就不動了(那時玩家自己的位置才是真相)。
+        /// </summary>
+        public void SetLocalSeat(int seat)
+        {
+            if (seat < 0 || seat == _localSeat || _hasWalked || !_ready) return;
+            _localSeat = seat;
+            Vector3 spawn = SpawnSpot(seat);
+            _walkPos = new Vector3(spawn.x, floorY, spawn.z);
+            ApplyAvatarTransform();
+        }
 
         /// <summary>
         /// 座位 → 出生點。**本機與遠端都用它**,所以「六個人都還沒走過」時每台算出來的站位都一樣。
@@ -369,7 +397,7 @@ namespace Sdo.Game
         {
             var parent = new GameObject("RoomRemoteAvatar" + p.UserId);
             parent.transform.SetParent(transform, false);
-            var av = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false,
+            var av = SdoRoomAvatar.Build(parent, RemoteAvatarLayer, portraitOpaque: false,
                                          male: p.Male, equippedParts: p.Parts, bodyIndex: p.BodyIndex);
             if (av == null) { Destroy(parent); return; }
 
@@ -468,6 +496,19 @@ namespace Sdo.Game
         }
 
         /// <summary>某位遠端玩家頭頂在畫面上的位置(viewport 0..1),用來擺他的名字牌。看不到 → false。</summary>
+        /// <summary>
+        /// 拿某位遠端玩家的 avatar 與它的 root transform(頭貼相機要靠它算取景與朝向)。
+        /// 回 false = 這個人現在沒有角色(旁觀者、或剛好在重建中)。
+        /// </summary>
+        public bool TryGetRemoteAvatar(int userId, out SdoAvatar av, out Transform root)
+        {
+            av = null; root = null;
+            Remote r;
+            if (!_remotes.TryGetValue(userId, out r) || r == null || r.Av == null || r.Go == null) return false;
+            av = r.Av; root = r.Go.transform;
+            return true;
+        }
+
         /// <summary>這個人現在有 3D 角色嗎?(旁觀者不在座位上 → 沒有角色可以掛泡/名字牌)</summary>
         public bool HasRemote(int userId)
         {
@@ -694,7 +735,7 @@ namespace Sdo.Game
             _cam.orthographic = false;
             _cam.fieldOfView = 45f;                                 // EXACT decompiled projection (Camera_ctor): fovY=45,
             _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500
-            _cam.cullingMask = 1 << SceneLayer;
+            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer);   // 房間畫面要同時看到場景與遠端角色
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = Color.black;
@@ -764,6 +805,7 @@ namespace Sdo.Game
                 _walkPos.y = floorY;
                 _facing = RoomMovement.FacingDegrees(dir);   // face the way we're pressing even when blocked
                 if (!_walking) { _walking = true; _avatar.SetClip(_walkMot); }
+                _hasWalked = true;   // 之後 SetLocalSeat 不再挪動我 —— 玩家自己走到的位置才是真相
                 ApplyAvatarTransform();
             }
             else if (_walking)

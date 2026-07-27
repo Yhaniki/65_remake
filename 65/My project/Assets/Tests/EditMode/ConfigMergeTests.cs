@@ -29,7 +29,13 @@ namespace Sdo.Tests
         {
             ProfileManager.Root = null;   // 還原 lazy 解析，避免污染其他測試
             RoomConfig.activeId = "";
-            RoomConfig.LoadedForTests = true;   // 這個檔有一條測試會關掉「Load 過了」的旗標；失敗時也要還原，別波及其他測試
+            // 🔴 還原成 **false**,不是 true。
+            // 還原成 true 的話,後面任何一條測試呼叫 RoomConfig.Save() 都會寫進**玩家真正的**
+            // config.ini(ProfileManager.Root 已經被還原成 null → 解析到真實 DataRoot),
+            // 而測試裡的靜態欄位是被各自 SetUp 塞過的值 —— 實測後果:serverAddress 被寫成空字串,
+            // 玩家下次開遊戲就默默變回單機模式,而且完全看不出是測試幹的。
+            // false 是安全的方向:真的要寫檔的測試自己會先 Load()(那時旗標就會變 true)。
+            RoomConfig.LoadedForTests = false;
             try { Directory.Delete(_root, true); } catch { /* best effort */ }
         }
 

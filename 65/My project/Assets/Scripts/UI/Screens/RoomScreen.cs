@@ -545,6 +545,11 @@ namespace Sdo.UI.Screens
                 var sceneGo = new GameObject("RoomScene3D");
                 _scene = sceneGo.AddComponent<RoomScene3D>();
                 _scene.Build(localMale, localAvatarParts, localBody, localSeat);
+                // 遠端玩家的頭貼:一台相機對準房間裡已經在跑的那幾隻角色(不再建 avatar)。
+                var headsGo = new GameObject("RoomRemoteHeads");
+                headsGo.transform.SetParent(_scene.transform, false);
+                _remoteHeads = headsGo.AddComponent<RoomRemoteHeadSet>();
+                _remoteHeads.Build(_scene);
                 if (_backdrop != null && _scene.SceneTexture != null)
                 {
                     _backdrop.texture = _scene.SceneTexture;
@@ -569,7 +574,8 @@ namespace Sdo.UI.Screens
             if (ui != null)
             {
                 _maskedCam = ui; _savedMask = ui.cullingMask;
-                ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer));
+                ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer)
+                                    | (1 << RoomScene3D.RemoteAvatarLayer));
             }
 
             // 儲物櫃換穿後 → 立即重建本機房間 avatar + 頭貼，讓新穿搭當場反映 (WardrobeScreen 已寫回 profile.json)。
@@ -673,6 +679,7 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < _slotHead.Length; i++) if (_slotHead[i] != null) { _slotHead[i].texture = null; _slotHead[i].enabled = false; }
             if (_localHead != null) { Destroy(_localHead.gameObject); _localHead = null; }
             if (_scene != null) { Destroy(_scene.gameObject); _scene = null; }
+            _remoteHeads = null;   // 它掛在 _scene 底下,跟著一起被拆掉(OnDestroy 會釋放 RT)
             // 遠端玩家的角色跟著 _scene 一起被拆掉,但名字牌是掛在 UI 上的 → 要自己收,
             // 否則回房間時會留下一排指向已消失角色的孤兒名字牌。
             ClearRemoteNamePlates();
@@ -2464,6 +2471,7 @@ namespace Sdo.UI.Screens
             SendLocalMove();
             PlaceRemoteNamePlates();
             PlaceRemoteChatBubbles();
+            if (_remoteHeads != null) _remoteHeads.Tick();   // 每幀輪轉拍一格遠端頭貼
 
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
@@ -3294,11 +3302,14 @@ namespace Sdo.UI.Screens
                     rt.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x,
                                                       -(RoomLayout.HeadSlotY + headSlotOffset.y));
                     rt.sizeDelta = headSlotSize;
-                    // 只有本機玩家有即時 3D 頭貼(RoomHeadPortrait 跟著房間裡的角色動)。
-                    // 遠端玩家的頭貼要再開五組 3D 頭部渲染 —— 那是 M8(多舞者)那批效能功課的一部分,
-                    // 現階段遠端座位只畫名字與徽章。_debugOpen(F2 對位面板)時六格都畫本機的頭貼。
-                    bool showHead = (isLocal || _debugOpen) && localHeadTex != null;
-                    _slotHead[i].texture = showHead ? localHeadTex : null;
+                    // 本機那格用 RoomHeadPortrait(它自己有一隻 idle avatar,會鏡射走路/動作);
+                    // 遠端那幾格由 RoomRemoteHeadSet 拍房間裡**已經在跑**的那隻角色 —— 不另外建 avatar。
+                    // _debugOpen(F2 對位面板)時六格都畫本機的頭貼,方便對版位。
+                    Texture tex = null;
+                    if (isLocal || _debugOpen) tex = localHeadTex;
+                    else if (taken && _remoteHeads != null) tex = _remoteHeads.Texture(seat.UserId);
+                    bool showHead = tex != null;
+                    _slotHead[i].texture = tex;
                     _slotHead[i].enabled = showHead;
                 }
 
@@ -3327,6 +3338,8 @@ namespace Sdo.UI.Screens
         // 每幀重來會卡死;而座位表只在有人進出/換裝時才變,rev 正好是那個變動的訊號。
         private int _remoteAvatarRev = -1;
         private readonly List<RoomScene3D.RemotePlayer> _remoteBuf = new List<RoomScene3D.RemotePlayer>();
+        private RoomRemoteHeadSet _remoteHeads;
+        private readonly List<int> _remoteHeadIds = new List<int>();
 
         // 遠端玩家頭上的名字牌(userId → label)。跟著 3D 角色的頭每幀擺位。
         private readonly Dictionary<int, OutlinedLabel> _remoteNames = new Dictionary<int, OutlinedLabel>();
@@ -3344,6 +3357,9 @@ namespace Sdo.UI.Screens
             _remoteAvatarRev = snap.Rev;
 
             int me = Ctx.Net.UserId;
+            // 座位確定了 → 補正本機出生點(OnShow 那一刻常常還查不到座位,見 SetLocalSeat 的註解)。
+            int mySeat = snap.SeatIndexOf(me);
+            if (mySeat >= 0) _scene.SetLocalSeat(mySeat);
             _remoteBuf.Clear();
             for (int i = 0; i < snap.Seats.Length; i++)
             {
@@ -3360,6 +3376,12 @@ namespace Sdo.UI.Screens
             }
             _scene.SyncRemotePlayers(_remoteBuf);
             SyncRemoteNamePlates(snap, me);
+            if (_remoteHeads != null)
+            {
+                _remoteHeadIds.Clear();
+                for (int i = 0; i < _remoteBuf.Count; i++) _remoteHeadIds.Add(_remoteBuf[i].UserId);
+                _remoteHeads.SetRoster(_remoteHeadIds);
+            }
         }
 
         // 頭上的名字牌:跟本機那顆同款(FaceCream + 黑邊 + 粗體),沒有它的話房間裡的人是誰全靠猜。

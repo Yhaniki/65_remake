@@ -241,7 +241,12 @@ namespace Sdo.UI
                 yield break;
             }
 
-            int code = rooms[0].Code;
+            // 挑**人最多**的那間,不是第一間 —— 之前跑測試留下的空房會排在前面,
+            // 挑到那間就會看到一間只有自己的房間(而且症狀跟「加入失敗」長得一樣)。
+            int pick = 0;
+            for (int i = 1; i < rooms.Length; i++)
+                if (rooms[i].Count > rooms[pick].Count) pick = i;
+            int code = rooms[pick].Code;
             net.JoinRoom(code, (result, _) =>
             {
                 if (result == Sdo.Net.NetProto.JoinOk) _ctx.Flow.GoTo(ScreenId.Room);
