@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   跑 Unity 的 EditMode / PlayMode 測試(無頭),即時串流 log,最後解析 results.xml 印摘要。
 
