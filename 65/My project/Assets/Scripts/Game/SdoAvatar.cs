@@ -96,10 +96,6 @@ namespace Sdo.Game
         public bool OneShotHeld => _oneShot != null && _oneShotHold && _oneShotStart >= 0f
             && (Time.time - _oneShotStart) * Fps >= _oneShot.MaxTime;
 
-        /// <summary>True when the avatar is currently displaying its standby REST clip (idle) or a win/lose one-shot —
-        /// i.e. NOT a dance slice. Lets the gameplay host lift the DANCING body up to the floating idle's altitude
-        /// (飛行翅膀:flystay idle 靠自身 pose 浮空,dance 貼地 → 跳舞時額外抬 root 補上;見 ScreenGameplay.UpdateFlyHover)。</summary>
-        public bool IsRestPose => _oneShot != null || (RestMot != null && _mot == RestMot);
 
         /// <summary>Play a single motion clip once from t=0. When <paramref name="hold"/> it clamps on the last
         /// frame; otherwise it loops. Takes priority over DPS/idle until <see cref="ClearOneShot"/>.</summary>
@@ -289,6 +285,20 @@ namespace Sdo.Game
         /// <summary>Pose at <paramref name="frame"/> and return the lowest skinned vertex Y (model space) — the feet
         /// height for that pose. Used to rest the avatar's feet on the floor (honours the actual skin mode + pose).</summary>
         public float FeetYAt(float frame) { if (_hrc == null || _parts.Count == 0) return 0f; Pose(frame); return _lastMinY; }
+
+        /// <summary>Same as <see cref="FeetYAt(float)"/> but measured with <paramref name="clip"/> instead of the
+        /// active clip (restored afterwards). Callers that need a STABLE floor reference must use this: FeetYAt poses
+        /// whatever clip is live, so measuring while a FLOATING clip is active (飛行翅膀 flystay, feet tucked up) folds
+        /// that clip's altitude into the "feet offset" — and subtracting it pins the floating pose back on the floor,
+        /// cancelling the hover. Measure against the ground idle and every clip's height reads relative to standing.</summary>
+        public float FeetYAt(float frame, MotLoader clip)
+        {
+            if (clip == null) return FeetYAt(frame);
+            var prev = _mot;
+            _mot = clip;
+            try { return FeetYAt(frame); }
+            finally { _mot = prev; }
+        }
         /// <summary>Pose at <paramref name="frame"/> and return the highest skinned vertex Y (model space) — the
         /// head/hair-top height for that pose. Used with FeetYAt to measure body height for per-model framing.</summary>
         public float HeadYAt(float frame) { if (_hrc == null || _parts.Count == 0) return 0f; Pose(frame); return _lastMaxY; }

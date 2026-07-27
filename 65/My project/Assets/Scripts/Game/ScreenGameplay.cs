@@ -950,9 +950,11 @@ namespace Sdo.Game
                 loseMot = "MREST0004.MOT";
             }
 
-            // 飛行翅膀 → arena standby idle 換成 flystay 浮空 clip (rest cat 0x2c, 023_gameplay:4138). Only the idle/rest
-            // changes; the DPS dance is unaffected. 飛行翅膀 = 硬編 5 id + 線上實測名單(離線無法從資料推;見 SpecialMotionItems)。
-            // 競技場沒有走路,故只換 idle;前傾滑動 fly-walk 只在房間走動時用。See [[sdo-special-item-idle-walk]].
+            // 飛行翅膀 → 舞台待機 idle 換成 flystay clip (rest cat 0x2c)。Only the idle/rest changes; the DPS dance is
+            // unaffected. 飛行翅膀 = 硬編 5 id + 線上實測名單(離線無法從資料推;見 SpecialMotionItems)。競技場沒有走路,
+            // 故只換 idle;前傾滑動 fly-walk 只在房間走動時用。
+            // 註:這是 remake 的選擇,不是照抄官方 —— cat 0x2c 在反編譯裡只出現在房間路徑(023:4138 / 028:2437),官方舞台
+            // 的待機是 Dancer_PlayIdle_004a73b0(027:1992)的 Motion_PickRandom(cat 0)。See [[sdo-special-item-idle-walk]].
             if (SpecialMotionItems.WearsFlyingWing(avatarParts))
                 restMot = SpecialMotionItems.FlyIdleMot(localPlayerMale);
         }
@@ -2539,22 +2541,13 @@ namespace Sdo.Game
                 Vector3 chestLocal = avatar != null ? avatar.BoneModelPos("Bip01_Spine1") : new Vector3(0f, 38f, 0f);
                 _avatarChest = parent.transform.position + chestLocal;   // star-ring / bounds / debug framing only
                 _avatarRoot = parent.transform;
-                // 飛行翅膀:量 flystay 浮空 idle 比「dance 貼地」高多少(Δ),UpdateFlyHover 在跳舞時把 root 抬 Δ,讓跳舞和
-                // fly idle 同高(不然飛行角色跳舞卻黏地上)。用「身體(骨盆)」的高度差,不用最低頂點——飛行 idle 常是腿垂下,
-                // 最低頂點反而更低會量成 0;骨盆才代表身體被抬起的高度。idle 本身靠 flystay pose 已浮,故只在 dance 補抬。
-                _flyBaseRootY = _danceSpot.y - feetY; _flyDanceLift = 0f; _flyLiftCur = 0f;
-                if (avatar != null && avatar.RestMot != null && SpecialMotionItems.WearsFlyingWing(avatarParts))
-                {
-                    string refBone = avatar.BoneIndex("Bip01_Pelvis") >= 0 ? "Bip01_Pelvis"
-                                   : avatar.BoneIndex("Bip01_Spine") >= 0 ? "Bip01_Spine" : "Bip01";
-                    avatar.SetClip(mot); avatar.PoseFrame(0f);                       // dance ready pose
-                    float danceRefY = avatar.BoneModelPos(refBone).y;
-                    avatar.SetClip(avatar.RestMot); float flyFeet = avatar.FeetYAt(0f);   // flystay pose (FeetYAt poses it)
-                    float flyRefY = avatar.BoneModelPos(refBone).y;
-                    // 用「身體(骨盆)高度差」和「腳底高度差」取較大者:飛行 idle 可能腿垂下(腳底差≈0)或整個抬起(兩者皆>0);
-                    // 取 max 兩種都涵蓋,寧可抬到位也不要黏地。
-                    _flyDanceLift = Mathf.Max(0f, Mathf.Max(flyRefY - danceRefY, flyFeet - feetY));
-                }
+                // 飛行翅膀:整場常駐懸浮(見 UpdateFlyHover)。這裡只記下貼地基準與「有沒有在飛」,不再去量 flystay 比
+                // dance 高多少 —— 那個 Δ 建立在「flystay 自己會浮」的錯誤前提上,實測它相對站姿只有 +3.4(女)/+1.2(男),
+                // 常常算出 0 讓整個懸浮靜默失效(見 FlyHoverRealDataTests)。
+                _flyBaseRootY = _danceSpot.y - feetY;
+                _flying = SpecialMotionItems.WearsFlyingWing(avatarParts);
+                _flyLiftCur = SpecialMotionItems.HoverY(_flying);   // 一進場就浮著,不要從地面升起來
+                _flyHoverArmed = true;                              // 只有這條 3D 舞台路徑量過基準 → 只有它能動 root.y
                 if (avatar != null) avatar.PoseInitialIdle();   // arm the idle so the first frame doesn't crossfade from the measurement T-pose
                 if (!avatarDebug && avatar != null)
                     try   // never let a hand-glow hiccup abort scene/audio setup (which run AFTER TryLoadAvatar)
@@ -2619,14 +2612,28 @@ namespace Sdo.Game
         // .cv eye/target ONLY for shots whose CDT flag = 1. For solo the spot is the origin, so the anchor is zero and
         // every camera is just its raw .cv/table value. (The old _avatarChest re-centring was the source of the
         // wrong angles + the fly-in; it's gone.)
-        // 飛行翅膀:每幀把整個舞者平滑抬到與 flystay 浮空 idle 同高。idle 靠自身 pose 已浮 Δ(抬 0);dance 貼地(抬 Δ)。
-        // 非飛行(_flyDanceLift==0)/2D/編輯器直接跳過。地面星環釘在 FloorY,故舞者浮起、星環仍貼地;相機是 verbatim CDT
-        // 不動 → 舞者在畫面內往上浮。見 [[sdo-special-item-idle-walk]]。
+        // 飛行翅膀:穿著就整場浮 10,和姿勢無關 —— 待機、跳舞、勝負定格一律同高,與房間同一顆 SpecialMotionItems.HoverY。
+        //
+        // 這是 remake 刻意偏離官方的一條(使用者要求「跳舞畫面也要浮起來」)。官方舞台其實不浮:那個 y+=10 只寫在
+        // Player_UpdateTransform_004ab4a0(028:2614),而它全 exe 只有一個呼叫端(023:1044),掛在 StateRoom 的 vtable
+        // @0x5491b4 上 —— 房間是 StateMgr_SwitchState case 5,跳舞是 case 8 的另一個 class(Gameplay_ctor_004742d0,
+        // 不繼承 StateRoom)。舞台的 Y 由 Dancer_UpdateTransform_004a8080(027:2593)寫成「隊形表 Y + DPS step Y」,
+        // 兩者實測全為 0(隊形表 @0x582690 中間分量皆 0;2176 個官方 .DPS 共 85,525 row 的 Y 分量亦全 0)。
+        //
+        // 舊版在這裡量「flystay 比 dance ready pose 高多少」當抬升量,前提是「flystay 自己會浮」——實測錯的
+        // (flystay 相對站姿只有 +3.4 女 / +1.2 男),Δ 常常算成 0 讓整段靜默失效。也不再看 IsRestPose:那個 gate 會讓
+        // 勝負定格(PlayOneShot)被當成 rest 而沉下去、回放又浮起來,一沉一浮。
+        //
+        // 地面星環釘在 FloorY(FloorRing 只吃 X/Z),故舞者浮起、星環仍貼地;相機是 verbatim CDT 不補償 → 舞者在畫面
+        // 內往上浮。見 [[sdo-special-item-idle-walk]]。
         private void UpdateFlyHover()
         {
-            if (_flyDanceLift <= 0f || _avatarRoot == null || _avatar == null) return;
-            float target = _avatar.IsRestPose ? 0f : _flyDanceLift;   // idle 已浮 Δ → 0;跳舞 → Δ(抬到同高)
-            _flyLiftCur = Mathf.Lerp(_flyLiftCur, target, 1f - Mathf.Exp(-Time.deltaTime / 0.25f));   // 平滑起降(τ≈0.25s)
+            if (!_flyHoverArmed || _avatarRoot == null) return;   // 2D/編輯器路徑沒量過基準 → 一律不碰 root.y
+            float target = SpecialMotionItems.HoverY(_flying);
+            if (_flyLiftCur != target)
+                _flyLiftCur = Mathf.Abs(target - _flyLiftCur) < 0.01f
+                            ? target
+                            : Mathf.Lerp(_flyLiftCur, target, 1f - Mathf.Exp(-Time.deltaTime / 0.25f));   // 平滑(τ≈0.25s)
             var p = _avatarRoot.position;
             _avatarRoot.position = new Vector3(p.x, _flyBaseRootY + _flyLiftCur, p.z);
         }
@@ -2641,10 +2648,11 @@ namespace Sdo.Game
         public float sceneSupersample = RtSizing.DefaultSupersample;   // set to 1 to render at window-native resolution
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
-        // 飛行翅膀跳舞抬升:flystay 浮空 idle 靠自身 pose 已浮 Δ,dance 貼地 → 跳舞時把 root 抬 Δ,讓跳舞與 fly idle 同高。
-        private float _flyDanceLift;   // Δ = flystay idle 相對「dance 貼地」的浮高(>0 才啟用;非飛行/2D/編輯器=0)
-        private float _flyBaseRootY;   // dance 貼地時的 root.y(= danceSpot.y − danceFeetY)
-        private float _flyLiftCur;     // 目前已套用的抬升,平滑到 idle→0 / dance→Δ
+        // 飛行翅膀懸浮(見 UpdateFlyHover):穿著就整場浮 HoverY,與姿勢/是否在跳舞無關。
+        private bool _flying;          // 這位舞者穿了會飛的翅膀
+        private bool _flyHoverArmed;   // 只有 3D 舞台路徑量過 _flyBaseRootY;沒 arm 就完全不碰 root.y(2D/編輯器)
+        private float _flyBaseRootY;   // 貼地時的 root.y(= danceSpot.y − danceFeetY)
+        private float _flyLiftCur;     // 目前已套用的懸浮,平滑收斂到 HoverY(_flying)
         private int _camMode = -1;                     // -1 = auto-director (default); 0..5 = fixed F2 camera
         private CvLoader[] _dirCv; private int[] _dirDurMs; private bool[] _dirAbs;   // director shots + per-shot absolute(:0)/relative(:1)
         private int _dirShot; private float _dirShotStart;
@@ -2661,6 +2669,7 @@ namespace Sdo.Game
         public void SetCamModeForTest(int m) { _camMode = m; _camSwitchTime = Time.time; }   // headless capture hook
         public void SpawnComboBurstForTest(int tier) => SpawnComboBurst(tier);               // headless combo-burst capture hook
         public Transform AvatarRootForTest => _avatarRoot;                                    // for framing the capture camera on the dancer
+        public float FlyLiftForTest => _flyLiftCur;                                           // 目前套用的飛行懸浮高度
         // Hide the bright stage geometry (palace walls/floor + mapobj props + ground star-ring) so a headless capture
         // shows the ADDITIVE combo burst on the SceneCam's black background — the only way to verify the effect's true
         // colour/brightness/height (on the lit palace the additive glow washes out, exactly like the official's dark
@@ -4323,7 +4332,7 @@ namespace Sdo.Game
             }
             ApplyRingDebug();   // live floor-ring spread/brightness/spin from the F4 sliders
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
-            UpdateFlyHover();   // 飛行翅膀:跳舞時把舞者抬到 fly idle 同高(idle 靠 pose 已浮,dance 補抬)
+            UpdateFlyHover();   // 飛行翅膀:整場常駐懸浮(待機/跳舞/定格同高)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
             // 測試用（已停用）：F9 開流速測試面板；Shift+F9 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依
             // graphicsUVStartsAtTop 自動判斷，但萬一這台機器仍然上下顛倒就用它救）。遊玩時會誤觸，需要時再解開。
