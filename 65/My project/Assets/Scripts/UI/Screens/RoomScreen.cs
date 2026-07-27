@@ -67,6 +67,9 @@ namespace Sdo.UI.Screens
         private const float ChatBubbleFollowTicksPerSecond = 20f;
         private const float ChatBubbleFollowStep = 0.33333335f;
         private const float ChatBubbleDragScale = 1f;
+        // 泡的畫進了房間相機(才會被前面的人擋住)之後多出來的兩個常數。
+        private const float BubbleDepthBiasPad = 2f;        // 世界單位:量出來的半厚度之外再讓一點,避免剛好貼齊
+        private const int BubbleSortingOrderBase = 100;     // 見 SortBubbleWorldCanvases:要大於衣物/場景的 0
         private static readonly Color ChatBubbleTextColor = new Color32(0x7C, 0x01, 0x38, 0xFF);
         // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe；
         // 家族=綠（你沒有家族也用綠；你說＝白，沿用一般行色）。
@@ -130,6 +133,17 @@ namespace Sdo.UI.Screens
         private bool _chatBubbleDragPointerCaptured;
         // 已送出的泡：可同時多顆，各自壽命；打字泡仍用上面 _chatBubble*。
         private readonly List<SentRoomBubble> _sentBubbles = new List<SentRoomBubble>();
+
+        // ---- 頭上泡的「畫」住在 3D 世界(才吃得到深度遮擋)----------------------------------------------
+        // 每顆泡被拆成兩半:
+        //   • **代理**(Root,留在 _bubbleLayer 的 UI 裡):透明、只負責滑鼠命中與「絕對設計座標」。
+        //     鏈物理/拖曳/命中測試/壽命一行都沒改 —— 它們全部繼續讀寫代理的 anchoredPosition。
+        //   • **畫**(Visual,掛在下面這張 per-owner 的 world canvas 裡):由房間相機 render,
+        //     所以站在說話者前面的人會逐像素把它切掉。位置寫成「代理位置 − 錨點位置」= 相對偏移。
+        // 每個人一張 canvas,因為每個人在不同深度(canvas 的位置/縮放是按那個人的深度解出來的)。
+        private Transform _bubbleWorldRoot;   // 🔴 獨立 GameObject,**不可以**掛在 UI canvas 底下(會變 nested canvas)
+        private readonly Dictionary<int, RectTransform> _bubbleWorldCanvas = new Dictionary<int, RectTransform>();
+        private readonly Dictionary<int, float> _bubbleWorldDepth = new Dictionary<int, float>();   // 給每幀重排前後用
         private Coroutine _chatInputFocusRoutine;
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
 
@@ -574,8 +588,11 @@ namespace Sdo.UI.Screens
             if (ui != null)
             {
                 _maskedCam = ui; _savedMask = ui.cullingMask;
+                // BubbleLayer 也要遮:頭上泡的畫已經由房間相機 render 進 RT(這樣才吃得到深度遮擋),
+                // 前端 UI 相機若也看得到那張 world canvas,泡就會被畫第二次 —— 而且第二次的位置與大小都是錯的
+                // (它活在房間相機的透視裡,不在 UI 的正交裡)。
                 ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer)
-                                    | (1 << RoomScene3D.RemoteAvatarLayer));
+                                    | (1 << RoomScene3D.RemoteAvatarLayer) | (1 << RoomScene3D.BubbleLayer));
             }
 
             // 儲物櫃換穿後 → 立即重建本機房間 avatar + 頭貼，讓新穿搭當場反映 (WardrobeScreen 已寫回 profile.json)。
@@ -674,6 +691,7 @@ namespace Sdo.UI.Screens
             HideExpressionMenu();
             HideRoomChatBubble();
             ClearSentRoomBubbles();
+            DestroyBubbleWorld();   // 泡的畫掛在獨立的 GameObject 樹底下(不在 UI canvas 裡)→ 要自己收
             _chatInputSticky = false;   // 離開房間 → 放掉輸入框黏 focus，回來時不自動搶 focus
             Input.imeCompositionMode = IMECompositionMode.Auto;   // 還原，別影響遊戲/其他畫面的按鍵
             if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
@@ -1580,14 +1598,55 @@ namespace Sdo.UI.Screens
             }
         }
 
+        /// <summary>
+        /// 某個人的泡要畫在哪張 world canvas 裡(lazily 建)。回 null = 房間 3D 還沒好,
+        /// 呼叫端就把畫掛回代理底下(退回搬家前的行為:能看到泡,只是不會被擋住)。
+        /// </summary>
+        private RectTransform BubbleWorldCanvas(int owner)
+        {
+            if (_scene == null || _scene.SceneCamera == null) return null;
+            RectTransform rt;
+            if (_bubbleWorldCanvas.TryGetValue(owner, out rt) && rt != null) return rt;
+
+            if (_bubbleWorldRoot == null)
+            {
+                // 🔴 不掛 parent:RoomScreen 自己就在 UI canvas 底下,掛進去會讓泡的 canvas 變成
+                //    nested canvas → renderMode 被忽略 → 遮擋功能靜默消失。OnHide 自己收。
+                var holder = new GameObject("RoomBubbleWorld") { layer = RoomScene3D.BubbleLayer };
+                _bubbleWorldRoot = holder.transform;
+            }
+            rt = UIKit.CreateBubbleWorldCanvas("RoomBubbleCanvas" + owner, _bubbleWorldRoot,
+                                               RoomScene3D.BubbleLayer, new Vector2(800f, 600f));
+            _bubbleWorldCanvas[owner] = rt;
+            return rt;
+        }
+
+        private void DestroyBubbleWorld()
+        {
+            _bubbleWorldCanvas.Clear();
+            _bubbleWorldDepth.Clear();
+            if (_bubbleWorldRoot != null) { Destroy(_bubbleWorldRoot.gameObject); _bubbleWorldRoot = null; }
+        }
+
         private SentRoomBubble SpawnSentRoomBubble(int ownerUserId = 0)
         {
+            // 代理:留在 UI 層。鏈物理、拖曳、命中測試、壽命全部認它(這樣那些程式碼一行都不用改)。
             var root = UIKit.NewRect(_bubbleLayer, "RoomChatBubble");   // 掛在 _bubbleLayer(UI 底下)
             root.anchorMin = root.anchorMax = new Vector2(0f, 1f);
             root.pivot = new Vector2(0f, 1f);
             root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
 
             var bubble = new SentRoomBubble { Root = root, OwnerUserId = ownerUserId };
+
+            // 畫:進房間相機的 world canvas(吃深度遮擋)。房間 3D 還沒好就退回掛在代理底下。
+            var world = BubbleWorldCanvas(ownerUserId);
+            var visual = UIKit.NewRect(world != null ? (Transform)world : root, "RoomChatBubbleArt");
+            visual.anchorMin = visual.anchorMax = new Vector2(0f, 1f);
+            visual.pivot = new Vector2(0f, 1f);
+            visual.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            bubble.Visual = visual;
+            bubble.InWorld = world != null;
+
             // 🔴 只有自己的泡能拖。拖曳狀態是**全域單一**的(_chatBubbleChainDragging /
             //    _chatBubbleDraggedSent),而拖住時的補償會延長**那條鏈上所有泡**的壽命 ——
             //    跨人就變成「你按住不放,別人的泡也不會消失」。官方也沒有拖別人的泡這回事。
@@ -1596,35 +1655,65 @@ namespace Sdo.UI.Screens
                 var drag = root.gameObject.AddComponent<RoomBubbleDragHandle>();
                 drag.Owner = this;
                 drag.Sent = bubble;
+                // 代理要有一個「看不見但收得到滑鼠」的圖 —— 拖曳事件靠它冒泡到上面那個 handle。
+                // 原本是泡框自己收(Frame raycast:true),但泡框已經搬到別的 canvas、那張沒有 raycaster。
+                // 尺寸與原本的泡框完全相同(整張 171×111),所以可命中的範圍一模一樣。
+                var hit = UIKit.AddImage(root, "Hit", new Color(0f, 0f, 0f, 0f), raycast: true);
+                UIKit.Stretch(hit.rectTransform);
             }
 
-            bubble.Frame = UIKit.AddImage(root, "Frame", Color.white, raycast: ownerUserId == 0);
+            bubble.Frame = UIKit.AddImage(visual, "Frame", Color.white, raycast: false);
             UIKit.Stretch(bubble.Frame.rectTransform);
             UIKit.ApplySprite(bubble.Frame, RoomBubbleArt.Base(1));
             Place(bubble.Frame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
             bubble.FrameAnim = bubble.Frame.gameObject.AddComponent<SpriteSeqAnim>();
             bubble.FrameAnim.Fps = 12f;
 
-            bubble.Add = UIKit.AddImage(root, "AddAni", Color.white);
+            bubble.Add = UIKit.AddImage(visual, "AddAni", Color.white);
             UIKit.Stretch(bubble.Add.rectTransform);
             bubble.AddAnim = bubble.Add.gameObject.AddComponent<SpriteSeqAnim>();
             bubble.AddAnim.Fps = 14f;
 
-            bubble.Text = UIKit.AddText(root, "Text", "", 13, ChatBubbleTextColor, TextAlignmentOptions.MidlineLeft, true);
+            bubble.Text = UIKit.AddText(visual, "Text", "", 13, ChatBubbleTextColor, TextAlignmentOptions.MidlineLeft, true);
             Place(bubble.Text.rectTransform, 49, 43, 74, 28);
             bubble.Text.richText = true;
             bubble.Text.textWrappingMode = TextWrappingModes.Normal;
             bubble.Text.overflowMode = TextOverflowModes.Overflow;
 
-            bubble.Expression = UIKit.AddImage(root, "Expression", Color.white);
+            bubble.Expression = UIKit.AddImage(visual, "Expression", Color.white);
             bubble.Expression.raycastTarget = false;
             bubble.Expression.preserveAspect = true;
             Place(bubble.Expression.rectTransform, 73, 43, 24, 24);
             bubble.ExpressionAnim = bubble.Expression.gameObject.AddComponent<SpriteSeqAnim>();
             bubble.ExpressionAnim.Fps = 8f;
 
-            root.gameObject.SetActive(false);
+            if (bubble.InWorld) SetBubbleLayer(visual);
+            SetBubbleActive(bubble, false);
             return bubble;
+        }
+
+        /// <summary>代理與畫要一起開關 —— 只關畫的話代理還在吃滑鼠(看不到的泡照樣被拖);只關代理的話泡還看得見。</summary>
+        private static void SetBubbleActive(SentRoomBubble b, bool on)
+        {
+            if (b == null) return;
+            if (b.Root != null && b.Root.gameObject.activeSelf != on) b.Root.gameObject.SetActive(on);
+            if (b.Visual != null && b.Visual.gameObject.activeSelf != on) b.Visual.gameObject.SetActive(on);
+        }
+
+        /// <summary>
+        /// 把泡的畫整棵設成 <see cref="RoomScene3D.BubbleLayer"/>。
+        ///
+        /// 為什麼要遞迴、而且要在改過字之後再做一次:字型是執行期的 OS SimSun + 後備字型,
+        /// TMP 碰到 SimSun 沒有的字(實測 `𠀋`/`한`/`Ⅷ` 這類)會**當場長出 sub-mesh 子物件**。
+        /// 實測那些子物件會繼承父物件的 layer,所以正常情況本來就對 —— 但萬一哪天不對,
+        /// 症狀是「只有打到罕見字那則訊息的一部分字不見/畫在錯的地方」,幾乎不可能查到。
+        /// 這裡是幾個物件的 layer 寫入,便宜到不值得省。
+        /// </summary>
+        private static void SetBubbleLayer(Transform t)
+        {
+            if (t == null) return;
+            t.gameObject.layer = RoomScene3D.BubbleLayer;
+            for (int i = 0, n = t.childCount; i < n; i++) SetBubbleLayer(t.GetChild(i));   // 不用 foreach:那會配置 enumerator
         }
 
         private void ApplySentBubbleStyle(SentRoomBubble bubble, int style, bool entering)
@@ -1636,6 +1725,7 @@ namespace Sdo.UI.Screens
             var sprite = frames != null && frames.Length > 0 ? frames[0] : RoomBubbleArt.Base(style);
 
             bubble.Root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            if (bubble.Visual != null) bubble.Visual.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
             if (bubble.FrameAnim != null) bubble.FrameAnim.SetFrames(frames, restart: true, loop: !entering);
             if (bubble.Frame != null)
             {
@@ -1694,6 +1784,9 @@ namespace Sdo.UI.Screens
             if (bubble.FrameAnim != null) bubble.FrameAnim.Frames = null;
             if (bubble.AddAnim != null) bubble.AddAnim.Frames = null;
             if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
+            // 畫掛在別的樹底下(per-owner 的 world canvas),不會跟著代理一起被拆 → 要自己收,
+            // 不然會留下一顆不動的泡浮在房間裡直到離房。
+            if (bubble.Visual != null && bubble.InWorld) Destroy(bubble.Visual.gameObject);
             if (bubble.Root != null) Destroy(bubble.Root.gameObject);
         }
 
@@ -2498,6 +2591,9 @@ namespace Sdo.UI.Screens
                 else if (_scene.TryHeadViewport(out var fallbackVp))
                     PlaceRoomChatBubbles(fallbackVp, 0, true);
             }
+
+            // 所有人的泡都擺完了 → 按深度重排「泡與泡」的前後(UI 材質不寫深度,誰蓋誰只看畫的順序)。
+            SortBubbleWorldCanvases();
         }
 
         private bool HasBubbleOf(int owner)
@@ -2530,7 +2626,7 @@ namespace Sdo.UI.Screens
                 {
                     var b = _sentBubbles[i];
                     if (b != null && b.OwnerUserId == owner && b.Root != null && b.Root.gameObject.activeSelf)
-                        b.Root.gameObject.SetActive(false);
+                        SetBubbleActive(b, false);
                 }
             }
         }
@@ -2680,6 +2776,11 @@ namespace Sdo.UI.Screens
 
             if (nodes.Count == 0) return;
 
+            // 這個人的泡畫在他自己那張 world canvas 上 → 每幀把 canvas 擺到他肩膀的投影點並補償縮放。
+            PlaceBubbleWorldCanvas(owner);
+            // canvas 原點投影到的設計座標 = 泡的畫的相對位移基準(見下面 WriteBubbleVisualPos 那行的註解)。
+            Vector2 canvasOriginDesign = RoomBubbleWorldAnchor.AnchorDesignPoint(vp, 800f, 600f);
+
             int draggedIndex = -1;
             for (int i = 0; i < nodes.Count; i++)
             {
@@ -2736,6 +2837,10 @@ namespace Sdo.UI.Screens
                 var node = nodes[i];
                 if (node.Root != null)
                     node.Root.anchoredPosition = node.Position;
+                // 畫在 3D 世界的那份寫「相對 canvas 原點」的偏移。canvas 原點被擺在**錨點骨頭的投影點**上
+                // (PlaceBubbleWorldCanvas),所以要減的是那一點 —— **不是**這條鏈的 anchorRoot
+                // (它多帶了泡身位移與畫布中心,差 (5.5, 46.5) 設計 px)。見 AnchorDesignPoint 的註解。
+                if (node.Sent != null) WriteBubbleVisualPos(node.Sent, node.Position, canvasOriginDesign);
 
                 if (node.Sent != null)
                 {
@@ -2744,13 +2849,97 @@ namespace Sdo.UI.Screens
                     node.Sent.HasPhysics = node.HasPhysics;
                     if (node.Sent.PendingShow)
                     {
-                        node.Sent.Root.gameObject.SetActive(true);
+                        SetBubbleActive(node.Sent, true);
                         node.Sent.PendingShow = false;
                         LayoutSentBubbleInlineEmoji(node.Sent);   // 活化後才有 mesh，這時把行內 emoji 疊到打的位置
+                        if (node.Sent.InWorld) SetBubbleLayer(node.Sent.Visual);   // 換過字 → sub-mesh 可能剛長出來
                     }
+                    // 註:同一條鏈裡誰畫在上面**刻意不動** —— world canvas 裡的兄弟順序就是生成順序,
+                    //     與泡還在 UI 層時一樣(最新的泡最後生成 → 畫在最上面)。這裡若補 SetAsLastSibling
+                    //     反而會照 nodes 的逆序每幀重排,把順序倒過來。
                 }
             }
         }
+
+        /// <summary>泡的畫要放哪:在 3D 世界 → 相對錨點的偏移;退回 UI(房間 3D 沒好)→ 貼著代理不動。</summary>
+        private static void WriteBubbleVisualPos(SentRoomBubble b, Vector2 pos, Vector2 anchorRoot)
+        {
+            if (b == null || b.Visual == null) return;
+            b.Visual.anchoredPosition = b.InWorld ? pos - anchorRoot : Vector2.zero;
+        }
+
+        /// <summary>
+        /// 把某個人的泡 canvas 擺到「他肩膀的投影點」上,並按距離補償縮放 —— 泡因此與搬家前**同位置同大小**,
+        /// 只是現在活在房間相機裡,會被前面的人擋住。數學在 <see cref="RoomBubbleWorldAnchor"/>(有單元測試)。
+        /// 回 false = 這一幀擺不出來(角色沒了/在相機後面)→ 整張 canvas 關掉,寧可不畫也不要留一顆定格的泡。
+        /// </summary>
+        private bool PlaceBubbleWorldCanvas(int owner)
+        {
+            var canvas = BubbleWorldCanvas(owner);
+            if (canvas == null) return false;
+            var cam = _scene != null ? _scene.SceneCamera : null;
+            bool ok = false;
+            if (cam != null)
+            {
+                Vector3 anchorWorld;
+                bool haveAnchor = owner == 0
+                    ? _scene.TryChatBubbleAnchorWorld(out anchorWorld)
+                    : _scene.TryRemoteChatBubbleAnchorWorld(owner, out anchorWorld);
+                if (haveAnchor)
+                {
+                    Vector3 fwd = cam.transform.forward;
+                    // bias = 說話者自己的水平半厚度 + 一點餘裕:泡的錨點在肩膀骨,而他自己的頭髮/胸口
+                    // 比肩膀骨更靠近相機 → 不拉開的話他會切掉自己泡的尾巴(看起來像美術破圖)。
+                    float bias = _scene.OwnerDepthExtent(owner, fwd) + BubbleDepthBiasPad;
+                    var plane = RoomBubbleWorldAnchor.Solve(cam.transform.position, fwd,
+                                                            cam.projectionMatrix.m11, cam.nearClipPlane,
+                                                            anchorWorld, bias, 600f);
+                    if (plane.Valid)
+                    {
+                        canvas.position = plane.Position;
+                        canvas.rotation = cam.transform.rotation;   // 正對相機 → 設計 px 偏移在螢幕上還是設計 px
+                        canvas.localScale = new Vector3(plane.Scale, plane.Scale, plane.Scale);
+                        _bubbleWorldDepth[owner] = Vector3.Dot(plane.Position - cam.transform.position, fwd);
+                        ok = true;
+                    }
+                }
+            }
+            if (canvas.gameObject.activeSelf != ok) canvas.gameObject.SetActive(ok);
+            return ok;
+        }
+
+        /// <summary>
+        /// 泡與泡之間的前後關係。
+        ///
+        /// 🔴 UI 材質不寫深度,所以「兩顆泡誰蓋誰」是**畫的順序**決定的,不是深度 —— 站在後面的人的泡
+        /// 有可能蓋住前面那個人的泡。每幀按各人的深度重排 canvas 的 sortingOrder(近的排後面 = 蓋住遠的)。
+        ///
+        /// 起點刻意用 <see cref="BubbleSortingOrderBase"/>=100 而不是 0:透明衣物與場景的 alpha 批是
+        /// sortingOrder 0(renderQueue 3000–3400),而 sortingOrder 比 renderQueue 優先
+        /// ([[unity-sortingorder-outranks-renderqueue]])→ 100 保證泡畫在它們之後。不這麼做的話,
+        /// 遠處某人的紗裙會蓋掉近處的泡,而症狀看起來像泡破圖。
+        /// </summary>
+        private void SortBubbleWorldCanvases()
+        {
+            if (_bubbleWorldCanvas.Count <= 1) return;
+            _bubbleSortScratch.Clear();
+            foreach (var kv in _bubbleWorldCanvas)
+            {
+                if (kv.Value == null) continue;
+                float d;
+                if (!_bubbleWorldDepth.TryGetValue(kv.Key, out d)) d = float.MaxValue;
+                _bubbleSortScratch.Add(new KeyValuePair<float, RectTransform>(d, kv.Value));
+            }
+            _bubbleSortScratch.Sort((a, b) => b.Key.CompareTo(a.Key));   // 遠 → 近
+            for (int i = 0; i < _bubbleSortScratch.Count; i++)
+            {
+                var c = _bubbleSortScratch[i].Value.GetComponent<Canvas>();
+                if (c != null) c.sortingOrder = BubbleSortingOrderBase + i;
+            }
+        }
+
+        private readonly List<KeyValuePair<float, RectTransform>> _bubbleSortScratch =
+            new List<KeyValuePair<float, RectTransform>>();
 
 
         private static bool StepBubbleNode(ref RoomBubbleLayoutNode node, Vector2 target, float dt)
@@ -3004,7 +3193,23 @@ namespace Sdo.UI.Screens
 
         private sealed class SentRoomBubble
         {
+            /// <summary>
+            /// **命中代理**,留在 UI 的 _bubbleLayer 裡:透明、沒有畫面,只負責兩件事 ——
+            /// ① 滑鼠命中(拖曳/點擊) ② 承載「絕對設計座標」。鏈物理、拖曳、命中測試、壽命補償
+            /// 全部繼續讀寫它的 anchoredPosition,所以那些程式碼一行都不用改。
+            /// </summary>
             public RectTransform Root;
+
+            /// <summary>
+            /// **畫**,掛在該 owner 的 world canvas 裡(<see cref="RoomScene3D.BubbleLayer"/>)由房間相機 render,
+            /// 因此會吃 GPU 深度測試 —— 站在說話者前面的人可以逐像素把它切掉(使用者要的前後景)。
+            /// 位置寫的是「代理位置 − 錨點位置」的相對偏移,見 WriteBubbleVisualPos。
+            /// </summary>
+            public RectTransform Visual;
+
+            /// <summary>畫真的進了 3D 世界嗎?false = 房間 3D 還沒好,畫退回掛在代理底下(看得到但不會被擋)。</summary>
+            public bool InWorld;
+
             public Image Frame, Add, Expression;
             public TextMeshProUGUI Text;
             public SpriteSeqAnim FrameAnim, AddAnim, ExpressionAnim;

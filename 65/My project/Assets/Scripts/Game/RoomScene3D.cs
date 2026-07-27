@@ -29,6 +29,19 @@ namespace Sdo.Game
         /// 房間主相機兩層都看,所以畫面完全不變。
         /// </summary>
         public const int RemoteAvatarLayer = 13;
+
+        /// <summary>
+        /// 頭上聊天泡的 layer(TagManager 命名 "RoomBubble")。
+        ///
+        /// 泡的**畫面**住在這一層、由房間相機一起 render,這樣它才會吃 GPU 的深度測試 ——
+        /// 站在說話者前面的人就能逐像素把泡切掉(使用者要的前後景)。泡的**排版與滑鼠命中**
+        /// 仍留在 UI 層(RoomScreen 那邊的透明代理),所以整套鏈物理/拖曳一行都沒改。
+        ///
+        /// 與角色分層的理由跟 <see cref="RemoteAvatarLayer"/> 一樣:六格頭貼相機只看角色那層,
+        /// 泡不該入頭貼。前端 UI 相機也要把這層遮掉(RoomScreen 進房時做),否則泡會被畫兩次。
+        /// </summary>
+        public const int BubbleLayer = 14;
+
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
         public bool loadMapobjs = true;          // load the Room_obj stage props (dianshi/laba/guang/taizi)
@@ -91,6 +104,9 @@ namespace Sdo.Game
         public Texture SceneTexture => _rt;
         public bool Ready => _ready;
         public Camera SceneCamForTest => _cam;          // inspection/capture only
+        /// <summary>房間那台相機。頭上泡的畫住在它的世界裡(<see cref="BubbleLayer"/>),所以 RoomScreen
+        /// 需要它的位置/朝向/投影矩陣來擺泡的平面。Null 直到 Build 成功。</summary>
+        public Camera SceneCamera => _cam;
         public SdoAvatar AvatarForTest => _avatar;
         public bool IsWalking => _walking;              // so the head portrait can MIRROR the avatar's walk/idle motion
         public float AvatarFacing => _facing;           // so the head portrait can turn with the avatar's facing
@@ -178,16 +194,27 @@ namespace Sdo.Game
         public bool TryChatBubbleViewport(out Vector2 vp)
         {
             vp = default;
-            if (_avatar == null || _cam == null || _avatarRoot == null) return false;
+            Vector3 bw;
+            if (_cam == null || !TryChatBubbleAnchorWorld(out bw)) return false;
+            Vector3 v = _cam.WorldToViewportPoint(bw);
+            if (v.z <= 0f) return false;
+            vp = new Vector2(v.x, v.y);
+            return true;
+        }
+
+        /// <summary>本機聊天泡錨點的**世界座標**(泡的畫進了房間相機之後要用它算平面;見
+        /// <see cref="RoomBubbleWorldAnchor"/>)。與 <see cref="TryChatBubbleViewport"/> 是同一個點 ——
+        /// 刻意共用同一段骨骼 fallback,不然螢幕位置(UI 排版用 viewport)與深度(3D 用世界點)會對不上。</summary>
+        public bool TryChatBubbleAnchorWorld(out Vector3 world)
+        {
+            world = default;
+            if (_avatar == null || _avatarRoot == null) return false;
             Vector3 bp = _avatar.BoneModelPos("Bip01_Neck");
             if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Head");
             if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine1");
             if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine");
             if (bp == Vector3.zero) return false;
-            Vector3 bw = _avatarRoot.TransformPoint(bp);
-            Vector3 v = _cam.WorldToViewportPoint(bw);
-            if (v.z <= 0f) return false;
-            vp = new Vector2(v.x, v.y);
+            world = _avatarRoot.TransformPoint(bp);
             return true;
         }
 
@@ -510,6 +537,52 @@ namespace Sdo.Game
             return true;
         }
 
+        /// <summary>
+        /// 這個人的角色沿相機視線的**半厚度**(世界單位)—— 頭上泡的 depthBias 就是它。
+        ///
+        /// 為什麼需要:泡的錨點是**肩膀骨**,而頭髮/胸口比肩膀骨更靠近相機。泡的平面若剛好放在
+        /// 肩膀骨的深度,說話者**自己**的頭髮就會把泡的尾巴切掉 —— 那看起來會像美術破圖,
+        /// 完全指不到「深度差了 20 個單位」這個原因。把平面往相機拉開自己的半厚度就沒事了。
+        ///
+        /// 🔴 這個值一定要量出來,不可以寫死一個常數:寫太小 → 自己的頭髮切自己的泡;
+        /// 寫太大 → 泡被推到所有人前面,擋人功能整個失效**而且不會報錯**。
+        ///
+        /// <paramref name="userId"/> 0 = 本機角色。回 0 表示量不到(呼叫端就當沒有 bias)。
+        /// </summary>
+        public float OwnerDepthExtent(int userId, Vector3 camFwd)
+        {
+            Transform root = userId == 0 ? _avatarRoot : null;
+            if (userId != 0)
+            {
+                Remote r;
+                if (_remotes.TryGetValue(userId, out r) && r != null && r.Go != null) root = r.Go.transform;
+            }
+            if (root == null) return 0f;
+
+            var rends = root.GetComponentsInChildren<Renderer>();
+            if (rends == null || rends.Length == 0) return 0f;
+            bool any = false;
+            var bounds = new Bounds();
+            foreach (var rd in rends)
+            {
+                if (rd == null || !rd.enabled) continue;
+                if (!any) { bounds = rd.bounds; any = true; }
+                else bounds.Encapsulate(rd.bounds);
+            }
+            if (!any) return 0f;
+
+            // 只取**水平**方向的厚度(相機視線投影到地面之後),刻意不算垂直項。
+            // 理由:房間相機是俯視的,把整個身高(ey≈90)乘上 camFwd.y 會得到「一個人很厚」的假結果,
+            // 泡就會被推得太靠近相機 → 擋人功能失效。真正會切到泡的是說話者的頭/髮,
+            // 而那是水平方向的厚度(≈ 一個人的胸厚)。
+            Vector3 fh = new Vector3(camFwd.x, 0f, camFwd.z);
+            float fl = fh.magnitude;
+            if (fl < 1e-4f) return 0f;   // 正上方俯視 → 沒有「前後」可言
+            fh /= fl;
+            Vector3 e = bounds.extents;
+            return Mathf.Abs(e.x * fh.x) + Mathf.Abs(e.z * fh.z);
+        }
+
         /// <summary>這個人現在有 3D 角色嗎?(旁觀者不在座位上 → 沒有角色可以掛泡/名字牌)</summary>
         public bool HasRemote(int userId)
         {
@@ -524,16 +597,28 @@ namespace Sdo.Game
         public bool TryRemoteBubbleViewport(int userId, out Vector2 vp)
             => TryRemoteBoneViewport(userId, "Bip01_Neck", "Bip01_Head", 0f, out vp);
 
-        private bool TryRemoteBoneViewport(int userId, string bone, string fallbackBone, float rise, out Vector2 vp)
+        /// <summary>某位遠端玩家聊天泡錨點的**世界座標**(同 <see cref="TryChatBubbleAnchorWorld"/> 的用途)。</summary>
+        public bool TryRemoteChatBubbleAnchorWorld(int userId, out Vector3 world)
+            => TryRemoteBoneWorld(userId, "Bip01_Neck", "Bip01_Head", 0f, out world);
+
+        private bool TryRemoteBoneWorld(int userId, string bone, string fallbackBone, float rise, out Vector3 world)
         {
-            vp = default;
+            world = default;
             Remote r;
-            if (_cam == null || !_remotes.TryGetValue(userId, out r) || r == null || r.Av == null || r.Go == null)
-                return false;
+            if (!_remotes.TryGetValue(userId, out r) || r == null || r.Av == null || r.Go == null) return false;
             Vector3 bm = r.Av.BoneModelPos(bone);
             if (bm == Vector3.zero) bm = r.Av.BoneModelPos(fallbackBone);
             if (bm == Vector3.zero) return false;
-            Vector3 v = _cam.WorldToViewportPoint(r.Go.transform.TransformPoint(bm) + new Vector3(0f, rise, 0f));
+            world = r.Go.transform.TransformPoint(bm) + new Vector3(0f, rise, 0f);
+            return true;
+        }
+
+        private bool TryRemoteBoneViewport(int userId, string bone, string fallbackBone, float rise, out Vector2 vp)
+        {
+            vp = default;
+            Vector3 bw;
+            if (_cam == null || !TryRemoteBoneWorld(userId, bone, fallbackBone, rise, out bw)) return false;
+            Vector3 v = _cam.WorldToViewportPoint(bw);
             if (v.z <= 0f) return false;
             // 🔴 走出畫面的人要回 false:PlaceFollow 不夾邊界,vp 是負的就會把名字牌/泡畫到
             // 800×600 設計框外面(遠端會動之後才踩得到這個坑)。留一點餘裕讓邊緣不要閃。
@@ -739,7 +824,8 @@ namespace Sdo.Game
             _cam.orthographic = false;
             _cam.fieldOfView = 45f;                                 // EXACT decompiled projection (Camera_ctor): fovY=45,
             _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500
-            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer);   // 房間畫面要同時看到場景與遠端角色
+            // 房間畫面要同時看到場景、遠端角色、以及頭上泡 —— 泡進來這台相機才吃得到深度測試(BubbleLayer)。
+            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer) | (1 << BubbleLayer);
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = Color.black;
