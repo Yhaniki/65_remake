@@ -77,6 +77,79 @@ namespace Sdo.Tests
         }
 
         /// <summary>
+        /// 水面分層拆解:同一個機位連拍「全部開」與「逐片關掉」,用來回答「畫面上這條硬邊界是哪一片畫的」。
+        /// 海灘有四片水(SEA 海面 / LANG 岸浪 / SEA_UP / SEA_DOWN 海床),疊在一起看圖猜是猜不出來的。
+        /// 順便掃過六個固定機位各拍一張,好對上使用者實機截圖的角度。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Capture_Scn0004_Water_Layer_Breakdown()
+        {
+            Sdo.Game.ScreenGameplay game = null;
+            yield return GameplayBoot.Boot(g => game = g, SceneOnlyScn0004);
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            for (int c = 0; c <= 5; c++)
+            {
+                game.SetCamModeForTest(c);
+                yield return new WaitForSecondsRealtime(0.4f);
+                Cap($"{OutDir}/{Tag}-cam{c}.png");
+            }
+
+            // 固定機位全都盯著棧橋上的舞者,看不到「海面 → 沙灘」那條交界 —— 而使用者回報的硬邊界正好在那裡。
+            // 拆解要用一台從舞者背後往沙灘看的自由機位(= 使用者截圖的角度)。
+            var camGo = new GameObject("Scn0004LayerCam");
+            var free = camGo.AddComponent<Camera>();
+            free.fieldOfView = 55f; free.nearClipPlane = 1f; free.farClipPlane = 20000f;
+            foreach (var c in Camera.allCameras) if (!c.orthographic) { free.cullingMask = c.cullingMask; free.clearFlags = c.clearFlags; free.backgroundColor = c.backgroundColor; break; }
+            var backdrop = GameObject.Find("SceneBackdrop");
+            if (backdrop != null) free.cullingMask &= ~(1 << backdrop.layer);
+            // 用 "chairs" 那個機位:海面 → 沙灘的交界在畫面正中央橫貫,硬邊界要出現就是出現在這裡。
+            camGo.transform.position = new Vector3(-260f, 150f, -430f);
+            camGo.transform.rotation = Quaternion.LookRotation(new Vector3(360f, -20f, -690f) - camGo.transform.position, Vector3.up);
+
+            var layers = new[] { "SEA_UP", "SEA_DOWN", "SEA", "LANG" };
+            CapFrom(free, $"{OutDir}/{Tag}-lb-all.png");
+            foreach (var layer in layers)
+            {
+                var hidden = SetLayerVisible(layer, false);
+                yield return null;
+                CapFrom(free, $"{OutDir}/{Tag}-lb-no{layer}.png");
+                Debug.Log($"[scn0004-probe] hid {hidden} renderer(s) for {layer}");
+                SetLayerVisible(layer, true);
+                yield return null;
+            }
+            // 「只留這一片」比「關掉這一片」更能看出每片水自己的邊界落在哪裡。
+            foreach (var layer in layers)
+            {
+                foreach (var other in layers) if (other != layer) SetLayerVisible(other, false);
+                yield return null;
+                CapFrom(free, $"{OutDir}/{Tag}-lb-only{layer}.png");
+                foreach (var other in layers) SetLayerVisible(other, true);
+                yield return null;
+            }
+            Object.Destroy(camGo);
+        }
+
+        /// <summary>Enable/disable one water sheet by its mapobj group name. "SEA" must NOT also catch
+        /// SEA_UP/SEA_DOWN — those are separate sheets and the whole point is to tell them apart.</summary>
+        private static int SetLayerVisible(string group, bool on)
+        {
+            int n = 0;
+            foreach (var mr in Object.FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None))
+            {
+                var pn = mr.transform.parent ? mr.transform.parent.name : "";
+                if (!Belongs(mr.gameObject.name, group) && !Belongs(pn, group)) continue;
+                mr.enabled = on; n++;
+            }
+            return n;
+        }
+
+        // 物件叫 "<GROUP>_mesh"、父物件叫 "<GROUP>_0" —— 必須整段比對,用 StartsWith("SEA") 會把 SEA_UP/SEA_DOWN
+        // 一起關掉,那正好毀掉這支測試想分辨的東西。
+        private static bool Belongs(string name, string group)
+            => name == group || name == group + "_mesh" || name.StartsWith(group + "_0");
+
+        /// <summary>
         /// 自由機位俯瞰:固定機位一律盯著舞者(棧橋上),看不到沙灘那一側。判斷「水該蓋住沙灘、但不該蓋住
         /// 房子」必須同時看到兩者,所以另外拉一台相機從幾個角度照整片海岸。
         /// </summary>
@@ -103,6 +176,9 @@ namespace Sdo.Tests
                 ("far",   new Vector3(-1400f,  700f, -900f),  new Vector3(200f, -40f,  700f)),
                 ("shore", new Vector3( 1500f,  350f, -600f),  new Vector3(  0f, -40f,  700f)),
                 ("top",   new Vector3(  200f, 1400f,  -600f), new Vector3(200f, -40f,  700f)),
+                // 使用者拿來對照官方的那一段海灘:陽傘 SAN c=(389,14,−626)、躺椅 YIZI c=(319,−15,−680)。
+                // 從水面上斜看過去,畫面就是「浪打在陽傘前面的沙灘上」—— 官方截圖的正中央。
+                ("chairs", new Vector3(-260f, 150f, -430f),   new Vector3(360f, -20f, -690f)),
             };
             for (int i = 0; i < shots.Length; i++)
             {
@@ -129,6 +205,10 @@ namespace Sdo.Tests
         }
 
         // 把水面片與場景本體的排序資訊全部印出來。renderQueue 才是「誰蓋誰」的答案。
+        //
+        // 場景是「一顆 renderer + 幾十個 submesh」,所以只印 sharedMaterial(第 0 顆)看不出重點 ——
+        // 「浪要蓋沙灘、但不能蓋甲板」的關鍵在於 SHA*(沙)與 DIBAN*(甲板)這兩組 submesh 各自的
+        // shader/佇列/深度寫入與 Y 高度。逐 submesh 印出來才有辦法判斷。
         private static void Probe()
         {
             foreach (var mr in Object.FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None))
@@ -138,11 +218,22 @@ namespace Sdo.Tests
                 bool water = n.StartsWith("SEA") || n.StartsWith("LANG") || pn.StartsWith("SEA") || pn.StartsWith("LANG");
                 bool scene = n.ToUpperInvariant().Contains("SCENE") || pn.ToUpperInvariant().Contains("SCENE");
                 if (!water && !scene) continue;
-                var m = mr.sharedMaterial;
-                Debug.Log($"[scn0004-probe] {n} (parent={pn}) shader={m?.shader?.name} queue={m?.renderQueue} " +
-                          $"zwrite={(m != null && m.HasProperty("_ZWrite") ? m.GetFloat("_ZWrite").ToString() : "n/a")} " +
-                          $"uvOffset={(m != null ? m.mainTextureOffset.ToString("F3") : "-")} " +
-                          $"bounds c={mr.bounds.center} s={mr.bounds.size}");
+                var mesh = mr.GetComponent<MeshFilter>() != null ? mr.GetComponent<MeshFilter>().sharedMesh : null;
+                var mats = mr.sharedMaterials;
+                Debug.Log($"[scn0004-probe] {n} (parent={pn}) subMats={mats.Length} bounds c={mr.bounds.center} s={mr.bounds.size}");
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var m = mats[i]; if (m == null) continue;
+                    string sub = "-";
+                    if (mesh != null && i < mesh.subMeshCount)
+                    {
+                        var sb = mesh.GetSubMesh(i).bounds;
+                        sub = $"y[{sb.min.y:F1}..{sb.max.y:F1}] c={sb.center.ToString("F0")}";
+                    }
+                    Debug.Log($"[scn0004-probe]   [{i}] {m.name} shader={m.shader?.name} queue={m.renderQueue} " +
+                              $"cutoff={(m.HasProperty("_Cutoff") ? m.GetFloat("_Cutoff").ToString("F2") : "n/a")} " +
+                              $"uv={m.mainTextureOffset.ToString("F3")} {sub}");
+                }
             }
         }
 

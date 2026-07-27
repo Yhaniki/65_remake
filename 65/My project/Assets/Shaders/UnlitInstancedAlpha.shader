@@ -58,7 +58,8 @@ Shader "Sdo/UnlitInstancedAlpha"
             fixed4 frag (v2f i) : SV_Target
             {
                 fixed4 c = tex2D(_MainTex, i.uv) * _Color;
-                c.rgb *= i.col.rgb;             // × baked vertex lighting (RGB only; keep texture alpha for blending)
+                c.rgb *= i.col.rgb;             // × baked vertex lighting
+                c.a *= i.col.a;                 // × 美術畫的逐頂點淡出 —— SCN0004 海面/岸浪靠這個把水面外緣化開
                 return c;
             }
             ENDCG

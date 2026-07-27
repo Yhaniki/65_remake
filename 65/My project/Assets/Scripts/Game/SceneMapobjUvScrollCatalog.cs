@@ -32,6 +32,11 @@ namespace Sdo.Game
             // cutout heuristic. Unlike ForceAlphaBlend/AlphaBlendOverlay this is PER-MATERIAL, so a multi-material
             // prop (SCN0014 TV: screen + frame + projector opaque, only the light beam transparent) stays correct.
             OfficialMaterialAlpha,
+            // 官方旗標 0 = 不透明批:引擎連 ALPHABLENDENABLE 都沒開,更沒有 alpha test,貼圖的 alpha 通道**整個是死的**。
+            // 我們的貼圖啟發式卻可能把「帶淡出漸層」的貼圖判成 cutout,於是 clip(a-0.5) 會在漸層的中段一刀切掉,
+            // 留下貼圖最暗的那一列、還是 100% 不透明、邊緣沿著 texel 鋸齒 —— 畫面上就是一條硬邊深色帶。
+            // 這個模式把 clip 關掉(_Cutoff = -1),回到官方的「照畫、不看 alpha」。
+            ForceOpaque,
         }
 
         /// <summary>How a target's UV offset moves. The original uses all three; a single "UV/s" cannot express
@@ -114,11 +119,22 @@ namespace Sdo.Game
         // Angular-edge issue tracked in decomp doc; suspect UV scale transform not yet captured.
         private static readonly Vector2 Scn0015WindowUv = new Vector2(0f, 0.06f);
 
-        /// <summary>Render queue that puts a transparent prop BEHIND the stage. The base scene mesh renders with
-        /// Sdo/SceneVertexCutout at AlphaTest (2450) and writes depth; a ZWrite-off prop placed before it is drawn
-        /// first and then simply painted over wherever the stage has geometry — i.e. the stage always wins.
-        /// Used for SCN0004's sea/shore water, which must never appear in front of the huts or the pier.</summary>
-        public const int WaterBehindSceneQueue = 2400;
+        /// <summary>
+        /// 水面「蓋在地面上、但輸給場景所有透明道具」的佇列。SCN0004 的岸浪就靠這個位置。
+        ///
+        /// 場景一顆 SCENE.MSH 會依貼圖 alpha 分成兩種材質(SceneLoader):
+        ///   • 不透明/cutout → Sdo/SceneVertexCutout,**AlphaTest 2450 且 ZWrite On**(沙 SHA*、甲板 DIBAN*、
+        ///     房子 FANGZI*、島 HAIDAO11 …)
+        ///   • 軟 alpha     → Sdo/SceneVertexAlpha,**Transparent 3000 且 ZWrite Off**(欄杆 LANGAN*、棚架 JIAZI、
+        ///     房子基座 D1、陽傘 SAN*、椅子 YIZI*、稻草 DAOCAO、樹葉 YEZI/SHUYE …)
+        /// 這一格(2450 < q < 3000)剛好把水面夾在兩者中間:
+        ///   1. 排在不透明批之後 → 深度測試照常生效。浪片本來就疊在沙灘上方,於是**浪畫得到沙灘**;
+        ///      而甲板/房子在浪前面的地方仍然由深度擋掉。
+        ///   2. 排在場景透明批之前 → 欄杆/棚架/基座那些**不寫深度**的道具後畫,一律覆蓋水面 = 浪永遠不會
+        ///      刷到棧橋欄杆與房子基座。深度救不了它們(ZWrite Off),只有佇列先後能。
+        /// 把水面壓到 2400 會連第 1 點一起放棄(沙灘後畫、把浪整條蓋掉)——那正是「沙灘上沒有海浪」的成因。
+        /// </summary>
+        public const int WaterOverGroundQueue = 2600;
 
         private static readonly Target[] Targets =
         {
@@ -163,27 +179,33 @@ namespace Sdo.Game
             //   但把「官方說它是一般透明批」這件事釘住,免得日後 heuristic 漂移又把它改成加法。
             //   教訓:這兩支之前看起來「沒問題」只是因為它們不會動;一旦 UV 開始動,誤判就藏不住了。
             //
-            // ★ Queue = WaterBehindSceneQueue:光把混色改對還不夠 —— 官方的海浪永遠在房子後面(使用者對過原版
-            //   確認)。這兩片水面是 ZWrite Off 的透明批,原本排在 Transparent(3000),也就是「場景畫完之後」才畫,
-            //   所以只要哪個像素比場景近就會蓋上去;水面又大又掠角,棧橋/房子基座那一帶就一直被水紋刷到。
-            //   把它們壓到場景(Sdo/SceneVertexCutout,queue 2450)之前 → 水面先畫、又不寫深度,接著場景以
-            //   不透明/alpha-test 覆蓋上去,結果就是「有場景幾何的地方一律是場景贏」= 水永遠在房子後面。
-            //   水面本身在 y ≈ −49、比整個棧橋都低,沒有任何它「應該」擋住的東西,所以這個取捨沒有副作用。
-            // ★ 只有 LANG 壓到場景之前,SEA 不動 —— 判準是「這片水的高度跟甲板差多少」,不是「哪片比較大」:
-            //   SEA  平躺在 y = −48.9,比棧橋甲板(y ≈ 0)低了整整 49 單位。相機一定在水面之上,射線會先打到
-            //        甲板才碰得到那個高度,所以正常深度測試本來就不會讓它爬上甲板;而沙灘沿岸低於水面的部分
-            //        則會被它正確蓋住 —— 這正是「海水蓋在沙灘上」。**維持預設佇列(3000)**,壓下去反而會
-            //        變成沙灘蓋掉海水。
-            //   LANG 是岸浪,包圍盒 y −69.5..−5.7,**上緣幾乎跟甲板同高**,所以它會從甲板下面戳出來、
-            //        整條浪打在木板上。這片才要壓到 2400(場景本體 Sdo/SceneVertexCutout 的 AlphaTest 2450
-            //        之前):水面先畫又不寫深度、場景後畫覆蓋上去 → 有場景幾何的地方一律場景贏 = 浪永遠在
-            //        甲板與房子後面。
-            //   房子/甲板與沙灘同屬一顆 SCENE.MSH(單一 renderer、單一佇列),佇列分不開它們,所以唯一能
-            //   表達「擋住甲板但別擋住沙灘」的維度就是分開設定這兩片水。
+            // ★ Queue = WaterOverGroundQueue(2600):岸浪要同時滿足兩件互相打架的事 ——「打在沙灘上」與
+            //   「不刷到棧橋欄杆/房子基座」。之前以為場景是單一佇列、分不開,所以只能二選一(壓 2400 = 保住
+            //   房子但沙灘上的浪整條不見,正是使用者回報的症狀)。實機探針(Scn0004CaptureTest 逐 submesh 印
+            //   shader/queue)推翻了這個前提:SCENE.MSH 被 SceneLoader 依貼圖 alpha 拆成兩批 ——
+            //     沙 SHA*/甲板 DIBAN*/房子 FANGZI* → SceneVertexCutout,2450,**ZWrite On**
+            //     欄杆 LANGAN*/棚架 JIAZI/基座 D1/陽傘 SAN* → SceneVertexAlpha,3000,**ZWrite Off**
+            //   當初「浪蓋到棧橋與房子基座」的真正原因是後面這批不寫深度、又跟浪同在 3000,勝負只看排序;
+            //   不是「深度測試擋不住」。把浪放進 2450 與 3000 中間那格就兩件事一起成立:
+            //     不透明批先畫 → 深度測試生效,浪疊在沙灘上方所以蓋得到沙、被甲板/房子正確擋住;
+            //     浪再畫 → 場景透明道具最後畫,一律覆蓋浪 = 欄杆與基座永遠乾淨。
+            //   詳見 WaterOverGroundQueue 的註解。
+            // ★ SEA(大洋)維持預設佇列(3000)不動:它是平躺在 y = −48.9 的一張平面,比棧橋甲板低 49 單位,
+            //   相機一定在水面之上,正常深度測試本來就不會讓它爬上甲板;沿岸低於水面的沙灘則被它正確蓋住
+            //   (= 海水蓋在沙灘上)。壓它反而會變成沙灘蓋掉海水 —— 這條 0032d6f 已經用截圖踩過一次。
             Target.Sine("SCN0004", "SEA",  new Vector2(0.5f, 0f), new Vector2(0.593f, 0f),
                         RenderMode.OfficialMaterialAlpha),
             Target.Sine("SCN0004", "LANG", new Vector2(0f, -0.25f), new Vector2(0f, 2.372f),
-                        RenderMode.OfficialMaterialAlpha, WaterBehindSceneQueue),
+                        RenderMode.OfficialMaterialAlpha, WaterOverGroundQueue),
+            // ── SCN0004 淺灘海床 SEA_DOWN:那條「黑色的邊界」───────────────────────────────────────
+            // A001..A032(32 幀焦散動畫)的下緣是一段**淡出漸層**:第 0..95 列 alpha 255(藍綠焦散 → 橄欖),
+            // 第 96..127 列 alpha 220→34、顏色是靠岸的濕沙。官方材質旗標 = 0 = 不透明批,引擎不看 alpha,
+            // 整片照畫,所以那段漸層是「顏色慢慢收進沙灘」的過渡。
+            // 我們的貼圖啟發式把它判成 Cutout,clip(a-0.5) 正好切在漸層中段 —— 保留下來的最後一列是整張圖
+            // **最暗**的橄欖褐、而且 100% 不透明,邊緣還沿 texel 鋸齒。實機分層截圖(只留 SEA_DOWN)拍得一清二楚:
+            // 沿著海岸線一條硬邊深褐帶,就是使用者說的黑色邊界。ForceOpaque 把 clip 關掉即可。
+            // 不動 UV(這片是換幀動畫不是捲動),所以振幅/速度都是 0 —— Animates == false,只帶 RenderMode。
+            new Target("SCN0004", "SEA_DOWN", -1, Vector2.zero, RenderMode.ForceOpaque),
             // ── SCN0012/0013 足球場:廣告看板每 2 秒換一幅 ───────────────────────────────────────
             // StageScene_UpdatePulse_004b0090(case 0xc 與 0xd 共用)是一台「停→快掃」的狀態機:
             //   v>=1 → v=0;若 v!=0 且 (v<=0.5 或 prev>=0.5) → 每幀 v += _DAT_00589030 (0.003) 並寫出;

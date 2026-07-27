@@ -57,6 +57,7 @@ Shader "Sdo/UnlitInstancedAlphaCullBack"
             {
                 fixed4 c = tex2D(_MainTex, i.uv) * _Color;
                 c.rgb *= i.col.rgb;
+                c.a *= i.col.a;                 // 與 Sdo/UnlitInstancedAlpha 一致:逐頂點淡出也要吃(見 MshLoader alphaAuthored)
                 return c;
             }
             ENDCG
