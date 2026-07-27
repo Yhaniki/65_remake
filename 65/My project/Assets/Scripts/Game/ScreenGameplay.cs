@@ -2474,6 +2474,12 @@ namespace Sdo.Game
                                  new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 
+        // Pose crossfade length for the dancer. The original re-arms a blend on EVERY DPS slice boundary and decays its
+        // weight at a per-clip rate (MotionDriver tick: blendW -= dt·clip.blendRate) whose constant isn't recovered from
+        // the decomp; 0.15s (≈4-5 frames @30fps) hands the pose over without smearing the shortest slices (some run
+        // <0.3s). SdoAvatar's 1.0s default was written for the room's idle↔walk, and is far too long for choreography.
+        private const float DanceBlendSec = 0.15f;
+
         private void TryLoadAvatar()
         {
             var parent = new GameObject("Avatar3D");
@@ -2484,6 +2490,7 @@ namespace Sdo.Game
             if (hrc != null)
             {
                 avatar = parent.AddComponent<SdoAvatar>(); avatar.Setup(hrc, mot);
+                avatar.BlendSec = DanceBlendSec;                                              // short pose hand-off on every DPS slice (see the const)
                 _avatar = avatar;                                                             // F4 panel re-shapes this live
                 _bodyShapeB = SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody);
                 avatar.SetBodyShape(_bodyShapeB);                                             // 體型: thin/standard/fat (default thin)
