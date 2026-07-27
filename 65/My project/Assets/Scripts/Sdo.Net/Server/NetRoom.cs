@@ -50,9 +50,25 @@ namespace Sdo.Net.Server
             _state.Rev = 1;
 
             SeatPlayer(0, host);
-            // 房主不需要「準備」—— 官方 UI 也沒給房主準備鈕。恆為 ready,開場檢查才不用特例。
-            _state.Seats[0].Ready = true;
+            // 房主的 Ready 一律留 false —— 見 IsClearedToStart 的說明:
+            // 房主不是「準備好的玩家」,它是房主,那是另一種身分。
         }
+
+        /// <summary>
+        /// 這個座位可以被納入下一場了嗎?
+        ///
+        /// 🔴 **房主沒有「準備」這個狀態。** 它的頭貼顯示的是 host 徽章(官方 master.an),
+        /// 而不是準備標記;它也不需要按準備 —— 它按的是「開始」。所以判定是
+        /// 「**是房主** 或 **按了準備**」,而不是把房主的 Ready 硬設成 true。
+        ///
+        /// 為什麼不用「房主恆 Ready = true」那種做法(我一開始就是那樣寫的):那會讓
+        /// <c>Ready</c> 這個欄位同時承載兩種語意,結果每個讀它的地方都要記得排除房主 ——
+        /// 忘掉一處就出錯,而且症狀很難聯想。最明顯的例子是「房主永遠不能選自己的隊」:
+        /// 換隊的條件是「還沒準備」,而房主恆 Ready 就永遠通不過,
+        /// 於是組隊模式(要求所有參與者都選隊)永遠開不了場。
+        /// </summary>
+        private bool IsClearedToStart(NetSeat seat)
+            => seat.IsTaken && (_state.IsHost(seat.UserId) || seat.Ready);
 
         // ================= 加入 / 離開 / 旁觀 =================
 
@@ -84,14 +100,32 @@ namespace Sdo.Net.Server
         {
             if (_state.SpectatorIndexOf(user.UserId) >= 0) return NetRoomOp.Ok;   // 已經在旁觀
 
-            // 房主不能變旁觀 —— 它得留著管房間(否則沒人能開始遊戲)。
-            if (_state.IsHost(user.UserId)) return NetRoomOp.BadState;
-
             if (_spectators.Count >= _state.Settings.LookerCount) return NetRoomOp.LookerFull;
 
-            // 本來坐著的話先讓出座位。
             int seat = _state.SeatIndexOf(user.UserId);
-            if (seat >= 0) _state.Seats[seat].Clear();
+            if (seat >= 0)
+            {
+                var s = _state.Seats[seat];
+
+                // **一般玩家準備後不能旁觀**(使用者要求)—— 要先取消準備。
+                // 不擋的話會出現「已準備的人數」與實際能開場的人對不上。
+                if (s.Ready) return NetRoomOp.BadState;
+
+                // 已經進入遊戲流程(載入中/遊玩中/看結算)也不能切 —— 它正在這一場裡面。
+                if (s.PlayState != PlayState.Idle) return NetRoomOp.BadState;
+
+                // **房主可以旁觀,但要先把 host 交給下一個人**(使用者要求)。
+                // 找不到接手的人(它是唯一的座位玩家)就不行 —— 沒有房主的房間沒人能開始遊戲,
+                // 而且座位全空的房間本來就會被關掉。
+                if (_state.IsHost(user.UserId))
+                {
+                    int heir = FindHeirSeat(seat);
+                    if (heir < 0) return NetRoomOp.BadState;
+                    _state.HostUserId = _state.Seats[heir].UserId;
+                }
+
+                s.Clear();
+            }
 
             var sp = new NetSpectator
             {
@@ -232,8 +266,8 @@ namespace Sdo.Net.Server
             if (seat < 0) return NetRoomOp.NotInRoom;   // 只能給座位玩家(旁觀者不能當房主)
 
             _state.HostUserId = targetId;
-            // 新房主恆 ready(它沒有準備鈕);舊房主變成一般玩家,ready 保持原樣。
-            _state.Seats[seat].Ready = true;
+            // 新房主的 Ready 不動 —— 它現在是房主,Ready 對它已經不適用(見 IsClearedToStart)。
+            // 舊房主變回一般玩家,它的 Ready 本來就是 false,所以它需要自己按準備。
             Touch();
             return NetRoomOp.Ok;
         }
@@ -269,8 +303,7 @@ namespace Sdo.Net.Server
                 if (!s.IsTaken) continue;
                 s.Avail = Availability.Unknown;
                 s.AvailProgress = 0f;
-                // 房主恆 ready;其他人一律打回未準備。
-                s.Ready = s.UserId == _state.HostUserId;
+                s.Ready = false;   // 房主的 Ready 本來就是 false,不用特例
             }
             for (int i = 0; i < _spectators.Count; i++)
             {
@@ -356,8 +389,9 @@ namespace Sdo.Net.Server
 
             // 已經進入遊戲流程(載入/遊玩/結算)就不能換。
             if (s.PlayState != PlayState.Idle) return NetRoomOp.BadState;
-            // 按了準備的一般玩家鎖定;房主的 Ready 是常態,不算鎖定。
-            if (s.Ready && !_state.IsHost(userId)) return NetRoomOp.BadState;
+            // 按了準備就鎖定。房主的 Ready 恆為 false(它沒有準備這個狀態),所以它一直都能換隊
+            // —— 這正是使用者要的:「它可以直接按開始 但是它還是要可以選隊」。
+            if (s.Ready) return NetRoomOp.BadState;
 
             s.Team = team;
             Touch();
@@ -371,13 +405,14 @@ namespace Sdo.Net.Server
         /// 這是照 osu 的做法(它甚至更進一步:圖不見了會自動把 Ready 打回 Idle,見
         /// <see cref="SetAvailability"/>)。
         ///
-        /// 房主沒有準備鈕(它恆 ready),所以房主送這個訊息是不合法的。
+        /// **房主沒有準備這個狀態** —— 它的頭貼顯示 host 徽章,而它按的是「開始」。
+        /// 所以房主送這個訊息是不合法的(見 <see cref="IsClearedToStart"/>)。
         /// </summary>
         public NetRoomOp SetReady(int userId, bool ready)
         {
             var s = _state.SeatOf(userId);
             if (s == null) return NetRoomOp.NotInRoom;
-            if (_state.IsHost(userId)) return NetRoomOp.BadState;   // 房主恆 ready
+            if (_state.IsHost(userId)) return NetRoomOp.BadState;   // 房主沒有準備這個狀態
             if (_state.Status != RoomStatus.Open) return NetRoomOp.BadState;
 
             if (ready)
@@ -419,7 +454,9 @@ namespace Sdo.Net.Server
                 seat.AvailProgress = avail == Availability.Downloading ? progress : 0f;
 
                 // 準備好的人突然沒歌了 → 自動取消準備,否則會被拉進一局他打不了的歌。
-                if (seat.Ready && avail != Availability.Have && !_state.IsHost(userId))
+                // (房主的 Ready 恆 false,所以這段自然不會動到它;房主缺歌的處置是
+                //  RequestStart 時不把它算進參與者。)
+                if (seat.Ready && avail != Availability.Have)
                 {
                     seat.Ready = false;
                     if (seat.PlayState == PlayState.Ready) seat.PlayState = PlayState.Idle;
@@ -486,8 +523,9 @@ namespace Sdo.Net.Server
         /// 不要求全員準備,沒準備/缺歌的人**留在房間**(狀態不變),只會看到其他人的頭貼變「遊戲中」。
         /// 這與 osu 的行為一致(host 直接 StartMatch 時,Idle 的人整場被跳過)。
         ///
-        /// **參與者集合 = <c>ready</c> 且 <c>avail == have</c> 的座位玩家**(房主恆 ready,
-        /// 但房主自己也必須有歌)。集合在這一刻**凍結**。
+        /// **參與者集合 = <see cref="IsClearedToStart"/> 且 <c>avail == have</c> 的座位玩家**。
+        /// 房主不需要按準備(它就是按開始的那個人),但**它自己也必須有歌**才算參與者。
+        /// 集合在這一刻**凍結**。
         ///
         /// 🔴 R10c:組隊模式下湊不出官方座標表有的版型就**擋住不開始**(連 force 也擋)。
         /// </summary>
@@ -500,24 +538,24 @@ namespace Sdo.Net.Server
             if (_state.Song == null) return NetRoomOp.NoSong;
             if (resolved == null) return NetRoomOp.BadState;
 
-            // 非強制開始 → 所有座位玩家都要準備好。
+            // 非強制開始 → 所有**其他**座位玩家都要準備好。
+            // 房主自己不算(它沒有準備狀態 —— 它按的就是開始那顆鈕)。
             if (!force)
             {
                 for (int i = 0; i < _state.Seats.Length; i++)
                 {
                     var s = _state.Seats[i];
-                    if (s.IsTaken && !s.Ready) return NetRoomOp.BadState;
+                    if (s.IsTaken && !IsClearedToStart(s)) return NetRoomOp.BadState;
                 }
             }
 
-            // 參與者:準備好**而且**手上有歌。
+            // 參與者:可開場(房主 or 已準備)**而且**手上有歌。
             var participants = new List<int>();
             var participantSeats = new List<NetSeat>();
             for (int i = 0; i < _state.Seats.Length; i++)
             {
                 var s = _state.Seats[i];
-                if (!s.IsTaken) continue;
-                if (!s.Ready) continue;
+                if (!IsClearedToStart(s)) continue;
                 if (s.Avail != Availability.Have) continue;
                 participants.Add(s.UserId);
                 participantSeats.Add(s);
@@ -689,7 +727,7 @@ namespace Sdo.Net.Server
                 if (!s.IsTaken) continue;
                 if (s.PlayState == PlayState.Results || s.PlayState == PlayState.Finished)
                     s.PlayState = PlayState.Idle;
-                s.Ready = s.UserId == _state.HostUserId;   // 房主恆 ready
+                s.Ready = false;   // 下一局要重新準備;房主本來就沒有這個狀態
             }
             _match = null;
             Touch();
@@ -728,13 +766,25 @@ namespace Sdo.Net.Server
         /// <summary>房主走了 → 給剩下 Taken 座位中**索引最小**的人(R5)。</summary>
         private void PromoteNewHost()
         {
+            int heir = FindHeirSeat(-1);
+            if (heir < 0) return;
+            _state.HostUserId = _state.Seats[heir].UserId;
+            // 不動它的 Ready —— 它現在是房主,Ready 對它已經不適用(見 IsClearedToStart)。
+            // 若它原本已按準備,那個 true 也無害:IsClearedToStart 對房主一律放行。
+        }
+
+        /// <summary>
+        /// 找可以接手房主的座位:Taken 且索引最小,並排除 <paramref name="exceptSeat"/>
+        /// (房主要變旁觀時,要排除它自己那個還沒清空的座位)。找不到回 -1。
+        /// </summary>
+        private int FindHeirSeat(int exceptSeat)
+        {
             for (int i = 0; i < _state.Seats.Length; i++)
             {
-                if (!_state.Seats[i].IsTaken) continue;
-                _state.HostUserId = _state.Seats[i].UserId;
-                _state.Seats[i].Ready = true;   // 新房主恆 ready
-                return;
+                if (i == exceptSeat) continue;
+                if (_state.Seats[i].IsTaken) return i;
             }
+            return -1;
         }
 
         private static string ClipRoomName(string name)

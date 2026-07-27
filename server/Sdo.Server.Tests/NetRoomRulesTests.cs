@@ -155,16 +155,63 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void R4_New_Host_Becomes_Ready_Automatically()
+        public void R4_Host_Has_No_Ready_State_At_All()
         {
-            // 房主沒有準備鈕(恆 ready),所以轉移後新房主必須自動變 ready ——
-            // 否則會出現「房主自己沒準備所以不能開始」的死結。
+            // 🔴 房主**沒有**準備這個狀態。它的頭貼顯示 host 徽章(官方 master.an),
+            // 而它按的是「開始」不是「準備」。所以 Ready 一律留 false ——
+            // 不是「恆為 true」,那會讓 Ready 這個欄位同時承載兩種語意,
+            // 於是每個讀它的地方都要記得排除房主,忘掉一處就出錯。
+            var r = MakeRoom();
+            Assert.IsFalse(r.State.Seats[0].Ready, "房主的 Ready 應該是 false");
+
+            JoinMany(r, Bob);
+            r.TransferHost(Host, Bob);
+            Assert.IsFalse(r.State.Seats[1].Ready, "新房主也不需要 Ready");
+        }
+
+        [Test]
+        public void R4_Host_Can_Start_Without_Being_Ready()
+        {
+            // 「它可以直接按開始」—— 房主不需要先準備。
+            var r = MakeRoom();
+            SetSongAndHave(r, Host);
+            Assert.IsFalse(r.State.SeatOf(Host).Ready);
+
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 0, out m));
+            Assert.Contains(Host, m.ParticipantUserIds, "房主自己要算參與者");
+        }
+
+        [Test]
+        public void R4_New_Host_Can_Start_Immediately_After_Transfer()
+        {
+            // 轉移房主後不該出現「新房主自己沒準備所以開不了場」的死結。
             var r = MakeRoom();
             JoinMany(r, Bob);
-            Assert.IsFalse(r.State.Seats[1].Ready);
-
+            SetSongAndHave(r, Host, Bob);
             r.TransferHost(Host, Bob);
-            Assert.IsTrue(r.State.Seats[1].Ready);
+
+            NetMatchInfo m;
+            // 舊房主 Host 現在是一般玩家,它沒準備 → 非強制開始應該被擋。
+            Assert.AreEqual(NetRoomOp.BadState, r.RequestStart(Bob, false, Resolved(), 0, out m));
+            // 舊房主準備後就能開。
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Host, true));
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Bob, false, Resolved(), 0, out m));
+        }
+
+        [Test]
+        public void R4_Host_Can_Change_Team_Even_When_Everyone_Else_Is_Ready()
+        {
+            // 「它還是要可以選隊」—— 這是舊模型(房主恆 Ready)最直接的受害者:
+            // 換隊的條件是「還沒準備」,房主恆 Ready 就永遠通不過,
+            // 於是組隊模式(要求所有參與者都選隊)永遠開不了場。
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid, Dan);
+            SetSongAndHave(r, Host, Bob, Cid, Dan);
+            ReadyAll(r);
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetOwnTeam(Host, (int)TeamTag.A));
+            Assert.AreEqual((int)TeamTag.A, r.State.SeatOf(Host).Team);
         }
 
         [Test]
@@ -200,7 +247,6 @@ namespace Sdo.Tests
 
             Assert.IsFalse(close, "還有人在,房間不該關");
             Assert.AreEqual(Bob, r.HostUserId, "應該給座位索引最小的那個人");
-            Assert.IsTrue(r.State.Seats[1].Ready, "新房主自動 ready");
         }
 
         [Test]
@@ -414,7 +460,7 @@ namespace Sdo.Tests
             Assert.IsFalse(r.State.Seats[1].Ready, "換歌要清掉準備狀態");
             Assert.AreEqual(Availability.Unknown, r.State.Seats[1].Avail);
             Assert.AreEqual(Availability.Unknown, r.State.Seats[0].Avail);
-            Assert.IsTrue(r.State.Seats[0].Ready, "房主恆 ready");
+            Assert.IsFalse(r.State.Seats[0].Ready, "房主沒有準備狀態,一律 false");
         }
 
         [Test]
@@ -668,11 +714,78 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Host_Cannot_Become_A_Spectator()
+        public void Host_Can_Spectate_By_Handing_Off_The_Host_Role()
         {
-            // 房主要留著管房間,否則沒人能開始遊戲。
+            // 使用者要求:「房主還要可以旁觀(把 host 切給下一個人)」。
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid);
+
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Host)));
+
+            Assert.AreEqual(Bob, r.HostUserId, "host 交給剩下座位索引最小的人");
+            Assert.AreEqual(-1, r.State.SeatIndexOf(Host), "房主的座位讓出來了");
+            Assert.AreEqual(0, r.State.SpectatorIndexOf(Host));
+            Assert.IsTrue(r.State.Seats[0].IsOpen);
+        }
+
+        [Test]
+        public void Lone_Host_Cannot_Spectate()
+        {
+            // 沒有人可以接手 host —— 而且座位全空的房間本來就會被關掉,
+            // 「房主想旁觀結果房間關了」不是合理的結果。
             var r = MakeRoom();
             Assert.AreEqual(NetRoomOp.BadState, r.TrySpectate(User(Host)));
+            Assert.AreEqual(Host, r.HostUserId, "失敗時 host 不該被交出去");
+            Assert.AreEqual(0, r.State.SeatIndexOf(Host));
+        }
+
+        [Test]
+        public void Host_Cannot_Spectate_If_Only_Spectators_Remain()
+        {
+            // 旁觀者不能接手 host(它沒有座位)。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            r.TrySpectate(User(Bob));   // Bob 變旁觀,只剩房主坐著
+
+            Assert.AreEqual(NetRoomOp.BadState, r.TrySpectate(User(Host)));
+            Assert.AreEqual(Host, r.HostUserId);
+        }
+
+        [Test]
+        public void Ready_Players_Cannot_Spectate()
+        {
+            // 使用者要求:「一般玩家準備後不能旁觀」。
+            // 不擋的話會出現「已準備的人數」與實際能開場的人對不上。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+
+            Assert.AreEqual(NetRoomOp.BadState, r.TrySpectate(User(Bob)));
+            Assert.AreEqual(1, r.State.SeatIndexOf(Bob), "還在座位上");
+
+            // 取消準備之後就可以了。
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, false));
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Bob)));
+        }
+
+        [Test]
+        public void Participants_Cannot_Spectate_Mid_Match()
+        {
+            // 已經在這一場裡面的人不能中途切旁觀。
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid);
+            SetSongAndHave(r, Host, Bob);
+            r.SetReady(Bob, true);
+
+            NetMatchInfo m;
+            r.RequestStart(Host, true, Resolved(), 0, out m);
+
+            Assert.AreEqual(NetRoomOp.BadState, r.TrySpectate(User(Bob)), "Bob 正在載入");
+            Assert.AreEqual(NetRoomOp.BadState, r.TrySpectate(User(Host)), "房主也在這一場裡");
+
+            // 但沒被納入這一場的人(缺歌的 Cid)還是可以切 —— 它閒著。
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Cid)));
         }
 
         [Test]
@@ -939,7 +1052,7 @@ namespace Sdo.Tests
 
             Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Host).PlayState);
             Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
-            Assert.IsTrue(r.State.SeatOf(Host).Ready, "房主恆 ready");
+            Assert.IsFalse(r.State.SeatOf(Host).Ready, "房主沒有準備狀態");
             Assert.IsFalse(r.State.SeatOf(Bob).Ready, "其他人要重新準備");
             Assert.IsNull(r.Match);
         }
@@ -1119,11 +1232,12 @@ namespace Sdo.Tests
         [Test]
         public void R17_Host_Cannot_Use_SetReady()
         {
-            // 房主恆 ready(官方 UI 也沒給房主準備鈕)。
+            // 官方 UI 沒給房主準備鈕 —— 房主的頭貼位置顯示的是 host 徽章。
             var r = MakeRoom();
             SetSongAndHave(r, Host);
             Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Host, false));
-            Assert.IsTrue(r.State.SeatOf(Host).Ready);
+            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Host, true));
+            Assert.IsFalse(r.State.SeatOf(Host).Ready, "Ready 始終不適用於房主");
         }
 
         [Test]

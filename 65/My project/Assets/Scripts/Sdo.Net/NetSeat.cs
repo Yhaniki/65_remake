@@ -104,7 +104,16 @@ namespace Sdo.Net
         /// <summary>外觀。</summary>
         public NetAvatarLook Look = new NetAvatarLook();
 
-        /// <summary>按了準備。host 恆為 true(它不需要準備)。</summary>
+        /// <summary>
+        /// 按了準備。
+        ///
+        /// 🔴 **房主的這個欄位永遠是 false** —— 房主沒有「準備」這個狀態:它的頭貼位置顯示的是
+        /// host 徽章(官方 master.an),而它按的是「開始」不是「準備」。
+        /// 判斷「這個座位能不能被納入下一場」要用「是房主 或 Ready」,不要把房主的 Ready 設成 true
+        /// (那會讓這個欄位同時承載兩種語意,每個讀它的地方都得記得排除房主)。
+        ///
+        /// UI 對應:房主那一格畫 <c>master.an</c> 徽章、**不畫準備標記**;其他人畫準備標記。
+        /// </summary>
         public bool Ready;
 
         /// <summary>隊伍 0=A 1=B 2=C 3=自由。</summary>
