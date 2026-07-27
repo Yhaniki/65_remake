@@ -425,8 +425,9 @@ namespace Sdo.Game
             if (r.Idle != null)
             {
                 av.RestMot = r.Idle;
-                av.SetClip(r.Idle);
                 av.PhaseOffsetSec = (p.Seat + 1) * 0.37f;   // 同一段 clip 不要整齊得像複製人
+                av.PoseFrame(av.AutoLoopFrame);             // 上面 FeetYAt 把人停在第 0 幀 → 擺回迴圈當下(見換裝那條)
+                av.SetClip(r.Idle);
             }
 
             // 還沒收到他的位置之前先站在座位對應的固定點(每台算出來一樣),收到第一筆就會滑過去。
@@ -681,6 +682,9 @@ namespace Sdo.Game
             _avatarRoot = parent.transform;
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
+            // FeetYAt 是「把人擺到第 0 幀」量出來的 → 顯示姿勢現在停在第 0 幀。擺回迴圈當下那一格,
+            // 否則接著真的換 clip 時(戴上飛行翅膀:地面 idle→flystay)混色會從第 0 幀起跳 = 抖一下。
+            if (_avatar != null) _avatar.PoseFrame(_avatar.AutoLoopFrame);
             _walking = false;
             ApplyRebuildIdle(wasFlying);
             ApplyAvatarTransform();

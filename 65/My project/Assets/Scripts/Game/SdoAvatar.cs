@@ -124,9 +124,16 @@ namespace Sdo.Game
             if (_hrc == null || from == null) return;
             _mot = from;
             _blendStart = -1f;      // not blending yet — we're only establishing the displayed pose
-            Pose(0f);               // display 'from' → _dispLocal = from's pose, _haveDisp = true
+            // 用**迴圈當下**那一幀,不是第 0 幀:被取代掉的那隻 avatar 顯示的就是這個相位(它也是 wall-clock 迴圈),
+            // 從第 0 幀起混色 = 一開始就跳到一個畫面上根本沒出現過的姿勢。
+            Pose(AutoLoopFrame);    // display 'from' → _dispLocal = from's pose, _haveDisp = true
             _lastMot = from;        // so SetClip(target) next is seen as a switch → crossfade from this pose
         }
+
+        /// <summary>自動迴圈目前算到第幾幀 —— 與 <see cref="LateUpdate"/> 的待機/走路迴圈同一條公式(唯一來源)。
+        /// 重建 avatar 時用它把顯示姿勢對回「畫面上原本那一格」,混色才不會從第 0 幀起跳。</summary>
+        public float AutoLoopFrame =>
+            _mot != null && _mot.MaxTime > 0f ? ((Time.time + PhaseOffsetSec) * Fps) % (_mot.MaxTime + 1f) : 0f;
 
         /// <summary>Switch the active LOOPING clip (no DPS): used by the waiting room to flip between the standby idle
         /// and the walk clip as the local player moves. The change is picked up next LateUpdate, which crossfades from
@@ -482,7 +489,7 @@ namespace Sdo.Game
                 }
             }
             else if (FrameOverride >= 0f) t = FrameOverride;
-            else if (Animate && _mot != null && _mot.MaxTime > 0f) t = ((Time.time + PhaseOffsetSec) * Fps) % (_mot.MaxTime + 1f);
+            else if (Animate) t = AutoLoopFrame;   // 同一條公式也給 PrimeBlendFrom 用(見 AutoLoopFrame)
             else t = 0f;
             MaybeStartBlend();   // crossfade if the active clip switched this frame
             Pose(t);
