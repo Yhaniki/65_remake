@@ -839,6 +839,10 @@ namespace Sdo.Tests
         public void Participants_Cannot_Spectate_Mid_Match()
         {
             // 已經在這一場裡面的人不能中途切旁觀。
+            //
+            // ⚠️ 這是**防禦性**的:打歌畫面沒有「旁觀」鈕,正常玩家送不出這個請求。
+            // 擋的是改過的 client —— 中途變旁觀者會讓分數與 playState 對不上,結算就錯了。
+            // 真正會用到旁觀切換的是後半段那個 case:留在房間、沒被納入這一場的人。
             var r = MakeRoom();
             JoinMany(r, Bob, Cid);
             SetSongAndHave(r, Host, Bob);
@@ -1304,6 +1308,39 @@ namespace Sdo.Tests
             Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Host, false));
             Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Host, true));
             Assert.IsFalse(r.State.SeatOf(Host).Ready, "Ready 始終不適用於房主");
+        }
+
+        [Test]
+        public void R17_Nobody_Can_Ready_Up_While_The_Room_Is_In_Game()
+        {
+            // 使用者:「按準備只有在不是在遊戲中才行」。
+            // 房間在 waitingForLoad / playing 期間,連留在房間沒下場的人也按不了準備 ——
+            // 準備是為了「下一局」,而下一局要等這一局結束才存在。
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid);
+            SetSongAndHave(r, Host, Bob, Cid);
+            r.SetReady(Bob, true);
+
+            NetMatchInfo m;
+            r.RequestStart(Host, true, Resolved(), 0, out m);   // Cid 沒準備 → 留在房間
+            Assert.AreEqual(RoomStatus.WaitingForLoad, r.Status);
+
+            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Cid, true), "載入階段不能按準備");
+
+            r.SetPlayState(Host, PlayState.Loaded, m.MatchId);
+            r.SetPlayState(Bob, PlayState.Loaded, m.MatchId);
+            r.Tick(100);
+            Assert.AreEqual(RoomStatus.Playing, r.Status);
+
+            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Cid, true), "遊玩階段也不能");
+
+            // 這一局結束、房間回到 open 之後才可以。
+            r.SetPlayState(Host, PlayState.Finished, m.MatchId);
+            r.SetPlayState(Bob, PlayState.Finished, m.MatchId);
+            r.Tick(200);
+            r.ClearResults();
+            Assert.AreEqual(RoomStatus.Open, r.Status);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Cid, true));
         }
 
         [Test]
