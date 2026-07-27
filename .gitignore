@@ -168,3 +168,4 @@ tools/kgn_export/gn_notes.json
 # Unity 產生的資料夾 meta 也一併忽略。
 65/My project/Assets/MagicaCloth2/
 65/My project/Assets/MagicaCloth2.meta
+/bubble_log*.txt

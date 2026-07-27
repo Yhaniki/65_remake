@@ -1394,6 +1394,34 @@ namespace Sdo.UI.Screens
             return _chatScroll.verticalNormalizedPosition <= 0.02f;
         }
 
+        // ---- DEV: SDO_SAY=<文字> → 進房後定期自動說一次那句話 ------------------------------------------------
+        // 為什麼需要這個 hook:頭上泡的東西(尤其「被前面的人擋住」)只能實機截圖驗,而「點空曠處 → 打字 → Enter」
+        // 用注入按鍵驅動太脆 —— 實測進得去打字模式、游標也在閃,但一個字都沒進去(看起來像輸入框壞了)。
+        // 這裡刻意走 SendRoomChat(),與使用者真的按 Enter 完全同一條路(頻道解析、泡生成、上網),
+        // 所以截到的畫面是真的,不是為了測試另外搭的假路徑。只有設了環境變數才會動。
+        private float _devSayAt = -1f;
+        private string _devSayText;
+        private bool _devSayResolved;
+
+        private void TickDevAutoSay()
+        {
+            if (!_devSayResolved)
+            {
+                _devSayResolved = true;
+                _devSayText = ScreenGameplay.DevVar("SDO_SAY");
+            }
+            if (string.IsNullOrEmpty(_devSayText) || _chatInput == null || Ctx == null || Ctx.Chat == null) return;
+            if (Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            float now = Time.unscaledTime;
+            if (_devSayAt < 0f) { _devSayAt = now + 4f; return; }   // 進房後先等一下,等連線/座位就位
+            if (now < _devSayAt) return;
+            _devSayAt = now + DevSayEverySec;
+            _chatInput.text = _devSayText;
+            SendRoomChat();
+        }
+
+        private const float DevSayEverySec = 6f;   // 泡的壽命比這個長 → 畫面上一直有泡可看
+
         private void SendRoomChat()
         {
             if (_chatInput == null || Ctx == null || Ctx.Chat == null) return;
@@ -2594,6 +2622,8 @@ namespace Sdo.UI.Screens
 
             // 所有人的泡都擺完了 → 按深度重排「泡與泡」的前後(UI 材質不寫深度,誰蓋誰只看畫的順序)。
             SortBubbleWorldCanvases();
+
+            TickDevAutoSay();   // DEV only:設了 SDO_SAY 才會動(見那邊的註解)
         }
 
         private bool HasBubbleOf(int owner)
