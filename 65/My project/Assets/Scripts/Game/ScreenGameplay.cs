@@ -35,7 +35,8 @@ namespace Sdo.Game
         private static readonly string[] ForceJudgeLabels = { "Real", "Perfect", "Cool", "Bad", "Miss" };
         // Note scroll = osu!mania-style (Sequential + relative beat-length scaling) at a FIXED base tempo:
         // the base speed is the SAME for every song (NOT scaled by the song's BPM), calibrated with the
-        // official px/s = BPM×speed×1.6 at referenceBpm (ManiaScroll.DefaultReferenceBpm). Mid-song BPM changes /
+        // official px/s = BPM×speed×1.6 at referenceBpm (config.ini [Room] scrollBaseBpm, 預設 130 =
+        // ManiaScroll.DefaultReferenceBpm). Mid-song BPM changes /
         // osu SV still vary the scroll locally (see ManiaScroll). scrollSpeedMul = the room "速度" step
         // (RoomConfig.speedSteps), set by FrontendApp from the session. constantScroll = osu "Constant Speed" mod
         // (kill all variation) — wired to OPTION 進階「歌曲變速」關閉 (GameplaySettings.songSpeed == false).
@@ -44,7 +45,9 @@ namespace Sdo.Game
         // -2 = unset (standalone/F4 boot: keep stock); -1 = 隨機 (random skin); 0..11 = the specific note skin
         // (0..10 = the 2D skins in NoteTypeEftSuffix order, 11 = the 3D hiteft3D skin) — same order as the room's NoteEftArt.
         public int roomNoteType = -2;
-        public float referenceBpm = 130f;     // base-tempo anchor when NOT following the song's BPM
+        // base-tempo anchor when NOT following the song's BPM。預設＝ config.ini [Room] scrollBaseBpm（手改可整體調快/調慢
+        // 所有歌的下落速度；預設 130 = ManiaScroll.DefaultReferenceBpm）。遊戲中 F 面板的滑桿仍可即時覆蓋（不寫回檔案）。
+        public float referenceBpm = Sdo.Settings.RoomConfig.scrollBaseBpm;
         public bool scrollFollowsSongBpm = false; // true = base speed follows the song's own BPM (official px/s = BPM×speed×1.6); false = fixed referenceBpm for every song
         public bool constantScroll = false;   // true = ignore BPM/SV variation (perfectly linear scroll)
         public bool useMusicStartOffset = true;  // true = start the music (and the dancer) at the chart's type-10 音樂起止 marker (skip the leading count-in measure so notes line up with the song)

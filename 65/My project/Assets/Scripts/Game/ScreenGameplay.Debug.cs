@@ -155,8 +155,8 @@ namespace Sdo.Game
                 if (fsb != scrollFollowsSongBpm) { scrollFollowsSongBpm = fsb; BuildScroll(); }
                 if (!scrollFollowsSongBpm)
                 {
-                    GUILayout.Label($"固定基準 BPM: {referenceBpm:F0}");
-                    float nb = GUILayout.HorizontalSlider(referenceBpm, 60f, 240f);
+                    GUILayout.Label($"固定基準 BPM: {referenceBpm:F0}（開局值＝config.ini scrollBaseBpm，這裡調不寫回檔案）");
+                    float nb = GUILayout.HorizontalSlider(referenceBpm, 30f, 400f);   // 與 RoomConfig.Sanitize 的夾值同範圍
                     if (Mathf.Abs(nb - referenceBpm) > 0.5f) { referenceBpm = nb; BuildScroll(); }
                 }
                 bool cs = GUILayout.Toggle(constantScroll, constantScroll

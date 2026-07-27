@@ -237,7 +237,7 @@ namespace Sdo.UI
             game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
-            game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準 ManiaScroll.DefaultReferenceBpm，osu式內部變速）
+            game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準 config.ini scrollBaseBpm，osu式內部變速）
             game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
             game.showtimeMode = s.GameMode == 2;                 // 選歌模式選單：2 = ShowTime（氣條/集氣）模式；否則一般玩法

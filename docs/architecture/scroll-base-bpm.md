@@ -19,12 +19,15 @@ note 的位置     = judgeLineY + vBase × ∫ multiplier dτ   (osu SequentialS
 
 | 名詞 | 值 | 誰決定 |
 |------|----|--------|
-| `anchorBpm` | 預設 **固定 130**（`ManiaScroll.DefaultReferenceBpm`）；`scrollFollowsSongBpm=true` 時改用 base BPM | `ScreenGameplay.referenceBpm` |
+| `anchorBpm` | 預設 **固定 130**（`ManiaScroll.DefaultReferenceBpm`），可在 `config.ini` `[Room] scrollBaseBpm` 手改（30~400）；`scrollFollowsSongBpm=true` 時改用 base BPM | `ScreenGameplay.referenceBpm` ← `RoomConfig.scrollBaseBpm` |
 | 速度檔位 | 房間「速度」（`RoomConfig.speedSteps`） | 玩家 |
 | `baseBeatLength` | **本文主題**：譜面的「基準速度」 | 演算法（§2） |
 | `SV(t)` | osu 綠線（.gn 沒有；NX/online frame_type 33 走另一條 `ScrollSpeeds`） | 譜面 |
 
-重點：**預設模式下 `anchorBpm` 是固定的 130，所以 base BPM 不影響整體快慢的絕對值**——它決定的是
+整體快慢要調就改 `anchorBpm`：`config.ini` `[Room] scrollBaseBpm`（預設 130，範圍 30~400）——它是**所有歌、所有
+速度檔位共同的乘數**（130→160 = 全部快 23%），跟下面在講的「哪一段算 1.0×」是兩回事。
+
+重點：**預設模式下 `anchorBpm` 是固定的（預設 130），所以 base BPM 不影響整體快慢的絕對值**——它決定的是
 「譜面裡哪一段算 1.0×」。base 挑錯 → 該段以外的部分全部被乘上一個常數倍率。
 
 ---
