@@ -4458,7 +4458,16 @@ namespace Sdo.Game
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
             SetTrackVisible(false);                           // note board + HP + receptors + click strips
-            if (showtimeMode) ClearShowtimeWindowFx();        // song ended mid-window → kill the body_star aura + EDGE4 side lightning (they follow the now-hidden board)
+            // A window still OPEN when the song ends never gets another Tick — Update returns at `_ended` (top of the
+            // frame) before TickShowtime — so OnShowtimeEnd would never run and the swap it undoes would stick: the
+            // dancer keeps the 7-20s breakdance DPS, and the result screen's background replay (which only re-points
+            // DanceTimeSec at the song-length loop clock) would break for its first few seconds and then stand in the
+            // standby idle for the rest of EVERY lap. BuildDanceIntervals would take its ceiling from the break's
+            // Total too, dropping under ReplayMinRunMs so the randomised start collapses to 0 as well. Close the
+            // window here; that also kills the aura + EDGE4 columns, which must go because the board is now hidden.
+            // The meter itself stays Active (only its own Tick clears that) — nothing reads it past `_ended`, and the
+            // result panel still needs its Bonus.
+            if (showtimeMode) { if (_showtime.Active) OnShowtimeEnd(); else ClearShowtimeWindowFx(); }
             // SetTrackVisible(false) also hid the ranking — but it must STAY up through the win/lose pose (final
             // standings). Re-show it here with the final order; only HideHudForPanel (result panel) hides it.
             if (_rosterName != null) { UpdateRosterList(); UpdateRankDisplay(); SetRankingVisible(true); }
