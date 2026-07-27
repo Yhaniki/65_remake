@@ -1,6 +1,8 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 using Sdo.Settings;
 
 namespace Sdo.Tests
@@ -27,6 +29,7 @@ namespace Sdo.Tests
         {
             ProfileManager.Root = null;   // 還原 lazy 解析，避免污染其他測試
             RoomConfig.activeId = "";
+            RoomConfig.LoadedForTests = true;   // 這個檔有一條測試會關掉「Load 過了」的旗標；失敗時也要還原，別波及其他測試
             try { Directory.Delete(_root, true); } catch { /* best effort */ }
         }
 
@@ -86,6 +89,31 @@ namespace Sdo.Tests
             // 比 "opt_keys=" 而非 "opt_keys"：檔頭那行「鍵位已搬到 keymaps.ini」的註解本來就會提到這個名字。
             StringAssert.DoesNotContain("opt_keys=", File.ReadAllText(ConfigPath), "新的 config.ini 不該再寫鍵位");
             Assert.AreEqual(1, RoomConfig.defaultTeam, "[Room] 的值不受影響");
+        }
+
+        [Test]
+        public void Save_Before_Load_Refuses_To_Overwrite_The_Players_File()
+        {
+            // 🔴 RoomConfig 的欄位是 static,而 Save() 是「把現在的欄位值整份寫出去」——
+            // 在 Load() 之前呼叫就會把玩家的 config.ini 換成一份內建預設值,設定全部消失。
+            // 實際踩過:serverAddress 被寫回空字串 → 遊戲默默退回單機模式,
+            // 而症狀(「兩台怎麼看不到彼此」)完全指不到根因。所以寧可不存也不要存錯。
+            File.WriteAllText(ConfigPath, "[Net]\nserverAddress=192.168.1.10\nserverPort=27015\n");
+            RoomConfig.LoadedForTests = false;      // 模擬「這個 process 還沒讀過檔」
+            RoomConfig.serverAddress = "";          // 欄位停在預設值
+
+            LogAssert.Expect(LogType.Warning, new Regex(@"Save\(\) 在 Load\(\) 之前"));
+            RoomConfig.Save();
+
+            StringAssert.Contains("serverAddress=192.168.1.10", File.ReadAllText(ConfigPath),
+                "沒 Load 過就不該覆寫玩家的檔");
+
+            // Load 過之後才允許寫 —— 守門不能把正常的保存也一起擋掉。
+            RoomConfig.Load();
+            Assert.AreEqual("192.168.1.10", RoomConfig.serverAddress, "Load 要真的讀到值");
+            RoomConfig.serverAddress = "10.0.0.7";
+            RoomConfig.Save();
+            StringAssert.Contains("serverAddress=10.0.0.7", File.ReadAllText(ConfigPath));
         }
 
         [Test]

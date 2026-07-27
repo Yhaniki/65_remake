@@ -259,6 +259,7 @@ namespace Sdo.Settings
                 // 把它換成 opt_songBombs，之後檔案裡不再有舊鍵。
                 if (!hasSongBombsKey) dirty = true;
 
+                _loaded = true;        // 一定要在下面那個 Save() 之前 —— 補寫新 key 是合法的寫入
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
                 DisplaySettingsManager.DeleteLegacyJson();      // 舊 settings.json（內容已在 [Option]）
@@ -269,6 +270,8 @@ namespace Sdo.Settings
             {
                 Debug.LogWarning($"[RoomConfig] load failed, using defaults: {e.Message}");
                 Sanitize();
+                // 讀失敗也算「試過了」:否則後面任何一次 Save() 都會被守門擋掉,玩家連改設定都存不進去。
+                _loaded = true;
             }
         }
 
@@ -368,6 +371,16 @@ namespace Sdo.Settings
         /// 建好，這裡再保險確保一次，供 OPTION 保存等較晚的呼叫）。</summary>
         public static void Save()
         {
+            // 🔴 沒 Load 過就不准寫。這些欄位是 static 的,而 Save 是「把現在的欄位值整份寫出去」——
+            // 在 Load 之前呼叫就會把**整個 config.ini 換成內建預設值**,玩家的設定全部消失。
+            // 實際踩過:開發連線功能時 serverAddress 被寫回空字串 → 遊戲默默退回單機模式,
+            // 而症狀(「兩台怎麼看不到彼此」)完全指不到根因。寧可不存,也不要存錯。
+            if (!_loaded)
+            {
+                Debug.LogWarning("[RoomConfig] Save() 在 Load() 之前被呼叫 → 不寫檔"
+                                 + "(否則 config.ini 會被整份換成預設值)");
+                return;
+            }
             try
             {
                 var path = FilePath;
@@ -380,6 +393,12 @@ namespace Sdo.Settings
                 Debug.LogError($"[RoomConfig] save failed: {e.Message}");
             }
         }
+
+        /// <summary><see cref="Load"/> 有跑過嗎?<see cref="Save"/> 用它當守門(見那邊的註解)。</summary>
+        private static bool _loaded;
+
+        /// <summary>測試用:讓「Load 之前不准 Save」的守門能在單元測試裡被驗證與重置(正式流程別碰)。</summary>
+        public static bool LoadedForTests { get { return _loaded; } set { _loaded = value; } }
 
         /// <summary>把一份 INI 文字解析進靜態欄位（純函式：不碰檔案）。未出現的 key 保留原值。</summary>
         public static void ParseInto(string text)

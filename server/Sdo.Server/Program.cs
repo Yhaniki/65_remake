@@ -13,6 +13,12 @@ namespace Sdo.Server
     {
         public static int Main(string[] args)
         {
+            // 🔴 stdout 被重導向(systemd → journald,或 `sdo-server > log.txt`)時,.NET 交給我們的是一個
+            // AutoFlush=false 的 StreamWriter —— 日誌會卡在緩衝區裡,`journalctl -f` 看起來像「server 沒在動」,
+            // 要等緩衝區滿或程式結束才一次噴出來。對一個要靠日誌看發生什麼事的常駐服務來說這不能接受。
+            // (直接接終端機時 .NET 本來就會 flush;這行把兩種情況統一成「寫一行就看得到一行」。)
+            Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+
             ServerOptions opts;
             string error;
             bool wantsHelp;
