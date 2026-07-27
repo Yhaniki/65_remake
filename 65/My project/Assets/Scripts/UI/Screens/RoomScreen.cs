@@ -6,6 +6,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Game;
 using Sdo.Localization;
+using Sdo.Net;
 using Sdo.Settings;
 using Sdo.UI.Catalog;
 using Sdo.UI.Core;
@@ -95,6 +96,10 @@ namespace Sdo.UI.Screens
         private readonly Image[] _slotClose = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
+        // 六格頭貼的透明命中盒 + 目前彈出的座位選單(一次只會有一個)。
+        private readonly Image[] _slotHit = new Image[RoomLayout.SeatCount];
+        private GameObject _slotPopup;
+        private int _slotPopupFrame = -1;   // 彈出的那一幀不要被「點選單外面就關掉」自己關掉
         private OutlinedLabel _serverLabel, _channelLabel, _roomIdLabel;   // 白字 + 藍邊 (rgb 70,74,152)
         private TextMeshProUGUI _roomNameLabel;
         private OutlinedLabel _songLabel;   // 歌名(白邊)
@@ -286,6 +291,16 @@ namespace Sdo.UI.Screens
                 _slotName[i] = UIKit.AddText(_win1Root, "Name" + i, "", 13, Color.white, TextAlignmentOptions.Center);
                 Place(_slotName[i].rectTransform, nameX[i] + Win1.x, 141, RoomLayout.HeadSlotW, 18);
                 _slotName[i].gameObject.SetActive(false);
+
+                // 透明命中盒:座位的右鍵選單與雙擊鎖格都靠它收滑鼠。
+                // 為什麼不掛在 _slotHead 上:那張 RawImage 是 raycastTarget=false,而且**空位時 enabled=false**
+                // → 收不到任何點擊,而「關閉一個空位」正是最需要點空位的操作。
+                _slotHit[i] = UIKit.AddImage(_win1Root, "SlotHit" + i, new Color(0f, 0f, 0f, 0f), raycast: true);
+                _slotHit[i].rectTransform.anchorMin = _slotHit[i].rectTransform.anchorMax = new Vector2(0f, 1f);
+                _slotHit[i].rectTransform.pivot = new Vector2(0f, 1f);   // 同 AddRaw:左上為原點,y 往下為負
+                var hitProxy = _slotHit[i].gameObject.AddComponent<PointerClickProxy>();
+                int seatIndex = i;
+                hitProxy.Clicked = ev => OnSlotPointerClick(seatIndex, ev);
             }
 
             // head-bar buttons (win1)
@@ -689,6 +704,7 @@ namespace Sdo.UI.Screens
             }
             HideChatModeMenu();
             HideExpressionMenu();
+            CloseSlotPopup();   // 常駐單例:選單開著時離房,回來不能還掛著一個指向舊座位的選單
             HideRoomChatBubble();
             ClearSentRoomBubbles();
             DestroyBubbleWorld();   // 泡的畫掛在獨立的 GameObject 樹底下(不在 UI canvas 裡)→ 要自己收
@@ -2563,6 +2579,7 @@ namespace Sdo.UI.Screens
                 ApplyCollapse();
             }
 
+            HandleContextMenuDismiss();   // 座位/分隊選單開著時,點到外面就關掉(要在 blank-click 之前:那條會進打字模式)
             HandleRoomBlankChatClick();
             HandleRoomChatTypingKeys();
             // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
@@ -3525,6 +3542,167 @@ namespace Sdo.UI.Screens
         /// 位置與尺寸為什麼要每幀套:F2 除錯面板能即時拉 <see cref="headSlotOffset"/>/<see cref="headSlotSize"/>
         /// 對位,所以不能只在建立時套一次。
         /// </summary>
+        // ==================== 座位操作(房主專屬)====================
+        // 每一項 server 都獨立驗過(R7 host-only / R8 不准關自己的位子 / TransferHost 要求目標在座位上)。
+        // 這邊的守門純粹是 UX:不要把按不動的東西畫出來。規則本體在 RoomSlotMenu(純函式 + 測試)。
+
+        /// <summary>我現在是這間房的房主、而且在連線模式嗎?(離線房只有自己一個人,這些操作沒有意義)</summary>
+        private bool CanManageSeats(RoomInfo room)
+            => room != null && Ctx != null && Ctx.Net != null
+               && Ctx.Net.IsConnected && Ctx.Net.InRoom && Ctx.Net.IsHost;
+
+        private void OnSlotPointerClick(int seat, PointerEventData ev)
+        {
+            if (ev == null || seat < 0 || seat >= RoomLayout.SeatCount) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
+
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            bool host = CanManageSeats(room);
+            bool isSelf = seat == LocalSeatIndex(room);
+
+            if (ev.button == PointerEventData.InputButton.Right)
+            {
+                ShowSlotPopup(seat, ev.position, room, host, isSelf);
+                return;
+            }
+            // 雙擊 = 鎖格/解鎖。有人坐的位子 server 會先把他踢掉再關(R8)—— 那就是「鎖住這一格」的語意。
+            if (ev.button == PointerEventData.InputButton.Left && ev.clickCount >= 2
+                && RoomSlotMenu.DoubleClickAllowed(host, true, isSelf))
+            {
+                var s = SeatAt(room, seat);
+                Ctx.Net.SetSeatClosed(seat, RoomSlotMenu.DoubleClickClosesSeat(s != null && s.IsClosed));
+                UiSfx.Play(UiSfx.Click);
+                CloseSlotPopup();
+            }
+        }
+
+        private static SeatInfo SeatAt(RoomInfo room, int seat)
+            => room != null && seat >= 0 && seat < room.Seats.Count ? room.Seats[seat] : null;
+
+        /// <summary>座位右鍵選單。項目由 <see cref="RoomSlotMenu"/> 決定(空 → 不彈)。</summary>
+        private void ShowSlotPopup(int seat, Vector2 screenPos, RoomInfo room, bool host, bool isSelf)
+        {
+            CloseSlotPopup();
+            var s = SeatAt(room, seat);
+            bool taken = s != null && !s.IsEmpty;
+            bool closed = s != null && s.IsClosed;
+            var actions = RoomSlotMenu.For(host, true, isSelf, taken, closed);
+            if (actions.Length == 0) return;
+
+            int targetUser = taken && s != null ? s.UserId : 0;
+            _slotPopup = BuildContextMenu("SlotPopup", screenPos, actions.Length,
+                (idx, label) => SlotActionLabel(actions[idx]),
+                idx =>
+                {
+                    // 🔴 callback 內再檢查一次房主身分:選單彈出到按下之間房主可能已經被轉走
+                    //    (自己交出房主、或 server 因為別人離開重新指派)。
+                    var now = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+                    if (!CanManageSeats(now)) { CloseSlotPopup(); return; }
+                    switch (actions[idx])
+                    {
+                        case RoomSlotAction.Kick: if (targetUser != 0) Ctx.Net.KickUser(targetUser); break;
+                        case RoomSlotAction.TransferHost: if (targetUser != 0) Ctx.Net.TransferHost(targetUser); break;
+                        case RoomSlotAction.CloseSeat: Ctx.Net.SetSeatClosed(seat, true); break;
+                        case RoomSlotAction.OpenSeat: Ctx.Net.SetSeatClosed(seat, false); break;
+                    }
+                    CloseSlotPopup();
+                });
+        }
+
+        private string SlotActionLabel(RoomSlotAction a)
+        {
+            switch (a)
+            {
+                case RoomSlotAction.Kick: return L("room.slot_kick");
+                case RoomSlotAction.TransferHost: return L("room.slot_transfer_host");
+                case RoomSlotAction.CloseSeat: return L("room.slot_close");
+                default: return L("room.slot_open");
+            }
+        }
+
+        /// <summary>滑鼠螢幕座標 → 800×600 設計座標(左上原點、y 往下)。同 SongSelectScreen.ScreenToDesign 的算法。</summary>
+        private Vector2 PointerToDesign(Vector2 screenPos)
+        {
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (Root != null && RectTransformUtility.ScreenPointToLocalPointInRectangle(Root, screenPos, cam, out var lp))
+            {
+                var r = Root.rect;
+                return new Vector2(lp.x - r.xMin, r.yMax - lp.y);
+            }
+            return Vector2.zero;
+        }
+
+        private void CloseSlotPopup()
+        {
+            if (_slotPopup != null) { Destroy(_slotPopup); _slotPopup = null; }
+        }
+
+        /// <summary>
+        /// 通用的小彈出選單(座位選單與房主分隊選單共用)。
+        ///
+        /// 官方客端沒有右鍵選單這種東西,所以沒有可以對照的美術 —— 用房間的配色自己疊一個:
+        /// 深色底 + 白字,寬度依最長那一項算。位置是滑鼠的設計座標,並夾進 800×600 框內。
+        /// </summary>
+        private GameObject BuildContextMenu(string name, Vector2 screenPos, int count,
+                                            System.Func<int, string, string> labelOf, System.Action<int> onPick)
+        {
+            const float rowH = 22f, padX = 10f, fontSize = 13f;
+            var labels = new string[count];
+            float w = 60f;
+            for (int i = 0; i < count; i++)
+            {
+                labels[i] = labelOf(i, null) ?? "";
+                w = Mathf.Max(w, labels[i].Length * fontSize * 0.62f + padX * 2f);   // 粗估:CJK 一字約 0.62em
+            }
+            float h = rowH * count;
+            Vector2 tl = PointerToDesign(screenPos);
+            float x = Mathf.Clamp(tl.x, 0f, 800f - w);
+            float y = Mathf.Clamp(tl.y, 0f, 600f - h);
+
+            var panel = UIKit.AddImage(Root, name, new Color32(0x2A, 0x1B, 0x45, 0xF0), raycast: true);
+            Place(panel.rectTransform, x, y, w, h);
+            panel.transform.SetAsLastSibling();
+            for (int i = 0; i < count; i++)
+            {
+                int idx = i;
+                var row = UIKit.AddImage(panel.rectTransform, "Row" + i, new Color(1f, 1f, 1f, 0f), raycast: true);
+                Place(row.rectTransform, 0, rowH * i, w, rowH);
+                var btn = row.gameObject.AddComponent<Button>();
+                btn.targetGraphic = row;
+                btn.transition = Selectable.Transition.ColorTint;
+                btn.colors = new ColorBlock
+                {
+                    normalColor = new Color(1f, 1f, 1f, 0f),
+                    highlightedColor = new Color(1f, 1f, 1f, 0.18f),
+                    pressedColor = new Color(1f, 1f, 1f, 0.30f),
+                    selectedColor = new Color(1f, 1f, 1f, 0.18f),
+                    disabledColor = new Color(1f, 1f, 1f, 0f),
+                    colorMultiplier = 1f, fadeDuration = 0.05f,
+                };
+                UiSfx.AttachClick(btn);
+                UiHoverSfx.Attach(btn);
+                btn.onClick.AddListener(() => onPick(idx));
+                var t = UIKit.AddText(row.rectTransform, "Label", labels[i], fontSize, Color.white,
+                                      TextAlignmentOptions.Left);
+                Place(t.rectTransform, padX, 2, w - padX * 2f, rowH - 2f);
+            }
+            _slotPopupFrame = Time.frameCount;
+            return panel.gameObject;
+        }
+
+        /// <summary>選單開著時點到選單外面 → 關掉(彈出那一幀不算,否則會被觸發它的那次點擊自己關掉)。</summary>
+        private void HandleContextMenuDismiss()
+        {
+            if (_slotPopup == null) return;
+            if (Time.frameCount == _slotPopupFrame) return;
+            if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;
+            var rt = _slotPopup.transform as RectTransform;
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (rt != null && RectTransformUtility.RectangleContainsScreenPoint(rt, Input.mousePosition, cam)) return;
+            CloseSlotPopup();
+        }
+
         private void RenderSlots(RoomInfo room)
         {
             Texture localHeadTex = _localHead != null ? _localHead.Texture : null;
@@ -3536,6 +3714,18 @@ namespace Sdo.UI.Screens
                 bool taken = seat != null && !seat.IsEmpty;
                 bool closed = seat != null && seat.IsClosed;
                 bool isLocal = i == localSeat;
+
+                // 命中盒跟著頭貼格走(F2 對位面板會即時改 headSlotOffset/headSlotSize)。
+                // 它一直是 active 的 —— 空位/關閉的位子也要能被右鍵(那正是「開啟/關閉位子」要點的地方)。
+                if (_slotHit[i] != null)
+                {
+                    var hr = _slotHit[i].rectTransform;
+                    // 與下面 _slotHead 的算式**逐字相同**(同一個 _win1Root 座標系)—— 兩邊會一起被 F2 面板改,
+                    // 寫成不同式子的話某天調版位就會只動一邊,命中盒與頭貼錯開。
+                    hr.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x,
+                                                      -(RoomLayout.HeadSlotY + headSlotOffset.y));
+                    hr.sizeDelta = headSlotSize;
+                }
 
                 if (_slotHead[i] != null)
                 {
@@ -3800,9 +3990,42 @@ namespace Sdo.UI.Screens
             Ctx.Rooms.SetReady(!LocalReady(room));
         }
 
+        /// <summary>
+        /// 組隊模式下這一局湊得出合法站位嗎 —— 與 server 的 R10c 走**同一條純規則**
+        /// (<see cref="TeamLayoutRules"/>),client 只是提早把失敗原因說出來,不然玩家按下開始
+        /// 只會收到一個看不懂的 badTeams。
+        ///
+        /// 參與者集合的定義照 server:「(是房主 或 已準備) 且 有這首歌」的座位。
+        /// 6 人房只有 4 人準備且 A/B 各 2 人 → 2v2 合法,可以開始。
+        /// </summary>
+        private bool TeamsCanStart(RoomInfo room, out bool teamMode)
+        {
+            teamMode = false;
+            if (room == null) return true;
+            int a = 0, b = 0, c = 0;
+            for (int i = 0; i < room.Seats.Count; i++)
+            {
+                var s = room.Seats[i];
+                if (s == null || s.IsEmpty) continue;
+                if (s.Team != (int)TeamTag.Free) teamMode = true;   // 有人不是「自由」→ 這房在組隊
+                bool isHost = s.UserId != 0 ? room.IsHostUser(s.UserId) : s.IsHost;
+                if (!(isHost || s.IsReady) || s.Avail != Availability.Have) continue;   // 不是參與者
+                if (s.Team == (int)TeamTag.A) a++;
+                else if (s.Team == (int)TeamTag.B) b++;
+                else if (s.Team == (int)TeamTag.C) c++;
+            }
+            if (!teamMode) return true;
+            return TeamLayoutRules.TryLayoutFor(a, b, c, out _);
+        }
+
         private void OnStart()
         {
             if (_starting) return;   // 已在漸暗切場中，忽略重複按
+            // 組隊模式湊不出官方的三張站位表(2v2 / 3v3 / 2v2v2)→ 擋住並說明原因。
+            // 🔴 擋住而不是退回個人隊形:退回會讓玩家以為分隊生效了卻看到單人站位,那是靜默的錯誤行為。
+            //    server 也會獨立擋一次(含 force),這裡只是提早講清楚。
+            var teamRoom = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (!TeamsCanStart(teamRoom, out _)) { Toast.Show(L("room.teams_need_layout")); return; }
             if (Ctx.Rooms == null || !Ctx.Rooms.CanStart())
             {
                 var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
@@ -3906,8 +4129,65 @@ namespace Sdo.UI.Screens
             btn.transition = Selectable.Transition.None;
             UiSfx.AttachPress(btn, UiSfx.Click);   // 按下 SE_0001；win2 中間設定塊滑過不出聲 → 不掛 hover
             int i = idx;
-            btn.onClick.AddListener(() => { Ctx.Session.Team = i; RenderWin2(); });
+            btn.onClick.AddListener(() => PickOwnTeam(i));
+            // 房主右鍵組隊鈕 → 自動分隊選單(2對2 / 3對3 / 2對2對2)。官方沒有這顆鈕,而 win2 也沒有空位再擺一顆,
+            // 所以掛在同一塊上;非房主右鍵不會有反應(選單規則與座位選單同一套守門)。
+            var proxy = img.gameObject.AddComponent<PointerClickProxy>();
+            proxy.Clicked = ev =>
+            {
+                if (ev != null && ev.button == PointerEventData.InputButton.Right) ShowAssignTeamsPopup(ev.position);
+            };
             _teamImg[idx] = img;
+        }
+
+        /// <summary>
+        /// 自己換隊。連線模式送 <c>setOwnTeam</c> 讓 server 決定(它會擋「已準備就不能換」= R10a),
+        /// **不做樂觀更新** —— 顯示一律等 server 的 roomState 回來(與整個連線層同一個原則)。
+        /// 離線模式維持原本的純本機行為。
+        /// </summary>
+        private void PickOwnTeam(int team)
+        {
+            if (Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom)
+            {
+                Ctx.Net.SetOwnTeam(team);
+                return;
+            }
+            Ctx.Session.Team = team;
+            RenderWin2();
+        }
+
+        /// <summary>房主的「自動分隊」選單。人數湊不出那個版型時 server 會回 <c>error{badTeams}</c>(R10b),
+        /// 所以這裡先用同一條純規則把湊不出來的項目擋掉,按下去才不會只收到一個看不懂的錯誤。</summary>
+        private void ShowAssignTeamsPopup(Vector2 screenPos)
+        {
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (!CanManageSeats(room)) return;
+            int seated = SeatedPlayerCount(room);
+            var layouts = new List<TeamLayout>(3);
+            if (seated == 4) layouts.Add(TeamLayout.V2v2);
+            if (seated == 6) { layouts.Add(TeamLayout.V3v3); layouts.Add(TeamLayout.V2v2v2); }
+            if (layouts.Count == 0) { Toast.Show(L("room.teams_need_layout")); return; }
+
+            CloseSlotPopup();
+            _slotPopup = BuildContextMenu("TeamsPopup", screenPos, layouts.Count,
+                (idx, _) => L(layouts[idx] == TeamLayout.V2v2 ? "room.teams_2v2"
+                            : layouts[idx] == TeamLayout.V3v3 ? "room.teams_3v3" : "room.teams_2v2v2"),
+                idx =>
+                {
+                    var now = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+                    if (CanManageSeats(now)) { Ctx.Net.AssignTeams(layouts[idx]); Toast.Show(L("room.teams_assigned")); }
+                    CloseSlotPopup();
+                });
+        }
+
+        /// <summary>座位上有幾個人(不含旁觀者、不含空位/關閉的位子)。</summary>
+        private static int SeatedPlayerCount(RoomInfo room)
+        {
+            if (room == null) return 0;
+            int n = 0;
+            for (int i = 0; i < room.Seats.Count; i++)
+                if (room.Seats[i] != null && !room.Seats[i].IsEmpty) n++;
+            return n;
         }
 
         // 所有房間按鈕統一：滑過 Buttonfloat(圖1/圖2)、按下 SE_0001(圖3 預設)。少數例外用參數覆寫：

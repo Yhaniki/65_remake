@@ -120,42 +120,6 @@
    "v": "{0}的舞蹈室"
   },
   {
-   "k": "room.create_failed",
-   "v": "创建房间失败"
-  },
-  {
-   "k": "room.join_title",
-   "v": "房号输入"
-  },
-  {
-   "k": "room.join_code",
-   "v": "房号"
-  },
-  {
-   "k": "room.join_confirm",
-   "v": "确认"
-  },
-  {
-   "k": "room.join_bad_code",
-   "v": "房号是 5 位数字"
-  },
-  {
-   "k": "room.join_not_found",
-   "v": "找不到这个房号"
-  },
-  {
-   "k": "room.join_full",
-   "v": "房间已满"
-  },
-  {
-   "k": "room.join_in_game",
-   "v": "这间房正在游戏中"
-  },
-  {
-   "k": "room.join_failed",
-   "v": "加入房间失败"
-  },
-  {
    "k": "room.leave",
    "v": "离开房间"
   },
@@ -198,6 +162,78 @@
   {
    "k": "room.need_song",
    "v": "请先选择歌曲"
+  },
+  {
+   "k": "room.join_title",
+   "v": "房号输入"
+  },
+  {
+   "k": "room.join_code",
+   "v": "房号"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "确认"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "房号是 5 位数字"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "找不到这个房号"
+  },
+  {
+   "k": "room.join_full",
+   "v": "房间已满"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "这间房正在游戏中"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "加入房间失败"
+  },
+  {
+   "k": "room.create_failed",
+   "v": "创建房间失败"
+  },
+  {
+   "k": "room.slot_kick",
+   "v": "踢出玩家"
+  },
+  {
+   "k": "room.slot_transfer_host",
+   "v": "交出房主"
+  },
+  {
+   "k": "room.slot_close",
+   "v": "关闭位置"
+  },
+  {
+   "k": "room.slot_open",
+   "v": "开启位置"
+  },
+  {
+   "k": "room.teams_2v2",
+   "v": "分队 2对2"
+  },
+  {
+   "k": "room.teams_3v3",
+   "v": "分队 3对3"
+  },
+  {
+   "k": "room.teams_2v2v2",
+   "v": "分队 2对2对2"
+  },
+  {
+   "k": "room.teams_need_layout",
+   "v": "组队人数必须是 2对2、3对3 或 2对2对2"
+  },
+  {
+   "k": "room.teams_assigned",
+   "v": "已自动分队"
   },
   {
    "k": "room.drop_up",

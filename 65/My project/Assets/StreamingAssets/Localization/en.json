@@ -120,42 +120,6 @@
    "v": "{0}'s Dance Room"
   },
   {
-   "k": "room.create_failed",
-   "v": "Failed to create room"
-  },
-  {
-   "k": "room.join_title",
-   "v": "Join Room"
-  },
-  {
-   "k": "room.join_code",
-   "v": "Code"
-  },
-  {
-   "k": "room.join_confirm",
-   "v": "OK"
-  },
-  {
-   "k": "room.join_bad_code",
-   "v": "Enter a 5-digit room code"
-  },
-  {
-   "k": "room.join_not_found",
-   "v": "No room with that code"
-  },
-  {
-   "k": "room.join_full",
-   "v": "That room is full"
-  },
-  {
-   "k": "room.join_in_game",
-   "v": "That room is in a match"
-  },
-  {
-   "k": "room.join_failed",
-   "v": "Could not join the room"
-  },
-  {
    "k": "room.leave",
    "v": "Leave Room"
   },
@@ -198,6 +162,78 @@
   {
    "k": "room.need_song",
    "v": "Please select a song first"
+  },
+  {
+   "k": "room.join_title",
+   "v": "Join Room"
+  },
+  {
+   "k": "room.join_code",
+   "v": "Code"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "OK"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "Enter a 5-digit room code"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "No room with that code"
+  },
+  {
+   "k": "room.join_full",
+   "v": "That room is full"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "That room is in a match"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "Could not join the room"
+  },
+  {
+   "k": "room.create_failed",
+   "v": "Failed to create room"
+  },
+  {
+   "k": "room.slot_kick",
+   "v": "Kick player"
+  },
+  {
+   "k": "room.slot_transfer_host",
+   "v": "Make host"
+  },
+  {
+   "k": "room.slot_close",
+   "v": "Close seat"
+  },
+  {
+   "k": "room.slot_open",
+   "v": "Open seat"
+  },
+  {
+   "k": "room.teams_2v2",
+   "v": "Teams 2v2"
+  },
+  {
+   "k": "room.teams_3v3",
+   "v": "Teams 3v3"
+  },
+  {
+   "k": "room.teams_2v2v2",
+   "v": "Teams 2v2v2"
+  },
+  {
+   "k": "room.teams_need_layout",
+   "v": "Team sizes must be 2v2, 3v3 or 2v2v2"
+  },
+  {
+   "k": "room.teams_assigned",
+   "v": "Teams assigned"
   },
   {
    "k": "room.drop_up",

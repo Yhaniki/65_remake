@@ -120,42 +120,6 @@
    "v": "{0}のダンスルーム"
   },
   {
-   "k": "room.create_failed",
-   "v": "ルームの作成に失敗しました"
-  },
-  {
-   "k": "room.join_title",
-   "v": "ルーム番号入力"
-  },
-  {
-   "k": "room.join_code",
-   "v": "番号"
-  },
-  {
-   "k": "room.join_confirm",
-   "v": "確認"
-  },
-  {
-   "k": "room.join_bad_code",
-   "v": "ルーム番号は5桁です"
-  },
-  {
-   "k": "room.join_not_found",
-   "v": "そのルームは見つかりません"
-  },
-  {
-   "k": "room.join_full",
-   "v": "ルームが満員です"
-  },
-  {
-   "k": "room.join_in_game",
-   "v": "対戦中のルームです"
-  },
-  {
-   "k": "room.join_failed",
-   "v": "ルームに参加できませんでした"
-  },
-  {
    "k": "room.leave",
    "v": "ルーム退出"
   },
@@ -198,6 +162,78 @@
   {
    "k": "room.need_song",
    "v": "先に曲を選択してください"
+  },
+  {
+   "k": "room.join_title",
+   "v": "ルーム番号入力"
+  },
+  {
+   "k": "room.join_code",
+   "v": "番号"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "確認"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "ルーム番号は5桁です"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "そのルームは見つかりません"
+  },
+  {
+   "k": "room.join_full",
+   "v": "ルームが満員です"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "対戦中のルームです"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "ルームに参加できませんでした"
+  },
+  {
+   "k": "room.create_failed",
+   "v": "ルームの作成に失敗しました"
+  },
+  {
+   "k": "room.slot_kick",
+   "v": "プレイヤーをキック"
+  },
+  {
+   "k": "room.slot_transfer_host",
+   "v": "ホストを譲る"
+  },
+  {
+   "k": "room.slot_close",
+   "v": "席を閉じる"
+  },
+  {
+   "k": "room.slot_open",
+   "v": "席を開く"
+  },
+  {
+   "k": "room.teams_2v2",
+   "v": "チーム 2対2"
+  },
+  {
+   "k": "room.teams_3v3",
+   "v": "チーム 3対3"
+  },
+  {
+   "k": "room.teams_2v2v2",
+   "v": "チーム 2対2対2"
+  },
+  {
+   "k": "room.teams_need_layout",
+   "v": "チーム人数は 2対2 / 3対3 / 2対2対2 のいずれかにしてください"
+  },
+  {
+   "k": "room.teams_assigned",
+   "v": "チームを割り当てました"
   },
   {
    "k": "room.drop_up",
