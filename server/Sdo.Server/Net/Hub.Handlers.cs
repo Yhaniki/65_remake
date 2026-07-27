@@ -1,0 +1,861 @@
+using System;
+using System.Collections.Generic;
+using Sdo.Net;
+using Sdo.Net.Server;
+
+namespace Sdo.Server.Net
+{
+    /// <summary>
+    /// Hub 的訊息處理。**全部在 actor 執行緒上執行**,所以可以自由碰房間狀態、不需要任何 lock。
+    ///
+    /// 每個 handler 的形狀都一樣:驗權限與狀態(交給 <see cref="NetRoom"/> 的純邏輯)→
+    /// 失敗回 <c>error</c>、成功廣播新的 <c>roomState</c>。
+    /// 權限**絕不**只靠 client 隱藏按鈕 —— 每個 host-only 操作 server 都獨立驗一次。
+    /// </summary>
+    public sealed partial class Hub
+    {
+        /// <summary>roomCode → (userId → 最新一筆 frame)。固定頻率彙整後推出去,見 <see cref="PushPendingFrames"/>。</summary>
+        private readonly Dictionary<int, Dictionary<int, FrameSample>> _frames
+            = new Dictionary<int, Dictionary<int, FrameSample>>();
+
+        // ================= frame 進入點 =================
+
+        private void HandleFrame(Connection conn, byte kind, byte[] payload)
+        {
+            if (conn.IsClosed) return;
+
+            if (kind == NetLimits.FrameKindChunk)
+            {
+                // 檔案傳輸在 M5(缺歌傳檔)才實作。現在收到就當協定錯誤 ——
+                // 靜默忽略會讓對面一直等,回明確的錯誤比較好查。
+                SendError(conn, 0, NetProto.BlobErrNotFound, "檔案傳輸尚未實作");
+                return;
+            }
+
+            object node;
+            string type;
+            if (!NetJson.TryParseMessage(payload, 0, payload.Length, out node, out type))
+            {
+                conn.Kill(NetProto.ErrBadJson);
+                return;
+            }
+
+            long now = NowMs();
+            int rq = NetJson.Int(node, NetProto.FieldRequest);
+
+            // 握手之前只准 hello。
+            if (!conn.HelloDone && type != NetProto.Hello)
+            {
+                conn.Kill(NetProto.ErrProto);
+                return;
+            }
+
+            // rate limit:frame 走寬鬆的那條,其餘走 control。
+            bool ok = type == NetProto.Frame ? conn.Rate.AllowFrame(now) : conn.Rate.AllowControl(now);
+            if (!ok)
+            {
+                conn.Rate.Strikes++;
+                // 偶爾爆一下就丟掉那筆;一直爆代表對方壞了或在攻擊。
+                if (conn.Rate.Strikes > 20) { conn.Kill(NetProto.ErrRateLimit); }
+                return;
+            }
+
+            LogVerbose("← #" + conn.ConnId + " " + type);
+            Dispatch(conn, type, node, rq, now);
+        }
+
+        private void Dispatch(Connection conn, string type, object node, int rq, long now)
+        {
+            switch (type)
+            {
+                case NetProto.Hello: OnHello(conn, node, rq, now); break;
+                case NetProto.Ping: OnPing(conn, node); break;
+                case NetProto.Bye: conn.Close("byeFromClient"); break;
+
+                case NetProto.RoomList: OnRoomList(conn, rq); break;
+                case NetProto.CreateRoom: OnCreateRoom(conn, node, rq); break;
+                case NetProto.JoinRoom: OnJoinRoom(conn, node, rq); break;
+                case NetProto.LeaveRoom: OnLeaveRoom(conn); break;
+
+                case NetProto.SetRoomName: OnSetRoomName(conn, node, rq); break;
+                case NetProto.SetSong: OnSetSong(conn, node, rq); break;
+                case NetProto.SetRoomSettings: OnSetRoomSettings(conn, node, rq); break;
+                case NetProto.AssignTeams: OnAssignTeams(conn, node, rq); break;
+                case NetProto.SetOwnTeam: OnSetOwnTeam(conn, node, rq); break;
+                case NetProto.SetReady: OnSetReady(conn, node, rq); break;
+                case NetProto.SetAvailability: OnSetAvailability(conn, node, now); break;
+
+                case NetProto.KickUser: OnKickUser(conn, node, rq); break;
+                case NetProto.SetSeatClosed: OnSetSeatClosed(conn, node, rq); break;
+                case NetProto.TransferHost: OnTransferHost(conn, node, rq); break;
+
+                case NetProto.Spectate: OnSpectate(conn, node, rq); break;
+                case NetProto.StopSpectate: OnStopSpectate(conn, rq); break;
+
+                case NetProto.RequestStart: OnRequestStart(conn, node, rq, now); break;
+                case NetProto.SetPlayState: OnSetPlayState(conn, node, rq); break;
+                case NetProto.Frame: OnGameplayFrame(conn, node); break;
+                case NetProto.PlayFinished: OnPlayFinished(conn, node); break;
+
+                case NetProto.ChatSay: OnChatSay(conn, node, now); break;
+
+                default:
+                    // 不認得的訊息型別:可能是新版 client。回錯誤但不斷線。
+                    SendError(conn, rq, NetProto.ErrProto, "unknown message: " + type);
+                    break;
+            }
+        }
+
+        // ================= 連線 / 工作階段 =================
+
+        private void OnHello(Connection conn, object node, int rq, long now)
+        {
+            if (conn.HelloDone) { conn.Kill(NetProto.ErrProto); return; }
+
+            int proto = NetJson.Int(node, "proto", -1);
+            if (proto != NetProto.Version)
+            {
+                // 版本不合就明確擋掉 —— 讓它半殘地跑然後在某個角落出怪事更難查。
+                conn.Kill(NetProto.ErrProto);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(_opts.Password))
+            {
+                string pw = NetJson.Str(node, "password");
+                if (!string.Equals(pw, _opts.Password, StringComparison.Ordinal))
+                {
+                    conn.Kill("badPassword");
+                    return;
+                }
+            }
+
+            string role = NetJson.Str(node, "role", NetProto.RoleControl);
+            conn.Role = role == NetProto.RoleFile ? NetProto.RoleFile : NetProto.RoleControl;
+
+            if (conn.Role == NetProto.RoleFile)
+            {
+                // file 連線靠 sessionKey 認親到既有的 control 連線 —— 它不是新玩家。
+                string key = NetJson.Str(node, "sessionKey");
+                int owner;
+                if (string.IsNullOrEmpty(key) || !_sessions.TryGetValue(key, out owner))
+                {
+                    conn.Kill("badSession");
+                    return;
+                }
+                conn.UserId = owner;
+                conn.SessionKey = key;
+                conn.HelloDone = true;
+                conn.LastRecvMs = now;
+                conn.Send(JObj.New()
+                    .Str(NetProto.FieldType, NetProto.Welcome)
+                    .Int(NetProto.FieldRequest, rq)
+                    .Int("userId", owner)
+                    .Str("role", NetProto.RoleFile));
+                LogVerbose("#" + conn.ConnId + " 是 user " + owner + " 的檔案連線");
+                return;
+            }
+
+            conn.PlayerId = Clip(NetJson.Str(node, "playerId"), 32);
+            conn.Name = SanitizeName(NetJson.Str(node, "name"));
+            conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
+            conn.Level = Math.Max(0, NetJson.Int(node, "level"));
+            conn.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
+
+            conn.UserId = _nextUserId++;
+            conn.SessionKey = Guid.NewGuid().ToString("N");
+            conn.HelloDone = true;
+            conn.LastRecvMs = now;
+
+            _byUser[conn.UserId] = conn;
+            _sessions[conn.SessionKey] = conn.UserId;
+
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Welcome)
+                .Int(NetProto.FieldRequest, rq)
+                .Int("userId", conn.UserId)
+                .Str("sessionKey", conn.SessionKey)
+                .Str("role", NetProto.RoleControl)
+                .Int("proto", NetProto.Version)
+                .Int("capacity", NetLimits.RoomCapacity)
+                .Int("maxSpectators", NetLimits.MaxSpectators)
+                .Int("fileTtlHours", _opts.TtlHours)
+                .Long("maxBlobBytes", NetLimits.DefaultMaxBlobBytes)
+                .Int("serverNumber", 1)
+                .Int("channel", 1)
+                .Long("serverTimeMs", now));
+
+            Log("user " + conn.UserId + " 「" + conn.Name + "」上線(#" + conn.ConnId + ")");
+        }
+
+        private void OnPing(Connection conn, object node)
+        {
+            // 原樣把 t0 echo 回去 —— client 用它算 RTT。
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Pong)
+                .Num("t0", NetJson.Num(node, "t0"))
+                .Long("serverTimeMs", NowMs()));
+        }
+
+        // ================= 房間生命週期 =================
+
+        private void OnRoomList(Connection conn, int rq)
+        {
+            var arr = JArr.New();
+            var list = _rooms.ListOpenRooms();
+            for (int i = 0; i < list.Count; i++)
+            {
+                var s = list[i].State;
+                string hostName = "";
+                var hostSeat = s.SeatOf(s.HostUserId);
+                if (hostSeat != null) hostName = hostSeat.Name;
+
+                arr.Add(JObj.New()
+                    .Int("code", s.Code)
+                    .Str("name", s.Name)
+                    .Str("hostName", hostName)
+                    .Str("status", NetState.ToWire(s.Status))
+                    .Int("count", s.SeatedCount)
+                    .Int("capacity", s.Capacity)
+                    .Int("spectators", s.Spectators != null ? s.Spectators.Length : 0)
+                    .Int("mode", s.Settings.GameMode)
+                    .Str("songTitle", s.Song != null ? s.Song.Title : ""));
+            }
+
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.RoomListResult)
+                .Int(NetProto.FieldRequest, rq)
+                .Put("rooms", arr));
+        }
+
+        private void OnCreateRoom(Connection conn, object node, int rq)
+        {
+            string name = NetJson.Str(node, "name");
+
+            NetRoom room;
+            LeaveResult left;
+            var op = _rooms.TryCreate(JoinUserOf(conn), name, out room, out left);
+
+            AfterImplicitLeave(left);
+
+            if (op != NetRoomOp.Ok)
+            {
+                conn.Send(JObj.New()
+                    .Str(NetProto.FieldType, NetProto.JoinResult)
+                    .Int(NetProto.FieldRequest, rq)
+                    .Str("result", op.ToJoinResult())
+                    .Int("code", 0));
+                return;
+            }
+
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.JoinResult)
+                .Int(NetProto.FieldRequest, rq)
+                .Str("result", NetProto.JoinOk)
+                .Int("code", room.Code));
+
+            BroadcastRoomState(room);
+            Log("user " + conn.UserId + " 開了房 " + room.Code);
+        }
+
+        private void OnJoinRoom(Connection conn, object node, int rq)
+        {
+            int code = NetJson.Int(node, "code");
+
+            NetRoom room;
+            int seat;
+            LeaveResult left;
+            var op = _rooms.TryJoin(code, JoinUserOf(conn), out room, out seat, out left);
+
+            AfterImplicitLeave(left);
+
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.JoinResult)
+                .Int(NetProto.FieldRequest, rq)
+                .Str("result", op.ToJoinResult())
+                .Int("code", op == NetRoomOp.Ok ? code : 0));
+
+            if (op == NetRoomOp.Ok)
+            {
+                BroadcastRoomState(room);
+                Log("user " + conn.UserId + " 加入房 " + code + " 座位 " + seat);
+            }
+        }
+
+        private void OnLeaveRoom(Connection conn)
+        {
+            LeaveRoomFor(conn.UserId);
+        }
+
+        /// <summary>離房的共同路徑(主動離開 / 斷線 / ping 逾時都走這裡)。</summary>
+        private void LeaveRoomFor(int userId)
+        {
+            var left = _rooms.Leave(userId);
+            if (left.Room == null) return;
+
+            if (left.RoomClosed)
+            {
+                // 關房時理論上已經沒人了(關房條件是「一個人都不剩」),
+                // 但若狀態不同步還有人在,要通知他們。
+                var evicted = left.EvictedUserIds;
+                for (int i = 0; i < evicted.Length; i++) SendKicked(evicted[i], NetProto.KickedRoomClosed);
+                _frames.Remove(left.Room.Code);
+                Log("房 " + left.Room.Code + " 已關閉(沒人了)");
+                return;
+            }
+
+            if (left.NewHostUserId != 0)
+                Log("房 " + left.Room.Code + " 房主換成 user " + left.NewHostUserId);
+
+            BroadcastRoomState(left.Room);
+        }
+
+        /// <summary>「已在別房 → 先隱式離房」之後要處理的廣播。</summary>
+        private void AfterImplicitLeave(LeaveResult left)
+        {
+            if (left.Room == null) return;
+            if (left.RoomClosed)
+            {
+                var evicted = left.EvictedUserIds;
+                for (int i = 0; i < evicted.Length; i++) SendKicked(evicted[i], NetProto.KickedRoomClosed);
+                _frames.Remove(left.Room.Code);
+                return;
+            }
+            BroadcastRoomState(left.Room);
+        }
+
+        // ================= 房間設定(host only) =================
+
+        private void OnSetRoomName(Connection conn, object node, int rq)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            var op = room.SetRoomName(conn.UserId, NetJson.Str(node, "name"));
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        private void OnSetSong(Connection conn, object node, int rq)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            NetSongRef song = null;
+            var songNode = NetJson.Sub(node, "song");
+            if (songNode != null && !NetSongRef.TryDecode(songNode, out song))
+            {
+                // 歌曲參照是嚴格驗證的(packId 格式、譜面路徑安全性)—— 壞的就拒絕整個請求。
+                SendError(conn, rq, NetProto.ErrBadState, "bad song ref");
+                return;
+            }
+
+            var op = room.SetSong(conn.UserId, song);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        private void OnSetRoomSettings(Connection conn, object node, int rq)
+        {
+            NetRoom room;
+            int[] kickedSpecs;
+            var op = _rooms.SetRoomSettings(conn.UserId, NetJson.Sub(node, "settings"), out room, out kickedSpecs);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+
+            for (int i = 0; i < kickedSpecs.Length; i++) SendKicked(kickedSpecs[i], NetProto.KickedRoomClosed);
+            BroadcastRoomState(room);
+        }
+
+        private void OnAssignTeams(Connection conn, object node, int rq)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            TeamLayout layout;
+            if (!TeamLayoutRules.TryParseLayout(NetJson.Str(node, "layout"), out layout) || layout == TeamLayout.None)
+            {
+                SendError(conn, rq, NetProto.ErrBadTeams, "bad layout");
+                return;
+            }
+
+            var op = room.AssignTeams(conn.UserId, layout);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        // ================= 個人操作 =================
+
+        private void OnSetOwnTeam(Connection conn, object node, int rq)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            var op = room.SetOwnTeam(conn.UserId, NetJson.Int(node, "team", (int)TeamTag.Free));
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        private void OnSetReady(Connection conn, object node, int rq)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            var op = room.SetReady(conn.UserId, NetJson.Bool(node, "ready"));
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        private void OnSetAvailability(Connection conn, object node, long now)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return;   // 不在房裡的可用性回報靜默忽略(正常的競態)
+
+            Availability avail;
+            if (!NetState.TryParseAvailability(NetJson.Str(node, "state"), out avail)) return;
+
+            // 下載進度回報要節流。client 自己也會節流,但不能假設對方的 client 沒被改過。
+            if (avail == Availability.Downloading && !conn.Rate.AllowAvailProgress(now)) return;
+
+            var op = room.SetAvailability(conn.UserId, NetJson.Str(node, "packId"),
+                                          avail, (float)NetJson.Num(node, "progress"));
+            if (op == NetRoomOp.Ok) BroadcastRoomState(room);
+        }
+
+        // ================= 座位管理(host only) =================
+
+        private void OnKickUser(Connection conn, object node, int rq)
+        {
+            int target = NetJson.Int(node, "userId");
+
+            NetRoom room;
+            LeaveResult left;
+            var op = _rooms.KickUser(conn.UserId, target, out room, out left);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+
+            SendKicked(target, NetProto.KickedByHost);
+            if (left.RoomClosed) { _frames.Remove(room.Code); return; }
+            BroadcastRoomState(room);
+            Log("user " + target + " 被房主踢出房 " + room.Code);
+        }
+
+        private void OnSetSeatClosed(Connection conn, object node, int rq)
+        {
+            int seat = NetJson.Int(node, "seat", -1);
+            bool closed = NetJson.Bool(node, "closed", true);
+
+            NetRoom room;
+            int kicked;
+            var op = _rooms.SetSeatClosed(conn.UserId, seat, closed, out room, out kicked);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+
+            // 關閉有人的座位 → 那個人先被踢出去(需求 12)。
+            if (kicked != 0) SendKicked(kicked, NetProto.KickedSeatClosed);
+            BroadcastRoomState(room);
+        }
+
+        private void OnTransferHost(Connection conn, object node, int rq)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            var op = room.TransferHost(conn.UserId, NetJson.Int(node, "userId"));
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        // ================= 旁觀 =================
+
+        private void OnSpectate(Connection conn, object node, int rq)
+        {
+            // 帶 code = 從房間列表以旁觀身分加入;不帶 = 在目前房間內切成旁觀。
+            int code = NetJson.Int(node, "code");
+            if (code == 0)
+            {
+                var cur = _rooms.RoomOf(conn.UserId);
+                if (cur == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+                code = cur.Code;
+            }
+
+            NetRoom room;
+            LeaveResult left;
+            var op = _rooms.TrySpectate(code, JoinUserOf(conn), out room, out left);
+            AfterImplicitLeave(left);
+
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        private void OnStopSpectate(Connection conn, int rq)
+        {
+            NetRoom room;
+            int seat;
+            var op = _rooms.TryUnspectate(JoinUserOf(conn), out room, out seat);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        // ================= 開場 =================
+
+        private void OnRequestStart(Connection conn, object node, int rq, long now)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            NetResolvedRound resolved;
+            if (!NetResolvedRound.TryDecode(NetJson.Sub(node, "resolved"), out resolved))
+            {
+                // 隨機值的範圍驗證失敗 —— server 是最終權威,不照著跑。
+                SendError(conn, rq, NetProto.ErrBadState, "bad resolved round");
+                return;
+            }
+
+            bool force = NetJson.Bool(node, "force");
+
+            NetMatchInfo match;
+            var op = room.RequestStart(conn.UserId, force, resolved, now, out match);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+
+            SendMatchStarting(room, match);
+            BroadcastRoomState(room);
+            Log("房 " + room.Code + " 開始第 " + match.MatchId + " 場(" +
+                match.ParticipantUserIds.Length + " 人" +
+                (match.SpectatorUserIds.Length > 0 ? " + " + match.SpectatorUserIds.Length + " 旁觀" : "") + ")");
+        }
+
+        private void SendMatchStarting(NetRoom room, NetMatchInfo match)
+        {
+            var participants = JArr.New();
+            for (int i = 0; i < match.ParticipantUserIds.Length; i++)
+            {
+                int uid = match.ParticipantUserIds[i];
+                int seatIdx = room.State.SeatIndexOf(uid);
+                var seat = seatIdx >= 0 ? room.State.Seats[seatIdx] : null;
+                if (seat == null) continue;
+
+                participants.Add(JObj.New()
+                    .Int("userId", uid)
+                    .Int("seat", seatIdx)
+                    .Str("name", seat.Name)
+                    .Int("level", seat.Level)
+                    .Int("team", seat.Team)
+                    .Put("look", seat.Look != null ? seat.Look.Encode() : null));
+            }
+
+            var spectatorNames = JArr.New();
+            var specs = room.State.Spectators;
+            if (specs != null)
+                for (int i = 0; i < specs.Length; i++) spectatorNames.Add(specs[i].Name);
+
+            var msg = JObj.New()
+                .Str(NetProto.FieldType, NetProto.MatchStarting)
+                .Long("matchId", match.MatchId)
+                .Long("startEpochMs", match.StartEpochMs)
+                .Int("loadTimeoutMs", match.LoadTimeoutMs)
+                .Put("participants", participants)
+                .Put("spectatorNames", spectatorNames)
+                .Put("resolved", match.Resolved.Encode())
+                .Put("song", match.Song != null ? match.Song.Encode() : null)
+                .Put("settings", room.State.Settings.Encode())
+                .Utf8();
+
+            // 收件人 = 參與者 + 有歌的旁觀者(缺歌的旁觀者留在房間看頭貼)。
+            for (int i = 0; i < match.ParticipantUserIds.Length; i++)
+            {
+                var c = ControlOf(match.ParticipantUserIds[i]);
+                if (c != null) c.SendPreEncoded(msg);
+            }
+            for (int i = 0; i < match.SpectatorUserIds.Length; i++)
+            {
+                var c = ControlOf(match.SpectatorUserIds[i]);
+                if (c != null) c.SendPreEncoded(msg);
+            }
+        }
+
+        private void OnSetPlayState(Connection conn, object node, int rq)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
+
+            PlayState state;
+            if (!NetState.TryParsePlayState(NetJson.Str(node, "state"), out state))
+            {
+                SendError(conn, rq, NetProto.ErrBadState, "unknown state");
+                return;
+            }
+            if (!NetState.IsClientSettable(state))
+            {
+                // 🔴 安全邊界:server 保留狀態不准 client 自稱(否則能繞過載入同步)。
+                SendError(conn, rq, NetProto.ErrBadState, "server-reserved state");
+                return;
+            }
+
+            var op = room.SetPlayState(conn.UserId, state, NetJson.Long(node, "matchId"));
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            BroadcastRoomState(room);
+        }
+
+        // ================= 遊玩中的分數流 =================
+
+        private void OnGameplayFrame(Connection conn, object node)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return;
+            if (room.Match == null) return;
+            if (NetJson.Long(node, "matchId") != room.Match.MatchId) return;   // 上一場的遲到訊息
+
+            Dictionary<int, FrameSample> byUser;
+            if (!_frames.TryGetValue(room.Code, out byUser))
+            {
+                byUser = new Dictionary<int, FrameSample>();
+                _frames[room.Code] = byUser;
+            }
+
+            // 只留最新一筆 —— 這是狀態快照而不是事件流,舊的沒有價值。
+            byUser[conn.UserId] = FrameSample.Decode(node);
+        }
+
+        /// <summary>
+        /// 固定頻率把每個房間彙整好的 frames 推出去。
+        /// N 人的下行是 N×<see cref="NetLimits.ServerFrameHz"/> 訊息/秒,而不是 N² 的轉發風暴。
+        /// </summary>
+        private void PushPendingFrames()
+        {
+            if (_frames.Count == 0) return;
+
+            List<int> emptied = null;
+            foreach (var kv in _frames)
+            {
+                var byUser = kv.Value;
+                if (byUser.Count == 0) continue;
+
+                var room = _rooms.Find(kv.Key);
+                if (room == null || room.Match == null)
+                {
+                    if (emptied == null) emptied = new List<int>();
+                    emptied.Add(kv.Key);
+                    continue;
+                }
+
+                var arr = JArr.New();
+                foreach (var f in byUser) arr.Add(f.Value.Encode(f.Key));
+
+                var bytes = JObj.New()
+                    .Str(NetProto.FieldType, NetProto.Frames)
+                    .Long("matchId", room.Match.MatchId)
+                    .Put("f", arr)
+                    .Utf8();
+
+                // 用 lossy 送:佇列滿了寧可丟掉這一輪,也不要斷線或拖慢 actor loop。
+                ForEachInRoom(room, c => c.SendPreEncoded(bytes, critical: false));
+
+                byUser.Clear();
+            }
+
+            if (emptied != null)
+                for (int i = 0; i < emptied.Count; i++) _frames.Remove(emptied[i]);
+        }
+
+        private void OnPlayFinished(Connection conn, object node)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null || room.Match == null) return;
+            if (NetJson.Long(node, "matchId") != room.Match.MatchId) return;
+
+            // 最終成績先記著,結算時折進 resultsReady。
+            Dictionary<int, FrameSample> byUser;
+            if (!_frames.TryGetValue(room.Code, out byUser))
+            {
+                byUser = new Dictionary<int, FrameSample>();
+                _frames[room.Code] = byUser;
+            }
+            byUser[conn.UserId] = FrameSample.Decode(node);
+
+            var op = room.SetPlayState(conn.UserId, PlayState.Finished, room.Match.MatchId);
+            if (op == NetRoomOp.Ok) BroadcastRoomState(room);
+        }
+
+        // ================= 房間狀態機的結果 =================
+
+        private void ApplyRoomTick(RoomTickResult r, long now)
+        {
+            var room = r.Room;
+            var tick = r.Tick;
+
+            // 載入太久被逐出本場的人:unicast 告訴他們原因(其他人不需要知道)。
+            var timedOut = tick.LoadTimedOutUserIds;
+            for (int i = 0; i < timedOut.Length; i++)
+            {
+                SendTo(timedOut[i], JObj.New()
+                    .Str(NetProto.FieldType, NetProto.GameplayAborted)
+                    .Long("matchId", tick.MatchId)
+                    .Str("reason", NetProto.AbortLoadTookTooLong));
+                Log("房 " + room.Code + ":user " + timedOut[i] + " 載入逾時,逐出本場");
+            }
+
+            if (tick.MatchAborted)
+            {
+                var bytes = JObj.New()
+                    .Str(NetProto.FieldType, NetProto.GameplayAborted)
+                    .Long("matchId", tick.MatchId)
+                    .Str("reason", NetProto.AbortNoParticipants)
+                    .Utf8();
+                ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+                _frames.Remove(room.Code);
+                Log("房 " + room.Code + ":沒有人載入成功,本場取消");
+            }
+
+            if (tick.GameplayStarted)
+            {
+                var bytes = JObj.New()
+                    .Str(NetProto.FieldType, NetProto.GameplayStarted)
+                    .Long("matchId", tick.MatchId)
+                    .Long("serverStartMs", now)
+                    .Utf8();
+                ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+                Log("房 " + room.Code + ":第 " + tick.MatchId + " 場開始");
+            }
+
+            if (tick.ResultsReady)
+            {
+                SendResultsReady(room, tick.MatchId);
+                room.ClearResults();
+                _frames.Remove(room.Code);
+            }
+
+            if (tick.Changed) BroadcastRoomState(room);
+        }
+
+        private void SendResultsReady(NetRoom room, long matchId)
+        {
+            Dictionary<int, FrameSample> byUser;
+            _frames.TryGetValue(room.Code, out byUser);
+
+            var rows = JArr.New();
+            var seats = room.State.Seats;
+            for (int i = 0; i < seats.Length; i++)
+            {
+                var s = seats[i];
+                if (!s.IsTaken) continue;
+                if (s.PlayState != PlayState.Results && s.PlayState != PlayState.Finished) continue;
+
+                // 沒有成績記錄(例如遊玩中斷線沒交最後一筆)→ 全 0,列在結算上但數字是空的。
+                FrameSample f = default(FrameSample);
+                if (byUser != null) byUser.TryGetValue(s.UserId, out f);
+
+                rows.Add(JObj.New()
+                    .Int("userId", s.UserId)
+                    .Str("name", s.Name)
+                    .Long("score", f.Score)
+                    .Int("perfect", f.P)
+                    .Int("cool", f.C)
+                    .Int("bad", f.B)
+                    .Int("miss", f.M)
+                    .Int("maxCombo", f.MaxCombo)
+                    .Bool("disconnected", ControlOf(s.UserId) == null));
+            }
+
+            var bytes = JObj.New()
+                .Str(NetProto.FieldType, NetProto.ResultsReady)
+                .Long("matchId", matchId)
+                .Put("rows", rows)
+                .Utf8();
+            ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+            Log("房 " + room.Code + ":第 " + matchId + " 場結算");
+        }
+
+        // ================= 聊天 =================
+
+        private void OnChatSay(Connection conn, object node, long now)
+        {
+            if (!conn.Rate.AllowChat(now)) return;   // 洗頻:靜默丟掉,不斷線
+
+            string text = Clip(NetJson.Str(node, "text"), NetLimits.MaxChatChars);
+            int expressionId = NetJson.Int(node, "expressionId");
+            if (string.IsNullOrEmpty(text) && expressionId == 0) return;
+
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return;   // 大廳聊天在後續階段
+
+            var bytes = JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatMsg)
+                .Int("senderUserId", conn.UserId)
+                .Str("sender", conn.Name)
+                .Str("text", text)
+                .Str("channel", NetJson.Str(node, "channel", "current"))
+                .Int("expressionId", expressionId)
+                .Str("leadingText", Clip(NetJson.Str(node, "leading"), NetLimits.MaxChatChars))
+                .Int("roomId", room.Code)
+                .Utf8();
+
+            ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+        }
+
+        // ================= 小工具 =================
+
+        private static NetJoinUser JoinUserOf(Connection c)
+            => new NetJoinUser(c.UserId, c.Name, c.Guild, c.Level, c.Look);
+
+        private static string Clip(string s, int max)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Length <= max ? s : s.Substring(0, max);
+        }
+
+        /// <summary>
+        /// 玩家名稱的清理:去頭尾空白、拿掉控制字元、截長度。
+        /// 控制字元一定要拿掉 —— 換行會破壞聊天行的排版,而 0x00 之類的東西在某些
+        /// 文字渲染路徑上會出現奇怪的結果。
+        /// </summary>
+        private static string SanitizeName(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return "玩家";
+            var sb = new System.Text.StringBuilder(raw.Length);
+            for (int i = 0; i < raw.Length; i++)
+            {
+                char ch = raw[i];
+                if (ch < 0x20 || ch == 0x7F) continue;
+                sb.Append(ch);
+            }
+            string s = sb.ToString().Trim();
+            if (s.Length == 0) return "玩家";
+            return s.Length <= NetLimits.MaxNameChars ? s : s.Substring(0, NetLimits.MaxNameChars);
+        }
+
+        /// <summary>遊玩中的一筆分數快照。</summary>
+        private struct FrameSample
+        {
+            public double TMs;
+            public long Score;
+            public int Combo, MaxCombo, P, C, B, M;
+            public float Hp;
+
+            public static FrameSample Decode(object node)
+            {
+                var f = new FrameSample();
+                f.TMs = NetJson.Num(node, "tMs");
+                f.Score = NetJson.Long(node, "score");
+                f.Combo = NetJson.Int(node, "combo");
+                f.MaxCombo = NetJson.Int(node, "maxCombo");
+                f.Hp = (float)NetJson.Num(node, "hp");
+                f.P = NetJson.Int(node, "p");
+                f.C = NetJson.Int(node, "c");
+                f.B = NetJson.Int(node, "b");
+                f.M = NetJson.Int(node, "m");
+                return f;
+            }
+
+            public JObj Encode(int userId)
+                => JObj.New()
+                    .Int("userId", userId)
+                    .Num("tMs", TMs)
+                    .Long("score", Score)
+                    .Int("combo", Combo)
+                    .Int("maxCombo", MaxCombo)
+                    .Num("hp", Hp)
+                    .Int("p", P)
+                    .Int("c", C)
+                    .Int("b", B)
+                    .Int("m", M);
+        }
+    }
+}
