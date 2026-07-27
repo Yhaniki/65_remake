@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Sdo.Game;
+using Sdo.Localization;
 using Sdo.Settings;
 using Sdo.UI.Core;
 using Sdo.UI.Services;
@@ -288,12 +289,46 @@ namespace Sdo.UI.Screens
                 Ctx.Session.Gender = _gender;
                 Ctx.Session.SeedRoomDefaults();      // 房間面板預設是 per-user（換帳號要重種）
             }
+            // 連線模式:建房要問 server 拿房號,是**非同步**的 —— 等回應到了才切畫面,
+            // 否則會進到一個沒有房間資料的房間畫面(房號/HOST/座位全是空的)。
+            if (Ctx != null && Ctx.Net != null)
+            {
+                EnterOwnRoomOnline();
+                return;
+            }
+
             // 選性別 == 進「我自己」的房間當房主：確保當前身分真的擁有房主座位。若殘留了上一個身分/別人的房
             // (例如 ESC 退出未清房)，先離開再重建，否則 IsHost=false → 房主標記消失。
             if (Ctx != null && Ctx.Rooms != null)
                 RoomEntry.EnsureOwnHostRoom(Ctx.Rooms, GameMode.Normal);
             // 進房間轉場：漸黑 → loading → 漸亮，房間 UI 從四邊滑入（Nav.PlayRoomEntrance）。切畫面(GoTo)在全黑時執行。
             ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
+        }
+
+        /// <summary>
+        /// 連線模式的「建立自己的房間」。
+        ///
+        /// 與離線的差別只有一件事:**要等 server 回應**。server 才知道房號(它從池子裡配),
+        /// 而房間畫面一進去就要顯示房號與房主徽章 —— 提早切畫面的話那些欄位還是空的。
+        ///
+        /// 殘留房間的處理與離線同理:如果目前在一間我不是房主的房裡(換身分留下的),先離開。
+        /// </summary>
+        private void EnterOwnRoomOnline()
+        {
+            var net = Ctx.Net;
+
+            if (net.InRoom && !net.IsHost) net.LeaveRoom();
+            if (net.InRoom) { ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance); return; }
+
+            net.CreateRoom("", (result, code) =>
+            {
+                if (result == Sdo.Net.NetProto.JoinOk)
+                {
+                    ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
+                    return;
+                }
+                Toast.Show(LocalizationManager.Get("room.create_failed"));
+            });
         }
 
         // 開場畫面直接進 商城 modal：先把目前選的性別帶進 session（商城依 session 性別開對應性別的 avatar），再開 商城，

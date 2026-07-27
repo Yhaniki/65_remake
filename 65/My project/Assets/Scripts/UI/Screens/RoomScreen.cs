@@ -2124,13 +2124,17 @@ namespace Sdo.UI.Screens
                 int ch = Ctx.Session != null ? Ctx.Session.Channel : 1;
                 _serverLabel.SetText(RoomLabels.ServerName(srv));      // 自由練習場1
                 _channelLabel.SetText(RoomLabels.Channel(ch));         // 頻道1
-                _roomIdLabel.SetText(room.Id.ToString());              // 1
+                // 房號**不放在左上這排** —— 那裡照原本只有「練習場 + 頻道」。
+                // 房號改成接在中央房名後面加括弧(見下面),因為那才是玩家要唸給朋友聽的東西,
+                // 跟房名放在一起比擠在頻道後面好認。
+                _roomIdLabel.SetText("");
                 // 量實際字寬，左到右自動排版(固定 HeaderGap 間距):不論字長/語言都不會疊、間距一致。
                 float lx = ServerX;
                 _serverLabel.SetX(lx);  lx += _serverLabel.PreferredWidth + HeaderGap;
-                _channelLabel.SetX(lx); lx += _channelLabel.PreferredWidth + HeaderGap;
-                _roomIdLabel.SetX(lx);
-                _roomNameLabel.text = RoomLabels.DisplayName(room.Name, room.HostName);  // 玩家001的舞蹈室 (或自訂)
+                _channelLabel.SetX(lx);
+
+                // 中央房名 + 房號:「飄漂o的舞蹈室(40444)」。
+                _roomNameLabel.text = RoomLabels.DisplayNameWithCode(room.Name, room.HostName, room.Id);
             }
 
             RenderWin2();   // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落 全部依 session 重畫
