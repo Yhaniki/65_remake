@@ -124,6 +124,38 @@
    "v": "Failed to create room"
   },
   {
+   "k": "room.join_title",
+   "v": "Join Room"
+  },
+  {
+   "k": "room.join_code",
+   "v": "Code"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "OK"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "Enter a 5-digit room code"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "No room with that code"
+  },
+  {
+   "k": "room.join_full",
+   "v": "That room is full"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "That room is in a match"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "Could not join the room"
+  },
+  {
    "k": "room.leave",
    "v": "Leave Room"
   },

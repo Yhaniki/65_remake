@@ -37,7 +37,14 @@ namespace Sdo.UI
         /// the room can't tell them apart from a screen check alone.</summary>
         public bool AnyModalOpen => ShopOpen
             || (_wardrobe != null && _wardrobe.IsOpen)
-            || (_option != null && _option.IsOpen);
+            || (_option != null && _option.IsOpen)
+            || JoinRoomOpen;
+
+        /// <summary>「輸入房號」框。選男女畫面按「加入」時自己叫它 <c>Open()</c> —— 加入流程的邏輯屬於那個畫面。</summary>
+        public JoinRoomModal JoinRoom => _joinRoom;
+
+        /// <summary>True while 輸入房號 框開著。背後的畫面用它讓自己的 ESC 處理讓路(同 <see cref="ShopOpen"/>)。</summary>
+        public bool JoinRoomOpen => _joinRoom != null && _joinRoom.IsOpen;
 
         private AppContext _ctx;
         private readonly Dictionary<ScreenId, UIScreenBase> _screens = new Dictionary<ScreenId, UIScreenBase>();
@@ -46,6 +53,7 @@ namespace Sdo.UI
         private ResultsModal _results;
         private ShopScreen _shop;
         private WardrobeScreen _wardrobe;
+        private JoinRoomModal _joinRoom;
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
@@ -140,8 +148,16 @@ namespace Sdo.UI
                 prog.Set(0.15f + 0.55f * Mathf.Clamp01(f),
                          string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
 
-            // Phase 3 — build the screens (SongSelect now sees the external songs registered above).
-            prog.Set(0.72f, "建立介面…");
+            // Phase 3 —— 連線(只有 config.ini 填了 [Net] serverAddress 才會走到)。
+            // 連線在 AppContext.Create 就已經開始了(背景 thread),這裡只是等它完成並顯示進度。
+            //
+            // 🔴 順序很重要:這一段**必須在建畫面之前**。連不上的時候它會把 _ctx 換成單機版,
+            // 而畫面是在 Build(ctx) 時把 ctx 抓進自己的欄位的 —— 先建畫面就會抓到一個已經死掉的連線,
+            // 而且畫面的版面(選男女畫面的按鈕是兩顆還是三顆)也是依連線狀態決定的,晚了就來不及。
+            yield return WaitForConnectionCo(prog);
+
+            // Phase 4 — build the screens (SongSelect now sees the external songs registered above).
+            prog.Set(0.78f, "建立介面…");
             yield return null;
             Make<GenderSelectScreen>(screenLayer);   // 單機開場的男/女選擇畫面（Flow 的入口狀態）
             Make<LobbyScreen>(screenLayer);
@@ -149,8 +165,8 @@ namespace Sdo.UI
             Make<SongSelectScreen>(screenLayer);
             _ctx.Flow.ScreenChanged += (from, to) => { ShowOnly(to); UpdateBgm(to); };
 
-            // Phase 4 — modals + Nav wiring.
-            prog.Set(0.85f, "建立介面…");
+            // Phase 5 — modals + Nav wiring.
+            prog.Set(0.87f, "建立介面…");
             yield return null;
             _option = new GameObject("OptionDlg").AddComponent<OptionDlgModal>();
             _option.transform.SetParent(modalLayer, false);
@@ -167,6 +183,11 @@ namespace Sdo.UI
             _wardrobe = new GameObject("Wardrobe").AddComponent<WardrobeScreen>();
             _wardrobe.transform.SetParent(modalLayer, false);
             _wardrobe.Build(modalLayer, _ctx.Session);
+            // 「輸入房號」框(選男女畫面按加入時彈)。單機也建 —— 建一個隱藏的 modal 沒有成本,
+            // 而且不必在兩條路徑上各寫一次 null 判斷。
+            _joinRoom = new GameObject("JoinRoom").AddComponent<JoinRoomModal>();
+            _joinRoom.transform.SetParent(modalLayer, false);
+            _joinRoom.Build(modalLayer);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
@@ -177,14 +198,10 @@ namespace Sdo.UI
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
-            // Phase 5 — font atlas warmup (rasterises the CJK glyphs of the visible song titles).
-            prog.Set(0.92f, "準備字型…");
+            // Phase 6 — font atlas warmup (rasterises the CJK glyphs of the visible song titles).
+            prog.Set(0.94f, "準備字型…");
             yield return null;
             WarmupFont();
-
-            // Phase 6 —— 連線(只有 config.ini 填了 [Net] serverAddress 才會走到)。
-            // 連線在 AppContext.Create 就已經開始了(背景 thread),這裡只是等它完成並顯示進度。
-            yield return WaitForConnectionCo(prog);
 
             prog.Set(1f, "");
             yield return null;
@@ -198,6 +215,38 @@ namespace Sdo.UI
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOM"))) EnterRoom();
             // DEV: SDO_SHOP → boot into the waiting room then open the 商城 (shop) modal (Tools ▸ SDO ▸ Boot Into Shop).
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_SHOP"))) { EnterRoom(); Nav.OpenShop?.Invoke(); }
+            // DEV: SDO_JOINDLG → 開機直接彈「輸入房號」框,用來截圖檢查那個框的排版。
+            // (它是官方密碼框抹掉字後疊 TMP 的,字沒對準只有實機截圖看得出來 —— 不能只信烘圖工具的輸出。)
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_JOINDLG")) && _joinRoom != null)
+                _joinRoom.Open(_ => { });
+            // DEV: SDO_JOINFIRST=1 → 開機直接加入 server 上第一間房。
+            // 同機多開兩份 client 測連線時,房號是 server 隨機配的 —— 這個 hook 讓第二份不必把房號抄過去,
+            // 直接問 roomList 拿第一間。要先有另一份 client(SDO_ROOM=1)開好房。
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_JOINFIRST")) && _ctx.Net != null)
+                StartCoroutine(DevJoinFirstRoomCo());
+        }
+
+        /// <summary>SDO_JOINFIRST 的實作:問房間列表 → 加入第一間 → 進房間畫面。純除錯用。</summary>
+        private IEnumerator DevJoinFirstRoomCo()
+        {
+            var net = _ctx.Net;
+            Sdo.Net.NetRoomListEntry[] rooms = null;
+            net.RequestRoomList(r => rooms = r);
+
+            float deadline = Time.realtimeSinceStartup + 5f;
+            while (rooms == null && Time.realtimeSinceStartup < deadline) yield return null;
+            if (rooms == null || rooms.Length == 0)
+            {
+                Debug.LogWarning("[dev] SDO_JOINFIRST:server 上沒有房間(先讓另一份 client 用 SDO_ROOM=1 開房)");
+                yield break;
+            }
+
+            int code = rooms[0].Code;
+            net.JoinRoom(code, (result, _) =>
+            {
+                if (result == Sdo.Net.NetProto.JoinOk) _ctx.Flow.GoTo(ScreenId.Room);
+                else Debug.LogWarning("[dev] SDO_JOINFIRST:加入 " + code + " 失敗:" + result);
+            });
         }
 
         /// <summary>
@@ -212,7 +261,7 @@ namespace Sdo.UI
             var net = _ctx.Net;
             if (net == null) yield break;
 
-            prog.Set(0.95f, "連線伺服器…", Sdo.Settings.RoomConfig.serverAddress);
+            prog.Set(0.72f, "連線伺服器…", Sdo.Settings.RoomConfig.serverAddress);
 
             float deadline = Time.realtimeSinceStartup + ConnectTimeoutSec;
             while (Time.realtimeSinceStartup < deadline)
@@ -221,7 +270,7 @@ namespace Sdo.UI
 
                 if (net.IsConnected)
                 {
-                    prog.Set(0.98f, "已連上伺服器", Sdo.Settings.RoomConfig.serverAddress);
+                    prog.Set(0.76f, "已連上伺服器", Sdo.Settings.RoomConfig.serverAddress);
                     _netReady = true;
                     yield break;
                 }

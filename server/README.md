@@ -149,22 +149,46 @@ netMaxDownloadMb=200
 🔴 `config.ini` 是**全域一份**(在 `<DataRoot>/PROFILE/`),所以同機兩份 client 預設會共用
 同一個 `activeId` 並互相 `Save()` 覆蓋 —— 兩邊會變成同一個角色,測不出多人。
 
-用 `SDO_DATA_ROOT` 給第二份 client 一份獨立的 DATA:
+用 `SDO_DATA_ROOT` 給第二份 client 一份獨立的 DATA。`tools\make_alt_data_root.ps1` 會建好:
 
 ```powershell
-# 第一份:照常跑
-.\dance.exe
+# 一次就好:建一個 link farm(除 PROFILE 以外全部 junction 回原本那棵樹,幾 GB 不用複製),
+# 並把第二份的 activeId 改成 00000001(男)—— 兩邊看起來不一樣,一眼分得出誰是誰。
+.\tools\make_alt_data_root.ps1
 
-# 第二份:複製一份 PROFILE(其餘資產可以共用 —— 用 junction 省空間)
-$alt = 'H:\sdo_alt_root'
-New-Item -ItemType Directory -Force $alt | Out-Null
-robocopy H:\65_remake_clean\DATA $alt /E /XD PROFILE /NFL /NDL /NJH /NJS
-robocopy H:\65_remake_clean\DATA\PROFILE "$alt\PROFILE" /E /NFL /NDL /NJH /NJS
-$env:SDO_DATA_ROOT = $alt
-.\dance.exe
+# 第一份:照常跑
+.\Build\Windows\dance.exe
+
+# 第二份:換 DATA root
+$env:SDO_DATA_ROOT = 'H:\sdo_alt_root'
+.\Build\Windows\dance.exe
 ```
 
-然後在兩份的 `config.ini` 裡填同一個 `serverAddress`,但選不同的角色(`activeId`)。
+兩份的 `config.ini` 要填同一個 `serverAddress` 與同一個 `serverPassword`。
+
+房號是 server 隨機配的,手動把它抄到第二份很煩 → 有兩個 dev 環境變數:
+
+```powershell
+$env:SDO_ROOM = 1        # 開機直接開一間房(第一份)
+$env:SDO_JOINFIRST = 1   # 開機直接加入 server 上第一間房(第二份)
+$env:SDO_JOINDLG = 1     # 開機直接彈「輸入房號」框(只是要看那個框的排版)
+```
+
+### 截圖驗證
+
+UI 改動一律實機截圖驗證(烘圖工具的輸出看起來對,疊上 TMP 之後字有沒有對準是另一回事)。
+`tools\shoot_ui.ps1` 把「啟動 → 等開完機 → 抓視窗 → 關掉」自動化:
+
+```powershell
+.\tools\shoot_ui.ps1 -Out shot_gendersel.png
+.\tools\shoot_ui.ps1 -Env SDO_JOINDLG=1 -Out shot_joindlg.png
+.\tools\shoot_ui.ps1 -Env SDO_ROOM=1 -Out shot_room.png -KeepOpen
+```
+
+⚠️ 連線相關的畫面(選男女畫面的三顆鈕、房號框)**只有真的連上 server 才會出現** ——
+連不上會退回單機版面(兩顆鈕)。截圖前先確認 server 有在跑,而且
+`<DataRoot>\PROFILE\config.ini` 的 `[Net] serverAddress` 有填。
+DataRoot 看 repo 根的 `data_root.txt`,**不是** exe 旁邊那份 DATA(`log.txt` 第一行會印出實際用的那個)。
 
 ## 架構
 

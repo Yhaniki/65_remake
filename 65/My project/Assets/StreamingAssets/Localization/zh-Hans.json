@@ -124,6 +124,38 @@
    "v": "创建房间失败"
   },
   {
+   "k": "room.join_title",
+   "v": "房号输入"
+  },
+  {
+   "k": "room.join_code",
+   "v": "房号"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "确认"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "房号是 5 位数字"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "找不到这个房号"
+  },
+  {
+   "k": "room.join_full",
+   "v": "房间已满"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "这间房正在游戏中"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "加入房间失败"
+  },
+  {
    "k": "room.leave",
    "v": "离开房间"
   },

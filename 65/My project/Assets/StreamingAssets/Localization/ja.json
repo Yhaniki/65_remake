@@ -124,6 +124,38 @@
    "v": "ルームの作成に失敗しました"
   },
   {
+   "k": "room.join_title",
+   "v": "ルーム番号入力"
+  },
+  {
+   "k": "room.join_code",
+   "v": "番号"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "確認"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "ルーム番号は5桁です"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "そのルームは見つかりません"
+  },
+  {
+   "k": "room.join_full",
+   "v": "ルームが満員です"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "対戦中のルームです"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "ルームに参加できませんでした"
+  },
+  {
    "k": "room.leave",
    "v": "ルーム退出"
   },
