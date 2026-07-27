@@ -2854,6 +2854,7 @@ namespace Sdo.Game
         public float sceneSupersample = RtSizing.DefaultSupersample;   // set to 1 to render at window-native resolution
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
+        private FormationPreview _formation;   // 隊形假人預覽(F10,延遲建立)
         // 飛行翅膀跳舞抬升:flystay 浮空 idle 靠自身 pose 已浮 Δ,dance 貼地 → 跳舞時把 root 抬 Δ,讓跳舞與 fly idle 同高。
         private float _flyDanceLift;   // Δ = flystay idle 相對「dance 貼地」的浮高(>0 才啟用;非飛行/2D/編輯器=0)
         private float _flyBaseRootY;   // dance 貼地時的 root.y(= danceSpot.y − danceFeetY)
@@ -2910,6 +2911,28 @@ namespace Sdo.Game
                 _dirShotStart = Time.time;
             }
             onCamModeChanged?.Invoke(_camMode);   // 記住玩家的選擇（OPTION「遊戲視角」＋下一局的開場鏡頭）
+        }
+
+        // F10:開/關「隊形」假人預覽 —— 在舞台地板上立最多 6 個替身，位置逐字取自反編譯的 slot 表
+        // (FormationCatalog，table @0x582690)。開著時 ←→ 切隊形 TYPE(1..3)、↑↓ 改人數 COUNT(1..6)。
+        // slot 0(金色)＝領隊/第一名/相機錨點；預覽期間把單人舞者藏起來，讓替身站它的位置。
+        // 純研究/視覺化工具（沒有計分、沒有音符、沒有連線）。
+        //
+        // 原 formation 分支綁 F2，但本分支 F2/F3 都已被佔用（F2 = RoomScreen 開始遊戲、GenderSelectScreen
+        // 譜面編輯器、以及 KeyMap 的 Hotkey.Camera 預設值；F3 = RoomScreen 家族除錯），所以改綁 F10。
+        private void ToggleFormationPreview()
+        {
+            if (_formation == null)
+            {
+                var go = new GameObject("FormationPreview");
+                go.transform.SetParent(transform, false);
+                _formation = go.AddComponent<FormationPreview>();
+                _formation.Layer = SceneLayer;
+            }
+            _formation.Cam = _sceneCam;      // (重新)綁定 —— 舞台相機可能在第一次 toggle 之後才建好
+            _formation.Anchor = _danceSpot;
+            _formation.Toggle();
+            if (_avatarRoot != null) _avatarRoot.gameObject.SetActive(!_formation.Active);   // 預覽時藏起單人舞者
         }
 
         /// <summary>F2 可循環的固定鏡頭台數（前端把玩家選到的那台存進 OPTION 設定時要夾範圍）。</summary>
@@ -4558,6 +4581,8 @@ namespace Sdo.Game
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
+            // 隊形假人預覽(←→ 切隊形、↑↓ 改人數)。F10 是刻意選的：F2/F3 已被房間畫面與相機切換佔用。
+            if (Input.GetKeyDown(KeyCode.F10)) ToggleFormationPreview();
             // 以下功能鍵的鍵位都能在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] 改（預設＝括號裡那顆），見 Sdo.Settings.KeyMap。
             // Auto（自動）模式開關(預設 F8) — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
             if (KeyMap.Down(Hotkey.AutoPlay)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按下發出 SE_0001
