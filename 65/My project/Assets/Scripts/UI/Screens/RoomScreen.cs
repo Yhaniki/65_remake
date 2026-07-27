@@ -661,9 +661,34 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < _slotHead.Length; i++) if (_slotHead[i] != null) { _slotHead[i].texture = null; _slotHead[i].enabled = false; }
             if (_localHead != null) { Destroy(_localHead.gameObject); _localHead = null; }
             if (_scene != null) { Destroy(_scene.gameObject); _scene = null; }
+            // 遠端玩家的角色跟著 _scene 一起被拆掉,但名字牌是掛在 UI 上的 → 要自己收,
+            // 否則回房間時會留下一排指向已消失角色的孤兒名字牌。
+            ClearRemoteNamePlates();
+            _remoteAvatarRev = -1;
         }
 
-        private void OnRoomUpdated(int id) => Render();
+        private void OnRoomUpdated(int id)
+        {
+            EnsureChatScope();
+            Render();
+        }
+
+        /// <summary>
+        /// 聊天的作用域房號要跟著房間資料走,不能只在 <c>OnShow</c> 設一次。
+        ///
+        /// 🔴 連線模式下「進房」與「拿到房間資料」是**兩件事**:加入成功的回應可能比第一份
+        /// 房間快照先到,那時 <c>CurrentRoom</c> 還是 null → 作用域房號會停在 0,
+        /// 而顯示過濾器要求 <c>m.RoomId == _chatScopeRoomId</c> → **整個房間的聊天一句都不會出現**
+        /// (連自己說的也不會,因為線上版的自己那句也是從 server 繞回來的)。
+        /// 實際踩過:兩台互打字都看不到對方,server 的 log 卻明明收到了 chatSay。
+        /// </summary>
+        private void EnsureChatScope()
+        {
+            int id = Ctx != null && Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
+            if (id == 0 || id == _chatScopeRoomId) return;
+            _chatScopeRoomId = id;
+            Ctx.Chat?.SetScope(ChatScope.Room, id);
+        }
 
         private void BuildRoomChatLog()
         {
@@ -2379,7 +2404,9 @@ namespace Sdo.UI.Screens
             // 六格頭貼每幀重畫一次(見 RenderSlots 的註解:F2 面板要能即時拉位置/尺寸,
             // 而且連線模式的座位狀態是 server 推來的,不能只在 Render() 那一刻套一次)。
             RenderSlots(Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null);
+            EnsureChatScope();          // 房間資料可能比進場晚到(見那邊的註解);設好之後就是純比較,不花成本
             SyncRemoteRoomAvatars();
+            PlaceRemoteNamePlates();
 
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
@@ -3187,13 +3214,16 @@ namespace Sdo.UI.Screens
         private int _remoteAvatarRev = -1;
         private readonly List<RoomScene3D.RemotePlayer> _remoteBuf = new List<RoomScene3D.RemotePlayer>();
 
+        // 遠端玩家頭上的名字牌(userId → label)。跟著 3D 角色的頭每幀擺位。
+        private readonly Dictionary<int, OutlinedLabel> _remoteNames = new Dictionary<int, OutlinedLabel>();
+
         private void SyncRemoteRoomAvatars()
         {
             if (_scene == null || Ctx == null || Ctx.Net == null) return;   // 單機沒有別人
             var snap = Ctx.Net.Room;
             if (snap == null)
             {
-                if (_remoteAvatarRev != -1) { _scene.SyncRemotePlayers(null); _remoteAvatarRev = -1; }
+                if (_remoteAvatarRev != -1) { _scene.SyncRemotePlayers(null); ClearRemoteNamePlates(); _remoteAvatarRev = -1; }
                 return;
             }
             if (snap.Rev == _remoteAvatarRev) return;
@@ -3215,6 +3245,62 @@ namespace Sdo.UI.Screens
                 });
             }
             _scene.SyncRemotePlayers(_remoteBuf);
+            SyncRemoteNamePlates(snap, me);
+        }
+
+        // 頭上的名字牌:跟本機那顆同款(FaceCream + 黑邊 + 粗體),沒有它的話房間裡的人是誰全靠猜。
+        private void SyncRemoteNamePlates(Sdo.Net.NetRoomSnapshot snap, int me)
+        {
+            _remoteScratchIds.Clear();
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var s = snap.Seats[i];
+                if (!s.IsTaken || s.UserId == me) continue;
+                _remoteScratchIds.Add(s.UserId);
+
+                OutlinedLabel lbl;
+                if (!_remoteNames.TryGetValue(s.UserId, out lbl) || lbl == null)
+                {
+                    lbl = OutlinedLabel.Create(Root, "RemoteName" + s.UserId, 0, 0, 160, 20, 14,
+                                               TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
+                                               trackEm: TextStyles.HeadNameTrackEm);
+                    _remoteNames[s.UserId] = lbl;
+                }
+                string lvl = s.Level > 0 ? "  LV:" + s.Level : "";
+                lbl.SetText((s.Name ?? "") + lvl);
+            }
+
+            _remoteGoneIds.Clear();
+            foreach (var kv in _remoteNames) if (!_remoteScratchIds.Contains(kv.Key)) _remoteGoneIds.Add(kv.Key);
+            foreach (var id in _remoteGoneIds)
+            {
+                if (_remoteNames[id] != null) Destroy(_remoteNames[id].gameObject);
+                _remoteNames.Remove(id);
+            }
+        }
+
+        private readonly HashSet<int> _remoteScratchIds = new HashSet<int>();
+        private readonly List<int> _remoteGoneIds = new List<int>();
+
+        private void ClearRemoteNamePlates()
+        {
+            foreach (var kv in _remoteNames) if (kv.Value != null) Destroy(kv.Value.gameObject);
+            _remoteNames.Clear();
+        }
+
+        // 名字牌每幀跟著頭走(角色是 3D 的,鏡頭會動)。看不到的人(在鏡頭後面)就藏起來。
+        private void PlaceRemoteNamePlates()
+        {
+            if (_scene == null || _remoteNames.Count == 0) return;
+            foreach (var kv in _remoteNames)
+            {
+                var lbl = kv.Value;
+                if (lbl == null) continue;
+                Vector2 vp;
+                bool visible = _scene.TryRemoteHeadViewport(kv.Key, out vp);
+                if (lbl.gameObject.activeSelf != visible) lbl.gameObject.SetActive(visible);
+                if (visible) PlaceFollow(lbl.Rect, vp, -8f);
+            }
         }
 
         /// <summary>本機玩家坐在第幾格?找不到回 -1(旁觀或還沒進座位)。</summary>
