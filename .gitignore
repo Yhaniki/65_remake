@@ -120,6 +120,7 @@ assets/*
 /play-capture.png
 /cap-results.xml
 /test_results*.xml
+/test-*.log
 
 # Unity auto-recovery snapshots; keep the checked-in baseline scene only.
 65/My project/Assets/_Recovery/0 (*).unity*
