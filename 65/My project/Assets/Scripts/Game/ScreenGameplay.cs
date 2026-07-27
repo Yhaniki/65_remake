@@ -3703,6 +3703,12 @@ namespace Sdo.Game
                 if (shader != null) mat.shader = shader;
                 if (mat.HasProperty("_Color")) mat.color = Color.white;
             }
+            else if (mode == SceneMapobjUvScrollCatalog.RenderMode.ForceOpaque)
+            {
+                // 官方旗標 0 = 不透明批,alpha 通道是死的。關掉 alpha clip 就好 —— 保留 cutout shader 的
+                // ZWrite On / AlphaTest 佇列,只是永遠不 clip(_Cutoff = -1,和 SceneLoader 對不透明 DDS 的做法一致)。
+                if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", -1f);
+            }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow)
             {
                 // Soft searchlight beam (SCN0016 spotlights): additive shader that blurs the texture along its

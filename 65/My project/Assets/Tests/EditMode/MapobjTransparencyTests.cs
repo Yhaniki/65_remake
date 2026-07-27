@@ -1326,17 +1326,19 @@ namespace Sdo.Tests
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0004", "LANG"), "岸浪絕不能是加法");
             Assert.IsFalse(SceneMapobjUvScrollCatalog.UsesAdditiveOverlay("SCN0004", "SEA"));
 
-            // ★ 只有 LANG(岸浪)排到場景之前,SEA(大洋)不能跟著壓 —— 判準是「這片水離甲板多高」:
-            //   SEA 平躺在 y = −48.9,比甲板(y ≈ 0)低 49 單位,相機一定在水面之上,正常深度測試本來就不會
-            //   讓它爬上甲板;而沿岸低於水面的沙灘會被它正確蓋住 = 「海水蓋在沙灘上」。壓了它反而會變成
-            //   沙灘蓋掉海水。LANG 的包圍盒 y −69.5..−5.7,上緣幾乎跟甲板同高,會從木板下面戳出來,
-            //   所以只有它要壓到 2400(< 場景 SceneVertexCutout 的 AlphaTest 2450)。
-            //   房子/甲板與沙灘同屬一顆 SCENE.MSH(單一 renderer、單一佇列),佇列分不開它們,分開設定
-            //   這兩片水是唯一能同時滿足「擋住甲板」與「別擋住沙灘」的維度。
+            // ★ 岸浪的佇列要落在「場景不透明批之後、場景透明批之前」那一格(2450 < q < 3000)。
+            //   為什麼不是壓到 2400:那等於連沙灘(SHA*.dds,SceneVertexCutout 2450 ZWrite On)也後畫,
+            //   整條浪被沙灘蓋掉 —— 官方沙灘上看得到的白色浪花在 remake 完全不見,使用者回報過。
+            //   為什麼也不能留 3000:場景的欄杆 LANGAN*/棚架 JIAZI/房子基座 D1/陽傘 SAN* 是
+            //   SceneVertexAlpha(3000、**ZWrite Off**),不寫深度,和浪同佇列時勝負只看排序,浪就會刷到
+            //   棧橋欄杆與房子基座。深度測試救不了不寫深度的東西,只有佇列先後能。
+            //   夾在中間兩件事同時成立:不透明批先畫 → 深度生效(浪蓋沙、甲板房子擋浪);透明道具後畫 → 一律蓋過浪。
+            //   ※ SEA(大洋)維持預設佇列:它是 y = −48.9 的平面,比甲板低 49 單位,正常深度測試就不會爬上甲板,
+            //     沿岸低於水面的沙灘則被它正確蓋住 = 海水蓋在沙灘上;壓了反而變成沙灘蓋掉海水(0032d6f 踩過)。
             Assert.AreEqual(0, sea.Queue, "大洋不能壓佇列 —— 壓了沙灘就會反過來蓋掉海水");
-            Assert.AreEqual(SceneMapobjUvScrollCatalog.WaterBehindSceneQueue, wave.Queue, "岸浪要排在場景之前");
-            Assert.Less(wave.Queue, 2450, "必須小於場景 SceneVertexCutout 的 AlphaTest 佇列,否則會打上甲板");
-            Assert.Greater(wave.Queue, 2000, "又不能低到被不透明批之前的東西蓋掉");
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.WaterOverGroundQueue, wave.Queue, "岸浪要夾在場景不透明批與透明批之間");
+            Assert.Greater(wave.Queue, 2450, "必須大於場景 SceneVertexCutout 的 AlphaTest 佇列,否則沙灘會把浪整條蓋掉");
+            Assert.Less(wave.Queue, 3000, "又必須小於 SceneVertexAlpha 的 Transparent 佇列,否則浪會刷到欄杆與房子基座");
             // 其他場景的水/透明道具沒有這個覆寫(預設 0 = 沿用 shader 佇列),別讓它外溢。
             SceneMapobjUvScrollCatalog.TryFindTarget("SCN0025", "CHUNTIANDONGHUA", out var spring);
             Assert.AreEqual(0, spring.Queue, "春天噴水池不套佇列覆寫");
@@ -1357,6 +1359,66 @@ namespace Sdo.Tests
             Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(sea, "haishuei2_.dds")), "海面是官方透明批");
             var lang = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(Path.Combine(root, "BEACH"), "LANG.MSH")));
             Assert.IsTrue(MshLoader.IsOfficialTransparent(FlagOf(lang, "wave_.dds")), "岸浪是官方透明批");
+        }
+
+        /// <summary>
+        /// 淺灘海床 SEA_DOWN 必須走 ForceOpaque:官方旗標 0 = 不透明批(引擎不看 alpha),而 A001..A032 的下緣
+        /// 是一段淡出漸層。判成 cutout 會 clip 在漸層中段,留下整張圖最暗的一列、100% 不透明、邊緣沿 texel 鋸齒
+        /// —— 海岸線上一條硬邊深褐帶(使用者回報的「黑色邊界」)。這條釘住旗標事實與模式,任一邊被改都會紅。
+        /// </summary>
+        [Test]
+        public void RealData_Scn0004_SeaDown_Is_Official_Opaque_With_A_Fade_Ramp()
+        {
+            Assert.IsTrue(SceneMapobjUvScrollCatalog.TryFindTarget("SCN0004", "SEA_DOWN", out var down));
+            Assert.AreEqual(SceneMapobjUvScrollCatalog.RenderMode.ForceOpaque, down.Mode, "淺灘海床要關掉 alpha clip");
+            Assert.IsFalse(down.Animates, "SEA_DOWN 是換幀動畫,不捲 UV —— 這條目只帶 RenderMode");
+            Assert.AreEqual(0, down.Queue, "不需要佇列覆寫:它是不透明批,深度自己會排");
+
+            var root = MapobjDir();
+            if (root == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+            var msh = MshLoader.ReadMaterialTable(File.ReadAllBytes(Path.Combine(Path.Combine(root, "SEA_DOWN"), "SEA_DOWN.MSH")));
+            Assert.IsFalse(MshLoader.IsOfficialTransparent(FlagOf(msh, "a001.dds")),
+                           "官方把淺灘海床標成不透明批 —— ForceOpaque 的理由就是這個旗標");
+        }
+
+        /// <summary>
+        /// 岸浪夾在 2450 與 3000 中間才成立的**前提**:SCN0004 的 SCENE.MSH 會被 SceneLoader 依貼圖 alpha
+        /// 拆成兩批,而沙灘落在「不透明/cutout(2450、ZWrite On)」、欄杆與陽傘落在「軟 alpha(3000、
+        /// ZWrite Off)」。哪天貼圖分類漂移把沙灘判成 Blend(沙灘就不寫深度了)或把欄杆判成 Cutout
+        /// (欄杆就會提前到 2450、反而被浪蓋掉),WaterOverGroundQueue 的推理會**靜默失效** —— 畫面上又變成
+        /// 「浪不見了」或「浪刷到欄杆」,而佇列數字看起來還是對的。這條先紅出來,指出真正變動的地方。
+        /// </summary>
+        [Test]
+        public void RealData_Scn0004_Sand_Is_Opaque_Batch_And_Railings_Are_Alpha_Batch()
+        {
+            string dir;
+            try { dir = Path.Combine(SdoExtracted.Root, "SCENE/SCN0004"); }
+            catch { dir = null; }
+            if (dir == null || !Directory.Exists(dir)) Assert.Ignore("SCENE/SCN0004 data root not found");
+
+            // 沙灘/甲板/房子 = 不透明批 → SceneVertexCutout(AlphaTest 2450)且寫深度,所以浪排在它們之後才
+            // 蓋得到沙、又會被甲板房子擋住。
+            foreach (var n in new[] { "SHA.DDS", "SHA2.DDS", "SHA3.DDS", "DIBAN1.DDS", "DIBAN2.DDS", "FANGZI.DDS" })
+            {
+                var p = Path.Combine(dir, n);
+                Assert.IsTrue(File.Exists(p), n + " 不在 SCN0004");
+                Assert.AreEqual(DdsAlphaMode.Opaque, DdsLoader.GetAlphaMode(File.ReadAllBytes(p)),
+                                n + " 必須是不透明批(SceneVertexCutout 2450、ZWrite On)");
+            }
+
+            // 欄杆/陽傘/棚架/房子基座 = 軟 alpha → SceneVertexAlpha(Transparent 3000、**不寫深度**),
+            // 深度救不了它們,只能靠「浪的佇列比它們小」讓它們最後畫、蓋過浪。
+            foreach (var n in new[] { "LANGAN2.DDS", "LANGAN5.DDS", "SAN.DDS", "JIAZI.DDS", "D1.DDS" })
+            {
+                var p = Path.Combine(dir, n);
+                Assert.IsTrue(File.Exists(p), n + " 不在 SCN0004");
+                Assert.AreEqual(DdsAlphaMode.Blend, DdsLoader.GetAlphaMode(File.ReadAllBytes(p)),
+                                n + " 必須是軟 alpha 批(SceneVertexAlpha 3000、ZWrite Off)");
+            }
+
+            // 兩批之間確實有空位可以夾 —— 這是 WaterOverGroundQueue 存在的理由。
+            Assert.Greater(SceneMapobjUvScrollCatalog.WaterOverGroundQueue, 2450);
+            Assert.Less(SceneMapobjUvScrollCatalog.WaterOverGroundQueue, 3000);
         }
 
         [Test]

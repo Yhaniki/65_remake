@@ -273,6 +273,20 @@ namespace Sdo.Game
             // there, not a colour, so skip it → white (no darkening). White default keeps non-lit props unchanged.
             bool hasDiffuse = (stride == 24 || stride == 36);
             int diffOff = stride - 12;
+            // ── 逐頂點 ALPHA:美術真的有畫「淡出」,不能一律當 255 ────────────────────────────────────
+            // SCN0004 的海面 SEA.MSH(69 頂點,12 個 alpha=0,全在靠岸那一圈)與岸浪 LANG.MSH(60 頂點,
+            // 38 個 alpha=0)把水面外緣淡掉;丟掉 alpha 就變成「水面在自己的邊界硬生生切斷」——實機看到的
+            // 就是海上一條筆直的硬邊界,而且整片水比官方不透明。
+            // 但**不能無條件相信 alpha**:SCN0016 的 DI4..DI21 / FANGZI7 / FANGZI8 是「每一個頂點 alpha 都是 0」,
+            // 那不是淡出,是匯出時根本沒寫這個通道 —— 它們的材質是不透明批,官方的 D3D 連 ALPHABLENDENABLE 都
+            // 沒開,alpha 是死的;照單全收會讓整棟房子消失。
+            // 判準因此是「有沒有寫過」而不是「值是多少」:整支 submesh 全 0 → 視為沒寫,回退 255;有 0 也有非 0
+            // → 那是真的淡出漸層,原樣讀進來。(全語料掃過:82 支剛性道具只有這 22 支有非 255 alpha,
+            //  其中 20 支是上述 SCN0016 的全 0 case,真正有漸層的就是這兩片水。)
+            bool alphaAuthored = false;
+            if (hasDiffuse)
+                for (int i = 0; i < vcount; i++)
+                    if (d[vertOff + i * stride + diffOff + 3] != 0) { alphaAuthored = true; break; }
             int nW = stride == 44 ? 1 : stride == 48 ? 2 : stride == 52 ? 3 : 0;
             int boneOff = 12 + nW * 4;
             int[] mainMap = pal != null ? pal : null;
@@ -287,8 +301,9 @@ namespace Sdo.Game
                 int b = vertOff + i * stride;
                 verts[i] = new Vector3(F(d, b), F(d, b + 4), F(d, b + 8));   // verbatim — D3D9 & Unity are both LH (no -X)
                 uvs[i] = new Vector2(F(d, b + uvOff), F(d, b + uvOff + 4));   // V NOT flipped (reference msh_reader uses v direct)
-                // D3DCOLOR 0xAARRGGBB (LE bytes B,G,R,A); keep RGB (the baked darkening), alpha stays 255 (cut-out is the texture's).
-                cols[i] = hasDiffuse ? new Color32(d[b + diffOff + 2], d[b + diffOff + 1], d[b + diffOff], 255)
+                // D3DCOLOR 0xAARRGGBB (LE bytes B,G,R,A):RGB = 烘焙亮度,A = 美術畫的淡出(見上方 alphaAuthored)。
+                cols[i] = hasDiffuse ? new Color32(d[b + diffOff + 2], d[b + diffOff + 1], d[b + diffOff],
+                                                   alphaAuthored ? d[b + diffOff + 3] : (byte)255)
                                      : new Color32(255, 255, 255, 255);
                 // weights
                 float w0, w1, w2, w3;

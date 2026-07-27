@@ -134,5 +134,58 @@ namespace Sdo.Tests
             Assert.IsNull(MshLoader.Load(BuildMshWithDeclaredCount(0)));
             Assert.IsNull(MshLoader.Load(BuildMshWithDeclaredCount(-1)));
         }
+
+        // ── 逐頂點 D3DCOLOR 的 ALPHA ────────────────────────────────────────────────────────────
+        // 剛性道具(FVF 0x142/0x152)的 diffuse 除了烘焙亮度,alpha 通道還可能帶美術畫的「淡出」。
+        // 以前一律寫成 255,SCN0004 的海面就在自己的網格邊界硬生生切斷 = 海上一條筆直的硬邊界,
+        // 而且整片水比官方不透明。但也**不能無條件相信** —— 有些道具整支 alpha 全 0(匯出沒寫這個通道),
+        // 照收會讓它整個消失。規則:整支全 0 → 視為沒寫,回退 255;有 0 也有非 0 → 真的漸層,原樣讀。
+
+        private static string MapobjPath(params string[] parts)
+        {
+            try
+            {
+                var p = System.IO.Path.Combine(SdoExtracted.Root, System.IO.Path.Combine("SCENE", "MAPOBJ"));
+                foreach (var s in parts) p = System.IO.Path.Combine(p, s);
+                return System.IO.File.Exists(p) ? p : null;
+            }
+            catch { return null; }
+        }
+
+        private static UnityEngine.Color32[] LoadColors(string path)
+        {
+            var res = MshLoader.Load(System.IO.File.ReadAllBytes(path));
+            Assert.IsNotNull(res, path);
+            Assert.Greater(res.Submeshes.Count, 0, path);
+            return res.Submeshes[0].Mesh.colors32;
+        }
+
+        [Test]
+        public void RealData_Scn0004_Water_Keeps_The_Authored_Vertex_Alpha_Fade()
+        {
+            var sea = MapobjPath("SEA", "SEA.MSH");
+            var lang = MapobjPath("BEACH", "LANG.MSH");
+            if (sea == null || lang == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+
+            foreach (var (path, name) in new[] { (sea, "海面 SEA"), (lang, "岸浪 LANG") })
+            {
+                var cols = LoadColors(path);
+                int zero = 0, full = 0;
+                foreach (var c in cols) { if (c.a == 0) zero++; else if (c.a == 255) full++; }
+                Assert.Greater(zero, 0, name + " 的外緣頂點 alpha=0(淡出)不能被抹成 255 —— 抹掉水面就會在網格邊界硬切");
+                Assert.Greater(full, 0, name + " 也必須留著 alpha=255 的內部頂點");
+                Assert.AreEqual(cols.Length, zero + full, name + " 的 alpha 只有 0/255 兩種(官方資料如此)");
+            }
+        }
+
+        [Test]
+        public void RealData_AllZeroVertexAlpha_Prop_Falls_Back_To_Opaque()
+        {
+            // SCN0016 魔法屋的地板/房子:126 個頂點 alpha 全 0。那不是淡出,是沒寫;照收會整棟不見。
+            var p = MapobjPath("16", "FANGZI", "8", "FANGZI8.MSH");
+            if (p == null) Assert.Ignore("SCENE/MAPOBJ data root not found");
+            foreach (var c in LoadColors(p))
+                Assert.AreEqual(255, c.a, "整支全 0 的 alpha 必須回退成 255,否則道具整個消失");
+        }
     }
 }

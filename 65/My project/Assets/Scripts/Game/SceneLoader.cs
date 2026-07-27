@@ -234,7 +234,10 @@ namespace Sdo.Game
 
                     var drawMode = tm.mode;
                     var shader = drawMode == DdsAlphaMode.Blend ? alphaShader : cutoutShader;
-                    var mat = tm.tex != null ? new Material(shader) { mainTexture = tm.tex } : new Material(shader) { color = new Color(0.3f, 0.3f, 0.35f) };
+                    // 材質帶上貼圖檔名:場景是「一顆 renderer、幾十個 submesh」,出了遮蔽/排序問題時唯一能在
+                    // runtime 分辨「這一格是沙灘還是甲板」的線索就是材質名(SceneLoader.Result.MaterialNames 只有
+                    // 呼叫端拿得到,渲染探針拿不到)。純除錯資訊,不影響繪製。
+                    var mat = tm.tex != null ? new Material(shader) { name = name, mainTexture = tm.tex } : new Material(shader) { name = name, color = new Color(0.3f, 0.3f, 0.35f) };
                     // Soft DDS alpha is alpha-blended. Pure hard alpha stays a cutout. Opaque DDS disables clipping.
                     if (drawMode != DdsAlphaMode.Blend)
                         mat.SetFloat("_Cutoff", drawMode == DdsAlphaMode.Cutout ? 0.5f : -1f);
