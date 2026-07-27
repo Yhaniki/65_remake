@@ -609,7 +609,9 @@ namespace Sdo.UI.Screens
             int body = ProfileManager.Active != null ? ProfileManager.Active.bodyShapeIndex : 0;   // 本機角色自己的體型 (胖瘦)
             if (_scene != null) _scene.RebuildLocalAvatar(male, parts, body);
             // 換裝後要重報一次外觀,否則別人畫面上的你還穿著舊衣服。
-            if (Ctx != null && Ctx.Net != null) Ctx.Net.SendLook(male ? 1 : 0, body, parts);
+            // 走 PublishLook 而不是直接 SendLook:前者會更新「上次送出的外觀」快取。
+            // 直接送的話快取會過期 → 之後某次真的變了反而被去重擋掉(而且很難查)。
+            if (Ctx != null && Ctx.Net != null) Ctx.Net.PublishLook();
             // 頭貼要「整個重建」：RoomHeadPortrait.Init 每次都新建一隻頭 avatar/相機/RT 卻不清舊的 → 直接再 Init 只會疊一隻
             // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
             // (Destroy 幀尾才生效 → 先 SetActive(false)，否則舊頭 avatar 這一幀還在同一個 parkSpot，新頭相機會同時拍到兩顆。)
@@ -684,6 +686,10 @@ namespace Sdo.UI.Screens
             // 否則回房間時會留下一排指向已消失角色的孤兒名字牌。
             ClearRemoteNamePlates();
             _remoteAvatarRev = -1;
+            // 離房清掉「已廣播過誰」—— 不清的話回房時舊名單會被當成已知,
+            // 那些人再進來就不會播進場廣播了。
+            _announcedUsers.Clear();
+            _announceSeeded = false;
         }
 
         private void OnRoomUpdated(int id)
@@ -3372,16 +3378,56 @@ namespace Sdo.UI.Screens
                     Male = s.Look != null && s.Look.Male,
                     Parts = s.Look != null ? s.Look.Parts : null,
                     BodyIndex = s.Look != null ? s.Look.BodyIndex : 0,
+                    // 🔴 一定要填。忘了填的話它恆為 null,而「外觀變了嗎」是比對這個鍵 ——
+                    // null == null → 永遠判定沒變 → **別人換衣服在我畫面上永遠不會反映**
+                    // (使用者回報:「用儲物櫃換衣服 遠端沒有跟著換」)。
+                    LookKey = s.Look != null ? s.Look.Key() : "",
                 });
             }
             _scene.SyncRemotePlayers(_remoteBuf);
             SyncRemoteNamePlates(snap, me);
+            AnnounceRemoteComings(snap, me);
             if (_remoteHeads != null)
             {
                 _remoteHeadIds.Clear();
                 for (int i = 0; i < _remoteBuf.Count; i++) _remoteHeadIds.Add(_remoteBuf[i].UserId);
                 _remoteHeads.SetRoster(_remoteHeadIds);
             }
+        }
+
+        // 「誰已經被廣播過了」。第一份快照只用來建底(不廣播),否則一進房就會看到房裡每個人
+        // 都跳一行「進入舞台遊戲」—— 官方只在**之後**有人進出時才播。
+        private readonly Dictionary<int, string> _announcedUsers = new Dictionary<int, string>();
+        private bool _announceSeeded;
+
+        /// <summary>
+        /// 遠端玩家進出的藍字廣播(「X 進入舞台遊戲」/「X 離開舞台」)。
+        ///
+        /// **不需要新訊息**:每台 client 自己比對前後兩份座位表就知道誰來誰走 ——
+        /// 房間快照本來就會在有人進出時推新版。加一條專門的廣播訊息反而要處理
+        /// 「它與快照的先後順序」(先收到廣播卻還沒有那個人的座位資料),徒增一種不一致。
+        /// </summary>
+        private void AnnounceRemoteComings(Sdo.Net.NetRoomSnapshot snap, int me)
+        {
+            _remoteScratchIds.Clear();
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var s = snap.Seats[i];
+                if (!s.IsTaken || s.UserId == me) continue;
+                _remoteScratchIds.Add(s.UserId);
+                if (_announceSeeded && !_announcedUsers.ContainsKey(s.UserId))
+                    Ctx.Chat?.AnnounceStageEnter(s.Name ?? "");
+                _announcedUsers[s.UserId] = s.Name ?? "";
+            }
+
+            _remoteGoneIds.Clear();
+            foreach (var kv in _announcedUsers) if (!_remoteScratchIds.Contains(kv.Key)) _remoteGoneIds.Add(kv.Key);
+            foreach (int id in _remoteGoneIds)
+            {
+                if (_announceSeeded) Ctx.Chat?.AnnounceStageLeave(_announcedUsers[id]);
+                _announcedUsers.Remove(id);
+            }
+            _announceSeeded = true;
         }
 
         // 頭上的名字牌:跟本機那顆同款(FaceCream + 黑邊 + 粗體),沒有它的話房間裡的人是誰全靠猜。

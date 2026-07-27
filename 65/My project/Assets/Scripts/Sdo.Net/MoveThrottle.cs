@@ -23,8 +23,16 @@ namespace Sdo.Net
         /// <summary>朝向變化超過這個角度才算「轉向」。房間裡的朝向只有四個方向(0/90/180/270),所以門檻可以很寬。</summary>
         private const float FacingEpsilon = 1f;
 
-        /// <summary>位置變化超過這個距離才算「動了」。0.1 unit ≈ 0.3 px,肉眼看不到。</summary>
-        private const float PosEpsilon = 0.1f;
+        /// <summary>
+        /// 「瞬移」的門檻(unit)。只有真的被搬動(座位補正、未來的傳送)才該無視節奏立刻回報。
+        ///
+        /// 🔴 這個數字踩過一次很嚴重的坑:原本寫成 2 unit,但房間走路速度是 **60 unit/秒**
+        /// (RoomMovement:dtMs × 0.02 × 3),60fps 下每幀移動 1 unit → 每兩幀就觸發一次 = 30 送/秒,
+        /// 超過 server 的 15/秒上限 → strikes 累積 → **走不到兩秒就被踢下線**。
+        /// 走路本來就有 100ms 的定期回報(6 unit/次)在管,所以這個門檻必須遠大於那個距離。
+        /// 30 unit = 半秒的走路距離,走路永遠碰不到,真的被搬動一定超過。
+        /// </summary>
+        private const float TeleportDist = 30f;
 
         /// <summary>離開房間 / 重連 → 忘掉上次送的東西,下一次一定會重送。</summary>
         public void Reset()
@@ -47,6 +55,14 @@ namespace Sdo.Net
             {
                 send = true;                                  // ② 開始走 / 停下
             }
+            else if (Dist2(x, z, _lastX, _lastZ) > TeleportDist * TeleportDist)
+            {
+                // 真的被搬動了(座位補正、未來的傳送)。
+                // 🔴 這條必須排在「站著不動就不送」**前面** —— 座位補正正好是站著被搬動的,
+                // 排在後面的話那一筆永遠送不出去,別人看到的位置就停在舊的地方
+                // (而症狀是「兩隻角色疊在一起」,看起來像位置同步整個沒生效)。
+                send = true;
+            }
             else if (!walking)
             {
                 send = false;                                 // ① + ④ 站著不動就不送
@@ -60,10 +76,6 @@ namespace Sdo.Net
                 // ③ 走動中的定期回報。位置完全沒動(撞牆)也照送 —— 對方要靠它知道我還在走
                 //    (不送的話 RemoteWalkTimeout 會把他畫成停下,而我明明還在推著牆走)。
                 send = true;
-            }
-            else if (Dist2(x, z, _lastX, _lastZ) > PosEpsilon * PosEpsilon * 400f)
-            {
-                send = true;                                  // 瞬移級的位移(不該發生,但別漏)
             }
             else send = false;
 

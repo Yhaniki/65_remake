@@ -71,6 +71,11 @@ namespace Sdo.Server.Net
                 if (conn.Rate.Strikes > 20) { conn.Kill(NetProto.ErrRateLimit); }
                 return;
             }
+            // 🔴 放行就把 strikes 歸零。不歸零的話它是一個**只會往上加的計數器** ——
+            // 正常玩家偶爾爆一下(切畫面時一批訊息擠在一起)累積個二十次就會莫名被踢,
+            // 而且症狀是「玩了一陣子突然斷線」,完全指不到任何一次爆量。
+            // 要擋的是「持續爆量」,那種情況下根本不會有訊息被放行。
+            conn.Rate.Strikes = 0;
 
             LogVerbose("← #" + conn.ConnId + " " + type);
             Dispatch(conn, type, node, rq, now);

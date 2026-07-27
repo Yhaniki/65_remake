@@ -78,6 +78,42 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Sustained_Walking_Never_Exceeds_The_Server_Rate_Limit()
+        {
+            // 🔴 這條是為了抓一個真的把人踢下線的 bug 寫的。
+            //
+            // 房間走路速度是 **60 unit/秒**(RoomMovement:dtMs × 0.02 × 3),60fps 下每幀 1 unit。
+            // 原本的「瞬移」判斷門檻只有 2 unit → 每兩幀就送一次 = 30 送/秒,超過 server 的
+            // RateMovePerSec=15 → strikes 累積 → **走不到兩秒就被 server 踢下線**
+            // (使用者回報:「遠端人物走兩步就斷線」)。
+            //
+            // 用真實速度與真實幀率模擬一整秒,斷言送出次數不超過上限。
+            const float unitsPerMs = 0.02f * 3f;      // RoomMovement.MoveScale × WalkSpeed
+            const long frameMs = 16;                   // ~60fps
+            var t = new MoveThrottle();
+            float x = 0f;
+            int sent = 0;
+            for (long ms = 0; ms <= 1000; ms += frameMs)
+            {
+                x += unitsPerMs * frameMs;
+                if (t.ShouldSend(x, 0f, 90f, true, ms)) sent++;
+            }
+            Assert.LessOrEqual(sent, NetLimits.RateMovePerSec,
+                "一秒的走路送了 " + sent + " 筆,超過 server 的上限 " + NetLimits.RateMovePerSec + " → 會被踢下線");
+            // 也不能反過來太疏:遠端角色的插值需要穩定的取樣。
+            Assert.GreaterOrEqual(sent, 8, "一秒至少要送 8 筆,不然遠端會一格一格跳");
+        }
+
+        [Test]
+        public void A_Real_Teleport_Still_Reports_Immediately()
+        {
+            // 座位補正之類會直接搬動角色。那個要立刻回報,否則別人看到的位置會停在舊的地方。
+            var t = new MoveThrottle();
+            Assert.IsTrue(t.ShouldSend(0f, 0f, 0f, false, 0));
+            Assert.IsTrue(t.ShouldSend(200f, 200f, 0f, false, 10), "被搬到很遠的地方 → 立刻送");
+        }
+
+        [Test]
         public void Reset_Makes_The_Next_Report_Unconditional()
         {
             // 離房再進房 / 重連:一定要重送一次「我在這裡」。
