@@ -1660,6 +1660,10 @@ namespace Sdo.UI.Screens
             s.ExternalChartSeed = hit.chartSeed;
             s.ExternalDpsPath = hit.dpsPath ?? "";
             s.ExternalLevel = hit.DisplayLevel(0);
+            s.ExternalSongBpm = hit.bpm;                     // 生成編舞的節拍網格：整首歌一個 BPM，換難度不會換舞
+            // 生成編舞要量「這首歌所有難度」的頭尾（不是只有選到這張）—— 三個格子照原順序帶過去，空的留 ""
+            s.ExternalSongChartPaths = new[] { hit.ChartPath(0), hit.ChartPath(1), hit.ChartPath(2) };
+            s.ExternalSongChartIndices = new[] { hit.ChartIndex(0), hit.ChartIndex(1), hit.ChartIndex(2) };
             Debug.Log("[dev] SDO_PICKSONG 選了外部歌:" + hit.title + "(packId=" + (hit.packId ?? "(空)")
                       + " 譜=" + s.ExternalChartPath + ")");
             Ctx.Rooms.SetSong(s.SongTitle);
@@ -4744,6 +4748,12 @@ namespace Sdo.UI.Screens
             s.ExternalLevel = hit.DisplayLevel(slot);
             s.ExternalFolderPath = hit.folderPath;
             s.ExternalSongKey = hit.songKey ?? "";
+            // 生成編舞的輸入一樣要走**本機**這筆 catalog:舞是一首歌一支,不能因為房主選了 hard
+            // 就跟自己單機玩 easy 時生出的舞不同(見 Sdo.Osu.DanceInputs)。少了這三行,線上開外部歌
+            // 會退回「選到那張譜自己的 span/bpm」—— 正是這次要修掉的那個 bug,只是躲在連線這條路徑上。
+            s.ExternalSongBpm = hit.bpm;
+            s.ExternalSongChartPaths = new[] { hit.ChartPath(0), hit.ChartPath(1), hit.ChartPath(2) };
+            s.ExternalSongChartIndices = new[] { hit.ChartIndex(0), hit.ChartIndex(1), hit.ChartIndex(2) };
             Debug.Log("[room] 外部歌已對映到本機:" + hit.title + " → " + s.ExternalChartPath);
         }
 
