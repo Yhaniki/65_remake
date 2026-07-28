@@ -610,6 +610,8 @@ namespace Sdo.Game
         };
         private TrackedTextMesh _musicName;                       // bottom song title — per-char so its letter-spacing can be tightened
         private TextMesh _lvText, _timeText, _info, _fpsText;
+        // 底列白字(LV/時間)的光柵尺寸管理：跟歌名同一條規則(em 盒實體 px × 2 超取樣)，三個值才是同一種字重。
+        private readonly HudTextRaster _hudTextRaster = new HudTextRaster();
         // 「時間」欄拆成三個獨立文字物件，讓數字變動時「冒號」與「總長」的位置都定住不動：
         //   _timeMin  ＝ 倒數的「分」，右對齊 → 右緣釘在冒號錨點，分是「—」或數字都不影響冒號 x。
         //   _timeText ＝ 倒數的「: 秒」，左對齊在冒號錨點 → 冒號位置固定；秒往右長不影響冒號。
@@ -2462,6 +2464,9 @@ namespace Sdo.Game
             tm.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             tm.GetComponent<MeshRenderer>().sortingOrder = 42;
             tm.fontSize = 64; tm.characterSize = px * 0.2f; tm.anchor = TextAnchor.MiddleLeft; tm.color = col;
+            // 光柵尺寸交給 HudTextRaster 跟著螢幕走(顯示大小不變) —— 上面那對 64/px×0.2 只是「設計基準」，
+            // 直接用它等於把字圖縮 4~5 倍畫，跟同排走實體 px 光柵的歌名並排就一銳一糊、字重也不同。
+            _hudTextRaster.Add(tm, px);
             return tm;
         }
 
@@ -4289,7 +4294,9 @@ namespace Sdo.Game
         {
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
             MaintainSceneRt();
-            _musicName?.Tick();            // 視窗/全螢幕一變就重新以實體 px 光柵化歌名（否則縮小取樣 → 糊出殘影）
+            _musicName?.Tick();            // 視窗/全螢幕一變就重新以實體 px 光柵化歌名（否則取樣不對 → 殘影/糊）
+            // LV/時間值同一套光柵；真的換了尺寸就重量「: 秒」欄寬(字寬會微調)，好把總長欄重新釘回原位。
+            if (_hudTextRaster.Tick()) _timeMeasure = 0;
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
