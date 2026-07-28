@@ -25,8 +25,15 @@ namespace Sdo.Game
         private static readonly object _gate = new object();
         private static bool _installed;
 
-        /// <summary>Also mirror plain Debug.Log (info) lines, not just warnings/errors. Off by default (chatty).</summary>
-        public static bool Verbose = false;
+        /// <summary>
+        /// Also mirror plain Debug.Log (info) lines, not just warnings/errors. Off by default (chatty).
+        ///
+        /// 🔴 用 <c>SDO_VERBOSE=1</c>(環境變數)打開。**沒有這個開關的時候這個旗標永遠是 false**,
+        /// 於是整個專案的 <c>Debug.Log</c> 在打包版裡完全看不到 —— 而那正是查連線問題時最需要的東西。
+        /// 實際踩過:為了查「按開始沒反應」加了一排 Debug.Log 診斷,跑了三輪都是空的 log,
+        /// 還以為是那些程式碼沒被執行(它們有執行,只是被這裡丟掉了)。
+        /// </summary>
+        public static bool Verbose = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SDO_VERBOSE"));
 
         /// <summary>Absolute path of the active log file (null until installed).</summary>
         public static string Path => _path;

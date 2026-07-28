@@ -460,7 +460,10 @@ namespace Sdo.UI
             // instead of the one ExternalDps would generate.
             game.dpsPath = !string.IsNullOrEmpty(s.ExternalDpsPath) ? s.ExternalDpsPath : "DANCE/" + s.SongFileId + ".DPS";
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
-            game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
+            // DEV: SDO_AUTOPLAY=1 → 用內建的 demo auto-player 代打。
+            // 驗連線的分數流需要「分數真的會漲」,而亂按 lane 鍵在節奏遊戲裡幾乎全是 MISS
+            // (負分被夾到 0)→ 兩台都停在 0,證明不了任何事。autoPlay 打得準,分數才會動。
+            game.autoPlay = !string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_AUTOPLAY"));
             game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準 ManiaScroll.DefaultReferenceBpm，osu式內部變速）
             game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）

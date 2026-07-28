@@ -396,6 +396,9 @@ namespace Sdo.Server.Net
 
             var op = room.SetSong(conn.UserId, song);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            // 選歌是房間狀態的重大變更(會清掉全員 ready 與 availability = R9),而且「這間房有沒有歌」
+            // 是準備/開始的前提 —— 沒印出來的話「按開始沒反應」完全查不到(踩過)。
+            Log("房 " + room.Code + " 換歌:" + (song != null ? song.Title : "(清空)"));
             BroadcastRoomState(room);
         }
 

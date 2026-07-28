@@ -175,15 +175,20 @@ try {
     $srvExe = Join-Path $repo 'server\Sdo.Server\bin\Release\net8.0\sdo-server.exe'
     if (Test-Path $srvExe) {
         Write-Host '[shoot] 啟動 server'
-        $srv = Start-Process -FilePath $srvExe -PassThru -WindowStyle Minimized
+        # server 的 stdout 收進檔案 —— 它是唯一會說「哪一條規則拒絕了誰」的地方
+        # (SendError 會印)。少了這個就只能猜,實際上因此浪費了好幾輪。
+        $srvLog = Join-Path $repo 'server_run.log'
+        $srv = Start-Process -FilePath $srvExe -PassThru -WindowStyle Minimized -RedirectStandardOutput $srvLog
         $null = $srv.Handle
         Start-Sleep -Seconds 2
     } else { Write-Host "[shoot] 找不到 server exe($srvExe)—— 假設外面已經有一台在跑" }
 
     $logSrc = Join-Path (Split-Path -Parent $Exe) 'log.txt'
+    $env:SDO_VERBOSE = '1'   # 讓 Debug.Log 也進 log.txt(預設只寫 warning/error,診斷全看不到)
     $env:SDO_DATA_ROOT = ''
     if ($M4) { $SayA = ''; $SayB = '' }   # 見下:自動說話會讓聊天框 armed,把 F2 擋掉
     $env:SDO_ROOM = '1'; $env:SDO_JOINFIRST = ''; $env:SDO_SAY = $SayA
+    if ($M4) { $env:SDO_AUTOSTART = '1'; $env:SDO_AUTOPLAY = '1' } else { $env:SDO_AUTOSTART = ''; $env:SDO_AUTOPLAY = '' }   # 房主自動開始 + 代打(分數才會漲)
     Write-Host '[shoot] 啟動 A(房主,主 DATA 根)'
     $pa = Start-Process -FilePath $Exe -PassThru
     $null = $pa.Handle
@@ -192,12 +197,13 @@ try {
     if (Test-Path $logSrc) { Copy-Item $logSrc (Join-Path $repo 'bubble_logA.txt') -Force }
 
     $env:SDO_ROOM = ''; $env:SDO_JOINFIRST = '1'; $env:SDO_DATA_ROOT = $AltRoot; $env:SDO_SAY = $SayB
+    $env:SDO_AUTOSTART = ''; $env:SDO_AUTOPLAY = ''   # 只有房主(A)自動開始+代打 → 兩邊分數不同,一眼看得出誰是誰
     if ($M4) { $env:SDO_AUTOREADY = '1' }   # 非房主自動按準備(見 RoomScreen.TickDevAutoReady)
     Write-Host "[shoot] 啟動 B(加入,DATA 根 = $AltRoot)"
     $pb = Start-Process -FilePath $Exe -PassThru
     $null = $pb.Handle
     Start-Sleep -Seconds $BootSecB
-    $env:SDO_DATA_ROOT = ''; $env:SDO_JOINFIRST = ''; $env:SDO_SAY = ''; $env:SDO_AUTOREADY = ''
+    $env:SDO_DATA_ROOT = ''; $env:SDO_JOINFIRST = ''; $env:SDO_SAY = ''; $env:SDO_AUTOREADY = ''; $env:SDO_AUTOSTART = ''; $env:SDO_AUTOPLAY = ''
     if (Test-Path $logSrc) { Copy-Item $logSrc (Join-Path $repo 'bubble_logB.txt') -Force }
 
     $pa.Refresh(); $pb.Refresh()
@@ -218,11 +224,18 @@ try {
         Start-Sleep -Seconds 6
         Write-Host '[shoot] A 按開始(F2)'
         Focus-Win $ha; Tap 0x71          # F2 = 直接開始(RoomScreen.Update 的捷徑)
-        Start-Sleep -Seconds 25          # 等 loading + 開場 READY/GO + 打一小段
+        Start-Sleep -Seconds 25          # 等 loading + 開場 READY/GO
         Shoot $ha (Join-Path $repo 'm4_play_host.png')
         Focus-Win $hb; Shoot $hb (Join-Path $repo 'm4_play_guest.png')
-        Start-Sleep -Seconds 20          # 再等一段,看分數有沒有在跑
+
+        # 只在**房主**那台亂按 4 個 lane 鍵(預設 A/S/W/D)→ 他的分數會動、guest 不動。
+        # 這是驗分數流唯一可靠的方式:如果 guest 的右側名單看到房主的分數不是 0,
+        # 就證明「送 frame → server 彙整 → 推給對方 → 對方的名單」整條路是通的。
+        Write-Host '[shoot] 等房主的 autoPlay 累積分數 15 秒'
+        Start-Sleep -Seconds 15
+
         Focus-Win $ha; Shoot $ha (Join-Path $repo 'm4_play_host2.png')
+        Focus-Win $hb; Shoot $hb (Join-Path $repo 'm4_play_guest2.png')
         return
     }
 

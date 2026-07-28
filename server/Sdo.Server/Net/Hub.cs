@@ -303,13 +303,22 @@ namespace Sdo.Server.Net
             if (c != null) c.Send(msg);
         }
 
-        /// <summary>回一個 error(帶上原請求的 rq 讓 client 對得上)。</summary>
+        /// <summary>
+        /// 回一個 error(帶上原請求的 rq 讓 client 對得上)。
+        ///
+        /// 🔴 一定要把拒絕**印出來**:這些規則(host-only、要有歌、已準備不能換隊…)在 client 端全都是
+        /// 靜默的 —— 玩家按了沒反應,而 server 這邊什麼都沒留。實際上因為這個查了很久:
+        /// 「兩台都看得到歌名、按開始沒反應」的真因是 server 眼中這間房沒有歌,而唯一能證明它的
+        /// 就是這一行 log。拒絕本來就是低頻事件,印出來不會吵。
+        /// </summary>
         private static void SendError(Connection conn, int rq, string code, string msg = null)
         {
             var o = JObj.New().Str(NetProto.FieldType, NetProto.Error).Str("code", code ?? NetProto.ErrBadState);
             if (rq != 0) o.Int(NetProto.FieldRequest, rq);
             if (!string.IsNullOrEmpty(msg)) o.Str("msg", msg);
             conn.Send(o);
+            Log("拒絕 user " + conn.UserId + " 的請求(rq " + rq + "):" + (code ?? "?")
+                + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
         }
 
         private static void SendOpError(Connection conn, int rq, NetRoomOp op)
@@ -324,7 +333,7 @@ namespace Sdo.Server.Net
             SendTo(userId, JObj.New().Str(NetProto.FieldType, NetProto.Kicked).Str("reason", reason));
         }
 
-        internal void Log(string line)
+        internal static void Log(string line)
         {
             Console.WriteLine("[sdo-server] " + line);
         }

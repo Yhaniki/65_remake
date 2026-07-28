@@ -643,6 +643,11 @@ namespace Sdo.UI.Screens
 
             ResetCollapse();             // 每次進場都從「完全展開」開始（常駐單例，避免上次收合狀態殘留）
             SeedDefaultSongIfNeeded();   // 進大廳預設選好 index 最大的歌(easy)，房間一進來就有歌
+            Debug.Log("[dev] vars: ROOM=" + (ScreenGameplay.DevVar("SDO_ROOM") ?? "-")
+                      + " JOINFIRST=" + (ScreenGameplay.DevVar("SDO_JOINFIRST") ?? "-")
+                      + " AUTOREADY=" + (ScreenGameplay.DevVar("SDO_AUTOREADY") ?? "-")
+                      + " AUTOSTART=" + (ScreenGameplay.DevVar("SDO_AUTOSTART") ?? "-")
+                      + " SAY=" + (ScreenGameplay.DevVar("SDO_SAY") ?? "-"));
             // 聊天作用域切到本房間：之後的送話/廣播標記成此房，且只顯示此房 + 密語(跨場)。
             _chatScopeRoomId = Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
             Ctx.Chat?.Clear();   // 換場地就清訊息欄：進房間(大廳→房間 / 遊戲→房間都會經過 OnShow)先清空
@@ -763,6 +768,15 @@ namespace Sdo.UI.Screens
         private void OnRoomUpdated(int id)
         {
             EnsureChatScope();
+            // 🔴 房主要把歌發給 server,而且必須在**每次房間快照**時檢查一次,不能只在進房那一刻送一次:
+            //    進房時房間可能還沒建好(createRoom 要等 server 回 roomState),那時 InRoom 還是 false
+            //    → 發布被靜默跳過、而且永遠不會再試 → server 眼中這間房永遠沒有歌 →
+            //    沒人按得下準備、房主按開始也沒反應(實機兩開就是卡在這裡,而且三個 log 都看不出來)。
+            //    這裡有 SongTitle 空的守門,所以送成功之後就不會再送(不會迴圈)。
+            NetSongPublisher.PublishIfRoomHasNone(Ctx);
+            // 回報「我有沒有這首歌」—— 沒有這一步,server 眼中每個人都是 Unknown,
+            // 沒人按得下準備(R17)、也沒有人算參與者(R12)。見那邊的註解。
+            NetSongPublisher.ReportAvailability(Ctx);
             Render();
         }
 
@@ -1479,16 +1493,44 @@ namespace Sdo.UI.Screens
         private bool _devAutoReadyDone;
         private float _devAutoReadyAt = -1f;
 
+        // DEV: SDO_AUTOSTART=1 → 房主自動按「開始」,每 2 秒重試一次直到這一場真的開始。
+        // 重試同時也把「第一次只提示、1.5 秒內再按才強制開始」那條路走完 —— 所以不需要另外傳 force。
+        private float _devAutoStartAt = -1f;
+
+        private void TickDevAutoStart()
+        {
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_AUTOSTART"))) return;
+            if (!Online || !Ctx.Net.IsHost || _starting || _awaitingMatchStart) return;
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room == null || string.IsNullOrEmpty(room.SongTitle)) return;
+            // 🔴 要等第二個人真的坐下來才開始。不等的話房主會在自己還在開機的那幾秒就 solo 開場,
+            //    等別人加入時房間已經是 playing → 他的 join 被 R18 以 inGame 拒絕(而且畫面上看不出來)。
+            if (SeatedPlayerCount(room) < 2)
+            {
+                if (Time.frameCount % 300 == 0) Debug.Log("[dev] SDO_AUTOSTART 還在等第二個人坐下");
+                return;
+            }
+            if (_devAutoStartAt < 0f) { _devAutoStartAt = Time.unscaledTime + 6f; return; }   // 等他按完準備
+            if (Time.unscaledTime < _devAutoStartAt) return;
+            _devAutoStartAt = Time.unscaledTime + 2f;
+            OnStart();
+        }
+
         private void TickDevAutoReady()
         {
             if (_devAutoReadyDone) return;
             if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_AUTOREADY"))) { _devAutoReadyDone = true; return; }
             if (!Online || Ctx.Net.IsHost) return;                              // 房主沒有「準備」這個狀態
             var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-            if (room == null || string.IsNullOrEmpty(room.SongTitle)) return;   // 還沒選歌 → 按了會被 R17 擋掉
+            if (room == null || string.IsNullOrEmpty(room.SongTitle))
+            {
+                if (Time.frameCount % 180 == 0) Debug.Log("[dev] SDO_AUTOREADY 還在等:房間沒有歌");
+                return;   // 還沒選歌 → 按了會被 R17 擋掉
+            }
             if (_devAutoReadyAt < 0f) { _devAutoReadyAt = Time.unscaledTime + 3f; return; }   // 等座位/歌同步好
             if (Time.unscaledTime < _devAutoReadyAt) return;
             _devAutoReadyDone = true;
+            Debug.Log("[dev] SDO_AUTOREADY:按下準備");
             if (!LocalReady(room)) OnReadyToggle();
         }
 
@@ -2728,6 +2770,7 @@ namespace Sdo.UI.Screens
 
             TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
             TickDevAutoReady();          // DEV only:設了 SDO_AUTOREADY 才會動
+            TickDevAutoStart();          // DEV only:設了 SDO_AUTOSTART 才會動
             TickDevAutoSay();   // DEV only:設了 SDO_SAY 才會動(見那邊的註解)
         }
 
@@ -4271,12 +4314,17 @@ namespace Sdo.UI.Screens
 
         private void OnStart()
         {
+            Debug.Log("[room] OnStart: starting=" + _starting + " online=" + Online
+                      + " awaiting=" + _awaitingMatchStart
+                      + " canStart=" + (Ctx != null && Ctx.Rooms != null && Ctx.Rooms.CanStart())
+                      + " songTitle='" + (Ctx != null && Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null
+                                          ? Ctx.Rooms.CurrentRoom.SongTitle : "<no room>") + "'");
             if (_starting) return;   // 已在漸暗切場中，忽略重複按
             // 組隊模式湊不出官方的三張站位表(2v2 / 3v3 / 2v2v2)→ 擋住並說明原因。
             // 🔴 擋住而不是退回個人隊形:退回會讓玩家以為分隊生效了卻看到單人站位,那是靜默的錯誤行為。
             //    server 也會獨立擋一次(含 force),這裡只是提早講清楚。
             var teamRoom = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-            if (!TeamsCanStart(teamRoom, out _)) { Toast.Show(L("room.teams_need_layout")); return; }
+            if (!TeamsCanStart(teamRoom, out _)) { Debug.Log("[room] 開始被本機擋下:組隊人數湊不出站位"); Toast.Show(L("room.teams_need_layout")); return; }
 
             if (Online)
             {
@@ -4287,11 +4335,12 @@ namespace Sdo.UI.Screens
                 {
                     var r0 = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
                     // 沒歌是硬條件,強制也開不了 → 直接說。
-                    if (r0 == null || string.IsNullOrEmpty(r0.SongTitle)) { Toast.Show(L("room.need_song")); return; }
+                    if (r0 == null || string.IsNullOrEmpty(r0.SongTitle)) { Debug.Log("[room] 開始被本機擋下:房間沒有歌(room.SongTitle 空)"); Toast.Show(L("room.need_song")); return; }
                     // 有人沒準備 → 第一次按只提示,1.5 秒內再按一次才強制開始(需求:房主連按兩下強制開始)。
                     if (Time.unscaledTime - _lastStartPressAt > ForceStartDoubleTapSec)
                     {
                         _lastStartPressAt = Time.unscaledTime;
+                        Debug.Log("[room] 開始被本機擋下:有人沒準備 → 提示再按一次強制開始");
                         Toast.Show(L("room.force_start_hint"));
                         return;
                     }
@@ -4300,6 +4349,7 @@ namespace Sdo.UI.Screens
                 _lastStartPressAt = -99f;
                 _awaitingMatchStart = true;
                 _awaitingSince = Time.unscaledTime;
+                Debug.Log("[room] 送出 requestStart(force=" + force + ")");
                 Ctx.Net.RequestStart(force, BuildResolvedRound());
                 return;   // 🔴 這裡**不**進場 —— 等 matchStarting(見 OnMatchStarting)
             }
