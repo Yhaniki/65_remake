@@ -237,10 +237,23 @@ namespace Sdo.Server.Net
             PumpDownloads();
 
             // 4) 歌曲暫存清理(15 分鐘一次)
+            //
+            // 🔴 有上傳進行中就整輪跳過。上傳是「一個檔一個檔 commit 進 files/,最後才寫 pack json」,
+            // 所以在那段時間裡已經收好的 blob **還沒有任何 pack 引用它們** → 清理程序會把它們當孤兒刪掉,
+            // 然後 FinishUpload 的存在檢查失敗 → 整份上傳白做。一首 200 MB 的歌在慢線路上傳得夠久,
+            // 這不是理論問題。延後一輪(15 分鐘)完全無害,所以用最笨但最明顯正確的做法。
             if (_janitor.Due(now))
             {
-                var r = _janitor.Sweep(now, PinnedPackIds());
-                if (r.DidAnything) Log("歌曲暫存清理:" + r);
+                if (_uploads.Count > 0)
+                {
+                    Log("歌曲暫存清理:有 " + _uploads.Count + " 份上傳進行中,這輪跳過");
+                    _janitor.Defer(now);   // 不推遲的話 Due 會一直是 true → 每秒 20 行日誌
+                }
+                else
+                {
+                    var r = _janitor.Sweep(now, PinnedPackIds());
+                    if (r.DidAnything) Log("歌曲暫存清理:" + r);
+                }
             }
         }
 

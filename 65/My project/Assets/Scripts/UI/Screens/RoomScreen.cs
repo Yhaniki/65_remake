@@ -685,7 +685,8 @@ namespace Sdo.UI.Screens
                       + " JOINFIRST=" + (ScreenGameplay.DevVar("SDO_JOINFIRST") ?? "-")
                       + " AUTOREADY=" + (ScreenGameplay.DevVar("SDO_AUTOREADY") ?? "-")
                       + " AUTOSTART=" + (ScreenGameplay.DevVar("SDO_AUTOSTART") ?? "-")
-                      + " SAY=" + (ScreenGameplay.DevVar("SDO_SAY") ?? "-"));
+                      + " SAY=" + (ScreenGameplay.DevVar("SDO_SAY") ?? "-")
+                      + " PICKSONG=" + (ScreenGameplay.DevVar("SDO_PICKSONG") ?? "-"));
             // 聊天作用域切到本房間：之後的送話/廣播標記成此房，且只顯示此房 + 密語(跨場)。
             _chatScopeRoomId = Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
             Ctx.Chat?.Clear();   // 換場地就清訊息欄：進房間(大廳→房間 / 遊戲→房間都會經過 OnShow)先清空
@@ -1555,6 +1556,69 @@ namespace Sdo.UI.Screens
             if (Time.unscaledTime < _devAutoStartAt) return;
             _devAutoStartAt = Time.unscaledTime + 2f;
             OnStart();
+        }
+
+        // DEV: SDO_PICKSONG=<歌名片段> → 房主自動選「第一首名字含這段字的外部歌」。
+        // 為什麼要這個 hook:缺歌傳檔(M5)的實機驗證需要房主選一首**外部歌**,而用滑鼠自動化走
+        // 選歌畫面要精確的設計→螢幕座標換算(那條換算有已知偏移),不可靠。這條走與玩家一樣的
+        // 「填 session → SetSong → Publish」路徑,但**只填傳檔需要的欄位** —— 它不是完整的選歌
+        // (要真的進遊戲玩那首歌還是得走 SongSelectScreen.OnConfirm)。
+        private bool _devPickSongDone;
+
+        private void TickDevPickSong()
+        {
+            if (_devPickSongDone) return;
+            var want = ScreenGameplay.DevVar("SDO_PICKSONG");
+            if (string.IsNullOrEmpty(want)) { _devPickSongDone = true; return; }
+            if (!Online || !Ctx.Net.IsHost) return;
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room == null) return;                                   // 還沒進房
+            // 🔴 這裡刻意**不**檢查「房間已經有歌」。session 會記著上次選的歌,而
+            //    NetSongPublisher.PublishIfRoomHasNone 在進房那一刻就把它發出去了 →
+            //    加了那個檢查的話這個 hook 永遠不會動(實測就是這樣:房間變成上次那首官方歌,
+            //    而 log 裡一行都沒有,看起來像 hook 壞了)。SDO_PICKSONG 是明確的指令,要蓋過去。
+            if (Sdo.Game.ExternalSongLibrary.Scanning) return;          // 等歌庫掃完
+
+            var all = Sdo.Game.SongCatalog.All;
+            Sdo.Game.SongCatalog.Entry hit = null;
+            if (all != null)
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var e = all[i];
+                    if (e == null || !e.external || string.IsNullOrEmpty(e.title)) continue;
+                    if (e.title.IndexOf(want, System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    hit = e; break;
+                }
+            if (hit == null)
+            {
+                if (Time.frameCount % 300 == 0) Debug.Log("[dev] SDO_PICKSONG 找不到外部歌:" + want);
+                return;
+            }
+
+            _devPickSongDone = true;
+            var s = Ctx.Session;
+            s.SongGn = hit.gn;
+            s.SongFileId = hit.fileId;
+            s.SongTitle = hit.title;
+            s.SongArtist = hit.artist ?? "";
+            s.SongIsRandom = false;
+            s.IsExternalSong = true;
+            s.ExternalFolderPath = hit.folderPath ?? "";
+            s.ExternalSongKey = hit.songKey ?? "";
+            s.ExternalChartFormat = hit.chartFormat;
+            s.ExternalAudioPath = hit.audioPath ?? "";
+            // 譜面路徑一定要填:協定要求外部歌帶 ChartRelPath(空的話 server 直接回
+            // badState「bad song ref」,而畫面上只看到「選了歌但房間沒歌」)。取難度槽 0。
+            s.Difficulty = Difficulty.Easy;
+            s.ExternalChartPath = hit.ChartPath(0);
+            s.ExternalChartIndex = hit.ChartIndex(0);
+            s.ExternalChartSeed = hit.chartSeed;
+            s.ExternalDpsPath = hit.dpsPath ?? "";
+            s.ExternalLevel = hit.DisplayLevel(0);
+            Debug.Log("[dev] SDO_PICKSONG 選了外部歌:" + hit.title + "(packId=" + (hit.packId ?? "(空)")
+                      + " 譜=" + s.ExternalChartPath + ")");
+            Ctx.Rooms.SetSong(s.SongTitle);
+            NetSongPublisher.Publish(Ctx);
         }
 
         private void TickDevAutoReady()
@@ -2525,7 +2589,11 @@ namespace Sdo.UI.Screens
                 _roomNameLabel.text = RoomLabels.DisplayNameWithCode(room.Name, room.HostName, room.Id);
             }
 
-            RenderWin2();   // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落 全部依 session 重畫
+            // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落。
+            // 房主與離線:依 session;**線上非房主依房間快照** —— 房主一換歌/換場景,server 立刻推一份
+            // roomState,這裡就跟著重畫(Render 是 OnRoomUpdated 直接叫的,所以是同一刻)。
+            // 速度/note 皮/掉落方向仍是個人偏好,不跟房間(官方也是各自設定)。
+            RenderWin2();
 
             RenderSlots(room);
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
@@ -2553,43 +2621,83 @@ namespace Sdo.UI.Screens
             var s = Ctx != null ? Ctx.Session : null;
             if (s == null) return;
 
+            // 🔴 這整個面板顯示的是**房間的設定**,而房間的設定是房主定的。
+            // 離線時本機就是房主,所以讀 session 是對的;線上的非房主讀 session 會顯示自己上次的設定,
+            // 而房間實際上是別人選的 —— 歌名、場景縮圖、難度碟、模式全都會是錯的。
+            // 這些值 server 都在 roomState 裡帶著走(NetRoomSettings + song),所以一律以快照為準。
+            var netRoom = Online && Ctx.Net != null && !Ctx.Net.IsHost ? Ctx.Net.Room : null;
+            var netSet = netRoom != null ? netRoom.Settings : null;
+
             // 模式標題（自由模式/普通模式/ShowTime模式）—— 純文字 + 白邊
+            int gameMode = netSet != null ? netSet.GameMode : s.GameMode;
             if (_modeLabel != null)
-                _modeLabel.SetText(L(s.GameMode == 2 ? "songselect.mode_showtime" : s.GameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
+                _modeLabel.SetText(L(gameMode == 2 ? "songselect.mode_showtime" : gameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
 
             // 場景縮圖：隨機 → RANDOM；具體 → Scene{id+1}（官方縮圖編號是 1-based）
+            bool sceneRandom = netSet != null ? netSet.SceneRandom : s.StageRandom;
+            int sceneId = netSet != null ? netSet.SceneId : s.StageId;
             if (_sceneThumb != null)
             {
-                Sprite sc = s.StageRandom
+                Sprite sc = sceneRandom
                     ? RoomUiArt.An("randomscene")
-                    : (RoomUiArt.An("scene" + (s.StageId + 1)) ?? RoomUiArt.An("scene1"));
+                    : (RoomUiArt.An("scene" + (sceneId + 1)) ?? RoomUiArt.An("scene1"));
                 UIKit.ApplySprite(_sceneThumb, sc);
             }
+
+            var netSong0 = netRoom != null ? netRoom.Song : null;
+            if (netSong0 != null && !netSong0.HasSong) netSong0 = null;
 
             // CD 光碟依難度換色（Difficult0/1/2）。隨機難度選擇：難度也是隨機的 → 用「灰階碟」當中性顯示
             // （不鎖任何一色；實際難度進遊戲才抽）。灰階碟去色失敗(材質不可讀)時退回原本的難度碟。
             if (_diffDisc != null && _diffDiscFrames != null && _diffDiscFrames.Length > 0)
             {
-                Sprite disc = s.SongIsRandom
+                bool discRandom = netSong0 != null ? netSong0.RandomTitle : s.SongIsRandom;
+                int discDiff = netSong0 != null ? netSong0.Difficulty : (int)s.Difficulty;
+                Sprite disc = discRandom
                     ? (DiffDiscGray() ?? _diffDiscFrames[_diffDiscFrames.Length - 1])
-                    : _diffDiscFrames[Mathf.Clamp((int)s.Difficulty, 0, _diffDiscFrames.Length - 1)];
+                    : _diffDiscFrames[Mathf.Clamp(discDiff, 0, _diffDiscFrames.Length - 1)];
                 UIKit.ApplySprite(_diffDisc, disc);
             }
 
-            // 歌名 + 難度 + BPM（從歌曲目錄查；沒選歌就空白）。歌名以 session 為準（離線單機 = 房主選的歌）。
-            var entry = s.HasSong ? SongCatalog.Get(s.SongGn) : null;
+            // 歌名 + 難度 + BPM（從歌曲目錄查；沒選歌就空白）。
+            //
+            // 🔴 離線時 session 就是房主選的歌,所以以 session 為準是對的。但**線上的非房主不是** ——
+            // 它的 session 記著自己上次選的歌,面板會顯示那一首,而房間實際上是房主選的另一首
+            // (實機兩開就是這樣:房主選了外部歌,客人的面板還寫著自己上次玩的官方歌)。
+            // 線上非房主一律看房間快照;缺歌的人也看得到歌名/等級/BPM(那些值 server 帶著走)。
+            var netSong = netSong0;
+
+            bool hasSong = netSong != null || s.HasSong;
+            bool isRandom = netSong != null ? netSong.RandomTitle : s.SongIsRandom;
+            string title = netSong != null ? netSong.Title : s.SongTitle;
+            int diffSlot = netSong != null ? netSong.Difficulty : (int)s.Difficulty;
+
+            // 本機的目錄:官方歌用 gn(全球穩定),外部歌用 packId(跨電腦的內容指紋)。查不到 = 我沒這首歌。
+            SongCatalog.Entry entry = null;
+            if (netSong != null)
+                entry = netSong.Official
+                    ? SongCatalog.Get(netSong.Gn)
+                    : Sdo.Game.ExternalSongLibrary.FindByPack(netSong.PackId, netSong.SongKey);
+            else if (s.HasSong) entry = SongCatalog.Get(s.SongGn);
+
             // 隨機難度選擇：房間顯示「隨機難度 X」標籤、不揭曉抽到的歌 → 等級/BPM 也一併隱藏（否則會露出那首歌的等級/BPM）。
-            if (s.SongIsRandom) entry = null;
+            if (isRandom) entry = null;
             if (_songLabel != null)
                 // 已選歌曲：跟選歌清單／遊戲中同一個上限（NoWrap+Overflow → 長歌名會往兩邊溢出面板美術）
-                _songLabel.SetText(s.HasSong ? SongTextLimits.ClampTitle(s.SongTitle) : L("room.no_song"));
+                _songLabel.SetText(hasSong ? SongTextLimits.ClampTitle(title) : L("room.no_song"));
             if (_levelLabel != null)
             {
-                int lvl = entry != null ? entry.DisplayLevel((int)s.Difficulty) : -1;
+                // 目錄查得到就用本機的值,查不到(缺歌)退回 server 帶來的那份。
+                int lvl = entry != null ? entry.DisplayLevel(diffSlot)
+                        : (netSong != null && !isRandom && netSong.Level > 0 ? netSong.Level : -1);
                 _levelLabel.SetText(lvl >= 0 ? lvl.ToString() : "");
             }
             if (_bpmLabel != null)
-                _bpmLabel.SetText((entry != null && entry.bpm > 0f) ? Mathf.RoundToInt(entry.bpm).ToString() : "");
+            {
+                float bpm = entry != null && entry.bpm > 0f ? entry.bpm
+                          : (netSong != null && !isRandom ? (float)netSong.Bpm : 0f);
+                _bpmLabel.SetText(bpm > 0f ? Mathf.RoundToInt(bpm).ToString() : "");
+            }
 
             // 速度（對齊到 config 檔位）
             var steps = SpeedSteps();
@@ -2810,6 +2918,7 @@ namespace Sdo.UI.Screens
             SortBubbleWorldCanvases();
 
             TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
+            TickDevPickSong();           // DEV only:設了 SDO_PICKSONG 才會動(缺歌傳檔的實機驗證用)
             TickDevAutoReady();          // DEV only:設了 SDO_AUTOREADY 才會動
             TickDevAutoStart();          // DEV only:設了 SDO_AUTOSTART 才會動
             TickDevAutoSay();   // DEV only:設了 SDO_SAY 才會動(見那邊的註解)
@@ -4319,7 +4428,10 @@ namespace Sdo.UI.Screens
                 return;
             }
 
-            if (net.IsSpectating) { net.StopSpectate(); Toast.Show(L("room.spectate_off")); return; }
+            // 送出就好,**不要先報成功**。server 可能拒絕(房間開打了、座位全滿/全關),
+            // 那時「已回到座位」是騙人的 —— 而人還在旁觀席。狀態變了會有新的 roomState 快照,
+            // 畫面自己就會更新(整個連線層的原則:不做樂觀更新)。
+            if (net.IsSpectating) { net.StopSpectate(); return; }
 
             var snap = net.Room;
             var me = snap != null ? snap.SeatOf(net.UserId) : null;
@@ -4331,8 +4443,7 @@ namespace Sdo.UI.Screens
             // 房主要先有人能接手(R21)。座位上只有自己一個人時沒人接 → 講清楚,不要送出去等 badState。
             if (net.IsHost && OtherSeatedCount(snap) == 0) { Toast.Show(L("room.spectate_no_host")); return; }
 
-            net.Spectate();
-            Toast.Show(L("room.spectate_on"));
+            net.Spectate();   // 同上:等 server 的快照,不先報成功
         }
 
         /// <summary>除了自己以外還有幾個人坐在座位上(房主能不能交棒 → 能不能去旁觀)。</summary>
@@ -4433,13 +4544,57 @@ namespace Sdo.UI.Screens
                 if (r.IsRandomSong) s.SongIsRandom = false;   // 同理:歌也抽好了
             }
             // 歌本身:server 的那份才是這一場真正要玩的(隨機難度時是抽出來的那首)。
-            // 官方歌用 gn/fileId 認;外部歌走 packId(M5 才做)→ 這裡先只處理官方歌。
-            if (m.Song != null && m.Song.Official && !string.IsNullOrEmpty(m.Song.Gn))
+            if (m.Song == null) return;
+            if (m.Song.Official)
             {
+                if (string.IsNullOrEmpty(m.Song.Gn)) return;
                 s.SongGn = m.Song.Gn;
                 s.SongFileId = m.Song.FileId;
                 s.Difficulty = (Difficulty)Mathf.Clamp(m.Song.ChartIndex, 0, 2);
+                return;
             }
+            ApplyResolvedExternalSong(s, m.Song);
+        }
+
+        /// <summary>
+        /// 外部歌:把「房主選的那一份」對映到**本機自己的路徑**(M5)。
+        ///
+        /// 🔴 為什麼不能直接用 server 帶來的路徑:那是房主電腦上的絕對路徑,而且外部歌的 gn 是
+        /// 「絕對路徑的 hash」—— 換台電腦完全不同。所以身分走 packId + songKey(內容指紋),
+        /// 查到本機的那筆 catalog entry 之後,譜/音檔/資料夾全部用**自己這邊**的值。
+        /// 少了這一步,非房主進場時 ExternalChartPath 還是房主的路徑 → 載不到譜(黑畫面),
+        /// 而症狀完全指不到「身分對映」這一層。
+        ///
+        /// 找不到(還在下載 / 下載失敗)就什麼都不動:那台本來就不會被納入這一場(R12 要求 avail==have)。
+        /// </summary>
+        private static void ApplyResolvedExternalSong(GameSession s, NetSongRef song)
+        {
+            if (string.IsNullOrEmpty(song.PackId)) return;
+            var hit = Sdo.Game.ExternalSongLibrary.FindByPack(song.PackId, song.SongKey);
+            if (hit == null)
+            {
+                Debug.LogWarning("[room] 本機找不到這一場的外部歌(packId=" + song.PackId + ")—— 進場會載不到譜");
+                return;
+            }
+
+            int slot = Mathf.Clamp(song.Difficulty, 0, 2);
+            s.SongGn = hit.gn;                 // 本機的 gn(每台不同,只在本機有意義)
+            s.SongFileId = hit.fileId;
+            s.SongTitle = hit.title;
+            s.SongArtist = hit.artist ?? "";
+            s.SongIsRandom = false;
+            s.IsExternalSong = true;
+            s.Difficulty = (Difficulty)slot;
+            s.ExternalChartFormat = hit.chartFormat;
+            s.ExternalChartPath = hit.ChartPath(slot);
+            s.ExternalChartIndex = hit.ChartIndex(slot);
+            s.ExternalChartSeed = hit.chartSeed;
+            s.ExternalDpsPath = hit.dpsPath;
+            s.ExternalAudioPath = hit.audioPath;
+            s.ExternalLevel = hit.DisplayLevel(slot);
+            s.ExternalFolderPath = hit.folderPath;
+            s.ExternalSongKey = hit.songKey ?? "";
+            Debug.Log("[room] 外部歌已對映到本機:" + hit.title + " → " + s.ExternalChartPath);
         }
 
         private void OnStart()

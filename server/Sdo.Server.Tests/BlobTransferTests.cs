@@ -155,6 +155,138 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Re_Uploading_An_Existing_PackId_Cannot_Replace_Its_Contents()
+        {
+            // 🔴 packId 的強度不是均勻的:譜面算完整 SHA-256,但音檔只進了(檔名, 長度) ——
+            // 那是刻意的取捨(開機掃描不可能讀完幾 GB 音檔)。所以理論上可以送一份
+            // 「譜一樣、音檔長度一樣但內容不同」的包,packId 重算相符,然後把既有那份換掉,
+            // 之後所有下載的人拿到的都是被替換的音檔。防線 = 已存在的 pack 紀錄**不覆寫**。
+            var host = Control("房主");
+            int code = CreateRoom(host);
+            var files = Manifest();
+            string packId = SongPackId.Compute(files);
+            SetExternalSong(host, packId);
+
+            // 第一次:正常上傳
+            var f1 = FileConn(host);
+            SendPayloads(f1, files, UploadBegin(f1, packId, files));
+            f1.Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobUploadDone).Int(NetProto.FieldRequest, 23));
+            Assert.IsNotNull(f1.WaitFor(NetProto.BlobUploadDone));
+
+            // 第二次:同一個 packId,但音檔換成「一樣長、內容不同」的位元組
+            var tampered = new byte[AudioBytes.Length];
+            for (int i = 0; i < tampered.Length; i++) tampered[i] = 0x7E;
+            var lying = new List<PackFileEntry>
+            {
+                files[0],                                                        // 譜面不動(packId 才算得相符)
+                new PackFileEntry("audio.mp3", tampered.Length, Sha(tampered)),
+            };
+            Assert.AreEqual(packId, SongPackId.Compute(lying), "前提:換掉音檔內容但長度一樣,packId 仍然相符");
+
+            var f2 = FileConn(host);
+            var need2 = UploadBegin(f2, packId, lying);
+            for (int i = 0; i < need2.Count; i++) f2.SendChunks(tampered);        // 只有音檔會被要
+            f2.Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobUploadDone).Int(NetProto.FieldRequest, 24));
+            Assert.IsNotNull(f2.WaitFor(NetProto.BlobUploadDone), "第二次上傳本身不必失敗(內容尋址,存了也無害)");
+
+            // 關鍵:現在下載回來的必須還是**原本**那份音檔
+            var peer = Control("下載的人");
+            Join(peer, code);
+            var pf = FileConn(peer);
+            pf.Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobDownloadBegin)
+                .Int(NetProto.FieldRequest, 32).Str("packId", packId));
+            var manifest = pf.WaitFor(NetProto.BlobManifest);
+            Assert.IsNotNull(manifest, "沒收到 manifest:" + LastError(pf));
+
+            var got = ReadManifest(manifest);
+            string wantAudioSha = Sha(AudioBytes);
+            bool sawOriginal = false;
+            for (int i = 0; i < got.Count; i++)
+                if (got[i].RelPath == "audio.mp3") sawOriginal = got[i].Sha256 == wantAudioSha;
+            Assert.IsTrue(sawOriginal, "既有的包被換掉了 —— 下載到的音檔不是原本那份");
+        }
+
+        [Test]
+        public void A_Zero_Length_File_In_The_Pack_Does_Not_Stall_The_Upload()
+        {
+            // 🔴 上傳端照長度切 chunk → 空檔案**一塊都不會送**。server 如果傻等它的 chunk,
+            // 之後的 blobUploadDone 會看到還有檔沒收完而整批退掉 —— 症狀是「某些歌永遠上傳失敗」,
+            // 而清單看起來完全正常。歌曲資料夾裡放一個空的 .ini 就會踩到。
+            var host = Control("房主");
+            CreateRoom(host);
+
+            var files = new List<PackFileEntry>(Manifest());
+            files.Insert(0, new PackFileEntry("empty.ini", 0, Sha(new byte[0])));   // 排在最前面,卡在第一個
+            string packId = SongPackId.Compute(files);
+            SetExternalSong(host, packId);
+
+            var f = FileConn(host);
+            var need = UploadBegin(f, packId, files);
+            CollectionAssert.Contains(need, 0, "空檔案 server 也沒有 → 要列進 need");
+
+            // 只送有內容的那些(與真的 client 一樣:空檔案不送 chunk)
+            for (int i = 0; i < need.Count; i++)
+            {
+                var entry = files[need[i]];
+                if (entry.Length == 0) continue;
+                f.SendChunks(PayloadFor(entry.RelPath));
+            }
+
+            f.Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobUploadDone).Int(NetProto.FieldRequest, 22));
+            var done = f.WaitFor(NetProto.BlobUploadDone);
+            Assert.IsNotNull(done, "空檔案不該讓上傳卡住:" + LastError(f));
+            Assert.IsTrue(NetJson.Bool(done, "ok"));
+        }
+
+        [Test]
+        public void Downloading_A_Pack_With_An_Empty_File_Sends_No_Chunk_For_It()
+        {
+            // 這條釘住 client 端 SkipEmptyIncoming 依賴的 wire 契約:空檔案**會**出現在 manifest 裡
+            // (收端要建出那個檔),但**不會**有任何 chunk 對應它。收端如果等它的 chunk 才推進 cursor,
+            // 後面每個檔的內容都會寫錯位置 → 最後「檔案沒收完」。
+            var host = Control("房主");
+            int code = CreateRoom(host);
+
+            var files = new List<PackFileEntry>(Manifest());
+            files.Insert(1, new PackFileEntry("empty.ini", 0, Sha(new byte[0])));
+            string packId = SongPackId.Compute(files);
+            SetExternalSong(host, packId);
+
+            var hf = FileConn(host);
+            var need = UploadBegin(hf, packId, files);
+            for (int i = 0; i < need.Count; i++)
+            {
+                var e = files[need[i]];
+                if (e.Length == 0) continue;
+                hf.SendChunks(PayloadFor(e.RelPath));
+            }
+            hf.Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobUploadDone).Int(NetProto.FieldRequest, 25));
+            Assert.IsNotNull(hf.WaitFor(NetProto.BlobUploadDone), "上傳沒完成:" + LastError(hf));
+
+            var peer = Control("下載的人");
+            Join(peer, code);
+            var pf = FileConn(peer);
+            pf.Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobDownloadBegin)
+                .Int(NetProto.FieldRequest, 33).Str("packId", packId));
+            var manifest = pf.WaitFor(NetProto.BlobManifest);
+            Assert.IsNotNull(manifest, "沒收到 manifest:" + LastError(pf));
+
+            var got = ReadManifest(manifest);
+            bool sawEmpty = false;
+            long expect = 0;
+            for (int i = 0; i < got.Count; i++)
+            {
+                expect += got[i].Length;
+                if (got[i].RelPath == "empty.ini") { sawEmpty = true; Assert.AreEqual(0, got[i].Length); }
+            }
+            Assert.IsTrue(sawEmpty, "空檔案也要列在 manifest 裡 —— 收端得知道要建它");
+
+            var bytes = pf.ReceiveAllChunks(NetProto.BlobDownloadDone, 10000);
+            Assert.IsNotNull(bytes, "chunk 沒收完");
+            Assert.AreEqual(expect, bytes.Length, "位元組總數要等於 manifest 的長度總和(空檔案貢獻 0)");
+        }
+
+        [Test]
         public void Blob_Query_Tells_The_Client_Whether_The_Server_Has_It()
         {
             var host = Control("房主");

@@ -170,3 +170,14 @@ tools/kgn_export/gn_notes.json
 65/My project/Assets/MagicaCloth2.meta
 /bubble_log*.txt
 /server_run.log
+
+# 兩開實機測試(tools/shoot_room_bubble.ps1 -M5)複製出來的 client log
+/m5_log*.txt
+# Unity performance-test package 跑測試時自己產生的暫存,不是專案資產
+/65/My project/Assets/Resources/PerformanceTestRunInfo.json
+/65/My project/Assets/Resources/PerformanceTestRunInfo.json.meta
+/65/My project/Assets/Resources/PerformanceTestRunSettings.json
+/65/My project/Assets/Resources/PerformanceTestRunSettings.json.meta
+
+# 兩開實機測試時 server 的歌曲暫存(tools/shoot_room_bubble.ps1 -M5 每次重跑會清掉重建)
+/server_data/

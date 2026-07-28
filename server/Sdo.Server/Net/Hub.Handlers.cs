@@ -33,6 +33,11 @@ namespace Sdo.Server.Net
 
             if (kind == NetLimits.FrameKindChunk)
             {
+                // 🔴 握手之前一個 chunk 都不收。下面 JSON 那條路徑有「HelloDone 之前只准 hello」的守門,
+                // 這裡少了同一道的話,任何連上 port 的人都能不認證就一直丟 64 KiB 的 chunk 進來 ——
+                // 每一塊都會排進單執行緒的 actor loop 並讓我們回一封錯誤,等於免費的放大器。
+                if (!conn.HelloDone) { conn.Kill(NetProto.ErrProto); return; }
+
                 // 上傳的位元組。刻意不吃 control 的 rate limit —— 一首歌是幾百塊 chunk,
                 // 32/s 會把正常上傳擋死。總量的防線在 blobUploadBegin 那份清單上
                 // (超過宣稱長度就中止),而清單本身是 control 訊息、有被限流。

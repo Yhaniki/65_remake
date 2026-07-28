@@ -194,6 +194,11 @@ namespace Sdo.Game
         {
             if (_lookerRows == null) return;
             int n = spectatorNames != null ? spectatorNames.Length : 0;
+
+            // 一個旁觀者都沒有 → 連「旁觀玩家」的標題也收起來(官方沒有觀眾時那一區是空的)。
+            // 這一行是 showSpectators 改成「連線就一律建」的配套:不然沒人旁觀時會留一個空標題。
+            if (_lookerTitle != null)
+                _lookerTitle.enabled = _lookersOn && n > 0 && _lookerTitle.sprite != null;
             for (int i = 0; i < _lookerRows.Length; i++)
             {
                 if (_lookerRows[i] == null) continue;
@@ -441,6 +446,12 @@ namespace Sdo.Game
 
         private void UpdateRankDisplay()
         {
+            // 🔴 旁觀者沒有「我排第幾」。這裡是每 8 拍(每次計分)都會跑的,而它直接寫
+            // _rankCurD.enabled —— 所以只在 SetRankingVisible 那邊把旁觀夾掉是不夠的:
+            // 下一次計分就把數字重新打開了。而旁觀者不在名單裡 → LocalRank 回 rank 0
+            // → 畫面上出現「0 / N」。
+            if (spectatorMode) return;
+
             var (rank, total) = RankingBoard.LocalRank(_roster);
             rank = Mathf.Clamp(rank, 0, 6);    // PKSCORE digits only go 0..6
             total = Mathf.Clamp(total, 0, 6);
@@ -468,9 +479,8 @@ namespace Sdo.Game
             if (_rankCurD) _rankCurD.enabled = rankOn && _rankCurD.sprite != null;
             if (_rankTotD) _rankTotD.enabled = rankOn && _rankTotD.sprite != null;
             if (_rankSlash) _rankSlash.enabled = rankOn;
-            if (_lookerTitle) _lookerTitle.enabled = on && _lookerTitle.sprite != null;
             _lookersOn = on;
-            ApplySpectatorNames();   // 空的那幾列要維持關著(見 ApplySpectatorNames)
+            ApplySpectatorNames();   // 標題與空的那幾列都由它決定(見 ApplySpectatorNames)
         }
 
         private void UpdateHpBar()

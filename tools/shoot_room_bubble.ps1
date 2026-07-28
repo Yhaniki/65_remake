@@ -35,11 +35,18 @@ param(
     [string]$WalkKey = 'Down',
     [switch]$M3,
     [switch]$M4,
+    # M5 = 缺歌自動傳檔。A 有一首外部歌(靠 A 的 config.ini 的 AdditionalSongFolders),B 沒有。
+    # A 用 SDO_PICKSONG 選它 → 上傳 → B 回報缺歌 → 自動下載 → 熱重載 → 變成有歌。
+    [switch]$M5,
+    [string]$PickSong = 'Bassdrop',
     [switch]$KeepOpen
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+# server 的歌曲暫存目錄。明確指定(而不是靠它預設的相對路徑 'data')—— 那個相對路徑是相對
+# **工作目錄**的,清錯地方會讓重跑時上傳變成「0 個檔要傳」。
+$SrvData = Join-Path $repo 'server_data'
 if (-not $Exe)  { $Exe  = Join-Path $repo 'Build\Windows\dance.exe' }
 if (-not $OutA) { $OutA = Join-Path $repo 'bubble_host.png' }
 if (-not $OutB) { $OutB = Join-Path $repo 'bubble_guest.png' }
@@ -172,13 +179,32 @@ function Shoot([IntPtr]$h, [string]$out) {
 
 $srv = $null; $pa = $null; $pb = $null
 try {
+    if ($M5) {
+        # 🔴 每次重跑前一定要清這兩個地方,否則第二次跑根本不會下載:
+        #   • server 的歌曲暫存 —— 留著的話房主一上傳就「0 個檔要傳」(去重命中),
+        #     驗不到「房主真的把歌傳上去」那一段;
+        #   • ADDON/SONG/connect —— B 上一輪下載到的歌還在(而 alt root 的 ADDON 是 junction,
+        #     指到同一棵樹),它會直接回報「我有這首歌」。
+        #
+        # server 的 --data 預設是相對路徑 'data' → 落在**它的工作目錄**底下,不是 exe 旁邊。
+        # (一開始清錯地方,結果第二輪的 log 是「開始收上傳:0/7 個檔」——
+        #  看起來像上傳壞了,其實是舊的暫存還在。)所以這裡明確指定一個路徑,兩邊都用它。
+        if (Test-Path $SrvData) { Remove-Item $SrvData -Recurse -Force }
+        Write-Host "[shoot] 已清 server 歌曲暫存($SrvData)"
+        $rootTxt = Join-Path $repo 'data_root.txt'
+        if (Test-Path $rootTxt) {
+            $connect = Join-Path ((Get-Content $rootTxt -Raw).Trim()) 'ADDON\SONG\connect'
+            if (Test-Path $connect) { Remove-Item $connect -Recurse -Force; Write-Host '[shoot] 已清 ADDON\SONG\connect' }
+        }
+    }
+
     $srvExe = Join-Path $repo 'server\Sdo.Server\bin\Release\net8.0\sdo-server.exe'
     if (Test-Path $srvExe) {
         Write-Host '[shoot] 啟動 server'
         # server 的 stdout 收進檔案 —— 它是唯一會說「哪一條規則拒絕了誰」的地方
         # (SendError 會印)。少了這個就只能猜,實際上因此浪費了好幾輪。
         $srvLog = Join-Path $repo 'server_run.log'
-        $srv = Start-Process -FilePath $srvExe -PassThru -WindowStyle Minimized -RedirectStandardOutput $srvLog
+        $srv = Start-Process -FilePath $srvExe -ArgumentList @('--data', $SrvData) -PassThru -WindowStyle Minimized -RedirectStandardOutput $srvLog
         $null = $srv.Handle
         Start-Sleep -Seconds 2
     } else { Write-Host "[shoot] 找不到 server exe($srvExe)—— 假設外面已經有一台在跑" }
@@ -186,8 +212,11 @@ try {
     $logSrc = Join-Path (Split-Path -Parent $Exe) 'log.txt'
     $env:SDO_VERBOSE = '1'   # 讓 Debug.Log 也進 log.txt(預設只寫 warning/error,診斷全看不到)
     $env:SDO_DATA_ROOT = ''
-    if ($M4) { $SayA = ''; $SayB = '' }   # 見下:自動說話會讓聊天框 armed,把 F2 擋掉
+    if ($M4 -or $M5) { $SayA = ''; $SayB = '' }   # 見下:自動說話會讓聊天框 armed,把 F2 擋掉
     $env:SDO_ROOM = '1'; $env:SDO_JOINFIRST = ''; $env:SDO_SAY = $SayA
+    # M5:只有 A 自動選那首外部歌(B 的歌庫裡沒有它 → 會回報缺歌然後自動下載)。
+    $env:SDO_PICKSONG = ''
+    if ($M5) { $env:SDO_PICKSONG = $PickSong }
     if ($M4) { $env:SDO_AUTOSTART = '1'; $env:SDO_AUTOPLAY = '1' } else { $env:SDO_AUTOSTART = ''; $env:SDO_AUTOPLAY = '' }   # 房主自動開始 + 代打(分數才會漲)
     Write-Host '[shoot] 啟動 A(房主,主 DATA 根)'
     $pa = Start-Process -FilePath $Exe -PassThru
@@ -198,6 +227,7 @@ try {
 
     $env:SDO_ROOM = ''; $env:SDO_JOINFIRST = '1'; $env:SDO_DATA_ROOT = $AltRoot; $env:SDO_SAY = $SayB
     $env:SDO_AUTOSTART = ''; $env:SDO_AUTOPLAY = ''   # 只有房主(A)自動開始+代打 → 兩邊分數不同,一眼看得出誰是誰
+    $env:SDO_PICKSONG = ''                            # 只有房主選歌(而且 B 根本沒有那首歌)
     if ($M4) { $env:SDO_AUTOREADY = '1' }   # 非房主自動按準備(見 RoomScreen.TickDevAutoReady)
     Write-Host "[shoot] 啟動 B(加入,DATA 根 = $AltRoot)"
     $pb = Start-Process -FilePath $Exe -PassThru
@@ -209,6 +239,22 @@ try {
     $pa.Refresh(); $pb.Refresh()
     $ha = $pa.MainWindowHandle; $hb = $pb.MainWindowHandle
     if ($ha -eq [IntPtr]::Zero -or $hb -eq [IntPtr]::Zero) { throw '抓不到兩個遊戲視窗' }
+
+    if ($M5) {
+        # 缺歌傳檔:整條路都是自動的(A 選歌 → 上傳 → B 缺歌 → 下載 → 熱重載),不需要滑鼠。
+        # 這裡連拍幾張,因為 localhost 上 5 MB 幾乎是瞬間 —— 「缺歌」徽章與跑條可能只出現一兩幀。
+        # 真正的證據在三份 log(server_run.log / m5_logA / m5_logB),截圖是用來確認徽章長相與版位。
+        for ($i = 1; $i -le 6; $i++) {
+            Focus-Win $hb; Shoot $hb (Join-Path $repo ("m5_guest_{0}.png" -f $i))
+            Start-Sleep -Milliseconds 900
+        }
+        Focus-Win $ha; Shoot $ha (Join-Path $repo 'm5_host.png')
+        Start-Sleep -Seconds 6
+        Focus-Win $hb; Shoot $hb (Join-Path $repo 'm5_guest_final.png')
+        if (Test-Path $logSrc) { Copy-Item $logSrc (Join-Path $repo 'm5_logB.txt') -Force }
+        Copy-Item (Join-Path $repo 'bubble_logA.txt') (Join-Path $repo 'm5_logA.txt') -Force -ErrorAction SilentlyContinue
+        return
+    }
 
     # B 先走幾步:走到與 A 不同的深度,才有「一個人在另一個人前面」可看。
     $vk = @{ 'Up' = 0x26; 'Down' = 0x28; 'Left' = 0x25; 'Right' = 0x27 }[$WalkKey]

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -53,7 +53,15 @@ namespace Sdo.Game.Net
         /// <summary>一幀最多處理幾塊收到的 chunk(2 MiB)。避免大歌在單幀寫爆造成掉幀。</summary>
         private const int MaxChunksPerTick = 32;
 
-        private readonly NetConnection _link = new NetConnection();
+        /// <summary>
+        /// 這一趟傳輸用的 file 連線。**每一趟都是新的一條** ——
+        /// 🔴 <see cref="NetConnection.Close"/> 會把 <c>_closed</c> 永久上鎖(<c>Interlocked.Exchange</c>),
+        /// 而 <c>BeginConnect</c> 不會把它解開。所以「留一個實例反覆 Close/BeginConnect」是行不通的:
+        /// 第一次 <see cref="Reset"/> 之後那條連線就永遠是 closed,下一幀的 Tick 立刻判定「連線中斷」。
+        /// (實機驗證就是這樣抓到的:上傳在 25 毫秒內失敗,而錯誤訊息裡的 LastError 是空的 ——
+        ///  因為根本沒有發生過連線錯誤,是我們自己把它關掉的。)
+        /// </summary>
+        private NetConnection _link;
         private bool _uploading;
         private string _sessionKey = "";
         private string _packId = "";
@@ -86,6 +94,16 @@ namespace Sdo.Game.Net
 
         public bool IsBusy => State != NetTransferState.Idle && State != NetTransferState.Done && State != NetTransferState.Failed;
         public bool IsUploading => _uploading;
+
+        /// <summary>
+        /// 現在還在用連線嗎。<see cref="NetTransferState.Verifying"/> / <see cref="NetTransferState.Importing"/>
+        /// 是純本機的收尾(算 hash、重掃歌庫),那時連線已經關了 —— 所以任何「連線斷了嗎」的判斷
+        /// 都必須先問這個,否則會把成功的傳輸判成失敗。
+        /// </summary>
+        private bool IsNetworkPhase
+            => State == NetTransferState.Connecting || State == NetTransferState.Hashing
+            || State == NetTransferState.Negotiating || State == NetTransferState.Uploading
+            || State == NetTransferState.Downloading;
 
         /// <summary>0..1。談判階段回 0,完成回 1。</summary>
         public float Progress
@@ -120,6 +138,7 @@ namespace Sdo.Game.Net
             _packId = packId ?? "";
             _srcFolder = folder ?? "";
             State = NetTransferState.Connecting;
+            _link = new NetConnection();   // 每趟一條新的(見 _link 的註解)
 
             // 清單的 hash 先在背景算(一首歌的音檔幾十 MB,主執行緒算會明顯卡一下)。
             // SongPackScan 是純 System.IO,沒有任何 Unity API → 可以安全地在 worker thread 上跑。
@@ -138,6 +157,7 @@ namespace Sdo.Game.Net
             _packId = packId ?? "";
             _destFolder = destFolder ?? "";
             State = NetTransferState.Connecting;
+            _link = new NetConnection();   // 每趟一條新的(見 _link 的註解)
             _link.BeginConnect(host, port);
         }
 
@@ -149,7 +169,7 @@ namespace Sdo.Game.Net
 
         private void Reset()
         {
-            _link.Close("restart");
+            if (_link != null) { _link.Close("restart"); _link = null; }
             CloseStreams();
             State = NetTransferState.Idle;
             Error = "";
@@ -165,6 +185,25 @@ namespace Sdo.Game.Net
         {
             if (!IsBusy) return;
 
+            // 驗證/匯入階段**已經離開網路**(FinishDownload 收完檔案就把連線關掉了)→ 完全不碰 link。
+            if (!IsNetworkPhase) return;
+
+            if (_link == null) { Fail("沒有連線"); return; }
+
+            // 🔴 先把收件匣清乾淨,**再**判斷連線是不是斷了。順序反過來的話,server 用
+            // bye{reason} 說明理由之後才關 socket —— 而我們會先看到 socket 關了就直接 Fail("Eof"),
+            // 那封已經躺在收件匣裡的 bye 永遠不會被讀到。實機驗證時就吃到這個:
+            // client 只說「連線中斷(Eof)」,真正的原因(密碼不符)只有 server 的 log 看得到。
+            PumpInbox();
+            if (!IsBusy) return;
+
+            // 🔴 這裡**必須再問一次階段**,不能只靠函式開頭那道。PumpInbox 會就地處理
+            // blobDownloadDone → FinishDownload → 驗證 → State=Importing 並把連線關掉,
+            // 全部發生在**同一次 Tick 之內** → 開頭那道早就過去了,接著這個「連線斷了嗎」
+            // 就把剛剛成功的下載判成失敗。實機第六輪就是這樣:log 上一行「下載完成並驗證通過」,
+            // 下一行「傳檔失敗:連線中斷:」(而且 LastError 是空的 —— 因為是我們自己關的)。
+            if (!IsNetworkPhase) return;
+
             if (_link.State == NetLinkState.Failed || _link.IsClosed)
             {
                 Fail("連線中斷:" + _link.LastError);
@@ -174,12 +213,19 @@ namespace Sdo.Game.Net
             if (State == NetTransferState.Connecting)
             {
                 if (!_link.IsConnected) return;
-                _link.Send(JObj.New()
+                var hello = JObj.New()
                     .Str(NetProto.FieldType, NetProto.Hello)
                     .Int(NetProto.FieldRequest, ++_rq)
                     .Int("proto", NetProto.Version)
                     .Str("role", NetProto.RoleFile)
-                    .Str("sessionKey", _sessionKey));
+                    .Str("sessionKey", _sessionKey);
+                // 🔴 進站密碼:file 連線也要送。server 對**每一條**連線都檢查密碼(不分角色),
+                // 少了它 server 直接 bye,而這邊只看到「連線中斷(Eof)」—— 完全指不到密碼。
+                // (實機驗證就是這樣:client 說 Eof,server 說「密碼不符,client 送的是空值」。)
+                // 直接讀 RoomConfig 而不是從外面傳進來:控制連線用的也是同一個來源,不可能漂移。
+                var pw = Sdo.Settings.RoomConfig.serverPassword;
+                if (!string.IsNullOrEmpty(pw)) hello.Str("password", pw);
+                _link.Send(hello);
                 State = _uploading ? NetTransferState.Hashing : NetTransferState.Negotiating;
                 if (!_uploading) RequestDownload();
                 return;
@@ -188,9 +234,30 @@ namespace Sdo.Game.Net
             PumpInbox();
             if (!IsBusy) return;
 
+            KeepAlive();
             if (State == NetTransferState.Hashing) TickHashing();
             else if (State == NetTransferState.Uploading) TickUpload();
         }
+
+        /// <summary>
+        /// 定期 ping,讓 server 知道這條 file 連線還活著。
+        ///
+        /// 🔴 非做不可,而且**下載方向才是重點**:server 的 <c>SweepDeadConnections</c> 看的是
+        /// 「多久沒**收到**這條連線的東西」(<see cref="NetLimits.PingTimeoutMs"/> 15 秒)。
+        /// 下載時我們送出 blobDownloadBegin 之後就一路只收不送 → 15 秒後 server 判定斷線把它砍掉,
+        /// 下載永遠走不完。localhost 上一首 5 MB 的歌 150 毫秒就傳完,所以**測不出來**;
+        /// 一首 40 MB 的歌走真的網路一定會踩到。
+        /// (上傳方向剛好一直有 chunk 進去,所以不會被砍 —— 但還是一起 ping,不要靠這種巧合。)
+        /// </summary>
+        private void KeepAlive()
+        {
+            float now = Time.realtimeSinceStartup * 1000f;
+            if (now - _lastPingMs < NetLimits.PingIntervalMs) return;
+            _lastPingMs = now;
+            _link.Send(JObj.New().Str(NetProto.FieldType, NetProto.Ping).Num("t0", now));
+        }
+
+        private float _lastPingMs;
 
         /// <summary>hash 算完就把清單送出去。</summary>
         private void TickHashing()
@@ -327,6 +394,10 @@ namespace Sdo.Game.Net
 
                 case NetProto.BlobUploadDone:
                     State = NetTransferState.Done;
+                    // 完成就把 file 連線收掉。留著不關的話它一路不再收發任何東西,
+                    // 15 秒後被 server 的 ping 掃描當成斷線(server log 會出現「ping 逾時」),
+                    // 而且那段時間白佔一條連線額度。實機第六輪的 log 就有兩行那個。
+                    if (_link != null) { _link.Close("uploadDone"); _link = null; }
                     break;
 
                 case NetProto.BlobManifest:
@@ -411,6 +482,8 @@ namespace Sdo.Game.Net
             _inReceived = 0;
             _recvBytes = 0;
             State = NetTransferState.Downloading;
+            SkipEmptyIncoming();   // 空檔案可能排在最前面 —— 等第一塊 chunk 才處理就太晚了
+            if (!IsBusy) return;
             Debug.Log("[net] 開始下載 " + _incoming.Count + " 個檔、" + (_totalRecvBytes / 1024) + " KB → " + _destFolder);
         }
 
@@ -434,6 +507,33 @@ namespace Sdo.Game.Net
             CloseStreams();
             _inCursor++;
             _inReceived = 0;
+            SkipEmptyIncoming();
+        }
+
+        /// <summary>
+        /// 把清單上「長度 0」的檔案就地建好並跳過。
+        ///
+        /// 🔴 送端是照長度切 chunk 的 → 空檔案**一塊 chunk 都不會來**。不主動跳過的話 _inCursor
+        /// 會永遠停在那一格,而後面的 chunk 會被寫進**這個**檔案(位移全錯),最後
+        /// blobDownloadDone 一到就是「檔案沒收完」。歌曲資料夾裡有個空的 .ini 就會踩到。
+        /// (server 端有對稱的處理 —— 見 Hub.Blobs.cs 的 OpenNextUploadFile。)
+        /// </summary>
+        private void SkipEmptyIncoming()
+        {
+            if (_incoming == null) return;
+            while (_inCursor < _incoming.Count && _incoming[_inCursor].Length == 0)
+            {
+                var rel = _incoming[_inCursor].RelPath.Replace('/', Path.DirectorySeparatorChar);
+                var full = Path.Combine(_destFolder, rel);
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(full));
+                    using (File.Create(full)) { }        // 0 byte 檔案,內容就是「沒有內容」
+                }
+                catch (Exception ex) { Fail("建不了空檔案 " + rel + ":" + ex.Message); return; }
+                _inCursor++;
+                _inReceived = 0;
+            }
         }
 
         private bool OpenNextDownloadFile()
@@ -476,7 +576,7 @@ namespace Sdo.Game.Net
 
             Debug.Log("[net] 下載完成並驗證通過:" + _packId);
             State = NetTransferState.Importing;      // 等呼叫端跑歌庫重新掃描
-            _link.Close("done");
+            if (_link != null) _link.Close("done");
         }
 
         /// <summary>呼叫端(重新掃描完)通知匯入結束。</summary>
@@ -494,8 +594,20 @@ namespace Sdo.Game.Net
             Error = why ?? "";
             State = NetTransferState.Failed;
             CloseStreams();
-            _link.Close("failed");
+            if (_link != null) _link.Close("failed");
+            // 🔴 失敗的下載要把半成品資料夾刪掉。留著的話下一次歌庫掃描會把它當成一首**正常的歌**
+            // 收進目錄(掃描器只看有沒有譜面檔,不知道那份譜只寫了一半)→ 玩家選到它就是壞譜,
+            // 而那時完全看不出跟「某次下載失敗」有關。上傳失敗不用清(我們沒在本機寫任何東西)。
+            if (!_uploading) DiscardPartialDownload();
             Debug.LogWarning("[net] 傳檔失敗:" + Error);
+        }
+
+        /// <summary>把下載到一半的資料夾整個刪掉(見 <see cref="Fail"/> 的註解)。</summary>
+        private void DiscardPartialDownload()
+        {
+            if (string.IsNullOrEmpty(_destFolder)) return;
+            try { if (Directory.Exists(_destFolder)) Directory.Delete(_destFolder, true); }
+            catch (Exception ex) { Debug.LogWarning("[net] 清不掉半成品資料夾 " + _destFolder + ":" + ex.Message); }
         }
 
         private void CloseStreams()
@@ -507,7 +619,7 @@ namespace Sdo.Game.Net
         public void Dispose()
         {
             CloseStreams();
-            _link.Close("dispose");
+            if (_link != null) { _link.Close("dispose"); _link = null; }
         }
 
         private static long ToLong(object o)

@@ -4885,7 +4885,8 @@ namespace Sdo.Game
                 // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
                 // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
                 if (_localWon) SpawnNamedEft("FINISHED", 5f);
-                if (enableResultSfx) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
+                // 旁觀者不放輸贏短曲 —— 它沒有輸也沒有贏,而 _localWon 恆 false 會讓它每次都聽到「輸了」的音效。
+                if (enableResultSfx && !spectatorMode) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
             }
             _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
         }
@@ -5116,7 +5117,10 @@ namespace Sdo.Game
                 if (netRows != null && netRows.Length > 0) return netRows;
             }
             var order = RankingBoard.SortedIndices(_roster);
-            int total = Math.Max(1, _notes.Count);
+            // 音符總數:通常就是生出來的音符數,但旁觀模式**不生音符**(_notes 是空的)→ 會變成
+            // 「這首歌只有 1 顆音符」,每個人的判定數都被反推成 1。改成生不出來時退回譜面本身的數字。
+            // (連線時上面就 return 了 —— 用的是 server 的真判定數;這條只是離線/退化路徑。)
+            int total = Math.Max(1, _notes.Count > 0 ? _notes.Count : (_map != null ? _map.TotalNotes : 0));
             long top = order.Length > 0 ? Math.Max(1L, _roster[order[0]].Score) : 1L;
             var rows = new ResultScreen.Row[order.Length];
             for (int i = 0; i < order.Length; i++)

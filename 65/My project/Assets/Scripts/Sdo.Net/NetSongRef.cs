@@ -1,4 +1,4 @@
-using Sdo.Osu;
+﻿using Sdo.Osu;
 
 namespace Sdo.Net
 {
@@ -57,6 +57,15 @@ namespace Sdo.Net
         /// <summary>0=Easy 1=Normal 2=Hard(對映 client 的 Sdo.UI.Core.Difficulty)。</summary>
         public int Difficulty;
 
+        /// <summary>
+        /// 「隨機難度」模式:<see cref="Title"/> 是「隨機難度 X」那個標籤,不是真正抽到的歌名。
+        ///
+        /// 為什麼要傳這一個 bool:抽到的歌**已經**在 <see cref="Gn"/> 裡了(開場時要用它載譜),
+        /// 所以房間裡的其他人如果拿 gn 去查自己的目錄,就會顯示出那首歌的等級/BPM ——
+        /// 隨機難度的意義就沒了(房間刻意不揭曉抽到哪一首)。收端看到這個旗標就不查目錄。
+        /// </summary>
+        public bool RandomTitle;
+
         /// <summary>這是「有選歌」嗎?(官方歌要有 gn,外部歌要有 packId)</summary>
         public bool HasSong
             => Official ? !string.IsNullOrEmpty(Gn) : !string.IsNullOrEmpty(PackId);
@@ -90,7 +99,8 @@ namespace Sdo.Net
                 .Num("bpm", Bpm)
                 .Num("durationSec", DurationSec)
                 .Str("title", Title)
-                .Str("artist", Artist);
+                .Str("artist", Artist)
+                .Bool("randomTitle", RandomTitle);
 
             if (Official)
             {
@@ -124,6 +134,7 @@ namespace Sdo.Net
             s.DurationSec = NetJson.Num(node, "durationSec");
             s.Title = Clip(NetJson.Str(node, "title"));
             s.Artist = Clip(NetJson.Str(node, "artist"));
+            s.RandomTitle = NetJson.Bool(node, "randomTitle");
 
             if (s.Official)
             {

@@ -54,6 +54,15 @@ namespace Sdo.Server.Files
         public bool Due(long nowMs) => nowMs >= _nextSweepMs;
 
         /// <summary>
+        /// 這輪先不掃,晚一點再說(呼叫端有理由暫時不能刪東西,例如有上傳進行中)。
+        ///
+        /// 🔴 一定要有這個方法:<see cref="Due"/> 只是比時間,把下一次的時間往後推是
+        /// <see cref="Sweep"/> 做的。所以「條件不滿足就 continue」會讓 Due 一直是 true,
+        /// 而 Hub 的 tick 是 50ms 一輪 → 每秒 20 行「這輪跳過」的日誌。
+        /// </summary>
+        public void Defer(long nowMs, int delayMs = 60 * 1000) => _nextSweepMs = nowMs + delayMs;
+
+        /// <summary>
         /// 掃一次。<paramref name="pinned"/> = 存活房間現在選的那些 packId —— **必須傳,不能傳 null**
         /// 當作「沒有」:那會讓一場正在等人下載的比賽在中途失去來源。
         /// </summary>

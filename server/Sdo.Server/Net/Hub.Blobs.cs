@@ -189,6 +189,31 @@ namespace Sdo.Server.Net
         private bool OpenNextUploadFile(Connection conn, UploadSession sess)
         {
             CloseUploadStream(sess);
+
+            // 🔴 長度 0 的檔案要在這裡就地收完。上傳端是「照長度切 chunk」送的 → 空檔案**一塊都不會送**,
+            // 而我們卻在等它的 chunk → 之後的 blobUploadDone 看到 cursor 還沒走完就整批退掉,
+            // 症狀是「某些歌永遠上傳失敗」而清單看起來完全正常。歌曲資料夾裡有個空的 .ini 就會踩到。
+            while (sess.Cursor < sess.Need.Count && sess.Files[sess.Need[sess.Cursor]].Length == 0)
+            {
+                var empty = sess.Files[sess.Need[sess.Cursor]];
+                var tmp = Path.Combine(sess.TmpDir, "empty.part");
+                try { File.WriteAllBytes(tmp, new byte[0]); }
+                catch (Exception ex)
+                {
+                    SendBlobError(conn, 0, NetProto.BlobErrQuota, "server 開不了暫存檔: " + ex.Message);
+                    AbortUpload(conn.ConnId);
+                    return false;
+                }
+                // 照樣走 CommitBlob:它會重算 hash,所以宣稱「這個檔是空的」但 sha 不是空檔案的 sha
+                // (= 說謊的清單)一樣會被擋掉。
+                if (!_blobs.CommitBlob(tmp, empty.Sha256))
+                {
+                    SendBlobError(conn, 0, NetProto.BlobErrHashMismatch, "空檔案的 sha256 不符:" + empty.RelPath);
+                    AbortUpload(conn.ConnId);
+                    return false;
+                }
+                sess.Cursor++;
+            }
             if (sess.Cursor >= sess.Need.Count) return false;
 
             // 暫存檔名用「第幾個」而不是原始檔名 —— 原始檔名是 client 給的字串,
@@ -291,6 +316,30 @@ namespace Sdo.Server.Net
                 if (_blobs.HasBlob(sess.Files[i].Sha256)) continue;
                 SendBlobError(conn, rq, NetProto.BlobErrNotFound, "缺檔:" + sess.Files[i].RelPath);
                 AbortUpload(conn.ConnId);
+                return;
+            }
+
+            // 🔴 已經有這個 packId 的紀錄就**不覆寫**,只續命。
+            // 理由是 packId 的強度不是均勻的:譜面算完整 SHA-256,但音檔/圖片只進了(檔名, 長度)
+            // (那是刻意的取捨 —— 開機掃描不可能讀完幾 GB 的音檔)。所以理論上有人可以送一份
+            // 「譜一模一樣、音檔長度一樣但內容不同」的包,packId 會重算相符,然後把既有的那份換掉 ——
+            // 之後所有下載的人拿到的都是被替換的音檔。不覆寫就完全沒有這條路:
+            // 內容尋址的檔案本體早就都在了,重複上傳本來就不需要改任何東西。
+            if (_blobs.HasPack(sess.PackId))
+            {
+                _blobs.Touch(sess.PackId, now);
+                _blobs.DropTempDir(sess.TmpDir);
+                _uploads.Remove(conn.ConnId);
+                conn.Send(JObj.New()
+                    .Str(NetProto.FieldType, NetProto.BlobUploadDone)
+                    .Int(NetProto.FieldRequest, rq)
+                    .Str("packId", sess.PackId)
+                    .Bool("ok", true));
+                BroadcastBlobProgress(sess.RoomCode, sess.UserId, 1f, true);
+                BroadcastToRoom(sess.RoomCode, JObj.New()
+                    .Str(NetProto.FieldType, NetProto.BlobAvailable)
+                    .Str("packId", sess.PackId));
+                Log("房 " + sess.RoomCode + " 上傳完成(已存在的包,只續命):" + sess.PackId);
                 return;
             }
 
@@ -412,9 +461,26 @@ namespace Sdo.Server.Net
                 var sess = kv.Value;
                 var buf = new byte[NetLimits.BlobChunkBytes];
 
-                while (conn.OutboundCount < DownloadHighWater)
+                bool aborted = false;
+                // 🔴 迴圈條件要**同時**看「連線還開著」。只看佇列水位的話,連線在迴圈中途關掉時
+                // (Enqueue 對已關的連線直接丟掉 → OutboundCount 永遠停在原地)水位條件永遠成立 →
+                // 這一輪 tick 會把整包幾十 MB 從磁碟讀完再一塊塊丟進垃圾桶,單執行緒的 actor loop
+                // 就這樣被一個剛斷線的人卡住,全 server 的房間一起頓。
+                while (!conn.IsClosed && conn.OutboundCount < DownloadHighWater)
                 {
-                    if (sess.CurStream == null && !OpenNextDownloadFile(sess)) break;   // 沒有下一個檔了
+                    if (sess.CurStream == null)
+                    {
+                        bool missing;
+                        if (!OpenNextDownloadFile(sess, out missing))
+                        {
+                            if (missing)
+                            {
+                                SendBlobError(conn, 0, NetProto.BlobErrNotFound, "server 缺了這個包的一個檔案");
+                                aborted = true;
+                            }
+                            break;   // 沒有下一個檔了(或缺檔中止)
+                        }
+                    }
 
                     int n;
                     try { n = sess.CurStream.Read(buf, 0, buf.Length); }
@@ -432,7 +498,11 @@ namespace Sdo.Server.Net
                     sess.SentBytes += n;
                 }
 
-                if (sess.CurStream == null && sess.Cursor >= sess.Files.Count)
+                if (aborted)
+                {
+                    (finished ?? (finished = new List<int>())).Add(kv.Key);
+                }
+                else if (sess.CurStream == null && sess.Cursor >= sess.Files.Count)
                 {
                     conn.Send(JObj.New()
                         .Str(NetProto.FieldType, NetProto.BlobDownloadDone)
@@ -447,24 +517,34 @@ namespace Sdo.Server.Net
             for (int i = 0; i < finished.Count; i++) AbortDownload(finished[i]);
         }
 
-        /// <summary>開下一個要送的檔。跳過缺檔(理論上不會 —— 但寧可少一個檔也不要整條卡住)。</summary>
-        private bool OpenNextDownloadFile(DownloadSession sess)
+        /// <summary>
+        /// 開下一個要送的檔。
+        ///
+        /// 🔴 缺檔**不能跳過**。收端是照 manifest 的順序與長度把位元組切回檔案的,少送一個檔
+        /// 等於把後面每一個檔的內容都挪錯位置 —— 它會把下一個檔的開頭寫進這個檔裡。
+        /// 收端的 hash 驗證最後會抓到(所以不會拿到壞譜),但錯誤訊息會指向一個**內容其實沒問題**的檔案,
+        /// 而真正的原因(server 少了一個 blob)只有這裡看得到。所以就地中止並說清楚。
+        /// (理論上不會發生:房間選著的歌會被 janitor pin 住。但這是「之後所有人下載到什麼」的路徑,
+        ///  寧可明確失敗也不要送出一份對不起來的資料。)
+        /// </summary>
+        private bool OpenNextDownloadFile(DownloadSession sess, out bool missing)
         {
-            while (sess.Cursor < sess.Files.Count)
+            missing = false;
+            if (sess.Cursor >= sess.Files.Count) return false;
+
+            var f = sess.Files[sess.Cursor];
+            var path = _blobs.BlobPath(f.Sha256);
+            if (path != null && File.Exists(path))
             {
-                var path = _blobs.BlobPath(sess.Files[sess.Cursor].Sha256);
-                if (path != null && File.Exists(path))
+                try
                 {
-                    try
-                    {
-                        sess.CurStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                        return true;
-                    }
-                    catch { }
+                    sess.CurStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    return true;
                 }
-                Log("下載時缺檔(跳過):" + sess.Files[sess.Cursor].RelPath);
-                sess.Cursor++;
+                catch (Exception ex) { Log("下載時開不了 " + f.RelPath + ":" + ex.Message); }
             }
+            Log("下載中止:server 缺了 " + f.RelPath + "(pack " + sess.PackId + ")");
+            missing = true;
             return false;
         }
 

@@ -1,9 +1,72 @@
 using NUnit.Framework;
 using Sdo.Game.Net;
 using Sdo.Osu;
+using Sdo.UI.Core;
 
 namespace Sdo.Tests
 {
+    /// <summary>
+    /// 外部歌上線時,譜面路徑要從「本機絕對路徑」翻成「相對歌曲資料夾」。
+    ///
+    /// 🔴 這是實機驗證抓到的真 bug:<c>GameSession.ExternalChartPath</c> 是絕對路徑,
+    /// 原本直接塞進 <c>NetSongRef.ChartRelPath</c> → server 的 <c>SafeRelPath.IsSafe</c> 擋掉
+    /// (它不收磁碟機代號)→ 整個 setSong 回 badState,而畫面上只是「選了歌但房間沒歌」。
+    /// 當時所有單元測試都是綠的 —— 沒有一條測到「絕對路徑進 wire」。這幾條就是補那個洞。
+    /// </summary>
+    public class NetSongRefChartPathTests
+    {
+        [Test]
+        public void An_Absolute_Chart_Path_Becomes_Relative_To_The_Song_Folder()
+        {
+            Assert.AreEqual("song.osu",
+                NetSongPublisher.ToChartRelPath(@"H:\Songs\My Pack", @"H:\Songs\My Pack\song.osu"));
+        }
+
+        [Test]
+        public void A_Chart_In_A_Subfolder_Keeps_The_Subfolder()
+        {
+            Assert.AreEqual("sub/song.osu",
+                NetSongPublisher.ToChartRelPath(@"H:\Songs\My Pack", @"H:\Songs\My Pack\sub\song.osu"));
+        }
+
+        [Test]
+        public void The_Result_Passes_The_Servers_Safety_Check()
+        {
+            // 這才是重點:server 會用這個函式擋。翻出來的東西一定要過得了。
+            var rel = NetSongPublisher.ToChartRelPath(@"H:\Songs\My Pack", @"H:\Songs\My Pack\song.osu");
+            Assert.IsTrue(SafeRelPath.IsSafe(rel), rel + " 過不了 SafeRelPath.IsSafe → server 會拒絕整個 setSong");
+
+            // 反例:絕對路徑本來就過不了 —— 這正是那個 bug 的形狀。
+            Assert.IsFalse(SafeRelPath.IsSafe(@"H:\Songs\My Pack\song.osu"), "絕對路徑不該被當成安全的相對路徑");
+        }
+
+        [Test]
+        public void Forward_And_Back_Slashes_Both_Work()
+        {
+            Assert.AreEqual("song.osu",
+                NetSongPublisher.ToChartRelPath("H:/Songs/My Pack", @"H:\Songs\My Pack\song.osu"));
+            Assert.AreEqual("song.osu",
+                NetSongPublisher.ToChartRelPath(@"H:\Songs\My Pack\", "H:/Songs/My Pack/song.osu"));
+        }
+
+        [Test]
+        public void A_Chart_Outside_The_Folder_Falls_Back_To_The_File_Name()
+        {
+            // 切不出相對路徑時退回檔名 —— 那仍是合法且能用的相對路徑。
+            // 回空字串會讓 server 拒絕整個 setSong(房間就沒歌了),那比退回檔名糟得多。
+            var rel = NetSongPublisher.ToChartRelPath(@"H:\Other", @"H:\Songs\My Pack\song.osu");
+            Assert.AreEqual("song.osu", rel);
+            Assert.IsTrue(SafeRelPath.IsSafe(rel));
+        }
+
+        [Test]
+        public void No_Chart_Path_Stays_Empty()
+        {
+            Assert.AreEqual("", NetSongPublisher.ToChartRelPath(@"H:\Songs\My Pack", null));
+            Assert.AreEqual("", NetSongPublisher.ToChartRelPath(null, ""));
+        }
+    }
+
     /// <summary>
     /// 下載來的歌要放在哪個資料夾 —— 唯一的純函式,所以唯一能單元測試的部分。
     /// (真正的傳輸有 server 那邊的端到端測試守著:BlobTransferTests。)

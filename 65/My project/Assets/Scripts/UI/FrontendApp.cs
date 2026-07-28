@@ -523,7 +523,11 @@ namespace Sdo.UI
             // (它可能因為缺歌/沒準備而把你排除在這一場之外,那時你也是旁觀者)。
             game.spectatorMode = !net.IsMatchParticipant;
             // 旁觀名單:server 在 matchStarting 裡帶了真名(需求 10:不要假名)。
-            game.showSpectators = match.SpectatorNames != null && match.SpectatorNames.Length > 0;
+            // 🔴 連線時**一律**建那排 label(不是「開場那一刻有人旁觀才建」)。
+            // 依當下人數決定的話,開局沒人旁觀 → _lookerRows 根本沒建 → 之後有人進來旁觀,
+            // SetSpectatorNames 沒有東西可以寫,那個人永遠不會出現在名單上。
+            // 空的列本來就不顯示(ApplySpectatorNames 會把沒人的那幾列關掉),所以先建不會有副作用。
+            game.showSpectators = true;
             game.spectatorNames = match.SpectatorNames ?? new string[0];
 
             game.LocalReady = () =>

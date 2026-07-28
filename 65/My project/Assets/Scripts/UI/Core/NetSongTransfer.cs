@@ -38,6 +38,10 @@ namespace Sdo.UI.Core
         private static bool _importing;
         private static float _lastReportMs;
 
+        /// <summary>「server 還沒有這首歌」之後隔多久再問一次(見 <see cref="MaybeStart"/> 的節流註解)。</summary>
+        private const float QueryRetrySec = 2f;
+        private static float _lastQueryAt = -99f;
+
         /// <summary>userId → (0..1, 是不是上傳)。頭貼下方的跑條讀它。</summary>
         private static readonly Dictionary<int, KeyValuePair<float, bool>> _bars
             = new Dictionary<int, KeyValuePair<float, bool>>();
@@ -103,6 +107,13 @@ namespace Sdo.UI.Core
                 {
                     Toast.Show("歌曲傳輸失敗:" + _fx.Error, 4f);
                     _fx = null;
+                    // 🔴 一定要把「我到底有沒有這首歌」重報一次。下載開始時我們已經告訴 server
+                    // downloading 了 —— 失敗之後不重報的話,那個座位會**永遠停在 downloading**:
+                    // 按準備被 R17 拒絕(它要求 avail==have)、房主也開不了場(R12),
+                    // 而畫面上沒有任何東西說明原因(進度條也不動了)。重報會送出 missing,
+                    // 至少狀態是誠實的,而且缺歌徽章會回來。
+                    NetSongPublisher.ForceReport();
+                    NetSongPublisher.ReportAvailability(ctx);
                     return;
                 }
                 if (_fx.IsBusy) return;                      // 還在傳,不要開第二件事
@@ -111,23 +122,37 @@ namespace Sdo.UI.Core
             MaybeStart(ctx);
         }
 
-        /// <summary>房間狀態變了(換歌)→ 清掉「這首歌處理過了」的記憶。</summary>
+        /// <summary>
+        /// 房間換歌了 → 清掉「這首歌處理過了」的記憶。每次房間快照都會呼叫。
+        ///
+        /// 🔴 判斷「換了嗎」要記**房間上一首是什麼**,不能拿 _handledPack 比:
+        /// 沒有在傳檔的人(本來就有歌)_handledPack 永遠是 null → 每一份快照都會被當成換歌,
+        /// 於是每份快照都把 _bars 清掉。而下載中的人每 500ms 送一次進度 → 每次都產生新快照 →
+        /// 別人的跑條會一直閃掉重來(看起來像進度條壞了)。
+        /// </summary>
         public static void OnRoomSong(string packKey)
         {
-            if (_handledPack == packKey) return;
+            if (_roomPack == packKey) return;   // 還是同一首 → 什麼都不動
+            _roomPack = packKey;
             _handledPack = null;
             _serverHasPack = false;
             _queryPending = false;
+            _lastQueryAt = -99f;
             _bars.Clear();
         }
+
+        /// <summary>房間上一次快照裡的歌(判斷「換歌了嗎」用,見 <see cref="OnRoomSong"/>)。</summary>
+        private static string _roomPack;
 
         /// <summary>離開房間 / 斷線。</summary>
         public static void Reset()
         {
             if (_fx != null) { _fx.Dispose(); _fx = null; }
             _handledPack = null;
+            _roomPack = null;
             _serverHasPack = false;
             _queryPending = false;
+            _lastQueryAt = -99f;
             _importing = false;
             _bars.Clear();
         }
@@ -161,7 +186,17 @@ namespace Sdo.UI.Core
 
             if (!_serverHasPack)
             {
+                // 🔴 問過而且答案是「沒有」→ 要等一下再問。
+                // 少了這個節流的話:房主正在上傳的那幾十秒裡,我們每一幀都送一次 blobQuery
+                // (回覆一到就把 _queryPending 清掉了)→ 一秒幾十次,直接撞 server 的 control 限流
+                // 32/s(R19)→ **被 server 以 rateLimit 踢下線**。而症狀是「缺歌的人會莫名斷線」,
+                // 完全指不到一個查詢迴圈。
+                // 房主上傳完會廣播 blobAvailable(OnBlobAvailable),所以正常情況下不必靠輪詢 ——
+                // 這個輪詢只是後備(例如我進房時上傳已經完成、又沒收到廣播)。
                 if (_queryPending) return;
+                float now = Time.realtimeSinceStartup;
+                if (now - _lastQueryAt < QueryRetrySec) return;
+                _lastQueryAt = now;
                 _queryPending = true;
                 net.SendBlobQuery(song.PackId);
                 return;
@@ -267,7 +302,12 @@ namespace Sdo.UI.Core
         private static void OnBlobAvailable(string packId)
         {
             // 房主上傳完了 → 現在可以下載。清掉「處理過」的記憶,讓 MaybeStart 重新評估。
+            //
+            // 🔴 但**房主自己也收得到這個廣播**(它是房內廣播)→ 清掉記憶之後 MaybeStart 會叫它
+            // 再上傳一次。第二次雖然是「零個檔」很便宜,但那是個沒有理由的迴圈(實機 log 上就是
+            // 「開始收上傳:0/7 個檔」出現兩次)。只有真的還缺歌的人才需要重新評估。
             _serverHasPack = true;
+            if (_wired != null && _wired.IsHost) return;
             if (_handledPack == packId && (_fx == null || !_fx.IsBusy)) _handledPack = null;
         }
 
