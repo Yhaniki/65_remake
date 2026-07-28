@@ -4170,8 +4170,11 @@ namespace Sdo.UI.Screens
 
             int me = Ctx.Net.UserId;
             // 座位確定了 → 補正本機出生點(OnShow 那一刻常常還查不到座位,見 SetLocalSeat 的註解)。
-            int mySeat = snap.SeatIndexOf(me);
-            if (mySeat >= 0) _scene.SetLocalSeat(mySeat);
+            // 自己在旁觀時要給**旁觀 slot**(6..15):不給的話 SeatIndexOf 回 -1,
+            // 本機角色就會留在剛才那個座位上,別人畫面上的自己卻已經站到旁觀席 —— 兩邊對不上。
+            int mySlot = snap.SeatIndexOf(me);
+            if (mySlot < 0) mySlot = LocalSpectatorSlot(snap, me);
+            if (mySlot >= 0) _scene.SetLocalSeat(mySlot);
             _remoteBuf.Clear();
             for (int i = 0; i < snap.Seats.Length; i++)
             {
@@ -4222,6 +4225,21 @@ namespace Sdo.UI.Screens
                 for (int i = 0; i < _remoteBuf.Count; i++) _remoteHeadIds.Add(_remoteBuf[i].UserId);
                 _remoteHeads.SetRoster(_remoteHeadIds);
             }
+        }
+
+        /// <summary>
+        /// 自己是旁觀者時佔的 slot(<c>SeatCount + 名單序號</c>);不在旁觀名單裡 → -1。
+        ///
+        /// 🔴 序號一定要用**陣列 index**,不能用「跳過自己之後的計數」—— 生遠端角色那個迴圈用的就是
+        /// 陣列 index,兩邊算法不一致的話「我以為我站第 3 格、別人看我在第 2 格」。
+        /// </summary>
+        private static int LocalSpectatorSlot(Sdo.Net.NetRoomSnapshot snap, int me)
+        {
+            var specs = snap != null ? snap.Spectators : null;
+            if (specs == null || me == 0) return -1;
+            for (int i = 0; i < specs.Length && i < NetLimits.MaxSpectators; i++)
+                if (specs[i] != null && specs[i].UserId == me) return RoomLayout.SeatCount + i;
+            return -1;
         }
 
         // 「誰已經被廣播過了」。第一份快照只用來建底(不廣播),否則一進房就會看到房裡每個人

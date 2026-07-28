@@ -84,6 +84,7 @@ namespace Sdo.Game
         private RenderTexture _rt;
         private RtResizeTracker _rtTrack;     // debounced window-resize → RT re-allocation (see LateUpdate)
         private MotLoader _walkMot, _idleMot;
+        private bool _slotConfirmed;       // 收到過一份帶自己 slot 的房間快照了嗎(見 SetLocalSeat)
         private bool _flying;   // 飛行翅膀已裝備:idle=flystay、走路=fly 前傾滑動、移動時 +10 懸浮 (SpecialMotionItems)
         private readonly Dictionary<string, MotLoader> _chatActionMots = new Dictionary<string, MotLoader>(System.StringComparer.OrdinalIgnoreCase);
         private bool _male;
@@ -117,17 +118,27 @@ namespace Sdo.Game
         public float LocalWalkZ => _walkPos.z;
 
         /// <summary>
-        /// 晚到的本機座位。
+        /// 本機現在佔的 slot(0..5 座位 / 6..15 旁觀席)。兩種呼叫情境:
         ///
-        /// 🔴 連線模式下「進房」與「拿到房間快照」是兩件事:<c>OnShow</c> 那一刻 <c>CurrentRoom</c>
-        /// 常常還是 null,座位查不到就會退回 0 —— 而座位 0 的出生點是房主的位置,
+        /// 🔴 **晚到的第一份快照。** 連線模式下「進房」與「拿到房間快照」是兩件事:<c>OnShow</c> 那一刻
+        /// <c>CurrentRoom</c> 常常還是 null,座位查不到就會退回 0 —— 而座位 0 的出生點是房主的位置,
         /// 於是**客戶端會生在房主身上**(實測:兩隻角色完全疊在一起,兩張名字牌重疊)。
-        /// 所以座位一確定就要補正一次。已經走過一步就不動了(那時玩家自己的位置才是真相)。
+        /// 這種情況已經走過一步就不搬人了(那時玩家自己的位置才是真相)。
+        ///
+        /// **真的換位**(按「旁觀」交出座位、或旁觀者坐回座位):一律搬到新 slot 的錨點,
+        /// 就算他正在走路也搬 —— 是他自己按的,而且官方就是把人挪到新 slot 的位置。
+        /// 順便重挑 idle:旁觀席各有自己的 cat-0x21 觀看姿勢(見 <see cref="SlotIdleMot"/>)。
         /// </summary>
         public void SetLocalSeat(int seat)
         {
-            if (seat < 0 || seat == _localSeat || _hasWalked || !_ready) return;
+            if (seat < 0 || !_ready) return;
+            bool first = !_slotConfirmed;
+            _slotConfirmed = true;
+            if (seat == _localSeat) return;
             _localSeat = seat;
+            ApplyOutfitMotion();                       // slot 換了 → idle 可能換一支(座位待機 ↔ 觀看姿勢)
+            if (_avatar != null && _idleMot != null && !_walking) _avatar.SetClip(_idleMot);
+            if (first && _hasWalked) return;           // 晚到的快照 + 已經自己走過 → 位置不動
             Vector3 spawn = SpawnSpot(seat);
             _walkPos = new Vector3(spawn.x, floorY, spawn.z);
             ApplyAvatarTransform();
@@ -154,6 +165,21 @@ namespace Sdo.Game
             if (_remoteSpots == null) _remoteSpots = RandomDancerSpots(RoomLayout.SeatCount);
             if (_remoteSpots.Length == 0) return RoomLayout.HostSpawn;
             return _remoteSpots[seat % _remoteSpots.Length];
+        }
+
+        /// <summary>
+        /// 座位 → 待機動作檔。座位 0..5 的舞者站 cat-0 的大廳待機;**旁觀者(6..15)各有自己的
+        /// cat-0x21 觀看姿勢**(<see cref="RoomLayout.SlotMotionName"/>,那張表是從 EXE 逐項解出來的
+        /// bucket 載入順序)—— 官方的旁觀者不是十個一模一樣的立正,是十種不同的看戲姿勢。
+        ///
+        /// 回傳的是「基底」idle:飛行翅膀之類的特殊道具還會在外面再覆蓋一次(<c>SpecialMotionItems</c>)。
+        /// 讓道具贏是刻意的 —— 穿飛行翅膀的人套上彎腰的 WAITING 姿勢會變成翅膀浮著、人卻站在地上。
+        /// </summary>
+        public static string SlotIdleMot(int seat, bool male)
+        {
+            if (seat < RoomLayout.SeatCount)
+                return male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot;
+            return "MOTION/" + RoomLayout.SlotMotionName(seat, female: !male) + ".MOT";
         }
 
         public bool PlayChatAction(string motionRelPath)
@@ -396,7 +422,10 @@ namespace Sdo.Game
                     continue;
                 }
                 if (string.Equals(cur.LookKey, p.LookKey, System.StringComparison.Ordinal))
+                {
+                    if (cur.Seat != p.Seat) MoveRemoteToSlot(cur, p);   // 座位↔旁觀:外觀沒變但站位/姿勢要換
                     continue;                 // 外觀沒變(rev 是因為別的事變的)→ 什麼都不做
+                }
                 RebuildRemote(p, cur);        // 換裝/晚到的 setLook → 重建,但**留在原地**
             }
         }
@@ -429,6 +458,34 @@ namespace Sdo.Game
             ApplyRemoteTransform(fresh);
         }
 
+        /// <summary>
+        /// 這個人換 slot 了(按了旁觀交出座位、或旁觀者坐回座位),但外觀沒變 → **不重建**,
+        /// 只搬位置 + 換 idle。重建要讀十幾個部件檔(50-100ms hitch),為了換個站位付這個代價不值得。
+        ///
+        /// 為什麼一定要處理:比對鍵是外觀(<c>LookKey</c>),換 slot 不會讓它變 → 舊版直接 continue,
+        /// 於是坐下來的人會**帶著旁觀的彎腰姿勢坐在舞台上**,而且還站在旁觀席的位置
+        /// (位置流只在他走動時才送,他不走就永遠不會被修正)。
+        /// </summary>
+        private void MoveRemoteToSlot(Remote r, RemotePlayer p)
+        {
+            r.Seat = p.Seat;
+            string idleRel = SpecialMotionItems.IdleMotFor(p.Parts, p.Male, SlotIdleMot(p.Seat, p.Male));
+            var idle = SdoRoomAvatar.LoadMot(idleRel);
+            if (idle != null)
+            {
+                r.Idle = idle;
+                if (r.Av != null)
+                {
+                    r.Av.RestMot = idle;
+                    if (!r.ClipIsWalk) r.Av.SetClip(idle);   // 正在走就別打斷,停下來自然會換過去
+                }
+            }
+            Vector3 spot = SpawnSpot(p.Seat);
+            r.Pos = r.Target = new Vector3(spot.x, floorY, spot.z);
+            r.Walking = false;
+            ApplyRemoteTransform(r);
+        }
+
         private void SpawnRemote(RemotePlayer p)
         {
             var parent = new GameObject("RoomRemoteAvatar" + p.UserId);
@@ -442,8 +499,8 @@ namespace Sdo.Game
             av.DanceEnabled = () => false;
             av.DanceTimeSec = () => -1f;
             // 飛行翅膀的浮空 idle / 滑行走路也照本機那套判斷 —— 不然穿飛行翅膀的人在別人畫面上是走路的。
-            string idleRel = SpecialMotionItems.IdleMotFor(p.Parts, p.Male,
-                p.Male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            string baseIdle = SlotIdleMot(p.Seat, p.Male);
+            string idleRel = SpecialMotionItems.IdleMotFor(p.Parts, p.Male, baseIdle);
             string walkRel = SpecialMotionItems.WalkMotFor(p.Parts, p.Male,
                 p.Male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
 
@@ -815,7 +872,9 @@ namespace Sdo.Game
             bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
             // 飛行翅膀:idle→flystay 浮空,走路→fly(前傾滑動),速度強制 3.0(028:2774),移動時 body Y +10 懸浮(028:2852)。
             // 「哪些翅膀會飛」離線推不出來 → SpecialMotionItems 用硬編 5 id + 線上實測名單(見該檔)。
-            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            // 基底 idle 依**自己現在的 slot**:坐著是大廳待機,旁觀是自己那格 cat-0x21 觀看姿勢
+            // (見 SlotIdleMot;本機與遠端走同一個函式,不然「我看自己在發呆、別人看我在看戲」)。
+            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male, SlotIdleMot(_localSeat, _male));
             string walkRel = SpecialMotionItems.WalkMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
             _idleMot = SdoRoomAvatar.LoadMot(idleRel);
             _walkMot = SdoRoomAvatar.LoadMot(walkRel);

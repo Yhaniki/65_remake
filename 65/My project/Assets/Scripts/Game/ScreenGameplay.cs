@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -421,7 +421,22 @@ namespace Sdo.Game
         }
 
         /// <summary>房內其他舞者的名字 + 目前分數(server 彙整後推來的)。</summary>
-        public struct NetPlayerScore { public string Name; public long Score; }
+        /// <summary>
+        /// 一位遠端玩家的最新一筆成績。右側名單只用 Name/Score,但**遠端舞者的跳/停**需要
+        /// 判定計數與 combo —— 那是從相鄰兩筆的差推出「這個 8 拍有沒有斷/有沒有音符」的原料
+        /// (見 <see cref="Sdo.Ruleset.DanceGate"/>,也是分數流不必傳按鍵記錄的原因)。
+        /// </summary>
+        public struct NetPlayerScore
+        {
+            public int UserId;
+            public string Name;
+            public long Score;
+            public int Combo;
+            public int Perfect, Cool, Bad, Miss;
+
+            public Sdo.Ruleset.DanceJudgeCounts Counts
+                => new Sdo.Ruleset.DanceJudgeCounts(Perfect, Cool, Bad, Miss);
+        }
 
         /// <summary>
         /// 連線:右側名單/名次要用的**真**對手。null = 離線 → 走 <see cref="mockOpponents"/> 或 solo。
@@ -3067,6 +3082,9 @@ namespace Sdo.Game
         private void LoadCvCameras()
         {
             _danceSpot = SoloDanceSpot();
+            // 單人時相機錨點就是本機的位置 —— 多人時 TickDancerSlots 會把它改成 slot 0 的占用者
+            // (官方的鏡頭跟第一名)。先在這裡對齊,離線/單人的行為就與加多人之前完全一樣。
+            _camAnchorSpot = _danceSpot;
             var cdt = LoadAsset(SelectCdtPath(), b => CdtLoader.Load(b));
             if (cdt != null)
             {
@@ -4684,6 +4702,7 @@ namespace Sdo.Game
             MaintainSceneRt();
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             TickDancerPerf();   // SDO_DANCERS 開著時每 2 秒印一行幀時間(M8 的量測依據,見 ScreenGameplay.Dancers.cs)
+            TickDancerSlots();  // 多人:每幀把舞者往該站的格子滑一步,並讓相機錨點跟著第一名
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
@@ -4763,7 +4782,11 @@ namespace Sdo.Game
                     // Camera_GetEyePos/GetTargetPos: add the dance-spot anchor ONLY for relative (:1) shots;
                     // absolute (:0) shots (e.g. the opening crane) use raw .cv world coords. Solo spot = 0 either way.
                     // The anchor is a POSITION offset — it never touches the up vector (a direction).
-                    if (!_dirAbs[_dirShot]) { eye += _danceSpot; tgt += _danceSpot; }
+                    // 🔴 用 _camAnchorSpot 而不是 _danceSpot。這兩個在單人時是同一個值(都是原點),
+                    // 但多人時**相機要跟著第一名**(官方:slot 0 是中央前排 = 鏡頭錨點,而第一名會滑進去),
+                    // 不是跟著本機。_danceSpot 的語意仍然是「本機舞者站哪」——
+                    // 它另外還有 6 個 read site 都是那個意思,改它的語意會一起弄壞那些。
+                    if (!_dirAbs[_dirShot]) { eye += _camAnchorSpot; tgt += _camAnchorSpot; }
                 }
                 else
                 {
@@ -4811,6 +4834,7 @@ namespace Sdo.Game
             }
             TickBombs(now, detonate: manualPlay);   // 炸彈:手動打時踩到(該軌按著)引爆;F8自動/ShowTime自動避雷,只安全流過
             if (!spectatorMode) UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
+            TickRemoteGates(now);   // 遠端舞者各自的跳/停(從分數流推導,與本機同一個規則函式)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
             // hold case waits for the round to finish; taps fire freely above.

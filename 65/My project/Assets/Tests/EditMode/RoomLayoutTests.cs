@@ -84,6 +84,25 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Slot_Idle_Mot_Paths_Seated_Standby_Spectators_Waiting()
+        {
+            // 這條守的是「連線的旁觀者真的擺出官方那十種看戲姿勢」:動作表早就解出來了
+            // (SlotMotionName),但遠端/本機生角色時要**經過 SlotIdleMot 這個橋**才會用到它 ——
+            // 少了這一步,十個旁觀者會全部站著發呆(而且是靜默的:沒有任何報錯)。
+            Assert.AreEqual(SdoRoomAvatar.IdleMot, RoomScene3D.SlotIdleMot(0, male: false));
+            Assert.AreEqual(SdoRoomAvatar.MaleIdleMot, RoomScene3D.SlotIdleMot(5, male: true));
+            Assert.AreEqual("MOTION/WWAITING004.MOT", RoomScene3D.SlotIdleMot(6, male: false));
+            Assert.AreEqual("MOTION/MWAITING004.MOT", RoomScene3D.SlotIdleMot(6, male: true));
+            Assert.AreEqual("MOTION/WWAITING009.MOT", RoomScene3D.SlotIdleMot(15, male: false));
+            // 十個旁觀 slot 各一支,不重複(與 SlotMotionName 同一張表,這裡驗的是路徑組出來也還是十種)
+            var seen = new System.Collections.Generic.HashSet<string>();
+            for (int s = RoomLayout.SeatCount; s < RoomLayout.SlotCount; s++)
+                Assert.IsTrue(seen.Add(RoomScene3D.SlotIdleMot(s, male: false)), "slot " + s + " needs its own pose");
+            // 超出十個旁觀位(協定擋在 MaxSpectators=10,這是防禦)→ 退回站立待機,不是丟例外
+            Assert.AreEqual(SdoRoomAvatar.IdleMot, RoomScene3D.SlotIdleMot(RoomLayout.SlotCount + 3, male: false));
+        }
+
+        [Test]
         public void Head_Slots_Are_Six_Left_To_Right()
         {
             Assert.AreEqual(6, RoomLayout.HeadSlotX.Length);

@@ -519,7 +519,14 @@ namespace Sdo.UI
             game.playerCount = Mathf.Max(1, match.Participants.Length);
             // 隊形:**只信 server echo 的那份**(隨機隊形是房主抽的,server 驗過範圍再發給所有人)。
             // 各台自己讀 GameSession.Formation 的話,隨機那格會各抽一次 → 每台的站位都不一樣。
-            if (match.Resolved != null) game.formationType = match.Resolved.FormationType;
+            if (match.Resolved != null)
+            {
+                game.formationType = match.Resolved.FormationType;
+                // 組隊站位版型(-1 = 不組隊)。同理只信 server echo 的那份 ——
+                // 各台自己算會用不同時刻的人數快照算出不同版型。
+                game.teamLayout = (int)match.Resolved.TeamLayout;
+            }
+            FillNetDancers(game, match, net.UserId);
 
             // 旁觀(需求 10):不是這一場的參與者 → 只看別人跳舞。
             // 判斷用 server 給的參與者名單,不是本機的「我按了旁觀鈕嗎」—— server 才是唯一權威
@@ -566,7 +573,15 @@ namespace Sdo.UI
                 var arr = new ScreenGameplay.NetPlayerScore[_netOpponents.Count];
                 int i = 0;
                 foreach (var kv in _netOpponents)
-                    arr[i++] = new ScreenGameplay.NetPlayerScore { Name = kv.Value.Name, Score = kv.Value.Score };
+                    arr[i++] = new ScreenGameplay.NetPlayerScore
+                    {
+                        UserId = kv.Key,
+                        Name = kv.Value.Name,
+                        Score = kv.Value.Score,
+                        Combo = kv.Value.Combo,
+                        Perfect = kv.Value.Perfect, Cool = kv.Value.Cool,
+                        Bad = kv.Value.Bad, Miss = kv.Value.Miss,
+                    };
                 return arr;
             };
             game.NetResultRows = () => _netResultRows;
@@ -574,7 +589,15 @@ namespace Sdo.UI
 
         // ---- 分數流:收 / 送 ------------------------------------------------------------------------------------
 
-        private sealed class NetOppState { public string Name; public long Score; }
+        // 一位遠端玩家的最新一筆。除了名字/分數,還要帶判定計數與 combo ——
+        // 遠端舞者的跳/停是從相鄰兩筆的差推出來的(Sdo.Ruleset.DanceGate)。
+        private sealed class NetOppState
+        {
+            public string Name;
+            public long Score;
+            public int Combo;
+            public int Perfect, Cool, Bad, Miss;
+        }
         private readonly Dictionary<int, NetOppState> _netOpponents = new Dictionary<int, NetOppState>();
         private static readonly ScreenGameplay.NetPlayerScore[] _netOpponentsEmpty = new ScreenGameplay.NetPlayerScore[0];
         private ResultScreen.Row[] _netResultRows;
@@ -599,7 +622,47 @@ namespace Sdo.UI
                     _netOpponents[r.UserId] = st;
                 }
                 st.Score = r.Score;
+                st.Combo = r.Combo;
+                st.Perfect = r.Perfect; st.Cool = r.Cool; st.Bad = r.Bad; st.Miss = r.Miss;
             }
+        }
+
+        /// <summary>
+        /// 把這一場的參與者灌進打歌畫面(每個人自己的性別/穿搭/體型/名字),**依座位序**。
+        ///
+        /// 🔴 順序一定要是座位序而且每台一致 —— 隊形的 slot 指派是照這個順序算的
+        /// (`FormationAssignment.SlotForDancer`),順序不同的話同一個人在不同人的畫面上站不同格。
+        /// server 已經是照座位序發 participants 的,這裡再排一次是為了不依賴那個順序
+        /// (協定上沒有保證,而依賴一個沒寫進協定的順序正是最難查的那種 bug)。
+        /// </summary>
+        private static void FillNetDancers(ScreenGameplay game, NetMatchStart match, int myUserId)
+        {
+            var src = match != null ? match.Participants : null;
+            if (src == null || src.Length == 0) { game.netDancers = null; game.localDancerIndex = 0; return; }
+
+            var list = new List<NetMatchParticipant>(src);
+            list.Sort((a, b) => a.Seat != b.Seat ? a.Seat.CompareTo(b.Seat) : a.UserId.CompareTo(b.UserId));
+
+            var arr = new ScreenGameplay.DancerInfo[list.Count];
+            int localIdx = -1;
+            for (int i = 0; i < list.Count; i++)
+            {
+                var p = list[i];
+                arr[i] = new ScreenGameplay.DancerInfo
+                {
+                    UserId = p.UserId,
+                    Name = p.Name ?? "",
+                    Male = p.Look != null && p.Look.Male,
+                    Parts = p.Look != null ? p.Look.Parts : null,
+                    BodyIndex = p.Look != null ? p.Look.BodyIndex : 0,
+                    Team = p.Team,
+                };
+                if (p.UserId == myUserId) localIdx = i;
+            }
+            game.netDancers = arr;
+            // 旁觀者不在名單裡 → -1(它沒有自己的舞者,但別人的照出)。
+            game.localDancerIndex = localIdx;
+            Debug.Log("[dancers] 這一場 " + arr.Length + " 位舞者,本機是第 " + localIdx + " 位");
         }
 
         private static string MatchNameOf(NetMatchStart match, int userId)
