@@ -33,6 +33,15 @@ namespace Sdo.Game
             public string imagePath = "";  // absolute SOURCE cover (jacket→banner→background); "" → placeholder disc
             public string folderPath = ""; // the song's folder — where its CD disc + sdoinfo.dat sidecar live
             public string songKey = "";    // identity WITHIN the folder ("" = the folder's only song); see ExternalSongGrouper
+            /// <summary>
+            /// 這首歌所在**資料夾**的跨電腦身分(<c>Sdo.Osu.SongPackId</c>)。"" = 還沒算/官方歌。
+            ///
+            /// 🔴 為什麼不能用 <see cref="gn"/> 或 <see cref="fileId"/> 當身分:外部歌的 gn 是
+            /// 「絕對路徑的 hash」、fileId 是「掃描到的第幾首」—— **換一台電腦兩個都完全不同**。
+            /// 缺歌傳檔要靠「你有沒有這個包」比對,所以一定要一個只看內容的 id。
+            /// 一個資料夾可能有多首歌(<see cref="songKey"/> 分),它們共用同一個 packId。
+            /// </summary>
+            public string packId = "";
             public string cdPath = "";     // absolute generated CD disc image; "" → compose it from imagePath on first use
             public int chartFormat;        // 0=none, 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
             // ---- .gn 歌曲包 (chartFormat 3；見 Sdo.Osu.SdoPackIndex) ----

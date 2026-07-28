@@ -39,6 +39,10 @@ namespace Sdo.Osu
         /// FolderPath + SongKey) byte-identical to the one-song-per-folder era, so existing favourites survive.</summary>
         public string SongKey = "";
 
+        /// <summary>這首歌所在**資料夾**的跨電腦身分(<see cref="SongPackId"/>)。同一個資料夾裡的歌共用它。
+        /// "" = 還沒算。缺歌傳檔靠它比對 —— 見 <c>SongCatalog.Entry.packId</c> 的註解。</summary>
+        public string PackId = "";
+
         public string Title = "";
         public string Artist = "";
         public double Bpm;

@@ -37,7 +37,7 @@ namespace Sdo.Game
         //     `level` 都是被壓過的死值，不整份作廢重掃就永遠停在 99。
         // v9: osu 星數等級不再把炸彈當成可打音符（ManiaStarRating 現在跟 ManiaMsd 一樣跳過 IsBomb）。舊快取裡
         //     炸彈多的譜 `level` 被灌水過（灑滿雷的慢譜可以虛高好幾十級），得整份作廢重算。
-        public const int Version = 9;
+        public const int Version = 10;   // v10: Folder 加 packId(缺歌傳檔要用)
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null
@@ -61,6 +61,9 @@ namespace Sdo.Game
         public sealed class Folder
         {
             public string path = "", sig = "", group = "";   // group is the same for every song in a folder
+            // 這個資料夾的跨電腦身分(SongPackId)。與 sig 同一個失效條件 —— sig 是 file-stat token,
+            // 檔案有任何增刪改都會變,而 packId 只看「可傳的那些檔」的內容,所以 sig 沒變時它一定也沒變。
+            public string packId = "";
             public List<Song> songs = new List<Song>();
         }
 
@@ -155,9 +158,9 @@ namespace Sdo.Game
 
         /// <summary>A folder cache line from a freshly-parsed (or refreshed) song list. group is taken from the songs
         /// (they all share it); an empty folder still caches as "yields nothing" so it isn't re-parsed either.</summary>
-        public static Folder ToFolder(string path, string sig, List<ExternalSong> songs)
+        public static Folder ToFolder(string path, string sig, List<ExternalSong> songs, string packId = null)
         {
-            var f = new Folder { path = path, sig = sig };
+            var f = new Folder { path = path, sig = sig, packId = packId ?? "" };
             if (songs != null && songs.Count > 0)
             {
                 f.group = songs[0].Group ?? "";
