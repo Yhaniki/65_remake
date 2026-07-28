@@ -96,6 +96,11 @@ namespace Sdo.UI.Screens
         private readonly Image[] _slotClose = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
+        // 狀態徽章(NO SONG / PLAYING,art\generated\UI\ROOM)+ 傳檔跑條(執行期畫的兩個矩形,不烘圖)。
+        private readonly Image[] _slotMissing = new Image[RoomLayout.SeatCount];
+        private readonly Image[] _slotPlaying = new Image[RoomLayout.SeatCount];
+        private readonly Image[] _slotBarTrack = new Image[RoomLayout.SeatCount];
+        private readonly Image[] _slotBarFill = new Image[RoomLayout.SeatCount];
         // 六格頭貼的透明命中盒 + 目前彈出的座位選單(一次只會有一個)。
         private readonly Image[] _slotHit = new Image[RoomLayout.SeatCount];
         private GameObject _slotPopup;
@@ -206,6 +211,18 @@ namespace Sdo.UI.Screens
             heads.fitHairTop = false;   // 與 RoomHeadPortrait.fitHairTop 的預設一致(兩邊都不理頭髮)
         }
 
+        // ---- 頭貼上的狀態徽章與傳檔跑條的版位 ----
+        // 徽章 116×26(art\generated\UI\ROOM\{MISSING,PLAYING}),比頭貼格(96)寬 20 → 左右各外露 10px 置中。
+        // y=62 是頭貼上半部:官方房主徽章佔 102..132、名牌 141 起,放那裡會疊。
+        private const float StateBadgeInset = 10f;
+        private const float StateBadgeY = 62f;
+        // 跑條夾在頭貼下緣(132)與名牌(141)之間那條縫。
+        private const float BarY = 134f, BarH = 4f;
+        // 上傳/下載用顏色區分(使用者要求不要字):上傳偏藍、下載偏綠。
+        // 藍色取自官方房主徽章第四幀 b09 的外框(0,53,165)那一系 —— 同一套素材的藍。
+        private static readonly Color BarUpColor = new Color(0.42f, 0.66f, 1f, 1f);
+        private static readonly Color BarDownColor = new Color(0.45f, 0.92f, 0.55f, 1f);
+
         // ---- win 容器（收合用）：win1/win2/win3 的所有元件各掛在自己的容器下，收合就整組滑出畫面（官方 uihide/uidisplay）。
         //      每個容器都是「錨定左上、原點、800×600」的全畫布 rect → 子元件座標仍用絕對(win.x+x) 不變，收合只動容器 anchoredPosition。
         private RectTransform _win1Root, _win2Root, _win3Root;
@@ -308,6 +325,27 @@ namespace Sdo.UI.Screens
                 _slotName[i] = UIKit.AddText(_win1Root, "Name" + i, "", 13, Color.white, TextAlignmentOptions.Center);
                 Place(_slotName[i].rectTransform, nameX[i] + Win1.x, 141, RoomLayout.HeadSlotW, 18);
                 _slotName[i].gameObject.SetActive(false);
+
+                // 狀態徽章:蓋在頭貼**上半部**。為什麼不放頭貼下緣 —— 那裡是官方房主徽章(y=102..132)
+                // 的位置,房主在場中時兩張會疊在一起。
+                _slotMissing[i] = Art("missing", Win1, sx[i] - StateBadgeInset, StateBadgeY, "Missing" + i);
+                _slotPlaying[i] = Art("playing", Win1, sx[i] - StateBadgeInset, StateBadgeY, "Playing" + i);
+                if (_slotMissing[i] != null) _slotMissing[i].enabled = false;
+                if (_slotPlaying[i] != null) _slotPlaying[i].enabled = false;
+
+                // 上傳/下載的跑條:頭貼下緣與名牌之間那條縫(y=134..138)。
+                // 刻意不烘圖也不寫百分比 —— 使用者要的就是一條會跑的條。
+                _slotBarTrack[i] = UIKit.AddImage(_win1Root, "Bar" + i, new Color(0f, 0f, 0f, 0.55f));
+                Place(_slotBarTrack[i].rectTransform, sx[i] + Win1.x, BarY, RoomLayout.HeadSlotW, BarH);
+                _slotBarFill[i] = UIKit.AddImage(_slotBarTrack[i].rectTransform, "Fill", Color.white);
+                var fr = _slotBarFill[i].rectTransform;
+                fr.anchorMin = new Vector2(0f, 0f);
+                fr.anchorMax = new Vector2(0f, 1f);      // 高度跟著 track,寬度由 sizeDelta.x 控制
+                fr.pivot = new Vector2(0f, 0.5f);
+                fr.anchoredPosition = Vector2.zero;
+                fr.sizeDelta = new Vector2(0f, 0f);
+                _slotBarTrack[i].enabled = false;
+                _slotBarFill[i].enabled = false;
 
                 // 透明命中盒:座位的右鍵選單與雙擊鎖格都靠它收滑鼠。
                 // 為什麼不掛在 _slotHead 上:那張 RawImage 是 raycastTarget=false,而且**空位時 enabled=false**
@@ -777,6 +815,9 @@ namespace Sdo.UI.Screens
             // 回報「我有沒有這首歌」—— 沒有這一步,server 眼中每個人都是 Unknown,
             // 沒人按得下準備(R17)、也沒有人算參與者(R12)。見那邊的註解。
             NetSongPublisher.ReportAvailability(Ctx);
+            // 換歌 → 忘掉「這首歌的傳檔已經處理過了」,否則換回同一首歌時不會再試一次。
+            var netSong = Ctx.Net != null && Ctx.Net.Room != null ? Ctx.Net.Room.Song : null;
+            NetSongTransfer.OnRoomSong(netSong != null ? netSong.PackId : null);
             Render();
         }
 
@@ -3933,8 +3974,50 @@ namespace Sdo.UI.Screens
                     if (taken) _slotName[i].text = isLocal ? LocalName(room)
                                                           : (seat.Player != null ? seat.Player.DisplayName : "");
                 }
+
+                RenderSlotState(i, seat, taken);
             }
         }
+
+        /// <summary>
+        /// 一格頭貼的「狀態徽章 + 傳檔跑條」。
+        ///
+        /// 兩者是分開的兩件事,可以同時出現(一邊下載、一邊還是缺歌 → NO SONG 徽章 + 綠色跑條在跑)。
+        /// 徽章的優先序:**在場中(PLAYING)壓過缺歌** —— 已經在打歌的人「缺不缺歌」不再是有用的資訊,
+        /// 而「他在場裡、你在房間等」才是留在房間的人需要知道的事(需求 9)。
+        /// </summary>
+        private void RenderSlotState(int i, SeatInfo seat, bool taken)
+        {
+            bool playing = taken && IsInMatch(seat.PlayState);
+            bool missing = taken && !playing && seat.Avail == Availability.Missing;
+
+            if (_slotPlaying[i] != null) _slotPlaying[i].enabled = playing;
+            if (_slotMissing[i] != null) _slotMissing[i].enabled = missing;
+
+            // 跑條:自己的進度看本機的傳檔器(每幀最新),別人的看 server 轉播的 blobProgress;
+            // 另外 server 的座位快照本身也帶著下載進度(availProgress)—— 兩個來源取有值的那個。
+            float frac = 0f;
+            bool uploading = false;
+            bool show = false;
+            if (taken)
+            {
+                if (NetSongTransfer.TryProgressOf(Ctx, seat.UserId, out frac, out uploading)) show = true;
+                else if (seat.Avail == Availability.Downloading) { frac = seat.AvailProgress; show = true; }
+            }
+
+            if (_slotBarTrack[i] != null) _slotBarTrack[i].enabled = show;
+            if (_slotBarFill[i] == null) return;
+            _slotBarFill[i].enabled = show;
+            if (!show) return;
+            _slotBarFill[i].color = uploading ? BarUpColor : BarDownColor;
+            _slotBarFill[i].rectTransform.sizeDelta =
+                new Vector2(RoomLayout.HeadSlotW * Mathf.Clamp01(frac), 0f);
+        }
+
+        /// <summary>這個遊玩狀態算「在這一場裡」嗎 —— 頭貼要不要畫 PLAYING 徽章。</summary>
+        private static bool IsInMatch(PlayState s)
+            => s == PlayState.WaitingForLoad || s == PlayState.Loaded || s == PlayState.ReadyForGameplay
+            || s == PlayState.Playing || s == PlayState.Finished || s == PlayState.Results;
 
         // 房間 3D 裡「其他玩家」的角色。只在 server 的 rev 變動時重建 —— 生一隻 avatar 要讀十幾個部件檔,
         // 每幀重來會卡死;而座位表只在有人進出/換裝時才變,rev 正好是那個變動的訊號。

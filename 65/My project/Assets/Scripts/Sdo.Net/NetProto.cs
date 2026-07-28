@@ -135,6 +135,14 @@ namespace Sdo.Net
         public const string BlobProgress = "blobProgress";
         public const string BlobDownloadBegin = "blobDownloadBegin";
         public const string BlobManifest = "blobManifest";
+        /// <summary>
+        /// S→C。所有 chunk 都送完了。
+        ///
+        /// 為什麼要一個明確的結束訊號、而不是讓收端自己數位元組:數得出來,但那樣
+        /// 「傳輸中斷」與「還沒傳完」在收端看起來一模一樣,只能靠 timeout 猜 ——
+        /// 猜錯的方向是「等了三十秒才告訴你下載失敗」。收到這個才開始驗證檔案。
+        /// </summary>
+        public const string BlobDownloadDone = "blobDownloadDone";
         /// <summary>S→C 房內廣播:「這首歌可以下載了」。</summary>
         public const string BlobAvailable = "blobAvailable";
         public const string BlobError = "blobError";

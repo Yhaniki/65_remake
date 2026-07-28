@@ -33,9 +33,10 @@ namespace Sdo.Server.Net
 
             if (kind == NetLimits.FrameKindChunk)
             {
-                // 檔案傳輸在 M5(缺歌傳檔)才實作。現在收到就當協定錯誤 ——
-                // 靜默忽略會讓對面一直等,回明確的錯誤比較好查。
-                SendError(conn, 0, NetProto.BlobErrNotFound, "檔案傳輸尚未實作");
+                // 上傳的位元組。刻意不吃 control 的 rate limit —— 一首歌是幾百塊 chunk,
+                // 32/s 會把正常上傳擋死。總量的防線在 blobUploadBegin 那份清單上
+                // (超過宣稱長度就中止),而清單本身是 control 訊息、有被限流。
+                OnUploadChunk(conn, payload, NowMs());
                 return;
             }
 
@@ -103,6 +104,11 @@ namespace Sdo.Server.Net
                 case NetProto.SetLook: OnSetLook(conn, node); break;
                 case NetProto.Move: OnRoomMove(conn, node, now); break;
                 case NetProto.SetAvailability: OnSetAvailability(conn, node, now); break;
+
+                case NetProto.BlobQuery: OnBlobQuery(conn, node, rq, now); break;
+                case NetProto.BlobUploadBegin: OnBlobUploadBegin(conn, node, rq, now); break;
+                case NetProto.BlobUploadDone: OnBlobUploadDone(conn, node, rq, now); break;
+                case NetProto.BlobDownloadBegin: OnBlobDownloadBegin(conn, node, rq, now); break;
 
                 case NetProto.KickUser: OnKickUser(conn, node, rq); break;
                 case NetProto.SetSeatClosed: OnSetSeatClosed(conn, node, rq); break;

@@ -355,6 +355,8 @@ namespace Sdo.UI
             // (原本整個 hotkey 區塊被圈在「遊戲中」,很容易誤把 pump 也放進去。)
             if (_ctx != null && _ctx.Net != null) _ctx.Net.Pump();
             TickNetGameplay();   // 遊玩中每 200ms 把本機成績送上去(見那邊的註解)
+            // 缺歌傳檔:同樣要在遊戲中也繼續跑 —— 下載可能跨過「別人在打歌、我留在房間」那段。
+            NetSongTransfer.Tick(_ctx, this);
 
             // 開機時連不上 → 已退回單機,進到畫面後告知玩家一次。
             if (_netFellBackReason != null)

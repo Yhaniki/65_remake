@@ -226,6 +226,26 @@ namespace Sdo.Game.Net
             _outbox.TryAdd(new Outbound(NetLimits.FrameKindJson, msg.Utf8()));
         }
 
+        /// <summary>
+        /// 送一塊檔案位元組(<c>kind=1</c>,走 file 連線上傳歌曲用)。
+        ///
+        /// 回 false = 佇列滿了,**這一塊沒送出去,呼叫端要稍後重試同一塊**。
+        /// 這裡刻意不像 <see cref="Send"/> 那樣滿了就斷線:上傳本來就是「盡量塞滿管線」,
+        /// 塞不下是正常的流量控制訊號,不是錯誤。呼叫端(<c>NetSongFetcher</c>)靠它決定
+        /// 這一幀還能不能再送 —— 沒有這個回饋的話,一首 30 MB 的歌會在一幀之內把
+        /// 佇列灌爆然後把連線關掉。
+        /// </summary>
+        public bool TrySendChunk(byte[] data, int offset, int count)
+        {
+            if (data == null || count <= 0 || IsClosed) return false;
+            var copy = new byte[count];
+            System.Array.Copy(data, offset, copy, 0, count);
+            return _outbox.TryAdd(new Outbound(NetLimits.FrameKindChunk, copy));
+        }
+
+        /// <summary>還有幾筆等著送出去。上傳的流量控制用(見 <see cref="TrySendChunk"/>)。</summary>
+        public int PendingOutbound => _outbox.Count;
+
         // ---- 主執行緒 pump ----
 
         /// <summary>

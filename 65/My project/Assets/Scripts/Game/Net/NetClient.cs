@@ -146,6 +146,23 @@ namespace Sdo.Game.Net
         /// <summary>聊天訊息。</summary>
         public event Action<NetChatMessage> ChatReceived;
 
+        // ---- 缺歌傳檔(M5)----
+
+        /// <summary>server 回答「我有沒有這首歌」:(packId, 有沒有)。</summary>
+        public event Action<string, bool> BlobInfoReceived;
+
+        /// <summary>房內廣播:某首歌上傳完成、現在可以下載了(packId)。</summary>
+        public event Action<string> BlobAvailable;
+
+        /// <summary>房內廣播:某個人正在上傳/下載到幾成 —— (userId, 0..1, 是不是上傳)。</summary>
+        public event Action<int, float, bool> BlobProgress;
+
+        /// <summary>問 server 有沒有這首歌(缺歌的人要先確認,不然下載會撲空)。</summary>
+        public void SendBlobQuery(string packId)
+            => Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobQuery)
+                .Int(NetProto.FieldRequest, NextRq(null))
+                .Str("packId", packId ?? ""));
+
         /// <summary>
         /// 房間裡每個人的最新位置(userId → row),自己那筆已經濾掉。
         ///
@@ -376,6 +393,25 @@ namespace Sdo.Game.Net
                 case NetProto.ChatMsg:
                     Raise(ChatReceived, NetChatMessage.Decode(node));
                     break;
+
+                case NetProto.BlobInfo:
+                    {
+                        var h = BlobInfoReceived;
+                        if (h != null) h(NetJson.Str(node, "packId"), NetJson.Bool(node, "have"));
+                        break;
+                    }
+
+                case NetProto.BlobAvailable:
+                    Raise(BlobAvailable, NetJson.Str(node, "packId"));
+                    break;
+
+                case NetProto.BlobProgress:
+                    {
+                        var h = BlobProgress;
+                        if (h != null)
+                            h(NetJson.Int(node, "userId"), (float)NetJson.Num(node, "frac"), NetJson.Bool(node, "up"));
+                        break;
+                    }
 
                 case NetProto.Moves:
                     {

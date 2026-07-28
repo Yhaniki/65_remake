@@ -32,6 +32,20 @@ namespace Sdo.UI.Core
         private static string _lastKey;
         private static Availability _lastState = Availability.Unknown;
 
+        /// <summary>
+        /// 忘掉上次回報過什麼 → 下一次 <see cref="ReportAvailability"/> 一定會重送。
+        ///
+        /// 下載完成的那一刻一定要叫它:本機的答案從 missing 變成 have,而「狀態沒變就不重送」的記憶
+        /// 只記得**回報過的值**(那時是 missing → 現在算出 have,其實會送)。真正的問題是下載期間
+        /// 我們送過 downloading/importing 而那些不是這個記憶在管的欄位 —— 保險起見清掉,
+        /// 免得留在「已經 100% 了但頭貼還是缺歌、按不了準備」。
+        /// </summary>
+        public static void ForceReport()
+        {
+            _lastKey = null;
+            _lastState = Availability.Unknown;
+        }
+
         /// <summary>每次房間快照呼叫一次。狀態沒變就不重送。</summary>
         public static void ReportAvailability(AppContext ctx)
         {
@@ -55,8 +69,15 @@ namespace Sdo.UI.Core
         private static bool HaveSong(AppContext ctx, NetSongRef song)
         {
             if (song.Official) return SongCatalog.Get(song.Gn) != null;
-            // 外部歌:跨電腦的身分要靠 packId,而那是 M5 才算得出來的。在那之前只認「這首就是我自己選的那首」
-            // (房主一定成立),別人一律 missing —— 寧可說沒有,也不要謊報 have 然後在開場時載不到譜。
+
+            // 外部歌:身分是 packId(資料夾內容的指紋)+ songKey(資料夾裡的哪一首)。
+            // 用它去查自己的歌庫 —— 這就是「我到底有沒有房主選的那一份」的唯一正確問法:
+            // 歌名相同不代表譜相同,而拿到不對的譜的症狀是「音符跟音樂差半拍」。
+            if (!string.IsNullOrEmpty(song.PackId))
+                return ExternalSongLibrary.FindByPack(song.PackId, song.SongKey) != null;
+
+            // 沒有 packId(房主的歌庫掃描還沒算出來,或對面是舊版)→ 只認「這首就是我自己選的那首」。
+            // 寧可說沒有,也不要謊報 have 然後在開場時載不到譜。
             var s = ctx.Session;
             return s != null && s.IsExternalSong && !string.IsNullOrEmpty(song.SongKey)
                    && string.Equals(s.ExternalSongKey, song.SongKey, System.StringComparison.Ordinal);
@@ -78,11 +99,15 @@ namespace Sdo.UI.Core
             };
             if (s.IsExternalSong)
             {
-                // 外部歌:先帶得出「是哪一份譜」的資訊;跨電腦的身分(packId)是 M5 才算得出來。
                 song.SongKey = s.ExternalSongKey ?? "";
                 song.ChartRelPath = s.ExternalChartPath ?? "";
                 song.ChartIndex = s.ExternalChartIndex;
                 song.Level = s.ExternalLevel;
+
+                // 跨電腦的身分。session 自己不存 packId —— 它是掃描時算好蓋在 catalog entry 上的,
+                // 所以從那裡拿(gn 在本機是唯一的,只是換台電腦就不同,這也正是需要 packId 的原因)。
+                var e = SongCatalog.Get(s.SongGn);
+                song.PackId = e != null ? (e.packId ?? "") : "";
             }
             return song;
         }

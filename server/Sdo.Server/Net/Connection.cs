@@ -106,6 +106,13 @@ namespace Sdo.Server.Net
             Enqueue(new Outgoing(NetLimits.FrameKindJson, utf8, critical));
         }
 
+        /// <summary>
+        /// 還有幾筆等著送出去。**下載的流量控制靠它** —— 一首 30 MB 的歌是 500 塊 chunk,
+        /// 一次全塞進來會超過 <see cref="OutboundCapacity"/>,而 chunk 是 critical(滿了就斷線)。
+        /// 所以 Hub 每輪 tick 只補到一個水位,見 <c>PumpDownloads</c>。
+        /// </summary>
+        public int OutboundCount => _outbound.Count;
+
         /// <summary>送檔案 chunk(走 file 連線)。</summary>
         public void SendChunk(byte[] data, int offset, int count)
         {

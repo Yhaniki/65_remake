@@ -233,6 +233,9 @@ namespace Sdo.Server.Net
                 SweepDeadConnections(now);
             }
 
+            // 3b) 下載中的歌:把 chunk 補到水位(流量控制,見 PumpDownloads)
+            PumpDownloads();
+
             // 4) 歌曲暫存清理(15 分鐘一次)
             if (_janitor.Due(now))
             {
@@ -281,6 +284,11 @@ namespace Sdo.Server.Net
             if (!_conns.Remove(conn.ConnId)) return;
 
             Log("連線 #" + conn.ConnId + " 關閉(" + reason + ")");
+
+            // 傳輸中斷:關掉開著的檔案 handle、清掉暫存目錄。
+            // 不做的話那份半成品會一直佔著空間,而且沒有任何 pack 引用它 → 連 janitor 都掃不到
+            // (它只認 files/ 底下的東西)。
+            CloseBlobSessions(conn.ConnId);
 
             if (!string.IsNullOrEmpty(conn.SessionKey) && conn.Role == NetProto.RoleControl)
                 _sessions.Remove(conn.SessionKey);
