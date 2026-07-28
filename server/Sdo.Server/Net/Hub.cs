@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Sdo.Net;
 using Sdo.Net.Server;
+using Sdo.Server.Files;
 
 namespace Sdo.Server.Net
 {
@@ -56,11 +57,23 @@ namespace Sdo.Server.Net
         private long _lastMovePushMs;
         private TcpListener _listener;
 
+        /// <summary>歌曲暫存的磁碟層(缺歌傳檔用)。只由 actor loop 碰。</summary>
+        private readonly DiskBlobIo _blobs;
+
+        /// <summary>定期清掉沒人用的歌曲暫存。</summary>
+        private readonly BlobJanitor _janitor;
+
         public Hub(ServerOptions opts)
         {
             _opts = opts;
             int seed = opts.CodeSeed != 0 ? opts.CodeSeed : unchecked((int)DateTime.UtcNow.Ticks);
             _rooms = new RoomRegistry(opts.MaxRooms, seed);
+
+            _blobs = new DiskBlobIo(opts.BlobDir);
+            int dropped = _blobs.ClearTemp();     // 上次被 kill 掉留下的半個上傳
+            if (dropped > 0) Log("清掉 " + dropped + " 份沒收完的上傳暫存");
+            _janitor = new BlobJanitor(_blobs, opts.TtlHours,
+                                       (long)opts.MaxTotalBlobGb * 1024L * 1024L * 1024L, NowMs());
         }
 
         /// <summary>Unix 毫秒。所有逾時判斷的時間源。</summary>
@@ -219,6 +232,28 @@ namespace Sdo.Server.Net
                 _lastPingSweepMs = now;
                 SweepDeadConnections(now);
             }
+
+            // 4) 歌曲暫存清理(15 分鐘一次)
+            if (_janitor.Due(now))
+            {
+                var r = _janitor.Sweep(now, PinnedPackIds());
+                if (r.DidAnything) Log("歌曲暫存清理:" + r);
+            }
+        }
+
+        /// <summary>
+        /// 存活房間現在選的那些歌 —— 清理時**絕對不能刪**這些包(<see cref="BlobJanitor.Sweep"/>)。
+        /// 少了它,一場正在等人下載的比賽會被自己的清理程序把來源刪掉。
+        /// </summary>
+        private HashSet<string> PinnedPackIds()
+        {
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var room in _rooms.Rooms)
+            {
+                var song = room.State != null ? room.State.Song : null;
+                if (song != null && !song.Official && !string.IsNullOrEmpty(song.PackId)) set.Add(song.PackId);
+            }
+            return set;
         }
 
         private void SweepDeadConnections(long now)
