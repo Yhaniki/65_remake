@@ -496,7 +496,7 @@ namespace Sdo.UI.Screens
             Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包(膠囊,非圓)
             // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
             // 大顆圓鈕 → alphaHit：命中判定貼齊可見圓形,透明四角不再誤觸;disc：手繪圓盤的階梯描邊沿圓周低通抹平(見 Btn 註解)。
-            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null, alphaHit: 0.5f, disc: true);
+            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
 
             // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
             _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f, disc: true);
@@ -4300,6 +4300,53 @@ namespace Sdo.UI.Screens
         private const float ForceStartDoubleTapSec = 1.5f;  // 這段時間內再按一次 = 強制開始
 
         private bool Online => Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom;
+
+        /// <summary>
+        /// 「旁觀」鈕:交出座位變旁觀者,再按一次搶回座位(需求 10 / D13)。
+        ///
+        /// 三道門(D13)在 server 那邊是權威(R21),這裡先擋一次**只是為了把原因講出來** ——
+        /// 靜默失敗的話玩家只會覺得「這顆鈕壞了」:
+        ///   • 已經在這一局裡的參與者 → 不能中途離場;
+        ///   • 已按準備的一般玩家 → 先取消準備;
+        ///   • 房主 → server 會自動把房主交給剩下座位索引最小的人;沒人能接手就擋下來。
+        /// </summary>
+        private void OnSpectateToggle()
+        {
+            var net = Ctx != null ? Ctx.Net : null;
+            if (net == null || !net.IsConnected || !net.InRoom)
+            {
+                Toast.Show(L("room.spectate_offline"));   // 離線單機沒有旁觀(沒有別人可看)
+                return;
+            }
+
+            if (net.IsSpectating) { net.StopSpectate(); Toast.Show(L("room.spectate_off")); return; }
+
+            var snap = net.Room;
+            var me = snap != null ? snap.SeatOf(net.UserId) : null;
+            if (me == null) return;   // 不在座位上也不是旁觀者 → 狀態還沒同步,等下一份快照
+
+            if (me.PlayState != PlayState.Idle) { Toast.Show(L("room.spectate_in_match")); return; }
+            // 房主的 Ready 恆 false(D12)—— 所以這條天然不會擋到房主,不用另外排除它。
+            if (me.Ready) { Toast.Show(L("room.spectate_ready")); return; }
+            // 房主要先有人能接手(R21)。座位上只有自己一個人時沒人接 → 講清楚,不要送出去等 badState。
+            if (net.IsHost && OtherSeatedCount(snap) == 0) { Toast.Show(L("room.spectate_no_host")); return; }
+
+            net.Spectate();
+            Toast.Show(L("room.spectate_on"));
+        }
+
+        /// <summary>除了自己以外還有幾個人坐在座位上(房主能不能交棒 → 能不能去旁觀)。</summary>
+        private static int OtherSeatedCount(NetRoomSnapshot snap)
+        {
+            if (snap == null || snap.Seats == null) return 0;
+            int n = 0;
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var s = snap.Seats[i];
+                if (s != null && s.IsTaken && s.UserId != snap.HostUserId) n++;
+            }
+            return n;
+        }
 
         private void OnMatchStarting(NetMatchStart m)
         {

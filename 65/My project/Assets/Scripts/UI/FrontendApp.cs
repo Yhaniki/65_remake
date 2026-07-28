@@ -374,6 +374,10 @@ namespace Sdo.UI
                 {
                     // 中離（預設 ESC，可在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] quit 改）：不結算直接退出。
                     if (KeyMap.Down(Hotkey.Quit)) AbortGameplay();
+                    // 旁觀退出(需求 10):Ctrl+Q → 直接離開房間回選角色畫面。
+                    // 只在旁觀時吃 —— 參賽者按到不能把自己踢出比賽。
+                    else if (_activeGame.spectatorMode && CtrlHeld() && KeyMap.Down(Hotkey.SpectatorQuit))
+                        QuitSpectating();
                 }
                 // Finished: ScreenGameplay owns the win/lose 定格 pose + STATIS result panel itself (its own ResultScreen).
                 // That sequence plays out AFTER Finished flips at song-end, so we must NOT tear down on Finished — we
@@ -514,6 +518,14 @@ namespace Sdo.UI
             _netGateArmedRt = Time.realtimeSinceStartup;
             game.playerCount = Mathf.Max(1, match.Participants.Length);
 
+            // 旁觀(需求 10):不是這一場的參與者 → 只看別人跳舞。
+            // 判斷用 server 給的參與者名單,不是本機的「我按了旁觀鈕嗎」—— server 才是唯一權威
+            // (它可能因為缺歌/沒準備而把你排除在這一場之外,那時你也是旁觀者)。
+            game.spectatorMode = !net.IsMatchParticipant;
+            // 旁觀名單:server 在 matchStarting 裡帶了真名(需求 10:不要假名)。
+            game.showSpectators = match.SpectatorNames != null && match.SpectatorNames.Length > 0;
+            game.spectatorNames = match.SpectatorNames ?? new string[0];
+
             game.LocalReady = () =>
             {
                 net.SetPlayState(Sdo.Net.PlayState.Loaded, _netMatchId);
@@ -626,6 +638,7 @@ namespace Sdo.UI
         {
             var net = _ctx.Net;
             if (net == null || net.Match == null || _activeGame == null) return;
+            SyncSpectatorNames(net);               // 中途有人進來/離開旁觀 → 右側名單要跟著變(旁觀者與參賽者都看得到)
             if (!net.IsMatchParticipant) return;   // 旁觀者不送成績
             var snap = _activeGame.NetScore;
             if (Time.unscaledTime >= _netFrameNextAt)
@@ -634,6 +647,33 @@ namespace Sdo.UI
                 net.SendFrame(_netMatchId, snap.TimeMs, snap.Score, snap.Combo, snap.MaxCombo, snap.Hp,
                               snap.Perfect, snap.Cool, snap.Bad, snap.Miss);
             }
+        }
+
+        // 上一次套進畫面的旁觀名單(用來判斷有沒有變 —— 每幀重寫十個 Label3D 是白工)。
+        private string _spectatorNamesKey;
+
+        /// <summary>
+        /// 把房間快照裡的旁觀者名單推進遊戲畫面(需求 10:右側要真名)。
+        ///
+        /// 為什麼不訂閱 <c>RoomUpdated</c> 事件而是每幀比對:遊戲中房間畫面已經被拆掉,
+        /// 訂閱者的生命週期要自己管(進場訂閱、離場取消,少一邊就是洩漏或 NRE)。
+        /// 每幀比一個字串便宜得多,而且 <see cref="TickNetGameplay"/> 本來就每幀跑。
+        /// </summary>
+        private void SyncSpectatorNames(NetClient net)
+        {
+            var snap = net.Room;
+            var specs = snap != null ? snap.Spectators : null;
+            int n = specs != null ? specs.Length : 0;
+
+            var sb = new System.Text.StringBuilder(64);
+            for (int i = 0; i < n; i++) { sb.Append(specs[i].Name); sb.Append('\n'); }
+            string key = sb.ToString();
+            if (key == _spectatorNamesKey) return;
+            _spectatorNamesKey = key;
+
+            var names = new string[n];
+            for (int i = 0; i < n; i++) names[i] = specs[i].Name ?? "";
+            _activeGame.SetSpectatorNames(names);
         }
 
         /// <summary>這一局結束(正常打完 / 中途離開)→ 告訴 server,房間才會離開 playing。只會送一次。</summary>
@@ -671,6 +711,36 @@ namespace Sdo.UI
         // 🔴 中途離開也要送 playFinished(帶當下的部分分數)—— 不送的話房間會卡在 playing,
         //    要等 server 的逾時才恢復,那段時間誰都不能再開一局。
         private void AbortGameplay() { SendNetPlayFinished(); TransitionToRoomFromGame(); }
+
+        /// <summary>Ctrl 按著嗎(左右都算)。優先問實體鍵位(不受輸入法影響),不支援時退回 Unity Input。</summary>
+        private static bool CtrlHeld()
+        {
+            if (RawKeyboard.Supported)
+                return RawKeyboard.IsHeld(KeyCode.LeftControl) || RawKeyboard.IsHeld(KeyCode.RightControl);
+            return Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        }
+
+        /// <summary>
+        /// 旁觀中按 Ctrl+Q:直接離開房間回選角色畫面(需求 10)。
+        ///
+        /// 順序照 <c>RoomScreen.OnLeave</c> 的既有慣例:<b>離房要在轉場全黑時才做</b>。
+        /// 那邊的註解記錄了不這麼做的後果 —— 離房會觸發房間狀態回呼去重畫還沒被黑幕蓋住的畫面,
+        /// 而且 <c>CurrentRoom</c> 沒清乾淨的話換身分再進房會變成 <c>IsHost=false</c>。
+        /// 這裡多一步 StopSpectate:先把旁觀席退掉,server 才不會留一個幽靈觀眾。
+        /// </summary>
+        private void QuitSpectating()
+        {
+            if (_returningFromGame) return;
+            _returningFromGame = true;
+            var net = _ctx != null ? _ctx.Net : null;
+            ScreenTransition.Run(() =>
+            {
+                TeardownGameplay();
+                if (net != null && net.IsSpectating) net.StopSpectate();
+                _ctx.Rooms?.LeaveRoom();
+                _ctx.Flow.GoTo(ScreenId.GenderSel);
+            });
+        }
 
         // 遊戲 → 房間：漸黑 → 全黑時拆遊戲場景並切回房間（建 3D 房間的卡頓藏在黑幕下）→ 漸亮，房間 UI 從四邊滑入。
         // 轉場的黑幕獨立於前端 canvas（gameplay 期間前端 canvas 關閉），所以能蓋住還在跑的遊戲畫面。

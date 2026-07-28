@@ -75,6 +75,17 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void LocalRank_With_No_Local_Entry_Is_Rank_Zero()
+        {
+            // 旁觀模式的名單裡**沒有自己**(旁觀者不是參賽者)→ rank = 0 =「找不到本機」。
+            //
+            // 🔴 這個 0 不可以被「修」成 1:呼叫端用 `rank <= 1` 判斷贏家,回 1 的話旁觀者會看到 YOU WIN 旗。
+            // ScreenGameplay 因此在那裡多一道 !spectatorMode 的守門;這條測試把 0 這個契約釘住。
+            var r = Roster(("x", 500, false), ("y", 300, false));
+            Assert.AreEqual((0, 2), RankingBoard.LocalRank(r));
+        }
+
+        [Test]
         public void LocalRank_Tie_Local_Outranks()
         {
             // local ties the leader on score -> local takes rank 1.

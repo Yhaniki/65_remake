@@ -252,6 +252,30 @@
    "v": "已自动分队"
   },
   {
+   "k": "room.spectate_offline",
+   "v": "旁观需要连上服务器"
+  },
+  {
+   "k": "room.spectate_in_match",
+   "v": "你正在这一局里 — 不能切成旁观"
+  },
+  {
+   "k": "room.spectate_ready",
+   "v": "请先取消准备"
+  },
+  {
+   "k": "room.spectate_no_host",
+   "v": "没有人能接手房主"
+  },
+  {
+   "k": "room.spectate_on",
+   "v": "旁观中 — 座位已释出"
+  },
+  {
+   "k": "room.spectate_off",
+   "v": "已回到座位"
+  },
+  {
    "k": "room.drop_up",
    "v": "向上"
   },

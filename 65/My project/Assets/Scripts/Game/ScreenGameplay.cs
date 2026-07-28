@@ -943,6 +943,15 @@ namespace Sdo.Game
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
         public bool mockOpponents = false;           // 預設關閉測試對手(離線單人=solo rank 1/1、清單只有本機);真連線時再開
         public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
+        /// <summary>
+        /// 旁觀模式(需求 10):進場**只看別人跳舞**。
+        ///
+        /// 關掉:音符(連生成都不生)、音符板、受擊線、判定字、連擊、血條、分數、名次 N/M、鍵盤輸入、自己的舞者。
+        /// 保留:3D 場景、導播運鏡、右側名單(誰領先正是旁觀者要看的)、旁觀者名單、歌曲資訊列。
+        ///
+        /// 穿線方式照 <see cref="freeMode"/> 的慣例(FrontendApp 在 AddComponent 之後、Start 之前設欄位)。
+        /// </summary>
+        public bool spectatorMode = false;
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
         public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
         public bool localPlayerMale = false;         // set by FrontendApp from GameSession.Gender before Start()
@@ -962,10 +971,20 @@ namespace Sdo.Game
         // rank "N / M": laid out on the SCORE's column pitch so M (total) sits under the score's tens digit.
         // slash x = ScorePos.x + 5*pitch + 14 = 429 → N at col4 (404), M at col6/tens (454). rankY below the score.
         public float rankCenterX = 429f, rankY = 74f, rankDigitW = 25f, rankPitch = 26f;
-        // spectators (旁觀玩家): GAMEPLAY18 title sprite + fake light-blue names below the roster. DdrGamePlay.xml
-        // had lookerTitle@(696,190) + looker rows@(696,212..) step13 colour 0xff9DCBFF — we use fake names.
-        public bool showSpectators = false;          // 預設關閉測試旁觀名單(全是假名);真連線有觀眾時再開
-        private static readonly string[] SpectatorNames = { "酷", "美麗", "悲晴吉克", "路過旅人", "小幫手" };
+        // spectators (旁觀玩家): GAMEPLAY18 title sprite + light-blue names below the roster. DdrGamePlay.xml
+        // had lookerTitle@(696,190) + looker rows@(696,212..) step13 colour 0xff9DCBFF。
+        public bool showSpectators = false;          // 離線預設關閉(沒有觀眾);連線有觀眾時由 FrontendApp 打開
+        /// <summary>
+        /// 旁觀者的名字(需求 10:要真名)。FrontendApp 從 <c>matchStarting.spectatorNames</c> 灌進來。
+        ///
+        /// 🔴 這裡本來是 <c>private static readonly string[]</c> 的假名 —— 而 <c>_lookerRows</c> 的長度是**從它**取的。
+        /// 所以要能顯示真名,這個欄位必須是實例的、可寫的,而且列數上限要自己定(<see cref="MaxLookerRows"/>)
+        /// 而不是跟著資料長度 —— 不然中途有人進來旁觀、名單變長,就得重建整排 Label3D。
+        /// 改成固定配 10 列、多的截掉,<see cref="SetSpectatorNames"/> 只改文字。
+        /// </summary>
+        public string[] spectatorNames = new string[0];
+        /// <summary>旁觀名單最多畫幾列(座標 lookerFirstY + i*16 到第 10 列就碰到畫面底了)。</summary>
+        public const int MaxLookerRows = 10;
         private SpriteRenderer _lookerTitle;
         private Label3D[] _lookerRows;
         public float lookerTitleX = 694f, lookerTitleY = 214f, lookerX = 698f, lookerFirstY = 241f, lookerRowStep = 16f, lookerFontWorld = 18f;   // names start 5px lower than before so the list clears the 旁觀玩家 header
@@ -1095,13 +1114,22 @@ namespace Sdo.Game
             if (!LoadChart()) yield break;
             BuildScroll();
             BuildBoard();
-            if (!observeBurstMode) SpawnNotes();   // observe mode: no notes (clean stage to watch the burst)
+            // observe mode: no notes (clean stage to watch the burst)。
+            // 旁觀模式也不生:一顆音符都不存在 → 沒有東西可捲、可判、可扣血,整條遊玩路徑自然全空,
+            // 不用在十幾個地方各加一個 if(spectatorMode)(那才是會漏掉一處的做法)。
+            if (!observeBurstMode && !spectatorMode) SpawnNotes();
             foreach (var n in _notes) { double t = n.Note.EndTimeMs ?? n.Note.StartTimeMs; if (t > _totalMs) _totalMs = t; }
+            // 🔴 旁觀沒有生音符 → 上面那圈跑不到,_totalMs 會留 0,而歌曲結束的判定是
+            // 「now > baseEndMs + 1000」→ 旁觀者的畫面會在**開場一秒後**就跳結算。
+            // 曲長改從譜面本身量(音符沒生,但譜是載好的)。
+            if (_totalMs <= 0.0 && _map != null) _totalMs = _map.LastNoteMs;
             BuildHud();
             ApplyRoomNoteSkin();   // AFTER BuildHud so _comboWord exists → LoadComboJudgeArt can assign the skin's COMBO.PNG
                                    // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
             // 編輯器：不載舞者、不載 3D 場景（也就沒有 SceneCam/背景 quad）→ 主相機的 SolidColor 黑直接成為背景。
-            if (!editorMode) { TryLoadAvatar(); TryLoadScene(); }
+            // 旁觀:不載**自己**的舞者(沒下場的人不該出現在場上),但場景與導播運鏡照載 —— 那正是要看的東西。
+            // (別人的舞者是 M8 的事;在那之前旁觀者看到的是空場 + 名單。)
+            if (!editorMode) { if (!spectatorMode) TryLoadAvatar(); TryLoadScene(); }
             // 判定窗:StepMania(YHANIKI)的「精N」毫秒窗,與 BPM 無關(原版是 tick 窗 = 歌越快越嚴,見 FromSdoBpm)。
             // 以精4 為基準(Perfect 45 / Cool 90 / Bad 135 / Miss 180 ms)乘精度係數;預設精2(×1.33)。
             // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
@@ -1137,6 +1165,9 @@ namespace Sdo.Game
             if (use3dCamera && _camReady && openingIntroSec > 0f && cameraAuto) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
             if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f;   // idle dancer, fixed cam, hidden track
                 HideComboAndJudge(); HideHudForPanel(); }   // also clear the rest of the gameplay HUD (score/combo/judge/song labels/ranking) for a clean stage
+            // 旁觀:自己沒有舞者也沒有音符 → 停掉本機的舞蹈閘門,並把判定字/連擊收掉。
+            // 音符板與血條交給 SetTrackVisible 的旁觀分支(它才是唯一收口,開場揭示後還會再呼叫一次)。
+            if (spectatorMode) { _dancing = false; SetTrackVisible(_trackVisible); HideComboAndJudge(); }
             // 編輯器：沒有開場運鏡，音符板直接出來；HP/分數/名次/歌曲列全部收掉，只留板子+受擊線+音符。
             if (editorMode) { _dancing = false; _introStartRt = -1f; SetTrackVisible(true); HideHudForEditor(); }
             _sceneBootDone = true;            // the synchronous build above is complete (scene/avatar/board/HUD placed)
@@ -2258,11 +2289,16 @@ namespace Sdo.Game
         // UpdateHpBar (which early-outs while _trackVisible is false), so on hide we just force them off.
         private void SetTrackVisible(bool on)
         {
-            _trackVisible = on;
-            if (_board) _board.enabled = on;
+            // 旁觀模式:音符板/受擊線/血條**永遠**不出(需求 10)。這裡是唯一的收口 ——
+            // 開場揭示(OpeningSequence)之後還會再呼叫一次 SetTrackVisible(true),
+            // 所以不能只在 Start 關一次,要在這個函式裡把旁觀夾進去。
+            // 名單(SetRankingVisible)刻意還是跟著 on 走:旁觀者要看的正是誰領先。
+            bool trackOn = on && !spectatorMode;
+            _trackVisible = trackOn;   // UpdateHpBar 讀它早退 → 旁觀時不會被重新打開
+            if (_board) _board.enabled = trackOn;
             // ShowTime mode has no HP bar (only the 集氣 energy gauge) — keep the whole HP widget hidden even when the
             // track is shown. UpdateHpBar also early-outs in ShowTime so it can't re-enable _hpGlow.
-            bool hpOn = on && !showtimeMode;
+            bool hpOn = trackOn && !showtimeMode;
             if (_hpSolidBack) _hpSolidBack.enabled = hpOn;
             if (_hpBg) _hpBg.enabled = hpOn;
             if (_hpTex) _hpTex.enabled = hpOn;
@@ -2270,13 +2306,13 @@ namespace Sdo.Game
             if (_hpGlow) _hpGlow.enabled = hpOn;         // UpdateHpBar refines this (low HP -> off) once visible again
             for (int c = 0; c < Keys; c++)
             {
-                if (_receptors[c]) _receptors[c].enabled = on;
-                if (!on && _clickFlashSr[c] != null) _clickFlashSr[c].enabled = false;
+                if (_receptors[c]) _receptors[c].enabled = trackOn;
+                if (!trackOn && _clickFlashSr[c] != null) _clickFlashSr[c].enabled = false;
             }
             // 3D-mesh 音符不是 SpriteRenderer，不吃上面那些 enabled；而且藏板子之後 ScrollNotes 通常也不會再被呼叫
             // （EnterResult → Update 直接 return），沒人幫它收 → 最後一幀的箭頭會留在畫面上。這裡直接收起整個 pool；
             // 要再顯示不必做事，ScrollNotes 每幀都會自己打開。
-            if (!on && _highway != null) _highway.visible = false;
+            if (!trackOn && _highway != null) _highway.visible = false;
             SetRankingVisible(on);   // hide the roster list + rank during the opening hold / observe mode
         }
 
@@ -4755,15 +4791,17 @@ namespace Sdo.Game
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
-            bool manualPlay = !_failed && !_showtime.Active && !autoPlay;   // 只有真人手動打時才吃鍵盤(= 下面 HandleInput 分支的條件)
-            if (!_failed)
+            // 旁觀:不吃鍵盤(需求 10)。這一條不是「反正沒有音符所以無害」—— HandleInput 會亮受擊閃光,
+            // 旁觀者按到方向鍵就會在沒有音符板的畫面上閃出四條光。
+            bool manualPlay = !_failed && !_showtime.Active && !autoPlay && !spectatorMode;
+            if (!_failed && !spectatorMode)
             {
                 if (_showtime.Active) AutoPlay(now, showtime: true);   // ShowTime window: force PERFECT, ignore manual input
                 else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
                 else { HandleInput(now); AutoMiss(now); }
             }
             TickBombs(now, detonate: manualPlay);   // 炸彈:手動打時踩到(該軌按著)引爆;F8自動/ShowTime自動避雷,只安全流過
-            UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
+            if (!spectatorMode) UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
             // hold case waits for the round to finish; taps fire freely above.
@@ -4812,7 +4850,10 @@ namespace Sdo.Game
             if (showtimeMode) { SetEnergyHudVisible(false); _scoreRoll?.SetVisible(false); _bonusRoll?.SetVisible(false); }   // hide the gauge AND the big/small ShowTime score at song end (not on the result panel)
             RebuildRoster();                                  // finalize scores so the rank/winner is current
             var (rank, _) = RankingBoard.LocalRank(_roster);
-            _localWon = rank <= 1;                            // rank 1 = highest score = winner
+            // rank 1 = highest score = winner。
+            // 🔴 旁觀者不在名單裡 → LocalRank 回 rank 0(「找不到本機」),而 0 <= 1 會判成**贏了** ——
+            // 旁觀者看到 YOU WIN 旗。旁觀一律不贏不輸。
+            _localWon = !spectatorMode && rank <= 1;
             _gameOver = _hpDead;                              // HP-out → GAME OVER (overrides win/lose banner);完奏模式打完整首也算
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
@@ -5050,12 +5091,16 @@ namespace Sdo.Game
             // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
             var (place, players) = RankingBoard.LocalRank(_roster);
             int bad = _score != null ? _score.BadCount : 0, miss = _score != null ? _score.MissCount : 0;
-            // 自由模式不加 G幣/EXP
-            int expGained = freeMode ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
-            int coinsGained = freeMode ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
-            Texture head = BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
+            // 自由模式不加 G幣/EXP;旁觀者沒下場,更不該有獎勵(而且 place 會是 0 = 找不到本機)。
+            bool noReward = freeMode || spectatorMode;
+            int expGained = noReward ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
+            int coinsGained = noReward ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
+            // 旁觀者沒有自己的舞者 → 沒有頭貼可拍(BuildLocalHeadPortrait 會回 null,結算列用預設圖)。
+            Texture head = spectatorMode ? null : BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
-            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe, showBanner: !freeMode);
+            // 旁觀也不出:那面旗是「你贏了/輸了」,而旁觀者兩者都不是。
+            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe,
+                         showBanner: !freeMode && !spectatorMode);
         }
 
         // Turn the final roster + score into ranked result rows. The local player uses real judgment counts;

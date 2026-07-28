@@ -1073,6 +1073,77 @@ namespace Sdo.Tests
             Assert.AreEqual(NetRoomOp.BadState, r.SetPlayState(Host, PlayState.Loaded, m.MatchId + 99));
         }
 
+        // ==================== M6:強制開始 + 非參與者留在房間 ====================
+
+        [Test]
+        public void M6_A_Player_Missing_The_Song_Stays_In_The_Room_While_The_Others_Play()
+        {
+            // 需求 9 的完整情境:三個人,一個缺歌 → 房主連按兩下強制開始 →
+            // 兩個人進遊戲,缺歌那個**留在房間**看另外兩人的頭貼變「遊戲中」。
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, OfficialSong()));
+            // Host 與 Bob 有歌,Cid 沒有
+            Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(Host, "sdom1435k.gn", Availability.Have, 0f));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(Bob, "sdom1435k.gn", Availability.Have, 0f));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(Cid, "sdom1435k.gn", Availability.Missing, 0f));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+
+            // Cid 缺歌 → 按不了準備(R17)→ 不強制就開不了場
+            Assert.AreNotEqual(NetRoomOp.Ok, r.SetReady(Cid, true), "缺歌不該按得下準備");
+
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.BadState, r.RequestStart(Host, false, Resolved(), 0, out m),
+                "還有人沒準備 → 不強制開不了");
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, true, Resolved(), 0, out m), "強制開始要成功");
+
+            CollectionAssert.AreEquivalent(new[] { Host, Bob }, m.ParticipantUserIds,
+                "參與者只有『有歌 且(是房主或已準備)』的人");
+
+            // 缺歌那個人還在房間裡,而且狀態是 idle(不是被踢出去、也不是 playing)
+            var cid = r.State.Seats[r.State.SeatIndexOf(Cid)];
+            Assert.IsTrue(cid.IsTaken, "缺歌的人要留在房間,不能被踢掉");
+            Assert.AreEqual(PlayState.Idle, cid.PlayState);
+
+            // 另外兩人的頭貼要看得出「在場中」—— client 的 PLAYING 徽章讀的就是這個欄位
+            Assert.AreEqual(PlayState.WaitingForLoad, r.State.Seats[r.State.SeatIndexOf(Host)].PlayState);
+            Assert.AreEqual(PlayState.WaitingForLoad, r.State.Seats[r.State.SeatIndexOf(Bob)].PlayState);
+        }
+
+        [Test]
+        public void M6_The_Room_Comes_Back_To_Open_After_The_Match_So_The_Left_Behind_Player_Can_Play_Next()
+        {
+            // 留在房間的人不能永久卡住:一場打完房間要回 open,他的頭貼徽章也要消失。
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, OfficialSong()));
+            r.SetAvailability(Host, "sdom1435k.gn", Availability.Have, 0f);
+            r.SetAvailability(Bob, "sdom1435k.gn", Availability.Have, 0f);
+            r.SetAvailability(Cid, "sdom1435k.gn", Availability.Missing, 0f);
+            r.SetReady(Bob, true);
+
+            NetMatchInfo m;
+            r.RequestStart(Host, true, Resolved(), 0, out m);
+            r.SetPlayState(Host, PlayState.Loaded, m.MatchId);
+            r.SetPlayState(Bob, PlayState.Loaded, m.MatchId);
+            r.Tick(100);
+            Assert.AreEqual(RoomStatus.Playing, r.Status);
+
+            r.SetPlayState(Host, PlayState.Finished, m.MatchId);
+            r.SetPlayState(Bob, PlayState.Finished, m.MatchId);
+            var tick = r.Tick(200);
+            Assert.IsTrue(tick.ResultsReady, "兩個人都打完了 → 結算");
+
+            r.ClearResults();
+            Assert.AreEqual(RoomStatus.Open, r.Status, "房間要回到 open,不然留在房間的人永遠開不了下一場");
+            for (int i = 0; i < r.State.Seats.Length; i++)
+            {
+                var s = r.State.Seats[i];
+                if (!s.IsTaken) continue;
+                Assert.AreEqual(PlayState.Idle, s.PlayState, "所有人的遊玩狀態要回 idle(徽章才會消失)");
+            }
+        }
+
         // ==================== R14:結算 ====================
 
         [Test]

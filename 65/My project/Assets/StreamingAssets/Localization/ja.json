@@ -252,6 +252,30 @@
    "v": "チームを割り当てました"
   },
   {
+   "k": "room.spectate_offline",
+   "v": "観戦にはサーバー接続が必要です"
+  },
+  {
+   "k": "room.spectate_in_match",
+   "v": "このラウンドに参加中です — 観戦に切り替えられません"
+  },
+  {
+   "k": "room.spectate_ready",
+   "v": "先に準備を解除してください"
+  },
+  {
+   "k": "room.spectate_no_host",
+   "v": "ホストを引き継げる人がいません"
+  },
+  {
+   "k": "room.spectate_on",
+   "v": "観戦中 — 席を手放しました"
+  },
+  {
+   "k": "room.spectate_off",
+   "v": "席に戻りました"
+  },
+  {
    "k": "room.drop_up",
    "v": "上"
   },

@@ -44,6 +44,20 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void The_Spectator_Quit_Key_Is_Q_And_Sits_Last()
+        {
+            // 旁觀退出 = Ctrl + 這顆(Ctrl 寫死,見 KeyMap 的註解)。
+            Assert.AreEqual(KeyCode.Q, KeyMap.Key(Hotkey.SpectatorQuit));
+            Assert.AreEqual("spectatorQuit", KeyMap.HotkeyIds[(int)Hotkey.SpectatorQuit]);
+
+            // 🔴 新的 Hotkey 一定要加在 enum 最後面。三張表是「等長同序」,而既有的 keymaps.ini
+            // 存的是 key 名 —— 插在中間會讓玩家改過的每一顆鍵都對到隔壁那個功能,
+            // 症狀是「更新之後我的鍵位全亂了」。
+            Assert.AreEqual(Enum.GetValues(typeof(Hotkey)).Length - 1, (int)Hotkey.SpectatorQuit,
+                "SpectatorQuit 必須是 enum 的最後一個");
+        }
+
+        [Test]
         public void Hotkeys_RoundTrip_Through_Ini_Text()
         {
             KeyMap.Bind(Hotkey.SpeedUp, KeyCode.PageUp);

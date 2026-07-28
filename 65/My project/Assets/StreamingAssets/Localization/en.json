@@ -252,6 +252,30 @@
    "v": "Teams assigned"
   },
   {
+   "k": "room.spectate_offline",
+   "v": "Spectating needs a server connection"
+  },
+  {
+   "k": "room.spectate_in_match",
+   "v": "You are in this round — you cannot switch to spectating"
+  },
+  {
+   "k": "room.spectate_ready",
+   "v": "Cancel your ready first"
+  },
+  {
+   "k": "room.spectate_no_host",
+   "v": "No one can take over as host"
+  },
+  {
+   "k": "room.spectate_on",
+   "v": "Spectating — your seat is released"
+  },
+  {
+   "k": "room.spectate_off",
+   "v": "Back in a seat"
+  },
+  {
    "k": "room.drop_up",
    "v": "Up"
   },

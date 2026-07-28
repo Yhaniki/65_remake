@@ -21,7 +21,8 @@ namespace Sdo.UI.Core
                 { ScreenId.Lobby, new HashSet<ScreenId> { ScreenId.Room } },
                 { ScreenId.Room, new HashSet<ScreenId> { ScreenId.GenderSel, ScreenId.Lobby, ScreenId.SongSelect, ScreenId.Gameplay, ScreenId.Shop } },
                 { ScreenId.SongSelect, new HashSet<ScreenId> { ScreenId.Room } },
-                { ScreenId.Gameplay, new HashSet<ScreenId> { ScreenId.Room } },
+                // Gameplay → GenderSel 是旁觀的 Ctrl+Q(需求 10):旁觀者直接離開房間回選角色,不繞回房間畫面。
+                { ScreenId.Gameplay, new HashSet<ScreenId> { ScreenId.Room, ScreenId.GenderSel } },
                 { ScreenId.Shop, new HashSet<ScreenId> { ScreenId.Room } },
             };
 
