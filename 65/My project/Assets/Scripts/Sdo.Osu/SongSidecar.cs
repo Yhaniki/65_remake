@@ -74,9 +74,12 @@ namespace Sdo.Osu
 
         /// <summary>Current dance generator. Bump whenever <see cref="RandomDps"/> would choreograph a song
         /// differently: a recorded dance with an older <c>#DPSVER</c> is rebuilt on the next play.</summary>
+        // 4 = length/tempo are per-SONG (every difficulty's note windows unioned + the catalog BPM), so every
+        //     difficulty gets the same dance — a 3-era dance was planned off whichever chart happened to generate it,
+        //     and off a chart already through lead-in/short-hold collapse at that (see DanceInputs);
         // 3 = the body replays official three-motion groups too; 2 = openings replay the official rows (slices);
         // 1 = whole-clip openings
-        public const int DpsGenerator = 3;
+        public const int DpsGenerator = 4;
 
         private const string TagVersion = "VERSION";
         private const string TagSong = "SONG";
