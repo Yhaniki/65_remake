@@ -517,6 +517,9 @@ namespace Sdo.UI
             _netGateOpenSeen = false;
             _netGateArmedRt = Time.realtimeSinceStartup;
             game.playerCount = Mathf.Max(1, match.Participants.Length);
+            // 隊形:**只信 server echo 的那份**(隨機隊形是房主抽的,server 驗過範圍再發給所有人)。
+            // 各台自己讀 GameSession.Formation 的話,隨機那格會各抽一次 → 每台的站位都不一樣。
+            if (match.Resolved != null) game.formationType = match.Resolved.FormationType;
 
             // 旁觀(需求 10):不是這一場的參與者 → 只看別人跳舞。
             // 判斷用 server 給的參與者名單,不是本機的「我按了旁觀鈕嗎」—— server 才是唯一權威

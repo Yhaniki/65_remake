@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -1128,8 +1128,10 @@ namespace Sdo.Game
                                    // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
             // 編輯器：不載舞者、不載 3D 場景（也就沒有 SceneCam/背景 quad）→ 主相機的 SolidColor 黑直接成為背景。
             // 旁觀:不載**自己**的舞者(沒下場的人不該出現在場上),但場景與導播運鏡照載 —— 那正是要看的東西。
-            // (別人的舞者是 M8 的事;在那之前旁觀者看到的是空場 + 名單。)
             if (!editorMode) { if (!spectatorMode) TryLoadAvatar(); TryLoadScene(); }
+            // 同場其他舞者(M8)。一定要在 TryLoadAvatar 之後:它們共用那邊解析好的骨架/動作/編舞
+            // (_sharedHrc / _sharedDanceMot / _sharedDps),而 SdoAvatar 對那三個只讀 → 共用安全。
+            if (!editorMode) SpawnExtraDancers();
             // 判定窗:StepMania(YHANIKI)的「精N」毫秒窗,與 BPM 無關(原版是 tick 窗 = 歌越快越嚴,見 FromSdoBpm)。
             // 以精4 為基準(Perfect 45 / Cool 90 / Bad 135 / Miss 180 ms)乘精度係數;預設精2(×1.33)。
             // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
@@ -2790,6 +2792,10 @@ namespace Sdo.Game
             // skeleton + dance motion (skinned, CPU). Missing/invalid -> falls back to the static bind pose.
             HrcLoader hrc = LoadAsset(skeletonHrc, b => HrcLoader.Load(b));
             MotLoader mot = LoadAsset(danceMot, b => MotLoader.Load(b));   // fallback dance clip if no DPS
+            // 多舞者(M8)要共用這幾份解析結果 —— LoadAsset 每次都重讀重解,六隻各載一次是白花時間;
+            // 而且 SdoAvatar 對 HrcLoader / MotLoader **只讀**(Setup 把所有會被改的狀態都配成 per-instance 陣列),
+            // 所以共用是安全的。See SpawnExtraDancers.
+            _sharedHrc = hrc; _sharedDanceMot = mot;
             SdoAvatar avatar = null;
             if (hrc != null)
             {
@@ -2798,6 +2804,7 @@ namespace Sdo.Game
                 _bodyShapeB = SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody);
                 avatar.SetBodyShape(_bodyShapeB);                                             // 體型: thin/standard/fat (default thin)
                 avatar.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));   // standby idle (rest cat 0x15) — looped before the DPS starts and after it ends
+                _sharedRestMot = avatar.RestMot;   // 同上:多舞者共用
                 // 動作外掛（overlay）：一個歌包把它自帶的 .dps 和 .mot 用跟 base 資料根一樣的樹狀結構擺在一起
                 // （…/patch Datas/DANCE + …/patch Datas/MOTION|AUMOTION）。這首歌的 .dps 從哪棵樹讀出來，它的 .mot
                 // 就在那棵樹 → 設成 overlay，讓 ResolveMot 先查它、找不到才退回 base（含 base 沒有的 W_00xxxx.MOT）。
@@ -2810,6 +2817,7 @@ namespace Sdo.Game
                     Debug.Log($"[avatar] 動作外掛樹: {_motOverrideRoot}（AUMOTION/MOTION 先於 base 根）");
                 // per-song choreography (DPS): sequence motion slices to the music clock (debug now dances too)
                 var dps = LoadAsset(dpsPath, b => DpsLoader.Load(b));
+                _sharedDps = dps;   // 同上:多舞者共用同一份編舞(同一首歌大家跳一樣)
                 if (dps != null)
                 {
                     avatar.Dps = dps;
@@ -4675,6 +4683,7 @@ namespace Sdo.Game
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
             MaintainSceneRt();
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
+            TickDancerPerf();   // SDO_DANCERS 開著時每 2 秒印一行幀時間(M8 的量測依據,見 ScreenGameplay.Dancers.cs)
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
@@ -6034,13 +6043,13 @@ namespace Sdo.Game
         // while() so a long frame that skips a boundary still settles. _dancing is read by the avatar each frame.
         private void UpdateDanceGate(double now)
         {
-            double settleMs = 8 * (60000.0 / Math.Max(1.0, _map.Bpm));   // 8 beats = 2 bars, same as the score commit
+            // 規則本體在 Sdo.Ruleset.DanceGate —— **遠端舞者用的是同一個函式**(見那邊的註解:
+            // 各寫一份的話門檻一改,別人畫面上的舞者就會靜默對不上,而且沒有測試抓得到)。
+            double settleMs = Sdo.Ruleset.DanceGate.SettleMs(_map.Bpm);   // 8 beats = 2 bars, same as the score commit
             if (_nextDanceSettleMs <= 0) _nextDanceSettleMs = settleMs;
             while (now >= _nextDanceSettleMs)
             {
-                if (_blockHadBreak) _dancing = _score.Combo > 30;   // (1) broke -> carry on only with a strong (>30) combo
-                else if (_blockHadNote) _dancing = true;            // (2) clean block with notes -> dance/resume
-                // else: empty block (no break, no notes) -> hold the current _dancing state
+                _dancing = Sdo.Ruleset.DanceGate.Next(_dancing, _blockHadBreak, _blockHadNote, _score.Combo);
                 _blockHadBreak = false;
                 _blockHadNote = false;
                 _nextDanceSettleMs += settleMs;

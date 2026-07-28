@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -1542,12 +1542,17 @@ namespace Sdo.UI.Screens
         private void TickDevAutoStart()
         {
             if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_AUTOSTART"))) return;
-            if (!Online || !Ctx.Net.IsHost || _starting || _awaitingMatchStart) return;
+            if (_starting || _awaitingMatchStart) return;
+            // 線上要是房主才按得動;**離線單人房也要能用** —— 效能量測(SDO_DANCERS)是離線跑的,
+            // 而它需要有人把遊戲開起來。原本這裡直接 `if (!Online) return;`,結果離線那幾組
+            // 一行都沒量到(client 一直停在房間)。
+            if (Online && !Ctx.Net.IsHost) return;
             var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             if (room == null || string.IsNullOrEmpty(room.SongTitle)) return;
-            // 🔴 要等第二個人真的坐下來才開始。不等的話房主會在自己還在開機的那幾秒就 solo 開場,
+            // 🔴 線上要等第二個人真的坐下來才開始。不等的話房主會在自己還在開機的那幾秒就 solo 開場,
             //    等別人加入時房間已經是 playing → 他的 join 被 R18 以 inGame 拒絕(而且畫面上看不出來)。
-            if (SeatedPlayerCount(room) < 2)
+            //    離線沒有別人可以等,所以這條只在線上成立。
+            if (Online && SeatedPlayerCount(room) < 2)
             {
                 if (Time.frameCount % 300 == 0) Debug.Log("[dev] SDO_AUTOSTART 還在等第二個人坐下");
                 return;
@@ -2917,6 +2922,7 @@ namespace Sdo.UI.Screens
             // 所有人的泡都擺完了 → 按深度重排「泡與泡」的前後(UI 材質不寫深度,誰蓋誰只看畫的順序)。
             SortBubbleWorldCanvases();
 
+            TickRoomPerf();              // DEV only:設了 SDO_ROOMAVATARS 才會動(量 16 隻角色的成本)
             TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
             TickDevPickSong();           // DEV only:設了 SDO_PICKSONG 才會動(缺歌傳檔的實機驗證用)
             TickDevAutoReady();          // DEV only:設了 SDO_AUTOREADY 才會動
@@ -4140,7 +4146,19 @@ namespace Sdo.UI.Screens
 
         private void SyncRemoteRoomAvatars()
         {
-            if (_scene == null || Ctx == null || Ctx.Net == null) return;   // 單機沒有別人
+            if (_scene == null || Ctx == null) return;
+            // 單機沒有別人 —— 但**量測模式例外**:SDO_ROOMAVATARS 要能在離線下把房間補到 16 隻,
+            // 否則量「6 座位 + 10 旁觀」的成本就得先湊出 16 個真人,那不現實。
+            if (Ctx.Net == null)
+            {
+                if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOMAVATARS"))) return;
+                if (_remoteAvatarRev == -2) return;   // 離線只補一次(沒有 rev 可以比)
+                _remoteAvatarRev = -2;
+                _remoteBuf.Clear();
+                PadDevRoomAvatars();
+                _scene.SyncRemotePlayers(_remoteBuf);
+                return;
+            }
             var snap = Ctx.Net.Room;
             if (snap == null)
             {
@@ -4172,6 +4190,29 @@ namespace Sdo.UI.Screens
                     LookKey = s.Look != null ? s.Look.Key() : "",
                 });
             }
+
+            // 旁觀者也要站在房間裡(官方就有,而且座標表早就解出來了:RoomLayout.SpectatorAnchors,
+            // EXE slots 6..15 —— 十個圍在舞者周圍的固定站位)。
+            // 🔴 slot 給 SeatCount + 名單序號,SpawnSpot 才會走「官方 looker 位置」那條;
+            //    給 0..5 會被當成舞者去搶隨機走位點,兩個人可能疊在一起。
+            var specs = snap.Spectators;
+            if (specs != null)
+                for (int i = 0; i < specs.Length && i < NetLimits.MaxSpectators; i++)
+                {
+                    var sp = specs[i];
+                    if (sp == null || sp.UserId == 0 || sp.UserId == me) continue;   // 自己旁觀時走本機 avatar
+                    _remoteBuf.Add(new RoomScene3D.RemotePlayer
+                    {
+                        UserId = sp.UserId,
+                        Seat = RoomLayout.SeatCount + i,
+                        Male = sp.Look != null && sp.Look.Male,
+                        Parts = sp.Look != null ? sp.Look.Parts : null,
+                        BodyIndex = sp.Look != null ? sp.Look.BodyIndex : 0,
+                        LookKey = sp.Look != null ? sp.Look.Key() : "",
+                    });
+                }
+
+            PadDevRoomAvatars();   // DEV only:SDO_ROOMAVATARS 才會動(量 6 座位 + 10 旁觀 = 16 隻的成本)
             _scene.SyncRemotePlayers(_remoteBuf);
             SyncRemoteNamePlates(snap, me);
             AnnounceRemoteComings(snap, me);
@@ -4444,6 +4485,52 @@ namespace Sdo.UI.Screens
             if (net.IsHost && OtherSeatedCount(snap) == 0) { Toast.Show(L("room.spectate_no_host")); return; }
 
             net.Spectate();   // 同上:等 server 的快照,不先報成功
+        }
+
+        private Sdo.Game.FrameStats _roomPerf;
+
+        /// <summary>
+        /// 房間的幀時間量測。房間的最壞情況(6 座位 + 10 旁觀 = 16 隻)**比打歌畫面更重**,
+        /// 所以兩邊都要量,而且用同一份統計程式(<see cref="Sdo.Game.FrameStats"/>)。
+        /// </summary>
+        private void TickRoomPerf()
+        {
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOMAVATARS"))) return;
+            if (_roomPerf == null) _roomPerf = new Sdo.Game.FrameStats("room");
+            _roomPerf.Tick(_remoteBuf.Count + 1);   // +1 = 本機那隻可走動的
+        }
+
+        /// <summary>
+        /// DEV:<c>SDO_ROOMAVATARS=&lt;n&gt;</c> → 把房間的角色數補到 n 隻(用真的 avatar,不是假物件)。
+        ///
+        /// 為什麼需要:房間的**最壞情況比打歌畫面更重** —— 6 個座位 + 10 個旁觀 = 16 隻角色同時在場
+        /// (官方的 looker 站位表就是 10 格,RoomLayout.SpectatorAnchors)。而要湊出 16 隻真人來量測不現實,
+        /// 所以補一批假 userId 走**同一條生成路徑**(SpawnRemote → SdoRoomAvatar.Build),
+        /// 量到的成本就是真的成本。座位序號從 SeatCount 起算 → 站官方的旁觀位置。
+        /// </summary>
+        private void PadDevRoomAvatars()
+        {
+            var v = ScreenGameplay.DevVar("SDO_ROOMAVATARS");
+            int want;
+            if (string.IsNullOrEmpty(v) || !int.TryParse(v, out want)) return;
+            want = Mathf.Clamp(want, 0, RoomLayout.SlotCount);
+
+            // 已經有的(座位 + 旁觀)不重複補;本機那隻是可走動的 avatar,不算在 _remoteBuf 裡但要算進總數。
+            int have = _remoteBuf.Count + 1;
+            for (int i = have; i < want; i++)
+            {
+                int slot = Mathf.Clamp(RoomLayout.SeatCount + (i - 1), RoomLayout.SeatCount, RoomLayout.SlotCount - 1);
+                _remoteBuf.Add(new RoomScene3D.RemotePlayer
+                {
+                    UserId = 900000 + i,          // 不可能與真 userId 撞(server 從 1 開始發)
+                    Seat = slot,
+                    Male = (i & 1) == 0,          // 男女交錯 → 兩套部件都會被載到(成本才是真的)
+                    Parts = null,                 // null = 預設整套
+                    BodyIndex = 0,
+                    LookKey = "dev" + i,
+                });
+            }
+            if (want > have) Debug.Log("[perf] SDO_ROOMAVATARS:房間補到 " + want + " 隻角色(真實 " + have + " 隻)");
         }
 
         /// <summary>除了自己以外還有幾個人坐在座位上(房主能不能交棒 → 能不能去旁觀)。</summary>

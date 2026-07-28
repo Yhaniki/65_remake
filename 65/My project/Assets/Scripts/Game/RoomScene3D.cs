@@ -141,6 +141,15 @@ namespace Sdo.Game
         /// </summary>
         public Vector3 SpawnSpot(int seat)
         {
+            // 旁觀者(slot 6..15)站**官方的 looker 位置** —— 那張表是從 EXE 逐項解出來的
+            // (RoomLayout.SpectatorAnchors @0x583af0),十個位置圍在舞者周圍。
+            // 不要給他們隨機點:隨機會讓觀眾散到房間各處,而且每台算出來不一樣。
+            if (seat >= RoomLayout.SeatCount)
+            {
+                int i = seat - RoomLayout.SeatCount;
+                return (i >= 0 && i < RoomLayout.SpectatorAnchors.Length)
+                    ? RoomLayout.SpectatorAnchors[i] : RoomLayout.HostSpawn;
+            }
             if (seat <= 0) return RoomLayout.HostSpawn;
             if (_remoteSpots == null) _remoteSpots = RandomDancerSpots(RoomLayout.SeatCount);
             if (_remoteSpots.Length == 0) return RoomLayout.HostSpawn;
