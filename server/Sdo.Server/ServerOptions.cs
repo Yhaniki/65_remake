@@ -124,8 +124,10 @@ namespace Sdo.Server
             "\n" +
             "  -h, --help           顯示這段說明\n" +
             "\n" +
-            "⚠️ MVP 階段沒有帳號認證、沒有加密 —— 身分由 client 自稱。\n" +
-            "   請只在 LAN 或信任的朋友之間使用,不要直接開在公網。\n";
+            "⚠️ 上面那四個公網化參數**一個都不給**時:沒有帳號認證、沒有加密,身分由 client 自稱。\n" +
+            "   那是 LAN／信任的朋友之間的模式(也是預設)。要開在公網,四個都要給 ——\n" +
+            "   完整步驟見 server/README.md 的「公網化」一節。開機時會把現在受哪些保護印出來,\n" +
+            "   ⚠️ 開頭的每一行就是一個缺口。\n";
 
         /// <summary>
         /// 解析命令列。回 false 時 <paramref name="error"/> 有原因(或 <paramref name="wantsHelp"/> 為 true)。
