@@ -228,6 +228,106 @@ namespace Sdo.Tests
             }
         }
 
+        /// <summary>
+        /// 名字牌與頭上泡的兩條關係(使用者要求):
+        ///   ① 名字**也要**被站在前面的人擋住(與泡同一個平面 → 同樣吃深度)。
+        ///   ② 泡永遠畫在名字**之上** —— 否則自己說話時會被自己的名字擋住。
+        ///
+        /// 為什麼要測:兩者都在同一張 canvas、而 UI 材質不寫深度 → 它們之間的前後**只由兄弟順序決定**。
+        /// 那是一個「看起來沒關係」的隱性相依:哪天有人在名字後面才 SetParent 進去(或把 SetAsFirstSibling 拿掉),
+        /// 泡就會被名字壓住,而症狀只在「名字與泡剛好重疊」時出現 —— 很容易被當成偶發。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Name_Is_Occluded_Like_The_Bubble_And_The_Bubble_Draws_Over_The_Name()
+        {
+            if (!HaveData()) { Assert.Ignore("no AVATAR/SCENE data root"); yield break; }
+
+            var sceneGo = new GameObject("RoomScene3D_nameDepth");
+            var scene = sceneGo.AddComponent<RoomScene3D>();
+            scene.Build();
+            for (int i = 0; i < 12; i++) yield return null;
+            yield return new WaitForSecondsRealtime(0.5f);
+
+            GameObject holder = null, blocker = null;
+            try
+            {
+                var cam = scene.SceneCamera;
+                var rt = scene.SceneTexture as RenderTexture;
+                Assert.IsNotNull(cam); Assert.IsNotNull(rt);
+                Assert.IsTrue(scene.TryChatBubbleAnchorWorld(out Vector3 anchorWorld));
+
+                holder = new GameObject("BubbleWorldHolder3") { layer = RoomScene3D.BubbleLayer };
+                var canvas = UIKit.CreateBubbleWorldCanvas("BubbleCanvasName", holder.transform,
+                                                           RoomScene3D.BubbleLayer, new Vector2(DesignW, DesignH));
+                Vector3 fwd = cam.transform.forward;
+                var plane = RoomBubbleWorldAnchor.Solve(cam.transform.position, fwd, cam.projectionMatrix.m11,
+                                                        cam.nearClipPlane, anchorWorld,
+                                                        scene.OwnerDepthExtent(0, fwd) + 2f, DesignH);
+                Assert.IsTrue(plane.Valid);
+                canvas.position = plane.Position;
+                canvas.rotation = cam.transform.rotation;
+                canvas.localScale = new Vector3(plane.Scale, plane.Scale, plane.Scale);
+                canvas.GetComponent<Canvas>().sortingOrder = 100;
+
+                // 名字(洋紅)先建 → 兄弟順序在前;泡(青)後建 → 畫在名字之上。兩者故意**重疊**。
+                var name = AddMarker(canvas, "NameMarker", new Color32(255, 0, 255, 255), Vector2.zero);
+                var bubble = AddMarker(canvas, "BubbleMarker", new Color32(0, 255, 255, 255), new Vector2(20f, -10f));
+                name.rectTransform.SetAsFirstSibling();   // = ParentNameIntoOwnerCanvas 做的事
+                SetLayer(canvas.gameObject, RoomScene3D.BubbleLayer);
+                yield return null;
+
+                // ---- ② 重疊處由泡贏 ----
+                // 🔴 量法一律用 Measure(同一幀開/關那一塊再相減)—— 它量的正是「這一塊對最終畫面貢獻了幾個像素」,
+                //    也就是**沒被別人蓋掉的面積**。用顏色數像素會被房間本身的洋紅燈光污染(這個檔頭就寫著這個教訓,
+                //    我第一版還是踩了:名字量到 16389 px,而一塊標記其實只有 ~3.5k)。
+                //
+                // 兩塊各 60×40、泡偏移 (20,-10) → 重疊剛好是各自面積的一半。
+                //   泡在上 ⇒ 泡看得到全部、名字只剩一半 ⇒ nameVisible ≈ bubbleVisible / 2
+                //   名字在上 ⇒ 反過來。0.75 當門檻,兩種情形分得很開。
+                Measure(cam, rt, bubble, out Vector2 _, out int bubbleVisible);
+                Measure(cam, rt, name, out Vector2 _, out int nameVisible);
+                Assert.Greater(bubbleVisible, 200, "泡的標記沒畫出來");
+                Assert.Greater(nameVisible, 100, "名字的標記沒畫出來(整塊被蓋住?)");
+                Assert.Less(nameVisible, bubbleVisible * 0.75f,
+                    "名字可見 " + nameVisible + " px、泡可見 " + bubbleVisible + " px —— 泡沒有蓋在名字上面,"
+                    + "自己說話時泡會被自己的名字擋住(檢查 ParentNameIntoOwnerCanvas 的 SetAsFirstSibling)");
+
+                // ---- ① 名字也要被前面的東西擋住 ----
+                Vector3 nameCenter = canvas.TransformPoint(new Vector3(MarkerW * 0.5f, -MarkerH * 0.5f, 0f));
+                float dMark = Vector3.Dot(nameCenter - cam.transform.position, fwd);
+                float dBlock = Mathf.Max(cam.nearClipPlane + 2f, dMark * 0.5f);
+                blocker = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                blocker.layer = RoomScene3D.SceneLayer;
+                blocker.GetComponent<MeshRenderer>().sharedMaterial =
+                    new Material(Shader.Find("Unlit/Color")) { color = new Color32(20, 200, 20, 255) };
+                blocker.transform.position = cam.transform.position
+                    + (nameCenter - cam.transform.position) * (dBlock / dMark);
+                blocker.transform.rotation = cam.transform.rotation;
+                blocker.transform.localScale = Vector3.one * (dBlock * 0.5f);
+                yield return null;
+
+                Measure(cam, rt, name, out Vector2 _, out int nameAfter);
+                Assert.Less(nameAfter, 60,
+                    "名字沒有被前面的不透明面片擋住(剩 " + nameAfter + " 個像素)—— 名字沒有跟泡一樣進到房間相機裡");
+            }
+            finally
+            {
+                if (blocker != null) Object.DestroyImmediate(blocker);
+                if (holder != null) Object.DestroyImmediate(holder);
+                if (sceneGo != null) Object.DestroyImmediate(sceneGo);
+            }
+        }
+
+        private static Image AddMarker(RectTransform canvas, string name, Color32 col, Vector2 at)
+        {
+            var img = UIKit.AddImage(canvas, name, col);
+            img.rectTransform.anchorMin = img.rectTransform.anchorMax = new Vector2(0f, 1f);
+            img.rectTransform.pivot = new Vector2(0f, 1f);
+            img.rectTransform.sizeDelta = new Vector2(MarkerW, MarkerH);
+            img.rectTransform.anchoredPosition = at;
+            return img;
+        }
+
         /// <summary>衣服回歸套裡那件真的多層蕾絲裙([[sdo-garment-regression-suite]] 的 024976 金姬兰)。</summary>
         private const string SheerGarment = "AVATAR/024976_WOMAN_ONE.MSH";
 

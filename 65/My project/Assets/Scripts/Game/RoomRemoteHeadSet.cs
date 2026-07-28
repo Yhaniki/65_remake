@@ -33,6 +33,17 @@ namespace Sdo.Game
         /// <summary>相機繞到角色**正面**的角度。0 = 正對他的臉。</summary>
         public float portraitYaw = 0f;
 
+        // ---- 取景參數:必須與本機那顆頭貼(RoomHeadPortrait)**用同一組值** -----------------------------------
+        // 🔴 踩過:這裡原本把 ComputeFraming 的參數寫死成 RoomHeadPortrait 的**欄位預設值**(aimUp 0.11),
+        //    而本機那顆是由 RoomScreen.ApplyHeadFraming 覆寫成 0.25 的 —— 於是同一個角色的遠端頭貼比
+        //    他自己畫面上的頭貼**高了 0.14×框高 ≈ 14% 的框高**(使用者:「女角遠端頭貼比本機高 15%」)。
+        //    症狀只在「同時看得到兩顆頭貼」時才發現得了,而且看起來像取景演算法有問題,不像參數沒同步。
+        //    現在由 RoomScreen 同時餵這兩顆(同一組常數),要調就只調那一處。
+        public float aimUp = 0.11f;         // 與 RoomHeadPortrait.headAimUp 同義
+        public float frameDist = 1.9f;      // 與 RoomHeadPortrait.headFrameDist 同義
+        public float zoom = 1f;             // 與 RoomHeadPortrait.zoom 同義
+        public bool fitHairTop = false;     // 與 RoomHeadPortrait.fitHairTop 同義
+
         private Camera _cam;
         private RoomScene3D _scene;
 
@@ -185,7 +196,12 @@ namespace Sdo.Game
             Bounds face;
             if (!MeshUnion(s.Rends, "FACE", out face) || face.size.y < 1f) return false;
             float ignoredDist;
-            RoomHeadPortrait.ComputeFraming(face, false, 0f, 1.9f, 1f, 0.11f, fov, out aim, out ignoredDist);
+            // 髮頂的處理也要跟本機一致:本機是 `hairFound && fitHairTop`,所以這裡照抄同一條式子
+            // (fitHairTop 預設 false → 兩邊都不理頭髮;哪天要開就兩邊一起開)。
+            Bounds hair;
+            bool hairFound = MeshUnion(s.Rends, "HAIR", out hair);
+            RoomHeadPortrait.ComputeFraming(face, hairFound && fitHairTop, hairFound ? hair.max.y : 0f,
+                                            frameDist, zoom, aimUp, fov, out aim, out ignoredDist);
             return true;
         }
 

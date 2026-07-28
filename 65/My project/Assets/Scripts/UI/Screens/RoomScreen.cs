@@ -189,6 +189,23 @@ namespace Sdo.UI.Screens
             head.avatarScale   = male ? MaleAvatarScale   : FemaleAvatarScale;
         }
 
+        /// <summary>
+        /// 遠端那組頭貼也套**同一組**取景參數 —— 少了這一步,同一個角色的遠端頭貼會比他自己畫面上的
+        /// 頭貼高 0.14×框高(≈14% 框高):遠端那邊原本寫死 RoomRemoteHeadSet/RoomHeadPortrait 的
+        /// **欄位預設值** aimUp 0.11,而本機這條路是被上面覆寫成 0.25 的。
+        ///
+        /// 這裡不分性別:上面那兩組常數目前完全相同(「女生沿用男生這組」)。哪天真的要分,
+        /// RoomRemoteHeadSet 就得改成 per-slot 參數(它一台相機輪拍男女混合的六個人)。
+        /// </summary>
+        private static void ApplyHeadFraming(RoomRemoteHeadSet heads)
+        {
+            if (heads == null) return;
+            heads.aimUp = MaleHeadAimUp;
+            heads.zoom = MaleHeadZoom;
+            heads.frameDist = MaleHeadFrameDist;
+            heads.fitHairTop = false;   // 與 RoomHeadPortrait.fitHairTop 的預設一致(兩邊都不理頭髮)
+        }
+
         // ---- win 容器（收合用）：win1/win2/win3 的所有元件各掛在自己的容器下，收合就整組滑出畫面（官方 uihide/uidisplay）。
         //      每個容器都是「錨定左上、原點、800×600」的全畫布 rect → 子元件座標仍用絕對(win.x+x) 不變，收合只動容器 anchoredPosition。
         private RectTransform _win1Root, _win2Root, _win3Root;
@@ -579,6 +596,7 @@ namespace Sdo.UI.Screens
                 var headsGo = new GameObject("RoomRemoteHeads");
                 headsGo.transform.SetParent(_scene.transform, false);
                 _remoteHeads = headsGo.AddComponent<RoomRemoteHeadSet>();
+                ApplyHeadFraming(_remoteHeads);   // 與本機那顆同一組取景參數(否則遠端頭貼會偏高,見那邊的註解)
                 _remoteHeads.Build(_scene);
                 if (_backdrop != null && _scene.SceneTexture != null)
                 {
@@ -1669,9 +1687,32 @@ namespace Sdo.UI.Screens
 
         private void DestroyBubbleWorld()
         {
+            // 🔴 名字牌/家族列/徽章是**常駐單例**(BuildUI 建一次),而它們現在掛在 world canvas 底下 ——
+            // 直接拆 canvas 會把它們一起銷毀,回房間時就永遠沒有名字了。先搬回 UI 層,並把 layer 還原
+            // (留在 BubbleLayer 的話前端 UI 相機把那層遮掉了 → 名字變成看不見)。
+            RestoreNameToUi(_floatName != null ? _floatName.Rect : null);
+            RestoreNameToUi(_floatFamily != null ? _floatFamily.Rect : null);
+            RestoreNameToUi(_floatEmblem != null ? _floatEmblem.rectTransform : null);
+            // 遠端的名字牌是動態生成的,跟著 canvas 一起被銷毀沒問題 —— ClearRemoteNamePlates 的
+            // `!= null` 守門吃得下「已經被銷毀」的那些(Unity 的 destroyed object == null)。
             _bubbleWorldCanvas.Clear();
             _bubbleWorldDepth.Clear();
             if (_bubbleWorldRoot != null) { Destroy(_bubbleWorldRoot.gameObject); _bubbleWorldRoot = null; }
+        }
+
+        private void RestoreNameToUi(RectTransform rt)
+        {
+            if (rt == null || Root == null) return;
+            if (rt.parent == Root) return;
+            rt.SetParent(Root, false);
+            SetLayerRecursiveTo(rt, Root.gameObject.layer);
+        }
+
+        private static void SetLayerRecursiveTo(Transform t, int layer)
+        {
+            if (t == null) return;
+            t.gameObject.layer = layer;
+            for (int i = 0, n = t.childCount; i < n; i++) SetLayerRecursiveTo(t.GetChild(i), layer);
         }
 
         private SentRoomBubble SpawnSentRoomBubble(int ownerUserId = 0)
@@ -2622,11 +2663,20 @@ namespace Sdo.UI.Screens
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
 
+            // 本機的名字牌 + 家族列。它們與泡同住一張 world canvas(所以一樣會被前面的人擋住),
+            // canvas 的原點是**肩膀**錨點(泡的錨點)→ 名字要寫「相對那一點」的偏移。
+            Vector2 localOrigin = Vector2.zero;
+            bool localInCanvas = _scene.TryChatBubbleViewport(out var localShoulderVp)
+                                 && PlaceBubbleWorldCanvas(0);
+            if (localInCanvas) localOrigin = RoomBubbleWorldAnchor.AnchorDesignPoint(localShoulderVp, 800f, 600f);
             if (_scene.TryHeadViewport(out var vp))
             {
                 if (_floatName != null && _floatName.gameObject.activeSelf)
-                    PlaceFollow(_floatName.Rect, vp, -8f);                      // name sits just ABOVE the avatar's head
-                PlaceFamilyRow(vp);                                            // 家族列(徽章+名稱)再往上疊一行
+                {
+                    bool moved = localInCanvas && ParentNameIntoOwnerCanvas(_floatName.Rect, 0);
+                    PlaceFollow(_floatName.Rect, vp, -8f, moved ? localOrigin : Vector2.zero);   // 名字在頭的正上方
+                }
+                PlaceFamilyRow(vp, localInCanvas ? localOrigin : Vector2.zero, localInCanvas);   // 家族列再往上疊一行
             }
 
             bool needBubbleAnchor = HasBubbleOf(0)
@@ -3489,9 +3539,18 @@ namespace Sdo.UI.Screens
 
         // viewport (0..1, y-up) → 800×600 canvas, centred on x, rect TOP at the point + topOffset (negative = above).
         private static void PlaceFollow(RectTransform rt, Vector2 vp, float topOffset)
+            => PlaceFollow(rt, vp, topOffset, Vector2.zero);
+
+        /// <param name="originDesign">
+        /// 這個 rect 所在 canvas 的原點(設計座標)。0 = 還在 UI 層(絕對座標);
+        /// 非 0 = 已經搬進房間相機的 per-owner world canvas → 要寫「相對原點」的偏移。
+        /// 見 <see cref="RoomBubbleWorldAnchor.AnchorDesignPoint"/>。
+        /// </param>
+        private static void PlaceFollow(RectTransform rt, Vector2 vp, float topOffset, Vector2 originDesign)
         {
             float topFromTop = (1f - vp.y) * 600f + topOffset;
-            rt.anchoredPosition = new Vector2(vp.x * 800f - rt.sizeDelta.x * 0.5f, -topFromTop);
+            var abs = new Vector2(vp.x * 800f - rt.sizeDelta.x * 0.5f, -topFromTop);
+            rt.anchoredPosition = abs - originDesign;
         }
 
         // 依 config.ini 設定頭上「家族列」(徽章＋家族名稱)的內容與顯示與否；實際位置每幀由 PlaceFamilyRow 跟著頭擺放。
@@ -3515,9 +3574,14 @@ namespace Sdo.UI.Screens
 
         // 把頭上「家族列」(徽章＋家族名稱)整組水平置中於頭部，疊在名字上方一行。徽章在左、名稱在右，兩者當「一個群組」
         // 一起置中(而非各自置中)，才不會因徽章寬度而整體偏移。家族名稱左對齊 → 文字自群組內固定起點畫出。跟著 vp(頭部視埠)走。
-        private void PlaceFamilyRow(Vector2 vp)
+        private void PlaceFamilyRow(Vector2 vp, Vector2 originDesign, bool intoOwnerCanvas)
         {
             if (_floatFamily == null || !_floatFamily.gameObject.activeSelf) return;
+            // 家族列(名稱 + 徽章)也一起搬進 world canvas —— 否則它會浮在被遮住的名字之上,
+            // 看起來像「名字被擋住但家族名沒有」。徽章是獨立的 Image,要各自搬。
+            bool moved = intoOwnerCanvas && ParentNameIntoOwnerCanvas(_floatFamily.Rect, 0);
+            if (moved && _floatEmblem != null) ParentNameIntoOwnerCanvas(_floatEmblem.rectTransform, 0);
+            Vector2 org = moved ? originDesign : Vector2.zero;
             float centerX = vp.x * 800f;
             // 名字列頂端 = (1-vp.y)*600 - 8（見 Update 內 PlaceFollow 給 _floatName 的 topOffset=-8）。家族列疊其上 → 兩行
             // 都同高且垂直置中，所以「holder 頂端相差 FamilyLinePitch」＝「兩行文字中心相差 FamilyLinePitch」，直接調它即可。
@@ -3528,10 +3592,10 @@ namespace Sdo.UI.Screens
             float emblemW = hasEmblem ? FamilyEmblemSize : 0f;
             float gap = hasEmblem ? FamilyEmblemGap : 0f;
             float left = centerX - (emblemW + gap + textW) * 0.5f;
-            _floatFamily.Rect.anchoredPosition = new Vector2(left + emblemW + gap, -rowTop);   // 左對齊：文字起點=群組左緣+徽章+間距
+            _floatFamily.Rect.anchoredPosition = new Vector2(left + emblemW + gap, -rowTop) - org;   // 左對齊：文字起點=群組左緣+徽章+間距
             if (hasEmblem)
                 _floatEmblem.rectTransform.anchoredPosition =
-                    new Vector2(left, -(rowTop + (FamilyRowH - FamilyEmblemSize) * 0.5f));      // 徽章垂直置中於家族列
+                    new Vector2(left, -(rowTop + (FamilyRowH - FamilyEmblemSize) * 0.5f)) - org;      // 徽章垂直置中於家族列
         }
 
         /// <summary>
@@ -3633,6 +3697,32 @@ namespace Sdo.UI.Screens
                 return new Vector2(lp.x - r.xMin, r.yMax - lp.y);
             }
             return Vector2.zero;
+        }
+
+        /// <summary>
+        /// 把「頭上的名字牌」也搬進那個人的 world canvas —— 讓它跟頭上泡一樣吃深度遮擋
+        /// (站在前面的人會擋住名字),而且**泡永遠畫在名字之上**。
+        ///
+        /// 為什麼泡要壓在名字上面:兩者都在同一個平面(同一張 canvas),而 UI 材質不寫深度 →
+        /// 它們之間的前後**只由畫的順序決定**。名字固定放在第一個子物件,泡是之後才生成的兄弟
+        /// → 泡自然畫在後面(= 上面)。這樣「自己說話的泡被自己的名字擋住」不可能發生。
+        /// (刻意不用「把泡的平面往相機拉近」來做:那會讓泡逃掉本來該有的遮擋 —— 例如有人就站在你前面
+        ///  半步,泡卻因為被拉近而蓋在他身上。)
+        ///
+        /// 名字沒有滑鼠互動,所以不需要像泡那樣留一個 UI 代理 —— 整棵搬過去就好。
+        /// </summary>
+        private bool ParentNameIntoOwnerCanvas(RectTransform rt, int owner)
+        {
+            if (rt == null) return false;
+            var canvas = BubbleWorldCanvas(owner);
+            if (canvas == null) return false;
+            if (rt.parent != canvas)
+            {
+                rt.SetParent(canvas, false);
+                rt.SetAsFirstSibling();          // 名字永遠在泡之前畫 → 泡蓋在名字上
+                SetBubbleLayer(rt);
+            }
+            return true;
         }
 
         private void CloseSlotPopup()
@@ -3899,6 +3989,10 @@ namespace Sdo.UI.Screens
         }
 
         // 名字牌每幀跟著頭走(角色是 3D 的,鏡頭會動)。看不到的人(在鏡頭後面)就藏起來。
+        //
+        // 名字與那個人的頭上泡同住一張 world canvas → 一樣會被站在前面的人逐像素擋住,
+        // 而泡永遠畫在名字之上(見 ParentNameIntoOwnerCanvas)。canvas 的原點是**肩膀**錨點,
+        // 所以名字寫的是「相對那一點」的偏移;肩膀錨點拿不到就退回原本的 UI 絕對座標(不遮擋,但看得到)。
         private void PlaceRemoteNamePlates()
         {
             if (_scene == null || _remoteNames.Count == 0) return;
@@ -3909,7 +4003,18 @@ namespace Sdo.UI.Screens
                 Vector2 vp;
                 bool visible = _scene.TryRemoteHeadViewport(kv.Key, out vp);
                 if (lbl.gameObject.activeSelf != visible) lbl.gameObject.SetActive(visible);
-                if (visible) PlaceFollow(lbl.Rect, vp, -8f);
+                if (!visible) continue;
+
+                Vector2 origin = Vector2.zero;
+                bool moved = false;
+                Vector2 shoulderVp;
+                if (_scene.TryRemoteBubbleViewport(kv.Key, out shoulderVp) && PlaceBubbleWorldCanvas(kv.Key)
+                    && ParentNameIntoOwnerCanvas(lbl.Rect, kv.Key))
+                {
+                    origin = RoomBubbleWorldAnchor.AnchorDesignPoint(shoulderVp, 800f, 600f);
+                    moved = true;
+                }
+                PlaceFollow(lbl.Rect, vp, -8f, moved ? origin : Vector2.zero);
             }
         }
 
