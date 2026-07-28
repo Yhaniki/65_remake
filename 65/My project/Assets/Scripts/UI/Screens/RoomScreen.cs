@@ -713,6 +713,9 @@ namespace Sdo.UI.Screens
             var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             if (s.HasSong && room != null && string.IsNullOrEmpty(room.SongTitle))
                 Ctx.Rooms.SetSong(s.SongTitle);               // 同步房間顯示（單機=房主）
+            // 連線:房主要把歌**發給 server**,否則 server 眼中這間房沒有歌 → 沒人按得下準備、
+            // 房主按開始只會收到「請先選擇歌曲」(見 NetSongPublisher 的註解)。
+            NetSongPublisher.Publish(Ctx);
         }
 
         public override void OnHide()
@@ -1468,6 +1471,26 @@ namespace Sdo.UI.Screens
         }
 
         private const float DevSayEverySec = 6f;   // 泡的壽命比這個長 → 畫面上一直有泡可看
+
+        // DEV: SDO_AUTOREADY=1 → 非房主一進房就自動按「準備」。
+        // 同 SDO_SAY 的理由:同步進場只能兩開實機驗,而「用注入的滑鼠點右下那顆圓鈕」需要精確的
+        // 設計座標→螢幕座標換算(目前那條換算有一個還沒查清的水平偏移)。走 OnReadyToggle
+        // 就是玩家真的按下去的同一條路。只有設了環境變數才會動。
+        private bool _devAutoReadyDone;
+        private float _devAutoReadyAt = -1f;
+
+        private void TickDevAutoReady()
+        {
+            if (_devAutoReadyDone) return;
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_AUTOREADY"))) { _devAutoReadyDone = true; return; }
+            if (!Online || Ctx.Net.IsHost) return;                              // 房主沒有「準備」這個狀態
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room == null || string.IsNullOrEmpty(room.SongTitle)) return;   // 還沒選歌 → 按了會被 R17 擋掉
+            if (_devAutoReadyAt < 0f) { _devAutoReadyAt = Time.unscaledTime + 3f; return; }   // 等座位/歌同步好
+            if (Time.unscaledTime < _devAutoReadyAt) return;
+            _devAutoReadyDone = true;
+            if (!LocalReady(room)) OnReadyToggle();
+        }
 
         private void SendRoomChat()
         {
@@ -2704,6 +2727,7 @@ namespace Sdo.UI.Screens
             SortBubbleWorldCanvases();
 
             TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
+            TickDevAutoReady();          // DEV only:設了 SDO_AUTOREADY 才會動
             TickDevAutoSay();   // DEV only:設了 SDO_SAY 才會動(見那邊的註解)
         }
 

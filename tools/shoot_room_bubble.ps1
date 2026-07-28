@@ -34,6 +34,7 @@ param(
     [int]$WalkMs = 900,
     [string]$WalkKey = 'Down',
     [switch]$M3,
+    [switch]$M4,
     [switch]$KeepOpen
 )
 
@@ -181,6 +182,7 @@ try {
 
     $logSrc = Join-Path (Split-Path -Parent $Exe) 'log.txt'
     $env:SDO_DATA_ROOT = ''
+    if ($M4) { $SayA = ''; $SayB = '' }   # 見下:自動說話會讓聊天框 armed,把 F2 擋掉
     $env:SDO_ROOM = '1'; $env:SDO_JOINFIRST = ''; $env:SDO_SAY = $SayA
     Write-Host '[shoot] 啟動 A(房主,主 DATA 根)'
     $pa = Start-Process -FilePath $Exe -PassThru
@@ -190,11 +192,12 @@ try {
     if (Test-Path $logSrc) { Copy-Item $logSrc (Join-Path $repo 'bubble_logA.txt') -Force }
 
     $env:SDO_ROOM = ''; $env:SDO_JOINFIRST = '1'; $env:SDO_DATA_ROOT = $AltRoot; $env:SDO_SAY = $SayB
+    if ($M4) { $env:SDO_AUTOREADY = '1' }   # 非房主自動按準備(見 RoomScreen.TickDevAutoReady)
     Write-Host "[shoot] 啟動 B(加入,DATA 根 = $AltRoot)"
     $pb = Start-Process -FilePath $Exe -PassThru
     $null = $pb.Handle
     Start-Sleep -Seconds $BootSecB
-    $env:SDO_DATA_ROOT = ''; $env:SDO_JOINFIRST = ''; $env:SDO_SAY = ''
+    $env:SDO_DATA_ROOT = ''; $env:SDO_JOINFIRST = ''; $env:SDO_SAY = ''; $env:SDO_AUTOREADY = ''
     if (Test-Path $logSrc) { Copy-Item $logSrc (Join-Path $repo 'bubble_logB.txt') -Force }
 
     $pa.Refresh(); $pb.Refresh()
@@ -207,6 +210,21 @@ try {
     Focus-Win $hb
     Write-Host "[shoot] B 按 $WalkKey $WalkMs ms"
     Hold ([byte]$vk) $WalkMs
+
+    if ($M4) {
+        # 同步進場:B 先按「準備」(右下大圓鈕),A 再按 F2(= 按開始)。
+        # 兩邊都應該在同一刻解除 loading 畫面 → 打一小段 → 截圖看右側名單有沒有兩個人的分數。
+        Write-Host '[shoot] 等 B 自動按準備(SDO_AUTOREADY)'
+        Start-Sleep -Seconds 6
+        Write-Host '[shoot] A 按開始(F2)'
+        Focus-Win $ha; Tap 0x71          # F2 = 直接開始(RoomScreen.Update 的捷徑)
+        Start-Sleep -Seconds 25          # 等 loading + 開場 READY/GO + 打一小段
+        Shoot $ha (Join-Path $repo 'm4_play_host.png')
+        Focus-Win $hb; Shoot $hb (Join-Path $repo 'm4_play_guest.png')
+        Start-Sleep -Seconds 20          # 再等一段,看分數有沒有在跑
+        Focus-Win $ha; Shoot $ha (Join-Path $repo 'm4_play_host2.png')
+        return
+    }
 
     if ($M3) {
         # 六格頭貼:HeadSlotX={63,184,306,430,549,675} / HeadSlotY=56 / 96x76(RoomLayout)。
