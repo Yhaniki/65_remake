@@ -33,6 +33,7 @@ param(
     [string]$SayB = 'GUEST TALKING',
     [int]$WalkMs = 900,
     [string]$WalkKey = 'Down',
+    [switch]$M3,
     [switch]$KeepOpen
 )
 
@@ -53,6 +54,9 @@ Add-Type -Namespace Sdo -Name W -MemberDefinition @'
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
     [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
 '@
 
 function Focus-Win([IntPtr]$h) {
@@ -113,6 +117,33 @@ function Say([IntPtr]$h, [string]$msg) {
     Start-Sleep -Milliseconds 900
 }
 
+
+# 800×600 設計座標 → 螢幕座標。用 **client 區**而不是 window rect:後者含標題列與邊框,
+# 拿它換算會整體偏掉一個標題列的高度(點不到想點的東西,而且偏移量看起來像「座標算錯」)。
+function Design-ToScreen([IntPtr]$h, [double]$dx, [double]$dy) {
+    $c = New-Object Sdo.W+RECT
+    if (-not [Sdo.W]::GetClientRect($h, [ref] $c)) { throw 'GetClientRect 失敗' }
+    $o = New-Object Sdo.W+POINT
+    $o.X = 0; $o.Y = 0
+    if (-not [Sdo.W]::ClientToScreen($h, [ref] $o)) { throw 'ClientToScreen 失敗' }
+    $w = $c.R - $c.L; $ht = $c.B - $c.T
+    return @([int]($o.X + $dx / 800.0 * $w), [int]($o.Y + $dy / 600.0 * $ht))
+}
+
+function Click-At([IntPtr]$h, [double]$dx, [double]$dy, [switch]$Right) {
+    $p = Design-ToScreen $h $dx $dy
+    $null = [Sdo.W]::SetCursorPos($p[0], $p[1])
+    Start-Sleep -Milliseconds 260
+    if ($Right) {
+        [Sdo.W]::mouse_event(0x0008, 0, 0, 0, [IntPtr]::Zero)   # RIGHTDOWN
+        [Sdo.W]::mouse_event(0x0010, 0, 0, 0, [IntPtr]::Zero)   # RIGHTUP
+    } else {
+        [Sdo.W]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)   # LEFTDOWN
+        [Sdo.W]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)   # LEFTUP
+    }
+    Start-Sleep -Milliseconds 500
+}
+
 function Shoot([IntPtr]$h, [string]$out) {
     $r = Get-Rect $h
     $w = $r.R - $r.L; $hh = $r.B - $r.T
@@ -164,6 +195,25 @@ try {
     Focus-Win $hb
     Write-Host "[shoot] B 按 $WalkKey $WalkMs ms"
     Hold ([byte]$vk) $WalkMs
+
+    if ($M3) {
+        # 六格頭貼:HeadSlotX={63,184,306,430,549,675} / HeadSlotY=56 / 96x76(RoomLayout)。
+        # B 會坐第 2 格(index 1)—— 房主在 0,join 取 index 最小的 Open 位子。
+        $slotCx = 184 + 48; $slotCy = 56 + 38
+        Write-Host '[shoot] A 右鍵 B 的座位 → 選單'
+        Focus-Win $ha
+        Click-At $ha $slotCx $slotCy -Right
+        Shoot $ha (Join-Path $repo 'm3_menu.png')
+
+        # 選單的第一列在滑鼠位置往下 11px(rowH=22 的中線)。BuildContextMenu 會把選單夾進畫面內,
+        # 這一格離邊界很遠 → 位置就是滑鼠點。
+        Write-Host '[shoot] 按「踢出玩家」'
+        Click-At $ha ($slotCx + 30) ($slotCy + 11)
+        Start-Sleep -Seconds 2
+        Shoot $ha (Join-Path $repo 'm3_after_kick_host.png')
+        Focus-Win $hb; Shoot $hb (Join-Path $repo 'm3_after_kick_guest.png')
+        return
+    }
 
     Write-Host '[shoot] 等 SDO_SAY 各說一次(泡在壽命內)'
     Start-Sleep -Seconds 5

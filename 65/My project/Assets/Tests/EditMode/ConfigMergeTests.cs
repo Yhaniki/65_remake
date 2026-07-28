@@ -123,6 +123,51 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Save_Refuses_To_Write_A_Different_File_Than_Load_Read()
+        {
+            // 🔴 這是「Save() 只准寫回 Load() 讀進來的那個檔」那條不變式。
+            //
+            // 為什麼需要它:欄位是 static,而 FilePath 跟著 ProfileManager.Root 跑。
+            // 任何「Root 指到暫存目錄讀一份 → 之後把 Root 還原」的流程(每個測試都這樣做)
+            // 都會讓後面某一次 Save() 把**暫存那份的值**寫進玩家真正的 config.ini。
+            // 實測後果:玩家的 serverAddress 被抹成空字串 → 遊戲默默退回單機模式,
+            // 而且房號一樣是 5 位數、畫面一模一樣,完全看不出來。踩過兩次,所以用不變式關掉整個 class。
+            var otherRoot = Path.Combine(Path.GetTempPath(), "sdo_other_" + Path.GetRandomFileName());
+            Directory.CreateDirectory(otherRoot);
+            try
+            {
+                // ① 在 _root 讀一份(serverAddress = A)
+                File.WriteAllText(ConfigPath, "[Net]\nserverAddress=10.0.0.1\n");
+                RoomConfig.Load();
+                Assert.AreEqual("10.0.0.1", RoomConfig.serverAddress);
+
+                // ② 「別人的」設定檔:內容不該被動到
+                var otherPath = Path.Combine(otherRoot, RoomConfig.FileName);
+                const string otherText = "[Net]\nserverAddress=192.168.9.9\n";
+                File.WriteAllText(otherPath, otherText);
+
+                // ③ 把 Root 換過去(= 測試把 Root 還原成 null 的那個瞬間)再 Save
+                ProfileManager.Root = otherRoot;
+                LogAssert.Expect(LogType.Warning, new Regex(@"讀進來的"));
+                RoomConfig.Save();
+
+                Assert.AreEqual(otherText, File.ReadAllText(otherPath),
+                    "Save() 不該寫到「不是它讀進來的那一份」設定檔");
+
+                // ④ 在新根 Load 過之後就允許寫了 —— 守門不能把正常的換根流程也擋掉
+                RoomConfig.Load();
+                RoomConfig.serverAddress = "10.9.9.9";
+                RoomConfig.Save();
+                StringAssert.Contains("serverAddress=10.9.9.9", File.ReadAllText(otherPath));
+            }
+            finally
+            {
+                ProfileManager.Root = _root;   // 交還給 TearDown 收(它會刪 _root)
+                try { Directory.Delete(otherRoot, true); } catch { /* best effort */ }
+            }
+        }
+
+        [Test]
         public void Fresh_Install_Writes_Both_Files_With_Defaults()
         {
             RoomConfig.Load();

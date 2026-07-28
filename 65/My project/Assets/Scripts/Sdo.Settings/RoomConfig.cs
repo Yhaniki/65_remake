@@ -260,6 +260,7 @@ namespace Sdo.Settings
                 if (!hasSongBombsKey) dirty = true;
 
                 _loaded = true;        // 一定要在下面那個 Save() 之前 —— 補寫新 key 是合法的寫入
+                _loadedPath = FilePath;
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
                 DisplaySettingsManager.DeleteLegacyJson();      // 舊 settings.json（內容已在 [Option]）
@@ -272,6 +273,7 @@ namespace Sdo.Settings
                 Sanitize();
                 // 讀失敗也算「試過了」:否則後面任何一次 Save() 都會被守門擋掉,玩家連改設定都存不進去。
                 _loaded = true;
+                _loadedPath = FilePath;
             }
         }
 
@@ -381,9 +383,18 @@ namespace Sdo.Settings
                                  + "(否則 config.ini 會被整份換成預設值)");
                 return;
             }
+            var target = FilePath;
+            // 🔴 只准寫回 Load() 讀進來的那個檔 —— 見 _loadedPath 的註解(踩過兩次的坑)。
+            if (!string.IsNullOrEmpty(_loadedPath)
+                && !string.Equals(target, _loadedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.LogWarning("[RoomConfig] Save() 想寫 " + target + ",但這份設定是從 " + _loadedPath
+                                 + " 讀進來的 → 不寫檔(避免把別的根的值蓋到玩家的 config.ini)");
+                return;
+            }
             try
             {
-                var path = FilePath;
+                var path = target;
                 var dir = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 File.WriteAllText(path, Serialize(), new UTF8Encoding(false));
@@ -398,7 +409,19 @@ namespace Sdo.Settings
         private static bool _loaded;
 
         /// <summary>測試用:讓「Load 之前不准 Save」的守門能在單元測試裡被驗證與重置(正式流程別碰)。</summary>
-        public static bool LoadedForTests { get { return _loaded; } set { _loaded = value; } }
+        public static bool LoadedForTests { get { return _loaded; } set { _loaded = value; if (!value) _loadedPath = null; } }
+
+        /// <summary>
+        /// <see cref="Load"/> 實際讀的那個檔案路徑。<see cref="Save"/> **只准寫回這裡**。
+        ///
+        /// 🔴 為什麼要這條不變式:這些欄位是 static 的,而 <see cref="FilePath"/> 會跟著
+        /// <see cref="ProfileManager.Root"/> 跑。任何「先把 Root 指到暫存目錄讀一份、之後又把 Root 還原」的
+        /// 流程(測試就是這樣做的)都會讓後面某一次 Save() 把**暫存那份的值**寫進玩家真正的 config.ini。
+        /// 實際踩過兩次:serverAddress 被寫成空字串 → 遊戲默默退回單機模式,而症狀
+        /// (「兩台看不到彼此」)完全指不到根因,連房號都還是 5 位數看不出差別。
+        /// 「寫回讀進來的那個檔」把整個 bug class 關掉:要存到別的根,就得先在那個根 Load()。
+        /// </summary>
+        private static string _loadedPath;
 
         /// <summary>把一份 INI 文字解析進靜態欄位（純函式：不碰檔案）。未出現的 key 保留原值。</summary>
         public static void ParseInto(string text)
