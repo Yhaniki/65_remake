@@ -52,17 +52,29 @@ namespace Sdo.Game
         }
 
         /// <summary>Active motion + interpolated frame at dance time t (seconds).</summary>
-        public void Sample(float t, out string mot, out float frame)
+        public void Sample(float t, out string mot, out float frame) => Sample(t, out mot, out frame, out _);
+
+        /// <summary>
+        /// Active motion + interpolated frame at dance time t (seconds), plus the INDEX of the row supplying them.
+        /// Callers must crossfade the pose whenever <paramref name="row"/> changes, even when the .mot name did not:
+        /// the original engine restarts its blend on EVERY slice boundary (Dancer_AdvanceMotionStep always calls
+        /// MotionDriver_PlayClip, which snapshots the live pose and resets the blend weight to 1 — it never compares
+        /// clips). Consecutive slices of the SAME clip are usually frame-continuous (StartF == prev EndF + 1), but
+        /// ~1% of the official rows step BACKWARD there (10027 wdance0101 frame 192 → 83, 10410 wdance0351 227 → 0);
+        /// without the blend the dancer visibly rewinds a beat and jumps back in ("同一個 mot 切 row 突然回朔").
+        /// </summary>
+        public void Sample(float t, out string mot, out float frame, out int row)
         {
-            if (Rows.Length == 0) { mot = null; frame = 0; return; }
-            if (t <= 0f) { mot = Rows[0].Mot; frame = Rows[0].StartF; return; }
-            if (t >= Total) { var r = Rows[Rows.Length - 1]; mot = r.Mot; frame = r.EndF; return; }
+            if (Rows.Length == 0) { mot = null; frame = 0; row = -1; return; }
+            if (t <= 0f) { row = 0; mot = Rows[0].Mot; frame = Rows[0].StartF; return; }
+            if (t >= Total) { row = Rows.Length - 1; var last = Rows[row]; mot = last.Mot; frame = last.EndF; return; }
             int lo = 0, hi = Rows.Length;                     // largest row with TStart <= t
             while (lo < hi) { int m = (lo + hi) / 2; if (Rows[m].TStart <= t) lo = m + 1; else hi = m; }
-            var row = Rows[Math.Max(0, lo - 1)];
-            float ratio = row.Dur > 1e-6f ? (t - row.TStart) / row.Dur : 0f;
-            mot = row.Mot;
-            frame = row.StartF + UnityEngine.Mathf.Clamp01(ratio) * (row.EndF - row.StartF);
+            row = Math.Max(0, lo - 1);
+            var r = Rows[row];
+            float ratio = r.Dur > 1e-6f ? (t - r.TStart) / r.Dur : 0f;
+            mot = r.Mot;
+            frame = r.StartF + UnityEngine.Mathf.Clamp01(ratio) * (r.EndF - r.StartF);
         }
 
         private static bool IsName(byte b) => (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_';

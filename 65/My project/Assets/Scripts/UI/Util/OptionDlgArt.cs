@@ -25,6 +25,7 @@ namespace Sdo.UI.Util
         private static Texture2D _atlas;
         private static readonly Dictionary<long, Sprite> _cache = new Dictionary<long, Sprite>();
         private static readonly Dictionary<long, Sprite> _soloCache = new Dictionary<long, Sprite>();
+        private static readonly Dictionary<long, Sprite> _sharpCache = new Dictionary<long, Sprite>();
 
         /// <summary>Resolved OPTIONDLG art folder (lazy). Settable for tests (clears the sprite cache).</summary>
         public static string Dir
@@ -86,6 +87,40 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        /// <summary>Like <see cref="CropSolo"/> (own texture, so no shared-atlas bleed) but instead of de-matting it
+        /// SHARPENS the alpha ramp: alpha ≤ <paramref name="lo"/> → fully transparent, ≥ <paramref name="hi"/> → fully
+        /// opaque, smoothstep between. RGB is untouched.
+        ///
+        /// 為什麼需要:官方小 sprite 的外圈常是「半透明的深色 AA/描邊」(把手 = 3px 的 alpha 25..200 深紫)。那是畫給
+        /// 深色底用的 —— 疊在 OPTIONDLG 的淺粉板上，再被 4:3 放大到全螢幕，就變成一圈朦朧的灰紗(使用者回報的
+        /// 「slider 外圍超大一圈灰色」)。把 ramp 壓硬 → 描邊變實心、灰紗消失，等於還原官方 800×600 原生的觀感。
+        /// DeMatteWhite 對這種 sprite 幫不上忙(它假設 matte 是白的，會把深紫邊 un-composite 成黑邊，反而更糟)。
+        /// AlphaBleed 仍要做:透明區存的是 (255,255,255,0)，放大取樣會把白拉進邊緣。Cached。</summary>
+        public static Sprite CropAlphaSharpened(int x, int y, int w, int h, float lo, float hi)
+        {
+            long key = ((long)x << 40) | ((long)y << 20) | ((long)w << 10) | (uint)h;
+            if (_sharpCache.TryGetValue(key, out var s) && s != null) return s;
+            var tex = Atlas;
+            if (tex == null) return null;
+            int cy = tex.height - y - h;
+            if (x < 0 || cy < 0 || w <= 0 || h <= 0 || x + w > tex.width || cy + h > tex.height) return null;
+            var block = tex.GetPixels(x, cy, w, h);
+            float span = Mathf.Max(1e-4f, hi - lo);
+            for (int i = 0; i < block.Length; i++)
+            {
+                float t = Mathf.Clamp01((block[i].a - lo) / span);
+                block[i].a = t * t * (3f - 2f * t);          // smoothstep: 柔邊壓成實邊，保留一點抗鋸齒
+            }
+            var outTex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            outTex.SetPixels(block);
+            outTex.Apply(false);
+            SdoExtracted.AlphaBleed(outTex);                 // 透明區的白 matte 不要被放大取樣拉進邊緣
+            s = Sprite.Create(outTex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            _sharpCache[key] = s;
+            return s;
+        }
+
         // ---- named crops (atlas rects from the OPTIONDLG .an table) ----
         // frame quadrants (title text removed in the clean atlas)
         public static Sprite FrameTL => Crop(355, 0, 256, 256);
@@ -136,8 +171,10 @@ namespace Sdo.UI.Util
         // blend invisibly, and the orb is pixel-identical to row 1's baked circle. RadioOn (gold) overlays it when selected.
         public static Sprite RadioOff => Crop(472, 690, 17, 17);
         public static Sprite RadioOn => Crop(994, 0, 15, 15);
-        // slider handle
-        public static Sprite SliderHandle => Crop(951, 0, 43, 23);
+        // slider handle (音效三條音量 + 遊戲頁面板透明度共用)。CropAlphaSharpened 而不是 Crop:crop 的外圈是 3px
+        // 半透明深紫描邊，直接畫在淺粉板上被放大後糊成一圈灰暈 —— 見 CropAlphaSharpened 的說明。
+        // lo/hi 由 OptionSliderRenderTests 的放大照片量出來(暈消失、膠囊尺寸/描邊不變)。
+        public static Sprite SliderHandle => CropAlphaSharpened(951, 0, 43, 23, 0.18f, 0.62f);
         // keyboard sub-tabs (each is a full 322-wide strip carrying one tab; stack them to form the 4鍵|6鍵|激鼓 bar).
         // 4鍵 = active (lighter pushed state, Option_Game36 @305); 6鍵/激鼓 = inactive normal state (Option_Game37/40).
         // Only 4鍵 is functional; 6鍵/激鼓 are drawn for fidelity but inert.

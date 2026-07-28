@@ -138,6 +138,32 @@ namespace Sdo.Tests
         public void FlyHover_MatchesDecompiledOffset()
             => Assert.AreEqual(10f, SpecialMotionItems.FlyHoverY);   // Player_StepMovement 028:2852: world-Y += 10
 
+        // The hover is NOT movement-gated. Both decompiled sites (Player_UpdateTransform 028:2614, which runs every
+        // frame with no movement gate, and Player_StepMovement 028:2852) guard it with the flying flag ALONE — and the
+        // flystay clip does not lift the body by itself (see FlystayClip_DoesNotLiftBodyByItself), so gating the hover
+        // on "is walking" leaves a standing flyer on the floor. That was the reported bug.
+        [Test]
+        public void HoverY_AppliesWheneverFlying_NotOnlyWhileMoving()
+        {
+            Assert.AreEqual(SpecialMotionItems.FlyHoverY, SpecialMotionItems.HoverY(flyingWing: true));
+            Assert.AreEqual(0f, SpecialMotionItems.HoverY(flyingWing: false));
+        }
+
+        // The hover must not depend on WHAT THE BODY IS DOING — the room asked "is walking?" and the stage asked
+        // "is this a rest pose?" (SdoAvatar.IsRestPose), and both gates produced the same symptom: the avatar sank
+        // whenever the gate said "not moving / resting". Room and stage now share this ONE function, whose signature
+        // takes no pose, no clip and no movement state — that is the contract, so pin it structurally: if someone
+        // reintroduces a pose-dependent overload this stops compiling.
+        [Test]
+        public void HoverY_TakesNothingButTheWingFlag_SoNoPoseCanGateIt()
+        {
+            var m = typeof(SpecialMotionItems).GetMethod("HoverY");
+            Assert.IsNotNull(m, "HoverY 不見了 — 房間與舞台都靠它");
+            var ps = m.GetParameters();
+            Assert.AreEqual(1, ps.Length, "HoverY 只能有「有沒有穿飛行翅膀」這一個輸入");
+            Assert.AreEqual(typeof(bool), ps[0].ParameterType);
+        }
+
         // ---- 炫 UV-scroll hair: model band [40000,49999] (avatar/015: `if ((id<40000)||(49999<id))`) ----
 
         [TestCase(40000)]  // 炫红

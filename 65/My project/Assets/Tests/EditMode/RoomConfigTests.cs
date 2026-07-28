@@ -57,6 +57,50 @@ namespace Sdo.Tests
             RoomConfig.comboTextPop = 2f;
             RoomConfig.judgeTextPop = 2f;
             RoomConfig.hasTextPopKeys = false;
+            RoomConfig.scrollBaseBpm = 130f;
+            RoomConfig.hasScrollBaseBpmKey = false;
+        }
+
+        [Test]
+        public void ScrollBaseBpm_Defaults_To_130_Parse_Clamp_And_RoundTrip()
+        {
+            // note 下落速度的基準：畫面 px/s = scrollBaseBpm × 速度檔位 × 1.6。預設 130 = ManiaScroll.DefaultReferenceBpm
+            // （Sdo.Settings 不參照 Sdo.Osu，兩邊各寫一份同樣的數字 → 這條測試就是釘住它們一致）。
+            Assert.AreEqual(130f, RoomConfig.scrollBaseBpm, 1e-4f, "預設＝現行固定基準 130");
+
+            RoomConfig.ParseInto("[Room]\nscrollBaseBpm=160\n");
+            Assert.AreEqual(160f, RoomConfig.scrollBaseBpm, 1e-4f);
+            Assert.IsTrue(RoomConfig.hasScrollBaseBpmKey);
+
+            RoomConfig.scrollBaseBpm = 0f;      // 0＝音符完全不動
+            RoomConfig.Sanitize();
+            Assert.AreEqual(130f, RoomConfig.scrollBaseBpm, 1e-4f, "0/負數回預設，不是夾到下限");
+
+            RoomConfig.scrollBaseBpm = 9999f;   // 再快就整條飛出畫面
+            RoomConfig.Sanitize();
+            Assert.AreEqual(400f, RoomConfig.scrollBaseBpm, 1e-4f);
+
+            RoomConfig.scrollBaseBpm = 12f;     // 慢到看不出在動
+            RoomConfig.Sanitize();
+            Assert.AreEqual(30f, RoomConfig.scrollBaseBpm, 1e-4f);
+
+            RoomConfig.scrollBaseBpm = 145.5f;
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual(145.5f, RoomConfig.scrollBaseBpm, 1e-4f, "小數也要能存回來（0.## 格式）");
+        }
+
+        [Test]
+        public void ScrollBaseBpm_Missing_From_An_Old_File_Flags_A_Template_TopUp()
+        {
+            // 這個鍵比前面所有鍵都晚加 → 已經帶大小/透明度/彈跳鍵的舊檔仍要補寫一次模板，不然使用者找不到鍵可改。
+            RoomConfig.ParseInto("[Room]\ncomboTextScale=1.2\ncomboTextAlpha=0.5\ncomboTextPop=2\n");
+            Assert.IsFalse(RoomConfig.hasScrollBaseBpmKey);
+
+            Reset();
+            RoomConfig.ParseInto(RoomConfig.Serialize());   // 自己寫出來的模板一定帶鍵 → 補寫一次就不再重寫
+            Assert.IsTrue(RoomConfig.hasScrollBaseBpmKey);
         }
 
         [Test]

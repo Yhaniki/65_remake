@@ -298,51 +298,17 @@ namespace Sdo.Game
             }
             if (_headCam == null || _headAvatar == null) return;
             Vector3 restHead = _headAvatar.transform.TransformPoint(_headModelPos);   // head bone world pos (rest)
-            // Auto-frame from the MEASURED head (the official frames each costume's head to fill the row via a per-costume
-            // scale table — no single value — so we measure THIS head instead of porting an arbitrary number). We capture
-            // from ~chest up to ~0.15·(hair height) ABOVE the hair top, so the hair always lands inside the RT (never cut),
-            // and target the capture centre. headZoom nudges the framing; auto OFF → manual dist/aimOffset.
-            EnsureHairOffset();
-            float h = _hairOffsetModel * Mathf.Max(0.01f, headAvatarScale);    // hair-top height above the head bone (world)
-            Vector3 target;
-            if (headAutoFrame && h > 0.001f)
-            {
-                // TIGHT head close-up (official look): capture ≈ chin→hair-top + ~10% margin (head fills the frame, only a
-                // sliver of shoulder, hair spills above). dist 1.9·h, aim centred a bit above the bone so the face sits low.
-                headPortraitDist = 1.9f * h * Mathf.Max(0.05f, headZoom);
-                target = restHead + new Vector3(headAimOffset.x, 0.35f * h, 0f);
-            }
-            else target = restHead + headAimOffset;
+            // 取景只看頭骨：距離與瞄準偏移是相對頭骨的固定值（模型單位 × avatar scale），完全不碰任何 renderer 的 bounds。
+            // 骨架每套裝扮都同一副 → 髮型/帽子/翅膀/法杖都影響不到取景（穿 Ribbon Star M 翅膀把相機甩飛的那個 bug）。
+            float s = Mathf.Max(0.01f, headAvatarScale);
+            Vector3 target = restHead + headAimOffset * s;
+            float dist = headPortraitDist * s * Mathf.Max(0.05f, headZoom);   // headPortraitDist 預設 = HeadBoneFraming.DistModel（F4 可調）
             _headCam.fieldOfView = headPortraitFov;
             // Frontal (+Z) view tilted DOWN by headPitchDeg, matching the official cam (eye slightly above the head, looking
             // down ~2.3°). Place the cam back along that tilted forward axis and look at the head target.
             Vector3 dir = Quaternion.Euler(headPitchDeg, 0f, 0f) * Vector3.forward;   // +Z, pitched down
-            _headCam.transform.position = target - dir * headPortraitDist;
+            _headCam.transform.position = target - dir * dist;
             _headCam.transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
-        }
-
-        // Measure (once) how far the hair top sits above the head bone, in MODEL units (scale-independent), from the posed
-        // avatar's renderer bounds — bounds are valid after CPU skinning (SdoAvatar recalculates them). Used by the auto-frame
-        // so the cam captures the whole head + hair + a top margin (never cut) regardless of the model's unit scale.
-        private float _hairOffsetModel = -1f;
-        private void EnsureHairOffset()
-        {
-            if (_hairOffsetModel > 0f || _headAvatar == null) return;
-            var rends = _headAvatar.GetComponentsInChildren<Renderer>();
-            if (rends == null || rends.Length == 0) return;
-            float top = float.NegativeInfinity; bool any = false;
-            foreach (var r in rends)
-            {
-                if (r == null) continue;
-                var b = r.bounds;
-                if (b.size.sqrMagnitude < 1e-6f) continue;     // not posed yet
-                top = Mathf.Max(top, b.max.y); any = true;
-            }
-            if (!any) return;
-            float headBoneY = _headAvatar.transform.TransformPoint(_headModelPos).y;
-            float offW = top - headBoneY;                       // world hair height above the bone
-            if (offW <= 0.001f) return;                         // bounds not ready — retry next frame
-            _hairOffsetModel = offW / Mathf.Max(0.01f, headAvatarScale);   // back to model units
         }
 
         // rebuild + redraw the roster (called at each 8-beat score commit and once at startup).

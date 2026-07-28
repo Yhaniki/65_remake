@@ -61,7 +61,9 @@ namespace Sdo.Game
         private RenderTexture _rt;
         private RtResizeTracker _rtTrack;     // debounced window-resize → RT re-allocation (see LateUpdate)
         private MotLoader _walkMot, _idleMot;
-        private bool _flying;   // 飛行翅膀已裝備:idle=flystay、走路=fly 前傾滑動、移動時 +10 懸浮 (SpecialMotionItems)
+        private bool _flying;   // 飛行翅膀已裝備:idle=flystay、走路=fly 前傾滑動、常駐 +10 懸浮 (SpecialMotionItems)
+        private float _hoverCur;         // 目前套用的懸浮高度,平滑追到 HoverY(_flying) — 換穿翅膀時不會瞬移 (TickHover)
+        private const float HoverTau = 0.25f;   // 懸浮起降的收斂時間常數(秒),與 ScreenGameplay.UpdateFlyHover 同
         private readonly Dictionary<string, MotLoader> _chatActionMots = new Dictionary<string, MotLoader>(System.StringComparer.OrdinalIgnoreCase);
         private bool _male;
         private string[] _avatarParts;
@@ -281,9 +283,9 @@ namespace Sdo.Game
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
+            _feetY = GroundFeetY();                                               // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
-
-            _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;   // lowest skinned vertex at the bind pose
+            _hoverCur = SpecialMotionItems.HoverY(_flying);                       // 一進房間就穿著翅膀 → 直接浮著,不從地面升起
             // Host spawn = (-100, 0, -26): the REAL fixed offline spawn, captured via Frida from the running official EXE
             // (the host avatar slot-0 object position) and then confirmed in the decompile — flat sdo_stand_alone.exe.c
             // 99644-99660 loops the 6 dancer slots and writes each player +4/+8/+0xc = (-100, 0, -26); offline only the
@@ -312,16 +314,17 @@ namespace Sdo.Game
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
-            _feetY = _avatar != null ? _avatar.FeetYAt(0f) : 0f;
-            _walking = false;
+            _feetY = GroundFeetY();   // 地板校正:一律拿地面站姿量(見 GroundFeetY)
+            _walking = false;         // _hoverCur 不重設 → 穿/脫翅膀時 TickHover 把懸浮平滑帶到新目標(不 pop)
             ApplyRebuildIdle(wasFlying);
             ApplyAvatarTransform();
             if (oldRoot != null) Destroy(oldRoot.gameObject);
         }
 
         /// <summary>Arm the rebuilt avatar's idle. Normally an instant idle pose, BUT when the outfit change 脱下飛行翅膀
-        /// (was flying, now grounded) settle the body from the flystay 浮空 pose down to the ground idle over 1s instead
-        /// of popping — prime the flystay pose as the crossfade source, then blend to the new idle (使用者需求 #2)。</summary>
+        /// (was flying, now grounded) settle the body from the flystay pose down to the ground idle over 1s instead
+        /// of popping — prime the flystay pose as the crossfade source, then blend to the new idle (使用者需求 #2)。
+        /// 高度那半邊由 <see cref="TickHover"/> 收斂(懸浮 10→0),兩者一起才不會有一半在跳。</summary>
         private void ApplyRebuildIdle(bool wasFlying)
         {
             if (_avatar == null || _idleMot == null) return;
@@ -339,6 +342,33 @@ namespace Sdo.Game
             _avatar.SetClip(_idleMot);   // 一般:從生成起就用對的 idle(flystay 也是,不必等走一步)
         }
 
+        /// <summary>The model-space feet offset used to rest the avatar on <see cref="floorY"/> — ALWAYS measured on the
+        /// GROUND standby idle, never on the outfit's own idle. <see cref="SdoAvatar.FeetYAt(float)"/> poses whatever
+        /// clip is live, so measuring while the 飛行翅膀 flystay clip is active (腳收起來) treats those raised feet as the
+        /// new "sole" and subtracts them — pinning the floating pose straight back onto the floor. That was the bug:
+        /// 靜止時完全沒有浮起來。With a fixed ground reference every clip keeps its own height relative to standing.</summary>
+        private float GroundFeetY()
+        {
+            if (_avatar == null) return 0f;
+            var ground = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
+            return _avatar.FeetYAt(0f, ground);
+        }
+
+        /// <summary>Ease <see cref="_hoverCur"/> toward the flight hover (10 while a 飛行翅膀 is worn, 0 otherwise). The
+        /// TARGET is movement-independent — the official client adds it every frame from Player_UpdateTransform, so a
+        /// hovering avatar stays up while standing. Only the APPROACH is ours: 換穿 翅膀 would otherwise teleport the
+        /// body 10 units, and the 脱下翅膀 settle already eases the POSE over 1s (ApplyRebuildIdle) — the height has to
+        /// ease too or it pops out from under the animation.</summary>
+        private void TickHover()
+        {
+            float target = SpecialMotionItems.HoverY(_flying);
+            if (_hoverCur == target) return;
+            _hoverCur = Mathf.Abs(target - _hoverCur) < 0.01f
+                      ? target
+                      : Mathf.Lerp(_hoverCur, target, 1f - Mathf.Exp(-Time.deltaTime / HoverTau));
+            ApplyAvatarTransform();
+        }
+
         /// <summary>Resolve the idle/walk clips + walk speed for the CURRENT outfit — the decompiled special-item traits
         /// ([[sdo-special-item-idle-walk]] / <see cref="SpecialMotionItems"/>): a 飛行翅膀 (flying wing) swaps the idle to
         /// the flystay 浮空 clip (rest cat 0x2c); a 加速鞋 (speed shoe) bumps the free-walk speed to 5.0 (unless a wing
@@ -347,7 +377,7 @@ namespace Sdo.Game
         {
             _flying = SpecialMotionItems.WearsFlyingWing(_avatarParts);
             bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
-            // 飛行翅膀:idle→flystay 浮空,走路→fly(前傾滑動),速度強制 3.0(028:2774),移動時 body Y +10 懸浮(028:2852)。
+            // 飛行翅膀:idle→flystay,走路→fly(前傾滑動),速度強制 3.0(028:2774),body Y +10 懸浮常駐(028:2614,不分動靜)。
             // 「哪些翅膀會飛」離線推不出來 → SpecialMotionItems 用硬編 5 id + 線上實測名單(見該檔)。
             string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
             string walkRel = SpecialMotionItems.WalkMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
@@ -439,9 +469,10 @@ namespace Sdo.Game
             {
                 _walking = false;
                 _avatar.SetClip(_idleMot);
-                ApplyAvatarTransform();   // 停下:移除飛行懸浮 (+10)，回地面高度(否則 flystay 停在半空)
+                ApplyAvatarTransform();   // 停下:位置定案(飛行懸浮不動 — 站著也照浮,見 TickHover)
             }
 
+            TickHover();
             UpdateCamera();
         }
 
@@ -458,9 +489,9 @@ namespace Sdo.Game
         private void ApplyAvatarTransform()
         {
             if (_avatarRoot == null) return;
-            // 飛行翅膀移動時 body Y +10 懸浮(Player_StepMovement 028:2852 fStack_8 += 10);停下(flystay)回地面高度。
-            float hover = (_flying && _walking) ? SpecialMotionItems.FlyHoverY : 0f;
-            _avatarRoot.position = new Vector3(_walkPos.x, floorY - _feetY + hover, _walkPos.z);
+            // 飛行翅膀:body Y +10 懸浮,「在飛」就常駐,跟有沒有在移動無關(官方 Player_UpdateTransform_004ab4a0 028:2614
+            // 每幀無條件套,Player_StepMovement 028:2852 只是走路路徑上的同一條)。_hoverCur 是它的平滑追蹤值。
+            _avatarRoot.position = new Vector3(_walkPos.x, floorY - _feetY + _hoverCur, _walkPos.z);
             _avatarRoot.localRotation = Quaternion.Euler(0f, _facing, 0f);
         }
 

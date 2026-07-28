@@ -56,6 +56,11 @@ namespace Sdo.Game
         private bool _snapNextBlend;                          // true -> next clip switch is a HARD CUT (see SnapNextClip)
         private bool _haveDisp;                              // _dispLocal holds a valid previous pose
         private MotLoader _lastMot;                          // active clip last frame (to detect a switch)
+        // DPS slice identity last frame. The pose source is (clip, choreography, row) — NOT the clip alone: two
+        // consecutive DPS rows often share one .mot, and comparing MotLoader references would hard-cut that seam.
+        // The original always restarts its blend on a slice boundary (see DpsLoader.Sample), and ~1% of the official
+        // rows step BACKWARD in frame there, which read as the dancer rewinding a beat before carrying on.
+        private DpsLoader _lastDps; private int _lastDpsRow = -1;
 
         public float Fps = 30f;          // MOT frame rate (time = integer frame index)
         public bool Animate = true;      // false -> hold bind pose (verification)
@@ -91,10 +96,6 @@ namespace Sdo.Game
         public bool OneShotHeld => _oneShot != null && _oneShotHold && _oneShotStart >= 0f
             && (Time.time - _oneShotStart) * Fps >= _oneShot.MaxTime;
 
-        /// <summary>True when the avatar is currently displaying its standby REST clip (idle) or a win/lose one-shot —
-        /// i.e. NOT a dance slice. Lets the gameplay host lift the DANCING body up to the floating idle's altitude
-        /// (飛行翅膀:flystay idle 靠自身 pose 浮空,dance 貼地 → 跳舞時額外抬 root 補上;見 ScreenGameplay.UpdateFlyHover)。</summary>
-        public bool IsRestPose => _oneShot != null || (RestMot != null && _mot == RestMot);
 
         /// <summary>Play a single motion clip once from t=0. When <paramref name="hold"/> it clamps on the last
         /// frame; otherwise it loops. Takes priority over DPS/idle until <see cref="ClearOneShot"/>.</summary>
@@ -157,7 +158,7 @@ namespace Sdo.Game
             _motScale = new Vector3[bc]; for (int i = 0; i < bc; i++) _motScale[i] = Vector3.one;
             _motScaleActive = new bool[bc];
             _dispLocal = new Matrix4x4[bc]; _blendFromQ = new Quaternion[bc]; _blendFromP = new Vector3[bc];
-            _haveDisp = false; _lastMot = mot; _blendStart = -1f;
+            _haveDisp = false; _lastMot = mot; _blendStart = -1f; _lastDps = null; _lastDpsRow = -1;
             _scaleMat = new Matrix4x4[bc]; for (int i = 0; i < bc; i++) _scaleMat[i] = Matrix4x4.identity; _hasBodyScale = false;
         }
 
@@ -284,6 +285,20 @@ namespace Sdo.Game
         /// <summary>Pose at <paramref name="frame"/> and return the lowest skinned vertex Y (model space) — the feet
         /// height for that pose. Used to rest the avatar's feet on the floor (honours the actual skin mode + pose).</summary>
         public float FeetYAt(float frame) { if (_hrc == null || _parts.Count == 0) return 0f; Pose(frame); return _lastMinY; }
+
+        /// <summary>Same as <see cref="FeetYAt(float)"/> but measured with <paramref name="clip"/> instead of the
+        /// active clip (restored afterwards). Callers that need a STABLE floor reference must use this: FeetYAt poses
+        /// whatever clip is live, so measuring while a FLOATING clip is active (飛行翅膀 flystay, feet tucked up) folds
+        /// that clip's altitude into the "feet offset" — and subtracting it pins the floating pose back on the floor,
+        /// cancelling the hover. Measure against the ground idle and every clip's height reads relative to standing.</summary>
+        public float FeetYAt(float frame, MotLoader clip)
+        {
+            if (clip == null) return FeetYAt(frame);
+            var prev = _mot;
+            _mot = clip;
+            try { return FeetYAt(frame); }
+            finally { _mot = prev; }
+        }
         /// <summary>Pose at <paramref name="frame"/> and return the highest skinned vertex Y (model space) — the
         /// head/hair-top height for that pose. Used with FeetYAt to measure body height for per-model framing.</summary>
         public float HeadYAt(float frame) { if (_hrc == null || _parts.Count == 0) return 0f; Pose(frame); return _lastMaxY; }
@@ -459,11 +474,12 @@ namespace Sdo.Game
         {
             if (_hrc == null) return;
             float t;
+            DpsLoader dps = null; int dpsRow = -1;   // DPS slice driving this frame (null/-1 = idle, one-shot or plain looping clip)
             if (_oneShot != null && _oneShot.MaxTime > 0f)   // 結算 win/lose 定格 pose — highest priority
             {
                 float f = (Time.time - _oneShotStart) * Fps;
                 f = _oneShotHold ? Mathf.Min(f, _oneShot.MaxTime) : f % (_oneShot.MaxTime + 1f);
-                _mot = _oneShot; MaybeStartBlend(); Pose(f); return;
+                _mot = _oneShot; MaybeStartBlend(null, -1); Pose(f); return;
             }
             if (Dps != null && Dps.Rows != null && Dps.Rows.Length > 0 && MotResolver != null && DanceTimeSec != null)
             {
@@ -476,24 +492,31 @@ namespace Sdo.Game
                 }
                 else
                 {
-                    Dps.Sample(dt, out string motName, out float frame);   // choreography: switch clip + frame
+                    Dps.Sample(dt, out string motName, out float frame, out int row);   // choreography: switch clip + frame
                     if (!string.IsNullOrEmpty(motName)) { var m = MotResolver(motName); if (m != null) _mot = m; }
-                    t = frame;
+                    t = frame; dps = Dps; dpsRow = row;
                 }
             }
             else if (FrameOverride >= 0f) t = FrameOverride;
             else if (Animate && _mot != null && _mot.MaxTime > 0f) t = ((Time.time + PhaseOffsetSec) * Fps) % (_mot.MaxTime + 1f);
             else t = 0f;
-            MaybeStartBlend();   // crossfade if the active clip switched this frame
+            MaybeStartBlend(dps, dpsRow);   // crossfade if the clip OR the DPS slice switched this frame
             Pose(t);
         }
 
-        // If the active clip changed since last frame, snapshot the current displayed pose as the blend source and
-        // begin a crossfade. Same clip reference -> continuous playback (no blend).
-        private void MaybeStartBlend()
+        /// <summary>True when the pose source changed between two frames: a different clip, a different choreography,
+        /// or a different DPS row of the same clip. The original engine blends on all three (it re-arms the blend on
+        /// every slice boundary without comparing clips) — see DpsLoader.Sample. Pure, unit-tested.</summary>
+        public static bool PoseSourceChanged(object prevClip, object clip, object prevDps, object dps, int prevRow, int row)
+            => !ReferenceEquals(prevClip, clip) || !ReferenceEquals(prevDps, dps) || prevRow != row;
+
+        // If the pose source (clip / choreography / DPS row) changed since last frame, snapshot the current displayed
+        // pose as the blend source and begin a crossfade. Unchanged -> continuous playback (no blend).
+        private void MaybeStartBlend(DpsLoader dps, int dpsRow)
         {
-            if (_mot == _lastMot) return;
-            _lastMot = _mot;
+            bool switched = PoseSourceChanged(_lastMot, _mot, _lastDps, dps, _lastDpsRow, dpsRow);
+            _lastMot = _mot; _lastDps = dps; _lastDpsRow = dpsRow;
+            if (!switched) return;
             if (_snapNextBlend) { _snapNextBlend = false; _blendStart = -1f; _blendNextSec = -1f; return; }   // hard cut requested -> no crossfade
             if (!_haveDisp || _dispLocal == null) { _blendNextSec = -1f; return; }     // nothing displayed yet -> nothing to blend from
             int bc = _hrc.Names.Length;
