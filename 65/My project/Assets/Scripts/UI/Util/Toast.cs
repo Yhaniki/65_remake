@@ -31,6 +31,16 @@ namespace Sdo.UI.Util
             _inst._cg = cg;
         }
 
+        /// <summary>
+        /// Toast 已經建好了嗎(<see cref="Init"/> 跑過了)。
+        ///
+        /// 🔴 **開機途中要說的話必須先問這個。** <see cref="Show"/> 在還沒 Init 時只會寫一行 log,
+        /// 訊息就這樣消失了。實際踩過:「連不上伺服器,改用單機模式」那句是在開機 Phase 3 設的,
+        /// 而 Toast 到 Phase 5 才建 —— Update 在下一幀就把它讀走並丟掉,**玩家永遠看不到那句話**,
+        /// 只會覺得「怎麼變單機了」。
+        /// </summary>
+        public static bool Ready => _inst != null;
+
         public static void Show(string msg, float seconds = 2.5f)
         {
             if (_inst == null) { Debug.Log($"[Toast] {msg}"); return; }

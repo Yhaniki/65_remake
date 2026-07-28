@@ -407,7 +407,10 @@ namespace Sdo.UI
             NetSongTransfer.Tick(_ctx, this);
 
             // 開機時連不上 → 已退回單機,進到畫面後告知玩家一次。
-            if (_netFellBackReason != null)
+            // 🔴 要等 Toast 建好才說(Toast.Ready)。Update 從第一幀就在跑,而這個原因是開機
+            // Phase 3 設的、Toast 到 Phase 5 才建 —— 不等的話下一幀就被讀走並丟掉,
+            // Toast.Show 那時只會寫一行 log,**玩家永遠看不到那句話**,只覺得「怎麼變單機了」。
+            if (_netFellBackReason != null && Toast.Ready)
             {
                 var why = _netFellBackReason;
                 _netFellBackReason = null;
