@@ -199,6 +199,13 @@ namespace Sdo.Game
         public static Mp3Decoder.Mp3Sync Mp3SyncFor(int format)
             => format == 1 || format == 3 || format == 4 ? Mp3Decoder.Mp3Sync.Osu : Mp3Decoder.Mp3Sync.StepMania;
         public int chartLevel;                // external chart LV (osu!mania 星數×7) — shown as the LV label so it matches song-select
+        // ---- 生成編舞（外部歌）要的「整首歌」資料 —— 一首歌只能有一支舞，換難度不能換舞（見 Sdo.Osu.DanceInputs）----
+        // 這首**歌**的 BPM（選歌畫面顯示的那個，SongCatalog.Entry.bpm）；<= 0 = 不知道 → 退回這張譜自己算的。
+        public double songBpm;
+        // 這首歌**每個難度**的譜（空格子是 ""）：舞蹈長度＝所有難度的最早第一顆 → 最晚最後一顆，所以玩哪個難度
+        // 都跳得完、也都是同一支舞。只在生成那一次讀（ExternalChartIO.Windows）。
+        public string[] songChartPaths;
+        public int[] songChartIndices;   // 對應每格的 .sm #NOTES 區塊／.gn 包難度（osu/.mc 恆 0）
         public string songDisplayName = "";   // external: the catalog's display title (an osu pack's real per-song name);
                                                // _map.Title would be the shared pack label ("SDO Pack8"). Official = "" (resolved from the .gn catalog).
         private const int ExternalLeadInMs = 2000;   // min ms the first external note is pushed to, so it scrolls in from the edge (count-in)
@@ -1677,8 +1684,8 @@ namespace Sdo.Game
                 if (collapsed > 0) Debug.Log($"[Step1] collapsed {collapsed} short hold(s) (< {OsuBeatmap.ShortHoldMaxMs:0.#} ms) into taps");
             }
             EnsureExternalDance();
-            // 炸彈**在生成外部舞蹈之後**才拿掉：ExternalDps 用 HitObjects 的頭尾時間當舞蹈長度，而它只生一次
-            // 就寫進歌資料夾（同一首歌永遠同一支舞）—— 開/關這個選項不該讓同一首歌生出兩種舞。
+            // 炸彈**在生成外部舞蹈之後**才拿掉：舞蹈長度平常是自己重讀每個難度的原始譜量的（不受這些修整影響），
+            // 但量不到時會退回手上這張 _map 的頭尾時間 —— 開/關這個選項不該讓同一首歌生出兩種舞。
             // 之後才建的東西（判定、TotalNotes→滿分、打拍音時間軸、note 皮）看到的就是一張沒有炸彈的譜。
             if (!songBombs && _map != null)
             {
@@ -1697,7 +1704,9 @@ namespace Sdo.Game
             if (editorMode) return;   // 編輯器只校時/看譜，不生成也不寫 .dps 進使用者的歌資料夾
             if (chartFormat == 0 || _map == null || string.IsNullOrEmpty(externalFolder)) return;
             if (!string.IsNullOrEmpty(dpsPath) && File.Exists(Path.Combine(SdoExtracted.Root, dpsPath))) return;
-            string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, _map);
+            // songBpm / songChartPaths 是**這首歌**的（不是這張譜的）：一首歌一支舞，換難度不換舞（見 Sdo.Osu.DanceInputs）。
+            string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, _map, songBpm,
+                                                     chartFormat, chartSeed, songChartPaths, songChartIndices);
             if (!string.IsNullOrEmpty(generated)) dpsPath = generated;   // absolute → LoadAsset uses it as-is
         }
 
@@ -1713,19 +1722,8 @@ namespace Sdo.Game
             // to a concrete chart file at selection time (see SongSelectScreen.OnConfirm / FrontendApp.StartGameplay).
             if (chartFormat != 0 && !string.IsNullOrEmpty(chartPath) && File.Exists(chartPath))
             {
-                try
-                {
-                    if (chartFormat == 3)
-                        // .gn 歌曲包：一個檔裝三個難度，chartIndex 就是難度。金鑰優先用這首自己的（[NX] 每首譜
-                        // 一把鑰匙，共用池救不了），失敗才退回共用池。
-                        _map = GnChart.Load(File.ReadAllBytes(chartPath), chartIndex, GnSeedsFor(chartSeed));
-                    else if (chartFormat == 4)
-                        _map = MalodyChart.ToBeatmap(MalodyChart.Parse(File.ReadAllText(chartPath)));       // .mc (Malody, one difficulty/file)
-                    else
-                        _map = chartFormat == 2
-                            ? SmChart.ToBeatmap(SmChart.Parse(File.ReadAllText(chartPath)), chartIndex)   // .sm block
-                            : OsuBeatmapParser.Parse(File.ReadAllText(chartPath));                        // .osu
-                }
+                // 四種格式的解析在 ExternalChartIO —— 生成編舞時要用同一套去量這首歌的每個難度。
+                try { _map = ExternalChartIO.Parse(chartFormat, chartPath, chartIndex, chartSeed); }
                 catch (Exception ex) { Debug.LogError($"[Step1] external chart parse failed: {ex.Message}"); _map = new OsuBeatmap(); }
                 if (_map.Bpm <= 0.0) _map.Bpm = 120.0;   // guard: a chart with no parseable BPM must not feed 0 into the judge windows
                 if (chartLevel > 0) _map.Level = chartLevel;   // LV label = the song-select 星數×7 level (Parse/ToBeatmap don't know it)

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using Sdo.Osu;
 using UnityEngine;
@@ -15,9 +16,10 @@ namespace Sdo.Game
     /// The dance is DETERMINISTIC: the RNG seed is the song's identity (its folder + which song in it), so the same
     /// song always dances the same way — even if the sidecar is deleted, or the song is played on another machine.
     ///
-    /// It spans first note → last note, which is exactly the window the engine's dance clock covers
-    /// (ScreenGameplay._danceStartSec = the first note), so the dancer holds its standby idle through the intro and
-    /// starts moving on the first note.
+    /// It is also the SAME dance whichever difficulty is played: everything the plan depends on — the seed, the length
+    /// and the beat grid — is per-SONG (see <see cref="DanceInputs"/>), never per-chart. The dance still starts on the
+    /// played difficulty's own first note (ScreenGameplay._danceStartSec), so the dancer holds its standby idle through
+    /// the intro and starts moving on the first note; only WHAT it dances is shared.
     /// </summary>
     public static class ExternalDps
     {
@@ -26,10 +28,20 @@ namespace Sdo.Game
 
         /// <summary>
         /// Absolute path of the song's .dps — the recorded one, else one generated (and recorded) now, else "" (the
-        /// caller then keeps the fallback dance clip). <paramref name="map"/> is the loaded chart: its first/last note
-        /// set the span, its BPM the beat grid.
+        /// caller then keeps the fallback dance clip).
         /// </summary>
-        public static string EnsureFor(string folderPath, string songKey, OsuBeatmap map)
+        /// <param name="map">The loaded chart — only the FALLBACK source of length/tempo, for a song whose charts can't
+        /// be measured or whose BPM is unknown (see <see cref="DanceInputs"/>); planning off it directly is what used
+        /// to make the dance depend on the difficulty played first.</param>
+        /// <param name="songBpm">The catalog's per-song BPM (&lt;= 0 = unknown → the chart's own).</param>
+        /// <param name="chartFormat">Sdo.Osu.SongFormat of this song's charts (1=osu, 2=sm, 3=.gn 包, 4=.mc).</param>
+        /// <param name="chartSeed">.gn pack key, for a packed song's charts.</param>
+        /// <param name="chartPaths">EVERY difficulty's chart file (empty slots may be "" / null) — their note windows,
+        /// unioned, are the dance's length.</param>
+        /// <param name="chartIndices">Per-slot .sm block / .gn difficulty index, parallel to <paramref name="chartPaths"/>.</param>
+        public static string EnsureFor(string folderPath, string songKey, OsuBeatmap map, double songBpm,
+                                       int chartFormat, long chartSeed,
+                                       IReadOnlyList<string> chartPaths, IReadOnlyList<int> chartIndices)
         {
             if (string.IsNullOrEmpty(folderPath) || map == null || map.HitObjects.Count == 0) return "";
             songKey = songKey ?? "";
@@ -44,14 +56,20 @@ namespace Sdo.Game
             // …but a dance an OLDER generator built is rebuilt once: a fix to the choreography has to reach the songs
             // the player has already danced (the seed is unchanged, so the new dance is still this song's own).
 
-            double span = (map.LastNoteMs - map.FirstNoteMs) / 1000.0;
-            if (span < MinDanceSeconds) return "";
+            // Length and tempo come from the SONG, not from the chart in hand — otherwise the same song choreographs
+            // differently depending on which difficulty reached this first (see DanceInputs). Every difficulty is
+            // re-read here, as written: this runs once per song, and gameplay's copy of the chart has already been
+            // through lead-in/collapse by now.
+            var windows = ExternalChartIO.Windows(chartFormat, chartPaths, chartIndices, chartSeed);
+            var inputs = DanceInputs.For(DanceInputs.UnionSeconds(windows), songBpm,
+                                         (map.LastNoteMs - map.FirstNoteMs) / 1000.0, map.Bpm);
+            if (inputs.Seconds < MinDanceSeconds) return "";
             if (DpsMotionLibrary.Pool.Count == 0) return "";  // no motions in the data tree → nothing to plan with
 
             var req = new RandomDpsRequest
             {
-                Bpm = map.Bpm > 0 ? map.Bpm : 120.0,
-                DanceSeconds = span,
+                Bpm = inputs.Bpm,
+                DanceSeconds = inputs.Seconds,
                 Pool = DpsMotionLibrary.Pool,
                 Intros = DpsMotionLibrary.Intros,
                 Groups = DpsMotionLibrary.Groups,
@@ -75,7 +93,9 @@ namespace Sdo.Game
                 SdoLog.Note("dps", "could not write " + path + ": " + ex.Message);
                 return "";                                   // read-only folder → dancer keeps the fallback clip
             }
-            Debug.Log($"[dps] generated {file} for {Path.GetFileName(folderPath)}: {span:F1}s @ {req.Bpm:F1} bpm, seed {req.Seed:x8}");
+            Debug.Log($"[dps] generated {file} for {Path.GetFileName(folderPath)}: {inputs.Seconds:F1}s @ {req.Bpm:F1} bpm, " +
+                      $"seed {req.Seed:x8}, {windows.Count} difficult(y/ies) measured" +
+                      $"{(inputs.PerSong ? "" : " — FELL BACK to this chart's own span/bpm")}");
             return path;
         }
 

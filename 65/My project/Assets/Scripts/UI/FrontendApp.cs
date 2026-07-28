@@ -286,6 +286,10 @@ namespace Sdo.UI
                 game.oggPath = s.ExternalAudioPath;
                 game.externalFolder = s.ExternalFolderPath;
                 game.externalSongKey = s.ExternalSongKey;
+                // 生成編舞吃「這首歌的」BPM 跟「所有難度的譜」，不是只看選到這張（換難度不換舞，見 Sdo.Osu.DanceInputs）
+                game.songBpm = s.ExternalSongBpm;
+                game.songChartPaths = s.ExternalSongChartPaths;
+                game.songChartIndices = s.ExternalSongChartIndices;
                 game.songDisplayName = s.SongTitle;   // catalog display name (osu pack → real song name), not the .osu pack-label Title
             }
             else
