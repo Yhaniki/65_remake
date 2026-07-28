@@ -272,6 +272,46 @@
    "v": "Spectating — your seat is released"
   },
   {
+   "k": "room.join_as_looker",
+   "v": "The seats are full — joining as a spectator"
+  },
+  {
+   "k": "room.join_in_game_looker",
+   "v": "That room is in a match — joining as a spectator"
+  },
+  {
+   "k": "room.join_all_full",
+   "v": "That room is full — seats and spectator slots"
+  },
+  {
+   "k": "neterr.not_host",
+   "v": "Only the host can do that"
+  },
+  {
+   "k": "neterr.not_in_room",
+   "v": "You are not in a room"
+  },
+  {
+   "k": "neterr.bad_seat",
+   "v": "That seat cannot be changed"
+  },
+  {
+   "k": "neterr.bad_state",
+   "v": "Not possible right now"
+  },
+  {
+   "k": "neterr.no_song",
+   "v": "The room has no song selected"
+  },
+  {
+   "k": "neterr.full",
+   "v": "No free seat"
+  },
+  {
+   "k": "neterr.looker_full",
+   "v": "The spectator slots are full"
+  },
+  {
    "k": "room.spectate_off",
    "v": "Back in a seat"
   },

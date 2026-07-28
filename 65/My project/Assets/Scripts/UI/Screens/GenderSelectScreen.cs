@@ -385,17 +385,25 @@ namespace Sdo.UI.Screens
                 // 殘留房間:換身分或上一輪 ESC 退出可能還留在某間房裡。先離開,否則 server 會回 badState。
                 if (net.InRoom) net.LeaveRoom();
 
-                net.JoinRoom(code, (result, _) =>
-                {
-                    if (result == Sdo.Net.NetProto.JoinOk)
+                // 座位滿了(或房間正在打)會自動改用旁觀身分進去 —— 政策在 NetClient,
+                // 這裡只負責把過程講給玩家聽(框不關,訊息就寫在框裡)。
+                net.JoinOrSpectate(code,
+                    (result, asSpectator) =>
                     {
-                        app.JoinRoom.Close();
-                        ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
-                        return;
-                    }
-                    app.JoinRoom.ShowError(LocalizationManager.Get(JoinErrorKey(result)));
-                });
+                        if (result == Sdo.Net.NetProto.JoinOk) { EnterJoinedRoom(app); return; }
+                        app.JoinRoom.ShowError(LocalizationManager.Get(JoinErrorKey(result)));
+                    },
+                    trigger => app.JoinRoom.ShowError(LocalizationManager.Get(
+                        trigger == Sdo.Net.NetProto.JoinFull ? "room.join_as_looker"
+                                                             : "room.join_in_game_looker")));
             });
+        }
+
+        /// <summary>進房成功(不管是坐下還是以旁觀身分)→ 關掉輸入框、轉場進房間。</summary>
+        private void EnterJoinedRoom(FrontendApp app)
+        {
+            app.JoinRoom.Close();
+            ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
         }
 
         /// <summary>把 server 回的 joinResult 翻成玩家看得懂的一句話。</summary>
@@ -403,6 +411,9 @@ namespace Sdo.UI.Screens
         {
             switch (result)
             {
+                // 座位滿了會先自動轉旁觀(JoinOrSpectate),所以走到這裡的 lookerFull
+                // 代表**座位 6 個 + 旁觀 10 個都滿了** —— 那才是真的進不去。
+                case Sdo.Net.NetProto.ErrLookerFull: return "room.join_all_full";
                 case Sdo.Net.NetProto.JoinFull: return "room.join_full";
                 case Sdo.Net.NetProto.JoinInGame: return "room.join_in_game";
                 case Sdo.Net.NetProto.JoinNotFound: return "room.join_not_found";

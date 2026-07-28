@@ -31,6 +31,9 @@ param(
     [string]$Server,
     [switch]$Tls,
     [switch]$Token,
+    # 滿房模式:房主把自己以外的座位全部關掉(SDO_CLOSESEATS),第二台加入時會撞到 full。
+    # 驗的是「座位滿了自動改用旁觀身分進去」,所以不打歌 —— 檢查表也只驗到進房那一段。
+    [switch]$FullRoom,
     # 從「開兩台」到「撈 log」總共等多久(秒)。要跑完一首歌的話給 120 以上。
     [int]$Seconds = 150,
     # 房主要選的歌(外部歌的標題片段;SDO_PICKSONG 就吃這個)。兩台共用同一棵 ADDON → 都有這首,
@@ -195,7 +198,9 @@ function Start-Client([string]$root, [hashtable]$extra, [string]$label) {
 
 $logA = Join-Path $work 'clientA.log'
 $logB = Join-Path $work 'clientB.log'
-$pA = Start-Client $RootA @{ SDO_ROOM = '1'; SDO_PICKSONG = $Song; SDO_AUTOSTART = '1'; SDO_AUTOPLAY = '1'; __log = $logA } 'A(房主)'
+$envA = @{ SDO_ROOM = '1'; SDO_PICKSONG = $Song; SDO_AUTOPLAY = '1'; __log = $logA }
+if ($FullRoom) { $envA['SDO_CLOSESEATS'] = '1' } else { $envA['SDO_AUTOSTART'] = '1' }
+$pA = Start-Client $RootA $envA 'A(房主)'
 Start-Sleep -Seconds 12   # 讓 A 先進到房間、拿到房號
 $pB = Start-Client $RootB @{ SDO_JOINFIRST = '1'; SDO_AUTOREADY = '1'; SDO_AUTOPLAY = '1'; __log = $logB } 'B(客人)'
 
@@ -203,10 +208,11 @@ $pB = Start-Client $RootB @{ SDO_JOINFIRST = '1'; SDO_AUTOREADY = '1'; SDO_AUTOP
 Write-Host "[verify] 等這一場打完(最多 $Seconds 秒)…"
 $deadline = (Get-Date).AddSeconds($Seconds)
 $done = $false
+$waitFor = if ($FullRoom) { '以旁觀身分進入房 \d+' } else { '房 \d+:第 \d+ 場結算' }
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 3
     $peek = if (Test-Path $srvLog) { Get-Content -LiteralPath $srvLog -Raw -Encoding UTF8 } else { '' }
-    if ($peek -match '房 \d+:第 \d+ 場結算') { $done = $true; break }
+    if ($peek -match $waitFor) { $done = $true; break }
     if ($pA.HasExited -or $pB.HasExited) { Write-Host '[verify] 有一台 client 自己結束了'; break }
 }
 if (-not $done) { Write-Host "[verify] ⚠️ 等到逾時還沒看到結算" }
@@ -243,6 +249,18 @@ if ($Token) {
     $rows += Check 'token:身分由 server 覆寫' `
         ($srvTxt -match 'user \d+ 「驗證女」上線' -and $srvTxt -match 'user \d+ 「驗證男」上線') ''
 }
+if ($FullRoom) {
+    # ---- 滿房 → 自動旁觀(使用者要求的行為)----
+    $rows += Check '房主把其他座位都關了' ($cliA -match 'SDO_CLOSESEATS:把座位') ([regex]::Match($cliA, '\[dev\] SDO_CLOSESEATS[^
+]*').Value)
+    $rows += Check '第二台**沒有**坐到位子' ($srvTxt -notmatch 'user 2 加入房') ''
+    $rows += Check '第二台改用旁觀身分進了房' ($srvTxt -match 'user \d+ 以旁觀身分進入房 \d+') ([regex]::Match($srvTxt, 'user \d+ 以旁觀身分進入房[^
+]*').Value)
+    $rows += Check 'client 端知道自己是旁觀進去的' ($cliB -match 'SDO_JOINFIRST:進了房 \d+' -and $cliB -match '旁觀身分') ([regex]::Match($cliB, '\[dev\] SDO_JOINFIRST[^
+]*').Value)
+    $rows += Check 'A 沒有例外' ($cliA -notmatch 'EXC |NullReferenceException') ''
+    $rows += Check 'B 沒有例外' ($cliB -notmatch 'EXC |NullReferenceException') ''
+} else {
 $rows += Check '開房' ($srvTxt -match 'user \d+ 開了房 \d{5}') ([regex]::Match($srvTxt, 'user \d+ 開了房 \d+').Value)
 $rows += Check '第二台加入同一間房' ($srvTxt -match 'user \d+ 加入房 \d{5} 座位 \d') ([regex]::Match($srvTxt, 'user \d+ 加入房[^
 ]*').Value)
@@ -270,6 +288,7 @@ $rows += Check '分數流:server 收到 frame 並彙整' ($srvTxt -match 'frame'
 $rows += Check '結算' ($srvTxt -match '房 \d+:第 \d+ 場結算') ([regex]::Match($srvTxt, '房 \d+:第 \d+ 場結算').Value)
 $rows += Check 'A 沒有例外' ($cliA -notmatch 'EXC |NullReferenceException') ''
 $rows += Check 'B 沒有例外' ($cliB -notmatch 'EXC |NullReferenceException') ''
+}
 
 $md = @()
 $md += '# 線上實機驗證'

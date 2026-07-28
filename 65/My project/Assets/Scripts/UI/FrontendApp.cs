@@ -248,11 +248,20 @@ namespace Sdo.UI
             for (int i = 1; i < rooms.Length; i++)
                 if (rooms[i].Count > rooms[pick].Count) pick = i;
             int code = rooms[pick].Code;
-            net.JoinRoom(code, (result, _) =>
-            {
-                if (result == Sdo.Net.NetProto.JoinOk) _ctx.Flow.GoTo(ScreenId.Room);
-                else Debug.LogWarning("[dev] SDO_JOINFIRST:加入 " + code + " 失敗:" + result);
-            });
+            // 與玩家真的按「加入」走同一條政策(座位滿了自動轉旁觀)—— dev 路徑自己寫一份的話,
+            // 「滿房自動旁觀」就只有其中一條路測得到。
+            net.JoinOrSpectate(code,
+                (result, asSpectator) =>
+                {
+                    if (result == Sdo.Net.NetProto.JoinOk)
+                    {
+                        Debug.Log("[dev] SDO_JOINFIRST:進了房 " + code + (asSpectator ? "(旁觀身分)" : "(座位)"));
+                        _ctx.Flow.GoTo(ScreenId.Room);
+                        return;
+                    }
+                    Debug.LogWarning("[dev] SDO_JOINFIRST:加入 " + code + " 失敗:" + result);
+                },
+                trigger => Debug.Log("[dev] SDO_JOINFIRST:房間 " + code + " 回了 " + trigger + " → 改用旁觀身分"));
         }
 
         /// <summary>
@@ -277,6 +286,7 @@ namespace Sdo.UI
                 if (net.IsConnected)
                 {
                     prog.Set(0.76f, "已連上伺服器", Sdo.Settings.RoomConfig.serverAddress);
+                    net.ErrorReceived += OnNetError;   // 見 OnNetError:沒接的話這些錯誤全被丟掉
                     _netReady = true;
                     yield break;
                 }
@@ -297,6 +307,44 @@ namespace Sdo.UI
 
         /// <summary>開機連線的等待上限。超過就退回單機。</summary>
         private const float ConnectTimeoutSec = 6f;
+
+        /// <summary>
+        /// server 回的 <c>error{code}</c> —— **沒有被任何請求認領的那些**。
+        ///
+        /// 🔴 這個訂閱以前不存在,於是那些錯誤整個被丟掉:按「旁觀」但旁觀席滿了、
+        /// 旁觀者想搶回座位但沒空位、非房主誤送 host-only 操作…… 玩家看到的都是
+        /// 「按了沒反應」,而 log 也只有 server 那邊有。連線層的原則是不做樂觀更新
+        /// (按了不會先改畫面),所以**失敗一定要說出來**,否則就變成靜默失敗。
+        ///
+        /// (帶 rq 且有人在等的錯誤不會走到這裡 —— 那些由發起請求的地方自己處理,
+        ///  例如加入房間的失敗原因是寫在輸入房號的框裡。)
+        /// </summary>
+        private void OnNetError(string code, string msg)
+        {
+            string key = NetErrorKey(code);
+            if (key == null) return;   // 刻意不打擾玩家的(rate limit 之類)
+            Toast.Show(LocalizationManager.Get(key));
+            Debug.LogWarning("[net] server error: " + code + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
+        }
+
+        /// <summary>error code → 本地化 key。回 null = 這種錯誤不要吵玩家。</summary>
+        private static string NetErrorKey(string code)
+        {
+            switch (code)
+            {
+                case Sdo.Net.NetProto.ErrNotHost:    return "neterr.not_host";
+                case Sdo.Net.NetProto.ErrNotInRoom:  return "neterr.not_in_room";
+                case Sdo.Net.NetProto.ErrBadSeat:    return "neterr.bad_seat";
+                case Sdo.Net.NetProto.ErrBadState:   return "neterr.bad_state";
+                case Sdo.Net.NetProto.ErrNoSong:     return "neterr.no_song";
+                case Sdo.Net.NetProto.ErrFull:       return "neterr.full";
+                case Sdo.Net.NetProto.ErrLookerFull: return "neterr.looker_full";
+                case Sdo.Net.NetProto.ErrBadTeams:   return "room.teams_need_layout";   // 已經有一句更精確的
+                // rateLimit / proto / badJson:不是玩家能處理的事,而且 rateLimit 一爆就是一串 →
+                // 跳出來只會洗版。留在 log 裡就好。
+                default: return null;
+            }
+        }
 
         private bool _netReady;
 

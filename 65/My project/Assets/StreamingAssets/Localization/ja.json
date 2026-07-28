@@ -272,6 +272,46 @@
    "v": "観戦中 — 席を手放しました"
   },
   {
+   "k": "room.join_as_looker",
+   "v": "席が満員です — 観戦として入室します"
+  },
+  {
+   "k": "room.join_in_game_looker",
+   "v": "対戦中のルームです — 観戦として入室します"
+  },
+  {
+   "k": "room.join_all_full",
+   "v": "満員です — 席も観戦枠も空きがありません"
+  },
+  {
+   "k": "neterr.not_host",
+   "v": "ホストのみ可能です"
+  },
+  {
+   "k": "neterr.not_in_room",
+   "v": "ルームにいません"
+  },
+  {
+   "k": "neterr.bad_seat",
+   "v": "その席は変更できません"
+  },
+  {
+   "k": "neterr.bad_state",
+   "v": "今はできません"
+  },
+  {
+   "k": "neterr.no_song",
+   "v": "曲が選ばれていません"
+  },
+  {
+   "k": "neterr.full",
+   "v": "空席がありません"
+  },
+  {
+   "k": "neterr.looker_full",
+   "v": "観戦枠が満員です"
+  },
+  {
    "k": "room.spectate_off",
    "v": "席に戻りました"
   },

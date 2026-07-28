@@ -466,6 +466,10 @@ namespace Sdo.Game.Net
                 return;
             }
 
+            // 旁觀請求成功的**唯一證據**:我出現在這份快照的旁觀名單裡。
+            // (server 對成功的 spectate 不回應那個 rq,只廣播快照 —— 見 Spectate 的註解。)
+            if (_spectateCb != null && snap.SpectatorIndexOf(UserId) >= 0) CompleteSpectate(NetProto.JoinOk);
+
             Raise(RoomUpdated, snap);
         }
 
@@ -528,6 +532,39 @@ namespace Sdo.Game.Net
                 .Int("code", code));
         }
 
+        /// <summary>
+        /// 加入房間;**座位滿了(或房間正在打)就自動改用旁觀身分進去**。
+        ///
+        /// 為什麼這條政策放在這裡而不是各畫面自己寫:進房有兩條路(選男女畫面的「加入」框、
+        /// dev 的 <c>SDO_JOINFIRST</c>),各寫一份的話一定會有一條漏掉,而漏掉的症狀是
+        /// 「這條路進不去滿的房間」—— 沒有錯誤、只是行為不一致,很難聯想。
+        ///
+        /// 官方的房間本來就是「六個舞者 + 十個旁觀」;server 也早就支援 <c>spectate{code}</c>
+        /// (含遊戲中的房間 —— R18/D10:進得了房間看頭貼,只是不中途接入 gameplay)。
+        /// 真正把人擋在門外的一直是 client 自己。
+        /// </summary>
+        /// <param name="onResult">(result, asSpectator)。result 是 <c>JoinOk</c> 或失敗的 code
+        /// (座位與旁觀席都滿 → <see cref="NetProto.ErrLookerFull"/>)。</param>
+        /// <param name="onFallback">要改用旁觀之前呼叫一次,參數 = 觸發的 joinResult(<c>full</c>/<c>inGame</c>)。
+        /// UI 可以趁機說一聲「座位滿了,以旁觀身分進入」。</param>
+        public void JoinOrSpectate(int code, Action<string, bool> onResult, Action<string> onFallback = null)
+        {
+            JoinRoom(code, (result, _) =>
+            {
+                if (result == NetProto.JoinOk) { if (onResult != null) onResult(result, false); return; }
+                if (result != NetProto.JoinFull && result != NetProto.JoinInGame)
+                {
+                    if (onResult != null) onResult(result, false);
+                    return;
+                }
+                if (onFallback != null) onFallback(result);
+                Spectate(code, spec =>
+                {
+                    if (onResult != null) onResult(spec, spec == NetProto.JoinOk);
+                });
+            });
+        }
+
         private static void ReportJoin(object node, Action<string, int> onResult)
         {
             if (onResult == null) return;
@@ -586,11 +623,49 @@ namespace Sdo.Game.Net
             => Send(JObj.New().Str(NetProto.FieldType, NetProto.TransferHost)
                 .Int(NetProto.FieldRequest, NextRq(null)).Int("userId", userId));
 
-        public void Spectate(int code = 0)
+        // 進行中的旁觀請求。0 = 沒有。**成功與失敗走的是兩條不同的路**(見 Spectate)。
+        private int _spectateRq;
+        private Action<string> _spectateCb;
+
+        /// <summary>
+        /// 以旁觀身分加入(<paramref name="code"/> = 房號;0 = 我現在這間房裡切成旁觀)。
+        ///
+        /// 🔴 **成功與失敗的回應形狀不一樣**,所以不能只用 rq 配對:
+        ///   • 失敗 → <c>error{rq,code}</c>(lookerFull / notInRoom …)—— 這條走 <see cref="NextRq"/>。
+        ///   • 成功 → server **不回應那個 rq**,只廣播一份新的 <c>roomState</c>。
+        ///     所以「我出現在旁觀名單裡」才是成功的證據(見 <see cref="ApplyRoomState"/> 末端)。
+        /// 這與整個連線層的原則一致:不做樂觀更新,一律等 server 的快照。
+        ///
+        /// <paramref name="onResult"/> 收到 <c>NetProto.JoinOk</c> 或 server 的 error code。
+        /// </summary>
+        public void Spectate(int code = 0, Action<string> onResult = null)
         {
             PublishLook();   // 旁觀者在房間 3D 裡也是站在那邊的人,外觀一樣要對
+            // 前一個還沒結果的請求先收掉 —— 不然它的 callback 會被後來這次的回應觸發。
+            if (_spectateRq != 0) _pending.Remove(_spectateRq);
+            int rq = NextRq(node => CompleteSpectate(NetJson.Str(node, "code")));
+            _spectateRq = rq;
+            _spectateCb = onResult;
             Send(JObj.New().Str(NetProto.FieldType, NetProto.Spectate)
-                .Int(NetProto.FieldRequest, NextRq(null)).Int("code", code));
+                .Int(NetProto.FieldRequest, rq).Int("code", code));
+        }
+
+        /// <summary>結束一次旁觀請求(成功或失敗都走這裡),並把 pending 收乾淨。</summary>
+        private void CompleteSpectate(string result)
+        {
+            if (_spectateRq != 0) { _pending.Remove(_spectateRq); _spectateRq = 0; }
+            var cb = _spectateCb;
+            _spectateCb = null;
+            string r = string.IsNullOrEmpty(result) ? NetProto.ErrBadState : result;
+            if (cb == null)
+            {
+                // 沒人在等結果(房間裡按「旁觀」鈕那條)→ 失敗要交回一般的錯誤通道,
+                // 否則它會被這個 pending 吃掉變成靜默失敗(旁觀席滿了按了沒反應)。
+                if (r != NetProto.JoinOk && ErrorReceived != null) ErrorReceived(r, "");
+                return;
+            }
+            try { cb(r); }
+            catch (Exception ex) { Debug.LogError("[net] 旁觀結果處理例外: " + ex); }
         }
 
         public void StopSpectate()

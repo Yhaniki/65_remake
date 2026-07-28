@@ -573,6 +573,9 @@ namespace Sdo.Server.Net
             AfterImplicitLeave(left);
 
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            // 座位有 log、旁觀沒有 → 實機驗證時「他到底進去了沒」只能用猜的。補上。
+            Log("user " + conn.UserId + " 以旁觀身分進入房 " + room.Code
+                + "(座位 " + room.State.SeatedCount + " 人)");
             BroadcastRoomState(room);
         }
 

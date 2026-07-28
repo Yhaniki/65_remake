@@ -1563,6 +1563,31 @@ namespace Sdo.UI.Screens
             OnStart();
         }
 
+        // DEV: SDO_CLOSESEATS=1 → 房主把**自己以外的座位全部關掉**,做出一個「座位滿了」的房間。
+        // 為什麼需要:要驗「座位滿了會自動改用旁觀身分進去」得先有一間滿的房,而湊六台 client
+        // 不現實。關閉的座位在 FirstOpenSeat 眼中與被坐走完全一樣(都不是 Open),
+        // 所以這條 hook 造出來的「滿」與六個人坐滿是同一個狀態。
+        private bool _devCloseSeatsDone;
+
+        private void TickDevCloseSeats()
+        {
+            if (_devCloseSeatsDone) return;
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_CLOSESEATS"))) { _devCloseSeatsDone = true; return; }
+            if (!Online || !Ctx.Net.IsHost) return;
+            var snap = Ctx.Net.Room;
+            if (snap == null) return;
+
+            int mySeat = snap.SeatIndexOf(Ctx.Net.UserId);
+            if (mySeat < 0) return;                       // 還沒坐下(快照還沒到)
+            _devCloseSeatsDone = true;
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                if (i == mySeat) continue;                // 自己的位子關不了(server 會回 badSeat)
+                Ctx.Net.SetSeatClosed(i, true);
+            }
+            Debug.Log("[dev] SDO_CLOSESEATS:把座位 " + mySeat + " 以外的位子都關了(做出滿房)");
+        }
+
         // DEV: SDO_PICKSONG=<歌名片段> → 房主自動選「第一首名字含這段字的外部歌」。
         // 為什麼要這個 hook:缺歌傳檔(M5)的實機驗證需要房主選一首**外部歌**,而用滑鼠自動化走
         // 選歌畫面要精確的設計→螢幕座標換算(那條換算有已知偏移),不可靠。這條走與玩家一樣的
@@ -2924,6 +2949,7 @@ namespace Sdo.UI.Screens
 
             TickRoomPerf();              // DEV only:設了 SDO_ROOMAVATARS 才會動(量 16 隻角色的成本)
             TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
+            TickDevCloseSeats();         // DEV only:設了 SDO_CLOSESEATS 才會動(做出滿房,驗自動轉旁觀)
             TickDevPickSong();           // DEV only:設了 SDO_PICKSONG 才會動(缺歌傳檔的實機驗證用)
             TickDevAutoReady();          // DEV only:設了 SDO_AUTOREADY 才會動
             TickDevAutoStart();          // DEV only:設了 SDO_AUTOSTART 才會動

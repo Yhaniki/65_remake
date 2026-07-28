@@ -272,6 +272,46 @@
    "v": "旁觀中 — 座位已釋出"
   },
   {
+   "k": "room.join_as_looker",
+   "v": "座位已滿 — 以旁觀身分進入"
+  },
+  {
+   "k": "room.join_in_game_looker",
+   "v": "這間房正在遊戲中 — 以旁觀身分進入"
+  },
+  {
+   "k": "room.join_all_full",
+   "v": "這間房滿了 — 座位與旁觀席都沒空位"
+  },
+  {
+   "k": "neterr.not_host",
+   "v": "只有房主可以做這件事"
+  },
+  {
+   "k": "neterr.not_in_room",
+   "v": "你不在房間裡"
+  },
+  {
+   "k": "neterr.bad_seat",
+   "v": "這個位置不能這樣操作"
+  },
+  {
+   "k": "neterr.bad_state",
+   "v": "現在不能做這件事"
+  },
+  {
+   "k": "neterr.no_song",
+   "v": "房間還沒選歌"
+  },
+  {
+   "k": "neterr.full",
+   "v": "沒有空的座位"
+  },
+  {
+   "k": "neterr.looker_full",
+   "v": "旁觀席已經滿了"
+  },
+  {
    "k": "room.spectate_off",
    "v": "已回到座位"
   },

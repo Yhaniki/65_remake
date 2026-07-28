@@ -758,6 +758,32 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void A_Full_Room_Still_Takes_Spectators_Until_Those_Are_Full_Too()
+        {
+            // 使用者問的那條梯子,一次釘死:
+            //   六個座位滿 → 第七個人坐不下(Full)→ 但**可以用旁觀身分進來**
+            //   → 旁觀席也滿了才是真的進不去(LookerFull)。
+            // 官方的房間就是「六個舞者 + 十個旁觀」,把人擋在座位那一關等於少了十個位置。
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid, Dan, Eve, Fay);       // 房主 + 5 = 六個座位坐滿
+
+            int seat;
+            Assert.AreEqual(NetRoomOp.Full, r.TryJoin(User(Gus), out seat), "座位滿了就是坐不下");
+
+            // 同一個人改用旁觀身分 → 進得來,而且**不佔座位**。
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Gus)));
+            Assert.AreEqual(6, r.State.SeatedCount, "旁觀者不佔座位");
+            Assert.AreEqual(1, r.State.Spectators.Length);
+            Assert.IsTrue(r.State.Contains(Gus), "他在房間裡(只是不在座位上)");
+
+            // 把旁觀上限降到 1(等於旁觀席也滿了)→ 下一個人才真的進不去。
+            int[] kicked;
+            Assert.AreEqual(NetRoomOp.Ok, r.SetRoomSettings(Host, ParseSettings("{\"lookerCount\":1}"), out kicked));
+            Assert.AreEqual(NetRoomOp.LookerFull, r.TrySpectate(User(8)),
+                "座位滿 + 旁觀滿 = 這時候才是真的進不了這間房");
+        }
+
+        [Test]
         public void R11_Shrinking_The_Looker_Limit_Kicks_The_Newest_Spectators()
         {
             var r = MakeRoom();
