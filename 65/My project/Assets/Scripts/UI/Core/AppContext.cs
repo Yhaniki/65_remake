@@ -68,7 +68,8 @@ namespace Sdo.UI.Core
                 AvatarParts = Sdo.Settings.ProfileManager.Active != null
                     ? Sdo.Settings.ProfileManager.Active.EquippedAvatarParts() : null,
             };
-            net.Connect(RoomConfig.serverAddress, RoomConfig.serverPort, RoomConfig.serverPassword, identity);
+            net.Connect(RoomConfig.serverAddress, RoomConfig.serverPort, RoomConfig.serverPassword, identity,
+                        RoomConfig.serverTls, RoomConfig.serverCertFingerprint);
 
             // 「我現在長什麼樣」的唯一來源。NetClient 在建房/加入/旁觀的第一行呼叫它(PublishLook),
             // 所以第一份廣播出去的房間快照就已經帶對的外觀 —— 別人不會先看到一隻預設的女角。

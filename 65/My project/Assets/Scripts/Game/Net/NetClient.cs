@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Sdo.Net;
 using UnityEngine;
@@ -48,6 +48,12 @@ namespace Sdo.Game.Net
             {
                 case NetProto.ErrBadPassword:
                     return "密碼不符 —— 請確認 config.ini 的 [Net] serverPassword 與伺服器一致";
+                case NetProto.ErrBadToken:
+                    return "token 不被接受 —— 請確認 config.ini 的 [Net] serverToken(公網伺服器需要)";
+                case "notAllowed":
+                    return "這台伺服器不接受你的來源位址";
+                case "tooManyFromIp":
+                    return "同一個位址的連線數過多";
                 case NetProto.ErrProto:
                     return "協定版本不合 —— 遊戲與伺服器的版本不一樣,需要更新其中一邊";
                 case NetProto.ErrRateLimit:
@@ -178,7 +184,10 @@ namespace Sdo.Game.Net
         /// <summary>
         /// 開始連線並握手。非阻塞 —— 呼叫端輪詢 <see cref="LinkState"/> / <see cref="IsConnected"/>。
         /// </summary>
-        public void Connect(string host, int port, string password, NetHelloIdentity identity)
+        /// <param name="tls">走 TLS(<c>config.ini serverTls</c>)。</param>
+        /// <param name="pinFingerprint">釘選的 server 憑證指紋(<c>config.ini serverCertFingerprint</c>)。</param>
+        public void Connect(string host, int port, string password, NetHelloIdentity identity,
+                            bool tls = false, string pinFingerprint = null)
         {
             _identity = identity;
             _password = password ?? "";
@@ -187,7 +196,7 @@ namespace Sdo.Game.Net
             Room = null;
             _lastSeenRev = 0;
             ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
-            _link.BeginConnect(host, port);
+            _link.BeginConnect(host, port, 5000, tls, pinFingerprint);
         }
 
         public void Disconnect(string reason = "userQuit")
@@ -286,6 +295,11 @@ namespace Sdo.Game.Net
                 .Put("look", look);
 
             if (!string.IsNullOrEmpty(_password)) hello.Str("password", _password);
+            // 公網 server 的 token(M10)。空的就不帶 —— server 沒啟用 token 認證時也不會看它。
+            // 🔴 它與密碼的差別:密碼是共用的一道門,token 是「server 認得的你」——
+            // 啟用之後身分由 server 依 token 決定,不再信這裡送的 playerId。
+            var token = Sdo.Settings.RoomConfig.serverToken;
+            if (!string.IsNullOrEmpty(token)) hello.Str("authToken", token);
             _link.Send(hello);
         }
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.IO;
 using Sdo.Net;
@@ -48,6 +48,45 @@ namespace Sdo.Server
         /// <summary>blob 目錄的總容量上限(GB)。</summary>
         public int MaxTotalBlobGb = NetLimits.DefaultMaxTotalBlobGb;
 
+        // ---- 公網化(M10)。四個都預設關閉/寬鬆 → LAN 的行為完全不變。----
+
+        /// <summary>
+        /// token 檔路徑(一行一個 token,見 <see cref="Sdo.Net.Server.AuthTokens"/>)。
+        /// 空 = 不啟用 token 認證(身分沿用 client 自稱的,只適合 LAN)。
+        /// </summary>
+        public string TokensFile = "";
+
+        /// <summary>只接受這些來源(逗號分隔;<c>192.168.0.</c> 這種以 . 結尾的是前綴網段)。空 = 不限。</summary>
+        public string AllowFrom = "";
+
+        /// <summary>同一個 IP 的連線數上限。一份 client 正常用 2 條(control + file)。</summary>
+        public int MaxPerIp = Sdo.Net.Server.OriginPolicy.DefaultMaxPerIp;
+
+        /// <summary>每人每小時的上傳位元組上限。0 = 不限。</summary>
+        public long UploadBytesPerHour;
+
+        /// <summary>
+        /// TLS 憑證檔(PKCS#12 / <c>.pfx</c>,必須含私鑰)。空 = 不加密(明文 TCP)。
+        ///
+        /// 為什麼是 .pfx 而不是 pem 一對:<see cref="System.Security.Cryptography.X509Certificates.X509Certificate2"/>
+        /// 讀 pfx 是一行,而「憑證與私鑰是不是同一組」這件事由檔案格式本身保證 ——
+        /// 給兩個路徑的話,配錯的症狀是握手失敗,而錯誤訊息不會告訴你是配錯了。
+        /// </summary>
+        public string TlsCertFile = "";
+
+        /// <summary>
+        /// pfx 的密碼。空 = 沒有密碼。
+        /// ⚠️ 命令列參數在同一台機器上是**任何人都看得到的**(<c>ps</c> / <c>/proc</c>),
+        /// 所以有密碼的憑證請用 <see cref="TlsCertPassFile"/>。
+        /// </summary>
+        public string TlsCertPass = "";
+
+        /// <summary>pfx 密碼的檔案路徑(只讀第一行、去掉尾端換行)。與 <see cref="TlsCertPass"/> 二選一。</summary>
+        public string TlsCertPassFile = "";
+
+        /// <summary>TLS 有沒有開。</summary>
+        public bool TlsEnabled => !string.IsNullOrEmpty(TlsCertFile);
+
         /// <summary>房號池的洗牌種子。0 = 用開機時間(讓每次啟動的房號順序不同)。</summary>
         public int CodeSeed;
 
@@ -72,6 +111,17 @@ namespace Sdo.Server
             "  --max-blob-gb <n>    歌曲暫存總容量上限 GB(預設 " + NetLimits.DefaultMaxTotalBlobGb + ")\n" +
             "  --code-seed <n>      房號洗牌種子(預設隨機;給固定值可重現)\n" +
             "  -v, --verbose        印出每筆訊息\n" +
+            "\n" +
+            "公網化(預設全關 → LAN 行為不變):\n" +
+            "  --tokens <file>      token 檔(一行一個;啟用後**身分由 server 決定**,不再信 client 自稱)\n" +
+            "  --allow-from <list>  只接受這些來源(逗號分隔;192.168.0. = 前綴網段)\n" +
+            "  --max-per-ip <n>     同一個 IP 的連線數上限(預設 " + Sdo.Net.Server.OriginPolicy.DefaultMaxPerIp + ")\n" +
+            "  --upload-mb-hour <n> 每人每小時上傳上限 MB(0 = 不限)\n" +
+            "  --tls-cert <file>    TLS 憑證(.pfx,含私鑰)。給了就加密;開機會印出憑證指紋,\n" +
+            "                       自簽憑證要把那串填進 client 的 config.ini serverCertFingerprint\n" +
+            "  --tls-pass <pw>      pfx 密碼(⚠️ 命令列在本機是公開的,建議用 --tls-pass-file)\n" +
+            "  --tls-pass-file <f>  從檔案讀 pfx 密碼(只讀第一行)\n" +
+            "\n" +
             "  -h, --help           顯示這段說明\n" +
             "\n" +
             "⚠️ MVP 階段沒有帳號認證、沒有加密 —— 身分由 client 自稱。\n" +
@@ -131,6 +181,33 @@ namespace Sdo.Server
                         if (!NextInt(args, ref i, out opts.CodeSeed, out error)) return false;
                         break;
 
+                    case "--tokens":
+                        if (!NextString(args, ref i, out opts.TokensFile, out error)) return false;
+                        break;
+                    case "--allow-from":
+                        if (!NextString(args, ref i, out opts.AllowFrom, out error)) return false;
+                        break;
+                    case "--max-per-ip":
+                        if (!NextInt(args, ref i, out opts.MaxPerIp, out error)) return false;
+                        break;
+                    case "--upload-mb-hour":
+                        {
+                            int mb;
+                            if (!NextInt(args, ref i, out mb, out error)) return false;
+                            opts.UploadBytesPerHour = mb <= 0 ? 0 : (long)mb * 1024L * 1024L;
+                            break;
+                        }
+
+                    case "--tls-cert":
+                        if (!NextString(args, ref i, out opts.TlsCertFile, out error)) return false;
+                        break;
+                    case "--tls-pass":
+                        if (!NextString(args, ref i, out opts.TlsCertPass, out error)) return false;
+                        break;
+                    case "--tls-pass-file":
+                        if (!NextString(args, ref i, out opts.TlsCertPassFile, out error)) return false;
+                        break;
+
                     default:
                         error = "不認得的選項: " + a;
                         return false;
@@ -158,6 +235,31 @@ namespace Sdo.Server
             if (MaxConnections < 2) MaxConnections = 2;      // 至少要能容納兩個人才有「多人」
             if (TtlHours < 1) TtlHours = 1;
             if (MaxTotalBlobGb < 1) MaxTotalBlobGb = 1;
+            TokensFile = (TokensFile ?? "").Trim();
+            AllowFrom = (AllowFrom ?? "").Trim();
+            if (MaxPerIp < 0) MaxPerIp = 0;
+            if (UploadBytesPerHour < 0) UploadBytesPerHour = 0;
+
+            TlsCertFile = (TlsCertFile ?? "").Trim();
+            TlsCertPassFile = (TlsCertPassFile ?? "").Trim();
+            TlsCertPass = TlsCertPass ?? "";        // 密碼**不 Trim**:尾端空白可能是密碼的一部分
+            // 憑證路徑要在開機時就擋下來,不要等第一個人連進來才發現讀不到 ——
+            // 那時候的症狀是「所有人都連不上」,而 log 只會有一行握手失敗。
+            if (TlsEnabled && !File.Exists(TlsCertFile))
+            {
+                error = "--tls-cert 找不到憑證檔: " + TlsCertFile;
+                return false;
+            }
+            if (TlsCertPassFile.Length > 0 && !File.Exists(TlsCertPassFile))
+            {
+                error = "--tls-pass-file 找不到檔案: " + TlsCertPassFile;
+                return false;
+            }
+            if (TlsCertPassFile.Length > 0 && !TlsEnabled)
+            {
+                error = "給了 --tls-pass-file 卻沒給 --tls-cert";
+                return false;
+            }
 
             return true;
         }

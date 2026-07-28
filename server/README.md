@@ -3,19 +3,32 @@
 跑在 Linux(也能在 Windows 上跑來測)的 standalone 伺服器。負責房間狀態、訊息轉發、
 以及缺歌時的歌曲暫存。
 
-## ⚠️ 安全性:目前只適合 LAN / 信任的朋友
+## ⚠️ 安全性:兩種模式,差別在你給了哪些參數
 
-MVP 階段**沒有帳號認證、沒有加密**:
+**預設(什麼都不給)= LAN 模式:沒有帳號認證、沒有加密。**
 
 - `playerId` 與名稱完全由 client 自稱 —— 任何人都能冒用別人的身分
-- 連線是明文的
+- 連線是明文的(密碼、聊天內容,同一個網路上的人看得到)
 - `--password` 只是個進站門檻,不是認證
 
-已經做的濫用防護:每連線的訊息速率限制、連線數與房間數上限、上傳檔案的路徑與大小驗證、
-server 端獨立重算歌曲指紋(不信任上傳者)。這些擋的是「壞掉或惡意的 client 把 server 打爆」,
-不是「有人冒用身分」。
+一直都有的濫用防護(不需要任何參數):每連線的訊息速率限制、連線數與房間數上限、
+上傳檔案的路徑與大小驗證、server 端獨立重算歌曲指紋(不信任上傳者)。
+這些擋的是「壞掉或惡意的 client 把 server 打爆」,不是「有人冒用身分」。
 
-**不要直接開在公網。** 要開公網需要先做 token 認證與 TLS(計畫裡排成獨立階段)。
+**要開在公網,四個參數都要給**(見 [公網化](#公網化) 一節):
+
+```bash
+./sdo-server --tls-cert /etc/sdo/cert.pfx --tls-pass-file /etc/sdo/pfx.pass \
+             --tokens /etc/sdo/tokens.txt --max-per-ip 4 --upload-mb-hour 1024
+```
+
+少給任何一個都是裸奔,而裸奔**沒有任何徵兆** —— 所以 server 每次開機都會把
+「現在受哪些保護」印出來,`⚠️` 開頭的每一行都是一個缺口。看到這兩行就是還沒準備好開公網:
+
+```
+[sdo-server] ⚠️  沒有加密(明文 TCP)。要加密請給 --tls-cert <pfx>。
+[sdo-server] ⚠️  沒有帳號認證 —— 身分由 client 自稱。要認證請給 --tokens <file>。
+```
 
 ## 建置
 
@@ -81,6 +94,111 @@ client 的 `serverPassword=` 留空(留空不會被自動補回預設值)。
 密碼不符時 server 會 log 一行,但**只寫「空值 / 另一個值」,不印密碼本體** ——
 log 常常被貼進 issue 或截圖。
 
+## 公網化
+
+四道防線,**全部都是「給了參數才生效」** —— 不給就完全是 LAN 模式的行為(所以在家裡玩的人
+不必為了公網功能付任何代價)。
+
+| 參數 | 擋什麼 | 不給的後果 |
+|---|---|---|
+| `--tls-cert <pfx>` | 竊聽與中間人 | 密碼/token/聊天全明文 |
+| `--tokens <file>` | 冒用身分 | 誰都能自稱是你 |
+| `--max-per-ip <n>` | 一個人開一百條連線佔滿 server | 一台機器就能讓別人連不進來 |
+| `--upload-mb-hour <n>` | 拿 server 當免費網路硬碟 | 磁碟被塞滿(TTL 清理來不及) |
+
+### 1. TLS 加密
+
+```bash
+# 自簽憑證(自己跟朋友玩,最常見的情況)。-days 3650 = 十年,免得忘記換。
+openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+  -keyout key.pem -out cert.pem -subj "/CN=dance.example.com" \
+  -addext "subjectAltName=DNS:dance.example.com"
+
+# 合成 server 要的 pfx(密碼可以留空;有密碼就用 --tls-pass-file 帶進去)
+openssl pkcs12 -export -out cert.pfx -inkey key.pem -in cert.pem -passout pass:
+
+./sdo-server --tls-cert /etc/sdo/cert.pfx
+```
+
+開機時 server 會印出憑證指紋:
+
+```
+[sdo-server] TLS 已啟用(TLS 1.2/1.3)。憑證指紋 SHA-256:
+[sdo-server]   6473b40678340324aa73a7cd6144d2168cdbc24f3d3a04ef469a672cc2c92e22
+```
+
+**把那一串貼進每個玩家的 `config.ini`**:
+
+```ini
+serverTls=1
+serverCertFingerprint=6473b40678340324aa73a7cd6144d2168cdbc24f3d3a04ef469a672cc2c92e22
+```
+
+為什麼要貼指紋:自簽憑證沒有 CA 背書,一般的驗證流程必定失敗。於是最容易犯的錯就是在 client 的
+驗證 callback 裡直接放行 —— **那樣 TLS 只剩裝飾**:任何人都能在中間插一台假 server,
+加密照樣成立,只是加密給攻擊者。填了指紋之後 client 只認「指紋一模一樣」的那張憑證,
+鏈結錯誤才可以忽略。指紋留空 = 走一般 CA 驗證(用 Let's Encrypt 之類的正式憑證時適用);
+兩者都不成立時 client **連不上**,不會默默放行。
+
+其他行為:
+
+- 憑證讀不到 / 沒有私鑰 / pfx 密碼錯 → **server 直接開不起來**(exit 4)。
+  退回明文是最糟的選擇:使用者以為是加密的,而且完全沒有徵兆。
+- pfx 密碼請用 `--tls-pass-file`。`--tls-pass` 會出現在 `ps` / `/proc` 裡,同一台機器上誰都看得到。
+- 只開 TLS 1.2 / 1.3。client 端談的是 1.2(Unity 的 Mono 對 1.3 的支援視版本而定)。
+- 握手有 10 秒逾時,而且**跑在各自的連線 task 上** —— 連上來不講話的人不會擋住別人進來
+  (有一條回歸測試守這件事:先弄壞一次握手,再確認正常 client 還連得進來)。
+- 傳檔的第二條連線走同一個 port,所以加密設定當然一樣,client 兩條都讀同一組 config。
+
+### 2. token 認證
+
+一行一個 token 的純文字檔;`#` 開頭是註解。`=` 後面可以接「這個 token 是誰」
+(`playerId, 顯示名稱, admin`,都可以省略):
+
+```
+# /etc/sdo/tokens.txt —— chmod 600,只有跑 server 的那個帳號讀得到
+9f2c1ab34de5f6079f2c1ab34de5f607
+c0ffee1234567890c0ffee1234567890 = 00000001
+deadbeefdeadbeefdeadbeefdeadbeef = 00000002, 小明
+0123456789abcdef0123456789abcdef = 00000003, 管理員, admin
+```
+
+只給 token(第一行)= 認證通過,但身分沿用 client 自稱的;要**真的**阻止冒用就要綁 playerId。
+
+產生 token:`openssl rand -hex 16`(32 個字,遠超過下限)。
+
+```bash
+./sdo-server --tokens /etc/sdo/tokens.txt
+```
+
+啟用之後**身分由 server 決定**:client 送上來的 `playerId` 被忽略,改用 token 對到的那一個。
+沒帶 token 或帶錯 → `bye{badToken}`,client 顯示「伺服器不認得這個 token」。
+token 太短(< 16 字元)會在開機時被拒絕並在 log 說明 —— 短 token 是可以猜的。
+
+玩家端填 `config.ini` 的 `serverToken=`。
+
+> ⚠️ token 是**共享機密**,只要拿到就是那個身分。所以 TLS 是搭配條件,不是選項:
+> 明文連線的 token 在網路上等於公開的。
+
+### 3. 連線來源與 per-IP 上限
+
+```bash
+./sdo-server --allow-from "192.168.0.,203.0.113.7"   # . 結尾 = 前綴網段
+./sdo-server --max-per-ip 4                          # 一份 client 正常用 2 條(control + file)
+```
+
+兩者都在**握手之前**就擋掉(連線在 hello 之前已經成立 —— 「開一百條連線把 `--max-conns`
+佔滿」不需要通過任何認證就做得到)。
+
+### 4. 上傳配額
+
+```bash
+./sdo-server --upload-mb-hour 1024      # 每人每小時 1 GB;0 = 不限
+```
+
+超過就回 `blobError{quota}`,房主那邊看得到原因。歌曲暫存本來就有 TTL(預設 24 小時)與
+總容量上限(`--max-blob-gb`),配額擋的是「在 TTL 到之前就把磁碟塞滿」。
+
 ## systemd
 
 `/etc/systemd/system/sdo-server.service`:
@@ -97,6 +215,10 @@ User=sdo
 Group=sdo
 WorkingDirectory=/opt/sdo-server
 ExecStart=/opt/sdo-server/sdo-server --port 27015 --data /var/lib/sdo-server
+# 開在公網的話換成這行(見「公網化」一節;憑證與 token 檔放在 /etc/sdo,chmod 600 給 sdo 讀):
+# ExecStart=/opt/sdo-server/sdo-server --port 27015 --data /var/lib/sdo-server \
+#   --tls-cert /etc/sdo/cert.pfx --tls-pass-file /etc/sdo/pfx.pass \
+#   --tokens /etc/sdo/tokens.txt --max-per-ip 4 --upload-mb-hour 1024
 Restart=on-failure
 RestartSec=5
 
@@ -134,6 +256,9 @@ journalctl -u sdo-server -f
 serverAddress=192.168.1.10     ← 留空＝純單機(總開關)
 serverPort=27015
 serverPassword=abab123         ← 預設值,與 server 的 --password 預設值相同
+serverToken=                   ← 公網 server 才要填(server 有 --tokens 時)
+serverTls=0                    ← 1 = 加密。server 有 --tls-cert 時必須設 1
+serverCertFingerprint=         ← 自簽憑證必填(server 開機會印出來);正式憑證留空
 netAutoDownload=1
 netMaxDownloadMb=200
 ```
@@ -143,6 +268,19 @@ netMaxDownloadMb=200
 
 密碼不符會在開機時被 server 擋掉,client 顯示
 「密碼不符 —— 請確認 config.ini 的 `[Net] serverPassword` 與伺服器一致」然後退回單機。
+token 不對是同一條路徑(顯示「伺服器不認得這個 token」)。
+
+TLS 設定不一致時的症狀:
+
+| 情況 | 看到什麼 |
+|---|---|
+| server 開了 TLS,client `serverTls=0` | 連不上(server log 有一行 TLS 握手失敗);**絕不會退回明文** |
+| server 沒開 TLS,client `serverTls=1` | 握手失敗,client 顯示 TLS 錯誤 |
+| 自簽憑證但沒填指紋 | 「憑證驗證失敗… 自簽憑證要在 config.ini 填 serverCertFingerprint」 |
+| 指紋填錯 | 「憑證指紋不符(設定的是 xxx…,收到的是 yyy…)」—— 訊息帶兩邊前 16 碼,好對照 |
+
+`serverCertFingerprint` 會被正規化成「64 個小寫 hex」:冒號、空白、大小寫都隨你貼,
+但格式不對就當沒填 —— 那會讓連線在握手時明確失敗,而不是靜默放行一張不對的憑證。
 
 ## 在同一台機器上開兩份 client 測試
 

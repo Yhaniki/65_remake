@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using Sdo.Net;
@@ -29,7 +32,12 @@ namespace Sdo.Server.Net
         private const int OutboundCapacity = 64;
 
         private readonly TcpClient _tcp;
-        private readonly NetworkStream _stream;
+        /// <summary>
+        /// 收發的 stream。**不是 readonly**:啟用 TLS 時 <see cref="TryStartTls"/> 會把它換成
+        /// 包起來的 <see cref="System.Net.Security.SslStream"/>。換的時機在 writer/reader 兩條
+        /// task 開始**之前**,所以之後所有人看到的都是同一個(加密的)那份。
+        /// </summary>
+        private Stream _stream;
         private readonly BlockingCollection<Outgoing> _outbound
             = new BlockingCollection<Outgoing>(new ConcurrentQueue<Outgoing>(), OutboundCapacity);
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
@@ -75,6 +83,45 @@ namespace Sdo.Server.Net
             _stream = tcp.GetStream();
             try { RemoteLabel = tcp.Client.RemoteEndPoint != null ? tcp.Client.RemoteEndPoint.ToString() : "?"; }
             catch { RemoteLabel = "?"; }
+        }
+
+        /// <summary>這條連線是加密的嗎(log 用)。</summary>
+        public bool IsTls { get; private set; }
+
+        /// <summary>
+        /// 把這條連線升級成 TLS(server 端握手)。**必須在 writer/reader 開始之前呼叫。**
+        ///
+        /// 握手期間套 socket 逾時:對方連上來卻不講話的話,不設逾時會讓一條 task 永遠掛著
+        /// (「開一堆連線只為了佔住 server 的 task」是不需要任何認證就做得到的事)。
+        /// 握手完成後解掉 —— 之後的閒置由協定層的 ping 逾時管,不是 socket 層。
+        /// </summary>
+        public bool TryStartTls(X509Certificate2 cert, int handshakeTimeoutMs, out string error)
+        {
+            error = null;
+            if (cert == null) { error = "沒有憑證"; return false; }
+            SslStream ssl = null;
+            try
+            {
+                _tcp.ReceiveTimeout = handshakeTimeoutMs;
+                _tcp.SendTimeout = handshakeTimeoutMs;
+                ssl = new SslStream(_stream, leaveInnerStreamOpen: false);
+                // 只開 TLS 1.2 / 1.3。舊版本(TLS 1.0/1.1、SSLv3)是已知有問題的,而這邊兩端的
+                // client 都是自己寫的 —— 沒有任何要照顧舊 client 的理由。
+                ssl.AuthenticateAsServer(cert, clientCertificateRequired: false,
+                    enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
+                    checkCertificateRevocation: false);
+                _tcp.ReceiveTimeout = 0;
+                _tcp.SendTimeout = 0;
+                _stream = ssl;
+                IsTls = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.GetType().Name + ": " + ex.Message;
+                try { if (ssl != null) ssl.Dispose(); } catch { }
+                return false;
+            }
         }
 
         // ---- 送出 ----
@@ -149,12 +196,20 @@ namespace Sdo.Server.Net
             if (Interlocked.Exchange(ref _closed, 1) != 0) return;
             try { _cts.Cancel(); } catch { }
             try { _outbound.CompleteAdding(); } catch { }
+            try { if (_stream != null) _stream.Dispose(); } catch { }   // TLS 時這才是真正要收的那層
             try { _tcp.Close(); } catch { }
         }
 
+        /// <summary>
+        /// 送出用的鎖。**不要 <c>lock (_stream)</c>** —— TLS 會把 <c>_stream</c> 換成另一個物件,
+        /// 鎖在會變的欄位上是「今天剛好對、改一行就靜默失效」的那種寫法(而且失效的症狀是
+        /// 兩條 thread 同時寫進同一個 SslStream = 加密封包交錯 = 對方直接斷線)。
+        /// </summary>
+        private readonly object _writeLock = new object();
+
         private void WriteFrameDirect(byte kind, byte[] payload)
         {
-            lock (_stream) { NetFrame.Write(_stream, kind, payload); }
+            lock (_writeLock) { NetFrame.Write(_stream, kind, payload); }
         }
 
         // ---- 讀 / 寫迴圈 ----

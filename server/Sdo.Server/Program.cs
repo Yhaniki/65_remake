@@ -44,6 +44,14 @@ namespace Sdo.Server
 
             var hub = new Hub(opts);
 
+            // 🔴 憑證載不起來就**不要啟動**。退回明文是最糟的選擇:使用者以為連線是加密的,
+            // 實際上不是,而且完全沒有徵兆(client 那邊也連得上,因為它只是連不到 TLS 而已)。
+            if (hub.TlsError != null)
+            {
+                Console.Error.WriteLine("[sdo-server] TLS 設定有問題,拒絕以明文啟動: " + hub.TlsError);
+                return 4;
+            }
+
             // Ctrl-C(SIGINT)與 systemd 的 SIGTERM 都要能讓它乾淨收線。
             Console.CancelKeyPress += (s, e) =>
             {

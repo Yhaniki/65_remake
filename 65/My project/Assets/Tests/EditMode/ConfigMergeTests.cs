@@ -29,6 +29,7 @@ namespace Sdo.Tests
         {
             ProfileManager.Root = null;   // 還原 lazy 解析，避免污染其他測試
             RoomConfig.activeId = "";
+            RoomConfig.serverTls = false; RoomConfig.serverCertFingerprint = "";   // TLS 是連線總開關的一部分,不要留給別人
             // 🔴 還原成 **false**,不是 true。
             // 還原成 true 的話,後面任何一條測試呼叫 RoomConfig.Save() 都會寫進**玩家真正的**
             // config.ini(ProfileManager.Root 已經被還原成 null → 解析到真實 DataRoot),
@@ -95,6 +96,31 @@ namespace Sdo.Tests
             // 比 "opt_keys=" 而非 "opt_keys"：檔頭那行「鍵位已搬到 keymaps.ini」的註解本來就會提到這個名字。
             StringAssert.DoesNotContain("opt_keys=", File.ReadAllText(ConfigPath), "新的 config.ini 不該再寫鍵位");
             Assert.AreEqual(1, RoomConfig.defaultTeam, "[Room] 的值不受影響");
+        }
+
+        [Test]
+        public void A_Pasted_Certificate_Fingerprint_Is_Normalized_On_Load()
+        {
+            // 玩家是**複製貼上**的:openssl 印冒號、Windows 憑證管理員印空白、大小寫也不一定。
+            // 三種都要能用 —— 為了一個冒號就說「憑證指紋不符」只會讓人以為 TLS 壞了。
+            const string Hex = "6473b40678340324aa73a7cd6144d2168cdbc24f3d3a04ef469a672cc2c92e22";
+            File.WriteAllText(ConfigPath,
+                "[Net]\nserverAddress=192.168.1.10\nserverTls=1\n" +
+                "serverCertFingerprint=64:73:B4:06:78:34:03:24:AA:73:A7:CD:61:44:D2:16" +
+                ":8C:DB:C2:4F:3D:3A:04:EF:46:9A:67:2C:C2:C9:2E:22\n");
+            RoomConfig.LoadedForTests = false;
+            RoomConfig.Load();
+
+            Assert.IsTrue(RoomConfig.serverTls, "serverTls=1 要讀進來");
+            Assert.AreEqual(Hex, RoomConfig.serverCertFingerprint, "冒號與大寫都要被正規化掉");
+
+            // 🔴 貼錯東西 → 當成沒填。那會讓連線在握手時明確失敗(自簽憑證過不了一般驗證),
+            // 而**不是**靜默放行一張不對的憑證 —— 後者才是漏洞,而且症狀是「一切正常」。
+            File.WriteAllText(ConfigPath,
+                "[Net]\nserverAddress=192.168.1.10\nserverCertFingerprint=(我不小心貼了整段說明)\n");
+            RoomConfig.LoadedForTests = false;
+            RoomConfig.Load();
+            Assert.AreEqual("", RoomConfig.serverCertFingerprint, "格式不對就當沒填");
         }
 
         [Test]

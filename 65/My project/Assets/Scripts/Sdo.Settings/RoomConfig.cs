@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -147,6 +147,31 @@ namespace Sdo.Settings
         /// </summary>
         public const string DefaultServerPassword = Sdo.Net.NetLimits.DefaultServerPassword;
         // 缺歌時要不要自動從伺服器下載。true＝座位玩家自動下載（旁觀者一律不自動下載）。
+        /// <summary>
+        /// 連線用的 token(公網 server 才需要)。空 = 不帶。
+        ///
+        /// 🔴 這與 <see cref="serverPassword"/> 不同:密碼是「大家共用的一道門」,token 是
+        /// **「server 認得的你」** —— 啟用之後 server 用它決定你是誰,而不是信 client 自稱的 playerId。
+        /// 開在公網的 server 應該要求 token(見 server/README.md)。
+        /// </summary>
+        public static string serverToken = "";
+
+        /// <summary>
+        /// 用 TLS 連線(server 要有 <c>--tls-cert</c>)。**開在公網一定要開。**
+        /// 不開的話密碼、token、聊天內容全部是明文 —— 同一個網路上的人看得到。
+        /// </summary>
+        public static bool serverTls;
+
+        /// <summary>
+        /// 釘選的 server 憑證指紋(SHA-256 hex;server 開機會印出來,冒號/空白可留)。
+        ///
+        /// 🔴 **自簽憑證一定要填這個。** 自簽沒有 CA 背書 → 一般驗證必定失敗;填了指紋之後
+        /// client 就只認「指紋一模一樣」的那張憑證,鏈結錯誤可以忽略。
+        /// 留空 = 走一般的 CA 驗證(有正式憑證、用網域名連的人適用)。
+        /// 兩者都不成立時 client **連不上**,不會默默放行(見 <c>NetConnection.TryHandshake</c>)。
+        /// </summary>
+        public static string serverCertFingerprint = "";
+
         public static bool netAutoDownload = true;
         // 自動下載的單首歌大小上限（MB）。超過就不下載，只顯示缺歌，避免在慢速網路上卡很久。
         public static int netMaxDownloadMb = 200;
@@ -446,6 +471,9 @@ namespace Sdo.Settings
                     case "serverAddress": serverAddress = val; break;
                     case "serverPort": serverPort = ParseInt(val, serverPort); break;
                     case "serverPassword": serverPassword = val; break;
+                    case "serverToken": serverToken = val; break;
+                    case "serverTls": serverTls = ParseBool(val, serverTls); break;
+                    case "serverCertFingerprint": serverCertFingerprint = val; break;
                     case "netAutoDownload": netAutoDownload = ParseBool(val, netAutoDownload); break;
                     case "netMaxDownloadMb": netMaxDownloadMb = ParseInt(val, netMaxDownloadMb); break;
                     case "speedSteps": speedSteps = ParseFloatList(val); break;
@@ -515,6 +543,7 @@ namespace Sdo.Settings
             judgeLevel = Mathf.Clamp(judgeLevel, 1, 9);                      // 精1~精8、9=JUSTICE
             globalOffsetMs = Mathf.Clamp(globalOffsetMs, -300f, 300f);       // 再大就不是延遲、是打錯拍了
             judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
+            if (serverToken == null) serverToken = "";
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
             if (addonFolder == null) addonFolder = "";
             songUiAlpha = Mathf.Clamp01(songUiAlpha);                        // 外部歌分類面板不透明度 0..1
@@ -538,6 +567,9 @@ namespace Sdo.Settings
             // 誤判成「有填」然後拿一個含空白的主機名去解析,錯誤訊息會很莫名。
             serverAddress = (serverAddress ?? "").Trim();
             serverPassword = (serverPassword ?? "").Trim();
+            // 指紋是複製貼上來的 —— 正規化到「64 個小寫 hex」,格式不對就當沒填(那會讓
+            // 連線在握手時明確失敗,而不是靜默地放行一張不對的憑證)。
+            serverCertFingerprint = Sdo.Net.TlsPinning.Normalize(serverCertFingerprint);
             serverPort = Mathf.Clamp(serverPort, 1, 65535);
             netMaxDownloadMb = Mathf.Clamp(netMaxDownloadMb, 1, 2048);
         }
@@ -589,6 +621,16 @@ namespace Sdo.Settings
             sb.Append("# ⚠️ MVP 階段這只是門檻不是認證（身分由 client 自稱、連線沒加密）——\n");
             sb.Append("#    只在 LAN／信任的朋友之間用，不要開在公網。\n");
             sb.Append("serverPassword=").Append(serverPassword ?? "").Append('\n');
+            sb.Append("# 公網伺服器的 token(空=不帶)。與密碼不同:密碼是大家共用的一道門,\n");
+            sb.Append("# token 是「伺服器認得的你」—— 啟用後身分由伺服器依 token 決定,不再信本機自稱的角色 id。\n");
+            sb.Append("serverToken=").Append(serverToken ?? "").Append('\n');
+            sb.Append("# 用 TLS 加密連線（1=開 0=關）。伺服器要有 --tls-cert 才開得起來。\n");
+            sb.Append("# ★ 開在公網一定要開:不開的話密碼、token、聊天內容全部是明文。\n");
+            sb.Append("serverTls=").Append(B(serverTls)).Append('\n');
+            sb.Append("# 釘選的伺服器憑證指紋（SHA-256；伺服器開機會印出來，冒號/空白可留）。\n");
+            sb.Append("# ★ 自簽憑證一定要填 —— 自簽沒有 CA 背書，一般驗證必定失敗。填了之後只認這張憑證。\n");
+            sb.Append("#   留空＝走一般 CA 驗證（有正式憑證、用網域名連的人適用）。兩者都不成立時連不上。\n");
+            sb.Append("serverCertFingerprint=").Append(serverCertFingerprint ?? "").Append('\n');
             sb.Append("# 缺歌時自動從伺服器下載（1=開 0=關）。旁觀者一律不自動下載。\n");
             sb.Append("netAutoDownload=").Append(B(netAutoDownload)).Append('\n');
             sb.Append("# 自動下載的單首歌上限（MB）。超過只顯示缺歌，避免在慢速網路上卡很久。\n");

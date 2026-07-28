@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Sdo.Net;
 using Sdo.Net.Server;
@@ -164,6 +164,19 @@ namespace Sdo.Server.Net
                 }
             }
 
+            // ---- token 認證(M10:公網化)。沒有 token 檔就完全跳過,行為回到 MVP。 ----
+            // 🔴 這是「身分由誰決定」的分界線。MVP 階段 playerId 與名字是 client 說了算 ——
+            // 在 LAN/朋友之間沒差,一開公網就等於任何人都能冒用任何人。
+            // 啟用之後:token 查不到 → 直接拒;token 綁了身分 → **用 token 的,不用 client 送的**。
+            AuthIdentity ident;
+            if (!_tokens.TryAuth(NetJson.Str(node, "authToken"), out ident))
+            {
+                // 同密碼那邊的理由:**不印 token 本身**(日誌常被貼到 issue 或截圖)。
+                Log("連線 #" + conn.ConnId + " token 認證失敗,拒絕");
+                conn.Kill(NetProto.ErrBadToken);
+                return;
+            }
+
             string role = NetJson.Str(node, "role", NetProto.RoleControl);
             conn.Role = role == NetProto.RoleFile ? NetProto.RoleFile : NetProto.RoleControl;
 
@@ -192,6 +205,9 @@ namespace Sdo.Server.Net
 
             conn.PlayerId = Clip(NetJson.Str(node, "playerId"), 32);
             conn.Name = SanitizeName(NetJson.Str(node, "name"));
+            // token 綁了身分就覆寫 client 自稱的那份(見上面的註解 —— 這是整個 token 機制的重點)。
+            if (ident.HasPlayerId) conn.PlayerId = Clip(ident.PlayerId, 32);
+            if (ident.HasName) conn.Name = SanitizeName(ident.Name);
             conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
             conn.Level = Math.Max(0, NetJson.Int(node, "level"));
             conn.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));

@@ -35,9 +35,21 @@ flowchart LR
 - server 要保管的其實只有**房間**,而房間是暫時的:開房→打歌→散。它連資料庫都不需要
   (歌曲暫存是檔案,而且最多留一天)。
 
-代價講清楚:**沒有跨機器的身分**。`playerId` 是 client 自稱的,server 不驗。
-所以現階段只適合 LAN / 信任的朋友(見 [networking.md](../systems/networking.md) 的安全性一節)。
-要開公網就得補 token 認證 + TLS —— 那是排在最後的獨立階段,協定已經預留 `authToken` 欄位。
+代價講清楚:**預設沒有跨機器的身分**。`playerId` 是 client 自稱的,server 不驗 ——
+那是 LAN / 信任的朋友之間的模式,也是預設值。
+
+要開公網,server 端有四個參數要給(token 認證、TLS、來源限制、上傳配額),
+給了就換成「身分由 server 決定 + 全程加密」:
+
+| 開關 | 沒給(預設) | 給了 |
+|---|---|---|
+| `--tokens <file>` | `hello.playerId` 說了算 | server 用 token 查出你是誰,client 自稱的被忽略 |
+| `--tls-cert <pfx>` | 明文 TCP | TLS 1.2/1.3;自簽憑證靠 client 釘選指紋 |
+| `--allow-from` / `--max-per-ip` | 誰都能連、連幾條都行 | 握手前就擋 |
+| `--upload-mb-hour` | 只有 TTL 與總容量上限 | 每人每小時的上傳量也有上限 |
+
+四道防線共同的性質是**沒生效時什麼異狀都沒有**,所以 server 每次開機都會把現在的模式印出來
+(`⚠️` 開頭的每一行 = 一個缺口)。完整設定步驟見 [server/README.md](../../server/README.md) 的公網化一節。
 
 ## 帳號
 

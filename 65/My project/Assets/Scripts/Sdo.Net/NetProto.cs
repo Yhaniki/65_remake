@@ -1,4 +1,4 @@
-namespace Sdo.Net
+﻿namespace Sdo.Net
 {
     /// <summary>
     /// 協定版本 + 所有訊息的 type 字串。
@@ -197,6 +197,12 @@ namespace Sdo.Net
 
         /// <summary>進站密碼不符(<c>bye</c> 的 reason)。client 要翻成人看得懂的提示。</summary>
         public const string ErrBadPassword = "badPassword";
+
+        /// <summary>
+        /// token 認證失敗(<c>bye</c> 的 reason)。M10 公網化:server 啟用 token 檔之後,
+        /// 身分由 server 決定,client 沒帶或帶錯 token 就進不來。
+        /// </summary>
+        public const string ErrBadToken = "badToken";
 
         // ---- blob error code ----
 

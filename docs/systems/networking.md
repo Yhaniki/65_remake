@@ -87,10 +87,21 @@ Sdo.Osu/     歌曲指紋 SongPackId / 過濾 SongPackFilter / 路徑安全 Safe
 
 ## 安全性(現況與界線)
 
-**MVP 沒有帳號認證、沒有加密。`playerId` 完全由 client 自稱。**
-請只在 LAN 或信任的朋友之間使用,不要直接開在公網。
+**預設模式(server 沒給公網參數)= 沒有帳號認證、沒有加密,`playerId` 完全由 client 自稱。**
+那是 LAN / 信任的朋友之間的模式,也是預設值。
 
-但**濫用防護 MVP 就做了** —— 事後補會動到協定:
+**開公網要給四個參數**(`--tokens` / `--tls-cert` / `--max-per-ip` / `--upload-mb-hour`);
+完整步驟見 [server/README.md](../../server/README.md) 的公網化一節。兩件跟 client 有關的:
+
+- `config.ini` 的 `serverTls=1` + `serverCertFingerprint=<server 開機印出來那串>`。
+  自簽憑證**一定要填指紋** —— 自簽沒有 CA 背書,一般驗證必定失敗,而「驗證失敗就放行」
+  會讓 TLS 只剩裝飾(中間人插一台假 server,加密照樣成立,只是加密給攻擊者)。
+  填了指紋 = 只認那一張憑證;兩者都不成立時 client 連不上,**不會默默退回明文**。
+  比對規則是純函式 `Sdo.Net.TlsPinning`(client/server 共用同一份,有測試守「空指紋不符合任何東西」)。
+- `serverToken=` 對應 server 的 token 檔。啟用後身分由 server 決定,client 自稱的 `playerId` 被忽略。
+  token 是共享機密 → **TLS 是搭配條件不是選項**(明文連線上的 token 等於公開的)。
+
+而**濫用防護一直都在**(不需要任何參數)—— 事後補會動到協定:
 - rate limit(control 32/s、frame 20/s、chat 5/3s),持續超過就斷線
 - 每個 host-only 操作 server 獨立驗一次(client 只是隱藏按鈕,兩層都要做)
 - server 保留的狀態(`waitingForLoad`/`playing`/`results`)client 送不進來

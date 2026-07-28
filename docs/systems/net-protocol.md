@@ -48,7 +48,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 
 | 類別 | 訊息 |
 |---|---|
-| 連線 | `hello`{proto,role,playerId,name,gender,level,guild,password?,**authToken?**(預留),sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
+| 連線 | `hello`{proto,role,playerId,name,gender,level,guild,password?,**authToken?**,sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
 | 房間 | `roomList` / `createRoom`{mode,name} / `joinRoom`{code} → `joinResult`{ok/full/inGame/notFound} / `leaveRoom` / **`roomState`**{rev,code,name,hostUserId,mode,status,capacity,seats[…],spectators[],song,settings} / `setRoomName` |
 | 座位 | `kickUser` / `setSeatClosed` / `transferHost` / `kicked`{reason} / `error`{rq?,code,msg} |
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
@@ -62,6 +62,19 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 
 `playState`:`idle` `ready` **`waitingForLoad`** `loaded` `readyForGameplay` **`playing`** `finished`
 **`results`** `spectating`(粗體 = server 保留,client 送不進來)。
+
+### 握手時的身分:`authToken`
+
+server 沒給 `--tokens` 時 `authToken` 被忽略,身分 = client 自稱的 `playerId`/`name`(LAN 模式)。
+
+給了 token 檔之後**server 說了算**:查得到就用 token 綁的 `playerId`/`name` 覆蓋 client 自稱的那組,
+查不到 → `bye{badToken}`。所以「把 hello 的 playerId 改成別人的」在啟用 token 之後不再有效。
+
+同一條連線上還有另外兩道在 hello **之前**就生效的門(連線在握手之前已經成立):
+來源允許名單 → `bye{notAllowed}`、per-IP 連線數上限 → `bye{tooManyFromIp}`。
+
+加密不在協定層:TLS 包在 framing 外面(`[len][kind][payload]` 一個 byte 都沒變),
+所以 `serverTls` 只影響 stream 怎麼建起來。憑證釘選規則見 `Sdo.Net.TlsPinning`。
 
 ### 為什麼推整份 snapshot 而不是 delta
 

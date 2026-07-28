@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
@@ -63,6 +63,26 @@ namespace Sdo.Server.Net
         /// <summary>定期清掉沒人用的歌曲暫存。</summary>
         private readonly BlobJanitor _janitor;
 
+        // ---- 公網化(M10)。四個都預設關閉/寬鬆 → LAN 行為不變。----
+        private readonly AuthTokens _tokens = new AuthTokens();
+        private readonly OriginPolicy _origin = new OriginPolicy();
+        private readonly UploadQuota _quota = new UploadQuota();
+
+        /// <summary>TLS 憑證。null = 明文(LAN 預設)。開機載入,之後唯讀 → 多執行緒共用安全。</summary>
+        private readonly System.Security.Cryptography.X509Certificates.X509Certificate2 _tlsCert;
+
+        /// <summary>
+        /// TLS 握手的逾時(ms)。連上來卻不講話的人不能無限佔住一條 task ——
+        /// 那是**不需要通過任何認證**就做得到的事。
+        /// </summary>
+        private const int TlsHandshakeTimeoutMs = 10000;
+
+        /// <summary>憑證載入失敗的原因(非 null = server 不該啟動)。</summary>
+        public string TlsError { get; private set; }
+
+        /// <summary>這台 server 的憑證指紋(SHA-256 小寫 hex)。空 = 沒開 TLS。</summary>
+        public string TlsFingerprint { get; private set; } = "";
+
         public Hub(ServerOptions opts)
         {
             _opts = opts;
@@ -74,6 +94,32 @@ namespace Sdo.Server.Net
             if (dropped > 0) Log("清掉 " + dropped + " 份沒收完的上傳暫存");
             _janitor = new BlobJanitor(_blobs, opts.TtlHours,
                                        (long)opts.MaxTotalBlobGb * 1024L * 1024L * 1024L, NowMs());
+
+            // 公網化的三道防線。都是「設了才生效」—— 沒設就完全是 LAN 的行為。
+            _origin.SetAllowList(opts.AllowFrom);
+            _origin.MaxPerIp = opts.MaxPerIp;
+            _quota.BytesPerHour = opts.UploadBytesPerHour;
+            if (!string.IsNullOrEmpty(opts.TokensFile))
+            {
+                var problems = new List<string>();
+                try
+                {
+                    int n = _tokens.Load(System.IO.File.ReadAllText(opts.TokensFile), problems);
+                    Log("token 認證已啟用:" + n + " 個 token(身分由 server 決定,不再信 client 自稱)");
+                }
+                catch (Exception ex) { Log("讀不到 token 檔 " + opts.TokensFile + ":" + ex.Message + " → token 認證未啟用"); }
+                foreach (var pr in problems) Log("token 檔:" + pr);
+            }
+            if (_origin.HasAllowList) Log("來源限制已啟用:" + opts.AllowFrom);
+            if (_quota.Enabled) Log("上傳配額已啟用:每人每小時 " + (opts.UploadBytesPerHour / (1024 * 1024)) + " MB");
+
+            if (opts.TlsEnabled)
+            {
+                string tlsErr;
+                _tlsCert = TlsSetup.Load(opts, out tlsErr);
+                TlsError = tlsErr;
+                TlsFingerprint = TlsSetup.Fingerprint(_tlsCert);
+            }
         }
 
         /// <summary>Unix 毫秒。所有逾時判斷的時間源。</summary>
@@ -116,7 +162,7 @@ namespace Sdo.Server.Net
 
             Console.WriteLine("[sdo-server] 監聽中 " + addr + ":" + ActualPort + "  (protocol v" + NetProto.Version + ")");
             Console.WriteLine("[sdo-server] " + _opts);
-            Console.WriteLine("[sdo-server] ⚠️  MVP:沒有帳號認證、沒有加密 —— 請只在 LAN／信任的朋友之間使用。");
+            PrintSecurityBanner();
 
             var accept = Task.Factory.StartNew(AcceptLoop, TaskCreationOptions.LongRunning);
 
@@ -124,6 +170,32 @@ namespace Sdo.Server.Net
 
             try { _listener.Stop(); } catch { }
             try { accept.Wait(1000); } catch { }
+        }
+
+        /// <summary>
+        /// 開機時把「這台現在受哪些保護」講清楚。
+        ///
+        /// 為什麼要印:M10 的四道防線都是「設了才生效」,而沒生效的時候**什麼異狀都沒有** ——
+        /// 少打一個參數就是裸奔,而且要等出事才知道。所以每次開機都明確說一遍現在是哪一種模式。
+        /// </summary>
+        private void PrintSecurityBanner()
+        {
+            bool hardened = _tokens.Enabled && _tlsCert != null;
+            if (_tlsCert != null)
+            {
+                Console.WriteLine("[sdo-server] TLS 已啟用(TLS 1.2/1.3)。憑證指紋 SHA-256:");
+                Console.WriteLine("[sdo-server]   " + TlsFingerprint);
+                Console.WriteLine("[sdo-server]   自簽憑證的話,把上面那串填進 client 的 config.ini:");
+                Console.WriteLine("[sdo-server]   serverTls=1 / serverCertFingerprint=<上面那串>");
+            }
+            else
+            {
+                Console.WriteLine("[sdo-server] ⚠️  沒有加密(明文 TCP)。要加密請給 --tls-cert <pfx>。");
+            }
+            if (!_tokens.Enabled)
+                Console.WriteLine("[sdo-server] ⚠️  沒有帳號認證 —— 身分由 client 自稱。要認證請給 --tokens <file>。");
+            if (!hardened)
+                Console.WriteLine("[sdo-server] ⚠️  以上任一項缺少時,請只在 LAN／信任的朋友之間使用,不要直接開在公網。");
         }
 
         public void Stop()
@@ -145,26 +217,77 @@ namespace Sdo.Server.Net
                 catch (ObjectDisposedException) { break; }
                 catch (Exception) { continue; }
 
-                var conn = new Connection(Interlocked.Increment(ref _nextConnId), tcp);
-                conn.LastRecvMs = NowMs();
-
-                // 連線數上限:在 actor loop 裡判斷(它才知道目前有幾條)。
-                Post(() =>
-                {
-                    if (_conns.Count >= _opts.MaxConnections)
-                    {
-                        conn.Kill("serverFull");
-                        return;
-                    }
-                    _conns[conn.ConnId] = conn;
-                    Log("連線 #" + conn.ConnId + " 來自 " + conn.RemoteLabel + "(共 " + _conns.Count + " 條)");
-                });
-
-                conn.StartWriter();
-                Task.Factory.StartNew(
-                    () => conn.RunReadLoop(OnFrameFromReader, NowMs, OnConnectionClosed),
-                    TaskCreationOptions.LongRunning);
+                // 一條連線 = 一個 task。**TLS 握手要在這個 task 上做,不能在 accept 迴圈裡等** ——
+                // 握手是好幾趟來回,擋在這裡的話一個慢(或惡意不講話)的 client 就讓所有人都連不進來。
+                var accepted = tcp;
+                Task.Factory.StartNew(() => ServeConnection(accepted), TaskCreationOptions.LongRunning);
             }
+        }
+
+        /// <summary>
+        /// 一條連線的一生:(TLS 握手)→ 註冊 → 讀迴圈。跑在自己的 task 上。
+        ///
+        /// 註冊(以及來源/連線數的檢查)排進 actor loop,而關閉的通知也是從這個 task 排進去的 ——
+        /// 同一個 task 依序 Post,所以「加入」一定排在「移除」前面。
+        /// </summary>
+        private void ServeConnection(TcpClient tcp)
+        {
+            var conn = new Connection(Interlocked.Increment(ref _nextConnId), tcp);
+            conn.LastRecvMs = NowMs();
+
+            if (_tlsCert != null)
+            {
+                string tlsErr;
+                if (!conn.TryStartTls(_tlsCert, TlsHandshakeTimeoutMs, out tlsErr))
+                {
+                    // 握手失敗就結束 —— 這時候還沒有加密通道,送 bye 對方也解不開。
+                    Post(() => Log("連線 #" + conn.ConnId + " 來自 " + conn.RemoteLabel + " TLS 握手失敗:" + tlsErr));
+                    conn.Close("tlsHandshake");
+                    return;
+                }
+            }
+
+            // 連線數上限:在 actor loop 裡判斷(它才知道目前有幾條)。
+            Post(() =>
+            {
+                if (_conns.Count >= _opts.MaxConnections)
+                {
+                    conn.Kill("serverFull");
+                    return;
+                }
+                // 🔴 來源限制與 per-IP 上限要在**hello 之前**擋 —— 連線在握手之前就已經成立,
+                // 所以「開一百條連線把 maxConnections 佔滿」不需要通過任何認證就做得到。
+                string ip = OriginPolicy.IpOf(conn.RemoteLabel);
+                if (!_origin.Allows(ip))
+                {
+                    Log("連線 #" + conn.ConnId + " 來源不在允許名單(" + ip + "),拒絕");
+                    conn.Kill("notAllowed");
+                    return;
+                }
+                if (!_origin.AllowsAnother(CountFromIp(ip)))
+                {
+                    Log("連線 #" + conn.ConnId + " 來自 " + ip + " 的連線數已達上限,拒絕");
+                    conn.Kill("tooManyFromIp");
+                    return;
+                }
+                _conns[conn.ConnId] = conn;
+                Log("連線 #" + conn.ConnId + " 來自 " + conn.RemoteLabel
+                    + (conn.IsTls ? "(TLS" : "(明文") + ",共 " + _conns.Count + " 條)");
+            });
+
+            conn.StartWriter();
+            // 讀迴圈就跑在這個 task 上(以前是再開一個)—— 一條連線一個 task 就夠。
+            conn.RunReadLoop(OnFrameFromReader, NowMs, OnConnectionClosed);
+        }
+
+        /// <summary>這個 IP 現在有幾條連線(per-IP 上限用)。只由 actor loop 呼叫。</summary>
+        private int CountFromIp(string ip)
+        {
+            if (string.IsNullOrEmpty(ip)) return 0;
+            int n = 0;
+            foreach (var kv in _conns)
+                if (string.Equals(OriginPolicy.IpOf(kv.Value.RemoteLabel), ip, StringComparison.Ordinal)) n++;
+            return n;
         }
 
         /// <summary>
@@ -297,6 +420,9 @@ namespace Sdo.Server.Net
             if (!_conns.Remove(conn.ConnId)) return;
 
             Log("連線 #" + conn.ConnId + " 關閉(" + reason + ")");
+
+            // 那個人的上傳配額紀錄可以丟了(不清的話這張表會跟著 server 的執行時間一直長)。
+            if (conn.UserId != 0 && conn.Role == NetProto.RoleControl) _quota.Forget(conn.UserId);
 
             // 傳輸中斷:關掉開著的檔案 handle、清掉暫存目錄。
             // 不做的話那份半成品會一直佔著空間,而且沒有任何 pack 引用它 → 連 janitor 都掃不到

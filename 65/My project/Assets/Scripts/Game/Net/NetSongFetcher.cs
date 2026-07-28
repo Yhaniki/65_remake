@@ -145,7 +145,11 @@ namespace Sdo.Game.Net
             var src = _srcFolder;
             _hashTask = Task.Run(() => SongPackScan.Enumerate(src, hashEverything: true));
 
-            _link.BeginConnect(host, port);
+            // 檔案連線與 control 連線是**同一台 server 的同一個 port** → 加密設定當然要一樣。
+            // (漏掉這裡的話 server 開了 TLS,傳檔那條會用明文去撞 TLS 握手,錯誤訊息只有「Eof」。)
+            _link.BeginConnect(host, port, 5000,
+                               Sdo.Settings.RoomConfig.serverTls,
+                               Sdo.Settings.RoomConfig.serverCertFingerprint);
         }
 
         /// <summary>缺歌的人:把 <paramref name="packId"/> 下載到 <paramref name="destFolder"/>。</summary>
@@ -158,7 +162,11 @@ namespace Sdo.Game.Net
             _destFolder = destFolder ?? "";
             State = NetTransferState.Connecting;
             _link = new NetConnection();   // 每趟一條新的(見 _link 的註解)
-            _link.BeginConnect(host, port);
+            // 檔案連線與 control 連線是**同一台 server 的同一個 port** → 加密設定當然要一樣。
+            // (漏掉這裡的話 server 開了 TLS,傳檔那條會用明文去撞 TLS 握手,錯誤訊息只有「Eof」。)
+            _link.BeginConnect(host, port, 5000,
+                               Sdo.Settings.RoomConfig.serverTls,
+                               Sdo.Settings.RoomConfig.serverCertFingerprint);
         }
 
         public void Cancel(string why)

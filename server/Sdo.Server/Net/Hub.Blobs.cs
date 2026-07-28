@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Sdo.Net;
@@ -156,6 +156,19 @@ namespace Sdo.Server.Net
                 SendBlobError(conn, rq, NetProto.BlobErrQuota, "server 的歌曲暫存空間滿了");
                 return;
             }
+
+            // 每人每小時的上傳配額(M10;預設不限 → LAN 行為不變)。
+            // 🔴 這一條擋的是既有上限擋不住的東西:**一個人反覆上傳不同的歌**。
+            // 每一包都合法(單檔 32 MB / 整包 200 MB 都過),加起來卻能在幾分鐘內把磁碟吃光,
+            // 而且每包在房間換歌前都被 janitor pin 住,清不掉。
+            if (!_quota.Allows(conn.UserId, needBytes, now))
+            {
+                Log("使用者 " + conn.UserId + " 的上傳超過每小時配額(還剩 "
+                    + (_quota.Remaining(conn.UserId, now) / 1024) + " KB),拒絕");
+                SendBlobError(conn, rq, NetProto.BlobErrQuota, "超過每小時上傳配額,請稍後再試");
+                return;
+            }
+            _quota.Add(conn.UserId, needBytes, now);   // 先記帳:同時開兩條上傳的話兩邊都要算進去
 
             var sess = new UploadSession
             {
