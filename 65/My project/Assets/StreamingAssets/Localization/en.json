@@ -204,6 +204,10 @@
    "v": "Kick player"
   },
   {
+   "k": "room.kicked",
+   "v": "You were removed from the room"
+  },
+  {
    "k": "room.slot_transfer_host",
    "v": "Make host"
   },

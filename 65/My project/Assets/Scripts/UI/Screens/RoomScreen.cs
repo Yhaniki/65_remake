@@ -545,6 +545,7 @@ namespace Sdo.UI.Screens
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated += OnRoomUpdated;
                 if (Ctx.Chat != null) Ctx.Chat.MessageReceived += OnRoomChatMessage;
+                if (Ctx.Net != null) Ctx.Net.Kicked += OnKickedFromRoom;   // 被房主踢/位子被關 → 要離開房間畫面
                 LocalizationManager.LanguageChanged += Render;   // 切語言時，房號/房名/位置標示即時重譯
                 _subscribed = true;
             }
@@ -699,6 +700,7 @@ namespace Sdo.UI.Screens
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated -= OnRoomUpdated;
                 if (Ctx.Chat != null) Ctx.Chat.MessageReceived -= OnRoomChatMessage;
+                if (Ctx.Net != null) Ctx.Net.Kicked -= OnKickedFromRoom;
                 LocalizationManager.LanguageChanged -= Render;
                 _subscribed = false;
             }
@@ -4052,6 +4054,23 @@ namespace Sdo.UI.Screens
             }
             if (_startFade != null) _startFade.color = Color.black;
             Nav.StartGame?.Invoke();
+        }
+
+        /// <summary>
+        /// 被房主踢出 / 位子被關掉(server 的 R8 會先發 kicked 再標 Closed)。
+        ///
+        /// 沒有這條的話症狀很怪:server 已經把你移出房間了,但畫面還停在房間 —— 六格全空、
+        /// 房主的角色不見了,只剩你自己站在一個空房間裡,而且什麼提示都沒有(實機兩開驗到的)。
+        ///
+        /// 這裡刻意**不**廣播「離開舞台」:我們已經不在房裡了,那則訊息送不出去也不該送。
+        /// 轉場順序與 <see cref="OnLeave"/> 相同(全黑時才清房間) —— 見那邊的註解。
+        /// </summary>
+        private void OnKickedFromRoom(string reason)
+        {
+            if (Ctx == null || Ctx.Flow == null || Ctx.Flow.Current != ScreenId.Room) return;   // 不在房間畫面就不搶轉場
+            Debug.Log("[room] kicked: " + (reason ?? ""));
+            Toast.Show(L("room.kicked"));
+            ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(ScreenId.GenderSel); });
         }
 
         private void OnLeave()

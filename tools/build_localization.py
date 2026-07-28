@@ -75,6 +75,7 @@ STR = {
     "room.create_failed":        ["Failed to create room", "建立房間失敗", "创建房间失败", "ルームの作成に失敗しました"],
     # M3 座位操作(房主右鍵選單 / 雙擊鎖格)與組隊
     "room.slot_kick":          ["Kick player", "踢出玩家", "踢出玩家", "プレイヤーをキック"],
+    "room.kicked":             ["You were removed from the room", "你被請出了房間", "你被请出了房间", "部屋から退出させられました"],
     "room.slot_transfer_host": ["Make host", "交出房主", "交出房主", "ホストを譲る"],
     "room.slot_close":         ["Close seat", "關閉位置", "关闭位置", "席を閉じる"],
     "room.slot_open":          ["Open seat", "開啟位置", "开启位置", "席を開く"],

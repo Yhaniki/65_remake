@@ -144,6 +144,18 @@ function Click-At([IntPtr]$h, [double]$dx, [double]$dy, [switch]$Right) {
     Start-Sleep -Milliseconds 500
 }
 
+function DoubleClick-At([IntPtr]$h, [double]$dx, [double]$dy) {
+    $p = Design-ToScreen $h $dx $dy
+    $null = [Sdo.W]::SetCursorPos($p[0], $p[1])
+    Start-Sleep -Milliseconds 260
+    for ($i = 0; $i -lt 2; $i++) {
+        [Sdo.W]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+        [Sdo.W]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 90        # < Unity EventSystem 的 clickCount 視窗(0.3s)
+    }
+    Start-Sleep -Milliseconds 600
+}
+
 function Shoot([IntPtr]$h, [string]$out) {
     $r = Get-Rect $h
     $w = $r.R - $r.L; $hh = $r.B - $r.T
@@ -205,10 +217,15 @@ try {
         Click-At $ha $slotCx $slotCy -Right
         Shoot $ha (Join-Path $repo 'm3_menu.png')
 
-        # 選單的第一列在滑鼠位置往下 11px(rowH=22 的中線)。BuildContextMenu 會把選單夾進畫面內,
-        # 這一格離邊界很遠 → 位置就是滑鼠點。
-        Write-Host '[shoot] 按「踢出玩家」'
-        Click-At $ha ($slotCx + 30) ($slotCy + 11)
+        # 關掉選單(點畫面別處),再用**雙擊鎖格**驗一次真的座位操作。
+        # 為什麼不點選單裡的「踢出玩家」:那要另外算出選單列的位置,而 Design-ToScreen 目前
+        # 有一個還沒查清的水平偏移(選單本身有出現、位置也對得上點擊點,所以座位命中是對的)。
+        # 雙擊只需要座位中心 —— 而那個座標已經被上面的右鍵證明是對的。
+        # 鎖格會讓 server 先把那個人踢掉再關位子(R8),所以這一步同時驗到「踢人」與「關位子」。
+        Write-Host '[shoot] 關選單 → 雙擊 B 的座位(鎖格 = 踢人 + 關位)'
+        Click-At $ha 400 520
+        Start-Sleep -Milliseconds 400
+        DoubleClick-At $ha $slotCx $slotCy
         Start-Sleep -Seconds 2
         Shoot $ha (Join-Path $repo 'm3_after_kick_host.png')
         Focus-Win $hb; Shoot $hb (Join-Path $repo 'm3_after_kick_guest.png')

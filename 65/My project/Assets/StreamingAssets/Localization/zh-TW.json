@@ -204,6 +204,10 @@
    "v": "踢出玩家"
   },
   {
+   "k": "room.kicked",
+   "v": "你被請出了房間"
+  },
+  {
    "k": "room.slot_transfer_host",
    "v": "交出房主"
   },
