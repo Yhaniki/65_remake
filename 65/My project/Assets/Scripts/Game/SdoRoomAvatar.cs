@@ -87,10 +87,9 @@ namespace Sdo.Game
         public static SdoAvatar Build(GameObject parent, int layer, RenderMode mode, bool male = false, string[] equippedParts = null, int bodyIndex = 0)
         {
             // PortraitHead + PreviewBody both composite over an alpha-cleared RT → use the opaque-cutout shader so hair
-            // gaps stay transparent instead of writing depth/alpha holes over the face. Only the head portrait collapses
-            // the COAT/PANT submeshes to a single material (it never shows them); the full-body preview keeps the ranges.
+            // gaps stay transparent instead of writing depth/alpha holes over the face. 三種模式的「逐 range 材質分割」
+            // 一律相同 (見下方多材質分支):頭貼曾經被收成單一材質,結果多 range 衣物的第二段整片不見。
             bool useCutout = mode != RenderMode.Scene;
-            bool singleMaterial = mode == RenderMode.PortraitHead;
             string hrcRel = male ? MaleHrc : FemaleHrc;
             // 連身裙把上/下裝槽拿掉,而髖部/腿的皮膚幾何就長在那兩顆 mesh 裡 → 裙子開衩、低背處後面沒東西,直接看穿到
             // 場景 (使用者:「腳上破一個洞」「背後破一塊」)。補一件「裸腿」身體件 (AvatarOutfit.BareLegsFiller:全皮膚
@@ -163,9 +162,13 @@ namespace Sdo.Game
                     go.AddComponent<MeshFilter>().mesh = sub.Mesh;
                     var mr = go.AddComponent<MeshRenderer>();
 
-                    // 2-material skin submeshes (COAT/PANT): cloth range -> garment DDS, skin range -> shared W_Basic DDS.
-                    // Only meaningful for the full-body avatar; the head portrait never shows them, so keep it single.
-                    if (!singleMaterial && sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
+                    // 多材質 range:COAT/PANT 的「布料+皮膚」,以及連身裙的「裙身+圍裙」——每條 range 各自的貼圖。
+                    // ★頭貼(PortraitHead)也要走這條★:MshLoader 已把 mesh 依 range 拆成多個 subMesh,只餵一個
+                    // material 時 Unity 根本不畫第 2 個以後的 subMesh。000892_WOMAN_ONE(range0=藍裙 coat.dds、
+                    // range1=白圍裙+紅蝴蝶結 coat2.dds)在房間頭貼裡就只剩藍裙、白圍裙整片消失 —— 使用者回報
+                    // 「大頭貼一部分沒有顯示出來,顯示完全藍色」。舊前提「頭貼永遠看不到 COAT/PANT」是錯的:
+                    // 頭貼框到胸口,肩線以下的衣服都入鏡。shader 的挑法兩條分支本來就相同,不影響頭貼的不透明合成。
+                    if (sub.Ranges != null && sub.Ranges.Count > 1 && sub.Mesh.subMeshCount == sub.Ranges.Count)
                     {
                         var mats = new Material[sub.Ranges.Count];
                         for (int s = 0; s < sub.Ranges.Count; s++)

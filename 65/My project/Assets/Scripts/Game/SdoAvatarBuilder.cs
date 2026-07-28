@@ -22,8 +22,9 @@ namespace Sdo.Game
             /// <summary>In-stage dancer / lobby avatar: Unlit/Texture, hair two-sided, and the COAT/PANT 2-material
             /// split (cloth range → garment DDS, skin range → shared W_Basic skin DDS).</summary>
             Gameplay,
-            /// <summary>Head portrait / isolated: Sdo/PortraitOpaque, a single texture per submesh (clean opaque
-            /// head for the portrait RT).</summary>
+            /// <summary>Head portrait / isolated: Sdo/PortraitOpaque (clean opaque head over the alpha-cleared portrait
+            /// RT). The per-range material split is kept exactly like Gameplay — the head portrait DOES frame the chest,
+            /// and collapsing a 2-range garment to one material left its second subMesh undrawn (見 LoadParts 內註解)。</summary>
             Portrait,
         }
 
@@ -104,9 +105,13 @@ namespace Sdo.Game
                     go.AddComponent<MeshFilter>().mesh = sub.Mesh;
                     var mr = go.AddComponent<MeshRenderer>();
 
-                    // 2-material skin submeshes (COAT/PANT): cloth range → garment DDS, skin range → shared W_Basic DDS.
-                    // Only meaningful for the full-body Gameplay style; the portrait head never shows them (keep single).
-                    if (style != SkinStyle.Portrait && sub.Ranges != null && sub.Ranges.Count > 1
+                    // 多材質 range:COAT/PANT 的「布料+皮膚」,以及連身裙的「裙身+圍裙」——每條 range 各自的貼圖。
+                    // ★頭貼(Portrait)也要走這條★:MshLoader 已把 mesh 依 range 拆成多個 subMesh,只餵一個 material
+                    // 時 Unity 根本不畫第 2 個以後的 subMesh。000892_WOMAN_ONE(range0=藍裙 coat.dds、range1=白圍裙
+                    // +紅蝴蝶結 coat2.dds)在頭貼裡就只剩藍裙、白圍裙整片消失 —— 使用者回報「大頭貼一部分沒有顯示
+                    // 出來,顯示完全藍色」。舊註解的前提「頭貼永遠看不到 COAT/PANT」是錯的:頭貼框到胸口,肩線
+                    // 以下的衣服都入鏡。shader 的挑法(AlphaShaderFor)兩條分支本來就一樣,故不影響頭貼的不透明合成。
+                    if (sub.Ranges != null && sub.Ranges.Count > 1
                         && sub.Mesh.subMeshCount == sub.Ranges.Count)
                     {
                         var mats = new Material[sub.Ranges.Count];
