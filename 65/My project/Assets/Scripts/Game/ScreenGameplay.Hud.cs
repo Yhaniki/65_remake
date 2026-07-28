@@ -359,6 +359,16 @@ namespace Sdo.Game
         {
             _roster.Clear();
             _roster.Add(new PlayerEntry(localPlayerName, TotalScore, true));
+            // 連線:用 server 推來的真分數,而且**優先於 mockOpponents** —— 真連線時混進假對手的話
+            // 名次是假的,結算列還會多出不存在的人。
+            var netOpp = NetOpponents != null ? NetOpponents() : null;
+            if (netOpp != null)
+            {
+                int cap = Math.Min(netOpp.Length, RosterRows - 1);
+                for (int i = 0; i < cap; i++)
+                    _roster.Add(new PlayerEntry(netOpp[i].Name ?? "", netOpp[i].Score, false));
+                return;
+            }
             if (mockOpponents && !freeMode)   // 自由模式 = solo (no opponents)
             {
                 double now = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : 0.0;

@@ -386,6 +386,54 @@ namespace Sdo.Game
         /// </summary>
         public System.Action LocalReady;
 
+        // ---- 連線:分數流(M4-c)---------------------------------------------------------------------------------
+        // 只傳分數,不傳按鍵記錄:舞蹈是 DPS 編舞驅動的(同一首歌大家跳一樣),收端可以從相鄰兩筆
+        // 判定計數推導出「跳/停」的 gate,所以 replay frame 是多餘的頻寬。
+
+        /// <summary>本機這一刻的成績 —— 分數流的一筆就是送這個。</summary>
+        public struct NetScoreSnapshot
+        {
+            public double TimeMs;                                  // 歌曲時間(負 = 還沒開始)
+            public long Score;
+            public int Combo, MaxCombo, Perfect, Cool, Bad, Miss;
+            public float Hp;                                       // 0..1
+        }
+
+        /// <summary>連線層每 ~200ms 讀一次送上去。離線沒人讀。</summary>
+        public NetScoreSnapshot NetScore
+        {
+            get
+            {
+                var s = default(NetScoreSnapshot);
+                s.TimeMs = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : -1.0;
+                s.Score = TotalScore;
+                if (_score != null)
+                {
+                    s.Combo = _score.Combo; s.MaxCombo = _score.MaxCombo;
+                    s.Perfect = _score.PerfectCount; s.Cool = _score.CoolCount;
+                    s.Bad = _score.BadCount; s.Miss = _score.MissCount;
+                }
+                double hp = _health != null ? _health.Health : HealthProcessor.MaxHealth;
+                s.Hp = Mathf.Clamp01((float)((hp - HealthProcessor.FloorHealth)
+                                             / (HealthProcessor.MaxHealth - HealthProcessor.FloorHealth)));
+                return s;
+            }
+        }
+
+        /// <summary>房內其他舞者的名字 + 目前分數(server 彙整後推來的)。</summary>
+        public struct NetPlayerScore { public string Name; public long Score; }
+
+        /// <summary>
+        /// 連線:右側名單/名次要用的**真**對手。null = 離線 → 走 <see cref="mockOpponents"/> 或 solo。
+        /// 每次 8 拍結算(<c>RefreshRanking</c>)讀一次。
+        /// </summary>
+        public System.Func<NetPlayerScore[]> NetOpponents;
+
+        /// <summary>
+        /// 連線:結算面板要用的真資料(server 的 resultsReady)。null / 回 null = 用本機算的那份。
+        /// </summary>
+        public System.Func<ResultScreen.Row[]> NetResultRows;
+
         // ---- result / finish sequence (歌曲結束 → 輸贏定格動作 → 結算面板; decompiled FinishSequenceTick phase4..6) ----
         private enum ResultPhase { None, FinishPose, Settle, Replay }
         private ResultPhase _resultPhase = ResultPhase.None;
@@ -5015,6 +5063,13 @@ namespace Sdo.Game
         private ResultScreen.Row[] BuildResultRows()
         {
             RebuildRoster();
+            // 連線:server 的 resultsReady 才是每個人**真正**的判定數(對手的判定計數本機根本沒有,
+            // 下面那條路是拿分數反推出來的假數字 —— 只適合離線的假對手)。
+            if (NetResultRows != null)
+            {
+                var netRows = NetResultRows();
+                if (netRows != null && netRows.Length > 0) return netRows;
+            }
             var order = RankingBoard.SortedIndices(_roster);
             int total = Math.Max(1, _notes.Count);
             long top = order.Length > 0 ? Math.Max(1L, _roster[order[0]].Score) : 1L;

@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using Sdo.Game;
 using Sdo.Game.Net;
+using Sdo.Net;
 using Sdo.Localization;
 using Sdo.Settings;
 using Sdo.UI.Catalog;
@@ -353,6 +354,7 @@ namespace Sdo.UI
             // 房間狀態、聊天、開場通知在遊戲中與不在遊戲中都要收。
             // (原本整個 hotkey 區塊被圈在「遊戲中」,很容易誤把 pump 也放進去。)
             if (_ctx != null && _ctx.Net != null) _ctx.Net.Pump();
+            TickNetGameplay();   // 遊玩中每 200ms 把本機成績送上去(見那邊的註解)
 
             // 開機時連不上 → 已退回單機,進到畫面後告知玩家一次。
             if (_netFellBackReason != null)
@@ -524,6 +526,123 @@ namespace Sdo.UI
                 }
                 return false;
             };
+
+            // ---- 分數流 ----
+            _netOpponents.Clear();
+            _netResultRows = null;
+            _netFrameNextAt = 0f;
+            _netPlayFinishedSent = false;
+            net.FramesReceived += OnNetFrames;
+            net.ResultsReady += OnNetResults;
+            // 右側名單/名次:讀 server 推來的最新一筆。**不做插值/推測** —— 分數是別人的權威資料,
+            // 猜出來的數字會讓名次在兩台上不一樣。
+            game.NetOpponents = () =>
+            {
+                if (_netOpponents.Count == 0) return _netOpponentsEmpty;
+                var arr = new ScreenGameplay.NetPlayerScore[_netOpponents.Count];
+                int i = 0;
+                foreach (var kv in _netOpponents)
+                    arr[i++] = new ScreenGameplay.NetPlayerScore { Name = kv.Value.Name, Score = kv.Value.Score };
+                return arr;
+            };
+            game.NetResultRows = () => _netResultRows;
+        }
+
+        // ---- 分數流:收 / 送 ------------------------------------------------------------------------------------
+
+        private sealed class NetOppState { public string Name; public long Score; }
+        private readonly Dictionary<int, NetOppState> _netOpponents = new Dictionary<int, NetOppState>();
+        private static readonly ScreenGameplay.NetPlayerScore[] _netOpponentsEmpty = new ScreenGameplay.NetPlayerScore[0];
+        private ResultScreen.Row[] _netResultRows;
+        private float _netFrameNextAt;
+        private bool _netPlayFinishedSent;
+        private const float NetFrameIntervalSec = 0.2f;   // 5 Hz;server 也是 5 Hz 往下推(NetLimits.ServerFrameHz)
+
+        private void OnNetFrames(NetFrameRow[] rows)
+        {
+            if (rows == null) return;
+            var net = _ctx.Net;
+            int me = net != null ? net.UserId : 0;
+            var match = net != null ? net.Match : null;
+            for (int i = 0; i < rows.Length; i++)
+            {
+                var r = rows[i];
+                if (r.UserId == me) continue;              // 自己的那筆用本機真值,不要繞一圈回來
+                NetOppState st;
+                if (!_netOpponents.TryGetValue(r.UserId, out st))
+                {
+                    st = new NetOppState { Name = MatchNameOf(match, r.UserId) };
+                    _netOpponents[r.UserId] = st;
+                }
+                st.Score = r.Score;
+            }
+        }
+
+        private static string MatchNameOf(NetMatchStart match, int userId)
+        {
+            if (match != null && match.Participants != null)
+                for (int i = 0; i < match.Participants.Length; i++)
+                    if (match.Participants[i].UserId == userId) return match.Participants[i].Name ?? "";
+            return "";
+        }
+
+        private void OnNetResults(NetResultRow[] rows)
+        {
+            if (rows == null || rows.Length == 0) { _netResultRows = null; return; }
+            int me = _ctx.Net != null ? _ctx.Net.UserId : 0;
+            var outRows = new ResultScreen.Row[rows.Length];
+            for (int i = 0; i < rows.Length; i++)
+            {
+                var r = rows[i];
+                int judged = Mathf.Max(1, r.Perfect + r.Cool + r.Bad + r.Miss);
+                outRows[i] = new ResultScreen.Row
+                {
+                    Rank = i + 1,                       // server 已經照分數排好了
+                    Name = r.Name ?? "",
+                    IsLocal = r.UserId == me,
+                    Score = r.Score,
+                    Perfect = r.Perfect, Cool = r.Cool, Bad = r.Bad, Miss = r.Miss,
+                    MaxCombo = r.MaxCombo,
+                    Accuracy = (r.Perfect + r.Cool) * 100.0 / judged,
+                    FullCombo = (r.Bad + r.Miss) == 0,
+                };
+            }
+            _netResultRows = outRows;
+        }
+
+        /// <summary>
+        /// 遊玩中每 200ms 把本機成績送上去,曲末送一次 playFinished。
+        /// 由 Update 呼叫(<see cref="_activeGame"/> 活著時)。
+        ///
+        /// 🔴 playFinished 一定要送,而且中途離開(Esc)也要送:不送的話房間會卡在 playing,
+        /// 要等 server 的逾時才恢復,那段時間誰都不能再開一局。
+        /// </summary>
+        private void TickNetGameplay()
+        {
+            var net = _ctx.Net;
+            if (net == null || net.Match == null || _activeGame == null) return;
+            if (!net.IsMatchParticipant) return;   // 旁觀者不送成績
+            var snap = _activeGame.NetScore;
+            if (Time.unscaledTime >= _netFrameNextAt)
+            {
+                _netFrameNextAt = Time.unscaledTime + NetFrameIntervalSec;
+                net.SendFrame(_netMatchId, snap.TimeMs, snap.Score, snap.Combo, snap.MaxCombo, snap.Hp,
+                              snap.Perfect, snap.Cool, snap.Bad, snap.Miss);
+            }
+        }
+
+        /// <summary>這一局結束(正常打完 / 中途離開)→ 告訴 server,房間才會離開 playing。只會送一次。</summary>
+        private void SendNetPlayFinished()
+        {
+            var net = _ctx.Net;
+            if (net == null || net.Match == null || _netPlayFinishedSent) return;
+            if (!net.IsMatchParticipant) return;
+            _netPlayFinishedSent = true;
+            var snap = _activeGame != null ? _activeGame.NetScore : default(ScreenGameplay.NetScoreSnapshot);
+            net.SendPlayFinished(_netMatchId, snap.Score, snap.Combo, snap.MaxCombo,
+                                 snap.Perfect, snap.Cool, snap.Bad, snap.Miss);
+            net.FramesReceived -= OnNetFrames;
+            net.ResultsReady -= OnNetResults;
         }
 
         // 遊戲中按換鏡頭鍵（預設 F2）→ 存進 OPTION 遊戲頁的「遊戲視角」：切到固定鏡頭就記住是第幾台且標籤變「固定」，
@@ -541,10 +660,12 @@ namespace Sdo.UI
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),
         // so the front-end just tears the gameplay session down and returns to the room. (The legacy ResultsModal is
         // intentionally unused now that the play screen settles itself; kept built only so older call sites compile.)
-        private void ReturnFromGameplay() => TransitionToRoomFromGame();
+        private void ReturnFromGameplay() { SendNetPlayFinished(); TransitionToRoomFromGame(); }
 
         // Esc during play: abandon the run with no settlement and go straight back to the room.
-        private void AbortGameplay() => TransitionToRoomFromGame();
+        // 🔴 中途離開也要送 playFinished(帶當下的部分分數)—— 不送的話房間會卡在 playing,
+        //    要等 server 的逾時才恢復,那段時間誰都不能再開一局。
+        private void AbortGameplay() { SendNetPlayFinished(); TransitionToRoomFromGame(); }
 
         // 遊戲 → 房間：漸黑 → 全黑時拆遊戲場景並切回房間（建 3D 房間的卡頓藏在黑幕下）→ 漸亮，房間 UI 從四邊滑入。
         // 轉場的黑幕獨立於前端 canvas（gameplay 期間前端 canvas 關閉），所以能蓋住還在跑的遊戲畫面。
