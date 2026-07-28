@@ -162,9 +162,12 @@ namespace Sdo.Game
                     ? RoomLayout.SpectatorAnchors[i] : RoomLayout.HostSpawn;
             }
             if (seat <= 0) return RoomLayout.HostSpawn;
-            if (_remoteSpots == null) _remoteSpots = RandomDancerSpots(RoomLayout.SeatCount);
+            // 🔴 只需要 5 個點(座位 1..5;座位 0 是房主,上面就 return 了),而且索引要減 1 對齊。
+            // 舊寫法是「產 6 個點、用 seat % 6」:第 0 個點永遠用不到(白算一個),而且與
+            // FillTestAvatars(產 5 個用 0..4)算出來的站位**不一樣** —— 同一個房間兩套站位。
+            if (_remoteSpots == null) _remoteSpots = RandomDancerSpots(RoomLayout.SeatCount - 1);
             if (_remoteSpots.Length == 0) return RoomLayout.HostSpawn;
-            return _remoteSpots[seat % _remoteSpots.Length];
+            return _remoteSpots[(seat - 1) % _remoteSpots.Length];
         }
 
         /// <summary>
@@ -729,30 +732,14 @@ namespace Sdo.Game
             }
         }
 
-        // Pick <count> RANDOM WALKABLE spots for the filler dancers, clustered (uniform-in-disk) around the central
-        // dance area, kept apart by dancerSpacing and clear of the host. Rejection-samples the SCNROOM mask so none land
-        // on the sofa/furniture or off-map. Fixed seed → reproducible spread (change the seed for a different layout).
+        // Pick <count> RANDOM WALKABLE spots for the other dancers (seats 1..5), clustered (uniform-in-disk) around the
+        // central dance area, kept apart by dancerSpacing and clear of the host. Rejection-samples the SCNROOM mask so
+        // none land on the sofa/furniture or off-map. 規則本體在 DancerSpotSampler(純函式,有測試守著
+        // 「同樣的輸入一定得到同樣的點」—— 那是「每台看到的站位一樣」的前提)。
         private Vector3[] RandomDancerSpots(int count)
-        {
-            var rng = new System.Random(0x5D0);
-            var pts = new System.Collections.Generic.List<Vector3>();
-            var host = new Vector2(RoomLayout.HostSpawn.x, RoomLayout.HostSpawn.z);
-            float sp2 = dancerSpacing * dancerSpacing;
-            for (int guard = 0; guard < 9000 && pts.Count < count; guard++)
-            {
-                double ang = rng.NextDouble() * 6.2831853;
-                double rad = System.Math.Sqrt(rng.NextDouble()) * dancerAreaRadius;
-                float x = dancerAreaCenter.x + (float)(rad * System.Math.Cos(ang));
-                float z = dancerAreaCenter.y + (float)(rad * System.Math.Sin(ang));
-                if (!WalkableRobust(x, z)) continue;
-                var v = new Vector2(x, z);
-                if ((v - host).sqrMagnitude < sp2) continue;
-                bool clash = false;
-                foreach (var p in pts) if ((new Vector2(p.x, p.z) - v).sqrMagnitude < sp2) { clash = true; break; }
-                if (!clash) pts.Add(new Vector3(x, floorY, z));
-            }
-            return pts.ToArray();
-        }
+            => DancerSpotSampler.Sample(count, dancerAreaCenter, dancerAreaRadius, dancerSpacing,
+                                        new Vector2(RoomLayout.HostSpawn.x, RoomLayout.HostSpawn.z),
+                                        floorY, WalkableRobust);
 
         // walkable at (x,z) AND a small footprint around it (so a dancer isn't on a thin sliver / edge). No mask → true.
         private bool WalkableRobust(float x, float z)
