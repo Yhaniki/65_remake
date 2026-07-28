@@ -208,6 +208,18 @@
    "v": "你被請出了房間"
   },
   {
+   "k": "room.force_start_hint",
+   "v": "尚有玩家未準備 — 再按一次「開始」強制開始"
+  },
+  {
+   "k": "room.start_no_response",
+   "v": "伺服器沒有回應開始請求"
+  },
+  {
+   "k": "room.match_aborted",
+   "v": "這一局被取消了"
+  },
+  {
    "k": "room.slot_transfer_host",
    "v": "交出房主"
   },

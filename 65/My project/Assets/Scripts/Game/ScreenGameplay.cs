@@ -376,6 +376,16 @@ namespace Sdo.Game
         // this; BootRevealCo holds the loading screen until it returns true. See BootRevealCo / LocalBootReady.
         public System.Func<bool> ReadyGate;
 
+        /// <summary>
+        /// 本機這一端載完了(場景/角色/譜面/音訊都就緒),但**還沒**開跑 —— 連線層在這裡回報
+        /// <c>setPlayState(loaded)</c>,server 收齊所有人的才廣播 gameplayStarted 讓
+        /// <see cref="ReadyGate"/> 放行。只會被呼叫一次。null = 離線/單機。
+        ///
+        /// 為什麼不讓連線層自己去輪詢 <c>LocalBootReady()</c>:那是 private,而且「載完了」的定義
+        /// (場景 + 音訊 + follow 特效落位)本來就該由 gameplay 自己說,不該在外面再寫一份。
+        /// </summary>
+        public System.Action LocalReady;
+
         // ---- result / finish sequence (歌曲結束 → 輸贏定格動作 → 結算面板; decompiled FinishSequenceTick phase4..6) ----
         private enum ResultPhase { None, FinishPose, Settle, Replay }
         private ResultPhase _resultPhase = ResultPhase.None;
@@ -1138,6 +1148,9 @@ namespace Sdo.Game
         {
             float shownAt = _bootShownRt;   // count the minimum display time from when the loading screen appeared (before the build)
             while (!LocalBootReady()) yield return null;                       // (1) local objects prepared
+            // 連線:先告訴 server「我這邊載完了」,再等它說「大家都好了」。順序不能顛倒 ——
+            // 反過來就是每台都在等別人先講,誰也不會開場(server 的推進條件是「沒人還在 waitingForLoad」)。
+            if (LocalReady != null) { LocalReady(); LocalReady = null; }
             while (ReadyGate != null && !ReadyGate()) yield return null;       // (2) online: all users ready + synced
             while (Time.realtimeSinceStartup - shownAt < loadingMinSec) yield return null;   // (3) minimum display time
 

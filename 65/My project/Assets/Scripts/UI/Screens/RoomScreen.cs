@@ -562,7 +562,12 @@ namespace Sdo.UI.Screens
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated += OnRoomUpdated;
                 if (Ctx.Chat != null) Ctx.Chat.MessageReceived += OnRoomChatMessage;
-                if (Ctx.Net != null) Ctx.Net.Kicked += OnKickedFromRoom;   // 被房主踢/位子被關 → 要離開房間畫面
+                if (Ctx.Net != null)
+                {
+                    Ctx.Net.Kicked += OnKickedFromRoom;          // 被房主踢/位子被關 → 要離開房間畫面
+                    Ctx.Net.MatchStarting += OnMatchStarting;    // server 說開場了 → 才進場(房主與非房主同一條路)
+                    Ctx.Net.GameplayAborted += OnGameplayAborted;
+                }
                 LocalizationManager.LanguageChanged += Render;   // 切語言時，房號/房名/位置標示即時重譯
                 _subscribed = true;
             }
@@ -718,13 +723,19 @@ namespace Sdo.UI.Screens
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated -= OnRoomUpdated;
                 if (Ctx.Chat != null) Ctx.Chat.MessageReceived -= OnRoomChatMessage;
-                if (Ctx.Net != null) Ctx.Net.Kicked -= OnKickedFromRoom;
+                if (Ctx.Net != null)
+                {
+                    Ctx.Net.Kicked -= OnKickedFromRoom;
+                    Ctx.Net.MatchStarting -= OnMatchStarting;
+                    Ctx.Net.GameplayAborted -= OnGameplayAborted;
+                }
                 LocalizationManager.LanguageChanged -= Render;
                 _subscribed = false;
             }
             HideChatModeMenu();
             HideExpressionMenu();
             CloseSlotPopup();   // 常駐單例:選單開著時離房,回來不能還掛著一個指向舊座位的選單
+            _awaitingMatchStart = false;   // 同理:離房時還在等 matchStarting → 回來不能卡住「開始」鈕
             HideRoomChatBubble();
             ClearSentRoomBubbles();
             DestroyBubbleWorld();   // 泡的畫掛在獨立的 GameObject 樹底下(不在 UI canvas 裡)→ 要自己收
@@ -2692,6 +2703,7 @@ namespace Sdo.UI.Screens
             // 所有人的泡都擺完了 → 按深度重排「泡與泡」的前後(UI 材質不寫深度,誰蓋誰只看畫的順序)。
             SortBubbleWorldCanvases();
 
+            TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
             TickDevAutoSay();   // DEV only:設了 SDO_SAY 才會動(見那邊的註解)
         }
 
@@ -4125,6 +4137,114 @@ namespace Sdo.UI.Screens
             return TeamLayoutRules.TryLayoutFor(a, b, c, out _);
         }
 
+        // ==================== 同步進場(M4)====================
+        // 離線:按開始 → 直接漸暗進場(與加連線之前一模一樣)。
+        // 連線:按開始 → requestStart → **等 server 的 matchStarting** 才漸暗。
+        //       為什麼不本機先進場:場景/難度的隨機值由 server echo,而參與者集合是 server 在
+        //       「open → waitingForLoad」那一刻凍結的 —— 本機先跑就會用自己猜的值,兩台看到不同的東西。
+        //       非房主也是收到 matchStarting 才進場,所以兩邊走的是同一條路。
+        private bool _awaitingMatchStart;
+        private float _awaitingSince;
+        private float _lastStartPressAt = -99f;
+        private const float RequestStartTimeoutSec = 8f;    // 沒回應就放開按鈕(不要讓玩家以為卡住)
+        private const float ForceStartDoubleTapSec = 1.5f;  // 這段時間內再按一次 = 強制開始
+
+        private bool Online => Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom;
+
+        private void OnMatchStarting(NetMatchStart m)
+        {
+            _awaitingMatchStart = false;
+            if (m == null || _starting) return;
+            // 🔴 只信 server echo 的 resolved:隨機場景/難度都在那裡面。用自己算的 → 每台的場景不一樣。
+            ApplyResolvedRound(m);
+            _starting = true;
+            _returnedFromStage = true;
+            Ctx.Chat?.Clear();
+            UiSfx.Play(UiSfx.GameStart);
+            StartCoroutine(FadeToStage());
+        }
+
+        private void OnGameplayAborted(long matchId, string reason)
+        {
+            _awaitingMatchStart = false;
+            Debug.Log("[room] gameplay aborted: " + (reason ?? ""));
+            Toast.Show(L("room.match_aborted"));
+        }
+
+        /// <summary>
+        /// 房主把這一局的隨機值抽好交給 server(它會驗範圍再 echo 給所有人)。
+        ///
+        /// 🔴 隨機值一定要在**這一刻**抽好、由 server echo:讓每台自己抽的話場景就會不一樣,
+        /// 而那是「大家在同一個房間玩」最基本的東西。非房主送的 resolved server 不看(host-only)。
+        /// </summary>
+        private NetResolvedRound BuildResolvedRound()
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            var r = new NetResolvedRound();
+            if (s == null) return r;
+            r.SceneId = s.StageRandom
+                ? Random.Range(0, NetLimits.MaxSceneId + 1)   // 隨機場景 → 現在抽
+                : Mathf.Clamp(s.StageId, 0, NetLimits.MaxSceneId);
+            // 隊形:GameSession.Formation 的 3 = 隨機 → 抽 0..2(官方只有三張個人隊形表)
+            r.FormationType = s.Formation >= NetResolvedRound.FormationTypeCount
+                ? Random.Range(0, NetResolvedRound.FormationTypeCount)
+                : Mathf.Clamp(s.Formation, 0, NetResolvedRound.FormationTypeCount - 1);
+            // 組隊版型:湊得出來才填(TeamsCanStart 已經在 OnStart 擋過湊不出來的情形)
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room != null && TeamsCanStart(room, out bool teamMode) && teamMode)
+            {
+                int a = 0, b = 0, c = 0;
+                for (int i = 0; i < room.Seats.Count; i++)
+                {
+                    var seat = room.Seats[i];
+                    if (seat == null || seat.IsEmpty) continue;
+                    bool isHost = seat.UserId != 0 ? room.IsHostUser(seat.UserId) : seat.IsHost;
+                    if (!(isHost || seat.IsReady) || seat.Avail != Availability.Have) continue;
+                    if (seat.Team == (int)TeamTag.A) a++;
+                    else if (seat.Team == (int)TeamTag.B) b++;
+                    else if (seat.Team == (int)TeamTag.C) c++;
+                }
+                if (TeamLayoutRules.TryLayoutFor(a, b, c, out TeamLayout layout)) r.TeamLayout = layout;
+            }
+            return r;
+        }
+
+        /// <summary>requestStart 送出去之後沒有回應 → 放開按鈕。不放的話玩家會以為遊戲卡死。</summary>
+        private void TickAwaitingMatchStart()
+        {
+            if (!_awaitingMatchStart) return;
+            if (Time.unscaledTime - _awaitingSince < RequestStartTimeoutSec) return;
+            _awaitingMatchStart = false;
+            Toast.Show(L("room.start_no_response"));
+        }
+
+        /// <summary>把 server echo 的這一場設定套進 session —— 場景/難度/歌曲都要與所有人一致。</summary>
+        private void ApplyResolvedRound(NetMatchStart m)
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null) return;
+            var r = m.Resolved;
+            if (r != null)
+            {
+                // 🔴 StageFolder 才是 gameplay 真正用的(scenePath = "SCENE/" + StageFolder)——
+                // 只設 StageId 的話場景還是舊的那個,而且兩台會不一樣(症狀:「場景不同步」)。
+                var st = StageCatalog.Get(r.SceneId);
+                s.StageRandom = false;          // 已經抽好了 → 進場不要再抽一次
+                s.StageId = st.Id;
+                s.StageFolder = st.Folder;
+                s.Formation = Mathf.Clamp(r.FormationType, 0, NetResolvedRound.FormationTypeCount - 1);
+                if (r.IsRandomSong) s.SongIsRandom = false;   // 同理:歌也抽好了
+            }
+            // 歌本身:server 的那份才是這一場真正要玩的(隨機難度時是抽出來的那首)。
+            // 官方歌用 gn/fileId 認;外部歌走 packId(M5 才做)→ 這裡先只處理官方歌。
+            if (m.Song != null && m.Song.Official && !string.IsNullOrEmpty(m.Song.Gn))
+            {
+                s.SongGn = m.Song.Gn;
+                s.SongFileId = m.Song.FileId;
+                s.Difficulty = (Difficulty)Mathf.Clamp(m.Song.ChartIndex, 0, 2);
+            }
+        }
+
         private void OnStart()
         {
             if (_starting) return;   // 已在漸暗切場中，忽略重複按
@@ -4133,6 +4253,33 @@ namespace Sdo.UI.Screens
             //    server 也會獨立擋一次(含 force),這裡只是提早講清楚。
             var teamRoom = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             if (!TeamsCanStart(teamRoom, out _)) { Toast.Show(L("room.teams_need_layout")); return; }
+
+            if (Online)
+            {
+                if (_awaitingMatchStart) return;   // 已經送出請求,在等 server 回 matchStarting
+                bool canStart = Ctx.Rooms != null && Ctx.Rooms.CanStart();
+                bool force = false;
+                if (!canStart)
+                {
+                    var r0 = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+                    // 沒歌是硬條件,強制也開不了 → 直接說。
+                    if (r0 == null || string.IsNullOrEmpty(r0.SongTitle)) { Toast.Show(L("room.need_song")); return; }
+                    // 有人沒準備 → 第一次按只提示,1.5 秒內再按一次才強制開始(需求:房主連按兩下強制開始)。
+                    if (Time.unscaledTime - _lastStartPressAt > ForceStartDoubleTapSec)
+                    {
+                        _lastStartPressAt = Time.unscaledTime;
+                        Toast.Show(L("room.force_start_hint"));
+                        return;
+                    }
+                    force = true;
+                }
+                _lastStartPressAt = -99f;
+                _awaitingMatchStart = true;
+                _awaitingSince = Time.unscaledTime;
+                Ctx.Net.RequestStart(force, BuildResolvedRound());
+                return;   // 🔴 這裡**不**進場 —— 等 matchStarting(見 OnMatchStarting)
+            }
+
             if (Ctx.Rooms == null || !Ctx.Rooms.CanStart())
             {
                 var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;

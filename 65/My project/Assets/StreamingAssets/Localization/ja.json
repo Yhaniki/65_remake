@@ -208,6 +208,18 @@
    "v": "部屋から退出させられました"
   },
   {
+   "k": "room.force_start_hint",
+   "v": "未準備のプレイヤーがいます — もう一度「開始」で強制スタート"
+  },
+  {
+   "k": "room.start_no_response",
+   "v": "サーバーが開始要求に応答しませんでした"
+  },
+  {
+   "k": "room.match_aborted",
+   "v": "このラウンドは中止されました"
+  },
+  {
    "k": "room.slot_transfer_host",
    "v": "ホストを譲る"
   },

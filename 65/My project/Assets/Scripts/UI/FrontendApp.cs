@@ -392,7 +392,10 @@ namespace Sdo.UI
 
             // 隨機難度：房間只鎖定「難度範圍」(SongRandomRange)，實際歌曲/難度到這裡(進遊戲)才抽 → 每局重抽，
             // 同一個隨機設定每次進遊戲都是不同歌。easy/normal/hard 一起搜(見 SongListModel.RandomCandidates)。
-            if (s.SongIsRandom)
+            // 🔴 連線時**不要**重抽:這一場要玩哪一首是 server echo 的(RoomScreen.ApplyResolvedRound 已經套好),
+            //    每台自己再抽一次就會各玩一首歌。s.SongIsRandom 在套用 resolved 時已被清掉,這個判斷是第二道保險。
+            bool online = _ctx.Net != null && _ctx.Net.Match != null;
+            if (s.SongIsRandom && !online)
             {
                 var pool = SongListModel.RandomCandidates(SongListModel.FromCatalog().All, s.SongRandomRange);
                 if (pool.Count > 0)
@@ -476,7 +479,51 @@ namespace Sdo.UI
                 game.constantScroll = !gp.songSpeed;             // 進階「歌曲變速」關 → 整首固定流速（忽略譜面 BPM 變化 / SV）
                 game.songBombs = gp.songBombs;                   // 進階「歌曲炸彈」關 → 載譜時把譜面上的炸彈整顆拿掉
             }
+            WireNetGameplay(game);
             _activeGame = game;
+        }
+
+        // ---- 連線:同步進場 ------------------------------------------------------------------------------------
+        // 三件事:
+        //   ① 本機載完了 → setPlayState(loaded) 再 readyForGameplay(兩段式,照 osu:loaded=程式載完、
+        //      readyForGameplay=人準備好;server 的推進條件只看「沒人還在 waitingForLoad」)。
+        //   ② ReadyGate:等 server 廣播 gameplayStarted 才放行 → 所有人同一刻開場。
+        //   ③ 🔴 **逃生**:server 有 30 秒載入逾時(R15)會強制推進,但萬一那個廣播沒到(掉包/斷線),
+        //      這邊不能永遠停在 loading 畫面。所以本機也放一條逾時,時間比 server 的長一點
+        //      (讓 server 先處理;它處理完就會廣播,正常情況永遠用不到這條)。
+        private bool _netGateOpenSeen;
+        private float _netGateArmedRt;
+        private long _netMatchId;
+        private const float NetGateLocalTimeoutSec = 45f;   // > server 的 LoadTimeoutMs(30s)
+
+        private void WireNetGameplay(ScreenGameplay game)
+        {
+            var net = _ctx.Net;
+            var match = net != null ? net.Match : null;
+            if (net == null || match == null) return;   // 離線/單機 → ReadyGate 留 null,行為與加連線之前一樣
+
+            _netMatchId = match.MatchId;
+            _netGateOpenSeen = false;
+            _netGateArmedRt = Time.realtimeSinceStartup;
+            game.playerCount = Mathf.Max(1, match.Participants.Length);
+
+            game.LocalReady = () =>
+            {
+                net.SetPlayState(Sdo.Net.PlayState.Loaded, _netMatchId);
+                net.SetPlayState(Sdo.Net.PlayState.ReadyForGameplay, _netMatchId);
+            };
+            game.ReadyGate = () =>
+            {
+                if (net.GameplayGateOpen) _netGateOpenSeen = true;
+                if (_netGateOpenSeen) return true;
+                if (Time.realtimeSinceStartup - _netGateArmedRt > NetGateLocalTimeoutSec)
+                {
+                    Debug.LogWarning("[net] gameplayStarted 沒收到,本機逾時後照樣開場(match " + _netMatchId + ")");
+                    _netGateOpenSeen = true;
+                    return true;
+                }
+                return false;
+            };
         }
 
         // 遊戲中按換鏡頭鍵（預設 F2）→ 存進 OPTION 遊戲頁的「遊戲視角」：切到固定鏡頭就記住是第幾台且標籤變「固定」，

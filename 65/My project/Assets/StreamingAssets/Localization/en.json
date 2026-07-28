@@ -208,6 +208,18 @@
    "v": "You were removed from the room"
   },
   {
+   "k": "room.force_start_hint",
+   "v": "Not everyone is ready — press Start again to force"
+  },
+  {
+   "k": "room.start_no_response",
+   "v": "The server did not respond to the start request"
+  },
+  {
+   "k": "room.match_aborted",
+   "v": "The round was cancelled"
+  },
+  {
    "k": "room.slot_transfer_host",
    "v": "Make host"
   },

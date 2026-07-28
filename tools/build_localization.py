@@ -76,6 +76,14 @@ STR = {
     # M3 座位操作(房主右鍵選單 / 雙擊鎖格)與組隊
     "room.slot_kick":          ["Kick player", "踢出玩家", "踢出玩家", "プレイヤーをキック"],
     "room.kicked":             ["You were removed from the room", "你被請出了房間", "你被请出了房间", "部屋から退出させられました"],
+    # M4 同步進場
+    "room.force_start_hint":   ["Not everyone is ready — press Start again to force",
+                                "尚有玩家未準備 — 再按一次「開始」強制開始",
+                                "还有玩家未准备 — 再按一次「开始」强制开始",
+                                "未準備のプレイヤーがいます — もう一度「開始」で強制スタート"],
+    "room.start_no_response":  ["The server did not respond to the start request",
+                                "伺服器沒有回應開始請求", "服务器没有回应开始请求", "サーバーが開始要求に応答しませんでした"],
+    "room.match_aborted":      ["The round was cancelled", "這一局被取消了", "这一局被取消了", "このラウンドは中止されました"],
     "room.slot_transfer_host": ["Make host", "交出房主", "交出房主", "ホストを譲る"],
     "room.slot_close":         ["Close seat", "關閉位置", "关闭位置", "席を閉じる"],
     "room.slot_open":          ["Open seat", "開啟位置", "开启位置", "席を開く"],

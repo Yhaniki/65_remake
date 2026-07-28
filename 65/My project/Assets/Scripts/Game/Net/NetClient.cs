@@ -122,6 +122,27 @@ namespace Sdo.Game.Net
         /// <summary>遊玩中的分數流(房內所有人的最新一筆)。</summary>
         public event Action<NetFrameRow[]> FramesReceived;
 
+        /// <summary>
+        /// 這一場的開場資料(matchStarting 收到的那份)。null = 現在不在一場裡。
+        ///
+        /// 為什麼由 NetClient 保管、而不是讓收到事件的畫面自己記:進場流程橫跨
+        /// 房間畫面 → 轉場(RoomScreen.OnHide)→ ScreenGameplay,中間房間畫面會被拆掉。
+        /// 而 gameplay 需要 matchId(送 setPlayState/frame)與 Resolved(隨機場景/難度要與所有人一致)。
+        /// </summary>
+        public NetMatchStart Match { get; private set; }
+
+        /// <summary>
+        /// server 說「大家都載完了,開始跑」了嗎 —— gameplay 的 ReadyGate 讀它。
+        /// 開場前為 false,收到 gameplayStarted 才變 true;本場中止/結算就關掉。
+        /// </summary>
+        public bool GameplayGateOpen { get; private set; }
+
+        /// <summary>這一場結束/作廢 —— matchId 與閘門一起清掉。</summary>
+        private void ClearMatch() { Match = null; GameplayGateOpen = false; }
+
+        /// <summary>本機在這一場裡是舞者(而不是旁觀者)嗎?</summary>
+        public bool IsMatchParticipant => Match != null && Match.IsParticipant(UserId);
+
         /// <summary>聊天訊息。</summary>
         public event Action<NetChatMessage> ChatReceived;
 
@@ -148,6 +169,7 @@ namespace Sdo.Game.Net
             UserId = 0;
             Room = null;
             _lastSeenRev = 0;
+            ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
             _link.BeginConnect(host, port);
         }
 
@@ -156,6 +178,7 @@ namespace Sdo.Game.Net
             _link.Close(reason);
             UserId = 0;
             Room = null;
+            ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
             _sentLook = null;   // 重連後要重送外觀(server 那邊的 conn 已經沒了)
             Moves.Clear();
         }
@@ -213,6 +236,7 @@ namespace Sdo.Game.Net
                 var wasInRoom = Room != null;
                 Room = null;
                 UserId = 0;
+                ClearMatch();
                 Moves.Clear();
                 if (wasInRoom) Raise(RoomLeft, "disconnected");
                 Raise(Disconnected, string.IsNullOrEmpty(_link.LastError) ? "連線中斷" : _link.LastError);
@@ -293,6 +317,7 @@ namespace Sdo.Game.Net
                         string reason = NetJson.Str(node, "reason");
                         Room = null;
                         _lastSeenRev = 0;
+                        ClearMatch();
                         Moves.Clear();
                         Raise(Kicked, reason);
                         Raise(RoomLeft, "kicked:" + reason);
@@ -312,19 +337,35 @@ namespace Sdo.Game.Net
                     }
 
                 case NetProto.MatchStarting:
-                    Raise(MatchStarting, NetMatchStart.Decode(node));
-                    break;
+                    {
+                        var start = NetMatchStart.Decode(node);
+                        Match = start;               // 保管到這一場結束(見 Match 的註解)
+                        GameplayGateOpen = false;
+                        Raise(MatchStarting, start);
+                        break;
+                    }
 
                 case NetProto.GameplayStarted:
-                    Raise(GameplayStarted, NetJson.Long(node, "matchId"));
-                    break;
+                    {
+                        long mid = NetJson.Long(node, "matchId");
+                        // 只認**這一場**的 —— 上一場遲到的 gameplayStarted 不該把新一場的閘門打開。
+                        if (Match != null && Match.MatchId == mid) GameplayGateOpen = true;
+                        Raise(GameplayStarted, mid);
+                        break;
+                    }
 
                 case NetProto.GameplayAborted:
-                    if (GameplayAborted != null)
-                        GameplayAborted(NetJson.Long(node, "matchId"), NetJson.Str(node, "reason"));
-                    break;
+                    {
+                        long mid = NetJson.Long(node, "matchId");
+                        if (Match != null && Match.MatchId == mid) { Match = null; GameplayGateOpen = false; }
+                        if (GameplayAborted != null) GameplayAborted(mid, NetJson.Str(node, "reason"));
+                        break;
+                    }
 
                 case NetProto.ResultsReady:
+                    // 結算 = 這一場結束。閘門一定要關掉,否則下一場在收到自己的 gameplayStarted 之前
+                    // 就會被當成「可以開始」→ 那台會提早開跑,與別人不同步。
+                    GameplayGateOpen = false;
                     Raise(ResultsReady, NetResultRow.DecodeAll(NetJson.Arr(node, "rows")));
                     break;
 
@@ -451,6 +492,8 @@ namespace Sdo.Game.Net
             Send(JObj.New().Str(NetProto.FieldType, NetProto.LeaveRoom));
             Room = null;
             _lastSeenRev = 0;
+            ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
+
             Moves.Clear();   // 位置是「這間房裡的狀態」,離房就沒有意義了(留著會變幽靈)
         }
 
