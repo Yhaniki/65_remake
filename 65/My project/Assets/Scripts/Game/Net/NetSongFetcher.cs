@@ -233,6 +233,12 @@ namespace Sdo.Game.Net
                 // 直接讀 RoomConfig 而不是從外面傳進來:控制連線用的也是同一個來源,不可能漂移。
                 var pw = Sdo.Settings.RoomConfig.serverPassword;
                 if (!string.IsNullOrEmpty(pw)) hello.Str("password", pw);
+                // 🔴 token 同理,而且是**同一個坑的第二次**:server 的 token 檢查也在 OnHello 的最前面、
+                // 不分角色。少了它 → 公網 server 上傳歌曲一律失敗。
+                // (實機驗證抓到的:server「連線 #3 token 認證失敗,拒絕」/ client「傳檔失敗:badToken」,
+                //  但畫面上毫無異狀 —— 那次兩台剛好都有那首歌,所以沒人發現歌其實沒傳上去。)
+                var tok = Sdo.Settings.RoomConfig.serverToken;
+                if (!string.IsNullOrEmpty(tok)) hello.Str("authToken", tok);
                 _link.Send(hello);
                 State = _uploading ? NetTransferState.Hashing : NetTransferState.Negotiating;
                 if (!_uploading) RequestDownload();

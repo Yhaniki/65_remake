@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
@@ -528,6 +528,19 @@ namespace Sdo.UI
             }
             FillNetDancers(game, match, net.UserId);
 
+            // 這一行是「隨機值有沒有同步」的唯一客觀證據:兩台的這一行**必須逐字相同**
+            // (使用者的原話:「就算是 Room 裡面隨機場景,也要隨機到一樣的」)。
+            // 靠截圖比對場景很難說得準 —— 兩張圖看起來像不像不是證據,這行字一樣才是。
+            // tools\verify_online.ps1 就是拿兩邊的這行做 diff。
+            Debug.Log("[net] resolved match=" + match.MatchId
+                      + " scene=" + (match.Resolved != null ? match.Resolved.SceneId : -1)
+                      + " formation=" + game.formationType
+                      + " teamLayout=" + game.teamLayout
+                      + " randomSong=" + (match.Resolved != null && match.Resolved.IsRandomSong
+                                          ? match.Resolved.RandomSong.Gn : "-")
+                      + " dancers=" + game.playerCount
+                      + " spectator=" + (!net.IsMatchParticipant));
+
             // 旁觀(需求 10):不是這一場的參與者 → 只看別人跳舞。
             // 判斷用 server 給的參與者名單,不是本機的「我按了旁觀鈕嗎」—— server 才是唯一權威
             // (它可能因為缺歌/沒準備而把你排除在這一場之外,那時你也是旁觀者)。
@@ -710,6 +723,14 @@ namespace Sdo.UI
             if (net == null || net.Match == null || _activeGame == null) return;
             SyncSpectatorNames(net);               // 中途有人進來/離開旁觀 → 右側名單要跟著變(旁觀者與參賽者都看得到)
             if (!net.IsMatchParticipant) return;   // 旁觀者不送成績
+
+            // 🔴 曲末就送 playFinished,**不要等玩家把結算畫面關掉**。
+            // 結算畫面是在等按鍵的:沒人在鍵盤前面(或有人去泡茶)的話,server 那邊
+            // 這一場永遠不會結束 —— 房間卡在 playing、誰都不能再開一局,而畫面上一切正常。
+            // (實機驗證抓到的:兩台都打完了,server 的 log 就是沒有「場結算」那一行。)
+            // 離開畫面時還是會再呼叫一次,但 _netPlayFinishedSent 已經 latch 住了。
+            if (_activeGame.Finished) SendNetPlayFinished();
+
             var snap = _activeGame.NetScore;
             if (Time.unscaledTime >= _netFrameNextAt)
             {
@@ -756,6 +777,16 @@ namespace Sdo.UI
             var snap = _activeGame != null ? _activeGame.NetScore : default(ScreenGameplay.NetScoreSnapshot);
             net.SendPlayFinished(_netMatchId, snap.Score, snap.Combo, snap.MaxCombo,
                                  snap.Perfect, snap.Cool, snap.Bad, snap.Miss);
+            // 🔴 這裡**不退訂** —— 曲末就會呼叫這支(見 TickNetGameplay),而結算畫面還開著:
+            // 退了的話 server 之後推的 resultsReady 就收不到,結算的名次會停在最後一筆 frame。
+            // 退訂放在真的離開打歌畫面的那條路徑(DetachNetGameplay)。
+        }
+
+        /// <summary>離開打歌畫面:把這一局的訂閱收掉。</summary>
+        private void DetachNetGameplay()
+        {
+            var net = _ctx.Net;
+            if (net == null) return;
             net.FramesReceived -= OnNetFrames;
             net.ResultsReady -= OnNetResults;
         }
@@ -775,12 +806,12 @@ namespace Sdo.UI
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),
         // so the front-end just tears the gameplay session down and returns to the room. (The legacy ResultsModal is
         // intentionally unused now that the play screen settles itself; kept built only so older call sites compile.)
-        private void ReturnFromGameplay() { SendNetPlayFinished(); TransitionToRoomFromGame(); }
+        private void ReturnFromGameplay() { SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame(); }
 
         // Esc during play: abandon the run with no settlement and go straight back to the room.
         // 🔴 中途離開也要送 playFinished(帶當下的部分分數)—— 不送的話房間會卡在 playing,
         //    要等 server 的逾時才恢復,那段時間誰都不能再開一局。
-        private void AbortGameplay() { SendNetPlayFinished(); TransitionToRoomFromGame(); }
+        private void AbortGameplay() { SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame(); }
 
         /// <summary>Ctrl 按著嗎(左右都算)。優先問實體鍵位(不受輸入法影響),不支援時退回 Unity Input。</summary>
         private static bool CtrlHeld()

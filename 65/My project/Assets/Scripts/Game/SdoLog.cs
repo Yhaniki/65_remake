@@ -12,7 +12,8 @@ namespace Sdo.Game
     /// Unity's buried Player.log. Warnings/errors are always written; plain info lines only when <see cref="Verbose"/>
     /// (Debug.Log fires every frame in places, so info is opt-in to keep the file small).
     ///
-    /// Location (printed on the first line and to the console): &lt;exeDir&gt;/log.txt when the exe folder is
+    /// Location (printed on the first line and to the console): <c>SDO_LOG</c> if that env var is set (multi-instance
+    /// testing NEEDS it — see <see cref="ResolvePath"/>), else &lt;exeDir&gt;/log.txt when the exe folder is
     /// writable — the most discoverable spot, right beside dance.exe and DATA/ — else
     /// Application.persistentDataPath/log.txt (always writable). The previous run is kept as log.txt.prev.
     ///
@@ -65,6 +66,22 @@ namespace Sdo.Game
 
         private static string ResolvePath()
         {
+            // 🔴 <c>SDO_LOG=&lt;路徑&gt;</c> 覆寫 —— **同機開兩份 client 時是必要的**:
+            // 兩份都寫 <exeDir>/log.txt,後開的那份在啟動時就把前一份的 log 搬成 .prev(等於清掉),
+            // 之後兩邊還會交錯寫進同一個檔。症狀是「log 裡只有一台的訊息,而且開頭被截掉」——
+            // 看起來像功能沒跑,其實是被另一台蓋掉了。多開測試一定要各給一條路徑。
+            try
+            {
+                var over = Environment.GetEnvironmentVariable("SDO_LOG");
+                if (!string.IsNullOrEmpty(over))
+                {
+                    var dir = System.IO.Path.GetDirectoryName(over);
+                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                    File.AppendAllText(over, "");   // 先確認寫得進去,不然還是要退回預設位置
+                    return over;
+                }
+            }
+            catch { /* 路徑不合法/寫不進去 → 照原本的規則挑 */ }
             try
             {
                 // Built player: Application.dataPath == <exe>/<product>_Data, so its parent is the exe folder.

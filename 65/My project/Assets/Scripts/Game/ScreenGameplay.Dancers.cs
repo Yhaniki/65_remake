@@ -184,7 +184,11 @@ namespace Sdo.Game
             }
             _camAnchorSpot = _slotSpots.Length > 0 ? _slotSpots[0] : Vector3.zero;
 
-            Debug.Log("[dancers] 生出 " + _extraDancers.Count + " 位額外舞者(總共 " + total + " 位,隊形 "
+            // 🔴 數**真的建出來的那幾隻**:_extraDancers 在本機那一格放的是 null 佔位
+            // (索引要與舞者序對齊),直接印 Count 會多算一隻 —— 而這行字是驗證多人同場時唯一的證據。
+            int builtCount = 0;
+            for (int i = 0; i < _extraDancers.Count; i++) if (_extraDancers[i] != null) builtCount++;
+            Debug.Log("[dancers] 生出 " + builtCount + " 位額外舞者(總共 " + total + " 位,隊形 "
                       + ClampedFormationType + ")");
         }
 

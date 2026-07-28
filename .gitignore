@@ -181,3 +181,7 @@ tools/kgn_export/gn_notes.json
 
 # 兩開實機測試時 server 的歌曲暫存(tools/shoot_room_bubble.ps1 -M5 每次重跑會清掉重建)
 /server_data/
+
+# tools/verify_online.ps1 的工作目錄(憑證、token 檔、server 暫存、兩台 client 的 log)。
+# 每次重跑會整個刪掉重建 —— 報告 online_verify.md 才是要留的那份。
+/.verify_online/
