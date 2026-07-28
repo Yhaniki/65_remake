@@ -37,6 +37,12 @@ namespace Sdo.UI.Util
         public const float AnchorCanvasX = 85.5f;
         public const float AnchorCanvasY = 56.5f;
 
+        // 泡身美術(TALK/ENTER/ADDANI)是男女共用的白/淡青玻璃圖，唯一分性別的是「泡裡的字」：女=桃紅、男=藍。
+        public static readonly Color32 TextColorFemale = new Color32(0x7C, 0x01, 0x38, 0xFF);
+        public static readonly Color32 TextColorMale = new Color32(0x3B, 0x5A, 0xA6, 0xFF);
+
+        public static Color32 TextColor(bool male) => male ? TextColorMale : TextColorFemale;
+
         private static string _dir;
         private static readonly Dictionary<string, Sprite[]> _framesCache = new Dictionary<string, Sprite[]>();
         private static readonly Dictionary<string, Sprite> _spriteCache = new Dictionary<string, Sprite>();

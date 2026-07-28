@@ -67,7 +67,10 @@ namespace Sdo.UI.Screens
         private const float ChatBubbleFollowTicksPerSecond = 20f;
         private const float ChatBubbleFollowStep = 0.33333335f;
         private const float ChatBubbleDragScale = 1f;
-        private static readonly Color ChatBubbleTextColor = new Color32(0x7C, 0x01, 0x38, 0xFF);
+        // 泡內字色分性別(女桃紅/男藍)。用 property 現算而非常數：性別可在遊玩中改(商城 ActivateGenderProfile)，
+        // 打字泡是建一次重用的 → 每次進打字態要重刷色(見 BeginRoomBubbleTyping)；已送出的泡在 Spawn 當下取色。
+        private Color ChatBubbleTextColor => RoomBubbleArt.TextColor(LocalIsMale);
+        private bool LocalIsMale => Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
         // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe；
         // 家族=綠（你沒有家族也用綠；你說＝白，沿用一般行色）。
         private const string ChatSystemHex = "F0C24A";
@@ -1685,6 +1688,10 @@ namespace Sdo.UI.Screens
             _chatDraftWasEmpty = string.IsNullOrEmpty(_chatInput.text);
             SetRoomChatInputEchoVisible(false);
             FocusRoomChatInput();
+
+            var textColor = ChatBubbleTextColor;   // 泡是重用的：性別可能在建完之後才換(商城換性別)→ 每次進打字態重取
+            if (_chatBubbleText != null) _chatBubbleText.color = textColor;
+            if (_chatBubbleCaret != null) _chatBubbleCaret.color = textColor;
 
             ApplyRoomBubbleTypingStyle();
             if (_chatBubbleAdd != null) _chatBubbleAdd.gameObject.SetActive(false);
