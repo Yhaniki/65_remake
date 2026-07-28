@@ -82,8 +82,18 @@ namespace Sdo.Game
         public const string FlyWalkFemale = "MOTION/FLY_NV.MOT";
         public const string FlyWalkMale = "MOTION/FLY_NAN.MOT";
 
-        /// <summary>World-Y hover added to a flying avatar while moving (Player_StepMovement 028:2852: <c>y += 10</c>).</summary>
+        /// <summary>World-Y hover added to a flying avatar. NOT movement-gated: the decompile writes the same
+        /// <c>y += 10</c> from BOTH the per-frame transform update (Player_UpdateTransform_004ab4a0 028:2614, which has
+        /// no movement gate at all) and the walk step (Player_StepMovement 028:2852) — and both guard it with the SAME
+        /// condition, the flying flag +0x255 alone. So a flying avatar hovers while standing still too.</summary>
         public const float FlyHoverY = 10f;
+
+        /// <summary>World-Y hover for an avatar that is / isn't flying. The flystay clip does NOT lift the body by
+        /// itself (measured on the real MOTs against the ground idle: the lowest bone only rises ~2.6 units for
+        /// FLYSTAY_NV and ~0.7 for FLYSTAY_NAN, vs ~12 for the FLY_* glide) — so WITHOUT this constant hover a
+        /// standing flyer just stands on the floor. That was the bug: gating the hover on "is moving" made the
+        /// avatar rise only while walking. See <see cref="FlyHoverY"/> for the decompiled sites.</summary>
+        public static float HoverY(bool flyingWing) => flyingWing ? FlyHoverY : 0f;
 
         /// <summary>The flying-IDLE clip (rest cat 0x2c) for a gender — FLYSTAY_NAN (male) / FLYSTAY_NV (female).</summary>
         public static string FlyIdleMot(bool male) => male ? FlyIdleMale : FlyIdleFemale;

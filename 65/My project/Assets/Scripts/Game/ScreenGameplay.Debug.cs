@@ -155,8 +155,8 @@ namespace Sdo.Game
                 if (fsb != scrollFollowsSongBpm) { scrollFollowsSongBpm = fsb; BuildScroll(); }
                 if (!scrollFollowsSongBpm)
                 {
-                    GUILayout.Label($"固定基準 BPM: {referenceBpm:F0}");
-                    float nb = GUILayout.HorizontalSlider(referenceBpm, 60f, 240f);
+                    GUILayout.Label($"固定基準 BPM: {referenceBpm:F0}（開局值＝config.ini scrollBaseBpm，這裡調不寫回檔案）");
+                    float nb = GUILayout.HorizontalSlider(referenceBpm, 30f, 400f);   // 與 RoomConfig.Sanitize 的夾值同範圍
                     if (Mathf.Abs(nb - referenceBpm) > 0.5f) { referenceBpm = nb; BuildScroll(); }
                 }
                 bool cs = GUILayout.Toggle(constantScroll, constantScroll
@@ -501,20 +501,14 @@ namespace Sdo.Game
                 }
                 GUILayout.Space(8);
                 GUILayout.Label("══ 頭像 AvtShow（idle 人物）即時套用 ══");
-                headAutoFrame = GUILayout.Toggle(headAutoFrame, headAutoFrame
-                    ? " 自動取景: ON（量測髮頂自動算距離→永不切頂；用 zoom 微調）"
-                    : " 自動取景: OFF（手動 dist/瞄準偏移）");
-                if (headAutoFrame)
-                {
-                    GUILayout.Label($"自動 zoom: {headZoom:F2}（>1 拉遠=頭變小+上方留白更多；<1 放大）");
-                    headZoom = GUILayout.HorizontalSlider(headZoom, 0.5f, 2f);
-                    GUILayout.Label($"（自動算出的 dist≈{headPortraitDist:F0}）");
-                }
+                GUILayout.Label("取景只對頭骨（不量臉/頭髮/配件）→ 換裝扮頭恆等大、恆等位置");
+                GUILayout.Label($"zoom: {headZoom:F2}（>1 拉遠=頭變小+上方留白更多；<1 放大）");
+                headZoom = GUILayout.HorizontalSlider(headZoom, 0.5f, 2f);
                 GUILayout.Label($"旋轉 yaw: {headAvatarYaw:F0}°（官方結算=0 正面）");
                 headAvatarYaw = GUILayout.HorizontalSlider(headAvatarYaw, 0f, 360f);
                 GUILayout.Label($"縮放 scale: {headAvatarScale:F2}");
                 headAvatarScale = GUILayout.HorizontalSlider(headAvatarScale, 0.2f, 6f);
-                GUILayout.Label($"相機 距離 dist: {headPortraitDist:F0}（小=放大；自動取景時無效）");
+                GUILayout.Label($"相機 距離 dist: {headPortraitDist:F1}（模型單位，相對頭骨；小=放大）");
                 headPortraitDist = GUILayout.HorizontalSlider(headPortraitDist, 5f, 120f);
                 GUILayout.Label($"相機 FOV: {headPortraitFov:F0}（官方=45）");
                 headPortraitFov = GUILayout.HorizontalSlider(headPortraitFov, 10f, 60f);

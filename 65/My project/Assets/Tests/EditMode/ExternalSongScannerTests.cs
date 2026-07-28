@@ -25,6 +25,7 @@ namespace Sdo.Tests
         [TearDown]
         public void TearDown()
         {
+            ExternalSongScanner.CollapseShortHolds = false;   // 靜態掃描設定：別漏給下一個測試
             try { if (Directory.Exists(_root)) Directory.Delete(_root, true); } catch { /* temp dir */ }
         }
 
@@ -607,6 +608,84 @@ namespace Sdo.Tests
             var back = SongSidecar.Parse(SongSidecar.ReadText(dir));
             Assert.AreEqual(12f, back[0].OffsetMs, 1e-3f, "the migrated file carries the new offset");
             Assert.AreEqual("cd.png", back[0].CdImage, "migrating kept the recorded disc");
+        }
+
+        // ---- 選歌那欄的音符數 = 判定次數（＝全接的最大 combo）----
+
+        // 一張 4K .sm：#BPMS 240 ＋ 每小節 16 行 → 一行 62.5 ms。
+        //   tap ×2、正常長條 ×1（8 行 = 500 ms）、極短長條 ×1（1 行 = 62.5 ms < 83 ms 的收合門檻）
+        // → 物件數 4、判定次數 6（長條的放開各算一次）、收合開著時 5。
+        private static void SmWithHolds(string dir, string file, string music, string title)
+        {
+            var rows = new string[16];
+            for (int i = 0; i < rows.Length; i++) rows[i] = "0000";
+            rows[0] = "1000";                       // tap
+            rows[1] = "0100";                       // tap
+            rows[2] = "0010"; rows[10] = "0030";    // 長條 500 ms（row2 的 '2' → row10 的 '3'）
+            rows[12] = "0002"; rows[13] = "0003";   // 極短長條 62.5 ms
+            File.WriteAllText(Path.Combine(dir, file),
+                "#TITLE:" + title + ";\n#ARTIST:Tester;\n#MUSIC:" + music + ";\n#OFFSET:0.000;\n" +
+                "#BPMS:0.000=240.000;\n#NOTES:\n     dance-single:\n     :\n     Hard:\n     8:\n" +
+                "     0,0,0,0,0:\n" + string.Join("\n", rows) + "\n;\n");
+        }
+
+        // 一張 4K osu!mania 譜：tap ×2 ＋ 長條 ×1（type 128，第一個 objectParam 是結束時間）。
+        private static void OsuWithHold(string dir, string file, string audio, string title, int holdMs)
+        {
+            var sb = new StringBuilder();
+            sb.Append("osu file format v14\n\n[General]\nAudioFilename: ").Append(audio).Append('\n');
+            sb.Append("PreviewTime: 1000\nMode: 3\n\n[Metadata]\nTitle:").Append(title).Append('\n');
+            sb.Append("Artist:Tester\nVersion:Hard\nBeatmapSetID:-1\n\n[Difficulty]\nCircleSize:4\n\n[Events]\n");
+            sb.Append("\n[TimingPoints]\n0,500,4,2,0,100,1,0\n\n[HitObjects]\n");
+            sb.Append("64,192,500,1,0,0:0:0:0:\n");                                  // tap
+            sb.Append("192,192,750,1,0,0:0:0:0:\n");                                 // tap
+            sb.Append("320,192,1000,128,0,").Append(1000 + holdMs).Append(":0:0:0:0:\n");   // 長條
+            File.WriteAllText(Path.Combine(dir, file), sb.ToString());
+        }
+
+        [Test]
+        public void Sm_Note_Count_Is_Judged_Events_So_It_Equals_The_Max_Combo()
+        {
+            // 選歌那欄和官方 .gn 表頭的 notes 是同一個語意：長條的頭與放開各算一次判定
+            //（官方 25 首 × 3 難度實測 68/75 等於 OsuBeatmap.TotalNotes，其餘是沒長條、兩種算法同值的譜）。
+            // 長條只算一顆的話,一張長條多的 .sm 打完會發現 combo 比選歌寫的多出幾十。
+            var dir = Dir("pack", "sm");
+            Audio(dir, "track.mp3");
+            SmWithHolds(dir, "chart.sm", "track.mp3", "Holds");
+
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+
+            Assert.AreEqual(1, songs.Count);
+            Assert.AreEqual(6, songs[0].Charts[2].NoteCount, "2 taps + 2 holds × (頭 + 放開) = 6 次判定");
+        }
+
+        [Test]
+        public void Note_Count_Follows_The_Short_Hold_Collapse_Setting()
+        {
+            // 「無理短長條→一般 note」開著時（預設）那條 62.5 ms 的長條會被收成 tap，少一次放開判定 ——
+            // ScreenGameplay.LoadChart 就是這樣載譜的，所以選歌那欄要跟著少，數字才等於玩家打得到的 combo。
+            var dir = Dir("pack", "sm");
+            Audio(dir, "track.mp3");
+            SmWithHolds(dir, "chart.sm", "track.mp3", "Holds");
+
+            ExternalSongScanner.CollapseShortHolds = true;
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+
+            Assert.AreEqual(5, songs[0].Charts[2].NoteCount, "短長條收成 tap → 少一次放開判定");
+        }
+
+        [Test]
+        public void Osu_Note_Count_Counts_The_Hold_Release_Too()
+        {
+            // osu 那條路線本來是拿 [HitObjects] 的行數（長條算一顆）——和 .sm 一樣要改看判定次數。
+            var dir = Dir("pack", "osu");
+            Audio(dir, "track.mp3");
+            OsuWithHold(dir, "chart.osu", "track.mp3", "Holds", 1000);
+
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+
+            Assert.AreEqual(1, songs.Count);
+            Assert.AreEqual(4, songs[0].Charts[2].NoteCount, "2 taps + 1 hold × (頭 + 放開) = 4 次判定");
         }
     }
 }

@@ -112,5 +112,19 @@ namespace Sdo.Tests
             Assert.AreEqual(at64, at22, 1e-3f);
             Assert.AreEqual(at64, at40, 1e-3f);
         }
+
+        [Test]
+        public void CharSize_Legacy_Calibration_Matches_Old_Hud_Pair()
+        {
+            // 遊戲 HUD 底列(歌名/LV/時間)舊寫法 = fontSize 64 + characterSize designPx×0.2；改走實體 px 光柵後，
+            // 顯示大小必須「一模一樣」，否則歌名會位移/變大。
+            const float c = NameplateMetrics.PxToCharSizeLegacyAt64;
+            Assert.AreEqual(11f * 0.2f, NameplateMetrics.CharacterSizeFor(11f, 64, c), 1e-4f);
+            float at64 = 64 * NameplateMetrics.CharacterSizeFor(11f, 64, c);
+            float at11 = 11 * NameplateMetrics.CharacterSizeFor(11f, 11, c);   // 800×600 視窗
+            float at20 = 20 * NameplateMetrics.CharacterSizeFor(11f, 20, c);   // 1080p 全螢幕
+            Assert.AreEqual(at64, at11, 1e-3f);
+            Assert.AreEqual(at64, at20, 1e-3f);
+        }
     }
 }

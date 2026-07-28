@@ -221,6 +221,8 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 ├── config.ini                 # ★ 設定總表（RoomConfig）
 │     [Profile] activeId       #   目前登入的角色（＝下面的 8 位數資料夾名）
 │     [Room]                   #   開房間右側面板預設：速度檔位表/note/組隊/掉落/模式/場景/判定精度/offset
+│                              #   ＋ note 速度的基準 BPM(scrollBaseBpm，預設 130，範圍 30~400；
+│                              #     畫面速度 = 它 × 速度檔位 × 1.6 px/s，調它＝所有歌一起變快/變慢)
 │                              #   ＋ COMBO/判定字的大小(comboTextScale/judgeTextScale)、不透明度
 │                              #     (comboTextAlpha/judgeTextAlpha，預設 0.6，不擋住下落中的音符)、
 │                              #     打中彈跳峰值倍率(comboTextPop/judgeTextPop，官方 2.0，1.0=不彈跳)

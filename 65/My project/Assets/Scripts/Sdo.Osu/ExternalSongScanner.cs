@@ -36,6 +36,16 @@ namespace Sdo.Osu
         /// </summary>
         public static bool SlotByMsd;
 
+        /// <summary>
+        /// 掃描時算音符數要不要照「無理短長條→一般 note」收合（<c>RoomConfig.optCollapseShortHolds</c>，
+        /// <see cref="OsuBeatmap.CollapseShortHolds"/>）。收掉的長條少一次「放開」判定，選歌那欄要跟著少，
+        /// 不然顯示的數字就不等於玩家實際打得到的 combo（實測一張 .sm 收 2 條 → 999 vs 997）。
+        /// **這個欄位本身預設 false**（純資料組件，不讀設定層），呼叫端每次掃描前都要灌值，同 <see cref="SlotByMsd"/>；
+        /// 快取也要記著它是用哪個值算的（<c>ExternalScanCache</c> 的 calc 鍵），換設定 → 冷快取重掃一次。
+        /// 只影響 osu/sm/mc 這些外部轉檔譜 —— .gn 歌曲包的音符數讀表頭，本來就是官方自己算的判定次數。
+        /// </summary>
+        public static bool CollapseShortHolds;
+
         /// <summary>分槽用的等級表。<paramref name="byMsd"/> 且**每張譜都算得出 MSD** → 用 MSD 換算等級；只要有一張
         /// 缺（空譜/太短算不出來）就整首退回 osu 等級 —— 兩種尺度混在一起比，排出來只會更亂。純函式。</summary>
         public static List<int> SlotLevels(IReadOnlyList<ChartStats> stats, bool byMsd)
@@ -517,7 +527,10 @@ namespace Sdo.Osu
                     var st = stats[c];
                     d.Charts[s] = new ExternalChart
                     {
-                        FilePath = candFile[i], ChartIndex = 0, NoteCount = candMeta[i].NoteCount,
+                        // 音符數 = 判定次數(長條的放開也算一次,見 ChartStats.JudgedNotes);
+                        // 解析失敗(0)才退回 [HitObjects] 的行數。
+                        FilePath = candFile[i], ChartIndex = 0,
+                        NoteCount = st.JudgedNotes > 0 ? st.JudgedNotes : candMeta[i].NoteCount,
                         Level = st.Level, DurationSec = st.DurationSec, Msd = st.Msd,
                     };
                 }
@@ -578,7 +591,10 @@ namespace Sdo.Osu
                     var st = candStats[c];
                     d.Charts[s] = new ExternalChart
                     {
-                        FilePath = smPath, ChartIndex = candIndex[c], NoteCount = candCount[c],
+                        // 音符數 = 判定次數(長條的放開也算一次,見 ChartStats.JudgedNotes);
+                        // 解析失敗(0)才退回 PlayableNoteCount(長條只算一顆)。
+                        FilePath = smPath, ChartIndex = candIndex[c],
+                        NoteCount = st.JudgedNotes > 0 ? st.JudgedNotes : candCount[c],
                         Level = st.Level, DurationSec = st.DurationSec, Msd = st.Msd,
                     };
                 }
@@ -644,7 +660,10 @@ namespace Sdo.Osu
                     var st = mStats[c];
                     d.Charts[s] = new ExternalChart
                     {
-                        FilePath = candFile[i], ChartIndex = 0, NoteCount = counts[i],
+                        // 音符數 = 判定次數(長條的放開也算一次,見 ChartStats.JudgedNotes);
+                        // 解析失敗(0)才退回 .mc 的 note 筆數。
+                        FilePath = candFile[i], ChartIndex = 0,
+                        NoteCount = st.JudgedNotes > 0 ? st.JudgedNotes : counts[i],
                         Level = st.Level, DurationSec = st.DurationSec, Msd = st.Msd,
                     };
                 }
@@ -818,9 +837,17 @@ namespace Sdo.Osu
             return n;
         }
 
-        /// <summary>Level + play time of ONE chart. Both come from the same full parse — the star rating already needs
-        /// it, so the 時間 column costs nothing extra (the scan still only full-parses the 3 chosen charts).</summary>
-        public struct ChartStats { public int Level; public int DurationSec; public float Msd; }
+        /// <summary>Level + play time + 判定次數 of ONE chart. All come from the same full parse — the star rating already
+        /// needs it, so the 時間 column costs nothing extra (the scan still only full-parses the 3 chosen charts).</summary>
+        public struct ChartStats
+        {
+            public int Level; public int DurationSec; public float Msd;
+            /// <summary>選歌畫面那欄音符數 ＝ 這張譜的**判定次數**（<see cref="OsuBeatmap.TotalNotes"/>：長條的頭與放開各一次，
+            /// 炸彈與 warp 掃掉的裝飾音不算）＝ 全接時的最大 combo。官方 .gn 表頭寫的 notes 就是這個數
+            /// （實測 25 首 × 3 難度：68/75 等於 TotalNotes，其餘 7 個是沒有長條、兩種算法同值的譜），
+            /// 外部歌照著算才會和官方歌讀起來一樣。0 = 解析失敗（呼叫端退回自己那份便宜的物件數）。</summary>
+            public int JudgedNotes;
+        }
 
         // Level from osu!mania star rating (star × 7, clamped). Level 0 / no duration on failure.
         private static ChartStats OsuStats(string osuPath)
@@ -844,12 +871,17 @@ namespace Sdo.Osu
             catch { return new ChartStats { Level = 0 }; }
         }
 
-        /// <summary>Rating + duration of a parsed chart. Duration = the last note's time (hold ends included), which is
-        /// the same measure the official catalog's dur* carries — so both kinds of song read alike in the list.</summary>
+        /// <summary>Rating + duration + 判定次數 of a parsed chart. Duration = the last note's time (hold ends included),
+        /// which is the same measure the official catalog's dur* carries — so both kinds of song read alike in the list.
+        ///
+        /// <see cref="ChartStats.JudgedNotes"/> 要和 <c>ScreenGameplay.LoadChart</c> 看到的是同一張譜,所以
+        /// <see cref="CollapseShortHolds"/> 開著時**先收合再數** —— 但收合放在難度算完之後:收掉的是幾條無理短長條,
+        /// 讓它去動星等/MSD 只會讓顯示的 LV 無聲飄一格。呼叫這支的三條路線(osu/sm/mc)都是
+        /// <see cref="OsuBeatmap.AllowsShortHoldCollapse"/> 為 true 的外部轉檔譜;.gn 歌曲包不走這裡(音符數讀表頭)。</summary>
         public static ChartStats StatsOf(OsuBeatmap beatmap, int fallbackLevel)
         {
             if (beatmap == null) return new ChartStats { Level = fallbackLevel };
-            return new ChartStats
+            var stats = new ChartStats
             {
                 Level = ManiaStarRating.Level(beatmap),
                 DurationSec = (int)Math.Round(Math.Max(0.0, beatmap.LastNoteMs) / 1000.0),
@@ -857,6 +889,9 @@ namespace Sdo.Osu
                 // uses the osu star LEVEL; this is carried alongside for the MinaCalc difficulty display.
                 Msd = ManiaMsd.Overall(beatmap),
             };
+            if (CollapseShortHolds) beatmap.CollapseShortHolds();
+            stats.JudgedNotes = beatmap.TotalNotes;
+            return stats;
         }
 
         private static string First(List<int> charts, Func<int, string> field, string fallback)

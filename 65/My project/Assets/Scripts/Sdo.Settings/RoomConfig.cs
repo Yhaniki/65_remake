@@ -31,6 +31,12 @@ namespace Sdo.Settings
         public static int defaultDropDirection = 0;  // 掉落方式：0=向上,1=向下,2=傾斜
         public static int defaultGameMode = 0;       // 模式：0=自由模式,1=普通模式,2=ShowTime模式
         public static int defaultScene = -1;         // 場景：-1=隨機(預設)；0..30=指定場景 id(見 StageCatalog)。玩家在選歌選了會寫回這裡
+
+        // note 下落速度的「基準 BPM」（＝ ManiaScroll.DefaultReferenceBpm 的落地值，Sdo.Settings 不參照 Sdo.Osu 所以這裡寫死同一個數）。
+        // 螢幕像素速度 = scrollBaseBpm × 速度檔位 × 1.6 px/s（官方公式）。每首歌用同一個基準 → 同一個檔位在每首歌都一樣快；
+        // 譜面自己的 BPM 變化/SV 仍會在曲內相對加減速（ManiaScroll 的 multiplier），這個值只決定「1.0× 是多快」。
+        // 130 = 現行預設；調大 = 整體變快（所有歌、所有檔位等比例）。見 docs/architecture/scroll-base-bpm.md。
+        public static float scrollBaseBpm = 130f;
         // 判定精度：沿用 StepMania 的「精N」（1~8，9=JUSTICE）。以精4 為基準窗（Perfect 45 / Cool 90 / Bad 135 /
         // Miss 180 ms）乘上該精度的係數；精2 = ×1.33。手改這個 key 就能整組調鬆緊，見 JudgmentWindows.FromStepManiaJudge。
         public static int judgeLevel = 2;
@@ -96,6 +102,7 @@ namespace Sdo.Settings
         public static bool hasTextScaleKeys = false;   // 同上：檔案是否帶 combo/判定文字大小鍵
         public static bool hasTextAlphaKeys = false;   // 同上：檔案是否帶 combo/判定文字透明度鍵（比大小鍵晚加，得各自記）
         public static bool hasTextPopKeys = false;     // 同上：檔案是否帶 combo/判定文字彈跳倍率鍵（又比透明度鍵晚加）
+        public static bool hasScrollBaseBpmKey = false;// 同上：檔案是否帶 scrollBaseBpm（最晚加的一個，舊檔都沒有 → 補寫模板）
         public static bool hasOptUiScale = false;   // 檔案是否帶 opt_uiScale（舊檔沒有 → 從舊 settings.json 撿）
         public static bool hasSongBombsKey = false; // 檔案是否帶 opt_songBombs（沒有＝舊檔只有語意相反的 opt_disableBombs
                                                     // → Load 重寫一次模板，把舊鍵換成新鍵）
@@ -283,6 +290,7 @@ namespace Sdo.Settings
                 // 舊檔只有語意相反的 opt_disableBombs（值已在 ParseInto 反過來搬進 optSongBombs）→ 重寫一次，
                 // 把它換成 opt_songBombs，之後檔案裡不再有舊鍵。
                 if (!hasSongBombsKey) dirty = true;
+                if (!hasScrollBaseBpmKey) dirty = true;// note 速度基準 BPM 是最晚加的，舊檔一律補寫一次
 
                 _loaded = true;        // 一定要在下面那個 Save() 之前 —— 補寫新 key 是合法的寫入
                 _loadedPath = FilePath;
@@ -483,6 +491,7 @@ namespace Sdo.Settings
                     case "defaultDropDirection": defaultDropDirection = ParseInt(val, defaultDropDirection); break;
                     case "defaultGameMode": defaultGameMode = ParseInt(val, defaultGameMode); break;
                     case "defaultScene": defaultScene = ParseInt(val, defaultScene); break;
+                    case "scrollBaseBpm": scrollBaseBpm = ParseFloat(val, scrollBaseBpm); hasScrollBaseBpmKey = true; break;
                     case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
                     case "globalOffsetMs": globalOffsetMs = ParseFloat(val, globalOffsetMs); break;
                     case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
@@ -540,6 +549,8 @@ namespace Sdo.Settings
             defaultDropDirection = Mathf.Clamp(defaultDropDirection, 0, 2);
             defaultGameMode = Mathf.Clamp(defaultGameMode, 0, 2);
             if (defaultScene < -1 || defaultScene > 30) defaultScene = -1;   // 只允許 -1(隨機) 或 0..30(可選場景 id)
+            if (scrollBaseBpm <= 0f) scrollBaseBpm = 130f;                   // 0/負數＝音符不動或倒著走 → 回預設
+            scrollBaseBpm = Mathf.Clamp(scrollBaseBpm, 30f, 400f);           // 30 = 慢到看不出在動；400 × 8 檔 = 5120px/s 已經飛出畫面
             judgeLevel = Mathf.Clamp(judgeLevel, 1, 9);                      // 精1~精8、9=JUSTICE
             globalOffsetMs = Mathf.Clamp(globalOffsetMs, -300f, 300f);       // 再大就不是延遲、是打錯拍了
             judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
@@ -651,6 +662,10 @@ namespace Sdo.Settings
             sb.Append("defaultGameMode=").Append(defaultGameMode).Append('\n');
             sb.Append("# 預設場景：-1=隨機，0..30=指定場景 id（步行街=0 … 卡通公路=30）。玩家在選歌選了會寫回這裡\n");
             sb.Append("defaultScene=").Append(defaultScene).Append('\n');
+            sb.Append("# note 下落速度的基準 BPM（範圍 30~400，預設 130）：畫面速度 = 這個值 × 速度檔位 × 1.6 px/s。\n");
+            sb.Append("# 每首歌共用同一個基準（同一檔位在每首歌一樣快）；譜面自己的 BPM 變化/SV 仍會在曲內相對加減速。\n");
+            sb.Append("# 調大＝所有歌、所有檔位一起變快（例：130→160 全部快 23%），嫌整體太快就往下調。\n");
+            sb.Append("scrollBaseBpm=").Append(scrollBaseBpm.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 判定精度（StepMania 的「精N」）：1~8，9=JUSTICE。數字越大越嚴格。\n");
             sb.Append("# 以精4 為基準窗（Perfect ±45 / Cool ±90 / Bad ±135 / Miss ±180 ms）乘該精度係數：\n");
             sb.Append("#   精1=1.50 精2=1.33 精3=1.16 精4=1.00 精5=0.84 精6=0.66 精7=0.50 精8=0.33 JUSTICE=0.20\n");

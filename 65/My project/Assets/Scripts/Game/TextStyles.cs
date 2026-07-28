@@ -373,29 +373,55 @@ namespace Sdo.Game
     /// raster pixel = characterSize×0.1 (Unity's fixed TextMesh scale), so placing cell k+1 at cell k's advance
     /// reproduces the native string at trackEm 0, then a constant reduction pulls the characters closer. Used for the
     /// gameplay HUD bottom song title.
+    ///
+    /// 光柵尺寸跟著螢幕走(同 <see cref="Label3D.Refresh"/>)：舊版寫死 fontSize 64 再用 characterSize 縮到 ~13px 顯示，
+    /// 等於把字圖縮小 5 倍取樣，而動態字型 atlas 沒有 mipmap → 邊緣糊出鬼影(「歌名有殘影」)。改成依 PHYSICAL 螢幕
+    /// px 光柵、characterSize 反向補回，字圖就近 1:1 畫出來，顯示大小完全不變。<see cref="Tick"/> 每幀檢查一次，
+    /// 解析度/視窗大小一改就重新光柵化。
     /// </summary>
     public sealed class TrackedTextMesh
     {
         public readonly GameObject root;
         private readonly Font _font;
-        private readonly int _fontSize;
-        private readonly float _charSize;
+        private readonly float _designPx;      // 想在螢幕上站多高(設計 px) — 光柵尺寸由它 × 螢幕縮放算出
         private readonly int _order;
         private readonly TextAnchor _anchor;
         private readonly float _trackEm;
+        private int _fontPx;                   // 目前的光柵尺寸(實體 px)
+        private float _charSize;               // 對應的 characterSize，維持顯示高度 = _designPx
         private Color _color;
         private TextMesh[] _cells;
         private string _text = "";
 
-        public TrackedTextMesh(string name, Font font, int fontSize, float charSize, Color color, int order, TextAnchor anchor, float trackEm)
+        public TrackedTextMesh(string name, Font font, float designPx, Color color, int order, TextAnchor anchor, float trackEm)
         {
             root = new GameObject(name);
-            _font = font; _fontSize = fontSize; _charSize = charSize; _color = color; _order = order; _anchor = anchor; _trackEm = trackEm;
+            _font = font; _designPx = designPx; _color = color; _order = order; _anchor = anchor; _trackEm = trackEm;
+            PickRaster();
         }
 
         public Vector3 Position { set { root.transform.position = value; } }
         public void SetActive(bool on) { if (root != null) root.SetActive(on); }
         public Color Color { set { _color = value; if (_cells != null) foreach (var c in _cells) if (c != null) c.color = value; } }
+
+        /// <summary>目前螢幕下該用的光柵尺寸；有變才回 true。</summary>
+        private bool PickRaster()
+        {
+            float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
+            int fp = NameplateMetrics.FontPxFor(_designPx, sy);
+            if (fp == _fontPx) return false;
+            _fontPx = fp;
+            _charSize = NameplateMetrics.CharacterSizeFor(_designPx, fp, NameplateMetrics.PxToCharSizeLegacyAt64);
+            return true;
+        }
+
+        /// <summary>每幀呼叫：視窗大小/全螢幕切換後重新以實體 px 光柵化(沒變就是 no-op)。</summary>
+        public void Tick()
+        {
+            if (!PickRaster() || _cells == null) return;
+            foreach (var c in _cells) if (c != null) { c.fontSize = _fontPx; c.characterSize = _charSize; }
+            Reflow();
+        }
 
         public string Text
         {
@@ -419,7 +445,7 @@ namespace Sdo.Game
                 var go = new GameObject("c" + k);
                 go.transform.SetParent(root.transform, false);
                 var tm = go.AddComponent<TextMesh>();
-                tm.font = _font; tm.fontSize = _fontSize; tm.characterSize = _charSize;
+                tm.font = _font; tm.fontSize = _fontPx; tm.characterSize = _charSize;
                 tm.anchor = TextAnchor.MiddleLeft; tm.alignment = TextAlignment.Left; tm.color = _color;
                 tm.text = s[k].ToString();
                 var mr = go.GetComponent<MeshRenderer>();
@@ -432,16 +458,16 @@ namespace Sdo.Game
         {
             int n = _cells.Length;
             if (n == 0) return;
-            _font.RequestCharactersInTexture(_text, _fontSize, FontStyle.Normal);
+            _font.RequestCharactersInTexture(_text, _fontPx, FontStyle.Normal);
             float worldPerPx = 0.1f * _charSize;
             // 收緊量逐字串 clamp，字母不會黏在一起（SimSun 半形西文的 "TA" 天生只有 0.043em）→ 見 TextTracking。
-            float trackEm = TextTracking.SafeTrackEm(_font, _text, _fontSize, FontStyle.Normal, _trackEm, TextStyles.MinInkGapEm);
-            float reduce = trackEm * _fontSize * worldPerPx;
+            float trackEm = TextTracking.SafeTrackEm(_font, _text, _fontPx, FontStyle.Normal, _trackEm, TextStyles.MinInkGapEm);
+            float reduce = trackEm * _fontPx * worldPerPx;
             var adv = new float[n];
             float total = 0f;
             for (int k = 0; k < n; k++)
             {
-                float a = _font.GetCharacterInfo(_text[k], out CharacterInfo info, _fontSize, FontStyle.Normal) ? info.advance : _fontSize;
+                float a = _font.GetCharacterInfo(_text[k], out CharacterInfo info, _fontPx, FontStyle.Normal) ? info.advance : _fontPx;
                 adv[k] = a * worldPerPx; total += adv[k];
             }
             if (n > 1) total -= reduce * (n - 1);

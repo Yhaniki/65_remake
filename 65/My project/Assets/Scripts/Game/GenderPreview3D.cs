@@ -108,7 +108,7 @@ namespace Sdo.Game
                 show.gameObject.SetActive(true);
                 var av = show.GetComponent<SdoAvatar>();
                 EnsureRandomMotion(av, gender == 1);
-                FrameTo(av, show);
+                FrameTo(av, show, gender == 1);
             }
         }
 
@@ -127,7 +127,7 @@ namespace Sdo.Game
             av.BlendSec = PreviewMotBlendSec;
             ApplyRandomMotion(av, male, restart: true);
             // feet on y=0 at the park spot; yaw 0 faces the −Z camera (RoomMovement.FacingDegrees(2) = 0°)
-            float feet = av.FeetYAt(0f);
+            float feet = GroundFeetY(av, male);
             go.transform.position = new Vector3(Park.x, Park.y + avatarYOffset - feet, Park.z);
             go.transform.localRotation = Quaternion.Euler(0f, avatarYaw, 0f);
             go.SetActive(false);
@@ -253,15 +253,23 @@ namespace Sdo.Game
             RtSizing.Apply(_rt, w, h);
         }
 
+        /// <summary>落地/取景的基準腳高 — 一律用「地面站姿」量,不用當下播的 clip。<see cref="SdoAvatar.FeetYAt(float)"/>
+        /// 會先 pose 當前 clip 再取最低頂點,而這個畫面播的是隨機 idle 池(每次抽到的姿勢不同),穿飛行翅膀時更是 flystay
+        /// (腳收起來) → 基準會跟著姿勢跳,人的落點與取景距離跟著抖。用固定站姿量,基準才是身體的常數。
+        /// 註:這裡不加 <see cref="SpecialMotionItems.HoverY"/> —— 預覽 RT 是透明底、沒有地面可參照,把人整體上移只會讓
+        /// 取景偏上,看不出「浮空」。浮空要看得見的地方是房間與舞台。見 [[sdo-special-item-idle-walk]]。</summary>
+        private static float GroundFeetY(SdoAvatar av, bool male)
+            => av.FeetYAt(0f, SdoRoomAvatar.LoadMot(male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot));
+
         // Frame the dancer head-to-toe: feet rest on y=0 (set at build), the head bone (+ hair pad) is the top. Place a
         // level camera on −Z at a distance that fits the body height into fillFrac of the vertical FOV.
-        private void FrameTo(SdoAvatar av, Transform root)
+        private void FrameTo(SdoAvatar av, Transform root, bool male)
         {
             if (_cam == null || av == null || root == null) return;
             av.PoseFrame(0f);
             float headY = av.BoneModelPos("Bip01_Head").y;
             if (headY <= 0f) headY = av.BoneModelPos("Bip01_Neck").y;
-            float feet = av.FeetYAt(0f);
+            float feet = GroundFeetY(av, male);   // 同一把尺:取景高度不隨隨機 idle / flystay 抖動
             float bodyTop = (headY > 0f ? (headY - feet) : nominalHeight) * (1f + framePadTop);   // world Y of hair top (feet at 0)
             float viewH = Mathf.Max(bodyTop, 1f) / Mathf.Max(fillFrac, 0.1f);                      // vertical extent to frame
             float centerY = bodyTop * 0.5f + verticalBias;

@@ -80,13 +80,15 @@ namespace Sdo.Tests
         public void TrackedTextMesh_OneCellPerChar_ReusesOnSameLength()
         {
             var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            var t = new TrackedTextMesh("song", font, 64, 11 * 0.2f, Color.white, 0, TextAnchor.MiddleLeft, TextStyles.SongTitleTrackEm);
+            var t = new TrackedTextMesh("song", font, 11f, Color.white, 0, TextAnchor.MiddleLeft, TextStyles.SongTitleTrackEm);
             try
             {
                 t.Text = "ABCDE";
                 Assert.AreEqual(5, t.root.GetComponentsInChildren<TextMesh>(true).Length, "one cell per character");
                 t.Text = "12345";   // same length → reuse the existing cells (no rebuild)
                 Assert.AreEqual(5, t.root.GetComponentsInChildren<TextMesh>(true).Length, "same-length update must reuse cells");
+                t.Tick();           // 解析度沒變 → no-op，cells 不重建
+                Assert.AreEqual(5, t.root.GetComponentsInChildren<TextMesh>(true).Length, "Tick must not churn cells");
             }
             finally { Object.DestroyImmediate(t.root); }
         }

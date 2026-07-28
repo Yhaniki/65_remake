@@ -49,7 +49,7 @@ namespace Sdo.Tests
         public void Rebuilt_Room_Avatar_Sees_Its_Own_Idle_As_The_Same_Clip()
         {
             // 這條是上面那條規則的**行為**版本:重演換裝重建的兩步(Build 載 RestMot → 依穿搭再載一次 idle 並 SetClip),
-            // 然後用 IsRestPose(它就是在比 _mot == RestMot)確認 SdoAvatar 認得這是同一段動作。
+            // 然後用 IsShowingRestClip(它就是在比 _mot == RestMot)確認 SdoAvatar 認得這是同一段動作。
             if (!HaveData()) Assert.Ignore("AVATAR data root not found");
             GameObject go = null;
             try
@@ -60,7 +60,7 @@ namespace Sdo.Tests
                 Assert.IsNotNull(av.RestMot, "Build 應該把待機動作掛成 RestMot");
 
                 av.SetClip(SdoRoomAvatar.LoadMot(SdoRoomAvatar.IdleMot));   // = ApplyOutfitMotion 那次載入
-                Assert.IsTrue(av.IsRestPose,
+                Assert.IsTrue(av.IsShowingRestClip,
                     "換裝重建後套回同一段待機動作 → 必須被當成同一個 clip;不然會多混一次 0.5 秒 crossfade(換衣服抖一下)");
             }
             finally { if (go != null) Object.DestroyImmediate(go); }

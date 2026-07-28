@@ -6,9 +6,9 @@ namespace Sdo.Game
     /// Renders one live 3D avatar HEAD into a RenderTexture for a room head-portrait slot — the same technique the
     /// result screen uses (ScreenGameplay BuildIdleHeadAvatar / UpdateHeadPortraitCam): an isolated idle avatar parked
     /// far off the room, on its own layer, framed head-on (3/4 yaw) by a dedicated camera with a transparent
-    /// background. The camera targets the head bone's REST position so the idle head-bob plays inside the frame instead
-    /// of being chased, and auto-frames off the FACE box raised to the measured hair-top (ComputeHeadBox) so the whole
-    /// head fits, the hair is never cut, and a 長髮 mesh can't push the camera away (商城卡片同招:依可見幾何 bbox auto-fit).
+    /// background. The frame is measured ONCE off the FACE box (ComputeFraming) so 換髮型/戴帽子頭都恆等大;after that the
+    /// camera keeps its distance to the head through <see cref="HeadPortraitAimFilter"/>: 待機/走路的小擺動落在死區內 →
+    /// 相機一動也不動,擺動在框內演出;飛行滑翔那種「一直偏同一邊」的大幅前傾會被慢爬吃掉 → 距離守住,頭不會爆大。
     /// Owns its avatar + camera + RT; release via OnDestroy (the host destroys this GameObject).
     /// </summary>
     public sealed class RoomHeadPortrait : MonoBehaviour
@@ -42,6 +42,15 @@ namespace Sdo.Game
         /// <summary>髮頂/下巴離畫面邊緣至少留這麼多(臉高單位)。</summary>
         public const float FitMarginFaces = 0.05f;
 
+        // ---- 跟頭(帶死區的低通) ---------------------------------------------------------------------------------
+        /// <summary>相機跟頭的死區半徑(臉高單位)。頭離基準姿勢在這個範圍內 → 相機一動也不動(擺動在框內演出);
+        /// 超出才跟,而且只跟超出的那一段。見 <see cref="HeadPortraitAimFilter"/>。</summary>
+        public float aimDeadZoneFaces = HeadPortraitAimFilter.DefaultDeadZoneFaces;
+        /// <summary>跟頭的指數平滑時間常數(秒)。</summary>
+        public float aimSmoothSec = HeadPortraitAimFilter.DefaultSmoothSec;
+        /// <summary>慢爬的時間常數(秒)→ 死區留下的殘餘距離最後也會補回來。</summary>
+        public float aimCreepSec = HeadPortraitAimFilter.DefaultCreepSec;
+
         private SdoAvatar _avatar;
         private Renderer[] _headRends;     // FACE + HAIR renderers (fallback: no FACE mesh → union of these)
         private Renderer[] _faceRends;     // FACE* only → 頭本體 = 取景基準 (換髮型不變)
@@ -51,7 +60,6 @@ namespace Sdo.Game
         private Camera _cam;
         private RenderTexture _rt;
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);
-        private float _hairOffsetModel = -1f;
         private float _chatActionUntil = -1f;   // 頭貼跟著房間 avatar 做聊天動作:此時間前不被 walk/idle 鏡射覆寫
 
         // ---- 凍結的取景(模型空間) ---------------------------------------------------------------------------------
@@ -62,6 +70,10 @@ namespace Sdo.Game
         private Vector3 _aimModel;      // 取景目標(模型空間)
         private float _distModel;       // 相機距離(模型單位;世界距離 = × avatarScale)
         private Vector3 _rootModel0;    // 凍結當下的 root 骨位置 → 走路時的位移補償(只補平移,不補擺動)
+        private Vector3 _headRelRoot0;  // 凍結當下「頭骨相對 root」的位置 → 姿勢把頭挪走多少,就是下面要跟的量
+        private float _faceHeightModel; // 凍結當下的臉高(模型單位)→ 死區的尺標
+        private Vector3 _aimFollow;     // 濾波後的「跟頭」補償(模型空間;死區內恆為上一幀的值)
+        private string _headBone = "Bip01_Head";
 
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
@@ -97,9 +109,10 @@ namespace Sdo.Game
             _cam.targetTexture = _rt;
             _cam.depth = -20;
 
-            // cache the head bone REST model-space position (fallback target when bounds aren't ready)
+            // cache the head bone REST model-space position (fallback target when bounds aren't ready) and remember WHICH
+            // bone answered — UpdateCam reads that same bone live each frame to follow a leaning pose (see _aimFollow).
             Vector3 hp = _avatar.BoneModelPos("Bip01_Head");
-            if (hp == Vector3.zero) hp = _avatar.BoneModelPos("Bip01_Neck");
+            if (hp == Vector3.zero) { hp = _avatar.BoneModelPos("Bip01_Neck"); if (hp != Vector3.zero) _headBone = "Bip01_Neck"; }
             if (hp != Vector3.zero) _headModelPos = hp;
 
             // collect the FACE renderers (the head proper — same mesh for every costume) and the HAIR renderers
@@ -179,19 +192,24 @@ namespace Sdo.Game
             Vector3 target; float dist;
             if (_framed)
             {
-                // 只補「root 骨的平移」(走路時整個人前進/浮沉),頭的擺動不補 → 擺動在框內演出,相機不追、不晃。
-                Vector3 drift = _avatar.BoneModelPos(RootBone) - _rootModel0;
-                target = t.TransformPoint(_aimModel + drift);
+                // (1) root 骨的平移(走路時整個人前進/浮沉)照補,一格不差。
+                Vector3 root = _avatar.BoneModelPos(RootBone);
+                Vector3 drift = root - _rootModel0;
+                // (2) 姿勢把頭挪離基準多少 —— 過濾之後才補。純凍結(只補 (1))時,身體大幅前傾的姿勢會讓頭朝相機
+                //     衝過去、相機到頭的距離被吃掉 → 頭爆大:飛行滑翔 (FLY_NV/FLY_NAN) 就是這樣,前傾「持續」把頭往
+                //     相機挪 11 個模型單位(相機距離才 ~25)。反過來每幀直接追頭又會被待機/走路的小擺動帶著抖。
+                //     所以交給 HeadPortraitAimFilter:死區擋掉擺動(實測待機 1.39 / 走路 1.61,死區 3.14),
+                //     慢爬把「一直偏同一邊」的前傾整個吃掉(實測殘餘 0.17)。
+                Vector3 headRel = _avatar.BoneModelPos(_headBone) - root;
+                _aimFollow = HeadPortraitAimFilter.Step(_aimFollow, headRel - _headRelRoot0,
+                                                        aimDeadZoneFaces * _faceHeightModel,
+                                                        aimSmoothSec, aimCreepSec, Time.deltaTime);
+                target = t.TransformPoint(_aimModel + drift + _aimFollow);
                 dist = _distModel * Mathf.Max(0.01f, avatarScale);
             }
-            else   // 姿勢/bounds 還沒好 → 退回頭骨 + 量到的髮頂
-            {
-                EnsureHairOffset();
-                float h = _hairOffsetModel * Mathf.Max(0.01f, avatarScale);
-                Vector3 restHead = t.TransformPoint(_headModelPos);
-                target = restHead + new Vector3(0f, h > 0.001f ? 0.35f * h : 9f, 0f);
-                dist = (h > 0.001f ? 1.9f * h : 28f) * Mathf.Max(0.05f, zoom);
-            }
+            else   // 臉的 bounds 還沒好 → 退回「只對頭骨」的固定取景(HeadBoneFraming;不量任何 mesh)
+                HeadBoneFraming.Compute(t.TransformPoint(_headModelPos), avatarScale, zoom,
+                                        new Vector3(0f, HeadBoneFraming.AimUpModel, 0f), out target, out dist);
             _cam.fieldOfView = fov;
             Vector3 dir = Quaternion.Euler(pitchDeg, 0f, 0f) * Vector3.forward;   // +Z, (optionally pitched down)
             _cam.transform.position = target - dir * dist;
@@ -212,6 +230,9 @@ namespace Sdo.Game
             ComputeFraming(face, hairFound && fitHairTop, hairTop,
                            headFrameDist, zoom, headAimUp, fov, out _aimModel, out _distModel);
             _rootModel0 = _avatar.BoneModelPos(RootBone);
+            _headRelRoot0 = _avatar.BoneModelPos(_headBone) - _rootModel0;   // 跟頭的基準姿勢 = 量框的這個姿勢
+            _faceHeightModel = Mathf.Max(face.size.y, 1e-4f);                // 死區的尺標(臉高單位 → 模型單位)
+            _aimFollow = Vector3.zero;
             _framed = true;
             LogFramingOnce(face, hairFound, hairTop, _aimModel, _distModel);   // 髮頂照印(診斷用),即使不參與取景
         }
@@ -291,29 +312,6 @@ namespace Sdo.Game
                     if (!any) { b = mb; any = true; } else b.Encapsulate(mb);
                 }
             return any;
-        }
-
-        // Measure (once) the hair-top height above the head bone from the posed avatar's renderer bounds (valid after
-        // the first CPU skin). Scale-independent (model units) so the auto-frame captures the whole head regardless of
-        // the model's unit scale.
-        private void EnsureHairOffset()
-        {
-            if (_hairOffsetModel > 0f || _avatar == null) return;
-            var rends = _avatar.GetComponentsInChildren<Renderer>();
-            if (rends == null || rends.Length == 0) return;
-            float top = float.NegativeInfinity; bool any = false;
-            foreach (var r in rends)
-            {
-                if (r == null) continue;
-                var b = r.bounds;
-                if (b.size.sqrMagnitude < 1e-6f) continue;
-                top = Mathf.Max(top, b.max.y); any = true;
-            }
-            if (!any) return;
-            float headBoneY = _avatar.transform.TransformPoint(_headModelPos).y;
-            float offW = top - headBoneY;
-            if (offW <= 0.001f) return;
-            _hairOffsetModel = offW / Mathf.Max(0.01f, avatarScale);
         }
 
         private void OnDestroy()

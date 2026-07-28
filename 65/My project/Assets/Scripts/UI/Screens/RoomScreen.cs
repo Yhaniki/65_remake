@@ -71,7 +71,22 @@ namespace Sdo.UI.Screens
         // 泡的畫進了房間相機(才會被前面的人擋住)之後多出來的兩個常數。
         private const float BubbleDepthBiasPad = 2f;        // 世界單位:量出來的半厚度之外再讓一點,避免剛好貼齊
         private const int BubbleSortingOrderBase = 100;     // 見 SortBubbleWorldCanvases:要大於衣物/場景的 0
-        private static readonly Color ChatBubbleTextColor = new Color32(0x7C, 0x01, 0x38, 0xFF);
+        // 泡內字色分性別(女桃紅/男藍)。用 property 現算而非常數：性別可在遊玩中改(商城 ActivateGenderProfile)，
+        // 打字泡是建一次重用的 → 每次進打字態要重刷色(見 BeginRoomBubbleTyping)；已送出的泡在 Spawn 當下取色。
+        private Color ChatBubbleTextColor => RoomBubbleArt.TextColor(LocalIsMale);
+        private bool LocalIsMale => Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
+
+        /// <summary>某一顆泡該用的字色 —— 取**泡的主人**的性別，不是本機的。
+        /// 房間裡別人的泡也是這裡生的(<see cref="SpawnSentRoomBubble"/> 帶 ownerUserId)，
+        /// 用本機性別的話會變成「我是女生，所以全房的泡都是桃紅」。
+        /// 查不到座位(剛離開/旁觀者)就退回女生桃紅＝官方原本唯一的那個顏色。</summary>
+        private Color BubbleTextColor(int ownerUserId)
+        {
+            if (ownerUserId == 0) return ChatBubbleTextColor;
+            var snap = Ctx != null && Ctx.Net != null ? Ctx.Net.Room : null;
+            var seat = snap != null ? snap.SeatOf(ownerUserId) : null;
+            return RoomBubbleArt.TextColor(seat != null && seat.Look != null && seat.Look.Male);
+        }
         // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe；
         // 家族=綠（你沒有家族也用綠；你說＝白，沿用一般行色）。
         private const string ChatSystemHex = "F0C24A";
@@ -1972,7 +1987,7 @@ namespace Sdo.UI.Screens
             bubble.AddAnim = bubble.Add.gameObject.AddComponent<SpriteSeqAnim>();
             bubble.AddAnim.Fps = 14f;
 
-            bubble.Text = UIKit.AddText(visual, "Text", "", 13, ChatBubbleTextColor, TextAlignmentOptions.MidlineLeft, true);
+            bubble.Text = UIKit.AddText(visual, "Text", "", 13, BubbleTextColor(ownerUserId), TextAlignmentOptions.MidlineLeft, true);
             Place(bubble.Text.rectTransform, 49, 43, 74, 28);
             bubble.Text.richText = true;
             bubble.Text.textWrappingMode = TextWrappingModes.Normal;
@@ -2166,6 +2181,10 @@ namespace Sdo.UI.Screens
             _chatDraftWasEmpty = string.IsNullOrEmpty(_chatInput.text);
             SetRoomChatInputEchoVisible(false);
             FocusRoomChatInput();
+
+            var textColor = ChatBubbleTextColor;   // 泡是重用的：性別可能在建完之後才換(商城換性別)→ 每次進打字態重取
+            if (_chatBubbleText != null) _chatBubbleText.color = textColor;
+            if (_chatBubbleCaret != null) _chatBubbleCaret.color = textColor;
 
             ApplyRoomBubbleTypingStyle();
             if (_chatBubbleAdd != null) _chatBubbleAdd.gameObject.SetActive(false);
