@@ -272,18 +272,6 @@
    "v": "旁觀中 — 座位已釋出"
   },
   {
-   "k": "room.join_as_looker",
-   "v": "座位已滿 — 以旁觀身分進入"
-  },
-  {
-   "k": "room.join_in_game_looker",
-   "v": "這間房正在遊戲中 — 以旁觀身分進入"
-  },
-  {
-   "k": "room.join_all_full",
-   "v": "這間房滿了 — 座位與旁觀席都沒空位"
-  },
-  {
    "k": "neterr.not_host",
    "v": "只有房主可以做這件事"
   },

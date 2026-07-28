@@ -108,19 +108,6 @@ STR = {
                                 "ホストを引き継げる人がいません"],
     "room.spectate_on":        ["Spectating — your seat is released", "旁觀中 — 座位已釋出",
                                 "旁观中 — 座位已释出", "観戦中 — 席を手放しました"],
-    # 座位滿了自動改用旁觀身分進房(使用者要求);旁觀席也滿才真的進不去。
-    "room.join_as_looker":     ["The seats are full — joining as a spectator",
-                                "座位已滿 — 以旁觀身分進入",
-                                "座位已满 — 以旁观身份进入",
-                                "席が満員です — 観戦として入室します"],
-    "room.join_in_game_looker": ["That room is in a match — joining as a spectator",
-                                "這間房正在遊戲中 — 以旁觀身分進入",
-                                "这间房正在游戏中 — 以旁观身份进入",
-                                "対戦中のルームです — 観戦として入室します"],
-    "room.join_all_full":      ["That room is full — seats and spectator slots",
-                                "這間房滿了 — 座位與旁觀席都沒空位",
-                                "这间房满了 — 座位与旁观席都没空位",
-                                "満員です — 席も観戦枠も空きがありません"],
     # server 回的 error{code}。**沒有這些字的時候玩家只會覺得「按了沒反應」** ——
     # 這些錯誤原本沒有任何訂閱者,整個被丟掉。
     "neterr.not_host":         ["Only the host can do that", "只有房主可以做這件事",

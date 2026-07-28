@@ -272,18 +272,6 @@
    "v": "Spectating — your seat is released"
   },
   {
-   "k": "room.join_as_looker",
-   "v": "The seats are full — joining as a spectator"
-  },
-  {
-   "k": "room.join_in_game_looker",
-   "v": "That room is in a match — joining as a spectator"
-  },
-  {
-   "k": "room.join_all_full",
-   "v": "That room is full — seats and spectator slots"
-  },
-  {
    "k": "neterr.not_host",
    "v": "Only the host can do that"
   },
