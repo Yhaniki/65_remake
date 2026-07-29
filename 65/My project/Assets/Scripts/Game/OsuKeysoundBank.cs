@@ -18,6 +18,7 @@ namespace Sdo.Game
         // Bound native decoder/file-handle pressure while loading hundreds of small keysounds.
         public const int LoadBatchSize = 16;
         private const long MaxNormalizerInputBytes = 8L * 1024 * 1024;
+        private const double PreparationBudgetMs = 3.0;
 
         private readonly Dictionary<string, AudioClip> _clips =
             new Dictionary<string, AudioClip>(StringComparer.OrdinalIgnoreCase);
@@ -99,12 +100,16 @@ namespace Sdo.Game
             }
         }
 
-        /// <summary>Load every distinct referenced sample in small concurrent batches.</summary>
+        /// <summary>Load every distinct sample referenced by a complete beatmap.</summary>
         public IEnumerator Load(OsuBeatmap map, string chartPath)
+            => LoadFilenames(ReferencedFilenames(map), chartPath);
+
+        /// <summary>Load only the requested sample filenames in small concurrent batches.</summary>
+        public IEnumerator LoadFilenames(IEnumerable<string> filenames, string chartPath)
         {
             Release();
             int generation = _generation;
-            var names = ReferencedFilenames(map);
+            var names = UniqueFilenames(filenames);
             ReferencedCount = names.Count;
             if (names.Count == 0) yield break;
 
@@ -114,6 +119,7 @@ namespace Sdo.Game
                 {
                     var pending = new List<Pending>(LoadBatchSize);
                     int end = Math.Min(names.Count, offset + LoadBatchSize);
+                    long preparationStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
                     for (int i = offset; i < end; i++)
                     {
                         if (generation != _generation) yield break;
@@ -128,7 +134,6 @@ namespace Sdo.Game
 
                         string decoderPath = path;
                         UnityWebRequest request = null;
-                        bool started = false;
                         try
                         {
                             if (type == AudioType.MPEG)
@@ -145,7 +150,6 @@ namespace Sdo.Game
                                 _pendingRequests.Add(request);
                                 pending.Add(new Pending(name, decoderPath, request, operation));
                             }
-                            started = true;
                         }
                         catch
                         {
@@ -157,10 +161,21 @@ namespace Sdo.Game
                             }
                             ReleaseTemporaryFile(decoderPath);
                         }
-                        // Keep previously-started requests in flight, but spread synchronous
-                        // file sniffing and Ogg header normalization across frames.
-                        if (started) yield return null;
+
+                        // Large legacy Ogg files can make normalization expensive. Keep the native batch bound,
+                        // but yield when its synchronous preparation has consumed this frame's time budget.
+                        if (type == AudioType.OGGVORBIS && i + 1 < end &&
+                            PreparationBudgetExpired(preparationStartedAt))
+                        {
+                            yield return null;
+                            if (generation != _generation) yield break;
+                            preparationStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                        }
                     }
+
+                    // Small keysounds launch together, then the bounded batch gets one frame to progress.
+                    // A 270-sample BMS map needs about 17 launch frames rather than at least 270.
+                    if (pending.Count > 0) yield return null;
 
                     bool waiting;
                     do
@@ -336,6 +351,26 @@ namespace Sdo.Game
             if (value.Length >= 2 && value[0] == '"' && value[value.Length - 1] == '"')
                 value = value.Substring(1, value.Length - 2);
             return value.Replace('\\', '/').Trim();
+        }
+
+        private static List<string> UniqueFilenames(IEnumerable<string> filenames)
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (filenames == null) return result;
+            foreach (string filename in filenames)
+            {
+                string name = NormalizeName(filename);
+                if (name.Length > 0 && seen.Add(name)) result.Add(name);
+            }
+            return result;
+        }
+
+        private static bool PreparationBudgetExpired(long startedAt)
+        {
+            long elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - startedAt;
+            return elapsed * 1000.0 / System.Diagnostics.Stopwatch.Frequency
+                >= PreparationBudgetMs;
         }
 
         private static bool HasReparsePointBelowRoot(string root, string fullPath)

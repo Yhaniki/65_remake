@@ -128,11 +128,13 @@ namespace Sdo.UI.Screens
         private AudioSource _preview;
         private Coroutine _previewCo;
         private int _previewId = -1;
+        private string _previewChartPath = "";
         private float _previewGateTime;   // unscaled time before which previews hold (set on entry so the open spin settles first)
         // Fallback when a song has no dedicated exper preview: loop a 20s window from the MIDDLE of the full song.
         private bool _previewWindow;
         private float _previewWinStart, _previewWinEnd;
         private Sdo.Game.Mp3StreamClip _previewStream;   // streaming mp3 preview (fast start; disposed on stop/change)
+        private OsuKeysoundPreviewPlayer _osuKeysoundPreview;
         private const float PreviewWindowSec = 20f;
         // External songs are scanned WITHOUT reading their audio (see ExternalSongScanner) so boot stays fast; their
         // 時間 column shows the chart's last-note time until played. When one is actually selected its real audio length
@@ -865,7 +867,12 @@ namespace Sdo.UI.Screens
             // 切難度後：若目前選的歌在新難度沒有譜面(整列會變灰、不可選)，把選取移到最近一首在此難度有譜面的歌。
             if (_category != CatRandom && (_selected == null || !_selected.HasChart(_difficulty)))
                 SelectFirstPlayable();
-            else { RenderPage(); UpdateInfo(); }
+            else
+            {
+                RenderPage();
+                UpdateInfo();
+                if (VirtualOsuPreviewChart(_selected).Length > 0) PlayPreview(_selected);
+            }
         }
 
         private void RenderDiffTabs()
@@ -1076,8 +1083,10 @@ namespace Sdo.UI.Screens
             // Official songs preview only when a jacket loads (mirrors the original — NONE disc = no music). External
             // (user Songs/) songs preview whenever they have audio, even with NO cover image — an image-less osu/SM
             // folder still gets a preview (the disc just shows the placeholder).
-            bool extAudio = e != null && e.external && !string.IsNullOrEmpty(e.audioPath);
-            if (UpdateDisk() || extAudio) PlayPreview(e);
+            bool externalPreview = e != null && e.external &&
+                (!string.IsNullOrEmpty(e.audioPath) ||
+                 VirtualOsuPreviewChart(e).Length > 0);
+            if (UpdateDisk() || externalPreview) PlayPreview(e);
             else StopPreview();
         }
 
@@ -1136,15 +1145,37 @@ namespace Sdo.UI.Screens
 
         // ---------------- music preview (exper/<fileId>.ogg) ----------------
 
+        private string VirtualOsuPreviewChart(SongCatalog.Entry e)
+        {
+            if (e == null || !e.external ||
+                e.chartFormat != (int)SongFormat.Osu ||
+                !string.IsNullOrEmpty(e.audioPath))
+                return "";
+            string path = e.ChartPath(_difficulty);
+            return !string.IsNullOrEmpty(path) && File.Exists(path) ? path : "";
+        }
+
+        private bool IsCurrentPreview(int fileId, string chartPath)
+        {
+            return _previewId == fileId &&
+                   string.Equals(_previewChartPath, chartPath ?? "",
+                       System.StringComparison.OrdinalIgnoreCase);
+        }
+
         // Start (or replace) the looping preview for the selected song. Cancels any in-flight load first so rapid
         // selection never stacks coroutines or leaves a stale clip playing (debounce on fileId).
         private void PlayPreview(SongCatalog.Entry e)
         {
             if (e == null) return;
-            if (e.fileId == _previewId && _preview != null && _preview.isPlaying) return;
+            string chartPath = VirtualOsuPreviewChart(e);
+            bool active = _previewCo != null ||
+                (_preview != null && _preview.isPlaying) ||
+                (_osuKeysoundPreview != null && _osuKeysoundPreview.IsPlaying);
+            if (IsCurrentPreview(e.fileId, chartPath) && active) return;
             StopPreview();
             _previewId = e.fileId;
-            _previewCo = StartCoroutine(LoadPreviewCo(e));
+            _previewChartPath = chartPath;
+            _previewCo = StartCoroutine(LoadPreviewCo(e, chartPath));
         }
 
         /// <summary>Full-song ogg name for a chart gn ("sdom2784k.gn" -> "sdom2784.ogg"). Shared with the
@@ -1171,9 +1202,58 @@ namespace Sdo.UI.Screens
         // Every exper/<fileId>.ogg is a real, pre-decoded preview clip (the official preview .sdm are decoded to
         // valid Vorbis at import time via donor headers — see tools/decode_previews). GetContent is still wrapped
         // in try/catch so that even a malformed file could never throw out of the coroutine (it just no-ops).
-        private IEnumerator LoadPreviewCo(SongCatalog.Entry e)
+        private IEnumerator LoadPreviewCo(SongCatalog.Entry e, string virtualChartPath)
         {
             int fileId = e.fileId;
+            if (!string.IsNullOrEmpty(virtualChartPath))
+            {
+                OsuBeatmap map = null;
+                try { map = OsuBeatmapParser.Parse(File.ReadAllText(virtualChartPath)); }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning("[SongSelect] virtual osu preview parse fail: " + ex.Message);
+                }
+
+                if (map != null && OsuBeatmapParser.IsVirtualAudioFilename(map.AudioFilename))
+                {
+                    var player = new OsuKeysoundPreviewPlayer(
+                        gameObject, map, virtualChartPath,
+                        e.previewStartMs,
+                        e.previewLengthMs > 0 ? e.previewLengthMs : PreviewWindowSec * 1000.0);
+                    _osuKeysoundPreview = player;
+                    yield return player.Load();
+
+                    if (!IsCurrentPreview(fileId, virtualChartPath) ||
+                        !ReferenceEquals(_osuKeysoundPreview, player))
+                    {
+                        player.Dispose();
+                        yield break;
+                    }
+
+                    while (Time.unscaledTime < _previewGateTime)
+                    {
+                        if (!IsCurrentPreview(fileId, virtualChartPath) ||
+                            !ReferenceEquals(_osuKeysoundPreview, player))
+                        {
+                            player.Dispose();
+                            yield break;
+                        }
+                        yield return null;
+                    }
+
+                    _previewCo = null;
+                    EnsurePreviewSource();
+                    if (!player.Play())
+                    {
+                        Debug.LogWarning($"[SongSelect] virtual osu preview has no decodable samples " +
+                            $"({player.LoadedCount}/{player.ReferencedCount}, {player.MissingCount} missing)");
+                        player.Dispose();
+                        if (ReferenceEquals(_osuKeysoundPreview, player)) _osuKeysoundPreview = null;
+                    }
+                    yield break;
+                }
+            }
+
             string path;
             bool isPreviewClip;
             AudioType audioType;
@@ -1221,7 +1301,7 @@ namespace Sdo.UI.Screens
             {
                 var req = UnityWebRequestMultimedia.GetAudioClip(Sdo.Game.SdoExtracted.FileUri(path), audioType);
                 yield return req.SendWebRequest();
-                if (_previewId != fileId) { req.Dispose(); _previewCo = null; yield break; }   // superseded mid-load
+                if (!IsCurrentPreview(fileId, virtualChartPath)) { req.Dispose(); yield break; }   // superseded mid-load
                 if (req.result == UnityWebRequest.Result.Success)
                 {
                     try { clip = DownloadHandlerAudioClip.GetContent(req); }
@@ -1232,13 +1312,13 @@ namespace Sdo.UI.Screens
             }
 
             // race guard: selection changed (or hidden) while loading -> drop the stale clip.
-            if (clip == null || _previewId != fileId) { _previewCo = null; yield break; }
+            if (clip == null || !IsCurrentPreview(fileId, virtualChartPath)) { _previewCo = null; yield break; }
 
             // Hold until the entry gate passes (~1s after OnShow) so music starts only once the open spin settles.
             // After that first second the gate is in the past, so later selections play immediately.
             while (Time.unscaledTime < _previewGateTime)
             {
-                if (_previewId != fileId) { _previewCo = null; yield break; }   // superseded while waiting
+                if (!IsCurrentPreview(fileId, virtualChartPath)) yield break;   // superseded while waiting
                 yield return null;
             }
             _previewCo = null;
@@ -1330,9 +1410,15 @@ namespace Sdo.UI.Screens
         {
             if (_previewCo != null) { StopCoroutine(_previewCo); _previewCo = null; }
             _previewId = -1;
+            _previewChartPath = "";
             _previewWindow = false;
             if (_preview != null) { _preview.Stop(); _preview.clip = null; }   // detach BEFORE disposing so OnRead stops being called
             if (_previewStream != null) { _previewStream.Dispose(); _previewStream = null; }
+            if (_osuKeysoundPreview != null)
+            {
+                _osuKeysoundPreview.Dispose();
+                _osuKeysoundPreview = null;
+            }
         }
 
         // ---------------- confirm ----------------
@@ -1460,6 +1546,8 @@ namespace Sdo.UI.Screens
                 CloseTo(ScreenId.Room);                                       // ④ 返回房間
                 return;
             }
+
+            _osuKeysoundPreview?.Tick();
 
             // Keep the fallback preview (full-song middle) looping within its 20s window.
             if (_previewWindow && _preview != null && _preview.clip != null)

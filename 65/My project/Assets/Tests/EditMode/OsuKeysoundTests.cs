@@ -242,7 +242,7 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Batch_Starts_One_Mp3_Per_Yield_But_Keeps_Earlier_Decodes_In_Flight()
+        public void Batch_Starts_All_Cheap_Mp3_Decodes_Before_First_Yield()
         {
             WriteFakeMp3("one.mp3");
             WriteFakeMp3("two.mp3");
@@ -258,14 +258,10 @@ namespace Sdo.Tests
 
             try
             {
-                Assert.IsTrue(load.MoveNext(), "the first prepared sample yields one frame");
-                Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 1, 3000));
-                Assert.AreEqual(1, Volatile.Read(ref started),
-                    "the second sample must not be prepared in the first frame");
-
-                Assert.IsTrue(load.MoveNext(), "the second prepared sample yields the next frame");
+                Assert.IsTrue(load.MoveNext(), "the prepared batch yields one frame");
                 Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 2, 3000),
-                    "both worker decodes should coexist within the same batch");
+                    "both cheap decodes must start in the first batch, not one per frame");
+                Assert.AreEqual(2, Volatile.Read(ref started));
 
                 gate.Set();
                 Drain(load);
@@ -282,38 +278,41 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Dispose_Stops_An_Old_Batch_Before_Starting_Its_Next_Mp3()
+        public void Dispose_Stops_An_Old_Load_Before_Starting_Its_Next_Batch()
         {
-            WriteFakeMp3("one.mp3");
-            WriteFakeMp3("two.mp3");
+            int count = OsuKeysoundBank.LoadBatchSize + 1;
+            var names = new string[count];
+            for (int i = 0; i < count; i++)
+            {
+                names[i] = "sample" + i + ".mp3";
+                WriteFakeMp3(names[i]);
+            }
+
             int started = 0;
-            var gate = new ManualResetEventSlim(false);
             var bank = new OsuKeysoundBank(path =>
             {
                 Interlocked.Increment(ref started);
-                gate.Wait(5000);
                 return TestPcm();
             });
-            IEnumerator load = bank.Load(MapWithSamples("one.mp3", "two.mp3"), _chartPath);
+            IEnumerator load = bank.Load(MapWithSamples(names), _chartPath);
 
             try
             {
                 Assert.IsTrue(load.MoveNext());
-                Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 1, 3000));
+                Assert.IsTrue(SpinWait.SpinUntil(
+                    () => Volatile.Read(ref started) == OsuKeysoundBank.LoadBatchSize, 3000));
 
                 bank.Dispose();
 
                 Assert.IsFalse(load.MoveNext(),
                     "generation change must end the old iterator without waiting for its worker");
-                Assert.AreEqual(1, Volatile.Read(ref started),
-                    "disposing must prevent the next sample from starting");
+                Assert.AreEqual(OsuKeysoundBank.LoadBatchSize, Volatile.Read(ref started),
+                    "disposing must prevent the next batch from starting");
             }
             finally
             {
-                gate.Set();
                 (load as IDisposable)?.Dispose();
                 bank.Dispose();
-                gate.Dispose();
             }
         }
 
@@ -350,6 +349,117 @@ namespace Sdo.Tests
                     Assert.Fail("keysound load did not finish within five seconds");
                 Thread.Sleep(1);
             }
+        }
+    }
+
+    public class OsuKeysoundPreviewTimelineTests
+    {
+        [Test]
+        public void Preview_Queues_Events_And_All_Playable_Note_Heads_Without_Deduplication()
+        {
+            var map = new OsuBeatmap();
+            map.TimingPoints.Add(new OsuTimingPoint(0, 500, 37));
+            map.SampleEvents.Add(new OsuSampleEvent(99, 0, "before.wav", 10));
+            map.SampleEvents.Add(new OsuSampleEvent(100, 0, "dup.wav", 20));
+            map.SampleEvents.Add(new OsuSampleEvent(100, 0, "dup.wav", 20));
+            map.SampleEvents.Add(new OsuSampleEvent(300, 0, "at-end.wav", 30));
+            map.HitObjects.Add(new OsuHitObject(
+                0, 100, customSampleFilename: "tap.wav"));
+            map.HitObjects.Add(new OsuHitObject(
+                1, 100, 200, customSampleFilename: "hold.wav", customSampleVolume: 80));
+            map.HitObjects.Add(new OsuHitObject(
+                2, 100, isBomb: true, customSampleFilename: "bomb.wav"));
+            map.HitObjects.Add(new OsuHitObject(
+                2, 100, isFake: true, customSampleFilename: "fake.wav"));
+            map.HitObjects.Add(new OsuHitObject(
+                3, 299, customSampleFilename: "last.wav", customSampleVolume: 60));
+            map.HitObjects.Add(new OsuHitObject(
+                3, 300, customSampleFilename: "note-at-end.wav"));
+
+            var triggers = OsuKeysoundPreviewPlayer.BuildTriggers(map, 100, 300);
+
+            Assert.AreEqual(5, triggers.Count, "the preview window is [start,end)");
+            int duplicateRows = 0;
+            int inheritedVolume = -1;
+            int holdVolume = -1;
+            foreach (var trigger in triggers)
+            {
+                if (trigger.Filename == "dup.wav") duplicateRows++;
+                if (trigger.Filename == "tap.wav") inheritedVolume = trigger.Volume;
+                if (trigger.Filename == "hold.wav") holdVolume = trigger.Volume;
+                Assert.AreNotEqual("bomb.wav", trigger.Filename);
+                Assert.AreNotEqual("fake.wav", trigger.Filename);
+            }
+            Assert.AreEqual(2, duplicateRows, "identical rows are independent voices");
+            Assert.AreEqual(37, inheritedVolume, "zero note volume inherits the timing point");
+            Assert.AreEqual(80, holdVolume, "a hold plays its custom sample at the head");
+        }
+
+        [Test]
+        public void Preview_Window_Loads_Only_Triggers_Inside_The_Active_Twenty_Seconds()
+        {
+            var map = new OsuBeatmap();
+            map.SampleEvents.Add(new OsuSampleEvent(0, 0, "a.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(1, 0, "a.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(19999, 0, "b.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(20000, 0, "at-end.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(50000, 0, "later.wav"));
+
+            OsuKeysoundPreviewPlayer.ResolveWindow(
+                map, 0, OsuKeysoundPreviewPlayer.DefaultWindowMs,
+                out double startMs, out double endMs);
+            var triggers = OsuKeysoundPreviewPlayer.BuildTriggers(map, startMs, endMs);
+
+            Assert.AreEqual(0.0, startMs);
+            Assert.AreEqual(20000.0, endMs);
+            Assert.AreEqual(3, triggers.Count);
+            Assert.AreEqual("b.wav", triggers[2].Filename);
+        }
+
+        [Test]
+        public void Preview_Window_Does_Not_Collapse_Around_A_Short_Map_And_Repeat_Long_Tails()
+        {
+            var map = new OsuBeatmap();
+            map.SampleEvents.Add(new OsuSampleEvent(1000, 0, "long-tail.wav"));
+
+            OsuKeysoundPreviewPlayer.ResolveWindow(
+                map, 0, OsuKeysoundPreviewPlayer.DefaultWindowMs,
+                out double startMs, out double endMs);
+            var triggers = OsuKeysoundPreviewPlayer.BuildTriggers(map, startMs, endMs);
+
+            Assert.AreEqual(0.0, startMs);
+            Assert.AreEqual(20000.0, endMs,
+                "a short onset timeline still uses the requested preview period; " +
+                "otherwise a sample longer than the fixed tail overlaps itself every loop");
+            Assert.AreEqual(1, triggers.Count);
+            Assert.AreEqual("long-tail.wav", triggers[0].Filename);
+        }
+
+        [Test]
+        public void Preview_Loop_Keeps_One_Dsp_Anchor_Without_A_Restart_Gap()
+        {
+            const double anchorDsp = 100.0;
+            const double startMs = 1000.0;
+            const double endMs = 21000.0;
+
+            Assert.That(
+                OsuKeysoundPreviewPlayer.OccurrenceDspTime(
+                    anchorDsp, startMs, endMs, startMs, 0),
+                Is.EqualTo(100.0).Within(1e-9));
+            Assert.That(
+                OsuKeysoundPreviewPlayer.OccurrenceDspTime(
+                    anchorDsp, startMs, endMs, 20999.0, 0),
+                Is.EqualTo(119.999).Within(1e-9));
+            Assert.That(
+                OsuKeysoundPreviewPlayer.OccurrenceDspTime(
+                    anchorDsp, startMs, endMs, startMs, 1),
+                Is.EqualTo(120.0).Within(1e-9),
+                "the next loop begins on the same anchor without another 50ms lead");
+
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                OsuKeysoundPreviewPlayer.OccurrenceDspTime(0, 10, 10, 10, 0));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                OsuKeysoundPreviewPlayer.OccurrenceDspTime(0, 0, 1000, 0, -1));
         }
     }
 
@@ -450,6 +560,62 @@ namespace Sdo.Tests
             Invoke("RefreshEditorTimelineEnd");
 
             Assert.AreEqual(5000.0, _screen.EditorEndMs);
+        }
+
+        [Test]
+        public void Editor_Preview_AutoSchedules_Note_Keysounds_Except_In_Beat_Test()
+        {
+            var property = typeof(ScreenGameplay).GetProperty(
+                "ShouldScheduleOsuAutoNotes", InstancePrivate);
+            Assert.NotNull(property);
+
+            _screen.editorMode = true;
+            _screen.beatTestMode = false;
+            Assert.IsTrue((bool)property.GetValue(_screen),
+                "normal chart-editor playback should sound every note sample");
+
+            _screen.beatTestMode = true;
+            Assert.IsFalse((bool)property.GetValue(_screen),
+                "the generated beat-test chart has no osu keysound preview");
+        }
+
+        [Test]
+        public void Editor_EarlyMiss_DoesNotCancel_Future_AutoPreviewSample()
+        {
+            var map = new OsuBeatmap();
+            var note = new OsuHitObject(
+                lane: 0, startTimeMs: 1000, customSampleFilename: "hit.wav");
+            map.HitObjects.Add(note);
+            Field("_map").SetValue(_screen, map);
+            Invoke("AddOsuEventVoice");
+
+            var starts = (List<double>)Field("_osuEventStartsAt").GetValue(_screen);
+            var busyUntil = (List<double>)Field("_osuEventBusyUntil").GetValue(_screen);
+            var owners = (List<int>)Field("_osuAutoNoteOwners").GetValue(_screen);
+            var scheduled = (HashSet<int>)Field("_osuScheduledAutoNotes").GetValue(_screen);
+            double futureDsp = AudioSettings.dspTime + 1.0;
+            starts[0] = futureDsp;
+            busyUntil[0] = futureDsp + 1.0;
+            owners[0] = 0;
+            scheduled.Add(0);
+
+            _screen.editorMode = true;
+            Invoke("PlayOsuHitSample", note, Sdo.Ruleset.Judgment.Miss);
+
+            Assert.AreEqual(futureDsp, starts[0], 1e-6,
+                "editor misses only detach ownership; the preview sound remains scheduled");
+            Assert.AreEqual(-1, owners[0]);
+
+            starts[0] = futureDsp;
+            busyUntil[0] = futureDsp + 1.0;
+            owners[0] = 0;
+            scheduled.Add(0);
+            _screen.editorMode = false;
+            Invoke("PlayOsuHitSample", note, Sdo.Ruleset.Judgment.Miss);
+
+            Assert.AreEqual(0.0, starts[0],
+                "gameplay misses still cancel future auto-scheduled samples");
+            Assert.AreEqual(-1, owners[0]);
         }
 
         private static System.Reflection.FieldInfo Field(string name)

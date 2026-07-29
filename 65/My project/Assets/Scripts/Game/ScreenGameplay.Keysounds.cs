@@ -38,7 +38,8 @@ namespace Sdo.Game
             _map != null && _map.SamplesMatchPlaybackRate ? _timeScale : 1f;
 
         private bool ShouldScheduleOsuAutoNotes =>
-            !editorMode && (_showtime.Active || (autoPlay && forcedJudge != (int)Judgment.Miss));
+            (editorMode && !beatTestMode) ||
+            (!editorMode && (_showtime.Active || (autoPlay && forcedJudge != (int)Judgment.Miss)));
 
         private void BuildOsuKeysoundAudio()
         {
@@ -127,7 +128,8 @@ namespace Sdo.Game
 
         private void PlayOsuHitSample(OsuHitObject note, Judgment judgment)
         {
-            bool wasScheduled = ResolveScheduledAutoNote(note, judgment == Judgment.Miss);
+            bool wasScheduled = ResolveScheduledAutoNote(
+                note, judgment == Judgment.Miss && !editorMode);
             if (judgment == Judgment.Miss || wasScheduled ||
                 _osuKeysounds == null ||
                 !_osuKeysounds.TryGet(note.CustomSampleFilename, out var clip))
