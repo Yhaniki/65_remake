@@ -16,11 +16,19 @@ namespace Sdo.Osu
         /// <param name="bannerTag">explicit banner filename from the chart, or ""</param>
         /// <param name="backgroundTag">explicit background filename from the chart / osu [Events], or ""</param>
         /// <param name="cdtitleTag">explicit cdtitle filename (excluded from the tile), or ""</param>
-        public static string Pick(IReadOnlyList<string> imageFiles, string bannerTag, string backgroundTag, string cdtitleTag)
+        public static string Pick(IReadOnlyList<string> imageFiles, string bannerTag, string backgroundTag,
+                                  string cdtitleTag, bool preferBackground = false)
         {
             // 1) jacket — no format here carries a jacket tag, so match by filename hint only.
             var jacket = FirstHinted(imageFiles, cdtitleTag, "jacket", "cover", "cdimage", "disc");
             if (jacket != "") return jacket;
+
+            // StepMania song-select discs use the full background just like osu, rather than the wide banner.
+            if (preferBackground)
+            {
+                var preferredBackground = Resolve(imageFiles, backgroundTag, cdtitleTag, "background", "bg");
+                if (preferredBackground != "") return preferredBackground;
+            }
 
             // 2) banner — explicit tag first, else filename hint.
             var banner = Resolve(imageFiles, bannerTag, cdtitleTag, "banner", "bn");

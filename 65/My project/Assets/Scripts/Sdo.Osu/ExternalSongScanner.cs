@@ -790,7 +790,8 @@ namespace Sdo.Osu
 
         private static string ResolveImage(string dir, List<string> pool, Draft d)
         {
-            string chosen = ExternalImagePicker.Pick(pool, d.BannerName, d.BackgroundName, d.CdTitleName);
+            string chosen = ExternalImagePicker.Pick(pool, d.BannerName, d.BackgroundName, d.CdTitleName,
+                                                     preferBackground: d.Format == SongFormat.Sm);
             return string.IsNullOrEmpty(chosen) ? "" : Path.Combine(dir, chosen);
         }
 
