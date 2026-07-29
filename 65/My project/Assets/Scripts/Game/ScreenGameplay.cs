@@ -239,8 +239,13 @@ namespace Sdo.Game
         private SdoAvatar _avatar;                             // gameplay dancer — kept so the F4 panel can re-shape it live
         private float _bodyShapeB = 1f;                        // live body weight B driven by the F4 control (1 = standard)
         private static readonly string[] BodyShapeLabels = { "Thin", "Std", "Chubby", "Fat", "XFat" };  // body index 0..4 presets
+        // 舞台待機 idle(rest cat 0x15,DPS 開始前/結束後循環的那支 — 023_gameplay:4135)。
+        // WREST0056 是 cat 0 的大廳待機,擺在這裡是錯的。同場的遠端舞者也照這一組挑(見 RemoteRestMot)——
+        // 兩邊各寫一份字面值的話,改了一邊沒改另一邊就會變成「只有別人的待機動作不一樣」。
+        internal const string FemaleGameplayRestMot = "MOTION/WREST0072.MOT";
+        internal const string MaleGameplayRestMot   = "MOTION/MREST0082.MOT";
         public string danceMot = "MOTION/WDANCE0002.MOT";      // fallback dance motion if no DPS
-        public string restMot = "MOTION/WREST0072.MOT";        // in-game standby idle (decompiled: rest-table category 0x15, played before/after the DPS — 023_gameplay:4135). male = MREST0082.MOT. (WREST0056 was cat 0, the lobby idle — wrong here.)
+        public string restMot = FemaleGameplayRestMot;         // 男版在 ConfigureAvatarGender 換成 MaleGameplayRestMot
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
         // External (osu/StepMania) songs have no official .dps: these two identify the song so ExternalDps can generate
         // one — deterministically, once — into its folder and record it in the folder's sdoinfo.dat (see EnsureExternalDance).
@@ -1103,7 +1108,7 @@ namespace Sdo.Game
                 skeletonHrc = SdoRoomAvatar.MaleHrc;
                 maleBody = true;
                 danceMot = "MOTION/MDANCE0002.MOT";
-                restMot = "MOTION/MREST0082.MOT";
+                restMot = MaleGameplayRestMot;
                 winMot = "MWIN0001.MOT";
                 loseMot = "MREST0004.MOT";
             }

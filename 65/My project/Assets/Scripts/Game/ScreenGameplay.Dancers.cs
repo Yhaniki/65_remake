@@ -142,16 +142,22 @@ namespace Sdo.Game
                     if (parts == null) parts = SdoRoomAvatar.DefaultParts(male);
                 }
 
+                // 飛行翅膀看**這一位自己的**穿搭 —— 浮空高度與待機 clip 都由它決定(見下面兩處)。
+                bool flying = SpecialMotionItems.WearsFlyingWing(parts);
+
                 var go = new GameObject("Dancer" + i + (label != null ? "_" + label : ""));
                 var av = go.AddComponent<SdoAvatar>();
                 // 🔴 骨架要用**這一位的性別**那一份 —— 男女骨架不同,拿錯會整隻扭曲。
+                // 路徑一定要先解成絕對的:AvatarAssetCache 底下是 File.ReadAllBytes,吃到 "AVATAR/MALE.HRC" 這種
+                // 相對路徑會相對於**行程的工作目錄**(不是資料根)→ 讀不到 → 下面那行靜默退回 _sharedHrc,
+                // 異性玩家就一路用著本機性別的骨架。房間/商城那幾個呼叫端都是先過 ResolveAvatarFile 的。
                 var hrc = male == localPlayerMale
                     ? _sharedHrc
-                    : AvatarAssetCache.Hrc(male ? SdoRoomAvatar.MaleHrc : SdoRoomAvatar.FemaleHrc);
+                    : AvatarAssetCache.Hrc(SdoAvatarBuilder.ResolveAvatarFile(male ? SdoRoomAvatar.MaleHrc : SdoRoomAvatar.FemaleHrc));
                 if (hrc == null) hrc = _sharedHrc;
                 av.Setup(hrc, _sharedDanceMot);
                 av.SetBodyShape(SdoBodyShape.WeightFromIndex(bodyIdx, male));
-                av.RestMot = _sharedRestMot;
+                av.RestMot = RemoteRestMot(male, flying) ?? _sharedRestMot;
                 if (_sharedDps != null)
                 {
                     av.Dps = _sharedDps;
@@ -174,7 +180,13 @@ namespace Sdo.Game
                 // 否則這一隻會定在 T-pose 之後的第一幀(房間那邊踩過同一個坑)。
                 float feetY = av.FeetYAt(0f);
                 var spot = slots[Mathf.Clamp(i, 0, slots.Length - 1)];
-                go.transform.position = new Vector3(spot.x, spot.y - feetY, spot.z);
+                // 飛行翅膀:穿著就整場浮 HoverY —— 與姿勢、是否在跳舞都無關,和本機同一顆 SpecialMotionItems.HoverY
+                // (漏掉的話同場會變成「我浮著、別人踩在地上」)。flystay clip 自己只抬 ~2.6(女)/~0.7(男),
+                // 不靠這個常數是浮不起來的。
+                //
+                // 遠端的穿搭整場不變 → 擺位時加一次就夠,不必像本機 UpdateFlyHover 那樣每幀平滑收斂
+                // (那是為了 F4 面板即時換穿);TickDancerSlots 每幀只寫 XZ、保留 Y,所以這個高度會留著。
+                go.transform.position = new Vector3(spot.x, spot.y - feetY + SpecialMotionItems.HoverY(flying), spot.z);
                 av.PhaseOffsetSec = i * 0.37f;   // 待機時不要整齊得像複製人
                 av.PoseInitialIdle();
 
@@ -371,6 +383,25 @@ namespace Sdo.Game
             hm.AnchorGetter = () => a != null ? a.position
                 : ((r != null ? r.position : Vector3.zero) + new Vector3(0f, 59f, 0f));
             hm.CamGetter = () => _sceneCam != null ? _sceneCam : _cam;
+        }
+
+        /// <summary>
+        /// 一位遠端舞者的待機 clip(舞台 rest cat 0x15;穿飛行翅膀換成 flystay)。
+        ///
+        /// 🔴 **不能沿用 _sharedRestMot** —— 那是本機那位解析出來的:性別不同就是另一支 clip,而且本機穿翅膀時
+        /// 它已經在 ConfigureAvatarGender 被換成 flystay 了。共用的話會兩個方向都錯:本機一穿翅膀,全場的人
+        /// 待機都變飛行姿勢;本機沒穿時,真的穿翅膀的遠端玩家浮在空中卻擺站姿。
+        ///
+        /// 走 AvatarAssetCache(而不是 LoadAsset)是刻意的:它保證「同一路徑永遠是同一個 MotLoader 物件」,
+        /// 而 SdoAvatar 判斷「動作換了嗎」是比物件參照 —— 每隻各 parse 一份會被誤判成換動作,多一次 crossfade。
+        /// 路徑要絕對:AvatarAssetCache 底下是 File.ReadAllBytes。
+        /// </summary>
+        private static MotLoader RemoteRestMot(bool male, bool flying)
+        {
+            string rel = flying ? SpecialMotionItems.FlyIdleMot(male)
+                                : (male ? MaleGameplayRestMot : FemaleGameplayRestMot);
+            return AvatarAssetCache.Mot(System.IO.Path.Combine(
+                SdoExtracted.Root, rel.Replace('/', System.IO.Path.DirectorySeparatorChar)));
         }
 
         /// <summary>測試用:第 i 位舞者的 root(本機那一格 = <c>_avatarRoot</c>;還沒生出來 = null)。</summary>
