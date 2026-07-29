@@ -515,8 +515,12 @@ namespace Sdo.UI.Screens
 
             // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
             _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f, disc: true);
+            // 準備 / 取消是**同一個位置的兩顆球**(官方 WaitingRoom.png 裡「取消」就烘在「準備」正下方一列):
+            // 沒準備 → Room12「準備」;按了之後 server 回 roomState → 換成 c_ready0「取消」,再按一次取消準備。
+            // 兩顆都掛 OnReadyToggle(它自己看目前狀態決定送 true 還是 false)。初始隱藏「取消」,等 Render 決定。
             _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f, disc: true);
             _cancelReadyBtn = Btn("cancel_ready", "c_ready0", "c_ready1", "c_ready2", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f, disc: true);
+            _cancelReadyBtn.gameObject.SetActive(false);
 
             // 5) 左上「左拉」收合鈕（官方 uihide/uidisplay，同一位置 11,83）。按 ◄(BtnMaypopLeft) → 三個面板往四周滑出；
             //    收合後原地換成 ►(BtnMaypopRight) 展開鈕。掛在 Root（不隨面板收合），且最後建立 → 疊在最上層永遠可點。
@@ -4442,16 +4446,12 @@ namespace Sdo.UI.Screens
 
         /// <summary>本機玩家坐在第幾格?找不到回 -1(旁觀或還沒進座位)。</summary>
         private int LocalSeatIndex(RoomInfo room)
-        {
-            if (room == null) return -1;
-            // 連線模式用 server 配的 userId 比對(名字可能重複,id 不會)。
-            int uid = Ctx != null && Ctx.Net != null ? Ctx.Net.UserId : 0;
-            if (uid != 0) return room.SeatIndexOfUser(uid);
-            string me = Ctx != null && Ctx.Session != null ? Ctx.Session.LocalPlayerId : null;
-            for (int i = 0; i < room.Seats.Count; i++)
-                if (!room.Seats[i].IsEmpty && room.Seats[i].Player.Id == me) return i;
-            return -1;
-        }
+            => RoomLocalSeat.IndexOf(room, LocalUserId, LocalProfileId);
+
+        /// <summary>server 配的 userId(離線 0)。認人一律用它 —— 見 <see cref="RoomLocalSeat"/>。</summary>
+        private int LocalUserId => Ctx != null && Ctx.Net != null ? Ctx.Net.UserId : 0;
+
+        private string LocalProfileId => Ctx != null && Ctx.Session != null ? Ctx.Session.LocalPlayerId : null;
 
         private string LocalName(RoomInfo room)
         {
@@ -4461,14 +4461,15 @@ namespace Sdo.UI.Screens
             return Ctx.Session != null ? Ctx.Session.LocalPlayerName : "";
         }
 
+        /// <summary>
+        /// 本機按過準備了嗎。**認人走 userId,不是 profile id** —— 線上座位的 Player.Id 是 server 的
+        /// userId,拿本機存檔 id 去比永遠比不中(細節見 <see cref="RoomLocalSeat"/>)。這個值同時決定
+        /// 右下角那顆球畫「準備」還是「取消」,以及按下去要送 setReady(true) 還是 (false)。
+        /// </summary>
         private bool LocalReady(RoomInfo room)
-        {
-            if (room == null) return false;
-            foreach (var s in room.Seats)
-                if (!s.IsEmpty && s.Player.Id == Ctx.Session.LocalPlayerId) return s.IsReady;
-            return false;
-        }
+            => RoomLocalSeat.IsReady(room, LocalUserId, LocalProfileId);
 
+        /// <summary>準備 ⇄ 取消(同一顆球換圖)。狀態的權威在 server,這裡只送切換、等 roomState 回來才翻圖。</summary>
         private void OnReadyToggle()
         {
             var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
