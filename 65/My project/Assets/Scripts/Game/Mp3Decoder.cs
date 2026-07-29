@@ -35,15 +35,57 @@ namespace Sdo.Game
         ///     YHANIKI editor's WaveformDisplay (<c>DetectMp3FrameAlignSeconds</c>). Without it a header-less file such
         ///     as BlythE sits exactly one frame (~26 ms) EARLY relative to every headered song in the pack, so its
         ///     waveform/audio lands a frame before the notes. Only "Xing" (VBR) is skipped (content already at 0).
-        ///   • <see cref="Osu"/> — modern BASS gapless-trims the priming (~<see cref="OsuGaplessTrim"/> samples).
+        ///   • <see cref="Osu"/> — BASS SKIPS the Xing/Info header frame entirely and gapless-trims the priming.
+        ///     How much depends on the FILE, not a constant — see <see cref="OsuGaplessTrimFor"/>.
         /// Picking the wrong one shifts the song ~50 ms. Measured on Be Crazy For Me (SM Info, ±3 ms) and SDO Pack9's
         /// six osu charts (clean-kick ones within ±5 ms of the grid).
         /// </summary>
         public enum Mp3Sync { StepMania, Osu }
 
-        /// <summary>Samples-per-channel osu!/BASS trims off the front of an mp3 (gapless priming = 576 LAME encoder
-        /// delay + 529 decoder delay). Empirically the same for tagged and untagged files. ≈25 ms @ 44.1 kHz.</summary>
-        public const int OsuGaplessTrim = 576 + 529;   // 1105
+        /// <summary>
+        /// Samples-per-channel BASS strips even from an mp3 that carries NO delay info at all — its own decoder
+        /// delay. Official: BASS 2.4.12 upgrade notes, <c>BASS_StreamCreateFile</c> — "529 samples of silence are
+        /// removed from the start of MP3 files that do not include delay info (eg. in a LAME header)". Gapless is
+        /// unconditional in BASS 2.4.15 (osu!stable's build): there is no BASS_CONFIG_MP3_DISABLEGAPLESS in that
+        /// version and no config id changes the output, so this is never off.
+        /// </summary>
+        public const int BassDecoderDelay = 529;
+
+        /// <summary>
+        /// Samples-per-channel to drop off the FRONT so the audio sits where osu! puts it — i.e. so the chart's
+        /// ABSOLUTE hit times land on the right sound. Verified against osu!stable's own bass.dll (2.4.15.2) by
+        /// decoding through it and cross-correlating with our libmad output: this formula reproduced the true offset
+        /// for 12/12 real charts (values 529 / 1681 / 2257 — it is NOT one constant).
+        ///
+        /// WHERE THAT VERIFICATION LIVES (it is NOT in this repo, so don't assume it was never done — it has already
+        /// been mistaken for a fabricated claim once): <c>H:/offset_check/bassgt/</c> — <c>bassdump.cs</c> P/Invokes
+        /// osu!stable's own <c>bass.dll</c> (<c>%LOCALAPPDATA%/osu!/bass.dll</c>, BASS_GetVersion = 0x02040F02 =
+        /// 2.4.15.2) with BASS_STREAM_DECODE|BASS_SAMPLE_FLOAT and dumps raw PCM; <c>bass_vs_mad.json</c> holds the
+        /// per-file result. Re-confirmed independently on 2026-07-29 for the two extremes: Kamui.mp3 (Info + LAME
+        /// delay 576) → BASS sample 0 sits at libmad sample 2257; Sayonara Trip.mp3 (no Xing/Info frame at all) →
+        /// 529. Both matched to max|Δ| ≈ 1.3e-6 over 200 000 samples, i.e. bit-exact modulo the float32 WAV round-trip.
+        /// So the 529 branch is MEASURED, not inferred — mpg123/libsndfile trim 0 there and are simply not BASS.
+        ///
+        ///     trim = (header frame still in our output ? that frame's samples : 0) + encoder delay + 529
+        ///
+        /// <paramref name="headerFrameInOutput"/> is the decoder's business, not the file's: libmad decodes the
+        /// Xing/Info header frame like any other frame and emits it as ~26 ms of silence, so that frame is still
+        /// sitting in front of the audio and has to come off here. NLayer (the fallback) skips it like BASS does,
+        /// so for that path it's already gone. Getting this backwards costs exactly one frame (26 ms @ 44.1 kHz).
+        ///
+        /// Null/unreadable region → <see cref="BassDecoderDelay"/>, which is what BASS does with a file it can read
+        /// no delay info from. Pure — unit-tested.
+        /// </summary>
+        public static int OsuGaplessTrimFor(byte[] region, bool headerFrameInOutput)
+        {
+            int header = headerFrameInOutput && VbrTagOffset(region) >= 0 ? FrameSamplesPerChannel(region) : 0;
+            return header + LameEncoderDelay(region) + BassDecoderDelay;
+        }
+
+        /// <summary>Same, for an actual file — reads its first frame off disk. Unreadable → the bare
+        /// <see cref="BassDecoderDelay"/>, matching BASS on a file it finds no delay info in.</summary>
+        public static int OsuGaplessTrimForFile(string path, bool headerFrameInOutput)
+            => OsuGaplessTrimFor(ReadTagRegion(path), headerFrameInOutput);
 
         /// <summary>Decode an .mp3 file to interleaved PCM, positioned to match the chart's home game
         /// (<paramref name="sync"/>). Returns null on failure. Background-thread safe.</summary>
@@ -62,10 +104,13 @@ namespace Sdo.Game
                                 + $"、{pretendFrames} 幀 pretend-success(與 StepMania 逐位相同)");
                     // osu 譜的音訊要照 BASS 的 gapless 修掉 priming。StepMania 譜**不再補前導幀** ——
                     // 那個補償當初是為了讓 NLayer 的輸出對上 MAD;現在解碼器就是 MAD,補了反而多 26ms。
+                    // libmad 會把 Xing/Info 表頭幀當一般幀解成 ~26ms 靜音(BASS 是整幀跳過),所以這條路徑
+                    // 要連那一幀一起剪掉 → headerFrameInOutput: true。
                     if (sync == Mp3Sync.Osu)
                     {
                         var d = mad.Samples;
-                        int keep = ApplyOsuGapless(d, d.Length, mad.Channels);
+                        int keep = ApplyOsuGapless(d, d.Length, mad.Channels,
+                                                   OsuGaplessTrimForFile(path, true));
                         if (keep == 0) return null;
                         if (keep != d.Length) Array.Resize(ref d, keep);
                         mad.Samples = d;
@@ -99,9 +144,10 @@ namespace Sdo.Game
                 if (len == 0) return null;
                 // Position the PCM to match the chart's home game (see Mp3Sync). osu → drop BASS's gapless priming;
                 // StepMania → prepend the one leading silence frame it keeps for everything but a Xing (VBR) header.
-                // Both verified against real charts.
+                // Both verified against real charts. NLayer already skips the Xing/Info header frame (like BASS),
+                // so this path must NOT subtract it again → headerFrameInOutput: false.
                 if (sync == Mp3Sync.Osu)
-                    len = ApplyOsuGapless(data, len, ch);
+                    len = ApplyOsuGapless(data, len, ch, OsuGaplessTrimForFile(path, false));
                 else
                     data = ApplyStepManiaLeadFrame(path, data, ref len, ch);
                 if (len == 0) return null;
@@ -270,30 +316,43 @@ namespace Sdo.Game
         }
 
         private static readonly byte[] XingTag = { 0x58, 0x69, 0x6E, 0x67 }; // "Xing" (VBR header — decoders SKIP this frame)
-        private static readonly byte[] InfoTag = { 0x49, 0x6E, 0x66, 0x6F }; // "Info" (CBR header — BASS/DWI EMIT it as silence)
+        // "Info" = the CBR spelling of the same header. StepMania's MAD reader deliberately emits it as a silence frame
+        // (RageSoundReader_MP3.cpp: if(type==INFO) return false) — that is a StepMania quirk, NOT a BASS one. Verified
+        // against osu!stable's bass.dll by rewriting Kamui.mp3's marker: "Info" and "Xing" give byte-identical output
+        // (BASS skips both); only corrupting it to "Junk" changes anything (+1 frame). libmad, having no special case
+        // at all, decodes either one into ~26 ms of silence.
+        private static readonly byte[] InfoTag = { 0x49, 0x6E, 0x66, 0x6F };
+        // Encoder-version strings that carry a LAME-style gapless tag. Lavf/Lavc = ffmpeg (it writes the same layout).
+        private static readonly byte[][] EncoderTags =
+        {
+            new byte[] { 0x4C, 0x41, 0x4D, 0x45 },   // "LAME"
+            new byte[] { 0x4C, 0x61, 0x76, 0x66 },   // "Lavf"
+            new byte[] { 0x4C, 0x61, 0x76, 0x63 },   // "Lavc"
+        };
 
         /// <summary>
-        /// osu!/BASS gapless positioning: drop the leading <see cref="OsuGaplessTrim"/> priming samples (per channel) so
-        /// the music starts where an osu chart's ABSOLUTE hit times expect it. In-place shift; returns the new
-        /// interleaved length. Pure w.r.t. Unity (safe off-thread). Verified: trimming this lands SDO Pack9's osu charts
-        /// within a few ms of the grid at global-offset 0, where NLayer's un-trimmed output sat ~25 ms late.
+        /// osu!/BASS gapless positioning: drop <paramref name="trim"/> leading samples (per channel) so the music
+        /// starts where an osu chart's ABSOLUTE hit times expect it. The amount comes from the file — see
+        /// <see cref="OsuGaplessTrimFor"/>. In-place shift; returns the new interleaved length. Pure w.r.t. Unity
+        /// (safe off-thread).
         /// </summary>
-        private static int ApplyOsuGapless(float[] data, int len, int ch)
+        private static int ApplyOsuGapless(float[] data, int len, int ch, int trim)
         {
             if (ch <= 0 || len <= 0 || data == null) return len;
-            int keep = OsuGaplessKeptLength(len, ch);
+            int keep = OsuGaplessKeptLength(len, ch, trim);
             int skip = len - keep;
             if (skip <= 0) return len;
             if (keep > 0) Array.Copy(data, skip, data, 0, keep);   // memmove: overlapping is fine
             return keep;
         }
 
-        /// <summary>Interleaved length left after the osu gapless trim removes <see cref="OsuGaplessTrim"/> frames from
+        /// <summary>Interleaved length left after the osu gapless trim removes <paramref name="trim"/> frames from
         /// the front; 0 if that eats the whole buffer. Pure — unit-tested.</summary>
-        public static int OsuGaplessKeptLength(int len, int ch)
+        public static int OsuGaplessKeptLength(int len, int ch, int trim)
         {
             if (ch <= 0 || len <= 0) return len < 0 ? 0 : len;
-            int skip = OsuGaplessTrim * ch;
+            if (trim <= 0) return len;
+            int skip = trim * ch;
             return skip >= len ? 0 : len - skip;
         }
 
@@ -345,10 +404,11 @@ namespace Sdo.Game
             return true;                                    // Info (CBR) or no header → align to the +1-frame position
         }
 
-        /// <summary>True when the file's VBR/CBR header frame is an "Info" (CBR) tag — the kind BASS/DWI emit as a silence
-        /// frame, so it must be re-inserted. A "Xing" (VBR) tag, or no tag at all, returns false (those are skipped / do
-        /// not exist, matching NLayer). The tag lives inside the first audio frame; only the first ~1 KB is scanned so
-        /// the same 4 bytes reappearing in real audio later can't be mistaken for it. Pure — unit-tested.</summary>
+        /// <summary>True when the file's VBR/CBR header frame is an "Info" (CBR) tag — the kind StepMania's MAD reader
+        /// emits as a silence frame, so it must be re-inserted on the StepMania path. A "Xing" (VBR) tag, or no tag at
+        /// all, returns false (those are skipped / do not exist, matching NLayer). The tag lives inside the first audio
+        /// frame; only the first ~1 KB is scanned so the same 4 bytes reappearing in real audio later can't be mistaken
+        /// for it. Pure — unit-tested.</summary>
         public static bool HasInfoHeaderFrame(byte[] region)
         {
             if (region == null) return false;
@@ -359,17 +419,87 @@ namespace Sdo.Game
             return ii >= 0 && ii < scan;
         }
 
+        /// <summary>Offset of the Xing/Info marker inside the first audio frame, or −1 when this file has no header
+        /// frame at all. Either spelling counts — BASS treats them identically (see <see cref="InfoTag"/>), and for
+        /// the gapless maths all that matters is "is frame 0 a header instead of audio". Only the first ~1 KB is
+        /// scanned so the same 4 bytes appearing in real audio later can't be mistaken for it. Pure — unit-tested.</summary>
+        public static int VbrTagOffset(byte[] region)
+        {
+            int end = FirstFrameEnd(region);
+            if (end <= 0) return -1;
+            int xi = IndexOfIn(region, XingTag, 0, end);
+            if (xi >= 0) return xi;
+            return IndexOfIn(region, InfoTag, 0, end);
+        }
+
+        /// <summary>
+        /// Where the first MPEG frame ends inside <paramref name="region"/> (exclusive) — the only bytes a
+        /// Xing/Info/LAME tag can legally live in.
+        ///
+        /// This has to be the REAL frame length, not a constant: encoders write the header frame at whatever bitrate
+        /// they like, and low ones are tiny — Dreamin's is 182 B (56 kbps), Violet Soul's 417 B (128 kbps). A fixed
+        /// ~1 KB window runs straight past them into actual audio, where the bytes "LAME" turn up by chance and read
+        /// as a 1365-sample delay (0x555 = the 0x55 filler). That mis-set both songs by ~18 ms.
+        /// Falls back to the old conservative window when no frame table can be read. Pure — unit-tested.
+        /// </summary>
+        private static int FirstFrameEnd(byte[] region)
+        {
+            if (region == null || region.Length == 0) return 0;
+            var tbl = FrameTable(region, out _);
+            if (tbl != null && tbl.Count >= 2 && tbl[1] > tbl[0]) return Math.Min(tbl[1], region.Length);
+            return Math.Min(region.Length, 1100);
+        }
+
+        /// <summary>
+        /// The encoder delay (samples per channel) recorded in the file's LAME-style gapless tag, or 0 when there
+        /// isn't one. Layout: 21 bytes past the encoder-version string sit 3 bytes holding a 12-bit delay followed by
+        /// a 12-bit padding; ffmpeg ("Lavf"/"Lavc") writes the same layout, verified on real files (Lavf54.31 and
+        /// Lavf55.19 both read 576, matching what bass.dll actually trimmed).
+        ///
+        /// Only looked for INSIDE the Xing/Info header frame, and only after the marker — see
+        /// <see cref="FirstFrameEnd"/> for why the boundary has to be the real frame length. Without that guard the
+        /// bytes "LAME" occurring by chance in the audio that follows get read as a 1365-sample delay: untagged files
+        /// (Sayonara Trip, Isetsu Higanbana) carry a bare "LAME" + 0x55 filler, and short header frames (Dreamin at
+        /// 182 B, Violet Soul at 417 B) let the window spill into frame 2 where the same thing happens.
+        /// The EARLIEST match wins, not the first name tried — the version string sits right after the tag, so
+        /// anything later is coincidence. Pure — unit-tested.
+        /// </summary>
+        public static int LameEncoderDelay(byte[] region)
+        {
+            int tag = VbrTagOffset(region);
+            if (tag < 0) return 0;                        // no header frame → nothing to read (BASS trims 529 only)
+            int end = FirstFrameEnd(region);
+            int at = -1;
+            foreach (var enc in EncoderTags)
+            {
+                int i = IndexOfIn(region, enc, tag, end);
+                if (i >= 0 && (at < 0 || i < at)) at = i;
+            }
+            if (at < 0 || at + 24 > region.Length) return 0;
+            return (region[at + 21] << 4) | (region[at + 22] >> 4);   // 12-bit delay (padding is the next 12)
+        }
+
         /// <summary>Samples-per-channel in one MPEG audio frame, read from the first frame-sync header in
         /// <paramref name="region"/>: MPEG-1 Layer III = 1152, MPEG-2/2.5 Layer III = 576 (mp3 is always Layer III).
-        /// 0 when no frame sync is found. Pure — unit-tested.</summary>
+        /// 0 when no frame sync is found.
+        ///
+        /// The header has to be VALIDATED, not just sync-matched: 11 bits of 1s turn up constantly in non-MPEG data,
+        /// and this value feeds <see cref="OsuGaplessTrimFor"/> — believing a false sync costs a whole frame (26 ms).
+        /// Measured on the 324 mp3s under Songs/: four of them (sdom0158/0225/0439/1186) are Ogg Vorbis wearing an
+        /// .mp3 extension, and the sync-only test "found" a frame at offset 44 and answered 1152 for a file with no
+        /// MPEG frame in it at all. Same reject list as <see cref="FrameTable"/>, which already got this right.
+        /// Pure — unit-tested.</summary>
         public static int FrameSamplesPerChannel(byte[] region)
         {
             if (region == null) return 0;
-            for (int i = 0; i + 1 < region.Length; i++)
+            for (int i = 0; i + 2 < region.Length; i++)
             {
                 if (region[i] != 0xFF || (region[i + 1] & 0xE0) != 0xE0) continue;   // 11-bit frame sync
                 int version = (region[i + 1] >> 3) & 0x3;   // 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5, 1 = reserved
-                if (version == 1) continue;                 // reserved → false sync, keep scanning
+                int layer = (region[i + 1] >> 1) & 0x3;     // 1 = Layer III (mp3 is always Layer III)
+                if (version == 1 || layer != 1) continue;   // reserved version / not Layer III → false sync
+                int bri = (region[i + 2] >> 4) & 0xF, sri = (region[i + 2] >> 2) & 3;
+                if (bri == 0 || bri == 15 || sri == 3) continue;   // free-form / bad bitrate, reserved sample rate
                 return version == 3 ? 1152 : 576;
             }
             return 0;
@@ -404,7 +534,10 @@ namespace Sdo.Game
                 int rate = SampleRates[ver, sri];
                 int bps = (ver == 3 ? BitrateV1[bri] : BitrateV2[bri]) * 1000;
                 if (rate == 0 || bps == 0) { p++; continue; }
-                int flen = 144 * bps / rate + pad;
+                // 幀長係數跟著「一幀幾個 sample」走:MPEG-1 Layer III 一幀 1152 → 144;MPEG-2/2.5(LSF)一幀
+                // 只有 576 → 72。用 144 去算 LSF 會把每一幀都算成兩倍長,FirstFrameEnd 的搜尋窗跟著開兩倍,
+                // 第 2 幀裡巧合的 "LAME" 就會被當成真的 gapless 標籤讀進來(= 整首歌位移 13 ms)。
+                int flen = (ver == 3 ? 144 : 72) * bps / rate + pad;
                 if (flen <= 4 || p + flen > data.Length) break;
                 if (samplesPerFrame == 0) samplesPerFrame = ver == 3 ? 1152 : 576;
                 list.Add(p);
@@ -458,7 +591,8 @@ namespace Sdo.Game
 
         /// <summary>Read the bytes covering an mp3's first audio frame (where the Xing/Info tag lives), skipping any
         /// leading ID3v2 tag via its syncsafe size. ~2.6 KB is enough for the header frame. Null on IO failure →
-        /// <see cref="ApplyBassInfoFrame"/> then leaves the audio exactly as NLayer decoded it.</summary>
+        /// <see cref="ApplyStepManiaLeadFrame"/> then leaves the audio exactly as NLayer decoded it, and
+        /// <see cref="OsuGaplessTrimFor"/> falls back to the bare <see cref="BassDecoderDelay"/>.</summary>
         private static byte[] ReadTagRegion(string path)
         {
             try

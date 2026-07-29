@@ -6,13 +6,17 @@ namespace Sdo.Tests
 {
     /// <summary>
     /// Mp3Decoder timing — making imported osu!/StepMania (mp3) charts line up at global-offset 0 like they do in their
-    /// home game. Both games decode through MAD (StepMania) / BASS (osu, DWI); those keep the LAME encoder-delay priming
-    /// (NO gapless trim) and, for a CBR "Info" header frame they can't recognise, EMIT it as ~26 ms of silence rather
-    /// than skipping it (RageSoundReader_MP3.cpp: <c>if(type==INFO) return false</c>). NLayer instead skips that frame,
-    /// so our decode starts one frame early — <see cref="Mp3Decoder.ApplyBassInfoFrame"/> re-inserts it. These cover the
-    /// two pure pieces that decide the fix: is the header an Info tag, and how big is one frame.
-    /// Measured on "Be Crazy For Me.mp3" (MPEG-1 L3, Info tag): NLayer-raw onset 0.504 s + 1 frame (1152/44100 ≈ 26 ms)
-    /// = 0.530 s ≈ chart beat 4 at 0.537 s; the old gapless trim instead put it at 0.479 s (≈ 51 ms early).
+    /// home game. The two games place the SAME mp3 differently, so each gets its own path:
+    ///
+    ///   • StepMania (MAD) keeps the encoder-delay priming and EMITS a CBR "Info" header frame as ~26 ms of silence
+    ///     (RageSoundReader_MP3.cpp: <c>if(type==INFO) return false</c>). That quirk is StepMania's alone.
+    ///   • osu (BASS) SKIPS the header frame — "Xing" and "Info" alike — and gapless-trims the priming. How much it
+    ///     trims is per-FILE: <c>(header frame ? its samples : 0) + LAME encoder delay + 529</c>.
+    ///
+    /// The osu side was ground-truthed against osu!stable's own bass.dll (2.4.15.2): decode through it, cross-correlate
+    /// with our libmad output, and read off where BASS's sample 0 lands. 12/12 real charts matched the formula, with
+    /// three different answers (529 / 1681 / 2257) — which is why a single constant could not work. A fixed 1105 left
+    /// every Info-tagged song 1152 samples (26 ms) late, and that is exactly the group the player had to hand-correct.
     /// </summary>
     public class Mp3GaplessTests
     {
@@ -23,6 +27,11 @@ namespace Sdo.Tests
         {
             var b = new byte[size];
             b[0] = 0xFF; b[1] = hdr1;         // frame sync + version/layer
+            b[2] = 0x90;                      // bitrate idx 9, samplerate idx 0, no padding — a VALID header.
+                                              // 幀頭必須合法:FrameSamplesPerChannel 現在會驗 layer/bitrate/
+                                              // samplerate(跟 FrameTable 同一組條件),byte 2 留 0 等於 free-form
+                                              // bitrate,會被正確地當成假同步丟掉。
+            b[3] = 0x44;
             if (vbrTag != null) Put(b, 36, vbrTag);
             return b;
         }
@@ -41,6 +50,36 @@ namespace Sdo.Tests
         {
             Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(new byte[64]));   // all zero → no 0xFFEx sync
             Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(null));
+        }
+
+        [Test]
+        public void FrameSamples_RejectsASyncWithAnInvalidHeader()
+        {
+            // 11 個 1 在非 MPEG 的資料裡到處都是,所以光比對 sync 不夠 —— 這個值會餵進 OsuGaplessTrimFor,
+            // 信了假同步就是整整一幀(26 ms)。實測 Songs/ 底下 324 個 .mp3 有 4 個(sdom0158/0225/0439/1186)
+            // 其實是副檔名寫成 .mp3 的 Ogg Vorbis:舊碼在 offset 44 「找到」幀頭並回報 1152,但整個檔案裡
+            // 根本沒有 MPEG 幀。條件跟 FrameTable 用同一組。
+            var freeform = new byte[64];
+            freeform[0] = 0xFF; freeform[1] = 0xFB; freeform[2] = 0x04;   // bitrate idx 0 = free-form
+            Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(freeform));
+
+            var badRate = new byte[64];
+            badRate[0] = 0xFF; badRate[1] = 0xFB; badRate[2] = 0xF4;      // bitrate idx 15 = "bad"
+            Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(badRate));
+
+            var reservedSr = new byte[64];
+            reservedSr[0] = 0xFF; reservedSr[1] = 0xFB; reservedSr[2] = 0x9C;   // samplerate idx 3 = reserved
+            Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(reservedSr));
+
+            var layerII = new byte[64];
+            layerII[0] = 0xFF; layerII[1] = 0xFD; layerII[2] = 0x90;      // layer 2 = Layer II, mp3 一定是 Layer III
+            Assert.AreEqual(0, Mp3Decoder.FrameSamplesPerChannel(layerII));
+
+            // 假同步不能贏過後面「真的」幀頭 —— 要繼續往下掃,不是就地放棄。
+            var decoy = new byte[128];
+            decoy[0] = 0xFF; decoy[1] = 0xFB; decoy[2] = 0xF4;            // 假的(bad bitrate)
+            decoy[40] = 0xFF; decoy[41] = 0xF3; decoy[42] = 0x90; decoy[43] = 0x44;   // 真的 MPEG-2 幀
+            Assert.AreEqual(576, Mp3Decoder.FrameSamplesPerChannel(decoy));
         }
 
         [Test]
@@ -72,14 +111,153 @@ namespace Sdo.Tests
         [Test]
         public void OsuGapless_TrimsPrimingFromTheFront()
         {
-            // osu/BASS drops 576+529 = 1105 frames of priming; verified to align SDO Pack9's osu charts at offset 0.
-            Assert.AreEqual(1105, Mp3Decoder.OsuGaplessTrim);
             // stereo: 1105 frames = 2210 interleaved samples removed.
-            Assert.AreEqual(100000 - 2210, Mp3Decoder.OsuGaplessKeptLength(100000, 2));
-            Assert.AreEqual(100000 - 1105, Mp3Decoder.OsuGaplessKeptLength(100000, 1));   // mono
+            Assert.AreEqual(100000 - 2210, Mp3Decoder.OsuGaplessKeptLength(100000, 2, 1105));
+            Assert.AreEqual(100000 - 1105, Mp3Decoder.OsuGaplessKeptLength(100000, 1, 1105));   // mono
             // a buffer shorter than the priming is emptied, never negative.
-            Assert.AreEqual(0, Mp3Decoder.OsuGaplessKeptLength(1000, 2));
-            Assert.AreEqual(0, Mp3Decoder.OsuGaplessKeptLength(0, 2));
+            Assert.AreEqual(0, Mp3Decoder.OsuGaplessKeptLength(1000, 2, 1105));
+            Assert.AreEqual(0, Mp3Decoder.OsuGaplessKeptLength(0, 2, 1105));
+            // trim 0 (or nonsense) → leave the buffer exactly as decoded.
+            Assert.AreEqual(100000, Mp3Decoder.OsuGaplessKeptLength(100000, 2, 0));
+            Assert.AreEqual(100000, Mp3Decoder.OsuGaplessKeptLength(100000, 2, -5));
+        }
+
+        // ---- how much osu/BASS actually trims (per file, not a constant) ----
+
+        // Build the first frame the way a real encoder does: header + Xing/Info marker at 36, then the encoder
+        // version string, whose byte +21 starts the 12-bit encoder delay.
+        private static byte[] TaggedFrame(string vbrTag, string encoder, int delay, byte hdr1 = 0xFB)
+        {
+            var b = Frame(hdr1, vbrTag, 256);
+            if (encoder != null)
+            {
+                const int at = 120;                       // anywhere after the marker; real files vary
+                Put(b, at, encoder);
+                b[at + 21] = (byte)(delay >> 4);
+                b[at + 22] = (byte)((delay & 0xF) << 4);  // low nibble of delay, then padding's top 4 bits (0)
+            }
+            return b;
+        }
+
+        [Test]
+        public void OsuTrim_IsHeaderFramePlusEncoderDelayPlus529()
+        {
+            // The three answers seen across 12 real charts, each reproduced by bass.dll:
+            // (a) no header frame at all → BASS still drops its own 529 decoder delay.
+            Assert.AreEqual(529, Mp3Decoder.OsuGaplessTrimFor(Frame(0xFB, null), true));
+            // (b) Info header + LAME delay 576 → 1152 + 576 + 529. Kamui / Bassdrop / BLUE ARMY / Yes my master…
+            Assert.AreEqual(2257, Mp3Decoder.OsuGaplessTrimFor(TaggedFrame("Info", "LAME3.99r", 576), true));
+            // (c) Info header but no encoder tag → delay reads 0. Violet Soul.
+            Assert.AreEqual(1681, Mp3Decoder.OsuGaplessTrimFor(TaggedFrame("Info", null, 0), true));
+            // "Xing" is the same header, and BASS makes no distinction (unlike StepMania's MAD).
+            Assert.AreEqual(2257, Mp3Decoder.OsuGaplessTrimFor(TaggedFrame("Xing", "LAME3.99r", 576), true));
+            // ffmpeg writes the identical layout under a different name — real files: Lavf54.31, Lavf55.19.
+            Assert.AreEqual(2257, Mp3Decoder.OsuGaplessTrimFor(TaggedFrame("Info", "Lavf55.19", 576), true));
+            Assert.AreEqual(2257, Mp3Decoder.OsuGaplessTrimFor(TaggedFrame("Info", "Lavc58.13", 576), true));
+        }
+
+        [Test]
+        public void OsuTrim_HeaderFrameOnlyCountsWhenTheDecoderKeptIt()
+        {
+            // libmad decodes the header frame like any other → it's still in front of the audio → subtract it.
+            // NLayer (the fallback) skips it exactly like BASS → subtracting again would eat a real 26 ms of music.
+            var f = TaggedFrame("Info", "LAME3.99r", 576);
+            Assert.AreEqual(1152 + 576 + 529, Mp3Decoder.OsuGaplessTrimFor(f, true));
+            Assert.AreEqual(576 + 529, Mp3Decoder.OsuGaplessTrimFor(f, false));
+            // No header frame → nothing to skip either way, so the flag changes nothing.
+            var plain = Frame(0xFB, null);
+            Assert.AreEqual(529, Mp3Decoder.OsuGaplessTrimFor(plain, true));
+            Assert.AreEqual(529, Mp3Decoder.OsuGaplessTrimFor(plain, false));
+        }
+
+        [Test]
+        public void OsuTrim_UsesTheRealFrameSizeForMpeg2()
+        {
+            // MPEG-2/2.5 Layer III frames are 576 samples, not 1152 — the header frame is that much shorter.
+            Assert.AreEqual(576 + 576 + 529, Mp3Decoder.OsuGaplessTrimFor(TaggedFrame("Info", "LAME3.99r", 576, 0xF3), true));
+        }
+
+        [Test]
+        public void OsuTrim_FallsBackToTheDecoderDelayWhenTheHeaderCantBeRead()
+        {
+            // Couldn't read the file → do what BASS does with a file carrying no delay info, not nothing at all.
+            Assert.AreEqual(529, Mp3Decoder.OsuGaplessTrimFor(null, true));
+            Assert.AreEqual(Mp3Decoder.BassDecoderDelay, Mp3Decoder.OsuGaplessTrimFor(new byte[64], true));
+        }
+
+        [Test]
+        public void EncoderDelay_IsIgnoredOutsideAHeaderFrame()
+        {
+            // Untagged files can still carry a bare "LAME" string in ancillary data followed by 0x55 filler, which
+            // reads as delay 1365. Sayonara Trip and Isetsu Higanbana both do — honouring it would shove those songs
+            // 31 ms off for no reason, and bass.dll trims only 529 from them.
+            var b = Frame(0xFB, null, 256);
+            Put(b, 120, "LAME");
+            for (int i = 124; i < 150; i++) b[i] = 0x55;
+            Assert.AreEqual(0, Mp3Decoder.LameEncoderDelay(b));
+            Assert.AreEqual(529, Mp3Decoder.OsuGaplessTrimFor(b, true));
+            // The same string INSIDE a header frame is the real tag and is read.
+            Assert.AreEqual(576, Mp3Decoder.LameEncoderDelay(TaggedFrame("Info", "LAME3.99r", 576)));
+        }
+
+        // 表頭幀常常用很低的位元率 —— Dreamin 的只有 182 B(56 kbps)、Violet Soul 417 B(128 kbps)。
+        // 用固定 ~1 KB 的窗去找 encoder 標籤會跨進第 2 幀的**真音訊**,那裡的位元組剛好拼成 "LAME",
+        // 後面接 0x55 填充 → 讀成 delay 1365,兩首各被推掉 ~18 ms。窗一定要收在真正的幀邊界。
+        //
+        // 這裡直接照真檔的樣子組:56 kbps@44.1kHz(144×56000/44100 = 182 B 一幀)。
+        private static byte[] ShortHeaderFrameStream(string encoderInFrame1, int delay, bool fakeLameInFrame2)
+        {
+            const int Len = 182;
+            var b = new byte[Len * 3];
+            for (int f = 0; f < 3; f++)
+            {
+                int at = f * Len;
+                b[at] = 0xFF; b[at + 1] = 0xFB;      // MPEG-1 Layer III
+                b[at + 2] = 0x40;                    // bitrate idx 4 = 56 kbps, samplerate idx 0 = 44.1 kHz, no padding
+                b[at + 3] = 0x44;
+            }
+            Put(b, 36, "Info");                      // header frame marker
+            if (encoderInFrame1 != null)
+            {
+                const int at = 152;                  // real files put it right after the tag; +24 still fits in 182
+                Put(b, at, encoderInFrame1);
+                b[at + 21] = (byte)(delay >> 4);
+                b[at + 22] = (byte)((delay & 0xF) << 4);
+            }
+            if (fakeLameInFrame2)
+            {
+                Put(b, Len + 36, "LAME");            // coincidence inside real audio
+                for (int i = Len + 40; i < Len + 70; i++) b[i] = 0x55;   // → reads as delay 1365
+            }
+            return b;
+        }
+
+        [Test]
+        public void EncoderDelay_StopsAtTheRealFrameBoundary_NotAFixedWindow()
+        {
+            // Dreamin: 182 B header frame carrying Lavf54.31/576, with a chance "LAME" in frame 2.
+            var dreamin = ShortHeaderFrameStream("Lavf54.31", 576, fakeLameInFrame2: true);
+            Assert.AreEqual(576, Mp3Decoder.LameEncoderDelay(dreamin), "第 2 幀那個假 LAME 不能蓋掉幀內真的 Lavf");
+            Assert.AreEqual(1152 + 576 + 529, Mp3Decoder.OsuGaplessTrimFor(dreamin, true));
+
+            // Violet Soul: header frame with NO encoder tag at all → delay 0, even though frame 2 has a fake "LAME".
+            var violet = ShortHeaderFrameStream(null, 0, fakeLameInFrame2: true);
+            Assert.AreEqual(0, Mp3Decoder.LameEncoderDelay(violet));
+            Assert.AreEqual(1152 + 0 + 529, Mp3Decoder.OsuGaplessTrimFor(violet, true));   // 1681, matches bass.dll
+        }
+
+        [Test]
+        public void VbrTagOffset_FindsEitherSpellingInTheFirstFrameOnly()
+        {
+            Assert.AreEqual(36, Mp3Decoder.VbrTagOffset(Frame(0xFB, "Info")));
+            Assert.AreEqual(36, Mp3Decoder.VbrTagOffset(Frame(0xFB, "Xing")));
+            Assert.AreEqual(-1, Mp3Decoder.VbrTagOffset(Frame(0xFB, null)));
+            Assert.AreEqual(-1, Mp3Decoder.VbrTagOffset(null));
+            // "Info" as real audio data far past the first frame is not a header tag.
+            var late = new byte[2000];
+            late[0] = 0xFF; late[1] = 0xFB;
+            Put(late, 1200, "Info");
+            Assert.AreEqual(-1, Mp3Decoder.VbrTagOffset(late));
         }
 
         // ---- frame table (drives the timeline-exact re-decode) ----
@@ -124,6 +302,32 @@ namespace Sdo.Tests
             Assert.AreEqual(4, t.Count);
             Assert.AreEqual(4193, t[0]);                           // audio starts after the tag, not at byte 0
             Assert.AreEqual(4193 + 3 * FrameLen, t[3]);
+        }
+
+        [Test]
+        public void FrameTable_UsesTheLsfCoefficientForMpeg2()
+        {
+            // 幀長係數跟著「一幀幾個 sample」走:MPEG-1 Layer III 一幀 1152 sample → 144;MPEG-2/2.5(LSF)
+            // 一幀只有 576 → 72。這裡照真檔組:MPEG-2、80 kbps、22.05 kHz → 72×80000/22050 = 261 B。
+            // 用 MPEG-1 的 144 會算成 522,幀表整個錯位,而且 FirstFrameEnd 的搜尋窗會開成兩倍 —— 第 2 幀裡
+            // 巧合的 "LAME" 就被當成真的 gapless 標籤讀進來(整首歌位移 13 ms)。
+            const int Len = 261;
+            var b = new byte[Len * 3];
+            for (int f = 0; f < 3; f++)
+            {
+                int at = f * Len;
+                b[at] = 0xFF; b[at + 1] = 0xF3;   // sync + MPEG-2 + Layer III
+                b[at + 2] = 0x90;                 // bitrate idx 9 = 80 kbps, samplerate idx 0 = 22050, no padding
+                b[at + 3] = 0x44;
+            }
+            int spf;
+            var t = Mp3Decoder.FrameTable(b, out spf);
+            Assert.AreEqual(576, spf);                             // MPEG-2 Layer III
+            Assert.AreEqual(4, t.Count, "3 幀 + 哨兵;用 144 只會走到 1 幀就撞底");
+            Assert.AreEqual(0, t[0]);
+            Assert.AreEqual(Len, t[1], "LSF 幀長係數是 72,不是 144(用 144 會算成 522)");
+            Assert.AreEqual(2 * Len, t[2]);
+            Assert.AreEqual(3 * Len, t[3]);
         }
 
         [Test]
@@ -268,12 +472,58 @@ namespace Sdo.Tests
 
             var pcm = Mp3Decoder.Decode(path, Mp3Decoder.Mp3Sync.Osu);   // Osu = 不補前導幀,幀數才好直接比
             Assert.IsNotNull(pcm);
-            int perChannel = pcm.Samples.Length / pcm.Channels + Mp3Decoder.OsuGaplessTrim;   // 把 gapless 剪掉的加回來
+            // 把 gapless 剪掉的加回來 —— 剪多少是看檔案算的(這首是 Info + Lavf delay 576 → 2257)
+            int perChannel = pcm.Samples.Length / pcm.Channels + Mp3Decoder.OsuGaplessTrimForFile(path, true);
             int decoded = perChannel / spf;
             Assert.GreaterOrEqual(decoded, audioFrames,
                 $"解出 {decoded} 幀但檔案有 {audioFrames} 個音訊幀 —— 少一幀,那之後整首就提前一幀(26 ms)");
             Assert.LessOrEqual(decoded, totalFrames,
                 $"解出 {decoded} 幀但檔案總共才 {totalFrames} 幀(含表頭幀)—— 憑空多出來的幀會讓整首延後");
+        }
+
+        // ---- 真實檔案的 ground truth(回歸用)----
+        //
+        // StreamingAssets/Step1/Bassdrop.mp3 就是玩家實測那首 Camellia - Bassdrop Freaks(同一份 4,808,920 B)。
+        // 它的檔頭:Info 表頭幀 + Lavf55.19(ffmpeg)+ encoder delay 576 → BASS 的第 0 個樣本落在 libmad 的第
+        // 1152+576+529 = 2257 個樣本。這個 2257 不是算出來的期望值,是拿 osu!stable 自己的 bass.dll(2.4.15.2)
+        // 解同一個檔、跟 libmad 逐樣本互相關量出來的(相對誤差 ~1e-13)。
+        //
+        // 這一組是「音樂會不會整首偏掉」的總驗收:錯一個表頭幀就是 26 ms,玩家得逐首手調 offset 才蓋得掉。
+
+        private static string TestSongPath()
+            => System.IO.Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
+
+        [Test]
+        public void OsuTrim_MatchesBassOnTheShippedSong()
+        {
+            string path = TestSongPath();
+            if (!System.IO.File.Exists(path)) Assert.Ignore("找不到 StreamingAssets/Step1/Bassdrop.mp3");
+            // libmad 留著表頭幀 → 連它一起剪。
+            Assert.AreEqual(2257, Mp3Decoder.OsuGaplessTrimForFile(path, true));
+            // NLayer 已經跳掉表頭幀 → 只剪 priming,不然會多吃掉一幀真音樂。
+            Assert.AreEqual(1105, Mp3Decoder.OsuGaplessTrimForFile(path, false));
+            // 檔案讀不到也不能回 0(那等於完全不做 gapless);至少是 BASS 的解碼延遲。
+            Assert.AreEqual(Mp3Decoder.BassDecoderDelay,
+                            Mp3Decoder.OsuGaplessTrimForFile(path + ".nope", true));
+        }
+
+        [Test]
+        public void Decode_OsuStartsExactlyTheBassTrimAheadOfStepMania()
+        {
+            string path = TestSongPath();
+            if (!System.IO.File.Exists(path)) Assert.Ignore("找不到 StreamingAssets/Step1/Bassdrop.mp3");
+            if (!MadDecoder.Available) Assert.Ignore("sdomad.dll 載不到 → 走 NLayer fallback,前導幀規則不同");
+
+            var sm = Mp3Decoder.Decode(path, Mp3Decoder.Mp3Sync.StepMania);   // libmad 原樣(不剪也不補)
+            var osu = Mp3Decoder.Decode(path, Mp3Decoder.Mp3Sync.Osu);
+            Assert.IsNotNull(sm); Assert.IsNotNull(osu);
+            Assert.AreEqual(sm.Channels, osu.Channels);
+
+            int trim = 2257 * sm.Channels;
+            Assert.AreEqual(sm.Samples.Length - trim, osu.Samples.Length, "osu 版必須正好短了 BASS 那一段");
+            // 而且要是「從前面剪掉」,不是從尾巴 —— 剪錯邊長度一樣但整首都對不上。
+            for (int i = 0; i < 200000 && i < osu.Samples.Length; i += 977)
+                Assert.AreEqual(sm.Samples[i + trim], osu.Samples[i], 1e-6f, $"sample {i}");
         }
 
         // ---- overload protection (hot masters like Amanojaku.mp3 decode to > ±1) ----

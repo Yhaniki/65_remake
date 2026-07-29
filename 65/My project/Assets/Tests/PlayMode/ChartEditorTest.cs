@@ -101,6 +101,7 @@ namespace Sdo.Tests
                 // 不能只 =100 就假設變化 100ms:歌本身在 song_table.csv 帶了自己的 offsetMs(這首 ≈46ms),setter 把它整個
                 // 換掉 → 變化量 = 100 − 46 = 54ms(歌單刪減後預設開的歌換人才踩到,舊歌 offsetMs 剛好是 0)。
                 game.EditorSongOffsetMs = 0.0;
+                double countInBefore = game.EditorMusicCountInMs;
                 double chartBefore = game.EditorNowMs;
                 double clipBefore = game.EditorClipSec;
 
@@ -113,8 +114,8 @@ namespace Sdo.Tests
                 // 不受這首歌音檔長短/seek 到哪裡影響）。
                 Assert.AreEqual(0.100, clipBefore - clipAfter, 0.010,
                     "單首 offset +100ms → 音樂要往回退 100ms（＝之後才播到現在這個位置）");
-                Assert.AreEqual(game.EditorMusicDelaySec * 1000.0 + 100.0, game.EditorMusicCountInMs, 1.0,
-                    "波形的時間原點要跟著音樂走（不然波形會跟音符一起動）");
+                Assert.AreEqual(countInBefore + 100.0, game.EditorMusicCountInMs, 1.0,
+                    "音樂 count-in 要跟著單首 offset 移動 100ms");
 
                 game.EditorSongOffsetMs = 0.0;     // 還原，後面的波形檢查才不受影響
                 yield return null;
@@ -135,10 +136,9 @@ namespace Sdo.Tests
                 Assert.Greater(maxPeak, 0.5f, "波形全是靜音 → GetData 沒讀到 PCM");
                 // RMS 必須真的有起伏：全曲一路貼在最大值 = 畫出來會是一根實心柱（不是波形）
                 Assert.Less(minRms, 0.5f * maxRms, "RMS 沒有起伏 —— 波形會變成一根實心柱");
-                // 波形第 0 格 = 音樂起點（type-10 無聲數拍）**再往早補解碼暖機**：Unity 的 Vorbis 解碼在 clip 開頭
-                // 留了一段暖機樣本，不補的話波形瞬態整條晚到、看起來音符比波形早。純顯示修正，見 WaveformDecoderDelayMs。
-                Assert.AreEqual(game.EditorMusicDelaySec * 1000.0 - ScreenGameplay.WaveformDecoderDelayMs,
-                    overlay.PeaksOffsetMs, 1.0, "波形的時間原點沒有對到音樂起點（type-10 無聲數拍 − 解碼暖機）");
+                // 波形原點走唯一的格式映射：.osu 是音樂起點 −20ms；其他格式就是音樂起點。
+                Assert.AreEqual(game.EditorWaveformStartMs, overlay.PeaksOffsetMs, 1.0,
+                    "波形的時間原點沒有套用目前譜面格式的映射");
             }
 
             yield return null;

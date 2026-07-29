@@ -68,17 +68,33 @@ namespace Sdo.Game
         public double EditorTickOnsetMs => _tickOnsetSec * 1000.0;
 
         /// <summary>
-        /// **波形顯示**要往早補的量（毫秒）＝ 聲音的 <see cref="DriverLatencyMs"/> ＋ 這個實測校出來的差
-        /// <see cref="WaveformExtraMs"/>。兩條路徑吃到的延遲不同，所以是兩個獨立的旋鈕、各自用眼睛/耳朵校：
-        ///   • 聲音（時鐘）走「解碼 → 混音 → 喇叭」，用 DriverLatencyMs 校（耳朵：聽節拍器 ≈ 0）；
-        ///   • 波形畫的是 clip 的**原始樣本**，跟聲音路徑差一段（Vorbis 解碼暖機等），用眼睛校（波形瞬態壓在音符上）。
-        /// 目前實測差是 <see cref="WaveformExtraMs"/>（本機 = −30 → 波形淨位移 33−30 ≈ 3ms，跟 libsndfile 量到的 +3 一致）。
+        /// osu!lazer 為相容 stable 時代製作的譜面，會把編輯器波形往早畫 20ms
+        ///（<c>Editor.WAVEFORM_VISUAL_OFFSET</c>）。這是 <b>osu 波形的視覺座標</b>，不是解碼延遲：
+        /// note 仍在 .osu 寫的 T，播放/seek 仍讀音檔的 T − count-in，只有波形在座標 T 顯示
+        /// 音檔的 T − count-in + 20ms。
         ///
-        /// 純顯示：不碰音符時間、不碰音訊排程、更不是 per-song offset。改 DriverLatencyMs 波形會跟著動並維持這個差；
-        /// 若哪天在別台機器波形沒對準，只調 WaveformExtraMs 這一個數字。
+        /// 只套在真正的 <c>.osu</c>；StepMania、原生 .gn 與 Malody 沒有這條 osu 相容規則。
+        /// 波形直接來自 <see cref="AudioClip.GetData(float[], int)"/>，絕不能跟 DSP buffer 或
+        /// <see cref="DriverLatencyMs"/> 綁在一起。
         /// </summary>
-        public const double WaveformExtraMs = -30.0;
-        public const double WaveformDecoderDelayMs = DriverLatencyMs + WaveformExtraMs;
+        public const double OsuWaveformVisualOffsetMs = 20.0;
+
+        public static double WaveformVisualOffsetMsFor(int format)
+            => format == (int)SongFormat.Osu ? OsuWaveformVisualOffsetMs : 0.0;
+
+        /// <summary>波形第 0 個 PCM bucket 應畫在的譜面時間。</summary>
+        public static double WaveformStartMsFor(int format, double musicCountInMs)
+            => musicCountInMs - WaveformVisualOffsetMsFor(format);
+
+        /// <summary>譜面時間對到的實際播放 PCM 位置；global offset 只修播放時鐘，不改檔案內容。</summary>
+        public static double AudioSourceMsAtChartMs(double chartMs, double musicCountInMs, double globalOffsetMs)
+            => chartMs - globalOffsetMs - musicCountInMs;
+
+        /// <summary>譜面座標上實際畫到的 PCM 位置。osu 的結果會比播放 PCM 晚 20ms，與 lazer 一致。</summary>
+        public static double WaveformSourceMsAtChartMs(int format, double chartMs, double musicCountInMs)
+            => chartMs - WaveformStartMsFor(format, musicCountInMs);
+
+        public double EditorWaveformStartMs => WaveformStartMsFor(chartFormat, EditorMusicCountInMs);
 
         /// <summary>譜面時鐘已自動扣掉的音訊延遲（毫秒）＝ 算得到的 DSP 緩衝 ＋ 寫死的驅動延遲常數。校時面板要顯示。</summary>
         public double EditorDspLatencyMs => _outputLatencySec * 1000.0;
@@ -354,7 +370,9 @@ namespace Sdo.Game
             if (_audio != null && _audio.clip != null)
             {
                 _audio.Stop();
-                double clipSec = musicChartSec - MusicCountInSec;   // 音樂晚 count-in 秒才進來（含單首 offset）
+                // 播放/seek 永遠讀實際 PCM；osu 的 20ms 只屬於波形視覺座標，不能混進音訊。
+                double clipSec = AudioSourceMsAtChartMs(
+                    chartMs, EditorMusicCountInMs, _globalOffsetMs) / 1000.0;
                 _editorSeekClipSec = Math.Max(0.0, clipSec);        // 暫停中 _audio.time 讀不到，EditorClipSec 回報這個
                 if (clipSec < 0.0)
                 {
