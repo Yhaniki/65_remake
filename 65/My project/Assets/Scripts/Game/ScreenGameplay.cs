@@ -676,6 +676,8 @@ namespace Sdo.Game
         };
         private TrackedTextMesh _musicName;                       // bottom song title — per-char so its letter-spacing can be tightened
         private TextMesh _lvText, _timeText, _info, _fpsText;
+        // 底列白字(LV/時間)的光柵尺寸管理：跟歌名同一條規則(em 盒實體 px × 2 超取樣)，三個值才是同一種字重。
+        private readonly HudTextRaster _hudTextRaster = new HudTextRaster();
         // 「時間」欄拆成三個獨立文字物件，讓數字變動時「冒號」與「總長」的位置都定住不動：
         //   _timeMin  ＝ 倒數的「分」，右對齊 → 右緣釘在冒號錨點，分是「—」或數字都不影響冒號 x。
         //   _timeText ＝ 倒數的「: 秒」，左對齊在冒號錨點 → 冒號位置固定；秒往右長不影響冒號。
@@ -2677,6 +2679,9 @@ namespace Sdo.Game
             tm.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             tm.GetComponent<MeshRenderer>().sortingOrder = 42;
             tm.fontSize = 64; tm.characterSize = px * 0.2f; tm.anchor = TextAnchor.MiddleLeft; tm.color = col;
+            // 光柵尺寸交給 HudTextRaster 跟著螢幕走(顯示大小不變) —— 上面那對 64/px×0.2 只是「設計基準」，
+            // 直接用它等於把字圖縮 4~5 倍畫，跟同排走實體 px 光柵的歌名並排就一銳一糊、字重也不同。
+            _hudTextRaster.Add(tm, px);
             return tm;
         }
 
@@ -3727,8 +3732,18 @@ namespace Sdo.Game
             }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.ForceOpaque)
             {
-                // 官方旗標 0 = 不透明批,alpha 通道是死的。關掉 alpha clip 就好 —— 保留 cutout shader 的
-                // ZWrite On / AlphaTest 佇列,只是永遠不 clip(_Cutoff = -1,和 SceneLoader 對不透明 DDS 的做法一致)。
+                // 官方旗標 0 = 不透明批,alpha 通道是死的 —— 這不是「cutout 但不 clip」,是**根本不是 cutout**。
+                // 只把 _Cutoff 設 -1 會把材質留在 Sdo/UnlitInstancedCutout,而那支跟真正的不透明
+                // Sdo/UnlitInstanced 差在**頂點色的乘法空間**:
+                //   Cutout        : c.rgb *= i.col.rgb                                    (linear 空間)
+                //   UnlitInstanced: GammaToLinear(LinearToGamma(tex) × _Color × i.col)     (gamma 空間,刻意複製 D3D9)
+                // SCN0004 的海床是**兩片相鄰的 mapobj**:外海 SEA_UP 走不透明批、近岸 SEA_DOWN 走這裡,
+                // 兩片的頂點色都不是白的(SEA_UP 24 種、SEA_DOWN 12 種偏暗藍灰),於是同一片海被兩套亮度
+                // 數學畫出來 —— 接縫上就是一條亮度階差,也就是使用者看到的「海水裡奇怪的分割線」。
+                // 換成不透明 shader 兩件事一起成立:官方語意正確(不透明批不看 alpha),而且跟鄰片同一條
+                // 顏色路徑。_Cutoff 仍設 -1,以防 fallback 落回 cutout。
+                var opaque = Shader.Find("Sdo/UnlitInstanced");
+                if (opaque != null) mat.shader = opaque;
                 if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", -1f);
             }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow)
@@ -4576,7 +4591,9 @@ namespace Sdo.Game
         {
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
             MaintainSceneRt();
-            _musicName?.Tick();            // 視窗/全螢幕一變就重新以實體 px 光柵化歌名（否則縮小取樣 → 糊出殘影）
+            _musicName?.Tick();            // 視窗/全螢幕一變就重新以實體 px 光柵化歌名（否則取樣不對 → 殘影/糊）
+            // LV/時間值同一套光柵；真的換了尺寸就重量「: 秒」欄寬(字寬會微調)，好把總長欄重新釘回原位。
+            if (_hudTextRaster.Tick()) _timeMeasure = 0;
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板

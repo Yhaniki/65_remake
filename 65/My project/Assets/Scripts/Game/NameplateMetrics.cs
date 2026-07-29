@@ -68,6 +68,32 @@ namespace Sdo.Game
         public static int FontPxFor(float designPx, float scaleY, int min = 8, int max = 200)
             => Mathf.Clamp(Mathf.RoundToInt(designPx * scaleY), min, max);
 
+        /// <summary>Supersample factor for the HUD raster (<see cref="RasterPxForEm"/>). 2 is the sweet spot:
+        /// bilinear minification at exactly 2:1 IS a box filter (each output pixel averages the 2×2 it covers),
+        /// so the glyph downsamples cleanly with no mipmap — while 1:1 would smear by half a pixel whenever the
+        /// quad lands off the pixel grid (design y 585 × a fractional scale almost never lands on an integer).</summary>
+        public const float HudTextSupersample = 2f;
+
+        /// <summary>How tall the em box ACTUALLY stands on screen, in design px, for a label calibrated as
+        /// (<paramref name="designPx"/>, <paramref name="pxToCharSizeAt64"/>). TextMesh's quad height =
+        /// fontPx × characterSize × 0.1 world units (= design px, see <c>SdoLayout</c>); substituting
+        /// <see cref="CharacterSizeFor"/> cancels fontPx out and leaves 0.1 × 64 × calibration × designPx.
+        /// Legacy/Arial (0.2) → 1.28 × designPx; CJK (0.11) → 0.704 × designPx. The calibration constants were
+        /// fitted to the INK height, so the em box the bitmap has to cover is bigger than the nominal designPx.</summary>
+        public static float EmDesignPx(float designPx, float pxToCharSizeAt64)
+            => 0.1f * CalibrationFontPx * pxToCharSizeAt64 * designPx;
+
+        /// <summary>Raster size (px) that actually resolves the glyph: the em box's PHYSICAL pixel height, times
+        /// <paramref name="supersample"/>. <see cref="FontPxFor"/> sizes off the nominal designPx instead, which is
+        /// short by the <see cref="EmDesignPx"/> factor — for the HUD song title (legacy 0.2) that is 1.28×, so its
+        /// bitmap was rasterized SMALLER than it is drawn and every glyph came out magnified/blurry. Clamped like
+        /// <see cref="FontPxFor"/>.</summary>
+        public static int RasterPxForEm(float designPx, float scaleY, float pxToCharSizeAt64,
+                                        float supersample = HudTextSupersample, int min = 8, int max = 200)
+            => Mathf.Clamp(
+                Mathf.RoundToInt(EmDesignPx(designPx, pxToCharSizeAt64) * scaleY * Mathf.Max(0.01f, supersample)),
+                min, max);
+
         /// <summary>TextMesh characterSize that keeps the on-screen height at <paramref name="designPx"/> for a
         /// bitmap rasterized at <paramref name="fontPx"/>: quad size scales with BOTH fontSize and characterSize,
         /// so the calibration (<paramref name="pxToCharSizeAt64"/>, per typeface) is rescaled by 64/fontSize.</summary>

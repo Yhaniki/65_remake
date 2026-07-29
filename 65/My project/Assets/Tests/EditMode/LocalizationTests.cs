@@ -1,5 +1,8 @@
+using System.IO;
 using NUnit.Framework;
 using Sdo.Localization;
+using Sdo.UI.Catalog;
+using UnityEngine;
 
 namespace Sdo.Tests
 {
@@ -61,6 +64,22 @@ namespace Sdo.Tests
             LocalizationManager.LoadFromTables(Language.English, En(), En());
             LocalizationManager.LanguageChanged -= H;
             Assert.GreaterOrEqual(n, 1);
+        }
+
+        /// 每加一列 SongListModel.RandRanges，build_localization.py 也要補同名 key，否則隨機 tab 直接印出 [key]。
+        [Test]
+        public void Shipped_Tables_Cover_Every_RandRange_Key()
+        {
+            var dir = Path.Combine(Application.dataPath, "StreamingAssets", "Localization");
+            foreach (var code in new[] { "en", "zh-TW", "zh-Hans", "ja" })
+            {
+                var path = Path.Combine(dir, code + ".json");
+                Assert.IsTrue(File.Exists(path), path);
+                var t = StringTable.Parse(File.ReadAllText(path));
+                foreach (var r in SongListModel.RandRanges)
+                    Assert.IsTrue(t.TryGet(r.Key, out var v) && !string.IsNullOrEmpty(v),
+                        $"{code}.json 缺少 {r.Key}（跑 tools/build_localization.py）");
+            }
         }
 
         [Test]
