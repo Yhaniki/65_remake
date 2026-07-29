@@ -229,6 +229,58 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Renaming_Before_Joining_Is_What_Everyone_Else_Sees()
+        {
+            // ★ 使用者實測回報的那個 bug:在大廳換成男角進房,別人看到的名字還是女角的。
+            // 握手在**開機時**就做完了(那時 active profile 是女角),選性別 == 選帳號 ——
+            // 所以進房前要補送 setIdentity,否則座位名字就是握手那份,而且之後永遠不會變。
+            var a = Connect("飄漂o");
+            int code = CreateRoom(a, "舞蹈室");
+
+            var b = Connect("飄漂o");          // B 開機時的 active profile 也是那隻女角
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetIdentity)
+                .Str("name", "按黑青眼暴龍壽3")
+                .Str("playerId", "00000001")
+                .Str("guild", "熱舞家族")
+                .Int("level", 11));
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.JoinRoom)
+                .Int(NetProto.FieldRequest, 21)
+                .Int("code", code));
+            Assert.AreEqual(NetProto.JoinOk, NetJson.Str(b.WaitFor(NetProto.JoinResult), "result"));
+
+            var aState = WaitForState(a, s => s.SeatedCount == 2, "A 看到 B 加入");
+            Assert.AreEqual("按黑青眼暴龍壽3", aState.Seats[1].Name, "A 要看到 B 換過的名字,不是開機那份");
+            Assert.AreEqual("熱舞家族", aState.Seats[1].Guild);
+            Assert.AreEqual(11, aState.Seats[1].Level);
+        }
+
+        [Test]
+        public void Renaming_Inside_A_Room_Is_Broadcast_To_The_Others()
+        {
+            // 進房後才換身分(例如被踢回選男女畫面又進來)也要即時反映在別人的畫面上。
+            var a = Connect("房主");
+            int code = CreateRoom(a, "舞蹈室");
+
+            var b = Connect("舊名字");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.JoinRoom)
+                .Int(NetProto.FieldRequest, 22)
+                .Int("code", code));
+            Assert.AreEqual(NetProto.JoinOk, NetJson.Str(b.WaitFor(NetProto.JoinResult), "result"));
+            WaitForState(a, s => s.SeatedCount == 2, "A 看到 B 加入");
+
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetIdentity)
+                .Str("name", "新名字")
+                .Int("level", 3));
+
+            var aState = WaitForState(a, s => s.Seats[1].Name == "新名字", "A 看到 B 改名");
+            Assert.AreEqual(3, aState.Seats[1].Level);
+        }
+
+        [Test]
         public void Joining_An_Unknown_Code_Returns_NotFound()
         {
             var a = Connect("玩家A");

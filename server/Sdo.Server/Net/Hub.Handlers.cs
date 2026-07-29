@@ -107,6 +107,7 @@ namespace Sdo.Server.Net
                 case NetProto.SetOwnTeam: OnSetOwnTeam(conn, node, rq); break;
                 case NetProto.SetReady: OnSetReady(conn, node, rq); break;
                 case NetProto.SetLook: OnSetLook(conn, node); break;
+                case NetProto.SetIdentity: OnSetIdentity(conn, node); break;
                 case NetProto.Move: OnRoomMove(conn, node, now); break;
                 case NetProto.SetAvailability: OnSetAvailability(conn, node, now); break;
 
@@ -206,8 +207,8 @@ namespace Sdo.Server.Net
             conn.PlayerId = Clip(NetJson.Str(node, "playerId"), 32);
             conn.Name = SanitizeName(NetJson.Str(node, "name"));
             // token 綁了身分就覆寫 client 自稱的那份(見上面的註解 —— 這是整個 token 機制的重點)。
-            if (ident.HasPlayerId) conn.PlayerId = Clip(ident.PlayerId, 32);
-            if (ident.HasName) conn.Name = SanitizeName(ident.Name);
+            if (ident.HasPlayerId) { conn.PlayerId = Clip(ident.PlayerId, 32); conn.PlayerIdLocked = true; }
+            if (ident.HasName) { conn.Name = SanitizeName(ident.Name); conn.NameLocked = true; }
             conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
             conn.Level = Math.Max(0, NetJson.Int(node, "level"));
             conn.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
@@ -494,6 +495,39 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) return;
             if (room.SetLook(conn.UserId, look) == NetRoomOp.Ok) BroadcastRoomState(room);
+        }
+
+        /// <summary>
+        /// 玩家回報自己的身分(名字 / playerId / 家族 / 等級)。
+        ///
+        /// 為什麼握手之後還會變:**選性別 == 選帳號** —— 女角與男角是兩個 profile,各有自己的名字,
+        /// 而握手是開機時就做完的。沒有這條路徑,換成男角進房的人在別人畫面上會是
+        /// 「男角的模型 + 女角的名字」(setLook 只帶外觀)。
+        ///
+        /// 🔴 token 綁定優先:綁了名字/playerId 的連線改不動那兩項(見 <see cref="Connection.NameLocked"/>)。
+        /// 不回 error(理由同 <see cref="OnSetLook"/>:不在房裡只更新連線上那份,進房時會拿去填座位)。
+        /// </summary>
+        private void OnSetIdentity(Connection conn, object node)
+        {
+            if (!conn.NameLocked)
+            {
+                // 名字空白 → 保留原本的。SanitizeName 會把空的變成「玩家」,但那是握手時
+                // 「這個 client 根本沒報名字」該有的行為,不該讓一筆壞掉的更新把好名字洗掉。
+                string raw = (NetJson.Str(node, "name") ?? "").Trim();
+                if (raw.Length > 0) conn.Name = SanitizeName(raw);
+            }
+            if (!conn.PlayerIdLocked)
+            {
+                string pid = Clip(NetJson.Str(node, "playerId"), 32);
+                if (pid.Length > 0) conn.PlayerId = pid;
+            }
+            conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
+            conn.Level = Math.Max(0, NetJson.Int(node, "level"));
+
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return;
+            if (room.SetIdentity(conn.UserId, conn.Name, conn.Guild, conn.Level) == NetRoomOp.Ok)
+                BroadcastRoomState(room);
         }
 
         private void OnSetAvailability(Connection conn, object node, long now)

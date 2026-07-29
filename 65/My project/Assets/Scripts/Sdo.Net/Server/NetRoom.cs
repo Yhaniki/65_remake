@@ -462,6 +462,46 @@ namespace Sdo.Net.Server
             return NetRoomOp.NotInRoom;
         }
 
+        /// <summary>
+        /// 更新某個人的身分(顯示名稱 / 家族 / 等級)。座位玩家與旁觀者都可能送。
+        ///
+        /// 為什麼名字會在進房後還變:**選性別 == 選帳號**,而握手是開機時就做完的 ——
+        /// 那時報上去的是開機那刻 active profile 的名字。沒有這條路徑的話,換成男角進房的人
+        /// 在別人畫面上會是「男角的模型 + 女角的名字」(實測踩過)。
+        ///
+        /// 與 <see cref="SetLook"/> 同樣沒有權限檢查(名字就是「我叫什麼」),
+        /// 不在房裡回 <see cref="NetRoomOp.NotInRoom"/>(正常的競態,不是錯誤)。
+        ///
+        /// <paramref name="name"/> 空 = 不動名字 —— 座位名字被抹成空白比顯示舊名字更糟
+        /// (頭上名牌與聊天行會變成無主的字)。清理與長度截斷由呼叫端(Hub)負責。
+        /// 旁觀者沒有家族欄位(<see cref="NetSpectator"/>),所以只吃得到名字與等級。
+        /// </summary>
+        public NetRoomOp SetIdentity(int userId, string name, string guild, int level)
+        {
+            if (level < 0) level = 0;
+
+            var seat = _state.SeatOf(userId);
+            if (seat != null)
+            {
+                if (!string.IsNullOrEmpty(name)) seat.Name = name;
+                seat.Guild = guild ?? "";
+                seat.Level = level;
+                Touch();
+                return NetRoomOp.Ok;
+            }
+
+            for (int i = 0; i < _spectators.Count; i++)
+                if (_spectators[i].UserId == userId)
+                {
+                    if (!string.IsNullOrEmpty(name)) _spectators[i].Name = name;
+                    _spectators[i].Level = level;
+                    SyncSpectators();
+                    Touch();
+                    return NetRoomOp.Ok;
+                }
+            return NetRoomOp.NotInRoom;
+        }
+
         public NetRoomOp SetReady(int userId, bool ready)
         {
             var s = _state.SeatOf(userId);

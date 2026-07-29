@@ -57,6 +57,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 | 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²) / `playFinished` |
 | 房間走動 | `move`{x,z,facing,walking} C→S / `moves` S→C(同上,但頻率高一點 —— 位置是連續量) |
 | 外觀 | `setLook`{gender,bodyIndex,parts[]} —— 握手時玩家還沒選性別/還沒讀 profile,所以外觀要另外送 |
+| 身分 | `setIdentity`{name,playerId,guild,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
 | 旁觀 | `spectate`{code} / `stopSpectate` |
 | 聊天 | `chatSay` / `chatMsg` / `announce` |
 
@@ -69,6 +70,9 @@ server 沒給 `--tokens` 時 `authToken` 被忽略,身分 = client 自稱的 `pl
 
 給了 token 檔之後**server 說了算**:查得到就用 token 綁的 `playerId`/`name` 覆蓋 client 自稱的那組,
 查不到 → `bye{badToken}`。所以「把 hello 的 playerId 改成別人的」在啟用 token 之後不再有效。
+
+⚠️ `setIdentity` 是握手**之後**改身分的路徑,所以它必須尊重同一條規則:token 綁了 `name`/`playerId` 的連線
+改不動那兩項(只吃得到 `guild`/`level`)—— 否則它就是 token 機制的後門,hello 擋下的冒用改成事後再送一次就成立。
 
 同一條連線上還有另外兩道在 hello **之前**就生效的門(連線在握手之前已經成立):
 來源允許名單 → `bye{notAllowed}`、per-IP 連線數上限 → `bye{tooManyFromIp}`。

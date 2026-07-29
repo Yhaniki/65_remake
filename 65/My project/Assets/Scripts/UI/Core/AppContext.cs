@@ -75,6 +75,10 @@ namespace Sdo.UI.Core
             // 所以第一份廣播出去的房間快照就已經帶對的外觀 —— 別人不會先看到一隻預設的女角。
             // 放在 AppContext 是因為它是唯一的離線/連線分流點,也是唯一該知道 profile/穿搭怎麼解析的地方。
             net.LocalLook = () => LocalLookNow(offline.Session);
+            // 「我現在是誰」的唯一來源,與 LocalLook 成對(NetClient 在建房/加入/旁觀一起呼叫)。
+            // 握手報的名字是**開機那刻**的 active profile —— 而選性別 == 選帳號,女角與男角的名字不一樣,
+            // 所以進房前一定要再報一次,否則別人看到的是「新的男角」配「舊的女角名字」。
+            net.LocalIdentity = () => LocalIdentityNow(offline.Session);
 
             var rooms = new OnlineRoomService(net, offline.Session);
             // 聊天:同房的公開發言走 server 廣播;密語/家族/系統/「你說」那些本機專屬的行仍由離線實作產生
@@ -99,6 +103,19 @@ namespace Sdo.UI.Core
                 look.Parts = WardrobeStore.ResolveEquippedParts(p, gender, id => AvatarItemCatalog.Instance.ById(id));
             return look;
         }
+
+        /// <summary>
+        /// 現在的本機身分:名字 / playerId / 性別看 session(選角色畫面可能剛切過帳號),
+        /// 家族與等級看共用的 <c>config.ini [Profile]</c>(那兩項不分帳號)。
+        /// </summary>
+        private static NetPlayerIdentity LocalIdentityNow(GameSession session)
+            => new NetPlayerIdentity
+            {
+                Name = session != null ? session.LocalPlayerName : "",
+                PlayerId = session != null ? session.LocalPlayerId : "",
+                Guild = session != null ? session.GuildName : "",
+                Level = ParseLevel(RoomConfig.playerLevel),
+            };
 
         private static int ParseLevel(string s)
         {

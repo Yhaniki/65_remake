@@ -205,7 +205,8 @@ namespace Sdo.Game.Net
             UserId = 0;
             Room = null;
             ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
-            _sentLook = null;   // 重連後要重送外觀(server 那邊的 conn 已經沒了)
+            _sentLook = null;       // 重連後要重送外觀(server 那邊的 conn 已經沒了)
+            _sentIdentity = null;   // 同上:名字也是記在那條 conn 上的
             Moves.Clear();
         }
 
@@ -515,7 +516,8 @@ namespace Sdo.Game.Net
         /// <summary>建房。<paramref name="onResult"/> 收到 (result, code)。</summary>
         public void CreateRoom(string name, Action<string, int> onResult)
         {
-            PublishLook();   // 🔴 一定要在 createRoom **之前** —— 見 PublishLook 的註解
+            PublishLook();       // 🔴 一定要在 createRoom **之前** —— 見 PublishLook 的註解
+            PublishIdentity();   // 同上:座位的名字是進房那一刻從連線上抄過去的
             Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.CreateRoom)
                 .Int(NetProto.FieldRequest, NextRq(node => ReportJoin(node, onResult)))
@@ -525,7 +527,8 @@ namespace Sdo.Game.Net
         /// <summary>用房號加入。<paramref name="onResult"/> 收到 (result, code)。</summary>
         public void JoinRoom(int code, Action<string, int> onResult)
         {
-            PublishLook();   // 🔴 一定要在 joinRoom **之前** —— 見 PublishLook 的註解
+            PublishLook();       // 🔴 一定要在 joinRoom **之前** —— 見 PublishLook 的註解
+            PublishIdentity();   // 同上:座位的名字是進房那一刻從連線上抄過去的
             Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.JoinRoom)
                 .Int(NetProto.FieldRequest, NextRq(node => ReportJoin(node, onResult)))
@@ -640,7 +643,8 @@ namespace Sdo.Game.Net
         /// </summary>
         public void Spectate(int code = 0, Action<string> onResult = null)
         {
-            PublishLook();   // 旁觀者在房間 3D 裡也是站在那邊的人,外觀一樣要對
+            PublishLook();       // 旁觀者在房間 3D 裡也是站在那邊的人,外觀一樣要對
+            PublishIdentity();   // 旁觀名單顯示的也是名字
             // 前一個還沒結果的請求先收掉 —— 不然它的 callback 會被後來這次的回應觸發。
             if (_spectateRq != 0) _pending.Remove(_spectateRq);
             int rq = NextRq(node => CompleteSpectate(NetJson.Str(node, "code")));
@@ -781,6 +785,47 @@ namespace Sdo.Game.Net
             look.Put("parts", arr);
             Send(JObj.New().Str(NetProto.FieldType, NetProto.SetLook).Put("look", look));
         }
+
+        /// <summary>
+        /// 「我現在是誰」的提供者,由 <c>AppContext</c> 注入(同 <see cref="LocalLook"/> 的理由 ——
+        /// 只有它知道 session / profile 怎麼解析)。null → <see cref="PublishIdentity"/> 什麼都不做。
+        /// </summary>
+        public Func<NetPlayerIdentity> LocalIdentity;
+
+        private NetPlayerIdentity _sentIdentity;
+
+        /// <summary>
+        /// 把自己的身分(名字 / playerId / 家族 / 等級)報給 server。
+        /// **與 <see cref="PublishLook"/> 成對** —— 進房的三個出口都在第一行呼叫兩者。
+        ///
+        /// 🔴 為什麼名字不能只靠 hello:握手在開機時就做完了,而**選性別 == 選帳號**
+        /// (女角/男角是兩個 profile,名字不一樣)。只補送 setLook 的話,別人看到的會是
+        /// 「新的男角模型」配「舊的女角名字」—— 而且**永遠**不會變回來,因為座位名字是
+        /// 進房那一刻從連線上抄過去的,之後沒有任何東西會再碰它(實測踩過)。
+        ///
+        /// 去重理由同 PublishLook:每送一次 server 就 rev++ 並向全房廣播一份完整快照。
+        /// </summary>
+        public void PublishIdentity()
+        {
+            if (LocalIdentity == null) return;
+            var id = LocalIdentity();
+            if (id == null) return;
+            if (_sentIdentity != null && _sentIdentity.SameAs(id)) return;
+            _sentIdentity = id;
+            SendIdentity(id.Name, id.PlayerId, id.Guild, id.Level);
+        }
+
+        /// <summary>
+        /// 回報自己的身分。一般走 <see cref="PublishIdentity"/>(有去重);
+        /// 這個多載留給「就是要強制送一次」的呼叫端。
+        /// </summary>
+        public void SendIdentity(string name, string playerId, string guild, int level)
+            => Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetIdentity)
+                .Str("name", name ?? "")
+                .Str("playerId", playerId ?? "")
+                .Str("guild", guild ?? "")
+                .Int("level", level));
 
         public void SendChat(string text, string channel = "current", int expressionId = 0, string leading = null)
             => Send(JObj.New()

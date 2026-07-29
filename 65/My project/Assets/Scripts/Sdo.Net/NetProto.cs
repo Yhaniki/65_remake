@@ -123,6 +123,23 @@
         /// </summary>
         public const string SetLook = "setLook";
 
+        /// <summary>
+        /// C→S。回報自己的身分(顯示名稱 / playerId / 家族 / 等級)。
+        ///
+        /// 與 <see cref="SetLook"/> 完全同一個理由,而且是同一個坑的另一半:握手發生在開機時,
+        /// 那時玩家還沒在選男女畫面選角色 —— 而**選性別 == 選帳號**(女/男是兩個 profile,
+        /// 各有自己的名字)。只補送外觀的話,別人看到的是「新的男角模型」配「舊的女角名字」。
+        ///
+        /// 送的時機與 setLook 一模一樣:進房前(建房/加入/旁觀)與切換身分後。
+        ///
+        /// 🔴 **server 端要尊重 token 綁定**:token 綁了名字/playerId 的連線不准靠這條訊息改 ——
+        /// 否則它就是 <c>AuthTokens</c> 的後門(hello 擋住的東西從側門走進來)。
+        ///
+        /// 協定版本沒有 +1:這是**新增**的可省略訊息,舊 client 不送、舊 server 回一個
+        /// 「unknown message」的 error 但不斷線 —— 降級成現狀(名字不會更新),不會壞掉。
+        /// </summary>
+        public const string SetIdentity = "setIdentity";
+
         // ---- 缺歌上報與傳檔 ----
 
         public const string SetAvailability = "setAvailability";

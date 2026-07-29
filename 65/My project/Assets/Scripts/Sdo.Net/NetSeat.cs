@@ -3,6 +3,46 @@ using System.Collections.Generic;
 namespace Sdo.Net
 {
     /// <summary>
+    /// 玩家的身分資料(頭上名牌那一組:名字 / 家族 / 等級,加上本機的 playerId)。
+    ///
+    /// 為什麼它是一份**會變的**資料、而不是握手時報一次就算數:**選性別 == 選帳號** ——
+    /// 女角與男角是兩個 profile,各有自己的名字,而握手發生在開機時(那時還沒選)。
+    /// 見 <see cref="NetProto.SetIdentity"/>。
+    ///
+    /// 與 <see cref="NetAvatarLook"/> 分開送:外觀變動會讓收端**重建角色**(讀十幾個部件檔),
+    /// 改名字不該付那個代價;而且 server 端對這兩者的權限規則不同(名字可能被 token 綁死)。
+    /// </summary>
+    public sealed class NetPlayerIdentity
+    {
+        /// <summary>顯示名稱。</summary>
+        public string Name = "";
+
+        /// <summary>本機的 profile id(DATA/PROFILE 的資料夾名)。server 只是存著,座位一律用 userId 當 key。</summary>
+        public string PlayerId = "";
+
+        /// <summary>家族名。空 = 沒有家族(頭上名牌不顯示那一行)。</summary>
+        public string Guild = "";
+
+        /// <summary>等級(頭上名牌的 Lv)。</summary>
+        public int Level;
+
+        /// <summary>
+        /// 兩份身分一樣嗎?client 用它做「送出去重」—— 每送一次 server 就 rev++ 並向全房
+        /// 廣播一份完整快照,而多數時候身分根本沒變(進房、打完歌回房都會呼叫)。
+        /// null 與空字串視為相等。
+        /// </summary>
+        public bool SameAs(NetPlayerIdentity o)
+        {
+            if (o == null) return false;
+            return Level == o.Level
+                && Same(Name, o.Name) && Same(PlayerId, o.PlayerId) && Same(Guild, o.Guild);
+        }
+
+        private static bool Same(string a, string b)
+            => string.Equals(a ?? "", b ?? "", System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// 玩家的外觀資料 —— 房間 3D 與遊戲中的舞者都要靠它把別人的角色建出來。
     ///
     /// <see cref="Parts"/> 對映 client 端 <c>AvatarOutfit.ResolveParts</c> 的輸出

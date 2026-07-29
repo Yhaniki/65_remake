@@ -52,12 +52,22 @@ namespace Sdo.Server.Net
         /// <summary>"control" 或 "file"(見 <see cref="NetProto.RoleControl"/>)。</summary>
         public string Role = NetProto.RoleControl;
 
-        /// <summary>握手帶來的身分資料。</summary>
+        /// <summary>握手帶來的身分資料。之後可由 <c>setIdentity</c> / <c>setLook</c> 更新(見下面的鎖)。</summary>
         public string PlayerId = "";
         public string Name = "";
         public string Guild = "";
         public int Level;
         public NetAvatarLook Look = new NetAvatarLook();
+
+        /// <summary>
+        /// 這條連線的名字 / playerId 是 token 綁定的嗎?
+        ///
+        /// 🔴 綁了就**不准** <c>setIdentity</c> 改 —— 否則那條訊息等於 <c>AuthTokens</c> 的後門:
+        /// hello 擋下的冒用身分改成握手後再送一次就成立了。沒啟用 token(或 token 沒綁)時
+        /// 兩個旗標都是 false,行為維持 MVP 的「client 說了算」。
+        /// </summary>
+        public bool NameLocked;
+        public bool PlayerIdLocked;
 
         /// <summary>file 連線用它認親到同一個玩家的 control 連線。</summary>
         public string SessionKey = "";

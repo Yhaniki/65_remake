@@ -318,7 +318,13 @@ namespace Sdo.UI.Screens
             // 握手時報的那份是開機狀態(還沒選性別、穿搭也還沒解析),所以這裡一定要再報一次,
             // 否則你在別人的房間畫面上會是預設的女角。
             if (Ctx != null && Ctx.Net != null)
+            {
                 Ctx.Net.SendLook(_gender, BodyIndexForGender(_gender), PartsForGender(_gender));
+                // 名字也一樣要重報 —— 女角與男角是兩個 profile,名字不一樣。只送外觀的話
+                // 別人看到的是「新的男角」配「舊的女角名字」,而且那個名字之後永遠不會變
+                // (座位名字是進房那一刻抄過去的)。
+                Ctx.Net.PublishIdentity();
+            }
         }
 
         // 進入：切 active 使用者、建/進房間（不經大廳列表，直接進房）。

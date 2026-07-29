@@ -1598,6 +1598,72 @@ namespace Sdo.Tests
             Assert.IsNotNull(r.State.SeatOf(Host).Look);
         }
 
+        [Test]
+        public void SetIdentity_Renames_The_Seat_And_Bumps_Rev()
+        {
+            // 選性別 == 選帳號:女角與男角是兩個 profile,名字不一樣,而握手是開機時做的。
+            // 沒有這條路徑的話,換成男角進房的人在別人畫面上是「男角的模型 + 女角的名字」。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            int rev = r.State.Rev;
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetIdentity(Bob, "按黑青眼暴龍壽3", "熱舞家族", 11));
+
+            var seat = r.State.SeatOf(Bob);
+            Assert.AreEqual("按黑青眼暴龍壽3", seat.Name);
+            Assert.AreEqual("熱舞家族", seat.Guild);
+            Assert.AreEqual(11, seat.Level);
+            Assert.Greater(r.State.Rev, rev, "名字變了也要 rev++,否則 client 會丟掉這份快照");
+        }
+
+        [Test]
+        public void SetIdentity_Works_For_A_Spectator_Too()
+        {
+            // 旁觀名單顯示的也是名字。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Bob)));
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetIdentity(Bob, "新名字", "家族", 7));
+            var snap = r.State;
+            Assert.AreEqual(1, snap.Spectators.Length);
+            Assert.AreEqual("新名字", snap.Spectators[0].Name);
+            Assert.AreEqual(7, snap.Spectators[0].Level);
+        }
+
+        [Test]
+        public void SetIdentity_Needs_You_To_Be_In_The_Room()
+        {
+            // 正常的競態:剛離房的人送出的最後一筆。回 NotInRoom(server 端會靜默忽略)。
+            var r = MakeRoom();
+            Assert.AreEqual(NetRoomOp.NotInRoom, r.SetIdentity(Bob, "誰", "", 1));
+        }
+
+        [Test]
+        public void SetIdentity_Keeps_The_Old_Name_When_Given_An_Empty_One()
+        {
+            // 空名字保留原本的 —— 座位名字被抹成空白比顯示舊名字更糟(頭上名牌與聊天行會變成無主的字)。
+            // 家族與等級照更新:那兩項「清空」是有意義的(退出家族)。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetIdentity(Bob, "小明", "舊家族", 5));
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetIdentity(Bob, "", "", 6));
+            var seat = r.State.SeatOf(Bob);
+            Assert.AreEqual("小明", seat.Name, "名字不該被空字串洗掉");
+            Assert.AreEqual("", seat.Guild);
+            Assert.AreEqual(6, seat.Level);
+        }
+
+        [Test]
+        public void SetIdentity_Clamps_A_Negative_Level()
+        {
+            // 被改過的 client 可能送負數。等級只用來顯示,夾到 0 就好,不值得為它斷線。
+            var r = MakeRoom();
+            Assert.AreEqual(NetRoomOp.Ok, r.SetIdentity(Host, "房主", "", -3));
+            Assert.AreEqual(0, r.State.SeatOf(Host).Level);
+        }
+
         // ---- helper ----
 
         /// <summary>把 JSON 字串解成 setRoomSettings 的 patch 節點。</summary>
