@@ -304,6 +304,14 @@
    "v": "已回到座位"
   },
   {
+   "k": "room.difficulty_setting",
+   "v": "難度設置"
+  },
+  {
+   "k": "room.teams_normal_mode_only",
+   "v": "只有「普通模式」可以組隊"
+  },
+  {
    "k": "room.drop_up",
    "v": "向上"
   },

@@ -2902,7 +2902,8 @@ namespace Sdo.Game
                         CreateHandTrail(parent.transform, avatar, "Bip01_R_Hand", "Bip01_R_Finger0", handYellow);
                     }
                     catch (System.Exception e) { Debug.LogError("[handtrail] creation failed (non-fatal): " + e); }
-                CreateGroundStarRing(_avatarChest.x, _avatarChest.z, 0.6f, avatar, parent.transform);   // follows the dancer's pelvis
+                // 地面星環:跟著自己的骨盆走,顏色 = 自己那一隊(沒組隊就是官方原本的白)。
+                CreateGroundStarRing(_avatarChest.x, _avatarChest.z, 0.6f, avatar, parent.transform, TeamOf(LocalDancerSlotIndex));
                 if (avatar != null)
                     try { CreateHeadEmoji(avatar); }   // head-emoji billboard at the dancer's head front-right
                     catch (System.Exception e) { Debug.LogError("[emoji] creation failed (non-fatal): " + e); }
@@ -4169,8 +4170,22 @@ namespace Sdo.Game
         // engine's way (a band mesh, not sprites). Additive, flat on floor, spins, follows the dancer's pelvis.
         // ringOuterRadius = spread (ring radius); ringBrightness = additive glow level; both live-tunable in the F4 panel.
         public float ringOuterRadius = 22f, ringSpinDeg = 20f, ringBrightness = 0.9f;
-        private Transform _ringTr; private Material _ringMat; private FloorRing _floorRing;   // live refs for debug tuning
-        private void CreateGroundStarRing(float x, float yOrZ, float floorY, SdoAvatar avatar, Transform avatarParent)
+        private Transform _ringTr; private Material _ringMat; private FloorRing _floorRing;   // 本機那一個(連打特效/相機都掛在它身上)
+
+        /// <summary>場上每一個星環(含遠端舞者的)。F4 的大小/亮度/轉速滑桿一次套用到全部。</summary>
+        private struct RingRef { public Transform Tr; public Material Mat; public FloorRing Ring; }
+        private readonly List<RingRef> _rings = new List<RingRef>();
+
+        // 組隊時腳下那圈**彩色光暈**的大小,單位是「星環外半徑的幾倍(邊長)」。
+        // 2.67 = 讓光暈最亮的那一圈(CR.TGA 的環帶尖峰在半徑 0.625 處)正好落在星環的中線(0.833)上:
+        // 0.625 × 2.67/2 ≈ 0.833。改大 = 光暈往外擴。
+        public float teamGlowScale = 2.67f;
+
+        /// <param name="team">0=A 1=B 2=C,其他 = 沒組隊(白)。組隊時腳下的星環就是自己那一隊的顏色。</param>
+        /// <param name="local">true = 本機那一位 —— 只有它的 ref 會存進 <see cref="_ringTr"/> 那組
+        /// (combo 特效/完奏特效/相機都拿它當錨點,指到別人身上會讓特效跑到別人腳下)。</param>
+        private void CreateGroundStarRing(float x, float yOrZ, float floorY, SdoAvatar avatar, Transform avatarParent,
+                                          int team = TeamColors.Free, bool local = true)
         {
             string zako = Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", "ZAKO");
 
@@ -4189,7 +4204,9 @@ namespace Sdo.Game
 
                 var fr = ringGo.AddComponent<FloorRing>();
                 fr.FloorY = floorY;
-                _ringTr = ringGo.transform; _ringMat = mat; _floorRing = fr;
+                _rings.Add(new RingRef { Tr = ringGo.transform, Mat = mat, Ring = fr });
+                if (local) { _ringTr = ringGo.transform; _ringMat = mat; _floorRing = fr; }
+                AddTeamGlowDisc(ringGo.transform, team);
                 ApplyRingDebug();
                 if (avatar != null && avatarParent != null)   // follow pelvis (root GO is static; bones dance)
                 {
@@ -4221,7 +4238,7 @@ namespace Sdo.Game
                     stars[i] = sr;
                 }
                 var ring = ringGo.AddComponent<StarRing>();
-                ring.Stars = stars; ring.Spin = 0.6f; ring.Tint = Color.white;
+                ring.Stars = stars; ring.Spin = 0.6f; ring.Tint = Color.white;   // 2D 退化路徑沒有隊伍光暈(它只在 3D 舞台出現)
                 ringGo.transform.position = new Vector3(x, yOrZ + 4f, 6f);
                 ring.Billboard = true; ring.Rx = 70f; ring.Ry = 20f; ring.BaseScale = 36f / 64f;
             }
@@ -4230,16 +4247,65 @@ namespace Sdo.Game
         // Live-apply the F4 ring sliders. Mesh is unit-radius, so localScale = spread; _TintColor.rgb = brightness
         // (legacy-particle additive ×2 → ringBrightness*0.5 = native); keep _TintColor.a = 1 so the SrcAlpha-One blend
         // doesn't dim it a SECOND time (that earlier double-dim is what made it vanish).
+        /// <summary>
+        /// 組隊時腳下多疊的那圈**彩色光暈**(官方 yuanpan_r/_g/_b.eft 相對 yuanpan.eft 多出來的那一支)。
+        ///
+        /// 🔴 官方**不是**把白星環染色 —— 反編譯的 <c>FUN_004a6720</c> 用舞者結構 +0x2e1 那個 byte 去查
+        /// <c>{0, 10, 11, 12}</c>,整支換成 yuanpan / yuanpan_r / _g / _b.eft;四份檔案的差別只有
+        /// 「root 播放清單 1 支變 2 支」與「多出來那支 emitter 的貼圖是 generic\map_g\cr / cg / cb」。
+        /// 也就是說星環本身永遠是白的,隊伍色是**底下多疊的一片平躺彩色環形光暈**。這裡照做:
+        /// 一張貼著官方那張貼圖的平面 quad,掛在星環底下(跟著它的 localScale 一起縮放、一起跟著骨盆走)。
+        ///
+        /// (CR/CG/CB 原檔是 .TGA,Unity 的 <c>Texture2D.LoadImage</c> 不吃 —— 已在 Extracted 同目錄
+        /// 轉出同名 .png,與那棵樹裡 BMP→PNG 的雙胞胎慣例一致。)
+        /// </summary>
+        private void AddTeamGlowDisc(Transform ringTr, int team)
+        {
+            if (!TeamColors.IsTeam(team) || ringTr == null) return;
+            string tex = team == 0 ? "CR.png" : team == 1 ? "CG.png" : "CB.png";
+            var t = SdoExtracted.LoadTextureRawLinear(Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", "MAP_G"), tex);
+            if (t == null) { Debug.LogWarning("[ring] 隊伍光暈貼圖載不到:" + tex); return; }
+
+            var go = new GameObject("TeamGlow");
+            go.transform.SetParent(ringTr, false);              // 吃星環的縮放/位置/自轉
+            go.transform.localScale = Vector3.one * teamGlowScale;
+            go.AddComponent<MeshFilter>().mesh = FlatQuadMesh();
+            var mr = go.AddComponent<MeshRenderer>();
+            var m = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
+            m.mainTexture = t;
+            if (m.HasProperty("_TintColor")) m.SetColor("_TintColor", new Color(0.5f, 0.5f, 0.5f, 1f));   // 顏色來自貼圖,這裡只給中性亮度
+            mr.sharedMaterial = m;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; mr.receiveShadows = false;
+        }
+
+        private static Mesh _flatQuad;
+        /// <summary>邊長 1、位於 XY 平面、中心在原點的 quad —— 與星環環帶同一個平面(父物件已轉成平躺)。</summary>
+        private static Mesh FlatQuadMesh()
+        {
+            if (_flatQuad != null) return _flatQuad;
+            _flatQuad = new Mesh
+            {
+                name = "TeamGlowQuad",
+                vertices = new[] { new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f),
+                                   new Vector3(0.5f, 0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f) },
+                uv = new[] { new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(0f, 1f) },
+                triangles = new[] { 0, 2, 1, 0, 3, 2 },
+            };
+            _flatQuad.RecalculateBounds();
+            return _flatQuad;
+        }
+
         private void ApplyRingDebug()
         {
-            if (_ringTr == null) return;
-            _ringTr.localScale = Vector3.one * ringOuterRadius;
-            if (_ringMat != null && _ringMat.HasProperty("_TintColor"))
+            float tb = Mathf.Clamp01(ringBrightness * 0.5f);
+            for (int i = 0; i < _rings.Count; i++)
             {
-                float tb = Mathf.Clamp01(ringBrightness * 0.5f);
-                _ringMat.SetColor("_TintColor", new Color(tb, tb, tb, 1f));
+                var r = _rings[i];
+                if (r.Tr != null) r.Tr.localScale = Vector3.one * ringOuterRadius;   // 子物件(隊伍光暈)跟著縮放
+                if (r.Mat != null && r.Mat.HasProperty("_TintColor"))
+                    r.Mat.SetColor("_TintColor", new Color(tb, tb, tb, 1f));   // 星環永遠是白的(隊伍色在底下那圈光暈)
+                if (r.Ring != null) r.Ring.SpinDegPerSec = ringSpinDeg;
             }
-            if (_floorRing != null) _floorRing.SpinDegPerSec = ringSpinDeg;
         }
 
         // filled white 5-point star with a faint halo, on black -> additive reads as a crisp star (matches the SDO floor ring)

@@ -356,6 +356,11 @@ namespace Sdo.Net.Server
 
             _state.Settings.ApplyPatch(patchNode);
 
+            // 模式離開「普通」→ 這間房不再有隊伍,把所有人清回自由。
+            // 🔴 不清的話會留下一組看不見也改不掉的隊伍:面板不讓你動(只有普通模式能改),
+            //    但 requestStart 那條仍會看到有人不是自由 → 判定成組隊局,然後因為湊不出版型而永遠開不了場。
+            if (!TeamLayoutRules.TeamsAllowedIn(_state.Settings.GameMode)) ClearTeams();
+
             if (_spectators.Count > _state.Settings.LookerCount)
             {
                 var kicked = new List<int>();
@@ -381,6 +386,9 @@ namespace Sdo.Net.Server
         {
             if (!_state.IsHost(actorId)) return NetRoomOp.NotHost;
             if (_state.Status != RoomStatus.Open) return NetRoomOp.BadState;
+            // 只有普通模式能組隊(見 TeamLayoutRules.TeamsAllowedIn)。client 也擋了一次,但那只是 UX ——
+            // 這一條才是真的:改過的 client 不能靠送 assignTeams 在自由模式下把大家分隊。
+            if (!TeamLayoutRules.TeamsAllowedIn(_state.Settings.GameMode)) return NetRoomOp.BadTeams;
 
             int seated = _state.SeatedCount;
             if (!TeamLayoutRules.CanAssign(layout, seated)) return NetRoomOp.BadTeams;
@@ -399,6 +407,13 @@ namespace Sdo.Net.Server
             return NetRoomOp.Ok;
         }
 
+        /// <summary>把所有座位清回「自由」(模式離開普通時)。已經是自由就什麼都不做。</summary>
+        private void ClearTeams()
+        {
+            for (int i = 0; i < _state.Seats.Length; i++)
+                if (_state.Seats[i].IsTaken) _state.Seats[i].Team = (int)TeamTag.Free;
+        }
+
         // ================= 個人操作 =================
 
         /// <summary>
@@ -415,6 +430,10 @@ namespace Sdo.Net.Server
             var s = _state.SeatOf(userId);
             if (s == null) return NetRoomOp.NotInRoom;
             if (!NetState.IsValidTeam(team)) return NetRoomOp.BadState;
+            // 只有普通模式能組隊。「改回自由」永遠放行 —— 否則模式切走之後,已經在某一隊的人
+            // 就被鎖在那一隊裡出不來(而且那時候整間房都不該有隊伍了)。
+            if (team != (int)TeamTag.Free && !TeamLayoutRules.TeamsAllowedIn(_state.Settings.GameMode))
+                return NetRoomOp.BadTeams;
 
             // 已經進入遊戲流程(載入/遊玩/結算)就不能換。
             if (s.PlayState != PlayState.Idle) return NetRoomOp.BadState;

@@ -33,6 +33,20 @@ namespace Sdo.Net
         public const int MaxTeams = 3;
 
         /// <summary>
+        /// **只有普通模式可以組隊**(<c>NetRoomSettings.GameMode</c>:0=自由 1=普通 2=ShowTime)。
+        ///
+        /// 自由模式是「各玩各的」——連難度都各挑各的(見 <c>FreeModeDifficulty</c>),更沒有隊伍的意義;
+        /// ShowTime 是集氣表演,同樣不分隊。所以組隊只在普通模式成立。
+        ///
+        /// 這條規則 client 與 server **兩邊都要擋**:client 擋是為了說得出原因(按下去有話講),
+        /// server 擋才是真的 —— 否則改過的 client 可以在自由模式下把大家分隊,開場就會走到組隊站位。
+        /// </summary>
+        public const int TeamGameMode = 1;
+
+        /// <summary>這個模式可以組隊嗎。</summary>
+        public static bool TeamsAllowedIn(int gameMode) => gameMode == TeamGameMode;
+
+        /// <summary>
         /// 依每隊人數決定版型。
         ///
         /// 判定來源是反編譯的 <c>023_gameplay_00482340</c>:它就是數每隊人數然後選 mode

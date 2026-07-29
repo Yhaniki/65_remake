@@ -304,6 +304,14 @@
    "v": "席に戻りました"
   },
   {
+   "k": "room.difficulty_setting",
+   "v": "難易度設定"
+  },
+  {
+   "k": "room.teams_normal_mode_only",
+   "v": "チーム分けはノーマルモードのみ"
+  },
+  {
    "k": "room.drop_up",
    "v": "上"
   },

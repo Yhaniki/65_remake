@@ -53,6 +53,20 @@ namespace Sdo.Game
 
         public void SetName(string playerName) { if (_name != null) _name.Text = playerName ?? string.Empty; }
 
+        /// <summary>
+        /// 組隊局:把名字染成那一隊的顏色(<see cref="TeamColors"/>);沒組隊就維持官方原本的乳白。
+        ///
+        /// **只改字面、黑邊不動** —— 那圈黑邊是這個名字在任何背景上都讀得到的唯一原因,
+        /// 跟著換色只會讓深色隊(藍)的名字糊進舞台。
+        /// </summary>
+        public void SetTeamColor(int team)
+        {
+            if (_name == null) return;
+            Color face;
+            if (!TeamColors.TryFor(team, out face)) return;   // 沒組隊 → 保持 HeadName 樣式原本的乳白
+            _name.SetColors(face, Color.black);
+        }
+
         /// <summary>Hide the arrow + name and STOP tracking (the name label is a separate root object that LateUpdate
         /// re-shows every frame, so disabling this component alone wouldn't hide it). Used when the result panel opens.</summary>
         public void Hide()

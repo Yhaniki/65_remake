@@ -42,6 +42,13 @@ namespace Sdo.UI.Screens
         // 自由模式/歌名/難度/BPM 的白色描邊(位移複製,不靠 SDF) 厚度(canvas px)。要更粗就調大。
         private const float Win2EdgePx = 1.1f;
 
+        // 自由模式「難度設置」框裡的 EASY/NORMAL/HARD：官方 FMLvlChoose color="0xfff9f891"(淡黃)。
+        private static readonly Color32 FmLevelColor = new Color32(0xf9, 0xf8, 0x91, 0xff);
+        // FMdif.an 上「难度设置」那幾個烘死的簡體字所佔的像素範圍(.an 座標,左上原點)——見 EraseFmDifTitle。
+        // 逐列量出來的字框是 x 36..88 / y 2..14;這裡各留一點餘裕,但 y 絕不碰 15(那是下面值框的上緣)。
+        private const int FmTitleClearX0 = 33, FmTitleClearX1 = 92, FmTitleClearY0 = 2, FmTitleClearY1 = 15;
+        private const int FmTitleCleanX = 20;   // 同一列拿來當「乾淨底色」的取樣 x(在框內、字的左邊)
+
         // note 種類(hit-effect)可選預覽圖，取自線上 DDRROOM.XML 的 hiteft 清單（索引 = GameSession.NoteType；-1=隨機）。
         // 每個 .an 是多幀動畫（如 hiteft2 = jz00..jz07 八幀），預覽框用 SpriteSeqAnim 循環撥放。
         // 只收「實際可選的特效皮」12 項（index 0..11），循環是 隨機 → 0..11 → 回隨機。
@@ -110,6 +117,13 @@ namespace Sdo.UI.Screens
         private readonly RawImage[] _slotHead = new RawImage[RoomLayout.SeatCount];
         private readonly Image[] _slotClose = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
+        // 準備徽章(官方 charready0..5 / Room66.an)。與 HOST 徽章疊在同一條(y=102)——房主不會有 Ready
+        // (NetSeat.Ready 對房主恆 false),所以兩者天生互斥。兩張都是四幀(白/橘/綠/藍)= 隊伍顏色。
+        private readonly Image[] _slotReady = new Image[RoomLayout.SeatCount];
+        // 名字底下那條名牌(官方 AvatarName0..5 的 background = Team.an)。四幀:第 0 幀是 1×1 的空白
+        // (沒選隊 → 不畫),第 1/2/3 幀是 A/B/C 的橘/綠/青藍漸層條。選了隊,名字那一格就整條變成自己那隊的顏色。
+        private readonly Image[] _slotPlate = new Image[RoomLayout.SeatCount];
+        private Sprite[] _readyFrames, _masterFrames, _plateFrames;
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
         // 狀態徽章(NO SONG / PLAYING,art\generated\UI\ROOM)+ 傳檔跑條(執行期畫的兩個矩形,不烘圖)。
         private readonly Image[] _slotMissing = new Image[RoomLayout.SeatCount];
@@ -186,6 +200,13 @@ namespace Sdo.UI.Screens
         private readonly Image[] _teamImg = new Image[4];      // 組隊 A/B/C/自由
         private readonly Sprite[] _teamNormal = new Sprite[4];
         private readonly Sprite[] _teamPushed = new Sprite[4];
+
+        // ---- 自由模式的「難度設置」(官方 FMGameLevel)：跟「房主設置」鈕擺同一格，二選一 ----
+        // 房主 → 房主設置(選歌)；自由模式的其他玩家 → 這一格，各自挑自己要打的難度。
+        private Image _fmLevelBg;                 // FMdif.an 的框(烘死的簡體標題已抹掉)
+        private OutlinedLabel _fmLevelTitle;      // 疊上去的「難度設置」(可翻譯)
+        private TextMeshProUGUI _fmLevelValue;    // EASY / NORMAL / HARD
+        private Button _fmLevelPrev, _fmLevelNext;
 
         private RoomScene3D _scene;
         private RoomHeadPortrait _localHead;
@@ -328,17 +349,33 @@ namespace Sdo.UI.Screens
             float[] closeX = { 68, 188, 309, 431, 556, 678 };
             float[] nameX = { 52, 172, 293, 418, 539, 662 };
             float[] masterX = { 54, 176, 298, 421, 544, 666 };
+            float[] readyX = { 53, 175, 298, 419, 542, 665 };   // DDRROOM charready0..5（與 master 差 1px，照官方）
+
+            // HOST / READY 兩張徽章各四幀（白=自由 / 橘=A / 綠=B / 藍=C）——選了不同隊的人，頭貼上的字就是自己那隊的顏色。
+            _masterFrames = RoomUiArt.AnFrames("master");   // b06..b09
+            _readyFrames = RoomUiArt.AnFrames("Room66");    // a06..a09
+            // 名字底下那條名牌也是四幀，但第 0 幀是 1×1 空白 —— 官方用「畫一張看不見的圖」表示沒選隊。
+            _plateFrames = RoomUiArt.AnFrames("Team");      // 空白 / 橘 / 綠 / 青藍
             for (int i = 0; i < RoomLayout.SeatCount; i++)
             {
                 _slotHead[i] = AddRaw("Slot" + i, sx[i] + Win1.x, RoomLayout.HeadSlotY, RoomLayout.HeadSlotW, RoomLayout.HeadSlotH);
                 _slotHead[i].enabled = false;   // shown only when occupied (head RT assigned)
                 _slotClose[i] = Art("close", Win1, closeX[i], 59, "Close" + i);
-                _slotMaster[i] = Art("master", Win1, masterX[i], 102, "Master" + i);
+                _slotMaster[i] = UIKit.AddSprite(_win1Root, "Master" + i, Frame(_masterFrames, 0),
+                                                 Win1.x + masterX[i], Win1.y + 102);
                 _slotMaster[i].enabled = false;
-                var plate = Art("Team", Win1, nameX[i], 141, "NamePlate" + i);
-                plate.enabled = false;
+                _slotReady[i] = UIKit.AddSprite(_win1Root, "Ready" + i, Frame(_readyFrames, 0),
+                                                Win1.x + readyX[i], Win1.y + 102);
+                _slotReady[i].enabled = false;
+                // 名牌先建、名字後建 → UGUI 的 sibling 順序讓白字畫在彩色名牌**上面**。
+                _slotPlate[i] = UIKit.AddSprite(_win1Root, "NamePlate" + i, Frame(_plateFrames, 1),
+                                                Win1.x + nameX[i], Win1.y + 141);
+                _slotPlate[i].enabled = false;
                 _slotName[i] = UIKit.AddText(_win1Root, "Name" + i, "", 13, Color.white, TextAlignmentOptions.Center);
-                Place(_slotName[i].rectTransform, nameX[i] + Win1.x, 141, RoomLayout.HeadSlotW, 18);
+                // 🔴 欄寬要用官方 AvatarName 的 108(不是頭貼格的 96),y 也要加上 Win1.y ——
+                //    名字是**置中**排版,量錯寬度/少加一格就會偏:96 寬時字的中心在 x+48、名牌條中心在 x+53.5,
+                //    在名牌沒畫出來的年代看不出來,現在選了隊、彩色條一畫上去,白字就明顯偏左又高 1px。
+                Place(_slotName[i].rectTransform, nameX[i] + Win1.x, Win1.y + 141, 108, 18);
                 _slotName[i].gameObject.SetActive(false);
 
                 // 狀態徽章:蓋在頭貼**上半部**。為什麼不放頭貼下緣 —— 那裡是官方房主徽章(y=102..132)
@@ -465,6 +502,8 @@ namespace Sdo.UI.Screens
 
             // 房主設置（= 選歌入口）。線上原版 BtnRoomMaster_1/2/3。按下音效改 Buttonfloat（非預設 SE_0001）。
             _songSelectBtn = Btn("songselect", "BtnRoomMaster_1", "BtnRoomMaster_2", "BtnRoomMaster_3", Win2, 14, 296, () => GoTo(ScreenId.SongSelect), UiSfx.ButtonFloat);
+
+            BuildFreeModeLevel();
 
             // 註：官方 WinMoveUpHelp(moveuphelp0.an) 其實是一張「黃底問號」的方向鍵提示圖，靜態擺在面板左上角就變成
             // 使用者看到的那顆問號 → 依需求移除（要做方向鍵提示應改成floating動畫貼在 3D 場景，不放面板裡）。
@@ -832,6 +871,10 @@ namespace Sdo.UI.Screens
             //    沒人按得下準備、房主按開始也沒反應(實機兩開就是卡在這裡,而且三個 log 都看不出來)。
             //    這裡有 SongTitle 空的守門,所以送成功之後就不會再送(不會迴圈)。
             NetSongPublisher.PublishIfRoomHasNone(Ctx);
+            // 房間設定(模式/隊形/旁觀人數/場景)同理:在此之前根本沒有任何一條路徑把它們送上去,
+            // 所以線上這間房永遠停在 server 的預設值 —— 房主選了「普通模式」別人還是看到「自由模式」,
+            // 而「只有普通模式才能組隊」就永遠不成立。守門是「跟 server 手上的不一樣才送」。
+            NetRoomSettingsPublisher.SyncIfHost(Ctx);
             // 回報「我有沒有這首歌」—— 沒有這一步,server 眼中每個人都是 Unknown,
             // 沒人按得下準備(R17)、也沒有人算參與者(R12)。見那邊的註解。
             NetSongPublisher.ReportAvailability(Ctx);
@@ -1605,6 +1648,32 @@ namespace Sdo.UI.Screens
                 Ctx.Net.SetSeatClosed(i, true);
             }
             Debug.Log("[dev] SDO_CLOSESEATS:把座位 " + mySeat + " 以外的位子都關了(做出滿房)");
+        }
+
+        // DEV: SDO_TEAM=<0..3> → 一進房就把自己分到那一隊(0=A 1=B 2=C 3=自由)。
+        // 為什麼需要:頭貼上的 READY / HOST 徽章要**依隊伍換色**,而要驗那件事得先讓兩台
+        // client 各自選到不同的隊 —— 用滑鼠自動化去點那四格得先做設計→螢幕座標換算
+        // (那條換算有已知偏移,不可靠)。這條走與玩家按下去**完全同一條路徑**(PickOwnTeam →
+        // server 的 setOwnTeam),所以驗出來的畫面就是玩家會看到的畫面。
+        private bool _devTeamDone;
+
+        private void TickDevTeam()
+        {
+            if (_devTeamDone) return;
+            var want = ScreenGameplay.DevVar("SDO_TEAM");
+            if (string.IsNullOrEmpty(want)) { _devTeamDone = true; return; }
+            int team;
+            if (!int.TryParse(want, out team) || team < 0 || team > (int)TeamTag.Free)
+            {
+                _devTeamDone = true;
+                Debug.LogWarning("[dev] SDO_TEAM 要是 0..3(0=A 1=B 2=C 3=自由),收到:" + want);
+                return;
+            }
+            // 線上要等自己真的坐上位子(server 才收得下 setOwnTeam);離線直接設就好。
+            if (Online && (Ctx.Net == null || Ctx.Net.Room == null || Ctx.Net.Room.SeatIndexOf(Ctx.Net.UserId) < 0)) return;
+            _devTeamDone = true;
+            PickOwnTeam(team);
+            Debug.Log("[dev] SDO_TEAM:自己分到隊伍 " + team);
         }
 
         // DEV: SDO_PICKSONG=<歌名片段> → 房主自動選「第一首名字含這段字的外部歌」。
@@ -2682,11 +2751,13 @@ namespace Sdo.UI.Screens
             // 離線時本機就是房主,所以讀 session 是對的;線上的非房主讀 session 會顯示自己上次的設定,
             // 而房間實際上是別人選的 —— 歌名、場景縮圖、難度碟、模式全都會是錯的。
             // 這些值 server 都在 roomState 裡帶著走(NetRoomSettings + song),所以一律以快照為準。
-            var netRoom = Online && Ctx.Net != null && !Ctx.Net.IsHost ? Ctx.Net.Room : null;
+            var netRoom = NetRoomForPanel();
             var netSet = netRoom != null ? netRoom.Settings : null;
 
-            // 模式標題（自由模式/普通模式/ShowTime模式）—— 純文字 + 白邊
-            int gameMode = netSet != null ? netSet.GameMode : s.GameMode;
+            // 模式標題（自由模式/普通模式/ShowTime模式）—— 純文字 + 白邊。
+            // 線上一律讀 server 的房間設定(房主也是,見 RoomGameMode)—— 房主的選擇會 push 上去,
+            // 兩邊本來就該一致;推送還沒成功時顯示 server 手上的那個才是誠實的。
+            int gameMode = RoomGameMode();
             if (_modeLabel != null)
                 _modeLabel.SetText(L(gameMode == 2 ? "songselect.mode_showtime" : gameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
 
@@ -2701,44 +2772,47 @@ namespace Sdo.UI.Screens
                 UIKit.ApplySprite(_sceneThumb, sc);
             }
 
-            var netSong0 = netRoom != null ? netRoom.Song : null;
-            if (netSong0 != null && !netSong0.HasSong) netSong0 = null;
-
-            // CD 光碟依難度換色（Difficult0/1/2）。隨機難度選擇：難度也是隨機的 → 用「灰階碟」當中性顯示
-            // （不鎖任何一色；實際難度進遊戲才抽）。灰階碟去色失敗(材質不可讀)時退回原本的難度碟。
-            if (_diffDisc != null && _diffDiscFrames != null && _diffDiscFrames.Length > 0)
-            {
-                bool discRandom = netSong0 != null ? netSong0.RandomTitle : s.SongIsRandom;
-                int discDiff = netSong0 != null ? netSong0.Difficulty : (int)s.Difficulty;
-                Sprite disc = discRandom
-                    ? (DiffDiscGray() ?? _diffDiscFrames[_diffDiscFrames.Length - 1])
-                    : _diffDiscFrames[Mathf.Clamp(discDiff, 0, _diffDiscFrames.Length - 1)];
-                UIKit.ApplySprite(_diffDisc, disc);
-            }
-
             // 歌名 + 難度 + BPM（從歌曲目錄查；沒選歌就空白）。
             //
             // 🔴 離線時 session 就是房主選的歌,所以以 session 為準是對的。但**線上的非房主不是** ——
             // 它的 session 記著自己上次選的歌,面板會顯示那一首,而房間實際上是房主選的另一首
             // (實機兩開就是這樣:房主選了外部歌,客人的面板還寫著自己上次玩的官方歌)。
             // 線上非房主一律看房間快照;缺歌的人也看得到歌名/等級/BPM(那些值 server 帶著走)。
-            var netSong = netSong0;
+            var netSong = netRoom != null ? netRoom.Song : null;
+            if (netSong != null && !netSong.HasSong) netSong = null;
 
             bool hasSong = netSong != null || s.HasSong;
             bool isRandom = netSong != null ? netSong.RandomTitle : s.SongIsRandom;
             string title = netSong != null ? netSong.Title : s.SongTitle;
-            int diffSlot = netSong != null ? netSong.Difficulty : (int)s.Difficulty;
 
             // 本機的目錄:官方歌用 gn(全球穩定),外部歌用 packId(跨電腦的內容指紋)。查不到 = 我沒這首歌。
-            SongCatalog.Entry entry = null;
-            if (netSong != null)
-                entry = netSong.Official
-                    ? SongCatalog.Get(netSong.Gn)
-                    : Sdo.Game.ExternalSongLibrary.FindByPack(netSong.PackId, netSong.SongKey);
-            else if (s.HasSong) entry = SongCatalog.Get(s.SongGn);
+            // 隨機難度選擇：房間顯示「隨機難度 X」標籤、不揭曉抽到的歌 → 等級/BPM 也一併隱藏(否則會露出那首歌的等級/BPM)。
+            SongCatalog.Entry entry = isRandom ? null : LocalEntryFor(netSong);
 
-            // 隨機難度選擇：房間顯示「隨機難度 X」標籤、不揭曉抽到的歌 → 等級/BPM 也一併隱藏（否則會露出那首歌的等級/BPM）。
-            if (isRandom) entry = null;
+            // 🎚 自由模式:非房主那格「房主設置」換成「難度設置 ◄ EASY ►」,每個人挑自己要打的難度
+            // (netRoom != null ⟺ 線上且不是房主 —— 與上面 netSet 同一個判斷,兩者不會不同步)。
+            // 挑了之後**上面的難度數字與 CD 光碟就跟著自己選的走**,因為那才是自己等一下要打的譜。
+            bool picksOwnDiff = FreeModeDifficulty.PlayerPicksOwn(gameMode, isHost: netRoom == null);
+            SetFreeModeLevelVisible(picksOwnDiff);
+            int diffSlot = netSong != null ? netSong.Difficulty : (int)s.Difficulty;
+            if (picksOwnDiff)
+            {
+                // 房主換了歌之後,上次選的難度在新的那首可能沒有譜(外部歌常常只有一兩張)→ 貼到最近的可打難度。
+                s.FreeDifficulty = FreeModeDifficulty.Snap(s.FreeDifficulty, PlayableSlots(entry));
+                diffSlot = s.FreeDifficulty;
+                if (_fmLevelValue != null) _fmLevelValue.text = FreeModeDifficulty.Name(s.FreeDifficulty);
+            }
+
+            // CD 光碟依難度換色（Difficult0/1/2）。隨機難度選擇：難度也是隨機的 → 用「灰階碟」當中性顯示
+            // （不鎖任何一色；實際難度進遊戲才抽）。灰階碟去色失敗(材質不可讀)時退回原本的難度碟。
+            if (_diffDisc != null && _diffDiscFrames != null && _diffDiscFrames.Length > 0)
+            {
+                Sprite disc = isRandom
+                    ? (DiffDiscGray() ?? _diffDiscFrames[_diffDiscFrames.Length - 1])
+                    : _diffDiscFrames[Mathf.Clamp(diffSlot, 0, _diffDiscFrames.Length - 1)];
+                UIKit.ApplySprite(_diffDisc, disc);
+            }
+
             if (_songLabel != null)
                 // 已選歌曲：跟選歌清單／遊戲中同一個上限（NoWrap+Overflow → 長歌名會往兩邊溢出面板美術）
                 _songLabel.SetText(hasSong ? SongTextLimits.ClampTitle(title) : L("room.no_song"));
@@ -2780,11 +2854,87 @@ namespace Sdo.UI.Screens
                 }
             }
 
-            // 組隊單選：選到的顯示 pushed 圖，其餘顯示 normal
+            // 組隊單選：選到的顯示 pushed 圖，其餘顯示 normal。
+            // 🔴 亮哪一格要看 **server 認定的隊伍**,不是 session.Team —— 線上換隊刻意不做樂觀更新
+            // (PickOwnTeam 只送 setOwnTeam,顯示等 roomState 回來),而 session.Team 在線上根本沒人寫,
+            // 所以拿它來畫的話:頭貼上的 READY 已經是 B 隊的綠色了,格子卻還亮在「自由」。
+            int myTeam = LocalTeam();
             for (int i = 0; i < _teamImg.Length; i++)
-                if (_teamImg[i] != null) UIKit.ApplySprite(_teamImg[i], s.Team == i ? _teamPushed[i] : _teamNormal[i]);
+                if (_teamImg[i] != null) UIKit.ApplySprite(_teamImg[i], myTeam == i ? _teamPushed[i] : _teamNormal[i]);
 
             // 掉落方式的值由 SdoComboBox 自己維護（onPick → session.DropDirection）；此處不需重畫。
+        }
+
+        /// <summary>
+        /// 右側面板要讀的房間快照 —— **線上而且不是房主**才有。
+        /// 房主與離線看自己的 session(它就是房間的設定);非房主看快照(房間是別人選的)。
+        /// 「netRoom == null」因此也正好等於「這台是房主」。
+        /// </summary>
+        private NetRoomSnapshot NetRoomForPanel()
+            => Online && Ctx != null && Ctx.Net != null && !Ctx.Net.IsHost ? Ctx.Net.Room : null;
+
+        /// <summary>
+        /// 本機這一格現在在**哪一隊**(0=A 1=B 2=C 3=自由)。
+        ///
+        /// 線上以 server 的座位為準:換隊不做樂觀更新(見 <see cref="PickOwnTeam"/>),而且線上沒有人寫
+        /// <c>GameSession.Team</c> —— 讀它會讓「組隊」四格永遠亮在自己上次離線時選的那一格。
+        /// 離線(本機就是房主、沒有 server)才用 session 的值。
+        /// </summary>
+        /// <summary>
+        /// 這間房**現在**是什麼模式(0=自由 1=普通 2=ShowTime)。
+        ///
+        /// 線上一律以 server 的房間設定為準(房主自己也是 —— 它按下去的模式會 push 上去,
+        /// 兩邊本來就該一致;拿 session 當來源的話,推送失敗時房主會看到一個只有它自己相信的模式)。
+        /// 離線沒有 server,session 就是房間設定。
+        /// </summary>
+        private int RoomGameMode()
+        {
+            if (Online && Ctx != null && Ctx.Net != null && Ctx.Net.Room != null && Ctx.Net.Room.Settings != null)
+                return Ctx.Net.Room.Settings.GameMode;
+            return Ctx != null && Ctx.Session != null ? Ctx.Session.GameMode : 0;
+        }
+
+        private int LocalTeam()
+        {
+            if (Online && Ctx != null && Ctx.Net != null && Ctx.Net.Room != null)
+            {
+                var seat = Ctx.Net.Room.SeatOf(Ctx.Net.UserId);
+                if (seat != null) return seat.Team;
+            }
+            return Ctx != null && Ctx.Session != null ? Ctx.Session.Team : (int)TeamTag.Free;
+        }
+
+        /// <summary>
+        /// 面板現在顯示的那首歌在**本機**歌曲目錄裡的那一筆。
+        /// <paramref name="netSong"/> 有值(線上非房主)就用房間那份的識別去查,否則查 session 自己選的。
+        /// 查不到 = 我沒這首歌(缺歌)→ null,呼叫端退回 server 帶來的顯示值。
+        /// </summary>
+        private SongCatalog.Entry LocalEntryFor(NetSongRef netSong)
+        {
+            if (netSong != null)
+                return netSong.Official
+                    ? SongCatalog.Get(netSong.Gn)
+                    : Sdo.Game.ExternalSongLibrary.FindByPack(netSong.PackId, netSong.SongKey);
+            var s = Ctx != null ? Ctx.Session : null;
+            return s != null && s.HasSong ? SongCatalog.Get(s.SongGn) : null;
+        }
+
+        /// <summary>這首歌三個難度槽各有沒有譜。查不到目錄(缺歌/隨機難度)→ null = 三個都當可選。</summary>
+        private static bool[] PlayableSlots(SongCatalog.Entry entry)
+        {
+            if (entry == null) return null;
+            var ok = new bool[FreeModeDifficulty.SlotCount];
+            for (int i = 0; i < ok.Length; i++) ok[i] = entry.HasChart(i);
+            return ok;
+        }
+
+        /// <summary>自由模式難度選擇器現在該用哪一份「哪些難度有譜」(◄ ► 要跳過沒譜的難度)。</summary>
+        private bool[] CurrentPlayableSlots()
+        {
+            var netSong = NetRoomForPanel()?.Song;
+            if (netSong != null && !netSong.HasSong) netSong = null;
+            bool isRandom = netSong != null ? netSong.RandomTitle : (Ctx != null && Ctx.Session != null && Ctx.Session.SongIsRandom);
+            return PlayableSlots(isRandom ? null : LocalEntryFor(netSong));
         }
 
         /// <summary>隨機難度用的灰階 CD 碟：把任一難度碟去色一次並快取（碟形相同、只差色相，去色後即中性灰）。
@@ -2978,6 +3128,7 @@ namespace Sdo.UI.Screens
             TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
             TickDevCloseSeats();         // DEV only:設了 SDO_CLOSESEATS 才會動(做出滿房,驗自動轉旁觀)
             TickDevPickSong();           // DEV only:設了 SDO_PICKSONG 才會動(缺歌傳檔的實機驗證用)
+            TickDevTeam();               // DEV only:設了 SDO_TEAM 才會動(驗徽章依隊伍換色)
             TickDevAutoReady();          // DEV only:設了 SDO_AUTOREADY 才會動
             TickDevAutoStart();          // DEV only:設了 SDO_AUTOSTART 才會動
             TickDevAutoSay();   // DEV only:設了 SDO_SAY 才會動(見那邊的註解)
@@ -4130,10 +4281,31 @@ namespace Sdo.UI.Screens
 
                 // 🔴 房主徽章跟 HostUserId 走,不是「座位 0」—— 轉移房主時 server 只換那個值、不搬座位。
                 // 離線模式沒有 userId(恆 0),那時退回 SeatInfo.IsHost。
+                //
+                // HOST 與 READY 疊在同一條(y=102)且互斥:房主沒有「準備」這個狀態(NetSeat.Ready 對房主恆 false),
+                // 所以房主那格畫 HOST、其他人按了準備才畫 READY。兩張都依**那個人自己的隊伍**換色。
+                bool seatIsHost = taken && (seat.UserId != 0 && room != null ? room.IsHostUser(seat.UserId) : seat.IsHost);
+                int badgeFrame = taken ? RoomBadgeFrames.ForTeam(seat.Team) : 0;
                 if (_slotMaster[i] != null)
-                    _slotMaster[i].enabled = taken && (seat.UserId != 0 && room != null
-                        ? room.IsHostUser(seat.UserId)
-                        : seat.IsHost);
+                {
+                    _slotMaster[i].enabled = seatIsHost;
+                    if (seatIsHost) UIKit.ApplySprite(_slotMaster[i], Frame(_masterFrames, badgeFrame));
+                }
+                if (_slotReady[i] != null)
+                {
+                    bool showReady = taken && !seatIsHost && seat.IsReady;
+                    _slotReady[i].enabled = showReady;
+                    if (showReady) UIKit.ApplySprite(_slotReady[i], Frame(_readyFrames, badgeFrame));
+                }
+
+                // 名字底下那條名牌:選了隊才畫,畫的是那一隊的色條(官方 Team.an 第 1/2/3 幀)。
+                // 沒選隊(自由)= 官方的第 0 幀是 1×1 空白 → 這裡直接不畫,名字就落在頭貼面板原本的紫底上。
+                if (_slotPlate[i] != null)
+                {
+                    bool showPlate = taken && TeamColors.IsTeam(seat.Team);
+                    _slotPlate[i].enabled = showPlate;
+                    if (showPlate) UIKit.ApplySprite(_slotPlate[i], Frame(_plateFrames, badgeFrame));
+                }
 
                 if (_slotName[i] != null)
                 {
@@ -4489,6 +4661,9 @@ namespace Sdo.UI.Screens
         {
             teamMode = false;
             if (room == null) return true;
+            // 非普通模式一律不是組隊局 —— 就算座位上還留著剛切模式那一瞬間的舊隊伍值(server 會清,
+            // 但快照可能還沒回來),也不能讓它把開始鈕卡住。
+            if (!TeamLayoutRules.TeamsAllowedIn(RoomGameMode())) return true;
             int a = 0, b = 0, c = 0;
             for (int i = 0; i < room.Seats.Count; i++)
             {
@@ -4699,16 +4874,36 @@ namespace Sdo.UI.Screens
                 if (r.IsRandomSong) s.SongIsRandom = false;   // 同理:歌也抽好了
             }
             // 歌本身:server 的那份才是這一場真正要玩的(隨機難度時是抽出來的那首)。
+            // 難度**不是** —— 自由模式下每個人打自己在「難度設置」挑的那個(見 LocalPlaySlot)。
             if (m.Song == null) return;
             if (m.Song.Official)
             {
                 if (string.IsNullOrEmpty(m.Song.Gn)) return;
                 s.SongGn = m.Song.Gn;
                 s.SongFileId = m.Song.FileId;
-                s.Difficulty = (Difficulty)Mathf.Clamp(m.Song.ChartIndex, 0, 2);
+                s.Difficulty = (Difficulty)LocalPlaySlot(m.Song, Mathf.Clamp(m.Song.ChartIndex, 0, 2));
                 return;
             }
-            ApplyResolvedExternalSong(s, m.Song);
+            ApplyResolvedExternalSong(s, m.Song, LocalPlaySlot(m.Song, Mathf.Clamp(m.Song.Difficulty, 0, 2)));
+        }
+
+        /// <summary>
+        /// 這一場**我**要打哪一個難度槽。
+        ///
+        /// 一般/ShowTime 模式:房主選的那個(<paramref name="hostSlot"/>,server 帶來的)——全場同一張譜。
+        /// 自由模式的非房主:自己在「難度設置」挑的那個 —— 這就是「同一首歌每個人可以打不同難度」的落點。
+        /// 挑的那個在這首歌沒有譜就貼到最近的可打難度(外部歌常只有一兩張)。
+        ///
+        /// 「隨機難度」局例外:歌與難度都是房主當場抽出來的一組,覆寫難度等於把隨機的意義拿掉 → 照房主那份。
+        /// </summary>
+        private int LocalPlaySlot(NetSongRef song, int hostSlot)
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null || song == null || song.RandomTitle) return hostSlot;
+            var netRoom = NetRoomForPanel();
+            int gameMode = netRoom != null && netRoom.Settings != null ? netRoom.Settings.GameMode : s.GameMode;
+            if (!FreeModeDifficulty.PlayerPicksOwn(gameMode, isHost: netRoom == null)) return hostSlot;
+            return FreeModeDifficulty.Snap(s.FreeDifficulty, PlayableSlots(LocalEntryFor(song)));
         }
 
         /// <summary>
@@ -4722,7 +4917,7 @@ namespace Sdo.UI.Screens
         ///
         /// 找不到(還在下載 / 下載失敗)就什麼都不動:那台本來就不會被納入這一場(R12 要求 avail==have)。
         /// </summary>
-        private static void ApplyResolvedExternalSong(GameSession s, NetSongRef song)
+        private static void ApplyResolvedExternalSong(GameSession s, NetSongRef song, int slot)
         {
             if (string.IsNullOrEmpty(song.PackId)) return;
             var hit = Sdo.Game.ExternalSongLibrary.FindByPack(song.PackId, song.SongKey);
@@ -4732,7 +4927,7 @@ namespace Sdo.UI.Screens
                 return;
             }
 
-            int slot = Mathf.Clamp(song.Difficulty, 0, 2);
+            slot = Mathf.Clamp(slot, 0, 2);    // 自由模式時這是**自己**挑的難度(見 LocalPlaySlot),不一定是房主那個
             s.SongGn = hit.gn;                 // 本機的 gn(每台不同,只在本機有意義)
             s.SongFileId = hit.fileId;
             s.SongTitle = hit.title;
@@ -4885,6 +5080,10 @@ namespace Sdo.UI.Screens
         private Image Art(string an, Vector2 win, float x, float y, string name)
             => UIKit.AddSprite(WinRoot(win), name, RoomUiArt.An(an), win.x + x, win.y + y);
 
+        /// <summary>多幀 .an 的第 n 幀；載不到就回 null(呼叫端的 Image 只是不顯示，不會爆)。</summary>
+        private static Sprite Frame(Sprite[] frames, int n)
+            => frames != null && frames.Length > 0 ? frames[Mathf.Clamp(n, 0, frames.Length - 1)] : null;
+
         // 裁切容器：左上錨在 Win2 局部(x,y)、大小 w×h，掛 RectMask2D → 子物件超出即被硬裁(同 AddSprite 的左上像素座標系)。
         private RectTransform NewClip(string name, float x, float y, float w, float h)
         {
@@ -4908,6 +5107,86 @@ namespace Sdo.UI.Screens
         // win2 難度/BPM 字幕（線上框沒烘這兩個字 → 自己畫；白邊；粗體；座標 = Win2 + (x,y)）
         private void MakeCaption(string name, string text, float x, float y)
             => OutlinedLabel.Create(_win2Root, name, Win2.x + x, Win2.y + y, 21, 14, 12, SongNameColor, Color.white, Win2EdgePx, true).SetText(text);
+
+        /// <summary>
+        /// 自由模式的「難度設置 ◄ EASY ►」(官方 DDRROOM.XML 的 <c>FMGameLevel</c> 視窗)。
+        ///
+        /// 版位逐字取自官方:視窗 <c>(5,292) 140×40 背景 FMdif.an</c>,子件 <c>FMLvlSelL(1,17)</c> /
+        /// <c>FMLvlSelR(95,17)</c> / <c>FMLvlChoose(30,16) 66×19</c> —— 全部再加上 Win2 原點。
+        /// 它與房主的 <c>songselect</c>(14,296)**疊在同一格**,所以永遠只會有一個是開著的(見 Render)。
+        /// </summary>
+        private void BuildFreeModeLevel()
+        {
+            _fmLevelBg = UIKit.AddSprite(_win2Root, "FmLevelBg", EraseFmDifTitle(RoomUiArt.An("FMdif")),
+                                         Win2.x + 5, Win2.y + 292);
+            // 標題自己畫:官方那張圖把「难度设置」烘死在裡面(簡體),抹掉之後疊上翻譯過的字。
+            // 顏色/描邊沿用原圖量到的值(紫 = ModeColor、乳白描邊)，看起來和沒動過一樣。
+            _fmLevelTitle = OutlinedLabel.Create(_win2Root, "FmLevelTitle", Win2.x + 5, Win2.y + 293, 124, 16, 13,
+                                                 ModeColor, Color.white, Win2EdgePx, true);
+            _fmLevelTitle.SetText(L("room.difficulty_setting"));
+
+            _fmLevelValue = UIKit.AddText(_win2Root, "FmLevelValue", "", 13, FmLevelColor, TextAlignmentOptions.Center);
+            _fmLevelValue.fontStyle = FontStyles.Bold;
+            PlaceW2(_fmLevelValue.rectTransform, 35, 308, 66, 19);
+
+            // ◄ / ► 用官方的橘色箭頭(FMLvlDown/FMLvlUp 三態)。跟速度那對小箭頭一樣不掛滑過音。
+            _fmLevelPrev = Btn("fmlvlprev", "FMLvlDown1", "FMLvlDown2", "FMLvlDown3", Win2, 6, 309,
+                               () => StepFreeDifficulty(-1), hoverSfx: null);
+            _fmLevelNext = Btn("fmlvlnext", "FMLvlup1", "FMLvlup2", "FMLvlup3", Win2, 100, 309,
+                               () => StepFreeDifficulty(1), hoverSfx: null);
+
+            SetFreeModeLevelVisible(false);
+        }
+
+        private void SetFreeModeLevelVisible(bool on)
+        {
+            if (_fmLevelBg != null) _fmLevelBg.gameObject.SetActive(on);
+            if (_fmLevelTitle != null) _fmLevelTitle.gameObject.SetActive(on);
+            if (_fmLevelValue != null) _fmLevelValue.gameObject.SetActive(on);
+            if (_fmLevelPrev != null) _fmLevelPrev.gameObject.SetActive(on);
+            if (_fmLevelNext != null) _fmLevelNext.gameObject.SetActive(on);
+        }
+
+        /// <summary>
+        /// FMdif.an 的標題「难度设置」是**烘在圖上的簡體字** —— 把它抹掉,標題改由程式疊(可翻譯)。
+        ///
+        /// 抹法之所以是像素完全正確的:那塊底是**純垂直漸層**(同一列從左到右每個像素一模一樣,已逐列驗過),
+        /// 所以把字那塊的每個像素換成**同一列**左邊乾淨處(x=20)的顏色,得到的就是原本被字蓋住的底。
+        /// 只動 y=2..14 這幾列,下面 y≥15 的深青色值框一個像素都不碰。
+        /// 材質不可讀時原樣回傳(頂多標題疊字,不會沒圖)。
+        /// </summary>
+        private static Sprite EraseFmDifTitle(Sprite src)
+        {
+            if (src == null || src.texture == null) return src;
+            var r = src.textureRect;
+            int tx = Mathf.RoundToInt(r.x), ty = Mathf.RoundToInt(r.y);
+            int w = Mathf.RoundToInt(r.width), h = Mathf.RoundToInt(r.height);
+            if (w < FmTitleClearX1 || h < FmTitleClearY1) return src;
+            Color[] px;
+            try { px = src.texture.GetPixels(tx, ty, w, h); }
+            catch { return src; }
+            for (int yTop = FmTitleClearY0; yTop < FmTitleClearY1; yTop++)
+            {
+                int row = (h - 1 - yTop) * w;                 // GetPixels 是由下往上,.an 座標是由上往下
+                Color clean = px[row + FmTitleCleanX];        // 同一列、字左邊那塊乾淨的底色
+                for (int x = FmTitleClearX0; x < FmTitleClearX1; x++) px[row + x] = clean;
+            }
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            tex.SetPixels(px);
+            tex.Apply(false);
+            return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), src.pixelsPerUnit, 0, SpriteMeshType.FullRect);
+        }
+
+        /// <summary>自由模式:按 ◄ / ► 換自己的難度(跳過這首歌沒有的譜),存進 session 並重畫面板。</summary>
+        private void StepFreeDifficulty(int dir)
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null) return;
+            int next = FreeModeDifficulty.Step(s.FreeDifficulty, dir, CurrentPlayableSlots());
+            if (next == s.FreeDifficulty) return;
+            s.FreeDifficulty = next;
+            RenderWin2();
+        }
 
         // 組隊單選格：normal/pushed 兩態，點了把 GameSession.Team 設成 idx 並重畫（座標 = Win2 + (x,y)）
         private void BuildTeamToggle(int idx, string normalAn, string pushedAn, float x, float y)
@@ -4938,6 +5217,13 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void PickOwnTeam(int team)
         {
+            // 只有普通模式能組隊(server 也擋,這裡只是提早把原因講出來 —— 官方那四格在自由模式下
+            // 圖也是照畫的,所以不能靠「看起來能不能按」讓玩家知道)。改回「自由」永遠放行。
+            if (team != (int)TeamTag.Free && !TeamLayoutRules.TeamsAllowedIn(RoomGameMode()))
+            {
+                Toast.Show(L("room.teams_normal_mode_only"));
+                return;
+            }
             if (Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom)
             {
                 Ctx.Net.SetOwnTeam(team);
@@ -4953,6 +5239,8 @@ namespace Sdo.UI.Screens
         {
             var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             if (!CanManageSeats(room)) return;
+            // 自動分隊也只在普通模式(server 的 assignTeams 同樣會擋)。
+            if (!TeamLayoutRules.TeamsAllowedIn(RoomGameMode())) { Toast.Show(L("room.teams_normal_mode_only")); return; }
             int seated = SeatedPlayerCount(room);
             var layouts = new List<TeamLayout>(3);
             if (seated == 4) layouts.Add(TeamLayout.V2v2);

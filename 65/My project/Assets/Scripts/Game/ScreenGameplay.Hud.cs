@@ -257,6 +257,7 @@ namespace Sdo.Game
             var go = new GameObject("HeadMarker");   // HUD layer (default) — children draw in the main ortho cam
             var hm = go.AddComponent<HeadMarker>();
             hm.Init(_arrowFrames, localPlayerName);
+            hm.SetTeamColor(TeamOf(LocalDancerSlotIndex));   // 組隊局:自己的名字也是自己那一隊的顏色
             Transform a = anchor;
             hm.AnchorGetter = () => a != null ? a.position
                 : ((_avatarRoot != null ? _avatarRoot.position : _danceSpot) + new Vector3(0f, 59f, 0f));

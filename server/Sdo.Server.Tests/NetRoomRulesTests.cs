@@ -1,4 +1,4 @@
-using NUnit.Framework;
+﻿using NUnit.Framework;
 using Sdo.Net;
 using Sdo.Net.Server;
 
@@ -52,6 +52,21 @@ namespace Sdo.Tests
             Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, OfficialSong()));
             foreach (var id in userIds)
                 Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(id, "sdom1435k.gn", Availability.Have, 0f));
+        }
+
+        /// <summary>
+        /// 把房間切成「普通模式」。
+        ///
+        /// 新房預設是**自由模式**(<c>NetRoomSettings.GameMode</c> 預設 0),而
+        /// <see cref="TeamLayoutRules.TeamsAllowedIn"/> 規定只有普通模式可以組隊 ——
+        /// 所以每一個要碰隊伍的測試都得先做這一步,否則 setOwnTeam / assignTeams 會被擋成 BadTeams。
+        /// </summary>
+        private static void NormalMode(NetRoom r)
+        {
+            int[] kicked;
+            Assert.AreEqual(NetRoomOp.Ok,
+                r.SetRoomSettings(Host, ParseSettings("{\"gameMode\":" + TeamLayoutRules.TeamGameMode + "}"), out kicked),
+                "切成普通模式");
         }
 
         /// <summary>讓所有座位玩家都準備好(房主本來就 ready)。</summary>
@@ -206,6 +221,7 @@ namespace Sdo.Tests
             // 換隊的條件是「還沒準備」,房主恆 Ready 就永遠通不過,
             // 於是組隊模式(要求所有參與者都選隊)永遠開不了場。
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid, Dan);
             SetSongAndHave(r, Host, Bob, Cid, Dan);
             ReadyAll(r);
@@ -376,6 +392,7 @@ namespace Sdo.Tests
             // 🔴 每一個都要在 server 端擋。client 隱藏按鈕只是 UX ——
             // 改過的 client 照樣能把這些訊息送上來。
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob);
 
             int kicked;
@@ -561,6 +578,7 @@ namespace Sdo.Tests
         {
             // 使用者的要求:「其它玩家如果不是在準備狀態下的話能在自己換組隊」
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob);
 
             Assert.AreEqual(NetRoomOp.Ok, r.SetOwnTeam(Bob, (int)TeamTag.A));
@@ -571,6 +589,7 @@ namespace Sdo.Tests
         public void R10a_Own_Team_Cannot_Be_Changed_After_Readying_Up()
         {
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob);
             SetSongAndHave(r, Host, Bob);
             Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
@@ -587,6 +606,7 @@ namespace Sdo.Tests
         public void R10a_Invalid_Team_Value_Is_Rejected()
         {
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob);
             Assert.AreEqual(NetRoomOp.BadState, r.SetOwnTeam(Bob, 4));
             Assert.AreEqual(NetRoomOp.BadState, r.SetOwnTeam(Bob, -1));
@@ -596,6 +616,7 @@ namespace Sdo.Tests
         public void R10a_Spectators_Cannot_Set_A_Team()
         {
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob);
             r.TrySpectate(User(Bob));
             Assert.AreEqual(NetRoomOp.NotInRoom, r.SetOwnTeam(Bob, (int)TeamTag.A));
@@ -607,6 +628,7 @@ namespace Sdo.Tests
         public void R10b_AssignTeams_Requires_An_Exact_Player_Count()
         {
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob);   // 共 2 人
 
             Assert.AreEqual(NetRoomOp.BadTeams, r.AssignTeams(Host, TeamLayout.V2v2), "2 個人不能 2v2");
@@ -620,6 +642,7 @@ namespace Sdo.Tests
         public void R10b_AssignTeams_Deals_Round_Robin_Over_Seated_Players()
         {
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid, Dan);   // 座位 0,1,2,3
 
             Assert.AreEqual(NetRoomOp.Ok, r.AssignTeams(Host, TeamLayout.V2v2));
@@ -634,6 +657,7 @@ namespace Sdo.Tests
         public void R10b_AssignTeams_Skips_Empty_Seats()
         {
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid, Dan, Eve);   // 6 人滿
             r.Leave(Bob);                       // 座位 1 空 → 剩 5 人... 再走一個湊 4
             r.Leave(Cid);                       // 剩 Host, Dan, Eve = 3 人
@@ -648,6 +672,7 @@ namespace Sdo.Tests
         public void R10c_Team_Mode_With_A_Legal_Layout_Can_Start()
         {
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid, Dan);
             SetSongAndHave(r, Host, Bob, Cid, Dan);
             r.AssignTeams(Host, TeamLayout.V2v2);
@@ -664,6 +689,7 @@ namespace Sdo.Tests
             // 🔴 使用者的決定:湊不出官方座標表有的版型就**不能開始遊戲**
             // (而不是退回個人隊形 —— 那會讓玩家以為分隊生效了卻看到單人站位)。
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid, Dan, Eve);   // 5 人
             SetSongAndHave(r, Host, Bob, Cid, Dan, Eve);
 
@@ -685,6 +711,7 @@ namespace Sdo.Tests
         {
             // 強制開始不能繞過「站位表不存在」這件事。
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid);
             SetSongAndHave(r, Host, Bob, Cid);
             r.SetOwnTeam(Bob, (int)TeamTag.A);
@@ -701,6 +728,7 @@ namespace Sdo.Tests
         {
             // 組隊模式下所有參與者都必須選了隊 —— 有人是「自由」就不知道他該站哪。
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid, Dan);
             SetSongAndHave(r, Host, Bob, Cid, Dan);
             r.SetOwnTeam(Bob, (int)TeamTag.A);
@@ -718,6 +746,7 @@ namespace Sdo.Tests
         {
             // host 送來的 teamLayout 不可信 —— server 用自己手上的參與者名單重算。
             var r = MakeRoom();
+            NormalMode(r);   // 只有普通模式可以組隊
             JoinMany(r, Bob, Cid, Dan);
             SetSongAndHave(r, Host, Bob, Cid, Dan);
             r.AssignTeams(Host, TeamLayout.V2v2);   // 實際是 2v2
@@ -738,6 +767,93 @@ namespace Sdo.Tests
             Assert.AreEqual(NetRoomOp.BadTeams, r.RequestStart(Host, false, Resolved(TeamLayout.V2v2), 0, out m),
                 "沒人組隊卻送了組隊版型");
             Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(TeamLayout.None), 0, out m));
+        }
+
+        // ==================== R10d:只有普通模式可以組隊 ====================
+        // 使用者的規則:「只有普通模式才能組隊」。自由模式是各玩各的(連難度都各挑各的),
+        // ShowTime 是集氣表演 —— 兩者都沒有隊伍的意義。client 也會擋,但那只是為了說得出原因;
+        // 這裡這幾條才是真的:改過的 client 不能靠直接送 setOwnTeam / assignTeams 繞過去。
+
+        [Test]
+        public void R10d_Free_Mode_Rejects_Setting_A_Team()
+        {
+            var r = MakeRoom();          // 新房預設就是自由模式
+            JoinMany(r, Bob);
+
+            Assert.AreEqual(NetRoomOp.BadTeams, r.SetOwnTeam(Bob, (int)TeamTag.A), "自由模式不能選隊");
+            Assert.AreEqual((int)TeamTag.Free, r.State.Seats[1].Team);
+        }
+
+        [Test]
+        public void R10d_Showtime_Mode_Rejects_Setting_A_Team()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            int[] kicked;
+            Assert.AreEqual(NetRoomOp.Ok, r.SetRoomSettings(Host, ParseSettings("{\"gameMode\":2}"), out kicked));
+
+            Assert.AreEqual(NetRoomOp.BadTeams, r.SetOwnTeam(Bob, (int)TeamTag.B), "ShowTime 模式也不能選隊");
+        }
+
+        [Test]
+        public void R10d_Free_Mode_Rejects_AssignTeams()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob, Cid, Dan);
+
+            Assert.AreEqual(NetRoomOp.BadTeams, r.AssignTeams(Host, TeamLayout.V2v2), "自由模式不能一鍵分隊");
+        }
+
+        [Test]
+        public void R10d_Going_Back_To_Free_Is_Always_Allowed()
+        {
+            // 「改回自由」永遠放行 —— 否則模式切走之後,已經在某一隊的人會被鎖在那一隊裡出不來。
+            var r = MakeRoom();
+            NormalMode(r);
+            JoinMany(r, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetOwnTeam(Bob, (int)TeamTag.A));
+
+            int[] kicked;
+            Assert.AreEqual(NetRoomOp.Ok, r.SetRoomSettings(Host, ParseSettings("{\"gameMode\":0}"), out kicked));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetOwnTeam(Bob, (int)TeamTag.Free), "改回自由不受模式限制");
+        }
+
+        [Test]
+        public void R10d_Leaving_Normal_Mode_Clears_Everyones_Team()
+        {
+            // 不清的話會留下一組看不見也改不掉的隊伍:面板不讓你動,但 requestStart 仍會判定成組隊局,
+            // 然後因為湊不出版型而永遠開不了場。
+            var r = MakeRoom();
+            NormalMode(r);
+            JoinMany(r, Bob, Cid, Dan);
+            Assert.AreEqual(NetRoomOp.Ok, r.AssignTeams(Host, TeamLayout.V2v2));
+            Assert.AreNotEqual((int)TeamTag.Free, r.State.Seats[1].Team, "前提:分完隊了");
+
+            int[] kicked;
+            Assert.AreEqual(NetRoomOp.Ok, r.SetRoomSettings(Host, ParseSettings("{\"gameMode\":0}"), out kicked));
+
+            for (int i = 0; i < r.State.Seats.Length; i++)
+                if (r.State.Seats[i].IsTaken)
+                    Assert.AreEqual((int)TeamTag.Free, r.State.Seats[i].Team, "座位 " + i + " 應該被清回自由");
+        }
+
+        [Test]
+        public void R10d_Clearing_Teams_Unblocks_Starting()
+        {
+            // 上一條的後果:清乾淨之後這一局就是普通(非組隊)局,4 個人也開得起來。
+            var r = MakeRoom();
+            NormalMode(r);
+            JoinMany(r, Bob, Cid, Dan);
+            Assert.AreEqual(NetRoomOp.Ok, r.AssignTeams(Host, TeamLayout.V2v2));
+
+            int[] kicked;
+            Assert.AreEqual(NetRoomOp.Ok, r.SetRoomSettings(Host, ParseSettings("{\"gameMode\":0}"), out kicked));
+            SetSongAndHave(r, Host, Bob, Cid, Dan);
+            ReadyAll(r);
+
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(TeamLayout.None), 0, out m));
+            Assert.AreEqual(TeamLayout.None, m.Resolved.TeamLayout);
         }
 
         // ==================== R11:旁觀人數上限 ====================

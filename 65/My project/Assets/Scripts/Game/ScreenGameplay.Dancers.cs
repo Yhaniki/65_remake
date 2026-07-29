@@ -65,6 +65,20 @@ namespace Sdo.Game
 
         private bool TeamMode => teamLayout >= 0;
 
+        /// <summary>
+        /// 第 <paramref name="dancerIndex"/> 位舞者的隊伍(0=A 1=B 2=C),**只在組隊局有效** ——
+        /// 其餘一律回「沒組隊」。頭上名字的顏色與腳下星環的顏色都吃這個值。
+        ///
+        /// 為什麼閘門是 <see cref="TeamMode"/>(server echo 的 teamLayout)而不是直接看 team 值:
+        /// teamLayout 是 server 用**它自己**的參與者名單重算出來的結論,是「這一局到底算不算組隊局」的
+        /// 唯一權威;座位上的 team 則可能是剛切模式那一瞬間還沒清乾淨的殘值。
+        /// </summary>
+        private int TeamOf(int dancerIndex)
+        {
+            if (!TeamMode || netDancers == null) return TeamColors.Free;
+            return dancerIndex >= 0 && dancerIndex < netDancers.Length ? netDancers[dancerIndex].Team : TeamColors.Free;
+        }
+
         /// <summary>每位舞者現在在跳嗎(遠端的由分數流推導,見 TickRemoteGates)。索引 = 舞者序。</summary>
         private bool[] _dancerDancing;
         /// <summary>上一個結算點時每位遠端舞者的判定計數(推導跳/停用)。</summary>
@@ -119,9 +133,13 @@ namespace Sdo.Game
                 {
                     var d = netDancers[i];
                     male = d.Male;
-                    parts = d.Parts;                       // null → SdoAvatarBuilder 會用預設整套
+                    parts = d.Parts;
                     bodyIdx = d.BodyIndex;
                     label = d.Name;
+                    // 🔴 穿搭還沒傳到(null)就退回預設整套 —— **不能把 null 丟給 builder**:LoadParts 是
+                    // `foreach (var rel0 in parts)`,null 會 NRE,而那條 NRE 會把整個 SpawnExtraDancers 打斷 ——
+                    // 後面的舞者連生都不會生,連 _dancerCur/_dancerDancing 都沒配起來。少一件衣服總比整場沒人好。
+                    if (parts == null) parts = SdoRoomAvatar.DefaultParts(male);
                 }
 
                 var go = new GameObject("Dancer" + i + (label != null ? "_" + label : ""));
@@ -160,10 +178,22 @@ namespace Sdo.Game
                 av.PhaseOffsetSec = i * 0.37f;   // 待機時不要整齊得像複製人
                 av.PoseInitialIdle();
 
-                // 遠端舞者刻意**不掛**手光/地面星環/頭上表情:那些是本機專屬的表演元素(官方也只在本機出),
-                // 而且每一隻都掛的話成本會直接翻倍。
-                // 但**名字牌要掛** —— 六隻角色在場上,沒有名字就分不出哪一隻是誰。
-                if (!string.IsNullOrEmpty(label)) CreateRemoteNameplate(av, go.transform, label);
+                // 遠端舞者刻意**不掛**手光與頭上表情:那兩個是本機專屬的表演元素,而且手光每一隻都掛的話
+                // 成本會直接翻倍。
+                //
+                // 但**名字牌與地面星環要掛**:
+                //   • 名字 —— 六隻角色在場上,沒有名字就分不出哪一隻是誰。
+                //   • 星環 —— 官方的組隊實機畫面裡**每一位**腳下都有一圈(而且是自己那一隊的顏色),
+                //     那正是場上分辨敵我的方式。星環只是 14 個 quad 的環帶 + 一份材質,成本與手光不是同一個量級。
+                int team = TeamOf(i);
+                if (!string.IsNullOrEmpty(label)) CreateRemoteNameplate(av, go.transform, label, team);
+                CreateGroundStarRing(spot.x, spot.z, 0.6f, av, go.transform, team, local: false);
+
+                // 🔴 一定要跟本機舞者同一層。3D 舞台是**另一台相機**在畫的(SceneCam 的 cullingMask 只有 SceneLayer,
+                // 主相機反過來把那層剔掉),留在 Default 層的話這一隻改由主正交相機畫 —— 那台的座標系是 800×600
+                // design px,模型單位直接當像素 → 60 單位高的人變成貼在畫面上的 60px 小人,而且不受場景遮擋。
+                // (回報:「進遊戲後其他玩家變超小」。條件與本機那條 3D 擺位路徑一致 —— 退回 2D 時兩邊都留在 Default。)
+                if (use3dCamera && _camReady) SetLayerRecursive(go, SceneLayer);
 
                 _extraDancers.Add(av);
                 _extraRoots.Add(go.transform);
@@ -319,7 +349,7 @@ namespace Sdo.Game
         /// 一位遠端舞者頭上的名字牌。做法與本機那個一樣(把頭骨每幀投影到螢幕、在固定像素距離上畫),
         /// 但**不畫箭頭** —— 那個箭頭在官方是「這是你」的指示物,每個人頭上都有一個就沒有意義了。
         /// </summary>
-        private void CreateRemoteNameplate(SdoAvatar av, Transform root, string label)
+        private void CreateRemoteNameplate(SdoAvatar av, Transform root, string label, int team)
         {
             int headIdx = av.BoneIndex("Bip01_Head");
             if (headIdx < 0) headIdx = av.BoneIndex("Bip01_Neck");
@@ -335,12 +365,16 @@ namespace Sdo.Game
             var go = new GameObject("RemoteNameplate_" + label);
             var hm = go.AddComponent<HeadMarker>();
             hm.Init(null, label);   // null = 不要箭頭(見上面的理由)
+            hm.SetTeamColor(team);  // 組隊局:名字染成他那一隊的顏色(與腳下星環同一個色)
             Transform a = anchor;
             Transform r = root;
             hm.AnchorGetter = () => a != null ? a.position
                 : ((r != null ? r.position : Vector3.zero) + new Vector3(0f, 59f, 0f));
             hm.CamGetter = () => _sceneCam != null ? _sceneCam : _cam;
         }
+
+        /// <summary>測試用:第 i 位舞者的 root(本機那一格 = <c>_avatarRoot</c>;還沒生出來 = null)。</summary>
+        public Transform DancerRootForTest(int i) => i >= 0 && i < _extraRoots.Count ? _extraRoots[i] : null;
 
         /// <summary>本機在舞者陣列裡的索引(離線/量測時是 0;旁觀者是 -1)。</summary>
         private int LocalDancerSlotIndex

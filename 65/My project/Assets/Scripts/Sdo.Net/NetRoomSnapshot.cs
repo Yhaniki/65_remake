@@ -64,6 +64,21 @@ namespace Sdo.Net
             if (NetJson.Has(node, "sceneRandom")) SceneRandom = NetJson.Bool(node, "sceneRandom");
         }
 
+        /// <summary>
+        /// 兩份設定一模一樣嗎。
+        ///
+        /// 為什麼需要它:房主每次收到房間快照都會拿「自己面板上的設定」跟「server 手上的」比一次,
+        /// **不一樣才送**(見 <c>NetRoomSettingsPublisher</c>)。每送一次 server 就 rev++ 並向全房廣播
+        /// 一份完整快照 —— 少了這個比較,房主會在每一份快照之後再送一次設定,兩邊互相觸發成無窮迴圈。
+        /// </summary>
+        public bool SameAs(NetRoomSettings o)
+            => o != null
+            && GameMode == o.GameMode
+            && Formation == o.Formation
+            && LookerCount == o.LookerCount
+            && SceneId == o.SceneId
+            && SceneRandom == o.SceneRandom;
+
         public NetRoomSettings Clone()
             => new NetRoomSettings
             {
