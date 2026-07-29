@@ -3506,8 +3506,18 @@ namespace Sdo.Game
             }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.ForceOpaque)
             {
-                // 官方旗標 0 = 不透明批,alpha 通道是死的。關掉 alpha clip 就好 —— 保留 cutout shader 的
-                // ZWrite On / AlphaTest 佇列,只是永遠不 clip(_Cutoff = -1,和 SceneLoader 對不透明 DDS 的做法一致)。
+                // 官方旗標 0 = 不透明批,alpha 通道是死的 —— 這不是「cutout 但不 clip」,是**根本不是 cutout**。
+                // 只把 _Cutoff 設 -1 會把材質留在 Sdo/UnlitInstancedCutout,而那支跟真正的不透明
+                // Sdo/UnlitInstanced 差在**頂點色的乘法空間**:
+                //   Cutout        : c.rgb *= i.col.rgb                                    (linear 空間)
+                //   UnlitInstanced: GammaToLinear(LinearToGamma(tex) × _Color × i.col)     (gamma 空間,刻意複製 D3D9)
+                // SCN0004 的海床是**兩片相鄰的 mapobj**:外海 SEA_UP 走不透明批、近岸 SEA_DOWN 走這裡,
+                // 兩片的頂點色都不是白的(SEA_UP 24 種、SEA_DOWN 12 種偏暗藍灰),於是同一片海被兩套亮度
+                // 數學畫出來 —— 接縫上就是一條亮度階差,也就是使用者看到的「海水裡奇怪的分割線」。
+                // 換成不透明 shader 兩件事一起成立:官方語意正確(不透明批不看 alpha),而且跟鄰片同一條
+                // 顏色路徑。_Cutoff 仍設 -1,以防 fallback 落回 cutout。
+                var opaque = Shader.Find("Sdo/UnlitInstanced");
+                if (opaque != null) mat.shader = opaque;
                 if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", -1f);
             }
             else if (mode == SceneMapobjUvScrollCatalog.RenderMode.SpotGlow)
