@@ -125,6 +125,8 @@ STR = {
     "songselect.rand_5up":  ["Random Lv 5+",   "隨機難度 5級以上",  "随机难度 5级以上",  "ランダム難易度 5以上"],
     "songselect.rand_9up":  ["Random Lv 9+",   "隨機難度 9級以上",  "随机难度 9级以上",  "ランダム難易度 9以上"],
     "songselect.rand_13up": ["Random Lv 13+",  "隨機難度 13級以上", "随机难度 13级以上", "ランダム難易度 13以上"],
+    "songselect.rand_20up": ["Random Lv 20+",  "隨機難度 20級以上", "随机难度 20级以上", "ランダム難易度 20以上"],
+    "songselect.rand_25up": ["Random Lv 25+",  "隨機難度 25級以上", "随机难度 25级以上", "ランダム難易度 25以上"],
 
     # 3D stage names — selector scenes (ids 0..30) + special rooms (31/32/33/35/37/38/39).
     # zh-TW are the real EXE names; en/ja are translations (proper nouns like NARNIA kept as-is).
