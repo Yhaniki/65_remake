@@ -137,7 +137,13 @@ namespace Sdo.UI.Services
             if (!_net.IsHost || _current == null) return false;
             if (string.IsNullOrEmpty(_current.SongTitle)) return false;
             if (_current.Status != RoomStatus.Waiting) return false;
-            return AllReady();
+            if (!AllReady()) return false;
+            for (int i = 0; i < _current.Seats.Count; i++)
+            {
+                var s = _current.Seats[i];
+                if (s != null && !s.IsEmpty && s.Avail != Availability.Have) return false;
+            }
+            return true;
         }
 
         // ---- 介面要求但連線下做不到的同步簽章 ----

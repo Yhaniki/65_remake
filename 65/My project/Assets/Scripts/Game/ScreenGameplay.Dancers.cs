@@ -118,6 +118,9 @@ namespace Sdo.Game
             _slotSpots = slots;
             bool haveNames = netDancers != null && netDancers.Length > 0;
             int localIdx = haveNames ? Mathf.Clamp(localDancerIndex, -1, total - 1) : 0;
+            // Freeze ONE predicate for the whole remote spawn pass. A loaded SceneCam alone is insufficient:
+            // without a valid CV track the dancer stays in the legacy Default-layer path, so its name must too.
+            bool sceneWorldMode = use3dCamera && _camReady && _sceneCam != null;
 
             for (int i = 0; i < total && i < slots.Length; i++)
             {
@@ -198,14 +201,15 @@ namespace Sdo.Game
                 //   • 星環 —— 官方的組隊實機畫面裡**每一位**腳下都有一圈(而且是自己那一隊的顏色),
                 //     那正是場上分辨敵我的方式。星環只是 14 個 quad 的環帶 + 一份材質,成本與手光不是同一個量級。
                 int team = TeamOf(i);
-                if (!string.IsNullOrEmpty(label)) CreateRemoteNameplate(av, go.transform, label, team);
+                if (!string.IsNullOrEmpty(label))
+                    CreateRemoteNameplate(av, go.transform, label, team, sceneWorldMode);
                 CreateGroundStarRing(spot.x, spot.z, 0.6f, av, go.transform, team, local: false);
 
                 // 🔴 一定要跟本機舞者同一層。3D 舞台是**另一台相機**在畫的(SceneCam 的 cullingMask 只有 SceneLayer,
                 // 主相機反過來把那層剔掉),留在 Default 層的話這一隻改由主正交相機畫 —— 那台的座標系是 800×600
                 // design px,模型單位直接當像素 → 60 單位高的人變成貼在畫面上的 60px 小人,而且不受場景遮擋。
                 // (回報:「進遊戲後其他玩家變超小」。條件與本機那條 3D 擺位路徑一致 —— 退回 2D 時兩邊都留在 Default。)
-                if (use3dCamera && _camReady) SetLayerRecursive(go, SceneLayer);
+                if (sceneWorldMode) SetLayerRecursive(go, SceneLayer);
 
                 _extraDancers.Add(av);
                 _extraRoots.Add(go.transform);
@@ -215,6 +219,7 @@ namespace Sdo.Game
             int n = total;
             _dancerCur = new Vector3[n];
             _dancerScores = new long[n];
+            _dancerLeader = Sdo.Ruleset.FormationAssignment.LeaderSlot;
             _dancerDancing = new bool[n];
             _dancerPrevCounts = new Sdo.Ruleset.DanceJudgeCounts[n];
             BuildBaseSlots(n);
@@ -316,6 +321,11 @@ namespace Sdo.Game
         private long[] _dancerScores;
 
         /// <summary>
+        /// 目前占領隊格的舞者索引。分數接近時保留這個人,直到挑戰者跨過 FormationAssignment 的換位門檻。
+        /// </summary>
+        private int _dancerLeader;
+
+        /// <summary>
         /// 每幀把每位舞者往它該站的格子收斂一步,並把相機錨點設成 slot 0 的占用者。
         ///
         /// 🔴 **搬既有的 transform,不重建角色。** avatar 的 Mesh/Texture/Material 是 per-instance
@@ -332,8 +342,18 @@ namespace Sdo.Game
             // 官方的組隊座標表是「每隊自己的前後排」,member 0 是該隊的前排 —— 那是隊內的概念,
             // 不是全場的。跨隊搬人在官方也不會發生。所以組隊時每個人待在自己隊的格子裡。
             // (「隊內也依分數換前後排」有可能是官方行為,但我沒有證據,所以不猜。)
-            var slots = TeamMode ? _dancerBaseSlot
-                                 : Sdo.Ruleset.FormationAssignment.SlotForDancer(_dancerScores);
+            int[] slots;
+            if (TeamMode)
+            {
+                slots = _dancerBaseSlot;
+            }
+            else
+            {
+                int authoritativeLeader = NetLeaderDancerIndex();
+                _dancerLeader = Sdo.Ruleset.FormationAssignment.ResolveLeader(
+                    _dancerScores, _dancerLeader, authoritativeLeader);
+                slots = Sdo.Ruleset.FormationAssignment.SlotForDancer(_dancerScores, _dancerLeader);
+            }
 
             for (int i = 0; i < n; i++)
             {
@@ -358,10 +378,10 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// 一位遠端舞者頭上的名字牌。做法與本機那個一樣(把頭骨每幀投影到螢幕、在固定像素距離上畫),
+        /// 一位遠端舞者頭上的名字牌。3D 路徑與本機一樣進 SceneCam、保持固定螢幕大小並吃人物深度遮擋,
         /// 但**不畫箭頭** —— 那個箭頭在官方是「這是你」的指示物,每個人頭上都有一個就沒有意義了。
         /// </summary>
-        private void CreateRemoteNameplate(SdoAvatar av, Transform root, string label, int team)
+        private void CreateRemoteNameplate(SdoAvatar av, Transform root, string label, int team, bool sceneWorldMode)
         {
             int headIdx = av.BoneIndex("Bip01_Head");
             if (headIdx < 0) headIdx = av.BoneIndex("Bip01_Neck");
@@ -369,14 +389,16 @@ namespace Sdo.Game
             if (headIdx >= 0)
             {
                 var ag = new GameObject("HeadAnchor");
-                if (use3dCamera) ag.layer = SceneLayer;
+                if (sceneWorldMode) ag.layer = SceneLayer;
                 ag.transform.SetParent(root, false);
                 av.AddAnchor(headIdx, ag.transform);
                 anchor = ag.transform;
             }
             var go = new GameObject("RemoteNameplate_" + label);
             var hm = go.AddComponent<HeadMarker>();
-            hm.Init(null, label);   // null = 不要箭頭(見上面的理由)
+            hm.Init(null, label,
+                    depthTestedWorld: sceneWorldMode,
+                    worldLayer: SceneLayer);   // null = 不要箭頭(見上面的理由)
             hm.SetTeamColor(team);  // 組隊局:名字染成他那一隊的顏色(與腳下星環同一個色)
             Transform a = anchor;
             Transform r = root;
@@ -411,6 +433,15 @@ namespace Sdo.Game
         private int LocalDancerSlotIndex
             => (netDancers != null && netDancers.Length > 0) ? localDancerIndex : 0;
 
+        private int NetLeaderDancerIndex()
+        {
+            int userId = NetLeaderUserId != null ? NetLeaderUserId() : 0;
+            if (userId <= 0 || netDancers == null) return -1;
+            for (int i = 0; i < netDancers.Length; i++)
+                if (netDancers[i].UserId == userId) return i;
+            return -1;
+        }
+
         private void FillDancerScores()
         {
             int local = LocalDancerSlotIndex;
@@ -419,7 +450,7 @@ namespace Sdo.Game
 
             for (int i = 0; i < _dancerScores.Length; i++)
             {
-                if (i == local) { _dancerScores[i] = _score != null ? _score.Score : 0L; continue; }
+                if (i == local) { _dancerScores[i] = TotalScore; continue; }
                 _dancerScores[i] = haveNames ? ScoreOf(opp, netDancers[i].UserId) : ScoreFallback(opp, i, local);
             }
         }

@@ -218,12 +218,23 @@ namespace Sdo.Net.Server
             room = RoomOf(actorId);
             if (room == null) return NetRoomOp.NotInRoom;
 
-            // 先問權限(不改狀態),過了才真的踢 —— 否則非 host 的請求會先把索引改掉。
-            if (!room.State.IsHost(actorId)) return NetRoomOp.NotHost;
-            if (targetId == actorId) return NetRoomOp.BadSeat;
-            if (!room.State.Contains(targetId)) return NetRoomOp.NotInRoom;
+            int hostBefore = room.HostUserId;
+            bool shouldClose;
+            var op = room.KickUser(actorId, targetId, out shouldClose);
+            if (op != NetRoomOp.Ok) return op;
 
-            left = Leave(targetId);
+            _userRoom.Remove(targetId);
+            left.Room = room;
+            if (shouldClose)
+            {
+                left.RoomClosed = true;
+                left.EvictedUserIds = CloseRoom(room);
+            }
+            else if (room.HostUserId != hostBefore)
+            {
+                left.NewHostUserId = room.HostUserId;
+            }
+
             return NetRoomOp.Ok;
         }
 

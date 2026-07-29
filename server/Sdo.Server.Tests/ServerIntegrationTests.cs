@@ -506,6 +506,159 @@ namespace Sdo.Tests
             Assert.IsNull(leaked, "別房的人不該看到這句話");
         }
 
+        [Test]
+        public void Moves_Are_Room_Versioned_And_Old_Slots_Are_Ignored_After_Spectate()
+        {
+            var host = Connect("房主");
+            int code = CreateRoom(host, "走動房");
+
+            host.Send(JObj.New().Str(NetProto.FieldType, NetProto.SetRoomName)
+                .Int(NetProto.FieldRequest, 2199).Str("name", "走動房-同步"));
+            var initialState = WaitForState(host,
+                s => s.Code == code && s.Name == "走動房-同步", "取得目前房間 revision");
+
+            // 先讓 server 留下一筆穩定位置；等自己收到代表 dirty round 已經 flush 完。
+            host.Send(RoomMoveMsg(code, initialState.Rev, 0, 1.25, 2.5));
+            var initial = host.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(initial);
+            Assert.AreEqual(code, NetJson.Int(initial, "roomCode"));
+            Assert.AreEqual(initialState.Rev, NetJson.Int(initial, "roomRev"));
+
+            var guest = Connect("切旁觀的人");
+            JoinRoom(guest, code);
+            var joined = WaitForState(host, s => s.SeatIndexOf(guest.UserId) == 1, "客人坐在座位 1");
+            var guestJoined = WaitForState(guest, s => s.SeatIndexOf(guest.UserId) == 1, "客人收到座位狀態");
+
+            // 後加入者拿到的 SendMoveSnapshot 也必須帶同一房間與 revision。
+            var snapshot = guest.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(snapshot);
+            Assert.AreEqual(code, NetJson.Int(snapshot, "roomCode"));
+            Assert.AreEqual(guestJoined.Rev, NetJson.Int(snapshot, "roomRev"));
+            Assert.AreEqual(1.25, NetJson.Num(MoveOf(snapshot, host.UserId), "x"), 0.001);
+
+            // 一般 live push 同樣帶 metadata。
+            guest.Send(RoomMoveMsg(code + 1, guestJoined.Rev, 1, 8, 8));
+            guest.Send(RoomMoveMsg(code, guestJoined.Rev - 1, 1, 9, 9));
+            Assert.IsNull(host.WaitFor(NetProto.Moves, 500), "錯房號或舊 revision 的 move 必須被丟棄");
+            guest.Send(RoomMoveMsg(code, guestJoined.Rev, 1, 10, 20));
+            var live = host.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(live);
+            Assert.AreEqual(code, NetJson.Int(live, "roomCode"));
+            Assert.AreEqual(joined.Rev, NetJson.Int(live, "roomRev"));
+            Assert.AreEqual(10, NetJson.Num(MoveOf(live, guest.UserId), "x"), 0.001);
+
+            guest.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2201)
+                .Int("code", 0));
+            var spectating = WaitForState(host,
+                s => s.SpectatorIndexOf(guest.UserId) >= 0,
+                "客人切成旁觀");
+            int spectatorSlot = 1000 + spectating.SpectatorIndexOf(guest.UserId);
+
+            // roomState 已經顯示旁觀後，延遲抵達的舊 seat=1 move 不可重建舊座標。
+            guest.Send(RoomMoveMsg(code, spectating.Rev, 1, 99, 99));
+            Assert.IsNull(host.WaitFor(NetProto.Moves, 500));
+
+            guest.Send(RoomMoveMsg(code, spectating.Rev, spectatorSlot, 30, 40));
+            var spectatorMove = host.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(spectatorMove);
+            Assert.AreEqual(code, NetJson.Int(spectatorMove, "roomCode"));
+            Assert.AreEqual(spectating.Rev, NetJson.Int(spectatorMove, "roomRev"));
+            Assert.AreEqual(30, NetJson.Num(MoveOf(spectatorMove, guest.UserId), "x"), 0.001);
+        }
+
+        [Test]
+        public void Leave_Rejoin_Drops_Stored_Move_And_Rejects_Stale_Same_Slot_Revision()
+        {
+            var host = Connect("房主");
+            int code = CreateRoom(host, "離房重進移動");
+            var guest = Connect("離房重進的人");
+            JoinRoom(guest, code);
+            WaitForState(host, s => s.SeatIndexOf(guest.UserId) == 1, "guest first joined");
+            var guestJoined = WaitForState(guest, s => s.SeatIndexOf(guest.UserId) == 1, "guest first state");
+
+            guest.Send(RoomMoveMsg(code, guestJoined.Rev, 1, 10, 20));
+            var live = host.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(live);
+            Assert.AreEqual(10, NetJson.Num(MoveOf(live, guest.UserId), "x"), 0.001);
+            Assert.IsNotNull(guest.WaitFor(NetProto.Moves), "先吃掉 sender 自己收到的 live echo");
+
+            guest.Send(JObj.New().Str(NetProto.FieldType, NetProto.LeaveRoom));
+            var left = WaitForState(host,
+                s => s.SeatIndexOf(guest.UserId) < 0 && s.SeatedCount == 1,
+                "guest left");
+
+            JoinRoom(guest, code);
+            var rejoined = WaitForState(guest,
+                s => s.SeatIndexOf(guest.UserId) == 1 && s.Rev > left.Rev,
+                "guest rejoined the same seat");
+
+            Assert.IsNull(guest.WaitFor(NetProto.Moves, 500),
+                "離房時必須清掉舊位置，重進不可收到自己的舊 snapshot");
+            guest.Send(RoomMoveMsg(code, guestJoined.Rev, 1, 99, 99));
+            Assert.IsNull(host.WaitFor(NetProto.Moves, 500),
+                "同一 seat 的延遲封包也必須靠舊 revision 被拒絕");
+
+            guest.Send(RoomMoveMsg(code, rejoined.Rev, 1, 30, 40));
+            var current = host.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(current);
+            Assert.AreEqual(30, NetJson.Num(MoveOf(current, guest.UserId), "x"), 0.001);
+        }
+
+        [Test]
+        public void Spectator_Index_Shift_Clears_Old_Room_Moves()
+        {
+            var host = Connect("房主");
+            int code = CreateRoom(host, "旁觀索引移動");
+            var first = Connect("旁觀 A");
+            var second = Connect("旁觀 B");
+
+            first.Send(JObj.New().Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2210).Int("code", code));
+            second.Send(JObj.New().Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2211).Int("code", code));
+
+            var both = WaitForState(host,
+                s => s.SpectatorIndexOf(first.UserId) == 0
+                    && s.SpectatorIndexOf(second.UserId) == 1,
+                "two spectators joined");
+            WaitForState(first, s => s.SpectatorIndexOf(second.UserId) == 1, "first sees second");
+            var secondState = WaitForState(second,
+                s => s.SpectatorIndexOf(second.UserId) == 1, "second sees slot 1001");
+
+            first.Send(RoomMoveMsg(code, both.Rev, 1000, 10, 10));
+            Assert.IsNotNull(host.WaitFor(NetProto.Moves));
+            second.Send(RoomMoveMsg(code, secondState.Rev, 1001, 20, 20));
+            var secondMove = host.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(secondMove);
+            Assert.AreEqual(20, NetJson.Num(MoveOf(secondMove, second.UserId), "x"), 0.001);
+
+            first.Send(JObj.New().Str(NetProto.FieldType, NetProto.LeaveRoom));
+            WaitForState(host,
+                s => s.SpectatorIndexOf(first.UserId) < 0
+                    && s.SpectatorIndexOf(second.UserId) == 0,
+                "second spectator shifted from 1001 to 1000");
+
+            var observer = Connect("後加入者");
+            JoinRoom(observer, code);
+            var observerJoined = WaitForState(observer,
+                s => s.SeatIndexOf(observer.UserId) == 1
+                    && s.SpectatorIndexOf(second.UserId) == 0,
+                "observer joined after spectator shift");
+            Assert.IsNull(observer.WaitFor(NetProto.Moves, 500),
+                "slot 1001 的舊 B 座標不可被新 revision 包裝成 snapshot");
+
+            second.Send(RoomMoveMsg(code, secondState.Rev, 1001, 99, 99));
+            Assert.IsNull(host.WaitFor(NetProto.Moves, 500),
+                "旁觀 index 壓縮前的封包必須被丟棄");
+
+            second.Send(RoomMoveMsg(code, observerJoined.Rev, 1000, 30, 30));
+            var current = host.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(current);
+            Assert.AreEqual(30, NetJson.Num(MoveOf(current, second.UserId), "x"), 0.001);
+        }
+
         // ================= 開場的完整流程 =================
 
         [Test]
@@ -562,6 +715,108 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Final_Score_Survives_A_Frame_Flush_Before_The_Last_Player_Finishes()
+        {
+            TestClient a, b;
+            long matchId = StartTwoPlayerMatch(out a, out b);
+            const long aScore = 123456;
+            const long bScore = 654321;
+
+            a.Send(PlayFinishedMsg(matchId, aScore, 90));
+
+            // 收到這筆表示 server 已執行 200ms frame flush。舊實作也會在這裡
+            // Clear 掉同一份 dictionary,使先完成的 A 在稍後結算時變成 0 分。
+            var flushed = b.WaitFor(NetProto.Frames, 3000);
+            Assert.IsNotNull(flushed, "B 應收到 A 的 final frame");
+            Assert.AreEqual(aScore, ScoreOf(flushed, "f", a.UserId), "確認 A 的 final 已經歷一次 frame flush");
+
+            b.Send(PlayFinishedMsg(matchId, bScore, 120));
+
+            var results = b.WaitFor(NetProto.ResultsReady, 3000);
+            Assert.IsNotNull(results, "兩人完成後應收到 resultsReady");
+            Assert.AreEqual(aScore, ScoreOf(results, "rows", a.UserId), "先完成者的 final score 不可被 frame flush 清掉");
+            Assert.AreEqual(bScore, ScoreOf(results, "rows", b.UserId));
+        }
+
+        [Test]
+        public void Kicked_Participant_Is_Pruned_From_Production_Result_Rows()
+        {
+            TestClient host, kicked;
+            long matchId = StartTwoPlayerMatch(out host, out kicked);
+
+            host.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.KickUser)
+                .Int(NetProto.FieldRequest, 2220)
+                .Int("userId", kicked.UserId));
+
+            var kickedMsg = kicked.WaitFor(NetProto.Kicked);
+            Assert.IsNotNull(kickedMsg);
+            Assert.AreEqual(NetProto.KickedByHost, NetJson.Str(kickedMsg, "reason"));
+            WaitForState(host,
+                s => s.Status == RoomStatus.Playing && s.SeatedCount == 1,
+                "kicked participant removed from the active room");
+
+            host.Send(PlayFinishedMsg(matchId, 456789, 123));
+            var results = host.WaitFor(NetProto.ResultsReady, 3000);
+            Assert.IsNotNull(results);
+            var rows = NetJson.Arr(results, "rows");
+            Assert.AreEqual(1, rows.Count, "明確踢人不可保留 frozen result participant");
+            Assert.AreEqual(host.UserId, NetJson.Int(rows[0], "userId"));
+        }
+
+        [Test]
+        public void Disconnected_Leader_Is_Replaced_But_Keeps_Last_Result_Frame()
+        {
+            TestClient a, b;
+            long matchId = StartTwoPlayerMatch(out a, out b);
+            const long disconnectedScore = 345678;
+
+            b.Send(GameplayFrameMsg(matchId, disconnectedScore));
+            var relayed = a.WaitFor(NetProto.Frames, 3000);
+            Assert.IsNotNull(relayed);
+            Assert.AreEqual(disconnectedScore, ScoreOf(relayed, "f", b.UserId));
+            Assert.AreEqual(b.UserId, NetJson.Int(relayed, "leaderUserId"));
+
+            b.Dispose();
+            WaitForState(a, s => s.Status == RoomStatus.Playing && s.SeatedCount == 1,
+                "disconnected player removed", 5000);
+
+            a.Send(GameplayFrameMsg(matchId, 100));
+            var afterDisconnect = a.WaitFor(NetProto.Frames, 3000);
+            Assert.IsNotNull(afterDisconnect);
+            Assert.AreEqual(a.UserId, NetJson.Int(afterDisconnect, "leaderUserId"));
+
+            a.Send(PlayFinishedMsg(matchId, 111111, 100));
+            var results = a.WaitFor(NetProto.ResultsReady, 3000);
+            Assert.IsNotNull(results);
+            Assert.AreEqual(disconnectedScore, ScoreOf(results, "rows", b.UserId));
+            Assert.IsTrue(NetJson.Bool(ResultRowOf(results, b.UserId), "disconnected"));
+        }
+
+        [Test]
+        public void Only_The_First_Legal_Playing_Final_Is_Accepted()
+        {
+            TestClient a, b;
+            long matchId = StartTwoPlayerMatch(out a, out b, startGameplay: false);
+
+            a.Send(PlayFinishedMsg(matchId, 900000, 900));
+            a.Send(SetPlayStateMsg(matchId, "loaded"));
+            b.Send(SetPlayStateMsg(matchId, "loaded"));
+            Assert.IsNotNull(a.WaitFor(NetProto.GameplayStarted, 3000));
+            Assert.IsNotNull(b.WaitFor(NetProto.GameplayStarted, 3000));
+
+            const long legalScore = 123456;
+            a.Send(PlayFinishedMsg(matchId, legalScore, 90));
+            a.Send(PlayFinishedMsg(matchId, 888888, 888));
+            b.Send(PlayFinishedMsg(matchId, 222222, 120));
+
+            var results = b.WaitFor(NetProto.ResultsReady, 3000);
+            Assert.IsNotNull(results);
+            Assert.AreEqual(legalScore, ScoreOf(results, "rows", a.UserId));
+            Assert.AreEqual(222222, ScoreOf(results, "rows", b.UserId));
+        }
+
+        [Test]
         public void Client_Cannot_Claim_A_Server_Reserved_State()
         {
             // 🔴 安全邊界:改過的 client 自稱 playing 想繞過載入同步。
@@ -579,7 +834,292 @@ namespace Sdo.Tests
             Assert.AreEqual(NetProto.ErrBadState, NetJson.Str(err, "code"));
         }
 
+        // ================= 遊玩事件 / 結算 =================
+        [Test]
+        public void Combo_Milestone_Is_Reliably_Relayed_To_Other_Players()
+        {
+            TestClient a, b;
+            long matchId = StartTwoPlayerMatch(out a, out b);
+
+            var playing = WaitForState(a, s => s.Status == RoomStatus.Playing, "比賽已開始");
+            int roomCode = playing.Code;
+            var outsider = Connect("別房玩家");
+            CreateRoom(outsider, "別房");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("combo", 100));
+
+            var milestone = b.WaitFor(NetProto.ComboMilestone, 3000);
+            Assert.IsNotNull(milestone);
+            Assert.AreEqual(matchId, NetJson.Long(milestone, "matchId"));
+            Assert.AreEqual(a.UserId, NetJson.Int(milestone, "userId"));
+            Assert.AreEqual(100, NetJson.Int(milestone, "combo"));
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("combo", 100));
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("combo", 50));
+            Assert.IsNull(b.WaitFor(NetProto.ComboMilestone, 300));
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("combo", 150));
+            milestone = b.WaitFor(NetProto.ComboMilestone, 3000);
+            Assert.IsNotNull(milestone);
+            Assert.AreEqual(150, NetJson.Int(milestone, "combo"));
+
+            Assert.IsNull(a.WaitFor(NetProto.ComboMilestone, 300), "sender 已在本機播放，不可 echo");
+            Assert.IsNull(outsider.WaitFor(NetProto.ComboMilestone, 300), "事件不可洩漏到別房");
+
+            // Non-boundaries are malformed and must not create arbitrary remote effects.
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("combo", 75));
+
+            Assert.IsNull(a.WaitFor(NetProto.ComboMilestone, 300));
+
+            var spectator = Connect("未參與者");
+            spectator.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2100)
+                .Int("code", roomCode));
+            WaitForState(spectator, s => s.SpectatorIndexOf(spectator.UserId) >= 0,
+                "未參與者進入同房旁觀");
+
+            spectator.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("combo", 50));
+            Assert.IsNull(a.WaitFor(NetProto.ComboMilestone, 300), "非參與者不可偽造 combo 特效");
+            Assert.IsNull(b.WaitFor(NetProto.ComboMilestone, 300), "非參與者不可偽造 combo 特效");
+
+            a.Send(PlayFinishedMsg(matchId, 1000, 150));
+            b.Send(PlayFinishedMsg(matchId, 900, 100));
+            Assert.IsNotNull(b.WaitFor(NetProto.ResultsReady, 3000));
+
+            long nextMatchId = StartNextTwoPlayerMatch(a, b);
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", nextMatchId)
+                .Int("combo", 50));
+            var nextMilestone = b.WaitFor(NetProto.ComboMilestone, 3000);
+            Assert.IsNotNull(nextMilestone);
+            Assert.AreEqual(50, NetJson.Int(nextMilestone, "combo"));
+        }
+
+        [Test]
+        public void Frames_Include_Authoritative_Leader_With_300_Point_Hysteresis()
+        {
+            TestClient a, b;
+            long matchId = StartTwoPlayerMatch(out a, out b);
+
+            b.Send(GameplayFrameMsg(matchId, 299));
+            WaitForLeaderFrame(a, a.UserId, b.UserId, 299);
+
+            b.Send(GameplayFrameMsg(matchId, 300));
+            WaitForLeaderFrame(a, b.UserId, b.UserId, 300);
+
+            a.Send(GameplayFrameMsg(matchId, 599));
+            WaitForLeaderFrame(b, b.UserId, a.UserId, 599);
+
+            a.Send(GameplayFrameMsg(matchId, 600));
+            WaitForLeaderFrame(b, a.UserId, a.UserId, 600);
+
+            b.Send(GameplayFrameMsg(matchId, 899));
+            WaitForLeaderFrame(a, a.UserId, b.UserId, 899);
+
+            b.Send(GameplayFrameMsg(matchId, 900));
+            WaitForLeaderFrame(a, b.UserId, b.UserId, 900);
+
+            a.Send(PlayFinishedMsg(matchId, 600, 60));
+            b.Send(PlayFinishedMsg(matchId, 900, 90));
+            Assert.IsNotNull(b.WaitFor(NetProto.ResultsReady, 3000));
+
+            long nextMatchId = StartNextTwoPlayerMatch(a, b);
+            b.Send(GameplayFrameMsg(nextMatchId, 299));
+            WaitForLeaderFrame(a, a.UserId, b.UserId, 299);
+        }
+
+
+        [Test]
+        public void Finished_Host_Can_Spectate_And_Remains_In_Frozen_Results()
+        {
+            TestClient host, other;
+            long matchId = StartTwoPlayerMatch(out host, out other);
+            const long hostScore = 222222;
+            const long otherScore = 333333;
+
+            host.Send(PlayFinishedMsg(matchId, hostScore, 100));
+            WaitForState(other,
+                state =>
+                {
+                    var seat = state.SeatOf(host.UserId);
+                    return seat != null && seat.PlayState == PlayState.Finished;
+                },
+                "host reached finished state");
+
+            host.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2001)
+                .Int("code", 0));
+            WaitForState(host, state => state.SpectatorIndexOf(host.UserId) >= 0,
+                "finished host moved to spectator");
+
+            host.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetIdentity)
+                .Str("name", "賽後改名")
+                .Str("guild", "新家族")
+                .Int("level", 99));
+            host.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetLook)
+                .Put("look", JObj.New()
+                    .Int("gender", 1)
+                    .Int("bodyIndex", 4)
+                    .Put("parts", JArr.New().Add("AFTER"))));
+            WaitForState(other, state =>
+                {
+                    int index = state.SpectatorIndexOf(host.UserId);
+                    if (index < 0) return false;
+                    var live = state.Spectators[index];
+                    return live.Name == "賽後改名" && live.Level == 99
+                        && live.Look.Gender == 1 && live.Look.BodyIndex == 4;
+                },
+                "結算前 live 旁觀資料確實已變更");
+
+            other.Send(PlayFinishedMsg(matchId, otherScore, 120));
+            var results = host.WaitFor(NetProto.ResultsReady, 3000);
+            Assert.IsNotNull(results);
+            var rows = NetJson.Arr(results, "rows");
+            Assert.AreEqual(2, rows.Count, "leaving the live seat table must not remove a match participant");
+            Assert.AreEqual(other.UserId, NetJson.Int(rows[0], "userId"), "server results must be score sorted");
+            Assert.AreEqual(hostScore, ScoreOf(results, "rows", host.UserId));
+            Assert.AreEqual(otherScore, ScoreOf(results, "rows", other.UserId));
+
+            var hostRow = ResultRowOf(results, host.UserId);
+            Assert.AreEqual("先完成", NetJson.Str(hostRow, "name"), "名字要使用開場時凍結值");
+            Assert.AreEqual(0, NetJson.Int(hostRow, "seat"), "座位要使用開場時凍結值");
+            Assert.AreEqual(7, NetJson.Int(hostRow, "level"));
+            Assert.AreEqual((int)TeamTag.Free, NetJson.Int(hostRow, "team"));
+            var hostLook = NetJson.Sub(hostRow, "look");
+            Assert.AreEqual(0, NetJson.Int(hostLook, "gender"), "外觀不可被賽後 live 更新覆蓋");
+            Assert.AreEqual(0, NetJson.Int(hostLook, "bodyIndex"));
+            Assert.AreEqual(0, NetJson.Arr(hostLook, "parts").Count);
+
+            var otherRow = ResultRowOf(results, other.UserId);
+            Assert.AreEqual(1, NetJson.Int(otherRow, "seat"));
+            Assert.AreEqual("後完成", NetJson.Str(otherRow, "name"));
+        }
+
+        [Test]
+        public void Gameplay_Frames_From_Waiting_Or_Nonparticipants_Are_Ignored()
+        {
+            TestClient a, b;
+            long matchId = StartTwoPlayerMatch(out a, out b, startGameplay: false);
+
+            b.Send(GameplayFrameMsg(matchId, 999));
+            Assert.IsNull(a.WaitFor(NetProto.Frames, 500));
+
+            a.Send(SetPlayStateMsg(matchId, "loaded"));
+            b.Send(SetPlayStateMsg(matchId, "loaded"));
+            Assert.IsNotNull(a.WaitFor(NetProto.GameplayStarted, 3000));
+            Assert.IsNotNull(b.WaitFor(NetProto.GameplayStarted, 3000));
+
+            var playing = WaitForState(a, s => s.Status == RoomStatus.Playing, "gameplay started");
+            var spectator = Connect("frame spectator");
+            spectator.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2200)
+                .Int("code", playing.Code));
+            WaitForState(spectator,
+                s => s.SpectatorIndexOf(spectator.UserId) >= 0,
+                "spectator joined");
+
+            spectator.Send(GameplayFrameMsg(matchId, 999999));
+            Assert.IsNull(a.WaitFor(NetProto.Frames, 500));
+            Assert.IsNull(b.WaitFor(NetProto.Frames, 500));
+        }
+
         // ---- helper ----
+        private long StartTwoPlayerMatch(out TestClient a, out TestClient b, bool startGameplay = true)
+        {
+            a = Connect("先完成");
+            int code = CreateRoom(a, "成績房");
+            b = Connect("後完成");
+            JoinRoom(b, code);
+            WaitForState(a, s => s.SeatedCount == 2, "A 看到 B 加入");
+
+            a.Send(JObj.New().Str(NetProto.FieldType, NetProto.SetSong).Int(NetProto.FieldRequest, 83)
+                .Put("song", JObj.New().Bool("official", true).Str("gn", "sdom1435k.gn").Int("fileId", 11435)));
+            WaitForState(b, s => s.Song != null, "B 看到選了歌");
+
+            SetAvailability(a, "sdom1435k.gn");
+            SetAvailability(b, "sdom1435k.gn");
+            WaitForState(a, s => s.SeatedCount == 2
+                              && s.Seats[0].Avail == Availability.Have
+                              && s.Seats[1].Avail == Availability.Have, "兩邊都上報有歌");
+
+            b.Send(JObj.New().Str(NetProto.FieldType, NetProto.SetReady).Int(NetProto.FieldRequest, 84).Bool("ready", true));
+            WaitForState(a, s => s.Seats[1].Ready, "A 看到 B 準備好了");
+
+            a.Send(JObj.New().Str(NetProto.FieldType, NetProto.RequestStart).Int(NetProto.FieldRequest, 85)
+                .Bool("force", false)
+                .Put("resolved", JObj.New().Int("sceneId", 9).Int("formationType", 0).Int("teamLayout", -1)));
+
+            var aStart = a.WaitFor(NetProto.MatchStarting);
+            var bStart = b.WaitFor(NetProto.MatchStarting);
+            Assert.IsNotNull(aStart);
+            Assert.IsNotNull(bStart);
+            long matchId = NetJson.Long(aStart, "matchId");
+
+            if (startGameplay)
+            {
+                a.Send(SetPlayStateMsg(matchId, "loaded"));
+                b.Send(SetPlayStateMsg(matchId, "loaded"));
+                Assert.IsNotNull(a.WaitFor(NetProto.GameplayStarted, 3000));
+                Assert.IsNotNull(b.WaitFor(NetProto.GameplayStarted, 3000));
+            }
+            return matchId;
+        }
+
+        private long StartNextTwoPlayerMatch(TestClient a, TestClient b)
+        {
+            WaitForState(a,
+                s => s.Status == RoomStatus.Open && s.SeatOf(b.UserId) != null,
+                "room reopened");
+
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetReady)
+                .Int(NetProto.FieldRequest, 86)
+                .Bool("ready", true));
+            WaitForState(a, s => s.SeatOf(b.UserId).Ready, "B ready");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.RequestStart)
+                .Int(NetProto.FieldRequest, 87)
+                .Bool("force", false)
+                .Put("resolved", JObj.New().Int("sceneId", 9).Int("formationType", 0).Int("teamLayout", -1)));
+
+            var aStart = a.WaitFor(NetProto.MatchStarting);
+            var bStart = b.WaitFor(NetProto.MatchStarting);
+            Assert.IsNotNull(aStart);
+            Assert.IsNotNull(bStart);
+            long matchId = NetJson.Long(aStart, "matchId");
+
+            a.Send(SetPlayStateMsg(matchId, "loaded"));
+            b.Send(SetPlayStateMsg(matchId, "loaded"));
+            Assert.IsNotNull(a.WaitFor(NetProto.GameplayStarted, 3000));
+            Assert.IsNotNull(b.WaitFor(NetProto.GameplayStarted, 3000));
+            return matchId;
+        }
+
 
         /// <summary>
         /// 等到收到一份**滿足條件**的 roomState。
@@ -651,6 +1191,110 @@ namespace Sdo.Tests
                 .Int(NetProto.FieldRequest, 1002)
                 .Str("state", state)
                 .Long("matchId", matchId);
+
+        private static JObj PlayFinishedMsg(long matchId, long score, int maxCombo)
+            => JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayFinished)
+                .Long("matchId", matchId)
+                .Long("score", score)
+                .Int("combo", maxCombo)
+                .Int("maxCombo", maxCombo)
+                .Int("p", maxCombo)
+                .Int("c", 0)
+                .Int("b", 0)
+                .Int("m", 0);
+
+        private static JObj GameplayFrameMsg(long matchId, long score)
+            => JObj.New()
+                .Str(NetProto.FieldType, NetProto.Frame)
+                .Long("matchId", matchId)
+                .Long("score", score)
+                .Int("combo", 0)
+                .Int("maxCombo", 0)
+                .Int("p", 0)
+                .Int("c", 0)
+                .Int("b", 0)
+                .Int("m", 0);
+
+        private static JObj RoomMoveMsg(int roomCode, int roomRev, int slot, double x, double z)
+            => JObj.New()
+                .Str(NetProto.FieldType, NetProto.Move)
+                .Int("slot", slot)
+                .Int("roomCode", roomCode)
+                .Int("roomRev", roomRev)
+                .Num("x", x)
+                .Num("z", z)
+                .Num("f", 0)
+                .Bool("w", false);
+
+        private static object MoveOf(object message, int userId)
+        {
+            var moves = NetJson.Arr(message, "m");
+            for (int i = 0; i < moves.Count; i++)
+            {
+                var move = moves[i];
+                if (NetJson.Int(move, "userId") == userId) return move;
+            }
+
+            Assert.Fail("找不到 userId=" + userId + " 的 move");
+            return null;
+        }
+
+
+        private static object ResultRowOf(object message, int userId)
+        {
+            var rows = NetJson.Arr(message, "rows");
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                if (NetJson.Int(row, "userId") == userId) return row;
+            }
+            Assert.Fail("找不到 userId=" + userId + " 的 results row");
+            return null;
+        }
+
+        private static long ScoreOf(object message, string rowsField, int userId)
+        {
+            var rows = NetJson.Arr(message, rowsField);
+            for (int i = 0; i < rows.Count; i++)
+                if (NetJson.Int(rows[i], "userId") == userId)
+                    return NetJson.Long(rows[i], "score");
+            Assert.Fail("找不到 userId=" + userId + " 的 " + rowsField + " row");
+            return -1;
+        }
+
+        private static void WaitForLeaderFrame(
+            TestClient client, int expectedLeaderUserId, int scoreUserId, long expectedScore)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 3000)
+            {
+                int remaining = (int)Math.Max(1, 3000 - sw.ElapsedMilliseconds);
+                var frames = client.WaitFor(NetProto.Frames, remaining);
+                if (frames == null) break;
+
+                long observedScore;
+                if (!TryScoreOf(frames, "f", scoreUserId, out observedScore)) continue;
+                if (observedScore != expectedScore) continue;
+                Assert.AreEqual(expectedLeaderUserId, NetJson.Int(frames, "leaderUserId"));
+                return;
+            }
+
+            Assert.Fail("Did not receive the expected score frame for user " + scoreUserId);
+        }
+
+        private static bool TryScoreOf(object message, string rowsField, int userId, out long score)
+        {
+            score = 0;
+            var rows = NetJson.Arr(message, rowsField);
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (NetJson.Int(rows[i], "userId") != userId) continue;
+                score = NetJson.Long(rows[i], "score");
+                return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// 測試用的極簡 client:framing + JSON + 「等某個型別的訊息」。

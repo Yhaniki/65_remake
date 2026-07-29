@@ -129,7 +129,8 @@ namespace Sdo.Net.Server
 
                 // **一般玩家準備後不能旁觀**(使用者要求)—— 要先取消準備。
                 // 不擋的話會出現「已準備的人數」與實際能開場的人對不上。
-                if (s.Ready) return NetRoomOp.BadState;
+                bool completed = s.PlayState == PlayState.Finished || s.PlayState == PlayState.Results;
+                if (s.Ready && !completed) return NetRoomOp.BadState;
 
                 // 已經進入遊戲流程(載入中/遊玩中/看結算)不能切。
                 //
@@ -140,7 +141,7 @@ namespace Sdo.Net.Server
                 // 反過來,**沒被納入這一場的人**(缺歌或沒準備、留在房間的)playState 是 idle,
                 // 所以他們隨時可以切成旁觀者 —— 他們本來就沒在玩,只是從座位換到旁觀位。
                 // 但他們**不會**因此進入正在進行的打歌畫面(不做中途接入,要等下一局)。
-                if (s.PlayState != PlayState.Idle) return NetRoomOp.BadState;
+                if (s.PlayState != PlayState.Idle && !completed) return NetRoomOp.BadState;
 
                 // **房主可以旁觀,並且把 host 交給下一個人**(使用者要求)。
                 // 沒有其他座位玩家可以接手時 → **房間變成沒有房主**(hostUserId = 0),
@@ -212,8 +213,9 @@ namespace Sdo.Net.Server
 
             if (seat < 0 && si < 0) return false;   // 本來就不在這房 → 什麼都沒變
 
-            // 把離開的人從進行中的場次移除(R15:遊玩中斷線 → 逐出本場)。
-            RemoveFromMatch(userId);
+            // 逐出 active 集合，讓剩下的人能完成本場；但開場時凍結的結算資料要保留，
+            // 才能依 R16 把斷線者的最後一筆 frame 列進 resultsReady。
+            RemoveActiveParticipant(userId);
 
             if (IsEmpty)
             {
@@ -239,6 +241,8 @@ namespace Sdo.Net.Server
             if (!_state.Contains(targetId)) return NetRoomOp.NotInRoom;
 
             roomShouldClose = Leave(targetId);
+            // Leave 為 R16 斷線路徑保留 frozen results；明確被房主踢除則不應留在結算。
+            RemoveFromMatch(targetId);
             return NetRoomOp.Ok;
         }
 
@@ -294,9 +298,10 @@ namespace Sdo.Net.Server
             int seat = _state.SeatIndexOf(targetId);
             if (seat < 0) return NetRoomOp.NotInRoom;   // 只能給座位玩家(旁觀者不能當房主)
 
+            var newHostSeat = _state.Seats[seat];
+            newHostSeat.Ready = false;
+            if (newHostSeat.PlayState == PlayState.Ready) newHostSeat.PlayState = PlayState.Idle;
             _state.HostUserId = targetId;
-            // 新房主的 Ready 不動 —— 它現在是房主,Ready 對它已經不適用(見 IsClearedToStart)。
-            // 舊房主變回一般玩家,它的 Ready 本來就是 false,所以它需要自己按準備。
             Touch();
             return NetRoomOp.Ok;
         }
@@ -315,9 +320,8 @@ namespace Sdo.Net.Server
         /// 選歌(R9)。**只有房主** —— 這就是使用者要求的「只有房主可以選房主設置選歌曲」的
         /// server 端把關。
         ///
-        /// 換歌會**清掉所有人的準備狀態,並把所有人的 avail 設回 unknown**。
-        /// 這是照 osu 的行為(換圖後每個人都要重新確認手上有沒有那張圖)——
-        /// 少了這步,原本準備好的人會帶著「上一首歌的 have」狀態被拉進新的一局。
+        /// 換歌會**保留所有人的準備意願,並把所有人的 avail 設回 unknown**。
+        /// availability 重新確認為 have 前不能開始；下載完成後原本已準備的人不必再按一次。
         /// </summary>
         public NetRoomOp SetSong(int actorId, NetSongRef song)
         {
@@ -332,7 +336,6 @@ namespace Sdo.Net.Server
                 if (!s.IsTaken) continue;
                 s.Avail = Availability.Unknown;
                 s.AvailProgress = 0f;
-                s.Ready = false;   // 房主的 Ready 本來就是 false,不用特例
             }
             for (int i = 0; i < _spectators.Count; i++)
             {
@@ -450,8 +453,7 @@ namespace Sdo.Net.Server
         /// 準備 / 取消準備。
         ///
         /// R17:<c>ready = true</c> 需要 <c>avail == have</c> —— **缺歌的人不能準備**。
-        /// 這是照 osu 的做法(它甚至更進一步:圖不見了會自動把 Ready 打回 Idle,見
-        /// <see cref="SetAvailability"/>)。
+        /// availability 之後若改變會保留 Ready 意願，但開始時仍要求當前歌曲為 have。
         ///
         /// **房主沒有準備這個狀態** —— 它的頭貼顯示 host 徽章,而它按的是「開始」。
         /// 所以房主送這個訊息是不合法的(見 <see cref="IsClearedToStart"/>)。
@@ -547,8 +549,8 @@ namespace Sdo.Net.Server
         /// 這擋掉的是「上一首歌的遲到回報」:玩家還在下載 A 歌時房主換成了 B 歌,
         /// A 歌的下載進度回報會陸續抵達,不能讓它們污染 B 歌的狀態。
         ///
-        /// R17 的另一半:**ready 中的人 avail 掉出 have → 自動取消 ready**
-        /// (對映 osu 的 <c>NotDownloaded &amp;&amp; Ready → ChangeState(Idle)</c>)。
+        /// R17 的另一半:**availability 改變不會取消 ready**；開始前另外檢查當前歌曲必須是 have，
+        /// 讓換歌或重新下載後的玩家保留準備意願，又不會被拉進沒有歌曲的一局。
         /// </summary>
         public NetRoomOp SetAvailability(int userId, string packId, Availability avail, float progress)
         {
@@ -566,14 +568,6 @@ namespace Sdo.Net.Server
                 seat.Avail = avail;
                 seat.AvailProgress = avail == Availability.Downloading ? progress : 0f;
 
-                // 準備好的人突然沒歌了 → 自動取消準備,否則會被拉進一局他打不了的歌。
-                // (房主的 Ready 恆 false,所以這段自然不會動到它;房主缺歌的處置是
-                //  RequestStart 時不把它算進參與者。)
-                if (seat.Ready && avail != Availability.Have)
-                {
-                    seat.Ready = false;
-                    if (seat.PlayState == PlayState.Ready) seat.PlayState = PlayState.Idle;
-                }
                 Touch();
                 return NetRoomOp.Ok;
             }
@@ -633,7 +627,8 @@ namespace Sdo.Net.Server
         /// 房主按開始(R12 + R10c)。
         ///
         /// <paramref name="force"/> = 使用者要求的「連按兩下開始強制開始」:
-        /// 不要求全員準備,沒準備/缺歌的人**留在房間**(狀態不變),只會看到其他人的頭貼變「遊戲中」。
+        /// 不要求全員準備,沒準備/缺歌的人**留在房間**,只會看到其他人的頭貼變「遊戲中」。
+        /// 被 force 排除的缺歌玩家會清掉 sticky Ready，避免 Ready playState 洩漏進進行中的房間狀態。
         /// 這與 osu 的行為一致(host 直接 StartMatch 時,Idle 的人整場被跳過)。
         ///
         /// **參與者集合 = <see cref="IsClearedToStart"/> 且 <c>avail == have</c> 的座位玩家**。
@@ -658,13 +653,15 @@ namespace Sdo.Net.Server
                 for (int i = 0; i < _state.Seats.Length; i++)
                 {
                     var s = _state.Seats[i];
-                    if (s.IsTaken && !IsClearedToStart(s)) return NetRoomOp.BadState;
+                    if (s.IsTaken && (!IsClearedToStart(s) || s.Avail != Availability.Have))
+                        return NetRoomOp.BadState;
                 }
             }
 
             // 參與者:可開場(房主 or 已準備)**而且**手上有歌。
             var participants = new List<int>();
             var participantSeats = new List<NetSeat>();
+            var participantSnapshots = new List<NetMatchPlayerSnapshot>();
             for (int i = 0; i < _state.Seats.Length; i++)
             {
                 var s = _state.Seats[i];
@@ -672,6 +669,7 @@ namespace Sdo.Net.Server
                 if (s.Avail != Availability.Have) continue;
                 participants.Add(s.UserId);
                 participantSeats.Add(s);
+                participantSnapshots.Add(NetMatchPlayerSnapshot.Capture(s, i));
             }
             if (participants.Count == 0) return NetRoomOp.BadState;
 
@@ -696,6 +694,19 @@ namespace Sdo.Net.Server
             // server 用自己手上的參與者名單重算版型,不信 host 送來的那個值。
             if (resolved.TeamLayout != wantLayout) return NetRoomOp.BadTeams;
 
+
+            // Force start may skip a sticky-ready player whose new song is still unavailable.
+            // Clear that excluded intent so PlayState.Ready cannot leak through the active match.
+            if (force)
+            {
+                for (int i = 0; i < _state.Seats.Length; i++)
+                {
+                    var s = _state.Seats[i];
+                    if (!s.IsTaken || !s.Ready || s.Avail == Availability.Have) continue;
+                    s.Ready = false;
+                    if (s.PlayState == PlayState.Ready) s.PlayState = PlayState.Idle;
+                }
+            }
             // ---- 凍結參與者,進入載入階段 ----
             _match = new NetMatchInfo
             {
@@ -703,6 +714,7 @@ namespace Sdo.Net.Server
                 StartEpochMs = nowMs,
                 LoadTimeoutMs = NetLimits.LoadTimeoutMs,
                 ParticipantUserIds = participants.ToArray(),
+                Participants = participantSnapshots.ToArray(),
                 SpectatorUserIds = SpectatorsWithSong(),
                 Resolved = resolved,
                 Song = resolved.RandomSong ?? _state.Song,
@@ -895,9 +907,16 @@ namespace Sdo.Net.Server
         private void PromoteNewHost()
         {
             int heir = FindHeirSeat(-1);
-            // 不動它的 Ready —— 它現在是房主,Ready 對它已經不適用(見 IsClearedToStart)。
-            // 若它原本已按準備,那個 true 也無害:IsClearedToStart 對房主一律放行。
-            _state.HostUserId = heir >= 0 ? _state.Seats[heir].UserId : 0;
+            if (heir < 0)
+            {
+                _state.HostUserId = 0;
+                return;
+            }
+
+            var newHostSeat = _state.Seats[heir];
+            newHostSeat.Ready = false;
+            if (newHostSeat.PlayState == PlayState.Ready) newHostSeat.PlayState = PlayState.Idle;
+            _state.HostUserId = newHostSeat.UserId;
         }
 
         /// <summary>
@@ -940,13 +959,28 @@ namespace Sdo.Net.Server
             return false;
         }
 
-        private void RemoveFromMatch(int userId)
+        private void RemoveActiveParticipant(int userId)
         {
             if (_match == null) return;
             var ids = _match.ParticipantUserIds;
             var keep = new List<int>(ids.Length);
             for (int i = 0; i < ids.Length; i++) if (ids[i] != userId) keep.Add(ids[i]);
             _match.ParticipantUserIds = keep.ToArray();
+        }
+
+        /// <summary>
+        /// 完整逐出本場（載入逾時 / 被踢）：active 狀態與結算名單都移除。
+        /// 一般離房或斷線只呼叫 <see cref="RemoveActiveParticipant"/>，保留 R16 結算資料。
+        /// </summary>
+        private void RemoveFromMatch(int userId)
+        {
+            RemoveActiveParticipant(userId);
+            if (_match == null) return;
+            var players = _match.Participants;
+            var keepPlayers = new List<NetMatchPlayerSnapshot>(players.Length);
+            for (int i = 0; i < players.Length; i++)
+                if (players[i].UserId != userId) keepPlayers.Add(players[i]);
+            _match.Participants = keepPlayers.ToArray();
         }
 
         private void RemoveManyFromMatch(int[] userIds)

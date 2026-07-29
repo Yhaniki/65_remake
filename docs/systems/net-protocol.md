@@ -52,10 +52,10 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 | 房間 | `roomList` / `createRoom`{mode,name} / `joinRoom`{code} → `joinResult`{ok/full/inGame/notFound} / `leaveRoom` / **`roomState`**{rev,code,name,hostUserId,mode,status,capacity,seats[…],spectators[],song,settings} / `setRoomName` |
 | 座位 | `kickUser` / `setSeatClosed` / `transferHost` / `kicked`{reason} / `error`{rq?,code,msg} |
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
-| 開場 | `setReady` / `setSong`{NetSongRef} / `setRoomSettings` / `requestStart`{force,resolved} → `matchStarting`{matchId,startEpochMs,loadTimeoutMs,participants[],spectatorNames[],resolved,song,settings} / `setPlayState` / `gameplayStarted` / `gameplayAborted` / `resultsReady`{rows[]} |
+| 開場 | `setReady` / `setSong`{NetSongRef} / `setRoomSettings` / `requestStart`{force,resolved} → `matchStarting`{matchId,startEpochMs,loadTimeoutMs,participants[],spectatorNames[],resolved,song,settings} / `setPlayState` / `gameplayStarted` / `gameplayAborted` / `resultsReady`{matchId,rows[]} |
 | 缺歌 | `setAvailability`{packId,state,progress} / `blobQuery`→`blobInfo` / `blobUploadBegin`→`blobUploadAccept`{need[]}→(chunks)→`blobUploadDone` / `blobProgress` / `blobDownloadBegin`→`blobManifest`→(chunks)→`blobDownloadDone` / `blobAvailable` / `blobError` |
-| 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²) / `playFinished` |
-| 房間走動 | `move`{x,z,facing,walking} C→S / `moves` S→C(同上,但頻率高一點 —— 位置是連續量) |
+| 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{matchId,leaderUserId,f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²) / `playFinished` / `comboMilestone`{matchId,combo} C→S→C |
+| 房間走動 | `move`{roomCode,roomRev,slot,x,z,f,w} C→S / `moves`{roomCode,roomRev,m:[…]} S→C(同上,但頻率高一點；`slot`=座位 0..5 或旁觀 1000+索引，遲到的舊身分移動會被丟棄) |
 | 外觀 | `setLook`{gender,bodyIndex,parts[]} —— 握手時玩家還沒選性別/還沒讀 profile,所以外觀要另外送 |
 | 身分 | `setIdentity`{name,playerId,guild,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
 | 旁觀 | `spectate`{code} / `stopSpectate` |
@@ -112,7 +112,7 @@ randomTitle    → title 是「隨機難度 X」的標籤,收端不要拿 gn 去
 | R6 | 斷線 == `leaveRoom`,idempotent |
 | R7 | host-only 清單(見 room-matchmaking.md)。非 host → `error{notHost}`,**絕不靜默忽略** |
 | R8 | 關自己那格 → `badSeat`;**關閉已有人的座位 → 先 `kicked{seatClosed}` 再標 Closed** |
-| R9 | `setSong` → 清全員 ready、全員 `avail=unknown`、`rev++` |
+| R9 | `setSong` → 保留全員 ready、全員 `avail=unknown`、`rev++`；新歌確認為 `have` 前不能開始 |
 | R10a | `setOwnTeam` 需 `playState==idle` 且未按準備(房主的 Ready 恆 false 所以它一直能換隊) |
 | R10b | `assignTeams` 驗座位玩家人數符合 layout,否則 `badTeams` |
 | R10c | **`requestStart` 在組隊模式下必須湊出 2+2 / 3+3 / 2+2+2,否則擋住**(含 `force`)。參與者集合是「ready 且 `avail==have`」的座位 |
@@ -122,7 +122,7 @@ randomTitle    → title 是「隨機難度 X」的標籤,收端不要拿 gn 去
 | R14 | `playing → results → open`:沒人還是 `playing` → 廣播 `resultsReady` → 回 `idle` |
 | R15 | **載入 timeout 30 秒**:還在 `waitingForLoad` → 逐出本場;卡在 `loaded` → **強制轉 `playing`** |
 | R16 | 遊玩中斷線 → 逐出本場,最後一筆 frame 仍列入結算(`disconnected:true`);host 斷線 → **本場繼續** |
-| R17 | `setReady` 需 `avail=="have"`;ready 中的人 `avail` 翻成 `missing` → **自動取消 ready** |
+| R17 | `setReady` 需 `avail=="have"`；之後 `avail` 改變會保留 ready 意願，但非 `have` 時不能一般開始 |
 | R18 | join 一個 `status != open` 的房間 → `inGame`;**但 `spectate` 允許** |
 | R19 | rate limit:control 32/s、`frame` 20/s、chat 5/3s、`setAvailability{downloading}` 1/500ms。超過丟訊息;持續超過 → `bye{rateLimit}` |
 | R20 | 上限:maxRooms 200、maxConnections 256、name ≤16、roomName ≤20、blob 總量 20 GB |

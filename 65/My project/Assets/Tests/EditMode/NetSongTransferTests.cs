@@ -1,7 +1,9 @@
+using System.Reflection;
 using NUnit.Framework;
 using Sdo.Game.Net;
 using Sdo.Osu;
 using Sdo.UI.Core;
+using Sdo.UI.Screens;
 
 namespace Sdo.Tests
 {
@@ -78,6 +80,21 @@ namespace Sdo.Tests
     public class NetSongTransferTests
     {
         private const string Pack = "sha256:0123456789abcdef0123456789abcdef";
+        private const string PackB = "sha256:ffffffffffffffffffffffffffffffff";
+
+        [SetUp]
+        public void SetUp()
+        {
+            NetSongTransfer.Reset();
+            SetStatic("_wired", null);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            NetSongTransfer.Reset();
+            SetStatic("_wired", null);
+        }
 
         [Test]
         public void The_Folder_Name_Is_Title_Artist_And_A_Pack_Tag()
@@ -139,6 +156,148 @@ namespace Sdo.Tests
             var name = NetSongFetcher.ConnectFolderName(new string('長', 300), new string('人', 300), Pack);
             Assert.LessOrEqual(name.Length, 60 + 11, "名字要截短,不然整條路徑會超過 Windows 的上限");
             StringAssert.EndsWith("[01234567]", name);
+        }
+
+        [Test]
+        public void RoomSongChangeInvalidatesOldTransferBeforeReportingNewAvailability()
+        {
+            var method = typeof(RoomScreen).GetMethod(
+                "RunSongAvailabilitySync", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+
+            string order = "";
+            string seenPack = null;
+            System.Action<string> onRoomSong = pack =>
+            {
+                order += "song>";
+                seenPack = pack;
+            };
+            System.Action reportAvailability = () => order += "availability";
+
+            method.Invoke(null, new object[] { PackB, onRoomSong, reportAvailability });
+
+            Assert.AreEqual(PackB, seenPack);
+            Assert.AreEqual("song>availability", order);
+        }
+
+        [Test]
+        public void ChangingRoomPackDisposesTheOldFetcherAndInvalidatesItsImportGeneration()
+        {
+            NetSongTransfer.OnRoomSong(Pack);
+            var fx = new NetSongFetcher();
+            SetFetcher(fx, "_packId", Pack);
+            SetFetcher(fx, "<State>k__BackingField", NetTransferState.Downloading);
+            SetFetcher(fx, "_link", new NetConnection());
+            Invoke("ActivateTransfer", fx, "song-a");
+            int generation = Static<int>("_transferGeneration");
+
+            Assert.IsTrue(fx.IsBusy);
+            Assert.AreEqual("song-a", Static<string>("_transferSongKey"));
+            Assert.IsTrue((bool)Invoke("IsCurrentTransfer", fx, generation, Pack));
+
+            NetSongTransfer.OnRoomSong(PackB);
+
+            Assert.IsNull(Static<NetSongFetcher>("_fx"));
+            Assert.IsNull(Fetcher<object>(fx, "_link"), "OnRoomSong must Dispose the old fetcher's connection");
+            Assert.IsFalse(Static<bool>("_importing"));
+            Assert.IsNull(Static<string>("_transferSongKey"));
+            Assert.AreNotEqual(generation, Static<int>("_transferGeneration"));
+            Assert.IsFalse((bool)Invoke("IsCurrentTransfer", fx, generation, Pack),
+                "stale A import completion must not be current after selecting B");
+        }
+
+        [Test]
+        public void EachTransferCapturesItsOwnSongKey()
+        {
+            NetSongTransfer.OnRoomSong(Pack);
+            var a = new NetSongFetcher();
+            SetFetcher(a, "_packId", Pack);
+            Invoke("ActivateTransfer", a, "key-a");
+            int aGeneration = Static<int>("_transferGeneration");
+
+            NetSongTransfer.OnRoomSong(PackB);
+            var b = new NetSongFetcher();
+            SetFetcher(b, "_packId", PackB);
+            Invoke("ActivateTransfer", b, "key-b");
+            int bGeneration = Static<int>("_transferGeneration");
+
+            Assert.AreEqual("key-b", Static<string>("_transferSongKey"));
+            Assert.IsFalse((bool)Invoke("IsCurrentTransfer", a, aGeneration, Pack));
+            Assert.IsTrue((bool)Invoke("IsCurrentTransfer", b, bGeneration, PackB));
+        }
+
+        [Test]
+        public void BlobInfoOnlyCompletesTheMatchingCurrentPackQuery()
+        {
+            NetSongTransfer.OnRoomSong(PackB);
+            SetStatic("_queryPending", true);
+            SetStatic("_queriedPack", PackB);
+            SetStatic("_serverHasPack", false);
+
+            Invoke("OnBlobInfo", Pack, true);
+            Assert.IsTrue(Static<bool>("_queryPending"));
+            Assert.IsFalse(Static<bool>("_serverHasPack"));
+
+            Invoke("OnBlobInfo", PackB, true);
+            Assert.IsFalse(Static<bool>("_queryPending"));
+            Assert.IsNull(Static<string>("_queriedPack"));
+            Assert.IsTrue(Static<bool>("_serverHasPack"));
+        }
+
+        [Test]
+        public void BlobAvailableForOldPackCannotUnlockTheNewPack()
+        {
+            NetSongTransfer.OnRoomSong(PackB);
+            SetStatic("_handledPack", PackB);
+            SetStatic("_queryPending", true);
+            SetStatic("_queriedPack", PackB);
+            SetStatic("_serverHasPack", false);
+
+            Invoke("OnBlobAvailable", Pack);
+            Assert.IsFalse(Static<bool>("_serverHasPack"));
+            Assert.IsTrue(Static<bool>("_queryPending"));
+            Assert.AreEqual(PackB, Static<string>("_handledPack"));
+
+            Invoke("OnBlobAvailable", PackB);
+            Assert.IsTrue(Static<bool>("_serverHasPack"));
+            Assert.IsFalse(Static<bool>("_queryPending"));
+            Assert.IsNull(Static<string>("_queriedPack"));
+            Assert.IsNull(Static<string>("_handledPack"));
+        }
+
+        private static object Invoke(string name, params object[] args)
+        {
+            var method = typeof(NetSongTransfer).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method, name);
+            return method.Invoke(null, args);
+        }
+
+        private static T Static<T>(string name)
+        {
+            var field = typeof(NetSongTransfer).GetField(name, BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(field, name);
+            return (T)field.GetValue(null);
+        }
+
+        private static void SetStatic(string name, object value)
+        {
+            var field = typeof(NetSongTransfer).GetField(name, BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(field, name);
+            field.SetValue(null, value);
+        }
+
+        private static T Fetcher<T>(NetSongFetcher fetcher, string name)
+        {
+            var field = typeof(NetSongFetcher).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field, name);
+            return (T)field.GetValue(fetcher);
+        }
+
+        private static void SetFetcher(NetSongFetcher fetcher, string name, object value)
+        {
+            var field = typeof(NetSongFetcher).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field, name);
+            field.SetValue(fetcher, value);
         }
     }
 }

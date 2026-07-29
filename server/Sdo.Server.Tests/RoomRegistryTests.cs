@@ -35,6 +35,30 @@ namespace Sdo.Tests
             return room;
         }
 
+        private static NetRoom StartTwoPlayerMatch(RoomRegistry reg)
+        {
+            var room = Create(reg, Host);
+            NetRoom joined;
+            int seat;
+            LeaveResult left;
+            Assert.AreEqual(NetRoomOp.Ok, reg.TryJoin(room.Code, User(Bob), out joined, out seat, out left));
+
+            Assert.AreEqual(NetRoomOp.Ok, room.SetSong(Host, Song()));
+            Assert.AreEqual(NetRoomOp.Ok,
+                room.SetAvailability(Host, "sdom1435k.gn", Availability.Have, 0f));
+            Assert.AreEqual(NetRoomOp.Ok,
+                room.SetAvailability(Bob, "sdom1435k.gn", Availability.Have, 0f));
+            Assert.AreEqual(NetRoomOp.Ok, room.SetReady(Bob, true));
+
+            NetMatchInfo match;
+            Assert.AreEqual(NetRoomOp.Ok,
+                room.RequestStart(Host, false,
+                    new NetResolvedRound { SceneId = 9, FormationType = 0 }, 0, out match));
+            Assert.AreEqual(2, match.ParticipantUserIds.Length);
+            Assert.AreEqual(2, match.Participants.Length);
+            return room;
+        }
+
         // ---- 建房 ----
 
         [Test]
@@ -328,14 +352,17 @@ namespace Sdo.Tests
         public void Kick_Clears_The_Target_Index()
         {
             var reg = Reg();
-            var room = Create(reg, Host);
-            NetRoom j; int seat; LeaveResult l;
-            reg.TryJoin(room.Code, User(Bob), out j, out seat, out l);
+            var room = StartTwoPlayerMatch(reg);
 
             NetRoom kr; LeaveResult left;
             Assert.AreEqual(NetRoomOp.Ok, reg.KickUser(Host, Bob, out kr, out left));
             Assert.IsFalse(reg.IsInAnyRoom(Bob));
             Assert.IsFalse(room.State.Contains(Bob));
+            Assert.AreSame(room, kr);
+            Assert.AreSame(room, left.Room);
+            CollectionAssert.AreEqual(new[] { Host }, room.Match.ParticipantUserIds);
+            Assert.AreEqual(1, room.Match.Participants.Length);
+            Assert.AreEqual(Host, room.Match.Participants[0].UserId);
         }
 
         [Test]
@@ -358,14 +385,15 @@ namespace Sdo.Tests
         public void Closing_An_Occupied_Seat_Clears_That_Players_Index()
         {
             var reg = Reg();
-            var room = Create(reg, Host);
-            NetRoom j; int seat; LeaveResult l;
-            reg.TryJoin(room.Code, User(Bob), out j, out seat, out l);
+            var room = StartTwoPlayerMatch(reg);
 
             NetRoom sr; int kicked;
             Assert.AreEqual(NetRoomOp.Ok, reg.SetSeatClosed(Host, 1, true, out sr, out kicked));
             Assert.AreEqual(Bob, kicked);
             Assert.IsFalse(reg.IsInAnyRoom(Bob), "被鎖格踢掉的人索引也要清");
+            CollectionAssert.AreEqual(new[] { Host }, room.Match.ParticipantUserIds);
+            Assert.AreEqual(1, room.Match.Participants.Length);
+            Assert.AreEqual(Host, room.Match.Participants[0].UserId);
         }
 
         [Test]

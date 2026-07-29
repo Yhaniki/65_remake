@@ -459,6 +459,9 @@ namespace Sdo.Game
         /// </summary>
         public System.Func<NetPlayerScore[]> NetOpponents;
 
+        /// <summary>Server-authoritative leader userId for the active online match; zero means unavailable.</summary>
+        public System.Func<int> NetLeaderUserId;
+
         /// <summary>
         /// 連線:結算面板要用的真資料(server 的 resultsReady)。null / 回 null = 用本機算的那份。
         /// </summary>
@@ -510,6 +513,7 @@ namespace Sdo.Game
         private Camera _headCam; private RenderTexture _headRt; private SdoAvatar _headAvatar;
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);   // head bone REST pos (model space) — cam targets this so it stays FIXED (no per-frame bob chase)
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
+        private readonly Dictionary<int, RoomHeadPortrait> _resultHeadPortraits = new Dictionary<int, RoomHeadPortrait>();
 
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
         private readonly List<double> _noteStarts = new List<double>();   // _notes[i].Note.StartTimeMs, ascending — drives NoteScan.UpperBound
@@ -1529,7 +1533,7 @@ namespace Sdo.Game
             if (_ambientClip == null || _ambient == null) return;
             if (!_started || _ended || observeBurstMode || avatarDebug) return;
             if (_nextAmbientAt < 0f || Time.realtimeSinceStartup < _nextAmbientAt || _ambient.isPlaying) return;
-            _ambient.PlayOneShot(_ambientClip, AudioMix.Sfx);   // 場景環境音 = 遊戲音效 音量
+            _ambient.PlayOneShot(_ambientClip, AudioMix.SceneSfx);   // 場景環境音 = 遊戲音效 音量
             _nextAmbientAt = Time.realtimeSinceStartup + _ambientClip.length + UnityEngine.Random.Range(0f, 29f);
         }
 
@@ -4104,6 +4108,10 @@ namespace Sdo.Game
             cam.nearClipPlane = 5f; cam.farClipPlane = sceneFar;
             Debug.Log($"[scene] {SceneFolder()}: camera far={sceneFar:F0} (sky top Y={sceneTopY:F0})");
             _sceneCam = cam;
+            // The local marker is built by TryLoadAvatar before this camera exists. Promote only here, after
+            // scene setup succeeded; an early scene-load return therefore leaves its legacy HUD fallback intact.
+            if (_headMarker != null && use3dCamera)
+                _headMarker.EnableDepthTestedWorld(SceneLayer);
             if (avatarDebug)
             {
                 // clean STRAIGHT-FRONT orthographic view of the avatar (matches the reference avatar_viewer framing,
@@ -5224,19 +5232,15 @@ namespace Sdo.Game
                 };
             }
             string diff = _map != null ? "Lv " + _map.Level : "";
-            var rows = BuildResultRows();   // also rebuilds _roster so the rank/total below are current
+            var rows = PrepareResultRows();   // also rebuilds _roster and attaches every participant portrait
             // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
-            var (place, players) = RankingBoard.LocalRank(_roster);
-            int bad = _score != null ? _score.BadCount : 0, miss = _score != null ? _score.MissCount : 0;
+            CalculateResultOutcome(rows, out bool localWon, out int expGained, out int coinsGained);
             // 自由模式不加 G幣/EXP;旁觀者沒下場,更不該有獎勵(而且 place 會是 0 = 找不到本機)。
-            bool noReward = freeMode || spectatorMode;
-            int expGained = noReward ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
-            int coinsGained = noReward ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
             // 旁觀者沒有自己的舞者 → 沒有頭貼可拍(BuildLocalHeadPortrait 會回 null,結算列用預設圖)。
             Texture head = spectatorMode ? null : BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
             // 旁觀也不出:那面旗是「你贏了/輸了」,而旁觀者兩者都不是。
-            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe,
+            _result.Show(_songTitle, diff, rows, localWon, expGained, coinsGained, head, _gameOver, PlaySe,
                          showBanner: !freeMode && !spectatorMode);
         }
 
@@ -6146,6 +6150,7 @@ namespace Sdo.Game
         private void ApplyEvent(Judgment j, int lane = -1)
         {
             _score.Apply(j);
+            NotifyLocalComboMilestone(j);
             _health.Apply(j);
             if (showtimeMode) _showtime.OnJudge(j);                               // ShowTime: fill the gauge (normal) or accrue the bonus (in a window)
             UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins

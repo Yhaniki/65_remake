@@ -29,6 +29,20 @@ namespace Sdo.Game.Net
         private int _lastSeenRev;
         private bool _helloSent;
 
+        private enum RoomStateAcceptance
+        {
+            Closed,
+            WaitingForJoinResult,
+            WaitingForEntrySnapshot,
+            Current,
+            WaitingForSpectatorSnapshot,
+        }
+
+        private RoomStateAcceptance _roomStateAcceptance;
+        private int _roomStateGeneration;
+        private int _expectedRoomCode;
+        private int _roomEntryRq;
+
         // ---- 狀態 ----
 
         public NetLinkState LinkState => _link.State;
@@ -128,6 +142,9 @@ namespace Sdo.Game.Net
         /// <summary>遊玩中的分數流(房內所有人的最新一筆)。</summary>
         public event Action<NetFrameRow[]> FramesReceived;
 
+        /// <summary>Reliable one-shot 50-combo visual event from a remote player.</summary>
+        public event Action<NetComboMilestone> ComboMilestoneReceived;
+
         /// <summary>
         /// 這一場的開場資料(matchStarting 收到的那份)。null = 現在不在一場裡。
         ///
@@ -143,8 +160,19 @@ namespace Sdo.Game.Net
         /// </summary>
         public bool GameplayGateOpen { get; private set; }
 
+        /// <summary>
+        /// Server-authoritative current leader for the active match. Zero means that no authoritative frame has
+        /// arrived yet; gameplay then falls back to its deterministic local score rule.
+        /// </summary>
+        public int LeaderUserId { get; private set; }
+
         /// <summary>這一場結束/作廢 —— matchId 與閘門一起清掉。</summary>
-        private void ClearMatch() { Match = null; GameplayGateOpen = false; }
+        private void ClearMatch()
+        {
+            Match = null;
+            GameplayGateOpen = false;
+            LeaderUserId = 0;
+        }
 
         /// <summary>本機在這一場裡是舞者(而不是旁觀者)嗎?</summary>
         public bool IsMatchParticipant => Match != null && Match.IsParticipant(UserId);
@@ -194,7 +222,7 @@ namespace Sdo.Game.Net
             _helloSent = false;
             UserId = 0;
             Room = null;
-            _lastSeenRev = 0;
+            CloseRoomStateAcceptance();
             ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
             _link.BeginConnect(host, port, 5000, tls, pinFingerprint);
         }
@@ -204,6 +232,7 @@ namespace Sdo.Game.Net
             _link.Close(reason);
             UserId = 0;
             Room = null;
+            CloseRoomStateAcceptance();
             ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
             _sentLook = null;       // 重連後要重送外觀(server 那邊的 conn 已經沒了)
             _sentIdentity = null;   // 同上:名字也是記在那條 conn 上的
@@ -262,6 +291,7 @@ namespace Sdo.Game.Net
                 _reportedDown = true;
                 var wasInRoom = Room != null;
                 Room = null;
+                CloseRoomStateAcceptance();
                 UserId = 0;
                 ClearMatch();
                 Moves.Clear();
@@ -348,7 +378,7 @@ namespace Sdo.Game.Net
                     {
                         string reason = NetJson.Str(node, "reason");
                         Room = null;
-                        _lastSeenRev = 0;
+                        CloseRoomStateAcceptance();
                         ClearMatch();
                         Moves.Clear();
                         Raise(Kicked, reason);
@@ -373,6 +403,7 @@ namespace Sdo.Game.Net
                         var start = NetMatchStart.Decode(node);
                         Match = start;               // 保管到這一場結束(見 Match 的註解)
                         GameplayGateOpen = false;
+                        LeaderUserId = 0;
                         Raise(MatchStarting, start);
                         break;
                     }
@@ -389,21 +420,41 @@ namespace Sdo.Game.Net
                 case NetProto.GameplayAborted:
                     {
                         long mid = NetJson.Long(node, "matchId");
-                        if (Match != null && Match.MatchId == mid) { Match = null; GameplayGateOpen = false; }
+                        if (Match != null && Match.MatchId == mid) ClearMatch();
                         if (GameplayAborted != null) GameplayAborted(mid, NetJson.Str(node, "reason"));
                         break;
                     }
 
                 case NetProto.ResultsReady:
-                    // 結算 = 這一場結束。閘門一定要關掉,否則下一場在收到自己的 gameplayStarted 之前
-                    // 就會被當成「可以開始」→ 那台會提早開跑,與別人不同步。
-                    GameplayGateOpen = false;
-                    Raise(ResultsReady, NetResultRow.DecodeAll(NetJson.Arr(node, "rows")));
-                    break;
+                    {
+                        long mid = NetJson.Long(node, "matchId");
+                        if (Match == null || Match.MatchId != mid) break;
+                        // 結算 = 這一場結束。閘門一定要關掉,否則下一場在收到自己的 gameplayStarted 之前
+                        // 就會被當成「可以開始」→ 那台會提早開跑,與別人不同步。
+                        GameplayGateOpen = false;
+                        Raise(ResultsReady, NetResultRow.DecodeAll(NetJson.Arr(node, "rows")));
+                        break;
+                    }
 
                 case NetProto.Frames:
-                    Raise(FramesReceived, NetFrameRow.DecodeAll(NetJson.Arr(node, "f")));
-                    break;
+                    {
+                        long mid = NetJson.Long(node, "matchId");
+                        if (Match != null && Match.MatchId == mid)
+                        {
+                            int leader = NetJson.Int(node, "leaderUserId");
+                            LeaderUserId = leader > 0 ? leader : 0;
+                            Raise(FramesReceived, NetFrameRow.DecodeAll(NetJson.Arr(node, "f")));
+                        }
+                        break;
+                    }
+                case NetProto.ComboMilestone:
+                    {
+                        var milestone = NetComboMilestone.Decode(node);
+                        if (Match != null && milestone.MatchId == Match.MatchId)
+                            Raise(ComboMilestoneReceived, milestone);
+                        break;
+                    }
+
 
                 case NetProto.ChatMsg:
                     Raise(ChatReceived, NetChatMessage.Decode(node));
@@ -430,6 +481,14 @@ namespace Sdo.Game.Net
 
                 case NetProto.Moves:
                     {
+                        // Position samples belong to an exact room snapshot generation. A seat↔spectator transition
+                        // teleports the avatar and removes its cached move; a delayed pre-transition batch must not
+                        // put the old interpolated position back.
+                        if (Room == null
+                            || NetJson.Int(node, "roomCode") != Room.Code
+                            || NetJson.Int(node, "roomRev") != Room.Rev)
+                            break;
+
                         var rows = NetJson.Arr(node, "m");
                         if (rows != null)
                             for (int i = 0; i < rows.Count; i++)
@@ -450,6 +509,8 @@ namespace Sdo.Game.Net
         private void ApplyRoomState(object node)
         {
             var snap = NetRoomSnapshot.Decode(node);
+            RoomStateAcceptance accepting = _roomStateAcceptance;
+            if (!CanAcceptRoomState(snap, accepting)) return;
 
             // rev 單調遞增。丟掉過期的快照 —— TCP 有序所以正常不會發生,
             // 但 loopback 假伺服器與測試路徑需要這道保護。
@@ -459,19 +520,118 @@ namespace Sdo.Game.Net
             bool wasIn = Room != null;
             bool stillIn = snap.Contains(UserId);
 
+            if (stillIn) InvalidateMovesForSlotChanges(Room, snap);
+            else Moves.Clear();
             Room = stillIn ? snap : null;
             if (!stillIn)
             {
-                _lastSeenRev = 0;
+                CloseRoomStateAcceptance();
                 if (wasIn) Raise(RoomLeft, "left");
                 return;
             }
 
+            _roomStateAcceptance = RoomStateAcceptance.Current;
+
             // 旁觀請求成功的**唯一證據**:我出現在這份快照的旁觀名單裡。
             // (server 對成功的 spectate 不回應那個 rq,只廣播快照 —— 見 Spectate 的註解。)
-            if (_spectateCb != null && snap.SpectatorIndexOf(UserId) >= 0) CompleteSpectate(NetProto.JoinOk);
+            if (accepting == RoomStateAcceptance.WaitingForSpectatorSnapshot)
+                CompleteSpectate(_roomStateGeneration, NetProto.JoinOk);
 
             Raise(RoomUpdated, snap);
+        }
+
+        private bool CanAcceptRoomState(NetRoomSnapshot snap, RoomStateAcceptance accepting)
+        {
+            if (snap == null || UserId == 0 || _expectedRoomCode <= 0 || snap.Code != _expectedRoomCode)
+                return false;
+
+            switch (accepting)
+            {
+                case RoomStateAcceptance.Current:
+                    return true;
+                case RoomStateAcceptance.WaitingForEntrySnapshot:
+                    // The server sends joinResult before the first snapshot. Requiring membership here prevents an
+                    // old same-room snapshot from closing or rev-poisoning a just-opened generation.
+                    return snap.Contains(UserId);
+                case RoomStateAcceptance.WaitingForSpectatorSnapshot:
+                    // Spectate has no success response: only a matching snapshot that actually moved us into the
+                    // spectator list proves success. A late seated snapshot must not consume this generation.
+                    return snap.SpectatorIndexOf(UserId) >= 0;
+                default:
+                    return false;
+            }
+        }
+
+        private void CancelPendingRoomOperations()
+        {
+            if (_roomEntryRq != 0)
+            {
+                _pending.Remove(_roomEntryRq);
+                _roomEntryRq = 0;
+            }
+            if (_spectateRq != 0)
+            {
+                _pending.Remove(_spectateRq);
+                _spectateRq = 0;
+            }
+            _spectateCb = null;
+        }
+
+        private void CloseRoomStateAcceptance()
+        {
+            _roomStateGeneration++;
+            CancelPendingRoomOperations();
+            _roomStateAcceptance = RoomStateAcceptance.Closed;
+            _expectedRoomCode = 0;
+            _lastSeenRev = 0;
+        }
+
+        private int BeginRoomEntry(int requestedCode)
+        {
+            CloseRoomStateAcceptance();
+            _roomStateAcceptance = RoomStateAcceptance.WaitingForJoinResult;
+            _expectedRoomCode = requestedCode > 0 ? requestedCode : 0;
+            return _roomStateGeneration;
+        }
+
+        private int BeginSpectatorEntry(int requestedCode)
+        {
+            CloseRoomStateAcceptance();
+            _roomStateAcceptance = RoomStateAcceptance.WaitingForSpectatorSnapshot;
+            _expectedRoomCode = requestedCode > 0 ? requestedCode : 0;
+            return _roomStateGeneration;
+        }
+
+        private void InvalidateMovesForSlotChanges(NetRoomSnapshot previous, NetRoomSnapshot current)
+        {
+            if (previous == null || current == null) return;
+            for (int i = 0; i < previous.Seats.Length; i++)
+            {
+                int userId = previous.Seats[i].IsTaken ? previous.Seats[i].UserId : 0;
+                if (userId != 0 && userId != UserId
+                    && SnapshotSlot(previous, userId) != SnapshotSlot(current, userId))
+                    Moves.Remove(userId);
+            }
+
+            var spectators = previous.Spectators;
+            if (spectators == null) return;
+            for (int i = 0; i < spectators.Length; i++)
+            {
+                int userId = spectators[i] != null ? spectators[i].UserId : 0;
+                if (userId != 0 && userId != UserId
+                    && SnapshotSlot(previous, userId) != SnapshotSlot(current, userId))
+                    Moves.Remove(userId);
+            }
+        }
+
+        private static int SnapshotSlot(NetRoomSnapshot snap, int userId)
+        {
+            if (snap == null || userId == 0) return int.MinValue;
+            int seat = snap.SeatIndexOf(userId);
+            if (seat >= 0) return seat;
+            int spectator = snap.SpectatorIndexOf(userId);
+            // Keep spectator positions in a separate namespace from the six seated slots.
+            return spectator >= 0 ? 1000 + spectator : int.MinValue;
         }
 
         // ---- request / response 配對 ----
@@ -518,9 +678,12 @@ namespace Sdo.Game.Net
         {
             PublishLook();       // 🔴 一定要在 createRoom **之前** —— 見 PublishLook 的註解
             PublishIdentity();   // 同上:座位的名字是進房那一刻從連線上抄過去的
+            int generation = BeginRoomEntry(0);
+            int rq = NextRq(node => ReportJoin(node, onResult, generation, 0));
+            _roomEntryRq = rq;
             Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.CreateRoom)
-                .Int(NetProto.FieldRequest, NextRq(node => ReportJoin(node, onResult)))
+                .Int(NetProto.FieldRequest, rq)
                 .Str("name", name ?? ""));
         }
 
@@ -529,9 +692,12 @@ namespace Sdo.Game.Net
         {
             PublishLook();       // 🔴 一定要在 joinRoom **之前** —— 見 PublishLook 的註解
             PublishIdentity();   // 同上:座位的名字是進房那一刻從連線上抄過去的
+            int generation = BeginRoomEntry(code);
+            int rq = NextRq(node => ReportJoin(node, onResult, generation, code));
+            _roomEntryRq = rq;
             Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.JoinRoom)
-                .Int(NetProto.FieldRequest, NextRq(node => ReportJoin(node, onResult)))
+                .Int(NetProto.FieldRequest, rq)
                 .Int("code", code));
         }
 
@@ -568,23 +734,52 @@ namespace Sdo.Game.Net
             });
         }
 
-        private static void ReportJoin(object node, Action<string, int> onResult)
+        private void ReportJoin(object node, Action<string, int> onResult, int generation, int requestedCode)
         {
-            if (onResult == null) return;
+            if (generation != _roomStateGeneration
+                || _roomStateAcceptance != RoomStateAcceptance.WaitingForJoinResult)
+                return;
+
+            _roomEntryRq = 0;
             // 可能收到 joinResult,也可能收到 error(例如房間滿了以外的失敗)。
             string t = NetJson.Str(node, NetProto.FieldType);
-            if (t == NetProto.Error) { onResult(NetProto.JoinNotFound, 0); return; }
-            onResult(NetJson.Str(node, "result"), NetJson.Int(node, "code"));
+            string result = t == NetProto.Error ? NetProto.JoinNotFound : NetJson.Str(node, "result");
+            int code = t == NetProto.Error ? 0 : NetJson.Int(node, "code");
+            bool accepted = result == NetProto.JoinOk && code > 0
+                && (requestedCode <= 0 || requestedCode == code);
+
+            if (accepted)
+            {
+                _expectedRoomCode = code;
+                _lastSeenRev = 0;
+                _roomStateAcceptance = RoomStateAcceptance.WaitingForEntrySnapshot;
+            }
+            else if (Room != null)
+            {
+                _expectedRoomCode = Room.Code;
+                _lastSeenRev = Room.Rev;
+                _roomStateAcceptance = RoomStateAcceptance.Current;
+            }
+            else
+            {
+                _expectedRoomCode = 0;
+                _lastSeenRev = 0;
+                _roomStateAcceptance = RoomStateAcceptance.Closed;
+            }
+
+            if (onResult != null) onResult(result, code);
         }
 
         public void LeaveRoom()
         {
+            bool wasInRoom = Room != null;
             Send(JObj.New().Str(NetProto.FieldType, NetProto.LeaveRoom));
             Room = null;
-            _lastSeenRev = 0;
+            CloseRoomStateAcceptance();
             ClearMatch();   // 離開房間/斷線 → 這一場也沒了(不清的話 gameplay 會拿著舊 matchId 送封包)
 
             Moves.Clear();   // 位置是「這間房裡的狀態」,離房就沒有意義了(留著會變幽靈)
+            if (wasInRoom) Raise(RoomLeft, "left");
         }
 
         public void SetReady(bool ready)
@@ -645,9 +840,9 @@ namespace Sdo.Game.Net
         {
             PublishLook();       // 旁觀者在房間 3D 裡也是站在那邊的人,外觀一樣要對
             PublishIdentity();   // 旁觀名單顯示的也是名字
-            // 前一個還沒結果的請求先收掉 —— 不然它的 callback 會被後來這次的回應觸發。
-            if (_spectateRq != 0) _pending.Remove(_spectateRq);
-            int rq = NextRq(node => CompleteSpectate(NetJson.Str(node, "code")));
+            int requestedCode = code > 0 ? code : (Room != null ? Room.Code : _expectedRoomCode);
+            int generation = BeginSpectatorEntry(requestedCode);
+            int rq = NextRq(node => CompleteSpectate(generation, NetJson.Str(node, "code")));
             _spectateRq = rq;
             _spectateCb = onResult;
             Send(JObj.New().Str(NetProto.FieldType, NetProto.Spectate)
@@ -656,11 +851,30 @@ namespace Sdo.Game.Net
 
         /// <summary>結束一次旁觀請求(成功或失敗都走這裡),並把 pending 收乾淨。</summary>
         private void CompleteSpectate(string result)
+            => CompleteSpectate(_roomStateGeneration, result);
+
+        private void CompleteSpectate(int generation, string result)
         {
+            if (generation != _roomStateGeneration) return;
             if (_spectateRq != 0) { _pending.Remove(_spectateRq); _spectateRq = 0; }
             var cb = _spectateCb;
             _spectateCb = null;
             string r = string.IsNullOrEmpty(result) ? NetProto.ErrBadState : result;
+            if (r != NetProto.JoinOk)
+            {
+                if (Room != null)
+                {
+                    _expectedRoomCode = Room.Code;
+                    _lastSeenRev = Room.Rev;
+                    _roomStateAcceptance = RoomStateAcceptance.Current;
+                }
+                else
+                {
+                    _expectedRoomCode = 0;
+                    _lastSeenRev = 0;
+                    _roomStateAcceptance = RoomStateAcceptance.Closed;
+                }
+            }
             if (cb == null)
             {
                 // 沒人在等結果(房間裡按「旁觀」鈕那條)→ 失敗要交回一般的錯誤通道,
@@ -729,14 +943,31 @@ namespace Sdo.Game.Net
                 .Int("combo", combo).Int("maxCombo", maxCombo)
                 .Int("p", p).Int("c", c).Int("b", b).Int("m", m));
 
+        /// <summary>Reliably reports a one-shot combo effect, separately from lossy frames.</summary>
+        public void SendComboMilestone(long matchId, int combo)
+            => Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("combo", combo));
+
         /// <summary>
         /// 回報自己在房間裡的位置與朝向。**只在走動時送**(見 <see cref="NetLimits.ClientMoveIntervalMs"/>),
         /// 停下來時送最後一筆就不再送 —— 站著不動的人不需要每 100ms 提醒別人他還在那裡。
         /// </summary>
         public void SendMove(float x, float z, float facing, bool walking)
-            => Send(JObj.New()
+        {
+            var room = Room;
+            if (room == null) return;
+            int slot = SnapshotSlot(room, UserId);
+            if (slot == int.MinValue) return;
+
+            Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.Move)
+                .Int("roomCode", room.Code)
+                .Int("roomRev", room.Rev)
+                .Int("slot", slot)
                 .Num("x", x).Num("z", z).Num("f", facing).Bool("w", walking));
+        }
 
         /// <summary>
         /// 「我現在長什麼樣」的提供者,由 <c>AppContext</c> 注入(它是唯一知道 profile / 穿搭解析的地方)。

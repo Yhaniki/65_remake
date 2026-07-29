@@ -190,7 +190,25 @@ namespace Sdo.Net
         }
     }
 
-    /// <summary>一則聊天訊息。欄位對映 client 既有的 <c>Sdo.UI.Services.ChatMessage</c>。</summary>
+    /// <summary>An exact 50-combo milestone reached by a remote player.</summary>
+    public struct NetComboMilestone
+    {
+        public long MatchId;
+        public int UserId;
+        public int Combo;
+
+        public static NetComboMilestone Decode(object node)
+        {
+            return new NetComboMilestone
+            {
+                MatchId = NetJson.Long(node, "matchId"),
+                UserId = NetJson.Int(node, "userId"),
+                Combo = NetJson.Int(node, "combo"),
+            };
+        }
+    }
+
+    /// <summary>A chat message mapped to the client chat service.</summary>
     public struct NetChatMessage
     {
         public int SenderUserId;

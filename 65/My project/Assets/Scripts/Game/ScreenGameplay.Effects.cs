@@ -446,7 +446,8 @@ namespace Sdo.Game
         private static readonly Dictionary<int, EftFile> _eftCache = new Dictionary<int, EftFile>();
         // Faithful: load the actual <tier>COMBO.EFT and run it through the EftEffect interpreter (real emitters,
         // EMIT counts, start-delays, per-channel curves, ring geometry, additive) — no hand-tuned sprites.
-        private void SpawnComboBurst(int tier)
+        private void SpawnComboBurst(int tier) => SpawnComboBurst(tier, _ringTr);
+        private void SpawnComboBurst(int tier, Transform anchor)
         {
             tier = Mathf.Clamp(tier, 0, 4);
             int effId = 0x13 + tier;
@@ -460,13 +461,13 @@ namespace Sdo.Game
             var go = new GameObject("ComboBurst" + ((tier + 1) * 100));
             // pelvis projected to floor (Dancer_SpawnDirEffect: Bip01_Pelvis x/z, y≈0.1); the yuanpan ground ring
             // already tracks the pelvis-on-floor, so reuse its transform as the follow anchor.
-            go.transform.position = _ringTr != null ? _ringTr.position : new Vector3(_avatarChest.x, 0.6f, _avatarChest.z);
+            go.transform.position = anchor != null ? anchor.position : new Vector3(_avatarChest.x, 0.6f, _avatarChest.z);
             // Render on the STAGE layer/camera so the burst shares the scene depth → it rises FROM THE GROUND and is
             // occluded by the dancer's body (a 2D composite drew it flat in front of everything). The white-hot core
             // is enlarged in this depth-correct linear-additive path via EftEffect.BallCoreIntensity (F4 slider).
             int layer = use3dCamera ? SceneLayer : 0;
             float effScale = ComboTierScale[tier] * comboBurstSize;   // .eft uniform spawn scale (× F4 size tuning)
-            go.AddComponent<EftEffect>().Init(file, effScale, _ringTr, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
+            go.AddComponent<EftEffect>().Init(file, effScale, anchor, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
             if (use3dCamera) SetLayerRecursive(go, SceneLayer);
         }
 

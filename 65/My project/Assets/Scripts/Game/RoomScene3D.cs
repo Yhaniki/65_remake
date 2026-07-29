@@ -446,6 +446,7 @@ namespace Sdo.Game
         private void RebuildRemote(RemotePlayer p, Remote old)
         {
             Vector3 pos = old.Pos, target = old.Target;
+            bool slotChanged = old.Seat != p.Seat;
             float facing = old.Facing, targetFacing = old.TargetFacing;
             bool walking = old.Walking;
             float lastMoveAt = old.LastMoveAt;
@@ -459,6 +460,11 @@ namespace Sdo.Game
             if (!_remotes.TryGetValue(p.UserId, out fresh) || fresh == null) return;
             fresh.Pos = pos; fresh.Target = target;
             fresh.Facing = facing; fresh.TargetFacing = targetFacing;
+            if (slotChanged)
+            {
+                MoveRemoteToSlot(fresh, p);
+                return;
+            }
             fresh.Walking = walking; fresh.LastMoveAt = lastMoveAt;
             ApplyRemoteTransform(fresh);
         }

@@ -71,6 +71,40 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Leader_Only_Changes_After_A_Challenger_Leads_By_300()
+        {
+            Assert.AreEqual(0, FormationAssignment.SelectLeader(new long[] { 1000, 1299 }, 0),
+                "只領先 299 分時,目前 leader 要留在中央,避免兩人來回換位");
+            Assert.AreEqual(1, FormationAssignment.SelectLeader(new long[] { 1000, 1300 }, 0),
+                "領先達 300 分才確認換 leader");
+            Assert.AreEqual(1, FormationAssignment.SelectLeader(new long[] { 1599, 1300 }, 1),
+                "換位後反向也要領先 300 分,不能剛追近就立刻換回");
+            Assert.AreEqual(0, FormationAssignment.SelectLeader(new long[] { 1600, 1300 }, 1));
+        }
+
+        [Test]
+        public void Retained_Leader_Still_Occupies_Leader_Slot_While_A_Challenger_Is_Close()
+        {
+            var scores = new long[] { 1000, 1299, 500 };
+            int leader = FormationAssignment.SelectLeader(scores, 0);
+
+            CollectionAssert.AreEqual(new[] { 0, 1, 2 },
+                FormationAssignment.SlotForDancer(scores, leader),
+                "防抖留下原 leader 後,slot 指派也必須沿用它,不能又用原始最高分把人換掉");
+        }
+
+        [Test]
+        public void Server_Authoritative_Leader_Overrides_Local_Hysteresis_And_Invalid_Authority_Falls_Back()
+        {
+            var scores = new long[] { 5000, 1000, 10 };
+
+            Assert.AreEqual(2, FormationAssignment.ResolveLeader(scores, 0, 2),
+                "a mapped server leader is authoritative even when local scores currently favour another dancer");
+            Assert.AreEqual(0, FormationAssignment.ResolveLeader(scores, 0, -1));
+            Assert.AreEqual(0, FormationAssignment.ResolveLeader(scores, 0, 99));
+        }
+
+        [Test]
         public void Everyone_On_Zero_Keeps_Seat_Order()
         {
             // 開場那一刻大家都是 0 分 —— 這時就該是「照座位序」,而不是隨便挑一個人站中間。

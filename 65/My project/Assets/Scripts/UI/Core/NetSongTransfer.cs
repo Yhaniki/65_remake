@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -37,6 +38,9 @@ namespace Sdo.UI.Core
         private static bool _serverHasPack;
         private static bool _importing;
         private static float _lastReportMs;
+        private static string _queriedPack;
+        private static string _transferSongKey;
+        private static int _transferGeneration;
 
         /// <summary>「server 還沒有這首歌」之後隔多久再問一次(見 <see cref="MaybeStart"/> 的節流註解)。</summary>
         private const float QueryRetrySec = 2f;
@@ -91,22 +95,28 @@ namespace Sdo.UI.Core
 
                 if (_fx.State == NetTransferState.Importing && !_importing && runner != null)
                 {
+                    var importingFx = _fx;
+                    int importingGeneration = _transferGeneration;
+                    string importingPack = importingFx.PackId;
+                    string importingSongKey = _transferSongKey;
                     _importing = true;
-                    runner.StartCoroutine(ImportCo(ctx, runner));
+                    runner.StartCoroutine(ImportCo(ctx, runner, importingFx, importingGeneration,
+                                                   importingPack, importingSongKey));
                     return;
                 }
 
                 if (_fx.State == NetTransferState.Done)
                 {
                     Debug.Log("[net] 傳檔完成:" + _fx.PackId);
-                    _fx = null;
+                    InvalidateActiveTransfer();
                     NetSongPublisher.ForceReport();          // 立刻重新回報 have/missing
+                    NetSongPublisher.ReportAvailability(ctx);
                     return;
                 }
                 if (_fx.State == NetTransferState.Failed)
                 {
                     Toast.Show("歌曲傳輸失敗:" + _fx.Error, 4f);
-                    _fx = null;
+                    InvalidateActiveTransfer();
                     // 🔴 一定要把「我到底有沒有這首歌」重報一次。下載開始時我們已經告訴 server
                     // downloading 了 —— 失敗之後不重報的話,那個座位會**永遠停在 downloading**:
                     // 按準備被 R17 拒絕(它要求 avail==have)、房主也開不了場(R12),
@@ -132,12 +142,17 @@ namespace Sdo.UI.Core
         /// </summary>
         public static void OnRoomSong(string packKey)
         {
-            if (_roomPack == packKey) return;   // 還是同一首 → 什麼都不動
+            if (string.Equals(_roomPack, packKey, StringComparison.Ordinal)) return;   // 還是同一首 → 什麼都不動
+            // A transfer/import belongs to the song that started it. Once the room selects another pack, keeping
+            // A alive lets its eventual Done/MarkImported path report availability for B.
+            InvalidateActiveTransfer();
             _roomPack = packKey;
             _handledPack = null;
             _serverHasPack = false;
             _queryPending = false;
+            _queriedPack = null;
             _lastQueryAt = -99f;
+            _lastReportMs = 0f;
             _bars.Clear();
         }
 
@@ -147,14 +162,16 @@ namespace Sdo.UI.Core
         /// <summary>離開房間 / 斷線。</summary>
         public static void Reset()
         {
-            if (_fx != null) { _fx.Dispose(); _fx = null; }
+            InvalidateActiveTransfer();
             _handledPack = null;
             _roomPack = null;
             _serverHasPack = false;
             _queryPending = false;
+            _queriedPack = null;
             _lastQueryAt = -99f;
-            _importing = false;
+            _lastReportMs = 0f;
             _bars.Clear();
+            NetSongPublisher.ForceReport();
         }
 
         // ================= 決定要做什麼 =================
@@ -198,6 +215,7 @@ namespace Sdo.UI.Core
                 if (now - _lastQueryAt < QueryRetrySec) return;
                 _lastQueryAt = now;
                 _queryPending = true;
+                _queriedPack = song.PackId;
                 net.SendBlobQuery(song.PackId);
                 return;
             }
@@ -215,8 +233,9 @@ namespace Sdo.UI.Core
             }
 
             _handledPack = song.PackId;
-            _fx = new NetSongFetcher();
-            _fx.BeginUpload(RoomConfig.serverAddress, RoomConfig.serverPort, ctx.Net.SessionKey, song.PackId, folder);
+            var fx = new NetSongFetcher();
+            fx.BeginUpload(RoomConfig.serverAddress, RoomConfig.serverPort, ctx.Net.SessionKey, song.PackId, folder);
+            ActivateTransfer(fx, song.SongKey);
             Debug.Log("[net] 開始上傳歌曲 " + song.Title + "(" + song.PackId + ")");
         }
 
@@ -226,8 +245,9 @@ namespace Sdo.UI.Core
                                     NetSongFetcher.ConnectFolderName(song.Title, song.Artist, song.PackId));
 
             _handledPack = song.PackId;
-            _fx = new NetSongFetcher();
-            _fx.BeginDownload(RoomConfig.serverAddress, RoomConfig.serverPort, ctx.Net.SessionKey, song.PackId, dest);
+            var fx = new NetSongFetcher();
+            fx.BeginDownload(RoomConfig.serverAddress, RoomConfig.serverPort, ctx.Net.SessionKey, song.PackId, dest);
+            ActivateTransfer(fx, song.SongKey);
             ctx.Net.SetAvailability(song.PackId, Availability.Downloading, 0f);
             Debug.Log("[net] 開始下載歌曲 " + song.Title + " → " + dest);
         }
@@ -253,17 +273,21 @@ namespace Sdo.UI.Core
         /// 找不到就是「檔案下載對了但這個格式我們解析不出來」,那要說出來,
         /// 不能讓玩家停在「已經 100% 了但還是缺歌」。
         /// </summary>
-        private static IEnumerator ImportCo(AppContext ctx, MonoBehaviour runner)
+        private static IEnumerator ImportCo(AppContext ctx, MonoBehaviour runner, NetSongFetcher fx,
+                                            int generation, string packId, string songKey)
         {
-            var fx = _fx;
-            if (fx == null) { _importing = false; yield break; }
-
-            var song = ctx.Net.Room != null ? ctx.Net.Room.Song : null;
-            string packId = fx.PackId;
-            string songKey = song != null ? song.SongKey : "";
+            if (!IsCurrentTransfer(fx, generation, packId))
+            {
+                if (generation == _transferGeneration) _importing = false;
+                yield break;
+            }
 
             ctx.Net.SetAvailability(packId, Availability.Importing, 1f);
             yield return runner.StartCoroutine(ExternalSongLibrary.ScanAndRegisterCo(null));
+
+            // ScanAndRegisterCo yields for many frames. A room-song change during that time invalidates this
+            // generation; stale A must not look up, mark, or clear B's importing flag.
+            if (!IsCurrentTransfer(fx, generation, packId)) yield break;
 
             var found = ExternalSongLibrary.FindByPack(packId, songKey);
             if (found == null)
@@ -280,6 +304,30 @@ namespace Sdo.UI.Core
             _importing = false;
         }
 
+        private static void ActivateTransfer(NetSongFetcher fx, string songKey)
+        {
+            _transferGeneration++;
+            _fx = fx;
+            _transferSongKey = songKey ?? "";
+            _importing = false;
+        }
+
+        private static void InvalidateActiveTransfer()
+        {
+            var old = _fx;
+            _fx = null;
+            _transferGeneration++;
+            _transferSongKey = null;
+            _importing = false;
+            if (old != null) old.Dispose();
+        }
+
+        private static bool IsCurrentTransfer(NetSongFetcher fx, int generation, string packId)
+            => generation == _transferGeneration
+            && ReferenceEquals(_fx, fx)
+            && fx != null
+            && string.Equals(fx.PackId, packId, StringComparison.Ordinal);
+
         // ================= 事件接線 =================
 
         private static void Wire(NetClient net)
@@ -295,18 +343,27 @@ namespace Sdo.UI.Core
 
         private static void OnBlobInfo(string packId, bool have)
         {
+            if (!_queryPending
+                || !string.Equals(packId, _queriedPack, StringComparison.Ordinal)
+                || !string.Equals(packId, _roomPack, StringComparison.Ordinal))
+                return;
+
             _queryPending = false;
-            if (have) _serverHasPack = true;
+            _queriedPack = null;
+            _serverHasPack = have;
         }
 
         private static void OnBlobAvailable(string packId)
         {
+            if (!string.Equals(packId, _roomPack, StringComparison.Ordinal)) return;
             // 房主上傳完了 → 現在可以下載。清掉「處理過」的記憶,讓 MaybeStart 重新評估。
             //
             // 🔴 但**房主自己也收得到這個廣播**(它是房內廣播)→ 清掉記憶之後 MaybeStart 會叫它
             // 再上傳一次。第二次雖然是「零個檔」很便宜,但那是個沒有理由的迴圈(實機 log 上就是
             // 「開始收上傳:0/7 個檔」出現兩次)。只有真的還缺歌的人才需要重新評估。
             _serverHasPack = true;
+            _queryPending = false;
+            _queriedPack = null;
             if (_wired != null && _wired.IsHost) return;
             if (_handledPack == packId && (_fx == null || !_fx.IsBusy)) _handledPack = null;
         }

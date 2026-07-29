@@ -667,6 +667,9 @@ namespace Sdo.UI.Screens
                 LocalizationManager.LanguageChanged += Render;   // 切語言時，房號/房名/位置標示即時重譯
                 _subscribed = true;
             }
+            // joinResult and the first roomState can arrive before this screen subscribes; reconcile the snapshot now.
+            SyncNetSongAvailability();
+
 
             bool localMale = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
             // 從 id-based equippedItems 經 catalog 現算 (含合成 翅膀/表情/项链)，非讀可能過時的 equippedParts 快取 → 房間
@@ -685,6 +688,7 @@ namespace Sdo.UI.Screens
             if (Ctx != null && Ctx.Net != null)
             {
                 Ctx.Net.PublishLook();        // 去重過;進房前 NetClient 已經送過一次,這裡是補網
+                _localMoveSlot = int.MinValue;
                 _moveThrottle.Reset();
             }
 
@@ -856,10 +860,43 @@ namespace Sdo.UI.Screens
             // 否則回房間時會留下一排指向已消失角色的孤兒名字牌。
             ClearRemoteNamePlates();
             _remoteAvatarRev = -1;
+            _localMoveSlot = int.MinValue;
+            // A real leave clears the transfer's room-song latch. Without this, rejoining a room that
+            // selected the same external pack can retain _handledPack from the previous visit and never
+            // retry availability/download. Entering gameplay keeps Net.Room, so an in-flight host upload
+            // is deliberately left alone.
+            if (Ctx == null || Ctx.Net == null || !Ctx.Net.InRoom)
+                NetSongTransfer.OnRoomSong(null);
             // 離房清掉「已廣播過誰」—— 不清的話回房時舊名單會被當成已知,
             // 那些人再進來就不會播進場廣播了。
             _announcedUsers.Clear();
             _announceSeeded = false;
+        }
+
+        /// <summary>
+        /// Reconcile transfer ownership before reporting availability for the current song.
+        /// Reporting first can see the previous external transfer as active and skip the new song forever;
+        /// official songs do not start another transfer that could repair that skipped report.
+        /// </summary>
+        private void SyncNetSongAvailability()
+        {
+            var netSong = Ctx != null && Ctx.Net != null && Ctx.Net.Room != null
+                ? Ctx.Net.Room.Song : null;
+            RunSongAvailabilitySync(
+                netSong != null ? netSong.PackId : null,
+                NetSongTransfer.OnRoomSong,
+                () => NetSongPublisher.ReportAvailability(Ctx));
+        }
+
+        /// <summary>
+        /// One ordering point shared by first display and later room snapshots. The delegates keep this race
+        /// contract testable without constructing a Unity room screen or a live network connection.
+        /// </summary>
+        private static void RunSongAvailabilitySync(
+            string packId, System.Action<string> onRoomSong, System.Action reportAvailability)
+        {
+            onRoomSong(packId);
+            reportAvailability();
         }
 
         private void OnRoomUpdated(int id)
@@ -875,12 +912,10 @@ namespace Sdo.UI.Screens
             // 所以線上這間房永遠停在 server 的預設值 —— 房主選了「普通模式」別人還是看到「自由模式」,
             // 而「只有普通模式才能組隊」就永遠不成立。守門是「跟 server 手上的不一樣才送」。
             NetRoomSettingsPublisher.SyncIfHost(Ctx);
-            // 回報「我有沒有這首歌」—— 沒有這一步,server 眼中每個人都是 Unknown,
+            // 先取消/切換上一首歌的傳輸，再回報「我有沒有這首歌」。
+            // 沒有可用性回報時，server 眼中每個人都是 Unknown，
             // 沒人按得下準備(R17)、也沒有人算參與者(R12)。見那邊的註解。
-            NetSongPublisher.ReportAvailability(Ctx);
-            // 換歌 → 忘掉「這首歌的傳檔已經處理過了」,否則換回同一首歌時不會再試一次。
-            var netSong = Ctx.Net != null && Ctx.Net.Room != null ? Ctx.Net.Room.Song : null;
-            NetSongTransfer.OnRoomSong(netSong != null ? netSong.PackId : null);
+            SyncNetSongAvailability();
             Render();
         }
 
@@ -4388,6 +4423,7 @@ namespace Sdo.UI.Screens
             if (snap == null)
             {
                 if (_remoteAvatarRev != -1) { _scene.SyncRemotePlayers(null); ClearRemoteNamePlates(); _remoteAvatarRev = -1; }
+                _localMoveSlot = int.MinValue;
                 return;
             }
             if (snap.Rev == _remoteAvatarRev) return;
@@ -4399,7 +4435,13 @@ namespace Sdo.UI.Screens
             // 本機角色就會留在剛才那個座位上,別人畫面上的自己卻已經站到旁觀席 —— 兩邊對不上。
             int mySlot = snap.SeatIndexOf(me);
             if (mySlot < 0) mySlot = LocalSpectatorSlot(snap, me);
-            if (mySlot >= 0) _scene.SetLocalSeat(mySlot);
+            if (mySlot >= 0)
+            {
+                if (_localMoveSlot != int.MinValue && _localMoveSlot != mySlot)
+                    _moveThrottle.Reset();
+                _localMoveSlot = mySlot;
+                _scene.SetLocalSeat(mySlot);
+            }
             _remoteBuf.Clear();
             for (int i = 0; i < snap.Seats.Length; i++)
             {
@@ -4524,6 +4566,29 @@ namespace Sdo.UI.Screens
                 lbl.SetText((s.Name ?? "") + lvl);
             }
 
+            // Spectators still own a live 3D avatar in a looker slot. Keep the same userId-keyed label while
+            // switching between a seat and spectator list so its head/world-canvas binding follows that avatar.
+            var specs = snap.Spectators;
+            if (specs != null)
+                for (int i = 0; i < specs.Length; i++)
+                {
+                    var sp = specs[i];
+                    if (sp == null || sp.UserId == 0 || sp.UserId == me) continue;
+                    _remoteScratchIds.Add(sp.UserId);
+
+                    OutlinedLabel lbl;
+                    if (!_remoteNames.TryGetValue(sp.UserId, out lbl) || lbl == null)
+                    {
+                        // Spectators have no team, so use the same free/default cream name colour as local players.
+                        lbl = OutlinedLabel.Create(Root, "RemoteName" + sp.UserId, 0, 0, 160, 20, 14,
+                                                   TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
+                                                   trackEm: TextStyles.HeadNameTrackEm);
+                        _remoteNames[sp.UserId] = lbl;
+                    }
+                    string lvl = sp.Level > 0 ? "  LV:" + sp.Level : "";
+                    lbl.SetText((sp.Name ?? "") + lvl);
+                }
+
             _remoteGoneIds.Clear();
             foreach (var kv in _remoteNames) if (!_remoteScratchIds.Contains(kv.Key)) _remoteGoneIds.Add(kv.Key);
             foreach (var id in _remoteGoneIds)
@@ -4577,6 +4642,7 @@ namespace Sdo.UI.Screens
         // ---- 房間裡的走動同步 ----
 
         private readonly Sdo.Net.MoveThrottle _moveThrottle = new Sdo.Net.MoveThrottle();
+        private int _localMoveSlot = int.MinValue;
 
         // 泡鏈排版用的可重用暫存(見 PlaceRoomChatBubbles 的註解:一幀會被呼叫多次)。
         private readonly List<RoomBubbleLayoutNode> _bubbleNodes = new List<RoomBubbleLayoutNode>();
@@ -4721,12 +4787,10 @@ namespace Sdo.UI.Screens
             var me = snap != null ? snap.SeatOf(net.UserId) : null;
             if (me == null) return;   // 不在座位上也不是旁觀者 → 狀態還沒同步,等下一份快照
 
-            if (me.PlayState != PlayState.Idle) { Toast.Show(L("room.spectate_in_match")); return; }
+            bool completed = me.PlayState == PlayState.Finished || me.PlayState == PlayState.Results;
+            if (me.PlayState != PlayState.Idle && !completed) { Toast.Show(L("room.spectate_in_match")); return; }
             // 房主的 Ready 恆 false(D12)—— 所以這條天然不會擋到房主,不用另外排除它。
-            if (me.Ready) { Toast.Show(L("room.spectate_ready")); return; }
-            // 房主要先有人能接手(R21)。座位上只有自己一個人時沒人接 → 講清楚,不要送出去等 badState。
-            if (net.IsHost && OtherSeatedCount(snap) == 0) { Toast.Show(L("room.spectate_no_host")); return; }
-
+            if (me.Ready && !completed) { Toast.Show(L("room.spectate_ready")); return; }
             net.Spectate();   // 同上:等 server 的快照,不先報成功
         }
 
@@ -4774,19 +4838,6 @@ namespace Sdo.UI.Screens
                 });
             }
             if (want > have) Debug.Log("[perf] SDO_ROOMAVATARS:房間補到 " + want + " 隻角色(真實 " + have + " 隻)");
-        }
-
-        /// <summary>除了自己以外還有幾個人坐在座位上(房主能不能交棒 → 能不能去旁觀)。</summary>
-        private static int OtherSeatedCount(NetRoomSnapshot snap)
-        {
-            if (snap == null || snap.Seats == null) return 0;
-            int n = 0;
-            for (int i = 0; i < snap.Seats.Length; i++)
-            {
-                var s = snap.Seats[i];
-                if (s != null && s.IsTaken && s.UserId != snap.HostUserId) n++;
-            }
-            return n;
         }
 
         private void OnMatchStarting(NetMatchStart m)

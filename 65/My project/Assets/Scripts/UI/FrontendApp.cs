@@ -21,7 +21,7 @@ namespace Sdo.UI
     /// to ScreenGameplay), builds the canvas + screens + modals procedurally, and drives the flow.
     /// </summary>
     [DefaultExecutionOrder(-10000)]
-    public sealed class FrontendApp : MonoBehaviour
+    public sealed partial class FrontendApp : MonoBehaviour
     {
         public static FrontendApp Instance { get; private set; }
 
@@ -633,6 +633,7 @@ namespace Sdo.UI
             _netPlayFinishedSent = false;
             net.FramesReceived += OnNetFrames;
             net.ResultsReady += OnNetResults;
+            net.ComboMilestoneReceived += OnNetComboMilestone;
             // 右側名單/名次:讀 server 推來的最新一筆。**不做插值/推測** —— 分數是別人的權威資料,
             // 猜出來的數字會讓名次在兩台上不一樣。
             game.NetOpponents = () =>
@@ -652,7 +653,9 @@ namespace Sdo.UI
                     };
                 return arr;
             };
+            game.NetLeaderUserId = () => net.LeaderUserId;
             game.NetResultRows = () => _netResultRows;
+            game.LocalComboMilestone = combo => net.SendComboMilestone(_netMatchId, combo);
         }
 
         // ---- 分數流:收 / 送 ------------------------------------------------------------------------------------
@@ -753,16 +756,19 @@ namespace Sdo.UI
                 outRows[i] = new ResultScreen.Row
                 {
                     Rank = i + 1,                       // server 已經照分數排好了
+                    UserId = r.UserId,
                     Name = r.Name ?? "",
                     IsLocal = r.UserId == me,
                     Score = r.Score,
                     Perfect = r.Perfect, Cool = r.Cool, Bad = r.Bad, Miss = r.Miss,
                     MaxCombo = r.MaxCombo,
                     Accuracy = (r.Perfect + r.Cool) * 100.0 / judged,
+                    Grade = Sdo.Ruleset.Grade.FromAccuracy((r.Perfect + r.Cool) * 100.0 / judged),
                     FullCombo = (r.Bad + r.Miss) == 0,
                 };
             }
             _netResultRows = outRows;
+            _activeGame?.RefreshNetResultRows();
         }
 
         /// <summary>
@@ -844,6 +850,7 @@ namespace Sdo.UI
             if (net == null) return;
             net.FramesReceived -= OnNetFrames;
             net.ResultsReady -= OnNetResults;
+            net.ComboMilestoneReceived -= OnNetComboMilestone;
         }
 
         // 遊戲中按換鏡頭鍵（預設 F2）→ 存進 OPTION 遊戲頁的「遊戲視角」：切到固定鏡頭就記住是第幾台且標籤變「固定」，

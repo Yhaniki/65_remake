@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Sdo.Game
@@ -15,6 +16,8 @@ namespace Sdo.Game
     /// </summary>
     public static class TextStyles
     {
+        public const string DepthTextShaderName = "Sdo/DepthText";
+
         public enum Style { HeadName, ListLocal, ListOther, Looker }
 
         /// <summary>Letter-spacing tightening for the head-top nameplate — 房間+遊戲共用, drives the gameplay
@@ -53,7 +56,10 @@ namespace Sdo.Game
         public static readonly Color FaceLookerBlue = new Color(0.612f, 0.792f, 1.000f, 1f); // 旁觀玩家       = RGB(156,202,255)
 
         private static Font _cjk;
+        private static readonly Dictionary<Font, Material> DepthTextMaterials =
+            new Dictionary<Font, Material>();
 
+        private static Material _depthSpriteMaterial;
         /// <summary>The bundled CJK font under Assets/Resources. SINGLE SOURCE shared with the front-end UI
         /// (<c>UIFont.BundledFontResource</c>) so the room (TMP) and the in-game HUD (legacy TextMesh) render the
         /// SAME typeface — the head-name font must match on both sides.</summary>
@@ -96,7 +102,8 @@ namespace Sdo.Game
         /// <paramref name="trackEmOverride"/> forces a specific letter-spacing (null = pick by style): the ranking
         /// roster passes 0 for the SCORE column so the numbers show at natural spacing (數字不縮), while the NAME
         /// column keeps the style's <see cref="RosterTrackEm"/> tightening (名字縮緊).</summary>
-        public static Label3D NewLabel(string name, Style style, int order, float pxSize, TextAnchor anchor, int layer = 0, float? trackEmOverride = null)
+        public static Label3D NewLabel(string name, Style style, int order, float pxSize, TextAnchor anchor,
+                                       int layer = 0, float? trackEmOverride = null, bool depthTested = false)
         {
             Color face, edge; Vector2[] offsets; bool bold;
             // Letter-spacing tightening (字靠緊一點): head nameplate + ranking roster; spectator (Looker) stays natural.
@@ -111,7 +118,43 @@ namespace Sdo.Game
                 // 16-direction ring: 8 left scalloped notches in the black edge once fullscreen magnified the offsets.
                 default: /* HeadName */ face = FaceCream;     edge = EdgeBlack; offsets = NameplateMetrics.Ring(1.4f, 16); bold = true; break;
             }
-            return new Label3D(name, CjkFont(), face, edge, offsets, order, pxSize, anchor, layer, -3f, bold, trackEm);
+            return new Label3D(name, CjkFont(), face, edge, offsets, order, pxSize, anchor, layer, -3f,
+                               bold, trackEm, depthTested);
+        }
+
+        internal static Material DepthTextMaterial(Font font)
+        {
+            if (font == null) return null;
+            if (!DepthTextMaterials.TryGetValue(font, out var material) || material == null)
+            {
+                var shader = Shader.Find(DepthTextShaderName);
+                if (shader == null) return font.material;
+                material = new Material(shader);
+                material.SetFloat("_UseTextureRgb", 0f);   // dynamic font atlases carry coverage in alpha only
+                material.hideFlags = HideFlags.HideAndDontSave;
+                DepthTextMaterials[font] = material;
+            }
+            SyncDepthTextAtlas(font, material);
+            return material;
+        }
+        internal static Material DepthSpriteMaterial()
+        {
+            if (_depthSpriteMaterial == null)
+            {
+                var shader = Shader.Find(DepthTextShaderName);
+                if (shader == null) return null;
+                _depthSpriteMaterial = new Material(shader);
+                _depthSpriteMaterial.SetFloat("_UseTextureRgb", 1f);
+                _depthSpriteMaterial.hideFlags = HideFlags.HideAndDontSave;
+            }
+            return _depthSpriteMaterial;
+        }
+
+
+        internal static void SyncDepthTextAtlas(Font font, Material material)
+        {
+            if (font == null || material == null || font.material == null) return;
+            material.mainTexture = font.material.mainTexture;
         }
 
         public static (Color face, Color edge) Colors(Style style)
@@ -136,10 +179,12 @@ namespace Sdo.Game
         public readonly GameObject root;
         private readonly Font _font;
         private readonly Vector2[] _offsets;    // design-px outline/shadow offsets (x is stretch-compensated on apply)
-        private readonly int _order, _layer;
+        private readonly int _order;
+        private int _layer;
         private readonly TextAnchor _anchor;
         private readonly FontStyle _fontStyle;
         private readonly float _trackEm;        // em-fraction pulled OUT of each inter-char gap; 0 = legacy single-mesh path
+        private Material _materialOverride;
         private Color _faceCol, _edgeCol;
         private float _pxSize;
         private int _lastFontPx = -1;
@@ -157,7 +202,8 @@ namespace Sdo.Game
         private TextMesh[][] _cellEdge;
 
         public Label3D(string name, Font font, Color face, Color edge, Vector2[] offsets,
-                       int order, float pxSize, TextAnchor anchor, int layer, float z, bool bold = false, float trackEm = 0f)
+                       int order, float pxSize, TextAnchor anchor, int layer, float z, bool bold = false,
+                       float trackEm = 0f, bool depthTested = false)
         {
             root = new GameObject(name);
             if (layer != 0) root.layer = layer;
@@ -167,20 +213,24 @@ namespace Sdo.Game
             _anchor = anchor; _order = order; _layer = layer;
             _offsets = offsets ?? System.Array.Empty<Vector2>();
             _trackEm = trackEm;
+            _materialOverride = depthTested ? TextStyles.DepthTextMaterial(font) : null;
             _pxSize = pxSize;
             if (trackEm == 0f)
             {
                 _back = new TextMesh[_offsets.Length];
                 for (int i = 0; i < _back.Length; i++)
-                    _back[i] = MakeTm(root.transform, "edge" + i, font, edge, order - 1, anchor, layer, _fontStyle);
-                _main = MakeTm(root.transform, "main", font, face, order, anchor, layer, _fontStyle);
+                    _back[i] = MakeTm(root.transform, "edge" + i, font, edge, order - 1, anchor, layer,
+                                      _fontStyle, _materialOverride);
+                _main = MakeTm(root.transform, "main", font, face, order, anchor, layer,
+                               _fontStyle, _materialOverride);
                 Refresh(true);
             }
             // per-char path defers to the first Text set (needs the string to build one cell per character).
         }
 
         private static TextMesh MakeTm(Transform parent, string n, Font font, Color col,
-                                       int order, TextAnchor anchor, int layer, FontStyle fontStyle)
+                                       int order, TextAnchor anchor, int layer, FontStyle fontStyle,
+                                       Material materialOverride)
         {
             var go = new GameObject(n);
             if (layer != 0) go.layer = layer;
@@ -192,7 +242,9 @@ namespace Sdo.Game
             tm.alignment = TextAlignment.Center;
             tm.color = col;
             var mr = go.GetComponent<MeshRenderer>();
-            mr.sharedMaterial = font.material;   // dynamic font's texture material (GUI/Text shader)
+            mr.sharedMaterial = materialOverride != null
+                ? materialOverride
+                : font.material;                 // HUD path keeps the dynamic font's GUI/Text material
             mr.sortingOrder = order;
             return tm;
         }
@@ -204,6 +256,7 @@ namespace Sdo.Game
         /// change mid-game re-applies live.</summary>
         private void Refresh(bool force)
         {
+            if (_materialOverride != null) TextStyles.SyncDepthTextAtlas(_font, _materialOverride);
             float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
             float ax = NameplateMetrics.AnisotropyX(Screen.width, Screen.height, AspectController.ContentRect);
             int fontPx = NameplateMetrics.FontPxFor(_pxSize, sy);
@@ -294,10 +347,12 @@ namespace Sdo.Game
                 var es = new TextMesh[_offsets.Length];
                 for (int i = 0; i < es.Length; i++)
                 {
-                    es[i] = MakeTm(root.transform, "c" + k + "e" + i, _font, _edgeCol, _order - 1, TextAnchor.MiddleLeft, _layer, _fontStyle);
+                    es[i] = MakeTm(root.transform, "c" + k + "e" + i, _font, _edgeCol, _order - 1,
+                                   TextAnchor.MiddleLeft, _layer, _fontStyle, _materialOverride);
                     es[i].text = ch;
                 }
-                var f = MakeTm(root.transform, "c" + k, _font, _faceCol, _order, TextAnchor.MiddleLeft, _layer, _fontStyle);
+                var f = MakeTm(root.transform, "c" + k, _font, _faceCol, _order, TextAnchor.MiddleLeft,
+                               _layer, _fontStyle, _materialOverride);
                 f.text = ch;
                 _cellEdge[k] = es; _cellFace[k] = f;
             }
@@ -360,6 +415,22 @@ namespace Sdo.Game
             {
                 if (_cellFace != null) foreach (var f in _cellFace) if (f != null) f.color = face;
                 if (_cellEdge != null) foreach (var es in _cellEdge) if (es != null) foreach (var e in es) if (e != null) e.color = edge;
+            }
+        }
+
+        /// <summary>
+        /// Move an already-built HUD label into a scene camera's world layer and replace GUI/Text's
+        /// depth-always material. New per-character cells built after this call inherit the same layer/material.
+        /// </summary>
+        public void EnableDepthTestedWorld(int layer)
+        {
+            _layer = layer;
+            root.layer = layer;
+            _materialOverride = TextStyles.DepthTextMaterial(_font);
+            foreach (var renderer in root.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                renderer.gameObject.layer = layer;
+                renderer.sharedMaterial = _materialOverride;
             }
         }
 

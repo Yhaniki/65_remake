@@ -108,6 +108,7 @@ namespace Sdo.Net.Server
 
         /// <summary>參與者(座位玩家)的 userId,依座位索引序。</summary>
         public int[] ParticipantUserIds = new int[0];
+        public NetMatchPlayerSnapshot[] Participants = new NetMatchPlayerSnapshot[0];
 
         /// <summary>
         /// 跟著進場的旁觀者 userId —— **只有 <c>avail == have</c> 的旁觀者**。

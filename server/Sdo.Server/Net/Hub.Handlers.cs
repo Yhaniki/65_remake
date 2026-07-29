@@ -15,8 +15,30 @@ namespace Sdo.Server.Net
     public sealed partial class Hub
     {
         /// <summary>roomCode → (userId → 最新一筆 frame)。固定頻率彙整後推出去,見 <see cref="PushPendingFrames"/>。</summary>
-        private readonly Dictionary<int, Dictionary<int, FrameSample>> _frames
+        private readonly Dictionary<int, Dictionary<int, FrameSample>> _pendingFrames
             = new Dictionary<int, Dictionary<int, FrameSample>>();
+
+        /// <summary>
+        /// roomCode → (userId → 本場收到的最新一筆 frame)。
+        /// 不隨 200ms 廣播清空；斷線者沒送 playFinished 時，R16 結算要用這份最後快照。
+        /// </summary>
+        private readonly Dictionary<int, Dictionary<int, FrameSample>> _latestFrames
+            = new Dictionary<int, Dictionary<int, FrameSample>>();
+
+        /// <summary>
+        /// roomCode → (userId → playFinished 帶來的最終成績)。
+        /// 與 200ms 推送後會清空的 <see cref="_pendingFrames"/> 分開保存,直到本場結算或中止。
+        /// </summary>
+        private readonly Dictionary<int, Dictionary<int, FrameSample>> _finalFrames
+            = new Dictionary<int, Dictionary<int, FrameSample>>();
+        /// <summary>roomCode to each user's last forwarded combo milestone in this match.</summary>
+        private readonly Dictionary<int, Dictionary<int, int>> _comboMilestones
+            = new Dictionary<int, Dictionary<int, int>>();
+
+        /// <summary>roomCode to the authoritative live leader state for this match.</summary>
+        private readonly Dictionary<int, LiveLeaderTracker> _liveLeaders
+            = new Dictionary<int, LiveLeaderTracker>();
+
 
         /// <summary>roomCode → (userId → 最新一筆房間內位置)。同上,見 <see cref="PushPendingMoves"/>。</summary>
         private readonly Dictionary<int, Dictionary<int, MoveSample>> _moves
@@ -127,6 +149,7 @@ namespace Sdo.Server.Net
                 case NetProto.SetPlayState: OnSetPlayState(conn, node, rq); break;
                 case NetProto.Frame: OnGameplayFrame(conn, node); break;
                 case NetProto.PlayFinished: OnPlayFinished(conn, node); break;
+                case NetProto.ComboMilestone: OnComboMilestone(conn, node); break;
 
                 case NetProto.ChatSay: OnChatSay(conn, node, now); break;
 
@@ -287,7 +310,7 @@ namespace Sdo.Server.Net
             LeaveResult left;
             var op = _rooms.TryCreate(JoinUserOf(conn), name, out room, out left);
 
-            AfterImplicitLeave(left);
+            AfterImplicitLeave(left, conn.UserId);
 
             if (op != NetRoomOp.Ok)
             {
@@ -318,7 +341,7 @@ namespace Sdo.Server.Net
             LeaveResult left;
             var op = _rooms.TryJoin(code, JoinUserOf(conn), out room, out seat, out left);
 
-            AfterImplicitLeave(left);
+            AfterImplicitLeave(left, conn.UserId);
 
             conn.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.JoinResult)
@@ -351,7 +374,11 @@ namespace Sdo.Server.Net
             foreach (var mv in byUser)
                 if (mv.Key != conn.UserId) arr.Add(mv.Value.Encode(mv.Key));
 
-            conn.Send(JObj.New().Str(NetProto.FieldType, NetProto.Moves).Put("m", arr));
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Moves)
+                .Int("roomCode", room.Code)
+                .Int("roomRev", room.State.Rev)
+                .Put("m", arr));
         }
 
         private void OnLeaveRoom(Connection conn)
@@ -364,6 +391,7 @@ namespace Sdo.Server.Net
         {
             var left = _rooms.Leave(userId);
             if (left.Room == null) return;
+            DropRoomMoves(left.Room.Code);
 
             if (left.RoomClosed)
             {
@@ -383,9 +411,10 @@ namespace Sdo.Server.Net
         }
 
         /// <summary>「已在別房 → 先隱式離房」之後要處理的廣播。</summary>
-        private void AfterImplicitLeave(LeaveResult left)
+        private void AfterImplicitLeave(LeaveResult left, int userId)
         {
             if (left.Room == null) return;
+            DropRoomMoves(left.Room.Code);
             if (left.RoomClosed)
             {
                 var evicted = left.EvictedUserIds;
@@ -424,7 +453,7 @@ namespace Sdo.Server.Net
 
             var op = room.SetSong(conn.UserId, song);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
-            // 選歌是房間狀態的重大變更(會清掉全員 ready 與 availability = R9),而且「這間房有沒有歌」
+            // 選歌是房間狀態的重大變更(保留 ready、重設 availability = R9),而且「這間房有沒有歌」
             // 是準備/開始的前提 —— 沒印出來的話「按開始沒反應」完全查不到(踩過)。
             Log("房 " + room.Code + " 換歌:" + (song != null ? song.Title : "(清空)"));
             BroadcastRoomState(room);
@@ -437,7 +466,11 @@ namespace Sdo.Server.Net
             var op = _rooms.SetRoomSettings(conn.UserId, NetJson.Sub(node, "settings"), out room, out kickedSpecs);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
 
-            for (int i = 0; i < kickedSpecs.Length; i++) SendKicked(kickedSpecs[i], NetProto.KickedRoomClosed);
+            if (kickedSpecs.Length != 0) DropRoomMoves(room.Code);
+            for (int i = 0; i < kickedSpecs.Length; i++)
+            {
+                SendKicked(kickedSpecs[i], NetProto.KickedRoomClosed);
+            }
             BroadcastRoomState(room);
         }
 
@@ -557,6 +590,7 @@ namespace Sdo.Server.Net
             var op = _rooms.KickUser(conn.UserId, target, out room, out left);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
 
+            DropRoomMoves(room.Code);
             SendKicked(target, NetProto.KickedByHost);
             if (left.RoomClosed) { DropRoomScratch(room.Code); return; }
             BroadcastRoomState(room);
@@ -574,7 +608,11 @@ namespace Sdo.Server.Net
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
 
             // 關閉有人的座位 → 那個人先被踢出去(需求 12)。
-            if (kicked != 0) SendKicked(kicked, NetProto.KickedSeatClosed);
+            if (kicked != 0)
+            {
+                DropRoomMoves(room.Code);
+                SendKicked(kicked, NetProto.KickedSeatClosed);
+            }
             BroadcastRoomState(room);
         }
 
@@ -604,9 +642,10 @@ namespace Sdo.Server.Net
             NetRoom room;
             LeaveResult left;
             var op = _rooms.TrySpectate(code, JoinUserOf(conn), out room, out left);
-            AfterImplicitLeave(left);
+            AfterImplicitLeave(left, conn.UserId);
 
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            DropRoomMoves(room.Code);
             // 座位有 log、旁觀沒有 → 實機驗證時「他到底進去了沒」只能用猜的。補上。
             Log("user " + conn.UserId + " 以旁觀身分進入房 " + room.Code
                 + "(座位 " + room.State.SeatedCount + " 人)");
@@ -619,6 +658,7 @@ namespace Sdo.Server.Net
             int seat;
             var op = _rooms.TryUnspectate(JoinUserOf(conn), out room, out seat);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            DropRoomMoves(room.Code);
             BroadcastRoomState(room);
         }
 
@@ -642,6 +682,8 @@ namespace Sdo.Server.Net
             NetMatchInfo match;
             var op = room.RequestStart(conn.UserId, force, resolved, now, out match);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            _comboMilestones.Remove(room.Code);
+            _liveLeaders[room.Code] = new LiveLeaderTracker(match.Participants);
 
             SendMatchStarting(room, match);
             BroadcastRoomState(room);
@@ -653,20 +695,16 @@ namespace Sdo.Server.Net
         private void SendMatchStarting(NetRoom room, NetMatchInfo match)
         {
             var participants = JArr.New();
-            for (int i = 0; i < match.ParticipantUserIds.Length; i++)
+            for (int i = 0; i < match.Participants.Length; i++)
             {
-                int uid = match.ParticipantUserIds[i];
-                int seatIdx = room.State.SeatIndexOf(uid);
-                var seat = seatIdx >= 0 ? room.State.Seats[seatIdx] : null;
-                if (seat == null) continue;
-
+                var player = match.Participants[i];
                 participants.Add(JObj.New()
-                    .Int("userId", uid)
-                    .Int("seat", seatIdx)
-                    .Str("name", seat.Name)
-                    .Int("level", seat.Level)
-                    .Int("team", seat.Team)
-                    .Put("look", seat.Look != null ? seat.Look.Encode() : null));
+                    .Int("userId", player.UserId)
+                    .Int("seat", player.Seat)
+                    .Str("name", player.Name)
+                    .Int("level", player.Level)
+                    .Int("team", player.Team)
+                    .Put("look", player.Look != null ? player.Look.Encode() : null));
             }
 
             var spectatorNames = JArr.New();
@@ -740,6 +778,18 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) return;
 
+            if (NetJson.Int(node, "roomCode") != room.Code
+                || NetJson.Int(node, "roomRev", -1) != room.State.Rev) return;
+
+            // 座位 ↔ 旁觀切換後，舊畫面可能還有一筆 move 排在 socket/actor queue 裡。
+            // 用 server 目前認定的 slot 擋掉它，否則 DropRoomMoves 清完後它又會把舊座標塞回來。
+            int seat = room.State.SeatIndexOf(conn.UserId);
+            int spectator = room.State.SpectatorIndexOf(conn.UserId);
+            int expectedSlot = seat >= 0 ? seat
+                : spectator >= 0 ? 1000 + spectator
+                : -1;
+            if (expectedSlot < 0 || NetJson.Int(node, "slot", -1) != expectedSlot) return;
+
             Dictionary<int, MoveSample> byUser;
             if (!_moves.TryGetValue(room.Code, out byUser))
             {
@@ -778,6 +828,8 @@ namespace Sdo.Server.Net
 
                 var bytes = JObj.New()
                     .Str(NetProto.FieldType, NetProto.Moves)
+                    .Int("roomCode", room.Code)
+                    .Int("roomRev", room.State.Rev)
                     .Put("m", arr)
                     .Utf8();
 
@@ -818,12 +870,22 @@ namespace Sdo.Server.Net
         /// <summary>
         /// 房間沒了 → 清掉它的暫存流(分數 + 位置)。
         ///
-        /// 為什麼要抽出來:`_frames.Remove` 原本散在 5 個地方,加了 `_moves` 之後
+        /// 為什麼要抽出來:`_pendingFrames.Remove` 原本散在 5 個地方,加了 `_moves` 之後
         /// 「改了一處忘了另一處」就會留下幽靈 —— 舊 userId 的殘留位置會把新生的角色瞬移到上一場的位置。
         /// </summary>
         private void DropRoomScratch(int roomCode)
         {
-            _frames.Remove(roomCode);
+            _pendingFrames.Remove(roomCode);
+            _latestFrames.Remove(roomCode);
+            _finalFrames.Remove(roomCode);
+            _comboMilestones.Remove(roomCode);
+            _liveLeaders.Remove(roomCode);
+            _moves.Remove(roomCode);
+            _movesDirty.Remove(roomCode);
+        }
+
+        private void DropRoomMoves(int roomCode)
+        {
             _moves.Remove(roomCode);
             _movesDirty.Remove(roomCode);
         }
@@ -834,28 +896,110 @@ namespace Sdo.Server.Net
             if (room == null) return;
             if (room.Match == null) return;
             if (NetJson.Long(node, "matchId") != room.Match.MatchId) return;   // 上一場的遲到訊息
+            if (room.State.Status != RoomStatus.Playing) return;
+
+            bool participant = false;
+            var ids = room.Match.ParticipantUserIds;
+            for (int i = 0; i < ids.Length; i++)
+                if (ids[i] == conn.UserId) { participant = true; break; }
+            if (!participant) return;
+
+            var seat = room.State.SeatOf(conn.UserId);
+            if (seat == null || seat.PlayState != PlayState.Playing) return;
+
+            Dictionary<int, FrameSample> finalized;
+            if (_finalFrames.TryGetValue(room.Code, out finalized)
+                && finalized.ContainsKey(conn.UserId))
+                return;   // playFinished 已拍板；遲到的 lossy frame 不可覆蓋 final
 
             Dictionary<int, FrameSample> byUser;
-            if (!_frames.TryGetValue(room.Code, out byUser))
+            if (!_pendingFrames.TryGetValue(room.Code, out byUser))
             {
                 byUser = new Dictionary<int, FrameSample>();
-                _frames[room.Code] = byUser;
+                _pendingFrames[room.Code] = byUser;
             }
 
             // 只留最新一筆 —— 這是狀態快照而不是事件流,舊的沒有價值。
-            byUser[conn.UserId] = FrameSample.Decode(node);
-        }
+            var sample = FrameSample.Decode(node);
+            byUser[conn.UserId] = sample;
 
+            Dictionary<int, FrameSample> latestByUser;
+            if (!_latestFrames.TryGetValue(room.Code, out latestByUser))
+            {
+                latestByUser = new Dictionary<int, FrameSample>();
+                _latestFrames[room.Code] = latestByUser;
+            }
+            latestByUser[conn.UserId] = sample;
+            RecordLiveScore(room, conn.UserId, sample.Score);
+        }
+        private void RecordLiveScore(NetRoom room, int userId, long score)
+        {
+            if (room.State.Status != RoomStatus.Playing || room.Match == null) return;
+
+            LiveLeaderTracker tracker;
+            if (!_liveLeaders.TryGetValue(room.Code, out tracker)) return;
+            tracker.Record(room.Match.ParticipantUserIds, userId, score);
+        }
         /// <summary>
         /// 固定頻率把每個房間彙整好的 frames 推出去。
         /// N 人的下行是 N×<see cref="NetLimits.ServerFrameHz"/> 訊息/秒,而不是 N² 的轉發風暴。
         /// </summary>
+
+        /// <summary>
+        /// Reliably forwards a one-shot combo effect. It cannot be inferred from 5 Hz
+        /// snapshots because a receiver may see combo jump directly from 49 to 53.
+        /// </summary>
+        private void OnComboMilestone(Connection conn, object node)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null || room.Match == null || room.State.Status != RoomStatus.Playing) return;
+
+            long matchId = NetJson.Long(node, "matchId");
+            int combo = NetJson.Int(node, "combo");
+            if (matchId != room.Match.MatchId || combo < 50 || combo > 1000000 || combo % 50 != 0) return;
+
+            bool participant = false;
+            var ids = room.Match.ParticipantUserIds;
+            for (int i = 0; i < ids.Length; i++)
+            {
+                if (ids[i] != conn.UserId) continue;
+                participant = true;
+                break;
+            }
+            if (!participant) return;
+
+            var seat = room.State.SeatOf(conn.UserId);
+            if (seat == null || seat.PlayState != PlayState.Playing) return;
+            Dictionary<int, int> lastByUser;
+            if (!_comboMilestones.TryGetValue(room.Code, out lastByUser))
+            {
+                lastByUser = new Dictionary<int, int>();
+                _comboMilestones[room.Code] = lastByUser;
+            }
+
+            int last;
+            if (lastByUser.TryGetValue(conn.UserId, out last) && combo <= last) return;
+            lastByUser[conn.UserId] = combo;
+            var bytes = JObj.New()
+                .Str(NetProto.FieldType, NetProto.ComboMilestone)
+                .Long("matchId", matchId)
+                .Int("userId", conn.UserId)
+                .Int("combo", combo)
+                .Utf8();
+
+            // The sender already played it locally; avoid replaying the same effect there.
+            ForEachInRoom(room, c =>
+            {
+                if (c.UserId != conn.UserId) c.SendPreEncoded(bytes);
+            });
+        }
+
         private void PushPendingFrames()
         {
-            if (_frames.Count == 0) return;
+            if (_pendingFrames.Count == 0) return;
 
             List<int> emptied = null;
-            foreach (var kv in _frames)
+            foreach (var kv in _pendingFrames)
             {
                 var byUser = kv.Value;
                 if (byUser.Count == 0) continue;
@@ -871,9 +1015,15 @@ namespace Sdo.Server.Net
                 var arr = JArr.New();
                 foreach (var f in byUser) arr.Add(f.Value.Encode(f.Key));
 
+                LiveLeaderTracker tracker;
+                int leaderUserId = _liveLeaders.TryGetValue(room.Code, out tracker)
+                    ? tracker.Resolve(room.Match.ParticipantUserIds)
+                    : 0;
+
                 var bytes = JObj.New()
                     .Str(NetProto.FieldType, NetProto.Frames)
                     .Long("matchId", room.Match.MatchId)
+                    .Int("leaderUserId", leaderUserId)
                     .Put("f", arr)
                     .Utf8();
 
@@ -884,7 +1034,7 @@ namespace Sdo.Server.Net
             }
 
             if (emptied != null)
-                for (int i = 0; i < emptied.Count; i++) _frames.Remove(emptied[i]);
+                for (int i = 0; i < emptied.Count; i++) _pendingFrames.Remove(emptied[i]);
         }
 
         private void OnPlayFinished(Connection conn, object node)
@@ -893,14 +1043,45 @@ namespace Sdo.Server.Net
             if (room == null || room.Match == null) return;
             if (NetJson.Long(node, "matchId") != room.Match.MatchId) return;
 
-            // 最終成績先記著,結算時折進 resultsReady。
-            Dictionary<int, FrameSample> byUser;
-            if (!_frames.TryGetValue(room.Code, out byUser))
+            if (room.State.Status != RoomStatus.Playing) return;
+            var seat = room.State.SeatOf(conn.UserId);
+            if (seat == null || seat.PlayState != PlayState.Playing) return;
+
+            bool participant = false;
+            var ids = room.Match.ParticipantUserIds;
+            for (int i = 0; i < ids.Length; i++)
+                if (ids[i] == conn.UserId) { participant = true; break; }
+            if (!participant) return;
+
+            var final = FrameSample.Decode(node);
+
+            // 最終成績必須活到整場 resultsReady,不能跟 200ms pending frames 一起清空。
+            Dictionary<int, FrameSample> finalByUser;
+            if (!_finalFrames.TryGetValue(room.Code, out finalByUser))
             {
-                byUser = new Dictionary<int, FrameSample>();
-                _frames[room.Code] = byUser;
+                finalByUser = new Dictionary<int, FrameSample>();
+                _finalFrames[room.Code] = finalByUser;
             }
-            byUser[conn.UserId] = FrameSample.Decode(node);
+            if (finalByUser.ContainsKey(conn.UserId)) return;
+            finalByUser[conn.UserId] = final;
+
+            Dictionary<int, FrameSample> latestByUser;
+            if (!_latestFrames.TryGetValue(room.Code, out latestByUser))
+            {
+                latestByUser = new Dictionary<int, FrameSample>();
+                _latestFrames[room.Code] = latestByUser;
+            }
+            latestByUser[conn.UserId] = final;
+
+            // final 同時也是最新的一筆 live frame,照舊在下一輪推給其他玩家。
+            Dictionary<int, FrameSample> pendingByUser;
+            if (!_pendingFrames.TryGetValue(room.Code, out pendingByUser))
+            {
+                pendingByUser = new Dictionary<int, FrameSample>();
+                _pendingFrames[room.Code] = pendingByUser;
+            }
+            pendingByUser[conn.UserId] = final;
+            RecordLiveScore(room, conn.UserId, final.Score);
 
             var op = room.SetPlayState(conn.UserId, PlayState.Finished, room.Match.MatchId);
             if (op == NetRoomOp.Ok) BroadcastRoomState(room);
@@ -959,31 +1140,42 @@ namespace Sdo.Server.Net
 
         private void SendResultsReady(NetRoom room, long matchId)
         {
-            Dictionary<int, FrameSample> byUser;
-            _frames.TryGetValue(room.Code, out byUser);
+            Dictionary<int, FrameSample> finalByUser;
+            Dictionary<int, FrameSample> latestByUser;
+            _finalFrames.TryGetValue(room.Code, out finalByUser);
+            _latestFrames.TryGetValue(room.Code, out latestByUser);
 
             var rows = JArr.New();
-            var seats = room.State.Seats;
-            for (int i = 0; i < seats.Length; i++)
+            var players = new List<NetMatchPlayerSnapshot>(room.Match.Participants);
+            players.Sort((a, b) =>
             {
-                var s = seats[i];
-                if (!s.IsTaken) continue;
-                if (s.PlayState != PlayState.Results && s.PlayState != PlayState.Finished) continue;
+                FrameSample af = ResultFrame(finalByUser, latestByUser, a.UserId);
+                FrameSample bf = ResultFrame(finalByUser, latestByUser, b.UserId);
+                return ResultRowOrder.Compare(
+                    af.Score, a.Seat, a.UserId,
+                    bf.Score, b.Seat, b.UserId);
+            });
+            for (int i = 0; i < players.Count; i++)
+            {
+                var player = players[i];
 
-                // 沒有成績記錄(例如遊玩中斷線沒交最後一筆)→ 全 0,列在結算上但數字是空的。
-                FrameSample f = default(FrameSample);
-                if (byUser != null) byUser.TryGetValue(s.UserId, out f);
+                // 完整 final 優先；斷線沒送 playFinished 時退回本場最後一筆 frame。
+                FrameSample f = ResultFrame(finalByUser, latestByUser, player.UserId);
 
                 rows.Add(JObj.New()
-                    .Int("userId", s.UserId)
-                    .Str("name", s.Name)
+                    .Int("userId", player.UserId)
+                    .Int("seat", player.Seat)
+                    .Str("name", player.Name)
+                    .Int("level", player.Level)
+                    .Int("team", player.Team)
+                    .Put("look", player.Look != null ? player.Look.Encode() : null)
                     .Long("score", f.Score)
                     .Int("perfect", f.P)
                     .Int("cool", f.C)
                     .Int("bad", f.B)
                     .Int("miss", f.M)
                     .Int("maxCombo", f.MaxCombo)
-                    .Bool("disconnected", ControlOf(s.UserId) == null));
+                    .Bool("disconnected", ControlOf(player.UserId) == null));
             }
 
             var bytes = JObj.New()
@@ -993,6 +1185,17 @@ namespace Sdo.Server.Net
                 .Utf8();
             ForEachInRoom(room, c => c.SendPreEncoded(bytes));
             Log("房 " + room.Code + ":第 " + matchId + " 場結算");
+        }
+
+        private static FrameSample ResultFrame(
+            Dictionary<int, FrameSample> finalByUser,
+            Dictionary<int, FrameSample> latestByUser,
+            int userId)
+        {
+            FrameSample frame;
+            if (finalByUser != null && finalByUser.TryGetValue(userId, out frame)) return frame;
+            if (latestByUser != null && latestByUser.TryGetValue(userId, out frame)) return frame;
+            return default(FrameSample);
         }
 
         // ================= 聊天 =================

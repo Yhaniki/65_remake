@@ -22,6 +22,9 @@ namespace Sdo.Ruleset
         /// <summary>鏡頭錨定的那一格(領隊)。官方是 0。</summary>
         public const int LeaderSlot = 0;
 
+        /// <summary>挑戰者至少要領先目前領隊這麼多分才換位,避免接近分數在每筆網路快照間反覆超車。</summary>
+        public const long LeaderSwitchLead = 300L;
+
         /// <summary>
         /// 算出每位舞者的目標 slot。<paramref name="scores"/> 的索引 = 舞者(依房間座位序),
         /// 回傳陣列同索引 = 那位舞者要站的 slot。
@@ -31,13 +34,21 @@ namespace Sdo.Ruleset
         /// 那個人就會在別人畫面上站在中央、在自己畫面上站在旁邊。
         /// </summary>
         public static int[] SlotForDancer(IReadOnlyList<long> scores)
+            => SlotForDancer(scores, TopScorer(scores));
+
+        /// <summary>
+        /// 依已選定的 <paramref name="leader"/> 指派 slot。這個 overload 給有防抖狀態的即時多人站位用:
+        /// 分數只決定人數,領隊由 <see cref="SelectLeader"/> 決定,不能在這裡又重算一次最高分。
+        /// leader 不合法時才退回當下最高分。
+        /// </summary>
+        public static int[] SlotForDancer(IReadOnlyList<long> scores, int leader)
         {
             int n = scores != null ? scores.Count : 0;
             var slot = new int[n];
             for (int i = 0; i < n; i++) slot[i] = i;      // 基礎:各就各位
             if (n <= 1) return slot;
 
-            int top = TopScorer(scores);
+            int top = leader >= 0 && leader < n ? leader : TopScorer(scores);
             if (top == LeaderSlot) return slot;            // 第一名本來就在領隊格
 
             // 找出「現在占著領隊格」的那位,與第一名互換。
@@ -62,6 +73,36 @@ namespace Sdo.Ruleset
             for (int i = 1; i < n; i++)
                 if (scores[i] > scores[best]) best = i;    // 嚴格大於 → 同分保留較小的索引
             return best;
+        }
+
+        /// <summary>
+        /// 依最新分數更新領隊。分數接近時保留 <paramref name="currentLeader"/>,只有挑戰者領先
+        /// <see cref="LeaderSwitchLead"/> 分以上才換人;因此反向換回也要跨過同一條門檻。
+        /// </summary>
+        public static int SelectLeader(IReadOnlyList<long> scores, int currentLeader)
+        {
+            int n = scores != null ? scores.Count : 0;
+            if (n == 0) return -1;
+
+            int challenger = TopScorer(scores);
+            if (currentLeader < 0 || currentLeader >= n) return challenger;
+            if (challenger == currentLeader) return currentLeader;
+
+            long incumbentScore = scores[currentLeader];
+            if (incumbentScore > long.MaxValue - LeaderSwitchLead) return currentLeader;
+            return scores[challenger] >= incumbentScore + LeaderSwitchLead ? challenger : currentLeader;
+        }
+
+        /// <summary>
+        /// Prefer the server-selected dancer index when it maps into this client's roster. If the authoritative
+        /// user is absent (old server, roster transition, spectator-only row), retain the local hysteresis fallback.
+        /// </summary>
+        public static int ResolveLeader(IReadOnlyList<long> scores, int currentLeader, int authoritativeLeader)
+        {
+            int n = scores != null ? scores.Count : 0;
+            return authoritativeLeader >= 0 && authoritativeLeader < n
+                ? authoritativeLeader
+                : SelectLeader(scores, currentLeader);
         }
 
         /// <summary>

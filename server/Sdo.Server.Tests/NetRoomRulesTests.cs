@@ -180,8 +180,14 @@ namespace Sdo.Tests
             Assert.IsFalse(r.State.Seats[0].Ready, "房主的 Ready 應該是 false");
 
             JoinMany(r, Bob);
-            r.TransferHost(Host, Bob);
+            SetSongAndHave(r, Host, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+            Assert.IsTrue(r.State.Seats[1].Ready);
+            Assert.AreEqual(PlayState.Ready, r.State.Seats[1].PlayState);
+
+            Assert.AreEqual(NetRoomOp.Ok, r.TransferHost(Host, Bob));
             Assert.IsFalse(r.State.Seats[1].Ready, "新房主也不需要 Ready");
+            Assert.AreEqual(PlayState.Idle, r.State.Seats[1].PlayState);
         }
 
         [Test]
@@ -263,6 +269,24 @@ namespace Sdo.Tests
 
             Assert.IsFalse(close, "還有人在,房間不該關");
             Assert.AreEqual(Bob, r.HostUserId, "應該給座位索引最小的那個人");
+        }
+
+        [Test]
+        public void R5_Ready_Guest_Promoted_When_Host_Leaves_Can_Spectate()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+            Assert.AreEqual(PlayState.Ready, r.State.SeatOf(Bob).PlayState);
+
+            Assert.IsFalse(r.Leave(Host), "Bob 還在房間裡");
+            Assert.AreEqual(Bob, r.HostUserId);
+            Assert.IsFalse(r.State.SeatOf(Bob).Ready, "接任房主後不能保留一般玩家的 Ready");
+            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Bob)),
+                "新房主應可立即切旁觀，不可被接任前的 Ready 卡住");
+            Assert.GreaterOrEqual(r.State.SpectatorIndexOf(Bob), 0);
         }
 
         [Test]
@@ -523,12 +547,12 @@ namespace Sdo.Tests
             Assert.AreEqual(NetRoomOp.BadSeat, r.SetSeatClosed(Host, 999, true, out kicked));
         }
 
-        // ==================== R9:換歌清狀態 ====================
+        // ==================== R9:換歌保留準備、重設歌曲狀態 ====================
 
         [Test]
-        public void R9_Changing_The_Song_Clears_Ready_And_Availability()
+        public void R9_Changing_The_Song_Preserves_Ready_And_Resets_Availability()
         {
-            // 少了這步,原本準備好的人會帶著「上一首歌的 have」被拉進新的一局。
+            // Ready 是跨換歌的意願；availability 必須針對新歌重新確認。
             var r = MakeRoom();
             JoinMany(r, Bob);
             SetSongAndHave(r, Host, Bob);
@@ -538,10 +562,19 @@ namespace Sdo.Tests
             // 換另一首歌
             Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, new NetSongRef { Official = true, Gn = "sdom0001k.gn" }));
 
-            Assert.IsFalse(r.State.Seats[1].Ready, "換歌要清掉準備狀態");
+            Assert.IsTrue(r.State.Seats[1].Ready, "換歌要保留準備狀態");
+            Assert.AreEqual(PlayState.Ready, r.State.Seats[1].PlayState);
             Assert.AreEqual(Availability.Unknown, r.State.Seats[1].Avail);
             Assert.AreEqual(Availability.Unknown, r.State.Seats[0].Avail);
             Assert.IsFalse(r.State.Seats[0].Ready, "房主沒有準備狀態,一律 false");
+
+            var stickyStates = new[] { Availability.Missing, Availability.Downloading, Availability.Importing, Availability.Have };
+            for (int i = 0; i < stickyStates.Length; i++)
+            {
+                r.SetAvailability(Bob, "sdom0001k.gn", stickyStates[i], 0.5f);
+                Assert.IsTrue(r.State.SeatOf(Bob).Ready, "availability 變化不可清掉準備意願");
+                Assert.AreEqual(PlayState.Ready, r.State.SeatOf(Bob).PlayState);
+            }
         }
 
         [Test]
@@ -1000,6 +1033,47 @@ namespace Sdo.Tests
             Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Cid)));
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void Completed_Participants_Can_Spectate(bool targetIsHost, bool resultsState)
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            ReadyAll(r);
+
+            NetMatchInfo match;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 0, out match));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Host, PlayState.Loaded, match.MatchId));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Bob, PlayState.Loaded, match.MatchId));
+            Assert.IsTrue(r.Tick(100).GameplayStarted);
+
+            int target = targetIsHost ? Host : Bob;
+            int other = targetIsHost ? Bob : Host;
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(target, PlayState.Finished, match.MatchId));
+
+            if (resultsState)
+            {
+                Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(other, PlayState.Finished, match.MatchId));
+                Assert.IsTrue(r.Tick(200).ResultsReady);
+                Assert.AreEqual(PlayState.Results, r.State.SeatOf(target).PlayState);
+            }
+            else
+            {
+                Assert.AreEqual(PlayState.Finished, r.State.SeatOf(target).PlayState);
+            }
+
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(target)));
+            Assert.AreEqual(-1, r.State.SeatIndexOf(target));
+            Assert.GreaterOrEqual(r.State.SpectatorIndexOf(target), 0);
+            CollectionAssert.Contains(r.Match.ParticipantUserIds, target,
+                "切成旁觀只移出 live 座位，不可抹掉本場凍結參與者");
+            if (targetIsHost)
+                Assert.AreEqual(other, r.HostUserId, "完成後切旁觀的房主要把 host 交給仍在座位的人");
+        }
+
         [Test]
         public void Spectating_Frees_The_Seat()
         {
@@ -1120,6 +1194,41 @@ namespace Sdo.Tests
             NetMatchInfo m;
             Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 0, out m));
             Assert.AreEqual(NetRoomOp.BadState, r.RequestStart(Host, false, Resolved(), 0, out m));
+        }
+
+
+        [Test]
+        public void R12_Sticky_Ready_Waits_Until_The_New_Song_Is_Available()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+            var next = new NetSongRef { Official = true, Gn = "sdom0001k.gn" };
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, next));
+            Assert.IsTrue(r.State.SeatOf(Bob).Ready);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(Host, next.Gn, Availability.Have, 0f));
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.BadState, r.RequestStart(Host, false, Resolved(), 0, out m));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(Bob, next.Gn, Availability.Have, 0f));
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 0, out m));
+        }
+
+        [Test]
+        public void R12_Force_Start_Drops_A_Sticky_Ready_Player_Without_The_New_Song()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            r.SetReady(Bob, true);
+            var next = new NetSongRef { Official = true, Gn = "sdom0001k.gn" };
+            r.SetSong(Host, next);
+            r.SetAvailability(Host, next.Gn, Availability.Have, 0f);
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, true, Resolved(), 0, out m));
+            CollectionAssert.AreEqual(new[] { Host }, m.ParticipantUserIds);
+            Assert.IsFalse(r.State.SeatOf(Bob).Ready);
+            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
         }
 
         // ==================== R13:開場 ====================
@@ -1367,6 +1476,10 @@ namespace Sdo.Tests
             Assert.AreEqual(RoomStatus.Playing, r.Status);
             Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState, "被逐出的人回到房間 idle");
             Assert.IsFalse(r.State.SeatOf(Bob).Ready);
+            Assert.AreEqual(1, m.ParticipantUserIds.Length);
+            Assert.AreEqual(Host, m.ParticipantUserIds[0]);
+            Assert.AreEqual(1, m.Participants.Length);
+            Assert.AreEqual(Host, m.Participants[0].UserId);
         }
 
         [Test]
@@ -1445,11 +1558,36 @@ namespace Sdo.Tests
 
             // Bob 打到一半斷線。
             r.Leave(Bob);
+            CollectionAssert.AreEqual(new[] { Host }, m.ParticipantUserIds,
+                "active 名單要移除斷線者，避免卡住整場");
+            CollectionAssert.AreEqual(new[] { Host, Bob },
+                System.Array.ConvertAll(m.Participants, p => p.UserId),
+                "結算用凍結名單要保留斷線者與其開場資料");
             r.SetPlayState(Host, PlayState.Finished, m.MatchId);
 
             var t = r.Tick(200);
             Assert.IsTrue(t.ResultsReady, "斷線的人被移出本場,剩下的人打完就該結算");
             Assert.AreEqual(RoomStatus.Open, r.Status);
+        }
+
+        [Test]
+        public void R16_Kicked_Participant_Is_Removed_From_Result_Metadata()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            ReadyAll(r);
+
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 0, out m));
+
+            bool roomShouldClose;
+            Assert.AreEqual(NetRoomOp.Ok, r.KickUser(Host, Bob, out roomShouldClose));
+            Assert.IsFalse(roomShouldClose);
+            Assert.AreEqual(1, m.ParticipantUserIds.Length);
+            Assert.AreEqual(Host, m.ParticipantUserIds[0]);
+            Assert.AreEqual(1, m.Participants.Length);
+            Assert.AreEqual(Host, m.Participants[0].UserId);
         }
 
         [Test]
@@ -1469,6 +1607,9 @@ namespace Sdo.Tests
 
             r.Leave(Host);
             Assert.AreEqual(Bob, r.HostUserId, "房主轉移給 Bob");
+            CollectionAssert.AreEqual(new[] { Bob }, m.ParticipantUserIds);
+            CollectionAssert.AreEqual(new[] { Host, Bob },
+                System.Array.ConvertAll(m.Participants, p => p.UserId));
             Assert.AreEqual(RoomStatus.Playing, r.Status, "這一局繼續");
 
             r.SetPlayState(Bob, PlayState.Finished, m.MatchId);
@@ -1496,10 +1637,10 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void R17_Losing_The_Song_Auto_Cancels_Ready()
+        public void R17_Availability_Changes_Do_Not_Cancel_Ready()
         {
-            // 對映 osu 的「NotDownloaded && Ready → ChangeState(Idle)」。
-            // 少了這步,人會被拉進一局他打不了的歌。
+            // 換歌/下載狀態變動不應要求玩家重按 Ready；
+            // RequestStart 仍會用 availability 擋住沒有歌曲的人。
             var r = MakeRoom();
             JoinMany(r, Bob);
             SetSongAndHave(r, Host, Bob);
@@ -1508,8 +1649,8 @@ namespace Sdo.Tests
 
             r.SetAvailability(Bob, "sdom1435k.gn", Availability.Missing, 0f);
 
-            Assert.IsFalse(r.State.SeatOf(Bob).Ready, "歌不見了要自動取消準備");
-            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
+            Assert.IsTrue(r.State.SeatOf(Bob).Ready, "availability 變化要保留準備意願");
+            Assert.AreEqual(PlayState.Ready, r.State.SeatOf(Bob).PlayState);
         }
 
         [Test]

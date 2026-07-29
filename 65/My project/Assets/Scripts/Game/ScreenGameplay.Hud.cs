@@ -237,10 +237,9 @@ namespace Sdo.Game
             UpdateRankDisplay();
         }
 
-        // the local dancer's nameplate (animated arrow + name). It is a SCREEN-SPACE label (on the HUD
-        // layer, not the scene layer): HeadMarker projects the head bone through the scene cam each frame
-        // and draws a fixed pixel distance above it — so it floats over the head from any angle and never
-        // occludes it. Only the local player is rendered, so there is exactly one.
+        // The local dancer's nameplate (animated arrow + name). On the 3D path it is a constant-pixel-size
+        // billboard inside SceneCam, so a dancer standing in front can occlude it through the shared depth buffer.
+        // The legacy 2D fallback still projects into the orthographic HUD. Only the local player gets the arrow.
         private void CreateHeadMarker(SdoAvatar avatar)
         {
             int headIdx = avatar.BoneIndex("Bip01_Head");
@@ -254,8 +253,10 @@ namespace Sdo.Game
                 avatar.AddAnchor(headIdx, ag.transform);
                 anchor = ag.transform;
             }
-            var go = new GameObject("HeadMarker");   // HUD layer (default) — children draw in the main ortho cam
+            var go = new GameObject("HeadMarker");
             var hm = go.AddComponent<HeadMarker>();
+            // TryLoadAvatar runs before TryLoadScene, so SceneCam does not exist yet. Start in the safe HUD
+            // mode; TryLoadScene promotes this marker only after the scene camera is successfully constructed.
             hm.Init(_arrowFrames, localPlayerName);
             hm.SetTeamColor(TeamOf(LocalDancerSlotIndex));   // 組隊局:自己的名字也是自己那一隊的顏色
             Transform a = anchor;

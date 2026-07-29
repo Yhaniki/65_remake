@@ -79,7 +79,7 @@
         // ---- 準備 / 開場 / 同步進場 ----
 
         public const string SetReady = "setReady";
-        /// <summary>host only。server 原樣存，並清掉全員 ready + 全員 avail 設回 unknown(同 osu 換圖行為)。</summary>
+        /// <summary>host only。server 原樣存，保留全員 ready 意願，並把全員 avail 設回 unknown 重新確認歌曲。</summary>
         public const string SetSong = "setSong";
         /// <summary>host only。這就是「只有房主可以選房主設置」的 server 端把關。</summary>
         public const string SetRoomSettings = "setRoomSettings";
@@ -175,6 +175,12 @@
         /// <summary>S→C 房內廣播(含旁觀者)。server 攢的所有人最新一筆，固定 5 Hz。</summary>
         public const string Frames = "frames";
         public const string PlayFinished = "playFinished";
+        /// <summary>
+        /// C-to-S-to-C reliable 50-combo milestone. A 5 Hz frame snapshot can skip
+        /// straight past 50 or 100, so one-shot visual effects need a separate event.
+        /// </summary>
+        public const string ComboMilestone = "comboMilestone";
+
 
         // ---- 旁觀 ----
 
