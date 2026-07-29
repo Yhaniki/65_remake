@@ -39,7 +39,9 @@ namespace Sdo.Game
         //     炸彈多的譜 `level` 被灌水過（灑滿雷的慢譜可以虛高好幾十級），得整份作廢重算。
         // v10: `notes` 的語意換成**判定次數**（長條的放開也算一次，＝全接的最大 combo，也＝官方 .gn 表頭 notes 的
         //     算法）。舊快取存的是「物件數」（長條算一顆），長條多的譜會少報好幾十顆，得整份作廢重算。
-        public const int Version = 10;
+        // v11: keysounded osu maps with `AudioFilename: virtual` now use an empty base track; old caches pointed at
+        //      the folder's first sample instead, so all external-song scan records must be rebuilt.
+        public const int Version = 11;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

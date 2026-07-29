@@ -67,7 +67,7 @@ namespace Sdo.Osu
             if (m != null)
             {
                 string audio = BaseName(m.AudioFilename);
-                if (audio.Length > 0) return "audio:" + audio.ToLowerInvariant();
+                if (audio.Length > 0 && !OsuBeatmapParser.IsVirtualAudioFilename(audio)) return "audio:" + audio.ToLowerInvariant();
 
                 if (m.BeatmapSetId > 0) return "set:" + m.BeatmapSetId.ToString(CultureInfo.InvariantCulture);
 

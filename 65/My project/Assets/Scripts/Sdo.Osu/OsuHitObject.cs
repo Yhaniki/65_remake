@@ -50,13 +50,19 @@ namespace Sdo.Osu
         /// <summary>顯示用的長條尾端時間 (ms);tap 時 == <see cref="ScrollTimeMs"/>。理由同 <see cref="ScrollTimeMs"/>。</summary>
         public double ScrollEndTimeMs { get; }
 
+        /// <summary>Custom hit-sample file relative to the beatmap; empty when none is specified.</summary>
+        public string CustomSampleFilename { get; }
+
+        /// <summary>Custom sample volume (1..100); zero inherits the active timing point.</summary>
+        public int CustomSampleVolume { get; }
+
         /// <param name="scrollTimeMs">顯示用時間;null = 跟判定時間一樣(.gn/.osu/沒有 warp 的 .sm 都走這條)。</param>
         /// <param name="scrollEndTimeMs">顯示用尾端時間;null = 長條取 <paramref name="endTimeMs"/>、tap 取頭部顯示時間。
         /// 有給 <paramref name="scrollTimeMs"/> 的長條請把這個也一起給,不然尾端會落回判定時間。</param>
         /// <param name="isFakeTail">長條的 cap 落在 warp 裡 → 結尾不用放開;見 <see cref="IsFakeTail"/>。</param>
         public OsuHitObject(int lane, int startTimeMs, int? endTimeMs = null, bool isBomb = false,
             bool isFake = false, double? scrollTimeMs = null, double? scrollEndTimeMs = null,
-            bool isFakeTail = false)
+            bool isFakeTail = false, string customSampleFilename = "", int customSampleVolume = 0)
         {
             Lane = lane;
             StartTimeMs = startTimeMs;
@@ -67,6 +73,8 @@ namespace Sdo.Osu
             ScrollTimeMs = scrollTimeMs ?? startTimeMs;
             ScrollEndTimeMs = scrollEndTimeMs
                 ?? (endTimeMs.HasValue && !scrollTimeMs.HasValue ? endTimeMs.Value : ScrollTimeMs);
+            CustomSampleFilename = customSampleFilename ?? "";
+            CustomSampleVolume = customSampleVolume < 0 ? 0 : (customSampleVolume > 100 ? 100 : customSampleVolume);
         }
     }
 }

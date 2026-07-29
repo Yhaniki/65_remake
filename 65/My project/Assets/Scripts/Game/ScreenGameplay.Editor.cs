@@ -197,6 +197,7 @@ namespace Sdo.Game
             var j = _engine.JudgeHit(n.Note.StartTimeMs, now);
             if (j == null) return;
             n.HeadJudged = true;                         // 同一顆不重複判（seek 會重新 arm）
+            PlayOsuHitSample(n.Note, j.Value);
             n.Done = true;                               // 打到就消失（跟遊玩一樣的回饋）；長條在編輯器一律當 tap
             EditorOnHit?.Invoke(now - n.Note.StartTimeMs, j.Value);   // delta：負 = 太早、正 = 太晚（同 osu）
             TriggerClickFlash(lane);                                   // 打到有回饋
@@ -292,12 +293,18 @@ namespace Sdo.Game
             _danceStartSec = 0.0;
 
             // 可 seek 的範圍：音樂通常比最後一顆音符長（尾奏），編譜時要能拖到歌尾。
-            double clipMs = (_audio != null && _audio.clip != null) ? _audio.clip.length * 1000.0 : 0.0;
-            EditorEndMs = Math.Max(_totalMs, clipMs + MusicCountInSec * 1000.0);
+            RefreshEditorTimelineEnd();
 
             _started = true;
             EditorSetPaused(true);
             EditorSeekMs(0.0);
+        }
+
+        private void RefreshEditorTimelineEnd()
+        {
+            double clipMs = (_audio != null && _audio.clip != null) ? _audio.clip.length * 1000.0 : 0.0;
+            double audioEndMs = Math.Max(clipMs + MusicCountInSec * 1000.0, _osuTimelineEndMs);
+            EditorEndMs = Math.Max(_totalMs, audioEndMs);
         }
 
         // 編輯器不需要 HP 條/分數/名次/歌曲資訊列 —— 只留音符板、受擊線、音符。
@@ -325,6 +332,7 @@ namespace Sdo.Game
                 if (_audio != null) _audio.Pause();
                 Time.timeScale = 0f;
                 ResetScheduledTicks();
+                OnOsuPlaybackPaused(_pauseChartSec * 1000.0 - _globalOffsetMs);
                 ClearGameplayFx();   // 爆發是用 Time.time 推幀的 → timeScale=0 會讓還在飛的那幾張定格在畫面上不消
                 _paused = true;
             }
@@ -332,6 +340,8 @@ namespace Sdo.Game
             {
                 _paused = false;
                 Time.timeScale = _timeScale;
+                _resumeOsuSamplesOnNextEditorSeek = true;
+                _preserveOsuSamplesOnNextEditorSeek = true;
                 EditorSeekMs(_pauseChartSec * 1000.0);   // 從暫停的位置重新起播（音源是 Stop 過的，不能只 UnPause）
             }
         }
@@ -339,11 +349,21 @@ namespace Sdo.Game
         /// <summary>跳到譜面時間（毫秒）。暫停中也可用（畫面會停在該處，按播放就從那裡開始）。</summary>
         public void EditorSeekMs(double chartMs)
         {
+            bool resumeOsuSamples = _resumeOsuSamplesOnNextEditorSeek;
+            bool preserveOsuSamples = _preserveOsuSamplesOnNextEditorSeek;
+            _resumeOsuSamplesOnNextEditorSeek = false;
+            _preserveOsuSamplesOnNextEditorSeek = false;
+            EditorSeekMs(chartMs, resumeOsuSamples, preserveOsuSamples);
+        }
+
+        private void EditorSeekMs(double chartMs, bool resumeOsuSamples, bool preserveOsuSamples)
+        {
             if (!editorMode || !_started) return;
             chartMs = Math.Max(0.0, Math.Min(chartMs, Math.Max(0.0, EditorEndMs)));
             double chartSec = chartMs / 1000.0;
 
-            bool willPlay = !_paused && _audio != null && _audio.clip != null;
+            bool willPlay = !_paused &&
+                (IsVirtualOsuTrack || (_audio != null && _audio.clip != null));
             // 音樂一律用 PlayScheduled 起播，**不能用 Play()**：Play() 要等下一個 mixer 回呼才真的出聲
             // （最多一個 DSP buffer，實測 ≈10ms），而打拍音是排程進 dsp 時鐘的（取樣級精準）→ 用 Play()
             // 會讓音樂固定慢打拍音一點點。所以先把起播點排在 dspNow + 這段餘裕上，錨點也錨在同一個時刻。
@@ -357,6 +377,7 @@ namespace Sdo.Game
             // 停在 chartSec + globalOffset（seek 到 X 卻停在 X+offset），而且 EditorSongOffsetMs 的
             // `EditorSeekMs(_nowMs)` 來回會把 offset 越加越多（offset 40 → 每碰一次單首 offset 就往前 40ms）。
             double musicChartSec = chartSec - _globalOffsetMs / 1000.0;
+            double osuChartMs = musicChartSec * 1000.0;
             _songStartDspTime = GameRate.AnchorForChartSeconds(startDsp, musicChartSec, _musicRate, MusicCountInSec);
             // 譜面時鐘也要在 startDsp 那一刻剛好等於 chartSec（timeAsDouble 吃 timeScale，所以餘裕要乘流速）。
             // 尾巴那項 = 把輸出延遲補償加回來：譜面時鐘一律減 rate×L（＝「時鐘讀的是正在出喇叭的位置」，見 ApplyClockOffset），
@@ -398,6 +419,9 @@ namespace Sdo.Game
 
             _tick.Rewind(chartMs);   // F7 打拍音：游標跟著跳，不補播過去的
             ResetScheduledTicks();
+            if (resumeOsuSamples) OnOsuPlaybackResumed(osuChartMs, startDsp);
+            else if (preserveOsuSamples) OnOsuPlaybackReanchored(osuChartMs);
+            else OnOsuPlaybackSeek(osuChartMs);
         }
 
         public void EditorSeekBy(double deltaMs) => EditorSeekMs(_nowMs + deltaMs);
@@ -408,9 +432,10 @@ namespace Sdo.Game
             if (!editorMode) return;
             double at = _nowMs;
             bool wasPaused = _paused;
-            if (wasPaused) { _paused = false; Time.timeScale = 1f; }   // SetGameRate 會依 dsp 重算「現在的譜面時間」，暫停中那個值是錯的
+            if (!wasPaused) OnOsuPlaybackPaused(at - _globalOffsetMs);
+            _resumeOsuSamplesOnNextEditorSeek = !wasPaused;
+            _preserveOsuSamplesOnNextEditorSeek = true;
             SetGameRate(rate);
-            if (wasPaused) { _paused = true; Time.timeScale = 0f; }
             EditorSeekMs(at);                                          // 用剛才的位置重新錨定四件事
         }
 

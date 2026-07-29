@@ -10,6 +10,11 @@ namespace Sdo.Osu
     public sealed class OsuBeatmap
     {
         public string AudioFilename { get; set; } = "";
+        /// <summary>
+        /// osu! [General] SamplesMatchPlaybackRate. The file-format default is false: rate-changing mods alter
+        /// trigger spacing, while each individual storyboard/custom sample keeps its original pitch and duration.
+        /// </summary>
+        public bool SamplesMatchPlaybackRate { get; set; }
         public string Title { get; set; } = "";
         public string Version { get; set; } = "";
 
@@ -37,6 +42,9 @@ namespace Sdo.Osu
         public double MusicStartOffsetMs { get; set; }
 
         public List<OsuHitObject> HitObjects { get; } = new List<OsuHitObject>();
+
+        /// <summary>Storyboard Sample events which play automatically, independently of player input.</summary>
+        public List<OsuSampleEvent> SampleEvents { get; } = new List<OsuSampleEvent>();
 
         /// <summary>
         /// SDO online/NX frame_type 33 = 捲動速度 track (time ms → current scroll-speed multiplier), sorted by time.
@@ -90,6 +98,16 @@ namespace Sdo.Osu
         /// </summary>
         public List<OsuTimingPoint> TimingPoints { get; } = new List<OsuTimingPoint>();
 
+        /// <summary>The sample volume (0..100) in effect at a chart time; 100 before the first timing point.</summary>
+        public int SampleVolumeAt(double ms)
+        {
+            for (int i = TimingPoints.Count - 1; i >= 0; i--)
+            {
+                if (TimingPoints[i].TimeMs <= ms) return TimingPoints[i].SampleVolume;
+            }
+            return 100;
+        }
+
         /// <summary>
         /// StepMania #STOPS/#FREEZES, in MILLISECONDS on the note/beat clock, sorted by time. Each is a window
         /// during which the note highway FREEZES: the audio keeps playing but every note holds its on-screen
@@ -129,12 +147,18 @@ namespace Sdo.Osu
                 // 炸彈/warp 旗標與顯示用時間都要跟著搬,不然平移完炸彈變普通 note、warp 音符的位置會脫節。
                 HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs + leadInMs,
                     h.EndTimeMs.HasValue ? h.EndTimeMs.Value + leadInMs : (int?)null, h.IsBomb,
-                    h.IsFake, h.ScrollTimeMs + leadInMs, h.ScrollEndTimeMs + leadInMs, h.IsFakeTail);
+                    h.IsFake, h.ScrollTimeMs + leadInMs, h.ScrollEndTimeMs + leadInMs, h.IsFakeTail,
+                    h.CustomSampleFilename, h.CustomSampleVolume);
             }
             for (int i = 0; i < TimingPoints.Count; i++)
             {
                 var t = TimingPoints[i];
-                TimingPoints[i] = new OsuTimingPoint(t.TimeMs + leadInMs, t.BeatLength);
+                TimingPoints[i] = new OsuTimingPoint(t.TimeMs + leadInMs, t.BeatLength, t.SampleVolume);
+            }
+            for (int i = 0; i < SampleEvents.Count; i++)
+            {
+                var s = SampleEvents[i];
+                SampleEvents[i] = new OsuSampleEvent(s.TimeMs + leadInMs, s.Layer, s.Filename, s.Volume);
             }
             for (int i = 0; i < Stops.Count; i++)
             {
@@ -211,7 +235,7 @@ namespace Sdo.Osu
                 if (dur >= cutoff) continue;
                 // 長條 → 一般 note(頭部的判定/顯示時間原封不動,尾端跟著收回頭部)
                 HitObjects[i] = new OsuHitObject(h.Lane, h.StartTimeMs, null, h.IsBomb, h.IsFake,
-                    h.ScrollTimeMs, h.ScrollTimeMs);
+                    h.ScrollTimeMs, h.ScrollTimeMs, false, h.CustomSampleFilename, h.CustomSampleVolume);
                 n++;
             }
             return n;
@@ -279,11 +303,13 @@ namespace Sdo.Osu
     {
         public double TimeMs { get; }
         public double BeatLength { get; }
+        public int SampleVolume { get; }
 
-        public OsuTimingPoint(double timeMs, double beatLength)
+        public OsuTimingPoint(double timeMs, double beatLength, int sampleVolume = 100)
         {
             TimeMs = timeMs;
             BeatLength = beatLength;
+            SampleVolume = sampleVolume < 0 ? 0 : (sampleVolume > 100 ? 100 : sampleVolume);
         }
 
         /// <summary>True for a tempo (BPM) point; false for an osu! SV (green) line.</summary>
@@ -291,6 +317,23 @@ namespace Sdo.Osu
 
         /// <summary>osu! scroll-velocity multiplier: 1.0 for tempo points, -100/BeatLength for green lines.</summary>
         public double SpeedMultiplier => BeatLength < 0.0 ? -100.0 / BeatLength : 1.0;
+    }
+
+    /// <summary>An osu! storyboard Sample event: play one beatmap-relative audio file automatically at a chart time.</summary>
+    public readonly struct OsuSampleEvent
+    {
+        public double TimeMs { get; }
+        public int Layer { get; }
+        public string Filename { get; }
+        public int Volume { get; }
+
+        public OsuSampleEvent(double timeMs, int layer, string filename, int volume = 100)
+        {
+            TimeMs = timeMs;
+            Layer = layer;
+            Filename = filename ?? "";
+            Volume = volume < 0 ? 0 : (volume > 100 ? 100 : volume);
+        }
     }
 
     /// <summary>

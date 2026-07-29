@@ -166,6 +166,7 @@ namespace Sdo.Game
         private void OnDestroy()
         {
             EditorRestoreCameraShift();   // 編輯器把相機推下去過的話要推回來（相機可能是前端共用的那一台）
+            DisposeOsuKeysounds();
             AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
             if (_noteVisualRoot) Destroy(_noteVisualRoot.gameObject);   // tear down the pooled note visuals (root-level like the old per-note objects) with this screen
         }
@@ -435,6 +436,7 @@ namespace Sdo.Game
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
 
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
+        private readonly List<RuntimeNote> _notesByMapIndex = new List<RuntimeNote>();
         private readonly List<double> _noteStarts = new List<double>();   // _notes[i].Note.StartTimeMs, ascending — drives NoteScan.UpperBound
         private int _firstAlive;                                          // cursor: index of the earliest still-live note (see NoteScan.Advance)
         private double _bombPrevNow;                                       // 上一幀的譜面時間,用來偵測炸彈「跨過判定線」的那一幀(見 TickBombs / StepMania CrossedMineRow)
@@ -1082,6 +1084,7 @@ namespace Sdo.Game
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
             _ambient = gameObject.AddComponent<AudioSource>();
+            BuildOsuKeysoundAudio();
             BuildAssistTick();   // F7 打拍音:本譜的 tick 時間軸 + 排程用的音源池
             var ambName = editorMode ? null : AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
             if (!string.IsNullOrEmpty(ambName)) StartCoroutine(LoadAmbientCo(ambName));
@@ -1785,6 +1788,19 @@ namespace Sdo.Game
             // 打拍測試：完全不放音樂（節拍音是 assist tick 排出來的）。沒有這道門，下面那個 fallback 會把
             // 示範曲 Bassdrop.mp3 撈出來播 —— 校時的時候背後放歌是最不該發生的事。
             if (beatTestMode) { _audioReady = true; StartCoroutine(EditorOpeningCo()); yield break; }
+            yield return LoadOsuKeysoundsCo();
+            bool externalTrackMissing = chartFormat != 0 &&
+                (IsVirtualOsuTrack || string.IsNullOrEmpty(oggPath) || !File.Exists(oggPath));
+            if (externalTrackMissing)
+            {
+                Debug.Log(IsVirtualOsuTrack ? "[keysound] virtual osu track: using silent transport" : "[Step1] external audio missing: using silent transport");
+                _audioReady = true;
+                if (editorMode) { StartCoroutine(EditorOpeningCo()); yield break; }
+                _clockStart = Time.timeAsDouble + OpeningParkSec;
+                _started = true;
+                StartCoroutine(OpeningSequence());
+                yield break;
+            }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
                 ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
             // 走哪個解碼器看**檔案內容**，不是副檔名 —— 外面撿來的歌曲庫常有名不符實的檔（[NX] 那包就有 4 個
@@ -1903,6 +1919,7 @@ namespace Sdo.Game
             // 從中途切入),餵的是 feat 管線的 MusicCountInSec(= marker + songOffsetMs + GlobalSongOffsetMs)。
             GameRate.ScheduleMusic(AudioSettings.dspTime, StartLeadSec, MusicCountInSec, _musicRate,
                                    out _songStartDspTime, out double playAtDsp, out double clipSkipSec);
+            OnOsuTransportStarted();
             if (_audio != null && _audio.clip != null)
             {
                 _audio.pitch = _timeScale;
@@ -1930,6 +1947,7 @@ namespace Sdo.Game
             // 打拍測試（F2）非交不可：那個模式**沒有音樂**，但你聽到的 click 是 PlayScheduled 排進 dsp 時鐘的。
             // 這裡若回 null，譜面時鐘就純靠 wall clock 自走 —— 於是「格線/判定」走 wall、「聽到的 click」走 dsp，
             // 兩支時鐘只在 seek 那一刻對過一次：會慢慢漂，而且視窗一失焦（wall 停、dsp 照跑）回來就固定錯開一段
+            if (IsVirtualOsuTrack) return VirtualOsuChartSeconds();
             // （實測：+108ms → 切出去再切回來變 −104ms）。鎖上 dsp 之後，殘留的固定偏移才等於「這台機器的真實延遲」。
             // 暫停中不交：timeScale=0 讓 wall 停住而 dsp 照跑，拿它當真值會把時鐘推著往前爬。
             if (editorMode)
@@ -2250,8 +2268,14 @@ namespace Sdo.Game
         // length. Notes are kept START-TIME-ASCENDING so the per-frame scans can window with NoteScan.
         private void SpawnNotes()
         {
-            foreach (var h in _map.HitObjects)
-                _notes.Add(new RuntimeNote(h, NoteBeatColor.Family(h.StartTimeMs, _map)));   // beat-quantization colour precomputed (used only in 3D skin)
+            _notesByMapIndex.Clear();
+            for (int mapIndex = 0; mapIndex < _map.HitObjects.Count; mapIndex++)
+            {
+                var h = _map.HitObjects[mapIndex];
+                var runtime = new RuntimeNote(h, NoteBeatColor.Family(h.StartTimeMs, _map));
+                _notes.Add(runtime);
+                _notesByMapIndex.Add(runtime);
+            }
             // window/break rely on ascending start (loaders sort, but be defensive). 判定時間相同時再比顯示時間 ——
             // StepMania warp(負 BPM)那一批音符判定時刻全部一樣、只有畫面位置不同,ScrollNotes 的提早 break 是照
             // 顯示順序走的,排錯會讓 warp 那批少畫幾顆。
@@ -4528,6 +4552,7 @@ namespace Sdo.Game
                 if (dspNow < _songStartDspTime) _audio.SetScheduledStartTime(_songStartDspTime);   // 還在 lead-in/數拍:起播點也要重排
             }
             ResetScheduledTicks();   // 已排進音訊時鐘的打拍音是舊速度算的 → 全部作廢重排
+            OnOsuPlaybackRateChanged((_paused ? _pauseChartSec : chartSecNow) * 1000.0);
         }
 
         // \ 暫停/恢復。音樂也要停 —— 只把 timeScale 歸零的話音樂會自顧自跑掉,恢復時整首歌就對不上了。
@@ -4540,6 +4565,7 @@ namespace Sdo.Game
                 if (_audio != null && _audio.clip != null) _audio.Pause();
                 Time.timeScale = 0f;   // Time.timeAsDouble 隨之凍結 → 譜面時鐘自己就停了,不需另外存
                 ResetScheduledTicks();
+                OnOsuPlaybackPaused(_pauseChartSec * 1000.0);
             }
             else
             {
@@ -4567,6 +4593,7 @@ namespace Sdo.Game
                 // （timeAsDouble 吃 timeScale，所以餘裕要乘流速。）
                 _clockStart = Time.timeAsDouble - (_pauseChartSec - lead * _musicRate);
                 _clock.Reset();
+                OnOsuPlaybackResumed(_pauseChartSec * 1000.0, startDsp);
             }
             _paused = paused;
         }
@@ -4698,6 +4725,7 @@ namespace Sdo.Game
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
             TickAssist(now);   // F7 打拍音：把接下來 250ms 內的 tick 排進音訊時鐘（關閉時只推游標）
             // 譜面編輯器：只把音符捲過去 —— 不扣血、不計分、不結算（時間由 ChartEditorScreen 自由 seek）。
+            TickOsuSampleEvents(now);
             // 判定照跑（含一般編譜模式）：只回報誤差給 osu 式誤差條，讓你邊看譜邊跟著打、即時看出偏早/偏晚。
             if (editorMode)
             {
@@ -4709,11 +4737,22 @@ namespace Sdo.Game
             }
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
+            bool showtimeWasActive = _showtime.Active;
+            double showtimeEndBeforeTick = _showtime.UntilMs;
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
+            TickOsuSampleEvents(now);   // re-check after a ShowTime transition so this frame's note uses the DSP queue
             bool manualPlay = !_failed && !_showtime.Active && !autoPlay;   // 只有真人手動打時才吃鍵盤(= 下面 HandleInput 分支的條件)
             if (!_failed)
             {
                 if (_showtime.Active) AutoPlay(now, showtime: true);   // ShowTime window: force PERFECT, ignore manual input
+                else if (showtimeWasActive)
+                {
+                    // The frame can cross UntilMs before judging runs. Finish every head strictly inside the old
+                    // window so a DSP-scheduled keysound can never exist without its matching auto-PERFECT.
+                    AutoPlay(showtimeEndBeforeTick - 0.0001, showtime: true);
+                    if (autoPlay) { AutoPlay(now); _stJustEnded = false; }
+                    else { HandleInput(now); AutoMiss(now); }
+                }
                 else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
                 else { HandleInput(now); AutoMiss(now); }
             }
@@ -4750,10 +4789,14 @@ namespace Sdo.Game
             //   兩種基準最後都再 +1 秒緩衝才 EnterResult(音樂/最後音符播完後的定格前置)。
             double notesEndMs = _totalMs;
             double baseEndMs = notesEndMs;
+            // A virtual keysound map has no backing clip; its automatic samples are the song. Honour their final
+            // audible tail under the same 10-second outro cap used for ordinary backing audio.
+            if (_osuTimelineEndMs > notesEndMs && _osuTimelineEndMs <= notesEndMs + 10000.0) baseEndMs = _osuTimelineEndMs;
             if (_audio != null && _audio.clip != null)
             {
                 double musicEndMs = (MusicCountInSec + _audio.clip.length) * 1000.0;
-                if (musicEndMs > notesEndMs && musicEndMs <= notesEndMs + 10000.0) baseEndMs = musicEndMs;
+                if (musicEndMs > notesEndMs && musicEndMs <= notesEndMs + 10000.0)
+                    baseEndMs = Math.Max(baseEndMs, musicEndMs);
             }
             if (!_ended && (_failed || now > baseEndMs + 1000)) { _ended = true; EnterResult(); }
         }
@@ -5376,6 +5419,7 @@ namespace Sdo.Game
                 {
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
                     _recDownStart[n.Note.Lane] = Time.time;   // auto-press: fire the keydown burst (head only, never the hold tail)
+                    PlayOsuHitSample(n.Note, grade);
                     if (grade == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // flows past the receptor (bar dimmed), then ScrollNotes removes it
                     else if (n.Note.IsHold) { _holding[n.Note.Lane] = n; SpawnHit3dLong(n.Note.Lane); }   // 3D: continuous HIT_LONG for the hold
                     else n.Done = true;
@@ -5661,6 +5705,7 @@ namespace Sdo.Game
             var j = _engine.JudgeHit(n.Note.StartTimeMs, _stPressMs[lane]);   // grade at the player's REAL press time
             if (j == null || j.Value == Judgment.Miss) return;     // press too far off the aimed note → leave it for normal manual play (a fresh post-seam press), don't force a seam miss
             n.HeadJudged = true; ApplyEvent(j.Value, lane); _recDownStart[lane] = Time.time;   // keydown burst on the replayed press too
+            PlayOsuHitSample(n.Note, j.Value);
             if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
             if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; return; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
             if (held) { _holding[lane] = n; return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
@@ -5679,6 +5724,7 @@ namespace Sdo.Game
             if (forcedJudge >= 0) jv = (Judgment)forcedJudge;                         // debug: force a grade on the hit
             else { var j = _engine.JudgeHit(n.Note.StartTimeMs, now); if (j == null) return; jv = j.Value; }
             n.HeadJudged = true; ApplyEvent(jv, lane);
+            PlayOsuHitSample(n.Note, jv);
             if (jv == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // keep flowing past the receptor (dimmed if it's a bar); ScrollNotes removes it off the top
             else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // Bad head = never held → dimmed bar; 3D: continuous HIT_LONG for the hold
             else n.Done = true;
