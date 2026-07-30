@@ -5,7 +5,7 @@
 [README.md](README.md) 與 [docs/systems/networking.md](../docs/systems/networking.md)。
 
 > 📄 **要部署到 `srcds.yhaniki.com` 那台就直接看 [DEPLOY.md](DEPLOY.md)** —— 那份是照那台主機的
-> 實際狀況寫的(port 27017、磁碟只剩 21G、跟 L4D2 撞 port),照著抄就好。
+> 實際狀況寫的(port 8888、磁碟只剩 21G、用 tmux + 獨立的 `sdo` 帳號跑),照著抄就好。
 > 這份是通用的:換一台機器、或想知道某個參數到底在做什麼的時候看這份。
 
 所有指令都在這個 repo 的根目錄執行。Windows 的指令用 PowerShell,Linux 的用 bash。
@@ -282,6 +282,17 @@ sudo systemctl enable --now sdo-server
 journalctl -u sdo-server -f
 ```
 
+🔴 `ProtectHome=true` 會把 `/home` 遮成空目錄。資料目錄或憑證放在某個人的家目錄底下時,
+症狀是「憑證讀不到 → exit 4」而不是權限錯誤。要嘛照上面放 `/var/lib` + `/etc`,要嘛關掉這行。
+
+### 4.5b 不用 systemd:tmux
+
+想要能 `attach` 進去看畫面、或不想動 `/etc/systemd` 的話,[`deploy/sdoctl.sh`](deploy/sdoctl.sh)
+把 tmux 那套包成 `start` / `stop` / `restart` / `attach` / `status` / `log`
+(設定放 `/etc/sdo/sdoctl.conf`)。代價是**沒有 `Restart=on-failure`、沒有 journald 輪替、
+沒有開機自動啟動**(要自己加 `@reboot` crontab)——
+取捨與實際用法見 [DEPLOY.md §14](DEPLOY.md#14-為什麼是-tmux-不是-systemd)。
+
 ### 4.6 上線前的驗收清單
 
 ```
@@ -427,7 +438,8 @@ DataRoot 看 repo 根的 `data_root.txt`,**不是** exe 旁邊那份 DATA
 
 ## 7. 症狀 → 原因 → 去哪裡看
 
-log 在哪:server 是 stdout(systemd → `journalctl -u sdo-server -f`);
+log 在哪:server 是 stdout(systemd → `journalctl -u sdo-server -f`;
+用 §4.5b 的 tmux 那套 → `sdoctl log`,檔案在 `<data>/server.log`);
 client 是 `<exe 目錄>\log.txt`(或 `SDO_LOG` 指定的路徑),**要先開 `SDO_VERBOSE=1`**。
 
 | 玩家/你看到什麼 | 真正的原因 | 去哪裡確認 |
