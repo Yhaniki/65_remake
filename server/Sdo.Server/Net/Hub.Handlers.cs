@@ -265,8 +265,9 @@ namespace Sdo.Server.Net
             // client「dance v1.5.0-dev-d41da」對 server「sdo-server v1.5.0-dev-d41da」。
             string clientBuild = Clip(NetJson.Str(node, "build").Trim(), 64);
             conn.Build = clientBuild;
-            Log("user " + conn.UserId + " 「" + conn.Name + "」上線(#" + conn.ConnId + ")"
-                + (clientBuild.Length > 0 ? " client=" + clientBuild : " client=(未報版本)"));
+            // 一個人上線只印這一行:名字、從哪來、哪個版本。IP 在這裡才有意義(對得上人)。
+            Log("user " + conn.UserId + "「" + conn.Name + "」上線  " + conn.RemoteLabel
+                + "  " + (clientBuild.Length > 0 ? clientBuild : "(未報版本)"));
             if (clientBuild.Length > 0 && !BuildVersionMatch.Same(clientBuild, BuildInfo.Version))
                 Log("⚠️  版本不一致:client=" + clientBuild + " server=" + BuildInfo.Banner
                     + " —— 兩邊不是同一個 commit,新加的訊息型別在舊的那一邊會被當成不認識而忽略。");
@@ -339,7 +340,7 @@ namespace Sdo.Server.Net
                 .Int("code", room.Code));
 
             BroadcastRoomState(room);
-            Log("user " + conn.UserId + " 開了房 " + room.Code);
+            Log("房 " + room.Code + " 開房  user " + conn.UserId + "「" + conn.Name + "」");
         }
 
         private void OnJoinRoom(Connection conn, object node, int rq)
@@ -363,7 +364,7 @@ namespace Sdo.Server.Net
             {
                 BroadcastRoomState(room);
                 SendMoveSnapshot(conn, room);   // 讓他立刻知道大家站在哪裡(見那個方法的註解)
-                Log("user " + conn.UserId + " 加入房 " + code + " 座位 " + seat);
+                Log("房 " + code + " 加入  user " + conn.UserId + "「" + conn.Name + "」座位 " + seat);
             }
         }
 
@@ -410,7 +411,7 @@ namespace Sdo.Server.Net
                 var evicted = left.EvictedUserIds;
                 for (int i = 0; i < evicted.Length; i++) SendKicked(evicted[i], NetProto.KickedRoomClosed);
                 DropRoomScratch(left.Room.Code);
-                Log("房 " + left.Room.Code + " 已關閉(沒人了)");
+                Log("房 " + left.Room.Code + " 關閉(沒人了)");
                 return;
             }
 
@@ -604,7 +605,7 @@ namespace Sdo.Server.Net
             SendKicked(target, NetProto.KickedByHost);
             if (left.RoomClosed) { DropRoomScratch(room.Code); return; }
             BroadcastRoomState(room);
-            Log("user " + target + " 被房主踢出房 " + room.Code);
+            Log("房 " + room.Code + " 踢出  user " + target);
         }
 
         private void OnSetSeatClosed(Connection conn, object node, int rq)
@@ -657,8 +658,8 @@ namespace Sdo.Server.Net
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
             DropRoomMoves(room.Code);
             // 座位有 log、旁觀沒有 → 實機驗證時「他到底進去了沒」只能用猜的。補上。
-            Log("user " + conn.UserId + " 以旁觀身分進入房 " + room.Code
-                + "(座位 " + room.State.SeatedCount + " 人)");
+            Log("房 " + room.Code + " 旁觀  user " + conn.UserId + "「" + conn.Name
+                + "」(座位 " + room.State.SeatedCount + " 人)");
             BroadcastRoomState(room);
         }
 
@@ -1119,7 +1120,7 @@ namespace Sdo.Server.Net
                     .Str(NetProto.FieldType, NetProto.GameplayAborted)
                     .Long("matchId", tick.MatchId)
                     .Str("reason", NetProto.AbortLoadTookTooLong));
-                Log("房 " + room.Code + ":user " + timedOut[i] + " 載入逾時,逐出本場");
+                Log("房 " + room.Code + " 載入逾時,逐出本場:user " + timedOut[i]);
             }
 
             if (tick.MatchAborted)
@@ -1131,7 +1132,7 @@ namespace Sdo.Server.Net
                     .Utf8();
                 ForEachInRoom(room, c => c.SendPreEncoded(bytes));
                 DropRoomScratch(room.Code);
-                Log("房 " + room.Code + ":沒有人載入成功,本場取消");
+                Log("房 " + room.Code + " 本場取消(沒有人載入成功)");
             }
 
             if (tick.GameplayStarted)
@@ -1142,7 +1143,8 @@ namespace Sdo.Server.Net
                     .Long("serverStartMs", now)
                     .Utf8();
                 ForEachInRoom(room, c => c.SendPreEncoded(bytes));
-                Log("房 " + room.Code + ":第 " + tick.MatchId + " 場開始");
+                // 「開始第 N 場」上面已經印過(載入前);這裡是載入完真的開跳,對營運沒有新資訊 → verbose。
+                LogVerbose("房 " + room.Code + ":第 " + tick.MatchId + " 場開始跳了");
             }
 
             if (tick.ResultsReady)
@@ -1201,7 +1203,7 @@ namespace Sdo.Server.Net
                 .Put("rows", rows)
                 .Utf8();
             ForEachInRoom(room, c => c.SendPreEncoded(bytes));
-            Log("房 " + room.Code + ":第 " + matchId + " 場結算");
+            Log("房 " + room.Code + " 第 " + matchId + " 場結算");
         }
 
         private static FrameSample ResultFrame(
@@ -1270,7 +1272,7 @@ namespace Sdo.Server.Net
             {
                 // 密語找不到人要留 log:玩家回報「密語沒反應」時,這一行能立刻分辨是
                 // 「server 沒收到」(完全沒有這行 → 版本不對或封包沒送出)還是「真的沒這個人」。
-                Log("user " + conn.UserId + " 密語找不到「" + target + "」");
+                LogVerbose("user " + conn.UserId + " 密語找不到「" + target + "」");
                 // party 用玩家原本打的那串字,不是正規化後的 —— 錯字要照樣顯示出來,他才知道自己打錯了什麼。
                 conn.Send(JObj.New()
                     .Str(NetProto.FieldType, NetProto.WhisperMsg)

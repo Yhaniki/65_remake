@@ -303,6 +303,17 @@ namespace Sdo.UI.Screens
 
         private static string L(string k) => LocalizationManager.Get(k);
 
+        /// <summary>
+        /// 「這個操作為什麼沒成功」——**只寫 log,不彈 toast**。
+        ///
+        /// 這些原本都是畫面上方的浮動訊息,但它們幾乎全是「按了但條件不符」的例行拒絕
+        /// (沒選歌、還有人沒準備、正在局裡不能旁觀…),而畫面本身已經表達了狀態:
+        /// 沒選歌時歌名欄是空的、沒準備的人頭上沒有準備標記。一直跳訊息只是把畫面弄髒。
+        /// 需要追原因時看 log(而且 log 印的是同一句本地化文字,不必再對照 key)。
+        /// </summary>
+        private static void Notice(string key)
+            => Debug.Log("[room] " + L(key));
+
         protected override void BuildUI()
         {
             // 1) full-screen 3D-room backdrop (behind everything; texture wired in OnShow)
@@ -4579,6 +4590,10 @@ namespace Sdo.UI.Screens
         }
 
         // 頭上的名字牌:跟本機那顆同款(FaceCream + 黑邊 + 粗體),沒有它的話房間裡的人是誰全靠猜。
+        //
+        // 寫什麼字由 RoomHeadName 決定 —— 進去打歌的人(還沒回房間)寫 Playing,其餘寫「名字 LV:x」。
+        // 這個方法掛在 rev gate 之後,而 PlayState 每次變動 server 都會 Touch()(Rev++)並推新快照,
+        // 所以「他開始打了 / 他回來了」都會走到這裡重寫一次;不需要每幀比對。
         private void SyncRemoteNamePlates(Sdo.Net.NetRoomSnapshot snap, int me)
         {
             _remoteScratchIds.Clear();
@@ -4596,8 +4611,7 @@ namespace Sdo.UI.Screens
                                                trackEm: TextStyles.HeadNameTrackEm);
                     _remoteNames[s.UserId] = lbl;
                 }
-                string lvl = s.Level > 0 ? "  LV:" + s.Level : "";
-                lbl.SetText((s.Name ?? "") + lvl);
+                lbl.SetText(RoomHeadName.For(s.Name, s.Level, s.PlayState));
             }
 
             // Spectators still own a live 3D avatar in a looker slot. Keep the same userId-keyed label while
@@ -4619,8 +4633,8 @@ namespace Sdo.UI.Screens
                                                    trackEm: TextStyles.HeadNameTrackEm);
                         _remoteNames[sp.UserId] = lbl;
                     }
-                    string lvl = sp.Level > 0 ? "  LV:" + sp.Level : "";
-                    lbl.SetText((sp.Name ?? "") + lvl);
+                    // 旁觀者不會在場中(NetSpectator 連 PlayState 欄位都沒有)→ 永遠寫名字。
+                    lbl.SetText(RoomHeadName.For(sp.Name, sp.Level, PlayState.Spectating));
                 }
 
             _remoteGoneIds.Clear();
@@ -4808,7 +4822,7 @@ namespace Sdo.UI.Screens
             var net = Ctx != null ? Ctx.Net : null;
             if (net == null || !net.IsConnected || !net.InRoom)
             {
-                Toast.Show(L("room.spectate_offline"));   // 離線單機沒有旁觀(沒有別人可看)
+                Notice("room.spectate_offline");   // 離線單機沒有旁觀(沒有別人可看)
                 return;
             }
 
@@ -4822,9 +4836,9 @@ namespace Sdo.UI.Screens
             if (me == null) return;   // 不在座位上也不是旁觀者 → 狀態還沒同步,等下一份快照
 
             bool completed = me.PlayState == PlayState.Finished || me.PlayState == PlayState.Results;
-            if (me.PlayState != PlayState.Idle && !completed) { Toast.Show(L("room.spectate_in_match")); return; }
+            if (me.PlayState != PlayState.Idle && !completed) { Notice("room.spectate_in_match"); return; }
             // 房主的 Ready 恆 false(D12)—— 所以這條天然不會擋到房主,不用另外排除它。
-            if (me.Ready && !completed) { Toast.Show(L("room.spectate_ready")); return; }
+            if (me.Ready && !completed) { Notice("room.spectate_ready"); return; }
             net.Spectate();   // 同上:等 server 的快照,不先報成功
         }
 
@@ -4891,7 +4905,7 @@ namespace Sdo.UI.Screens
         {
             _awaitingMatchStart = false;
             Debug.Log("[room] gameplay aborted: " + (reason ?? ""));
-            Toast.Show(L("room.match_aborted"));
+            Notice("room.match_aborted");
         }
 
         /// <summary>
@@ -4938,7 +4952,7 @@ namespace Sdo.UI.Screens
             if (!_awaitingMatchStart) return;
             if (Time.unscaledTime - _awaitingSince < RequestStartTimeoutSec) return;
             _awaitingMatchStart = false;
-            Toast.Show(L("room.start_no_response"));
+            Notice("room.start_no_response");
         }
 
         /// <summary>把 server echo 的這一場設定套進 session —— 場景/難度/歌曲都要與所有人一致。</summary>
@@ -5050,7 +5064,7 @@ namespace Sdo.UI.Screens
             // 🔴 擋住而不是退回個人隊形:退回會讓玩家以為分隊生效了卻看到單人站位,那是靜默的錯誤行為。
             //    server 也會獨立擋一次(含 force),這裡只是提早講清楚。
             var teamRoom = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-            if (!TeamsCanStart(teamRoom, out _)) { Debug.Log("[room] 開始被本機擋下:組隊人數湊不出站位"); Toast.Show(L("room.teams_need_layout")); return; }
+            if (!TeamsCanStart(teamRoom, out _)) { Notice("room.teams_need_layout"); return; }
 
             if (Online)
             {
@@ -5061,7 +5075,7 @@ namespace Sdo.UI.Screens
                 {
                     var r0 = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
                     // 沒歌是硬條件,強制也開不了 → 直接說。
-                    if (r0 == null || string.IsNullOrEmpty(r0.SongTitle)) { Debug.Log("[room] 開始被本機擋下:房間沒有歌(room.SongTitle 空)"); Toast.Show(L("room.need_song")); return; }
+                    if (r0 == null || string.IsNullOrEmpty(r0.SongTitle)) { Notice("room.need_song"); return; }
                     // 有人沒準備 → 第一次按只提示,1.5 秒內再按一次才強制開始(需求:房主連按兩下強制開始)。
                     if (Time.unscaledTime - _lastStartPressAt > ForceStartDoubleTapSec)
                     {
@@ -5083,7 +5097,7 @@ namespace Sdo.UI.Screens
             if (Ctx.Rooms == null || !Ctx.Rooms.CanStart())
             {
                 var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-                Toast.Show(L(room != null && string.IsNullOrEmpty(room.SongTitle) ? "room.need_song" : "room.waiting_players"));
+                Notice(room != null && string.IsNullOrEmpty(room.SongTitle) ? "room.need_song" : "room.waiting_players");
                 return;
             }
             _starting = true;
@@ -5121,7 +5135,7 @@ namespace Sdo.UI.Screens
         {
             if (Ctx == null || Ctx.Flow == null || Ctx.Flow.Current != ScreenId.Room) return;   // 不在房間畫面就不搶轉場
             Debug.Log("[room] kicked: " + (reason ?? ""));
-            Toast.Show(L("room.kicked"));
+            Notice("room.kicked");
             ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(ScreenId.GenderSel); });
         }
 
@@ -5319,7 +5333,7 @@ namespace Sdo.UI.Screens
             // 圖也是照畫的,所以不能靠「看起來能不能按」讓玩家知道)。改回「自由」永遠放行。
             if (team != (int)TeamTag.Free && !TeamLayoutRules.TeamsAllowedIn(RoomGameMode()))
             {
-                Toast.Show(L("room.teams_normal_mode_only"));
+                Notice("room.teams_normal_mode_only");
                 return;
             }
             if (Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom)
@@ -5338,12 +5352,12 @@ namespace Sdo.UI.Screens
             var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             if (!CanManageSeats(room)) return;
             // 自動分隊也只在普通模式(server 的 assignTeams 同樣會擋)。
-            if (!TeamLayoutRules.TeamsAllowedIn(RoomGameMode())) { Toast.Show(L("room.teams_normal_mode_only")); return; }
+            if (!TeamLayoutRules.TeamsAllowedIn(RoomGameMode())) { Notice("room.teams_normal_mode_only"); return; }
             int seated = SeatedPlayerCount(room);
             var layouts = new List<TeamLayout>(3);
             if (seated == 4) layouts.Add(TeamLayout.V2v2);
             if (seated == 6) { layouts.Add(TeamLayout.V3v3); layouts.Add(TeamLayout.V2v2v2); }
-            if (layouts.Count == 0) { Toast.Show(L("room.teams_need_layout")); return; }
+            if (layouts.Count == 0) { Notice("room.teams_need_layout"); return; }
 
             CloseSlotPopup();
             _slotPopup = BuildContextMenu("TeamsPopup", screenPos, layouts.Count,
@@ -5352,7 +5366,7 @@ namespace Sdo.UI.Screens
                 idx =>
                 {
                     var now = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-                    if (CanManageSeats(now)) { Ctx.Net.AssignTeams(layouts[idx]); Toast.Show(L("room.teams_assigned")); }
+                    if (CanManageSeats(now)) { Ctx.Net.AssignTeams(layouts[idx]); Notice("room.teams_assigned"); }
                     CloseSlotPopup();
                 });
         }

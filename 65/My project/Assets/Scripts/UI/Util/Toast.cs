@@ -4,7 +4,22 @@ using UnityEngine.UI;
 
 namespace Sdo.UI.Util
 {
-    /// <summary>Center-top transient message (errors, info). Built once into the modal layer.</summary>
+    /// <summary>
+    /// 畫面上方置中的浮動訊息。整個 app 只建一個(在 modal 層)。
+    ///
+    /// 🔴 **什麼該彈、什麼只寫 log** —— 這條線劃過一次了,不要讓它慢慢長回來:
+    ///
+    ///   彈:玩家**看不出來**發生了什麼,而且他能據此做點什麼 ——
+    ///       購買/刪除成功、設定已套用、連不上伺服器改用單機、傳歌失敗、
+    ///       「再按一次開始可以強制開始」這種操作指引。
+    ///
+    ///   只寫 log:「按了但條件不符」的例行拒絕 —— 沒選歌、還有人沒準備、不是房主、
+    ///       房間滿了、正在局裡不能旁觀…… 這些**畫面本身已經表達了**(歌名欄是空的、
+    ///       頭上沒有準備標記、不是房主就沒有那顆按鈕、房間列表寫著人數與「遊戲中」)。
+    ///       在那上面再蓋一條浮動訊息只是把畫面弄髒,而玩家早就知道了。
+    ///
+    /// 追原因看 log:那些行印的是同一句本地化文字(不是 error code),所以 log 一樣讀得懂。
+    /// </summary>
     public sealed class Toast : MonoBehaviour
     {
         private static Toast _inst;

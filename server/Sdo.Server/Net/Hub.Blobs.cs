@@ -136,7 +136,7 @@ namespace Sdo.Server.Net
             if (!string.Equals(recomputed, packId, StringComparison.Ordinal))
             {
                 SendBlobError(conn, rq, NetProto.BlobErrHashMismatch, "重算的 packId 與宣稱的不符");
-                Log("使用者 " + conn.UserId + " 的上傳被拒:packId 重算不符");
+                Log("✗ user " + conn.UserId + " 上傳被拒:packId 重算不符");
                 return;
             }
 
@@ -163,8 +163,9 @@ namespace Sdo.Server.Net
             // 而且每包在房間換歌前都被 janitor pin 住,清不掉。
             if (!_quota.Allows(conn.UserId, needBytes, now))
             {
-                Log("使用者 " + conn.UserId + " 的上傳超過每小時配額(還剩 "
-                    + (_quota.Remaining(conn.UserId, now) / 1024) + " KB),拒絕");
+                // 下面 SendBlobError 已經會印一行「✗ … 被拒」,這裡只補「還剩多少額度」給 verbose。
+                LogVerbose("user " + conn.UserId + " 的配額還剩 "
+                    + (_quota.Remaining(conn.UserId, now) / 1024) + " KB");
                 SendBlobError(conn, rq, NetProto.BlobErrQuota, "超過每小時上傳配額,請稍後再試");
                 return;
             }
@@ -192,8 +193,8 @@ namespace Sdo.Server.Net
                 .Long("needBytes", needBytes)
                 .Put("need", needArr));
 
-            Log("房 " + sess.RoomCode + " 開始收上傳:" + need.Count + "/" + files.Count + " 個檔、" +
-                (needBytes / 1024) + " KB");
+            Log("房 " + sess.RoomCode + " 收上傳:" + need.Count + "/" + files.Count + " 檔、"
+                + Mb(needBytes) + "(" + sess.PackId + ")");
 
             if (need.Count == 0) FinishUpload(conn, sess, 0, now);   // 全部去重命中 → 直接完成
             else OpenNextUploadFile(conn, sess);
@@ -287,7 +288,7 @@ namespace Sdo.Server.Net
                 if (!_blobs.CommitBlob(sess.CurTmpPath, f.Sha256))
                 {
                     SendBlobError(conn, 0, NetProto.BlobErrHashMismatch, "內容與 sha256 不符:" + f.RelPath);
-                    Log("使用者 " + conn.UserId + " 的上傳被拒:" + f.RelPath + " hash 不符");
+                    Log("✗ user " + conn.UserId + " 上傳被拒:" + f.RelPath + " hash 不符");
                     AbortUpload(conn.ConnId);
                     return;
                 }
@@ -352,7 +353,7 @@ namespace Sdo.Server.Net
                 BroadcastToRoom(sess.RoomCode, JObj.New()
                     .Str(NetProto.FieldType, NetProto.BlobAvailable)
                     .Str("packId", sess.PackId));
-                Log("房 " + sess.RoomCode + " 上傳完成(已存在的包,只續命):" + sess.PackId);
+                LogVerbose("房 " + sess.RoomCode + " 上傳完成(這個包 server 早就有了,只續命):" + sess.PackId);
                 return;
             }
 
@@ -379,7 +380,7 @@ namespace Sdo.Server.Net
                 .Str(NetProto.FieldType, NetProto.BlobAvailable)
                 .Str("packId", sess.PackId));
 
-            Log("房 " + sess.RoomCode + " 上傳完成:" + sess.PackId + "(" + sess.Files.Count + " 個檔)");
+            Log("房 " + sess.RoomCode + " 上傳完成:" + sess.PackId + "(" + sess.Files.Count + " 檔)");
         }
 
         private void AbortUpload(int connId)
@@ -447,7 +448,7 @@ namespace Sdo.Server.Net
                 Files = pack.Files,
                 TotalBytes = total,
             };
-            Log("使用者 " + conn.UserId + " 開始下載 " + packId + "(" + (total / 1024) + " KB)");
+            Log("user " + conn.UserId + " 下載 " + packId + "(" + Mb(total) + ")");
         }
 
         /// <summary>
@@ -521,7 +522,7 @@ namespace Sdo.Server.Net
                         .Str(NetProto.FieldType, NetProto.BlobDownloadDone)
                         .Str("packId", sess.PackId)
                         .Long("totalBytes", sess.SentBytes));
-                    Log("使用者 " + sess.UserId + " 下載完成 " + sess.PackId);
+                    Log("user " + sess.UserId + " 下載完成 " + sess.PackId);
                     (finished ?? (finished = new List<int>())).Add(kv.Key);
                 }
             }
@@ -602,7 +603,7 @@ namespace Sdo.Server.Net
 
         private void SendBlobError(Connection conn, int rq, string code, string msg)
         {
-            Log("blob 拒絕 #" + conn.ConnId + " " + code + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
+            Log("✗ user " + conn.UserId + " 傳檔被拒:" + code + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
             conn.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.BlobError)
                 .Int(NetProto.FieldRequest, rq)

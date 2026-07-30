@@ -80,6 +80,11 @@ namespace Sdo.Server.Net
         /// <summary>憑證載入失敗的原因(非 null = server 不該啟動)。</summary>
         public string TlsError { get; private set; }
 
+        // token 檔的載入結果。建構子讀、banner 印(見建構子的註解:順序)。
+        private int _tokenCount;
+        private string _tokenLoadError;
+        private List<string> _tokenProblems;
+
         /// <summary>這台 server 的憑證指紋(SHA-256 小寫 hex)。空 = 沒開 TLS。</summary>
         public string TlsFingerprint { get; private set; } = "";
 
@@ -99,19 +104,19 @@ namespace Sdo.Server.Net
             _origin.SetAllowList(opts.AllowFrom);
             _origin.MaxPerIp = opts.MaxPerIp;
             _quota.BytesPerHour = opts.UploadBytesPerHour;
+            // ⚠️ 這裡**不印**「已啟用」那類的行 —— 建構子比 banner 早跑,印了會插在版本/監聽之前,
+            // 開機訊息就變成沒有順序的一堆。狀態統一由 PrintSecurityBanner 一行列完;
+            // 這裡只留「真的出事了」的:token 檔讀不到 / 內容有問題,那是設定錯誤,不能被摺疊掉。
             if (!string.IsNullOrEmpty(opts.TokensFile))
             {
                 var problems = new List<string>();
-                try
+                try { _tokenCount = _tokens.Load(System.IO.File.ReadAllText(opts.TokensFile), problems); }
+                catch (Exception ex)
                 {
-                    int n = _tokens.Load(System.IO.File.ReadAllText(opts.TokensFile), problems);
-                    Log("token 認證已啟用:" + n + " 個 token(身分由 server 決定,不再信 client 自稱)");
+                    _tokenLoadError = ex.Message;
                 }
-                catch (Exception ex) { Log("讀不到 token 檔 " + opts.TokensFile + ":" + ex.Message + " → token 認證未啟用"); }
-                foreach (var pr in problems) Log("token 檔:" + pr);
+                _tokenProblems = problems;
             }
-            if (_origin.HasAllowList) Log("來源限制已啟用:" + opts.AllowFrom);
-            if (_quota.Enabled) Log("上傳配額已啟用:每人每小時 " + (opts.UploadBytesPerHour / (1024 * 1024)) + " MB");
 
             if (opts.TlsEnabled)
             {
@@ -160,12 +165,12 @@ namespace Sdo.Server.Net
             _listener.Start();
             ActualPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
 
-            // 版本擺在最前面 —— 排查任何「更新完還是壞的」都要先確認這顆 binary 真的是新的。
+            // 版本擺在第一行 —— 排查任何「更新完還是壞的」都要先確認這顆 binary 真的是新的。
             // 與 client 視窗標題同格式(dance v1.5.0-dev-d41da ↔ sdo-server v1.5.0-dev-d41da),見 BuildInfo。
-            Console.WriteLine("[sdo-server] " + BuildInfo.Banner
-                              + "  (protocol v" + NetProto.Version + ")");
-            Console.WriteLine("[sdo-server] 監聽中 " + addr + ":" + ActualPort);
-            Console.WriteLine("[sdo-server] " + _opts);
+            Log(BuildInfo.Banner + " (protocol v" + NetProto.Version + ")  監聽 " + addr + ":" + ActualPort);
+            Log("data=" + _opts.DataDir + "  房間上限 " + _opts.MaxRooms
+                + "  連線上限 " + _opts.MaxConnections
+                + "  歌曲暫存 " + _opts.MaxTotalBlobGb + "GB/" + _opts.TtlHours + "h");
             PrintSecurityBanner();
 
             var accept = Task.Factory.StartNew(AcceptLoop, TaskCreationOptions.LongRunning);
@@ -184,23 +189,34 @@ namespace Sdo.Server.Net
         /// </summary>
         private void PrintSecurityBanner()
         {
-            bool hardened = _tokens.Enabled && _tlsCert != null;
+            // 四道防線一行列完(✓/✗ 一眼掃過去),而不是每一項各印一段 ——
+            // 開機訊息愈長,真正要看的那一項愈容易被跳過。
+            Log("安全:加密 " + Mark(_tlsCert != null)
+                + "  密碼 " + Mark(!string.IsNullOrEmpty(_opts.Password))
+                + "  token " + Mark(_tokens.Enabled) + (_tokens.Enabled ? "(" + _tokenCount + ")" : "")
+                + "  來源限制 " + Mark(_origin.HasAllowList)
+                + "  上傳配額 " + (_quota.Enabled
+                    ? (_opts.UploadBytesPerHour / (1024 * 1024)) + "MB/人/時" : "✗"));
+
+            // 自簽憑證要把指紋填進 client,所以指紋要印;但說明壓成同一行。
             if (_tlsCert != null)
-            {
-                Console.WriteLine("[sdo-server] TLS 已啟用(TLS 1.2/1.3)。憑證指紋 SHA-256:");
-                Console.WriteLine("[sdo-server]   " + TlsFingerprint);
-                Console.WriteLine("[sdo-server]   自簽憑證的話,把上面那串填進 client 的 config.ini:");
-                Console.WriteLine("[sdo-server]   serverTls=1 / serverCertFingerprint=<上面那串>");
-            }
-            else
-            {
-                Console.WriteLine("[sdo-server] ⚠️  沒有加密(明文 TCP)。要加密請給 --tls-cert <pfx>。");
-            }
-            if (!_tokens.Enabled)
-                Console.WriteLine("[sdo-server] ⚠️  沒有帳號認證 —— 身分由 client 自稱。要認證請給 --tokens <file>。");
-            if (!hardened)
-                Console.WriteLine("[sdo-server] ⚠️  以上任一項缺少時,請只在 LAN／信任的朋友之間使用,不要直接開在公網。");
+                Log("TLS 指紋 " + TlsFingerprint
+                    + "  → client config.ini:serverTls=1 / serverCertFingerprint=<這串>");
+
+            // 設定錯誤(讀不到 token 檔、檔案內容有問題)一定要吵 —— 它會讓認證靜靜地沒生效。
+            if (_tokenLoadError != null)
+                Log("⚠️  讀不到 token 檔 " + _opts.TokensFile + ":" + _tokenLoadError + " → token 認證未啟用");
+            if (_tokenProblems != null)
+                foreach (var pr in _tokenProblems) Log("⚠️  token 檔:" + pr);
+
+            // 裸奔警告只在真的裸奔時講一次,而且講清楚缺什麼。
+            if (_tokens.Enabled && _tlsCert != null) return;
+            string missing = _tlsCert == null ? "加密(--tls-cert)" : "";
+            if (!_tokens.Enabled) missing += (missing.Length > 0 ? "與" : "") + "帳號認證(--tokens)";
+            Log("⚠️  缺少" + missing + " —— 只適合 LAN/信任的朋友,不要直接開在公網。");
         }
+
+        private static string Mark(bool on) => on ? "✓" : "✗";
 
         public void Stop()
         {
@@ -275,7 +291,9 @@ namespace Sdo.Server.Net
                     return;
                 }
                 _conns[conn.ConnId] = conn;
-                Log("連線 #" + conn.ConnId + " 來自 " + conn.RemoteLabel
+                // TCP 接上還不是「有人來了」—— 真正有意義的是 hello 完成那一行(它才有名字與版本)。
+                // 這一行在正常流程上是重複的,留給 --verbose 診斷「連上來但沒講話」的情況。
+                LogVerbose("連線 #" + conn.ConnId + " 來自 " + conn.RemoteLabel
                     + (conn.IsTls ? "(TLS" : "(明文") + ",共 " + _conns.Count + " 條)");
             });
 
@@ -373,7 +391,7 @@ namespace Sdo.Server.Net
             {
                 if (_uploads.Count > 0)
                 {
-                    Log("歌曲暫存清理:有 " + _uploads.Count + " 份上傳進行中,這輪跳過");
+                    LogVerbose("歌曲暫存清理:有 " + _uploads.Count + " 份上傳進行中,這輪跳過");
                     _janitor.Defer(now);   // 不推遲的話 Due 會一直是 true → 每秒 20 行日誌
                 }
                 else
@@ -423,7 +441,11 @@ namespace Sdo.Server.Net
         {
             if (!_conns.Remove(conn.ConnId)) return;
 
-            Log("連線 #" + conn.ConnId + " 關閉(" + reason + ")");
+            // 認得這個人就用名字報離線;還沒 hello 的(掃 port、握手失敗、file 連線)只是雜訊 → verbose。
+            if (conn.UserId != 0 && conn.Role == NetProto.RoleControl)
+                Log("user " + conn.UserId + "「" + conn.Name + "」離線(" + reason + ")");
+            else
+                LogVerbose("連線 #" + conn.ConnId + " 關閉(" + reason + ")");
 
             // 那個人的上傳配額紀錄可以丟了(不清的話這張表會跟著 server 的執行時間一直長)。
             if (conn.UserId != 0 && conn.Role == NetProto.RoleControl) _quota.Forget(conn.UserId);
@@ -524,7 +546,7 @@ namespace Sdo.Server.Net
             if (rq != 0) o.Int(NetProto.FieldRequest, rq);
             if (!string.IsNullOrEmpty(msg)) o.Str("msg", msg);
             conn.Send(o);
-            Log("拒絕 user " + conn.UserId + " 的請求(rq " + rq + "):" + (code ?? "?")
+            Log("✗ user " + conn.UserId + " 的請求被拒:" + (code ?? "?")
                 + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
         }
 
@@ -543,6 +565,14 @@ namespace Sdo.Server.Net
         internal static void Log(string line)
         {
             Console.WriteLine("[sdo-server] " + line);
+        }
+
+        /// <summary>位元組數印成人看得懂的大小(log 用,不精確沒關係)。</summary>
+        internal static string Mb(long bytes)
+        {
+            if (bytes >= 1024L * 1024L) return (bytes / (1024L * 1024L)) + " MB";
+            if (bytes >= 1024L) return (bytes / 1024L) + " KB";
+            return bytes + " B";
         }
 
         internal void LogVerbose(string line)

@@ -60,7 +60,8 @@ namespace Sdo.UI.Screens
                 btn.onClick.AddListener(() =>
                 {
                     _session.NoteSkin = skin.Id;
-                    Toast.Show(skin.NameZh);
+                    // 不彈 toast:選中的那一列立刻長出「✓」,再用一個只有皮膚名字的浮動訊息
+                    // 蓋在畫面上方,沒有多說任何事。
                     Open();   // refresh checkmarks
                 });
             }

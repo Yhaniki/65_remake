@@ -319,15 +319,23 @@ namespace Sdo.UI
         /// (帶 rq 且有人在等的錯誤不會走到這裡 —— 那些由發起請求的地方自己處理,
         ///  例如加入房間的失敗原因是寫在輸入房號的框裡。)
         /// </summary>
+        /// <summary>
+        /// server 回絕某個操作。**一律只寫 log,不彈 toast。**
+        ///
+        /// 這些全是「按了但條件不符」的例行拒絕(不是房主、房間開打了、座位滿了…),而畫面本身
+        /// 已經表達了狀態 —— 不是房主就沒有房主的按鈕、房間滿了列表上就寫著人數。彈出來只是把
+        /// 畫面弄髒,而真正需要追原因時看的是 log。log 印本地化後的同一句話,不必再對照 code。
+        /// </summary>
         private void OnNetError(string code, string msg)
         {
             string key = NetErrorKey(code);
-            if (key == null) return;   // 刻意不打擾玩家的(rate limit 之類)
-            Toast.Show(LocalizationManager.Get(key));
-            Debug.LogWarning("[net] server error: " + code + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
+            string human = key != null ? LocalizationManager.Get(key) : null;
+            Debug.LogWarning("[net] server error: " + code
+                + (human != null ? " — " + human : "")
+                + (string.IsNullOrEmpty(msg) ? "" : " (" + msg + ")"));
         }
 
-        /// <summary>error code → 本地化 key。回 null = 這種錯誤不要吵玩家。</summary>
+        /// <summary>error code → 本地化 key,**只給 log 用**(回 null = 沒有對應的人話,印 code 就好)。</summary>
         private static string NetErrorKey(string code)
         {
             switch (code)
@@ -340,12 +348,8 @@ namespace Sdo.UI
                 case Sdo.Net.NetProto.ErrFull:       return "neterr.full";
                 case Sdo.Net.NetProto.ErrLookerFull: return "neterr.looker_full";
                 case Sdo.Net.NetProto.ErrBadTeams:   return "room.teams_need_layout";   // 已經有一句更精確的
-                // proto = server 不認得我們送的訊息型別 → **兩邊版本不一樣**。這個要講出來:
-                // 玩家能處理它(去更新),而靜默的代價是「打了密語整句話憑空消失」那種找不到原因的鬼故事。
                 case Sdo.Net.NetProto.ErrProto:      return "neterr.proto";
-                // rateLimit / badJson:不是玩家能處理的事,而且 rateLimit 一爆就是一串 →
-                // 跳出來只會洗版。留在 log 裡就好。
-                default: return null;
+                default: return null;   // rateLimit / badJson:沒有對應的人話,log 印 code
             }
         }
 
@@ -389,8 +393,12 @@ namespace Sdo.UI
             {
                 _ctx.Net.CreateRoom("", (result, code) =>
                 {
-                    if (result == Sdo.Net.NetProto.JoinOk) _ctx.Flow.GoTo(ScreenId.Room);
-                    else Toast.Show("建立房間失敗:" + result);
+                    if (result == Sdo.Net.NetProto.JoinOk) { _ctx.Flow.GoTo(ScreenId.Room); return; }
+                    // server 回的是協定代碼(full / …)。原本直接貼在畫面上,玩家看到的是
+                    // 「建立房間失敗:full」—— 半句英文,而且沒說接下來能做什麼。
+                    Debug.LogWarning("[net] createRoom 失敗:" + result);
+                    Toast.Show(LocalizationManager.Get(result == Sdo.Net.NetProto.JoinFull
+                        ? "room.create_failed_full" : "room.create_failed"));
                 });
                 return;
             }
@@ -417,7 +425,10 @@ namespace Sdo.UI
             {
                 var why = _netFellBackReason;
                 _netFellBackReason = null;
-                Toast.Show("連不上伺服器,改用單機模式\n" + why);
+                // 原因是技術訊息(socket 錯誤、憑證指紋不符…),玩家看不懂也不能處理 → 進 log。
+                // Toast 只有一行的高度,接一段英文錯誤上去也只會被截掉。
+                Debug.LogWarning("[net] 退回單機:" + why);
+                Toast.Show(LocalizationManager.Get("net.fallback_offline"), 4f);
             }
 
             _ctx?.Chat?.Tick();
@@ -450,7 +461,8 @@ namespace Sdo.UI
             if (_activeGame != null) return;
             _returningFromGame = false;   // 新的一局：解除上次回房轉場的守門
             var s = _ctx.Session;
-            if (!s.HasSong) { Toast.Show(LocalizationManager.Get("room.need_song")); return; }
+            // 沒選歌就不開場 —— 只寫 log:房間面板的歌名欄是空的,那已經說明了一切。
+            if (!s.HasSong) { Debug.Log("[room] " + LocalizationManager.Get("room.need_song")); return; }
 
             // 隨機難度：房間只鎖定「難度範圍」(SongRandomRange)，實際歌曲/難度到這裡(進遊戲)才抽 → 每局重抽，
             // 同一個隨機設定每次進遊戲都是不同歌。easy/normal/hard 一起搜(見 SongListModel.RandomCandidates)。
