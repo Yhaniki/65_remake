@@ -45,6 +45,27 @@ namespace Sdo.Tests
             Assert.AreEqual("", e.ChartPath(0));
         }
 
+        [Test]
+        public void ToEntry_Normalizes_Only_Nonpositive_Osu_Preview_Starts()
+        {
+            SongCatalog.Entry Entry(SongFormat format, int previewStartMs)
+            {
+                return ExternalSongLibrary.ToEntry(new ExternalSong
+                {
+                    FolderPath = "C:/Songs/Test",
+                    Title = "Test",
+                    Format = format,
+                    PreviewStartMs = previewStartMs,
+                }, 0);
+            }
+
+            Assert.AreEqual(-1, Entry(SongFormat.Osu, 0).previewStartMs);
+            Assert.AreEqual(-1, Entry(SongFormat.Osu, -1).previewStartMs);
+            Assert.AreEqual(35000, Entry(SongFormat.Osu, 35000).previewStartMs);
+            Assert.AreEqual(0, Entry(SongFormat.Sm, 0).previewStartMs,
+                "StepMania #SAMPLESTART:0 must continue to mean the start of the song");
+        }
+
         // The sidecar's per-song offset (ExternalSong.OffsetMs, read from sdoinfo.dat) must reach the catalog entry —
         // that's the field FrontendApp feeds into gameplay's songOffsetMs. Out-of-range values are clamped, not trusted.
         [Test]

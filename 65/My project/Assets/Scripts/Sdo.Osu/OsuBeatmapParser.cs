@@ -38,6 +38,8 @@ namespace Sdo.Osu
                     case "General":
                         ParseKeyValue(line, "AudioFilename", v => map.AudioFilename = v);
                         ParseKeyValue(line, "Mode", v => map.Mode = ParseInt(v));
+                        ParseKeyValue(line, "SamplesMatchPlaybackRate",
+                            v => map.SamplesMatchPlaybackRate = TryInt(v, 0) != 0);
                         break;
                     case "Metadata":
                         ParseKeyValue(line, "Title", v => map.Title = v);
@@ -53,6 +55,9 @@ namespace Sdo.Osu
                         // them are kept (for the note scroll); the first uninherited also sets map.Bpm.
                         ParseTimingPoint(line, map, timeOffset);
                         break;
+                    case "Events":
+                        ParseSampleEvent(line, map, timeOffset);
+                        break;
                     case "HitObjects":
                         var ho = ParseHitObject(line, map.Keys, timeOffset);
                         if (ho.HasValue) map.HitObjects.Add(ho.Value);
@@ -60,8 +65,16 @@ namespace Sdo.Osu
                 }
             }
 
+            map.SampleEvents.Sort((a, b) => a.TimeMs.CompareTo(b.TimeMs));
             return map;
         }
+        /// <summary>True only for osu!'s reserved silent backing-track name.</summary>
+        public static bool IsVirtualAudioFilename(string filename)
+        {
+            filename = Dequote(filename);
+            return string.Equals(filename, "virtual", StringComparison.OrdinalIgnoreCase);
+        }
+
 
         /// <summary>
         /// Add a timing point (time,beatLength) to <see cref="OsuBeatmap.TimingPoints"/>. The first
@@ -91,9 +104,40 @@ namespace Sdo.Osu
             time += timeOffset;
             if (!double.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var beatLength))
                 return;
-            map.TimingPoints.Add(new OsuTimingPoint(time, beatLength));
+            int sampleVolume = p.Length > 5 ? TryInt(p[5], 100) : 100;
+            sampleVolume = Math.Max(0, Math.Min(100, sampleVolume));
+            map.TimingPoints.Add(new OsuTimingPoint(time, beatLength, sampleVolume));
             if (beatLength > 0.0 && map.Bpm <= 0.0) map.Bpm = 60000.0 / beatLength;
         }
+        private static void ParseSampleEvent(string line, OsuBeatmap map, int timeOffset)
+        {
+            var p = SplitCsv(line);
+            if (p.Length < 4) return;
+            string kind = p[0].Trim();
+            if (!string.Equals(kind, "Sample", StringComparison.OrdinalIgnoreCase) && kind != "5") return;
+            if (!double.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var time)) return;
+            string filename = Dequote(p[3]);
+            if (filename.Length == 0) return;
+            int layer = TryInt(p[2], 0);
+            int volume = p.Length > 4 ? TryInt(p[4], 100) : 100;
+            map.SampleEvents.Add(new OsuSampleEvent(time + timeOffset, layer, filename, volume));
+        }
+
+        private static string[] SplitCsv(string line)
+        {
+            var fields = new System.Collections.Generic.List<string>();
+            var field = new System.Text.StringBuilder();
+            bool quoted = false;
+            foreach (char c in line ?? "")
+            {
+                if (c == '"') { quoted = !quoted; field.Append(c); }
+                else if (c == ',' && !quoted) { fields.Add(field.ToString()); field.Length = 0; }
+                else field.Append(c);
+            }
+            fields.Add(field.ToString());
+            return fields.ToArray();
+        }
+
 
         /// <summary>
         /// Lightweight metadata read for the folder scanner: title/artist/creator/version, key count (CircleSize),
@@ -138,16 +182,27 @@ namespace Sdo.Osu
                         }
                         break;
                     case "Events":
+                        var eventParts = SplitCsv(line);
+                        if (eventParts.Length >= 4 &&
+                            (eventParts[0].Trim().Equals("Sample", StringComparison.OrdinalIgnoreCase) || eventParts[0].Trim() == "5") &&
+                            Dequote(eventParts[3]).Length > 0)
+                            m.KeysoundCount++;
                         // First "0,0,\"bg.jpg\",..." line is the background; a leading "1,..." video is a fallback bg.
                         if (string.IsNullOrEmpty(m.BackgroundFilename))
                         {
-                            var p = line.Split(',');
-                            if (p.Length >= 3 && (p[0].Trim() == "0" || p[0].Trim() == "1"))
-                                m.BackgroundFilename = Dequote(p[2]);
+                            if (eventParts.Length >= 3 && (eventParts[0].Trim() == "0" || eventParts[0].Trim() == "1"))
+                                m.BackgroundFilename = Dequote(eventParts[2]);
                         }
                         break;
                     case "HitObjects":
                         m.NoteCount++;   // one object per line (tap or hold)
+                        var hitParts = line.Split(new[] { ',' }, 6);
+                        if (hitParts.Length > 5)
+                        {
+                            bool hold = (TryInt(hitParts[3], 0) & 128) != 0;
+                            ParseHitSample(hitParts[5], hold, out string sampleName, out _);
+                            if (sampleName.Length > 0) m.KeysoundCount++;
+                        }
                         break;
                 }
             }
@@ -179,7 +234,7 @@ namespace Sdo.Osu
         /// </summary>
         private static OsuHitObject? ParseHitObject(string line, int keys, int timeOffset = 0)
         {
-            var parts = line.Split(',');
+            var parts = line.Split(new[] { ',' }, 6);
             if (parts.Length < 5) return null;
             if (keys <= 0) keys = 4;
 
@@ -192,6 +247,8 @@ namespace Sdo.Osu
             if (lane > keys - 1) lane = keys - 1;
 
             bool isHold = (type & 128) != 0;
+            string sampleField = parts.Length > 5 ? parts[5] : "";
+            ParseHitSample(sampleField, isHold, out string sampleFilename, out int sampleVolume);
             if (isHold)
             {
                 // parts[5] = "endTime:hitSample..."
@@ -200,11 +257,30 @@ namespace Sdo.Osu
                 int colon = endField.IndexOf(':');
                 var endStr = colon >= 0 ? endField.Substring(0, colon) : endField;
                 int end = ParseInt(endStr) + timeOffset;
-                return new OsuHitObject(lane, time, end);
+                return new OsuHitObject(lane, time, end, customSampleFilename: sampleFilename,
+                    customSampleVolume: sampleVolume);
             }
 
-            return new OsuHitObject(lane, time);
+            return new OsuHitObject(lane, time, customSampleFilename: sampleFilename,
+                customSampleVolume: sampleVolume);
         }
+        private static void ParseHitSample(string field, bool isHold, out string filename, out int volume)
+        {
+            filename = "";
+            volume = 0;
+            if (string.IsNullOrEmpty(field)) return;
+            if (isHold)
+            {
+                int colon = field.IndexOf(':');
+                if (colon < 0 || colon + 1 >= field.Length) return;
+                field = field.Substring(colon + 1);
+            }
+            var p = field.Split(new[] { ':' }, 5);
+            if (p.Length < 5) return;
+            volume = Math.Max(0, Math.Min(100, TryInt(p[3], 0)));
+            filename = Dequote(p[4]);
+        }
+
 
         private static int ParseInt(string s) =>
             int.Parse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture);
@@ -231,6 +307,7 @@ namespace Sdo.Osu
         public double Bpm;
         public int BeatmapSetId = -1;    // [Metadata] BeatmapSetID；未上傳/自製/轉檔譜大多是 -1，只能當分組的次要線索
         public int NoteCount;            // number of [HitObjects] lines
+        public int KeysoundCount;        // storyboard Sample events + hit objects with a custom sample filename
         public int PreviewTime = -1;     // [General] PreviewTime (ms); -1 = none (試聽起點；長度用預設)
     }
 }

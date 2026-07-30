@@ -34,6 +34,14 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Preferred_Background_Beats_Banner_For_StepMania()
+        {
+            var f = new[] { "banner.png", "background.png" };
+            Assert.AreEqual("background.png",
+                ExternalImagePicker.Pick(f, "banner.png", "background.png", "", preferBackground: true));
+        }
+
+        [Test]
         public void Background_Tag_Then_Hint()
         {
             Assert.AreEqual("back.jpg", ExternalImagePicker.Pick(new[] { "back.jpg" }, "", "back.jpg", ""));

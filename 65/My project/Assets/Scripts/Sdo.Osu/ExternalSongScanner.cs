@@ -221,10 +221,10 @@ namespace Sdo.Osu
             {
                 string audioPath = ResolveAudio(audio, d.AudioName);
                 if (audioPath.Length == 0) audioPath = ResolveAudioStem(audio, d.AudioStem);   // .gn: any extension
-                if (audioPath.Length == 0) continue;
+                if (audioPath.Length == 0 && !d.VirtualAudio) continue;
                 kept.Add(d); tracks.Add(audioPath);
             }
-            if (kept.Count == 0 && drafts.Count == 1 && audio.Count > 0)
+            if (kept.Count == 0 && drafts.Count == 1 && audio.Count == 1)
             {
                 kept.Add(drafts[0]); tracks.Add(audio[0]);   // sole song whose chart names its audio wrongly
             }
@@ -343,6 +343,7 @@ namespace Sdo.Osu
             public double Bpm;
             public int PreviewStartMs = -1, PreviewLengthMs;
             public string AudioName = "", BannerName = "", BackgroundName = "", CdTitleName = "";
+            public bool VirtualAudio;
             /// <summary>.gn only, and only when the sidecar didn't name the audio: the chart stem to match against the
             /// folder with ANY audio extension (see <see cref="ResolveAudioStem"/>). "" = use <see cref="AudioName"/>.</summary>
             public string AudioStem = "";
@@ -544,10 +545,14 @@ namespace Sdo.Osu
                 // Basenamed like the grouping key and like the .sm branch: a chart may spell its audio/background with
                 // a folder prefix or backslashes, and the folder's files are matched by filename.
                 d.AudioName = ExternalSongGrouper.BaseName(First(g.Charts, i => candMeta[i].AudioFilename, ""));
+                // `virtual` is osu!'s reserved no-backing-track sentinel, never an audio filename to resolve. Keep it
+                // unconditional: even a malformed/partially parsed keysound map must not borrow the folder's first sample.
+                d.VirtualAudio = OsuBeatmapParser.IsVirtualAudioFilename(d.AudioName);
                 d.BackgroundName = ExternalSongGrouper.BaseName(First(g.Charts, i => candMeta[i].BackgroundFilename, ""));
                 foreach (var i in g.Charts) { if (candMeta[i].Bpm > 0) { d.Bpm = candMeta[i].Bpm; break; } }
                 d.PreviewStartMs = -1;
-                foreach (var i in g.Charts) { if (candMeta[i].PreviewTime >= 0) { d.PreviewStartMs = candMeta[i].PreviewTime; break; } }
+                // Zero is the common "no useful preview point chosen" osu export; only a positive value is explicit.
+                foreach (var i in g.Charts) { if (candMeta[i].PreviewTime > 0) { d.PreviewStartMs = candMeta[i].PreviewTime; break; } }
                 d.PreviewLengthMs = 0;   // osu carries no preview length → default window
                 drafts.Add(d);
             }
@@ -790,7 +795,8 @@ namespace Sdo.Osu
 
         private static string ResolveImage(string dir, List<string> pool, Draft d)
         {
-            string chosen = ExternalImagePicker.Pick(pool, d.BannerName, d.BackgroundName, d.CdTitleName);
+            string chosen = ExternalImagePicker.Pick(pool, d.BannerName, d.BackgroundName, d.CdTitleName,
+                                                     preferBackground: d.Format == SongFormat.Sm);
             return string.IsNullOrEmpty(chosen) ? "" : Path.Combine(dir, chosen);
         }
 

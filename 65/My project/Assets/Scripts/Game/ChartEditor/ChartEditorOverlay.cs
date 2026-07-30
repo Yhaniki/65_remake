@@ -20,7 +20,7 @@ namespace Sdo.Game
     {
         public ScreenGameplay Game;
         public WaveformPeaks Peaks;              // null = 還在解碼（或沒有音檔）
-        public double PeaksOffsetMs;             // 波形第 0 格對應的譜面時間 = 音樂起點的無聲數拍（type-10）
+        public double PeaksOffsetMs;             // 波形第 0 格的譜面時間；.osu 另含官方 −20ms 視覺相容位移
 
         public bool showGrid = true;
         public bool showWaveform = true;
@@ -119,9 +119,8 @@ namespace Sdo.Game
         {
             _verts.Clear(); _cols.Clear(); _tris.Clear();
             // 波形畫的是「音樂」→ 單首 offset（F11/F12）把音樂挪走時，波形要跟著挪，音符才不會跟波形一起動。
-            // 再往早補 WaveformDecoderDelayMs：Unity 的 Vorbis 解碼在 clip 開頭留了 ~30ms 暖機樣本，不補的話波形
-            // 瞬態會整條晚 30ms，看起來音符比波形早到。純顯示修正（見 ScreenGameplay.WaveformDecoderDelayMs）。
-            if (Game != null) PeaksOffsetMs = Game.EditorMusicCountInMs - ScreenGameplay.WaveformDecoderDelayMs;
+            // .osu 再套官方 20ms 波形視覺位移；其他格式的第 0 格就是音樂起點。兩者都不含輸出裝置延遲。
+            if (Game != null) PeaksOffsetMs = Game.EditorWaveformStartMs;
             if (Game != null && Game.EditorReady) Build();
             _mesh.Clear();
             if (_verts.Count > 0)

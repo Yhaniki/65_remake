@@ -103,6 +103,37 @@ namespace Sdo.Tests
             Assert.AreEqual(0, songs[0].AudioDurationSec, "scan must not decode audio — 時間 falls back to chart length");
         }
 
+        [Test]
+        public void Osu_PreviewTime_Zero_Is_Missing_And_Does_Not_Hide_A_Positive_Difficulty()
+        {
+            var zeroDir = Dir("pack", "zero");
+            Audio(zeroDir, "track.mp3");
+            Osu(zeroDir, "zero.osu", "track.mp3", "Zero", 200);
+            string zeroPath = Path.Combine(zeroDir, "zero.osu");
+            File.WriteAllText(zeroPath, File.ReadAllText(zeroPath)
+                .Replace("PreviewTime: 1000", "PreviewTime: 0"));
+
+            var zeroSongs = ExternalSongScanner.LoadFolder("pack", zeroDir);
+            Assert.AreEqual(1, zeroSongs.Count);
+            Assert.AreEqual(-1, zeroSongs[0].PreviewStartMs,
+                "zero is normalized to the automatic midpoint sentinel");
+
+            var mixedDir = Dir("pack", "mixed-preview");
+            Audio(mixedDir, "track.mp3");
+            Osu(mixedDir, "a-zero.osu", "track.mp3", "Mixed", 100, "Easy");
+            Osu(mixedDir, "b-positive.osu", "track.mp3", "Mixed", 200, "Hard");
+            string mixedZeroPath = Path.Combine(mixedDir, "a-zero.osu");
+            string mixedPositivePath = Path.Combine(mixedDir, "b-positive.osu");
+            File.WriteAllText(mixedZeroPath, File.ReadAllText(mixedZeroPath)
+                .Replace("PreviewTime: 1000", "PreviewTime: 0"));
+            File.WriteAllText(mixedPositivePath, File.ReadAllText(mixedPositivePath)
+                .Replace("PreviewTime: 1000", "PreviewTime: 5000"));
+
+            var mixedSongs = ExternalSongScanner.LoadFolder("pack", mixedDir);
+            Assert.AreEqual(1, mixedSongs.Count);
+            Assert.AreEqual(5000, mixedSongs[0].PreviewStartMs);
+        }
+
         // ---- one folder, several songs ----
 
         [Test]

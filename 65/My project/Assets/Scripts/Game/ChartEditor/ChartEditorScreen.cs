@@ -178,7 +178,14 @@ namespace Sdo.Game
                 gnPath = SongPaths.Gn(_gn); oggPath = SongPaths.Ogg(_gn);
                 if (gnPath == null || !File.Exists(gnPath)) { _status = "找不到譜面檔：" + gnPath; _loading = false; yield break; }
             }
-            _status = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath)) ? "" : "找不到音樂檔（只能看譜，沒有聲音/波形）";
+            bool virtualOsu = ext &&
+                e.chartFormat == (int)SongFormat.Osu &&
+                string.IsNullOrEmpty(oggPath);
+            _status = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
+                ? ""
+                : virtualOsu
+                    ? "虛擬音軌：keysound 可播放，沒有母音軌波形"
+                    : "找不到音樂檔（只能看譜，沒有聲音/波形）";
 
             // ScreenGameplay 什麼都不掛在自己身上（音符板/HUD 都是新的場景根物件）→ 先記下現有的根，換歌時照差集拆。
             _preRoots = new HashSet<GameObject>(SceneManager.GetActiveScene().GetRootGameObjects());
@@ -364,10 +371,10 @@ namespace Sdo.Game
             if (_overlay != null)
             {
                 _overlay.Peaks = peaks;
-                // 波形第 0 格 = 音樂真正開始的譜面時間（含單首 offset）再往早補解碼暖機。**公式要跟
+                // 波形第 0 格 = 音樂起點（.osu 再套官方 −20ms 視覺位移）。**公式要跟
                 // ChartEditorOverlay.LateUpdate 一模一樣** —— 它每幀都會覆寫這個值，兩邊不同只會讓這裡的初值
-                // 閃一幀不同步（07-15 加解碼暖機補償時漏改這行）。
-                _overlay.PeaksOffsetMs = game.EditorMusicCountInMs - ScreenGameplay.WaveformDecoderDelayMs;
+                // 閃一幀不同步。
+                _overlay.PeaksOffsetMs = game.EditorWaveformStartMs;
             }
             _peaksCo = null;
         }

@@ -445,10 +445,12 @@ namespace Sdo.Game
     /// reproduces the native string at trackEm 0, then a constant reduction pulls the characters closer. Used for the
     /// gameplay HUD bottom song title.
     ///
-    /// 光柵尺寸跟著螢幕走(同 <see cref="Label3D.Refresh"/>)：舊版寫死 fontSize 64 再用 characterSize 縮到 ~13px 顯示，
-    /// 等於把字圖縮小 5 倍取樣，而動態字型 atlas 沒有 mipmap → 邊緣糊出鬼影(「歌名有殘影」)。改成依 PHYSICAL 螢幕
-    /// px 光柵、characterSize 反向補回，字圖就近 1:1 畫出來，顯示大小完全不變。<see cref="Tick"/> 每幀檢查一次，
-    /// 解析度/視窗大小一改就重新光柵化。
+    /// 光柵尺寸跟著螢幕走：舊版寫死 fontSize 64 再用 characterSize 縮到 ~14px 顯示，等於把字圖縮小 4.5 倍取樣，
+    /// 而動態字型 atlas 沒有 mipmap → 邊緣糊出鬼影(「歌名有殘影」)。現在依 em 盒的 PHYSICAL 螢幕 px 高
+    /// (<see cref="NameplateMetrics.RasterPxForEm"/>) × 2 倍超取樣光柵、characterSize 反向補回，顯示大小完全不變。
+    /// 「em 盒」而不是 designPx 是關鍵：designPx 11 的標籤實際站 1.28×11 ≈ 14 設計 px 高，拿 11 去光柵會小 1.28 倍，
+    /// 字圖反而被放大 → 又糊一次(這正是第一版修法糊掉的原因)。<see cref="Tick"/> 每幀檢查，視窗一改就重新光柵化。
+    /// LV/時間值走 <see cref="HudTextRaster"/> 套同一條規則，底列三個白字才會同一種字重。
     /// </summary>
     public sealed class TrackedTextMesh
     {
@@ -479,7 +481,7 @@ namespace Sdo.Game
         private bool PickRaster()
         {
             float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
-            int fp = NameplateMetrics.FontPxFor(_designPx, sy);
+            int fp = NameplateMetrics.RasterPxForEm(_designPx, sy, NameplateMetrics.PxToCharSizeLegacyAt64);
             if (fp == _fontPx) return false;
             _fontPx = fp;
             _charSize = NameplateMetrics.CharacterSizeFor(_designPx, fp, NameplateMetrics.PxToCharSizeLegacyAt64);
@@ -551,6 +553,49 @@ namespace Sdo.Game
                 _cells[k].transform.localPosition = new Vector3(cursor, 0f, 0f);
                 cursor += adv[k] - reduce;
             }
+        }
+    }
+
+    /// <summary>
+    /// 讓一組普通(單一 mesh)的 legacy <see cref="TextMesh"/> 標籤跟 <see cref="TrackedTextMesh"/> 走同一條光柵規則：
+    /// 依 em 盒的實體螢幕 px × 超取樣決定 fontSize，characterSize 反向補回 → 顯示大小一模一樣，只是字圖解析度對了。
+    ///
+    /// 用途＝遊戲 HUD 底列的「LV」「時間」數值。它們原本寫死 fontSize 64 再縮 4~5 倍顯示，跟改過的歌名並排時
+    /// 一個銳一個糊、字重也不同(使用者說的「style 不一致」)。納管進來後三個白字完全同款。
+    /// </summary>
+    public sealed class HudTextRaster
+    {
+        private sealed class Entry { public TextMesh Tm; public float DesignPx; public int FontPx = -1; }
+        private readonly List<Entry> _items = new List<Entry>();
+
+        /// <summary>納管一個標籤，並立刻以目前螢幕尺寸光柵化(designPx = 原本 characterSize ÷ 0.2 的那個數)。</summary>
+        public void Add(TextMesh tm, float designPx)
+        {
+            if (tm == null) return;
+            var e = new Entry { Tm = tm, DesignPx = designPx };
+            _items.Add(e);
+            Apply(e, NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect));
+        }
+
+        /// <summary>每幀呼叫：視窗大小/全螢幕切換後重新光柵化。任何一個標籤真的換了尺寸就回 true
+        /// —— 呼叫端據此重量文字寬度(時間欄是靠實測 renderer 寬度釘位置的)。</summary>
+        public bool Tick()
+        {
+            float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
+            bool changed = false;
+            for (int i = 0; i < _items.Count; i++) changed |= Apply(_items[i], sy);
+            return changed;
+        }
+
+        private static bool Apply(Entry e, float sy)
+        {
+            if (e.Tm == null) return false;
+            int fp = NameplateMetrics.RasterPxForEm(e.DesignPx, sy, NameplateMetrics.PxToCharSizeLegacyAt64);
+            if (fp == e.FontPx) return false;
+            e.FontPx = fp;
+            e.Tm.fontSize = fp;
+            e.Tm.characterSize = NameplateMetrics.CharacterSizeFor(e.DesignPx, fp, NameplateMetrics.PxToCharSizeLegacyAt64);
+            return true;
         }
     }
 }

@@ -83,6 +83,36 @@ namespace Sdo.Tests
             Assert.AreEqual(0f, ScreenGameplay.EditorViewShiftFor(-50f, 300f, 600f, +1), 1e-3f);   // 負值（不該發生）→ 完全不推
         }
 
+        [Test]
+        public void OsuTimeT_MapsNoteAudioAndWaveformLikeOsuEditor()
+        {
+            const double noteTimeMs = 1000.0;
+            const double musicCountInMs = 123.0;
+
+            // .osu 的 note 保持檔案內的 T。播放/seek 在 T 讀 T-C；波形則比照 lazer 在 T 顯示 T-C+20。
+            double audioSourceMs = ScreenGameplay.AudioSourceMsAtChartMs(noteTimeMs, musicCountInMs, 0.0);
+            double waveformSourceMs = ScreenGameplay.WaveformSourceMsAtChartMs(
+                (int)SongFormat.Osu, noteTimeMs, musicCountInMs);
+
+            Assert.AreEqual(877.0, audioSourceMs, 1e-9);
+            Assert.AreEqual(897.0, waveformSourceMs, 1e-9);
+            Assert.AreEqual(ScreenGameplay.OsuWaveformVisualOffsetMs,
+                waveformSourceMs - audioSourceMs, 1e-9,
+                "osu 的 20ms 只能存在波形視覺座標，不能偷進播放 PCM");
+            Assert.AreEqual(noteTimeMs,
+                ScreenGameplay.WaveformStartMsFor((int)SongFormat.Osu, musicCountInMs) + waveformSourceMs,
+                1e-9, "同一個 osu 時間 T 必須仍畫回同一個譜面座標");
+        }
+
+        [Test]
+        public void WaveformVisualOffset_IsOnlyAppliedToOsuFiles()
+        {
+            Assert.AreEqual(20.0, ScreenGameplay.WaveformVisualOffsetMsFor((int)SongFormat.Osu), 1e-9);
+            foreach (var format in new[] { SongFormat.None, SongFormat.Sm, SongFormat.Gn, SongFormat.Malody })
+                Assert.AreEqual(0.0, ScreenGameplay.WaveformVisualOffsetMsFor((int)format), 1e-9,
+                    format + " 不應繼承 osu 的波形相容位移");
+        }
+
         // 小數點固定用「.」：跑在把逗號當小數點的系統語系時，這一欄不能變成 67,616。
         [Test]
         public void Fmt_UsesDotDecimalSeparator_RegardlessOfCulture()

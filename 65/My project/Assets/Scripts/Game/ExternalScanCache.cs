@@ -42,7 +42,14 @@ namespace Sdo.Game
         //     算法）。舊快取存的是「物件數」（長條算一顆），長條多的譜會少報好幾十顆，得整份作廢重算。
         //     (兩件事各自在自己的分支上都編到 v10 —— 合併之後那個號碼下有兩種不相容的快取:一種缺 packId、
         //      一種 `notes` 是舊語意。停在 10 會把兩種都當成有效 → 跳到 11 讓它們一起作廢。)
-        public const int Version = 11;
+        // v12: keysounded osu maps with `AudioFilename: virtual` now use an empty base track; old caches pointed at
+        //      the folder's first sample instead, so all external-song scan records must be rebuilt.
+        // v13: osu PreviewTime:0 now means "use the midpoint", and zero no longer hides a positive preview point from
+        //      another difficulty in the same set. Cached previewStartMs values must be rebuilt.
+        //      (⚠️ 上面那兩條在 song-loader 分支上原本編成 v11/v12 —— 與這條分支的 v11 撞號,
+        //       正是 v11 括號裡寫的那件事又發生一次:兩個分支各自往下編,合併之後同一個號碼底下
+        //       會有兩種不相容的快取。所以整組往後挪,Version 直接跳到 13 把兩邊的舊快取一起作廢。)
+        public const int Version = 13;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

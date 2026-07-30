@@ -163,9 +163,43 @@ namespace Sdo.Game
             //   objects[3] = beach/LANG (岸浪): U 寫 0、V = −sin(b)×0.25,b += _DAT_00589020 = 0.004/frame
             //   objects[4] = SEA     (海面): V 寫 0、U = +sin(a)×0.5 ,a += _DAT_00589024 = 0.001/frame
             // 這是「來回盪」不是「單向流」—— 用等速捲動根本表達不出來,所以這兩支之前完全沒有條目、海面是死的。
+            // 軸的選擇有 mesh 依據:SEA 的 U 跑到 −1.772..2.312(在 U 上 tiling)、LANG 的 V 是 −0.215..0.617。
+            //
+            // ★ 「哪個相位打哪一片」曾經只是推論(反編譯把目標寫成 FUN_0041a100(0),四次呼叫參數都是 0,
+            //   看不出差別)。已用線上版 sdo.bin 的機器碼釘死:那支是 __thiscall 的 GetMaterial(this, idx),
+            //   **ECX 才是目標物件**,堆疊上的 0 只是材質索引(位元組 8b4120/8b4c2404/8b0488/c20400)。
+            //   線上版 FUN_00969c70 內:
+            //       00969cfe  mov ecx,[eax+0x0c]   ← objects[3]   → 00969d28 fstp [eax+0x5c]  V = −sin(快)×0.25
+            //       00969d49  mov ecx,[eax+0x10]   ← objects[4]   → 00969d6f fstp [eax+0x58]  U = +sin(慢)×0.5
+            //   兩塊材質記憶體不重疊,所以後者寫的 V=0 不會蓋掉前者 —— 兩片都真的在動。
+            //   索引→名字的鏈也驗過:名稱表 0xb8f430 = sea_up/sea_down/chuan/beach/sea(.bin),
+            //   0xb8f444 同序的 .msh = …/lang/sea,載入迴圈用同一個 edi 同時索引名稱表與物件陣列
+            //   (無重排、無壓縮補位),故 objects[3]=LANG、objects[4]=SEA。
+            //   資產側獨立佐證:wave_.dds 的 alpha 內容在 V 方向留了 0.496 tile 的透明跑道(官方 V 峰對峰
+            //   0.5,差 0.8%),U 方向卻被逐像素貼齊圖案邊界(餘裕 0.005/0.0095 tile)—— 捲 U 會把浪沫切兩半。
+            //
+            // ★★ 最後由**執行期實測**一槌定音(tools/probe_scn0004_identify.js,線上版 sdo.bin 實機 Frida):
+            //   hook GetMaterial 錄下每次回傳的材質物件,再從物件記憶體撈出貼圖檔名 ——
+            //       寫 V = −sin(快 0.004)×0.25 的那次 → 材質是 **wave_.dds**       = LANG 岸浪
+            //       寫 U = +sin(慢 0.001)×0.5  的那次 → 材質是 **haishuei2_.dds** = SEA  海面
+            //   同一份 log 還順帶證實換幀:每 100 ms 那一幀會多出兩次呼叫,依序拿到 **b001.dds(SEA_UP)**
+            //   與 **a001.dds(SEA_DOWN)** —— 兩片海床共用同一個索引、同一幀一起換,與反編譯的
+            //   [esi+0x7c]/[esi+0x80] 順序一致。相位每次呼叫 +0.004 / +0.001 也逐輪對上。
+            //   → 這條對應已無推論成分,不必再查。
+            //
+            // ★ 官方每次只寫**材質槽 0**(push 0);這裡用 MaterialId = -1(整支道具的所有材質)。
+            //   SEA.MSH 與 LANG.MSH 各只有一個材質(haishuei2_.dds / wave_.dds),所以實務上等價。
+            //   哪天 MshLoader 把它們拆成多段(例如依 alpha 分批),這裡就會與官方分岔 —— 屆時要改回只驅動槽 0。
+            //
             // 每幀累加換算成秒沿用本檔既有的官方幀率慣例(SCN0011 CAIDAI 的 0.003×593):
             //   浪 0.004×593 = 2.372 rad/s(週期約 2.65 s)、海 0.001×593 = 0.593 rad/s(週期約 10.6 s)。
-            // 軸的選擇有 mesh 依據:SEA 的 U 跑到 −1.772..2.312(在 U 上 tiling)、LANG 的 V 是 −0.215..0.617。
+            // ★ 已在線上版 sdo.bin 實測驗證(tools/measure_scn0004_wave.py,輪詢相位 + hook FUN_00969c70 對帳):
+            //   場景更新函式的呼叫率瞬時值 530~689/s、**中位數 625**(n=11 個 2 秒區間),換算岸浪 2.501 /
+            //   海面 0.625 rad/s。與此處的 593 慣例差 5.2%,而呼叫率自身漂移就有 ±13% —— 差距埋在雜訊裡,
+            //   故維持 593 不動(也讓本檔對 SCN0011/0012/0013/0029 的慣例保持一致)。
+            //   官方宣告 D3DPRESENT_INTERVAL_IMMEDIATE、主迴圈是 PeekMessage busy-loop,沒有任何 frame
+            //   limiter,所以「機器越快水流越快、換幀動畫卻釘死 100 ms」是官方設計的固有性質:
+            //   岸浪週期 ~2.5 s 對換幀一輪 3.2 s,兩者永遠合不上,而且比例隨機器而變。**這不是 remake 的 bug。**
             //
             // ★ 兩支都必須套 OfficialMaterialAlpha(官方旗標都是 0x1 = 一般透明批)。LANG 的 wave_.dds 是
             //   「亮 RGB + 幾乎全軟 alpha」(min 0 / mean 11.6)——正是 LooksLikeAdditiveGlow 的誤判樣本

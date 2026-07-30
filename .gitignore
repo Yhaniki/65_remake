@@ -145,6 +145,7 @@ procmon_tool/runs/
 /shop_avatar_probe_log.txt
 /tools/shop_probe/shop_avatar_online_log.txt
 /tools/shop_probe/Run
+/tools/scn0004_identify_log.txt
 
 # Per-machine settings writeback (not seed profile data)
 /65/My project/DATA/PROFILE/settings.json

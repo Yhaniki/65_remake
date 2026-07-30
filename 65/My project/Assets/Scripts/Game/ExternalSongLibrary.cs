@@ -372,7 +372,8 @@ namespace Sdo.Game
                 previewPath = song.PreviewAudioPath ?? "",
                 dpsPath = song.DpsPath ?? "",
                 chartSeed = song.GnSeed,
-                previewStartMs = song.PreviewStartMs,
+                previewStartMs = SongPreviewWindow.NormalizeStart(
+                    (int)song.Format, song.PreviewStartMs),
                 previewLengthMs = song.PreviewLengthMs,
                 // 包自帶的 serverconfig：歌單順序 + NEW/HOT/推薦/古典 標籤（見 SdoServerConfig）
                 packOrder = song.PackOrder,
