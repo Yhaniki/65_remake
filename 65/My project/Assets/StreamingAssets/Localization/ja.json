@@ -304,6 +304,26 @@
    "v": "サーバーのバージョンが違います"
   },
   {
+   "k": "room.teams_normal_mode_only",
+   "v": "チーム戦はノーマルのみ"
+  },
+  {
+   "k": "room.create_failed_full",
+   "v": "サーバーの部屋が満杯です"
+  },
+  {
+   "k": "net.fallback_offline",
+   "v": "サーバーに接続できません(オフラインで続行)"
+  },
+  {
+   "k": "net.transfer_failed",
+   "v": "曲の転送に失敗しました"
+  },
+  {
+   "k": "settings.applied",
+   "v": "設定を適用しました"
+  },
+  {
    "k": "room.spectate_off",
    "v": "席に戻りました"
   },
@@ -734,6 +754,10 @@
   {
    "k": "stage.name.39",
    "v": "個人ルーム（夜）"
+  },
+  {
+   "k": "room.difficulty_setting",
+   "v": "難易度設定"
   },
   {
    "k": "difficulty.easy",

@@ -125,6 +125,19 @@ STR = {
     # server 不認得 client 送的訊息 = 兩邊版本不一樣。靜默的話症狀是「訊息憑空消失」,查不出原因。
     "neterr.proto":            ["Server version mismatch — please update", "伺服器版本不符,請更新",
                                 "服务器版本不符,请更新", "サーバーのバージョンが違います"],
+    # 自由模式按組隊時的提示。這個 key 以前沒定義 → 畫面直接顯示 [room.teams_normal_mode_only]。
+    "room.teams_normal_mode_only": ["Teams are for Normal mode only", "只有普通模式可以組隊",
+                                "只有普通模式可以组队", "チーム戦はノーマルのみ"],
+    # 建房失敗:server 的房間數到上限。原本直接把 server 回的英文代碼(full)貼在畫面上。
+    "room.create_failed_full": ["The server has no room slots left", "伺服器的房間已經滿了",
+                                "服务器的房间已经满了", "サーバーの部屋が満杯です"],
+    # 開機連不上 → 退回單機。技術原因(socket 錯誤那類)寫進 log,不貼在玩家臉上。
+    "net.fallback_offline":    ["Can't reach the server — playing offline", "連不上伺服器,改用單機模式",
+                                "连不上服务器,改用单机模式", "サーバーに接続できません(オフラインで続行)"],
+    # 傳歌失敗。原本把內部錯誤字串接在後面,玩家看不懂也不能做什麼。
+    "net.transfer_failed":     ["Song transfer failed — please try again", "歌曲傳輸失敗,請稍後再試",
+                                "歌曲传输失败,请稍后再试", "曲の転送に失敗しました"],
+    "settings.applied":        ["Settings applied", "設定已套用", "设置已套用", "設定を適用しました"],
     "room.spectate_off":       ["Back in a seat", "已回到座位", "已回到座位", "席に戻りました"],
     "room.drop_up":         ["Up", "向上", "向上", "上"],
     "room.drop_down":       ["Down", "向下", "向下", "下"],
@@ -253,6 +266,9 @@ STR = {
     "stage.name.38": ["Wedding Hall", "婚禮大廳", "婚礼大厅", "ウェディングホール"],
     "stage.name.39": ["Private Room (Night)", "個人房（夜）", "个人房（夜）", "個人ルーム（夜）"],
 
+    # 自由模式的「難度設置」標題。官方圖 FMdif.an 把簡體字烘死在裡面,程式抹掉後疊這行翻譯上去
+    # (見 RoomScreen.BuildFreeModeLevel)—— key 沒定義的話畫面上會直接看到 [room.difficulty_setting]。
+    "room.difficulty_setting": ["Difficulty", "難度設置", "难度设置", "難易度設定"],
     "difficulty.easy":   ["Easy", "簡單", "简单", "かんたん"],
     "difficulty.normal": ["Normal", "普通", "普通", "ふつう"],
     "difficulty.hard":   ["Hard", "困難", "困难", "むずかしい"],

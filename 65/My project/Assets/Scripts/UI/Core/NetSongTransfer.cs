@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using Sdo.Game;
 using Sdo.Game.Net;
+using Sdo.Localization;
 using Sdo.Net;
 using Sdo.Settings;
 using Sdo.UI.Util;
@@ -115,7 +116,10 @@ namespace Sdo.UI.Core
                 }
                 if (_fx.State == NetTransferState.Failed)
                 {
-                    Toast.Show("歌曲傳輸失敗:" + _fx.Error, 4f);
+                    // _fx.Error 是內部錯誤字串(協定代碼/例外訊息)。玩家看不懂,而且看懂了也
+                    // 不能做什麼 —— 進 log,畫面上講一句他能理解的。
+                    Debug.LogWarning("[net] 傳檔失敗 " + _fx.PackId + ":" + _fx.Error);
+                    Toast.Show(LocalizationManager.Get("net.transfer_failed"), 4f);
                     InvalidateActiveTransfer();
                     // 🔴 一定要把「我到底有沒有這首歌」重報一次。下載開始時我們已經告訴 server
                     // downloading 了 —— 失敗之後不重報的話,那個座位會**永遠停在 downloading**:
@@ -189,6 +193,15 @@ namespace Sdo.UI.Core
 
             if (net.IsHost)
             {
+                // 🔴 **有人真的缺這首歌才傳**。以前是「房主一選外部歌就無條件上傳」——
+                // 一個人在房裡試歌也會把好幾 MB 推上去,而那份東西沒有任何人要。
+                // (實機 log:「開始收上傳:10/10 個檔、2104 KB」,房裡只有房主一個人。)
+                // server 那邊每一份都要存、要續命、要跑 janitor,純粹是白花的流量與磁碟。
+                //
+                // 不用擔心「晚傳會來不及」:缺歌的人本來就要先 blobQuery 問過 server
+                // (見下面的節流註解),問到「沒有」會每 2 秒重問,而我們上傳完會廣播
+                // blobAvailable 把他叫醒 —— 這條路是既有的,只是現在由「有人喊缺」當起點。
+                if (!AnyoneMissingSong(snap, net.UserId)) return;
                 StartUpload(ctx, song);
                 return;
             }
@@ -220,6 +233,30 @@ namespace Sdo.UI.Core
                 return;
             }
             StartDownload(ctx, song);
+        }
+
+        /// <summary>
+        /// 房裡有別人缺這首歌嗎(= 值得把它傳上去嗎)。<paramref name="meUserId"/> 是自己,不算。
+        ///
+        /// 只認 <see cref="Availability.Missing"/> —— 其餘三種都不該觸發上傳:
+        ///   • <c>Unknown</c> = 那個人**還沒回報**(換歌會把全房打回 unknown,R9)。
+        ///     把它當成缺歌的話,等於「每次換歌都無條件上傳」,這個判斷就白寫了。
+        ///     他算完自己有沒有就會送過來,那時再傳也不遲。
+        ///   • <c>Downloading</c> / <c>Importing</c> = 他已經在拿了 → server 手上一定有這個包。
+        ///   • <c>Have</c> = 不用傳。
+        ///
+        /// 旁觀者不算:他們不自動下載(需求 10),為他們上傳沒有意義。
+        /// </summary>
+        private static bool AnyoneMissingSong(NetRoomSnapshot snap, int meUserId)
+        {
+            if (snap == null || snap.Seats == null) return false;
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var seat = snap.Seats[i];
+                if (seat == null || !seat.IsTaken || seat.UserId == meUserId) continue;
+                if (seat.Avail == Availability.Missing) return true;
+            }
+            return false;
         }
 
         private static void StartUpload(AppContext ctx, NetSongRef song)

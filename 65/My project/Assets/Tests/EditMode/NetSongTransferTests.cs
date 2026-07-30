@@ -1,6 +1,7 @@
 using System.Reflection;
 using NUnit.Framework;
 using Sdo.Game.Net;
+using Sdo.Net;
 using Sdo.Osu;
 using Sdo.UI.Core;
 using Sdo.UI.Screens;
@@ -264,6 +265,64 @@ namespace Sdo.Tests
             Assert.IsNull(Static<string>("_queriedPack"));
             Assert.IsNull(Static<string>("_handledPack"));
         }
+
+        /// <summary>
+        /// 🔴 回歸:房主以前是「一選外部歌就無條件上傳」,一個人在房裡試歌也會把好幾 MB 推上去
+        /// (實機 log:「開始收上傳:10/10 個檔、2104 KB」,房裡只有房主)。沒有人要的東西
+        /// server 還得存、續命、跑 janitor —— 純粹是白花的流量與磁碟。
+        /// </summary>
+        [Test]
+        public void UploadOnlyStartsWhenSomeoneElseActuallyMissesTheSong()
+        {
+            Assert.IsFalse(AnyoneMissing(RoomOf(1), 1), "一個人在房裡試歌不該觸發上傳");
+
+            // 換歌會把全房的 avail 打回 unknown(R9)。把 unknown 當成缺歌的話,
+            // 等於每次換歌都無條件上傳 —— 這個判斷就白寫了。
+            Assert.IsFalse(AnyoneMissing(RoomOf(1, Seat(2, Availability.Unknown)), 1), "還沒回報 → 等他算完");
+            Assert.IsFalse(AnyoneMissing(RoomOf(1, Seat(2, Availability.Have)), 1));
+
+            // 已經在拿了 = server 手上一定有這個包,再傳一次沒有意義。
+            Assert.IsFalse(AnyoneMissing(RoomOf(1, Seat(2, Availability.Downloading)), 1));
+            Assert.IsFalse(AnyoneMissing(RoomOf(1, Seat(2, Availability.Importing)), 1));
+
+            Assert.IsTrue(AnyoneMissing(RoomOf(1, Seat(2, Availability.Missing)), 1), "有人真的缺 → 這時才傳");
+            Assert.IsTrue(AnyoneMissing(RoomOf(1, Seat(2, Availability.Have), Seat(3, Availability.Missing)), 1),
+                          "有人有、有人缺 → 還是要傳");
+        }
+
+        [Test]
+        public void MyOwnSeatNeverCountsAsSomeoneMissingTheSong()
+        {
+            // 房主自己不算 —— 不然「自己缺歌」會變成「傳給自己」,而房主的歌本來就在本機。
+            var room = RoomOf(1);
+            room.Seats[0] = Seat(1, Availability.Missing);
+            Assert.IsFalse(AnyoneMissing(room, 1));
+        }
+
+        [Test]
+        public void SpectatorsDoNotTriggerAnUpload()
+        {
+            // 旁觀者不自動下載(需求 10)→ 為他們上傳沒有意義。他們不在 Seats 裡,所以天然不算,
+            // 但這條測試要釘住「將來有人把旁觀者也掃進去」這件事。
+            var room = RoomOf(1);
+            room.Spectators = new[] { new NetSpectator { UserId = 9, Name = "看戲的" } };
+            Assert.IsFalse(AnyoneMissing(room, 1));
+        }
+
+        private static bool AnyoneMissing(NetRoomSnapshot snap, int meUserId)
+            => (bool)Invoke("AnyoneMissingSong", snap, meUserId);
+
+        /// <summary>房主坐 0 號位(當然有自己選的歌),其餘的人依序往後坐。</summary>
+        private static NetRoomSnapshot RoomOf(int hostUserId, params NetSeat[] others)
+        {
+            var snap = new NetRoomSnapshot { HostUserId = hostUserId };
+            snap.Seats[0] = Seat(hostUserId, Availability.Have);
+            for (int i = 0; i < others.Length; i++) snap.Seats[i + 1] = others[i];
+            return snap;
+        }
+
+        private static NetSeat Seat(int userId, Availability avail)
+            => new NetSeat { State = SeatState.Taken, UserId = userId, Avail = avail };
 
         private static object Invoke(string name, params object[] args)
         {

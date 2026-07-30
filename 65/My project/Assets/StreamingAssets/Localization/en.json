@@ -304,6 +304,26 @@
    "v": "Server version mismatch — please update"
   },
   {
+   "k": "room.teams_normal_mode_only",
+   "v": "Teams are for Normal mode only"
+  },
+  {
+   "k": "room.create_failed_full",
+   "v": "The server has no room slots left"
+  },
+  {
+   "k": "net.fallback_offline",
+   "v": "Can't reach the server — playing offline"
+  },
+  {
+   "k": "net.transfer_failed",
+   "v": "Song transfer failed — please try again"
+  },
+  {
+   "k": "settings.applied",
+   "v": "Settings applied"
+  },
+  {
    "k": "room.spectate_off",
    "v": "Back in a seat"
   },
@@ -734,6 +754,10 @@
   {
    "k": "stage.name.39",
    "v": "Private Room (Night)"
+  },
+  {
+   "k": "room.difficulty_setting",
+   "v": "Difficulty"
   },
   {
    "k": "difficulty.easy",

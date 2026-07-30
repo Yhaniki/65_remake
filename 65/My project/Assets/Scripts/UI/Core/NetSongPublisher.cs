@@ -201,13 +201,47 @@ namespace Sdo.UI.Core
             return Sdo.Osu.SafeRelPath.Normalize(slash >= 0 ? chart.Substring(slash + 1) : chart);
         }
 
-        /// <summary>房主把選好的歌發給 server。非房主/離線 → 什麼都不做(server 也會擋,R7)。</summary>
+        /// <summary>
+        /// 房主把選好的歌發給 server。非房主/離線 → 什麼都不做(server 也會擋,R7)。
+        ///
+        /// 🔴 **server 手上已經是這張譜就不送**。RoomScreen.OnShow 每次都會呼叫這裡,而「回房間畫面」
+        /// 包含遊戲結束回來 —— 重送會被 server 當成換歌,把所有人的 avail 打回 unknown,
+        /// 於是缺歌的人莫名其妙又傳一次歌。(server 端同樣擋了一道,兩邊都擋是因為
+        /// 這條路徑上的無謂訊息本來就不該送出去。)
+        /// </summary>
         public static void Publish(AppContext ctx)
         {
             if (ctx == null || ctx.Net == null) return;
             if (!ctx.Net.IsConnected || !ctx.Net.InRoom || !ctx.Net.IsHost) return;
             var song = FromSession(ctx.Session);
             if (song == null) return;
+            var current = ctx.Net.Room != null ? ctx.Net.Room.Song : null;
+            if (current != null && song.SameChartAs(current)) return;   // 沒變 → 不送
+
+            // 🔴 送出前先自己驗一次,而且**要說出是哪一條規則擋的**。
+            // server 收到不合格的參照只會回一個沒有細節的 badState「bad song ref」,而畫面上
+            // 的症狀是「選了歌,但按開始沒反應」—— 從那裡完全推不回「某個檔名太長」。
+            // (實機踩過兩次:第一次是絕對路徑進了 wire,第二次是 osu 的譜面檔名超過
+            //  SafeRelPath.MaxSegmentLength。兩次都是靠 server log 才找到的。)
+            if (!song.Official)
+            {
+                string why;
+                if (!Sdo.Osu.SafeRelPath.IsSafe(song.ChartRelPath, out why))
+                {
+                    UnityEngine.Debug.LogError("[net] 這首歌的譜面路徑過不了驗證,server 會拒絕整個 setSong:"
+                                               + why + "(路徑=" + song.ChartRelPath + ")");
+                    return;
+                }
+                if (string.IsNullOrEmpty(song.PackId))
+                {
+                    // packId 是外部歌的跨機器身分,少了它 server 一樣拒收。空的通常代表
+                    // 歌庫掃描還沒算出這個資料夾的指紋(而不是這首歌有問題)。
+                    UnityEngine.Debug.LogError("[net] 這首外部歌還沒有 packId(歌庫掃描沒算出來?),server 會拒絕整個 setSong:"
+                                               + song.Title);
+                    return;
+                }
+            }
+
             UnityEngine.Debug.Log("[net] 發布歌曲給 server:" + song.Title + " (gn=" + song.Gn + ")");
             ctx.Net.SetSong(song);
         }

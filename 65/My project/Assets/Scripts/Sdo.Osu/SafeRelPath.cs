@@ -21,8 +21,25 @@ namespace Sdo.Osu
         /// </summary>
         public const int MaxLength = 180;
 
-        /// <summary>單一路徑片段(檔名/資料夾名)的長度上限。</summary>
-        public const int MaxSegmentLength = 100;
+        /// <summary>
+        /// 單一路徑片段(檔名/資料夾名)的長度上限。
+        ///
+        /// 🔴 **100 太短,擋掉的是完全正常的 osu 譜面**。osu! 產生的檔名格式是
+        /// <c>&lt;曲師&gt; - &lt;曲名&gt; (&lt;製譜者&gt;) [&lt;難度名&gt;].osu</c> —— 四段字串串起來,
+        /// 破百是常態而不是異常。實機上這一份就是 119~129 字:
+        /// <c>Jeff Williams &amp; Casey Lee Williams - This Will Be the Day (James Landino's
+        /// Magical Girl Remix) (Fullerene-) [Blocko's 7K NM+].osu</c>
+        ///
+        /// 而症狀完全指不到長度:譜面檔被 <see cref="SongPackFilter"/> 判成 UnsafePath →
+        /// 整包只剩音檔與圖(packId 還是算得出來,所以看起來一切正常)→ 房主一送
+        /// <c>setSong</c> 就被 server 回 <c>badState「bad song ref」</c>(<c>ChartRelPath</c>
+        /// 過不了本函式)→ 畫面上只是「選了歌但房間沒歌、按開始沒反應」。
+        ///
+        /// 160 的來源:上面那個最長的實例是 129,留一點餘裕;而真正管住總長度(MAX_PATH)的是
+        /// <see cref="MaxLength"/>,這個常數要擋的只是「單一片段長到檔案系統自己不收」
+        /// (NTFS/ext4 的上限都是 255)。
+        /// </summary>
+        public const int MaxSegmentLength = 160;
 
         /// <summary>
         /// Windows 的裝置保留名。**注意 <c>CON.txt</c> 也一樣被保留** —— 判斷要看第一個

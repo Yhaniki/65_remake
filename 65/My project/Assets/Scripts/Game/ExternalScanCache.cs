@@ -49,7 +49,14 @@ namespace Sdo.Game
         //      (⚠️ 上面那兩條在 song-loader 分支上原本編成 v11/v12 —— 與這條分支的 v11 撞號,
         //       正是 v11 括號裡寫的那件事又發生一次:兩個分支各自往下編,合併之後同一個號碼底下
         //       會有兩種不相容的快取。所以整組往後挪,Version 直接跳到 13 把兩邊的舊快取一起作廢。)
-        public const int Version = 13;
+        // v14: SafeRelPath.MaxSegmentLength 從 100 放寬到 160(osu 的譜面檔名破百是常態)。
+        //      🔴 這條**非跳不可**,而且原因不在 sig:packId 只看「可傳的那些檔」,而放寬過濾規則
+        //      之後同一個資料夾的可傳檔案集合變了(那些 .osu 從 UnsafePath 變成 Include)→ packId 變了,
+        //      但 sig(檔名/大小/mtime)一個位元都沒動 → 快取命中 → **舊 packId 被沿用**。
+        //      後果是缺歌的人永遠補不到:房主宣稱舊 packId,而上傳時重掃資料夾會納入那些 .osu,
+        //      server 重算後與宣稱的不符 → 整批不收(Hub.Blobs「重算的 packId 與宣稱的不符」)。
+        //      上面 Folder.packId 那句「sig 沒變時它一定也沒變」的前提是**過濾規則不變**,這次它變了。
+        public const int Version = 14;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

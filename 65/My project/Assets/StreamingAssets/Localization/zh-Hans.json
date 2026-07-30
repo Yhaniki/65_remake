@@ -304,6 +304,26 @@
    "v": "服务器版本不符,请更新"
   },
   {
+   "k": "room.teams_normal_mode_only",
+   "v": "只有普通模式可以组队"
+  },
+  {
+   "k": "room.create_failed_full",
+   "v": "服务器的房间已经满了"
+  },
+  {
+   "k": "net.fallback_offline",
+   "v": "连不上服务器,改用单机模式"
+  },
+  {
+   "k": "net.transfer_failed",
+   "v": "歌曲传输失败,请稍后再试"
+  },
+  {
+   "k": "settings.applied",
+   "v": "设置已套用"
+  },
+  {
    "k": "room.spectate_off",
    "v": "已回到座位"
   },
@@ -734,6 +754,10 @@
   {
    "k": "stage.name.39",
    "v": "个人房（夜）"
+  },
+  {
+   "k": "room.difficulty_setting",
+   "v": "难度设置"
   },
   {
    "k": "difficulty.easy",

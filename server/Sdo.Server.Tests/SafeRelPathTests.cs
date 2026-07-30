@@ -153,6 +153,25 @@ namespace Sdo.Tests
             Assert.IsFalse(SafeRelPath.IsSafe(new string('a', SafeRelPath.MaxSegmentLength + 1) + ".osu"));
         }
 
+        /// <summary>
+        /// 🔴 回歸:osu! 的檔名格式是「曲師 - 曲名 (製譜者) [難度名].osu」,破百是**常態**。
+        /// 片段上限曾經是 100,於是這一份(實機抓到的,119~129 字)整首歌都動不了:
+        /// 譜面被判 UnsafePath 排除在 pack 之外,而房主送 setSong 直接被 server 回
+        /// badState「bad song ref」—— 畫面上只是「選了歌但按開始沒反應」。
+        /// </summary>
+        [Test]
+        public void Real_Osu_Filenames_Over_100_Chars_Are_Accepted()
+        {
+            const string longest =
+                "Jeff Williams & Casey Lee Williams - This Will Be the Day (James Landino's Magical Girl Remix) (Fullerene-) [Blocko's 7K NM+].osu";
+            Assert.Greater(longest.Length, 100, "這條測試的前提就是它超過 100 字");
+
+            string reason;
+            Assert.IsTrue(SafeRelPath.IsSafe(longest, out reason), reason);
+            Assert.AreEqual(PackFileVerdict.Include, SongPackFilter.Classify(longest, 53654),
+                            "過得了 IsSafe 還要真的能跟著歌一起傳出去");
+        }
+
         [Test]
         public void Reason_Explains_Which_Rule_Rejected_It()
         {
