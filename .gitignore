@@ -147,6 +147,13 @@ procmon_tool/runs/
 /65/My project/log.txt
 /65/My project/log.txt.prev
 
+# 手打 Unity batchmode 指令時,「65\My project」沒加引號 → 路徑被空白切成「65\My」+「project」,
+# Unity 的 -logFile 就落在 repo 裡一個叫 65/My 的檔上(專案根那句 "Couldn't set project path to:
+# …/65/My project/…/65/My" 就是這樣來的)。它曾經被誤 commit 進版控,現在移出來並擋住。
+# 🔴 這一條擋的是**檔案 65/My**,不是目錄「65/My project」—— 名字不同(後者含空白),不會被誤擋。
+# 正解仍然是下指令時加引號:-projectPath "H:\...\65\My project"
+/65/My
+
 # gn_note_export 的輸出（5MB 生成檔，隨時能用 dotnet run --project tools/gn_note_export 重跑）
 tools/kgn_export/gn_notes.json
 
