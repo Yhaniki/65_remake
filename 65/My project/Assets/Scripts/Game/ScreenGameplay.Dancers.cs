@@ -159,6 +159,11 @@ namespace Sdo.Game
                     : AvatarAssetCache.Hrc(SdoAvatarBuilder.ResolveAvatarFile(male ? SdoRoomAvatar.MaleHrc : SdoRoomAvatar.FemaleHrc));
                 if (hrc == null) hrc = _sharedHrc;
                 av.Setup(hrc, _sharedDanceMot);
+                // 🔴 混色長度要與本機**同一個**常數。SdoAvatar 自己的預設是 1.0 秒 —— 那是寫給房間 idle↔walk 的,
+                // 拿來跳舞會蓋掉整段 slice:DPS 一個 row 常常只有 1~2 秒,混 1 秒等於半首歌都在過場,
+                // 而且下一個 row 邊界又從「混到一半的姿勢」重新起混 —— 動作幅度被壓扁、追不上編舞,
+                // 看起來就是「切動作的中間卡一下」。DanceBlendSec(0.5s)是反編譯出來的官方值(見那個常數的註解)。
+                av.BlendSec = DanceBlendSec;
                 av.SetBodyShape(SdoBodyShape.WeightFromIndex(bodyIdx, male));
                 av.RestMot = RemoteRestMot(male, flying) ?? _sharedRestMot;
                 if (_sharedDps != null)
