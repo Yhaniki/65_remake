@@ -210,6 +210,35 @@ namespace Sdo.Tests
             Assert.AreEqual("", SongPackFilter.FileNameOf(null));
         }
 
+        // ---- 檔案數上限 ----
+
+        [Test]
+        public void KeysoundedMapsFitUnderTheFileCountLimit()
+        {
+            // key 音的圖每個 note 一個 wav,幾百個檔是正常的。實機案例:STAGER 有 291 個檔,
+            // 舊上限 200 直接把它擋成「檔案數不合理」,缺歌的人永遠補不到。
+            Assert.GreaterOrEqual(NetPackLimits.MaxPackFiles, 291,
+                "上限要容得下實際存在的 key 音圖,否則那些歌永遠傳不出去");
+        }
+
+        [Test]
+        public void TheWholeManifestStillFitsInOneMessage()
+        {
+            // manifest 是**一個訊息**送的。上限乘上單項最壞情況必須留在 frame payload 之內,
+            // 否則「檔案數放寬」會換來一個更難查的失敗:傳輸在送清單那一刻就爆掉。
+            const int worstCaseBytesPerEntry = 300;   // {"path":<長路徑>,"len":…,"sha256":<64 hex>}
+            long manifestBytes = (long)NetPackLimits.MaxPackFiles * worstCaseBytesPerEntry;
+            Assert.Less(manifestBytes, Sdo.Net.NetLimits.MaxFramePayload,
+                "MaxPackFiles 調過頭了 —— 整份清單會超過單一訊息的上限");
+        }
+
+        [Test]
+        public void NetLimitsMirrorsThePackLimit()
+        {
+            // 兩邊同名常數必須相等(NetLimits 那顆是指過來的,這條防的是有人把它改成獨立的字面值)。
+            Assert.AreEqual(NetPackLimits.MaxPackFiles, Sdo.Net.NetLimits.MaxPackFiles);
+        }
+
         [Test]
         public void ExtensionOf_Handles_Edge_Cases()
         {

@@ -386,6 +386,55 @@ namespace Sdo.Tests
             Assert.AreEqual(NetRoomOp.NotHost, r.RequestStart(Bob, true, Resolved(), 0, out m));
         }
 
+        // ==================== 換歌的冪等 ====================
+
+        [Test]
+        public void ResendingTheSameSongDoesNotResetAvailability()
+        {
+            // 房主的 client 每次進房間畫面都會發布一次歌(含**遊戲結束回房**)。那不是換歌 ——
+            // 但重設 avail 會讓所有人重新回報,缺歌的人於是「沒換歌卻又傳一次歌」。實機踩過。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, OfficialSong()), "重送同一首仍然算成功");
+
+            Assert.AreEqual(Availability.Have, r.State.SeatOf(User(Host).UserId).Avail,
+                "重送同一首不該把房主打回 unknown");
+            Assert.AreEqual(Availability.Have, r.State.SeatOf(User(Bob).UserId).Avail,
+                "重送同一首不該把別人打回 unknown —— 那正是「莫名其妙又傳一次歌」的來源");
+        }
+
+        [Test]
+        public void ChangingToAnotherSongStillResetsAvailability()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+
+            var other = new NetSongRef { Official = true, Gn = "sdom9999k.gn", FileId = 19999, Title = "另一首" };
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, other));
+
+            Assert.AreEqual(Availability.Unknown, r.State.SeatOf(User(Bob).UserId).Avail,
+                "真的換歌就要重新確認誰有這首");
+        }
+
+        [Test]
+        public void SwitchingChartSlotCountsAsAChange()
+        {
+            // 同一個 pack 裡換難度槽 = 換譜面 → 不能當成「同一首」跳過(SameChartAs 有比 ChartIndex)。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            var easy = new NetSongRef { Official = false, PackId = "p1", SongKey = "k", ChartRelPath = "a.osu", ChartIndex = 0 };
+            var hard = new NetSongRef { Official = false, PackId = "p1", SongKey = "k", ChartRelPath = "a.osu", ChartIndex = 2 };
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, easy));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(Bob, "p1", Availability.Have, 0f));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, hard));
+
+            Assert.AreEqual(Availability.Unknown, r.State.SeatOf(User(Bob).UserId).Avail);
+        }
+
         // ==================== R6:離開 idempotent ====================
 
         [Test]

@@ -328,6 +328,13 @@ namespace Sdo.Net.Server
             if (!_state.IsHost(actorId)) return NetRoomOp.NotHost;
             if (_state.Status != RoomStatus.Open) return NetRoomOp.BadState;
 
+            // 🔴 **同一張譜重送一次不算換歌** —— 直接返回,不要把大家的 avail 打回 unknown。
+            // 房主的 client 每次進房間畫面都會發布一次(含遊戲結束回房),那不是換歌;
+            // 但重設 avail 會讓所有人重新回報,缺歌的人於是「莫名其妙又開始傳歌一次」。
+            // 實機就是這樣:沒換歌,結算回房卻突然傳一次歌。
+            // 用 SameChartAs 而不是自己比 —— 它只比識別欄位(標題會因簡繁/metadata 而不同)。
+            if (song != null && song.SameChartAs(_state.Song)) return NetRoomOp.Ok;
+
             _state.Song = song;
 
             for (int i = 0; i < _state.Seats.Length; i++)

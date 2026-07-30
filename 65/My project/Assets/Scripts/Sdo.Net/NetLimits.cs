@@ -115,19 +115,25 @@ namespace Sdo.Net
         // ---- 房間裡的走動 ----
 
         /// <summary>
-        /// 房間裡走動時,client 送位置的間隔(ms)。10 Hz —— 比分數流(200ms)密,因為位置是連續量:
+        /// 房間裡走動時,client 送位置的間隔(ms)。20 Hz —— 比分數流(200ms)密,因為位置是連續量:
         /// 太疏的話遠端角色會一格一格跳,插值也補不出中間的轉彎。停下來時送最後一筆就不再送。
+        ///
+        /// 🔴 為什麼從 100ms 加密到 50ms:上行與 server 的下行**是兩層各自的節奏**,兩個 10 Hz
+        /// 不同步時,同一輪可能推到兩筆、下一輪一筆都沒有 —— 實際到達間隔在 0~200ms 之間跳,
+        /// 遠端角色於是「滑一下、停一下」。公網的 RTT 抖動會再放大這件事。兩層都加密到 20 Hz
+        /// 之後間隙變成 0~100ms,而插值的時間常數(RoomScene3D.RemoteLerpRate,約 83ms)蓋得住它。
+        /// 代價很小:一個人約 60 bytes/筆,六人房下行也只有 ~7 KB/s。
         /// </summary>
-        public const int ClientMoveIntervalMs = 100;
+        public const int ClientMoveIntervalMs = 50;
 
         /// <summary>server 彙整後推 moves 的頻率(Hz)。與 <see cref="ServerFrameHz"/> 同樣的理由:攢起來定頻推。</summary>
-        public const int ServerMoveHz = 10;
+        public const int ServerMoveHz = 20;
 
         /// <summary>
-        /// 位置訊息的速率上限(每秒)。比 <see cref="ClientMoveIntervalMs"/> 換算的 10 留一點餘裕
-        /// (幀率抖動會讓實際間隔略小於 100ms),但擋得住「每幀都送」那種壞掉的 client。
+        /// 位置訊息的速率上限(每秒)。比 <see cref="ClientMoveIntervalMs"/> 換算的 20 留一點餘裕
+        /// (幀率抖動會讓實際間隔略小於 50ms),但擋得住「每幀都送」那種壞掉的 client。
         /// </summary>
-        public const int RateMovePerSec = 15;
+        public const int RateMovePerSec = 30;
 
         /// <summary>
         /// 房間走動框(鏡射 <c>Sdo.Game.RoomLayout.Min/MaxX/Z</c> —— server 編不到那個 assembly)。

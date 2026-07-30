@@ -194,7 +194,18 @@ namespace Sdo.Osu
         /// <summary>圖片單檔上限。</summary>
         public const long MaxImageFileBytes = 4L * 1024 * 1024;
 
-        /// <summary>單首歌(過濾後)的檔案數上限。</summary>
-        public const int MaxPackFiles = 200;
+        /// <summary>
+        /// 單首歌(過濾後)的檔案數上限。
+        ///
+        /// 🔴 200 太低:**key 音**的圖每個 note 一個 wav,幾百個檔是正常的,不是可疑的。
+        /// 實機上 STAGER 有 291 個檔就直接被擋掉(server 回 <c>tooBig — 檔案數不合理:291</c>),
+        /// 而且症狀很難懂 —— 缺歌的人永遠補不到,每次回房又重試一次。
+        ///
+        /// 上限仍然要有,因為整份 manifest 是**一個訊息**送的,受
+        /// <see cref="Sdo.Net.NetLimits.MaxFramePayload"/>(256 KB)限制。每一項是
+        /// <c>{"path":…,"len":…,"sha256":64 hex}</c>,最壞情況(長路徑)抓 300 bytes,
+        /// 600 × 300 ≈ 176 KB 還留得下餘裕。要再往上調的話先確認那個算式(有測試釘著)。
+        /// </summary>
+        public const int MaxPackFiles = 600;
     }
 }
