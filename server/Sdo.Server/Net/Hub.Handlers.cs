@@ -152,6 +152,7 @@ namespace Sdo.Server.Net
                 case NetProto.ComboMilestone: OnComboMilestone(conn, node); break;
 
                 case NetProto.ChatSay: OnChatSay(conn, node, now); break;
+                case NetProto.ChatWhisper: OnChatWhisper(conn, node, now); break;
 
                 default:
                     // 不認得的訊息型別:可能是新版 client。回錯誤但不斷線。
@@ -259,7 +260,16 @@ namespace Sdo.Server.Net
                 .Int("channel", 1)
                 .Long("serverTimeMs", now));
 
-            Log("user " + conn.UserId + " 「" + conn.Name + "」上線(#" + conn.ConnId + ")");
+            // client 的版本一起印。**版本不一樣就明講**:更新了一邊忘了另一邊時,症狀(某個功能沒反應)
+            // 與「功能寫錯了」長得一樣,而這一行能立刻分辨。比對用尾巴那段(拿掉各自的產品名):
+            // client「dance v1.5.0-dev-d41da」對 server「sdo-server v1.5.0-dev-d41da」。
+            string clientBuild = Clip(NetJson.Str(node, "build").Trim(), 64);
+            conn.Build = clientBuild;
+            Log("user " + conn.UserId + " 「" + conn.Name + "」上線(#" + conn.ConnId + ")"
+                + (clientBuild.Length > 0 ? " client=" + clientBuild : " client=(未報版本)"));
+            if (clientBuild.Length > 0 && !BuildVersionMatch.Same(clientBuild, BuildInfo.Version))
+                Log("⚠️  版本不一致:client=" + clientBuild + " server=" + BuildInfo.Banner
+                    + " —— 兩邊不是同一個 commit,新加的訊息型別在舊的那一邊會被當成不認識而忽略。");
         }
 
         private void OnPing(Connection conn, object node)
@@ -1230,6 +1240,66 @@ namespace Sdo.Server.Net
                 .Utf8();
 
             ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+        }
+
+        /// <summary>
+        /// 密語。收件人**照名字**在全服的連線裡找 —— 不是在房裡找:密語本來就跨房,
+        /// 對方在大廳、在別間房、在旁觀都要收得到。這也是它不能沿用 chatSay 的原因。
+        ///
+        /// 三種結果都由 server 回,連發送者自己那行「你對X說」也是(見 <see cref="NetProto.WhisperMsg"/>):
+        /// 名字存不存在只有 server 知道,本機沒有全服名冊,先畫了才發現送不到就是騙人。
+        /// </summary>
+        private void OnChatWhisper(Connection conn, object node, long now)
+        {
+            // 與公開發言共用同一個洗頻窗 —— 否則密語就成了繞過聊天限速的後門。
+            if (!conn.Rate.AllowChat(now)) return;
+
+            // 不能用 SanitizeName:它把空字串補成「玩家」,那會讓「只打了 [] 沒填名字」變成去找一個
+            // 真的叫「玩家」的人。這裡空的就是空的,直接不處理。
+            string target = Clip(NetJson.Str(node, "target").Trim(), NetLimits.MaxNameChars);
+            string text = Clip(NetJson.Str(node, "text"), NetLimits.MaxChatChars);
+            int expressionId = NetJson.Int(node, "expressionId");
+            if (target.Length == 0) return;
+            if (string.IsNullOrEmpty(text) && expressionId == 0) return;   // 只選了對象還沒打內容
+
+            string channel = NetJson.Str(node, "channel", "current");
+            string leading = Clip(NetJson.Str(node, "leading"), NetLimits.MaxChatChars);
+
+            var to = ControlByName(target);
+            if (to == null)
+            {
+                // 密語找不到人要留 log:玩家回報「密語沒反應」時,這一行能立刻分辨是
+                // 「server 沒收到」(完全沒有這行 → 版本不對或封包沒送出)還是「真的沒這個人」。
+                Log("user " + conn.UserId + " 密語找不到「" + target + "」");
+                // party 用玩家原本打的那串字,不是正規化後的 —— 錯字要照樣顯示出來,他才知道自己打錯了什麼。
+                conn.Send(JObj.New()
+                    .Str(NetProto.FieldType, NetProto.WhisperMsg)
+                    .Str("kind", NetProto.WhisperNoId)
+                    .Str("party", target));
+                return;
+            }
+
+            // 對方看到的:「X 對你說」。senderUserId 給收端認人(頭上泡不彈,但點名字回話要用)。
+            to.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.WhisperMsg)
+                .Str("kind", NetProto.WhisperIn)
+                .Str("party", conn.Name)
+                .Int("senderUserId", conn.UserId)
+                .Str("text", text)
+                .Str("channel", channel)
+                .Int("expressionId", expressionId)
+                .Str("leadingText", leading));
+
+            // 自己看到的:「你對 X 說」。party 用 server 認定的正規名字(玩家可能打了不同大小寫)。
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.WhisperMsg)
+                .Str("kind", NetProto.WhisperOut)
+                .Str("party", to.Name)
+                .Int("senderUserId", conn.UserId)
+                .Str("text", text)
+                .Str("channel", channel)
+                .Int("expressionId", expressionId)
+                .Str("leadingText", leading));
         }
 
         // ================= 小工具 =================

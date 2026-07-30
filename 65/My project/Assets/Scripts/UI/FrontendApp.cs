@@ -340,7 +340,10 @@ namespace Sdo.UI
                 case Sdo.Net.NetProto.ErrFull:       return "neterr.full";
                 case Sdo.Net.NetProto.ErrLookerFull: return "neterr.looker_full";
                 case Sdo.Net.NetProto.ErrBadTeams:   return "room.teams_need_layout";   // 已經有一句更精確的
-                // rateLimit / proto / badJson:不是玩家能處理的事,而且 rateLimit 一爆就是一串 →
+                // proto = server 不認得我們送的訊息型別 → **兩邊版本不一樣**。這個要講出來:
+                // 玩家能處理它(去更新),而靜默的代價是「打了密語整句話憑空消失」那種找不到原因的鬼故事。
+                case Sdo.Net.NetProto.ErrProto:      return "neterr.proto";
+                // rateLimit / badJson:不是玩家能處理的事,而且 rateLimit 一爆就是一串 →
                 // 跳出來只會洗版。留在 log 裡就好。
                 default: return null;
             }

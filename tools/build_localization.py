@@ -122,6 +122,9 @@ STR = {
     "neterr.full":             ["No free seat", "沒有空的座位", "没有空的座位", "空席がありません"],
     "neterr.looker_full":      ["The spectator slots are full", "旁觀席已經滿了",
                                 "旁观席已经满了", "観戦枠が満員です"],
+    # server 不認得 client 送的訊息 = 兩邊版本不一樣。靜默的話症狀是「訊息憑空消失」,查不出原因。
+    "neterr.proto":            ["Server version mismatch — please update", "伺服器版本不符,請更新",
+                                "服务器版本不符,请更新", "サーバーのバージョンが違います"],
     "room.spectate_off":       ["Back in a seat", "已回到座位", "已回到座位", "席に戻りました"],
     "room.drop_up":         ["Up", "向上", "向上", "上"],
     "room.drop_down":       ["Down", "向下", "向下", "下"],

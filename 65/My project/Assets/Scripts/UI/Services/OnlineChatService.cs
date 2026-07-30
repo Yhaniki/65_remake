@@ -6,15 +6,16 @@ using Sdo.Net;
 namespace Sdo.UI.Services
 {
     /// <summary>
-    /// 連線版聊天:房間裡打的字經由 server 廣播給同房所有人。
+    /// 連線版聊天。上網的有兩件事:**同房的公開發言**(廣播)與**密語**(server 照名字找人,跨房)。
     ///
-    /// **本機專屬的那些行不上網** —— 密語、家族頻道、「你說」、系統提示、進出舞台廣播都還是走
-    /// 底下那個離線實作(<paramref name="local"/>),因為它們本來就只給自己看,或者(密語/家族)
-    /// 需要伺服器端的名冊與家族資料,那是後面的階段。這個類別只接管一件事:**同房的公開發言**。
+    /// **本機專屬的那些行不上網** —— 家族頻道、「你說」、系統提示、進出舞台廣播都還是走底下那個
+    /// 離線實作(<paramref name="local"/>),因為它們本來就只給自己看,或者(家族)需要伺服器端的
+    /// 家族資料,那是後面的階段。
     ///
-    /// 🔴 送出時不在本機先畫一行。server 會把訊息廣播回**包含自己**的所有人,所以本機只要等它回來 ——
-    /// 這樣「自己看到的」與「別人看到的」是同一份資料,不會出現「本機顯示了但其實沒送出去」那種鬼故事。
-    /// 代價是自己的字會晚一個 round-trip 才出現(區網下看不出來)。
+    /// 🔴 送出時不在本機先畫一行。server 會把訊息廣播回**包含自己**的所有人(密語則是單獨回一份
+    /// kind=out 給發送者),所以本機只要等它回來 —— 這樣「自己看到的」與「別人看到的」是同一份資料,
+    /// 不會出現「本機顯示了但其實沒送出去」那種鬼故事。密語還多一層:對方到底存不存在只有 server
+    /// 知道,本機沒有全服名冊可查。代價是自己的字會晚一個 round-trip 才出現(區網下看不出來)。
     /// </summary>
     public sealed class OnlineChatService : IChatService
     {
@@ -38,7 +39,11 @@ namespace Sdo.UI.Services
             // 底層(離線實作)產生的本機專屬行也要進到同一份歷史 —— 畫面只讀 Ctx.Chat.History,
             // 兩份歷史會讓密語/家族/系統訊息整個不見。
             if (_local != null) _local.MessageReceived += Add;
-            if (_net != null) _net.ChatReceived += OnNetChat;
+            if (_net != null)
+            {
+                _net.ChatReceived += OnNetChat;
+                _net.WhisperReceived += OnNetWhisper;
+            }
         }
 
         // ---- 送出 ----
@@ -52,7 +57,7 @@ namespace Sdo.UI.Services
             string target, body;
             if (RoomChatCommand.TryParseWhisper(text, out target, out body))
             {
-                SendWhisper(target, body, channel);   // 密語:MVP 仍是本機
+                SendWhisper(target, body, channel);
                 return;
             }
 
@@ -79,10 +84,36 @@ namespace Sdo.UI.Services
                           (leadingText ?? "").Trim());
         }
 
-        // ---- 本機專屬:整批轉給離線實作 ----
-
+        /// <summary>
+        /// 密語走 server —— 不是本機。
+        ///
+        /// 🔴 之前這裡直接轉給離線實作,而離線那份是拿寫死的假名冊(_onlineNames)比名字的,
+        /// 所以線上密語任何真人都是「找不到玩家」。收件人只有 server 找得到:它是唯一
+        /// 握有全服在線名冊的一方,而且密語跨房,連同房快照都不夠用。
+        ///
+        /// 送出後本機**不畫任何東西**,「你對X說」那行等 server 回 whisperMsg(kind=out)才出現,
+        /// 與公開發言同一套哲學(見類別註解)——沒送到就不該看到自己說了話。
+        /// </summary>
         public void SendWhisper(string target, string body, ChatChannel channel = ChatChannel.Current)
-            => _local?.SendWhisper(target, body, channel);
+        {
+            string tgt = target != null ? target.Trim() : "";
+            string msg = body != null ? body.Trim() : "";
+            if (tgt.Length == 0 || msg.Length == 0) return;   // 只選了對象還沒打內容 → 不送
+            if (_net == null) return;
+
+            // 內容裡夾的表情指令([名字] /GO)在送出前就解好:server 只原封轉發,
+            // 兩邊拿到同一組 expressionId/leading/text,收端不必也不會再解一次。
+            int exprId; string lead, trail;
+            if (!RoomChatCommand.TryParseExpression(msg, out exprId, out lead, out trail))
+            {
+                exprId = 0;
+                lead = "";
+                trail = msg;
+            }
+            _net.SendWhisper(tgt, trail, ChannelWire(channel), exprId, lead);
+        }
+
+        // ---- 本機專屬:整批轉給離線實作 ----
 
         public void SendGuild(string text) => _local?.SendGuild(text);
         public void SendSelfTalk(string text) => _local?.SendSelfTalk(text);
@@ -137,6 +168,56 @@ namespace Sdo.UI.Services
                 RoomChatAction action;
                 if (RoomChatCommand.TryParseRoomAction(msg.Text, senderMale, out action) && action != null)
                     msg.RoomActionId = action.Id;
+            }
+
+            Add(msg);
+        }
+
+        /// <summary>
+        /// server 回來的密語:三種 kind 各對應顯示端已經會畫的一種行
+        /// (「你對X說」/「X對你說」/「找不到玩家X」),這裡只做欄位對應。
+        ///
+        /// 文案與離線版共用 <see cref="ChatDisplay.WhisperText"/>,所以線上/單機看到的字一模一樣。
+        /// 密語行不彈頭上泡、不觸發舞蹈動作(RoomScreen 依 <c>Whisper != None</c> 判斷),
+        /// 因此這裡刻意不解 RoomActionId。
+        /// </summary>
+        private void OnNetWhisper(NetWhisperMessage m)
+        {
+            string party = m.Party ?? "";
+            var msg = new ChatMessage
+            {
+                WhisperParty = party,
+                Text = m.Text ?? "",
+                ExpressionId = m.ExpressionId,
+                LeadingText = m.LeadingText ?? "",
+                Channel = ChannelOf(m.Channel),
+                TimeMs = NowMs(),
+                // 密語其實不受作用域過濾(跨大廳/房間都看得到),但還是蓋上當下的作用域,
+                // 讓歷史裡每一則都有一致的欄位 —— 與離線實作的 Emit 同樣做法。
+                Scope = _scope,
+                RoomId = _scopeRoomId,
+            };
+
+            switch (m.Kind)
+            {
+                case NetProto.WhisperOut:
+                    msg.Whisper = WhisperKind.Outgoing;
+                    msg.Local = true;
+                    msg.SenderUserId = m.SenderUserId;
+                    break;
+
+                case NetProto.WhisperNoId:
+                    msg.Whisper = WhisperKind.NoId;
+                    msg.Local = true;
+                    msg.Sender = "系統";
+                    break;
+
+                default:   // WhisperIn
+                    msg.Whisper = WhisperKind.Incoming;
+                    msg.Sender = party;                 // 「X 對你說」的 X:點名字回話要用
+                    msg.SenderUserId = m.SenderUserId;
+                    msg.SenderMale = SenderIsMale(m.SenderUserId);
+                    break;
             }
 
             Add(msg);

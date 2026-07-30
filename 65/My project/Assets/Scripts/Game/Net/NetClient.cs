@@ -180,6 +180,9 @@ namespace Sdo.Game.Net
         /// <summary>聊天訊息。</summary>
         public event Action<NetChatMessage> ChatReceived;
 
+        /// <summary>密語(含「你對X說」與「找不到玩家X」——三種都由 server 回)。</summary>
+        public event Action<NetWhisperMessage> WhisperReceived;
+
         // ---- 缺歌傳檔(M5)----
 
         /// <summary>server 回答「我有沒有這首歌」:(packId, 有沒有)。</summary>
@@ -323,6 +326,10 @@ namespace Sdo.Game.Net
                 .Str("name", _identity.Name ?? "")
                 .Str("guild", _identity.Guild ?? "")
                 .Int("level", _identity.Level)
+                // 這顆 client 是哪個 commit(視窗標題那串,BuildScript 在 build 時用 git 寫進 productName)。
+                // server 會把它印在連線 log 裡,而且與自己的版本不同時警告 —— 「兩邊版本對不對」
+                // 是排查連線問題的第一步,而它以前完全看不出來。
+                .Str("build", Application.productName ?? "")
                 .Put("look", look);
 
             if (!string.IsNullOrEmpty(_password)) hello.Str("password", _password);
@@ -458,6 +465,10 @@ namespace Sdo.Game.Net
 
                 case NetProto.ChatMsg:
                     Raise(ChatReceived, NetChatMessage.Decode(node));
+                    break;
+
+                case NetProto.WhisperMsg:
+                    Raise(WhisperReceived, NetWhisperMessage.Decode(node));
                     break;
 
                 case NetProto.BlobInfo:
@@ -1067,6 +1078,20 @@ namespace Sdo.Game.Net
         public void SendChat(string text, string channel = "current", int expressionId = 0, string leading = null)
             => Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.ChatSay)
+                .Str("text", text ?? "")
+                .Str("channel", channel ?? "current")
+                .Int("expressionId", expressionId)
+                .Str("leading", leading ?? ""));
+
+        /// <summary>
+        /// 密語。對方是誰由 server 照名字找(全服、跨房),所以本機不需要、也不可能自己驗證名字存不存在。
+        /// 結果(送到了 / 找不到人)一律由 <see cref="WhisperReceived"/> 回來。
+        /// </summary>
+        public void SendWhisper(string target, string text, string channel = "current",
+                                int expressionId = 0, string leading = null)
+            => Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", target ?? "")
                 .Str("text", text ?? "")
                 .Str("channel", channel ?? "current")
                 .Int("expressionId", expressionId)

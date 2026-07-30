@@ -54,5 +54,60 @@
     -->
     <Compile Include="../../65/My project/Assets/Scripts/Sdo.Osu/**/*.cs"
              Exclude="../../65/My project/Assets/Scripts/Sdo.Osu/AudioDuration.cs" />
+
+    <!--
+      版本字串的 formatter。**單獨挑這一個檔**(它刻意寫成 UnityEngine-free,見檔頭)——
+      Assets/Scripts/Game 底下其他檔滿是 UnityEngine 依賴,整包 include 會編不過。
+      共用它的理由:server 印的版本要與 client 視窗標題長得一樣,才能一眼比對兩邊是不是同一個 commit。
+    -->
+    <Compile Include="../../65/My project/Assets/Scripts/Game/BuildTitle.cs" />
+
+    <!--
+      測試專案是 ProjectReference(不是把原始碼再編一份),所以 internal 的純函式
+      (BuildInfo.Sane / Compose 那些)跨 assembly 是看不見的 —— 開這道門而不是把它們改成 public:
+      它們是實作細節,只有測試需要直接戳。
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Sdo.Server.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
+
+  <!--
+    編譯時把 git 狀態戳進 assembly metadata,啟動 banner 才印得出「這顆 binary 是哪個 commit」
+    (見 BuildInfo.cs —— 沒有它的話,「server 沒換到新版」與「新功能有 bug」的症狀無法區分)。
+
+    ⚠️ 三個 git 指令都可能失敗(不在 tag 上是常態、從 tarball 建則完全沒有 .git),所以:
+      * stderr 丟掉 —— ConsoleToMSBuild 會把 stderr 一起收進 ConsoleOutput,
+        「fatal: no tag exactly matches …」會直接變成版本字串的一部分。
+      * IgnoreExitCode + ContinueOnError —— git 失敗絕對不可以讓 build 失敗。
+      * C# 端還有一道 BuildInfo.Sane(tag/hash 不含空白)兜底。
+  -->
+  <Target Name="SdoStampGitVersion" BeforeTargets="GetAssemblyAttributes">
+    <PropertyGroup>
+      <SdoNul Condition="'$(OS)' == 'Windows_NT'">NUL</SdoNul>
+      <SdoNul Condition="'$(OS)' != 'Windows_NT'">/dev/null</SdoNul>
+    </PropertyGroup>
+
+    <Exec Command="git describe --tags --exact-match HEAD 2&gt;$(SdoNul)"
+          WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="SdoGitExactTag" />
+    </Exec>
+    <Exec Command="git describe --tags --abbrev=0 2&gt;$(SdoNul)"
+          WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="SdoGitNearestTag" />
+    </Exec>
+    <Exec Command="git rev-parse --short=5 HEAD 2&gt;$(SdoNul)"
+          WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="SdoGitHash5" />
+    </Exec>
+
+    <ItemGroup>
+      <AssemblyMetadata Include="GitExactTag" Value="$(SdoGitExactTag)" />
+      <AssemblyMetadata Include="GitNearestTag" Value="$(SdoGitNearestTag)" />
+      <AssemblyMetadata Include="GitHash5" Value="$(SdoGitHash5)" />
+    </ItemGroup>
+  </Target>
 </Project>

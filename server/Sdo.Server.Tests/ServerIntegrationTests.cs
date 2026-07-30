@@ -506,6 +506,139 @@ namespace Sdo.Tests
             Assert.IsNull(leaked, "別房的人不該看到這句話");
         }
 
+        // ---- 密語 ----
+        //
+        // 這幾條釘住的是實際踩到的 bug:client 端把密語轉給離線實作,而離線那份比的是寫死的假名冊,
+        // 所以線上密語任何真人都回「找不到玩家」。修法是讓 server 照全服名冊找人 —— 因此下面的測試
+        // 一定要包含「跨房也送得到」(chatSay 恰好相反,它不跨房)。
+
+        [Test]
+        public void Whisper_Reaches_Only_The_Target_And_Echoes_To_Sender()
+        {
+            var a = Connect("說密語的");
+            int code = CreateRoom(a, "房");
+            var b = Connect("收密語的");
+            JoinRoom(b, code);
+            var c = Connect("旁邊的人");
+            JoinRoom(c, code);
+            WaitForState(a, s => s.SeatedCount == 3, "三個人都在房裡");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", "收密語的")
+                .Str("text", "只給你看")
+                .Str("channel", "current"));
+
+            var incoming = b.WaitFor(NetProto.WhisperMsg);
+            Assert.IsNotNull(incoming, "目標沒收到密語");
+            Assert.AreEqual(NetProto.WhisperIn, NetJson.Str(incoming, "kind"));
+            Assert.AreEqual("說密語的", NetJson.Str(incoming, "party"), "party 要是發送者");
+            Assert.AreEqual(a.UserId, NetJson.Int(incoming, "senderUserId"));
+            Assert.AreEqual("只給你看", NetJson.Str(incoming, "text"));
+
+            var echo = a.WaitFor(NetProto.WhisperMsg);
+            Assert.IsNotNull(echo, "發送者要收到自己那行「你對X說」");
+            Assert.AreEqual(NetProto.WhisperOut, NetJson.Str(echo, "kind"));
+            Assert.AreEqual("收密語的", NetJson.Str(echo, "party"), "party 要是收件人");
+
+            Assert.IsNull(c.WaitFor(NetProto.WhisperMsg, 500), "同房的第三人不該看到密語");
+            Assert.IsNull(c.WaitFor(NetProto.ChatMsg, 300), "密語不該變成公開發言");
+        }
+
+        [Test]
+        public void Whisper_Crosses_Rooms()
+        {
+            var a = Connect("A房的人");
+            CreateRoom(a, "A房");
+            var b = Connect("B房的人");
+            CreateRoom(b, "B房");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", "B房的人")
+                .Str("text", "跨房也找得到你"));
+
+            var incoming = b.WaitFor(NetProto.WhisperMsg);
+            Assert.IsNotNull(incoming, "密語要跨房送到(這正是它不能沿用 chatSay 的原因)");
+            Assert.AreEqual(NetProto.WhisperIn, NetJson.Str(incoming, "kind"));
+            Assert.AreEqual("跨房也找得到你", NetJson.Str(incoming, "text"));
+        }
+
+        [Test]
+        public void Whisper_Is_Case_Insensitive_And_Echo_Uses_The_Canonical_Name()
+        {
+            var a = Connect("Sender");
+            var b = Connect("TargetName");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", "targetNAME")
+                .Str("text", "大小寫不該影響找人"));
+
+            Assert.IsNotNull(b.WaitFor(NetProto.WhisperMsg), "名字比對要不分大小寫");
+
+            var echo = a.WaitFor(NetProto.WhisperMsg);
+            Assert.IsNotNull(echo);
+            Assert.AreEqual("TargetName", NetJson.Str(echo, "party"),
+                "自己那行要顯示 server 認定的正規名字,不是玩家打的大小寫");
+        }
+
+        [Test]
+        public void Whisper_To_Unknown_Name_Reports_NoId_To_Sender_Only()
+        {
+            var a = Connect("找人的");
+            var b = Connect("無關的人");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", "不存在的人")
+                .Str("text", "有人在嗎"));
+
+            var reply = a.WaitFor(NetProto.WhisperMsg);
+            Assert.IsNotNull(reply, "找不到人也要回一則,否則玩家不知道沒送出去");
+            Assert.AreEqual(NetProto.WhisperNoId, NetJson.Str(reply, "kind"));
+            Assert.AreEqual("不存在的人", NetJson.Str(reply, "party"),
+                "要回玩家原本打的那串字,他才知道自己打錯了什麼");
+            Assert.IsNull(b.WaitFor(NetProto.WhisperMsg, 400), "別人不該看到這則失敗提示");
+        }
+
+        [Test]
+        public void Whisper_Without_Target_Or_Body_Is_Dropped()
+        {
+            var a = Connect("亂送的");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", "   ").Str("text", "沒填對象"));
+            Assert.IsNull(a.WaitFor(NetProto.WhisperMsg, 400),
+                "空對象不該被當成去找一個叫「玩家」的人(SanitizeName 會那樣補)");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", "亂送的").Str("text", ""));
+            Assert.IsNull(a.WaitFor(NetProto.WhisperMsg, 400), "只選了對象還沒打內容 → 不送");
+        }
+
+        [Test]
+        public void Whisper_Carries_Expression_Fields()
+        {
+            var a = Connect("表情密語");
+            var b = Connect("看表情的");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatWhisper)
+                .Str("target", "看表情的")
+                .Str("text", "後面的字")
+                .Int("expressionId", 3)
+                .Str("leading", "前面的字"));
+
+            var incoming = b.WaitFor(NetProto.WhisperMsg);
+            Assert.IsNotNull(incoming);
+            Assert.AreEqual(3, NetJson.Int(incoming, "expressionId"));
+            Assert.AreEqual("前面的字", NetJson.Str(incoming, "leadingText"));
+            Assert.AreEqual("後面的字", NetJson.Str(incoming, "text"));
+        }
+
         [Test]
         public void Moves_Are_Room_Versioned_And_Old_Slots_Are_Ignored_After_Spectate()
         {

@@ -57,6 +57,9 @@ namespace Sdo.Server.Net
         public string Name = "";
         public string Guild = "";
         public int Level;
+
+        /// <summary>client 自報的 build 版本(視窗標題那串)。只用來 log 與版本比對,不影響任何規則。</summary>
+        public string Build = "";
         public NetAvatarLook Look = new NetAvatarLook();
 
         /// <summary>

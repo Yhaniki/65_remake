@@ -234,6 +234,37 @@ namespace Sdo.Net
     }
 
     /// <summary>
+    /// 一則密語的結果(server → client)。
+    ///
+    /// <see cref="Kind"/> 決定畫哪一行:<c>out</c>「你對X說」、<c>in</c>「X對你說」、<c>noid</c>「找不到玩家X」。
+    /// <see cref="Party"/> 一律是**對方**的名字(out → 收件人、in → 發送者、noid → 玩家自己打的那串字),
+    /// 顯示端只認這一個欄位,不必自己判斷該印誰。
+    /// </summary>
+    public struct NetWhisperMessage
+    {
+        public string Kind;
+        public string Party;
+        public int SenderUserId;
+        public string Text;
+        public string Channel;
+        public int ExpressionId;
+        public string LeadingText;
+
+        public static NetWhisperMessage Decode(object node)
+        {
+            var m = new NetWhisperMessage();
+            m.Kind = NetJson.Str(node, "kind", NetProto.WhisperIn);
+            m.Party = NetJson.Str(node, "party");
+            m.SenderUserId = NetJson.Int(node, "senderUserId");
+            m.Text = NetJson.Str(node, "text");
+            m.Channel = NetJson.Str(node, "channel", "current");
+            m.ExpressionId = NetJson.Int(node, "expressionId");
+            m.LeadingText = NetJson.Str(node, "leadingText");
+            return m;
+        }
+    }
+
+    /// <summary>
     /// 房間裡某個人的最新位置(server 攢好後一批一批推)。
     ///
     /// <see cref="Walking"/> 是收端決定播走路還是待機 clip 的依據 —— 不能只靠「位置有沒有變」推:

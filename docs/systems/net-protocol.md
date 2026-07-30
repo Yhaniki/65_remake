@@ -48,7 +48,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 
 | 類別 | 訊息 |
 |---|---|
-| 連線 | `hello`{proto,role,playerId,name,gender,level,guild,password?,**authToken?**,sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
+| 連線 | `hello`{proto,role,playerId,name,gender,level,guild,**build**,password?,**authToken?**,sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
 | 房間 | `roomList` / `createRoom`{mode,name} / `joinRoom`{code} → `joinResult`{ok/full/inGame/notFound} / `leaveRoom` / **`roomState`**{rev,code,name,hostUserId,mode,status,capacity,seats[…],spectators[],song,settings} / `setRoomName` |
 | 座位 | `kickUser` / `setSeatClosed` / `transferHost` / `kicked`{reason} / `error`{rq?,code,msg} |
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
@@ -60,6 +60,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 | 身分 | `setIdentity`{name,playerId,guild,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
 | 旁觀 | `spectate`{code} / `stopSpectate` |
 | 聊天 | `chatSay` / `chatMsg` / `announce` |
+| 密語 | `chatWhisper`{target,text,expressionId,leading,channel} C→S / `whisperMsg`{kind:`out`/`in`/`noid`,party,senderUserId,text,expressionId,leadingText,channel} S→C(見下) |
 
 `playState`:`idle` `ready` **`waitingForLoad`** `loaded` `readyForGameplay` **`playing`** `finished`
 **`results`** `spectating`(粗體 = server 保留,client 送不進來)。
@@ -79,6 +80,46 @@ server 沒給 `--tokens` 時 `authToken` 被忽略,身分 = client 自稱的 `pl
 
 加密不在協定層:TLS 包在 framing 外面(`[len][kind][payload]` 一個 byte 都沒變),
 所以 `serverTls` 只影響 stream 怎麼建起來。憑證釘選規則見 `Sdo.Net.TlsPinning`。
+
+### `hello.build`:兩邊是不是同一個 commit
+
+client 把視窗標題那串版本(`dance v1.5.0-dev-50359`,build 時由 git 寫進 `productName`)一起送上來,
+server 印在連線 log 裡,和自己的版本不同時喊一句警告。server 啟動 banner 也印同格式的
+`sdo-server v1.5.0-dev-50359`(見 `Sdo.Server.BuildInfo`)。
+
+🔴 為什麼需要:協定新增訊息型別之後,「忘了更新其中一邊」的症狀是**該功能完全沒反應**
+(舊的那一邊不認得,只回一個 `error{proto}`),與「功能本身寫壞了」無法區分。實際踩過兩次,
+兩次都花在「到底部署了沒有」上面。版本拿不到的一邊(Unity Editor 的 productName 沒有 git 後綴、
+從 tarball 建的 server)則刻意**不**警告 —— 每次連線都喊一句沒意義的話,真的不一致時就沒人看了。
+
+client 收到 `error{proto}` 也會 toast 一句「伺服器版本不符,請更新」。這是 `proto` 與
+`rateLimit`/`badJson` 的差別:後兩者不是玩家能處理的事,而版本不符他可以去更新。
+
+### 密語:收件人由 server 找,而且跨房
+
+`chatSay` 的收件人是「房裡所有人」,密語是「全服照名字找出來的那一個人」—— 兩者收件人完全不同,
+所以密語是獨立的訊息型別而不是 `chatSay` 的一個欄位。**對方在大廳、在別間房、在旁觀都要收得到**。
+
+三種結果都由 server 回,**連發送者自己那行「你對X說」也是**(`kind=out`):
+
+| kind | 收件人 | 顯示 | `party` |
+|---|---|---|---|
+| `in` | 目標 | 「X 對你說」 | 發送者的名字 |
+| `out` | 發送者 | 「你對 X 說」 | 收件人的名字(**server 認定的正規大小寫**) |
+| `noid` | 發送者 | 「找不到玩家 X」 | 玩家原本打的那串字(錯字要照樣顯示,他才知道打錯了什麼) |
+
+🔴 本機送出後**不畫任何東西**,三行都等 server 回來才出現 —— 與公開發言同一套哲學:
+「名字到底存不存在」只有 server 知道(它才有全服在線名冊),本機先畫了才發現送不到就是騙人。
+這裡實際踩過:client 端曾把密語轉給離線實作,而離線那份比的是寫死的假名冊,
+結果線上密語**任何**真人都回「找不到玩家」。
+
+名字比對不分大小寫;同名時送給 userId 最小的那個(先上線的)—— 名字在 server 這邊不保證唯一,
+不挑一個穩定規則的話「密語進到誰的視窗」會隨 Dictionary 列舉順序而變。
+
+⚠️ server 只有「現在連著的人」這份名冊,所以無法區分「查無此人」與「這個人存在但沒上線」,兩者都回 `noid`。
+單機離線版另外有的「X 不在當前頻道」(`WhisperKind.OffChannel`)因此在連線時不會出現。
+
+密語與公開發言**共用同一個洗頻窗**(chat 5/3s),否則它就成了繞過聊天限速的後門。
 
 ### 為什麼推整份 snapshot 而不是 delta
 

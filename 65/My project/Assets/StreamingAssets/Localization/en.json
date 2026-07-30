@@ -300,16 +300,12 @@
    "v": "The spectator slots are full"
   },
   {
+   "k": "neterr.proto",
+   "v": "Server version mismatch — please update"
+  },
+  {
    "k": "room.spectate_off",
    "v": "Back in a seat"
-  },
-  {
-   "k": "room.difficulty_setting",
-   "v": "SETTING"
-  },
-  {
-   "k": "room.teams_normal_mode_only",
-   "v": "Teams are only available in Normal mode"
   },
   {
    "k": "room.drop_up",

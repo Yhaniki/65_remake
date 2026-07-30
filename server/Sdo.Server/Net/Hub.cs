@@ -160,7 +160,11 @@ namespace Sdo.Server.Net
             _listener.Start();
             ActualPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
 
-            Console.WriteLine("[sdo-server] 監聽中 " + addr + ":" + ActualPort + "  (protocol v" + NetProto.Version + ")");
+            // 版本擺在最前面 —— 排查任何「更新完還是壞的」都要先確認這顆 binary 真的是新的。
+            // 與 client 視窗標題同格式(dance v1.5.0-dev-d41da ↔ sdo-server v1.5.0-dev-d41da),見 BuildInfo。
+            Console.WriteLine("[sdo-server] " + BuildInfo.Banner
+                              + "  (protocol v" + NetProto.Version + ")");
+            Console.WriteLine("[sdo-server] 監聽中 " + addr + ":" + ActualPort);
             Console.WriteLine("[sdo-server] " + _opts);
             PrintSecurityBanner();
 
@@ -477,6 +481,27 @@ namespace Sdo.Server.Net
         {
             Connection c;
             return _byUser.TryGetValue(userId, out c) && !c.IsClosed ? c : null;
+        }
+
+        /// <summary>
+        /// 照名字找 control 連線(不分大小寫)。密語用 —— 全服都找,不限同房。
+        ///
+        /// 名字在 server 這邊**不保證唯一**(SanitizeName 只清字元、不查重複),所以同名時取 userId
+        /// 最小的那一條:Dictionary 的列舉順序是不保證的,不挑一個穩定的規則,同名情況下「密語會進到誰
+        /// 的視窗」會隨執行而變 —— 那種 bug 沒人查得出來。userId 最小 == 先上線的那個。
+        /// </summary>
+        private Connection ControlByName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            Connection best = null;
+            foreach (var kv in _byUser)
+            {
+                var c = kv.Value;
+                if (c == null || c.IsClosed) continue;
+                if (!string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (best == null || c.UserId < best.UserId) best = c;
+            }
+            return best;
         }
 
         private void SendTo(int userId, JObj msg)

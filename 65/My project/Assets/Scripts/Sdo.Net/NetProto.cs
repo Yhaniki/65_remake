@@ -193,6 +193,35 @@
         public const string ChatMsg = "chatMsg";
         public const string Announce = "announce";
 
+        /// <summary>
+        /// C→S 密語:`{target, text, expressionId, leading, channel}`。
+        ///
+        /// 跟 <see cref="ChatSay"/> 分開是因為收件人完全不同 —— 公開發言是「房裡所有人」,
+        /// 密語是「全服照名字找出來的那一個人」(密語本來就跨房,對方在大廳或別間房都要收得到)。
+        /// </summary>
+        public const string ChatWhisper = "chatWhisper";
+
+        /// <summary>
+        /// S→C 密語結果:`{kind, party, senderUserId, text, expressionId, leadingText, channel}`。
+        ///
+        /// 🔴 連自己那行「你對X說」也是等 server 回這個訊息才畫(kind=<see cref="WhisperOut"/>),
+        /// 不在本機先畫 —— 理由與公開發言相同:本機顯示了但其實沒送到,是最難查的那種鬼故事。
+        /// 而且「對方到底存不存在」只有 server 知道,本機沒有全服名冊可查。
+        /// </summary>
+        public const string WhisperMsg = "whisperMsg";
+
+        /// <summary>whisperMsg.kind:你對某人說的那一行(回給發送者)。</summary>
+        public const string WhisperOut = "out";
+        /// <summary>whisperMsg.kind:某人對你說的那一行(送給收件人)。</summary>
+        public const string WhisperIn = "in";
+        /// <summary>
+        /// whisperMsg.kind:找不到這個名字(回給發送者)。
+        ///
+        /// server 只有「現在連著的人」這份名冊,所以無法區分「名字不存在」與「這個人存在但沒上線」——
+        /// 兩者都回這個。離線版另有的「不在當前頻道」(WhisperKind.OffChannel)因此不會在連線時出現。
+        /// </summary>
+        public const string WhisperNoId = "noid";
+
         // ---- 連線角色 ----
 
         /// <summary>主連線:房間狀態 + 聊天 + 分數流。</summary>

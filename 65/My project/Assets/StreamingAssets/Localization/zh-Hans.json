@@ -300,16 +300,12 @@
    "v": "旁观席已经满了"
   },
   {
+   "k": "neterr.proto",
+   "v": "服务器版本不符,请更新"
+  },
+  {
    "k": "room.spectate_off",
    "v": "已回到座位"
-  },
-  {
-   "k": "room.difficulty_setting",
-   "v": "难度设置"
-  },
-  {
-   "k": "room.teams_normal_mode_only",
-   "v": "只有「普通模式」可以组队"
   },
   {
    "k": "room.drop_up",
