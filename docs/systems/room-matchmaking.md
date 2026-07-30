@@ -30,6 +30,8 @@
 - 沒有座位玩家了 → `hostUserId = 0`(無房主)。旁觀者不會被指派成房主:
   沒有舞者的房間本來就不需要選歌或開始,所以「無房主」不是壞狀態而是正確狀態。
 - **房主沒有「準備」這個狀態。** 它那格畫 host 徽章(`master.an` = 官方的 "HOST"),不畫準備標記;
+  ⚠️ 但那個位置是**四張共用**的:`PLAYING`(d06..d09)> `NO MAP`(c06..c09)> `HOST` > `READY`,
+  所以房主在場中時那一格畫的是 PLAYING —— 狀態壓過身分(見 `RoomBadgeChoice`)。
   它按的是「開始」。實作上房主的 `Ready` 一律留 `false`,判定用「是房主 或 Ready」。
   🔴 不要用「房主恆 Ready = true」—— 那會讓 `Ready` 同時承載兩種語意,每個讀它的地方都要記得排除房主,
   忘一處就錯。最直接的受害者是「房主永遠不能選自己的隊」(換隊條件是「還沒準備」),
@@ -73,7 +75,7 @@ open ──requestStart──> waitingForLoad ──沒人還在載──> playi
 ```
 
 - **參與者集合在 `requestStart` 那一刻凍結** = 「(是房主 或 已準備)且 `avail == have`」的座位。
-  非參與者維持 `idle` **留在房間**,看得到其他人的頭貼變 PLAYING 徽章。
+  非參與者維持 `idle` **留在房間**,看得到其他人頭貼下緣那條徽章變 PLAYING(蓋掉原本的 HOST / READY)。
 - `loaded` = 程式載完;`readyForGameplay` = 人準備好。推進條件是「沒人還在 `waitingForLoad`」——
   所以 `readyForGameplay` **不阻塞開場**。
 - **載入逾時 30 秒**:還在 `waitingForLoad` 的人逐出本場;卡在 `loaded` 的**強制轉 `playing`**。

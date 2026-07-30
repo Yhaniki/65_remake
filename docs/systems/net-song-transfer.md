@@ -65,7 +65,7 @@ manifest 每行 = <相對路徑,小寫,'/'> \x1F <位元組數> \x1F <譜面才�
 
 其他人收到 roomState.song
   ├─ 有 → setAvailability(have)
-  └─ 沒有 → setAvailability(missing) + 出「NO SONG」徽章
+  └─ 沒有 → setAvailability(missing) + 頭貼那條徽章換成「NO MAP」(c06..c09)
        座位玩家 + netAutoDownload → blobQuery(有嗎?)→ 有才 blobDownloadBegin
        旁觀者 → **不自動下載**(需求)
        下載 → 寫 <DATA>/ADDON/SONG/connect/<歌名 - 作者 [packId 前8碼]>/
