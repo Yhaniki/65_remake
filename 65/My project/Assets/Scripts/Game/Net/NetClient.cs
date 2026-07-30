@@ -481,12 +481,18 @@ namespace Sdo.Game.Net
 
                 case NetProto.Moves:
                     {
-                        // Position samples belong to an exact room snapshot generation. A seat↔spectator transition
-                        // teleports the avatar and removes its cached move; a delayed pre-transition batch must not
-                        // put the old interpolated position back.
+                        // 座位↔旁觀切換會把角色傳送到新位置並清掉他的位置快取,所以**切換之前**發出的
+                        // 那一批不能把舊的插值位置放回去 —— 那一批帶的 rev 比現在小,擋掉它就夠了。
+                        //
+                        // 🔴 這裡曾經要求 rev **完全相等**,那會餓死整條位置流:server 推 moves 時帶的是它
+                        // 當下最新的 rev,而 client 只要丟棄過任何一份 roomState(CanAcceptRoomState 的
+                        // 進房/旁觀等待狀態、或 rev 沒有前進的重送),Room.Rev 就永久落後 server 一截 ——
+                        // 之後每一批 moves 都「不等於」,遠端玩家就從此定在原地不動了。
+                        // 位置資料本身是 userId-keyed 的,比當前 rev 新沒有任何害處(那只代表對應的
+                        // roomState 還在路上;還沒生出來的人 RoomScene3D.ApplyRemoteMove 本來就會忽略)。
                         if (Room == null
                             || NetJson.Int(node, "roomCode") != Room.Code
-                            || NetJson.Int(node, "roomRev") != Room.Rev)
+                            || NetJson.Int(node, "roomRev") < Room.Rev)
                             break;
 
                         var rows = NetJson.Arr(node, "m");
