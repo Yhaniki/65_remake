@@ -576,6 +576,7 @@ namespace Sdo.UI
         private float _netGateArmedRt;
         private long _netMatchId;
         private const float NetGateLocalTimeoutSec = 45f;   // > server 的 LoadTimeoutMs(30s)
+        private const float NetResultAutoConfirmSec = 30f;  // 連線:結算面板放著沒按 → 30 秒後自動確定回房間
 
         private void WireNetGameplay(ScreenGameplay game)
         {
@@ -670,6 +671,9 @@ namespace Sdo.UI
             };
             game.NetLeaderUserId = () => net.LeaderUserId;
             game.NetResultRows = () => _netResultRows;
+            // 結算畫面沒人按確定 → 30 秒後自己按(ResultScreen 會走 OnConfirm,跟按確定完全同一條路:
+            // 送 playFinished、拆遊戲、轉場回房間)。連線才需要 —— 一個人掛在結算畫面,整間房都開不了下一局。
+            game.resultAutoConfirmSec = NetResultAutoConfirmSec;
             game.LocalComboMilestone = combo => net.SendComboMilestone(_netMatchId, combo);
         }
 

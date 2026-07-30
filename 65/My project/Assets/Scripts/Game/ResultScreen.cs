@@ -38,6 +38,10 @@ namespace Sdo.Game
         private const int OrderBg = 120, OrderRow = 130, OrderRowText = 134, OrderBanner = 138, OrderBtn = 140, OrderText = 144;
 
         public System.Action OnConfirm;
+        /// <summary>沒人按「確定」就自動確定的秒數,從面板出現算起(≤0 = 不自動,一直等玩家按)。
+        /// 線上由 <see cref="ScreenGameplay.resultAutoConfirmSec"/> 設 —— 一個人把結算畫面放著不管,
+        /// 整間房就都開不了下一局。走的是跟按確定完全同一條路(<see cref="OnConfirm"/>)。</summary>
+        public float autoConfirmSec = 0f;
         public bool Visible { get; private set; }
 
         private Camera _cam;
@@ -50,6 +54,7 @@ namespace Sdo.Game
         private bool[] _rowSnd;
         // result sequence flags/timers: rows (SE_0020, 500ms apart) → EXP/G roll (SE_0021) → win/lose banner zoom (SE_0022)
         private bool _expSnd, _bannerShown, _bannerLocalWon, _gameOver;
+        private bool _confirmed;           // 確定已送出(按的或逾時自動的)— 一局只送一次
         private bool _showBanner = true;   // 出 YOU WIN/LOSE 旗? 自由模式=false (仍播 SE_0022);GAME OVER 也不出旗
         private float _bannerStart;
         // GAME OVER (RANK/7.png) sprite — drawn IN the failed (local) player's rank column as a normal row child, so it
@@ -227,6 +232,7 @@ namespace Sdo.Game
             ClearRows();
             _playSe = playSe; _rowSnd = new bool[rows != null ? rows.Length : 0];
             _expSnd = false; _bannerShown = false; _bannerStatic = false; _rewardArmed = false; _localHead = localHead; _gameOver = gameOver;
+            _confirmed = false;
             _showBanner = showBanner;
             string dir = SdoExtracted.ResultStatisDir;
 
@@ -467,12 +473,23 @@ namespace Sdo.Game
             if (_bannerShown && wantBanner) UpdateBanner(banner);
 
             // OK (Enter / click) confirms; save-record is a P1 stub (no-op for now)
-            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Escape)) { OnConfirm?.Invoke(); return; }
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Escape)) { Confirm(); return; }
             if (Input.GetMouseButtonDown(0) && _cam != null)
             {
                 var w = _cam.ScreenToWorldPoint(Input.mousePosition);
-                if (_okBtn && _okBtn.sprite && _okBtn.bounds.Contains(new Vector3(w.x, w.y, _okBtn.transform.position.z))) OnConfirm?.Invoke();
+                if (_okBtn && _okBtn.sprite && _okBtn.bounds.Contains(new Vector3(w.x, w.y, _okBtn.transform.position.z))) { Confirm(); return; }
             }
+            // 沒人按:面板開著 autoConfirmSec 秒後自己按下去(線上 = 30 秒)。
+            if (autoConfirmSec > 0f && el >= autoConfirmSec) Confirm();
+        }
+
+        // 「確定」的唯一出口(按鈕 / Enter / Esc / 逾時自動都走這裡)。一局只送一次 —— 自動確定之後
+        // 面板還在 Tick,不擋的話會每一幀再送一次同一個確定。
+        private void Confirm()
+        {
+            if (_confirmed) return;
+            _confirmed = true;
+            OnConfirm?.Invoke();
         }
 
         // Position + scale the active WIN/LOSE banner (live F4 bannerX/Y/finalScale/animSec). Zooms from ~screen-width

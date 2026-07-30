@@ -469,6 +469,14 @@ namespace Sdo.Game
         /// </summary>
         public System.Func<ResultScreen.Row[]> NetResultRows;
 
+        /// <summary>
+        /// 結算面板「沒人按確定」時自動確定的秒數(0 = 不自動,一直等玩家按)。
+        /// 連線時由 FrontendApp 設 30 秒:自動確定跟按確定是同一條路(ResultScreen.OnConfirm),
+        /// 一樣拆遊戲、送 playFinished、轉場回房間 —— 差別只在沒人按也會走。
+        /// 單機留 0(想看多久就看多久,反正沒人在等)。
+        /// </summary>
+        public float resultAutoConfirmSec = 0f;
+
         // ---- result / finish sequence (歌曲結束 → 輸贏定格動作 → 結算面板; decompiled FinishSequenceTick phase4..6) ----
         private enum ResultPhase { None, FinishPose, Settle, Replay }
         private ResultPhase _resultPhase = ResultPhase.None;
@@ -5292,6 +5300,7 @@ namespace Sdo.Game
                         UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);   // 確定 → 重玩 (reload)
                 };
             }
+            _result.autoConfirmSec = resultAutoConfirmSec;   // 連線 = 30 秒後自己按確定(每次開面板都重設,面板本身只建一次)
             string diff = _map != null ? "Lv " + _map.Level : "";
             var rows = PrepareResultRows();   // also rebuilds _roster and attaches every participant portrait
             // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
