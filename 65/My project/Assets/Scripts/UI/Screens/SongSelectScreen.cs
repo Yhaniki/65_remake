@@ -1162,6 +1162,13 @@ namespace Sdo.UI.Screens
                        System.StringComparison.OrdinalIgnoreCase);
         }
 
+        private static int PreviewStartMs(SongCatalog.Entry e)
+        {
+            if (e == null || !e.external) return -1;
+            return SongPreviewWindow.NormalizeStart(
+                e.chartFormat, e.previewStartMs);
+        }
+
         // Start (or replace) the looping preview for the selected song. Cancels any in-flight load first so rapid
         // selection never stacks coroutines or leaves a stale clip playing (debounce on fileId).
         private void PlayPreview(SongCatalog.Entry e)
@@ -1218,7 +1225,7 @@ namespace Sdo.UI.Screens
                 {
                     var player = new OsuKeysoundPreviewPlayer(
                         gameObject, map, virtualChartPath,
-                        e.previewStartMs,
+                        PreviewStartMs(e),
                         e.previewLengthMs > 0 ? e.previewLengthMs : PreviewWindowSec * 1000.0);
                     _osuKeysoundPreview = player;
                     yield return player.Load();
@@ -1288,10 +1295,13 @@ namespace Sdo.UI.Screens
             {
                 // mp3: STREAM it (decode on demand on the audio thread) so the preview starts as fast as ogg — no
                 // up-front full-window decode. The streaming clip loops the [start,len] window itself. ~20-30ms to start.
-                float startSec = e.previewStartMs >= 0 ? e.previewStartMs / 1000f : -1f;
+                int previewStartMs = PreviewStartMs(e);
+                float startSec = previewStartMs >= 0 ? previewStartMs / 1000f : -1f;
                 float lenSec = e.previewLengthMs > 0 ? e.previewLengthMs / 1000f : PreviewWindowSec;
                 _previewStream?.Dispose();
-                _previewStream = Sdo.Game.Mp3StreamClip.Create(path, startSec, lenSec, "preview");
+                _previewStream = Sdo.Game.Mp3StreamClip.Create(
+                    path, startSec, lenSec, "preview",
+                    SongPreviewWindow.AutomaticStartRatio(e.chartFormat));
                 if (_previewStream == null || _previewStream.Clip == null)
                 { Debug.LogWarning("[SongSelect] mp3 preview stream fail: " + path); _previewCo = null; yield break; }
                 clip = _previewStream.Clip;
@@ -1345,23 +1355,20 @@ namespace Sdo.UI.Screens
             else
             {
                 // Loop a window of the full song (Update() bounces time back to the window start — AudioSource.loop
-                // only loops the whole clip). External songs specify the preview point (osu PreviewTime / StepMania
-                // #SAMPLESTART+#SAMPLELENGTH); honour it. Otherwise centre a default window in the song.
+                // only loops the whole clip). osu PreviewTime must be positive; StepMania #SAMPLESTART:0 stays valid.
+                // A missing point uses the song midpoint; an explicit #SAMPLELENGTH is still honoured.
                 float len = clip.length;
-                float win, start;
-                if (e.external && e.previewStartMs >= 0)
-                {
-                    start = e.previewStartMs / 1000f;
-                    win = e.previewLengthMs > 0 ? e.previewLengthMs / 1000f : PreviewWindowSec;
-                }
-                else
-                {
-                    win = PreviewWindowSec;
-                    start = 0.4f * len;   // osu default preview point (WorkingBeatmap: 40% of length) when none is specified
-                }
+                float win = e.external && e.previewLengthMs > 0
+                    ? e.previewLengthMs / 1000f
+                    : PreviewWindowSec;
                 win = Mathf.Min(win, len);
-                if (start >= len) start = 0.4f * len;   // preview point past the clip → osu's 40% default, not the silent tail
-                start = Mathf.Clamp(start, 0f, Mathf.Max(0f, len - win));
+                int previewStartMs = PreviewStartMs(e);
+                double requestedStart = previewStartMs >= 0
+                    ? previewStartMs / 1000.0
+                    : -1.0;
+                float start = (float)SongPreviewWindow.ResolveStart(
+                    requestedStart, len, win,
+                    SongPreviewWindow.AutomaticStartRatio(e.chartFormat));
                 _previewWinStart = start;
                 _previewWinEnd = start + win;
                 _previewWindow = true;

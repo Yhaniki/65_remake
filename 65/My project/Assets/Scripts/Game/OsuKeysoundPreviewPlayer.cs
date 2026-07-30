@@ -40,6 +40,7 @@ namespace Sdo.Game
         private readonly OsuKeysoundBank _bank = new OsuKeysoundBank();
         private readonly List<AudioSource> _voices = new List<AudioSource>();
         private readonly List<double> _busyUntil = new List<double>();
+        private readonly List<long> _voiceCycles = new List<long>();
         private int _cursor;
         private long _cycle;
         private double _transportStartDsp;
@@ -112,6 +113,7 @@ namespace Sdo.Game
             }
             _voices.Clear();
             _busyUntil.Clear();
+            _voiceCycles.Clear();
         }
 
         public static List<OsuKeysoundPreviewTrigger> BuildTriggers(
@@ -161,12 +163,12 @@ namespace Sdo.Game
                 : DefaultWindowMs;
             lengthMs = Math.Max(1.0, lengthMs);
 
-            startMs = requestedStartMs >= 0.0
+            double normalizedStartMs = requestedStartMs > 0.0
                 ? requestedStartMs
-                : timelineEndMs * 0.4;
-            if (startMs >= timelineEndMs) startMs = timelineEndMs * 0.4;
-            startMs = Math.Max(0.0,
-                Math.Min(startMs, Math.Max(0.0, timelineEndMs - lengthMs)));
+                : -1.0;
+            startMs = SongPreviewWindow.ResolveStart(
+                normalizedStartMs, timelineEndMs, lengthMs,
+                SongPreviewWindow.OsuAutomaticStartRatio);
             endMs = startMs + lengthMs;
         }
 
@@ -179,6 +181,17 @@ namespace Sdo.Game
             if (cycle < 0) throw new ArgumentOutOfRangeException(nameof(cycle));
             return anchorDsp + cycle * loopSec +
                 (triggerTimeMs - windowStartMs) / 1000.0;
+        }
+
+        public static double CycleEndDspTime(double anchorDsp,
+            double windowStartMs, double windowEndMs, long cycle)
+        {
+            double loopSec = (windowEndMs - windowStartMs) / 1000.0;
+            if (loopSec <= 0.0)
+                throw new ArgumentOutOfRangeException(nameof(windowEndMs));
+            if (cycle < 0)
+                throw new ArgumentOutOfRangeException(nameof(cycle));
+            return anchorDsp + (cycle + 1) * loopSec;
         }
 
         private static double LastTriggerTimeMs(OsuBeatmap map)
@@ -214,6 +227,10 @@ namespace Sdo.Game
         {
             double loopSec = (WindowEndMs - WindowStartMs) / 1000.0;
             if (loopSec <= 0.0 || _triggers.Count == 0) return;
+            long physicalCycle = dspNow <= _transportStartDsp
+                ? 0
+                : (long)Math.Floor((dspNow - _transportStartDsp) / loopSec);
+            StopExpiredCycleVoices(physicalCycle);
 
             // After a long frame stall, discard whole loops whose occurrences are already too late.
             // Keep at most the immediately preceding loop so a trigger near its end can still resume.
@@ -231,15 +248,23 @@ namespace Sdo.Game
 
             double horizonDsp = dspNow + LookaheadMs / 1000.0;
 
-            // Keep one continuous DSP anchor. The start of the next loop is queued before the current
-            // loop ends, so sample tails may cross the boundary and there is no stop/restart gap.
+            // Keep one continuous DSP anchor and queue the next loop ahead of time, but cap every voice at
+            // its own cycle boundary. A long keysound from the previous preview must never bleed into the next loop.
             for (int processed = 0; processed < MaxOccurrencesPerTick; processed++)
             {
                 var trigger = _triggers[_cursor];
+                long occurrenceCycle = _cycle;
                 double targetDsp = OccurrenceDspTime(
                     _transportStartDsp, WindowStartMs, WindowEndMs,
-                    trigger.TimeMs, _cycle);
+                    trigger.TimeMs, occurrenceCycle);
                 if (targetDsp > horizonDsp) break;
+                double cycleEndDsp = CycleEndDspTime(
+                    _transportStartDsp, WindowStartMs, WindowEndMs, occurrenceCycle);
+                if (dspNow >= cycleEndDsp)
+                {
+                    AdvanceCursor();
+                    continue;
+                }
 
                 if (!_bank.TryGet(trigger.Filename, out var clip) ||
                     clip == null || clip.samples <= 0 || clip.frequency <= 0)
@@ -257,7 +282,8 @@ namespace Sdo.Game
 
                 int voiceIndex = PickVoice(dspNow);
                 if (voiceIndex < 0) break;
-                StartVoice(voiceIndex, clip, trigger.Volume, targetDsp, lateSec, dspNow);
+                StartVoice(voiceIndex, clip, trigger.Volume,
+                    targetDsp, cycleEndDsp, occurrenceCycle, lateSec, dspNow);
                 AdvanceCursor();
             }
         }
@@ -283,11 +309,13 @@ namespace Sdo.Game
             source.spatialBlend = 0f;
             _voices.Add(source);
             _busyUntil.Add(0.0);
+            _voiceCycles.Add(-1);
             return _voices.Count - 1;
         }
 
         private void StartVoice(int index, AudioClip clip, int volume,
-            double targetDsp, double sourceOffsetSec, double dspNow)
+            double targetDsp, double cycleEndDsp, long cycle,
+            double sourceOffsetSec, double dspNow)
         {
             var voice = _voices[index];
             voice.Stop();
@@ -301,7 +329,29 @@ namespace Sdo.Game
             double playDsp = scheduled ? targetDsp : dspNow;
             if (scheduled) voice.PlayScheduled(targetDsp);
             else voice.Play();
-            _busyUntil[index] = playDsp + Math.Max(0.0, clip.length - sourceOffsetSec);
+            double naturalEndDsp =
+                playDsp + Math.Max(0.0, clip.length - sourceOffsetSec);
+            if (naturalEndDsp > cycleEndDsp) voice.SetScheduledEndTime(cycleEndDsp);
+            _busyUntil[index] = Math.Min(naturalEndDsp, cycleEndDsp);
+            _voiceCycles[index] = cycle;
+        }
+
+        private void StopExpiredCycleVoices(long physicalCycle)
+        {
+            if (physicalCycle <= 0) return;
+            for (int i = 0; i < _voices.Count; i++)
+            {
+                long voiceCycle = _voiceCycles[i];
+                if (voiceCycle < 0 || voiceCycle >= physicalCycle) continue;
+                var voice = _voices[i];
+                if (voice != null)
+                {
+                    voice.Stop();
+                    voice.clip = null;
+                }
+                _busyUntil[i] = 0.0;
+                _voiceCycles[i] = -1;
+            }
         }
 
         private void StopVoices()
@@ -314,6 +364,7 @@ namespace Sdo.Game
                     _voices[i].clip = null;
                 }
                 _busyUntil[i] = 0.0;
+                _voiceCycles[i] = -1;
             }
         }
     }

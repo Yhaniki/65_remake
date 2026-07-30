@@ -551,7 +551,8 @@ namespace Sdo.Osu
                 d.BackgroundName = ExternalSongGrouper.BaseName(First(g.Charts, i => candMeta[i].BackgroundFilename, ""));
                 foreach (var i in g.Charts) { if (candMeta[i].Bpm > 0) { d.Bpm = candMeta[i].Bpm; break; } }
                 d.PreviewStartMs = -1;
-                foreach (var i in g.Charts) { if (candMeta[i].PreviewTime >= 0) { d.PreviewStartMs = candMeta[i].PreviewTime; break; } }
+                // Zero is the common "no useful preview point chosen" osu export; only a positive value is explicit.
+                foreach (var i in g.Charts) { if (candMeta[i].PreviewTime > 0) { d.PreviewStartMs = candMeta[i].PreviewTime; break; } }
                 d.PreviewLengthMs = 0;   // osu carries no preview length → default window
                 drafts.Add(d);
             }

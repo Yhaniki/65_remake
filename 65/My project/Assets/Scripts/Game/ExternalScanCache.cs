@@ -41,7 +41,9 @@ namespace Sdo.Game
         //     算法）。舊快取存的是「物件數」（長條算一顆），長條多的譜會少報好幾十顆，得整份作廢重算。
         // v11: keysounded osu maps with `AudioFilename: virtual` now use an empty base track; old caches pointed at
         //      the folder's first sample instead, so all external-song scan records must be rebuilt.
-        public const int Version = 11;
+        // v12: osu PreviewTime:0 now means "use the midpoint", and zero no longer hides a positive preview point from
+        //      another difficulty in the same set. Cached previewStartMs values must be rebuilt.
+        public const int Version = 12;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

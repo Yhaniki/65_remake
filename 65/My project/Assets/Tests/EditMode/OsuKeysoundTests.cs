@@ -396,24 +396,70 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Preview_Window_Loads_Only_Triggers_Inside_The_Active_Twenty_Seconds()
+        public void Preview_Window_Honours_A_Strictly_Positive_Start()
         {
             var map = new OsuBeatmap();
-            map.SampleEvents.Add(new OsuSampleEvent(0, 0, "a.wav"));
-            map.SampleEvents.Add(new OsuSampleEvent(1, 0, "a.wav"));
-            map.SampleEvents.Add(new OsuSampleEvent(19999, 0, "b.wav"));
-            map.SampleEvents.Add(new OsuSampleEvent(20000, 0, "at-end.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(99, 0, "before.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(100, 0, "a.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(20099, 0, "b.wav"));
+            map.SampleEvents.Add(new OsuSampleEvent(20100, 0, "at-end.wav"));
             map.SampleEvents.Add(new OsuSampleEvent(50000, 0, "later.wav"));
 
             OsuKeysoundPreviewPlayer.ResolveWindow(
-                map, 0, OsuKeysoundPreviewPlayer.DefaultWindowMs,
+                map, 100, OsuKeysoundPreviewPlayer.DefaultWindowMs,
                 out double startMs, out double endMs);
             var triggers = OsuKeysoundPreviewPlayer.BuildTriggers(map, startMs, endMs);
 
-            Assert.AreEqual(0.0, startMs);
-            Assert.AreEqual(20000.0, endMs);
-            Assert.AreEqual(3, triggers.Count);
-            Assert.AreEqual("b.wav", triggers[2].Filename);
+            Assert.AreEqual(100.0, startMs);
+            Assert.AreEqual(20100.0, endMs);
+            Assert.AreEqual(2, triggers.Count);
+            Assert.AreEqual("a.wav", triggers[0].Filename);
+            Assert.AreEqual("b.wav", triggers[1].Filename);
+        }
+
+        [Test]
+        public void Preview_Window_Uses_The_Song_Midpoint_For_Zero_Or_Unspecified_Start()
+        {
+            var map = new OsuBeatmap();
+            map.SampleEvents.Add(new OsuSampleEvent(100000, 0, "last.wav"));
+
+            OsuKeysoundPreviewPlayer.ResolveWindow(
+                map, 0, OsuKeysoundPreviewPlayer.DefaultWindowMs,
+                out double zeroStartMs, out double zeroEndMs);
+            OsuKeysoundPreviewPlayer.ResolveWindow(
+                map, -1, OsuKeysoundPreviewPlayer.DefaultWindowMs,
+                out double missingStartMs, out double missingEndMs);
+
+            // The usable virtual-song timeline includes the player's one-second ending tail.
+            Assert.AreEqual(50500.0, zeroStartMs);
+            Assert.AreEqual(70500.0, zeroEndMs);
+            Assert.AreEqual(zeroStartMs, missingStartMs);
+            Assert.AreEqual(zeroEndMs, missingEndMs);
+        }
+
+        [Test]
+        public void Preview_Window_Shared_Resolver_Uses_Midpoint_And_Clamps_The_Window()
+        {
+            Assert.AreEqual(0.5f, SongPreviewWindow.AutomaticStartRatio((int)SongFormat.Osu));
+            Assert.AreEqual(0.4f, SongPreviewWindow.AutomaticStartRatio((int)SongFormat.Sm));
+            Assert.AreEqual(-1, SongPreviewWindow.NormalizeStart((int)SongFormat.Osu, 0));
+            Assert.AreEqual(-1, SongPreviewWindow.NormalizeStart((int)SongFormat.Osu, -1));
+            Assert.AreEqual(35000, SongPreviewWindow.NormalizeStart((int)SongFormat.Osu, 35000));
+            Assert.AreEqual(0, SongPreviewWindow.NormalizeStart((int)SongFormat.Sm, 0),
+                "StepMania #SAMPLESTART:0 remains an explicit start");
+
+            Assert.AreEqual(60.0, SongPreviewWindow.ResolveStart(
+                SongPreviewWindow.NormalizeStart((int)SongFormat.Osu, 0), 120, 20,
+                SongPreviewWindow.AutomaticStartRatio((int)SongFormat.Osu)));
+            Assert.AreEqual(0.0, SongPreviewWindow.ResolveStart(
+                SongPreviewWindow.NormalizeStart((int)SongFormat.Sm, 0), 120, 20,
+                SongPreviewWindow.AutomaticStartRatio((int)SongFormat.Sm)));
+            Assert.AreEqual(48.0, SongPreviewWindow.ResolveStart(-1, 120, 20),
+                "non-osu songs without metadata retain the legacy 40% fallback");
+            Assert.AreEqual(35.0, SongPreviewWindow.ResolveStart(35, 120, 20));
+            Assert.AreEqual(100.0, SongPreviewWindow.ResolveStart(115, 120, 20));
+            Assert.AreEqual(0.0, SongPreviewWindow.ResolveStart(
+                -1, 10, 20, SongPreviewWindow.OsuAutomaticStartRatio));
         }
 
         [Test]
@@ -436,7 +482,7 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Preview_Loop_Keeps_One_Dsp_Anchor_Without_A_Restart_Gap()
+        public void Preview_Loop_Keeps_One_Dsp_Anchor_And_A_Hard_Cycle_End()
         {
             const double anchorDsp = 100.0;
             const double startMs = 1000.0;
@@ -456,10 +502,83 @@ namespace Sdo.Tests
                 Is.EqualTo(120.0).Within(1e-9),
                 "the next loop begins on the same anchor without another 50ms lead");
 
+            Assert.That(
+                OsuKeysoundPreviewPlayer.CycleEndDspTime(
+                    anchorDsp, startMs, endMs, 0),
+                Is.EqualTo(120.0).Within(1e-9));
+            Assert.That(
+                OsuKeysoundPreviewPlayer.CycleEndDspTime(
+                    anchorDsp, startMs, endMs, 1),
+                Is.EqualTo(140.0).Within(1e-9));
+
             Assert.Throws<ArgumentOutOfRangeException>(() =>
                 OsuKeysoundPreviewPlayer.OccurrenceDspTime(0, 10, 10, 10, 0));
             Assert.Throws<ArgumentOutOfRangeException>(() =>
                 OsuKeysoundPreviewPlayer.OccurrenceDspTime(0, 0, 1000, 0, -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                OsuKeysoundPreviewPlayer.CycleEndDspTime(0, 10, 10, 0));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                OsuKeysoundPreviewPlayer.CycleEndDspTime(0, 0, 1000, -1));
+        }
+
+        [Test]
+        public void Preview_Long_Voice_Is_Capped_At_Its_Loop_Boundary()
+        {
+            var map = new OsuBeatmap();
+            map.SampleEvents.Add(new OsuSampleEvent(1, 0, "long.wav"));
+            var host = new GameObject("keysound-preview-loop-cut-test");
+            var player = new OsuKeysoundPreviewPlayer(host, map, "chart.osu", 1, 100);
+
+            try
+            {
+                var playerFlags = System.Reflection.BindingFlags.Instance |
+                                  System.Reflection.BindingFlags.NonPublic;
+                var bankField = typeof(OsuKeysoundPreviewPlayer).GetField("_bank", playerFlags);
+                Assert.NotNull(bankField);
+                var bank = (OsuKeysoundBank)bankField.GetValue(player);
+
+                var clipsField = typeof(OsuKeysoundBank).GetField("_clips", playerFlags);
+                Assert.NotNull(clipsField);
+                var clips = (Dictionary<string, AudioClip>)clipsField.GetValue(bank);
+                clips.Add("long.wav", AudioClip.Create(
+                    "long-preview-tail", 44100, 1, 44100, false));
+
+                Assert.IsTrue(player.Play());
+                var anchorField = typeof(OsuKeysoundPreviewPlayer).GetField(
+                    "_transportStartDsp", playerFlags);
+                var busyField = typeof(OsuKeysoundPreviewPlayer).GetField(
+                    "_busyUntil", playerFlags);
+                var cyclesField = typeof(OsuKeysoundPreviewPlayer).GetField(
+                    "_voiceCycles", playerFlags);
+                Assert.NotNull(anchorField);
+                Assert.NotNull(busyField);
+                Assert.NotNull(cyclesField);
+                double anchor = (double)anchorField.GetValue(player);
+                var busyUntil = (List<double>)busyField.GetValue(player);
+                var voiceCycles = (List<long>)cyclesField.GetValue(player);
+
+                Assert.Greater(busyUntil.Count, 0);
+                Assert.That(busyUntil[0], Is.EqualTo(anchor + 0.1).Within(1e-6),
+                    "the one-second sample must be stopped at the 100ms loop boundary");
+                CollectionAssert.Contains(voiceCycles, 0L);
+                CollectionAssert.Contains(voiceCycles, 1L,
+                    "lookahead should already contain the next cycle");
+
+                var schedule = typeof(OsuKeysoundPreviewPlayer).GetMethod(
+                    "ScheduleThrough", playerFlags);
+                Assert.NotNull(schedule);
+                schedule.Invoke(player, new object[] { anchor + 0.101 });
+
+                CollectionAssert.DoesNotContain(voiceCycles, 0L,
+                    "the physically expired cycle must be stopped and released");
+                CollectionAssert.Contains(voiceCycles, 1L,
+                    "boundary cleanup must not cancel the next cycle queued by lookahead");
+            }
+            finally
+            {
+                player.Dispose();
+                UnityEngine.Object.DestroyImmediate(host);
+            }
         }
     }
 

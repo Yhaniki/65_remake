@@ -622,9 +622,11 @@ namespace Sdo.Game
         /// <summary>
         /// Decode ONLY a window of an mp3 (for song-select previews) instead of the whole song — NLayer seeks
         /// accurately in ~15 ms, so this is ~10× faster than a full decode (≈120 ms vs ≈1.4 s) and starts the preview
-        /// almost immediately. <paramref name="startSec"/> &lt; 0 (or past the end) → centre the window. Background-thread safe.
+        /// almost immediately. <paramref name="startSec"/> &lt; 0 (or past the end) uses
+        /// <paramref name="automaticStartRatio"/>. Background-thread safe.
         /// </summary>
-        public static Mp3Pcm DecodeWindow(string path, float startSec, float lenSec)
+        public static Mp3Pcm DecodeWindow(string path, float startSec, float lenSec,
+            float automaticStartRatio = SongPreviewWindow.LegacyAutomaticStartRatio)
         {
             try
             {
@@ -635,10 +637,8 @@ namespace Sdo.Game
                     double dur = mp3.Duration.TotalSeconds;
                     float win = lenSec > 0f ? lenSec : 20f;
                     if (dur > 0 && win > dur) win = (float)dur;
-                    float start = startSec;
-                    if (start < 0f || (dur > 0 && start >= dur)) start = (float)(dur * 0.4);   // osu default preview = 40% of length
-                    if (dur > 0) start = (float)Math.Min(start, Math.Max(0.0, dur - win));
-                    if (start < 0f) start = 0f;
+                    float start = (float)SongPreviewWindow.ResolveStart(
+                        startSec, dur, win, automaticStartRatio);
                     if (start > 0f) mp3.Time = TimeSpan.FromSeconds(start);
 
                     int need = (int)(win * sr) * ch;
@@ -693,8 +693,10 @@ namespace Sdo.Game
         public AudioClip Clip { get; private set; }
 
         /// <summary>Open <paramref name="path"/> and build a looping streaming clip of a [start, start+len] window.
-        /// startSec &lt; 0 (or past the end) → centre the window. Null on failure. MAIN THREAD.</summary>
-        public static Mp3StreamClip Create(string path, float startSec, float lenSec, string name)
+        /// startSec &lt; 0 (or past the end) uses <paramref name="automaticStartRatio"/>.
+        /// Null on failure. MAIN THREAD.</summary>
+        public static Mp3StreamClip Create(string path, float startSec, float lenSec, string name,
+            float automaticStartRatio = SongPreviewWindow.LegacyAutomaticStartRatio)
         {
             NLayer.MpegFile mp3 = null;
             try
@@ -705,10 +707,8 @@ namespace Sdo.Game
                 double dur = mp3.Duration.TotalSeconds;
                 float win = lenSec > 0f ? lenSec : 20f;
                 if (dur > 0 && win > dur) win = (float)dur;
-                float start = startSec;
-                if (start < 0f || (dur > 0 && start >= dur)) start = (float)(dur * 0.4);   // osu default preview = 40% of length
-                if (dur > 0) start = (float)Math.Min(start, Math.Max(0.0, dur - win));
-                if (start < 0f) start = 0f;
+                float start = (float)SongPreviewWindow.ResolveStart(
+                    startSec, dur, win, automaticStartRatio);
                 int winFrames = Math.Max(1, (int)(win * sr));
 
                 var self = new Mp3StreamClip(mp3, ch, sr, start, winFrames);
