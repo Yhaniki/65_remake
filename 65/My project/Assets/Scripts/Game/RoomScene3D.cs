@@ -360,7 +360,8 @@ namespace Sdo.Game
             public SdoAvatar Av;
             public float FeetY;           // 站立 idle 的腳偏移(生成時量一次)
             public MotLoader Idle, Walk;
-            public bool Flying;           // 飛行翅膀 → 移動時 body Y +10 懸浮(與本機同一條規則)
+            public bool Flying;           // 飛行翅膀 → body Y +10 懸浮**常駐**(不分動靜,與本機同一條規則)
+            public float HoverCur;        // 目前套用的懸浮,平滑追到 HoverY(Flying) — 換穿翅膀時不瞬移(同本機 _hoverCur)
             public Vector3 Pos;           // 現在畫出來的位置(插值後)
             public Vector3 Target;        // server 最新一筆
             public float Facing, TargetFacing;
@@ -526,6 +527,10 @@ namespace Sdo.Game
                 LookKey = p.LookKey,
                 Seat = p.Seat,
             };
+            // 生出來就浮在該有的高度,不從地面升上去(同本機 BuildAvatar 的 _hoverCur 初始化)。
+            // 換裝會重建這隻 Remote,所以「穿上翅膀慢慢升起」那段平滑在遠端看不到 —— 寧可如此,
+            // 也不要每次重建都從地板彈上來。
+            r.HoverCur = SpecialMotionItems.HoverY(r.Flying);
             if (r.Idle != null)
             {
                 av.RestMot = r.Idle;
@@ -587,16 +592,37 @@ namespace Sdo.Game
                         if (clip != null) r.Av.SetClip(clip);
                     }
                 }
+                TickRemoteHover(r);
                 ApplyRemoteTransform(r);
             }
+        }
+
+        /// <summary>
+        /// 遠端的懸浮收斂 —— 與本機 <see cref="TickHover"/> 同一個 tau,目標同樣**與動靜無關**。
+        ///
+        /// 換裝會整隻重建(HoverCur 直接設成目標),所以實務上這裡多半是 no-op;留著是因為
+        /// 「目標變了就平滑過去」才是這個欄位的定義,哪天有路徑改了 Flying 而不重建也不會瞬移。
+        /// </summary>
+        private static void TickRemoteHover(Remote r)
+        {
+            float target = SpecialMotionItems.HoverY(r.Flying);
+            if (r.HoverCur == target) return;
+            r.HoverCur = Mathf.Abs(target - r.HoverCur) < 0.01f
+                       ? target
+                       : Mathf.Lerp(r.HoverCur, target, 1f - Mathf.Exp(-Time.deltaTime / HoverTau));
         }
 
         private void ApplyRemoteTransform(Remote r)
         {
             if (r.Go == null) return;
-            // 飛行翅膀移動時 +10 懸浮 —— 與本機的 ApplyAvatarTransform 同一條規則。
-            float hover = (r.Flying && r.ClipIsWalk) ? SpecialMotionItems.FlyHoverY : 0f;
-            r.Go.transform.position = new Vector3(r.Pos.x, floorY - r.FeetY + hover, r.Pos.z);
+            // 懸浮吃 r.HoverCur(收斂到 HoverY(Flying)),**不看他有沒有在走**。
+            //
+            // 🔴 這裡曾經是 `(r.Flying && r.ClipIsWalk) ? FlyHoverY : 0f` —— 那正是
+            // SpecialMotionItems.HoverY 註解裡寫的那個 bug:官方是每幀從 Player_UpdateTransform 無條件
+            // 加上去的(028:2614),flystay clip 自己幾乎不抬身體,所以用「有沒有在移動」去 gate 的話
+            // 站著的飛行者就直接站在地板上。本機與場內遠端舞者都已經改用 HoverY,只有房間的遠端漏了 ——
+            // 症狀是同一間房裡「自己浮著比較高、別人站著比較矮」。
+            r.Go.transform.position = new Vector3(r.Pos.x, floorY - r.FeetY + r.HoverCur, r.Pos.z);
             r.Go.transform.localRotation = Quaternion.Euler(0f, r.Facing, 0f);
         }
 
