@@ -771,9 +771,10 @@ namespace Sdo.Tests
             long matchId = StartTwoPlayerMatch(out a, out b);
             const long disconnectedScore = 345678;
 
-            b.Send(GameplayFrameMsg(matchId, disconnectedScore));
-            var relayed = a.WaitFor(NetProto.Frames, 3000);
-            Assert.IsNotNull(relayed);
+            // 要送兩筆:leader 是在「全場最新歌曲時間 − 500ms」那個時刻取樣比出來的,只送一筆的話
+            // 取樣點還在那一筆之前,誰都還沒有分數(見 LiveLeaderTracker)。
+            b.Send(GameplayFrameMsg(matchId, 0, disconnectedScore));
+            var relayed = SendFrameAndWait(b, a, matchId, 1600, disconnectedScore);
             Assert.AreEqual(disconnectedScore, ScoreOf(relayed, "f", b.UserId));
             Assert.AreEqual(b.UserId, NetJson.Int(relayed, "leaderUserId"));
 
@@ -915,37 +916,69 @@ namespace Sdo.Tests
             Assert.AreEqual(50, NetJson.Int(nextMilestone, "combo"));
         }
 
+        /// <summary>
+        /// 端到端釘住 frames 的 <c>leaderUserId</c>:它是「所有人在同一個歌曲時刻的分數」比出來的,
+        /// 再加上換人節流 —— 不是比最後收到的那筆(見 <see cref="LiveLeaderTracker"/> 的說明)。
+        ///
+        /// 取樣點 = 全場最新歌曲時間 − 500ms;換人節流 1000ms(歌曲時間)。序列裡每個 tMs 兩人各送一筆。
+        /// </summary>
         [Test]
-        public void Frames_Include_Authoritative_Leader_With_300_Point_Hysteresis()
+        public void Frames_Carry_A_Time_Aligned_And_Throttled_Authoritative_Leader()
         {
             TestClient a, b;
-            long matchId = StartTwoPlayerMatch(out a, out b);
+            long matchId = StartTwoPlayerMatch(out a, out b);   // a = 房主 = seat 0 → 開場的 leader
 
-            b.Send(GameplayFrameMsg(matchId, 299));
-            WaitForLeaderFrame(a, a.UserId, b.UserId, 299);
+            // 開場:取樣點還在 0 之前,誰都沒有「那個時刻」的分數 → leader 停在最低座位。
+            SendFrameAndWait(a, b, matchId, 0, 0);
+            var frames = SendFrameAndWait(b, a, matchId, 0, 0);
+            Assert.AreEqual(a.UserId, NetJson.Int(frames, "leaderUserId"));
 
-            b.Send(GameplayFrameMsg(matchId, 300));
-            WaitForLeaderFrame(a, b.UserId, b.UserId, 300);
+            // b 在歌曲時間 1000 爆到 60000。取樣點是 500,那時候兩人都還是 0 → 不換。
+            // 舊版的 300 分門檻在這裡完全無效(差距 60000),會直接換人 —— 那就是震盪的來源。
+            SendFrameAndWait(a, b, matchId, 1000, 0);
+            frames = SendFrameAndWait(b, a, matchId, 1000, 60000);
+            Assert.AreEqual(a.UserId, NetJson.Int(frames, "leaderUserId"),
+                "60000 分是歌曲時間 1000 的資料,取樣點還在 500 → 不算數");
 
-            a.Send(GameplayFrameMsg(matchId, 599));
-            WaitForLeaderFrame(b, b.UserId, a.UserId, 599);
+            // 時間再走 600ms,取樣點 1100 看得到那 60000 —— 這才是真的超車。
+            SendFrameAndWait(a, b, matchId, 1600, 0);
+            frames = SendFrameAndWait(b, a, matchId, 1600, 60000);
+            Assert.AreEqual(b.UserId, NetJson.Int(frames, "leaderUserId"));
 
-            a.Send(GameplayFrameMsg(matchId, 600));
-            WaitForLeaderFrame(b, a.UserId, a.UserId, 600);
+            // a 在 1900 反超 939999 分,但取樣點 1400 還看不到。
+            SendFrameAndWait(a, b, matchId, 1900, 999999);
+            frames = SendFrameAndWait(b, a, matchId, 1900, 60000);
+            Assert.AreEqual(b.UserId, NetJson.Int(frames, "leaderUserId"));
 
-            b.Send(GameplayFrameMsg(matchId, 899));
-            WaitForLeaderFrame(a, a.UserId, b.UserId, 899);
+            // 取樣點推進到 1900,已經看得到 a 領先 939999 分 —— 但距離上次換位只有 800ms。
+            SendFrameAndWait(a, b, matchId, 2400, 999999);
+            frames = SendFrameAndWait(b, a, matchId, 2400, 60000);
+            Assert.AreEqual(b.UserId, NetJson.Int(frames, "leaderUserId"),
+                "節流是頻率上限,分數差多少都一樣擋 —— 這正是固定門檻做不到的事");
 
-            b.Send(GameplayFrameMsg(matchId, 900));
-            WaitForLeaderFrame(a, b.UserId, b.UserId, 900);
+            // 距離上次換位滿 1 秒 → 放行。
+            SendFrameAndWait(a, b, matchId, 2700, 999999);
+            frames = SendFrameAndWait(b, a, matchId, 2700, 60000);
+            Assert.AreEqual(a.UserId, NetJson.Int(frames, "leaderUserId"));
 
-            a.Send(PlayFinishedMsg(matchId, 600, 60));
-            b.Send(PlayFinishedMsg(matchId, 900, 90));
+            a.Send(PlayFinishedMsg(matchId, 999999, 90));
+            b.Send(PlayFinishedMsg(matchId, 60000, 60));
             Assert.IsNotNull(b.WaitFor(NetProto.ResultsReady, 3000));
 
+            // 新的一場:tracker 重建,不帶上一場的分數也不繼承上一場的 leader。
             long nextMatchId = StartNextTwoPlayerMatch(a, b);
-            b.Send(GameplayFrameMsg(nextMatchId, 299));
-            WaitForLeaderFrame(a, a.UserId, b.UserId, 299);
+            SendFrameAndWait(a, b, nextMatchId, 0, 0);
+            frames = SendFrameAndWait(b, a, nextMatchId, 0, 999999);
+            Assert.AreEqual(a.UserId, NetJson.Int(frames, "leaderUserId"));
+
+            // 🔴 上面那一條光靠「開場 leader = 最低座位」就會過,沿用上一場 tracker 的實作也會過 ——
+            // 所以要再往前推一輪才真的鑑別得出來。沿用的話:第二場所有 tMs 都 ≤ 上一場最後一筆
+            // (2700),Record 一路走「覆蓋最後一筆」→ 序列時間軸永不前進 → tRef 恆等於殘留的
+            // _lastSwitchTMs → 節流永久擋住,領隊格**整首歌**卡在上一場的結果。
+            SendFrameAndWait(a, b, nextMatchId, 1600, 0);
+            frames = SendFrameAndWait(b, a, nextMatchId, 1600, 50000);
+            Assert.AreEqual(b.UserId, NetJson.Int(frames, "leaderUserId"),
+                "第二場的取樣點與節流時限都要從零開始");
         }
 
 
@@ -1204,10 +1237,15 @@ namespace Sdo.Tests
                 .Int("b", 0)
                 .Int("m", 0);
 
+        /// <summary>不在意歌曲時間的測試用這個(tMs = 0)。</summary>
         private static JObj GameplayFrameMsg(long matchId, long score)
+            => GameplayFrameMsg(matchId, 0, score);
+
+        private static JObj GameplayFrameMsg(long matchId, double tMs, long score)
             => JObj.New()
                 .Str(NetProto.FieldType, NetProto.Frame)
                 .Long("matchId", matchId)
+                .Num("tMs", tMs)
                 .Long("score", score)
                 .Int("combo", 0)
                 .Int("maxCombo", 0)
@@ -1263,35 +1301,39 @@ namespace Sdo.Tests
             return -1;
         }
 
-        private static void WaitForLeaderFrame(
-            TestClient client, int expectedLeaderUserId, int scoreUserId, long expectedScore)
+        /// <summary>
+        /// 送一筆 gameplay frame,等到 <paramref name="watcher"/> 真的收到**那一筆**,回傳那個
+        /// frames 訊息(呼叫端接著斷言它的 <c>leaderUserId</c>)。
+        ///
+        /// 用 tMs 認而不是用分數:同一個人連續兩筆的分數可能一樣,分數認不出來是哪一筆。
+        /// 而且一次只送一筆、等到它出現才送下一筆 —— server 的 leader 是在 5 Hz 的 push 上算的,
+        /// 不序列化的話兩人的 frame 會落在同一輪裡,測試就不知道自己在斷言哪個狀態。
+        /// </summary>
+        private static object SendFrameAndWait(
+            TestClient sender, TestClient watcher, long matchId, double tMs, long score)
         {
+            sender.Send(GameplayFrameMsg(matchId, tMs, score));
+
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < 3000)
             {
                 int remaining = (int)Math.Max(1, 3000 - sw.ElapsedMilliseconds);
-                var frames = client.WaitFor(NetProto.Frames, remaining);
+                var frames = watcher.WaitFor(NetProto.Frames, remaining);
                 if (frames == null) break;
-
-                long observedScore;
-                if (!TryScoreOf(frames, "f", scoreUserId, out observedScore)) continue;
-                if (observedScore != expectedScore) continue;
-                Assert.AreEqual(expectedLeaderUserId, NetJson.Int(frames, "leaderUserId"));
-                return;
+                if (HasFrameAt(frames, sender.UserId, tMs)) return frames;
             }
 
-            Assert.Fail("Did not receive the expected score frame for user " + scoreUserId);
+            Assert.Fail("沒等到 userId=" + sender.UserId + " tMs=" + tMs + " 的 frame");
+            return null;
         }
 
-        private static bool TryScoreOf(object message, string rowsField, int userId, out long score)
+        private static bool HasFrameAt(object message, int userId, double tMs)
         {
-            score = 0;
-            var rows = NetJson.Arr(message, rowsField);
+            var rows = NetJson.Arr(message, "f");
             for (int i = 0; i < rows.Count; i++)
             {
                 if (NetJson.Int(rows[i], "userId") != userId) continue;
-                score = NetJson.Long(rows[i], "score");
-                return true;
+                return NetJson.Num(rows[i], "tMs") == tMs;
             }
             return false;
         }

@@ -22,7 +22,16 @@ namespace Sdo.Ruleset
         /// <summary>鏡頭錨定的那一格(領隊)。官方是 0。</summary>
         public const int LeaderSlot = 0;
 
-        /// <summary>挑戰者至少要領先目前領隊這麼多分才換位,避免接近分數在每筆網路快照間反覆超車。</summary>
+        /// <summary>
+        /// 挑戰者至少要領先目前領隊這麼多分才換位 —— 純粹的**視覺**防抖:分數咬得很緊時,
+        /// 每個判定都換一次中央那格看起來像在抽動。
+        ///
+        /// ⚠️ 這**不是**同步機制,而且只走本機 fallback 那條路(見 <see cref="ResolveLeader"/>)。
+        /// 線上的領隊是 server 權威的:它把每個人的 (歌曲時間, 分數) 存成序列,在同一個歌曲
+        /// 時刻取樣後才比大小,再加上換人節流 —— 見 server 的 <c>LiveLeaderTracker</c>。
+        /// 分數門檻治不了「兩台看到的分數在時間上錯位」那種震盪,因為雜訊振幅 = 時間落差 ×
+        /// 當下得分率,會跟著 combo 一起長,門檻永遠追不上。所以那件事不在這裡處理。
+        /// </summary>
         public const long LeaderSwitchLead = 300L;
 
         /// <summary>
@@ -78,6 +87,9 @@ namespace Sdo.Ruleset
         /// <summary>
         /// 依最新分數更新領隊。分數接近時保留 <paramref name="currentLeader"/>,只有挑戰者領先
         /// <see cref="LeaderSwitchLead"/> 分以上才換人;因此反向換回也要跨過同一條門檻。
+        ///
+        /// 這是**本機**規則(單機多人、或 server 還沒給過權威 leader 的那幾幀)。分數都是同一台
+        /// 算出來的,沒有時間錯位的問題,門檻在這裡只是視覺防抖 —— 見 <see cref="LeaderSwitchLead"/>。
         /// </summary>
         public static int SelectLeader(IReadOnlyList<long> scores, int currentLeader)
         {

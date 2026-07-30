@@ -930,15 +930,19 @@ namespace Sdo.Server.Net
                 _latestFrames[room.Code] = latestByUser;
             }
             latestByUser[conn.UserId] = sample;
-            RecordLiveScore(room, conn.UserId, sample.Score);
+            RecordLiveScore(room, conn.UserId, sample.TMs, sample.Score);
         }
-        private void RecordLiveScore(NetRoom room, int userId, long score)
+        /// <summary>
+        /// 餵一筆分數給權威 leader 的追蹤器。**歌曲時間一定要一起帶** —— 它是「同一時刻取樣」
+        /// 的依據,少了它就退回「比最後收到的分數」= 拿不同時刻的分數比大小(見 <see cref="LiveLeaderTracker"/>)。
+        /// </summary>
+        private void RecordLiveScore(NetRoom room, int userId, double tMs, long score)
         {
             if (room.State.Status != RoomStatus.Playing || room.Match == null) return;
 
             LiveLeaderTracker tracker;
             if (!_liveLeaders.TryGetValue(room.Code, out tracker)) return;
-            tracker.Record(room.Match.ParticipantUserIds, userId, score);
+            tracker.Record(room.Match.ParticipantUserIds, userId, tMs, score);
         }
         /// <summary>
         /// 固定頻率把每個房間彙整好的 frames 推出去。
@@ -1081,7 +1085,10 @@ namespace Sdo.Server.Net
                 _pendingFrames[room.Code] = pendingByUser;
             }
             pendingByUser[conn.UserId] = final;
-            RecordLiveScore(room, conn.UserId, final.Score);
+            // playFinished 沒有帶 tMs(它是「這一場結束」而不是某個時刻的快照),所以這裡的 0 會走
+            // Record 的「時間沒有前進 → 只更新最後一筆的分數」那條路 —— 正是想要的語義:最終成績
+            // 取代這個人最後一刻的分數,而他的時間軸停在那裡不動。
+            RecordLiveScore(room, conn.UserId, final.TMs, final.Score);
 
             var op = room.SetPlayState(conn.UserId, PlayState.Finished, room.Match.MatchId);
             if (op == NetRoomOp.Ok) BroadcastRoomState(room);

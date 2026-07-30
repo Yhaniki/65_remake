@@ -54,7 +54,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
 | 開場 | `setReady` / `setSong`{NetSongRef} / `setRoomSettings` / `requestStart`{force,resolved} → `matchStarting`{matchId,startEpochMs,loadTimeoutMs,participants[],spectatorNames[],resolved,song,settings} / `setPlayState` / `gameplayStarted` / `gameplayAborted` / `resultsReady`{matchId,rows[]} |
 | 缺歌 | `setAvailability`{packId,state,progress} / `blobQuery`→`blobInfo` / `blobUploadBegin`→`blobUploadAccept`{need[]}→(chunks)→`blobUploadDone` / `blobProgress` / `blobDownloadBegin`→`blobManifest`→(chunks)→`blobDownloadDone` / `blobAvailable` / `blobError` |
-| 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{matchId,leaderUserId,f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²) / `playFinished` / `comboMilestone`{matchId,combo} C→S→C |
+| 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{matchId,leaderUserId,f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²；`leaderUserId` = 權威領隊,見下) / `playFinished` / `comboMilestone`{matchId,combo} C→S→C |
 | 房間走動 | `move`{roomCode,roomRev,slot,x,z,f,w} C→S / `moves`{roomCode,roomRev,m:[…]} S→C(同上,但頻率高一點；`slot`=座位 0..5 或旁觀 1000+索引，遲到的舊身分移動會被丟棄) |
 | 外觀 | `setLook`{gender,bodyIndex,parts[]} —— 握手時玩家還沒選性別/還沒讀 profile,所以外觀要另外送 |
 | 身分 | `setIdentity`{name,playerId,guild,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
@@ -85,6 +85,31 @@ server 沒給 `--tokens` 時 `authToken` 被忽略,身分 = client 自稱的 `pl
 6 人 × 約 1 KB 不是問題,而它消滅一整類「兩邊狀態慢慢漂開」的 bug。`rev` 單調遞增。
 **而且不做樂觀更新**:按了按鈕不改本機畫面,等 server 的下一份 snapshot ——
 server 會拒絕(不是房主、房間開打了、座位滿了),樂觀更新會顯示一件沒發生的事。
+
+### `frames.leaderUserId` —— 誰站在領隊格
+
+中央前排那一格(鏡頭錨定的位置)是 **server 說了算**,client 收到就照用
+(`FormationAssignment.ResolveLeader`)。不讓每台自己算最高分,是因為每台手上的對手分數
+新舊不一,同一個人會在別人畫面上站中央、在自己畫面上站旁邊。
+
+而 server 自己也**不能**直接比「最後收到的分數」:每個人的 frame 是 5 Hz、lossy、各自的時鐘,
+A 的最新一筆可能是歌曲時間 10000ms 的、B 的是 9600ms 的 —— 直接比就是拿不同時刻的分數比大小,
+那 400ms 落差在高 combo 下值好幾千分,leader 就會每 200ms 交替一次。
+
+所以照 osu 的多人排行榜做法(`SpectatorScoreProcessor.UpdateScore` + `MultiplayerLeaderboardProvider.sort`
+的節流),三層、沒有分數門檻:
+
+1. **同一時刻取樣** —— 每人的 (`tMs`, `score`) 存成序列,取樣點 = 全場最新歌曲時間 − 500ms,
+   各取「不晚於它的最後一筆」(sample-and-hold)。掉包的人就 hold 住上一筆,不會變 0 分。
+2. **換人節流** —— leader 最多每 1000ms(歌曲時間)換一次。這是頻率上限,與分數增量大小無關。
+3. **決定性 tie-break** —— 同分照 (seat, userId) 排,而且同分不換位。
+4. **leader 離場補位** —— 領隊格不能空著,所以補位不受節流限制;但補的是「當下取樣點上分數最高的
+   那位」,不是座位序最前的那位。挑座位序會讓玩家看到**兩次**換位(先滑到站錯的人、等滿一輪節流
+   才滑到真正的第一名),而中央前排是鏡頭錨點,鏡頭也跟著多跑一趟。
+
+> 舊版是「挑戰者要領先 300 分才換」。門檻式防抖的有效條件是「門檻 > 雜訊振幅」,而這裡的雜訊
+> 振幅 = 時間落差 × 得分率,跟著 combo 一起長 —— 門檻永遠追不上,調大又會鎖死真正的超車。
+> 細節與取捨(為什麼取樣點用 max−window 而不是 min)寫在 `server/Sdo.Server/Net/LiveLeaderTracker.cs`。
 
 ### 歌曲參照 `NetSongRef`
 
