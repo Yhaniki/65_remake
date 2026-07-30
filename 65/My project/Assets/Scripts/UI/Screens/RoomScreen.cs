@@ -123,11 +123,14 @@ namespace Sdo.UI.Screens
         // 名字底下那條名牌(官方 AvatarName0..5 的 background = Team.an)。四幀:第 0 幀是 1×1 的空白
         // (沒選隊 → 不畫),第 1/2/3 幀是 A/B/C 的橘/綠/青藍漸層條。選了隊,名字那一格就整條變成自己那隊的顏色。
         private readonly Image[] _slotPlate = new Image[RoomLayout.SeatCount];
-        private Sprite[] _readyFrames, _masterFrames, _plateFrames;
+        private Sprite[] _readyFrames, _masterFrames, _plateFrames, _noMapFrames, _playingFrames;
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
-        // 狀態徽章(NO SONG / PLAYING,art\generated\UI\ROOM)+ 傳檔跑條(執行期畫的兩個矩形,不烘圖)。
+        // 狀態徽章(NO MAP / PLAYING,官方 c06..c09 / d06..d09)。跟 HOST / READY **同一條**(y=102)、
+        // 四張共用那個位置一次只畫一張,優先序 PLAYING > NO MAP > HOST > READY —— 見 RenderSeatBadges。
+        // 也是四色(黑=自由 / 橘=A / 綠=B / 藍=C),跟著那個人的隊伍換色,與 HOST/READY 同一套幀序。
         private readonly Image[] _slotMissing = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotPlaying = new Image[RoomLayout.SeatCount];
+        // 傳檔跑條(執行期畫的兩個矩形,不烘圖)。
         private readonly Image[] _slotBarTrack = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotBarFill = new Image[RoomLayout.SeatCount];
         // 六格頭貼的透明命中盒 + 目前彈出的座位選單(一次只會有一個)。
@@ -247,11 +250,14 @@ namespace Sdo.UI.Screens
             heads.fitHairTop = false;   // 與 RoomHeadPortrait.fitHairTop 的預設一致(兩邊都不理頭髮)
         }
 
-        // ---- 頭貼上的狀態徽章與傳檔跑條的版位 ----
-        // 徽章 116×26(art\generated\UI\ROOM\{MISSING,PLAYING}),比頭貼格(96)寬 20 → 左右各外露 10px 置中。
-        // y=62 是頭貼上半部:官方房主徽章佔 102..132、名牌 141 起,放那裡會疊。
-        private const float StateBadgeInset = 10f;
-        private const float StateBadgeY = 62f;
+        // ---- 徽章條與傳檔跑條的版位 ----
+        // HOST / READY / NO MAP / PLAYING 四張都畫在頭貼下緣那一條(官方 master0..5 / charready0..5 的 y=102)。
+        // 四張互斥(RenderSeatBadges 一次只開一張)→ 同一條不會疊,而且不再蓋住頭貼的臉(舊版狀態徽章在 y=62)。
+        private const float BadgeY = 102f;
+        // 四張共用**同一個顯示矩形** = 官方 HOST/READY 的 100×30。PLAYING 的圖(d06..d09)只有 100×27,
+        // 這裡是**拉伸**(非等比)填滿到 30 高,不是照原尺寸畫 —— 使用者要四張的高寬完全一樣,
+        // 寧可那張字被拉高 3px(約 11%),也不要一張比另三張矮一截。
+        private const float BadgeW = 100f, BadgeH = 30f;
         // 跑條夾在頭貼下緣(132)與名牌(141)之間那條縫。
         private const float BarY = 134f, BarH = 4f;
         // 上傳/下載用顏色區分(使用者要求不要字):上傳偏藍、下載偏綠。
@@ -354,6 +360,10 @@ namespace Sdo.UI.Screens
             // HOST / READY 兩張徽章各四幀（白=自由 / 橘=A / 綠=B / 藍=C）——選了不同隊的人，頭貼上的字就是自己那隊的顏色。
             _masterFrames = RoomUiArt.AnFrames("master");   // b06..b09
             _readyFrames = RoomUiArt.AnFrames("Room66");    // a06..a09
+            // NO MAP / PLAYING 是同一套素材的下兩組編號（c06..c09 / d06..d09），幀序與配色跟 a/b 完全一樣，
+            // 只有第 0 幀是黑（a/b 是白）。官方沒把這兩組包成 .an（資料夾裡只有裸 PNG）→ 逐張讀，幀序由檔名保證。
+            _noMapFrames = StateBadgeFrames("C");
+            _playingFrames = StateBadgeFrames("D");
             // 名字底下那條名牌也是四幀，但第 0 幀是 1×1 空白 —— 官方用「畫一張看不見的圖」表示沒選隊。
             _plateFrames = RoomUiArt.AnFrames("Team");      // 空白 / 橘 / 綠 / 青藍
             for (int i = 0; i < RoomLayout.SeatCount; i++)
@@ -362,10 +372,10 @@ namespace Sdo.UI.Screens
                 _slotHead[i].enabled = false;   // shown only when occupied (head RT assigned)
                 _slotClose[i] = Art("close", Win1, closeX[i], 59, "Close" + i);
                 _slotMaster[i] = UIKit.AddSprite(_win1Root, "Master" + i, Frame(_masterFrames, 0),
-                                                 Win1.x + masterX[i], Win1.y + 102);
+                                                 Win1.x + masterX[i], Win1.y + BadgeY);
                 _slotMaster[i].enabled = false;
                 _slotReady[i] = UIKit.AddSprite(_win1Root, "Ready" + i, Frame(_readyFrames, 0),
-                                                Win1.x + readyX[i], Win1.y + 102);
+                                                Win1.x + readyX[i], Win1.y + BadgeY);
                 _slotReady[i].enabled = false;
                 // 名牌先建、名字後建 → UGUI 的 sibling 順序讓白字畫在彩色名牌**上面**。
                 _slotPlate[i] = UIKit.AddSprite(_win1Root, "NamePlate" + i, Frame(_plateFrames, 1),
@@ -378,12 +388,19 @@ namespace Sdo.UI.Screens
                 Place(_slotName[i].rectTransform, nameX[i] + Win1.x, Win1.y + 141, 108, 18);
                 _slotName[i].gameObject.SetActive(false);
 
-                // 狀態徽章:蓋在頭貼**上半部**。為什麼不放頭貼下緣 —— 那裡是官方房主徽章(y=102..132)
-                // 的位置,房主在場中時兩張會疊在一起。
-                _slotMissing[i] = Art("missing", Win1, sx[i] - StateBadgeInset, StateBadgeY, "Missing" + i);
-                _slotPlaying[i] = Art("playing", Win1, sx[i] - StateBadgeInset, StateBadgeY, "Playing" + i);
-                if (_slotMissing[i] != null) _slotMissing[i].enabled = false;
-                if (_slotPlaying[i] != null) _slotPlaying[i].enabled = false;
+                // 狀態徽章:與 HOST / READY **同一條**、同一個 x(readyX)—— 四張互斥,由 RenderSeatBadges
+                // 挑要畫哪一張,所以「房主在場中」不會兩張疊在一起,也不用再蓋住頭貼的臉。
+                _slotMissing[i] = UIKit.AddSprite(_win1Root, "Missing" + i, Frame(_noMapFrames, 0),
+                                                  Win1.x + readyX[i], Win1.y + BadgeY);
+                _slotMissing[i].enabled = false;
+                _slotPlaying[i] = UIKit.AddSprite(_win1Root, "Playing" + i, Frame(_playingFrames, 0),
+                                                  Win1.x + readyX[i], Win1.y + BadgeY);
+                _slotPlaying[i].enabled = false;
+                // 四張一律撐成 BadgeW×BadgeH(AddSprite 依 sprite 原生尺寸給的 sizeDelta 在這裡被蓋掉)。
+                StretchToBadgeRow(_slotMissing[i]);
+                StretchToBadgeRow(_slotPlaying[i]);
+                StretchToBadgeRow(_slotMaster[i]);
+                StretchToBadgeRow(_slotReady[i]);
 
                 // 上傳/下載的跑條:頭貼下緣與名牌之間那條縫(y=134..138)。
                 // 刻意不烘圖也不寫百分比 —— 使用者要的就是一條會跑的條。
@@ -4316,22 +4333,9 @@ namespace Sdo.UI.Screens
 
                 // 🔴 房主徽章跟 HostUserId 走,不是「座位 0」—— 轉移房主時 server 只換那個值、不搬座位。
                 // 離線模式沒有 userId(恆 0),那時退回 SeatInfo.IsHost。
-                //
-                // HOST 與 READY 疊在同一條(y=102)且互斥:房主沒有「準備」這個狀態(NetSeat.Ready 對房主恆 false),
-                // 所以房主那格畫 HOST、其他人按了準備才畫 READY。兩張都依**那個人自己的隊伍**換色。
                 bool seatIsHost = taken && (seat.UserId != 0 && room != null ? room.IsHostUser(seat.UserId) : seat.IsHost);
                 int badgeFrame = taken ? RoomBadgeFrames.ForTeam(seat.Team) : 0;
-                if (_slotMaster[i] != null)
-                {
-                    _slotMaster[i].enabled = seatIsHost;
-                    if (seatIsHost) UIKit.ApplySprite(_slotMaster[i], Frame(_masterFrames, badgeFrame));
-                }
-                if (_slotReady[i] != null)
-                {
-                    bool showReady = taken && !seatIsHost && seat.IsReady;
-                    _slotReady[i].enabled = showReady;
-                    if (showReady) UIKit.ApplySprite(_slotReady[i], Frame(_readyFrames, badgeFrame));
-                }
+                RenderSeatBadges(i, seat, taken, seatIsHost, badgeFrame);
 
                 // 名字底下那條名牌:選了隊才畫,畫的是那一隊的色條(官方 Team.an 第 1/2/3 幀)。
                 // 沒選隊(自由)= 官方的第 0 幀是 1×1 空白 → 這裡直接不畫,名字就落在頭貼面板原本的紫底上。
@@ -4350,25 +4354,60 @@ namespace Sdo.UI.Screens
                                                           : (seat.Player != null ? seat.Player.DisplayName : "");
                 }
 
-                RenderSlotState(i, seat, taken);
+                RenderSlotBar(i, seat, taken);
             }
         }
 
         /// <summary>
-        /// 一格頭貼的「狀態徽章 + 傳檔跑條」。
+        /// 頭貼下緣那一條徽章:PLAYING / NO MAP / HOST / READY **四張共用同一個位置**,一次只畫一張。
         ///
-        /// 兩者是分開的兩件事,可以同時出現(一邊下載、一邊還是缺歌 → NO SONG 徽章 + 綠色跑條在跑)。
-        /// 徽章的優先序:**在場中(PLAYING)壓過缺歌** —— 已經在打歌的人「缺不缺歌」不再是有用的資訊,
-        /// 而「他在場裡、你在房間等」才是留在房間的人需要知道的事(需求 9)。
+        /// 「哪一張」是純邏輯,住在 <see cref="RoomBadgeChoice"/>(優先序 PLAYING &gt; NO MAP &gt; HOST &gt; READY
+        /// 與理由都寫在那裡,並由 RoomBadgeChoiceTests 釘住)。這裡只負責把選中的那一張開起來、
+        /// 換成**那個人自己的隊伍色**那一幀,其餘三張關掉。
         /// </summary>
-        private void RenderSlotState(int i, SeatInfo seat, bool taken)
+        private void RenderSeatBadges(int i, SeatInfo seat, bool taken, bool seatIsHost, int badgeFrame)
         {
-            bool playing = taken && IsInMatch(seat.PlayState);
-            bool missing = taken && !playing && seat.Avail == Availability.Missing;
+            var badge = taken
+                ? RoomBadgeChoice.For(true, seatIsHost, seat.IsReady, seat.PlayState, seat.Avail)
+                : RoomSeatBadge.None;
 
-            if (_slotPlaying[i] != null) _slotPlaying[i].enabled = playing;
-            if (_slotMissing[i] != null) _slotMissing[i].enabled = missing;
+            Badge(_slotPlaying[i], badge == RoomSeatBadge.Playing, _playingFrames, badgeFrame);
+            Badge(_slotMissing[i], badge == RoomSeatBadge.NoMap, _noMapFrames, badgeFrame);
+            Badge(_slotMaster[i], badge == RoomSeatBadge.Host, _masterFrames, badgeFrame);
+            Badge(_slotReady[i], badge == RoomSeatBadge.Ready, _readyFrames, badgeFrame);
+        }
 
+        /// <summary>徽章條上的一張:要畫就換成那個隊伍色的幀,不畫就關掉(關掉時不換圖,省一次 mesh 重建)。</summary>
+        private static void Badge(Image img, bool show, Sprite[] frames, int frame)
+        {
+            if (img == null) return;
+            img.enabled = show;
+            if (!show) return;
+            UIKit.ApplySprite(img, Frame(frames, frame));
+            StretchToBadgeRow(img);   // ApplySprite 會把 sizeDelta 設回 sprite 原生尺寸 → 蓋回統一矩形
+        }
+
+        /// <summary>
+        /// 把徽章撐成徽章條的統一矩形 BadgeW×BadgeH。
+        ///
+        /// UGUI 的 Image 預設就是「把 sprite 拉滿 rect」(simple + 不保持長寬比),所以只要蓋掉
+        /// <see cref="UIKit.ApplySprite"/> 依原生尺寸算出來的 sizeDelta,矮 3px 的 PLAYING 就會被
+        /// 垂直拉伸填滿,而不是照原比例畫成一張比較矮的圖。
+        /// </summary>
+        private static void StretchToBadgeRow(Image img)
+        {
+            if (img == null) return;
+            img.preserveAspect = false;   // 明講:不保持長寬比(預設就是 false,但這一行是這個方法的重點)
+            img.rectTransform.sizeDelta = new Vector2(BadgeW, BadgeH);
+        }
+
+        /// <summary>
+        /// 一格頭貼的傳檔跑條(夾在頭貼下緣與名牌之間那條縫)。
+        ///
+        /// 與徽章條是分開的兩件事,可以同時出現:一邊下載、一邊還是缺歌 → NO MAP 徽章 + 綠色跑條在跑。
+        /// </summary>
+        private void RenderSlotBar(int i, SeatInfo seat, bool taken)
+        {
             // 跑條:自己的進度看本機的傳檔器(每幀最新),別人的看 server 轉播的 blobProgress;
             // 另外 server 的座位快照本身也帶著下載進度(availProgress)—— 兩個來源取有值的那個。
             float frac = 0f;
@@ -4388,11 +4427,6 @@ namespace Sdo.UI.Screens
             _slotBarFill[i].rectTransform.sizeDelta =
                 new Vector2(RoomLayout.HeadSlotW * Mathf.Clamp01(frac), 0f);
         }
-
-        /// <summary>這個遊玩狀態算「在這一場裡」嗎 —— 頭貼要不要畫 PLAYING 徽章。</summary>
-        private static bool IsInMatch(PlayState s)
-            => s == PlayState.WaitingForLoad || s == PlayState.Loaded || s == PlayState.ReadyForGameplay
-            || s == PlayState.Playing || s == PlayState.Finished || s == PlayState.Results;
 
         // 房間 3D 裡「其他玩家」的角色。只在 server 的 rev 變動時重建 —— 生一隻 avatar 要讀十幾個部件檔,
         // 每幀重來會卡死;而座位表只在有人進出/換裝時才變,rev 正好是那個變動的訊號。
@@ -5134,6 +5168,19 @@ namespace Sdo.UI.Screens
         /// <summary>多幀 .an 的第 n 幀；載不到就回 null(呼叫端的 Image 只是不顯示，不會爆)。</summary>
         private static Sprite Frame(Sprite[] frames, int n)
             => frames != null && frames.Length > 0 ? frames[Mathf.Clamp(n, 0, frames.Length - 1)] : null;
+
+        /// <summary>
+        /// NO MAP / PLAYING 的四色幀:官方把它們放成「一個顏色一個裸 PNG」(<c>C06..C09</c> / <c>D06..D09</c>),
+        /// 沒有 .an 包 —— 幀序由檔名的編號保證,與 Room66.an / master.an 的 a06..a09 / b06..b09 一致
+        /// (黑/白=自由、橘=A、綠=B、藍=C)。少一張就只是那一幀畫不出來,不會位移其他幀。
+        /// </summary>
+        private static Sprite[] StateBadgeFrames(string prefix)
+        {
+            var frames = new Sprite[RoomBadgeFrames.FrameCount];
+            for (int i = 0; i < frames.Length; i++)
+                frames[i] = RoomUiArt.Image(prefix + "0" + (6 + i) + ".png");
+            return frames;
+        }
 
         // 裁切容器：左上錨在 Win2 局部(x,y)、大小 w×h，掛 RectMask2D → 子物件超出即被硬裁(同 AddSprite 的左上像素座標系)。
         private RectTransform NewClip(string name, float x, float y, float w, float h)

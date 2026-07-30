@@ -157,11 +157,12 @@ else { Write-Warning "[clean] art\upscaled 不存在 — 表情 cut-in 維持 64
 # 3c) generated art overlay — EXACTLY package_build's step(接一支不接另一支 = 編輯器有圖、打包版沒圖)。
 # art\generated 放「原版沒有、照原版風格新烘」的素材:
 #   UI\LOBBYSEL\LOBBYSEL200..205 = 開房/加入 三態鈕(tools\make_lobbysel_room_buttons.py,底板取自官方 LOBBYSEL29..31)
-#   UI\ROOM\{MISSING,PLAYING}    = 頭貼狀態徽章(tools\make_room_state_badges.py,風格量自官方房主徽章 MASTER/b06)
+#   UI\ROOM\{C06..C09,D06..D09}  = 頭貼徽章條的 NO MAP / PLAYING 四色幀(延續官方 READY=a06.. / HOST=b06.. 的編號;
+#                                  原版 Extracted 沒有這幾張 → 只有這棵樹會把它們帶進 clean pack 與出貨包)
 # 與 art\upscaled 分開兩棵樹是刻意的:upscaled 的語意是「取代既有檔」,generated 是「全新檔名」。
 $Generated = Join-Path $Repo 'art\generated'
 if (Test-Path $Generated) { Copy-Tree $Generated $Data 'generated art overlay' }
-else { Write-Warning "[clean] art\generated 不存在 — 連線用的新按鈕與頭貼狀態徽章會缺圖 (run tools\make_lobbysel_room_buttons.py 與 tools\make_room_state_badges.py)" }
+else { Write-Warning "[clean] art\generated 不存在 — 連線用的新按鈕與頭貼的 NO MAP / PLAYING 徽章會缺圖 (run tools\make_lobbysel_room_buttons.py)" }
 
 # 4) shop item data
 foreach ($f in 'iteminfo.dat','setinfo.dat') {
