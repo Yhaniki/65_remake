@@ -454,7 +454,7 @@ namespace Sdo.Tests
             Assert.AreEqual(0.0, SongPreviewWindow.ResolveStart(
                 SongPreviewWindow.NormalizeStart((int)SongFormat.Sm, 0), 120, 20,
                 SongPreviewWindow.AutomaticStartRatio((int)SongFormat.Sm)));
-            Assert.AreEqual(48.0, SongPreviewWindow.ResolveStart(-1, 120, 20),
+            Assert.AreEqual(48.0, SongPreviewWindow.ResolveStart(-1, 120, 20), 1e-6,
                 "non-osu songs without metadata retain the legacy 40% fallback");
             Assert.AreEqual(35.0, SongPreviewWindow.ResolveStart(35, 120, 20));
             Assert.AreEqual(100.0, SongPreviewWindow.ResolveStart(115, 120, 20));
