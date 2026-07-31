@@ -90,23 +90,45 @@ namespace Sdo.Tests
             return null;
         }
 
+        // 🔴 這九段(共 81 張)就是全部的表情 cut-in —— 與 ScreenGameplay.LoadEmojiArt 同一份清單。
+        //
+        // 為什麼不能直接 Directory.GetFiles(dir, "*.PNG"):UI/PLAYINGEXP 裡不是只有表情。原始的
+        // Extracted 樹另外躺著 COMBO*/MISS*/PLAYING* 那 18 張 90×90 —— 那是連段/Miss 的提示圖,
+        // 另一個系列、本來就不是 64 的倍數,不歸 hq3x 那次升解析度管。剪枝過的乾淨包把它們拿掉了,
+        // 所以 data_root.txt 指著乾淨包時掃整個資料夾剛好會過;一旦 data root 落回主 repo 的原始
+        // Extracted 樹(worktree 沒有 data_root.txt 時就是這樣),同一條測試就會拿提示圖來紅。
+        private static readonly string[] SeqPrefixes = { "HH", "SHSH", "JRKL", "KJ", "HE", "H", "Y", "JS", "GTH" };
+        private static readonly int[] SeqCounts = { 7, 16, 8, 14, 8, 10, 4, 6, 8 };
+
         [Test]
         public void ShippedFrames_AreSquareMultiplesOfTheDesignSize()
         {
             var dir = ExpDir();
             if (dir == null) Assert.Ignore("UI/PLAYINGEXP art not present in this environment.");
 
-            foreach (var f in Directory.GetFiles(dir, "*.PNG"))
-            {
-                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                Assert.IsTrue(tex.LoadImage(File.ReadAllBytes(f)), "decodable PNG: " + f);
-                int w = tex.width, h = tex.height;
-                Object.DestroyImmediate(tex);
-                Assert.AreEqual(w, h, "frames are square: " + Path.GetFileName(f));
-                // A non-integer factor would still display right (ppu is a float) but means someone resampled the set
-                // with a different pipeline — worth failing loudly rather than shipping a mixed-resolution sequence.
-                Assert.AreEqual(0, w % DesignPx, $"{Path.GetFileName(f)} is {w}px — not a whole multiple of the {DesignPx}px design size");
-            }
+            int checkedFrames = 0;
+            for (int s = 0; s < SeqPrefixes.Length; s++)
+                for (int i = 0; i < SeqCounts[s]; i++)
+                {
+                    var name = $"{SeqPrefixes[s]}{i:D3}.PNG";
+                    var f = Path.Combine(dir, name);
+                    // 缺幀不在這條測試的守備範圍(LoadEmojiSeq 本來就跳過載不到的張數)——
+                    // 這裡只管「有出貨的那些張,解析度對不對」。
+                    if (!File.Exists(f)) continue;
+
+                    var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    Assert.IsTrue(tex.LoadImage(File.ReadAllBytes(f)), "decodable PNG: " + f);
+                    int w = tex.width, h = tex.height;
+                    Object.DestroyImmediate(tex);
+                    checkedFrames++;
+                    Assert.AreEqual(w, h, "frames are square: " + name);
+                    // A non-integer factor would still display right (ppu is a float) but means someone resampled the set
+                    // with a different pipeline — worth failing loudly rather than shipping a mixed-resolution sequence.
+                    Assert.AreEqual(0, w % DesignPx, $"{name} is {w}px — not a whole multiple of the {DesignPx}px design size");
+                }
+
+            // 一張都沒對到 = 目錄長得對但檔名全變了 → 這條測試等於沒跑,要讓它紅而不是靜靜地綠。
+            Assert.Greater(checkedFrames, 0, "找到了 PLAYINGEXP 卻一張表情框都沒對到 —— 檔名規則變了?");
         }
 
         [Test]
