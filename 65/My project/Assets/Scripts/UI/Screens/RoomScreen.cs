@@ -67,6 +67,11 @@ namespace Sdo.UI.Screens
         // 特效貼圖多為 53×48 / 54×54(甚至外掛皮可能更大)，比框高 → 底部溢出。用 RectMask2D 容器把貼圖硬裁進這塊。
         private const float NoteBoxX = 8f, NoteBoxY = 189f, NoteBoxW = 57f, NoteBoxH = 48f;
         private const float ChatBubbleLifetime = 10f;
+        /// <summary>同一個人頭上最多同時掛幾顆已送出的泡（超過就從最舊的開始收）。
+        /// 講得快的時候 4 顆會把還在畫面上的前幾句吃掉，看起來像「訊息不見了」→ 一整串講完都留得住。
+        /// 代價是最壞情況 6 人 × 8 = 48 顆（每顆 1 個 GameObject + 3 Image + 1 TMP）—— 泡本來就 10 秒後自己消失，
+        /// 六人同時洗頻才會逼近那個數字。</summary>
+        private const int MaxBubblesPerOwner = 8;
         private const float ChatBubbleRiseSpeed = 12f;    // px/s；泡持續往上飄，不再卡在固定高度（點5）
         // 泡身垂直中心(畫布 y=56.5)對齊到「肩錨 + 位移」：換 sprite 不跳位、文字上下置中。位移=泡身中心相對肩錨的偏移。
         private const float ChatBubbleAnchorVisibleLeft = 80f;   // 泡身中心相對肩錨的水平位移(右+/左-)；調小/負=更靠名字
@@ -2046,12 +2051,10 @@ namespace Sdo.UI.Screens
 
             _sentBubbles.Add(bubble);
             // 防洗版:**per-owner** 計數。全域計數的話一個人洗頻會把別人的泡全踢光。
-            // 上限從 8 降到 4:最壞 6 人 × 4 = 24 顆泡(每顆是 1 個 GameObject + 3 Image + 1 TMP),
-            // 8 的話在六人房會實際掉幀。
             int mine = 0;
             for (int i = _sentBubbles.Count - 1; i >= 0; i--)
                 if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == bubble.OwnerUserId) mine++;
-            while (mine > 4)
+            while (mine > MaxBubblesPerOwner)
             {
                 for (int i = 0; i < _sentBubbles.Count; i++)
                     if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == bubble.OwnerUserId)
