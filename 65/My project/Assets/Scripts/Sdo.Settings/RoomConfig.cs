@@ -55,6 +55,12 @@ namespace Sdo.Settings
         // 只影響「看起來要打在哪」，不影響判定時間（那是 globalOffsetMs 的事）。同樣用打拍測試調。
         public static float judgeOffsetY = 0f;
 
+        // 外部歌曲（osu / StepMania / Malody）載入總開關：1=載入(預設)、0=完全不碰。關掉的話開機不掃任何歌資料夾、
+        // 不建 <ADDON> 那幾個資料夾，開場那張進度條載入畫面也不出現（沒有慢的掃描要等），選歌畫面的「資料夾」頁籤
+        // 不再開分類瀏覽面板 —— 整個遊戲只剩官方 DATA/MUSIC 的歌。下面 AdditionalSongFolders / AddonFolder /
+        // SongUiAlpha / DifficultyCalc 都只在這個開關開著時有意義。見 ExternalSongLibrary.ScanAndRegisterCo。
+        public static bool loadExternalSongs = true;
+
         // 額外歌曲資料夾（osu / StepMania）：分號(;)分隔的絕對路徑（逗號仍相容），每個路徑都當成一個 Songs 根目錄（底下第一層=
         // 分類 group，再一層=各首歌的資料夾），語意同 StepMania 的 AdditionalSongFolders。預設的 <ADDON>/SONG 一律自動掃描，
         // 不需列在這（舊的 exe 同層 Songs/ 也仍相容）。
@@ -495,6 +501,7 @@ namespace Sdo.Settings
                     case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
                     case "globalOffsetMs": globalOffsetMs = ParseFloat(val, globalOffsetMs); break;
                     case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
+                    case "LoadExternalSongs": loadExternalSongs = ParseBool(val, loadExternalSongs); break;
                     case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
                     case "AddonFolder": addonFolder = NormalizeFolder(val); break;
                     case "SongUiAlpha": songUiAlpha = ParseFloat(val, songUiAlpha); break;
@@ -677,6 +684,10 @@ namespace Sdo.Settings
             sb.Append("globalOffsetMs=").Append(globalOffsetMs.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 判定線視覺偏移（設計 px，畫面高 600）：完美時機的音符會落在受擊線 + 這個位移處。0 = 正中受擊線。\n");
             sb.Append("judgeOffsetY=").Append(judgeOffsetY.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 外部歌曲（osu/StepMania/Malody）載入總開關：1=載入(預設) 0=完全不碰。\n");
+            sb.Append("# 關掉後：開機不掃歌資料夾、不建 ADDON 那幾個資料夾、開場的載入進度畫面不出現，\n");
+            sb.Append("# 選歌畫面的「資料夾」頁籤也不再開分類瀏覽面板 —— 只剩官方歌。下面四個設定都只在開著時有意義。\n");
+            sb.Append("LoadExternalSongs=").Append(B(loadExternalSongs)).Append('\n');
             sb.Append("# 額外歌曲資料夾（osu/StepMania），仿 StepMania：分號分隔多個絕對路徑，例如 D:/test;E:/songs。\n");
             sb.Append("# 每個路徑都當成一個 Songs 根：底下第一層=分類(group)，再下一層=各首歌資料夾。\n");
             sb.Append("# 預設的 <ADDON>/SONG 一律自動掃描（舊的 exe 同層 Songs/ 仍相容），不需列在這。\n");

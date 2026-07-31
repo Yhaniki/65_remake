@@ -129,25 +129,34 @@ namespace Sdo.UI
 
         // Staged boot with a progress bar. The genuinely slow part is (a) the official catalog parse and (b) the
         // external Songs/ folder scan (reads + note-counts every candidate osu/StepMania chart); both advance the bar.
+        //
+        // config.ini 的 LoadExternalSongs=0 → 慢的那一半（掃歌）整個不跑，剩下的官方歌單解析＋建介面快到不值得
+        // 蓋一張載入畫面上去，所以連 BootProgress 都不建（prog 保持 null，下面每個 Set 都是 no-op）——
+        // 玩家看到的就是官方原本那樣直接進男/女選擇畫面，沒有黑底白條的載入過場。
         private IEnumerator BootCo(RectTransform root, RectTransform screenLayer, RectTransform modalLayer)
         {
-            var prog = BootProgress.Create(root);   // last child of root → above the (empty) screen/modal layers
-            yield return null;                       // let the overlay render before any heavy work
+            bool ext = RoomConfig.loadExternalSongs;
+            var prog = ext ? BootProgress.Create(root) : null;   // last child of root → above the (empty) screen/modal layers
+            if (prog != null) yield return null;                  // let the overlay render before any heavy work
 
             // Phase 1 — official song catalog (one atomic JsonUtility parse; coarse pre/post steps).
-            prog.Set(0.05f, "載入歌曲資料…");
+            prog?.Set(0.05f, "載入歌曲資料…");
             yield return null;
             var _ = SongCatalog.All;   // force EnsureLoaded (the big catalog parse + name overrides)
-            prog.Set(0.15f, "載入歌曲資料…");
+            prog?.Set(0.15f, "載入歌曲資料…");
             yield return null;
 
             // Phase 2 — scan DATA/ADDON/SONG (+ legacy Songs/ + AdditionalSongFolders) for osu/StepMania songs. The
             // ADDON plugin folders are created first so a fresh install shows the player where to drop songs. The bar's
             // sub-label shows the folder being read and its detail line the current song + running count.
-            SdoExtracted.EnsureAddonDirs();
-            yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
-                prog.Set(0.15f + 0.55f * Mathf.Clamp01(f),
-                         string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
+            // 外部歌曲關掉時整個 Phase 2 跳過：不建 ADDON 資料夾（不然關著功能還在硬碟上長出空資料夾），也不掃。
+            if (ext)
+            {
+                SdoExtracted.EnsureAddonDirs();
+                yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
+                    prog?.Set(0.15f + 0.55f * Mathf.Clamp01(f),
+                              string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
+            }
 
             // Phase 3 —— 連線(只有 config.ini 填了 [Net] serverAddress 才會走到)。
             // 連線在 AppContext.Create 就已經開始了(背景 thread),這裡只是等它完成並顯示進度。
@@ -158,7 +167,7 @@ namespace Sdo.UI
             yield return WaitForConnectionCo(prog);
 
             // Phase 4 — build the screens (SongSelect now sees the external songs registered above).
-            prog.Set(0.78f, "建立介面…");
+            prog?.Set(0.78f, "建立介面…");
             yield return null;
             Make<GenderSelectScreen>(screenLayer);   // 單機開場的男/女選擇畫面（Flow 的入口狀態）
             Make<LobbyScreen>(screenLayer);
@@ -167,7 +176,7 @@ namespace Sdo.UI
             _ctx.Flow.ScreenChanged += (from, to) => { ShowOnly(to); UpdateBgm(to); };
 
             // Phase 5 — modals + Nav wiring.
-            prog.Set(0.87f, "建立介面…");
+            prog?.Set(0.87f, "建立介面…");
             yield return null;
             _option = new GameObject("OptionDlg").AddComponent<OptionDlgModal>();
             _option.transform.SetParent(modalLayer, false);
@@ -200,14 +209,13 @@ namespace Sdo.UI
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
             // Phase 6 — font atlas warmup (rasterises the CJK glyphs of the visible song titles).
-            prog.Set(0.94f, "準備字型…");
+            prog?.Set(0.94f, "準備字型…");
             yield return null;
             WarmupFont();
-
-            prog.Set(1f, "");
+            prog?.Set(1f, "");
             yield return null;
 
-            prog.Destroy();
+            prog?.Destroy();
             ShowOnly(_ctx.Flow.Current);
             UpdateBgm(_ctx.Flow.Current);   // 開場即起隨機大廳 BGM(男/女選擇畫面)
 
@@ -276,7 +284,8 @@ namespace Sdo.UI
             var net = _ctx.Net;
             if (net == null) yield break;
 
-            prog.Set(0.72f, "連線伺服器…", Sdo.Settings.RoomConfig.serverAddress);
+            // prog 可能是 null:config.ini 關掉外部歌曲(LoadExternalSongs=0)時整張載入畫面都不建(見 BootCo)。
+            prog?.Set(0.72f, "連線伺服器…", Sdo.Settings.RoomConfig.serverAddress);
 
             float deadline = Time.realtimeSinceStartup + ConnectTimeoutSec;
             while (Time.realtimeSinceStartup < deadline)
@@ -285,7 +294,7 @@ namespace Sdo.UI
 
                 if (net.IsConnected)
                 {
-                    prog.Set(0.76f, "已連上伺服器", Sdo.Settings.RoomConfig.serverAddress);
+                    prog?.Set(0.76f, "已連上伺服器", Sdo.Settings.RoomConfig.serverAddress);
                     net.ErrorReceived += OnNetError;   // 見 OnNetError:沒接的話這些錯誤全被丟掉
                     _netReady = true;
                     yield break;

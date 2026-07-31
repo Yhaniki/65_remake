@@ -214,7 +214,7 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 ### 本地（永遠寫入）— **實作現況**
 
 存檔全部在 data root 底下的 `DATA/PROFILE/`（隨 exe 搬機；root 解析見 `SdoDataRoot`，可用 `SDO_DATA_ROOT` /
-`data_root.txt` 覆寫）。**設定只有兩個 ini**，都是全域一份（不跟著使用者跑）、純文字附中文註解、可手改：
+`data_root.txt` 覆寫 —— `data_root.txt` 只認 **dance.exe 同層**，repo 根那一份只有 editor 會讀）。**設定只有兩個 ini**，都是全域一份（不跟著使用者跑）、純文字附中文註解、可手改：
 
 ```
 <data root>/DATA/PROFILE/

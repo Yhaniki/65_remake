@@ -482,5 +482,42 @@ namespace Sdo.Tests
             Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(null, new SongCatalog.Entry { gn = "x.gn" }));
             Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(new Dictionary<string, SongBadge>(), null));
         }
+
+        // ---- ByBadge：最新(NEW) / 勁樂(HOT) / 懷舊(古典) 三個分頁共用的篩選 ----
+
+        [Test]
+        public void ByBadge_PicksOnlyThatBadge_KeepingListOrder()
+        {
+            var list = new List<SongCatalog.Entry>
+            {
+                Pack("ext_hot1k.gn", "NX", 9, SongBadge.Hot),
+                Pack("ext_classk.gn", "NX", 8, SongBadge.Classical),
+                Pack("ext_hot2k.gn", "NX", 7, SongBadge.Hot),
+                Pack("ext_plaink.gn", "NX", 6),
+            };
+            var map = SongListModel.BadgeMap(list, 0);
+
+            var hot = SongListModel.ByBadge(list, map, SongBadge.Hot);
+            Assert.AreEqual(new[] { "ext_hot1k.gn", "ext_hot2k.gn" }, hot.ConvertAll(e => e.gn).ToArray(),
+                            "只留 HOT，且維持傳入的順序");
+            Assert.AreEqual(1, SongListModel.ByBadge(list, map, SongBadge.Classical).Count);
+            Assert.AreEqual(0, SongListModel.ByBadge(list, map, SongBadge.Recommend).Count);
+        }
+
+        [Test]
+        public void ByBadge_None_Is_Always_Empty()
+        {
+            // 「沒有標籤」不是一個可以拿來瀏覽的分類：不能因為大部分歌都沒標籤就把整份歌單倒進某個分頁。
+            var list = new List<SongCatalog.Entry> { Pack("ext_plaink.gn", "NX", 1) };
+            var map = SongListModel.BadgeMap(list, 0);
+            Assert.AreEqual(0, SongListModel.ByBadge(list, map, SongBadge.None).Count);
+        }
+
+        [Test]
+        public void ByBadge_NullSafe()
+        {
+            Assert.AreEqual(0, SongListModel.ByBadge(null, null, SongBadge.Hot).Count);
+            Assert.AreEqual(0, SongListModel.ByBadge(Sample(), null, SongBadge.Hot).Count);
+        }
     }
 }

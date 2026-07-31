@@ -12,7 +12,8 @@ namespace Sdo.Settings
     /// 剛好存在就會命中），而且 SDO_DATA_ROOT 覆寫只對資產生效，存檔搬不動。單一來源就不會再漂移。
     ///
     /// 解析順序（取第一個「看起來像 SDO 資料樹」的候選，見 <see cref="LooksLikeGameDataRoot"/>）：
-    ///   0) 覆寫：環境變數 <c>SDO_DATA_ROOT</c>，或 exe 同層 / repo 根的 <c>data_root.txt</c> 第一行
+    ///   0) 覆寫：環境變數 <c>SDO_DATA_ROOT</c>，或 <c>data_root.txt</c> 第一行（搜尋目錄見 <see cref="OverrideFileDirs"/>：
+    ///      exe 同層永遠算，repo 根**只有 editor** 算）
     ///   1) editor/dev：<c>&lt;repo&gt;/assets/sdox_offline/Extracted</c>（含 git 主 worktree 與 <c>&lt;name&gt;-suffix</c> 兄弟 repo）
     ///   2) 建置版：<c>&lt;exe&gt;/DATA</c>
     ///   3) 非 editor 的 dev 版型：repo 相對的 Extracted
@@ -54,6 +55,21 @@ namespace Sdo.Settings
             if (string.IsNullOrEmpty(exeDir)) return "DATA";
             try { return Path.GetFullPath(Path.Combine(exeDir, "DATA")); }
             catch { return "DATA"; }
+        }
+
+        /// <summary>要去哪些目錄找 <c>data_root.txt</c>（依序、已去重）。純函式：不碰磁碟。
+        ///
+        /// exe 同層永遠算 —— 那是「這一份 build 自己的」覆寫檔。repo 根**只有 editor 算**：player 的
+        /// <c>Application.dataPath</c> 是 <c>&lt;exe&gt;/dance_Data</c>，往上三層（呼叫端算 repo 的方式）只是 exe 上面
+        /// 兩層的任意資料夾，根本不是 repo。而預設 build 路徑正好是 <c>&lt;repo&gt;/Build/Windows</c>，那層就等於 repo 根，
+        /// 於是打包版每次都會吃到開發機 repo 根的 data_root.txt（例如指向 clean\DATA 或 junction 樹），
+        /// 自己旁邊打包好的 <c>DATA/</c> 反而永遠用不到。</summary>
+        public static List<string> OverrideFileDirs(string exeDir, string repo, bool isEditor)
+        {
+            var list = new List<string>();
+            AddUnique(list, exeDir);
+            if (isEditor) AddUnique(list, repo);
+            return list;
         }
 
         /// <summary>候選 root（依優先序、已去重）。純函式：不碰磁碟，也不看 Unity。</summary>
@@ -142,13 +158,14 @@ namespace Sdo.Settings
                 if (!string.IsNullOrEmpty(sibling)) devRepos.Add(sibling);
             }
 
-            var candidates = CandidateRoots(ConfiguredRoot(exeDir, repo), exeDir, repo, devRepos, isEditor);
+            var candidates = CandidateRoots(ConfiguredRoot(exeDir, repo, isEditor), exeDir, repo, devRepos, isEditor);
             return PickRoot(candidates, DataDirFor(exeDir), LooksLikeGameDataRoot);
         }
 
-        /// <summary>覆寫來源：env <c>SDO_DATA_ROOT</c> 優先，否則 exe 同層 / repo 根的 <c>data_root.txt</c> 第一行。
-        /// 讓遊戲指向任何備好的 DATA 樹（例如剪枝過的乾淨包）而不必重 build。沒設 → null。</summary>
-        private static string ConfiguredRoot(string exeDir, string repo)
+        /// <summary>覆寫來源：env <c>SDO_DATA_ROOT</c> 優先，否則 <see cref="OverrideFileDirs"/> 這些目錄裡
+        /// <c>data_root.txt</c> 的第一行。讓遊戲指向任何備好的 DATA 樹（例如剪枝過的乾淨包）而不必重 build。
+        /// 沒設 → null。</summary>
+        private static string ConfiguredRoot(string exeDir, string repo, bool isEditor)
         {
             try
             {
@@ -157,7 +174,7 @@ namespace Sdo.Settings
             }
             catch { }
 
-            foreach (var dir in new[] { exeDir, repo })
+            foreach (var dir in OverrideFileDirs(exeDir, repo, isEditor))
             {
                 if (string.IsNullOrEmpty(dir)) continue;
                 try
