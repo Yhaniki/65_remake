@@ -42,6 +42,10 @@ public static class BuildScript
         "Sdo/LensFlare",         // SCN0004 太陽鏡頭光斑(ONE/ONE 純加法); stripped -> Shader.Find null -> 退回 Unlit/Texture 變成不透明黑方塊
         "Sdo/PortraitOpaque",
         "Sdo/UnlitDoubleSided",
+        "Sdo/DepthOnlyMask",     // 房間頭上泡:角色的隱形深度分身(RoomPeopleDepthProxy)
+        "Sdo/DepthReset",        // 房間頭上泡:場景畫完後把深度推回無限遠的那片
+                                 // 這兩支任一支 stripped -> Shader.Find null -> RoomScene3D 退回舊行為
+                                 // -> 泡又會被場景/家具擋住(使用者回報過的那個 bug)
 
         "Sdo/UnlitAvatarAlpha",  // 眼鏡鏡片 + 翅膀(CHIBANG)/去背飾品 alpha-blend; stripped -> Shader.Find null -> 退回 UnlitDoubleSided(cutout,c.a=1
                                  // 強制不透明) -> 翅膀周圍閃爍貼圖/眼鏡鏡片「透明度沒做出來」(editor 不 strip 故只在打包版壞)

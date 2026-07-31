@@ -764,11 +764,14 @@ namespace Sdo.UI.Screens
             if (ui != null)
             {
                 _maskedCam = ui; _savedMask = ui.cullingMask;
-                // BubbleLayer 也要遮:頭上泡的畫已經由房間相機 render 進 RT(這樣才吃得到深度遮擋),
+                // BubbleLayer 也要遮:頭上泡的畫已經由房間那組相機 render 進 RT(這樣才吃得到深度遮擋),
                 // 前端 UI 相機若也看得到那張 world canvas,泡就會被畫第二次 —— 而且第二次的位置與大小都是錯的
                 // (它活在房間相機的透視裡,不在 UI 的正交裡)。
+                // PeopleDepthLayer 同理:那層是角色的隱形深度分身(ColorMask 0),雖然畫不出顏色,
+                // 但沒必要讓 UI 相機每幀跑一次它們的 draw。
                 ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer)
-                                    | (1 << RoomScene3D.RemoteAvatarLayer) | (1 << RoomScene3D.BubbleLayer));
+                                    | (1 << RoomScene3D.RemoteAvatarLayer) | (1 << RoomScene3D.BubbleLayer)
+                                    | (1 << RoomScene3D.PeopleDepthLayer));
             }
 
             // 儲物櫃換穿後 → 立即重建本機房間 avatar + 頭貼，讓新穿搭當場反映 (WardrobeScreen 已寫回 profile.json)。

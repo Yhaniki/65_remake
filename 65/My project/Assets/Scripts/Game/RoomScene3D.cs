@@ -36,11 +36,27 @@ namespace Sdo.Game
         /// 泡的**畫面**住在這一層、由房間相機一起 render,這樣它才會吃 GPU 的深度測試 ——
         /// 站在說話者前面的人就能逐像素把泡切掉(使用者要的前後景)。泡的**排版與滑鼠命中**
         /// 仍留在 UI 層(RoomScreen 那邊的透明代理),所以整套鏈物理/拖曳一行都沒改。
+        /// 「場景擋不到泡」則靠畫在泡之前的深度重置片,見 <see cref="PeopleDepthLayer"/>。
         ///
         /// 與角色分層的理由跟 <see cref="RemoteAvatarLayer"/> 一樣:六格頭貼相機只看角色那層,
         /// 泡不該入頭貼。前端 UI 相機也要把這層遮掉(RoomScreen 進房時做),否則泡會被畫兩次。
         /// </summary>
         public const int BubbleLayer = 14;
+
+        /// <summary>
+        /// 「深度重置片 + 人的隱形深度分身」那一層(TagManager 命名 "RoomPeopleDepth")。
+        ///
+        /// 泡的遮擋規則是**只被人擋、不被場景擋**(使用者需求)。同一台相機裡靠三步做到,
+        /// 先後由 sortingOrder 決定(它比 renderQueue 優先,見 [[unity-sortingorder-outranks-renderqueue]]):
+        ///
+        ///   場景/家具/衣物(0) → **深度重置片**(98,<c>Sdo/DepthReset</c>,整片寫最遠 = 場景的深度消失)
+        ///   → **角色的隱形分身**(99,<c>Sdo/DepthOnlyMask</c>,把人的剪影寫回深度)
+        ///   → **泡**(100+,照常做深度測試 → 只可能輸給人)。
+        ///
+        /// 兩片都是 ColorMask 0,畫面上完全看不見;它們存在的唯一意義是「決定泡輸給誰」。
+        /// 建立處:重置片在 <c>BuildCamera</c>,分身在 <c>AttachDepthProxy</c>(每個生角色的地方都要叫)。
+        /// </summary>
+        public const int PeopleDepthLayer = 15;
 
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
@@ -81,6 +97,8 @@ namespace Sdo.Game
         private SdoAvatar _avatar;
         private Transform _avatarRoot;
         private Camera _cam;
+        private GameObject _depthReset;     // 場景畫完後把深度推回無限遠的那片(→ 場景擋不住泡)
+        private Transform _peopleDepthRoot; // 所有角色的隱形深度分身住這底下(刻意不掛在角色身上)
         private RenderTexture _rt;
         private RtResizeTracker _rtTrack;     // debounced window-resize → RT re-allocation (see LateUpdate)
         private MotLoader _walkMot, _idleMot;
@@ -316,6 +334,7 @@ namespace Sdo.Game
             _avatarParts = avatarParts;
             _bodyIndex = bodyIndex;   // 本機角色自己的體型 (胖瘦;由 RoomScreen 從 profile 帶入)
             _localSeat = localSeat < 0 ? 0 : localSeat;
+            BuildPeopleDepthRoot();   // 角色的隱形深度分身要有地方掛 —— 在 LoadAvatar 之前先備好
             LoadScene();
             LoadMask();
             LoadAvatar();
@@ -323,6 +342,33 @@ namespace Sdo.Game
             if (fillTestAvatars) FillTestAvatars();
             BuildCamera();
             _ready = true;
+        }
+
+        private void BuildPeopleDepthRoot()
+        {
+            if (_peopleDepthRoot != null) return;
+            var go = new GameObject("RoomPeopleDepth") { layer = PeopleDepthLayer };
+            go.transform.SetParent(transform, false);
+            _peopleDepthRoot = go.transform;
+        }
+
+        /// <summary>
+        /// 這隻角色要能擋住頭上聊天泡 —— 替他建隱形的深度分身(見 <see cref="RoomPeopleDepthProxy"/>)。
+        /// **每一個生出角色的地方都要叫一次**:本機、遠端、換穿重建、測試填充。漏掉的那一個人
+        /// 會變成「站在別人泡前面卻擋不住」,而且畫面上完全看不出哪裡不對。
+        /// </summary>
+        private void AttachDepthProxy(GameObject avatarRoot)
+        {
+            if (avatarRoot == null) return;
+            BuildPeopleDepthRoot();
+            RoomPeopleDepthProxy.Attach(avatarRoot, _peopleDepthRoot, PeopleDepthLayer);
+        }
+
+        /// <summary>房間 RT 立刻重畫一次(截圖/測試用)。整個房間 —— 場景、人、深度重置、分身、泡 ——
+        /// 都在同一台相機裡,所以這就只是 Render()。</summary>
+        public void RenderNow()
+        {
+            if (_cam != null) _cam.Render();
         }
 
         // Load the room's animated stage props (Room_obj mapobjs) the official open-room loads (case 0x25): the TV,
@@ -357,6 +403,7 @@ namespace Sdo.Game
                 parent.transform.SetParent(transform, false);
                 var av = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false);
                 if (av == null) { Destroy(parent); continue; }
+                AttachDepthProxy(parent);   // 這些人也要擋得住頭上泡
 
                 // Measure the feet offset from the STANDING idle BEFORE swapping in the slot motion: a bent WAITING pose's
                 // frame-0 lowest vertex isn't the feet, which mis-grounded (sank) some lookers. The model is identical for
@@ -563,6 +610,7 @@ namespace Sdo.Game
             var av = SdoRoomAvatar.Build(parent, RemoteAvatarLayer, portraitOpaque: false,
                                          male: p.Male, equippedParts: p.Parts, bodyIndex: p.BodyIndex);
             if (av == null) { Destroy(parent); return; }
+            AttachDepthProxy(parent);   // 別人站在我前面時要擋得住我的泡
 
             // 腳的偏移要在換 clip **之前**量:彎腰姿勢的第 0 幀最低點不是腳,會把人埋進地板。
             float feet = av.FeetYAt(0f);
@@ -873,6 +921,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            AttachDepthProxy(parent);   // 自己的身體也要擋得住自己的泡尾巴(depthBias 只拉開,不負責遮擋)
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();                                               // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
@@ -906,6 +955,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            AttachDepthProxy(parent);   // 換穿是**重建**一隻新的 → 分身也要跟著重建(舊的隨舊 root 一起銷毀)
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();   // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             // GroundFeetY 換的是「拿哪個 clip 量」,量法還是 FeetYAt → Pose(0) → 顯示姿勢仍被停在第 0 幀。
@@ -996,11 +1046,22 @@ namespace Sdo.Game
             _cam.orthographic = false;
             _cam.fieldOfView = 45f;                                 // EXACT decompiled projection (Camera_ctor): fovY=45,
             _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500
-            // 房間畫面要同時看到場景、遠端角色、以及頭上泡 —— 泡進來這台相機才吃得到深度測試(BubbleLayer)。
-            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer) | (1 << BubbleLayer);
+            // 房間畫面要同時看到場景、遠端角色、頭上泡(泡進來這台相機才吃得到深度測試),
+            // 以及「人的隱形深度分身」那一層 —— 分身寫不出顏色,它存在的意義就是把深度寫給泡看。
+            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer) | (1 << BubbleLayer)
+                               | (1 << PeopleDepthLayer);
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = Color.black;
+
+            // 場景畫完之後、泡畫出來之前把深度推回無限遠 —— 這就是「泡不被場景擋」。
+            // 🔴 打包版若把 Sdo/DepthReset strip 掉,這裡會是 null:那時整套退回舊行為
+            //    (泡被人也被場景擋),而不是變成「泡蓋在所有人前面」。
+            if (RoomPeopleDepthProxy.Available)
+                _depthReset = RoomPeopleDepthProxy.CreateDepthReset(_cam.transform, PeopleDepthLayer);
+            if (_depthReset == null)
+                Debug.LogWarning("[room-bubble] no " + RoomPeopleDepthProxy.ResetShaderName
+                                 + " → 泡退回舊行為(會被場景擋住)");
             UpdateCamera();
         }
 
