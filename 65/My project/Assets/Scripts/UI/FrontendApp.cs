@@ -646,6 +646,7 @@ namespace Sdo.UI
         private float _netGateArmedRt;
         private long _netMatchId;
         private const float NetGateLocalTimeoutSec = 45f;   // > server 的 LoadTimeoutMs(30s)
+        private const float NetResultAutoConfirmSec = 30f;  // 連線:結算面板放著沒按 → 30 秒後自動確定回房間
 
         private void WireNetGameplay(ScreenGameplay game)
         {
@@ -695,6 +696,11 @@ namespace Sdo.UI
 
             game.LocalReady = () =>
             {
+                // 旁觀者不送:server 的 setPlayState 只認**這一場的參與者**(座位上的人),旁觀送過去
+                // 一律回 notInRoom —— server log 上那兩行「✗ user N 的請求被拒:notInRoom」就是它
+                // (loaded + readyForGameplay 各一行)。而且他本來就不該參與「等所有人載完才開場」的
+                // 同步:他要看的就是別人開場,自己載完直接看。
+                if (!net.IsMatchParticipant) return;
                 net.SetPlayState(Sdo.Net.PlayState.Loaded, _netMatchId);
                 net.SetPlayState(Sdo.Net.PlayState.ReadyForGameplay, _netMatchId);
             };
@@ -740,6 +746,9 @@ namespace Sdo.UI
             };
             game.NetLeaderUserId = () => net.LeaderUserId;
             game.NetResultRows = () => _netResultRows;
+            // 結算畫面沒人按確定 → 30 秒後自己按(ResultScreen 會走 OnConfirm,跟按確定完全同一條路:
+            // 送 playFinished、拆遊戲、轉場回房間)。連線才需要 —— 一個人掛在結算畫面,整間房都開不了下一局。
+            game.resultAutoConfirmSec = NetResultAutoConfirmSec;
             game.LocalComboMilestone = combo => net.SendComboMilestone(_netMatchId, combo);
         }
 
@@ -928,6 +937,25 @@ namespace Sdo.UI
             // 退訂放在真的離開打歌畫面的那條路徑(DetachNetGameplay)。
         }
 
+        /// <summary>
+        /// 「結算看完了,我人回房間了」。
+        ///
+        /// 為什麼要單獨一則:<see cref="SendNetPlayFinished"/> 是**曲末**就送的(不等玩家關掉結算面板),
+        /// 所以 server 判定結算的那一刻,人還在看成績。留在房間的人這段時間應該繼續看到那幾格的
+        /// PLAYING 徽章 —— 它該跟著「人回來了沒」,不是「歌放完了沒」。
+        ///
+        /// 沒有這一則也不會壞:server 有 <see cref="Sdo.Net.NetLimits.ResultsGraceMs"/> 的逾時兜底
+        /// (那是給斷線 / 直接關掉遊戲的人用的),只是徽章會多掛幾十秒才消失。
+        ///
+        /// 送不出去(這一場已經被 server 收掉了 → error{badState})只會進 log,不影響回房。
+        /// </summary>
+        private void SendNetBackToRoom()
+        {
+            var net = _ctx != null ? _ctx.Net : null;
+            if (net == null || net.Match == null || !net.IsMatchParticipant) return;
+            net.SetPlayState(Sdo.Net.PlayState.Idle, _netMatchId);
+        }
+
         /// <summary>離開打歌畫面:把這一局的訂閱收掉。</summary>
         private void DetachNetGameplay()
         {
@@ -960,7 +988,7 @@ namespace Sdo.UI
         private void ReturnFromGameplay()
         {
             RecordPlayStats();
-            SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame();
+            SendNetPlayFinished(); SendNetBackToRoom(); DetachNetGameplay(); TransitionToRoomFromGame();
         }
 
         // Esc during play: abandon the run with no settlement and go straight back to the room.
@@ -969,7 +997,7 @@ namespace Sdo.UI
         //
         // 中途離開**不記戰績**:那不是一份完整的成績(判定數只有半首歌),而且如果記勝負的話,
         // 「快輸了就按 ESC」就會變成保住勝率的操作。
-        private void AbortGameplay() { SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame(); }
+        private void AbortGameplay() { SendNetPlayFinished(); SendNetBackToRoom(); DetachNetGameplay(); TransitionToRoomFromGame(); }
 
         /// <summary>
         /// 把這一場的判定數(與該記的勝負)累加進 active profile。政策在 <see cref="PlayStatsRecorder"/>。

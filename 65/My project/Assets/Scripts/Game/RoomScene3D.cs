@@ -36,11 +36,27 @@ namespace Sdo.Game
         /// 泡的**畫面**住在這一層、由房間相機一起 render,這樣它才會吃 GPU 的深度測試 ——
         /// 站在說話者前面的人就能逐像素把泡切掉(使用者要的前後景)。泡的**排版與滑鼠命中**
         /// 仍留在 UI 層(RoomScreen 那邊的透明代理),所以整套鏈物理/拖曳一行都沒改。
+        /// 「場景擋不到泡」則靠畫在泡之前的深度重置片,見 <see cref="PeopleDepthLayer"/>。
         ///
         /// 與角色分層的理由跟 <see cref="RemoteAvatarLayer"/> 一樣:六格頭貼相機只看角色那層,
         /// 泡不該入頭貼。前端 UI 相機也要把這層遮掉(RoomScreen 進房時做),否則泡會被畫兩次。
         /// </summary>
         public const int BubbleLayer = 14;
+
+        /// <summary>
+        /// 「深度重置片 + 人的隱形深度分身」那一層(TagManager 命名 "RoomPeopleDepth")。
+        ///
+        /// 泡的遮擋規則是**只被人擋、不被場景擋**(使用者需求)。同一台相機裡靠三步做到,
+        /// 先後由 sortingOrder 決定(它比 renderQueue 優先,見 [[unity-sortingorder-outranks-renderqueue]]):
+        ///
+        ///   場景/家具/衣物(0) → **深度重置片**(98,<c>Sdo/DepthReset</c>,整片寫最遠 = 場景的深度消失)
+        ///   → **角色的隱形分身**(99,<c>Sdo/DepthOnlyMask</c>,把人的剪影寫回深度)
+        ///   → **泡**(100+,照常做深度測試 → 只可能輸給人)。
+        ///
+        /// 兩片都是 ColorMask 0,畫面上完全看不見;它們存在的唯一意義是「決定泡輸給誰」。
+        /// 建立處:重置片在 <c>BuildCamera</c>,分身在 <c>AttachDepthProxy</c>(每個生角色的地方都要叫)。
+        /// </summary>
+        public const int PeopleDepthLayer = 15;
 
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
@@ -81,6 +97,8 @@ namespace Sdo.Game
         private SdoAvatar _avatar;
         private Transform _avatarRoot;
         private Camera _cam;
+        private GameObject _depthReset;     // 場景畫完後把深度推回無限遠的那片(→ 場景擋不住泡)
+        private Transform _peopleDepthRoot; // 所有角色的隱形深度分身住這底下(刻意不掛在角色身上)
         private RenderTexture _rt;
         private RtResizeTracker _rtTrack;     // debounced window-resize → RT re-allocation (see LateUpdate)
         private MotLoader _walkMot, _idleMot;
@@ -129,7 +147,8 @@ namespace Sdo.Game
         ///
         /// **真的換位**(按「旁觀」交出座位、或旁觀者坐回座位):一律搬到新 slot 的錨點,
         /// 就算他正在走路也搬 —— 是他自己按的,而且官方就是把人挪到新 slot 的位置。
-        /// 順便重挑 idle:旁觀席各有自己的 cat-0x21 觀看姿勢(見 <see cref="SlotIdleMot"/>)。
+        /// 順便重挑 idle:旁觀席各有自己的 cat-0x21 觀看姿勢,而且**贏過飛行翅膀的 flystay**
+        /// (見 <see cref="ResolveIdleMot"/>);換過去是硬切,不混色。
         /// </summary>
         public void SetLocalSeat(int seat)
         {
@@ -138,8 +157,20 @@ namespace Sdo.Game
             _slotConfirmed = true;
             if (seat == _localSeat) return;
             _localSeat = seat;
+            var prevIdle = _idleMot;
             ApplyOutfitMotion();                       // slot 換了 → idle 可能換一支(座位待機 ↔ 觀看姿勢)
-            if (_avatar != null && _idleMot != null && !_walking) _avatar.SetClip(_idleMot);
+            if (_avatar != null && _idleMot != null && !_walking)
+            {
+                // 🔴 換 slot 的 idle **硬切,不混色**(使用者需求):座位待機 ↔ 看戲姿勢是兩個差很多的姿勢,
+                // 混 1 秒過去看起來像慢動作扭過去,而不是「換了一個狀態」。官方也是按下去就換好。
+                // 只在 clip 真的換了才 Snap:座位↔座位是同一支 idle,那時 SnapNextClip 會**留到下一次**
+                // clip 切換(= 開始走路)才被消耗 → 變成走路那一下沒有混色。
+                if (!ReferenceEquals(prevIdle, _idleMot)) _avatar.SnapNextClip();
+                _avatar.SetClip(_idleMot);
+            }
+            // 高度跟著硬切:動作瞬間換、身體卻慢慢從 +10 飄下來的話,會有一段人跟姿勢對不上的空窗。
+            _hoverCur = SpecialMotionItems.HoverY(_flying);
+            ApplyAvatarTransform();                    // 位置不動的那條路徑也要把新高度寫進去(TickHover 已經沒事做了)
             if (first && _hasWalked) return;           // 晚到的快照 + 已經自己走過 → 位置不動
             Vector3 spawn = SpawnSpot(seat);
             _walkPos = new Vector3(spawn.x, floorY, spawn.z);
@@ -177,14 +208,47 @@ namespace Sdo.Game
         /// cat-0x21 觀看姿勢**(<see cref="RoomLayout.SlotMotionName"/>,那張表是從 EXE 逐項解出來的
         /// bucket 載入順序)—— 官方的旁觀者不是十個一模一樣的立正,是十種不同的看戲姿勢。
         ///
-        /// 回傳的是「基底」idle:飛行翅膀之類的特殊道具還會在外面再覆蓋一次(<c>SpecialMotionItems</c>)。
-        /// 讓道具贏是刻意的 —— 穿飛行翅膀的人套上彎腰的 WAITING 姿勢會變成翅膀浮著、人卻站在地上。
+        /// 回傳的是「基底」idle:座位上還會被飛行翅膀之類的特殊道具覆蓋一次(<see cref="ResolveIdleMot"/>)。
         /// </summary>
         public static string SlotIdleMot(int seat, bool male)
         {
             if (seat < RoomLayout.SeatCount)
                 return male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot;
             return "MOTION/" + RoomLayout.SlotMotionName(seat, female: !male) + ".MOT";
+        }
+
+        /// <summary>這個 slot 是旁觀席嗎(6..15)。</summary>
+        public static bool IsSpectatorSlot(int seat) => seat >= RoomLayout.SeatCount;
+
+        /// <summary>
+        /// 旁觀席的人算不算「在飛」—— **不算**。
+        ///
+        /// 飛行翅膀那組特性(flystay 浮空 idle + fly 前傾滑行 + 常駐 +10 懸浮)是一整組:
+        /// 只擋 idle、留著懸浮的話,人會浮在半空中做地面的看戲姿勢;留著滑行走路又會腳踩不到地。
+        /// 所以站上旁觀席就整組關掉,坐回座位再整組開回來(使用者需求:旁觀動作優先於翅膀)。
+        /// </summary>
+        public static bool FlyingAt(int seat, string[] parts)
+            => !IsSpectatorSlot(seat) && SpecialMotionItems.WearsFlyingWing(parts);
+
+        /// <summary>
+        /// 這個 slot + 這身穿搭的待機動作。**本機與遠端走同一個函式**,不然會變成
+        /// 「我看自己在發呆、別人看我在看戲」。
+        ///
+        /// 座位上:飛行翅膀覆蓋成 flystay(穿翅膀的人站地面 idle 會變成翅膀浮著、人卻踩在地上)。
+        /// 旁觀席:**看戲姿勢贏** —— 旁觀席那十種 cat-0x21 姿勢就是「他正在旁觀」這件事在畫面上的樣子,
+        /// 被 flystay 蓋掉的話旁觀者跟座位上的人長得一模一樣,誰在看戲根本分不出來。
+        /// </summary>
+        public static string ResolveIdleMot(int seat, bool male, string[] parts)
+        {
+            string baseIdle = SlotIdleMot(seat, male);
+            return IsSpectatorSlot(seat) ? baseIdle : SpecialMotionItems.IdleMotFor(parts, male, baseIdle);
+        }
+
+        /// <summary>這個 slot + 這身穿搭的走路動作(旁觀席不吃翅膀的滑行,理由同 <see cref="FlyingAt"/>)。</summary>
+        public static string ResolveWalkMot(int seat, bool male, string[] parts)
+        {
+            string baseWalk = male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot;
+            return IsSpectatorSlot(seat) ? baseWalk : SpecialMotionItems.WalkMotFor(parts, male, baseWalk);
         }
 
         public bool PlayChatAction(string motionRelPath)
@@ -270,6 +334,7 @@ namespace Sdo.Game
             _avatarParts = avatarParts;
             _bodyIndex = bodyIndex;   // 本機角色自己的體型 (胖瘦;由 RoomScreen 從 profile 帶入)
             _localSeat = localSeat < 0 ? 0 : localSeat;
+            BuildPeopleDepthRoot();   // 角色的隱形深度分身要有地方掛 —— 在 LoadAvatar 之前先備好
             LoadScene();
             LoadMask();
             LoadAvatar();
@@ -277,6 +342,33 @@ namespace Sdo.Game
             if (fillTestAvatars) FillTestAvatars();
             BuildCamera();
             _ready = true;
+        }
+
+        private void BuildPeopleDepthRoot()
+        {
+            if (_peopleDepthRoot != null) return;
+            var go = new GameObject("RoomPeopleDepth") { layer = PeopleDepthLayer };
+            go.transform.SetParent(transform, false);
+            _peopleDepthRoot = go.transform;
+        }
+
+        /// <summary>
+        /// 這隻角色要能擋住頭上聊天泡 —— 替他建隱形的深度分身(見 <see cref="RoomPeopleDepthProxy"/>)。
+        /// **每一個生出角色的地方都要叫一次**:本機、遠端、換穿重建、測試填充。漏掉的那一個人
+        /// 會變成「站在別人泡前面卻擋不住」,而且畫面上完全看不出哪裡不對。
+        /// </summary>
+        private void AttachDepthProxy(GameObject avatarRoot)
+        {
+            if (avatarRoot == null) return;
+            BuildPeopleDepthRoot();
+            RoomPeopleDepthProxy.Attach(avatarRoot, _peopleDepthRoot, PeopleDepthLayer);
+        }
+
+        /// <summary>房間 RT 立刻重畫一次(截圖/測試用)。整個房間 —— 場景、人、深度重置、分身、泡 ——
+        /// 都在同一台相機裡,所以這就只是 Render()。</summary>
+        public void RenderNow()
+        {
+            if (_cam != null) _cam.Render();
         }
 
         // Load the room's animated stage props (Room_obj mapobjs) the official open-room loads (case 0x25): the TV,
@@ -311,6 +403,7 @@ namespace Sdo.Game
                 parent.transform.SetParent(transform, false);
                 var av = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false);
                 if (av == null) { Destroy(parent); continue; }
+                AttachDepthProxy(parent);   // 這些人也要擋得住頭上泡
 
                 // Measure the feet offset from the STANDING idle BEFORE swapping in the slot motion: a bent WAITING pose's
                 // frame-0 lowest vertex isn't the feet, which mis-grounded (sank) some lookers. The model is identical for
@@ -481,15 +574,27 @@ namespace Sdo.Game
         private void MoveRemoteToSlot(Remote r, RemotePlayer p)
         {
             r.Seat = p.Seat;
-            string idleRel = SpecialMotionItems.IdleMotFor(p.Parts, p.Male, SlotIdleMot(p.Seat, p.Male));
-            var idle = SdoRoomAvatar.LoadMot(idleRel);
+            // 🔴 走路 clip 與飛行狀態也要跟著 slot 重挑:座位↔旁觀席會開關整組飛行特性(見 FlyingAt),
+            // 只換 idle 的話,穿翅膀的人一站上旁觀席就變成「浮在半空中做地面看戲姿勢」。
+            var idle = SdoRoomAvatar.LoadMot(ResolveIdleMot(p.Seat, p.Male, p.Parts));
+            var walk = SdoRoomAvatar.LoadMot(ResolveWalkMot(p.Seat, p.Male, p.Parts));
+            if (walk != null) r.Walk = walk;
+            r.Flying = FlyingAt(p.Seat, p.Parts);
+            r.HoverCur = SpecialMotionItems.HoverY(r.Flying);   // 高度硬切(同本機 SetLocalSeat:動作瞬間換,身體不慢慢飄)
             if (idle != null)
             {
+                bool idleChanged = !ReferenceEquals(r.Idle, idle);
                 r.Idle = idle;
                 if (r.Av != null)
                 {
                     r.Av.RestMot = idle;
-                    if (!r.ClipIsWalk) r.Av.SetClip(idle);   // 正在走就別打斷,停下來自然會換過去
+                    // 正在走就別打斷,停下來自然會換過去;要換就**硬切不混色**(使用者需求,同本機那條)。
+                    // 只在 clip 真的換了才 Snap —— 理由見 SetLocalSeat 那條(否則會留到下一次切換才用掉)。
+                    if (!r.ClipIsWalk)
+                    {
+                        if (idleChanged) r.Av.SnapNextClip();
+                        r.Av.SetClip(idle);
+                    }
                 }
             }
             Vector3 spot = SpawnSpot(p.Seat);
@@ -505,25 +610,22 @@ namespace Sdo.Game
             var av = SdoRoomAvatar.Build(parent, RemoteAvatarLayer, portraitOpaque: false,
                                          male: p.Male, equippedParts: p.Parts, bodyIndex: p.BodyIndex);
             if (av == null) { Destroy(parent); return; }
+            AttachDepthProxy(parent);   // 別人站在我前面時要擋得住我的泡
 
             // 腳的偏移要在換 clip **之前**量:彎腰姿勢的第 0 幀最低點不是腳,會把人埋進地板。
             float feet = av.FeetYAt(0f);
             av.DanceEnabled = () => false;
             av.DanceTimeSec = () => -1f;
             // 飛行翅膀的浮空 idle / 滑行走路也照本機那套判斷 —— 不然穿飛行翅膀的人在別人畫面上是走路的。
-            string baseIdle = SlotIdleMot(p.Seat, p.Male);
-            string idleRel = SpecialMotionItems.IdleMotFor(p.Parts, p.Male, baseIdle);
-            string walkRel = SpecialMotionItems.WalkMotFor(p.Parts, p.Male,
-                p.Male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
-
+            // (旁觀席那組整個關掉 → 看戲姿勢贏;見 ResolveIdleMot / FlyingAt。)
             var r = new Remote
             {
                 Go = parent,
                 Av = av,
                 FeetY = feet,
-                Idle = SdoRoomAvatar.LoadMot(idleRel),
-                Walk = SdoRoomAvatar.LoadMot(walkRel),
-                Flying = SpecialMotionItems.WearsFlyingWing(p.Parts),
+                Idle = SdoRoomAvatar.LoadMot(ResolveIdleMot(p.Seat, p.Male, p.Parts)),
+                Walk = SdoRoomAvatar.LoadMot(ResolveWalkMot(p.Seat, p.Male, p.Parts)),
+                Flying = FlyingAt(p.Seat, p.Parts),
                 LookKey = p.LookKey,
                 Seat = p.Seat,
             };
@@ -819,6 +921,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            AttachDepthProxy(parent);   // 自己的身體也要擋得住自己的泡尾巴(depthBias 只拉開,不負責遮擋)
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();                                               // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
@@ -852,6 +955,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            AttachDepthProxy(parent);   // 換穿是**重建**一隻新的 → 分身也要跟著重建(舊的隨舊 root 一起銷毀)
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();   // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             // GroundFeetY 換的是「拿哪個 clip 量」,量法還是 FeetYAt → Pose(0) → 顯示姿勢仍被停在第 0 幀。
@@ -917,14 +1021,15 @@ namespace Sdo.Game
         /// is also worn, which forces 3.0). Called after every (re)build so 換裝 picks the trait up immediately.</summary>
         private void ApplyOutfitMotion()
         {
-            _flying = SpecialMotionItems.WearsFlyingWing(_avatarParts);
-            bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
             // 飛行翅膀:idle→flystay,走路→fly(前傾滑動),速度強制 3.0(028:2774),body Y +10 懸浮常駐(028:2614,不分動靜)。
             // 「哪些翅膀會飛」離線推不出來 → SpecialMotionItems 用硬編 5 id + 線上實測名單(見該檔)。
-            // 基底 idle 依**自己現在的 slot**:坐著是大廳待機,旁觀是自己那格 cat-0x21 觀看姿勢
-            // (見 SlotIdleMot;本機與遠端走同一個函式,不然「我看自己在發呆、別人看我在看戲」)。
-            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male, SlotIdleMot(_localSeat, _male));
-            string walkRel = SpecialMotionItems.WalkMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
+            // 🔴 但**站在旁觀席時整組關掉**(FlyingAt):旁觀動作優先,而懸浮/滑行是跟著 flystay 的配套。
+            _flying = FlyingAt(_localSeat, _avatarParts);
+            bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
+            // idle/walk 依**自己現在的 slot + 穿搭**:坐著是大廳待機(翅膀可覆蓋),旁觀是自己那格
+            // cat-0x21 觀看姿勢(見 ResolveIdleMot;本機與遠端走同一個函式,不然「我看自己在發呆、別人看我在看戲」)。
+            string idleRel = ResolveIdleMot(_localSeat, _male, _avatarParts);
+            string walkRel = ResolveWalkMot(_localSeat, _male, _avatarParts);
             _idleMot = SdoRoomAvatar.LoadMot(idleRel);
             _walkMot = SdoRoomAvatar.LoadMot(walkRel);
             walkSpeed = SpecialMotionItems.WalkSpeedMult(fast, _flying);
@@ -941,11 +1046,22 @@ namespace Sdo.Game
             _cam.orthographic = false;
             _cam.fieldOfView = 45f;                                 // EXACT decompiled projection (Camera_ctor): fovY=45,
             _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500
-            // 房間畫面要同時看到場景、遠端角色、以及頭上泡 —— 泡進來這台相機才吃得到深度測試(BubbleLayer)。
-            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer) | (1 << BubbleLayer);
+            // 房間畫面要同時看到場景、遠端角色、頭上泡(泡進來這台相機才吃得到深度測試),
+            // 以及「人的隱形深度分身」那一層 —— 分身寫不出顏色,它存在的意義就是把深度寫給泡看。
+            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer) | (1 << BubbleLayer)
+                               | (1 << PeopleDepthLayer);
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = Color.black;
+
+            // 場景畫完之後、泡畫出來之前把深度推回無限遠 —— 這就是「泡不被場景擋」。
+            // 🔴 打包版若把 Sdo/DepthReset strip 掉,這裡會是 null:那時整套退回舊行為
+            //    (泡被人也被場景擋),而不是變成「泡蓋在所有人前面」。
+            if (RoomPeopleDepthProxy.Available)
+                _depthReset = RoomPeopleDepthProxy.CreateDepthReset(_cam.transform, PeopleDepthLayer);
+            if (_depthReset == null)
+                Debug.LogWarning("[room-bubble] no " + RoomPeopleDepthProxy.ResetShaderName
+                                 + " → 泡退回舊行為(會被場景擋住)");
             UpdateCamera();
         }
 

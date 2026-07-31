@@ -10,12 +10,13 @@ using Sdo.UI.Util;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// 頭上聊天泡「搬進房間相機」的端到端像素驗證 —— 驗的是兩件用眼睛看不準、但使用者一定會發現的事:
+    /// 頭上聊天泡「搬進房間相機」的端到端像素驗證 —— 驗的是三件用眼睛看不準、但使用者一定會發現的事:
     ///
     ///   ① **位置沒有跑掉**:泡的排版仍在 800×600 設計 px 裡算(鏈物理一行沒改),
     ///      所以「錨點右 dx、下 dy 設計 px」在算出來的畫面上必須還是同一點。差 3 px 就是「泡有點飄」。
-    ///   ② **真的會被擋住**:在泡與相機之間放一片不透明的東西 → 泡的像素必須消失。
-    ///      這是整個改動的**目的**;做壞了的症狀是「什麼都沒變」,而那看起來像沒改到程式。
+    ///   ② **人擋得住泡**:在泡與相機之間放一個人 → 泡的像素必須消失。
+    ///   ③ **場景擋不住泡**(使用者需求):同一個位置換成場景/家具 → 泡**一個像素都不能少**。
+    ///      ②③ 是整個功能的**目的**;做壞了的症狀是「什麼都沒變」,而那看起來像沒改到程式。
     ///
     /// 用真的 <see cref="RoomScene3D"/>(真相機、真 RT、真 URP 設定)+ 真的
     /// <see cref="RoomBubbleWorldAnchor.Solve"/>,所以連「aspect 釘 4:3」「RT 是視窗形狀」這些
@@ -31,7 +32,7 @@ namespace Sdo.Tests
         private const float DesignW = 800f, DesignH = 600f;
 
         [UnityTest]
-        public IEnumerator Bubble_Lands_On_The_Anchor_And_Is_Occluded_By_Geometry()
+        public IEnumerator Bubble_Lands_On_The_Anchor_Occluded_By_People_Not_By_The_Scene()
         {
             if (!HaveData()) { Assert.Ignore("no AVATAR/SCENE data root"); yield break; }
 
@@ -78,7 +79,7 @@ namespace Sdo.Tests
                 // ---- ① 位置 ----
                 Vector2 got;
                 int count;
-                Measure(cam, rt, mark, out got, out count);
+                Measure(scene, rt, mark, out got, out count);
                 Assert.Greater(count, 500, "標記塊幾乎沒畫出來(改變的像素只有 " + count + " 個)—— 泡沒被房間相機畫到");
 
                 // 期望值:錨點的 viewport → RT 像素,再加上「標記塊中心相對錨點」的設計 px 位移。
@@ -98,7 +99,7 @@ namespace Sdo.Tests
                 var absPos = new Vector2(origin.x - 120f, origin.y + 75f);   // 任選:左 120、上 75 設計 px
                 mark.rectTransform.anchoredPosition = absPos - origin;       // = RoomScreen 的寫法
                 yield return null;
-                Measure(cam, rt, mark, out Vector2 got2, out int count2);
+                Measure(scene, rt, mark, out Vector2 got2, out int count2);
                 Assert.Greater(count2, 500, "移到別的位置之後標記塊消失了");
                 Assert.AreEqual((absPos.x + MarkerW * 0.5f) / DesignW * rt.width, got2.x,
                     Mathf.Max(2f, rt.width * 0.006f), "任意鏈位置的水平座標對不上絕對設計座標");
@@ -107,27 +108,38 @@ namespace Sdo.Tests
                 mark.rectTransform.anchoredPosition = Vector2.zero;
                 yield return null;
 
-                // ---- ② 遮擋 ----
-                // 在泡與相機之間插一片不透明面片(蓋住標記塊的位置)→ 標記塊必須整片消失。
+                // ---- ② 場景擋在泡前面 → 擋不住(使用者需求)----
+                // 一片不透明的**場景**面片,擺在泡與相機之間、大到一定蓋住標記塊。
+                Vector3 markCenterWorld = canvas.TransformPoint(new Vector3(MarkerW * 0.5f, -MarkerH * 0.5f, 0f));
+                float dMark = Vector3.Dot(markCenterWorld - cam.transform.position, fwd);
+                float dBlock = Mathf.Max(cam.nearClipPlane + 2f, dMark * 0.5f);   // 一半距離 = 明確在泡前面
                 blocker = GameObject.CreatePrimitive(PrimitiveType.Quad);
                 blocker.layer = RoomScene3D.SceneLayer;
                 blocker.GetComponent<MeshRenderer>().sharedMaterial =
                     new Material(Shader.Find("Unlit/Color")) { color = new Color32(20, 200, 20, 255) };
-                Vector3 markCenterWorld = canvas.TransformPoint(new Vector3(MarkerW * 0.5f, -MarkerH * 0.5f, 0f));
-                float dMark = Vector3.Dot(markCenterWorld - cam.transform.position, fwd);
-                float dBlock = Mathf.Max(cam.nearClipPlane + 2f, dMark * 0.5f);   // 一半距離 = 明確在泡前面
                 blocker.transform.position = cam.transform.position
                     + (markCenterWorld - cam.transform.position) * (dBlock / dMark);
                 blocker.transform.rotation = cam.transform.rotation;
                 blocker.transform.localScale = Vector3.one * (dBlock * 0.5f);     // 夠大,一定蓋住
                 yield return null;
 
-                Vector2 gotBlocked;
-                int blocked;
-                Measure(cam, rt, mark, out gotBlocked, out blocked);
+                Measure(scene, rt, mark, out Vector2 _, out int behindScene);
+                Assert.GreaterOrEqual(behindScene, count * 0.98f,
+                    "泡被**場景**擋住了(剩 " + behindScene + " / 原 " + count + " 個像素)—— 深度重置片沒生效。"
+                    + "官方規則是泡只被人擋,家具/牆壁不該切到它。");
+
+                // ---- ③ 人擋在泡前面 → 一定要擋住 ----
+                // 同一片面片改成「人的深度分身」(與角色身上那份走同一支 shader / 同一個 sortingOrder)。
+                var mr = blocker.GetComponent<MeshRenderer>();
+                blocker.layer = RoomScene3D.PeopleDepthLayer;
+                mr.sharedMaterial = new Material(Shader.Find(RoomPeopleDepthProxy.ShaderName));
+                mr.sortingOrder = RoomPeopleDepthProxy.ProxySortingOrder;
+                yield return null;
+
+                Measure(scene, rt, mark, out Vector2 _, out int blocked);
                 Assert.Less(blocked, count * 0.02f,
-                    "泡沒有被前面的不透明面片擋住(開/關標記塊仍有 " + blocked + " 個像素在變,原本 " + count
-                    + ")—— 深度測試沒生效,整個改動就沒有意義了");
+                    "泡沒有被前面的人擋住(開/關標記塊仍有 " + blocked + " 個像素在變,原本 " + count
+                    + ")—— 深度分身沒寫進深度,擋人功能失效");
             }
             finally
             {
@@ -140,11 +152,11 @@ namespace Sdo.Tests
         /// <summary>
         /// 擋在泡前面的是**真的紗質衣物**時也要遮住泡。
         ///
-        /// 為什麼要單獨驗:紗質/蕾絲是 alpha-blend 材質,而 alpha-blend 的東西**預設不寫深度** ——
-        /// 不寫深度就不會遮任何東西,泡會直接畫在裙子前面(明明人站在前面)。這件事完全取決於
-        /// <see cref="SdoAvatarBuilder.ApplySheerMaterialState"/> 有沒有把 <c>_ZWriteMode</c> 開起來,
-        /// 而那支函式的目的是別的(修「背面看得到前面」),隨時可能因為別的衣服問題被改回去。
-        /// 所以這裡用衣服回歸套裡那件真的多層蕾絲裙(024976 金姬兰)當遮擋物,把這個相依性釘住。
+        /// 為什麼要單獨驗:紗質/蕾絲是 alpha-blend 材質,而 alpha-blend 的東西**預設不寫深度**。
+        /// 現在遮擋不是靠衣服自己寫深度,而是靠 <see cref="RoomPeopleDepthProxy"/> 的隱形分身
+        /// (<c>Sdo/DepthOnlyMask</c>)—— 所以這條測試在驗的是:分身有沒有把**紗質那幾片**也複製到,
+        /// 而且 alpha 裁切門檻沒有把整件裙子裁掉(紗的 alpha 很低)。真實資料才驗得出來,
+        /// 因此用衣服回歸套裡那件多層蕾絲裙(024976 金姬兰,見 [[sdo-garment-regression-suite]])。
         /// </summary>
         [UnityTest]
         public IEnumerator A_Real_Sheer_Garment_In_Front_Also_Occludes_The_Bubble()
@@ -158,7 +170,7 @@ namespace Sdo.Tests
             for (int i = 0; i < 12; i++) yield return null;
             yield return new WaitForSecondsRealtime(0.5f);
 
-            GameObject holder = null, blocker = null;
+            GameObject holder = null, blocker = null, proxyRoot = null;
             try
             {
                 var cam = scene.SceneCamera;
@@ -187,7 +199,7 @@ namespace Sdo.Tests
                 SetLayer(canvas.gameObject, RoomScene3D.BubbleLayer);
                 yield return null;
 
-                Measure(cam, rt, mark, out Vector2 _, out int before);
+                Measure(scene, rt, mark, out Vector2 _, out int before);
                 Assert.Greater(before, 500, "標記塊沒畫出來,後面的斷言就沒有意義");
 
                 // 紗裙:走與房間角色完全同一條建置路徑(材質狀態才會一致)。
@@ -196,6 +208,13 @@ namespace Sdo.Tests
                                               equippedParts: new[] { SheerGarment });
                 Assert.IsNotNull(gav, "紗裙 avatar 建不起來");
                 gav.enabled = false;   // 凍住姿勢:量測期間剪影不要變
+                // 房間裡的每一隻角色都會被掛上深度分身(RoomScene3D.AttachDepthProxy);這裡照做,
+                // 否則測的就不是「人擋得住泡」而是「一隻沒有分身的角色擋不住泡」。
+                // 🔴 分身刻意**不掛在角色底下**(見 RoomPeopleDepthProxy):掛進去的話這個檔案裡的
+                //    MergedBounds(GetComponentsInChildren)就會連分身一起量,擺位整個算錯。
+                proxyRoot = new GameObject("sheerBlockerDepth") { layer = RoomScene3D.PeopleDepthLayer };
+                Assert.IsNotNull(RoomPeopleDepthProxy.Attach(blocker, proxyRoot.transform, RoomScene3D.PeopleDepthLayer),
+                                 "深度分身建不起來(shader 不在?)");
 
                 var b = MergedBounds(blocker);
                 Assert.Greater(b.size.magnitude, 0.01f, "紗裙沒有任何 renderer bounds");
@@ -214,14 +233,15 @@ namespace Sdo.Tests
                 blocker.transform.position += want - b2.center;
                 yield return null;
 
-                Measure(cam, rt, mark, out Vector2 _, out int after);
+                Measure(scene, rt, mark, out Vector2 _, out int after);
                 Assert.Less(after, before * 0.35f,
                     "真的紗質衣物擋在泡前面時沒有遮住泡(剩 " + after + " / 原 " + before + " 個像素)。"
-                    + "alpha-blend 材質預設不寫深度 → 檢查 SdoAvatarBuilder.ApplySheerMaterialState 是否還在把 "
-                    + "_ZWriteMode 設成 1;若那裡因為別的衣服問題必須關掉,泡就要改用另外一顆「只寫深度」的代理 renderer。");
+                    + "檢查 RoomPeopleDepthProxy 有沒有替紗質那幾片 renderer 建分身,"
+                    + "以及分身材質抄過來的 _Cutoff 是不是把低 alpha 的紗整片裁掉了。");
             }
             finally
             {
+                if (proxyRoot != null) Object.DestroyImmediate(proxyRoot);
                 if (blocker != null) Object.DestroyImmediate(blocker);
                 if (holder != null) Object.DestroyImmediate(holder);
                 if (sceneGo != null) Object.DestroyImmediate(sceneGo);
@@ -229,9 +249,10 @@ namespace Sdo.Tests
         }
 
         /// <summary>
-        /// 名字牌與頭上泡的兩條關係(使用者要求):
+        /// 名字牌與頭上泡的三條關係(使用者要求):
         ///   ① 名字**也要**被站在前面的人擋住(與泡同一個平面 → 同樣吃深度)。
-        ///   ② 泡永遠畫在名字**之上** —— 否則自己說話時會被自己的名字擋住。
+        ///   ②(同泡)場景/家具**不該**擋住名字。
+        ///   ③ 泡永遠畫在名字**之上** —— 否則自己說話時會被自己的名字擋住。
         ///
         /// 為什麼要測:兩者都在同一張 canvas、而 UI 材質不寫深度 → 它們之間的前後**只由兄弟順序決定**。
         /// 那是一個「看起來沒關係」的隱性相依:哪天有人在名字後面才 SetParent 進去(或把 SetAsFirstSibling 拿掉),
@@ -284,31 +305,42 @@ namespace Sdo.Tests
                 // 兩塊各 60×40、泡偏移 (20,-10) → 重疊剛好是各自面積的一半。
                 //   泡在上 ⇒ 泡看得到全部、名字只剩一半 ⇒ nameVisible ≈ bubbleVisible / 2
                 //   名字在上 ⇒ 反過來。0.75 當門檻,兩種情形分得很開。
-                Measure(cam, rt, bubble, out Vector2 _, out int bubbleVisible);
-                Measure(cam, rt, name, out Vector2 _, out int nameVisible);
+                Measure(scene, rt, bubble, out Vector2 _, out int bubbleVisible);
+                Measure(scene, rt, name, out Vector2 _, out int nameVisible);
                 Assert.Greater(bubbleVisible, 200, "泡的標記沒畫出來");
                 Assert.Greater(nameVisible, 100, "名字的標記沒畫出來(整塊被蓋住?)");
                 Assert.Less(nameVisible, bubbleVisible * 0.75f,
                     "名字可見 " + nameVisible + " px、泡可見 " + bubbleVisible + " px —— 泡沒有蓋在名字上面,"
                     + "自己說話時泡會被自己的名字擋住(檢查 ParentNameIntoOwnerCanvas 的 SetAsFirstSibling)");
 
-                // ---- ① 名字也要被前面的東西擋住 ----
+                // ---- ② 場景擋在名字前面 → 擋不住 ----
                 Vector3 nameCenter = canvas.TransformPoint(new Vector3(MarkerW * 0.5f, -MarkerH * 0.5f, 0f));
                 float dMark = Vector3.Dot(nameCenter - cam.transform.position, fwd);
                 float dBlock = Mathf.Max(cam.nearClipPlane + 2f, dMark * 0.5f);
                 blocker = GameObject.CreatePrimitive(PrimitiveType.Quad);
                 blocker.layer = RoomScene3D.SceneLayer;
-                blocker.GetComponent<MeshRenderer>().sharedMaterial =
-                    new Material(Shader.Find("Unlit/Color")) { color = new Color32(20, 200, 20, 255) };
+                var blockerMr = blocker.GetComponent<MeshRenderer>();
+                blockerMr.sharedMaterial = new Material(Shader.Find("Unlit/Color")) { color = new Color32(20, 200, 20, 255) };
                 blocker.transform.position = cam.transform.position
                     + (nameCenter - cam.transform.position) * (dBlock / dMark);
                 blocker.transform.rotation = cam.transform.rotation;
                 blocker.transform.localScale = Vector3.one * (dBlock * 0.5f);
                 yield return null;
 
-                Measure(cam, rt, name, out Vector2 _, out int nameAfter);
+                Measure(scene, rt, name, out Vector2 _, out int nameBehindScene);
+                Assert.GreaterOrEqual(nameBehindScene, nameVisible * 0.98f,
+                    "名字被**場景**擋住了(剩 " + nameBehindScene + " / 原 " + nameVisible + " 個像素)——"
+                    + "名字與泡同一張 canvas,規則也一樣:只被人擋。");
+
+                // ---- ① 人擋在名字前面 → 一定要擋住 ----
+                blocker.layer = RoomScene3D.PeopleDepthLayer;
+                blockerMr.sharedMaterial = new Material(Shader.Find(RoomPeopleDepthProxy.ShaderName));
+                blockerMr.sortingOrder = RoomPeopleDepthProxy.ProxySortingOrder;
+                yield return null;
+
+                Measure(scene, rt, name, out Vector2 _, out int nameAfter);
                 Assert.Less(nameAfter, 60,
-                    "名字沒有被前面的不透明面片擋住(剩 " + nameAfter + " 個像素)—— 名字沒有跟泡一樣進到房間相機裡");
+                    "名字沒有被前面的人擋住(剩 " + nameAfter + " 個像素)—— 名字沒有跟泡一樣進到房間相機裡");
             }
             finally
             {
@@ -367,12 +399,12 @@ namespace Sdo.Tests
         /// 同一幀不 yield ⇒ 場景動畫/角色姿勢都沒推進,所以差集裡只會有標記塊。
         /// 重心用 RT 像素座標(原點左下,與 viewport 同向)。
         /// </summary>
-        private static void Measure(Camera cam, RenderTexture rt, Graphic mark, out Vector2 centroid, out int count)
+        private static void Measure(RoomScene3D scene, RenderTexture rt, Graphic mark, out Vector2 centroid, out int count)
         {
             mark.enabled = false;
-            var off = Shoot(cam, rt);
+            var off = Shoot(scene, rt);
             mark.enabled = true;
-            var on = Shoot(cam, rt);
+            var on = Shoot(scene, rt);
 
             int w = rt.width, h = rt.height;
             double sx = 0, sy = 0;
@@ -388,10 +420,10 @@ namespace Sdo.Tests
             centroid = count > 0 ? new Vector2((float)(sx / count), (float)(sy / count)) : Vector2.zero;
         }
 
-        private static Color32[] Shoot(Camera cam, RenderTexture rt)
+        private static Color32[] Shoot(RoomScene3D scene, RenderTexture rt)
         {
             Canvas.ForceUpdateCanvases();
-            cam.Render();
+            scene.RenderNow();
             var prev = RenderTexture.active;
             RenderTexture.active = rt;
             var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGBA32, false);

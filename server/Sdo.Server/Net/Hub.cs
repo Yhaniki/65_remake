@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Sdo.Net;
 using Sdo.Net.Server;
 using Sdo.Server.Files;
+using Sdo.Server.Logging;
 
 namespace Sdo.Server.Net
 {
@@ -171,6 +172,8 @@ namespace Sdo.Server.Net
             Log("data=" + _opts.DataDir + "  房間上限 " + _opts.MaxRooms
                 + "  連線上限 " + _opts.MaxConnections
                 + "  歌曲暫存 " + _opts.MaxTotalBlobGb + "GB/" + _opts.TtlHours + "h");
+            // log 檔在哪要印出來 —— 出事時第一件事就是「去哪撈 log」,而路徑是可以被 --log-dir 換掉的。
+            Log("log " + ServerLog.Describe());
             PrintSecurityBanner();
 
             var accept = Task.Factory.StartNew(AcceptLoop, TaskCreationOptions.LongRunning);
@@ -562,9 +565,14 @@ namespace Sdo.Server.Net
             SendTo(userId, JObj.New().Str(NetProto.FieldType, NetProto.Kicked).Str("reason", reason));
         }
 
+        /// <summary>
+        /// server 的每一行訊息都從這裡出去 —— 時間戳、畫面、依日期分的 log 檔都由
+        /// <see cref="ServerLog"/> 統一處理(誰都不要自己 Console.WriteLine,
+        /// 那樣寫出去的行不會進檔案,而「檔案裡沒有」與「事情沒發生」看起來一樣)。
+        /// </summary>
         internal static void Log(string line)
         {
-            Console.WriteLine("[sdo-server] " + line);
+            ServerLog.Write(line);
         }
 
         /// <summary>位元組數印成人看得懂的大小(log 用,不精確沒關係)。</summary>
@@ -577,7 +585,7 @@ namespace Sdo.Server.Net
 
         internal void LogVerbose(string line)
         {
-            if (_opts.Verbose) Console.WriteLine("[sdo-server] " + line);
+            if (_opts.Verbose) ServerLog.Write(line);
         }
     }
 }

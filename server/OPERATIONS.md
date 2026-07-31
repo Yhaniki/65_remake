@@ -289,8 +289,9 @@ journalctl -u sdo-server -f
 
 想要能 `attach` 進去看畫面、或不想動 `/etc/systemd` 的話,[`deploy/sdoctl.sh`](deploy/sdoctl.sh)
 把 tmux 那套包成 `start` / `stop` / `restart` / `attach` / `status` / `log`
-(設定放 `/etc/sdo/sdoctl.conf`)。代價是**沒有 `Restart=on-failure`、沒有 journald 輪替、
-沒有開機自動啟動**(要自己加 `@reboot` crontab)——
+(設定放 `/etc/sdo/sdoctl.conf`)。代價是**沒有 `Restart=on-failure`、沒有開機自動啟動**
+(要自己加 `@reboot` crontab)。輪替不是問題 —— server 自己寫 `<data>/logs/`,一天一檔、
+滿 100 MB 從最舊的刪,systemd 與 tmux 兩邊都一樣;
 取捨與實際用法見 [DEPLOY.md §14](DEPLOY.md#14-為什麼是-tmux-不是-systemd)。
 
 ### 4.6 上線前的驗收清單
@@ -321,6 +322,8 @@ journalctl -u sdo-server -n 20
 | `--ttl-hours <n>` | `24` | 歌曲暫存保留時數(最小 1) |
 | `--max-blob-gb <n>` | `20` | 歌曲暫存總容量上限 GB(最小 1) |
 | `--code-seed <n>` | 隨機 | 房號洗牌種子。給固定值 = 房號順序可重現(測試用) |
+| `--log-dir <dir>` | `<data>/logs` | log 檔目錄。一天一個 `sdo-server-<日期>.log`(同一天寫滿 8 MB 會續 `.2`、`.3`) |
+| `--log-mb <n>` | `100` | log 檔**總量**上限 MB,超過從最舊的那天開始刪。`0` = 不寫檔,只印畫面。目錄裡不是 server 產的檔一律不動 |
 | `-v`, `--verbose` | 關 | 印出每一筆**收到**的訊息(送出的不印)。量很大,只在查問題時開 |
 | `--tokens <file>` | 不啟用 | token 檔。啟用後身分由 server 決定 |
 | `--allow-from <list>` | 不限 | 只接受這些來源(逗號分隔;`.` 結尾 = 前綴網段) |
@@ -438,8 +441,10 @@ DataRoot 看 repo 根的 `data_root.txt`,**不是** exe 旁邊那份 DATA
 
 ## 7. 症狀 → 原因 → 去哪裡看
 
-log 在哪:server 是 stdout(systemd → `journalctl -u sdo-server -f`;
-用 §4.5b 的 tmux 那套 → `sdoctl log`,檔案在 `<data>/server.log`);
+log 在哪:server 每一行都同時寫進畫面與 **`<data>/logs/sdo-server-<日期>.log`**
+(一天一個檔,每行開頭是 `2026-07-31 14:03:12`,全部加起來滿 100 MB 就從最舊的那天開始刪;
+用 `--log-mb` / `--log-dir` 調,`--log-mb 0` = 不寫檔)。畫面那份看 `journalctl -u sdo-server -f`
+(systemd)或 `sdoctl log`(§4.5b 的 tmux 那套,檔案在 `<data>/server.log`)。
 client 是 `<exe 目錄>\log.txt`(或 `SDO_LOG` 指定的路徑),**要先開 `SDO_VERBOSE=1`**。
 
 | 玩家/你看到什麼 | 真正的原因 | 去哪裡確認 |

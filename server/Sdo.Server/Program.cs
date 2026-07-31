@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using Sdo.Server.Logging;
 using Sdo.Server.Net;
 
 namespace Sdo.Server
@@ -42,13 +43,18 @@ namespace Sdo.Server
                 return 3;
             }
 
+            // 🔴 要在 new Hub 之前 —— 建構子就會 log(清掉沒收完的上傳、token 檔讀不到),
+            // 而那些正是「開機就不對勁」的第一手證據,不能只留在畫面上。
+            ServerLog.Init(opts.LogDirOrDefault, opts.LogCapBytes);
+
             var hub = new Hub(opts);
 
             // 🔴 憑證載不起來就**不要啟動**。退回明文是最糟的選擇:使用者以為連線是加密的,
             // 實際上不是,而且完全沒有徵兆(client 那邊也連得上,因為它只是連不到 TLS 而已)。
             if (hub.TlsError != null)
             {
-                Console.Error.WriteLine("[sdo-server] TLS 設定有問題,拒絕以明文啟動: " + hub.TlsError);
+                ServerLog.Error("TLS 設定有問題,拒絕以明文啟動: " + hub.TlsError);
+                ServerLog.Close();
                 return 4;
             }
 
@@ -57,7 +63,7 @@ namespace Sdo.Server
             {
                 e.Cancel = true;              // 不要讓 runtime 直接砍掉我們
                 Console.WriteLine();
-                Console.WriteLine("[sdo-server] 收到中斷,正在收線…");
+                ServerLog.Write("收到中斷,正在收線…");
                 hub.Stop();
             };
             AppDomain.CurrentDomain.ProcessExit += (s, e) => hub.Stop();
@@ -68,11 +74,14 @@ namespace Sdo.Server
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("[sdo-server] 致命錯誤: " + ex);
+                // 🔴 這一行(含 stack trace)是 server 自己死掉時唯一的線索,一定要落地。
+                ServerLog.Error("致命錯誤: " + ex);
+                ServerLog.Close();
                 return 1;
             }
 
-            Console.WriteLine("[sdo-server] 已停止。");
+            ServerLog.Write("已停止。");
+            ServerLog.Close();
             return 0;
         }
     }

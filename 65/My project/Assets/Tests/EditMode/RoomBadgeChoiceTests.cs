@@ -15,8 +15,9 @@ namespace Sdo.Tests
     {
         private static RoomSeatBadge For(bool taken, bool isHost, bool isReady,
                                         PlayState play = PlayState.Idle,
-                                        Availability avail = Availability.Have)
-            => RoomBadgeChoice.For(taken, isHost, isReady, play, avail);
+                                        Availability avail = Availability.Have,
+                                        bool isLocal = false)
+            => RoomBadgeChoice.For(taken, isHost, isReady, play, avail, isLocal);
 
         [Test]
         public void An_Empty_Seat_Draws_Nothing()
@@ -79,6 +80,38 @@ namespace Sdo.Tests
                 Assert.IsTrue(RoomBadgeChoice.IsInMatch(s), s + " 應該算在場中");
                 Assert.AreEqual(RoomSeatBadge.Playing, For(true, false, false, s), s + " 那格應該畫 PLAYING");
             }
+        }
+
+        [Test]
+        public void My_Own_Slot_Never_Draws_Playing()
+        {
+            // 🔴 「我看得到房間」就代表我已經不在場上了。中離(Esc)或打完先回房時 server 把我標成
+            //    finished/results,那要等**全場**都打完才會被 ClearResults 打回 idle —— 中間那段
+            //    (別人還在跳完整首歌)我人就站在房間裡走動,那一格卻掛著 PLAYING。
+            //    使用者的需求原話:「自己照理來說不會看到 playing」。
+            foreach (var s in new[]
+                     {
+                         PlayState.WaitingForLoad, PlayState.Loaded, PlayState.ReadyForGameplay,
+                         PlayState.Playing, PlayState.Finished, PlayState.Results,
+                     })
+                Assert.AreNotEqual(RoomSeatBadge.Playing, For(true, false, false, s, isLocal: true),
+                                   s + ":自己那格不該畫 PLAYING");
+
+            // 但**別人**那格照畫 —— 那正是留在房間的人需要的資訊(還要不要等他)。
+            Assert.AreEqual(RoomSeatBadge.Playing, For(true, false, false, PlayState.Finished));
+        }
+
+        [Test]
+        public void My_Own_Slot_Still_Shows_Everything_Else()
+        {
+            // 本機例外只吃掉 PLAYING 那一張,其餘三張照原本的優先序走 ——
+            // 不然自己回房後會連「我是房主」「我缺這首歌」都看不到。
+            Assert.AreEqual(RoomSeatBadge.Host,
+                For(true, isHost: true, isReady: false, PlayState.Finished, Availability.Have, isLocal: true));
+            Assert.AreEqual(RoomSeatBadge.NoMap,
+                For(true, isHost: false, isReady: false, PlayState.Results, Availability.Missing, isLocal: true));
+            Assert.AreEqual(RoomSeatBadge.Ready,
+                For(true, isHost: false, isReady: true, PlayState.Idle, Availability.Have, isLocal: true));
         }
 
         [Test]

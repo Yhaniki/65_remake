@@ -83,6 +83,7 @@ status() {
   alive     && say "  server 行程  : 在"                   || say "  server 行程  : 不在"
   listening && say "  port $PORT   : 有在聽"               || say "  port $PORT   : 沒在聽"
   say "  log          : $LOG"
+  say "  log 檔       : $DATA/logs/(server 自己依日期分,總量 100 MB 滿了從最舊的刪)"
 }
 
 logs() { sudo tail -n "${1:-50}" "$LOG" 2>/dev/null || say "還沒有 log:$LOG"; }
@@ -112,6 +113,15 @@ start() {
   preflight || return 1
   [ "$PASSWORD" = CHANGEME ] && say "⚠️  --password 還是 CHANGEME —— 去改 $CONF"
   running && tm kill-session -t "$SESSION" >/dev/null 2>&1   # 清掉上次留下的死 pane
+
+  # server 現在自己把每一行(含時間戳)寫進 $DATA/logs/,依日期分檔、滿 100 MB 從最舊的刪。
+  # 底下 tee 的這一份只剩一個用途:接住「log 檔開起來之前」就死掉的訊息(參數錯、data 目錄
+  # 建不出來、TLS 憑證讀不到)。它沒有輪替,所以長到一定程度就從頭來過 ——
+  # 不然它會是這台機器上唯一一個會無限長的東西,而完整記錄本來就在 logs/ 裡。
+  if [ "$(sudo stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt $((10 * 1024 * 1024)) ]; then
+    say "$LOG 超過 10 MB,清空重來(完整記錄在 $DATA/logs/)"
+    sudo truncate -s 0 "$LOG" 2>/dev/null || true
+  fi
 
   local cmd qlog
   cmd=$(printf '%q ' "$BIN" "${ARGS[@]}")

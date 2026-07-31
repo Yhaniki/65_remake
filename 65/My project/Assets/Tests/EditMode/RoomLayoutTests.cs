@@ -103,6 +103,37 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Spectator_Slot_Beats_Flying_Wing_For_Idle_Walk_And_Hover()
+        {
+            // 使用者回報:「穿戴翅膀旁觀沒有做旁觀動作」—— 舊版一律讓道具贏(SpecialMotionItems.IdleMotFor),
+            // 於是穿飛行翅膀的人站上旁觀席還是浮空 flystay,跟座位上的人長得一模一樣,誰在看戲分不出來。
+            // 旁觀席改成看戲姿勢優先,而且是**整組**(idle / walk / 懸浮)—— 只擋 idle 會變成
+            // 「浮在半空中做地面的看戲姿勢」。
+            var wings = new[] { "AVATAR/008448_WOMAN_CHIBANG.MSH" };
+
+            // 座位上:翅膀照舊贏(這是官方行為,不能被這次的修改弄壞)
+            Assert.IsTrue(RoomScene3D.FlyingAt(0, wings));
+            Assert.AreEqual(SpecialMotionItems.FlyIdleMot(false), RoomScene3D.ResolveIdleMot(0, male: false, parts: wings));
+            Assert.AreEqual(SpecialMotionItems.FlyWalkMot(false), RoomScene3D.ResolveWalkMot(0, male: false, parts: wings));
+
+            // 旁觀席:看戲姿勢贏,而且不飛不浮、走路也是一般走路
+            for (int s = RoomLayout.SeatCount; s < RoomLayout.SlotCount; s++)
+            {
+                Assert.IsTrue(RoomScene3D.IsSpectatorSlot(s));
+                Assert.IsFalse(RoomScene3D.FlyingAt(s, wings), "slot " + s + " 旁觀時不飛");
+                Assert.AreEqual(0f, SpecialMotionItems.HoverY(RoomScene3D.FlyingAt(s, wings)), "旁觀不浮空");
+                Assert.AreEqual(RoomScene3D.SlotIdleMot(s, male: false), RoomScene3D.ResolveIdleMot(s, male: false, parts: wings),
+                                "slot " + s + " 要用自己那格的看戲姿勢,不是 flystay");
+                Assert.AreEqual(SdoRoomAvatar.WalkMot, RoomScene3D.ResolveWalkMot(s, male: false, parts: wings));
+                Assert.AreEqual(SdoRoomAvatar.MaleWalkMot, RoomScene3D.ResolveWalkMot(s, male: true, parts: wings));
+            }
+
+            // 沒穿翅膀的人不受影響:座位是大廳待機、旁觀是看戲姿勢(與 SlotIdleMot 同一個答案)
+            Assert.AreEqual(SdoRoomAvatar.IdleMot, RoomScene3D.ResolveIdleMot(0, male: false, parts: null));
+            Assert.AreEqual("MOTION/WWAITING004.MOT", RoomScene3D.ResolveIdleMot(6, male: false, parts: null));
+        }
+
+        [Test]
         public void Head_Slots_Are_Six_Left_To_Right()
         {
             Assert.AreEqual(6, RoomLayout.HeadSlotX.Length);

@@ -1062,6 +1062,9 @@ namespace Sdo.Server.Net
             if (room == null || room.Match == null) return;
             if (NetJson.Long(node, "matchId") != room.Match.MatchId) return;
 
+            // 🔴 這兩道守衛是**安全邊界**,不要放寬:載入階段(還沒開跳)送上來的 final 一律不收,
+            //    否則改過的 client 可以在開場前先塞一個好看的分數。載入階段按 Esc 中離的人不靠這一則
+            //    退場 —— 他會另外送 setPlayState{idle}(見 NetRoom.AbortDuringLoad),那一則才是退場。
             if (room.State.Status != RoomStatus.Playing) return;
             var seat = room.State.SeatOf(conn.UserId);
             if (seat == null || seat.PlayState != PlayState.Playing) return;
@@ -1154,7 +1157,11 @@ namespace Sdo.Server.Net
             if (tick.ResultsReady)
             {
                 SendResultsReady(room, tick.MatchId);
-                room.ClearResults();
+                // 🔴 這裡**不**呼叫 room.ClearResults()。以前呼叫的後果是:它就在下面那次
+                //    BroadcastRoomState 之前把所有人打回 idle,於是那份帶 playState=results 的快照
+                //    從來沒被送出去過一次 —— 留在房間的人看到 PLAYING 在曲末就消失,而那些人其實
+                //    還盯著結算面板(最多 30 秒)。清除改由「人回來了」(setPlayState{idle})、
+                //    寬限期逾時、或房主開下一局來觸發,見 NetRoom.ClearResults。
                 DropRoomScratch(room.Code);
             }
 

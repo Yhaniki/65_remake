@@ -188,6 +188,7 @@ namespace Sdo.UI.Screens
         private readonly Dictionary<int, float> _bubbleWorldDepth = new Dictionary<int, float>();   // 給每幀重排前後用
         private Coroutine _chatInputFocusRoutine;
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
+        private Button _spectateBtn, _enterBtn;   // 同一個位置的兩顆:座位上顯示「旁觀」、旁觀中顯示「進入」
 
         // ---- win2 右側面板控件（模式/場景/歌曲資訊/速度/note/組隊/掉落）----
         private OutlinedLabel _modeLabel;  // 自由模式/普通模式（白邊；線上是純文字，沒有 mode 圖）
@@ -576,9 +577,16 @@ namespace Sdo.UI.Screens
             Btn("BangleButton", "Bangle0", "Bangle1", "Bangle0", Win3, 514, 82, null, circle: true);                       // 手環
             Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null, circle: true);                              // 信件
             Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包(膠囊,非圓)
-            // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
+            // 右邊這格是**同一個位置的兩顆球**(比照下面的準備/取消):
+            //   • 在座位上 → 藍色「旁觀」(look, BtnLook):交出座位去看戲;
+            //   • 旁觀中   → 官方綠色「進入」(play, Room92/93/94):回座位。
+            // 兩顆都掛 OnSpectateToggle(它自己看目前是不是旁觀者決定送 spectate 還是 stopSpectate)。
+            // 為什麼一定要換圖:同一顆「旁觀」鈕按下去之後還是寫著「旁觀」,玩家會以為沒生效而一直按 ——
+            // 而那顆鈕在旁觀狀態下做的其實是相反的事。初始隱藏「進入」,等 Render 依快照決定。
             // 大顆圓鈕 → alphaHit：命中判定貼齊可見圓形,透明四角不再誤觸;disc：手繪圓盤的階梯描邊沿圓周低通抹平(見 Btn 註解)。
-            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _spectateBtn = Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _enterBtn = Btn("play", "Room92", "Room93", "Room94", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _enterBtn.gameObject.SetActive(false);
 
             // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
             _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f, disc: true);
@@ -746,6 +754,7 @@ namespace Sdo.UI.Screens
                 _localHead.layer = HeadLayer;
                 ApplyHeadFraming(_localHead, localMale);   // 男女各自的上下/遠近
                 _localHead.Init(localMale, localAvatarParts, localBody);
+                _localHead.SetSpectating(LocalSpectating);   // 旁觀進房的人:頭貼一開始就不要演飛行動作
                 _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
             }
@@ -755,11 +764,14 @@ namespace Sdo.UI.Screens
             if (ui != null)
             {
                 _maskedCam = ui; _savedMask = ui.cullingMask;
-                // BubbleLayer 也要遮:頭上泡的畫已經由房間相機 render 進 RT(這樣才吃得到深度遮擋),
+                // BubbleLayer 也要遮:頭上泡的畫已經由房間那組相機 render 進 RT(這樣才吃得到深度遮擋),
                 // 前端 UI 相機若也看得到那張 world canvas,泡就會被畫第二次 —— 而且第二次的位置與大小都是錯的
                 // (它活在房間相機的透視裡,不在 UI 的正交裡)。
+                // PeopleDepthLayer 同理:那層是角色的隱形深度分身(ColorMask 0),雖然畫不出顏色,
+                // 但沒必要讓 UI 相機每幀跑一次它們的 draw。
                 ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer)
-                                    | (1 << RoomScene3D.RemoteAvatarLayer) | (1 << RoomScene3D.BubbleLayer));
+                                    | (1 << RoomScene3D.RemoteAvatarLayer) | (1 << RoomScene3D.BubbleLayer)
+                                    | (1 << RoomScene3D.PeopleDepthLayer));
             }
 
             // 儲物櫃換穿後 → 立即重建本機房間 avatar + 頭貼，讓新穿搭當場反映 (WardrobeScreen 已寫回 profile.json)。
@@ -834,6 +846,7 @@ namespace Sdo.UI.Screens
             _localHead.layer = HeadLayer;
             ApplyHeadFraming(_localHead, male);   // 男女各自的上下/遠近
             _localHead.Init(male, parts, body);
+            _localHead.SetSpectating(LocalSpectating);   // 重建會回到 Init 的預設(穿翅膀=飛)→ 旁觀中要再關掉一次
             _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
             _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
         }
@@ -2826,6 +2839,11 @@ namespace Sdo.UI.Screens
             if (_readyBtn != null) _readyBtn.gameObject.SetActive(!isHost && !localReady);
             if (_cancelReadyBtn != null) _cancelReadyBtn.gameObject.SetActive(!isHost && localReady);
             if (_songSelectBtn != null) _songSelectBtn.gameObject.SetActive(isHost);
+            // 旁觀 ↔ 進入:一律以 server 快照為準(見 LocalSpectating)—— 不做樂觀更新,
+            // 按下去到 server 認可之間,鈕還是留在原本那一顆(同 OnSpectateToggle 的原則)。
+            bool spectating = LocalSpectating;
+            if (_spectateBtn != null) _spectateBtn.gameObject.SetActive(!spectating);
+            if (_enterBtn != null) _enterBtn.gameObject.SetActive(spectating);
         }
 
         // ---- win2 右側面板：依 GameSession 重畫模式/場景/CD/難度/BPM/速度/note/組隊/掉落 ----
@@ -4647,7 +4665,7 @@ namespace Sdo.UI.Screens
                 // 離線模式沒有 userId(恆 0),那時退回 SeatInfo.IsHost。
                 bool seatIsHost = taken && (seat.UserId != 0 && room != null ? room.IsHostUser(seat.UserId) : seat.IsHost);
                 int badgeFrame = taken ? RoomBadgeFrames.ForTeam(seat.Team) : 0;
-                RenderSeatBadges(i, seat, taken, seatIsHost, badgeFrame);
+                RenderSeatBadges(i, seat, taken, seatIsHost, badgeFrame, isLocal);
 
                 // 名字底下那條名牌:選了隊才畫,畫的是那一隊的色條(官方 Team.an 第 1/2/3 幀)。
                 // 沒選隊(自由)= 官方的第 0 幀是 1×1 空白 → 這裡直接不畫,名字就落在頭貼面板原本的紫底上。
@@ -4676,11 +4694,24 @@ namespace Sdo.UI.Screens
         /// 「哪一張」是純邏輯,住在 <see cref="RoomBadgeChoice"/>(優先序 PLAYING &gt; NO MAP &gt; HOST &gt; READY
         /// 與理由都寫在那裡,並由 RoomBadgeChoiceTests 釘住)。這裡只負責把選中的那一張開起來、
         /// 換成**那個人自己的隊伍色**那一幀,其餘三張關掉。
+        ///
+        /// 🔴 <see cref="_starting"/> 期間整條凍結。server 在開場那一刻就把所有參與者轉成 waitingForLoad
+        /// (頭貼會立刻翻成 PLAYING),但那時本機的黑幕才剛開始淡 —— 不擋的話自己會眼睜睜看著
+        /// 自己那格在亮著的畫面上翻牌,而要的是「畫面先全黑、進 loading,之後才換」。
+        /// 順序是穩的:server 先送 matchStarting(這裡才會 _starting=true)才廣播含新狀態的房間快照,
+        /// 同一條連線不會倒過來。留在房間的人(沒被納入這場、缺歌的旁觀者)收不到 matchStarting,
+        /// _starting 恆 false → 照樣即時看到別人翻成 PLAYING,那正是他們需要的資訊。
+        ///
+        /// 🔴 <paramref name="isLocal"/> 管的是**回來**那半段:自己那格永遠不畫 PLAYING(理由見
+        /// <see cref="RoomBadgeChoice.For"/> 的參數說明)。兩道守門缺一不可 —— _starting 擋出去、
+        /// isLocal 擋回來,少了後者的症狀是「中離回房後自己那格掛著 PLAYING 直到全場打完」。
         /// </summary>
-        private void RenderSeatBadges(int i, SeatInfo seat, bool taken, bool seatIsHost, int badgeFrame)
+        private void RenderSeatBadges(int i, SeatInfo seat, bool taken, bool seatIsHost, int badgeFrame, bool isLocal)
         {
+            if (_starting) return;
+
             var badge = taken
-                ? RoomBadgeChoice.For(true, seatIsHost, seat.IsReady, seat.PlayState, seat.Avail)
+                ? RoomBadgeChoice.For(true, seatIsHost, seat.IsReady, seat.PlayState, seat.Avail, isLocal)
                 : RoomSeatBadge.None;
 
             Badge(_slotPlaying[i], badge == RoomSeatBadge.Playing, _playingFrames, badgeFrame);
@@ -4787,6 +4818,9 @@ namespace Sdo.UI.Screens
                     _moveThrottle.Reset();
                 _localMoveSlot = mySlot;
                 _scene.SetLocalSeat(mySlot);
+                // 頭貼鏡射的是同一隻角色的動作 → 旁觀席那條「不飛」也要一起套,
+                // 不然穿翅膀旁觀時會變成「頭在飛、身體在看戲」(見 RoomHeadPortrait.SetSpectating)。
+                if (_localHead != null) _localHead.SetSpectating(RoomScene3D.IsSpectatorSlot(mySlot));
             }
             _remoteBuf.Clear();
             for (int i = 0; i < snap.Seats.Length; i++)
@@ -4892,9 +4926,8 @@ namespace Sdo.UI.Screens
 
         // 頭上的名字牌:跟本機那顆同款(FaceCream + 黑邊 + 粗體),沒有它的話房間裡的人是誰全靠猜。
         //
-        // 寫什麼字由 RoomHeadName 決定 —— 進去打歌的人(還沒回房間)寫 Playing,其餘寫「名字 LV:x」。
-        // 這個方法掛在 rev gate 之後,而 PlayState 每次變動 server 都會 Touch()(Rev++)並推新快照,
-        // 所以「他開始打了 / 他回來了」都會走到這裡重寫一次;不需要每幀比對。
+        // 🔴 名字牌**只寫名字**。「他在打歌」是頭貼那條徽章的事(見 RenderSeatBadges) ——
+        // 名字被狀態字蓋掉的話,留在房間的人反而認不出誰是誰。
         private void SyncRemoteNamePlates(Sdo.Net.NetRoomSnapshot snap, int me)
         {
             _remoteScratchIds.Clear();
@@ -4912,7 +4945,8 @@ namespace Sdo.UI.Screens
                                                trackEm: TextStyles.HeadNameTrackEm);
                     _remoteNames[s.UserId] = lbl;
                 }
-                lbl.SetText(RoomHeadName.For(s.Name, s.Level, s.PlayState));
+                string lvl = s.Level > 0 ? "  LV:" + s.Level : "";
+                lbl.SetText((s.Name ?? "") + lvl);
             }
 
             // Spectators still own a live 3D avatar in a looker slot. Keep the same userId-keyed label while
@@ -4934,8 +4968,8 @@ namespace Sdo.UI.Screens
                                                    trackEm: TextStyles.HeadNameTrackEm);
                         _remoteNames[sp.UserId] = lbl;
                     }
-                    // 旁觀者不會在場中(NetSpectator 連 PlayState 欄位都沒有)→ 永遠寫名字。
-                    lbl.SetText(RoomHeadName.For(sp.Name, sp.Level, PlayState.Spectating));
+                    string lvl = sp.Level > 0 ? "  LV:" + sp.Level : "";
+                    lbl.SetText((sp.Name ?? "") + lvl);
                 }
 
             _remoteGoneIds.Clear();
@@ -5108,6 +5142,10 @@ namespace Sdo.UI.Screens
         private const float ForceStartDoubleTapSec = 1.5f;  // 這段時間內再按一次 = 強制開始
 
         private bool Online => Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom;
+
+        /// <summary>本機現在是不是旁觀者 —— **以 server 快照為準**(查房間的旁觀名單裡有沒有自己),
+        /// 不是本機猜的。按下鈕到 server 認可之間答案不變,所以畫面不會先報成功再被打臉。離線恆 false。</summary>
+        private bool LocalSpectating => Ctx != null && Ctx.Net != null && Ctx.Net.IsSpectating;
 
         /// <summary>
         /// 「旁觀」鈕:交出座位變旁觀者,再按一次搶回座位(需求 10 / D13)。

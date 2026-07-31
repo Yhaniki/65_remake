@@ -25,7 +25,10 @@ namespace Sdo.Game
         private int _osuAutoNoteIndex;
         private double _lastOsuEventNowMs = double.NegativeInfinity;
         private bool _lastOsuAutoNoteScheduling;
-        private bool _osuVirtualTransportAnchored;
+        // The DSP schedule is only meaningful once _songStartDspTime has been anchored (OpeningSequence's
+        // ScheduleMusic, or an editor seek). Before that it is still 0, which would map chart time straight onto
+        // AudioSettings.dspTime — see TickOsuSampleEvents.
+        private bool _osuTransportAnchored;
         private bool _resumeOsuSamplesOnNextEditorSeek;
         private bool _preserveOsuSamplesOnNextEditorSeek;
         private double _osuTimelineEndMs;
@@ -183,6 +186,12 @@ namespace Sdo.Game
         private void TickOsuSampleEvents(double nowMs)
         {
             if (_map == null || _osuKeysounds == null) return;
+            // Gameplay flips _started before the READY/GO opening runs, but the music transport is only anchored
+            // when GO finishes (ScheduleMusic -> OnOsuTransportStarted). Scheduling against the unset anchor makes
+            // chart time equal AudioSettings.dspTime, so the map plays from wherever that clock happens to sit —
+            // a keysound-only ("virtual") song then audibly plays its middle throughout the opening and is cut off
+            // the instant the real transport starts.
+            if (!_osuTransportAnchored) return;
             if (_ended)
             {
                 ResetOsuSamplePlayback(double.MaxValue);
@@ -348,7 +357,7 @@ namespace Sdo.Game
 
         private void OnOsuPlaybackPaused(double chartMs)
         {
-            if (IsVirtualOsuTrack && !_osuVirtualTransportAnchored) return;
+            if (IsVirtualOsuTrack && !_osuTransportAnchored) return;
             double dspNow = AudioSettings.dspTime;
             for (int i = 0; i < _osuEventVoices.Count; i++)
             {
@@ -375,7 +384,7 @@ namespace Sdo.Game
 
         private void OnOsuPlaybackResumed(double chartMs, double resumeDsp)
         {
-            if (IsVirtualOsuTrack && !_osuVirtualTransportAnchored) return;
+            if (IsVirtualOsuTrack && !_osuTransportAnchored) return;
             for (int i = 0; i < _osuEventVoices.Count; i++)
             {
                 int position = _osuEventPausedSamples[i];
@@ -405,7 +414,7 @@ namespace Sdo.Game
         {
             if (_preserveOsuSamplesOnNextEditorSeek && editorMode && _paused)
                 chartMs -= _globalOffsetMs;
-            if (IsVirtualOsuTrack && !_osuVirtualTransportAnchored)
+            if (IsVirtualOsuTrack && !_osuTransportAnchored)
             {
                 RefreshOsuTimelineEnd();
                 return;
@@ -442,14 +451,14 @@ namespace Sdo.Game
 
         private void OnOsuPlaybackSeek(double chartMs)
         {
-            if (IsVirtualOsuTrack) _osuVirtualTransportAnchored = true;
+            _osuTransportAnchored = true;
             ResetOsuSamplePlayback(chartMs);
             _lastOsuEventNowMs = OsuDspChartMs();
         }
 
         private void OnOsuPlaybackReanchored(double chartMs)
         {
-            if (IsVirtualOsuTrack) _osuVirtualTransportAnchored = true;
+            _osuTransportAnchored = true;
             double dspNow = AudioSettings.dspTime;
             for (int i = 0; i < _osuEventVoices.Count; i++)
                 if (_osuEventPausedSamples[i] < 0 && _osuEventStartsAt[i] > dspNow + 0.001)
@@ -459,7 +468,7 @@ namespace Sdo.Game
 
         private void OnOsuTransportStarted()
         {
-            if (IsVirtualOsuTrack) _osuVirtualTransportAnchored = true;
+            _osuTransportAnchored = true;
             double chartMs = GameRate.ChartSecondsFromDsp(
                 AudioSettings.dspTime, _songStartDspTime, _musicRate, MusicCountInSec) * 1000.0;
             ResetOsuSamplePlayback(chartMs);
@@ -517,7 +526,7 @@ namespace Sdo.Game
 
         private double? VirtualOsuChartSeconds()
         {
-            if (!IsVirtualOsuTrack || !_osuVirtualTransportAnchored || _paused || _ended) return null;
+            if (!IsVirtualOsuTrack || !_osuTransportAnchored || _paused || _ended) return null;
             double dsp = AudioSettings.dspTime;
             double chartStartDsp = GameRate.DspFromChartSeconds(
                 0.0, _songStartDspTime, _musicRate, MusicCountInSec);
@@ -531,7 +540,7 @@ namespace Sdo.Game
             ResetOsuSamplePlayback(double.MaxValue);
             _osuKeysounds?.Dispose();
             _osuKeysounds = null;
-            _osuVirtualTransportAnchored = false;
+            _osuTransportAnchored = false;
             _osuTimelineEndMs = 0.0;
         }
 
