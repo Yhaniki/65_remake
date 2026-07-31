@@ -184,6 +184,28 @@ AU 模式是 `FUN_00567350`，形狀一樣，只是資料換成 music.dom 物件
 
 **優先序：NEW > HOT > 推薦 > 古典**，一列最多一個標籤。
 
+### 5.1 上排那六個分類頁籤
+
+`DATA\UI\ROOMDLG\MUSICSELDLG.XML` 的 `musictype_0`..`musictype_6`（`_6` 跟 `_5` 同座標同美術，還連寫兩行
+——官方 XML 複製貼上的殘留，實際只有六格）：
+
+| 控制項 | x | 美術 | 圖上的字 |
+|--------|-----|------|----------|
+| `musictype_0` | 292 | `MusicSelDlg24/25/26.an` | 全部 |
+| `musictype_1` | 366 | `MusicSelDlg30/31/32.an` | 隨機 |
+| `musictype_2` | 441 | `MusicSelDlg33/34/35.an` | 收藏 |
+| `musictype_3` | 516 | `MusicSelDlg36/37/38.an` | 最新 |
+| `musictype_4` | 592 | `MusicSelDlg42/43/44.an` | **勁樂** |
+| `musictype_5` | 667 | `MusicSelDlg39/40/41.an` | 懷舊 |
+
+六張字是 `MusicSelDlg.png` 上 `y=648` 高 34、寬 77 的同一條，`x` 依序 0/77/154/231/308/385 ——
+**圖上的排列是 全部/最新/隨機/收藏/勁樂/懷舊**，跟 XML 的控制項編號不同序（所以 `_4` 拿的是第 5 張 308、
+`_5` 拿第 6 張 385）。重製版 `SongSelectScreen.BuildCategoryTabs` 的 `ids`/`x` 就是照這張表抄的。
+
+三個「照標籤分」的頁籤：最新 = NEW、懷舊 = 古典，這兩個明確。**勁樂 = HOT 是推斷**：四個旗標扣掉那兩個只剩
+HOT 與 推薦，HOT 語意最近；尚未從 `sdo.bin` 的 `musictype_N` 按鈕 handler 實證（`FUN_0042f090` 另外還建了
+BPM<100…≥160 的分段清單，理論上也可能是這格的來源）。要翻案就改 `CategoryBase` 裡那一個 `SongBadge.Hot`。
+
 ---
 
 ## 6. MUSIC.DOM（AU 模式的歌曲表）
@@ -225,7 +247,7 @@ NX 那份表的前段是 id 升冪（1, 6, 26, 39, 40, 43…），**尾段是作
 | 外部 `.gn` 歌包掃描時讀包內的 serverconfig | `Sdo.Osu/ExternalSongScanner.ApplyServerConfig` → `ExternalSong.Badge` / `.PackOrder` / `.PackHidden` |
 | 帶進歌單 | `Game/SongCatalog.Entry.badge` / `.packOrder`（`Game/ExternalSongLibrary.ToEntry` 填） |
 | 排序（包用自己的順序） | `UI/Catalog/SongListModel.BrowseKey` + `Curate`；**分類抽屜的「資料夾」模式**在 `UI/Catalog/SongGrouping.ByPackOrderThenTitle`（那條才是選歌畫面實際在用的清單） |
-| 分頁 | 最新 = NEW 標籤、懷舊 = 古典(CLASSICAL) 標籤（勁樂 這邊改當「資料夾/分類瀏覽」用，不接 HOT） |
+| 分頁 | 最新 = NEW、懷舊 = 古典(CLASSICAL)、勁樂 = HOT，三個都走 `SongListModel.ByBadge`。**勁樂那一格有兩種身分**：`config.ini` 的 `LoadExternalSongs=1`（預設）時它被借去當外部歌的「資料夾/分類瀏覽」浮動面板，關掉外部歌後才還原成 HOT 清單（`SongSelectScreen.CategoryBase` 用 `_groupPanel == null` 分辨） |
 | 標籤決策（包優先，官方歌退回「最上面 N 首 = NEW」） | `UI/Catalog/SongListModel.BadgeMap` |
 | 四種標籤繪製（優先序同官方） | `UI/Screens/SongSelectScreen.SetRowBadge` |
 

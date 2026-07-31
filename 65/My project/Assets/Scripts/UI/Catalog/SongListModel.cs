@@ -114,6 +114,20 @@ namespace Sdo.UI.Catalog
         public static SongBadge BadgeOf(Dictionary<string, SongBadge> map, SongCatalog.Entry e)
             => map != null && e != null && !string.IsNullOrEmpty(e.gn) && map.TryGetValue(e.gn, out var b) ? b : SongBadge.None;
 
+        /// <summary>掛著某個標籤的歌，維持傳入清單的順序。選歌畫面三個「照標籤分」的頁籤共用：
+        /// 最新 = <see cref="SongBadge.New"/>、勁樂 = <see cref="SongBadge.Hot"/>、懷舊 = <see cref="SongBadge.Classical"/>
+        /// （官方的四個旗標見 docs/reverse-engineering/SDO_SERVERCONFIG.md 的 12-byte 歌曲列）。
+        /// <paramref name="badges"/> 來自 <see cref="BadgeMap"/>。<see cref="SongBadge.None"/> 一律回空清單
+        /// —— 「沒有標籤」不是一個可以拿來瀏覽的分類。純函式，好測。</summary>
+        public static List<SongCatalog.Entry> ByBadge(IReadOnlyList<SongCatalog.Entry> list,
+                                                      Dictionary<string, SongBadge> badges, SongBadge badge)
+        {
+            var res = new List<SongCatalog.Entry>();
+            if (list == null || badge == SongBadge.None) return res;
+            foreach (var e in list) if (BadgeOf(badges, e) == badge) res.Add(e);
+            return res;
+        }
+
         public int Count => _all.Count;
         public IReadOnlyList<SongCatalog.Entry> All => _all;
 
