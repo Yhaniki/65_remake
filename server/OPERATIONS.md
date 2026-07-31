@@ -414,8 +414,8 @@ UI 改動一律實機截圖驗證(烘圖工具的輸出看起來對,疊上 TMP �
 .\tools\shoot_ui.ps1 -Env SDO_ROOM=1 -Out shot_room.png -KeepOpen
 ```
 
-⚠️ 連線相關的畫面(選男女畫面的三顆鈕、房號框)**只有真的連上 server 才會出現** ——
-連不上會退回單機版面(兩顆鈕)。截圖前先確認 server 有在跑,而且
+⚠️ 連線相關的畫面(大廳、房號框)**只有真的連上 server 才看得到** ——
+按登入連不上就照單機路徑直接進自己的房間,不會經過大廳。截圖前先確認 server 有在跑,而且
 `<DataRoot>\PROFILE\config.ini` 的 `[Net] serverAddress` 有填。
 DataRoot 看 repo 根的 `data_root.txt`,**不是** exe 旁邊那份 DATA
 (`log.txt` 第一行會印出實際用的那個)。
@@ -449,7 +449,8 @@ client 是 `<exe 目錄>\log.txt`(或 `SDO_LOG` 指定的路徑),**要先開 `SD
 
 | 玩家/你看到什麼 | 真正的原因 | 去哪裡確認 |
 |---|---|---|
-| 開機後**沒有連線功能**(選男女畫面只有兩顆鈕),而且沒有任何提示 | 位址/port 不對、server 沒開、防火牆擋住。TCP 連不到約 5 秒放棄,開機最多等 6 秒(蓋住「連上了但握手沒回」)就**靜靜**退回單機 —— 刻意不彈訊息,所以只能從 log 判斷 | client log 的 `[net] 連不上伺服器,改用單機模式:` 後面那句 |
+| 按登入後**直接進自己的房間**(沒經過大廳),而且沒有任何提示 | 位址/port 不對、server 沒開、防火牆擋住。TCP 連不到約 5 秒放棄,按登入最多等 6 秒(蓋住「連上了但握手沒回」)就**靜靜**留在單機 —— 刻意不彈訊息,所以只能從 log 判斷 | client log 的 `[net] 登入沒成功,留在單機:` 後面那句 |
+| 按登入後彈「登入失敗:這個名稱已被使用」、留在選男女畫面 | 這個名字**已經有人在線上**(server 只留先上線的那個)。伺服器是連得上的 —— 改個名字再登入即可 | server log `連線 #N 想用「名字」上線,但 user N 已經在線上用這個名字 → 拒絕`。⚠️ client 當掉重開會被自己那條還沒清掉的舊連線擋住,要等 ping 逾時掃掉 |
 | 「密碼不符 —— 請確認 config.ini…」 | 兩邊 `--password` / `serverPassword` 不一致 | server log `連線 #N 密碼不符,拒絕(client 送的是空值/另一個值)`(**不會印密碼本體**) |
 | 「伺服器不認得這個 token」 | `serverToken` 沒填或不在 token 檔裡 | server log `連線 #N token 認證失敗,拒絕` |
 | 連不上,server log 有「TLS 握手失敗」 | client `serverTls=0` 但 server 開了 TLS(或反過來) | 兩邊的 `serverTls` / `--tls-cert` |
