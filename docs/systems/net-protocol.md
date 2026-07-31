@@ -50,6 +50,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 |---|---|
 | 連線 | `hello`{proto,role,playerId,name,gender,level,guild,**build**,password?,**authToken?**,sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
 | 房間 | `roomList` / `createRoom`{mode,name} / `joinRoom`{code} → `joinResult`{ok/full/inGame/notFound} / `leaveRoom` / **`roomState`**{rev,code,name,hostUserId,mode,status,capacity,seats[…],spectators[],song,settings} / `setRoomName` |
+| 名單 | `userList` → `userListResult`{users:[{userId,name,guild,level,gender,**roomSeq**}]} —— 大廳左側玩家名單(全部/好友/家族)的資料來源。**沒有上下線推播**,與 `roomList` 同一個問答模式(大廳自己輪詢)。`roomSeq` 0 = 人在大廳、>0 = 在那個**門牌**的房(不是加入用的 code)。「誰是我的好友」server 不知道 —— 好友清單存在玩家自己機器上,比對在 client 做 |
 | 座位 | `kickUser` / `setSeatClosed` / `transferHost` / `kicked`{reason} / `error`{rq?,code,msg} |
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
 | 開場 | `setReady` / `setSong`{NetSongRef} / `setRoomSettings` / `requestStart`{force,resolved} → `matchStarting`{matchId,startEpochMs,loadTimeoutMs,participants[],spectatorNames[],resolved,song,settings} / `setPlayState` / `gameplayStarted` / `gameplayAborted` / `resultsReady`{matchId,rows[]} |

@@ -122,6 +122,7 @@ namespace Sdo.Server.Net
                 case NetProto.Bye: conn.Close("byeFromClient"); break;
 
                 case NetProto.RoomList: OnRoomList(conn, rq); break;
+                case NetProto.UserList: OnUserList(conn, rq); break;
                 case NetProto.CreateRoom: OnCreateRoom(conn, node, rq); break;
                 case NetProto.JoinRoom: OnJoinRoom(conn, node, rq); break;
                 case NetProto.LeaveRoom: OnLeaveRoom(conn); break;
@@ -336,6 +337,48 @@ namespace Sdo.Server.Net
                 .Str(NetProto.FieldType, NetProto.RoomListResult)
                 .Int(NetProto.FieldRequest, rq)
                 .Put("rooms", arr));
+        }
+
+        /// <summary>
+        /// 「現在誰在線上」——大廳玩家名單(全部 / 好友 / 家族 / 黑名單四個分頁)的唯一資料來源。
+        ///
+        /// 只回**事實**:誰在線上、叫什麼、幾等、屬於哪個家族、人在大廳還是某間房。
+        /// 「這個人是不是我的好友」不在這裡判斷 —— 好友清單存在玩家**自己那台機器**上
+        /// (server 沒有帳號持久化,見 client 的 <c>FriendList</c>),所以那是 client 拿這份名單去比對的事。
+        ///
+        /// 照 userId 排序:Dictionary 的列舉順序不保證,不排的話名單每刷一次順序就跳一遍。
+        /// userId 遞增 == 上線先後,正好也是官方名單「先來的在上面」的排法。
+        /// </summary>
+        private void OnUserList(Connection conn, int rq)
+        {
+            var users = new List<Connection>();
+            foreach (var kv in _byUser)
+            {
+                var c = kv.Value;
+                if (c == null || c.IsClosed) continue;
+                users.Add(c);
+            }
+            users.Sort((a, b) => a.UserId.CompareTo(b.UserId));
+
+            var arr = JArr.New();
+            for (int i = 0; i < users.Count; i++)
+            {
+                var c = users[i];
+                var room = _rooms.RoomOf(c.UserId);
+                arr.Add(JObj.New()
+                    .Int("userId", c.UserId)
+                    .Str("name", c.Name)
+                    .Str("guild", c.Guild)
+                    .Int("level", c.Level)
+                    .Int("gender", c.Look != null ? c.Look.Gender : 0)
+                    // 門牌(seq)而不是 code:名單只是給人看「他在幾號房」,不是給人拿去闖房的鑰匙。
+                    .Int("roomSeq", room != null ? room.State.Seq : 0));
+            }
+
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.UserListResult)
+                .Int(NetProto.FieldRequest, rq)
+                .Put("users", arr));
         }
 
         private void OnCreateRoom(Connection conn, object node, int rq)

@@ -361,4 +361,44 @@ namespace Sdo.Net
             return rows;
         }
     }
+
+    /// <summary>線上玩家名單的一列(大廳 win3 的四個分頁都吃這一份)。</summary>
+    public struct NetUserListEntry
+    {
+        /// <summary>server 這次連線給的編號。**下次上線會變**,所以只能拿來認「這一輪的同一個人」
+        /// (例如把自己從名單裡挑掉),不能存起來當身分 —— 那是名字的工作(見 FriendList 的註解)。</summary>
+        public int UserId;
+
+        public string Name;
+        public string Guild;
+        public int Level;
+
+        /// <summary>0=女 1=男。名單左邊那個小人頭圖示用它分色。</summary>
+        public int Gender;
+
+        /// <summary>人在哪:0 = 大廳,&gt;0 = 那間房的**門牌**(不是加入用的 5 位數 code —— 名單只是給人看位置的)。</summary>
+        public int RoomSeq;
+
+        public bool InLobby => RoomSeq <= 0;
+
+        public static NetUserListEntry Decode(object node)
+        {
+            var e = new NetUserListEntry();
+            e.UserId = NetJson.Int(node, "userId");
+            e.Name = NetJson.Str(node, "name");
+            e.Guild = NetJson.Str(node, "guild");
+            e.Level = NetJson.Int(node, "level");
+            e.Gender = NetJson.Int(node, "gender");
+            e.RoomSeq = NetJson.Int(node, "roomSeq");
+            return e;
+        }
+
+        public static NetUserListEntry[] DecodeAll(List<object> arr)
+        {
+            if (arr == null || arr.Count == 0) return new NetUserListEntry[0];
+            var rows = new NetUserListEntry[arr.Count];
+            for (int i = 0; i < arr.Count; i++) rows[i] = Decode(arr[i]);
+            return rows;
+        }
+    }
 }

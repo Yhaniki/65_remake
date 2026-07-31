@@ -45,6 +45,18 @@
 
         public const string RoomList = "roomList";
         public const string RoomListResult = "roomListResult";
+
+        /// <summary>
+        /// C→S 請求「現在誰在線上」(大廳的玩家名單:全部 / 好友 / 家族三個分頁的資料來源)。
+        ///
+        /// 與 <see cref="RoomList"/> 一樣是**問答式**的:server 沒有「有人上下線了」的推播,
+        /// 名單由大廳自己跟著房間列表同一個節拍回頭問。
+        /// </summary>
+        public const string UserList = "userList";
+
+        /// <summary>S→C。<c>users</c> 是一列 <c>{userId,name,guild,level,gender,roomSeq}</c>
+        /// (<c>roomSeq</c> 0 = 人在大廳,&gt;0 = 在門牌 N 那間房)。</summary>
+        public const string UserListResult = "userListResult";
         public const string CreateRoom = "createRoom";
         public const string JoinRoom = "joinRoom";
         /// <summary>S→C unicast。result 對映現有的 Sdo.UI.Services.JoinResult enum，不用改那邊。</summary>

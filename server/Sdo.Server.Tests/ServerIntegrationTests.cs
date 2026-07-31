@@ -315,6 +315,36 @@ namespace Sdo.Tests
             Assert.AreEqual(1, NetJson.Int(rooms[0], "count"));
         }
 
+        [Test]
+        public void User_List_Shows_Who_Is_Online_And_Where()
+        {
+            // 大廳玩家名單(全部/好友/家族三個分頁的資料來源)。server 只回事實:誰在線上、幾等、
+            // 在大廳還是在某間房 —— 「誰是我的好友」是 client 拿本機清單去比對的(server 沒有帳號持久化)。
+            var a = Connect("房主");
+            int seq;
+            {
+                CreateRoom(a, "位置測試");
+                a.Send(JObj.New().Str(NetProto.FieldType, NetProto.RoomList).Int(NetProto.FieldRequest, 70));
+                var rooms = NetJson.Arr(a.WaitFor(NetProto.RoomListResult), "rooms");
+                seq = NetJson.Int(rooms[0], "seq");
+            }
+
+            var b = Connect("路人");
+            b.Send(JObj.New().Str(NetProto.FieldType, NetProto.UserList).Int(NetProto.FieldRequest, 71));
+
+            var res = b.WaitFor(NetProto.UserListResult);
+            Assert.IsNotNull(res);
+            var users = NetJson.Arr(res, "users");
+            Assert.IsNotNull(users);
+            Assert.AreEqual(2, users.Count, "兩條連線都要在名單上(自己也算)");
+
+            // 照 userId 排序 == 上線先後,所以房主一定在第 0 列。
+            Assert.AreEqual("房主", NetJson.Str(users[0], "name"));
+            Assert.AreEqual(seq, NetJson.Int(users[0], "roomSeq"), "在房裡的人要標出**門牌**(不是加入用的 code)");
+            Assert.AreEqual("路人", NetJson.Str(users[1], "name"));
+            Assert.AreEqual(0, NetJson.Int(users[1], "roomSeq"), "沒進房 = 人在大廳");
+        }
+
         // ================= 離開 / 房主轉移 =================
 
         [Test]

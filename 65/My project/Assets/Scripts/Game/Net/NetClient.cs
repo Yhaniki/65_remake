@@ -701,6 +701,18 @@ namespace Sdo.Game.Net
                 })));
         }
 
+        /// <summary>「現在誰在線上」——大廳玩家名單的資料來源。與 <see cref="RequestRoomList"/> 同一個問答模式
+        /// (server 沒有上下線推播,只能自己回頭問)。</summary>
+        public void RequestUserList(Action<NetUserListEntry[]> onList)
+        {
+            Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.UserList)
+                .Int(NetProto.FieldRequest, NextRq(node =>
+                {
+                    if (onList != null) onList(NetUserListEntry.DecodeAll(NetJson.Arr(node, "users")));
+                })));
+        }
+
         /// <summary>建房。<paramref name="onResult"/> 收到 (result, code)。</summary>
         public void CreateRoom(string name, Action<string, int> onResult)
         {
