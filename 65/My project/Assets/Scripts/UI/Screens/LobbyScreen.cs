@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using Sdo.Game;
 using Sdo.Localization;
 using Sdo.Settings;
 using Sdo.UI.Core;
@@ -61,6 +62,9 @@ namespace Sdo.UI.Screens
         private const float BadgeX = 6f, BadgeY = 39f;                             // waiting.an / playing.an
         private const float HeadX = 66f, HeadY = 65f, HeadStep = 19f;              // roomplayer0..5(man.an)
         private const float KeysX = 183f, KeysY = 60f;                             // jianpan(Lobby97)
+
+        // 左側的 3D 角色(官方 AvtShow x=0 y=2 w=285 h=430)。與選角色畫面共用 GenderPreview3D。
+        private const float AvatarX = 0f, AvatarY = 2f, AvatarW = 285f, AvatarH = 430f;
 
         // 房間列表底板(NormalBG = LobbyChannelBG,506×364)+ 捲軸
         private const float ListBgX = 286f, ListBgY = 46f;
@@ -124,6 +128,13 @@ namespace Sdo.UI.Screens
 
         private TextMeshProUGUI _selfName, _selfLevel, _selfWin, _selfAcc, _selfRecord, _selfCoins, _selfPoints, _selfBonus;
 
+        // 左側 3D 角色(官方 AvtShow)。與選角色畫面同一套 GenderPreview3D:它自己開一台相機
+        // 渲到 RenderTexture,顯示時要把那個 layer 從前端 UI 相機的 cullingMask 遮掉,OnHide 還原。
+        private GenderPreview3D _preview;
+        private RawImage _previewImg;
+        private Camera _maskedCam;
+        private int _savedMask;
+
         /// <summary>OnShow 當下訂到的那兩份服務。登入/登出會**就地換掉** Ctx.Rooms / Ctx.Chat,
         /// 用 Ctx 的現值去退訂會退到新的那份身上 → 舊的那份永遠留著一條死訂閱。</summary>
         private IRoomService _subRooms;
@@ -146,6 +157,11 @@ namespace Sdo.UI.Screens
             var bg = An("LobbyBG");
             if (bg != null) UIKit.AddSprite(Root, "Bg", bg, 0f, 0f);
             else UIKit.Stretch(UIKit.AddImage(Root, "Bg", UITheme.Bg).rectTransform);
+
+            // 左側 3D 角色的畫布(貼圖在 OnShow 接上 —— RenderTexture 那時才存在)。
+            // 先加 = 在最底層,房卡與下方面板都疊在它上面(官方 AvtShow 也是最底下那層)。
+            _previewImg = AddRaw("AvatarView", AvatarX, AvatarY, AvatarW, AvatarH);
+            _previewImg.color = new Color(1f, 1f, 1f, 0f);   // 還沒有 RT 之前不要畫一塊白
 
             BuildRoomList();     // 底板 + 兩欄三列房卡
             BuildTopBar();
@@ -379,6 +395,7 @@ namespace Sdo.UI.Screens
             Subscribe();
             Ctx.Chat?.SetScope(ChatScope.Lobby);   // 大廳作用域:只顯示大廳訊息(密語跨場另計)
 
+            ShowAvatar();
             _scroll = 0;
             RefreshSelf();
             ReloadRooms();
@@ -390,6 +407,86 @@ namespace Sdo.UI.Screens
         {
             _listGen++;   // 還在路上的 roomList 回呼作廢
             Unsubscribe();
+            HideAvatar();
+        }
+
+        /// <summary>
+        /// 左側的 3D 角色(官方 AvtShow)。做法與選角色畫面**完全相同**:GenderPreview3D 自己開一台相機
+        /// 把角色渲到 RenderTexture,我們只是把那張貼圖掛到 RawImage 上。
+        ///
+        /// 🔴 一定要把預覽的 layer 從前端 UI 相機的 cullingMask 遮掉 —— 那台相機幾乎什麼都照,
+        ///    沒遮的話角色會被它用正交投影再畫一次(扁扁的疊在畫面上)。OnHide 還原。
+        ///
+        /// 大廳只顯示**目前登入的那個角色**,所以 Build 之後照 session 的性別切一次。
+        /// (GenderPreview3D 內部男女兩隻都建起來、靠 SetGender 切換顯示,這裡沿用同一套 API。)
+        /// </summary>
+        private void ShowAvatar()
+        {
+            int gender = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0;
+            string[] fParts = PartsForGender(0), mParts = PartsForGender(1);
+
+            if (_preview == null)
+            {
+                var go = new GameObject("LobbyAvatar3D");
+                _preview = go.AddComponent<GenderPreview3D>();
+                _preview.Build(gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
+            }
+            else
+            {
+                // 回到大廳時穿搭可能已經變了(去商城買了東西、或換過帳號)→ 每次顯示都重套一次。
+                _preview.SetOutfits(gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
+            }
+            _preview.SetGender(gender);
+
+            if (_previewImg != null && _preview.PreviewTexture != null)
+            {
+                _previewImg.texture = _preview.PreviewTexture;
+                _previewImg.color = Color.white;
+            }
+
+            var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (ui != null) { _maskedCam = ui; _savedMask = ui.cullingMask; ui.cullingMask &= ~(1 << GenderPreview3D.PreviewLayer); }
+        }
+
+        private void HideAvatar()
+        {
+            if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
+            if (_previewImg != null) { _previewImg.texture = null; _previewImg.color = new Color(1f, 1f, 1f, 0f); }
+            if (_preview != null) { Destroy(_preview.gameObject); _preview = null; }
+        }
+
+        // 取某性別對應 profile(女 00000000 / 男 00000001)的「實際穿戴」部位;找不到 → null(用預設整套)。
+        // 從 id-based equippedItems 經 catalog 現算(含合成的翅膀/表情/項鍊),而不是讀可能過時的
+        // equippedParts 快取 —— 與選角色畫面同一條路,兩邊看到的自己才會一樣。
+        private static string[] PartsForGender(int gender)
+        {
+            string id = ProfileManager.SeededIdForGender(gender);
+            foreach (var p in ProfileManager.List())
+                if (p != null && p.id == id)
+                    return WardrobeStore.ResolveEquippedParts(p, gender, cid => AvatarItemCatalog.Instance.ById(cid));
+            return null;
+        }
+
+        // 取某性別對應 profile 自己的體型(胖瘦)index 0..4;找不到 → 0(瘦)。
+        private static int BodyIndexForGender(int gender)
+        {
+            string id = ProfileManager.SeededIdForGender(gender);
+            foreach (var p in ProfileManager.List())
+                if (p != null && p.id == id)
+                    return p.bodyShapeIndex;
+            return 0;
+        }
+
+        private RawImage AddRaw(string name, float x, float y, float w, float h)
+        {
+            var rt = UIKit.NewRect(Root, name);
+            var ri = rt.gameObject.AddComponent<RawImage>();
+            ri.raycastTarget = false;
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = new Vector2(x, -y);
+            rt.sizeDelta = new Vector2(w, h);
+            return ri;
         }
 
         private void Subscribe()
