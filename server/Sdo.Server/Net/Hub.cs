@@ -545,21 +545,77 @@ namespace Sdo.Server.Net
         /// 靜默的 —— 玩家按了沒反應,而 server 這邊什麼都沒留。實際上因為這個查了很久:
         /// 「兩台都看得到歌名、按開始沒反應」的真因是 server 眼中這間房沒有歌,而唯一能證明它的
         /// 就是這一行 log。拒絕本來就是低頻事件,印出來不會吵。
+        ///
+        /// 🔴 而且要印出**哪個請求**與**當下的狀態**。只印 code 的話 log 長這樣:
+        ///   <c>✗ user 1 的請求被拒:badState</c> ×12
+        /// —— <c>badState</c> 有十幾個來源(場次對不上、狀態機不允許、client 自稱保留狀態…),
+        /// 而十二行一模一樣的字連「是同一個請求重送十二次還是十二個不同請求」都分不出來。
+        /// 加上請求型別(<see cref="Connection.CurMsgType"/>)、<paramref name="note"/> 的請求內容、
+        /// 以及 <see cref="DescribeConn"/> 的當下狀態,同一行就能直接讀出「誰、按了什麼、當時在哪一階段」。
         /// </summary>
-        private static void SendError(Connection conn, int rq, string code, string msg = null)
+        /// <param name="msg">給 client 的簡短原因(會進 wire)。</param>
+        /// <param name="note">只進 log 的請求細節(送上來的參數值)。不進 wire —— 診斷用的東西沒必要外流。</param>
+        private void SendError(Connection conn, int rq, string code, string msg = null, string note = null)
         {
             var o = JObj.New().Str(NetProto.FieldType, NetProto.Error).Str("code", code ?? NetProto.ErrBadState);
             if (rq != 0) o.Int(NetProto.FieldRequest, rq);
             if (!string.IsNullOrEmpty(msg)) o.Str("msg", msg);
             conn.Send(o);
-            Log("✗ user " + conn.UserId + " 的請求被拒:" + (code ?? "?")
-                + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
+            Log("✗ user " + conn.UserId + " 的 " + (string.IsNullOrEmpty(conn.CurMsgType) ? "?" : conn.CurMsgType)
+                + (rq != 0 ? "#" + rq : "")
+                + (string.IsNullOrEmpty(note) ? "" : "(" + note + ")")
+                + " 被拒:" + (code ?? "?")
+                + (string.IsNullOrEmpty(msg) ? "" : " — " + msg)
+                + " | " + DescribeConn(conn));
         }
 
-        private static void SendOpError(Connection conn, int rq, NetRoomOp op)
+        private void SendOpError(Connection conn, int rq, NetRoomOp op, string note = null)
         {
             var code = op.ToErrorCode();
-            if (code != null) SendError(conn, rq, code);
+            if (code != null) SendError(conn, rq, code, null, note);
+        }
+
+        /// <summary>
+        /// 拒絕時要印的「這個人當下處在什麼狀態」。
+        ///
+        /// 這裡挑的欄位就是**規則實際會看的那些**(見 <see cref="NetRoom"/>):房間階段、
+        /// 進行中的場次與他是不是參與者、座位上的 ready / playState / 有沒有這首歌。
+        /// 任何一次拒絕都是這幾個值其中之一不合 —— 一起印出來,才不用再回頭猜。
+        /// </summary>
+        private string DescribeConn(Connection conn)
+        {
+            if (!conn.HelloDone) return "還沒握手";
+            if (conn.Role == NetProto.RoleFile) return "檔案連線";
+
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return "不在任何房間";
+
+            string s = "房 " + room.Code + " " + room.Status;
+
+            var match = room.Match;
+            if (match == null) s += " 沒有進行中的場次";
+            else s += " 第" + match.MatchId + "場(" + (IsParticipant(match, conn.UserId) ? "參與者" : "非參與者") + ")";
+
+            var seat = room.State.SeatOf(conn.UserId);
+            if (seat != null)
+            {
+                s += " 座位" + room.State.SeatIndexOf(conn.UserId)
+                   + (room.State.IsHost(conn.UserId) ? "(房主)" : "")
+                   + " play=" + seat.PlayState
+                   + " ready=" + (seat.Ready ? "是" : "否")
+                   + " avail=" + seat.Avail;
+            }
+            else if (room.State.SpectatorIndexOf(conn.UserId) >= 0) s += " 旁觀中";
+            else s += " 不在座位也不在旁觀名單";
+
+            return s;
+        }
+
+        private static bool IsParticipant(NetMatchInfo match, int userId)
+        {
+            var ids = match.ParticipantUserIds;
+            for (int i = 0; i < ids.Length; i++) if (ids[i] == userId) return true;
+            return false;
         }
 
         /// <summary>踢出通知(client 收到會回選男女畫面)。</summary>

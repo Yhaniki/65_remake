@@ -60,6 +60,8 @@ namespace Sdo.Server.Net
                 // 每一塊都會排進單執行緒的 actor loop 並讓我們回一封錯誤,等於免費的放大器。
                 if (!conn.HelloDone) { conn.Kill(NetProto.ErrProto); return; }
 
+                conn.CurMsgType = "chunk";
+
                 // 上傳的位元組。刻意不吃 control 的 rate limit —— 一首歌是幾百塊 chunk,
                 // 32/s 會把正常上傳擋死。總量的防線在 blobUploadBegin 那份清單上
                 // (超過宣稱長度就中止),而清單本身是 control 訊息、有被限流。
@@ -106,6 +108,8 @@ namespace Sdo.Server.Net
             conn.Rate.Strikes = 0;
 
             LogVerbose("← #" + conn.ConnId + " " + type);
+            // 被拒的 log 要說出「是哪一個請求被拒」—— 記在連線上,由 SendError 取用。
+            conn.CurMsgType = type;
             Dispatch(conn, type, node, rq, now);
         }
 
@@ -484,7 +488,11 @@ namespace Sdo.Server.Net
             }
 
             var op = room.SetSong(conn.UserId, song);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok)
+            {
+                SendOpError(conn, rq, op, "song=" + (song != null ? song.Title + " packId=" + song.PackId : "(清空)"));
+                return;
+            }
             // 選歌是房間狀態的重大變更(保留 ready、重設 availability = R9),而且「這間房有沒有歌」
             // 是準備/開始的前提 —— 沒印出來的話「按開始沒反應」完全查不到(踩過)。
             Log("房 " + room.Code + " 換歌:" + (song != null ? song.Title : "(清空)"));
@@ -519,7 +527,7 @@ namespace Sdo.Server.Net
             }
 
             var op = room.AssignTeams(conn.UserId, layout);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "layout=" + layout); return; }
             BroadcastRoomState(room);
         }
 
@@ -530,8 +538,9 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
-            var op = room.SetOwnTeam(conn.UserId, NetJson.Int(node, "team", (int)TeamTag.Free));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            int team = NetJson.Int(node, "team", (int)TeamTag.Free);
+            var op = room.SetOwnTeam(conn.UserId, team);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "team=" + team); return; }
             BroadcastRoomState(room);
         }
 
@@ -540,8 +549,9 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
-            var op = room.SetReady(conn.UserId, NetJson.Bool(node, "ready"));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            bool ready = NetJson.Bool(node, "ready");
+            var op = room.SetReady(conn.UserId, ready);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "ready=" + ready); return; }
             BroadcastRoomState(room);
         }
 
@@ -631,7 +641,7 @@ namespace Sdo.Server.Net
             NetRoom room;
             LeaveResult left;
             var op = _rooms.KickUser(conn.UserId, target, out room, out left);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "目標 user " + target); return; }
 
             DropRoomMoves(room.Code);
             SendKicked(target, NetProto.KickedByHost);
@@ -648,7 +658,7 @@ namespace Sdo.Server.Net
             NetRoom room;
             int kicked;
             var op = _rooms.SetSeatClosed(conn.UserId, seat, closed, out room, out kicked);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "座位" + seat + " closed=" + closed); return; }
 
             // 關閉有人的座位 → 那個人先被踢出去(需求 12)。
             if (kicked != 0)
@@ -664,8 +674,9 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
-            var op = room.TransferHost(conn.UserId, NetJson.Int(node, "userId"));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            int newHost = NetJson.Int(node, "userId");
+            var op = room.TransferHost(conn.UserId, newHost);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "目標 user " + newHost); return; }
             BroadcastRoomState(room);
         }
 
@@ -687,7 +698,7 @@ namespace Sdo.Server.Net
             var op = _rooms.TrySpectate(code, JoinUserOf(conn), out room, out left);
             AfterImplicitLeave(left, conn.UserId);
 
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "房 " + code); return; }
             DropRoomMoves(room.Code);
             // 座位有 log、旁觀沒有 → 實機驗證時「他到底進去了沒」只能用猜的。補上。
             Log("房 " + room.Code + " 旁觀  user " + conn.UserId + "「" + conn.Name
@@ -724,7 +735,7 @@ namespace Sdo.Server.Net
 
             NetMatchInfo match;
             var op = room.RequestStart(conn.UserId, force, resolved, now, out match);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "force=" + force); return; }
             _comboMilestones.Remove(room.Code);
             _liveLeaders[room.Code] = new LiveLeaderTracker(match.Participants);
 
@@ -785,21 +796,28 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
+            long matchId = NetJson.Long(node, "matchId");
+
             PlayState state;
             if (!NetState.TryParsePlayState(NetJson.Str(node, "state"), out state))
             {
-                SendError(conn, rq, NetProto.ErrBadState, "unknown state");
+                SendError(conn, rq, NetProto.ErrBadState, "unknown state",
+                          "state=" + NetJson.Str(node, "state") + " matchId=" + matchId);
                 return;
             }
             if (!NetState.IsClientSettable(state))
             {
                 // 🔴 安全邊界:server 保留狀態不准 client 自稱(否則能繞過載入同步)。
-                SendError(conn, rq, NetProto.ErrBadState, "server-reserved state");
+                SendError(conn, rq, NetProto.ErrBadState, "server-reserved state",
+                          "state=" + state + " matchId=" + matchId);
                 return;
             }
 
-            var op = room.SetPlayState(conn.UserId, state, NetJson.Long(node, "matchId"));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            var op = room.SetPlayState(conn.UserId, state, matchId);
+            // 🔴 送上來的 matchId 一定要進 log:這條路徑最常見的拒絕就是「這一場已經被 server 收掉了」
+            // (client 拿著上一場的 matchId 送),而那唯一的證據就是「它送的號碼」與
+            // DescribeConn 印的「server 現在認的那一場」對不起來。
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "state=" + state + " matchId=" + matchId); return; }
             BroadcastRoomState(room);
         }
 

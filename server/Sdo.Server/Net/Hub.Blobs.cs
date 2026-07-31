@@ -603,7 +603,11 @@ namespace Sdo.Server.Net
 
         private void SendBlobError(Connection conn, int rq, string code, string msg)
         {
-            Log("✗ user " + conn.UserId + " 傳檔被拒:" + code + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
+            // 與 SendError 同一個形狀:先說是**哪個請求**,再說原因(見 Hub.SendError 的說明)。
+            Log("✗ user " + conn.UserId + " 的 " + (string.IsNullOrEmpty(conn.CurMsgType) ? "?" : conn.CurMsgType)
+                + (rq != 0 ? "#" + rq : "") + " 傳檔被拒:" + code
+                + (string.IsNullOrEmpty(msg) ? "" : " — " + msg)
+                + " | " + DescribeConn(conn));
             conn.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.BlobError)
                 .Int(NetProto.FieldRequest, rq)
