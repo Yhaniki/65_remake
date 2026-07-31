@@ -452,11 +452,12 @@ namespace Sdo.UI.Screens
                 RenderPage();      // -> RenderRandomRows
                 UpdateInfo();      // clears the value block (no song picked)
             }
-            else if (_category == CatFolder)
+            else if (_category == CatFolder && _groupPanel != null)
             {
                 // 分類瀏覽：開浮動面板，停在上次的桶(第一次則第一個桶)；面板 onPick → OnBucketPicked 把歌灌進歌單。
-                OpenGroupPanel(_groupPanel != null ? _groupPanel.ActiveKey : null);
+                OpenGroupPanel(_groupPanel.ActiveKey);
             }
+            // 沒有面板（外部歌關掉）時 勁樂 落到下面那條一般分類的路，由 CategoryBase 給它 HOT 標籤的歌。
             else
             {
                 ApplyFilter();     // category + search -> rows
@@ -467,7 +468,14 @@ namespace Sdo.UI.Screens
 
         // ---------------- 分類瀏覽面板 (資料夾 tab) ----------------
 
-        private void BuildGroupPanel() => _groupPanel = SongGroupPanel.Create(Root, OnBucketPicked, BeginRescan);
+        // config.ini 的 LoadExternalSongs=0 → 面板根本不建（_groupPanel 留 null）。全畫面對它的存取本來就都是
+        // null-safe（開/關/SetBusy/PointerOver），而 _groupPanel==null 正是 SetCategory / CategoryBase 用來分辨
+        // 「這一格現在是分類瀏覽、還是官方原本的 勁樂(HOT)」的依據 —— 點下去不會有面板跳出來，改列 HOT 標籤的歌。
+        private void BuildGroupPanel()
+        {
+            if (!RoomConfig.loadExternalSongs) return;
+            _groupPanel = SongGroupPanel.Create(Root, OnBucketPicked, BeginRescan);
+        }
 
         // ---------------- 更新：re-scan the song folders without restarting ----------------
 
@@ -925,8 +933,15 @@ namespace Sdo.UI.Screens
         {
             var all = _model.All;
             var res = new List<SongCatalog.Entry>();
-            // 分類瀏覽 tab: the songs of the bucket the floating panel currently has picked (empty if none).
-            if (_category == CatFolder) { res.AddRange(_bucketSongs); return res; }
+            // 勁樂 tab 有兩種身分：外部歌開著時這一格被借去當「資料夾/分類瀏覽」，顯示浮動面板挑中的那個桶；
+            // config.ini 關掉外部歌(LoadExternalSongs=0)後面板不存在，就還原成官方本來的用途 —— HOT 標籤那批
+            // （四個旗標見 docs/reverse-engineering/SDO_SERVERCONFIG.md 的 12-byte 歌曲列，+5 = HOT）。
+            if (_category == CatFolder)
+            {
+                if (_groupPanel != null) { res.AddRange(_bucketSongs); return res; }
+                res.AddRange(SongListModel.ByBadge(all, _badges, SongBadge.Hot));
+                return res;
+            }
             // 全部 = official .gn songs only; external (user Songs/) songs live under the 資料夾 tab. (A text search
             // isn't limited to this list — ApplyFilter searches the whole library when the box has text.)
             if (_category == CatAll) { foreach (var e in all) if (e != null && !e.external) res.Add(e); }
@@ -938,8 +953,8 @@ namespace Sdo.UI.Screens
                 foreach (var k in Favorites.NewestFirst())
                     if (byKey.TryGetValue(k, out var e)) res.Add(e);
             }
-            else if (_category == CatNewest) { foreach (var e in all) if (BadgeOf(e) == SongBadge.New) res.Add(e); }
-            else if (_category == CatNostalgia) { foreach (var e in all) if (BadgeOf(e) == SongBadge.Classical) res.Add(e); }
+            else if (_category == CatNewest) res.AddRange(SongListModel.ByBadge(all, _badges, SongBadge.New));
+            else if (_category == CatNostalgia) res.AddRange(SongListModel.ByBadge(all, _badges, SongBadge.Classical));
             return res;
         }
 

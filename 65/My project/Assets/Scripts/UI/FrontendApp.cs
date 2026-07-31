@@ -132,32 +132,41 @@ namespace Sdo.UI
 
         // Staged boot with a progress bar. The genuinely slow part is (a) the official catalog parse and (b) the
         // external Songs/ folder scan (reads + note-counts every candidate osu/StepMania chart); both advance the bar.
+        //
+        // config.ini 的 LoadExternalSongs=0 → 慢的那一半（掃歌）整個不跑，剩下的官方歌單解析＋建介面快到不值得
+        // 蓋一張載入畫面上去，所以連 BootProgress 都不建（prog 保持 null，下面每個 Set 都是 no-op）——
+        // 玩家看到的就是官方原本那樣直接進男/女選擇畫面，沒有黑底白條的載入過場。
         private IEnumerator BootCo(RectTransform root, RectTransform screenLayer, RectTransform modalLayer)
         {
-            var prog = BootProgress.Create(root);   // last child of root → above the (empty) screen/modal layers
-            yield return null;                       // let the overlay render before any heavy work
+            bool ext = RoomConfig.loadExternalSongs;
+            var prog = ext ? BootProgress.Create(root) : null;   // last child of root → above the (empty) screen/modal layers
+            if (prog != null) yield return null;                  // let the overlay render before any heavy work
 
             // Phase 1 — official song catalog (one atomic JsonUtility parse; coarse pre/post steps).
-            prog.Set(0.05f, "載入歌曲資料…");
+            prog?.Set(0.05f, "載入歌曲資料…");
             yield return null;
             var _ = SongCatalog.All;   // force EnsureLoaded (the big catalog parse + name overrides)
-            prog.Set(0.15f, "載入歌曲資料…");
+            prog?.Set(0.15f, "載入歌曲資料…");
             yield return null;
 
             // Phase 2 — scan DATA/ADDON/SONG (+ legacy Songs/ + AdditionalSongFolders) for osu/StepMania songs. The
             // ADDON plugin folders are created first so a fresh install shows the player where to drop songs. The bar's
             // sub-label shows the folder being read and its detail line the current song + running count.
-            SdoExtracted.EnsureAddonDirs();
-            yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
-                prog.Set(0.15f + 0.55f * Mathf.Clamp01(f),
-                         string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
+            // 外部歌曲關掉時整個 Phase 2 跳過：不建 ADDON 資料夾（不然關著功能還在硬碟上長出空資料夾），也不掃。
+            if (ext)
+            {
+                SdoExtracted.EnsureAddonDirs();
+                yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
+                    prog?.Set(0.15f + 0.55f * Mathf.Clamp01(f),
+                              string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
+            }
 
             // Phase 3 —— 開機不再連線。連線改由玩家按「登入」發動(TryLogin),而且成功/失敗都是
             // **就地**換掉 AppContext 內部的 Rooms/Chat/Net,不換 AppContext 物件本身 ——
             // 所以畫面在這之後才建也沒關係(它們抓的 ctx 永遠是同一個)。
 
             // Phase 4 — build the screens (SongSelect now sees the external songs registered above).
-            prog.Set(0.78f, "建立介面…");
+            prog?.Set(0.78f, "建立介面…");
             yield return null;
             Make<GenderSelectScreen>(screenLayer);   // 單機開場的男/女選擇畫面（Flow 的入口狀態）
             Make<LobbyScreen>(screenLayer);
@@ -166,7 +175,7 @@ namespace Sdo.UI
             _ctx.Flow.ScreenChanged += (from, to) => { ShowOnly(to); UpdateBgm(to); };
 
             // Phase 5 — modals + Nav wiring.
-            prog.Set(0.87f, "建立介面…");
+            prog?.Set(0.87f, "建立介面…");
             yield return null;
             _option = new GameObject("OptionDlg").AddComponent<OptionDlgModal>();
             _option.transform.SetParent(modalLayer, false);
@@ -210,14 +219,13 @@ namespace Sdo.UI
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
             // Phase 6 — font atlas warmup (rasterises the CJK glyphs of the visible song titles).
-            prog.Set(0.94f, "準備字型…");
+            prog?.Set(0.94f, "準備字型…");
             yield return null;
             WarmupFont();
-
-            prog.Set(1f, "");
+            prog?.Set(1f, "");
             yield return null;
 
-            prog.Destroy();
+            prog?.Destroy();
             ShowOnly(_ctx.Flow.Current);
             UpdateBgm(_ctx.Flow.Current);   // 開場即起隨機大廳 BGM(男/女選擇畫面)
 

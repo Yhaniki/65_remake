@@ -78,6 +78,14 @@ namespace Sdo.Game
         /// time (<see cref="Scanning"/>); a second call while one is in flight just waits for it and returns.</summary>
         public static IEnumerator ScanAndRegisterCo(Action<float, string, string> onProgress)
         {
+            // config.ini 的 LoadExternalSongs=0：外部歌曲整個功能關掉 → 一個資料夾都不掃（連 Roots() 都不算），
+            // catalog 只留官方歌。單一守門點：開機(FrontendApp.BootCo)與選歌的「更新」都走這裡。
+            if (!RoomConfig.loadExternalSongs)
+            {
+                onProgress?.Invoke(1f, "", "");
+                yield break;
+            }
+
             if (Scanning)   // a boot scan / another refresh is already running — don't start a second worker
             {
                 while (Scanning) yield return null;

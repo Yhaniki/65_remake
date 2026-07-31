@@ -126,6 +126,67 @@ namespace Sdo.Tests
             RoomConfig.songUiAlpha = 0.6f;   // leave clean for other tests
         }
 
+        // ---- LoadExternalSongs：外部歌曲(osu/StepMania/Malody)載入總開關 ----
+
+        [Test]
+        public void Old_Config_Without_The_Key_Keeps_External_Songs_On()
+        {
+            // 升級時的關鍵行為：舊 config.ini 沒有這個鍵 → 維持「載入」，不能讓既有玩家的外部歌憑空消失。
+            RoomConfig.loadExternalSongs = true;
+            RoomConfig.ParseInto("AdditionalSongFolders=D:/test\n");   // 一份沒有 LoadExternalSongs 的舊檔
+            Assert.IsTrue(RoomConfig.loadExternalSongs);
+            RoomConfig.additionalSongFolders = new string[0];   // leave clean for other tests
+        }
+
+        [Test]
+        public void ParseInto_Reads_LoadExternalSongs()
+        {
+            RoomConfig.ParseInto("LoadExternalSongs=0\n");
+            Assert.IsFalse(RoomConfig.loadExternalSongs);
+            RoomConfig.ParseInto("LoadExternalSongs=1\n");
+            Assert.IsTrue(RoomConfig.loadExternalSongs);
+        }
+
+        [Test]
+        public void Serialize_RoundTrips_LoadExternalSongs()
+        {
+            RoomConfig.loadExternalSongs = false;
+            string ini = RoomConfig.Serialize();
+            StringAssert.Contains("LoadExternalSongs=0", ini);
+            RoomConfig.loadExternalSongs = true;               // clobber, then read the serialized value back
+            RoomConfig.ParseInto(ini);
+            Assert.IsFalse(RoomConfig.loadExternalSongs);
+            RoomConfig.loadExternalSongs = true;   // leave clean for other tests
+        }
+
+        [Test]
+        public void Schema_Upgrade_Notices_A_Missing_LoadExternalSongs()
+        {
+            // 舊 config.ini 沒有這個鍵 → Load() 的升級路徑要補寫一次，玩家才找得到可改的鍵。
+            string full = RoomConfig.Serialize();
+            var lines = full.Split('\n');
+            var trimmed = string.Join("\n", System.Array.FindAll(lines, l => !l.TrimStart().StartsWith("LoadExternalSongs=")));
+            Assert.IsTrue(RoomConfig.IsMissingCurrentKey(trimmed), "少了 LoadExternalSongs 的舊檔應被判為需要補寫");
+        }
+
+        // 關掉之後真的一個資料夾都不掃：掃描協程第一次 MoveNext 就結束（沒有起 worker、沒碰磁碟），
+        // 且進度回報直接跳 1（開機/更新兩邊的載入畫面才不會卡在 0%）。這是唯一的守門點。
+        [Test]
+        public void ScanAndRegister_Is_A_No_Op_When_Loading_Is_Off()
+        {
+            bool prev = RoomConfig.loadExternalSongs;
+            try
+            {
+                RoomConfig.loadExternalSongs = false;
+                float reported = -1f;
+                var it = ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) => reported = f);
+                Assert.IsFalse(it.MoveNext(), "關掉時協程不該有任何一步要等（沒掃描可跑）");
+                Assert.AreEqual(1f, reported, 1e-4f, "進度應直接回報完成");
+                Assert.IsFalse(ExternalSongLibrary.Scanning, "不該起掃描 worker");
+            }
+            finally { RoomConfig.loadExternalSongs = prev; }
+        }
+
         [Test]
         public void Schema_Upgrade_Notices_A_Missing_SongUiAlpha()
         {
