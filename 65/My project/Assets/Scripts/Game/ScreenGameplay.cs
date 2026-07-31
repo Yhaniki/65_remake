@@ -788,6 +788,23 @@ namespace Sdo.Game
         // ShowTime drives showtimeMode (FrontendApp sets it from GameSession.GameMode==2); F7 toggles it for
         // dev. Space is free (lanes = ASWD / numpad). Default OFF so a direct/scene-test boot is normal play.
         public bool showtimeMode = false;
+
+        /// <summary>
+        /// 這場的房間模式:0=自由 1=普通 2=ShowTime(對應 <c>GameSession.GameMode</c> 的編碼)。
+        ///
+        /// 之所以除了 <see cref="showtimeMode"/> 還要留完整的模式代號:曲末要決定「這場記不記勝負」,
+        /// 而政策是**只有普通與 ShowTime 才記**(見 <c>Sdo.Settings.PlayStats.RecordsWinLoss</c>)——
+        /// 光看 showtimeMode 這個 bool 分不出「自由模式」與「普通模式」。
+        /// </summary>
+        public int gameMode = 0;
+
+        /// <summary>
+        /// 本機是不是這一輪的第一名。曲末(<c>EnterResult</c>)先用本機名單推算,
+        /// server 的 <c>resultsReady</c> 到達後由 <c>CalculateResultOutcome</c> 覆寫成權威值。
+        /// 戰績落地要讀它 —— 所以得公開(以前只有畫面內部用)。
+        /// </summary>
+        public bool LocalWon => _localWon;
+
         // energy meter geometry (design px). Frame = MyEnergy0(256×45)@(8,7) metallic trough + MyEnergy1(100×45)@(264,7)
         // gauge head with a black status panel (design 297..354) holding the badge cluster. Official ONLINE fill
         // (sdo.bin FUN_0040dc00/0040e210/0040e0f0): the moving fill is a 3D-EFT electric particle STRIP slid

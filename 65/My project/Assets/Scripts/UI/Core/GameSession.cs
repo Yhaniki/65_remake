@@ -13,8 +13,12 @@ namespace Sdo.UI.Core
         public string LocalPlayerName = "玩家001";
         public int Gender = 0;   // 本機角色性別：0=女(WOMAN) 1=男(MAN)。由 active profile 帶入（見 AppContext.CreateMock）。
 
-        // 本機所屬家族名。離線單機沒有真正的家族系統：預設給一個示範家族名，家族頻道即可正常運作（綠字 <家族>…）；
+        // 本機所屬家族名。沒有真正的家族系統：值來自 config.ini [Profile] familyName（或這個角色自己覆寫的那份，
+        // 見 Sdo.Settings.ProfileFields），家族頻道即可正常運作（綠字 <家族>…）；
         // 清空（""）＝沒有家族 → 家族頻道送出顯示「你沒有家族」。房間可按 F3 在「有/沒有」之間切換（除錯用）。
+        //
+        // DemoGuildName 只是「設定裡什麼都沒填」時的示範值 —— 以前這裡是寫死的，於是玩家在 config.ini 設了家族名，
+        // 頭上名牌換了、送上線的身分卻還是「熱舞家族」，兩邊對不起來。
         public const string DemoGuildName = "熱舞家族";
         public string GuildName = DemoGuildName;
         public bool HasGuild => !string.IsNullOrWhiteSpace(GuildName);
@@ -102,6 +106,12 @@ namespace Sdo.UI.Core
             Team = RoomConfig.defaultTeam;
             DropDirection = RoomConfig.defaultDropDirection;
             GameMode = RoomConfig.defaultGameMode;
+            // 家族名跟著這個角色走（config.ini [Profile] 是 Default，角色自己設過就以角色的為準）。
+            // 這裡種是因為 SeedRoomDefaults 每次切帳號都會重跑 —— 換角色時家族名要跟著換，
+            // 而 GuildName 是家族頻道與送上線身分共同的來源。設定裡完全沒填 → 留著示範家族名，
+            // 家族頻道才不會在單機下變成一個永遠說「你沒有家族」的死頁籤。
+            string family = ProfileFields.FamilyName(ProfileManager.Active);
+            GuildName = family.Length > 0 ? family : DemoGuildName;
             // 場景：config 沒指定（-1，或 config.ini 被刪 → 回退預設 -1）就維持隨機；指定了就套用那個場景。
             if (RoomConfig.defaultScene < 0)
             {

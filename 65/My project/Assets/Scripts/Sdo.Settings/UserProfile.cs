@@ -120,6 +120,32 @@ namespace Sdo.Settings
         // 空 (舊檔) 時退回 6 部位的 equippedClothes。由 WardrobeStore 在存檔時用 Sdo.Game.AvatarOutfit.ResolveParts 算出。
         public string[] equippedParts = new string[0];
 
+        // ---- [Profile] 的 per-user 覆寫 ----
+        // config.ini 的 [Profile] 是**所有角色共用的 Default**;這三個欄位讓「這個角色」可以有自己的家族/等級。
+        // 解析一律走 ProfileFields —— 不要直接讀這裡,也不要直接讀 RoomConfig。
+        public string familyName = "";
+        public string familyEmblem = "";
+        public string playerLevel = "";
+
+        /// <summary>
+        /// 這個角色有沒有自己的 [Profile] 設定?
+        ///
+        /// 🔴 這個 latch 是必要的,不能用「欄位留空 = 沿用 Default」代替:現行約定是
+        /// **familyName 留空 = 不顯示家族**、**playerLevel 留空 = 不顯示等級**,而 JsonUtility 對 string
+        /// 一律給 ""(分不出「這個 key 不存在」與「使用者刻意清空」)。少了這個旗標,
+        /// 「我就是不想顯示家族」下次開機就會被 config.ini 的 Default 蓋回來。
+        ///
+        /// false(舊檔預設)= 三個欄位全部吃 config.ini;一旦這個角色自己設過,就整組吃 profile.json 的值。
+        /// 與 <see cref="WalletSave.seeded"/> 是同一種手法。
+        /// </summary>
+        public bool hasProfileOverrides;
+
+        /// <summary>累計遊玩統計(個人資料頁的命中率/勝率就是它算的)。見 <see cref="PlayStats"/>。</summary>
+        public PlayStats stats = new PlayStats();
+
+        /// <summary>本機好友清單。server 沒有帳號持久化 → 好友是這台機器記得的。見 <see cref="FriendEntry"/>。</summary>
+        public FriendEntry[] friends = new FriendEntry[0];
+
         public UserProfile() { }
 
         public UserProfile(string id, string name, int gender)
@@ -141,8 +167,34 @@ namespace Sdo.Settings
             if (ownedItems == null) ownedItems = new OwnedItemSave[0];
             if (equippedItems == null) equippedItems = new EquipSave[0];
             if (equippedParts == null) equippedParts = new string[0];
+            if (stats == null) stats = new PlayStats(); else stats.Sanitize();
+            friends = SanitizeFriends(friends);
+            familyName = (familyName ?? "").Trim();
+            familyEmblem = (familyEmblem ?? "").Trim();
+            playerLevel = (playerLevel ?? "").Trim();
             EnsureWardrobe();
             return this;
+        }
+
+        /// <summary>好友清單防呆:丟掉沒有名字的殘骸、依名字去重(同一個人被加兩次只留先加的那筆)。
+        /// 鍵是名字而不是 id —— 理由見 <see cref="FriendList"/>。</summary>
+        private static FriendEntry[] SanitizeFriends(FriendEntry[] src)
+        {
+            if (src == null) return new FriendEntry[0];
+            var outList = new List<FriendEntry>(src.Length);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < src.Length; i++)
+            {
+                var f = src[i];
+                if (f == null) continue;
+                string name = (f.name ?? "").Trim();
+                if (name.Length == 0) continue;
+                if (!seen.Add(name)) continue;
+                f.name = name;
+                f.id = (f.id ?? "").Trim();
+                outList.Add(f);
+            }
+            return outList.ToArray();
         }
 
         /// <summary>The ordered mesh part paths the room/gameplay avatar wears. Prefers the full <see cref="equippedParts"/>

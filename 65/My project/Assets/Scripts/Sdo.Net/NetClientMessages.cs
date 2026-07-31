@@ -313,6 +313,16 @@ namespace Sdo.Net
     public struct NetRoomListEntry
     {
         public int Code;
+
+        /// <summary>
+        /// 門牌序號 —— 大廳房卡上顯示的那個小數字(官方是 <c>%03d</c> 的 3 位數)。
+        ///
+        /// 🔴 與 <see cref="Code"/> 是**兩件不同的事**:Code 是 5 位數的「加入房間鑰匙」,
+        /// Seq 是「這是第幾間房」。官方大廳只顯示後者。
+        /// 舊版 server 不送這個欄位 → 0,呼叫端自己決定要退回什麼(見 LobbyScreen 的房卡繫結)。
+        /// </summary>
+        public int Seq;
+
         public string Name;
         public string HostName;
         public RoomStatus Status;
@@ -326,6 +336,7 @@ namespace Sdo.Net
         {
             var e = new NetRoomListEntry();
             e.Code = NetJson.Int(node, "code");
+            e.Seq = NetJson.Int(node, "seq");
             e.Name = NetJson.Str(node, "name");
             e.HostName = NetJson.Str(node, "hostName");
 

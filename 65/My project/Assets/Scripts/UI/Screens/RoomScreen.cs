@@ -786,6 +786,29 @@ namespace Sdo.UI.Screens
             // 進場廣播「X 進入舞台遊戲」只在「從大廳進來」時送；從舞台遊戲回房(打完一首回房)不重播。
             if (_returnedFromStage) _returnedFromStage = false;
             else AnnounceStagePresence(true);   // 只同房、只在「當前」分類
+
+            // DEV: SDO_SLOTMENU=<座位編號 0..5> → 進房間就把那一格的右鍵選單彈出來,用來截圖檢查選單外觀。
+            // 選單用的是官方美術(SPopMenu6 底板 + EXPRESSIONINFO 的兩態列圖)並就地重造成 9-slice ——
+            // 圓角有沒有被拉扁、中文字塞不塞得下,只有實機截圖看得出來。
+            string devSlot = ScreenGameplay.DevVar("SDO_SLOTMENU");
+            if (!string.IsNullOrEmpty(devSlot))
+            {
+                int seat;
+                if (!int.TryParse(devSlot, out seat)) seat = 0;
+                StartCoroutine(DevShowSlotMenuCo(Mathf.Clamp(seat, 0, 5)));
+            }
+        }
+
+        /// <summary>SDO_SLOTMENU 的實作:等座位畫好(Render 要先跑過)再彈選單。純除錯用。</summary>
+        private System.Collections.IEnumerator DevShowSlotMenuCo(int seat)
+        {
+            yield return null;
+            yield return null;
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            // ShowSlotPopup 收的是**螢幕**座標(平常來自 PointerEventData.position),
+            // 不是 800×600 的 design 座標 —— 挑一個畫面中段偏左的點,選單自己會夾進框內。
+            ShowSlotPopup(seat, new Vector2(Screen.width * 0.25f, Screen.height * 0.55f),
+                          room, CanManageSeats(room), seat == LocalSeatIndex(room));
         }
 
         // 儲物櫃換穿 → 重建本機房間 3D avatar + 頭貼 (讀最新 EquippedAvatarParts；WardrobeScreen 已寫回 profile)。
@@ -2765,8 +2788,8 @@ namespace Sdo.UI.Screens
                 _serverLabel.SetText(RoomLabels.ServerName(srv));      // 自由練習場1
                 _channelLabel.SetText(RoomLabels.Channel(ch));         // 頻道1
                 // 左上這排照官方原本的樣子:練習場 + 頻道 + **房間序號**(一個小數字)。
-                // ⚠️ 這裡放的是 Seq 不是 Id —— 5 位數房號改接在中央房名後面的括弧裡(見下面),
-                //    因為那才是玩家要唸給朋友聽的東西,跟房名放在一起比擠在「頻道1」後面好認。
+                // ⚠️ 這裡放的是 Seq 不是 Id —— 5 位數房號官方畫面上根本不出現(要進房就在大廳點那張卡),
+                //    所以中央房名後面不再接括弧房號,只留這個給人看的門牌序號。
                 _roomIdLabel.SetText(room.Seq > 0 ? room.Seq.ToString() : "");
                 // 量實際字寬，左到右自動排版(固定 HeaderGap 間距):不論字長/語言都不會疊、間距一致。
                 float lx = ServerX;
@@ -2774,8 +2797,8 @@ namespace Sdo.UI.Screens
                 _channelLabel.SetX(lx); lx += _channelLabel.PreferredWidth + HeaderGap;
                 _roomIdLabel.SetX(lx);
 
-                // 中央房名 + 房號:「飄漂o的舞蹈室(40444)」。
-                _roomNameLabel.text = RoomLabels.DisplayNameWithCode(room.Name, room.HostName, room.Id);
+                // 中央只放房名:「飄漂o的舞蹈室」。官方那塊牌子上沒有房號。
+                _roomNameLabel.text = RoomLabels.DisplayName(room.Name, room.HostName);
             }
 
             // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落。
@@ -2786,11 +2809,12 @@ namespace Sdo.UI.Screens
 
             RenderSlots(room);
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
-            // 名字後面接等級「Lv:N」(config.playerLevel 留空則不接)；家族列(徽章+名稱)另外畫在名字上方(UpdateFamilyRow)。
+            // 名字後面接等級「Lv:N」(等級留空則不接)；家族列(徽章+名稱)另外畫在名字上方(UpdateFamilyRow)。
+            // 等級走 ProfileFields —— config.ini 是共用預設,這個角色自己設過就以它自己的為準(同 UpdateFamilyRow)。
             if (_floatName != null)
             {
                 string nm = LocalName(room);
-                string lvl = RoomConfig.LevelLabel(RoomConfig.playerLevel);
+                string lvl = ProfileFields.LevelLabel(ProfileManager.Active);
                 _floatName.SetText(lvl.Length > 0 ? nm + "  " + lvl : nm);
                 _floatName.gameObject.SetActive(true);
             }
@@ -3923,6 +3947,29 @@ namespace Sdo.UI.Screens
             }
         }
 
+        /// <summary>
+        /// 「對這個人開始密語」—— 玩家**主動選**私聊的那條路:座位右鍵選單的「私聊」、
+        /// 玩家資訊視窗(PlayerInfoModal)的私聊鈕(<c>FrontendApp</c> 建 <see cref="Nav.OpenPlayerInfo"/>
+        /// 時把它包成 callback 傳進去)。
+        ///
+        /// 🔴 與 <see cref="InsertWhisperTarget"/> 的差別是**頻道**。那個函式在家族/回覆頻道刻意什麼都不做,
+        ///    因為它服務的是「點聊天列上的人名」—— 手滑機率高,而且會把草稿搞成 <c>[名字] /家族</c>。
+        ///    但從選單按下「私聊」是明確意圖,套同一條規則就變成整個動作靜默失敗(玩家只會覺得選單壞了)。
+        ///    所以這裡先把頻道切回「當前」(綜合台,密語與回覆都看得到),並剝掉草稿開頭的「/家族 」——
+        ///    換頻道本身刻意不清那個前綴(見 <see cref="SyncChannelInputPrefix"/>),不剝就會被塞成
+        ///    <c>[名字] /家族 …</c> 送出去。打到一半的內容會保留,只是改用密語送。
+        /// </summary>
+        public void BeginWhisperTo(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+            if (_chatChannel != ChatChannel.Current && _chatChannel != ChatChannel.Friend)
+            {
+                SetChatChannel(ChatChannel.Current);
+                if (_chatInput != null) _chatInput.text = RoomChatCommand.StripGuildCommand(_chatInput.text);
+            }
+            InsertWhisperTarget(name);
+        }
+
         // 點聊天列的人名 → 把 `[名字] ` 塞進輸入框，切成輸入框打字模式，保留已打的內容。
         private void InsertWhisperTarget(string name)
         {
@@ -4055,20 +4102,25 @@ namespace Sdo.UI.Screens
             rt.anchoredPosition = abs - originDesign;
         }
 
-        // 依 config.ini 設定頭上「家族列」(徽章＋家族名稱)的內容與顯示與否；實際位置每幀由 PlaceFamilyRow 跟著頭擺放。
+        // 設定頭上「家族列」(徽章＋家族名稱)的內容與顯示與否；實際位置每幀由 PlaceFamilyRow 跟著頭擺放。
         //   familyName 留空 → 整條家族列(名稱+徽章)不顯示。
         //   familyEmblem 留空或載入失敗 → 只顯示家族名稱、不放徽章。
+        //
+        // 值走 ProfileFields 而不是直接讀 RoomConfig:config.ini 的 [Profile] 只是**所有角色共用的預設**,
+        // 這個角色自己設過就以它自己的為準。直接讀 config 的話,切到有自訂家族的角色時名牌不會跟著換。
         private void UpdateFamilyRow()
         {
-            bool show = !string.IsNullOrEmpty((RoomConfig.familyName ?? "").Trim());
+            var prof = ProfileManager.Active;
+            string family = ProfileFields.FamilyName(prof);
+            bool show = family.Length > 0;
             if (_floatFamily != null)
             {
-                if (show) _floatFamily.SetText(RoomConfig.familyName.Trim());
+                if (show) _floatFamily.SetText(family);
                 _floatFamily.gameObject.SetActive(show);
             }
             if (_floatEmblem != null)
             {
-                Sprite em = show ? EmblemArt.Emblem(RoomConfig.familyEmblem) : null;
+                Sprite em = show ? EmblemArt.Emblem(ProfileFields.FamilyEmblem(prof)) : null;
                 if (em != null) { _floatEmblem.sprite = em; _floatEmblem.gameObject.SetActive(true); }
                 else _floatEmblem.gameObject.SetActive(false);
             }
@@ -4155,33 +4207,108 @@ namespace Sdo.UI.Screens
             var s = SeatAt(room, seat);
             bool taken = s != null && !s.IsEmpty;
             bool closed = s != null && s.IsClosed;
-            var actions = RoomSlotMenu.For(host, true, isSelf, taken, closed);
+            string who = taken && s.Player != null ? (s.Player.DisplayName ?? "") : "";
+            // 「是不是好友」在這裡查完再餵給純規則 —— 好友清單住在 profile.json,
+            // RoomSlotMenu 碰它就變成要有檔案系統才測得動(見那邊的 doc)。
+            bool friend = taken && FriendList.IsFriend(ProfileManager.Active, who);
+            var actions = RoomSlotMenu.For(host, Online, isSelf, taken, closed, friend);
             if (actions.Length == 0) return;
 
             int targetUser = taken && s != null ? s.UserId : 0;
-            _slotPopup = BuildContextMenu("SlotPopup", screenPos, actions.Length,
-                (idx, label) => SlotActionLabel(actions[idx]),
+            _slotPopup = BuildSlotMenu("SlotPopup", screenPos, actions.Length,
+                idx => SlotActionLabel(actions[idx]),
                 idx =>
                 {
-                    // 🔴 callback 內再檢查一次房主身分:選單彈出到按下之間房主可能已經被轉走
-                    //    (自己交出房主、或 server 因為別人離開重新指派)。
-                    var now = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-                    if (!CanManageSeats(now)) { CloseSlotPopup(); return; }
                     switch (actions[idx])
                     {
-                        case RoomSlotAction.Kick: if (targetUser != 0) Ctx.Net.KickUser(targetUser); break;
-                        case RoomSlotAction.TransferHost: if (targetUser != 0) Ctx.Net.TransferHost(targetUser); break;
-                        case RoomSlotAction.CloseSeat: Ctx.Net.SetSeatClosed(seat, true); break;
-                        case RoomSlotAction.OpenSeat: Ctx.Net.SetSeatClosed(seat, false); break;
+                        // 社交三項誰都能用 → **不能**再套房主二次驗證(那道守門只屬於管理項,見 HostSlotAction)。
+                        case RoomSlotAction.PlayerInfo: OpenSeatPlayerInfo(seat, isSelf); break;
+                        // 走 BeginWhisperTo 不是 InsertWhisperTarget:選單是明確意圖,在家族頻道也要能開始密語。
+                        case RoomSlotAction.Whisper: BeginWhisperTo(who); break;
+                        case RoomSlotAction.AddFriend: ToggleSeatFriend(s, true); break;
+                        case RoomSlotAction.RemoveFriend: ToggleSeatFriend(s, false); break;
+                        default: HostSlotAction(actions[idx], seat, targetUser); break;
                     }
                     CloseSlotPopup();
                 });
+        }
+
+        /// <summary>
+        /// 房主專屬的那四項。
+        ///
+        /// 🔴 這裡再檢查一次房主身分:選單彈出到按下之間房主可能已經被轉走
+        ///    (自己交出房主、或 server 因為別人離開重新指派)。原本這段寫在 callback 開頭,
+        ///    社交項加進來之後不能再那樣寫 —— 非房主連「玩家信息」都會被那個 return 吃掉。
+        /// </summary>
+        private void HostSlotAction(RoomSlotAction a, int seat, int targetUser)
+        {
+            var now = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (!CanManageSeats(now)) return;
+            switch (a)
+            {
+                case RoomSlotAction.Kick: if (targetUser != 0) Ctx.Net.KickUser(targetUser); break;
+                case RoomSlotAction.TransferHost: if (targetUser != 0) Ctx.Net.TransferHost(targetUser); break;
+                case RoomSlotAction.CloseSeat: Ctx.Net.SetSeatClosed(seat, true); break;
+                case RoomSlotAction.OpenSeat: Ctx.Net.SetSeatClosed(seat, false); break;
+            }
+        }
+
+        /// <summary>
+        /// 「玩家信息」→ 玩家資訊視窗。視窗本體是 modal,由 FrontendApp 接到
+        /// <see cref="Nav.OpenPlayerInfo"/> / <see cref="Nav.OpenSelfInfo"/>;沒接的時候什麼也不做(不是 NRE)。
+        ///
+        /// 座位快照是每幀重來的,所以按下的當下重新查一次 —— 彈選單到按下之間那個人可能已經離開,
+        /// 用彈出時抓的 SeatInfo 會開出一個「已經不在房裡的人」的視窗。
+        /// </summary>
+        private void OpenSeatPlayerInfo(int seat, bool isSelf)
+        {
+            if (isSelf) { Nav.OpenSelfInfo?.Invoke(); return; }
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            var s = SeatAt(room, seat);
+            if (s == null || s.IsEmpty) return;
+            Nav.OpenPlayerInfo?.Invoke(s.Player, SeatGender(s.UserId));
+        }
+
+        /// <summary>那個座位上的人的性別(0=女 1=男)。<see cref="SeatInfo"/> 沒帶性別,所以從連線快照的
+        /// <c>NetAvatarLook</c> 查 —— 那正是房間 3D 拿來建他角色的同一份資料,不會出現「視窗畫男的、房裡站女的」。
+        /// 查不到(離線 / 剛離開 / 旁觀者)就退回本機性別,至少不是一個非法值。</summary>
+        private int SeatGender(int userId)
+        {
+            var snap = Ctx != null && Ctx.Net != null ? Ctx.Net.Room : null;
+            var ns = snap != null && userId != 0 ? snap.SeatOf(userId) : null;
+            if (ns != null && ns.Look != null) return ns.Look.Gender;
+            return Ctx != null && Ctx.Session != null ? Ctx.Session.Gender : 0;
+        }
+
+        /// <summary>
+        /// 加 / 刪好友。
+        ///
+        /// 清單存在**自己的** profile.json(為什麼不是 server 見 <see cref="FriendList"/> 的 doc),
+        /// 而那一層刻意不自己存檔 → 改完一定要 <c>ProfileManager.Save()</c>,否則關掉遊戲就沒了。
+        /// 結果一定要 Toast 講出來:好友清單不在這個畫面上,沒有回饋玩家會以為按了沒反應
+        /// (尤其「已經是好友」「清單滿了」這兩種失敗,畫面上完全看不出差別)。
+        /// </summary>
+        private void ToggleSeatFriend(SeatInfo s, bool add)
+        {
+            string name = s != null && s.Player != null ? (s.Player.DisplayName ?? "").Trim() : "";
+            if (name.Length == 0) return;
+            var me = ProfileManager.Active;
+            bool ok = add ? FriendList.Add(me, name, s.Player.Id, System.DateTime.UtcNow.ToString("o"))
+                          : FriendList.Remove(me, name);
+            if (ok) ProfileManager.Save();
+            string key = add ? (ok ? "room.friend_added" : "room.friend_add_failed")
+                             : (ok ? "room.friend_removed" : "room.friend_remove_failed");
+            Toast.Show(LocalizationManager.Get(key, name));
         }
 
         private string SlotActionLabel(RoomSlotAction a)
         {
             switch (a)
             {
+                case RoomSlotAction.PlayerInfo: return L("room.slot_player_info");
+                case RoomSlotAction.Whisper: return L("room.slot_whisper");
+                case RoomSlotAction.AddFriend: return L("room.slot_add_friend");
+                case RoomSlotAction.RemoveFriend: return L("room.slot_remove_friend");
                 case RoomSlotAction.Kick: return L("room.slot_kick");
                 case RoomSlotAction.TransferHost: return L("room.slot_transfer_host");
                 case RoomSlotAction.CloseSeat: return L("room.slot_close");
@@ -4232,10 +4359,184 @@ namespace Sdo.UI.Screens
             if (_slotPopup != null) { Destroy(_slotPopup); _slotPopup = null; }
         }
 
+        // ==================== 座位右鍵選單的官方美術 ====================
+        // 來源:官方 UI/ROOM/POPMENU.XML 的 <Screen name="SP_PopMenu">
+        //   <PopMenu background="SPopMenu6.an">
+        //     <Button bgnormal="FamilyPop_1.an" bghover="FamilyPop_2.an" bgpushed="FamilyPop_1.an"
+        //             bold="true" color="0xff7a000e" x="0" y="0/27/54/81/108/…"/>
+        // → 列高 27、列寬 92、列的 x 一律 0(底板沒有內縮),bgpushed = bgnormal(實際只有兩態)。
+        private const float SlotMenuRowH = 27f;    // POPMENU.XML 相鄰兩列的 y 差
+        private const float SlotMenuMinW = 92f;    // FamilyPop_1.an 的原生寬(= 底板 SPopMenu6.png 的寬)
+        private const float SlotMenuFontPx = 13f;  // 官方最長是 5 個中文字塞進 92px;我們最長 4 字 → 13px 還有餘裕
+        private const float SlotMenuPadX = 7f;     // 字距左右緣的內縮(膠囊的圓角大約就這麼寬)
+        private const float SlotMenuSliceX = 12f;  // 9-slice 左右保留寬(圓角弧 ~6px,留 12 絕對蓋得住)
+        private const float SlotMenuSliceY = 8f;   // 底板才需要(它 21px 高卻要撐到 27×N)
+        private static readonly Color32 SlotMenuTextColor = new Color32(0x7a, 0x00, 0x0e, 0xff);   // 官方 color="0xff7a000e"
+        // 找不到 DATA 時的退路(數值就是從那兩張圖中央量到的):選單至少還畫得出來、深紅字還讀得到。
+        private static readonly Color32 SlotMenuBgFallback = new Color32(0x3c, 0xe6, 0xf2, 0xea);
+        private static readonly Color32 SlotMenuRowFallback = new Color32(0x9d, 0x8a, 0xbb, 0xf0);
+        private static Sprite _slotMenuBg, _slotMenuRow, _slotMenuRowHover;
+        private static bool _slotMenuArtLoaded;
+
         /// <summary>
-        /// 通用的小彈出選單(座位選單與房主分隊選單共用)。
+        /// 選單的三張圖,都轉成 **9-slice**(左右各留 <see cref="SlotMenuSliceX"/> 不拉伸)。
         ///
-        /// 官方客端沒有右鍵選單這種東西,所以沒有可以對照的美術 —— 用房間的配色自己疊一個:
+        /// 為什麼不是 Simple 直接拉:這幾張是 92px 寬的圓角膠囊,左右各只有 ~6px 的弧再加 1px 深藍外框。
+        /// 日文的「プレイヤー情報」、英文的 "Remove Friend" 在 13px 字級下要 100px 以上,Simple 會把那段弧
+        /// 連同外框一起橫向拉扁 → 圓角變橢圓、框線變糊。9-slice 只拉中段,而中段是**純垂直漸層,水平方向
+        /// 逐像素量過最多差 3/255**(等於看不出來)→ 拉到任何寬度都跟原圖一樣銳利。底板 SPopMenu6 只有
+        /// 21px 高卻要撐到 27×N,所以它連上下也要留 border。
+        ///
+        /// 為什麼要自己重造 sprite:RoomUiArt 的 An/AtlasCrop 造出來的 sprite 沒有 border,
+        /// 而 <c>Image.Type.Sliced</c> 遇到 border 全 0 會靜靜地退化成 Simple(不會報錯,只是圓角被拉扁 ——
+        /// 正是我們要避免的那個結果)。這裡照原 rect 重造一張帶 border 的,底圖 texture 是共用的 → 不多佔記憶體。
+        /// </summary>
+        private static void EnsureSlotMenuArt()
+        {
+            if (_slotMenuArtLoaded) return;
+            _slotMenuBg = Slice(RoomUiArt.An("SPopMenu6"), SlotMenuSliceX, SlotMenuSliceY);
+            // FamilyPop_1/2.an 沒有被單獨切出來,兩張都在 ExpressionInfo 圖集裡(座標為官方 .an 的 top-left)。
+            _slotMenuRow = Slice(RoomUiArt.AtlasCrop("EXPRESSIONINFO.PNG", 420, 139, 92, 27), SlotMenuSliceX, 0f);
+            _slotMenuRowHover = Slice(RoomUiArt.AtlasCrop("EXPRESSIONINFO.PNG", 420, 169, 92, 27), SlotMenuSliceX, 0f);
+            // 只有真的拿到圖才把結果封存起來。第一次右鍵有可能發生在 DATA 根還沒解析成功的時候
+            // (RoomUiArt.Dir 走 catch 分支 → 三張全 null),先把旗標立起來等於**永久**退回純色 ——
+            // 之後就算路徑好了也再也不會重載。RoomUiArt 自己的快取也是同一個寫法(null 不算數)。
+            _slotMenuArtLoaded = _slotMenuRow != null;
+        }
+
+        /// <summary>同一張圖、同一塊 rect,只是補上 9-slice 的 border。來源缺圖 → 回 null(呼叫端有退路色)。</summary>
+        private static Sprite Slice(Sprite src, float sideX, float sideY)
+        {
+            if (src == null || src.texture == null) return null;
+            return Sprite.Create(src.texture, src.rect, new Vector2(0.5f, 0.5f), src.pixelsPerUnit, 0,
+                                 SpriteMeshType.FullRect, new Vector4(sideX, sideY, sideX, sideY));
+        }
+
+        /// <summary>
+        /// 套 9-slice 圖。**不能用 <c>UIKit.ApplySprite</c>** —— 它會把 sizeDelta 設回 sprite 的原生尺寸,
+        /// 選單就永遠是 92×27 一格。尺寸一律由 <c>Place</c> 決定。
+        ///
+        /// 🔴 <c>pixelsPerUnitMultiplier</c> 不是可有可無的裝飾。UGUI 畫 Sliced 時是拿
+        ///    <c>sprite.border ÷ (sprite.pixelsPerUnit / canvas.referencePixelsPerUnit)</c> 當邊寬 ——
+        ///    這個專案的圖一律 ppu=1(<c>SdoExtracted</c> 的 Sprite.Create 全寫死 1),而 CanvasScaler 給的
+        ///    參考值是 UGUI 預設的 100 → 除數是 0.01,border 12 會被當成 **1200** 單位。UGUI 遇到
+        ///    「左右邊加起來比整個 rect 還寬」只好等比夾成各半 → 整條膠囊變成兩個被橫向拉爛的圓角、
+        ///    中段完全不見。乘回 refPPU/spritePPU 之後 border 才剛好等於我們量的那幾個像素。
+        ///    (為什麼不乾脆把 sprite 造成 ppu=100:那會讓任何走 <c>UIKit.ApplySprite</c> 的人拿到
+        ///     0.92×0.27 的尺寸,埋一個更難查的坑。)
+        /// </summary>
+        private static void SetSliced(Image img, Sprite s, Color32 fallback)
+        {
+            if (img == null) return;
+            img.sprite = s;
+            img.type = Image.Type.Sliced;
+            img.fillCenter = true;
+            if (s != null)
+            {
+                var canvas = img.canvas;                                      // 建立時就已 parent 進 Root → 找得到
+                float refPpu = canvas != null ? canvas.referencePixelsPerUnit : 100f;   // 拿不到就用 UGUI 預設值
+                float spritePpu = s.pixelsPerUnit > 0f ? s.pixelsPerUnit : 1f;
+                img.pixelsPerUnitMultiplier = Mathf.Max(0.01f, refPpu / spritePpu);
+            }
+            img.color = s != null ? (Color)Color.white : (Color)fallback;
+        }
+
+        /// <summary>
+        /// 一個中文字約 1em、半形約 0.55em 的粗估寬度。
+        ///
+        /// 為什麼不問 TMP 要 preferredWidth:那要先把物件建出來、跑一次排版才有值,而寬度是**建之前**
+        /// 就要決定的(整個選單每列等寬)。粗估寬一點沒有壞處 —— 底圖是 9-slice,多幾 px 不會糊。
+        /// </summary>
+        private static float MenuTextWidth(string s, float fontSize)
+        {
+            if (string.IsNullOrEmpty(s)) return 0f;
+            float w = 0f;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                bool wide = (c >= 0x1100 && c <= 0x115F)      // 韓文字母
+                            || (c >= 0x2E80 && c <= 0xA4CF)   // CJK 部首 / 假名 / 注音 / 漢字
+                            || (c >= 0xAC00 && c <= 0xD7A3)   // 韓文音節
+                            || (c >= 0xF900 && c <= 0xFAFF)   // CJK 相容漢字
+                            || (c >= 0xFE30 && c <= 0xFE4F)   // CJK 相容形式
+                            || (c >= 0xFF00 && c <= 0xFF60);  // 全形英數/標點
+                w += wide ? fontSize : fontSize * 0.55f;
+            }
+            return w;
+        }
+
+        /// <summary>
+        /// 座位右鍵選單 —— 官方 SP_PopMenu 的複刻(底板 SPopMenu6 + 每列 FamilyPop 兩態 + 深紅粗體字)。
+        ///
+        /// 為什麼跟 <see cref="BuildContextMenu"/> 分家:官方那張列圖是 92px 的固定膠囊,而分隊選單的
+        /// 「2對2對2」在 92px 內會被夾壞。共用一個繪製函式就一定有一邊要犧牲 —— 座位選單有官方美術可對,
+        /// 分隊選單沒有(那顆鈕是我們加的),所以各走各的。
+        ///
+        /// 底板為什麼還是畫:官方每一列 x=0、寬度也是 92,所以底板其實**整片被列蓋住**。留著是因為
+        /// 選單被撐寬時(日文/英文的長字)兩者一起拉,列與列之間 1px 的接縫後面才不會透出 3D 房間。
+        /// </summary>
+        private GameObject BuildSlotMenu(string name, Vector2 screenPos, int count,
+                                         System.Func<int, string> labelOf, System.Action<int> onPick)
+        {
+            EnsureSlotMenuArt();
+            var labels = new string[count];
+            float w = SlotMenuMinW;
+            for (int i = 0; i < count; i++)
+            {
+                labels[i] = labelOf(i) ?? "";
+                w = Mathf.Max(w, MenuTextWidth(labels[i], SlotMenuFontPx) + SlotMenuPadX * 2f);
+            }
+            w = Mathf.Ceil(w);          // 半像素寬會讓 9-slice 的邊落在像素中間 → 邊框糊掉
+            float h = SlotMenuRowH * count;
+
+            Vector2 tl = PointerToDesign(screenPos);
+            // 夾進 800×600。最滿是 5 列 = 135px(RoomSlotMenuTests 釘住了上限),在畫面下緣右鍵時
+            // 這個 Clamp 會把整個選單往上推,而不是讓下面兩列被切到框外。
+            float x = Mathf.Clamp(tl.x, 0f, Mathf.Max(0f, 800f - w));
+            float y = Mathf.Clamp(tl.y, 0f, Mathf.Max(0f, 600f - h));
+
+            var panel = UIKit.AddImage(Root, name, Color.white, raycast: true);
+            SetSliced(panel, _slotMenuBg, SlotMenuBgFallback);
+            Place(panel.rectTransform, x, y, w, h);
+            panel.transform.SetAsLastSibling();
+
+            for (int i = 0; i < count; i++)
+            {
+                int idx = i;
+                var row = UIKit.AddImage(panel.rectTransform, "Row" + i, Color.white, raycast: true);
+                SetSliced(row, _slotMenuRow, SlotMenuRowFallback);
+                Place(row.rectTransform, 0f, SlotMenuRowH * i, w, SlotMenuRowH);
+
+                var btn = row.gameObject.AddComponent<Button>();
+                btn.targetGraphic = row;
+                // 官方 bgpushed = bgnormal,所以 pressed 也給 normal ——
+                // 自己補一個「按下變暗」等於多出官方沒有的第三態。
+                btn.transition = Selectable.Transition.SpriteSwap;
+                var st = btn.spriteState;
+                st.highlightedSprite = _slotMenuRowHover;
+                st.pressedSprite = _slotMenuRow;
+                st.selectedSprite = _slotMenuRow;
+                btn.spriteState = st;
+                UiSfx.AttachClick(btn);
+                UiHoverSfx.Attach(btn);
+                btn.onClick.AddListener(() => onPick(idx));
+
+                var t = UIKit.AddText(row.rectTransform, "Label", labels[i], SlotMenuFontPx, SlotMenuTextColor,
+                                      TextAlignmentOptions.Center);
+                t.fontStyle = FontStyles.Bold;                 // 官方每一列都 bold="true"
+                // 高度少 1px:膠囊的上下框各佔 1px,字框跟著縮才會落在**內側**的視覺中心。
+                Place(t.rectTransform, SlotMenuPadX, 0f, w - SlotMenuPadX * 2f, SlotMenuRowH - 1f);
+            }
+            _slotPopupFrame = Time.frameCount;
+            return panel.gameObject;
+        }
+
+        /// <summary>
+        /// 純色的小彈出選單 —— 現在**只剩房主的自動分隊選單**在用。
+        ///
+        /// 座位選單已經換成官方美術(<see cref="BuildSlotMenu"/>,對照 UI/ROOM/POPMENU.XML 的 SP_PopMenu)。
+        /// 分隊選單留在這個純色版本,是因為官方**沒有**這顆鈕(右鍵組隊格是我們加的,見 <see cref="BuildTeamToggle"/>),
+        /// 沒有可以對照的美術;而官方那張列圖是 92px 的固定膠囊,「2對2對2」塞進去會被夾壞。
         /// 深色底 + 白字,寬度依最長那一項算。位置是滑鼠的設計座標,並夾進 800×600 框內。
         /// </summary>
         private GameObject BuildContextMenu(string name, Vector2 screenPos, int count,

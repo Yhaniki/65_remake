@@ -39,6 +39,7 @@ namespace Sdo.UI
         public bool AnyModalOpen => ShopOpen
             || (_wardrobe != null && _wardrobe.IsOpen)
             || (_option != null && _option.IsOpen)
+            || (_playerInfo != null && _playerInfo.IsOpen)
             || JoinRoomOpen;
 
         /// <summary>「輸入房號」框。選男女畫面按「加入」時自己叫它 <c>Open()</c> —— 加入流程的邏輯屬於那個畫面。</summary>
@@ -55,6 +56,7 @@ namespace Sdo.UI
         private ShopScreen _shop;
         private WardrobeScreen _wardrobe;
         private JoinRoomModal _joinRoom;
+        private PlayerInfoModal _playerInfo;          // 玩家資訊視窗（房間右鍵選單「玩家信息」開它）
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
@@ -101,8 +103,9 @@ namespace Sdo.UI
             var vol = DisplaySettingsManager.Settings?.audio;   // 開機即把已存的三個音量套進 AudioMix(BGM/歌曲/SE 一開始就對)
             if (vol != null) AudioMix.Set(vol.bgm, vol.gameMusic, vol.sfx);
 
-            // 依 config.ini 的 [Net] serverAddress 決定單機還是連線 —— 這是唯一的分流點。
-            // 留空(預設)＝完全走原本的單機路徑,連線層一行都不會被建起來。
+            // 開機**一律是單機**:連線層一行都不會被建起來,直到玩家在選角色畫面按「登入」
+            // (見 TryLogin)。config.ini 的 [Net] serverAddress 現在只決定「按登入時要連去哪」,
+            // 不再決定「開機要不要連」—— 只想單機玩的人開機不必等任何握手。
             _ctx = AppContext.Create();
 
             // OPTION 遊戲頁「遊戲畫面」偏好：全屏(填滿) = Stretch，視窗化(左右黑邊) = Pillarbox。必須在 CreateWorldCanvas
@@ -149,13 +152,9 @@ namespace Sdo.UI
                 prog.Set(0.15f + 0.55f * Mathf.Clamp01(f),
                          string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
 
-            // Phase 3 —— 連線(只有 config.ini 填了 [Net] serverAddress 才會走到)。
-            // 連線在 AppContext.Create 就已經開始了(背景 thread),這裡只是等它完成並顯示進度。
-            //
-            // 🔴 順序很重要:這一段**必須在建畫面之前**。連不上的時候它會把 _ctx 換成單機版,
-            // 而畫面是在 Build(ctx) 時把 ctx 抓進自己的欄位的 —— 先建畫面就會抓到一個已經死掉的連線,
-            // 而且畫面的版面(選男女畫面的按鈕是兩顆還是三顆)也是依連線狀態決定的,晚了就來不及。
-            yield return WaitForConnectionCo(prog);
+            // Phase 3 —— 開機不再連線。連線改由玩家按「登入」發動(TryLogin),而且成功/失敗都是
+            // **就地**換掉 AppContext 內部的 Rooms/Chat/Net,不換 AppContext 物件本身 ——
+            // 所以畫面在這之後才建也沒關係(它們抓的 ctx 永遠是同一個)。
 
             // Phase 4 — build the screens (SongSelect now sees the external songs registered above).
             prog.Set(0.78f, "建立介面…");
@@ -189,6 +188,10 @@ namespace Sdo.UI
             _joinRoom = new GameObject("JoinRoom").AddComponent<JoinRoomModal>();
             _joinRoom.transform.SetParent(modalLayer, false);
             _joinRoom.Build(modalLayer);
+            // 玩家資訊視窗(官方 PlayerInformationDlg)。單機也建 —— 看自己的資料不需要連線。
+            _playerInfo = new GameObject("PlayerInfo").AddComponent<PlayerInfoModal>();
+            _playerInfo.transform.SetParent(modalLayer, false);
+            _playerInfo.Build(modalLayer);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
@@ -196,6 +199,13 @@ namespace Sdo.UI
             Nav.OpenShop = () => ScreenTransition.Run(() => _shop.Open());   // 進商城：漸黑 → loading → 漸亮（同房間進出效果）
             Nav.OpenWardrobe = () => _wardrobe.Open();                        // 儲物櫃有自己的視窗開闔動畫(WindowAnim)，不套轉場
             Nav.StartGame = StartGameplay;
+            // 玩家資訊:看自己 / 看別人。視窗裡的「私聊」鈕轉回房間的聊天輸入框(與點聊天列人名同一條路)——
+            // 沒有這一手的話那顆鈕就只能隱藏,而它是官方選單裡最常按的一項。
+            Nav.OpenSelfInfo = () => _playerInfo.OpenSelf();
+            Nav.OpenPlayerInfo = (who, gender) => _playerInfo.Open(who, gender, name =>
+            {
+                if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.BeginWhisperTo(name);
+            });
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
@@ -225,6 +235,18 @@ namespace Sdo.UI
             // 直接問 roomList 拿第一間。要先有另一份 client(SDO_ROOM=1)開好房。
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_JOINFIRST")) && _ctx.Net != null)
                 StartCoroutine(DevJoinFirstRoomCo());
+            // DEV: SDO_LOBBY=1 → 開機自動登入並進大廳,用來截圖檢查大廳版位。
+            //      SDO_LOBBY=2 → **不登入**直接進大廳(房間列表用單機的 MockRoomService)。
+            //      後者不只是省事:大廳的單機分支(LoadOfflineRooms)在正常玩法裡走不到
+            //      —— 玩家連不上就直接進自己的房間了 —— 所以那條路沒有別的辦法驗證。
+            string devLobby = ScreenGameplay.DevVar("SDO_LOBBY");
+            if (devLobby == "2") _ctx.Flow.GoTo(ScreenId.Lobby);
+            else if (!string.IsNullOrEmpty(devLobby))
+                TryLogin(ok => { if (ok) _ctx.Flow.GoTo(ScreenId.Lobby); });
+            // DEV: SDO_PLAYERINFO=1 → 開機直接開「我自己的」玩家資訊視窗。
+            // 那個視窗的數字全部來自本機 profile.json 的累計,版位又是逐字照官方 XML 排的 ——
+            // 兩件事都只有實機截圖看得出來對不對。
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_PLAYERINFO"))) Nav.OpenSelfInfo?.Invoke();
         }
 
         /// <summary>SDO_JOINFIRST 的實作:問房間列表 → 加入第一間 → 進房間畫面。純除錯用。</summary>
@@ -265,19 +287,43 @@ namespace Sdo.UI
         }
 
         /// <summary>
-        /// 等連線握手完成。單機模式(<c>_ctx.Net == null</c>)直接跳過。
+        /// 「登入」—— 玩家在選角色畫面按下那顆鈕時呼叫。**這是全專案唯一發動連線的地方。**
         ///
-        /// **連不上就退回單機,不會卡在開機畫面** —— 這很重要:玩家可能只是忘了關掉
-        /// config.ini 的 serverAddress,或伺服器剛好沒開。那種情況下讓他能照常單機玩,
-        /// 遠比讓他盯著一個永遠不動的進度條好。
+        /// <paramref name="done"/> 收到 true = 已經是線上模式(可以進大廳);false = 沒有伺服器可連、
+        /// 或連不上已退回單機(呼叫端照原本的單機路徑走,不必自己判斷是哪一種失敗)。
+        ///
+        /// 重複按不會疊第二條連線(<see cref="_loggingIn"/> 擋著);已經登入過就直接回 true。
         /// </summary>
-        private IEnumerator WaitForConnectionCo(BootProgress prog)
+        public void TryLogin(System.Action<bool> done)
         {
-            var net = _ctx.Net;
-            if (net == null) yield break;
+            if (_ctx == null) { done?.Invoke(false); return; }
+            if (_ctx.Net != null && _ctx.Net.IsConnected) { done?.Invoke(true); return; }
+            if (_loggingIn) { done?.Invoke(false); return; }
 
-            prog.Set(0.72f, "連線伺服器…", Sdo.Settings.RoomConfig.serverAddress);
+            var net = _ctx.BeginLogin();
+            if (net == null)
+            {
+                // config.ini 沒填 serverAddress —— 這不是錯誤,是「這台機器就是要單機玩」。
+                // 不彈 Toast:玩家按的是「登入」,而他得到的就是原本的單機房間,沒有壞掉的東西要解釋。
+                done?.Invoke(false);
+                return;
+            }
+            _loggingIn = true;
+            StartCoroutine(LoginCo(net, done));
+        }
 
+        /// <summary>登入中(擋重複按)。</summary>
+        private bool _loggingIn;
+
+        /// <summary>True while <see cref="TryLogin"/> 正在等握手 —— 畫面用它把登入鈕變灰。</summary>
+        public bool LoggingIn => _loggingIn;
+
+        /// <summary>
+        /// 等握手完成。**連不上就退回單機,不會卡住** —— 玩家可能只是忘了關掉 config.ini 的
+        /// serverAddress,或伺服器剛好沒開。那種情況下讓他照常單機玩,遠比讓他盯著一個轉不完的圈好。
+        /// </summary>
+        private IEnumerator LoginCo(NetClient net, System.Action<bool> done)
+        {
             float deadline = Time.realtimeSinceStartup + ConnectTimeoutSec;
             while (Time.realtimeSinceStartup < deadline)
             {
@@ -285,9 +331,13 @@ namespace Sdo.UI
 
                 if (net.IsConnected)
                 {
-                    prog.Set(0.76f, "已連上伺服器", Sdo.Settings.RoomConfig.serverAddress);
                     net.ErrorReceived += OnNetError;   // 見 OnNetError:沒接的話這些錯誤全被丟掉
+                    net.Disconnected += OnNetDisconnected;   // 中途斷線也要退回單機,不能停在半死狀態
+                    _ctx.CompleteLogin(net);
                     _netReady = true;
+                    _loggingIn = false;
+                    Debug.Log("[net] 已登入 " + Sdo.Settings.RoomConfig.serverAddress);
+                    done?.Invoke(true);
                     yield break;
                 }
 
@@ -297,15 +347,34 @@ namespace Sdo.UI
                 yield return null;
             }
 
-            // 逾時或失敗 → 退回單機。
+            // 逾時或失敗 → 退回單機。ctx 本來就還是單機的(CompleteLogin 沒被呼叫過),
+            // 所以這裡只要把半開的連線關掉、記下原因讓 Update 用 Toast 說一次。
             string why = string.IsNullOrEmpty(net.LastError) ? "連線逾時" : net.LastError;
-            Debug.LogWarning("[net] 連不上伺服器,改用單機模式:" + why);
-            net.Disconnect("bootFailed");
-            _ctx = AppContext.CreateMock();
+            net.Disconnect("loginFailed");
+            _loggingIn = false;
             _netFellBackReason = why;
+            done?.Invoke(false);
         }
 
-        /// <summary>開機連線的等待上限。超過就退回單機。</summary>
+        /// <summary>
+        /// 連上之後**中途**斷線(server 關掉、網路斷了)。以前完全沒人接,畫面會停在
+        /// 「Net 非 null 但 IsConnected == false」的半死狀態:按鈕還是線上版面,按下去卻永遠沒有回應。
+        ///
+        /// 這裡走與登入失敗同一條退回路徑,並把玩家從房間帶回選角色畫面 ——
+        /// 房間畫面的資料來源(server 快照)已經沒了,留在那裡只會看到一間空房。
+        /// </summary>
+        private void OnNetDisconnected(string reason)
+        {
+            if (_ctx == null || _ctx.Net == null) return;
+            Debug.LogWarning("[net] 連線中斷:" + reason);
+            _ctx.Logout("linkLost");
+            _netFellBackReason = reason;
+            var cur = _ctx.Flow.Current;
+            if (cur == ScreenId.Lobby || cur == ScreenId.Room || cur == ScreenId.SongSelect)
+                ScreenTransition.Run(() => _ctx.Flow.GoTo(ScreenId.GenderSel));
+        }
+
+        /// <summary>登入握手的等待上限。超過就退回單機。</summary>
         private const float ConnectTimeoutSec = 6f;
 
         /// <summary>
@@ -358,11 +427,11 @@ namespace Sdo.UI
         /// <summary>非空 = 開機時連不上,已退回單機(進到畫面後用 Toast 告知玩家)。</summary>
         private string _netFellBackReason;
 
-        // 大廳系畫面(男/女選擇 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複)並淡回;選歌畫面=淡出禁音但軌道繼續播
-        // (離開選歌回房間再淡回同一首);遊戲(有歌)/Lobby 才真的停。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 持續。
+        // 大廳系畫面(男/女選擇 + 大廳 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複)並淡回;選歌畫面=淡出禁音但軌道繼續播
+        // (離開選歌回房間再淡回同一首);遊戲(有歌)才真的停。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 持續。
         private static void UpdateBgm(ScreenId to)
         {
-            if (to == ScreenId.GenderSel || to == ScreenId.Room) { BgmPlayer.Play(); BgmPlayer.SetMuted(false); }
+            if (to == ScreenId.GenderSel || to == ScreenId.Lobby || to == ScreenId.Room) { BgmPlayer.Play(); BgmPlayer.SetMuted(false); }
             else if (to == ScreenId.SongSelect) BgmPlayer.SetMuted(true);   // 線性淡出 0.2s → 禁音,仍在播
             else BgmPlayer.Stop();
         }
@@ -417,10 +486,10 @@ namespace Sdo.UI
             // 缺歌傳檔:同樣要在遊戲中也繼續跑 —— 下載可能跨過「別人在打歌、我留在房間」那段。
             NetSongTransfer.Tick(_ctx, this);
 
-            // 開機時連不上 → 已退回單機,進到畫面後告知玩家一次。
-            // 🔴 要等 Toast 建好才說(Toast.Ready)。Update 從第一幀就在跑,而這個原因是開機
-            // Phase 3 設的、Toast 到 Phase 5 才建 —— 不等的話下一幀就被讀走並丟掉,
-            // Toast.Show 那時只會寫一行 log,**玩家永遠看不到那句話**,只覺得「怎麼變單機了」。
+            // 登入連不上 / 中途斷線 → 已退回單機,告知玩家一次。
+            // 🔴 要等 Toast 建好才說(Toast.Ready):Update 從第一幀就在跑,而 Toast 到開機 Phase 5
+            // 才建 —— 不等的話原因下一幀就被讀走並丟掉,Toast.Show 那時只會寫一行 log,
+            // **玩家永遠看不到那句話**,只覺得「怎麼變單機了」。
             if (_netFellBackReason != null && Toast.Ready)
             {
                 var why = _netFellBackReason;
@@ -544,6 +613,7 @@ namespace Sdo.UI
             game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
             game.showtimeMode = s.GameMode == 2;                 // 選歌模式選單：2 = ShowTime（氣條/集氣）模式；否則一般玩法
+            game.gameMode = s.GameMode;                          // 0=自由 1=普通 2=ShowTime。曲末要靠它決定這場記不記勝負（PlayStatsRecorder）
             game.dropDirection = s.DropDirection;                // 房間 win2「掉落方式」→ note 面板上/下 + 捲動方向（0=向上 1=向下 2=傾斜）
             var gp = DisplaySettingsManager.Settings?.gameplay;  // OPTION 遊戲頁偏好 → 開局套用
             if (gp != null)
@@ -883,12 +953,46 @@ namespace Sdo.UI
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),
         // so the front-end just tears the gameplay session down and returns to the room. (The legacy ResultsModal is
         // intentionally unused now that the play screen settles itself; kept built only so older call sites compile.)
-        private void ReturnFromGameplay() { SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame(); }
+        //
+        // 🔴 戰績要在**這裡**落地,不能在曲末(EnterResult):線上的名次是 server 的 resultsReady 到了才算數
+        //    (見 ScreenGameplay.RefreshNetResultRows),曲末那一刻本機只是用自己看得到的名單推測。
+        //    玩家按下確定時,權威名次早就到了。
+        private void ReturnFromGameplay()
+        {
+            RecordPlayStats();
+            SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame();
+        }
 
         // Esc during play: abandon the run with no settlement and go straight back to the room.
         // 🔴 中途離開也要送 playFinished(帶當下的部分分數)—— 不送的話房間會卡在 playing,
         //    要等 server 的逾時才恢復,那段時間誰都不能再開一局。
+        //
+        // 中途離開**不記戰績**:那不是一份完整的成績(判定數只有半首歌),而且如果記勝負的話,
+        // 「快輸了就按 ESC」就會變成保住勝率的操作。
         private void AbortGameplay() { SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame(); }
+
+        /// <summary>
+        /// 把這一場的判定數(與該記的勝負)累加進 active profile。政策在 <see cref="PlayStatsRecorder"/>。
+        ///
+        /// 分數物件是 plain managed state,gameplay 的 GameObject 被銷毀後仍讀得到 —— 但這裡是在
+        /// TeardownGameplay **之前**呼叫的,所以不必依賴那件事。
+        /// </summary>
+        private void RecordPlayStats()
+        {
+            var game = _activeGame;
+            if (game == null) return;
+            var score = game.Score;
+            if (score == null) return;
+
+            PlayStatsRecorder.Record(
+                ProfileManager.Active,
+                score.PerfectCount, score.CoolCount, score.BadCount, score.MissCount,
+                finished: game.Finished,
+                spectator: game.spectatorMode,
+                online: _ctx != null && _ctx.Net != null && _ctx.Net.IsConnected,
+                gameMode: game.gameMode,
+                localWon: game.LocalWon);
+        }
 
         /// <summary>Ctrl 按著嗎(左右都算)。優先問實體鍵位(不受輸入法影響),不支援時退回 Unity Input。</summary>
         private static bool CtrlHeld()

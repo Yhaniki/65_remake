@@ -33,8 +33,14 @@ namespace Sdo.UI.Services
         public string DisplayName;
         public int Level;
 
+        /// <summary>家族名稱。空 = 沒有家族。線上由 <c>NetSeat.Guild</c> 帶進來(對方在 setIdentity 報的),
+        /// 離線是本機 profile/config 的家族名。玩家資訊視窗要顯示它。</summary>
+        public string Guild = "";
+
         public PlayerProfile() { }
         public PlayerProfile(string id, string name, int level) { Id = id; DisplayName = name; Level = level; }
+        public PlayerProfile(string id, string name, int level, string guild)
+        { Id = id; DisplayName = name; Level = level; Guild = guild ?? ""; }
     }
 
     public sealed class SeatInfo

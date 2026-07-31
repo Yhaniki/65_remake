@@ -11,20 +11,35 @@ namespace Sdo.UI.Core
     {
         public GameSession Session { get; }
         public FlowManager Flow { get; }
-        public IRoomService Rooms { get; }
         public IPlayerService Players { get; }
-        public IChatService Chat { get; }
 
         /// <summary>
-        /// 連線層。**null = 單機模式**(<c>config.ini [Net] serverAddress</c> 留空)。
+        /// 房間服務。**登入前後會換人**(單機的 MockRoomService ↔ 線上的 OnlineRoomService),
+        /// 但 AppContext 這個**物件本身不換** —— 畫面在 <c>Build(ctx)</c> 時把 ctx 抓成自己的欄位就不再更新,
+        /// 換掉整個 ctx 會讓已建好的畫面全指著死掉的那份(RoomScreen 有 50 處 <c>Ctx.Net</c>)。
+        /// </summary>
+        public IRoomService Rooms { get; private set; }
+
+        /// <summary>聊天服務。同 <see cref="Rooms"/>,登入/登出時就地換掉。</summary>
+        public IChatService Chat { get; private set; }
+
+        /// <summary>
+        /// 連線層。**null = 單機模式**(還沒登入、沒有伺服器可連、或登入失敗退回單機)。
         ///
         /// 讀房間狀態一律走 <see cref="Rooms"/> —— 兩個模式的形狀一樣,所以畫面程式碼不必分辨。
         /// **線上專屬的操作**(鎖格子 / 踢人 / 轉移房主 / 旁觀 / 開場 / 缺歌回報)走這裡,
         /// 呼叫前判斷 null;那就是「這個功能只有連線才有」最自然的表達。
         /// </summary>
-        public NetClient Net { get; }
+        public NetClient Net { get; private set; }
 
         public bool IsOnline => Net != null;
+
+        /// <summary>線上/單機切換時通知畫面重畫(版面依模式而異,例如大廳的房間列表來源)。</summary>
+        public event System.Action OnlineChanged;
+
+        /// <summary>單機那份聊天實作。線上的 OnlineChatService 是**包在它外面**的,登出時要換回這一份
+        /// (不能重新 new 一個 —— 歷史訊息會整串消失)。</summary>
+        private readonly IChatService _offlineChat;
 
         public AppContext(GameSession session, FlowManager flow, IRoomService rooms,
                           IPlayerService players, IChatService chat, NetClient net = null)
@@ -35,31 +50,36 @@ namespace Sdo.UI.Core
             Players = players;
             Chat = chat;
             Net = net;
+            _offlineChat = chat;
         }
 
         /// <summary>
-        /// 依 <c>config.ini</c> 建 app context:填了 <c>[Net] serverAddress</c> 走連線,留空走單機。
-        /// **這是唯一的分流點** —— 其餘程式碼不需要知道自己在哪個模式。
+        /// 建 app context。**開機一律是單機** —— 連線改由玩家在選角色畫面按「登入」才發動
+        /// (<see cref="BeginLogin"/> → <see cref="CompleteLogin"/>)。
+        ///
+        /// 以前這裡會依 <c>config.ini [Net] serverAddress</c> 直接開連線,於是連「只想單機玩」的人
+        /// 開機都要先等一次握手。現在開機一行連線程式碼都不會跑。
         /// </summary>
-        public static AppContext Create()
-            => RoomConfig.OnlineEnabled ? CreateOnline() : CreateOffline();
+        public static AppContext Create() => CreateOffline();
 
         /// <summary>
-        /// 連線模式。**連線是非同步的** —— 這裡只把連線層建起來並開始連,
-        /// 等待與逾時由呼叫端(<c>FrontendApp.BootCo</c>)處理,連不上就提示並改用單機。
+        /// 發動連線。**非同步** —— 這裡只把連線層建起來並開始連,握手完成與否由呼叫端輪詢
+        /// (<c>FrontendApp.LoginCo</c>);握手成功要再呼叫 <see cref="CompleteLogin"/> 才會真的切成線上模式。
+        ///
+        /// 回 <c>null</c> = <c>config.ini</c> 沒填 <c>[Net] serverAddress</c>(根本沒有伺服器可連)。
         /// </summary>
-        private static AppContext CreateOnline()
+        public NetClient BeginLogin()
         {
-            var offline = CreateOffline();   // session / chat / players 先照單機那套建好
+            if (!RoomConfig.OnlineEnabled) return null;
 
             var net = new NetClient();
             var identity = new NetHelloIdentity
             {
-                PlayerId = offline.Session.LocalPlayerId,
-                Name = offline.Session.LocalPlayerName,
-                Guild = offline.Session.GuildName,
-                Level = ParseLevel(RoomConfig.playerLevel),
-                Gender = offline.Session.Gender,
+                PlayerId = Session.LocalPlayerId,
+                Name = Session.LocalPlayerName,
+                Guild = Session.GuildName,
+                Level = ProfileFields.PlayerLevelValue(Sdo.Settings.ProfileManager.Active),
+                Gender = Session.Gender,
                 // 握手就帶上真的體型與穿搭 —— 用 profile 的**快取**那份(EquippedAvatarParts),
                 // 不要在開機時去碰 AvatarItemCatalog(那會提早觸發整份商城目錄載入,很貴)。
                 // 飾品之類需要 catalog 才算得出來的差異,由進房前的 setLook 修正(見 net.LocalLook)。
@@ -74,17 +94,53 @@ namespace Sdo.UI.Core
             // 「我現在長什麼樣」的唯一來源。NetClient 在建房/加入/旁觀的第一行呼叫它(PublishLook),
             // 所以第一份廣播出去的房間快照就已經帶對的外觀 —— 別人不會先看到一隻預設的女角。
             // 放在 AppContext 是因為它是唯一的離線/連線分流點,也是唯一該知道 profile/穿搭怎麼解析的地方。
-            net.LocalLook = () => LocalLookNow(offline.Session);
+            net.LocalLook = () => LocalLookNow(Session);
             // 「我現在是誰」的唯一來源,與 LocalLook 成對(NetClient 在建房/加入/旁觀一起呼叫)。
-            // 握手報的名字是**開機那刻**的 active profile —— 而選性別 == 選帳號,女角與男角的名字不一樣,
+            // 握手報的名字是**按登入那刻**的 active profile —— 而選性別 == 選帳號,女角與男角的名字不一樣,
             // 所以進房前一定要再報一次,否則別人看到的是「新的男角」配「舊的女角名字」。
-            net.LocalIdentity = () => LocalIdentityNow(offline.Session);
+            net.LocalIdentity = () => LocalIdentityNow(Session);
+            return net;
+        }
 
-            var rooms = new OnlineRoomService(net, offline.Session);
+        /// <summary>
+        /// 握手成功 → **就地**切成線上模式:房間服務換成 OnlineRoomService、聊天包上 OnlineChatService、
+        /// <see cref="Net"/> 指過去。
+        ///
+        /// 🔴 <see cref="Session"/> / <see cref="Flow"/> / <see cref="Players"/> 原封不動 ——
+        /// 玩家在選角色畫面已經選好的性別與身分不能在這一步蒸發。
+        /// </summary>
+        public void CompleteLogin(NetClient net)
+        {
+            if (net == null || Net == net) return;
+            Net = net;
+            Rooms = new OnlineRoomService(net, Session);
             // 聊天:同房的公開發言走 server 廣播;密語/家族/系統/「你說」那些本機專屬的行仍由離線實作產生
             // (見 OnlineChatService 的註解)。所以是「包在外面」而不是整個換掉。
-            var chat = new OnlineChatService(net, offline.Chat, () => offline.Session.Gender == 1);
-            return new AppContext(offline.Session, offline.Flow, rooms, offline.Players, chat, net);
+            Chat = new OnlineChatService(net, _offlineChat, () => Session.Gender == 1);
+            if (OnlineChanged != null) OnlineChanged();
+        }
+
+        /// <summary>
+        /// 退回單機:斷線、房間/聊天換回單機那份、<see cref="Net"/> 設回 null。
+        /// 連不上、被踢下線、玩家自己登出都走這裡。
+        ///
+        /// 🔴 同一個 <see cref="Session"/> 留著 —— 這正是不能用「重建一個 AppContext」代替的原因
+        /// (那會把玩家已選好的性別/身分一起換掉)。
+        /// </summary>
+        public void Logout(string reason)
+        {
+            bool wasOnline = Net != null;
+            if (Net != null)
+            {
+                Net.Disconnect(reason);
+                Net = null;
+            }
+            // OnlineRoomService 在 NetClient 上掛了事件;不退訂的話反覆登入/登出會累積重複訂閱。
+            var disposable = Rooms as System.IDisposable;
+            if (disposable != null) disposable.Dispose();
+            Rooms = new MockRoomService(Session);
+            Chat = _offlineChat;
+            if (wasOnline && OnlineChanged != null) OnlineChanged();
         }
 
         /// <summary>
@@ -106,21 +162,21 @@ namespace Sdo.UI.Core
 
         /// <summary>
         /// 現在的本機身分:名字 / playerId / 性別看 session(選角色畫面可能剛切過帳號),
-        /// 家族與等級看共用的 <c>config.ini [Profile]</c>(那兩項不分帳號)。
+        /// 家族與等級走 <see cref="ProfileFields"/> —— 那兩項的 Default 在 config.ini,
+        /// 但這個角色自己設過就以角色的為準(所以切帳號時會跟著換)。
         /// </summary>
         private static NetPlayerIdentity LocalIdentityNow(GameSession session)
-            => new NetPlayerIdentity
+        {
+            var p = Sdo.Settings.ProfileManager.Active;
+            return new NetPlayerIdentity
             {
                 Name = session != null ? session.LocalPlayerName : "",
                 PlayerId = session != null ? session.LocalPlayerId : "",
-                Guild = session != null ? session.GuildName : "",
-                Level = ParseLevel(RoomConfig.playerLevel),
+                // 家族名走 profile/config 那條(而不是 GameSession 寫死的示範字串)——
+                // 這樣「別人在房間看到的我的家族」與「我頭上名牌的家族」是同一個來源。
+                Guild = ProfileFields.FamilyName(p),
+                Level = ProfileFields.PlayerLevelValue(p),
             };
-
-        private static int ParseLevel(string s)
-        {
-            int v;
-            return int.TryParse((s ?? "").Trim(), out v) && v > 0 ? v : 1;
         }
 
         /// <summary>Build an app context backed by the offline mock services.</summary>

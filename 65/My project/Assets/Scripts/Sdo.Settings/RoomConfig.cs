@@ -612,7 +612,9 @@ namespace Sdo.Settings
             sb.Append("# 目前登入的角色＝ DATA/PROFILE/ 底下的 8 位數資料夾名（00000000=女 00000001=男）。\n");
             sb.Append("# 留空＝開遊戲時自動挑一個並寫回這裡。選角色畫面切換性別也會寫回這裡。\n");
             sb.Append("activeId=").Append(activeId ?? "").Append('\n');
-            sb.Append("# 房間裡頭上名字牌要顯示的「家族 / 等級」（本機顯示；任一留空＝不顯示該項）。\n");
+            sb.Append("# 底下三項是「家族 / 等級」的**預設值（Default）**，所有角色共用。\n");
+            sb.Append("# ★ 個別角色可以有自己的：角色資料夾裡的 profile.json 一旦有自己的設定，那個角色就以自己的為準，\n");
+            sb.Append("#   不再看這裡（在個人資料頁改家族/等級就會寫進那裡）。沒設過的角色才吃這裡的預設值。\n");
             sb.Append("# 家族名稱（白字描邊，畫在名字上方那行）。留空＝不顯示家族（連同下面的徽章一起隱藏）。\n");
             sb.Append("familyName=").Append(familyName ?? "").Append('\n');
             sb.Append("# 家族名稱前的小徽章：DATA/EMBLEM 底下的檔名(不含副檔名，如 SMALL43)，預設 SMALL43。留空＝只顯示名稱不放徽章。\n");

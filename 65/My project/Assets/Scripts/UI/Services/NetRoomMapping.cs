@@ -91,10 +91,13 @@ namespace Sdo.UI.Services
                 return s;
             }
 
+            // 🔴 Guild 一定要帶過來 —— 玩家資訊視窗要顯示對方的家族,而這是唯一拿得到它的地方
+            //    (以前這裡把 seat.Guild 丟掉了,於是視窗上的家族欄永遠是空的)。
             s.Player = new PlayerProfile(
                 seat.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 seat.Name ?? "",
-                seat.Level);
+                seat.Level,
+                seat.Guild ?? "");
 
             // 🔴 房主判定跟 hostUserId 比,不是看座位索引。
             s.IsHost = hostUserId != 0 && seat.UserId == hostUserId;
@@ -119,6 +122,7 @@ namespace Sdo.UI.Services
         {
             var info = new RoomInfo();
             info.Id = e.Code;
+            info.Seq = e.Seq;   // 大廳房卡顯示的門牌(3 位數);Id 是 5 位數的加入鑰匙,兩者不同
             info.Name = e.Name ?? "";
             info.HostName = e.HostName ?? "";
             info.Capacity = e.Capacity;

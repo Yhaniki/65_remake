@@ -297,6 +297,10 @@ namespace Sdo.Server.Net
 
                 arr.Add(JObj.New()
                     .Int("code", s.Code)
+                    // 門牌序號:大廳房卡上顯示的那個 3 位數(官方 %03d)。與 code 是兩件事 ——
+                    // code 是 5 位數的「加入鑰匙」,seq 是「這是第幾間房」。不送 seq 的話大廳只能拿
+                    // 列表位置湊,而那個數字會隨排序/刷新跳來跳去。
+                    .Int("seq", s.Seq)
                     .Str("name", s.Name)
                     .Str("hostName", hostName)
                     .Str("status", NetState.ToWire(s.Status))

@@ -17,8 +17,10 @@ namespace Sdo.UI.Core
         private static readonly Dictionary<ScreenId, HashSet<ScreenId>> Allowed =
             new Dictionary<ScreenId, HashSet<ScreenId>>
             {
-                { ScreenId.GenderSel, new HashSet<ScreenId> { ScreenId.Room } },   // 選完男女 → 直接進房間
-                { ScreenId.Lobby, new HashSet<ScreenId> { ScreenId.Room } },
+                // 選完男女按「登入」:連上 → 大廳(線上);連不上/沒設伺服器 → 照原本直接進自己的房間(單機)。
+                { ScreenId.GenderSel, new HashSet<ScreenId> { ScreenId.Room, ScreenId.Lobby } },
+                // 大廳 → 房間(建房或點列表加入);大廳 → 選角色是「登出」(斷線退回單機)。
+                { ScreenId.Lobby, new HashSet<ScreenId> { ScreenId.Room, ScreenId.GenderSel } },
                 { ScreenId.Room, new HashSet<ScreenId> { ScreenId.GenderSel, ScreenId.Lobby, ScreenId.SongSelect, ScreenId.Gameplay, ScreenId.Shop } },
                 { ScreenId.SongSelect, new HashSet<ScreenId> { ScreenId.Room } },
                 // Gameplay → GenderSel 是旁觀的 Ctrl+Q(需求 10):旁觀者直接離開房間回選角色,不繞回房間畫面。
