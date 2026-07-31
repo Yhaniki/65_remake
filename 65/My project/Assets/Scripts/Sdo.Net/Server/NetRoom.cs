@@ -23,6 +23,12 @@ namespace Sdo.Net.Server
         private readonly List<NetSpectator> _spectators = new List<NetSpectator>();
         private NetMatchInfo _match;
         private long _matchDeadlineMs;
+
+        /// <summary>
+        /// 結算寬限期的到期時刻(0 = 沒有在結算)。到期時 <see cref="Tick"/> 把還停在
+        /// <see cref="PlayState.Results"/> 的座位打回 idle —— 見 <see cref="NetLimits.ResultsGraceMs"/>。
+        /// </summary>
+        private long _resultsClearAtMs;
         private long _nextMatchId = 1;
 
         /// <summary>權威狀態。**只有這個類別能改它** —— 外部只讀。</summary>
@@ -616,14 +622,62 @@ namespace Sdo.Net.Server
                     break;
 
                 case PlayState.Finished:
+                    // 🔴 載入階段送 finished 一律忽略(不是退場,退場走下面的 idle)—— 這是安全邊界的一半:
+                    //    Hub.OnPlayFinished 那邊也擋掉同一件事,免得有人在開跳前先報一個分數。
                     if (_state.Status != RoomStatus.Playing) return NetRoomOp.Ok;
                     s.PlayState = PlayState.Finished;
+                    break;
+
+                case PlayState.Idle:
+                    // 還在等其他人載入時送 idle = 在「等待載入」畫面按了 Esc 中離 → 退出本場。
+                    if (_state.Status == RoomStatus.WaitingForLoad) return AbortDuringLoad(userId, matchId);
+                    // 「結算看完了,我人回房間了」。徽章的下緣時間點靠這一則 —— 沒有它,留在房間的人
+                    // 只能等 ResultsGraceMs 逾時才看到你回來(而那是給斷線的人用的兜底)。
+                    // 只有剛打完/中離那一場的人送得出來:其餘狀態一律擋掉,免得有人用它洗掉自己的 ready。
+                    // 已經是 idle 就當成功(冪等)—— 載入階段中離的人會先被 AbortDuringLoad 清成 idle,
+                    // 緊接著回房又送一次這則,不該讓他收到一個沒有意義的 badState。
+                    if (s.PlayState == PlayState.Idle) return NetRoomOp.Ok;
+                    if (s.PlayState != PlayState.Results && s.PlayState != PlayState.Finished)
+                        return NetRoomOp.BadState;
+                    s.PlayState = PlayState.Idle;
+                    s.Ready = false;
+                    // 最後一個人也回來了 → 這一場真的結束,收掉 _match(下一局才開得成)。
+                    if (!AnyParticipantIn(PlayState.Results) && !AnyParticipantIn(PlayState.Finished))
+                    {
+                        ClearResults();
+                        return NetRoomOp.Ok;
+                    }
                     break;
 
                 default:
                     return NetRoomOp.BadState;
             }
 
+            Touch();
+            return NetRoomOp.Ok;
+        }
+
+        /// <summary>
+        /// 載入階段中離 —— 把這個人從本場拿掉,座位打回 idle。
+        ///
+        /// 為什麼不是設成 <see cref="PlayState.Finished"/>:他一個音符都還沒打,沒有成績要進結算名單
+        /// (<see cref="RemoveFromMatch"/> 連 <c>Participants</c> 一起移除,結算就不會多出一列 0 分)。
+        ///
+        /// 之後的收尾由既有的 <see cref="Tick"/> 接手,不需要在這裡處理:還有人在載 → 繼續等;
+        /// 他是最後一個可開場的人 → <c>starters.Count == 0</c> 那條會把整場取消、房間打回 open。
+        /// </summary>
+        public NetRoomOp AbortDuringLoad(int userId, long matchId)
+        {
+            if (_match == null || _match.MatchId != matchId) return NetRoomOp.BadState;
+            if (_state.Status != RoomStatus.WaitingForLoad) return NetRoomOp.BadState;
+
+            var s = _state.SeatOf(userId);
+            if (s == null) return NetRoomOp.NotInRoom;
+            if (!IsParticipant(userId)) return NetRoomOp.BadState;
+
+            s.PlayState = PlayState.Idle;
+            s.Ready = false;
+            RemoveFromMatch(userId);
             Touch();
             return NetRoomOp.Ok;
         }
@@ -650,6 +704,10 @@ namespace Sdo.Net.Server
             match = null;
             if (!_state.IsHost(actorId)) return NetRoomOp.NotHost;
             if (_state.Status != RoomStatus.Open) return NetRoomOp.BadState;
+
+            // 上一局的結算還掛著(有人沒關結算面板,或已經斷線)→ 房主按下一局就等於「結算階段結束」。
+            // 不先清的話那幾格會頂著 results 跨進下一局,而 _match 也還是上一場的。
+            if (_resultsClearAtMs > 0) ClearResults();
             if (_state.Song == null) return NetRoomOp.NoSong;
             if (resolved == null) return NetRoomOp.BadState;
 
@@ -837,6 +895,9 @@ namespace Sdo.Net.Server
                         if (s.IsTaken && s.PlayState == PlayState.Finished) s.PlayState = PlayState.Results;
                     }
                     _state.Status = RoomStatus.Open;
+                    // 從這一刻起算寬限期。**這裡不清 results** —— 那份帶著 results 的快照要先廣播出去,
+                    // 留在房間的人才會繼續看到「他們還在結算、還沒回來」(見 ResultsGraceMs)。
+                    _resultsClearAtMs = nowMs + NetLimits.ResultsGraceMs;
                     tick.ResultsReady = true;
                     tick.Changed = true;
                     Touch();
@@ -844,21 +905,42 @@ namespace Sdo.Net.Server
                 return tick;
             }
 
+            // 結算寬限期到了 —— 還停在 results 的人多半是關掉遊戲/斷線走的(正常關結算面板的人
+            // 早就送過 setPlayState{idle} 把自己那格清掉了)。不兜這一手,那幾格會永遠掛著 PLAYING。
+            if (_resultsClearAtMs > 0 && nowMs >= _resultsClearAtMs)
+            {
+                ClearResults();
+                tick.Changed = true;
+            }
+
             return tick;
         }
 
         /// <summary>
-        /// 結算看完了 —— 把所有人打回 idle,準備下一局。Hub 在廣播 resultsReady 之後呼叫。
-        /// (分開成兩步是為了讓 client 有機會在 <c>results</c> 狀態下顯示結算畫面。)
+        /// 結算階段結束 —— 把所有人打回 idle,準備下一局。
+        ///
+        /// 🔴 呼叫時機是「**人回來了**」,不是「歌放完了」:
+        ///   ① 每個人自己關掉結算面板時 client 送 <c>setPlayState{idle}</c> → 只清他那一格;
+        ///      最後一個人清完時這裡會被叫到,收掉 <c>_match</c>。
+        ///   ② 沒人回報的兜底:<see cref="Tick"/> 的寬限期到了(斷線 / 關掉遊戲)。
+        ///   ③ 房主直接按下一局:<see cref="RequestStart"/> 進來時先清乾淨。
+        ///
+        /// 以前是由 Hub 在廣播 resultsReady 的**同一輪**就呼叫,結果是那份帶 <c>results</c> 的快照
+        /// 從來沒被送出去過一次 —— 留在房間的人看到 PLAYING 在曲末就消失,而那些人還在看成績。
         /// </summary>
         public void ClearResults()
         {
+            _resultsClearAtMs = 0;
             for (int i = 0; i < _state.Seats.Length; i++)
             {
                 var s = _state.Seats[i];
                 if (!s.IsTaken) continue;
-                if (s.PlayState == PlayState.Results || s.PlayState == PlayState.Finished)
-                    s.PlayState = PlayState.Idle;
+                // 🔴 只動「剛打完那一場」的人 —— 清 ready 也一樣。以前是無條件清全部,因為那時這支
+                //    是在結算的**同一瞬間**跑的,沒參加的人不可能在那個瞬間之前按下準備(打歌期間
+                //    SetReady 被 Status != Open 擋著)。現在清除延後到「人回來了 / 寬限期到」,中間
+                //    那幾十秒房間已經是 open —— 留在房間的人按了準備等下一局,不能被這裡洗掉。
+                if (s.PlayState != PlayState.Results && s.PlayState != PlayState.Finished) continue;
+                s.PlayState = PlayState.Idle;
                 s.Ready = false;   // 下一局要重新準備;房主本來就沒有這個狀態
             }
             _match = null;

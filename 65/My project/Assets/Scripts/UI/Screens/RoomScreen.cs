@@ -4364,7 +4364,7 @@ namespace Sdo.UI.Screens
                 // 離線模式沒有 userId(恆 0),那時退回 SeatInfo.IsHost。
                 bool seatIsHost = taken && (seat.UserId != 0 && room != null ? room.IsHostUser(seat.UserId) : seat.IsHost);
                 int badgeFrame = taken ? RoomBadgeFrames.ForTeam(seat.Team) : 0;
-                RenderSeatBadges(i, seat, taken, seatIsHost, badgeFrame);
+                RenderSeatBadges(i, seat, taken, seatIsHost, badgeFrame, isLocal);
 
                 // 名字底下那條名牌:選了隊才畫,畫的是那一隊的色條(官方 Team.an 第 1/2/3 幀)。
                 // 沒選隊(自由)= 官方的第 0 幀是 1×1 空白 → 這裡直接不畫,名字就落在頭貼面板原本的紫底上。
@@ -4393,11 +4393,24 @@ namespace Sdo.UI.Screens
         /// 「哪一張」是純邏輯,住在 <see cref="RoomBadgeChoice"/>(優先序 PLAYING &gt; NO MAP &gt; HOST &gt; READY
         /// 與理由都寫在那裡,並由 RoomBadgeChoiceTests 釘住)。這裡只負責把選中的那一張開起來、
         /// 換成**那個人自己的隊伍色**那一幀,其餘三張關掉。
+        ///
+        /// 🔴 <see cref="_starting"/> 期間整條凍結。server 在開場那一刻就把所有參與者轉成 waitingForLoad
+        /// (頭貼會立刻翻成 PLAYING),但那時本機的黑幕才剛開始淡 —— 不擋的話自己會眼睜睜看著
+        /// 自己那格在亮著的畫面上翻牌,而要的是「畫面先全黑、進 loading,之後才換」。
+        /// 順序是穩的:server 先送 matchStarting(這裡才會 _starting=true)才廣播含新狀態的房間快照,
+        /// 同一條連線不會倒過來。留在房間的人(沒被納入這場、缺歌的旁觀者)收不到 matchStarting,
+        /// _starting 恆 false → 照樣即時看到別人翻成 PLAYING,那正是他們需要的資訊。
+        ///
+        /// 🔴 <paramref name="isLocal"/> 管的是**回來**那半段:自己那格永遠不畫 PLAYING(理由見
+        /// <see cref="RoomBadgeChoice.For"/> 的參數說明)。兩道守門缺一不可 —— _starting 擋出去、
+        /// isLocal 擋回來,少了後者的症狀是「中離回房後自己那格掛著 PLAYING 直到全場打完」。
         /// </summary>
-        private void RenderSeatBadges(int i, SeatInfo seat, bool taken, bool seatIsHost, int badgeFrame)
+        private void RenderSeatBadges(int i, SeatInfo seat, bool taken, bool seatIsHost, int badgeFrame, bool isLocal)
         {
+            if (_starting) return;
+
             var badge = taken
-                ? RoomBadgeChoice.For(true, seatIsHost, seat.IsReady, seat.PlayState, seat.Avail)
+                ? RoomBadgeChoice.For(true, seatIsHost, seat.IsReady, seat.PlayState, seat.Avail, isLocal)
                 : RoomSeatBadge.None;
 
             Badge(_slotPlaying[i], badge == RoomSeatBadge.Playing, _playingFrames, badgeFrame);
@@ -4612,9 +4625,8 @@ namespace Sdo.UI.Screens
 
         // 頭上的名字牌:跟本機那顆同款(FaceCream + 黑邊 + 粗體),沒有它的話房間裡的人是誰全靠猜。
         //
-        // 寫什麼字由 RoomHeadName 決定 —— 進去打歌的人(還沒回房間)寫 Playing,其餘寫「名字 LV:x」。
-        // 這個方法掛在 rev gate 之後,而 PlayState 每次變動 server 都會 Touch()(Rev++)並推新快照,
-        // 所以「他開始打了 / 他回來了」都會走到這裡重寫一次;不需要每幀比對。
+        // 🔴 名字牌**只寫名字**。「他在打歌」是頭貼那條徽章的事(見 RenderSeatBadges) ——
+        // 名字被狀態字蓋掉的話,留在房間的人反而認不出誰是誰。
         private void SyncRemoteNamePlates(Sdo.Net.NetRoomSnapshot snap, int me)
         {
             _remoteScratchIds.Clear();
@@ -4632,7 +4644,8 @@ namespace Sdo.UI.Screens
                                                trackEm: TextStyles.HeadNameTrackEm);
                     _remoteNames[s.UserId] = lbl;
                 }
-                lbl.SetText(RoomHeadName.For(s.Name, s.Level, s.PlayState));
+                string lvl = s.Level > 0 ? "  LV:" + s.Level : "";
+                lbl.SetText((s.Name ?? "") + lvl);
             }
 
             // Spectators still own a live 3D avatar in a looker slot. Keep the same userId-keyed label while
@@ -4654,8 +4667,8 @@ namespace Sdo.UI.Screens
                                                    trackEm: TextStyles.HeadNameTrackEm);
                         _remoteNames[sp.UserId] = lbl;
                     }
-                    // 旁觀者不會在場中(NetSpectator 連 PlayState 欄位都沒有)→ 永遠寫名字。
-                    lbl.SetText(RoomHeadName.For(sp.Name, sp.Level, PlayState.Spectating));
+                    string lvl = sp.Level > 0 ? "  LV:" + sp.Level : "";
+                    lbl.SetText((sp.Name ?? "") + lvl);
                 }
 
             _remoteGoneIds.Clear();

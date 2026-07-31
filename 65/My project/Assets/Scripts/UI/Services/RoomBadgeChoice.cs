@@ -27,6 +27,9 @@ namespace Sdo.UI.Services
     /// (房主在場中時那格畫 PLAYING,不是 HOST);等他回來 / 補完歌,那一格自然退回 HOST 或 READY。
     /// PLAYING 壓過 NO MAP 是同一個道理 —— 已經在打歌的人「缺不缺歌」不再是有用的資訊。
     ///
+    /// **唯一的例外是自己那一格**(<c>isLocal</c>):看得到房間就代表自己已經回來了,不該看到自己 PLAYING。
+    /// 理由寫在 <see cref="For"/> 的參數說明。
+    ///
     /// 這裡只做「狀態 → 哪一張」這一步,與 Unity 無關 → 可單元測試(見 RoomBadgeChoiceTests)。
     /// 顏色是另一步(隊伍 → 幀索引,見 <see cref="RoomBadgeFrames"/>)。
     /// </summary>
@@ -35,10 +38,21 @@ namespace Sdo.UI.Services
         /// <param name="taken">這一格有人坐嗎(空位/關閉的位子什麼都不畫)。</param>
         /// <param name="isHost">🔴 由呼叫端算:線上看 server 的 HostUserId,離線退回 SeatInfo.IsHost。</param>
         /// <param name="isReady">按了「準備」。房主恆 false,所以順序上先判斷 host 也不會吃掉它。</param>
-        public static RoomSeatBadge For(bool taken, bool isHost, bool isReady, PlayState play, Availability avail)
+        /// <param name="isLocal">
+        /// 這格是**本機自己**嗎。是的話永遠不畫 PLAYING —— 「我看得到房間」本身就代表我已經不在場上了。
+        ///
+        /// 🔴 為什麼需要這個例外:中離(Esc)或打完先回房時,client 送的是 <c>playFinished</c>,server 把座位
+        /// 標成 <see cref="PlayState.Finished"/>,而那要等**全場**都打完才會被 ClearResults 打回 Idle。
+        /// 中間那段(別人還在跳完整首歌,可能一兩分鐘)自己人明明就站在房間裡走動聊天,那一格卻掛著
+        /// PLAYING。使用者的需求原話是「自己照理來說不會看到 playing」。
+        ///
+        /// 只擋自己這一格:別人畫面上的你仍然是 PLAYING(server 狀態沒動,那是他們需要的資訊 ——
+        /// 你的成績還在這一場裡)。
+        /// </param>
+        public static RoomSeatBadge For(bool taken, bool isHost, bool isReady, PlayState play, Availability avail, bool isLocal)
         {
             if (!taken) return RoomSeatBadge.None;
-            if (IsInMatch(play)) return RoomSeatBadge.Playing;
+            if (!isLocal && IsInMatch(play)) return RoomSeatBadge.Playing;
             if (avail == Availability.Missing) return RoomSeatBadge.NoMap;
             if (isHost) return RoomSeatBadge.Host;
             return isReady ? RoomSeatBadge.Ready : RoomSeatBadge.None;

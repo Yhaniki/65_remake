@@ -73,6 +73,19 @@ namespace Sdo.Net
         /// </summary>
         public const int ClientLoadTimeoutMs = LoadTimeoutMs + 5000;
 
+        /// <summary>
+        /// 結算的寬限期:從「全員打完」起算,到期就把還停在 <c>results</c> 的座位打回 <c>idle</c>。
+        ///
+        /// 為什麼需要它:client 是**曲末**就送 playFinished(不等玩家關掉 STATIS 結算面板),
+        /// 所以 server 判定結算的那一刻,人其實還在看成績、還沒走回房間。留在房間的人這時
+        /// 應該繼續看到他們頭貼上的 PLAYING —— 徽章要跟著「人回來了沒」,不是「歌放完了沒」。
+        ///
+        /// 正常情況下用不到這個逾時:玩家關掉結算面板時 client 會送 <c>setPlayState{idle}</c>,
+        /// 那一格當場就清掉。這是**斷線 / 關掉遊戲 / 改過的 client** 的兜底,不然那格會永遠掛著。
+        /// 比 client 的自動確認(<c>FrontendApp.NetResultAutoConfirmSec</c> = 30 秒)多留 5 秒緩衝。
+        /// </summary>
+        public const int ResultsGraceMs = 35000;
+
         // ---- 心跳 ----
 
         /// <summary>ping 間隔。</summary>

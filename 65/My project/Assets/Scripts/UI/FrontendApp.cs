@@ -867,6 +867,25 @@ namespace Sdo.UI
             // 退訂放在真的離開打歌畫面的那條路徑(DetachNetGameplay)。
         }
 
+        /// <summary>
+        /// 「結算看完了,我人回房間了」。
+        ///
+        /// 為什麼要單獨一則:<see cref="SendNetPlayFinished"/> 是**曲末**就送的(不等玩家關掉結算面板),
+        /// 所以 server 判定結算的那一刻,人還在看成績。留在房間的人這段時間應該繼續看到那幾格的
+        /// PLAYING 徽章 —— 它該跟著「人回來了沒」,不是「歌放完了沒」。
+        ///
+        /// 沒有這一則也不會壞:server 有 <see cref="Sdo.Net.NetLimits.ResultsGraceMs"/> 的逾時兜底
+        /// (那是給斷線 / 直接關掉遊戲的人用的),只是徽章會多掛幾十秒才消失。
+        ///
+        /// 送不出去(這一場已經被 server 收掉了 → error{badState})只會進 log,不影響回房。
+        /// </summary>
+        private void SendNetBackToRoom()
+        {
+            var net = _ctx != null ? _ctx.Net : null;
+            if (net == null || net.Match == null || !net.IsMatchParticipant) return;
+            net.SetPlayState(Sdo.Net.PlayState.Idle, _netMatchId);
+        }
+
         /// <summary>離開打歌畫面:把這一局的訂閱收掉。</summary>
         private void DetachNetGameplay()
         {
@@ -892,12 +911,12 @@ namespace Sdo.UI
         // Result panel confirmed: ScreenGameplay already showed its own STATIS settlement (score / EXP / G幣 / replay),
         // so the front-end just tears the gameplay session down and returns to the room. (The legacy ResultsModal is
         // intentionally unused now that the play screen settles itself; kept built only so older call sites compile.)
-        private void ReturnFromGameplay() { SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame(); }
+        private void ReturnFromGameplay() { SendNetPlayFinished(); SendNetBackToRoom(); DetachNetGameplay(); TransitionToRoomFromGame(); }
 
         // Esc during play: abandon the run with no settlement and go straight back to the room.
         // 🔴 中途離開也要送 playFinished(帶當下的部分分數)—— 不送的話房間會卡在 playing,
         //    要等 server 的逾時才恢復,那段時間誰都不能再開一局。
-        private void AbortGameplay() { SendNetPlayFinished(); DetachNetGameplay(); TransitionToRoomFromGame(); }
+        private void AbortGameplay() { SendNetPlayFinished(); SendNetBackToRoom(); DetachNetGameplay(); TransitionToRoomFromGame(); }
 
         /// <summary>Ctrl 按著嗎(左右都算)。優先問實體鍵位(不受輸入法影響),不支援時退回 Unity Input。</summary>
         private static bool CtrlHeld()
