@@ -234,10 +234,12 @@ namespace Sdo.Tests
             // ★ 使用者實測回報的那個 bug:在大廳換成男角進房,別人看到的名字還是女角的。
             // 握手在**開機時**就做完了(那時 active profile 是女角),選性別 == 選帳號 ——
             // 所以進房前要補送 setIdentity,否則座位名字就是握手那份,而且之後永遠不會變。
-            var a = Connect("飄漂o");
+            var a = Connect("舞蹈室主人");
             int code = CreateRoom(a, "舞蹈室");
 
-            var b = Connect("飄漂o");          // B 開機時的 active profile 也是那隻女角
+            // (這裡兩個人的握手名字**必須不同** —— 同名的後來者現在在握手就被擋掉了,
+            //  見 NameUniquenessTests。這條測的是「改名有沒有傳出去」,與同名無關。)
+            var b = Connect("飄漂o");          // B 開機時的 active profile 是那隻女角
             b.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.SetIdentity)
                 .Str("name", "按黑青眼暴龍壽3")

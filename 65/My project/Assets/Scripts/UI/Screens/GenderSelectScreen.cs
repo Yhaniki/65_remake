@@ -347,6 +347,10 @@ namespace Sdo.UI.Screens
                     ScreenTransition.Run(() => GoTo(ScreenId.Lobby));
                     return;
                 }
+                // 「這個名字已經有人在線上」→ **留在這個畫面**。旁邊的「玩家名稱」小視窗就是改名的地方,
+                // 而 Toast 說的正是去換一個名字 —— 把他丟進單機房間的話那句建議就做不到了
+                // (而且伺服器明明連得上,不是該退回單機的情況)。
+                if (app.LoginBlockedByName) return;
                 EnterOwnRoomOffline();
             });
         }

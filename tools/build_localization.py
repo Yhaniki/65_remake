@@ -195,6 +195,10 @@ STR = {
     # 開機連不上 → 退回單機。技術原因(socket 錯誤那類)寫進 log,不貼在玩家臉上。
     "net.fallback_offline":    ["Can't reach the server — playing offline", "連不上伺服器,改用單機模式",
                                 "连不上服务器,改用单机模式", "サーバーに接続できません(オフラインで続行)"],
+    # 同名被擋(server 只讓先上線的那個留著)。這句要與上面那句分開:「連不上」會讓玩家去查網路,
+    # 但伺服器明明連得上,他真正要做的是改名字。
+    "net.name_taken":          ["Login failed — that name is already in use", "登入失敗：這個名稱已被使用",
+                                "登录失败：这个名称已被使用", "ログイン失敗：その名前は使用中です"],
     # 傳歌失敗。原本把內部錯誤字串接在後面,玩家看不懂也不能做什麼。
     "net.transfer_failed":     ["Song transfer failed — please try again", "歌曲傳輸失敗,請稍後再試",
                                 "歌曲传输失败,请稍后再试", "曲の転送に失敗しました"],

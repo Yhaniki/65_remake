@@ -55,6 +55,14 @@ namespace Sdo.Game.Net
 
         private string _byeReason;
 
+        /// <summary>
+        /// server 送 <c>bye</c> 時的**原始 code**(沒收到 bye = 空字串)。
+        ///
+        /// <see cref="LastError"/> 是給 log 看的整句人話;這個是給程式分支用的 ——
+        /// 例如「名字被佔用」要彈自己那一句 Toast,而不是通用的「連不上伺服器」。
+        /// </summary>
+        public string ByeCode { get; private set; } = "";
+
         /// <summary>把 server 的 <c>bye</c> reason 翻成人看得懂的話。</summary>
         private static string ExplainBye(string reason)
         {
@@ -64,6 +72,8 @@ namespace Sdo.Game.Net
                     return "密碼不符 —— 請確認 config.ini 的 [Net] serverPassword 與伺服器一致";
                 case NetProto.ErrBadToken:
                     return "token 不被接受 —— 請確認 config.ini 的 [Net] serverToken(公網伺服器需要)";
+                case NetProto.ErrNameTaken:
+                    return "登入失敗:這個名稱已被使用(同一個名字同時只能有一個人在線)";
                 case "notAllowed":
                     return "這台伺服器不接受你的來源位址";
                 case "tooManyFromIp":
@@ -364,6 +374,7 @@ namespace Sdo.Game.Net
                         // 把協定 code 翻成人看得懂的話 —— 這條訊息會直接顯示給玩家看
                         // (開機連不上時的 Toast)。「badPassword」對玩家毫無意義,
                         // 「密碼不符」他才知道要去改 config.ini。
+                        ByeCode = reason ?? "";
                         _byeReason = ExplainBye(reason);
                         _link.Close("bye:" + reason);
                         break;

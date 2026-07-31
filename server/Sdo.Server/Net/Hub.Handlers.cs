@@ -233,6 +233,23 @@ namespace Sdo.Server.Net
             // token 綁了身分就覆寫 client 自稱的那份(見上面的註解 —— 這是整個 token 機制的重點)。
             if (ident.HasPlayerId) { conn.PlayerId = Clip(ident.PlayerId, 32); conn.PlayerIdLocked = true; }
             if (ident.HasName) { conn.Name = SanitizeName(ident.Name); conn.NameLocked = true; }
+            // 🔴 名字要唯一 —— 同名的**後來者被擋**(先上線的不受影響)。
+            // 名字是這裡唯一認人的東西:密語照名字找人(ControlByName)、名字牌、線上名單都是它。
+            // 兩個「小明」同時在線的話,密語會進到其中一個而寄的人不知道是哪個,收的人也不知道
+            // 為什麼有一半的話不見了 —— 那種 bug 沒人查得出來,所以在門口就不讓它成立。
+            //
+            // 代價寫在這裡免得日後當成 bug 查:client 當掉重開會被自己那條還沒被清掉的舊連線擋住,
+            // 要等 ping 逾時(NetLimits.PingTimeoutMs)把幽靈連線掃掉才進得來。這是有意的取捨 ——
+            // 「同名就踢掉舊的」在被冒名時等於送對方一把踢人的鑰匙。
+            var sameName = ControlByName(conn.Name);
+            if (sameName != null)
+            {
+                Log("連線 #" + conn.ConnId + " 想用「" + conn.Name + "」上線,但 user "
+                    + sameName.UserId + " 已經在線上用這個名字 → 拒絕");
+                conn.Kill(NetProto.ErrNameTaken);
+                return;
+            }
+
             conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
             conn.Level = Math.Max(0, NetJson.Int(node, "level"));
             conn.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
@@ -562,7 +579,18 @@ namespace Sdo.Server.Net
                 // 名字空白 → 保留原本的。SanitizeName 會把空的變成「玩家」,但那是握手時
                 // 「這個 client 根本沒報名字」該有的行為,不該讓一筆壞掉的更新把好名字洗掉。
                 string raw = (NetJson.Str(node, "name") ?? "").Trim();
-                if (raw.Length > 0) conn.Name = SanitizeName(raw);
+                if (raw.Length > 0)
+                {
+                    string want = SanitizeName(raw);
+                    // 🔴 撞到別人的名字就不改(保留原本的)。少了這一段,hello 的同名檢查等於白做 ——
+                    // 用另一個名字進來、握手後再改成別人的名字,結果一樣是兩個同名的人同時在線。
+                    // 找到的是自己時要放行:換性別(男女各一個 profile)本來就會重送同一個名字。
+                    var holder = ControlByName(want);
+                    if (holder == null || holder == conn) conn.Name = want;
+                    else
+                        Log("✗ user " + conn.UserId + " 想改名成「" + want + "」,但 user "
+                            + holder.UserId + " 正在用這個名字 → 保留原名「" + conn.Name + "」");
+                }
             }
             if (!conn.PlayerIdLocked)
             {

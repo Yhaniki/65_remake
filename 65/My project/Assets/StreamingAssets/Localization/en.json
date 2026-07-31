@@ -464,6 +464,10 @@
    "v": "Can't reach the server — playing offline"
   },
   {
+   "k": "net.name_taken",
+   "v": "Login failed — that name is already in use"
+  },
+  {
    "k": "net.transfer_failed",
    "v": "Song transfer failed — please try again"
   },

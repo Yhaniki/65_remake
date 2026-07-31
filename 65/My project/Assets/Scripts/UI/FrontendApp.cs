@@ -304,6 +304,7 @@ namespace Sdo.UI
         /// </summary>
         public void TryLogin(System.Action<bool> done)
         {
+            LoginBlockedByName = false;
             if (_ctx == null) { done?.Invoke(false); return; }
             if (_ctx.Net != null && _ctx.Net.IsConnected) { done?.Invoke(true); return; }
             if (_loggingIn) { done?.Invoke(false); return; }
@@ -325,6 +326,15 @@ namespace Sdo.UI
 
         /// <summary>True while <see cref="TryLogin"/> 正在等握手 —— 畫面用它把登入鈕變灰。</summary>
         public bool LoggingIn => _loggingIn;
+
+        /// <summary>
+        /// 上一次 <see cref="TryLogin"/> 失敗是因為「這個名字已經有人在線上」嗎?
+        ///
+        /// 這與其他失敗**不一樣**,所以要分得出來:連不上就照單機路徑走(玩家還是能玩),
+        /// 但名字被佔用時該讓他留在選角色畫面 —— 那裡就有改名字的地方,而 Toast 說的正是去改名。
+        /// 把他帶進單機房間反而讓那句建議做不到(還得先退回來)。
+        /// </summary>
+        public bool LoginBlockedByName { get; private set; }
 
         /// <summary>
         /// 等握手完成。**連不上就退回單機,不會卡住** —— 玩家可能只是忘了關掉 config.ini 的
@@ -358,9 +368,16 @@ namespace Sdo.UI
             // 逾時或失敗 → 退回單機。ctx 本來就還是單機的(CompleteLogin 沒被呼叫過),
             // 所以這裡只要把半開的連線關掉、記下原因讓 Update 用 Toast 說一次。
             string why = string.IsNullOrEmpty(net.LastError) ? "連線逾時" : net.LastError;
+            // 🔴 同名被擋要說**那一句**,不能用通用的「連不上伺服器」:那句話會讓玩家去查網路與
+            // config.ini,而真正該做的事是改名字 —— 而且伺服器明明就連得上。
+            // (要在 Disconnect 之前讀 ByeCode 嗎?不必 —— 它記的是收到的那一份,不會被關閉清掉。)
+            bool nameTaken = net.ByeCode == Sdo.Net.NetProto.ErrNameTaken;
+            string key = nameTaken ? "net.name_taken" : "net.fallback_offline";
             net.Disconnect("loginFailed");
             _loggingIn = false;
+            LoginBlockedByName = nameTaken;
             _netFellBackReason = why;
+            _netFellBackKey = key;
             done?.Invoke(false);
         }
 
@@ -377,6 +394,7 @@ namespace Sdo.UI
             Debug.LogWarning("[net] 連線中斷:" + reason);
             _ctx.Logout("linkLost");
             _netFellBackReason = reason;
+            _netFellBackKey = "net.fallback_offline";   // 中途斷線一律是這句(同名只會在握手時被擋)
             var cur = _ctx.Flow.Current;
             if (cur == ScreenId.Lobby || cur == ScreenId.Room || cur == ScreenId.SongSelect)
                 ScreenTransition.Run(() => _ctx.Flow.GoTo(ScreenId.GenderSel));
@@ -434,6 +452,9 @@ namespace Sdo.UI
 
         /// <summary>非空 = 開機時連不上,已退回單機(進到畫面後用 Toast 告知玩家)。</summary>
         private string _netFellBackReason;
+
+        /// <summary>上面那次退回單機要彈哪一句(名字被佔用 vs 連不上)。與 <see cref="_netFellBackReason"/> 同時設。</summary>
+        private string _netFellBackKey = "net.fallback_offline";
 
         // 大廳系畫面(男/女選擇 + 大廳 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複)並淡回;選歌畫面=淡出禁音但軌道繼續播
         // (離開選歌回房間再淡回同一首);遊戲(有歌)才真的停。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 持續。
@@ -501,11 +522,14 @@ namespace Sdo.UI
             if (_netFellBackReason != null && Toast.Ready)
             {
                 var why = _netFellBackReason;
+                var key = _netFellBackKey;
                 _netFellBackReason = null;
+                _netFellBackKey = "net.fallback_offline";
                 // 原因是技術訊息(socket 錯誤、憑證指紋不符…),玩家看不懂也不能處理 → 進 log。
                 // Toast 只有一行的高度,接一段英文錯誤上去也只會被截掉。
+                // 例外是「名字被佔用」:那句話本身就是玩家該看到的處理方式(見 LoginCo)。
                 Debug.LogWarning("[net] 退回單機:" + why);
-                Toast.Show(LocalizationManager.Get("net.fallback_offline"), 4f);
+                Toast.Show(LocalizationManager.Get(key), 4f);
             }
 
             _ctx?.Chat?.Tick();

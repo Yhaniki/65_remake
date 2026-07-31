@@ -256,6 +256,15 @@
         /// </summary>
         public const string ErrBadToken = "badToken";
 
+        /// <summary>
+        /// 這個名字線上已經有人在用了(<c>bye</c> 的 reason)—— **後上線的那個被擋**。
+        ///
+        /// 為什麼要擋:名字是這款遊戲裡唯一認人的東西 —— 密語照名字找人、房間裡的名字牌、
+        /// 大廳的線上名單都是。允許兩個「小明」同時在線,密語就會進到不確定的那一個,
+        /// 而看到名字牌的人也分不出誰是誰。
+        /// </summary>
+        public const string ErrNameTaken = "nameTaken";
+
         // ---- blob error code ----
 
         public const string BlobErrNotFound = "notFound";
