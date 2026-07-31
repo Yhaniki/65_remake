@@ -188,6 +188,7 @@ namespace Sdo.UI.Screens
         private readonly Dictionary<int, float> _bubbleWorldDepth = new Dictionary<int, float>();   // 給每幀重排前後用
         private Coroutine _chatInputFocusRoutine;
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
+        private Button _spectateBtn, _enterBtn;   // 同一個位置的兩顆:座位上顯示「旁觀」、旁觀中顯示「進入」
 
         // ---- win2 右側面板控件（模式/場景/歌曲資訊/速度/note/組隊/掉落）----
         private OutlinedLabel _modeLabel;  // 自由模式/普通模式（白邊；線上是純文字，沒有 mode 圖）
@@ -576,9 +577,16 @@ namespace Sdo.UI.Screens
             Btn("BangleButton", "Bangle0", "Bangle1", "Bangle0", Win3, 514, 82, null, circle: true);                       // 手環
             Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null, circle: true);                              // 信件
             Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包(膠囊,非圓)
-            // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
+            // 右邊這格是**同一個位置的兩顆球**(比照下面的準備/取消):
+            //   • 在座位上 → 藍色「旁觀」(look, BtnLook):交出座位去看戲;
+            //   • 旁觀中   → 官方綠色「進入」(play, Room92/93/94):回座位。
+            // 兩顆都掛 OnSpectateToggle(它自己看目前是不是旁觀者決定送 spectate 還是 stopSpectate)。
+            // 為什麼一定要換圖:同一顆「旁觀」鈕按下去之後還是寫著「旁觀」,玩家會以為沒生效而一直按 ——
+            // 而那顆鈕在旁觀狀態下做的其實是相反的事。初始隱藏「進入」,等 Render 依快照決定。
             // 大顆圓鈕 → alphaHit：命中判定貼齊可見圓形,透明四角不再誤觸;disc：手繪圓盤的階梯描邊沿圓周低通抹平(見 Btn 註解)。
-            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _spectateBtn = Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _enterBtn = Btn("play", "Room92", "Room93", "Room94", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _enterBtn.gameObject.SetActive(false);
 
             // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
             _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f, disc: true);
@@ -746,6 +754,7 @@ namespace Sdo.UI.Screens
                 _localHead.layer = HeadLayer;
                 ApplyHeadFraming(_localHead, localMale);   // 男女各自的上下/遠近
                 _localHead.Init(localMale, localAvatarParts, localBody);
+                _localHead.SetSpectating(LocalSpectating);   // 旁觀進房的人:頭貼一開始就不要演飛行動作
                 _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
             }
@@ -811,6 +820,7 @@ namespace Sdo.UI.Screens
             _localHead.layer = HeadLayer;
             ApplyHeadFraming(_localHead, male);   // 男女各自的上下/遠近
             _localHead.Init(male, parts, body);
+            _localHead.SetSpectating(LocalSpectating);   // 重建會回到 Init 的預設(穿翅膀=飛)→ 旁觀中要再關掉一次
             _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
             _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
         }
@@ -2802,6 +2812,11 @@ namespace Sdo.UI.Screens
             if (_readyBtn != null) _readyBtn.gameObject.SetActive(!isHost && !localReady);
             if (_cancelReadyBtn != null) _cancelReadyBtn.gameObject.SetActive(!isHost && localReady);
             if (_songSelectBtn != null) _songSelectBtn.gameObject.SetActive(isHost);
+            // 旁觀 ↔ 進入:一律以 server 快照為準(見 LocalSpectating)—— 不做樂觀更新,
+            // 按下去到 server 認可之間,鈕還是留在原本那一顆(同 OnSpectateToggle 的原則)。
+            bool spectating = LocalSpectating;
+            if (_spectateBtn != null) _spectateBtn.gameObject.SetActive(!spectating);
+            if (_enterBtn != null) _enterBtn.gameObject.SetActive(spectating);
         }
 
         // ---- win2 右側面板：依 GameSession 重畫模式/場景/CD/難度/BPM/速度/note/組隊/掉落 ----
@@ -4486,6 +4501,9 @@ namespace Sdo.UI.Screens
                     _moveThrottle.Reset();
                 _localMoveSlot = mySlot;
                 _scene.SetLocalSeat(mySlot);
+                // 頭貼鏡射的是同一隻角色的動作 → 旁觀席那條「不飛」也要一起套,
+                // 不然穿翅膀旁觀時會變成「頭在飛、身體在看戲」(見 RoomHeadPortrait.SetSpectating)。
+                if (_localHead != null) _localHead.SetSpectating(RoomScene3D.IsSpectatorSlot(mySlot));
             }
             _remoteBuf.Clear();
             for (int i = 0; i < snap.Seats.Length; i++)
@@ -4807,6 +4825,10 @@ namespace Sdo.UI.Screens
         private const float ForceStartDoubleTapSec = 1.5f;  // 這段時間內再按一次 = 強制開始
 
         private bool Online => Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom;
+
+        /// <summary>本機現在是不是旁觀者 —— **以 server 快照為準**(查房間的旁觀名單裡有沒有自己),
+        /// 不是本機猜的。按下鈕到 server 認可之間答案不變,所以畫面不會先報成功再被打臉。離線恆 false。</summary>
+        private bool LocalSpectating => Ctx != null && Ctx.Net != null && Ctx.Net.IsSpectating;
 
         /// <summary>
         /// 「旁觀」鈕:交出座位變旁觀者,再按一次搶回座位(需求 10 / D13)。

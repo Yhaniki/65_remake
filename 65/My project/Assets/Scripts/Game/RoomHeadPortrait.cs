@@ -57,6 +57,9 @@ namespace Sdo.Game
         private Renderer[] _hairRends;     // HAIR* only → 只用「髮頂」決定鏡頭上下,不影響頭的大小
         private MotLoader _walkMot, _idleMot;
         private bool _mirrorWalking;
+        private bool _male;          // 重挑鏡射 clip 要用(飛行↔地面切換,見 SetSpectating)
+        private bool _wingFlying;    // 這身穿搭有飛行翅膀嗎(換裝才會變)
+        private bool _flyClips;      // 現在鏡射的是不是飛行 clip(= _wingFlying 且不在旁觀席)
         private Camera _cam;
         private RenderTexture _rt;
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);
@@ -92,9 +95,10 @@ namespace Sdo.Game
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
             // the avatar's live pose (官方頭像框跟著實際動作做動作). 穿飛行翅膀時比照房間 avatar 用 flystay 浮空 idle /
             // fly 前傾滑動,頭貼才跟著一樣做飛行動作 (使用者需求 #3;SpecialMotionItems 同一條規則)。
-            bool flying = SpecialMotionItems.WearsFlyingWing(avatarParts);
-            _walkMot = SdoRoomAvatar.LoadMot(flying ? SpecialMotionItems.FlyWalkMot(male) : (male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot));
-            _idleMot = SdoRoomAvatar.LoadMot(flying ? SpecialMotionItems.FlyIdleMot(male) : (male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot));
+            _male = male;
+            _wingFlying = SpecialMotionItems.WearsFlyingWing(avatarParts);
+            _flyClips = _wingFlying;   // 站上旁觀席時由 SetSpectating 關掉(全身也不飛,見 RoomScene3D.FlyingAt)
+            LoadMirrorClips();
 
             _rt = new RenderTexture(rtWidth, rtHeight, 16, RenderTextureFormat.ARGB32) { name = "RoomHeadPortraitRT" };
             var camGo = new GameObject("RoomHeadPortraitCam");
@@ -138,6 +142,29 @@ namespace Sdo.Game
 
             UpdateCam();
             return true;
+        }
+
+        private void LoadMirrorClips()
+        {
+            _walkMot = SdoRoomAvatar.LoadMot(_flyClips ? SpecialMotionItems.FlyWalkMot(_male)
+                                                       : (_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot));
+            _idleMot = SdoRoomAvatar.LoadMot(_flyClips ? SpecialMotionItems.FlyIdleMot(_male)
+                                                       : (_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot));
+        }
+
+        /// <summary>本機是不是站在旁觀席上。旁觀時**頭貼也不做飛行動作** —— 全身那邊已經把整組飛行特性
+        /// 關掉、改回地面的看戲姿勢(<see cref="RoomScene3D.FlyingAt"/>),頭貼再演 flystay 就變成
+        /// 「頭在飛、身體在看戲」。沒穿飛行翅膀的人本來就是地面 clip → 這裡是 no-op。
+        /// 換過去是**硬切**,與房間 avatar 同一條規則(旁觀動作不用平滑過場)。</summary>
+        public void SetSpectating(bool spectating)
+        {
+            bool fly = _wingFlying && !spectating;
+            if (fly == _flyClips) return;
+            _flyClips = fly;
+            LoadMirrorClips();
+            if (_avatar == null || _idleMot == null || _mirrorWalking || _chatActionUntil > 0f) return;
+            _avatar.SnapNextClip();
+            _avatar.SetClip(_idleMot);
         }
 
         /// <summary>Mirror a room-chat action on the framed head — play the SAME one-shot motion the room avatar plays
