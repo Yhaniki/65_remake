@@ -46,7 +46,7 @@ namespace Sdo.UI.Core
 
         /// <summary>
         /// 連線模式。**連線是非同步的** —— 這裡只把連線層建起來並開始連,
-        /// 等待與逾時由呼叫端(<c>FrontendApp.BootCo</c>)處理,連不上就提示並改用單機。
+        /// 等待與逾時由呼叫端(<c>FrontendApp.BootCo</c>)處理,連不上就靜靜改用單機(原因只進 log)。
         /// </summary>
         private static AppContext CreateOnline()
         {

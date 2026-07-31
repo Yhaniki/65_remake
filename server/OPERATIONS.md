@@ -449,7 +449,7 @@ client 是 `<exe 目錄>\log.txt`(或 `SDO_LOG` 指定的路徑),**要先開 `SD
 
 | 玩家/你看到什麼 | 真正的原因 | 去哪裡確認 |
 |---|---|---|
-| 開機提示「連不上伺服器,改用單機模式」 | 位址/port 不對、server 沒開、防火牆擋住。TCP 連不到約 5 秒放棄,開機最多等 6 秒(蓋住「連上了但握手沒回」)就退回單機,不會卡住 | client log 的 `[net] 連不上伺服器` 後面那句 |
+| 開機後**沒有連線功能**(選男女畫面只有兩顆鈕),而且沒有任何提示 | 位址/port 不對、server 沒開、防火牆擋住。TCP 連不到約 5 秒放棄,開機最多等 6 秒(蓋住「連上了但握手沒回」)就**靜靜**退回單機 —— 刻意不彈訊息,所以只能從 log 判斷 | client log 的 `[net] 連不上伺服器,改用單機模式:` 後面那句 |
 | 「密碼不符 —— 請確認 config.ini…」 | 兩邊 `--password` / `serverPassword` 不一致 | server log `連線 #N 密碼不符,拒絕(client 送的是空值/另一個值)`(**不會印密碼本體**) |
 | 「伺服器不認得這個 token」 | `serverToken` 沒填或不在 token 檔裡 | server log `連線 #N token 認證失敗,拒絕` |
 | 連不上,server log 有「TLS 握手失敗」 | client `serverTls=0` 但 server 開了 TLS(或反過來) | 兩邊的 `serverTls` / `--tls-cert` |

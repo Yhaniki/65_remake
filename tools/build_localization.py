@@ -131,9 +131,8 @@ STR = {
     # 建房失敗:server 的房間數到上限。原本直接把 server 回的英文代碼(full)貼在畫面上。
     "room.create_failed_full": ["The server has no room slots left", "伺服器的房間已經滿了",
                                 "服务器的房间已经满了", "サーバーの部屋が満杯です"],
-    # 開機連不上 → 退回單機。技術原因(socket 錯誤那類)寫進 log,不貼在玩家臉上。
-    "net.fallback_offline":    ["Can't reach the server — playing offline", "連不上伺服器,改用單機模式",
-                                "连不上服务器,改用单机模式", "サーバーに接続できません(オフラインで続行)"],
+    # (開機連不上 → 退回單機:刻意不告訴玩家。沒填 serverAddress / 伺服器沒開的人本來就是
+    #  要單機玩的,那句話對他沒有用;技術原因寫進 log 就好。見 Toast.cs 開頭那條線。)
     # 傳歌失敗。原本把內部錯誤字串接在後面,玩家看不懂也不能做什麼。
     "net.transfer_failed":     ["Song transfer failed — please try again", "歌曲傳輸失敗,請稍後再試",
                                 "歌曲传输失败,请稍后再试", "曲の転送に失敗しました"],

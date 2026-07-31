@@ -306,12 +306,13 @@ namespace Sdo.UI
                 yield return null;
             }
 
-            // 逾時或失敗 → 退回單機。
+            // 逾時或失敗 → 退回單機。**只寫 log,不告訴玩家。**
+            // 沒填 serverAddress 或伺服器沒開的人,本來就是要單機玩的 —— 對他們來說「連不上」
+            // 不是壞消息也不是他能處理的事,一進畫面就彈一句話只是把單機開場弄髒。
             string why = string.IsNullOrEmpty(net.LastError) ? "連線逾時" : net.LastError;
             Debug.LogWarning("[net] 連不上伺服器,改用單機模式:" + why);
             net.Disconnect("bootFailed");
             _ctx = AppContext.CreateMock();
-            _netFellBackReason = why;
         }
 
         /// <summary>開機連線的等待上限。超過就退回單機。</summary>
@@ -363,9 +364,6 @@ namespace Sdo.UI
         }
 
         private bool _netReady;
-
-        /// <summary>非空 = 開機時連不上,已退回單機(進到畫面後用 Toast 告知玩家)。</summary>
-        private string _netFellBackReason;
 
         // 大廳系畫面(男/女選擇 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複)並淡回;選歌畫面=淡出禁音但軌道繼續播
         // (離開選歌回房間再淡回同一首);遊戲(有歌)/Lobby 才真的停。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 持續。
@@ -425,20 +423,6 @@ namespace Sdo.UI
             TickNetGameplay();   // 遊玩中每 200ms 把本機成績送上去(見那邊的註解)
             // 缺歌傳檔:同樣要在遊戲中也繼續跑 —— 下載可能跨過「別人在打歌、我留在房間」那段。
             NetSongTransfer.Tick(_ctx, this);
-
-            // 開機時連不上 → 已退回單機,進到畫面後告知玩家一次。
-            // 🔴 要等 Toast 建好才說(Toast.Ready)。Update 從第一幀就在跑,而這個原因是開機
-            // Phase 3 設的、Toast 到 Phase 5 才建 —— 不等的話下一幀就被讀走並丟掉,
-            // Toast.Show 那時只會寫一行 log,**玩家永遠看不到那句話**,只覺得「怎麼變單機了」。
-            if (_netFellBackReason != null && Toast.Ready)
-            {
-                var why = _netFellBackReason;
-                _netFellBackReason = null;
-                // 原因是技術訊息(socket 錯誤、憑證指紋不符…),玩家看不懂也不能處理 → 進 log。
-                // Toast 只有一行的高度,接一段英文錯誤上去也只會被截掉。
-                Debug.LogWarning("[net] 退回單機:" + why);
-                Toast.Show(LocalizationManager.Get("net.fallback_offline"), 4f);
-            }
 
             _ctx?.Chat?.Tick();
             if (_killGuardFrames > 0 && _activeGame == null) { _killGuardFrames--; KillStrayGameplay(); }

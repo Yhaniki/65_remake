@@ -312,10 +312,6 @@
    "v": "The server has no room slots left"
   },
   {
-   "k": "net.fallback_offline",
-   "v": "Can't reach the server — playing offline"
-  },
-  {
    "k": "net.transfer_failed",
    "v": "Song transfer failed — please try again"
   },

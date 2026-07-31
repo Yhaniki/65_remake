@@ -2788,7 +2788,10 @@ namespace Sdo.UI.Screens
                 _roomIdLabel.SetX(lx);
 
                 // 中央房名 + 房號:「飄漂o的舞蹈室(40444)」。
-                _roomNameLabel.text = RoomLabels.DisplayNameWithCode(room.Name, room.HostName, room.Id);
+                // ⚠️ 房號**只有連線模式才接上去**:它的用途是唸給朋友聽、讓他打進「輸入房號」框。
+                //    單機沒有別人能加入,那串 5 位數對玩家沒有任何意義(離線仍配號是內部的鍵,見 MockRoomService)。
+                _roomNameLabel.text = RoomLabels.DisplayNameWithCode(
+                    room.Name, room.HostName, Ctx != null && Ctx.Net != null ? room.Id : 0);
             }
 
             // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落。
