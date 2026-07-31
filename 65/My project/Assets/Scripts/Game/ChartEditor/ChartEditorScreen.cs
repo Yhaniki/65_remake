@@ -66,6 +66,7 @@ namespace Sdo.Game
         private void ExitToFrontend()
         {
             Teardown();                    // 毀掉這首的場景根(不在 _preRoots 裡的),含 ScreenGameplay 與它的相機
+            EditorAudioCache.Clear();      // 快取著的 PCM 一首就幾十 MB，離開編輯器就還回去
             var onExit = OnExit;
             Instance = null; OnExit = null;
             onExit?.Invoke();              // 前端 canvas + UI 相機 + 大廳 BGM 復原(flow 從沒變 → 回到男女選擇)
@@ -100,10 +101,15 @@ namespace Sdo.Game
 
         // 歌單視窗
         private bool _showList;
+        private bool _pickFolder;                   // 歌單視窗切成「選資料夾」那一頁
         private string _search = "";
-        private Vector2 _listScroll;
+        private Vector2 _listScroll, _folderScroll;
         private readonly List<SongCatalog.Entry> _filtered = new List<SongCatalog.Entry>();
         private string _filterFor = null;
+        /// <summary>Q/E 與歌單只走這個資料夾（<see cref="EditorSongScope"/>）。"" = 全部。整包匯進來的歌
+        /// 要一首一首調 offset 時，鎖住資料夾才不會按 E 就掉到別包去。</summary>
+        private string _scope = EditorSongScope.All;
+        private const string PrefScope = "sdo.editor.scope";
 
         private void Start()
         {
@@ -111,6 +117,7 @@ namespace Sdo.Game
             string want = ScreenGameplay.DevVar(EnvVar) ?? "";
             string gn = want.EndsWith(".gn", StringComparison.OrdinalIgnoreCase) ? want : PlayerPrefs.GetString(PrefLastGn, "");
             _diff = Mathf.Clamp(PlayerPrefs.GetInt(PrefLastDiff, 0), 0, 2);
+            _scope = PlayerPrefs.GetString(PrefScope, EditorSongScope.All);   // 上次鎖的資料夾（校時常常要分好幾天）
             if (string.IsNullOrEmpty(gn) || !File.Exists(SongPaths.Gn(gn) ?? "")) gn = PickDefaultGn();
             if (string.IsNullOrEmpty(gn)) { _status = "找不到任何可開的 .gn（song_table.csv 或 MUSIC 資料夾是空的）"; _showList = true; return; }
             LoadSong(gn, _diff);
@@ -157,16 +164,46 @@ namespace Sdo.Game
             PlayerPrefs.SetString(PrefLastGn, _gn);
             PlayerPrefs.SetInt(PrefLastDiff, _diff);
 
-            string gnPath = SongPaths.Gn(_gn), oggPath = SongPaths.Ogg(_gn);
-            if (gnPath == null || !File.Exists(gnPath)) { _status = "找不到譜面檔：" + gnPath; _loading = false; yield break; }
-            _status = (oggPath != null && File.Exists(oggPath)) ? "" : "找不到音樂檔（只能看譜，沒有聲音/波形）";
+            // 外部歌(osu/StepMania)沒有官方 .gn：直接餵 chartPath + 掃描解析出的音檔(ogg/mp3/wav)；官方歌走 gnPath/oggPath。
+            bool ext = e != null && e.external;
+            string gnPath = null, oggPath;
+            if (ext)
+            {
+                string chartPath = e.ChartPath(_diff);
+                if (string.IsNullOrEmpty(chartPath) || !File.Exists(chartPath)) { _status = "找不到外部譜面檔：" + chartPath; _loading = false; yield break; }
+                oggPath = e.audioPath;
+            }
+            else
+            {
+                gnPath = SongPaths.Gn(_gn); oggPath = SongPaths.Ogg(_gn);
+                if (gnPath == null || !File.Exists(gnPath)) { _status = "找不到譜面檔：" + gnPath; _loading = false; yield break; }
+            }
+            bool virtualOsu = ext &&
+                e.chartFormat == (int)SongFormat.Osu &&
+                string.IsNullOrEmpty(oggPath);
+            _status = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
+                ? ""
+                : virtualOsu
+                    ? "虛擬音軌：keysound 可播放，沒有母音軌波形"
+                    : "找不到音樂檔（只能看譜，沒有聲音/波形）";
 
             // ScreenGameplay 什麼都不掛在自己身上（音符板/HUD 都是新的場景根物件）→ 先記下現有的根，換歌時照差集拆。
             _preRoots = new HashSet<GameObject>(SceneManager.GetActiveScene().GetRootGameObjects());
 
             var game = new GameObject("ScreenGameplay").AddComponent<ScreenGameplay>();   // 欄位在它的 Start() 之前讀
             game.editorMode = true;              // 純黑背景（不載場景/舞者）＋不判定/不結算＋可自由 seek
-            game.gnPath = gnPath;
+            if (ext)
+            {
+                game.chartFormat = e.chartFormat;      // 1=osu, 2=sm, 3=.gn 歌曲包 → LoadChart 直接解析 chartPath
+                game.chartPath = e.ChartPath(_diff);
+                game.chartIndex = e.ChartIndex(_diff); // .sm 的 #NOTES 區塊序號；.gn 是難度（osu 恆 0）
+                game.chartSeed = e.chartSeed;          // .gn 歌曲包：每首譜自己的金鑰。漏掉的話共用 seed 池一把都開不了 → 整張譜空白
+                game.chartLevel = e.DisplayLevel(_diff);   // 顯示等級(osu 星數×7 或 minacalc)→ LV 標籤,與選歌一致
+                game.gnPath = "";
+                game.externalFolder = e.folderPath;    // LoadChart 認得出是外部歌；editorMode 下不會生成/寫 .dps（見 EnsureExternalDance）
+                game.externalSongKey = e.songKey;
+            }
+            else game.gnPath = gnPath;
             game.oggPath = oggPath;
             game.difficulty = _diff;
             game.autoPlay = false;
@@ -175,7 +212,8 @@ namespace Sdo.Game
             game.effectScene = false;            // 不放場景常駐特效
             game.scrollSpeedMul = _speed;
             game.useMusicStartOffset = true;     // type-10 音樂起點：音符照樣領先音樂 count-in 拍（波形也會跟著位移）
-            _songOffset = SongCatalog.OffsetMs(_gn);   // 這首譜的 offset：手改在 song_table.csv 的 offsetMs
+            // 外部歌的 offset 存在歌資料夾的 sdoinfo.dat（已灌進 entry.offsetMs，見 ExternalSongLibrary.ToEntry）；官方歌走 song_table.csv 的 offsetMs。
+            _songOffset = ext ? (e != null ? e.offsetMs : 0f) : SongCatalog.OffsetMs(_gn);
             game.songOffsetMs = (float)_songOffset;
             game.EditorOnHit = OnHit;             // 跟著打 → 誤差條（一般編譜模式也有，不必進打拍測試）
             _game = game;
@@ -194,8 +232,24 @@ namespace Sdo.Game
             _overlay.showHitError = true;     // osu 式誤差條：跟著打就會記錄
             _overlay.ClearHits();
             _stats.Clear(); _misses = 0;
+            game.mp3Decoder = EditorAudioCache.Get;   // 解過的直接給；還沒解的照樣背景解（見 EditorAudioCache）
             _peaksCo = StartCoroutine(BuildPeaksCo(_game));
             _loading = false;
+            PrefetchNeighbours();                     // 這首載完了 → 背景先把 Q/E 兩邊那首的 mp3 解好
+        }
+
+        // 一首一首校 offset 的人只會按 Q/E 走。趁現在這首在播，背景把上一首/下一首的 mp3 先解完
+        // （一首 2~3 分鐘的 mp3 用 NLayer 要 1 秒多），真的按下去時 PCM 已經在快取裡，換歌就不用等。
+        // ogg/wav 不預抓 —— Unity 原生解本來就快，占著幾十 MB 不划算（見 EditorAudioCache.Prefetch）。
+        private void PrefetchNeighbours()
+        {
+            var scoped = EditorSongScope.InScope(SongCatalog.Primary, _scope);
+            for (int dir = -1; dir <= 1; dir += 2)
+            {
+                var n = EditorSongScope.Step(scoped, _gn, dir);
+                if (n == null || !n.external || string.IsNullOrEmpty(n.audioPath)) continue;
+                EditorAudioCache.Prefetch(n.audioPath, ScreenGameplay.Mp3SyncFor(n.chartFormat));
+            }
         }
 
         private void EnsureOverlay()
@@ -317,10 +371,10 @@ namespace Sdo.Game
             if (_overlay != null)
             {
                 _overlay.Peaks = peaks;
-                // 波形第 0 格 = 音樂真正開始的譜面時間（含單首 offset）再往早補解碼暖機。**公式要跟
+                // 波形第 0 格 = 音樂起點（.osu 再套官方 −20ms 視覺位移）。**公式要跟
                 // ChartEditorOverlay.LateUpdate 一模一樣** —— 它每幀都會覆寫這個值，兩邊不同只會讓這裡的初值
-                // 閃一幀不同步（07-15 加解碼暖機補償時漏改這行）。
-                _overlay.PeaksOffsetMs = game.EditorMusicCountInMs - ScreenGameplay.WaveformDecoderDelayMs;
+                // 閃一幀不同步。
+                _overlay.PeaksOffsetMs = game.EditorWaveformStartMs;
             }
             _peaksCo = null;
         }
@@ -364,8 +418,9 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.G) && _overlay != null) _overlay.showGrid = !_overlay.showGrid;
             if (Input.GetKeyDown(KeyCode.F2) && _overlay != null) _overlay.showHitError = !_overlay.showHitError;
             if (Input.GetKeyDown(KeyCode.Tab)) CycleDifficulty();
-            if (Input.GetKeyDown(KeyCode.Q)) StepSong(-1);   // 上一首
+            if (Input.GetKeyDown(KeyCode.Q)) StepSong(-1);   // 上一首（只在鎖定的資料夾裡）
             if (Input.GetKeyDown(KeyCode.E)) StepSong(+1);   // 下一首
+            if (Input.GetKeyDown(KeyCode.F8)) ToggleScope(); // 鎖定/解除「只走這首歌的資料夾」
             if (Input.GetKeyDown(KeyCode.Backspace)) { _stats.Clear(); _misses = 0; _overlay?.ClearHits(); }   // 清掉打擊紀錄
 
             if (Input.GetKeyDown(KeyCode.Home)) _game.EditorSeekMs(0);
@@ -378,9 +433,13 @@ namespace Sdo.Game
             if (Input.GetKeyDown(KeyCode.F11)) NudgeSongOffset(-stepMs);
             if (Input.GetKeyDown(KeyCode.F12)) NudgeSongOffset(+stepMs);
 
-            // Ctrl+S：把目前的單首 offset 存進 song_table.csv（只動那一筆的 offsetMs，其餘位元組不變）
+            // Ctrl+S：把目前的單首 offset 存進 song_table.csv（外部歌則寫進歌資料夾的 sdoinfo.dat）—— 只動那一筆的 offsetMs，其餘位元組不變
+            // Ctrl+Shift+S：外部歌 —— 把這個 offset 套到整個資料夾（整包同時跑掉時用）
             if (Input.GetKeyDown(KeyCode.S) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
-                SaveSongOffset();
+            {
+                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) SaveFolderOffset();
+                else SaveSongOffset();
+            }
 
             // Ctrl+↑/↓ = 顯示縮放（StepMania 的 Ctrl+Up/Down 改 scroll speed）：↓ 變窄、↑ 變寬。
             bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
@@ -414,6 +473,22 @@ namespace Sdo.Game
             _game.EditorSongOffsetMs = _songOffset;
         }
 
+        /// <summary>標題列要顯示的譜面檔名 —— **實際讀的那個檔**，不是目錄的鍵值。
+        ///
+        /// 外部歌在 <see cref="SongCatalog"/> 裡的 <c>gn</c> 是一組合成的識別碼（<c>ext_9d891d61k.gn</c>：資料夾＋
+        /// 資料夾內第幾首的雜湊），用途是讓收藏／上次開的歌在重掃之後還認得出同一首，**不是**一個真的檔案，
+        /// 也沒有任何東西會去生成它。顯示它只會讓人以為譜是即時合成出來的 —— 歌曲包裡本來就躺著真正的
+        /// <c>sdom0069K.gn</c>，直接讀那個檔。所以有真檔就顯示真檔名。</summary>
+        private string ChartFileLabel()
+        {
+            if (_entry != null && _entry.external)
+            {
+                var path = _entry.ChartPath(_diff);
+                if (!string.IsNullOrEmpty(path)) return Path.GetFileName(path);
+            }
+            return _gn;
+        }
+
         /// <summary>目前這首的 gn 詞幹（sdomNNNN）—— song_table.csv 的 key，k/t 共用一筆（同一個音檔）。</summary>
         private string Stem()
         {
@@ -427,6 +502,7 @@ namespace Sdo.Game
         private void SaveSongOffset()
         {
             if (string.IsNullOrEmpty(_gn)) return;
+            if (_entry != null && _entry.external) { SaveExternalSongOffset(); return; }
             if (SongTableWriter.SetOffset(Stem(), _songOffset, out string msg))
             {
                 var e = SongCatalog.Get(_gn);
@@ -435,17 +511,79 @@ namespace Sdo.Game
             _status = msg;
         }
 
-        // 上一首 / 下一首：走跟歌單同一份順序（SongCatalog.Primary，只有鍵盤譜 k）。
+        // 外部歌：offset 寫進歌資料夾的 sdoinfo.dat（跟著歌走 → 下次開編輯器＋正式遊玩都吃得到），只動那一筆的 #OFFSETMS，
+        // 其餘位元組不變（走 SongSidecar.SetOffset 的 round-trip）。同步記憶體 catalog，這次執行的遊玩不必重掃就生效。
+        private void SaveExternalSongOffset()
+        {
+            string folder = _entry.folderPath;
+            if (string.IsNullOrEmpty(folder)) { _status = "外部歌沒有資料夾路徑，無法存 offset"; return; }
+            try
+            {
+                string text = SongSidecar.ReadText(folder);   // 現名 sdoinfo.dat，沒有才退回舊 sdoinfo.dat
+                SongSidecar.WriteText(folder, SongSidecar.SetOffset(text, _entry.songKey, (float)_songOffset));
+                _entry.offsetMs = (float)_songOffset;   // FrontendApp 讀 SongCatalog → 這次執行的 gameplay 直接吃到
+                _status = $"已存外部歌 offset {_songOffset:+0.#;-0.#;0} ms → {SongSidecar.FileName}（跟著歌走，遊玩也生效）";
+            }
+            catch (Exception ex) { _status = "存 offset 失敗：" + ex.Message; }
+        }
+
+        // Ctrl+Shift+S：把目前這個 offset 套到**整個資料夾**（範圍內每一首外部歌）。
+        // 一整包匯進來的歌常常是同一個系統性偏移（同一套工具轉的音檔、同一版譜），對準一首之後其餘 198 首
+        // 通常就一起對了 —— 與其手動按 199 次 Ctrl+S，不如一次寫完，之後再對個別跑掉的那幾首微調。
+        // 每首歌寫的是它自己那一筆 #OFFSETMS，所以事後個別再改也不會互相蓋掉。
+        private void SaveFolderOffset()
+        {
+            if (_entry == null || !_entry.external) { _status = "只有外部歌能整包套用 offset"; return; }
+            var scoped = EditorSongScope.InScope(SongCatalog.Primary, EditorSongScope.ScopeOf(_entry));
+            var byFolder = new Dictionary<string, List<SongCatalog.Entry>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in scoped)
+            {
+                if (e == null || !e.external || string.IsNullOrEmpty(e.folderPath)) continue;
+                if (!byFolder.TryGetValue(e.folderPath, out var l)) byFolder[e.folderPath] = l = new List<SongCatalog.Entry>();
+                l.Add(e);
+            }
+            int done = 0;
+            try
+            {
+                foreach (var kv in byFolder)   // 一個資料夾讀寫一次，不是每首歌都重讀整份 sidecar
+                {
+                    string text = SongSidecar.ReadText(kv.Key);   // 現名 sdoinfo.dat，沒有才退回舊 sdoinfo.dat
+                    foreach (var e in kv.Value)
+                    {
+                        text = SongSidecar.SetOffset(text, e.songKey, (float)_songOffset);
+                        e.offsetMs = (float)_songOffset;
+                        done++;
+                    }
+                    SongSidecar.WriteText(kv.Key, text);
+                }
+                _status = $"已把 offset {_songOffset:+0.#;-0.#;0} ms 套用到「{EditorSongScope.Label(EditorSongScope.ScopeOf(_entry))}」的 {done} 首"
+                        + $"（寫進 {byFolder.Count} 個 {SongSidecar.FileName}）";
+            }
+            catch (Exception ex) { _status = $"整包套用失敗（已寫 {done} 首）：" + ex.Message; }
+        }
+
+        // 上一首 / 下一首：走跟歌單同一份順序（SongCatalog.Primary，只有鍵盤譜 k），而且**只在目前鎖定的
+        // 資料夾裡繞**（F8 切換／F1 歌單裡選）—— 整包歌要一首一首校時的時候，這是唯一實用的走法。
         private void StepSong(int dir)
         {
-            var list = SongCatalog.Primary;
-            if (list.Count == 0 || _loading) return;
-            int cur = -1;
-            for (int i = 0; i < list.Count; i++)
-                if (string.Equals(list[i].gn, _gn, StringComparison.OrdinalIgnoreCase)) { cur = i; break; }
-            int next = cur < 0 ? 0 : (cur + dir + list.Count) % list.Count;   // 頭尾相接，撞到邊界不會卡住
-            LoadSong(list[next].gn, _diff);
+            if (_loading) return;
+            var next = EditorSongScope.Step(EditorSongScope.InScope(SongCatalog.Primary, _scope), _gn, dir);
+            if (next != null) LoadSong(next.gn, _diff);
         }
+
+        /// <summary>把範圍換成 <paramref name="scope"/>（"" = 全部）並記住。歌單要重篩（_filterFor 作廢）。</summary>
+        private void SetScope(string scope)
+        {
+            _scope = scope ?? EditorSongScope.All;
+            _filterFor = null;
+            PlayerPrefs.SetString(PrefScope, _scope);
+            PlayerPrefs.Save();
+            _status = $"資料夾範圍：{EditorSongScope.Label(_scope)}（Q/E 只在這裡面走）";
+        }
+
+        /// <summary>F8：在「只走這首歌所在的資料夾」與「全部」之間切換。</summary>
+        private void ToggleScope()
+            => SetScope(string.IsNullOrEmpty(_scope) ? EditorSongScope.ScopeOf(_entry) : EditorSongScope.All);
 
         private BeatGrid Grid()
         {
@@ -537,11 +675,13 @@ namespace Sdo.Game
             GUI.Box(new Rect(0, 0, Screen.width, barH), GUIContent.none);
 
             // 歌名以外的元素先量寬度，剩下的才是歌名能用的
+            // LV 用 DisplayLevel（不是 Diff）——config DifficultyCalc=minacalc 時外部歌顯示的是 MSD 換算等級，
+            // 用 Diff 會秀出 osu 星數等級，跟選歌畫面的數字對不起來。
             string[] diffLabels = new string[3];
             for (int d = 0; d < 3; d++)
             {
                 bool h0 = _entry == null || _entry.HasChart(d);
-                diffLabels[d] = diffNames[d] + (_entry != null && h0 ? $" LV{_entry.Diff(d)}" : "");
+                diffLabels[d] = diffNames[d] + (_entry != null && h0 ? $" LV{_entry.DisplayLevel(d)}" : "");
             }
             string bpmText = map != null ? $"BPM {map.Bpm:0.##}  {map.TotalNotes} 音符" : null;
             float used = 0f;
@@ -561,7 +701,7 @@ namespace Sdo.Game
 
             if (titleRoom >= 60f)      // 窄到連省略號版都沒意義時就整格不畫（歌名在歌單裡看得到）
             {
-                string t = $"♪ {title}   [{_gn}]";
+                string t = $"♪ {title}   [{ChartFileLabel()}]";
                 float w = Mathf.Min(titleRoom, box.CalcSize(new GUIContent(t)).x);
                 GUILayout.Label(Elide(box, t, w), box, GUILayout.Width(w));
             }
@@ -582,28 +722,41 @@ namespace Sdo.Game
             // ---- transport ----
             // 讀數全部走內容寬，進度條 stretch 吃剩下的空間（原本是用 Screen.width - 900 手算，畫面一窄就互相擠）。
             // 括號裡的快捷鍵提示移到最下面那兩行說明，這一列只留數字。
-            GUILayout.BeginHorizontal();
-            GUI.enabled = ready;
-            if (GUILayout.Button(ready && !_game.EditorPaused ? "❚❚ 暫停" : "▶ 播放"))
-                _game.EditorSetPaused(!_game.EditorPaused);
-            if (GUILayout.Button("⏮ 開頭")) _game.EditorSeekMs(0);
-
             double now = ready ? _game.EditorNowMs : 0.0;
             double end = ready ? Math.Max(1.0, _game.EditorEndMs) : 1.0;
-            float pos = GUILayout.HorizontalSlider((float)now, 0f, (float)end, GUILayout.MinWidth(80f), GUILayout.ExpandWidth(true));
+            var g = ready ? Grid() : null;
+            float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
+            string playLabel = ready && !_game.EditorPaused ? "❚❚ 暫停" : "▶ 播放";
+            // 播放位置給 6 位小數，對齊 StepMania 的 CURRENT SECOND，方便逐拍核對匯入的譜
+            // （＝真實音檔時間：外部譜編輯器不套 lead-in，見 ScreenGameplay.ExternalLeadInMsFor → 應與 .sm 的秒數一致）。
+            string timeText = $"{Fmt(now, 6)} / {Fmt(end)} 秒";
+            string gridText = g != null ? $"小節 {g.MeasureAt(now)}  拍 {BeatInMeasure(g, now):0.000000}" : null;
+            string zoomText = $"縮放 {speed:0.00}×";
+            string rateText = $"流速 {(ready ? _game.EditorRate : 1.0):0.00}×";
+            string offText = $"offset {_songOffset:+0.#;-0.#;0} ms";
+            string scopeText = $"資料夾 {EditorSongScope.Label(_scope)}";
+
+            // 這一列讀數多，窄視窗塞不下時最先讓位的是「資料夾」（F1 的歌單窗裡本來就看得到，F8 可切）
+            const float SliderMinW = 90f;
+            float row2 = Wd(btn, playLabel) + Wd(btn, "⏮ 開頭") + SliderMinW
+                       + Wd(box, timeText) + (gridText != null ? Wd(box, gridText) : 0f)
+                       + Wd(box, zoomText) + Wd(box, rateText) + Wd(box, offText);
+            bool showScope = row2 + Wd(box, scopeText) <= Screen.width - TopBarPad * 2f;
+
+            GUILayout.BeginHorizontal();
+            GUI.enabled = ready;
+            if (GUILayout.Button(playLabel)) _game.EditorSetPaused(!_game.EditorPaused);
+            if (GUILayout.Button("⏮ 開頭")) _game.EditorSeekMs(0);
+
+            float pos = GUILayout.HorizontalSlider((float)now, 0f, (float)end, GUILayout.MinWidth(SliderMinW), GUILayout.ExpandWidth(true));
             if (ready && Mathf.Abs(pos - (float)now) > 1f) _game.EditorSeekMs(pos);   // 拖 slider = seek（暫停中也可以）
 
-            Chip(box, $"{Fmt(now)} / {Fmt(end)} 秒");
-            var g = ready ? Grid() : null;
-            if (g != null)
-            {
-                double beat = g.MsToBeat(now);
-                Chip(box, $"小節 {g.MeasureAt(now)}  拍 {(beat % 4 + 4) % 4 + 1:0.00}");
-            }
-            float speed = ready ? _game.EditorScrollSpeed : _speed;   // F5/F6 與 Ctrl+↑↓ 都直接改 ScreenGameplay → 顯示以它為準
-            Chip(box, $"縮放 {speed:0.00}×");
-            Chip(box, $"流速 {(ready ? _game.EditorRate : 1.0):0.00}×");
-            Chip(box, $"offset {_songOffset:+0.#;-0.#;0} ms");
+            Chip(box, timeText);
+            if (gridText != null) Chip(box, gridText);
+            Chip(box, zoomText);
+            Chip(box, rateText);
+            Chip(box, offText);
+            if (showScope) Chip(box, scopeText);
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.EndArea();
@@ -615,15 +768,24 @@ namespace Sdo.Game
                 "空白=播放/暫停  ↑↓=一格  Ctrl+↑↓/F5F6=縮放  PgUp/PgDn=一小節  [ ]=流速(= 回 1×)  ←→=格線細分" +
                 (_overlay != null ? $"（每拍 {_overlay.subdivisions} 格）" : ""));
             GUI.Label(new Rect(8, Screen.height - 22, Screen.width - 16, 20f),
-                "A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  Ctrl+S=存offset  F1=歌單  Q/E=上/下一首  F4=打拍測試  F3=波形  F2=誤差條  G=格線  Tab=難度");
+                "A/S/W/D=跟著打(誤差條)  F11/F12=單首offset(±20ms，Alt=±1ms)  Ctrl+S=存offset  Ctrl+Shift+S=整個資料夾套用" +
+                "  F1=歌單/選資料夾  F8=鎖資料夾  Q/E=上/下一首  F4=打拍測試  F3=波形  F2=誤差條  G=格線  Tab=難度");
 
             if (_showList) DrawSongList();
         }
 
         private static readonly string[] TopButtons = { "歌單 F1", "◀ 上一首 Q", "下一首 E ▶", "打拍測試 F4" };
 
+        /// <summary>小節內的拍序（1~4）。BeatGrid 給的是從曲首起算的絕對拍，顯示要的是 StepMania 那種小節內位置。</summary>
+        public static double BeatInMeasure(BeatGrid g, double ms)
+        {
+            const int m = BeatGrid.BeatsPerMeasure;
+            double b = g.MsToBeat(ms);
+            return (b % m + m) % m + 1;
+        }
+
         // 頂欄第三列：跟著打的即時統計（誤差條畫在軌道右邊，A/S/W/D 打擊）＋ 存檔提示／狀態。
-        // 單首 offset 不寫檔（值只活在這次執行裡）→ 調了還沒存就提醒 Ctrl+S 寫回 song_table.csv。
+        // offset 調了但還沒存 → 提醒 Ctrl+S（存完 _status 會蓋掉提示）。外部歌寫 sidecar、內建歌寫 song_table.csv。
         private string StatusLine()
         {
             string hits = null, note = null;
@@ -632,19 +794,22 @@ namespace Sdo.Game
                 double mean = _stats.Mean;
                 hits = $"打擊 {_stats.Count}   平均 {mean:+0.0;-0.0;0.0} ms（{(mean < 0 ? "偏早" : "偏晚")}）   UR {_stats.UnstableRate:0}   [Backspace 清除]";
             }
-            if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
+            if (_entry != null && _entry.external && Mathf.Abs((float)_songOffset - _entry.offsetMs) > 0.0005f)
+                note = $"外部歌單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 {Path.Combine(_entry.folderPath ?? "", SongSidecar.FileName)}"
+                     + $"　／　Ctrl+Shift+S 套用到整個「{EditorSongScope.Label(EditorSongScope.ScopeOf(_entry))}」";
+            else if (Mathf.Abs((float)_songOffset - SongCatalog.OffsetMs(_gn)) > 0.0005f)
                 note = $"單首 offset {_songOffset:+0.#;-0.#;0} ms 尚未存檔 —— Ctrl+S 寫進 song_table.csv（{Stem()}）";
-            else if (!string.IsNullOrEmpty(_status)) note = _status;   // 存完 _status 會蓋掉提示
+            else if (!string.IsNullOrEmpty(_status)) note = _status;
 
             if (hits == null) return note ?? "";
             return note == null ? hits : hits + "　│　" + note;
         }
 
-        /// <summary>音樂時間一律以「秒」顯示（編譜/對拍都在算毫秒，換算成分秒只是多一道心算）。小數三位 = 毫秒。</summary>
-        public static string Fmt(double ms)
+        /// <summary>音樂時間一律以「秒」顯示（編譜/對拍都在算毫秒，換算成分秒只是多一道心算）。</summary>
+        public static string Fmt(double ms, int decimals = 3)
         {
             if (ms < 0) ms = 0;
-            return (ms / 1000.0).ToString("0.000", System.Globalization.CultureInfo.InvariantCulture);
+            return (ms / 1000.0).ToString("0." + new string('0', decimals), System.Globalization.CultureInfo.InvariantCulture);
         }
 
         // ---------- 打拍測試的面板 ----------
@@ -780,6 +945,14 @@ namespace Sdo.Game
         {
             var r = new Rect(Screen.width - 430, 60, 420, Mathf.Min(560, Screen.height - 90));
             GUILayout.BeginArea(r, GUI.skin.box);
+
+            // 資料夾列：點一下切到選單頁，選完 Q/E 就只在那個資料夾裡走（見 EditorSongScope）。
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("資料夾", GUILayout.Width(44));
+            if (GUILayout.Button(EditorSongScope.Label(_scope) + "　▾")) _pickFolder = !_pickFolder;
+            GUILayout.EndHorizontal();
+            if (_pickFolder) { DrawFolderPicker(); GUILayout.EndArea(); return; }
+
             GUILayout.BeginHorizontal();
             GUILayout.Label("搜尋", GUILayout.Width(32));
             _search = GUILayout.TextField(_search ?? "");
@@ -795,7 +968,7 @@ namespace Sdo.Game
             foreach (var e in _filtered)
             {
                 if (shown++ > 400) { GUILayout.Label("…（太多了，打字縮小範圍）"); break; }
-                string lvs = $"{(e.HasChart(0) ? e.Diff(0).ToString() : "-")}/{(e.HasChart(1) ? e.Diff(1).ToString() : "-")}/{(e.HasChart(2) ? e.Diff(2).ToString() : "-")}";
+                string lvs = $"{(e.HasChart(0) ? e.DisplayLevel(0).ToString() : "-")}/{(e.HasChart(1) ? e.DisplayLevel(1).ToString() : "-")}/{(e.HasChart(2) ? e.DisplayLevel(2).ToString() : "-")}";
                 if (GUILayout.Button($"{e.title}  —  {e.artist}\n#{e.fileId}   {e.gn}   BPM {e.bpm:0.#}   LV {lvs}", GUILayout.Height(38)))
                 { LoadSong(e.gn, _diff); _showList = false; }
             }
@@ -812,11 +985,35 @@ namespace Sdo.Game
         private void Refilter()
         {
             string q = (_search ?? "").Trim();
-            if (_filterFor == q) return;
-            _filterFor = q;
+            string key = _scope + "" + q;   // 換資料夾也要重篩，不只是換搜尋字串
+            if (_filterFor == key) return;
+            _filterFor = key;
             _filtered.Clear();
-            foreach (var e in SongCatalog.Primary)
+            foreach (var e in EditorSongScope.InScope(SongCatalog.Primary, _scope))
                 if (SongCatalog.Matches(e, q)) _filtered.Add(e);
+        }
+
+        // 選資料夾那一頁：全部 / 官方內建 / 每一個外部歌資料夾（＝選歌畫面「資料夾」分頁的那一層）。
+        // 選了就記住（PlayerPrefs），Q/E 與這份歌單都只走它。
+        private void DrawFolderPicker()
+        {
+            GUILayout.Label("選一個資料夾 —— Q/E 上一首/下一首就只在裡面走（F8 可快速切回全部）");
+            _folderScroll = GUILayout.BeginScrollView(_folderScroll);
+            var songs = SongCatalog.Primary;
+            if (FolderButton("全部", EditorSongScope.All, songs)) { }
+            if (FolderButton("官方內建", EditorSongScope.OfficialScope, songs)) { }
+            foreach (var g in EditorSongScope.Folders(songs)) FolderButton(g, g, songs);
+            GUILayout.EndScrollView();
+        }
+
+        private bool FolderButton(string label, string scope, IReadOnlyList<SongCatalog.Entry> songs)
+        {
+            int n = scope == EditorSongScope.All ? songs.Count : EditorSongScope.InScope(songs, scope).Count;
+            bool cur = string.Equals(_scope, scope, StringComparison.OrdinalIgnoreCase);
+            if (!GUILayout.Button((cur ? "● " : "　") + label + $"　（{n} 首）", GUILayout.Height(26))) return false;
+            SetScope(scope);
+            _pickFolder = false;
+            return true;
         }
     }
 }

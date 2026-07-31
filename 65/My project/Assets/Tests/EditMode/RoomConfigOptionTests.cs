@@ -20,6 +20,7 @@ namespace Sdo.Tests
             src.language = "en";
             src.gameplay.fullscreenFill = true; src.gameplay.cameraAuto = false; src.gameplay.cameraFixed = 4;
             src.gameplay.playFullSong = true;
+            src.gameplay.songBombs = false;   // 非預設值（預設是 true＝照譜面原樣有雷）才驗得出有沒有落地
             src.gameplay.panelOpacity = 1.1f; src.gameplay.effectScene = false;
 
             RoomConfig.CaptureOptionFrom(src);
@@ -30,7 +31,7 @@ namespace Sdo.Tests
             RoomConfig.optBgm = RoomConfig.optMusic = RoomConfig.optSfx = 0.5f;
             RoomConfig.optDispW = 1024; RoomConfig.optLang = "zh-TW"; RoomConfig.optUiScale = 1f;
             RoomConfig.optFullscreenFill = false; RoomConfig.optCameraAuto = true; RoomConfig.optCameraFixed = 0;
-            RoomConfig.optPlayFullSong = false;
+            RoomConfig.optPlayFullSong = false; RoomConfig.optSongBombs = true;
             RoomConfig.ParseInto(ini);
             Assert.IsTrue(RoomConfig.hasOption, "[Option] 區應被辨識");
             Assert.IsTrue(RoomConfig.hasOptUiScale, "opt_uiScale 應被寫出且辨識得到");
@@ -51,6 +52,7 @@ namespace Sdo.Tests
             Assert.IsFalse(dst.gameplay.cameraAuto);
             Assert.AreEqual(4, dst.gameplay.cameraFixed, "F2 記住的固定鏡頭台號要跟著 config.ini 走");
             Assert.IsTrue(dst.gameplay.playFullSong);
+            Assert.IsFalse(dst.gameplay.songBombs, "進階「歌曲炸彈」要跟著 config.ini 走");
             Assert.IsFalse(dst.gameplay.effectScene);
             Assert.AreEqual(1.1f, dst.gameplay.panelOpacity, 1e-4f);
         }
@@ -83,6 +85,36 @@ namespace Sdo.Tests
             RoomConfig.ParseInto("[Option]\nopt_keys=J,K,I,L\nopt_keysAux=Keypad4,Keypad2,Keypad8,Keypad6\n");
             Assert.AreEqual("J,K,I,L", RoomConfig.optKeys);
             Assert.AreEqual("Keypad4,Keypad2,Keypad8,Keypad6", RoomConfig.optKeysAux);
+        }
+
+        // ---- 「停用炸彈」→「歌曲炸彈」：改名同時語意反過來（開＝有雷），舊鍵要搬得過來 ----
+
+        [Test]
+        public void SongBombs_Defaults_To_On_And_RoundTrips()
+        {
+            RoomConfig.optSongBombs = true;
+            Assert.IsTrue(new GameSettings().gameplay.songBombs, "預設開＝照譜面原樣有雷");
+
+            RoomConfig.optSongBombs = false;
+            RoomConfig.ParseInto(RoomConfig.Serialize());
+            Assert.IsFalse(RoomConfig.optSongBombs);
+            Assert.IsTrue(RoomConfig.hasSongBombsKey, "自己寫出來的模板一定帶新鍵");
+            StringAssert.Contains("opt_songBombs=", RoomConfig.Serialize());
+            StringAssert.DoesNotContain("opt_disableBombs=", RoomConfig.Serialize(), "舊鍵不再寫回");
+        }
+
+        [Test]
+        public void Legacy_DisableBombs_Key_Migrates_Inverted()
+        {
+            // 舊鍵語意相反：opt_disableBombs=1（把炸彈拿掉）→ opt_songBombs=0。
+            RoomConfig.optSongBombs = true; RoomConfig.hasSongBombsKey = false;
+            RoomConfig.ParseInto("[Option]\nopt_disableBombs=1\n");
+            Assert.IsFalse(RoomConfig.optSongBombs, "舊檔說要拿掉炸彈 → 新鍵是關");
+            Assert.IsFalse(RoomConfig.hasSongBombsKey, "只有舊鍵 → Load 要補寫一次模板換成新鍵");
+
+            RoomConfig.optSongBombs = false;
+            RoomConfig.ParseInto("[Option]\nopt_disableBombs=0\n");
+            Assert.IsTrue(RoomConfig.optSongBombs, "舊檔說照譜面原樣 → 新鍵是開");
         }
 
         // ---- [Profile] activeId：以前是獨立的 active.txt，現在併進 config.ini ----

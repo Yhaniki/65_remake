@@ -21,6 +21,39 @@ namespace Sdo.Game
             public int diffEasy = -1, diffNormal = -1, diffHard = -1;
             public int notesEasy, notesNormal, notesHard;
             public int durEasy, durNormal, durHard;   // seconds per difficulty
+            // Etterna MinaCalc raw overall MSD per difficulty (external osu/sm/mc songs only; 0 = none — .gn packs
+            // keep their own header level and are never rated). Shown instead of the osu level when
+            // RoomConfig.difficultyCalc == "minacalc". See ManiaMsd / Sdo.Osu.Mina.
+            public float msdEasy, msdNormal, msdHard;
+
+            // ---- external (user Songs/ folder: osu / StepMania) — absent/false for the official .gn catalog ----
+            public bool external;          // true → this row is a scanned external song, not an official .gn
+            public string group = "";      // group folder name (the drill-in 資料夾 category groups by this)
+            public string audioPath = "";  // absolute audio file (full-song ogg/mp3/wav) for gameplay + preview
+            public string imagePath = "";  // absolute SOURCE cover (jacket→banner→background); "" → placeholder disc
+            public string folderPath = ""; // the song's folder — where its CD disc + sdoinfo.dat sidecar live
+            public string songKey = "";    // identity WITHIN the folder ("" = the folder's only song); see ExternalSongGrouper
+            public string cdPath = "";     // absolute generated CD disc image; "" → compose it from imagePath on first use
+            public int chartFormat;        // 0=none, 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
+            // ---- .gn 歌曲包 (chartFormat 3；見 Sdo.Osu.SdoPackIndex) ----
+            public string previewPath = ""; // 專屬試聽短檔（包裡的 exper/<fileId>.ogg）；"" → 用全曲擷取一段
+            public string dpsPath = "";     // 包裡自帶的官方編舞（DANCE/<fileId>.DPS）；"" → 開局自己生一份
+            public long chartSeed;          // .gn 的 LCG 解密金鑰（uint32）；0 = 未知→退回共用 seed 池
+            public string chartEasy = "", chartNormal = "", chartHard = "";   // absolute chart file per slot ("" if empty)
+            public int chartIdxEasy, chartIdxNormal, chartIdxHard;            // .sm #NOTES block index per slot (osu: 0)
+            public int previewStartMs = -1;   // 試聽起點(ms)：osu PreviewTime / SM #SAMPLESTART；-1 = 未指定→中段
+            public int previewLengthMs;       // 試聽長度(ms)：SM #SAMPLELENGTH；0 = 未指定→預設長度
+            // ---- 歌包自帶的 serverconfig（Sdo.Osu.SdoServerConfig；docs/reverse-engineering/SDO_SERVERCONFIG.md）----
+            /// <summary>這首歌在歌包 serverconfig 歌曲表裡的列號；-1 = 沒有（官方歌、或包裡沒這個檔）。
+            /// 官方選單反序畫，所以歌單排序用它**降冪**（表的最後一列 = 最上面）。</summary>
+            public int packOrder = -1;
+            /// <summary>歌包指定的標籤（0=無 1=NEW 2=HOT 3=推薦 4=古典，= Sdo.Osu.SongBadge）。</summary>
+            public int badge;
+
+            /// <summary>Absolute chart file path for difficulty d (external songs only); "" if that slot is empty.</summary>
+            public string ChartPath(int d) => d <= 0 ? chartEasy : (d == 1 ? chartNormal : chartHard);
+            /// <summary>.sm note-block index for difficulty d (external songs only; osu always 0).</summary>
+            public int ChartIndex(int d) => d <= 0 ? chartIdxEasy : (d == 1 ? chartIdxNormal : chartIdxHard);
 
             /// <summary>
             /// 單首 offset（毫秒）——StepMania 的 song offset、osu 的 beatmap offset。補「這首譜跟音檔沒對齊」
@@ -35,8 +68,33 @@ namespace Sdo.Game
             /// </summary>
             public float offsetMs;
 
+            /// <summary>單首**舞蹈** offset(毫秒)——跟 <see cref="offsetMs"/> 完全獨立。動的只有舞者(整段 DPS 前後挪),
+            /// 音樂/音符/判定都不動。來源是外部歌資料夾 sidecar 的 <c>#DPSOFFSETMS</c>(<see cref="SongSidecarEntry.DpsOffsetMs"/>);
+            /// 官方 csv 歌沒這欄 → 一律 0。正 = 舞蹈延後。給 ScreenGameplay 的 dpsOffsetMs 用(見 FrontendApp)。</summary>
+            public float dpsOffsetMs;
+
             /// <summary>Difficulty level for d (0=easy,1=normal,2=hard); -1 if unknown.</summary>
             public int Diff(int d) => d <= 0 ? diffEasy : (d == 1 ? diffNormal : diffHard);
+            public float Msd(int d) => d <= 0 ? msdEasy : (d == 1 ? msdNormal : msdHard);
+
+            /// <summary>難度數字的「顯示值」——依 <see cref="Sdo.Settings.RoomConfig.difficultyCalc"/> 決定：
+            /// minacalc → round(max(MSD^1.9×0.1, MSD))，上限 999（<see cref="Sdo.Osu.ManiaMsd.ToLevel"/>）；
+            /// 否則 osu 星數×7 等級（<see cref="Diff"/>）。**選歌 / 房間 / 遊戲一律用這個**,才不會切畫面時數字跳掉。
+            ///
+            /// **新的等級算法只套用在「難度得自己重算」的外部譜面(osu / StepMania / Malody)。.gn 一律不動**：
+            /// 官方 DATA/MUSIC 的 .gn 是 <c>external == false</c>，外部資料夾裡的 .gn 歌包則是
+            /// <c>chartFormat == SongFormat.Gn</c>——兩者都自帶檔頭寫死的難度(<see cref="Sdo.Osu.GnHeader"/>)，
+            /// 那是這首歌本來的等級，換算計器不該把它改掉。</summary>
+            public int DisplayLevel(int d)
+            {
+                if (external && chartFormat != (int)Sdo.Osu.SongFormat.Gn &&
+                    Sdo.Settings.RoomConfig.difficultyCalc == "minacalc")
+                {
+                    float m = Msd(d);
+                    if (m > 0f) return Sdo.Osu.ManiaMsd.ToLevel(m);
+                }
+                return Diff(d);
+            }
             public int NoteCount(int d) => d <= 0 ? notesEasy : (d == 1 ? notesNormal : notesHard);
             public int DurationSec(int d) => d <= 0 ? durEasy : (d == 1 ? durNormal : durHard);
 
@@ -45,6 +103,70 @@ namespace Sdo.Game
             /// difficulty that carries no notes (e.g. 動畫歌曲串燒 sdom2140k: easy=3417 notes, normal/hard=0).
             /// Those empty difficulties are greyed out / non-selectable in song-select.</summary>
             public bool HasChart(int d) => NoteCount(d) > 0;
+
+            // 一個難度槽的完整內容（重排時整組搬，不能只搬數字 —— 譜面路徑/#NOTES 索引跟著走才不會選到別張譜）。
+            private struct Slot
+            {
+                public int Diff, Notes, Dur, ChartIdx;
+                public float Msd;
+                public string Chart;
+                public static Slot Empty => new Slot { Diff = -1, Chart = "" };   // 同 Entry 的欄位預設（-1 = 未知等級）
+            }
+
+            private Slot ReadSlot(int d)
+            {
+                if (d <= 0) return new Slot { Diff = diffEasy, Notes = notesEasy, Dur = durEasy, ChartIdx = chartIdxEasy, Msd = msdEasy, Chart = chartEasy };
+                if (d == 1) return new Slot { Diff = diffNormal, Notes = notesNormal, Dur = durNormal, ChartIdx = chartIdxNormal, Msd = msdNormal, Chart = chartNormal };
+                return new Slot { Diff = diffHard, Notes = notesHard, Dur = durHard, ChartIdx = chartIdxHard, Msd = msdHard, Chart = chartHard };
+            }
+
+            private void WriteSlot(int d, Slot s)
+            {
+                if (d <= 0) { diffEasy = s.Diff; notesEasy = s.Notes; durEasy = s.Dur; chartIdxEasy = s.ChartIdx; msdEasy = s.Msd; chartEasy = s.Chart ?? ""; }
+                else if (d == 1) { diffNormal = s.Diff; notesNormal = s.Notes; durNormal = s.Dur; chartIdxNormal = s.ChartIdx; msdNormal = s.Msd; chartNormal = s.Chart ?? ""; }
+                else { diffHard = s.Diff; notesHard = s.Notes; durHard = s.Dur; chartIdxHard = s.ChartIdx; msdHard = s.Msd; chartHard = s.Chart ?? ""; }
+            }
+
+            /// <summary>
+            /// 把三個難度槽重排成 easy ≤ normal ≤ hard —— **依 <see cref="DisplayLevel"/>，也就是目前那套難度算法**
+            /// （<see cref="Sdo.Settings.RoomConfig.difficultyCalc"/>）。
+            ///
+            /// 掃描期是用 osu 等級把譜面分進三個槽的（<see cref="Sdo.Osu.ExternalDifficultyPicker"/>）。兩套算法對
+            /// 同一首歌的高低順序不見得一樣，所以切成 minacalc 之後,困難格的數字可能反而比普通格小 —— 選了哪套算法
+            /// 就整體都照那套，包含「哪張譜是困難」。重排只是換槽（同一首歌的同三張譜，路徑/索引跟著搬），
+            /// 不必重掃、也不動任何檔案。
+            ///
+            /// 排法沿用掃描期那支 hard-first 的純函式：等級高的先拿 hard，同級用音符數多的，再同就保持原順序；
+            /// 譜不足三張時**低位留空**（跟掃描期一致 —— 只有一張譜就是「只有困難」，易/普灰掉）。
+            ///
+            /// **.gn 一律不重排**（官方 DATA/MUSIC 的歌、以及外部資料夾裡的 .gn 歌包）：那三格是譜面自己的
+            /// 易/普/難，不是算出來的名次 —— 有些歌只有簡單格有譜（例：sdom2140k easy 3417 notes、其餘 0），
+            /// 拿去 hard-first 重排會把它搬進困難格。這跟 <see cref="DisplayLevel"/> 不動 .gn 是同一條規則。
+            /// </summary>
+            public void SortSlotsByDisplayLevel()
+            {
+                if (!external || chartFormat == (int)Sdo.Osu.SongFormat.Gn) return;
+                // 顯示用的就是掃描期分槽用的那套（osu 等級）→ 槽位本來就對，一個位元組都不要動。
+                if (Sdo.Settings.RoomConfig.difficultyCalc != "minacalc") return;
+
+                var lv = new List<int>(3); var notes = new List<int>(3); var data = new List<Slot>(3);
+                for (int d = 0; d < 3; d++)
+                {
+                    if (!HasChart(d)) continue;
+                    // 有譜卻沒 MSD（空譜/太短算不出來 → DisplayLevel 退回 osu 等級）：整首歌就會拿兩種尺度互比，
+                    // 排出來只會更亂 → 維持掃描期的順序。
+                    if (Msd(d) <= 0f) return;
+                    lv.Add(DisplayLevel(d)); notes.Add(NoteCount(d)); data.Add(ReadSlot(d));
+                }
+                if (data.Count < 2) return;
+                // 已經是遞增就不要動：同分時 Assign 會照音符數重排，那種「同級但換位」的搬動是沒必要的雜訊。
+                bool ascending = true;
+                for (int i = 1; i < lv.Count; i++) if (lv[i] < lv[i - 1]) { ascending = false; break; }
+                if (ascending) return;
+
+                var order = Sdo.Osu.ExternalDifficultyPicker.Assign(lv, notes);   // [easyIdx, normalIdx, hardIdx]
+                for (int d = 0; d < 3; d++) WriteSlot(d, order[d] >= 0 ? data[order[d]] : Slot.Empty);
+            }
         }
 
         /// <summary>Sanity bound for a hand-typed offsetMs. A stray extra digit (30 -> 3000000) would otherwise
@@ -108,8 +230,59 @@ namespace Sdo.Game
         public static string Title(string gnPathOrName) => Get(gnPathOrName)?.title;
         public static string Artist(string gnPathOrName) => Get(gnPathOrName)?.artist;
 
+        /// <summary>Merge scanned external songs (user Songs/ folder — osu / StepMania) into the catalog, AFTER the
+        /// official catalog is loaded. Entries whose gn already exists are skipped (idempotent). The song-select
+        /// list picks these up because <see cref="All"/> now includes them (browsed via the 資料夾 group category;
+        /// they are excluded from the 全部 tab — see SongSelectScreen.CategoryBase).</summary>
+        public static void RegisterExternal(IEnumerable<Entry> entries)
+        {
+            if (entries == null) return;
+            EnsureLoaded();
+            foreach (var e in entries)
+            {
+                if (e == null || string.IsNullOrEmpty(e.gn)) continue;
+                var key = e.gn.ToLowerInvariant();
+                if (_byGn.ContainsKey(key)) continue;
+                _byGn[key] = e;
+                _all.Add(e);
+                _primary = null;   // external gns end in 'k' → they belong to the Primary view; drop its cache
+            }
+        }
+
+        /// <summary>Swap the WHOLE external half of the catalog for a fresh scan's entries: every previously
+        /// registered <c>external</c> row is dropped first, then <paramref name="entries"/> registered. This is what a
+        /// RE-scan needs (see ExternalSongLibrary.ScanAndRegisterCo, driven at boot and by 選歌 → 分類瀏覽 → 更新):
+        /// <see cref="RegisterExternal"/> alone only ever adds, so a song deleted from disk — or one whose gn changed
+        /// because its folder/audio was renamed — would linger in the list pointing at a file that is gone.
+        ///
+        /// Official (.gn) rows are untouched. Entry OBJECTS are replaced wholesale, so anything holding an Entry
+        /// reference across a re-scan must re-resolve it by gn (<see cref="Get"/>) — gns are content-derived and
+        /// stable, which is also why favourites and the restored selection survive.</summary>
+        public static void ReplaceExternal(IEnumerable<Entry> entries)
+        {
+            EnsureLoaded();
+            if (DropExternalRows(_all, _byGn) > 0) _primary = null;
+            RegisterExternal(entries);
+        }
+
+        /// <summary>Remove every <c>external</c> row from a catalog's two views, keeping the official ones and their
+        /// order; returns how many were dropped. Pure (no IO, no globals) — the testable half of
+        /// <see cref="ReplaceExternal"/>.</summary>
+        public static int DropExternalRows(List<Entry> all, Dictionary<string, Entry> byGn)
+        {
+            int n = all != null ? all.RemoveAll(e => e != null && e.external) : 0;
+            if (byGn == null) return n;
+            var stale = new List<string>();
+            foreach (var kv in byGn) if (kv.Value != null && kv.Value.external) stale.Add(kv.Key);
+            foreach (var k in stale) byGn.Remove(k);
+            return n;
+        }
+
         /// <summary>這首譜的單首 offset（毫秒）；沒設過 = 0。見 <see cref="Entry.offsetMs"/>。</summary>
         public static float OffsetMs(string gnPathOrName) => Get(gnPathOrName)?.offsetMs ?? 0f;
+
+        /// <summary>這首譜的單首**舞蹈** offset（毫秒）；跟音樂 offset 獨立，沒設過 = 0。見 <see cref="Entry.dpsOffsetMs"/>。</summary>
+        public static float DpsOffsetMs(string gnPathOrName) => Get(gnPathOrName)?.dpsOffsetMs ?? 0f;
 
         private static float ClampOffsetMs(float ms)
             => float.IsNaN(ms) ? 0f : (ms < -MaxOffsetMs ? -MaxOffsetMs : (ms > MaxOffsetMs ? MaxOffsetMs : ms));

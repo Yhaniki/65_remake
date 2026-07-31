@@ -148,6 +148,9 @@ procmon_tool/runs/
 /65/My project/log.txt
 /65/My project/log.txt.prev
 
+# User song library (osu!/StepMania folders dropped beside the exe) — local data, never versioned
+/65/My project/Songs/
+
 # 手打 Unity batchmode 指令時,「65\My project」沒加引號 → 路徑被空白切成「65\My」+「project」,
 # Unity 的 -logFile 就落在 repo 裡一個叫 65/My 的檔上(專案根那句 "Couldn't set project path to:
 # …/65/My project/…/65/My" 就是這樣來的)。它曾經被誤 commit 進版控,現在移出來並擋住。

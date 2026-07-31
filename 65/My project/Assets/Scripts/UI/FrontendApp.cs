@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
@@ -104,17 +105,59 @@ namespace Sdo.UI
             var root = (RectTransform)canvas.transform;
             UIKit.Stretch(UIKit.AddImage(root, "AppBg", UITheme.Bg).rectTransform);
 
+            // Layers are created empty here; the (slow) screen/modal building + catalog parse + external Songs/ scan run
+            // in BootCo behind a progress bar so the window shows a filling bar instead of a long black freeze. The
+            // BootProgress overlay is created LAST inside BootCo so it renders above these layers.
             var screenLayer = UIKit.NewRect(root, "Screens");
             UIKit.Stretch(screenLayer);
+            var modalLayer = UIKit.NewRect(root, "Modals");
+            UIKit.Stretch(modalLayer);
+            StartCoroutine(BootCo(root, screenLayer, modalLayer));
+        }
+
+        // Staged boot with a progress bar. The genuinely slow part is (a) the official catalog parse and (b) the
+        // external Songs/ folder scan (reads + note-counts every candidate osu/StepMania chart); both advance the bar.
+        //
+        // config.ini 的 LoadExternalSongs=0 → 慢的那一半（掃歌）整個不跑，剩下的官方歌單解析＋建介面快到不值得
+        // 蓋一張載入畫面上去，所以連 BootProgress 都不建（prog 保持 null，下面每個 Set 都是 no-op）——
+        // 玩家看到的就是官方原本那樣直接進男/女選擇畫面，沒有黑底白條的載入過場。
+        private IEnumerator BootCo(RectTransform root, RectTransform screenLayer, RectTransform modalLayer)
+        {
+            bool ext = RoomConfig.loadExternalSongs;
+            var prog = ext ? BootProgress.Create(root) : null;   // last child of root → above the (empty) screen/modal layers
+            if (prog != null) yield return null;                  // let the overlay render before any heavy work
+
+            // Phase 1 — official song catalog (one atomic JsonUtility parse; coarse pre/post steps).
+            prog?.Set(0.05f, "載入歌曲資料…");
+            yield return null;
+            var _ = SongCatalog.All;   // force EnsureLoaded (the big catalog parse + name overrides)
+            prog?.Set(0.15f, "載入歌曲資料…");
+            yield return null;
+
+            // Phase 2 — scan DATA/ADDON/SONG (+ legacy Songs/ + AdditionalSongFolders) for osu/StepMania songs. The
+            // ADDON plugin folders are created first so a fresh install shows the player where to drop songs. The bar's
+            // sub-label shows the folder being read and its detail line the current song + running count.
+            // 外部歌曲關掉時整個 Phase 2 跳過：不建 ADDON 資料夾（不然關著功能還在硬碟上長出空資料夾），也不掃。
+            if (ext)
+            {
+                SdoExtracted.EnsureAddonDirs();
+                yield return ExternalSongLibrary.ScanAndRegisterCo((f, folder, detail) =>
+                    prog?.Set(0.15f + 0.55f * Mathf.Clamp01(f),
+                              string.IsNullOrEmpty(folder) ? "掃描歌曲資料夾…" : folder, detail));
+            }
+
+            // Phase 3 — build the screens (SongSelect now sees the external songs registered above).
+            prog?.Set(0.72f, "建立介面…");
+            yield return null;
             Make<GenderSelectScreen>(screenLayer);   // 單機開場的男/女選擇畫面（Flow 的入口狀態）
             Make<LobbyScreen>(screenLayer);
             Make<RoomScreen>(screenLayer);
             Make<SongSelectScreen>(screenLayer);
-
             _ctx.Flow.ScreenChanged += (from, to) => { ShowOnly(to); UpdateBgm(to); };
 
-            var modalLayer = UIKit.NewRect(root, "Modals");
-            UIKit.Stretch(modalLayer);
+            // Phase 4 — modals + Nav wiring.
+            prog?.Set(0.85f, "建立介面…");
+            yield return null;
             _option = new GameObject("OptionDlg").AddComponent<OptionDlgModal>();
             _option.transform.SetParent(modalLayer, false);
             _option.Build(modalLayer);
@@ -140,7 +183,14 @@ namespace Sdo.UI
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
 
+            // Phase 5 — font atlas warmup (rasterises the CJK glyphs of the visible song titles).
+            prog?.Set(0.92f, "準備字型…");
+            yield return null;
             WarmupFont();
+            prog?.Set(1f, "");
+            yield return null;
+
+            prog?.Destroy();
             ShowOnly(_ctx.Flow.Current);
             UpdateBgm(_ctx.Flow.Current);   // 開場即起隨機大廳 BGM(男/女選擇畫面)
 
@@ -226,15 +276,47 @@ namespace Sdo.UI
             if (_uiCam != null) _uiCam.enabled = false;   // stop the UI cam clearing over the play screen
 
             var game = new GameObject("ScreenGameplay").AddComponent<ScreenGameplay>();   // fields read in its Start() next frame
-            game.gnPath = gnPath;
-            game.oggPath = oggPath;
+            if (s.IsExternalSong)
+            {
+                // external osu/StepMania (user Songs/ folder): ScreenGameplay.LoadChart parses chartPath directly,
+                // bypassing .gn; audio is the resolved file (ogg/mp3/wav). There is no official DANCE/<negId>.DPS, so
+                // LoadChart generates the song's choreography from these two (ExternalDps: once, deterministically,
+                // recorded in the song folder's sdoinfo.dat) instead of looping the single fallback clip.
+                // 外部歌才需要:把「解 mp3」換成有快取/預抓的版本 —— 選歌確認時(OnConfirm)已背景預解,這裡
+                // 命中就秒進;沒命中(random 歌 / retry)也只是照常背景解,不會更糟。sync 由 LoadAndPlayAudio
+                // 自己用 Mp3SyncFor 算,GameplaySongAudioCache 只照收到的 sync 存取,key 也含 sync,不會串位置。
+                game.mp3Decoder = GameplaySongAudioCache.Get;
+                game.chartFormat = s.ExternalChartFormat;
+                game.chartPath = s.ExternalChartPath;
+                game.chartIndex = s.ExternalChartIndex;
+                game.chartSeed = s.ExternalChartSeed;   // .gn 歌曲包：這首譜自己的解密金鑰
+                game.chartLevel = s.ExternalLevel;
+                game.gnPath = "";
+                game.oggPath = s.ExternalAudioPath;
+                game.externalFolder = s.ExternalFolderPath;
+                game.externalSongKey = s.ExternalSongKey;
+                // 生成編舞吃「這首歌的」BPM 跟「所有難度的譜」，不是只看選到這張（換難度不換舞，見 Sdo.Osu.DanceInputs）
+                game.songBpm = s.ExternalSongBpm;
+                game.songChartPaths = s.ExternalSongChartPaths;
+                game.songChartIndices = s.ExternalSongChartIndices;
+                game.songDisplayName = s.SongTitle;   // catalog display name (osu pack → real song name), not the .osu pack-label Title
+            }
+            else
+            {
+                game.gnPath = gnPath;
+                game.oggPath = oggPath;
+            }
             game.difficulty = (int)s.Difficulty;                 // Easy/Normal/Hard -> 0/1/2
             game.songOffsetMs = SongCatalog.OffsetMs(s.SongGn);  // 這首譜自己的 offset（手改在 song_table.csv 的 offsetMs）
+            game.dpsOffsetMs = SongCatalog.DpsOffsetMs(s.SongGn); // 舞蹈**獨立** offset（外部歌 sidecar 的 #DPSOFFSETMS，預設 0）
             game.localPlayerName = s.LocalPlayerName;             // 頭上名字 = 房間同一個名字 (玩家001…)
             game.localPlayerMale = s.Gender == 1;
             game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;
             if (ProfileManager.Active != null) game.bodyShapeIndex = ProfileManager.Active.bodyShapeIndex;   // 遊戲舞者用這個角色自己的體型 (胖瘦)
-            game.dpsPath = "DANCE/" + s.SongFileId + ".DPS";     // per-song choreography (missing -> generic dance fallback)
+            // per-song choreography (missing -> generic dance fallback). A .gn 歌曲包 ships the song's OWN official
+            // .DPS next to it — an absolute path, which LoadAsset takes as-is, so it dances the real choreography
+            // instead of the one ExternalDps would generate.
+            game.dpsPath = !string.IsNullOrEmpty(s.ExternalDpsPath) ? s.ExternalDpsPath : "DANCE/" + s.SongFileId + ".DPS";
             game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
             game.autoPlay = false;                               // real play (A/S/W/D + numpad), not the demo auto-player
             game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準 config.ini scrollBaseBpm，osu式內部變速）
@@ -253,7 +335,9 @@ namespace Sdo.UI
                 game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
                 game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
                 game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
+                game.collapseShortHolds = gp.collapseShortHolds; // 無理短長條(<180BPM 16分)收成一般 note；只對外部轉檔譜(osu/sm/mc)，官方/歌曲包 .gn 不動
                 game.constantScroll = !gp.songSpeed;             // 進階「歌曲變速」關 → 整首固定流速（忽略譜面 BPM 變化 / SV）
+                game.songBombs = gp.songBombs;                   // 進階「歌曲炸彈」關 → 載譜時把譜面上的炸彈整顆拿掉
             }
             _activeGame = game;
         }

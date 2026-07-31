@@ -2,12 +2,14 @@ using System.Globalization;
 using System.Threading;
 using NUnit.Framework;
 using Sdo.Game;
+using Sdo.Osu;
 
 namespace Sdo.Tests
 {
     /// <summary>
     /// 編輯器頂欄的音樂時間顯示：一律「秒」，不再換算成 分:秒。
-    /// 對拍/offset 都是以毫秒在算，心算 01:07.6 → 67.6 秒是多餘的一步。
+    /// 對拍/offset 都是以毫秒在算，心算 01:07.6 → 67.6 秒是多餘的一步；
+    /// 播放位置給 6 位小數是為了跟 StepMania 的 CURRENT SECOND 逐位對照。
     /// </summary>
     public class ChartEditorTimeFormatTests
     {
@@ -18,6 +20,13 @@ namespace Sdo.Tests
             Assert.AreEqual("67.616", ChartEditorScreen.Fmt(67616.375));   // 舊格式會顯示 01:07.6
             Assert.AreEqual("126.912", ChartEditorScreen.Fmt(126912));
             Assert.AreEqual("605.500", ChartEditorScreen.Fmt(605500));     // 超過 10 分鐘也只是變大的秒數
+        }
+
+        [Test]
+        public void Fmt_SixDecimals_MatchesStepManiaCurrentSecond()
+        {
+            Assert.AreEqual("67.616375", ChartEditorScreen.Fmt(67616.375, 6));
+            Assert.AreEqual("0.000000", ChartEditorScreen.Fmt(0, 6));
         }
 
         [Test]
@@ -32,7 +41,19 @@ namespace Sdo.Tests
         public void Fmt_ClampsNegativeToZero()
         {
             Assert.AreEqual("0.000", ChartEditorScreen.Fmt(-1));
-            Assert.AreEqual("0.000", ChartEditorScreen.Fmt(-2500));
+            Assert.AreEqual("0.000000", ChartEditorScreen.Fmt(-2500, 6));
+        }
+
+        // 頂欄顯示的是「小節內第幾拍」(1~4)，不是從曲首起算的絕對拍。120 BPM → 一拍 500ms。
+        [Test]
+        public void BeatInMeasure_WrapsToOneThroughFour()
+        {
+            var g = new BeatGrid(null, 120.0);
+            Assert.AreEqual(1.0, ChartEditorScreen.BeatInMeasure(g, 0), 1e-6);
+            Assert.AreEqual(1.5, ChartEditorScreen.BeatInMeasure(g, 250), 1e-6);
+            Assert.AreEqual(2.0, ChartEditorScreen.BeatInMeasure(g, 500), 1e-6);
+            Assert.AreEqual(4.0, ChartEditorScreen.BeatInMeasure(g, 1500), 1e-6);
+            Assert.AreEqual(1.0, ChartEditorScreen.BeatInMeasure(g, 2000), 1e-6);   // 下一小節第一拍
         }
 
         // 板子往下讓出頂欄：頂欄是螢幕像素，板子是 800×600 design px，比例隨視窗大小變 →
@@ -60,6 +81,36 @@ namespace Sdo.Tests
             Assert.AreEqual(ScreenGameplay.EditorViewShiftMax, ScreenGameplay.EditorViewShiftFor(9999f, 300f, 600f, +1), 1e-3f);
             Assert.AreEqual(ScreenGameplay.EditorViewShiftPad, ScreenGameplay.EditorViewShiftFor(0f, 300f, 600f, +1), 1e-3f);
             Assert.AreEqual(0f, ScreenGameplay.EditorViewShiftFor(-50f, 300f, 600f, +1), 1e-3f);   // 負值（不該發生）→ 完全不推
+        }
+
+        [Test]
+        public void OsuTimeT_MapsNoteAudioAndWaveformLikeOsuEditor()
+        {
+            const double noteTimeMs = 1000.0;
+            const double musicCountInMs = 123.0;
+
+            // .osu 的 note 保持檔案內的 T。播放/seek 在 T 讀 T-C；波形則比照 lazer 在 T 顯示 T-C+20。
+            double audioSourceMs = ScreenGameplay.AudioSourceMsAtChartMs(noteTimeMs, musicCountInMs, 0.0);
+            double waveformSourceMs = ScreenGameplay.WaveformSourceMsAtChartMs(
+                (int)SongFormat.Osu, noteTimeMs, musicCountInMs);
+
+            Assert.AreEqual(877.0, audioSourceMs, 1e-9);
+            Assert.AreEqual(897.0, waveformSourceMs, 1e-9);
+            Assert.AreEqual(ScreenGameplay.OsuWaveformVisualOffsetMs,
+                waveformSourceMs - audioSourceMs, 1e-9,
+                "osu 的 20ms 只能存在波形視覺座標，不能偷進播放 PCM");
+            Assert.AreEqual(noteTimeMs,
+                ScreenGameplay.WaveformStartMsFor((int)SongFormat.Osu, musicCountInMs) + waveformSourceMs,
+                1e-9, "同一個 osu 時間 T 必須仍畫回同一個譜面座標");
+        }
+
+        [Test]
+        public void WaveformVisualOffset_IsOnlyAppliedToOsuFiles()
+        {
+            Assert.AreEqual(20.0, ScreenGameplay.WaveformVisualOffsetMsFor((int)SongFormat.Osu), 1e-9);
+            foreach (var format in new[] { SongFormat.None, SongFormat.Sm, SongFormat.Gn, SongFormat.Malody })
+                Assert.AreEqual(0.0, ScreenGameplay.WaveformVisualOffsetMsFor((int)format), 1e-9,
+                    format + " 不應繼承 osu 的波形相容位移");
         }
 
         // 小數點固定用「.」：跑在把逗號當小數點的系統語系時，這一欄不能變成 67,616。

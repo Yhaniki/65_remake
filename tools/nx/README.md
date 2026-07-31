@@ -32,6 +32,7 @@
 | [`NXSTART.md`](NXSTART.md) | **啟動握手怎麼繞過**：LaunchStamp + seal + 共享記憶體，含校驗算法與 Python 版 |
 | [`NXStart.cs`](NXStart.cs) | 最小替代啟動器原始碼（C#，來源見 NXSTART.md） |
 | [`crack_nx.py`](crack_nx.py) | **主力工具**：離線破解 `.nx` → 明文譜（外層還原 + LCG seed 反推）。**實測 199/199 全解** |
+| [`nx_to_gn.py`](nx_to_gn.py) | **整包轉檔**：`.nx` → 標準 `k.gn` ＋金鑰表＋歌單 sidecar，重製版可以直接把整包當外部歌曲庫載入（見下） |
 | [`dump_chart.py`](dump_chart.py) | 執行期從遊戲記憶體 hook 解密函式撈明文（現在只當**交叉驗證**用，非必要） |
 | [`decode_chart.py`](decode_chart.py) | 解析 dump 出來的明文譜：frame/note 統計、**捲動速度表**、**炸彈表** |
 | [`dump_nxpatch_image.py`](dump_nxpatch_image.py) | spawn NXPatch 並 dump 記憶體映像（靜態逐位址分析用；平常不需要） |
@@ -110,3 +111,60 @@ note_type : {'一般音符': 1525, '炸彈': 20, '長條頭': 33, '長條尾': 3
 `Sdo.Osu/GnChart.cs`（解析）、`Sdo.Osu/OsuBeatmap.cs`（`ScrollSpeeds`/`CurrentScrollSpeed`）、
 `Game/ScreenGameplay.cs`（`ScrollPx` 套捲動、`TickBombs`/`ExplodeBomb` 炸彈）。
 對照表見 [`NX_FORMAT.md`](NX_FORMAT.md) §4。
+
+---
+
+## 整包當外部歌曲庫玩（`.nx` → `k.gn` → 選歌畫面）
+
+`crack_nx.py` 解出來的是**明文譜**，適合分析；要真的在重製版裡玩，用 [`nx_to_gn.py`](nx_to_gn.py)
+把整包轉成**標準 SDOM `.gn`**，遊戲的外部歌曲掃描就能直接吃這個資料夾。
+
+```bash
+python tools/nx/nx_to_gn.py "<pack>"
+# patch 沒帶的封面/編舞，再指到遊戲本體補（包自帶的優先，這些只當補件）：
+python tools/nx/nx_to_gn.py "<pack>" --icons "H:/65_remake_clean/DATA/UI/MUSIC/ICONS" --dance "H:/65_remake_clean/DATA/DANCE"
+```
+
+補件前後（[NX] 3.0，199 首）：封面 140 → **198**、編舞 35 → **190**、試聽 197。
+
+轉完把 pack 根目錄加進 `config.ini` 的 `AdditionalSongFolders`，開機掃描就會多出一個以 pack
+資料夾命名的分頁。實測 **199/199 首全部轉換成功、597 張譜（199×3 難度）全部解得開**。
+
+### 產物（都寫在 `patch music/` 裡，原始 `.nx` 保留不動）
+
+| 檔案 | 內容 |
+|------|------|
+| `sdomNNNNK.gn` | 標準 SDOM `.gn`：456B 資源名前綴 + 300B 明文表頭 + LCG 密文 |
+| `gn_keytable.json` | **金鑰表**，schema 同 `tools/gn_keytable.py` 的 `gn-keytable/1`。**下次再跑直接讀這張表，不用重算** |
+| `sdo_pack.tsv` | 歌單 sidecar（UTF-8）：seed、表頭數值、歌名/歌手、音樂/封面/試聽/編舞的路徑 |
+| `cd/<fileId>.png` | 封面轉出來的 PNG（見下） |
+
+sidecar 的路徑：包內資源寫**相對**（整包搬家還能用），補進來的包外資源寫**絕對**
+（相對會變成一長串 `../../../..`，Songs 一搬就全斷）。
+
+### 封面一定要轉成 PNG
+
+官方 ICONS 有 92% 是 `.dds`（這包 146 張裡 134 張，全是未壓縮 A8R8G8B8 237×237）。遊戲端的共用圖片
+載入器只吃 PNG/JPG/BMP，而繞去 `DdsLoader` 有兩個坑：它每個解碼器最後都
+`Apply(..., makeNoLongerReadable: true)`（拿不回像素、翻不了列），且 DDS 是「第一列在上」而 Unity 貼圖
+第一列在下 —— 3D 的 UV 會自動抵銷，UI sprite 不會，畫出來會上下顛倒。所以一律離線轉一份 PNG
+（順便 224 KB → ~75 KB）。`ExternalCdImage` 仍留了一條未壓縮 DDS 的後備解碼路徑，給沒跑過本工具的包用。
+
+### 為什麼非要有金鑰表
+
+離線單機版整個語料（4000+ 檔）只用 ~150 把共用 seed，所以 runtime 有一個共用池，硬試也試得出來。
+**[NX] 這包不是**：實測 199 首**每首自己一把**（去重後 43 把，且與共用池零交集）——
+共用池一把都開不了。所以 seed 必須先算好存表帶著走，`sdo_pack.tsv` 的 `seed` 欄就是這個用途。
+
+### 兩份表頭不一致的坑
+
+容器裡有**兩份** 300 bytes 表頭：`0x1C8` 那份明文，和密文區解開後的「重複表頭」。這包裡兩份**不一樣**——
+明文那份被 patch 改成英文歌名，而且 `address_end`(+296) 是垃圾值；密文那份才是引擎真正解析的。
+重製版的 `GnChart` 又要求兩份**逐位元組相同**才算解密成功，所以轉檔時把解密後那份（權威、位址正確）
+寫回明文槽。英文歌名沒有掉——它從 `SongList.dat` 讀出來寫進 `sdo_pack.tsv`（那本來就是遊戲畫面顯示的來源）。
+
+### 遊戲端接在哪
+
+`Sdo.Osu/SdoPackIndex.cs`（讀 sidecar）、`Sdo.Osu/GnHeader.cs`（不解密就讀表頭數值）、
+`Sdo.Osu/ExternalSongScanner.cs`（`SongFormat.Gn` 掃描）、`Game/ExternalCdImage.cs`（`.dds` 封面）、
+`Game/ScreenGameplay.cs`（`chartFormat == 3` 用自己的金鑰載譜）。

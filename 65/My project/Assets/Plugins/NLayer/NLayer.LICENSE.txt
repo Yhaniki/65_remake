@@ -1,0 +1,2 @@
+NLayer (https://github.com/naudio/NLayer) — MIT License.
+Bundled managed MP3 decoder for external .mp3 song audio.

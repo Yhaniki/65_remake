@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using Sdo.Game;
+using Sdo.Osu;
 using Sdo.UI.Catalog;
 
 namespace Sdo.Tests
@@ -33,6 +34,21 @@ namespace Sdo.Tests
         [Test]
         public void Filter_By_Artist_Cjk()
             => Assert.AreEqual(1, new SongListModel(Sample()).Filter("蔡妍").Count);
+
+        [Test]
+        public void Filter_By_Group_Finds_External_Pack_By_Its_Name()
+        {
+            // An external song's pack/folder label is searchable, so typing the pack name surfaces its songs even
+            // when none of their titles contain it (e.g. "SDO Pack8" holding "Aoi Shiori", "INVOKE", …).
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "ext_1k.gn", title = "Aoi Shiori", external = true, group = "SDO Pack8" },
+                new SongCatalog.Entry { gn = "ext_2k.gn", title = "INVOKE",     external = true, group = "SDO Pack8" },
+                new SongCatalog.Entry { gn = "sdom0001k.gn", title = "official", group = "" },
+            };
+            Assert.AreEqual(2, SongListModel.Filter(list, "Pack8").Count);
+            Assert.AreEqual(2, SongListModel.Filter(list, "sdo pack").Count);   // case-insensitive
+        }
 
         [Test]
         public void PickRandom_Is_Deterministic_And_InRange()
@@ -143,12 +159,25 @@ namespace Sdo.Tests
             // Sample()[0] is easy3/normal6/hard9; the others have no level data (Diff -> -1).
             Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 0, 1, 5).Count);   // easy 3 in 1-5
             Assert.AreEqual(0, SongListModel.InLevelRange(Sample(), 0, 5, 9).Count);   // easy 3 not in 5-9
-            Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 2, 9, 99).Count);  // hard 9 >= 9
+            // 「9 以上」的上界是 NoMax,不是等級天花板 —— 天花板從 99 放寬到 999 之後這裡不能再寫死數字。
+            Assert.AreEqual(1, SongListModel.InLevelRange(Sample(), 2, 9, SongListModel.NoMax).Count);  // hard 9 >= 9
         }
 
         [Test]
         public void InLevelRange_All_Includes_Unknown_Levels()
-            => Assert.AreEqual(3, SongListModel.InLevelRange(Sample(), 1, 0, 99).Count);
+            => Assert.AreEqual(3, SongListModel.InLevelRange(Sample(), 1, 0, SongListModel.NoMax).Count);
+
+        [Test]
+        public void InLevelRange_Keeps_Levels_Above_99()
+        {
+            // 回歸:哨兵曾經是 99(＝當時的等級上限),100 等以上的歌會被「X 以上」整批篩掉。
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "boss.gn", fileId = 9, diffEasy = 3, diffNormal = 60, diffHard = 150 },
+            };
+            Assert.AreEqual(1, SongListModel.InLevelRange(list, 2, 25, SongListModel.NoMax).Count);
+            Assert.AreEqual(0, SongListModel.InLevelRange(list, 2, 25, 99).Count, "明確給的上界 99 還是要擋住 150");
+        }
 
         [Test]
         public void InLevelRange_Null_Safe()
@@ -205,6 +234,62 @@ namespace Sdo.Tests
         {
             // 全部: a has 3 playable charts, hi has 2 (easy empty) -> 5 candidates.
             Assert.AreEqual(5, SongListModel.RandomCandidates(Levelled(), RngAll).Count);
+        }
+
+        [Test]
+        public void RandomCandidates_High_Range_Keeps_Songs_Above_99()
+        {
+            // 回歸:RandRanges 的「X 以上」以前用 Max=99 當無上界的哨兵,而 99 同時是等級天花板。天花板放寬到
+            // 999 之後,150 等的譜就會落在 [25,99] 之外 → 隨機池裡整批消失。哨兵改成 NoMax 才不會。
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "boss.gn", fileId = 9, diffEasy = 3, diffNormal = 60, diffHard = 150,
+                                        notesEasy = 100, notesNormal = 200, notesHard = 300 },
+            };
+            var c = SongListModel.RandomCandidates(list, Rng25up);
+            CollectionAssert.AreEquivalent(new[] { 1, 2 }, c.ConvertAll(x => x.Difficulty), "60 跟 150 都要留在池子裡");
+        }
+
+        // 隨機難度的範圍比的是「螢幕上那個數字」→ 跟著 RoomConfig.difficultyCalc 走（選了哪套就整體照那套）。
+        // 外部 osu 譜：osu 等級 3（低），但 MSD 27 換算後 ≈53（高）→ 同一首歌在兩套算法下落在完全不同的範圍。
+        private static List<SongCatalog.Entry> ExternalFlipped() => new List<SongCatalog.Entry>
+        {
+            new SongCatalog.Entry { gn = "x.gn", external = true, chartFormat = (int)SongFormat.Osu,
+                                    diffEasy = 3, notesEasy = 100, msdEasy = 27f },
+        };
+
+        [Test]
+        public void RandomCandidates_Uses_The_Active_DifficultyCalc()
+        {
+            var saved = Sdo.Settings.RoomConfig.difficultyCalc;
+            try
+            {
+                Sdo.Settings.RoomConfig.difficultyCalc = "osu";
+                Assert.AreEqual(1, SongListModel.RandomCandidates(ExternalFlipped(), Rng1to5).Count, "osu 等級 3 → 落在 1-5");
+                Assert.AreEqual(0, SongListModel.RandomCandidates(ExternalFlipped(), Rng25up).Count);
+
+                Sdo.Settings.RoomConfig.difficultyCalc = "minacalc";
+                Assert.AreEqual(0, SongListModel.RandomCandidates(ExternalFlipped(), Rng1to5).Count, "顯示的已經不是 3");
+                Assert.AreEqual(1, SongListModel.RandomCandidates(ExternalFlipped(), Rng25up).Count, "換算後 ≈53 → 25以上");
+            }
+            finally { Sdo.Settings.RoomConfig.difficultyCalc = saved; }
+        }
+
+        [Test]
+        public void InLevelRange_Uses_The_Active_DifficultyCalc()
+        {
+            var saved = Sdo.Settings.RoomConfig.difficultyCalc;
+            try
+            {
+                Sdo.Settings.RoomConfig.difficultyCalc = "osu";
+                Assert.AreEqual(1, SongListModel.InLevelRange(ExternalFlipped(), 0, 1, 5).Count);
+                Assert.AreEqual(0, SongListModel.InLevelRange(ExternalFlipped(), 0, 25, 99).Count);
+
+                Sdo.Settings.RoomConfig.difficultyCalc = "minacalc";
+                Assert.AreEqual(0, SongListModel.InLevelRange(ExternalFlipped(), 0, 1, 5).Count);
+                Assert.AreEqual(1, SongListModel.InLevelRange(ExternalFlipped(), 0, 25, 99).Count);
+            }
+            finally { Sdo.Settings.RoomConfig.difficultyCalc = saved; }
         }
 
         [Test]
@@ -273,6 +358,166 @@ namespace Sdo.Tests
         {
             Assert.AreEqual(-1, SongListModel.FirstPlayableIndex(null, 0, 0));
             Assert.AreEqual(-1, SongListModel.FirstPlayableIndex(new List<SongCatalog.Entry>(), 0, 0));
+        }
+
+        // ---- Externals: the pool the 分類瀏覽 panel groups (user Songs/ songs only, never the official .gn ones) ----
+
+        [Test]
+        public void Externals_Keeps_Only_External_Songs()
+        {
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "sdom0001k.gn", title = "official" },
+                new SongCatalog.Entry { gn = "ext_aaaak.gn", title = "user", external = true, group = "Anime" },
+            };
+            var r = SongListModel.Externals(list);
+            Assert.AreEqual(1, r.Count);
+            Assert.AreEqual("user", r[0].title);
+        }
+
+        [Test]
+        public void Externals_Null_Safe()
+            => Assert.AreEqual(0, SongListModel.Externals(null).Count);
+
+        // ---- 歌包自帶的 serverconfig：排序用包自己的順序、標籤照包說的 ----
+        // (Sdo.Osu.SdoServerConfig / docs/reverse-engineering/SDO_SERVERCONFIG.md)
+
+        private static SongCatalog.Entry Pack(string gn, string group, int packOrder, SongBadge badge = SongBadge.None)
+            => new SongCatalog.Entry { gn = gn, external = true, group = group, packOrder = packOrder, badge = (int)badge, notesEasy = 1 };
+
+        [Test]
+        public void Curate_PackSongs_UseTheirOwnOrder_NewestRowOnTop()
+        {
+            // 官方選單是反序畫的：serverconfig 表的最後一列在最上面 → packOrder 降冪。
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                Pack("ext_aaak.gn", "NX", 0),
+                Pack("ext_bbbk.gn", "NX", 7),
+                Pack("ext_ccck.gn", "NX", 3),
+            });
+            Assert.AreEqual(new[] { "ext_bbbk.gn", "ext_ccck.gn", "ext_aaak.gn" }, r.ConvertAll(e => e.gn).ToArray());
+        }
+
+        [Test]
+        public void Curate_OfficialSongsStayAboveExternalOnes()
+        {
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                Pack("ext_zzzk.gn", "NX", 99),
+                new SongCatalog.Entry { gn = "sdom0001k.gn", fileId = 10001 },
+            });
+            Assert.AreEqual("sdom0001k.gn", r[0].gn);
+            Assert.AreEqual("ext_zzzk.gn", r[1].gn);
+        }
+
+        [Test]
+        public void Curate_PackWithoutServerConfig_KeepsFilenameOrder_BelowTheOrderedOnes()
+        {
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "ext_aaak.gn", external = true, group = "NX" },   // packOrder 預設 -1
+                new SongCatalog.Entry { gn = "ext_bbbk.gn", external = true, group = "NX" },
+                Pack("ext_000k.gn", "NX", 2),
+            });
+            Assert.AreEqual("ext_000k.gn", r[0].gn);      // 有序的先出
+            Assert.AreEqual("ext_bbbk.gn", r[1].gn);      // 其餘沿用檔名降冪
+            Assert.AreEqual("ext_aaak.gn", r[2].gn);
+        }
+
+        [Test]
+        public void Curate_GroupsStayTogether()
+        {
+            var r = SongListModel.Curate(new List<SongCatalog.Entry>
+            {
+                Pack("ext_1k.gn", "A", 1), Pack("ext_2k.gn", "B", 1),
+                Pack("ext_3k.gn", "A", 0), Pack("ext_4k.gn", "B", 0),
+            });
+            var groups = r.ConvertAll(e => e.group);
+            Assert.AreEqual(new[] { "B", "B", "A", "A" }, groups.ToArray());   // 群組不交錯
+        }
+
+        [Test]
+        public void BadgeMap_PackConfigWins_AndOfficialFallsBackToTopN()
+        {
+            var list = new List<SongCatalog.Entry>
+            {
+                new SongCatalog.Entry { gn = "sdom9002k.gn", fileId = 19002 },
+                new SongCatalog.Entry { gn = "sdom9001k.gn", fileId = 19001 },
+                new SongCatalog.Entry { gn = "sdom9000k.gn", fileId = 19000 },
+                Pack("ext_hotk.gn", "NX", 5, SongBadge.Hot),
+                Pack("ext_reck.gn", "NX", 4, SongBadge.Recommend),
+                Pack("ext_plainek.gn", "NX", 3),
+            };
+            var map = SongListModel.BadgeMap(list, 2);
+
+            Assert.AreEqual(SongBadge.New, SongListModel.BadgeOf(map, list[0]));   // 最上面 2 首官方歌 = NEW
+            Assert.AreEqual(SongBadge.New, SongListModel.BadgeOf(map, list[1]));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[2]));
+            Assert.AreEqual(SongBadge.Hot, SongListModel.BadgeOf(map, list[3]));   // 包說了算
+            Assert.AreEqual(SongBadge.Recommend, SongListModel.BadgeOf(map, list[4]));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[5]));  // 外部歌不會被 top-N 規則掃到
+        }
+
+        [Test]
+        public void BadgeMap_ExternalSongsNeverGetTheAutoNewBadge()
+        {
+            // 外部歌就算排在最上面也不掛 NEW —— 它們沒有官方編號，NEW 由歌包的 serverconfig 決定。
+            var list = new List<SongCatalog.Entry>
+            {
+                Pack("ext_1k.gn", "NX", 9),
+                Pack("ext_2k.gn", "NX", 8),
+                new SongCatalog.Entry { gn = "sdom0001k.gn", fileId = 10001 },
+            };
+            var map = SongListModel.BadgeMap(list, 2);
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[0]));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(map, list[1]));
+            Assert.AreEqual(SongBadge.New, SongListModel.BadgeOf(map, list[2]));
+        }
+
+        [Test]
+        public void BadgeMap_NullAndEmptySafe()
+        {
+            Assert.AreEqual(0, SongListModel.BadgeMap(null, 5).Count);
+            Assert.AreEqual(0, SongListModel.BadgeMap(new List<SongCatalog.Entry> { null }, 5).Count);
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(null, new SongCatalog.Entry { gn = "x.gn" }));
+            Assert.AreEqual(SongBadge.None, SongListModel.BadgeOf(new Dictionary<string, SongBadge>(), null));
+        }
+
+        // ---- ByBadge：最新(NEW) / 勁樂(HOT) / 懷舊(古典) 三個分頁共用的篩選 ----
+
+        [Test]
+        public void ByBadge_PicksOnlyThatBadge_KeepingListOrder()
+        {
+            var list = new List<SongCatalog.Entry>
+            {
+                Pack("ext_hot1k.gn", "NX", 9, SongBadge.Hot),
+                Pack("ext_classk.gn", "NX", 8, SongBadge.Classical),
+                Pack("ext_hot2k.gn", "NX", 7, SongBadge.Hot),
+                Pack("ext_plaink.gn", "NX", 6),
+            };
+            var map = SongListModel.BadgeMap(list, 0);
+
+            var hot = SongListModel.ByBadge(list, map, SongBadge.Hot);
+            Assert.AreEqual(new[] { "ext_hot1k.gn", "ext_hot2k.gn" }, hot.ConvertAll(e => e.gn).ToArray(),
+                            "只留 HOT，且維持傳入的順序");
+            Assert.AreEqual(1, SongListModel.ByBadge(list, map, SongBadge.Classical).Count);
+            Assert.AreEqual(0, SongListModel.ByBadge(list, map, SongBadge.Recommend).Count);
+        }
+
+        [Test]
+        public void ByBadge_None_Is_Always_Empty()
+        {
+            // 「沒有標籤」不是一個可以拿來瀏覽的分類：不能因為大部分歌都沒標籤就把整份歌單倒進某個分頁。
+            var list = new List<SongCatalog.Entry> { Pack("ext_plaink.gn", "NX", 1) };
+            var map = SongListModel.BadgeMap(list, 0);
+            Assert.AreEqual(0, SongListModel.ByBadge(list, map, SongBadge.None).Count);
+        }
+
+        [Test]
+        public void ByBadge_NullSafe()
+        {
+            Assert.AreEqual(0, SongListModel.ByBadge(null, null, SongBadge.Hot).Count);
+            Assert.AreEqual(0, SongListModel.ByBadge(Sample(), null, SongBadge.Hot).Count);
         }
     }
 }

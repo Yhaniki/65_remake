@@ -23,6 +23,17 @@ namespace Sdo.Tests
             finally { ProfileManager.Root = null; }   // 還原 lazy 解析，避免污染其他測試
         }
 
+        [Test]
+        public void IsMissingCurrentKey_DetectsOldConfigMissingNewKeys()
+        {
+            // canonical（Serialize 剛寫出的）內容 → 一個 key 都不缺
+            Assert.IsFalse(RoomConfig.IsMissingCurrentKey(RoomConfig.Serialize()));
+            // 舊版存的內容缺這版新增的 AdditionalSongFolders → 偵測為缺 key（Load 會補寫升級，讓新 key 出現可手改）
+            string old = "[Room]\ndefaultSpeed=2.5\ndefaultTeam=3\n[Option]\nopt_bgm=0.5\n";
+            Assert.IsFalse(old.Contains("AdditionalSongFolders"), "前提：這份舊內容確實沒有該 key");
+            Assert.IsTrue(RoomConfig.IsMissingCurrentKey(old));
+        }
+
         // Reset to built-in defaults before each case (RoomConfig holds static state).
         [SetUp]
         public void Reset()

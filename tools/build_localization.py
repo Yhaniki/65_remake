@@ -128,6 +128,27 @@ STR = {
     "songselect.rand_20up": ["Random Lv 20+",  "隨機難度 20級以上", "随机难度 20级以上", "ランダム難易度 20以上"],
     "songselect.rand_25up": ["Random Lv 25+",  "隨機難度 25級以上", "随机难度 25级以上", "ランダム難易度 25以上"],
 
+    # 分類瀏覽 — the floating group panel behind the 資料夾 category (StepMania-style sections)
+    "songselect.group_panel":  ["Browse", "分類瀏覽", "分类浏览", "カテゴリ"],
+    # the panel's grouping tabs are English in every language (they sit in a narrow toolbar; asked for verbatim)
+    "songselect.group_folder": ["Group", "Group", "Group", "Group"],
+    "songselect.group_title":  ["Song", "Song", "Song", "Song"],
+    "songselect.group_artist": ["Artist", "Artist", "Artist", "Artist"],
+    "songselect.group_bpm":    ["BPM", "BPM", "BPM", "BPM"],
+    "songselect.group_other":  ["Other", "其他", "其他", "その他"],
+    "songselect.group_uncat":  ["(Ungrouped)", "(未分類)", "(未分类)", "(未分類)"],
+    "songselect.group_bpm_unknown": ["BPM ?", "BPM 未知", "BPM 未知", "BPM 不明"],
+    "songselect.group_empty":  ["No songs in Songs/", "Songs/ 裡沒有歌曲", "Songs/ 里没有歌曲", "Songs/ に曲がありません"],
+    # 分類瀏覽面板底部的「更新」鈕（重掃外部歌資料夾）與掃描狀態/結果訊息
+    "songselect.group_refresh":         ["Refresh", "更新", "更新", "更新"],
+    "songselect.group_scanning":        ["Scanning…", "掃描中…", "扫描中…", "スキャン中…"],
+    "songselect.group_refresh_done":    ["Songs updated: {0}", "歌曲已更新：{0}", "歌曲已更新：{0}", "曲を更新：{0}"],
+    "songselect.group_refresh_none":    ["No changes ({0} songs)", "歌曲沒有變更（共 {0} 首）", "歌曲没有变更（共 {0} 首）", "変更なし（全 {0} 曲）"],
+    "songselect.group_refresh_added":   ["{0} added", "新增 {0} 首", "新增 {0} 首", "{0} 曲追加"],
+    "songselect.group_refresh_changed": ["{0} changed", "更新 {0} 首", "更新 {0} 首", "{0} 曲更新"],
+    "songselect.group_refresh_removed": ["{0} removed", "移除 {0} 首", "移除 {0} 首", "{0} 曲削除"],
+    "songselect.group_refresh_sep":     [", ", "、", "、", "、"],
+
     # 3D stage names — selector scenes (ids 0..30) + special rooms (31/32/33/35/37/38/39).
     # zh-TW are the real EXE names; en/ja are translations (proper nouns like NARNIA kept as-is).
     "stage.name.0":  ["Pedestrian Street", "步行街", "步行街", "歩行者天国"],
@@ -188,6 +209,7 @@ STR = {
     "settings.language":     ["Language", "語言", "语言", "言語"],
     "settings.play_full_song": ["Full Play Mode", "完奏模式", "完奏模式", "完奏モード"],
     "settings.song_speed":     ["Song Speed", "歌曲變速", "歌曲变速", "曲の変速"],
+    "settings.song_bomb":      ["Song Mines", "歌曲炸彈", "歌曲炸弹", "曲の爆弾"],
 
     "display.windowed":   ["Windowed", "視窗", "窗口", "ウィンドウ"],
     "display.fullscreen": ["Fullscreen", "全螢幕", "全屏", "フルスクリーン"],

@@ -32,7 +32,7 @@ namespace Sdo.UI.Core
                 session.LocalPlayerName = prof.name;
                 session.Gender = prof.gender;
             }
-            session.SeedRoomDefaults();   // 房間面板預設值(速度/note/組隊/掉落/模式)從 active user 的 config.ini 種入
+            session.SeedRoomDefaults();   // 房間面板預設值(速度/note/組隊/掉落/模式)從共用 config.ini 種入
             WardrobeStore.Load(session);  // 錢包 + 擁有衣物 + 穿搭 從 active user 的 profile.json 載入 (首次自動發起始金額)
             var flow = new FlowManager();
             var clock = new SystemClock();

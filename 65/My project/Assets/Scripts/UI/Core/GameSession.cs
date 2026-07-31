@@ -32,6 +32,27 @@ namespace Sdo.UI.Core
         public string SongArtist;
         public Difficulty Difficulty = Difficulty.Easy;
 
+        // ---- external song (user Songs/ folder: osu / StepMania). Set at SongSelectScreen.OnConfirm from a scanned
+        //      SongCatalog.Entry, resolved to the chosen difficulty's chart; consumed by FrontendApp.StartGameplay. ----
+        public bool IsExternalSong;
+        public string ExternalChartPath = "";   // absolute .osu / .sm / .gn path for the selected difficulty
+        public int ExternalChartIndex;          // .sm #NOTES block index; .gn 的難度(0/1/2)；osu: 0
+        public int ExternalChartFormat;         // 1=osu, 2=sm, 3=gn 歌曲包 (Sdo.Osu.SongFormat)
+        public long ExternalChartSeed;          // .gn 的 LCG 解密金鑰（0 = 未知→退回共用 seed 池）
+        public string ExternalDpsPath = "";     // .gn 歌曲包自帶的官方編舞；"" → 開局自己生一份
+        public string ExternalAudioPath = "";   // absolute audio (ogg/mp3/wav); "" → silent
+        public int ExternalLevel;                // chosen difficulty's LV (osu!mania 星數×7) → shown in gameplay too
+        // 這首歌的身分（資料夾 + 資料夾內是哪一首）：外部歌沒有官方 .dps，開局時 ExternalDps 用它當種子生一份舞蹈、
+        // 寫進歌曲資料夾並記在該資料夾的 sdoinfo.dat（同一首歌永遠生出同一支舞，且只生一次）。
+        public string ExternalFolderPath = "";  // 歌曲資料夾（CD 圖／sdoinfo.dat／生成的 .dps 都放這）
+        public string ExternalSongKey = "";     // 資料夾內的識別（"" = 該資料夾只有一首）
+        // ---- 生成編舞要的「整首歌」資料：舞是一首歌一支，不能因為換難度就變另一支（見 Sdo.Osu.DanceInputs）----
+        // 這首**歌**的 BPM（選歌顯示的那個）；<= 0 = 不知道 → 退回選到那張譜自己算出來的。
+        public double ExternalSongBpm;
+        // 這首歌**每個難度**的譜（空格子是 ""）：舞蹈長度＝所有難度的最早第一顆音符 → 最晚最後一顆。
+        public string[] ExternalSongChartPaths = new string[0];
+        public int[] ExternalSongChartIndices = new int[0];
+
         // 隨機難度選擇：確認時就抽好實際歌曲(SongGn/SongFileId/SongArtist)，但房間只顯示「隨機難度 X」標籤(SongTitle)，
         // 進遊戲才揭曉是哪首歌。重進選歌選單 → 直接回隨機 tab 的該區間。false = 一般（指定歌曲）選擇。
         public bool SongIsRandom;

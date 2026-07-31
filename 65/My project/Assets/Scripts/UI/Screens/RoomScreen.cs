@@ -2217,10 +2217,11 @@ namespace Sdo.UI.Screens
             // 隨機難度選擇：房間顯示「隨機難度 X」標籤、不揭曉抽到的歌 → 等級/BPM 也一併隱藏（否則會露出那首歌的等級/BPM）。
             if (s.SongIsRandom) entry = null;
             if (_songLabel != null)
-                _songLabel.SetText(s.HasSong ? (s.SongTitle ?? "") : L("room.no_song"));
+                // 已選歌曲：跟選歌清單／遊戲中同一個上限（NoWrap+Overflow → 長歌名會往兩邊溢出面板美術）
+                _songLabel.SetText(s.HasSong ? SongTextLimits.ClampTitle(s.SongTitle) : L("room.no_song"));
             if (_levelLabel != null)
             {
-                int lvl = entry != null ? entry.Diff((int)s.Difficulty) : -1;
+                int lvl = entry != null ? entry.DisplayLevel((int)s.Difficulty) : -1;
                 _levelLabel.SetText(lvl >= 0 ? lvl.ToString() : "");
             }
             if (_bpmLabel != null)

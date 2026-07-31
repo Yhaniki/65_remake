@@ -63,6 +63,7 @@ namespace Sdo.UI.Screens
         private int _gpViewFixed;       // 「固定」視角鎖第幾台鏡頭（遊戲中 F2 切到哪台就記哪台；這裡只是跟著存/還原）
         private bool _gpPlayFullSong;   // 進階「完奏模式」（放在進階頁最上面，存 settings.gameplay.playFullSong）
         private bool _gpSongSpeed;      // 進階「歌曲變速」（存 settings.gameplay.songSpeed）
+        private bool _gpSongBombs;      // 進階「歌曲炸彈」（存 settings.gameplay.songBombs；開＝譜面有雷）
         private float _gpPanelOpacity;
         private Slider _gpOpacitySlider;
         private readonly List<Action> _gameRefresh = new List<Action>();   // re-paint every game-tab dot from its bool
@@ -178,10 +179,12 @@ namespace Sdo.UI.Screens
             var resNames = new string[ResolutionPreset.Presets.Length];
             for (int i = 0; i < resNames.Length; i++) resNames[i] = ResolutionPreset.Presets[i].ToString();
 
-            // 六列，起始 y=238（比原本 243 高 5px，連同進階板一起上移）、列距 26（沿用「遊戲」頁 GameRowY 的列距）。radio 圓點在列頂 +12。
+            // 七列，起始 y=238（比原本 243 高 5px，連同進階板一起上移）、列距 26（沿用「遊戲」頁 GameRowY 的列距）。radio 圓點在列頂 +12。
+            // 玩法三列（完奏模式/歌曲變速/歌曲炸彈）在上，系統四列（垂直同步/視窗大小/顯示模式/語言）在下。
+            // 板高 214（AdvBoard 放在 y=220 → 底邊 434），最後一列 y=394 + 圓點 12 仍在板內。
             const float y0 = 238f, step = 26f, dotDown = 12f;
-            float yFull = y0, ySpeed = y0 + step, yVsync = y0 + step * 2f;
-            float yRes = y0 + step * 3f, yMode = y0 + step * 4f, yLang = y0 + step * 5f;
+            float yFull = y0, ySpeed = y0 + step, yBomb = y0 + step * 2f, yVsync = y0 + step * 3f;
+            float yRes = y0 + step * 4f, yMode = y0 + step * 5f, yLang = y0 + step * 6f;
 
             // Row 1 — 完奏模式（移到最上面）：HP 歸零不切斷歌曲，整首照打到曲末（血空後不再加分、結算仍算 GAME OVER）。用 board 烘好的模板 pill + 兩顆圈。
             AdvLabel(b, yFull, "settings.play_full_song", bakedPill: true);
@@ -193,12 +196,17 @@ namespace Sdo.UI.Screens
             AdvDot(b, 392f, ySpeed + dotDown, "common.enabled", () => _gpSongSpeed, () => { _gpSongSpeed = true; RefreshAdv(); }, ownFrame: true);
             AdvDot(b, 481f, ySpeed + dotDown, "common.disabled", () => !_gpSongSpeed, () => { _gpSongSpeed = false; RefreshAdv(); }, ownFrame: true);
 
-            // Row 3 — 垂直同步：開啟/關閉。非模板列 → 自繪深紫空心圓框。
+            // Row 3 — 歌曲炸彈：開啟＝照譜面原樣有雷（預設）；關閉＝載譜時把炸彈整顆拿掉（GameplaySettings.songBombs）。
+            AdvLabel(b, yBomb, "settings.song_bomb", bakedPill: false);
+            AdvDot(b, 392f, yBomb + dotDown, "common.enabled", () => _gpSongBombs, () => { _gpSongBombs = true; RefreshAdv(); }, ownFrame: true);
+            AdvDot(b, 481f, yBomb + dotDown, "common.disabled", () => !_gpSongBombs, () => { _gpSongBombs = false; RefreshAdv(); }, ownFrame: true);
+
+            // Row 4 — 垂直同步：開啟/關閉。非模板列 → 自繪深紫空心圓框。
             AdvLabel(b, yVsync, "settings.vsync", bakedPill: false);
             AdvDot(b, 392f, yVsync + dotDown, "common.enabled", () => _vsync, () => { _vsync = true; RefreshAdv(); }, ownFrame: true);
             AdvDot(b, 481f, yVsync + dotDown, "common.disabled", () => !_vsync, () => { _vsync = false; RefreshAdv(); }, ownFrame: true);
 
-            // Rows 4-6 — 視窗大小 / 顯示模式 / 語言：cropped pill label + a selector
+            // Rows 5-7 — 視窗大小 / 顯示模式 / 語言：cropped pill label + a selector
             AdvLabel(b, yRes, "settings.resolution", bakedPill: false);
             _resSel = AdvSelector(b, yRes, resNames, i => _resIndex = i);
 
@@ -584,6 +592,9 @@ namespace Sdo.UI.Screens
 
             // Save() 一次落地兩個檔：[Option] 進 DATA/PROFILE/config.ini、鍵盤頁的 4 鍵鍵位進同層的 keymaps.ini。
             DisplaySettingsManager.Save();
+            // OPTION 設定也落地共用 config.ini（DATA/PROFILE/）：抓目前值 → 寫檔（使用者要求）。
+            Sdo.Settings.RoomConfig.CaptureOptionFrom(s);
+            Sdo.Settings.RoomConfig.Save();
             if (displayChanged) DisplaySettingsManager.ApplyDisplay();   // 沒改顯示就不重建視窗(避免保存像「跳出去」)
             Sdo.Game.AudioMix.Set(_bgm, _music, _sfx);   // 三類分別套用(背景音樂/遊戲音樂/遊戲音效),非舊的全域 AudioListener
             // 遊戲畫面 (全屏/黑邊) 立即套用：其餘遊戲頁偏好（特效/視角/透明度）在下一場遊戲開局讀取。
@@ -626,6 +637,7 @@ namespace Sdo.UI.Screens
             _gpCallShow = g.callCardInGame;
             _gpPlayFullSong = g.playFullSong;
             _gpSongSpeed = g.songSpeed;
+            _gpSongBombs = g.songBombs;
             _gpPanelOpacity = Mathf.Clamp(g.panelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
         }
 
@@ -637,6 +649,7 @@ namespace Sdo.UI.Screens
             g.callCardInGame = _gpCallShow;
             g.playFullSong = _gpPlayFullSong;
             g.songSpeed = _gpSongSpeed;
+            g.songBombs = _gpSongBombs;
             g.panelOpacity = Mathf.Clamp(_gpPanelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
         }
 

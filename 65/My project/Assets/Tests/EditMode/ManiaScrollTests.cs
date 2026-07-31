@@ -4,7 +4,7 @@ using Sdo.Osu;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// ManiaScroll = osu!mania-style scroll at a FIXED base tempo (the user's "base 140, 不依 BPM").
+    /// ManiaScroll = osu!mania-style scroll at a FIXED base tempo (the user's "base 130, 不依 BPM").
     /// Verifies: base velocity calibration, constant (single-BPM) linearity, the osu "Constant Speed"
     /// toggle, and that mid-song BPM changes / SV still vary the scroll locally (relative-scale multiplier).
     /// </summary>
@@ -100,6 +100,33 @@ namespace Sdo.Tests
             var scroll = ManiaScroll.Build(map, 2.5);
             double v = ManiaScroll.BaseVelocityFor(2.5);
             Assert.AreEqual(v * 0.05, scroll.PixelDistance(5000, 5050), 1e-3);   // base segment (would be ×0.5 without the fix)
+        }
+
+        [Test]
+        public void Same_Time_Timing_Points_Resolve_By_Declaration_Order_Not_Sort_Luck()
+        {
+            // 同一個 ms 上有好幾個 uninherited 點時，**最後宣告**的那個才是真正生效的速度
+            // （BuildMultiplierPoints 同時刻保留最後一個）。基準速度的投票必須用同一條規則：
+            // 最後一段的長度是「這一點 → lastObjMs」，同時刻誰排最後就吃掉整首剩下的時間、直接決定基準。
+            // Array.Sort 是不穩定排序，只比時間的話這裡是隨機的 —— StepMania warp 的譜很容易在一個 ms 上
+            // 塞好幾個點（好幾個 warp 共用同一個落地時刻），實測整首捲動速度會差兩千五百萬倍。
+            var tps = new System.Collections.Generic.List<OsuTimingPoint>
+            {
+                new OsuTimingPoint(0, 500.0),        // 120 BPM，只涵蓋 [0,1000)
+                new OsuTimingPoint(1000, 1e-4),      // 同一刻的超短 beat length（warp 顯示窗那種）
+                new OsuTimingPoint(1000, 312.5),     // 後宣告 → 這才是 1000ms 之後真正生效的速度
+            };
+            Assert.AreEqual(312.5, ManiaScroll.MostCommonBeatLength(tps, 200000.0), 1e-9,
+                "1000ms 之後的 199 秒屬於後宣告的那一點");
+
+            // 反過來宣告 → 換成超短的那個吃掉尾段（也就是說結果真的跟著宣告順序走，不是碰巧）
+            var flipped = new System.Collections.Generic.List<OsuTimingPoint>
+            {
+                new OsuTimingPoint(0, 500.0),
+                new OsuTimingPoint(1000, 312.5),
+                new OsuTimingPoint(1000, 1e-4),
+            };
+            Assert.AreEqual(1e-4, ManiaScroll.MostCommonBeatLength(flipped, 200000.0), 1e-12);
         }
 
         // ---- 基準速度 (base tempo) 的挑選：osu most-common + ±3% 併群，見 docs/architecture/scroll-base-bpm.md ----
@@ -241,6 +268,36 @@ namespace Sdo.Tests
             var slow = ManiaScroll.Build(MapWith(60, 5000, new OsuTimingPoint(0, 1000)), 2.5);
             var fast = ManiaScroll.Build(MapWith(240, 5000, new OsuTimingPoint(0, 250)), 2.5);
             Assert.AreEqual(slow.PixelDistance(0, 1000), fast.PixelDistance(0, 1000), 1e-4);
+        }
+
+        [Test]
+        public void Stop_Freezes_The_Highway_Then_Resumes()
+        {
+            // single 120bpm tempo (multiplier 1.0 everywhere) + a 500ms StepMania freeze window at 1000ms.
+            var map = MapWith(120, 5000, new OsuTimingPoint(0, 500));
+            map.Stops.Add(new ScrollStop(1000, 500));   // freeze [1000, 1500)
+            var scroll = ManiaScroll.Build(map, 2.5);
+            double v = ManiaScroll.BaseVelocityFor(2.5);
+
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(0, 1000), 1e-3);   // before the stop: base speed
+
+            // a note at 2000ms holds its distance while `now` advances through the freeze (notes freeze on screen).
+            double dStart = scroll.PixelDistance(1000, 2000);
+            Assert.AreEqual(v * 0.5, dStart, 1e-3);                          // only the post-freeze 500ms of travel remains
+            Assert.AreEqual(dStart, scroll.PixelDistance(1250, 2000), 1e-3); // mid-freeze → frozen (same distance)
+            Assert.AreEqual(dStart, scroll.PixelDistance(1499, 2000), 1e-3); // just before the freeze ends → still frozen
+            Assert.AreEqual(v * 0.5, scroll.PixelDistance(1500, 2000), 1e-3);// freeze over → base speed resumes
+        }
+
+        [Test]
+        public void ConstantScroll_Ignores_Stops()
+        {
+            var map = MapWith(120, 5000, new OsuTimingPoint(0, 500));
+            map.Stops.Add(new ScrollStop(1000, 500));
+            var scroll = ManiaScroll.Build(map, 2.5, constantScroll: true);
+            double v = ManiaScroll.BaseVelocityFor(2.5);
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(1000, 2000), 1e-4);   // perfectly linear despite the stop
+            Assert.AreEqual(v * 2.0, scroll.PixelDistance(1000, 3000), 1e-4);
         }
 
         [Test]

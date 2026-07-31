@@ -55,6 +55,33 @@ namespace Sdo.Settings
         // 只影響「看起來要打在哪」，不影響判定時間（那是 globalOffsetMs 的事）。同樣用打拍測試調。
         public static float judgeOffsetY = 0f;
 
+        // 外部歌曲（osu / StepMania / Malody）載入總開關：1=載入(預設)、0=完全不碰。關掉的話開機不掃任何歌資料夾、
+        // 不建 <ADDON> 那幾個資料夾，開場那張進度條載入畫面也不出現（沒有慢的掃描要等），選歌畫面的「資料夾」頁籤
+        // 不再開分類瀏覽面板 —— 整個遊戲只剩官方 DATA/MUSIC 的歌。下面 AdditionalSongFolders / AddonFolder /
+        // SongUiAlpha / DifficultyCalc 都只在這個開關開著時有意義。見 ExternalSongLibrary.ScanAndRegisterCo。
+        public static bool loadExternalSongs = true;
+
+        // 額外歌曲資料夾（osu / StepMania）：分號(;)分隔的絕對路徑（逗號仍相容），每個路徑都當成一個 Songs 根目錄（底下第一層=
+        // 分類 group，再一層=各首歌的資料夾），語意同 StepMania 的 AdditionalSongFolders。預設的 <ADDON>/SONG 一律自動掃描，
+        // 不需列在這（舊的 exe 同層 Songs/ 也仍相容）。
+        public static string[] additionalSongFolders = new string[0];
+
+        // 外掛(ADDON)根目錄覆蓋：預設空 = DATA/ADDON（即 Root/ADDON）。想把整包外掛（SONG/NOTESKIN/THEME/MODEL）放到別的
+        // 資料夾（例如另一顆硬碟 D:/SdoAddon）就填一個絕對路徑；該資料夾底下就是 SONG 等子夾。見 SdoExtracted.AddonDir。
+        public static string addonFolder = "";
+
+        // 外部歌曲「分類瀏覽」浮動面板（SongGroupPanel）的整體不透明度：0=全透明、1=不透明。預設 0.6 讓底下的唱片欄若隱若現。
+        // 見 SongGroupPanel.OnGUI（整個視窗連同文字/按鈕一起以此 alpha 疊繪）。
+        public static float songUiAlpha = 0.6f;
+
+        // 外部歌難度用哪套計算：minacalc=Etterna MinaCalc 的 MSD 換算等級(預設，見 ManiaMsd.ToLevel / Sdo.Osu.Mina)；
+        // osu=osu!mania 星數×7 的等級(見 ManiaStarRating)。想要 osu 星數那套就把這個鍵改成 osu。
+        // **選了哪一套就整體都照那套**：選歌/房間/遊戲/編輯器顯示的數字、隨機難度的範圍篩選、以及外部歌
+        // 「哪張譜排進簡單/普通/困難」（SongCatalog.Entry.SortSlotsByDisplayLevel）全部同一個來源，
+        // 不會有兩套數字混用。切換不需重掃歌曲（槽位是載入時重排的）。
+        // 只影響「難度得自己重算」的外部譜面(osu / StepMania / Malody)：官方 DATA/MUSIC 的 .gn 和外部資料夾裡的
+        // .gn 歌包都自帶檔頭難度，兩套計算器都不會動它們（見 SongCatalog.Entry.DisplayLevel）。
+        public static string difficultyCalc = "minacalc";
         // 遊戲中兩組文字的整體大小比例（1.0 = 官方原尺寸）。純顯示，不影響判定/分數。
         // comboTextScale：COMBO 字樣＋連段數字（整組一起縮放，字距/行距同比例，不會散開）。
         // judgeTextScale：PERFECT / COOL / BAD / MISS 判定字樣。
@@ -83,6 +110,8 @@ namespace Sdo.Settings
         public static bool hasTextPopKeys = false;     // 同上：檔案是否帶 combo/判定文字彈跳倍率鍵（又比透明度鍵晚加）
         public static bool hasScrollBaseBpmKey = false;// 同上：檔案是否帶 scrollBaseBpm（最晚加的一個，舊檔都沒有 → 補寫模板）
         public static bool hasOptUiScale = false;   // 檔案是否帶 opt_uiScale（舊檔沒有 → 從舊 settings.json 撿）
+        public static bool hasSongBombsKey = false; // 檔案是否帶 opt_songBombs（沒有＝舊檔只有語意相反的 opt_disableBombs
+                                                    // → Load 重寫一次模板，把舊鍵換成新鍵）
         public static float optBgm = 0.5f, optMusic = 0.5f, optSfx = 0.5f;
         // 舊檔（config.ini 還帶鍵位的年代）的 4 鍵鍵位：只讀不寫，開機時給 KeyMap 種 keymaps.ini 用，見 KeyMap.Load。
         public static string optKeys = "A,S,W,D";
@@ -93,7 +122,8 @@ namespace Sdo.Settings
         public static string optLang = "zh-TW";
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
-                           optPlayFullSong = false, optSongSpeed = true;
+                           optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true,
+                           optSongBombs = true;   // 歌曲炸彈：預設開（照譜面原樣有雷）
         public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
 
@@ -158,7 +188,12 @@ namespace Sdo.Settings
                 if (File.Exists(FilePath))
                 {
                     // 新位置（DATA/PROFILE/config.ini）已就緒 → 正常讀。
-                    ParseInto(File.ReadAllText(FilePath));
+                    string text = File.ReadAllText(FilePath);
+                    ParseInto(text);
+                    // schema 升級：舊版存的 config.ini 可能缺這版新增的 key（AdditionalSongFolders / AddonFolder /
+                    // opt_collapseShortHolds / SongUiAlpha…）。缺了就在收尾（if (dirty) Save()）補寫一次 ——
+                    // 讓新 key 以預設值出現在檔案裡可手改，舊 key 既有值照留。
+                    if (IsMissingCurrentKey(text)) dirty = true;
                 }
                 else
                 {
@@ -201,18 +236,47 @@ namespace Sdo.Settings
                 if (!hasTextScaleKeys) dirty = true;
                 if (!hasTextAlphaKeys) dirty = true;   // 透明度鍵比大小鍵晚加，只有大小鍵的檔一樣要補寫
                 if (!hasTextPopKeys) dirty = true;     // 彈跳倍率鍵又更晚加，同理
+                // 舊檔只有語意相反的 opt_disableBombs（值已在 ParseInto 反過來搬進 optSongBombs）→ 重寫一次，
+                // 把它換成 opt_songBombs，之後檔案裡不再有舊鍵。
+                if (!hasSongBombsKey) dirty = true;
                 if (!hasScrollBaseBpmKey) dirty = true;// note 速度基準 BPM 是最晚加的，舊檔一律補寫一次
 
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
                 DisplaySettingsManager.DeleteLegacyJson();      // 舊 settings.json（內容已在 [Option]）
                 ProfileManager.DeleteLegacyActiveFile();        // 舊 active.txt（內容已在 [Profile] activeId）
+                // [Option] 套回 GameSettings 已移到 DisplaySettingsManager.ApplyDisplay()（SettingsBootstrap 隨後呼叫）。
             }
             catch (Exception e)
             {
                 Debug.LogWarning($"[RoomConfig] load failed, using defaults: {e.Message}");
                 Sanitize();
             }
+        }
+
+        /// <summary>目前 schema（<see cref="Serialize"/> 會寫出的 key 全集）裡，是否有 key 不在給定的 INI 文字內。
+        /// 用來偵測「舊版存的 config.ini 缺這版新增的 key」→ <see cref="Load"/> 會補寫一次讓新 key 出現。
+        /// 純函式（只讀字串；<c>Serialize()</c> 只拿來抽 key 清單，值不影響結果）。</summary>
+        public static bool IsMissingCurrentKey(string fileText)
+        {
+            var have = new System.Collections.Generic.HashSet<string>(KeysIn(fileText), StringComparer.Ordinal);
+            foreach (var k in KeysIn(Serialize())) if (!have.Contains(k)) return true;
+            return false;
+        }
+
+        // 取一份 INI 文字裡所有 "key=" 的 key（略過空行/註解/區段標頭）。純函式。
+        private static System.Collections.Generic.List<string> KeysIn(string ini)
+        {
+            var keys = new System.Collections.Generic.List<string>();
+            if (string.IsNullOrEmpty(ini)) return keys;
+            foreach (var raw in ini.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0 || line[0] == '#' || line[0] == ';' || line[0] == '[') continue;
+                int eq = line.IndexOf('=');
+                if (eq > 0) keys.Add(line.Substring(0, eq).Trim());
+            }
+            return keys;
         }
 
         /// <summary>找一份殘留的舊 per-user config.ini：優先 active user，其次 PROFILE 下第一個找到的（只看 &lt;id&gt; 子資料夾，
@@ -251,7 +315,8 @@ namespace Sdo.Settings
             return null;
         }
 
-        /// <summary>移除舊位置的 config.ini（只在內容已寫進新位置後呼叫）：PROFILE/&lt;id&gt;/config.ini（per-user）+ 執行檔同層的舊全域檔。</summary>
+        /// <summary>移除殘留的舊位置 config.ini（每次 <see cref="Load"/> 尾端呼叫，冪等）：PROFILE/&lt;id&gt;/config.ini
+        /// （per-user，已停用、不再讀取）+ 執行檔同層的舊全域檔。新位置 <see cref="FilePath"/> 有 SamePath 守門，不會被刪。</summary>
         private static void DeleteLegacyConfigs()
         {
             try
@@ -328,6 +393,11 @@ namespace Sdo.Settings
                     case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
                     case "globalOffsetMs": globalOffsetMs = ParseFloat(val, globalOffsetMs); break;
                     case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
+                    case "LoadExternalSongs": loadExternalSongs = ParseBool(val, loadExternalSongs); break;
+                    case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
+                    case "AddonFolder": addonFolder = NormalizeFolder(val); break;
+                    case "SongUiAlpha": songUiAlpha = ParseFloat(val, songUiAlpha); break;
+                    case "DifficultyCalc": difficultyCalc = val; break;
                     case "comboTextScale": comboTextScale = ParseFloat(val, comboTextScale); hasTextScaleKeys = true; break;
                     case "judgeTextScale": judgeTextScale = ParseFloat(val, judgeTextScale); hasTextScaleKeys = true; break;
                     case "comboTextAlpha": comboTextAlpha = ParseFloat(val, comboTextAlpha); hasTextAlphaKeys = true; break;
@@ -357,6 +427,11 @@ namespace Sdo.Settings
                     case "opt_callCardInGame": optCallCard = ParseBool(val, optCallCard); break;
                     case "opt_playFullSong": optPlayFullSong = ParseBool(val, optPlayFullSong); break;
                     case "opt_songSpeed": optSongSpeed = ParseBool(val, optSongSpeed); break;
+                    case "opt_songBombs": optSongBombs = ParseBool(val, optSongBombs); hasSongBombsKey = true; break;
+                    // 舊鍵（語意相反）：opt_disableBombs=1 表示「把炸彈拿掉」→ 搬成 opt_songBombs=0。只讀不寫，
+                    // Load 會因為 hasSongBombsKey=false 重寫一次模板，之後檔案裡只剩新鍵。
+                    case "opt_disableBombs": optSongBombs = !ParseBool(val, !optSongBombs); break;
+                    case "opt_collapseShortHolds": optCollapseShortHolds = ParseBool(val, optCollapseShortHolds); break;
                     case "opt_panelOpacity": optPanelOpacity = ParseFloat(val, optPanelOpacity); break;
                 }
             }
@@ -378,6 +453,12 @@ namespace Sdo.Settings
             judgeLevel = Mathf.Clamp(judgeLevel, 1, 9);                      // 精1~精8、9=JUSTICE
             globalOffsetMs = Mathf.Clamp(globalOffsetMs, -300f, 300f);       // 再大就不是延遲、是打錯拍了
             judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
+            if (additionalSongFolders == null) additionalSongFolders = new string[0];
+            if (addonFolder == null) addonFolder = "";
+            songUiAlpha = Mathf.Clamp01(songUiAlpha);                        // 外部歌分類面板不透明度 0..1
+            difficultyCalc = (difficultyCalc ?? "").Trim().ToLowerInvariant();      // 只認 minacalc / osu
+            if (difficultyCalc != "minacalc" && difficultyCalc != "osu")
+                difficultyCalc = "minacalc";                                        // 打錯字/空的 → 回退預設
             comboTextScale = Mathf.Clamp(comboTextScale, 0.2f, 3f);          // 再小看不見、再大蓋滿整塊面板
             judgeTextScale = Mathf.Clamp(judgeTextScale, 0.2f, 3f);
             comboTextAlpha = Mathf.Clamp01(comboTextAlpha);                  // 0=完全隱藏（合法用法：不想看到連段字）
@@ -458,6 +539,23 @@ namespace Sdo.Settings
             sb.Append("globalOffsetMs=").Append(globalOffsetMs.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 判定線視覺偏移（設計 px，畫面高 600）：完美時機的音符會落在受擊線 + 這個位移處。0 = 正中受擊線。\n");
             sb.Append("judgeOffsetY=").Append(judgeOffsetY.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 外部歌曲（osu/StepMania/Malody）載入總開關：1=載入(預設) 0=完全不碰。\n");
+            sb.Append("# 關掉後：開機不掃歌資料夾、不建 ADDON 那幾個資料夾、開場的載入進度畫面不出現，\n");
+            sb.Append("# 選歌畫面的「資料夾」頁籤也不再開分類瀏覽面板 —— 只剩官方歌。下面四個設定都只在開著時有意義。\n");
+            sb.Append("LoadExternalSongs=").Append(B(loadExternalSongs)).Append('\n');
+            sb.Append("# 額外歌曲資料夾（osu/StepMania），仿 StepMania：分號分隔多個絕對路徑，例如 D:/test;E:/songs。\n");
+            sb.Append("# 每個路徑都當成一個 Songs 根：底下第一層=分類(group)，再下一層=各首歌資料夾。\n");
+            sb.Append("# 預設的 <ADDON>/SONG 一律自動掃描（舊的 exe 同層 Songs/ 仍相容），不需列在這。\n");
+            sb.Append("AdditionalSongFolders=").Append(StringListToString(additionalSongFolders)).Append('\n');
+            sb.Append("# 外掛(ADDON)根目錄：預設空=DATA/ADDON。想把整包外掛（SONG/NOTESKIN/THEME/MODEL）放別處就填絕對路徑，\n");
+            sb.Append("# 例如 AddonFolder=D:/SdoAddon（該資料夾底下就是 SONG 等子夾）。\n");
+            sb.Append("AddonFolder=").Append(addonFolder ?? "").Append('\n');
+            sb.Append("# 選歌畫面「分類瀏覽」浮動面板（外部歌資料夾清單）的不透明度：0=全透明、1=不透明。預設 0.6。\n");
+            sb.Append("SongUiAlpha=").Append(songUiAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 外部歌難度用哪套算：minacalc=Etterna MinaCalc 的 MSD 換算等級(預設)，osu=osu!mania 星數等級。\n");
+            sb.Append("# 選了哪套就整體都照那套：顯示的數字、隨機難度的範圍、哪張譜排進簡單/普通/困難，全部一致。\n");
+            sb.Append("# 只影響 osu/StepMania/Malody 這類要自己算難度的外部譜；.gn（官方 DATA/MUSIC 或外部歌包）一律保留原難度。\n");
+            sb.Append("DifficultyCalc=").Append(difficultyCalc ?? "minacalc").Append('\n');
             sb.Append("# 遊戲中文字的整體大小比例（1.0 = 官方原尺寸，範圍 0.2~3.0）。純顯示，不影響判定與分數。\n");
             sb.Append("#   comboTextScale = COMBO 字樣＋連段數字（整組等比例縮放，字距不會散開）\n");
             sb.Append("#   judgeTextScale = PERFECT / COOL / BAD / MISS 判定字樣\n");
@@ -472,7 +570,7 @@ namespace Sdo.Settings
             sb.Append("comboTextPop=").Append(comboTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("judgeTextPop=").Append(judgeTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
 
-            // OPTION 對話框（畫面/音效/鍵盤/遊戲）的 per-user 設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
+            // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");
             sb.Append("# 音量 0.0~1.0（背景音樂 / 遊戲音樂 / 遊戲音效）\n");
             sb.Append("opt_bgm=").Append(optBgm.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
@@ -498,6 +596,11 @@ namespace Sdo.Settings
             sb.Append("opt_callCardInGame=").Append(B(optCallCard)).Append('\n');
             sb.Append("opt_playFullSong=").Append(B(optPlayFullSong)).Append('\n');
             sb.Append("opt_songSpeed=").Append(B(optSongSpeed)).Append('\n');
+            sb.Append("# 歌曲炸彈（1=照譜面原樣有雷，預設；0=開局載譜時把炸彈整顆拿掉）。炸彈不計分也不計 miss，拿掉不影響滿分。\n");
+            sb.Append("opt_songBombs=").Append(B(optSongBombs)).Append('\n');
+            sb.Append("# 無理短長條收成一般 note（短於 180BPM 16 分音符 ≈83ms 的 long note → note；1=開 預設 0=關）\n");
+            sb.Append("# 只對外部轉檔譜（osu/StepMania/Malody）生效；官方 k.gn 與 .gn 歌曲包是原生譜，永遠照原樣打。\n");
+            sb.Append("opt_collapseShortHolds=").Append(B(optCollapseShortHolds)).Append('\n');
             sb.Append("# 面板透明度 0.0~1.6\n");
             sb.Append("opt_panelOpacity=").Append(optPanelOpacity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             return sb.ToString();
@@ -539,6 +642,8 @@ namespace Sdo.Settings
                 optEffectChar = g.effectCharacter; optEffectScene = g.effectScene; optCameraAuto = g.cameraAuto;
                 optCameraFixed = g.cameraFixed;
                 optCallCard = g.callCardInGame; optPlayFullSong = g.playFullSong; optSongSpeed = g.songSpeed;
+                optCollapseShortHolds = g.collapseShortHolds;
+                optSongBombs = g.songBombs;
                 optPanelOpacity = g.panelOpacity;
             }
             hasOption = true;
@@ -563,6 +668,8 @@ namespace Sdo.Settings
             g.effectCharacter = optEffectChar; g.effectScene = optEffectScene; g.cameraAuto = optCameraAuto;
             g.cameraFixed = optCameraFixed;
             g.callCardInGame = optCallCard; g.playFullSong = optPlayFullSong; g.songSpeed = optSongSpeed;
+            g.collapseShortHolds = optCollapseShortHolds;
+            g.songBombs = optSongBombs;
             g.panelOpacity = optPanelOpacity;
         }
 
@@ -605,5 +712,43 @@ namespace Sdo.Settings
 
         private static int ParseInt(string s, int fallback)
             => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : fallback;
+
+        /// <summary>Split a path list into folders — StepMania-style, semicolon-separated (<c>;</c>); comma is still
+        /// accepted for back-compat. Each entry is trimmed, backslashes normalised to '/', empties dropped, and leading
+        /// slashes in front of a Windows drive letter stripped (a config like <c>////D:/Songs</c> resolves to
+        /// <c>D:/Songs</c>). Pure/testable — mirrors <see cref="ParseFloatList"/> for the AdditionalSongFolders key.</summary>
+        public static string[] ParseStringList(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return new string[0];
+            var parts = s.Split(';', ',');   // '; ' preferred (a folder name can carry a ','), ',' kept for old configs
+            var list = new System.Collections.Generic.List<string>(parts.Length);
+            foreach (var p in parts)
+            {
+                var t = NormalizeFolder(p);
+                if (t.Length > 0) list.Add(t);
+            }
+            return list.ToArray();
+        }
+
+        /// <summary>Clean one folder entry: trim, backslashes→'/', and strip leading slashes sitting in front of a
+        /// Windows drive letter (so a StepMania-style <c>////D:/Songs</c> becomes <c>D:/Songs</c>). A UNC path
+        /// (<c>//server/share</c>) is left untouched — its second segment isn't a <c>X:</c> drive.</summary>
+        private static string NormalizeFolder(string p)
+        {
+            if (string.IsNullOrEmpty(p)) return "";
+            var t = p.Trim().Replace('\\', '/');
+            int i = 0;
+            while (i < t.Length && t[i] == '/') i++;
+            if (i > 0 && i + 1 < t.Length && char.IsLetter(t[i]) && t[i + 1] == ':') t = t.Substring(i);
+            return t.Trim();
+        }
+
+        private static string StringListToString(string[] a)
+        {
+            if (a == null || a.Length == 0) return "";
+            var sb = new StringBuilder();
+            for (int i = 0; i < a.Length; i++) { if (i > 0) sb.Append(';'); sb.Append(a[i] ?? ""); }
+            return sb.ToString();
+        }
     }
 }

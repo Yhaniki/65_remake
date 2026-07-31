@@ -66,6 +66,14 @@ namespace Sdo.Game
         public float songOffsetMs;
 
         /// <summary>
+        /// 單首歌的**舞蹈** offset（毫秒）—— 跟 <see cref="songOffsetMs"/> **完全獨立**。動的只有舞者：整段 DPS
+        /// 往前/往後挪（<see cref="_danceStartSec"/> 加它），音樂/音符/判定都不受影響。給「舞蹈跟音樂沒對齊、
+        /// 但音樂本身跟音符是對的」這種情況單獨微調用。來源是外部歌 sidecar 的 <c>#DPSOFFSETMS</c>（預設 0）。
+        /// 正 = 舞蹈延後。由 FrontendApp（開局，<see cref="SongCatalog.DpsOffsetMs"/>）設。
+        /// </summary>
+        public float dpsOffsetMs;
+
+        /// <summary>
         /// **全曲共用**的音樂 offset（毫秒）—— 已停用，設 0。
         /// 曾經以為官方那批 k.gn 的譜面時間軸整體跟音檔差了固定一段（每首都一樣），所以放一個全域 −25。
         /// 後來逐首手校（sdom2675 之後）發現**沒有這種全域常數**，每首的殘差各不相同，該由各自的
@@ -103,13 +111,13 @@ namespace Sdo.Game
         /// <summary>
         /// ② 混音緩衝**以外**、Unity 沒有 API 看得到的那段輸出延遲 —— 只能實測後寫死。
         ///
-        /// 這個值只補**聲音**路徑（時鐘）。編輯器**波形**是另一條路徑（畫 clip 原始樣本），實測要多補 30ms
-        /// —— 見 <see cref="WaveformDecoderDelayMs"/>（= 這個值 + 30）。兩者相關但不相等：波形多吃到 Vorbis
-        /// 解碼的暖機，聲音路徑上那段被別的環節吸收了。改這個值時波形會跟著動並維持 +30 的差。
+        /// 這個值只補**聲音輸出時鐘**。編輯器波形直接讀 <c>AudioClip.GetData</c> 的原始 PCM，
+        /// 不經混音、DSP buffer、驅動或喇叭；因此改這個值絕不能移動波形。格式特有的視覺規則
+        /// 另由 <see cref="WaveformVisualOffsetMsFor(int)"/> 處理。
         ///
         /// 本機用打拍測試量出來的（打拍測試面板 F2，聽節拍器打 100 下取中位數）：
         ///
-        /// | DSP buffer | ① 算得到的 | 聽覺中位數 | 視覺中位數 | 殘差 = ② |
+        /// | DSP buffer | ① 算得到的 | 聽覺中位數 | 看音符打拍中位數 | 殘差 = ② |
         /// |---|---|---|---|---|
         /// | 1024×4 @48k | 85.3 ms | +32.8 | +1.6 | **31.2 ms** |
         /// | 512×4 @48k | 42.7 ms | +33.2 | +4.4 | **28.8 ms** |
@@ -119,12 +127,13 @@ namespace Sdo.Game
         /// 換它不必重新校時 —— 這正是「時鐘讀播放游標」換來的。
         ///
         /// 取 33（＝聽覺中位數）而不是 31：那 ~2ms 的差是**輸入延遲**（Update 輪詢 + 鍵盤），
-        /// 一併吸收掉，跟著音樂打的人 delta 才會真的落在 0。聽感（耳朵）與波形（眼睛）該落在同一個數字上——
-        /// 兩者是同一個解碼暖機，可以互相驗證：調到這個值時，聽節拍器 ≈ 0 且波形瞬態壓在音符上。
+        /// 一併吸收掉，跟著音樂打的人 delta 才會真的落在 0。這個校準只回答「譜面時鐘顯示 T 時，
+        /// 喇叭是否正在播放 T」；離線 PCM 波形不參與，也不能拿它反推 decoder trim。
         ///
         /// osu!lazer 的處境與解法完全相同 —— 它也量不到，也是寫死一個平台常數再讓使用者微調
         /// （<c>FramedBeatmapClock.WINDOWS_BASE_AUDIO_OFFSET = 15</c> / 實驗性 WASAPI 再 −25）。
-        /// 差別只在我們這個數字是這台機器實測的，不是猜的。別台機器有出入 → 調這個值（聽感＋波形一起校）。
+        /// 差別只在我們這個數字是這台機器實測的，不是猜的。別台機器有出入 → 只校聲音/判定時鐘；
+        /// 波形仍保持原始 PCM 加格式明定的視覺位移。
         /// </summary>
         private const double DriverLatencyMs = 33.0;
 
@@ -157,6 +166,7 @@ namespace Sdo.Game
         private void OnDestroy()
         {
             EditorRestoreCameraShift();   // 編輯器把相機推下去過的話要推回來（相機可能是前端共用的那一台）
+            DisposeOsuKeysounds();
             AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
             if (_noteVisualRoot) Destroy(_noteVisualRoot.gameObject);   // tear down the pooled note visuals (root-level like the old per-note objects) with this screen
         }
@@ -173,8 +183,45 @@ namespace Sdo.Game
         // absolute path is baked in. When this component is run standalone (dev), Start() fills a default from
         // SdoExtracted.MusicDir (see ResolveDevDefaults).
         public string gnPath = "";   // official chart (e.g. <MusicDir>/sdom1435K.gn)
-        public string oggPath = "";  // matching song audio (e.g. <MusicDir>/sdom1435.ogg)
+        public string oggPath = "";  // matching song audio (e.g. <MusicDir>/sdom1435.ogg); ogg/mp3/wav
         public int difficulty = 2;            // 0=easy 1=normal 2=hard
+        // External chart (user Songs/ folder). When chartFormat != 0 LoadChart parses chartPath INSTEAD of gnPath:
+        // 1=osu (chartPath = one .osu file), 2=sm (chartPath = a .sm, chartIndex = which #NOTES block),
+        // 3=gn 歌曲包 (chartPath = a .gn holding all three difficulties, chartIndex = which one, chartSeed = its key).
+        public string chartPath = "";
+        public int chartIndex;
+        public int chartFormat;               // 0=official .gn, 1=osu, 2=sm, 3=gn 歌曲包, 4=Malody .mc (Sdo.Osu.SongFormat)
+        public long chartSeed;                // chartFormat 3: 該 .gn 的 LCG 金鑰（0 = 未知→只用共用 seed 池）
+        /// <summary>可選：換掉「解 mp3」這一步（路徑, 對拍方式）→ PCM。譜面編輯器塞
+        /// <see cref="EditorAudioCache"/> 進來，換歌就不必每首重解一次。null = 照常自己解。</summary>
+        public System.Func<string, Mp3Decoder.Mp3Sync, System.Threading.Tasks.Task<Mp3Pcm>> mp3Decoder;
+
+        /// <summary>這種譜的 mp3 該用哪一套對拍（見 <see cref="Mp3Decoder.Mp3Sync"/>）。純函式，編輯器的
+        /// 預抓也要用同一套，不然預抓的 PCM 位置跟實際播的不一樣。</summary>
+        public static Mp3Decoder.Mp3Sync Mp3SyncFor(int format)
+            => format == 1 || format == 3 || format == 4 ? Mp3Decoder.Mp3Sync.Osu : Mp3Decoder.Mp3Sync.StepMania;
+        public int chartLevel;                // external chart LV (osu!mania 星數×7) — shown as the LV label so it matches song-select
+        // ---- 生成編舞（外部歌）要的「整首歌」資料 —— 一首歌只能有一支舞，換難度不能換舞（見 Sdo.Osu.DanceInputs）----
+        // 這首**歌**的 BPM（選歌畫面顯示的那個，SongCatalog.Entry.bpm）；<= 0 = 不知道 → 退回這張譜自己算的。
+        public double songBpm;
+        // 這首歌**每個難度**的譜（空格子是 ""）：舞蹈長度＝所有難度的最早第一顆 → 最晚最後一顆，所以玩哪個難度
+        // 都跳得完、也都是同一支舞。只在生成那一次讀（ExternalChartIO.Windows）。
+        public string[] songChartPaths;
+        public int[] songChartIndices;   // 對應每格的 .sm #NOTES 區塊／.gn 包難度（osu/.mc 恆 0）
+        public string songDisplayName = "";   // external: the catalog's display title (an osu pack's real per-song name);
+                                               // _map.Title would be the shared pack label ("SDO Pack8"). Official = "" (resolved from the .gn catalog).
+        private const int ExternalLeadInMs = 2000;   // min ms the first external note is pushed to, so it scrolls in from the edge (count-in)
+
+        /// <summary>
+        /// 外部譜（osu/StepMania）要往後推多少毫秒才進場（gameplay 的無聲 count-in）。純函式，方便測。
+        ///   • 正式遊玩：把第一顆音符推到至少 <see cref="ExternalLeadInMs"/>，讓它從邊緣捲進來而不是一開場就貼在受擊線上。
+        ///   • 編輯器（<paramref name="editorMode"/>）：回 0 —— 編譜要 WYSIWYG，音符必須落在**真實音檔時間**上
+        ///     （第一顆＝.sm 的 beat×60/BPM−OFFSET），這樣時間讀數＝StepMania 的秒數、波形對得起來、拍號也正確。
+        ///     套了 lead-in 會把整張譜往後推 ~1.5s（且不是整數拍），時間軸就跟音檔/.sm 全對不上（見 BeatGrid 會誤插 beat0）。
+        /// </summary>
+        public static int ExternalLeadInMsFor(bool editorMode, int firstNoteMs)
+            => editorMode ? 0 : Math.Max(0, ExternalLeadInMs - firstNoteMs);
+
         // (2) 3D avatar — WOMAN default outfit: body-part .msh files (relative to Extracted/),
         // assembled in shared model space (bind pose). Skeleton/skinning/motion come next.
         public string[] avatarParts =
@@ -197,7 +244,14 @@ namespace Sdo.Game
         public string danceMot = "MOTION/WDANCE0002.MOT";      // fallback dance motion if no DPS
         public string restMot = "MOTION/WREST0072.MOT";        // in-game standby idle (decompiled: rest-table category 0x15, played before/after the DPS — 023_gameplay:4135). male = MREST0082.MOT. (WREST0056 was cat 0, the lobby idle — wrong here.)
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
+        // External (osu/StepMania) songs have no official .dps: these two identify the song so ExternalDps can generate
+        // one — deterministically, once — into its folder and record it in the folder's sdoinfo.dat (see EnsureExternalDance).
+        public string externalFolder = "";     // the song's folder (SongCatalog.Entry.folderPath)
+        public string externalSongKey = "";    // which song in that folder ("" = its only one; ExternalSongGrouper key)
         private readonly Dictionary<string, MotLoader> _motCache = new Dictionary<string, MotLoader>();
+        // 這首歌的動作外掛樹（overlay）：一個自帶 DANCE + MOTION/AUMOTION 的歌包，查 .mot 時先贏、找不到才退回 base
+        // 資料根。由這首歌 .dps 的所在樹推導（見 MotionOverlay）；"" = 沒有外掛，只用 base 根。每次載歌前重設。
+        private string _motOverrideRoot = "";
 
         // EXACT note-board geometry (4-key, left board X=0): lane LEFT-EDGE X 0/69/138/207 (pitch 69 exact).
         // These match NOTES_BOARD1.PNG's own lane-divider columns (texture x = 14,83,152,221,290 → 69px pitch),
@@ -268,9 +322,14 @@ namespace Sdo.Game
         private readonly AssistTick _tick = new AssistTick();
         private AudioClip _tickClip;
         private double _tickOnsetSec;           // 打拍音檔開頭的前導靜音(秒) —— 排程要提早這麼多,見 MeasureOnsetSec
-        private AudioSource[] _tickVoices;      // 小型輪替池:密集 16 分音符時,前一聲還在響就換下一個音源
-        private int _tickVoice;
-        private const int TickVoices = 8;
+        private AudioSource[] _tickVoices;      // 音源池:密集 16 分音符時,前一聲還在響(或還沒響)就換下一個音源
+        private double[] _tickBusyUntil;        // 每個音源忙到哪個 dspTime(排程落點 + 音檔長度);<= 現在 = 空閒
+        private double _tickClipLenSec;         // 目前打拍音檔的長度(秒)——音源要被佔住這麼久
+        // 池的大小**看譜面**決定(見 BuildAssistTick):一顆 tick 從被排程到播完會佔住一個音源
+        // lookahead + 音檔長度 那麼久,密集段一個視窗內十幾顆是常態。固定 8 個會輪回去蓋掉還沒響的排程 → 那幾聲
+        // 直接消失(「按鍵很密的時候沒有打拍音」)。上限 24 是留給音樂/音效的發聲數(Unity Real Voices 預設 32)。
+        private const int MinTickVoices = 8, MaxTickVoices = 24;
+        private const double TickVoiceWindowMs = AssistTick.DefaultLookaheadMs + 250.0;   // 250 = 音檔長度上限(合成 clap 150ms)+餘裕
         // Per-scene ambient SE (decompiled SeMgr_PlayVoiceTimed, gated on scene id in Gameplay_Update): only a few
         // scenes carry an intermittent ambience (sea waves / stadium crowd / underwater bubbles / garden); see
         // AmbientSeName + TickAmbient. Most scenes are BGM/song-only.
@@ -377,6 +436,7 @@ namespace Sdo.Game
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
 
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
+        private readonly List<RuntimeNote> _notesByMapIndex = new List<RuntimeNote>();
         private readonly List<double> _noteStarts = new List<double>();   // _notes[i].Note.StartTimeMs, ascending — drives NoteScan.UpperBound
         private int _firstAlive;                                          // cursor: index of the earliest still-live note (see NoteScan.Advance)
         private double _bombPrevNow;                                       // 上一幀的譜面時間,用來偵測炸彈「跨過判定線」的那一幀(見 TickBombs / StepMania CrossedMineRow)
@@ -472,6 +532,15 @@ namespace Sdo.Game
         // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打(判定/舞蹈續行)到曲末 —— 但死亡照算：從歸零那刻起分數凍結
         // (P/C/B/M 判定統計仍繼續記錄)，結算一樣出 GAME OVER、評分 F。見 Update 的 HP-out 段與 _hpDead。
         public bool playFullSong = false;
+        // 無理短長條 → 一般 note（預設開；OPTION 尚未接 UI，先由 GameplaySettings.collapseShortHolds / config.ini 灌進來）：
+        // 載譜後把長度短於 180 BPM 16 分音符 (OsuBeatmap.ShortHoldMaxMs ≈83ms) 的 long note 收成單顆 note，見 LoadChart。
+        // 這開關只管**外部轉檔譜**(chartFormat 1/2/4 = osu/sm/mc)：官方 k.gn (chartFormat 0) 與 .gn 歌曲包 (3) 是
+        // SDO 原生譜，開著也不會被改（格式 gating 見 OsuBeatmap.AllowsShortHoldCollapse）。
+        public bool collapseShortHolds = true;
+        // 進階「歌曲炸彈」（OPTION 進階頁 → GameplaySettings.songBombs）：true=照譜面原樣有雷（預設）；
+        // false=載譜後把譜面上的炸彈整顆拿掉（OsuBeatmap.RemoveBombs，見 LoadChart）。
+        // 炸彈不計分也不計 miss，拿掉不動滿分／TotalNotes。
+        public bool songBombs = true;
         // OPTION 遊戲頁「遊戲視角」：true=默認(自動導播，開場吊臂+自動切鏡) / false=固定(鎖 cameraFixedIndex 那台，無開場運鏡)。
         public bool cameraAuto = true;
         public int cameraFixedIndex = 0;    // 固定視角鎖第幾台（0..FixedCamCount-1）＝上次在遊戲中用 F2 切到的那台
@@ -1015,6 +1084,7 @@ namespace Sdo.Game
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
             _ambient = gameObject.AddComponent<AudioSource>();
+            BuildOsuKeysoundAudio();
             BuildAssistTick();   // F7 打拍音:本譜的 tick 時間軸 + 排程用的音源池
             var ambName = editorMode ? null : AmbientSeName(SceneMapId());   // load the per-scene ambience (sea/stadium/underwater/garden) if any
             if (!string.IsNullOrEmpty(ambName)) StartCoroutine(LoadAmbientCo(ambName));
@@ -1099,6 +1169,7 @@ namespace Sdo.Game
         private void ResolveDevDefaults()
         {
             if (!string.IsNullOrEmpty(gnPath)) return;
+            if (chartFormat != 0) return;   // external chart (osu/StepMania) assigned → never fall back to the dev song (would overwrite oggPath/gnPath → 播成 sdom1435)
             var music = SdoExtracted.MusicDir;
             gnPath = Path.Combine(music, "sdom1435K.gn");
             oggPath = Path.Combine(music, "sdom1435.ogg");
@@ -1133,11 +1204,18 @@ namespace Sdo.Game
         private void BuildAssistTick()
         {
             _tick.Load(NoteStartTimes());
-            _tickVoices = new AudioSource[TickVoices];
-            for (int i = 0; i < TickVoices; i++)
+            // 池大小 = 這張譜在一個「排程視窗」內最多幾顆 tick 同時在飛(AssistTick.PeakInWindow),夾在 8..24。
+            // 一般譜 8 個綽綽有餘;16 分連打/dump 段落要十幾個,不夠就會蓋掉自己還沒響的排程 → 密集段沒聲音。
+            int voices = _tick.VoicesNeeded(TickVoiceWindowMs, MinTickVoices, MaxTickVoices);
+            _tickVoices = new AudioSource[voices];
+            _tickBusyUntil = new double[voices];
+            for (int i = 0; i < voices; i++)
             {
                 var a = gameObject.AddComponent<AudioSource>();
                 a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
+                // 優先度壓在音樂/音效之下(預設 128;數字越大越低)：發聲數上限是全域的(專案 Real Voices = 32),
+                // 極密的譜真的把池吃滿時,該被虛擬化掉的是一聲 clap,不能是歌。
+                a.priority = 200;
                 _tickVoices[i] = a;
             }
             SetTickClip(SynthClapClip());         // 先掛 fallback,音源池才有 clip 可用(合成的 clap 沒有前導靜音)
@@ -1213,6 +1291,7 @@ namespace Sdo.Game
         {
             _tickClip = clip;
             _tickOnsetSec = MeasureOnsetSec(clip);
+            _tickClipLenSec = clip != null ? clip.length : 0.0;   // 音源被佔住多久(排程落點 + 這個長度)
             if (_tickVoices != null) foreach (var v in _tickVoices) if (v != null) v.clip = clip;
             if (_tickOnsetSec > 0.001)
                 Debug.Log($"[tick] 前導靜音 {_tickOnsetSec * 1000.0:0.0} ms → 排程提早這麼多"
@@ -1256,11 +1335,30 @@ namespace Sdo.Game
                 // 再減掉音檔的前導靜音 → 起音(而不是第 0 取樣)才落在音符上。
                 double dsp = GameRate.DspFromChartSeconds(tMs / 1000.0, _songStartDspTime, _musicRate, MusicCountInSec)
                            - _tickOnsetSec;
-                var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+                double at = Math.Max(dsp, AudioSettings.dspTime);
+                int i = PickTickVoice();
+                var v = _tickVoices[i];
+                _tickBusyUntil[i] = at + _tickClipLenSec;
                 v.volume = AudioMix.Sfx;
                 v.Stop();   // 輪到的音源可能還在響上一聲(超密集譜)→ 蓋掉
-                v.PlayScheduled(Math.Max(dsp, AudioSettings.dspTime));
+                v.PlayScheduled(at);
             }
+        }
+
+        // 挑一個音源來排這一聲。**先挑真正空閒的**(排程已經播完的);全都忙 → 挑最早結束的那個,蓋掉的
+        // 才會是最舊的一聲。舊版是無條件輪替 —— 密集段一輪回來時,那個音源上的排程往往還沒響,Stop() 會把
+        // 排程**取消**掉(不是截斷),於是整聲不見。池夠大時這裡幾乎永遠拿得到空閒音源。
+        private int PickTickVoice()
+        {
+            double now = AudioSettings.dspTime;
+            int best = 0; double bestUntil = double.MaxValue;
+            for (int i = 0; i < _tickVoices.Length; i++)
+            {
+                double until = _tickBusyUntil[i];
+                if (until <= now) return i;
+                if (until < bestUntil) { bestUntil = until; best = i; }
+            }
+            return best;
         }
 
         // 作廢所有「已排程但還沒響」的打拍音(改流速/暫停時它們的 dsp 落點已經失效),游標退回現在重排。
@@ -1268,6 +1366,7 @@ namespace Sdo.Game
         {
             if (_tickVoices == null) return;
             foreach (var v in _tickVoices) if (v != null) v.Stop();
+            for (int i = 0; i < _tickBusyUntil.Length; i++) _tickBusyUntil[i] = 0.0;   // 全部音源重新算空閒
             _tick.Rewind(_nowMs + TickLeadChartMs);   // 同 TickAssist:早於此的 tick 已經來不及排準,別撿
         }
 
@@ -1275,7 +1374,9 @@ namespace Sdo.Game
         private void PlayTickOnce()
         {
             if (_tickVoices == null || _tickClip == null) return;
-            var v = _tickVoices[_tickVoice]; _tickVoice = (_tickVoice + 1) % TickVoices;
+            int i = PickTickVoice();
+            var v = _tickVoices[i];
+            _tickBusyUntil[i] = AudioSettings.dspTime + _tickClipLenSec;
             v.Stop(); v.volume = AudioMix.Sfx; v.Play();
         }
 
@@ -1575,7 +1676,47 @@ namespace Sdo.Game
             _hpGlowMat = new Material(Shader.Find("Sdo/HpGlowClip") ?? sh);
         }
 
+        /// <summary>載譜（官方 .gn / 外部 osu·sm），成功後套用譜面修整：<see cref="collapseShortHolds"/> 開著、
+        /// **且這首是外部轉檔譜 (osu/sm/mc)** 時把「無理的短 long note」(短於 180 BPM 的 16 分音符) 收成一般 note
+        /// ——官方 k.gn 與 .gn 歌曲包是原生譜，一律照原樣打（見 OsuBeatmap.AllowsShortHoldCollapse）；
+        /// <see cref="songBombs"/> **關著**時把炸彈整顆拿掉。
+        /// 修整必須在這裡、在任何吃 _map 的東西 (判定、TotalNotes→滿分、捲動、note 皮) 建起來之前做完。</summary>
         private bool LoadChart()
+        {
+            if (!LoadChartRaw()) return false;
+            if (collapseShortHolds && _map != null && OsuBeatmap.AllowsShortHoldCollapse((SongFormat)chartFormat))
+            {
+                int collapsed = _map.CollapseShortHolds();
+                if (collapsed > 0) Debug.Log($"[Step1] collapsed {collapsed} short hold(s) (< {OsuBeatmap.ShortHoldMaxMs:0.#} ms) into taps");
+            }
+            EnsureExternalDance();
+            // 炸彈**在生成外部舞蹈之後**才拿掉：舞蹈長度平常是自己重讀每個難度的原始譜量的（不受這些修整影響），
+            // 但量不到時會退回手上這張 _map 的頭尾時間 —— 開/關這個選項不該讓同一首歌生出兩種舞。
+            // 之後才建的東西（判定、TotalNotes→滿分、打拍音時間軸、note 皮）看到的就是一張沒有炸彈的譜。
+            if (!songBombs && _map != null)
+            {
+                int bombs = _map.RemoveBombs();
+                if (bombs > 0) Debug.Log($"[Step1] 歌曲炸彈關閉：移除 {bombs} 顆 mine");
+            }
+            return true;
+        }
+
+        /// <summary>An external (osu/StepMania) song ships no choreography — its DANCE/&lt;id&gt;.DPS doesn't exist — so
+        /// generate one for it (once; recorded in the song folder's sdoinfo.dat, see <see cref="ExternalDps"/>) and dance
+        /// that instead of looping the single fallback clip. Official songs and songs whose .dps is already there are
+        /// untouched.</summary>
+        private void EnsureExternalDance()
+        {
+            if (editorMode) return;   // 編輯器只校時/看譜，不生成也不寫 .dps 進使用者的歌資料夾
+            if (chartFormat == 0 || _map == null || string.IsNullOrEmpty(externalFolder)) return;
+            if (!string.IsNullOrEmpty(dpsPath) && File.Exists(Path.Combine(SdoExtracted.Root, dpsPath))) return;
+            // songBpm / songChartPaths 是**這首歌**的（不是這張譜的）：一首歌一支舞，換難度不換舞（見 Sdo.Osu.DanceInputs）。
+            string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, _map, songBpm,
+                                                     chartFormat, chartSeed, songChartPaths, songChartIndices);
+            if (!string.IsNullOrEmpty(generated)) dpsPath = generated;   // absolute → LoadAsset uses it as-is
+        }
+
+        private bool LoadChartRaw()
         {
             // 打拍測試：不讀 .gn、也不放音樂 —— 用固定 BPM 的等距音符當節拍器（assist tick 每顆音符響一聲）。
             if (beatTestMode)
@@ -1583,7 +1724,29 @@ namespace Sdo.Game
                 _map = BeatTestChart.Build(beatTestBpm, BeatTestDurationSec, BeatTestChart.RightLane, beatTestBeatsPerNote);
                 return true;
             }
-            // (3) official .gn chart first
+            // (1) external user chart (osu / StepMania) from the Songs/ folder — the difficulty was already resolved
+            // to a concrete chart file at selection time (see SongSelectScreen.OnConfirm / FrontendApp.StartGameplay).
+            if (chartFormat != 0 && !string.IsNullOrEmpty(chartPath) && File.Exists(chartPath))
+            {
+                // 四種格式的解析在 ExternalChartIO —— 生成編舞時要用同一套去量這首歌的每個難度。
+                try { _map = ExternalChartIO.Parse(chartFormat, chartPath, chartIndex, chartSeed); }
+                catch (Exception ex) { Debug.LogError($"[Step1] external chart parse failed: {ex.Message}"); _map = new OsuBeatmap(); }
+                if (_map.Bpm <= 0.0) _map.Bpm = 120.0;   // guard: a chart with no parseable BPM must not feed 0 into the judge windows
+                if (chartLevel > 0) _map.Level = chartLevel;   // LV label = the song-select 星數×7 level (Parse/ToBeatmap don't know it)
+                // external charts have no count-in → push the first note out so it scrolls in from the edge (see ApplyLeadIn).
+                // 編輯器例外：回 0（見 ExternalLeadInMsFor）—— 編譜要 WYSIWYG，音符要落在真實音檔時間上（時間讀數＝StepMania 的秒數）。
+                // .gn 歌曲包例外：它是原生 SDO 譜，本來就自帶無聲 count-in（type-10 音樂起止 → MusicStartOffsetMs，
+                // 跟內建歌一模一樣），再疊一次 lead-in 會把整張譜推離它自己的音樂。
+                if (_map.HitObjects.Count > 0 && chartFormat != 3)
+                {
+                    int leadIn = ExternalLeadInMsFor(editorMode, (int)_map.FirstNoteMs);
+                    if (leadIn > 0) _map.ApplyLeadIn(leadIn);
+                }
+                if (_map.HitObjects.Count > 0) { Debug.Log($"[Step1] loaded external {Path.GetFileName(chartPath)}: {_map.HitObjects.Count} notes, bpm {_map.Bpm}, lv {_map.Level}"); return true; }
+                Debug.LogError("[Step1] external chart has no 4K notes: " + chartPath); return false;
+            }
+
+            // (2) official .gn chart
             if (!string.IsNullOrEmpty(gnPath) && File.Exists(gnPath))
             {
                 _map = GnChart.Load(File.ReadAllBytes(gnPath), difficulty, GnKeyTable.SeedsFor(gnPath));
@@ -1593,6 +1756,23 @@ namespace Sdo.Game
             if (!File.Exists(path)) { Debug.LogError("[Step1] no chart (.gn or .osu)"); return false; }
             _map = OsuBeatmapParser.Parse(File.ReadAllText(path));
             return true;
+        }
+
+        /// <summary>Candidate LCG seeds for an external .gn: the pack's own key for THIS chart first, then the shared
+        /// pool from the key table. [NX] gives every chart a distinct key, so the pack's own is what actually opens it;
+        /// the pool is there for a pack shipped without a sidecar (or with a stale one) whose charts happen to use the
+        /// common seeds. Pure — public for tests.</summary>
+        public static uint[] GnSeedsFor(long ownSeed) => GnSeedsFor(ownSeed, GnKeyTable.SdomSeeds);
+
+        /// <summary>Testable core of <see cref="GnSeedsFor(long)"/>: own key first, then the pool minus a duplicate.</summary>
+        public static uint[] GnSeedsFor(long ownSeed, uint[] pool)
+        {
+            pool = pool ?? Array.Empty<uint>();
+            if (ownSeed <= 0) return pool;
+            uint own = (uint)ownSeed;
+            var list = new List<uint>(pool.Length + 1) { own };
+            foreach (var s in pool) if (s != own) list.Add(s);
+            return list.ToArray();
         }
 
         private IEnumerator LoadAndPlayAudio()
@@ -1608,14 +1788,53 @@ namespace Sdo.Game
             // 打拍測試：完全不放音樂（節拍音是 assist tick 排出來的）。沒有這道門，下面那個 fallback 會把
             // 示範曲 Bassdrop.mp3 撈出來播 —— 校時的時候背後放歌是最不該發生的事。
             if (beatTestMode) { _audioReady = true; StartCoroutine(EditorOpeningCo()); yield break; }
+            yield return LoadOsuKeysoundsCo();
+            bool externalTrackMissing = chartFormat != 0 &&
+                (IsVirtualOsuTrack || string.IsNullOrEmpty(oggPath) || !File.Exists(oggPath));
+            if (externalTrackMissing)
+            {
+                Debug.Log(IsVirtualOsuTrack ? "[keysound] virtual osu track: using silent transport" : "[Step1] external audio missing: using silent transport");
+                _audioReady = true;
+                if (editorMode) { StartCoroutine(EditorOpeningCo()); yield break; }
+                _clockStart = Time.timeAsDouble + OpeningParkSec;
+                _started = true;
+                StartCoroutine(OpeningSequence());
+                yield break;
+            }
             string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
                 ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
-            var type = path.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) ? AudioType.OGGVORBIS : AudioType.MPEG;
-            using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
+            // 走哪個解碼器看**檔案內容**，不是副檔名 —— 外面撿來的歌曲庫常有名不符實的檔（[NX] 那包就有 4 個
+            // Ogg 取名叫 .mp3）。餵錯解碼器不會報錯，只會解出 0 個取樣 → 這首歌整首沒聲音。見 AudioFileType。
+            var kind = AudioFileType.Of(path);
+            if (kind == AudioKind.Mp3 && File.Exists(path))
             {
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success) { _audio.clip = DownloadHandlerAudioClip.GetContent(req); _audio.volume = AudioMix.Music; }   // 遊戲音樂 音量
-                else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
+                // Unity can't decode mp3 from a file on desktop → decode with the bundled NLayer on a worker thread.
+                // osu (chartFormat 1) and StepMania (2) decode mp3 to different positions; match the chart's home game
+                // so it lines up at global-offset 0 (see Mp3Decoder.Mp3Sync). Non-external mp3 (dev fallback) → StepMania.
+                // .gn 歌曲包 (3) 也走 Osu：那譜是照原版 .ogg 打的，包裡的 mp3 是後來轉出來的，而轉檔器一定會在檔頭
+                // 塞編碼器延遲(priming)。Osu 這條正好是「把 priming 修掉」，解出來的位置才會回到原版 ogg 的時間。
+                var sync = Mp3SyncFor(chartFormat);
+                // 譜面編輯器會把這個換成「解過就直接給、還會預抓前後兩首」的快取（EditorAudioCache）——
+                // 整包 mp3 的歌一首一秒多的解碼，校時時全卡在換歌上。正式遊玩沒設，就每次自己解。
+                var task = mp3Decoder != null ? mp3Decoder(path, sync)
+                                              : System.Threading.Tasks.Task.Run(() => Mp3Decoder.Decode(path, sync));
+                while (!task.IsCompleted) yield return null;
+                var clip = Mp3Decoder.ToClip(task.Result, "mp3song");
+                if (clip != null) { _audio.clip = clip; _audio.volume = AudioMix.Music; }
+                else Debug.LogWarning("[Step1] mp3 decode failed: " + path);
+            }
+            else
+            {
+                // ogg (official + external) and wav decode natively via UnityWebRequestMultimedia.
+                var type = kind == AudioKind.Ogg ? AudioType.OGGVORBIS
+                         : kind == AudioKind.Wav ? AudioType.WAV
+                         : AudioType.MPEG;
+                using (var req = UnityWebRequestMultimedia.GetAudioClip(SdoExtracted.FileUri(path), type))
+                {
+                    yield return req.SendWebRequest();
+                    if (req.result == UnityWebRequest.Result.Success) { _audio.clip = DownloadHandlerAudioClip.GetContent(req); _audio.volume = AudioMix.Music; }   // 遊戲音樂 音量
+                    else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
+                }
             }
             _audioReady = true;   // song decoded (or failed) → the loading screen may now reveal the stage
             // 編輯器：沒有 READY/GO 開場，也不自己起播 —— 停在 0ms 等使用者按播放（見 EditorOpeningCo）。
@@ -1689,15 +1908,18 @@ namespace Sdo.Game
             // would make it lead the song (sdom1226: marker beat 0 vs first note ~5.4 s ⇒ was 5.4 s early).
             double markerSec = (useMusicStartOffset && _map != null) ? _map.MusicStartOffsetMs / 1000.0 : 0.0;
             _musicStartDelaySec = markerSec;   // 只放 type-10 無聲數拍;手動 offset(songOffsetMs)＋全曲 offset(GlobalSongOffsetMs)一律走 MusicCountInSec，別在這裡折進去(會雙重套用)
-            // 音樂被挪的總量(= MusicCountInSec − marker):正 = 音樂晚進來(音檔跑在譜面前面時用)、負 = 提早。
-            // 挪的是音樂 + 舞蹈(DPS 掛在音樂時間軸上),音符/判定仍釘在譜面時鐘 —— 填錯頂多音畫不合拍,不改難度。
-            double songOffsetSec = (songOffsetMs + GlobalSongOffsetMs) / 1000.0;
-            _danceStartSec = ((useMusicStartOffset && _map != null) ? Math.Max(markerSec, _map.FirstNoteMs / 1000.0) : 0.0) + songOffsetSec;
+            // 音樂與舞蹈的 offset **各走各的**:音樂 = songOffsetMs(→ MusicCountInSec，挪音檔位置),舞蹈 = dpsOffsetMs
+            // (只挪舞者)。兩者互不連動,預設都 0;音符/判定永遠釘在譜面時鐘。這樣「音樂對音符是準的、只有舞者
+            // 飄」可以單獨修舞者而不動音樂。正值都是往後挪。
+            double danceOffsetSec = dpsOffsetMs / 1000.0;
+            _danceStartSec = ((useMusicStartOffset && _map != null) ? Math.Max(markerSec, _map.FirstNoteMs / 1000.0) : 0.0) + danceOffsetSec;
+            Debug.Log($"[dps-offset] gn={System.IO.Path.GetFileName(gnPath ?? "?")} dps={System.IO.Path.GetFileName(dpsPath ?? "?")} songOffsetMs={songOffsetMs} dpsOffsetMs={dpsOffsetMs} marker={markerSec:F2}s firstNote={(_map != null ? _map.FirstNoteMs / 1000.0 : -1):F2}s -> danceStart={_danceStartSec:F2}s");  // TODO 診斷用，查完刪
             // 兩段前導(共用 lead + 無聲數拍 + offset)都是**譜面時間**;dspTime 是真實時間,所以除以流速換回真實秒數。
             // 開場排程走 GameRate.ScheduleMusic(能處理負 count-in:offset 負得比前導多時 clip 第 0 秒已來不及播 →
             // 從中途切入),餵的是 feat 管線的 MusicCountInSec(= marker + songOffsetMs + GlobalSongOffsetMs)。
             GameRate.ScheduleMusic(AudioSettings.dspTime, StartLeadSec, MusicCountInSec, _musicRate,
                                    out _songStartDspTime, out double playAtDsp, out double clipSkipSec);
+            OnOsuTransportStarted();
             if (_audio != null && _audio.clip != null)
             {
                 _audio.pitch = _timeScale;
@@ -1725,6 +1947,7 @@ namespace Sdo.Game
             // 打拍測試（F2）非交不可：那個模式**沒有音樂**，但你聽到的 click 是 PlayScheduled 排進 dsp 時鐘的。
             // 這裡若回 null，譜面時鐘就純靠 wall clock 自走 —— 於是「格線/判定」走 wall、「聽到的 click」走 dsp，
             // 兩支時鐘只在 seek 那一刻對過一次：會慢慢漂，而且視窗一失焦（wall 停、dsp 照跑）回來就固定錯開一段
+            if (IsVirtualOsuTrack) return VirtualOsuChartSeconds();
             // （實測：+108ms → 切出去再切回來變 −104ms）。鎖上 dsp 之後，殘留的固定偏移才等於「這台機器的真實延遲」。
             // 暫停中不交：timeScale=0 讓 wall 停住而 dsp 照跑，拿它當真值會把時鐘推著往前爬。
             if (editorMode)
@@ -2045,9 +2268,22 @@ namespace Sdo.Game
         // length. Notes are kept START-TIME-ASCENDING so the per-frame scans can window with NoteScan.
         private void SpawnNotes()
         {
-            foreach (var h in _map.HitObjects)
-                _notes.Add(new RuntimeNote(h, NoteBeatColor.Family(h.StartTimeMs, _map)));   // beat-quantization colour precomputed (used only in 3D skin)
-            _notes.Sort((a, b) => a.Note.StartTimeMs.CompareTo(b.Note.StartTimeMs));   // window/break rely on ascending start (loaders sort, but be defensive)
+            _notesByMapIndex.Clear();
+            for (int mapIndex = 0; mapIndex < _map.HitObjects.Count; mapIndex++)
+            {
+                var h = _map.HitObjects[mapIndex];
+                var runtime = new RuntimeNote(h, NoteBeatColor.Family(h.StartTimeMs, _map));
+                _notes.Add(runtime);
+                _notesByMapIndex.Add(runtime);
+            }
+            // window/break rely on ascending start (loaders sort, but be defensive). 判定時間相同時再比顯示時間 ——
+            // StepMania warp(負 BPM)那一批音符判定時刻全部一樣、只有畫面位置不同,ScrollNotes 的提早 break 是照
+            // 顯示順序走的,排錯會讓 warp 那批少畫幾顆。
+            _notes.Sort((a, b) =>
+            {
+                int c = a.Note.StartTimeMs.CompareTo(b.Note.StartTimeMs);
+                return c != 0 ? c : a.Note.ScrollTimeMs.CompareTo(b.Note.ScrollTimeMs);
+            });
             _noteStarts.Clear();
             foreach (var n in _notes) _noteStarts.Add(n.Note.StartTimeMs);
             _firstAlive = 0;
@@ -2186,11 +2422,15 @@ namespace Sdo.Game
             _lvOnlyLabel = CropLeftSprite(_lblAttr.sprite, 34);   // GAMEPLAY2 cols 0..28 = "LV:"; the result screen swaps to this so "时间:" disappears with its value
             // values sit at x per DdrGamePlay.xml, but y = the label graphics' vertical centre (575+~20/2 ≈ 585),
             // MiddleLeft-anchored so they're vertically centred with "歌曲名:" / "LV: 时间:".
-            // Title from the import-time UTF-8 catalog (keyed by .gn filename); GB2312 is never
-            // decoded at runtime. Fall back to _map.Title (set only on the .osu path) then "song".
-            var songTitle = SongCatalog.Title(gnPath);
+            // External (user Songs/) songs carry their catalog display name — for an osu "pack" set that's the real
+            // per-song name (promoted from the .osu Version); _map.Title would be the shared pack label ("SDO Pack8").
+            // Official songs read the import-time UTF-8 catalog (keyed by .gn filename; GB2312 never decoded at runtime),
+            // then fall back to _map.Title (set only on the .osu path), then "song".
+            var songTitle = chartFormat != 0 && !string.IsNullOrEmpty(songDisplayName) ? songDisplayName : SongCatalog.Title(gnPath);
             if (string.IsNullOrEmpty(songTitle)) songTitle = _map.Title;
             if (string.IsNullOrEmpty(songTitle)) songTitle = "song";
+            // 「歌曲名:」後面那格是固定寬（右邊緊接 LV / 时间），長標題會直接壓過去 → 砍到跟選歌清單同一個上限
+            songTitle = SongTextLimits.ClampTitle(songTitle);
             // song name / LV / time value text — white, two sizes smaller (13 -> 11) per request.
             // Same font/size as NewText (LegacyRuntime, fontSize 64, characterSize 11×0.2, order 42, MiddleLeft) but
             // laid out per-glyph so the letter-spacing can be tightened (字靠緊一點).
@@ -2506,6 +2746,16 @@ namespace Sdo.Game
                 _bodyShapeB = SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody);
                 avatar.SetBodyShape(_bodyShapeB);                                             // 體型: thin/standard/fat (default thin)
                 avatar.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));   // standby idle (rest cat 0x15) — looped before the DPS starts and after it ends
+                // 動作外掛（overlay）：一個歌包把它自帶的 .dps 和 .mot 用跟 base 資料根一樣的樹狀結構擺在一起
+                // （…/patch Datas/DANCE + …/patch Datas/MOTION|AUMOTION）。這首歌的 .dps 從哪棵樹讀出來，它的 .mot
+                // 就在那棵樹 → 設成 overlay，讓 ResolveMot 先查它、找不到才退回 base（含 base 沒有的 W_00xxxx.MOT）。
+                // 必須在載 dps／PrewarmDpsMotions 之前設好；純由 dpsPath 推導，不必從歌單一路穿路徑過來。
+                string dpsFull = string.IsNullOrEmpty(dpsPath) ? ""
+                    : Path.Combine(SdoExtracted.Root, dpsPath.Replace('/', Path.DirectorySeparatorChar));
+                _motOverrideRoot = MotionOverlay.RootForDps(dpsFull, SdoExtracted.Root);
+                _motCache.Clear();   // 快取以動作名為鍵，不含樹；換歌換 overlay 時清掉，免得沿用上一包的解析結果
+                if (!string.IsNullOrEmpty(_motOverrideRoot))
+                    Debug.Log($"[avatar] 動作外掛樹: {_motOverrideRoot}（AUMOTION/MOTION 先於 base 根）");
                 // per-song choreography (DPS): sequence motion slices to the music clock (debug now dances too)
                 var dps = LoadAsset(dpsPath, b => DpsLoader.Load(b));
                 if (dps != null)
@@ -2525,6 +2775,7 @@ namespace Sdo.Game
                                               : (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
                     avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
                     Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
+                    PrewarmDpsMotions(dps);   // read every clip NOW (behind the loading cover), not lazily mid-song
                 }
             }
 
@@ -4092,25 +4343,53 @@ namespace Sdo.Game
         // Combo milestones / consecutive-miss cut-ins — pure decision in EmojiTriggers (unit-tested).
         private void UpdateEmojiOnJudge(Judgment j) => ShowEmoji(_emojiState.OnJudge(j, _score.Combo));
 
-        // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/).
-        private MotLoader ResolveMot(string name)
+        // Read every distinct choreography clip up front, while the loading cover is still up, so SdoAvatar.LateUpdate
+        // never hits the disk mid-song. A generated external dance pulls from a large random pool of wdanceNNNN.mot
+        // clips, and each one that first appeared during play used to cost a File.ReadAllBytes + MOT parse on the main
+        // thread — a periodic hitch. ResolveMot caches even a missing clip, so play is guaranteed touch-free afterwards.
+        private void PrewarmDpsMotions(DpsLoader dps)
         {
-            if (string.IsNullOrEmpty(name)) return null;
-            name = ResolveGenderedMotName(name);
+            if (dps == null || dps.Rows == null) return;
+            var seen = new HashSet<string>();
+            foreach (var row in dps.Rows)
+                if (!string.IsNullOrEmpty(row.Mot) && seen.Add(row.Mot))
+                    ResolveMot(row.Mot);   // populates _motCache under the exact (gendered) key LateUpdate will look up
+        }
+
+        // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/). 每棵樹都先
+        // AUMOTION 再 MOTION；樹的順序由 MotRoots() 決定 —— 歌包外掛樹（若有）先於 base 資料根。
+        private MotLoader ResolveMot(string rawName)
+        {
+            if (string.IsNullOrEmpty(rawName)) return null;
+            string name = ResolveGenderedMotName(rawName);
             if (_motCache.TryGetValue(name, out var cached)) return cached;
             MotLoader m = null; string triedPath = null, why = null;
-            foreach (var dir in new[] { "AUMOTION", "MOTION" })
+
+            // 歌曲資料夾最優先：dps 點名的 .mot 若就放在這首歌自己的資料夾（外部 osu/SM 歌 = 歌曲當下所在
+            // 資料夾），直接用它 —— 先於 overlay 樹與 base 根。這讓使用者把自訂舞步 .mot 丟進歌資料夾即可覆蓋
+            // 該片段（外部歌的 .dps 直接躺在歌資料夾、不在 DANCE/ 下，本來拿不到 overlay，此路補上）。先試
+            // gendered 名（尊重男版），再試原始 dps 名（讓歌自帶的女版 .mot 對男玩家也生效）。
+            m = TryLoadMotFromSongFolder(name, ref triedPath, ref why);
+            if (m == null && !string.Equals(name, rawName, System.StringComparison.Ordinal))
+                m = TryLoadMotFromSongFolder(rawName, ref triedPath, ref why);
+
+            if (m == null)
+            foreach (var root in MotRoots())
             {
-                var p = Path.Combine(SdoExtracted.Root, dir, name);
-                if (!File.Exists(p)) continue;
-                triedPath = p;
-                try
+                foreach (var dir in new[] { "AUMOTION", "MOTION" })
                 {
-                    var bytes = File.ReadAllBytes(p);
-                    m = MotLoader.Load(bytes);
-                    if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
+                    var p = Path.Combine(root, dir, name);
+                    if (!File.Exists(p)) continue;
+                    triedPath = p;
+                    try
+                    {
+                        var bytes = File.ReadAllBytes(p);
+                        m = MotLoader.Load(bytes);
+                        if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
+                    }
+                    catch (System.Exception e) { why = e.Message; }
+                    if (m != null) break;
                 }
-                catch (System.Exception e) { why = e.Message; }
                 if (m != null) break;
             }
             if (m == null)
@@ -4124,6 +4403,40 @@ namespace Sdo.Game
             return m;
         }
 
+        /// <summary>在這首歌自己的資料夾（<see cref="externalFolder"/>；官方歌為 ""）裡直接找 <paramref name="name"/>
+        /// 這顆 .mot 並載入，找不到／載入失敗回 null。不分大小寫（<c>WDANCE0531.MOT</c> ↔ <c>wdance0531.mot</c>）。
+        /// 命中時把路徑寫進 <paramref name="triedPath"/>，載入失敗把原因寫進 <paramref name="why"/>（供 ResolveMot 記錄）。</summary>
+        private MotLoader TryLoadMotFromSongFolder(string name, ref string triedPath, ref string why)
+        {
+            if (string.IsNullOrEmpty(externalFolder) || string.IsNullOrEmpty(name)) return null;
+            string folder = Path.IsPathRooted(externalFolder) ? externalFolder
+                            : Path.Combine(SdoExtracted.Root, externalFolder);
+            if (!Directory.Exists(folder)) return null;
+
+            string hit = Path.Combine(folder, name);
+            if (!File.Exists(hit))
+                hit = MotionOverlay.MatchFileName(Directory.GetFiles(folder), name);   // 大小寫不同也命中
+            if (string.IsNullOrEmpty(hit) || !File.Exists(hit)) return null;
+
+            triedPath = hit;
+            try
+            {
+                var bytes = File.ReadAllBytes(hit);
+                var m = MotLoader.Load(bytes);
+                if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
+                return m;
+            }
+            catch (System.Exception e) { why = e.Message; return null; }
+        }
+
+        /// <summary>查動作片段的資料樹，依優先順序：這首歌的外掛包（若有，<see cref="_motOverrideRoot"/>）先，
+        /// 再 base 資料根。歌包自帶的 .mot 因此能覆蓋／補足 base；base 沒有的（W_00xxxx.MOT）也找得到。</summary>
+        private IEnumerable<string> MotRoots()
+        {
+            if (!string.IsNullOrEmpty(_motOverrideRoot)) yield return _motOverrideRoot;
+            yield return SdoExtracted.Root;
+        }
+
         private string ResolveGenderedMotName(string name)
         {
             if (!localPlayerMale) return name;
@@ -4131,10 +4444,9 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(file) || file[0] != 'W') return name;
 
             string maleName = "M" + file.Substring(1);
-            foreach (var dir in new[] { "AUMOTION", "MOTION" })
-            {
-                if (File.Exists(Path.Combine(SdoExtracted.Root, dir, maleName))) return maleName;
-            }
+            foreach (var root in MotRoots())
+                foreach (var dir in new[] { "AUMOTION", "MOTION" })
+                    if (File.Exists(Path.Combine(root, dir, maleName))) return maleName;
             return name;
         }
 
@@ -4240,6 +4552,7 @@ namespace Sdo.Game
                 if (dspNow < _songStartDspTime) _audio.SetScheduledStartTime(_songStartDspTime);   // 還在 lead-in/數拍:起播點也要重排
             }
             ResetScheduledTicks();   // 已排進音訊時鐘的打拍音是舊速度算的 → 全部作廢重排
+            OnOsuPlaybackRateChanged((_paused ? _pauseChartSec : chartSecNow) * 1000.0);
         }
 
         // \ 暫停/恢復。音樂也要停 —— 只把 timeScale 歸零的話音樂會自顧自跑掉,恢復時整首歌就對不上了。
@@ -4252,6 +4565,7 @@ namespace Sdo.Game
                 if (_audio != null && _audio.clip != null) _audio.Pause();
                 Time.timeScale = 0f;   // Time.timeAsDouble 隨之凍結 → 譜面時鐘自己就停了,不需另外存
                 ResetScheduledTicks();
+                OnOsuPlaybackPaused(_pauseChartSec * 1000.0);
             }
             else
             {
@@ -4279,6 +4593,7 @@ namespace Sdo.Game
                 // （timeAsDouble 吃 timeScale，所以餘裕要乘流速。）
                 _clockStart = Time.timeAsDouble - (_pauseChartSec - lead * _musicRate);
                 _clock.Reset();
+                OnOsuPlaybackResumed(_pauseChartSec * 1000.0, startDsp);
             }
             _paused = paused;
         }
@@ -4410,6 +4725,7 @@ namespace Sdo.Game
             if (showtimeMode) UpdateBanner();   // song-end SHOW TIME flourish must tick post-song too (UpdateHud stops when _ended)
             TickAssist(now);   // F7 打拍音：把接下來 250ms 內的 tick 排進音訊時鐘（關閉時只推游標）
             // 譜面編輯器：只把音符捲過去 —— 不扣血、不計分、不結算（時間由 ChartEditorScreen 自由 seek）。
+            TickOsuSampleEvents(now);
             // 判定照跑（含一般編譜模式）：只回報誤差給 osu 式誤差條，讓你邊看譜邊跟著打、即時看出偏早/偏晚。
             if (editorMode)
             {
@@ -4421,11 +4737,22 @@ namespace Sdo.Game
             }
             if (_ended) { ResultTick(); UpdateFx(); return; }   // post-song: finish sequence drives avatar/camera/panel; gameplay frozen (FX still tick out)
             ScrollNotes(now);
+            bool showtimeWasActive = _showtime.Active;
+            double showtimeEndBeforeTick = _showtime.UntilMs;
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
+            TickOsuSampleEvents(now);   // re-check after a ShowTime transition so this frame's note uses the DSP queue
             bool manualPlay = !_failed && !_showtime.Active && !autoPlay;   // 只有真人手動打時才吃鍵盤(= 下面 HandleInput 分支的條件)
             if (!_failed)
             {
                 if (_showtime.Active) AutoPlay(now, showtime: true);   // ShowTime window: force PERFECT, ignore manual input
+                else if (showtimeWasActive)
+                {
+                    // The frame can cross UntilMs before judging runs. Finish every head strictly inside the old
+                    // window so a DSP-scheduled keysound can never exist without its matching auto-PERFECT.
+                    AutoPlay(showtimeEndBeforeTick - 0.0001, showtime: true);
+                    if (autoPlay) { AutoPlay(now); _stJustEnded = false; }
+                    else { HandleInput(now); AutoMiss(now); }
+                }
                 else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
                 else { HandleInput(now); AutoMiss(now); }
             }
@@ -4462,10 +4789,14 @@ namespace Sdo.Game
             //   兩種基準最後都再 +1 秒緩衝才 EnterResult(音樂/最後音符播完後的定格前置)。
             double notesEndMs = _totalMs;
             double baseEndMs = notesEndMs;
+            // A virtual keysound map has no backing clip; its automatic samples are the song. Honour their final
+            // audible tail under the same 10-second outro cap used for ordinary backing audio.
+            if (_osuTimelineEndMs > notesEndMs && _osuTimelineEndMs <= notesEndMs + 10000.0) baseEndMs = _osuTimelineEndMs;
             if (_audio != null && _audio.clip != null)
             {
                 double musicEndMs = (MusicCountInSec + _audio.clip.length) * 1000.0;
-                if (musicEndMs > notesEndMs && musicEndMs <= notesEndMs + 10000.0) baseEndMs = musicEndMs;
+                if (musicEndMs > notesEndMs && musicEndMs <= notesEndMs + 10000.0)
+                    baseEndMs = Math.Max(baseEndMs, musicEndMs);
             }
             if (!_ended && (_failed || now > baseEndMs + 1000)) { _ended = true; EnterResult(); }
         }
@@ -4810,7 +5141,18 @@ namespace Sdo.Game
             {
                 var n = _notes[i];
                 if (n.Done) { ReturnVisual(n); continue; }
-                if (n.Note.StartTimeMs > now && ScrollPx(now, n.Note.StartTimeMs) > aheadPx)
+                // 「歌曲變速」關(constantScroll)→ warp(負 BPM)掃掉的裝飾音**不畫**:那個模式把所有 timing point
+                // 丟掉,連 warp 的 1ms 超高速顯示窗都沒了,整段被跳過的拍子會疊成一坨捲進來(見 WarpDecoration)。
+                // 判定不受影響 —— IsFake 本來就不判定,warp 炸彈的「按住穿過 = 自動打擊」照跑。
+                if (WarpDecoration.IsHidden(n.Note, constantScroll, editorMode))
+                {
+                    ReturnVisual(n);
+                    // 退場得自己負責:TickBombs 把 IsFake 的退場讓給顯示端,而下面那條「流出畫面才收」的路徑
+                    // 這一顆永遠走不到了。炸彈要等跨線游標真的越過它才收(理由同 offPast 的 bombPending)。
+                    if (WarpDecoration.CanRetire(n.Note, now, _bombPrevNow)) n.Done = true;
+                    continue;
+                }
+                if (n.Note.ScrollTimeMs > now && ScrollPx(now, n.Note.ScrollTimeMs) > aheadPx)
                 {
                     // Note is past the far edge of the board. With frame_type 33 捲動速度 the current speed can jump/
                     // ramp, so a note that's off-board this frame may be back on it the next — we must keep hiding it
@@ -4824,8 +5166,10 @@ namespace Sdo.Game
                 // 長條頭按住時釘在判定線；一旦尾端(END)通過判定線 (now ≥ EndTimeMs) 就整條隱藏 — 判定仍在跑
                 // (還按著 → 等放開評 tail，或 release 窗口過了才 AutoMiss)，但畫面上直接消失，不留一顆釘在判定線的頭。
                 if (held && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value) { ReturnVisual(n); continue; }
-                float yRaw = held ? judgeLineY : YForTime(n.Note.StartTimeMs, now);
-                float yEnd = n.Note.EndTimeMs.HasValue ? YForTime(n.Note.EndTimeMs.Value, now) : yRaw;
+                // 位置一律用 ScrollTimeMs(顯示用時間),而不是判定時間 —— 兩者只有 StepMania warp(負 BPM)會不一樣:
+                // warp 是零秒跳過一段拍子,那段音符判定時刻全部擠在同一瞬間,但畫面上仍要照拍子鋪開(見 OsuHitObject)。
+                float yRaw = held ? judgeLineY : YForTime(n.Note.ScrollTimeMs, now);
+                float yEnd = n.Note.EndTimeMs.HasValue ? YForTime(n.Note.ScrollEndTimeMs, now) : yRaw;
                 // a note that has flowed off the top (above the clip band, past the HP bar) is no longer VISIBLE,
                 // but it is NOT retired yet: it stays alive and judgeable until its miss window actually elapses.
                 // On slow songs the off-top point comes BEFORE MissBoundary, so retiring it here would skip the
@@ -4837,7 +5181,17 @@ namespace Sdo.Game
                 if (offPast)
                 {
                     ReturnVisual(n);
-                    if (n.HeadJudged) n.Done = true;   // hit late / auto-missed -> now fully retired
+                    // hit late / auto-missed -> now fully retired. warp 掃掉的裝飾音永遠不會被判定,流出畫面就直接收掉
+                    // (不收的話它會一直卡在 _firstAlive 前面,每幀都被掃到)。
+                    //
+                    // 例外:warp 內的**炸彈**是「按住自動打擊」的觸發器(TickBombs → WarpMineStep),而
+                    // ScrollNotes 跑在 TickBombs 前面(見 Tick 的呼叫順序)。warp 的顯示窗只有
+                    // WarpDisplayMs(1ms)、遠短於一幀,所以播放頭跨過 warp 時刻的那一幀,這批炸彈已經被超高速
+                    // 捲動甩出畫面 —— offPast 與 TickBombs 的跨線偵測落在**同一幀**。這裡先收掉的話,同一幀的
+                    // TickBombs 只會看到 Done 而整批跳過,gimmick 永遠不會發生(實測 [blue]Dreadnought
+                    // 按住穿 warp 全 miss)。等跨線游標 _bombPrevNow 真的越過它之後再收,下一幀就收得到。
+                    bool bombPending = n.Note.IsBomb && n.Note.IsFake && n.Note.StartTimeMs > _bombPrevNow;
+                    if ((n.HeadJudged || n.Note.IsFake) && !bombPending) n.Done = true;
                     continue;
                 }
                 bool visible = held || (_scrollSign > 0
@@ -5060,17 +5414,24 @@ namespace Sdo.Game
                 var n = _notes[i];
                 if (n.Done) continue;
                 if (n.Note.IsBomb) continue;   // 炸彈自動玩時避開,不打(由 TickBombs 處理)
+                if (n.Note.IsFake) continue;   // warp 掃掉的裝飾音不判定,自動玩也不打
                 if (!n.HeadJudged && now >= n.Note.StartTimeMs)
                 {
                     n.HeadJudged = true; ApplyEvent(grade, n.Note.Lane);
                     _recDownStart[n.Note.Lane] = Time.time;   // auto-press: fire the keydown burst (head only, never the hold tail)
+                    PlayOsuHitSample(n.Note, grade);
                     if (grade == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // flows past the receptor (bar dimmed), then ScrollNotes removes it
                     else if (n.Note.IsHold) { _holding[n.Note.Lane] = n; SpawnHit3dLong(n.Note.Lane); }   // 3D: continuous HIT_LONG for the hold
                     else n.Done = true;
                 }
                 if (n.HeadJudged && !n.Done && grade != Judgment.Miss && n.Note.IsHold && _holding[n.Note.Lane] == n
                     && n.Note.EndTimeMs.HasValue && now >= n.Note.EndTimeMs.Value)
-                { _holding[n.Note.Lane] = null; ApplyEvent(grade, n.Note.Lane); EndHold(n.Note.Lane, n, grade); }
+                {
+                    // cap 被 warp 掃掉的長條結尾不判定(不進滿分分母)→ 自動玩也不能補一個評價,不然分母對不上。
+                    _holding[n.Note.Lane] = null;
+                    if (!n.Note.IsFakeTail) ApplyEvent(grade, n.Note.Lane);
+                    EndHold(n.Note.Lane, n, n.Note.IsFakeTail ? Judgment.Perfect : grade);
+                }
             }
         }
 
@@ -5344,9 +5705,11 @@ namespace Sdo.Game
             var j = _engine.JudgeHit(n.Note.StartTimeMs, _stPressMs[lane]);   // grade at the player's REAL press time
             if (j == null || j.Value == Judgment.Miss) return;     // press too far off the aimed note → leave it for normal manual play (a fresh post-seam press), don't force a seam miss
             n.HeadJudged = true; ApplyEvent(j.Value, lane); _recDownStart[lane] = Time.time;   // keydown burst on the replayed press too
+            PlayOsuHitSample(n.Note, j.Value);
             if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
             if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; return; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
             if (held) { _holding[lane] = n; return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
+            if (n.Note.IsFakeTail) { EndHold(lane, n, Judgment.Perfect); return; }   // cap 被 warp 掃掉 → 結尾不判定(見 ReleaseLane)
             // player already let go INSIDE the window → judge the tail at the TRUE release time (clamped ≤ seam), not a lingering auto-Perfect and not the over-lenient seam time
             double relMs = _stReleaseMs[lane] >= 0.0 ? Math.Min(_stReleaseMs[lane], now) : now;
             var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss;
@@ -5361,6 +5724,7 @@ namespace Sdo.Game
             if (forcedJudge >= 0) jv = (Judgment)forcedJudge;                         // debug: force a grade on the hit
             else { var j = _engine.JudgeHit(n.Note.StartTimeMs, now); if (j == null) return; jv = j.Value; }
             n.HeadJudged = true; ApplyEvent(jv, lane);
+            PlayOsuHitSample(n.Note, jv);
             if (jv == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // keep flowing past the receptor (dimmed if it's a bar); ScrollNotes removes it off the top
             else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // Bad head = never held → dimmed bar; 3D: continuous HIT_LONG for the hold
             else n.Done = true;
@@ -5370,6 +5734,10 @@ namespace Sdo.Game
         {
             var n = _holding[lane]; if (n == null) return;
             _holding[lane] = null;
+            // cap 被 warp 掃掉的長條:結尾**不判定**(見 OsuHitObject.IsFakeTail)。放開得再早也不算 Bad/Miss ——
+            // 播放頭永遠不會經過那個放開時刻,玩家沒有「按對結尾」的機會。整條不設 Dropped(不調暗),就照原亮度
+            // 繼續往判定線外流,ScrollNotes 流出畫面時收掉。
+            if (n.Note.IsFakeTail) { StopHit3dLong(lane); return; }
             var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, now) ?? Judgment.Miss;
             ApplyEvent(tail, lane);
             EndHold(lane, n, tail);
@@ -5397,7 +5765,8 @@ namespace Sdo.Game
             for (int i = _firstAlive; i < hi; i++)
             {
                 var n = _notes[i];
-                if (n.Done || n.HeadJudged || n.Note.IsBomb || n.Note.Lane != lane) continue;   // 炸彈不當一般 note 判定
+                // 炸彈不當一般 note 判定;warp(負 BPM)掃掉的裝飾音也不判定 —— 播放頭是瞬間跳過那段拍子的,不用打
+                if (n.Done || n.HeadJudged || n.Note.IsBomb || n.Note.IsFake || n.Note.Lane != lane) continue;
                 double d = Math.Abs(n.Note.StartTimeMs - now);
                 if (d < bestAbs && d <= _engine.Windows.MissBoundary) { bestAbs = d; best = n; }
             }
@@ -5414,17 +5783,26 @@ namespace Sdo.Game
                 var n = _notes[i];
                 if (n.Done) continue;
                 if (n.Note.IsBomb) continue;   // 炸彈不會 miss(避開才對);由 TickBombs 處理
+                if (n.Note.IsFake) continue;   // warp 掃掉的裝飾音不會 miss(打不到也不用打);流出畫面時由 ScrollNotes 收掉
                 // head never pressed: miss the head (+ the tail, for a bar), then keep flowing off the top — a bar the
                 // player never owned scrolls on DIMMED (holdDropDim), same as one dropped mid-way.
-                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
+                // (cap 被 warp 掃掉的長條只 miss 頭部 —— 結尾不在滿分分母裡,補一次 Miss 會多扣一下。)
+                if (!n.HeadJudged && _engine.HasPassed(n.Note.StartTimeMs, now)) { n.HeadJudged = true; ApplyEvent(Judgment.Miss); if (n.Note.IsHold) { if (!n.Note.IsFakeTail) ApplyEvent(Judgment.Miss); n.Dropped = true; } continue; }
                 // bad head → the tail misses too once it passes. Score it ONCE (clear the flag), but do NOT retire the note:
                 // the dimmed bar keeps scrolling like every other failed hold, and ScrollNotes retires it off the board.
-                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
+                if (n.BundledFail && n.Note.EndTimeMs.HasValue && _engine.HasPassed(n.Note.EndTimeMs.Value, now)) { if (!n.Note.IsFakeTail) ApplyEvent(Judgment.Miss); n.BundledFail = false; continue; }
                 // A long note's END is judged on the RELEASE — a real release inside the (widened) tail window is
                 // graded by ReleaseLane. Holding through without letting go earns NOTHING: once the tail release window
                 // has fully passed with the key still held, the tail is a MISS. Gate on the TAIL boundary (not the press
                 // boundary), else a note held into the extra tail leniency is force-missed before its release could score.
-                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now)) { _holding[n.Note.Lane] = null; ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss); }   // never released → tail miss
+                // cap 被 warp 掃掉的長條例外:按著頭一路撐到 cap 那一瞬間就算完成(StepMania Player.cpp:407 的
+                // HNS_OK),不判定、也不 miss —— 只放 LnEnd 特效並收掉整條。
+                if (_holding[n.Note.Lane] == n && n.Note.EndTimeMs.HasValue && _engine.HoldTailHasPassed(n.Note.EndTimeMs.Value, now))
+                {
+                    _holding[n.Note.Lane] = null;
+                    if (n.Note.IsFakeTail) { EndHold(n.Note.Lane, n, Judgment.Perfect); continue; }
+                    ApplyEvent(Judgment.Miss); EndHold(n.Note.Lane, n, Judgment.Miss);   // never released → tail miss
+                }
             }
         }
 
@@ -5438,6 +5816,9 @@ namespace Sdo.Game
         // 官方模型只認「炸彈抵達判定線的瞬間你的腳在不在上面」,兩個誤爆都不會發生。
         // (StepMania 另有一條 Step 新按下路徑,但它只認「離按下點最近的音符剛好是炸彈」;近處有真音符時
         //  炸彈會被讓過。跨線瞬間的按著檢查已涵蓋「站在上面踩爆」,又不會把打鄰近音符的按鍵誤判成踩雷,故從略。)
+        //
+        // 唯一的例外是 **warp 內的炸彈**:那裡官方的 Step 路徑不是誤爆來源,而是整個 gimmick 的本體
+        // (按住穿過 warp = 自動打擊)。它只對 IsFake 的炸彈開,一般炸彈維持上面的模型 —— 見 WarpMineStep。
         //
         // detonate=false(F8 自動打擊 / ShowTime / 已陣亡):自動避雷 —— 照樣推進跨線游標與退場,但不引爆。
         // 編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
@@ -5454,20 +5835,87 @@ namespace Sdo.Game
                 var n = _notes[i];
                 if (n.Done || !n.Note.IsBomb) continue;
                 double t = n.Note.StartTimeMs;
-                if (now - t > retire) { n.Done = true; continue; }   // 早已通過 → 消失
+                // 早已通過 → 消失。warp 內的炸彈例外:它和同一批 warp 裝飾音是一起被超高速刷過判定線的,
+                // 退場交給 ScrollNotes(流出畫面才收,見那裡的 IsFake 分支),才不會只有炸彈提早幾百 ms 憑空消失。
+                if (now - t > retire) { if (!n.Note.IsFake) n.Done = true; continue; }
                 if (!detonate) continue;                             // 自動避雷:只推進/退場,不引爆
                 if (!(prev < t && t <= now)) continue;               // 只在「這一幀剛跨過判定線」時檢查一次(嚴格 < 防重複)
                 bool held = false;
                 foreach (var k in laneKeys[n.Note.Lane]) if (Input.GetKey(k)) { held = true; break; }
-                if (held) ExplodeBomb(n);                            // 跨線瞬間手指壓在該軌上 → 引爆(= CrossedMineRow + IsButtonDown)
+                if (!held) continue;
+                if (n.Note.IsFake) WarpMineStep(n, now);             // warp 內的炸彈是**觸發器**,見 WarpMineStep
+                else ExplodeBomb(n);                                 // 跨線瞬間手指壓在該軌上 → 引爆(= CrossedMineRow + IsButtonDown)
             }
         }
 
+        // 「按住穿過 warp 會自動打擊」—— StepMania 的炸彈在 warp 裡是**觸發器**,不是目標。
+        // 官方鏈路(Player.cpp):
+        //   1. Update:458 `for(; m_iMineRowLastCrossed <= iRowNow; ++) CrossedMineRow(...)` —— warp 讓 beat 一瞬間
+        //      跳過幾百拍,這個迴圈會把中間**每一個 row 逐一補呼叫**,所以一幀內觸發幾十次;
+        //   2. CrossedMineRow:1077 —— 註解寫的是「Hold the panel while crossing a mine will cause the mine to
+        //      explode」,但它按住時呼叫的是 `Step(t, now)`,也就是**完整的按鍵判定流程**,不是只引爆;
+        //   3. Step:662 —— `GetClosestNote` 撿該軌最近的**還沒判定**的音符,照 GetElapsedTimeFromBeat 算誤差給分。
+        // 譜面長這樣([blue]Dreadnought 的 gimmick 段,[blue]bbkkbkk beat 95 也是同一招):同一軌上每 78ms
+        // 一組「warp 內的炸彈 + 一條 78ms 短長條」,炸彈與長條頭**落在同一個判定時刻**,連成一長串。
+        // 玩家按住不放時沒有新的 keydown,那一串長條頭本來永遠沒人判定 → 全部 miss;炸彈就是用來**補按**的。
+        //
+        // 為什麼官方撿到的是長條頭、不是炸彈(所以**不會爆炸**):GetClosestNote 從「現在的 beat」往外找第一顆
+        // 還沒判定的音符。長條頭就在落地拍上(距離 0),炸彈在 warp 內側(beat 更遠),所以先撿到長條頭。
+        // 正在按著的前一條長條頭早就判定過了,GetClosestNoteDirectional 的 `GetTapNoteScore != TNS_NONE`
+        // 會跳過它 —— 官方不需要、也沒有「這一軌正被佔用」的概念。
+        //
+        // **觸發什麼由落地點決定**:接回正 BPM 的那個位置上是 tap 就判 tap、是長條就判長條頭、是炸彈就爆炸,
+        // 那裡什麼都沒有就**空轉**(絕不能拿觸發器自己來爆 —— 大多數 warp 炸彈只是被跳過的裝飾牆)。
+        // 這也正是官方 GetClosestNote 的結果:它從「現在的 beat」往外找第一顆還沒判定的音符,落地拍上的距離 0
+        // 必然最先撿到;撿到 mine 才走 Step 的 mine 分支爆炸,撿不到就 score = TNS_NONE 什麼也沒發生。
+        // 實測落地點分布 —— Dreadnought 213/216 是長條;bbkkbkk 15 個 tap、2 個長條、1 個炸彈,其餘 874 是空的;
+        // Elisha 2765 顆全部是空的(那面炸彈牆純粹是視覺裝飾)。
+        //
+        // 和官方的兩點差異(都是為了不破壞 remake 既有的不變式):
+        //  • 落地點只認**非 IsFake** 的音符。warp 內的裝飾音不在滿分分母裡(OsuBeatmap.TotalNotes 排除 IsFake),
+        //    判定它們會多出分子、打破滿分;而且它們是「被跳過的那段」,本來就不是「接回去」的位置。
+        //  • 換手前要先把該軌正按著的長條收尾。官方每條 hold 各自由 IsButtonDown 續命,remake 只有單一
+        //    `_holding[lane]` 插槽,直接被 PressLane 覆蓋的話舊那條就成了沒人判定的孤兒。這裡走 ReleaseLane
+        //    (等同「放開舊的、按下新的」),而這串 gimmick 長條的 cap 全都落在下一段 warp 裡 → IsFakeTail
+        //    → ReleaseLane 乾淨放手、不判定也不扣分,正是官方 hold 不必放開就算完成的效果。
+        //    (實測 Dreadnought 213 顆目標全撿得到,舊長條收尾 211 顆、來不及 0 顆。)
+        private void WarpMineStep(RuntimeNote bomb, double now)
+        {
+            var target = LandingNote(bomb);
+            if (target == null) return;                                   // 落地點是空的 → 空轉,不爆炸
+            if (target.Note.IsBomb) { ExplodeBomb(target); return; }      // 落地點是炸彈 → 爆的是**那一顆**
+            int lane = bomb.Note.Lane;
+            if (_holding[lane] != null) ReleaseLane(lane, now);           // 舊長條先收尾,再把該軌交給新的
+            PressLane(lane, now);   // = 官方的 Step():照真實誤差給分(落地點與觸發器同時刻 → 誤差只有一幀)
+            // 觸發器本身不動:官方的 Step 撿到的是別顆音符時,這顆炸彈原封不動留在譜上照樣畫出來
+            // (只有 GetClosestNote 真的撿到它才會 SetTapNote(TAP_EMPTY))。跨線那一幀只成立一次,不會重複觸發。
+        }
+
+        /// <summary>warp「接回正 BPM 的那個位置」上、與觸發器同軌的那顆音符(還沒判定的)。判定時刻和觸發器
+        /// 完全相同 —— warp 內的東西被壓在同一個瞬間,而落地拍就是那個瞬間的出口。IsFake 的不算(那是被跳過的
+        /// 裝飾,不是接回去的位置)。找不到 = 落地點是空的。</summary>
+        private RuntimeNote LandingNote(RuntimeNote bomb)
+        {
+            int t = bomb.Note.StartTimeMs;
+            int hi = NoteScan.UpperBound(_noteStarts, _firstAlive, t);   // 落地點的 StartTimeMs 正好等於 t
+            for (int i = _firstAlive; i < hi; i++)
+            {
+                var n = _notes[i];
+                if (n.Done || n.HeadJudged || n.Note.IsFake) continue;
+                if (n.Note.Lane == bomb.Note.Lane && n.Note.StartTimeMs == t) return n;
+            }
+            return null;
+        }
+
+        // 踩到炸彈的代價**只有扣血**(等同一次 Miss 的 HP 量),其餘一律不動:不斷 combo、不計 miss、
+        // 不進判定統計/分數、不彈判定字樣、不觸發整排紅閃、不算跳舞判定的 break、不影響 ShowTime 氣條。
+        // 所以它不走 ApplyEvent(那是「判定」的入口),直接扣 HP —— 死亡照樣由 Update 的 _health.IsFailed 接手。
+        // 回饋只留爆炸特效 + 踩雷音(比照 StepMania HitMine,雷本來就不出判定)。
         private void ExplodeBomb(RuntimeNote n)
         {
             PlaySe(MineSeName);                       // StepMania theme 的爆炸音 (DATA/SE/player_mine.wav)
             SpawnBombExplosion(n.Note.Lane);          // StepMania 的 HitMine 爆炸圖 (不是受擊線按下動畫)
-            ApplyEvent(Judgment.Miss, n.Note.Lane, tally: false);   // 踩炸彈 = 斷連/扣血,但不多算一次 miss
+            _health.Apply(Judgment.Miss);             // 只扣血 (level 0 = -50);combo/統計完全不受影響
             n.Done = true;                            // 引爆後移除
         }
 
@@ -5511,19 +5959,17 @@ namespace Sdo.Game
             if (sr != null) Destroy(sr.gameObject);
         }
 
-        // tally=false:只斷 combo + 扣血 + 記一次 block break(給跳舞判定用),但**不**算成一次 miss ——
-        // 不進判定統計、也不彈「MISS」字樣、不觸發整排紅閃。炸彈專用:踩到炸彈只該掉血、斷連,
-        // 它本身有爆炸特效+踩雷音當回饋(比照 StepMania HitMine,雷不出 MISS 判定)。見 ExplodeBomb。
-        private void ApplyEvent(Judgment j, int lane = -1, bool tally = true)
+        // 一次「判定」的統一出口:計分/扣血/氣條/表情/跳舞判定/判定字樣/特效全在這裡。
+        // (炸彈不是判定,不走這裡 —— 它只扣血,見 ExplodeBomb。)
+        private void ApplyEvent(Judgment j, int lane = -1)
         {
-            if (tally) _score.Apply(j);
-            else _score.BreakCombo();   // 炸彈:斷 combo 但不計入 MissCount/flat score
+            _score.Apply(j);
             _health.Apply(j);
             if (showtimeMode) _showtime.OnJudge(j);                               // ShowTime: fill the gauge (normal) or accrue the bonus (in a window)
             UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins
             _blockHadNote = true;                                                // a note was judged this block (-> not an empty block)
             if (j == Judgment.Bad || j == Judgment.Miss) _blockHadBreak = true;   // break -> NOT stopped now; the dancer is re-decided at the next 8-beat settlement
-            if (tally) { _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time; }   // 炸彈不彈判定字樣(它有自己的爆炸特效)
+            _judgeWord.sprite = _judgeSprites[(int)j]; _judgeWordAt = Time.time;
             if (lane >= 0 && (j == Judgment.Perfect || j == Judgment.Cool))   // tap: fire immediately, may overlap
             {
                 if (_hit3dMode) SpawnHit3d(lane);                              // 3D skin: real AU_HIT.EFT burst at the receptor
@@ -5531,7 +5977,7 @@ namespace Sdo.Game
             }
             // 3D skin: the official has NO lane click-strip glow on press and NO red board flash on miss — suppress both.
             if (lane >= 0 && j != Judgment.Miss && !_note3dMode) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
-            if (tally && j == Judgment.Miss && !_note3dMode) TriggerMissFlash();            // 炸彈不觸發整排紅閃(避免看起來像多一個 miss)
+            if (j == Judgment.Miss && !_note3dMode) TriggerMissFlash();
         }
 
         // Every 8 beats (the score-settlement cadence) re-decide whether the dancer keeps dancing — a break NEVER

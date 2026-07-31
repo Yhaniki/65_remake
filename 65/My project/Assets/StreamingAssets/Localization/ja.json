@@ -372,6 +372,74 @@
    "v": "ランダム難易度 25以上"
   },
   {
+   "k": "songselect.group_panel",
+   "v": "カテゴリ"
+  },
+  {
+   "k": "songselect.group_folder",
+   "v": "Group"
+  },
+  {
+   "k": "songselect.group_title",
+   "v": "Song"
+  },
+  {
+   "k": "songselect.group_artist",
+   "v": "Artist"
+  },
+  {
+   "k": "songselect.group_bpm",
+   "v": "BPM"
+  },
+  {
+   "k": "songselect.group_other",
+   "v": "その他"
+  },
+  {
+   "k": "songselect.group_uncat",
+   "v": "(未分類)"
+  },
+  {
+   "k": "songselect.group_bpm_unknown",
+   "v": "BPM 不明"
+  },
+  {
+   "k": "songselect.group_empty",
+   "v": "Songs/ に曲がありません"
+  },
+  {
+   "k": "songselect.group_refresh",
+   "v": "更新"
+  },
+  {
+   "k": "songselect.group_scanning",
+   "v": "スキャン中…"
+  },
+  {
+   "k": "songselect.group_refresh_done",
+   "v": "曲を更新：{0}"
+  },
+  {
+   "k": "songselect.group_refresh_none",
+   "v": "変更なし（全 {0} 曲）"
+  },
+  {
+   "k": "songselect.group_refresh_added",
+   "v": "{0} 曲追加"
+  },
+  {
+   "k": "songselect.group_refresh_changed",
+   "v": "{0} 曲更新"
+  },
+  {
+   "k": "songselect.group_refresh_removed",
+   "v": "{0} 曲削除"
+  },
+  {
+   "k": "songselect.group_refresh_sep",
+   "v": "、"
+  },
+  {
    "k": "stage.name.0",
    "v": "歩行者天国"
   },
@@ -590,6 +658,10 @@
   {
    "k": "settings.song_speed",
    "v": "曲の変速"
+  },
+  {
+   "k": "settings.song_bomb",
+   "v": "曲の爆弾"
   },
   {
    "k": "display.windowed",

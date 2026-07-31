@@ -74,8 +74,17 @@
 * 畫在音符板右邊、跟著捲動：`ChartEditorOverlay` 每幀重建一個 Mesh（只畫看得到的那段，幾十～幾百個四邊形）。
 * **時間→Y 完全走 `ScreenGameplay.EditorYForTime`（＝音符自己用的那條 `YForTime`）**，所以波形、格線、音符
   永遠在同一格上：變速（type-1）、掉落方向（向上/向下）、速度檔位改了都自動跟著。
-* 波形的第 0 格對到**音樂真正開始的譜面時間**（type-10 音樂起點的無聲數拍，見
+* 一般格式的波形第 0 格對到**音樂真正開始的譜面時間** C（type-10 音樂起點的無聲數拍，見
   [`sdo-music-start-type10-marker`](../reverse-engineering/SM_GN_NOTE_FORMAT.md)），不是譜面第 0 拍。
+* `.osu` 是唯一例外：比照 osu!lazer 的 `Editor.WAVEFORM_VISUAL_OFFSET = 20`，第 0 格畫在 C−20ms。
+  因此同一譜面時間 T 的三條映射是：
+
+  * note：仍是 `.osu` 內寫的 T；
+  * 播放／seek：讀實際 PCM 的 T−C（另計使用者 global offset）；
+  * 波形：顯示實際 PCM 的 T−C+20ms。
+
+  20ms 只屬於 osu 波形顯示；它不是 MP3 encoder delay、Vorbis 暖機、DSP buffer 或驅動延遲，
+  不可加進 decoder trim、AudioSource seek 或其他格式。
 
 ### 格線
 

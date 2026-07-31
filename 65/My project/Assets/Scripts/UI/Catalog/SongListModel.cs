@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Sdo.Game;
+using Sdo.Osu;
 
 namespace Sdo.UI.Catalog
 {
@@ -22,15 +23,108 @@ namespace Sdo.UI.Catalog
         /// <summary>
         /// Browse-list curation: keep only the keyboard ('k') chart of each sdomNNNNk/t pair
         /// (<see cref="SongCatalog.IsPrimaryVariant"/> — that's where the k/t story is written down),
-        /// then order by gn filename DESCENDING (highest sdomNNNN first / at the top).
+        /// then order by <see cref="BrowseKey"/> DESCENDING.
         /// </summary>
         public static List<SongCatalog.Entry> Curate(IEnumerable<SongCatalog.Entry> entries)
         {
             var res = new List<SongCatalog.Entry>();
             if (entries == null) return res;
+            var keyed = new List<KeyValuePair<BrowseSortKey, SongCatalog.Entry>>();
             foreach (var e in entries)
-                if (e != null && SongCatalog.IsPrimaryVariant(e.gn)) res.Add(e);
-            res.Sort((a, b) => string.CompareOrdinal(b.gn, a.gn));   // by filename sdomNNNNk.gn 降冪(最大號在最上)
+                if (e != null && SongCatalog.IsPrimaryVariant(e.gn))
+                    keyed.Add(new KeyValuePair<BrowseSortKey, SongCatalog.Entry>(BrowseKey(e), e));
+            keyed.Sort((a, b) => BrowseSortKey.Compare(a.Key, b.Key));   // 每首先算一次鍵再排：比較只看鍵 → 保證是全序
+            foreach (var kv in keyed) res.Add(kv.Value);
+            return res;
+        }
+
+        /// <summary>
+        /// 歌單排序鍵。三段字典序，全部**降冪**（大的在最上面）：
+        /// <list type="bullet">
+        /// <item><b>Tier</b>：官方歌 1、外部歌 0 → 官方歌永遠在外部歌上面（維持原本 "sdom…" &gt; "ext_…" 的結果）。</item>
+        /// <item><b>Group</b>：外部歌依群組(歌包)聚在一起；官方歌一律 ""。</item>
+        /// <item><b>Within</b>：官方歌 = gn 檔名（sdomNNNNk.gn 降冪，最大號在最上）；外部歌有 packOrder
+        ///   (歌包自帶 serverconfig)的照**包自己的順序** —— 官方選單是反序畫的、表的最後一列在最上面，
+        ///   所以列號補零後降冪剛好就是那個順序；沒有的沿用 gn 降冪，並排在同群組有序的下面。</item>
+        /// </list>
+        /// 用結構化的鍵而不是接成一個字串，是為了不必塞分隔字元、也不會被群組名裡的字元干擾；
+        /// 比較只看鍵 → 是嚴格全序，List.Sort 不會抱怨比較不一致。純函式，好測。
+        /// </summary>
+        public struct BrowseSortKey
+        {
+            public int Tier;
+            public string Group;
+            public string Within;
+
+            /// <summary>降冪比較（回傳 &lt;0 表示 a 應排在 b 前面／更上面）。</summary>
+            public static int Compare(BrowseSortKey a, BrowseSortKey b)
+            {
+                if (a.Tier != b.Tier) return b.Tier.CompareTo(a.Tier);
+                int c = string.CompareOrdinal(b.Group ?? "", a.Group ?? "");
+                return c != 0 ? c : string.CompareOrdinal(b.Within ?? "", a.Within ?? "");
+            }
+        }
+
+        /// <summary>一首歌的 <see cref="BrowseSortKey"/>。</summary>
+        public static BrowseSortKey BrowseKey(SongCatalog.Entry e)
+        {
+            if (e == null) return new BrowseSortKey { Tier = 0, Group = "", Within = "" };
+            if (!e.external) return new BrowseSortKey { Tier = 1, Group = "", Within = e.gn ?? "" };
+            return new BrowseSortKey
+            {
+                Tier = 0,
+                Group = e.group ?? "",
+                // "1"+列號 排在 "0"+gn 之上 → 同一包裡有序的先出，其餘照舊
+                Within = e.packOrder >= 0 ? "1" + e.packOrder.ToString("D8") : "0" + (e.gn ?? ""),
+            };
+        }
+
+        /// <summary>
+        /// 每一列要掛哪個標籤（NEW / HOT / 推薦 / 古典）。兩個來源，**歌包說了算**：
+        /// <list type="number">
+        /// <item>歌包自帶的 serverconfig（<c>entry.badge</c>，見 <see cref="Sdo.Osu.SdoServerConfig"/>）。</item>
+        /// <item>其餘的官方歌沿用近似規則「歌單最上面的 N 首 = NEW」—— 官方那份 serverconfig 不在我們手上，
+        ///       而清單本身已由 <see cref="Curate"/> 依檔名降冪排好，新歌自然在最上面。外部歌不套這條
+        ///       （它們沒有官方編號，也不該因為剛好排在頂端就變 NEW）。</item>
+        /// </list>
+        /// 回傳 gn → 標籤（gn 是唯一鍵；沒有標籤的歌不會出現在字典裡）。純函式，好測。
+        /// </summary>
+        public static Dictionary<string, SongBadge> BadgeMap(IReadOnlyList<SongCatalog.Entry> list, int autoNewCount)
+        {
+            var res = new Dictionary<string, SongBadge>(StringComparer.Ordinal);
+            if (list == null) return res;
+            foreach (var e in list)
+            {
+                if (e == null || string.IsNullOrEmpty(e.gn)) continue;
+                var b = (SongBadge)e.badge;
+                if (b != SongBadge.None) res[e.gn] = b;
+            }
+            int n = 0;
+            for (int i = 0; i < list.Count && n < autoNewCount; i++)
+            {
+                var e = list[i];
+                if (e == null || e.external || string.IsNullOrEmpty(e.gn)) continue;
+                n++;
+                if (!res.ContainsKey(e.gn)) res[e.gn] = SongBadge.New;
+            }
+            return res;
+        }
+
+        /// <summary>查一首歌的標籤（<paramref name="map"/> 來自 <see cref="BadgeMap"/>）。</summary>
+        public static SongBadge BadgeOf(Dictionary<string, SongBadge> map, SongCatalog.Entry e)
+            => map != null && e != null && !string.IsNullOrEmpty(e.gn) && map.TryGetValue(e.gn, out var b) ? b : SongBadge.None;
+
+        /// <summary>掛著某個標籤的歌，維持傳入清單的順序。選歌畫面三個「照標籤分」的頁籤共用：
+        /// 最新 = <see cref="SongBadge.New"/>、勁樂 = <see cref="SongBadge.Hot"/>、懷舊 = <see cref="SongBadge.Classical"/>
+        /// （官方的四個旗標見 docs/reverse-engineering/SDO_SERVERCONFIG.md 的 12-byte 歌曲列）。
+        /// <paramref name="badges"/> 來自 <see cref="BadgeMap"/>。<see cref="SongBadge.None"/> 一律回空清單
+        /// —— 「沒有標籤」不是一個可以拿來瀏覽的分類。純函式，好測。</summary>
+        public static List<SongCatalog.Entry> ByBadge(IReadOnlyList<SongCatalog.Entry> list,
+                                                      Dictionary<string, SongBadge> badges, SongBadge badge)
+        {
+            var res = new List<SongCatalog.Entry>();
+            if (list == null || badge == SongBadge.None) return res;
+            foreach (var e in list) if (BadgeOf(badges, e) == badge) res.Add(e);
             return res;
         }
 
@@ -53,8 +147,9 @@ namespace Sdo.UI.Catalog
 
         public List<SongCatalog.Entry> Filter(string query) => Filter(_all, query);
 
-        /// <summary>Text search (title/artist/gn, case-insensitive) over an arbitrary list — lets the screen
-        /// search WITHIN a category subset. Empty/blank query returns a copy of the whole list.</summary>
+        /// <summary>Text search (title/artist/group/gn, case-insensitive) over an arbitrary list — lets the screen
+        /// search WITHIN a category subset. group matches an external song's pack/folder label (e.g. "SDO Pack8"), so
+        /// a pack is findable by its name as well as by song title. Empty/blank query returns a copy of the whole list.</summary>
         public static List<SongCatalog.Entry> Filter(IReadOnlyList<SongCatalog.Entry> list, string query)
         {
             var res = new List<SongCatalog.Entry>();
@@ -62,7 +157,8 @@ namespace Sdo.UI.Catalog
             if (string.IsNullOrWhiteSpace(query)) { res.AddRange(list); return res; }
             query = query.Trim();
             foreach (var e in list)
-                if (e != null && (Contains(e.title, query) || Contains(e.artist, query) || Contains(e.gn, query)))
+                if (e != null && (Contains(e.title, query) || Contains(e.artist, query)
+                                  || Contains(e.group, query) || Contains(e.gn, query)))
                     res.Add(e);
             return res;
         }
@@ -71,17 +167,23 @@ namespace Sdo.UI.Catalog
         /// label carried into the room ("隨機難度 X"). Min/Max are inclusive level bounds at the active difficulty;
         /// Key is the localization key. Single source of truth: the screen renders it, FrontendApp re-rolls off it.</summary>
         public struct RandRange { public string Key; public int Min, Max; }
+
+        /// <summary>「X 以上」沒有上界時填這個。**不要拿等級天花板當哨兵**：以前這裡寫 99，而顯示等級的上限也剛好
+        /// 是 99，兩件事一綁死，等級上限一放寬(現在 999，見 <see cref="Sdo.Osu.ManiaStarRating"/> /
+        /// <see cref="Sdo.Osu.ManiaMsd"/>)，「25 以上」就會把 100 等以上的歌通通篩掉。</summary>
+        public const int NoMax = int.MaxValue;
+
         public static readonly RandRange[] RandRanges =
         {
             new RandRange { Key = "songselect.rand_1_5",  Min = 1,  Max = 5 },
             new RandRange { Key = "songselect.rand_1_9",  Min = 1,  Max = 9 },
             new RandRange { Key = "songselect.rand_5_9",  Min = 5,  Max = 9 },
-            new RandRange { Key = "songselect.rand_all",  Min = 0,  Max = 99 },
-            new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = 99 },
-            new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = 99 },
-            new RandRange { Key = "songselect.rand_13up", Min = 13, Max = 99 },
-            new RandRange { Key = "songselect.rand_20up", Min = 20, Max = 99 },
-            new RandRange { Key = "songselect.rand_25up", Min = 25, Max = 99 },
+            new RandRange { Key = "songselect.rand_all",  Min = 0,  Max = NoMax },
+            new RandRange { Key = "songselect.rand_5up",  Min = 5,  Max = NoMax },
+            new RandRange { Key = "songselect.rand_9up",  Min = 9,  Max = NoMax },
+            new RandRange { Key = "songselect.rand_13up", Min = 13, Max = NoMax },
+            new RandRange { Key = "songselect.rand_20up", Min = 20, Max = NoMax },
+            new RandRange { Key = "songselect.rand_25up", Min = 25, Max = NoMax },
         };
 
         /// <summary>Clamp an arbitrary index into <see cref="RandRanges"/>.</summary>
@@ -101,7 +203,7 @@ namespace Sdo.UI.Catalog
             var res = new List<RandomCandidate>();
             if (list == null) return res;
             var r = RandRanges[ClampRange(rangeIndex)];
-            bool all = r.Min <= 0 && r.Max >= 99;
+            bool all = r.Min <= 0 && r.Max >= NoMax;
             foreach (var e in list)
             {
                 if (e == null) continue;
@@ -109,7 +211,9 @@ namespace Sdo.UI.Catalog
                 {
                     if (!e.HasChart(d)) continue;   // empty difficulty can't be a random pick
                     if (all) { res.Add(new RandomCandidate { Song = e, Difficulty = d }); continue; }
-                    int lvl = e.Diff(d);
+                    // 用 DisplayLevel（＝目前那套難度算法）比範圍：畫面上寫「難度 13 以上」，挑出來的就該是
+                    // 螢幕上顯示 13 以上的歌。用 Diff() 會在 minacalc 模式下拿 osu 等級去比 minacalc 的數字。
+                    int lvl = e.DisplayLevel(d);
                     if (lvl >= r.Min && lvl <= r.Max) res.Add(new RandomCandidate { Song = e, Difficulty = d });
                 }
             }
@@ -117,17 +221,18 @@ namespace Sdo.UI.Catalog
         }
 
         /// <summary>Songs whose level at <paramref name="difficulty"/> is within [min,max] — the pool for the
-        /// 隨機 (random) ranges. min&lt;=0 &amp;&amp; max&gt;=99 means "全部" (no level filter; unknown levels included).</summary>
+        /// 隨機 (random) ranges. min&lt;=0 &amp;&amp; max&gt;=<see cref="NoMax"/> means "全部" (no level filter; unknown
+        /// levels included).</summary>
         public static List<SongCatalog.Entry> InLevelRange(IReadOnlyList<SongCatalog.Entry> list, int difficulty, int min, int max)
         {
             var res = new List<SongCatalog.Entry>();
             if (list == null) return res;
-            bool all = min <= 0 && max >= 99;
+            bool all = min <= 0 && max >= NoMax;
             foreach (var e in list)
             {
                 if (e == null) continue;
                 if (all) { res.Add(e); continue; }
-                int lvl = e.Diff(difficulty);
+                int lvl = e.DisplayLevel(difficulty);   // 同 RandomCandidates：範圍比的是螢幕上看到的那個數字
                 if (lvl >= min && lvl <= max) res.Add(e);
             }
             return res;
@@ -148,6 +253,21 @@ namespace Sdo.UI.Catalog
                 if (list[i] != null && list[i].HasChart(difficulty)) return i;
             }
             return -1;
+        }
+
+        // ---- external (user Songs/ folder) songs — the pool the 資料夾 category's group panel slices ----
+
+        /// <summary>Every external (user Songs/) song. <see cref="SongGrouping"/> buckets these by folder /
+        /// title / artist / BPM for the browse panel; empty when no user Songs/ were scanned.</summary>
+        public List<SongCatalog.Entry> Externals() => Externals(_all);
+
+        public static List<SongCatalog.Entry> Externals(IReadOnlyList<SongCatalog.Entry> list)
+        {
+            var res = new List<SongCatalog.Entry>();
+            if (list == null) return res;
+            foreach (var e in list)
+                if (e != null && e.external) res.Add(e);
+            return res;
         }
 
         public SongCatalog.Entry PickRandom(int seed)
