@@ -460,12 +460,12 @@
    "v": "服务器的房间已经满了"
   },
   {
-   "k": "net.fallback_offline",
-   "v": "连不上服务器,改用单机模式"
-  },
-  {
    "k": "net.name_taken",
    "v": "登录失败：这个名称已被使用"
+  },
+  {
+   "k": "net.link_lost",
+   "v": "与服务器的连接中断"
   },
   {
    "k": "net.transfer_failed",

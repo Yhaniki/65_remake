@@ -21,9 +21,12 @@ namespace Sdo.UI.Services
         private readonly Random _rng;
 
         /// <summary>
-        /// 房號池 —— 離線也配 **5 位數**房號,與連線模式一致。
-        /// 兩邊格式一樣的話,「房名下面顯示房號」那段 UI 就不必分辨模式,
-        /// 而且截圖驗證版面時看到的是真實長度的號碼(1 位數的「1」看不出會不會壓到字)。
+        /// 房號池 —— 離線也配 **5 位數**房號,與連線模式一致(<c>GetRoom</c> / <c>CurrentRoomId</c> 都拿它當鍵)。
+        ///
+        /// 只是房間畫面上**不顯示**它 —— 線上也一樣(見 <c>RoomScreen.Render</c>);房號是給大廳
+        /// 「輸入房號」那個框用的,而單機根本沒有別人能加入。
+        /// 這裡仍配真號碼而不是 0,是為了讓離線與連線的房間資料結構完全一樣 —— 免得多一條
+        /// 「Id 可能是 0」的分支要照顧。
         /// </summary>
         private readonly Sdo.Net.Server.RoomCodePool _codes = new Sdo.Net.Server.RoomCodePool(seed: 20260727);
 

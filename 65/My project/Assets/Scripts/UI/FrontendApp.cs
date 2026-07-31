@@ -365,19 +365,20 @@ namespace Sdo.UI
                 yield return null;
             }
 
-            // 逾時或失敗 → 退回單機。ctx 本來就還是單機的(CompleteLogin 沒被呼叫過),
-            // 所以這裡只要把半開的連線關掉、記下原因讓 Update 用 Toast 說一次。
+            // 逾時或失敗 → 留在單機。ctx 本來就還是單機的(CompleteLogin 沒被呼叫過),
+            // 所以這裡只要把半開的連線關掉。
             string why = string.IsNullOrEmpty(net.LastError) ? "連線逾時" : net.LastError;
-            // 🔴 同名被擋要說**那一句**,不能用通用的「連不上伺服器」:那句話會讓玩家去查網路與
-            // config.ini,而真正該做的事是改名字 —— 而且伺服器明明就連得上。
+            // 🔴 「連不上」**只寫 log,不告訴玩家**(見 Toast.cs 開頭那條線):按了登入卻連不上的人
+            // 多半是沒填 serverAddress、伺服器沒開 —— 那句話對他既不是壞消息也不是他能處理的事。
+            // 例外是**同名被擋**:伺服器明明連得上,而他真正該做的事(改個名字)就在手邊 → 那句要說。
             // (要在 Disconnect 之前讀 ByeCode 嗎?不必 —— 它記的是收到的那一份,不會被關閉清掉。)
             bool nameTaken = net.ByeCode == Sdo.Net.NetProto.ErrNameTaken;
-            string key = nameTaken ? "net.name_taken" : "net.fallback_offline";
+            Debug.LogWarning("[net] 登入沒成功,留在單機:" + why);
             net.Disconnect("loginFailed");
             _loggingIn = false;
             LoginBlockedByName = nameTaken;
-            _netFellBackReason = why;
-            _netFellBackKey = key;
+            _netFellBackReason = nameTaken ? why : null;   // null = 不彈(見上)
+            _netFellBackKey = "net.name_taken";
             done?.Invoke(false);
         }
 
@@ -394,7 +395,9 @@ namespace Sdo.UI
             Debug.LogWarning("[net] 連線中斷:" + reason);
             _ctx.Logout("linkLost");
             _netFellBackReason = reason;
-            _netFellBackKey = "net.fallback_offline";   // 中途斷線一律是這句(同名只會在握手時被擋)
+            // 🔴 中途斷線**要說**,與「開機連不上不說」是兩件事:玩家已經在線上了,畫面突然變單機
+            // 又被帶回登入頁,不說一句他只會覺得壞了(而他能做的事也很明確:再登入一次)。
+            _netFellBackKey = "net.link_lost";   // 中途斷線一律是這句(同名只會在握手時被擋)
             var cur = _ctx.Flow.Current;
             if (cur == ScreenId.Lobby || cur == ScreenId.Room || cur == ScreenId.SongSelect)
                 ScreenTransition.Run(() => _ctx.Flow.GoTo(ScreenId.GenderSel));
@@ -450,11 +453,13 @@ namespace Sdo.UI
 
         private bool _netReady;
 
-        /// <summary>非空 = 開機時連不上,已退回單機(進到畫面後用 Toast 告知玩家)。</summary>
+        /// <summary>非空 = 有一次退回單機要**告訴玩家**(進到畫面後用 Toast 說一次)。
+        /// 🔴 「連不上」不走這裡 —— 那個只寫 log(見 <see cref="LoginCo"/> 尾端與 Toast.cs 開頭那條線);
+        /// 會設到這裡的只有「名字被佔用」與「連上之後中途斷線」。</summary>
         private string _netFellBackReason;
 
-        /// <summary>上面那次退回單機要彈哪一句(名字被佔用 vs 連不上)。與 <see cref="_netFellBackReason"/> 同時設。</summary>
-        private string _netFellBackKey = "net.fallback_offline";
+        /// <summary>上面那次要彈哪一句(名字被佔用 vs 連線中斷)。與 <see cref="_netFellBackReason"/> 同時設。</summary>
+        private string _netFellBackKey = "net.link_lost";
 
         // 大廳系畫面(男/女選擇 + 大廳 + ROOM)播 UI/BGM 資料夾的隨機 BGM(不連續重複)並淡回;選歌畫面=淡出禁音但軌道繼續播
         // (離開選歌回房間再淡回同一首);遊戲(有歌)才真的停。商城是疊在 ROOM/GenderSel 上的 modal(不改 Flow)→ BGM 持續。
@@ -515,7 +520,7 @@ namespace Sdo.UI
             // 缺歌傳檔:同樣要在遊戲中也繼續跑 —— 下載可能跨過「別人在打歌、我留在房間」那段。
             NetSongTransfer.Tick(_ctx, this);
 
-            // 登入連不上 / 中途斷線 → 已退回單機,告知玩家一次。
+            // 名字被佔用 / 中途斷線 → 已退回單機,告知玩家一次(「連不上」不在此列,見 LoginCo 尾端)。
             // 🔴 要等 Toast 建好才說(Toast.Ready):Update 從第一幀就在跑,而 Toast 到開機 Phase 5
             // 才建 —— 不等的話原因下一幀就被讀走並丟掉,Toast.Show 那時只會寫一行 log,
             // **玩家永遠看不到那句話**,只覺得「怎麼變單機了」。
@@ -524,13 +529,13 @@ namespace Sdo.UI
                 var why = _netFellBackReason;
                 var key = _netFellBackKey;
                 _netFellBackReason = null;
-                _netFellBackKey = "net.fallback_offline";
-                // 原因是技術訊息(socket 錯誤、憑證指紋不符…),玩家看不懂也不能處理 → 進 log。
+                _netFellBackKey = "net.link_lost";
+                // 原因是技術訊息(socket 錯誤、憑證指紋不符…),玩家看不懂也不能處理 → 只進 log。
                 // Toast 只有一行的高度,接一段英文錯誤上去也只會被截掉。
-                // 例外是「名字被佔用」:那句話本身就是玩家該看到的處理方式(見 LoginCo)。
                 Debug.LogWarning("[net] 退回單機:" + why);
                 Toast.Show(LocalizationManager.Get(key), 4f);
             }
+
 
             _ctx?.Chat?.Tick();
             if (_killGuardFrames > 0 && _activeGame == null) { _killGuardFrames--; KillStrayGameplay(); }

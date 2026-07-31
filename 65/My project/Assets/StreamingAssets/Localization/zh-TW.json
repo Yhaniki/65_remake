@@ -460,12 +460,12 @@
    "v": "伺服器的房間已經滿了"
   },
   {
-   "k": "net.fallback_offline",
-   "v": "連不上伺服器,改用單機模式"
-  },
-  {
    "k": "net.name_taken",
    "v": "登入失敗：這個名稱已被使用"
+  },
+  {
+   "k": "net.link_lost",
+   "v": "與伺服器的連線中斷"
   },
   {
    "k": "net.transfer_failed",

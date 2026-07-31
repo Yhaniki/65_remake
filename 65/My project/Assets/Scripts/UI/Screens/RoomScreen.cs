@@ -2810,6 +2810,8 @@ namespace Sdo.UI.Screens
                 _roomIdLabel.SetX(lx);
 
                 // 中央只放房名:「飄漂o的舞蹈室」。官方那塊牌子上沒有房號。
+                // (feat/online 那邊是「線上才把房號接在房名後面」,這裡走得更遠:房號一律不進房名,
+                //  改成左上那排的門牌 Seq —— 5 位數 code 官方畫面上本來就不出現。)
                 _roomNameLabel.text = RoomLabels.DisplayName(room.Name, room.HostName);
             }
 

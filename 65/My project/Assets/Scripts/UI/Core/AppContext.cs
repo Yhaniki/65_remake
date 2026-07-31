@@ -65,6 +65,7 @@ namespace Sdo.UI.Core
         /// <summary>
         /// 發動連線。**非同步** —— 這裡只把連線層建起來並開始連,握手完成與否由呼叫端輪詢
         /// (<c>FrontendApp.LoginCo</c>);握手成功要再呼叫 <see cref="CompleteLogin"/> 才會真的切成線上模式。
+        /// 連不上就靜靜留在單機(原因只進 log,見 <c>LoginCo</c> 尾端)。
         ///
         /// 回 <c>null</c> = <c>config.ini</c> 沒填 <c>[Net] serverAddress</c>(根本沒有伺服器可連)。
         /// </summary>

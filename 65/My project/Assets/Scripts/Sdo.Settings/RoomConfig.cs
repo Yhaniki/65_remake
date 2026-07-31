@@ -141,7 +141,7 @@ namespace Sdo.Settings
         public static string playerLevel = "";
 
         // ---- [Net]：多人連線。★ serverAddress 是整個連線功能的總開關：留空＝純單機（走 MockRoomService，
-        //      體驗與加連線之前完全一樣）；填了才會去連。連不上會提示並自動退回單機，不會卡在連線畫面。----
+        //      體驗與加連線之前完全一樣）；填了才會去連。連不上會自動退回單機（原因只寫 log），不會卡在連線畫面。----
         // 伺服器位址：IP 或主機名（例如 192.168.1.10 或 dance.example.com）。留空＝不連線（單機）。
         public static string serverAddress = "";
         // 伺服器 port。預設 27015（沒有官方值可循，挑一個常見的遊戲 port 區間）。
@@ -631,7 +631,7 @@ namespace Sdo.Settings
 
             sb.Append('\n').Append("[Net]\n");
             sb.Append("# 多人連線。★ serverAddress 是總開關：留空＝純單機（與加連線之前完全一樣）。\n");
-            sb.Append("# 填了才會去連；連不上會提示並自動退回單機，不會卡住。\n");
+            sb.Append("# 填了才會去連；連不上會自動退回單機（原因寫在 log），不會卡住。\n");
             sb.Append("# 伺服器位址：IP 或主機名（例如 192.168.1.10 或 dance.example.com）。\n");
             sb.Append("serverAddress=").Append(serverAddress ?? "").Append('\n');
             sb.Append("# 伺服器 port（1~65535）。\n");

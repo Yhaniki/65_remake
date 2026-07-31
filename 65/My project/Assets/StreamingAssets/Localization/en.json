@@ -460,12 +460,12 @@
    "v": "The server has no room slots left"
   },
   {
-   "k": "net.fallback_offline",
-   "v": "Can't reach the server — playing offline"
-  },
-  {
    "k": "net.name_taken",
    "v": "Login failed — that name is already in use"
+  },
+  {
+   "k": "net.link_lost",
+   "v": "Disconnected from the server"
   },
   {
    "k": "net.transfer_failed",
