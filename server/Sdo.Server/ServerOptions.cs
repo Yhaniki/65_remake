@@ -93,8 +93,31 @@ namespace Sdo.Server
         /// <summary>印出每一筆收發的訊息(除錯用;訊息量大時很吵)。</summary>
         public bool Verbose;
 
+        /// <summary>log 檔的目錄。空 = <c>&lt;data&gt;/logs</c>(見 <see cref="LogDirOrDefault"/>)。</summary>
+        public string LogDir = "";
+
+        /// <summary>
+        /// 所有 log 檔加起來的容量上限(MB)。0 = 不寫檔案,只印畫面。
+        /// 超過就從最舊的那天開始刪(見 <see cref="Sdo.Server.Logging.LogRetention"/>)。
+        /// </summary>
+        public int LogCapMb = DefaultLogCapMb;
+
+        /// <summary>log 保留量的預設值:100 MB(使用者要求)。</summary>
+        public const int DefaultLogCapMb = 100;
+
         /// <summary>blob 存放位置。</summary>
         public string BlobDir => Path.Combine(DataDir, "blobs");
+
+        /// <summary>
+        /// log 實際寫去哪。預設放在 data 底下 —— 部署時本來就只有 data 這一個目錄
+        /// 保證存在而且 server 有寫入權(DEPLOY.md §3),多一個要另外授權的路徑只會多一種
+        /// 「開機就寫不出 log」的失敗方式。
+        /// </summary>
+        public string LogDirOrDefault
+            => string.IsNullOrEmpty(LogDir) ? Path.Combine(DataDir, "logs") : LogDir;
+
+        /// <summary>log 容量上限(位元組)。</summary>
+        public long LogCapBytes => (long)LogCapMb * 1024L * 1024L;
 
         public static string Usage =>
             "sdo-server — 勁舞團重製版連線伺服器\n" +
@@ -110,6 +133,8 @@ namespace Sdo.Server
             "  --ttl-hours <n>      歌曲暫存保留時數(預設 " + NetLimits.DefaultBlobTtlHours + ")\n" +
             "  --max-blob-gb <n>    歌曲暫存總容量上限 GB(預設 " + NetLimits.DefaultMaxTotalBlobGb + ")\n" +
             "  --code-seed <n>      房號洗牌種子(預設隨機;給固定值可重現)\n" +
+            "  --log-dir <dir>      log 檔目錄(預設 <data>/logs;依日期一天一個檔)\n" +
+            "  --log-mb <n>         log 檔總容量上限 MB(預設 " + DefaultLogCapMb + ";超過從最舊的刪,0 = 不寫檔)\n" +
             "  -v, --verbose        印出每筆訊息\n" +
             "\n" +
             "公網化(預設全關 → LAN 行為不變):\n" +
@@ -182,6 +207,12 @@ namespace Sdo.Server
                     case "--code-seed":
                         if (!NextInt(args, ref i, out opts.CodeSeed, out error)) return false;
                         break;
+                    case "--log-dir":
+                        if (!NextString(args, ref i, out opts.LogDir, out error)) return false;
+                        break;
+                    case "--log-mb":
+                        if (!NextInt(args, ref i, out opts.LogCapMb, out error)) return false;
+                        break;
 
                     case "--tokens":
                         if (!NextString(args, ref i, out opts.TokensFile, out error)) return false;
@@ -232,6 +263,10 @@ namespace Sdo.Server
             Bind = Bind.Trim();
             DataDir = DataDir.Trim();
             Password = (Password ?? "").Trim();
+
+            LogDir = (LogDir ?? "").Trim();
+            // 負數當成 0(不寫檔),不要因為打錯一個減號就讓 server 起不來 —— log 設定不值得擋開機。
+            if (LogCapMb < 0) LogCapMb = 0;
 
             if (MaxRooms < 1) MaxRooms = 1;
             if (MaxConnections < 2) MaxConnections = 2;      // 至少要能容納兩個人才有「多人」

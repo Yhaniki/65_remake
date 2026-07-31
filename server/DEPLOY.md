@@ -363,9 +363,19 @@ sdoctl stop
 - 離開 tmux 是 **Ctrl-B 放開再按 D**。按 Ctrl-C 或關掉 SSH 視窗都不會停掉 server
   (那正是用 tmux 的意義),但 Ctrl-C 在 `--rw` 模式下會。
 - `stop` 送 SIGTERM,server 會把連線乾淨收掉;10 秒還沒退才改送 KILL。
-- log 在 `/var/lib/sdo-server/server.log`,**會一直長**。tmux 沒有 journald 幫忙輪替,
-  開了 `EXTRA_ARGS=(-v)` 之後尤其長 —— 查完把 `-v` 註解回去,必要時
-  `sudo truncate -s 0 /var/lib/sdo-server/server.log`。
+- **log 有兩份,要看的是第一份:**
+
+  | 檔 | 誰寫的 | 內容 | 會不會爆 |
+  |---|---|---|---|
+  | `/var/lib/sdo-server/logs/sdo-server-<日期>.log` | server 自己 | 每行都有 `2026-07-31 14:03:12` 時間戳,**一天一個檔** | 不會。全部加起來滿 100 MB 就從最舊的那天開始刪 |
+  | `/var/lib/sdo-server/server.log` | `sdoctl` 的 `tee` | 同樣的內容,外加**「log 檔開起來之前」就死掉的訊息**(參數打錯、data 目錄建不出來、憑證讀不到) | 不會。`sdoctl start` 發現它超過 10 MB 會清空重來 |
+
+  `sdoctl log N` 讀的是第二份(它涵蓋得最全)。要翻某一天就直接看第一份:
+  `sudo ls /var/lib/sdo-server/logs/`。
+- 保留量可以調:`EXTRA_ARGS=(--log-mb 300)`,或 `--log-mb 0` 完全不寫檔(只留畫面)。
+  目錄要換位置用 `--log-dir`(預設 `<data>/logs`)。
+- `EXTRA_ARGS=(-v)` 開著時 log 長得非常快(每一筆收發都印)。100 MB 只夠撐一小段時間 ——
+  查完把 `-v` 註解回去。
 
 ---
 
@@ -506,7 +516,7 @@ systemd unit 的寫法在 [OPERATIONS.md §4.5](OPERATIONS.md#45-systemd)。這�
 | 少了什麼 | 補救 |
 |---|---|
 | **沒有 `Restart=on-failure`** | server 掛了就是掛了。要自動重啟只能回去用 systemd,或自己包一層 while 迴圈 |
-| 沒有 journald(輪替、`journalctl -u`) | `sdoctl` 把 stdout 用 `tee` 落到 `/var/lib/sdo-server/server.log`,`sdoctl log` 讀那個檔。**沒有自動輪替**,見 §10 |
+| 沒有 journald(輪替、`journalctl -u`) | server 自己寫 `<data>/logs/sdo-server-<日期>.log`(一天一檔、每行有時間戳、滿 100 MB 從最舊的刪);`sdoctl` 另外把 stdout `tee` 到 `/var/lib/sdo-server/server.log` 接住開機前期的訊息。兩份都不會無限長,見 §10 |
 | 沒有開機自動啟動 | §11 的 `@reboot` crontab |
 | 沒有 `ProtectSystem` / `PrivateTmp` 那些 sandbox | 只剩「跑在 `sdo` 這個沒權限的帳號底下」這一層。執行檔 owner 是 root 所以改不掉自己 |
 
