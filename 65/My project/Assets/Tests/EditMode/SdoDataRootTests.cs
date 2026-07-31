@@ -16,6 +16,49 @@ namespace Sdo.Tests
         private static string Extracted(string repo) => Full(Path.Combine(repo, "assets", "sdox_offline", "Extracted"));
         private static string Data(string dir) => Full(Path.Combine(dir, "DATA"));
 
+        // ---------------- data_root.txt 的搜尋範圍 ----------------
+
+        [Test]
+        public void OverrideFileDirs_Editor_ExeDirThenRepo()
+        {
+            var d = SdoDataRoot.OverrideFileDirs(ExeDir, Repo, isEditor: true);
+            CollectionAssert.AreEqual(new[] { Full(ExeDir), Full(Repo) }, d);
+        }
+
+        [Test]
+        public void OverrideFileDirs_Player_ExeDirOnly()
+        {
+            // player 下 repo 是呼叫端從 dataPath 往上三層猜的，那不是 repo，只是 exe 上面兩層 —— 不可信。
+            var d = SdoDataRoot.OverrideFileDirs(ExeDir, Repo, isEditor: false);
+            CollectionAssert.AreEqual(new[] { Full(ExeDir) }, d);
+        }
+
+        [Test]
+        public void OverrideFileDirs_Player_DefaultBuildLayout_DoesNotReachRepoRoot()
+        {
+            // 回歸：預設 build 是 <repo>\Build\Windows，dataPath = 那裡的 dance_Data，往上三層剛好 = repo 根。
+            // 以前打包版因此吃到開發機 repo 根的 data_root.txt，旁邊打包好的 DATA 永遠用不到。
+            const string buildDir = @"H:\65_remake\Build\Windows";
+            var guessedRepo = Full(Path.Combine(buildDir, "dance_Data", "..", "..", ".."));
+            Assert.AreEqual(Full(Repo), guessedRepo, "前提：預設 build 版型下猜出來的 repo 就是 repo 根");
+
+            var d = SdoDataRoot.OverrideFileDirs(buildDir, guessedRepo, isEditor: false);
+            CollectionAssert.DoesNotContain(d, Full(Repo));
+            CollectionAssert.AreEqual(new[] { Full(buildDir) }, d);
+        }
+
+        [Test]
+        public void OverrideFileDirs_Dedupes_AndSkipsEmpty()
+        {
+            CollectionAssert.AreEqual(new[] { Full(Repo) }, SdoDataRoot.OverrideFileDirs(Repo, Repo, isEditor: true));
+            CollectionAssert.AreEqual(new[] { Full(Repo) }, SdoDataRoot.OverrideFileDirs(null, Repo, isEditor: true));
+            CollectionAssert.AreEqual(new[] { Full(ExeDir) }, SdoDataRoot.OverrideFileDirs(ExeDir, "", isEditor: true));
+            CollectionAssert.IsEmpty(SdoDataRoot.OverrideFileDirs(null, null, isEditor: true));
+            CollectionAssert.IsEmpty(SdoDataRoot.OverrideFileDirs(null, Repo, isEditor: false));
+        }
+
+        // ---------------- 候選 root ----------------
+
         [Test]
         public void CandidateRoots_Editor_PrefersDevTree_OverExeData()
         {

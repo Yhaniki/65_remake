@@ -19,7 +19,8 @@
 | `PROFILE` | 離線樹**實體複製** | 玩家存檔要可寫，不能跟主 worktree 共用 |
 | `iteminfo.dat` / `setinfo.dat` | `閉撰敃氪/` 根目錄 | 商品目錄 (31,563 筆) / 套裝組件表 |
 
-`data_root.txt`(已 gitignore) 就是 `SdoExtracted.ConfiguredRoot` 的覆寫入口。
+`data_root.txt`(已 gitignore) 就是 data root 的覆寫入口 (`SdoDataRoot`)。搜尋範圍只有兩處：**dance.exe 同層**(永遠讀)、
+**repo 根**(只有 editor 讀)。打包版不會往 exe 的上層目錄找,所以 build 放在 `<repo>\Build\*` 底下也不會偷吃到這一份。
 
 ## 2. 非衣服商品實際會讀的檔
 
