@@ -119,6 +119,11 @@ namespace Sdo.Settings
         // 目前穿搭解析出的完整 mesh 部位清單 (含飾品/翅膀/表情，順序=AvatarOutfit.Order)。房間/遊戲 avatar 的權威來源；
         // 空 (舊檔) 時退回 6 部位的 equippedClothes。由 WardrobeStore 在存檔時用 Sdo.Game.AvatarOutfit.ResolveParts 算出。
         public string[] equippedParts = new string[0];
+        /// <summary>累計知名度(名声)—— 大廳右下角顯示成 <c>LV 2 (15)</c> 的那個數字(格式/等級換算見 <see cref="FameLevel"/>)。
+        /// 放在這一區是因為它**由購物驅動**:唯一會加它的是商城的購買(ShopScreen 的 DoBuy / DoBuyAll,每件依價格換算),
+        /// 🔴 快速充值不算 —— 那是免費送錢,能算的話一鍵就刷滿等級。舊存檔沒有這個 key,JsonUtility 會給預設值 0
+        /// (= LV 1),所以不需要任何 migration。</summary>
+        public int fame;
 
         // ---- [Profile] 的 per-user 覆寫 ----
         // config.ini 的 [Profile] 是**所有角色共用的 Default**;這三個欄位讓「這個角色」可以有自己的家族/等級。
@@ -167,6 +172,7 @@ namespace Sdo.Settings
             if (ownedItems == null) ownedItems = new OwnedItemSave[0];
             if (equippedItems == null) equippedItems = new EquipSave[0];
             if (equippedParts == null) equippedParts = new string[0];
+            if (fame < 0) fame = 0;   // 知名度只會往上加,負值必是壞檔 → 當 0(= LV 1)
             if (stats == null) stats = new PlayStats(); else stats.Sanitize();
             friends = SanitizeFriends(friends);
             familyName = (familyName ?? "").Trim();

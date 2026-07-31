@@ -803,12 +803,27 @@ namespace Sdo.UI.Screens
             AddTrigData(trig, EventTriggerType.PointerExit, _ => { if (_hoverCard == idx) _hoverCard = -1; });
         }
 
+        // 買東西 → 累加知名度 (大廳右下角那行 LV x (n))。換算與量級的理由在 FameLevel.FameForPurchase
+        // (每 1000 元 1 點、花了錢至少 1 點、Price 為 0/-1 不給分)。
+        //
+        // 🔴 只掛在「真的花錢成交」的那一瞬間 (DoBuy / DoBuyAll 的 BuyResult.Ok),**不能掛在
+        // WardrobeStore.SaveOwnedWallet/SaveAll** —— 那條存檔出口 快速充值 (DoRecharge) 也會走,
+        // 掛上去等於按一下充值就刷滿知名度。這裡只改記憶體裡的 profile,落地交給呼叫端既有的
+        // WardrobeStore.Save*(它最後會 ProfileManager.Save),不另外多存一次。
+        private static void AddFame(ShopItem item)
+        {
+            var p = Sdo.Settings.ProfileManager.Active;   // 還沒選角色時是 null (WardrobeStore 的存檔也是這樣擋)
+            if (p == null) return;
+            p.fame += Sdo.Settings.FameLevel.FameForPurchase(item.Price);
+        }
+
         // 購買/全身購買 = 使用者主動花錢 → 要有 info 回饋 (其餘按鈕才靜默)。
         private void DoBuy(ShopItem item)
         {
             switch (ShopService.Buy(_session.Wardrobe, item, Now()))
             {
                 case BuyResult.Ok:
+                    AddFame(item);                       // 成交才算 (餘額不足/已擁有/欄位滿 都沒花到錢)
                     if (item.IsProp)
                     {
                         // 2D 商品 (道具/藥水/特效/寵物/禮包) 是「進背包」不是「穿上」→ 不換裝、不重建 avatar。
@@ -844,7 +859,7 @@ namespace Sdo.UI.Screens
                 if (it == null) continue;
                 switch (ShopService.Buy(_session.Wardrobe, it, Now()))
                 {
-                    case BuyResult.Ok: bought++; break;
+                    case BuyResult.Ok: bought++; AddFame(it); break;   // 逐件累加知名度 (一次買一整套就是每件都算)
                     case BuyResult.AlreadyOwned: already++; break;
                     case BuyResult.NoRoom: noRoom++; break;
                     case BuyResult.NotEnoughMoney: noMoney++; break;
