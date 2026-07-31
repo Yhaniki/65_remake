@@ -33,6 +33,10 @@ namespace Sdo.Game
         //   場景/家具/衣物 0 → 深度重置 98 → 人的分身 99 → 泡 100+(RoomScreen.BubbleSortingOrderBase)。
         // 🔴 動任何一個數字之前先確認上下兩層還排得對:排錯的症狀不是「沒效果」,而是
         //    重置片把**整個房間**的深度洗掉之後才畫場景 → 前後關係全亂。
+        // 🔴 前提是**四層都在同一趟 render pass 裡**:sortingOrder 只在 pass 內排得動,而 pass 是照
+        //    renderQueue 分的(不透明整趟畫完才輪到透明)。所以重置片與分身這兩支 shader 的 Queue 標成
+        //    Transparent —— 否則它們會在「場景的透明部分」(房間那片玻璃)畫出來之前就把深度洗掉,
+        //    玻璃於是整面浮到沙發與角色前面。詳見 Shaders/DepthReset.shader 開頭那段。
         public const int ResetSortingOrder = 98;
         public const int ProxySortingOrder = 99;
 

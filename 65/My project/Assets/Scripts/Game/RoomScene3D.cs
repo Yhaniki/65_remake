@@ -53,6 +53,11 @@ namespace Sdo.Game
         ///   → **角色的隱形分身**(99,<c>Sdo/DepthOnlyMask</c>,把人的剪影寫回深度)
         ///   → **泡**(100+,照常做深度測試 → 只可能輸給人)。
         ///
+        /// 🔴 sortingOrder 只在**同一趟 render pass 內**排序,而 pass 是照 renderQueue 分的
+        ///    (不透明整趟畫完才輪到透明)—— 所以那兩支 shader 的 Queue 都標成 <b>Transparent</b>,
+        ///    才會排在「場景的透明部分」之後。標成 Geometry 的話,重置片會在房間那片玻璃畫出來之前
+        ///    就把深度洗掉 → 玻璃整面浮到沙發與角色前面。見 <c>Shaders/DepthReset.shader</c>。
+        ///
         /// 兩片都是 ColorMask 0,畫面上完全看不見;它們存在的唯一意義是「決定泡輸給誰」。
         /// 建立處:重置片在 <c>BuildCamera</c>,分身在 <c>AttachDepthProxy</c>(每個生角色的地方都要叫)。
         /// </summary>

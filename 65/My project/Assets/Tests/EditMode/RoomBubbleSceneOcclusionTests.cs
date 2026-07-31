@@ -157,6 +157,61 @@ namespace Sdo.Tests
                 "深度重置片或深度分身把場景蓋掉了 —— 它們有寫到顏色(檢查兩支 shader 的 ColorMask 0)");
         }
 
+        [Test]
+        public void The_Scenes_Transparent_Parts_Stay_Behind_The_Solid_Ones()
+        {
+            // 🔴 這條釘住的是「房間玻璃浮到前面」那個 bug(使用者回報:room 黃色沙發**後面**的玻璃跑到前面)。
+            //
+            // sortingOrder 只在**同一趟 render pass 內**排序,而 pass 是照 renderQueue 分的
+            // (不透明整趟畫完才輪到透明)。重置片若標成 Queue=Geometry,它會在「場景的透明部分」
+            // 畫出來之前就把深度洗成無限遠 → 玻璃(ZWrite Off、ZTest LEqual)每個像素都通過測試,
+            // 整面蓋在牆、家具與人身上。標成 Transparent 才排得對:場景透明(0) → 重置(98) → 分身(99) → 泡(100+)。
+            _canvasGo.SetActive(false);
+            Place(_person, BehindZ + 200f);
+            Place(_sceneBlocker, FrontZ);       // 不透明牆在**近處**
+
+            var glass = GlassQuad(SceneLayer, new Color(0f, 0f, 1f, 0.9f));
+            Place(glass, BehindZ);              // 玻璃在牆**後面** → 應該完全看不到
+            try
+            {
+                var px = Shoot();
+                Assert.Greater(CountRed(px), 5000, "近處那面不透明牆沒畫出來(這條測試就沒在驗東西)");
+                Assert.Less(CountBlue(px), 200,
+                    "牆後面的玻璃浮到牆前面了 —— 深度重置片排在場景的透明部分之前"
+                    + "(檢查 Sdo/DepthReset 與 Sdo/DepthOnlyMask 的 Queue 是不是 Transparent)");
+            }
+            finally { Object.DestroyImmediate(glass); }
+        }
+
+        /// <summary>一片「玻璃」:與 SCNROOM 的透明材質走同一支 shader(<c>Sdo/SceneVertexAlpha</c>,
+        /// Transparent 3000 + ZWrite Off)。Quad primitive 沒有頂點色,而那支 shader 會乘上去 →
+        /// 自己補一份白的(共用 mesh 不能改,所以複製一份)。</summary>
+        private static GameObject GlassQuad(int layer, Color color)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            go.layer = layer;
+            go.transform.localScale = new Vector3(400f, 400f, 1f);
+
+            var mf = go.GetComponent<MeshFilter>();
+            var mesh = Object.Instantiate(mf.sharedMesh);
+            var cols = new Color[mesh.vertexCount];
+            for (int i = 0; i < cols.Length; i++) cols[i] = Color.white;
+            mesh.colors = cols;
+            mf.sharedMesh = mesh;
+
+            var tex = new Texture2D(1, 1);
+            tex.SetPixel(0, 0, color);
+            tex.Apply();
+
+            var shader = Shader.Find("Sdo/SceneVertexAlpha");
+            Assert.IsNotNull(shader, "Sdo/SceneVertexAlpha 找不到");
+            var mat = new Material(shader) { mainTexture = tex };
+            var mr = go.GetComponent<MeshRenderer>();
+            mr.sharedMaterial = mat;
+            mr.sortingOrder = 0;   // 場景 = 0(與 _sceneBlocker 同一層)
+            return go;
+        }
+
         private static GameObject Quad(int layer, Color color, Material mat, int sortingOrder)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -203,6 +258,13 @@ namespace Sdo.Tests
         {
             int n = 0;
             foreach (var p in px) if (p.r > 180 && p.g < 90 && p.b < 90) n++;
+            return n;
+        }
+
+        private static int CountBlue(Color32[] px)
+        {
+            int n = 0;
+            foreach (var p in px) if (p.b > 180 && p.r < 90 && p.g < 90) n++;
             return n;
         }
 

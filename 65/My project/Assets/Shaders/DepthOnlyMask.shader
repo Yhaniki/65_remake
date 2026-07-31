@@ -8,6 +8,11 @@
 // 兩個一定要保留的狀態:
 //   • ColorMask 0:分身永遠不能被看見(它與本尊完全重疊,畫出來就是重複疊畫,紗質衣物會變濃)。
 //   • Cull Off  :頭髮/裙擺是開放薄片,兩面都要進深度(與 Sdo/UnlitDoubleSided 同一個理由)。
+//
+// 🔴 Queue 要與 <c>Sdo/DepthReset</c> **同一趟**(Transparent):分身的工作是把人的剪影寫回
+//    「被那片洗掉的」深度,所以它必須在那片**之後**畫。sortingOrder(98 → 99)只在同一個 pass 內
+//    排得動 —— 分身留在 Geometry 的話它會在不透明那一趟就寫好深度,然後被透明那一趟的重置片整片洗掉,
+//    結果是泡誰也擋不住。見 DepthReset.shader 裡那段。
 Shader "Sdo/DepthOnlyMask"
 {
     Properties
@@ -21,7 +26,7 @@ Shader "Sdo/DepthOnlyMask"
 
     SubShader
     {
-        Tags { "RenderType"="Opaque" "Queue"="Geometry" "IgnoreProjector"="True" }
+        Tags { "RenderType"="Transparent" "Queue"="Transparent" "IgnoreProjector"="True" }
 
         Pass
         {

@@ -10,13 +10,20 @@
 // 三步的先後靠 sortingOrder(它比 renderQueue 優先,見 [[unity-sortingorder-outranks-renderqueue]]):
 // 場景/衣物 0 → 這片 98 → 分身 99 → 泡 100+。
 //
+// 🔴 **Queue 一定要是 Transparent,不能是 Geometry。** sortingOrder 只在**同一個 render pass 內**排序,
+//    而 pass 是照 renderQueue 分的:Geometry(2000) 走不透明那一趟、Transparent(3000) 走透明那一趟,
+//    不透明**整趟**都畫在透明之前。所以這片若留在 Geometry,它會在「場景的透明部分」畫出來之前
+//    就把深度洗掉 —— 房間裡那片玻璃(SCNROOM 的透明材質,ZWrite Off、ZTest LEqual)於是每個像素都
+//    通過深度測試,整面浮到沙發與角色前面(使用者回報「沙發後面的玻璃跑到前面」)。
+//    放在 Transparent 才是對的位置:場景的透明物件(sortingOrder 0)先畫完 → 這片洗深度 → 分身 → 泡。
+//
 // 🔴 這片**不能寫顏色**(ColorMask 0),也不能被視錐剔除掉:它掛在相機底下、mesh 的 bounds 開很大,
 // 頂點直接輸出裁剪空間座標(不吃 transform),所以永遠是整個畫面。
 Shader "Sdo/DepthReset"
 {
     SubShader
     {
-        Tags { "RenderType"="Opaque" "Queue"="Geometry" "IgnoreProjector"="True" }
+        Tags { "RenderType"="Transparent" "Queue"="Transparent" "IgnoreProjector"="True" }
 
         Pass
         {
