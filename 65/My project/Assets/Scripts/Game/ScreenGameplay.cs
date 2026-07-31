@@ -483,8 +483,15 @@ namespace Sdo.Game
         private float _resultPhaseStart;          // Time.time the current result phase began
         private bool _localWon;                   // local player is the round winner (rank 1) — drives win/lose pose + FINISHED
         private bool _gameOver;                   // HP ran out (failed) — result shows GAME OVER instead of YouWin/Lose
-        public string winMot = "WWIN0002.MOT";    // winner 定格 pose (cat5); male = MWIN0001.MOT
-        public string loseMot = "WLOST0003.MOT";  // loser 定格 pose (cat4); male = MREST0004.MOT
+        // 輸贏定格的官方 clip(cat5 = 贏、cat4 = 輸),男女各一支。本機用下面兩個欄位(ConfigureAvatarGender 依
+        // 本機性別挑);場上其他人**各挑自己性別**的那一支(見 PlayRemoteFinishPoses)—— 所以字面值要有名字,
+        // 不能只活在本機那兩個欄位裡。
+        public const string FemaleWinMot = "WWIN0002.MOT";
+        public const string MaleWinMot = "MWIN0001.MOT";
+        public const string FemaleLoseMot = "WLOST0003.MOT";
+        public const string MaleLoseMot = "MREST0004.MOT";
+        public string winMot = FemaleWinMot;      // winner 定格 pose (cat5); male = MWIN0001.MOT
+        public string loseMot = FemaleLoseMot;    // loser 定格 pose (cat4); male = MREST0004.MOT
         public float finishPoseSec = 2.5f;        // hold the win/lose 定格 pose this long before the panel settles
         public float settleSec = 0.6f;            // brief beat between the pose and the background replay starting
         public bool enableResultSfx = true;       // play SE_0014(win)/SE_0015(lose) jingle + the SE_0020/0022 tally chimes
@@ -1126,8 +1133,8 @@ namespace Sdo.Game
                 maleBody = true;
                 danceMot = "MOTION/MDANCE0002.MOT";
                 restMot = MaleGameplayRestMot;
-                winMot = "MWIN0001.MOT";
-                loseMot = "MREST0004.MOT";
+                winMot = MaleWinMot;
+                loseMot = MaleLoseMot;
             }
 
             // 飛行翅膀 → 舞台待機 idle 換成 flystay clip (rest cat 0x2c)。Only the idle/rest changes; the DPS dance is
@@ -1177,7 +1184,19 @@ namespace Sdo.Game
                                    // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
             // 編輯器：不載舞者、不載 3D 場景（也就沒有 SceneCam/背景 quad）→ 主相機的 SolidColor 黑直接成為背景。
             // 旁觀:不載**自己**的舞者(沒下場的人不該出現在場上),但場景與導播運鏡照載 —— 那正是要看的東西。
-            if (!editorMode) { if (!spectatorMode) TryLoadAvatar(); TryLoadScene(); }
+            //
+            // 🔴 共用資產與導播鏡頭都**不能**綁在「有沒有本機舞者」上,兩者旁觀時都要:
+            //   • LoadSharedDanceAssets —— 場上其他人的骨架/編舞從這裡來(少了它 SpawnExtraDancers 直接 return,
+            //     旁觀者看到的是一個空場)。
+            //   • LoadCvCameras —— 它同時設舞位(_danceSpot)與導播鏡頭(_dirCv/_camReady)。少了它 _camReady 恆 false,
+            //     相機停在原點的預設朝向 —— 實機回報「旁觀進去舞台,鏡頭卡在天花板」就是這個。
+            if (!editorMode)
+            {
+                LoadSharedDanceAssets();
+                if (use3dCamera) LoadCvCameras();
+                if (!spectatorMode) TryLoadAvatar();
+                TryLoadScene();
+            }
             // 同場其他舞者(M8)。一定要在 TryLoadAvatar 之後:它們共用那邊解析好的骨架/動作/編舞
             // (_sharedHrc / _sharedDanceMot / _sharedDps),而 SdoAvatar 對那三個只讀 → 共用安全。
             if (!editorMode) SpawnExtraDancers();
@@ -2862,16 +2881,46 @@ namespace Sdo.Game
         // hand-off window, softer ends. SdoAvatar's own 1.0s default was written for the room's idle↔walk.
         private const float DanceBlendSec = 0.5f;
 
+        /// <summary>
+        /// 這一場的**共用**資產:骨架、後備舞蹈 clip、待機 clip、這首歌的編舞(DPS)與它的動作外掛樹。
+        /// 本機舞者與場上其他人吃的是同一份 —— LoadAsset 每次都重讀重解,六隻各載一次是白花時間,
+        /// 而 SdoAvatar 對 HrcLoader / MotLoader / DpsLoader **只讀**(Setup 把會被改的狀態全配成
+        /// per-instance 陣列),所以共用是安全的。See SpawnExtraDancers。
+        ///
+        /// 🔴 與「建本機那隻 avatar」分開是必要的:**旁觀者沒有自己的舞者,但場上其他人照樣要出**。
+        /// 這段以前長在 <see cref="TryLoadAvatar"/> 裡,而旁觀時整個 TryLoadAvatar 被跳過 → _sharedHrc
+        /// 是 null → SpawnExtraDancers 第一行就 return → 旁觀者進到舞台看到的是一個空場。
+        /// </summary>
+        private void LoadSharedDanceAssets()
+        {
+            // skeleton + dance motion (skinned, CPU). Missing/invalid -> falls back to the static bind pose.
+            _sharedHrc = LoadAsset(skeletonHrc, b => HrcLoader.Load(b));
+            _sharedDanceMot = LoadAsset(danceMot, b => MotLoader.Load(b));   // fallback dance clip if no DPS
+            _sharedRestMot = LoadAsset(restMot, b => MotLoader.Load(b));     // standby idle (rest cat 0x15) — looped before the DPS starts and after it ends
+            // 動作外掛（overlay）：一個歌包把它自帶的 .dps 和 .mot 用跟 base 資料根一樣的樹狀結構擺在一起
+            // （…/patch Datas/DANCE + …/patch Datas/MOTION|AUMOTION）。這首歌的 .dps 從哪棵樹讀出來，它的 .mot
+            // 就在那棵樹 → 設成 overlay，讓 ResolveMot 先查它、找不到才退回 base（含 base 沒有的 W_00xxxx.MOT）。
+            // 必須在載 dps／PrewarmDpsMotions 之前設好；純由 dpsPath 推導，不必從歌單一路穿路徑過來。
+            string dpsFull = string.IsNullOrEmpty(dpsPath) ? ""
+                : Path.Combine(SdoExtracted.Root, dpsPath.Replace('/', Path.DirectorySeparatorChar));
+            _motOverrideRoot = MotionOverlay.RootForDps(dpsFull, SdoExtracted.Root);
+            _motCache.Clear();   // 快取以動作名為鍵，不含樹；換歌換 overlay 時清掉，免得沿用上一包的解析結果
+            if (!string.IsNullOrEmpty(_motOverrideRoot))
+                Debug.Log($"[avatar] 動作外掛樹: {_motOverrideRoot}（AUMOTION/MOTION 先於 base 根）");
+            // per-song choreography (DPS): sequence motion slices to the music clock (debug now dances too)
+            _sharedDps = LoadAsset(dpsPath, b => DpsLoader.Load(b));
+            if (_sharedDps != null)
+            {
+                Debug.Log($"[avatar] DPS {dpsPath}: {_sharedDps.Rows.Length} rows, {_sharedDps.Total:F1}s");
+                PrewarmDpsMotions(_sharedDps);   // read every clip NOW (behind the loading cover), not lazily mid-song
+            }
+        }
+
         private void TryLoadAvatar()
         {
             var parent = new GameObject("Avatar3D");
-            // skeleton + dance motion (skinned, CPU). Missing/invalid -> falls back to the static bind pose.
-            HrcLoader hrc = LoadAsset(skeletonHrc, b => HrcLoader.Load(b));
-            MotLoader mot = LoadAsset(danceMot, b => MotLoader.Load(b));   // fallback dance clip if no DPS
-            // 多舞者(M8)要共用這幾份解析結果 —— LoadAsset 每次都重讀重解,六隻各載一次是白花時間;
-            // 而且 SdoAvatar 對 HrcLoader / MotLoader **只讀**(Setup 把所有會被改的狀態都配成 per-instance 陣列),
-            // 所以共用是安全的。See SpawnExtraDancers.
-            _sharedHrc = hrc; _sharedDanceMot = mot;
+            HrcLoader hrc = _sharedHrc;          // 共用資產已由 LoadSharedDanceAssets 載好(旁觀也載,見那裡的理由)
+            MotLoader mot = _sharedDanceMot;
             SdoAvatar avatar = null;
             if (hrc != null)
             {
@@ -2880,21 +2929,8 @@ namespace Sdo.Game
                 _avatar = avatar;                                                             // F4 panel re-shapes this live
                 _bodyShapeB = SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody);
                 avatar.SetBodyShape(_bodyShapeB);                                             // 體型: thin/standard/fat (default thin)
-                avatar.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));   // standby idle (rest cat 0x15) — looped before the DPS starts and after it ends
-                _sharedRestMot = avatar.RestMot;   // 同上:多舞者共用
-                // 動作外掛（overlay）：一個歌包把它自帶的 .dps 和 .mot 用跟 base 資料根一樣的樹狀結構擺在一起
-                // （…/patch Datas/DANCE + …/patch Datas/MOTION|AUMOTION）。這首歌的 .dps 從哪棵樹讀出來，它的 .mot
-                // 就在那棵樹 → 設成 overlay，讓 ResolveMot 先查它、找不到才退回 base（含 base 沒有的 W_00xxxx.MOT）。
-                // 必須在載 dps／PrewarmDpsMotions 之前設好；純由 dpsPath 推導，不必從歌單一路穿路徑過來。
-                string dpsFull = string.IsNullOrEmpty(dpsPath) ? ""
-                    : Path.Combine(SdoExtracted.Root, dpsPath.Replace('/', Path.DirectorySeparatorChar));
-                _motOverrideRoot = MotionOverlay.RootForDps(dpsFull, SdoExtracted.Root);
-                _motCache.Clear();   // 快取以動作名為鍵，不含樹；換歌換 overlay 時清掉，免得沿用上一包的解析結果
-                if (!string.IsNullOrEmpty(_motOverrideRoot))
-                    Debug.Log($"[avatar] 動作外掛樹: {_motOverrideRoot}（AUMOTION/MOTION 先於 base 根）");
-                // per-song choreography (DPS): sequence motion slices to the music clock (debug now dances too)
-                var dps = LoadAsset(dpsPath, b => DpsLoader.Load(b));
-                _sharedDps = dps;   // 同上:多舞者共用同一份編舞(同一首歌大家跳一樣)
+                avatar.RestMot = _sharedRestMot;
+                var dps = _sharedDps;
                 if (dps != null)
                 {
                     avatar.Dps = dps;
@@ -2911,8 +2947,6 @@ namespace Sdo.Game
                     avatar.DanceTimeSec = () => _clockStart < 0.0 ? -1f
                                               : (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
                     avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
-                    Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
-                    PrewarmDpsMotions(dps);   // read every clip NOW (behind the loading cover), not lazily mid-song
                 }
             }
 
@@ -2922,7 +2956,6 @@ namespace Sdo.Game
             if (!any) { Debug.LogWarning("[avatar] no parts loaded"); return; }
             Debug.Log($"[avatar] {(localPlayerMale ? "MAN" : "WOMAN")}: {parts} parts, skeleton={(hrc != null ? hrc.Names.Length + " bones" : "none")}, mot={(mot != null ? mot.MaxTime + 1 + " frames" : "none")}");
             var handYellow = new Color(1f, 0.86f, 0.25f);
-            if (use3dCamera) LoadCvCameras();
             if (use3dCamera && _camReady)
             {
                 // Decompiled placement: the dancer stands FEET-DOWN on the floor dance-spot (table @0x582690; solo =
@@ -4591,10 +4624,15 @@ namespace Sdo.Game
 
         // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/). 每棵樹都先
         // AUMOTION 再 MOTION；樹的順序由 MotRoots() 決定 —— 歌包外掛樹（若有）先於 base 資料根。
-        private MotLoader ResolveMot(string rawName)
+        private MotLoader ResolveMot(string rawName) => ResolveMotFor(rawName, localPlayerMale);
+
+        /// <summary>同 <see cref="ResolveMot"/>,但性別映射(W→M)照 <paramref name="male"/> 而不是本機玩家。
+        /// 場上其他人的動作要走這條:本機是男的話,女生玩家的 WWIN0002 會被本機那條路換成 MWIN0002 —— 撈到
+        /// 別人性別的 clip,套在女骨架上就是一團扭曲。快取的鍵是**映射後**的名字,所以兩種性別各自命中自己那份。</summary>
+        private MotLoader ResolveMotFor(string rawName, bool male)
         {
             if (string.IsNullOrEmpty(rawName)) return null;
-            string name = ResolveGenderedMotName(rawName);
+            string name = ResolveGenderedMotName(rawName, male);
             if (_motCache.TryGetValue(name, out var cached)) return cached;
             MotLoader m = null; string triedPath = null, why = null;
 
@@ -4670,9 +4708,9 @@ namespace Sdo.Game
             yield return SdoExtracted.Root;
         }
 
-        private string ResolveGenderedMotName(string name)
+        private string ResolveGenderedMotName(string name, bool male)
         {
-            if (!localPlayerMale) return name;
+            if (!male) return name;
             string file = Path.GetFileName(name.Replace('\\', '/'));
             if (string.IsNullOrEmpty(file) || file[0] != 'W') return name;
 
@@ -5101,6 +5139,9 @@ namespace Sdo.Game
                 // 旁觀者不放輸贏短曲 —— 它沒有輸也沒有贏,而 _localWon 恆 false 會讓它每次都聽到「輸了」的音效。
                 if (enableResultSfx && !spectatorMode) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
             }
+            // 場上其他人的輸贏定格。放在 if/else **外面**是刻意的:GAME OVER 是本機血條見底的死亡流程,
+            // 別人並沒有死 —— 本機一死就讓全場站著不動,那是把自己的結局套到別人身上。
+            PlayRemoteFinishPoses();
             _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
         }
 
@@ -5234,17 +5275,23 @@ namespace Sdo.Game
         // Notes/board stay hidden (SetTrackVisible(false) already in effect); only the lit stage + dancer show.
         private void StartBackgroundReplay()
         {
-            if (_avatar == null) return;
-            _avatar.ClearOneShot();                                   // resume the DPS dance path
-            _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
-            foreach (var rib in _handTrails) if (rib) rib.Clear();    // 手在硬切處瞬移 → 清掉光條歷史，別從定格 pose 連一條光帶到回放起點；回放開始後光條自然重新累積成連續光帶（後面 mot 的手部光繼續做）
+            // 迴圈長度與起點是**全場共用**的(場上每個人都吃同一顆時鐘,回放才是同一段演出),所以先算,
+            // 而且不能因為本機沒有舞者(旁觀)就整段跳過 —— 別人的回放正是旁觀者要看的東西。
             _replayLenMs = _totalMs > 1.0 ? _totalMs : Math.Max(1.0, _replay.LengthMs);
             // Start the loop on a GOOD slice, not always the song's opening: a ≥20s stretch where the #1 dancer is
             // actually dancing (gate ON + within the choreography), biased to its busiest window, with per-visit jitter.
             _replayOffsetMs = ReplayStartPicker.Pick(_noteStarts, BuildDanceIntervals(), UnityEngine.Random.value, ReplayMinRunMs);
             _replayLoopStart = Time.timeAsDouble;
-            _avatar.DanceTimeSec = () => (float)((LoopMs() ) / 1000.0);
-            _avatar.DanceEnabled = () => GateAt(LoopMs());
+            System.Func<float> loopTimeSec = () => (float)(LoopMs() / 1000.0);
+            if (_avatar != null)
+            {
+                _avatar.ClearOneShot();                                   // resume the DPS dance path
+                _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
+                foreach (var rib in _handTrails) if (rib) rib.Clear();    // 手在硬切處瞬移 → 清掉光條歷史，別從定格 pose 連一條光帶到回放起點；回放開始後光條自然重新累積成連續光帶（後面 mot 的手部光繼續做）
+                _avatar.DanceTimeSec = loopTimeSec;
+                _avatar.DanceEnabled = () => GateAt(LoopMs());
+            }
+            StartRemoteBackgroundReplay(loopTimeSec);   // 場上其他人跟著同一顆迴圈時鐘一起再跳一遍
         }
 
         // Minimum continuous dance the replay start must have ahead of it (the #1 dancer keeps dancing ≥ this long).
@@ -5256,8 +5303,10 @@ namespace Sdo.Game
         private List<(double start, double end)> BuildDanceIntervals()
         {
             double ceil = _replayLenMs;
-            if (_avatar != null && _avatar.Dps != null && _avatar.Dps.Total > 0f)
-                ceil = Math.Min(ceil, _avatar.Dps.Total * 1000.0);
+            // 編舞是全場共用的同一份(_sharedDps 就是 _avatar.Dps)—— 取它而不是只取本機的,旁觀時本機沒有
+            // 舞者但場上有人在跳,天花板照樣要吃編舞長度,否則起點會挑到編舞結束後的那段空白。
+            var dps = _avatar != null && _avatar.Dps != null ? _avatar.Dps : _sharedDps;
+            if (dps != null && dps.Total > 0f) ceil = Math.Min(ceil, dps.Total * 1000.0);
             var ivs = new List<(double, double)>();
             if (ceil <= 0.0) return ivs;
             bool on = true; double segStart = 0.0;                    // gate defaults ON from t=0 (matches GateAt)

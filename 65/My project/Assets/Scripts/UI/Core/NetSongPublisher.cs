@@ -74,17 +74,37 @@ namespace Sdo.UI.Core
 
             var state = HaveSong(ctx, song) ? Availability.Have : Availability.Missing;
 
-            // server 眼中我的座位是什麼?(旁觀者沒有座位 → 沒有 avail 可比,退回本機記憶)
-            var seat = snap.SeatOf(ctx.Net.UserId);
-            if (seat != null)
+            // server 眼中我現在是什麼?**座位與旁觀席都要查** —— 拿 server 的值當基準才是自我修復的。
+            //
+            // 🔴 旁觀者以前走的是「本機記憶」那條退路,而那正是上面那段註解警告過的失效模式,只是換了個方向:
+            //    在座位上回報過 have(_lastState=Have)→ 轉去旁觀(server 端的旁觀席是新的一筆,avail=unknown)
+            //    → 歌沒換(key 一樣、算出來的答案一樣 have)→ 記憶說「送過了」→ 永遠不補送 →
+            //    server 眼中這個旁觀者沒有這首歌 → 他不在 SpectatorsWithSong() 裡 → 收不到 matchStarting →
+            //    別人都開場了,他還留在房間裡。實機回報就是這個(而且時好時壞:先旁觀才選歌就正常,
+            //    因為那時 key 會變、記憶擋不住)。
+            var serverAvail = ServerAvailOf(snap, ctx.Net.UserId);
+            if (serverAvail.HasValue)
             {
-                if (seat.Avail == state) { _lastKey = key; _lastState = state; return; }   // 已經一致
+                if (serverAvail.Value == state) { _lastKey = key; _lastState = state; return; }   // 已經一致
             }
-            else if (_lastKey == key && _lastState == state) return;
+            else if (_lastKey == key && _lastState == state) return;   // 快照裡還沒有我(剛進房的競態)→ 只好靠記憶
 
             _lastKey = key; _lastState = state;
             UnityEngine.Debug.Log("[net] 回報可用性:" + state + " (" + key + ")");
             ctx.Net.SetAvailability(key, state);
+        }
+
+        /// <summary>
+        /// server 快照裡「我」的 avail —— 坐著就是座位那格,旁觀就是旁觀席那筆(兩者 server 都有維護,
+        /// 見 <c>NetRoom.SetAvailability</c>)。兩邊都找不到 = 這份快照還沒帶到我 → null(呼叫端退回本機記憶)。
+        /// </summary>
+        private static Availability? ServerAvailOf(NetRoomSnapshot snap, int userId)
+        {
+            var seat = snap.SeatOf(userId);
+            if (seat != null) return seat.Avail;
+            int si = snap.SpectatorIndexOf(userId);
+            if (si >= 0 && snap.Spectators != null && si < snap.Spectators.Length) return snap.Spectators[si].Avail;
+            return null;
         }
 
         private static bool HaveSong(AppContext ctx, NetSongRef song)

@@ -86,6 +86,15 @@ namespace Sdo.Game
         /// <summary>下一次遠端 gate 結算的譜面時間(與本機同一個 8 拍節奏)。</summary>
         private double _nextRemoteGateMs;
 
+        /// <summary>
+        /// 每位舞者的跳/停歷程(譜面時間 ms + 那一刻在不在跳),格式與本機的 <c>_danceTrack</c> 一樣,只記變化。
+        ///
+        /// 結算的背景回放要用它:回放是「把這一場再跳一遍」,而「這一場」包含每個人各自斷在哪幾段 ——
+        /// 少了這份紀錄,遠端在回放裡只能整段跳好跳滿或整段站著,那就不是剛剛那一場了。
+        /// 索引 = 舞者序;本機那格不填(本機走自己的 _danceTrack)。
+        /// </summary>
+        private List<(double tMs, bool on)>[] _dancerTracks;
+
         /// <summary>這一場總共有幾位舞者(含本機)。量測時由 <c>SDO_DANCERS</c> 覆寫。</summary>
         private int TotalDancers
         {
@@ -110,14 +119,18 @@ namespace Sdo.Game
         private void SpawnExtraDancers()
         {
             // 旁觀者自己沒有舞者(TryLoadAvatar 被跳過),但**別人的還是要出** —— 那正是它要看的東西。
-            // 所以這裡不看 spectatorMode,只看有沒有共用資產。
+            // 所以這裡不看 spectatorMode,只看有沒有共用資產(LoadSharedDanceAssets 旁觀也會載)。
             int total = TotalDancers;
-            if (total <= 1 || _sharedHrc == null) return;
+            if (total <= 0 || _sharedHrc == null) return;
+            bool haveNames = netDancers != null && netDancers.Length > 0;
+            int localIdx = haveNames ? Mathf.Clamp(localDancerIndex, -1, total - 1) : 0;
+            // 🔴 門檻是「場上有沒有**別人**」,不是「總人數 > 1」。旁觀者不占名單裡的任何一格
+            // (localDancerIndex = -1),所以場上只有一位參賽者時 total == 1 —— 而那一位正是旁觀者
+            // 唯一要看的人。舊的 total<=1 會把這一格擋掉,旁觀就變成一個空場。
+            if (total == 1 && localIdx == 0) return;   // 真的只有本機一個人(離線/單人)
 
             var slots = BuildSlotSpots(total);
             _slotSpots = slots;
-            bool haveNames = netDancers != null && netDancers.Length > 0;
-            int localIdx = haveNames ? Mathf.Clamp(localDancerIndex, -1, total - 1) : 0;
             // Freeze ONE predicate for the whole remote spawn pass. A loaded SceneCam alone is insufficient:
             // without a valid CV track the dancer stays in the legacy Default-layer path, so its name must too.
             bool sceneWorldMode = use3dCamera && _camReady && _sceneCam != null;
@@ -227,12 +240,14 @@ namespace Sdo.Game
             _dancerLeader = Sdo.Ruleset.FormationAssignment.LeaderSlot;
             _dancerDancing = new bool[n];
             _dancerPrevCounts = new Sdo.Ruleset.DanceJudgeCounts[n];
+            _dancerTracks = new List<(double tMs, bool on)>[n];
             BuildBaseSlots(n);
             for (int i = 0; i < n; i++)
             {
                 int bs = Mathf.Clamp(_dancerBaseSlot[i], 0, _slotSpots.Length - 1);
                 _dancerCur[i] = _slotSpots[bs];
                 _dancerDancing[i] = true;   // 開場都在跳(與本機的 _dancing 初值一致)
+                _dancerTracks[i] = new List<(double tMs, bool on)>();   // 空 = 從頭到尾都在跳(與 RemoteGateAt 的預設一致)
             }
             _camAnchorSpot = _slotSpots.Length > 0 ? _slotSpots[0] : Vector3.zero;
 
@@ -508,7 +523,30 @@ namespace Sdo.Game
                 _dancerDancing[i] = Sdo.Ruleset.DanceGate.NextFromSamples(
                     _dancerDancing[i], _dancerPrevCounts[i], cur, combo);
                 _dancerPrevCounts[i] = cur;
+                RecordDancerGate(i, nowMs);   // 記給結算的背景回放用(本機的對應物是 RecordGate)
             }
+        }
+
+        /// <summary>把第 <paramref name="i"/> 位舞者這一刻的跳/停記進他自己那一軌 —— 只記變化,與本機
+        /// <c>RecordGate</c> 同一套。gate 一個結算週期只變一次,所以這條軌整首歌也就幾十筆。</summary>
+        private void RecordDancerGate(int i, double nowMs)
+        {
+            if (_dancerTracks == null || i < 0 || i >= _dancerTracks.Length) return;
+            var tr = _dancerTracks[i];
+            if (tr == null) return;
+            if (tr.Count == 0 || tr[tr.Count - 1].on != _dancerDancing[i]) tr.Add((nowMs, _dancerDancing[i]));
+        }
+
+        /// <summary>第 <paramref name="i"/> 位舞者在譜面時間 <paramref name="tMs"/> 當下在不在跳
+        /// (第一筆之前預設在跳,與本機 <c>GateAt</c> 一致)。回放迴圈每幀查一次。</summary>
+        private bool RemoteGateAt(int i, double tMs)
+        {
+            if (_dancerTracks == null || i < 0 || i >= _dancerTracks.Length) return true;
+            var tr = _dancerTracks[i];
+            if (tr == null) return true;
+            bool on = true;
+            for (int k = 0; k < tr.Count; k++) { if (tr[k].tMs > tMs) break; on = tr[k].on; }
+            return on;
         }
 
         private static Sdo.Ruleset.DanceJudgeCounts CountsOf(NetPlayerScore[] opp, int userId, out int combo)
@@ -518,6 +556,89 @@ namespace Sdo.Game
             for (int i = 0; i < opp.Length; i++)
                 if (opp[i].UserId == userId) { combo = opp[i].Combo; return opp[i].Counts; }
             return default(Sdo.Ruleset.DanceJudgeCounts);
+        }
+
+        // ================= 結算:場上其他人的輸贏定格與背景回放 =================
+
+        /// <summary>
+        /// 分數最高的那一位舞者(-1 = 沒有名單)。<paramref name="skip"/> 那一格不參選。
+        /// 平手的先後與 <see cref="Sdo.Ruleset.RankingBoard"/> 完全一致:分數高的先、同分本機先、
+        /// 再同就座位序小的先 —— 名次面板與場上定格必須指向同一個人。
+        /// </summary>
+        private int WinnerDancerIndex(int skip = -1)
+        {
+            if (_dancerScores == null || _dancerScores.Length == 0) return -1;
+            int best = -1;
+            for (int i = 0; i < _dancerScores.Length; i++)
+            {
+                if (i == skip) continue;
+                if (best < 0 || DancerOutranks(i, best)) best = i;
+            }
+            return best;
+        }
+
+        private bool DancerOutranks(int a, int b)
+        {
+            if (_dancerScores[a] != _dancerScores[b]) return _dancerScores[a] > _dancerScores[b];
+            int local = LocalDancerSlotIndex;
+            if ((a == local) != (b == local)) return a == local;   // 同分本機先(RankingBoard.Compare)
+            return a < b;
+        }
+
+        /// <summary>
+        /// 場上其他人的輸贏定格(第一名 cat5,其餘 cat4),與本機同一個時機、同一套動作。
+        ///
+        /// 🔴 clip 一定要挑**他自己性別**那一支,而且要走 <c>ResolveMotFor</c>:一般的 ResolveMot 會拿本機性別
+        /// 去做 W→M 映射,本機是男生時女生玩家的 WWIN0002 會被換成 MWIN0002 —— 男版動作套在女骨架上就是一團扭曲。
+        /// </summary>
+        private void PlayRemoteFinishPoses()
+        {
+            if (_dancerScores == null || _extraDancers.Count == 0) return;
+            FillDancerScores();               // 用最後一筆分數流定名次(這一幀 TickDancerSlots 也填過,重填不花錢)
+            int winner = WinnerDancerIndex();
+            // 🔴 場上**恰好一個**贏家,而且要是名次面板上的那一個。_localWon 走的是 _roster(server 的對手清單),
+            // 這裡走的是 _dancerScores(照 netDancers 的 userId 去查同一份分數)—— 兩份名單在有人中途離開時
+            // 可能對不齊,對不齊就會變成「兩個人一起做勝利動作」或「一個都沒有」。以面板為準:
+            int local = LocalDancerSlotIndex;
+            if (_localWon) winner = local;                                   // 面板說本機贏 → 其他人一律 cat4
+            else if (winner == local) winner = WinnerDancerIndex(skip: local);   // 面板說本機沒贏 → 贏家在別人裡挑
+            for (int i = 0; i < _extraDancers.Count; i++)
+            {
+                var av = _extraDancers[i];
+                if (av == null) continue;     // 本機那格是 null 佔位(本機的定格由 EnterResult 自己放)
+                bool male = netDancers != null && i < netDancers.Length ? netDancers[i].Male : localPlayerMale;
+                var mot = ResolveMotFor(FinishMot(male, i == winner), male);
+                if (mot != null) av.PlayOneShot(mot, true);   // hold = 停在最後一幀(定格)
+            }
+        }
+
+        /// <summary>輸贏定格用哪一支 clip。本機那兩個欄位(winMot/loseMot)是同一組值的「本機性別」版。</summary>
+        private static string FinishMot(bool male, bool won)
+            => won ? (male ? MaleWinMot : FemaleWinMot) : (male ? MaleLoseMot : FemaleLoseMot);
+
+        /// <summary>
+        /// 結算的背景回放:場上其他人跟著本機一起把這一場再跳一遍。
+        ///
+        /// 🔴 漏掉的原因藏在生成那一步 —— <c>av.DanceTimeSec = _avatar.DanceTimeSec</c> 複製的是**當下那一顆
+        /// delegate**,不是「永遠跟著本機」。<c>StartBackgroundReplay</c> 把本機換成迴圈時鐘之後,遠端手上還是舊的
+        /// 那顆歌曲時鐘;歌早就結束(時間已走過編舞尾端)→ 他們一律站著待機。所以這裡要重指一次。
+        ///
+        /// 跳/停用他**自己**那一軌(<see cref="RemoteGateAt"/>),與本機用 _danceTrack 是同一個道理:
+        /// 回放要回放的正是「這一場每個人各自斷在哪幾段」,不是「大家從頭跳到尾」。
+        /// </summary>
+        private void StartRemoteBackgroundReplay(System.Func<float> loopTimeSec)
+        {
+            for (int i = 0; i < _extraDancers.Count; i++)
+            {
+                var av = _extraDancers[i];
+                if (av == null) continue;
+                av.ClearOneShot();     // 收掉輸贏定格,回到 DPS 舞蹈那條路
+                av.SnapNextClip();     // 定格 → 回放走硬切,不做平滑過場(與本機同一個處理)
+                if (av.Dps == null) continue;   // 沒有編舞可跳(資產缺)→ 留在待機,別掛一組永遠回 true 的閘門
+                int me = i;
+                av.DanceTimeSec = loopTimeSec;
+                av.DanceEnabled = () => RemoteGateAt(me, LoopMs());
+            }
         }
 
         // ================= 效能量測 =================

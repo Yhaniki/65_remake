@@ -626,6 +626,11 @@ namespace Sdo.UI
 
             game.LocalReady = () =>
             {
+                // 旁觀者不送:server 的 setPlayState 只認**這一場的參與者**(座位上的人),旁觀送過去
+                // 一律回 notInRoom —— server log 上那兩行「✗ user N 的請求被拒:notInRoom」就是它
+                // (loaded + readyForGameplay 各一行)。而且他本來就不該參與「等所有人載完才開場」的
+                // 同步:他要看的就是別人開場,自己載完直接看。
+                if (!net.IsMatchParticipant) return;
                 net.SetPlayState(Sdo.Net.PlayState.Loaded, _netMatchId);
                 net.SetPlayState(Sdo.Net.PlayState.ReadyForGameplay, _netMatchId);
             };
