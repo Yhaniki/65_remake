@@ -258,6 +258,30 @@ namespace Sdo.UI.Services
         public static ChatChannel ResolveSendChannel(bool bubbleTyping, ChatChannel selectedChannel)
             => bubbleTyping ? ChatChannel.Current : selectedChannel;
 
+        /// <summary>
+        /// 這則訊息該不該在房間裡彈頭上泡?要彈才回 true,並給出泡的主人
+        /// (<paramref name="ownerUserId"/>:0 = 本機、非 0 = 遠端玩家的 userId)。見 RoomScreen.OnRoomChatMessage。
+        ///
+        /// 三道門:
+        /// 1. 純文字提示行(系統/密語/進出舞台/你說/你沒有家族/家族綠字)只進左下訊息欄,不彈泡。
+        /// 2. 本機說的話一定是在當下這間房說的 → 直接彈,不比作用域(免得房號來源不一致時連自己的泡都被吞掉)。
+        /// 3. 別人說的話要**同一間房**且**有 userId** 才彈。大廳假人的閒聊(Scope=Lobby、沒有 userId,
+        ///    見 MockChatService.Tick)因此被擋在門外 —— 否則 userId 0 會被誤當成「本機」,
+        ///    把大廳的話彈到玩家自己頭上,而左下訊息欄又因為作用域過濾看不到那行字。
+        /// </summary>
+        public static bool TryResolveBubbleOwner(ChatMessage m, int roomId, out int ownerUserId)
+        {
+            ownerUserId = 0;
+            if (m == null) return false;
+            if (m.System || m.Guild || m.Whisper != WhisperKind.None
+                || m.Stage != StageEventKind.None || m.Notice != ChatNotice.None) return false;
+            if (m.Local) return true;
+            if (m.SenderUserId == 0) return false;
+            if (m.Scope != ChatScope.Room || m.RoomId != roomId) return false;
+            ownerUserId = m.SenderUserId;
+            return true;
+        }
+
         // 文字是否以家族指令前綴（/家族、/公會、/guild…）開頭。用來在「當前」綜合台辨識「明打的家族訊息」：
         // 有前綴 → 送家族綠字；沒前綴 → 一般說話（見 RoomScreen.SendRoomChat）。
         public static bool HasGuildCommand(string text) => TryStripGuildCommand(text, out _);

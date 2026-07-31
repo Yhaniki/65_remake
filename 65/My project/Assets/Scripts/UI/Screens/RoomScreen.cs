@@ -1355,19 +1355,15 @@ namespace Sdo.UI.Screens
             bool follow = ShouldShowChatMessage(m) && IsChatFollowingBottom();
             AddRoomChatLine(m);
             if (follow) ScrollRoomChatToBottom();
-            // 密語/進出舞台/家族/你說/你沒有家族 都是文字提示，不彈頭上藍泡、不觸發角色動作。
-            if (m != null && !m.System
-                && m.Whisper == WhisperKind.None && m.Stage == StageEventKind.None
-                && m.Notice == ChatNotice.None && !m.Guild)
-            {
+            // 誰的話該彈泡、泡是誰的,規則收在 RoomChatCommand.TryResolveBubbleOwner:文字提示行不彈、
+            // 大廳假人的閒聊在房間裡不彈(它跟左下訊息欄一樣被作用域擋掉),別人的話要有 userId 才認得出主人。
+            if (RoomChatCommand.TryResolveBubbleOwner(m, _chatScopeRoomId, out var owner)
                 // owner 0 = 本機。遠端要先確認「他真的有一隻 3D 角色」——
                 // 旁觀者不在座位上,SyncRemoteRoomAvatars 不會生角色,泡沒有地方可掛。
-                int owner = m.Local ? 0 : m.SenderUserId;
-                if (owner == 0 || (_scene != null && _scene.HasRemote(owner)))
-                {
-                    ShowRoomChatBubble(m, owner);
-                    PlayRoomChatAction(m, owner);
-                }
+                && (owner == 0 || (_scene != null && _scene.HasRemote(owner))))
+            {
+                ShowRoomChatBubble(m, owner);
+                PlayRoomChatAction(m, owner);
             }
         }
 

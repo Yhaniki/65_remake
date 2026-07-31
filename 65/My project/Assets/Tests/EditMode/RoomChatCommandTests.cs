@@ -263,5 +263,84 @@ namespace Sdo.Tests
         [TestCase(ChatChannel.Current, ChatChannel.Current)]
         public void InputEcho_Keeps_Selected_Channel(ChatChannel selected, ChatChannel expected)
             => Assert.AreEqual(expected, RoomChatCommand.ResolveSendChannel(bubbleTyping: false, selected));
+
+        // ---- 頭上泡的主人（誰的話該彈、彈在誰身上）--------------------------------------------------------
+
+        private const int TestRoomId = 2486;
+
+        // 大廳假人的閒聊：Local=false 又沒有 SenderUserId（見 MockChatService.Tick），作用域是大廳。
+        // 這是本組的回歸點——舊版的 `m.Local ? 0 : m.SenderUserId` 會算出 0＝本機，把大廳的話彈到玩家自己頭上，
+        // 而左下訊息欄同時被作用域擋掉，於是「頭上有話、左下沒字」。房間裡就是不該出現。
+        [Test]
+        public void Bubble_Skips_Lobby_Bot_Chatter()
+        {
+            var m = new ChatMessage("小舞", "這舞台好漂亮", 0) { Scope = ChatScope.Lobby, RoomId = 0 };
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(m, TestRoomId, out var owner));
+            Assert.AreEqual(0, owner);
+        }
+
+        // 本機說的話一定是在當下這間房說的 → 不比作用域，owner 0（＝本機角色）。
+        [Test]
+        public void Bubble_Local_Is_Owner_Zero()
+        {
+            var m = new ChatMessage("飄漂o", "哈囉", 0, local: true) { Scope = ChatScope.Room, RoomId = TestRoomId };
+            Assert.IsTrue(RoomChatCommand.TryResolveBubbleOwner(m, TestRoomId, out var owner));
+            Assert.AreEqual(0, owner);
+        }
+
+        // 同房的遠端玩家：泡掛在他的 userId 上（3D 角色靠這個找人）。
+        [Test]
+        public void Bubble_Remote_In_Same_Room_Uses_SenderUserId()
+        {
+            var m = new ChatMessage("阿傑", "一起跳", 0) { SenderUserId = 77, Scope = ChatScope.Room, RoomId = TestRoomId };
+            Assert.IsTrue(RoomChatCommand.TryResolveBubbleOwner(m, TestRoomId, out var owner));
+            Assert.AreEqual(77, owner);
+        }
+
+        // 別間房的話不彈（就算那個 userId 剛好在場）。
+        [Test]
+        public void Bubble_Skips_Other_Room()
+        {
+            var m = new ChatMessage("阿傑", "一起跳", 0) { SenderUserId = 77, Scope = ChatScope.Room, RoomId = 1234 };
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(m, TestRoomId, out _));
+        }
+
+        // 非本機又沒有 userId → 不知道要掛給誰，不彈（別再退回「本機」）。
+        [Test]
+        public void Bubble_Skips_Remote_Without_UserId()
+        {
+            var m = new ChatMessage("誰", "?", 0) { Scope = ChatScope.Room, RoomId = TestRoomId };
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(m, TestRoomId, out _));
+        }
+
+        // 純文字提示行（系統／密語／進出舞台／你說／你沒有家族／家族綠字）只進左下訊息欄，一律不彈泡。
+        [Test]
+        public void Bubble_Skips_Notice_Lines()
+        {
+            var baseMsg = new ChatMessage("飄漂o", "內容", 0, local: true) { Scope = ChatScope.Room, RoomId = TestRoomId };
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(
+                new ChatMessage("系統", "訊息", 0, system: true, local: true) { Scope = ChatScope.Room, RoomId = TestRoomId },
+                TestRoomId, out _), "系統行");
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(
+                new ChatMessage("飄漂o", "早安", 0, local: true)
+                { Scope = ChatScope.Room, RoomId = TestRoomId, Whisper = WhisperKind.Outgoing, WhisperParty = "小舞" },
+                TestRoomId, out _), "密語");
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(
+                new ChatMessage("飄漂o", "", 0) { Scope = ChatScope.Room, RoomId = TestRoomId, Stage = StageEventKind.Enter },
+                TestRoomId, out _), "進出舞台");
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(
+                new ChatMessage("飄漂o", "自言自語", 0, local: true)
+                { Scope = ChatScope.Room, RoomId = TestRoomId, Notice = ChatNotice.SelfTalk },
+                TestRoomId, out _), "你說");
+            Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(
+                new ChatMessage("飄漂o", "衝排名", 0, local: true, channel: ChatChannel.Family)
+                { Scope = ChatScope.Room, RoomId = TestRoomId, Guild = true },
+                TestRoomId, out _), "家族綠字");
+            Assert.IsTrue(RoomChatCommand.TryResolveBubbleOwner(baseMsg, TestRoomId, out _), "一般說話仍要彈（對照組）");
+        }
+
+        [Test]
+        public void Bubble_Null_Is_Skipped()
+            => Assert.IsFalse(RoomChatCommand.TryResolveBubbleOwner(null, TestRoomId, out _));
     }
 }
