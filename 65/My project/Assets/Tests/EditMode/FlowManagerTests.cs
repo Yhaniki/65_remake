@@ -54,6 +54,24 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Room_Can_Exit_To_Both_Lobby_And_GenderSel()
+        {
+            // 離房的目的地**依模式而不同**:線上→大廳、離線(單機)→選男女(單機玩家沒經過大廳,
+            // 他是從選男女直接進自己的房間的)。
+            // 🔴 FlowManager 是純狀態機、**不知道連不連線**,所以這個測試只能釘「兩條邊都存在」——
+            //    真正的分流在 RoomScreen.ExitScreen(離房/被踢)與 FrontendApp.QuitSpectating(旁觀 Ctrl+Q),
+            //    那兩處是 MonoBehaviour + AppContext,EditMode 測試碰不到。這裡故意不假裝驗到分流。
+            var f = new FlowManager();
+            f.GoTo(ScreenId.Room);
+            Assert.IsTrue(f.CanGoTo(ScreenId.Lobby), "線上:房間返回要回得了大廳");
+            Assert.IsTrue(f.CanGoTo(ScreenId.GenderSel), "離線:房間返回要回得了選男女畫面");
+            // 旁觀中 Ctrl+Q 是從遊戲畫面直接離房 → 同樣兩個目的地都要通。
+            f.GoTo(ScreenId.Gameplay);
+            Assert.IsTrue(f.CanGoTo(ScreenId.Lobby), "線上:旁觀 Ctrl+Q 要能從遊戲直接回大廳");
+            Assert.IsTrue(f.CanGoTo(ScreenId.GenderSel), "離線:旁觀 Ctrl+Q 要能從遊戲直接回選男女畫面");
+        }
+
+        [Test]
         public void Room_Shop_RoundTrip()
         {
             var f = new FlowManager();

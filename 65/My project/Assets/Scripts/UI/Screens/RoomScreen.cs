@@ -3137,7 +3137,7 @@ namespace Sdo.UI.Screens
                 }
             }
 
-            // ESC → 退回選角色頁面（房間的上一層）。只在房間為當前畫面、非聊天輸入中、且無 modal(商城/儲物櫃/設定)疊層、
+            // ESC → 退回房間的上一層（線上=大廳、離線=選男女，見 ExitScreen）。只在房間為當前畫面、非聊天輸入中、且無 modal(商城/儲物櫃/設定)疊層、
             // 非轉場中時收——避免打字、選歌疊層、或 modal 開著時誤觸（打字中的 ESC 由 HandleRoomChatTypingKeys 取消打字）。
             if (Input.GetKeyDown(KeyCode.Escape))
             {
@@ -5461,6 +5461,22 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>
+        /// 離開房間之後要落在哪一個畫面 —— **房間的「上一層」依模式而不同**:
+        /// <list type="bullet">
+        /// <item>線上:大廳(官方流程就是這條:大廳建房/加入 → 房間 → 返回 → 大廳)。</item>
+        /// <item>離線(單機):選男女畫面。單機玩家**根本沒經過大廳** —— 按登入連不上就直接進自己的房間
+        ///       (見 <c>GenderSelectScreen.EnterOwnRoomOffline</c>),所以他的上一層本來就是選男女。</item>
+        /// </list>
+        ///
+        /// 🔴 判斷一律用 <see cref="AppContext.IsOnline"/>(定義是 <c>Net != null</c>),**不可以**改用本檔的
+        ///    <see cref="Online"/>:那個是 <c>Net != null &amp;&amp; IsConnected &amp;&amp; InRoom</c>,而離房的兩個出口
+        ///    都會在判斷前後把 <c>InRoom</c> 弄成 false —— 被踢時 NetClient 先清 <c>Room</c> 才 raise 事件、
+        ///    OnLeave 的 swap callback 第一行就是 <c>LeaveRoom()</c>。用它會把線上玩家誤判成離線、丟回選男女。
+        ///    也不要用 <c>IsConnected</c>:連線抖一下時 UserId 會先歸 0,但 Rooms/Chat 還是線上那份,狀態不一致。
+        /// </summary>
+        private ScreenId ExitScreen => Ctx != null && Ctx.IsOnline ? ScreenId.Lobby : ScreenId.GenderSel;
+
+        /// <summary>
         /// 被房主踢出 / 位子被關掉(server 的 R8 會先發 kicked 再標 Closed)。
         ///
         /// 沒有這條的話症狀很怪:server 已經把你移出房間了,但畫面還停在房間 —— 六格全空、
@@ -5468,24 +5484,31 @@ namespace Sdo.UI.Screens
         ///
         /// 這裡刻意**不**廣播「離開舞台」:我們已經不在房裡了,那則訊息送不出去也不該送。
         /// 轉場順序與 <see cref="OnLeave"/> 相同(全黑時才清房間) —— 見那邊的註解。
+        /// 目的地走共用的 <see cref="ExitScreen"/>:被踢**只可能發生在線上**(kicked 事件只在 Ctx.Net != null 時訂閱),
+        /// 所以這裡實際上永遠是大廳;仍共用同一個答案,是為了讓三個離房出口看起來就是同一件事。
         /// </summary>
         private void OnKickedFromRoom(string reason)
         {
             if (Ctx == null || Ctx.Flow == null || Ctx.Flow.Current != ScreenId.Room) return;   // 不在房間畫面就不搶轉場
             Debug.Log("[room] kicked: " + (reason ?? ""));
             Notice("room.kicked");
-            ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(ScreenId.GenderSel); });
+            var exit = ExitScreen;   // 先取值,理由同 OnLeave
+            ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(exit); });
         }
 
         private void OnLeave()
         {
             AnnounceStagePresence(false);   // 廣播「X 離開舞台」（趁還在房間、名字還查得到）
-            // 回男女選擇：漸黑 → loading → 漸亮（同其它畫面進出效果）。切畫面(GoTo)在全黑時執行；
-            // 男女選擇畫面無四邊滑入 UI → 不傳 onReveal。
+            // 目的地:線上回大廳、離線回選男女 —— 為什麼分流見 ExitScreen 的註解。
+            // 🔴 在 ScreenTransition.Run **之前**先取值。IsOnline 只看 Net != null,其實不受 LeaveRoom() 影響,
+            //    但 swap callback 裡第一行就在清房間,先取值能讓「為什麼安全」變成一眼看得出來、不必推理的事。
+            var exit = ExitScreen;
+            // 漸黑 → loading → 漸亮（同其它畫面進出效果）。切畫面(GoTo)在全黑時執行；
+            // 大廳/選男女都無四邊滑入 UI → 不傳 onReveal。
             // LeaveRoom() 一定要在轉場「全黑」時才呼叫,不能在轉場前:它會觸發 RoomUpdated → Render(),此時 IsHost 已變 false
             // → 「開始」鈕被藏、橘色「準備」鈕現身,玩家會在黑幕蓋上前瞥見這一翻。放進 swap callback(全黑執行)即可藏住,
             // 且仍在 GoTo 之前 → 維持「先清房再換身分」的既有順序(F9 換性別 host 標記 bug 需要此順序)。
-            ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(ScreenId.GenderSel); });
+            ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(exit); });
         }
 
         /// <summary>Blue text edge on the location labels — rgb(70,74,152), per the official 白字藍邊 look.</summary>

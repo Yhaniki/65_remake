@@ -540,7 +540,7 @@ namespace Sdo.UI
                 {
                     // 中離（預設 ESC，可在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] quit 改）：不結算直接退出。
                     if (KeyMap.Down(Hotkey.Quit)) AbortGameplay();
-                    // 旁觀退出(需求 10):Ctrl+Q → 直接離開房間回選角色畫面。
+                    // 旁觀退出(需求 10):Ctrl+Q → 直接離開房間,退回房間的上一層(線上=大廳、離線=選男女)。
                     // 只在旁觀時吃 —— 參賽者按到不能把自己踢出比賽。
                     else if (_activeGame.spectatorMode && CtrlHeld() && KeyMap.Down(Hotkey.SpectatorQuit))
                         QuitSpectating();
@@ -1063,7 +1063,10 @@ namespace Sdo.UI
         }
 
         /// <summary>
-        /// 旁觀中按 Ctrl+Q:直接離開房間回選角色畫面(需求 10)。
+        /// 旁觀中按 Ctrl+Q:直接離開房間、退回房間的上一層(需求 10)。
+        /// 目的地與 <c>RoomScreen.ExitScreen</c> 同一套規則:**線上→大廳、離線→選男女**
+        /// (單機玩家沒經過大廳,選男女登入失敗就直接進自己的房間)。判斷用 <c>AppContext.IsOnline</c>
+        /// 而不是連線/在房狀態 —— 理由見 <c>RoomScreen.ExitScreen</c> 的註解。
         ///
         /// 順序照 <c>RoomScreen.OnLeave</c> 的既有慣例:<b>離房要在轉場全黑時才做</b>。
         /// 那邊的註解記錄了不這麼做的後果 —— 離房會觸發房間狀態回呼去重畫還沒被黑幕蓋住的畫面,
@@ -1075,12 +1078,14 @@ namespace Sdo.UI
             if (_returningFromGame) return;
             _returningFromGame = true;
             var net = _ctx != null ? _ctx.Net : null;
+            // 🔴 目的地在轉場前先算好:swap callback 裡會 StopSpectate/LeaveRoom,先取值就不必去推理那些呼叫有沒有影響判斷。
+            var exit = _ctx != null && _ctx.IsOnline ? ScreenId.Lobby : ScreenId.GenderSel;
             ScreenTransition.Run(() =>
             {
                 TeardownGameplay();
                 if (net != null && net.IsSpectating) net.StopSpectate();
                 _ctx.Rooms?.LeaveRoom();
-                _ctx.Flow.GoTo(ScreenId.GenderSel);
+                _ctx.Flow.GoTo(exit);
             });
         }
 
