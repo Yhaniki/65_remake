@@ -60,10 +60,6 @@
    "v": "Chat"
   },
   {
-   "k": "lobby.chat_hint",
-   "v": "Type a message and press Enter…"
-  },
-  {
    "k": "lobby.send",
    "v": "Send"
   },
@@ -104,10 +100,6 @@
    "v": "Status"
   },
   {
-   "k": "lobby.accuracy",
-   "v": "Accuracy {0}%"
-  },
-  {
    "k": "lobby.record",
    "v": "{0}W {1}L"
   },
@@ -118,6 +110,14 @@
   {
    "k": "lobby.joined_as_spectator",
    "v": "Seats are full — joining as a spectator"
+  },
+  {
+   "k": "lobby.userlist_in_lobby",
+   "v": "Lobby"
+  },
+  {
+   "k": "lobby.userlist_in_room",
+   "v": "Room {0}"
   },
   {
    "k": "room.title",

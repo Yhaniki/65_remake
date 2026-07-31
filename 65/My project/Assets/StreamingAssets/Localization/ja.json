@@ -60,10 +60,6 @@
    "v": "チャット"
   },
   {
-   "k": "lobby.chat_hint",
-   "v": "メッセージを入力して Enter…"
-  },
-  {
    "k": "lobby.send",
    "v": "送信"
   },
@@ -104,10 +100,6 @@
    "v": "状態"
   },
   {
-   "k": "lobby.accuracy",
-   "v": "ヒット率 {0}%"
-  },
-  {
    "k": "lobby.record",
    "v": "{0}勝 {1}敗"
   },
@@ -118,6 +110,14 @@
   {
    "k": "lobby.joined_as_spectator",
    "v": "座席が満員のため、観戦として参加します"
+  },
+  {
+   "k": "lobby.userlist_in_lobby",
+   "v": "ロビー"
+  },
+  {
+   "k": "lobby.userlist_in_room",
+   "v": "ルーム {0}"
   },
   {
    "k": "room.title",

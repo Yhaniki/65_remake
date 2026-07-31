@@ -36,7 +36,6 @@ STR = {
     "lobby.rooms":          ["Rooms", "房間列表", "房间列表", "ルーム一覧"],
     "lobby.online_players": ["Online Players", "線上玩家", "在线玩家", "オンラインプレイヤー"],
     "lobby.chat":           ["Chat", "聊天", "聊天", "チャット"],
-    "lobby.chat_hint":      ["Type a message and press Enter…", "輸入訊息後按 Enter…", "输入消息后按 Enter…", "メッセージを入力して Enter…"],
     "lobby.send":           ["Send", "送出", "发送", "送信"],
     "lobby.settings":       ["Settings", "設定", "设置", "設定"],
     "lobby.logout":         ["Logout", "登出", "登出", "ログアウト"],
@@ -48,12 +47,15 @@ STR = {
     "lobby.col_mode":       ["Mode", "模式", "模式", "モード"],
     "lobby.col_status":     ["Status", "狀態", "状态", "状態"],
     # 官方版位的大廳（DDRLOBBY）：右下角自己的角色資料，以及「快速進入」的兩種結果。
-    "lobby.accuracy":       ["Accuracy {0}%", "命中率 {0}%", "命中率 {0}%", "ヒット率 {0}%"],
     "lobby.record":         ["{0}W {1}L", "{0} 勝 {1} 敗", "{0} 胜 {1} 负", "{0}勝 {1}敗"],
     "lobby.no_quick_room":  ["No open stage to join right now", "現在沒有可以加入的等待中舞台",
                              "现在没有可以加入的等待中舞台", "今すぐ入れる待機中のステージがありません"],
     "lobby.joined_as_spectator": ["Seats are full — joining as a spectator", "座位已滿，以旁觀身分進入",
                                   "座位已满，以旁观身份进入", "座席が満員のため、観戦として参加します"],
+
+    # 玩家名單（官方 win3：全部 / 好友 / 家族 / 黑名單）。
+    "lobby.userlist_in_lobby":   ["Lobby", "大廳", "大厅", "ロビー"],
+    "lobby.userlist_in_room":    ["Room {0}", "{0} 號房", "{0} 号房", "ルーム {0}"],
 
     "room.title":           ["Room {0}", "房間 {0}", "房间 {0}", "ルーム {0}"],
     "room.server_name":     ["Free Practice {0}", "自由練習場{0}", "自由练习场{0}", "自由練習場{0}"],

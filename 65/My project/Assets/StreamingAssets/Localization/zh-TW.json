@@ -60,10 +60,6 @@
    "v": "聊天"
   },
   {
-   "k": "lobby.chat_hint",
-   "v": "輸入訊息後按 Enter…"
-  },
-  {
    "k": "lobby.send",
    "v": "送出"
   },
@@ -104,10 +100,6 @@
    "v": "狀態"
   },
   {
-   "k": "lobby.accuracy",
-   "v": "命中率 {0}%"
-  },
-  {
    "k": "lobby.record",
    "v": "{0} 勝 {1} 敗"
   },
@@ -118,6 +110,14 @@
   {
    "k": "lobby.joined_as_spectator",
    "v": "座位已滿，以旁觀身分進入"
+  },
+  {
+   "k": "lobby.userlist_in_lobby",
+   "v": "大廳"
+  },
+  {
+   "k": "lobby.userlist_in_room",
+   "v": "{0} 號房"
   },
   {
    "k": "room.title",

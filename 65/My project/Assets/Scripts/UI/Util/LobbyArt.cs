@@ -30,13 +30,14 @@ namespace Sdo.UI.Util
 
         private static string _dir;
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
+        private static readonly Dictionary<string, Sprite> _soloCache = new Dictionary<string, Sprite>();
         private static readonly Dictionary<string, Sprite[]> _framesCache = new Dictionary<string, Sprite[]>();
 
         /// <summary>Resolved 大廳 art folder (lazy). Settable for tests (clears the cache).</summary>
         public static string Dir
         {
             get { return _dir ?? (_dir = Path.Combine(SdoExtracted.Root, "UI", FolderName)); }
-            set { _dir = value; _cache.Clear(); _framesCache.Clear(); }
+            set { _dir = value; _cache.Clear(); _soloCache.Clear(); _framesCache.Clear(); }
         }
 
         /// <summary>First frame of a LOBBY .an as a sprite (cached); null if missing. Name may include or omit ".an".</summary>
@@ -46,6 +47,53 @@ namespace Sdo.UI.Util
             if (_cache.TryGetValue(anName, out var s) && s != null) return s;
             s = SdoExtracted.LoadAn1(Dir, anName, bleed: true);
             _cache[anName] = s;
+            return s;
+        }
+
+        /// <summary>
+        /// 同 <see cref="An"/>,但那一幀是**複製到自己的貼圖**上再切(<c>LoadAnSolo</c>)。
+        ///
+        /// <see cref="An"/> 的 <c>bleed</c> 只能救「透明區存 (255,255,255,0)」那種白暈,救不了
+        /// **圖集鄰居**:大廳這一包幾乎整包裁自同一張 STAGE.PNG,鈕與鈕在圖裡是**貼著**的,
+        /// 雙線性取樣會把隔壁那顆鈕的不透明像素拖進這一顆的邊 —— 畫面上就是每顆鈕鑲一圈白/淺色邊
+        /// (創建舞台/快速進入/等待舞台/道具包/郵件/右上角圓鈕全中)。切到自己的貼圖上就沒有鄰居了。
+        ///
+        /// <c>pad: 0</c> 是刻意的:pad 會在四周加透明邊,而 <c>UIKit.AddSprite</c> 依 sprite 尺寸把左上角錨在 (x,y)
+        /// → 每加 N 就把可見圖往右下推 N px(整批位移)。載不到 solo crop 時自動退回共用圖集那條路,安全。
+        /// </summary>
+        public static Sprite AnSolo(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            if (_soloCache.TryGetValue(anName, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSolo(Dir, anName, pad: 0) ?? An(anName);
+            _soloCache[anName] = s;
+            return s;
+        }
+
+        /// <summary>同 <see cref="AnSolo"/> 但**超取樣**(<c>LoadAnSoloMip</c>:3× 存、邏輯尺寸顯示)。
+        /// 大廳的鈕在預設 800×600 視窗下差不多 1:1,放大/全螢幕時硬邊會鋸齒、模糊濾鏡又糊;
+        /// 交給 GPU 面積降取樣才會是乾淨的 ~1px 抗鋸齒邊。載不到就退回 <see cref="AnSolo"/>。</summary>
+        public static Sprite AnSoloAA(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "aa:" + anName;
+            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSoloMip(Dir, anName, pad: 0) ?? AnSolo(anName);
+            _soloCache[key] = s;
+            return s;
+        }
+
+        /// <summary>同 <see cref="AnSoloAA"/> 但給**圓形圖示鈕**用(右上角那排 hall10..28 的 34px 圓盤、
+        /// 底下那排表情/喇叭/寵物/幫助)。它們的圓邊是「寬軟 AA 邊」,<see cref="AnSoloAA"/> 的 α&lt;128→0 硬裁
+        /// 會把軟邊 binarise 成 1-bit 圓 → 邊緣破碎;<c>LoadAnSoloCircleMip</c> 用 smoothstep 圓邊(順便剪掉外圈光暈)
+        /// 再超取樣。載不到就退回 <see cref="AnSoloAA"/>。</summary>
+        public static Sprite AnSoloCircleAA(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "circ:" + anName;
+            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSoloCircleMip(Dir, anName, pad: 0) ?? AnSoloAA(anName);
+            _soloCache[key] = s;
             return s;
         }
 

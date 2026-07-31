@@ -60,10 +60,6 @@
    "v": "聊天"
   },
   {
-   "k": "lobby.chat_hint",
-   "v": "输入消息后按 Enter…"
-  },
-  {
    "k": "lobby.send",
    "v": "发送"
   },
@@ -104,10 +100,6 @@
    "v": "状态"
   },
   {
-   "k": "lobby.accuracy",
-   "v": "命中率 {0}%"
-  },
-  {
    "k": "lobby.record",
    "v": "{0} 胜 {1} 负"
   },
@@ -118,6 +110,14 @@
   {
    "k": "lobby.joined_as_spectator",
    "v": "座位已满，以旁观身份进入"
+  },
+  {
+   "k": "lobby.userlist_in_lobby",
+   "v": "大厅"
+  },
+  {
+   "k": "lobby.userlist_in_room",
+   "v": "{0} 号房"
   },
   {
    "k": "room.title",
