@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.UI;
 using Sdo.Localization;
 using Sdo.Settings;
@@ -17,53 +18,86 @@ namespace Sdo.UI.Screens
     /// 而看完別人資料要回到原本的房間)。生命週期照 <see cref="JoinRoomModal"/>:
     /// <c>Build</c> 一次、<c>Open</c>/<c>Close</c> 只切 CanvasGroup。
     ///
-    /// 美術是官方 <c>UI/PLAYERINFORMATIONDLG</c>,版位逐字取自 <c>PLAYERINFORMATIONDLG.XML</c>。
-    /// 官方那個框有八個分頁、3D 角色預覽、天使/魅力/幸運/星座/QQ 一堆欄位 —— 這個重製版後端只有
-    /// 「名字/家族/等級」與**本機**的累計統計,所以只留兩個分頁,其餘不畫(畫出來按不動比沒有更糟)。
+    /// 美術是官方 <c>UI/PLAYERINFORMATIONDLG</c>,版位逐字取自 <c>PLAYERINFORMATIONDLG_MAN.XML</c> 的
+    /// <c>&lt;Window name="WinPlayerInfo"&gt;</c>。官方那個框有五格分頁、3D 角色預覽、天使/魅力/幸運/星座/QQ
+    /// 一堆欄位 —— 這個重製版後端只有「名字/家族/等級」與**本機**的累計統計,所以只留兩個分頁,其餘不畫。
     ///
-    /// 🔴 底圖有兩張皮:女版是淺灰內裡、男版是深藍星空。同一份文字顏色不可能在兩者上都讀得清楚,
-    ///    所以內容一律鋪一層半透明深色底(<see cref="Scrim"/>)再放亮色字 —— 這樣兩張皮共用同一套顏色,
-    ///    不必為了換皮再維護一份色表。
+    /// 🔴 **底圖固定用男版**(使用者指定 <c>BASEBOARD_MAN.PNG</c>),不再依性別換皮。以前是「圖換男版、
+    ///    座標留女版」,關閉鈕、分頁條、底部那排全部差幾個 px —— 現在圖與座標統一取自男版 XML。
+    /// 🔴 官方的按鈕**全部照版位擺出來**,但這個重製版真正接得上的只有「關閉/確定/私聊/加好友↔刪好友」;
+    ///    其餘(VIP、手鐲、認證、榮譽、天使、合成書、EC、寵物、寄信、黑名單、買對方裝扮、三顆開關)一律
+    ///    **handler 傳 null**,按下去安靜地沒反應。這是使用者明確要求的:不要用 toast 假裝功能存在。
+    ///
+    /// 🔴 男版底圖是深藍星空,官方那些欄位字是直接寫在有底紋的板子上的。我們的字是動態的、長度不定,
+    ///    直接壓在星空上會有讀不清的段落,所以內容一律鋪一層半透明深色底(<see cref="Scrim"/>)再放亮色字。
     /// </summary>
     public sealed class PlayerInfoModal : MonoBehaviour
     {
-        // ---------------------------------------------------------------- 版位(PLAYERINFORMATIONDLG.XML,800×600 左上原點)
-        private const float BoardX = 93f, BoardY = 56f;          // <Label x="93" y="56" background="PlayerInformationDlg0.an"/>
-        private const float CloseX = 662f, CloseY = 62f;         // <Button name="close" x="662" y="62"/>
+        // ---------------------------------------------------------------- 版位(PLAYERINFORMATIONDLG_MAN.XML,800×600 左上原點)
+        // 🔴 那份 XML 是**整合檔**,十幾個視窗擠在同一個 <Screen> 底下;個人檔案的版位只在
+        //    <Window name="WinPlayerInfo" x="0" y="0" w="800" h="600"> 裡面 —— winRightGames / WinCapture /
+        //    ZoTask 那些同樣有 close、有一排鈕的視窗與這裡無關,抄錯了會整組偏掉而且看起來很合理。
+        private const float BoardX = 93f, BoardY = 56f;          // <Label name="DailogBg" x="93" y="56" background="PlayerInformationDlg0_man.an"/>
+        private const float CloseX = 662f, CloseY = 73f;         // <Button name="close" x="662" y="73"/>
 
-        private const float TabX = 336f, TabY = 108f;            // <CheckBox name="playerTabCheck0" x="336" y="108"/>
-        private const float TabStripW = 350f, TabStripH = 39f;   // 每張狀態圖都是整條 350×39
-        private const float TabPillW = 87.5f;                    // 量出來的:四格分別佔 0-88 / 87-175 / 174-260 / 259-349
+        private const float TabX = 333f, TabY = 116f;            // <CheckBox name="playerTabCheck0..3" x="333" y="116"/>(四格疊在同一點)
+        // 每一格的可點範圍(相對分頁條左緣)。量自 BaseBoard2_man.png 上未選那四張圖各自的不透明範圍:
+        // 5-73 / 73-142 / 143-212 / 213-282(283 之後是官方第五格「星座」的位置,我們不畫)。
+        private static readonly float[] TabPillX = { 4f, 73f, 143f, 213f };
+        private const float TabPillW = 70f, TabPillH = 39f;
         private const int TabBasic = 0, TabStats = 1, TabCount = 2;
 
-        private const float PanelX = 336f, PanelY = 147f;        // 官方分頁內容板 PlayerInformationDlg34.an 的位置
-        private const float PanelW = 350f, PanelH = 340f;
+        // 分頁內容板。官方兩頁的板子差 1-2 px(基本頁 PlayerInformationDlg34_man.an 掛在 playerTabWindow0(-1,+6)
+        // → 絕對 (335,153) 348×337;技术统计頁 PlayerInformationDlg43_man.an 掛在 playerTabWindow1(+1,+6)
+        // → 絕對 (337,152) 347×338)。我們只鋪一層共用的底,所以取兩者的聯集。
+        private const float PanelX = 335f, PanelY = 152f;
+        private const float PanelW = 349f, PanelH = 339f;
 
         // 身分區。官方在這塊放 <AvtShow name="AvatarShow" x="105" y="111" w="230" h="391"> 的 3D 角色,
-        // 名字/等級疊在它左上角(132,129 / 132,144)。我們不做 3D 預覽(要生一整套骨骼+貼圖,開個資料視窗不值得),
-        // 所以下半塊是刻意留白的,只保留官方那兩行字的位置感。
+        // 名字/等級疊在它左上角(name 132,129 / level 132,144 —— 這幾個男女版同座標)。我們不做 3D 預覽
+        // (要生一整套骨骼+貼圖,開個資料視窗不值得),所以下半塊是刻意留白的,只保留官方那兩行字的位置感。
         private const float IdX = 114f, IdY = 118f, IdW = 214f, IdH = 76f;
 
-        private const float BtnY = 504f;                         // <Button name="Dialog/AddFriend/Confirm" y="504"/>
-        private const float WhisperX = 108f, FriendX = 208f, OkX = 608f;
+        // 底部那一排動作鈕(93×31,確定是 101×37)。官方大多在 y=507,只有 DelFriend / AddEnemy 落在 508。
+        private const float BtnY = 507f, DelFriendY = 508f;
+        private const float WhisperX = 108f,                     // <CheckBox name="Dialog" x="108" y="507"/>
+                            FriendX = 208f,                      // <Button name="AddFriend" x="208" y="507"/> / DelFriend y=508
+                            MailX = 308f,                        // <Button name="SendMail" x="308" y="507"/>
+                            EnemyX = 408f,                       // <Button name="AddEnemy" x="408" y="508"/>
+                            BuyLookX = 508f,                     // <Button name="BuyOtherEquipedButton" x="508" y="507"/>
+                            OkX = 608f;                          // <Button name="Confirm" x="608" y="507"/>
 
-        // 分頁內容的欄位排版(絕對座標,與版位常數同一個座標系)
-        private const float RowX = 352f, RowW = 318f, RowLabelW = 100f;
-        private const float BasicRow0Y = 174f, RowStep = 30f, RowH = 20f, RowFont = 13f;
+        // 左側那一直排功能鈕(官方由上而下)。
+        private const float VipX = 296f, VipY = 212f;            // BtnVipSystem
+        private const float BangleX = 295f, BangleY = 249f;      // BtnBangleDlg
+        private const float CertX = 298f, CertY = 286f;          // BtnCertificateDlg
+        private const float HonourX = 296f, HonourY = 318f;      // BtnHonourShow
+        private const float AngelX = 298f, AngelY = 353f;        // PlayerAngelButton
+        private const float CraftX = 298f, CraftY = 388f;        // hechengshu
+        private const float EcX = 298f, EcY = 421f;              // btn_ec
+        private const float PetX = 298f, PetY = 455f;            // Showpet
+
+        // 底部三顆開關(105×21)。<CheckBox name="OpenBill/OpenInvite/OpenInfo" y="454"/>
+        private const float SwitchY = 454f;
+        private const float SwBillX = 351f, SwInviteX = 460f, SwInfoX = 570f;
+
+        // 分頁內容的欄位排版(絕對座標,與版位常數同一個座標系)。內縮量沿用原本那組,整體跟著內容板挪了 (-1,+5)。
+        private const float RowX = 351f, RowW = 318f, RowLabelW = 100f;
+        private const float BasicRow0Y = 179f, RowStep = 30f, RowH = 20f, RowFont = 13f;
         private const int BasicRowMax = 7;                       // 自己:名稱/性別/家族/等級/M/G/P
 
-        private const float RateRow0Y = 172f, RateStep = 30f, RateFont = 12f;
+        private const float RateRow0Y = 177f, RateStep = 30f, RateFont = 12f;
         private const float RateLabelW = 78f;
         private const float BarX = 84f, BarW = 176f, BarH = 11f, BarDy = 5f;   // 相對 row 左上角
         private const float RateValX = 268f, RateValW = 50f;
         private const int RateRowMax = 6;                        // 命中/Perfect/Cool/Bad/Miss/勝率
-        private const float StatsTextRow0Y = 362f;               // 比率之後那三行純文字
+        private const float StatsTextRow0Y = 367f;               // 比率之後那三行純文字
         private const int StatsRowMax = 3;                       // 判定數 / 遊玩次數 / 戰績
         // 判定數那一列會塞四組數字(「P 12,345 / C 6,789 / B 123 / M 45」),用基本頁那組字級/欄寬會撐出板外,
         // 所以這三行自己一組:標籤欄窄一點、字級小一號。
         private const float StatsLabelW = 76f, StatsFont = 12f;
 
-        private const float NoteX = 352f, NoteY = 210f, NoteW = 318f, NoteH = 120f, NoteFont = 13f;
+        private const float NoteX = 351f, NoteY = 215f, NoteW = 318f, NoteH = 120f, NoteFont = 13f;
 
         // ---------------------------------------------------------------- 顏色
         private static readonly Color Scrim = new Color(0.10f, 0.06f, 0.16f, 0.62f);
@@ -80,7 +114,6 @@ namespace Sdo.UI.Screens
         private CanvasGroup _windowCg;
         private WindowAnim _anim;
 
-        private Image _board;
         private Image[] _tabImg;
         private RectTransform[] _tabBody;
         private int _tab;
@@ -93,7 +126,7 @@ namespace Sdo.UI.Screens
         private TextRow[] _statsRows;
         private TextMeshProUGUI _basicNote, _statsNote;
 
-        private Button _whisperBtn, _friendBtn, _okBtn;
+        private Button _whisperBtn, _friendBtn;
         private Image _friendImg;
 
         private bool _isSelf;
@@ -131,7 +164,7 @@ namespace Sdo.UI.Screens
             _windowCg = _window.gameObject.AddComponent<CanvasGroup>();
             _anim = _window.gameObject.AddComponent<WindowAnim>();
 
-            _board = UIKit.AddSprite(_window, "Board", PlayerInfoArt.Board(0), BoardX, BoardY);
+            UIKit.AddSprite(_window, "Board", PlayerInfoArt.Board, BoardX, BoardY);
 
             BuildIdentity(_window);
             BuildTabs(_window);
@@ -139,10 +172,8 @@ namespace Sdo.UI.Screens
             BuildStatsTab(_tabBody[TabStats]);
             BuildButtons(_window);
 
-            var close = UIKit.AddSpriteButton(_window, "Close", PlayerInfoArt.CloseN,
-                                              PlayerInfoArt.CloseH, PlayerInfoArt.CloseP, CloseX, CloseY);
-            close.onClick.AddListener(Close);
-            UiSfx.AttachClick(close);
+            var close = AddOfficialButton(_window, "Close", PlayerInfoArt.CloseN,
+                                          PlayerInfoArt.CloseH, PlayerInfoArt.CloseP, CloseX, CloseY, Close);
             UIKit.SetAlphaHit(close.targetGraphic);   // 是顆圓 X,四角透明處不該吃到點擊
 
             SetVisible(false);
@@ -161,9 +192,9 @@ namespace Sdo.UI.Screens
 
         private void BuildTabs(RectTransform parent)
         {
-            // 官方把四格分頁疊在同一個座標,每張圖只畫自己那一格 —— 所以「一條 tab bar」是把每格的狀態圖疊起來,
-            // 而不是一張圖切四段。我們只畫實作得出來的兩格(赛事信息/拼图卡片 沒有後端,畫了也按不動)。
-            // 分頁圖自己一個容器:選中那格要蓋在鄰居上面(相鄰兩格左右各重疊 1px),而排序是用
+            // 官方把四格分頁疊在同一個座標,未選的圖只畫自己那一格、其餘透明 —— 所以「一條 tab bar」是把每格的
+            // 狀態圖疊起來,而不是一張圖切四段。我們只畫實作得出來的兩格(段位勋章/拼图卡片 沒有後端,畫了也按不動)。
+            // 分頁圖自己一個容器:選中那格的圖除了自己那格還畫滿整條底線,要蓋在鄰居上面,而排序是用
             // SetAsLastSibling 做的 —— 直接掛在 parent 上會把它排到「整個視窗」的最上層,語意就錯了。
             var bar = UIKit.NewRect(parent, "TabBar");
             UIKit.Stretch(bar);
@@ -172,8 +203,8 @@ namespace Sdo.UI.Screens
             _tabBody = new RectTransform[TabCount];
             for (int i = 0; i < TabCount; i++)
             {
-                _tabImg[i] = UIKit.AddSprite(bar, "Tab" + i, PlayerInfoArt.TabStrip(i, false), TabX, TabY);
-                Place(_tabImg[i].rectTransform, TabX, TabY, TabStripW, TabStripH);
+                _tabImg[i] = UIKit.AddSprite(bar, "Tab" + i, null, TabX, TabY);
+                ApplyTabArt(i, false);
             }
 
             // 內容板的底(半透明深色)。放在分頁本體之前建 → 排在文字後面。
@@ -186,12 +217,12 @@ namespace Sdo.UI.Screens
                 UIKit.Stretch(_tabBody[i]);   // 撐滿 800×600,子物件用絕對座標擺(與版位常數同一個座標系)
             }
 
-            // 點擊區另外做:每張狀態圖都是整條 350 寬,拿圖本身當按鈕會四格互相蓋掉。
+            // 點擊區另外做:選中那格的圖是整條寬(見上面),拿圖本身當按鈕會四格互相蓋掉。
             for (int i = 0; i < TabCount; i++)
             {
                 int idx = i;
                 var hit = UIKit.AddImage(parent, "TabHit" + i, new Color(0f, 0f, 0f, 0f), true);
-                Place(hit.rectTransform, TabX + i * TabPillW, TabY, TabPillW, TabStripH);
+                Place(hit.rectTransform, TabX + TabPillX[i], TabY, TabPillW, TabPillH);
                 var btn = hit.gameObject.AddComponent<Button>();
                 btn.targetGraphic = hit;
                 btn.transition = Selectable.Transition.None;
@@ -231,31 +262,69 @@ namespace Sdo.UI.Screens
 
         private void BuildButtons(RectTransform parent)
         {
-            _whisperBtn = UIKit.AddSpriteButton(parent, "Whisper", PlayerInfoArt.WhisperN,
-                                                PlayerInfoArt.WhisperH, PlayerInfoArt.WhisperP, WhisperX, BtnY);
-            _whisperBtn.onClick.AddListener(OnWhisper);
-            UiSfx.AttachClick(_whisperBtn);
+            // 左側那一直排:官方這八顆各自開一個獨立系統(VIP / 手鐲 / 認證 / 榮譽 / 天使 / 合成書 / EC / 寵物),
+            // 這個重製版一個都沒有 → handler 全是 null,按了安靜地沒反應(理由見 AddOfficialButton)。
+            AddOfficialButton(parent, "Vip", PlayerInfoArt.VipN, PlayerInfoArt.VipH, PlayerInfoArt.VipP, VipX, VipY, null);
+            AddOfficialButton(parent, "Bangle", PlayerInfoArt.BangleN, PlayerInfoArt.BangleH, null, BangleX, BangleY, null);
+            AddOfficialButton(parent, "Certificate", PlayerInfoArt.CertN, PlayerInfoArt.CertH, PlayerInfoArt.CertP, CertX, CertY, null);
+            AddOfficialButton(parent, "Honour", PlayerInfoArt.HonourN, PlayerInfoArt.HonourH, PlayerInfoArt.HonourP, HonourX, HonourY, null);
+            AddOfficialButton(parent, "Angel", PlayerInfoArt.AngelN, PlayerInfoArt.AngelH, PlayerInfoArt.AngelP, AngelX, AngelY, null);
+            AddOfficialButton(parent, "Craft", PlayerInfoArt.CraftN, PlayerInfoArt.CraftH, PlayerInfoArt.CraftP, CraftX, CraftY, null);
+            AddOfficialButton(parent, "Ec", PlayerInfoArt.EcN, PlayerInfoArt.EcH, PlayerInfoArt.EcP, EcX, EcY, null);
+            AddOfficialButton(parent, "Pet", PlayerInfoArt.PetN, PlayerInfoArt.PetH, PlayerInfoArt.PetP, PetX, PetY, null);
 
-            _friendBtn = UIKit.AddSpriteButton(parent, "Friend", PlayerInfoArt.AddFriendN,
-                                               PlayerInfoArt.AddFriendH, PlayerInfoArt.AddFriendP, FriendX, BtnY);
+            // 底部三顆開關(帳單/邀請/資料的公開與否)。三態圖都只給同一張,原因見 PlayerInfoArt.SwitchBox。
+            AddOfficialButton(parent, "SwitchBill", PlayerInfoArt.SwitchBox, PlayerInfoArt.SwitchBox, PlayerInfoArt.SwitchBox, SwBillX, SwitchY, null);
+            AddOfficialButton(parent, "SwitchInvite", PlayerInfoArt.SwitchBox, PlayerInfoArt.SwitchBox, PlayerInfoArt.SwitchBox, SwInviteX, SwitchY, null);
+            AddOfficialButton(parent, "SwitchInfo", PlayerInfoArt.SwitchBox, PlayerInfoArt.SwitchBox, PlayerInfoArt.SwitchBox, SwInfoX, SwitchY, null);
+
+            // 底部那一排。寄信/黑名單/買對方裝扮這個重製版都沒有後端 → 一樣 null。
+            _whisperBtn = AddOfficialButton(parent, "Whisper", PlayerInfoArt.WhisperN,
+                                            PlayerInfoArt.WhisperH, PlayerInfoArt.WhisperP, WhisperX, BtnY, OnWhisper);
+
+            _friendBtn = AddOfficialButton(parent, "Friend", PlayerInfoArt.AddFriendN,
+                                           PlayerInfoArt.AddFriendH, PlayerInfoArt.AddFriendP, FriendX, BtnY, OnToggleFriend);
             _friendImg = _friendBtn.targetGraphic as Image;
-            _friendBtn.onClick.AddListener(OnToggleFriend);
-            UiSfx.AttachClick(_friendBtn);
 
-            _okBtn = UIKit.AddSpriteButton(parent, "Ok", PlayerInfoArt.OkN,
-                                           PlayerInfoArt.OkH, PlayerInfoArt.OkP, OkX, BtnY);
-            _okBtn.onClick.AddListener(Close);
-            UiSfx.AttachClick(_okBtn);
+            AddOfficialButton(parent, "Mail", PlayerInfoArt.MailN, PlayerInfoArt.MailH, PlayerInfoArt.MailP, MailX, BtnY, null);
+            AddOfficialButton(parent, "Enemy", PlayerInfoArt.EnemyN, PlayerInfoArt.EnemyH, PlayerInfoArt.EnemyP, EnemyX, DelFriendY, null);
+            AddOfficialButton(parent, "BuyLook", PlayerInfoArt.BuyLookN, PlayerInfoArt.BuyLookH, PlayerInfoArt.BuyLookP, BuyLookX, BtnY, null);
+
+            // 確定鈕做的事就是關窗(官方也是),沒有人要事後改它 → 不留欄位。
+            AddOfficialButton(parent, "Ok", PlayerInfoArt.OkN, PlayerInfoArt.OkH, PlayerInfoArt.OkP, OkX, BtnY, Close);
+        }
+
+        /// <summary>
+        /// 建一顆官方版位的三態鈕。<paramref name="onClick"/> 傳 **null** = 這個功能這個重製版沒有,按下去
+        /// **安靜地什麼都不做**:不彈 toast、不出聲、也不留一行沒人會看的 log。
+        ///
+        /// 🔴 這是使用者這一輪明確的要求(「按了沒做的功能就是安靜地沒反應」)。舊的判斷是「靜靜地沒反應會讓人
+        ///    以為是壞了,所以要彈個 toast 說明」—— **那個判斷已經被推翻**,不要再加回來。null 的那幾顆連
+        ///    <c>UiSfx.AttachClick</c> 都不掛:會出聲就不叫安靜。滑鼠移上去/按下去仍然照官方換圖,那是按鈕本身的
+        ///    美術狀態,不是對「功能」的回應。
+        /// </summary>
+        private static Button AddOfficialButton(RectTransform parent, string name, Sprite normal, Sprite hover,
+                                                Sprite pushed, float x, float y, UnityAction onClick)
+        {
+            var btn = UIKit.AddSpriteButton(parent, name, normal, hover, pushed, x, y);
+            if (onClick != null)
+            {
+                btn.onClick.AddListener(onClick);
+                UiSfx.AttachClick(btn);
+            }
+            return btn;
         }
 
         // ---------------------------------------------------------------- open / close
 
         /// <summary>
         /// 看別人。<paramref name="who"/> 只有 <c>Id / DisplayName / Level / Guild</c>(座位快照帶得到的全部)。
-        /// <paramref name="gender"/> 0=女 1=男,**只用來決定底圖用哪張皮**。呼叫端
-        /// (<c>RoomScreen.SeatGender</c>)是從連線快照的 <c>NetAvatarLook</c> 查的,查不到(離線 / 剛離開 /
-        /// 旁觀者)會退回**本機**的性別 —— 也就是說這個值有可能根本不是這個人的,所以只能拿來挑皮,不能當資料顯示。
         /// <paramref name="onWhisper"/> 收到對方的顯示名字(呼叫端負責把「[名字] 」塞進聊天輸入框)。
+        ///
+        /// 🔴 <paramref name="gender"/>(0=女 1=男)**現在完全沒有作用**,留著只是因為呼叫端 <c>RoomScreen</c>
+        ///    還在傳。以前它用來決定底圖換哪張皮,但版位統一走男版 XML 之後底圖就只有一張(見類別註解);
+        ///    而且這個值本來就不可信 —— <c>RoomScreen.SeatGender</c> 查不到時會退回**本機**的性別,拿它當資料
+        ///    顯示會把一整批人標成跟自己同一個性別。
         /// </summary>
         public void Open(PlayerProfile who, int gender, Action<string> onWhisper)
         {
@@ -265,7 +334,6 @@ namespace Sdo.UI.Screens
             _targetId = (who.Id ?? "").Trim();
             _onWhisper = onWhisper;
 
-            ApplySkin(gender);
             string level = who.Level > 0
                 ? RoomConfig.LevelLabel(who.Level.ToString(CultureInfo.InvariantCulture))
                 : "";
@@ -291,7 +359,6 @@ namespace Sdo.UI.Screens
             _targetId = (p.id ?? "").Trim();
             _onWhisper = null;
 
-            ApplySkin(p.gender);
             SetIdentity(_targetName, ProfileFields.LevelLabel(p));
             FillBasicSelf(p);
             FillStatsSelf(p.stats);
@@ -339,11 +406,6 @@ namespace Sdo.UI.Screens
         }
 
         // ---------------------------------------------------------------- 內容
-
-        private void ApplySkin(int gender)
-        {
-            UIKit.ApplySprite(_board, PlayerInfoArt.Board(gender == 1 ? 1 : 0));
-        }
 
         private void SetIdentity(string name, string levelLabel)
         {
@@ -437,12 +499,26 @@ namespace Sdo.UI.Screens
             _tab = Mathf.Clamp(tab, 0, TabCount - 1);
             for (int i = 0; i < TabCount; i++)
             {
-                UIKit.ApplySprite(_tabImg[i], PlayerInfoArt.TabStrip(i, i == _tab));
-                Place(_tabImg[i].rectTransform, TabX, TabY, TabStripW, TabStripH);
+                ApplyTabArt(i, i == _tab);
                 _tabBody[i].gameObject.SetActive(i == _tab);
             }
-            // 相鄰兩格的圖左右各重疊 1px,選中的那格要壓在上面才不會被隔壁的邊蓋掉(範圍限在 TabBar 容器內)。
+            // 選中那格的圖除了自己那格還畫滿整條底線,要壓在鄰居上面才不會被隔壁的邊蓋掉(範圍限在 TabBar 容器內)。
             _tabImg[_tab].transform.SetAsLastSibling();
+        }
+
+        /// <summary>
+        /// 換上第 <paramref name="index"/> 格分頁的「選中/未選」圖並擺好。
+        ///
+        /// 🔴 尺寸一律跟著圖走(<c>ApplySprite</c> 會把 rect 設成圖的原生大小),**不要寫死 350×39**:男版四格的
+        ///    寬高各不相同(未選高 37、選中高 39,選中的第一格還是 356 寬),寫死會把圖拉歪。
+        /// 🔴 位置要加 <c>dx</c>:選中的第 2/3 格在官方 .an 裡是負的 x,裁切時夾到 0 之後得往右補回來
+        ///    (整段來龍去脈見 <see cref="PlayerInfoArt.TabStrip"/>)。
+        /// </summary>
+        private void ApplyTabArt(int index, bool selected)
+        {
+            var sprite = PlayerInfoArt.TabStrip(index, selected, out float dx);
+            UIKit.ApplySprite(_tabImg[index], sprite);
+            _tabImg[index].rectTransform.anchoredPosition = new Vector2(TabX + dx, -TabY);
         }
 
         // ---------------------------------------------------------------- 動作鈕
@@ -456,8 +532,12 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>
-        /// 加/刪好友。做的事與座位右鍵選單那兩項完全一樣(<c>RoomScreen.ToggleSeatFriend</c>),
-        /// **連 Toast 的 key 都共用** —— 同一件事在兩個入口講不同的話,玩家會以為做的不是同一件事。
+        /// 加/刪好友。做的事與座位右鍵選單那兩項完全一樣(<c>RoomScreen.ToggleSeatFriend</c>)。
+        ///
+        /// 🔴 **這條路不彈 toast**(使用者要求:大廳一律不要 toast)。唯一的回饋是 <see cref="RefreshFriendButton"/>
+        ///    把鈕換成另一張圖 —— 而那正是官方的做法:官方就是 AddFriend / DelFriend 兩顆疊在同一格互切,
+        ///    鈕上寫著什麼就代表現在按下去會發生什麼。以前這裡與 RoomScreen「連提示文字的 key 都共用」的約定
+        ///    已經不成立(<c>RoomScreen.ToggleSeatFriend</c> 那條路仍然會彈),別看到房間有彈就以為這裡漏了。
         /// </summary>
         private void OnToggleFriend()
         {
@@ -471,13 +551,13 @@ namespace Sdo.UI.Screens
                 ? FriendList.Add(me, _targetName, _targetId, DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture))
                 : FriendList.Remove(me, _targetName);
             if (ok) ProfileManager.Save();
-
-            string key = add ? (ok ? "room.friend_added" : "room.friend_add_failed")
-                             : (ok ? "room.friend_removed" : "room.friend_remove_failed");
-            Toast.Show(L(key, _targetName));
             RefreshFriendButton();
         }
 
+        /// <summary>
+        /// 把好友鈕切成「加好友」或「刪好友」。官方是兩顆鈕疊在同一格(AddFriend (208,507) / DelFriend (208,508)),
+        /// 我們用一顆換圖 —— 所以 y 也要跟著換,不然刪好友那張會比官方高 1px。
+        /// </summary>
         private void RefreshFriendButton()
         {
             if (_friendBtn == null) return;
@@ -486,6 +566,8 @@ namespace Sdo.UI.Screens
                             isFriend ? PlayerInfoArt.DelFriendN : PlayerInfoArt.AddFriendN,
                             isFriend ? PlayerInfoArt.DelFriendH : PlayerInfoArt.AddFriendH,
                             isFriend ? PlayerInfoArt.DelFriendP : PlayerInfoArt.AddFriendP);
+            ((RectTransform)_friendBtn.transform).anchoredPosition =
+                new Vector2(FriendX, -(isFriend ? DelFriendY : BtnY));
         }
 
         // ---------------------------------------------------------------- 小工具
