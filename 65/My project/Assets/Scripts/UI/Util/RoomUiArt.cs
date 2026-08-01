@@ -74,6 +74,26 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        /// <summary>As <see cref="AnSolo"/> but with cleanMatte + PREMULTIPLIED alpha — for ROOM art that still shows the
+        /// 「方形白邊」 after AnSolo. AnSolo's two treatments both MISS the low-α white matte: AlphaBleed only rewrites RGB at
+        /// α ≤ 8, and DeMatteWhite un-composites over white — which leaves a pure-white matte texel白的。那圈 α≈5~30 的白在
+        /// 800×600 被放大到視窗時就滲成白框(掉落方式的 ▼ ShopDlg13 就是這樣)。premult 讓透明像素變 (0,0,0,0),內插只淡化
+        /// 覆蓋率 → 白邊消失(同 <see cref="RoomDlgArt.An"/> / <see cref="ShopArt.An"/>)。**呼叫端必須用 UIKit.ApplySprite
+        /// 指派**,否則 premult 貼圖用預設材質畫會偏暗。shader 被剝掉或 crop 失敗時退回 <see cref="AnSolo"/>。
+        /// 只給真的看得到白邊的那幾張用 —— ROOM 的圓鈕另有調校過的 AA/mip 路徑,不要換過來。</summary>
+        public static Sprite AnPremult(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "premult:" + anName;
+            if (_aaCache.TryGetValue(key, out var s) && s != null) return s;
+            s = (SdoExtracted.PremultUiMaterial != null
+                    ? SdoExtracted.LoadAnSoloPremultiplied(Dir, anName, pad: 0, cleanMatte: true)   // pad:0 → 不位移(同 AnSolo)
+                    : null)
+                ?? AnSolo(anName);
+            _aaCache[key] = s;
+            return s;
+        }
+
         /// <summary>As <see cref="AnSolo"/> but SUPERSAMPLED (see <see cref="SdoExtracted.LoadAnSoloMip"/>): the ROOM
         /// buttons (開始/旁觀/房主設置…) are ~73px near 1-bit discs; at the default 800×600 window they show ~1:1 where a
         /// hard edge is jagged and a blur is mushy. The loader clips the baked outer glow, upsamples the crop 3× onto a

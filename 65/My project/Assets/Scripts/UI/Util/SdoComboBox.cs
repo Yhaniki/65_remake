@@ -96,7 +96,9 @@ namespace Sdo.UI.Util
             if (arrowSprite != null)
             {
                 var arrow = UIKit.AddImage(root, name + "_arr", Color.white);
-                arrow.sprite = arrowSprite;
+                // ApplySprite(不是直接指派 .sprite):premult 貼圖(RoomDlgArt.AnPremult 的去白邊 ▲)必須配 premult 材質才畫得對,
+                // 那個配對只發生在 ApplySprite 裡。它順帶設的 sizeDelta 由下面的 Place 覆蓋成同一個值(pad:0 → 原生尺寸)。
+                UIKit.ApplySprite(arrow, arrowSprite);
                 arrow.raycastTarget = false;
                 float aw = arrowSprite.rect.width, ah = arrowSprite.rect.height;
                 Place(arrow.rectTransform, arrowX, valueY + (slotH - ah) / 2f, aw, ah);
@@ -113,9 +115,9 @@ namespace Sdo.UI.Util
             if (_labelImg != null)
             {
                 var s = (_valueSprites != null && _index < _valueSprites.Length) ? _valueSprites[_index] : null;
-                _labelImg.sprite = s;
-                _labelImg.color = s != null ? Color.white : new Color(1f, 1f, 1f, 0f);
-                if (s != null) _labelImg.rectTransform.sizeDelta = s.rect.size;   // native size, centred
+                // ApplySprite:值圖(選歌的 LABEL_SDO 模式名切片)是 premult 貼圖,材質配對只發生在這裡；它同時代掉了
+                // 「null → 透明」與「sizeDelta = 原生尺寸置中」這兩件原本手寫的事。
+                UIKit.ApplySprite(_labelImg, s);
             }
             else if (_label != null)
             {
@@ -153,7 +155,9 @@ namespace Sdo.UI.Util
             {
                 int idx = i;
                 var row = UIKit.AddImage(panel, "row" + i, Color.white, raycast: true);
-                row.sprite = (i == _index) ? _listH : _listN;   // green row (selected uses the hover art)
+                // ApplySprite 而非直接指派:列圖若走 premult 路徑要配 premult 材質(材質是 Image 層級的,所以下面
+                // SpriteSwap 換 hover 圖時仍然對)。它設的 sizeDelta 由下一行的 listW×rowH 覆蓋。
+                UIKit.ApplySprite(row, (i == _index) ? _listH : _listN);   // green row (selected uses the hover art)
                 var rt = row.rectTransform;
                 rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0f, 1f);
                 rt.sizeDelta = new Vector2(listW, rowH); rt.anchoredPosition = new Vector2(0f, -rowH * i);
@@ -161,7 +165,8 @@ namespace Sdo.UI.Util
                 if (!_listAsText && _valueSprites != null && i < _valueSprites.Length && _valueSprites[i] != null)
                 {
                     var im = UIKit.AddImage(row.transform, "s", Color.white);
-                    im.sprite = _valueSprites[i]; im.preserveAspect = true; im.raycastTarget = false;
+                    UIKit.ApplySprite(im, _valueSprites[i]);   // premult 值圖要配 premult 材質；尺寸交給下面的 Stretch
+                    im.preserveAspect = true; im.raycastTarget = false;
                     UIKit.Stretch(im.rectTransform, 4, 2, 4, 2);
                 }
                 else
