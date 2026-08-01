@@ -27,6 +27,8 @@ namespace Sdo.UI.Util
 
         /// <summary>分頁條圖集(BaseBoard2_man.png,546×546)。底部那排 93×31 的動作鈕也都在這張裡。</summary>
         public const string TabAtlas = "BASEBOARD2_MAN.PNG";
+        /// <summary>第五格分頁(星座守護)的圖集 —— 與前四格不同一張。</summary>
+        public const string ZodiacAtlas = "ZODIAC.PNG";
 
         private static string _dir;
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
@@ -69,7 +71,16 @@ namespace Sdo.UI.Util
             return s;
         }
 
-        /// <summary>直接以官方 .an 的 top-left 座標裁圖集(y 在這裡是「從上往下」,與 .an 檔一致)。</summary>
+        /// <summary>
+        /// 直接以官方 .an 的 top-left 座標裁圖集(y 在這裡是「從上往下」,與 .an 檔一致)。
+        ///
+        /// 🔴 裁下來的像素會**複製到自己的貼圖**上,不是共用整張圖集。
+        ///    共用圖集時 sprite 的邊緣取樣會把 rect **外面**的像素拖進來 —— BaseBoard2_man.png 上
+        ///    那幾條分頁彼此上下貼著、周圍還是白的,結果四格分頁全部鑲一圈白底(使用者回報「沒去背」)。
+        ///    自己的貼圖沒有鄰居可滲,而且 Clamp 之後邊緣就是自己的顏色。
+        ///    順帶把「透明區存 (255,255,255,0)」那種白 matte 的 RGB 換成鄰近不透明色(AlphaBleed 的同一招),
+        ///    否則半透明的邊會滲出白線。
+        /// </summary>
         public static Sprite AtlasCrop(string imageName, int x, int y, int w, int h)
         {
             if (string.IsNullOrEmpty(imageName) || w <= 0 || h <= 0) return null;
@@ -81,10 +92,48 @@ namespace Sdo.UI.Util
             if (tex == null) return null;
             if (x < 0 || y < 0 || x + w > tex.width || y + h > tex.height) return null;
 
-            var rect = new Rect(x, tex.height - y - h, w, h);
-            s = Sprite.Create(tex, rect, new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            var px = tex.GetPixels32(0);
+            var cut = new Color32[w * h];
+            for (int row = 0; row < h; row++)
+            {
+                // 圖集是左下原點,.an 的 y 是左上原點 → 逐列反轉。
+                int srcRow = tex.height - y - h + row;
+                System.Array.Copy(px, srcRow * tex.width + x, cut, row * w, w);
+            }
+            // 透明像素的 RGB 常常是純白(工具的預設 matte)。把它換成同列最近的不透明色,
+            // 邊緣做雙線性混色時才不會混出一圈白。
+            BleedTransparent(cut, w, h);
+
+            var own = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            own.SetPixels32(cut);
+            own.Apply(false, false);
+
+            s = Sprite.Create(own, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
             _cache[key] = s;
             return s;
+        }
+
+        /// <summary>把透明像素的 RGB 換成同一列最近的不透明像素(alpha 不動,純外觀修正)。</summary>
+        private static void BleedTransparent(Color32[] px, int w, int h)
+        {
+            for (int row = 0; row < h; row++)
+            {
+                int b = row * w;
+                Color32 last = default; bool has = false;
+                for (int i = 0; i < w; i++)   // 由左往右補
+                {
+                    int k = b + i;
+                    if (px[k].a > 8) { last = px[k]; has = true; }
+                    else if (has) { px[k].r = last.r; px[k].g = last.g; px[k].b = last.b; }
+                }
+                has = false;
+                for (int i = w - 1; i >= 0; i--)   // 再由右往左補左邊那一段
+                {
+                    int k = b + i;
+                    if (px[k].a > 8) { last = px[k]; has = true; }
+                    else if (has) { px[k].r = last.r; px[k].g = last.g; px[k].b = last.b; }
+                }
+            }
         }
 
         // ---------------------------------------------------------------- 分頁條
@@ -120,6 +169,16 @@ namespace Sdo.UI.Util
         public static Sprite TabStrip(int index, bool selected, out float dx)
         {
             dx = 0f;
+            // 🔴 第五格「星座守護」不在 BaseBoard2_man.png 裡 —— 它是另一個圖集 Zodiac.png
+            //    (ZoSelect_a 未選 101,988,350×37 / ZoSelect_b 已選 101,949,350×39)。
+            //    查表那組只涵蓋前四格,第五格要單獨走。
+            if (index == 4)
+                return selected
+                    ? AtlasCrop(ZodiacAtlas, 101, 949, 350, 39)
+                    // 🔴 官方 ZoSelect_a 寫的是 (101,988,350,**37**) → 底邊 1025,而 Zodiac.png 只有 1024 高
+                    //    —— **官方那份資料自己越界**(女版 Dlg158 也有同一個毛病)。AtlasCrop 對越界回 null,
+                    //    所以照抄的話第五格「未選」狀態整個畫不出來(實機:分頁條只剩四格)。夾成 36,少一列像素看不出來。
+                    : AtlasCrop(ZodiacAtlas, 101, 988, 350, 36);
             if (index < 0 || index > 3) return null;
             var t = selected ? TabSelectedRect : TabNormalRect;
             int x = t[index, 0], y = t[index, 1], w = t[index, 2], h = t[index, 3];

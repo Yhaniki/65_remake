@@ -340,30 +340,6 @@
    "v": "Miss率"
   },
   {
-   "k": "room.info_match_rank",
-   "v": "現在の順位"
-  },
-  {
-   "k": "room.info_match_wins",
-   "v": "大会勝利数"
-  },
-  {
-   "k": "room.info_match_points",
-   "v": "大会ポイント"
-  },
-  {
-   "k": "room.info_cards_owned",
-   "v": "所持カード"
-  },
-  {
-   "k": "room.info_cards_sets",
-   "v": "コンプリート数"
-  },
-  {
-   "k": "room.info_cards_points",
-   "v": "カードポイント"
-  },
-  {
    "k": "room.info_winrate",
    "v": "勝率"
   },

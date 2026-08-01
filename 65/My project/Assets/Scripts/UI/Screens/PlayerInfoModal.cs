@@ -43,12 +43,11 @@ namespace Sdo.UI.Screens
         private const float TabX = 333f, TabY = 116f;            // <CheckBox name="playerTabCheck0..3" x="333" y="116"/>(四格疊在同一點)
         // 每一格的可點範圍(相對分頁條左緣)。量自 BaseBoard2_man.png 上未選那四張圖各自的不透明範圍:
         // 5-73 / 73-142 / 143-212 / 213-282(283 之後是官方第五格「星座」的位置,我們不畫)。
-        private static readonly float[] TabPillX = { 4f, 73f, 143f, 213f };
+        private static readonly float[] TabPillX = { 4f, 73f, 143f, 213f, 283f };
         private const float TabPillW = 70f, TabPillH = 39f;
-        // 官方男版分頁條有**四格**素材(Dlg4/7/10/158 → 基本信息 / 技術統計 / 賽事信息 / 拼圖卡片),
-        // 第五格「星座守護」是另一組(ZoSelect_a/b)、走另一套版面,這裡先不放。
-        // 🔴 以前只接了前兩格,後兩格根本點不動(使用者回報「右上 tab 全部沒接」)。
-        private const int TabBasic = 0, TabStats = 1, TabMatch = 2, TabCards = 3, TabCount = 4;
+        // 官方男版分頁條有**五格**:Dlg4/7/10/158(基本信息/技術統計/賽事信息/拼圖卡片)在 BaseBoard2_man.png,
+        // 第五格「星座守護」(ZoSelect_a/b)在**另一個圖集** Zodiac.png —— 見 PlayerInfoArt.TabStrip。
+        private const int TabBasic = 0, TabStats = 1, TabMatch = 2, TabCards = 3, TabZodiac = 4, TabCount = 5;
 
         // 分頁內容板。官方兩頁的板子差 1-2 px(基本頁 PlayerInformationDlg34_man.an 掛在 playerTabWindow0(-1,+6)
         // → 絕對 (335,153) 348×337;技术统计頁 PlayerInformationDlg43_man.an 掛在 playerTabWindow1(+1,+6)
@@ -99,11 +98,45 @@ namespace Sdo.UI.Screens
         private const float ExpValX = 437f, ExpValY = 176f;          // exp         (438,170)
         private const int CharmCount = 12;                           // 🔴 官方 Charm1..24 是「12 個位置 × 亮/暗兩張」,不是 24 顆(x 只排到 646)
         private const float CharmX = 425f, CharmY = 249f, CharmStep = 20f;
+        private const float LuckyX = 428f, LuckyY = 278f;            // lucky1..24 (429,272) 同款 12 個位置
         private const float FamilyValX = 431f, FamilyValY = 339f;    // familyname  (432,333)
         private const float OfferValX = 602f, OfferValY = 340f;      // offer       (603,334) 家族榮譽度
         private const float IntimateValX = 429f, IntimateValY = 367f;// intimate    (430,361) 密友度
         private const float SocialValX = 426f, SocialValY = 394f;    // SendNum     (427,388) 社交值
         private const float LuckValX = 419f, LuckValY = 379f;        // luckvalue   (420,373)
+
+        // ---- 賽事信息頁(官方 playerTabWindow2,容器偏移 x=1 y=16;下面是加過偏移的絕對座標) ----
+        private const float DuanweiBarX = 438f, DuanweiBarY = 162f;   // pro_duanwei (437,146) 236×19
+        private const int DuanweiCount = 12;                          // duanwei1..24 = 12 個位置 × 亮/暗
+        private const float DuanweiX = 434f, DuanweiY = 196f, DuanweiStep = 20f;   // (433,180) 起,每 20px
+        private const float XunzhangX = 357f, XunzhangY = 320f;       // AvtXunzhang1 (356,304) → 容器再 -12
+        private const float XunzhangStepX = 52f, XunzhangStepY = 53f; // 官方 356/408/460/512/564/616、304/357
+        private const float XunzhangW = 49f, XunzhangH = 48f;
+        private static readonly Color XunzhangSlotCol = new Color(0f, 0f, 0f, 0.28f);   // 空勳章格(官方是 3D 模型位)
+
+        // ---- 拼圖卡片頁(官方 playerTabWindow3 的 PinTuTab,容器偏移 y=-8;裡層 PinTuTabWindow 再 x=2 y=-6) ----
+        private const int CardTabCount = 8;                            // PinTuTabCheck0..7
+        private const float CardTabX = 348f, CardTabY = 154f, CardTabStep = 36f;   // (348,162) 起,每 36px
+        private const float CardDoneX = 621f, CardAllX = 642f, CardDoneY = 157f;   // Complete0/All0 (619/640,171)
+        /// <summary>六格拼圖的 x,y,w,h(官方 PinTu0_0..5,寬高不一致 —— 照抄,不要用公式)。</summary>
+        private static readonly float[,] CardSlot =
+        {
+            { 405f, 193f, 122f, 111f }, { 485f, 193f, 128f, 111f }, { 573f, 193f, 96f, 111f },
+            { 405f, 270f, 122f, 131f }, { 485f, 271f, 128f, 131f }, { 574f, 270f, 96f, 132f },
+        };
+
+        // ---- 星座守護頁(官方 playerTabWindow4,容器偏移 x=-1 y=+6;下面是加過偏移的絕對座標) ----
+        // 12 個星座圍成一圈,座標逐字取自 ZoTabGrayCheck0..11。
+        private static readonly string[] ZodiacNames =
+        {
+            "Baiyang", "Jinniu", "Shuangzi", "Juxie", "Shizi", "Chunv",
+            "Tianping", "tianxie", "Sheshou", "Mojie", "Shuiping", "Shuangyu",
+        };
+        private static readonly float[,] ZodiacPos =
+        {
+            { 438f, 174f }, { 385f, 193f }, { 364f, 247f }, { 364f, 319f }, { 384f, 359f }, { 438f, 386f },
+            { 510f, 386f }, { 549f, 358f }, { 578f, 320f }, { 578f, 247f }, { 551f, 193f }, { 510f, 174f },
+        };
 
         // ---- 技術統計頁(官方 playerTabWindow1,容器偏移 x=1 y=6;下面全是**加過偏移的絕對座標**) ----
         //
@@ -146,13 +179,13 @@ namespace Sdo.UI.Screens
         private OutlinedLabel _idName;
         private TextMeshProUGUI _idLevel;
 
-        private Image _angelBar, _expBar, _weightBar;
+        private Image _angelBar, _expBar, _weightBar, _duanweiBar;
         private TextMeshProUGUI _basicExp, _basicFamily, _basicOffer, _basicIntimate, _basicSocial, _basicLuck;
         private RateRow[] _rateRows;
         private RectTransform _skillBody, _effortBody;          // 技術統計的兩個子頁(統計明細 / 成就)
         private Button _skillBtn, _effortBtn;
         private TextMeshProUGUI _perfLabel, _perfAuLabel, _statsRankLabel;
-        private TextRow[] _matchRows, _cardRows;   // 賽事信息 / 拼圖卡片(系統還沒有 → 欄位在、值恆 0)
+        private TextMeshProUGUI _cardsDone, _cardsAll;   // 拼圖「完成數 / 總數」
         private TextMeshProUGUI _basicNote, _statsNote;
 
         private Button _whisperBtn, _friendBtn, _mailBtn, _enemyBtn, _buyLookBtn;
@@ -200,10 +233,9 @@ namespace Sdo.UI.Screens
             BuildBasicTab(_tabBody[TabBasic]);
             BuildStatsTab(_tabBody[TabStats]);
             // 賽事信息 / 拼圖卡片:系統都還沒有,但分頁要點得動、內容要看得到欄位(值 0)。
-            BuildPlaceholderTab(_tabBody[TabMatch], "Match",
-                new[] { "room.info_match_rank", "room.info_match_wins", "room.info_match_points" }, out _matchRows);
-            BuildPlaceholderTab(_tabBody[TabCards], "Cards",
-                new[] { "room.info_cards_owned", "room.info_cards_sets", "room.info_cards_points" }, out _cardRows);
+            BuildMatchTab(_tabBody[TabMatch]);
+            BuildZodiacTab(_tabBody[TabZodiac]);
+            BuildCardsTab(_tabBody[TabCards]);
             BuildButtons(_window);
 
             var close = AddOfficialButton(_window, "Close", PlayerInfoArt.CloseN,
@@ -292,6 +324,11 @@ namespace Sdo.UI.Screens
                 UIKit.AddSprite(body, "CharmOff" + i, PlayerInfoArt.An("PlayerInformationDlg38"),
                                 CharmX + i * CharmStep, CharmY);
 
+            // 幸運值:同魅力值,12 個位置 × 亮(Dlg268)/暗(Dlg238)。沒有這套系統 → 全暗。
+            for (int i = 0; i < CharmCount; i++)
+                UIKit.AddSprite(body, "LuckyOff" + i, PlayerInfoArt.An("PlayerInformationDlg238"),
+                                LuckyX + i * CharmStep, LuckyY);
+
             // 官方那幾格數值。有資料的只有家族;其餘固定 0(使用者要求:沒資料也要顯示 0,不要留白)。
             _basicExp = AddValue(body, "exp", ExpValX, ExpValY, 118f, Color.white, TextAlignmentOptions.Left);
             _basicFamily = AddValue(body, "familyname", FamilyValX, FamilyValY, 72f, Color.black, TextAlignmentOptions.Left);
@@ -312,6 +349,75 @@ namespace Sdo.UI.Screens
             _enemyBtn.gameObject.SetActive(!self);
             _buyLookBtn.gameObject.SetActive(!self);
 
+        }
+
+        /// <summary>
+        /// 拼圖卡片頁(官方 <c>playerTabWindow3</c> 的 <c>PinTuTab</c>,容器偏移 y=-8/-6)。
+        ///
+        /// 官方是左側 8 個系列分頁(PinTuTabCheck0..7)+ 右側 6 格拼圖(PinTu N_0..5)+「完成數/總數」。
+        /// 這個重製版沒有拼圖收集系統 → 分頁按得動、格子是空的、完成數 0/6。
+        /// </summary>
+        private void BuildCardsTab(RectTransform body)
+        {
+            for (int i = 0; i < CardTabCount; i++)
+            {
+                var b = AddOfficialButton(body, "PinTuTab" + i, PlayerInfoArt.An("PlayerInformationDlg161"),
+                    PlayerInfoArt.An("PlayerInformationDlg161"), PlayerInfoArt.An("PlayerInformationDlg161"),
+                    CardTabX, CardTabY + i * CardTabStep, null);
+                b.transition = Selectable.Transition.None;
+            }
+
+            // 六格拼圖。官方每格的寬高不一樣(122/128/96 × 111/131),照官方那組 rect 擺。
+            for (int i = 0; i < 6; i++)
+            {
+                var slot = UIKit.AddImage(body, "PinTu" + i, XunzhangSlotCol);
+                Place(slot.rectTransform, CardSlot[i, 0], CardSlot[i, 1], CardSlot[i, 2], CardSlot[i, 3]);
+            }
+
+            _cardsDone = AddValue(body, "Complete0", CardDoneX, CardDoneY, 16f, Color.black, TextAlignmentOptions.Left);
+            _cardsAll = AddValue(body, "All0", CardAllX, CardDoneY, 16f, Color.black, TextAlignmentOptions.Left);
+            _cardsDone.text = "0";
+            _cardsAll.text = "6";
+        }
+
+        /// <summary>
+        /// 賽事信息頁(官方 <c>playerTabWindow2</c>,容器偏移 x=1 y=16)。
+        ///
+        /// 官方這頁的三塊:段位進度條(pro_duanwei)、一排 12 顆段位星(duanwei1..24 = 12 個位置 × 亮/暗兩張)、
+        /// 以及 12 格勳章(AvtXunzhang1..12)。這個重製版沒有段位也沒有勳章 →
+        /// 條是空的、星全部暗、勳章格空著,那正是官方「什麼都還沒拿到」的樣子
+        /// (使用者要求:沒資料也要把版面畫出來,不要整頁空白)。
+        /// </summary>
+        private void BuildMatchTab(RectTransform body)
+        {
+            _duanweiBar = AddProgress(body, "pro_duanwei", DuanweiBarX, DuanweiBarY, "PlayerInformationDlg186_man");
+
+            // 12 顆段位星。亮的是 Dlg175(18×18)、暗的是 Dlg175_2(9×18) —— 沒有段位就全部畫暗的。
+            for (int i = 0; i < DuanweiCount; i++)
+                UIKit.AddSprite(body, "Duanwei" + i, PlayerInfoArt.An("PlayerInformationDlg175_2"),
+                                DuanweiX + i * DuanweiStep, DuanweiY);
+
+            // 12 格勳章(6×2)。官方那格是 AvtShow(3D 勳章模型),我們沒有那些模型 → 只留框的位置,
+            // 之後真要做就把 sprite 換上去。
+            for (int i = 0; i < 12; i++)
+            {
+                float x = XunzhangX + (i % 6) * XunzhangStepX;
+                float y = XunzhangY + (i / 6) * XunzhangStepY;
+                var slot = UIKit.AddImage(body, "Xunzhang" + i, XunzhangSlotCol);
+                Place(slot.rectTransform, x, y, XunzhangW, XunzhangH);
+            }
+        }
+
+        /// <summary>
+        /// 星座守護頁(官方 <c>playerTabWindow4</c>,容器偏移 x=-1 y=+6)。
+        /// 12 個星座圍成一圈,每格都是 <c>Zo*Gray_b.an</c> 的灰圖 —— 官方沒擁有的星座就是灰的,
+        /// 這個重製版沒有星座系統 → **全部都是灰的**,那正好就是「一個都還沒點亮」的官方樣子。
+        /// </summary>
+        private void BuildZodiacTab(RectTransform body)
+        {
+            for (int i = 0; i < ZodiacNames.Length; i++)
+                UIKit.AddSprite(body, "Zodiac" + i, PlayerInfoArt.An("Zo" + ZodiacNames[i] + "Gray_b"),
+                                ZodiacPos[i, 0], ZodiacPos[i, 1]);
         }
 
         /// <summary>官方 ProgressBar:236×19 的前景圖,用 Filled 由左往右填。</summary>
@@ -390,25 +496,6 @@ namespace Sdo.UI.Screens
                               PlayerInfoArt.An(skill ? "EffortBtn1_man" : "EffortBtn2_man"));
         }
 
-        /// <summary>
-        /// 賽事信息 / 拼圖卡片這兩頁。
-        ///
-        /// 🔴 這個重製版**沒有**賽事系統與拼圖卡片系統,但官方那兩格分頁是點得動的,而且點進去有東西看。
-        ///    使用者要求「就算沒玩過也要顯示全部 0,不是沒數據就都不用接」——所以這裡照官方的欄位名
-        ///    把列印出來、值一律 0。空白的一頁看起來像功能沒做完,一排 0 至少看得出「這裡會有什麼」。
-        ///
-        /// ⚠️ 官方那兩頁的**完整版面**(賽事的名次列表、拼圖的 6×N 卡片格)沒有重製 —— 這裡只有欄位列。
-        /// </summary>
-        private void BuildPlaceholderTab(RectTransform body, string name, string[] labelKeys, out TextRow[] rows)
-        {
-            rows = new TextRow[labelKeys.Length];
-            for (int i = 0; i < labelKeys.Length; i++)
-            {
-                rows[i] = TextRow.Create(body, name + "Row" + i, RowX, BasicRow0Y + i * RowStep,
-                                         RowW, RowH, RowLabelW, RowFont);
-                rows[i].Set(L(labelKeys[i]), "0");
-            }
-        }
 
         private TextMeshProUGUI MakeNote(RectTransform body, string name)
         {
