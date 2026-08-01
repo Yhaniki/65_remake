@@ -74,14 +74,18 @@ namespace Sdo.UI.Util
         ///      所以底板右緣會滲出一條鄰居的深色雜訊(使用者連兩輪回報「框旁邊切錯的黑色雜訊」)。
         ///    複製到自己的貼圖之後兩個問題都不存在:沒有鄰居可滲,也不做任何邊緣壓暗。
         /// </summary>
-        public static Sprite AnRaw(string anName)
+        /// <param name="trimRight">
+        /// 從 .an 給的寬度**再砍掉右邊幾欄**。這是給「.an 的 crop 與右邊鄰居重疊」的圖用的 ——
+        /// 見 <see cref="Board"/>,那不是我們算錯,是這份資料包的 .an 自己多寫了一欄。
+        /// </param>
+        public static Sprite AnRaw(string anName, int trimRight = 0)
         {
             if (string.IsNullOrEmpty(anName)) return null;
-            string key = "raw:" + anName;
+            string key = "raw:" + anName + (trimRight > 0 ? ":t" + trimRight : "");
             if (_cache.TryGetValue(key, out var s) && s != null) return s;
             // .an 檔記的是「哪張圖的哪一塊」,直接照它的裁切走 AtlasCrop。
             if (TryReadAnCrop(anName, out string img, out int x, out int y, out int w, out int h))
-                s = AtlasCrop(img, x, y, w, h);
+                s = AtlasCrop(img, x, y, Mathf.Max(1, w - trimRight), h);
             if (s == null) s = SdoExtracted.LoadAn1(Dir, anName, bleed: true);   // 讀不到裁切資訊時的退路
             _cache[key] = s;
             return s;
@@ -269,8 +273,19 @@ namespace Sdo.UI.Util
         // ---------------------------------------------------------------- 具名版位
         // 名稱照官方 XML 的元件名取,方便回頭對 PLAYERINFORMATIONDLG_MAN.XML 的 <Window name="WinPlayerInfo">。
 
-        /// <summary>主框(官方 <c>DailogBg</c>):BaseBoard_man.png (0,0,625,502),擺在 (93,56)。</summary>
-        public static Sprite Board => AnRaw("PlayerInformationDlg0_MAN");   // 整張大底板 → 不走 solo(見 AnRaw)
+        /// <summary>
+        /// 主框(官方 <c>DailogBg</c>):BaseBoard_man.png (0,0,625,502),擺在 (93,56)。
+        ///
+        /// 🔴 <c>trimRight: 1</c> 是必要的 —— **這份資料包的 .an 多寫了一欄**:
+        ///    crop 寫 625 寬(atlas 欄 0..624),但底板自己的框只畫到 atlas x=619,620..623 是**全透明**,
+        ///    而 x=624 又冒出一條 alpha≈82 的深紫 (97,72,168) —— 那是**右邊鄰居**
+        ///    <c>PlayerInformationDlg34_man (624,0,348,337)</c> 的左邊緣,兩者重疊了 1 欄。
+        ///    照 625 裁,畫面上就會在視窗外框**外面**隔 4px 浮著一條半透明深紫線
+        ///    (絕對 x=93+624=717,實機截圖在螢幕 x=925 量到,黑底下特別清楚)——
+        ///    使用者連續五輪回報的「框旁邊那條雜訊」最後剩的就是它。
+        ///    佐證:同一個 .an 在 Super Dance Online 那份資料包裡寫的是 <c>(0,0,624,502)</c>,官方自己修過。
+        /// </summary>
+        public static Sprite Board => AnRaw("PlayerInformationDlg0_MAN", trimRight: 1);   // 整張大底板 → 不走 solo(見 AnRaw)
 
         // 底部那一排動作鈕,全部 93×31、全部在 BaseBoard2_man.png 裡。
         public static Sprite WhisperN => An("PlayerInformationDlg17");     // Dialog     (108,507)

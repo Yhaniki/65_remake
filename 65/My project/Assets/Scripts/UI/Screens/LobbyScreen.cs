@@ -159,8 +159,10 @@ namespace Sdo.UI.Screens
         // 版位對照官方實機截圖:六角(651) / 放大鏡(688) / NEW筆(722) / 返回(759),而問號那顆(723,44)
         // 官方**根本沒畫**(使用者也要求拿掉)→ 這裡不放,設定改從放大鏡那顆的下拉選單進去(見 BuildHallMenu)。
         private const float ChannelBgX = 285f, ChannelBgY = 7f;
-        // 🔴 官方 XML 是 288/385,但實機那排字整體再往右 4px(使用者實機比對) → 292/389 再 +4。
-        private const float ServerX = 296f, ChannelX = 393f, TopLabelY = 9f;
+        // 🔴 官方 XML 是 288/385,但實機那排字整體要再往右 —— 使用者分兩次比對加了 4px 與 5px,
+        //    共 +9 → 297/394。名牌(ChannelBgX=285)不動,只有字往右;兩個標籤是**一起**移的,
+        //    它們在名牌上的相對位置(伺服器名 / 頻道號各自置中)才對得上官方。
+        private const float ServerX = 301f, ChannelX = 398f, TopLabelY = 9f;
         private const float TopWeddingX = 651f, TopHouseX = 688f, TopRankX = 722f, TopIconY = 8f;
         private const float TopLogoutX = 759f, TopLogoutY = 8f;
 
