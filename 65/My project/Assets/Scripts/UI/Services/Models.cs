@@ -105,6 +105,16 @@ namespace Sdo.UI.Services
         public List<SeatInfo> Seats = new List<SeatInfo>();
         public string SongTitle;   // currently selected song label (null = none)
 
+        /// <summary>
+        /// 坐著的人的性別(0=女 1=男),依座位順序,長度 == <see cref="Count"/>;null / 太短 = 不知道。
+        ///
+        /// 大廳房卡上那排愛心靠它上色(官方:女=粉紅 FEMALE.AN、男=藍 MALE.AN、空位=灰 MAN.AN)。
+        /// 為什麼不放進 <see cref="SeatInfo"/>:房間列表的封包**沒有**逐座位的資料
+        /// (那是進房之後 roomState 才有的),這裡只是「第 N 個人是男是女」這麼多,
+        /// 硬塞進座位會讓人以為那些座位是真的(它們是 ToRoomInfo 補出來的佔位)。
+        /// </summary>
+        public int[] SeatGenders;
+
         // ---- 連線才用得到的欄位 ----
 
         /// <summary>

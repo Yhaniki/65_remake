@@ -330,6 +330,13 @@ namespace Sdo.Net
         public int Mode;
         public string SongTitle;
 
+        /// <summary>
+        /// 坐著的人的性別(0=女 1=男),依座位順序,長度 == <see cref="Count"/>。空位不列。
+        /// 大廳房卡那排愛心靠它上色(女=粉紅、男=藍、空位=灰)。舊版 server 不送這個欄位 → 空陣列,
+        /// 呼叫端退回「一律當女生」(那是官方唯一那顆彩色心的顏色,退化得最不突兀)。
+        /// </summary>
+        public int[] Genders;
+
         public bool IsFull => Count >= Capacity;
 
         public static NetRoomListEntry Decode(object node)
@@ -350,6 +357,13 @@ namespace Sdo.Net
             e.Spectators = NetJson.Int(node, "spectators");
             e.Mode = NetJson.Int(node, "mode");
             e.SongTitle = NetJson.Str(node, "songTitle");
+            var g = NetJson.Arr(node, "genders");
+            if (g != null && g.Count > 0)
+            {
+                e.Genders = new int[g.Count];
+                // MiniJson 把所有數字都 parse 成 double(見 NetJson.Long 的註解)。
+                for (int i = 0; i < g.Count; i++) e.Genders[i] = g[i] is double d ? (int)d : 0;
+            }
             return e;
         }
 

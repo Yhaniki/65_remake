@@ -327,6 +327,10 @@ namespace Sdo.Server.Net
                     .Str("hostName", hostName)
                     .Str("status", NetState.ToWire(s.Status))
                     .Int("count", s.SeatedCount)
+                    // 每個座位的性別(0=女 1=男),空位不列 —— 大廳房卡上那排愛心要照性別上色
+                    // (官方:女=粉紅 FEMALE.AN、男=藍 MALE.AN、空位=灰 MAN.AN)。
+                    // 只送「坐著的人」的性別、依座位順序,長度就等於 count。
+                    .Put("genders", SeatGenders(s))
                     .Int("capacity", s.Capacity)
                     .Int("spectators", s.Spectators != null ? s.Spectators.Length : 0)
                     .Int("mode", s.Settings.GameMode)
@@ -337,6 +341,25 @@ namespace Sdo.Server.Net
                 .Str(NetProto.FieldType, NetProto.RoomListResult)
                 .Int(NetProto.FieldRequest, rq)
                 .Put("rooms", arr));
+        }
+
+        /// <summary>
+        /// 房間裡「坐著的人」的性別,依座位順序(0=女 1=男)。長度 == <c>SeatedCount</c>。
+        ///
+        /// 大廳房卡上那排愛心要照這個上色(官方:女=粉紅、男=藍、空位=灰)。只送坐著的、不送空位 ——
+        /// 空位的顏色是固定的,client 自己補得出來,沒必要把六格都送。
+        /// </summary>
+        private static JArr SeatGenders(NetRoomSnapshot s)
+        {
+            var arr = JArr.New();
+            if (s.Seats != null)
+                for (int i = 0; i < s.Seats.Length; i++)
+                {
+                    var seat = s.Seats[i];
+                    if (seat == null || !seat.IsTaken) continue;
+                    arr.Add(seat.Look != null ? seat.Look.Gender : 0);
+                }
+            return arr;
         }
 
         /// <summary>
