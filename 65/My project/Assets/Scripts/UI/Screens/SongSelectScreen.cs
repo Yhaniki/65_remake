@@ -359,7 +359,9 @@ namespace Sdo.UI.Screens
             _iconRandom = SongIcons.LoadNamed("RANDOM.PNG");   // 隨機 disc (ICONS/RANDOM.PNG)
             _iconNone = SongIcons.LoadNamed("NONE.PNG");        // "no cover" disc (ICONS/NONE.PNG)
             var baseImg = root.gameObject.AddComponent<Image>();
-            baseImg.sprite = RoomDlgArt.An("MusicSelDlg106.an");
+            // AnRaw(不是 An):這張是下面那顆 Mask 的 showMaskGraphic,而 premult 材質(Sdo/SpritePremultiply)沒有 Stencil
+            // block —— 換成 premult 遮罩就對它失效。它的 matte 本來就全是 α=0,沒有白邊問題。
+            baseImg.sprite = RoomDlgArt.AnRaw("MusicSelDlg106.an");
             baseImg.raycastTarget = true;   // 點唱片區域 → 切換停轉/轉動（ToggleDiskSpin）
             var mask = root.gameObject.AddComponent<Mask>();
             mask.showMaskGraphic = true;   // the vinyl shows as the base; children clip to its circular alpha
@@ -775,9 +777,8 @@ namespace Sdo.UI.Screens
             _infoNotes = MakeInfo("info_notes", 110, 346);     // value after the lbl_notes label below
 
             var notesLbl = UIKit.AddImage(Root, "info_notes_lbl", Color.white);
-            notesLbl.sprite = RoomDlgArt.An("lbl_notes.an");
+            UIKit.ApplySprite(notesLbl, RoomDlgArt.An("lbl_notes.an"));   // premult → 必須經 ApplySprite 掛材質(也代掉 null → 透明)
             notesLbl.raycastTarget = false;
-            if (notesLbl.sprite == null) notesLbl.color = new Color(1f, 1f, 1f, 0f);
             Place(notesLbl.rectTransform, 53, 343, 66, 16);    // 音符數 label x (nudged right to line up with 演唱者/BPM)
         }
 
@@ -814,7 +815,7 @@ namespace Sdo.UI.Screens
             // (offline xml: lblTeamMode x289 / lblFormation x571 / lookernum x661, all y≈484).
             Sprite listMode = RoomDlgArt.An("ShopDlg16.an"), listModeH = RoomDlgArt.An("ShopDlg17.an");   // green list rows (mode)
             Sprite listSm = RoomDlgArt.An("ShopDlg18.an"), listSmH = RoomDlgArt.An("ShopDlg19.an");       // green list rows (formation/looker)
-            Sprite arrow = RoomDlgArt.An("MusicSelDlg196.an");   // orange ▲
+            Sprite arrow = RoomDlgArt.An("MusicSelDlg196.an");   // orange ▲（premult 去白邊,見 RoomDlgArt.An）
             const float slotY = 488f, slotH = 22f;
 
             // Collapsed = value centred in the baked slot + ▲; list is green on expand. Mode VALUE uses the original
@@ -1142,14 +1143,14 @@ namespace Sdo.UI.Screens
             if (_sceneIndex <= 0)
             {
                 if (_sceneName != null) _sceneName.text = L("songselect.random");
-                thumb = RoomDlgArt.An("RandomScene.an") ?? RoomDlgArt.An("Scene1.an");
+                thumb = RoomDlgArt.AnRaw("RandomScene.an") ?? RoomDlgArt.AnRaw("Scene1.an");
             }
             else
             {
                 var stage = _stages[Mathf.Clamp(_sceneIndex - 1, 0, _stages.Count - 1)];
                 if (_sceneName != null) _sceneName.text = stage.DisplayName;
                 // thumbnail = Scene{sceneId+1}.an (EXE rule), NOT by list position.
-                thumb = RoomDlgArt.An("Scene" + (stage.Id + 1) + ".an") ?? RoomDlgArt.An("Scene1.an");
+                thumb = RoomDlgArt.AnRaw("Scene" + (stage.Id + 1) + ".an") ?? RoomDlgArt.AnRaw("Scene1.an");
             }
             if (_sceneBig != null)
             {

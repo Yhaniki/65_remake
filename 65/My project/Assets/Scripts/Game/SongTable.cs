@@ -41,6 +41,7 @@ namespace Sdo.Game
             public float bpm = -1f;     // 顯示 BPM（判定與流速一律讀譜面本身）
             public float offsetMs;      // 這首的音訊校正（見 SongCatalog.Entry.offsetMs）
             public string src = "";     // 歌名來源標記，僅供辨識
+            public bool hidden;         // 屏蔽：不讓這首歌出現在遊戲裡（見 SongCatalog.Entry.hidden）
 
             // ── 譜面數值（每個難度一格：0=easy 1=normal 2=hard）──────────────────
             public int[] levels = { -1, -1, -1 };
@@ -143,6 +144,7 @@ namespace Sdo.Game
                     bpm = Float(f, col, "bpm", -1f),
                     offsetMs = Float(f, col, "offsetMs", 0f),
                     src = Str(f, col, "src"),
+                    hidden = Bool(f, col, "hidden"),
                     chartBpm = Float(f, col, "chartBpm", -1f),
                     levels = new[] { Int(f, col, "lvEasy", -1), Int(f, col, "lvNormal", -1), Int(f, col, "lvHard", -1) },
                     noteCounts = new[] { Int(f, col, "notesEasy", 0), Int(f, col, "notesNormal", 0), Int(f, col, "notesHard", 0) },
@@ -234,6 +236,25 @@ namespace Sdo.Game
         {
             var s = Str(f, col, name).Trim();
             return s.Length > 0 && long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long v) ? v : 0L;
+        }
+
+        /// <summary>
+        /// 旗標欄（目前只有 <c>hidden</c>）：空 → false；<c>0</c> / <c>false</c> / <c>no</c> / <c>n</c> /
+        /// <c>off</c>（不分大小寫）→ false；**其餘一律 true**。
+        ///
+        /// 刻意寬鬆而不是只認 1：這欄是給人在 Excel 裡打的，打勾的人會寫 1、x、v、TRUE、是……
+        /// 認不得就當成「沒屏蔽」的話，使用者會以為自己屏蔽好了、遊戲裡那首歌卻還在。
+        /// 反過來的誤判（想留卻被屏蔽）只有把整格清空就好，看得見也救得回來。
+        /// </summary>
+        private static bool Bool(string[] f, Dictionary<string, int> col, string name)
+        {
+            var s = Str(f, col, name).Trim();
+            if (s.Length == 0) return false;
+            return !(s == "0"
+                     || string.Equals(s, "false", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(s, "no", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(s, "n", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(s, "off", StringComparison.OrdinalIgnoreCase));
         }
 
         private static float Float(string[] f, Dictionary<string, int> col, string name, float fallback)

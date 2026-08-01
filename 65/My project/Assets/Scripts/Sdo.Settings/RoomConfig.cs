@@ -90,7 +90,7 @@ namespace Sdo.Settings
 
         // 同兩組文字的整體不透明度（1.0 = 全不透明，0 = 完全看不見）。預設 0.6 —— 這兩叢字就疊在音符板正上方，
         // 全不透明會擋住下落中的音符；淡一點看得到連段又不吃視線。純顯示，不影響判定/分數。
-        // 判定字本來就有 0.5 秒淡出，這個值是它的「起始亮度」（整條淡出曲線等比例壓下來）。
+        // 判定字不會淡出（官方是顯示完直接消失），這個值就是它顯示期間的亮度。
         public static float comboTextAlpha = 0.6f;
         public static float judgeTextAlpha = 0.6f;
 
@@ -707,7 +707,7 @@ namespace Sdo.Settings
             sb.Append("comboTextScale=").Append(comboTextScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("judgeTextScale=").Append(judgeTextScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 同兩組文字的不透明度（1.0=全不透明 0=完全看不見，範圍 0.0~1.0）。預設 0.6：字就疊在音符板上，\n");
-            sb.Append("# 淡一點才不會擋住下落中的音符。判定字本來就會淡出，這裡是它的起始亮度。\n");
+            sb.Append("# 淡一點才不會擋住下落中的音符。判定字不會淡出(顯示完直接消失)，這裡就是它的亮度。\n");
             sb.Append("comboTextAlpha=").Append(comboTextAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("judgeTextAlpha=").Append(judgeTextAlpha.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 打中時「彈跳」放到最大那一瞬間的倍率＝峰值大小 ÷ 靜止大小（官方 2.0＝彈到兩倍再收回，\n");

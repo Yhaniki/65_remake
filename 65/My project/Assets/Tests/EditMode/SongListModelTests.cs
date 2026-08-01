@@ -109,6 +109,42 @@ namespace Sdo.Tests
         public void Curate_Null_Safe()
             => Assert.AreEqual(0, SongListModel.Curate(null).Count);
 
+        // ---- 屏蔽（song_table.csv 的 hidden 欄）：那首歌不出現在任何給人看的歌單裡 ----
+
+        [Test]
+        public void Curate_Drops_Hidden_Songs()
+        {
+            var list = Paired();
+            list[0].hidden = true;                       // sdom1197k（清單上看得到的那一列）
+            var r = SongListModel.Curate(list);
+            Assert.AreEqual(1, r.Count);
+            Assert.AreEqual("sdom1198k.gn", r[0].gn);
+        }
+
+        /// <summary>屏蔽也要吃掉隨機挑歌 —— 隨機池是從同一份 Curate 的清單來的（見 FrontendApp 重骰、
+        /// SongSelectScreen 的隨機頁），不然「遊戲裡看不到卻會被隨機骰到」。</summary>
+        [Test]
+        public void Hidden_Song_Cannot_Be_Rolled_By_Random()
+        {
+            var list = Paired();
+            foreach (var e in list) { e.notesEasy = 100; e.diffEasy = 3; }
+            list[0].hidden = true;
+            var pool = SongListModel.RandomCandidates(SongListModel.Curate(list), 3);   // 3 = 全部
+            CollectionAssert.DoesNotContain(pool.ConvertAll(c => c.Song.gn), "sdom1197k.gn");
+        }
+
+        /// <summary>屏蔽只擋「歌單」，不是把資料抹掉：目錄那一列還在，拿 gn 反查歌名的地方
+        /// （舊成績、房間紀錄、字型預熱）不會突然變空白。</summary>
+        [Test]
+        public void Hidden_Song_Is_Still_In_The_Catalog_For_Name_Lookups()
+        {
+            var rows = SongTable.Parse("gn,title,hidden\nsdom9k.gn,危險的演出,1\n");
+            var e = SongCatalog.FromRow(rows[0]);
+            Assert.IsTrue(e.hidden);
+            Assert.AreEqual("危險的演出", e.title);
+            Assert.AreEqual(0, SongListModel.Curate(new List<SongCatalog.Entry> { e }).Count);
+        }
+
         // ---- NEW 標籤 = 清單最上面 N 首（位置決定），與 fileId 無關 ----
 
         private static List<SongCatalog.Entry> Ranked() => new List<SongCatalog.Entry>

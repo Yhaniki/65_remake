@@ -265,8 +265,20 @@ namespace Sdo.Game
         private const float TrackMarginX = 14f;
         private static readonly float[] LaneLeftX = { 0f + TrackMarginX, 69f + TrackMarginX, 138f + TrackMarginX, 207f + TrackMarginX };
         private const float LaneCx0 = 34.5f;  // lane center offset (pitch/2)
-        private const float LaneW = 82f;      // note draw size
-        private const float ReceptorW = 92f;  // receptors are a touch larger than notes
+        // 官方 2D noteskin 是**整組 1:1 原生像素 blit**（跟 NOTES_BOARD1 315×600 一樣不縮放）。證據：
+        //   ① 每一套 4-key skin（NOTEIMAGE_5/6/8/9/10/11/PET/SHOWTIME）的圖尺寸完全一致 —
+        //      *HOLDHEADACTIVE* = 100×80、*_JUDGELINE* = 100×100、*_LONG*（長條 body）= 100×64。
+        //   ② 繪製函式 NewNote_DrawNoteWithEffects_004909c0 用 source rect（單位＝貼圖像素，捲動時直接寫
+        //      Pic_GetHeight 級的值進 param_5[1]/[3]）當目的高度做 Y 翻轉，旋轉中心取 Pic_GetWidth/GetHeight
+        //      的一半 → dest 尺寸 == 貼圖原生尺寸，沒有任何縮放係數。
+        // 貼圖 100 寬 > 車道 pitch 69 是**故意的**：箭頭實體只佔 x[22..77]≈56px，外圈是給旋轉/±20~30px 擺動
+        // 特效（KeyCfg byte5c8 的 note 特效模式）留的透明 padding，相鄰車道的 padding 互相重疊不影響畫面。
+        // ⚠️ 舊值 82/92 是目測估的，畫出來的箭頭只有 56×0.82≈46px，比官方小 18%（使用者實機比對回報）。
+        private const float NoteW = 100f;      // 2D 落下音符 / 炸彈本體 / 長條 的顯示寬 = 貼圖原生寬（1:1）
+        private const float ReceptorW = 100f;  // JUDGELINE 也是 100×100，同樣 1:1（官方 receptor 的圖案本來就比音符略小 54 vs 56 —— 是圖畫的，不是縮放）
+        // 3D skin（hiteft3D）畫的是 NOTES.MSH/JUDGELINE.MSH 的**幾何**、不是這組貼圖，尺寸另外校準過
+        // （0.73×82≈60px ≈ 官方 2D 箭頭實體 56px，本來就對）→ 保留它原本的基準寬，本次只修 2D。
+        private const float Note3dBaseW = 82f;
         private const int Keys = 4;
         // notes must stay within the note board and never cover the HP bar (y 18..29). A SpriteMask clips note
         // sprites to this Y band; 向上 the band is [30, 600] — the 30px strip hides notes behind the top frame/HP bar
@@ -301,8 +313,10 @@ namespace Sdo.Game
         // PERFECT/COMBO/digits form ONE rigid cluster (JudgeWord → COMBO word → number). Its bounding box spans from the
         // PERFECT word's top (~JudgeWordCenter.y − 20) to the digits' bottom (~ComboDigitY + 33). The three anchors are
         // offset in lock-step so that box is centred in the play area BELOW the judgment band — NOT the whole board: the
-        // receptors are 100×100 drawn at ReceptorW=92 about judgeLineY=70, so the judgment band is [70 ± 46] = [24, 116].
-        // The usable band below it is [116, 600] (board bottom); its centre = 358, shared by every noteskin (向上/up-scroll).
+        // receptors are 100×100 drawn 1:1 (ReceptorW=100) about judgeLineY=70, so the judgment band is [70 ± 50] = [20, 120].
+        // The usable band below it is [120, 600] (board bottom); its centre = 360, shared by every noteskin (向上/up-scroll).
+        // (The anchors below stay at the 358-centre values — the 1:1 receptor fix moved the ideal centre by 2px, far below
+        // the tolerance these were placed at; re-tuning them would churn the HUD for no visible gain.)
         // (History: originally ~277 = biased up; then board-midline 300; now below-judgment centre 358.)
         private static readonly Vector2 JudgeWordCenter = new Vector2(TrackCenterX, 259);
         private const float ComboWordY = 318f;
@@ -564,7 +578,10 @@ namespace Sdo.Game
         public float noteAnimFps = 12f;
         public float bombAnimFps = 5f;   // 炸彈 ZD00..ZD03 循環速度(比音符慢,不然轉太快)
         public float bombExplodeGain = 3f;    // 爆炸圖亮度增益(additive 疊在亮亮的譜面板上,1× 看起來太淡)
-        public float bombExplodeZoom = 1.9f;  // 爆炸圖大小 = LaneW × 此值
+        // 爆炸圖大小 = NoteW × 此值。1.558 = 舊的 (LaneW 82 × 1.9) ÷ NoteW 100 —— note 改回 1:1 時**刻意保持
+        // 爆炸的絕對像素寬 155.8 不變**：這個值是實機目測調的，而 BOMB_EXPLODE.png 是 128×128（1:1 會是 1.28），
+        // 手上沒有官方炸彈爆炸的畫面可以裁定哪個對，所以不順手改它、留給後續考據。
+        public float bombExplodeZoom = 1.558f;
 
         // ---- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----
         // notes_board_click{1..4}.png (1..4 = lane) lights the struck lane. The original tints the strip with a
@@ -680,7 +697,7 @@ namespace Sdo.Game
         public float comboTextScale = Sdo.Settings.RoomConfig.comboTextScale;
         public float judgeTextScale = Sdo.Settings.RoomConfig.judgeTextScale;
         // 同兩組文字的不透明度（config.ini [Room]，1.0 = 全不透明；預設 0.6 讓字不擋住下落中的音符）。
-        // 判定字的 0.5 秒淡出是乘上去的（起始亮度 = judgeTextAlpha）。
+        // 判定字不淡出（官方是顯示一段時間後直接消失），judgeTextAlpha 就是它整段的亮度 —— 見 JudgeWordShowSec。
         public float comboTextAlpha = Sdo.Settings.RoomConfig.comboTextAlpha;
         public float judgeTextAlpha = Sdo.Settings.RoomConfig.judgeTextAlpha;
         // 打中彈跳的峰值倍率（config.ini [Room]，官方 2.0＝彈到靜止大小的兩倍；1.0＝不彈跳）。見 PopScale。
@@ -728,10 +745,12 @@ namespace Sdo.Game
         // 3D receptor (JUDGELINE) 顯示寬度 × ReceptorW × note3dMaster；F4 可調。
         // 官方 JUDGELINE.MSH 與 NOTES.MSH 是**同一組頂點**（x ±10.9845 / z ±10.4824 完全相同）→ 受擊區箭頭跟落下的
         // 音符**一樣大**。我們的受擊區畫的是整張 128px JUDGELINE 精靈，而 mesh 只覆蓋它 u 0.0217..0.9948（97.31%），
-        // 所以：精靈寬 = 音符寬 ÷ 0.9731 = (LaneW 82 × Note3dHighway.noteSize 0.73) ÷ 0.9731 ≈ 61.5 → ÷ ReceptorW 92
-        // ≈ 0.669。（舊值 0.82 是目測「補回精靈邊界」補過頭，實機看起來就是判定區圖案太大。）
-        public float receptor3dScale = 0.669f;
-        public float note3dHoldWidth = 0.73f;                        // 3D hold body/cap width × LaneW (matches the 0.73 note mesh)
+        // 所以：精靈寬 = 音符寬 ÷ 0.9731 = (Note3dBaseW 82 × Note3dHighway.noteSize 0.73) ÷ 0.9731 ≈ 61.5 →
+        // ÷ ReceptorW 100 ≈ 0.6151。（舊值 0.82 是目測「補回精靈邊界」補過頭，實機看起來就是判定區圖案太大；
+        // 0.669 則是 ReceptorW 還是 92 時的同一個 61.5px —— 2D 改 1:1 後照著重新標定，3D 的實際大小沒變。）
+        internal const float Receptor3dScaleDefault = 0.6151f;   // = 61.5 ÷ ReceptorW；抽成 const 讓回歸測試盯住這條換算
+        public float receptor3dScale = Receptor3dScaleDefault;
+        public float note3dHoldWidth = 0.73f;                        // 3D hold body/cap width × Note3dBaseW (matches the 0.73 note mesh)
         public float note3dHoldHeadGap = 0f;                         // 3D hold body TOP offset from the note head (0 = connect; +px tucks the long lower)
         public float note3dCapOffset = 0f;                           // 3D tail-cap fine offset (design px) on top of the auto weld at the tail edge
         // ── OFFICIAL LONG.MSH constants. The official hold draws the FULLY-OPAQUE LONG textures (ColorKey=0, zero
@@ -5512,7 +5531,7 @@ namespace Sdo.Game
                 int frame = ((int)(Time.time * noteAnimFps)) & 3;   // 4-frame glow cycle (= the official _0.._3 frames)
                 bool stWin = showtimeMode && _showtime.Active;
                 float noteScale = stWin ? showtimeNoteScale : 1f;       // notes grow a little during the auto-hit window
-                float noteW = LaneW * noteScale;
+                float noteW = NoteW * noteScale;
                 if (n.Note.IsBomb)
                 {
                     // 炸彈：ZD00..ZD03 循環動畫(用較慢的 bombAnimFps),平面 sprite —— 不旋轉、不吃 3D 箭頭、無長條/尾。
@@ -5536,7 +5555,7 @@ namespace Sdo.Game
                     // HOLD head is forced to family 0 = the on-beat (4th) MAGENTA (洋紅), regardless of its beat position.
                     _highwayItems.Add(new Note3dHighway.Item {
                         World = SdoLayout.ToWorld(PX(LaneLeftX[c] + LaneCx0), y, -0.5f),
-                        Size = LaneW * note3dMaster * noteScale, RotZ = Note3dRot[c] + (note3dFlip180 ? 180f : 0f),
+                        Size = Note3dBaseW * note3dMaster * noteScale, RotZ = Note3dRot[c] + (note3dFlip180 ? 180f : 0f),
                         Family = n.Note.EndTimeMs.HasValue ? 0 : n.ColorFamily });
                     n.Head.enabled = false;
                 }
@@ -5558,7 +5577,9 @@ namespace Sdo.Game
 
                 if (n.Note.EndTimeMs.HasValue)
                 {
-                    float holdW = LaneW * (_note3dMode ? note3dHoldWidth * note3dMaster : 1f) * noteScale;   // 3D skin: hold width matches the note, scaled by the master (+ showtime grow)
+                    // 2D skin: 長條也 1:1（*_LONG 是 100×64 → 寬 NoteW 時 tileH 剛好 64，圖樣不變形，見下面的 tile 分支）。
+                    // 3D skin: hold width matches the note mesh, scaled by the master (+ showtime grow).
+                    float holdW = (_note3dMode ? Note3dBaseW * note3dHoldWidth * note3dMaster : NoteW) * noteScale;
                     float cx = PX(LaneLeftX[c] + 34.5f);
                     // 尾端 = 離判定線最遠的那一頭（帽子焊在這裡，貼圖也以這裡為錨）。向上捲時在下方(較大 design y)，
                     // 向下捲時在上方(較小 y) —— 舊版一律取 Max，於是 向下 模式錨到了「頭」那一端，造成兩個 bug：
@@ -6255,7 +6276,7 @@ namespace Sdo.Game
         {
             const float dur = 0.6f;   // linear,0.3 ×2
             float cx = PX(LaneLeftX[lane] + LaneCx0), cy = judgeLineY + judgeOffsetY;
-            float w = LaneW * bombExplodeZoom;   // zoom 固定
+            float w = NoteW * bombExplodeZoom;   // zoom 固定
             for (float t = 0f; t < 1f; t += Time.deltaTime / dur)
             {
                 float a = t <= 0.5f ? 1f : Mathf.Max(0f, 1f - (t - 0.5f) * 2f);   // 前半全亮,後半 diffusealpha→0
