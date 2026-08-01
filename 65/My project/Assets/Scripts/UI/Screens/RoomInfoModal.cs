@@ -48,8 +48,9 @@ namespace Sdo.UI.Screens
         // 🔴 官方 col4 是 167 寬(右緣 519),但底圖那個右格只到 **514** —— 靠右的名字會壓在捲軸握把(521)上。
         //    收成 162 讓文字右緣正好落在格線上;這 5px 是官方自己畫歪的,不是我們算錯。
         // 🔴 名字**靠左但要縮排**:官方 col4 從 352 起,那正好是底圖那條分隔線 —— 字貼著線看起來像溢出來
-        //    (使用者回報「名字太靠左」)。往內縮 8px,與右格的內緣對齊。
-        private const float ColNameX = 360f, ColNameW = 154f;
+        //    (使用者回報「名字太靠左」)。使用者分兩次比對:先縮 8px、再往右 10px,共 +18 → 370。
+        //    右緣仍收在 514(底圖右格的格線),所以寬度跟著減。
+        private const float ColNameX = 370f, ColNameW = 144f;
         private const float HeartW = 18f, HeartH = 16f;   // FEMALE/MALE.an = stage.png (…,18,16)
 
         // 捲軸握把(RoomInfoSB.an 14×28,與大廳好友列表的 Lobby12 是同一個裁切框)。
