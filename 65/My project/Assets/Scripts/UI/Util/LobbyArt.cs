@@ -98,6 +98,56 @@ namespace Sdo.UI.Util
         }
 
         /// <summary>
+        /// 大底圖專用(視窗底板那種整片的圖)—— 照 .an 的 crop 複製到自己的貼圖。
+        ///
+        /// 🔴 房間信息的底圖 <c>stageinfoBG.an = stage.png (0,533,341,423)</c> **兩條舊路都不能走**:
+        ///    共用圖集會滲鄰居(裁切框右邊隔 1px 就是一片不透明橘色 (255,190,115)、下面貼著一塊紫色),
+        ///    solo 又會把大圖邊緣那圈半透明壓成黑邊。理由與 <see cref="PlayerInfoArt.AnRaw"/> 完全相同,
+        ///    實作也共用同一份(<see cref="AtlasCropper"/>)。
+        /// 讀不到 .an 的裁切資訊時退回共用圖集那條路(至少畫得出來)。
+        /// </summary>
+        public static Sprite AnRaw(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "raw:" + anName;
+            if (_cache.TryGetValue(key, out var s) && s != null) return s;
+            if (TryReadAnCrop(anName, out string img, out int x, out int y, out int w, out int h))
+                s = AtlasCropper.Crop(Dir, img, x, y, w, h);
+            if (s == null) s = SdoExtracted.LoadAn1(Dir, anName, bleed: false);
+            _cache[key] = s;
+            return s;
+        }
+
+        /// <summary>
+        /// 讀一個 .an 的裁切資訊。這種 .an 是**純文字**,內容就一行:<c>圖檔名 (x, y, w, h)</c>
+        /// (數字之間可能有空格,而且同一行可能重複兩次 —— 只取第一組)。讀不到就回 false。
+        /// </summary>
+        private static bool TryReadAnCrop(string anName, out string image, out int x, out int y, out int w, out int h)
+        {
+            image = null; x = y = w = h = 0;
+            try
+            {
+                string file = Path.Combine(Dir, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase)
+                                                ? anName : anName + ".an");
+                if (!File.Exists(file))
+                {
+                    file = Path.Combine(Dir, anName.ToUpperInvariant() + ".AN");
+                    if (!File.Exists(file)) return false;
+                }
+                var m = System.Text.RegularExpressions.Regex.Match(
+                    File.ReadAllText(file), @"([^\s(]+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)");
+                if (!m.Success) return false;
+                image = m.Groups[1].Value;
+                x = int.Parse(m.Groups[2].Value);
+                y = int.Parse(m.Groups[3].Value);
+                w = int.Parse(m.Groups[4].Value);
+                h = int.Parse(m.Groups[5].Value);
+                return w > 0 && h > 0;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
         /// ALL frames of a LOBBY .an as sprites (cached).
         ///
         /// 目前只有數字條在用(LobbyNum1 → num1\0..9.png 共 10 格、LobbyNum2 → num2\0..9.png):

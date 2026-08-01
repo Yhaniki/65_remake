@@ -20,5 +20,12 @@ namespace Sdo.UI.Core
         // 沒接上時 ?.Invoke() 什麼也不做，不是 NRE。
         public static Action<Sdo.UI.Services.PlayerProfile, int> OpenPlayerInfo;   // 別人的資料；int = 對方性別 0=女 1=男
         public static Action OpenSelfInfo;                                          // 自己的資料（modal 自己讀本機 profile）
+
+        // 大廳「創建舞台」→ 官方的創建遊戲房間對話框（RoomCreateModal）。
+        // 回呼收到 (房名, 密碼, 模式)；使用者按取消就不會回呼。
+        public static Action<Action<string, string, Sdo.UI.Services.GameMode>> OpenRoomCreate;
+
+        // 大廳房卡右鍵 → 官方的房間信息對話框（RoomInfoModal）。第二個參數是按「進入」時要做的事。
+        public static Action<Sdo.UI.Services.RoomInfo, Action> OpenRoomInfo;
     }
 }

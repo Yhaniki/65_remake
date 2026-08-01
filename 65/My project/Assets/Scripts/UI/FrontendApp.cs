@@ -57,6 +57,8 @@ namespace Sdo.UI
         private WardrobeScreen _wardrobe;
         private JoinRoomModal _joinRoom;
         private PlayerInfoModal _playerInfo;          // 玩家資訊視窗（房間右鍵選單「玩家信息」開它）
+        private RoomCreateModal _roomCreate;          // 創建遊戲房間（大廳「創建舞台」開它）
+        private RoomInfoModal _roomInfo;              // 房間信息（大廳房卡右鍵開它）
         private int _killGuardFrames = 3;
         private GameObject _canvasGo;                 // the whole front-end canvas (hidden while gameplay runs)
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
@@ -201,6 +203,14 @@ namespace Sdo.UI
             _playerInfo = new GameObject("PlayerInfo").AddComponent<PlayerInfoModal>();
             _playerInfo.transform.SetParent(modalLayer, false);
             _playerInfo.Build(modalLayer);
+            // 創建遊戲房間(官方 ROOMCREATEDLG)。單機也建 —— 離線大廳一樣按得到「創建舞台」。
+            _roomCreate = new GameObject("RoomCreate").AddComponent<RoomCreateModal>();
+            _roomCreate.transform.SetParent(modalLayer, false);
+            _roomCreate.Build(modalLayer);
+            // 房間信息(官方 ROOMINFORMATIONDLG)。大廳房卡右鍵開它。
+            _roomInfo = new GameObject("RoomInfo").AddComponent<RoomInfoModal>();
+            _roomInfo.transform.SetParent(modalLayer, false);
+            _roomInfo.Build(modalLayer);
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
@@ -211,6 +221,8 @@ namespace Sdo.UI
             // 玩家資訊:看自己 / 看別人。視窗裡的「私聊」鈕轉回房間的聊天輸入框(與點聊天列人名同一條路)——
             // 沒有這一手的話那顆鈕就只能隱藏,而它是官方選單裡最常按的一項。
             Nav.OpenSelfInfo = () => _playerInfo.OpenSelf();
+            Nav.OpenRoomCreate = cb => _roomCreate.Open(cb);
+            Nav.OpenRoomInfo = (room, onEnter) => _roomInfo.Open(room, onEnter);
             Nav.OpenPlayerInfo = (who, gender) => _playerInfo.Open(who, gender, name =>
             {
                 if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.BeginWhisperTo(name);
@@ -255,6 +267,10 @@ namespace Sdo.UI
             // 那個視窗的數字全部來自本機 profile.json 的累計,版位又是逐字照官方 XML 排的 ——
             // 兩件事都只有實機截圖看得出來對不對。
             if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_PLAYERINFO"))) Nav.OpenSelfInfo?.Invoke();
+            // DEV: SDO_ROOMCREATE=1 → 開機直接開「創建遊戲房間」。版位逐字照官方 ROOMCREATEDLG.XML 排,
+            //      而那個框只有按到「創建舞台」才看得到 —— 截圖工具點不了鈕,只能從這裡開。
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOMCREATE")))
+                Nav.OpenRoomCreate?.Invoke((n, p, m) => Debug.Log("[dev] createRoom " + n + " / " + m));
         }
 
         /// <summary>SDO_JOINFIRST 的實作:問房間列表 → 加入第一間 → 進房間畫面。純除錯用。</summary>

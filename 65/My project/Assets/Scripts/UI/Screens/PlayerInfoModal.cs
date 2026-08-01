@@ -132,6 +132,12 @@ namespace Sdo.UI.Screens
         private const int CharmCount = 12;                           // 🔴 官方 Charm1..24 是「12 個位置 × 亮/暗兩張」,不是 24 顆(x 只排到 646)
         private const float CharmX = 425f, CharmY = 249f, CharmStep = 20f;
         private const float LuckyX = 428f, LuckyY = 278f;            // lucky1..24 (429,272) 同款 12 個位置
+
+        // 知名度那一排。官方 <zhimingdu1..10>(432,299) 22×22,加上 playerTabWindow0 的 (-1,+6) → (431,305)。
+        // 🔴 step **22 = 沒有間隙,彼此貼著**(魅力值/幸運值是 20 step、圖 20 寬 —— 那兩排才有縫)。
+        //    格子數就是 10,官方沒有 zhimingdu0 也沒有 11。
+        private const int FameSlots = 10;
+        private const float FameX = 431f, FameY = 305f, FameStep = 22f;
         private const float FamilyValX = 431f, FamilyValY = 339f;    // familyname  (432,333)
         private const float OfferValX = 602f, OfferValY = 340f;      // offer       (603,334) 家族榮譽度
         private const float IntimateValX = 429f, IntimateValY = 367f;// intimate    (430,361) 密友度
@@ -181,6 +187,23 @@ namespace Sdo.UI.Screens
         private const float StatsEffortBtnX = 349f, StatsEffortBtnY = 223f;
         private const float StatsSkillBtnX = 458f, StatsSkillBtnY = 227f;
         private const float SkillBgX = 351f, SkillBgY = 251f;                  // SkillBg_man 322×190
+
+        // ---- 成就子頁(官方 EffortStat,容器偏移 +1/+6;下面全是加過偏移的絕對座標)----
+        // 底圖 EffortBg_man.an = Effort_man.png (0,190,322,190),官方 (350,245) → (351,251)。
+        private const float EffortBgX = 351f, EffortBgY = 251f;
+        // 🔴 上排「当前装备」6 格與下面 6×2 收藏格**不同起點**:AvtEqipEffort0 在 (375,261)、
+        //    AvtEffort0 在 (360,316) —— 官方就是錯開的(上排靠右,因為左邊讓給那條直幅)。step 兩者都是 49。
+        private const int EquipSlots = 6, EffortSlots = 12;
+        private const float EquipSlotX = 375f, EquipSlotY = 261f;
+        private const float EffortSlotX = 360f, EffortSlotY = 316f;
+        private const float EffortStep = 49f, EffortSlotSize = 45f;
+        /// <summary>問號字形的實際大小(見 <see cref="PlayerInfoArt.EffortNone"/>:只切字、不切那張偏心的 45×45)。</summary>
+        private const float QuestionW = 22f, QuestionH = 35f;
+        // EffortNownum (491,418) / EffortAllnum (518,418),中間的斜線官方沒烤 → 自己補在兩者之間。
+        private const float EffortNumY0X = 491f, EffortNumY1X = 518f, EffortNumY = 418f, EffortSlashX = 508f;
+        private static readonly Color32 EffortNumCol = new Color32(0xFF, 0xFC, 0xA5, 0xFF);   // 官方 0xfffffca5
+        private const float EffortOkX = 429f, EffortOffX = 541f, EffortBtnY = 413f;           // 装备 / 脱下 各 65×24
+        private const float EffortRailX = 654f, EffortRailTop = 325f;                          // 見 BuildEffortSub 的註解
         private const float RateRow0Y = 264f, RateStep = 29f, RateFont = 12f;  // 官方 258/287/316/345/374/403 (+6)
         private const float RateBarX = 434f, RateBarW = 236f, RateBarH = 19f;  // ProgressBar 236×19
         private const float RateValDx = 7f;                                    // 數值文字相對條左緣(官方 440-433)
@@ -213,12 +236,14 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI _idLevel;
 
         private Image _angelBar, _expBar, _weightBar, _duanweiBar;
+        private Image[] _fameSlots;                             // 知名度那 10 格(星 / 月 / 太陽)
         private TextMeshProUGUI _basicExp, _basicFamily, _basicOffer, _basicIntimate, _basicSocial, _basicLuck;
         private RateRow[] _rateRows;
         private RectTransform _skillBody, _effortBody;          // 技術統計的兩個子頁(統計明細 / 成就)
         private Button _skillBtn, _effortBtn;
         private TextMeshProUGUI _perfLabel, _perfAuLabel, _statsRankLabel;
         private TextMeshProUGUI _cardsDone, _cardsAll;   // 拼圖「完成數 / 總數」
+        private TextMeshProUGUI _effortNow, _effortAll;  // 成就「已收藏 / 總數」
         private TextMeshProUGUI _basicNote, _statsNote;
 
         private Button _whisperBtn, _friendBtn, _mailBtn, _enemyBtn, _buyLookBtn;
@@ -377,6 +402,13 @@ namespace Sdo.UI.Screens
                 UIKit.AddSprite(body, "LuckyOff" + i, PlayerInfoArt.An("PlayerInformationDlg238"),
                                 LuckyX + i * CharmStep, LuckyY);
 
+            // 知名度:10 個空格,圖在 FillFame 時才決定(星 / 月 / 太陽)。
+            // 🔴 官方**沒有「空格子」的圖** —— 那 10 個 Label 在 XML 裡連 background 屬性都沒有,
+            //    圖是執行期塞的。所以沒填到的格子就是不畫,不要自己補一顆灰星。
+            _fameSlots = new Image[FameSlots];
+            for (int i = 0; i < FameSlots; i++)
+                _fameSlots[i] = UIKit.AddSprite(body, "zhimingdu" + (i + 1), null, FameX + i * FameStep, FameY);
+
             // 官方那幾格數值。有資料的只有家族;其餘固定 0(使用者要求:沒資料也要顯示 0,不要留白)。
             _basicExp = AddValue(body, "exp", ExpValX, ExpValY, 118f, Color.white, TextAlignmentOptions.Left);
             _basicFamily = AddValue(body, "familyname", FamilyValX, FamilyValY, 72f, Color.black, TextAlignmentOptions.Left);
@@ -505,11 +537,13 @@ namespace Sdo.UI.Screens
                                             new Color32(0x00, 0x4F, 0x7C, 0xFF), TextAlignmentOptions.Left);
             Place(_statsRankLabel.rectTransform, StatsRankX, StatsRankY, StatsRankW, PerfH);
 
-            // 兩個子頁的容器。成就那頁是官方的裝備成就格,這個重製版沒有那份資料 → 容器留著、內容空白。
+            // 兩個子頁的容器。
             _effortBody = UIKit.NewRect(body, "EffortStat");
             UIKit.Stretch(_effortBody);
             _skillBody = UIKit.NewRect(body, "SkillStat");
             UIKit.Stretch(_skillBody);
+
+            BuildEffortSub(_effortBody);
 
             // 統計明細:背板(六個標籤烤在上面)+ 六條進度條。
             UIKit.AddSprite(_skillBody, "SkillBg", PlayerInfoArt.AnRaw("SkillBg_man"), SkillBgX, SkillBgY);
@@ -530,6 +564,66 @@ namespace Sdo.UI.Screens
 
             _statsNote = MakeNote(body, "StatsNote");
             ShowStatsSub(true);   // 預設停在「統計明細」——那才是有資料可看的那一頁
+        }
+
+        /// <summary>
+        /// 「成就」子頁 —— 版位逐字取自官方 <c>playerTabWindow1 &gt; EffortStat</c>(容器偏移 +1/+6,下面都是絕對座標)。
+        ///
+        /// 官方的結構是三層疊在一起、位置互相錯開:
+        ///   ・<c>AvtShow AvtEffortN</c>(45×45)= 真正放徽章圖的槽
+        ///   ・<c>Label AvtEffortTipN</c>(同位置)= 只負責 tooltip,沒有背景
+        ///   ・<c>CheckBox BtnEffortN</c>(比槽左上各外擴 2px)= 點選,normal/hover 是 <c>empty.an</c>(全透明),
+        ///     只有 pushed 才畫 <c>EffortCheck_man</c> 那個實心高亮框
+        /// 這個重製版沒有成就系統 → 只畫槽與問號,選中框與 tooltip 都不做。
+        ///
+        /// 🔴 「当前装备」那條直幅**烤在 EffortBg_man 上**(abs 354,260),與六條率的標籤同一個模式 ——
+        ///    再畫一次會疊字。
+        /// 🔴 空格的問號圖是 <c>EffortNone_man.an</c>,而**官方 XML 完全沒有引用它** —— 是程式端拿來填空槽的。
+        ///    它的 45×45 框裡「?」字形落在 rel (18,1,22,35)、偏右偏上;所以這裡切**字形本身**
+        ///    (Effort_man.png 340,121,22,35)再置中貼進槽,而不是直接貼那張偏心的 45×45。
+        /// </summary>
+        private void BuildEffortSub(RectTransform body)
+        {
+            UIKit.AddSprite(body, "EffortBg", PlayerInfoArt.AnRaw("EffortBg_man"), EffortBgX, EffortBgY);
+
+            // 上排 6 格「当前装备」。沒有裝備任何成就 → 槽是空的(官方空槽也不畫問號,問號只在下面的收藏格)。
+            for (int i = 0; i < EquipSlots; i++)
+                UIKit.AddSprite(body, "AvtEqipEffort" + i, null, EquipSlotX + i * EffortStep, EquipSlotY);
+
+            // 下面 6×2 = 12 格收藏。一個成就都沒有 → 全部畫問號。
+            var q = PlayerInfoArt.EffortNone;
+            for (int i = 0; i < EffortSlots; i++)
+            {
+                float x = EffortSlotX + (i % 6) * EffortStep;
+                float y = EffortSlotY + (i / 6) * EffortStep;
+                var slot = UIKit.AddSprite(body, "AvtEffort" + i, q, 0f, 0f);
+                // 問號字形只有 22×35,要**置中**在 45×45 的槽裡 —— 直接貼在槽的左上角會整排偏左上。
+                Place(slot.rectTransform, x + (EffortSlotSize - QuestionW) * 0.5f,
+                                          y + (EffortSlotSize - QuestionH) * 0.5f, QuestionW, QuestionH);
+            }
+
+            // 「已收藏 / 總數」。🔴 官方**沒有**在底圖上烤那個斜線(那條帶子是純色),所以斜線要自己補一個 Label。
+            _effortNow = AddValue(body, "EffortNownum", EffortNumY0X, EffortNumY, 20f, EffortNumCol, TextAlignmentOptions.Left);
+            var slash = UIKit.AddText(body, "EffortSlash", "/", RowFont, EffortNumCol, TextAlignmentOptions.Center);
+            Place(slash.rectTransform, EffortSlashX, EffortNumY, 12f, 14f);
+            _effortAll = AddValue(body, "EffortAllnum", EffortNumY1X, EffortNumY, 20f, EffortNumCol, TextAlignmentOptions.Left);
+            _effortNow.text = "0";
+            _effortAll.text = "0";
+
+            // 裝備 / 脫下。沒有成就系統 → 鈕照擺、**按了安靜地什麼都不做**(handler 傳 null)。
+            // 🔴 官方 pushed 圖(EffortEquip3_man / EffortUnistall3_man)與 normal 是**同一個 crop**,
+            //    所以按下去本來就不會變樣;真正有變化的只有 hover 與 disabled。
+            AddOfficialButton(body, "EffortOk", PlayerInfoArt.An("EffortEquip1_man"),
+                PlayerInfoArt.An("EffortEquip2_man"), PlayerInfoArt.An("EffortEquip1_man"),
+                EffortOkX, EffortBtnY, null);
+            AddOfficialButton(body, "EffortUninstall", PlayerInfoArt.An("EffortUnistall1_man"),
+                PlayerInfoArt.An("EffortUnistall2_man"), PlayerInfoArt.An("EffortUnistall1_man"),
+                EffortOffX, EffortBtnY, null);
+
+            // 捲軸握把。🔴 XML 的 Effort_scroll 是 (652,302,25,125),但**底圖上畫死的軌道只有 abs x 661..664、
+            //    y 325..409** —— 照 652 的左緣擺,握把會歪在軌道左邊。16 寬的握把要對齊軌道中心(662.5)→ 654。
+            //    收藏格只有 12 個、我們又全是問號,實際捲不動;握把照官方永遠顯示,停在最上面。
+            UIKit.AddSprite(body, "Effort_scroll", PlayerInfoArt.An("EffortScrollBar_man"), EffortRailX, EffortRailTop);
         }
 
         /// <summary>技術統計頁的兩個子頁:true = 統計明細(六條)、false = 成就。</summary>
@@ -745,6 +839,36 @@ namespace Sdo.UI.Screens
             _angelBar.fillAmount = 0f;
             _expBar.fillAmount = 0f;
             _weightBar.fillAmount = 0f;
+            FillFame(p != null ? p.fame : 0);
+        }
+
+        /// <summary>
+        /// 知名度那一排:先畫星星,五顆換一個月亮,五個月亮換一個太陽。
+        ///
+        /// 🔴 **「幾顆換一個」這條規則不在官方資料包裡** —— 全樹掃過 .xml/.txt/.ini/.dat/.lua/.cfg 找 zhimingdu,
+        ///    再對 3328 個檔做三種編碼的「知名度」位元組掃描,零命中(那三個字只存在於烤進 PNG 的像素裡);
+        ///    連 XML 掛的 tip_xml(SpeakerTip.xml / ShopItemTip.xml)在資料包裡都不存在。
+        ///    換算寫在 client exe 或 server,查不到 → **五進位是我們定的**,不是抄來的,不要當成官方值。
+        ///    唯一的硬事實是「一排 10 格」,而五進位配 <see cref="FameLevel.MaxLevel"/>=15 最多只會畫到
+        ///    2 個月亮 + 4 顆星 = 6 格,永遠塞得下。
+        ///
+        /// 等級來源是 <see cref="FameLevel"/> —— 與大廳右下角那行「LV n (m)」同一份門檻表,
+        /// 兩個地方不該對同一個累計值算出不同等級。
+        /// </summary>
+        private void FillFame(int fame)
+        {
+            if (_fameSlots == null) return;
+
+            int lv = FameLevel.LevelFor(fame);
+            int suns = lv / 25;                 // 5 月 = 25 星
+            int moons = (lv % 25) / 5;
+            int stars = lv % 5;
+
+            int n = 0;
+            for (int i = 0; i < suns && n < _fameSlots.Length; i++) UIKit.ApplySprite(_fameSlots[n++], PlayerInfoArt.FameSun);
+            for (int i = 0; i < moons && n < _fameSlots.Length; i++) UIKit.ApplySprite(_fameSlots[n++], PlayerInfoArt.FameMoon);
+            for (int i = 0; i < stars && n < _fameSlots.Length; i++) UIKit.ApplySprite(_fameSlots[n++], PlayerInfoArt.FameStar);
+            for (; n < _fameSlots.Length; n++) UIKit.ApplySprite(_fameSlots[n], null);   // 剩下的格子不畫(官方沒有空格圖)
         }
 
         /// <summary>
@@ -764,6 +888,9 @@ namespace Sdo.UI.Screens
             _angelBar.fillAmount = 0f;
             _expBar.fillAmount = 0f;
             _weightBar.fillAmount = 0f;
+            // 座位快照帶不到別人的知名度 → 當 0,也就是 LV 1 = 一顆星。
+            // 與「沒資料也顯示 0 而不是留白」同一個原則:大廳那行同樣的人會顯示 LV 1 (0)。
+            FillFame(0);
         }
 
         private void FillStatsSelf(PlayStats s)

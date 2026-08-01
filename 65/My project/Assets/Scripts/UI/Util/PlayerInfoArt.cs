@@ -143,81 +143,7 @@ namespace Sdo.UI.Util
         ///    否則半透明的邊會滲出白線。
         /// </summary>
         public static Sprite AtlasCrop(string imageName, int x, int y, int w, int h)
-        {
-            if (string.IsNullOrEmpty(imageName) || w <= 0 || h <= 0) return null;
-            string key = "atlas:" + imageName + ":" + x + "," + y + "," + w + "," + h;
-            if (_cache.TryGetValue(key, out var s) && s != null) return s;
-
-            var tex = SdoExtracted.LoadTextureRaw(Dir, imageName)
-                      ?? SdoExtracted.LoadTextureRaw(Dir, imageName.ToUpperInvariant());
-            if (tex == null) return null;
-            if (x < 0 || y < 0 || x + w > tex.width || y + h > tex.height) return null;
-
-            var px = tex.GetPixels32(0);
-            var cut = new Color32[w * h];
-            for (int row = 0; row < h; row++)
-            {
-                // 圖集是左下原點,.an 的 y 是左上原點 → 逐列反轉。
-                int srcRow = tex.height - y - h + row;
-                System.Array.Copy(px, srcRow * tex.width + x, cut, row * w, w);
-            }
-            // 透明像素的 RGB 常常是純白(工具的預設 matte)。把它換成同列最近的不透明色,
-            // 邊緣做雙線性混色時才不會混出一圈白。
-            BleedTransparent(cut, w, h);
-
-            var own = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
-            own.SetPixels32(cut);
-            own.Apply(false, false);
-
-            s = Sprite.Create(own, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
-            _cache[key] = s;
-            return s;
-        }
-
-        /// <summary>
-        /// 把透明像素的 RGB 換成鄰近不透明像素的顏色(alpha 完全不動,純外觀修正)。
-        ///
-        /// 🔴 **水平與垂直都要做,而且要跑好幾輪。** 只做水平的話,格子**上下**那片透明區的 RGB 還是
-        ///    工具留下的純白 —— UI 放大顯示時雙線性會把那片白混進格子的邊,每一格就鑲一圈白邊
-        ///    (使用者回報「tab 沒去背」)。每一輪把不透明區往外擴一圈,三輪就夠蓋住雙線性取樣摸得到的範圍。
-        /// </summary>
-        private static void BleedTransparent(Color32[] px, int w, int h)
-        {
-            const int Rounds = 3;
-            // known = 「這個像素的 RGB 已經可信」。一開始只有不透明的算,每輪把它往外擴一圈 ——
-            // 沒有這個標記的話,第二輪讀到的還是原本那片白,多跑幾輪等於白跑。
-            var known = new bool[w * h];
-            for (int i = 0; i < px.Length; i++) known[i] = px[i].a > 8;
-
-            for (int round = 0; round < Rounds; round++)
-            {
-                var srcKnown = (bool[])known.Clone();
-                var src = (Color32[])px.Clone();
-                bool changed = false;
-                for (int y = 0; y < h; y++)
-                    for (int x = 0; x < w; x++)
-                    {
-                        int k = y * w + x;
-                        if (srcKnown[k]) continue;
-                        if (TryNeighbour(src, srcKnown, w, h, x - 1, y, ref px[k]) ||
-                            TryNeighbour(src, srcKnown, w, h, x + 1, y, ref px[k]) ||
-                            TryNeighbour(src, srcKnown, w, h, x, y - 1, ref px[k]) ||
-                            TryNeighbour(src, srcKnown, w, h, x, y + 1, ref px[k]))
-                        { known[k] = true; changed = true; }
-                    }
-                if (!changed) break;
-            }
-        }
-
-        private static bool TryNeighbour(Color32[] src, bool[] known, int w, int h, int x, int y, ref Color32 dst)
-        {
-            if (x < 0 || y < 0 || x >= w || y >= h) return false;
-            int k = y * w + x;
-            if (!known[k]) return false;
-            var n = src[k];
-            dst.r = n.r; dst.g = n.g; dst.b = n.b;   // alpha 保持原樣(透明的還是透明)
-            return true;
-        }
+            => AtlasCropper.Crop(Dir, imageName, x, y, w, h);
 
         // ---------------------------------------------------------------- 分頁條
 
@@ -286,6 +212,26 @@ namespace Sdo.UI.Util
         ///    佐證:同一個 .an 在 Super Dance Online 那份資料包裡寫的是 <c>(0,0,624,502)</c>,官方自己修過。
         /// </summary>
         public static Sprite Board => AnRaw("PlayerInformationDlg0_MAN", trimRight: 1);   // 整張大底板 → 不走 solo(見 AnRaw)
+
+        // 知名度那一排(官方 <c>zhimingdu1..10</c>,10 格 22×22 貼著排)。
+        // 這三張是**獨立的 22×22 PNG**,不是圖集裁切(Playerstar.png / Playermoon.png / Playersun.png),
+        // 所以沒有鄰居可滲,不必擔心共用圖集那套問題。
+        // 🔴 太陽走 <see cref="AnRaw"/> 而不是 <see cref="An"/>:星與月的 alpha bbox 是 (2,2,20,19)/(2,2,19,19),
+        //    四周留了透明邊;**太陽是 (0,0,22,22)** —— 外圈光暈一路半透明到邊,而 An 走的 LoadAnSolo
+        //    帶 DeMatteWhite,會把那圈半透明邊壓暗成一道黑框(同 AnRaw 註解裡「大底圖不能走 solo」的原因)。
+        public static Sprite FameStar => An("PlayerStar");
+        public static Sprite FameMoon => An("PlayerMoon");
+        public static Sprite FameSun => AnRaw("PlayerSun");
+
+        /// <summary>
+        /// 成就頁空格的問號。
+        ///
+        /// 🔴 **不走 <c>EffortNone_man.an</c>**:那個 .an 寫 <c>Effort_man.png (322,120,45,45)</c>,
+        ///    但「?」字形實際只落在框內 rel (18,1,22,35) —— 偏右偏上。整張 45×45 貼進槽裡,一排問號會整體偏左上。
+        ///    往上位移 .an 框也不行(會吃到上面 SkillBtn2_man (324,93,109,28) 的底邊),
+        ///    所以這裡直接切**字形本身** (340,121,22,35),由呼叫端置中貼進 45×45 的槽。
+        /// </summary>
+        public static Sprite EffortNone => AtlasCrop("Effort_man.png", 340, 121, 22, 35);
 
         // 底部那一排動作鈕,全部 93×31、全部在 BaseBoard2_man.png 裡。
         public static Sprite WhisperN => An("PlayerInformationDlg17");     // Dialog     (108,507)

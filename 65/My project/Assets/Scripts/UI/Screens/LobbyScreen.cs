@@ -554,6 +554,12 @@ namespace Sdo.UI.Screens
             row.Btn.onClick.AddListener(() => OnRowClicked(captured));
             UiSfx.AttachClick(row.Btn);
 
+            // 右鍵 → 房間信息。🔴 Button.onClick 只吃左鍵,右鍵一定要另外接(見 RightClickProxy)。
+            //    官方版面檔裡查不到這個觸發(房卡那六個 CheckBox 三態全是 empty.an、沒有任何 popmenu 屬性)——
+            //    右鍵開房間信息是寫在引擎程式碼裡的,所以這條是我們自己接的。
+            row.RightClick = root.gameObject.AddComponent<RightClickProxy>();
+            row.RightClick.Clicked = () => OnRowRightClicked(captured);
+
             row.Hover = root.gameObject.AddComponent<RowHover>();
             row.Hover.Left = row.Card;
             return row;
@@ -972,7 +978,19 @@ namespace Sdo.UI.Screens
                 Bind(_rows[i], idx < _view.Count ? _view[idx] : null, idx);
             }
             PlaceHandle(max);
+
+            // DEV: SDO_ROOMINFO=1 → 房間列表一有資料就直接開第一間房的房間信息。
+            //      那個框只有**右鍵房卡**才叫得出來,而截圖工具點不了滑鼠,只能從這裡開。
+            //      只開一次(_devInfoShown)—— 列表每 4 秒刷一次,不擋住就會每次都彈。
+            if (!_devInfoShown && _view.Count > 0 && Nav.OpenRoomInfo != null
+                && !string.IsNullOrEmpty(Sdo.Game.ScreenGameplay.DevVar("SDO_ROOMINFO")))
+            {
+                _devInfoShown = true;
+                Nav.OpenRoomInfo(_view[0], () => { });
+            }
         }
+
+        private bool _devInfoShown;
 
         private void Bind(RoomRow row, RoomInfo r, int absoluteIndex)
         {
@@ -986,6 +1004,7 @@ namespace Sdo.UI.Screens
             //    「官方本來是紫色為什麼做成粉紅色」)。官方是一律紫、滑鼠移上去才變粉紅。
             row.Hover.SetSkin(An("Lobby98"), has ? An("Lobby28") : null);
             row.Btn.interactable = has;
+            if (row.RightClick != null) row.RightClick.Enabled = has;   // 空位:官方左右鍵都點不動
 
             // 狀態:圓底 + 綠字牌兩層。有人 → 等待(Lobby26 + waiting)/ 遊戲中(Lobby27 + playing);
             // 空位 → 只有 LobbyRoomNone 的圓底,沒有字牌。
@@ -1095,9 +1114,26 @@ namespace Sdo.UI.Screens
 
         // ================================================================ 動作
 
+        /// <summary>
+        /// 「創建舞台」→ 先開官方的創建遊戲房間對話框(房名 / 密碼 / 模式 / 房型),按確定才真的建房。
+        /// 以前是按了直接建一間無名的普通房 —— 官方從來沒有那條捷徑。
+        ///
+        /// 🔴 走 <c>Nav</c> 而不是直接抓 modal:那個 modal 建在 FrontendApp 的 modalLayer 上,
+        ///    大廳不該知道它的存在(同 OpenPlayerInfo 的理由)。沒接上時 <c>?.Invoke</c> 什麼都不做。
+        /// </summary>
         private void OnCreate()
         {
             if (ScreenTransition.Busy) return;
+            if (Nav.OpenRoomCreate == null) { CreateRoomNow("", GameMode.Normal); return; }
+            Nav.OpenRoomCreate((name, password, mode) => CreateRoomNow(name, mode));
+        }
+
+        /// <summary>
+        /// 真的把房間建出來。<paramref name="password"/> 目前沒有用到 —— server 的 createRoom
+        /// 只吃房名,房間上鎖那套協定還沒有,所以密碼欄先收著不送(官方那個欄位照擺,見 RoomCreateModal)。
+        /// </summary>
+        private void CreateRoomNow(string name, GameMode mode)
+        {
             var net = Ctx.Net;
             if (net != null)
             {
@@ -1106,7 +1142,7 @@ namespace Sdo.UI.Screens
                 // 這不是進房的前提 —— server 的 RoomRegistry.TryCreate/TryJoin 本來就會隱式離房,
                 // 而且是房主也照離(那間房會轉手或關掉),所以這裡不必分房主/客人。
                 if (net.InRoom) net.LeaveRoom();
-                net.CreateRoom("", (result, code) =>
+                net.CreateRoom(name ?? "", (result, code) =>
                 {
                     if (this == null) return;
                     if (result == Sdo.Net.NetProto.JoinOk) { EnterRoom(); return; }
@@ -1117,7 +1153,7 @@ namespace Sdo.UI.Screens
                 return;
             }
 
-            Ctx.Rooms.CreateRoom(GameMode.Normal);
+            Ctx.Rooms.CreateRoom(mode);
             EnterRoom();
         }
 
@@ -1126,6 +1162,18 @@ namespace Sdo.UI.Screens
             var r = _rows[rowIndex].Data;
             if (r == null) return;   // 空位:官方也是點不動的
             JoinRoom(r);
+        }
+
+        /// <summary>
+        /// 房卡右鍵 → 官方的房間信息對話框(房名/模式/人數/觀戰/歌曲 + 玩家列表 + 進入/取消)。
+        /// 框裡按「進入」走的是與左鍵點卡片**同一條** <see cref="JoinRoom"/>,不要另外寫一份進房邏輯。
+        /// </summary>
+        private void OnRowRightClicked(int rowIndex)
+        {
+            var r = _rows[rowIndex].Data;
+            if (r == null || ScreenTransition.Busy) return;
+            if (Nav.OpenRoomInfo == null) return;   // modal 還沒接上 → 安靜地什麼都不做
+            Nav.OpenRoomInfo(r, () => JoinRoom(r));
         }
 
         private void JoinRoom(RoomInfo r)
@@ -1813,6 +1861,7 @@ namespace Sdo.UI.Screens
             public TextMeshProUGUI Song;
             public Button Btn;
             public RowHover Hover;
+            public RightClickProxy RightClick;
             public RoomInfo Data;
         }
 
