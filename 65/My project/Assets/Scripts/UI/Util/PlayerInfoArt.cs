@@ -223,6 +223,35 @@ namespace Sdo.UI.Util
         public static Sprite FameMoon => An("PlayerMoon");
         public static Sprite FameSun => AnRaw("PlayerSun");
 
+        // 賽事信息頁的三個子分頁(家族徽章 / 星座勛章 / 寵物勛章)在 BaseBoard2_man.png 上的裁切。
+        // 三張都是「整條 322-328 寬、只畫自己那一格、其餘透明」,官方把三個 CheckBox 疊在同一點 (350,264)。
+        //
+        // 🔴 **不要照 XML 的 CheckBox 名字綁圖** —— _man 版的 bgnormal 整組錯開了一格
+        //    (xunzhang0 掛的是家族的圖、familly 掛的是寵物的圖)。女版對得上,是男版重繪時把編號對調
+        //    卻沒改 XML(用 .msk 的可點區交叉驗過:圖錯、遮罩對)。這裡照**畫面上實際的左中右順序**排。
+        // 🔴 寵物那張 xunzhang7/8_man.an 寫 (12,400,325,31),但 row 0 在 x 102..208 有一條不透明線 ——
+        //    那是上面「星座勛章」那格的底邊。所以往下切一列 (12,401,325,30),擺放時 y 補 +1。
+        private static readonly int[,] SubTabNormal =
+        {
+            { 0, 337, 328, 31 },   // 家族徽章 xunzhang1_man
+            { 6, 369, 322, 31 },   // 星座勛章 xunzhang4_man
+            { 12, 401, 325, 30 },  // 寵物勛章 xunzhang7_man ← 上緣裁掉 1 列
+        };
+        private static readonly int[,] SubTabSelected =
+        {
+            { 6, 436, 322, 31 },   // xunzhang3_man
+            { 6, 473, 322, 31 },   // xunzhang6_man
+            { 2, 509, 322, 31 },   // xunzhang9_man
+        };
+
+        /// <summary>賽事信息頁第 <paramref name="index"/> 個子分頁(0=家族 1=星座 2=寵物)的圖。</summary>
+        public static Sprite SubTab(int index, bool selected)
+        {
+            if (index < 0 || index > 2) return null;
+            var t = selected ? SubTabSelected : SubTabNormal;
+            return AtlasCrop(TabAtlas, t[index, 0], t[index, 1], t[index, 2], t[index, 3]);
+        }
+
         /// <summary>
         /// 成就頁空格的問號。
         ///

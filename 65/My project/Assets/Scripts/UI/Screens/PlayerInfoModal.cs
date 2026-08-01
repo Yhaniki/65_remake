@@ -148,10 +148,44 @@ namespace Sdo.UI.Screens
         private const float DuanweiBarX = 438f, DuanweiBarY = 162f;   // pro_duanwei (437,146) 236×19
         private const int DuanweiCount = 12;                          // duanwei1..24 = 12 個位置 × 亮/暗
         private const float DuanweiX = 434f, DuanweiY = 196f, DuanweiStep = 20f;   // (433,180) 起,每 20px
-        private const float XunzhangX = 357f, XunzhangY = 320f;       // AvtXunzhang1 (356,304) → 容器再 -12
+        // 🔴 XunzhangY 以前寫 320 是**錯的**:註解說「(356,304) → 容器再 -12」,但實際只加了 +16 沒減 12。
+        //    playerxunzhang 這一層是 (0,-12),所以累加偏移是 (1,+4) → 304+16-12 = **308**。
+        private const float XunzhangX = 357f, XunzhangY = 308f;       // AvtXunzhang1 (356,304) + (1,+4)
         private const float XunzhangStepX = 52f, XunzhangStepY = 53f; // 官方 356/408/460/512/564/616、304/357
         private const float XunzhangW = 49f, XunzhangH = 48f;
-        private static readonly Color XunzhangSlotCol = new Color(0f, 0f, 0f, 0.28f);   // 空勳章格(官方是 3D 模型位)
+
+        // 大底板。星座/寵物頁是 PlayerInformationDlg54_man、家族頁是 playerfamilly1_man ——
+        // 🔴 兩者是**同一塊裁切** (350,685,346,339),只是名字不同、y 差 1px(151 / 152)。
+        //    官方切分頁時底板會抖一格,那是 bug,統一取 151 不要複製。
+        private const float MatchBoardX = 337f, MatchBoardY = 151f;
+        // 6×2 勳章格底圖(星座/寵物共用)與 5×2 家族徽章格底圖。
+        private const float XunzhangBgX = 348f, XunzhangBgY = 295f;
+        private const float FamillyBgX = 350f, FamillyBgY = 296f;
+        // 三個子分頁。官方三個 CheckBox **全部擺在同一點**,各自的圖只畫自己那一格、其餘透明
+        // (與最上面那條分頁條同一套疊圖法)。
+        private const float SubTabX = 350f, SubTabY = 264f;
+        private const int SubFamily = 0, SubZodiac = 1, SubPet = 2, SubTabCount = 3;
+        // 家族徽章格:5×2,官方 Avtfamilly1..10 (356,304) 52×52。
+        private const float FamillyX = 356f, FamillyY = 304f, FamillyStepX = 56f, FamillyStepY = 57f;
+        private const float FamillySlot = 52f;
+        private const float EmblemNumX = 380f, EmblemNumY = 344f, EmblemNumStepX = 58f, EmblemNumStepY = 57f;
+        // 「0 /50」。🔴 那條斜線**是烤在 playerfamilly2_man 上的**(abs 498..502),只放兩個數字。
+        private const float EmblemNowX = 477f, EmblemAllX = 504f, EmblemNumRowY = 424f;
+        // 捲軸:元素 (639,297,25,137),但底圖畫死的軌道只有 abs x 647..651 / y 321..416。
+        private const float EmblemRailX = 643f, EmblemRailTop = 321f, EmblemRailH = 96f, EmblemHandleH = 40f;
+        // 這頁的文字欄(全部是官方原始座標,幾個看起來沒對齊的都是官方自己畫的)。
+        private const float DuanweiDianX = 517f, DuanweiDianY = 168f;   // 段位點,坐在進度條上
+        private const float WeeklyWinX = 614f, WeeklyWinY = 227f;
+        private const float BestScoreX = 449f, BestScoreY = 249f;
+        private const float EmblemLabX = 447f, EmblemLabY = 231f;
+        // 三格子分頁的**可點範圍**(量出來的可見框,不是 .an 的整條寬度 —— 三張圖都是整條 322-328 寬、
+        // 只有自己那一格不透明,所以命中區要自己給)。
+        private static readonly float[] SubTabHitX = { 350f, 458f, 564f };
+        private static readonly float[] SubTabHitW = { 108f, 106f, 108f };
+
+        /// <summary>還沒接上官方素材的空格子(目前只剩拼圖頁在用)。官方那些格是 AvtShow(3D 模型位),
+        /// 沒有模型就先用一層淡底把「這裡會有東西」畫出來 —— 使用者要求沒資料也要看得到版面。</summary>
+        private static readonly Color XunzhangSlotCol = new Color(0f, 0f, 0f, 0.28f);
 
         // ---- 拼圖卡片頁(官方 playerTabWindow3 的 PinTuTab,容器偏移 y=-8;裡層 PinTuTabWindow 再 x=2 y=-6) ----
         private const int CardTabCount = 8;                            // PinTuTabCheck0..7
@@ -237,6 +271,9 @@ namespace Sdo.UI.Screens
 
         private Image _angelBar, _expBar, _weightBar, _duanweiBar;
         private Image[] _fameSlots;                             // 知名度那 10 格(星 / 月 / 太陽)
+        private Image[] _subTab;                                // 賽事頁的三個子分頁(家族/星座/寵物)
+        private RectTransform _xunzhangBody, _famillyBody;      // 星座+寵物共用 / 家族自己
+        private int _matchSub;
         private TextMeshProUGUI _basicExp, _basicFamily, _basicOffer, _basicIntimate, _basicSocial, _basicLuck;
         private RateRow[] _rateRows;
         private RectTransform _skillBody, _effortBody;          // 技術統計的兩個子頁(統計明細 / 成就)
@@ -470,22 +507,95 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void BuildMatchTab(RectTransform body)
         {
+            // 大底板(段位條、星星那排、三個子分頁的框都烤在上面)。
+            UIKit.AddSprite(body, "MatchBg", PlayerInfoArt.AnRaw("PlayerInformationDlg54_man"), MatchBoardX, MatchBoardY);
+
             _duanweiBar = AddProgress(body, "pro_duanwei", DuanweiBarX, DuanweiBarY, "PlayerInformationDlg186_man");
 
-            // 12 顆段位星。亮的是 Dlg175(18×18)、暗的是 Dlg175_2(9×18) —— 沒有段位就全部畫暗的。
+            // 段位星。🔴 官方 duanwei1..24 是**12 個位置 × 兩張**:整顆 Dlg175(18×18) 打底,
+            //    左半顆 Dlg175_2(9×18) 疊上去 —— 所以「滿格 24」數的是**半格**,不是 24 顆星。
+            //    這個重製版沒有段位系統,但那條欄位不能整條空白(使用者要求沒資料也要看得到版面)→
+            //    只畫半顆那張當「空格」,與以前的行為一致;真接上段位時把整顆那張補在同一個位置即可。
             for (int i = 0; i < DuanweiCount; i++)
-                UIKit.AddSprite(body, "Duanwei" + i, PlayerInfoArt.An("PlayerInformationDlg175_2"),
+                UIKit.AddSprite(body, "Duanwei" + (i * 2 + 2), PlayerInfoArt.An("PlayerInformationDlg175_2"),
                                 DuanweiX + i * DuanweiStep, DuanweiY);
 
-            // 12 格勳章(6×2)。官方那格是 AvtShow(3D 勳章模型),我們沒有那些模型 → 只留框的位置,
-            // 之後真要做就把 sprite 換上去。
-            for (int i = 0; i < 12; i++)
+            // 這頁的幾個數值。全部沒有那套系統 → 一律 0(使用者要求:沒資料也要顯示 0)。
+            AddValue(body, "duanweidian", DuanweiDianX, DuanweiDianY, 70f, ValueCol, TextAlignmentOptions.Left).text = "0";
+            AddValue(body, "weeklywin", WeeklyWinX, WeeklyWinY, 70f, Color.black, TextAlignmentOptions.Left).text = "0";
+            AddValue(body, "bestscore", BestScoreX, BestScoreY, 70f, Color.black, TextAlignmentOptions.Left).text = "0";
+            AddValue(body, "emblem", EmblemLabX, EmblemLabY, 70f, Color.black, TextAlignmentOptions.Left).text = "0";
+
+            // 兩個子頁容器:星座與寵物**共用** playerxunzhang(切換只換要畫哪幾格),家族自己一個。
+            _xunzhangBody = UIKit.NewRect(body, "playerxunzhang");
+            UIKit.Stretch(_xunzhangBody);
+            _famillyBody = UIKit.NewRect(body, "playerfamilly");
+            UIKit.Stretch(_famillyBody);
+
+            BuildXunzhangSub(_xunzhangBody);
+            BuildFamillySub(_famillyBody);
+
+            // 三個子分頁鈕。🔴 **_man 版的圖與 CheckBox 名字是錯開的**(xunzhang0 掛家族的圖、familly 掛寵物的圖)——
+            //    女版對得上、男版重繪時把編號對調卻沒改 XML。所以這裡照**畫面上實際的左中右順序**綁圖,
+            //    不要照 CheckBox 的名字綁,否則每個分頁會畫到別人的按鈕。
+            _subTab = new Image[SubTabCount];
+            for (int i = 0; i < SubTabCount; i++)
             {
-                float x = XunzhangX + (i % 6) * XunzhangStepX;
-                float y = XunzhangY + (i / 6) * XunzhangStepY;
-                var slot = UIKit.AddImage(body, "Xunzhang" + i, XunzhangSlotCol);
-                Place(slot.rectTransform, x, y, XunzhangW, XunzhangH);
+                int idx = i;
+                _subTab[i] = UIKit.AddSprite(body, "SubTab" + i, null, SubTabX, SubTabY);
+                var hit = UIKit.AddImage(body, "SubTabHit" + i, new Color(0f, 0f, 0f, 0f), raycast: true);
+                Place(hit.rectTransform, SubTabHitX[i], SubTabY + 3f, SubTabHitW[i], 28f);
+                var btn = hit.gameObject.AddComponent<Button>();
+                btn.targetGraphic = hit; btn.transition = Selectable.Transition.None;
+                btn.onClick.AddListener(() => ShowMatchSub(idx));
+                UiSfx.AttachClick(btn);
             }
+            ShowMatchSub(SubFamily);   // 官方預設停在最左邊那格
+        }
+
+        /// <summary>星座 / 寵物共用的那個容器:6×2 格。我們沒有勳章 → 只畫底圖,格子空著。</summary>
+        private void BuildXunzhangSub(RectTransform body)
+        {
+            UIKit.AddSprite(body, "XunzhangBg", PlayerInfoArt.AnRaw("PlayerInformationDlg55_man"), XunzhangBgX, XunzhangBgY);
+            for (int i = 0; i < 12; i++)
+                UIKit.AddSprite(body, "AvtXunzhang" + (i + 1), null,
+                                XunzhangX + (i % 6) * XunzhangStepX, XunzhangY + (i / 6) * XunzhangStepY);
+        }
+
+        /// <summary>
+        /// 家族徽章那一頁:5×2 格 + 每格右下的數量 + 「0 /50」+ 捲軸。
+        /// 🔴 「/」**烤在 playerfamilly2_man 上**(abs 498..502),只放 nownum / allnum 兩個數字,不要補斜線。
+        /// </summary>
+        private void BuildFamillySub(RectTransform body)
+        {
+            UIKit.AddSprite(body, "FamillyBg", PlayerInfoArt.AnRaw("playerfamilly2_man"), FamillyBgX, FamillyBgY);
+            for (int i = 0; i < 10; i++)
+            {
+                UIKit.AddSprite(body, "Avtfamilly" + (i + 1), null,
+                                FamillyX + (i % 5) * FamillyStepX, FamillyY + (i / 5) * FamillyStepY);
+                AddValue(body, "emblemnum" + (i + 1),
+                         EmblemNumX + (i % 5) * EmblemNumStepX, EmblemNumY + (i / 5) * EmblemNumStepY,
+                         20f, ValueCol, TextAlignmentOptions.Left).text = "0";
+            }
+            AddValue(body, "nownum", EmblemNowX, EmblemNumRowY, 20f, ValueCol, TextAlignmentOptions.Left).text = "0";
+            AddValue(body, "allnum", EmblemAllX, EmblemNumRowY, 20f, ValueCol, TextAlignmentOptions.Left).text = "0";
+
+            // 捲軸握把。軌道是底圖畫死的(abs x 647..651、y 321..416,只有 96 高),
+            // 元素那個 (639,297,25,137) 與它對不齊 —— 官方原樣,握把要對軌道不是對元素。
+            UIKit.AddSprite(body, "emblem_scroll", PlayerInfoArt.An("PlayerInformationDlg279"), EmblemRailX, EmblemRailTop);
+        }
+
+        /// <summary>
+        /// 切子分頁。<paramref name="sub"/> = <see cref="SubFamily"/> / <see cref="SubZodiac"/> / <see cref="SubPet"/>。
+        /// 星座與寵物共用同一個容器(官方切換時不換容器,只換要畫哪幾格),所以這裡只有兩個容器在開關。
+        /// </summary>
+        private void ShowMatchSub(int sub)
+        {
+            _matchSub = sub;
+            if (_famillyBody != null) _famillyBody.gameObject.SetActive(sub == SubFamily);
+            if (_xunzhangBody != null) _xunzhangBody.gameObject.SetActive(sub != SubFamily);
+            for (int i = 0; i < SubTabCount; i++)
+                UIKit.ApplySprite(_subTab[i], PlayerInfoArt.SubTab(i, i == sub));
         }
 
         /// <summary>
@@ -763,7 +873,11 @@ namespace Sdo.UI.Screens
             // 看自己不放私聊/加好友 —— 兩顆按了都沒有意義(FriendList.Add 也會擋掉加自己)。
             ShowBottomRow(self: true);
 
-            ShowTab(TabBasic);
+            // DEV: SDO_PLAYERINFO=<分頁編號> → 開機直接停在那一頁(0 基本 / 1 技術統計 / 2 賽事 / 3 拼圖 / 4 星座)。
+            //      那幾頁只有點得到分頁條才看得到,而截圖工具點不了 —— 版位對不對只有實機截圖看得出來。
+            int devTab;
+            ShowTab(int.TryParse(Sdo.Game.ScreenGameplay.DevVar("SDO_PLAYERINFO"), out devTab)
+                    && devTab >= 0 && devTab < TabCount ? devTab : TabBasic);
             Reveal();
         }
 
