@@ -337,6 +337,10 @@ namespace Sdo.Game
 
         // ---------- HUD update ----------
 
+        /// <summary>判定字（PERFECT/COOL/BAD/MISS）從命中起算的顯示時長；到期直接關掉，**不淡出**（官方就是瞬間消失）。
+        /// 期間內再打中一顆會重設 _judgeWordAt，所以密集連打時等於每次都重新計時。</summary>
+        private const float JudgeWordShowSec = 0.5f;
+
         private void UpdateHud()
         {
             // keydown receptor burst: play *_judgeline2..6 once over recKeydownStepSec/frame, then snap back to idle (1)
@@ -369,10 +373,11 @@ namespace Sdo.Game
             }
 
             float age = Time.time - _judgeWordAt;
-            if (_judgeWord.sprite != null && age < 0.5f)
+            if (_judgeWord.sprite != null && age < JudgeWordShowSec)
             {
-                // 0.5 秒淡出 × judgeTextAlpha（config.ini 的整體不透明度＝這條淡出曲線的起始亮度）
-                _judgeWord.color = new Color(1, 1, 1, Mathf.Clamp01(1f - age / 0.5f) * judgeTextAlpha);
+                // 官方的判定字**不淡出**：整段顯示期間亮度固定，到期那一幀直接消失（舊版是 0.5 秒線性淡出，
+                // 尾巴那半秒的殘影是我們自己加的）。judgeTextAlpha = config.ini 的整體不透明度，現在就是這段的亮度本身。
+                _judgeWord.color = new Color(1, 1, 1, judgeTextAlpha);
                 float pop = PopScale(age, 6f, judgeTextPop);   // 官方 2.0->1.0 ×0.8；峰值倍率由 config.ini 的 judgeTextPop 給
                 // 判定字跟 COMBO/數字是同一叢，向下模式套同一個 _judgeComboYOffset —— 只搬 COMBO 會把兩行的間距吃掉。
                 PlaceAspect(_judgeWord, PX(JudgeWordCenter.x), JudgeWordCenter.y + _judgeComboYOffset, _judgeWord.sprite.bounds.size.x, -2);
