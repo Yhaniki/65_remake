@@ -23,7 +23,12 @@ namespace Sdo.UI.Catalog
         /// <summary>
         /// Browse-list curation: keep only the keyboard ('k') chart of each sdomNNNNk/t pair
         /// (<see cref="SongCatalog.IsPrimaryVariant"/> — that's where the k/t story is written down),
-        /// then order by <see cref="BrowseKey"/> DESCENDING.
+        /// drop anything flagged <see cref="SongCatalog.Entry.hidden"/> (song_table.csv 的 <c>hidden</c> 欄 ——
+        /// 屏蔽某首歌就是讓它不出現在這份清單裡），then order by <see cref="BrowseKey"/> DESCENDING.
+        ///
+        /// 屏蔽濾在這裡而不是 <see cref="SongCatalog"/>：遊戲裡每一份給人看的歌單都是這支函式的產物
+        /// （選歌畫面、房間換歌、隨機挑歌），濾一次就全到；而目錄本身留著那一列，拿 gn 反查歌名的地方
+        /// （舊成績、房間紀錄）不會因此變空白。
         /// </summary>
         public static List<SongCatalog.Entry> Curate(IEnumerable<SongCatalog.Entry> entries)
         {
@@ -31,7 +36,7 @@ namespace Sdo.UI.Catalog
             if (entries == null) return res;
             var keyed = new List<KeyValuePair<BrowseSortKey, SongCatalog.Entry>>();
             foreach (var e in entries)
-                if (e != null && SongCatalog.IsPrimaryVariant(e.gn))
+                if (e != null && !e.hidden && SongCatalog.IsPrimaryVariant(e.gn))
                     keyed.Add(new KeyValuePair<BrowseSortKey, SongCatalog.Entry>(BrowseKey(e), e));
             keyed.Sort((a, b) => BrowseSortKey.Compare(a.Key, b.Key));   // 每首先算一次鍵再排：比較只看鍵 → 保證是全序
             foreach (var kv in keyed) res.Add(kv.Value);

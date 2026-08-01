@@ -26,6 +26,19 @@ namespace Sdo.Game
             // RoomConfig.difficultyCalc == "minacalc". See ManiaMsd / Sdo.Osu.Mina.
             public float msdEasy, msdNormal, msdHard;
 
+            /// <summary>
+            /// 屏蔽：這首歌**不出現在遊戲裡**（選歌畫面、搜尋、隨機、房間換歌），來源是 song_table.csv 的
+            /// <c>hidden</c> 欄（見 <see cref="SongTable.Row.hidden"/>；k/t 兩列共用一個值，改 k 列就好）。
+            ///
+            /// 濾掉的地方只有一個：<see cref="Sdo.UI.Catalog.SongListModel.Curate"/> —— 遊戲裡每一份「給人看的歌單」
+            /// 都是從那裡出來的。**這一列仍然在目錄裡**（<see cref="All"/> / <see cref="Get"/> 查得到），
+            /// 所以舊成績、房間紀錄、字型預熱這些拿 gn 反查歌名的地方不會突然變成空白；譜面編輯器
+            /// （走 <see cref="Primary"/>）也照樣打得開 —— 屏蔽是「玩家看不到」，不是「資料不見了」。
+            ///
+            /// 外部歌（掃描進來的 osu / StepMania / 歌包）不在這張表裡 → 一律 false。
+            /// </summary>
+            public bool hidden;
+
             // ---- external (user Songs/ folder: osu / StepMania) — absent/false for the official .gn catalog ----
             public bool external;          // true → this row is a scanned external song, not an official .gn
             public string group = "";      // group folder name (the drill-in 資料夾 category groups by this)
@@ -203,7 +216,11 @@ namespace Sdo.Game
         }
 
         /// <summary>只有鍵盤譜（k）的清單，檔案順序。**所有給人瀏覽的清單都該用這個**（選歌畫面、譜面編輯器），
-        /// 不是 <see cref="All"/>。</summary>
+        /// 不是 <see cref="All"/>。
+        ///
+        /// 這裡**不濾**被屏蔽的歌（<see cref="Entry.hidden"/>）—— 它只是「k 列」這個視圖。玩家看得到的那份歌單
+        /// 是 <see cref="Sdo.UI.Catalog.SongListModel.Curate"/>，屏蔽在那裡濾；譜面編輯器要的正好相反：
+        /// 一首歌會被屏蔽多半就是它有問題（缺音檔、offset 沒調），編輯器得看得到它才修得了。</summary>
         public static IReadOnlyList<Entry> Primary
         {
             get
@@ -278,6 +295,9 @@ namespace Sdo.Game
             return n;
         }
 
+        /// <summary>這首歌有沒有被屏蔽（song_table.csv 的 <c>hidden</c> 欄）；查不到 = false。見 <see cref="Entry.hidden"/>。</summary>
+        public static bool IsHidden(string gnPathOrName) => Get(gnPathOrName)?.hidden ?? false;
+
         /// <summary>這首譜的單首 offset（毫秒）；沒設過 = 0。見 <see cref="Entry.offsetMs"/>。</summary>
         public static float OffsetMs(string gnPathOrName) => Get(gnPathOrName)?.offsetMs ?? 0f;
 
@@ -344,6 +364,7 @@ namespace Sdo.Game
                 notesEasy = At(r.noteCounts, 0, 0), notesNormal = At(r.noteCounts, 1, 0), notesHard = At(r.noteCounts, 2, 0),
                 durEasy = At(r.durations, 0, 0), durNormal = At(r.durations, 1, 0), durHard = At(r.durations, 2, 0),
                 offsetMs = ClampOffsetMs(r.offsetMs),
+                hidden = r.hidden,
             };
         }
 

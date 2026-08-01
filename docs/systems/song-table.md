@@ -1,7 +1,7 @@
 # 歌曲表 song_table.csv（全部歌曲資料的唯一來源）
 
 `65/My project/Assets/StreamingAssets/song_table.csv` —— **一列 = 一個 `.gn` 檔**（4325 列）。
-遊戲執行期只讀這一個檔；歌單、難度、音符數、歌名、BPM、單首 offset、解密 seed 全在裡面。
+遊戲執行期只讀這一個檔；歌單、難度、音符數、歌名、BPM、單首 offset、屏蔽、解密 seed 全在裡面。
 
 以前這些東西分散在四份 JSON：
 
@@ -38,12 +38,30 @@
 |------|--------|------------------|
 | `title` `artist` | 人（或 `build_song_name_overrides.py` 打底） | 不會，merge-preserve；只有明確加 `--songname` 才會被原版歌名表蓋掉 |
 | `bpm` `offsetMs` | **只有人**（`offsetMs` 靠耳朵調，沒有來源可重建） | 重掃譜面的工具一律不碰；`bpm` 只在空的時候被填 |
+| `hidden` | **只有人**（屏蔽哪首歌是決定，不是可重建的資料） | 任何工具都不碰，連 `--reseed` 也保留 |
 | `fileId` | `.gn` 表頭，但可人工指定（撞號插隊：`sdom1117_1` 借 11138 槽） | `refresh_gn_header_stats.py` **刻意不碰** |
 | `lv*` `notes*` `dur*` `meas*` `chartBpm` `producer` `origName` | 譜面本身 | 會，重掃就以譜面為準 |
 | `enc` `seed` `seed1` `seed2` `innerOff` `size` | `gn_keytable.py` 暴力還原 | 會 |
 
 `bpm` 是**顯示** BPM（選歌資訊面板、房間標籤），`chartBpm` 是 `.gn` 表頭的原值。
 兩者都不影響遊戲時間軸 —— 判定與流速一律讀譜面本身。
+
+## 屏蔽某首歌（`hidden` 欄）
+
+那一列的 `hidden` 填 `1`，那首歌就**不出現在遊戲裡** —— 選歌畫面、搜尋、隨機挑歌、房間換歌全部沒有它。
+留空 = 照常顯示。GUI 也做得到：`tools/song_manager.py` 的「屏蔽」勾（單首）或「屏蔽/取消屏蔽選取」（多首）。
+
+- **這不是刪歌。** 譜面／音樂／封面一個檔都沒動，表裡那一列也還在 —— 清掉那一格，歌就回來了。
+  要真的把歌連檔案一起拿掉是 `tools/remove_songs.py`。
+- 讀法刻意寬鬆（`1` / `x` / `TRUE` / `是` 都算屏蔽，只有空白與 `0` `false` `no` `n` `off` 是不屏蔽）：
+  這欄是給人在 Excel 裡打勾的，認不得的字要是被當成「沒屏蔽」，人會以為屏蔽好了、遊戲裡那首歌卻還在。
+- k/t 兩列一起（`DISPLAY_COLS`，寫檔時由 k 列同步）—— 屏蔽的是「這首歌」。
+- 濾掉的地方只有 `SongListModel.Curate`，因為遊戲裡每一份給人看的歌單都是它的產物。
+  **目錄本身不濾**（`SongCatalog.All` / `Get` 查得到）：舊成績、房間紀錄那些拿 gn 反查歌名的地方
+  不會因此變空白，譜面編輯器（走 `SongCatalog.Primary`）也照樣打得開 —— 一首歌會被屏蔽多半就是它有問題，
+  編輯器得看得到它才修得了。
+- 附帶效果：`UsedAssetsProbe` 也走 `Curate`，所以屏蔽的歌的 `.gn` / `.ogg` / 封面**不會被算進打包清單**。
+  要打包時把某些歌整組排除，這就是那個開關。
 
 ## 工具
 
@@ -74,7 +92,8 @@ Big5、575 首），不在本 repo、遊戲執行期也不讀它 —— 它的�
 | 類別 | 角色 |
 |------|------|
 | `SongTable` | 唯一的載入者（CSV parser；欄位**照表頭名字**取，加欄/調順序都不會解錯格） |
-| `SongCatalog` | 歌單視圖：`All` / `Primary` / `Get` / `Matches` / `MainOggName` |
+| `SongCatalog` | 歌單視圖：`All` / `Primary` / `Get` / `Matches` / `MainOggName` / `IsHidden` |
+| `SongListModel.Curate` | 玩家看得到的那份歌單：只留 k 列、濾掉 `hidden`、依檔名降冪排 |
 | `GnKeyTable` | 解密視圖：`SeedsFor(gn)` 餵給 `GnChart.Load` |
 | `GnHeaderCatalog` | 原文歌名視圖：`{zhCN, zhTW, en}` |
 | `SongTableWriter` | 譜面編輯器 Ctrl+S 寫回 `offsetMs`（只換那一格，其餘位元組不動） |
