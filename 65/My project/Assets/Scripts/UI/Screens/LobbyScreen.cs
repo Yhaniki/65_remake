@@ -84,9 +84,12 @@ namespace Sdo.UI.Screens
         //    **與**釘死的 <c>_cam.aspect</c>。RawImage 的 rect 比例一旦不等於那個 aspect,角色立刻變形
         //    (而且是所有視窗都變形,不只非 4:3 的)。要改大小請動 <see cref="AvatarFillFrac"/>,不要動 W/H 的比例。
         //
-        // 落點驗算(見 AvatarFillFrac):角色高 600×0.913 = 548;頭頂 y = 4 + (600-548)/2 = 30;腳底 = 578;
-        // 身體中線 x = 5 + 200 = 205 —— 對上官方實機量到的「頭頂 30 / 腳底 578 / 中線 205」。
-        private const float AvatarX = 5f, AvatarY = 4f, AvatarW = 400f, AvatarH = 600f;
+        // 落點(數字是**量出來的**,不是算出來的 —— 見 AvatarFillFrac 與 LobbyAvatarFramingTests):
+        //   角色高 548、頭頂 y=30、腳底 y=578、身體中線 x=205,對上官方實機。
+        // 🔴 AvatarX 用「RT 中心 = 官方身體中線」回推(205 − 400/2 = 5),**不要**照 alpha bounding box 的中心去校:
+        //    相機正對角色原點,所以身體中線恆在 RT 正中;bounding box 的中心會隨當下抽到的 idle 姿勢
+        //    (手臂張開、抬腳、甩裙擺)左右跳三四十 px —— 照那個調會越調越偏。
+        private const float AvatarX = -30f, AvatarY = -91f, AvatarW = 400f, AvatarH = 600f;
 
         /// <summary>
         /// 角色佔預覽高度的比例。選角色畫面用 0.68(那邊的框留白多),大廳的角色幾乎頂天立地。
@@ -97,18 +100,49 @@ namespace Sdo.UI.Screens
         ///    (使用者回報「人變得太大」的真正成因),而且在 400×600 的槽位裡 fillFrac 上限只到 0.803。
         ///    歸零之後才做得到官方那個 548px。
         ///
-        /// 事後微調:高度不對 → <c>fillFrac = 目標高度 / AvatarH</c>;整體上下位移 → 直接加減 <see cref="AvatarY"/>(1:1 px)。
+        /// 🔴 **fillFrac 不等於「角色佔畫面的比例」,不要照那個直覺算。** <c>FrameTo</c> 是拿
+        ///    <c>bodyTop = (頭骨 y − 腳底 y) × (1 + framePadTop)</c> 去填 fillFrac 的,而**實際看得到的人**
+        ///    比那個 bodyTop 還高約 9%(髮型高過頭骨、idle 動作會抬腳/甩裙擺)。照「fillFrac = 548/600 = 0.913」
+        ///    算下去,實測是角色高 **599px、整個填滿畫布**(頭頂 y=4、腳底 y=603)——正是使用者回報的「太大」。
+        ///
+        /// 這個值是**量出來的**:0.913 → 實測 599px;0.835 → 571px;0.80 → 546px。
+        ///
+        /// 🔴 **目標值是直接從官方實機截圖量出來的**(800×630 的視窗截圖,標題列 26px,畫布從 y=26 起):
+        ///    髮髻頂 y≈30 → 畫布 y≈4;白鞋底 y≈437 → 畫布 y≈411(正好落在房卡列表框的下緣 410);
+        ///    身體中線 x≈170。**高 ≈410px。**
+        ///    前三次(599 / 571 / 546)都太大,是因為我拿截圖「目測」而不是逐點量,而且每次只縮 9% 一直在原地打轉。
+        ///    這一版連**落點**也一起修:官方那隻是「頂到畫面最上緣、腳落在列表框下緣」,以前整個往下掉了 80px。
+        ///    要再調就跑 <c>Assets/Tests/PlayMode/LobbyAvatarFramingTests.cs</c>,它會把實測的
+        ///    頭頂/腳底/高度印出來(Debug.Log 前綴 <c>[lobby-avatar]</c>);高度與 fillFrac 是線性的,
+        ///    想要 N px 就寫 <c>目前的 fillFrac × N ÷ 目前實測高度</c>。
+        /// 要再調就跑 <c>Assets/Tests/PlayMode/LobbyAvatarFramingTests.cs</c>,它會把實際的
+        /// 頭頂/腳底/高度/中線印出來(Debug.Log 前綴 <c>[lobby-avatar]</c>),照那個數字換算就好 ——
+        /// 別再用幾何推導,那條路已經錯過兩次。
         /// </summary>
-        private const float AvatarFillFrac = 0.913f;
+        private const float AvatarFillFrac = 0.605f;
+
+        // 「按住拖動轉身」的命中區。
+        // 🔴 **下緣一定要停在 370**:再往下就會蓋住三人頭(<see cref="UserListX"/> 206,378)與个人资料(244,378)
+        //    那兩顆鈕 —— 上一版開到 430,結果玩家家的名單按鈕整顆按不動(使用者回報)。
+        // 🔴 **右緣停在 240**:再往右會碰到个人资料鈕(244);更右邊的房卡列表(286 起)本來就不能碰。
+        // 角色實測橫向 x≈110-230、縱向 y≈6-419 —— 拖不到腳,但上半身涵蓋得到,轉身照樣拖得動。
+        private const float AvatarDragX = 90f, AvatarDragY = 0f, AvatarDragW = 150f, AvatarDragH = 370f;
 
         // 房間列表底板(NormalBG = LobbyChannelBG,506×364)+ 捲軸
         //
         // 🔴 HandleH 是**握把圖的實際高度**,不是隨便一個數:LOBBY38.AN = stage.png (843,590,14,28) → 14×28。
         //    以前寫 42 → 拉到底時握把底緣停在 y=341,離軌道底 355 差 14px。
-        // RailX 也不是 XML 的 760:那是 ScrollBarV 整條(w=25)的左緣,而底板烘死的軌道凹槽實測在絕對 x 760-781、
-        //    中央深溝 769-772 → 14 寬的握把要壓在溝上是 x≈764。
+        // RailX / RailTop 都**不是** XML 的那組(760,35):XML 給的是 ScrollBarV 整條(25 寬)的框,
+        //    而握把要坐進「底板烘死的凹槽」裡。實測 LobbyChannelBG 貼在 (286,46) 之後,
+        //    凹槽在絕對 x 760-781(中央深溝 769-772)、y 49-349 —— 所以 14 寬的握把置中是 x=764,
+        //    軌道從 y=49 起、可跑 300(349-49)。照 XML 的 35 會讓握把浮在列表框上緣外面(使用者回報「拉桿太高」)。
         private const float ListBgX = 286f, ListBgY = 46f;
-        private const float RailX = 764f, RailTop = 35f, RailH = 320f, HandleH = 28f;
+        private const float RailX = 764f, RailTop = 49f, RailH = 300f, HandleH = 28f;
+
+        // 左下聊天記錄的捲軸(官方 win4 的 TextList AllChatList,Handle 也是 Lobby12)。
+        // RecordChatBG 貼在 (21,437),它烘死的細溝實測在絕對 x 429-431 → 14 寬的握把置中 x=423;
+        // 軌道跟著聊天區(ChatY..ChatY+ChatH)。
+        private const float ChatRailX = 423f, ChatRailTop = 447f, ChatRailH = 110f;
 
         // 右下角那一排功能鈕。創建/快速/篩選同一個 y(363);活動查詢與夥伴在 365(官方就差這 2px)。
         private const float ActionY = 363f, SideActionY = 365f;
@@ -122,7 +156,8 @@ namespace Sdo.UI.Screens
         // 版位對照官方實機截圖:六角(651) / 放大鏡(688) / NEW筆(722) / 返回(759),而問號那顆(723,44)
         // 官方**根本沒畫**(使用者也要求拿掉)→ 這裡不放,設定改從放大鏡那顆的下拉選單進去(見 BuildHallMenu)。
         private const float ChannelBgX = 285f, ChannelBgY = 7f;
-        private const float ServerX = 292f, ChannelX = 389f, TopLabelY = 9f;
+        // 🔴 官方 XML 是 288/385,但實機那排字整體再往右 4px(使用者實機比對) → 292/389 再 +4。
+        private const float ServerX = 296f, ChannelX = 393f, TopLabelY = 9f;
         private const float TopWeddingX = 651f, TopHouseX = 688f, TopRankX = 722f, TopIconY = 8f;
         private const float TopLogoutX = 759f, TopLogoutY = 8f;
 
@@ -134,6 +169,10 @@ namespace Sdo.UI.Screens
 
         // 左下「當前」拉開的頻道選單 —— 逐字取自官方 LOBBYPOPMENU.XML 的 chatmodemenu (21,466)。
         private const float ChatMenuX = 21f, ChatMenuY = 466f;
+
+        // 表情盤(官方 LOBBYPOPMENU.XML 的 expression PopMenu,165×152)。XML 給的是選單自己的 (0,0),
+        // 實際位置對齊表情鈕:水平置中(458+16.5−82.5=392)、底邊貼鈕的上緣(566−152=414)。
+        private const float ExprMenuX = 392f, ExprMenuY = 414f;
 
         // 下方(win4)。聊天顯示區官方是可開關的浮動面板(recordchatmode/closerecordchatmode 一對開關鈕),
         // 它的 XML 位置 (21,296) 會壓在第三列房卡上 —— 這裡當常駐聊天區用,所以下移到輸入列正上方。
@@ -165,10 +204,13 @@ namespace Sdo.UI.Screens
         private const float FameX = 674f, FameY = 487f;            // AUcharperformance → 知名度「LV n (m)」
         private const float WinX = 672f, WinY = 505f;
         private const float LoveX = 672f, LoveY = 521f;            // charduanwei → 愛慕值(固定 0)
-        private const float LeafX = 676f, LeafY = 538f, LeafW = 100f;   // charrank → 金葉子(固定 0)
+        // 🔴 金葉子與愛慕值要**同一個 x**:官方 XML 寫 676/672,但那 4px 差在實機看起來就是沒對齊
+        //    (兩行上下相鄰、都是靠左的數字)。統一取 672。
+        private const float LeafX = 672f, LeafY = 538f, LeafW = 100f;   // charrank → 金葉子(固定 0)
 
         // XML 的顏色(0xAARRGGBB)
         private static readonly Color32 RoomNameColor = new Color32(0x82, 0x14, 0x38, 0xff);   // roomname
+        private const float RoomNameEdgePx = 1.2f;   // 房名的白邊厚度(12px 字,再厚就糊成一團)
         private static readonly Color32 SongColor = new Color32(0xed, 0xec, 0xa0, 0xff);       // roommusic
         private static readonly Color32 SelfNameColor = new Color32(0xf2, 0x86, 0x4b, 0xff);   // charname
         private static readonly Color32 StatColor = new Color32(0xff, 0xff, 0xff, 0xff);
@@ -193,13 +235,17 @@ namespace Sdo.UI.Screens
         private ScrollRect _chatScroll;
         private ChatLineClip _chatClip;
         private Image _chatBgImg;             // 聊天記錄的底框:跟捲動區一起被「聊天記錄」鈕收合
+        private Image _chatHandle;            // 聊天記錄的捲軸握把(官方 AllChatList 的 Handle)
+        private Image _chatCaret;             // 自畫的輸入游標(TMP 內建的在這裡畫不出來,見 ConfigureChatInput)
+        private readonly Vector3[] _caretCorners = new Vector3[4];   // 餵給 IME 候選視窗的座標暫存(每幀用,不要每次配置)
         private Button _recordChatBtn;
         private Image _recordChatImg;
         private bool _chatLogHidden;
 
         // 兩個下拉選單(右上角功能選單 / 左下角頻道選單)。都是 lazily build、再按一次收起來,
         // 而且**互斥** —— 開一個就把另一個收掉(照 RoomScreen 的 chatmode ↔ expression 那個模式)。
-        private RectTransform _hallMenu, _chatMenu;
+        private RectTransform _hallMenu, _chatMenu, _exprMenu;
+        private int _exprPage;
         private Button _chatChannelBtn;
         private Image _chatChannelImg;
         private ChatChannel _chatChannel = ChatChannel.Current;
@@ -255,6 +301,20 @@ namespace Sdo.UI.Screens
             _previewImg = AddRaw("AvatarView", AvatarX, AvatarY, AvatarW, AvatarH);
             _previewImg.color = new Color(1f, 1f, 1f, 0f);   // 還沒有 RT 之前不要畫一塊白
 
+            // 在角色身上按住拖動 → 轉身 / 抬頭(與商城左側那隻同一組官方參數,見 GenderPreview3D.Orbit)。
+            // 🔴 命中區**不能**用 AvatarView 本身:那張 RawImage 是 400×600、右緣蓋到 x=370,
+            //    會把房卡列表(x 從 286 起)整片吃掉。這裡另外開一塊只涵蓋角色的透明區
+            //    (實測角色橫向落在 x≈110-230、縱向 0-420),留一點餘裕又不碰到房卡。
+            var drag = UIKit.AddImage(Root, "AvatarDrag", new Color(0f, 0f, 0f, 0f), raycast: true);
+            PlaceTopLeft(drag.rectTransform, AvatarDragX, AvatarDragY, AvatarDragW, AvatarDragH);
+            var trig = drag.gameObject.AddComponent<EventTrigger>();
+            var entry = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
+            entry.callback.AddListener(ev =>
+            {
+                if (_preview != null && ev is PointerEventData p) _preview.Orbit(p.delta);
+            });
+            trig.triggers.Add(entry);
+
             // 捲軸握把(在角色之後 —— 兩者不重疊,只是維持「列表零件疊在最上」)。
             // 走 AnSoloAA 而不是共用圖集:握把在 stage.png 裡左邊 x=840-842 是完全不透明的鄰居,
             // 共用圖集取樣會把那片拖進邊緣變成白邊(見 SpriteBtn 的註解)。
@@ -309,7 +369,8 @@ namespace Sdo.UI.Screens
         {
             if (_hallMenu == null) BuildHallMenu();
             bool show = !_hallMenu.gameObject.activeSelf;
-            HideChatMenu();   // 兩個選單互斥
+            HideChatMenu();          // 三個選單互斥
+            HideExpressionMenu();
             _hallMenu.gameObject.SetActive(show);
         }
 
@@ -325,10 +386,15 @@ namespace Sdo.UI.Screens
 
             for (int i = 0; i < HallMenuItems.GetLength(0); i++)
             {
+                // 🔴 走 <see cref="LobbyArt.AnSolo"/> 而**不是** AnSoloAA:官方的 PopMenu 沒有背板
+                //    (XML 寫 background="empty.an"),那個「整片粉色選單框」其實是五條 135×26 的項目圖
+                //    **無縫疊起來**的效果。AnSoloAA 會把外圈的透明/低 alpha 邊裁掉 → 每條變窄一點,
+                //    疊起來就出現一條條裂縫、整體還會位移(使用者回報「沒把官方底圖做出來」)。
+                //    AnSolo 是 pad:0 的自貼圖裁切,尺寸與原圖完全一致 → 條與條才接得起來。
                 // 官方項目沒有 pushed 態 → 三個參數餵同一組(normal/hover/normal)。
                 var b = UIKit.AddSpriteButton(_hallMenu, "hallmenu" + i,
-                    LobbyArt.AnSoloAA(HallMenuItems[i, 0]), LobbyArt.AnSoloAA(HallMenuItems[i, 1]),
-                    LobbyArt.AnSoloAA(HallMenuItems[i, 0]),
+                    LobbyArt.AnSolo(HallMenuItems[i, 0]), LobbyArt.AnSolo(HallMenuItems[i, 1]),
+                    LobbyArt.AnSolo(HallMenuItems[i, 0]),
                     HallMenuItemX, HallMenuRow0Y + i * HallMenuRowStep);
                 UiHoverSfx.Attach(b, UiSfx.Menufloat);
                 UiSfx.AttachClick(b);
@@ -432,11 +498,14 @@ namespace Sdo.UI.Screens
             for (int d = 0; d < 3; d++)
                 row.Digits[d] = UIKit.AddSprite(root, "Num" + d, null, NumX + d * NumStep, NumY);
 
-            row.Name = Label(root, "Name", NameX, NameY, NameW, NameH, 12f,
-                             RoomNameColor, TextAlignmentOptions.MidlineLeft);
-            row.Name.fontStyle = FontStyles.Bold;   // XML: bold="1"
+            // 🔴 房名是**置中 + 白色描邊**(照官方實機):XML 只寫 color=0xff821438 與 bold,
+            //    但那個深紅字直接壓在粉紫標題列上根本讀不清 —— 官方實機那行字有一圈白邊、而且置中。
+            //    用 OutlinedLabel(與房間畫面的頭上名字同一套描邊)才做得出來。
+            row.Name = OutlinedLabel.Create(root, "Name", NameX, NameY, NameW, NameH, 12f,
+                                            RoomNameColor, Color.white, RoomNameEdgePx, true,
+                                            TextAlignmentOptions.Midline);
             // 房名是玩家自訂的,長的話會整條蓋過右邊的圖示 → 截斷加省略號(官方的欄寬也是硬邊界)。
-            row.Name.overflowMode = TextOverflowModes.Ellipsis;
+            row.Name.Face.overflowMode = TextOverflowModes.Ellipsis;
 
             row.CountD = UIKit.AddSprite(root, "Count", null, CountX, CountY);
             row.Slash = UIKit.AddSprite(root, "Slash", An("slash"), SlashX, CountY);
@@ -450,9 +519,10 @@ namespace Sdo.UI.Screens
             for (int h = 0; h < 6; h++)
                 row.Heads[h] = UIKit.AddSprite(root, "Head" + h, null, HeadX + h * HeadStep, HeadY);
 
+            // 官方 XML 把這格叫 roommusic,但實機顯示的是**遊戲模式**(見 Bind)。
             row.Song = Label(root, "Song", SongX, SongY, SongW, SongH, 11f,
                              SongColor, TextAlignmentOptions.MidlineLeft);
-            row.Song.overflowMode = TextOverflowModes.Ellipsis;   // 歌名比欄位長是常態
+            row.Song.overflowMode = TextOverflowModes.Ellipsis;
 
             // 鍵盤圖示:這個重製版只有鍵盤能玩,所以它永遠成立(不是「沒資料的裝飾」)。
             row.Keyboard = UIKit.AddSprite(root, "Keys", null, KeysX, KeysY);
@@ -477,10 +547,11 @@ namespace Sdo.UI.Screens
             // 下方整條背板(Lobby53..56,各 256 寬 + 一片 21 寬的收尾)。
             // 官方把「等級 / 經驗值 / G幣 / M幣 / P幣」與「超舞戰績 / 知名度 / 勝率 / 愛慕值 / 金葉子」
             // 兩排**標題字烤死在圖裡**,所以下面每一格只放數值,標題一律不重畫。
-            UIKit.AddSprite(Root, "Bottom0", An("Lobby53"), 5f, 433f);
-            UIKit.AddSprite(Root, "Bottom1", An("Lobby54"), 261f, 433f);
-            UIKit.AddSprite(Root, "Bottom2", An("Lobby55"), 517f, 433f);
-            UIKit.AddSprite(Root, "Bottom3", An("Lobby56"), 773f, 433f);
+            // 🔴 官方是**一整張** Lobby53(stage.png 0,364,787×169)貼在 (8,435) —— XML 只有這一個 Label。
+            //    以前拆成四張(Lobby53..56 各 256 寬)貼在 (5,433) 起,而 Lobby54/55/56 根本是**別的圖**
+            //    (各自獨立的 Lobby54.png…,不是背板的續接),整條 bar 因此位置偏了、右段還是拼接的。
+            //    bar 位置一偏,照官方座標擺的那排鈕看起來就沒對齊(使用者回報)。
+            UIKit.AddSprite(Root, "BottomPanel", An("Lobby53"), 8f, 435f);
 
             // 聊天顯示區的底框(RecordChatBG,437×130)。
             _chatBgImg = UIKit.AddSprite(Root, "ChatBg", An("RecordChatBG"), ChatBgX, ChatBgY);
@@ -489,6 +560,12 @@ namespace Sdo.UI.Screens
             _chatScroll = UIKit.AddVerticalScroll(Root, "ChatScroll", out _chatContent, 1f, 2, new Color(0f, 0f, 0f, 0f));
             PlaceTopLeft(_chatScroll.GetComponent<RectTransform>(), ChatX, ChatY, ChatW, ChatH);
             _chatClip = _chatScroll.gameObject.AddComponent<ChatLineClip>();   // 只露整行,不留半截字
+
+            // 聊天記錄的捲軸握把(官方 AllChatList 的 Handle,與另外兩條同一張 Lobby12)。
+            // 建在捲動區之後 = 疊在它上面;永遠顯示,沒得捲時停在最上面(同房間列表那條)。
+            _chatHandle = UIKit.AddSprite(Root, "ChatScrollHandle", LobbyArt.AnSoloAA("Lobby12"), ChatRailX, ChatRailTop);
+            // ScrollRect 自己動(滾輪/拖曳/自動捲到底)時沒人會通知我們 → 這條是唯一即時的來源。
+            _chatScroll.onValueChanged.AddListener(_ => PlaceChatHandle());
 
             // 頻道切換(chatmode「當前」)。按了拉開四選一的頻道選單,行為與房間畫面同一套。
             _chatChannelBtn = SpriteBtn("ChatChannel", "Lobby57", "Lobby58", "Lobby59", ChanX, ChanY, ToggleChatMenu);
@@ -510,8 +587,8 @@ namespace Sdo.UI.Screens
                 _chatInput.targetGraphic.color = new Color(1f, 1f, 1f, 0f);   // 底圖已經有凹槽了,不要再蓋一層灰
             ConfigureChatInput();
 
-            // 表情(expression)。大廳沒有 3D 角色的表情動作(那是房間的功能)→ 鈕照擺,按了不做事。
-            SpriteBtn("Expression", "Lobby102", "Lobby117", "Lobby118", ExprX, ExprY, null, circle: true);
+            // 表情(expression):按了拉開 6×4 的表情盤,點一格就把那個表情送進聊天(與房間同一套表情系統)。
+            SpriteBtn("Expression", "Lobby102", "Lobby117", "Lobby118", ExprX, ExprY, ToggleExpressionMenu, circle: true);
 
             // 送出鈕很小,不套 alpha 命中判定 —— 那麼小的鈕給滿一個矩形反而好按(見 UIKit.SetAlphaHit 的註解)。
             // ⚠️ 官方這顆的 normal/hover 是**對調**的(bgnormal=Lobby100、bghover=Lobby99),照抄。
@@ -596,6 +673,7 @@ namespace Sdo.UI.Screens
             // 兩個下拉選單不能掛著離開:回來時它們會還開著,而且蓋在剛滑入的房卡上。
             HideHallMenu();
             HideChatMenu();
+            HideExpressionMenu();
         }
 
         /// <summary>
@@ -637,6 +715,8 @@ namespace Sdo.UI.Screens
                 _preview.SetOutfits(gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
             }
             _preview.SetGender(gender);
+            // 重新進大廳(或換過性別/穿搭)→ 轉身角度歸零,回到官方那個朝左 30° 的預設姿。
+            _preview.ResetOrbit();
 
             if (_previewImg != null && _preview.PreviewTexture != null)
             {
@@ -729,6 +809,10 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (!Visible) return;
+
+            // 🔴 游標要**每幀**更新(閃爍 + 跟著字尾跑),所以擺在下面那個 4 秒節拍的早期返回**之前**。
+            UpdateChatCaret();
+
             if (Time.unscaledTime < _nextPoll) return;
             _nextPoll = Time.unscaledTime + PollSeconds;
 
@@ -757,7 +841,6 @@ namespace Sdo.UI.Screens
             _rooms.Clear();
             var src = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.GetRooms() : null;
             if (src != null) for (int i = 0; i < src.Count; i++) _rooms.Add(src[i]);
-            if (FakeLobbyData) AddFakeRooms();
             RefreshRows();
         }
 
@@ -787,10 +870,13 @@ namespace Sdo.UI.Screens
         private static readonly string[] FakeRoomHosts =
             { "煙煙羅", "寶貝BOY", "邦·瑋", "不知道", "勇敢的心", "月光之城", "櫻花雨", "小舞", "風之舞", "舞星" };
 
+        /// <summary>假房間的座位性別樣式(0=女 1=男)。刻意不規則 —— 真實房間就是誰先進來坐誰的。</summary>
+        private static readonly int[] FakeSeatGender = { 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1 };
+
         private static readonly string[] FakeSongs =
             { "Butterfly", "Dancing Queen", "極彩色", "Sandstorm", "Bad Apple", "月與蓮", "" };
 
-        private void AddFakeRooms()
+        private void AddFakeRooms(List<RoomInfo> into)
         {
             // 十間 —— 一頁只放得下 6 張卡,多出來的才會讓捲軸握把有得跑(這正是要測的東西之一)。
             for (int i = 0; i < FakeRoomHosts.Length; i++)
@@ -810,7 +896,12 @@ namespace Sdo.UI.Screens
                 int taken = 1 + (i % 5);
                 for (int s = 0; s < room.Capacity; s++)
                     room.Seats.Add(new SeatInfo { Player = s < taken ? new PlayerProfile("", host, 1 + i) : null });
-                _rooms.Add(room);
+                // 假房間也給性別 —— 不然那排愛心永遠全是粉紅,校不出藍色那顆對不對。
+                // 🔴 **不要男女交叉**:真實房間是「第 N 個座位坐的是誰就畫誰的性別」,
+                //    交叉排列會讓人以為那排愛心有固定規律。用一個不規則但固定的樣式。
+                room.SeatGenders = new int[taken];
+                for (int s = 0; s < taken; s++) room.SeatGenders[s] = FakeSeatGender[(i * 6 + s) % FakeSeatGender.Length];
+                into.Add(room);
             }
         }
 
@@ -839,6 +930,10 @@ namespace Sdo.UI.Screens
         private void RefreshRows()
         {
             _view.Clear();
+            // dev 假房間補在**檢視層**(_view)而不是資料來源(_rooms):
+            //   • 線上/離線都看得到 —— 上一版只在離線那條路加,結果連著 server 時整排卡還是空的;
+            //   • 不會被下一次輪詢洗掉,也不會混進「快速進入」的挑選(那邊讀的是 _rooms)。
+            if (FakeLobbyData) AddFakeRooms(_view);
             for (int i = 0; i < _rooms.Count; i++)
             {
                 var r = _rooms[i];
@@ -863,9 +958,12 @@ namespace Sdo.UI.Screens
             row.Data = r;
 
             bool has = r != null;
-            // 卡片是單張 226×89:有人 → Lobby28(粉紫標題列)、空位 → Lobby98(紫色標題列)。
-            // 官方沒有另外的 hover 圖(那一套只有兩張卡底),所以 hover 不換圖 —— 傳 null 當 hover。
-            row.Hover.SetSkin(An(has ? "Lobby28" : "Lobby98"), null);
+            // 🔴 卡片底的兩張圖是「**常態 vs 滑過**」,不是「空房 vs 有人」——
+            //    XML 兩個 Label 疊在同一格:emptyroom0 = Lobby98(**紫**,stage.png 506,0)、
+            //    room_chk0 = Lobby28(**粉紅**,506,89)。名字裡的 chk 就是 check/hover 的意思。
+            //    以前照字面把「有人」畫成粉紅、「空房」畫成紫,結果整排卡變粉紅色(使用者回報
+            //    「官方本來是紫色為什麼做成粉紅色」)。官方是一律紫、滑鼠移上去才變粉紅。
+            row.Hover.SetSkin(An("Lobby98"), has ? An("Lobby28") : null);
             row.Btn.interactable = has;
 
             // 狀態:圓底 + 綠字牌兩層。有人 → 等待(Lobby26 + waiting)/ 遊戲中(Lobby27 + playing);
@@ -888,8 +986,11 @@ namespace Sdo.UI.Screens
                 UIKit.ApplySprite(row.Digits[d], has ? LobbyArt.Digit("LobbyNum1", digit) : null);
             }
 
-            row.Name.text = has ? RoomLabels.DisplayName(r.Name, r.HostName) : "";
-            row.Song.text = has && !string.IsNullOrEmpty(r.SongTitle) ? r.SongTitle : "";
+            row.Name.SetText(has ? RoomLabels.DisplayName(r.Name, r.HostName) : "");
+            // 🔴 這一格(官方 roommusic,卡片右側)顯示的是**遊戲模式**,不是歌名 ——
+            //    官方實機那裡寫的是「自由模式 / 普通模式」。以前放歌名,結果多數房間是空白
+            //    (大廳的房間列表封包本來就常常沒帶歌名),整格看起來像壞掉。
+            row.Song.text = has ? ModeLabel(r.Mode) : "";
 
             int count = has ? Mathf.Clamp(r.Count, 0, 9) : 0;
             int cap = has ? Mathf.Clamp(r.Capacity, 0, 9) : 0;
@@ -900,10 +1001,19 @@ namespace Sdo.UI.Screens
             // 密碼房的鑰匙:這個重製版還沒有房間密碼 → 永遠不畫(版位已經留好)。
             if (row.Key != null) row.Key.enabled = false;
 
-            // 人頭:列表封包只帶得到「幾個人」,帶不到每個人的性別 → 一律用 man.an 這隻通用剪影。
-            var head = An("man");
+            // 🔴 官方那排是**六顆愛心**,不是人頭,而且**六格永遠都畫**,顏色分三種:
+            //    女 → FEMALE.AN(粉紅,stage.png 1000,89)、男 → MALE.AN(藍,982,89)、空位 → MAN.AN(灰,1001,105)。
+            //    以前只畫有人的那幾格、而且用灰心去畫「有人」—— 三個都錯。
+            //    性別由 server 的 roomList 逐座位送過來(見 RoomInfo.SeatGenders);舊版 server 不送 → 退回粉紅。
+            var female = An("female");
+            var male = An("male");
+            var free = An("man");
             for (int h = 0; h < row.Heads.Length; h++)
-                UIKit.ApplySprite(row.Heads[h], has && h < r.Count ? head : null);
+            {
+                Sprite heart = null;
+                if (has) heart = h < r.Count ? (SeatIsMale(r, h) ? male : female) : free;
+                UIKit.ApplySprite(row.Heads[h], heart);
+            }
 
             UIKit.ApplySprite(row.Keyboard, has ? An("Lobby97") : null);
         }
@@ -914,6 +1024,52 @@ namespace Sdo.UI.Screens
         /// 🔴 **永遠顯示**(使用者要求):以前沒東西可捲時整顆 <c>enabled = false</c>,結果房間少於七間
         /// 就看不到滑桿頭,看起來像忘了做。沒得捲時 t=0 → 停在軌道最上面,那就是官方的樣子。
         /// </summary>
+        /// <summary>
+        /// 聊天記錄的握把。與房間列表那條**驅動方式不同**:房卡是整數分頁(_scroll / max),
+        /// 這裡是真的 ScrollRect,位置要從 <c>verticalNormalizedPosition</c> 換算(1=最上、0=最下,方向相反)。
+        /// 內容比視窗短時 Unity 的回傳值不可信 → 自己判,直接停在最上面。
+        /// </summary>
+        private void PlaceChatHandle()
+        {
+            if (_chatHandle == null || _chatScroll == null) return;
+            float t = 0f;
+            var content = _chatScroll.content;
+            var viewport = _chatScroll.viewport;
+            if (content != null && viewport != null && content.rect.height > viewport.rect.height + 0.5f)
+                t = Mathf.Clamp01(1f - _chatScroll.verticalNormalizedPosition);
+            _chatHandle.rectTransform.anchoredPosition =
+                new Vector2(ChatRailX, -(ChatRailTop + (ChatRailH - HandleH) * t));
+        }
+
+        /// <summary>房卡上第 <paramref name="index"/> 顆愛心的主人是不是男生。
+        /// 資料缺了(舊版 server / 離線)一律當女生 —— 那是官方唯一那顆彩色心的顏色,退化得最不突兀。</summary>
+        private static bool SeatIsMale(RoomInfo r, int index)
+        {
+            var g = r.SeatGenders;
+            return g != null && index >= 0 && index < g.Length && g[index] == 1;
+        }
+
+        /// <summary>房卡上那格的模式字。與選歌畫面/房間畫面共用同一組 loc key —— 同一件事在三個地方
+        /// 不該有三種講法。(<c>GameMode</c> 只有 Free / Normal 兩個值;ShowTime 是房間裡另外一個開關,
+        /// 大廳的房間列表帶不到,所以這裡不分。)</summary>
+        private static string ModeLabel(GameMode mode)
+            => L(mode == GameMode.Normal ? "songselect.mode_normal" : "songselect.mode_free");
+
+        /// <summary>
+        /// 拖握把 → 捲聊天記錄。<paramref name="dy"/> 是滑鼠這一幀的垂直位移(Unity:往上為正)。
+        /// 握把往下拖 = 內容往後捲,所以 <c>verticalNormalizedPosition</c>(1=最上、0=最下)要跟著減。
+        /// 可跑的軌道長度是 <c>ChatRailH - HandleH</c> —— 用它把「移動幾像素」換成「捲了幾成」。
+        /// </summary>
+        private void DragChatHandle(float dy)
+        {
+            if (_chatScroll == null) return;
+            float travel = ChatRailH - HandleH;
+            if (travel <= 0f) return;
+            _chatScroll.verticalNormalizedPosition =
+                Mathf.Clamp01(_chatScroll.verticalNormalizedPosition + dy / travel);
+            PlaceChatHandle();
+        }
+
         private void PlaceHandle(int max)
         {
             if (_handle == null) return;
@@ -1066,7 +1222,8 @@ namespace Sdo.UI.Screens
         {
             if (_chatMenu == null) BuildChatMenu();
             bool show = !_chatMenu.gameObject.activeSelf;
-            HideHallMenu();   // 兩個選單互斥
+            HideHallMenu();          // 三個選單互斥
+            HideExpressionMenu();
             _chatMenu.gameObject.SetActive(show);
         }
 
@@ -1084,9 +1241,10 @@ namespace Sdo.UI.Screens
             {
                 var ch = ChatMenuOrder[i];
                 ChatChannelArt(ch, out var n, out var h, out var p, out bool fromRoom);
+                // 同 BuildHallMenu:選單項目要用 AnSolo(尺寸不變),AnSoloAA 會裁掉透明邊讓四條之間裂開。
                 System.Func<string, Sprite> res = fromRoom
                     ? (System.Func<string, Sprite>)RoomUiArt.AnSolo
-                    : LobbyArt.AnSoloAA;
+                    : LobbyArt.AnSolo;
                 var b = UIKit.AddSpriteButton(_chatMenu, "chatmode" + i, res(n), res(h), res(p), 2f, ChatMenuRowY[i]);
                 UiHoverSfx.Attach(b, UiSfx.Menufloat);
                 UiSfx.AttachClick(b);
@@ -1133,6 +1291,111 @@ namespace Sdo.UI.Screens
             }
         }
 
+        // ---- 表情盤(官方 LOBBYPOPMENU.XML 的 expression PopMenu,165×152) ----
+
+        private void ToggleExpressionMenu()
+        {
+            if (_exprMenu == null) BuildExpressionMenu();
+            bool show = !_exprMenu.gameObject.activeSelf;
+            HideHallMenu();
+            HideChatMenu();
+            _exprMenu.gameObject.SetActive(show);
+            if (show) RebuildExpressionMenu();   // 換過頁之後再打開要回到當下那一頁的內容
+        }
+
+        private void HideExpressionMenu()
+        {
+            if (_exprMenu != null) _exprMenu.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// 表情盤的框。官方 XML 給的是 PopMenu 自己的 (0,0) 165×152,實際位置要對齊表情鈕:
+        /// 水平置中於鈕(鈕 33 寬 → 中心 458+16.5=474.5 → 選單左緣 474.5−82.5=392)、
+        /// 底邊貼著鈕的上緣(566−152=414)。與房間那盤同一個擺法(見 RoomScreen.BuildExpressionMenu)。
+        ///
+        /// 🔴 素材走 <see cref="RoomUiArt"/> 而不是 LobbyArt:表情盤的圖(EXPRESSIONINFO.PNG)在 ROOMPOPMENU
+        ///    那一包,大廳與房間**共用同一份**(表情系統本來就是同一套,連 id 都是同一組)。
+        /// </summary>
+        private void BuildExpressionMenu()
+        {
+            _exprMenu = UIKit.NewRect(Root, "expression");
+            PlaceTopLeft(_exprMenu, ExprMenuX, ExprMenuY, 165f, 152f);
+            _exprMenu.gameObject.SetActive(false);
+            RebuildExpressionMenu();
+        }
+
+        private void RebuildExpressionMenu()
+        {
+            if (_exprMenu == null) return;
+            UIKit.Clear(_exprMenu);
+
+            UIKit.AddSprite(_exprMenu, "ExpressionInfo", RoomUiArt.ExpressionInfoPage(_exprPage), 0f, 20f);
+            UIKit.AddSprite(_exprMenu, "NormalExp", RoomUiArt.ExpressionNormalTab(selected: true), 5f, 3f);
+
+            var left = RoomUiArt.ExpressionPageArrowFrames(left: true);
+            var right = RoomUiArt.ExpressionPageArrowFrames(left: false);
+            var prev = UIKit.AddSpriteButton(_exprMenu, "preexp", left[0], left[1], left[2], 103f, 131f);
+            UiSfx.AttachClick(prev);
+            prev.onClick.AddListener(() => StepExpressionPage(-1));
+            var next = UIKit.AddSpriteButton(_exprMenu, "nextexp", right[0], right[1], right[2], 146f, 131f);
+            UiSfx.AttachClick(next);
+            next.onClick.AddListener(() => StepExpressionPage(1));
+
+            int pages = Mathf.Max(1, RoomChatCommand.TotalExpressionPages);
+            var pageColor = new Color32(0xBB, 0x20, 0x77, 0xFF);   // XML 的 0xffbb2077
+            var cur = UIKit.AddText(_exprMenu, "CurrentPage", Mathf.Clamp(_exprPage + 1, 1, pages).ToString(),
+                                    12f, pageColor, TextAlignmentOptions.Center);
+            PlaceTopLeft(cur.rectTransform, 118f, 133f, 12f, 12f);
+            var sep = UIKit.AddText(_exprMenu, "PageSlash", "/", 12f, pageColor, TextAlignmentOptions.Center);
+            PlaceTopLeft(sep.rectTransform, 127f, 133f, 10f, 12f);
+            var total = UIKit.AddText(_exprMenu, "TotalPage", pages.ToString(), 12f, pageColor, TextAlignmentOptions.Center);
+            PlaceTopLeft(total.rectTransform, 136f, 133f, 12f, 12f);
+
+            // 6×4 的格子。圖是烤在背板上的 → 每一格只放一塊透明的命中區(官方 XML 的 BtExpSel_* 也是 empty.an)。
+            for (int slot = 0; slot < RoomChatCommand.ExpressionsPerPage; slot++)
+            {
+                int id = RoomChatCommand.ExpressionAtMenuSlot(_exprPage, slot);
+                if (id <= 0) continue;
+                var hit = UIKit.AddImage(_exprMenu, "BtExpSel_" + slot, new Color(1f, 1f, 1f, 0.001f), raycast: true);
+                PlaceTopLeft(hit.rectTransform, 4f + (slot % 6) * 26f, 24f + (slot / 6) * 26f, 24f, 24f);
+                var b = hit.gameObject.AddComponent<Button>();
+                b.targetGraphic = hit;
+                b.transition = Selectable.Transition.None;
+                UiSfx.AttachClick(b);
+                int captured = id;
+                b.onClick.AddListener(() =>
+                {
+                    // 🔴 點表情是**把它的指令字插進打字框**,不是直接送出(使用者要求,與房間一致):
+                    //    玩家常常要「表情 + 一句話」一起送,直接送出就沒機會補字了。
+                    //    送出時 MockChatService / OnlineChatService 會把那段指令解析回 expressionId
+                    //    (見 RoomChatCommand.TryParseExpression),所以走這條路與直接送的結果相同。
+                    InsertIntoChatInput(RoomChatCommand.ExpressionDisplayText(captured));
+                    HideExpressionMenu();
+                });
+            }
+        }
+
+        /// <summary>把一段文字插到打字框目前游標的位置(沒有 focus 就接在最後),然後把 focus 交回輸入框。</summary>
+        private void InsertIntoChatInput(string text)
+        {
+            if (_chatInput == null || string.IsNullOrEmpty(text)) return;
+            string cur = _chatInput.text ?? "";
+            int at = Mathf.Clamp(_chatInput.stringPosition, 0, cur.Length);
+            // 前面已經有字時補一個空白,免得表情與前一個字黏在一起變成別的指令。
+            string sep = at > 0 && !char.IsWhiteSpace(cur[at - 1]) ? " " : "";
+            _chatInput.text = cur.Substring(0, at) + sep + text + " " + cur.Substring(at);
+            _chatInput.stringPosition = at + sep.Length + text.Length + 1;
+            _chatInput.ActivateInputField();
+        }
+
+        private void StepExpressionPage(int delta)
+        {
+            int pages = Mathf.Max(1, RoomChatCommand.TotalExpressionPages);
+            _exprPage = (_exprPage + delta) % pages;
+            if (_exprPage < 0) _exprPage += pages;
+            RebuildExpressionMenu();
+        }
+
         /// <summary>
         /// 輸入框的設定 —— **與房間那顆完全同一套**(見 <c>RoomScreen.ConfigureRoomChatInput</c>)。
         /// 以前大廳只設了 onSubmit,結果沒有游標、又留著一行提示字,看起來不像可以打字的地方(使用者回報)。
@@ -1168,6 +1431,55 @@ namespace Sdo.UI.Screens
                 _chatInput.textComponent.alignment = TextAlignmentOptions.MidlineLeft;
                 _chatInput.textComponent.margin = Vector4.zero;
             }
+
+            // 🔴 **自畫游標**。TMP 內建的 caret 在這個專案的執行期組合(執行期載入的 CJK 字型 + world-space canvas)
+            //    算不出可見的寬高,畫不出來 —— 使用者回報「打字時沒有光標」就是它。房間畫面早就踩過同一個坑
+            //    (見 RoomScreen 的 _chatCaret),這裡照抄:把內建 caret 設成全透明,自己擺一根白色細長條。
+            _chatInput.caretColor = new Color(1f, 1f, 1f, 0f);
+            if (_chatInput.textViewport != null)
+            {
+                _chatCaret = UIKit.AddImage(_chatInput.textViewport, "TypingCaret", Color.white, raycast: false);
+                var caretRt = _chatCaret.rectTransform;
+                caretRt.anchorMin = caretRt.anchorMax = new Vector2(0f, 0.5f);
+                caretRt.pivot = new Vector2(0f, 0.5f);
+                caretRt.sizeDelta = new Vector2(2f, 15f);
+                caretRt.anchoredPosition = new Vector2(2f, 0f);
+                _chatCaret.gameObject.SetActive(false);
+            }
+        }
+
+        /// <summary>
+        /// 自畫游標的每幀更新(擺在目前輸入位置、閃爍、順便告訴系統 IME 候選視窗該出現在哪)。
+        /// 與 <c>RoomScreen.UpdateChatCaret</c> 同一套,但大廳沒有「頭上泡打字模式」→ 少一組狀態判斷。
+        /// </summary>
+        private void UpdateChatCaret()
+        {
+            if (_chatCaret == null || _chatInput == null) return;
+            if (!_chatInput.isFocused)
+            {
+                if (_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(false);
+                return;
+            }
+
+            // 游標擺在「已上屏的字(到 stringPosition 為止)+ IME 組字串」的尾端 —— 往回移或中間刪都跟得上。
+            string committed = _chatInput.text ?? "";
+            int caretPos = Mathf.Clamp(_chatInput.stringPosition, 0, committed.Length);
+            string comp = Input.compositionString ?? "";
+            string upTo = committed.Substring(0, caretPos) + comp;
+            float w = (_chatInput.textComponent != null && upTo.Length > 0)
+                ? _chatInput.textComponent.GetPreferredValues(upTo).x : 0f;
+            _chatCaret.rectTransform.anchoredPosition = new Vector2(2f + w, 0f);
+            if (!_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(true);
+
+            // 閃爍:0.55 秒亮、0.45 秒暗(與房間同拍)。
+            bool on = Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
+            var c = _chatCaret.color; c.a = on ? 1f : 0f; _chatCaret.color = c;
+
+            // 自製輸入框要自己告訴系統「文字游標在螢幕哪裡」,注音/拼音的候選視窗才會跟著游標跑。
+            var canvas = _chatCaret.rectTransform.GetComponentInParent<Canvas>();
+            Camera cam = (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay) ? canvas.worldCamera : null;
+            _chatCaret.rectTransform.GetWorldCorners(_caretCorners);
+            Input.compositionCursorPos = RectTransformUtility.WorldToScreenPoint(cam, _caretCorners[0]);
         }
 
         // ---- 玩家名單(官方 win3) ----
@@ -1218,7 +1530,12 @@ namespace Sdo.UI.Screens
             {
                 // 同房間列表:回呼可能在離開大廳/登出之後才到,那份資料屬於上一次的畫面。
                 if (this == null || gen != _listGen || _userPanel == null) return;
-                _userPanel.SetUsers(users, net.UserId, SelfName(), SelfGuild());
+                // dev 假玩家線上也要補(同 RefreshRows 的假房間)—— 不然連著 server 時名單只有自己一列,
+                // 四個分頁的版位一樣校不了。
+                _offlineUsers.Clear();
+                _offlineUsers.AddRange(users);
+                if (FakeLobbyData) AddFakeUsers();
+                _userPanel.SetUsers(_offlineUsers, net.UserId, SelfName(), SelfGuild());
             });
         }
 
@@ -1466,7 +1783,8 @@ namespace Sdo.UI.Screens
         {
             public Image Card, State, Badge, Keyboard, CountD, CapD, Slash, Key;
             public Image[] Digits, Heads;
-            public TextMeshProUGUI Name, Song;
+            public OutlinedLabel Name;
+            public TextMeshProUGUI Song;
             public Button Btn;
             public RowHover Hover;
             public RoomInfo Data;

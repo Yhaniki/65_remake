@@ -340,6 +340,30 @@
    "v": "Miss"
   },
   {
+   "k": "room.info_match_rank",
+   "v": "Rank"
+  },
+  {
+   "k": "room.info_match_wins",
+   "v": "Match wins"
+  },
+  {
+   "k": "room.info_match_points",
+   "v": "Match points"
+  },
+  {
+   "k": "room.info_cards_owned",
+   "v": "Cards"
+  },
+  {
+   "k": "room.info_cards_sets",
+   "v": "Completed sets"
+  },
+  {
+   "k": "room.info_cards_points",
+   "v": "Card points"
+  },
+  {
    "k": "room.info_winrate",
    "v": "Win rate"
   },

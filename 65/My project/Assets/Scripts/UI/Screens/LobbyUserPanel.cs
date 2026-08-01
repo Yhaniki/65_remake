@@ -161,6 +161,10 @@ namespace Sdo.UI.Screens
             //    同時上一顆退回 Normal、露出我們設的 sprite → 選中的樣式看起來跑到上一顆去了。
             //    (這坑會重犯:任何人把 transition 改回 SpriteSwap 就復發。)
             b.transition = Selectable.Transition.None;
+            // 🔴 連 Navigation 也要關掉:UGUI 會給「目前被選取的那顆」畫一圈黃色外框(EventSystem 的
+            //    focus 指示,與 transition 是兩回事)。使用者回報「好友後面有個黃框」講的就是它 ——
+            //    點過的那顆會一直帶著框,而分頁的選取狀態我們已經用換圖表達了,不需要第二套指示。
+            b.navigation = new Navigation { mode = Navigation.Mode.None };
             var captured = (Tab)index;
             b.onClick.AddListener(() => SetTab(captured));
             UiSfx.AttachClick(b);

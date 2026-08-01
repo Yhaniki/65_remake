@@ -128,6 +128,14 @@ STR = {
     "room.info_cool":          ["Cool", "Cool率", "Cool率", "Cool率"],
     "room.info_bad":           ["Bad", "Bad率", "Bad率", "Bad率"],
     "room.info_miss":          ["Miss", "Miss率", "Miss率", "Miss率"],
+    # 個人資料的「賽事信息 / 拼圖卡片」兩頁。系統都還沒有,欄位照官方擺著、值恆 0（使用者要求：
+    # 沒資料也要顯示 0，不要整頁空白）。
+    "room.info_match_rank":   ["Rank", "目前排名", "目前排名", "現在の順位"],
+    "room.info_match_wins":   ["Match wins", "賽事勝場", "赛事胜场", "大会勝利数"],
+    "room.info_match_points": ["Match points", "賽事積分", "赛事积分", "大会ポイント"],
+    "room.info_cards_owned":  ["Cards", "擁有卡片", "拥有卡片", "所持カード"],
+    "room.info_cards_sets":   ["Completed sets", "完成套組", "完成套组", "コンプリート数"],
+    "room.info_cards_points": ["Card points", "卡片積分", "卡片积分", "カードポイント"],
     "room.info_winrate":       ["Win rate", "勝率", "胜率", "勝率"],
     "room.info_judged":        ["Judgements", "判定數", "判定数", "判定数"],
     "room.info_judged_value":  ["P {0} / C {1} / B {2} / M {3}", "P {0} / C {1} / B {2} / M {3}",

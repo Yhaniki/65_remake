@@ -340,6 +340,30 @@
    "v": "Miss率"
   },
   {
+   "k": "room.info_match_rank",
+   "v": "目前排名"
+  },
+  {
+   "k": "room.info_match_wins",
+   "v": "賽事勝場"
+  },
+  {
+   "k": "room.info_match_points",
+   "v": "賽事積分"
+  },
+  {
+   "k": "room.info_cards_owned",
+   "v": "擁有卡片"
+  },
+  {
+   "k": "room.info_cards_sets",
+   "v": "完成套組"
+  },
+  {
+   "k": "room.info_cards_points",
+   "v": "卡片積分"
+  },
+  {
    "k": "room.info_winrate",
    "v": "勝率"
   },

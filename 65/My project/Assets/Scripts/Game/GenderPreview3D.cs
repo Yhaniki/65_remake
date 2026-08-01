@@ -45,6 +45,24 @@ namespace Sdo.Game
             "MOTION/WREST0011.MOT",
         };
 
+        // ---- 拖曳轉身 / 抬頭(官方 AvtShow_ApplyDragRotateZoom) ----
+        //
+        // 參數與數學**逐字取自商城那份已經校好的實作**(ShopScreen.OnPreviewDrag / ApplyPreviewRotation),
+        // 那邊的出處註解記著:線上 sdo.bin FUN_0044f900 —— yaw −= dx×0.4、pitch −= dy×0.4 並 clamp[-30,15];
+        // 離線版只有 yaw。旋轉要建成 <c>Q = AngleAxis(pitch, 世界X) · AngleAxis(yaw, 世界Y)</c>,
+        // **不是** <c>Quaternion.Euler(pitch, yaw, 0)</c> —— 後者是繞頭部朝向的局部軸點頭,轉身之後抬頭會歪掉。
+        //
+        // 🔴 繞的是**身體中心**(PivotY,腰的高度),不是腳底:繞腳底的話抬 pitch 會變成整個人以腳為軸大幅甩動。
+        //
+        // (商城那邊維持原樣沒動 —— 那是已經校好的畫面。之後若要收斂成一份,把這裡與 ShopScreen 的
+        //  _dragAngle/_pitchAngle 一起抽成共用元件即可,兩邊的常數本來就是同一組。)
+        public const float DragDegPerPixel = 0.4f;
+        public const float PitchMin = -30f, PitchMax = 15f;
+        private const float OrbitPivotY = 30f;
+
+        private float _dragYaw, _dragPitch;
+        private float _feetOffsetY;   // BuildAvatar 當下量到的落地位移(轉身時要用它還原基準位置)
+
         private Camera _cam;
         private RenderTexture _rt;
         private RtResizeTracker _rtTrack;   // debounced window-resize → RT re-allocation (see MaintainRt)
@@ -112,6 +130,39 @@ namespace Sdo.Game
             }
         }
 
+        /// <summary>
+        /// 在角色身上「按住拖動」:水平轉身、垂直抬頭 —— 與商城左側那隻同一組官方參數(見上方欄位的註解)。
+        /// <paramref name="delta"/> 直接餵 <c>PointerEventData.delta</c>。
+        /// </summary>
+        public void Orbit(Vector2 delta)
+        {
+            _dragYaw -= delta.x * DragDegPerPixel;
+            // 滑鼠往上(Unity delta.y>0)→ 人往上抬。官方可下看 30°、上抬 15°,不對稱。
+            _dragPitch = Mathf.Clamp(_dragPitch + delta.y * DragDegPerPixel, PitchMin, PitchMax);
+            ApplyOrbit();
+        }
+
+        /// <summary>把轉身角度歸零(換性別/換穿搭時回到官方預設的 yaw)。</summary>
+        public void ResetOrbit()
+        {
+            _dragYaw = 0f;
+            _dragPitch = 0f;
+            ApplyOrbit();
+        }
+
+        private void ApplyOrbit()
+        {
+            var show = _gender == 1 ? _male : _female;
+            if (show == null) return;
+            // 🔴 先繞世界 Y 轉身、再繞**固定的世界 X** 抬頭(官方引擎就是這個順序,見欄位註解),
+            //    然後把整個人繞腰的高度轉一圈 —— 位置也要跟著轉,否則抬 pitch 時人會離開原地。
+            var q = Quaternion.AngleAxis(_dragPitch, Vector3.right)
+                  * Quaternion.AngleAxis(avatarYaw + _dragYaw, Vector3.up);
+            var pivot = new Vector3(Park.x, Park.y + OrbitPivotY, Park.z);
+            var basePos = new Vector3(Park.x, Park.y + _feetOffsetY, Park.z);
+            show.SetPositionAndRotation(pivot + q * (basePos - pivot), q);
+        }
+
         private Transform BuildAvatar(bool male, string name)
         {
             var go = new GameObject(name);
@@ -128,7 +179,8 @@ namespace Sdo.Game
             ApplyRandomMotion(av, male, restart: true);
             // feet on y=0 at the park spot; yaw 0 faces the −Z camera (RoomMovement.FacingDegrees(2) = 0°)
             float feet = GroundFeetY(av, male);
-            go.transform.position = new Vector3(Park.x, Park.y + avatarYOffset - feet, Park.z);
+            _feetOffsetY = avatarYOffset - feet;   // 拖曳旋轉要繞 pivot 重算位置,得記住這個基準
+            go.transform.position = new Vector3(Park.x, Park.y + _feetOffsetY, Park.z);
             go.transform.localRotation = Quaternion.Euler(0f, avatarYaw, 0f);
             go.SetActive(false);
             return go.transform;
