@@ -223,6 +223,24 @@ namespace Sdo.UI.Util
         public static Sprite FameMoon => An("PlayerMoon");
         public static Sprite FameSun => AnRaw("PlayerSun");
 
+        /// <summary>
+        /// 分頁內容板**最右那一欄**像素(1px 寬)。拿來把板子右緣延伸過去,填掉「板子只到 683、
+        /// 底板凹槽卻到 695」那 12px(官方靠 CharBack 蓋掉,我們沒有那張圖 —— 見 PlayerInfoModal.GrooveFillX)。
+        ///
+        /// 🔴 為什麼不用純色:上一版補一條框線色 (97,72,168),貼在淺紫板子旁邊反而變成一條**更明顯**的深紫邊
+        ///    (使用者回報)。板子的底色是**上淺下深的漸層**,任何單一純色都補不平。
+        ///    取它自己最右那一欄再橫向拉開,顏色就完全跟著漸層走,接縫看不出來。
+        /// 兩頁的板子在圖集裡右緣**剛好同一欄**(34_man 624+348-1、43_man 625+347-1,都是 971),只是 y 段不同。
+        /// </summary>
+        // 🔴 **不能取最後一欄** —— 那一欄是板子**自己的右框線**(97,72,168),延伸出去等於又畫了一條同色的深紫帶
+        //    (踩過兩次:第一次用純色框線色、第二次取最後一欄,畫面上一模一樣)。
+        //    正確的做法是分兩塊:先用框線**內側**的底色把空隙填平,再把框線本身整組搬到凹槽右緣。
+        //    圖集欄位(量出來的):板子內部到 965、框線 966..971。兩頁的板子右緣剛好同一欄,只有 y 段不同。
+        public static Sprite BasicFill => AtlasCrop("BaseBoard_man.PNG", 965, 0, 1, 337);
+        public static Sprite BasicFrame => AtlasCrop("BaseBoard_man.PNG", 966, 0, 6, 337);
+        public static Sprite StatsFill => AtlasCrop("BaseBoard_man.PNG", 965, 338, 1, 338);
+        public static Sprite StatsFrame => AtlasCrop("BaseBoard_man.PNG", 966, 338, 6, 338);
+
         // 賽事信息頁的三個子分頁(家族徽章 / 星座勛章 / 寵物勛章)在 BaseBoard2_man.png 上的裁切。
         // 三張都是「整條 322-328 寬、只畫自己那一格、其餘透明」,官方把三個 CheckBox 疊在同一點 (350,264)。
         //

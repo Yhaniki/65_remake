@@ -84,9 +84,10 @@ namespace Sdo.UI.Screens
         //    這段蓋回去,所以左移不會讓補條在分頁區露出來。
         // 🔴 右緣取到 697(凹槽框線的右緣)而不是 695:696..697 本來就是同色框線,蓋掉毫無差別,
         //    但可以吃掉縮放到 1024×768 時最後那一欄的抗鋸齒殘影(實測 x=897 會留一條)。
-        private const float GrooveFillX = 679f, GrooveFillY = 110f;
-        private const float GrooveFillW = 18f, GrooveFillH = 389f;
-        private static readonly Color GrooveFrameCol = new Color32(97, 72, 168, 255);
+        /// <summary>底板凹槽的右緣(絕對 x)。分頁板的右緣要延伸到這裡才不會露出底板的星空。</summary>
+        private const float GrooveRight = 695f;
+        /// <summary>分頁板右框線的寬度(圖集 966..971)。整組搬到凹槽右緣,空出來的用底色填。</summary>
+        private const float PanelFrameW = 6f;
 
         // 身分區。官方在這塊放 <AvtShow name="AvatarShow" x="105" y="111" w="230" h="391"> 的 3D 角色,
         // 名字/等級疊在它左上角(name 132,129 / level 132,144 —— 這幾個男女版同座標)。我們不做 3D 預覽
@@ -271,7 +272,6 @@ namespace Sdo.UI.Screens
 
         private Image _angelBar, _expBar, _weightBar, _duanweiBar;
         private Image[] _fameSlots;                             // 知名度那 10 格(星 / 月 / 太陽)
-        private Image _grooveFill;                              // 凹槽右緣的補條(見 GrooveFillX 的註解)
         private Image[] _subTab;                                // 賽事頁的三個子分頁(家族/星座/寵物)
         private RectTransform _xunzhangBody, _famillyBody;      // 星座+寵物共用 / 家族自己
         private int _matchSub;
@@ -336,8 +336,7 @@ namespace Sdo.UI.Screens
             // 補掉底板凹槽右緣那 12px(官方靠 CharBack 蓋掉,我們沒有那張圖 —— 見 GrooveFillX 的註解)。
             // 建在 Board 之後、分頁容器之前 → 分頁板疊在它上面,寬度不同的那幾頁(43_man 到 684、
             // ZoBG 到 686)各自蓋掉自己那幾 px,剩下的由補條接手,不會有哪一頁露出縫。
-            _grooveFill = UIKit.AddImage(_window, "GrooveFill", GrooveFrameCol);
-            Place(_grooveFill.rectTransform, GrooveFillX, GrooveFillY, GrooveFillW, GrooveFillH);
+            // (補條改成掛在各分頁自己的容器裡、用板子最右一欄延伸 —— 見 BuildBasicTab / BuildStatsTab。)
 
             BuildIdentity(_window);
             BuildTabs(_window);
@@ -431,6 +430,8 @@ namespace Sdo.UI.Screens
         private void BuildBasicTab(RectTransform body)
         {
             UIKit.AddSprite(body, "BasicBg", PlayerInfoArt.AnRaw("PlayerInformationDlg34_man"), BasicBgX, BasicBgY);
+            // 板子內部到 676(圖集 965),框線 677..683 —— 把框線搬到 689..695,中間用底色填。
+            AddPanelEdge(body, PlayerInfoArt.BasicFill, PlayerInfoArt.BasicFrame, 676f, BasicBgY, 337f);
 
             // 三條進度條(天使等級 / 經驗值 / TP值)。經驗值那條官方用黃色前景,另外兩條用同一張粉紅條。
             _angelBar = AddProgress(body, "pro_angel", AngelBarX, AngelBarY, "PlayerInformationDlg65");
@@ -630,6 +631,21 @@ namespace Sdo.UI.Screens
             return img;
         }
 
+        /// <summary>
+        /// 把分頁板的右緣延伸到底板凹槽的右緣(695)。<paramref name="edge"/> 是板子最右那一欄(1px 寬),
+        /// 橫向拉開之後顏色完全跟著板子的上下漸層走 —— 見 <see cref="PlayerInfoArt.BasicEdge"/> 的註解。
+        /// 建在板子之後 = 疊在它上面,但兩者右緣相接、不重疊,所以看不出接縫。
+        /// </summary>
+        private static void AddPanelEdge(RectTransform body, Sprite fill, Sprite frame, float x, float y, float h)
+        {
+            // 先用框線內側的底色把 x..(695-框線寬) 填平,再把框線本身貼到最右邊 —— 兩塊拼起來就是
+            // 「板子右緣整組往右移到凹槽邊」,而不是「板子旁邊多一條」。
+            var f = UIKit.AddSprite(body, "PanelFill", fill, x, y);
+            Place(f.rectTransform, x, y, GrooveRight - PanelFrameW - x, h);
+            var fr = UIKit.AddSprite(body, "PanelFrame", frame, GrooveRight - PanelFrameW, y);
+            Place(fr.rectTransform, GrooveRight - PanelFrameW, y, PanelFrameW, h);
+        }
+
         private static TextMeshProUGUI AddValue(RectTransform parent, string name, float x, float y, float w,
                                                 Color color, TextAlignmentOptions align)
         {
@@ -645,6 +661,7 @@ namespace Sdo.UI.Screens
         private void BuildStatsTab(RectTransform body)
         {
             UIKit.AddSprite(body, "StatsBg", PlayerInfoArt.AnRaw("PlayerInformationDlg43_man"), BasicBgX, BasicBgY - 1f);
+            AddPanelEdge(body, PlayerInfoArt.StatsFill, PlayerInfoArt.StatsFrame, 676f, BasicBgY - 1f, 338f);
 
             // 上方三格:熱舞戰績(兩格)與目前排名。烤字在底板上,這裡只放值。
             _perfLabel = UIKit.AddText(body, "performance", "", RateFont, Color.black, TextAlignmentOptions.Center);
@@ -1087,11 +1104,8 @@ namespace Sdo.UI.Screens
             // 選中那格的圖除了自己那格還畫滿整條底線,要壓在鄰居上面才不會被隔壁的邊蓋掉(範圍限在 TabBar 容器內)。
             _tabImg[_tab].transform.SetAsLastSibling();
 
-            // 🔴 凹槽右緣的補條**只在底板是淺紫的那幾頁**顯示。
-            //    它是一條實心的框線色(97,72,168),貼在基本/技術統計頁那種淺紫板子旁邊看起來就是「內框粗一點」;
-            //    但星座守護頁的底板是整片深色星空,同一條就變成畫面上一條突兀的紫邊(使用者回報)。
-            //    那幾頁的底板本來就是深色,凹槽露出來的星空與它融成一片,根本不需要補。
-            if (_grooveFill != null) _grooveFill.enabled = _tab == TabBasic || _tab == TabStats;
+            // (凹槽右緣的補條改成掛在各分頁自己的容器裡、用板子最右一欄延伸 —— 見 AddPanelEdge,
+            //  所以這裡不再需要跟著分頁開關它。)
         }
 
         /// <summary>

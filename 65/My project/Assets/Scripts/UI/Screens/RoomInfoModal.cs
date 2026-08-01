@@ -54,13 +54,16 @@ namespace Sdo.UI.Screens
         // 底圖畫死的軌道細線在 abs x 527..529 → 14 寬的握把置中是 521。
         private const float RailX = 521f, RailTop = 286f, RailH = 109f;
 
-        private static readonly Color32 ValueCol = new Color32(0xFF, 0xFF, 0xFF, 0xFF);
+        // 官方原圖取樣(使用者指定):上面四排欄位的值是深藍紫、下面玩家列是暗紅紫。
+        private static readonly Color32 ValueCol = new Color32(0x2B, 0x1D, 0x61, 0xFF);
+        private static readonly Color32 RowCol = new Color32(0x53, 0x19, 0x5B, 0xFF);
         private const float RowFont = 12f;
+        /// <summary>官方的觀戰欄是「0/10」——旁觀席固定 10 個位置。</summary>
+        private const int AudienceCapacity = 10;
 
         private CanvasGroup _cg;
         private TextMeshProUGUI _name, _mode, _players, _audience, _music;
         private readonly List<TextMeshProUGUI> _rowLevel = new List<TextMeshProUGUI>();
-        private readonly List<Image> _rowSex = new List<Image>();
         private readonly List<TextMeshProUGUI> _rowName = new List<TextMeshProUGUI>();
         private Action _onEnter;
 
@@ -104,32 +107,28 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>
-        /// 4 列玩家。每列三欄:等級(置中)、性別(置中)、名字(靠右)。
+        /// 4 列玩家。官方是「左邊一個小格 + 右邊一個大格」,對照使用者給的官方畫面:
+        /// 左格放**座位編號**(1/2/3…)、右格放名字。
         ///
-        /// 🔴 col1/col3 官方**沒留線索**說裡面放什麼(只知道各 25px 置中,而且 XML 的 5 個 Column 全是文字欄)。
-        ///    等級是座位快照帶得到的;性別這裡用**大廳房卡那排愛心的同一套素材**(FEMALE/MALE.an,18×16)——
-        ///    25px 的格子塞一顆愛心剛好,而且與房卡上那排是同一件事,同一個畫面不該有兩種講法。
-        ///    (官方那兩張 ROOMINFOMALE/FEMALE.an 是壞的 —— crop 出來是橘白漸層裝飾底,圖集改版後 offset 沒同步,不要用。)
+        /// 🔴 **名字靠左**(使用者指定)。官方 XML 的 col4 寫 align=right,但實機畫面上是靠左的 ——
+        ///    以畫面為準。
+        /// 🔴 **不畫性別愛心**(使用者指定)。上一版在中間那欄放了房卡那排愛心,官方那格是空的。
         /// </summary>
         private void BuildList(RectTransform root)
         {
             for (int i = 0; i < RowCount; i++)
             {
                 float y = RowY0 + i * RowStep;
-                _rowLevel.Add(AddValue(root, "row" + i + "_lv", ColLevelX, y + 4f, ColLevelW, TextAlignmentOptions.Center));
-
-                var sex = UIKit.AddSprite(root, "row" + i + "_sex", null, 0f, 0f);
-                Place(sex.rectTransform, ColSexX + (ColSexW - HeartW) * 0.5f, y + 5f, HeartW, HeartH);
-                _rowSex.Add(sex);
-
-                _rowName.Add(AddValue(root, "row" + i + "_name", ColNameX, y + 4f, ColNameW, TextAlignmentOptions.Right));
+                _rowLevel.Add(AddValue(root, "row" + i + "_no", ColLevelX, y + 4f, ColLevelW, TextAlignmentOptions.Center));
+                _rowName.Add(AddValue(root, "row" + i + "_name", ColNameX, y + 4f, ColNameW, TextAlignmentOptions.Left));
             }
         }
 
         private static TextMeshProUGUI AddValue(RectTransform parent, string name, float x, float y, float w,
                                                 TextAlignmentOptions align)
         {
-            var t = UIKit.AddText(parent, name, "", RowFont, ValueCol, align);
+            // 玩家列與上面四排欄位的字色不同(見 ValueCol / RowCol)——用名字前綴分,列都叫 rowN_*。
+            var t = UIKit.AddText(parent, name, "", RowFont, name.StartsWith("row") ? RowCol : ValueCol, align);
             Place(t.rectTransform, x, y, w, ValueH);
             t.overflowMode = TextOverflowModes.Ellipsis;   // 房名/暱稱沒有長度上限,不截會蓋到隔壁欄
             return t;
@@ -163,10 +162,10 @@ namespace Sdo.UI.Screens
             // 房名空的時候要顯示「房主名 + 的舞蹈室」—— 與房卡上那行同一份規則,不要各算各的。
             _name.text = RoomLabels.DisplayName(r.Name, r.HostName);
             _mode.text = L(r.Mode == GameMode.Normal ? "songselect.mode_normal" : "songselect.mode_free");
-            _players.text = r.Count + " / " + r.Capacity;
-            // 旁觀人數:房間快照沒有帶,官方那格沒資料時也是 0(使用者要求沒資料就顯示 0,不要留白)。
-            _audience.text = "0";
-            _music.text = Or(r.SongTitle);
+            _players.text = r.Count + "/" + r.Capacity;
+            // 旁觀人數:房間快照沒帶旁觀者,官方那格是「0/10」。
+            _audience.text = "0/" + AudienceCapacity;
+            _music.text = SongLabel(r);
 
             FillRows(r);
 
@@ -184,24 +183,26 @@ namespace Sdo.UI.Screens
         private void FillRows(RoomInfo r)
         {
             var seats = r.Seats;
-            var female = LobbyArt.AnSolo("female");
-            var male = LobbyArt.AnSolo("male");
+            int shown = 0;
             for (int i = 0; i < _rowLevel.Count; i++)
             {
                 var p = seats != null && i < seats.Count ? seats[i].Player : null;
-                if (p == null)
-                {
-                    _rowLevel[i].text = ""; _rowName[i].text = "";
-                    UIKit.ApplySprite(_rowSex[i], null);
-                    continue;
-                }
-                _rowLevel[i].text = p.Level > 0 ? p.Level.ToString() : "";
+                if (p == null) { _rowLevel[i].text = ""; _rowName[i].text = ""; continue; }
+                // 左格是**座位編號**(官方畫面上是 1/2/3…),不是等級 —— 空位不占號,所以從有人的那幾個往下數。
+                _rowLevel[i].text = (++shown).ToString();
                 _rowName[i].text = p.DisplayName ?? "";
-                var g = r.SeatGenders;
-                bool isMale = g != null && i < g.Length && g[i] == 1;
-                UIKit.ApplySprite(_rowSex[i], isMale ? male : female);
             }
         }
+
+        /// <summary>
+        /// 遊戲歌曲那格。官方是「歌名 (難度級)」,例如「海芋恋 (9級)」。
+        ///
+        /// 🔴 **難度目前拿不到**:<see cref="RoomInfo"/> 只帶 <c>SongTitle</c> —— 房間列表的封包沒有難度欄位
+        ///    (那是進房之後 roomState 才有的)。所以現在只寫歌名,**不硬掛一個「(0級)」**:
+        ///    那會讓人以為所有房間的歌都是 0 級,比缺一個括號更糟。
+        ///    要補的話得先讓 server 的 roomList 帶上難度,再從這裡接。
+        /// </summary>
+        private static string SongLabel(RoomInfo r) => Or(r.SongTitle);
 
         private static string Or(string s) => string.IsNullOrEmpty(s) ? "" : s;
 
