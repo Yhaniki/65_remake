@@ -40,11 +40,21 @@ namespace Sdo.UI.Util
         }
 
         /// <summary>一個 .an 的第一幀(已快取);找不到回 null。名字可含可不含 ".an"。</summary>
+        /// <summary>
+        /// 一個 .an 的第一幀(已快取)。
+        ///
+        /// 🔴 走 <c>LoadAnSolo</c>(**複製到自己的貼圖**)而不是 <c>LoadAn1</c>(共用圖集):
+        ///    這一包的按鈕在 BaseBoard_man.png / BaseBoard2_man.png 裡是**彼此貼著**排的
+        ///    (例如三態直接上下相鄰),共用圖集取樣時雙線性會把隔壁那顆鈕的不透明像素拖進這一顆的邊緣
+        ///    —— 畫面上就是每顆鈕鑲一圈白/淺色邊(使用者回報)。切到自己的貼圖上就沒有鄰居可滲。
+        ///    <c>pad: 0</c> 是刻意的:pad 會在四周加透明邊,而 <c>UIKit.AddSprite</c> 依 sprite 尺寸把左上角錨在 (x,y),
+        ///    每加 N 就把整張圖往右下推 N px。載不到 solo crop 時退回舊路(至少畫得出來)。
+        /// </summary>
         public static Sprite An(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;
             if (_cache.TryGetValue(anName, out var s) && s != null) return s;
-            s = SdoExtracted.LoadAn1(Dir, anName);
+            s = SdoExtracted.LoadAnSolo(Dir, anName, pad: 0) ?? SdoExtracted.LoadAn1(Dir, anName, bleed: true);
             _cache[anName] = s;
             return s;
         }

@@ -45,7 +45,10 @@ namespace Sdo.UI.Screens
         // 5-73 / 73-142 / 143-212 / 213-282(283 之後是官方第五格「星座」的位置,我們不畫)。
         private static readonly float[] TabPillX = { 4f, 73f, 143f, 213f };
         private const float TabPillW = 70f, TabPillH = 39f;
-        private const int TabBasic = 0, TabStats = 1, TabCount = 2;
+        // 官方男版分頁條有**四格**素材(Dlg4/7/10/158 → 基本信息 / 技術統計 / 賽事信息 / 拼圖卡片),
+        // 第五格「星座守護」是另一組(ZoSelect_a/b)、走另一套版面,這裡先不放。
+        // 🔴 以前只接了前兩格,後兩格根本點不動(使用者回報「右上 tab 全部沒接」)。
+        private const int TabBasic = 0, TabStats = 1, TabMatch = 2, TabCards = 3, TabCount = 4;
 
         // 分頁內容板。官方兩頁的板子差 1-2 px(基本頁 PlayerInformationDlg34_man.an 掛在 playerTabWindow0(-1,+6)
         // → 絕對 (335,153) 348×337;技术统计頁 PlayerInformationDlg43_man.an 掛在 playerTabWindow1(+1,+6)
@@ -86,22 +89,44 @@ namespace Sdo.UI.Screens
         private const float BasicRow0Y = 179f, RowStep = 30f, RowH = 20f, RowFont = 13f;
         private const int BasicRowMax = 7;                       // 自己:名稱/性別/家族/等級/M/G/P
 
-        private const float RateRow0Y = 177f, RateStep = 30f, RateFont = 12f;
-        private const float RateLabelW = 78f;
-        private const float BarX = 84f, BarW = 176f, BarH = 11f, BarDy = 5f;   // 相對 row 左上角
-        private const float RateValX = 268f, RateValW = 50f;
+        // ---- 基本信息頁(官方 playerTabWindow0,容器偏移 x=-1 y=+6;下面全是**加過偏移的絕對座標**) ----
+        // 每一格的標題都烤在底圖 PlayerInformationDlg34_man.an 上,程式只放數值。
+        private const float BasicBgX = 335f, BasicBgY = 153f;        // <Label background="PlayerInformationDlg34_man.an" x=336 y=147/>
+        private const float ProgressW = 236f, ProgressH = 19f;
+        private const float WeightBarX = 431f, WeightBarY = 124f;    // pro_weight  (432,118) TP值
+        private const float AngelBarX = 432f, AngelBarY = 190f;      // pro_angel   (433,184) 天使等級
+        private const float ExpBarX = 432f, ExpBarY = 221f;          // pro_exp     (433,215) 經驗值(黃)
+        private const float ExpValX = 437f, ExpValY = 176f;          // exp         (438,170)
+        private const int CharmCount = 12;                           // 🔴 官方 Charm1..24 是「12 個位置 × 亮/暗兩張」,不是 24 顆(x 只排到 646)
+        private const float CharmX = 425f, CharmY = 249f, CharmStep = 20f;
+        private const float FamilyValX = 431f, FamilyValY = 339f;    // familyname  (432,333)
+        private const float OfferValX = 602f, OfferValY = 340f;      // offer       (603,334) 家族榮譽度
+        private const float IntimateValX = 429f, IntimateValY = 367f;// intimate    (430,361) 密友度
+        private const float SocialValX = 426f, SocialValY = 394f;    // SendNum     (427,388) 社交值
+        private const float LuckValX = 419f, LuckValY = 379f;        // luckvalue   (420,373)
+
+        // ---- 技術統計頁(官方 playerTabWindow1,容器偏移 x=1 y=6;下面全是**加過偏移的絕對座標**) ----
+        //
+        // 官方這一頁底下有兩個子頁,由上方兩顆 CheckBox 切換:
+        //   EffortStat(成就)  —— EffortBtn (349,223)
+        //   SkillStat(統計明細)—— SkillBtn  (458,227)
+        // 🔴 六條的**標籤(勝率/命中率/Perfact率/Cool率/Bad率/Miss率)是烤在 SkillBg_man 背板圖上的**,
+        //    不要另外畫字 —— 畫了就會與烤字疊在一起。程式只放「進度條 + 右邊那個百分比數值」。
+        private const float StatsEffortBtnX = 349f, StatsEffortBtnY = 223f;
+        private const float StatsSkillBtnX = 458f, StatsSkillBtnY = 227f;
+        private const float SkillBgX = 351f, SkillBgY = 251f;                  // SkillBg_man 322×190
+        private const float RateRow0Y = 264f, RateStep = 29f, RateFont = 12f;  // 官方 258/287/316/345/374/403 (+6)
+        private const float RateBarX = 434f, RateBarW = 236f, RateBarH = 19f;  // ProgressBar 236×19
+        private const float RateValDx = 7f;                                    // 數值文字相對條左緣(官方 440-433)
+        // 這一頁上方那三格(熱舞戰績兩格 + 目前排名)。烤字同樣在底板上,只放值。
+        private const float PerfX = 427f, PerfAuX = 592f, PerfY = 168f, PerfW = 77f, PerfH = 12f;
+        private const float StatsRankX = 428f, StatsRankY = 200f, StatsRankW = 230f;
         private const int RateRowMax = 6;                        // 命中/Perfect/Cool/Bad/Miss/勝率
-        private const float StatsTextRow0Y = 367f;               // 比率之後那三行純文字
-        private const int StatsRowMax = 3;                       // 判定數 / 遊玩次數 / 戰績
-        // 判定數那一列會塞四組數字(「P 12,345 / C 6,789 / B 123 / M 45」),用基本頁那組字級/欄寬會撐出板外,
-        // 所以這三行自己一組:標籤欄窄一點、字級小一號。
-        private const float StatsLabelW = 76f, StatsFont = 12f;
 
         private const float NoteX = 351f, NoteY = 215f, NoteW = 318f, NoteH = 120f, NoteFont = 13f;
 
         // ---------------------------------------------------------------- 顏色
         private static readonly Color Scrim = new Color(0.10f, 0.06f, 0.16f, 0.62f);
-        private static readonly Color BarBack = new Color(0f, 0f, 0f, 0.45f);
         private static readonly Color32 LabelCol = new Color32(0xC9, 0xB6, 0xE8, 255);
         private static readonly Color32 ValueCol = new Color32(0xFF, 0xFF, 0xFF, 255);
         private static readonly Color32 NoteCol = new Color32(0xE6, 0xD8, 0xF0, 255);
@@ -121,12 +146,16 @@ namespace Sdo.UI.Screens
         private OutlinedLabel _idName;
         private TextMeshProUGUI _idLevel;
 
-        private TextRow[] _basicRows;
+        private Image _angelBar, _expBar, _weightBar;
+        private TextMeshProUGUI _basicExp, _basicFamily, _basicOffer, _basicIntimate, _basicSocial, _basicLuck;
         private RateRow[] _rateRows;
-        private TextRow[] _statsRows;
+        private RectTransform _skillBody, _effortBody;          // 技術統計的兩個子頁(統計明細 / 成就)
+        private Button _skillBtn, _effortBtn;
+        private TextMeshProUGUI _perfLabel, _perfAuLabel, _statsRankLabel;
+        private TextRow[] _matchRows, _cardRows;   // 賽事信息 / 拼圖卡片(系統還沒有 → 欄位在、值恆 0)
         private TextMeshProUGUI _basicNote, _statsNote;
 
-        private Button _whisperBtn, _friendBtn;
+        private Button _whisperBtn, _friendBtn, _mailBtn, _enemyBtn, _buyLookBtn;
         private Image _friendImg;
 
         private bool _isSelf;
@@ -170,6 +199,11 @@ namespace Sdo.UI.Screens
             BuildTabs(_window);
             BuildBasicTab(_tabBody[TabBasic]);
             BuildStatsTab(_tabBody[TabStats]);
+            // 賽事信息 / 拼圖卡片:系統都還沒有,但分頁要點得動、內容要看得到欄位(值 0)。
+            BuildPlaceholderTab(_tabBody[TabMatch], "Match",
+                new[] { "room.info_match_rank", "room.info_match_wins", "room.info_match_points" }, out _matchRows);
+            BuildPlaceholderTab(_tabBody[TabCards], "Cards",
+                new[] { "room.info_cards_owned", "room.info_cards_sets", "room.info_cards_points" }, out _cardRows);
             BuildButtons(_window);
 
             var close = AddOfficialButton(_window, "Close", PlayerInfoArt.CloseN,
@@ -184,9 +218,12 @@ namespace Sdo.UI.Screens
             var scrim = UIKit.AddImage(parent, "IdScrim", Scrim);
             Place(scrim.rectTransform, IdX, IdY, IdW, IdH);
 
+            // 🔴 名字與等級**靠右對齊、同一個顏色**(官方 XML 兩個 Label 都是 0xfffaff74 = NameFace)。
+            //    以前等級用 ValueCol(白)、兩者都靠左 —— 與官方對不上(使用者回報)。
+            //    靠右是因為這一區左邊被 3D 角色佔著,官方把字貼在右緣才不會壓在人身上。
             _idName = OutlinedLabel.Create(parent, "IdName", IdX + 10f, IdY + 8f, IdW - 20f, 22f,
-                                           15f, NameFace, NameEdge, 1f, true, TextAlignmentOptions.Left);
-            _idLevel = UIKit.AddText(parent, "IdLevel", "", 13f, ValueCol, TextAlignmentOptions.Left);
+                                           15f, NameFace, NameEdge, 1f, true, TextAlignmentOptions.Right);
+            _idLevel = UIKit.AddText(parent, "IdLevel", "", 13f, NameFace, TextAlignmentOptions.Right);
             Place(_idLevel.rectTransform, IdX + 10f, IdY + 38f, IdW - 20f, 20f);
         }
 
@@ -207,9 +244,11 @@ namespace Sdo.UI.Screens
                 ApplyTabArt(i, false);
             }
 
-            // 內容板的底(半透明深色)。放在分頁本體之前建 → 排在文字後面。
-            var scrim = UIKit.AddImage(parent, "PanelScrim", Scrim);
-            Place(scrim.rectTransform, PanelX, PanelY, PanelW, PanelH);
+            // 🔴 內容板的底圖是**每頁一張官方圖**,不是我們自己畫的半透明底 ——
+            //    官方把每一格的標題(天使等級 / TP值 / 經驗值 / 魅力值 / 幸運值 / 知名度 / 家族 / 城市…)
+            //    整組**烤在那張圖上**,程式只負責在對應座標放數值。以前鋪一層 Scrim 再自己排文字列,
+            //    所以不管座標怎麼調都不可能像官方(使用者連續三輪回報「tab 裡面的 layout 沒做」)。
+            //    兩張圖各自貼在自己那一頁的容器裡(見 BuildBasicTab / BuildStatsTab)。
 
             for (int i = 0; i < TabCount; i++)
             {
@@ -231,25 +270,144 @@ namespace Sdo.UI.Screens
             }
         }
 
+        /// <summary>
+        /// 基本信息頁 —— 版位**逐字取自官方 <c>playerTabWindow0</c>**(容器偏移 x=-1 y=+6,下面都是加過偏移的絕對座標)。
+        ///
+        /// 🔴 這一頁的**每一個標題都烤在底圖 <c>PlayerInformationDlg34_man.an</c> 上**,程式只放數值。
+        ///    官方欄位:天使等級 / TP值 / 經驗值 / 魅力值 / 幸運值 / 知名度 / 家族 / 家族榮譽度 / 密友度 /
+        ///    城市 / 社交值 / MSN / 年齡 / 星座 / MVP。
+        ///    這個重製版真正有資料的只有**家族**與**經驗值(恆 0)**;其餘照使用者要求**顯示 0 而不是留白**。
+        /// </summary>
         private void BuildBasicTab(RectTransform body)
         {
-            _basicRows = new TextRow[BasicRowMax];
-            for (int i = 0; i < BasicRowMax; i++)
-                _basicRows[i] = TextRow.Create(body, "BasicRow" + i, RowX, BasicRow0Y + i * RowStep,
-                                               RowW, RowH, RowLabelW, RowFont);
+            UIKit.AddSprite(body, "BasicBg", PlayerInfoArt.An("PlayerInformationDlg34_man"), BasicBgX, BasicBgY);
+
+            // 三條進度條(天使等級 / 經驗值 / TP值)。經驗值那條官方用黃色前景,另外兩條用同一張粉紅條。
+            _angelBar = AddProgress(body, "pro_angel", AngelBarX, AngelBarY, "PlayerInformationDlg65");
+            _expBar = AddProgress(body, "pro_exp", ExpBarX, ExpBarY, "PlayerInformationDlgYellow65");
+            _weightBar = AddProgress(body, "pro_weight", WeightBarX, WeightBarY, "PlayerInformationDlg285");
+
+            // 魅力值:24 顆愛心,亮(Dlg68)疊在暗(Dlg38)上面 —— 有幾點就亮幾顆。沒有這套系統 → 全暗。
+            for (int i = 0; i < CharmCount; i++)
+                UIKit.AddSprite(body, "CharmOff" + i, PlayerInfoArt.An("PlayerInformationDlg38"),
+                                CharmX + i * CharmStep, CharmY);
+
+            // 官方那幾格數值。有資料的只有家族;其餘固定 0(使用者要求:沒資料也要顯示 0,不要留白)。
+            _basicExp = AddValue(body, "exp", ExpValX, ExpValY, 118f, Color.white, TextAlignmentOptions.Left);
+            _basicFamily = AddValue(body, "familyname", FamilyValX, FamilyValY, 72f, Color.black, TextAlignmentOptions.Left);
+            _basicOffer = AddValue(body, "offer", OfferValX, OfferValY, 72f, Color.black, TextAlignmentOptions.Left);
+            _basicIntimate = AddValue(body, "intimate", IntimateValX, IntimateValY, 72f, Color.black, TextAlignmentOptions.Left);
+            _basicSocial = AddValue(body, "SendNum", SocialValX, SocialValY, 80f, Color.black, TextAlignmentOptions.Left);
+            _basicLuck = AddValue(body, "luckvalue", LuckValX, LuckValY, 48f, Color.white, TextAlignmentOptions.Left);
+
             _basicNote = MakeNote(body, "BasicNote");
         }
 
+        /// <summary>底部那一排要顯示哪一組(看自己 = 推广员那組、看別人 = 私聊/好友那組)。</summary>
+        private void ShowBottomRow(bool self)
+        {
+            _whisperBtn.gameObject.SetActive(!self);
+            _friendBtn.gameObject.SetActive(!self);
+            _mailBtn.gameObject.SetActive(!self);
+            _enemyBtn.gameObject.SetActive(!self);
+            _buyLookBtn.gameObject.SetActive(!self);
+
+        }
+
+        /// <summary>官方 ProgressBar:236×19 的前景圖,用 Filled 由左往右填。</summary>
+        private static Image AddProgress(RectTransform parent, string name, float x, float y, string an)
+        {
+            var img = UIKit.AddSprite(parent, name, PlayerInfoArt.An(an), x, y);
+            Place(img.rectTransform, x, y, ProgressW, ProgressH);   // AddSprite 會縮成原圖大小,擺完再改回來
+            img.type = Image.Type.Filled;
+            img.fillMethod = Image.FillMethod.Horizontal;
+            img.fillOrigin = (int)Image.OriginHorizontal.Left;
+            img.fillAmount = 0f;
+            return img;
+        }
+
+        private static TextMeshProUGUI AddValue(RectTransform parent, string name, float x, float y, float w,
+                                                Color color, TextAlignmentOptions align)
+        {
+            var t = UIKit.AddText(parent, name, "", RowFont, color, align);
+            Place(t.rectTransform, x, y, w, 14f);
+            return t;
+        }
+
+        /// <summary>
+        /// 技術統計頁 —— 版位**逐字取自官方 <c>playerTabWindow1</c>**(見上方常數區)。
+        /// 官方這頁分成「成就」與「統計明細」兩個子頁,由上面兩顆鈕切換;統計明細就是那六條進度條。
+        /// </summary>
         private void BuildStatsTab(RectTransform body)
         {
+            UIKit.AddSprite(body, "StatsBg", PlayerInfoArt.An("PlayerInformationDlg43_man"), BasicBgX, BasicBgY - 1f);
+
+            // 上方三格:熱舞戰績(兩格)與目前排名。烤字在底板上,這裡只放值。
+            _perfLabel = UIKit.AddText(body, "performance", "", RateFont, Color.black, TextAlignmentOptions.Center);
+            Place(_perfLabel.rectTransform, PerfX, PerfY, PerfW, PerfH);
+            _perfAuLabel = UIKit.AddText(body, "performanceau", "", RateFont, Color.black, TextAlignmentOptions.Center);
+            Place(_perfAuLabel.rectTransform, PerfAuX, PerfY, PerfW, PerfH);
+            _statsRankLabel = UIKit.AddText(body, "rank", "", RateFont,
+                                            new Color32(0x00, 0x4F, 0x7C, 0xFF), TextAlignmentOptions.Left);
+            Place(_statsRankLabel.rectTransform, StatsRankX, StatsRankY, StatsRankW, PerfH);
+
+            // 兩個子頁的容器。成就那頁是官方的裝備成就格,這個重製版沒有那份資料 → 容器留著、內容空白。
+            _effortBody = UIKit.NewRect(body, "EffortStat");
+            UIKit.Stretch(_effortBody);
+            _skillBody = UIKit.NewRect(body, "SkillStat");
+            UIKit.Stretch(_skillBody);
+
+            // 統計明細:背板(六個標籤烤在上面)+ 六條進度條。
+            UIKit.AddSprite(_skillBody, "SkillBg", PlayerInfoArt.An("SkillBg_man"), SkillBgX, SkillBgY);
             _rateRows = new RateRow[RateRowMax];
             for (int i = 0; i < RateRowMax; i++)
-                _rateRows[i] = RateRow.Create(body, "RateRow" + i, RowX, RateRow0Y + i * RateStep, RowW, RowH);
-            _statsRows = new TextRow[StatsRowMax];
-            for (int i = 0; i < StatsRowMax; i++)
-                _statsRows[i] = TextRow.Create(body, "StatRow" + i, RowX, StatsTextRow0Y + i * RowStep,
-                                               RowW, RowH, StatsLabelW, StatsFont);
+                _rateRows[i] = RateRow.Create(_skillBody, "RateRow" + i, RateBarX, RateRow0Y + i * RateStep);
+
+            // 兩顆子頁鈕。官方是 CheckBox(normal/pushed 兩態),選中換 pushed 圖 —— 與分頁條同一個做法,
+            // 所以 transition 關掉、圖由 ShowStatsSub 手動控制(留著 SpriteSwap 會出現「按一個動兩個」)。
+            _effortBtn = AddOfficialButton(body, "EffortBtn", PlayerInfoArt.An("EffortBtn1_man"),
+                PlayerInfoArt.An("EffortBtn1_man"), PlayerInfoArt.An("EffortBtn2_man"),
+                StatsEffortBtnX, StatsEffortBtnY, () => ShowStatsSub(false));
+            _skillBtn = AddOfficialButton(body, "SkillBtn", PlayerInfoArt.An("SkillBtn1_man"),
+                PlayerInfoArt.An("SkillBtn1_man"), PlayerInfoArt.An("SkillBtn2_man"),
+                StatsSkillBtnX, StatsSkillBtnY, () => ShowStatsSub(true));
+            _effortBtn.transition = Selectable.Transition.None;
+            _skillBtn.transition = Selectable.Transition.None;
+
             _statsNote = MakeNote(body, "StatsNote");
+            ShowStatsSub(true);   // 預設停在「統計明細」——那才是有資料可看的那一頁
+        }
+
+        /// <summary>技術統計頁的兩個子頁:true = 統計明細(六條)、false = 成就。</summary>
+        private void ShowStatsSub(bool skill)
+        {
+            if (_skillBody == null) return;
+            _skillBody.gameObject.SetActive(skill);
+            _effortBody.gameObject.SetActive(!skill);
+            UIKit.ApplySprite(_skillBtn.targetGraphic as Image,
+                              PlayerInfoArt.An(skill ? "SkillBtn2_man" : "SkillBtn1_man"));
+            UIKit.ApplySprite(_effortBtn.targetGraphic as Image,
+                              PlayerInfoArt.An(skill ? "EffortBtn1_man" : "EffortBtn2_man"));
+        }
+
+        /// <summary>
+        /// 賽事信息 / 拼圖卡片這兩頁。
+        ///
+        /// 🔴 這個重製版**沒有**賽事系統與拼圖卡片系統,但官方那兩格分頁是點得動的,而且點進去有東西看。
+        ///    使用者要求「就算沒玩過也要顯示全部 0,不是沒數據就都不用接」——所以這裡照官方的欄位名
+        ///    把列印出來、值一律 0。空白的一頁看起來像功能沒做完,一排 0 至少看得出「這裡會有什麼」。
+        ///
+        /// ⚠️ 官方那兩頁的**完整版面**(賽事的名次列表、拼圖的 6×N 卡片格)沒有重製 —— 這裡只有欄位列。
+        /// </summary>
+        private void BuildPlaceholderTab(RectTransform body, string name, string[] labelKeys, out TextRow[] rows)
+        {
+            rows = new TextRow[labelKeys.Length];
+            for (int i = 0; i < labelKeys.Length; i++)
+            {
+                rows[i] = TextRow.Create(body, name + "Row" + i, RowX, BasicRow0Y + i * RowStep,
+                                         RowW, RowH, RowLabelW, RowFont);
+                rows[i].Set(L(labelKeys[i]), "0");
+            }
         }
 
         private TextMeshProUGUI MakeNote(RectTransform body, string name)
@@ -286,9 +444,19 @@ namespace Sdo.UI.Screens
                                            PlayerInfoArt.AddFriendH, PlayerInfoArt.AddFriendP, FriendX, BtnY, OnToggleFriend);
             _friendImg = _friendBtn.targetGraphic as Image;
 
-            AddOfficialButton(parent, "Mail", PlayerInfoArt.MailN, PlayerInfoArt.MailH, PlayerInfoArt.MailP, MailX, BtnY, null);
-            AddOfficialButton(parent, "Enemy", PlayerInfoArt.EnemyN, PlayerInfoArt.EnemyH, PlayerInfoArt.EnemyP, EnemyX, DelFriendY, null);
-            AddOfficialButton(parent, "BuyLook", PlayerInfoArt.BuyLookN, PlayerInfoArt.BuyLookH, PlayerInfoArt.BuyLookP, BuyLookX, BtnY, null);
+            _mailBtn = AddOfficialButton(parent, "Mail", PlayerInfoArt.MailN, PlayerInfoArt.MailH, PlayerInfoArt.MailP, MailX, BtnY, null);
+            _enemyBtn = AddOfficialButton(parent, "Enemy", PlayerInfoArt.EnemyN, PlayerInfoArt.EnemyH, PlayerInfoArt.EnemyP, EnemyX, DelFriendY, null);
+            _buyLookBtn = AddOfficialButton(parent, "BuyLook", PlayerInfoArt.BuyLookN, PlayerInfoArt.BuyLookH, PlayerInfoArt.BuyLookP, BuyLookX, BtnY, null);
+
+            // 🔴 官方底部那五個格子有**兩種模式**,不是一組鈕:
+            //      看**別人** → 私聊(108) / 加好友(208) / 寄信(308) / 黑名單(408) / 買對方裝扮(508)
+            //      看**自己** → 我要做推广员(108) / 接受推广(208) / … / 点数兑换(508)
+            //    兩組疊在同樣的 x,靠「這是誰的資料」切換顯示(見 Open / OpenSelf)。
+            //    以前不分模式一律畫「看別人」那組,所以開自己的資料會看到「刪除好友 / 購買搭配」——
+            //    對著自己按毫無意義(使用者回報)。這兩顆同樣沒有後端 → handler null。
+            // 🔴 官方看自己時那一組是「我要做推广员 / 接受推广 / 点数兑换」——**使用者要求整組拿掉**:
+            //    這個重製版沒有推廣員制度也沒有點數兌換,那兩顆放上去只是兩塊按不動的裝飾。
+            //    看自己時底部就只留「確定」。(座標記在這裡,之後真要做:Spreader 108,507 / PointChange 508,507。)
 
             // 確定鈕做的事就是關窗(官方也是),沒有人要事後改它 → 不留欄位。
             AddOfficialButton(parent, "Ok", PlayerInfoArt.OkN, PlayerInfoArt.OkH, PlayerInfoArt.OkP, OkX, BtnY, Close);
@@ -341,8 +509,8 @@ namespace Sdo.UI.Screens
             FillBasicOther(who, level);
             FillStatsOther();
 
+            ShowBottomRow(self: false);
             _whisperBtn.gameObject.SetActive(onWhisper != null);
-            _friendBtn.gameObject.SetActive(true);
             RefreshFriendButton();
 
             ShowTab(TabBasic);
@@ -364,8 +532,7 @@ namespace Sdo.UI.Screens
             FillStatsSelf(p.stats);
 
             // 看自己不放私聊/加好友 —— 兩顆按了都沒有意義(FriendList.Add 也會擋掉加自己)。
-            _whisperBtn.gameObject.SetActive(false);
-            _friendBtn.gameObject.SetActive(false);
+            ShowBottomRow(self: true);
 
             ShowTab(TabBasic);
             Reveal();
@@ -410,65 +577,86 @@ namespace Sdo.UI.Screens
         private void SetIdentity(string name, string levelLabel)
         {
             if (_idName != null) _idName.SetText(name);
-            if (_idLevel != null) _idLevel.text = levelLabel ?? "";
+            if (_idLevel != null) _idLevel.text = FormatLevel(levelLabel);
         }
 
+        /// <summary>
+        /// 官方這一格寫的是「<c>Level:62</c>」。傳進來的 <paramref name="label"/> 是
+        /// <c>RoomConfig.LevelLabel</c> 的「LV:11」格式(那是房間頭上名牌用的、要短),
+        /// 這裡只把數字取出來重排 —— 兩個地方要的字面不一樣,但**等級的來源只有一個**,不另外開一條取值路徑。
+        /// 整串沒有數字(例如角色刻意留白)就原樣顯示,不要憑空生一個「Level:0」。
+        /// </summary>
+        private static string FormatLevel(string label)
+        {
+            if (string.IsNullOrEmpty(label)) return "";
+            var digits = new string(System.Array.FindAll(label.ToCharArray(), char.IsDigit));
+            return digits.Length > 0 ? "Level:" + digits : label;
+        }
+
+        /// <summary>
+        /// 基本信息頁的值(看自己)。欄位標題全部烤在底圖上 → 這裡只填數字。
+        /// 這個重製版真正有的只有**家族**;天使等級 / TP / 經驗 / 魅力 / 幸運 / 榮譽 / 密友 / 社交
+        /// 都沒有那套系統 → 一律 0(使用者要求:沒資料也要顯示 0,不要留白)。
+        /// </summary>
         private void FillBasicSelf(UserProfile p)
         {
             _basicNote.gameObject.SetActive(false);
-            int n = 0;
-            _basicRows[n++].Set(L("room.info_name"), _targetName);
-            _basicRows[n++].Set(L("room.info_gender"), L(p.gender == 1 ? "room.info_gender_male" : "room.info_gender_female"));
-            _basicRows[n++].Set(L("room.info_family"), Or(ProfileFields.FamilyName(p)));
-            _basicRows[n++].Set(L("room.info_level"), Or(ProfileFields.LevelLabel(p)));
-            _basicRows[n++].Set(L("room.info_coins"), Num(p.wallet.coins));
-            _basicRows[n++].Set(L("room.info_points"), Num(p.wallet.points));
-            _basicRows[n++].Set(L("room.info_bonus"), Num(p.wallet.bonus));
-            HideFrom(_basicRows, n);
+            _basicFamily.text = Or(ProfileFields.FamilyName(p));
+            _basicExp.text = "0%";
+            _basicOffer.text = "0";
+            _basicIntimate.text = "0";
+            _basicSocial.text = "0";
+            _basicLuck.text = "0";
+            _angelBar.fillAmount = 0f;
+            _expBar.fillAmount = 0f;
+            _weightBar.fillAmount = 0f;
         }
 
+        /// <summary>
+        /// 看別人。座位快照只帶得到名字 / 等級 / 家族 —— 其餘欄位與看自己一樣是 0。
+        /// 🔴 沒有「性別」:SeatInfo 沒帶性別,呼叫端傳進來的那個值查不到時會退回**本機**的性別
+        ///    (見 Open 的 doc),當成資料顯示會把一整批人標成跟自己同一個性別。
+        /// </summary>
         private void FillBasicOther(PlayerProfile who, string levelLabel)
         {
-            int n = 0;
-            _basicRows[n++].Set(L("room.info_name"), _targetName);
-            _basicRows[n++].Set(L("room.info_family"), Or(who.Guild));
-            _basicRows[n++].Set(L("room.info_level"), Or(levelLabel));
-            // 🔴 沒有「性別」這一列:SeatInfo 沒帶性別,呼叫端傳進來的那個值查不到時會退回**本機**的性別
-            //    (見 Open 的 doc),當成資料顯示會把一整批人標成跟自己同一個性別。
-            HideFrom(_basicRows, n);
-
-            _basicNote.text = L("room.info_remote_basic");
-            _basicNote.gameObject.SetActive(true);
-            Place(_basicNote.rectTransform, NoteX, BasicRow0Y + n * RowStep + 12f, NoteW, NoteH);
+            _basicNote.gameObject.SetActive(false);
+            _basicFamily.text = Or(who.Guild);
+            _basicExp.text = "0%";
+            _basicOffer.text = "0";
+            _basicIntimate.text = "0";
+            _basicSocial.text = "0";
+            _basicLuck.text = "0";
+            _angelBar.fillAmount = 0f;
+            _expBar.fillAmount = 0f;
+            _weightBar.fillAmount = 0f;
         }
 
         private void FillStatsSelf(PlayStats s)
         {
-            if (s == null || s.Judged == 0)
-            {
-                // 一顆音符都還沒判過:全部顯示 0.0% 會讓人以為「我的命中率是 0」。
-                HideFrom(_rateRows, 0);
-                HideFrom(_statsRows, 0);
-                ShowStatsNote(L("room.info_no_stats"));
-                return;
-            }
+            // 🔴 一顆音符都還沒判過時**照樣把每一列畫出來、值是 0**(使用者要求),不再改成一句
+            //    「還沒有紀錄」把整頁清空。官方就是這樣:欄位永遠在,沒資料就是 0 ——
+            //    空白的一頁看起來像功能沒做完,而一排 0 至少看得出「這裡會有什麼」。
+            //    (PlayStats 的衍生比率在 Judged==0 時本來就回 0,所以直接往下走即可。)
+            if (s == null) s = new PlayStats();
 
             _statsNote.gameObject.SetActive(false);
+            // 順序照官方的「統計明細」那一頁:勝率 → 命中率 → Perfect → Cool → Bad → Miss。
+            // (勝率排第一 —— 那是玩家最常看的那個數字,官方把它放最上面。)
             int r = 0;
-            _rateRows[r++].Set(L("room.info_accuracy"), s.Accuracy);
-            _rateRows[r++].Set(L("room.info_perfect"), s.PerfectRate);
-            _rateRows[r++].Set(L("room.info_cool"), s.CoolRate);
-            _rateRows[r++].Set(L("room.info_bad"), s.BadRate);
-            _rateRows[r++].Set(L("room.info_miss"), s.MissRate);
-            _rateRows[r++].Set(L("room.info_winrate"), s.WinRate);
+            _rateRows[r++].Set(null, s.WinRate);
+            _rateRows[r++].Set(null, s.Accuracy);
+            _rateRows[r++].Set(null, s.PerfectRate);
+            _rateRows[r++].Set(null, s.CoolRate);
+            _rateRows[r++].Set(null, s.BadRate);
+            _rateRows[r++].Set(null, s.MissRate);
             HideFrom(_rateRows, r);
 
-            int n = 0;
-            _statsRows[n++].Set(L("room.info_judged"),
-                                L("room.info_judged_value", Num(s.perfect), Num(s.cool), Num(s.bad), Num(s.miss)));
-            _statsRows[n++].Set(L("room.info_plays"), L("room.info_plays_value", Num(s.plays)));
-            _statsRows[n++].Set(L("room.info_record"), L("room.info_record_value", Num(s.wins), Num(s.losses)));
-            HideFrom(_statsRows, n);
+            // 上方那三格(官方 performance / performanceau / rank)。官方兩格「熱舞戰績」是兩種模式各一份,
+            // 這個重製版只累計一份 → 第一格放真的勝負,第二格放 0 勝 0 負(官方那格在沒打過時也是 0)。
+            // 目前排名沒有排名系統 → 留空(官方那格沒資料時也是空的,不要編一個假名次)。
+            _perfLabel.text = L("room.info_record_value", Num(s.wins), Num(s.losses));
+            _perfAuLabel.text = L("room.info_record_value", "0", "0");
+            _statsRankLabel.text = "";
         }
 
         /// <summary>
@@ -482,8 +670,18 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void FillStatsOther()
         {
-            HideFrom(_rateRows, 0);
-            HideFrom(_statsRows, 0);
+            // 六條照樣畫出來(值 0)—— 使用者要求「沒資料也要顯示 0,不要整頁空白」。
+            var empty = new PlayStats();
+            int r = 0;
+            _rateRows[r++].Set(null, empty.WinRate);
+            _rateRows[r++].Set(null, empty.Accuracy);
+            _rateRows[r++].Set(null, empty.PerfectRate);
+            _rateRows[r++].Set(null, empty.CoolRate);
+            _rateRows[r++].Set(null, empty.BadRate);
+            _rateRows[r++].Set(null, empty.MissRate);
+            _perfLabel.text = L("room.info_record_value", "0", "0");
+            _perfAuLabel.text = L("room.info_record_value", "0", "0");
+            _statsRankLabel.text = "";
             ShowStatsNote(L("room.info_remote_stats"));
         }
 
@@ -660,25 +858,24 @@ namespace Sdo.UI.Screens
             public TextMeshProUGUI Value;
             public Image Fill;
 
-            public static RateRow Create(RectTransform parent, string name, float x, float y, float w, float h)
+            /// <summary>
+            /// 官方 SkillStat 的一條:ProgressBar 236×19(前景 PlayerInformationDlg65.an)+ 疊在上面的百分比數值。
+            /// 🔴 **不畫標籤** —— 「勝率/命中率/…」那幾個字是烤在 SkillBg_man 背板圖上的,再畫一次會疊字。
+            /// </summary>
+            public static RateRow Create(RectTransform parent, string name, float x, float y)
             {
                 var r = new RateRow();
-                r.Root = Place(UIKit.NewRect(parent, name), x, y, w, h);
+                r.Root = Place(UIKit.NewRect(parent, name), x, y, RateBarW, RateBarH);
 
-                r.Label = UIKit.AddText(r.Root, "L", "", RateFont, LabelCol, TextAlignmentOptions.Left);
-                Place(r.Label.rectTransform, 0f, 0f, RateLabelW, h);
-
-                var back = UIKit.AddImage(r.Root, "BarBack", BarBack);
-                Place(back.rectTransform, BarX, BarDy, BarW, BarH);
-
-                r.Fill = UIKit.AddSprite(r.Root, "BarFill", PlayerInfoArt.RateBar, BarX, BarDy);
-                Place(r.Fill.rectTransform, BarX, BarDy, BarW, BarH);   // AddSprite 會縮成原圖大小,擺完再改回來
+                r.Fill = UIKit.AddSprite(r.Root, "BarFill", PlayerInfoArt.RateBar, 0f, 0f);
+                Place(r.Fill.rectTransform, 0f, 0f, RateBarW, RateBarH);   // AddSprite 會縮成原圖大小,擺完再改回來
                 r.Fill.type = Image.Type.Filled;
                 r.Fill.fillMethod = Image.FillMethod.Horizontal;
                 r.Fill.fillOrigin = (int)Image.OriginHorizontal.Left;
 
-                r.Value = UIKit.AddText(r.Root, "V", "", RateFont, ValueCol, TextAlignmentOptions.Right);
-                Place(r.Value.rectTransform, RateValX, 0f, RateValW, h);
+                // 官方那個數值是**白字、靠左、疊在條上**(x 比條多 7px),不是擺在右邊。
+                r.Value = UIKit.AddText(r.Root, "V", "", RateFont, ValueCol, TextAlignmentOptions.Left);
+                Place(r.Value.rectTransform, RateValDx, 0f, RateBarW - RateValDx, RateBarH);
 
                 r.Root.gameObject.SetActive(false);
                 return r;
@@ -686,7 +883,6 @@ namespace Sdo.UI.Screens
 
             public void Set(string label, double pct)
             {
-                Label.text = label ?? "";
                 Value.text = Pct(pct);
                 Fill.fillAmount = Mathf.Clamp01((float)pct / 100f);
                 Root.gameObject.SetActive(true);
