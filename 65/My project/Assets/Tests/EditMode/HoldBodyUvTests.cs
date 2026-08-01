@@ -14,7 +14,7 @@ namespace Sdo.Tests
     /// </summary>
     public class HoldBodyUvTests
     {
-        const float HoldW = 59.86f;    // LaneW 82 × note3dHoldWidth 0.73 = 實機長條寬度
+        const float HoldW = 59.86f;    // Note3dBaseW 82 × note3dHoldWidth 0.73 = 實機長條寬度（3D skin；2D 走 NoteW 1:1）
 
         // ── ① 尾端 = 離判定線最遠的那一頭 ────────────────────────────────────────────────────────────────
         [Test]

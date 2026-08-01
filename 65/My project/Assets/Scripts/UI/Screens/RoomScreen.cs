@@ -525,7 +525,10 @@ namespace Sdo.UI.Screens
             //   綠色下拉清單：左緣 = listX（改這個 → 清單左右移動）、寬 = listWidth（改這個 → 清單變寬/窄）
             //     右緣 = listX + listWidth。目前 listX=Win2.x+55、listWidth=43 → 55..98。
             _dropCombo = SdoComboBox.Create(_win2Root, "DropDir", Win2.x + 50, Win2.y + 268, 75, 16, Win2.x + 105,
-                RoomUiArt.AnSolo("ShopDlg13"), RoomUiArt.AnSolo("LabUnCheck"), RoomUiArt.AnSolo("LabCheck"),   // 自貼圖去白邊（▼ 鈕＋清單列）
+                // ▼ 鈕改走 premult：AnSolo 的 AlphaBleed(只補 α≤8)＋DeMatteWhite(純白 un-composite 還是白)都碰不到它外緣
+                // 那圈 α≈5~30 的白 matte，放大後就是使用者看到的方形白邊。清單列(LabUnCheck/LabCheck)實測沒有白 matte，
+                // 留在既有的 AnSolo 路徑；兩者是不同的 Image，材質各自獨立，不會互相影響。
+                RoomUiArt.AnPremult("ShopDlg13"), RoomUiArt.AnSolo("LabUnCheck"), RoomUiArt.AnSolo("LabCheck"),
                 new[] { L("room.drop_up"), L("room.drop_down"), L("room.drop_tilt") }, null,
                 Mathf.Clamp(Ctx.Session.DropDirection, 0, 2), SpeedColor, DropListColor,
                 i => { Ctx.Session.DropDirection = i; RoomConfig.defaultDropDirection = i; RoomConfig.Save(); },   // 持久化：掉落方式寫回 config.ini（進遊戲決定 note 面板上/下）

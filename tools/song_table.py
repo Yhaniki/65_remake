@@ -14,7 +14,8 @@ song_table.py — 「全部歌曲資料只有一份」的讀寫模組：Streamin
 所以它們是兩列；但「顯示用」的欄位（title/artist/bpm/offsetMs/src）兩列相同 ——
 runtime 以 k 列為準（見 C# SongTable.Display），手改歌名改 k 列那一行就會生效。
 
-欄位順序前四欄固定 fileId,title,artist,producer（人看的），其餘依「顯示 → 譜面 → 原文 → 解密」分組。
+欄位順序前四欄固定 fileId,title,artist,producer（人看的），其餘依「顯示 → 譜面 → 原文 → 解密」分組，
+之後新加的欄位一律往後接（hidden 就在最後）—— 讀寫兩邊都照欄名對應，接在後面只讓每列尾多一個逗號。
 檔案是 UTF-8-BOM（Excel 繁中直接開不亂碼）、以 gn 升冪排序、LF 換行。
 """
 from __future__ import annotations
@@ -40,7 +41,7 @@ COLUMNS: List[str] = [
     "gn",           # ★ key：.gn 檔名（小寫，例 sdom0001k.gn）
     "mode",         # K = 鍵盤譜、T = 毯子譜
     "bpm",          # 顯示 BPM（選歌/房間標籤用；遊戲判定與流速一律讀譜面本身）
-    "offsetMs",     # 這首的音訊校正：正 = 音樂晚進來、負 = 提早、0 = 不動（唯一真的進遊戲的手改欄）
+    "offsetMs",     # 這首的音訊校正：正 = 音樂晚進來、負 = 提早、0 = 不動（會真的進遊戲，另一個是 hidden）
     "src",          # 歌名來源標記（songname/official/kgn/manual），僅供辨識
     # ── 譜面數值（每個 .gn 各自不同；工具重掃會覆蓋，別手改）────────────────────
     "lvEasy", "lvNormal", "lvHard",
@@ -54,6 +55,8 @@ COLUMNS: List[str] = [
     # ── 解密（GnChart 解 .gn 用；工具重掃會覆蓋，別手改）────────────────────────
     "enc",          # sdom / rewu / ddrm / plain / unknown
     "seed", "seed1", "seed2", "innerOff", "size",
+    # ── 屏蔽（手改；接在最後 = 加這一欄只讓每列尾多一個逗號，diff 看得懂）──────────
+    "hidden",       # 1 = 這首歌不出現在遊戲裡（選歌/搜尋/隨機/房間換歌）；空 = 照常顯示
 ]
 
 #: 整數欄（空字串 = 沒有值）
@@ -67,9 +70,14 @@ INT_COLS = {
 #: 浮點欄
 FLOAT_COLS = {"bpm", "offsetMs", "chartBpm"}
 
+#: 旗標欄（Excel 裡打勾的那種）：空 = 否，其餘一律是。工具寫出去一律是 "1"，但手打的字（x / TRUE / 是…）
+#  原樣留著 —— runtime 的判法一樣寬鬆（見 C# SongTable.Bool），認不得的字不會被當成「沒屏蔽」。
+BOOL_COLS = {"hidden"}
+
 #: 顯示區塊：同一首歌的 k/t 兩列必須一致（寫入時自動同步，見 sync_display）。
 #  producer **不在**這裡：k 譜與 t 譜常常是不同人打的（sdom0002k=Tina / t=S.Q.H），那是每份譜自己的資料。
-DISPLAY_COLS = ["title", "artist", "bpm", "offsetMs", "src"]
+#  hidden **在**這裡：屏蔽的是「這首歌」，兩份譜一起（重製版是純鍵盤，t 列本來就不出現在歌單上）。
+DISPLAY_COLS = ["title", "artist", "bpm", "offsetMs", "src", "hidden"]
 
 
 # ─────────────────────────────── key helpers ────────────────────────────────
@@ -82,6 +90,21 @@ def stem(gn: str) -> str:
     if n and n[-1] in ("k", "t"):
         n = n[:-1]
     return n
+
+
+def is_hidden(row: Dict) -> bool:
+    """這一列有沒有被屏蔽（hidden 欄）—— 判法跟 runtime 一致（C# SongTable.Bool）：
+    空 / 0 / false / no / n / off = 沒屏蔽，其餘一律算屏蔽。
+
+    寬鬆是刻意的：這欄是給人在 Excel 裡打的，打勾的人會寫 1、x、v、是……認不得就當成
+    「沒屏蔽」的話，人會以為自己屏蔽好了、遊戲裡那首歌卻還在。"""
+    v = row.get("hidden")
+    if v is None or v is False:
+        return False
+    if v is True:
+        return True
+    s = str(v).strip().lower()
+    return bool(s) and s not in ("0", "false", "no", "n", "off")
 
 
 def is_primary(gn: str) -> bool:
@@ -111,6 +134,11 @@ def fmt(col: str, value) -> str:
         if f != f:                       # NaN
             return ""
         return str(int(f)) if float(f).is_integer() else repr(round(f, 6))
+    if col in BOOL_COLS:                 # True → "1"、False → ""；手打的字原樣留著
+        if value is True:
+            return "1"
+        if value is False:
+            return ""
     return str(value)
 
 

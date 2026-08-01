@@ -131,6 +131,33 @@ namespace Sdo.Tests
             Assert.IsTrue(e.HasChart(0));
         }
 
+        /// <summary>
+        /// 屏蔽欄（hidden）是給人在 Excel 裡打的勾 —— 打勾的人會寫 1、x、TRUE、是…… 一律算屏蔽；
+        /// 只有空白與「明確說不要」的那幾個字才是沒屏蔽。認不得就當成沒屏蔽的話，人會以為自己
+        /// 屏蔽好了、遊戲裡那首歌卻還在（誤判成屏蔽反而看得見、清掉那格就好）。
+        /// </summary>
+        [TestCase("1", true)]
+        [TestCase("x", true)]
+        [TestCase("TRUE", true)]
+        [TestCase("是", true)]
+        [TestCase(" 1 ", true)]
+        [TestCase("", false)]
+        [TestCase("0", false)]
+        [TestCase("false", false)]
+        [TestCase("No", false)]
+        [TestCase("off", false)]
+        public void Hidden_Flag_Is_Read_Leniently(string cell, bool expected)
+        {
+            var r = SongTable.Parse($"gn,hidden\nsdom9k.gn,{cell}\n")[0];
+            Assert.AreEqual(expected, r.hidden);
+            Assert.AreEqual(expected, SongCatalog.FromRow(r).hidden);
+        }
+
+        /// <summary>舊表沒有 hidden 欄 → 全部照常顯示（欄位是照表頭名字取的，缺欄不會壞）。</summary>
+        [Test]
+        public void Missing_Hidden_Column_Means_Nothing_Is_Blocked()
+            => Assert.IsFalse(SongTable.Parse(Header + RowK)[0].hidden);
+
         /// <summary>音符數 0 = 那個難度根本沒譜（有些歌 level 有值但一顆音符都沒有），選歌畫面要 grey out。</summary>
         [Test]
         public void HasChart_Follows_The_Note_Count_Not_The_Level()

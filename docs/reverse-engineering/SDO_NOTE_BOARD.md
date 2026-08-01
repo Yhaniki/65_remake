@@ -28,6 +28,31 @@ JAM/DDR 遊玩物件初始化（`.c` 行 111244 起，`Datas\NoteImage.bin`）�
 | `NOTES_BOARD_MISS` | 67×558 | Miss 閃爍軌條 |
 | `JAMLINE1/2.PNG` | 192×64 | JAM 判定線（橫） |
 
+### 1.1 noteskin 圖尺寸 = 繪製尺寸（**全部 1:1 原生，不縮放**）
+
+每一套 4-key skin（`NOTEIMAGE_5/6/8/9/10/11/PET/SHOWTIME`，實測 8 套全一致）：
+
+| 檔 | px | 內容 bbox（不透明區） | 用途 |
+|----|----|----------------------|------|
+| `{left,down,up,right}HOLDHEADACTIVE0~3.PNG` | **100×80** | x[22..77] y[12..67] ≈ **56×56** | 落下音符（4 幀輝光循環） |
+| `{dir}_JUDGELINE1~6.PNG` / `{dir}_JUDGELINE(_F2).PNG` | **100×100** | x[23..76] y[23..76] ≈ **54×54** | 判定線接收器（idle + 按下幀） |
+| `UPDOWN_LONG.PNG` / `RIGHTLEFT_LONG.PNG` | **100×64** | x[25..74] 全高 = 50×64 | 長條 body（沿長度 tile） |
+| `UPDOWN_LONG_BOTTOM.PNG` 等 | 100×80 | — | 長條尾帽 |
+
+**繪製尺寸 == 貼圖原生尺寸**，證據在 `NewNote_DrawNoteWithEffects_004909c0`（`0x4909c0`）：
+
+- `local_a4 = param_5[3] - param_5[1]` 直接拿 **source rect 的高**當 dest 高做 Y 翻轉
+  （`param_3 = screenH - param_3 - h`）；
+- 而 `param_5` 確定是 source rect（UV）—— 捲動分支把 `Pic_GetHeight(pic)` 級的值寫回
+  `param_5[1] / param_5[3]`（行 3711-3718、3786-3793），單位就是貼圖像素；
+- 旋轉分支的旋轉中心取 `Pic_GetWidth/GetHeight(pic) × 0.5`（行 3647/3653）。
+
+全程沒有任何縮放係數 → 跟 `NOTES_BOARD1` 315×600 必須 1:1 是**同一條規則：整個 2D note 面板都是原生像素 blit**。
+
+> 貼圖 100 寬 > 車道 pitch 69 是刻意的：箭頭實體只有 ~56px，外圈是給 note 特效
+> （`KeyCfg_GetByte5c8` 的旋轉／±20~30px sin 擺動模式）留的透明 padding，
+> 相鄰車道的 padding 互相重疊不影響畫面。**別把它誤讀成「圖太大要縮」**。
+
 ## 2. 背板捲動 = `0x10944`（不是血量！）
 
 背板繪製函式 **`FUN_0048de50`**（`0x48de50`）用 `+0x10870+param_2*4` 當圖、用 `+0x10944` 當**垂直捲動位移**繪製（`600 - 0x10944` 當長度）。`0x10944` 由計時器 `FUN_0048ef60` 每 30 單位變動，**到 0 重設 600**——即背板材質**每 600px 循環捲動**的動畫（製造速度感），高度 600 = 背板圖高。
@@ -111,6 +136,15 @@ cinematic 開場（`+0xac1==1`）用另一套 **ScrollCam**（`ScrollCam_Init_00
 
 - **開場揭示（§3.7）已接上**：`Start()` 進場時若有 3D crane（`use3dCamera && _camReady`），先 `SetTrackVisible(false)` 把整個遊玩面板（背板 `_board` + 四軌 receptor + click strip + **血條** `_hpBg/_hpTex/_hpBackFrame/_hpGlow`）藏起、記下 `_introStartRt`；`OpeningSequence()` 開頭等 `openingIntroSec`（預設 **1s**；F4 滑桿可即時調，hold 中拖曳會即時生效）後才 `SetTrackVisible(true)` 揭示面板，緊接播 READY/GO 並啟動歌曲+notes。`UpdateHpBar()` 在 `_trackVisible==false` 時 early-out（不會把血條重新打開）。crane（導播 shot 0）從 t=0 持續跑過揭示點。2D / `avatarDebug` 無 crane 時 `_introStartRt<0`、面板照舊立即顯示。
 
+- **音符／接收器／長條也一律 1:1（§1.1）已修正**：`ScreenGameplay` 的 `NoteW = 100`（落下音符／炸彈本體／2D 長條）
+  與 `ReceptorW = 100`（JUDGELINE）＝貼圖原生寬。舊值 `LaneW=82 / ReceptorW=92` 是目測估的，畫出來的箭頭實體只有
+  56×0.82 ≈ **46px、比官方小 18%**（使用者拿官方實機畫面比對回報）。連帶：2D 長條 body 的 tile 高 `holdW×(64/100)`
+  這下剛好等於貼圖原生高 64，chevron 圖樣不再被壓扁。
+  - 3D skin（hiteft3D）畫的是 `NOTES.MSH` 幾何而非這組貼圖，基準另外校準過（`Note3dBaseW = 82`，
+    ×`noteSize 0.73` ≈ 60px ≈ 官方 2D 箭頭實體 56px，本來就對）→ 拆成獨立常數，**2D 的修正不連動 3D**；
+    `receptor3dScale` 隨 `ReceptorW` 92→100 重新標定成 0.6151，3D 受擊區維持 61.5px。
+  - 回歸守衛：`Assets/Tests/EditMode/NoteSkinNativeSizeTests.cs`（常數 1:1 + 長條 tile 不變形 + 3D 基準沒被連動
+    + 讀真實資料確認 8 套 skin 的圖尺寸）。
 - 背板（現行 `BuildBoard` / `ApplyBoardAlpha`）：直接從 `Extracted/NOTEIMAGE/NOTES_BOARD1.PNG` 載入**單張**精靈，疊在舞台 backdrop 上。
   - **必須 1:1 原生繪製**（`SdoLayout.PlaceTopLeft(boardX=0)`，不縮放）：因為圖內軌道線 = 設計座標 69px 格線，原生擺放時 texture x == design x，音符才會精準落在板上的軌道；任何縮放都會把格線拉歪（曾因 `boardWidth` 縮放置中導致右側偏 ~11px）。
   - **不透明度 = `boardAlpha` 對「原圖每像素 alpha」的倍率**（`SdoExtracted.AlphaScaledSprite`，值變動才重烤貼圖）：`1.0`＝完全等於原圖（原生 ~62%）、`~1.4`＝官方那種「深但內部斜紋/斜角細節仍可見」（**現行預設**）、`~2.6`＝全不透明。乘整條 alpha 曲線→相對明暗（細節）保留；全透明像素 `0×倍率=0`→倒角/切角恆透明，**不需任何不透明矩形墊底**。

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-song_manager.py — 歌曲管理員(Tkinter GUI):看歌單、改歌名/BPM/音訊 offset、刪歌、插入新歌。
+song_manager.py — 歌曲管理員(Tkinter GUI):看歌單、改歌名/BPM/音訊 offset、屏蔽歌曲、刪歌、插入新歌。
 
 啟動:
     python tools/song_manager.py
@@ -10,14 +10,15 @@ song_manager.py — 歌曲管理員(Tkinter GUI):看歌單、改歌名/BPM/音�
     加歌 = add_songs_incremental.add_gn_files()
     刪歌 = remove_songs.remove_stems()
     改名 = 寫 song_table.csv 的 title/artist/bpm/offsetMs 欄
+    屏蔽 = 寫 song_table.csv 的 hidden 欄(遊戲歌單看不到那首歌;檔案都還在,取消勾就回來)
 所以 GUI 做的每件事,用命令列也做得到、結果一模一樣。
 
 三個概念先講清楚(這是所有坑的來源):
   1. 全部歌曲資料只有一份:song_table.csv,一列 = 一個 .gn 檔(同一首歌的 K/T 兩譜是兩列,
      顯示欄位同步)。「歌單有哪些歌」就是這張表有哪些列 —— 從表裡刪一列 = 那份譜真的不見了
      (不像以前刪 overrides 只是歌名變回 .gn 內嵌名)。title/artist/bpm 只影響顯示;
-     offsetMs 是唯一真的會進遊戲的欄(音訊校正:正 = 音樂晚一點進來、負 = 提早,
-     只挪音樂＋舞蹈,音符/判定仍讀譜面)。
+     真的會進遊戲的手改欄有兩個:offsetMs(音訊校正:正 = 音樂晚一點進來、負 = 提早,
+     只挪音樂＋舞蹈,音符/判定仍讀譜面)與 hidden(屏蔽:那首歌不出現在遊戲的歌單裡)。
   2. 兩個 key,各管一半:
        gn 檔名(詞幹) → 譜面、主音樂 sdomNNNN.ogg、收藏、歌名覆蓋
        fileId(整數)  → 試聽 exper/<id>.ogg、舞蹈 DANCE/<id>.DPS、封面 ICONS/<id>.PNG
@@ -69,6 +70,9 @@ class Song:
         self.src = row.get("src") or ""
         # 音訊校正(毫秒):正 = 音樂晚一點進來、負 = 提早、0 = 不動。只有這欄會真的進遊戲。
         self.offset_ms = float(row.get("offsetMs") or 0)
+        # 屏蔽:這首歌不出現在遊戲的歌單裡(選歌/搜尋/隨機/房間換歌)。檔案與資料都還在,
+        # 隨時清掉這個勾就回來了 —— 跟「刪除」是兩回事。
+        self.hidden = stbl.is_hidden(row)
 
     def assets(self) -> str:
         """哪些資源檔在位(看遊戲實際讀的那棵樹 —— 有 data_root.txt 就是乾淨 DATA,否則 dev)。
@@ -242,15 +246,17 @@ class App(tk.Tk):
         e.focus()
         ttk.Button(top, text="新增歌曲…", command=self.on_add).pack(side="left")
         ttk.Button(top, text="插在選取那首之後…", command=lambda: self.on_add(insert_after=True)).pack(side="left", padx=4)
+        ttk.Button(top, text="屏蔽/取消屏蔽選取", command=self.on_toggle_hidden).pack(side="left", padx=(0, 4))
         ttk.Button(top, text="刪除選取", command=self.on_delete).pack(side="left")
         ttk.Button(top, text="重新載入", command=self.reload).pack(side="left", padx=4)
         self.count = ttk.Label(top, text="")
         self.count.pack(side="right")
 
-        cols = ("stem", "fid", "title", "artist", "bpm", "offset", "diff", "assets")
+        cols = ("stem", "fid", "title", "artist", "bpm", "offset", "hidden", "diff", "assets")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="extended")
         for c, txt, w in (("stem", "詞幹", 110), ("fid", "fileId", 70), ("title", "歌名", 300),
                           ("artist", "歌手", 170), ("bpm", "BPM", 60), ("offset", "offset(ms)", 80),
+                          ("hidden", "屏蔽", 50),
                           ("diff", "難度 E/N/H", 90),
                           ("assets", "音樂/試聽/舞蹈/封面", 150)):
             self.tree.heading(c, text=txt)
@@ -266,6 +272,7 @@ class App(tk.Tk):
         ed.pack(fill="x", padx=8, pady=8)
         self.f_title, self.f_artist = tk.StringVar(), tk.StringVar()
         self.f_bpm, self.f_offset = tk.StringVar(), tk.StringVar()
+        self.f_hidden = tk.BooleanVar()
         ttk.Label(ed, text="歌名").grid(row=0, column=0, sticky="e")
         ttk.Entry(ed, textvariable=self.f_title, width=36).grid(row=0, column=1, padx=(4, 12))
         ttk.Label(ed, text="歌手").grid(row=0, column=2, sticky="e")
@@ -274,13 +281,18 @@ class App(tk.Tk):
         ttk.Entry(ed, textvariable=self.f_bpm, width=8).grid(row=0, column=5, padx=(4, 12))
         ttk.Label(ed, text="offset(ms)").grid(row=0, column=6, sticky="e")
         ttk.Entry(ed, textvariable=self.f_offset, width=8).grid(row=0, column=7, padx=(4, 12))
-        ttk.Button(ed, text="套用修改", command=self.on_apply_edit).grid(row=0, column=8)
+        ttk.Checkbutton(ed, text="屏蔽", variable=self.f_hidden).grid(row=0, column=8, padx=(0, 12))
+        ttk.Button(ed, text="套用修改", command=self.on_apply_edit).grid(row=0, column=9)
         ttk.Label(ed, foreground="#666",
                   text="offset = 這首歌的音訊校正：正值 = 音樂晚一點進來(音樂跑太前面、音符老是慢半拍時用)，"
                        "負值 = 音樂提早，留空/0 = 不動。只挪音樂＋舞蹈，音符與判定不受影響。").grid(
-            row=1, column=0, columnspan=9, sticky="w", pady=(6, 0))
+            row=1, column=0, columnspan=10, sticky="w", pady=(6, 0))
+        ttk.Label(ed, foreground="#666",
+                  text="屏蔽 = 這首歌不出現在遊戲裡(選歌、搜尋、隨機、房間換歌)。譜面/音樂/資料都還在，"
+                       "取消勾選就回來 —— 跟「刪除選取」不一樣。多首一起改用上面那顆「屏蔽/取消屏蔽選取」。").grid(
+            row=2, column=0, columnspan=10, sticky="w", pady=(2, 0))
         self.status = ttk.Label(ed, text="", foreground="#0a7")
-        self.status.grid(row=2, column=0, columnspan=9, sticky="w", pady=(4, 0))
+        self.status.grid(row=3, column=0, columnspan=10, sticky="w", pady=(4, 0))
 
     # ---- 資料
     def reload(self):
@@ -304,7 +316,8 @@ class App(tk.Tk):
             self.tree.insert("", "end", iid=str(i), values=(
                 s.stem, s.file_id, s.title, s.artist,
                 (f"{s.bpm:g}" if s.bpm > 0 else ""),
-                (f"{s.offset_ms:+g}" if s.offset_ms else ""), diff, s.assets()))
+                (f"{s.offset_ms:+g}" if s.offset_ms else ""),
+                ("✔" if s.hidden else ""), diff, s.assets()))
         self.count.config(text=f"{len(self.shown)} / {len(self.songs)} 首")
 
     def selected(self) -> List[Song]:
@@ -319,6 +332,7 @@ class App(tk.Tk):
         self.f_artist.set(s.artist)
         self.f_bpm.set(f"{s.bpm:g}" if s.bpm > 0 else "")
         self.f_offset.set(f"{s.offset_ms:g}" if s.offset_ms else "")
+        self.f_hidden.set(s.hidden)
 
     # ---- 改名 / 改 BPM / 改 offset
     def on_apply_edit(self):
@@ -355,9 +369,32 @@ class App(tk.Tk):
             row["bpm"] = bpm                   # 0 = 不覆蓋(顯示回譜面的 BPM)
             row["offsetMs"] = off_ms           # 0 = 不位移音樂
             row["src"] = "manual"              # 標記手改 → build_song_name_overrides 重跑時會保留
+            row["hidden"] = True if self.f_hidden.get() else ""    # 空 = 照常顯示
         stbl.save(table, TABLE)
         self.reload()
         self.status.config(text=f"已更新 {s.stem}(遊戲下次啟動生效)")
+
+    # ---- 屏蔽 / 取消屏蔽(可多選)
+    def on_toggle_hidden(self):
+        """把選取的歌一起屏蔽(或一起解除)。只寫 song_table.csv 的 hidden 欄 —— 檔案一個都不刪,
+        跟「刪除選取」是兩回事:屏蔽只是讓那首歌不出現在遊戲的歌單裡,取消勾就回來。"""
+        sel = self.selected()
+        if not sel:
+            messagebox.showinfo("屏蔽哪幾首?", "請先在清單選歌(可多選)。")
+            return
+        turn_on = any(not s.hidden for s in sel)   # 還有沒屏蔽的 → 全部屏蔽;全屏蔽了 → 全部解除
+        stems = {s.stem for s in sel}
+        table = stbl.load(TABLE)
+        rows = [r for r in table if stem(r["gn"]) in stems]     # 一首歌的 K/T 兩列一起
+        if not rows:
+            messagebox.showerror("找不到這些歌", "選取的歌不在 song_table.csv 裡。")
+            return
+        for row in rows:
+            row["hidden"] = True if turn_on else ""
+        stbl.save(table, TABLE)
+        self.reload()
+        self.status.config(
+            text=f"已{'屏蔽' if turn_on else '取消屏蔽'} {len(sel)} 首({len(rows)} 列，遊戲下次啟動生效)")
 
     # ---- 刪歌
     def on_delete(self):
