@@ -51,7 +51,7 @@ namespace Sdo.UI.Screens
         // 素材 LOBBY12.AN = stage.png (843,590,14,28) → 14×28,與大廳房間列表的 Lobby38 是同一塊圖。
         // 軌道 x:底板(Lobby0)把凹槽烤在圖裡,實測絕對 x 235-259、中央深溝 247-249 → 241 讓 14px 的握把
         // 落在 241..255、中心 248,正好坐進深溝。y 走 ListY .. ListY+(ListH-HandleH) = 110 .. 328。
-        private const float HandleX = 241f, HandleH = 28f;
+        private const float HandleX = 241f, HandleW = 14f, HandleH = 28f;
 
         // ---- 滑入 / 滑出(官方 win3 的那組 TransForm:targetx=0 ↔ targetx=-300)----
         /// <summary>收起來時 root 停的 x —— 官方 <c>&lt;Window name="win3" x="-300"&gt;</c> 就是這個值:
@@ -78,7 +78,7 @@ namespace Sdo.UI.Screens
         private RectTransform _root;
         private RectTransform _content;
         private ScrollRect _scroll;
-        private Image _handle;
+        private Scrollbar _bar;
         private readonly Button[] _tabBtn = new Button[4];
         private readonly Image[] _tabImg = new Image[4];
         private Tab _tab = Tab.All;
@@ -130,26 +130,18 @@ namespace Sdo.UI.Screens
             _scroll = UIKit.AddVerticalScroll(_root, "UserScroll", out _content, 1f, 0, new Color(0f, 0f, 0f, 0f));
             Place(_scroll.GetComponent<RectTransform>(), ListX, ListY, ListW, ListH);
 
-            // 捲軸握把。🔴 兩個位置條件都是必要的:
+            // 捲軸。🔴 兩個位置條件都是必要的:
             //   1. 掛在 _root 底下(不是外面那層畫布)—— 否則面板收起來/滑出去時,握把會孤零零留在畫面上。
             //   2. 建在 _scroll **之後** = 後面的兄弟畫在上面,不然會被捲動區的 viewport 底蓋掉。
             // 用 AnSoloAA:這張圖在 stage.png 裡緊貼著鄰居,共用圖集會把隔壁的不透明像素拖成白邊。
             // 🔴 **不要**改用 AnSoloCircleAA —— 那是給圓盤鈕的,會把這根膠囊的上下兩端當光暈剪掉。
-            _handle = UIKit.AddSprite(_root, "ScrollHandle", An("Lobby12"), HandleX, ListY);
-            // ScrollRect 自己動(滾輪、拖曳、慣性)時沒有人會通知我們 → 這條是唯一即時的來源。
-            _scroll.onValueChanged.AddListener(_ => PlaceHandle());
-
-            // 🔴 握把要**拉得動**。它只是一張 Image、不是 Unity 的 Scrollbar,沒有人會幫它接拖曳。
-            //    上一版用 EventTrigger 沒有用:EventSystem 是在 PointerDown 當下用
-            //    ExecuteEvents.GetEventHandler&lt;IBeginDragHandler&gt; 往上找 handler 的,
-            //    **EventTrigger 只註冊 Drag 而沒有 BeginDrag 時不會被選成 pointerDrag** → 拖曳事件永遠不會送到它,
-            //    只剩滾輪能捲(使用者回報)。改成自己的元件、把 IBeginDragHandler 一起實作就對了。
-            //    🔴 拖曳區鋪**整條軌道**而不是只有握把:握把只有 14px 寬,要正中它才拖得到,
-            //       實機上幾乎每次都抓不到(使用者連兩輪回報「拉不動」)。
-            var railHit = UIKit.AddImage(_root, "RailDrag", new Color(0f, 0f, 0f, 0f), raycast: true);
-            Place(railHit.rectTransform, HandleX - 5f, ListY, 24f, ListH);
-            railHit.gameObject.AddComponent<DragProxy>().Dragged = DragHandle;
-            railHit.transform.SetSiblingIndex(_handle.transform.GetSiblingIndex());   // 壓在握把底下,握把才看得見
+            //
+            // 🔴 用 Unity 內建的 Scrollbar,不要再自己接拖曳:自畫 Image + 自訂拖曳元件連續三輪都被回報
+            //    「滑鼠左鍵拉不動,只有滾輪能動」。Scrollbar 是 Selectable,拖曳與**點軌道跳到那個位置**
+            //    (使用者後來追加的要求)都由它處理。
+            _bar = FixedScrollbar.Create(_root, "UserScrollbar", An("Lobby12"),
+                                         HandleX, ListY, HandleW, HandleH, ListH);
+            FixedScrollbar.Bind(_bar, _scroll);
 
             // 添加好友:把選中的那一列加進本機好友清單(與房間座位選單的「加好友」同一條路)。
             var add = UIKit.AddSpriteButton(_root, "AddFriend", An("Lobby131"), An("Lobby132"), An("Lobby133"),
@@ -229,36 +221,11 @@ namespace Sdo.UI.Screens
         /// 把握把擺到對應捲動位置的高度。官方 ReportList 的 <c>&lt;ScrollBar need2bt="false"&gt;</c> 只有一顆 Handle
         /// (沒有上下箭頭鈕),四個分頁共用同一條軌道 —— 所以這裡也只有一根,換分頁不重建。
         ///
-        /// 🔴 驅動方式與大廳房間列表**完全不同**:那邊是自己算的整數 row offset,這邊是真的 ScrollRect
-        ///    (<c>UIKit.AddVerticalScroll</c> 只給 ScrollRect + Viewport + Content,**沒有** Scrollbar 元件,
-        ///    所以 Unity 不會幫我們動任何東西,得自己接)。而且方向相反:
-        ///    <c>verticalNormalizedPosition</c> 1 = 最上、0 = 最下 → 要 <c>1 - v</c> 才是「往下走了多少」。
-        /// 🔴 內容比視窗短時 Unity 回的 v 不可信(這種情況它算不出比例)→ 自己比高度,直接停在最上面。
-        ///    使用者要求握把**永遠顯示**(就算一個人都沒有),所以這裡不做隱藏。
+        /// 換分頁 / 名單重建之後 Content 的高度要等下一次 layout 才正確,所以是延後一幀由 _handleDirty 觸發的。
+        /// 內容比視窗短時 <see cref="FixedScrollbar.Sync"/> 會把它停在最上面 —— 使用者要求握把**永遠顯示**
+        /// (就算一個人都沒有),所以不做隱藏。
         /// </summary>
-        /// <summary>
-        /// 拖握把 → 捲名單。<paramref name="dy"/> 是滑鼠這一幀的垂直位移(Unity:往上為正)。
-        /// 握把往下拖 = 內容往後捲,所以 <c>verticalNormalizedPosition</c>(1=最上、0=最下)要跟著減。
-        /// 軌道可跑的長度是 <c>ListH - HandleH</c>,用它把「移動幾像素」換成「捲了幾成」。
-        /// </summary>
-        private void DragHandle(float dy)
-        {
-            if (_scroll == null) return;
-            float travel = ListH - HandleH;
-            if (travel <= 0f) return;
-            _scroll.verticalNormalizedPosition = Mathf.Clamp01(_scroll.verticalNormalizedPosition + dy / travel);
-            PlaceHandle();
-        }
-
-        private void PlaceHandle()
-        {
-            if (_handle == null || _scroll == null) return;
-            var vp = _scroll.viewport;
-            float t = 0f;
-            if (_content != null && vp != null && _content.rect.height > vp.rect.height)
-                t = Mathf.Clamp01(1f - _scroll.verticalNormalizedPosition);
-            _handle.rectTransform.anchoredPosition = new Vector2(HandleX, -(ListY + (ListH - HandleH) * t));
-        }
+        private void PlaceHandle() => FixedScrollbar.Sync(_bar, _scroll);
 
         public void SetTab(Tab tab)
         {

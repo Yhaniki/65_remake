@@ -217,8 +217,12 @@ namespace Sdo.UI.Screens
             UIKit.Stretch(root);
             _cg = root.gameObject.AddComponent<CanvasGroup>();
 
-            // 半透明黑幕:擋住背後房間的點擊(不然還看得到房間的鈕、按得下去),順便把底下壓暗讓框跳出來。
-            var dim = UIKit.AddImage(root, "Dim", new Color(0f, 0f, 0f, 0.5f), true);
+            // 擋住背後房間的點擊(不然還看得到房間的鈕、按得下去)。
+            // 🔴 **必須完全透明**:之前用 alpha 0.5 的黑幕想讓框跳出來,但官方開個人資料時背後的大廳是
+            //    原本的亮度、沒有壓暗。而且黑幕壓在大廳那些高彩度的房卡上,沿著框邊看起來就像框被切壞、
+            //    旁邊多了一條黑色雜訊 —— 使用者連續回報三次的「框旁邊的黑色雜訊」就是它。
+            //    透明的 Image 一樣吃得到射線,擋點擊的功能完全不受影響。
+            var dim = UIKit.AddImage(root, "Dim", new Color(0f, 0f, 0f, 0f), true);
             UIKit.Stretch(dim.rectTransform);
 
             // 除了黑幕以外都掛在 _window 底下 → 開闔動畫(WindowAnim)只轉框、黑幕不跟著轉。

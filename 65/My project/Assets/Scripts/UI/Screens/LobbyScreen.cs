@@ -137,7 +137,7 @@ namespace Sdo.UI.Screens
         //    凹槽在絕對 x 760-781(中央深溝 769-772)、y 49-349 —— 所以 14 寬的握把置中是 x=764,
         //    軌道從 y=49 起、可跑 300(349-49)。照 XML 的 35 會讓握把浮在列表框上緣外面(使用者回報「拉桿太高」)。
         private const float ListBgX = 286f, ListBgY = 46f;
-        private const float RailX = 764f, RailTop = 49f, RailH = 300f, HandleH = 28f;
+        private const float RailX = 764f, RailTop = 49f, RailH = 300f, HandleW = 14f, HandleH = 28f;
 
         // 左下聊天記錄的捲軸(官方 win4 的 TextList AllChatList,Handle 也是 Lobby12)。
         // RecordChatBG 貼在 (21,437),它烘死的細溝實測在絕對 x 429-431 → 14 寬的握把置中 x=423;
@@ -234,9 +234,8 @@ namespace Sdo.UI.Screens
         private readonly List<RoomInfo> _rooms = new List<RoomInfo>();   // 來源(線上=server 回的;離線=Ctx.Rooms)
         private readonly List<RoomInfo> _view = new List<RoomInfo>();    // 套用「只顯示等待中」之後的
         private int _scroll;
-        private float _railDrag;   // 房間列表握把的拖曳累積量(不足一列的部分要留著)
         private bool _waitingOnly;
-        private Image _handle;
+        private Scrollbar _roomBar;
 
         private Button _filterBtn;
         private Image _filterImg;
@@ -246,7 +245,7 @@ namespace Sdo.UI.Screens
         private ScrollRect _chatScroll;
         private ChatLineClip _chatClip;
         private Image _chatBgImg;             // 聊天記錄的底框:跟捲動區一起被「聊天記錄」鈕收合
-        private Image _chatHandle;            // 聊天記錄的捲軸握把(官方 AllChatList 的 Handle)
+        private Scrollbar _chatBar;           // 聊天記錄的捲軸(官方 AllChatList 的 Handle)
         private Image _chatCaret;             // 自畫的輸入游標(TMP 內建的在這裡畫不出來,見 ConfigureChatInput)
         private readonly Vector3[] _caretCorners = new Vector3[4];   // 餵給 IME 候選視窗的座標暫存(每幀用,不要每次配置)
         private Button _recordChatBtn;
@@ -326,17 +325,17 @@ namespace Sdo.UI.Screens
             });
             trig.triggers.Add(entry);
 
-            // 捲軸握把(在角色之後 —— 兩者不重疊,只是維持「列表零件疊在最上」)。
-            // 拖曳在下面接(與另外兩條握把同一個做法)。
+            // 捲軸(在角色之後 —— 兩者不重疊,只是維持「列表零件疊在最上」)。
             // 走 AnSoloAA 而不是共用圖集:握把在 stage.png 裡左邊 x=840-842 是完全不透明的鄰居,
             // 共用圖集取樣會把那片拖進邊緣變成白邊(見 SpriteBtn 的註解)。
-            _handle = UIKit.AddSprite(Root, "ScrollHandle", LobbyArt.AnSoloAA("Lobby38"), RailX, RailTop);
-            // 🔴 房間列表是**整數分頁**(一次捲一列),不是連續捲動 —— 拖曳要換算成「拖過幾列」。
-            //    🔴 用 DragProxy 而不是 EventTrigger:只註冊 Drag 的 EventTrigger 不會被 EventSystem
-            //       選成 pointerDrag(它挑的是有 IBeginDragHandler 的),拖曳事件永遠送不到 → 只剩滾輪能捲。
-            //    🔴 拖曳區鋪**整條軌道**而不是只有握把:握把只有 14px 寬,要正中它才拖得到,
-            //       實機上幾乎每次都抓不到(使用者連兩輪回報「拉不動」)。整條軌道都能拖就好按得多。
-            AddRailDrag("RoomRailDrag", RailX - 5f, RailTop, 24f, RailH, DragRoomHandle);
+            //
+            // 🔴 用 Unity 內建的 Scrollbar,不要再自己接拖曳:自畫 Image + 自訂拖曳元件連續三輪都被回報
+            //    「滑鼠左鍵拉不動」。Scrollbar 連「點軌道跳到那個位置」都是內建的(使用者後來也要這個)。
+            _roomBar = FixedScrollbar.Create(Root, "RoomScrollbar", LobbyArt.AnSoloAA("Lobby38"),
+                                             RailX, RailTop, HandleW, HandleH, RailH);
+            // 🔴 房間列表是**整數分頁**(一次捲一列),不是連續捲動,所以不接 ScrollRect ——
+            //    把 Scrollbar 的 0..1 換算成第幾列。BottomToTop 的 1 = 最上 = 第 0 列。
+            _roomBar.onValueChanged.AddListener(OnRoomBarChanged);
 
             // 玩家名單(官方 win3)最後建 = 疊在最上面,展開時蓋住角色與左半邊 —— 官方就是這樣。
             BuildUserPanel();
@@ -579,11 +578,13 @@ namespace Sdo.UI.Screens
             PlaceTopLeft(_chatScroll.GetComponent<RectTransform>(), ChatX, ChatY, ChatW, ChatH);
             _chatClip = _chatScroll.gameObject.AddComponent<ChatLineClip>();   // 只露整行,不留半截字
 
-            // 聊天記錄的捲軸握把(官方 AllChatList 的 Handle,與另外兩條同一張 Lobby12)。
-            // 建在捲動區之後 = 疊在它上面;永遠顯示,沒得捲時停在最上面(同房間列表那條)。
-            _chatHandle = UIKit.AddSprite(Root, "ChatScrollHandle", LobbyArt.AnSoloAA("Lobby12"), ChatRailX, ChatRailTop);
-            // ScrollRect 自己動(滾輪/拖曳/自動捲到底)時沒人會通知我們 → 這條是唯一即時的來源。
-            _chatScroll.onValueChanged.AddListener(_ => PlaceChatHandle());
+            // 聊天記錄的捲軸(官方 AllChatList 的 Handle,與另外兩條同一張 Lobby12)。
+            // 建在捲動區之後 = 疊在它上面,不然會被 viewport 的底蓋掉。
+            // 🔴 這條以前**根本沒接拖曳** —— DragChatHandle 寫好了卻沒有任何人呼叫,所以永遠只有滾輪能捲。
+            //    現在與另外兩條一樣用內建的 Scrollbar,拖曳與點軌道跳位都由它處理。
+            _chatBar = FixedScrollbar.Create(Root, "ChatScrollbar", LobbyArt.AnSoloAA("Lobby12"),
+                                             ChatRailX, ChatRailTop, HandleW, HandleH, ChatRailH);
+            FixedScrollbar.Bind(_chatBar, _chatScroll);
 
             // 頻道切換(chatmode「當前」)。按了拉開四選一的頻道選單,行為與房間畫面同一套。
             _chatChannelBtn = SpriteBtn("ChatChannel", "Lobby57", "Lobby58", "Lobby59", ChanX, ChanY, ToggleChatMenu);
@@ -1036,39 +1037,6 @@ namespace Sdo.UI.Screens
             UIKit.ApplySprite(row.Keyboard, has ? An("Lobby97") : null);
         }
 
-        /// <summary>
-        /// 把握把放到軌道上對應的位置。
-        ///
-        /// 🔴 **永遠顯示**(使用者要求):以前沒東西可捲時整顆 <c>enabled = false</c>,結果房間少於七間
-        /// 就看不到滑桿頭,看起來像忘了做。沒得捲時 t=0 → 停在軌道最上面,那就是官方的樣子。
-        /// </summary>
-        /// <summary>
-        /// 聊天記錄的握把。與房間列表那條**驅動方式不同**:房卡是整數分頁(_scroll / max),
-        /// 這裡是真的 ScrollRect,位置要從 <c>verticalNormalizedPosition</c> 換算(1=最上、0=最下,方向相反)。
-        /// 內容比視窗短時 Unity 的回傳值不可信 → 自己判,直接停在最上面。
-        /// </summary>
-        /// <summary>
-        /// 在一條捲軸軌道上鋪一塊透明的拖曳區。握把本身只有 14px 寬,滑鼠要正中它才拖得動 ——
-        /// 把整條軌道(左右各多留幾 px)都變成可拖區域,手感才對得起「用滑鼠拉捲軸」這件事。
-        /// </summary>
-        private void AddRailDrag(string name, float x, float y, float w, float h, System.Action<float> onDrag)
-        {
-            var hit = UIKit.AddImage(Root, name, new Color(0f, 0f, 0f, 0f), raycast: true);
-            PlaceTopLeft(hit.rectTransform, x, y, w, h);
-            hit.gameObject.AddComponent<DragProxy>().Dragged = onDrag;
-        }
-
-        private void PlaceChatHandle()
-        {
-            if (_chatHandle == null || _chatScroll == null) return;
-            float t = 0f;
-            var content = _chatScroll.content;
-            var viewport = _chatScroll.viewport;
-            if (content != null && viewport != null && content.rect.height > viewport.rect.height + 0.5f)
-                t = Mathf.Clamp01(1f - _chatScroll.verticalNormalizedPosition);
-            _chatHandle.rectTransform.anchoredPosition =
-                new Vector2(ChatRailX, -(ChatRailTop + (ChatRailH - HandleH) * t));
-        }
 
         /// <summary>房卡上第 <paramref name="index"/> 顆愛心的主人是不是男生。
         /// 資料缺了(舊版 server / 離線)一律當女生 —— 那是官方唯一那顆彩色心的顏色,退化得最不突兀。</summary>
@@ -1085,44 +1053,33 @@ namespace Sdo.UI.Screens
             => L(mode == GameMode.Normal ? "songselect.mode_normal" : "songselect.mode_free");
 
         /// <summary>
-        /// 拖房間列表的握把。這一條與另外兩條不同:房卡是**整數分頁**的(_scroll 是第幾列),
-        /// 所以先把「拖了幾像素」換算成軌道上的比例,再乘上可捲的列數、四捨五入成整數列。
-        /// 累積量存在 _railDrag 裡 —— 不累積的話每幀的位移都不足一列,永遠捲不動。
+        /// 捲軸被拖(或被點軌道)之後 → 換算成第幾列。房卡是**整數分頁**的,所以 0..1 要乘上可捲列數
+        /// 再四捨五入。<c>value</c> 是 BottomToTop:1 = 最上 = 第 0 列,所以要 <c>1 - value</c>。
+        ///
+        /// 🔴 只在真的換列時才 RefreshRows —— 拖曳時每幀都會回呼,同一列重建七張房卡是白工。
         /// </summary>
-        private void DragRoomHandle(float dy)
+        private void OnRoomBarChanged(float value)
         {
             int max = Mathf.Max(0, _view.Count - VisibleRows);
             if (max <= 0) return;
-            float travel = RailH - HandleH;
-            if (travel <= 0f) return;
-            _railDrag += -dy / travel * max;   // 螢幕往下拖(dy<0) = 往後捲
-            int step = Mathf.RoundToInt(_railDrag);
-            if (step == 0) return;
-            _railDrag -= step;
-            _scroll = Mathf.Clamp(_scroll + step, 0, max);
+            int row = Mathf.Clamp(Mathf.RoundToInt((1f - value) * max), 0, max);
+            if (row == _scroll) return;
+            _scroll = row;
             RefreshRows();
         }
 
         /// <summary>
-        /// 拖握把 → 捲聊天記錄。<paramref name="dy"/> 是滑鼠這一幀的垂直位移(Unity:往上為正)。
-        /// 握把往下拖 = 內容往後捲,所以 <c>verticalNormalizedPosition</c>(1=最上、0=最下)要跟著減。
-        /// 可跑的軌道長度是 <c>ChatRailH - HandleH</c> —— 用它把「移動幾像素」換成「捲了幾成」。
+        /// 把捲軸挪到目前這一列。
+        ///
+        /// 🔴 **永遠顯示**(使用者要求):以前沒東西可捲時整顆 <c>enabled = false</c>,結果房間少於七間
+        /// 就看不到滑桿頭,看起來像忘了做。沒得捲時停在軌道最上面,那就是官方的樣子。
+        /// 🔴 一定要用 <c>SetValueWithoutNotify</c>:這裡是「資料 → 捲軸」方向,發通知會反過來又叫一次
+        /// <see cref="OnRoomBarChanged"/> 造成迴圈。
         /// </summary>
-        private void DragChatHandle(float dy)
-        {
-            if (_chatScroll == null) return;
-            float travel = ChatRailH - HandleH;
-            if (travel <= 0f) return;
-            _chatScroll.verticalNormalizedPosition =
-                Mathf.Clamp01(_chatScroll.verticalNormalizedPosition + dy / travel);
-            PlaceChatHandle();
-        }
-
         private void PlaceHandle(int max)
         {
-            if (_handle == null) return;
-            float t = max > 0 ? _scroll / (float)max : 0f;
-            _handle.rectTransform.anchoredPosition = new Vector2(RailX, -(RailTop + (RailH - HandleH) * t));
+            if (_roomBar == null) return;
+            _roomBar.SetValueWithoutNotify(max > 0 ? 1f - _scroll / (float)max : 1f);
         }
 
         private void OnWheel(float dy)
@@ -1723,7 +1680,10 @@ namespace Sdo.UI.Screens
             // 🔴 只有「原本就貼在最底」時才跟著捲到底。玩家往上拉去看舊訊息的時候,
             //    新訊息不該把畫面搶回底部(使用者回報)—— 那會讓人根本讀不完一句話。
             //    要恢復自動跟隨,把捲軸拉回最底即可(與大多數聊天視窗的慣例一致)。
-            bool wasAtBottom = _chatScroll == null || _chatScroll.verticalNormalizedPosition <= 0.02f;
+            // 🔴 訊息還沒塞滿聊天區時 Unity 回的 vNP 不可信(它算不出比例,通常固定回 1),
+            //    照字面判會變成「一開始就不自動捲」→ 這種情況一律當作貼在最底。
+            bool wasAtBottom = _chatScroll == null || !ChatOverflows()
+                               || _chatScroll.verticalNormalizedPosition <= 0.02f;
             AddChatLine(m);
             if (wasAtBottom) ScrollChatToBottom();
             else if (_chatClip != null) _chatClip.Refresh();
@@ -1760,11 +1720,20 @@ namespace Sdo.UI.Screens
             return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
         }
 
+        /// <summary>聊天記錄有沒有多到要捲。差一點點(0.5px)當作沒有,避免邊界抖動。</summary>
+        private bool ChatOverflows()
+        {
+            if (_chatScroll == null) return false;
+            var c = _chatScroll.content; var v = _chatScroll.viewport;
+            return c != null && v != null && c.rect.height > v.rect.height + 0.5f;
+        }
+
         private void ScrollChatToBottom()
         {
             if (_chatScroll == null) return;
             Canvas.ForceUpdateCanvases();
             _chatScroll.verticalNormalizedPosition = 0f;
+            FixedScrollbar.Sync(_chatBar, _chatScroll);   // ForceUpdateCanvases 之後才量得到正確高度
             if (_chatClip != null) _chatClip.Refresh();
         }
 
