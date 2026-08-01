@@ -106,6 +106,13 @@ namespace Sdo.UI.Services
         public string SongTitle;   // currently selected song label (null = none)
 
         /// <summary>
+        /// 選中譜面的難度。大廳的「房間信息」把它寫成「歌名 (9級)」。
+        /// 🔴 <b>0 = 不知道</b>(沒歌、譜面沒標難度,或對方是舊版 server 不送這個欄位)——
+        /// 顯示端要當「不寫括號」而不是「0級」。
+        /// </summary>
+        public int SongLevel;
+
+        /// <summary>
         /// 坐著的人的性別(0=女 1=男),依座位順序,長度 == <see cref="Count"/>;null / 太短 = 不知道。
         ///
         /// 大廳房卡上那排愛心靠它上色(官方:女=粉紅 FEMALE.AN、男=藍 MALE.AN、空位=灰 MAN.AN)。

@@ -334,7 +334,10 @@ namespace Sdo.Server.Net
                     .Int("capacity", s.Capacity)
                     .Int("spectators", s.Spectators != null ? s.Spectators.Length : 0)
                     .Int("mode", s.Settings.GameMode)
-                    .Str("songTitle", s.Song != null ? s.Song.Title : ""));
+                    .Str("songTitle", s.Song != null ? s.Song.Title : "")
+                    // 譜面難度。大廳的「房間信息」那格官方寫成「歌名 (9級)」—— 沒有這個欄位就只能顯示歌名。
+                    // 🔴 0 = 沒歌 or 譜面沒標難度,呼叫端要當「不知道」而不是「0 級」(不然整排房間都會寫 0級)。
+                    .Int("songLevel", s.Song != null ? s.Song.Level : 0));
             }
 
             conn.Send(JObj.New()

@@ -331,6 +331,13 @@ namespace Sdo.Net
         public string SongTitle;
 
         /// <summary>
+        /// 譜面難度。大廳的「房間信息」把它寫成「歌名 (9級)」。
+        /// 🔴 <b>0 = 不知道</b>(沒歌、譜面沒標難度,或**對方是舊版 server 不送這個欄位**)——
+        /// 呼叫端要當「不顯示」而不是「0 級」,否則整排房間都會寫 0級。
+        /// </summary>
+        public int SongLevel;
+
+        /// <summary>
         /// 坐著的人的性別(0=女 1=男),依座位順序,長度 == <see cref="Count"/>。空位不列。
         /// 大廳房卡那排愛心靠它上色(女=粉紅、男=藍、空位=灰)。舊版 server 不送這個欄位 → 空陣列,
         /// 呼叫端退回「一律當女生」(那是官方唯一那顆彩色心的顏色,退化得最不突兀)。
@@ -357,6 +364,8 @@ namespace Sdo.Net
             e.Spectators = NetJson.Int(node, "spectators");
             e.Mode = NetJson.Int(node, "mode");
             e.SongTitle = NetJson.Str(node, "songTitle");
+            // 舊版 server 不送這個欄位 → NetJson.Int 回 0,而 0 的語意就是「不知道」(見 SongLevel 的 doc)。
+            e.SongLevel = NetJson.Int(node, "songLevel");
             var g = NetJson.Arr(node, "genders");
             if (g != null && g.Count > 0)
             {

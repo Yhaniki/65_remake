@@ -201,14 +201,17 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>
-        /// 遊戲歌曲那格。官方是「歌名 (難度級)」,例如「海芋恋 (9級)」。
+        /// 遊戲歌曲那格,官方格式是「歌名 (難度級)」,例如「海芋恋 (9級)」。
         ///
-        /// 🔴 **難度目前拿不到**:<see cref="RoomInfo"/> 只帶 <c>SongTitle</c> —— 房間列表的封包沒有難度欄位
-        ///    (那是進房之後 roomState 才有的)。所以現在只寫歌名,**不硬掛一個「(0級)」**:
-        ///    那會讓人以為所有房間的歌都是 0 級,比缺一個括號更糟。
-        ///    要補的話得先讓 server 的 roomList 帶上難度,再從這裡接。
+        /// 🔴 難度 <b>0 = 不知道</b>(沒歌、譜面沒標難度,或對方是**舊版 server** 不送 songLevel)——
+        ///    這時只寫歌名、**不掛「(0級)」**:那會讓整排房間看起來都是 0 級,比缺一個括號更糟。
         /// </summary>
-        private static string SongLabel(RoomInfo r) => Or(r.SongTitle);
+        private static string SongLabel(RoomInfo r)
+        {
+            string title = Or(r.SongTitle);
+            if (title.Length == 0) return "";
+            return r.SongLevel > 0 ? title + " (" + r.SongLevel + "級)" : title;
+        }
 
         private static string Or(string s) => string.IsNullOrEmpty(s) ? "" : s;
 

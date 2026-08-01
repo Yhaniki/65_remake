@@ -918,6 +918,7 @@ namespace Sdo.UI.Screens
                     Status = (i % 4 == 3) ? RoomStatus.InGame : RoomStatus.Waiting,
                     Capacity = 6,
                     SongTitle = FakeSongs[i % FakeSongs.Length],
+                    SongLevel = 5 + (i % 6),   // 假難度 5..10:房間信息那格要看得出「歌名 (N級)」的樣子
                 };
                 // 🔴 RoomInfo.Count 是**由 Seats 算出來的唯讀屬性**,不能直接指派 —— 人數要靠真的塞座位。
                 int taken = 1 + (i % 5);

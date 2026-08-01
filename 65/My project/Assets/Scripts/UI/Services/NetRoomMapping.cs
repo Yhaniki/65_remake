@@ -129,6 +129,7 @@ namespace Sdo.UI.Services
             info.Mode = e.Mode == 0 ? GameMode.Free : GameMode.Normal;
             info.Status = e.Status == NetRoomStatus.Open ? UiRoomStatus.Waiting : UiRoomStatus.InGame;
             info.SongTitle = string.IsNullOrEmpty(e.SongTitle) ? null : e.SongTitle;
+            info.SongLevel = e.SongLevel;   // 0 = 不知道(見 NetRoomListEntry.SongLevel)
             info.SeatGenders = e.Genders;   // 房卡那排愛心的顏色(舊版 server 不送 → null,呼叫端退回一律粉紅)
 
             // 列表沒有逐座位的資料 —— 用「有幾個人」補出對應數量的佔位座位,

@@ -80,6 +80,8 @@ namespace Sdo.UI.Services
                 r.Seats[i].IsReady = true;
             }
             r.SongTitle = SongLabels[_rng.Next(SongLabels.Length)];
+            r.SongLevel = _rng.Next(1, 11);   // 離線也要有難度,不然房間信息那格看不出「歌名 (N級)」
+
             _rooms.Add(r);
             return r;
         }
