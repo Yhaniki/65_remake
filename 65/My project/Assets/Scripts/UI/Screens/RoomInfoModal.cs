@@ -47,7 +47,9 @@ namespace Sdo.UI.Screens
         private const float ColSexX = 327f, ColSexW = 25f;
         // 🔴 官方 col4 是 167 寬(右緣 519),但底圖那個右格只到 **514** —— 靠右的名字會壓在捲軸握把(521)上。
         //    收成 162 讓文字右緣正好落在格線上;這 5px 是官方自己畫歪的,不是我們算錯。
-        private const float ColNameX = 352f, ColNameW = 162f;
+        // 🔴 名字**靠左但要縮排**:官方 col4 從 352 起,那正好是底圖那條分隔線 —— 字貼著線看起來像溢出來
+        //    (使用者回報「名字太靠左」)。往內縮 8px,與右格的內緣對齊。
+        private const float ColNameX = 360f, ColNameW = 154f;
         private const float HeartW = 18f, HeartH = 16f;   // FEMALE/MALE.an = stage.png (…,18,16)
 
         // 捲軸握把(RoomInfoSB.an 14×28,與大廳好友列表的 Lobby12 是同一個裁切框)。
@@ -128,7 +130,10 @@ namespace Sdo.UI.Screens
                                                 TextAlignmentOptions align)
         {
             // 玩家列與上面四排欄位的字色不同(見 ValueCol / RowCol)——用名字前綴分,列都叫 rowN_*。
-            var t = UIKit.AddText(parent, name, "", RowFont, name.StartsWith("row") ? RowCol : ValueCol, align);
+            bool isRow = name.StartsWith("row");
+            var t = UIKit.AddText(parent, name, "", RowFont, isRow ? RowCol : ValueCol, align);
+            // 玩家列的字色偏暗、底又是深紫 —— 加粗才讀得清楚(使用者回報「下面字太深」)。
+            if (isRow) t.fontStyle = FontStyles.Bold;
             Place(t.rectTransform, x, y, w, ValueH);
             t.overflowMode = TextOverflowModes.Ellipsis;   // 房名/暱稱沒有長度上限,不截會蓋到隔壁欄
             return t;
