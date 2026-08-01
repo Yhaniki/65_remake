@@ -62,20 +62,60 @@ namespace Sdo.UI.Util
         }
 
         /// <summary>
-        /// 給**整張獨立大圖**用的載入(底板、面板底圖那種)——走共用圖集 + alpha bleed,**不做 solo**。
+        /// 給**整張大底圖**用的載入(視窗底板、每一頁的底圖)。走 <see cref="AtlasCrop"/> ——
+        /// 也就是「複製到自己的貼圖 + 四鄰擴散」,而**不是** <see cref="An"/> 的 solo 那條路、
+        /// 也不是共用圖集。
         ///
-        /// 🔴 solo 那條路(<see cref="An"/>)是為了「圖集裡彼此貼著的小鈕」設計的:它會 DeMatteWhite + Clamp,
-        ///    對一張佔滿整個圖集角落的大底圖來說,那個處理會把邊緣那圈半透明像素壓成深色 ——
-        ///    畫面上就是視窗外圍多一條黑邊(使用者回報)。大底圖沒有鄰居可滲,本來就不需要 solo。
+        /// 🔴 兩條路都不行,原因不同:
+        ///    • solo(<see cref="An"/>)是為「圖集裡彼此貼著的小鈕」設計的,它的 DeMatteWhite + Clamp
+        ///      會把大底圖邊緣那圈半透明像素壓成深色 → 視窗外圍多一條黑邊。
+        ///    • 共用圖集(LoadAn1)則會在邊緣取樣時把**鄰居**拖進來 —— BaseBoard_man.png 上
+        ///      底板是 (0,0,625,502)、基本頁底圖是 (624,0,348,337),兩者**貼著**(甚至重疊 1px),
+        ///      所以底板右緣會滲出一條鄰居的深色雜訊(使用者連兩輪回報「框旁邊切錯的黑色雜訊」)。
+        ///    複製到自己的貼圖之後兩個問題都不存在:沒有鄰居可滲,也不做任何邊緣壓暗。
         /// </summary>
         public static Sprite AnRaw(string anName)
         {
             if (string.IsNullOrEmpty(anName)) return null;
             string key = "raw:" + anName;
             if (_cache.TryGetValue(key, out var s) && s != null) return s;
-            s = SdoExtracted.LoadAn1(Dir, anName, bleed: true);
+            // .an 檔記的是「哪張圖的哪一塊」,直接照它的裁切走 AtlasCrop。
+            if (TryReadAnCrop(anName, out string img, out int x, out int y, out int w, out int h))
+                s = AtlasCrop(img, x, y, w, h);
+            if (s == null) s = SdoExtracted.LoadAn1(Dir, anName, bleed: true);   // 讀不到裁切資訊時的退路
             _cache[key] = s;
             return s;
+        }
+
+        /// <summary>
+        /// 讀一個 .an 的裁切資訊。這種 .an 是**純文字**,內容就一行:<c>圖檔名 (x, y, w, h)</c>
+        /// (數字之間可能有空格,而且同一行可能重複兩次 —— 只取第一組)。
+        /// 讀不到就回 false,呼叫端自己退回舊路。
+        /// </summary>
+        private static bool TryReadAnCrop(string anName, out string image, out int x, out int y, out int w, out int h)
+        {
+            image = null; x = y = w = h = 0;
+            try
+            {
+                string file = Path.Combine(Dir, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase)
+                                                ? anName : anName + ".an");
+                if (!File.Exists(file))
+                {
+                    file = Path.Combine(Dir, anName.ToUpperInvariant() + ".AN");
+                    if (!File.Exists(file)) return false;
+                }
+                string text = File.ReadAllText(file);
+                var m = System.Text.RegularExpressions.Regex.Match(
+                    text, @"([^\s(]+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)");
+                if (!m.Success) return false;
+                image = m.Groups[1].Value;
+                x = int.Parse(m.Groups[2].Value);
+                y = int.Parse(m.Groups[3].Value);
+                w = int.Parse(m.Groups[4].Value);
+                h = int.Parse(m.Groups[5].Value);
+                return w > 0 && h > 0;
+            }
+            catch { return false; }
         }
 
         /// <summary>一個 .an 的全部幀(已快取)。這個視窗目前沒有動畫,留著是為了與其它 *Art 樣板一致。</summary>

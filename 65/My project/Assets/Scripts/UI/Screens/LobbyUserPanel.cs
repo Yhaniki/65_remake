@@ -144,8 +144,12 @@ namespace Sdo.UI.Screens
             //    ExecuteEvents.GetEventHandler&lt;IBeginDragHandler&gt; 往上找 handler 的,
             //    **EventTrigger 只註冊 Drag 而沒有 BeginDrag 時不會被選成 pointerDrag** → 拖曳事件永遠不會送到它,
             //    只剩滾輪能捲(使用者回報)。改成自己的元件、把 IBeginDragHandler 一起實作就對了。
-            _handle.raycastTarget = true;
-            _handle.gameObject.AddComponent<DragProxy>().Dragged = DragHandle;
+            //    🔴 拖曳區鋪**整條軌道**而不是只有握把:握把只有 14px 寬,要正中它才拖得到,
+            //       實機上幾乎每次都抓不到(使用者連兩輪回報「拉不動」)。
+            var railHit = UIKit.AddImage(_root, "RailDrag", new Color(0f, 0f, 0f, 0f), raycast: true);
+            Place(railHit.rectTransform, HandleX - 5f, ListY, 24f, ListH);
+            railHit.gameObject.AddComponent<DragProxy>().Dragged = DragHandle;
+            railHit.transform.SetSiblingIndex(_handle.transform.GetSiblingIndex());   // 壓在握把底下,握把才看得見
 
             // 添加好友:把選中的那一列加進本機好友清單(與房間座位選單的「加好友」同一條路)。
             var add = UIKit.AddSpriteButton(_root, "AddFriend", An("Lobby131"), An("Lobby132"), An("Lobby133"),

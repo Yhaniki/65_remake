@@ -334,8 +334,9 @@ namespace Sdo.UI.Screens
             // 🔴 房間列表是**整數分頁**(一次捲一列),不是連續捲動 —— 拖曳要換算成「拖過幾列」。
             //    🔴 用 DragProxy 而不是 EventTrigger:只註冊 Drag 的 EventTrigger 不會被 EventSystem
             //       選成 pointerDrag(它挑的是有 IBeginDragHandler 的),拖曳事件永遠送不到 → 只剩滾輪能捲。
-            _handle.raycastTarget = true;
-            _handle.gameObject.AddComponent<DragProxy>().Dragged = DragRoomHandle;
+            //    🔴 拖曳區鋪**整條軌道**而不是只有握把:握把只有 14px 寬,要正中它才拖得到,
+            //       實機上幾乎每次都抓不到(使用者連兩輪回報「拉不動」)。整條軌道都能拖就好按得多。
+            AddRailDrag("RoomRailDrag", RailX - 5f, RailTop, 24f, RailH, DragRoomHandle);
 
             // 玩家名單(官方 win3)最後建 = 疊在最上面,展開時蓋住角色與左半邊 —— 官方就是這樣。
             BuildUserPanel();
@@ -1046,6 +1047,17 @@ namespace Sdo.UI.Screens
         /// 這裡是真的 ScrollRect,位置要從 <c>verticalNormalizedPosition</c> 換算(1=最上、0=最下,方向相反)。
         /// 內容比視窗短時 Unity 的回傳值不可信 → 自己判,直接停在最上面。
         /// </summary>
+        /// <summary>
+        /// 在一條捲軸軌道上鋪一塊透明的拖曳區。握把本身只有 14px 寬,滑鼠要正中它才拖得動 ——
+        /// 把整條軌道(左右各多留幾 px)都變成可拖區域,手感才對得起「用滑鼠拉捲軸」這件事。
+        /// </summary>
+        private void AddRailDrag(string name, float x, float y, float w, float h, System.Action<float> onDrag)
+        {
+            var hit = UIKit.AddImage(Root, name, new Color(0f, 0f, 0f, 0f), raycast: true);
+            PlaceTopLeft(hit.rectTransform, x, y, w, h);
+            hit.gameObject.AddComponent<DragProxy>().Dragged = onDrag;
+        }
+
         private void PlaceChatHandle()
         {
             if (_chatHandle == null || _chatScroll == null) return;
@@ -1708,8 +1720,13 @@ namespace Sdo.UI.Screens
 
         private void OnChatMessage(ChatMessage m)
         {
+            // 🔴 只有「原本就貼在最底」時才跟著捲到底。玩家往上拉去看舊訊息的時候,
+            //    新訊息不該把畫面搶回底部(使用者回報)—— 那會讓人根本讀不完一句話。
+            //    要恢復自動跟隨,把捲軸拉回最底即可(與大多數聊天視窗的慣例一致)。
+            bool wasAtBottom = _chatScroll == null || _chatScroll.verticalNormalizedPosition <= 0.02f;
             AddChatLine(m);
-            ScrollChatToBottom();
+            if (wasAtBottom) ScrollChatToBottom();
+            else if (_chatClip != null) _chatClip.Refresh();
         }
 
         private void AddChatLine(ChatMessage m)
