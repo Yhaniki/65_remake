@@ -84,10 +84,15 @@ namespace Sdo.UI.Screens
         //    這段蓋回去,所以左移不會讓補條在分頁區露出來。
         // 🔴 右緣取到 697(凹槽框線的右緣)而不是 695:696..697 本來就是同色框線,蓋掉毫無差別,
         //    但可以吃掉縮放到 1024×768 時最後那一欄的抗鋸齒殘影(實測 x=897 會留一條)。
-        /// <summary>底板凹槽的右緣(絕對 x)。分頁板的右緣要延伸到這裡才不會露出底板的星空。</summary>
-        private const float GrooveRight = 695f;
-        /// <summary>兩頁分頁板的寬度(34_man 348、43_man 347)。用來算整頁該往右移幾 px。</summary>
-        private const float BasicPanelW = 348f, StatsPanelW = 347f;
+        // 🔴 底板凹槽到 695、分頁板只到 683,中間 12px 露出底板烤死的星空。
+        //    **這是官方 layout 的固有結果,不要再想辦法補它** —— 官方靠一張執行期填的角色背景圖
+        //    (<Label name="CharBack" x="114" y="110" w="584" background="empty.an"/>)蓋滿整個凹槽,
+        //    我們沒有那張圖。四種補法全部試過、全部被打回:
+        //      1) 純框線色的補條      → 貼在淺紫板子旁變成一條更明顯的深紫邊
+        //      2) 取板子最右一欄延伸  → 那一欄正是板子自己的右框線,與 1) 一模一樣
+        //      3) 底色填 + 框線右移   → 板子有圓角,矩形延伸讓右上/右下凸出直角
+        //      4) 整頁往右位移        → 板子與分頁條左緣對不齊,左邊裂一條更寬的縫
+        //    真要修就得補上 CharBack 那張圖(等於做「玩家可換的個人背景」那套系統),不是調版位能解決的。
 
         // 身分區。官方在這塊放 <AvtShow name="AvatarShow" x="105" y="111" w="230" h="391"> 的 3D 角色,
         // 名字/等級疊在它左上角(name 132,129 / level 132,144 —— 這幾個男女版同座標)。我們不做 3D 預覽
@@ -429,8 +434,6 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void BuildBasicTab(RectTransform body)
         {
-            // 整頁往右移,讓板子右緣(335+348=683)貼上凹槽右緣 695 —— 見 ShiftedPage。
-            body = ShiftedPage(body, GrooveRight - (BasicBgX + BasicPanelW));
             UIKit.AddSprite(body, "BasicBg", PlayerInfoArt.AnRaw("PlayerInformationDlg34_man"), BasicBgX, BasicBgY);
 
             // 三條進度條(天使等級 / 經驗值 / TP值)。經驗值那條官方用黃色前景,另外兩條用同一張粉紅條。
@@ -636,31 +639,6 @@ namespace Sdo.UI.Screens
         /// 橫向拉開之後顏色完全跟著板子的上下漸層走 —— 見 <see cref="PlayerInfoArt.BasicEdge"/> 的註解。
         /// 建在板子之後 = 疊在它上面,但兩者右緣相接、不重疊,所以看不出接縫。
         /// </summary>
-        /// <summary>
-        /// 把一頁的內容整組往右移 <paramref name="dx"/> px,讓分頁板的右緣正好貼上底板凹槽的右緣(695)。
-        ///
-        /// 🔴 這是「板子只到 683、凹槽卻到 695」那 12px 的**第四版**解法,前三版都失敗:
-        ///    1) 補一條純框線色 → 貼在淺紫板子旁邊變成一條更明顯的深紫邊;
-        ///    2) 取板子最右一欄延伸 → 那一欄正是板子自己的右框線,結果與 1) 一模一樣;
-        ///    3) 底色填 + 框線右移兩塊拼 → **板子有圓角**,矩形延伸讓右上/右下凸出直角(使用者回報「凸一塊還歪歪的」)。
-        ///    整組位移是唯一不會破壞圓角的做法:板子原封不動,只是站的位置往右挪。
-        ///
-        /// 🔴 **一定要移整頁而不是只移板子**:每一格的標題(天使等級/TP值/…)是**烤在板子上**的,
-        ///    板子動了、程式放的數值沒動,就會與烤字錯位。所以在 body 底下再包一層容器,
-        ///    位移它 → 底下所有絕對座標一起跟著走,版位常數一個都不用改。
-        ///
-        /// 左邊空出來的 12px 露出底板的星空 —— 那裡緊鄰左側的角色預覽區(本來就是同一片星空),
-        /// 接得上、看不出來;右邊那 12px 才是夾在板子與外框之間、怎麼補都突兀的位置。
-        /// </summary>
-        private static RectTransform ShiftedPage(RectTransform body, float dx)
-        {
-            var shift = UIKit.NewRect(body, "Shift");
-            UIKit.Stretch(shift);
-            shift.offsetMin += new Vector2(dx, 0f);
-            shift.offsetMax += new Vector2(dx, 0f);
-            return shift;
-        }
-
         private static TextMeshProUGUI AddValue(RectTransform parent, string name, float x, float y, float w,
                                                 Color color, TextAlignmentOptions align)
         {
@@ -675,8 +653,6 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void BuildStatsTab(RectTransform body)
         {
-            // 同基本頁:整頁往右移,讓板子右緣(335+347=682)貼上 695。
-            body = ShiftedPage(body, GrooveRight - (BasicBgX + StatsPanelW));
             UIKit.AddSprite(body, "StatsBg", PlayerInfoArt.AnRaw("PlayerInformationDlg43_man"), BasicBgX, BasicBgY - 1f);
 
             // 上方三格:熱舞戰績(兩格)與目前排名。烤字在底板上,這裡只放值。
