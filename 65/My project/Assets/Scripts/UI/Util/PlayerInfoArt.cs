@@ -61,6 +61,23 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        /// <summary>
+        /// 給**整張獨立大圖**用的載入(底板、面板底圖那種)——走共用圖集 + alpha bleed,**不做 solo**。
+        ///
+        /// 🔴 solo 那條路(<see cref="An"/>)是為了「圖集裡彼此貼著的小鈕」設計的:它會 DeMatteWhite + Clamp,
+        ///    對一張佔滿整個圖集角落的大底圖來說,那個處理會把邊緣那圈半透明像素壓成深色 ——
+        ///    畫面上就是視窗外圍多一條黑邊(使用者回報)。大底圖沒有鄰居可滲,本來就不需要 solo。
+        /// </summary>
+        public static Sprite AnRaw(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "raw:" + anName;
+            if (_cache.TryGetValue(key, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAn1(Dir, anName, bleed: true);
+            _cache[key] = s;
+            return s;
+        }
+
         /// <summary>一個 .an 的全部幀(已快取)。這個視窗目前沒有動畫,留著是為了與其它 *Art 樣板一致。</summary>
         public static Sprite[] AnFrames(string anName)
         {
@@ -213,7 +230,7 @@ namespace Sdo.UI.Util
         // 名稱照官方 XML 的元件名取,方便回頭對 PLAYERINFORMATIONDLG_MAN.XML 的 <Window name="WinPlayerInfo">。
 
         /// <summary>主框(官方 <c>DailogBg</c>):BaseBoard_man.png (0,0,625,502),擺在 (93,56)。</summary>
-        public static Sprite Board => An("PlayerInformationDlg0_MAN");
+        public static Sprite Board => AnRaw("PlayerInformationDlg0_MAN");   // 整張大底板 → 不走 solo(見 AnRaw)
 
         // 底部那一排動作鈕,全部 93×31、全部在 BaseBoard2_man.png 裡。
         public static Sprite WhisperN => An("PlayerInformationDlg17");     // Dialog     (108,507)

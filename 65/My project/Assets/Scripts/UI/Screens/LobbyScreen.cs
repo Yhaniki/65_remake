@@ -213,7 +213,9 @@ namespace Sdo.UI.Screens
 
         // XML 的顏色(0xAARRGGBB)
         private static readonly Color32 RoomNameColor = new Color32(0x82, 0x14, 0x38, 0xff);   // roomname
-        private const float RoomNameEdgePx = 1.2f;   // 房名的白邊厚度(12px 字,再厚就糊成一團)
+        // 房名的白邊厚度。官方實機那行字的邊相當厚(整個字看起來是「白描邊的粗體」)——
+        // 1.2 太細、看起來只是普通粗體,使用者比對官方後回報「還是不夠粗」。2.2 才有官方那個份量。
+        private const float RoomNameEdgePx = 2.2f;
         private static readonly Color32 SongColor = new Color32(0xed, 0xec, 0xa0, 0xff);       // roommusic
         private static readonly Color32 SelfNameColor = new Color32(0xf2, 0x86, 0x4b, 0xff);   // charname
         private static readonly Color32 StatColor = new Color32(0xff, 0xff, 0xff, 0xff);
@@ -330,11 +332,10 @@ namespace Sdo.UI.Screens
             // 共用圖集取樣會把那片拖進邊緣變成白邊(見 SpriteBtn 的註解)。
             _handle = UIKit.AddSprite(Root, "ScrollHandle", LobbyArt.AnSoloAA("Lobby38"), RailX, RailTop);
             // 🔴 房間列表是**整數分頁**(一次捲一列),不是連續捲動 —— 拖曳要換算成「拖過幾列」。
+            //    🔴 用 DragProxy 而不是 EventTrigger:只註冊 Drag 的 EventTrigger 不會被 EventSystem
+            //       選成 pointerDrag(它挑的是有 IBeginDragHandler 的),拖曳事件永遠送不到 → 只剩滾輪能捲。
             _handle.raycastTarget = true;
-            var rtrig = _handle.gameObject.AddComponent<EventTrigger>();
-            var rdrag = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
-            rdrag.callback.AddListener(ev => { if (ev is PointerEventData p) DragRoomHandle(p.delta.y); });
-            rtrig.triggers.Add(rdrag);
+            _handle.gameObject.AddComponent<DragProxy>().Dragged = DragRoomHandle;
 
             // 玩家名單(官方 win3)最後建 = 疊在最上面,展開時蓋住角色與左半邊 —— 官方就是這樣。
             BuildUserPanel();

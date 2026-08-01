@@ -40,7 +40,9 @@ namespace Sdo.UI.Screens
         private const float BoardX = 93f, BoardY = 56f;          // <Label name="DailogBg" x="93" y="56" background="PlayerInformationDlg0_man.an"/>
         private const float CloseX = 662f, CloseY = 73f;         // <Button name="close" x="662" y="73"/>
 
-        private const float TabX = 333f, TabY = 116f;            // <CheckBox name="playerTabCheck0..3" x="333" y="116"/>(四格疊在同一點)
+        // 🔴 XML 寫 333,但那幾張分頁圖左邊各有幾 px 的透明邊 —— 照 333 擺出來,**可見**的左緣落在 338,
+        //    比內容板(335)往右凸 3px(使用者回報「tab 往右歪」)。往左 4px 讓可見邊與內容板切齊。
+        private const float TabX = 329f, TabY = 116f;            // <CheckBox name="playerTabCheck0..3" x="333" y="116"/>(四格疊在同一點)
         // 每一格的可點範圍(相對分頁條左緣)。量自 BaseBoard2_man.png 上未選那四張圖各自的不透明範圍:
         // 5-73 / 73-142 / 143-212 / 213-282(283 之後是官方第五格「星座」的位置,我們不畫)。
         private static readonly float[] TabPillX = { 4f, 73f, 143f, 213f, 283f };
@@ -312,7 +314,7 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void BuildBasicTab(RectTransform body)
         {
-            UIKit.AddSprite(body, "BasicBg", PlayerInfoArt.An("PlayerInformationDlg34_man"), BasicBgX, BasicBgY);
+            UIKit.AddSprite(body, "BasicBg", PlayerInfoArt.AnRaw("PlayerInformationDlg34_man"), BasicBgX, BasicBgY);
 
             // 三條進度條(天使等級 / 經驗值 / TP值)。經驗值那條官方用黃色前景,另外兩條用同一張粉紅條。
             _angelBar = AddProgress(body, "pro_angel", AngelBarX, AngelBarY, "PlayerInformationDlg65");
@@ -446,7 +448,7 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void BuildStatsTab(RectTransform body)
         {
-            UIKit.AddSprite(body, "StatsBg", PlayerInfoArt.An("PlayerInformationDlg43_man"), BasicBgX, BasicBgY - 1f);
+            UIKit.AddSprite(body, "StatsBg", PlayerInfoArt.AnRaw("PlayerInformationDlg43_man"), BasicBgX, BasicBgY - 1f);
 
             // 上方三格:熱舞戰績(兩格)與目前排名。烤字在底板上,這裡只放值。
             _perfLabel = UIKit.AddText(body, "performance", "", RateFont, Color.black, TextAlignmentOptions.Center);
@@ -464,7 +466,7 @@ namespace Sdo.UI.Screens
             UIKit.Stretch(_skillBody);
 
             // 統計明細:背板(六個標籤烤在上面)+ 六條進度條。
-            UIKit.AddSprite(_skillBody, "SkillBg", PlayerInfoArt.An("SkillBg_man"), SkillBgX, SkillBgY);
+            UIKit.AddSprite(_skillBody, "SkillBg", PlayerInfoArt.AnRaw("SkillBg_man"), SkillBgX, SkillBgY);
             _rateRows = new RateRow[RateRowMax];
             for (int i = 0; i < RateRowMax; i++)
                 _rateRows[i] = RateRow.Create(_skillBody, "RateRow" + i, RateBarX, RateRow0Y + i * RateStep);

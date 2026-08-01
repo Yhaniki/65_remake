@@ -37,7 +37,9 @@ namespace Sdo.UI.Screens
 
         // ---- 版位(win3,絕對座標) ----
         private const float BgX = 7f, BgY = 82f;             // Lobby0.an 名單底板
-        private const float TitleX = 70f, TitleY = 47f;      // friendbold.an 分頁列的底
+        // 🔴 **不要**貼 friendbold.an。它不是「分頁列的底」——切出來看是 stage.png (928,500,71,38) 的
+        //    一個**純黃色圓角框**,官方拿它去高亮某一格。以前把它當底圖貼在 (70,47),正好蓋在「好友」那格上,
+        //    就成了使用者連兩輪回報的「好友後面那個拿不掉的黃框」(找了半天以為是 UGUI 的 focus 視覺)。
         private const float IntimacyX = 30f, IntimacyY = 87f;// qinmidu.an「位置 / 暱稱」欄頭
         private const float TabY = 52f;
         private const float TabAllX = 7f, TabFriendX = 73f, TabFamilyX = 139f, TabBlackX = 205f;
@@ -117,7 +119,6 @@ namespace Sdo.UI.Screens
 
             // 名單底板。官方把欄頭(位置/暱稱)與分頁列的底烤在 friendbold/qinmidu 兩張圖裡 → 只擺圖,不重畫字。
             UIKit.AddSprite(_root, "PanelBg", LobbyArt.An("Lobby0"), BgX, BgY);
-            UIKit.AddSprite(_root, "TabStrip", LobbyArt.An("friendbold"), TitleX, TitleY);
             UIKit.AddSprite(_root, "ColHeader", LobbyArt.An("qinmidu"), IntimacyX, IntimacyY);
 
             BuildTab(0, "TabAll", "Lobby15", "Lobby13", TabAllX);
@@ -138,17 +139,13 @@ namespace Sdo.UI.Screens
             // ScrollRect 自己動(滾輪、拖曳、慣性)時沒有人會通知我們 → 這條是唯一即時的來源。
             _scroll.onValueChanged.AddListener(_ => PlaceHandle());
 
-            // 🔴 握把要**拉得動**(使用者回報「所有 slider 用滑鼠拉都沒反應」)。它只是一張 Image、
-            //    不是 Unity 的 Scrollbar,沒有人會幫它接拖曳 —— 得自己把滑鼠位移換算成捲動量。
+            // 🔴 握把要**拉得動**。它只是一張 Image、不是 Unity 的 Scrollbar,沒有人會幫它接拖曳。
+            //    上一版用 EventTrigger 沒有用:EventSystem 是在 PointerDown 當下用
+            //    ExecuteEvents.GetEventHandler&lt;IBeginDragHandler&gt; 往上找 handler 的,
+            //    **EventTrigger 只註冊 Drag 而沒有 BeginDrag 時不會被選成 pointerDrag** → 拖曳事件永遠不會送到它,
+            //    只剩滾輪能捲(使用者回報)。改成自己的元件、把 IBeginDragHandler 一起實作就對了。
             _handle.raycastTarget = true;
-            var trig = _handle.gameObject.AddComponent<UnityEngine.EventSystems.EventTrigger>();
-            var entry = new UnityEngine.EventSystems.EventTrigger.Entry
-                { eventID = UnityEngine.EventSystems.EventTriggerType.Drag };
-            entry.callback.AddListener(ev =>
-            {
-                if (ev is UnityEngine.EventSystems.PointerEventData pe) DragHandle(pe.delta.y);
-            });
-            trig.triggers.Add(entry);
+            _handle.gameObject.AddComponent<DragProxy>().Dragged = DragHandle;
 
             // 添加好友:把選中的那一列加進本機好友清單(與房間座位選單的「加好友」同一條路)。
             var add = UIKit.AddSpriteButton(_root, "AddFriend", An("Lobby131"), An("Lobby132"), An("Lobby133"),
@@ -454,6 +451,7 @@ namespace Sdo.UI.Screens
             rt.sizeDelta = new Vector2(w, h);
             rt.anchoredPosition = new Vector2(x, -y);
         }
+
 
         private struct Row
         {
