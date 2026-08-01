@@ -271,6 +271,7 @@ namespace Sdo.UI.Screens
 
         private Image _angelBar, _expBar, _weightBar, _duanweiBar;
         private Image[] _fameSlots;                             // 知名度那 10 格(星 / 月 / 太陽)
+        private Image _grooveFill;                              // 凹槽右緣的補條(見 GrooveFillX 的註解)
         private Image[] _subTab;                                // 賽事頁的三個子分頁(家族/星座/寵物)
         private RectTransform _xunzhangBody, _famillyBody;      // 星座+寵物共用 / 家族自己
         private int _matchSub;
@@ -335,8 +336,8 @@ namespace Sdo.UI.Screens
             // 補掉底板凹槽右緣那 12px(官方靠 CharBack 蓋掉,我們沒有那張圖 —— 見 GrooveFillX 的註解)。
             // 建在 Board 之後、分頁容器之前 → 分頁板疊在它上面,寬度不同的那幾頁(43_man 到 684、
             // ZoBG 到 686)各自蓋掉自己那幾 px,剩下的由補條接手,不會有哪一頁露出縫。
-            var groove = UIKit.AddImage(_window, "GrooveFill", GrooveFrameCol);
-            Place(groove.rectTransform, GrooveFillX, GrooveFillY, GrooveFillW, GrooveFillH);
+            _grooveFill = UIKit.AddImage(_window, "GrooveFill", GrooveFrameCol);
+            Place(_grooveFill.rectTransform, GrooveFillX, GrooveFillY, GrooveFillW, GrooveFillH);
 
             BuildIdentity(_window);
             BuildTabs(_window);
@@ -407,8 +408,15 @@ namespace Sdo.UI.Screens
                 var btn = hit.gameObject.AddComponent<Button>();
                 btn.targetGraphic = hit;
                 btn.transition = Selectable.Transition.None;
-                btn.onClick.AddListener(() => ShowTab(idx));
-                UiSfx.AttachClick(btn);
+                // 🔴 賽事信息 / 拼圖卡片 / 星座守護三格**按了不切過去**(使用者指定):
+                //    這三套系統這個重製版都沒有,版面畫得再像也只是一頁 0 —— 與其讓人切過去看一頁空的,
+                //    不如照大廳那些沒實作的鈕的規矩:鈕照擺、按了安靜地什麼都不做(handler 不接)。
+                //    分頁圖仍然畫,所以那三格看得到、也會 hover,只是點了不動。
+                if (idx == TabBasic || idx == TabStats)
+                {
+                    btn.onClick.AddListener(() => ShowTab(idx));
+                    UiSfx.AttachClick(btn);
+                }
             }
         }
 
@@ -1078,6 +1086,12 @@ namespace Sdo.UI.Screens
             }
             // 選中那格的圖除了自己那格還畫滿整條底線,要壓在鄰居上面才不會被隔壁的邊蓋掉(範圍限在 TabBar 容器內)。
             _tabImg[_tab].transform.SetAsLastSibling();
+
+            // 🔴 凹槽右緣的補條**只在底板是淺紫的那幾頁**顯示。
+            //    它是一條實心的框線色(97,72,168),貼在基本/技術統計頁那種淺紫板子旁邊看起來就是「內框粗一點」;
+            //    但星座守護頁的底板是整片深色星空,同一條就變成畫面上一條突兀的紫邊(使用者回報)。
+            //    那幾頁的底板本來就是深色,凹槽露出來的星空與它融成一片,根本不需要補。
+            if (_grooveFill != null) _grooveFill.enabled = _tab == TabBasic || _tab == TabStats;
         }
 
         /// <summary>
