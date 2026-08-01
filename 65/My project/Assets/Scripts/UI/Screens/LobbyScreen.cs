@@ -142,7 +142,10 @@ namespace Sdo.UI.Screens
         // 左下聊天記錄的捲軸(官方 win4 的 TextList AllChatList,Handle 也是 Lobby12)。
         // RecordChatBG 貼在 (21,437),它烘死的細溝實測在絕對 x 429-431 → 14 寬的握把置中 x=423;
         // 軌道跟著聊天區(ChatY..ChatY+ChatH)。
-        private const float ChatRailX = 423f, ChatRailTop = 447f, ChatRailH = 110f;
+        // 🔴 握把要**壓在溝的正中央**:RecordChatBG 烤死的細溝實測在絕對 x 429-431(溝心 430),
+        //    14 寬的握把置中 → 430-7 = 423。以前寫 423 但視覺上偏一邊,是因為那條溝本身偏右一點 ——
+        //    改對齊「捲動區右緣」(ChatX+ChatW=442)往內 14+5:442-19 = 423… 實測還是偏,直接用溝心 430-7+3。
+        private const float ChatRailX = 426f, ChatRailTop = 447f, ChatRailH = 110f;
 
         // 右下角那一排功能鈕。創建/快速/篩選同一個 y(363);活動查詢與夥伴在 365(官方就差這 2px)。
         private const float ActionY = 363f, SideActionY = 365f;
@@ -218,12 +221,18 @@ namespace Sdo.UI.Screens
         /// <summary>線上房間列表的輪詢間隔。server 沒有「房間列表變了」的推播,只能自己回頭問。</summary>
         private const float PollSeconds = 4f;
 
+        // 聊天行的描邊(與房間畫面同一組:細髮絲邊、正十字四向 —— 13px 小字太厚會像粗體、也會糊)。
+        private static readonly Color32 ChatEdgeCol = new Color32(0x20, 0x14, 0x30, 0xFF);
+        private const float ChatEdgePx = 0.7f;
+        private const int ChatEdgeDirs = 4;
+
         // ---------------- 狀態 ----------------
 
         private readonly RoomRow[] _rows = new RoomRow[VisibleRows];
         private readonly List<RoomInfo> _rooms = new List<RoomInfo>();   // 來源(線上=server 回的;離線=Ctx.Rooms)
         private readonly List<RoomInfo> _view = new List<RoomInfo>();    // 套用「只顯示等待中」之後的
         private int _scroll;
+        private float _railDrag;   // 房間列表握把的拖曳累積量(不足一列的部分要留著)
         private bool _waitingOnly;
         private Image _handle;
 
@@ -316,9 +325,16 @@ namespace Sdo.UI.Screens
             trig.triggers.Add(entry);
 
             // 捲軸握把(在角色之後 —— 兩者不重疊,只是維持「列表零件疊在最上」)。
+            // 拖曳在下面接(與另外兩條握把同一個做法)。
             // 走 AnSoloAA 而不是共用圖集:握把在 stage.png 裡左邊 x=840-842 是完全不透明的鄰居,
             // 共用圖集取樣會把那片拖進邊緣變成白邊(見 SpriteBtn 的註解)。
             _handle = UIKit.AddSprite(Root, "ScrollHandle", LobbyArt.AnSoloAA("Lobby38"), RailX, RailTop);
+            // 🔴 房間列表是**整數分頁**(一次捲一列),不是連續捲動 —— 拖曳要換算成「拖過幾列」。
+            _handle.raycastTarget = true;
+            var rtrig = _handle.gameObject.AddComponent<EventTrigger>();
+            var rdrag = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
+            rdrag.callback.AddListener(ev => { if (ev is PointerEventData p) DragRoomHandle(p.delta.y); });
+            rtrig.triggers.Add(rdrag);
 
             // 玩家名單(官方 win3)最後建 = 疊在最上面,展開時蓋住角色與左半邊 —— 官方就是這樣。
             BuildUserPanel();
@@ -1056,6 +1072,25 @@ namespace Sdo.UI.Screens
             => L(mode == GameMode.Normal ? "songselect.mode_normal" : "songselect.mode_free");
 
         /// <summary>
+        /// 拖房間列表的握把。這一條與另外兩條不同:房卡是**整數分頁**的(_scroll 是第幾列),
+        /// 所以先把「拖了幾像素」換算成軌道上的比例,再乘上可捲的列數、四捨五入成整數列。
+        /// 累積量存在 _railDrag 裡 —— 不累積的話每幀的位移都不足一列,永遠捲不動。
+        /// </summary>
+        private void DragRoomHandle(float dy)
+        {
+            int max = Mathf.Max(0, _view.Count - VisibleRows);
+            if (max <= 0) return;
+            float travel = RailH - HandleH;
+            if (travel <= 0f) return;
+            _railDrag += -dy / travel * max;   // 螢幕往下拖(dy<0) = 往後捲
+            int step = Mathf.RoundToInt(_railDrag);
+            if (step == 0) return;
+            _railDrag -= step;
+            _scroll = Mathf.Clamp(_scroll + step, 0, max);
+            RefreshRows();
+        }
+
+        /// <summary>
         /// 拖握把 → 捲聊天記錄。<paramref name="dy"/> 是滑鼠這一幀的垂直位移(Unity:往上為正)。
         /// 握把往下拖 = 內容往後捲,所以 <c>verticalNormalizedPosition</c>(1=最上、0=最下)要跟著減。
         /// 可跑的軌道長度是 <c>ChatRailH - HandleH</c> —— 用它把「移動幾像素」換成「捲了幾成」。
@@ -1682,10 +1717,9 @@ namespace Sdo.UI.Screens
             // 密語跨大廳/房間 → 大廳也顯示(青色單行)。
             if (m.Whisper != WhisperKind.None)
             {
-                var w = UIKit.AddText(_chatContent, "whisper",
-                    "<color=#1EFEFE>" + Esc(ChatDisplay.WhisperText(m)) + "</color>", 13, UITheme.Text,
-                    TextAlignmentOptions.TopLeft, true);
-                w.richText = true;
+                var w = OutlinedLabel.CreateRich(_chatContent, "whisper",
+                    "<color=#1EFEFE>" + Esc(ChatDisplay.WhisperText(m)) + "</color>", 13f, ChatEdgeCol,
+                    ChatEdgePx, ChatEdgeDirs, true, TextAlignmentOptions.TopLeft);
                 UIKit.Layout(w.gameObject, 15);
                 return;
             }
@@ -1694,8 +1728,11 @@ namespace Sdo.UI.Screens
             if (m.Scope != ChatScope.Lobby) return;
             string line = m.System ? "<color=#F0C24A>" + Esc(m.Text) + "</color>"
                                    : "<color=#7FB6FF>" + Esc(m.Sender) + "</color>: " + Esc(m.Text);
-            var t = UIKit.AddText(_chatContent, "line", line, 13, UITheme.Text, TextAlignmentOptions.TopLeft, true);
-            t.richText = true;
+            // 🔴 聊天行要**粗體 + 描邊**(使用者要求,官方實機那些字都有一圈深邊):
+            //    這一區的底是星空與角色,細字直接壓上去會有整段讀不清。用 OutlinedLabel 的 rich 版
+            //    (它保留 <color> 標籤,所以名字/系統訊息的顏色照舊)。
+            var t = OutlinedLabel.CreateRich(_chatContent, "line", line, 13f, ChatEdgeCol,
+                                             ChatEdgePx, ChatEdgeDirs, true, TextAlignmentOptions.TopLeft);
             UIKit.Layout(t.gameObject, 15);
         }
 

@@ -138,6 +138,18 @@ namespace Sdo.UI.Screens
             // ScrollRect 自己動(滾輪、拖曳、慣性)時沒有人會通知我們 → 這條是唯一即時的來源。
             _scroll.onValueChanged.AddListener(_ => PlaceHandle());
 
+            // 🔴 握把要**拉得動**(使用者回報「所有 slider 用滑鼠拉都沒反應」)。它只是一張 Image、
+            //    不是 Unity 的 Scrollbar,沒有人會幫它接拖曳 —— 得自己把滑鼠位移換算成捲動量。
+            _handle.raycastTarget = true;
+            var trig = _handle.gameObject.AddComponent<UnityEngine.EventSystems.EventTrigger>();
+            var entry = new UnityEngine.EventSystems.EventTrigger.Entry
+                { eventID = UnityEngine.EventSystems.EventTriggerType.Drag };
+            entry.callback.AddListener(ev =>
+            {
+                if (ev is UnityEngine.EventSystems.PointerEventData pe) DragHandle(pe.delta.y);
+            });
+            trig.triggers.Add(entry);
+
             // 添加好友:把選中的那一列加進本機好友清單(與房間座位選單的「加好友」同一條路)。
             var add = UIKit.AddSpriteButton(_root, "AddFriend", An("Lobby131"), An("Lobby132"), An("Lobby133"),
                                             AddFriendX, AddFriendY);
@@ -165,6 +177,9 @@ namespace Sdo.UI.Screens
             //    focus 指示,與 transition 是兩回事)。使用者回報「好友後面有個黃框」講的就是它 ——
             //    點過的那顆會一直帶著框,而分頁的選取狀態我們已經用換圖表達了,不需要第二套指示。
             b.navigation = new Navigation { mode = Navigation.Mode.None };
+            // 🔴 連 spriteState 也清空:transition=None 理論上會忽略它,但 UGUI 的 focus 視覺
+            //    (點過之後那一圈黃框)仍然吃得到 selectedSprite。素材本身沒有黃框 —— 那圈是 Unity 畫的。
+            b.spriteState = default;
             var captured = (Tab)index;
             b.onClick.AddListener(() => SetTab(captured));
             UiSfx.AttachClick(b);
@@ -220,6 +235,20 @@ namespace Sdo.UI.Screens
         /// 🔴 內容比視窗短時 Unity 回的 v 不可信(這種情況它算不出比例)→ 自己比高度,直接停在最上面。
         ///    使用者要求握把**永遠顯示**(就算一個人都沒有),所以這裡不做隱藏。
         /// </summary>
+        /// <summary>
+        /// 拖握把 → 捲名單。<paramref name="dy"/> 是滑鼠這一幀的垂直位移(Unity:往上為正)。
+        /// 握把往下拖 = 內容往後捲,所以 <c>verticalNormalizedPosition</c>(1=最上、0=最下)要跟著減。
+        /// 軌道可跑的長度是 <c>ListH - HandleH</c>,用它把「移動幾像素」換成「捲了幾成」。
+        /// </summary>
+        private void DragHandle(float dy)
+        {
+            if (_scroll == null) return;
+            float travel = ListH - HandleH;
+            if (travel <= 0f) return;
+            _scroll.verticalNormalizedPosition = Mathf.Clamp01(_scroll.verticalNormalizedPosition + dy / travel);
+            PlaceHandle();
+        }
+
         private void PlaceHandle()
         {
             if (_handle == null || _scroll == null) return;
@@ -315,9 +344,12 @@ namespace Sdo.UI.Screens
             var hit = UIKit.AddImage(row, "hit", new Color(0f, 0f, 0f, 0f), raycast: true);
             Place(hit.rectTransform, 0f, 0f, ListW, RowH);
 
-            // 選中底(官方 ListCheck.an 是 hoverpic)。預設不畫,選到才亮 —— 「添加好友」按的就是這一列。
-            var hi = UIKit.AddSprite(row, "sel", LobbyArt.An("ListCheck"), 0f, 0f);
-            if (hi != null) hi.enabled = false;
+            // 選中框:官方是**一圈黃色外框**(見實機截圖),不是換一張底圖。用四條 1px 的線畫,
+            // 這樣不論列多寬都不會被拉伸變形。預設不畫,選到才亮 —— 「添加好友」按的就是這一列。
+            var hi = UIKit.AddImage(row, "sel", new Color(0f, 0f, 0f, 0f));
+            Place(hi.rectTransform, 0f, 0f, ListW, RowH);
+            MakeOutline(hi.rectTransform, SelectedFrameCol);
+            hi.gameObject.SetActive(false);
 
             // 性別小人頭。列表封包只帶得到性別,帶不到穿搭 → 用房卡那張通用剪影(同一張圖,同一個意思:「一個人」)。
             var icon = UIKit.AddSprite(row, "icon", LobbyArt.An("man"), ColIconX, 6f);
@@ -343,7 +375,7 @@ namespace Sdo.UI.Screens
             UiSfx.AttachClick(btn);
 
             _rows.Add(new Row { UserId = uid, Name = uname, Highlight = hi });
-            if (uid == _selectedUserId && hi != null) hi.enabled = true;
+            if (uid == _selectedUserId && hi != null) hi.gameObject.SetActive(true);
         }
 
         private TextMeshProUGUI Label(Transform parent, string name, float x, float w, Color color,
@@ -359,7 +391,7 @@ namespace Sdo.UI.Screens
             _selectedUserId = userId;
             _selectedName = name ?? "";
             for (int i = 0; i < _rows.Count; i++)
-                if (_rows[i].Highlight != null) _rows[i].Highlight.enabled = _rows[i].UserId == userId;
+                if (_rows[i].Highlight != null) _rows[i].Highlight.gameObject.SetActive(_rows[i].UserId == userId);
         }
 
         /// <summary>
@@ -389,6 +421,30 @@ namespace Sdo.UI.Screens
             // 正在看好友頁 → 新加的那個立刻出現,這就是「成功了」的回饋。
             // 其他分頁的濾鏡(全部/家族)根本不看好友清單 → 重畫出來一模一樣,不必白拆一次整份列表。
             if (_tab == Tab.Friends) Rebuild();
+        }
+
+        /// <summary>官方那圈選中框的黃(取自實機截圖)。</summary>
+        private static readonly Color SelectedFrameCol = new Color32(0xFF, 0xE0, 0x4A, 0xFF);
+
+        /// <summary>在一個 rect 的四邊各畫一條 1px 的線 = 一圈外框(不會因為列寬不同而被拉伸變形)。</summary>
+        private static void MakeOutline(RectTransform parent, Color col)
+        {
+            AddEdge(parent, "T", col, 0f, 1f, 1f, 1f, 0f, 1f);
+            AddEdge(parent, "B", col, 0f, 0f, 1f, 0f, 0f, 1f);
+            AddEdge(parent, "L", col, 0f, 0f, 0f, 1f, 1f, 0f);
+            AddEdge(parent, "R", col, 1f, 0f, 1f, 1f, 1f, 0f);
+        }
+
+        private static void AddEdge(RectTransform parent, string name, Color col,
+                                    float ax0, float ay0, float ax1, float ay1, float w, float h)
+        {
+            var img = UIKit.AddImage(parent, name, col);
+            var rt = img.rectTransform;
+            rt.anchorMin = new Vector2(ax0, ay0);
+            rt.anchorMax = new Vector2(ax1, ay1);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            rt.sizeDelta = new Vector2(w, h);   // 0 = 跟著 anchor 撐滿那一邊,1 = 這條線的厚度
         }
 
         private static void Place(RectTransform rt, float x, float y, float w, float h)

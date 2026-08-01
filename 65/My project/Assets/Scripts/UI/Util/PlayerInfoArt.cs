@@ -113,27 +113,49 @@ namespace Sdo.UI.Util
             return s;
         }
 
-        /// <summary>把透明像素的 RGB 換成同一列最近的不透明像素(alpha 不動,純外觀修正)。</summary>
+        /// <summary>
+        /// 把透明像素的 RGB 換成鄰近不透明像素的顏色(alpha 完全不動,純外觀修正)。
+        ///
+        /// 🔴 **水平與垂直都要做,而且要跑好幾輪。** 只做水平的話,格子**上下**那片透明區的 RGB 還是
+        ///    工具留下的純白 —— UI 放大顯示時雙線性會把那片白混進格子的邊,每一格就鑲一圈白邊
+        ///    (使用者回報「tab 沒去背」)。每一輪把不透明區往外擴一圈,三輪就夠蓋住雙線性取樣摸得到的範圍。
+        /// </summary>
         private static void BleedTransparent(Color32[] px, int w, int h)
         {
-            for (int row = 0; row < h; row++)
+            const int Rounds = 3;
+            // known = 「這個像素的 RGB 已經可信」。一開始只有不透明的算,每輪把它往外擴一圈 ——
+            // 沒有這個標記的話,第二輪讀到的還是原本那片白,多跑幾輪等於白跑。
+            var known = new bool[w * h];
+            for (int i = 0; i < px.Length; i++) known[i] = px[i].a > 8;
+
+            for (int round = 0; round < Rounds; round++)
             {
-                int b = row * w;
-                Color32 last = default; bool has = false;
-                for (int i = 0; i < w; i++)   // 由左往右補
-                {
-                    int k = b + i;
-                    if (px[k].a > 8) { last = px[k]; has = true; }
-                    else if (has) { px[k].r = last.r; px[k].g = last.g; px[k].b = last.b; }
-                }
-                has = false;
-                for (int i = w - 1; i >= 0; i--)   // 再由右往左補左邊那一段
-                {
-                    int k = b + i;
-                    if (px[k].a > 8) { last = px[k]; has = true; }
-                    else if (has) { px[k].r = last.r; px[k].g = last.g; px[k].b = last.b; }
-                }
+                var srcKnown = (bool[])known.Clone();
+                var src = (Color32[])px.Clone();
+                bool changed = false;
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int k = y * w + x;
+                        if (srcKnown[k]) continue;
+                        if (TryNeighbour(src, srcKnown, w, h, x - 1, y, ref px[k]) ||
+                            TryNeighbour(src, srcKnown, w, h, x + 1, y, ref px[k]) ||
+                            TryNeighbour(src, srcKnown, w, h, x, y - 1, ref px[k]) ||
+                            TryNeighbour(src, srcKnown, w, h, x, y + 1, ref px[k]))
+                        { known[k] = true; changed = true; }
+                    }
+                if (!changed) break;
             }
+        }
+
+        private static bool TryNeighbour(Color32[] src, bool[] known, int w, int h, int x, int y, ref Color32 dst)
+        {
+            if (x < 0 || y < 0 || x >= w || y >= h) return false;
+            int k = y * w + x;
+            if (!known[k]) return false;
+            var n = src[k];
+            dst.r = n.r; dst.g = n.g; dst.b = n.b;   // alpha 保持原樣(透明的還是透明)
+            return true;
         }
 
         // ---------------------------------------------------------------- 分頁條
