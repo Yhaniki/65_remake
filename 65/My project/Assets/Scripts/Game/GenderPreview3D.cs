@@ -31,7 +31,17 @@ namespace Sdo.Game
         public float previewSupersample = RtSizing.DefaultSupersample;   // set to 1 for window-native resolution
 
         // off-stage park spot (own layer + own camera → no conflict with anything; a far spot is just tidy)
-        private static readonly Vector3 Park = new Vector3(0f, 0f, 4000f);
+        //
+        // 🔴 **每個實例要停在自己的格子上。** 這裡曾經是一個 static 的定點,但相機的 cullingMask 只有
+        //    PreviewLayer —— 兩個 GenderPreview3D 同時活著時(大廳那尊 + 個人資料視窗那尊就是這種情況),
+        //    兩尊角色會疊在同一個座標,而**兩台相機都拍得到它們**,結果兩張 RT 裡都是兩個人疊在一起
+        //    (各自播各自的 idle,看起來像鬼影)。改成開機時各自認領一格、相隔 <see cref="ParkStride"/>:
+        //    取景距離約 225、水平半視野 ≈ 35,間隔 500 遠遠超過,誰也照不到誰。
+        private static readonly Vector3 ParkBase = new Vector3(0f, 0f, 4000f);
+        private const float ParkStride = 500f;
+        private static readonly HashSet<int> UsedParkSlots = new HashSet<int>();
+        private int _parkSlot = -1;
+        private Vector3 _park = ParkBase;
         private const float PreviewMotBlendSec = 1f;
         private static readonly string[] MalePreviewMotPaths =
         {
@@ -87,6 +97,7 @@ namespace Sdo.Game
         {
             _femaleParts = femaleParts; _maleParts = maleParts;
             _femaleBodyIndex = femaleBody; _maleBodyIndex = maleBody;
+            TakeParkSlot();   // 🔴 一定要在 BuildCamera / BuildAvatar 之前:兩者都要用 _park 定位
             BuildCamera();
             _femalePreviewMots = BuildPreviewMots(male: false);
             _malePreviewMots = BuildPreviewMots(male: true);
@@ -131,6 +142,19 @@ namespace Sdo.Game
         }
 
         /// <summary>
+        /// 用**現在**的取景參數(<see cref="fillFrac"/> / <see cref="framePadTop"/> / <see cref="verticalBias"/> /
+        /// <see cref="fieldOfView"/>)重新擺一次相機。取景是在 <see cref="SetGender"/> 裡定下來的,而那個方法
+        /// 同性別會直接 no-op —— 所以「跑起來之後改 fillFrac」必須走這裡,不能靠再 SetGender 一次。
+        /// (大廳的 F4 角色調校面板就是用它做即時預覽,見 <c>LobbyScreen.AvatarDebug.cs</c>。)
+        /// </summary>
+        public void Reframe()
+        {
+            var show = _gender == 1 ? _male : _female;
+            if (show == null) return;
+            FrameTo(show.GetComponent<SdoAvatar>(), show, _gender == 1);
+        }
+
+        /// <summary>
         /// 在角色身上「按住拖動」:水平轉身、垂直抬頭 —— 與商城左側那隻同一組官方參數(見上方欄位的註解)。
         /// <paramref name="delta"/> 直接餵 <c>PointerEventData.delta</c>。
         /// </summary>
@@ -158,8 +182,8 @@ namespace Sdo.Game
             //    然後把整個人繞腰的高度轉一圈 —— 位置也要跟著轉,否則抬 pitch 時人會離開原地。
             var q = Quaternion.AngleAxis(_dragPitch, Vector3.right)
                   * Quaternion.AngleAxis(avatarYaw + _dragYaw, Vector3.up);
-            var pivot = new Vector3(Park.x, Park.y + OrbitPivotY, Park.z);
-            var basePos = new Vector3(Park.x, Park.y + _feetOffsetY, Park.z);
+            var pivot = new Vector3(_park.x, _park.y + OrbitPivotY, _park.z);
+            var basePos = new Vector3(_park.x, _park.y + _feetOffsetY, _park.z);
             show.SetPositionAndRotation(pivot + q * (basePos - pivot), q);
         }
 
@@ -180,7 +204,7 @@ namespace Sdo.Game
             // feet on y=0 at the park spot; yaw 0 faces the −Z camera (RoomMovement.FacingDegrees(2) = 0°)
             float feet = GroundFeetY(av, male);
             _feetOffsetY = avatarYOffset - feet;   // 拖曳旋轉要繞 pivot 重算位置,得記住這個基準
-            go.transform.position = new Vector3(Park.x, Park.y + _feetOffsetY, Park.z);
+            go.transform.position = new Vector3(_park.x, _park.y + _feetOffsetY, _park.z);
             go.transform.localRotation = Quaternion.Euler(0f, avatarYaw, 0f);
             go.SetActive(false);
             return go.transform;
@@ -273,6 +297,16 @@ namespace Sdo.Game
             return Mathf.Max(0.5f, (clip.MaxTime + 1f) / fps);
         }
 
+        /// <summary>認領一格沒人用的停車位(見 <see cref="ParkBase"/> 的註解);Destroy 時還回去。</summary>
+        private void TakeParkSlot()
+        {
+            if (_parkSlot >= 0) return;
+            for (int i = 0; i < 64 && _parkSlot < 0; i++)
+                if (UsedParkSlots.Add(i)) _parkSlot = i;
+            // 64 格都滿了(不可能:同時最多兩三個實例)→ 退回第 0 格,寧可重疊也不要不顯示。
+            _park = ParkBase + new Vector3(Mathf.Max(_parkSlot, 0) * ParkStride, 0f, 0f);
+        }
+
         private void BuildCamera()
         {
             // RT follows the WINDOW (oversampled), not the slot's 2:3 aspect — the AvtShow slot is 400×600 of the logical
@@ -326,14 +360,15 @@ namespace Sdo.Game
             float viewH = Mathf.Max(bodyTop, 1f) / Mathf.Max(fillFrac, 0.1f);                      // vertical extent to frame
             float centerY = bodyTop * 0.5f + verticalBias;
             float dist = viewH * 0.5f / Mathf.Tan(fieldOfView * 0.5f * Mathf.Deg2Rad);
-            var eye = new Vector3(Park.x, centerY, Park.z - dist);
-            var look = new Vector3(Park.x, centerY, Park.z);
+            var eye = new Vector3(_park.x, centerY, _park.z - dist);
+            var look = new Vector3(_park.x, centerY, _park.z);
             _cam.transform.position = eye;
             _cam.transform.LookAt(look, Vector3.up);
         }
 
         private void OnDestroy()
         {
+            if (_parkSlot >= 0) { UsedParkSlots.Remove(_parkSlot); _parkSlot = -1; }   // 把格子還回去
             if (_cam != null) _cam.targetTexture = null;
             if (_rt != null) { _rt.Release(); Destroy(_rt); _rt = null; }
         }

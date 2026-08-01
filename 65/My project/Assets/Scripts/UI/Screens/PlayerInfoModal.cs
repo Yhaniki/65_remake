@@ -31,7 +31,9 @@ namespace Sdo.UI.Screens
     /// 🔴 男版底圖是深藍星空,官方那些欄位字是直接寫在有底紋的板子上的。我們的字是動態的、長度不定,
     ///    直接壓在星空上會有讀不清的段落,所以內容一律鋪一層半透明深色底(<see cref="Scrim"/>)再放亮色字。
     /// </summary>
-    public sealed class PlayerInfoModal : MonoBehaviour
+    /// <remarks>partial:左半邊那尊 3D 角色(官方 AvtShow)與它的 F5 調校面板收在
+    /// <c>PlayerInfoModal.Avatar.cs</c> —— 3D 的生命週期與這份版位表不是同一回事。</remarks>
+    public sealed partial class PlayerInfoModal : MonoBehaviour
     {
         // ---------------------------------------------------------------- 版位(PLAYERINFORMATIONDLG_MAN.XML,800×600 左上原點)
         // 🔴 那份 XML 是**整合檔**,十幾個視窗擠在同一個 <Screen> 底下;個人檔案的版位只在
@@ -343,6 +345,9 @@ namespace Sdo.UI.Screens
             // ZoBG 到 686)各自蓋掉自己那幾 px,剩下的由補條接手,不會有哪一頁露出縫。
             // (補條改成掛在各分頁自己的容器裡、用板子最右一欄延伸 —— 見 BuildBasicTab / BuildStatsTab。)
 
+            // 🔴 角色要建在 BuildIdentity **之前**:官方把名字/等級疊在角色的左上角,後建的畫在上面。
+            //    (順序顛倒的話那兩行字會被角色蓋掉 —— 見 PlayerInfoModal.Avatar.cs)
+            BuildAvatar(_window);
             BuildIdentity(_window);
             BuildTabs(_window);
             BuildBasicTab(_tabBody[TabBasic]);
@@ -364,6 +369,11 @@ namespace Sdo.UI.Screens
         {
             var scrim = UIKit.AddImage(parent, "IdScrim", Scrim);
             Place(scrim.rectTransform, IdX, IdY, IdW, IdH);
+            // 🔴 這層底要**沉到角色底下**。它是為了讓字壓在星空上時讀得清楚才加的,但這一區現在站著一尊
+            //    3D 角色 —— 半透明深色板蓋在人的頭臉上很難看(而且官方根本沒有這層,官方靠 CharBack 那張
+            //    角色背景圖)。疊法變成:底板 → 這層底 → 角色 → 名字/等級。字有白描邊,就算壓在人身上也讀得清。
+            if (_previewImg != null)
+                scrim.rectTransform.SetSiblingIndex(_previewImg.rectTransform.GetSiblingIndex());
 
             // 🔴 名字與等級**靠右對齊、同一個顏色**(官方 XML 兩個 Label 都是 0xfffaff74 = NameFace)。
             //    以前等級用 ValueCol(白)、兩者都靠左 —— 與官方對不上(使用者回報)。
@@ -869,6 +879,9 @@ namespace Sdo.UI.Screens
             _whisperBtn.gameObject.SetActive(onWhisper != null);
             RefreshFriendButton();
 
+            // 看別人:拿不到對方的穿搭 → 預設整套;性別只能用呼叫端傳的那個(可能不準,見 Avatar.cs 的註解)。
+            ShowInfoAvatar(gender, self: false);
+
             ShowTab(TabBasic);
             Reveal();
         }
@@ -890,6 +903,9 @@ namespace Sdo.UI.Screens
             // 看自己不放私聊/加好友 —— 兩顆按了都沒有意義(FriendList.Add 也會擋掉加自己)。
             ShowBottomRow(self: true);
 
+            // 看自己:性別與穿搭都是本機這個 profile 的,顯示的就是「現在的自己」。
+            ShowInfoAvatar(p.gender, self: true);
+
             // DEV: SDO_PLAYERINFO=<分頁編號> → 開機直接停在那一頁(0 基本 / 1 技術統計 / 2 賽事 / 3 拼圖 / 4 星座)。
             //      那幾頁只有點得到分頁條才看得到,而截圖工具點不了 —— 版位對不對只有實機截圖看得出來。
             int devTab;
@@ -903,6 +919,9 @@ namespace Sdo.UI.Screens
             if (_cg == null || _closing) return;   // _closing:動畫期間 IsOpen 還是 true(見它的 doc),
                                                    // 不擋的話按住 ESC 會每幀重跑一次 PlayOut,框就永遠關不掉
             _closing = true;
+            // 🔴 角色**現在**就收(不等關窗動畫跑完):那尊是 3D 直接畫在畫面上的,框縮出去的途中它不會跟著縮,
+            //    留到動畫結束才關的話會看到一個人孤零零浮在原地半秒。
+            HideInfoAvatar();
             if (_anim == null) { SetVisible(false); _onWhisper = null; _closing = false; return; }
             if (_windowCg != null) _windowCg.blocksRaycasts = false;   // 動畫期間不吃點擊
             UiSfx.Play(UiSfx.FrameRound);
@@ -929,6 +948,7 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (!IsOpen) return;
+            InfoAvatarUpdate();   // F5 開關角色調校面板(editor 限定,見 PlayerInfoModal.Avatar.cs)
             if (Input.GetKeyDown(KeyCode.Escape)) Close();
         }
 

@@ -159,6 +159,17 @@ namespace Sdo.UI.Util
             }
         }
 
+        /// <summary>Set the overflow mode on the face AND every edge copy. They must match: ellipsising only the
+        /// face leaves the edge copies still drawing the glyphs the face has already cut — a ring with no face
+        /// inside it, spilling past the label's box.</summary>
+        public void SetOverflow(TextOverflowModes mode)
+        {
+            if (_face != null) _face.overflowMode = mode;
+            if (_edges != null)
+                for (int i = 0; i < _edges.Length; i++)
+                    if (_edges[i] != null) _edges[i].overflowMode = mode;
+        }
+
         /// <summary>Set the text on the face and every edge copy together.</summary>
         public void SetText(string s)
         {

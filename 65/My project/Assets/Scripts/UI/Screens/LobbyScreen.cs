@@ -42,7 +42,9 @@ namespace Sdo.UI.Screens
     /// (連線由選角色畫面按「登入」才發動),所以在 <see cref="BuildUI"/> 判斷連線只會永遠走到離線那半邊。
     /// 線上/離線的差別全部收在 <see cref="OnShow"/> 之後的資料來源上。
     /// </summary>
-    public sealed class LobbyScreen : UIScreenBase
+    /// <remarks>partial:角色的即時調校面板(F4)另外收在 <c>LobbyScreen.AvatarDebug.cs</c> ——
+    /// 那些 OnGUI 與 PlayerPrefs 的雜事不該混進這份版位表。</remarks>
+    public sealed partial class LobbyScreen : UIScreenBase
     {
         public override ScreenId Id => ScreenId.Lobby;
 
@@ -82,14 +84,28 @@ namespace Sdo.UI.Screens
         //
         // 🔴 **W:H 必須永遠是 2:3。** <c>GenderPreview3D.SlotW/SlotH</c> 是 const 400/600,同時決定 RT 像素數
         //    **與**釘死的 <c>_cam.aspect</c>。RawImage 的 rect 比例一旦不等於那個 aspect,角色立刻變形
-        //    (而且是所有視窗都變形,不只非 4:3 的)。要改大小請動 <see cref="AvatarFillFrac"/>,不要動 W/H 的比例。
+        //    (而且是所有視窗都變形,不只非 4:3 的)。W/H **等比**放大縮小是可以的(= 把渲好的那張 RT 整張
+        //    縮放,人與留白一起變、不會被裁),下面現行的 419.21×628.81 就是 400×600 的 1.048 倍;
+        //    但**比例不准動** —— 419.21/628.81 一定要還是 0.6667。
         //
         // 落點(數字是**量出來的**,不是算出來的 —— 見 AvatarFillFrac 與 LobbyAvatarFramingTests):
         //   角色高 548、頭頂 y=30、腳底 y=578、身體中線 x=205,對上官方實機。
         // 🔴 AvatarX 用「RT 中心 = 官方身體中線」回推(205 − 400/2 = 5),**不要**照 alpha bounding box 的中心去校:
         //    相機正對角色原點,所以身體中線恆在 RT 正中;bounding box 的中心會隨當下抽到的 idle 姿勢
         //    (手臂張開、抬腳、甩裙擺)左右跳三四十 px —— 照那個調會越調越偏。
-        private const float AvatarX = -30f, AvatarY = -91f, AvatarW = 400f, AvatarH = 600f;
+        //
+        // 🔴 **不要再走「改常數 → 重編 → 進大廳看」那條路**:大廳裡按 <c>F4</c> 有一塊即時調校面板
+        //    (editor 限定,見 <c>LobbyScreen.AvatarDebug.cs</c>)—— 拖滑桿當場看落點與大小,滿意了按
+        //    「複製 const」就把下面這幾行產生好貼回來。這裡的值只是**預設**:面板調過的會存進 PlayerPrefs 蓋掉它。
+        //
+        // 🔴 **現在這組是使用者用那塊面板調出來的落點,不是上面那些官方量測值**(上面那些留著是為了記住
+        //    「怎麼量、踩過哪些坑」,不是現行版位)。相對最早那版(-30,-91,400×600):
+        //      • 往左 46、往下 49 → 身體中線 x≈124(原 170)、腳底 y≈460(原 411)——
+        //        腳踩進下方紫色面板(y=437)上緣約 23px,就是官方實機那個「鞋子壓在面板上」的樣子;
+        //      • 再整張放大 1.048 倍(面板的「縮放」,固定腳底中心 → 中線與腳底不動、只有人變高):
+        //        角色高 ≈430px(原 410)、頭頂 y≈30(原 4)。
+        //    <see cref="AvatarFillFrac"/> 全程沒動 —— 這一版的「變大」走的是 RT 縮放那條,不是改相機取景。
+        private const float AvatarX = -85.95f, AvatarY = -64.32f, AvatarW = 419.21f, AvatarH = 628.81f;
 
         /// <summary>
         /// 角色佔預覽高度的比例。選角色畫面用 0.68(那邊的框留白多),大廳的角色幾乎頂天立地。
@@ -121,12 +137,17 @@ namespace Sdo.UI.Screens
         /// </summary>
         private const float AvatarFillFrac = 0.605f;
 
-        // 「按住拖動轉身」的命中區。
-        // 🔴 **下緣一定要停在 370**:再往下就會蓋住三人頭(<see cref="UserListX"/> 206,378)與个人资料(244,378)
-        //    那兩顆鈕 —— 上一版開到 430,結果玩家家的名單按鈕整顆按不動(使用者回報)。
-        // 🔴 **右緣停在 240**:再往右會碰到个人资料鈕(244);更右邊的房卡列表(286 起)本來就不能碰。
-        // 角色實測橫向 x≈110-230、縱向 y≈6-419 —— 拖不到腳,但上半身涵蓋得到,轉身照樣拖得動。
-        private const float AvatarDragX = 90f, AvatarDragY = 0f, AvatarDragW = 150f, AvatarDragH = 370f;
+        // 「按住拖動轉身」的命中區。跟著角色走 —— F4 面板挪動/縮放角色時,這塊是照「與 AvatarX/Y/W/H 的
+        // 相對比例」一起搬的(見 LobbyScreen.AvatarDebug.cs 的 AvDragRel*),所以這裡四個值不要單獨手改:
+        // 改了角色卻沒搬熱區,就會變成「人在這、但要去旁邊那塊空氣上按住才轉得動」。
+        //
+        // 🔴 真正的規則是**這塊矩形不能與三人頭(<see cref="UserListX"/> 206,378)、个人资料(244,378)
+        //    那兩顆鈕相交** —— 上一版開到 (90,0,150,430) 就是壓在它們身上,名單鈕整顆按不動(使用者回報)。
+        //    舊註解寫「下緣一定要停在 370」是**那時 x 從 90 起**才推得出來的說法,不是通則:
+        //    現在這組 x 只到 39.82+157.2 = 197.02,右緣比那兩顆鈕的 206 還左邊 9px → 垂直上就算蓋到
+        //    418.8(378 以下)也碰不到它們。左半邊 y<437(下方紫色面板上緣)那片本來就只有星空與角色。
+        // 涵蓋的是角色的上半身(拖不到腳),轉身照樣拖得動。
+        private const float AvatarDragX = 39.82f, AvatarDragY = 31.05f, AvatarDragW = 157.2f, AvatarDragH = 387.77f;
 
         // 房間列表底板(NormalBG = LobbyChannelBG,506×364)+ 捲軸
         //
@@ -200,6 +221,9 @@ namespace Sdo.UI.Screens
         private const float SelfNameX = 492f, SelfNameY = 446f, SelfNameW = 130f, SelfNameH = 16f;
         private const float LevelX = 513f, LevelY = 467f;
         private const float ExpX = 522f, ExpY = 489f, ExpW = 86f, ExpH = 14f;
+        // 經驗值的百分比字(<Label name="charexprate" x="522" y="488" w="84" h="10" align="center"
+        // valign="bottom" color="0xffffe4da" fontheight="12"/>)—— 官方把它**壓在經驗條上面**,不是擺在旁邊。
+        private const float ExpRateX = 522f, ExpRateY = 488f, ExpRateW = 84f, ExpRateH = 10f;
         private const float PointY = 504f, CoinY = 522f, BonusY = 539f, MoneyX = 513f, MoneyW = 128f, StatH = 10f;
         // 🔴 右排那五行的**烤字**(實測 STAGE.PNG 的 Lobby53 那塊)由上而下是
         //    「超舞战绩 / 知名度 / 胜率 / 爱慕值 / 金叶子」。XML 的 label 名字會誤導
@@ -220,7 +244,13 @@ namespace Sdo.UI.Screens
         private const float RoomNameEdgePx = 2.2f;
         private static readonly Color32 SongColor = new Color32(0xed, 0xec, 0xa0, 0xff);       // roommusic
         private static readonly Color32 SelfNameColor = new Color32(0xf2, 0x86, 0x4b, 0xff);   // charname
+        // 名字的白描邊(使用者要求)。官方 XML 只給得出顏色與 bold,描邊是那個引擎畫字時自己加的 ——
+        // 橘字直接壓在深紫背板上,筆畫邊緣會與底色糊在一起;白邊一圈才跳得出來(同房名 roomname 的處理)。
+        // 1.2px:14px 的字用房名那種 2.2 會把「飄」這類密筆畫的字心糊住,用聊天那種 0.7 又看不出有邊。
+        private static readonly Color32 SelfNameEdge = new Color32(0xff, 0xff, 0xff, 0xff);
+        private const float SelfNameEdgePx = 1.2f;
         private static readonly Color32 StatColor = new Color32(0xff, 0xff, 0xff, 0xff);
+        private static readonly Color32 ExpRateColor = new Color32(0xff, 0xe4, 0xda, 0xff);   // charexprate 0xffffe4da
 
         /// <summary>線上房間列表的輪詢間隔。server 沒有「房間列表變了」的推播,只能自己回頭問。</summary>
         private const float PollSeconds = 4f;
@@ -269,12 +299,18 @@ namespace Sdo.UI.Screens
         /// <summary>離線時餵給名單的那一列(只有自己)。重複用同一個 List —— 名單每 4 秒刷一次,每次配置會一直跳 GC。</summary>
         private readonly List<NetUserListEntry> _offlineUsers = new List<NetUserListEntry>();
 
-        private TextMeshProUGUI _selfName, _selfLevel, _selfWin, _selfFame, _selfRecord, _selfCoins, _selfPoints, _selfBonus;
+        private OutlinedLabel _selfName;
+        private TextMeshProUGUI _selfLevel, _selfWin, _selfFame, _selfRecord, _selfCoins, _selfPoints, _selfBonus;
+        private TextMeshProUGUI _selfExpRate;   // 經驗條上面那個百分比(官方 charexprate)
+        private Image _expFill;                 // 經驗條的紅色前景(Lobby60,Filled 由左往右)
 
         // 左側 3D 角色(官方 AvtShow)。與選角色畫面同一套 GenderPreview3D:它自己開一台相機
         // 渲到 RenderTexture,顯示時要把那個 layer 從前端 UI 相機的 cullingMask 遮掉,OnHide 還原。
         private GenderPreview3D _preview;
         private RawImage _previewImg;
+        /// <summary>「按住拖動轉身」的透明命中區。角色被 F4 面板挪動/縮放時它要跟著走(不然人搬走了就拖不動),
+        /// 而且面板可以把它染紅顯示出來 —— 所以留成欄位,見 <c>LobbyScreen.AvatarDebug.cs</c>。</summary>
+        private Image _avatarDrag;
         private Camera _maskedCam;
         private int _savedMask;
 
@@ -317,14 +353,18 @@ namespace Sdo.UI.Screens
             // 🔴 命中區**不能**用 AvatarView 本身:那張 RawImage 是 400×600、右緣蓋到 x=370,
             //    會把房卡列表(x 從 286 起)整片吃掉。這裡另外開一塊只涵蓋角色的透明區
             //    (實測角色橫向落在 x≈110-230、縱向 0-420),留一點餘裕又不碰到房卡。
-            var drag = UIKit.AddImage(Root, "AvatarDrag", new Color(0f, 0f, 0f, 0f), raycast: true);
-            PlaceTopLeft(drag.rectTransform, AvatarDragX, AvatarDragY, AvatarDragW, AvatarDragH);
-            var trig = drag.gameObject.AddComponent<EventTrigger>();
+            _avatarDrag = UIKit.AddImage(Root, "AvatarDrag", new Color(0f, 0f, 0f, 0f), raycast: true);
+            PlaceTopLeft(_avatarDrag.rectTransform, AvatarDragX, AvatarDragY, AvatarDragW, AvatarDragH);
+            var trig = _avatarDrag.gameObject.AddComponent<EventTrigger>();
             var entry = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
             entry.callback.AddListener(ev =>
             {
                 if (_preview != null && ev is PointerEventData p) _preview.Orbit(p.delta);
             });
+
+            // 角色的版位改由調校值決定(存在 PlayerPrefs,預設就是上面那組常數)——
+            // F4 面板調完就是這個畫面看到的樣子,見 LobbyScreen.AvatarDebug.cs。
+            ApplyAvatarTuning();
             trig.triggers.Add(entry);
 
             // 捲軸(在角色之後 —— 兩者不重疊,只是維持「列表零件疊在最上」)。
@@ -651,29 +691,49 @@ namespace Sdo.UI.Screens
 
         private void BuildSelfInfo()
         {
-            _selfName = Label(Root, "SelfName", SelfNameX, SelfNameY, SelfNameW, SelfNameH, 14f,
-                              SelfNameColor, TextAlignmentOptions.MidlineLeft);
-            _selfName.fontStyle = FontStyles.Bold;
-            _selfName.overflowMode = TextOverflowModes.Ellipsis;   // 名字長度沒有上限,不截會蓋到右邊的欄位
+            // 名字:官方 charname 是這份 XML 裡**唯一**標了 bold="true" 的 Label,另外**描一圈白邊**
+            // (使用者要求)—— 橘字壓在深紫背板上,筆畫邊緣會與底色糊在一起。
+            // 用 OutlinedLabel(偏移複本)而不是 TMP 的 SDF outline:執行期建的 CJK 動態圖集吃不到
+            // SDF 描邊,不管 outlineWidth 給多少都畫不出來(見 OutlinedLabel 的註解)。
+            _selfName = OutlinedLabel.Create(Root, "SelfName", SelfNameX, SelfNameY, SelfNameW, SelfNameH, 14f,
+                                             SelfNameColor, SelfNameEdge, SelfNameEdgePx, true,
+                                             TextAlignmentOptions.MidlineLeft);
+            // 名字長度沒有上限,不截會蓋到右邊的欄位。🔴 描邊複本也要一起截,只截 face 的話
+            // 邊會繼續畫那幾個被截掉的字 —— 變成一圈沒有字心的白影(見 SetOverflow)。
+            _selfName.SetOverflow(TextOverflowModes.Ellipsis);
 
             // 右排五行(烤字順序見常數區):超舞戰績 / 知名度 / 勝率 / 愛慕值 / 金葉子。
-            _selfRecord = Label(Root, "SelfRecord", RecordX, RecordY, PerfW, PerfH, 11f, StatColor, TextAlignmentOptions.Midline);
-            _selfFame = Label(Root, "SelfFame", FameX, FameY, PerfW, PerfH, 11f, StatColor, TextAlignmentOptions.Midline);
+            _selfRecord = StatLabel(Root, "SelfRecord", RecordX, RecordY, PerfW, PerfH, 11f, StatColor, TextAlignmentOptions.Midline);
+            _selfFame = StatLabel(Root, "SelfFame", FameX, FameY, PerfW, PerfH, 11f, StatColor, TextAlignmentOptions.Midline);
 
             // 愛慕值 / 金葉子:這個重製版沒有這兩套系統,但官方那兩行**固定顯示 0**(使用者要求照擺)。
             // 同 WardrobeScreen 的金葉子 —— 那邊也是使用者指定固定 0。
-            Label(Root, "SelfLove", LoveX, LoveY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft).text = "0";
-            Label(Root, "SelfLeaf", LeafX, LeafY, LeafW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft).text = "0";
+            StatLabel(Root, "SelfLove", LoveX, LoveY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft).text = "0";
+            StatLabel(Root, "SelfLeaf", LeafX, LeafY, LeafW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft).text = "0";
 
-            _selfLevel = Label(Root, "SelfLevel", LevelX, LevelY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
-            _selfWin = Label(Root, "SelfWin", WinX, WinY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
-            _selfPoints = Label(Root, "SelfPoints", MoneyX, PointY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
-            _selfCoins = Label(Root, "SelfCoins", MoneyX, CoinY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
-            _selfBonus = Label(Root, "SelfBonus", MoneyX, BonusY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
+            _selfLevel = StatLabel(Root, "SelfLevel", LevelX, LevelY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
+            _selfWin = StatLabel(Root, "SelfWin", WinX, WinY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
+            _selfPoints = StatLabel(Root, "SelfPoints", MoneyX, PointY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
+            _selfCoins = StatLabel(Root, "SelfCoins", MoneyX, CoinY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
+            _selfBonus = StatLabel(Root, "SelfBonus", MoneyX, BonusY, MoneyW, StatH, 11f, StatColor, TextAlignmentOptions.MidlineLeft);
 
-            // 經驗條(exp_progress:Lobby137 底 + Lobby60 前景)。這個重製版沒有經驗值 →
-            // 只畫底槽、不畫填充,那格看起來就是「還沒開始累積」而不是一個假的進度。
-            UIKit.AddSprite(Root, "ExpBar", An("Lobby137"), ExpX, ExpY);
+            // 經驗條(官方 <ProgressBar name="exp_progress" x="522" y="489" w="86" h="14"
+            //   backname="Lobby137.an" forename="Lobby60.an" minrange="0" maxrange="100"/>)。
+            //
+            // 🔴 **Lobby137.png 整張 84×10 全是 alpha=0**(逐點量過)—— 官方的凹槽是**烤在背板 Lobby53 上**的,
+            //    backname 只是佔個位。以前這裡貼的就是它,所以那格永遠是空的:貼上去的是一張看不見的圖。
+            //    現在改貼真正有像素的前景 Lobby60(紅色漸層:上 219,48,68 / 中 228,67,88 / 下 164,5,33),
+            //    用 Filled 由左往右填 —— 那就是使用者說的「紅色容量」。
+            _expFill = UIKit.AddSprite(Root, "ExpFill", An("Lobby60"), ExpX, ExpY);
+            _expFill.type = Image.Type.Filled;
+            _expFill.fillMethod = Image.FillMethod.Horizontal;
+            _expFill.fillOrigin = (int)Image.OriginHorizontal.Left;
+            _expFill.fillAmount = 0f;
+
+            // 百分比壓在條上面(官方 charexprate,置中的淡粉白)。建在條**之後** = 畫在它上面,
+            // 條填過半時數字才不會被紅色蓋掉。
+            _selfExpRate = StatLabel(Root, "SelfExpRate", ExpRateX, ExpRateY, ExpRateW, ExpRateH, 11f,
+                                     ExpRateColor, TextAlignmentOptions.Midline);
         }
 
         // ================================================================ 生命週期
@@ -701,6 +761,7 @@ namespace Sdo.UI.Screens
             HideHallMenu();
             HideChatMenu();
             HideExpressionMenu();
+            FlushAvatarTuning();   // 調校值真的落到磁碟(改的當下只寫進 PlayerPrefs 的記憶體副本)
         }
 
         /// <summary>
@@ -733,7 +794,8 @@ namespace Sdo.UI.Screens
                 //    (那個偏移與身高成反比,男角比女角高 8% → 不歸零的話兩性會差 5px)。
                 _preview.avatarYOffset = 0f;
                 _preview.verticalBias = 0f;
-                _preview.fillFrac = AvatarFillFrac;
+                _preview.fillFrac = AvFill;   // 預設 = AvatarFillFrac,F4 面板調過就用調過的
+
                 _preview.Build(gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
             }
             else
@@ -762,27 +824,9 @@ namespace Sdo.UI.Screens
             if (_preview != null) { Destroy(_preview.gameObject); _preview = null; }
         }
 
-        // 取某性別對應 profile(女 00000000 / 男 00000001)的「實際穿戴」部位;找不到 → null(用預設整套)。
-        // 從 id-based equippedItems 經 catalog 現算(含合成的翅膀/表情/項鍊),而不是讀可能過時的
-        // equippedParts 快取 —— 與選角色畫面同一條路,兩邊看到的自己才會一樣。
-        private static string[] PartsForGender(int gender)
-        {
-            string id = ProfileManager.SeededIdForGender(gender);
-            foreach (var p in ProfileManager.List())
-                if (p != null && p.id == id)
-                    return WardrobeStore.ResolveEquippedParts(p, gender, cid => AvatarItemCatalog.Instance.ById(cid));
-            return null;
-        }
-
-        // 取某性別對應 profile 自己的體型(胖瘦)index 0..4;找不到 → 0(瘦)。
-        private static int BodyIndexForGender(int gender)
-        {
-            string id = ProfileManager.SeededIdForGender(gender);
-            foreach (var p in ProfileManager.List())
-                if (p != null && p.id == id)
-                    return p.bodyShapeIndex;
-            return 0;
-        }
+        // 穿搭 / 體型:個人資料視窗那尊也要用同一套 → 抽到 AvatarOutfits(見那邊的註解)。
+        private static string[] PartsForGender(int gender) => AvatarOutfits.PartsForGender(gender);
+        private static int BodyIndexForGender(int gender) => AvatarOutfits.BodyIndexForGender(gender);
 
         private RawImage AddRaw(string name, float x, float y, float w, float h)
         {
@@ -836,6 +880,8 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (!Visible) return;
+
+            AvatarDebugUpdate();   // F4 開關角色調校面板 + 方向鍵微調(editor 限定,見 AvatarDebug.cs)
 
             // 🔴 游標要**每幀**更新(閃爍 + 跟著字尾跑),所以擺在下面那個 4 秒節拍的早期返回**之前**。
             UpdateChatCaret();
@@ -1573,43 +1619,72 @@ namespace Sdo.UI.Screens
         ///
         /// 離線時 server 不存在 → 名單裡只有自己那一列。空著會讓人以為是壞了,而「只有你自己在線上」
         /// 正是單機模式的事實。
+        ///
+        /// 🔴 **線上時也要先墊一份本機名單**(使用者回報「名單什麼都沒有,連自己都沒有」)。
+        ///    <see cref="NetClient.RequestUserList"/> 是問答式的:回呼要等 server 回話才觸發,而它
+        ///    **可能永遠不觸發** —— 連線半死、封包掉了、server 那頭忙著,都會讓名單一直停在空的狀態
+        ///    (第一次打開面板時 <c>_users</c> 本來就是空的,沒人補就是一片空白)。所以只要名單還空著,
+        ///    就先把「自己 + dev 假人」擺上去,server 回話之後再整份換掉。
+        ///    用 <see cref="LobbyUserPanel.UserCount"/> 判斷而不是自己記旗標:名單一旦有東西就不再墊,
+        ///    4 秒一次的輪詢才不會出現「server 名單 ↔ 本機名單」來回閃。
         /// </summary>
         private void RequestOnlineUsers()
         {
             if (_userPanel == null || !_userPanel.Visible) return;
 
             var net = Ctx != null ? Ctx.Net : null;
-            if (net == null || !net.IsConnected) { _userPanel.SetUsers(OfflineSelfOnly(), 0, SelfName(), SelfGuild()); return; }
+            if (net == null || !net.IsConnected) { _userPanel.SetUsers(SelfPlusFakes(0), 0, SelfName(), SelfGuild()); return; }
+
+            if (_userPanel.UserCount == 0)
+                _userPanel.SetUsers(SelfPlusFakes(net.UserId), net.UserId, SelfName(), SelfGuild());
 
             int gen = _listGen;
             net.RequestUserList(users =>
             {
                 // 同房間列表:回呼可能在離開大廳/登出之後才到,那份資料屬於上一次的畫面。
                 if (this == null || gen != _listGen || _userPanel == null) return;
-                // dev 假玩家線上也要補(同 RefreshRows 的假房間)—— 不然連著 server 時名單只有自己一列,
-                // 四個分頁的版位一樣校不了。
                 _offlineUsers.Clear();
                 _offlineUsers.AddRange(users);
+                // server 照理會把自己也算進去(見 Hub.OnUserList),但**不能賭** —— 名單裡沒有自己
+                // 就等於使用者回報的那個症狀。少了就自己補一列擺在最上面。
+                if (!ListHasUser(_offlineUsers, net.UserId)) _offlineUsers.Insert(0, SelfEntry(net.UserId));
+                // dev 假玩家線上也要補(同 RefreshRows 的假房間)—— 不然連著 server 時名單只有自己一列,
+                // 四個分頁的版位一樣校不了。
                 if (FakeLobbyData) AddFakeUsers();
                 _userPanel.SetUsers(_offlineUsers, net.UserId, SelfName(), SelfGuild());
             });
         }
 
-        private List<NetUserListEntry> OfflineSelfOnly()
+        /// <summary>本機湊出來的一份名單:自己 + (dev 開著時的)假玩家。離線時這就是全部,
+        /// 線上時它只是 server 回話之前的墊檔。</summary>
+        private List<NetUserListEntry> SelfPlusFakes(int selfUserId)
         {
             _offlineUsers.Clear();
+            _offlineUsers.Add(SelfEntry(selfUserId));
+            if (FakeLobbyData) AddFakeUsers();
+            return _offlineUsers;
+        }
+
+        /// <summary>「自己」那一列。離線時 <paramref name="userId"/> 給 0(沒有連線編號),
+        /// 線上時給 <c>net.UserId</c> —— 名單靠它把自己標成粗體、也靠它擋掉「把自己加成好友」。</summary>
+        private NetUserListEntry SelfEntry(int userId)
+        {
             var p = ProfileManager.Active;
-            _offlineUsers.Add(new NetUserListEntry
+            return new NetUserListEntry
             {
-                UserId = 0,
+                UserId = userId,
                 Name = SelfName(),
                 Guild = SelfGuild(),
                 Level = ProfileFields.PlayerLevelValue(p),
                 Gender = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0,
                 RoomSeq = 0,
-            });
-            if (FakeLobbyData) AddFakeUsers();
-            return _offlineUsers;
+            };
+        }
+
+        private static bool ListHasUser(List<NetUserListEntry> list, int userId)
+        {
+            for (int i = 0; i < list.Count; i++) if (list[i].UserId == userId) return true;
+            return false;
         }
 
         /// <summary>
@@ -1691,7 +1766,7 @@ namespace Sdo.UI.Screens
 
             string name = Ctx != null && Ctx.Session != null ? Ctx.Session.LocalPlayerName : null;
             if (string.IsNullOrEmpty(name) && p != null) name = p.name;
-            _selfName.text = name ?? "";
+            _selfName.SetText(name ?? "");   // face + 16 個描邊複本一起換(見 OutlinedLabel)
 
             // 等級走 ProfileFields(config.ini 是 Default、角色自己設過就以角色的為準);沒設 → 這一格留白。
             // 這裡刻意**不**用 LevelLabel:那個會回「LV:11」,而背板左邊已經烤了「等级」→ 會變成「等级 LV:11」。
@@ -1711,6 +1786,27 @@ namespace Sdo.UI.Screens
             // 知名度:購物累加的那個值,顯示成官方的「LV 2 (15)」——等級由累計值查表(FameLevel)。
             // (以前這一格放的是命中率,那是照著一段錯註解擺的;命中率在個人資料頁本來就有。)
             _selfFame.text = p != null ? FameLevel.Label(p.fame) : "";
+
+            // 經驗值:這個重製版**沒有經驗系統**(UserProfile 裡連欄位都沒有,等級是 config.ini 給的一個字串),
+            // 所以百分比是 0.0%、紅條是空的 —— 同愛慕值/金葉子的處理:版位與素材照官方擺滿,值不假造。
+            // 真接上經驗時,把這裡換成 SetExpRate(本級已得 / 本級所需 * 100) 就好,其餘不用動。
+            SetExpRate(0f);
+        }
+
+        /// <summary>
+        /// 經驗條 + 壓在它上面的百分比(<paramref name="percent"/> 0..100,官方 ProgressBar 的 minrange/maxrange)。
+        /// 條是 Filled 的 Lobby60,由左往右填。
+        ///
+        /// 🔴 文字是**整數,不帶小數點**(使用者指定)—— 那格只有 84px 寬、字 11px,「99.9%」比「99%」
+        ///    多兩個字元,壓在條上就開始擠。取整用**無條件捨去**不是四捨五入:99.6% 顯示成 100%
+        ///    會變成「條滿了卻還沒升級」。勝率那格仍然是一位小數(見 <see cref="One"/>),兩者無關。
+        /// </summary>
+        private void SetExpRate(float percent)
+        {
+            percent = Mathf.Clamp(percent, 0f, 100f);
+            if (_expFill != null) _expFill.fillAmount = percent * 0.01f;
+            if (_selfExpRate != null)
+                _selfExpRate.text = Mathf.FloorToInt(percent).ToString(CultureInfo.InvariantCulture) + "%";
         }
 
         /// <summary>小數一位。用 InvariantCulture —— 跟著系統地區走的話,同一個畫面會出現「62.5%」與「62,5%」兩種寫法。</summary>
@@ -1839,6 +1935,20 @@ namespace Sdo.UI.Screens
         {
             var t = UIKit.AddText(parent, name, "", size, color, align);
             PlaceTopLeft(t.rectTransform, x, y, w, h);
+            return t;
+        }
+
+        /// <summary>
+        /// 右下角個人資料那兩排**填進去的數值** —— 一律粗體(使用者要求)。
+        /// 官方 XML 只在 charname 標了 bold="true",其餘那些 Label 都沒有;但那塊背板的底是深紫星空、
+        /// 字只有 10-11px,細體壓上去邊緣會被底色吃掉。粗體是使用者看過實機後指定的。
+        /// (只給這一區用 —— <see cref="Label"/> 本身還有房卡等處在用,不要把粗體推到那邊去。)
+        /// </summary>
+        private static TextMeshProUGUI StatLabel(Transform parent, string name, float x, float y, float w, float h,
+                                                 float size, Color color, TextAlignmentOptions align)
+        {
+            var t = Label(parent, name, x, y, w, h, size, color, align);
+            t.fontStyle = FontStyles.Bold;
             return t;
         }
 

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Localization;
 using Sdo.Net;
@@ -35,16 +36,25 @@ namespace Sdo.UI.Screens
     {
         public enum Tab { All = 0, Friends = 1, Family = 2, Blacklist = 3 }
 
-        // ---- 版位(win3,絕對座標) ----
+        // ---- 版位(win3,絕對座標;逐字取自 DATA/UI/STATECOMMUNITYHALL/STATECOMMUNITYHALL.XML)----
         private const float BgX = 7f, BgY = 82f;             // Lobby0.an 名單底板
         // 🔴 **不要**貼 friendbold.an。它不是「分頁列的底」——切出來看是 stage.png (928,500,71,38) 的
         //    一個**純黃色圓角框**,官方拿它去高亮某一格。以前把它當底圖貼在 (70,47),正好蓋在「好友」那格上,
         //    就成了使用者連兩輪回報的「好友後面那個拿不掉的黃框」(找了半天以為是 UGUI 的 focus 視覺)。
-        private const float IntimacyX = 30f, IntimacyY = 87f;// qinmidu.an「位置 / 暱稱」欄頭
+        //
+        // 🔴 **也不要貼 qinmidu.an。** 官方 XML 確實有 `<Label x="30" y="87" background="qinmidu.an"/>`,
+        //    但那三個字是**「親密度」**(qin-mi-du),是**好友**分頁才有的欄頭 —— 切出來量過:
+        //    stage.png (968,193,43,15),43px 剛好三個字。以前把它當成「位置 / 暱稱」貼在全部分頁,
+        //    等於在欄頭左邊多印三個不該出現的字。
+        //    真正的「位置 / 暱稱」是**烤在 Lobby0 底板上**的(連同下面那八條圓角凹槽),不必也不能重畫。
         private const float TabY = 52f;
+        // 四個分頁**並排**,每格 66×31(stage.png 的 x 依序 506/572/638/704,間隔正好 66)。
         private const float TabAllX = 7f, TabFriendX = 73f, TabFamilyX = 139f, TabBlackX = 205f;
         private const float ListX = 26f, ListY = 110f, ListW = 233f, ListH = 246f;
         private const float AddFriendX = 106f, AddFriendY = 347f;
+        /// <summary>列高。官方 <c>&lt;ReportList … height="28"&gt;</c>,而底板烤死的那八條圓角凹槽
+        /// 實測間距也是 ~28(板內 y=58/85/113/141/169/196/224)—— 列就是一格一條凹槽。
+        /// 🔴 列與列之間**不能再加 spacing**,加了就會一路歪出凹槽(見 <see cref="Build"/> 的捲動區)。</summary>
         private const float RowH = 28f;
 
         // 捲軸握把(官方 ReportList 的 <ScrollBar need2bt="false"><Handle background="Lobby12.an"/>)。
@@ -66,13 +76,18 @@ namespace Sdo.UI.Screens
         private const string SfxSlideIn = "Interfacein";     // SE\Interfacein.wav
         private const string SfxSlideOut = "Interfaceout";   // SE\Interfaceout.wav
 
-        // 官方 ReportList 的欄寬與顏色(AllUserList 的 Columns)。第一欄 width=0(隱藏的 id 欄)不畫。
-        private const float ColIconX = 4f, ColIconW = 16f;
-        private const float ColLevelX = 22f, ColLevelW = 26f;
-        private const float ColWhereX = 50f, ColWhereW = 44f;
-        private const float ColNameX = 96f, ColNameW = 130f;
-        private static readonly Color32 LevelColor = new Color32(0xba, 0xf6, 0x84, 0xff);   // 0xffbaf684
-        private static readonly Color32 WhereColor = new Color32(0xec, 0xff, 0xac, 0xff);   // 0xffecffac
+        // 官方 AllUserList 的 `<Columns count="6">` —— 欄位是**從列首依序累加**的,不是各自訂 x:
+        //   width=0(隱藏的 id 欄) / 16 / 16 / 18 / 35 / 135  → 0,0,16,32,50,85
+        // 兩個 16px 的圖示欄:第一欄放性別(male/female 那顆心),第二欄官方留給身份標記
+        // (喇叭 / VIP 之類,見 XML 的 tip_xml="SpeakerTip.xml"),這個重製版沒有 → 空著但**版位要留**,
+        // 少留這 16px 的話後面三欄整排左移,「大厅」就會壓到等級上。
+        private const float ColIconX = 0f, ColIconW = 16f;
+        private const float ColIcon2X = 16f, ColIcon2W = 16f;
+        private const float ColLevelX = 32f, ColLevelW = 18f;
+        private const float ColWhereX = 50f, ColWhereW = 35f;
+        private const float ColNameX = 85f, ColNameW = 135f;
+        private static readonly Color32 LevelColor = new Color32(0xba, 0xf6, 0x84, 0xff);   // 0xffbaf684 bold
+        private static readonly Color32 WhereColor = new Color32(0xec, 0xff, 0xac, 0xff);   // 0xffecffac bold
         private static readonly Color32 NameColor = new Color32(0xff, 0xfb, 0xe0, 0xff);    // 0xfffffbe0
 
         private RectTransform _root;
@@ -106,6 +121,10 @@ namespace Sdo.UI.Screens
         /// <summary>目標狀態;滑動動畫進行中也回目標值(見 <see cref="_visible"/>)。</summary>
         public bool Visible => _visible;
 
+        /// <summary>名單上現在有幾個人(**未**套分頁濾鏡)。大廳靠它判斷「這份名單是不是還空著、
+        /// 要不要先墊一份本機的上去」—— 見 <c>LobbyScreen.RequestOnlineUsers</c>。</summary>
+        public int UserCount => _users.Count;
+
         private static string L(string k) => LocalizationManager.Get(k);
         private static string L(string k, params object[] a) => LocalizationManager.Get(k, a);
         private static Sprite An(string n) => LobbyArt.AnSoloAA(n);
@@ -117,9 +136,9 @@ namespace Sdo.UI.Screens
             _root = UIKit.NewRect(parent, "LobbyUserPanel");
             UIKit.Stretch(_root);
 
-            // 名單底板。官方把欄頭(位置/暱稱)與分頁列的底烤在 friendbold/qinmidu 兩張圖裡 → 只擺圖,不重畫字。
+            // 名單底板。欄頭(位置/暱稱)與那八條圓角凹槽都**烤在 Lobby0 上** → 只擺這一張圖,不重畫字,
+            // 也不要再貼 qinmidu(那三個字是「親密度」,是好友分頁的欄頭 —— 見上面常數區的 🔴)。
             UIKit.AddSprite(_root, "PanelBg", LobbyArt.An("Lobby0"), BgX, BgY);
-            UIKit.AddSprite(_root, "ColHeader", LobbyArt.An("qinmidu"), IntimacyX, IntimacyY);
 
             BuildTab(0, "TabAll", "Lobby15", "Lobby13", TabAllX);
             BuildTab(1, "TabFriends", "Lobby18", "Lobby16", TabFriendX);
@@ -127,7 +146,9 @@ namespace Sdo.UI.Screens
             BuildTab(3, "TabBlacklist", "Lobby21", "Lobby19", TabBlackX);
 
             // 名單本體。底板已經畫好凹槽 → 捲動區自己不要再上底色。
-            _scroll = UIKit.AddVerticalScroll(_root, "UserScroll", out _content, 1f, 0, new Color(0f, 0f, 0f, 0f));
+            // 🔴 spacing **必須是 0**:列高 28 就是官方的 `height="28"`,也正好是底板凹槽的間距。
+            //    以前給了 1,八列下來就累積歪掉 8px,最底下那列整個坐在凹槽外面。
+            _scroll = UIKit.AddVerticalScroll(_root, "UserScroll", out _content, 0f, 0, new Color(0f, 0f, 0f, 0f));
             Place(_scroll.GetComponent<RectTransform>(), ListX, ListY, ListW, ListH);
 
             // 捲軸。🔴 兩個位置條件都是必要的:
@@ -308,27 +329,40 @@ namespace Sdo.UI.Screens
             UIKit.Layout(row.gameObject, RowH);
 
             // 整列的點擊接盤(透明)。🔴 一定要有:Button 需要一個吃射線的 Graphic 才點得到,
-            // 而選中底平常是關著的、文字全部 raycastTarget=false → 沒有接盤的話整列點不動。
+            // 而高亮框平常是關著的、文字全部 raycastTarget=false → 沒有接盤的話整列點不動。
             var hit = UIKit.AddImage(row, "hit", new Color(0f, 0f, 0f, 0f), raycast: true);
             Place(hit.rectTransform, 0f, 0f, ListW, RowH);
 
-            // 選中框:官方是**一圈黃色外框**(見實機截圖),不是換一張底圖。用四條 1px 的線畫,
-            // 這樣不論列多寬都不會被拉伸變形。預設不畫,選到才亮 —— 「添加好友」按的就是這一列。
-            var hi = UIKit.AddImage(row, "sel", new Color(0f, 0f, 0f, 0f));
-            Place(hi.rectTransform, 0f, 0f, ListW, RowH);
-            MakeOutline(hi.rectTransform, SelectedFrameCol);
-            hi.gameObject.SetActive(false);
+            // 選中 / 滑過的高亮:官方 `<ReportList … hoverpic="ListCheck.an">` 那張現成圖 ——
+            // stage.png (0,992,214,28) 是一圈**黃色圓角框**,圓角與底板烤死的那條凹槽剛好同形。
+            // 🔴 以前是用四條 1px 的線自己畫一個**直角**框,套在圓角凹槽上四個角會凸出來。
+            //    素材本來就有,不要自己畫。
+            var hi = UIKit.AddSprite(row, "sel", An("ListCheck"), 0f, 0f);
+            if (hi != null)
+            {
+                // AddSprite 會把 rect 縮成素材原生大小(214×28);列寬 233 比它寬,靠左貼齊凹槽即可。
+                hi.raycastTarget = false;
+                hi.gameObject.SetActive(false);
+            }
 
-            // 性別小人頭。列表封包只帶得到性別,帶不到穿搭 → 用房卡那張通用剪影(同一張圖,同一個意思:「一個人」)。
-            var icon = UIKit.AddSprite(row, "icon", LobbyArt.An("man"), ColIconX, 6f);
-            if (icon != null) icon.color = u.Gender == 1 ? new Color(0.65f, 0.82f, 1f) : new Color(1f, 0.72f, 0.88f);
+            // 性別:官方就是一顆心(male.an = 藍心、female.an = 粉心,各 18×16,見 stage.png 982/1000,89)。
+            // 🔴 **不要**再用房卡那張 man.an 剪影去染色 —— 那是「一個人」的通用圖示,官方名單用的是心。
+            var icon = UIKit.AddSprite(row, "icon", An(u.Gender == 1 ? "male" : "female"), ColIconX, 6f);
+            if (icon != null) icon.raycastTarget = false;
 
-            Label(row, "lv", ColLevelX, ColLevelW, LevelColor, TextAlignmentOptions.MidlineRight)
-                .text = u.Level > 0 ? u.Level.ToString() : "";
-            Label(row, "where", ColWhereX, ColWhereW, WhereColor, TextAlignmentOptions.Midline)
-                .text = u.InLobby ? L("lobby.userlist_in_lobby") : L("lobby.userlist_in_room", u.RoomSeq);
+            // 等級 / 位置:官方這兩欄都標了 bold="true"(名字那欄沒有)。
+            var lv = Label(row, "lv", ColLevelX, ColLevelW, LevelColor, TextAlignmentOptions.MidlineRight);
+            lv.text = u.Level > 0 ? u.Level.ToString() : "";
+            lv.fontStyle = FontStyles.Bold;
 
-            var name = Label(row, "name", ColNameX, ColNameW, NameColor, TextAlignmentOptions.MidlineLeft);
+            var where = Label(row, "where", ColWhereX, ColWhereW, WhereColor, TextAlignmentOptions.Midline);
+            where.text = u.InLobby ? L("lobby.userlist_in_lobby") : L("lobby.userlist_in_room", u.RoomSeq);
+            where.fontStyle = FontStyles.Bold;
+
+            // 名字欄**置中**,不是靠左 —— 官方實機截圖裡長短名字的**左右緣都不齊**
+            // (「ㄣЕ†n.ㄋ月光」比「Eithwa」既更靠左也更靠右),只有視覺重心對得上,那就是置中。
+            // 靠左的話短名字會整個貼到「大厅」右邊,官方那道明顯的空隙就沒了。
+            var name = Label(row, "name", ColNameX, ColNameW, NameColor, TextAlignmentOptions.Midline);
             name.text = u.Name ?? "";
             name.overflowMode = TextOverflowModes.Ellipsis;   // 名字沒有長度上限,不截會蓋出欄外
             // 自己那一列標粗體 —— 一整排名字裡要一眼找得到自己在哪。
@@ -342,8 +376,27 @@ namespace Sdo.UI.Screens
             btn.onClick.AddListener(() => Select(uid, uname));
             UiSfx.AttachClick(btn);
 
+            // 滑過就亮那圈框(官方 hoverpic 的語意)。選中的那一列不吃 hover —— 它本來就亮著,
+            // 滑鼠移開時不能把它關掉。
+            var tr = row.gameObject.AddComponent<EventTrigger>();
+            AddHover(tr, EventTriggerType.PointerEnter, uid, true);
+            AddHover(tr, EventTriggerType.PointerExit, uid, false);
+
             _rows.Add(new Row { UserId = uid, Name = uname, Highlight = hi });
             if (uid == _selectedUserId && hi != null) hi.gameObject.SetActive(true);
+        }
+
+        private void AddHover(EventTrigger trigger, EventTriggerType type, int userId, bool on)
+        {
+            var e = new EventTrigger.Entry { eventID = type };
+            e.callback.AddListener(_ =>
+            {
+                if (userId == _selectedUserId) return;   // 選中的那列一直亮著
+                for (int i = 0; i < _rows.Count; i++)
+                    if (_rows[i].UserId == userId && _rows[i].Highlight != null)
+                        _rows[i].Highlight.gameObject.SetActive(on);
+            });
+            trigger.triggers.Add(e);
         }
 
         private TextMeshProUGUI Label(Transform parent, string name, float x, float w, Color color,
@@ -389,30 +442,6 @@ namespace Sdo.UI.Screens
             // 正在看好友頁 → 新加的那個立刻出現,這就是「成功了」的回饋。
             // 其他分頁的濾鏡(全部/家族)根本不看好友清單 → 重畫出來一模一樣,不必白拆一次整份列表。
             if (_tab == Tab.Friends) Rebuild();
-        }
-
-        /// <summary>官方那圈選中框的黃(取自實機截圖)。</summary>
-        private static readonly Color SelectedFrameCol = new Color32(0xFF, 0xE0, 0x4A, 0xFF);
-
-        /// <summary>在一個 rect 的四邊各畫一條 1px 的線 = 一圈外框(不會因為列寬不同而被拉伸變形)。</summary>
-        private static void MakeOutline(RectTransform parent, Color col)
-        {
-            AddEdge(parent, "T", col, 0f, 1f, 1f, 1f, 0f, 1f);
-            AddEdge(parent, "B", col, 0f, 0f, 1f, 0f, 0f, 1f);
-            AddEdge(parent, "L", col, 0f, 0f, 0f, 1f, 1f, 0f);
-            AddEdge(parent, "R", col, 1f, 0f, 1f, 1f, 1f, 0f);
-        }
-
-        private static void AddEdge(RectTransform parent, string name, Color col,
-                                    float ax0, float ay0, float ax1, float ay1, float w, float h)
-        {
-            var img = UIKit.AddImage(parent, name, col);
-            var rt = img.rectTransform;
-            rt.anchorMin = new Vector2(ax0, ay0);
-            rt.anchorMax = new Vector2(ax1, ay1);
-            rt.offsetMin = Vector2.zero;
-            rt.offsetMax = Vector2.zero;
-            rt.sizeDelta = new Vector2(w, h);   // 0 = 跟著 anchor 撐滿那一邊,1 = 這條線的厚度
         }
 
         private static void Place(RectTransform rt, float x, float y, float w, float h)

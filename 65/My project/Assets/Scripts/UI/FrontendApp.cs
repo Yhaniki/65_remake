@@ -42,6 +42,10 @@ namespace Sdo.UI
             || (_playerInfo != null && _playerInfo.IsOpen)
             || JoinRoomOpen;
 
+        /// <summary>True while 個人資料(玩家信息)視窗開著。大廳用它讓自己的 F4 角色調校面板讓路 ——
+        /// 那個視窗自己有一塊 F5 的調校面板,兩塊同時吃鍵盤會很難用(見 <c>AvatarTuner</c>)。</summary>
+        public bool PlayerInfoOpen => _playerInfo != null && _playerInfo.IsOpen;
+
         /// <summary>「輸入房號」框。選男女畫面按「加入」時自己叫它 <c>Open()</c> —— 加入流程的邏輯屬於那個畫面。</summary>
         public JoinRoomModal JoinRoom => _joinRoom;
 
@@ -927,7 +931,11 @@ namespace Sdo.UI
         /// </summary>
         private void TickNetGameplay()
         {
-            var net = _ctx.Net;
+            // 🔴 `_ctx` 要防 null:Update **從第一幀就在跑**,而 _ctx 要等開機流程把它建起來
+            //    (同一個 Update 上一行的 Pump 就是為此防過一次)。少了這個檢查,開機那幾幀
+            //    每幀都在這裡拋 NullReferenceException,而 Unity 的 Update 一拋就**整個中斷** ——
+            //    後面的缺歌傳檔、聊天 Tick、中離熱鍵全部不會執行(Editor.log 裡整串同一支堆疊)。
+            var net = _ctx != null ? _ctx.Net : null;
             if (net == null || net.Match == null || _activeGame == null) return;
             SyncSpectatorNames(net);               // 中途有人進來/離開旁觀 → 右側名單要跟著變(旁觀者與參賽者都看得到)
             if (!net.IsMatchParticipant) return;   // 旁觀者不送成績

@@ -17,15 +17,24 @@ namespace Sdo.Tests
     ///
     /// 🔴 這條測試**不是回歸測試,是量尺**。它印出實測值並斷言在一個寬鬆的範圍內;
     ///    要改角色大小時先跑它看現在是多少,再回頭調 <c>LobbyScreen.AvatarFillFrac</c> / <c>AvatarY</c>。
-    ///    目標**逐點量自官方實機截圖**(800×630 視窗、標題列 26px):
-    /// 頭頂 y≈4、腳底 y≈411(= 房卡列表框下緣)、高 ≈410、身體中線 x≈170。
+    ///    (大小/落點現在也能在大廳按 <c>F4</c> 當場拖,見 <c>LobbyScreen.AvatarDebug.cs</c> —— 那條路調完
+    ///    記得把 const 貼回 LobbyScreen **和下面這份副本**,不然這把尺量的是上一版的版位。)
+    ///
+    /// 🔴 **基準值跟著現行版位走,不是永遠釘在官方截圖上。** 逐點量自官方實機截圖(800×630 視窗、
+    ///    標題列 26px)的那組是 頭頂 y≈4、腳底 y≈411、高 ≈410、中線 x≈170;現行版位是使用者用 F4 面板
+    ///    往左 46 / 往下 49、再整張放大 1.048 倍之後的 頭頂 y≈30、腳底 y≈460、高 ≈430、中線 x≈124。
+    ///    下面斷言的是**後者** —— 這條測試要抓的是「整個人跑掉一大截 / 被切半截」,不是把使用者選的落點判成錯。
     /// 前三版 599 / 571 / 546px 都太大,而且落點整個往下掉 80px —— 那三次都是「目測」而不是逐點量。
     /// </summary>
     public class LobbyAvatarFramingTests
     {
         // 與 LobbyScreen 的常數保持同步(那邊是 private const,測試碰不到 → 這裡複製一份並在失敗訊息裡點名)。
-        private const float AvatarX = -30f, AvatarY = -91f, AvatarW = 400f, AvatarH = 600f;
+        private const float AvatarX = -85.95f, AvatarY = -64.32f, AvatarW = 419.21f, AvatarH = 628.81f;
         private const float AvatarFillFrac = 0.605f;
+
+        // 現行版位算出來的落點基準:官方那組(頭頂 4 / 高 410 / 中線 170)平移 +49 / −46,再整張放大 1.048 倍
+        // (縮放是固定腳底中心做的 → 中線不動、腳底不動,只有頭頂往上跑、人變高)。
+        private const float ExpectedHeadY = 30f, ExpectedHeight = 430f, ExpectedCenterX = 124f;
 
         private GenderPreview3D _preview;
 
@@ -90,18 +99,19 @@ namespace Sdo.Tests
 
             // 官方基準:頭頂 30 / 腳底 578 / 高 548 / 中線 205。容差給得寬 —— 不同 idle 動作與髮型會差幾 px,
             // 這條測試要抓的是「整個人跑掉一大截」那種錯,不是像素級校正。
-            Assert.That(height, Is.EqualTo(410f).Within(40f),
-                $"角色高度 {height:F0} 偏離官方的 410 太多 → 調 LobbyScreen.AvatarFillFrac(高度 = AvatarH × fillFrac)");
-            Assert.That(headY, Is.EqualTo(4f).Within(35f),
-                $"頭頂 y={headY:F0} 偏離官方的 4 太多 → 調 LobbyScreen.AvatarY(1:1 px)");
+            Assert.That(height, Is.EqualTo(ExpectedHeight).Within(40f),
+                $"角色高度 {height:F0} 偏離現行版位的 {ExpectedHeight:F0} 太多 → 調 LobbyScreen 的 AvatarFillFrac"
+                + "(改相機取景)或 AvatarW/H 的等比縮放(高度 ≈ AvatarH × fillFrac × 1.09)");
+            Assert.That(headY, Is.EqualTo(ExpectedHeadY).Within(35f),
+                $"頭頂 y={headY:F0} 偏離現行版位的 {ExpectedHeadY:F0} 太多 → 調 LobbyScreen.AvatarY(1:1 px)");
             Assert.That(feetY, Is.LessThan(600f),
                 $"腳底 y={feetY:F0} 掉出畫面下緣了(600) → 角色會被切掉半截");
             // 🔴 身體中線驗的是 **RT 中心**(= AvatarX + AvatarW/2),不是 alpha bounding box 的中心:
             //    相機正對角色原點,所以中線恆在 RT 正中;而 bounding box 的中心會隨當下抽到的 idle 姿勢
             //    (手臂張開、抬腳、甩裙擺)左右跳三四十 px。照 bounding box 校 AvatarX 只會越校越偏。
             float geoCenterX = AvatarX + AvatarW * 0.5f;
-            Assert.That(geoCenterX, Is.EqualTo(170f).Within(8f),
-                $"身體中線 x={geoCenterX:F0} 偏離官方的 170 → 調 LobbyScreen.AvatarX(= 205 - AvatarW/2)");
+            Assert.That(geoCenterX, Is.EqualTo(ExpectedCenterX).Within(8f),
+                $"身體中線 x={geoCenterX:F0} 偏離現行版位的 {ExpectedCenterX:F0} → 調 LobbyScreen.AvatarX(中線 = AvatarX + AvatarW/2)");
             // 人整個跑出畫布左右緣就是版位錯了(姿勢再誇張也不該發生)。
             Assert.That(leftX, Is.GreaterThan(-20f), $"角色左緣 x={leftX:F0} 跑出畫面外");
             Assert.That(rightX, Is.LessThan(430f), $"角色右緣 x={rightX:F0} 侵入房卡列表區(列表底板從 x=286 起)");
