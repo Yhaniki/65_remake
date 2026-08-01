@@ -57,6 +57,37 @@ namespace Sdo.UI.Screens
         private const float PanelX = 335f, PanelY = 152f;
         private const float PanelW = 349f, PanelH = 339f;
 
+        // 內容區凹槽的右緣補條 —— 使用者連續四輪回報的「框旁邊那條黑色切錯的雜訊」。
+        //
+        // 🔴 **我們沒有切錯,那 12px 是官方 layout 的固有結果**(逐項量過):
+        //    ・DailogBg 是 BaseBoard_man.png (0,0,625,502) 貼在 (93,56);那張圖**自己烤了一個星空凹槽**,
+        //      凹槽在圖內 x=24..602 → 絕對 x **117..695**(截圖實測與素材量測完全一致)。
+        //    ・分頁內容板最寬的是基本頁 348 貼在 335 → 只到 **683**。
+        //    ・把 WinPlayerInfo 底下**每一個** Label 的 .an 尺寸都算過絕對右緣,最大是星座頁 ZoBG 的 686 ——
+        //      官方沒有任何元素蓋得到 683..695。純用官方素材+官方座標合成出來的圖,那 12px 就是深藍星空。
+        //
+        // 🔴 官方之所以看不到它,是因為官方還有一個 <Label name="CharBack" x="114" y="110" w="584"
+        //    background="empty.an"/> —— 執行期填入的「角色背景圖」,584 寬正好蓋滿整個凹槽(114..698),
+        //    那 12px 於是變成背景圖的自然延續。我們沒有那張圖(empty.an 是空的,圖由伺服器給),
+        //    所以露出底板烤死的星空;它夾在分頁板與外框之間、又緊鄰大廳那些高彩度房卡,看起來就像切壞了。
+        //
+        // 🔴 為什麼是補一條而不是把分頁板右移 12px:分頁板上的欄位標題(天使等級/TP值/…)全是**烤在圖上**的,
+        //    板子一移,程式放的每一個數值、進度條、按鈕都要跟著移 12px 才不會與烤字錯位 ——
+        //    那等於把整份逐字抄自官方 XML 的版位常數全部推翻,風險遠大於補一條 12px 的框。
+        //    補條顏色取自底板凹槽自己的框線 (97,72,168),補完視覺上就是「內框粗了一點」,與右側 696..697
+        //    那兩欄原生框線連成一體。
+        // 🔴 範圍是**整條凹槽**(y 110..499)而不是只有分頁板那一段(152..491):凹槽在分頁板上方還露 42px,
+        //    那截落在分頁條右邊,只補中間會在分頁條旁留一小塊深色,等於沒修完。
+        // 🔴 左緣 679 是**量出來的,不是算出來的**:照 TabX+TabPillX[4]+TabPillW(=682)會在分頁條與補條之間
+        //    留一條 3px 的縫(實測螢幕 x=877..881、y=181..226 仍是深藍)—— TabPillX/TabPillW 描述的是
+        //    **可點範圍**,分頁條圖本身的可見右緣比它窄。分頁板(335..683)建在補條之後會把 679..683
+        //    這段蓋回去,所以左移不會讓補條在分頁區露出來。
+        // 🔴 右緣取到 697(凹槽框線的右緣)而不是 695:696..697 本來就是同色框線,蓋掉毫無差別,
+        //    但可以吃掉縮放到 1024×768 時最後那一欄的抗鋸齒殘影(實測 x=897 會留一條)。
+        private const float GrooveFillX = 679f, GrooveFillY = 110f;
+        private const float GrooveFillW = 18f, GrooveFillH = 389f;
+        private static readonly Color GrooveFrameCol = new Color32(97, 72, 168, 255);
+
         // 身分區。官方在這塊放 <AvtShow name="AvatarShow" x="105" y="111" w="230" h="391"> 的 3D 角色,
         // 名字/等級疊在它左上角(name 132,129 / level 132,144 —— 這幾個男女版同座標)。我們不做 3D 預覽
         // (要生一整套骨骼+貼圖,開個資料視窗不值得),所以下半塊是刻意留白的,只保留官方那兩行字的位置感。
@@ -222,7 +253,12 @@ namespace Sdo.UI.Screens
             //    原本的亮度、沒有壓暗。而且黑幕壓在大廳那些高彩度的房卡上,沿著框邊看起來就像框被切壞、
             //    旁邊多了一條黑色雜訊 —— 使用者連續回報三次的「框旁邊的黑色雜訊」就是它。
             //    透明的 Image 一樣吃得到射線,擋點擊的功能完全不受影響。
-            var dim = UIKit.AddImage(root, "Dim", new Color(0f, 0f, 0f, 0f), true);
+            //
+            // DEV:SDO_PI_BLACK=1 → 把這層變成**不透明黑**。這是查「框旁邊那條雜訊到底是誰畫的」的
+            //     鑑別實驗:大廳整個被蓋掉之後,畫面上還剩的每一個非黑像素都一定是這個視窗自己畫的。
+            //     雜訊還在 = 視窗多畫了東西;雜訊不見 = 那是從框的縫隙透出來的背景。
+            bool devBlack = !string.IsNullOrEmpty(Sdo.Game.ScreenGameplay.DevVar("SDO_PI_BLACK"));
+            var dim = UIKit.AddImage(root, "Dim", new Color(0f, 0f, 0f, devBlack ? 1f : 0f), true);
             UIKit.Stretch(dim.rectTransform);
 
             // 除了黑幕以外都掛在 _window 底下 → 開闔動畫(WindowAnim)只轉框、黑幕不跟著轉。
@@ -233,6 +269,12 @@ namespace Sdo.UI.Screens
             _anim = _window.gameObject.AddComponent<WindowAnim>();
 
             UIKit.AddSprite(_window, "Board", PlayerInfoArt.Board, BoardX, BoardY);
+
+            // 補掉底板凹槽右緣那 12px(官方靠 CharBack 蓋掉,我們沒有那張圖 —— 見 GrooveFillX 的註解)。
+            // 建在 Board 之後、分頁容器之前 → 分頁板疊在它上面,寬度不同的那幾頁(43_man 到 684、
+            // ZoBG 到 686)各自蓋掉自己那幾 px,剩下的由補條接手,不會有哪一頁露出縫。
+            var groove = UIKit.AddImage(_window, "GrooveFill", GrooveFrameCol);
+            Place(groove.rectTransform, GrooveFillX, GrooveFillY, GrooveFillW, GrooveFillH);
 
             BuildIdentity(_window);
             BuildTabs(_window);
