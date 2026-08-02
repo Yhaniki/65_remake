@@ -143,6 +143,15 @@ namespace Sdo.Settings
         /// <summary>頭上名字牌那個等級標籤（「LV:N」）；沒設等級 → 空字串＝不顯示。</summary>
         public static string LevelLabel => ProfileFields.LevelLabel(Active);
 
+        /// <summary>active 角色目前等級內累積的經驗值。</summary>
+        public static int Exp => ProfileFields.Exp(Active);
+
+        /// <summary>active 角色升下一級還需要的經驗（滿級 → 0）。</summary>
+        public static int ExpToNext => ProfileFields.ExpToNext(Active);
+
+        /// <summary>active 角色目前等級內的經驗進度 0..100（大廳的經驗條 / 個人資料頁的經驗列）。</summary>
+        public static float ExpPercent => ProfileFields.ExpPercent(Active);
+
         /// <summary>每局結算把經驗值加進 active 角色（跨門檻自動升等，見 <see cref="PlayerLevel.Grant"/>）並落地
         /// 角色自己的 profile.json，回傳升了幾級（0＝沒升）。升等會豎起這個角色的覆寫旗標（連同目前生效的家族值一起
         /// 寫進去，見 <see cref="ProfileFields.SetLevel"/>）—— 從此它自己升自己的，不再跟著外層的預設走。

@@ -28,8 +28,9 @@ namespace Sdo.UI.Screens
     ///    其餘(VIP、手鐲、認證、榮譽、天使、合成書、EC、寵物、寄信、黑名單、買對方裝扮、三顆開關)一律
     ///    **handler 傳 null**,按下去安靜地沒反應。這是使用者明確要求的:不要用 toast 假裝功能存在。
     ///
-    /// 🔴 男版底圖是深藍星空,官方那些欄位字是直接寫在有底紋的板子上的。我們的字是動態的、長度不定,
-    ///    直接壓在星空上會有讀不清的段落,所以內容一律鋪一層半透明深色底(<see cref="Scrim"/>)再放亮色字。
+    /// 🔴 男版底圖是深藍星空,官方那些欄位字是直接寫在有底紋的板子上的 —— 所以**不要自己鋪底**:
+    ///    分頁內容的字都落在有底紋的分頁板上,而名字/等級那一區站著 3D 角色,鋪一層半透明底就成了
+    ///    「壓在人頭臉上的一條灰方框」(使用者回報,已整層拿掉)。讀不清就用描邊解決,不要加底。
     /// </summary>
     /// <remarks>partial:左半邊那尊 3D 角色(官方 AvtShow)與它的 F5 調校面板收在
     /// <c>PlayerInfoModal.Avatar.cs</c> —— 3D 的生命週期與這份版位表不是同一回事。</remarks>
@@ -96,10 +97,21 @@ namespace Sdo.UI.Screens
         //      4) 整頁往右位移        → 板子與分頁條左緣對不齊,左邊裂一條更寬的縫
         //    真要修就得補上 CharBack 那張圖(等於做「玩家可換的個人背景」那套系統),不是調版位能解決的。
 
-        // 身分區。官方在這塊放 <AvtShow name="AvatarShow" x="105" y="111" w="230" h="391"> 的 3D 角色,
-        // 名字/等級疊在它左上角(name 132,129 / level 132,144 —— 這幾個男女版同座標)。我們不做 3D 預覽
-        // (要生一整套骨骼+貼圖,開個資料視窗不值得),所以下半塊是刻意留白的,只保留官方那兩行字的位置感。
-        private const float IdX = 114f, IdY = 118f, IdW = 214f, IdH = 76f;
+        // 身分區。官方在這塊放 <AvtShow name="AvatarShow" x="105" y="111" w="230" h="391"> 的 3D 角色
+        // (現在真的畫出來了,見 PlayerInfoModal.Avatar.cs),名字/等級疊在它左上角
+        // (name 132,129 / level 132,144 —— 這幾個男女版同座標)。
+        //
+        // 🔴 這一區**不鋪任何底**。以前有一層半透明深色 scrim,在還沒有 3D 角色時是為了讓字讀得清楚,
+        //    現在只會變成壓在人頭臉上的一條灰方框(使用者回報)。官方也沒有這層 —— 官方靠 CharBack
+        //    那張執行期填的角色背景圖。
+        private const float IdX = 114f, IdW = 214f;
+        // 名字那行:官方 x=132 w=80(配他們的短 ID);這裡靠右對齊、寬度放到整區,長名字才不會被切。
+        private const float IdRowX = IdX + 10f, IdRowW = IdW - 20f, IdRowH = 16f;
+        private const float IdNameY = 129f, IdLevelY = 144f;   // 官方就差 15px
+        // 等級那行:**字比名字小、框靠右、字在框內置中**(官方實機就是這樣 —— 名字是一長串靠右頂到底,
+        // 「Level:62」則是在名字尾端下方的一小塊裡置中,兩行的右緣切齊)。框寬照官方的 w=80。
+        private const float IdLevelW = 80f, IdLevelX = IdRowX + IdRowW - IdLevelW;
+        private const float NameFont = 14f, LevelFont = 11f;   // 官方 name fontheight=14;level 沒寫 → 明顯小一級
 
         // 底部那一排動作鈕(93×31,確定是 101×37)。官方大多在 y=507,只有 DelFriend / AddEnemy 落在 508。
         private const float BtnY = 507f, DelFriendY = 508f;
@@ -133,10 +145,19 @@ namespace Sdo.UI.Screens
         // 每一格的標題都烤在底圖 PlayerInformationDlg34_man.an 上,程式只放數值。
         private const float BasicBgX = 335f, BasicBgY = 153f;        // <Label background="PlayerInformationDlg34_man.an" x=336 y=147/>
         private const float ProgressW = 236f, ProgressH = 19f;
-        private const float WeightBarX = 431f, WeightBarY = 124f;    // pro_weight  (432,118) TP值
-        private const float AngelBarX = 432f, AngelBarY = 190f;      // pro_angel   (433,184) 天使等級
-        private const float ExpBarX = 432f, ExpBarY = 221f;          // pro_exp     (433,215) 經驗值(黃)
-        private const float ExpValX = 437f, ExpValY = 176f;          // exp         (438,170)
+        // 🔴 **官方那三個 ProgressBar 的名字會騙人。** 由上而下的三列是「天使等級 / TP值 / 經驗值」,
+        //    而 XML 給的是 pro_weight(432,118)、pro_angel(433,184)、pro_exp(433,215):
+        //      • 天使等級那一列(y≈155)**不是進度條**,是 LBAngelName 那行字 + Angel 認證鈕(見下面 Angel*)。
+        //      • pro_angel 雖然叫 angel,畫出來卻在 **TP 值** 那一列(它的 tip_xml 也是 DegreeTpTips)。
+        //      • pro_weight 的 y=118 落在分頁板(153)**上方** —— 那是整合檔裡別的視窗的殘留,
+        //        照抄會在分頁條下面多畫一條粉紅槓(以前就是這樣)。**不要畫它。**
+        private const float TpBarX = 432f, TpBarY = 190f;            // pro_angel (433,184) → TP 值那條(粉紅)
+        private const float ExpBarX = 432f, ExpBarY = 221f;          // pro_exp   (433,215) → 經驗值那條(黃)
+
+        // 天使等級列。官方 LBAngelBadge(435,148,執行期填的徽章圖)/ LBAngelName(492,155,90×20,置中,14px)
+        // / Angel 認證鈕(592,151,**bggray="AngelAttGray.an"**)。沒有天使系統 → 用那顆鈕的灰圖 + 灰字。
+        private const float AngelNameX = 491f, AngelNameY = 161f, AngelNameW = 90f, AngelNameH = 20f;
+        private const float AngelCertX = 591f, AngelCertY = 157f;
         private const int CharmCount = 12;                           // 🔴 官方 Charm1..24 是「12 個位置 × 亮/暗兩張」,不是 24 顆(x 只排到 646)
         private const float CharmX = 425f, CharmY = 249f, CharmStep = 20f;
         private const float LuckyX = 428f, LuckyY = 278f;            // lucky1..24 (429,272) 同款 12 個位置
@@ -146,11 +167,27 @@ namespace Sdo.UI.Screens
         //    格子數就是 10,官方沒有 zhimingdu0 也沒有 11。
         private const int FameSlots = 10;
         private const float FameX = 431f, FameY = 305f, FameStep = 22f;
-        private const float FamilyValX = 431f, FamilyValY = 339f;    // familyname  (432,333)
-        private const float OfferValX = 602f, OfferValY = 340f;      // offer       (603,334) 家族榮譽度
-        private const float IntimateValX = 429f, IntimateValY = 367f;// intimate    (430,361) 密友度
-        private const float SocialValX = 426f, SocialValY = 394f;    // SendNum     (427,388) 社交值
-        private const float LuckValX = 419f, LuckValY = 379f;        // luckvalue   (420,373)
+        // 下半部那六格。官方每一格的 x/y 都差個一兩 px(431/429/426、339/340…),那是他們自己畫歪的;
+        // 🔴 這裡**對齊成一組**(使用者要求「排版要整齊」):左欄一律 x=430、右欄一律 x=594,
+        //    同一列共用一個 y。三列 y = 339 / 367 / 394,第四列(年齡/星座/MVP)= 423。
+        private const float ValLeftX = 430f, ValRightX = 594f;
+        private const float Row1Y = 339f, Row2Y = 367f, Row3Y = 394f, Row4Y = 423f;
+        private const float FamilyValW = 88f, OfferValW = 74f;
+        private const float OfferValX = 602f;                        // offer (603,334) 家族榮譽度:它的框自己就偏右
+        // 🔴 **不要**畫官方的 luckvalue(420,373)。那是「幸運值」的數字,而幸運值在這一頁是用**星星**表示的
+        //    (LuckyOff 那 12 顆),數字沒有任何格子裝 —— 它剛好落在密友度(367)與社交值(394)中間,
+        //    畫出來就是使用者回報的「密友度和社交值中間有一個白色的 0」。
+
+        // 四個**可以自己填**的欄位(官方 EditBox,color=0xff000000 黑字):
+        //   city_edit          (595,361) w=74 limittext=12
+        //   QQ_edit            (595,389) w=65 limittext=12 digitcase(只收數字)
+        //   age_edit           (401,417) w=65 limittext=2  digitcase
+        //   constellation_edit (512,417) w=65 limittext=6
+        // 官方 h=14;這裡給 16 —— 14px 的框在 800×600 縮放後只有十幾個像素高,滑鼠很難點進去。
+        private const float EditH = 16f;
+        private const float CityEditW = 74f, ImEditW = 65f, AgeEditW = 65f, ZodiacEditW = 65f;
+        private const float AgeEditX = 400f, ZodiacEditX = 511f;
+        private const int CityLimit = 12, ImLimit = 12, AgeLimit = 2, ZodiacLimit = 6;
 
         // ---- 賽事信息頁(官方 playerTabWindow2,容器偏移 x=1 y=16;下面是加過偏移的絕對座標) ----
         private const float DuanweiBarX = 438f, DuanweiBarY = 162f;   // pro_duanwei (437,146) 236×19
@@ -248,7 +285,6 @@ namespace Sdo.UI.Screens
         private const float EffortRailX = 654f, EffortRailTop = 325f;                          // 見 BuildEffortSub 的註解
         private const float RateRow0Y = 264f, RateStep = 29f, RateFont = 12f;  // 官方 258/287/316/345/374/403 (+6)
         private const float RateBarX = 434f, RateBarW = 236f, RateBarH = 19f;  // ProgressBar 236×19
-        private const float RateValDx = 7f;                                    // 數值文字相對條左緣(官方 440-433)
         // 這一頁上方那三格(熱舞戰績兩格 + 目前排名)。烤字同樣在底板上,只放值。
         private const float PerfX = 427f, PerfAuX = 592f, PerfY = 168f, PerfW = 77f, PerfH = 12f;
         private const float StatsRankX = 428f, StatsRankY = 200f, StatsRankW = 230f;
@@ -257,12 +293,20 @@ namespace Sdo.UI.Screens
         private const float NoteX = 351f, NoteY = 215f, NoteW = 318f, NoteH = 120f, NoteFont = 13f;
 
         // ---------------------------------------------------------------- 顏色
-        private static readonly Color Scrim = new Color(0.10f, 0.06f, 0.16f, 0.62f);
         private static readonly Color32 LabelCol = new Color32(0xC9, 0xB6, 0xE8, 255);
         private static readonly Color32 ValueCol = new Color32(0xFF, 0xFF, 0xFF, 255);
         private static readonly Color32 NoteCol = new Color32(0xE6, 0xD8, 0xF0, 255);
         private static readonly Color32 NameFace = new Color32(0xFA, 0xFF, 0x74, 255);   // 官方 name/level 的 0xfffaff74
-        private static readonly Color32 NameEdge = new Color32(0x2A, 0x18, 0x38, 255);
+        private static readonly Color32 NameEdge = new Color32(0x1D, 0x12, 0x00, 255);   // 名字/等級的描邊(使用者指定 #1d1200)
+        private const float NameEdgePx = 1f;
+        /// <summary>TP 值 / 經驗值壓在進度條上那兩個數字的描邊(使用者指定 #541934)。條是粉紅/橘的,
+        /// 白字直接壓上去會糊在一起 —— 描一圈比條更深的紫紅才跳得出來。</summary>
+        private static readonly Color32 BarEdge = new Color32(0x54, 0x19, 0x34, 255);
+        /// <summary>「統計明細」那六條(勝率/命中率/Perfact/Cool/Bad/Miss)的百分比:**白字、粗體、置中**,
+        /// 描一圈紅(使用者指定 #99042b)。與 <see cref="BarEdge"/> 分開是因為那六條是另一組粉紅條,
+        /// 使用者指定的描邊色不同 —— 不要為了「少一個常數」把兩處合成同一色。</summary>
+        private static readonly Color32 RateEdge = new Color32(0x99, 0x04, 0x2B, 255);
+        private const float RateEdgePx = 1f;
 
         // ---------------------------------------------------------------- 狀態
         private CanvasGroup _cg;
@@ -274,15 +318,17 @@ namespace Sdo.UI.Screens
         private RectTransform[] _tabBody;
         private int _tab;
 
-        private OutlinedLabel _idName;
-        private TextMeshProUGUI _idLevel;
+        private OutlinedLabel _idName, _idLevel;
 
-        private Image _angelBar, _expBar, _weightBar, _duanweiBar;
+        private Image _tpBar, _expBar, _duanweiBar;
+        /// <summary>四格自己填的(城市 / 即時通 / 年齡 / 星座)—— 存在 profile.json,見 <see cref="CommitProfileFields"/>。</summary>
+        private TMP_InputField _cityEdit, _imEdit, _ageEdit, _zodiacEdit;
         private Image[] _fameSlots;                             // 知名度那 10 格(星 / 月 / 太陽)
         private Image[] _subTab;                                // 賽事頁的三個子分頁(家族/星座/寵物)
         private RectTransform _xunzhangBody, _famillyBody;      // 星座+寵物共用 / 家族自己
         private int _matchSub;
-        private TextMeshProUGUI _basicExp, _basicFamily, _basicOffer, _basicIntimate, _basicSocial, _basicLuck;
+        private OutlinedLabel _basicTp, _basicExp;
+        private TextMeshProUGUI _basicFamily, _basicOffer, _basicIntimate, _basicSocial;
         private RateRow[] _rateRows;
         private RectTransform _skillBody, _effortBody;          // 技術統計的兩個子頁(統計明細 / 成就)
         private Button _skillBtn, _effortBtn;
@@ -365,23 +411,27 @@ namespace Sdo.UI.Screens
             SetVisible(false);
         }
 
+        /// <summary>
+        /// 名字 + 等級。官方就這兩行,**底下什麼都沒有** ——
+        /// 🔴 以前這裡鋪了一層半透明深色底(IdScrim)讓字讀得清楚,現在這一區站著一尊 3D 角色,
+        ///    那層底就變成「壓在人頭臉上的一條灰方框」(使用者回報)。整層拿掉:字本身有描邊,夠了。
+        ///
+        /// 版位與字級**逐字取自官方**:
+        ///   <c>&lt;Label name="name"  x=132 y=129 w=80 h=14 fontheight=14 bold color=0xfffaff74/&gt;</c>
+        ///   <c>&lt;Label name="level" x=132 y=144 w=80 h=14            bold color=0xfffaff74/&gt;</c>
+        /// —— 兩行只差 **15px**。以前寫 8 / 38(差 30),就是使用者回報的「lv 太遠」。
+        /// 兩行都**靠右對齊**(官方實機兩行的右緣切齊,見截圖)、都是**粗體**,寬度放大到這一區的寬,
+        /// 長名字才不會被切;官方那個 w=80 是配他們的短 ID 用的。
+        /// </summary>
         private void BuildIdentity(RectTransform parent)
         {
-            var scrim = UIKit.AddImage(parent, "IdScrim", Scrim);
-            Place(scrim.rectTransform, IdX, IdY, IdW, IdH);
-            // 🔴 這層底要**沉到角色底下**。它是為了讓字壓在星空上時讀得清楚才加的,但這一區現在站著一尊
-            //    3D 角色 —— 半透明深色板蓋在人的頭臉上很難看(而且官方根本沒有這層,官方靠 CharBack 那張
-            //    角色背景圖)。疊法變成:底板 → 這層底 → 角色 → 名字/等級。字有白描邊,就算壓在人身上也讀得清。
-            if (_previewImg != null)
-                scrim.rectTransform.SetSiblingIndex(_previewImg.rectTransform.GetSiblingIndex());
-
-            // 🔴 名字與等級**靠右對齊、同一個顏色**(官方 XML 兩個 Label 都是 0xfffaff74 = NameFace)。
-            //    以前等級用 ValueCol(白)、兩者都靠左 —— 與官方對不上(使用者回報)。
-            //    靠右是因為這一區左邊被 3D 角色佔著,官方把字貼在右緣才不會壓在人身上。
-            _idName = OutlinedLabel.Create(parent, "IdName", IdX + 10f, IdY + 8f, IdW - 20f, 22f,
-                                           15f, NameFace, NameEdge, 1f, true, TextAlignmentOptions.Right);
-            _idLevel = UIKit.AddText(parent, "IdLevel", "", 13f, NameFace, TextAlignmentOptions.Right);
-            Place(_idLevel.rectTransform, IdX + 10f, IdY + 38f, IdW - 20f, 20f);
+            _idName = OutlinedLabel.Create(parent, "IdName", IdRowX, IdNameY, IdRowW, IdRowH,
+                                           NameFont, NameFace, NameEdge, NameEdgePx, true, TextAlignmentOptions.Right);
+            // 🔴 等級**不跟名字用同一個框**:字小一級、框只有 80 寬且靠右,字在框內**置中** ——
+            //    官方實機就是這個排法(名字靠右頂到底,Level 在它尾端下方的一小塊裡置中)。
+            //    以前跟名字共用整條寬度又靠右對齊,兩行看起來就是硬貼在右邊、還一樣大。
+            _idLevel = OutlinedLabel.Create(parent, "IdLevel", IdLevelX, IdLevelY, IdLevelW, IdRowH,
+                                            LevelFont, NameFace, NameEdge, NameEdgePx, true, TextAlignmentOptions.Center);
         }
 
         private void BuildTabs(RectTransform parent)
@@ -403,7 +453,7 @@ namespace Sdo.UI.Screens
 
             // 🔴 內容板的底圖是**每頁一張官方圖**,不是我們自己畫的半透明底 ——
             //    官方把每一格的標題(天使等級 / TP值 / 經驗值 / 魅力值 / 幸運值 / 知名度 / 家族 / 城市…)
-            //    整組**烤在那張圖上**,程式只負責在對應座標放數值。以前鋪一層 Scrim 再自己排文字列,
+            //    整組**烤在那張圖上**,程式只負責在對應座標放數值。以前鋪一層半透明底再自己排文字列,
             //    所以不管座標怎麼調都不可能像官方(使用者連續三輪回報「tab 裡面的 layout 沒做」)。
             //    兩張圖各自貼在自己那一頁的容器裡(見 BuildBasicTab / BuildStatsTab)。
 
@@ -440,16 +490,22 @@ namespace Sdo.UI.Screens
         /// 🔴 這一頁的**每一個標題都烤在底圖 <c>PlayerInformationDlg34_man.an</c> 上**,程式只放數值。
         ///    官方欄位:天使等級 / TP值 / 經驗值 / 魅力值 / 幸運值 / 知名度 / 家族 / 家族榮譽度 / 密友度 /
         ///    城市 / 社交值 / MSN / 年齡 / 星座 / MVP。
-        ///    這個重製版真正有資料的只有**家族**與**經驗值(恆 0)**;其餘照使用者要求**顯示 0 而不是留白**。
+        ///    這個重製版真正有資料的只有**家族**與**經驗值**(見 <see cref="SetExpBar"/>);
+        ///    其餘照使用者要求**顯示 0 而不是留白**。
         /// </summary>
         private void BuildBasicTab(RectTransform body)
         {
             UIKit.AddSprite(body, "BasicBg", PlayerInfoArt.AnRaw("PlayerInformationDlg34_man"), BasicBgX, BasicBgY);
 
-            // 三條進度條(天使等級 / 經驗值 / TP值)。經驗值那條官方用黃色前景,另外兩條用同一張粉紅條。
-            _angelBar = AddProgress(body, "pro_angel", AngelBarX, AngelBarY, "PlayerInformationDlg65");
+            // 天使等級列:沒有天使系統 → 照官方「還沒認證」的樣子畫。**兩個都是官方素材**:
+            // 「见习天使」是 ANGELNAME_MAN.AN 的第一幀(灰色美術字),右邊那顆是 Angel 鈕的 bggray。
+            // 兩張都只是圖,按了不會有反應。
+            UIKit.AddSprite(body, "LBAngelName", PlayerInfoArt.AngelNameTrainee, AngelNameX, AngelNameY);
+            UIKit.AddSprite(body, "AngelCert", PlayerInfoArt.AngelCertGray, AngelCertX, AngelCertY);
+
+            // 兩條進度條:TP 值(粉紅)與經驗值(黃)。天使那列不是進度條,pro_weight 不畫 —— 見常數區的 🔴。
+            _tpBar = AddProgress(body, "pro_tp", TpBarX, TpBarY, "PlayerInformationDlg65");
             _expBar = AddProgress(body, "pro_exp", ExpBarX, ExpBarY, "PlayerInformationDlgYellow65");
-            _weightBar = AddProgress(body, "pro_weight", WeightBarX, WeightBarY, "PlayerInformationDlg285");
 
             // 魅力值:24 顆愛心,亮(Dlg68)疊在暗(Dlg38)上面 —— 有幾點就亮幾顆。沒有這套系統 → 全暗。
             for (int i = 0; i < CharmCount; i++)
@@ -468,13 +524,22 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < FameSlots; i++)
                 _fameSlots[i] = UIKit.AddSprite(body, "zhimingdu" + (i + 1), null, FameX + i * FameStep, FameY);
 
-            // 官方那幾格數值。有資料的只有家族;其餘固定 0(使用者要求:沒資料也要顯示 0,不要留白)。
-            _basicExp = AddValue(body, "exp", ExpValX, ExpValY, 118f, Color.white, TextAlignmentOptions.Left);
-            _basicFamily = AddValue(body, "familyname", FamilyValX, FamilyValY, 72f, Color.black, TextAlignmentOptions.Left);
-            _basicOffer = AddValue(body, "offer", OfferValX, OfferValY, 72f, Color.black, TextAlignmentOptions.Left);
-            _basicIntimate = AddValue(body, "intimate", IntimateValX, IntimateValY, 72f, Color.black, TextAlignmentOptions.Left);
-            _basicSocial = AddValue(body, "SendNum", SocialValX, SocialValY, 80f, Color.black, TextAlignmentOptions.Left);
-            _basicLuck = AddValue(body, "luckvalue", LuckValX, LuckValY, 48f, Color.white, TextAlignmentOptions.Left);
+            // 壓在兩條進度條上的數字(TP「0/0」、經驗「0%」)。白字 + 深紫紅描邊(使用者指定 #541934)——
+            // 沒有描邊的話白字會糊進粉紅/橘的條裡。置中在條上,與官方實機一致。
+            _basicTp = AddBarValue(body, "tpvalue", TpBarX, TpBarY);
+            _basicExp = AddBarValue(body, "exp", ExpBarX, ExpBarY);
+
+            // 下半部那幾格的值。官方全是黑字(0xff000000),左右兩欄各自對齊 —— 見常數區。
+            _basicFamily = AddValue(body, "familyname", ValLeftX, Row1Y, FamilyValW, Color.black, TextAlignmentOptions.Left);
+            _basicOffer = AddValue(body, "offer", OfferValX, Row1Y, OfferValW, Color.black, TextAlignmentOptions.Left);
+            _basicIntimate = AddValue(body, "intimate", ValLeftX, Row2Y, FamilyValW, Color.black, TextAlignmentOptions.Left);
+            _basicSocial = AddValue(body, "SendNum", ValLeftX, Row3Y, FamilyValW, Color.black, TextAlignmentOptions.Left);
+
+            // 四格自己填的(城市 / 即時通 / 年齡 / 星座)。看自己才打得動,存進 profile.json —— 見 BuildEdit。
+            _cityEdit = BuildEdit(body, "city_edit", ValRightX, Row2Y, CityEditW, CityLimit, digitsOnly: false);
+            _imEdit = BuildEdit(body, "QQ_edit", ValRightX, Row3Y, ImEditW, ImLimit, digitsOnly: true);
+            _ageEdit = BuildEdit(body, "age_edit", AgeEditX, Row4Y, AgeEditW, AgeLimit, digitsOnly: true);
+            _zodiacEdit = BuildEdit(body, "constellation_edit", ZodiacEditX, Row4Y, ZodiacEditW, ZodiacLimit, digitsOnly: false);
 
             _basicNote = MakeNote(body, "BasicNote");
         }
@@ -655,6 +720,86 @@ namespace Sdo.UI.Screens
             var t = UIKit.AddText(parent, name, "", RowFont, color, align);
             Place(t.rectTransform, x, y, w, 14f);
             return t;
+        }
+
+        /// <summary>壓在進度條上的那個數字:白字 + <see cref="BarEdge"/> 描邊、整條置中。</summary>
+        private static OutlinedLabel AddBarValue(RectTransform parent, string name, float x, float y)
+            => OutlinedLabel.Create(parent, name, x, y, ProgressW, ProgressH, RowFont,
+                                    Color.white, BarEdge, 1f, true, TextAlignmentOptions.Center);
+
+        /// <summary>
+        /// 一格「自己填」的欄位(官方 EditBox)。底圖已經把凹槽烤好了 → 這裡**不畫任何底**,只放一個
+        /// 透明的接盤吃點擊 + 一行黑字。
+        ///
+        /// 🔴 游標用 <see cref="TypingCaret"/> 自畫,不是 TMP 內建的:執行期建的 CJK 動態字型配上
+        ///    world-space 畫布,TMP 算不出可見的 caret(房間/大廳的聊天輸入早就踩過,那邊也是自畫的)。
+        ///    使用者指定**白色**游標。
+        ///
+        /// 值在 <c>onEndEdit</c>(按 Enter / 點到別處)時寫回 profile.json;關窗時再存一次,
+        /// 免得「打完字直接按 X」那一下沒存到。
+        /// </summary>
+        private TMP_InputField BuildEdit(RectTransform parent, string name, float x, float y, float w,
+                                         int limit, bool digitsOnly)
+        {
+            var rt = UIKit.NewRect(parent, name);
+            var hit = rt.gameObject.AddComponent<Image>();
+            hit.color = new Color(0f, 0f, 0f, 0f);   // 透明:底圖的凹槽就是這一格的外觀
+            var field = rt.gameObject.AddComponent<TMP_InputField>();
+
+            var area = UIKit.NewRect(rt, "TextArea");
+            UIKit.Stretch(area, 2f, 0f, 2f, 0f);
+            area.gameObject.AddComponent<RectMask2D>();
+            var txt = UIKit.AddText(area, "Text", "", RowFont, Color.black, TextAlignmentOptions.Left);
+            UIKit.Stretch(txt.rectTransform);
+
+            field.textViewport = area;
+            field.textComponent = txt;
+            if (UIFont.Cjk != null) field.fontAsset = UIFont.Cjk;
+            field.targetGraphic = hit;
+            field.lineType = TMP_InputField.LineType.SingleLine;
+            field.richText = false;
+            field.characterLimit = limit;
+            // 官方那兩格標了 digitcase="true"(只收數字)。用 IntegerNumber 而不是自己過濾:
+            // 它連 IME 的中文輸入也一起擋掉,不然注音打進去會變成一格奇怪的字。
+            if (digitsOnly) field.contentType = TMP_InputField.ContentType.IntegerNumber;
+            field.onEndEdit.AddListener(_ => CommitProfileFields());
+            TypingCaret.Attach(field, Color.white, 2f, 13f);
+
+            Place(rt, x, y, w, EditH);
+            return field;
+        }
+
+        /// <summary>
+        /// 把四格自己填的內容寫回 <c>profile.json</c>。**只有看自己時才寫** —— 看別人時那四格是唯讀的,
+        /// 不該把對方的資料(或空白)蓋到自己的存檔上。
+        /// </summary>
+        private void CommitProfileFields()
+        {
+            if (!_isSelf) return;
+            var p = ProfileManager.Active;
+            if (p == null) return;
+            p.city = _cityEdit != null ? (_cityEdit.text ?? "") : "";
+            p.imAccount = _imEdit != null ? (_imEdit.text ?? "") : "";
+            p.age = _ageEdit != null ? (_ageEdit.text ?? "") : "";
+            p.constellation = _zodiacEdit != null ? (_zodiacEdit.text ?? "") : "";
+            ProfileManager.Save();
+        }
+
+        /// <summary>四格自己填的欄位:填值 + 決定打不打得動(看別人時唯讀且空白 —— 我們拿不到對方填了什麼)。</summary>
+        private void FillEdits(UserProfile p)
+        {
+            SetEdit(_cityEdit, p != null ? p.city : "", p != null);
+            SetEdit(_imEdit, p != null ? p.imAccount : "", p != null);
+            SetEdit(_ageEdit, p != null ? p.age : "", p != null);
+            SetEdit(_zodiacEdit, p != null ? p.constellation : "", p != null);
+        }
+
+        private static void SetEdit(TMP_InputField f, string value, bool editable)
+        {
+            if (f == null) return;
+            f.SetTextWithoutNotify(value ?? "");   // 不要觸發 onEndEdit → 不會在「只是打開視窗」時寫一次檔
+            f.readOnly = !editable;
+            f.interactable = editable;
         }
 
         /// <summary>
@@ -917,6 +1062,8 @@ namespace Sdo.UI.Screens
             if (_cg == null || _closing) return;   // _closing:動畫期間 IsOpen 還是 true(見它的 doc),
                                                    // 不擋的話按住 ESC 會每幀重跑一次 PlayOut,框就永遠關不掉
             _closing = true;
+            // 打完字直接按 X 的話 onEndEdit 不一定來得及觸發 → 關窗時再存一次(沒改過就是寫回一樣的值)。
+            CommitProfileFields();
             // 🔴 角色**現在**就收(不等關窗動畫跑完):那尊是 3D 直接畫在畫面上的,框縮出去的途中它不會跟著縮,
             //    留到動畫結束才關的話會看到一個人孤零零浮在原地半秒。
             HideInfoAvatar();
@@ -955,7 +1102,7 @@ namespace Sdo.UI.Screens
         private void SetIdentity(string name, string levelLabel)
         {
             if (_idName != null) _idName.SetText(name);
-            if (_idLevel != null) _idLevel.text = FormatLevel(levelLabel);
+            if (_idLevel != null) _idLevel.SetText(FormatLevel(levelLabel));
         }
 
         /// <summary>
@@ -973,22 +1120,38 @@ namespace Sdo.UI.Screens
 
         /// <summary>
         /// 基本信息頁的值(看自己)。欄位標題全部烤在底圖上 → 這裡只填數字。
-        /// 這個重製版真正有的只有**家族**;天使等級 / TP / 經驗 / 魅力 / 幸運 / 榮譽 / 密友 / 社交
-        /// 都沒有那套系統 → 一律 0(使用者要求:沒資料也要顯示 0,不要留白)。
+        /// 這個重製版真正有的只有**家族**與**經驗值**(後者存在 profile.json,每局結算累加);
+        /// 天使等級 / TP / 魅力 / 幸運 / 榮譽 / 密友 / 社交都沒有那套系統 → 一律 0
+        /// (使用者要求:沒資料也要顯示 0,不要留白)。
         /// </summary>
         private void FillBasicSelf(UserProfile p)
         {
             _basicNote.gameObject.SetActive(false);
             _basicFamily.text = Or(ProfileFields.FamilyName(p));
-            _basicExp.text = "0%";
+            _basicTp.SetText("0/0");
             _basicOffer.text = "0";
             _basicIntimate.text = "0";
             _basicSocial.text = "0";
-            _basicLuck.text = "0";
-            _angelBar.fillAmount = 0f;
-            _expBar.fillAmount = 0f;
-            _weightBar.fillAmount = 0f;
+            _tpBar.fillAmount = 0f;
+            // 經驗值:真的資料 —— 存在 profile.json(每局結算由 ProfileManager.AddExperience 累加),
+            // 百分比走 ProfileFields.ExpPercent,與大廳右下那條紅色經驗條同一條式子。
+            SetExpBar(ProfileFields.ExpPercent(p));
+            FillEdits(p);   // 城市 / 即時通 / 年齡 / 星座:自己的那份,而且打得動
             FillFame(p != null ? p.fame : 0);
+        }
+
+        /// <summary>
+        /// 經驗值那一列:黃條 + 壓在上面的百分比。<paramref name="percent"/> 0..100。
+        ///
+        /// 🔴 百分比**無條件捨去、不帶小數**,與大廳那條經驗條同一個規則(見 <c>LobbyScreen.SetExpRate</c>):
+        ///    四捨五入會讓 99.6% 顯示成 100%,變成「條滿了卻還沒升級」。
+        /// </summary>
+        private void SetExpBar(float percent)
+        {
+            percent = Mathf.Clamp(percent, 0f, 100f);
+            if (_expBar != null) _expBar.fillAmount = percent * 0.01f;
+            if (_basicExp != null)
+                _basicExp.SetText(Mathf.FloorToInt(percent).ToString(CultureInfo.InvariantCulture) + "%");
         }
 
         /// <summary>
@@ -1029,14 +1192,16 @@ namespace Sdo.UI.Screens
         {
             _basicNote.gameObject.SetActive(false);
             _basicFamily.text = Or(who.Guild);
-            _basicExp.text = "0%";
+            _basicTp.SetText("0/0");
             _basicOffer.text = "0";
             _basicIntimate.text = "0";
             _basicSocial.text = "0";
-            _basicLuck.text = "0";
-            _angelBar.fillAmount = 0f;
-            _expBar.fillAmount = 0f;
-            _weightBar.fillAmount = 0f;
+            _tpBar.fillAmount = 0f;
+            // 🔴 看別人時經驗條是 0% —— 座位快照只帶得到 Id/名字/等級/家族,拿不到對方的經驗值。
+            //    **絕不能**退回讀 ProfileManager.Active(那會把自己的進度掛在別人名下,而且看起來完全正常)。
+            SetExpBar(0f);
+            // 看別人:那四格自己填的東西我們拿不到(座位快照只有 Id/名字/等級/家族)→ 空白而且打不動。
+            FillEdits(null);
             // 座位快照帶不到別人的知名度 → 當 0,也就是 LV 1 = 一顆星。
             // 與「沒資料也顯示 0 而不是留白」同一個原則:大廳那行同樣的人會顯示 LV 1 (0)。
             FillFame(0);
@@ -1230,7 +1395,9 @@ namespace Sdo.UI.Screens
 
         private static string Num(long n) => n.ToString("N0", CultureInfo.InvariantCulture);
 
-        private static string Pct(double v) => v.ToString("0.0", CultureInfo.InvariantCulture) + "%";
+        /// <summary>百分比 → 「54%」。🔴 **整數、不帶小數點**(使用者指定;官方實機那六條也是整數)。
+        /// 取整用**無條件捨去**不是四捨五入:99.6% 的命中率顯示成 100% 會被當成「整首全中」。</summary>
+        private static string Pct(double v) => Math.Floor(v).ToString("0", CultureInfo.InvariantCulture) + "%";
 
         // ---------------------------------------------------------------- 列
 
@@ -1268,13 +1435,15 @@ namespace Sdo.UI.Screens
         private sealed class RateRow
         {
             public RectTransform Root;
-            public TextMeshProUGUI Label;
-            public TextMeshProUGUI Value;
+            public OutlinedLabel Value;
             public Image Fill;
 
             /// <summary>
             /// 官方 SkillStat 的一條:ProgressBar 236×19(前景 PlayerInformationDlg65.an)+ 疊在上面的百分比數值。
             /// 🔴 **不畫標籤** —— 「勝率/命中率/…」那幾個字是烤在 SkillBg_man 背板圖上的,再畫一次會疊字。
+            /// 🔴 數值是**白色、置中、粗體 + 紅描邊**(使用者指定 #99042b)。以前是靠左的白字直接壓在條上,
+            ///    條是粉紅的 → 白字的筆畫邊緣糊進條裡;而且填到一半時數字有半邊落在空槽上、半邊落在條上,
+            ///    對比整個反過來。描邊一圈之後兩種底色下都讀得到,所以用 OutlinedLabel 而不是純 TMP。
             /// </summary>
             public static RateRow Create(RectTransform parent, string name, float x, float y)
             {
@@ -1287,9 +1456,10 @@ namespace Sdo.UI.Screens
                 r.Fill.fillMethod = Image.FillMethod.Horizontal;
                 r.Fill.fillOrigin = (int)Image.OriginHorizontal.Left;
 
-                // 官方那個數值是**白字、靠左、疊在條上**(x 比條多 7px),不是擺在右邊。
-                r.Value = UIKit.AddText(r.Root, "V", "", RateFont, ValueCol, TextAlignmentOptions.Left);
-                Place(r.Value.rectTransform, RateValDx, 0f, RateBarW - RateValDx, RateBarH);
+                // 建在條**之後** = 畫在它上面(UGUI 的兄弟順序就是繪製順序)。
+                r.Value = OutlinedLabel.Create(r.Root, "V", 0f, 0f, RateBarW, RateBarH, RateFont,
+                                               Color.white, RateEdge, RateEdgePx, true,
+                                               TextAlignmentOptions.Center);
 
                 r.Root.gameObject.SetActive(false);
                 return r;
@@ -1297,7 +1467,7 @@ namespace Sdo.UI.Screens
 
             public void Set(string label, double pct)
             {
-                Value.text = Pct(pct);
+                Value.SetText(Pct(pct));
                 Fill.fillAmount = Mathf.Clamp01((float)pct / 100f);
                 Root.gameObject.SetActive(true);
             }

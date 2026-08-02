@@ -188,8 +188,14 @@ namespace Sdo.UI.Screens
         // 放大鏡那顆(TopHouseX)拉開的下拉選單 —— 版位逐字取自官方 POPMENU.XML 的 Formal_Pop_Menu:
         // 五個項目在選單內的 (14, 13/39/65/91/117),每項 135×26,**pushed = normal**(官方只給兩態)。
         // 選單原點是靠右對齊算出來的:項目寬 135、右緣貼齊畫面 → 651;y 讓第一項落在按鈕列正下方 → 27。
+        //
+        // NEW筆那顆(TopRankX)拉開的是同一個 XML 裡的 Apply_Pop_Menu(舞台/商店/E模式小屋/游樂場)。
+        // 官方兩個 PopMenu 的 x/y **完全一樣**(都是 x="-135" y="0")→ 這裡共用 HallMenuX/HallMenuY
+        // 與同一組項目間距,只是項目少一列。
         private const float HallMenuX = 651f, HallMenuY = 27f;
         private const float HallMenuItemX = 14f, HallMenuRow0Y = 13f, HallMenuRowStep = 26f;
+        // Apply_Pop_Menu 裡那張 New.an 標籤(官方 <Label name="NewLabel" x="22" y="83">),疊在「E模式小屋」上。
+        private const float ApplyNewX = 22f, ApplyNewY = 83f;
 
         // 左下「當前」拉開的頻道選單 —— 逐字取自官方 LOBBYPOPMENU.XML 的 chatmodemenu (21,466)。
         private const float ChatMenuX = 21f, ChatMenuY = 466f;
@@ -249,7 +255,14 @@ namespace Sdo.UI.Screens
         private static readonly Color32 RoomNameColor = new Color32(0x82, 0x14, 0x38, 0xff);   // roomname
         // 房名的白邊厚度。官方實機那行字的邊相當厚(整個字看起來是「白描邊的粗體」)——
         // 1.2 太細、看起來只是普通粗體,使用者比對官方後回報「還是不夠粗」。2.2 才有官方那個份量。
-        private const float RoomNameEdgePx = 2.2f;
+        private const float RoomNameEdgePx = 1.5f;
+        // 🔴 白邊夠厚之後,**裡面那圈深紅字反而顯得太細**(使用者比對官方後回報)。原因是字重只有 TMP 的
+        //    faux-bold —— 執行期建的動態 CJK 圖集沒有真正的粗體字面,而官方那行字的字心明顯比 faux-bold 重。
+        //    所以再疊一圈**深紅色**的複本把字心撐開(OutlinedLabel 的 facePx),白邊會跟著外推同樣的量,
+        //    看得到的白邊仍然是 2.2 —— 只有字心變粗,外框厚度不變(使用者說外框已經夠厚了)。
+        // 🔴 **0.4 不是 0.8**:16 向的環是往**每個方向**長,0.8 等於整個字寬多 1.6px —— 12px 的字這樣
+        //    「短短屋」那種密筆畫會糊成一團(使用者回報「變成太厚」)。0.4 只把 faux-bold 補到官方那個字重。
+        private const float RoomNameFacePx = 0.05f;
         private static readonly Color32 SongColor = new Color32(0xed, 0xec, 0xa0, 0xff);       // roommusic
         private static readonly Color32 SelfNameColor = new Color32(0xf2, 0x86, 0x4b, 0xff);   // charname
         // 名字的白描邊(使用者要求)。官方 XML 只給得出顏色與 bold,描邊是那個引擎畫字時自己加的 ——
@@ -296,9 +309,10 @@ namespace Sdo.UI.Screens
         private Image _chatCaret;             // 自畫的輸入游標(TMP 內建的在這裡畫不出來,見 ConfigureChatInput)
         private readonly Vector3[] _caretCorners = new Vector3[4];   // 餵給 IME 候選視窗的座標暫存(每幀用,不要每次配置)
 
-        // 兩個下拉選單(右上角功能選單 / 左下角頻道選單)。都是 lazily build、再按一次收起來,
-        // 而且**互斥** —— 開一個就把另一個收掉(照 RoomScreen 的 chatmode ↔ expression 那個模式)。
-        private RectTransform _hallMenu, _chatMenu, _exprMenu;
+        // 四個下拉選單(右上角功能選單 / 右上角 NEW筆的舞台選單 / 左下角頻道選單 / 表情盤)。
+        // 都是 lazily build、再按一次收起來,而且**互斥** —— 開一個就把其它收掉
+        // (照 RoomScreen 的 chatmode ↔ expression 那個模式)。
+        private RectTransform _hallMenu, _applyMenu, _chatMenu, _exprMenu;
         private int _exprPage;
         private Button _chatChannelBtn;
         private Image _chatChannelImg;
@@ -412,35 +426,49 @@ namespace Sdo.UI.Screens
             // 右上角那排圓鈕(版位與圖案的對照見上方常數區)。實機還藏著拼圖/彩虹/BOSS/權益那幾顆
             // (要開活動才亮),不放。
             //
-            // 🔴 六角與 NEW筆 這個重製版沒有對應功能 → 鈕照擺、**按了安靜地什麼都不做**(handler 傳 null)。
+            // 🔴 六角這個重製版沒有對應功能 → 鈕照擺、**按了安靜地什麼都不做**(handler 傳 null)。
             //    以前這裡會彈一句「這個功能還沒做」的 Toast,使用者要求大廳一律不要 Toast。
             TopIcon("Wedding", "hall23", "hall24", "hall25", TopWeddingX, null);
             // 放大鏡 = 官方那顆拉開功能選單的鈕(家族/奖励兑换/情侣密友证/排行榜/设置),見 BuildHallMenu。
             TopIcon("MyHouse", "hall10", "hall11", "hall12", TopHouseX, ToggleHallMenu);
-            TopIcon("Rank", "hall13", "hall14", "hall15", TopRankX, null);
+            // NEW筆 = 官方 Apply_Pop_Menu 那顆(舞台/商店/E模式小屋/游乐场),見 BuildApplyMenu。
+            TopIcon("Rank", "hall13", "hall14", "hall15", TopRankX, ToggleApplyMenu);
 
             // returnlubbysel(回頻道選擇)= 我們的「登出」:斷線退回單機並回選角色畫面。
             TopIcon("Logout", "hall16", "hall17", "hall18", TopLogoutX, OnLogout);
         }
 
-        // ---- 右上角放大鏡拉開的功能選單(官方 POPMENU.XML 的 Formal_Pop_Menu) ----
+        // ---- 右上角兩顆鈕拉開的下拉選單(官方 POPMENU.XML 的 Formal_Pop_Menu / Apply_Pop_Menu) ----
 
-        /// <summary>五個項目。normal / hover 兩態(官方沒給 pushed,pushed 直接用 normal)。
-        /// 只有「设置」接得上東西(與房間同一個 OptionDlg);其餘四項是官方有、這裡還沒做的功能 → handler 為 null。</summary>
-        private static readonly string[,] HallMenuItems =
+        /// <summary>放大鏡那顆的五個項目。
+        /// 🔴 **只列 normal 圖**:官方每項還有一張 xxxPopMenu2 的 hover 圖(整條底色換成灰的),
+        ///    使用者要求「滑鼠滑過的時候底圖不要變色」→ 三態一律餵 normal,滑過只剩音效回饋。
+        /// 只有「设置」接得上東西(與房間同一個 OptionDlg);其餘四項是官方有、這裡還沒做的功能 → 按了只收選單。</summary>
+        private static readonly string[] HallMenuItems =
         {
-            { "FamilyPopMenu1",  "FamilyPopMenu2"  },   // 家族
-            { "ChangePopMenu1",  "ChangePopMenu2"  },   // 奖励兑换
-            { "WeddingPopMenu1", "WeddingPopMenu2" },   // 情侣密友证
-            { "RankPopMenu1",    "RankPopMenu2"    },   // 排行榜
-            { "SetPopMenu1",     "SetPopMenu2"     },   // 设置
+            "FamilyPopMenu1",    // 家族
+            "ChangePopMenu1",    // 奖励兑换
+            "WeddingPopMenu1",   // 情侣密友证
+            "RankPopMenu1",      // 排行榜
+            "SetPopMenu1",       // 设置
+        };
+
+        /// <summary>NEW筆那顆的四個項目(官方 Apply_Pop_Menu)。同樣只列 normal 圖(見 <see cref="HallMenuItems"/>)。
+        /// 「商店」接到商城(<see cref="Nav.OpenShop"/>);其餘三項這裡還沒做 → 按了只收選單。</summary>
+        private static readonly string[] ApplyMenuItems =
+        {
+            "StagePopMenu1",     // 舞台
+            "ShoppingPopMenu1",  // 商店 → 商城
+            "HousePopMenu1",     // E模式小屋
+            "PlayingPopMenu1",   // 游乐场
         };
 
         private void ToggleHallMenu()
         {
             if (_hallMenu == null) BuildHallMenu();
             bool show = !_hallMenu.gameObject.activeSelf;
-            HideChatMenu();          // 三個選單互斥
+            HideApplyMenu();         // 四個選單互斥
+            HideChatMenu();
             HideExpressionMenu();
             _hallMenu.gameObject.SetActive(show);
         }
@@ -450,34 +478,72 @@ namespace Sdo.UI.Screens
             if (_hallMenu != null) _hallMenu.gameObject.SetActive(false);
         }
 
+        private void ToggleApplyMenu()
+        {
+            if (_applyMenu == null) BuildApplyMenu();
+            bool show = !_applyMenu.gameObject.activeSelf;
+            HideHallMenu();          // 四個選單互斥
+            HideChatMenu();
+            HideExpressionMenu();
+            _applyMenu.gameObject.SetActive(show);
+        }
+
+        private void HideApplyMenu()
+        {
+            if (_applyMenu != null) _applyMenu.gameObject.SetActive(false);
+        }
+
         private void BuildHallMenu()
         {
-            _hallMenu = UIKit.NewRect(Root, "hallmenu");
-            PlaceTopLeft(_hallMenu, HallMenuX, HallMenuY, 163f, 143f);   // 14+135 寬、13+5×26 高
-
-            for (int i = 0; i < HallMenuItems.GetLength(0); i++)
+            // 最後一項是「设置」→ 開房間那個 OptionDlg;其餘四項按了只把選單收起來(沒有功能)。
+            _hallMenu = BuildPopMenu("hallmenu", HallMenuItems, i =>
             {
-                // 🔴 走 <see cref="LobbyArt.AnSolo"/> 而**不是** AnSoloAA:官方的 PopMenu 沒有背板
-                //    (XML 寫 background="empty.an"),那個「整片粉色選單框」其實是五條 135×26 的項目圖
-                //    **無縫疊起來**的效果。AnSoloAA 會把外圈的透明/低 alpha 邊裁掉 → 每條變窄一點,
-                //    疊起來就出現一條條裂縫、整體還會位移(使用者回報「沒把官方底圖做出來」)。
-                //    AnSolo 是 pad:0 的自貼圖裁切,尺寸與原圖完全一致 → 條與條才接得起來。
-                // 官方項目沒有 pushed 態 → 三個參數餵同一組(normal/hover/normal)。
-                var b = UIKit.AddSpriteButton(_hallMenu, "hallmenu" + i,
-                    LobbyArt.AnSolo(HallMenuItems[i, 0]), LobbyArt.AnSolo(HallMenuItems[i, 1]),
-                    LobbyArt.AnSolo(HallMenuItems[i, 0]),
-                    HallMenuItemX, HallMenuRow0Y + i * HallMenuRowStep);
+                HideHallMenu();
+                if (i == HallMenuItems.Length - 1) Nav.OpenSettings?.Invoke();
+            });
+        }
+
+        private void BuildApplyMenu()
+        {
+            // 第二項是「商店」→ 商城(與房間衣櫥旁那顆同一個 ShopScreen);其餘三項按了只把選單收起來。
+            _applyMenu = BuildPopMenu("applymenu", ApplyMenuItems, i =>
+            {
+                HideApplyMenu();
+                if (i == 1) Nav.OpenShop?.Invoke();
+            });
+            // 官方在「E模式小屋」那條上疊一張 New.an(<Label name="NewLabel" x="22" y="83">)。
+            // raycast 預設關掉 → 不會擋住底下那條的點擊。
+            UIKit.AddSprite(_applyMenu, "NewLabel", LobbyArt.AnSolo("New"), ApplyNewX, ApplyNewY);
+        }
+
+        /// <summary>
+        /// 官方 PopMenu 的共用建構:一疊 135×26 的項目圖,**沒有背板**(XML 寫 background="empty.an")——
+        /// 畫面上那片「整片粉色選單框」其實就是這些條無縫疊起來的效果。
+        ///
+        /// 🔴 走 <see cref="LobbyArt.AnSolo"/> 而**不是** AnSoloAA:AnSoloAA 會把外圈的透明/低 alpha 邊裁掉
+        ///    → 每條變窄一點,疊起來就出現一條條裂縫、整體還會位移(使用者回報「沒把官方底圖做出來」)。
+        ///    AnSolo 是 pad:0 的自貼圖裁切,尺寸與原圖完全一致 → 條與條才接得起來。
+        ///
+        /// 三態(normal/hover/pushed)全餵同一張:官方沒給 pushed,而 hover 那張使用者不要(底圖不變色)。
+        /// </summary>
+        private RectTransform BuildPopMenu(string name, string[] items, System.Action<int> onPick)
+        {
+            var menu = UIKit.NewRect(Root, name);
+            PlaceTopLeft(menu, HallMenuX, HallMenuY,
+                         HallMenuItemX + 135f, HallMenuRow0Y + items.Length * HallMenuRowStep);
+
+            for (int i = 0; i < items.Length; i++)
+            {
+                var art = LobbyArt.AnSolo(items[i]);
+                var b = UIKit.AddSpriteButton(menu, name + i, art, art, art,
+                                              HallMenuItemX, HallMenuRow0Y + i * HallMenuRowStep);
                 UiHoverSfx.Attach(b, UiSfx.Menufloat);
                 UiSfx.AttachClick(b);
-                // 最後一項是「设置」→ 開房間那個 OptionDlg;其餘四項按了只把選單收起來(沒有功能)。
-                bool isSettings = i == HallMenuItems.GetLength(0) - 1;
-                b.onClick.AddListener(() =>
-                {
-                    HideHallMenu();
-                    if (isSettings) Nav.OpenSettings?.Invoke();
-                });
+                int idx = i;
+                b.onClick.AddListener(() => onPick(idx));
             }
-            _hallMenu.gameObject.SetActive(false);
+            menu.gameObject.SetActive(false);
+            return menu;
         }
 
         /// <summary>右上角那排 34px 圓盤鈕:圓形去白邊 + 命中判定貼齊可見圓(透明四角不吃點擊)。</summary>
@@ -574,9 +640,11 @@ namespace Sdo.UI.Screens
             //    用 OutlinedLabel(與房間畫面的頭上名字同一套描邊)才做得出來。
             row.Name = OutlinedLabel.Create(root, "Name", NameX, NameY, NameW, NameH, 12f,
                                             RoomNameColor, Color.white, RoomNameEdgePx, true,
-                                            TextAlignmentOptions.Midline);
+                                            TextAlignmentOptions.Midline, facePx: RoomNameFacePx);
             // 房名是玩家自訂的,長的話會整條蓋過右邊的圖示 → 截斷加省略號(官方的欄寬也是硬邊界)。
-            row.Name.Face.overflowMode = TextOverflowModes.Ellipsis;
+            // 🔴 走 SetOverflow(**所有複本一起**)而不是只設 Face:只截 face 的話,描邊與字心那兩圈複本
+            //    還是會把 face 已經切掉的字畫出來 —— 變成一圈沒有臉的框漏在欄位外面(見 SetOverflow 的註解)。
+            row.Name.SetOverflow(TextOverflowModes.Ellipsis);
 
             row.CountD = UIKit.AddSprite(root, "Count", null, CountX, CountY);
             row.Slash = UIKit.AddSprite(root, "Slash", An("slash"), SlashX, CountY);
@@ -770,8 +838,9 @@ namespace Sdo.UI.Screens
             _listGen++;   // 還在路上的 roomList 回呼作廢
             Unsubscribe();
             HideAvatar();
-            // 兩個下拉選單不能掛著離開:回來時它們會還開著,而且蓋在剛滑入的房卡上。
+            // 下拉選單不能掛著離開:回來時它們會還開著,而且蓋在剛滑入的房卡上。
             HideHallMenu();
+            HideApplyMenu();
             HideChatMenu();
             HideExpressionMenu();
             FlushAvatarTuning();   // 調校值真的落到磁碟(改的當下只寫進 PlayerPrefs 的記憶體副本)
@@ -1337,7 +1406,8 @@ namespace Sdo.UI.Screens
         {
             if (_chatMenu == null) BuildChatMenu();
             bool show = !_chatMenu.gameObject.activeSelf;
-            HideHallMenu();          // 三個選單互斥
+            HideHallMenu();          // 四個選單互斥
+            HideApplyMenu();
             HideExpressionMenu();
             _chatMenu.gameObject.SetActive(show);
         }
@@ -1374,8 +1444,15 @@ namespace Sdo.UI.Screens
         /// 我們沒有;硬把訊息標成別的頻道只會變成「送出去自己看不到」。
         /// 密語仍然走 <c>/w 名字</c>,不佔頻道。
         /// </summary>
+        /// <summary>
+        /// 切聊天頻道。**與房間同一套動作**(見 <c>RoomScreen.SetChatChannel</c>)——
+        /// 以前這裡只換了鈕的圖,所以按下家族/好友之後畫面上什麼都沒發生:聊天區還是全部訊息、
+        /// 輸入框也沒有進家族模式(使用者回報「按了沒有跳轉、也沒有跳到家族頻道」)。
+        /// 少的是這兩件:**依頻道重畫聊天區**、**進家族時自動填「/家族 」前綴**。
+        /// </summary>
         private void SetChatChannel(ChatChannel channel)
         {
+            var prev = _chatChannel;
             _chatChannel = channel;
             ChatChannelArt(channel, out var n, out var h, out var p, out bool fromRoom);
             if (fromRoom)
@@ -1390,7 +1467,49 @@ namespace Sdo.UI.Screens
             }
             else Reskin(_chatChannelBtn, _chatChannelImg, n, h, p);
             HideChatMenu();
+            RebuildChat();                        // 這一頻道要看的那些訊息(見 ShouldShowChatMessage)
+            SyncChannelInputPrefix(prev, channel);
             if (_chatInput != null) _chatInput.ActivateInputField();
+        }
+
+        /// <summary>
+        /// 換頻道時同步輸入框的指令前綴:進家族 → 自動填「/家族 」,游標接在後面。
+        /// **離開家族不清掉** —— 「當前」是綜合台,留著前綴讓人接著打家族訊息(明打 /家族 一樣送家族)。
+        /// 草稿不是空的就不動它:蓋掉使用者打到一半的字比少一個前綴糟得多。
+        /// (房間那邊同名方法還要處理頭上泡與回顯,大廳沒有那兩樣東西,所以只剩這一段。)
+        /// </summary>
+        private void SyncChannelInputPrefix(ChatChannel from, ChatChannel to)
+        {
+            if (_chatInput == null || from == to || to != ChatChannel.Family) return;
+            if (!string.IsNullOrWhiteSpace(_chatInput.text)) return;
+            _chatInput.text = RoomChatCommand.GuildCommandPrefix;
+            _chatInput.ActivateInputField();
+            _chatInput.MoveTextEnd(false);
+        }
+
+        /// <summary>
+        /// 這一則訊息在**目前這個頻道**看不看得到 —— 規則逐條照房間那份
+        /// (<c>RoomScreen.ShouldShowChatMessage</c>),差別只有作用域:那邊留房間的、這邊留大廳的。
+        ///
+        /// 「當前」= 綜合台:家族、密語、系統、一般聊天全都看得到;家族/好友/回覆則只看各自那一類。
+        /// </summary>
+        private bool ShouldShowChatMessage(ChatMessage m)
+        {
+            if (m == null) return false;
+            bool all = _chatChannel == ChatChannel.Current;
+
+            // 這三種是本機產生的提示行/家族訊息,**不看作用域**(在房間打的家族話回大廳也該看得到)。
+            if (m.Notice == ChatNotice.SelfTalk) return all || _chatChannel == ChatChannel.Friend;
+            if (m.Notice == ChatNotice.NoGuild) return all || _chatChannel == ChatChannel.Family;
+            if (m.Guild) return all || _chatChannel == ChatChannel.Family;
+            // 密語跨大廳/房間,出現在「當前」與「好友」。
+            if (m.Whisper != WhisperKind.None) return all || _chatChannel == ChatChannel.Friend;
+
+            // 其餘:進出舞台廣播只屬房間;一般/系統訊息只留大廳作用域(隔離房間與別房的話)。
+            if (m.Stage != StageEventKind.None) return false;
+            if (m.Scope != ChatScope.Lobby) return false;
+            if (m.System) return true;
+            return all || m.Channel == _chatChannel;
         }
 
         private static void ChatChannelArt(ChatChannel channel, out string nrm, out string hov, out string psh,
@@ -1413,6 +1532,7 @@ namespace Sdo.UI.Screens
             if (_exprMenu == null) BuildExpressionMenu();
             bool show = !_exprMenu.gameObject.activeSelf;
             HideHallMenu();
+            HideApplyMenu();
             HideChatMenu();
             _exprMenu.gameObject.SetActive(show);
             if (show) RebuildExpressionMenu();   // 換過頁之後再打開要回到當下那一頁的內容
@@ -1787,10 +1907,10 @@ namespace Sdo.UI.Screens
             // (以前這一格放的是命中率,那是照著一段錯註解擺的;命中率在個人資料頁本來就有。)
             _selfFame.text = p != null ? FameLevel.Label(p.fame) : "";
 
-            // 經驗值:這個重製版**沒有經驗系統**(UserProfile 裡連欄位都沒有,等級是 config.ini 給的一個字串),
-            // 所以百分比是 0.0%、紅條是空的 —— 同愛慕值/金葉子的處理:版位與素材照官方擺滿,值不假造。
-            // 真接上經驗時,把這裡換成 SetExpRate(本級已得 / 本級所需 * 100) 就好,其餘不用動。
-            SetExpRate(0f);
+            // 經驗值:每局結算加進 profile.json(ProfileManager.AddExperience),這裡只是把「本級已得 / 本級所需」
+            // 換成百分比。式子在 ProfileFields.ExpPercent —— 個人資料頁那條經驗條讀的是同一個入口,
+            // 兩個地方對同一份存檔算出不同的百分比是不能接受的。
+            SetExpRate(ProfileFields.ExpPercent(p));
         }
 
         /// <summary>
@@ -1838,7 +1958,11 @@ namespace Sdo.UI.Screens
 
         private void AddChatLine(ChatMessage m)
         {
-            if (m == null) return;
+            // 🔴 看得看不到由 <see cref="ShouldShowChatMessage"/> 一處決定(頻道 + 作用域),
+            //    不要在這裡另外加條件 —— 那正是以前「切了家族但畫面沒變」的成因:
+            //    過濾散在畫圖的路上,切頻道時沒有任何一條會重跑。
+            if (!ShouldShowChatMessage(m)) return;
+
             // 🔴 大廳聊天區**整區白字**(使用者要求)—— 密語的青、系統訊息的金、名字的藍全部拿掉。
             //    所以這裡一律不帶 <color> 標籤:OutlinedLabel.CreateRich 的 face 預設就是白色,
             //    只有 <color> 會蓋過它。要再分色的話改的是這裡,不是 OutlinedLabel。
@@ -1851,14 +1975,13 @@ namespace Sdo.UI.Screens
                 UIKit.Layout(w.gameObject, ChatLineH);
                 return;
             }
-            // 進出舞台廣播只屬房間;一般/系統訊息只顯示大廳作用域(隔離房間訊息)。
-            if (m.Stage != StageEventKind.None) return;
-            if (m.Scope != ChatScope.Lobby) return;
-            string line = m.System ? Esc(m.Text) : Esc(m.Sender) + ": " + Esc(m.Text);
+            // 名字包成可點的 link → 點了把「[名字] 」塞進打字框密語(與房間同一套)。
+            string line = m.System ? Esc(m.Text) : WhisperNameLink(m) + ": " + Esc(m.Text);
             // 🔴 聊天行要**粗體 + 描邊**(使用者要求,官方實機那些字都有一圈深邊):
             //    這一區的底是星空與角色,細字直接壓上去會有整段讀不清。
             var t = OutlinedLabel.CreateRich(_chatContent, "line", line, ChatFontSize, ChatEdgeCol,
                                              ChatEdgePx, ChatEdgeDirs, true, TextAlignmentOptions.TopLeft);
+            EnableWhisperNameClicks(t, m);
             UIKit.Layout(t.gameObject, ChatLineH);
         }
 
@@ -1885,13 +2008,89 @@ namespace Sdo.UI.Screens
             if (_chatClip != null) _chatClip.Refresh();
         }
 
+        /// <summary>
+        /// 送出打好的那句話。
+        /// 🔴 **一定要把 <see cref="_chatChannel"/> 帶下去** —— 以前只呼叫 <c>Send(txt)</c>,
+        ///    參數用預設的「當前」,所以左下角那顆頻道鈕切到家族/好友之後**完全沒有作用**
+        ///    (使用者回報「家族那些功能」沒帶過來)。房間那邊本來就是帶頻道送的。
+        /// </summary>
         private void SendChat()
         {
+            if (_chatInput == null || Ctx == null || Ctx.Chat == null) return;
             var txt = _chatInput.text;
             if (string.IsNullOrWhiteSpace(txt)) return;
-            Ctx.Chat.Send(txt);
+            Ctx.Chat.Send(txt, _chatChannel);
             _chatInput.text = "";
             _chatInput.ActivateInputField();
+        }
+
+        // ---- 點聊天區的人名 → 密語(與房間同一套:<link="w|名字">) ----
+
+        private const string WhisperLinkId = "w|";
+
+        /// <summary>別人講的那行,名字包成可點的 TMP link;自己說的話不用(不能對自己密語)。</summary>
+        private string WhisperNameLink(ChatMessage m)
+        {
+            string name = Esc(m.Sender);
+            if (m.Local || string.IsNullOrEmpty(m.Sender)) return name;
+            return "<link=\"" + WhisperLinkId + name + "\">" + name + "</link>";
+        }
+
+        /// <summary>讓這一行吃得到點擊,並把點到的 link 解回名字。</summary>
+        private void EnableWhisperNameClicks(OutlinedLabel label, ChatMessage m)
+        {
+            if (label == null || label.Face == null || m == null || m.Local || string.IsNullOrEmpty(m.Sender)) return;
+            var t = label.Face;
+            t.raycastTarget = true;
+            var h = t.gameObject.AddComponent<ChatWhisperLinkHandle>();
+            h.Owner = this;
+            h.Text = t;
+        }
+
+        private void OnChatWhisperLinkClick(TextMeshProUGUI text, PointerEventData eventData)
+        {
+            if (text == null || eventData == null) return;
+            var canvas = text.canvas;
+            Camera cam = (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay) ? canvas.worldCamera : null;
+            int idx = TMP_TextUtilities.FindIntersectingLink(text, eventData.position, cam);
+            if (idx < 0 || idx >= text.textInfo.linkCount) return;
+            string id = text.textInfo.linkInfo[idx].GetLinkID();
+            if (string.IsNullOrEmpty(id) || !id.StartsWith(WhisperLinkId, System.StringComparison.Ordinal)) return;
+            InsertWhisperTarget(id.Substring(WhisperLinkId.Length));
+        }
+
+        /// <summary>
+        /// 把「[名字] 」放到打字框最前面 —— 送出時 <c>RoomChatCommand.TryParseWhisper</c> 會把它解成密語。
+        /// 已經打到一半的內容留著(若已有舊的 [名字] 前綴就換掉,不會疊成兩個)。
+        ///
+        /// 🔴 只有「當前 / 好友」頻道才插入,與房間同一條規則:家族/回覆頻道有自己的前綴語意,
+        ///    插進去會變成「[名字] /家族 …」那種誰也送不出去的東西。
+        /// </summary>
+        private void InsertWhisperTarget(string name)
+        {
+            if (_chatInput == null || string.IsNullOrWhiteSpace(name)) return;
+            if (_chatChannel != ChatChannel.Current && _chatChannel != ChatChannel.Friend)
+            {
+                _chatInput.ActivateInputField();
+                return;
+            }
+            string draft = _chatInput.text ?? "";
+            string body = RoomChatCommand.TryParseWhisper(draft, out _, out var existing) ? existing : draft.Trim();
+            string prefix = "[" + name.Trim() + "] ";
+            _chatInput.text = string.IsNullOrEmpty(body) ? prefix : prefix + body;
+            _chatInput.ActivateInputField();
+            _chatInput.MoveTextEnd(false);   // 游標擺到結尾,接著打內容
+        }
+
+        private sealed class ChatWhisperLinkHandle : MonoBehaviour, IPointerClickHandler
+        {
+            public LobbyScreen Owner;
+            public TextMeshProUGUI Text;
+
+            public void OnPointerClick(PointerEventData eventData)
+            {
+                if (Owner != null) Owner.OnChatWhisperLinkClick(Text, eventData);
+            }
         }
 
         // ================================================================ 小工具
@@ -1915,6 +2114,9 @@ namespace Sdo.UI.Screens
             var btn = UIKit.AddSpriteButton(Root, name, res(normal), res(hover), res(pushed), x, y);
             if (onClick != null) btn.onClick.AddListener(onClick);
             UiSfx.AttachClick(btn);
+            // 滑過大廳的鈕 → SE\Buttonfloat.wav(與房間那排鈕同一個音,使用者要求大廳也要有)。
+            // 選單項目不走這條(它們自己掛 Menufloat,見 BuildPopMenu)。
+            UiHoverSfx.Attach(btn, UiSfx.ButtonFloat);
             return btn;
         }
 

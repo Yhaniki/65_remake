@@ -24,6 +24,18 @@ namespace Sdo.Settings
             return level >= MaxLevel ? 0 : PerLevel * level;
         }
 
+        /// <summary>目前等級內的經驗進度(0..100)：<c>exp / ExpToNext(level) × 100</c>。給大廳那條紅色經驗條與
+        /// 個人資料頁的經驗列共用 —— 兩個地方對同一份存檔算出不同的百分比是不能接受的。
+        /// 滿級（<see cref="ExpToNext"/> = 0）回 **100**：沒有下一級可跑，條收滿比歸零合理（歸零看起來像「掉等」）。
+        /// 純函式。</summary>
+        public static float Percent(int level, int exp)
+        {
+            int need = ExpToNext(level);
+            if (need <= 0) return 100f;                    // 滿級
+            if (exp <= 0) return 0f;
+            return exp >= need ? 100f : exp * 100f / need;  // exp ≥ need 只會在存檔被手改時出現（Grant 會先升等）
+        }
+
         /// <summary>等級夾進 1..<see cref="MaxLevel"/>。純函式。</summary>
         public static int Clamp(int level)
             => level < MinLevel ? MinLevel : (level > MaxLevel ? MaxLevel : level);

@@ -39,6 +39,22 @@ namespace Sdo.Settings
         /// <summary>「LV:11」這種顯示字串;等級留空時回空字串(呼叫端據此決定接不接在名字後面)。</summary>
         public static string LevelLabel(UserProfile p) => Sdo.Settings.PlayerLevel.Label(PlayerLevel(p));
 
+        // ---- 經驗值。存在角色自己的 profile.json(UserProfile.exp,每局結算由 ProfileManager.AddExperience 累加),
+        //      下面三個是**給外面顯示用**的入口:大廳右下的紅色經驗條、個人資料頁「經驗值」那一列。
+        //      🔴 等級一定要走 PlayerLevelValue(覆寫 → Default 那條路),不要直接讀 p.playerLevel ——
+        //         分母(升下一級所需)是等級的函數,兩邊取的等級不一樣,條就會與實際進度對不起來。
+
+        /// <summary>目前等級內累積的經驗值(壞資料一律當 0)。</summary>
+        public static int Exp(UserProfile p) => p == null || p.exp < 0 ? 0 : p.exp;
+
+        /// <summary>升下一級還需要多少經驗(滿級 → 0)。與 <see cref="Exp"/> 湊成「x / y」那種顯示。</summary>
+        public static int ExpToNext(UserProfile p)
+            => Sdo.Settings.PlayerLevel.ExpToNext(PlayerLevelValue(p));
+
+        /// <summary>目前等級內的經驗進度 0..100(滿級 → 100)。大廳那條經驗條與個人資料頁共用同一條式子。</summary>
+        public static float ExpPercent(UserProfile p)
+            => Sdo.Settings.PlayerLevel.Percent(PlayerLevelValue(p), Exp(p));
+
         /// <summary>把這個角色的等級設成 <paramref name="level"/>(打歌升等用)。會豎起覆寫旗標 —— 旗標是**整組**的,
         /// 所以順手把「目前生效的」家族值一起寫進去,不然家族會從「吃 Default」變成「刻意留空 = 不顯示」。
         /// 呼叫端負責 <c>ProfileManager.Save()</c>。</summary>

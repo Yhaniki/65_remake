@@ -15,16 +15,23 @@ namespace Sdo.UI.Util
     /// The edge is a 16-direction ring (8 showed scalloped notches once fullscreen magnified the offsets to
     /// 2–3 physical px), and each offset's x is divided by the 4:3→screen stretch anisotropy so the ring
     /// thickness looks uniform under the non-uniform Stretch mode (re-applied on resolution/mode change).
+    ///
+    /// The same trick thickens the FACE: pass <c>facePx</c> to <see cref="Create"/> and a second ring is stacked
+    /// in the face colour in front of the edge ring, growing the coloured core without thinning the edge.
     /// </summary>
     public sealed class OutlinedLabel : MonoBehaviour
     {
         private TextMeshProUGUI _face;
-        private TextMeshProUGUI[] _edges;
-        private float _edgePx;
+        /// <summary>Every offset copy behind the face: the edge-coloured ring, plus (when <c>facePx</c> &gt; 0) a
+        /// face-coloured ring drawn in front of it that thickens the glyph core. Same text, same tracking, same
+        /// overflow — only the colour and the offset differ, so they are kept in one array.</summary>
+        private TextMeshProUGUI[] _copies;
+        /// <summary>Per-copy offset in design px (direction × that ring's radius). Re-compensated for the
+        /// horizontal stretch every time the resolution/aspect mode changes.</summary>
+        private Vector2[] _offsets;
         private float _trackEm;              // 想收緊的字距(em);實際收多少每次 SetText 重算 → ApplyTracking
         private int _lastW, _lastH;
         private AspectMode _lastMode;
-        private Vector2[] _dirs = Dirs16;    // edge-copy directions (Create=16-ring; CreateRich picks its own count)
 
         /// <summary>The front-face text (read-only access for callers that need the TMP itself).</summary>
         public TextMeshProUGUI Face => _face;
@@ -54,10 +61,16 @@ namespace Sdo.UI.Util
         /// <param name="trackEm">Letter-spacing tightening ASKED FOR, as a fraction of an em (0 = natural spacing,
         /// glyphs never distort). How much actually gets applied is re-derived from the string on every
         /// <see cref="SetText"/> so no two glyphs' ink touches — see <see cref="TextTracking"/>.</param>
+        /// <param name="facePx">Thicken the FACE by this many px (0 = the glyph's natural weight), by stacking a
+        /// second ring of copies IN the face colour in front of the edge ring. The edge ring is pushed out by the
+        /// same amount, so the visible edge stays exactly <paramref name="edgePx"/> thick and only the coloured
+        /// core grows. This is the knob for "the outline is thick enough but the dark letters inside are too thin":
+        /// TMP's faux-bold is the only weight a runtime-built dynamic CJK atlas has, and against a 2px+ ring it is
+        /// not enough — the official client's letters have a visibly heavier core than plain bold.</param>
         public static OutlinedLabel Create(Transform parent, string name, float x, float y, float w, float h,
             float size, Color32 face, Color32 edge, float edgePx, bool bold,
             TextAlignmentOptions align = TextAlignmentOptions.Center,
-            float glyphScaleX = 1f, float glyphScaleY = 1f, float trackEm = 0f)
+            float glyphScaleX = 1f, float glyphScaleY = 1f, float trackEm = 0f, float facePx = 0f)
         {
             var holder = UIKit.NewRect(parent, name);
             holder.anchorMin = holder.anchorMax = new Vector2(0f, 1f);
@@ -71,12 +84,23 @@ namespace Sdo.UI.Util
             var glyphScale = new Vector3(glyphScaleX, glyphScaleY, 1f);
 
             var ol = holder.gameObject.AddComponent<OutlinedLabel>();
-            ol._edgePx = edgePx;
             ol._trackEm = trackEm;
-            ol._dirs = Dirs16;
-            ol._edges = new TextMeshProUGUI[Dirs16.Length];
-            for (int i = 0; i < Dirs16.Length; i++)           // edges first → they sit BEHIND the face (UGUI sibling order)
-                ol._edges[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale);
+
+            if (facePx < 0f) facePx = 0f;
+            int core = facePx > 0f ? Dirs16.Length : 0;
+            ol._copies = new TextMeshProUGUI[Dirs16.Length + core];
+            ol._offsets = new Vector2[ol._copies.Length];
+            // Build order IS draw order (UGUI sibling order): edge ring → face-coloured core ring → face on top.
+            for (int i = 0; i < Dirs16.Length; i++)
+            {
+                ol._copies[i] = Make(holder, "Edge" + i, size, edge, bold, align, glyphScale);
+                ol._offsets[i] = Dirs16[i] * (edgePx + facePx);   // pushed out so the visible ring stays edgePx thick
+            }
+            for (int i = 0; i < core; i++)
+            {
+                ol._copies[Dirs16.Length + i] = Make(holder, "Core" + i, size, face, bold, align, glyphScale);
+                ol._offsets[Dirs16.Length + i] = Dirs16[i] * facePx;
+            }
             ol._face = Make(holder, "Face", size, face, bold, align, glyphScale);
             ol.ApplyEdgeOffsets(true);
             return ol;
@@ -116,12 +140,15 @@ namespace Sdo.UI.Util
         {
             var holder = UIKit.NewRect(parent, name);
             var ol = holder.gameObject.AddComponent<OutlinedLabel>();
-            ol._edgePx = edgePx;
-            ol._dirs = NameplateMetrics.Ring(1f, Mathf.Max(1, dirs));
-            ol._edges = new TextMeshProUGUI[ol._dirs.Length];
+            var ring = NameplateMetrics.Ring(1f, Mathf.Max(1, dirs));
+            ol._copies = new TextMeshProUGUI[ring.Length];
+            ol._offsets = new Vector2[ring.Length];
             string edgeText = StripColorTags(rich);
-            for (int i = 0; i < ol._dirs.Length; i++)         // edges first → behind the face (UGUI sibling order)
-                ol._edges[i] = MakeRich(holder, "Edge" + i, edgeText, size, edge, wrap, align);
+            for (int i = 0; i < ring.Length; i++)             // edges first → behind the face (UGUI sibling order)
+            {
+                ol._copies[i] = MakeRich(holder, "Edge" + i, edgeText, size, edge, wrap, align);
+                ol._offsets[i] = ring[i] * edgePx;
+            }
             ol._face = MakeRich(holder, "Face", rich, size, Color.white, wrap, align);   // <color> tags override white where present
             ol.ApplyEdgeOffsets(true);
             return ol;
@@ -144,16 +171,16 @@ namespace Sdo.UI.Util
         /// ring stays visually uniform. Runs once per resolution/mode change (cheap int check per frame).</summary>
         private void ApplyEdgeOffsets(bool force)
         {
-            if (_edges == null) return;
+            if (_copies == null) return;
             if (!force && Screen.width == _lastW && Screen.height == _lastH && AspectController.Mode == _lastMode) return;
             _lastW = Screen.width; _lastH = Screen.height; _lastMode = AspectController.Mode;
 
             float ax = NameplateMetrics.AnisotropyX(Screen.width, Screen.height, AspectController.ContentRect);
-            for (int i = 0; i < _edges.Length; i++)
+            for (int i = 0; i < _copies.Length; i++)
             {
-                if (_edges[i] == null) continue;
-                var rt = _edges[i].rectTransform;
-                Vector2 o = NameplateMetrics.Compensate(_dirs[i] * _edgePx, ax);
+                if (_copies[i] == null) continue;
+                var rt = _copies[i].rectTransform;
+                Vector2 o = NameplateMetrics.Compensate(_offsets[i], ax);
                 rt.offsetMin = o;                                     // shift the whole stretched rect by the offset
                 rt.offsetMax = o;
             }
@@ -165,18 +192,18 @@ namespace Sdo.UI.Util
         public void SetOverflow(TextOverflowModes mode)
         {
             if (_face != null) _face.overflowMode = mode;
-            if (_edges != null)
-                for (int i = 0; i < _edges.Length; i++)
-                    if (_edges[i] != null) _edges[i].overflowMode = mode;
+            if (_copies != null)
+                for (int i = 0; i < _copies.Length; i++)
+                    if (_copies[i] != null) _copies[i].overflowMode = mode;
         }
 
         /// <summary>Set the text on the face and every edge copy together.</summary>
         public void SetText(string s)
         {
             if (_face != null) _face.text = s;
-            if (_edges != null)
-                for (int i = 0; i < _edges.Length; i++)
-                    if (_edges[i] != null) _edges[i].text = s;
+            if (_copies != null)
+                for (int i = 0; i < _copies.Length; i++)
+                    if (_copies[i] != null) _copies[i].text = s;
             ApplyTracking();
         }
 
@@ -188,9 +215,9 @@ namespace Sdo.UI.Util
             if (_trackEm <= 0f || _face == null) return;
             float cs = -TextTracking.SafeTrackEm(_face.font, _face.text, _trackEm, TextStyles.MinInkGapEm) * 100f;
             _face.characterSpacing = cs;
-            if (_edges != null)
-                for (int i = 0; i < _edges.Length; i++)
-                    if (_edges[i] != null) _edges[i].characterSpacing = cs;
+            if (_copies != null)
+                for (int i = 0; i < _copies.Length; i++)
+                    if (_copies[i] != null) _copies[i].characterSpacing = cs;
         }
     }
 }

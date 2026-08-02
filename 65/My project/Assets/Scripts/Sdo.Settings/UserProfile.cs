@@ -150,6 +150,19 @@ namespace Sdo.Settings
         /// </summary>
         public bool hasProfileOverrides;
 
+        // ---- 個人資料視窗裡「自己填」的四格(官方的 city_edit / QQ_edit / constellation_edit / age_edit)----
+        //
+        // 純粹是給別人看的自我介紹欄位:server 不知道、也不驗證(這套連線根本沒有帳號持久化),就是存在
+        // **自己這台機器**的 profile.json 裡,下次開遊戲還在。看別人的資料時這四格一律空白 —— 我們拿不到
+        // 對方填了什麼,座位快照只帶得到 Id / 名字 / 等級 / 家族。
+        //
+        // 長度限制照官方 EditBox 的 limittext:城市 12、即時通 12(digitcase=只收數字)、星座 6、年齡 2(只數字)。
+        // 年齡存字串而不是 int:官方那格就是「沒填 = 空白」,存 0 的話會變成畫面上多一個沒人填過的 0。
+        public string city = "";
+        public string imAccount = "";
+        public string constellation = "";
+        public string age = "";
+
         /// <summary>累計遊玩統計(個人資料頁的命中率/勝率就是它算的)。見 <see cref="PlayStats"/>。</summary>
         public PlayStats stats = new PlayStats();
 

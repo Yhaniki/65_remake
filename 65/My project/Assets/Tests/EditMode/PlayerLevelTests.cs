@@ -85,6 +85,45 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Percent_IsProgressWithinCurrentLevel_FullAtMaxLevel()
+        {
+            // 分母是「這一級要多少」＝ 100 × 等級，所以同樣的 exp 在越高的等級佔比越小。
+            Assert.AreEqual(0f, PlayerLevel.Percent(1, 0), 0.001f);
+            Assert.AreEqual(30f, PlayerLevel.Percent(1, 30), 0.001f);      // LV1 要 100
+            Assert.AreEqual(15f, PlayerLevel.Percent(2, 30), 0.001f);      // LV2 要 200
+            Assert.AreEqual(95f, PlayerLevel.Percent(10, 950), 0.001f);    // LV10 要 1000
+
+            Assert.AreEqual(0f, PlayerLevel.Percent(3, -5), 0.001f);       // 壞資料 → 0
+            Assert.AreEqual(100f, PlayerLevel.Percent(1, 500), 0.001f);    // 手改的存檔 → 夾在 100
+            // 滿級沒有「下一級」可跑 → 條收滿；歸零會看起來像掉等。
+            Assert.AreEqual(100f, PlayerLevel.Percent(PlayerLevel.MaxLevel, 0), 0.001f);
+        }
+
+        [Test]
+        public void ProfileFields_ExpPercent_UsesTheSameLevelAsTheRestOfTheProfile()
+        {
+            int prevLevel = ProfileDefaults.level;
+            try
+            {
+                ProfileDefaults.level = 10;   // 外層共用預設：LV10 → 這一級要 1000
+
+                // 沒豎旗標 → 等級吃 default(10),分母就是 1000。若這裡誤讀 p.playerLevel("2"),
+                // 分母會變成 200、百分比直接爆表 —— 大廳那條經驗條與實際進度對不起來。
+                var noOverride = new UserProfile { playerLevel = "2", exp = 250 }.Sanitize();
+                Assert.AreEqual(1000, ProfileFields.ExpToNext(noOverride));
+                Assert.AreEqual(25f, ProfileFields.ExpPercent(noOverride), 0.001f);
+
+                var own = new UserProfile { playerLevel = "2", exp = 50, hasProfileOverrides = true }.Sanitize();
+                Assert.AreEqual(200, ProfileFields.ExpToNext(own));
+                Assert.AreEqual(25f, ProfileFields.ExpPercent(own), 0.001f);
+
+                Assert.AreEqual(0, ProfileFields.Exp(null));
+                Assert.AreEqual(0f, ProfileFields.ExpPercent(null), 0.001f);   // 看別人時沒有 profile 可讀
+            }
+            finally { ProfileDefaults.level = prevLevel; }
+        }
+
+        [Test]
         public void Text_And_CleanText_NormalizeLevelStrings()
         {
             Assert.AreEqual("11", PlayerLevel.Text(11));

@@ -298,6 +298,19 @@ namespace Sdo.UI.Util
         public static Sprite CloseH => An("PlayerInformationDlg15");
         public static Sprite CloseP => An("PlayerInformationDlg16");
 
+        /// <summary>「天使认证」鈕的**灰色**版(官方那顆 Angel 鈕的 <c>bggray="AngelAttGray.an"</c>)。
+        /// 這個重製版沒有天使系統 → 基本信息頁一律畫這張,和官方「還沒認證」的畫面一樣。</summary>
+        public static Sprite AngelCertGray => An("AngelAttGray");
+
+        /// <summary>
+        /// 「见习天使」那四個字 —— **官方的美術字素材**,不是用字型排出來的。
+        /// <c>ANGELNAME_MAN.AN</c> 的第一幀 = <c>BaseBoard2_man.png (439,419,89,20)</c>,**灰色**版:
+        /// 官方在「還沒認證」的狀態就是顯示這張(第二幀起是各等級的紫色名稱,那是認證之後才換的)。
+        /// 尺寸 89×20 正好對上 XML 的 <c>LBAngelName w=90 h=20</c>。
+        /// 🔴 用圖不用文字:那四個字是烤好的美術字,系統字型排出來的筆畫、字距與灰階都對不上官方。
+        /// </summary>
+        public static Sprite AngelNameTrainee => An("AngelName_man");
+
         // 左側那一直排功能鈕(官方順序由上而下)。素材散在好幾張圖集裡,照 .an 走就好。
         public static Sprite VipN => An("Vip0");                           // BtnVipSystem      (296,212) 36×36
         public static Sprite VipH => An("Vip1");
