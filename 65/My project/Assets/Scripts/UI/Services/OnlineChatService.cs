@@ -156,7 +156,9 @@ namespace Sdo.UI.Services
                 Channel = ChannelOf(m.Channel),
                 // 自己的發言:標成 local,顯示端才會當成「我說的」(顏色/頭上泡的判斷都看它)。
                 Local = _net != null && m.SenderUserId == _net.UserId,
-                Scope = ChatScope.Room,
+                // roomId=0 = server 標的「這句話發生在大廳」(房間號從 1 起,見 Hub 的 OnChatSay)。
+                // 以前這裡寫死 Room,大廳的發言會被標成「某間房裡說的」。
+                Scope = m.RoomId > 0 ? ChatScope.Room : ChatScope.Lobby,
                 RoomId = m.RoomId,
             };
 

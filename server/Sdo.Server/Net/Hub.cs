@@ -482,6 +482,24 @@ namespace Sdo.Server.Net
             ForEachInRoom(room, c => c.SendPreEncoded(bytes));
         }
 
+        /// <summary>
+        /// 對**大廳裡**每一條 control 連線做一件事 —— 「大廳」的定義就是「線上、但不在任何房間裡」
+        /// (server 沒有大廳這個容器,大廳是房間的補集)。大廳聊天用它廣播,見 <c>OnChatSay</c>。
+        ///
+        /// 🔴 發話者自己也在這個集合裡,**要留著** —— 那句話要回到他自己的聊天區才看得見,
+        ///    client 不會先斬後奏地把自己說的話畫上去(密語也是同一個原則,見 <c>OnChatWhisper</c>)。
+        /// </summary>
+        private void ForEachInLobby(Action<Connection> act)
+        {
+            foreach (var kv in _byUser)
+            {
+                var c = kv.Value;
+                if (c == null || c.IsClosed) continue;
+                if (_rooms.RoomOf(c.UserId) != null) continue;   // 在房裡的人收房內那份,不重複收
+                act(c);
+            }
+        }
+
         /// <summary>對房裡每一條 control 連線做一件事。</summary>
         private void ForEachInRoom(NetRoom room, Action<Connection> act)
         {

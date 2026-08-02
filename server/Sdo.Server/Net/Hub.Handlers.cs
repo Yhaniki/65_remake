@@ -1353,22 +1353,46 @@ namespace Sdo.Server.Net
             int expressionId = NetJson.Int(node, "expressionId");
             if (string.IsNullOrEmpty(text) && expressionId == 0) return;
 
+            // 🔴 **不在房間裡 = 在大廳**,那就廣播給大廳裡的所有人 —— 以前這裡是
+            //    `if (room == null) return;`(註解寫「大廳聊天在後續階段」),結果在大廳打字送出去之後
+            //    server 直接把它丟掉,連自己那一行都不會回來 → 使用者回報「我打字都沒辦法送出」。
+            //    大廳沒有「房間」這個容器,所以收件人是「所有線上、且同樣不在任何房間裡的連線」。
             var room = _rooms.RoomOf(conn.UserId);
-            if (room == null) return;   // 大廳聊天在後續階段
+            string channel = NetJson.Str(node, "channel", "current");
 
             var bytes = JObj.New()
                 .Str(NetProto.FieldType, NetProto.ChatMsg)
                 .Int("senderUserId", conn.UserId)
                 .Str("sender", conn.Name)
                 .Str("text", text)
-                .Str("channel", NetJson.Str(node, "channel", "current"))
+                .Str("channel", channel)
                 .Int("expressionId", expressionId)
                 .Str("leadingText", Clip(NetJson.Str(node, "leading"), NetLimits.MaxChatChars))
-                .Int("roomId", room.Code)
+                // roomId=0 是「這句話發生在大廳」的標記(房間號從 1 起)。client 靠它分辨要不要顯示。
+                .Int("roomId", room != null ? room.Code : 0)
                 .Utf8();
 
-            ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+            if (room != null)
+            {
+                ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+                return;
+            }
+
+            // 大廳的**家族頻道只送給同一個家族的人** —— 大廳是全服共用的一塊,不像房間本來就只有六個人;
+            // 家族的話被整個大廳看光,那個頻道就沒有存在的意義了。沒有家族的人送家族頻道 → 只有自己收得到
+            // (client 那邊會顯示「你沒有家族」,見 RoomScreen 的同一條規則)。
+            bool familyOnly = string.Equals(channel, "family", StringComparison.OrdinalIgnoreCase);
+            ForEachInLobby(c =>
+            {
+                if (familyOnly && c.UserId != conn.UserId && !SameGuild(conn, c)) return;
+                c.SendPreEncoded(bytes);
+            });
         }
+
+        /// <summary>兩條連線屬於同一個家族嗎(沒有家族的人永遠不算同族,免得「都沒家族」變成一個大家族)。</summary>
+        private static bool SameGuild(Connection a, Connection b)
+            => a != null && b != null && !string.IsNullOrEmpty(a.Guild)
+               && string.Equals(a.Guild, b.Guild, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// 密語。收件人**照名字**在全服的連線裡找 —— 不是在房裡找:密語本來就跨房,
