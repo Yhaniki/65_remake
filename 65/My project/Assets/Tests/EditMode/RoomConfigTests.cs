@@ -45,9 +45,11 @@ namespace Sdo.Tests
             RoomConfig.defaultDropDirection = 0;
             RoomConfig.defaultGameMode = 0;
             RoomConfig.judgeLevel = 2;
-            RoomConfig.familyName = "";
-            RoomConfig.familyEmblem = "SMALL43";
-            RoomConfig.playerLevel = "";
+            RoomConfig.legacyFamilyName = "";
+            RoomConfig.legacyFamilyEmblem = "";
+            RoomConfig.legacyPlayerLevel = "";
+            RoomConfig.legacyActiveId = "";
+            RoomConfig.hasLegacyProfileKeys = false;
             RoomConfig.comboTextScale = 1f;
             RoomConfig.judgeTextScale = 1f;
             RoomConfig.hasTextScaleKeys = false;
@@ -219,52 +221,35 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Family_And_Level_Parse_And_RoundTrip()
+        public void Legacy_Profile_Section_Is_Read_For_Migration_But_Never_Written_Back()
         {
-            RoomConfig.ParseInto("[Profile]\nfamilyName=天使家族\nfamilyEmblem=SMALL7\nplayerLevel=42\n");
-            Assert.AreEqual("天使家族", RoomConfig.familyName);
-            Assert.AreEqual("SMALL7", RoomConfig.familyEmblem);
-            Assert.AreEqual("42", RoomConfig.playerLevel);
+            // [Profile] 已經拉出去成 DATA/PROFILE/profile.json：舊 config.ini 的那區只被讀進 legacy 欄位
+            // （給 ProfileDefaults 搬），Serialize 不再寫出 → 重寫一次檔案該區就消失了。
+            RoomConfig.ParseInto("[Profile]\nactiveId=00000001\nfamilyName=天使家族\nfamilyEmblem=SMALL7\nplayerLevel=42\n");
+            Assert.AreEqual("00000001", RoomConfig.legacyActiveId);
+            Assert.AreEqual("天使家族", RoomConfig.legacyFamilyName);
+            Assert.AreEqual("SMALL7", RoomConfig.legacyFamilyEmblem);
+            Assert.AreEqual("42", RoomConfig.legacyPlayerLevel);
+            Assert.IsTrue(RoomConfig.hasLegacyProfileKeys, "帶舊 [Profile] → Load 要重寫一次 config.ini 把該區去掉");
 
             string ini = RoomConfig.Serialize();
-            Reset();
-            RoomConfig.ParseInto(ini);
-            Assert.AreEqual("天使家族", RoomConfig.familyName);
-            Assert.AreEqual("SMALL7", RoomConfig.familyEmblem);
-            Assert.AreEqual("42", RoomConfig.playerLevel);
+            StringAssert.DoesNotContain("[Profile]", ini);
+            StringAssert.DoesNotContain("familyName=", ini);
+            StringAssert.DoesNotContain("playerLevel=", ini);
+            StringAssert.DoesNotContain("activeId=", ini);
         }
 
         [Test]
-        public void Family_And_Level_Sanitize_Trims_Whitespace()
+        public void Legacy_Profile_Values_Sanitize_Trims_Whitespace()
         {
-            // 前後空白會讓「留空＝不顯示」的判定失準(看似有值其實是空白) → Sanitize 去頭尾空白。
-            RoomConfig.familyName = "  ";
-            RoomConfig.playerLevel = "  ";
-            RoomConfig.familyEmblem = "  SMALL43  ";
+            // 前後空白會讓「留空＝沒設過」的判定失準(看似有值其實是空白) → Sanitize 去頭尾空白後才交給 ProfileDefaults。
+            RoomConfig.legacyFamilyName = "  ";
+            RoomConfig.legacyPlayerLevel = "  ";
+            RoomConfig.legacyFamilyEmblem = "  SMALL43  ";
             RoomConfig.Sanitize();
-            Assert.AreEqual("", RoomConfig.familyName);
-            Assert.AreEqual("", RoomConfig.playerLevel);
-            Assert.AreEqual("SMALL43", RoomConfig.familyEmblem);
-        }
-
-        [Test]
-        public void LevelLabel_Formats_NonEmpty_And_Blank_For_Empty()
-        {
-            Assert.AreEqual("LV:11", RoomConfig.LevelLabel("11"));
-            Assert.AreEqual("LV:11", RoomConfig.LevelLabel("  11  "));   // 去頭尾空白後仍成立
-            Assert.AreEqual("", RoomConfig.LevelLabel(""));              // 留空 → 不顯示
-            Assert.AreEqual("", RoomConfig.LevelLabel("   "));
-            Assert.AreEqual("", RoomConfig.LevelLabel(null));
-        }
-
-        [Test]
-        public void Defaults_Hide_Family_And_Level()
-        {
-            // 內建預設：家族名稱/等級留空 → 不顯示；徽章雖預設 SMALL43，但沒有家族名就整條不畫。
-            Assert.AreEqual("", RoomConfig.familyName);
-            Assert.AreEqual("", RoomConfig.playerLevel);
-            Assert.AreEqual("SMALL43", RoomConfig.familyEmblem);
-            Assert.AreEqual("", RoomConfig.LevelLabel(RoomConfig.playerLevel));
+            Assert.AreEqual("", RoomConfig.legacyFamilyName);
+            Assert.AreEqual("", RoomConfig.legacyPlayerLevel);
+            Assert.AreEqual("SMALL43", RoomConfig.legacyFamilyEmblem);
         }
 
         [Test]

@@ -235,7 +235,7 @@ namespace Sdo.UI.Screens
             _floatName.gameObject.SetActive(false);
 
             // 家族列：家族名稱(白字描黑邊) + 名稱前的小徽章(EMBLEM/SMALL*)，畫在頭上名字的「上方」一行。
-            // 內容與顯不顯示都由 config.ini 的 familyName/familyEmblem 決定(見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
+            // 內容與顯不顯示由這個角色的 profile.json 決定(沒設過才吃 config.ini 的預設，見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
             // 名稱用「左對齊」：徽章+名稱要作為一個群組一起水平置中，左對齊才能讓文字自群組內的固定起點畫出。預設留空 → 不顯示。
             _floatFamily = OutlinedLabel.Create(Root, "FloatFamily", 0, 0, 160, FamilyRowH, 14, Color.white, Color.black,
                 FamilyNameEdgePx, true, TextAlignmentOptions.Left, trackEm: TextStyles.HeadNameTrackEm);
@@ -2168,11 +2168,12 @@ namespace Sdo.UI.Screens
                 }
             }
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
-            // 名字後面接等級「Lv:N」(config.playerLevel 留空則不接)；家族列(徽章+名稱)另外畫在名字上方(UpdateFamilyRow)。
+            // 名字後面接等級「Lv:N」(這個角色的等級，沒設過就吃 config.ini 的預設；留空則不接)；家族列(徽章+名稱)
+            // 另外畫在名字上方(UpdateFamilyRow)。
             if (_floatName != null)
             {
                 string nm = LocalName(room);
-                string lvl = RoomConfig.LevelLabel(RoomConfig.playerLevel);
+                string lvl = ProfileManager.LevelLabel;
                 _floatName.SetText(lvl.Length > 0 ? nm + "  " + lvl : nm);
                 _floatName.gameObject.SetActive(true);
             }
@@ -3117,20 +3118,22 @@ namespace Sdo.UI.Screens
             rt.anchoredPosition = new Vector2(vp.x * 800f - rt.sizeDelta.x * 0.5f, -topFromTop);
         }
 
-        // 依 config.ini 設定頭上「家族列」(徽章＋家族名稱)的內容與顯示與否；實際位置每幀由 PlaceFamilyRow 跟著頭擺放。
-        //   familyName 留空 → 整條家族列(名稱+徽章)不顯示。
-        //   familyEmblem 留空或載入失敗 → 只顯示家族名稱、不放徽章。
+        // 設定頭上「家族列」(徽章＋家族名稱)的內容與顯示與否；實際位置每幀由 PlaceFamilyRow 跟著頭擺放。
+        // 值來自這個角色的 profile.json，沒設過才吃 config.ini 的預設（解析都在 ProfileManager）：
+        //   家族名稱兩層都留空 → 整條家族列(名稱+徽章)不顯示。
+        //   徽章留空或載入失敗 → 只顯示家族名稱、不放徽章。
         private void UpdateFamilyRow()
         {
-            bool show = !string.IsNullOrEmpty((RoomConfig.familyName ?? "").Trim());
+            string family = ProfileManager.FamilyName;
+            bool show = family.Length > 0;
             if (_floatFamily != null)
             {
-                if (show) _floatFamily.SetText(RoomConfig.familyName.Trim());
+                if (show) _floatFamily.SetText(family);
                 _floatFamily.gameObject.SetActive(show);
             }
             if (_floatEmblem != null)
             {
-                Sprite em = show ? EmblemArt.Emblem(RoomConfig.familyEmblem) : null;
+                Sprite em = show ? EmblemArt.Emblem(ProfileManager.FamilyEmblem) : null;
                 if (em != null) { _floatEmblem.sprite = em; _floatEmblem.gameObject.SetActive(true); }
                 else _floatEmblem.gameObject.SetActive(false);
             }

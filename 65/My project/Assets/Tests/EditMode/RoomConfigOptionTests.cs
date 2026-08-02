@@ -117,25 +117,6 @@ namespace Sdo.Tests
             Assert.IsTrue(RoomConfig.optSongBombs, "舊檔說照譜面原樣 → 新鍵是開");
         }
 
-        // ---- [Profile] activeId：以前是獨立的 active.txt，現在併進 config.ini ----
-
-        [Test]
-        public void ActiveId_RoundTrips_Through_Ini_Text()
-        {
-            RoomConfig.activeId = "00000001";
-            string ini = RoomConfig.Serialize();
-            RoomConfig.activeId = "";
-            RoomConfig.ParseInto(ini);
-            Assert.AreEqual("00000001", RoomConfig.activeId);
-        }
-
-        [Test]
-        public void ActiveId_Sanitize_Rejects_NonEightDigit()
-        {
-            Assert.AreEqual("", RoomConfig.SanitizeActiveId("1"), "非 8 位數 → 當沒設定");
-            Assert.AreEqual("", RoomConfig.SanitizeActiveId("0000000a"), "非數字 → 當沒設定");
-            Assert.AreEqual("", RoomConfig.SanitizeActiveId(null));
-            Assert.AreEqual("00000000", RoomConfig.SanitizeActiveId(" 00000000 "), "前後空白要吃掉");
-        }
+        // activeId 已經從 config.ini 拉去 DATA/PROFILE/profile.json（見 ProfileDefaultsTests）。
     }
 }

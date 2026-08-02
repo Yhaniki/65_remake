@@ -920,7 +920,8 @@ namespace Sdo.Game
         public bool mockOpponents = false;           // 預設關閉測試對手(離線單人=solo rank 1/1、清單只有本機);真連線時再開
         public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
-        public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
+        public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward).
+                                                     // 前端每局注入 ProfileManager.Level（這個角色的等級）；自 boot 時維持 1。
         public bool localPlayerMale = false;         // set by FrontendApp from GameSession.Gender before Start()
         private static readonly string[] OpponentNames =
             { "炫炎輪火", "Polaris晴天坊", "小醜麵具", "奶茶布丁", "醉小蛇" };
@@ -5079,6 +5080,9 @@ namespace Sdo.Game
             // 自由模式不加 G幣/EXP
             int expGained = freeMode ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
             int coinsGained = freeMode ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
+            // 經驗值落地：加進 active 角色的 profile.json（到門檻自動升等，曲線見 PlayerLevel）。自由模式不給經驗 →
+            // 不碰存檔。本局的 G幣/榮譽仍用進場時的等級算（上一行），升上去的等級下一局才生效。
+            if (expGained > 0) ProfileManager.AddExperience(expGained);
             Texture head = BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
             _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe, showBanner: !freeMode);

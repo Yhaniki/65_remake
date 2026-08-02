@@ -218,8 +218,7 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 
 ```
 <data root>/DATA/PROFILE/
-├── config.ini                 # ★ 設定總表（RoomConfig）
-│     [Profile] activeId       #   目前登入的角色（＝下面的 8 位數資料夾名）
+├── config.ini                 # ★ 設定總表（RoomConfig）── 只有設定，不含角色資料
 │     [Room]                   #   開房間右側面板預設：速度檔位表/note/組隊/掉落/模式/場景/判定精度/offset
 │                              #   ＋ note 速度的基準 BPM(scrollBaseBpm，預設 130，範圍 30~400；
 │                              #     畫面速度 = 它 × 速度檔位 × 1.6 px/s，調它＝所有歌一起變快/變慢)
@@ -230,15 +229,33 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 ├── keymaps.ini                # ★ 鍵位（KeyMap）
 │     [Lane4]  primary / aux   #   4 鍵打擊鍵位（OPTION 鍵盤頁改完會寫回這裡）
 │     [Hotkeys]                #   遊玩中的功能鍵，見下表
+├── profile.json               # ★ 角色資料的**外層(default)**（ProfileDefaults）
+│     activeId                 #   目前登入的角色（＝下面的 8 位數資料夾名）
+│     familyName/familyEmblem  #   家族的共用預設值（所有角色都吃這份，除非自己設過）
+│     level                    #   等級的起始值（0＝不顯示等級）
 ├── favorites.json             # 收藏的歌（全帳號共用）
-└── <8 位數 id>/profile.json   # 每個角色的衣服/道具/錢包（00000000=女 00000001=男）
+└── <8 位數 id>/profile.json   # ★ 角色資料的**內層(自己的)**（00000000=女 00000001=男）
+      衣服/道具/錢包            #   穿搭、儲物櫃、G幣
+      familyName/familyEmblem  #   這個角色自己的家族（留空＝沒設過 → 吃外層那份）
+      level / exp              #   這個角色自己的等級與經驗值（level=0＝沒設過 → 吃外層那份）
 ```
+
+**角色資料是兩層、同檔名的**：外層 `DATA/PROFILE/profile.json` 是**所有角色共用的預設值(default)**，
+`DATA/PROFILE/<id>/profile.json` 是**那個角色自己的**；同名欄位角色設過（家族留空 / `level=0` ＝沒設過）就以
+自己的為準。顯示端（房間頭上的名字牌）一律問 `ProfileManager.FamilyName / FamilyEmblem / Level / LevelLabel`，
+不直接讀 `ProfileDefaults`。內層比外層多一個 `exp`。
+
+每局結算拿到的經驗值（`Sdo.Ruleset.Reward.Experience`，自由模式不給）由 `ProfileManager.AddExperience` 加進
+角色自己的 `exp`，跨過門檻自動升等（曲線 `PlayerLevel`：升一級要 `100 × 目前等級`，上限 LV99）。第一次加經驗
+會把共用預設等級落地成這個角色自己的 `level`，之後就跟外層那份脫鉤。等級也回頭餵給結算的 G幣/榮譽獎勵公式
+（`FrontendApp` 每局把 `ProfileManager.Level` 注入 `ScreenGameplay.playerLevel`）。
 
 `GameSettings`（`DisplaySettingsManager.Settings`）只是**執行期工作副本**，由上面兩個 ini 組出來，按保存時寫回去。
 
-> **歷史**：以前還有 `settings.json`（＝現在的 `[Option]`，本來就是同一組值存兩份）與 `active.txt`
-> （＝現在的 `[Profile] activeId`）。開機時 `RoomConfig.Load()` 會把它們一次性併進 `config.ini` 後刪除；
-> 舊 `config.ini` 裡的 `opt_keys/opt_keysAux` 同時搬進 `keymaps.ini`。玩家不用做任何事。
+> **歷史**：角色資料以前跟設定混在 `config.ini` 的 `[Profile]` 區（更早之前登入的角色還是獨立的 `active.txt`），
+> 現在拉出去成同層的 `profile.json`；`settings.json`（＝現在的 `[Option]`）本來也是同一組值存兩份。開機時
+> `RoomConfig.Load()` / `ProfileDefaults.Load()` 會把這些舊檔一次性搬過來後刪除（`[Profile]` 區則是重寫 `config.ini`
+> 時自然消失）；舊 `config.ini` 裡的 `opt_keys/opt_keysAux` 同時搬進 `keymaps.ini`。玩家不用做任何事。
 
 #### `[Hotkeys]` — 遊玩中的功能鍵（都能自訂）
 
