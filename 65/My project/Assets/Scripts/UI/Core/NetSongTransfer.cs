@@ -47,6 +47,20 @@ namespace Sdo.UI.Core
         private const float QueryRetrySec = 2f;
         private static float _lastQueryAt = -99f;
 
+        /// <summary>
+        /// 同一首歌的下載,線路問題最多再試幾次。
+        ///
+        /// 🔴 要有,而且**只能有一點點**:停滯逾時(<c>NetLimits.BlobStallTimeoutMs</c>)之後
+        /// <c>_handledPack</c> 會擋住所有重試 —— 那個人就從「永遠卡在 downloading」變成
+        /// 「永遠卡在 missing」,一樣按不了準備,只是換個位置卡。給一次重試就能救掉
+        /// 絕大多數的暫時性斷線,而次數上限讓它不可能變成無限迴圈。
+        /// 內容問題(hash 不符)不走這條 —— 見 <c>NetSongFetcher.Retryable</c>。
+        /// </summary>
+        private const int MaxDownloadRetries = 1;
+
+        private static string _retryPack;
+        private static int _retriesUsed;
+
         /// <summary>userId → (0..1, 是不是上傳)。頭貼下方的跑條讀它。</summary>
         private static readonly Dictionary<int, KeyValuePair<float, bool>> _bars
             = new Dictionary<int, KeyValuePair<float, bool>>();
@@ -119,8 +133,27 @@ namespace Sdo.UI.Core
                     // _fx.Error 是內部錯誤字串(協定代碼/例外訊息)。玩家看不懂,而且看懂了也
                     // 不能做什麼 —— 進 log,畫面上講一句他能理解的。
                     Debug.LogWarning("[net] 傳檔失敗 " + _fx.PackId + ":" + _fx.Error);
-                    Toast.Show(LocalizationManager.Get("net.transfer_failed"), 4f);
+
+                    // 線路問題就再試一次(見 MaxDownloadRetries)。重試的是**下載**:
+                    // 上傳失敗的房主本來就還有這首歌,他的 avail 是 have、按不按得下開始不受影響,
+                    // 而缺歌的人會在 blobQuery 撲空後自己重問,不需要房主在這裡重推一次。
+                    string failedPack = _fx.PackId;
+                    bool retry = !_fx.IsUploading && _fx.Retryable && CountRetry(failedPack);
+
+                    Toast.Show(LocalizationManager.Get(retry ? "net.transfer_retry" : "net.transfer_failed"), 4f);
                     InvalidateActiveTransfer();
+
+                    if (retry)
+                    {
+                        Debug.Log("[net] 傳檔重試 " + failedPack + "(第 " + _retriesUsed + "/" + MaxDownloadRetries + " 次)");
+                        // _handledPack 是「這首歌處理過了」的記憶,不清掉的話 MaybeStart 永遠不會再看它。
+                        // _serverHasPack 留著 —— server 手上確實有這個包(剛剛就是從那裡下載的),
+                        // 重問一次只是多繞一趟 blobQuery。
+                        _handledPack = null;
+                        NetSongPublisher.ForceReport();
+                        NetSongPublisher.ReportAvailability(ctx);
+                        return;
+                    }
                     // 🔴 一定要把「我到底有沒有這首歌」重報一次。下載開始時我們已經告訴 server
                     // downloading 了 —— 失敗之後不重報的話,那個座位會**永遠停在 downloading**:
                     // 按準備被 R17 拒絕(它要求 avail==have)、房主也開不了場(R12),
@@ -134,6 +167,23 @@ namespace Sdo.UI.Core
             }
 
             MaybeStart(ctx);
+        }
+
+        /// <summary>
+        /// 這首歌還有重試額度嗎?有就記一次並回 true。
+        /// 計數綁在 packId 上 —— 換一首歌就是新的預算,而同一首歌不會被無限重試。
+        /// </summary>
+        private static bool CountRetry(string packId)
+        {
+            if (string.IsNullOrEmpty(packId)) return false;
+            if (!string.Equals(_retryPack, packId, StringComparison.Ordinal))
+            {
+                _retryPack = packId;
+                _retriesUsed = 0;
+            }
+            if (_retriesUsed >= MaxDownloadRetries) return false;
+            _retriesUsed++;
+            return true;
         }
 
         /// <summary>
@@ -152,6 +202,8 @@ namespace Sdo.UI.Core
             InvalidateActiveTransfer();
             _roomPack = packKey;
             _handledPack = null;
+            _retryPack = null;
+            _retriesUsed = 0;
             _serverHasPack = false;
             _queryPending = false;
             _queriedPack = null;
@@ -169,6 +221,8 @@ namespace Sdo.UI.Core
             InvalidateActiveTransfer();
             _handledPack = null;
             _roomPack = null;
+            _retryPack = null;
+            _retriesUsed = 0;
             _serverHasPack = false;
             _queryPending = false;
             _queriedPack = null;

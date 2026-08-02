@@ -381,8 +381,12 @@ namespace Sdo.Server.Net
                 SweepDeadConnections(now);
             }
 
-            // 3b) 下載中的歌:把 chunk 補到水位(流量控制,見 PumpDownloads)
-            PumpDownloads();
+            // 3b) 下載中的歌:把 chunk 補到水位(流量控制,見 PumpDownloads)。
+            //     停滯逾時也在裡面就地判 —— 它每輪本來就在看每一份下載。
+            PumpDownloads(now);
+
+            // 3c) 上傳方向沒有「每輪都會跑過一遍」的地方(它是被 chunk 推著走的)→ 另外掃。
+            SweepStalledUploads(now);
 
             // 4) 歌曲暫存清理(15 分鐘一次)
             //
@@ -444,9 +448,16 @@ namespace Sdo.Server.Net
         {
             if (!_conns.Remove(conn.ConnId)) return;
 
-            // 認得這個人就用名字報離線;還沒 hello 的(掃 port、握手失敗、file 連線)只是雜訊 → verbose。
+            // 認得這個人就用名字報離線;還沒 hello 的(掃 port、握手失敗)只是雜訊 → verbose。
+            //
+            // 🔴 例外:**身上還有傳輸的 file 連線一律用 Log**。它關掉就代表那份上傳/下載當場死掉,
+            // 而那正是「傳完歌卻按不了準備」查起來最缺的一行 —— 以前它只在 verbose 出現,
+            // 於是正式 log 上「下載開始」之後就是一片空白,分不出還在傳、傳完了、還是連線沒了。
+            bool hadTransfer = _uploads.ContainsKey(conn.ConnId) || _downloads.ContainsKey(conn.ConnId);
             if (conn.UserId != 0 && conn.Role == NetProto.RoleControl)
                 Log("user " + conn.UserId + "「" + conn.Name + "」離線(" + reason + ")");
+            else if (hadTransfer)
+                Log("傳檔連線 #" + conn.ConnId + " 關閉(" + reason + ")— user " + conn.UserId);
             else
                 LogVerbose("連線 #" + conn.ConnId + " 關閉(" + reason + ")");
 

@@ -306,6 +306,9 @@
         public const string BlobErrHashMismatch = "hashMismatch";
         public const string BlobErrQuota = "quota";
 
+        /// <summary>傳輸停滯太久,server 這一側先放棄了(見 <c>NetLimits.BlobStallTimeoutServerMs</c>)。</summary>
+        public const string BlobErrStalled = "stalled";
+
         // ---- kicked reason ----
 
         public const string KickedByHost = "host";

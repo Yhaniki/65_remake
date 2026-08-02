@@ -192,6 +192,33 @@ namespace Sdo.Net
         /// <summary>每人同時下載數上限。</summary>
         public const int MaxConcurrentDownloadsPerUser = 2;
 
+        /// <summary>
+        /// **傳檔停滯逾時(client 端)**:進了傳輸階段之後,這麼久沒有任何位元組進展就判定卡死。
+        ///
+        /// 🔴 非有不可,而且 ping 逾時**擋不住這個情況**:半開連線(NAT/路由器悄悄丟掉 session、
+        /// 對方主機直接斷電)上,TCP 要重傳好幾分鐘才會報錯,而我們這一側的 ping 是「送得出去」的
+        /// (只是永遠沒人收)。結果是 <c>NetSongFetcher</c> 一直停在 <c>Downloading</c>、
+        /// <c>NetSongTransfer.ReportProgress</c> 每 500ms 繼續回報 downloading ——
+        /// server 眼中那個座位就**永遠**是 downloading:按準備被 R17 拒(要求 avail==have)、
+        /// 房主也開不了場(R12),而畫面上進度條停在 99% 看起來就像傳完了。
+        /// (實機 log:房 22320 的 user 26 下載 4 MB 之後連按三次準備都是 badState avail=Downloading,
+        ///  而 server 從頭到尾沒有印出「下載完成」。)
+        ///
+        /// 30 秒是「慢到不像在動」的門檻:公網上最慢的線路每 30 秒也一定推得動一塊 64 KiB。
+        /// </summary>
+        public const int BlobStallTimeoutMs = 30000;
+
+        /// <summary>
+        /// 傳檔停滯逾時(server 端)。**刻意比 client 長** —— 讓卡住的那一邊先自己發現、
+        /// 自己關連線、自己回報 missing(那是唯一能把玩家從「永遠缺歌」救回來的路徑)。
+        /// 兩邊同時逾時的話,server 先關連線,client 只會看到一句沒有細節的「連線中斷」。
+        /// 這一道是兜底:對付「client 整個消失但 socket 還開著」,免得下載 session 與檔案 handle 永遠掛著。
+        /// </summary>
+        public const int BlobStallTimeoutServerMs = 45000;
+
+        /// <summary>傳檔進行中,server 每隔這麼久印一行 verbose 進度(診斷「慢」與「卡死」的差別用)。</summary>
+        public const int BlobProgressLogIntervalMs = 5000;
+
         // ---- rate limit(每連線) ----
 
         /// <summary>control 訊息/秒。</summary>

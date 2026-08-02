@@ -749,9 +749,51 @@ namespace Sdo.Server.Net
             // 下載進度回報要節流。client 自己也會節流,但不能假設對方的 client 沒被改過。
             if (avail == Availability.Downloading && !conn.Rate.AllowAvailProgress(now)) return;
 
-            var op = room.SetAvailability(conn.UserId, NetJson.Str(node, "packId"),
-                                          avail, (float)NetJson.Num(node, "progress"));
-            if (op == NetRoomOp.Ok) BroadcastRoomState(room);
+            // 🔴 **狀態變化要進 log。** 「我有沒有這首歌」是按準備(R17)與開場(R12)的前提,
+            // 而它出錯時畫面上完全看不出來(見 NetSongPublisher 開頭那段)。以前這裡一行都不印,
+            // 於是 log 上只看得到最後被拒的那一刻是什麼值,看不到它**什麼時候、從哪一個值**變過來的
+            // —— 而那正是分辨「卡在下載」與「傳完了但沒回報」的唯一線索。
+            // 只印變化:downloading 的進度回報每 500ms 一筆,全印會把 log 淹掉。
+            string packId = NetJson.Str(node, "packId");
+            var prev = AvailOf(room, conn.UserId);
+
+            var op = room.SetAvailability(conn.UserId, packId, avail, (float)NetJson.Num(node, "progress"));
+            if (op != NetRoomOp.Ok) return;
+
+            var now2 = AvailOf(room, conn.UserId);
+            int code = room.State != null ? room.State.Code : 0;
+            if (now2 != prev)
+            {
+                Log("房 " + code + " user " + conn.UserId + " 可用性 "
+                    + NetState.ToWire(prev) + " → " + NetState.ToWire(now2) + "(" + packId + ")");
+            }
+            else if (avail != prev)
+            {
+                // 送來的值與現在的不一樣,套用之後卻沒變 → 被 NetRoom.SetAvailability 的
+                // MatchesCurrentSong 丟掉了(packId 對不上房間現在的歌)。多半是換歌的正常競態,
+                // 但「一直對不上」的話那個人會**永遠**停在舊值 —— 而畫面上完全看不出來。
+                LogVerbose("房 " + code + " user " + conn.UserId + " 的可用性回報被丟掉(packId 對不上這間房現在的歌):"
+                    + NetState.ToWire(avail) + " packId=" + packId);
+            }
+            else if (avail == Availability.Downloading)
+            {
+                LogVerbose("房 " + code + " user " + conn.UserId + " 下載進度 "
+                    + (int)(NetJson.Num(node, "progress") * 100) + "%");
+            }
+
+            BroadcastRoomState(room);
+        }
+
+        /// <summary>房間裡這個人現在的可用性(座位或旁觀席都算)。找不到人 → <c>Unknown</c>。</summary>
+        private static Availability AvailOf(NetRoom room, int userId)
+        {
+            var snap = room != null ? room.State : null;
+            if (snap == null) return Availability.Unknown;
+            var seat = snap.SeatOf(userId);
+            if (seat != null) return seat.Avail;
+            int si = snap.SpectatorIndexOf(userId);
+            if (si >= 0 && snap.Spectators != null && si < snap.Spectators.Length) return snap.Spectators[si].Avail;
+            return Availability.Unknown;
         }
 
         // ================= 座位管理(host only) =================
