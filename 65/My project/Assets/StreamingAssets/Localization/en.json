@@ -476,6 +476,10 @@
    "v": "Song transfer failed — please try again"
   },
   {
+   "k": "net.transfer_retry",
+   "v": "Song transfer failed — retrying"
+  },
+  {
    "k": "settings.applied",
    "v": "Settings applied"
   },

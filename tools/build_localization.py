@@ -210,6 +210,10 @@ STR = {
     # 傳歌失敗。原本把內部錯誤字串接在後面,玩家看不懂也不能做什麼。
     "net.transfer_failed":     ["Song transfer failed — please try again", "歌曲傳輸失敗,請稍後再試",
                                 "歌曲传输失败,请稍后再试", "曲の転送に失敗しました"],
+    # 同一件事但**程式會自己再試一次**(線路問題、還沒用完重試次數 —— 見 NetSongTransfer.MaxDownloadRetries)。
+    # 與上面那句分開是因為玩家該做的事相反:這句要他「等一下」,那句要他「自己再試」。
+    "net.transfer_retry":      ["Song transfer failed — retrying", "歌曲傳輸失敗,正在重試",
+                                "歌曲传输失败,正在重试", "曲の転送に失敗しました — 再試行中"],
     "settings.applied":        ["Settings applied", "設定已套用", "设置已套用", "設定を適用しました"],
     "room.spectate_off":       ["Back in a seat", "已回到座位", "已回到座位", "席に戻りました"],
     "room.drop_up":         ["Up", "向上", "向上", "上"],
