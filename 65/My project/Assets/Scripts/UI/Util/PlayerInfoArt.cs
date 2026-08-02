@@ -33,12 +33,13 @@ namespace Sdo.UI.Util
         private static string _dir;
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
         private static readonly Dictionary<string, Sprite[]> _framesCache = new Dictionary<string, Sprite[]>();
+        private static readonly Dictionary<string, Sprite> _circleCache = new Dictionary<string, Sprite>();
 
         /// <summary>解析後的 PLAYERINFORMATIONDLG 資料夾(懶解析)。可設定給測試用(會清快取)。</summary>
         public static string Dir
         {
             get { return _dir ?? (_dir = Path.Combine(SdoExtracted.Root, "UI", FolderName)); }
-            set { _dir = value; _cache.Clear(); _framesCache.Clear(); }
+            set { _dir = value; _cache.Clear(); _framesCache.Clear(); _circleCache.Clear(); }
         }
 
         /// <summary>一個 .an 的第一幀(已快取);找不到回 null。名字可含可不含 ".an"。</summary>
@@ -58,6 +59,29 @@ namespace Sdo.UI.Util
             if (_cache.TryGetValue(anName, out var s) && s != null) return s;
             s = SdoExtracted.LoadAnSolo(Dir, anName, pad: 0) ?? SdoExtracted.LoadAn1(Dir, anName, bleed: true);
             _cache[anName] = s;
+            return s;
+        }
+
+        /// <summary>
+        /// 同 <see cref="An"/> 但給**圓形鈕**用(這一包只有右上角那顆 X):
+        /// <c>LoadAnSoloCircleMip</c> = AlphaFlood + 圓形 smoothstep alpha 遮罩 + 3× 超取樣(mipmap/Trilinear,
+        /// 以 ppu = 3 交出去,所以顯示尺寸不變)。
+        ///
+        /// 🔴 這顆 X(<c>BaseBoard_man.png (972,618,29,29)</c>)的圓盤**外面烤了一圈純白光暈**:
+        ///    半徑 15~16 那兩環是 RGB=(255,255,255)、α 43~83 的白texel,而真正的圓邊(帶色 AA)在半徑 14。
+        ///    <see cref="An"/> 那條路(<c>LoadAnSolo</c>)動不了它 —— <c>DeMatteWhite</c> 只還原 RGB 不碰 alpha,
+        ///    把純白 un-composite 回去還是純白;<c>AlphaBleed</c> 更只管全透明區。於是那圈白暈原封不動畫在
+        ///    深色底板上 = 圓外一圈亮邊,再被「800×600 設計拉到 1040×807 視窗」的 **1.3 倍非整數縮放**
+        ///    拉開,就成了使用者回報的「邊緣鋸齒狀」(白暈的 α 從 131 陡降到 10,階梯全露出來)。
+        ///    CircleMask 把 maskR 之外的 alpha 收成 0 → 白暈整圈消失;超取樣讓 1.3 倍放大時是 GPU 面積降取樣
+        ///    而不是 29px 貼圖硬撐 → 邊緣乾淨。載不到就退回 <see cref="An"/>。
+        /// </summary>
+        public static Sprite AnCircleAA(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            if (_circleCache.TryGetValue(anName, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSoloCircleMip(Dir, anName, pad: 0) ?? An(anName);
+            _circleCache[anName] = s;
             return s;
         }
 
@@ -293,10 +317,13 @@ namespace Sdo.UI.Util
         public static Sprite OkH => An("PlayerInformationDlg30_MAN");
         public static Sprite OkP => An("PlayerInformationDlg31_MAN");
 
-        // 右上角的 X(29×29,close (662,73))。
-        public static Sprite CloseN => An("PlayerInformationDlg14");
-        public static Sprite CloseH => An("PlayerInformationDlg15");
-        public static Sprite CloseP => An("PlayerInformationDlg16");
+        // 右上角的 X(29×29,close (662,73))。三態都走 AnCircleAA —— 它是這一包唯一的圓形鈕,
+        // 而且外圈烤了白光暈,走 An() 會在圓外留一圈鋸齒亮邊(見 AnCircleAA 的註解)。
+        // 🔴 三態要一起換:SpriteSwap 是滑過去就換圖,只修 normal 的話白暈會在 hover 的瞬間跳出來又消失。
+        //    (pushed 的 .an 指到和 normal 同一塊 crop,所以那兩張本來就該長一樣。)
+        public static Sprite CloseN => AnCircleAA("PlayerInformationDlg14");
+        public static Sprite CloseH => AnCircleAA("PlayerInformationDlg15");
+        public static Sprite CloseP => AnCircleAA("PlayerInformationDlg16");
 
         /// <summary>「天使认证」鈕的**灰色**版(官方那顆 Angel 鈕的 <c>bggray="AngelAttGray.an"</c>)。
         /// 這個重製版沒有天使系統 → 基本信息頁一律畫這張,和官方「還沒認證」的畫面一樣。</summary>
@@ -354,5 +381,24 @@ namespace Sdo.UI.Util
 
         /// <summary>比率長條的填色(232×19 粉紅圓角)。官方 ProgressBar 的 forename,我們拿它做 Filled 填充。</summary>
         public static Sprite RateBar => An("PlayerInformationDlg65");
+
+        /// <summary>
+        /// 經驗值那條進度條的填色(**黃**,232×19)。官方 <c>pro_exp</c> 的 forename 寫的是
+        /// <c>PlayerInformationDlgYellow65.an</c>,但**那個 .an 的圖檔名寫錯了**:它寫
+        /// <c>BaseBoard_man.PNG (700,991,232,19)</c> —— 座標是對的,圖不對。
+        ///   • 女版 <c>BaseBoard.PNG</c> 的 (700,991,232,19) 是一條**填滿整格**的黃條(alpha bbox 0..231 × 0..18),
+        ///     正上方 (700,972,232,19) 就是 TP 值那條粉紅(<c>PlayerInformationDlg65.an</c>)——
+        ///     同一張圖、上下相鄰、同尺寸,兩條本來就是一套。
+        ///   • 男版 <c>BaseBoard_man.PNG</c> 的同一塊,條體只有 **228×15**(右邊 7 欄、下面 4 列全透明),
+        ///     那張圖上的進度條是另一種排版。照 .an 走的話,經驗條會比隔壁的 TP 條**細一圈又偏上**
+        ///     —— 使用者回報「經驗值那個黃條不是官方的素材」指的就是這個。
+        /// 所以這裡**照官方座標裁女版圖**。這是本類「素材一律走男版」的唯一例外,原因是官方自己把圖檔名寫錯,
+        /// 別「順手」改回 _man —— 那正是壞掉的那條路。(這份資料包寫錯 .an 的前科見 <see cref="Board"/>、
+        /// <see cref="TabStrip"/> 的第五格。)
+        ///
+        /// 🔴 走 <see cref="AtlasCrop"/> 而不是 <see cref="An"/>:一來 .an 指的圖是錯的,二來這一塊的上下鄰居
+        ///    (粉紅條在 y=990 結束、黃條 y=991 開始)是**貼著**的,共用圖集會把粉紅滲進黃條的上緣。
+        /// </summary>
+        public static Sprite ExpBar => AtlasCrop("BaseBoard.PNG", 700, 991, 232, 19);
     }
 }

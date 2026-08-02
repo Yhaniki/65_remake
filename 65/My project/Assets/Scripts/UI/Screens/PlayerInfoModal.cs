@@ -531,8 +531,11 @@ namespace Sdo.UI.Screens
             UIKit.AddSprite(body, "AngelCert", PlayerInfoArt.AngelCertGray, AngelCertX, AngelCertY);
 
             // 兩條進度條:TP 值(粉紅)與經驗值(黃)。天使那列不是進度條,pro_weight 不畫 —— 見常數區的 🔴。
-            _tpBar = AddProgress(body, "pro_tp", TpBarX, TpBarY, "PlayerInformationDlg65");
-            _expBar = AddProgress(body, "pro_exp", ExpBarX, ExpBarY, "PlayerInformationDlgYellow65");
+            // 🔴 黃條**不能**走 An("PlayerInformationDlgYellow65"):那個官方 .an 的圖檔名寫錯了
+            //    (指到男版圖,而男版圖同一塊的條體只有 228×15 → 畫出來比隔壁 TP 條細一圈又偏上)。
+            //    PlayerInfoArt.ExpBar 照同一組座標裁**女版**圖,那才是與粉紅條同一套的 232×19 滿版黃條。
+            _tpBar = AddProgress(body, "pro_tp", TpBarX, TpBarY, PlayerInfoArt.An("PlayerInformationDlg65"));
+            _expBar = AddProgress(body, "pro_exp", ExpBarX, ExpBarY, PlayerInfoArt.ExpBar);
 
             // 魅力值:24 顆愛心,亮(Dlg68)疊在暗(Dlg38)上面 —— 有幾點就亮幾顆。沒有這套系統 → 全暗。
             for (int i = 0; i < CharmCount; i++)
@@ -624,7 +627,8 @@ namespace Sdo.UI.Screens
             // 大底板(段位條、星星那排、三個子分頁的框都烤在上面)。
             UIKit.AddSprite(body, "MatchBg", PlayerInfoArt.AnRaw("PlayerInformationDlg54_man"), MatchBoardX, MatchBoardY);
 
-            _duanweiBar = AddProgress(body, "pro_duanwei", DuanweiBarX, DuanweiBarY, "PlayerInformationDlg186_man");
+            _duanweiBar = AddProgress(body, "pro_duanwei", DuanweiBarX, DuanweiBarY,
+                                      PlayerInfoArt.An("PlayerInformationDlg186_man"));
 
             // 段位星。🔴 官方 duanwei1..24 是**12 個位置 × 兩張**:整顆 Dlg175(18×18) 打底,
             //    左半顆 Dlg175_2(9×18) 疊上去 —— 所以「滿格 24」數的是**半格**,不是 24 顆星。
@@ -725,9 +729,9 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>官方 ProgressBar:236×19 的前景圖,用 Filled 由左往右填。</summary>
-        private static Image AddProgress(RectTransform parent, string name, float x, float y, string an)
+        private static Image AddProgress(RectTransform parent, string name, float x, float y, Sprite fill)
         {
-            var img = UIKit.AddSprite(parent, name, PlayerInfoArt.An(an), x, y);
+            var img = UIKit.AddSprite(parent, name, fill, x, y);
             Place(img.rectTransform, x, y, ProgressW, ProgressH);   // AddSprite 會縮成原圖大小,擺完再改回來
             img.type = Image.Type.Filled;
             img.fillMethod = Image.FillMethod.Horizontal;
