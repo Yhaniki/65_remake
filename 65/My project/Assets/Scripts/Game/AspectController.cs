@@ -113,22 +113,32 @@ namespace Sdo.Game
         }
 
         /// <summary>Frame the (normalized) content rect with the four black bars. Anchors are screen fractions, so this
-        /// stays correct on window resize; in Stretch the rect is the whole screen and all four bars collapse to zero.</summary>
+        /// stays correct on window resize; in Stretch the rect is the whole screen and all four bars collapse to zero.
+        ///
+        /// 每條邊往**內容側多蓋 <see cref="BarOverlapPx"/> 個實體像素**:相機視口(pixelRect,整數像素)與這張
+        /// Overlay canvas 的邊界即使 <see cref="Fit43Rect"/> 已對齊像素格,驅動/管線的 rounding 仍可能在交界留下
+        /// 一列「被相機畫到、卻沒被黑條蓋住」的次像素邊緣 —— 背景一動它就跟著變色(黑邊旁那條會閃色的雜訊線)。
+        /// 多蓋 1px 一勞永逸;犧牲的是 800×600 邏輯畫面最外圈不到一個設計像素,肉眼看不出來。
+        /// 只在該側真的有黑邊時才長(Stretch 模式四條都是零寬,長出去會變成畫面邊緣的黑線)。</summary>
         private void UpdateBars(Rect r)
         {
-            SetBar(_barL, 0f, 0f, r.xMin, 1f);            // left of content
-            SetBar(_barR, r.xMax, 0f, 1f, 1f);           // right of content
-            SetBar(_barB, 0f, 0f, 1f, r.yMin);           // below content
-            SetBar(_barT, 0f, r.yMax, 1f, 1f);           // above content
+            SetBar(_barL, 0f, 0f, r.xMin, 1f, Vector2.zero, r.xMin > 0f ? new Vector2(BarOverlapPx, 0f) : Vector2.zero);
+            SetBar(_barR, r.xMax, 0f, 1f, 1f, r.xMax < 1f ? new Vector2(-BarOverlapPx, 0f) : Vector2.zero, Vector2.zero);
+            SetBar(_barB, 0f, 0f, 1f, r.yMin, Vector2.zero, r.yMin > 0f ? new Vector2(0f, BarOverlapPx) : Vector2.zero);
+            SetBar(_barT, 0f, r.yMax, 1f, 1f, r.yMax < 1f ? new Vector2(0f, -BarOverlapPx) : Vector2.zero, Vector2.zero);
         }
 
-        private static void SetBar(RectTransform rt, float xMin, float yMin, float xMax, float yMax)
+        /// <summary>黑邊往內容側的重疊量(實體像素 —— 這張 canvas 沒有 CanvasScaler,scaleFactor 固定 1)。</summary>
+        private const float BarOverlapPx = 1f;
+
+        private static void SetBar(RectTransform rt, float xMin, float yMin, float xMax, float yMax,
+                                   Vector2 offMin, Vector2 offMax)
         {
             if (rt == null) return;
             rt.anchorMin = new Vector2(xMin, yMin);
             rt.anchorMax = new Vector2(xMax, yMax);
-            rt.offsetMin = Vector2.zero;
-            rt.offsetMax = Vector2.zero;
+            rt.offsetMin = offMin;
+            rt.offsetMax = offMax;
         }
 
         private void LateUpdate()
@@ -155,17 +165,23 @@ namespace Sdo.Game
             _inst.UpdateBars(r);                          // top-most black bars frame the content rect (collapse in Stretch)
         }
 
-        /// <summary>Centred 4:3 sub-rect of the current screen (pillarbox on wide screens, letterbox on tall).</summary>
+        /// <summary>Centred 4:3 sub-rect of the current screen (pillarbox on wide screens, letterbox on tall).
+        ///
+        /// 先算**整數像素**的內容框再換回 normalized:直接用比值算出來的 normalized rect 幾乎一定落在像素中間,
+        /// 相機的 pixelRect 會自己 round(邊界移動最多半像素),而黑邊條那張 Overlay canvas 是照原始 normalized
+        /// 值鋪頂點的 —— 兩者對不齊,交界就露出一列會跟著背景變色的雜訊。邊界落在像素格線上,兩邊才會一致。</summary>
         private static Rect Fit43Rect()
         {
-            float wa = (float)Screen.width / Mathf.Max(1, Screen.height);
-            if (wa > TargetAspect)                        // window wider than 4:3 → bars left/right
+            int sw = Mathf.Max(1, Screen.width), sh = Mathf.Max(1, Screen.height);
+            if ((float)sw / sh > TargetAspect)            // window wider than 4:3 → bars left/right
             {
-                float w = TargetAspect / wa;
-                return new Rect((1f - w) * 0.5f, 0f, w, 1f);
+                int w = Mathf.Clamp(Mathf.RoundToInt(sh * TargetAspect), 1, sw);
+                int x = (sw - w) / 2;                     // 置中(奇數餘數落在右邊,無所謂 —— 兩側邊界仍在格線上)
+                return new Rect((float)x / sw, 0f, (float)w / sw, 1f);
             }
-            float h = wa / TargetAspect;                  // window taller than 4:3 → bars top/bottom
-            return new Rect(0f, (1f - h) * 0.5f, 1f, h);
+            int h = Mathf.Clamp(Mathf.RoundToInt(sw / TargetAspect), 1, sh);   // taller than 4:3 → bars top/bottom
+            int y = (sh - h) / 2;
+            return new Rect(0f, (float)y / sh, 1f, (float)h / sh);
         }
     }
 }
