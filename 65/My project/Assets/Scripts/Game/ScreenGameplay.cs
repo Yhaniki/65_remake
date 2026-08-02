@@ -433,13 +433,21 @@ namespace Sdo.Game
             public float Hp;                                       // 0..1
         }
 
+        /// <summary>分數流用的歌曲時鐘(ms;負 = 還沒開始)。
+        ///
+        /// 🔴 刻意用**原始牆鐘**(開跳到現在),不是校正過的 <c>_clock.CurrentMs</c>:tMs 會被拿去跟
+        /// **別台**的 tMs 比(server 的領隊取樣、本機名單的同刻取樣)。校正裡含每台自己的音訊延遲設定
+        /// (GlobalOffsetSeconds),兩台設不同就會憑空多出一段固定偏差。牆鐘則是共同的「開跳後第幾毫秒」。
+        /// 右側名單的本機分數歷程(<c>RecordLocalScoreSample</c>)也用這個時鐘,才查得準。</summary>
+        private double NetClockMs => _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : -1.0;
+
         /// <summary>連線層每 ~200ms 讀一次送上去。離線沒人讀。</summary>
         public NetScoreSnapshot NetScore
         {
             get
             {
                 var s = default(NetScoreSnapshot);
-                s.TimeMs = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : -1.0;
+                s.TimeMs = NetClockMs;
                 s.Score = TotalScore;
                 if (_score != null)
                 {
@@ -467,6 +475,9 @@ namespace Sdo.Game
             public long Score;
             public int Combo;
             public int Perfect, Cool, Bad, Miss;
+            /// <summary>這一筆是他的**哪個譜面時刻**(ms;≤0 = 不知道)。右側名單靠它把本機的分數倒帶到
+            /// 同一刻再畫,否則自己那一列永遠比別人快一步(見 <c>RosterLocalScore</c>)。</summary>
+            public double TimeMs;
 
             public Sdo.Ruleset.DanceJudgeCounts Counts
                 => new Sdo.Ruleset.DanceJudgeCounts(Perfect, Cool, Bad, Miss);
@@ -499,6 +510,7 @@ namespace Sdo.Game
         private ResultPhase _resultPhase = ResultPhase.None;
         private float _resultPhaseStart;          // Time.time the current result phase began
         private bool _localWon;                   // local player is the round winner (rank 1) — drives win/lose pose + FINISHED
+        private bool _localWonForRecord;          // 戰績用的「贏」:並列第一也算(見 LocalWonForRecord)
         private bool _gameOver;                   // HP ran out (failed) — result shows GAME OVER instead of YouWin/Lose
         // 輸贏定格的官方 clip(cat5 = 贏、cat4 = 輸),男女各一支。本機用下面兩個欄位(ConfigureAvatarGender 依
         // 本機性別挑);場上其他人**各挑自己性別**的那一支(見 PlayRemoteFinishPoses)—— 所以字面值要有名字,
@@ -846,6 +858,15 @@ namespace Sdo.Game
         /// 戰績落地要讀它 —— 所以得公開(以前只有畫面內部用)。
         /// </summary>
         public bool LocalWon => _localWon;
+
+        /// <summary>
+        /// 戰績(勝/負場)要記的那個「贏」——**同分也算贏**。
+        ///
+        /// 🔴 與 <see cref="LocalWon"/> 不同,而且是刻意的(使用者指定):名次面板只能有一個第一名、
+        /// 場上也只有一個人做勝利定格(平手照座位序),但兩個人打成平手時**兩邊都記勝場** ——
+        /// 誰也沒輸給誰。旁觀者恆 false(它不是參賽者)。規則本身在 <c>RankingBoard.LocalTiedForTop</c>。
+        /// </summary>
+        public bool LocalWonForRecord => _localWonForRecord;
 
         // energy meter geometry (design px). Frame = MyEnergy0(256×45)@(8,7) metallic trough + MyEnergy1(100×45)@(264,7)
         // gauge head with a black status panel (design 297..354) holding the badge cluster. Official ONLINE fill
@@ -5091,6 +5112,7 @@ namespace Sdo.Game
             if (!spectatorMode) UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
             TickRemoteGates(now);   // 遠端舞者各自的跳/停(從分數流推導,與本機同一個規則函式)
             RecordGate(now);        // log gate transitions for the result-screen background replay
+            RecordLocalScoreSample(NetClockMs);   // 右側名單要把自己的分數倒帶到遠端那一刻(見 RosterLocalScore)
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
             // hold case waits for the round to finish; taps fire freely above.
             for (int lane = 0; lane < Keys; lane++)
@@ -5142,11 +5164,6 @@ namespace Sdo.Game
             if (_audio) _audio.Stop();                        // stop the song (natural end already silent; matters for F5 mid-song cut)
             if (showtimeMode) { SetEnergyHudVisible(false); _scoreRoll?.SetVisible(false); _bonusRoll?.SetVisible(false); }   // hide the gauge AND the big/small ShowTime score at song end (not on the result panel)
             RebuildRoster();                                  // finalize scores so the rank/winner is current
-            var (rank, _) = RankingBoard.LocalRank(_roster);
-            // rank 1 = highest score = winner。
-            // 🔴 旁觀者不在名單裡 → LocalRank 回 rank 0(「找不到本機」),而 0 <= 1 會判成**贏了** ——
-            // 旁觀者看到 YOU WIN 旗。旁觀一律不贏不輸。
-            _localWon = !spectatorMode && rank <= 1;
             _gameOver = _hpDead;                              // HP-out → GAME OVER (overrides win/lose banner);完奏模式打完整首也算
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
@@ -5177,23 +5194,89 @@ namespace Sdo.Game
                 LoadGameOverFrames();                             // 依當前 note skin 選對應的 GAMEOVER 圖 (per-skin)
                 StartCoroutine(GameOverAnim());
             }
-            else
+            _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
+            // 輸贏定格(本機 + 場上其他人)。線上**不在這一幀決定** —— 見 TickFinishPoseDecision。
+            _finishPoseDone = false; _finishPoseAuthoritative = false; _finishedEftSpawned = false;
+            _remoteFinishWinner = -1;
+            TickFinishPoseDecision();                         // 離線/單人:資料都在本機,同一幀就定案(行為不變)
+        }
+
+        /// <summary>權威名次到手前,最多等這麼久就用本機名單定輸贏(秒)。
+        /// 等過了先用本機名單演,權威名次再晚到還是會覆蓋(見 <see cref="TickFinishPoseDecision"/>)。</summary>
+        private const float FinishDecideMaxSec = 1.0f;
+        private bool _finishPoseDone = true;     // 這一局的輸贏定格已經演過(不管是權威還是本機猜的)
+        private bool _finishPoseAuthoritative;   // 演的那次是用 server 權威名次決定的 → 不會再改
+        private bool _finishedEftSpawned;        // FINISHED 特效放過了(改判時不重放,也收不回來)
+        private bool _finishPoseShownWon;        // **現在演著的**是勝利姿勢嗎(翻案要不要重演比的是它,不是 _localWon)
+
+        /// <summary>
+        /// 決定並播出輸贏定格(本機 cat5/cat4 + FINISHED + 短曲,以及場上其他人的定格)。
+        ///
+        /// 🔴 線上要等 server 的權威名次(resultsReady),等不到才退回本機名單:
+        /// 曲末**這一刻**本機手上的對手分數,是 5Hz 分數流的最後一筆 —— 少了他最後零點幾秒打的音符。
+        /// 拿它定輸贏,同分/接近時兩台都會覺得自己贏,於是「結算面板寫我第 2 名,人卻在跳勝利動作」
+        /// (使用者回報)。權威名次通常在一個往返內就到;真的沒到,等過 <see cref="FinishDecideMaxSec"/> 時
+        /// 對手的**最終**成績也早就從分數流補上了,而且平手照座位序(<see cref="RankingBoard"/>)兩台一致。
+        ///
+        /// 一局最多演兩次:先用本機名單猜的那次,以及權威名次晚到而且**改判**時的重演(硬切)。
+        /// 短曲只在第一次放、FINISHED 只放一次 —— 重演的是姿勢,不是整套演出。
+        /// </summary>
+        /// <param name="force">true = 不再等,現在就定案(面板要開了,見 ResultTick)。</param>
+        private void TickFinishPoseDecision(bool force = false)
+        {
+            if (_finishPoseAuthoritative) return;              // 已經照權威名次演過 → 不會再有更好的答案
+            int place = NetLocalPlace();                       // >0 = 權威名次已到
+            bool authoritative = place > 0 || NetWinnerUserId() != 0;
+            bool online = NetResultRows != null;
+            if (!authoritative)
             {
+                if (_finishPoseDone) return;                   // 本機猜的那次演過了,等權威名次來翻案
+                if (online && !force && Time.time - _resultPhaseStart < FinishDecideMaxSec) return;   // 再等一下
+            }
+            // 權威名次晚到(>FinishDecideMaxSec)時會走到這裡第二次:改判就把定格重演一次。演錯 1 秒總比
+            // 「面板寫第 2 名、人在跳勝利動作」整段演完好 —— 那正是這次要修的回報。
+            bool redo = _finishPoseDone;
+            _finishPoseDone = true;
+            _finishPoseAuthoritative = authoritative;
+
+            // 名單也一起定案:權威結果在的話直接用它(曲末那一刻的分數流還少了大家最後零點幾秒),
+            // 不在就用「等到現在」的最新分數流重算 —— 兩者都比 EnterResult 當下那一份完整。
+            if (!RosterFromNetRows()) RebuildRoster();
+            // rank 1 = highest score = winner。
+            // 🔴 旁觀者不在名單裡 → LocalRank 回 rank 0(「找不到本機」)。**不能**寫 place <= 1:那個 0 會被
+            // 判成贏(旁觀者看到 YOU WIN 旗、權威列裡查不到自己時也會誤判)。與 CalculateResultOutcome 同一條:== 1。
+            if (place <= 0) place = RankingBoard.LocalRank(_roster).rank;
+            _localWon = !spectatorMode && place == 1;
+            // 勝負場的記錄是**另一回事**:同分兩邊都記勝場(使用者指定)。定格/旗子只能有一個第一名,
+            // 但打成平手的兩個人誰也沒輸給誰。見 RankingBoard.LocalTiedForTop 與 LocalWonForRecord。
+            _localWonForRecord = !spectatorMode && RankingBoard.LocalTiedForTop(_roster);
+            // 右側名單/名次跟著定案的分數。SetRankingVisible 是顯示與否的**唯一**政策點(自由模式一律不出),
+            // 少了它自由模式會在定格這 2.5 秒把名單掀出來。
+            if (_rosterName != null) { UpdateRosterList(); UpdateRankDisplay(); SetRankingVisible(true); }
+            // 🔴 比的是「**現在演著的**是哪一種姿勢」,不是 _localWon 的舊值 —— 面板開場的
+            // CalculateResultOutcome 也會寫 _localWon(ResultsOnline.cs),拿它當基準的話會漏掉那種翻案。
+            bool localChanged = !redo || _localWon != _finishPoseShownWon;
+            if (!_gameOver && localChanged)
+            {
+                _finishPoseShownWon = _localWon;
                 if (_avatar != null)                              // win/lose 定格 pose (cat5/cat4), held on its last frame
                 {
                     var mot = ResolveMot(_localWon ? winMot : loseMot);
-                    if (mot != null) _avatar.PlayOneShot(mot, true);
+                    // 翻案是**硬切**(定格→定格,平滑過場只會糊成一團);第一次照舊讓它從舞蹈平順接進定格。
+                    if (mot != null) { if (redo) _avatar.SnapNextClip(); _avatar.PlayOneShot(mot, true); }
                 }
                 // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
                 // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
-                if (_localWon) SpawnNamedEft("FINISHED", 5f);
+                // 翻案翻成輸的話收不回來(特效自己會在 5 秒內結束),但至少不會再放第二次。
+                if (_localWon && !_finishedEftSpawned) { _finishedEftSpawned = true; SpawnNamedEft("FINISHED", 5f); }
                 // 旁觀者不放輸贏短曲 —— 它沒有輸也沒有贏,而 _localWon 恆 false 會讓它每次都聽到「輸了」的音效。
-                if (enableResultSfx && !spectatorMode) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
+                // 翻案時**不再**放一次(兩聲短曲比一聲錯的還糟)。
+                if (enableResultSfx && !spectatorMode && !redo) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle
             }
-            // 場上其他人的輸贏定格。放在 if/else **外面**是刻意的:GAME OVER 是本機血條見底的死亡流程,
+            // 場上其他人的輸贏定格。GAME OVER 時**照樣要放**:那是本機血條見底的死亡流程,
             // 別人並沒有死 —— 本機一死就讓全場站著不動,那是把自己的結局套到別人身上。
-            PlayRemoteFinishPoses();
-            _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
+            // (翻案時它自己會判斷贏家有沒有換人,沒換就不動 —— 重播會把定格倒回第 0 幀。)
+            PlayRemoteFinishPoses(redo);
         }
 
         // 死亡字幕的「哪一組」= 官方由**同一個變體 id S**(DAT_00674f04+0x68)同時決定 note_image 與 gameover
@@ -5309,7 +5392,14 @@ namespace Sdo.Game
             switch (_resultPhase)
             {
                 case ResultPhase.FinishPose:
-                    if (el >= finishPoseSec) { ShowResultPanel(); _resultPhase = ResultPhase.Settle; _resultPhaseStart = Time.time; }
+                    TickFinishPoseDecision();   // 線上:權威名次到了(或等夠了)才放輸贏定格
+                    // 面板要開了 → 不管等到沒等到都得先定案。finishPoseSec 是可調欄位,調到比
+                    // FinishDecideMaxSec 還短時,少了這個 force 就會整局都不放定格(面板一開就沒人再呼叫它)。
+                    if (el >= finishPoseSec)
+                    {
+                        TickFinishPoseDecision(force: true);
+                        ShowResultPanel(); _resultPhase = ResultPhase.Settle; _resultPhaseStart = Time.time;
+                    }
                     break;
                 case ResultPhase.Settle:
                     _result?.Tick();   // slide rows in / scale the banner / poll the OK button
@@ -5461,6 +5551,11 @@ namespace Sdo.Game
                 r.Grade = (p.IsLocal && _hpDead) ? "F" : Sdo.Ruleset.Grade.FromAccuracy(r.Accuracy);
                 rows[i] = r;
             }
+            // 名次牌上寫的是**同分並列、不跳號**的名次(1,1,2);Rank 那一欄留給輸贏定格用的嚴格順序。
+            var scores = new long[rows.Length];
+            for (int i = 0; i < rows.Length; i++) scores[i] = rows[i].Score;
+            var display = RankingBoard.DisplayRanks(scores);
+            for (int i = 0; i < rows.Length; i++) rows[i].DisplayRank = display[i];
             return rows;
         }
 

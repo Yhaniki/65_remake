@@ -813,6 +813,7 @@ namespace Sdo.UI
                         Combo = kv.Value.Combo,
                         Perfect = kv.Value.Perfect, Cool = kv.Value.Cool,
                         Bad = kv.Value.Bad, Miss = kv.Value.Miss,
+                        TimeMs = kv.Value.TMs,
                     };
                 return arr;
             };
@@ -834,6 +835,8 @@ namespace Sdo.UI
             public long Score;
             public int Combo;
             public int Perfect, Cool, Bad, Miss;
+            /// <summary>這一筆的譜面時刻(ms)。右側名單用它把本機的分數對齊到同一刻(見 ScreenGameplay.RosterLocalScore)。</summary>
+            public double TMs;
         }
         private readonly Dictionary<int, NetOppState> _netOpponents = new Dictionary<int, NetOppState>();
         private static readonly ScreenGameplay.NetPlayerScore[] _netOpponentsEmpty = new ScreenGameplay.NetPlayerScore[0];
@@ -862,6 +865,7 @@ namespace Sdo.UI
                 st.Score = r.Score;
                 st.Combo = r.Combo;
                 st.Perfect = r.Perfect; st.Cool = r.Cool; st.Bad = r.Bad; st.Miss = r.Miss;
+                st.TMs = r.TMs;
             }
         }
 
@@ -934,6 +938,12 @@ namespace Sdo.UI
                     FullCombo = (r.Bad + r.Miss) == 0,
                 };
             }
+            // 畫在名次牌上的名次:**同分並列、不跳號**(1,1,2)。Rank 那一欄仍是嚴格順序 ——
+            // 輸贏定格/旗子要靠它挑出唯一的第一名(見 ScreenGameplay.TickFinishPoseDecision)。
+            var scores = new long[outRows.Length];
+            for (int i = 0; i < outRows.Length; i++) scores[i] = outRows[i].Score;
+            var display = Sdo.Ruleset.RankingBoard.DisplayRanks(scores);
+            for (int i = 0; i < outRows.Length; i++) outRows[i].DisplayRank = display[i];
             _netResultRows = outRows;
             _activeGame?.RefreshNetResultRows();
         }
@@ -1101,7 +1111,10 @@ namespace Sdo.UI
                 spectator: game.spectatorMode,
                 online: _ctx != null && _ctx.Net != null && _ctx.Net.IsConnected,
                 gameMode: game.gameMode,
-                localWon: game.LocalWon);
+                // 🔴 記戰績用 LocalWonForRecord 而不是 LocalWon:**同分兩邊都記勝場**(使用者指定)。
+                // LocalWon 是「名次面板上的第一名」,平手時只會有一個人是 —— 拿它記戰績,平手的另一位
+                // 明明沒輸給誰卻被記一場敗。
+                localWon: game.LocalWonForRecord);
         }
 
         /// <summary>Ctrl 按著嗎(左右都算)。優先問實體鍵位(不受輸入法影響),不支援時退回 Unity Input。</summary>

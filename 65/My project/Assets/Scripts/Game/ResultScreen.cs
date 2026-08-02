@@ -22,7 +22,12 @@ namespace Sdo.Game
     {
         public struct Row
         {
-            public int Rank;            // 1-based place
+            public int Rank;            // 1-based place — **嚴格**順序(照 (分數, 座位) 排,同分也一定分先後)
+            /// <summary>畫在名次牌上的名次 —— **同分並列**(競賽排名 1,1,3;使用者指定)。0 = 用 <see cref="Rank"/>。
+            ///
+            /// 🔴 與 <see cref="Rank"/> 分開是刻意的:輸贏定格與 WIN/LOSE 旗只能有一個第一名(那要嚴格順序,
+            /// 見 <c>ScreenGameplay.TickFinishPoseDecision</c>),但**寫在畫面上的名次**同分要一樣。</summary>
+            public int DisplayRank;
             public int UserId;
             public string Name;
             public int Perfect, Cool, Bad, Miss, MaxCombo;
@@ -307,8 +312,9 @@ namespace Sdo.Game
             }
             else
             {
-                if (_rankBadge.TryGetValue(r.Rank, out var badge) == false)
-                { badge = LoadPanelImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG"); _rankBadge[r.Rank] = badge; }
+                int shown = r.DisplayRank > 0 ? r.DisplayRank : r.Rank;   // 同分並列(1,1,3);沒填就用嚴格名次
+                if (_rankBadge.TryGetValue(shown, out var badge) == false)
+                { badge = LoadPanelImage(dir, "rank/" + Mathf.Clamp(shown, 1, 8) + ".PNG"); _rankBadge[shown] = badge; }
                 if (badge) Child(rowRoot, NewSR("Rank", badge, OrderRow), 0, y - 8);
             }
 
