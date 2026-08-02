@@ -147,12 +147,15 @@ Copy-Tree (Join-Path $Ds 'UI\LOBBYDLG\KEYS')    (Join-Path $Data 'UI\LOBBYDLG\KE
 Copy-Tree (Join-Path $Ds 'LOADING')             (Join-Path $Data 'LOADING')             'online LOADING'
 
 # 3b) upscaled art overlay — EXACTLY package_build's step, so editor and shipped player see the same art.
-# art\upscaled mirrors the DATA layout with higher-resolution replacements (UI\PLAYINGEXP 表情 cut-in: 64px -> 192px
-# hq3x, tools\upscale_playingexp.py). On-screen size is unchanged: the loader divides the extra resolution back out
-# (SdoExtracted.LoadImageAtDesignWidth; EmojiUpscaleTests guards it).
+# art\upscaled mirrors the DATA layout with higher-resolution replacements:
+#   UI\PLAYINGEXP 表情 cut-in       64px -> 192px hq3x      (tools\upscale_playingexp.py)
+#     On-screen size is unchanged: the loader divides the extra resolution back out
+#     (SdoExtracted.LoadImageAtDesignWidth; EmojiUpscaleTests guards it).
+#   3DEFT\GENERIC\MAP_G\KEKKAI     512px -> 2048px         (tools\upscale_kekkai.py)
+#     SCN0008 埃及古墓的地板結界; EFT 貼圖是 UV 全幅取樣, 換解析度不動任何座標。
 $Upscaled = Join-Path $Repo 'art\upscaled'
 if (Test-Path $Upscaled) { Copy-Tree $Upscaled $Data 'upscaled art overlay' }
-else { Write-Warning "[clean] art\upscaled 不存在 — 表情 cut-in 維持 64px (run tools\upscale_playingexp.py)" }
+else { Write-Warning "[clean] art\upscaled 不存在 — 表情 cut-in 維持 64px, KEKKAI 維持 512px (run tools\upscale_playingexp.py / upscale_kekkai.py)" }
 
 # 4) shop item data
 foreach ($f in 'iteminfo.dat','setinfo.dat') {
@@ -181,6 +184,7 @@ $mf = New-Object System.Text.StringBuilder
 [void]$mf.AppendLine("  MOTION AUMOTION DANCE SCENE CAMERA 3DEFT EFFECT NOTEIMAGE 3DNOTES  (from Extracted)")
 [void]$mf.AppendLine("  UI/* (Extracted) + online overlays ICONS/STATISTIC/ROOMDLG/OPTIONDLG/SHOP/MYHOUSEDLG/KEYS")
 [void]$mf.AppendLine("  UI/PLAYINGEXP 表情 cut-in: 81 frames replaced by the art/upscaled 3x (192px hq3x) set — same on-screen size")
+[void]$mf.AppendLine("  3DEFT/GENERIC/MAP_G/KEKKAI.png: SCN0008 地板結界, replaced by the art/upscaled 2048px rebuild (原廠 .BMP 512px 保留)")
 [void]$mf.AppendLine("  BGM (8 ogg, lobby/room random playlist) — MOVED out of UI/BGM to the DATA root (DATA/BGM)")
 [void]$mf.AppendLine("  AVATAR = Extracted(120) + Datas/AVATAR(full 38k costume catalog)")
 [void]$mf.AppendLine("  MUSIC = full song tree")
