@@ -135,6 +135,8 @@ namespace Sdo.Server.Net
                 case NetProto.SetReady: OnSetReady(conn, node, rq); break;
                 case NetProto.SetLook: OnSetLook(conn, node); break;
                 case NetProto.SetIdentity: OnSetIdentity(conn, node); break;
+                case NetProto.SetPlayerCard: OnSetPlayerCard(conn, node); break;
+                case NetProto.PlayerCardQuery: OnPlayerCardQuery(conn, node, rq); break;
                 case NetProto.Move: OnRoomMove(conn, node, now); break;
                 case NetProto.SetAvailability: OnSetAvailability(conn, node, now); break;
 
@@ -685,6 +687,55 @@ namespace Sdo.Server.Net
             if (room == null) return;
             if (room.SetIdentity(conn.UserId, conn.Name, conn.Guild, conn.Level) == NetRoomOp.Ok)
                 BroadcastRoomState(room);
+        }
+
+        /// <summary>
+        /// 玩家回報自己的**公開名片**(累計判定數 / 勝負 / 經驗值% / 知名度 / 四格自我介紹)。
+        ///
+        /// 🔴 **不廣播、不推快照。** 名片只有「有人點開你的資料」時才會被讀到 —— 拿它去 rev++
+        /// 會讓全房為了一個沒人在看的數字重畫一次(<see cref="OnSetLook"/> 那條路踩過的坑)。
+        /// 所以這裡就只是把它放在連線上,等 <see cref="OnPlayerCardQuery"/> 來拿。
+        ///
+        /// 🔴 **自報值,不驗證。** 判定數本來就發生在 client,這套連線也沒有帳號系統可以對帳 ——
+        /// 與 <see cref="OnSetIdentity"/> / <see cref="OnSetLook"/> 同一個信任等級。<c>Decode</c>
+        /// 已經把負數與過長字串夾掉,壞掉的名片最糟就是顯示怪數字,不值得為它斷線。
+        /// </summary>
+        private void OnSetPlayerCard(Connection conn, object node)
+        {
+            conn.Card = NetPlayerCard.Decode(NetJson.Sub(node, "card"));
+        }
+
+        /// <summary>
+        /// 查一個玩家的公開資料(個人資料視窗點開別人時發的)。
+        ///
+        /// 回應帶的 <c>look</c> 是 server 手上那份(<c>setLook</c> 來的),不是名片的一部分 ——
+        /// 同一件事只該有一個來源,而且那份本來就已經在連線上了。
+        ///
+        /// 對方不在線上就回 <c>found=false</c> 而不是 error:「他剛好下線了」是**正常**情況,
+        /// 不是誰做錯事。呼叫端看到 false 就維持原本的空白顯示。
+        /// </summary>
+        private void OnPlayerCardQuery(Connection conn, object node, int rq)
+        {
+            int userId = NetJson.Int(node, "userId");
+            var target = ControlOf(userId);
+
+            var reply = JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardResult)
+                .Int(NetProto.FieldRequest, rq)
+                .Bool("found", target != null)
+                .Int("userId", userId);
+
+            if (target != null)
+            {
+                reply.Str("name", target.Name)
+                     .Str("playerId", target.PlayerId)
+                     .Str("guild", target.Guild)
+                     .Int("level", target.Level)
+                     .Put("look", (target.Look ?? new NetAvatarLook()).Encode())
+                     .Put("card", (target.Card ?? new NetPlayerCard()).Encode());
+            }
+
+            conn.Send(reply);
         }
 
         private void OnSetAvailability(Connection conn, object node, long now)

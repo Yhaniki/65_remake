@@ -1040,7 +1040,14 @@ namespace Sdo.UI.Screens
             RefreshSelf();
 
             // server 沒有「房間列表變了」的推播,只能自己回頭問(離線那份靠 RoomsChanged 事件就夠了)。
-            if (Ctx != null && Ctx.Net != null) RequestOnlineRooms();
+            if (Ctx != null && Ctx.Net != null)
+            {
+                RequestOnlineRooms();
+                // 順手把自己的公開名片推上去,別人點開才看得到命中率那些數字。掛在這個節拍是因為
+                // 名片會變的時機很散(打完一局、逛完商城、改了自我介紹四格),與其在每個地方補一次
+                // 呼叫、漏一個就永遠不更新,不如跟著大廳既有的心跳走。內容沒變的話 PublishCard 自己會擋掉。
+                Ctx.Net.PublishCard();
+            }
 
             // 玩家名單同理(沒有上下線推播)。只在名單開著時才問 —— 收起來的時候沒人看,不必占頻寬。
             RequestOnlineUsers();

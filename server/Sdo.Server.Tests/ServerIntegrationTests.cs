@@ -346,6 +346,74 @@ namespace Sdo.Tests
             Assert.AreEqual(-1, NetJson.Int(users[1], "roomSeq"), "沒進房 = 人在大廳");
         }
 
+        /// <summary>
+        /// 玩家的**公開名片**(個人資料視窗點開別人時看到的命中率/勝負/自我介紹 + 穿搭)。
+        ///
+        /// 這條路存在的理由:那些數字原本只存在玩家自己那台機器的 profile.json,所以點開別人整頁都是 0。
+        /// 現在 client 定期 <c>setCard</c> 上來,別人 <c>cardQuery</c> 就查得到。
+        ///
+        /// 回應裡的 <c>look</c> 來自 <c>setLook</c>(server 手上那份),不是名片的一部分 ——
+        /// 這條測試順便把「同一件事只有一個來源」釘住。
+        /// </summary>
+        [Test]
+        public void Player_Card_Round_Trips_With_The_Look_Server_Already_Has()
+        {
+            var a = Connect("被看的人");
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetLook)
+                .Put("look", JObj.New().Int("gender", 1).Int("bodyIndex", 2)
+                                       .Put("parts", JArr.New().Add("HAIR_X").Add("TOP_Y"))));
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetPlayerCard)
+                .Put("card", JObj.New()
+                    .Long("perfect", 300).Long("cool", 100).Long("bad", 60).Long("miss", 40)
+                    .Int("plays", 12).Int("wins", 7).Int("losses", 3)
+                    .Int("expPct", 42).Int("fame", 15)
+                    .Str("city", "台北").Str("im", "12345").Str("constellation", "獅子").Str("age", "18")));
+
+            var b = Connect("看別人的人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 91)
+                .Int("userId", a.UserId));
+
+            var res = b.WaitFor(NetProto.PlayerCardResult);
+            Assert.IsNotNull(res);
+            Assert.IsTrue(NetJson.Bool(res, "found"), "對方在線上就要查得到");
+            Assert.AreEqual("被看的人", NetJson.Str(res, "name"));
+
+            var card = NetPlayerCard.Decode(NetJson.Sub(res, "card"));
+            Assert.AreEqual(300, card.Perfect);
+            Assert.AreEqual(40, card.Miss);
+            Assert.AreEqual(7, card.Wins);
+            Assert.AreEqual(3, card.Losses);
+            Assert.AreEqual(42, card.ExpPercent);
+            Assert.AreEqual(15, card.Fame);
+            Assert.AreEqual("台北", card.City);
+            Assert.AreEqual("獅子", card.Constellation);
+
+            // 穿搭走 setLook 那份 —— 名片裡沒有外觀欄位,查詢回應是 server 自己補上的。
+            var look = NetAvatarLook.Decode(NetJson.Sub(res, "look"));
+            Assert.AreEqual(1, look.Gender);
+            Assert.AreEqual(2, look.BodyIndex);
+            CollectionAssert.AreEqual(new[] { "HAIR_X", "TOP_Y" }, look.Parts);
+        }
+
+        /// <summary>對方不在線上 → <c>found=false</c>,**不是** error。「他剛好下線了」是正常情況。</summary>
+        [Test]
+        public void Player_Card_Of_Someone_Not_Online_Is_Not_Found()
+        {
+            var b = Connect("查的人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 92)
+                .Int("userId", 999999));
+
+            var res = b.WaitFor(NetProto.PlayerCardResult);
+            Assert.IsNotNull(res, "查不到也要回話,不能讓呼叫端等到天荒地老");
+            Assert.IsFalse(NetJson.Bool(res, "found"));
+        }
+
         // ================= 離開 / 房主轉移 =================
 
         [Test]

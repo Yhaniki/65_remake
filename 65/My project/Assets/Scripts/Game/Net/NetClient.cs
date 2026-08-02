@@ -718,6 +718,7 @@ namespace Sdo.Game.Net
         {
             PublishLook();       // 🔴 一定要在 createRoom **之前** —— 見 PublishLook 的註解
             PublishIdentity();   // 同上:座位的名字是進房那一刻從連線上抄過去的
+            PublishCard();       // 同房的人右鍵座位就會查名片,進房前先備好
             int generation = BeginRoomEntry(0);
             int rq = NextRq(node => ReportJoin(node, onResult, generation, 0));
             _roomEntryRq = rq;
@@ -732,6 +733,7 @@ namespace Sdo.Game.Net
         {
             PublishLook();       // 🔴 一定要在 joinRoom **之前** —— 見 PublishLook 的註解
             PublishIdentity();   // 同上:座位的名字是進房那一刻從連線上抄過去的
+            PublishCard();       // 同房的人右鍵座位就會查名片,進房前先備好
             int generation = BeginRoomEntry(code);
             int rq = NextRq(node => ReportJoin(node, onResult, generation, code));
             _roomEntryRq = rq;
@@ -880,6 +882,7 @@ namespace Sdo.Game.Net
         {
             PublishLook();       // 旁觀者在房間 3D 裡也是站在那邊的人,外觀一樣要對
             PublishIdentity();   // 旁觀名單顯示的也是名字
+            PublishCard();       // 旁觀者的資料一樣點得開
             int requestedCode = code > 0 ? code : (Room != null ? Room.Code : _expectedRoomCode);
             int generation = BeginSpectatorEntry(requestedCode);
             int rq = NextRq(node => CompleteSpectate(generation, NetJson.Str(node, "code")));
@@ -1097,6 +1100,49 @@ namespace Sdo.Game.Net
                 .Str("playerId", playerId ?? "")
                 .Str("guild", guild ?? "")
                 .Int("level", level));
+
+        /// <summary>
+        /// 「我的公開名片長什麼樣」的提供者,由 <c>AppContext</c> 注入(理由同 <see cref="LocalLook"/>:
+        /// 只有它知道怎麼從 <c>ProfileManager.Active</c> 解析)。null → <see cref="PublishCard"/> 什麼都不做。
+        /// </summary>
+        public Func<NetPlayerCard> LocalCard;
+
+        private NetPlayerCard _sentCard;
+
+        /// <summary>
+        /// 把自己的公開名片(命中率那些數字 + 四格自我介紹)報給 server,讓**別人**點開你的資料時看得到。
+        ///
+        /// 與 <see cref="PublishLook"/> / <see cref="PublishIdentity"/> 成組:進房的三個出口都會呼叫,
+        /// 另外打完一局(統計變了)與大廳輪詢的節拍也會回頭呼叫一次。
+        ///
+        /// 🔴 去重的理由與那兩條**不同**:名片不會讓 server 廣播任何東西(見 server 的 <c>OnSetPlayerCard</c>),
+        ///    所以白送不會害到別人 —— 但它會跟著輪詢一秒一次地送,而多數時候一個字都沒變。
+        ///    純粹是不要讓 log 與頻寬被沒有意義的封包塞滿。
+        /// </summary>
+        public void PublishCard()
+        {
+            if (LocalCard == null) return;
+            var card = LocalCard();
+            if (card == null) return;
+            if (_sentCard != null && _sentCard.SameAs(card)) return;
+            _sentCard = card;
+            Send(JObj.New().Str(NetProto.FieldType, NetProto.SetPlayerCard).Put("card", card.Encode()));
+        }
+
+        /// <summary>
+        /// 問 server「<paramref name="userId"/> 這個人的公開資料」——個人資料視窗點開別人時走這條。
+        ///
+        /// 對方不在線上時回來的是 <c>Found == false</c>(**不是** error):那是正常情況,
+        /// 呼叫端維持原本的空白顯示就好。
+        /// </summary>
+        public void RequestPlayerCard(int userId, Action<NetPlayerCardResult> onCard)
+        {
+            if (onCard == null) return;
+            Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, NextRq(node => onCard(NetPlayerCardResult.Decode(node))))
+                .Int("userId", userId));
+        }
 
         public void SendChat(string text, string channel = "current", int expressionId = 0, string leading = null)
             => Send(JObj.New()

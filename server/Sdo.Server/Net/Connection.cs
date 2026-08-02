@@ -63,6 +63,15 @@ namespace Sdo.Server.Net
         public NetAvatarLook Look = new NetAvatarLook();
 
         /// <summary>
+        /// 這個玩家的公開名片(累計判定數 / 勝負 / 經驗值% / 知名度 / 四格自我介紹)——
+        /// 由 <c>setCard</c> 更新,別人用 <c>cardQuery</c> 查。見 <see cref="NetPlayerCard"/>。
+        ///
+        /// 🔴 生命週期 = **這條連線**。server 沒有帳號持久化,對方離線就查不到 ——
+        /// 與「玩家名單只列線上的人」一致。舊 client 不送 → 一張全 0 的名片,顯示退化成現狀。
+        /// </summary>
+        public NetPlayerCard Card = new NetPlayerCard();
+
+        /// <summary>
         /// 這條連線的名字 / playerId 是 token 綁定的嗎?
         ///
         /// 🔴 綁了就**不准** <c>setIdentity</c> 改 —— 否則那條訊息等於 <c>AuthTokens</c> 的後門:

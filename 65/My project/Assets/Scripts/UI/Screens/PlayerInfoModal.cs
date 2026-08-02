@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 using Sdo.Localization;
+using Sdo.Net;          // NetPlayerCard / NetPlayerCardResult(看別人的公開名片)
 using Sdo.Settings;
 using Sdo.UI.Services;
 using Sdo.UI.Util;
@@ -355,6 +356,22 @@ namespace Sdo.UI.Screens
         private bool _closing;                 // 關閉動畫跑到一半(見 Close)
         private string _targetName = "", _targetId = "";
         private Action<string> _onWhisper;
+
+        /// <summary>
+        /// 現在這扇窗顯示的是哪個 server userId(0 = 自己 / 離線 / 不知道)。
+        ///
+        /// 🔴 名片查詢的回呼是**非同步**的,而玩家可以在等待期間關掉視窗、或直接點開另一個人。
+        ///    所以每份回來的名片都要拿 forUserId 與這個欄位比對,對不上就丟掉 ——
+        ///    沒有這道門的話,連點兩個人時後到的那份會蓋掉先開的那個,而畫面看起來完全正常。
+        /// </summary>
+        private int _cardUserId;
+
+        /// <summary>
+        /// 「去跟 server 要這個人的公開名片」。由 <c>FrontendApp</c> 注入(只有它拿得到 <c>AppContext.Net</c>,
+        /// 而那個欄位在登入成功時會**換人**,所以注入的是每次呼叫時才去讀它的 lambda)。
+        /// null 或離線 → 不查,顯示維持原本的空白(見 <see cref="FillStatsOther"/>)。
+        /// </summary>
+        public Action<int, Action<NetPlayerCardResult>> CardQuery;
 
         /// <summary>
         /// 視窗開著嗎?<c>FrontendApp.AnyModalOpen</c> 拿它去擋房間的 ESC 與聊天欄搶 focus,所以這個值是有責任的。
@@ -795,7 +812,8 @@ namespace Sdo.UI.Screens
             ProfileManager.Save();
         }
 
-        /// <summary>四格自己填的欄位:填值 + 決定打不打得動(看別人時唯讀且空白 —— 我們拿不到對方填了什麼)。</summary>
+        /// <summary>四格自己填的欄位:填值 + 決定打不打得動。看別人時傳 null(唯讀 + 先清空),
+        /// 對方真正填了什麼由名片回來時的 <see cref="FillRemoteEdits"/> 補上。</summary>
         private void FillEdits(UserProfile p)
         {
             SetEdit(_cityEdit, p != null ? p.city : "", p != null);
@@ -1015,10 +1033,11 @@ namespace Sdo.UI.Screens
         ///    而且這個值本來就不可信 —— <c>RoomScreen.SeatGender</c> 查不到時會退回**本機**的性別,拿它當資料
         ///    顯示會把一整批人標成跟自己同一個性別。
         /// </summary>
-        public void Open(PlayerProfile who, int gender, Action<string> onWhisper)
+        public void Open(PlayerProfile who, int gender, int userId, Action<string> onWhisper)
         {
             if (who == null || _cg == null) return;   // _cg == null ⇒ 還沒 Build(),沒有東西可以開
             _isSelf = false;
+            _cardUserId = userId;
             _targetName = (who.DisplayName ?? "").Trim();
             _targetId = (who.Id ?? "").Trim();
             _onWhisper = onWhisper;
@@ -1032,11 +1051,20 @@ namespace Sdo.UI.Screens
             _whisperBtn.gameObject.SetActive(onWhisper != null);
             RefreshFriendButton();
 
-            // 看別人:拿不到對方的穿搭 → 預設整套;性別只能用呼叫端傳的那個(可能不準,見 Avatar.cs 的註解)。
+            // 先照舊畫一次「還沒有資料」的樣子(預設整套穿搭 + 一整排 0)—— 名片是非同步回來的,
+            // 中間那段時間不能是空白或上一個人的資料。
             ShowInfoAvatar(gender, self: false);
 
             ShowTab(TabBasic);
             Reveal();
+
+            // 再去跟 server 要對方的公開名片(命中率那些數字 + 真正的穿搭)。離線 / 沒接上 / 對方剛下線
+            // → 什麼都不會發生,畫面就停在上面那份預設值。
+            if (userId != 0 && CardQuery != null)
+            {
+                int forUserId = userId;
+                CardQuery(forUserId, res => ApplyRemoteCard(forUserId, res));
+            }
         }
 
         /// <summary>看自己。資料全部來自 <see cref="ProfileManager.Active"/>。</summary>
@@ -1045,6 +1073,7 @@ namespace Sdo.UI.Screens
             if (_cg == null) return;
             var p = ProfileManager.Active;
             _isSelf = true;
+            _cardUserId = 0;   // 看自己不查名片 —— 順便把上一扇窗還在飛的回呼失效掉
             _targetName = (p.name ?? "").Trim();
             _targetId = (p.id ?? "").Trim();
             _onWhisper = null;
@@ -1072,6 +1101,9 @@ namespace Sdo.UI.Screens
             if (_cg == null || _closing) return;   // _closing:動畫期間 IsOpen 還是 true(見它的 doc),
                                                    // 不擋的話按住 ESC 會每幀重跑一次 PlayOut,框就永遠關不掉
             _closing = true;
+            // 🔴 先把名片的收件人清掉:查詢是非同步的,關窗之後才回來的那份不該再往已經收起來的
+            //    視窗裡塞值(見 _cardUserId)。CommitProfileFields 只在看自己時才寫檔,所以順序不影響存檔。
+            _cardUserId = 0;
             // 打完字直接按 X 的話 onEndEdit 不一定來得及觸發 → 關窗時再存一次(沒改過就是寫回一樣的值)。
             CommitProfileFields();
             // 🔴 角色**現在**就收(不等關窗動畫跑完):那尊是 3D 直接畫在畫面上的,框縮出去的途中它不會跟著縮,
@@ -1257,6 +1289,7 @@ namespace Sdo.UI.Screens
         private void FillStatsOther()
         {
             // 六條照樣畫出來(值 0)—— 使用者要求「沒資料也要顯示 0,不要整頁空白」。
+            // 這是**還沒收到名片**時的樣子;名片回來了就由 ApplyRemoteCard 填上真的數字。
             var empty = new PlayStats();
             int r = 0;
             _rateRows[r++].Set(null, empty.WinRate);
@@ -1269,6 +1302,62 @@ namespace Sdo.UI.Screens
             _perfAuLabel.text = L("room.info_record_value", "0", "0");
             _statsRankLabel.text = "";
             ShowStatsNote(L("room.info_remote_stats"));
+        }
+
+        /// <summary>
+        /// 對方的**公開名片**回來了 —— 把「技術統計」那頁的六條比率、熱舞戰績、經驗條、知名度、
+        /// 四格自我介紹全部換成真的值,並用對方真正的穿搭重建預覽角色。
+        ///
+        /// 🔴 **回呼是非同步的**,期間玩家可能已經關掉視窗或改看另一個人 —— 所以第一件事是
+        ///    比對 <see cref="_cardUserId"/>。少了這道門,連點兩個人時後到的那份會蓋掉先開的那個,
+        ///    而且看起來完全正常(這正是「別人的資料掛在別人名下」那類 bug 最難查的形態)。
+        ///
+        /// 🔴 名片是**對方自己報上來的**,server 不驗證(見 <c>NetPlayerCard</c>)。拿來顯示可以,
+        ///    不要拿它做任何判斷。
+        /// </summary>
+        private void ApplyRemoteCard(int forUserId, NetPlayerCardResult res)
+        {
+            if (this == null || _cg == null) return;
+            if (_isSelf || forUserId == 0 || forUserId != _cardUserId) return;   // 視窗已經換人/關掉了
+            if (res == null || !res.Found) return;                               // 對方剛好下線 → 維持空白
+
+            var c = res.Card ?? new NetPlayerCard();
+
+            // 六條比率:用 PlayStats 算,與看自己那條路是**同一條式子**(不要在這裡自己再除一次)。
+            var s = new PlayStats
+            {
+                perfect = c.Perfect, cool = c.Cool, bad = c.Bad, miss = c.Miss,
+                plays = c.Plays, wins = c.Wins, losses = c.Losses,
+            };
+            int r = 0;
+            _rateRows[r++].Set(null, s.WinRate);
+            _rateRows[r++].Set(null, s.Accuracy);
+            _rateRows[r++].Set(null, s.PerfectRate);
+            _rateRows[r++].Set(null, s.CoolRate);
+            _rateRows[r++].Set(null, s.BadRate);
+            _rateRows[r++].Set(null, s.MissRate);
+            _perfLabel.text = L("room.info_record_value", Num(s.wins), Num(s.losses));
+            _perfAuLabel.text = L("room.info_record_value", "0", "0");
+
+            // 有真的資料了 → 收掉那句「伺服器不保存玩家統計」。
+            _statsNote.gameObject.SetActive(false);
+
+            SetExpBar(c.ExpPercent);
+            FillFame(c.Fame);
+            FillRemoteEdits(c);
+
+            // 穿搭:server 手上那份(對方 setLook 報的)—— 與房間 3D 建他角色用的是同一份資料。
+            var look = res.Look;
+            if (look != null) ShowRemoteAvatar(look);
+        }
+
+        /// <summary>看別人時那四格自我介紹。**唯讀** —— 那是對方填的,這裡只是把它顯示出來。</summary>
+        private void FillRemoteEdits(NetPlayerCard c)
+        {
+            SetEdit(_cityEdit, c.City, editable: false);
+            SetEdit(_imEdit, c.Im, editable: false);
+            SetEdit(_ageEdit, c.Age, editable: false);
+            SetEdit(_zodiacEdit, c.Constellation, editable: false);
         }
 
         private void ShowStatsNote(string text)

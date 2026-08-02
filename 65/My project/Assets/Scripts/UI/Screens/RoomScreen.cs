@@ -4291,7 +4291,7 @@ namespace Sdo.UI.Screens
             var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             var s = SeatAt(room, seat);
             if (s == null || s.IsEmpty) return;
-            Nav.OpenPlayerInfo?.Invoke(s.Player, SeatGender(s.UserId));
+            Nav.OpenPlayerInfo?.Invoke(s.Player, SeatGender(s.UserId), s.UserId);
         }
 
         /// <summary>那個座位上的人的性別(0=女 1=男)。<see cref="SeatInfo"/> 沒帶性別,所以從連線快照的

@@ -153,6 +153,26 @@
         /// </summary>
         public const string SetIdentity = "setIdentity";
 
+        /// <summary>
+        /// C→S。回報自己的**公開名片**(累計判定數 / 勝負 / 經驗值% / 知名度 / 四格自我介紹)——
+        /// 就是個人資料視窗看別人時該顯示的那些數字。內容見 <see cref="NetPlayerCard"/>。
+        ///
+        /// 為什麼要有:那些資料原本只存在玩家自己那台機器的 profile.json,所以點開別人的資料整頁是 0。
+        /// 送的時機與 <see cref="SetLook"/> / <see cref="SetIdentity"/> 同一組(進房前 + 打完一局後 +
+        /// 大廳輪詢的節拍),client 端自己去重(內容沒變就不送)。
+        ///
+        /// 🔴 **自報值,server 不驗證** —— 判定數本來就發生在 client。拿來顯示可以,
+        /// 拿來做排行榜或發獎勵不行(與 setIdentity/setLook 同一個信任等級)。
+        /// </summary>
+        public const string SetPlayerCard = "setCard";
+
+        /// <summary>C→S。問「userId 這個人的公開資料」。對方不在線上 → <c>found=false</c>。</summary>
+        public const string PlayerCardQuery = "cardQuery";
+
+        /// <summary>S→C。<c>{found,userId,name,playerId,guild,level,look{...},card{...}}</c>。
+        /// <c>look</c> 是 server 手上那份(setLook 來的),不是名片的一部分 —— 同一件事只該有一個來源。</summary>
+        public const string PlayerCardResult = "cardResult";
+
         // ---- 缺歌上報與傳檔 ----
 
         public const string SetAvailability = "setAvailability";

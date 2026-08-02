@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Sdo.Game;
+using Sdo.Net;          // NetAvatarLook(看別人時套對方真正的穿搭)
 using Sdo.UI.Util;
 
 namespace Sdo.UI.Screens
@@ -58,6 +59,15 @@ namespace Sdo.UI.Screens
         private int _savedMask;
         /// <summary>上一次顯示的是「自己」嗎 —— 換了對象才需要重套穿搭(重建兩隻角色不便宜)。</summary>
         private bool _previewSelf, _previewBuilt;
+
+        /// <summary>
+        /// 現在身上套的是**別人的**穿搭嗎(<see cref="ShowRemoteAvatar"/> 套上去的)?
+        ///
+        /// 需要它的理由與 <see cref="_previewSelf"/> 一樣:<see cref="ShowInfoAvatar"/> 的「看別人」那條路
+        /// 原本假設「上一次不是自己 ⇒ 身上就是預設整套,不用重套」。名片會把真的穿搭套上去之後那個假設就不成立了
+        /// —— 少了這個旗標,連看兩個人時第二個人會**穿著第一個人的衣服**,而且看起來完全正常。
+        /// </summary>
+        private bool _previewRemote;
         private AvatarTuner _infoTuner;
 
         private AvatarTuner InfoTuner
@@ -135,13 +145,15 @@ namespace Sdo.UI.Screens
             {
                 _preview.gameObject.SetActive(true);
                 // 看自己:穿搭可能剛換過(去商城買了東西)→ 每次都重套。
-                // 看別人:只有「上一次是自己」時才需要換回預設整套,連看兩個人不必重建。
-                if (self || _previewSelf) _preview.SetOutfits(gender, fParts, mParts, fBody, mBody);
+                // 看別人:「上一次是自己」或「上一次身上是別人的穿搭」時要換回預設整套 ——
+                //   後者少了的話,連看兩個人時第二個會穿著第一個人的衣服(見 _previewRemote)。
+                if (self || _previewSelf || _previewRemote) _preview.SetOutfits(gender, fParts, mParts, fBody, mBody);
                 _previewSelf = self;
             }
 
             _preview.SetGender(gender);
             _preview.ResetOrbit();   // 回到 avatarYaw(這裡是 0:正面),pitch 也歸零
+            _previewRemote = false;
 
             if (_previewImg != null && _preview.PreviewTexture != null)
             {
@@ -157,6 +169,32 @@ namespace Sdo.UI.Screens
                 _savedMask = ui.cullingMask;
                 ui.cullingMask &= ~(1 << GenderPreview3D.PreviewLayer);
             }
+        }
+
+        /// <summary>
+        /// 名片回來了 → 把預覽角色換成**對方真正的穿搭**(<c>setLook</c> 那份,與房間 3D 建他角色的來源相同)。
+        ///
+        /// 之前這裡永遠是預設整套,因為 client 之間拿不到彼此的穿搭 —— 現在 server 有了,就用它。
+        ///
+        /// 🔴 只在 <see cref="ShowInfoAvatar"/> 已經跑過(<see cref="_previewBuilt"/>)之後才有意義:
+        ///    名片是非同步回來的,而視窗一定是先開起來的,所以正常順序就是這樣;沒建好就安靜地不做事。
+        /// 🔴 性別以**對方的 look** 為準,不是呼叫端猜的那個 —— look 是對方自己報的,那是唯一的權威。
+        /// </summary>
+        private void ShowRemoteAvatar(NetAvatarLook look)
+        {
+            if (look == null || _preview == null || !_previewBuilt) return;
+
+            int gender = look.Male ? 1 : 0;
+            // GenderPreview3D 一次養兩隻(男/女),所以只餵對方那一邊,另一邊給 null = 維持預設。
+            string[] fParts = gender == 0 ? look.Parts : null;
+            string[] mParts = gender == 1 ? look.Parts : null;
+            int fBody = gender == 0 ? look.BodyIndex : 0;
+            int mBody = gender == 1 ? look.BodyIndex : 0;
+
+            _preview.SetOutfits(gender, fParts, mParts, fBody, mBody);
+            _preview.SetGender(gender);
+            _previewSelf = false;
+            _previewRemote = true;
         }
 
         /// <summary>

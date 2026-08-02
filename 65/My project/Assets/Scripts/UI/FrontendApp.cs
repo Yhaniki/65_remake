@@ -207,6 +207,14 @@ namespace Sdo.UI
             _playerInfo = new GameObject("PlayerInfo").AddComponent<PlayerInfoModal>();
             _playerInfo.transform.SetParent(modalLayer, false);
             _playerInfo.Build(modalLayer);
+            // 「去跟 server 要這個人的公開名片」(命中率那些數字 + 真正的穿搭)。
+            // 🔴 lambda 每次呼叫時才去讀 _ctx.Net —— 那個欄位在登入成功時會**換人**(見 AppContext.CompleteLogin),
+            //    在這裡先抓成區域變數的話,開機時是離線的 null,之後永遠查不到。
+            _playerInfo.CardQuery = (uid, onCard) =>
+            {
+                var net = _ctx != null ? _ctx.Net : null;
+                if (net != null && net.IsConnected) net.RequestPlayerCard(uid, onCard);
+            };
             // 創建遊戲房間(官方 ROOMCREATEDLG)。單機也建 —— 離線大廳一樣按得到「創建舞台」。
             _roomCreate = new GameObject("RoomCreate").AddComponent<RoomCreateModal>();
             _roomCreate.transform.SetParent(modalLayer, false);
@@ -227,7 +235,7 @@ namespace Sdo.UI
             Nav.OpenSelfInfo = () => _playerInfo.OpenSelf();
             Nav.OpenRoomCreate = cb => _roomCreate.Open(cb);
             Nav.OpenRoomInfo = (room, onEnter) => _roomInfo.Open(room, onEnter);
-            Nav.OpenPlayerInfo = (who, gender) => _playerInfo.Open(who, gender, name =>
+            Nav.OpenPlayerInfo = (who, gender, userId) => _playerInfo.Open(who, gender, userId, name =>
             {
                 if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.BeginWhisperTo(name);
             });

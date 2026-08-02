@@ -142,12 +142,13 @@ STR = {
                                 "還沒有紀錄 —— 完整打完一首歌就會開始累計。",
                                 "还没有记录 —— 完整打完一首歌就会开始累计。",
                                 "まだ記録がありません — 1曲を最後までプレイすると集計が始まります。"],
-    # 為什麼看別人時不顯示數字：server 廣播完結果就把資料丟掉，完全沒有玩家統計的持久化層。
-    # 拿自己的數字冒充對方是最糟的做法（看起來合理但全錯），所以誠實說明它為什麼看不到。
-    "room.info_remote_stats":  ["Another player's record lives only on their own PC. The server keeps no player statistics, so it cannot be shown here.",
-                                "對方的成績只存在他自己的電腦裡。伺服器不保存玩家統計，所以這裡看不到。",
-                                "对方的成绩只存在他自己的电脑里。服务器不保存玩家统计，所以这里看不到。",
-                                "相手の成績は相手のPCにしかありません。サーバーはプレイヤー統計を保存しないため、ここには表示できません。"],
+    # 這句是「名片還沒到」時的替代文字（見 PlayerInfoModal.ApplyRemoteCard：名片一到就把它收掉）。
+    # 以前它寫的是「伺服器不保存玩家統計」——那在 setCard/cardQuery 之後已經不成立了，
+    # 現在說的是真正的兩個原因：對方離線，或對方跑的是還不會上傳名片的舊版。
+    "room.info_remote_stats":  ["This player's record hasn't arrived - they may be offline, or running an older build that doesn't publish it.",
+                                "對方的資料還沒送到 —— 可能已經離線，或還在用不會上傳資料的舊版。",
+                                "对方的资料还没送到 —— 可能已经离线，或还在用不会上传资料的旧版。",
+                                "相手のデータがまだ届いていません — オフラインか、データを送信しない旧バージョンの可能性があります。"],
     "room.info_remote_basic":  ["Only the name, family and level travel over the network — nothing else is stored on the server.",
                                 "線上只帶得到名字、家族與等級，其餘資料伺服器沒有保存。",
                                 "线上只带得到名字、家族与等级，其余资料服务器没有保存。",

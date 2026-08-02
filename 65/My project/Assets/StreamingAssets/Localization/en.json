@@ -377,7 +377,7 @@
   },
   {
    "k": "room.info_remote_stats",
-   "v": "Another player's record lives only on their own PC. The server keeps no player statistics, so it cannot be shown here."
+   "v": "This player's record hasn't arrived - they may be offline, or running an older build that doesn't publish it."
   },
   {
    "k": "room.info_remote_basic",

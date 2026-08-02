@@ -100,6 +100,10 @@ namespace Sdo.UI.Core
             // 握手報的名字是**按登入那刻**的 active profile —— 而選性別 == 選帳號,女角與男角的名字不一樣,
             // 所以進房前一定要再報一次,否則別人看到的是「新的男角」配「舊的女角名字」。
             net.LocalIdentity = () => LocalIdentityNow(Session);
+            // 「我的公開名片」——命中率/勝負/經驗值/知名度/四格自我介紹。與上面兩條同一個理由放這裡:
+            // 只有 AppContext 知道 profile 怎麼解析。沒有它的話,別人點開你的資料整頁都是 0
+            // (那些數字原本只存在自己這台機器的 profile.json)。
+            net.LocalCard = LocalCardNow;
             return net;
         }
 
@@ -182,6 +186,38 @@ namespace Sdo.UI.Core
                 Guild = ProfileFields.FamilyName(p),
                 Level = ProfileFields.PlayerLevelValue(p),
             };
+        }
+
+        /// <summary>
+        /// 現在的本機**公開名片** —— 個人資料視窗被**別人**點開時要顯示的那些數字。
+        ///
+        /// 全部來自 <see cref="ProfileManager.Active"/>(那才是「這個角色」的資料;切帳號會跟著換)。
+        /// 經驗值送的是**百分比**而不是原始 exp:換算曲線是 client 的知識,server 不該為了畫一條
+        /// 進度條而知道升級表(見 <see cref="NetPlayerCard.ExpPercent"/>)。
+        /// </summary>
+        private static NetPlayerCard LocalCardNow()
+        {
+            var p = Sdo.Settings.ProfileManager.Active;
+            if (p == null) return new NetPlayerCard();
+            var s = p.stats ?? new Sdo.Settings.PlayStats();
+            return new NetPlayerCard
+            {
+                Perfect = s.perfect, Cool = s.cool, Bad = s.bad, Miss = s.miss,
+                Plays = s.plays, Wins = s.wins, Losses = s.losses,
+                // 夾值自己做,不用 Mathf —— 這個檔沒有 using UnityEngine,不值得為一次四捨五入拉進來。
+                ExpPercent = ClampPercent(ProfileFields.ExpPercent(p)),
+                Fame = p.fame,
+                City = p.city ?? "",
+                Im = p.imAccount ?? "",
+                Constellation = p.constellation ?? "",
+                Age = p.age ?? "",
+            };
+        }
+
+        private static int ClampPercent(float pct)
+        {
+            int v = (int)System.Math.Round(pct, System.MidpointRounding.AwayFromZero);
+            return v < 0 ? 0 : (v > 100 ? 100 : v);
         }
 
         /// <summary>Build an app context backed by the offline mock services.</summary>
