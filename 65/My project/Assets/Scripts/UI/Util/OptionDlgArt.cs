@@ -26,12 +26,13 @@ namespace Sdo.UI.Util
         private static readonly Dictionary<long, Sprite> _cache = new Dictionary<long, Sprite>();
         private static readonly Dictionary<long, Sprite> _soloCache = new Dictionary<long, Sprite>();
         private static readonly Dictionary<long, Sprite> _sharpCache = new Dictionary<long, Sprite>();
+        private static readonly Dictionary<long, Sprite> _bledCache = new Dictionary<long, Sprite>();
 
-        /// <summary>Resolved OPTIONDLG art folder (lazy). Settable for tests (clears the sprite cache).</summary>
+        /// <summary>Resolved OPTIONDLG art folder (lazy). Settable for tests (clears the sprite caches).</summary>
         public static string Dir
         {
             get { return _dir ?? (_dir = ResolveDir()); }
-            set { _dir = value; _atlas = null; _cache.Clear(); }
+            set { _dir = value; _atlas = null; _cache.Clear(); _soloCache.Clear(); _sharpCache.Clear(); _bledCache.Clear(); }
         }
 
         private static string ResolveDir()
@@ -121,12 +122,44 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        /// <summary>Like <see cref="Crop"/> but onto its OWN texture with <see cref="SdoExtracted.AlphaBleed"/> run over it —
+        /// and NOTHING else (no de-matte, no alpha sharpening), so the sprite's own pixels are byte-identical to Crop's.
+        ///
+        /// 為什麼:官方粉框的外緣是「粉框身 → 白框線 → 深紫描邊(α=84/23/7 的 3 階 drop shadow)」,而描邊外面的空白區
+        /// 存的是 (255,255,255,0) —— 透明的**白** matte。把 800×600 拉到實際視窗時 bilinear 會把那片白 RGB 混進只有
+        /// α=7~84 的深紫描邊,描邊就從「幾乎看不見的暗邊」變成一條**白霧線**(使用者回報:粉紅框外面有幾條白色線)。
+        /// AlphaBleed 把描邊色 dilate 進透明區,取樣拉到的就是深紫而不是白 —— 這是唯一的病灶,所以只做這一件事:
+        /// DeMatteWhite 會把直-alpha 的深紫描邊 un-composite 成黑邊(它假設半透明像素是在白底上合成的,這裡不是),
+        /// 反而更糟;自己的 texture 則順便讓框的 crop 邊界不再取樣到 atlas 隔壁欄(框右邊緊鄰保存/退出鈕)。Cached.</summary>
+        public static Sprite CropBled(int x, int y, int w, int h)
+        {
+            long key = ((long)x << 40) | ((long)y << 20) | ((long)w << 10) | (uint)h;
+            if (_bledCache.TryGetValue(key, out var s) && s != null) return s;
+            var tex = Atlas;
+            if (tex == null) return null;
+            int cy = tex.height - y - h;                                // top-left origin -> Unity bottom-left
+            if (x < 0 || cy < 0 || w <= 0 || h <= 0 || x + w > tex.width || cy + h > tex.height) return null;
+            var outTex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            outTex.SetPixels(tex.GetPixels(x, cy, w, h));
+            outTex.Apply(false);
+            SdoExtracted.AlphaBleed(outTex);
+            s = Sprite.Create(outTex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+            _bledCache[key] = s;
+            return s;
+        }
+
         // ---- named crops (atlas rects from the OPTIONDLG .an table) ----
-        // frame quadrants (title text removed in the clean atlas)
-        public static Sprite FrameTL => Crop(355, 0, 256, 256);
-        public static Sprite FrameTR => Crop(611, 0, 133, 256);
-        public static Sprite FrameBL => Crop(355, 256, 256, 120);
-        public static Sprite FrameBR => Crop(611, 256, 138, 120);
+        // frame quadrants (title text removed in the clean atlas). CropBled, not Crop: the frame's outer 深紫 drop-shadow
+        // 描邊 (α=84/23/7) sits against a transparent-WHITE matte, which bilinear magnification smears into it as a white
+        // fringe outside the pink frame (使用者回報「粉紅框外有幾條白色線」). See CropBled for why NOT CropSolo.
+        public static Sprite FrameTL => CropBled(355, 0, 256, 256);
+        // 寬度 132 而不是 .an 表寫的 133:第 133 欄(atlas x=743)已經踩進隔壁的「保存」鈕,把 10 個 α 高達 238 的深紅
+        // 像素帶進來,畫在螢幕 x=608 / y=141~150 —— 框右邊外面、靠上方的一條孤立短線(使用者回報的框外雜訊)。
+        // 框身本體只到第 128 欄(col 127),外面的深紫描邊到 col 128,所以砍掉最後一欄不會動到任何美術。
+        public static Sprite FrameTR => CropBled(611, 0, 132, 256);
+        public static Sprite FrameBL => CropBled(355, 256, 256, 120);
+        public static Sprite FrameBR => CropBled(611, 256, 138, 120);
         // 遊戲 tab board (OptScreenBoard) — the OptionGameWindow board with ALL its labels + option captions BAKED
         // (遊戲畫面/全屏泛光效果/NOTES面板位置/… + 全屏/窗口/開啟/關閉/… + the 面板透明度 MIN…MAX track). We overlay only
         // the selection dots + the transparency handle at the measured screen positions (see OptionDlgModal.BuildGame).
