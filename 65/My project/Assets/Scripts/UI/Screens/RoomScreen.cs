@@ -810,8 +810,8 @@ namespace Sdo.UI.Screens
             else AnnounceStagePresence(true);   // 只同房、只在「當前」分類
 
             // DEV: SDO_SLOTMENU=<座位編號 0..5> → 進房間就把那一格的右鍵選單彈出來,用來截圖檢查選單外觀。
-            // 選單用的是官方美術(SPopMenu6 底板 + EXPRESSIONINFO 的兩態列圖)並就地重造成 9-slice ——
-            // 圓角有沒有被拉扁、中文字塞不塞得下,只有實機截圖看得出來。
+            // 選單用的是官方美術(EXPRESSIONINFO 的兩態列圖)並就地重造成 9-slice、不畫底板 ——
+            // 圓角有沒有被拉扁、外面有沒有鑲白框、中文字塞不塞得下,只有實機截圖看得出來。
             string devSlot = ScreenGameplay.DevVar("SDO_SLOTMENU");
             if (!string.IsNullOrEmpty(devSlot))
             {
@@ -4395,46 +4395,46 @@ namespace Sdo.UI.Screens
         private const float SlotMenuFontPx = 13f;  // 官方最長是 5 個中文字塞進 92px;我們最長 4 字 → 13px 還有餘裕
         private const float SlotMenuPadX = 7f;     // 字距左右緣的內縮(膠囊的圓角大約就這麼寬)
         private const float SlotMenuSliceX = 12f;  // 9-slice 左右保留寬(圓角弧 ~6px,留 12 絕對蓋得住)
-        private const float SlotMenuSliceY = 8f;   // 底板才需要(它 21px 高卻要撐到 27×N)
         private static readonly Color32 SlotMenuTextColor = new Color32(0x7a, 0x00, 0x0e, 0xff);   // 官方 color="0xff7a000e"
-        // 找不到 DATA 時的退路(數值就是從那兩張圖中央量到的):選單至少還畫得出來、深紅字還讀得到。
-        private static readonly Color32 SlotMenuBgFallback = new Color32(0x3c, 0xe6, 0xf2, 0xea);
+        // 找不到 DATA 時的退路(數值就是從那張列圖中央量到的):選單至少還畫得出來、深紅字還讀得到。
         private static readonly Color32 SlotMenuRowFallback = new Color32(0x9d, 0x8a, 0xbb, 0xf0);
-        private static Sprite _slotMenuBg, _slotMenuRow, _slotMenuRowHover;
+        private static Sprite _slotMenuRow, _slotMenuRowHover;
         private static bool _slotMenuArtLoaded;
 
         /// <summary>
-        /// 選單的三張圖,都轉成 **9-slice**(左右各留 <see cref="SlotMenuSliceX"/> 不拉伸)。
+        /// 選單的兩張列圖(normal / hover),都轉成 **9-slice**(左右各留 <see cref="SlotMenuSliceX"/> 不拉伸)。
         ///
-        /// 為什麼不是 Simple 直接拉:這幾張是 92px 寬的圓角膠囊,左右各只有 ~6px 的弧再加 1px 深藍外框。
+        /// 為什麼不是 Simple 直接拉:這兩張是 92px 寬的圓角膠囊,左右各只有 ~6px 的弧再加 1px 深藍外框。
         /// 日文的「プレイヤー情報」、英文的 "Remove Friend" 在 13px 字級下要 100px 以上,Simple 會把那段弧
         /// 連同外框一起橫向拉扁 → 圓角變橢圓、框線變糊。9-slice 只拉中段,而中段是**純垂直漸層,水平方向
-        /// 逐像素量過最多差 3/255**(等於看不出來)→ 拉到任何寬度都跟原圖一樣銳利。底板 SPopMenu6 只有
-        /// 21px 高卻要撐到 27×N,所以它連上下也要留 border。
+        /// 逐像素量過最多差 3/255**(等於看不出來)→ 拉到任何寬度都跟原圖一樣銳利。
         ///
-        /// 為什麼要自己重造 sprite:RoomUiArt 的 An/AtlasCrop 造出來的 sprite 沒有 border,
-        /// 而 <c>Image.Type.Sliced</c> 遇到 border 全 0 會靜靜地退化成 Simple(不會報錯,只是圓角被拉扁 ——
-        /// 正是我們要避免的那個結果)。這裡照原 rect 重造一張帶 border 的,底圖 texture 是共用的 → 不多佔記憶體。
+        /// 🔴 走 <see cref="AtlasCropper"/> 而不是 <c>RoomUiArt.AtlasCrop</c>:後者是**直接在共用圖集上開 rect**,
+        ///    而 EXPRESSIONINFO.PNG 在這兩塊膠囊的圓角外留的是 <c>ffffff0a</c>(工具的白 matte)、四周又緊貼別的圖 ——
+        ///    雙線性取樣會把那圈白拖進圓角,每一列鑲一道白邊。AtlasCropper.Crop 會把 rect 複製到自己的貼圖、
+        ///    把透明像素的 RGB 換成鄰近的不透明色(BleedTransparent)再 Clamp → 沒有白 matte 也沒有鄰居可滲。
+        ///
+        /// 為什麼還要自己重造 sprite:Crop 造出來的 sprite 沒有 border,而 <c>Image.Type.Sliced</c> 遇到 border 全 0
+        /// 會靜靜地退化成 Simple(不會報錯,只是圓角被拉扁 —— 正是我們要避免的那個結果)。
         /// </summary>
         private static void EnsureSlotMenuArt()
         {
             if (_slotMenuArtLoaded) return;
-            _slotMenuBg = Slice(RoomUiArt.An("SPopMenu6"), SlotMenuSliceX, SlotMenuSliceY);
             // FamilyPop_1/2.an 沒有被單獨切出來,兩張都在 ExpressionInfo 圖集裡(座標為官方 .an 的 top-left)。
-            _slotMenuRow = Slice(RoomUiArt.AtlasCrop("EXPRESSIONINFO.PNG", 420, 139, 92, 27), SlotMenuSliceX, 0f);
-            _slotMenuRowHover = Slice(RoomUiArt.AtlasCrop("EXPRESSIONINFO.PNG", 420, 169, 92, 27), SlotMenuSliceX, 0f);
+            _slotMenuRow = Slice(AtlasCropper.Crop(RoomUiArt.Dir, "EXPRESSIONINFO.PNG", 420, 139, 92, 27), SlotMenuSliceX);
+            _slotMenuRowHover = Slice(AtlasCropper.Crop(RoomUiArt.Dir, "EXPRESSIONINFO.PNG", 420, 169, 92, 27), SlotMenuSliceX);
             // 只有真的拿到圖才把結果封存起來。第一次右鍵有可能發生在 DATA 根還沒解析成功的時候
-            // (RoomUiArt.Dir 走 catch 分支 → 三張全 null),先把旗標立起來等於**永久**退回純色 ——
+            // (RoomUiArt.Dir 走 catch 分支 → 兩張全 null),先把旗標立起來等於**永久**退回純色 ——
             // 之後就算路徑好了也再也不會重載。RoomUiArt 自己的快取也是同一個寫法(null 不算數)。
             _slotMenuArtLoaded = _slotMenuRow != null;
         }
 
-        /// <summary>同一張圖、同一塊 rect,只是補上 9-slice 的 border。來源缺圖 → 回 null(呼叫端有退路色)。</summary>
-        private static Sprite Slice(Sprite src, float sideX, float sideY)
+        /// <summary>同一張圖、同一塊 rect,只是補上 9-slice 的左右 border。來源缺圖 → 回 null(呼叫端有退路色)。</summary>
+        private static Sprite Slice(Sprite src, float sideX)
         {
             if (src == null || src.texture == null) return null;
             return Sprite.Create(src.texture, src.rect, new Vector2(0.5f, 0.5f), src.pixelsPerUnit, 0,
-                                 SpriteMeshType.FullRect, new Vector4(sideX, sideY, sideX, sideY));
+                                 SpriteMeshType.FullRect, new Vector4(sideX, 0f, sideX, 0f));
         }
 
         /// <summary>
@@ -4497,8 +4497,12 @@ namespace Sdo.UI.Screens
         /// 「2對2對2」在 92px 內會被夾壞。共用一個繪製函式就一定有一邊要犧牲 —— 座位選單有官方美術可對,
         /// 分隊選單沒有(那顆鈕是我們加的),所以各走各的。
         ///
-        /// 底板為什麼還是畫:官方每一列 x=0、寬度也是 92,所以底板其實**整片被列蓋住**。留著是因為
-        /// 選單被撐寬時(日文/英文的長字)兩者一起拉,列與列之間 1px 的接縫後面才不會透出 3D 房間。
+        /// 🔴 **底板 SPopMenu6 不畫**(panel 只是一塊透明的吃點擊面板)。那張圖是 92×21 的框:最外圈 1px 半透明黑、
+        ///    再往內 2px 是 <c>ffffff b8</c> 的**白邊**,中間才是青漸層。而列圖是圓角膠囊、四邊的邊緣像素是半透明的 ——
+        ///    底板被 9-slice 撐成 w×(27×N) 後,那圈白邊就從膠囊的圓角與半透明邊緣透出來,整個選單外面鑲一個
+        ///    **方形白框**(使用者回報)。任何顏色的矩形底板都會留下這一圈(膠囊是圓角,底板是方的),所以是拿掉、
+        ///    不是換色。官方其他 PopMenu 本來也就沒有背板(XML 寫 <c>background="empty.an"</c>,見 LobbyScreen.BuildPopMenu)。
+        ///    代價只有列與列交界那 2~3px 的圓角縫會透出 3D 房間 —— 官方一疊膠囊本來就長這樣。
         /// </summary>
         private GameObject BuildSlotMenu(string name, Vector2 screenPos, int count,
                                          System.Func<int, string> labelOf, System.Action<int> onPick)
@@ -4520,8 +4524,9 @@ namespace Sdo.UI.Screens
             float x = Mathf.Clamp(tl.x, 0f, Mathf.Max(0f, 800f - w));
             float y = Mathf.Clamp(tl.y, 0f, Mathf.Max(0f, 600f - h));
 
-            var panel = UIKit.AddImage(Root, name, Color.white, raycast: true);
-            SetSliced(panel, _slotMenuBg, SlotMenuBgFallback);
+            // 透明但 raycastTarget=true:選單自己要吃掉點擊(才不會穿透到後面的座位/3D 房間),
+            // 但一個像素都不畫(見上面的白框)。Image 的 raycast 與 color.a 無關 → alpha 0 照樣擋得住。
+            var panel = UIKit.AddImage(Root, name, new Color(0f, 0f, 0f, 0f), raycast: true);
             Place(panel.rectTransform, x, y, w, h);
             panel.transform.SetAsLastSibling();
 
