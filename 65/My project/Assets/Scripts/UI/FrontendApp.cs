@@ -788,6 +788,7 @@ namespace Sdo.UI
             _netResultRows = null;
             _netFrameNextAt = 0f;
             _netPlayFinishedSent = false;
+            _netBackToRoomSent = false;
             net.FramesReceived += OnNetFrames;
             net.ResultsReady += OnNetResults;
             net.ComboMilestoneReceived += OnNetComboMilestone;
@@ -834,6 +835,7 @@ namespace Sdo.UI
         private ResultScreen.Row[] _netResultRows;
         private float _netFrameNextAt;
         private bool _netPlayFinishedSent;
+        private bool _netBackToRoomSent;   // 「我人回房間了」只送一次(見 SendNetBackToRoom)
         private const float NetFrameIntervalSec = 0.2f;   // 5 Hz;server 也是 5 Hz 往下推(NetLimits.ServerFrameHz)
 
         private void OnNetFrames(NetFrameRow[] rows)
@@ -1023,6 +1025,11 @@ namespace Sdo.UI
         {
             var net = _ctx != null ? _ctx.Net : null;
             if (net == null || net.Match == null || !net.IsMatchParticipant) return;
+            // 🔴 latch:呼叫端是 Update 的 `ResultConfirmed` 分支,而 _activeGame 要等轉場黑幕蓋滿才變 null
+            //    —— 中間那十幾幀每幀都會再進來一次。沒有它,同一件事會送十來則(server log 上就是
+            //    連號的 setPlayState#87..#95),白白吃掉 control 的限流窗。
+            if (_netBackToRoomSent) return;
+            _netBackToRoomSent = true;
             net.SetPlayState(Sdo.Net.PlayState.Idle, _netMatchId);
         }
 

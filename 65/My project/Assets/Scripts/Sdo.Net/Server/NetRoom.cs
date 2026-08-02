@@ -637,6 +637,27 @@ namespace Sdo.Net.Server
                     // 已經是 idle 就當成功(冪等)—— 載入階段中離的人會先被 AbortDuringLoad 清成 idle,
                     // 緊接著回房又送一次這則,不該讓他收到一個沒有意義的 badState。
                     if (s.PlayState == PlayState.Idle) return NetRoomOp.Ok;
+
+                    // 🔴 還停在 playing 的人也要收。
+                    //
+                    // 「我人回房間了」是只有 client 知道的事實;server 這時還以為他在跳,唯一的原因是那則
+                    // playFinished 沒生效(掉包 / 被限流 / 被暫存殘留擋掉)。以前這裡回 badState,後果是**死結**:
+                    //   • 他的座位永遠是 playing → Tick 的結算條件(沒有參與者還在 playing)永遠不成立
+                    //     → 房間卡在 playing,整間房再也開不了下一局;
+                    //   • Ready 只在這條路徑上清,所以他頭上的「準備」也永遠退不掉,別人看他永遠是 PLAYING。
+                    // 而且沒有任何逃生門救得回來:R14 的逾時只管 waitingForLoad,結算寬限期要等結算才起算。
+                    //
+                    // 收下之後把他移出 active 集合(**保留**結算名單 —— R16 用他最後一筆 frame 算成績,
+                    // 與斷線者走同一條路),剩下的人照樣打完、照樣結算。
+                    if (s.PlayState == PlayState.Playing)
+                    {
+                        RemoveActiveParticipant(userId);
+                        s.PlayState = PlayState.Idle;
+                        s.Ready = false;
+                        Touch();
+                        return NetRoomOp.Ok;   // 收尾(全員打完 → 結算 → 房間回 open)交給 Tick
+                    }
+
                     if (s.PlayState != PlayState.Results && s.PlayState != PlayState.Finished)
                         return NetRoomOp.BadState;
                     s.PlayState = PlayState.Idle;

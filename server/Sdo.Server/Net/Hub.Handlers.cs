@@ -900,7 +900,12 @@ namespace Sdo.Server.Net
             NetMatchInfo match;
             var op = room.RequestStart(conn.UserId, force, resolved, now, out match);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "force=" + force); return; }
-            _comboMilestones.Remove(room.Code);
+
+            // 🔴 新的一場 = 全新的分數暫存。上一場若沒走到 resultsReady(那條路徑才會 DropRoomScratch)
+            //    就留著別人的 final,而 OnPlayFinished 看到「這個人已經有 final 了」會直接掉頭 ——
+            //    座位就永遠停在 playing:房間卡住不結算、準備退不掉、setPlayState{idle} 全被回 badState。
+            //    (_comboMilestones / _liveLeaders 本來就在這裡重置,分數暫存漏了而已。)
+            DropMatchScratch(room.Code);
             _liveLeaders[room.Code] = new LiveLeaderTracker(match.Participants);
 
             SendMatchStarting(room, match);
@@ -1100,13 +1105,24 @@ namespace Sdo.Server.Net
         /// </summary>
         private void DropRoomScratch(int roomCode)
         {
+            DropMatchScratch(roomCode);
+            _moves.Remove(roomCode);
+            _movesDirty.Remove(roomCode);
+        }
+
+        /// <summary>
+        /// 只清「這一場」的暫存(分數流 / 里程碑 / 領先者)。
+        ///
+        /// 與 <see cref="DropRoomScratch"/> 的差別是**不動走動位置** —— 那是房間的東西,不屬於任何一場
+        /// (開下一局時清掉它,回房的人在下一筆 move 送到之前會少一個位置)。
+        /// </summary>
+        private void DropMatchScratch(int roomCode)
+        {
             _pendingFrames.Remove(roomCode);
             _latestFrames.Remove(roomCode);
             _finalFrames.Remove(roomCode);
             _comboMilestones.Remove(roomCode);
             _liveLeaders.Remove(roomCode);
-            _moves.Remove(roomCode);
-            _movesDirty.Remove(roomCode);
         }
 
         private void DropRoomMoves(int roomCode)
@@ -1294,8 +1310,10 @@ namespace Sdo.Server.Net
                 finalByUser = new Dictionary<int, FrameSample>();
                 _finalFrames[room.Code] = finalByUser;
             }
-            if (finalByUser.ContainsKey(conn.UserId)) return;
-            finalByUser[conn.UserId] = final;
+            // 一場只收第一筆 final(重複送不覆寫,免得有人送第二筆刷分)——
+            // 但**不能在這裡 return**:狀態推進(下面那句 SetPlayState{finished})一定要走到,
+            // 不然這個人的座位會停在 playing,整間房就跟著卡住(見 OnRequestStart 的 DropMatchScratch)。
+            if (!finalByUser.ContainsKey(conn.UserId)) finalByUser[conn.UserId] = final;
 
             Dictionary<int, FrameSample> latestByUser;
             if (!_latestFrames.TryGetValue(room.Code, out latestByUser))

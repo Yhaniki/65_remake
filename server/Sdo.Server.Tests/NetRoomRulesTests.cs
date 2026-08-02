@@ -1536,6 +1536,56 @@ namespace Sdo.Tests
             Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
         }
 
+        /// <summary>
+        /// 座位還停在 <c>playing</c> 的人送 <c>idle</c>(「我人回房間了」)也要收下。
+        ///
+        /// 🔴 這是實機抓到的死結:server 沒收到 / 沒採用某個人的 playFinished(掉包、被限流,或
+        /// 上一場殘留的 final 把它擋掉)時,那個座位會一直是 playing ——
+        ///   • Tick 的結算條件是「沒有參與者還在 playing」→ 房間永遠不結算,整間房再也開不了下一局;
+        ///   • <c>Ready</c> 只在這條路徑上清 → 他頭上的「準備」永遠退不掉,別人看他永遠是 PLAYING。
+        /// 而且沒有任何逃生門:R14 的逾時只管 waitingForLoad,結算寬限期要等結算了才起算。
+        ///
+        /// 實機 log 長這樣(房 78533 第 4 場,同一秒被拒了九次):
+        /// <c>✗ user 27 的 setPlayState#87(state=Idle matchId=4) 被拒:badState |
+        /// 房 78533 Playing 第4場(參與者) 座位0 play=Playing ready=是</c>
+        /// </summary>
+        [Test]
+        public void Back_To_Room_Is_Accepted_Even_If_The_Seat_Is_Still_Playing()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, OfficialSong()));
+            r.SetAvailability(Host, "sdom1435k.gn", Availability.Have, 0f);
+            r.SetAvailability(Bob, "sdom1435k.gn", Availability.Have, 0f);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 0, out m));
+            r.SetPlayState(Host, PlayState.Loaded, m.MatchId);
+            r.SetPlayState(Bob, PlayState.Loaded, m.MatchId);
+            r.Tick(100);
+            Assert.AreEqual(RoomStatus.Playing, r.Status);
+            Assert.AreEqual(PlayState.Playing, r.State.SeatOf(Bob).PlayState);
+            Assert.IsTrue(r.State.SeatOf(Bob).Ready, "打歌期間 ready 還留著(開始時凍結的意願)");
+
+            // Bob 的 playFinished 沒生效,他直接回房 → 收下,而不是回 badState。
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Bob, PlayState.Idle, m.MatchId),
+                            "「我回房間了」是只有 client 知道的事實,server 不能因為自己沒收到 finished 就拒收");
+            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
+            Assert.IsFalse(r.State.SeatOf(Bob).Ready, "回房就要退掉準備 —— 下一局要重新按");
+
+            // 他退出 active 集合之後,剩下的人打完照樣結算(不是整間房陪葬)。
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Host, PlayState.Finished, m.MatchId));
+            var tick = r.Tick(200);
+            Assert.IsTrue(tick.ResultsReady, "房間必須結算得了 —— 卡住的話再也開不了下一局");
+            Assert.AreEqual(RoomStatus.Open, r.Status);
+
+            // R16:結算名單**保留**他(成績用他最後一筆 frame),與斷線者走同一條路。
+            var ids = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < m.Participants.Length; i++) ids.Add(m.Participants[i].UserId);
+            CollectionAssert.Contains(ids, Bob, "結算列不能因為他先回房就少一個人");
+        }
+
         [Test]
         public void A_Ready_Pressed_While_Others_Are_Still_On_The_Result_Panel_Survives()
         {
