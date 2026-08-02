@@ -1,9 +1,6 @@
-using System.Globalization;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Game;
-using Sdo.Settings;
 using Sdo.UI.Util;
 
 namespace Sdo.UI.Screens
@@ -30,31 +27,33 @@ namespace Sdo.UI.Screens
     ///    static 的定點 → 兩尊疊在一起、兩台相機互相拍到對方,兩張 RT 都出現鬼影。現在
     ///    <see cref="GenderPreview3D"/> 會給每個實例分一個停車位(見那邊 ParkBase 的註解),不必特地把
     ///    大廳那尊藏起來。
+    ///
+    /// 🔴 **這尊正對鏡頭,而且不給滑鼠拖曳轉身**(使用者要求):
+    ///   • <c>avatarYaw = 0</c> —— 官方 AvtShow 那個朝左 30°(<c>0x2b4</c>)是**大廳**那尊的姿;
+    ///     個人資料是拿來看一個人長什麼樣的,側身會擋掉半邊穿搭。
+    ///   • 沒有轉身熱區 —— 連帶不必再算那塊「跟著角色走」的命中區,也就沒有它壓到分頁條(329 起)或
+    ///     左側功能鈕(296)的風險。**大廳那尊照舊拖得動**(那邊是官方行為):yaw 與拖曳都是實例層級的,
+    ///     兩邊互不影響。
     /// </summary>
     public sealed partial class PlayerInfoModal
     {
-        // ---- 版位(官方 AvtShow 105,111,230,391 → 補成 2:3 之後的框)----
-        private const float InfoAvatarX = 89.67f, InfoAvatarY = 111f, InfoAvatarW = 260.67f, InfoAvatarH = 391f;
+        // ---- 版位 ----
+        // 起點是官方 AvtShow(105,111,230,391)補成 2:3 的框;下面這組是**使用者用 F5 面板調出來的落點**
+        // (往左 3、往下 36.7)—— 官方那個座標是配「名字疊在角色左上角」的排版,我們的名字是靠右對齊的
+        // 動態字,人站高一點會與那兩行字打架。大小沒動(仍是 0.6517 倍的槽位)。
+        private const float InfoAvatarX = 86.62f, InfoAvatarY = 147.71f, InfoAvatarW = 260.67f, InfoAvatarH = 391.01f;
 
         /// <summary>角色佔預覽高度的比例。官方那個框裡的人幾乎頂天立地 → 比大廳(0.605)高一些。
         /// 實際看得到的人比 <c>FrameTo</c> 算的 bodyTop 還高約 9%(髮型高過頭骨、idle 會抬腳)——
         /// 0.78 × 391 × 1.09 ≈ 332px,約佔框高的 85%。要調就按 F5 拖滑桿,不要用算的。</summary>
         private const float InfoAvatarFillFrac = 0.78f;
 
-        // 「按住拖動轉身」的命中區。🔴 **不能**用 RawImage 整塊:它右緣到 350,會蓋住分頁條(329 起)
-        // 與左側那排功能鈕(VipX 296),那幾顆就按不動了。這裡只圈住角色本人:右緣 277,離 296 還有 19px。
-        private const float InfoAvatarDragX = 162.7f, InfoAvatarDragY = 130.6f,
-                            InfoAvatarDragW = 114.7f, InfoAvatarDragH = 351.9f;
-
-        // 熱區跟著角色走(同大廳):記比例,角色挪到哪、放多大,熱區就等比跟到哪。
-        private const float InfoDragRelX = (InfoAvatarDragX - InfoAvatarX) / InfoAvatarW;
-        private const float InfoDragRelY = (InfoAvatarDragY - InfoAvatarY) / InfoAvatarH;
-        private const float InfoDragRelW = InfoAvatarDragW / InfoAvatarW;
-        private const float InfoDragRelH = InfoAvatarDragH / InfoAvatarH;
+        /// <summary>這尊面朝哪 —— **0 = 正對鏡頭**(使用者要求)。大廳那尊維持官方 AvtShow 的 −30°
+        /// (<see cref="GenderPreview3D.avatarYaw"/> 的預設),兩邊各自設定,互不影響。</summary>
+        private const float InfoAvatarYaw = 0f;
 
         private GenderPreview3D _preview;
         private RawImage _previewImg;
-        private Image _previewDrag;
         private Camera _maskedCam;
         private int _savedMask;
         /// <summary>上一次顯示的是「自己」嗎 —— 換了對象才需要重套穿搭(重建兩隻角色不便宜)。</summary>
@@ -71,9 +70,8 @@ namespace Sdo.UI.Screens
                                                  KeyCode.F5, 65092,
                                                  InfoAvatarX, InfoAvatarY, InfoAvatarW, InfoAvatarH,
                                                  InfoAvatarFillFrac, winHomeX: 420f, winHomeY: 12f);
+                    // 沒有 ShowHitBox / ExtraCode:這尊不給拖曳 → 沒有熱區可顯示,也沒有第三行 const 要產。
                     _infoTuner.Applied = ApplyInfoAvatarTuning;
-                    _infoTuner.ShowHitBox = ShowInfoAvatarDragBox;
-                    _infoTuner.ExtraCode = InfoAvatarDragCode;
                 }
                 return _infoTuner;
             }
@@ -82,26 +80,19 @@ namespace Sdo.UI.Screens
         // ================================================================ 版面
 
         /// <summary>
-        /// 建角色的畫布與轉身熱區。**一定要在 <c>BuildIdentity</c> 之前呼叫** —— 官方把名字/等級疊在角色的
-        /// 左上角,後建的才畫在上面;顛倒過來名字會被角色蓋掉。
+        /// 建角色的畫布。**一定要在 <c>BuildIdentity</c> 之前呼叫** —— 官方把名字/等級疊在角色的左上角,
+        /// 後建的才畫在上面;顛倒過來名字會被角色蓋掉。
+        ///
+        /// 🔴 這裡**不建轉身熱區**(使用者要求關掉拖曳)。RawImage 自己 <c>raycastTarget = false</c>,
+        ///    所以這一整塊蓋在板子上也不吃射線,底下那些鈕照樣按得到。
         /// </summary>
         private void BuildAvatar(RectTransform parent)
         {
             var rt = UIKit.NewRect(parent, "AvatarView");
             _previewImg = rt.gameObject.AddComponent<RawImage>();
-            _previewImg.raycastTarget = false;   // 蓋在板子上但不吃射線,底下的鈕照樣按得到
+            _previewImg.raycastTarget = false;
             _previewImg.color = new Color(1f, 1f, 1f, 0f);   // 還沒有 RT 之前不要畫一塊白
             Place(rt, InfoAvatarX, InfoAvatarY, InfoAvatarW, InfoAvatarH);
-
-            _previewDrag = UIKit.AddImage(parent, "AvatarDrag", new Color(0f, 0f, 0f, 0f), raycast: true);
-            Place(_previewDrag.rectTransform, InfoAvatarDragX, InfoAvatarDragY, InfoAvatarDragW, InfoAvatarDragH);
-            var trig = _previewDrag.gameObject.AddComponent<EventTrigger>();
-            var entry = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
-            entry.callback.AddListener(ev =>
-            {
-                if (_preview != null && ev is PointerEventData p) _preview.Orbit(p.delta);
-            });
-            trig.triggers.Add(entry);
 
             ApplyInfoAvatarTuning();   // 版位改由調校值決定(預設就是上面那組常數)
         }
@@ -134,6 +125,8 @@ namespace Sdo.UI.Screens
                 _preview.avatarYOffset = 0f;
                 _preview.verticalBias = 0f;
                 _preview.fillFrac = InfoTuner.Fill;
+                // 🔴 yaw 也要在 Build 之前:BuildAvatar 擺人的時候就把它寫進 localRotation 了。
+                _preview.avatarYaw = InfoAvatarYaw;   // 0 = 正對鏡頭(大廳那尊才是官方的 −30°)
                 _preview.Build(gender, fParts, mParts, fBody, mBody);
                 _previewBuilt = true;
                 _previewSelf = self;
@@ -148,7 +141,7 @@ namespace Sdo.UI.Screens
             }
 
             _preview.SetGender(gender);
-            _preview.ResetOrbit();   // 每次開窗都回到官方那個朝左 30° 的預設姿
+            _preview.ResetOrbit();   // 回到 avatarYaw(這裡是 0:正面),pitch 也歸零
 
             if (_previewImg != null && _preview.PreviewTexture != null)
             {
@@ -175,7 +168,7 @@ namespace Sdo.UI.Screens
             if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
             if (_preview != null) _preview.gameObject.SetActive(false);
             if (_previewImg != null) _previewImg.color = new Color(1f, 1f, 1f, 0f);
-            InfoTuner.CloseWindow();   // 面板收掉 + 熱區的紅框拿掉 + 調校值落地
+            InfoTuner.CloseWindow();   // 面板收掉 + 調校值落地
         }
 
         private void OnDestroy()
@@ -186,16 +179,11 @@ namespace Sdo.UI.Screens
 
         // ================================================================ 調校面板(F5)
 
-        /// <summary>把調校值擺到畫面上:角色的 RawImage、跟著它走的轉身熱區,還有相機取景。</summary>
+        /// <summary>把調校值擺到畫面上:角色的 RawImage 與相機取景(這尊沒有熱區,不給拖曳)。</summary>
         private void ApplyInfoAvatarTuning()
         {
             var t = InfoTuner;
-            float w = t.W, h = t.H;
-
-            if (_previewImg != null) Place(_previewImg.rectTransform, t.X, t.Y, w, h);
-            if (_previewDrag != null)
-                Place(_previewDrag.rectTransform,
-                      t.X + InfoDragRelX * w, t.Y + InfoDragRelY * h, InfoDragRelW * w, InfoDragRelH * h);
+            if (_previewImg != null) Place(_previewImg.rectTransform, t.X, t.Y, t.W, t.H);
 
             // fillFrac 改了一定要 Reframe:那個值是在取景當下算進相機距離的,光是寫欄位不會有任何變化。
             if (_preview != null && _previewBuilt && !Mathf.Approximately(_preview.fillFrac, t.Fill))
@@ -203,24 +191,6 @@ namespace Sdo.UI.Screens
                 _preview.fillFrac = t.Fill;
                 _preview.Reframe();
             }
-        }
-
-        private void ShowInfoAvatarDragBox(bool on)
-        {
-            if (_previewDrag == null) return;
-            _previewDrag.color = on ? new Color(1f, 0.25f, 0.25f, 0.22f) : new Color(0f, 0f, 0f, 0f);
-        }
-
-        /// <summary>「複製 const」時附在後面的那行:熱區是等比跟著角色走的,所以由這裡現算。</summary>
-        private string InfoAvatarDragCode()
-        {
-            var ic = CultureInfo.InvariantCulture;
-            var t = InfoTuner;
-            float w = t.W, h = t.H;
-            float dx = t.X + InfoDragRelX * w, dy = t.Y + InfoDragRelY * h;
-            return $"private const float InfoAvatarDragX = {dx.ToString("0.##", ic)}f, InfoAvatarDragY = {dy.ToString("0.##", ic)}f,\n"
-                 + $"                    InfoAvatarDragW = {(InfoDragRelW * w).ToString("0.##", ic)}f, "
-                 + $"InfoAvatarDragH = {(InfoDragRelH * h).ToString("0.##", ic)}f;";
         }
 
         /// <summary>F5 開關調校面板(只在視窗開著時收鍵)。由 <c>Update</c> 呼叫。</summary>
