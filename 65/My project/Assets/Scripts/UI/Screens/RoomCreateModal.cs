@@ -3,6 +3,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using Sdo.Localization;
+using Sdo.Settings;
 using Sdo.UI.Services;
 using Sdo.UI.Util;
 
@@ -39,11 +40,6 @@ namespace Sdo.UI.Screens
         //    夾到 135 讓它停在箭頭鈕左緣。
         private const float ModeW = 135f, ModeH = 14f;
 
-        // 下拉清單:ChoseState1/3 是 166×26,官方 interval=-1 → step 25。
-        // 🔴 用 25 不是 26:那兩張圖的第 0 列與第 25 列 alpha 只有 102/153(羽化邊),重疊 1px 才接得無縫;
-        //    照 26 排兩列之間會多一條半透明接縫。
-        private const float ListX = 401f, ListY = 279f, ListW = 166f, RowH = 26f;
-
         // ---- 從官方原圖取樣的顏色 ----
         /// <summary>兩個輸入框與模式字的深棕金(官方 XML 三個欄位都寫 color=0xff815105)。</summary>
         private static readonly Color32 FieldText = new Color32(0x81, 0x51, 0x05, 255);
@@ -55,7 +51,6 @@ namespace Sdo.UI.Screens
         private TMP_InputField _nameInput, _passInput;
         private Image _normalBox, _cohabitBox;
         private bool _cohabit;                      // false = 普通房間(官方預設)
-        private int _mode;                          // 0 = 自由模式、1 = 普通模式(見 BuildMode)
         private Action<string, string, GameMode> _onConfirm;
 
         public bool IsOpen => _cg != null && _cg.alpha > 0f && _cg.blocksRaycasts;
@@ -92,6 +87,12 @@ namespace Sdo.UI.Screens
         /// <summary>
         /// 一個輸入框。底圖已經把凹槽畫好了(房名槽 y196..220、密碼槽 225..249,水平內緣都是 406..563)——
         /// 所以 <c>AddInputField</c> 預設那層半透明白底要關掉,不然凹槽裡會多一塊亮片。
+        ///
+        /// 🔴 官方 EditBox 的 <c>h</c>(房名 14 / 密碼 17)是**那行字的行高**,不是可視區高度。
+        ///    而 <see cref="UIKit.AddInputField"/> 會在 textViewport 上再切掉上下各 4px 並蓋一層
+        ///    <c>RectMask2D</c> → 房名只剩 14-8=6px 可視高度,12px 的字被攔腰切成一條
+        ///    (使用者回報「名字顯示不出來」)。兩手一起修:上下 padding 歸零,並且把 rect 依**同一條中心線**
+        ///    撐到凹槽的 24px。左右只留 2px —— 官方 x=106 的意思就是字從凹槽內緣開始,不該再縮排 8px。
         /// </summary>
         private TMP_InputField BuildField(RectTransform root, string name, float x, float y, float h,
                                           int limit, bool password)
@@ -100,11 +101,14 @@ namespace Sdo.UI.Screens
             var rt = (RectTransform)f.transform;
             rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
             rt.pivot = new Vector2(0f, 1f);
-            rt.anchoredPosition = new Vector2(x, -y);
-            rt.sizeDelta = new Vector2(FieldW, h);
+            rt.anchoredPosition = new Vector2(x, -(y + h * 0.5f - GrooveH * 0.5f));
+            rt.sizeDelta = new Vector2(FieldW, GrooveH);
+            if (f.textViewport != null) UIKit.Stretch(f.textViewport, 2, 0, 2, 0);
 
             var bg = f.GetComponent<Image>(); if (bg != null) bg.color = new Color(1f, 1f, 1f, 0f);
             f.textComponent.color = FieldText;
+            // 官方兩個 EditBox 都寫 bold="1" —— 12px 的深棕金字不加粗在底圖凹槽裡幾乎看不見。
+            f.textComponent.fontStyle |= FontStyles.Bold;
             f.characterLimit = limit;
             if (password) f.contentType = TMP_InputField.ContentType.Password;
             // 🔴 關掉 onFocusSelectAll:它預設為 true,而 SelectAll 被延到 LateUpdate 才跑,會蓋掉
@@ -114,23 +118,23 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>
-        /// 遊戲模式下拉。官方是四項(第 2/3/4 項當年掛著 New 標記),但**四個模式的名字 XML 裡沒有** ——
-        /// 是執行期由 client 塞的,整份 DATA 找不到字串表。這個重製版的 <see cref="GameMode"/> 只有
-        /// 自由 / 普通兩個值,所以就放兩項,用與選歌畫面/房卡同一組 loc key(同一件事不該有三種講法)。
+        /// 遊戲模式那一格。官方 XML 是個四項下拉(<c>ComboButton gamemode</c>,第 2/3/4 項當年掛著 New 標記),
+        /// 但**四個模式的名字 XML 裡沒有** —— 是執行期由 client 塞的,整份 DATA 找不到字串表。
+        ///
+        /// 🔴 這個重製版**不開下拉**:只有「時尚超舞」一種玩法,所以照使用者指定固定寫死、靠左對齊
+        ///    (官方 <c>currmode</c> 就是 <c>align="left"</c>)。▼ 鈕照官方版位擺著當裝飾(官方那格永遠有它),
+        ///    但**不是** Button —— 一顆按了沒反應的鈕比沒有鈕更難懂。
+        /// 🔴 版位直接用官方座標:文字 <c>currmode</c> (409,259) 157×14(夾成 135 讓它停在箭頭鈕左緣)、
+        ///    ▼ 鈕 <c>mode</c> (544,256) 22×21。這兩者官方就是差 3px,不要硬對齊。
         /// </summary>
         private void BuildMode(RectTransform root)
         {
-            // 🔴 slot 的 y 要給**箭頭**的 256,不是文字的 259:SdoComboBox 把 ▼ 鈕與值放在同一個 y,
-            //    而官方這兩者差 3px(mode 256 / currmode 259)。差額由 valueOffsetY 補回去,
-            //    照 259 傳的話箭頭會整顆掉出凹槽下緣。
-            SdoComboBox.Create(root, "gamemode",
-                ModeX, ArrowY, ModeW, ModeH, ArrowX,
-                RoomCreateArt.ArrowN, RoomCreateArt.RowN, RoomCreateArt.RowH,
-                new[] { L("songselect.mode_free"), L("songselect.mode_normal") }, null,
-                _mode, FieldText, FieldText,
-                i => _mode = i,
-                listAsText: true, expandDown: true, listWidth: ListW, listX: ListX,
-                valueOffsetY: ModeY - ArrowY);
+            var t = UIKit.AddText(root, "currmode", L("room.mode_fashion"), 12f, FieldText,
+                                  TextAlignmentOptions.Left);
+            t.fontStyle |= FontStyles.Bold;          // 官方 currmode bold="1"
+            Place(t.rectTransform, ModeX, ModeY, ModeW, ModeH);
+
+            UIKit.AddSprite(root, "mode", RoomCreateArt.ArrowN, ArrowX, ArrowY);
         }
 
         /// <summary>
@@ -196,12 +200,32 @@ namespace Sdo.UI.Screens
         public void Open(Action<string, string, GameMode> onConfirm)
         {
             _onConfirm = onConfirm;
-            if (_nameInput != null) _nameInput.text = "";
+            if (_nameInput != null) _nameInput.text = DefaultRoomName();
             if (_passInput != null) _passInput.text = "";
             SetCohabit(false);
             if (_cg != null) { _cg.alpha = 1f; _cg.blocksRaycasts = true; _cg.interactable = true; }
             transform.SetAsLastSibling();
-            if (_nameInput != null) _nameInput.ActivateInputField();
+            if (_nameInput != null)
+            {
+                _nameInput.ActivateInputField();
+                // 游標擺到最後面(不是全選):使用者要嘛直接按確定用這個預設名,要嘛退格改掉 ——
+                // 全選會讓「打第一個字就整串沒了」,而這個預設名本來就是要能留著改的。
+                _nameInput.caretPosition = _nameInput.text.Length;
+                _nameInput.MoveTextEnd(false);
+            }
+        }
+
+        /// <summary>
+        /// 房名的預設值「{我的名字}的舞蹈室」—— 官方開這個框時房名欄就已經填好了(見參考截圖
+        /// 「★热舞昧匠★的舞蹈室」),不是空白。用 <c>room.default_name</c> 這個既有的 key,
+        /// 與房卡/房間標題牌「房名留空時顯示什麼」是同一份規則(<see cref="RoomLabels.DisplayName"/>)——
+        /// 同一件事不該有兩份字串。超過 <see cref="NameLimit"/> 的話交給 TMP_InputField 自己截。
+        /// </summary>
+        private static string DefaultRoomName()
+        {
+            var p = ProfileManager.Active;
+            string me = p != null ? (p.name ?? "").Trim() : "";
+            return LocalizationManager.Get("room.default_name", me);
         }
 
         public void Close() { Hide(); }
@@ -216,8 +240,9 @@ namespace Sdo.UI.Screens
             var cb = _onConfirm;
             string name = _nameInput != null ? _nameInput.text : "";
             string pass = _passInput != null ? _passInput.text : "";
-            // 模式索引照 BuildMode 的順序:0 = 自由、1 = 普通。
-            var mode = _mode == 1 ? GameMode.Normal : GameMode.Free;
+            // 模式那格已經固定成「時尚超舞」(見 BuildMode),沒有東西可選 → 一律回 Normal
+            // (與 LobbyScreen.OnCreate 在 modal 還沒接上時的退路同一個值)。
+            const GameMode mode = GameMode.Normal;
             Hide();
             if (cb != null) cb(name, pass, mode);
         }

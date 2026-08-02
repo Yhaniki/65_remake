@@ -164,6 +164,10 @@
    "v": "模式"
   },
   {
+   "k": "room.mode_fashion",
+   "v": "時尚超舞"
+  },
+  {
    "k": "room.empty_seat",
    "v": "空位"
   },

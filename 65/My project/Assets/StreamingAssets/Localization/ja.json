@@ -164,6 +164,10 @@
    "v": "モード"
   },
   {
+   "k": "room.mode_fashion",
+   "v": "ファッションダンス"
+  },
+  {
    "k": "room.empty_seat",
    "v": "空席"
   },

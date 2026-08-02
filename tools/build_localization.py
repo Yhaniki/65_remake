@@ -68,6 +68,8 @@ STR = {
     "room.select_song":     ["Select Song", "選擇歌曲", "选择歌曲", "曲を選択"],
     "room.no_song":         ["(No song selected)", "（尚未選歌）", "（尚未选歌）", "（曲未選択）"],
     "room.mode":            ["Mode", "模式", "模式", "モード"],
+    # 創建房間對話框的「遊戲模式」——官方那格是固定值（不是下拉），照官方寫死。
+    "room.mode_fashion":    ["Fashion Dance", "時尚超舞", "时尚超舞", "ファッションダンス"],
     "room.empty_seat":      ["Empty", "空位", "空位", "空席"],
     "room.host":            ["Host", "房主", "房主", "ホスト"],
     "room.waiting_players": ["Some players are not ready", "尚有玩家未準備", "还有玩家未准备", "未準備のプレイヤーがいます"],

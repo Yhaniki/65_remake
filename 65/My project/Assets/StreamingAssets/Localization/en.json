@@ -164,6 +164,10 @@
    "v": "Mode"
   },
   {
+   "k": "room.mode_fashion",
+   "v": "Fashion Dance"
+  },
+  {
    "k": "room.empty_seat",
    "v": "Empty"
   },
