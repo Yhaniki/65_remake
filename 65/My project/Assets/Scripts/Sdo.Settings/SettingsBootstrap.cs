@@ -12,10 +12,11 @@ namespace Sdo.Settings
             // 「資產/存檔到底讀哪一棵樹」以前只能靠猜。
             Debug.Log($"[DataRoot] {SdoDataRoot.Root}  (profiles: {SdoDataRoot.ProfileDir})");
 
-            // 順序有相依：config.ini 是總表（[Profile] activeId + [Room] + [Option]），先讀它；keymaps.ini 缺檔時要靠
-            // config.ini 的舊 opt_keys 種一份；GameSettings 工作副本由前兩者組成；ProfileManager 的 active 使用者
-            // 讀的是 config.ini 的 activeId。
-            RoomConfig.Load();               // DATA/PROFILE/config.ini（並一次性併入舊 settings.json / active.txt / 舊位置 config.ini）
+            // 順序有相依：config.ini 是設定總表（[Room] + [Option]），先讀它；profile.json 的一次性搬遷要撿 config.ini
+            // 舊 [Profile] 區的值，所以緊接在後；keymaps.ini 缺檔時要靠 config.ini 的舊 opt_keys 種一份；GameSettings
+            // 工作副本由前兩者組成；ProfileManager 的 active 使用者讀的是 profile.json 的 activeId。
+            RoomConfig.Load();               // DATA/PROFILE/config.ini（並一次性併入舊 settings.json / 舊位置 config.ini）
+            ProfileDefaults.Load();          // DATA/PROFILE/profile.json（登入的角色 + 家族/等級預設；併入舊 [Profile] / active.txt）
             KeyMap.Load();                   // DATA/PROFILE/keymaps.ini（4 鍵鍵位 + 遊玩功能鍵）
             DisplaySettingsManager.Load();   // [Option] + 鍵位 → 執行期 GameSettings
             ProfileManager.Boot();           // 解析/建立 DATA/PROFILE（active 使用者+資料夾）

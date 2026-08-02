@@ -868,9 +868,7 @@ namespace Sdo.UI.Screens
             _targetId = (who.Id ?? "").Trim();
             _onWhisper = onWhisper;
 
-            string level = who.Level > 0
-                ? RoomConfig.LevelLabel(who.Level.ToString(CultureInfo.InvariantCulture))
-                : "";
+            string level = Sdo.Settings.PlayerLevel.Label(who.Level);
             SetIdentity(_targetName, level);
             FillBasicOther(who, level);
             FillStatsOther();
@@ -962,7 +960,7 @@ namespace Sdo.UI.Screens
 
         /// <summary>
         /// 官方這一格寫的是「<c>Level:62</c>」。傳進來的 <paramref name="label"/> 是
-        /// <c>RoomConfig.LevelLabel</c> 的「LV:11」格式(那是房間頭上名牌用的、要短),
+        /// <see cref="Sdo.Settings.PlayerLevel.Label(int)"/> 的「LV:11」格式(那是房間頭上名牌用的、要短),
         /// 這裡只把數字取出來重排 —— 兩個地方要的字面不一樣,但**等級的來源只有一個**,不另外開一條取值路徑。
         /// 整串沒有數字(例如角色刻意留白)就原樣顯示,不要憑空生一個「Level:0」。
         /// </summary>

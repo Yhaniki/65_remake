@@ -163,8 +163,9 @@ namespace Sdo.UI.Core
 
         /// <summary>
         /// 現在的本機身分:名字 / playerId / 性別看 session(選角色畫面可能剛切過帳號),
-        /// 家族與等級走 <see cref="ProfileFields"/> —— 那兩項的 Default 在 config.ini,
-        /// 但這個角色自己設過就以角色的為準(所以切帳號時會跟著換)。
+        /// 家族與等級走 <see cref="ProfileFields"/> —— 那兩項的 Default 在**外層的**
+        /// DATA/PROFILE/profile.json,但這個角色自己設過就以角色的為準(所以切帳號時會跟著換)。
+        /// 等級還會因為打歌拿經驗而自己往上升(見 <see cref="ProfileManager.AddExperience"/>)。
         /// </summary>
         private static NetPlayerIdentity LocalIdentityNow(GameSession session)
         {
@@ -173,7 +174,7 @@ namespace Sdo.UI.Core
             {
                 Name = session != null ? session.LocalPlayerName : "",
                 PlayerId = session != null ? session.LocalPlayerId : "",
-                // 家族名走 profile/config 那條(而不是 GameSession 寫死的示範字串)——
+                // 家族名走 profile 那條(而不是 GameSession 寫死的示範字串)——
                 // 這樣「別人在房間看到的我的家族」與「我頭上名牌的家族」是同一個來源。
                 Guild = ProfileFields.FamilyName(p),
                 Level = ProfileFields.PlayerLevelValue(p),

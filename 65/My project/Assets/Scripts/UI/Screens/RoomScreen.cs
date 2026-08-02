@@ -344,7 +344,7 @@ namespace Sdo.UI.Screens
             _floatName.gameObject.SetActive(false);
 
             // 家族列：家族名稱(白字描黑邊) + 名稱前的小徽章(EMBLEM/SMALL*)，畫在頭上名字的「上方」一行。
-            // 內容與顯不顯示都由 config.ini 的 familyName/familyEmblem 決定(見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
+            // 內容與顯不顯示由這個角色的 profile.json 決定(沒設過才吃 config.ini 的預設，見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
             // 名稱用「左對齊」：徽章+名稱要作為一個群組一起水平置中，左對齊才能讓文字自群組內的固定起點畫出。預設留空 → 不顯示。
             _floatFamily = OutlinedLabel.Create(Root, "FloatFamily", 0, 0, 160, FamilyRowH, 14, Color.white, Color.black,
                 FamilyNameEdgePx, true, TextAlignmentOptions.Left, trackEm: TextStyles.HeadNameTrackEm);
@@ -2827,7 +2827,7 @@ namespace Sdo.UI.Screens
             RenderSlots(room);
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
             // 名字後面接等級「Lv:N」(等級留空則不接)；家族列(徽章+名稱)另外畫在名字上方(UpdateFamilyRow)。
-            // 等級走 ProfileFields —— config.ini 是共用預設,這個角色自己設過就以它自己的為準(同 UpdateFamilyRow)。
+            // 等級走 ProfileFields —— 外層 profile.json 是共用預設,這個角色自己設過就以它自己的為準(同 UpdateFamilyRow)。
             if (_floatName != null)
             {
                 string nm = LocalName(room);
@@ -4128,8 +4128,8 @@ namespace Sdo.UI.Screens
         //   familyName 留空 → 整條家族列(名稱+徽章)不顯示。
         //   familyEmblem 留空或載入失敗 → 只顯示家族名稱、不放徽章。
         //
-        // 值走 ProfileFields 而不是直接讀 RoomConfig:config.ini 的 [Profile] 只是**所有角色共用的預設**,
-        // 這個角色自己設過就以它自己的為準。直接讀 config 的話,切到有自訂家族的角色時名牌不會跟著換。
+        // 值走 ProfileFields 而不是直接讀外層的 profile.json:那份只是**所有角色共用的預設**,
+        // 這個角色自己設過就以它自己的為準。直接讀預設的話,切到有自訂家族的角色時名牌不會跟著換。
         private void UpdateFamilyRow()
         {
             var prof = ProfileManager.Active;

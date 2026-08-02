@@ -7,13 +7,17 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// **本機設定的唯一落地檔** <c>config.ini</c>：開房間右側面板的可選清單與預設值（<c>[Room]</c>）、OPTION 對話框
-    /// 設定（<c>[Option]</c>）、以及目前登入的角色（<c>[Profile] activeId</c>）。**全域一份**，放在存檔層
-    /// <c>DATA/PROFILE/</c>（與 favorites.json / keymaps.ini 同層）—— 設定不跟著使用者跑（換帳號不會換設定）。
+    /// **本機設定的落地檔** <c>config.ini</c>：開房間右側面板的可選清單與預設值（<c>[Room]</c>）與 OPTION 對話框
+    /// 設定（<c>[Option]</c>）。**全域一份**，放在存檔層 <c>DATA/PROFILE/</c>（與 profile.json / favorites.json /
+    /// keymaps.ini 同層）—— 設定不跟著使用者跑（換帳號不會換設定）。
+    ///
+    /// **角色資料不在這裡**：登入哪個角色、家族/等級的預設值拉去同層的 <c>profile.json</c>（見
+    /// <see cref="ProfileDefaults"/>）；每個角色自己的設定與經驗值在 <c>DATA/PROFILE/&lt;id&gt;/profile.json</c>。
+    /// 舊 config.ini 的 <c>[Profile]</c> 區開機時一次性搬過去，之後這個檔不再寫出該區。
     ///
     /// 以前散成三個檔，開機時會一次性併進來後把舊檔移除（見 <see cref="Load"/>）：
     ///   * <c>settings.json</c>（畫面/音量/遊戲頁）→ <c>[Option]</c>，本來就是同一份值存兩處。
-    ///   * <c>active.txt</c>（登入哪個角色）→ <c>[Profile] activeId</c>。
+    ///   * <c>active.txt</c>（登入哪個角色）→ 曾經是 <c>[Profile] activeId</c>，現在在 profile.json。
     ///   * 舊位置的 config.ini：per-user（<c>DATA/PROFILE/&lt;id&gt;/</c>）優先，其次執行檔同層。
     /// **鍵位不在這裡**：4 鍵鍵位與遊玩功能鍵拆去 <see cref="KeyMap"/> 的 <c>keymaps.ini</c>（舊檔的
     /// <c>opt_keys/opt_keysAux</c> 仍讀得進來供搬遷，但不再寫出）。
@@ -104,7 +108,8 @@ namespace Sdo.Settings
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
         public static bool hasOption = false;   // 解析到的 config.ini 是否帶 [Option] 區（帶了就不用去撿舊 settings.json）
-        public static bool hasFamilyKeys = false;   // 檔案是否帶家族/等級鍵（沒有＝舊檔 → Load 補寫模板，讓使用者有鍵可手改）
+        public static bool hasLegacyProfileKeys = false;   // 檔案是否還帶舊的 [Profile] 鍵（activeId/家族/等級）→ Load 要把值
+                                                           // 搬進 DATA/PROFILE/profile.json 並重寫一次 config.ini 把該區去掉
         public static bool hasTextScaleKeys = false;   // 同上：檔案是否帶 combo/判定文字大小鍵
         public static bool hasTextAlphaKeys = false;   // 同上：檔案是否帶 combo/判定文字透明度鍵（比大小鍵晚加，得各自記）
         public static bool hasTextPopKeys = false;     // 同上：檔案是否帶 combo/判定文字彈跳倍率鍵（又比透明度鍵晚加）
@@ -127,18 +132,13 @@ namespace Sdo.Settings
         public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
 
-        // ---- [Profile]：目前登入的本機角色（8 位數資料夾名）。以前是獨立的 active.txt，現在併進 config.ini。
-        //      ""＝還沒決定 → ProfileManager.Boot 會挑一個並寫回。權威值仍由 ProfileManager 管，這裡只是落地欄位。----
-        public static string activeId = "";
-
-        // ---- [Profile]：房間裡頭上名字牌要顯示的「家族 / 等級」（本機顯示；任一留空＝不顯示該項，見 RoomScreen 的頭上名字牌）----
-        // 家族名稱：白字描邊，畫在名字上方那一行。留空 → 整條家族列（徽章＋名稱）都不顯示。
-        public static string familyName = "";
-        // 家族名稱前的小徽章：DATA/EMBLEM 底下的檔名(不含副檔名，如 SMALL43)，預設 SMALL43。只在 familyName 非空時顯示；
-        // 這欄留空 → 只顯示家族名稱、不放徽章。
-        public static string familyEmblem = "SMALL43";
-        // 玩家等級：顯示成「LV:N」跟在名字後面。留空 → 不顯示等級。存字串，讓「留空＝不顯示」最自然（不必用哨兵值）。
-        public static string playerLevel = "";
+        // ---- 舊 [Profile] 區（登入哪個角色 + 家族/等級預設值）：**已經拉出去成 DATA/PROFILE/profile.json**
+        //      （見 ProfileDefaults）。這幾個欄位只剩「開機時把舊 config.ini 的值讀進來給它搬」這一個用途 ——
+        //      不再寫出到 config.ini，也不要拿來當顯示來源（顯示一律問 ProfileManager）。----
+        public static string legacyActiveId = "";
+        public static string legacyFamilyName = "";
+        public static string legacyFamilyEmblem = "";
+        public static string legacyPlayerLevel = "";
 
         // ---- [Net]：多人連線。★ serverAddress 是整個連線功能的總開關：留空＝純單機（走 MockRoomService，
         //      體驗與加連線之前完全一樣）；填了才會去連。按登入連不上會留在單機（原因只寫 log），不會卡在畫面上。----
@@ -280,15 +280,13 @@ namespace Sdo.Settings
                     dirty = true;
                 }
 
-                // ---- 一次性併入舊的 active.txt（登入哪個角色）----
-                if (string.IsNullOrEmpty(activeId))
-                {
-                    var legacyActive = ProfileManager.ReadLegacyActiveId();
-                    if (!string.IsNullOrEmpty(legacyActive)) { activeId = legacyActive; dirty = true; }
-                }
+                // ---- 一次性撿回舊的 active.txt（登入哪個角色）：值先放進 legacy 欄位，隨後由 ProfileDefaults.Load()
+                //      一起搬進 DATA/PROFILE/profile.json（見 SettingsBootstrap 的呼叫順序）。----
+                if (string.IsNullOrEmpty(legacyActiveId))
+                    legacyActiveId = ProfileManager.ReadLegacyActiveId() ?? "";
 
-                // 舊 config.ini 沒有家族/等級鍵 → 補寫一次模板（含註解），讓使用者有鍵可手改（預設值＝留空不顯示）。
-                if (!hasFamilyKeys) dirty = true;
+                // config.ini 還帶著舊的 [Profile] 區 → 重寫一次（Serialize 已經不輸出該區），值由 ProfileDefaults 接手。
+                if (hasLegacyProfileKeys) dirty = true;
                 // 同理：舊檔沒有 combo/判定文字大小鍵 → 補寫一次，不然使用者在檔案裡找不到可改的鍵。
                 if (!hasTextScaleKeys) dirty = true;
                 if (!hasTextAlphaKeys) dirty = true;   // 透明度鍵比大小鍵晚加，只有大小鍵的檔一樣要補寫
@@ -303,7 +301,7 @@ namespace Sdo.Settings
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
                 DisplaySettingsManager.DeleteLegacyJson();      // 舊 settings.json（內容已在 [Option]）
-                ProfileManager.DeleteLegacyActiveFile();        // 舊 active.txt（內容已在 [Profile] activeId）
+                // 舊 active.txt 由 ProfileDefaults.Load() 收尾刪除（它才是 activeId 現在的落地處）。
                 // [Option] 套回 GameSettings 已移到 DisplaySettingsManager.ApplyDisplay()（SettingsBootstrap 隨後呼叫）。
             }
             catch (Exception e)
@@ -477,10 +475,11 @@ namespace Sdo.Settings
                 if (key.StartsWith("opt_")) hasOption = true;   // 檔案帶 [Option] → 不必再去撿舊 settings.json
                 switch (key)
                 {
-                    case "activeId": activeId = val; break;
-                    case "familyName": familyName = val; hasFamilyKeys = true; break;
-                    case "familyEmblem": familyEmblem = val; hasFamilyKeys = true; break;
-                    case "playerLevel": playerLevel = val; hasFamilyKeys = true; break;
+                    // 舊 [Profile] 區：只讀不寫，開機時給 ProfileDefaults 搬進 DATA/PROFILE/profile.json（見 Load）。
+                    case "activeId": legacyActiveId = val; hasLegacyProfileKeys = true; break;
+                    case "familyName": legacyFamilyName = val; hasLegacyProfileKeys = true; break;
+                    case "familyEmblem": legacyFamilyEmblem = val; hasLegacyProfileKeys = true; break;
+                    case "playerLevel": legacyPlayerLevel = val; hasLegacyProfileKeys = true; break;
                     // [Net]：大小寫敏感,要與 Serialize 寫出的 key 一字不差
                     case "serverAddress": serverAddress = val; break;
                     case "serverPort": serverPort = ParseInt(val, serverPort); break;
@@ -576,11 +575,11 @@ namespace Sdo.Settings
             judgeTextPop = Mathf.Clamp(judgeTextPop, 1f, 4f);
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
-            activeId = SanitizeActiveId(activeId);
-            // 家族/等級：純顯示字串，只去頭尾空白（前後空白對「留空＝不顯示」判定會造成假陽性）。
-            familyName = (familyName ?? "").Trim();
-            familyEmblem = (familyEmblem ?? "").Trim();
-            playerLevel = (playerLevel ?? "").Trim();
+            // 舊 [Profile] 區的搬遷暫存值：只去頭尾空白（前後空白會讓「留空＝沒設過」的判定失真）。
+            legacyActiveId = ProfileDefaults.SanitizeActiveId(legacyActiveId);
+            legacyFamilyName = (legacyFamilyName ?? "").Trim();
+            legacyFamilyEmblem = (legacyFamilyEmblem ?? "").Trim();
+            legacyPlayerLevel = (legacyPlayerLevel ?? "").Trim();
             // [Net]：位址一定要 Trim —— 手改設定檔很容易留下尾端空白，那會讓 OnlineEnabled
             // 誤判成「有填」然後拿一個含空白的主機名去解析,錯誤訊息會很莫名。
             serverAddress = (serverAddress ?? "").Trim();
@@ -592,44 +591,17 @@ namespace Sdo.Settings
             netMaxDownloadMb = Mathf.Clamp(netMaxDownloadMb, 1, 2048);
         }
 
-        /// <summary>房間頭上的等級標籤文字：等級字串非空 → 「LV:{值}」（LV 兩字都大寫），留空 → 空字串（＝不顯示等級）。純函式。</summary>
-        public static string LevelLabel(string level)
-        {
-            level = (level ?? "").Trim();
-            return level.Length == 0 ? "" : "LV:" + level;
-        }
-
-        /// <summary>只認 8 位數編號（＝ DATA/PROFILE 下的角色資料夾名）；其它一律當「沒設定」。純函式。</summary>
-        public static string SanitizeActiveId(string id)
-        {
-            id = (id ?? "").Trim();
-            if (id.Length != 8) return "";
-            foreach (var c in id) if (c < '0' || c > '9') return "";
-            return id;
-        }
-
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
         public static string Serialize()
         {
             var sb = new StringBuilder();
             sb.Append("# 本機設定總表 — 放在存檔資料夾 DATA/PROFILE/，純文字可手改，改完存檔下次開遊戲生效。\n");
-            sb.Append("# [Profile]=登入哪個角色  [Net]=多人連線  [Room]=開房間右側面板預設  [Option]=遊戲內 OPTION 對話框的設定。\n");
+            sb.Append("# [Net]=多人連線  [Room]=開房間右側面板預設  [Option]=遊戲內 OPTION 對話框的設定。\n");
             sb.Append("# 鍵位不在這個檔：4 鍵鍵位與遊玩功能鍵（換鏡頭/加減速/打拍音/Auto…）在同層的 keymaps.ini。\n");
-            sb.Append("[Profile]\n");
-            sb.Append("# 目前登入的角色＝ DATA/PROFILE/ 底下的 8 位數資料夾名（00000000=女 00000001=男）。\n");
-            sb.Append("# 留空＝開遊戲時自動挑一個並寫回這裡。選角色畫面切換性別也會寫回這裡。\n");
-            sb.Append("activeId=").Append(activeId ?? "").Append('\n');
-            sb.Append("# 底下三項是「家族 / 等級」的**預設值（Default）**，所有角色共用。\n");
-            sb.Append("# ★ 個別角色可以有自己的：角色資料夾裡的 profile.json 一旦有自己的設定，那個角色就以自己的為準，\n");
-            sb.Append("#   不再看這裡（在個人資料頁改家族/等級就會寫進那裡）。沒設過的角色才吃這裡的預設值。\n");
-            sb.Append("# 家族名稱（白字描邊，畫在名字上方那行）。留空＝不顯示家族（連同下面的徽章一起隱藏）。\n");
-            sb.Append("familyName=").Append(familyName ?? "").Append('\n');
-            sb.Append("# 家族名稱前的小徽章：DATA/EMBLEM 底下的檔名(不含副檔名，如 SMALL43)，預設 SMALL43。留空＝只顯示名稱不放徽章。\n");
-            sb.Append("familyEmblem=").Append(familyEmblem ?? "").Append('\n');
-            sb.Append("# 玩家等級：顯示成「LV:N」跟在名字後面。留空＝不顯示等級。\n");
-            sb.Append("playerLevel=").Append(playerLevel ?? "").Append('\n');
+            sb.Append("# 角色資料也不在這個檔：登入哪個角色、家族/等級的預設值在同層的 profile.json（每個角色自己的\n");
+            sb.Append("# 設定與經驗值則在 DATA/PROFILE/<8位數id>/profile.json，個人資料頁改的家族/等級就寫在那裡）。\n");
 
-            sb.Append('\n').Append("[Net]\n");
+            sb.Append("[Net]\n");
             sb.Append("# 多人連線。★ serverAddress 是總開關：留空＝純單機（與加連線之前完全一樣）。\n");
             sb.Append("# 填了才會去連；按登入連不上會留在單機（原因寫在 log），不會卡住。\n");
             sb.Append("# 伺服器位址：IP 或主機名（例如 192.168.1.10 或 dance.example.com）。\n");

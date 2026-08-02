@@ -125,12 +125,17 @@ namespace Sdo.Settings
         /// (= LV 1),所以不需要任何 migration。</summary>
         public int fame;
 
-        // ---- [Profile] 的 per-user 覆寫 ----
-        // config.ini 的 [Profile] 是**所有角色共用的 Default**;這三個欄位讓「這個角色」可以有自己的家族/等級。
-        // 解析一律走 ProfileFields —— 不要直接讀這裡,也不要直接讀 RoomConfig。
+        // ---- 個人資料(家族/等級)的 per-user 覆寫 ----
+        // **外層的** DATA/PROFILE/profile.json 是所有角色共用的 Default(見 ProfileDefaults);這三個欄位讓
+        // 「這個角色」可以有自己的家族/等級。解析一律走 ProfileFields —— 不要直接讀這裡,也不要直接讀 ProfileDefaults。
         public string familyName = "";
         public string familyEmblem = "";
         public string playerLevel = "";
+
+        /// <summary>目前等級內累積的經驗值(滿級後固定 0)。每局結算加上 <c>Sdo.Ruleset.Reward.Experience</c>,
+        /// 跨過門檻就把 <see cref="playerLevel"/> 往上推(曲線見 <see cref="PlayerLevel"/>,落地在
+        /// <see cref="ProfileManager.AddExperience"/>)。經驗值**只有角色自己有**,外層那份 Default 沒有這欄。</summary>
+        public int exp;
 
         /// <summary>
         /// 這個角色有沒有自己的 [Profile] 設定?
@@ -175,9 +180,11 @@ namespace Sdo.Settings
             if (fame < 0) fame = 0;   // 知名度只會往上加,負值必是壞檔 → 當 0(= LV 1)
             if (stats == null) stats = new PlayStats(); else stats.Sanitize();
             friends = SanitizeFriends(friends);
+            // 家族/等級：只去頭尾空白（前後空白會讓「留空＝刻意不顯示」的判定失真，見 hasProfileOverrides）。
             familyName = (familyName ?? "").Trim();
             familyEmblem = (familyEmblem ?? "").Trim();
-            playerLevel = (playerLevel ?? "").Trim();
+            playerLevel = PlayerLevel.CleanText(playerLevel);
+            if (exp < 0) exp = 0;   // 經驗只會往上加，負值必是壞檔
             EnsureWardrobe();
             return this;
         }

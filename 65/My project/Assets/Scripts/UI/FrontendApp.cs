@@ -657,6 +657,7 @@ namespace Sdo.UI
             game.localPlayerMale = s.Gender == 1;
             game.avatarParts = ProfileManager.Active != null ? ProfileManager.Active.EquippedAvatarParts() : game.avatarParts;
             if (ProfileManager.Active != null) game.bodyShapeIndex = ProfileManager.Active.bodyShapeIndex;   // 遊戲舞者用這個角色自己的體型 (胖瘦)
+            game.playerLevel = ProfileManager.Level;             // 這個角色的等級（profile.json，沒設過吃 config.ini 預設）→ 結算 G幣/榮譽獎勵照它算
             // per-song choreography (missing -> generic dance fallback). A .gn 歌曲包 ships the song's OWN official
             // .DPS next to it — an absolute path, which LoadAsset takes as-is, so it dances the real choreography
             // instead of the one ExternalDps would generate.

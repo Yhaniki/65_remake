@@ -8,10 +8,13 @@ using UnityEngine;
 namespace Sdo.Settings
 {
     /// <summary>
-    /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），裡面只放
-    /// 衣服/道具（profile.json）。收藏夾(favorites.json)是全帳號共用，放在 PROFILE 那層（舊版 per-user 的
-    /// favorites.json 開機時一次性併入）。目前登入的本機 user 記在 config.ini 的 <c>[Profile] activeId</c>
-    /// （舊版是獨立的 active.txt，由 <see cref="RoomConfig.Load"/> 一次性併入後刪除）。
+    /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），裡面是這個角色
+    /// 自己的東西（profile.json：衣服/道具/錢包，以及家族/等級/經驗值 —— 家族與等級沒設過就退回**外層**
+    /// DATA/PROFILE/profile.json 的共用預設值，見 <see cref="FamilyName"/> / <see cref="Level"/>）。
+    /// 收藏夾(favorites.json)是全帳號共用，放在 PROFILE 那層（舊版 per-user 的
+    /// favorites.json 開機時一次性併入）。目前登入的本機 user 記在**外層的** <c>DATA/PROFILE/profile.json</c>
+    /// 的 <c>activeId</c>（見 <see cref="ProfileDefaults"/>；舊版是獨立的 active.txt、再舊一版是 config.ini 的
+    /// <c>[Profile]</c> 區，都由 <see cref="ProfileDefaults.Load"/> 一次性搬過來後刪除）。
     ///
     /// 單機 v1 首次開機自動種兩個角色 —— 00000000(女) 與 00000001(男) —— 並以 00000000 為 active。刻意先不做
     /// 登入/選角 UI；<see cref="SetActive"/> + 編號資料夾本身就是多帳號的底層，未來線上版換掉 backing store
@@ -55,8 +58,8 @@ namespace Sdo.Settings
 
         // ---------------- boot / activate ----------------
 
-        /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且在 <see cref="RoomConfig.Load"/> **之後**
-        /// （activeId 現在存在 config.ini 的 [Profile] 區，要先讀進來）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
+        /// <summary>解析/建立 active user 與其資料夾。開機時呼叫一次，且在 <see cref="ProfileDefaults.Load"/> **之後**
+        /// （activeId 存在外層 profile.json，要先讀進來）。任何 IO 失敗都退回記憶體內預設角色，不擋開機。</summary>
         public static void Boot()
         {
             try
@@ -119,6 +122,41 @@ namespace Sdo.Settings
                 File.WriteAllText(Path.Combine(_activeDir, ProfileFileName), JsonUtility.ToJson(_active, true), new UTF8Encoding(false));
             }
             catch (Exception e) { Debug.LogError($"[Profile] save failed: {e.Message}"); }
+        }
+
+        // ---------------- 個人資料：家族 / 等級 / 經驗值 ----------------
+        //
+        // 兩層、同檔名：角色資料夾裡的 DATA/PROFILE/<id>/profile.json 是**這個角色自己的**，外面那層的
+        // DATA/PROFILE/profile.json（ProfileDefaults）是**所有角色共用的預設**。哪一層算數由
+        // UserProfile.hasProfileOverrides 決定（整組覆寫，不是逐欄；理由見該欄位）—— 解析全在 ProfileFields，
+        // 下面幾個只是「active 角色」的方便入口，不要在別處重寫同樣的判斷。
+
+        /// <summary>active 角色要顯示的家族名稱。空字串＝不顯示家族列。</summary>
+        public static string FamilyName => ProfileFields.FamilyName(Active);
+
+        /// <summary>active 角色要顯示的家族徽章檔名（DATA/EMBLEM 下，不含副檔名）。空＝只顯示名稱不放徽章。</summary>
+        public static string FamilyEmblem => ProfileFields.FamilyEmblem(Active);
+
+        /// <summary>active 角色的等級（給獎勵公式 <c>Sdo.Ruleset.Reward</c> 與上線 identity 用的數字）。永遠 ≥ 1。</summary>
+        public static int Level => ProfileFields.PlayerLevelValue(Active);
+
+        /// <summary>頭上名字牌那個等級標籤（「LV:N」）；沒設等級 → 空字串＝不顯示。</summary>
+        public static string LevelLabel => ProfileFields.LevelLabel(Active);
+
+        /// <summary>每局結算把經驗值加進 active 角色（跨門檻自動升等，見 <see cref="PlayerLevel.Grant"/>）並落地
+        /// 角色自己的 profile.json，回傳升了幾級（0＝沒升）。升等會豎起這個角色的覆寫旗標（連同目前生效的家族值一起
+        /// 寫進去，見 <see cref="ProfileFields.SetLevel"/>）—— 從此它自己升自己的，不再跟著外層的預設走。
+        /// 沒有角色資料夾時（standalone 自 boot）只改記憶體。</summary>
+        public static int AddExperience(int gained)
+        {
+            if (gained <= 0) return 0;
+            var p = Active;
+            int before = ProfileFields.PlayerLevelValue(p);
+            var (lv, exp) = PlayerLevel.Grant(before, p.exp, gained);
+            ProfileFields.SetLevel(p, lv);
+            p.exp = exp;
+            Save();
+            return lv - before;
         }
 
         // ---------------- enumerate / create ----------------
@@ -266,18 +304,18 @@ namespace Sdo.Settings
             File.WriteAllText(Path.Combine(dir, ProfileFileName), JsonUtility.ToJson(p.Sanitize(), true), new UTF8Encoding(false));
         }
 
-        // 目前登入的角色記在 config.ini 的 [Profile] activeId（以前是獨立的 active.txt，開機時由 RoomConfig.Load 併入）。
+        // 目前登入的角色記在外層的 DATA/PROFILE/profile.json（歷程：active.txt → config.ini [Profile] → 這裡）。
         private static string ReadActiveId()
         {
-            var id = RoomConfig.SanitizeActiveId(RoomConfig.activeId);
+            var id = ProfileDefaults.SanitizeActiveId(ProfileDefaults.activeId);
             return id.Length == 0 ? null : id;
         }
 
         private static void WriteActiveId(string id)
         {
-            if (RoomConfig.activeId == id) return;   // 沒變就別重寫整份 config.ini
-            RoomConfig.activeId = id;
-            RoomConfig.Save();
+            if (ProfileDefaults.activeId == id) return;   // 沒變就別重寫整份 profile.json
+            ProfileDefaults.activeId = id;
+            ProfileDefaults.Save();
         }
 
         /// <summary>讀舊的 active.txt；沒有/內容不合法 → null。只給 <see cref="RoomConfig.Load"/> 做一次性搬遷用。</summary>
@@ -293,7 +331,7 @@ namespace Sdo.Settings
             catch { return null; }
         }
 
-        /// <summary>刪掉舊的 active.txt（內容已併進 config.ini 的 [Profile] activeId 才呼叫）。</summary>
+        /// <summary>刪掉舊的 active.txt（內容已經進到外層 profile.json 的 activeId 才呼叫，見 <see cref="ProfileDefaults.Load"/>）。</summary>
         public static void DeleteLegacyActiveFile()
         {
             try
@@ -301,7 +339,7 @@ namespace Sdo.Settings
                 var path = Path.Combine(Root, ActiveFileName);
                 if (!File.Exists(path)) return;
                 File.Delete(path);
-                Debug.Log($"[Profile] merged into config.ini, removed {path}");
+                Debug.Log($"[Profile] merged into profile.json, removed {path}");
             }
             catch (Exception e) { Debug.LogWarning($"[Profile] legacy active delete failed: {e.Message}"); }
         }

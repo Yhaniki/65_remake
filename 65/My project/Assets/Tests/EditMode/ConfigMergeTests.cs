@@ -21,14 +21,17 @@ namespace Sdo.Tests
             _root = Path.Combine(Path.GetTempPath(), "sdo_merge_" + Path.GetRandomFileName());
             Directory.CreateDirectory(_root);
             ProfileManager.Root = _root;
-            RoomConfig.hasOption = false; RoomConfig.hasOptUiScale = false; RoomConfig.activeId = "";
+            RoomConfig.hasOption = false; RoomConfig.hasOptUiScale = false;
+            RoomConfig.legacyActiveId = ""; RoomConfig.hasLegacyProfileKeys = false;
+            ProfileDefaults.activeId = "";
         }
 
         [TearDown]
         public void TearDown()
         {
             ProfileManager.Root = null;   // 還原 lazy 解析，避免污染其他測試
-            RoomConfig.activeId = "";
+            RoomConfig.legacyActiveId = ""; RoomConfig.hasLegacyProfileKeys = false;
+            ProfileDefaults.activeId = "";
             RoomConfig.serverTls = false; RoomConfig.serverCertFingerprint = "";   // TLS 是連線總開關的一部分,不要留給別人
             // 🔴 還原成 **false**,不是 true。
             // 還原成 true 的話,後面任何一條測試呼叫 RoomConfig.Save() 都會寫進**玩家真正的**
@@ -56,10 +59,11 @@ namespace Sdo.Tests
             File.WriteAllText(Path.Combine(_root, DisplaySettingsManager.LegacyFileName), JsonUtility.ToJson(legacy, true));
 
             RoomConfig.Load();
+            ProfileDefaults.Load();
             KeyMap.Load();
 
             Assert.IsTrue(File.Exists(ConfigPath), "應產生合併後的 config.ini");
-            Assert.AreEqual("00000001", RoomConfig.activeId, "active.txt 的角色要進 [Profile] activeId");
+            Assert.AreEqual("00000001", ProfileDefaults.activeId, "active.txt 的角色要進 profile.json 的 activeId");
             Assert.AreEqual(0.25f, RoomConfig.optBgm, 1e-4f, "settings.json 的音量要進 [Option]");
             Assert.AreEqual(0.75f, RoomConfig.optMusic, 1e-4f);
             Assert.AreEqual(1280, RoomConfig.optDispW);
@@ -72,10 +76,12 @@ namespace Sdo.Tests
             Assert.IsFalse(File.Exists(Path.Combine(_root, DisplaySettingsManager.LegacyFileName)), "settings.json 應被移除");
             Assert.IsTrue(File.Exists(KeymapPath), "應產生 keymaps.ini");
 
-            // 重開一次（只剩 config.ini）值要一樣 —— 搬遷不是一次性有效而已。
-            RoomConfig.hasOption = false; RoomConfig.activeId = ""; RoomConfig.optBgm = 0.5f; RoomConfig.optDispW = 800;
+            // 重開一次（只剩 config.ini + profile.json）值要一樣 —— 搬遷不是一次性有效而已。
+            RoomConfig.hasOption = false; RoomConfig.optBgm = 0.5f; RoomConfig.optDispW = 800;
+            RoomConfig.legacyActiveId = ""; ProfileDefaults.activeId = "";
             RoomConfig.Load();
-            Assert.AreEqual("00000001", RoomConfig.activeId);
+            ProfileDefaults.Load();
+            Assert.AreEqual("00000001", ProfileDefaults.activeId);
             Assert.AreEqual(0.25f, RoomConfig.optBgm, 1e-4f);
             Assert.AreEqual(1280, RoomConfig.optDispW);
         }
