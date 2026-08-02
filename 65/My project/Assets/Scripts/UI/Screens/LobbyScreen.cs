@@ -269,7 +269,7 @@ namespace Sdo.UI.Screens
         //    邊緣加深(字心本來就不透明)—— 疊 2~3 份就飽和。所以 16 份永遠是「全滿」(facePx 0 與 0.01
         //    之間字重用「跳」的),把 16 份一起調淡則要接近不透明才看得出來(使用者實測 0.1~0.4 沒差)。
         //    1 份 ≈ 邊緣填一半;要更細填 0.5,要更粗填 1.5、2。
-        private const float RoomNameFaceCopies = 1.0f;
+        private const float RoomNameFaceCopies = 2.5f;
         private static readonly Color32 SongColor = new Color32(0xed, 0xec, 0xa0, 0xff);       // roommusic
         private static readonly Color32 SelfNameColor = new Color32(0xf2, 0x86, 0x4b, 0xff);   // charname
         // 名字的白描邊(使用者要求)。官方 XML 只給得出顏色與 bold,描邊是那個引擎畫字時自己加的 ——
