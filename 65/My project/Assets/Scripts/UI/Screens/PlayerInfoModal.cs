@@ -290,9 +290,6 @@ namespace Sdo.UI.Screens
         private const float EffortStep = 49f, EffortSlotSize = 45f;
         /// <summary>問號字形的實際大小(見 <see cref="PlayerInfoArt.EffortNone"/>:只切字、不切那張偏心的 45×45)。</summary>
         private const float QuestionW = 22f, QuestionH = 35f;
-        // EffortNownum (491,418) / EffortAllnum (518,418),中間的斜線官方沒烤 → 自己補在兩者之間。
-        private const float EffortNumY0X = 491f, EffortNumY1X = 518f, EffortNumY = 418f, EffortSlashX = 508f;
-        private static readonly Color32 EffortNumCol = new Color32(0xFF, 0xFC, 0xA5, 0xFF);   // 官方 0xfffffca5
         private const float EffortOkX = 429f, EffortOffX = 541f, EffortBtnY = 413f;           // 装备 / 脱下 各 65×24
         private const float EffortRailX = 654f, EffortRailTop = 325f;                          // 見 BuildEffortSub 的註解
         private const float RateRow0Y = 264f, RateStep = 29f, RateFont = 12f;  // 官方 258/287/316/345/374/403 (+6)
@@ -346,7 +343,6 @@ namespace Sdo.UI.Screens
         private Button _skillBtn, _effortBtn;
         private TextMeshProUGUI _perfLabel, _perfAuLabel, _statsRankLabel;
         private TextMeshProUGUI _cardsDone, _cardsAll;   // 拼圖「完成數 / 總數」
-        private TextMeshProUGUI _effortNow, _effortAll;  // 成就「已收藏 / 總數」
         private TextMeshProUGUI _basicNote, _statsNote;
 
         private Button _whisperBtn, _friendBtn, _mailBtn, _enemyBtn, _buyLookBtn;
@@ -916,22 +912,17 @@ namespace Sdo.UI.Screens
                                           y + (EffortSlotSize - QuestionH) * 0.5f, QuestionW, QuestionH);
             }
 
-            // 「已收藏 / 總數」。🔴 官方**沒有**在底圖上烤那個斜線(那條帶子是純色),所以斜線要自己補一個 Label。
-            _effortNow = AddValue(body, "EffortNownum", EffortNumY0X, EffortNumY, 20f, EffortNumCol, TextAlignmentOptions.Left);
-            var slash = UIKit.AddText(body, "EffortSlash", "/", RowFont, EffortNumCol, TextAlignmentOptions.Center);
-            Place(slash.rectTransform, EffortSlashX, EffortNumY, 12f, 14f);
-            _effortAll = AddValue(body, "EffortAllnum", EffortNumY1X, EffortNumY, 20f, EffortNumCol, TextAlignmentOptions.Left);
-            _effortNow.text = "0";
-            _effortAll.text = "0";
+            // 🔴 官方在那條帶子中間會畫「已收藏 / 總數」(EffortNownum / EffortAllnum,斜線官方沒烤要自己補),
+            //    但這個重製版沒有成就系統 → 永遠是 0/0,一排問號旁邊掛個 0/0 只是雜訊。整組不畫。
 
-            // 裝備 / 脫下。沒有成就系統 → 鈕照擺、**按了安靜地什麼都不做**(handler 傳 null)。
-            // 🔴 官方 pushed 圖(EffortEquip3_man / EffortUnistall3_man)與 normal 是**同一個 crop**,
-            //    所以按下去本來就不會變樣;真正有變化的只有 hover 與 disabled。
-            AddOfficialButton(body, "EffortOk", PlayerInfoArt.An("EffortEquip1_man"),
-                PlayerInfoArt.An("EffortEquip2_man"), PlayerInfoArt.An("EffortEquip1_man"),
+            // 裝備 / 脫下。沒有成就系統 → 兩顆鈕**一律畫官方的灰色(disabled)版**
+            //    (EffortEquip4_man / EffortUnistall4_man),而且三態同圖 —— 滑過去不該亮回紫色,
+            //    那會讓一顆按了什麼都不會發生的鈕看起來可以按。handler 仍傳 null。
+            AddOfficialButton(body, "EffortOk", PlayerInfoArt.An("EffortEquip4_man"),
+                PlayerInfoArt.An("EffortEquip4_man"), PlayerInfoArt.An("EffortEquip4_man"),
                 EffortOkX, EffortBtnY, null);
-            AddOfficialButton(body, "EffortUninstall", PlayerInfoArt.An("EffortUnistall1_man"),
-                PlayerInfoArt.An("EffortUnistall2_man"), PlayerInfoArt.An("EffortUnistall1_man"),
+            AddOfficialButton(body, "EffortUninstall", PlayerInfoArt.An("EffortUnistall4_man"),
+                PlayerInfoArt.An("EffortUnistall4_man"), PlayerInfoArt.An("EffortUnistall4_man"),
                 EffortOffX, EffortBtnY, null);
 
             // 捲軸握把。🔴 XML 的 Effort_scroll 是 (652,302,25,125),但**底圖上畫死的軌道只有 abs x 661..664、
