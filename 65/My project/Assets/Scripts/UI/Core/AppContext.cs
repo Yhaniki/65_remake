@@ -117,7 +117,10 @@ namespace Sdo.UI.Core
             Rooms = new OnlineRoomService(net, Session);
             // 聊天:同房的公開發言走 server 廣播;密語/家族/系統/「你說」那些本機專屬的行仍由離線實作產生
             // (見 OnlineChatService 的註解)。所以是「包在外面」而不是整個換掉。
-            Chat = new OnlineChatService(net, _offlineChat, () => Session.Gender == 1);
+            // localGuild:家族頻道要不要上網看它(沒有家族 → 只在本機回「你沒有家族」)。
+            // 與單機那份 MockChatService 吃的是**同一個來源**(Session.GuildName),兩邊判斷才會一致。
+            Chat = new OnlineChatService(net, _offlineChat, () => Session.Gender == 1,
+                                         () => Session.GuildName);
             if (OnlineChanged != null) OnlineChanged();
         }
 

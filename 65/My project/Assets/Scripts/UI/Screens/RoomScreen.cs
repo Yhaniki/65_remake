@@ -101,10 +101,12 @@ namespace Sdo.UI.Screens
         }
         // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe；
         // 家族=綠（你沒有家族也用綠；你說＝白，沿用一般行色）。
-        private const string ChatSystemHex = "F0C24A";
-        private const string WhisperHex = "1EFEFE";
-        private const string StageHex = "72C1FE";
-        private const string GuildHex = "3CE63C";        // 家族頻道綠字「<家族>名字: 內容」＋「你沒有家族」
+        // 🔴 值本身搬到 <see cref="ChatPalette"/> 了 —— **大廳的訊息欄要用同一組**(使用者要求兩邊一致),
+        //    同一個顏色寫兩份遲早走味。這裡保留這幾個名字,底下所有使用處不必動。
+        private const string ChatSystemHex = ChatPalette.SystemHex;
+        private const string WhisperHex = ChatPalette.WhisperHex;
+        private const string StageHex = ChatPalette.StageHex;
+        private const string GuildHex = ChatPalette.GuildHex;   // 家族頻道綠字「<家族>名字: 內容」＋「你沒有家族」
         // 訊息欄底是全透明（文字直接疊在 3D 房間上），小字會跟花背景糊在一起 → 每行描一圈黑邊拉開對比。
         // 動態 CJK 字型畫不出 TMP SDF 描邊，改用 OutlinedLabel 的位移複製法（和房間標題/頭上名字同一套）。
         private const float ChatEdgePx = 0.7f;   // 邊厚（design px）；13px 小字太厚會像粗體 → 0.7 細髮絲邊，字回正常字重又不糊

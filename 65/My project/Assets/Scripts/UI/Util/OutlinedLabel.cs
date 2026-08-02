@@ -17,7 +17,8 @@ namespace Sdo.UI.Util
     /// thickness looks uniform under the non-uniform Stretch mode (re-applied on resolution/mode change).
     ///
     /// The same trick thickens the FACE: pass <c>facePx</c> to <see cref="Create"/> and a second ring is stacked
-    /// in the face colour in front of the edge ring, growing the coloured core without thinning the edge.
+    /// in the face colour in front of the edge ring, growing the coloured core without thinning the edge —
+    /// with <c>faceCopies</c> as the fine knob for how much of that extra weight actually shows.
     /// </summary>
     public sealed class OutlinedLabel : MonoBehaviour
     {
@@ -67,10 +68,18 @@ namespace Sdo.UI.Util
         /// core grows. This is the knob for "the outline is thick enough but the dark letters inside are too thin":
         /// TMP's faux-bold is the only weight a runtime-built dynamic CJK atlas has, and against a 2px+ ring it is
         /// not enough — the official client's letters have a visibly heavier core than plain bold.</param>
+        /// <param name="faceCopies">HOW MANY copies that core ring is made of (fractional: the outermost one gets a
+        /// part-alpha), 16 = the full ring. This is the FINE knob for weight, and it is the count — not the radius,
+        /// not a global alpha — because of how the stack composites: at a radius near 0 all the copies land on the
+        /// same pixels, and each opaque one only darkens the glyph's ANTI-ALIASED EDGE (the core is already opaque),
+        /// which saturates after 2–3 layers. So 16 copies is always "fully solid" — <paramref name="facePx"/> 0 vs
+        /// 0.01 jumps a whole weight — while fading all 16 does nothing until they are nearly opaque. Fractional
+        /// counts around 1 are the useful range: 1 = one solid copy (edge pixels ~half filled), 0.5 = half of one.</param>
         public static OutlinedLabel Create(Transform parent, string name, float x, float y, float w, float h,
             float size, Color32 face, Color32 edge, float edgePx, bool bold,
             TextAlignmentOptions align = TextAlignmentOptions.Center,
-            float glyphScaleX = 1f, float glyphScaleY = 1f, float trackEm = 0f, float facePx = 0f)
+            float glyphScaleX = 1f, float glyphScaleY = 1f, float trackEm = 0f, float facePx = 0f,
+            float faceCopies = 16f)
         {
             var holder = UIKit.NewRect(parent, name);
             holder.anchorMin = holder.anchorMax = new Vector2(0f, 1f);
@@ -87,7 +96,13 @@ namespace Sdo.UI.Util
             ol._trackEm = trackEm;
 
             if (facePx < 0f) facePx = 0f;
-            int core = facePx > 0f ? Dirs16.Length : 0;
+            if (faceCopies < 0f) faceCopies = 0f;
+            int core = facePx > 0f ? Mathf.CeilToInt(faceCopies) : 0;
+            if (core == 0) facePx = 0f;                           // no core ring → don't push the edge out for one
+            // The copies are spread evenly over their own circle (NOT the first N of Dirs16) so a 2- or 3-copy ring
+            // still grows the glyph symmetrically. The LAST one carries the fractional part of faceCopies.
+            var coreDirs = core > 0 ? NameplateMetrics.Ring(1f, core) : null;
+            byte lastAlpha = (byte)Mathf.RoundToInt(face.a * Mathf.Clamp01(faceCopies - (core - 1)));
             ol._copies = new TextMeshProUGUI[Dirs16.Length + core];
             ol._offsets = new Vector2[ol._copies.Length];
             // Build order IS draw order (UGUI sibling order): edge ring → face-coloured core ring → face on top.
@@ -98,8 +113,10 @@ namespace Sdo.UI.Util
             }
             for (int i = 0; i < core; i++)
             {
-                ol._copies[Dirs16.Length + i] = Make(holder, "Core" + i, size, face, bold, align, glyphScale);
-                ol._offsets[Dirs16.Length + i] = Dirs16[i] * facePx;
+                var c = face;
+                if (i == core - 1) c.a = lastAlpha;
+                ol._copies[Dirs16.Length + i] = Make(holder, "Core" + i, size, c, bold, align, glyphScale);
+                ol._offsets[Dirs16.Length + i] = coreDirs[i] * facePx;
             }
             ol._face = Make(holder, "Face", size, face, bold, align, glyphScale);
             ol.ApplyEdgeOffsets(true);

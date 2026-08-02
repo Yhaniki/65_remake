@@ -8,9 +8,13 @@ namespace Sdo.UI.Services
     /// <summary>
     /// 連線版聊天。上網的有兩件事:**同房的公開發言**(廣播)與**密語**(server 照名字找人,跨房)。
     ///
-    /// **本機專屬的那些行不上網** —— 家族頻道、「你說」、系統提示、進出舞台廣播都還是走底下那個
-    /// 離線實作(<paramref name="local"/>),因為它們本來就只給自己看,或者(家族)需要伺服器端的
-    /// 家族資料,那是後面的階段。
+    /// **本機專屬的那些行不上網** —— 「你說」、系統提示、進出舞台廣播都還是走底下那個離線實作
+    /// (<paramref name="local"/>),它們本來就只給自己看。
+    ///
+    /// 🔴 **家族頻道現在會上網了**(以前也歸在上面那組,註解寫「需要伺服器端的家族資料,那是後面的階段」):
+    ///    server 認得 <c>channel="family"</c>,而且**只轉發給同一個家族的人**(見 Hub 的 <c>OnChatSay</c>
+    ///    與 <c>SameGuild</c>)——家族名是握手時就帶上去的,不需要另一套家族系統。
+    ///    沒有家族的人送家族訊息仍走離線那份:它會回一行「你沒有家族」,那句話本來就只給自己看。
     ///
     /// 🔴 送出時不在本機先畫一行。server 會把訊息廣播回**包含自己**的所有人(密語則是單獨回一份
     /// kind=out 給發送者),所以本機只要等它回來 —— 這樣「自己看到的」與「別人看到的」是同一份資料,
@@ -22,6 +26,8 @@ namespace Sdo.UI.Services
         private readonly NetClient _net;
         private readonly IChatService _local;
         private readonly Func<bool> _localIsMale;
+        /// <summary>本機這個角色的家族名(空 = 沒有家族)。家族訊息要不要上網就看它 —— 見 <see cref="SendGuild"/>。</summary>
+        private readonly Func<string> _localGuild;
 
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private ChatScope _scope = ChatScope.Lobby;
@@ -30,11 +36,13 @@ namespace Sdo.UI.Services
         public event Action<ChatMessage> MessageReceived;
         public IReadOnlyList<ChatMessage> History => _history;
 
-        public OnlineChatService(NetClient net, IChatService local, Func<bool> localIsMale = null)
+        public OnlineChatService(NetClient net, IChatService local, Func<bool> localIsMale = null,
+                                 Func<string> localGuild = null)
         {
             _net = net;
             _local = local;
             _localIsMale = localIsMale;
+            _localGuild = localGuild;
 
             // 底層(離線實作)產生的本機專屬行也要進到同一份歷史 —— 畫面只讀 Ctx.Chat.History,
             // 兩份歷史會讓密語/家族/系統訊息整個不見。
@@ -115,7 +123,22 @@ namespace Sdo.UI.Services
 
         // ---- 本機專屬:整批轉給離線實作 ----
 
-        public void SendGuild(string text) => _local?.SendGuild(text);
+        /// <summary>
+        /// 家族頻道。**有家族就真的上網**(server 只轉發給同一個家族的人,見 Hub 的 <c>OnChatSay</c>),
+        /// 沒有家族則交給底下那份離線實作 —— 它會回一行綠字「你沒有家族」,而那句話本來就只給自己看。
+        ///
+        /// 🔴 上網的那條**不要**在本機先畫一行:server 會把它廣播回**包含自己**的所有同族(與一般發言同一條路),
+        ///    自己先畫就會看到兩份。收端靠 <c>channel=="family"</c> 標回綠字,見 <see cref="OnNetChat"/>。
+        /// </summary>
+        public void SendGuild(string text)
+        {
+            string msg = text != null ? text.Trim() : "";
+            if (msg.Length == 0) return;
+            string guild = _localGuild != null ? _localGuild() : null;
+            if (string.IsNullOrWhiteSpace(guild)) { _local?.SendGuild(text); return; }
+            _net.SendChat(msg, ChannelWire(ChatChannel.Family));
+        }
+
         public void SendSelfTalk(string text) => _local?.SendSelfTalk(text);
         public void SendSystem(string text) => _local?.SendSystem(text);
         public void AnnounceStageEnter(string name) => _local?.AnnounceStageEnter(name);
@@ -160,6 +183,9 @@ namespace Sdo.UI.Services
                 // 以前這裡寫死 Room,大廳的發言會被標成「某間房裡說的」。
                 Scope = m.RoomId > 0 ? ChatScope.Room : ChatScope.Lobby,
                 RoomId = m.RoomId,
+                // family 頻道的發言 = 家族訊息(綠字「<家族>名字: 內容」)。server 只轉發給同族,
+                // 所以收得到就代表是自己人;顯示端靠這個旗標決定顏色與分類,與離線那份一致。
+                Guild = string.Equals(m.Channel, "family", StringComparison.OrdinalIgnoreCase),
             };
 
             // 房間動作(關鍵字 → 舞蹈動作)在**收端**重新判斷,不由發送端決定:

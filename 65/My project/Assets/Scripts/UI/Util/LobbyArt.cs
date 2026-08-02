@@ -70,6 +70,63 @@ namespace Sdo.UI.Util
             return s;
         }
 
+        /// <summary>
+        /// 下拉選單項目的「滑過態」——**只把 hover 圖真的畫了東西的地方疊到 normal 圖上**。
+        ///
+        /// 官方 PopMenu 每項給兩張圖(如 <c>FamilyPopMenu1/2</c>),兩張的**底色像素其實完全一樣**,
+        /// hover 那張只是把文字/圖示改成金黃、右邊多一個黃三角。但 hover 那張同時把 normal 右緣那條
+        /// 半透明暗邊(α≈40~100 的黑)清成全透明 —— 條與條疊起來時那條暗邊就是分隔線,整張換掉的話
+        /// 滑過的那一條看起來就「底跟著變了」(使用者回報:底圖不要變色,但三角形和字變黃要留著)。
+        ///
+        /// 合成規則:兩張差得夠多(<see cref="HoverDiffThreshold"/>)**而且** hover 那邊不透明度 ≥ normal 才採用
+        /// hover 的像素;其餘一律保留 normal。→ 黃字/黃圖示/三角(hover 畫上去的東西)進來,
+        /// 被 hover 清掉的暗邊與任何底色微差留在 normal 那邊。
+        ///
+        /// 任何一張載不到、尺寸對不上、或退回共用圖集(sprite 只是大圖的一小塊、像素對不起來)就直接回 normal
+        /// —— 最壞情況是滑過沒有黃字,不會畫錯。
+        /// </summary>
+        public static Sprite AnSoloHover(string normalAn, string hoverAn)
+        {
+            if (string.IsNullOrEmpty(hoverAn)) return AnSolo(normalAn);
+            string key = "hov:" + normalAn + "|" + hoverAn;
+            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
+            s = MergeHover(AnSolo(normalAn), AnSolo(hoverAn));
+            _soloCache[key] = s;
+            return s;
+        }
+
+        /// <summary>採用 hover 像素的門檻(R+G+B+A 四通道差的總和)。底色的取樣誤差遠低於它,黃字/三角遠高於它。</summary>
+        private const int HoverDiffThreshold = 30;
+
+        private static Sprite MergeHover(Sprite normal, Sprite hover)
+        {
+            if (normal == null) return hover;
+            if (hover == null) return normal;
+            var nt = normal.texture; var ht = hover.texture;
+            if (nt == null || ht == null || nt.width != ht.width || nt.height != ht.height) return normal;
+            // 兩張都必須是「自己一張貼圖」(AnSolo 那條路)。退回 An() 的話 sprite 只是共用圖集的一小塊,
+            // 整張 GetPixels32 拿到的是別人的像素 —— 對不起來,直接放棄合成。
+            if (normal.rect.width != nt.width || normal.rect.height != nt.height) return normal;
+            if (hover.rect.width != ht.width || hover.rect.height != ht.height) return normal;
+
+            Color32[] np, hp;
+            try { np = nt.GetPixels32(); hp = ht.GetPixels32(); }
+            catch { return normal; }   // 不可讀的貼圖(理論上不會:solo 那條路自己建的貼圖都可讀)
+
+            for (int i = 0; i < np.Length; i++)
+            {
+                Color32 a = np[i], b = hp[i];
+                int d = Mathf.Abs(a.r - b.r) + Mathf.Abs(a.g - b.g) + Mathf.Abs(a.b - b.b) + Mathf.Abs(a.a - b.a);
+                if (d > HoverDiffThreshold && b.a >= a.a) np[i] = b;
+            }
+
+            var tex = new Texture2D(nt.width, nt.height, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            tex.SetPixels32(np); tex.Apply(false);
+            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                                 new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+        }
+
         /// <summary>同 <see cref="AnSolo"/> 但**超取樣**(<c>LoadAnSoloMip</c>:3× 存、邏輯尺寸顯示)。
         /// 大廳的鈕在預設 800×600 視窗下差不多 1:1,放大/全螢幕時硬邊會鋸齒、模糊濾鏡又糊;
         /// 交給 GPU 面積降取樣才會是乾淨的 ~1px 抗鋸齒邊。載不到就退回 <see cref="AnSolo"/>。</summary>

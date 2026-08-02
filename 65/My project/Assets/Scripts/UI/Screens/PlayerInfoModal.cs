@@ -105,12 +105,16 @@ namespace Sdo.UI.Screens
         //    現在只會變成壓在人頭臉上的一條灰方框(使用者回報)。官方也沒有這層 —— 官方靠 CharBack
         //    那張執行期填的角色背景圖。
         private const float IdX = 114f, IdW = 214f;
-        // 名字那行:官方 x=132 w=80(配他們的短 ID);這裡靠右對齊、寬度放到整區,長名字才不會被切。
-        private const float IdRowX = IdX + 10f, IdRowW = IdW - 20f, IdRowH = 16f;
+        // 名字/等級**共用同一個框、都左右置中**:框就是這一區的整寬(114..328),所以兩行的中心線
+        // 對在一起、也對在角色頭上(AvtShow 105..335 的中心 220 ≒ 這裡的 221)。
+        //
+        // 🔴 **兩行不可以用不同寬度或不同對齊的框**(使用者連兩輪回報)。試過的錯法:
+        //      1) 等級放進一個 80 寬的小框裡置中 → 置中是相對那個小框,「Level:11」實寬只有 ~44px,
+        //         右邊留白 18px,等級的中心與名字的中心差 18px,兩行歪掉。
+        //      2) 兩行都靠右切齊右緣 → 使用者要的不是右緣對齊,是**左右置中**。
+        //    大小層次交給字級差(NameFont/LevelFont)去做,不要再用框位或對齊方式營造。
+        private const float IdRowX = IdX, IdRowW = IdW, IdRowH = 16f;
         private const float IdNameY = 129f, IdLevelY = 144f;   // 官方就差 15px
-        // 等級那行:**字比名字小、框靠右、字在框內置中**(官方實機就是這樣 —— 名字是一長串靠右頂到底,
-        // 「Level:62」則是在名字尾端下方的一小塊裡置中,兩行的右緣切齊)。框寬照官方的 w=80。
-        private const float IdLevelW = 80f, IdLevelX = IdRowX + IdRowW - IdLevelW;
         private const float NameFont = 14f, LevelFont = 11f;   // 官方 name fontheight=14;level 沒寫 → 明顯小一級
 
         // 底部那一排動作鈕(93×31,確定是 101×37)。官方大多在 y=507,只有 DelFriend / AddEnemy 落在 508。
@@ -420,17 +424,16 @@ namespace Sdo.UI.Screens
         ///   <c>&lt;Label name="name"  x=132 y=129 w=80 h=14 fontheight=14 bold color=0xfffaff74/&gt;</c>
         ///   <c>&lt;Label name="level" x=132 y=144 w=80 h=14            bold color=0xfffaff74/&gt;</c>
         /// —— 兩行只差 **15px**。以前寫 8 / 38(差 30),就是使用者回報的「lv 太遠」。
-        /// 兩行都**靠右對齊**(官方實機兩行的右緣切齊,見截圖)、都是**粗體**,寬度放大到這一區的寬,
+        /// 兩行都**左右置中**(使用者要的排法)、都是**粗體**,寬度放大到這一區的整寬,
         /// 長名字才不會被切;官方那個 w=80 是配他們的短 ID 用的。
         /// </summary>
         private void BuildIdentity(RectTransform parent)
         {
+            // 🔴 兩行**同框同寬同對齊**,只有字級不同 —— 中心線對齊靠的就是這個(見 IdRowW 的註解:
+            //    給等級另開一個窄框,不管框裡怎麼對齊,兩行的中心都會差開)。
             _idName = OutlinedLabel.Create(parent, "IdName", IdRowX, IdNameY, IdRowW, IdRowH,
-                                           NameFont, NameFace, NameEdge, NameEdgePx, true, TextAlignmentOptions.Right);
-            // 🔴 等級**不跟名字用同一個框**:字小一級、框只有 80 寬且靠右,字在框內**置中** ——
-            //    官方實機就是這個排法(名字靠右頂到底,Level 在它尾端下方的一小塊裡置中)。
-            //    以前跟名字共用整條寬度又靠右對齊,兩行看起來就是硬貼在右邊、還一樣大。
-            _idLevel = OutlinedLabel.Create(parent, "IdLevel", IdLevelX, IdLevelY, IdLevelW, IdRowH,
+                                           NameFont, NameFace, NameEdge, NameEdgePx, true, TextAlignmentOptions.Center);
+            _idLevel = OutlinedLabel.Create(parent, "IdLevel", IdRowX, IdLevelY, IdRowW, IdRowH,
                                             LevelFont, NameFace, NameEdge, NameEdgePx, true, TextAlignmentOptions.Center);
         }
 
