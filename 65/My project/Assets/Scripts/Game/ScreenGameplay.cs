@@ -546,9 +546,14 @@ namespace Sdo.Game
         // OPTION 遊戲頁「遊戲特效」兩個勾選（FrontendApp 開局前設定）：關掉就不生對應特效。預設 true = 全開。
         public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
-        // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打(判定/舞蹈續行)到曲末 —— 但死亡照算：從歸零那刻起分數凍結
-        // (P/C/B/M 判定統計仍繼續記錄)，結算一樣出 GAME OVER、評分 F。見 Update 的 HP-out 段與 _hpDead。
+        // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打(判定續行)到曲末 —— 但死亡照算：從歸零那刻起分數凍結
+        // (P/C/B/M 判定統計仍繼續記錄)、**舞者停舞回待機**(血用完了就不能再跳舞，跟一般模式死掉一樣)，
+        // 結算一樣出 GAME OVER、評分 F。見 Update 的 HP-out 段與 _hpDead。
         public bool playFullSong = false;
+        // 掉 miss 也照跳舞（config.ini opt_danceIgnoreMiss，預設關；OPTION 沒有這個選項）：開著時 8 拍結算不再因為
+        // 這個 block 有 Bad/Miss 而讓舞者停下來（見 Sdo.Ruleset.DanceGate），**連血量都不管**（優先權最大）：
+        // 完奏模式血用完照樣跳到曲末。整首跳舞不受 combo/miss/HP 影響。
+        public bool danceIgnoreMiss = false;
         // 無理短長條 → 一般 note（預設開；OPTION 尚未接 UI，先由 GameplaySettings.collapseShortHolds / config.ini 灌進來）：
         // 載譜後把長度短於 180 BPM 16 分音符 (OsuBeatmap.ShortHoldMaxMs ≈83ms) 的 long note 收成單顆 note，見 LoadChart。
         // 這開關只管**外部轉檔譜**(chartFormat 1/2/4 = osu/sm/mc)：官方 k.gn (chartFormat 0) 與 .gn 歌曲包 (3) 是
@@ -2793,7 +2798,10 @@ namespace Sdo.Game
                     // run: "進遊戲先亂跳一段舞才回 idle"), so report "before the dance" until the clock is real.
                     avatar.DanceTimeSec = () => _clockStart < 0.0 ? -1f
                                               : (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
-                    avatar.DanceEnabled = () => _dancing && !_failed;   // 8-beat dance-gate decision / HP-out (failed) -> dancer holds the standby idle
+                    // 8-beat dance-gate decision / HP-out -> dancer holds the standby idle。HP 看的是 _hpDead 而不是
+                    // _failed：完奏模式歌不切斷(_failed 不設)，但「血用完了就不能繼續跳舞」——死了就回待機站著到曲末。
+                    // 例外：danceIgnoreMiss 開著時血量完全不管，死了照跳（見 DanceGate.Enabled）。
+                    avatar.DanceEnabled = () => DanceGate.Enabled(_dancing, _failed, _hpDead, danceIgnoreMiss);
                     Debug.Log($"[avatar] DPS {dpsPath}: {dps.Rows.Length} rows, {dps.Total:F1}s");
                     PrewarmDpsMotions(dps);   // read every clip NOW (behind the loading cover), not lazily mid-song
                 }
@@ -4793,7 +4801,8 @@ namespace Sdo.Game
             //       (1) 分數就地凍結 (ScoreProcessor.FreezeScore) —— 之後打再好都不再加分;
             //       (2) P/C/B/M 判定統計、combo、特效照常繼續累計(結算的判定數是整首的);
             //       (3) HP 鎖在地板 (HealthProcessor lockOnDeath),不會被後面的 combo 補回來;
-            //       (4) 曲末結算一樣算 GAME OVER / 輸(見 EnterResult 的 _gameOver 與評分 F)。
+            //       (4) 舞者停舞 —— 血用完就不能繼續跳舞,回待機站著到曲末(DanceEnabled 看 _hpDead);
+            //       (5) 曲末結算一樣算 GAME OVER / 輸(見 EnterResult 的 _gameOver 與評分 F)。
             if (!showtimeMode && !_hpDead && _health != null && _health.IsFailed)
             {
                 _hpDead = true;
@@ -5408,12 +5417,12 @@ namespace Sdo.Game
             _replay.Record(now, mask);   // osu-style 打擊紀錄 (appends only when the held-key bitmask changes)
         }
 
-        // Record dance-gate transitions (the effective _dancing && !_failed each frame). Tiny: only changes at the
+        // Record dance-gate transitions (the effective DanceEnabled each frame). Tiny: only changes at the
         // 8-beat settle or on HP-out. Drives the result-screen BACKGROUND replay so the looped dance reproduces the
         // original performance's stop/start gaps (the DPS choreography itself is deterministic from time).
         private void RecordGate(double now)
         {
-            bool g = _dancing && !_failed;
+            bool g = DanceGate.Enabled(_dancing, _failed, _hpDead, danceIgnoreMiss);   // 與 DanceEnabled 同一條式子（停舞也要進 replay）
             if (_danceTrack.Count == 0 || _danceTrack[_danceTrack.Count - 1].on != g) _danceTrack.Add((now, g));
         }
 
@@ -6006,10 +6015,11 @@ namespace Sdo.Game
         }
 
         // Every 8 beats (the score-settlement cadence) re-decide whether the dancer keeps dancing — a break NEVER
-        // stops it mid-block, only this boundary does. Two conditions (see the _blockHadBreak field comment):
+        // stops it mid-block, only this boundary does. Rules live in Sdo.Ruleset.DanceGate.NextState:
         //   1. block had a break (Bad/Miss) -> dance only if the current combo is still > 30, else stop.
         //   2. block had NO break but DID judge notes -> dance (clean block always dances, even at low combo).
         //      No break and NO notes at all -> keep the current state (a stopped dancer does not resume on silence).
+        //   (danceIgnoreMiss 開著 -> 有判定的 block 一律跳，忽略 1.)
         // while() so a long frame that skips a boundary still settles. _dancing is read by the avatar each frame.
         private void UpdateDanceGate(double now)
         {
@@ -6017,9 +6027,9 @@ namespace Sdo.Game
             if (_nextDanceSettleMs <= 0) _nextDanceSettleMs = settleMs;
             while (now >= _nextDanceSettleMs)
             {
-                if (_blockHadBreak) _dancing = _score.Combo > 30;   // (1) broke -> carry on only with a strong (>30) combo
-                else if (_blockHadNote) _dancing = true;            // (2) clean block with notes -> dance/resume
-                // else: empty block (no break, no notes) -> hold the current _dancing state
+                // 決策本體是純函式（Sdo.Ruleset.DanceGate）：斷了 → combo > 30 才續跳；乾淨且有音符 → 跳；
+                // 空 block → 維持現況。danceIgnoreMiss 開著時「斷了就停」那條整個豁免（見欄位註解）。
+                _dancing = DanceGate.NextState(_dancing, _blockHadBreak, _blockHadNote, _score.Combo, danceIgnoreMiss);
                 _blockHadBreak = false;
                 _blockHadNote = false;
                 _nextDanceSettleMs += settleMs;

@@ -21,6 +21,7 @@ namespace Sdo.Tests
             src.gameplay.fullscreenFill = true; src.gameplay.cameraAuto = false; src.gameplay.cameraFixed = 4;
             src.gameplay.playFullSong = true;
             src.gameplay.songBombs = false;   // 非預設值（預設是 true＝照譜面原樣有雷）才驗得出有沒有落地
+            src.gameplay.danceIgnoreMiss = true;   // 掉 miss 也照跳舞（預設關）
             src.gameplay.panelOpacity = 1.1f; src.gameplay.effectScene = false;
 
             RoomConfig.CaptureOptionFrom(src);
@@ -32,6 +33,7 @@ namespace Sdo.Tests
             RoomConfig.optDispW = 1024; RoomConfig.optLang = "zh-TW"; RoomConfig.optUiScale = 1f;
             RoomConfig.optFullscreenFill = false; RoomConfig.optCameraAuto = true; RoomConfig.optCameraFixed = 0;
             RoomConfig.optPlayFullSong = false; RoomConfig.optSongBombs = true;
+            RoomConfig.optDanceIgnoreMiss = false;
             RoomConfig.ParseInto(ini);
             Assert.IsTrue(RoomConfig.hasOption, "[Option] 區應被辨識");
             Assert.IsTrue(RoomConfig.hasOptUiScale, "opt_uiScale 應被寫出且辨識得到");
@@ -54,7 +56,24 @@ namespace Sdo.Tests
             Assert.IsTrue(dst.gameplay.playFullSong);
             Assert.IsFalse(dst.gameplay.songBombs, "進階「歌曲炸彈」要跟著 config.ini 走");
             Assert.IsFalse(dst.gameplay.effectScene);
+            Assert.IsTrue(dst.gameplay.danceIgnoreMiss, "「掉 miss 也照跳舞」要跟著 config.ini 走");
             Assert.AreEqual(1.1f, dst.gameplay.panelOpacity, 1e-4f);
+        }
+
+        // ---- 掉 miss 也照跳舞（opt_danceIgnoreMiss；OPTION 沒 UI，只走 config.ini）----
+
+        [Test]
+        public void DanceIgnoreMiss_Defaults_Off_And_Is_Written_To_Template()
+        {
+            Assert.IsFalse(new GameSettings().gameplay.danceIgnoreMiss, "預設關＝官方玩法（斷 combo 會停舞）");
+            StringAssert.Contains("opt_danceIgnoreMiss=", RoomConfig.Serialize(), "模板要帶這個鍵，玩家才手改得到");
+        }
+
+        [Test]
+        public void Old_Ini_Without_DanceIgnoreMiss_Is_Flagged_For_Rewrite()
+        {
+            // 舊版存的 config.ini 沒有這個鍵 → Load 要判定「缺鍵」並補寫一次模板（見 RoomConfig.Load 的 dirty）。
+            Assert.IsTrue(RoomConfig.IsMissingCurrentKey("[Option]\nopt_bgm=0.5\nopt_songBombs=1\n"));
         }
 
         [Test]

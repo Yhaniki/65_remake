@@ -53,6 +53,10 @@ namespace Sdo.Settings
         // （見 OsuBeatmap.AllowsShortHoldCollapse）。預設開。OPTION 尚未接 UI，先走這個欄位/config.ini
         // (opt_collapseShortHolds) 當開關接口。
         public bool collapseShortHolds = true;
+        // 掉 miss 也照跳舞：開著時舞者完全不受 combo/miss 影響（8 拍結算不再因為斷 combo 停舞，見 Sdo.Ruleset.DanceGate），
+        // 血量也一併不管（優先權最大）——完奏模式血用完照樣跳到曲末。預設關＝官方玩法。
+        // OPTION 沒有這個選項，只走 config.ini 的 opt_danceIgnoreMiss（同 collapseShortHolds 的作法）。
+        public bool danceIgnoreMiss = false;
 
         public const float MaxPanelOpacity = 1.4f;   // OPTION 面板透明度滑桿最高 1.4X
         public const int AutoCamMode = -1;           // ScreenGameplay._camMode 的「自動導播」值（0..n-1 才是固定鏡頭）

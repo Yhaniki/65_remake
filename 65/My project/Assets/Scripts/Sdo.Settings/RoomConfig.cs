@@ -128,7 +128,8 @@ namespace Sdo.Settings
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
                            optEffectChar = true, optEffectScene = true, optCameraAuto = true, optCallCard = true,
                            optPlayFullSong = false, optSongSpeed = true, optCollapseShortHolds = true,
-                           optSongBombs = true;   // 歌曲炸彈：預設開（照譜面原樣有雷）
+                           optSongBombs = true,   // 歌曲炸彈：預設開（照譜面原樣有雷）
+                           optDanceIgnoreMiss = false;   // 掉 miss 也照跳舞：預設關（官方玩法＝斷 combo 會停舞）
         public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
 
@@ -431,6 +432,7 @@ namespace Sdo.Settings
                     // Load 會因為 hasSongBombsKey=false 重寫一次模板，之後檔案裡只剩新鍵。
                     case "opt_disableBombs": optSongBombs = !ParseBool(val, !optSongBombs); break;
                     case "opt_collapseShortHolds": optCollapseShortHolds = ParseBool(val, optCollapseShortHolds); break;
+                    case "opt_danceIgnoreMiss": optDanceIgnoreMiss = ParseBool(val, optDanceIgnoreMiss); break;
                     case "opt_panelOpacity": optPanelOpacity = ParseFloat(val, optPanelOpacity); break;
                 }
             }
@@ -575,6 +577,9 @@ namespace Sdo.Settings
             sb.Append("# 無理短長條收成一般 note（短於 180BPM 16 分音符 ≈83ms 的 long note → note；1=開 預設 0=關）\n");
             sb.Append("# 只對外部轉檔譜（osu/StepMania/Malody）生效；官方 k.gn 與 .gn 歌曲包是原生譜，永遠照原樣打。\n");
             sb.Append("opt_collapseShortHolds=").Append(B(optCollapseShortHolds)).Append('\n');
+            sb.Append("# 掉 miss 也照跳舞（1=開：跳舞完全不受 combo/miss 影響；0=關 預設＝官方玩法，斷 combo 且 combo≤30 會停舞）。\n");
+            sb.Append("# 開著時連血量都不管：完奏模式血用完照樣跳到曲末（關著時血用完就回待機站著）。\n");
+            sb.Append("opt_danceIgnoreMiss=").Append(B(optDanceIgnoreMiss)).Append('\n');
             sb.Append("# 面板透明度 0.0~1.6\n");
             sb.Append("opt_panelOpacity=").Append(optPanelOpacity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             return sb.ToString();
@@ -617,6 +622,7 @@ namespace Sdo.Settings
                 optCameraFixed = g.cameraFixed;
                 optCallCard = g.callCardInGame; optPlayFullSong = g.playFullSong; optSongSpeed = g.songSpeed;
                 optCollapseShortHolds = g.collapseShortHolds;
+                optDanceIgnoreMiss = g.danceIgnoreMiss;
                 optSongBombs = g.songBombs;
                 optPanelOpacity = g.panelOpacity;
             }
@@ -643,6 +649,7 @@ namespace Sdo.Settings
             g.cameraFixed = optCameraFixed;
             g.callCardInGame = optCallCard; g.playFullSong = optPlayFullSong; g.songSpeed = optSongSpeed;
             g.collapseShortHolds = optCollapseShortHolds;
+            g.danceIgnoreMiss = optDanceIgnoreMiss;
             g.songBombs = optSongBombs;
             g.panelOpacity = optPanelOpacity;
         }
