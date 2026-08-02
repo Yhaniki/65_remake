@@ -77,6 +77,39 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void RedLine_Resets_SV_To_One_Like_Osu()
+        {
+            // osu 的紅線(uninherited)會連帶送出一個 SV=1 的 DifficultyControlPoint，把前面那條綠線蓋掉。
+            // 這裡 1000ms 的綠線開 ×2，2000ms 放一條同速紅線 → 之後必須回到基準速度，不能讓 ×2 延續下去。
+            var map = MapWith(120, 8000, new OsuTimingPoint(0, 500), new OsuTimingPoint(1000, -50),
+                new OsuTimingPoint(2000, 500));
+            var scroll = ManiaScroll.Build(map, 2.5);
+            double v = ManiaScroll.BaseVelocityFor(2.5);
+            Assert.AreEqual(v * 2.0, scroll.PixelDistance(1000, 2000), 1e-3);   // 綠線生效區間
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(2000, 3000), 1e-3);   // 紅線之後 SV 清回 1.0
+        }
+
+        [Test]
+        public void ShortRedLineGimmick_Does_Not_Slow_The_Rest_Of_The_Chart()
+        {
+            // Bizzare Nation [88c52453] 的實譜片段：14000/14004 是一組「4ms 超快紅線 + 綠線收尾」的閃現
+            // gimmick，收尾那條是 -500(0.2×)。14400 的紅線該把它清掉，而下一條綠線要到 25600 才出現 ——
+            // 不清的話 14.4s~25.6s 整整 11.2 秒都以 0.2× 爬行（使用者回報「14 秒開始突然變超慢」）。
+            var map = MapWith(150, 60000,
+                new OsuTimingPoint(0, 400),
+                new OsuTimingPoint(14000, 50), new OsuTimingPoint(14000, -10),
+                new OsuTimingPoint(14004, 400), new OsuTimingPoint(14004, -500),
+                new OsuTimingPoint(14400, 400),
+                new OsuTimingPoint(25600, -100));
+            var scroll = ManiaScroll.Build(map, 2.5);
+            double v = ManiaScroll.BaseVelocityFor(2.5);
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(0, 1000), 1e-3);              // 開頭：基準速度
+            Assert.AreEqual(v * 0.2 * 0.396, scroll.PixelDistance(14004, 14400), 1e-3); // gimmick 收尾仍是 0.2×
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(14400, 15400), 1e-3);         // 紅線之後回到正常速度
+            Assert.AreEqual(v * 1.0, scroll.PixelDistance(24600, 25600), 1e-3);         // 一路正常到下一條綠線
+        }
+
+        [Test]
         public void ConstantScroll_Toggle_Ignores_All_Variation()
         {
             var map = MapWith(120, 9000, new OsuTimingPoint(0, 500), new OsuTimingPoint(8000, 250), new OsuTimingPoint(1000, -50));

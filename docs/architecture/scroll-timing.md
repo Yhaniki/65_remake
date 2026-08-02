@@ -82,7 +82,16 @@ pixelPerMs = baseScroll(scroll_speed, scale_with_bpm, currentBpm, sliderMultipli
 | `scroll_speed` | 使用者設定 / 房間 SPEED / Ctrl+± | 本地；可選 **Steam 同步** |
 | `scale_with_bpm` | [game-settings.md](../systems/game-settings.md) `scale_scroll_with_bpm` | 同上 |
 | `sliderMultiplier` | 譜面 [General] | 譜面檔（不同步） |
-| `activeSvMultiplier` | 當前時間前最後一個 **SV timing point**（osu 綠線） | 譜面檔（不同步） |
+| `activeSvMultiplier` | 當前時間前最後一個 **SV timing point**（osu 綠線）；**紅線會把它清回 1.0**（見下） | 譜面檔（不同步） |
+
+> ⚠️ **綠線的效力到下一條紅線為止，不是到下一條綠線為止。** osu 的 LegacyBeatmapDecoder 每讀一行
+> timing point 都會送出一個 DifficultyControlPoint，SV = `beatLength < 0 ? 100 / -beatLength : 1`，
+> 所以紅線（uninherited）恆為 1、等於蓋掉前面那條綠線；譜師也是照這個寫的（紅線之後要重放綠線）。
+> 沿用綠線會出事：Bizzare Nation `[88c52453]` 在 14004ms 有一條 `-500`(0.2×) 的閃現 gimmick 收尾綠線，
+> 本來只該活到 14400ms 的紅線，沿用下去就一路撐到 25600ms 的下一條綠線 —— 中間 11.2 秒整段慢五倍。
+> 實作見 `ManiaScroll.BuildMultiplierPoints`，測試 `ManiaScrollTests.RedLine_Resets_SV_To_One_Like_Osu`
+> 與 `ShortRedLineGimmick_Does_Not_Slow_The_Rest_Of_The_Chart`。
+> 只有 `.osu` 有綠線；SM / GN / Malody 轉出來的 timing point 全是紅線，不受影響。
 
 > **使用者設定先寫本地**；設定頁可勾 **同步到 Steam**（MVP+）。見 [game-settings.md § 設定儲存與同步](../systems/game-settings.md#設定儲存與同步)。
 

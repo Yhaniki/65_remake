@@ -169,7 +169,12 @@ namespace Sdo.Osu
             for (int j = 0; j < n; j++)
             {
                 var p = tps[idx[j]];
-                if (p.Uninherited) curBeat = p.BeatLength > 0.0 ? p.BeatLength : curBeat;
+                // 紅線(uninherited)會把 SV 清回 1.0 —— 這是 osu 的規則，不是我們的簡化：LegacyBeatmapDecoder
+                // 每讀一行 timing point 都送出一個 DifficultyControlPoint，SV = beatLength<0 ? 100/-beatLength : 1，
+                // 紅線恆為 1，等於蓋掉前面那條綠線。譜師也是照這個寫的（紅線後要重放綠線）。
+                // 不清會怎樣：Bizzare Nation 在 14004 有一條 -500(0.2×) 的綠線，本來只該活到 14400 的紅線；
+                // 沿用下去就一路撐到 25600 的下一條綠線 —— 中間 11.2 秒整段慢五倍。
+                if (p.Uninherited) { curBeat = p.BeatLength > 0.0 ? p.BeatLength : curBeat; curSv = 1.0; }
                 else curSv = p.SpeedMultiplier;
                 double mult = curSv * baseBeat / Math.Max(1e-9, curBeat);
                 if (result.Count > 0 && result[result.Count - 1].time == p.TimeMs)
