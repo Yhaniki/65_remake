@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Localization;
 using Sdo.Net;
@@ -50,7 +49,12 @@ namespace Sdo.UI.Screens
         private const float TabY = 52f;
         // 四個分頁**並排**,每格 66×31(stage.png 的 x 依序 506/572/638/704,間隔正好 66)。
         private const float TabAllX = 7f, TabFriendX = 73f, TabFamilyX = 139f, TabBlackX = 205f;
-        private const float ListX = 26f, ListY = 110f, ListW = 233f, ListH = 246f;
+        // 🔴 高度用 **8 × RowH = 224**,不是 XML 寫的 246。底板烤死的凹槽就是 **8 條**,
+        //    246 會多露出 0.79 列 —— 第 9 列被切一半掛在最底下、還壓到「添加好友」那顆鈕
+        //    (使用者回報的「多顯示了一排,最下面會超出框」)。官方那個 246 是連捲動區外框一起算的。
+        private const float ListX = 26f, ListY = 110f, ListW = 233f;
+        private const int VisibleRows = 8;
+        private const float ListH = VisibleRows * RowH;
         private const float AddFriendX = 106f, AddFriendY = 347f;
         /// <summary>列高。官方 <c>&lt;ReportList … height="28"&gt;</c>,而底板烤死的那八條圓角凹槽
         /// 實測間距也是 ~28(板內 y=58/85/113/141/169/196/224)—— 列就是一格一條凹槽。
@@ -310,6 +314,7 @@ namespace Sdo.UI.Screens
                 if (!PassesFilter(u, owner)) continue;
                 AddRow(u);
             }
+            EnsureSelection();   // 一定要有一列是框起來的(預設 = 最上面的自己)
         }
 
         private bool PassesFilter(NetUserListEntry u, UserProfile owner)
@@ -362,7 +367,15 @@ namespace Sdo.UI.Screens
 
             // 第二欄 = 那顆粉紅心。官方**不分性別一律粉心**(實機截圖裡綠色小人那幾列也是粉心),
             // 所以它不是性別 —— 用途待考,先照著擺,版位與視覺才對得上。
-            var heart = UIKit.AddSprite(row, "heart", An("female"), ColIcon2X, (RowH - 16f) * 0.5f);
+            //
+            // 🔴 用 <see cref="LobbyArt.AnSolo"/>,**不要**用 AnSoloAA:後者走 LoadAnSoloMip,
+            //    那條路是給圓盤按鈕用的,會先把 α&lt;128 的像素**整片砍成 0** 再超取樣。這顆心只有
+            //    18×16、邊緣整圈都是柔和 AA —— 實測 222 個不透明像素會被砍到剩 144(少 35%),
+            //    輪廓縮一圈又變硬,與官方那顆對不上(使用者回報「愛心跟官方不一樣」)。
+            //    AnSolo 只做「單獨裁出來 + 去白 matte」,柔邊原樣保留,才是官方 alpha blend 的樣子。
+            //    (仍然不能用 LobbyArt.An:這顆心在 stage.png 裡左邊緊貼著 male 那顆**藍心**,
+            //     共用圖集的雙線性取樣會把藍色拖進來。)
+            var heart = UIKit.AddSprite(row, "heart", LobbyArt.AnSolo("female"), ColIcon2X, (RowH - 16f) * 0.5f);
             if (heart != null) heart.raycastTarget = false;
 
             // 等級 / 位置:官方這兩欄是粗體(名字那欄不是)。
@@ -393,27 +406,30 @@ namespace Sdo.UI.Screens
             btn.onClick.AddListener(() => Select(uid, uname));
             UiSfx.AttachClick(btn);
 
-            // 滑過就亮那圈框(官方 hoverpic 的語意)。選中的那一列不吃 hover —— 它本來就亮著,
-            // 滑鼠移開時不能把它關掉。
-            var tr = row.gameObject.AddComponent<EventTrigger>();
-            AddHover(tr, EventTriggerType.PointerEnter, uid, true);
-            AddHover(tr, EventTriggerType.PointerExit, uid, false);
-
+            // 🔴 **不接 hover**。XML 雖然有 hoverpic,但實機那圈黃框是「選中」的標記,不是滑過的回饋 ——
+            //    滑過就亮的話,滑鼠掃過名單會一路閃,而且分不出真正選中的是誰(使用者指定:只有點了才亮)。
             _rows.Add(new Row { UserId = uid, Name = uname, Highlight = hi });
             if (uid == _selectedUserId && hi != null) hi.gameObject.SetActive(true);
         }
 
-        private void AddHover(EventTrigger trigger, EventTriggerType type, int userId, bool on)
+        /// <summary>
+        /// 名單重建之後把「選中」補上去。**名單一定要有一列是選中的**(使用者指定:預設就框在最上面
+        /// 那個自己身上)—— 空著的話「添加好友」按下去沒反應,而畫面上看不出為什麼。
+        ///
+        /// 上一次選的人還在名單裡就維持不動(換分頁、4 秒一次的輪詢重建都不該把選擇弄丟);
+        /// 不在了才重挑:優先挑**自己**那列,名單裡沒有自己(好友/家族分頁本來就不列自己)就挑第一列。
+        /// </summary>
+        private void EnsureSelection()
         {
-            var e = new EventTrigger.Entry { eventID = type };
-            e.callback.AddListener(_ =>
-            {
-                if (userId == _selectedUserId) return;   // 選中的那列一直亮著
-                for (int i = 0; i < _rows.Count; i++)
-                    if (_rows[i].UserId == userId && _rows[i].Highlight != null)
-                        _rows[i].Highlight.gameObject.SetActive(on);
-            });
-            trigger.triggers.Add(e);
+            if (_rows.Count == 0) { _selectedUserId = 0; _selectedName = ""; return; }
+
+            for (int i = 0; i < _rows.Count; i++)
+                if (_rows[i].UserId == _selectedUserId) return;   // 還在 → AddRow 已經把框亮好了
+
+            int pick = 0;
+            for (int i = 0; i < _rows.Count; i++)
+                if (_rows[i].UserId == _selfUserId) { pick = i; break; }
+            Select(_rows[pick].UserId, _rows[pick].Name);
         }
 
         private TextMeshProUGUI Label(Transform parent, string name, float x, float w, Color color,
