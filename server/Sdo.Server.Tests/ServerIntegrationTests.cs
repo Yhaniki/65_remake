@@ -316,6 +316,48 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Room_List_Carries_Who_Is_Inside()
+        {
+            // 大廳右鍵房卡開的「房間信息」要列出房裡有誰(等級 + 名字)。那時人**還在大廳** ——
+            // roomSnapshot 只發給房裡的人,所以房間列表是 client 唯一拿得到那些名字的地方。
+            // 🔴 這條釘住的是「只送 count 不送人」那個退步:症狀是那 4 列格子永遠空白,
+            //    而空白看起來像排版問題,完全指不到「封包沒帶」這個原因。
+            var a = Connect("房主");
+            int code = CreateRoom(a, "名單測試");
+
+            var b = Connect("客人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetIdentity)
+                .Str("name", "飄漂o")
+                .Int("level", 11));
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetLook)
+                .Put("look", JObj.New().Int("gender", 1).Int("bodyIndex", 0)));
+            JoinRoom(b, code);
+            WaitForState(a, s => s.SeatedCount == 2 && s.Seats[1].Level == 11, "B 的身分送到了");
+
+            var c = Connect("路人");
+            c.Send(JObj.New().Str(NetProto.FieldType, NetProto.RoomList).Int(NetProto.FieldRequest, 41));
+            var rooms = NetJson.Arr(c.WaitFor(NetProto.RoomListResult), "rooms");
+
+            var members = NetJson.Arr(rooms[0], "members");
+            Assert.IsNotNull(members, "房間列表要帶 members");
+            Assert.AreEqual(2, members.Count, "只送坐著的人,長度 == count");
+
+            Assert.AreEqual("房主", NetJson.Str(members[0], "name"));
+            Assert.AreEqual(7, NetJson.Int(members[0], "level"), "握手報的等級");
+
+            Assert.AreEqual("飄漂o", NetJson.Str(members[1], "name"), "要是 setIdentity 之後的名字");
+            Assert.AreEqual(11, NetJson.Int(members[1], "level"));
+            Assert.AreEqual(1, NetJson.Int(members[1], "gender"));
+
+            // genders 沒有被 members 取代 —— 舊版 client 只讀那個欄位,拿掉的話它們的房卡愛心整排退回粉紅。
+            var genders = NetJson.Arr(rooms[0], "genders");
+            Assert.IsNotNull(genders, "genders 要繼續送(舊 client 相容)");
+            Assert.AreEqual(members.Count, genders.Count, "兩個陣列要逐項對齊");
+        }
+
+        [Test]
         public void User_List_Shows_Who_Is_Online_And_Where()
         {
             // 大廳玩家名單(全部/好友/家族三個分頁的資料來源)。server 只回事實:誰在線上、幾等、

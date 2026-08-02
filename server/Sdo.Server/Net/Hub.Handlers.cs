@@ -333,6 +333,10 @@ namespace Sdo.Server.Net
                     // (官方:女=粉紅 FEMALE.AN、男=藍 MALE.AN、空位=灰 MAN.AN)。
                     // 只送「坐著的人」的性別、依座位順序,長度就等於 count。
                     .Put("genders", SeatGenders(s))
+                    // 房裡有誰(名字 + 等級 + 性別),依座位順序、只送坐著的 —— 右鍵房卡的「房間信息」
+                    // 那 4 列要寫出來。🔴 那個框開的時候人**還沒進房**,roomSnapshot 只發給房裡的人,
+                    // 所以這份列表是它唯一拿得到玩家名字的地方(以前沒送 → 那 4 列永遠空白)。
+                    .Put("members", SeatMembers(s))
                     .Int("capacity", s.Capacity)
                     .Int("spectators", s.Spectators != null ? s.Spectators.Length : 0)
                     .Int("mode", s.Settings.GameMode)
@@ -363,6 +367,32 @@ namespace Sdo.Server.Net
                     var seat = s.Seats[i];
                     if (seat == null || !seat.IsTaken) continue;
                     arr.Add(seat.Look != null ? seat.Look.Gender : 0);
+                }
+            return arr;
+        }
+
+        /// <summary>
+        /// 房間裡「坐著的人」的名字/等級/性別,依座位順序。長度 == <c>SeatedCount</c>,與
+        /// <see cref="SeatGenders"/> 逐項對齊。
+        ///
+        /// 「房間信息」對話框(大廳右鍵房卡)要列出裡面有誰 —— 那時 client 還在大廳,
+        /// 拿不到 <c>roomSnapshot</c>(那只發給房裡的人),所以除了這份列表沒有第二個來源。
+        ///
+        /// 🔴 <c>genders</c> 仍然照送、沒有拿掉:舊版 client 只讀那個欄位,不送的話它們的房卡
+        ///    愛心會整排退回粉紅。新版 client 兩個都收得到,以 members 為準。
+        /// </summary>
+        private static JArr SeatMembers(NetRoomSnapshot s)
+        {
+            var arr = JArr.New();
+            if (s.Seats != null)
+                for (int i = 0; i < s.Seats.Length; i++)
+                {
+                    var seat = s.Seats[i];
+                    if (seat == null || !seat.IsTaken) continue;
+                    arr.Add(JObj.New()
+                        .Str("name", seat.Name ?? "")
+                        .Int("level", seat.Level)
+                        .Int("gender", seat.Look != null ? seat.Look.Gender : 0));
                 }
             return arr;
         }

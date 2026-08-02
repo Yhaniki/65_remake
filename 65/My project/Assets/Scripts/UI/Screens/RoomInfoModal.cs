@@ -56,6 +56,10 @@ namespace Sdo.UI.Screens
         // 捲軸握把(RoomInfoSB.an 14×28,與大廳好友列表的 Lobby12 是同一個裁切框)。
         // 底圖畫死的軌道細線在 abs x 527..529 → 14 寬的握把置中是 521。
         private const float RailX = 521f, RailTop = 286f, RailH = 109f;
+        private const float HandleW = 14f, HandleH = 28f;
+
+        // 滾輪的收訊範圍 = 那 4 個格子整片(左緣 276 見 ColLevelX 的註解,右緣收在格線 514)。
+        private const float ListX = 276f, ListW = 238f;
 
         // 官方原圖取樣(使用者指定):上面四排欄位的值是深藍紫、下面玩家列是暗紅紫。
         private static readonly Color32 ValueCol = new Color32(0x2B, 0x1D, 0x61, 0xFF);
@@ -69,6 +73,15 @@ namespace Sdo.UI.Screens
         private readonly List<TextMeshProUGUI> _rowLevel = new List<TextMeshProUGUI>();
         private readonly List<TextMeshProUGUI> _rowName = new List<TextMeshProUGUI>();
         private Action _onEnter;
+
+        // 捲動狀態。列表是**整數分頁**(一次捲一列),所以存的是「第一列是名單的第幾個人」,
+        // 不是像素位移 —— 4 個格子是烤在底圖上的,列只能對齊格線。
+        private Scrollbar _bar;
+        private readonly List<PlayerProfile> _people = new List<PlayerProfile>();
+        private int _scroll;
+
+        /// <summary>捲得動的列數(0 = 人數塞得進 4 列,握把停在最上面不動)。</summary>
+        private int MaxScroll => Mathf.Max(0, _people.Count - RowCount);
 
         public bool IsOpen => _cg != null && _cg.alpha > 0f && _cg.blocksRaycasts;
 
@@ -97,8 +110,14 @@ namespace Sdo.UI.Screens
 
             BuildList(root);
 
-            // 捲軸握把。列表固定 4 列、我們最多也只顯示 4 個人 → 捲不動,但官方那根握把永遠在,停在最上面。
-            UIKit.AddSprite(root, "ScrollHandle", LobbyArt.AnSoloAA("RoomInfoSB"), RailX, RailTop);
+            // 捲軸。列表固定 4 列、房間坐得下 6 個 → 滿房時真的捲得動。
+            // 🔴 用 FixedScrollbar 而不是自畫一張握把圖接拖曳:握把要維持官方那個固定 28px
+            //    (接 ScrollRect.verticalScrollbar 會被拉成「內容越長越扁」),而拖曳/點軌道跳位
+            //    自己接過的下場見 FixedScrollbar 的類別註解。大廳那三條捲軸走的是同一條路。
+            // 🔴 **永遠顯示**:沒得捲時停在軌道最上面 —— 官方那根握把是常駐的,藏起來看起來像忘了做。
+            _bar = FixedScrollbar.Create(root, "ScrollBar", LobbyArt.AnSoloAA("RoomInfoSB"),
+                                         RailX, RailTop, HandleW, HandleH, RailH);
+            _bar.onValueChanged.AddListener(OnBarChanged);
 
             // 進入 / 取消 / 右上 X。三顆鈕的字都烤在圖上 → 不要疊字。
             // 🔴 close1/2/3.an 是**完全同一個 crop**(官方沒做 hover/pushed 差異),照抄即可。
@@ -110,8 +129,11 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>
-        /// 4 列玩家。官方是「左邊一個小格 + 右邊一個大格」,對照使用者給的官方畫面:
-        /// 左格放**座位編號**(1/2/3…)、右格放名字。
+        /// 4 列玩家。官方是「左邊一個小格 + 右邊一個大格」:左格放**等級**、右格放名字
+        /// (欄名就叫 col_level —— 見上面的版位常數)。
+        ///
+        /// 🔴 曾經把左格寫成「座位編號」(1/2/3…):房裡只有一個人的時候剛好也印「1」,
+        ///    看起來像等級 1,實際上是 11 等 —— 使用者回報的就是這個。編號沒有資訊量,官方那格是等級。
         ///
         /// 🔴 **名字靠左**(使用者指定)。官方 XML 的 col4 寫 align=right,但實機畫面上是靠左的 ——
         ///    以畫面為準。
@@ -119,10 +141,17 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void BuildList(RectTransform root)
         {
+            // 滾輪的收訊板 —— 全透明但吃射線。<c>UIKit.AddText</c> 出來的字 raycastTarget 是 false,
+            // 而 UGUI 的 scroll 事件是從「射線打到的東西」往上冒泡的:不鋪這張,游標壓在名單上滾會直接
+            // 穿到底下的 Dim,什麼都不會發生。先建 = 在字底下(它全透明,擋不到畫面)。
+            var catcher = UIKit.AddImage(root, "ListWheel", new Color(0f, 0f, 0f, 0f), true);
+            Place(catcher.rectTransform, ListX, RowY0, ListW, RowCount * RowStep);
+            catcher.gameObject.AddComponent<WheelScroll>().Scrolled = OnWheel;
+
             for (int i = 0; i < RowCount; i++)
             {
                 float y = RowY0 + i * RowStep;
-                _rowLevel.Add(AddValue(root, "row" + i + "_no", ColLevelX, y + 4f, ColLevelW, TextAlignmentOptions.Center));
+                _rowLevel.Add(AddValue(root, "row" + i + "_level", ColLevelX, y + 4f, ColLevelW, TextAlignmentOptions.Center));
                 _rowName.Add(AddValue(root, "row" + i + "_name", ColNameX, y + 4f, ColNameW, TextAlignmentOptions.Left));
             }
         }
@@ -173,31 +202,93 @@ namespace Sdo.UI.Screens
             _audience.text = "0/" + AudienceCapacity;
             _music.text = SongLabel(r);
 
-            FillRows(r);
+            TakePeople(r);
+            _scroll = 0;              // 每次開框都從頭看起(上一間房捲到哪與這間無關)
+            RefreshRows();
+            PlaceHandle();
 
             if (_cg != null) { _cg.alpha = 1f; _cg.blocksRaycasts = true; _cg.interactable = true; }
             transform.SetAsLastSibling();
         }
 
         /// <summary>
-        /// 把座位填進 4 列。空位就整列清空 —— 官方底圖那 4 個格子永遠在,格子裡沒字而已。
+        /// 房裡有誰 —— 把座位壓成一份**名單**。
         ///
+        /// 🔴 **空位不佔位**:這是「房裡有誰」,不是座位圖。座位 0 空、座位 1 有人的房間,
+        ///    那個人是名單的第一個,不是第二個(不然捲動時會捲到一片空白)。
         /// 🔴 性別**不在 <see cref="SeatInfo"/> 裡**,在 <c>RoomInfo.SeatGenders</c>(0=女 1=男,依座位順序)——
-        ///    房間列表的封包沒有逐座位資料,那個陣列是 ToRoomInfo 補出來的。資料缺了一律當女生,
-        ///    與大廳房卡那排愛心同一個退化規則。
+        ///    那個框不畫性別(使用者指定),留著這條是因為中間那欄的版位常數還在。
         /// </summary>
-        private void FillRows(RoomInfo r)
+        private void TakePeople(RoomInfo r)
         {
+            _people.Clear();
             var seats = r.Seats;
-            int shown = 0;
+            if (seats == null) return;
+            for (int i = 0; i < seats.Count; i++)
+                if (seats[i].Player != null) _people.Add(seats[i].Player);
+        }
+
+        /// <summary>
+        /// 把名單第 <see cref="_scroll"/> 個起的 4 個人畫進那 4 列(左=等級、右=名字)。
+        /// 名單不夠長的列清空 —— 官方底圖那 4 個格子永遠在,格子裡沒字而已。
+        ///
+        /// 🔴 等級 <b>0 = 不知道</b>(對方是**舊版 server**,roomList 不送 members)—— 這時整格留白。
+        ///    寫「0」或補一個假數字都會讓人以為那是真的等級。
+        /// </summary>
+        private void RefreshRows()
+        {
             for (int i = 0; i < _rowLevel.Count; i++)
             {
-                var p = seats != null && i < seats.Count ? seats[i].Player : null;
-                if (p == null) { _rowLevel[i].text = ""; _rowName[i].text = ""; continue; }
-                // 左格是**座位編號**(官方畫面上是 1/2/3…),不是等級 —— 空位不占號,所以從有人的那幾個往下數。
-                _rowLevel[i].text = (++shown).ToString();
-                _rowName[i].text = p.DisplayName ?? "";
+                int idx = _scroll + i;
+                var p = idx >= 0 && idx < _people.Count ? _people[idx] : null;
+                _rowLevel[i].text = p != null && p.Level > 0 ? p.Level.ToString() : "";
+                _rowName[i].text = p != null ? (p.DisplayName ?? "") : "";
             }
+        }
+
+        /// <summary>
+        /// 捲軸被拖(或被點軌道)→ 換算成「第一列是第幾個人」。列是**整數分頁**的(4 個格子烤在底圖上,
+        /// 列只能對齊格線),所以 0..1 要乘上可捲列數再四捨五入。
+        /// <c>value</c> 是 BottomToTop:1 = 最上 = 第 0 個。
+        ///
+        /// 🔴 只在真的換列時才重畫 —— 拖曳時每幀都會回呼。
+        /// </summary>
+        private void OnBarChanged(float value)
+        {
+            int max = MaxScroll;
+            // 沒得捲(人數 <= 4)還被拖動 → 彈回最上面。放著不管的話握把會停在半路,
+            // 看起來像「捲了但列表沒跟上」。
+            if (max <= 0) { PlaceHandle(); return; }
+
+            int row = Mathf.Clamp(Mathf.RoundToInt((1f - value) * max), 0, max);
+            if (row == _scroll) return;
+            _scroll = row;
+            RefreshRows();
+            PlaceHandle();   // 對齊格線 —— 列只能整列跳,握把也跟著吸在那一格上
+        }
+
+        private void OnWheel(float dy)
+        {
+            if (Mathf.Approximately(dy, 0f)) return;
+            int max = MaxScroll;
+            if (max <= 0) return;
+            int row = Mathf.Clamp(_scroll + (dy > 0f ? -1 : 1), 0, max);
+            if (row == _scroll) return;
+            _scroll = row;
+            RefreshRows();
+            PlaceHandle();
+        }
+
+        /// <summary>
+        /// 把握把挪到目前這一列。
+        /// 🔴 一定要用 <c>SetValueWithoutNotify</c>:這裡是「資料 → 捲軸」方向,發通知會反過來又叫一次
+        /// <see cref="OnBarChanged"/>。
+        /// </summary>
+        private void PlaceHandle()
+        {
+            if (_bar == null) return;
+            int max = MaxScroll;
+            _bar.SetValueWithoutNotify(max > 0 ? 1f - _scroll / (float)max : 1f);
         }
 
         /// <summary>

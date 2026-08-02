@@ -132,12 +132,23 @@ namespace Sdo.UI.Services
             info.SongLevel = e.SongLevel;   // 0 = 不知道(見 NetRoomListEntry.SongLevel)
             info.SeatGenders = e.Genders;   // 房卡那排愛心的顏色(舊版 server 不送 → null,呼叫端退回一律粉紅)
 
-            // 列表沒有逐座位的資料 —— 用「有幾個人」補出對應數量的佔位座位,
+            // 列表沒有逐座位的完整資料 —— 用「有幾個人」補出對應數量的佔位座位,
             // 讓既有的 RoomInfo.Count / IsFull 仍然算得出正確的數字。
+            //
+            // 🔴 名字與等級**能填就填**(<see cref="NetRoomListEntry.Members"/>):「房間信息」那個框是在
+            //    大廳右鍵房卡開的,人還沒進房 → 沒有 roomSnapshot 可讀,這是它唯一的資料來源。
+            //    舊版 server 不送 members → 留空名字與 0 等,那個框的列就只有格子沒有字
+            //    (不要湊假資料 —— 寫「1 等」比留白更難發現是錯的)。
+            //    Id 一律是 "?":列表不帶 userId,而 PlayerProfile.Id 在別處是拿來認人的,
+            //    給一個明顯的假值比給一個看起來像真的數字安全。
+            var mem = e.Members;
             for (int i = 0; i < e.Capacity; i++)
             {
                 var s = new SeatInfo();
-                if (i < e.Count) s.Player = new PlayerProfile("?", "", 0);
+                if (i < e.Count)
+                    s.Player = mem != null && i < mem.Length
+                        ? new PlayerProfile("?", mem[i].Name ?? "", mem[i].Level)
+                        : new PlayerProfile("?", "", 0);
                 info.Seats.Add(s);
             }
             return info;

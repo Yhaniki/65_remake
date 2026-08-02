@@ -2384,12 +2384,5 @@ namespace Sdo.UI.Screens
                 UIKit.ApplySprite(Left, _hot && _hover != null ? _hover : _normal);
             }
         }
-
-        /// <summary>滾輪轉發。UGUI 的 scroll 事件會往上冒泡,所以掛在列表容器上就能收到任何一張卡上的滾動。</summary>
-        private sealed class WheelScroll : MonoBehaviour, IScrollHandler
-        {
-            public System.Action<float> Scrolled;
-            public void OnScroll(PointerEventData e) { if (Scrolled != null) Scrolled(e.scrollDelta.y); }
-        }
     }
 }

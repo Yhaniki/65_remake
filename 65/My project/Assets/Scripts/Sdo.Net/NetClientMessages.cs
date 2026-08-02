@@ -309,6 +309,23 @@ namespace Sdo.Net
         }
     }
 
+    /// <summary>
+    /// 房間列表裡「坐著的一個人」——「房間信息」對話框(大廳右鍵房卡)那 4 列的內容。
+    ///
+    /// 🔴 為什麼名字要跟著**房間列表**送:那個框是在大廳開的,人還沒進房 → 收不到 roomSnapshot,
+    ///    所以房間列表是 client 唯一拿得到房裡玩家名字/等級的地方。
+    /// </summary>
+    public struct NetRoomMember
+    {
+        public string Name;
+
+        /// <summary>等級。0 = 不知道(舊版 server 不送 members)—— 呼叫端要當「不顯示」而不是「0 級」。</summary>
+        public int Level;
+
+        /// <summary>0=女 1=男。與 <see cref="NetRoomListEntry.Genders"/> 同一個值。</summary>
+        public int Gender;
+    }
+
     /// <summary>房間列表的一列。</summary>
     public struct NetRoomListEntry
     {
@@ -345,6 +362,15 @@ namespace Sdo.Net
         /// </summary>
         public int[] Genders;
 
+        /// <summary>
+        /// 坐著的人是誰(名字/等級/性別),依座位順序,長度 == <see cref="Count"/>。空位不列。
+        /// 「房間信息」對話框那 4 列靠它。
+        ///
+        /// 🔴 舊版 server 不送 → <c>null</c>,呼叫端要退成「只知道有幾個人、不知道是誰」
+        ///    (那個框的列就只有格子沒有字),不要拿 <see cref="Count"/> 生假名字。
+        /// </summary>
+        public NetRoomMember[] Members;
+
         public bool IsFull => Count >= Capacity;
 
         public static NetRoomListEntry Decode(object node)
@@ -373,6 +399,27 @@ namespace Sdo.Net
                 e.Genders = new int[g.Count];
                 // MiniJson 把所有數字都 parse 成 double(見 NetJson.Long 的註解)。
                 for (int i = 0; i < g.Count; i++) e.Genders[i] = g[i] is double d ? (int)d : 0;
+            }
+
+            var m = NetJson.Arr(node, "members");
+            if (m != null && m.Count > 0)
+            {
+                e.Members = new NetRoomMember[m.Count];
+                for (int i = 0; i < m.Count; i++)
+                    e.Members[i] = new NetRoomMember
+                    {
+                        Name = NetJson.Str(m[i], "name"),
+                        Level = NetJson.Int(m[i], "level"),
+                        Gender = NetJson.Int(m[i], "gender"),
+                    };
+
+                // members 自己就帶了性別 —— genders 缺了(未來 server 若不再送那個舊欄位)就從這裡補,
+                // 免得房卡那排愛心整排退回粉紅。
+                if (e.Genders == null)
+                {
+                    e.Genders = new int[e.Members.Length];
+                    for (int i = 0; i < e.Members.Length; i++) e.Genders[i] = e.Members[i].Gender;
+                }
             }
             return e;
         }

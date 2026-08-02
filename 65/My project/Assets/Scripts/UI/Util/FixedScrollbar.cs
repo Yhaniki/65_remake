@@ -43,6 +43,19 @@ namespace Sdo.UI.Util
     }
 
     /// <summary>
+    /// 滾輪轉發。UGUI 的 scroll 事件會往上冒泡,所以掛在**列表容器**上就收得到任何一張卡/一列上的滾動。
+    ///
+    /// 🔴 冒泡只走得到「吃得到射線的東西」的祖先 —— 列與列之間的縫、以及 raycastTarget 關掉的文字
+    ///    都不會發事件。所以容器底下要鋪一張全透明但 <c>raycastTarget = true</c> 的 Image
+    ///    (見 LobbyScreen 的 WheelCatcher / RoomInfoModal 的 ListWheel)。
+    /// </summary>
+    public sealed class WheelScroll : MonoBehaviour, IScrollHandler
+    {
+        public System.Action<float> Scrolled;
+        public void OnScroll(PointerEventData e) { if (Scrolled != null) Scrolled(e.scrollDelta.y); }
+    }
+
+    /// <summary>
     /// 官方那種「握把固定大小」的捲軸 —— 用 Unity 內建的 <see cref="Scrollbar"/> 做,但**不接**
     /// <c>ScrollRect.verticalScrollbar</c>,而是兩邊手動同步。
     ///
