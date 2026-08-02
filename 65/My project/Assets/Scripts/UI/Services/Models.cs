@@ -92,11 +92,14 @@ namespace Sdo.UI.Services
         public int Id;
 
         /// <summary>
-        /// **房間序號** —— 左上角那排「自由練習場1　頻道1　<b>N</b>」的 N。官方的顯示習慣是
-        /// 一個小數字(第幾間房),所以它跟 <see cref="Id"/> 是兩件不同的事:
+        /// **房間序號** —— 大廳房卡上那個 3 位數門牌,也是房間左上角那排「自由練習場1　頻道1　<b>N</b>」的 N。
+        /// 官方的顯示習慣是一個小數字(第幾間房),所以它跟 <see cref="Id"/> 是兩件不同的事:
         /// Id 是加入房間的鑰匙(5 位數、全域唯一),Seq 只是給人看的門牌號。
+        ///
+        /// 🔴 **從 0 起算**(官方大廳第一格就是 <c>000</c>),所以「還不知道門牌」的預設值是 <b>-1</b>
+        /// 而不是 0 —— 大廳房卡看到 -1 才知道要退回用列表位置當門牌。
         /// </summary>
-        public int Seq;
+        public int Seq = -1;
         public string HostName;
         public string Name;        // 玩家自訂房名；空 → 用「房主名 + 的舞蹈室」預設 (見 RoomLabels.DisplayName)
         public GameMode Mode = GameMode.Normal;

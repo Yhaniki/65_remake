@@ -342,7 +342,8 @@ namespace Sdo.Tests
             Assert.AreEqual("房主", NetJson.Str(users[0], "name"));
             Assert.AreEqual(seq, NetJson.Int(users[0], "roomSeq"), "在房裡的人要標出**門牌**(不是加入用的 code)");
             Assert.AreEqual("路人", NetJson.Str(users[1], "name"));
-            Assert.AreEqual(0, NetJson.Int(users[1], "roomSeq"), "沒進房 = 人在大廳");
+            // 🔴 大廳的哨兵值是 -1 不是 0 —— 門牌從 000 起算,0 是一間真的房。
+            Assert.AreEqual(-1, NetJson.Int(users[1], "roomSeq"), "沒進房 = 人在大廳");
         }
 
         // ================= 離開 / 房主轉移 =================

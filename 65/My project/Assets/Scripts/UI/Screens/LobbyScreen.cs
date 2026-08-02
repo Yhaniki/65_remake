@@ -1095,7 +1095,7 @@ namespace Sdo.UI.Screens
                 var room = new RoomInfo
                 {
                     Id = 90000 + i,          // 假房號不會與本機那間(RoomEntry 給的)撞號
-                    Seq = i + 1,
+                    Seq = i,                 // 門牌從 000 起算(官方第一格就是 000)
                     Name = host + "的舞蹈室",
                     HostName = host,
                     Status = (i % 4 == 3) ? RoomStatus.InGame : RoomStatus.Waiting,
@@ -1200,9 +1200,10 @@ namespace Sdo.UI.Screens
 
             // 🔴 門牌是 **3 位數的 Seq**,不是 5 位數的 Id。Id 是「加入房間的鑰匙」,
             //    官方大廳從來不顯示它(要進房就在這裡點那張卡)。
-            //    線上的 roomList 封包沒有帶 seq(NetRoomListEntry 只有 code),那就退回用列表位置當門牌 ——
+            //    門牌**從 000 起算**(官方實機截圖第一格就是 000),所以「沒有門牌」的哨兵是 -1 不是 0。
+            //    真的拿不到 seq 時(舊 server 的 roomList 不帶這個欄位)退回用列表位置當門牌 ——
             //    那正是官方那個數字的意思:「第幾間房」。
-            int door = !has ? 0 : (r.Seq > 0 ? r.Seq : absoluteIndex + 1);
+            int door = !has ? 0 : (r.Seq >= 0 ? r.Seq : absoluteIndex);
             door = Mathf.Clamp(door, 0, 999);
             for (int d = 0; d < row.Digits.Length; d++)
             {
@@ -1865,7 +1866,7 @@ namespace Sdo.UI.Screens
                 Guild = SelfGuild(),
                 Level = ProfileFields.PlayerLevelValue(p),
                 Gender = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0,
-                RoomSeq = 0,
+                RoomSeq = -1,   // -1 = 在大廳(門牌從 000 起算,0 是一間真的房)
             };
         }
 
@@ -1880,7 +1881,7 @@ namespace Sdo.UI.Screens
         ///   • 十幾個 → 名單塞得滿、捲軸握把有得跑;
         ///   • 前三個名字與**本機好友清單**比對得上(FriendList 認的是名字)→「好友」分頁不會是空的;
         ///   • 中間三個家族設成與自己相同 →「家族」分頁不會是空的;
-        ///   • 位置一半在大廳(RoomSeq=0)、一半在房裡 → 那一欄的兩種樣子都看得到。
+        ///   • 位置一半在大廳(RoomSeq=-1)、一半在房裡 → 那一欄的兩種樣子都看得到。
         /// </summary>
         private void AddFakeUsers()
         {
@@ -1900,7 +1901,7 @@ namespace Sdo.UI.Screens
                     Guild = (i >= 3 && i <= 5) ? myGuild : "",
                     Level = 1 + i * 7,
                     Gender = i % 2,
-                    RoomSeq = (i % 2 == 0) ? 0 : (i / 2) + 1,
+                    RoomSeq = (i % 2 == 0) ? -1 : (i / 2),
                 });
             }
         }

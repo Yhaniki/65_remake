@@ -318,8 +318,9 @@ namespace Sdo.Net
         /// 門牌序號 —— 大廳房卡上顯示的那個小數字(官方是 <c>%03d</c> 的 3 位數)。
         ///
         /// 🔴 與 <see cref="Code"/> 是**兩件不同的事**:Code 是 5 位數的「加入房間鑰匙」,
-        /// Seq 是「這是第幾間房」。官方大廳只顯示後者。
-        /// 舊版 server 不送這個欄位 → 0,呼叫端自己決定要退回什麼(見 LobbyScreen 的房卡繫結)。
+        /// Seq 是「這是第幾間房」。官方大廳只顯示後者。門牌**從 000 起算**。
+        /// 舊版 server 不送這個欄位 → <see cref="Decode"/> 退回 <b>-1</b>(不是 0 —— 0 是 000 房),
+        /// 呼叫端看到 -1 才知道要退回用列表位置當門牌(見 LobbyScreen 的房卡繫結)。
         /// </summary>
         public int Seq;
 
@@ -350,7 +351,7 @@ namespace Sdo.Net
         {
             var e = new NetRoomListEntry();
             e.Code = NetJson.Int(node, "code");
-            e.Seq = NetJson.Int(node, "seq");
+            e.Seq = NetJson.Int(node, "seq", -1);
             e.Name = NetJson.Str(node, "name");
             e.HostName = NetJson.Str(node, "hostName");
 
@@ -399,10 +400,18 @@ namespace Sdo.Net
         /// <summary>0=女 1=男。名單左邊那個小人頭圖示用它分色。</summary>
         public int Gender;
 
-        /// <summary>人在哪:0 = 大廳,&gt;0 = 那間房的**門牌**(不是加入用的 5 位數 code —— 名單只是給人看位置的)。</summary>
+        /// <summary>
+        /// 人在哪:<b>-1 = 大廳</b>,&gt;= 0 = 那間房的**門牌**(不是加入用的 5 位數 code —— 名單只是給人看位置的)。
+        ///
+        /// 🔴 哨兵值是 -1 不是 0:官方大廳第一格門牌就是 <c>000</c>(見 <c>RoomRegistry.NextFreeSeq</c>),
+        ///    0 是一間真的房。舊 server 不送這個欄位時 <see cref="Decode"/> 也退回 -1(當成在大廳),
+        ///    否則全大廳的人都會被標成「在 000 房」。
+        /// 🔴 這是 struct(不能有欄位初始值),所以**自己 new 出來的 entry 一定要明寫 RoomSeq** ——
+        ///    忘了寫拿到的是 0,那是 000 房不是大廳。
+        /// </summary>
         public int RoomSeq;
 
-        public bool InLobby => RoomSeq <= 0;
+        public bool InLobby => RoomSeq < 0;
 
         public static NetUserListEntry Decode(object node)
         {
@@ -412,7 +421,7 @@ namespace Sdo.Net
             e.Guild = NetJson.Str(node, "guild");
             e.Level = NetJson.Int(node, "level");
             e.Gender = NetJson.Int(node, "gender");
-            e.RoomSeq = NetJson.Int(node, "roomSeq");
+            e.RoomSeq = NetJson.Int(node, "roomSeq", -1);
             return e;
         }
 

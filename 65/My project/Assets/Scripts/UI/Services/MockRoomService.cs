@@ -36,8 +36,9 @@ namespace Sdo.UI.Services
         /// <summary>
         /// 房間序號 —— 左上角「自由練習場1　頻道1　N」的那個小數字。
         /// 與房號(5 位數)是兩件不同的事:序號是給人看的門牌,房號才是加入房間的鑰匙。
+        /// **從 0 起算** —— 官方大廳第一格就是 <c>000</c>(線上那邊見 <c>RoomRegistry.NextFreeSeq</c>)。
         /// </summary>
-        private int _nextSeq = 1;
+        private int _nextSeq = 0;
 
         private RoomInfo _current;
 

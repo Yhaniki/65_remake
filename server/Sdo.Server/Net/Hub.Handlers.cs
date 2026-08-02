@@ -398,7 +398,9 @@ namespace Sdo.Server.Net
                     .Int("level", c.Level)
                     .Int("gender", c.Look != null ? c.Look.Gender : 0)
                     // 門牌(seq)而不是 code:名單只是給人看「他在幾號房」,不是給人拿去闖房的鑰匙。
-                    .Int("roomSeq", room != null ? room.State.Seq : 0));
+                    // 🔴 不在房裡送 **-1** 不是 0 —— 門牌從 000 起算(見 RoomRegistry.NextFreeSeq),
+                    //    0 是一間真的房,拿它當「在大廳」的哨兵會把 000 房的人標成在大廳。
+                    .Int("roomSeq", room != null ? room.State.Seq : -1));
             }
 
             conn.Send(JObj.New()

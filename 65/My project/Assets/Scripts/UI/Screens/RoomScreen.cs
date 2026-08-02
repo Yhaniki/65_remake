@@ -2807,7 +2807,8 @@ namespace Sdo.UI.Screens
                 // 左上這排照官方原本的樣子:練習場 + 頻道 + **房間序號**(一個小數字)。
                 // ⚠️ 這裡放的是 Seq 不是 Id —— 5 位數房號官方畫面上根本不出現(要進房就在大廳點那張卡),
                 //    所以中央房名後面不再接括弧房號,只留這個給人看的門牌序號。
-                _roomIdLabel.SetText(room.Seq > 0 ? room.Seq.ToString() : "");
+                // 門牌從 000 起算 → 判斷是 >= 0(0 是一間真的房,-1 才是「不知道門牌」)。
+                _roomIdLabel.SetText(room.Seq >= 0 ? room.Seq.ToString("000") : "");
                 // 量實際字寬，左到右自動排版(固定 HeaderGap 間距):不論字長/語言都不會疊、間距一致。
                 float lx = ServerX;
                 _serverLabel.SetX(lx);  lx += _serverLabel.PreferredWidth + HeaderGap;

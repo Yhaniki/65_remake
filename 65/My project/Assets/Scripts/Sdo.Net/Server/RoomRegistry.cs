@@ -118,8 +118,9 @@ namespace Sdo.Net.Server
         ///    症狀是自己一個人反覆開關房,門牌會爬成 002、003、004…… 明明大廳裡一間房都沒有
         ///    (使用者回報「明明沒有其他房間但是我開房間進去編號是 5」)。
         ///
-        /// 🔴 **從 1 開始,不是 0** —— 協定裡 <c>roomSeq = 0</c> 的意思是「這個人在大廳」
-        ///    (見 <c>NetUserListEntry.InLobby</c>),0 不能拿來當門牌。
+        /// 🔴 **從 0 開始** —— 官方大廳第一格就是 <c>000</c>(見使用者提供的實機截圖:000、010…014)。
+        ///    所以「這個人在大廳」的哨兵值不能是 0,協定用的是 <b>-1</b>
+        ///    (見 <c>NetUserListEntry.InLobby</c>);0 是一間真的房。
         ///
         /// 房間數有 <see cref="MaxRooms"/> 上限(預設 200),所以這個 O(n) 掃描每次建房最多跑幾百步 ——
         /// 建房是低頻操作,不值得為它多養一個要跟著關房路徑同步的索引(那正是幽靈狀態的來源)。
@@ -128,7 +129,7 @@ namespace Sdo.Net.Server
         {
             var used = new HashSet<int>();
             foreach (var r in _rooms.Values) used.Add(r.State.Seq);
-            for (int seq = 1; ; seq++)
+            for (int seq = 0; ; seq++)
                 if (!used.Contains(seq)) return seq;
         }
 

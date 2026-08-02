@@ -55,7 +55,8 @@
         public const string UserList = "userList";
 
         /// <summary>S→C。<c>users</c> 是一列 <c>{userId,name,guild,level,gender,roomSeq}</c>
-        /// (<c>roomSeq</c> 0 = 人在大廳,&gt;0 = 在門牌 N 那間房)。</summary>
+        /// (<c>roomSeq</c> <b>-1</b> = 人在大廳,&gt;= 0 = 在門牌 N 那間房 —— 門牌從 000 起算,
+        /// 所以 0 不能當「在大廳」的哨兵值)。</summary>
         public const string UserListResult = "userListResult";
         public const string CreateRoom = "createRoom";
         public const string JoinRoom = "joinRoom";

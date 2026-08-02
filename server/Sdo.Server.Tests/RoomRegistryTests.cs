@@ -459,8 +459,8 @@ namespace Sdo.Tests
         }
 
         /// <summary>
-        /// 門牌(Seq)是**版面上的格子位置**,不是流水號:第一間房永遠是 1,關掉之後
-        /// 下一間房要能拿回 1。以前是 <c>_nextSeq++</c>,症狀是一個人反覆開關房,
+        /// 門牌(Seq)是**版面上的格子位置**,不是流水號:第一間房永遠是 000,關掉之後
+        /// 下一間房要能拿回 000。以前是 <c>_nextSeq++</c>,症狀是一個人反覆開關房,
         /// 門牌一路爬成 2、3、4……(使用者回報「明明沒有其他房間但我開房間編號是 5」)。
         /// </summary>
         [Test]
@@ -469,13 +469,13 @@ namespace Sdo.Tests
             var reg = Reg();
 
             var first = Create(reg, Host);
-            Assert.AreEqual(1, first.State.Seq, "大廳空的時候第一間房就是 1 號(0 是保留給「在大廳」)");
+            Assert.AreEqual(0, first.State.Seq, "大廳空的時候第一間房就是 000(官方實機第一格就是 000)");
 
             reg.Leave(Host);
             Assert.AreEqual(0, reg.RoomCount, "前提:那間房已經關掉了");
 
             var again = Create(reg, Host);
-            Assert.AreEqual(1, again.State.Seq, "沒有別的房間了 → 門牌要回到 1,不是往上加");
+            Assert.AreEqual(0, again.State.Seq, "沒有別的房間了 → 門牌要回到 000,不是往上加");
         }
 
         /// <summary>還開著的房間**不會**被搶號:中間關掉的那間才是空格。</summary>
@@ -487,16 +487,16 @@ namespace Sdo.Tests
             var a = Create(reg, Host);
             var b = Create(reg, Bob);
             var c = Create(reg, Cid);
-            Assert.AreEqual(1, a.State.Seq);
-            Assert.AreEqual(2, b.State.Seq);
-            Assert.AreEqual(3, c.State.Seq);
+            Assert.AreEqual(0, a.State.Seq);
+            Assert.AreEqual(1, b.State.Seq);
+            Assert.AreEqual(2, c.State.Seq);
 
-            reg.Leave(Bob);   // 2 號空出來
+            reg.Leave(Bob);   // 001 空出來
 
             var filler = Create(reg, Bob);
-            Assert.AreEqual(2, filler.State.Seq, "補中間的洞,不是接在 3 後面");
-            Assert.AreEqual(1, a.State.Seq, "既有房間的門牌不會被動到");
-            Assert.AreEqual(3, c.State.Seq);
+            Assert.AreEqual(1, filler.State.Seq, "補中間的洞,不是接在 002 後面");
+            Assert.AreEqual(0, a.State.Seq, "既有房間的門牌不會被動到");
+            Assert.AreEqual(2, c.State.Seq);
         }
     }
 }
