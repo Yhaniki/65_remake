@@ -179,7 +179,7 @@ namespace Sdo.Game
         public readonly GameObject root;
         private readonly Font _font;
         private readonly Vector2[] _offsets;    // design-px outline/shadow offsets (x is stretch-compensated on apply)
-        private readonly int _order;
+        private int _order;                     // face sortingOrder; the outline copies take _order − 1
         private int _layer;
         private readonly TextAnchor _anchor;
         private readonly FontStyle _fontStyle;
@@ -421,8 +421,12 @@ namespace Sdo.Game
         /// <summary>
         /// Move an already-built HUD label into a scene camera's world layer and replace GUI/Text's
         /// depth-always material. New per-character cells built after this call inherit the same layer/material.
+        ///
+        /// <paramref name="order"/>(null = 不動)也要一起換:HUD 的畫序是相對音符板挑的**負數**,搬進場景相機
+        /// 之後那個負數會把這個 label 排到整個透明批之前 → 後畫的透明場景物(噴水池的水)蓋掉它。
+        /// 見 <see cref="HeadMarker.WorldNameOrder"/>。
         /// </summary>
-        public void EnableDepthTestedWorld(int layer)
+        public void EnableDepthTestedWorld(int layer, int? order = null)
         {
             _layer = layer;
             root.layer = layer;
@@ -432,6 +436,25 @@ namespace Sdo.Game
                 renderer.gameObject.layer = layer;
                 renderer.sharedMaterial = _materialOverride;
             }
+            if (order.HasValue) SetSortingOrder(order.Value);
+        }
+
+        /// <summary>整組換畫序:字面吃 <paramref name="order"/>、黑邊/陰影吃 order − 1(之後重建的 per-char
+        /// cells 也照這個新值長出來,因為 BuildCells 讀的就是 _order)。</summary>
+        public void SetSortingOrder(int order)
+        {
+            _order = order;
+            ApplyOrder(_main, order);
+            if (_back != null) foreach (var b in _back) ApplyOrder(b, order - 1);
+            if (_cellFace != null) foreach (var f in _cellFace) ApplyOrder(f, order);
+            if (_cellEdge != null) foreach (var es in _cellEdge) if (es != null) foreach (var e in es) ApplyOrder(e, order - 1);
+        }
+
+        private static void ApplyOrder(TextMesh tm, int order)
+        {
+            if (tm == null) return;
+            var mr = tm.GetComponent<MeshRenderer>();
+            if (mr != null) mr.sortingOrder = order;
         }
 
         public void SetActive(bool on) { if (root != null) root.SetActive(on); }
