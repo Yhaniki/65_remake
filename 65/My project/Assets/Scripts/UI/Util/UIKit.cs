@@ -66,37 +66,6 @@ namespace Sdo.UI.Util
             return canvas;
         }
 
-        /// <summary>
-        /// 一張「掛在 3D 世界裡、由**別人的**相機 render」的小 canvas —— 房間頭上泡的畫用它。
-        ///
-        /// 與 <see cref="CreateWorldCanvas"/> 的差別(每一條都是刻意的):
-        /// • **不建相機、不 <c>AspectController.Register</c>** —— 它是被房間相機拍到的,不是自己一台。
-        /// • **不掛 GraphicRaycaster** —— 滑鼠命中留在 UI 層的透明代理(泡的拖曳/點擊完全沿用原本那套)。
-        /// • pivot/anchor (0,1) + sizeDelta 800×600 —— 讓「anchor (0,1) 的子物件」的原點正好落在 canvas 的
-        ///   transform 位置上,子物件的 anchoredPosition 就與它還在 UI 層時同一個意思(往下為負)。
-        /// • ConstantPixelSize + dynamicPixelsPerUnit 3 —— 與前端 UI canvas 同一組設定,
-        ///   否則 171×111 的泡圖與 fontSize 13 的字會用不同尺度。
-        ///
-        /// 🔴 <paramref name="parent"/> **絕對不可以是另一個 Canvas 的後代**:Unity 會把它降級成
-        /// nested canvas,renderMode 直接被忽略 —— 泡會回到 UI 層,遮擋功能靜默消失。
-        /// </summary>
-        public static RectTransform CreateBubbleWorldCanvas(string name, Transform parent, int layer, Vector2 designSize)
-        {
-            var go = new GameObject(name, typeof(Canvas), typeof(CanvasScaler));
-            go.layer = layer;
-            var canvas = go.GetComponent<Canvas>();
-            canvas.renderMode = RenderMode.WorldSpace;
-            var rt = (RectTransform)canvas.transform;
-            if (parent != null) rt.SetParent(parent, false);
-            rt.pivot = new Vector2(0f, 1f);
-            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
-            rt.sizeDelta = designSize;
-            var scaler = go.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
-            scaler.dynamicPixelsPerUnit = 3f;
-            return rt;
-        }
-
         public static void EnsureEventSystem()
         {
             if (EventSystem.current != null) return;
