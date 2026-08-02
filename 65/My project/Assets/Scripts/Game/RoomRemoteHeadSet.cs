@@ -52,7 +52,9 @@ namespace Sdo.Game
             public int UserId;
             public RenderTexture Rt;
             public Renderer[] Rends;      // 這個人身上所有的 renderer(拍別人時要關掉)
+            public Transform Root;        // 這組 renderer 是從哪隻角色抓的 —— 換了才需要重抓(見 Refresh)
             public bool Framed;           // 取景已凍結?
+            public bool Rendered;         // 這張 RT 至少拍過一次 → 之後永遠有畫面可以顯示(見 Texture)
             public float DistModel;       // 模型空間的相機距離 —— **只有這個凍結**(頭的大小不能忽大忽小)
         }
 
@@ -79,16 +81,26 @@ namespace Sdo.Game
             _cam.enabled = false;
         }
 
-        /// <summary>某個人的頭貼 RT(還沒拍過 → null,呼叫端就不畫那格)。</summary>
+        /// <summary>某個人的頭貼 RT(還沒拍過 → null,呼叫端就不畫那格)。
+        ///
+        /// 🔴 條件是「拍過沒」(<c>Rendered</c>)而**不是**「取景凍結了沒」(<c>Framed</c>)。
+        /// Framed 會在角色重建時被清掉,而重新取景要等輪轉回到這一格 —— 中間那幾幀若回 null,
+        /// 呼叫端(RoomScreen.RenderSlots)就把整格關掉 → 頭貼**閃一下**。RT 裡明明還留著上一張
+        /// 完全能看的畫面,顯示舊的一兩幀遠比消失好看。</summary>
         public Texture Texture(int userId)
         {
             Slot s;
-            return _slots.TryGetValue(userId, out s) && s.Framed ? s.Rt : null;
+            return _slots.TryGetValue(userId, out s) && s.Rendered ? s.Rt : null;
         }
 
         /// <summary>
         /// 名單同步。只在房間快照變動時呼叫(生 RT 很便宜,但重抓 renderer 陣列不該每幀做)。
-        /// </summary>
+        ///
+        /// 🔴 「快照變動」比想像中頻繁得多:**任何人在下載/上傳歌曲時,每 500ms 就會有一次**
+        /// (<see cref="Sdo.Net.NetLimits.AvailProgressThrottleMs"/> 的進度回報 → server Touch() → rev++)。
+        /// 舊版在這裡無條件對每個 slot 呼叫 Refresh(),而 Refresh 會把取景清掉 → 傳檔期間頭貼
+        /// **每半秒閃一次**(使用者回報)。座位表沒動時角色物件根本是同一隻(RoomScene3D.SyncRemotePlayers
+        /// 對 LookKey 沒變的人什麼都不做),重抓一次純屬白費。</summary>
         public void SetRoster(List<int> userIds)
         {
             _gone.Clear();
@@ -112,11 +124,12 @@ namespace Sdo.Game
             foreach (var kv in _slots) Refresh(kv.Value);
         }
 
-        /// <summary>某個人的角色被重建了(換裝)→ 丟掉快取的 renderer 與取景。</summary>
+        /// <summary>某個人的角色被重建了(換裝)→ 丟掉快取的 renderer 與取景。
+        /// (Rendered 不清:舊畫面繼續頂著,直到新的頭拍好,見 <see cref="Texture"/>。)</summary>
         public void Invalidate(int userId)
         {
             Slot s;
-            if (_slots.TryGetValue(userId, out s)) { s.Rends = null; s.Framed = false; }
+            if (_slots.TryGetValue(userId, out s)) { s.Rends = null; s.Root = null; s.Framed = false; }
         }
 
         /// <summary>
@@ -147,7 +160,9 @@ namespace Sdo.Game
             SdoAvatar av;
             if (!_scene.TryGetRemoteAvatar(s.UserId, out av, out root) || av == null || root == null) return false;
 
-            if (s.Rends == null) Refresh(s);
+            // 角色換了一隻(換裝重建)→ 就地重抓,不必等下一次 SetRoster。root 比對是零成本的,
+            // 而漏掉的話舊陣列裡全是已銷毀的 renderer → 這一格會凍在舊畫面上。
+            if (s.Rends == null || s.Root != root) Refresh(s);
             if (s.Rends == null || s.Rends.Length == 0) return false;
             if (!s.Framed && !TryFreeze(s, av)) return false;
 
@@ -186,6 +201,7 @@ namespace Sdo.Game
             {
                 ShowAll();   // 🔴 一定要 finally:一次例外就整個房間的人消失
             }
+            s.Rendered = true;
             return true;
         }
 
@@ -228,12 +244,25 @@ namespace Sdo.Game
             return true;
         }
 
+        /// <summary>
+        /// 重抓這個人的 renderer 陣列 —— **只有在角色真的換了一隻的時候**。
+        ///
+        /// 判斷鍵是 root transform:RoomScene3D 對「外觀沒變」的人不重建(直接沿用同一個 GameObject),
+        /// 換裝才會 RebuildRemote 出一隻新的。同一隻 → 舊陣列仍然有效,連 Framed 都不該碰:
+        /// 清掉它就要等輪轉回來重新取景,那段空窗就是傳檔時每半秒一次的閃爍(見 <see cref="SetRoster"/>)。
+        /// </summary>
         private void Refresh(Slot s)
         {
             Transform root;
             SdoAvatar av;
-            if (!_scene.TryGetRemoteAvatar(s.UserId, out av, out root) || av == null) { s.Rends = null; s.Framed = false; return; }
+            if (!_scene.TryGetRemoteAvatar(s.UserId, out av, out root) || av == null)
+            {
+                // 角色不在(旁觀者、或正在重建)→ 快取失效。Rendered 保留 → 那格繼續顯示最後拍到的臉。
+                s.Rends = null; s.Root = null; s.Framed = false; return;
+            }
+            if (s.Rends != null && s.Root == root) return;   // 同一隻角色 → 什麼都不用做
             s.Rends = av.GetComponentsInChildren<Renderer>(true);
+            s.Root = root;
             s.Framed = false;
         }
 
