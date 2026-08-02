@@ -14,7 +14,7 @@ namespace Sdo.Game
     /// SDO-faithful playable screen in the original 800×600 frame (DdrGamePlay.xml), art loaded at
     /// runtime from the extracted game tree (SdoExtracted). Geometry = EXACT values decoded from the
     /// decompilation (doc/GAMEPLAY_SCREEN_ANATOMY.md). Iteratively verified via the headless capture
-    /// (Tests/PlayMode/CaptureTest -> H:/65_remake/play-capture.png). Self-boots.
+    /// (Tests/PlayMode/CaptureTest -> test-output/gameplay/play-capture.png). Self-boots.
     /// </summary>
     public sealed partial class ScreenGameplay : MonoBehaviour
     {
@@ -5094,7 +5094,9 @@ namespace Sdo.Game
             if (expGained > 0) ProfileManager.AddExperience(expGained);
             Texture head = BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
-            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe, showBanner: !freeMode);
+            // 自由模式也沒有名次 → 結算列最左的名次數字不畫(GAME OVER 圖仍照畫)。
+            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe,
+                         showBanner: !freeMode, showRank: !freeMode);
         }
 
         // Turn the final roster + score into ranked result rows. The local player uses real judgment counts;

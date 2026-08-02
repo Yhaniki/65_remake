@@ -14,6 +14,9 @@ namespace Sdo.Tests
     {
         private const int W = 800, H = 600;
 
+        /// <summary>截圖一律落在 &lt;repo&gt;/test-output/camera/，不散在 repo 根目錄。</summary>
+        private static string Out(string fileName) => Sdo.Game.SdoTestOutput.File("camera", fileName);
+
         [UnityTearDown]
         public IEnumerator TearDown() => GameplayBoot.Teardown();
 
@@ -26,11 +29,11 @@ namespace Sdo.Tests
             // 1) director shot 0 at t~0 = the crane's start position
             game.RestartDirectorForTest();
             yield return null; yield return null;
-            Cap("H:/65_remake/cam-default-start.png");
+            Cap(Out("cam-default-start.png"));
 
             // 2) ~4s into the crane (it should be descending toward the dancer)
             yield return new WaitForSecondsRealtime(4f);
-            Cap("H:/65_remake/cam-default-4s.png");
+            Cap(Out("cam-default-4s.png"));
 
             // 3) each of the 6 fixed F2 cams (compare angles to the official reference frames)
             game.RestartDirectorForTest();
@@ -38,14 +41,14 @@ namespace Sdo.Tests
             {
                 game.CycleCamModeForTest();             // -> fixed i
                 yield return null; yield return null;
-                Cap("H:/65_remake/cam-fixed" + game.CamModeForTest + ".png");
+                Cap(Out("cam-fixed" + game.CamModeForTest + ".png"));
             }
 
             // 4) F2 cycle back to default (-1) = RE-ENTRY, captured immediately (must NOT be the crane)
             int guard = 0;
             do { game.CycleCamModeForTest(); } while (game.CamModeForTest != -1 && guard++ < 32);
             yield return null; yield return null;
-            Cap("H:/65_remake/cam-default-reentry.png");
+            Cap(Out("cam-default-reentry.png"));
 
             // 5) VENUE OVERVIEW: high top-down ortho over the dance-spot, to see the column/wall layout vs the dancer.
             var sc = game.SceneCamForTest; var spot = game.DanceSpotForTest;
@@ -55,7 +58,7 @@ namespace Sdo.Tests
                 sc.transform.position = spot + new Vector3(0, 2000, 0);
                 sc.transform.rotation = Quaternion.LookRotation(Vector3.down, Vector3.forward);  // look -Y, +Z = up in frame
                 yield return null; yield return null;
-                Cap("H:/65_remake/venue-topdown.png");
+                Cap(Out("venue-topdown.png"));
             }
         }
 

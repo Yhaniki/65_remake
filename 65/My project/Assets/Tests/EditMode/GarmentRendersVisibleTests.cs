@@ -20,6 +20,9 @@ namespace Sdo.Tests
     {
         private const int RtW = 128, RtH = 128;
 
+        /// <summary>診斷截圖一律落在 &lt;repo&gt;/test-output/garment/，不散在 repo 根目錄。</summary>
+        private static string Out(string fileName) => SdoTestOutput.File("garment", fileName);
+
         /// <summary>A garment mesh + how much of the frame it must cover, plus what makes it interesting.</summary>
         public struct Case
         {
@@ -199,7 +202,7 @@ namespace Sdo.Tests
 
         /// <summary>Render the FULL dressed avatar (body + garment, the room/gameplay configuration) over an OPAQUE
         /// backdrop and save a PNG, so a "body is see-through" report can be looked at instead of guessed. Writes to
-        /// the repo root as garment-probe-&lt;mesh&gt;.png. Diagnostic only — never fails.</summary>
+        /// test-output/garment/garment-probe-&lt;mesh&gt;.png. Diagnostic only — never fails.</summary>
         [Test]
         public void Snapshot_DressedAvatar()
         {
@@ -259,7 +262,7 @@ namespace Sdo.Tests
                                       $"enabled={mr.enabled} tris={(mr.GetComponent<MeshFilter>()?.sharedMesh?.triangles.Length ?? 0) / 3}");
                         }
                 Debug.Log($"[snap] {label}: {sheer} blended materials, {opaque} others");
-                SaveShot(root, "H:/65_remake/garment-probe-" + label + ".png");
+                SaveShot(root, Out("garment-probe-" + label + ".png"));
                 Object.DestroyImmediate(root);
             }
         }
@@ -293,7 +296,7 @@ namespace Sdo.Tests
                     }
                     mr.sharedMaterials = mats;
                 }
-                SaveShot(root, "H:/65_remake/garment-bisect-" + mode + ".png");
+                SaveShot(root, Out("garment-bisect-" + mode + ".png"));
                 Object.DestroyImmediate(root);
             }
         }
@@ -321,7 +324,7 @@ namespace Sdo.Tests
                         if (mode == "cull-off") m.SetInt("_Cull", 0);          // needs the shader to expose it; harmless otherwise
                         else if (mode == "no-blend-layers") m.SetFloat("_Density", 4f);
                     }
-                SaveShot(root, "H:/65_remake/garment-hole-" + mode + ".png");
+                SaveShot(root, Out("garment-hole-" + mode + ".png"));
                 Object.DestroyImmediate(root);
             }
         }
@@ -358,7 +361,7 @@ namespace Sdo.Tests
                             m.SetFloat(SdoAvatarBuilder.SheerCullProp, cull);
                             m.SetFloat(SdoAvatarBuilder.SheerZWriteProp, zw);
                         }
-                    SaveShot(root, $"H:/65_remake/garment-state-{label}-{(back ? "back" : "front")}.png");
+                    SaveShot(root, Out($"garment-state-{label}-{(back ? "back" : "front")}.png"));
                     Object.DestroyImmediate(root);
                 }
         }
@@ -382,7 +385,7 @@ namespace Sdo.Tests
                 if (av == null) { Object.DestroyImmediate(root); continue; }
                 av.enabled = false;
                 if (back) root.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
-                SaveShot(root, "H:/65_remake/shoppath-lace-" + (back ? "back" : "front") + ".png");
+                SaveShot(root, Out("shoppath-lace-" + (back ? "back" : "front") + ".png"));
                 Object.DestroyImmediate(root);
             }
         }
@@ -412,7 +415,7 @@ namespace Sdo.Tests
                         if (mode == "skinonly-2sided" && anySkin)                          // force skin two-sided
                             foreach (var m in mr.sharedMaterials) if (m != null && m.HasProperty("_Cull")) m.SetInt("_Cull", 0);
                     }
-                    SaveShotFromAngle(root, "H:/65_remake/diag-024976-" + mode + "-" + (back ? "back" : "front") + ".png", back);
+                    SaveShotFromAngle(root, Out("diag-024976-" + mode + "-" + (back ? "back" : "front") + ".png"), back);
                     Object.DestroyImmediate(root);
                 }
             SdoAvatarBuilder.LogHoleFill = false;

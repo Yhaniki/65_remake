@@ -142,7 +142,7 @@ namespace Sdo.Tests
             }
 
             yield return null;
-            Capture("H:/65_remake/chart-editor-capture.png");
+            Capture(SdoTestOutput.File("chart-editor", "chart-editor-capture.png"));
         }
 
         /// <summary>

@@ -5,7 +5,7 @@ using System.Collections.Generic;
 namespace Sdo.EditorTools
 {
     /// <summary>
-    /// Auto-saves an 800×600 render of the gameplay to H:/65_remake/play-capture.png a few seconds
+    /// Auto-saves an 800×600 render of the gameplay to test-output/gameplay/play-capture.png a few seconds
     /// after you press Play in the Editor. Lets the layout be reviewed without manual screenshots
     /// (and works while the Editor is open, unlike the headless batch capture which needs the
     /// project closed). Menu: Tools/Capture Gameplay Now also works any time in Play mode.
@@ -13,7 +13,7 @@ namespace Sdo.EditorTools
     [InitializeOnLoad]
     public static class AutoCapture
     {
-        private const string OutPath = "H:/65_remake/play-capture.png";
+        private static string OutPath => Sdo.Game.SdoTestOutput.File("gameplay", "play-capture.png");
         private static double _captureAt = -1;
 
         static AutoCapture()

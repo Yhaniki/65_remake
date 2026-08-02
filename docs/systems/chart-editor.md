@@ -204,7 +204,7 @@ osu!lazer 的處境與解法完全相同（`FramedBeatmapClock.WINDOWS_BASE_AUDI
 * `BeatGridTests` / `WaveformPeaksTests`（EditMode，純邏輯）
 * `ChartEditorTest`（PlayMode，端對端）：真的把編輯器開起來，驗「沒有場景/舞者、背景是黑的、音符讀進來、
   seek 到某顆音符的時間時該音符正好落在受擊線上、波形真的從 PCM 解出來且時間原點對到音樂起點」，
-  並存一張 `chart-editor-capture.png` 供人眼複核。
+  並存一張 `test-output/chart-editor/chart-editor-capture.png` 供人眼複核。
 
 ## 還沒做：編輯與存檔
 

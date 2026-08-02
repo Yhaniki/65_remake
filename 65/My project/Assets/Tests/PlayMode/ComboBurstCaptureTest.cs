@@ -9,11 +9,14 @@ namespace Sdo.Tests
     /// <summary>
     /// Fires the 100/200/300 COMBO bursts and captures each at bloom to compare against the official screenshots.
     /// Run: -runTests -testPlatform PlayMode -testFilter Sdo.Tests.ComboBurstCaptureTest
-    /// Output: H:/65_remake/combo-T0.png (100), combo-T1.png (200), combo-T2.png (300), + combo-cap-*.png (100 over time)
+    /// Output: test-output/combo/combo-T0.png (100), combo-T1.png (200), combo-T2.png (300), + combo-cap-*.png (100 over time)
     /// </summary>
     public class ComboBurstCaptureTest
     {
         private const int W = 800, H = 600;
+
+        /// <summary>截圖一律落在 &lt;repo&gt;/test-output/combo/，不散在 repo 根目錄。</summary>
+        private static string Out(string fileName) => Sdo.Game.SdoTestOutput.File("combo", fileName);
 
         [UnityTearDown]
         public IEnumerator TearDown() => GameplayBoot.Teardown();
@@ -42,7 +45,7 @@ namespace Sdo.Tests
             // 100COMBO over time (the reference effect)
             game.SpawnComboBurstForTest(0);
             float[] shots = { 0.12f, 0.40f, 0.65f, 1.0f, 1.4f, 1.8f }; float prev = 0f;
-            for (int i = 0; i < shots.Length; i++) { yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i]; Cap($"H:/65_remake/combo-cap-{i}.png"); }
+            for (int i = 0; i < shots.Length; i++) { yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i]; Cap(Out($"combo-cap-{i}.png")); }
             yield return new WaitForSecondsRealtime(1.0f);
 
             // one bloom shot of each tier (incl. 400 = tier 3, which SHOULD have the ring_l X-cross)
@@ -50,7 +53,7 @@ namespace Sdo.Tests
             {
                 game.SpawnComboBurstForTest(tier);
                 yield return new WaitForSecondsRealtime(0.7f);
-                Cap($"H:/65_remake/combo-T{tier}.png");
+                Cap(Out($"combo-T{tier}.png"));
                 yield return new WaitForSecondsRealtime(2.8f);
             }
         }
@@ -58,7 +61,7 @@ namespace Sdo.Tests
         /// <summary>
         /// Fires 200 and 300 COMBO and captures each over time so the RISING fountain bloom (peak ≈ tick 8-24 =
         /// 0.16-0.48s) is caught — the single 0.7s shot in Capture_ComboBurst is PAST the peak (fountain already faded),
-        /// which is why 300's rising column "isn't seen". Output: H:/65_remake/combo-200-t#.png, combo-300-t#.png.
+        /// which is why 300's rising column "isn't seen". Output: test-output/combo/combo-200-t#.png, combo-300-t#.png.
         /// Run: -testFilter Sdo.Tests.ComboBurstCaptureTest.Capture_200_300
         /// </summary>
         [UnityTest]
@@ -77,7 +80,7 @@ namespace Sdo.Tests
                 for (int i = 0; i < shots.Length; i++)
                 {
                     yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i];
-                    Cap($"H:/65_remake/combo-{(tier + 1) * 100}-t{i}_{(int)(shots[i] * 1000)}ms.png");
+                    Cap(Out($"combo-{(tier + 1) * 100}-t{i}_{(int)(shots[i] * 1000)}ms.png"));
                 }
                 yield return new WaitForSecondsRealtime(2.0f);   // let it die before the next tier
             }
@@ -86,7 +89,7 @@ namespace Sdo.Tests
         /// <summary>
         /// Like Capture_200_300 but HIDES the bright palace stage first so the additive burst shows on a BLACK
         /// background (the only honest way to compare colour/brightness/height against the official's dark night scene;
-        /// on the lit palace the additive glow washes out). Output: H:/65_remake/combo-dark-200-t#.png, dark-300-t#.png.
+        /// on the lit palace the additive glow washes out). Output: test-output/combo/combo-dark-200-t#.png, dark-300-t#.png.
         /// Run: -testFilter Sdo.Tests.ComboBurstCaptureTest.Capture_ComboDark
         /// </summary>
         [UnityTest]
@@ -107,7 +110,7 @@ namespace Sdo.Tests
                 for (int i = 0; i < shots.Length; i++)
                 {
                     yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i];
-                    Cap($"H:/65_remake/combo-dark-{(tier + 1) * 100}-t{i}_{(int)(shots[i] * 1000)}ms.png");
+                    Cap(Out($"combo-dark-{(tier + 1) * 100}-t{i}_{(int)(shots[i] * 1000)}ms.png"));
                 }
                 yield return new WaitForSecondsRealtime(2.0f);
             }
@@ -115,7 +118,7 @@ namespace Sdo.Tests
 
         /// <summary>
         /// DEBUG: isolate the AEF_3_00 blue MESH (slot0) — hide all balls/trails/disks (DebugMeshOnly) on a black bg so
-        /// the mesh's true shape/colour/position is visible. Output: H:/65_remake/mesh-only-{200,300}-t#.png.
+        /// the mesh's true shape/colour/position is visible. Output: test-output/combo/mesh-only-{200,300}-t#.png.
         /// Run: -testFilter Sdo.Tests.ComboBurstCaptureTest.Capture_MeshOnly
         /// </summary>
         [UnityTest]
@@ -136,7 +139,7 @@ namespace Sdo.Tests
                 for (int i = 0; i < shots.Length; i++)
                 {
                     yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i];
-                    Cap($"H:/65_remake/mesh-only-{(tier + 1) * 100}-t{i}_{(int)(shots[i] * 1000)}ms.png");
+                    Cap(Out($"mesh-only-{(tier + 1) * 100}-t{i}_{(int)(shots[i] * 1000)}ms.png"));
                 }
                 yield return new WaitForSecondsRealtime(2.0f);
             }
@@ -146,7 +149,7 @@ namespace Sdo.Tests
         /// <summary>
         /// Captures 200COMBO with each root slot ISOLATED (dark bg) so each element's true on-screen colour/shape is
         /// visible: slot1=external→trail(pink), slot2=tex31 fountain(orange core+blue-violet halo), slot3=tex4(faint
-        /// orange radial). Output: H:/65_remake/slot200-s{n}-t{i}.png. Run: -testFilter ...Capture_200Slots
+        /// orange radial). Output: test-output/combo/slot200-s{n}-t{i}.png. Run: -testFilter ...Capture_200Slots
         /// </summary>
         [UnityTest]
         public IEnumerator Capture_200Slots()
@@ -165,7 +168,7 @@ namespace Sdo.Tests
                 for (int i = 0; i < shots.Length; i++)
                 {
                     yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i];
-                    Cap($"H:/65_remake/slot200-s{slot}-t{i}.png");
+                    Cap(Out($"slot200-s{slot}-t{i}.png"));
                 }
                 yield return new WaitForSecondsRealtime(1.6f);
             }
@@ -209,7 +212,7 @@ namespace Sdo.Tests
         /// <summary>
         /// Fires FINISHED and captures a ~3s sequence at ~50ms intervals so the bright-pixel oscillation (the firework
         /// FLICKER) can be measured the same way as the official capture (final/*.jpg → ±2–4% @ ~18 Hz).
-        /// Run: -testFilter Sdo.Tests.ComboBurstCaptureTest.Capture_FinishedFlicker  → H:/65_remake/finflick/f##.png
+        /// Run: -testFilter Sdo.Tests.ComboBurstCaptureTest.Capture_FinishedFlicker  → test-output/combo/finflick/f##.png
         /// </summary>
         [UnityTest]
         public IEnumerator Capture_FinishedFlicker()
@@ -219,12 +222,11 @@ namespace Sdo.Tests
             yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
-            System.IO.Directory.CreateDirectory("H:/65_remake/finflick");
             game.SpawnNamedEftForTest("FINISHED", 5f);
             for (int i = 0; i < 60; i++)
             {
                 yield return new WaitForSecondsRealtime(0.05f);
-                Cap($"H:/65_remake/finflick/f{i:D2}.png");
+                Cap(Sdo.Game.SdoTestOutput.File("combo/finflick", $"f{i:D2}.png"));
             }
         }
 
@@ -237,13 +239,12 @@ namespace Sdo.Tests
             yield return GameplayBoot.Boot(g => game = g);   // 前端接管開機後 gameplay 不再自我 boot — 見 GameplayBoot
             game.SetCamModeForTest(0);
             yield return new WaitForSecondsRealtime(0.3f);
-            System.IO.Directory.CreateDirectory("H:/65_remake/cross400");
             game.SpawnComboBurstForTest(3);   // 400
             float[] shots = { 0.2f, 0.45f, 0.7f, 1.0f, 1.4f, 1.9f }; float prev = 0f;
             for (int i = 0; i < shots.Length; i++)
             {
                 yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i];
-                Cap($"H:/65_remake/cross400/c{i}_{(int)(shots[i]*1000)}ms.png");
+                Cap(Sdo.Game.SdoTestOutput.File("combo/cross400", $"c{i}_{(int)(shots[i]*1000)}ms.png"));
             }
         }
 

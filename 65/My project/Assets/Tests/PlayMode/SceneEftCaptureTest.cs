@@ -17,11 +17,14 @@ namespace Sdo.Tests
     /// self-boots and the env vars would never be consumed. Previously, forgetting them silently captured the wrong scene.
     /// Run: -runTests -batchmode -projectPath "h:\65_remake\65\My project" -testPlatform PlayMode
     ///      -testFilter Sdo.Tests.SceneEftCaptureTest -logFile &lt;log&gt;     (do NOT pass -nographics)
-    /// Output: H:/65_remake/scn0008-0..N.png (composite) + -bg.png (scene only, no HUD).
+    /// Output: test-output/scene-eft/scn0008-0..N.png (composite) + -bg.png (scene only, no HUD).
     /// </summary>
     public class SceneEftCaptureTest
     {
         private const int W = 800, H = 600;   // 800×600 4:3 design frame
+
+        /// <summary>截圖一律落在 &lt;repo&gt;/test-output/scene-eft/，不散在 repo 根目錄。</summary>
+        private static string Out(string fileName) => Sdo.Game.SdoTestOutput.File("scene-eft", fileName);
 
         // 乾淨的「只有舞台」開機：載 SCN0008（SCENE.MSH + mapobjs + 常駐 EFT），不要音符/音樂/HUD，舞者待機在舞點。
         // 等同官方 auto-boot 讀 SDO_SCENE='SCN0008' + SDO_SCENE_ONLY='1' 的那段。
@@ -51,7 +54,7 @@ namespace Sdo.Tests
             for (int i = 0; i < shots.Length; i++)
             {
                 yield return new WaitForSecondsRealtime(shots[i] - prev); prev = shots[i];
-                Cap($"H:/65_remake/scn0008-{i}.png");
+                Cap(Out($"scn0008-{i}.png"));
             }
         }
 
@@ -68,7 +71,7 @@ namespace Sdo.Tests
             game.SetCamModeForTest(0);
             // dense capture across the whole ~10s disc life; tag each with the disc's current alpha so a phase-aligned
             // (bright vs dim) pair can be diffed to verify the disc pulse renders.
-            for (int i = 0; i < 12; i++) { yield return new WaitForSecondsRealtime(1.0f); Cap($"H:/65_remake/scn0008-chk{i}.png"); Debug.Log($"[discalpha] chk{i} a={Sdo.Game.EftEffect.LastDiscAlpha:F0}"); }
+            for (int i = 0; i < 12; i++) { yield return new WaitForSecondsRealtime(1.0f); Cap(Out($"scn0008-chk{i}.png")); Debug.Log($"[discalpha] chk{i} a={Sdo.Game.EftEffect.LastDiscAlpha:F0}"); }
             Debug.Log("[delta-dump] done");
         }
 

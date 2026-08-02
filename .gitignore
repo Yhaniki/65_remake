@@ -94,9 +94,9 @@ assets/*
 /*.jpg
 /*.log
 /*-results.xml
-# PlayMode capture 測試寫進子資料夾的整組連續截圖（ComboBurstCaptureTest）
-/cross400/
-/finflick/
+# 測試／擷取的截圖統一落點（Sdo.Game.SdoTestOutput）：test-output/<分類>/…
+# 舊的 /cross400/、/finflick/ 已併進 test-output/combo/ 底下。
+/test-output/
 # 字距修正時的前後對照圖與量測 log（98 個檔、15 MB，重跑截圖即可重建）
 /_字距對照/
 /eft_log.txt
@@ -120,7 +120,6 @@ assets/*
 /.buildpid
 /.runpid
 /build.log
-/play-capture.png
 /cap-results.xml
 /test_results*.xml
 

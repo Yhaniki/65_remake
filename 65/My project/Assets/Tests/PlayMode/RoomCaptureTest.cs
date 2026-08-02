@@ -35,7 +35,7 @@ namespace Sdo.Tests
             {
                 if (c == null || c.targetTexture == null) continue;
                 c.Render();
-                Save(c.targetTexture, "H:/65_remake/room-cap-" + c.name + ".png");
+                Save(c.targetTexture, SdoTestOutput.File("room", "room-cap-" + c.name + ".png"));
                 n++;
             }
             Debug.Log("[RoomCaptureTest] captured " + n + " RT cameras; scene.Ready=" + scene.Ready);

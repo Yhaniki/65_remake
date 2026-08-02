@@ -27,7 +27,7 @@ namespace Sdo.Tests
             yield return GameplayBoot.Boot(g => game = g);
             game.SetCamModeForTest(0);   // fixed front cam0 to inspect hair + note board
             yield return new WaitForSecondsRealtime(6.0f);
-            Cap("H:/65_remake/play-capture.png");
+            Cap(Sdo.Game.SdoTestOutput.File("gameplay", "play-capture.png"));
         }
 
         // The scene renders to a RenderTexture shown by a full-screen quad in the main ortho cam (the live game's

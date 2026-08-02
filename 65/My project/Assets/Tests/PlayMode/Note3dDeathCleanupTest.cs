@@ -49,7 +49,7 @@ namespace Sdo.Tests
             }
             Assert.IsTrue(died, "120s 內沒有死亡 —— 測試前提壞了（autoPlay 沒關掉？血量公式改了？）");
 
-            Cap("H:/65_remake/note3d-death-cleanup.png");   // 供人眼複核
+            Cap(Sdo.Game.SdoTestOutput.File("gameplay", "note3d-death-cleanup.png"));   // 供人眼複核
 
             Assert.IsNull(GameObject.Find("Note3dMeshes_root"),
                 "死掉之後 3D 音符的 mesh pool 還留在畫面上（Note3dMeshes_root 仍是 active）");

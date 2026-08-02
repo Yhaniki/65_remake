@@ -241,7 +241,7 @@ namespace Sdo.Tests
                     var shot = new Texture2D(rt.width, rt.height, TextureFormat.RGBA32, false);
                     shot.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0); shot.Apply();
                     RenderTexture.active = prev;
-                    string path = "H:/65_remake/portrait-lolita-" + variant + ".png";
+                    string path = SdoTestOutput.File("garment", "portrait-lolita-" + variant + ".png");
                     File.WriteAllBytes(path, shot.EncodeToPNG());
                     Debug.Log("[portrait-snap] wrote " + path);
                     Object.DestroyImmediate(shot);
