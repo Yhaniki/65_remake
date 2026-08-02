@@ -693,6 +693,7 @@ namespace Sdo.UI
                 game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
                 game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
                 game.collapseShortHolds = gp.collapseShortHolds; // 無理短長條(<180BPM 16分)收成一般 note；只對外部轉檔譜(osu/sm/mc)，官方/歌曲包 .gn 不動
+                game.danceIgnoreMiss = gp.danceIgnoreMiss;       // config.ini opt_danceIgnoreMiss：掉 miss 也照跳舞（血用完仍停舞）
                 game.constantScroll = !gp.songSpeed;             // 進階「歌曲變速」關 → 整首固定流速（忽略譜面 BPM 變化 / SV）
                 game.songBombs = gp.songBombs;                   // 進階「歌曲炸彈」關 → 載譜時把譜面上的炸彈整顆拿掉
             }

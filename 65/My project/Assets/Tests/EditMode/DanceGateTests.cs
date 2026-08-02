@@ -4,46 +4,108 @@ using Sdo.Ruleset;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// 舞者的「跳/停」閘門。本機與遠端**共用同一個函式**,所以這一組測試同時守住兩邊。
+    /// 舞者跳舞/停舞的 8 拍結算決策(<see cref="DanceGate.NextState"/>)。官方規則＋config.ini 的
+    /// 「掉 miss 也照跳舞」(opt_danceIgnoreMiss) 豁免,再加上遠端舞者的推導。
     ///
     /// 🔴 這裡最重要的一條是最後那組:「同一組輸入,本機路徑與遠端推導的結果必須一樣」。
-    /// 那正是把規則抽出來的理由 —— 兩邊各寫一份的話,門檻一改就會變成
+    /// 那正是把規則抽成純函式的理由 —— 兩邊各寫一份的話,門檻一改就會變成
     /// 「別人的角色跳的跟他自己看到的不一樣」,而那種 bug 沒有人回報得清楚。
     /// </summary>
     public class DanceGateTests
     {
-        // ---- 規則本體 ----
+        // ---- 官方規則(ignoreMiss = false)----
 
         [Test]
-        public void A_Clean_Block_With_Notes_Dances()
+        public void Break_With_Strong_Combo_Keeps_Dancing()
         {
-            Assert.IsTrue(DanceGate.Next(dancing: false, hadBreak: false, hadNote: true, combo: 0),
-                "沒斷連又有音符 → 開始/恢復跳舞(combo 多少都不重要)");
+            Assert.IsTrue(DanceGate.NextState(dancing: true, hadBreak: true, hadNote: true, combo: 31, ignoreMiss: false));
         }
 
         [Test]
-        public void Breaking_With_A_Strong_Combo_Keeps_Dancing()
+        public void Break_With_Weak_Combo_Stops_Dancing()
         {
-            // 斷了但 combo 還撐得住 → 繼續跳。門檻是**大於** 30。
-            Assert.IsTrue(DanceGate.Next(true, hadBreak: true, hadNote: true, combo: 31));
-            Assert.IsFalse(DanceGate.Next(true, hadBreak: true, hadNote: true, combo: 30),
-                "剛好 30 不算「強」—— 門檻是嚴格大於");
-            Assert.IsFalse(DanceGate.Next(true, hadBreak: true, hadNote: true, combo: 0));
+            Assert.IsFalse(DanceGate.NextState(dancing: true, hadBreak: true, hadNote: true, combo: 30, ignoreMiss: false),
+                "門檻是 combo > 30,剛好 30 要停");
+            Assert.IsFalse(DanceGate.NextState(dancing: true, hadBreak: true, hadNote: true, combo: 0, ignoreMiss: false));
+        }
+
+        [Test]
+        public void Clean_Block_With_Notes_Resumes_Dancing()
+        {
+            Assert.IsTrue(DanceGate.NextState(dancing: false, hadBreak: false, hadNote: true, combo: 1, ignoreMiss: false),
+                "乾淨的 block 一律跳,即使 combo 很低");
         }
 
         [Test]
         public void A_Break_Overrides_The_Clean_Note_Rule()
         {
             // 同一個 block 裡既有音符又有斷連 → 走「斷連」那條(不是「有音符就跳」)。
-            Assert.IsFalse(DanceGate.Next(true, hadBreak: true, hadNote: true, combo: 5));
+            Assert.IsFalse(DanceGate.NextState(dancing: true, hadBreak: true, hadNote: true, combo: 5, ignoreMiss: false));
         }
 
         [Test]
-        public void An_Empty_Block_Holds_The_Current_State()
+        public void Empty_Block_Holds_Current_State()
         {
-            // 沒斷也沒音符(間奏/休息段)→ 維持現狀,兩個方向都要維持。
-            Assert.IsTrue(DanceGate.Next(true, false, false, 0), "本來在跳 → 繼續跳");
-            Assert.IsFalse(DanceGate.Next(false, false, false, 999), "本來站著 → 繼續站(combo 高也不會自己復活)");
+            Assert.IsFalse(DanceGate.NextState(dancing: false, hadBreak: false, hadNote: false, combo: 999, ignoreMiss: false),
+                "停住的舞者不會因為一段沒音符就自己站起來");
+            Assert.IsTrue(DanceGate.NextState(dancing: true, hadBreak: false, hadNote: false, combo: 0, ignoreMiss: false));
+        }
+
+        // ---- 掉 miss 也照跳舞(config.ini opt_danceIgnoreMiss = 1)----
+
+        [Test]
+        public void IgnoreMiss_Keeps_Dancing_Through_Breaks()
+        {
+            Assert.IsTrue(DanceGate.NextState(dancing: true, hadBreak: true, hadNote: true, combo: 0, ignoreMiss: true),
+                "整段都 miss、combo 0 也照跳");
+        }
+
+        [Test]
+        public void IgnoreMiss_Resumes_A_Stopped_Dancer_On_The_Next_Judged_Block()
+        {
+            Assert.IsTrue(DanceGate.NextState(dancing: false, hadBreak: true, hadNote: true, combo: 0, ignoreMiss: true));
+        }
+
+        [Test]
+        public void IgnoreMiss_Still_Holds_State_On_An_Empty_Block()
+        {
+            // 空 block 不豁免:編輯器/觀察模式那種刻意停住的舞者(沒有任何判定)不能被叫起來跳。
+            Assert.IsFalse(DanceGate.NextState(dancing: false, hadBreak: false, hadNote: false, combo: 0, ignoreMiss: true));
+        }
+
+        // ---- 這一幀跳不跳(DanceEnabled / RecordGate 同一條)----
+
+        [Test]
+        public void HpOut_Stops_The_Dancer_In_FullSong_Mode()
+        {
+            // 完奏模式:歌不切斷(failed 不設)但血用完 → 停舞,回待機站到曲末。
+            Assert.IsFalse(DanceGate.Enabled(dancing: true, failed: false, hpDead: true, ignoreMiss: false));
+        }
+
+        [Test]
+        public void IgnoreMiss_Outranks_Hp_And_Keeps_Dancing_After_HpOut()
+        {
+            // opt_danceIgnoreMiss 優先權最大:血用完照樣跳。
+            Assert.IsTrue(DanceGate.Enabled(dancing: true, failed: false, hpDead: true, ignoreMiss: true));
+        }
+
+        [Test]
+        public void Failed_Always_Stops_The_Dancer()
+        {
+            // 一般模式 HP 歸零＝遊戲當場中斷進 GAME OVER,不是「繼續跳舞」的情境 → ignoreMiss 也不豁免。
+            Assert.IsFalse(DanceGate.Enabled(dancing: true, failed: true, hpDead: true, ignoreMiss: true));
+        }
+
+        [Test]
+        public void Stopped_By_The_Gate_Stays_Stopped()
+        {
+            Assert.IsFalse(DanceGate.Enabled(dancing: false, failed: false, hpDead: false, ignoreMiss: true));
+        }
+
+        [Test]
+        public void Alive_And_Dancing_Is_Enabled()
+        {
+            Assert.IsTrue(DanceGate.Enabled(dancing: true, failed: false, hpDead: false, ignoreMiss: false));
         }
 
         // ---- 結算節奏 ----
@@ -83,6 +145,9 @@ namespace Sdo.Tests
         {
             // 🔴 這是整組測試的重點:同一組「發生了什麼」,本機(直接知道旗標)與遠端(只能看兩筆的差)
             // 必須得到**一樣**的結果。不一樣的話,別人畫面上的舞者就與本人看到的不同步。
+            //
+            // 本機那側刻意傳 ignoreMiss: false —— 遠端拿不到對方的 config.ini,所以兩邊比較的基準
+            // 就是官方規則(見 DanceGate.NextFromSamples 的說明)。
             var cases = new[]
             {
                 // prev,                              cur,                                combo, dancing
@@ -101,10 +166,11 @@ namespace Sdo.Tests
                 int combo = (int)c[2];
                 bool dancing = (bool)c[3];
 
-                bool local = DanceGate.Next(dancing,
-                                            hadBreak: cur.Breaks > prev.Breaks,
-                                            hadNote: cur.Total > prev.Total,
-                                            combo: combo);
+                bool local = DanceGate.NextState(dancing,
+                                                 hadBreak: cur.Breaks > prev.Breaks,
+                                                 hadNote: cur.Total > prev.Total,
+                                                 combo: combo,
+                                                 ignoreMiss: false);
                 bool remote = DanceGate.NextFromSamples(dancing, prev, cur, combo);
                 Assert.AreEqual(local, remote,
                     "本機與遠端對同一組輸入的結論必須一致(prev.total=" + prev.Total + " cur.total=" + cur.Total
