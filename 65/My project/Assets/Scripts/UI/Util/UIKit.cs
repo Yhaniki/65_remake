@@ -329,7 +329,16 @@ namespace Sdo.UI.Util
         {
             if (content == null) return;
             for (int i = content.childCount - 1; i >= 0; i--)
-                Object.Destroy(content.GetChild(i).gameObject);
+            {
+                var child = content.GetChild(i);
+                // 🔴 先脫離父物件、再 Destroy。Unity 的 Destroy 是**延到這一幀結束**才真的移除 ——
+                //    只呼叫 Destroy 的話,舊物件在同一幀裡仍然算在 VerticalLayoutGroup / ContentSizeFitter 中,
+                //    呼叫端緊接著重建清單並 ForceUpdateCanvases,量到的是「舊 + 新」的內容高度 →
+                //    捲到底會捲錯位置、舊行在畫面上多留一幀(使用者回報聊天面板的殘影)。
+                //    SetParent(null) 當下就把它從 layout 摘掉,而且沒有 Canvas 的根物件不會再被畫出來。
+                child.SetParent(null, false);
+                Object.Destroy(child.gameObject);
+            }
         }
 
         // ---------- input field ----------

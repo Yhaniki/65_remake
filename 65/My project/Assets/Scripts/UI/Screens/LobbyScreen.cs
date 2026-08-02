@@ -255,10 +255,18 @@ namespace Sdo.UI.Screens
         /// <summary>線上房間列表的輪詢間隔。server 沒有「房間列表變了」的推播,只能自己回頭問。</summary>
         private const float PollSeconds = 4f;
 
-        // 聊天行的描邊(與房間畫面同一組:細髮絲邊、正十字四向 —— 13px 小字太厚會像粗體、也會糊)。
+        // 聊天行的描邊(與房間畫面同一組:細髮絲邊、正十字四向 —— 小字太厚會像粗體、也會糊)。
         private static readonly Color32 ChatEdgeCol = new Color32(0x20, 0x14, 0x30, 0xFF);
         private const float ChatEdgePx = 0.7f;
         private const int ChatEdgeDirs = 4;
+
+        // 🔴 聊天字級/行高是**算出來的,不是喜好** —— 使用者要求聊天區一次要放得下 9 行:
+        //    視窗 ChatH=110,VerticalLayoutGroup 的 spacing=1、上下 padding 各 2(見 BuildBottomPanel 的
+        //    AddVerticalScroll 參數)→ 捲到底時第 9 行的上緣落在 2(底 pad)+ 9*ChatLineH + 8*spacing = 109 ≤ 110,
+        //    第 10 行永遠進不來。以前是 13px 字 / 15px 行高 → 一頁只裝得下 6 行(而且第 7 行只露半截)。
+        //    改這兩個數字之前先把上面那條算式重算一遍,不然 ChatLineClip 會再度出現「半截字」。
+        private const float ChatFontSize = 11f;
+        private const float ChatLineH = 11f;
 
         // ---------------- 狀態 ----------------
 
@@ -276,13 +284,9 @@ namespace Sdo.UI.Screens
         private TMP_InputField _chatInput;
         private ScrollRect _chatScroll;
         private ChatLineClip _chatClip;
-        private Image _chatBgImg;             // 聊天記錄的底框:跟捲動區一起被「聊天記錄」鈕收合
         private Scrollbar _chatBar;           // 聊天記錄的捲軸(官方 AllChatList 的 Handle)
         private Image _chatCaret;             // 自畫的輸入游標(TMP 內建的在這裡畫不出來,見 ConfigureChatInput)
         private readonly Vector3[] _caretCorners = new Vector3[4];   // 餵給 IME 候選視窗的座標暫存(每幀用,不要每次配置)
-        private Button _recordChatBtn;
-        private Image _recordChatImg;
-        private bool _chatLogHidden;
 
         // 兩個下拉選單(右上角功能選單 / 左下角頻道選單)。都是 lazily build、再按一次收起來,
         // 而且**互斥** —— 開一個就把另一個收掉(照 RoomScreen 的 chatmode ↔ expression 那個模式)。
@@ -618,8 +622,14 @@ namespace Sdo.UI.Screens
             //    bar 位置一偏,照官方座標擺的那排鈕看起來就沒對齊(使用者回報)。
             UIKit.AddSprite(Root, "BottomPanel", An("Lobby53"), 8f, 435f);
 
-            // 聊天顯示區的底框(RecordChatBG,437×130)。
-            _chatBgImg = UIKit.AddSprite(Root, "ChatBg", An("RecordChatBG"), ChatBgX, ChatBgY);
+            // 聊天顯示區的底框(RecordChatBG,437×130)。常駐,沒有人會去關它。
+            // 🔴 走 AnSolo(**自己的貼圖**)而不是 An(共用圖集):RECORDCHATBG.AN 是 stage.png 的
+            //    (341,533,437,130),而 crop 左緣**外面 2px** 就坐著一個 α=66 的粉紫鄰居(x=339)。
+            //    An 是在整張 stage.png 上取樣 + AlphaBleed,那個鄰居的顏色會被 dilate 進 crop 邊、
+            //    再被雙線性取樣拖進來 → 框的左右各多一條偏移的細線(使用者回報的「殘影 / shift 的框線」)。
+            //    AnSolo 把這一格複製到獨立貼圖(Clamp)上,沒有鄰居可滲。
+            //    不能用 AnSoloAA:那條路會把 α<128 的像素直接歸零,而這張背板整片只有 α=77 → 會整個消失。
+            UIKit.AddSprite(Root, "ChatBg", LobbyArt.AnSolo("RecordChatBG"), ChatBgX, ChatBgY);
 
             // 聊天記錄。背板已經畫好框了 → ScrollRect 自己不要再上底色。
             _chatScroll = UIKit.AddVerticalScroll(Root, "ChatScroll", out _chatContent, 1f, 2, new Color(0f, 0f, 0f, 0f));
@@ -638,11 +648,12 @@ namespace Sdo.UI.Screens
             _chatChannelBtn = SpriteBtn("ChatChannel", "Lobby57", "Lobby58", "Lobby59", ChanX, ChanY, ToggleChatMenu);
             _chatChannelImg = _chatChannelBtn.targetGraphic as Image;
 
-            // 聊天記錄(recordchatmode / closerecordchatmode 一對開關)。官方那是把聊天記錄面板叫出來/收回去,
-            // 我們的聊天區是常駐的 → 這顆就是它的收合開關(收起來才看得到底下角色的腳與星空)。
-            _recordChatBtn = SpriteBtn("RecordChat", "RecordChatBtn_1", "RecordChatBtn_2", "RecordChatBtn_3",
-                                       RecordChatX, RecordChatY, ToggleChatLog);
-            _recordChatImg = _recordChatBtn.targetGraphic as Image;
+            // 聊天記錄(recordchatmode)。🔴 這顆**按了不做事**(使用者要求把功能拿掉):
+            //    以前它是聊天區的收合開關,但收合是把底框關掉、捲動區關掉、鈕再換一組圖,
+            //    幾個東西各關各的 → 一收一開之間會在面板上留殘影(使用者回報)。
+            //    聊天區從此常駐,鈕照官方擺著、維持三態外觀而已(closerecordchatmode 那組圖從此沒人用)。
+            SpriteBtn("RecordChat", "RecordChatBtn_1", "RecordChatBtn_2", "RecordChatBtn_3",
+                      RecordChatX, RecordChatY, null);
 
             // 輸入框:**placeholder 傳空字串**。以前放「輸入訊息後按 Enter…」的提示字,官方那格是空的,
             // 而且提示字在沒有游標的情況下會讓人以為那不是輸入框(使用者回報)。設定整套照搬房間那顆
@@ -1736,19 +1747,6 @@ namespace Sdo.UI.Screens
 
         private static string SelfGuild() => ProfileFields.FamilyName(ProfileManager.Active);
 
-        /// <summary>「聊天記錄」鈕(官方 recordchatmode ↔ closerecordchatmode):收合/展開左下角的聊天顯示區。
-        /// 輸入列不跟著收 —— 收起來之後照樣講得了話(訊息會飄到房間/大廳的其他人那裡)。</summary>
-        private void ToggleChatLog()
-        {
-            _chatLogHidden = !_chatLogHidden;
-            if (_chatBgImg != null) _chatBgImg.enabled = !_chatLogHidden;
-            if (_chatScroll != null) _chatScroll.gameObject.SetActive(!_chatLogHidden);
-            Reskin(_recordChatBtn, _recordChatImg,
-                   _chatLogHidden ? "RecordChatCloseBtn_1" : "RecordChatBtn_1",
-                   _chatLogHidden ? "RecordChatCloseBtn_2" : "RecordChatBtn_2",
-                   _chatLogHidden ? "RecordChatCloseBtn_3" : "RecordChatBtn_3");
-        }
-
         private void OnLogout()
         {
             if (ScreenTransition.Busy) return;
@@ -1839,26 +1837,27 @@ namespace Sdo.UI.Screens
         private void AddChatLine(ChatMessage m)
         {
             if (m == null) return;
-            // 密語跨大廳/房間 → 大廳也顯示(青色單行)。
+            // 🔴 大廳聊天區**整區白字**(使用者要求)—— 密語的青、系統訊息的金、名字的藍全部拿掉。
+            //    所以這裡一律不帶 <color> 標籤:OutlinedLabel.CreateRich 的 face 預設就是白色,
+            //    只有 <color> 會蓋過它。要再分色的話改的是這裡,不是 OutlinedLabel。
+            // 密語跨大廳/房間 → 大廳也顯示(單行)。
             if (m.Whisper != WhisperKind.None)
             {
                 var w = OutlinedLabel.CreateRich(_chatContent, "whisper",
-                    "<color=#1EFEFE>" + Esc(ChatDisplay.WhisperText(m)) + "</color>", 13f, ChatEdgeCol,
+                    Esc(ChatDisplay.WhisperText(m)), ChatFontSize, ChatEdgeCol,
                     ChatEdgePx, ChatEdgeDirs, true, TextAlignmentOptions.TopLeft);
-                UIKit.Layout(w.gameObject, 15);
+                UIKit.Layout(w.gameObject, ChatLineH);
                 return;
             }
             // 進出舞台廣播只屬房間;一般/系統訊息只顯示大廳作用域(隔離房間訊息)。
             if (m.Stage != StageEventKind.None) return;
             if (m.Scope != ChatScope.Lobby) return;
-            string line = m.System ? "<color=#F0C24A>" + Esc(m.Text) + "</color>"
-                                   : "<color=#7FB6FF>" + Esc(m.Sender) + "</color>: " + Esc(m.Text);
+            string line = m.System ? Esc(m.Text) : Esc(m.Sender) + ": " + Esc(m.Text);
             // 🔴 聊天行要**粗體 + 描邊**(使用者要求,官方實機那些字都有一圈深邊):
-            //    這一區的底是星空與角色,細字直接壓上去會有整段讀不清。用 OutlinedLabel 的 rich 版
-            //    (它保留 <color> 標籤,所以名字/系統訊息的顏色照舊)。
-            var t = OutlinedLabel.CreateRich(_chatContent, "line", line, 13f, ChatEdgeCol,
+            //    這一區的底是星空與角色,細字直接壓上去會有整段讀不清。
+            var t = OutlinedLabel.CreateRich(_chatContent, "line", line, ChatFontSize, ChatEdgeCol,
                                              ChatEdgePx, ChatEdgeDirs, true, TextAlignmentOptions.TopLeft);
-            UIKit.Layout(t.gameObject, 15);
+            UIKit.Layout(t.gameObject, ChatLineH);
         }
 
         private static string Esc(string s)
