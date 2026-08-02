@@ -795,8 +795,14 @@ namespace Sdo.UI.Screens
                       + " SAY=" + (ScreenGameplay.DevVar("SDO_SAY") ?? "-")
                       + " PICKSONG=" + (ScreenGameplay.DevVar("SDO_PICKSONG") ?? "-"));
             // 聊天作用域切到本房間：之後的送話/廣播標記成此房，且只顯示此房 + 密語(跨場)。
+            int prevChatScopeRoomId = _chatScopeRoomId;
             _chatScopeRoomId = Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
-            Ctx.Chat?.Clear();   // 換場地就清訊息欄：進房間(大廳→房間 / 遊戲→房間都會經過 OnShow)先清空
+            // 換場地才清訊息欄：**只有「大廳→房間」算換場地**。打完一首從舞台回到同一間房不清 ——
+            // 使用者要求左下角的對話留著(進遊戲前講的話,回房後還看得到)。
+            // 房號也要一樣才留:_returnedFromStage 只在回房那次 OnShow 被消耗,萬一遊戲後沒回房(中離走人)
+            // 旗標會殘留到下一次進房 —— 那次是真的換場地,還是要清。
+            bool sameRoomAsBefore = _chatScopeRoomId != 0 && _chatScopeRoomId == prevChatScopeRoomId;
+            if (!_returnedFromStage || !sameRoomAsBefore) Ctx.Chat?.Clear();
             Ctx.Chat?.SetScope(ChatScope.Room, _chatScopeRoomId);
             RebuildRoomChat();
             Render();
