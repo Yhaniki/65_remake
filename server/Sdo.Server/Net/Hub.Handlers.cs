@@ -1428,13 +1428,25 @@ namespace Sdo.Server.Net
 
         private void SendResultsReady(NetRoom room, long matchId)
         {
+            // 🔴 沒有名單就沒有結算可送。以前這裡直接讀 room.Match.Participants,而
+            //    「房間停在 playing 但 _match 已經被收掉」是真的會發生的狀態(見 NetRoom.SetPlayState
+            //    的中離註解),於是整個 ActorLoop 的 tick 被一個 NullReferenceException 打斷 ——
+            //    連帶那一輪的 BroadcastRoomState 也沒送出去,座位停在別人畫面上的 PLAYING 就再也不動了。
+            //    根因已經在 NetRoom 修掉,這裡留一道:tick 不該因為房間狀態怪就整個掛掉。
+            var match = room.Match;
+            if (match == null)
+            {
+                Log("房 " + room.Code + " 第 " + matchId + " 場要結算,但場次已經不在了 → 略過(不該發生)");
+                return;
+            }
+
             Dictionary<int, FrameSample> finalByUser;
             Dictionary<int, FrameSample> latestByUser;
             _finalFrames.TryGetValue(room.Code, out finalByUser);
             _latestFrames.TryGetValue(room.Code, out latestByUser);
 
             var rows = JArr.New();
-            var players = new List<NetMatchPlayerSnapshot>(room.Match.Participants);
+            var players = new List<NetMatchPlayerSnapshot>(match.Participants);
             players.Sort((a, b) =>
             {
                 FrameSample af = ResultFrame(finalByUser, latestByUser, a.UserId);

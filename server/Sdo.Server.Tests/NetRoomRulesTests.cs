@@ -1586,6 +1586,78 @@ namespace Sdo.Tests
             CollectionAssert.Contains(ids, Bob, "結算列不能因為他先回房就少一個人");
         }
 
+        /// <summary>
+        /// **兩個人先後中離**(各自按 Esc)—— 後跳出的那個不可以永遠掛著 PLAYING。
+        ///
+        /// 🔴 實機抓到的:中離的 client 會**連著**送 playFinished + setPlayState{idle}
+        /// (<c>FrontendApp.AbortGameplay</c>),所以 server 是在房間還 Playing、別人還在跳的時候
+        /// 收到那則 idle 的。以前收掉 idle 之後會順手 <c>ClearResults()</c>(條件只看「沒有人還在
+        /// results/finished」,而還在跳的人兩者都不是)→ <c>_match</c> 被提早收掉,然後:
+        ///   • 下一次 Tick 的 <c>AnyParticipantIn</c> 因為 <c>_match == null</c> 全回 false
+        ///     → 誤判成「全員打完」→ 發一份沒有名單的結算 → <c>Hub.SendResultsReady</c> NRE,
+        ///       那一輪 tick 整個中斷(連 roomState 都沒廣播);
+        ///   • 還在跳的那格沒有任何人清 → 永遠是 PLAYING,他之後送的 idle 全被回 badState。
+        ///
+        /// 實機 log:
+        /// <c>Tick 例外: System.NullReferenceException at Hub.SendResultsReady</c>,接著
+        /// <c>✗ user 2 的 setPlayState#15(state=Idle matchId=2) 被拒:badState | 房 26437 Open 沒有進行中的場次</c>
+        /// </summary>
+        [Test]
+        public void Both_Players_Bailing_Out_Mid_Song_Still_Settles_The_Match()
+        {
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, OfficialSong()));
+            r.SetAvailability(Host, "sdom1435k.gn", Availability.Have, 0f);
+            r.SetAvailability(Bob, "sdom1435k.gn", Availability.Have, 0f);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+
+            NetMatchInfo m;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 0, out m));
+            r.SetPlayState(Host, PlayState.Loaded, m.MatchId);
+            r.SetPlayState(Bob, PlayState.Loaded, m.MatchId);
+            r.Tick(100);
+            Assert.AreEqual(RoomStatus.Playing, r.Status);
+
+            // ---- Bob 按 Esc:playFinished + idle 是連著送的,Host 還在跳 ----
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Bob, PlayState.Finished, m.MatchId));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Bob, PlayState.Idle, m.MatchId));
+            Assert.IsNotNull(r.Match, "房間還在 playing —— 這一場還沒結算,不能提早收掉場次");
+            Assert.AreEqual(RoomStatus.Playing, r.Status);
+
+            // 中間插一次 tick(實機的 actor loop 每秒都在跑)—— 不能因為有人先走就結算。
+            var mid = r.Tick(150);
+            Assert.IsFalse(mid.ResultsReady, "Host 還在跳,還不能結算");
+            Assert.AreEqual(PlayState.Playing, r.State.SeatOf(Host).PlayState);
+
+            // ---- 換 Host 也按 Esc ----
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Host, PlayState.Finished, m.MatchId),
+                            "後跳出的人送 playFinished 不能被拒 —— 被拒的話他就停在 playing 了");
+            Assert.AreEqual(NetRoomOp.Ok, r.SetPlayState(Host, PlayState.Idle, m.MatchId));
+
+            var tick = r.Tick(200);
+            Assert.IsTrue(tick.ResultsReady, "兩個人都離場了 → 這一場結束");
+            Assert.AreEqual(RoomStatus.Open, r.Status);
+            Assert.IsNotNull(r.Match, "結算的那一刻場次必須還在 —— Hub 要靠它列結算名單(以前是 NRE)");
+
+            // 兩格都不能停在 playing(那就是使用者看到的「一直顯示 PLAYING」)。
+            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Host).PlayState);
+            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
+
+            // 名單保留兩個人(R16:成績用他們最後一筆 frame)。
+            var ids = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < r.Match.Participants.Length; i++) ids.Add(r.Match.Participants[i].UserId);
+            CollectionAssert.Contains(ids, Host);
+            CollectionAssert.Contains(ids, Bob);
+
+            // 下一局開得成。
+            r.SetAvailability(Bob, "sdom1435k.gn", Availability.Have, 0f);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+            NetMatchInfo m2;
+            Assert.AreEqual(NetRoomOp.Ok, r.RequestStart(Host, false, Resolved(), 300, out m2),
+                            "中離兩次之後房間必須還開得了下一局");
+        }
+
         [Test]
         public void A_Ready_Pressed_While_Others_Are_Still_On_The_Result_Panel_Survives()
         {
