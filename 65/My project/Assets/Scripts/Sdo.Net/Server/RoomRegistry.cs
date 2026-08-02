@@ -53,13 +53,6 @@ namespace Sdo.Net.Server
         private readonly RoomCodePool _codes;
         private readonly int _maxRooms;
 
-        /// <summary>
-        /// 房間序號產生器 —— 左上角「自由練習場1 頻道1 <b>N</b>」顯示的那個小數字。
-        /// 與房號(<see cref="RoomCodePool"/> 配的 5 位數)是兩件不同的事:序號只是給人看的門牌,
-        /// 所以單純遞增、關房不回收(重用序號會讓人以為是同一間房)。
-        /// </summary>
-        private int _nextSeq = 1;
-
         public RoomRegistry(int maxRooms = NetLimits.DefaultMaxRooms, int seed = 0)
         {
             _maxRooms = maxRooms > 0 ? maxRooms : NetLimits.DefaultMaxRooms;
@@ -109,10 +102,34 @@ namespace Sdo.Net.Server
             int code;
             if (!_codes.TryRent(out code)) return NetRoomOp.Full;   // 90000 間房都開滿了
 
-            room = new NetRoom(code, host, name, _nextSeq++);
+            room = new NetRoom(code, host, name, NextFreeSeq());
             _rooms[code] = room;
             _userRoom[host.UserId] = code;
             return NetRoomOp.Ok;
+        }
+
+        /// <summary>
+        /// 配一個門牌號 —— 左上角「自由練習場1 頻道1 <b>N</b>」和大廳房卡上那個 3 位數。
+        /// 與房號(<see cref="RoomCodePool"/> 配的 5 位數)是兩件不同的事:房號是加入房間的鑰匙,
+        /// 門牌只是給人看的位置。
+        ///
+        /// 🔴 **配的是「目前沒人用的最小號」,不是單調遞增的流水號。** 官方大廳的門牌就是版面上的
+        ///    格子位置:開了 001,關掉之後下一個人開的房又是 001。以前這裡是 <c>_nextSeq++</c>,
+        ///    症狀是自己一個人反覆開關房,門牌會爬成 002、003、004…… 明明大廳裡一間房都沒有
+        ///    (使用者回報「明明沒有其他房間但是我開房間進去編號是 5」)。
+        ///
+        /// 🔴 **從 1 開始,不是 0** —— 協定裡 <c>roomSeq = 0</c> 的意思是「這個人在大廳」
+        ///    (見 <c>NetUserListEntry.InLobby</c>),0 不能拿來當門牌。
+        ///
+        /// 房間數有 <see cref="MaxRooms"/> 上限(預設 200),所以這個 O(n) 掃描每次建房最多跑幾百步 ——
+        /// 建房是低頻操作,不值得為它多養一個要跟著關房路徑同步的索引(那正是幽靈狀態的來源)。
+        /// </summary>
+        private int NextFreeSeq()
+        {
+            var used = new HashSet<int>();
+            foreach (var r in _rooms.Values) used.Add(r.State.Seq);
+            for (int seq = 1; ; seq++)
+                if (!used.Contains(seq)) return seq;
         }
 
         /// <summary>
