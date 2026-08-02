@@ -86,9 +86,12 @@ namespace Sdo.UI.Screens
         private const float ColLevelX = 32f, ColLevelW = 18f;
         private const float ColWhereX = 50f, ColWhereW = 35f;
         private const float ColNameX = 85f, ColNameW = 135f;
-        private static readonly Color32 LevelColor = new Color32(0xba, 0xf6, 0x84, 0xff);   // 0xffbaf684 bold
-        private static readonly Color32 WhereColor = new Color32(0xec, 0xff, 0xac, 0xff);   // 0xffecffac bold
-        private static readonly Color32 NameColor = new Color32(0xff, 0xfb, 0xe0, 0xff);    // 0xfffffbe0
+        // 顏色與粗細照實機取色(使用者逐格對過)——**不要**改回 XML 那組:XML 寫的是
+        // baf684 / ecffac / fffbe0,但實機畫出來是下面這組,而且暱稱是**純白細體**、
+        // 只有等級與位置是粗體。
+        private static readonly Color32 LevelColor = new Color32(0xba, 0xf5, 0x84, 0xff);   // #baf584 bold
+        private static readonly Color32 WhereColor = new Color32(0xeb, 0xfe, 0xac, 0xff);   // #ebfeac bold
+        private static readonly Color32 NameColor = new Color32(0xff, 0xff, 0xff, 0xff);    // #ffffff 細體
 
         private RectTransform _root;
         private RectTransform _content;
@@ -103,7 +106,8 @@ namespace Sdo.UI.Screens
         private int _selectedUserId;
         private string _selectedName = "";
 
-        /// <summary>名單裡「自己」那一列 —— 用來把自己標出來,也避免把自己加成好友。</summary>
+        /// <summary>名單裡「自己」那一列 —— 用來擋掉「把自己加成好友」。
+        /// (以前還拿它把自己那列加粗,那個標記已經拿掉了:暱稱一律細體。)</summary>
         private int _selfUserId;
         private string _selfName = "", _selfGuild = "";
 
@@ -345,18 +349,32 @@ namespace Sdo.UI.Screens
                 hi.gameObject.SetActive(false);
             }
 
-            // 性別:官方就是一顆心(male.an = 藍心、female.an = 粉心,各 18×16,見 stage.png 982/1000,89)。
-            // 🔴 **不要**再用房卡那張 man.an 剪影去染色 —— 那是「一個人」的通用圖示,官方名單用的是心。
-            var icon = UIKit.AddSprite(row, "icon", An(u.Gender == 1 ? "male" : "female"), ColIconX, 6f);
+            // 第一欄 = 性別小人:**綠色男 / 粉紅女**,19×23。
+            // 🔴 素材要走 <c>player_male</c> / <c>player_female</c>(那兩個 .an 指向獨立的
+            //    male.png / female.png)—— **不是** <c>male</c> / <c>female</c>:同名的
+            //    MALE.AN 指到 stage.png (982,89) 是一顆**藍心**,與小人完全是兩個東西,
+            //    接錯了整排就變成心。
+            // 🔴 也**不要**用 Accepter_*(戴帽子)或 Spreader_*(帶金星)那兩組 —— 那是活動身份的
+            //    變體版,一般玩家用的是這個最乾淨的無裝飾版(使用者指定)。
+            var icon = UIKit.AddSprite(row, "icon", LobbyArt.An(u.Gender == 1 ? "player_male" : "player_female"),
+                                       ColIconX, (RowH - 23f) * 0.5f);
             if (icon != null) icon.raycastTarget = false;
 
-            // 等級 / 位置:官方這兩欄都標了 bold="true"(名字那欄沒有)。
+            // 第二欄 = 那顆粉紅心。官方**不分性別一律粉心**(實機截圖裡綠色小人那幾列也是粉心),
+            // 所以它不是性別 —— 用途待考,先照著擺,版位與視覺才對得上。
+            var heart = UIKit.AddSprite(row, "heart", An("female"), ColIcon2X, (RowH - 16f) * 0.5f);
+            if (heart != null) heart.raycastTarget = false;
+
+            // 等級 / 位置:官方這兩欄是粗體(名字那欄不是)。
             var lv = Label(row, "lv", ColLevelX, ColLevelW, LevelColor, TextAlignmentOptions.MidlineRight);
             lv.text = u.Level > 0 ? u.Level.ToString() : "";
             lv.fontStyle = FontStyles.Bold;
 
+            // 位置:在大廳寫「大厅」,在房裡就是**三位補零的房號**(官方實機是 015 / 014 / 000)。
+            // 🔴 房號不走 LocalizationManager —— 純數字沒有什麼好翻譯的,而舊的
+            //    `lobby.userlist_in_room` = "{0} 号房" 在這個 35px 寬的欄位裡根本擺不下。
             var where = Label(row, "where", ColWhereX, ColWhereW, WhereColor, TextAlignmentOptions.Midline);
-            where.text = u.InLobby ? L("lobby.userlist_in_lobby") : L("lobby.userlist_in_room", u.RoomSeq);
+            where.text = u.InLobby ? L("lobby.userlist_in_lobby") : u.RoomSeq.ToString("000");
             where.fontStyle = FontStyles.Bold;
 
             // 名字欄**置中**,不是靠左 —— 官方實機截圖裡長短名字的**左右緣都不齊**
@@ -365,9 +383,8 @@ namespace Sdo.UI.Screens
             var name = Label(row, "name", ColNameX, ColNameW, NameColor, TextAlignmentOptions.Midline);
             name.text = u.Name ?? "";
             name.overflowMode = TextOverflowModes.Ellipsis;   // 名字沒有長度上限,不截會蓋出欄外
-            // 自己那一列標粗體 —— 一整排名字裡要一眼找得到自己在哪。
-            if (u.UserId == _selfUserId || string.Equals(u.Name, _selfName, System.StringComparison.OrdinalIgnoreCase))
-                name.fontStyle = FontStyles.Bold;
+            // 🔴 暱稱一律**細體**(使用者指定)。以前會把「自己」那列加粗當標記 —— 拿掉了:
+            //    官方沒有那個設計,而且一加粗就與旁邊那兩欄的粗體混在一起,反而看不出是誰。
 
             var btn = row.gameObject.AddComponent<Button>();
             btn.transition = Selectable.Transition.None;
@@ -428,6 +445,9 @@ namespace Sdo.UI.Screens
             if (_selectedName.Length == 0) return;
             var owner = ProfileManager.Active;
             if (owner == null) return;
+            // 不能加自己。**兩個條件都要看**:userId 是這次連線的唯一編號(最可靠),
+            // 但離線時大家都是 0 → 那時只有名字比對得準。
+            if (_selectedUserId == _selfUserId) return;
             if (string.Equals(_selectedName, _selfName, System.StringComparison.OrdinalIgnoreCase)) return;
             if (FriendList.IsFriend(owner, _selectedName)) return;
 

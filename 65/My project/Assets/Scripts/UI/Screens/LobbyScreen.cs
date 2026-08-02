@@ -161,12 +161,10 @@ namespace Sdo.UI.Screens
         private const float RailX = 764f, RailTop = 49f, RailH = 300f, HandleW = 14f, HandleH = 28f;
 
         // 左下聊天記錄的捲軸(官方 win4 的 TextList AllChatList,Handle 也是 Lobby12)。
-        // RecordChatBG 貼在 (21,437),它烘死的細溝實測在絕對 x 429-431 → 14 寬的握把置中 x=423;
-        // 軌道跟著聊天區(ChatY..ChatY+ChatH)。
-        // 🔴 握把要**壓在溝的正中央**:RecordChatBG 烤死的細溝實測在絕對 x 429-431(溝心 430),
-        //    14 寬的握把置中 → 430-7 = 423。以前寫 423 但視覺上偏一邊,是因為那條溝本身偏右一點 ——
-        //    改對齊「捲動區右緣」(ChatX+ChatW=442)往內 14+5:442-19 = 423… 實測還是偏,直接用溝心 430-7+3。
-        private const float ChatRailX = 426f, ChatRailTop = 447f, ChatRailH = 110f;
+        // 🔴 握把要**壓在溝的正中央**。那條溝是 Lobby53 烤死的,在 stage.png 上實測(見 ChatX 那段的表)
+        //    落在絕對 x 434-436 → 溝心 435,14 寬的握把置中 = 435-7 = 428。
+        //    以前寫 426 是對著**另一個框**(RecordChatBG 的溝心 430)算的,那張圖現在不貼了。
+        private const float ChatRailX = 428f, ChatRailTop = 447f, ChatRailH = 108f;
 
         // 右下角那一排功能鈕。創建/快速/篩選同一個 y(363);活動查詢與夥伴在 365(官方就差這 2px)。
         private const float ActionY = 363f, SideActionY = 365f;
@@ -202,8 +200,18 @@ namespace Sdo.UI.Screens
 
         // 下方(win4)。聊天顯示區官方是可開關的浮動面板(recordchatmode/closerecordchatmode 一對開關鈕),
         // 它的 XML 位置 (21,296) 會壓在第三列房卡上 —— 這裡當常駐聊天區用,所以下移到輸入列正上方。
-        private const float ChatBgX = 21f, ChatBgY = 437f;
-        private const float ChatX = 34f, ChatY = 447f, ChatW = 408f, ChatH = 110f;
+        // 🔴 聊天區**不貼底框**。Lobby53(下方那一整條 bar)的圖裡就**已經烤好了聊天區的框**,
+        //    連右邊的捲軸溝都在。以前又額外貼一張 RecordChatBG 疊上去,兩個框差 5~6px →
+        //    左右各兩條線、捲軸溝變三條(使用者回報的「殘影 / shift 的框線」)。
+        //    在 stage.png 上量出來的兩個框(畫面絕對座標):
+        //        Lobby53 烤死的框: 左 33  右 449  溝 434-436  上 444  下 556
+        //        RecordChatBG    : 左 27  右 445  溝 ~433     上 444  下 559
+        //    留 Lobby53 那個(官方就是這樣一張整圖),RecordChatBG 從此沒人用。
+        //    下面這組座標全部對齊 Lobby53 的框:框內是 x 34-448、y 446-555。
+        //    ChatX 不是貼齊框內緣(34)而是 40:框從 27 換成 33 之後,34 只離左框線 1px,
+        //    加上 layout 的 2px padding 字也才離框 3px —— 官方那張圖第一個字離框線約 8px。
+        //    右緣 40+390=430,停在捲軸溝(434)左邊,不與握把打架。
+        private const float ChatX = 40f, ChatY = 446f, ChatW = 390f, ChatH = 110f;
         private const float ChatInputX = 156f, ChatInputY = 570f, ChatInputW = 250f, ChatInputH = 20f;
         private const float ChanX = 23f, ChanY = 570f;            // chatmode「當前」
         private const float RecordChatX = 75f, RecordChatY = 570f;// recordchatmode「聊天記錄」開關
@@ -622,14 +630,8 @@ namespace Sdo.UI.Screens
             //    bar 位置一偏,照官方座標擺的那排鈕看起來就沒對齊(使用者回報)。
             UIKit.AddSprite(Root, "BottomPanel", An("Lobby53"), 8f, 435f);
 
-            // 聊天顯示區的底框(RecordChatBG,437×130)。常駐,沒有人會去關它。
-            // 🔴 走 AnSolo(**自己的貼圖**)而不是 An(共用圖集):RECORDCHATBG.AN 是 stage.png 的
-            //    (341,533,437,130),而 crop 左緣**外面 2px** 就坐著一個 α=66 的粉紫鄰居(x=339)。
-            //    An 是在整張 stage.png 上取樣 + AlphaBleed,那個鄰居的顏色會被 dilate 進 crop 邊、
-            //    再被雙線性取樣拖進來 → 框的左右各多一條偏移的細線(使用者回報的「殘影 / shift 的框線」)。
-            //    AnSolo 把這一格複製到獨立貼圖(Clamp)上,沒有鄰居可滲。
-            //    不能用 AnSoloAA:那條路會把 α<128 的像素直接歸零,而這張背板整片只有 α=77 → 會整個消失。
-            UIKit.AddSprite(Root, "ChatBg", LobbyArt.AnSolo("RecordChatBG"), ChatBgX, ChatBgY);
+            // 聊天顯示區**沒有自己的底框** —— 框是上面那張 Lobby53 烤死的(見 ChatX 那段的實測表)。
+            // 再貼一張 RecordChatBG 就會變成兩個框疊在一起、左右各兩條線。
 
             // 聊天記錄。背板已經畫好框了 → ScrollRect 自己不要再上底色。
             _chatScroll = UIKit.AddVerticalScroll(Root, "ChatScroll", out _chatContent, 1f, 2, new Color(0f, 0f, 0f, 0f));
