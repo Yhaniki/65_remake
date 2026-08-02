@@ -103,6 +103,8 @@ assets/*
 /eft_online_log*.txt
 /audio_online_log.txt
 /eft_scene_log.txt
+# 官方 client 的房間動作擷取(hook_mot_online 每跑一次就整份重寫,重跑即可重建)
+/mot_online_log.txt
 /test-results.xml
 /tr.xml
 
