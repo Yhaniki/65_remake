@@ -110,8 +110,9 @@ function Convert-ShopNamesToTraditional($tsvPath, $tag) {
 # 1) Base: the offline Extracted tree -> DATA. PROFILE (per-user saves) is excluded from the mirror and
 #    SEEDED separately below — a re-package over an existing build must never overwrite the player's live
 #    profile.json / favorites.json / config.ini / keymaps.ini. (The game also self-heals: missing PROFILE files are
-#    re-created with defaults at boot, see ProfileManager/RoomConfig/KeyMap. config.ini (settings + [Profile] activeId)
-#    and keymaps.ini (key bindings) are global-not-per-user but live in DATA/PROFILE, written on first boot.)
+#    re-created with defaults at boot, see ProfileManager/RoomConfig/ProfileDefaults/KeyMap. config.ini (settings),
+#    profile.json (active character + family/level defaults) and keymaps.ini (key bindings) are global-not-per-user
+#    but live in DATA/PROFILE, written on first boot.)
 Copy-Tree (Join-Path $Off 'Extracted') $Data 'Extracted' -ExcludeDirs @(Join-Path $Off 'Extracted\PROFILE')
 Copy-TreeIfMissing (Join-Path $Off 'Extracted\PROFILE') (Join-Path $Data 'PROFILE') 'PROFILE (seed only)'
 
@@ -178,15 +179,18 @@ if (Test-Path $twSets) {
 }
 
 # 2c) Upscaled art overlay: art\upscaled mirrors the DATA layout and carries higher-resolution replacements for art
-# whose shipped resolution is too low for today's screens (UI\PLAYINGEXP 表情 cut-in: 64px 原圖 -> 192px hq3x,
-# tools\upscale_playingexp.py). Copied ON TOP of the Extracted base, so only the named files are replaced.
+# whose shipped resolution is too low for today's screens:
+#   UI\PLAYINGEXP 表情 cut-in    64px 原圖 -> 192px hq3x  (tools\upscale_playingexp.py)
+#   3DEFT\GENERIC\MAP_G\KEKKAI  512px    -> 2048px       (tools\upscale_kekkai.py) — SCN0008 地板結界
+# Copied ON TOP of the Extracted base, so only the named files are replaced.
 # The on-screen SIZE is unchanged — the loaders divide it back out (SdoExtracted.LoadImageAtDesignWidth, guarded by
-# EmojiUpscaleTests). Never mirror/mirror-delete here: the folders it lands in also hold art we must not touch.
+# EmojiUpscaleTests); the EFT texture is sampled over the full UV, so its resolution is free.
+# Never mirror/mirror-delete here: the folders it lands in also hold art we must not touch.
 $upscaled = Join-Path $Repo 'art\upscaled'
 if (Test-Path $upscaled) {
     Copy-Tree $upscaled $Data 'upscaled art overlay'
 } else {
-    Write-Warning "[package] art\upscaled not found — 表情 cut-in 維持 64px 原圖 (run tools\upscale_playingexp.py)"
+    Write-Warning "[package] art\upscaled not found — 表情 cut-in 維持 64px, KEKKAI 維持 512px (run tools\upscale_playingexp.py / upscale_kekkai.py)"
 }
 
 # 2d) Generated art overlay: art\generated carries art the original never had, baked in the original's style from

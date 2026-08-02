@@ -58,7 +58,7 @@ namespace Sdo.UI.Core
                 PlayerId = offline.Session.LocalPlayerId,
                 Name = offline.Session.LocalPlayerName,
                 Guild = offline.Session.GuildName,
-                Level = ParseLevel(RoomConfig.playerLevel),
+                Level = ProfileManager.Level,   // 這個角色的等級(profile.json;沒設過吃外層 default),永遠 ≥1
                 Gender = offline.Session.Gender,
                 // 握手就帶上真的體型與穿搭 —— 用 profile 的**快取**那份(EquippedAvatarParts),
                 // 不要在開機時去碰 AvatarItemCatalog(那會提早觸發整份商城目錄載入,很貴)。
@@ -105,8 +105,9 @@ namespace Sdo.UI.Core
         }
 
         /// <summary>
-        /// 現在的本機身分:名字 / playerId / 性別看 session(選角色畫面可能剛切過帳號),
-        /// 家族與等級看共用的 <c>config.ini [Profile]</c>(那兩項不分帳號)。
+        /// 現在的本機身分:名字 / playerId / 性別看 session(選角色畫面可能剛切過帳號),家族看 session,
+        /// 等級問 <see cref="ProfileManager.Level"/> —— 那是**這個角色自己的**等級(打歌會升,見 profile.json),
+        /// 沒設過才退回外層 DATA/PROFILE/profile.json 的共用預設值。
         /// </summary>
         private static NetPlayerIdentity LocalIdentityNow(GameSession session)
             => new NetPlayerIdentity
@@ -114,14 +115,8 @@ namespace Sdo.UI.Core
                 Name = session != null ? session.LocalPlayerName : "",
                 PlayerId = session != null ? session.LocalPlayerId : "",
                 Guild = session != null ? session.GuildName : "",
-                Level = ParseLevel(RoomConfig.playerLevel),
+                Level = ProfileManager.Level,
             };
-
-        private static int ParseLevel(string s)
-        {
-            int v;
-            return int.TryParse((s ?? "").Trim(), out v) && v > 0 ? v : 1;
-        }
 
         /// <summary>Build an app context backed by the offline mock services.</summary>
         public static AppContext CreateMock() => CreateOffline();

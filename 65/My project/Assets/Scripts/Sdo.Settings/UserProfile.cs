@@ -111,6 +111,13 @@ namespace Sdo.Settings
         public string createdAt = "";
         public string lastPlayedAt = "";
 
+        // ---- 個人資料：家族 / 等級 / 經驗值。**這個角色自己的值**；家族兩項留空、level=0 ＝「沒設過」→ 退回
+        //      config.ini [Profile] 的共用預設值（解析在 ProfileManager.FamilyName / FamilyEmblem / Level）。----
+        public string familyName = "";     // 家族名稱（畫在頭上名字那行的上面）。留空 = 沒設過 → 吃 config.ini 的預設
+        public string familyEmblem = "";   // 家族徽章：DATA/EMBLEM 底下的檔名(不含副檔名，如 SMALL43)。留空 = 沒設過 → 同上
+        public int level = 0;              // 0 = 沒設過 → 吃 config.ini 的預設等級；第一次打歌加經驗就會落地成自己的等級
+        public int exp = 0;                // 目前等級內累積的經驗值（滿級後固定 0）。每局結算加上 Sdo.Ruleset.Reward.Experience
+
         // ---- 商城/儲物櫃 持久化 (item-id 為鍵；由 WardrobeStore 在 Sdo.Shop.Wardrobe 之間橋接)。金幣也記在這裡 (wallet)。----
         public WalletSave wallet = new WalletSave();
         public int clothSlots = 9;   // 服飾欄容量：預設 1 頁=9 格(裝得下一整套穿搭)，按「服饰栏扩充」每次 +9，最多 1000（Wardrobe.ClothSlotCount）
@@ -136,6 +143,11 @@ namespace Sdo.Settings
             gender = gender == 1 ? 1 : 0;
             if (avatarId < 0) avatarId = 0;
             if (bodyShapeIndex < 0) bodyShapeIndex = 0; else if (bodyShapeIndex > 4) bodyShapeIndex = 4;   // 體型 index 夾在 0..4
+            // 家族/等級/經驗：只去頭尾空白（前後空白會讓「留空＝沒設過」的判定失真）。level 0 是合法值＝沒設過。
+            familyName = (familyName ?? "").Trim();
+            familyEmblem = (familyEmblem ?? "").Trim();
+            if (level < 0) level = 0; else if (level > PlayerLevel.MaxLevel) level = PlayerLevel.MaxLevel;
+            if (exp < 0) exp = 0;
             if (wallet == null) wallet = new WalletSave();
             if (clothSlots < 9) clothSlots = 9; else if (clothSlots > 1000) clothSlots = 1000;   // 最少 1 頁(9)；舊檔存的 3 會自動補到 9
             if (ownedItems == null) ownedItems = new OwnedItemSave[0];

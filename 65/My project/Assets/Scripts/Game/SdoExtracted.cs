@@ -266,7 +266,7 @@ namespace Sdo.Game
 
         /// <summary>Minimal uncompressed-BMP decoder (24/32-bit BI_RGB) → upright RGBA32, matching the PNG path's
         /// orientation. SDO's Eft_Hit*.bmp are all 24-bit BI_RGB; returns null for anything else (RLE/paletted/etc).</summary>
-        private static Texture2D DecodeBmp(byte[] d)
+        private static Texture2D DecodeBmp(byte[] d, bool mipChain = false)
         {
             if (d == null || d.Length < 54 || d[0] != 'B' || d[1] != 'M') return null;
             int dataOff = System.BitConverter.ToInt32(d, 10);
@@ -292,9 +292,9 @@ namespace Sdo.Game
                     px[dstRow + x] = new Color32(d[s + 2], d[s + 1], d[s], a);
                 }
             }
-            var tex = new Texture2D(w, H, TextureFormat.RGBA32, false);
+            var tex = new Texture2D(w, H, TextureFormat.RGBA32, mipChain);
             tex.SetPixels32(px);
-            tex.Apply(false);
+            tex.Apply(mipChain);
             return tex;
         }
 
@@ -846,6 +846,78 @@ namespace Sdo.Game
 
         public static Texture2D LoadTextureRawLinear(string folder, string imageName)
             => LoadTextureLinear(Path.Combine(folder, imageName));
+
+        // EFT texture cache (ScreenGameplay.ResolveEftTex). Separate from _texCache because these get mipmaps.
+        private static readonly Dictionary<string, Texture2D> _texEftCache = new Dictionary<string, Texture2D>();
+
+        /// <summary>Smallest EFT texture that gets mipmaps + aniso. 為什麼要分大小:EFT 貼圖絕大多數是小張的
+        /// 粒子圖,在螢幕上是「放大」顯示的 —— 放大只吃 mip 0,生 mip 幫不上忙又多吃 33% 記憶體。只有鋪在
+        /// 3D 大面上的才需要,目前就是 SCN0008 地板結界的 KEKKAI(2048,見 tools/upscale_kekkai.py)。</summary>
+        private const int EftMipMinSize = 1024;
+        private const int EftAniso = 8;
+
+        /// <summary>Read just the pixel dimensions out of a PNG (IHDR) or BMP (DIB) header — no decode. Lets the EFT
+        /// loader decide up-front whether this texture needs a mip chain (which must be set at construction).</summary>
+        private static bool TryReadImageSize(byte[] d, bool bmp, out int w, out int h)
+        {
+            w = h = 0;
+            if (d == null) return false;
+            if (bmp)
+            {
+                if (d.Length < 26 || d[0] != 'B' || d[1] != 'M') return false;
+                w = System.BitConverter.ToInt32(d, 18);
+                h = Mathf.Abs(System.BitConverter.ToInt32(d, 22));
+            }
+            else
+            {
+                // 8-byte signature, then the IHDR chunk: length@8, "IHDR"@12, width@16, height@20 (big-endian).
+                if (d.Length < 24 || d[12] != 'I' || d[13] != 'H' || d[14] != 'D' || d[15] != 'R') return false;
+                w = (d[16] << 24) | (d[17] << 16) | (d[18] << 8) | d[19];
+                h = (d[20] << 24) | (d[21] << 16) | (d[22] << 8) | d[23];
+            }
+            return w > 0 && h > 0;
+        }
+
+        /// <summary>
+        /// Load an EFT texture. Same sRGB import as <see cref="LoadTexture"/>, but a texture big enough to be mapped
+        /// across a 3D surface (<see cref="EftMipMinSize"/>) additionally gets a mip chain + trilinear + anisotropic
+        /// filtering.
+        ///
+        /// 為什麼需要:SCN0008 地板的結界(kikkai_3)整張鋪滿舞台地板,鏡頭幾乎貼地時遠端的一個螢幕像素會跨掉
+        /// 貼圖上幾十個 texel。沒有 mip 的話 GPU 每個像素只取一個 bilinear 樣本 —— 取樣密度遠低於訊號頻率,
+        /// 就混疊成一圈圈原圖根本沒有的摩爾紋(看起來像重影)。貼圖解析度愈高愈嚴重,所以 512 原圖反而不明顯。
+        /// mip 解決縮小方向的取樣不足,但單靠 mip 會依「最大壓縮方向」選層、把斜視角壓得過糊,所以 aniso 要一起開。
+        /// </summary>
+        private static Texture2D LoadTextureEft(string path)
+        {
+            TraceLoad(path);
+            if (_texEftCache.TryGetValue(path, out var t) && t != null) return t;
+            if (!File.Exists(path)) return null;
+            var bytes = File.ReadAllBytes(path);
+            bool bmp = path.EndsWith(".bmp", System.StringComparison.OrdinalIgnoreCase);
+            bool mip = TryReadImageSize(bytes, bmp, out int iw, out int ih) &&
+                       (iw >= EftMipMinSize || ih >= EftMipMinSize);
+
+            Texture2D tex;
+            if (bmp)
+            {
+                tex = DecodeBmp(bytes, mip);
+                if (tex == null) return null;
+            }
+            else
+            {
+                tex = new Texture2D(2, 2, TextureFormat.RGBA32, mip);
+                tex.LoadImage(bytes);   // PNG/JPG — keeps the mipChain flag the texture was created with
+            }
+            tex.filterMode = mip ? FilterMode.Trilinear : FilterMode.Bilinear;   // trilinear: 別讓 mip 交界跳動
+            tex.anisoLevel = mip ? EftAniso : 1;
+            tex.wrapMode = TextureWrapMode.Clamp;
+            _texEftCache[path] = tex;
+            return tex;
+        }
+
+        public static Texture2D LoadTextureRawEft(string folder, string imageName)
+            => LoadTextureEft(Path.Combine(folder, imageName));
 
         /// <summary>
         /// Build a sprite from <paramref name="src"/> with every per-pixel alpha multiplied by <paramref name="gain"/>

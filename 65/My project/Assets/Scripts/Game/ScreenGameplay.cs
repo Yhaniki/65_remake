@@ -1026,7 +1026,8 @@ namespace Sdo.Game
         /// </summary>
         public bool spectatorMode = false;
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
-        public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward)
+        public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward).
+                                                     // 前端每局注入 ProfileManager.Level（這個角色的等級）；自 boot 時維持 1。
         public bool localPlayerMale = false;         // set by FrontendApp from GameSession.Gender before Start()
         private static readonly string[] OpponentNames =
             { "炫炎輪火", "Polaris晴天坊", "小醜麵具", "奶茶布丁", "醉小蛇" };
@@ -5373,6 +5374,10 @@ namespace Sdo.Game
             var rows = PrepareResultRows();   // also rebuilds _roster and attaches every participant portrait
             // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
             CalculateResultOutcome(rows, out bool localWon, out int expGained, out int coinsGained);
+            // 經驗值落地：加進 active 角色的 profile.json（到門檻自動升等，曲線見 PlayerLevel）。自由模式/旁觀者的
+            // expGained 本來就是 0（見 CalculateResultOutcome）→ 不碰存檔。本局的 G幣/榮譽用進場時的等級算，升上去
+            // 的等級下一局才生效；伺服器最終名次晚到只會刷新面板（RefreshNetResultRows），不會重複入帳。
+            if (expGained > 0) ProfileManager.AddExperience(expGained);
             // 自由模式不加 G幣/EXP;旁觀者沒下場,更不該有獎勵(而且 place 會是 0 = 找不到本機)。
             // 旁觀者沒有自己的舞者 → 沒有頭貼可拍(BuildLocalHeadPortrait 會回 null,結算列用預設圖)。
             Texture head = spectatorMode ? null : BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
