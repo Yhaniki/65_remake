@@ -232,6 +232,9 @@ namespace Sdo.UI.Screens
 
         // 自己的角色資料(win4 的 char* 標籤;背板已經把「等級/經驗值/G幣/M幣/P幣」與
         // 「超舞戰績/知名度/勝率/愛慕值/金葉子」兩排標題烤進圖裡了 → 每一格只放數值)
+        // 🔴 名字這行**只能自己往下移**去貼近下一排:下一排(等級 / 超舞戰績,y=467/470)是照背板 Lobby53
+        //    烤死的標題字對位的,動它就會與烤字錯開。官方 XML 是 y=446,與下排之間空了 5px,
+        //    使用者要求再貼近 → 下移 3px(名字高 16 → 底邊 465,離下排仍留 2px,不會壓到字)。
         private const float SelfNameX = 492f, SelfNameY = 446f, SelfNameW = 130f, SelfNameH = 16f;
         private const float LevelX = 513f, LevelY = 467f;
         private const float ExpX = 522f, ExpY = 489f, ExpW = 86f, ExpH = 14f;
@@ -1952,7 +1955,7 @@ namespace Sdo.UI.Screens
 
             // 勝率那格背板已經寫著「胜率」→ 只放數字。
             var st = p != null ? p.stats : null;
-            _selfWin.text = st != null ? One(st.WinRate) + "%" : "";
+            _selfWin.text = st != null ? Two(st.WinRate) + "%" : "";
             _selfRecord.text = st != null ? LocalizationManager.Get("lobby.record", st.wins, st.losses) : "";
 
             // 知名度:購物累加的那個值,顯示成官方的「LV 2 (15)」——等級由累計值查表(FameLevel)。
@@ -1971,7 +1974,7 @@ namespace Sdo.UI.Screens
         ///
         /// 🔴 文字是**整數,不帶小數點**(使用者指定)—— 那格只有 84px 寬、字 11px,「99.9%」比「99%」
         ///    多兩個字元,壓在條上就開始擠。取整用**無條件捨去**不是四捨五入:99.6% 顯示成 100%
-        ///    會變成「條滿了卻還沒升級」。勝率那格仍然是一位小數(見 <see cref="One"/>),兩者無關。
+        ///    會變成「條滿了卻還沒升級」。勝率那格是小數兩位(見 <see cref="Two"/>),兩者無關。
         /// </summary>
         private void SetExpRate(float percent)
         {
@@ -1981,8 +1984,8 @@ namespace Sdo.UI.Screens
                 _selfExpRate.text = Mathf.FloorToInt(percent).ToString(CultureInfo.InvariantCulture) + "%";
         }
 
-        /// <summary>小數一位。用 InvariantCulture —— 跟著系統地區走的話,同一個畫面會出現「62.5%」與「62,5%」兩種寫法。</summary>
-        private static string One(double v) => v.ToString("0.0", CultureInfo.InvariantCulture);
+        /// <summary>小數兩位。用 InvariantCulture —— 跟著系統地區走的話,同一個畫面會出現「62.50%」與「62,50%」兩種寫法。</summary>
+        private static string Two(double v) => v.ToString("0.00", CultureInfo.InvariantCulture);
 
         // ================================================================ 聊天
 
