@@ -18,7 +18,7 @@ namespace Sdo.UI.Screens
 {
     /// <summary>
     /// 大廳 —— 忠實重製官方 <c>CStateCommunityHall</c> 的 <c>STATECOMMUNITYHALL.XML</c>:
-    /// 星空底(LobbyBG)、上方頻道名牌、中間**兩欄三列**的房卡、右下一排「創建舞台 / 快速進入 / 等待舞台」、
+    /// 星空底(LobbyBG)、上方頻道名牌、中間**兩欄三列**的房卡、右下一排「創建舞台 / 快速進入 / 全部舞台」、
     /// 下方聊天欄 + 自己的角色資料。座標逐字取自那份 XML(800×600、左上原點、y 向下),
     /// 所以 <c>UIKit.AddSprite(parent, name, sprite, x, y)</c> 直接餵原座標就對位。
     ///
@@ -307,7 +307,16 @@ namespace Sdo.UI.Screens
         private readonly List<RoomInfo> _rooms = new List<RoomInfo>();   // 來源(線上=server 回的;離線=Ctx.Rooms)
         private readonly List<RoomInfo> _view = new List<RoomInfo>();    // 套用「只顯示等待中」之後的
         private int _scroll;
-        private bool _waitingOnly;
+
+        /// <summary>
+        /// 只顯示「等待中」的房間。<b>預設 true</b> —— 官方大廳一進來就不列遊戲中的房,
+        /// 要按右下那顆才會把它們也放出來(所以那顆鈕預設寫的是「全部舞台」,見
+        /// <see cref="ApplyFilterSprites"/>;使用者提供的實機截圖就是這個狀態)。
+        ///
+        /// 這也解釋了官方截圖裡門牌 000 之後直接跳 010 的空洞:001..009 不是不存在,
+        /// 是那幾間**正在遊戲中**被這個預設篩掉了(或已經關掉、號碼還沒被重用)。
+        /// </summary>
+        private bool _waitingOnly = true;
         private Scrollbar _roomBar;
 
         private Button _filterBtn;
@@ -1148,9 +1157,18 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < _rooms.Count; i++)
             {
                 var r = _rooms[i];
-                if (r == null) continue;
-                if (_waitingOnly && r.Status != RoomStatus.Waiting) continue;
-                _view.Add(r);
+                if (r != null) _view.Add(r);
+            }
+
+            // 「等待舞台 / 全部舞台」篩選。🔴 **連 dev 假房間一起吃** —— 以前這條寫在上面那個迴圈裡,
+            // 只濾得到 _rooms,假房間那幾張「遊戲中」的卡片會穿過預設檢視,看起來像篩選壞掉。
+            // 原地壓縮而不是 RemoveAll(lambda):RefreshRows 每次輪詢都跑,不要每次配一個 delegate。
+            if (_waitingOnly)
+            {
+                int keep = 0;
+                for (int i = 0; i < _view.Count; i++)
+                    if (_view[i].Status == RoomStatus.Waiting) _view[keep++] = _view[i];
+                _view.RemoveRange(keep, _view.Count - keep);
             }
 
             int max = Mathf.Max(0, _view.Count - VisibleRows);
