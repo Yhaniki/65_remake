@@ -1828,6 +1828,7 @@ namespace Sdo.UI.Screens
             s.IsExternalSong = true;
             s.ExternalFolderPath = hit.folderPath ?? "";
             s.ExternalSongKey = hit.songKey ?? "";
+            s.ExternalPackId = hit.packId ?? "";             // 生成舞蹈的 seed（見 Sdo.Game.ExternalDps）
             s.ExternalChartFormat = hit.chartFormat;
             s.ExternalAudioPath = hit.audioPath ?? "";
             // 譜面路徑一定要填:協定要求外部歌帶 ChartRelPath(空的話 server 直接回
@@ -5394,6 +5395,9 @@ namespace Sdo.UI.Screens
             s.ExternalLevel = hit.DisplayLevel(slot);
             s.ExternalFolderPath = hit.folderPath;
             s.ExternalSongKey = hit.songKey ?? "";
+            // 舞蹈的 seed:**內容指紋**,不是資料夾名 —— 傳檔來的那份放在 connect/<歌名 - 作者 [tag]>/,
+            // 資料夾名與持有原檔的人不同,吃資料夾名的話同一場的兩個人會跳完全不同的舞(見 Sdo.Game.ExternalDps)。
+            s.ExternalPackId = hit.packId ?? "";
             // 生成編舞的輸入一樣要走**本機**這筆 catalog:舞是一首歌一支,不能因為房主選了 hard
             // 就跟自己單機玩 easy 時生出的舞不同(見 Sdo.Osu.DanceInputs)。少了這三行,線上開外部歌
             // 會退回「選到那張譜自己的 span/bpm」—— 正是這次要修掉的那個 bug,只是躲在連線這條路徑上。

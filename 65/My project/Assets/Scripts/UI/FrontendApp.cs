@@ -647,6 +647,7 @@ namespace Sdo.UI
                 game.oggPath = s.ExternalAudioPath;
                 game.externalFolder = s.ExternalFolderPath;
                 game.externalSongKey = s.ExternalSongKey;
+                game.externalPackId = s.ExternalPackId;   // 生成舞蹈的 seed：內容指紋，兩台一定算出同一個
                 // 生成編舞吃「這首歌的」BPM 跟「所有難度的譜」，不是只看選到這張（換難度不換舞，見 Sdo.Osu.DanceInputs）
                 game.songBpm = s.ExternalSongBpm;
                 game.songChartPaths = s.ExternalSongChartPaths;

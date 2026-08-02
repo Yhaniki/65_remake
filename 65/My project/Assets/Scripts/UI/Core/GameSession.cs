@@ -60,6 +60,9 @@ namespace Sdo.UI.Core
         // 寫進歌曲資料夾並記在該資料夾的 sdoinfo.dat（同一首歌永遠生出同一支舞，且只生一次）。
         public string ExternalFolderPath = "";  // 歌曲資料夾（CD 圖／sdoinfo.dat／生成的 .dps 都放這）
         public string ExternalSongKey = "";     // 資料夾內的識別（"" = 該資料夾只有一首）
+        // 🔴 生成舞蹈的 seed 是這個,不是資料夾名:缺歌傳檔會把歌放進 connect/<歌名 - 作者 [packId 前8碼]>/,
+        // 兩邊的資料夾名不同 → 用資料夾名當 seed 會讓同一首歌在兩台生出完全不同的舞(見 Sdo.Game.ExternalDps)。
+        public string ExternalPackId = "";      // 這首歌所在資料夾的跨電腦身分（"" = 算不出 → 退回資料夾名）
         // ---- 生成編舞要的「整首歌」資料：舞是一首歌一支，不能因為換難度就變另一支（見 Sdo.Osu.DanceInputs）----
         // 這首**歌**的 BPM（選歌顯示的那個）；<= 0 = 不知道 → 退回選到那張譜自己算出來的。
         public double ExternalSongBpm;

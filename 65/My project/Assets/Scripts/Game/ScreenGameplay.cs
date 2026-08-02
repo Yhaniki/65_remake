@@ -249,10 +249,13 @@ namespace Sdo.Game
         public string danceMot = "MOTION/WDANCE0002.MOT";      // fallback dance motion if no DPS
         public string restMot = FemaleGameplayRestMot;         // 男版在 ConfigureAvatarGender 換成 MaleGameplayRestMot
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
-        // External (osu/StepMania) songs have no official .dps: these two identify the song so ExternalDps can generate
+        // External (osu/StepMania) songs have no official .dps: these identify the song so ExternalDps can generate
         // one — deterministically, once — into its folder and record it in the folder's sdoinfo.dat (see EnsureExternalDance).
         public string externalFolder = "";     // the song's folder (SongCatalog.Entry.folderPath)
         public string externalSongKey = "";    // which song in that folder ("" = its only one; ExternalSongGrouper key)
+        // 舞蹈的 RNG seed：資料夾的內容指紋(SongCatalog.Entry.packId)。缺歌傳檔的兩端資料夾名不同、
+        // .dps 又不隨檔傳(收端自己重生)，所以 seed 只能吃這個，吃資料夾名會讓兩邊跳不同的舞。"" → 退回資料夾名。
+        public string externalPackId = "";
         private readonly Dictionary<string, MotLoader> _motCache = new Dictionary<string, MotLoader>();
         // 這首歌的動作外掛樹（overlay）：一個自帶 DANCE + MOTION/AUMOTION 的歌包，查 .mot 時先贏、找不到才退回 base
         // 資料根。由這首歌 .dps 的所在樹推導（見 MotionOverlay）；"" = 沒有外掛，只用 base 根。每次載歌前重設。
@@ -1898,7 +1901,7 @@ namespace Sdo.Game
             if (chartFormat == 0 || _map == null || string.IsNullOrEmpty(externalFolder)) return;
             if (!string.IsNullOrEmpty(dpsPath) && File.Exists(Path.Combine(SdoExtracted.Root, dpsPath))) return;
             // songBpm / songChartPaths 是**這首歌**的（不是這張譜的）：一首歌一支舞，換難度不換舞（見 Sdo.Osu.DanceInputs）。
-            string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, _map, songBpm,
+            string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, externalPackId, _map, songBpm,
                                                      chartFormat, chartSeed, songChartPaths, songChartIndices);
             if (!string.IsNullOrEmpty(generated)) dpsPath = generated;   // absolute → LoadAsset uses it as-is
         }

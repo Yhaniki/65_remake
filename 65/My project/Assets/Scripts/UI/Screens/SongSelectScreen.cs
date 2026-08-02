@@ -1531,6 +1531,7 @@ namespace Sdo.UI.Screens
                 s.ExternalLevel = _selected.DisplayLevel(pickedDifficulty);   // 顯示等級(osu 或 minacalc)→ 帶進遊戲顯示同一個 LV
                 s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdoinfo.dat 都寫在歌曲自己的資料夾
                 s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
+                s.ExternalPackId = _selected.packId;             // 生成舞蹈的 seed：吃內容指紋，換台電腦（含傳檔來的）也是同一支舞
                 s.ExternalSongBpm = _selected.bpm;               // 生成編舞的節拍網格：整首歌一個 BPM，換難度不會換舞
                 // 生成編舞要量「這首歌所有難度」的頭尾（不是只有選到這張）—— 三個格子照原順序帶過去，空的留 ""
                 s.ExternalSongChartPaths = new[] { _selected.ChartPath(0), _selected.ChartPath(1), _selected.ChartPath(2) };
