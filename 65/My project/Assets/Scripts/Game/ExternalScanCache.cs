@@ -43,7 +43,9 @@ namespace Sdo.Game
         //      the folder's first sample instead, so all external-song scan records must be rebuilt.
         // v12: osu PreviewTime:0 now means "use the midpoint", and zero no longer hides a positive preview point from
         //      another difficulty in the same set. Cached previewStartMs values must be rebuilt.
-        public const int Version = 12;
+        // v13: 難度（`level` 與 `msd`）多了炸彈＋變速加成（Sdo.Osu.ChartDifficultyBonus）——同一張譜多灑了雷、
+        //      或多了 BPM 換段 / osu 綠線 SV / 停拍，難度會往上走一點點（最多 +8%）。舊快取存的是沒有這層的值。
+        public const int Version = 13;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

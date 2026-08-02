@@ -889,11 +889,13 @@ namespace Sdo.Osu
             if (beatmap == null) return new ChartStats { Level = fallbackLevel };
             var stats = new ChartStats
             {
+                // 兩套算法(osu 星數 / MinaCalc MSD)都吃同一份炸彈＋變速加成(ChartDifficultyBonus)——
+                // 同一張譜多灑了雷或多了變速，不管房間設定用哪套計器，難度都會往上走一點點。
                 Level = ManiaStarRating.Level(beatmap),
                 DurationSec = (int)Math.Round(Math.Max(0.0, beatmap.LastNoteMs) / 1000.0),
                 // Etterna MinaCalc overall MSD (raw). Computed from the same parsed beatmap — the slot ordering still
                 // uses the osu star LEVEL; this is carried alongside for the MinaCalc difficulty display.
-                Msd = ManiaMsd.Overall(beatmap),
+                Msd = ManiaMsd.OverallAdjusted(beatmap),
             };
             if (CollapseShortHolds) beatmap.CollapseShortHolds();
             stats.JudgedNotes = beatmap.TotalNotes;

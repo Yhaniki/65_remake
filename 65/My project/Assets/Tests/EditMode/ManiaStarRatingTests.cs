@@ -44,23 +44,26 @@ namespace Sdo.Tests
             Assert.GreaterOrEqual(ManiaStarRating.Level(dense), 1);
         }
 
-        // 炸彈是要避開的（永遠不判定，踩到只扣血），所以完全不能進星數 —— 它進去會雙重灌水：自己加一份
+        // 炸彈是要避開的（永遠不判定，踩到只扣血），所以完全不能進 strain —— 它進去會雙重灌水：自己加一份
         // strain，又縮短後面真音符的間隔讓衰減來不及發生。灑滿雷的慢譜曾經因此從 LV6 虛高到 LV44。
         [Test]
-        public void Bombs_Do_Not_Change_The_Star_Rating()
+        public void Bombs_Do_Not_Change_The_Raw_Star_Rating()
+        {
+            Assert.AreEqual(ManiaStarRating.Calculate(Stream(40, 300)), ManiaStarRating.Calculate(Mined(40, 300)), 1e-9,
+                "炸彈不判定，不能進 strain");
+        }
+
+        // ……但顯示的星數/等級**要**看得出來：同一張譜灑了雷就是比較難打（要閃），只是加得很小
+        // （<= +4%，見 ChartDifficultyBonus.BombMax）。
+        [Test]
+        public void Bombs_Nudge_The_Displayed_Star_Rating_Up()
         {
             var plain = Stream(40, 300);
-            var mined = Stream(40, 300);
-            // 每個真音符之間塞 3 顆炸彈（其餘三條 lane），密度是音符的三倍
-            for (int i = 0; i < 40; i++)
-                for (int lane = 0; lane < 4; lane++)
-                    if (lane != i % 4)
-                        mined.HitObjects.Add(new OsuHitObject(lane, 500 + i * 300 + 150, null, isBomb: true));
-            mined.HitObjects.Sort((a, b) => a.StartTimeMs.CompareTo(b.StartTimeMs));
-
-            Assert.AreEqual(ManiaStarRating.Calculate(plain), ManiaStarRating.Calculate(mined), 1e-9,
-                "炸彈不判定，不能影響星數");
-            Assert.AreEqual(ManiaStarRating.Level(plain), ManiaStarRating.Level(mined));
+            var mined = Mined(40, 300);
+            double a = ManiaStarRating.CalculateAdjusted(plain), b = ManiaStarRating.CalculateAdjusted(mined);
+            Assert.Greater(b, a, "灑滿雷的譜顯示星數要略高");
+            Assert.LessOrEqual(b, a * (1.0 + ChartDifficultyBonus.BombMax) + 1e-9, "但只能是「略」高");
+            Assert.GreaterOrEqual(ManiaStarRating.Level(mined), ManiaStarRating.Level(plain));
         }
 
         // 只有炸彈的譜＝沒有一顆打得到的音符 → 0 星（跟空譜同義）。
@@ -78,6 +81,18 @@ namespace Sdo.Tests
             var bm = new OsuBeatmap { Keys = 4 };
             for (int i = 0; i < count; i++)
                 bm.HitObjects.Add(new OsuHitObject(i % 4, 500 + i * stepMs));
+            return bm;
+        }
+
+        // 同一條 stream，但每個真音符之間塞 3 顆炸彈（其餘三條 lane），密度是音符的三倍。
+        private static OsuBeatmap Mined(int count, int stepMs)
+        {
+            var bm = Stream(count, stepMs);
+            for (int i = 0; i < count; i++)
+                for (int lane = 0; lane < 4; lane++)
+                    if (lane != i % 4)
+                        bm.HitObjects.Add(new OsuHitObject(lane, 500 + i * stepMs + stepMs / 2, null, isBomb: true));
+            bm.HitObjects.Sort((a, b) => a.StartTimeMs.CompareTo(b.StartTimeMs));
             return bm;
         }
     }

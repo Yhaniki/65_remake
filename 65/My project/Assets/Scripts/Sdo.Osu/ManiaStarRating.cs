@@ -26,8 +26,17 @@ namespace Sdo.Osu
         private const int LevelMin = 1, LevelMax = 999;
         private const double LevelPerStar = 7.0;     // display scale: LV = round(star × this)
 
-        /// <summary>GN level for a chart = round(star × 7), clamped 1..999. 0-note charts → LevelMin.</summary>
-        public static int Level(OsuBeatmap bm) => LevelFromStar(Calculate(bm));
+        /// <summary>GN level for a chart = round(star × 7), clamped 1..999. 0-note charts → LevelMin.
+        /// 走的是含炸彈/變速加成的 <see cref="CalculateAdjusted"/> —— 螢幕上的等級要看得出「同一張譜多灑了雷/多了變速」。</summary>
+        public static int Level(OsuBeatmap bm) => LevelFromStar(CalculateAdjusted(bm));
+
+        /// <summary>
+        /// **顯示用**星數 ＝ <see cref="Calculate"/> × <see cref="ChartDifficultyBonus.Multiplier"/>：同一張譜多灑了炸彈、
+        /// 或多了變速（BPM 換段 / osu 綠線 SV / 停拍）時比原版高一點點（最多 +8%）。純 osu 星數留在
+        /// <see cref="Calculate"/>，那支要跟 reference 對得起來，不能摻自己的東西。
+        /// </summary>
+        public static double CalculateAdjusted(OsuBeatmap bm)
+            => Calculate(bm) * ChartDifficultyBonus.Multiplier(bm);
 
         /// <summary>round(star × 7) clamped to 1..999.</summary>
         public static int LevelFromStar(double star)

@@ -37,8 +37,18 @@ namespace Sdo.Osu
             };
         }
 
-        /// <summary>Just the overall MinaCalc MSD (0 on empty/short charts).</summary>
+        /// <summary>Just the overall MinaCalc MSD (0 on empty/short charts). 純 MinaCalc —— 顯示用的請走
+        /// <see cref="OverallAdjusted"/>。</summary>
         public static float Overall(OsuBeatmap bm, float rate = 1.0f) => Compute(bm, rate).Overall;
+
+        /// <summary>
+        /// **顯示用** overall MSD ＝ <see cref="Overall"/> × <see cref="ChartDifficultyBonus.Multiplier"/>：同一張譜多灑了
+        /// 炸彈（MinaCalc 的 NoteInfo 裡根本沒有炸彈）、或多了變速（BPM 換段 / osu 綠線 SV / 停拍，MinaCalc 只看
+        /// 音符時刻，全都看不到）時比原版高一點點（最多 +8%）。MinaCalc 本體維持逐位相符，加成是外面獨立的一層。
+        /// 選歌畫面的 MSD 欄（<c>ExternalSongScanner.StatsOf</c>）存的就是這個值。
+        /// </summary>
+        public static float OverallAdjusted(OsuBeatmap bm, float rate = 1.0f)
+            => (float)(Overall(bm, rate) * ChartDifficultyBonus.Multiplier(bm));
 
         // ---- displayed difficulty number (MinaCalc mode) ----
         // The raw MSD (~10..30) is mapped to a shown difficulty by MSD^Exponent × Scale. Tunables — retune here to
