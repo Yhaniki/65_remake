@@ -5303,7 +5303,8 @@ namespace Sdo.Game
         // replay. Phase A implements FinishPose; Settle/Replay are filled in by later phases.
         private void ResultTick()
         {
-            UpdateHeadPortraitCam();   // keep the local head-portrait cam tracking the (moving) head each frame
+            UpdateHeadPortraitCam();          // keep the local head-portrait cam tracking the (moving) head each frame
+            SyncResultHeadPortraitTuning();   // 遠端那幾格跟著同一組(F4 可調的)取景參數走
             float el = Time.time - _resultPhaseStart;
             switch (_resultPhase)
             {

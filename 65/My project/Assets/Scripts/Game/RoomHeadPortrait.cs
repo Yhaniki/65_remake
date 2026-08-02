@@ -25,6 +25,29 @@ namespace Sdo.Game
         /// <summary>true = 蓬鬆髮/髮飾頂出框時,把鏡頭往上挪(頭大小仍不變,但構圖會隨髮型上下移)。
         /// 預設 false:使用者要「完全不看頭髮」——大小與位置固定,超出框的髮頂就讓它被切掉。</summary>
         public bool fitHairTop = false;
+
+        // ---- 只對頭骨取景(結算列用) -----------------------------------------------------------------------------
+        /// <summary>true = 取景**只對頭骨**(<see cref="HeadBoneFraming"/>),完全不量 mesh、也不跟頭。
+        ///
+        /// 房間的頭貼是量臉框(換髮型頭恆等大),但**結算列**必須跟本機那一列一模一樣,而本機那一列早就
+        /// 改成只對頭骨了(見 ScreenGameplay.UpdateHeadPortraitCam 的註解:量幾何會被翅膀那種離群配件甩飛)。
+        /// 更直接的病灶:量框是拿 <see cref="_idleMot"/> 第 0 幀的姿勢量的,而穿飛行翅膀的人那支 idle 是
+        /// flystay(浮空前傾)—— 姿勢不同 → 臉的框不同 → 相機高度/距離就跟沒穿翅膀的人不一樣
+        /// (使用者回報「有翅膀的人頭貼相機位置高度會不一樣」)。骨架每套裝扮都同一副,只對頭骨就沒有這件事。</summary>
+        public bool boneFraming = false;
+        /// <summary>只對頭骨時的瞄準偏移(模型單位,相對頭骨)。預設 = 官方構圖(X 不偏、Y 抬到臉/髮之間)。</summary>
+        public Vector3 boneAimOffset = new Vector3(0f, HeadBoneFraming.AimUpModel, 0f);
+        /// <summary>只對頭骨時的相機距離(模型單位)。</summary>
+        public float boneDistModel = HeadBoneFraming.DistModel;
+        /// <summary>true = 穿飛行翅膀也**不**換飛行 clip(照地面 idle 演)。結算列用:那裡沒有在飛,
+        /// 而 flystay 的浮空前傾會讓頭貼跟其他人對不齊。</summary>
+        public bool groundClipsOnly = false;
+        /// <summary>待機 clip 換成這一支(相對路徑;null/空 = 用房間的大廳待機)。
+        ///
+        /// 結算列要的是**舞台**待機(WREST0072 / MREST0082)—— 本機那一列是它(BuildIdleHeadAvatar),
+        /// 遠端那幾列不指定的話會用大廳待機(WREST0056 / MREST0067),於是「同一排頭像裡只有我的動作不一樣」,
+        /// 而且取景基準(頭骨在第 0 幀的位置)也跟著差一截。</summary>
+        public string idleMotOverride;
         public int rtWidth = 192, rtHeight = 152;               // matches the ROOM AvatarView slot aspect (96:76 ≈ 1.263)
 
         /// <summary>Set by the host: returns true while the room avatar is walking, so the framed head mirrors it.</summary>
@@ -97,8 +120,11 @@ namespace Sdo.Game
             // fly 前傾滑動,頭貼才跟著一樣做飛行動作 (使用者需求 #3;SpecialMotionItems 同一條規則)。
             _male = male;
             _wingFlying = SpecialMotionItems.WearsFlyingWing(avatarParts);
-            _flyClips = _wingFlying;   // 站上旁觀席時由 SetSpectating 關掉(全身也不飛,見 RoomScene3D.FlyingAt)
+            _flyClips = _wingFlying && !groundClipsOnly;   // 站上旁觀席時由 SetSpectating 關掉(全身也不飛,見 RoomScene3D.FlyingAt)
             LoadMirrorClips();
+            // 只對頭骨取景時沒人會去 SetClip(那是量框那條路在做的),而且頭骨位置本身就是**姿勢**的函數 ——
+            // 先把 idle 第 0 幀擺出來再量,每個人才是從同一個姿勢起算。
+            if (boneFraming && _idleMot != null) { _avatar.SetClip(_idleMot); _avatar.PoseFrame(0f); }
 
             _rt = new RenderTexture(rtWidth, rtHeight, 16, RenderTextureFormat.ARGB32) { name = "RoomHeadPortraitRT" };
             var camGo = new GameObject("RoomHeadPortraitCam");
@@ -149,7 +175,10 @@ namespace Sdo.Game
             _walkMot = SdoRoomAvatar.LoadMot(_flyClips ? SpecialMotionItems.FlyWalkMot(_male)
                                                        : (_male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot));
             _idleMot = SdoRoomAvatar.LoadMot(_flyClips ? SpecialMotionItems.FlyIdleMot(_male)
-                                                       : (_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot));
+                                                       : (!string.IsNullOrEmpty(idleMotOverride) ? idleMotOverride
+                                                          : (_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot)));
+            if (_idleMot == null && !string.IsNullOrEmpty(idleMotOverride))   // 指定的那支載不到 → 退回房間的待機
+                _idleMot = SdoRoomAvatar.LoadMot(_male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
         }
 
         /// <summary>本機是不是站在旁觀席上。旁觀時**頭貼也不做飛行動作** —— 全身那邊已經把整組飛行特性
@@ -158,7 +187,7 @@ namespace Sdo.Game
         /// 換過去是**硬切**,與房間 avatar 同一條規則(旁觀動作不用平滑過場)。</summary>
         public void SetSpectating(bool spectating)
         {
-            bool fly = _wingFlying && !spectating;
+            bool fly = _wingFlying && !spectating && !groundClipsOnly;
             if (fly == _flyClips) return;
             _flyClips = fly;
             LoadMirrorClips();
@@ -214,10 +243,13 @@ namespace Sdo.Game
             float facing = FacingProvider != null ? FacingProvider() : 0f;
             t.localRotation = Quaternion.Euler(0f, yaw + facing, 0f);
 
-            if (!_framed) TryFreezeFraming();
+            if (!_framed && !boneFraming) TryFreezeFraming();
 
             Vector3 target; float dist;
-            if (_framed)
+            if (boneFraming)   // 只對頭骨:固定取景,不量 mesh、不跟頭(與本機結算頭貼同一條路)
+                HeadBoneFraming.Compute(t.TransformPoint(_headModelPos), avatarScale, zoom,
+                                        boneAimOffset, boneDistModel, out target, out dist);
+            else if (_framed)
             {
                 // (1) root 骨的平移(走路時整個人前進/浮沉)照補,一格不差。
                 Vector3 root = _avatar.BoneModelPos(RootBone);

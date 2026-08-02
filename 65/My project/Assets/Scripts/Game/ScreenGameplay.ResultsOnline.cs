@@ -71,8 +71,16 @@ namespace Sdo.Game
                     portrait.yaw = headAvatarYaw;
                     portrait.avatarScale = headAvatarScale;
                     portrait.zoom = headZoom;
-                    portrait.headFrameDist = 1.9f;
-                    portrait.headAimUp = 0.25f;
+                    // 結算列的每一格頭貼都要**同一個取景**:只對頭骨(不量任何 mesh)、而且不演飛行 idle。
+                    // 這兩條就是本機那一列的作法(UpdateHeadPortraitCam);少了它們,穿飛行翅膀的人會用
+                    // flystay(浮空前傾)的姿勢去量臉框 → 相機高度/距離跟別人不一樣(使用者回報的頭貼高低差)。
+                    portrait.boneFraming = true;
+                    portrait.boneAimOffset = headAimOffset;
+                    portrait.boneDistModel = headPortraitDist;
+                    portrait.groundClipsOnly = true;
+                    // 待機也要跟本機那一列同一支(**舞台**待機,不是大廳待機)—— 不然同一排頭像裡
+                    // 只有自己的動作不一樣,而且取景基準(頭骨第 0 幀的位置)也差一截。
+                    portrait.idleMotOverride = dancer.Male ? MaleGameplayRestMot : FemaleGameplayRestMot;
                     portrait.fitHairTop = false;
                     portrait.rtWidth = 192;
                     portrait.rtHeight = 216;
@@ -90,6 +98,26 @@ namespace Sdo.Game
 
                 if (portrait != null) row.Head = portrait.Texture;
                 rows[i] = row;
+            }
+        }
+
+        /// <summary>把結算頭貼的取景參數推回每一格(F4 滑桿是活的,而 RoomHeadPortrait 讀的是自己那份複本)。
+        /// 「每一列頭貼共用同一組取景」這個不變量,要在調整當下也成立 —— 否則一拉滑桿就只有本機那一列會動。
+        /// 每幀跑一次,幾格而已(見 <see cref="ResultTick"/>)。</summary>
+        private void SyncResultHeadPortraitTuning()
+        {
+            if (_resultHeadPortraits.Count == 0) return;
+            foreach (var kv in _resultHeadPortraits)
+            {
+                var p = kv.Value;
+                if (p == null) continue;
+                p.fov = headPortraitFov;
+                p.pitchDeg = headPitchDeg;
+                p.yaw = headAvatarYaw;
+                p.avatarScale = headAvatarScale;
+                p.zoom = headZoom;
+                p.boneAimOffset = headAimOffset;
+                p.boneDistModel = headPortraitDist;
             }
         }
 

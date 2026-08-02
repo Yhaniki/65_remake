@@ -26,10 +26,16 @@ namespace Sdo.Game
         /// 通常 X 用來把臉擺正、Y 用 <see cref="AimUpModel"/>);<paramref name="zoom"/> &gt;1 = 拉遠。</summary>
         public static void Compute(Vector3 headBoneWorld, float scale, float zoom, Vector3 aimOffsetModel,
                                    out Vector3 target, out float dist)
+            => Compute(headBoneWorld, scale, zoom, aimOffsetModel, DistModel, out target, out dist);
+
+        /// <summary>同上,但相機距離自己指定(模型單位)—— 結算列的每個頭貼都要用**同一組**距離/瞄準值,
+        /// 本機那一列是 F4 可調的 <c>ScreenGameplay.headPortraitDist</c>,遠端那幾列跟著它走。</summary>
+        public static void Compute(Vector3 headBoneWorld, float scale, float zoom, Vector3 aimOffsetModel,
+                                   float distModel, out Vector3 target, out float dist)
         {
             float s = Mathf.Max(0.01f, scale);
             target = headBoneWorld + aimOffsetModel * s;
-            dist = DistModel * s * Mathf.Max(0.05f, zoom);
+            dist = distModel * s * Mathf.Max(0.05f, zoom);
         }
     }
 }
