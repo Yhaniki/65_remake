@@ -49,6 +49,7 @@ namespace Sdo.Game
         // result sequence flags/timers: rows (SE_0020, 500ms apart) → EXP/G roll (SE_0021) → win/lose banner zoom (SE_0022)
         private bool _expSnd, _bannerShown, _bannerLocalWon, _gameOver;
         private bool _showBanner = true;   // 出 YOU WIN/LOSE 旗? 自由模式=false (仍播 SE_0022);GAME OVER 也不出旗
+        private bool _showRank = true;     // 畫每列最左的名次數字? 自由模式=false (沒有排名);GAME OVER 圖不受影響照畫
         private float _bannerStart;
         // GAME OVER (RANK/7.png) sprite — drawn IN the failed (local) player's rank column as a normal row child, so it
         // slides in with that row (no separate banner / animation) and replaces their rank number.
@@ -220,12 +221,12 @@ namespace Sdo.Game
         /// banner scale-in and row slide-in. <paramref name="localWon"/> picks the YouWin / YouLose banner.</summary>
         public void Show(string songTitle, string difficulty, Row[] rows, bool localWon,
                          int expGained, int coinsGained, Texture localHead = null, bool gameOver = false,
-                         System.Action<string> playSe = null, bool showBanner = true)
+                         System.Action<string> playSe = null, bool showBanner = true, bool showRank = true)
         {
             ClearRows();
             _playSe = playSe; _rowSnd = new bool[rows != null ? rows.Length : 0];
             _expSnd = false; _bannerShown = false; _bannerStatic = false; _rewardArmed = false; _localHead = localHead; _gameOver = gameOver;
-            _showBanner = showBanner;
+            _showBanner = showBanner; _showRank = showRank;
             string dir = SdoExtracted.ResultStatisDir;
 
             // Song name + level are no longer drawn at the top of the panel — the gameplay HUD's bottom song-info row
@@ -264,11 +265,12 @@ namespace Sdo.Game
 
             // rank badge (rank/<n>.png) at (0, y-8) — STATISTIC rank NumLabel y=-8. The failed (local) player shows the
             // GAME OVER graphic in this slot instead of their rank number; either way it's a row child → slides in with the row.
+            // 自由模式 (_showRank=false) 沒有名次可言 → 這格留空,但 GAME OVER 圖照畫(它交代的是死亡,不是名次)。
             if (r.IsLocal && _gameOver)
             {
                 if (_overSprite) Child(rowRoot, NewSR("GameOver", _overSprite, OrderRow), 0, y - 8);
             }
-            else
+            else if (_showRank)
             {
                 if (_rankBadge.TryGetValue(r.Rank, out var badge) == false)
                 { badge = LoadPanelImage(dir, "rank/" + Mathf.Clamp(r.Rank, 1, 8) + ".PNG"); _rankBadge[r.Rank] = badge; }
