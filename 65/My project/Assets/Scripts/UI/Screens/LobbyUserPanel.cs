@@ -88,7 +88,8 @@ namespace Sdo.UI.Screens
         private const float ColIconX = 0f, ColIconW = 16f;
         private const float ColIcon2X = 16f, ColIcon2W = 16f;
         private const float ColLevelX = 32f, ColLevelW = 18f;
-        private const float ColWhereX = 50f, ColWhereW = 35f;
+        // 位置欄(「大厅」/ 三位房號)比官方欄位累加值再**往右 8px**(使用者指定,對實機微調過)。
+        private const float ColWhereX = 50f + 8f, ColWhereW = 35f;
         private const float ColNameX = 85f, ColNameW = 135f;
         // 顏色與粗細照實機取色(使用者逐格對過)——**不要**改回 XML 那組:XML 寫的是
         // baf684 / ecffac / fffbe0,但實機畫出來是下面這組,而且暱稱是**純白細體**、
@@ -365,18 +366,21 @@ namespace Sdo.UI.Screens
                                        ColIconX, (RowH - 23f) * 0.5f);
             if (icon != null) icon.raycastTarget = false;
 
-            // 第二欄 = 那顆粉紅心。官方**不分性別一律粉心**(實機截圖裡綠色小人那幾列也是粉心),
-            // 所以它不是性別 —— 用途待考,先照著擺,版位與視覺才對得上。
+            // 第二欄 = **親密度**(qinmi.png 的 QINMI1..5:一根直立的溫度計柱 + 底下一顆小紅心,13×24)。
+            // 這一欄的存在正是 qinmidu.an「親密度」那三個字的由來,也是 AllUserList 比 FriendList
+            // **多出來的那一欄**(6 欄 vs 5 欄)。
             //
-            // 🔴 用 <see cref="LobbyArt.AnSolo"/>,**不要**用 AnSoloAA:後者走 LoadAnSoloMip,
-            //    那條路是給圓盤按鈕用的,會先把 α&lt;128 的像素**整片砍成 0** 再超取樣。這顆心只有
-            //    18×16、邊緣整圈都是柔和 AA —— 實測 222 個不透明像素會被砍到剩 144(少 35%),
-            //    輪廓縮一圈又變硬,與官方那顆對不上(使用者回報「愛心跟官方不一樣」)。
-            //    AnSolo 只做「單獨裁出來 + 去白 matte」,柔邊原樣保留,才是官方 alpha blend 的樣子。
-            //    (仍然不能用 LobbyArt.An:這顆心在 stage.png 裡左邊緊貼著 male 那顆**藍心**,
-            //     共用圖集的雙線性取樣會把藍色拖進來。)
-            var heart = UIKit.AddSprite(row, "heart", LobbyArt.AnSolo("female"), ColIcon2X, (RowH - 16f) * 0.5f);
-            if (heart != null) heart.raycastTarget = false;
+            // 🔴 **不是** female.an 那顆心。那顆是 18×16 的胖心,擺上去會與旁邊 19×23 的小人一樣大 ——
+            //    官方實機那個明顯**小一截而且是細長的**(使用者連兩輪回報「愛心跟官方根本不一樣」)。
+            //    female / male / man 那三顆心(藍/粉/灰)在這份 UI 裡另有用途,不歸名單用。
+            //
+            // 這個重製版沒有親密度系統 → 一律 QINMI1(最低那級,柱子是灰的)。非好友本來就是 0,
+            // 官方「全部」分頁看到的也正是這一級;真做出親密度時把 1 換成 1..5 就好,其餘不用動。
+            //
+            // 🔴 走 AnSolo:QINMI1..5 在 qinmi.png 裡是**橫向緊貼**的(x = 52/39/26/13/0,間隔正好 13),
+            //    共用圖集的雙線性取樣會把隔壁那一級的柱子拖進來。
+            var qinmi = UIKit.AddSprite(row, "qinmi", LobbyArt.AnSolo("qinmi1"), ColIcon2X, (RowH - 24f) * 0.5f);
+            if (qinmi != null) qinmi.raycastTarget = false;
 
             // 等級 / 位置:官方這兩欄是粗體(名字那欄不是)。
             var lv = Label(row, "lv", ColLevelX, ColLevelW, LevelColor, TextAlignmentOptions.MidlineRight);
