@@ -33,13 +33,16 @@ namespace Sdo.UI
         /// (e.g. GenderSelectScreen) checks this so its own ESC handler stays out of the way while the shop is up.</summary>
         public bool ShopOpen => _shop != null && _shop.IsOpen;
 
-        /// <summary>True while any room-reachable modal (商城 / 儲物櫃 / 設定) is layered over the current screen. The room
-        /// gates its ESC→選角色 on this so ESC inside a modal doesn't jump past it. Modals don't change Flow.Current, so
-        /// the room can't tell them apart from a screen check alone.</summary>
+        /// <summary>True while any modal (商城 / 儲物櫃 / 設定 / 玩家資訊 / 輸入房號 / 創建舞台 / 房間信息) is layered over the
+        /// current screen. 房間與大廳都用它擋自己的 ESC→退上一層,免得 ESC 在 modal 裡按下去卻穿過去把整個畫面退掉。
+        /// Modals don't change Flow.Current, so a screen check alone can't tell them apart.
+        /// (創建舞台/房間信息只在大廳開得到,房間那邊看到的永遠是 false。)</summary>
         public bool AnyModalOpen => ShopOpen
             || (_wardrobe != null && _wardrobe.IsOpen)
             || (_option != null && _option.IsOpen)
             || (_playerInfo != null && _playerInfo.IsOpen)
+            || (_roomCreate != null && _roomCreate.IsOpen)
+            || (_roomInfo != null && _roomInfo.IsOpen)
             || JoinRoomOpen;
 
         /// <summary>True while 個人資料(玩家信息)視窗開著。大廳用它讓自己的 F4 角色調校面板讓路 ——

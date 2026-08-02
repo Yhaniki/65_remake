@@ -606,6 +606,53 @@ namespace Sdo.UI.Screens
             hide();
         }
 
+        /// <summary>
+        /// ESC 逐層退出:選單(放大鏡/NEW筆/頻道/表情)開著 → 先收選單;打字框有草稿(或正在 IME 組字) → 只清草稿;
+        /// 都不是 → 等同右上那顆「登出」鈕,退回選男女(見 <see cref="OnLogout"/>)。
+        ///
+        /// 🔴 **不能像房間那樣拿「輸入框有 focus」當守門** —— 大廳的打字框在送出訊息／換頻道／點人名之後
+        ///    都會自己 ActivateInputField 搶回 focus(見 SendChat / SetChatChannel),等於幾乎永遠是 focused,
+        ///    以 focus 守門的話 ESC 一輩子不會有反應。這裡改看「草稿是不是空的」:有字先清、空了才退畫面。
+        ///
+        /// modal(商城/儲物櫃/設定/玩家資訊/輸入房號/創建舞台/房間信息)疊在上面時整條讓路 —— ESC 屬於最上層那個視窗。
+        /// </summary>
+        private void HandleEscape()
+        {
+            if (!Input.GetKeyDown(KeyCode.Escape)) return;
+            if (ScreenTransition.Busy) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Lobby) return;
+            if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
+
+            if (AnyMenuOpen())
+            {
+                HideHallMenu();
+                HideApplyMenu();
+                HideChatMenu();
+                HideExpressionMenu();
+                return;
+            }
+
+            // TMP_InputField 自己也吃 ESC(取消編輯 → 把字還原成進入編輯前那份),所以草稿要由我們**明確**清成空字串,
+            // 否則它的還原會跟這裡打架,看起來像「按了 ESC 字還在」。清完把 focus 拿回來,接著打不用再點一次。
+            bool composing = !string.IsNullOrEmpty(Input.compositionString);
+            if (composing || (_chatInput != null && !string.IsNullOrEmpty(_chatInput.text)))
+            {
+                if (_chatInput != null)
+                {
+                    _chatInput.text = "";
+                    _chatInput.ActivateInputField();
+                }
+                return;
+            }
+
+            OnLogout();
+        }
+
+        private static bool MenuOpen(RectTransform menu) => menu != null && menu.gameObject.activeSelf;
+
+        private bool AnyMenuOpen()
+            => MenuOpen(_hallMenu) || MenuOpen(_applyMenu) || MenuOpen(_chatMenu) || MenuOpen(_exprMenu);
+
         /// <summary>右上角那排 34px 圓盤鈕:圓形去白邊 + 命中判定貼齊可見圓(透明四角不吃點擊)。</summary>
         private Button TopIcon(string name, string normal, string hover, string pushed, float x,
                                UnityEngine.Events.UnityAction onClick)
@@ -1031,6 +1078,7 @@ namespace Sdo.UI.Screens
             UpdateChatCaret();
 
             CloseMenusOnOutsideClick();   // 同理:點外面要**當下**就收選單,不能等到下一個 poll 節拍
+            HandleEscape();               // ESC 逐層退出(收選單 / 清草稿 / 退回選男女) —— 同樣要每幀收,不能等節拍
 
             if (Time.unscaledTime < _nextPoll) return;
             _nextPoll = Time.unscaledTime + PollSeconds;
@@ -1954,9 +2002,16 @@ namespace Sdo.UI.Screens
         {
             if (ScreenTransition.Busy) return;
             // AppContext.Logout 會斷線、把房間/聊天換回單機那份,並發 OnlineChanged。
-            // 之後才轉場 —— 反過來的話畫面已經切走,重畫的是一個看不見的大廳。
-            Ctx.Logout("userLogout");
-            ScreenTransition.Run(() => GoTo(ScreenId.GenderSel));
+            //
+            // 🔴 Logout 必須跟 GoTo **一起關在黑幕底下**(ScreenTransition.Run 的 swap 是全黑那一刻才跑的)。
+            //    先 Logout 再開轉場的話,OnOnlineChanged 會當場重讀列表 → 大廳這一幀就換成單機那份
+            //    (MockRoomService 的示範房「DanceKing的舞蹈盒」那批),而漸黑要 0.2 秒才蓋滿 → 玩家看得到
+            //    測試房閃一下才進黑幕。擺進 swap 就完全看不見:重畫的大廳被黑幕蓋著,緊接著 GoTo 就切走了。
+            ScreenTransition.Run(() =>
+            {
+                Ctx.Logout("userLogout");
+                GoTo(ScreenId.GenderSel);
+            });
         }
 
         // ================================================================ 自己的角色資料
