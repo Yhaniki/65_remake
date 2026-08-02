@@ -30,6 +30,8 @@ namespace Sdo.UI.Screens
         private const float BoardX = 301f, BoardY = 151f;              // background.an (0,0,302,288)
         private const float NameX = 406f, NameY = 202f, FieldW = 157f, NameH = 14f;
         private const float PassX = 405f, PassY = 230f, PassH = 17f;
+        /// <summary>底圖上兩個輸入凹槽的高度(房名 196..220、密碼 225..249,都是 24px)。見 <see cref="BuildField"/>。</summary>
+        private const float GrooveH = 24f;
         private const float ModeX = 409f, ModeY = 259f;                // currmode(顯示目前模式的那個 Label)
         private const float ArrowX = 544f, ArrowY = 256f;              // mode ▼ 鈕 22×21
         private const float RoomTypeY = 292f, RoomTypeW = 84f, RoomTypeH = 85f;
