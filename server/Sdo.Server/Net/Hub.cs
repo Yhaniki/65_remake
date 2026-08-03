@@ -381,8 +381,12 @@ namespace Sdo.Server.Net
                 SweepDeadConnections(now);
             }
 
-            // 3b) 下載中的歌:把 chunk 補到水位(流量控制,見 PumpDownloads)
-            PumpDownloads();
+            // 3b) 下載中的歌:把 chunk 補到水位(流量控制,見 PumpDownloads)。
+            //     停滯逾時也在裡面就地判 —— 它每輪本來就在看每一份下載。
+            PumpDownloads(now);
+
+            // 3c) 上傳方向沒有「每輪都會跑過一遍」的地方(它是被 chunk 推著走的)→ 另外掃。
+            SweepStalledUploads(now);
 
             // 4) 歌曲暫存清理(15 分鐘一次)
             //
@@ -444,9 +448,16 @@ namespace Sdo.Server.Net
         {
             if (!_conns.Remove(conn.ConnId)) return;
 
-            // 認得這個人就用名字報離線;還沒 hello 的(掃 port、握手失敗、file 連線)只是雜訊 → verbose。
+            // 認得這個人就用名字報離線;還沒 hello 的(掃 port、握手失敗)只是雜訊 → verbose。
+            //
+            // 🔴 例外:**身上還有傳輸的 file 連線一律用 Log**。它關掉就代表那份上傳/下載當場死掉,
+            // 而那正是「傳完歌卻按不了準備」查起來最缺的一行 —— 以前它只在 verbose 出現,
+            // 於是正式 log 上「下載開始」之後就是一片空白,分不出還在傳、傳完了、還是連線沒了。
+            bool hadTransfer = _uploads.ContainsKey(conn.ConnId) || _downloads.ContainsKey(conn.ConnId);
             if (conn.UserId != 0 && conn.Role == NetProto.RoleControl)
                 Log("user " + conn.UserId + "「" + conn.Name + "」離線(" + reason + ")");
+            else if (hadTransfer)
+                Log("傳檔連線 #" + conn.ConnId + " 關閉(" + reason + ")— user " + conn.UserId);
             else
                 LogVerbose("連線 #" + conn.ConnId + " 關閉(" + reason + ")");
 
@@ -482,6 +493,24 @@ namespace Sdo.Server.Net
             ForEachInRoom(room, c => c.SendPreEncoded(bytes));
         }
 
+        /// <summary>
+        /// 對**大廳裡**每一條 control 連線做一件事 —— 「大廳」的定義就是「線上、但不在任何房間裡」
+        /// (server 沒有大廳這個容器,大廳是房間的補集)。大廳聊天用它廣播,見 <c>OnChatSay</c>。
+        ///
+        /// 🔴 發話者自己也在這個集合裡,**要留著** —— 那句話要回到他自己的聊天區才看得見,
+        ///    client 不會先斬後奏地把自己說的話畫上去(密語也是同一個原則,見 <c>OnChatWhisper</c>)。
+        /// </summary>
+        private void ForEachInLobby(Action<Connection> act)
+        {
+            foreach (var kv in _byUser)
+            {
+                var c = kv.Value;
+                if (c == null || c.IsClosed) continue;
+                if (_rooms.RoomOf(c.UserId) != null) continue;   // 在房裡的人收房內那份,不重複收
+                act(c);
+            }
+        }
+
         /// <summary>對房裡每一條 control 連線做一件事。</summary>
         private void ForEachInRoom(NetRoom room, Action<Connection> act)
         {
@@ -509,11 +538,14 @@ namespace Sdo.Server.Net
         }
 
         /// <summary>
-        /// 照名字找 control 連線(不分大小寫)。密語用 —— 全服都找,不限同房。
+        /// 照名字找 control 連線(不分大小寫)。兩個用途:
+        ///   • 密語要送給誰 —— 全服都找,不限同房。
+        ///   • 「這個名字現在有人在用嗎」—— 握手與改名的唯一性檢查(見 <c>OnHello</c> / <c>OnSetIdentity</c>)。
         ///
-        /// 名字在 server 這邊**不保證唯一**(SanitizeName 只清字元、不查重複),所以同名時取 userId
-        /// 最小的那一條:Dictionary 的列舉順序是不保證的,不挑一個穩定的規則,同名情況下「密語會進到誰
-        /// 的視窗」會隨執行而變 —— 那種 bug 沒人查得出來。userId 最小 == 先上線的那個。
+        /// 那兩處把名字擋成唯一的(**同一份比對規則:不分大小寫**),所以正常情況下這裡最多只會找到一個。
+        /// 同名時取 userId 最小的那條是保險:Dictionary 的列舉順序不保證,萬一唯一性哪天被繞過,
+        /// 不挑一個穩定的規則的話「密語進到誰的視窗」會隨執行而變 —— 那種 bug 沒人查得出來。
+        /// userId 最小 == 先上線的那個,而先上線的正是同名時**留下來**的那一個。
         /// </summary>
         private Connection ControlByName(string name)
         {
@@ -542,21 +574,77 @@ namespace Sdo.Server.Net
         /// 靜默的 —— 玩家按了沒反應,而 server 這邊什麼都沒留。實際上因為這個查了很久:
         /// 「兩台都看得到歌名、按開始沒反應」的真因是 server 眼中這間房沒有歌,而唯一能證明它的
         /// 就是這一行 log。拒絕本來就是低頻事件,印出來不會吵。
+        ///
+        /// 🔴 而且要印出**哪個請求**與**當下的狀態**。只印 code 的話 log 長這樣:
+        ///   <c>✗ user 1 的請求被拒:badState</c> ×12
+        /// —— <c>badState</c> 有十幾個來源(場次對不上、狀態機不允許、client 自稱保留狀態…),
+        /// 而十二行一模一樣的字連「是同一個請求重送十二次還是十二個不同請求」都分不出來。
+        /// 加上請求型別(<see cref="Connection.CurMsgType"/>)、<paramref name="note"/> 的請求內容、
+        /// 以及 <see cref="DescribeConn"/> 的當下狀態,同一行就能直接讀出「誰、按了什麼、當時在哪一階段」。
         /// </summary>
-        private static void SendError(Connection conn, int rq, string code, string msg = null)
+        /// <param name="msg">給 client 的簡短原因(會進 wire)。</param>
+        /// <param name="note">只進 log 的請求細節(送上來的參數值)。不進 wire —— 診斷用的東西沒必要外流。</param>
+        private void SendError(Connection conn, int rq, string code, string msg = null, string note = null)
         {
             var o = JObj.New().Str(NetProto.FieldType, NetProto.Error).Str("code", code ?? NetProto.ErrBadState);
             if (rq != 0) o.Int(NetProto.FieldRequest, rq);
             if (!string.IsNullOrEmpty(msg)) o.Str("msg", msg);
             conn.Send(o);
-            Log("✗ user " + conn.UserId + " 的請求被拒:" + (code ?? "?")
-                + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
+            Log("✗ user " + conn.UserId + " 的 " + (string.IsNullOrEmpty(conn.CurMsgType) ? "?" : conn.CurMsgType)
+                + (rq != 0 ? "#" + rq : "")
+                + (string.IsNullOrEmpty(note) ? "" : "(" + note + ")")
+                + " 被拒:" + (code ?? "?")
+                + (string.IsNullOrEmpty(msg) ? "" : " — " + msg)
+                + " | " + DescribeConn(conn));
         }
 
-        private static void SendOpError(Connection conn, int rq, NetRoomOp op)
+        private void SendOpError(Connection conn, int rq, NetRoomOp op, string note = null)
         {
             var code = op.ToErrorCode();
-            if (code != null) SendError(conn, rq, code);
+            if (code != null) SendError(conn, rq, code, null, note);
+        }
+
+        /// <summary>
+        /// 拒絕時要印的「這個人當下處在什麼狀態」。
+        ///
+        /// 這裡挑的欄位就是**規則實際會看的那些**(見 <see cref="NetRoom"/>):房間階段、
+        /// 進行中的場次與他是不是參與者、座位上的 ready / playState / 有沒有這首歌。
+        /// 任何一次拒絕都是這幾個值其中之一不合 —— 一起印出來,才不用再回頭猜。
+        /// </summary>
+        private string DescribeConn(Connection conn)
+        {
+            if (!conn.HelloDone) return "還沒握手";
+            if (conn.Role == NetProto.RoleFile) return "檔案連線";
+
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null) return "不在任何房間";
+
+            string s = "房 " + room.Code + " " + room.Status;
+
+            var match = room.Match;
+            if (match == null) s += " 沒有進行中的場次";
+            else s += " 第" + match.MatchId + "場(" + (IsParticipant(match, conn.UserId) ? "參與者" : "非參與者") + ")";
+
+            var seat = room.State.SeatOf(conn.UserId);
+            if (seat != null)
+            {
+                s += " 座位" + room.State.SeatIndexOf(conn.UserId)
+                   + (room.State.IsHost(conn.UserId) ? "(房主)" : "")
+                   + " play=" + seat.PlayState
+                   + " ready=" + (seat.Ready ? "是" : "否")
+                   + " avail=" + seat.Avail;
+            }
+            else if (room.State.SpectatorIndexOf(conn.UserId) >= 0) s += " 旁觀中";
+            else s += " 不在座位也不在旁觀名單";
+
+            return s;
+        }
+
+        private static bool IsParticipant(NetMatchInfo match, int userId)
+        {
+            var ids = match.ParticipantUserIds;
+            for (int i = 0; i < ids.Length; i++) if (ids[i] == userId) return true;
+            return false;
         }
 
         /// <summary>踢出通知(client 收到會回選男女畫面)。</summary>

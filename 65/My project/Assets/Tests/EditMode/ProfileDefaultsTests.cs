@@ -176,7 +176,7 @@ namespace Sdo.Tests
 
             var male = new UserProfile(ProfileManager.MaleSeedId, "玩家002", 1)
             {
-                familyName = "惡魔之翼", familyEmblem = "SMALL7", level = 5,
+                familyName = "惡魔之翼", familyEmblem = "SMALL7", playerLevel = "5", hasProfileOverrides = true,
             }.Sanitize();
             File.WriteAllText(Path.Combine(_root, ProfileManager.MaleSeedId, ProfileManager.ProfileFileName),
                 UnityEngine.JsonUtility.ToJson(male, true));

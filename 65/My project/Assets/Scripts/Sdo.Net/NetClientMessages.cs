@@ -309,10 +309,38 @@ namespace Sdo.Net
         }
     }
 
+    /// <summary>
+    /// 房間列表裡「坐著的一個人」——「房間信息」對話框(大廳右鍵房卡)那 4 列的內容。
+    ///
+    /// 🔴 為什麼名字要跟著**房間列表**送:那個框是在大廳開的,人還沒進房 → 收不到 roomSnapshot,
+    ///    所以房間列表是 client 唯一拿得到房裡玩家名字/等級的地方。
+    /// </summary>
+    public struct NetRoomMember
+    {
+        public string Name;
+
+        /// <summary>等級。0 = 不知道(舊版 server 不送 members)—— 呼叫端要當「不顯示」而不是「0 級」。</summary>
+        public int Level;
+
+        /// <summary>0=女 1=男。與 <see cref="NetRoomListEntry.Genders"/> 同一個值。</summary>
+        public int Gender;
+    }
+
     /// <summary>房間列表的一列。</summary>
     public struct NetRoomListEntry
     {
         public int Code;
+
+        /// <summary>
+        /// 門牌序號 —— 大廳房卡上顯示的那個小數字(官方是 <c>%03d</c> 的 3 位數)。
+        ///
+        /// 🔴 與 <see cref="Code"/> 是**兩件不同的事**:Code 是 5 位數的「加入房間鑰匙」,
+        /// Seq 是「這是第幾間房」。官方大廳只顯示後者。門牌**從 000 起算**。
+        /// 舊版 server 不送這個欄位 → <see cref="Decode"/> 退回 <b>-1</b>(不是 0 —— 0 是 000 房),
+        /// 呼叫端看到 -1 才知道要退回用列表位置當門牌(見 LobbyScreen 的房卡繫結)。
+        /// </summary>
+        public int Seq;
+
         public string Name;
         public string HostName;
         public RoomStatus Status;
@@ -320,12 +348,36 @@ namespace Sdo.Net
         public int Mode;
         public string SongTitle;
 
+        /// <summary>
+        /// 譜面難度。大廳的「房間信息」把它寫成「歌名 (9級)」。
+        /// 🔴 <b>0 = 不知道</b>(沒歌、譜面沒標難度,或**對方是舊版 server 不送這個欄位**)——
+        /// 呼叫端要當「不顯示」而不是「0 級」,否則整排房間都會寫 0級。
+        /// </summary>
+        public int SongLevel;
+
+        /// <summary>
+        /// 坐著的人的性別(0=女 1=男),依座位順序,長度 == <see cref="Count"/>。空位不列。
+        /// 大廳房卡那排愛心靠它上色(女=粉紅、男=藍、空位=灰)。舊版 server 不送這個欄位 → 空陣列,
+        /// 呼叫端退回「一律當女生」(那是官方唯一那顆彩色心的顏色,退化得最不突兀)。
+        /// </summary>
+        public int[] Genders;
+
+        /// <summary>
+        /// 坐著的人是誰(名字/等級/性別),依座位順序,長度 == <see cref="Count"/>。空位不列。
+        /// 「房間信息」對話框那 4 列靠它。
+        ///
+        /// 🔴 舊版 server 不送 → <c>null</c>,呼叫端要退成「只知道有幾個人、不知道是誰」
+        ///    (那個框的列就只有格子沒有字),不要拿 <see cref="Count"/> 生假名字。
+        /// </summary>
+        public NetRoomMember[] Members;
+
         public bool IsFull => Count >= Capacity;
 
         public static NetRoomListEntry Decode(object node)
         {
             var e = new NetRoomListEntry();
             e.Code = NetJson.Int(node, "code");
+            e.Seq = NetJson.Int(node, "seq", -1);
             e.Name = NetJson.Str(node, "name");
             e.HostName = NetJson.Str(node, "hostName");
 
@@ -339,6 +391,36 @@ namespace Sdo.Net
             e.Spectators = NetJson.Int(node, "spectators");
             e.Mode = NetJson.Int(node, "mode");
             e.SongTitle = NetJson.Str(node, "songTitle");
+            // 舊版 server 不送這個欄位 → NetJson.Int 回 0,而 0 的語意就是「不知道」(見 SongLevel 的 doc)。
+            e.SongLevel = NetJson.Int(node, "songLevel");
+            var g = NetJson.Arr(node, "genders");
+            if (g != null && g.Count > 0)
+            {
+                e.Genders = new int[g.Count];
+                // MiniJson 把所有數字都 parse 成 double(見 NetJson.Long 的註解)。
+                for (int i = 0; i < g.Count; i++) e.Genders[i] = g[i] is double d ? (int)d : 0;
+            }
+
+            var m = NetJson.Arr(node, "members");
+            if (m != null && m.Count > 0)
+            {
+                e.Members = new NetRoomMember[m.Count];
+                for (int i = 0; i < m.Count; i++)
+                    e.Members[i] = new NetRoomMember
+                    {
+                        Name = NetJson.Str(m[i], "name"),
+                        Level = NetJson.Int(m[i], "level"),
+                        Gender = NetJson.Int(m[i], "gender"),
+                    };
+
+                // members 自己就帶了性別 —— genders 缺了(未來 server 若不再送那個舊欄位)就從這裡補,
+                // 免得房卡那排愛心整排退回粉紅。
+                if (e.Genders == null)
+                {
+                    e.Genders = new int[e.Members.Length];
+                    for (int i = 0; i < e.Members.Length; i++) e.Genders[i] = e.Members[i].Gender;
+                }
+            }
             return e;
         }
 
@@ -346,6 +428,54 @@ namespace Sdo.Net
         {
             if (arr == null || arr.Count == 0) return new NetRoomListEntry[0];
             var rows = new NetRoomListEntry[arr.Count];
+            for (int i = 0; i < arr.Count; i++) rows[i] = Decode(arr[i]);
+            return rows;
+        }
+    }
+
+    /// <summary>線上玩家名單的一列(大廳 win3 的四個分頁都吃這一份)。</summary>
+    public struct NetUserListEntry
+    {
+        /// <summary>server 這次連線給的編號。**下次上線會變**,所以只能拿來認「這一輪的同一個人」
+        /// (例如把自己從名單裡挑掉),不能存起來當身分 —— 那是名字的工作(見 FriendList 的註解)。</summary>
+        public int UserId;
+
+        public string Name;
+        public string Guild;
+        public int Level;
+
+        /// <summary>0=女 1=男。名單左邊那個小人頭圖示用它分色。</summary>
+        public int Gender;
+
+        /// <summary>
+        /// 人在哪:<b>-1 = 大廳</b>,&gt;= 0 = 那間房的**門牌**(不是加入用的 5 位數 code —— 名單只是給人看位置的)。
+        ///
+        /// 🔴 哨兵值是 -1 不是 0:官方大廳第一格門牌就是 <c>000</c>(見 <c>RoomRegistry.NextFreeSeq</c>),
+        ///    0 是一間真的房。舊 server 不送這個欄位時 <see cref="Decode"/> 也退回 -1(當成在大廳),
+        ///    否則全大廳的人都會被標成「在 000 房」。
+        /// 🔴 這是 struct(不能有欄位初始值),所以**自己 new 出來的 entry 一定要明寫 RoomSeq** ——
+        ///    忘了寫拿到的是 0,那是 000 房不是大廳。
+        /// </summary>
+        public int RoomSeq;
+
+        public bool InLobby => RoomSeq < 0;
+
+        public static NetUserListEntry Decode(object node)
+        {
+            var e = new NetUserListEntry();
+            e.UserId = NetJson.Int(node, "userId");
+            e.Name = NetJson.Str(node, "name");
+            e.Guild = NetJson.Str(node, "guild");
+            e.Level = NetJson.Int(node, "level");
+            e.Gender = NetJson.Int(node, "gender");
+            e.RoomSeq = NetJson.Int(node, "roomSeq", -1);
+            return e;
+        }
+
+        public static NetUserListEntry[] DecodeAll(List<object> arr)
+        {
+            if (arr == null || arr.Count == 0) return new NetUserListEntry[0];
+            var rows = new NetUserListEntry[arr.Count];
             for (int i = 0; i < arr.Count; i++) rows[i] = Decode(arr[i]);
             return rows;
         }

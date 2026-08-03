@@ -234,10 +234,12 @@ namespace Sdo.Tests
             // ★ 使用者實測回報的那個 bug:在大廳換成男角進房,別人看到的名字還是女角的。
             // 握手在**開機時**就做完了(那時 active profile 是女角),選性別 == 選帳號 ——
             // 所以進房前要補送 setIdentity,否則座位名字就是握手那份,而且之後永遠不會變。
-            var a = Connect("飄漂o");
+            var a = Connect("舞蹈室主人");
             int code = CreateRoom(a, "舞蹈室");
 
-            var b = Connect("飄漂o");          // B 開機時的 active profile 也是那隻女角
+            // (這裡兩個人的握手名字**必須不同** —— 同名的後來者現在在握手就被擋掉了,
+            //  見 NameUniquenessTests。這條測的是「改名有沒有傳出去」,與同名無關。)
+            var b = Connect("飄漂o");          // B 開機時的 active profile 是那隻女角
             b.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.SetIdentity)
                 .Str("name", "按黑青眼暴龍壽3")
@@ -311,6 +313,147 @@ namespace Sdo.Tests
             Assert.AreEqual("列表測試", NetJson.Str(rooms[0], "name"));
             Assert.AreEqual("房主", NetJson.Str(rooms[0], "hostName"));
             Assert.AreEqual(1, NetJson.Int(rooms[0], "count"));
+        }
+
+        [Test]
+        public void Room_List_Carries_Who_Is_Inside()
+        {
+            // 大廳右鍵房卡開的「房間信息」要列出房裡有誰(等級 + 名字)。那時人**還在大廳** ——
+            // roomSnapshot 只發給房裡的人,所以房間列表是 client 唯一拿得到那些名字的地方。
+            // 🔴 這條釘住的是「只送 count 不送人」那個退步:症狀是那 4 列格子永遠空白,
+            //    而空白看起來像排版問題,完全指不到「封包沒帶」這個原因。
+            var a = Connect("房主");
+            int code = CreateRoom(a, "名單測試");
+
+            var b = Connect("客人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetIdentity)
+                .Str("name", "飄漂o")
+                .Int("level", 11));
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetLook)
+                .Put("look", JObj.New().Int("gender", 1).Int("bodyIndex", 0)));
+            JoinRoom(b, code);
+            WaitForState(a, s => s.SeatedCount == 2 && s.Seats[1].Level == 11, "B 的身分送到了");
+
+            var c = Connect("路人");
+            c.Send(JObj.New().Str(NetProto.FieldType, NetProto.RoomList).Int(NetProto.FieldRequest, 41));
+            var rooms = NetJson.Arr(c.WaitFor(NetProto.RoomListResult), "rooms");
+
+            var members = NetJson.Arr(rooms[0], "members");
+            Assert.IsNotNull(members, "房間列表要帶 members");
+            Assert.AreEqual(2, members.Count, "只送坐著的人,長度 == count");
+
+            Assert.AreEqual("房主", NetJson.Str(members[0], "name"));
+            Assert.AreEqual(7, NetJson.Int(members[0], "level"), "握手報的等級");
+
+            Assert.AreEqual("飄漂o", NetJson.Str(members[1], "name"), "要是 setIdentity 之後的名字");
+            Assert.AreEqual(11, NetJson.Int(members[1], "level"));
+            Assert.AreEqual(1, NetJson.Int(members[1], "gender"));
+
+            // genders 沒有被 members 取代 —— 舊版 client 只讀那個欄位,拿掉的話它們的房卡愛心整排退回粉紅。
+            var genders = NetJson.Arr(rooms[0], "genders");
+            Assert.IsNotNull(genders, "genders 要繼續送(舊 client 相容)");
+            Assert.AreEqual(members.Count, genders.Count, "兩個陣列要逐項對齊");
+        }
+
+        [Test]
+        public void User_List_Shows_Who_Is_Online_And_Where()
+        {
+            // 大廳玩家名單(全部/好友/家族三個分頁的資料來源)。server 只回事實:誰在線上、幾等、
+            // 在大廳還是在某間房 —— 「誰是我的好友」是 client 拿本機清單去比對的(server 沒有帳號持久化)。
+            var a = Connect("房主");
+            int seq;
+            {
+                CreateRoom(a, "位置測試");
+                a.Send(JObj.New().Str(NetProto.FieldType, NetProto.RoomList).Int(NetProto.FieldRequest, 70));
+                var rooms = NetJson.Arr(a.WaitFor(NetProto.RoomListResult), "rooms");
+                seq = NetJson.Int(rooms[0], "seq");
+            }
+
+            var b = Connect("路人");
+            b.Send(JObj.New().Str(NetProto.FieldType, NetProto.UserList).Int(NetProto.FieldRequest, 71));
+
+            var res = b.WaitFor(NetProto.UserListResult);
+            Assert.IsNotNull(res);
+            var users = NetJson.Arr(res, "users");
+            Assert.IsNotNull(users);
+            Assert.AreEqual(2, users.Count, "兩條連線都要在名單上(自己也算)");
+
+            // 照 userId 排序 == 上線先後,所以房主一定在第 0 列。
+            Assert.AreEqual("房主", NetJson.Str(users[0], "name"));
+            Assert.AreEqual(seq, NetJson.Int(users[0], "roomSeq"), "在房裡的人要標出**門牌**(不是加入用的 code)");
+            Assert.AreEqual("路人", NetJson.Str(users[1], "name"));
+            // 🔴 大廳的哨兵值是 -1 不是 0 —— 門牌從 000 起算,0 是一間真的房。
+            Assert.AreEqual(-1, NetJson.Int(users[1], "roomSeq"), "沒進房 = 人在大廳");
+        }
+
+        /// <summary>
+        /// 玩家的**公開名片**(個人資料視窗點開別人時看到的命中率/勝負/自我介紹 + 穿搭)。
+        ///
+        /// 這條路存在的理由:那些數字原本只存在玩家自己那台機器的 profile.json,所以點開別人整頁都是 0。
+        /// 現在 client 定期 <c>setCard</c> 上來,別人 <c>cardQuery</c> 就查得到。
+        ///
+        /// 回應裡的 <c>look</c> 來自 <c>setLook</c>(server 手上那份),不是名片的一部分 ——
+        /// 這條測試順便把「同一件事只有一個來源」釘住。
+        /// </summary>
+        [Test]
+        public void Player_Card_Round_Trips_With_The_Look_Server_Already_Has()
+        {
+            var a = Connect("被看的人");
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetLook)
+                .Put("look", JObj.New().Int("gender", 1).Int("bodyIndex", 2)
+                                       .Put("parts", JArr.New().Add("HAIR_X").Add("TOP_Y"))));
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetPlayerCard)
+                .Put("card", JObj.New()
+                    .Long("perfect", 300).Long("cool", 100).Long("bad", 60).Long("miss", 40)
+                    .Int("plays", 12).Int("wins", 7).Int("losses", 3)
+                    .Int("expPct", 42).Int("fame", 15)
+                    .Str("city", "台北").Str("im", "12345").Str("constellation", "獅子").Str("age", "18")));
+
+            var b = Connect("看別人的人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 91)
+                .Int("userId", a.UserId));
+
+            var res = b.WaitFor(NetProto.PlayerCardResult);
+            Assert.IsNotNull(res);
+            Assert.IsTrue(NetJson.Bool(res, "found"), "對方在線上就要查得到");
+            Assert.AreEqual("被看的人", NetJson.Str(res, "name"));
+
+            var card = NetPlayerCard.Decode(NetJson.Sub(res, "card"));
+            Assert.AreEqual(300, card.Perfect);
+            Assert.AreEqual(40, card.Miss);
+            Assert.AreEqual(7, card.Wins);
+            Assert.AreEqual(3, card.Losses);
+            Assert.AreEqual(42, card.ExpPercent);
+            Assert.AreEqual(15, card.Fame);
+            Assert.AreEqual("台北", card.City);
+            Assert.AreEqual("獅子", card.Constellation);
+
+            // 穿搭走 setLook 那份 —— 名片裡沒有外觀欄位,查詢回應是 server 自己補上的。
+            var look = NetAvatarLook.Decode(NetJson.Sub(res, "look"));
+            Assert.AreEqual(1, look.Gender);
+            Assert.AreEqual(2, look.BodyIndex);
+            CollectionAssert.AreEqual(new[] { "HAIR_X", "TOP_Y" }, look.Parts);
+        }
+
+        /// <summary>對方不在線上 → <c>found=false</c>,**不是** error。「他剛好下線了」是正常情況。</summary>
+        [Test]
+        public void Player_Card_Of_Someone_Not_Online_Is_Not_Found()
+        {
+            var b = Connect("查的人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 92)
+                .Int("userId", 999999));
+
+            var res = b.WaitFor(NetProto.PlayerCardResult);
+            Assert.IsNotNull(res, "查不到也要回話,不能讓呼叫端等到天荒地老");
+            Assert.IsFalse(NetJson.Bool(res, "found"));
         }
 
         // ================= 離開 / 房主轉移 =================

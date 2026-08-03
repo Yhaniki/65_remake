@@ -54,6 +54,9 @@ namespace Sdo.UI.Screens
 
         // data (unchanged flow)
         private SongListModel _model;
+        // _model 是複製出來的 snapshot，而目錄會在這個畫面之外被改（線上下載別人的歌 → 重掃歌庫）。
+        // 記下 snapshot 是照哪一版目錄建的，每次開啟時比對（見 SyncCatalog）。
+        private int _modelRev = -1;
         private List<SongCatalog.Entry> _filtered = new List<SongCatalog.Entry>();
         private SongCatalog.Entry _selected;
         private int _difficulty;   // 0=easy/1=normal/2=hard; set from Session in OnShow
@@ -157,8 +160,7 @@ namespace Sdo.UI.Screens
 
         protected override void BuildUI()
         {
-            _model = SongListModel.FromCatalog();
-            ComputeBadges();
+            RebuildModel();
             _stages = new List<StageInfo>();
             foreach (var s in StageCatalog.Stages)
                 if (s.Id >= 0 && s.Id <= StageCatalog.MaxSelectableId) _stages.Add(s);
@@ -218,6 +220,10 @@ namespace Sdo.UI.Screens
 
         public override void OnShow()
         {
+            // 歌庫可能在這個畫面關著的時候變了（線上房間下載到別人的歌會重掃歌庫）→ 先把 snapshot 更新，
+            // 否則下面每一段（搜尋、分類、重選上一首）看的都是舊清單，剛下載的歌搜不到。
+            SyncCatalog();
+
             // open whoosh + fast spin-zoom in (Frameround.wav; ~0.2s)
             _closing = false;
             if (_windowCg != null) _windowCg.blocksRaycasts = true;
@@ -323,6 +329,43 @@ namespace Sdo.UI.Screens
             _rescanProg?.Destroy();
             _rescanProg = null;
             if (_rescanOverlay != null) { Destroy(_rescanOverlay); _rescanOverlay = null; }
+        }
+
+        /// <summary>
+        /// 依目前的目錄重建歌單 snapshot（<see cref="SongListModel"/> 是複製一份，不是活的視圖）。
+        /// 記下當下的 <see cref="SongCatalog.Revision"/>，<see cref="SyncCatalog"/> 靠它判斷 snapshot 過期了沒。
+        /// </summary>
+        private void RebuildModel()
+        {
+            _model = SongListModel.FromCatalog();
+            _modelRev = SongCatalog.Revision;
+            ComputeBadges();
+        }
+
+        /// <summary>
+        /// 目錄在這個畫面**沒被打開的時候**變了嗎？變了就重建 snapshot。
+        ///
+        /// 🔴 真實情境：線上房間裡從別的玩家那裡下載到一首歌 —— NetSongTransfer 下載完會重掃歌庫
+        /// (ExternalSongLibrary.ScanAndRegisterCo → SongCatalog.ReplaceExternal)，可是選歌畫面是開機時
+        /// 建一次就常駐的，它的 _model 停在開機那份 snapshot。換自己當房主要選歌時，**搜尋整個看不到那首歌**
+        /// （搜尋是全域的，但搜的是 _model.All），玩家只會覺得「我明明下載到了」。
+        ///
+        /// 同時把所有「握著 Entry 物件」的狀態一起洗掉：ReplaceExternal 會把外部歌的 Entry 整批換新，
+        /// 舊物件即使欄位長得一樣也已經不在目錄裡（IndexOf 找不到 → 選不動、換頁跳掉）。
+        /// 選中的那首用 gn 重新解析（gn 是內容決定的，跨重掃穩定）。
+        /// </summary>
+        private void SyncCatalog()
+        {
+            if (_modelRev == SongCatalog.Revision) return;
+            string keepGn = _selected != null ? _selected.gn : null;
+            RebuildModel();
+            _extDurDone.Clear();       // fileId 是重掃時重新發的，量過的長度不能沿用
+            // 都換成新的空清單，不是 Clear()：_bucketSongs 拿的是**面板那個桶自己的 list**（見 OnBucketPicked），
+            // 清它等於把面板的資料挖空。舊的丟掉就好，面板重開時 OnBucketPicked 會給新的。
+            _bucketSongs = new List<SongCatalog.Entry>();
+            _filtered = new List<SongCatalog.Entry>();
+            _selected = !string.IsNullOrEmpty(keepGn) ? SongCatalog.Get(keepGn) : null;
+            _groupPanel?.SetPool(_model.Externals());
         }
 
         private void ComputeBadges()
@@ -518,10 +561,9 @@ namespace Sdo.UI.Screens
             yield return null;
 
             // The catalog changed underneath us → rebuild everything derived from it.
-            _model = SongListModel.FromCatalog();
-            ComputeBadges();
+            RebuildModel();            // snapshot + 標籤，並記下這是照哪一版目錄建的（見 SyncCatalog）
             _extDurDone.Clear();       // fileIds are handed out afresh by the scan; measured durations don't carry over
-            _bucketSongs.Clear();      // stale Entry objects — the panel reopen below refills this via OnBucketPicked
+            _bucketSongs = new List<SongCatalog.Entry>();   // 舊 Entry 參考（別 Clear：那是面板那個桶自己的 list）
 
             // 讀取好 → 收掉 loading 畫面，跳回原本的選歌畫面。
             TeardownRescanLoading();
@@ -1489,6 +1531,7 @@ namespace Sdo.UI.Screens
                 s.ExternalLevel = _selected.DisplayLevel(pickedDifficulty);   // 顯示等級(osu 或 minacalc)→ 帶進遊戲顯示同一個 LV
                 s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdoinfo.dat 都寫在歌曲自己的資料夾
                 s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
+                s.ExternalPackId = _selected.packId;             // 生成舞蹈的 seed：吃內容指紋，換台電腦（含傳檔來的）也是同一支舞
                 s.ExternalSongBpm = _selected.bpm;               // 生成編舞的節拍網格：整首歌一個 BPM，換難度不會換舞
                 // 生成編舞要量「這首歌所有難度」的頭尾（不是只有選到這張）—— 三個格子照原順序帶過去，空的留 ""
                 s.ExternalSongChartPaths = new[] { _selected.ChartPath(0), _selected.ChartPath(1), _selected.ChartPath(2) };

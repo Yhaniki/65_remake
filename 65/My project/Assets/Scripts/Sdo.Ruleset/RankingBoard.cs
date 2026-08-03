@@ -13,20 +13,32 @@ namespace Sdo.Ruleset
         public readonly string Name;
         public readonly long Score;
         public readonly bool IsLocal;
+        /// <summary>平手時誰在前的 key —— 線上填**座位序**(見 <see cref="RankingBoard"/> 的 tie-break)。
+        /// <see cref="NoSeat"/> = 不知道座位(離線/假對手/名單裡查不到的人) → 退回名單順序。</summary>
+        public readonly int Seat;
 
-        public PlayerEntry(string name, long score, bool isLocal)
+        /// <summary>「沒有座位資料」。排序時排在所有有座位的人後面,彼此再照名單順序。</summary>
+        public const int NoSeat = int.MaxValue;
+
+        public PlayerEntry(string name, long score, bool isLocal, int seat = NoSeat)
         {
             Name = name;
             Score = score;
             IsLocal = isLocal;
+            Seat = seat;
         }
     }
 
     /// <summary>
     /// Pure ranking logic for the gameplay roster (right-side name+score list and the centre
     /// "rank N / M" readout). Ordering is fully deterministic so the list never flickers on ties:
-    /// higher score first; on equal score the local player ranks ahead; otherwise the lower
-    /// original index wins. This total order means the sort need not be stable.
+    /// higher score first; on equal score the lower <see cref="PlayerEntry.Seat"/> wins; otherwise
+    /// the lower original index wins. This total order means the sort need not be stable.
+    ///
+    /// 🔴 平手一定要照**座位序**,不能「本機先」。本機先是每台各自成立的規則 —— 同分時兩台都會覺得
+    /// 自己是第一名,於是兩邊都做勝利定格動作,而結算面板用的是 server 的權威名次(照 (seat, userId) 排,
+    /// 見 server 的 <c>ResultRowOrder</c>),就變成「面板寫我第 2 名,人卻在跳勝利動作」(使用者回報)。
+    /// 座位序是全場一致的,與 server / <see cref="FormationAssignment"/> / <c>LiveLeaderTracker</c> 同一條規則。
     /// </summary>
     public static class RankingBoard
     {
@@ -38,8 +50,8 @@ namespace Sdo.Ruleset
         {
             long sa = players[a].Score, sb = players[b].Score;
             if (sa != sb) return sb.CompareTo(sa);          // higher score first
-            bool la = players[a].IsLocal, lb = players[b].IsLocal;
-            if (la != lb) return la ? -1 : 1;               // local wins ties
+            int ta = players[a].Seat, tb = players[b].Seat;
+            if (ta != tb) return ta.CompareTo(tb);          // ties: lower seat first (same rule as the server)
             return a.CompareTo(b);                          // stable fallback: original order
         }
 
@@ -54,6 +66,70 @@ namespace Sdo.Ruleset
             for (int i = 0; i < n; i++) order[i] = i;
             Array.Sort(order, (a, b) => Compare(players, a, b));
             return order;
+        }
+
+        /// <summary>
+        /// **畫在畫面上的**名次:同分並列,而且**不跳號**(密集排名 1,1,2 —— 使用者指定。不是競賽排名的 1,1,3)。
+        /// <paramref name="scoresDesc"/> 要先照分數由高到低排好(<see cref="SortedIndices"/> 的順序)。
+        ///
+        /// 🔴 與 <see cref="Compare"/>/<see cref="LocalRank"/> 的**嚴格**順序是兩回事,而且必須並存:
+        /// 輸贏定格與 WIN/LOSE 旗只能有一個第一名(平手照座位序,兩台才會指向同一個人),
+        /// 但寫在結算面板與「N / M」上的名次,同分要一樣(使用者指定)。
+        /// </summary>
+        public static int[] DisplayRanks(IReadOnlyList<long> scoresDesc)
+        {
+            int n = scoresDesc?.Count ?? 0;
+            var ranks = new int[n];
+            for (int i = 0; i < n; i++)
+                ranks[i] = i == 0 ? 1
+                         : (scoresDesc[i] == scoresDesc[i - 1] ? ranks[i - 1] : ranks[i - 1] + 1);
+            return ranks;
+        }
+
+        /// <summary>
+        /// 本機**畫面上**的名次(同分並列、不跳號;1-based)。沒有本機那一列(旁觀)= 0,
+        /// 與 <see cref="LocalRank"/> 同一個契約。名單不必先排序 —— 它自己數「比我高的有**幾種**分數」。
+        /// </summary>
+        public static (int rank, int total) LocalDisplayRank(IReadOnlyList<PlayerEntry> players)
+        {
+            int n = players?.Count ?? 0;
+            int localIdx = -1;
+            for (int i = 0; i < n; i++)
+                if (players[i].IsLocal) { localIdx = i; break; }
+            if (localIdx < 0) return (0, n);
+
+            long mine = players[localIdx].Score;
+            int betterScores = 0;   // 比我高的**相異**分數有幾種 → 密集排名 = 它 + 1(同分的人數不影響)
+            for (int i = 0; i < n; i++)
+            {
+                if (players[i].Score <= mine) continue;
+                bool seen = false;
+                for (int k = 0; k < i; k++)
+                    if (players[k].Score == players[i].Score) { seen = true; break; }
+                if (!seen) betterScores++;
+            }
+            return (betterScores + 1, n);
+        }
+
+        /// <summary>
+        /// 本機是不是**並列**第一(同分也算)。名單裡沒有本機(旁觀)= false。
+        ///
+        /// 🔴 這條與 <see cref="LocalRank"/> 是**兩件不同的事**,不要合併:名次面板與場上的勝利定格
+        /// 只能有一個第一名(平手照座位序,見 <see cref="Compare"/>),但**勝負場的記錄**是
+        /// 「同分兩邊都記勝場」(使用者指定)—— 兩個人打成平手,誰也沒輸給誰。
+        /// </summary>
+        public static bool LocalTiedForTop(IReadOnlyList<PlayerEntry> players)
+        {
+            int n = players?.Count ?? 0;
+            long top = long.MinValue, local = 0L;
+            bool haveLocal = false;
+            for (int i = 0; i < n; i++)
+            {
+                long s = players[i].Score;
+                if (s > top) top = s;
+                if (players[i].IsLocal && !haveLocal) { local = s; haveLocal = true; }
+            }
+            return haveLocal && local >= top;
         }
 
         /// <summary>

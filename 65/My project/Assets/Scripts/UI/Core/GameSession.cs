@@ -13,8 +13,12 @@ namespace Sdo.UI.Core
         public string LocalPlayerName = "玩家001";
         public int Gender = 0;   // 本機角色性別：0=女(WOMAN) 1=男(MAN)。由 active profile 帶入（見 AppContext.CreateMock）。
 
-        // 本機所屬家族名。離線單機沒有真正的家族系統：預設給一個示範家族名，家族頻道即可正常運作（綠字 <家族>…）；
+        // 本機所屬家族名。沒有真正的家族系統：值來自 config.ini [Profile] familyName（或這個角色自己覆寫的那份，
+        // 見 Sdo.Settings.ProfileFields），家族頻道即可正常運作（綠字 <家族>…）；
         // 清空（""）＝沒有家族 → 家族頻道送出顯示「你沒有家族」。房間可按 F3 在「有/沒有」之間切換（除錯用）。
+        //
+        // DemoGuildName 只是「設定裡什麼都沒填」時的示範值 —— 以前這裡是寫死的，於是玩家在 config.ini 設了家族名，
+        // 頭上名牌換了、送上線的身分卻還是「熱舞家族」，兩邊對不起來。
         public const string DemoGuildName = "熱舞家族";
         public string GuildName = DemoGuildName;
         public bool HasGuild => !string.IsNullOrWhiteSpace(GuildName);
@@ -56,6 +60,9 @@ namespace Sdo.UI.Core
         // 寫進歌曲資料夾並記在該資料夾的 sdoinfo.dat（同一首歌永遠生出同一支舞，且只生一次）。
         public string ExternalFolderPath = "";  // 歌曲資料夾（CD 圖／sdoinfo.dat／生成的 .dps 都放這）
         public string ExternalSongKey = "";     // 資料夾內的識別（"" = 該資料夾只有一首）
+        // 🔴 生成舞蹈的 seed 是這個,不是資料夾名:缺歌傳檔會把歌放進 connect/<歌名 - 作者 [packId 前8碼]>/,
+        // 兩邊的資料夾名不同 → 用資料夾名當 seed 會讓同一首歌在兩台生出完全不同的舞(見 Sdo.Game.ExternalDps)。
+        public string ExternalPackId = "";      // 這首歌所在資料夾的跨電腦身分（"" = 算不出 → 退回資料夾名）
         // ---- 生成編舞要的「整首歌」資料：舞是一首歌一支，不能因為換難度就變另一支（見 Sdo.Osu.DanceInputs）----
         // 這首**歌**的 BPM（選歌顯示的那個）；<= 0 = 不知道 → 退回選到那張譜自己算出來的。
         public double ExternalSongBpm;
@@ -102,6 +109,12 @@ namespace Sdo.UI.Core
             Team = RoomConfig.defaultTeam;
             DropDirection = RoomConfig.defaultDropDirection;
             GameMode = RoomConfig.defaultGameMode;
+            // 家族名跟著這個角色走（config.ini [Profile] 是 Default，角色自己設過就以角色的為準）。
+            // 這裡種是因為 SeedRoomDefaults 每次切帳號都會重跑 —— 換角色時家族名要跟著換，
+            // 而 GuildName 是家族頻道與送上線身分共同的來源。設定裡完全沒填 → 留著示範家族名，
+            // 家族頻道才不會在單機下變成一個永遠說「你沒有家族」的死頁籤。
+            string family = ProfileFields.FamilyName(ProfileManager.Active);
+            GuildName = family.Length > 0 ? family : DemoGuildName;
             // 場景：config 沒指定（-1，或 config.ini 被刪 → 回退預設 -1）就維持隨機；指定了就套用那個場景。
             if (RoomConfig.defaultScene < 0)
             {

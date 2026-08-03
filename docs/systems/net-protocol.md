@@ -50,6 +50,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 |---|---|
 | 連線 | `hello`{proto,role,playerId,name,gender,level,guild,**build**,password?,**authToken?**,sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
 | 房間 | `roomList` / `createRoom`{mode,name} / `joinRoom`{code} → `joinResult`{ok/full/inGame/notFound} / `leaveRoom` / **`roomState`**{rev,code,name,hostUserId,mode,status,capacity,seats[…],spectators[],song,settings} / `setRoomName` |
+| 名單 | `userList` → `userListResult`{users:[{userId,name,guild,level,gender,**roomSeq**}]} —— 大廳左側玩家名單(全部/好友/家族)的資料來源。**沒有上下線推播**,與 `roomList` 同一個問答模式(大廳自己輪詢)。`roomSeq` 0 = 人在大廳、>0 = 在那個**門牌**的房(不是加入用的 code)。「誰是我的好友」server 不知道 —— 好友清單存在玩家自己機器上,比對在 client 做 |
 | 座位 | `kickUser` / `setSeatClosed` / `transferHost` / `kicked`{reason} / `error`{rq?,code,msg} |
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
 | 開場 | `setReady` / `setSong`{NetSongRef} / `setRoomSettings` / `requestStart`{force,resolved} → `matchStarting`{matchId,startEpochMs,loadTimeoutMs,participants[],spectatorNames[],resolved,song,settings} / `setPlayState` / `gameplayStarted` / `gameplayAborted` / `resultsReady`{matchId,rows[]} |
@@ -80,6 +81,23 @@ server 沒給 `--tokens` 時 `authToken` 被忽略,身分 = client 自稱的 `pl
 
 加密不在協定層:TLS 包在 framing 外面(`[len][kind][payload]` 一個 byte 都沒變),
 所以 `serverTls` 只影響 stream 怎麼建起來。憑證釘選規則見 `Sdo.Net.TlsPinning`。
+
+### 名字唯一:`bye{nameTaken}`
+
+**同一個名字同時只能有一個人在線**,擋的是**後上線的那個** → `bye{nameTaken}`,
+先在線的完全不受影響(反過來做的話,被冒名等於送對方一把把你踢下線的鑰匙)。
+
+為什麼:名字是這裡唯一認人的東西 —— 密語照名字找人、房間的名字牌、大廳的線上名單都是它。
+兩個「小明」同時在線的話密語只進得去其中一個,而寄的人與收的人都不知道為什麼。
+比對用 `SanitizeName` **之後**的名字且**不分大小寫**(與密語找人同一條規則,否則
+「Alice」與「alice」會同時在線而密語只進得去一個)。
+
+⚠️ `setIdentity` 要尊重同一條規則:改名撞到線上其他人時**不改**(保留原本的名字,其餘欄位照常更新)——
+否則用別的名字進來、進來後再改成對方的名字,結果一樣是兩個同名的人同時在線。
+
+代價(不是 bug):client 當掉重開會被自己那條還沒被清掉的舊連線擋住,要等 ping 逾時(15 秒)
+把幽靈連線掃掉才進得來。client 端收到這個 code 時彈的是「登入失敗:這個名稱已被使用」
+(`net.name_taken`),並**留在選角色畫面**(那裡就有改名字的地方),不像其他連線失敗那樣退回單機。
 
 ### `hello.build`:兩邊是不是同一個 commit
 
@@ -151,6 +169,30 @@ A 的最新一筆可能是歌曲時間 10000ms 的、B 的是 9600ms 的 —— 
 > 舊版是「挑戰者要領先 300 分才換」。門檻式防抖的有效條件是「門檻 > 雜訊振幅」,而這裡的雜訊
 > 振幅 = 時間落差 × 得分率,跟著 combo 一起長 —— 門檻永遠追不上,調大又會鎖死真正的超車。
 > 細節與取捨(為什麼取樣點用 max−window 而不是 min)寫在 `server/Sdo.Server/Net/LiveLeaderTracker.cs`。
+
+### 右側名單也要「同一時刻」
+
+`frames` 的三層規則(上一節)治的是 server 選領隊,**client 畫右側名單有同一個病**:
+遠端那幾列是 5 Hz 推來的、天生落後約一個往返,本機那一列如果照即時分數畫,自己就永遠比別人快一步
+(使用者回報「右邊分數列表沒有同步,自己的分數總是比較快」)。
+
+作法與 server 同一條(sample-and-hold,`ScreenGameplay.RosterLocalScore`):本機把自己的分數存成
+`(tMs, score)` 短期歷程(只在變動時記一筆、只留最近 5 秒),畫名單時取**最舊的一筆遠端 frame 的
+`tMs`**,把自己的分數倒帶到那一刻。取樣點單調遞增 → 名單上的數字不會倒退;有人卡住不再送 frame 時
+落後上限 2 秒,不會讓整張名單跟著他凍住。上方那排大分數仍然是即時的 —— 倒帶只影響名單與「第幾名」。
+
+### 曲末的輸贏:等權威名次,平手照座位序
+
+兩件事一起才會對:
+
+1. **平手照座位序**(`Sdo.Ruleset.RankingBoard`,與 server 的 `ResultRowOrder`、`LiveLeaderTracker`
+   同一條規則)。舊版是「同分本機先」—— 那是每台各自成立的規則,同分時兩台都判自己第一名。
+2. **曲末不當場定輸贏**(`ScreenGameplay.TickFinishPoseDecision`)。歌一結束那一刻,本機手上的對手
+   分數是分數流的最後一筆,少了他最後零點幾秒打的音符;拿它定輸贏,接近時兩台都會覺得自己贏。
+   改成等 `resultsReady`(權威名次)才放定格動作,最多等 1 秒 —— 等不到時對手的**最終**成績也早就
+   從分數流補上了。定格 pose 本來就要在 2.5 秒後才換結算面板,這段等待不影響時程。
+
+> 症狀長這樣:「結算面板寫我第 2 名,人卻在跳勝利動作」。只修其中一件都還會漏掉另一半的情形。
 
 ### 歌曲參照 `NetSongRef`
 

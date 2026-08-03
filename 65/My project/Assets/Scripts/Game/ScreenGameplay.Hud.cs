@@ -307,7 +307,11 @@ namespace Sdo.Game
             var av = parent.AddComponent<SdoAvatar>();
             av.Setup(hrc, LoadAsset(danceMot, b => MotLoader.Load(b)));
             av.SetBodyShape(SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody));
-            av.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));
+            // 🔴 頭貼一律用**地面**待機,不是 restMot —— 穿飛行翅膀時 restMot 已經被 ConfigureAvatarGender 換成
+            // flystay(浮空前傾),那是**舞台**待機用的。結算列其他人的頭貼是地面 idle(RoomHeadPortrait.
+            // groundClipsOnly),自己這一列跟著飛就變成「同一排頭像裡只有我歪一邊」,而且別台看到的我還是站姿。
+            av.RestMot = LoadAsset(localPlayerMale ? MaleGameplayRestMot : FemaleGameplayRestMot,
+                                   b => MotLoader.Load(b));
             av.DanceEnabled = () => false;     // always hold the standby idle clip
             av.DanceTimeSec = () => -1f;
             // Load the WOMAN body parts, opaque portrait style (shared builder; "h_" prefix keeps the isolated names).
@@ -362,17 +366,18 @@ namespace Sdo.Game
         private void RebuildRoster()
         {
             _roster.Clear();
+            // 連線:用 server 推來的真分數,而且**優先於 mockOpponents** —— 真連線時混進假對手的話
+            // 名次是假的,結算列還會多出不存在的人。(先取,本機那一列要照它決定畫哪一刻的分數。)
+            var netOpp = NetOpponents != null ? NetOpponents() : null;
             // 旁觀者不是參賽者 → 名單裡不能有自己。加了的話會多出一列 0 分的自己,而且它會跟著參與名次排序
             // (「第 3 名」裡有一個根本沒下場的人)。
-            if (!spectatorMode) _roster.Add(new PlayerEntry(localPlayerName, TotalScore, true));
-            // 連線:用 server 推來的真分數,而且**優先於 mockOpponents** —— 真連線時混進假對手的話
-            // 名次是假的,結算列還會多出不存在的人。
-            var netOpp = NetOpponents != null ? NetOpponents() : null;
+            if (!spectatorMode)
+                _roster.Add(new PlayerEntry(localPlayerName, RosterLocalScore(netOpp), true, LocalSeatOrder));
             if (netOpp != null)
             {
                 int cap = Math.Min(netOpp.Length, RosterRows - _roster.Count);
                 for (int i = 0; i < cap; i++)
-                    _roster.Add(new PlayerEntry(netOpp[i].Name ?? "", netOpp[i].Score, false));
+                    _roster.Add(new PlayerEntry(netOpp[i].Name ?? "", netOpp[i].Score, false, SeatOrderOf(netOpp[i].UserId)));
                 return;
             }
             if (mockOpponents && !freeMode)   // 自由模式 = solo (no opponents)
@@ -383,6 +388,61 @@ namespace Sdo.Game
                 for (int i = 0; i < n; i++)
                     _roster.Add(new PlayerEntry(OpponentNames[i], SimOpponentScore(i, progress), false));
             }
+        }
+
+        // ---- 名單的「同一時刻」與平手序 ---------------------------------------------------------------------
+
+        /// <summary>本機在座位序裡的位置(離線 = 0)。平手時比這個 —— 與 server 的 (seat, userId) 同序
+        /// (<c>netDancers</c> 就是照座位序排好的,見 FrontendApp.FillNetDancers)。</summary>
+        private int LocalSeatOrder => LocalDancerSlotIndex;
+
+        /// <summary>某位遠端玩家的座位序;名單裡找不到(中途離開/資料還沒到)= 沒有座位資料。</summary>
+        private int SeatOrderOf(int userId)
+        {
+            if (userId != 0 && netDancers != null)
+                for (int i = 0; i < netDancers.Length; i++)
+                    if (netDancers[i].UserId == userId) return i;
+            return PlayerEntry.NoSeat;
+        }
+
+        // 右側名單要畫的是「同一個歌曲時刻」的分數。遠端那幾筆是 server 5Hz 彙整推來的,天生落後約一個
+        // 往返;本機若照 TotalScore 直接畫,自己那一列就永遠比別人快一步(使用者回報「自己的分數總是比較快」)。
+        // 所以把本機的分數也倒帶到**遠端那幾筆的譜面時間**再畫 —— 整張名單於是都是同一刻的分數。
+        // (上方那排大分數仍然是即時的;倒帶只影響右側名單與「第幾名」。)
+        private const double RosterSyncCapMs = 2000.0;   // 有人卡住不再送 frame → 名單最多只跟著等這麼久
+        private const double ScoreTrailKeepMs = 5000.0;
+        private readonly List<(double tMs, long score)> _scoreTrail = new List<(double, long)>();
+
+        private long RosterLocalScore(NetPlayerScore[] netOpp)
+        {
+            // 曲末定名次(EnterResult)用的是**真**最終分,不能倒帶 —— 那一刻要的是自己打完的成績。
+            if (_ended || netOpp == null || netOpp.Length == 0) return TotalScore;
+            double asOf = double.MaxValue;
+            for (int i = 0; i < netOpp.Length; i++)
+                if (netOpp[i].TimeMs > 0.0 && netOpp[i].TimeMs < asOf) asOf = netOpp[i].TimeMs;
+            if (asOf == double.MaxValue) return TotalScore;   // 一筆 frame 都還沒收到
+            // 🔴 用 NetClockMs(與遠端 tMs 同一把尺,見它的註解),不是 _nowMs(那把尺含本機的音訊偏移設定)。
+            return LocalScoreAt(Math.Max(asOf, NetClockMs - RosterSyncCapMs));
+        }
+
+        /// <summary>本機分數的短期歷程 —— 只在分數變動時記一筆(整首歌約幾百筆,而且只留最近幾秒)。</summary>
+        private void RecordLocalScoreSample(double nowMs)
+        {
+            long s = TotalScore;
+            int n = _scoreTrail.Count;
+            if (n > 0 && _scoreTrail[n - 1].score == s) return;
+            _scoreTrail.Add((nowMs, s));
+            int drop = 0;   // 視窗外只留最後一筆 —— 查詢要靠它回答「那個時刻是多少分」
+            while (drop + 1 < _scoreTrail.Count && _scoreTrail[drop + 1].tMs < nowMs - ScoreTrailKeepMs) drop++;
+            if (drop > 0) _scoreTrail.RemoveRange(0, drop);
+        }
+
+        /// <summary>本機在譜面時間 <paramref name="tMs"/> 當下的分數(比最舊的樣本還早 → 取最舊那筆)。</summary>
+        private long LocalScoreAt(double tMs)
+        {
+            for (int i = _scoreTrail.Count - 1; i >= 0; i--)
+                if (_scoreTrail[i].tMs <= tMs) return _scoreTrail[i].score;
+            return _scoreTrail.Count > 0 ? _scoreTrail[0].score : TotalScore;
         }
 
         // deterministic mock score: skill × smoothstep(progress) × (1 ± small oscillation). The oscillation
@@ -420,7 +480,9 @@ namespace Sdo.Game
             // → 畫面上出現「0 / N」。
             if (spectatorMode) return;
 
-            var (rank, total) = RankingBoard.LocalRank(_roster);
+            // 畫面上的名次:同分並列、不跳號(1,1,2)—— 與結算面板的名次牌同一條規則(使用者指定)。
+            // 輸贏定格用的是另一條(LocalRank,嚴格順序),兩者刻意不同。
+            var (rank, total) = RankingBoard.LocalDisplayRank(_roster);
             rank = Mathf.Clamp(rank, 0, 6);    // PKSCORE digits only go 0..6
             total = Mathf.Clamp(total, 0, 6);
             var cur = _pkDigits[rank]; var tot = _pkDigits[total];

@@ -127,48 +127,46 @@ namespace Sdo.Settings
         // ---------------- 個人資料：家族 / 等級 / 經驗值 ----------------
         //
         // 兩層、同檔名：角色資料夾裡的 DATA/PROFILE/<id>/profile.json 是**這個角色自己的**，外面那層的
-        // DATA/PROFILE/profile.json（ProfileDefaults）是**所有角色共用的預設**。角色沒設過（家族兩項留空 /
-        // level=0）就吃預設值 —— 顯示端一律問這裡，不要直接讀 ProfileDefaults。
+        // DATA/PROFILE/profile.json（ProfileDefaults）是**所有角色共用的預設**。哪一層算數由
+        // UserProfile.hasProfileOverrides 決定（整組覆寫，不是逐欄；理由見該欄位）—— 解析全在 ProfileFields，
+        // 下面幾個只是「active 角色」的方便入口，不要在別處重寫同樣的判斷。
 
-        /// <summary>要顯示的家族名稱：角色自己的優先，沒設過 → 外層 profile.json 的預設。空字串＝不顯示家族列。</summary>
-        public static string FamilyName => ResolveText(Active.familyName, ProfileDefaults.familyName);
+        /// <summary>active 角色要顯示的家族名稱。空字串＝不顯示家族列。</summary>
+        public static string FamilyName => ProfileFields.FamilyName(Active);
 
-        /// <summary>要顯示的家族徽章檔名（DATA/EMBLEM 下，不含副檔名）：角色自己的優先，沒設過 → 外層的預設。</summary>
-        public static string FamilyEmblem => ResolveText(Active.familyEmblem, ProfileDefaults.familyEmblem);
+        /// <summary>active 角色要顯示的家族徽章檔名（DATA/EMBLEM 下，不含副檔名）。空＝只顯示名稱不放徽章。</summary>
+        public static string FamilyEmblem => ProfileFields.FamilyEmblem(Active);
 
-        /// <summary>這個角色的等級（給獎勵公式 <c>Sdo.Ruleset.Reward</c> 用的數字）：自己的優先，沒設過 → 外層
-        /// profile.json 的預設起始等級（沒設 → LV1）。永遠 ≥ 1。</summary>
-        public static int Level => ResolveLevel(Active.level, ProfileDefaults.level);
+        /// <summary>active 角色的等級（給獎勵公式 <c>Sdo.Ruleset.Reward</c> 與上線 identity 用的數字）。永遠 ≥ 1。</summary>
+        public static int Level => ProfileFields.PlayerLevelValue(Active);
 
-        /// <summary>頭上名字牌那個等級標籤：角色升過等 → 「LV:N」；還沒設過 → 照外層的預設（0＝空字串＝不顯示）。</summary>
-        public static string LevelLabel
-            => PlayerLevel.Label(Active.level > 0 ? Active.level : ProfileDefaults.level);
+        /// <summary>頭上名字牌那個等級標籤（「LV:N」）；沒設等級 → 空字串＝不顯示。</summary>
+        public static string LevelLabel => ProfileFields.LevelLabel(Active);
+
+        /// <summary>active 角色目前等級內累積的經驗值。</summary>
+        public static int Exp => ProfileFields.Exp(Active);
+
+        /// <summary>active 角色升下一級還需要的經驗（滿級 → 0）。</summary>
+        public static int ExpToNext => ProfileFields.ExpToNext(Active);
+
+        /// <summary>active 角色目前等級內的經驗進度 0..100（大廳的經驗條 / 個人資料頁的經驗列）。</summary>
+        public static float ExpPercent => ProfileFields.ExpPercent(Active);
 
         /// <summary>每局結算把經驗值加進 active 角色（跨門檻自動升等，見 <see cref="PlayerLevel.Grant"/>）並落地
-        /// 角色自己的 profile.json，回傳升了幾級（0＝沒升）。第一次加經驗會順手把「共用預設等級」寫成這個角色自己的
-        /// 等級 —— 從此它自己升自己的，不再跟著外層的預設走。沒有角色資料夾時（standalone 自 boot）只改記憶體。</summary>
+        /// 角色自己的 profile.json，回傳升了幾級（0＝沒升）。升等會豎起這個角色的覆寫旗標（連同目前生效的家族值一起
+        /// 寫進去，見 <see cref="ProfileFields.SetLevel"/>）—— 從此它自己升自己的，不再跟著外層的預設走。
+        /// 沒有角色資料夾時（standalone 自 boot）只改記憶體。</summary>
         public static int AddExperience(int gained)
         {
             if (gained <= 0) return 0;
             var p = Active;
-            int before = ResolveLevel(p.level, ProfileDefaults.level);
+            int before = ProfileFields.PlayerLevelValue(p);
             var (lv, exp) = PlayerLevel.Grant(before, p.exp, gained);
-            p.level = lv;
+            ProfileFields.SetLevel(p, lv);
             p.exp = exp;
             Save();
             return lv - before;
         }
-
-        /// <summary>角色自己的字串設定優先；留空（沒設過）→ 用預設值。兩邊都去頭尾空白。純函式。</summary>
-        public static string ResolveText(string own, string fallback)
-        {
-            own = (own ?? "").Trim();
-            return own.Length > 0 ? own : (fallback ?? "").Trim();
-        }
-
-        /// <summary>角色自己的等級優先（&gt;0 ＝設過）；沒設過 → 外層的預設等級；兩層都沒設 → LV1（＝以前寫死的值）。純函式。</summary>
-        public static int ResolveLevel(int own, int fallback)
-            => own > 0 ? PlayerLevel.Clamp(own) : (fallback > 0 ? PlayerLevel.Clamp(fallback) : PlayerLevel.MinLevel);
 
         // ---------------- enumerate / create ----------------
 

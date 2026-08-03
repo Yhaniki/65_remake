@@ -23,21 +23,5 @@ namespace Sdo.UI.Services
             => string.IsNullOrWhiteSpace(customName)
                 ? LocalizationManager.Get("room.default_name", hostName ?? "")
                 : customName;
-
-        /// <summary>
-        /// 房名 + 房號:「飄漂o的舞蹈室(40444)」。
-        ///
-        /// 房號放在房名後面而不是左上那排(練習場/頻道)—— 那才是玩家要唸給朋友聽的東西,
-        /// 跟房名放在一起比擠在「頻道1」後面好認。
-        ///
-        /// <paramref name="roomCode"/> &lt;= 0 時不加括弧 —— 還沒有房號的過渡狀態,
-        /// 以及**單機**(呼叫端刻意傳 0:沒有別人能加入,那串號碼對玩家沒有意義)。
-        /// </summary>
-        public static string DisplayNameWithCode(string customName, string hostName, int roomCode)
-        {
-            string name = DisplayName(customName, hostName);
-            if (roomCode <= 0) return name;
-            return name + "(" + roomCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")";
-        }
     }
 }

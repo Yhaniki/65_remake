@@ -60,10 +60,6 @@
    "v": "チャット"
   },
   {
-   "k": "lobby.chat_hint",
-   "v": "メッセージを入力して Enter…"
-  },
-  {
    "k": "lobby.send",
    "v": "送信"
   },
@@ -102,6 +98,26 @@
   {
    "k": "lobby.col_status",
    "v": "状態"
+  },
+  {
+   "k": "lobby.record",
+   "v": "{0}勝 {1}敗"
+  },
+  {
+   "k": "lobby.no_quick_room",
+   "v": "今すぐ入れる待機中のステージがありません"
+  },
+  {
+   "k": "lobby.joined_as_spectator",
+   "v": "座席が満員のため、観戦として参加します"
+  },
+  {
+   "k": "lobby.userlist_in_lobby",
+   "v": "ロビー"
+  },
+  {
+   "k": "lobby.userlist_in_room",
+   "v": "ルーム {0}"
   },
   {
    "k": "room.title",
@@ -146,6 +162,10 @@
   {
    "k": "room.mode",
    "v": "モード"
+  },
+  {
+   "k": "room.mode_fashion",
+   "v": "ファッションダンス"
   },
   {
    "k": "room.empty_seat",
@@ -221,7 +241,7 @@
   },
   {
    "k": "room.slot_transfer_host",
-   "v": "ホストを譲る"
+   "v": "ホストを変更"
   },
   {
    "k": "room.slot_close",
@@ -230,6 +250,138 @@
   {
    "k": "room.slot_open",
    "v": "席を開く"
+  },
+  {
+   "k": "room.slot_player_info",
+   "v": "プレイヤー情報"
+  },
+  {
+   "k": "room.slot_whisper",
+   "v": "ささやく"
+  },
+  {
+   "k": "room.slot_add_friend",
+   "v": "フレンド追加"
+  },
+  {
+   "k": "room.slot_remove_friend",
+   "v": "フレンド削除"
+  },
+  {
+   "k": "room.friend_added",
+   "v": "{0} をフレンドに追加しました"
+  },
+  {
+   "k": "room.friend_add_failed",
+   "v": "{0} をフレンドに追加できませんでした"
+  },
+  {
+   "k": "room.friend_removed",
+   "v": "{0} をフレンドから削除しました"
+  },
+  {
+   "k": "room.friend_remove_failed",
+   "v": "{0} はフレンドに登録されていません"
+  },
+  {
+   "k": "room.info_name",
+   "v": "名前"
+  },
+  {
+   "k": "room.info_gender",
+   "v": "性別"
+  },
+  {
+   "k": "room.info_gender_male",
+   "v": "男性"
+  },
+  {
+   "k": "room.info_gender_female",
+   "v": "女性"
+  },
+  {
+   "k": "room.info_family",
+   "v": "ファミリー"
+  },
+  {
+   "k": "room.info_level",
+   "v": "レベル"
+  },
+  {
+   "k": "room.info_none",
+   "v": "(なし)"
+  },
+  {
+   "k": "room.info_coins",
+   "v": "Mコイン"
+  },
+  {
+   "k": "room.info_points",
+   "v": "Gコイン"
+  },
+  {
+   "k": "room.info_bonus",
+   "v": "Pコイン"
+  },
+  {
+   "k": "room.info_accuracy",
+   "v": "命中率"
+  },
+  {
+   "k": "room.info_perfect",
+   "v": "Perfect率"
+  },
+  {
+   "k": "room.info_cool",
+   "v": "Cool率"
+  },
+  {
+   "k": "room.info_bad",
+   "v": "Bad率"
+  },
+  {
+   "k": "room.info_miss",
+   "v": "Miss率"
+  },
+  {
+   "k": "room.info_winrate",
+   "v": "勝率"
+  },
+  {
+   "k": "room.info_judged",
+   "v": "判定数"
+  },
+  {
+   "k": "room.info_judged_value",
+   "v": "P {0} / C {1} / B {2} / M {3}"
+  },
+  {
+   "k": "room.info_plays",
+   "v": "プレイ回数"
+  },
+  {
+   "k": "room.info_plays_value",
+   "v": "{0} 回"
+  },
+  {
+   "k": "room.info_record",
+   "v": "戦績"
+  },
+  {
+   "k": "room.info_record_value",
+   "v": "{0} 勝 {1} 敗"
+  },
+  {
+   "k": "room.info_no_stats",
+   "v": "まだ記録がありません — 1曲を最後までプレイすると集計が始まります。"
+  },
+  {
+   "k": "room.info_remote_stats",
+   "v": "相手のデータがまだ届いていません — オフラインか、データを送信しない旧バージョンの可能性があります。"
+  },
+  {
+   "k": "room.info_remote_basic",
+   "v": "オンラインで取得できるのは名前・ファミリー・レベルだけで、それ以外はサーバーに保存されていません。"
   },
   {
    "k": "room.teams_2v2",
@@ -312,8 +464,20 @@
    "v": "サーバーの部屋が満杯です"
   },
   {
+   "k": "net.name_taken",
+   "v": "ログイン失敗：その名前は使用中です"
+  },
+  {
+   "k": "net.link_lost",
+   "v": "サーバーとの接続が切れました"
+  },
+  {
    "k": "net.transfer_failed",
    "v": "曲の転送に失敗しました"
+  },
+  {
+   "k": "net.transfer_retry",
+   "v": "曲の転送に失敗しました — 再試行中"
   },
   {
    "k": "settings.applied",

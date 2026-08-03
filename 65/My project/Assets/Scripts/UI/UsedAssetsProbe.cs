@@ -221,6 +221,9 @@ namespace Sdo.UI
             "UI/BUBBLE2", "UI/EXPRESSIONS",
             "UI/LOBBYDLG/KEYS",     // keyboard glyphs (the only LOBBYDLG subtree read)
             "UI/LOBBYSEL",          // gender-select art
+            "UI/STATECOMMUNITYHALL",// 大廳(官方 CStateCommunityHall:星空底 + 兩欄三列房卡 + 下方面板;
+                                    // 幾乎整包裁自同一張 STAGE.PNG。⚠️ 不是 UI/LOBBY —— 那是另一套版面)
+            "UI/PLAYERINFORMATIONDLG",  // 玩家資訊視窗(BaseBoard 男女兩張皮 + 分頁條 + 底部動作鈕)
             "UI/BGM",               // front-end random background music
         };
 

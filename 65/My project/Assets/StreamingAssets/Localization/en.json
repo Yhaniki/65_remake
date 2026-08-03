@@ -60,10 +60,6 @@
    "v": "Chat"
   },
   {
-   "k": "lobby.chat_hint",
-   "v": "Type a message and press Enter…"
-  },
-  {
    "k": "lobby.send",
    "v": "Send"
   },
@@ -102,6 +98,26 @@
   {
    "k": "lobby.col_status",
    "v": "Status"
+  },
+  {
+   "k": "lobby.record",
+   "v": "{0}W {1}L"
+  },
+  {
+   "k": "lobby.no_quick_room",
+   "v": "No open stage to join right now"
+  },
+  {
+   "k": "lobby.joined_as_spectator",
+   "v": "Seats are full — joining as a spectator"
+  },
+  {
+   "k": "lobby.userlist_in_lobby",
+   "v": "Lobby"
+  },
+  {
+   "k": "lobby.userlist_in_room",
+   "v": "Room {0}"
   },
   {
    "k": "room.title",
@@ -146,6 +162,10 @@
   {
    "k": "room.mode",
    "v": "Mode"
+  },
+  {
+   "k": "room.mode_fashion",
+   "v": "Fashion Dance"
   },
   {
    "k": "room.empty_seat",
@@ -221,7 +241,7 @@
   },
   {
    "k": "room.slot_transfer_host",
-   "v": "Make host"
+   "v": "Transfer host"
   },
   {
    "k": "room.slot_close",
@@ -230,6 +250,138 @@
   {
    "k": "room.slot_open",
    "v": "Open seat"
+  },
+  {
+   "k": "room.slot_player_info",
+   "v": "Player info"
+  },
+  {
+   "k": "room.slot_whisper",
+   "v": "Whisper"
+  },
+  {
+   "k": "room.slot_add_friend",
+   "v": "Add friend"
+  },
+  {
+   "k": "room.slot_remove_friend",
+   "v": "Remove friend"
+  },
+  {
+   "k": "room.friend_added",
+   "v": "Added {0} to your friends"
+  },
+  {
+   "k": "room.friend_add_failed",
+   "v": "Could not add {0} to your friends"
+  },
+  {
+   "k": "room.friend_removed",
+   "v": "Removed {0} from your friends"
+  },
+  {
+   "k": "room.friend_remove_failed",
+   "v": "{0} is not in your friends list"
+  },
+  {
+   "k": "room.info_name",
+   "v": "Name"
+  },
+  {
+   "k": "room.info_gender",
+   "v": "Gender"
+  },
+  {
+   "k": "room.info_gender_male",
+   "v": "Male"
+  },
+  {
+   "k": "room.info_gender_female",
+   "v": "Female"
+  },
+  {
+   "k": "room.info_family",
+   "v": "Family"
+  },
+  {
+   "k": "room.info_level",
+   "v": "Level"
+  },
+  {
+   "k": "room.info_none",
+   "v": "(none)"
+  },
+  {
+   "k": "room.info_coins",
+   "v": "M coins"
+  },
+  {
+   "k": "room.info_points",
+   "v": "G coins"
+  },
+  {
+   "k": "room.info_bonus",
+   "v": "P coins"
+  },
+  {
+   "k": "room.info_accuracy",
+   "v": "Accuracy"
+  },
+  {
+   "k": "room.info_perfect",
+   "v": "Perfect"
+  },
+  {
+   "k": "room.info_cool",
+   "v": "Cool"
+  },
+  {
+   "k": "room.info_bad",
+   "v": "Bad"
+  },
+  {
+   "k": "room.info_miss",
+   "v": "Miss"
+  },
+  {
+   "k": "room.info_winrate",
+   "v": "Win rate"
+  },
+  {
+   "k": "room.info_judged",
+   "v": "Judgements"
+  },
+  {
+   "k": "room.info_judged_value",
+   "v": "P {0} / C {1} / B {2} / M {3}"
+  },
+  {
+   "k": "room.info_plays",
+   "v": "Songs played"
+  },
+  {
+   "k": "room.info_plays_value",
+   "v": "{0}"
+  },
+  {
+   "k": "room.info_record",
+   "v": "Record"
+  },
+  {
+   "k": "room.info_record_value",
+   "v": "{0}W {1}L"
+  },
+  {
+   "k": "room.info_no_stats",
+   "v": "No records yet — finish a song and the totals start counting."
+  },
+  {
+   "k": "room.info_remote_stats",
+   "v": "This player's record hasn't arrived - they may be offline, or running an older build that doesn't publish it."
+  },
+  {
+   "k": "room.info_remote_basic",
+   "v": "Only the name, family and level travel over the network — nothing else is stored on the server."
   },
   {
    "k": "room.teams_2v2",
@@ -312,8 +464,20 @@
    "v": "The server has no room slots left"
   },
   {
+   "k": "net.name_taken",
+   "v": "Login failed — that name is already in use"
+  },
+  {
+   "k": "net.link_lost",
+   "v": "Disconnected from the server"
+  },
+  {
    "k": "net.transfer_failed",
    "v": "Song transfer failed — please try again"
+  },
+  {
+   "k": "net.transfer_retry",
+   "v": "Song transfer failed — retrying"
   },
   {
    "k": "settings.applied",

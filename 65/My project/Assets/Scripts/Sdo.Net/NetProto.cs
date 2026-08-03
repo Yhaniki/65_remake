@@ -45,6 +45,19 @@
 
         public const string RoomList = "roomList";
         public const string RoomListResult = "roomListResult";
+
+        /// <summary>
+        /// C→S 請求「現在誰在線上」(大廳的玩家名單:全部 / 好友 / 家族三個分頁的資料來源)。
+        ///
+        /// 與 <see cref="RoomList"/> 一樣是**問答式**的:server 沒有「有人上下線了」的推播,
+        /// 名單由大廳自己跟著房間列表同一個節拍回頭問。
+        /// </summary>
+        public const string UserList = "userList";
+
+        /// <summary>S→C。<c>users</c> 是一列 <c>{userId,name,guild,level,gender,roomSeq}</c>
+        /// (<c>roomSeq</c> <b>-1</b> = 人在大廳,&gt;= 0 = 在門牌 N 那間房 —— 門牌從 000 起算,
+        /// 所以 0 不能當「在大廳」的哨兵值)。</summary>
+        public const string UserListResult = "userListResult";
         public const string CreateRoom = "createRoom";
         public const string JoinRoom = "joinRoom";
         /// <summary>S→C unicast。result 對映現有的 Sdo.UI.Services.JoinResult enum，不用改那邊。</summary>
@@ -139,6 +152,26 @@
         /// 「unknown message」的 error 但不斷線 —— 降級成現狀(名字不會更新),不會壞掉。
         /// </summary>
         public const string SetIdentity = "setIdentity";
+
+        /// <summary>
+        /// C→S。回報自己的**公開名片**(累計判定數 / 勝負 / 經驗值% / 知名度 / 四格自我介紹)——
+        /// 就是個人資料視窗看別人時該顯示的那些數字。內容見 <see cref="NetPlayerCard"/>。
+        ///
+        /// 為什麼要有:那些資料原本只存在玩家自己那台機器的 profile.json,所以點開別人的資料整頁是 0。
+        /// 送的時機與 <see cref="SetLook"/> / <see cref="SetIdentity"/> 同一組(進房前 + 打完一局後 +
+        /// 大廳輪詢的節拍),client 端自己去重(內容沒變就不送)。
+        ///
+        /// 🔴 **自報值,server 不驗證** —— 判定數本來就發生在 client。拿來顯示可以,
+        /// 拿來做排行榜或發獎勵不行(與 setIdentity/setLook 同一個信任等級)。
+        /// </summary>
+        public const string SetPlayerCard = "setCard";
+
+        /// <summary>C→S。問「userId 這個人的公開資料」。對方不在線上 → <c>found=false</c>。</summary>
+        public const string PlayerCardQuery = "cardQuery";
+
+        /// <summary>S→C。<c>{found,userId,name,playerId,guild,level,look{...},card{...}}</c>。
+        /// <c>look</c> 是 server 手上那份(setLook 來的),不是名片的一部分 —— 同一件事只該有一個來源。</summary>
+        public const string PlayerCardResult = "cardResult";
 
         // ---- 缺歌上報與傳檔 ----
 
@@ -256,6 +289,15 @@
         /// </summary>
         public const string ErrBadToken = "badToken";
 
+        /// <summary>
+        /// 這個名字線上已經有人在用了(<c>bye</c> 的 reason)—— **後上線的那個被擋**。
+        ///
+        /// 為什麼要擋:名字是這款遊戲裡唯一認人的東西 —— 密語照名字找人、房間裡的名字牌、
+        /// 大廳的線上名單都是。允許兩個「小明」同時在線,密語就會進到不確定的那一個,
+        /// 而看到名字牌的人也分不出誰是誰。
+        /// </summary>
+        public const string ErrNameTaken = "nameTaken";
+
         // ---- blob error code ----
 
         public const string BlobErrNotFound = "notFound";
@@ -263,6 +305,9 @@
         public const string BlobErrBadPath = "badPath";
         public const string BlobErrHashMismatch = "hashMismatch";
         public const string BlobErrQuota = "quota";
+
+        /// <summary>傳輸停滯太久,server 這一側先放棄了(見 <c>NetLimits.BlobStallTimeoutServerMs</c>)。</summary>
+        public const string BlobErrStalled = "stalled";
 
         // ---- kicked reason ----
 

@@ -637,12 +637,51 @@ namespace Sdo.Net.Server
                     // 已經是 idle 就當成功(冪等)—— 載入階段中離的人會先被 AbortDuringLoad 清成 idle,
                     // 緊接著回房又送一次這則,不該讓他收到一個沒有意義的 badState。
                     if (s.PlayState == PlayState.Idle) return NetRoomOp.Ok;
+
+                    // 🔴 還停在 playing 的人也要收。
+                    //
+                    // 「我人回房間了」是只有 client 知道的事實;server 這時還以為他在跳,唯一的原因是那則
+                    // playFinished 沒生效(掉包 / 被限流 / 被暫存殘留擋掉)。以前這裡回 badState,後果是**死結**:
+                    //   • 他的座位永遠是 playing → Tick 的結算條件(沒有參與者還在 playing)永遠不成立
+                    //     → 房間卡在 playing,整間房再也開不了下一局;
+                    //   • Ready 只在這條路徑上清,所以他頭上的「準備」也永遠退不掉,別人看他永遠是 PLAYING。
+                    // 而且沒有任何逃生門救得回來:R14 的逾時只管 waitingForLoad,結算寬限期要等結算才起算。
+                    //
+                    // 收下之後把他移出 active 集合(**保留**結算名單 —— R16 用他最後一筆 frame 算成績,
+                    // 與斷線者走同一條路),剩下的人照樣打完、照樣結算。
+                    if (s.PlayState == PlayState.Playing)
+                    {
+                        RemoveActiveParticipant(userId);
+                        s.PlayState = PlayState.Idle;
+                        s.Ready = false;
+                        Touch();
+                        return NetRoomOp.Ok;   // 收尾(全員打完 → 結算 → 房間回 open)交給 Tick
+                    }
+
                     if (s.PlayState != PlayState.Results && s.PlayState != PlayState.Finished)
                         return NetRoomOp.BadState;
                     s.PlayState = PlayState.Idle;
                     s.Ready = false;
-                    // 最後一個人也回來了 → 這一場真的結束,收掉 _match(下一局才開得成)。
-                    if (!AnyParticipantIn(PlayState.Results) && !AnyParticipantIn(PlayState.Finished))
+
+                    // 🔴 這一則有兩種來源,差別在於「這一場結算了沒」:
+                    //   ① 正常:曲末 → Finished → 全員打完 → Tick 結算(Status 回 Open、寬限期起算)
+                    //      → 玩家關掉結算面板才送 idle。這是真的「看完成績回房間」。
+                    //   ② 中離:按 Esc 的 client 會**連著**送 playFinished + setPlayState{idle}
+                    //      (見 FrontendApp.AbortGameplay),所以座位剛被打成 Finished 就馬上收到這一則,
+                    //      而其他人還在跳 —— 房間仍是 Playing,這一場根本還沒結算。
+                    //
+                    // ② 的情況下**絕對不能**收掉 _match。收掉的後果是連鎖的(實機踩到,兩個人先後中離):
+                    //   • AnyParticipantIn 在 _match == null 時一律回 false → 下一次 Tick 立刻把
+                    //     「還在 playing」誤判成「全員打完」→ 發出一份沒有名單的結算
+                    //     (Hub.SendResultsReady 讀 room.Match.Participants 直接 NullReferenceException,
+                    //      整個 tick 中斷,連 roomState 都沒廣播出去);
+                    //   • 還在跳的那個人座位停在 Playing 沒有任何人清 → 他頭上永遠掛著 PLAYING,
+                    //     而且他隨後送的 setPlayState{idle} 全被回 badState(場次已經不在了),救不回來。
+                    //
+                    // 所以收掉 _match 的條件多一個「已經結算過了」(_resultsClearAtMs > 0)。
+                    // ② 的收尾照舊交給 Tick:他已經是 idle,不算在 playing 裡,剩下的人打完就結算得了。
+                    if (_resultsClearAtMs > 0
+                        && !AnyParticipantIn(PlayState.Results) && !AnyParticipantIn(PlayState.Finished))
                     {
                         ClearResults();
                         return NetRoomOp.Ok;
@@ -886,13 +925,30 @@ namespace Sdo.Net.Server
 
             if (_state.Status == RoomStatus.Playing)
             {
+                // 防禦:停在 playing 卻沒有場次 = 壞狀態。AnyParticipantIn 這時一律回 false,
+                // 直接往下走會發出一份**沒有名單**的結算(Hub 讀 room.Match 就 NRE)。
+                // 這裡把房間收乾淨回 open 就好 —— 沒有名單就沒有成績可以結算。
+                if (_match == null)
+                {
+                    ResetParticipantsToIdle();
+                    _state.Status = RoomStatus.Open;
+                    tick.Changed = true;
+                    Touch();
+                    return tick;
+                }
+
                 if (!AnyParticipantIn(PlayState.Playing))
                 {
                     // 全部打完(或斷線被移除)→ 結算。
                     for (int i = 0; i < _state.Seats.Length; i++)
                     {
                         var s = _state.Seats[i];
-                        if (s.IsTaken && s.PlayState == PlayState.Finished) s.PlayState = PlayState.Results;
+                        if (!s.IsTaken) continue;
+                        // 🔴 還停在 playing 的座位也一起轉 —— 進到這裡代表沒有**參與者**還在 playing,
+                        //    所以這種座位是狀態機漏掉的殘留。不收的話那一格永遠掛著 PLAYING
+                        //    (寬限期只清 results,ClearResults 也只認 results/finished),誰都救不回來。
+                        if (s.PlayState == PlayState.Finished || s.PlayState == PlayState.Playing)
+                            s.PlayState = PlayState.Results;
                     }
                     _state.Status = RoomStatus.Open;
                     // 從這一刻起算寬限期。**這裡不清 results** —— 那份帶著 results 的快照要先廣播出去,

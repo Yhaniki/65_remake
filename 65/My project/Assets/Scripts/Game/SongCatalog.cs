@@ -201,6 +201,17 @@ namespace Sdo.Game
         private static List<Entry> _all;                  // in file order
         private static List<Entry> _primary;              // k-only view of _all (lazy)
 
+        /// <summary>
+        /// 目錄內容的版本號 —— 每次外部歌那一半被改動（<see cref="RegisterExternal"/> 真的加了東西、
+        /// <see cref="ReplaceExternal"/>、<see cref="Invalidate"/>）就 +1。
+        ///
+        /// 誰需要它：把目錄**複製一份**留著用的地方（<see cref="Sdo.UI.Catalog.SongListModel"/> 是 snapshot，
+        /// 選歌畫面在開機時建一次就一直用）。線上房間下載別人的歌會在**畫面之外**重掃歌庫
+        /// （NetSongTransfer.ImportCo → ExternalSongLibrary.ScanAndRegisterCo），那份 snapshot 不會自己更新 →
+        /// 換自己當房主去選歌時，搜尋整個看不到剛下載的歌。比版本號就知道該不該重建。
+        /// </summary>
+        public static int Revision { get; private set; }
+
         /// <summary>All catalog entries in file order (empty if no table). Includes BOTH chart variants —
         /// for a browsable list you almost always want <see cref="Primary"/> instead.</summary>
         public static IReadOnlyList<Entry> All { get { EnsureLoaded(); return _all; } }
@@ -272,6 +283,7 @@ namespace Sdo.Game
                 _byGn[key] = e;
                 _all.Add(e);
                 _primary = null;   // external gns end in 'k' → they belong to the Primary view; drop its cache
+                Revision++;        // 目錄變了 → 拿著 snapshot 的畫面該重建（見 Revision）
             }
         }
 
@@ -288,6 +300,9 @@ namespace Sdo.Game
         {
             EnsureLoaded();
             if (DropExternalRows(_all, _byGn) > 0) _primary = null;
+            // 無條件 +1：就算掃出來的歌跟上一次一模一樣，Entry **物件**已經整批換掉了 —— 誰還握著舊物件
+            // （選歌畫面的 SongListModel snapshot、_bucketSongs）就等於握著孤兒，必須重建（見 Revision）。
+            Revision++;
             RegisterExternal(entries);
         }
 
@@ -341,6 +356,7 @@ namespace Sdo.Game
         public static void Invalidate()
         {
             _byGn = null; _all = null; _primary = null;
+            Revision++;
             SongTable.Invalidate();
         }
 

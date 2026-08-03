@@ -114,8 +114,9 @@ socket 關閉或 15 秒沒收到 ping == `leaveRoom`(idempotent)。
 
 `config.ini` 的 `[Net] serverAddress` 留空 → 走 `MockRoomService`,行為與加連線之前一字不差。
 離線的房號也是 5 位數(共用 `RoomCodePool`),座位/準備/聊天都是本機模擬。
-不過房間畫面上**不顯示**離線的房號 —— 房號是唸給朋友聽、讓他打進「輸入房號」框用的,
-單機沒有別人能加入,所以中央的房名不接那串括弧(`RoomScreen.Render` 只在連線模式帶入 `room.Id`)。
+不過房間畫面上**一律不顯示**房號(線上離線都是):官方那塊房名牌子上沒有房號,左上那排
+放的是給人看的門牌 `Seq`(見 `RoomScreen.Render`)。5 位數房號是唸給朋友聽、讓他打進大廳
+「輸入房號」框用的 —— 單機仍照配一個,那是 `GetRoom` / `CurrentRoomId` 的鍵,只是不上畫面。
 
 ## 相關
 

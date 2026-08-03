@@ -60,10 +60,6 @@
    "v": "聊天"
   },
   {
-   "k": "lobby.chat_hint",
-   "v": "輸入訊息後按 Enter…"
-  },
-  {
    "k": "lobby.send",
    "v": "送出"
   },
@@ -102,6 +98,26 @@
   {
    "k": "lobby.col_status",
    "v": "狀態"
+  },
+  {
+   "k": "lobby.record",
+   "v": "{0} 勝 {1} 敗"
+  },
+  {
+   "k": "lobby.no_quick_room",
+   "v": "現在沒有可以加入的等待中舞台"
+  },
+  {
+   "k": "lobby.joined_as_spectator",
+   "v": "座位已滿，以旁觀身分進入"
+  },
+  {
+   "k": "lobby.userlist_in_lobby",
+   "v": "大廳"
+  },
+  {
+   "k": "lobby.userlist_in_room",
+   "v": "{0} 號房"
   },
   {
    "k": "room.title",
@@ -146,6 +162,10 @@
   {
    "k": "room.mode",
    "v": "模式"
+  },
+  {
+   "k": "room.mode_fashion",
+   "v": "時尚超舞"
   },
   {
    "k": "room.empty_seat",
@@ -221,7 +241,7 @@
   },
   {
    "k": "room.slot_transfer_host",
-   "v": "交出房主"
+   "v": "切換房主"
   },
   {
    "k": "room.slot_close",
@@ -230,6 +250,138 @@
   {
    "k": "room.slot_open",
    "v": "開啟位置"
+  },
+  {
+   "k": "room.slot_player_info",
+   "v": "玩家信息"
+  },
+  {
+   "k": "room.slot_whisper",
+   "v": "私聊"
+  },
+  {
+   "k": "room.slot_add_friend",
+   "v": "加為好友"
+  },
+  {
+   "k": "room.slot_remove_friend",
+   "v": "刪除好友"
+  },
+  {
+   "k": "room.friend_added",
+   "v": "已將 {0} 加為好友"
+  },
+  {
+   "k": "room.friend_add_failed",
+   "v": "無法將 {0} 加為好友"
+  },
+  {
+   "k": "room.friend_removed",
+   "v": "已將 {0} 從好友清單移除"
+  },
+  {
+   "k": "room.friend_remove_failed",
+   "v": "好友清單裡沒有 {0}"
+  },
+  {
+   "k": "room.info_name",
+   "v": "名稱"
+  },
+  {
+   "k": "room.info_gender",
+   "v": "性別"
+  },
+  {
+   "k": "room.info_gender_male",
+   "v": "男"
+  },
+  {
+   "k": "room.info_gender_female",
+   "v": "女"
+  },
+  {
+   "k": "room.info_family",
+   "v": "家族"
+  },
+  {
+   "k": "room.info_level",
+   "v": "等級"
+  },
+  {
+   "k": "room.info_none",
+   "v": "(無)"
+  },
+  {
+   "k": "room.info_coins",
+   "v": "M幣"
+  },
+  {
+   "k": "room.info_points",
+   "v": "G幣"
+  },
+  {
+   "k": "room.info_bonus",
+   "v": "P幣"
+  },
+  {
+   "k": "room.info_accuracy",
+   "v": "命中率"
+  },
+  {
+   "k": "room.info_perfect",
+   "v": "Perfect率"
+  },
+  {
+   "k": "room.info_cool",
+   "v": "Cool率"
+  },
+  {
+   "k": "room.info_bad",
+   "v": "Bad率"
+  },
+  {
+   "k": "room.info_miss",
+   "v": "Miss率"
+  },
+  {
+   "k": "room.info_winrate",
+   "v": "勝率"
+  },
+  {
+   "k": "room.info_judged",
+   "v": "判定數"
+  },
+  {
+   "k": "room.info_judged_value",
+   "v": "P {0} / C {1} / B {2} / M {3}"
+  },
+  {
+   "k": "room.info_plays",
+   "v": "遊玩次數"
+  },
+  {
+   "k": "room.info_plays_value",
+   "v": "{0} 次"
+  },
+  {
+   "k": "room.info_record",
+   "v": "戰績"
+  },
+  {
+   "k": "room.info_record_value",
+   "v": "{0} 勝 {1} 負"
+  },
+  {
+   "k": "room.info_no_stats",
+   "v": "還沒有紀錄 —— 完整打完一首歌就會開始累計。"
+  },
+  {
+   "k": "room.info_remote_stats",
+   "v": "對方的資料還沒送到 —— 可能已經離線，或還在用不會上傳資料的舊版。"
+  },
+  {
+   "k": "room.info_remote_basic",
+   "v": "線上只帶得到名字、家族與等級，其餘資料伺服器沒有保存。"
   },
   {
    "k": "room.teams_2v2",
@@ -312,8 +464,20 @@
    "v": "伺服器的房間已經滿了"
   },
   {
+   "k": "net.name_taken",
+   "v": "登入失敗：這個名稱已被使用"
+  },
+  {
+   "k": "net.link_lost",
+   "v": "與伺服器的連線中斷"
+  },
+  {
    "k": "net.transfer_failed",
    "v": "歌曲傳輸失敗,請稍後再試"
+  },
+  {
+   "k": "net.transfer_retry",
+   "v": "歌曲傳輸失敗,正在重試"
   },
   {
    "k": "settings.applied",

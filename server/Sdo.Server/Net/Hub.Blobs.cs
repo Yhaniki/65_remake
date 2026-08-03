@@ -34,6 +34,12 @@ namespace Sdo.Server.Net
             public string TmpDir;
             public long TotalNeedBytes, DoneBytes;
             public long LastProgressMs;
+
+            /// <summary>最後一次「真的有位元組進來」的時刻。停滯逾時看它,見 <see cref="Hub.SweepStalledUploads"/>。</summary>
+            public long LastAdvanceMs;
+
+            /// <summary>最後一次印 verbose 進度的時刻。</summary>
+            public long LastLogMs;
         }
 
         /// <summary>一份正在送的下載。key = connId(file 連線)。</summary>
@@ -46,6 +52,17 @@ namespace Sdo.Server.Net
             public int Cursor;                   // 目前送第幾個檔
             public FileStream CurStream;
             public long TotalBytes, SentBytes;
+
+            /// <summary>
+            /// 最後一次「真的把位元組推進 outbound 佇列」的時刻。
+            /// 🔴 下載方向沒有任何 client → server 的資料流可以拿來判斷對方還在不在
+            /// (只有 5 秒一次的 ping,而半開連線上那個 ping 是送得出去的)——
+            /// 唯一誠實的訊號就是「佇列有沒有在消化」,也就是這個時間戳有沒有在動。
+            /// </summary>
+            public long LastAdvanceMs;
+
+            /// <summary>最後一次印 verbose 進度的時刻。</summary>
+            public long LastLogMs;
         }
 
         private readonly Dictionary<int, UploadSession> _uploads = new Dictionary<int, UploadSession>();
@@ -181,6 +198,8 @@ namespace Sdo.Server.Net
                 TotalNeedBytes = needBytes,
                 TmpDir = _blobs.NewTempDir(conn.ConnId),
                 LastProgressMs = now,
+                LastAdvanceMs = now,
+                LastLogMs = now,
             };
             _uploads[conn.ConnId] = sess;
 
@@ -194,7 +213,7 @@ namespace Sdo.Server.Net
                 .Put("need", needArr));
 
             Log("房 " + sess.RoomCode + " 收上傳:" + need.Count + "/" + files.Count + " 檔、"
-                + Mb(needBytes) + "(" + sess.PackId + ")");
+                + Mb(needBytes) + "(" + sess.PackId + ")— user " + conn.UserId + " 連線 #" + conn.ConnId);
 
             if (need.Count == 0) FinishUpload(conn, sess, 0, now);   // 全部去重命中 → 直接完成
             else OpenNextUploadFile(conn, sess);
@@ -215,7 +234,7 @@ namespace Sdo.Server.Net
                 catch (Exception ex)
                 {
                     SendBlobError(conn, 0, NetProto.BlobErrQuota, "server 開不了暫存檔: " + ex.Message);
-                    AbortUpload(conn.ConnId);
+                    AbortUpload(conn.ConnId, "server 開不了暫存檔");
                     return false;
                 }
                 // 照樣走 CommitBlob:它會重算 hash,所以宣稱「這個檔是空的」但 sha 不是空檔案的 sha
@@ -223,7 +242,7 @@ namespace Sdo.Server.Net
                 if (!_blobs.CommitBlob(tmp, empty.Sha256))
                 {
                     SendBlobError(conn, 0, NetProto.BlobErrHashMismatch, "空檔案的 sha256 不符:" + empty.RelPath);
-                    AbortUpload(conn.ConnId);
+                    AbortUpload(conn.ConnId, "空檔案的 sha256 不符");
                     return false;
                 }
                 sess.Cursor++;
@@ -238,7 +257,7 @@ namespace Sdo.Server.Net
             catch (Exception ex)
             {
                 SendBlobError(conn, 0, NetProto.BlobErrQuota, "server 開不了暫存檔: " + ex.Message);
-                AbortUpload(conn.ConnId);
+                AbortUpload(conn.ConnId, "server 開不了暫存檔");
                 return false;
             }
             return true;
@@ -256,7 +275,7 @@ namespace Sdo.Server.Net
             if (sess.Cursor >= sess.Need.Count || sess.CurStream == null)
             {
                 SendBlobError(conn, 0, NetProto.ErrProto, "上傳的位元組比清單多");
-                AbortUpload(conn.ConnId);
+                AbortUpload(conn.ConnId, "送來的位元組比清單多");
                 return;
             }
 
@@ -267,7 +286,7 @@ namespace Sdo.Server.Net
                 // 送超過宣稱的長度 —— 壞掉的 client 或惡意填充。不截斷,直接拒:
                 // 截斷的話 hash 一定對不上,錯誤訊息會指向錯的地方。
                 SendBlobError(conn, 0, NetProto.BlobErrTooBig, "這個檔送超過宣稱的長度:" + f.RelPath);
-                AbortUpload(conn.ConnId);
+                AbortUpload(conn.ConnId, "某個檔送超過宣稱的長度");
                 return;
             }
 
@@ -275,11 +294,12 @@ namespace Sdo.Server.Net
             catch (Exception ex)
             {
                 SendBlobError(conn, 0, NetProto.BlobErrQuota, "server 寫不進暫存檔: " + ex.Message);
-                AbortUpload(conn.ConnId);
+                AbortUpload(conn.ConnId, "server 寫不進暫存檔");
                 return;
             }
             sess.CurReceived += payload.Length;
             sess.DoneBytes += payload.Length;
+            sess.LastAdvanceMs = now;      // 有位元組進來 = 沒有卡死(見 SweepStalledUploads)
 
             if (sess.CurReceived >= f.Length)
             {
@@ -288,8 +308,7 @@ namespace Sdo.Server.Net
                 if (!_blobs.CommitBlob(sess.CurTmpPath, f.Sha256))
                 {
                     SendBlobError(conn, 0, NetProto.BlobErrHashMismatch, "內容與 sha256 不符:" + f.RelPath);
-                    Log("✗ user " + conn.UserId + " 上傳被拒:" + f.RelPath + " hash 不符");
-                    AbortUpload(conn.ConnId);
+                    AbortUpload(conn.ConnId, "內容與 sha256 不符:" + f.RelPath);
                     return;
                 }
                 sess.Cursor++;
@@ -301,6 +320,14 @@ namespace Sdo.Server.Net
             {
                 sess.LastProgressMs = now;
                 BroadcastBlobProgress(sess.RoomCode, sess.UserId, Frac(sess.DoneBytes, sess.TotalNeedBytes), true);
+            }
+
+            // 進 log 的節奏比轉播稀疏得多 —— 它的用途是事後判斷「當時是慢、還是根本沒動」。
+            if (now - sess.LastLogMs >= NetLimits.BlobProgressLogIntervalMs)
+            {
+                sess.LastLogMs = now;
+                LogVerbose("user " + sess.UserId + " 上傳中 " + Mb(sess.DoneBytes) + "/" + Mb(sess.TotalNeedBytes)
+                    + "(第 " + (sess.Cursor + 1) + "/" + sess.Need.Count + " 檔)");
             }
         }
 
@@ -315,7 +342,7 @@ namespace Sdo.Server.Net
             if (sess.Cursor < sess.Need.Count)
             {
                 SendBlobError(conn, rq, NetProto.ErrProto, "還有檔案沒收完(" + sess.Cursor + "/" + sess.Need.Count + ")");
-                AbortUpload(conn.ConnId);
+                AbortUpload(conn.ConnId, "client 說傳完了,但還有檔案沒收完");
                 return;
             }
             FinishUpload(conn, sess, rq, now);
@@ -329,7 +356,7 @@ namespace Sdo.Server.Net
             {
                 if (_blobs.HasBlob(sess.Files[i].Sha256)) continue;
                 SendBlobError(conn, rq, NetProto.BlobErrNotFound, "缺檔:" + sess.Files[i].RelPath);
-                AbortUpload(conn.ConnId);
+                AbortUpload(conn.ConnId, "收尾檢查缺檔:" + sess.Files[i].RelPath);
                 return;
             }
 
@@ -362,7 +389,7 @@ namespace Sdo.Server.Net
             if (!_blobs.SavePack(pack))
             {
                 SendBlobError(conn, rq, NetProto.BlobErrQuota, "server 存不了歌曲清單");
-                AbortUpload(conn.ConnId);
+                AbortUpload(conn.ConnId, "server 存不了歌曲清單");
                 return;
             }
 
@@ -383,13 +410,21 @@ namespace Sdo.Server.Net
             Log("房 " + sess.RoomCode + " 上傳完成:" + sess.PackId + "(" + sess.Files.Count + " 檔)");
         }
 
-        private void AbortUpload(int connId)
+        /// <summary>
+        /// 中止一份上傳。<paramref name="why"/> 一定要說得出口 ——
+        /// 這條路徑以前是完全靜音的,而「上傳沒完成」在 log 上的樣子就是「收上傳」之後什麼都沒有,
+        /// 從那裡分不出「還在傳」「對方跑了」「被規則擋掉」。
+        /// </summary>
+        private void AbortUpload(int connId, string why = "")
         {
             UploadSession sess;
             if (!_uploads.TryGetValue(connId, out sess)) return;
             _uploads.Remove(connId);
             CloseUploadStream(sess);
             _blobs.DropTempDir(sess.TmpDir);
+            Log("✗ user " + sess.UserId + " 上傳中止" + (string.IsNullOrEmpty(why) ? "" : ":" + why)
+                + "(已收 " + Mb(sess.DoneBytes) + "/" + Mb(sess.TotalNeedBytes)
+                + "、第 " + (sess.Cursor + 1) + "/" + sess.Need.Count + " 檔、pack " + sess.PackId + ")");
         }
 
         private static void CloseUploadStream(UploadSession sess)
@@ -447,8 +482,11 @@ namespace Sdo.Server.Net
                 PackId = packId,
                 Files = pack.Files,
                 TotalBytes = total,
+                LastAdvanceMs = now,
+                LastLogMs = now,
             };
-            Log("user " + conn.UserId + " 下載 " + packId + "(" + Mb(total) + ")");
+            Log("user " + conn.UserId + " 下載開始 " + packId + "(" + pack.Files.Count + " 檔、" + Mb(total)
+                + "、連線 #" + conn.ConnId + ")");
         }
 
         /// <summary>
@@ -458,22 +496,27 @@ namespace Sdo.Server.Net
         /// 一次全塞的話 64 格的佇列會爆,而 chunk 是 critical → 連線直接被關掉,
         /// 症狀是「下載大歌時對方莫名斷線」。
         /// </summary>
-        private void PumpDownloads()
+        private void PumpDownloads(long now)
         {
             if (_downloads.Count == 0) return;
 
-            List<int> finished = null;
+            List<KeyValuePair<int, string>> finished = null;
             foreach (var kv in _downloads)
             {
                 Connection conn;
                 if (!_conns.TryGetValue(kv.Key, out conn) || conn.IsClosed)
                 {
-                    (finished ?? (finished = new List<int>())).Add(kv.Key);
+                    // 🔴 這條路徑以前是**完全靜音**的(RemoveConnection 對 file 連線只有 LogVerbose)——
+                    // 於是「下載開始」之後 log 上什麼都不再出現,而那正是「對方悄悄消失」的樣子。
+                    // 從沒有任何一行的 log 裡,分不出它到底是還在傳、傳完了、還是死了。
+                    (finished ?? (finished = new List<KeyValuePair<int, string>>()))
+                        .Add(new KeyValuePair<int, string>(kv.Key, "連線已關閉"));
                     continue;
                 }
 
                 var sess = kv.Value;
                 var buf = new byte[NetLimits.BlobChunkBytes];
+                long sentBefore = sess.SentBytes;
 
                 bool aborted = false;
                 // 🔴 迴圈條件要**同時**看「連線還開著」。只看佇列水位的話,連線在迴圈中途關掉時
@@ -514,21 +557,94 @@ namespace Sdo.Server.Net
 
                 if (aborted)
                 {
-                    (finished ?? (finished = new List<int>())).Add(kv.Key);
+                    (finished ?? (finished = new List<KeyValuePair<int, string>>()))
+                        .Add(new KeyValuePair<int, string>(kv.Key, "server 缺了這個包的一個檔案"));
+                    continue;
                 }
-                else if (sess.CurStream == null && sess.Cursor >= sess.Files.Count)
+
+                if (sess.CurStream == null && sess.Cursor >= sess.Files.Count)
                 {
                     conn.Send(JObj.New()
                         .Str(NetProto.FieldType, NetProto.BlobDownloadDone)
                         .Str("packId", sess.PackId)
                         .Long("totalBytes", sess.SentBytes));
-                    Log("user " + sess.UserId + " 下載完成 " + sess.PackId);
-                    (finished ?? (finished = new List<int>())).Add(kv.Key);
+                    Log("user " + sess.UserId + " 下載完成 " + sess.PackId + "(" + Mb(sess.SentBytes) + ")");
+                    // why="" → AbortDownload 不印中止行(這是正常完成,不是中止)
+                    (finished ?? (finished = new List<KeyValuePair<int, string>>()))
+                        .Add(new KeyValuePair<int, string>(kv.Key, ""));
+                    continue;
+                }
+
+                // ---- 停滯偵測 ----
+                // 「有沒有進展」= 這一輪有沒有把新的位元組推進佇列。佇列滿(對方收得慢)是正常的,
+                // 但**一直**滿而且一塊都推不出去,代表對方根本沒在收 —— 半開連線就長這樣。
+                if (sess.SentBytes != sentBefore)
+                {
+                    sess.LastAdvanceMs = now;
+                }
+                else if (now - sess.LastAdvanceMs >= NetLimits.BlobStallTimeoutServerMs)
+                {
+                    Log("✗ user " + sess.UserId + " 下載逾時:" + (NetLimits.BlobStallTimeoutServerMs / 1000)
+                        + " 秒沒有任何進展(已送 " + Mb(sess.SentBytes) + "/" + Mb(sess.TotalBytes)
+                        + "、第 " + (sess.Cursor + 1) + "/" + sess.Files.Count + " 檔、佇列 "
+                        + conn.OutboundCount + "/" + DownloadHighWater + ")");
+                    // SendBlobError 的 log 會引用 CurMsgType(「哪個請求被拒」)。這裡不是被某個請求
+                    // 觸發的,不設的話它會印出剛好最後處理過的那則(多半是 ping)—— 誤導。
+                    conn.CurMsgType = NetProto.BlobDownloadBegin;
+                    SendBlobError(conn, 0, NetProto.BlobErrStalled, "下載停滯太久,已中止");
+                    conn.Close("blobStall");
+                    (finished ?? (finished = new List<KeyValuePair<int, string>>()))
+                        .Add(new KeyValuePair<int, string>(kv.Key, "停滯逾時"));
+                    continue;
+                }
+
+                if (now - sess.LastLogMs >= NetLimits.BlobProgressLogIntervalMs)
+                {
+                    sess.LastLogMs = now;
+                    LogVerbose("user " + sess.UserId + " 下載中 " + Mb(sess.SentBytes) + "/" + Mb(sess.TotalBytes)
+                        + "(第 " + (sess.Cursor + 1) + "/" + sess.Files.Count + " 檔、佇列 "
+                        + conn.OutboundCount + "/" + DownloadHighWater + ")");
                 }
             }
 
             if (finished == null) return;
-            for (int i = 0; i < finished.Count; i++) AbortDownload(finished[i]);
+            for (int i = 0; i < finished.Count; i++) AbortDownload(finished[i].Key, finished[i].Value);
+        }
+
+        /// <summary>
+        /// 停在半路的上傳:對方連著、ping 也照送,但**位元組不再進來**。
+        ///
+        /// 🔴 ping 逾時(15 秒)完全擋不住這個情況 —— 那條 file 連線上的 ping 是 client 自己在送的
+        /// (<c>NetSongFetcher.KeepAlive</c>),它卡在哪個階段都照送。少了這道掃描,一份卡住的上傳會
+        /// 一直佔著暫存目錄與一個開著的檔案 handle,而且 <c>_uploads.Count > 0</c> 會讓
+        /// <see cref="BlobJanitor"/> **每一輪都跳過清理**(見 TickAll 註解)—— 一份沒人管的上傳
+        /// 就這樣把整個 server 的暫存清理永久關掉。
+        ///
+        /// 下載方向的同一件事在 <see cref="PumpDownloads"/> 裡就地處理(那裡本來就每輪都在看每一份下載)。
+        /// </summary>
+        private void SweepStalledUploads(long now)
+        {
+            if (_uploads.Count == 0) return;
+
+            List<int> dead = null;
+            foreach (var kv in _uploads)
+            {
+                if (now - kv.Value.LastAdvanceMs < NetLimits.BlobStallTimeoutServerMs) continue;
+                (dead ?? (dead = new List<int>())).Add(kv.Key);
+            }
+            if (dead == null) return;
+
+            for (int i = 0; i < dead.Count; i++)
+            {
+                Connection conn;
+                if (_conns.TryGetValue(dead[i], out conn) && !conn.IsClosed)
+                {
+                    conn.CurMsgType = NetProto.BlobUploadBegin;   // 同上,見 PumpDownloads 的停滯分支
+                    SendBlobError(conn, 0, NetProto.BlobErrStalled, "上傳停滯太久,已中止");
+                    conn.Close("blobStall");
+                }
+                AbortUpload(dead[i], "停滯逾時(" + (NetLimits.BlobStallTimeoutServerMs / 1000) + " 秒沒有位元組進來)");
+            }
         }
 
         /// <summary>
@@ -562,14 +678,24 @@ namespace Sdo.Server.Net
             return false;
         }
 
-        private void AbortDownload(int connId)
+        /// <summary>
+        /// 收掉一份下載。<paramref name="why"/> 空字串 = 正常完成(完成那一行已經印過了),
+        /// 其餘一律印一行 —— 見 <see cref="PumpDownloads"/> 裡「這條路徑以前是靜音的」那段註解。
+        /// </summary>
+        private void AbortDownload(int connId, string why = "")
         {
             DownloadSession sess;
             if (!_downloads.TryGetValue(connId, out sess)) return;
             _downloads.Remove(connId);
-            if (sess.CurStream == null) return;
-            try { sess.CurStream.Dispose(); } catch { }
-            sess.CurStream = null;
+            if (sess.CurStream != null)
+            {
+                try { sess.CurStream.Dispose(); } catch { }
+                sess.CurStream = null;
+            }
+            if (string.IsNullOrEmpty(why)) return;
+            Log("✗ user " + sess.UserId + " 下載中止:" + why
+                + "(已送 " + Mb(sess.SentBytes) + "/" + Mb(sess.TotalBytes)
+                + "、第 " + (sess.Cursor + 1) + "/" + sess.Files.Count + " 檔、pack " + sess.PackId + ")");
         }
 
         // ================= 共用 =================
@@ -577,8 +703,8 @@ namespace Sdo.Server.Net
         /// <summary>連線消失時清掉它的傳輸狀態(開著的檔案 handle、暫存目錄)。</summary>
         private void CloseBlobSessions(int connId)
         {
-            AbortUpload(connId);
-            AbortDownload(connId);
+            AbortUpload(connId, "連線關閉");
+            AbortDownload(connId, "連線關閉");
         }
 
         /// <summary>房內轉播「某個人正在上傳/下載到幾成」—— 畫在頭貼下方的跑條。</summary>
@@ -603,7 +729,11 @@ namespace Sdo.Server.Net
 
         private void SendBlobError(Connection conn, int rq, string code, string msg)
         {
-            Log("✗ user " + conn.UserId + " 傳檔被拒:" + code + (string.IsNullOrEmpty(msg) ? "" : " — " + msg));
+            // 與 SendError 同一個形狀:先說是**哪個請求**,再說原因(見 Hub.SendError 的說明)。
+            Log("✗ user " + conn.UserId + " 的 " + (string.IsNullOrEmpty(conn.CurMsgType) ? "?" : conn.CurMsgType)
+                + (rq != 0 ? "#" + rq : "") + " 傳檔被拒:" + code
+                + (string.IsNullOrEmpty(msg) ? "" : " — " + msg)
+                + " | " + DescribeConn(conn));
             conn.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.BlobError)
                 .Int(NetProto.FieldRequest, rq)

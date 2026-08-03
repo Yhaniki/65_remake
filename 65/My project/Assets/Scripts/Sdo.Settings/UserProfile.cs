@@ -111,13 +111,6 @@ namespace Sdo.Settings
         public string createdAt = "";
         public string lastPlayedAt = "";
 
-        // ---- 個人資料：家族 / 等級 / 經驗值。**這個角色自己的值**；家族兩項留空、level=0 ＝「沒設過」→ 退回
-        //      config.ini [Profile] 的共用預設值（解析在 ProfileManager.FamilyName / FamilyEmblem / Level）。----
-        public string familyName = "";     // 家族名稱（畫在頭上名字那行的上面）。留空 = 沒設過 → 吃 config.ini 的預設
-        public string familyEmblem = "";   // 家族徽章：DATA/EMBLEM 底下的檔名(不含副檔名，如 SMALL43)。留空 = 沒設過 → 同上
-        public int level = 0;              // 0 = 沒設過 → 吃 config.ini 的預設等級；第一次打歌加經驗就會落地成自己的等級
-        public int exp = 0;                // 目前等級內累積的經驗值（滿級後固定 0）。每局結算加上 Sdo.Ruleset.Reward.Experience
-
         // ---- 商城/儲物櫃 持久化 (item-id 為鍵；由 WardrobeStore 在 Sdo.Shop.Wardrobe 之間橋接)。金幣也記在這裡 (wallet)。----
         public WalletSave wallet = new WalletSave();
         public int clothSlots = 9;   // 服飾欄容量：預設 1 頁=9 格(裝得下一整套穿搭)，按「服饰栏扩充」每次 +9，最多 1000（Wardrobe.ClothSlotCount）
@@ -126,6 +119,55 @@ namespace Sdo.Settings
         // 目前穿搭解析出的完整 mesh 部位清單 (含飾品/翅膀/表情，順序=AvatarOutfit.Order)。房間/遊戲 avatar 的權威來源；
         // 空 (舊檔) 時退回 6 部位的 equippedClothes。由 WardrobeStore 在存檔時用 Sdo.Game.AvatarOutfit.ResolveParts 算出。
         public string[] equippedParts = new string[0];
+        /// <summary>累計知名度(名声)—— 大廳右下角顯示成 <c>LV 2 (15)</c> 的那個數字(格式/等級換算見 <see cref="FameLevel"/>)。
+        /// 放在這一區是因為它**由購物驅動**:唯一會加它的是商城的購買(ShopScreen 的 DoBuy / DoBuyAll,每件依價格換算),
+        /// 🔴 快速充值不算 —— 那是免費送錢,能算的話一鍵就刷滿等級。舊存檔沒有這個 key,JsonUtility 會給預設值 0
+        /// (= LV 1),所以不需要任何 migration。</summary>
+        public int fame;
+
+        // ---- 個人資料(家族/等級)的 per-user 覆寫 ----
+        // **外層的** DATA/PROFILE/profile.json 是所有角色共用的 Default(見 ProfileDefaults);這三個欄位讓
+        // 「這個角色」可以有自己的家族/等級。解析一律走 ProfileFields —— 不要直接讀這裡,也不要直接讀 ProfileDefaults。
+        public string familyName = "";
+        public string familyEmblem = "";
+        public string playerLevel = "";
+
+        /// <summary>目前等級內累積的經驗值(滿級後固定 0)。每局結算加上 <c>Sdo.Ruleset.Reward.Experience</c>,
+        /// 跨過門檻就把 <see cref="playerLevel"/> 往上推(曲線見 <see cref="PlayerLevel"/>,落地在
+        /// <see cref="ProfileManager.AddExperience"/>)。經驗值**只有角色自己有**,外層那份 Default 沒有這欄。</summary>
+        public int exp;
+
+        /// <summary>
+        /// 這個角色有沒有自己的 [Profile] 設定?
+        ///
+        /// 🔴 這個 latch 是必要的,不能用「欄位留空 = 沿用 Default」代替:現行約定是
+        /// **familyName 留空 = 不顯示家族**、**playerLevel 留空 = 不顯示等級**,而 JsonUtility 對 string
+        /// 一律給 ""(分不出「這個 key 不存在」與「使用者刻意清空」)。少了這個旗標,
+        /// 「我就是不想顯示家族」下次開機就會被 config.ini 的 Default 蓋回來。
+        ///
+        /// false(舊檔預設)= 三個欄位全部吃 config.ini;一旦這個角色自己設過,就整組吃 profile.json 的值。
+        /// 與 <see cref="WalletSave.seeded"/> 是同一種手法。
+        /// </summary>
+        public bool hasProfileOverrides;
+
+        // ---- 個人資料視窗裡「自己填」的四格(官方的 city_edit / QQ_edit / constellation_edit / age_edit)----
+        //
+        // 純粹是給別人看的自我介紹欄位:server 不知道、也不驗證(這套連線根本沒有帳號持久化),就是存在
+        // **自己這台機器**的 profile.json 裡,下次開遊戲還在。看別人的資料時這四格一律空白 —— 我們拿不到
+        // 對方填了什麼,座位快照只帶得到 Id / 名字 / 等級 / 家族。
+        //
+        // 長度限制照官方 EditBox 的 limittext:城市 12、即時通 12(digitcase=只收數字)、星座 6、年齡 2(只數字)。
+        // 年齡存字串而不是 int:官方那格就是「沒填 = 空白」,存 0 的話會變成畫面上多一個沒人填過的 0。
+        public string city = "";
+        public string imAccount = "";
+        public string constellation = "";
+        public string age = "";
+
+        /// <summary>累計遊玩統計(個人資料頁的命中率/勝率就是它算的)。見 <see cref="PlayStats"/>。</summary>
+        public PlayStats stats = new PlayStats();
+
+        /// <summary>本機好友清單。server 沒有帳號持久化 → 好友是這台機器記得的。見 <see cref="FriendEntry"/>。</summary>
+        public FriendEntry[] friends = new FriendEntry[0];
 
         public UserProfile() { }
 
@@ -143,18 +185,42 @@ namespace Sdo.Settings
             gender = gender == 1 ? 1 : 0;
             if (avatarId < 0) avatarId = 0;
             if (bodyShapeIndex < 0) bodyShapeIndex = 0; else if (bodyShapeIndex > 4) bodyShapeIndex = 4;   // 體型 index 夾在 0..4
-            // 家族/等級/經驗：只去頭尾空白（前後空白會讓「留空＝沒設過」的判定失真）。level 0 是合法值＝沒設過。
-            familyName = (familyName ?? "").Trim();
-            familyEmblem = (familyEmblem ?? "").Trim();
-            if (level < 0) level = 0; else if (level > PlayerLevel.MaxLevel) level = PlayerLevel.MaxLevel;
-            if (exp < 0) exp = 0;
             if (wallet == null) wallet = new WalletSave();
             if (clothSlots < 9) clothSlots = 9; else if (clothSlots > 1000) clothSlots = 1000;   // 最少 1 頁(9)；舊檔存的 3 會自動補到 9
             if (ownedItems == null) ownedItems = new OwnedItemSave[0];
             if (equippedItems == null) equippedItems = new EquipSave[0];
             if (equippedParts == null) equippedParts = new string[0];
+            if (fame < 0) fame = 0;   // 知名度只會往上加,負值必是壞檔 → 當 0(= LV 1)
+            if (stats == null) stats = new PlayStats(); else stats.Sanitize();
+            friends = SanitizeFriends(friends);
+            // 家族/等級：只去頭尾空白（前後空白會讓「留空＝刻意不顯示」的判定失真，見 hasProfileOverrides）。
+            familyName = (familyName ?? "").Trim();
+            familyEmblem = (familyEmblem ?? "").Trim();
+            playerLevel = PlayerLevel.CleanText(playerLevel);
+            if (exp < 0) exp = 0;   // 經驗只會往上加，負值必是壞檔
             EnsureWardrobe();
             return this;
+        }
+
+        /// <summary>好友清單防呆:丟掉沒有名字的殘骸、依名字去重(同一個人被加兩次只留先加的那筆)。
+        /// 鍵是名字而不是 id —— 理由見 <see cref="FriendList"/>。</summary>
+        private static FriendEntry[] SanitizeFriends(FriendEntry[] src)
+        {
+            if (src == null) return new FriendEntry[0];
+            var outList = new List<FriendEntry>(src.Length);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < src.Length; i++)
+            {
+                var f = src[i];
+                if (f == null) continue;
+                string name = (f.name ?? "").Trim();
+                if (name.Length == 0) continue;
+                if (!seen.Add(name)) continue;
+                f.name = name;
+                f.id = (f.id ?? "").Trim();
+                outList.Add(f);
+            }
+            return outList.ToArray();
         }
 
         /// <summary>The ordered mesh part paths the room/gameplay avatar wears. Prefers the full <see cref="equippedParts"/>

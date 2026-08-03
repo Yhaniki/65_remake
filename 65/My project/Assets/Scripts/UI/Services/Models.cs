@@ -33,8 +33,14 @@ namespace Sdo.UI.Services
         public string DisplayName;
         public int Level;
 
+        /// <summary>家族名稱。空 = 沒有家族。線上由 <c>NetSeat.Guild</c> 帶進來(對方在 setIdentity 報的),
+        /// 離線是本機 profile/config 的家族名。玩家資訊視窗要顯示它。</summary>
+        public string Guild = "";
+
         public PlayerProfile() { }
         public PlayerProfile(string id, string name, int level) { Id = id; DisplayName = name; Level = level; }
+        public PlayerProfile(string id, string name, int level, string guild)
+        { Id = id; DisplayName = name; Level = level; Guild = guild ?? ""; }
     }
 
     public sealed class SeatInfo
@@ -79,17 +85,21 @@ namespace Sdo.UI.Services
     {
         /// <summary>
         /// **房號** —— 5 位數(10000..99999),玩家要唸給朋友聽、用來加入房間的那個。
-        /// 連線時顯示在房名後面的括弧裡:「飄漂o的舞蹈室(40444)」。
-        /// 離線也配一個(當內部的鍵),但**畫面上不顯示** —— 單機沒有別人能加入(見 RoomScreen.Render)。
+        /// 🔴 房間畫面上**不顯示**它(不論線上離線):官方那塊房名牌子沒有房號,左上那排放的是
+        /// 給人看的門牌 Seq —— 見 RoomScreen.Render。它的用途是大廳「輸入房號」那個框,
+        /// 以及 GetRoom / CurrentRoomId 的鍵;離線也照配一個,兩邊的房間資料才長得一樣。
         /// </summary>
         public int Id;
 
         /// <summary>
-        /// **房間序號** —— 左上角那排「自由練習場1　頻道1　<b>N</b>」的 N。官方的顯示習慣是
-        /// 一個小數字(第幾間房),所以它跟 <see cref="Id"/> 是兩件不同的事:
+        /// **房間序號** —— 大廳房卡上那個 3 位數門牌,也是房間左上角那排「自由練習場1　頻道1　<b>N</b>」的 N。
+        /// 官方的顯示習慣是一個小數字(第幾間房),所以它跟 <see cref="Id"/> 是兩件不同的事:
         /// Id 是加入房間的鑰匙(5 位數、全域唯一),Seq 只是給人看的門牌號。
+        ///
+        /// 🔴 **從 0 起算**(官方大廳第一格就是 <c>000</c>),所以「還不知道門牌」的預設值是 <b>-1</b>
+        /// 而不是 0 —— 大廳房卡看到 -1 才知道要退回用列表位置當門牌。
         /// </summary>
-        public int Seq;
+        public int Seq = -1;
         public string HostName;
         public string Name;        // 玩家自訂房名；空 → 用「房主名 + 的舞蹈室」預設 (見 RoomLabels.DisplayName)
         public GameMode Mode = GameMode.Normal;
@@ -97,6 +107,23 @@ namespace Sdo.UI.Services
         public int Capacity = 6;
         public List<SeatInfo> Seats = new List<SeatInfo>();
         public string SongTitle;   // currently selected song label (null = none)
+
+        /// <summary>
+        /// 選中譜面的難度。大廳的「房間信息」把它寫成「歌名 (9級)」。
+        /// 🔴 <b>0 = 不知道</b>(沒歌、譜面沒標難度,或對方是舊版 server 不送這個欄位)——
+        /// 顯示端要當「不寫括號」而不是「0級」。
+        /// </summary>
+        public int SongLevel;
+
+        /// <summary>
+        /// 坐著的人的性別(0=女 1=男),依座位順序,長度 == <see cref="Count"/>;null / 太短 = 不知道。
+        ///
+        /// 大廳房卡上那排愛心靠它上色(官方:女=粉紅 FEMALE.AN、男=藍 MALE.AN、空位=灰 MAN.AN)。
+        /// 為什麼不放進 <see cref="SeatInfo"/>:房間列表的封包**沒有**逐座位的資料
+        /// (那是進房之後 roomState 才有的),這裡只是「第 N 個人是男是女」這麼多,
+        /// 硬塞進座位會讓人以為那些座位是真的(它們是 ToRoomInfo 補出來的佔位)。
+        /// </summary>
+        public int[] SeatGenders;
 
         // ---- 連線才用得到的欄位 ----
 

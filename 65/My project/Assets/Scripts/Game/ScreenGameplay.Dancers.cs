@@ -562,8 +562,8 @@ namespace Sdo.Game
 
         /// <summary>
         /// 分數最高的那一位舞者(-1 = 沒有名單)。<paramref name="skip"/> 那一格不參選。
-        /// 平手的先後與 <see cref="Sdo.Ruleset.RankingBoard"/> 完全一致:分數高的先、同分本機先、
-        /// 再同就座位序小的先 —— 名次面板與場上定格必須指向同一個人。
+        /// 平手的先後與 <see cref="Sdo.Ruleset.RankingBoard"/> 完全一致:分數高的先、同分**座位序**小的先
+        /// (_dancerScores 的索引就是座位序)—— 名次面板與場上定格必須指向同一個人,而且每台算出來要是同一位。
         /// </summary>
         private int WinnerDancerIndex(int skip = -1)
         {
@@ -580,9 +580,7 @@ namespace Sdo.Game
         private bool DancerOutranks(int a, int b)
         {
             if (_dancerScores[a] != _dancerScores[b]) return _dancerScores[a] > _dancerScores[b];
-            int local = LocalDancerSlotIndex;
-            if ((a == local) != (b == local)) return a == local;   // 同分本機先(RankingBoard.Compare)
-            return a < b;
+            return a < b;   // 同分照座位序(RankingBoard.Compare / server 的 ResultRowOrder 都是這條)
         }
 
         /// <summary>
@@ -591,7 +589,9 @@ namespace Sdo.Game
         /// 🔴 clip 一定要挑**他自己性別**那一支,而且要走 <c>ResolveMotFor</c>:一般的 ResolveMot 會拿本機性別
         /// 去做 W→M 映射,本機是男生時女生玩家的 WWIN0002 會被換成 MWIN0002 —— 男版動作套在女骨架上就是一團扭曲。
         /// </summary>
-        private void PlayRemoteFinishPoses()
+        /// <param name="redo">true = 權威名次晚到的重演。贏家沒換就**什麼都不做** —— PlayOneShot 會把
+        /// 計時歸零,已經停在最後一幀的定格會倒回第 0 幀再演一次(玩家看得一清二楚)。真的換人時走硬切。</param>
+        private void PlayRemoteFinishPoses(bool redo = false)
         {
             if (_dancerScores == null || _extraDancers.Count == 0) return;
             FillDancerScores();               // 用最後一筆分數流定名次(這一幀 TickDancerSlots 也填過,重填不花錢)
@@ -600,17 +600,26 @@ namespace Sdo.Game
             // 這裡走的是 _dancerScores(照 netDancers 的 userId 去查同一份分數)—— 兩份名單在有人中途離開時
             // 可能對不齊,對不齊就會變成「兩個人一起做勝利動作」或「一個都沒有」。以面板為準:
             int local = LocalDancerSlotIndex;
-            if (_localWon) winner = local;                                   // 面板說本機贏 → 其他人一律 cat4
+            int netWinner = NetWinnerDancerIndex();   // server 權威的第一名(有的話,兩台看到的贏家一定同一位)
+            if (netWinner >= 0) winner = netWinner;
+            else if (_localWon) winner = local;                              // 面板說本機贏 → 其他人一律 cat4
             else if (winner == local) winner = WinnerDancerIndex(skip: local);   // 面板說本機沒贏 → 贏家在別人裡挑
+            if (redo && winner == _remoteFinishWinner) return;   // 贏家沒換 → 不要把別人的定格倒回去重演
+            _remoteFinishWinner = winner;
             for (int i = 0; i < _extraDancers.Count; i++)
             {
                 var av = _extraDancers[i];
                 if (av == null) continue;     // 本機那格是 null 佔位(本機的定格由 EnterResult 自己放)
                 bool male = netDancers != null && i < netDancers.Length ? netDancers[i].Male : localPlayerMale;
                 var mot = ResolveMotFor(FinishMot(male, i == winner), male);
-                if (mot != null) av.PlayOneShot(mot, true);   // hold = 停在最後一幀(定格)
+                if (mot == null) continue;
+                if (redo) av.SnapNextClip();                 // 定格→定格:硬切(0.5s crossfade 只會糊成一團)
+                av.PlayOneShot(mot, true);                   // hold = 停在最後一幀(定格)
             }
         }
+
+        /// <summary>上一次遠端定格用的贏家索引(-1 = 還沒放過)。權威名次晚到時靠它判斷「要不要重演」。</summary>
+        private int _remoteFinishWinner = -1;
 
         /// <summary>輸贏定格用哪一支 clip。本機那兩個欄位(winMot/loseMot)是同一組值的「本機性別」版。</summary>
         private static string FinishMot(bool male, bool won)

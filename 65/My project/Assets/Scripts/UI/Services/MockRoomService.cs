@@ -23,7 +23,8 @@ namespace Sdo.UI.Services
         /// <summary>
         /// 房號池 —— 離線也配 **5 位數**房號,與連線模式一致(<c>GetRoom</c> / <c>CurrentRoomId</c> 都拿它當鍵)。
         ///
-        /// 只是**畫面上不顯示**:房號的用途是唸給朋友聽,單機沒有別人能加入(見 <c>RoomScreen.Render</c>)。
+        /// 只是房間畫面上**不顯示**它 —— 線上也一樣(見 <c>RoomScreen.Render</c>);房號是給大廳
+        /// 「輸入房號」那個框用的,而單機根本沒有別人能加入。
         /// 這裡仍配真號碼而不是 0,是為了讓離線與連線的房間資料結構完全一樣 —— 免得多一條
         /// 「Id 可能是 0」的分支要照顧。
         /// </summary>
@@ -35,8 +36,9 @@ namespace Sdo.UI.Services
         /// <summary>
         /// 房間序號 —— 左上角「自由練習場1　頻道1　N」的那個小數字。
         /// 與房號(5 位數)是兩件不同的事:序號是給人看的門牌,房號才是加入房間的鑰匙。
+        /// **從 0 起算** —— 官方大廳第一格就是 <c>000</c>(線上那邊見 <c>RoomRegistry.NextFreeSeq</c>)。
         /// </summary>
-        private int _nextSeq = 1;
+        private int _nextSeq = 0;
 
         private RoomInfo _current;
 
@@ -79,6 +81,8 @@ namespace Sdo.UI.Services
                 r.Seats[i].IsReady = true;
             }
             r.SongTitle = SongLabels[_rng.Next(SongLabels.Length)];
+            r.SongLevel = _rng.Next(1, 11);   // 離線也要有難度,不然房間信息那格看不出「歌名 (N級)」
+
             _rooms.Add(r);
             return r;
         }

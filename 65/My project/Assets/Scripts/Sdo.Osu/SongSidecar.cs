@@ -74,12 +74,16 @@ namespace Sdo.Osu
 
         /// <summary>Current dance generator. Bump whenever <see cref="RandomDps"/> would choreograph a song
         /// differently: a recorded dance with an older <c>#DPSVER</c> is rebuilt on the next play.</summary>
+        // 5 = the seed is the CHARTS' content (their SHA-256, as a set), not the folder's NAME — 缺歌傳檔 renames the
+        //     folder on the way over and does not carry the .dps, so a 4-era dance differs between the two sides of a
+        //     transfer (see Sdo.Game.ExternalDps). 🔴 This bump is what makes the fix reach songs already danced:
+        //     without it the sender keeps replaying the .dps its OLD seed built and the two sides still disagree.
         // 4 = length/tempo are per-SONG (every difficulty's note windows unioned + the catalog BPM), so every
         //     difficulty gets the same dance — a 3-era dance was planned off whichever chart happened to generate it,
         //     and off a chart already through lead-in/short-hold collapse at that (see DanceInputs);
         // 3 = the body replays official three-motion groups too; 2 = openings replay the official rows (slices);
         // 1 = whole-clip openings
-        public const int DpsGenerator = 4;
+        public const int DpsGenerator = 5;
 
         private const string TagVersion = "VERSION";
         private const string TagSong = "SONG";

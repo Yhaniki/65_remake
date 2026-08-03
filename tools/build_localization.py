@@ -36,7 +36,6 @@ STR = {
     "lobby.rooms":          ["Rooms", "房間列表", "房间列表", "ルーム一覧"],
     "lobby.online_players": ["Online Players", "線上玩家", "在线玩家", "オンラインプレイヤー"],
     "lobby.chat":           ["Chat", "聊天", "聊天", "チャット"],
-    "lobby.chat_hint":      ["Type a message and press Enter…", "輸入訊息後按 Enter…", "输入消息后按 Enter…", "メッセージを入力して Enter…"],
     "lobby.send":           ["Send", "送出", "发送", "送信"],
     "lobby.settings":       ["Settings", "設定", "设置", "設定"],
     "lobby.logout":         ["Logout", "登出", "登出", "ログアウト"],
@@ -47,6 +46,16 @@ STR = {
     "lobby.col_count":      ["Players", "人數", "人数", "人数"],
     "lobby.col_mode":       ["Mode", "模式", "模式", "モード"],
     "lobby.col_status":     ["Status", "狀態", "状态", "状態"],
+    # 官方版位的大廳（DDRLOBBY）：右下角自己的角色資料，以及「快速進入」的兩種結果。
+    "lobby.record":         ["{0}W {1}L", "{0} 勝 {1} 敗", "{0} 胜 {1} 负", "{0}勝 {1}敗"],
+    "lobby.no_quick_room":  ["No open stage to join right now", "現在沒有可以加入的等待中舞台",
+                             "现在没有可以加入的等待中舞台", "今すぐ入れる待機中のステージがありません"],
+    "lobby.joined_as_spectator": ["Seats are full — joining as a spectator", "座位已滿，以旁觀身分進入",
+                                  "座位已满，以旁观身份进入", "座席が満員のため、観戦として参加します"],
+
+    # 玩家名單（官方 win3：全部 / 好友 / 家族 / 黑名單）。
+    "lobby.userlist_in_lobby":   ["Lobby", "大廳", "大厅", "ロビー"],
+    "lobby.userlist_in_room":    ["Room {0}", "{0} 號房", "{0} 号房", "ルーム {0}"],
 
     "room.title":           ["Room {0}", "房間 {0}", "房间 {0}", "ルーム {0}"],
     "room.server_name":     ["Free Practice {0}", "自由練習場{0}", "自由练习场{0}", "自由練習場{0}"],
@@ -59,6 +68,8 @@ STR = {
     "room.select_song":     ["Select Song", "選擇歌曲", "选择歌曲", "曲を選択"],
     "room.no_song":         ["(No song selected)", "（尚未選歌）", "（尚未选歌）", "（曲未選択）"],
     "room.mode":            ["Mode", "模式", "模式", "モード"],
+    # 創建房間對話框的「遊戲模式」——官方那格是固定值（不是下拉），照官方寫死。
+    "room.mode_fashion":    ["Fashion Dance", "時尚超舞", "时尚超舞", "ファッションダンス"],
     "room.empty_seat":      ["Empty", "空位", "空位", "空席"],
     "room.host":            ["Host", "房主", "房主", "ホスト"],
     "room.waiting_players": ["Some players are not ready", "尚有玩家未準備", "还有玩家未准备", "未準備のプレイヤーがいます"],
@@ -84,9 +95,64 @@ STR = {
     "room.start_no_response":  ["The server did not respond to the start request",
                                 "伺服器沒有回應開始請求", "服务器没有回应开始请求", "サーバーが開始要求に応答しませんでした"],
     "room.match_aborted":      ["The round was cancelled", "這一局被取消了", "这一局被取消了", "このラウンドは中止されました"],
-    "room.slot_transfer_host": ["Make host", "交出房主", "交出房主", "ホストを譲る"],
+    # 「切換房主」而不是「交出房主」：房主可以把房主給任何一個座位上的人，之後也能再換一次 ——
+    # 「交出」聽起來像一去不回的單向動作，而它其實只是換人當。
+    "room.slot_transfer_host": ["Transfer host", "切換房主", "切换房主", "ホストを変更"],
     "room.slot_close":         ["Close seat", "關閉位置", "关闭位置", "席を閉じる"],
     "room.slot_open":          ["Open seat", "開啟位置", "开启位置", "席を開く"],
+    # 右鍵選單的社交組（官方 PopMenu 那三項）。管理組（切換房主/踢出/開關位置）在上面。
+    "room.slot_player_info":   ["Player info", "玩家信息", "玩家信息", "プレイヤー情報"],
+    "room.slot_whisper":       ["Whisper", "私聊", "私聊", "ささやく"],
+    "room.slot_add_friend":    ["Add friend", "加為好友", "加为好友", "フレンド追加"],
+    "room.slot_remove_friend": ["Remove friend", "刪除好友", "删除好友", "フレンド削除"],
+    "room.friend_added":       ["Added {0} to your friends", "已將 {0} 加為好友",
+                                "已将 {0} 加为好友", "{0} をフレンドに追加しました"],
+    "room.friend_add_failed":  ["Could not add {0} to your friends", "無法將 {0} 加為好友",
+                                "无法将 {0} 加为好友", "{0} をフレンドに追加できませんでした"],
+    "room.friend_removed":     ["Removed {0} from your friends", "已將 {0} 從好友清單移除",
+                                "已将 {0} 从好友列表移除", "{0} をフレンドから削除しました"],
+    "room.friend_remove_failed": ["{0} is not in your friends list", "好友清單裡沒有 {0}",
+                                  "好友列表里没有 {0}", "{0} はフレンドに登録されていません"],
+
+    # 玩家資訊視窗（官方 PlayerInformationDlg）。
+    "room.info_name":          ["Name", "名稱", "名称", "名前"],
+    "room.info_gender":        ["Gender", "性別", "性别", "性別"],
+    "room.info_gender_male":   ["Male", "男", "男", "男性"],
+    "room.info_gender_female": ["Female", "女", "女", "女性"],
+    "room.info_family":        ["Family", "家族", "家族", "ファミリー"],
+    "room.info_level":         ["Level", "等級", "等级", "レベル"],
+    "room.info_none":          ["(none)", "(無)", "(无)", "(なし)"],
+    "room.info_coins":         ["M coins", "M幣", "M币", "Mコイン"],
+    "room.info_points":        ["G coins", "G幣", "G币", "Gコイン"],
+    "room.info_bonus":         ["P coins", "P幣", "P币", "Pコイン"],
+    "room.info_accuracy":      ["Accuracy", "命中率", "命中率", "命中率"],
+    "room.info_perfect":       ["Perfect", "Perfect率", "Perfect率", "Perfect率"],
+    "room.info_cool":          ["Cool", "Cool率", "Cool率", "Cool率"],
+    "room.info_bad":           ["Bad", "Bad率", "Bad率", "Bad率"],
+    "room.info_miss":          ["Miss", "Miss率", "Miss率", "Miss率"],
+    "room.info_winrate":       ["Win rate", "勝率", "胜率", "勝率"],
+    "room.info_judged":        ["Judgements", "判定數", "判定数", "判定数"],
+    "room.info_judged_value":  ["P {0} / C {1} / B {2} / M {3}", "P {0} / C {1} / B {2} / M {3}",
+                                "P {0} / C {1} / B {2} / M {3}", "P {0} / C {1} / B {2} / M {3}"],
+    "room.info_plays":         ["Songs played", "遊玩次數", "游玩次数", "プレイ回数"],
+    "room.info_plays_value":   ["{0}", "{0} 次", "{0} 次", "{0} 回"],
+    "room.info_record":        ["Record", "戰績", "战绩", "戦績"],
+    "room.info_record_value":  ["{0}W {1}L", "{0} 勝 {1} 負", "{0} 胜 {1} 负", "{0} 勝 {1} 敗"],
+    "room.info_no_stats":      ["No records yet — finish a song and the totals start counting.",
+                                "還沒有紀錄 —— 完整打完一首歌就會開始累計。",
+                                "还没有记录 —— 完整打完一首歌就会开始累计。",
+                                "まだ記録がありません — 1曲を最後までプレイすると集計が始まります。"],
+    # 這句是「名片還沒到」時的替代文字（見 PlayerInfoModal.ApplyRemoteCard：名片一到就把它收掉）。
+    # 以前它寫的是「伺服器不保存玩家統計」——那在 setCard/cardQuery 之後已經不成立了，
+    # 現在說的是真正的兩個原因：對方離線，或對方跑的是還不會上傳名片的舊版。
+    "room.info_remote_stats":  ["This player's record hasn't arrived - they may be offline, or running an older build that doesn't publish it.",
+                                "對方的資料還沒送到 —— 可能已經離線，或還在用不會上傳資料的舊版。",
+                                "对方的资料还没送到 —— 可能已经离线，或还在用不会上传资料的旧版。",
+                                "相手のデータがまだ届いていません — オフラインか、データを送信しない旧バージョンの可能性があります。"],
+    "room.info_remote_basic":  ["Only the name, family and level travel over the network — nothing else is stored on the server.",
+                                "線上只帶得到名字、家族與等級，其餘資料伺服器沒有保存。",
+                                "线上只带得到名字、家族与等级，其余资料服务器没有保存。",
+                                "オンラインで取得できるのは名前・ファミリー・レベルだけで、それ以外はサーバーに保存されていません。"],
     "room.teams_2v2":          ["Teams 2v2", "分隊 2對2", "分队 2对2", "チーム 2対2"],
     "room.teams_3v3":          ["Teams 3v3", "分隊 3對3", "分队 3对3", "チーム 3対3"],
     "room.teams_2v2v2":       ["Teams 2v2v2", "分隊 2對2對2", "分队 2对2对2", "チーム 2対2対2"],
@@ -133,9 +199,21 @@ STR = {
                                 "服务器的房间已经满了", "サーバーの部屋が満杯です"],
     # (開機連不上 → 退回單機:刻意不告訴玩家。沒填 serverAddress / 伺服器沒開的人本來就是
     #  要單機玩的,那句話對他沒有用;技術原因寫進 log 就好。見 Toast.cs 開頭那條線。)
+    # 同名被擋(server 只讓先上線的那個留著)。這句與上面那條線的差別在「玩家能不能處理」:
+    # 連不上他多半只能去查網路(所以不說),但名字被占用時伺服器明明連得上,改個名字就好 —— 要說。
+    "net.name_taken":          ["Login failed — that name is already in use", "登入失敗：這個名稱已被使用",
+                                "登录失败：这个名称已被使用", "ログイン失敗：その名前は使用中です"],
+    # 連上之後**中途**斷線(server 關掉、網路斷了)。這句與「開機連不上」相反 —— 那個不說,
+    # 但這個玩家已經在線上了,畫面突然變單機又被帶回登入頁,不說一句他只會覺得壞了。
+    "net.link_lost":           ["Disconnected from the server", "與伺服器的連線中斷",
+                                "与服务器的连接中断", "サーバーとの接続が切れました"],
     # 傳歌失敗。原本把內部錯誤字串接在後面,玩家看不懂也不能做什麼。
     "net.transfer_failed":     ["Song transfer failed — please try again", "歌曲傳輸失敗,請稍後再試",
                                 "歌曲传输失败,请稍后再试", "曲の転送に失敗しました"],
+    # 同一件事但**程式會自己再試一次**(線路問題、還沒用完重試次數 —— 見 NetSongTransfer.MaxDownloadRetries)。
+    # 與上面那句分開是因為玩家該做的事相反:這句要他「等一下」,那句要他「自己再試」。
+    "net.transfer_retry":      ["Song transfer failed — retrying", "歌曲傳輸失敗,正在重試",
+                                "歌曲传输失败,正在重试", "曲の転送に失敗しました — 再試行中"],
     "settings.applied":        ["Settings applied", "設定已套用", "设置已套用", "設定を適用しました"],
     "room.spectate_off":       ["Back in a seat", "已回到座位", "已回到座位", "席に戻りました"],
     "room.drop_up":         ["Up", "向上", "向上", "上"],

@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using Sdo.Osu;
 using UnityEngine;
@@ -13,8 +15,27 @@ namespace Sdo.Game
     /// later play reads the sidecar and loads the file; nothing is regenerated. (Delete the <c>#DPS</c> line to get a
     /// fresh one.)
     ///
-    /// The dance is DETERMINISTIC: the RNG seed is the song's identity (its folder + which song in it), so the same
-    /// song always dances the same way — even if the sidecar is deleted, or the song is played on another machine.
+    /// The dance is DETERMINISTIC: the RNG seed is the SHA-256 of the song's DIFFICULTY CHARTS and nothing else —
+    /// not the folder's name, not the file names, not the audio. So the same charts always dance the same way: on
+    /// another machine, after the sidecar is deleted, after the library is moved or renamed, and — the case this rule
+    /// exists for — on both sides of 缺歌傳檔.
+    ///
+    /// 🔴 A song that reached this machine through 缺歌傳檔 lands in
+    /// <c>ADDON/SONG/connect/&lt;歌名 - 作者 [packId 前 8 碼]&gt;/</c> — the sender's own folder name is never on the wire
+    /// (see <c>NetSongFetcher.ConnectFolderName</c>), and the .dps itself is not transferred either
+    /// (<c>SongPackFilter</c> drops <c>dance*.dps</c>; the receiver regenerates it). Seeding off the folder name gave
+    /// the two sides two different seeds → the RNG diverged on its very first draw → 同一首歌、同一場,兩邊的舞者跳完全
+    /// 不同的舞。The charts, on the other hand, cross byte-for-byte: they are the files whose SHA-256 the manifest
+    /// actually carries (<see cref="SongPackId.NeedsContentHash"/>) and that the receiver re-verifies file by file.
+    ///
+    /// The charts are also exactly what the PLAN is measured from (span + BPM, see <see cref="DanceInputs"/>), so
+    /// seed and inputs are one and the same source: everything that can change the dance is in the seed, and nothing
+    /// that can't (audio, artwork, folder layout) is. An edited chart is a different dance — correctly so.
+    ///
+    /// 🔴 The fingerprint must not depend on the ORDER of the slots. Which chart is 簡單/普通/困難 is decided per
+    /// machine by <c>RoomConfig.difficultyCalc</c> (minacalc vs osu — see <c>SongCatalog.Entry.SortSlotsByDisplayLevel</c>),
+    /// so two players can hold the same three charts in different slots. The hashes are therefore sorted, i.e. taken
+    /// as a SET — which is also how <see cref="DanceInputs.UnionSeconds"/> reads them.
     ///
     /// It is also the SAME dance whichever difficulty is played: everything the plan depends on — the seed, the length
     /// and the beat grid — is per-SONG (see <see cref="DanceInputs"/>), never per-chart. The dance still starts on the
@@ -39,7 +60,9 @@ namespace Sdo.Game
         /// <param name="chartPaths">EVERY difficulty's chart file (empty slots may be "" / null) — their note windows,
         /// unioned, are the dance's length.</param>
         /// <param name="chartIndices">Per-slot .sm block / .gn difficulty index, parallel to <paramref name="chartPaths"/>.</param>
-        public static string EnsureFor(string folderPath, string songKey, OsuBeatmap map, double songBpm,
+        /// <param name="packId">The folder's cross-machine identity (<c>SongCatalog.Entry.packId</c>) — the FALLBACK
+        /// seed, for the song whose charts can't be read at all; "" → the folder name (see <see cref="SeedFor"/>).</param>
+        public static string EnsureFor(string folderPath, string songKey, string packId, OsuBeatmap map, double songBpm,
                                        int chartFormat, long chartSeed,
                                        IReadOnlyList<string> chartPaths, IReadOnlyList<int> chartIndices)
         {
@@ -66,6 +89,10 @@ namespace Sdo.Game
             if (inputs.Seconds < MinDanceSeconds) return "";
             if (DpsMotionLibrary.Pool.Count == 0) return "";  // no motions in the data tree → nothing to plan with
 
+            // One identity, hashed once: the charts are read here (SHA-256), and asking for it twice would read them twice.
+            string identity = IdentityOf(chartPaths, chartIndices, folderPath, songKey, packId);
+            uint seed = RandomDps.Fnv(identity);
+
             var req = new RandomDpsRequest
             {
                 Bpm = inputs.Bpm,
@@ -74,8 +101,8 @@ namespace Sdo.Game
                 Intros = DpsMotionLibrary.Intros,
                 Groups = DpsMotionLibrary.Groups,
                 FrameCount = DpsMotionLibrary.Frames,
-                Seed = SeedFor(folderPath, songKey),
-                ChartName = "ext_" + RandomDps.Fnv(IdentityOf(folderPath, songKey)).ToString("x8") + ".gn",
+                Seed = seed,
+                ChartName = "ext_" + seed.ToString("x8") + ".gn",
             };
 
             byte[] dps = RandomDps.Build(req);
@@ -94,21 +121,75 @@ namespace Sdo.Game
                 return "";                                   // read-only folder → dancer keeps the fallback clip
             }
             Debug.Log($"[dps] generated {file} for {Path.GetFileName(folderPath)}: {inputs.Seconds:F1}s @ {req.Bpm:F1} bpm, " +
-                      $"seed {req.Seed:x8}, {windows.Count} difficult(y/ies) measured" +
+                      $"seed {req.Seed:x8} (from {SeedSource(identity)}), {windows.Count} difficult(y/ies) measured" +
                       $"{(inputs.PerSong ? "" : " — FELL BACK to this chart's own span/bpm")}");
             return path;
         }
 
-        // Seed = the song's identity, NOT its path on this disk: the folder's NAME (a moved library keeps its dances)
-        // plus which song in it. Same song ⇒ same seed ⇒ same dance, on any machine, forever.
-        private static uint SeedFor(string folderPath, string songKey) => RandomDps.Fnv(IdentityOf(folderPath, songKey));
+        /// <summary>The RNG seed of this song's dance — its charts' content (see the class remarks). Public for tests.</summary>
+        public static uint SeedFor(IReadOnlyList<string> chartPaths, IReadOnlyList<int> chartIndices,
+                                   string folderPath, string songKey, string packId)
+            => RandomDps.Fnv(IdentityOf(chartPaths, chartIndices, folderPath, songKey, packId));
 
-        private static string IdentityOf(string folderPath, string songKey)
+        // What "the same song" MEANS, in order of preference:
+        //   • its CHARTS' content — the rule. Nothing outside the charts takes part, so the identity survives every
+        //     renaming the transfer (or the player) does to the folder around them.
+        //   • packId — the fallback when not one chart could be hashed (deleted mid-play, unreadable, a song whose
+        //     charts live inside a .gn pack this build can't open). Still cross-machine, just coarser: it also moves
+        //     when the artwork or the audio does.
+        //   • the folder's NAME — the last resort (no packId either: an unscannable folder, a pre-v10 scan cache).
+        // The folder's full PATH never takes part at any level: a library moved to another drive must not re-choreograph.
+        private static string IdentityOf(IReadOnlyList<string> chartPaths, IReadOnlyList<int> chartIndices,
+                                         string folderPath, string songKey, string packId)
         {
+            string charts = ChartsFingerprint(chartPaths, chartIndices);
+            if (charts.Length > 0) return charts;
+
+            string key = (songKey ?? "").ToLowerInvariant();
+            if (!string.IsNullOrEmpty(packId)) return packId.ToLowerInvariant() + "|" + key;
+
             string leaf = "";
             try { leaf = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)); }
             catch { leaf = folderPath ?? ""; }
-            return (leaf ?? "").ToLowerInvariant() + "|" + (songKey ?? "").ToLowerInvariant();
+            return (leaf ?? "").ToLowerInvariant() + "|" + key;
+        }
+
+        /// <summary>Which of the three identities the seed ended up on — the log line's way of saying "this song will
+        /// NOT match the same song on another machine" when it had to fall back.</summary>
+        private static string SeedSource(string identity)
+        {
+            if (identity.StartsWith("charts|", StringComparison.Ordinal)) return "charts";
+            if (identity.StartsWith(SongPackId.Prefix, StringComparison.Ordinal)) return "packId — CHARTS UNREADABLE";
+            return "folder name — no charts, no packId";
+        }
+
+        /// <summary>
+        /// The song's charts as a SET of "&lt;file sha256&gt;:&lt;index&gt;" — sorted (slot order is a local display
+        /// setting, see the class remarks) and de-duplicated (a .sm / .gn holds every difficulty in ONE file, so the
+        /// same path arrives three times with three indices — the index is what tells them apart).
+        /// "" = not one chart could be read → the caller falls back.
+        /// </summary>
+        private static string ChartsFingerprint(IReadOnlyList<string> chartPaths, IReadOnlyList<int> chartIndices)
+        {
+            if (chartPaths == null) return "";
+            var parts = new List<string>(3);
+            var hashed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);   // one read per FILE, not per slot
+            for (int i = 0; i < chartPaths.Count; i++)
+            {
+                string path = chartPaths[i];
+                if (string.IsNullOrEmpty(path)) continue;
+
+                string sha;
+                if (!hashed.TryGetValue(path, out sha)) hashed[path] = sha = SongPackId.HashFile(path) ?? "";
+                if (sha.Length == 0) continue;   // unreadable → this slot simply isn't part of the identity
+
+                int index = chartIndices != null && i < chartIndices.Count ? chartIndices[i] : 0;
+                string part = sha + ":" + index.ToString(CultureInfo.InvariantCulture);
+                if (!parts.Contains(part)) parts.Add(part);
+            }
+            if (parts.Count == 0) return "";
+            parts.Sort(StringComparer.Ordinal);
+            return "charts|" + string.Join(";", parts.ToArray());
         }
     }
 }

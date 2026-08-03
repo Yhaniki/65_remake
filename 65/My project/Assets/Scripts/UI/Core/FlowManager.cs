@@ -17,12 +17,18 @@ namespace Sdo.UI.Core
         private static readonly Dictionary<ScreenId, HashSet<ScreenId>> Allowed =
             new Dictionary<ScreenId, HashSet<ScreenId>>
             {
-                { ScreenId.GenderSel, new HashSet<ScreenId> { ScreenId.Room } },   // 選完男女 → 直接進房間
-                { ScreenId.Lobby, new HashSet<ScreenId> { ScreenId.Room } },
+                // 選完男女按「登入」:連上 → 大廳(線上);連不上/沒設伺服器 → 照原本直接進自己的房間(單機)。
+                { ScreenId.GenderSel, new HashSet<ScreenId> { ScreenId.Room, ScreenId.Lobby } },
+                // 大廳 → 房間(建房或點列表加入);大廳 → 選角色是「登出」(斷線退回單機)。
+                { ScreenId.Lobby, new HashSet<ScreenId> { ScreenId.Room, ScreenId.GenderSel } },
+                // 房間「返回」/ESC 的目的地**依模式而不同**:線上回大廳、離線(單機)回選男女 —— 單機玩家沒經過大廳,
+                // 他是從選男女直接進自己的房間的。所以 Lobby 與 GenderSel **兩條邊都要留著**(分流在 RoomScreen.ExitScreen)。
                 { ScreenId.Room, new HashSet<ScreenId> { ScreenId.GenderSel, ScreenId.Lobby, ScreenId.SongSelect, ScreenId.Gameplay, ScreenId.Shop } },
                 { ScreenId.SongSelect, new HashSet<ScreenId> { ScreenId.Room } },
-                // Gameplay → GenderSel 是旁觀的 Ctrl+Q(需求 10):旁觀者直接離開房間回選角色,不繞回房間畫面。
-                { ScreenId.Gameplay, new HashSet<ScreenId> { ScreenId.Room, ScreenId.GenderSel } },
+                // Gameplay → Lobby / GenderSel 是旁觀的 Ctrl+Q(需求 10):旁觀者直接離開房間退到房間的上一層,不繞回房間畫面。
+                // 同上,線上回大廳、離線回選男女,兩條邊都要留著(分流在 FrontendApp.QuitSpectating)。
+                // GenderSel 這條同時也承擔「中途斷線時要能從任何畫面退回登入頁」。
+                { ScreenId.Gameplay, new HashSet<ScreenId> { ScreenId.Room, ScreenId.GenderSel, ScreenId.Lobby } },
                 { ScreenId.Shop, new HashSet<ScreenId> { ScreenId.Room } },
             };
 

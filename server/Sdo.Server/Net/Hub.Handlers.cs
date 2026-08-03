@@ -60,6 +60,8 @@ namespace Sdo.Server.Net
                 // 每一塊都會排進單執行緒的 actor loop 並讓我們回一封錯誤,等於免費的放大器。
                 if (!conn.HelloDone) { conn.Kill(NetProto.ErrProto); return; }
 
+                conn.CurMsgType = "chunk";
+
                 // 上傳的位元組。刻意不吃 control 的 rate limit —— 一首歌是幾百塊 chunk,
                 // 32/s 會把正常上傳擋死。總量的防線在 blobUploadBegin 那份清單上
                 // (超過宣稱長度就中止),而清單本身是 control 訊息、有被限流。
@@ -106,6 +108,8 @@ namespace Sdo.Server.Net
             conn.Rate.Strikes = 0;
 
             LogVerbose("← #" + conn.ConnId + " " + type);
+            // 被拒的 log 要說出「是哪一個請求被拒」—— 記在連線上,由 SendError 取用。
+            conn.CurMsgType = type;
             Dispatch(conn, type, node, rq, now);
         }
 
@@ -118,6 +122,7 @@ namespace Sdo.Server.Net
                 case NetProto.Bye: conn.Close("byeFromClient"); break;
 
                 case NetProto.RoomList: OnRoomList(conn, rq); break;
+                case NetProto.UserList: OnUserList(conn, rq); break;
                 case NetProto.CreateRoom: OnCreateRoom(conn, node, rq); break;
                 case NetProto.JoinRoom: OnJoinRoom(conn, node, rq); break;
                 case NetProto.LeaveRoom: OnLeaveRoom(conn); break;
@@ -130,6 +135,8 @@ namespace Sdo.Server.Net
                 case NetProto.SetReady: OnSetReady(conn, node, rq); break;
                 case NetProto.SetLook: OnSetLook(conn, node); break;
                 case NetProto.SetIdentity: OnSetIdentity(conn, node); break;
+                case NetProto.SetPlayerCard: OnSetPlayerCard(conn, node); break;
+                case NetProto.PlayerCardQuery: OnPlayerCardQuery(conn, node, rq); break;
                 case NetProto.Move: OnRoomMove(conn, node, now); break;
                 case NetProto.SetAvailability: OnSetAvailability(conn, node, now); break;
 
@@ -233,6 +240,23 @@ namespace Sdo.Server.Net
             // token 綁了身分就覆寫 client 自稱的那份(見上面的註解 —— 這是整個 token 機制的重點)。
             if (ident.HasPlayerId) { conn.PlayerId = Clip(ident.PlayerId, 32); conn.PlayerIdLocked = true; }
             if (ident.HasName) { conn.Name = SanitizeName(ident.Name); conn.NameLocked = true; }
+            // 🔴 名字要唯一 —— 同名的**後來者被擋**(先上線的不受影響)。
+            // 名字是這裡唯一認人的東西:密語照名字找人(ControlByName)、名字牌、線上名單都是它。
+            // 兩個「小明」同時在線的話,密語會進到其中一個而寄的人不知道是哪個,收的人也不知道
+            // 為什麼有一半的話不見了 —— 那種 bug 沒人查得出來,所以在門口就不讓它成立。
+            //
+            // 代價寫在這裡免得日後當成 bug 查:client 當掉重開會被自己那條還沒被清掉的舊連線擋住,
+            // 要等 ping 逾時(NetLimits.PingTimeoutMs)把幽靈連線掃掉才進得來。這是有意的取捨 ——
+            // 「同名就踢掉舊的」在被冒名時等於送對方一把踢人的鑰匙。
+            var sameName = ControlByName(conn.Name);
+            if (sameName != null)
+            {
+                Log("連線 #" + conn.ConnId + " 想用「" + conn.Name + "」上線,但 user "
+                    + sameName.UserId + " 已經在線上用這個名字 → 拒絕");
+                conn.Kill(NetProto.ErrNameTaken);
+                return;
+            }
+
             conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
             conn.Level = Math.Max(0, NetJson.Int(node, "level"));
             conn.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
@@ -297,20 +321,124 @@ namespace Sdo.Server.Net
 
                 arr.Add(JObj.New()
                     .Int("code", s.Code)
+                    // 門牌序號:大廳房卡上顯示的那個 3 位數(官方 %03d)。與 code 是兩件事 ——
+                    // code 是 5 位數的「加入鑰匙」,seq 是「這是第幾間房」。不送 seq 的話大廳只能拿
+                    // 列表位置湊,而那個數字會隨排序/刷新跳來跳去。
+                    .Int("seq", s.Seq)
                     .Str("name", s.Name)
                     .Str("hostName", hostName)
                     .Str("status", NetState.ToWire(s.Status))
                     .Int("count", s.SeatedCount)
+                    // 每個座位的性別(0=女 1=男),空位不列 —— 大廳房卡上那排愛心要照性別上色
+                    // (官方:女=粉紅 FEMALE.AN、男=藍 MALE.AN、空位=灰 MAN.AN)。
+                    // 只送「坐著的人」的性別、依座位順序,長度就等於 count。
+                    .Put("genders", SeatGenders(s))
+                    // 房裡有誰(名字 + 等級 + 性別),依座位順序、只送坐著的 —— 右鍵房卡的「房間信息」
+                    // 那 4 列要寫出來。🔴 那個框開的時候人**還沒進房**,roomSnapshot 只發給房裡的人,
+                    // 所以這份列表是它唯一拿得到玩家名字的地方(以前沒送 → 那 4 列永遠空白)。
+                    .Put("members", SeatMembers(s))
                     .Int("capacity", s.Capacity)
                     .Int("spectators", s.Spectators != null ? s.Spectators.Length : 0)
                     .Int("mode", s.Settings.GameMode)
-                    .Str("songTitle", s.Song != null ? s.Song.Title : ""));
+                    .Str("songTitle", s.Song != null ? s.Song.Title : "")
+                    // 譜面難度。大廳的「房間信息」那格官方寫成「歌名 (9級)」—— 沒有這個欄位就只能顯示歌名。
+                    // 🔴 0 = 沒歌 or 譜面沒標難度,呼叫端要當「不知道」而不是「0 級」(不然整排房間都會寫 0級)。
+                    .Int("songLevel", s.Song != null ? s.Song.Level : 0));
             }
 
             conn.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.RoomListResult)
                 .Int(NetProto.FieldRequest, rq)
                 .Put("rooms", arr));
+        }
+
+        /// <summary>
+        /// 房間裡「坐著的人」的性別,依座位順序(0=女 1=男)。長度 == <c>SeatedCount</c>。
+        ///
+        /// 大廳房卡上那排愛心要照這個上色(官方:女=粉紅、男=藍、空位=灰)。只送坐著的、不送空位 ——
+        /// 空位的顏色是固定的,client 自己補得出來,沒必要把六格都送。
+        /// </summary>
+        private static JArr SeatGenders(NetRoomSnapshot s)
+        {
+            var arr = JArr.New();
+            if (s.Seats != null)
+                for (int i = 0; i < s.Seats.Length; i++)
+                {
+                    var seat = s.Seats[i];
+                    if (seat == null || !seat.IsTaken) continue;
+                    arr.Add(seat.Look != null ? seat.Look.Gender : 0);
+                }
+            return arr;
+        }
+
+        /// <summary>
+        /// 房間裡「坐著的人」的名字/等級/性別,依座位順序。長度 == <c>SeatedCount</c>,與
+        /// <see cref="SeatGenders"/> 逐項對齊。
+        ///
+        /// 「房間信息」對話框(大廳右鍵房卡)要列出裡面有誰 —— 那時 client 還在大廳,
+        /// 拿不到 <c>roomSnapshot</c>(那只發給房裡的人),所以除了這份列表沒有第二個來源。
+        ///
+        /// 🔴 <c>genders</c> 仍然照送、沒有拿掉:舊版 client 只讀那個欄位,不送的話它們的房卡
+        ///    愛心會整排退回粉紅。新版 client 兩個都收得到,以 members 為準。
+        /// </summary>
+        private static JArr SeatMembers(NetRoomSnapshot s)
+        {
+            var arr = JArr.New();
+            if (s.Seats != null)
+                for (int i = 0; i < s.Seats.Length; i++)
+                {
+                    var seat = s.Seats[i];
+                    if (seat == null || !seat.IsTaken) continue;
+                    arr.Add(JObj.New()
+                        .Str("name", seat.Name ?? "")
+                        .Int("level", seat.Level)
+                        .Int("gender", seat.Look != null ? seat.Look.Gender : 0));
+                }
+            return arr;
+        }
+
+        /// <summary>
+        /// 「現在誰在線上」——大廳玩家名單(全部 / 好友 / 家族 / 黑名單四個分頁)的唯一資料來源。
+        ///
+        /// 只回**事實**:誰在線上、叫什麼、幾等、屬於哪個家族、人在大廳還是某間房。
+        /// 「這個人是不是我的好友」不在這裡判斷 —— 好友清單存在玩家**自己那台機器**上
+        /// (server 沒有帳號持久化,見 client 的 <c>FriendList</c>),所以那是 client 拿這份名單去比對的事。
+        ///
+        /// 照 userId 排序:Dictionary 的列舉順序不保證,不排的話名單每刷一次順序就跳一遍。
+        /// userId 遞增 == 上線先後,正好也是官方名單「先來的在上面」的排法。
+        /// </summary>
+        private void OnUserList(Connection conn, int rq)
+        {
+            var users = new List<Connection>();
+            foreach (var kv in _byUser)
+            {
+                var c = kv.Value;
+                if (c == null || c.IsClosed) continue;
+                users.Add(c);
+            }
+            users.Sort((a, b) => a.UserId.CompareTo(b.UserId));
+
+            var arr = JArr.New();
+            for (int i = 0; i < users.Count; i++)
+            {
+                var c = users[i];
+                var room = _rooms.RoomOf(c.UserId);
+                arr.Add(JObj.New()
+                    .Int("userId", c.UserId)
+                    .Str("name", c.Name)
+                    .Str("guild", c.Guild)
+                    .Int("level", c.Level)
+                    .Int("gender", c.Look != null ? c.Look.Gender : 0)
+                    // 門牌(seq)而不是 code:名單只是給人看「他在幾號房」,不是給人拿去闖房的鑰匙。
+                    // 🔴 不在房裡送 **-1** 不是 0 —— 門牌從 000 起算(見 RoomRegistry.NextFreeSeq),
+                    //    0 是一間真的房,拿它當「在大廳」的哨兵會把 000 房的人標成在大廳。
+                    .Int("roomSeq", room != null ? room.State.Seq : -1));
+            }
+
+            conn.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.UserListResult)
+                .Int(NetProto.FieldRequest, rq)
+                .Put("users", arr));
         }
 
         private void OnCreateRoom(Connection conn, object node, int rq)
@@ -463,7 +591,11 @@ namespace Sdo.Server.Net
             }
 
             var op = room.SetSong(conn.UserId, song);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok)
+            {
+                SendOpError(conn, rq, op, "song=" + (song != null ? song.Title + " packId=" + song.PackId : "(清空)"));
+                return;
+            }
             // 選歌是房間狀態的重大變更(保留 ready、重設 availability = R9),而且「這間房有沒有歌」
             // 是準備/開始的前提 —— 沒印出來的話「按開始沒反應」完全查不到(踩過)。
             Log("房 " + room.Code + " 換歌:" + (song != null ? song.Title : "(清空)"));
@@ -498,7 +630,7 @@ namespace Sdo.Server.Net
             }
 
             var op = room.AssignTeams(conn.UserId, layout);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "layout=" + layout); return; }
             BroadcastRoomState(room);
         }
 
@@ -509,8 +641,9 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
-            var op = room.SetOwnTeam(conn.UserId, NetJson.Int(node, "team", (int)TeamTag.Free));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            int team = NetJson.Int(node, "team", (int)TeamTag.Free);
+            var op = room.SetOwnTeam(conn.UserId, team);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "team=" + team); return; }
             BroadcastRoomState(room);
         }
 
@@ -519,8 +652,9 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
-            var op = room.SetReady(conn.UserId, NetJson.Bool(node, "ready"));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            bool ready = NetJson.Bool(node, "ready");
+            var op = room.SetReady(conn.UserId, ready);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "ready=" + ready); return; }
             BroadcastRoomState(room);
         }
 
@@ -558,7 +692,18 @@ namespace Sdo.Server.Net
                 // 名字空白 → 保留原本的。SanitizeName 會把空的變成「玩家」,但那是握手時
                 // 「這個 client 根本沒報名字」該有的行為,不該讓一筆壞掉的更新把好名字洗掉。
                 string raw = (NetJson.Str(node, "name") ?? "").Trim();
-                if (raw.Length > 0) conn.Name = SanitizeName(raw);
+                if (raw.Length > 0)
+                {
+                    string want = SanitizeName(raw);
+                    // 🔴 撞到別人的名字就不改(保留原本的)。少了這一段,hello 的同名檢查等於白做 ——
+                    // 用另一個名字進來、握手後再改成別人的名字,結果一樣是兩個同名的人同時在線。
+                    // 找到的是自己時要放行:換性別(男女各一個 profile)本來就會重送同一個名字。
+                    var holder = ControlByName(want);
+                    if (holder == null || holder == conn) conn.Name = want;
+                    else
+                        Log("✗ user " + conn.UserId + " 想改名成「" + want + "」,但 user "
+                            + holder.UserId + " 正在用這個名字 → 保留原名「" + conn.Name + "」");
+                }
             }
             if (!conn.PlayerIdLocked)
             {
@@ -574,6 +719,55 @@ namespace Sdo.Server.Net
                 BroadcastRoomState(room);
         }
 
+        /// <summary>
+        /// 玩家回報自己的**公開名片**(累計判定數 / 勝負 / 經驗值% / 知名度 / 四格自我介紹)。
+        ///
+        /// 🔴 **不廣播、不推快照。** 名片只有「有人點開你的資料」時才會被讀到 —— 拿它去 rev++
+        /// 會讓全房為了一個沒人在看的數字重畫一次(<see cref="OnSetLook"/> 那條路踩過的坑)。
+        /// 所以這裡就只是把它放在連線上,等 <see cref="OnPlayerCardQuery"/> 來拿。
+        ///
+        /// 🔴 **自報值,不驗證。** 判定數本來就發生在 client,這套連線也沒有帳號系統可以對帳 ——
+        /// 與 <see cref="OnSetIdentity"/> / <see cref="OnSetLook"/> 同一個信任等級。<c>Decode</c>
+        /// 已經把負數與過長字串夾掉,壞掉的名片最糟就是顯示怪數字,不值得為它斷線。
+        /// </summary>
+        private void OnSetPlayerCard(Connection conn, object node)
+        {
+            conn.Card = NetPlayerCard.Decode(NetJson.Sub(node, "card"));
+        }
+
+        /// <summary>
+        /// 查一個玩家的公開資料(個人資料視窗點開別人時發的)。
+        ///
+        /// 回應帶的 <c>look</c> 是 server 手上那份(<c>setLook</c> 來的),不是名片的一部分 ——
+        /// 同一件事只該有一個來源,而且那份本來就已經在連線上了。
+        ///
+        /// 對方不在線上就回 <c>found=false</c> 而不是 error:「他剛好下線了」是**正常**情況,
+        /// 不是誰做錯事。呼叫端看到 false 就維持原本的空白顯示。
+        /// </summary>
+        private void OnPlayerCardQuery(Connection conn, object node, int rq)
+        {
+            int userId = NetJson.Int(node, "userId");
+            var target = ControlOf(userId);
+
+            var reply = JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardResult)
+                .Int(NetProto.FieldRequest, rq)
+                .Bool("found", target != null)
+                .Int("userId", userId);
+
+            if (target != null)
+            {
+                reply.Str("name", target.Name)
+                     .Str("playerId", target.PlayerId)
+                     .Str("guild", target.Guild)
+                     .Int("level", target.Level)
+                     .Put("look", (target.Look ?? new NetAvatarLook()).Encode())
+                     .Put("card", (target.Card ?? new NetPlayerCard()).Encode());
+            }
+
+            conn.Send(reply);
+        }
+
         private void OnSetAvailability(Connection conn, object node, long now)
         {
             var room = _rooms.RoomOf(conn.UserId);
@@ -585,9 +779,51 @@ namespace Sdo.Server.Net
             // 下載進度回報要節流。client 自己也會節流,但不能假設對方的 client 沒被改過。
             if (avail == Availability.Downloading && !conn.Rate.AllowAvailProgress(now)) return;
 
-            var op = room.SetAvailability(conn.UserId, NetJson.Str(node, "packId"),
-                                          avail, (float)NetJson.Num(node, "progress"));
-            if (op == NetRoomOp.Ok) BroadcastRoomState(room);
+            // 🔴 **狀態變化要進 log。** 「我有沒有這首歌」是按準備(R17)與開場(R12)的前提,
+            // 而它出錯時畫面上完全看不出來(見 NetSongPublisher 開頭那段)。以前這裡一行都不印,
+            // 於是 log 上只看得到最後被拒的那一刻是什麼值,看不到它**什麼時候、從哪一個值**變過來的
+            // —— 而那正是分辨「卡在下載」與「傳完了但沒回報」的唯一線索。
+            // 只印變化:downloading 的進度回報每 500ms 一筆,全印會把 log 淹掉。
+            string packId = NetJson.Str(node, "packId");
+            var prev = AvailOf(room, conn.UserId);
+
+            var op = room.SetAvailability(conn.UserId, packId, avail, (float)NetJson.Num(node, "progress"));
+            if (op != NetRoomOp.Ok) return;
+
+            var now2 = AvailOf(room, conn.UserId);
+            int code = room.State != null ? room.State.Code : 0;
+            if (now2 != prev)
+            {
+                Log("房 " + code + " user " + conn.UserId + " 可用性 "
+                    + NetState.ToWire(prev) + " → " + NetState.ToWire(now2) + "(" + packId + ")");
+            }
+            else if (avail != prev)
+            {
+                // 送來的值與現在的不一樣,套用之後卻沒變 → 被 NetRoom.SetAvailability 的
+                // MatchesCurrentSong 丟掉了(packId 對不上房間現在的歌)。多半是換歌的正常競態,
+                // 但「一直對不上」的話那個人會**永遠**停在舊值 —— 而畫面上完全看不出來。
+                LogVerbose("房 " + code + " user " + conn.UserId + " 的可用性回報被丟掉(packId 對不上這間房現在的歌):"
+                    + NetState.ToWire(avail) + " packId=" + packId);
+            }
+            else if (avail == Availability.Downloading)
+            {
+                LogVerbose("房 " + code + " user " + conn.UserId + " 下載進度 "
+                    + (int)(NetJson.Num(node, "progress") * 100) + "%");
+            }
+
+            BroadcastRoomState(room);
+        }
+
+        /// <summary>房間裡這個人現在的可用性(座位或旁觀席都算)。找不到人 → <c>Unknown</c>。</summary>
+        private static Availability AvailOf(NetRoom room, int userId)
+        {
+            var snap = room != null ? room.State : null;
+            if (snap == null) return Availability.Unknown;
+            var seat = snap.SeatOf(userId);
+            if (seat != null) return seat.Avail;
+            int si = snap.SpectatorIndexOf(userId);
+            if (si >= 0 && snap.Spectators != null && si < snap.Spectators.Length) return snap.Spectators[si].Avail;
+            return Availability.Unknown;
         }
 
         // ================= 座位管理(host only) =================
@@ -599,7 +835,7 @@ namespace Sdo.Server.Net
             NetRoom room;
             LeaveResult left;
             var op = _rooms.KickUser(conn.UserId, target, out room, out left);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "目標 user " + target); return; }
 
             DropRoomMoves(room.Code);
             SendKicked(target, NetProto.KickedByHost);
@@ -616,7 +852,7 @@ namespace Sdo.Server.Net
             NetRoom room;
             int kicked;
             var op = _rooms.SetSeatClosed(conn.UserId, seat, closed, out room, out kicked);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "座位" + seat + " closed=" + closed); return; }
 
             // 關閉有人的座位 → 那個人先被踢出去(需求 12)。
             if (kicked != 0)
@@ -632,8 +868,9 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
-            var op = room.TransferHost(conn.UserId, NetJson.Int(node, "userId"));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            int newHost = NetJson.Int(node, "userId");
+            var op = room.TransferHost(conn.UserId, newHost);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "目標 user " + newHost); return; }
             BroadcastRoomState(room);
         }
 
@@ -655,7 +892,7 @@ namespace Sdo.Server.Net
             var op = _rooms.TrySpectate(code, JoinUserOf(conn), out room, out left);
             AfterImplicitLeave(left, conn.UserId);
 
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "房 " + code); return; }
             DropRoomMoves(room.Code);
             // 座位有 log、旁觀沒有 → 實機驗證時「他到底進去了沒」只能用猜的。補上。
             Log("房 " + room.Code + " 旁觀  user " + conn.UserId + "「" + conn.Name
@@ -692,8 +929,13 @@ namespace Sdo.Server.Net
 
             NetMatchInfo match;
             var op = room.RequestStart(conn.UserId, force, resolved, now, out match);
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
-            _comboMilestones.Remove(room.Code);
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "force=" + force); return; }
+
+            // 🔴 新的一場 = 全新的分數暫存。上一場若沒走到 resultsReady(那條路徑才會 DropRoomScratch)
+            //    就留著別人的 final,而 OnPlayFinished 看到「這個人已經有 final 了」會直接掉頭 ——
+            //    座位就永遠停在 playing:房間卡住不結算、準備退不掉、setPlayState{idle} 全被回 badState。
+            //    (_comboMilestones / _liveLeaders 本來就在這裡重置,分數暫存漏了而已。)
+            DropMatchScratch(room.Code);
             _liveLeaders[room.Code] = new LiveLeaderTracker(match.Participants);
 
             SendMatchStarting(room, match);
@@ -753,21 +995,28 @@ namespace Sdo.Server.Net
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendError(conn, rq, NetProto.ErrNotInRoom); return; }
 
+            long matchId = NetJson.Long(node, "matchId");
+
             PlayState state;
             if (!NetState.TryParsePlayState(NetJson.Str(node, "state"), out state))
             {
-                SendError(conn, rq, NetProto.ErrBadState, "unknown state");
+                SendError(conn, rq, NetProto.ErrBadState, "unknown state",
+                          "state=" + NetJson.Str(node, "state") + " matchId=" + matchId);
                 return;
             }
             if (!NetState.IsClientSettable(state))
             {
                 // 🔴 安全邊界:server 保留狀態不准 client 自稱(否則能繞過載入同步)。
-                SendError(conn, rq, NetProto.ErrBadState, "server-reserved state");
+                SendError(conn, rq, NetProto.ErrBadState, "server-reserved state",
+                          "state=" + state + " matchId=" + matchId);
                 return;
             }
 
-            var op = room.SetPlayState(conn.UserId, state, NetJson.Long(node, "matchId"));
-            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
+            var op = room.SetPlayState(conn.UserId, state, matchId);
+            // 🔴 送上來的 matchId 一定要進 log:這條路徑最常見的拒絕就是「這一場已經被 server 收掉了」
+            // (client 拿著上一場的 matchId 送),而那唯一的證據就是「它送的號碼」與
+            // DescribeConn 印的「server 現在認的那一場」對不起來。
+            if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "state=" + state + " matchId=" + matchId); return; }
             BroadcastRoomState(room);
         }
 
@@ -886,13 +1135,24 @@ namespace Sdo.Server.Net
         /// </summary>
         private void DropRoomScratch(int roomCode)
         {
+            DropMatchScratch(roomCode);
+            _moves.Remove(roomCode);
+            _movesDirty.Remove(roomCode);
+        }
+
+        /// <summary>
+        /// 只清「這一場」的暫存(分數流 / 里程碑 / 領先者)。
+        ///
+        /// 與 <see cref="DropRoomScratch"/> 的差別是**不動走動位置** —— 那是房間的東西,不屬於任何一場
+        /// (開下一局時清掉它,回房的人在下一筆 move 送到之前會少一個位置)。
+        /// </summary>
+        private void DropMatchScratch(int roomCode)
+        {
             _pendingFrames.Remove(roomCode);
             _latestFrames.Remove(roomCode);
             _finalFrames.Remove(roomCode);
             _comboMilestones.Remove(roomCode);
             _liveLeaders.Remove(roomCode);
-            _moves.Remove(roomCode);
-            _movesDirty.Remove(roomCode);
         }
 
         private void DropRoomMoves(int roomCode)
@@ -1080,8 +1340,10 @@ namespace Sdo.Server.Net
                 finalByUser = new Dictionary<int, FrameSample>();
                 _finalFrames[room.Code] = finalByUser;
             }
-            if (finalByUser.ContainsKey(conn.UserId)) return;
-            finalByUser[conn.UserId] = final;
+            // 一場只收第一筆 final(重複送不覆寫,免得有人送第二筆刷分)——
+            // 但**不能在這裡 return**:狀態推進(下面那句 SetPlayState{finished})一定要走到,
+            // 不然這個人的座位會停在 playing,整間房就跟著卡住(見 OnRequestStart 的 DropMatchScratch)。
+            if (!finalByUser.ContainsKey(conn.UserId)) finalByUser[conn.UserId] = final;
 
             Dictionary<int, FrameSample> latestByUser;
             if (!_latestFrames.TryGetValue(room.Code, out latestByUser))
@@ -1166,13 +1428,25 @@ namespace Sdo.Server.Net
 
         private void SendResultsReady(NetRoom room, long matchId)
         {
+            // 🔴 沒有名單就沒有結算可送。以前這裡直接讀 room.Match.Participants,而
+            //    「房間停在 playing 但 _match 已經被收掉」是真的會發生的狀態(見 NetRoom.SetPlayState
+            //    的中離註解),於是整個 ActorLoop 的 tick 被一個 NullReferenceException 打斷 ——
+            //    連帶那一輪的 BroadcastRoomState 也沒送出去,座位停在別人畫面上的 PLAYING 就再也不動了。
+            //    根因已經在 NetRoom 修掉,這裡留一道:tick 不該因為房間狀態怪就整個掛掉。
+            var match = room.Match;
+            if (match == null)
+            {
+                Log("房 " + room.Code + " 第 " + matchId + " 場要結算,但場次已經不在了 → 略過(不該發生)");
+                return;
+            }
+
             Dictionary<int, FrameSample> finalByUser;
             Dictionary<int, FrameSample> latestByUser;
             _finalFrames.TryGetValue(room.Code, out finalByUser);
             _latestFrames.TryGetValue(room.Code, out latestByUser);
 
             var rows = JArr.New();
-            var players = new List<NetMatchPlayerSnapshot>(room.Match.Participants);
+            var players = new List<NetMatchPlayerSnapshot>(match.Participants);
             players.Sort((a, b) =>
             {
                 FrameSample af = ResultFrame(finalByUser, latestByUser, a.UserId);
@@ -1234,22 +1508,46 @@ namespace Sdo.Server.Net
             int expressionId = NetJson.Int(node, "expressionId");
             if (string.IsNullOrEmpty(text) && expressionId == 0) return;
 
+            // 🔴 **不在房間裡 = 在大廳**,那就廣播給大廳裡的所有人 —— 以前這裡是
+            //    `if (room == null) return;`(註解寫「大廳聊天在後續階段」),結果在大廳打字送出去之後
+            //    server 直接把它丟掉,連自己那一行都不會回來 → 使用者回報「我打字都沒辦法送出」。
+            //    大廳沒有「房間」這個容器,所以收件人是「所有線上、且同樣不在任何房間裡的連線」。
             var room = _rooms.RoomOf(conn.UserId);
-            if (room == null) return;   // 大廳聊天在後續階段
+            string channel = NetJson.Str(node, "channel", "current");
 
             var bytes = JObj.New()
                 .Str(NetProto.FieldType, NetProto.ChatMsg)
                 .Int("senderUserId", conn.UserId)
                 .Str("sender", conn.Name)
                 .Str("text", text)
-                .Str("channel", NetJson.Str(node, "channel", "current"))
+                .Str("channel", channel)
                 .Int("expressionId", expressionId)
                 .Str("leadingText", Clip(NetJson.Str(node, "leading"), NetLimits.MaxChatChars))
-                .Int("roomId", room.Code)
+                // roomId=0 是「這句話發生在大廳」的標記(房間號從 1 起)。client 靠它分辨要不要顯示。
+                .Int("roomId", room != null ? room.Code : 0)
                 .Utf8();
 
-            ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+            if (room != null)
+            {
+                ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+                return;
+            }
+
+            // 大廳的**家族頻道只送給同一個家族的人** —— 大廳是全服共用的一塊,不像房間本來就只有六個人;
+            // 家族的話被整個大廳看光,那個頻道就沒有存在的意義了。沒有家族的人送家族頻道 → 只有自己收得到
+            // (client 那邊會顯示「你沒有家族」,見 RoomScreen 的同一條規則)。
+            bool familyOnly = string.Equals(channel, "family", StringComparison.OrdinalIgnoreCase);
+            ForEachInLobby(c =>
+            {
+                if (familyOnly && c.UserId != conn.UserId && !SameGuild(conn, c)) return;
+                c.SendPreEncoded(bytes);
+            });
         }
+
+        /// <summary>兩條連線屬於同一個家族嗎(沒有家族的人永遠不算同族,免得「都沒家族」變成一個大家族)。</summary>
+        private static bool SameGuild(Connection a, Connection b)
+            => a != null && b != null && !string.IsNullOrEmpty(a.Guild)
+               && string.Equals(a.Guild, b.Guild, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// 密語。收件人**照名字**在全服的連線裡找 —— 不是在房裡找:密語本來就跨房,

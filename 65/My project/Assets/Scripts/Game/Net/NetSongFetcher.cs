@@ -89,6 +89,21 @@ namespace Sdo.Game.Net
         public string Error { get; private set; } = "";
         public string PackId => _packId;
 
+        /// <summary>
+        /// 最後一次「真的有進展」的時刻(<c>Time.realtimeSinceStartup * 1000</c>)。
+        /// 進展 = 收到對面的任何一個 frame,或成功把一塊 chunk 排進送件匣。見 <see cref="CheckStall"/>。
+        /// </summary>
+        private float _lastAdvanceMs;
+
+        /// <summary>
+        /// 這一趟的失敗**重試有機會成功嗎**(呼叫端用它決定要不要再跑一次)。
+        ///
+        /// 只有「線路問題」算:停滯逾時(兩邊任一側判的)、連線中斷。
+        /// 內容問題(sha256 不符、清單不安全、寫不進磁碟)一律 false —— 重試一百次也是同樣的結果,
+        /// 只是把 server 的頻寬與玩家的時間燒掉。
+        /// </summary>
+        public bool Retryable { get; private set; }
+
         /// <summary>下載的目的資料夾(匯入時要重新掃描它)。上傳時是空的。</summary>
         public string DestFolder => _destFolder;
 
@@ -181,6 +196,8 @@ namespace Sdo.Game.Net
             CloseStreams();
             State = NetTransferState.Idle;
             Error = "";
+            Retryable = false;
+            _lastAdvanceMs = Now();
             _manifest = null; _hashTask = null; _need = null; _needCursor = 0;
             _incoming = null; _inCursor = 0; _inReceived = 0;
             _sentBytes = _totalSendBytes = _recvBytes = _totalRecvBytes = 0;
@@ -214,9 +231,16 @@ namespace Sdo.Game.Net
 
             if (_link.State == NetLinkState.Failed || _link.IsClosed)
             {
+                // 線路問題 → 重試有機會成功(見 Retryable)。
+                Retryable = true;
                 Fail("連線中斷:" + _link.LastError);
                 return;
             }
+
+            // 🔴 停滯偵測放在這裡(所有網路階段之前),不是放在 Tick 的最後 ——
+            // 下面 Connecting 那一段是 return 收尾的,擺在尾巴的話握手階段就漏掉了。
+            CheckStall();
+            if (!IsBusy) return;
 
             if (State == NetTransferState.Connecting)
             {
@@ -254,6 +278,39 @@ namespace Sdo.Game.Net
         }
 
         /// <summary>
+        /// **停滯逾時。** 進了傳輸階段之後這麼久沒有任何進展就判定卡死並失敗。
+        ///
+        /// 🔴 為什麼不能只靠「連線斷了嗎」:半開連線(NAT/路由器悄悄丟掉 session、對方主機斷電)
+        /// 上的 socket **不會報錯** —— TCP 要重傳好幾分鐘才放棄,而在那之前
+        /// <c>_link.IsClosed</c> 是 false、我們的 ping 也「送得出去」(只是沒有人收)。
+        /// 結果是這裡永遠停在 <see cref="NetTransferState.Downloading"/>,
+        /// <c>NetSongTransfer.ReportProgress</c> 每 500 ms 繼續告訴 server「我在下載」,
+        /// 於是那個座位在 server 眼中**永遠**是 downloading:按準備被 R17 拒、房主也開不了場(R12),
+        /// 而畫面上進度條停在 99% 看起來就像傳完了。實機 log 上的樣子是
+        /// 「下載開始」之後 server 再也沒有印出「下載完成」,而 client 連按三次準備都是 badState。
+        ///
+        /// 失敗比卡住好:失敗會走 <c>Fail</c> → 刪掉半成品 → 呼叫端重報 missing,
+        /// 缺歌徽章回來、玩家看得到 toast,而且還能重試。
+        /// </summary>
+        private void CheckStall()
+        {
+            if (!IsNetworkPhase) return;
+            float idle = Now() - _lastAdvanceMs;
+            if (idle < NetLimits.BlobStallTimeoutMs) return;
+
+            Retryable = true;
+            Fail((_uploading ? "上傳" : "下載") + "停滯超過 " + (NetLimits.BlobStallTimeoutMs / 1000)
+                 + " 秒(對方沒有回應)—— 階段=" + State
+                 + " 已" + (_uploading ? "送 " + _sentBytes + "/" + _totalSendBytes
+                                       : "收 " + _recvBytes + "/" + _totalRecvBytes) + " bytes");
+        }
+
+        /// <summary>有進展 → 把停滯計時器歸零。</summary>
+        private void Advance() => _lastAdvanceMs = Now();
+
+        private static float Now() => Time.realtimeSinceStartup * 1000f;
+
+        /// <summary>
         /// 定期 ping,讓 server 知道這條 file 連線還活著。
         ///
         /// 🔴 非做不可,而且**下載方向才是重點**:server 的 <c>SweepDeadConnections</c> 看的是
@@ -277,7 +334,13 @@ namespace Sdo.Game.Net
         private void TickHashing()
         {
             if (_hashTask == null) { Fail("沒有檔案清單"); return; }
-            if (!_hashTask.IsCompleted) return;
+            if (!_hashTask.IsCompleted)
+            {
+                // 算 hash 是純本機的 CPU 工作(在背景執行緒上),與「對面還在不在」無關。
+                // 不歸零計時器的話,一首很大的歌在慢磁碟上會被停滯逾時誤殺。
+                Advance();
+                return;
+            }
 
             if (_hashTask.IsFaulted) { Fail("算檔案清單失敗"); return; }
             _manifest = _hashTask.Result;
@@ -344,6 +407,9 @@ namespace Sdo.Game.Net
                     return;
                 }
                 _sentBytes += n;
+                // 排進送件匣就算進展。**排不進去(佇列滿了)就不算** —— 那正是
+                // 「對面不收了、寫執行緒卡在 socket 上」的樣子,停滯逾時要抓的就是它。
+                Advance();
             }
 
             if (_readStream == null && _need != null && _needCursor >= _need.Count)
@@ -381,6 +447,7 @@ namespace Sdo.Game.Net
             {
                 if (kind == NetLimits.FrameKindChunk)
                 {
+                    Advance();
                     chunks++;
                     WriteIncoming(payload);
                     if (!IsBusy) return;
@@ -397,12 +464,20 @@ namespace Sdo.Game.Net
 
         private void HandleMessage(string type, object node)
         {
+            // 談判階段(等 manifest / 等 blobUploadDone)沒有 chunk 可以當「還活著」的訊號,
+            // 所以任何一則**協定訊息**都算進展。
+            //
+            // 🔴 但 pong 不算 —— 它是我們自己的 ping 打回來的,一定會準時到,拿它當進展的話
+            // 停滯逾時就永遠不會觸發(而「連線通、但檔案不再流動」正是要抓的那一種卡死)。
+            // pong 沒有出現在下面的 switch 裡,所以這裡不特判就自然排除了。
             switch (type)
             {
                 case NetProto.Welcome:
+                    Advance();
                     break;      // file 連線認親成功;真正的請求在 Tick 裡發
 
                 case NetProto.BlobUploadAccept:
+                    Advance();
                     OnUploadAccept(node);
                     break;
 
@@ -415,6 +490,7 @@ namespace Sdo.Game.Net
                     break;
 
                 case NetProto.BlobManifest:
+                    Advance();
                     OnManifest(node);
                     break;
 
@@ -423,8 +499,13 @@ namespace Sdo.Game.Net
                     break;
 
                 case NetProto.BlobError:
-                    Fail("server 拒絕(" + NetJson.Str(node, "code") + "):" + NetJson.Str(node, "msg"));
+                {
+                    // server 那一側先判了停滯(NetLimits.BlobStallTimeoutServerMs)—— 那是線路問題,可以重試。
+                    string code = NetJson.Str(node, "code");
+                    if (string.Equals(code, NetProto.BlobErrStalled, StringComparison.Ordinal)) Retryable = true;
+                    Fail("server 拒絕(" + code + "):" + NetJson.Str(node, "msg"));
                     break;
+                }
 
                 case NetProto.Bye:
                     Fail("server 關閉連線:" + NetJson.Str(node, "reason"));

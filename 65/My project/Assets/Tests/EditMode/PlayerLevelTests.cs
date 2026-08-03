@@ -85,39 +85,109 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void ResolveText_PrefersOwnValue_FallsBackToDefault()
+        public void Percent_IsProgressWithinCurrentLevel_FullAtMaxLevel()
         {
-            Assert.AreEqual("惡魔", ProfileManager.ResolveText("惡魔", "天使之翼"));   // 角色自己設過 → 用自己的
-            Assert.AreEqual("天使之翼", ProfileManager.ResolveText("", "天使之翼"));   // 沒設過 → 共用預設
-            Assert.AreEqual("天使之翼", ProfileManager.ResolveText("   ", "天使之翼")); // 只有空白也算沒設過
-            Assert.AreEqual("天使之翼", ProfileManager.ResolveText(null, "  天使之翼  "));
-            Assert.AreEqual("", ProfileManager.ResolveText("", ""));                    // 兩層都空 → 不顯示
+            // 分母是「這一級要多少」＝ 100 × 等級，所以同樣的 exp 在越高的等級佔比越小。
+            Assert.AreEqual(0f, PlayerLevel.Percent(1, 0), 0.001f);
+            Assert.AreEqual(30f, PlayerLevel.Percent(1, 30), 0.001f);      // LV1 要 100
+            Assert.AreEqual(15f, PlayerLevel.Percent(2, 30), 0.001f);      // LV2 要 200
+            Assert.AreEqual(95f, PlayerLevel.Percent(10, 950), 0.001f);    // LV10 要 1000
+
+            Assert.AreEqual(0f, PlayerLevel.Percent(3, -5), 0.001f);       // 壞資料 → 0
+            Assert.AreEqual(100f, PlayerLevel.Percent(1, 500), 0.001f);    // 手改的存檔 → 夾在 100
+            // 滿級沒有「下一級」可跑 → 條收滿；歸零會看起來像掉等。
+            Assert.AreEqual(100f, PlayerLevel.Percent(PlayerLevel.MaxLevel, 0), 0.001f);
         }
 
         [Test]
-        public void ResolveLevel_PrefersOwnLevel_FallsBackToOuterDefault()
+        public void ProfileFields_ExpPercent_UsesTheSameLevelAsTheRestOfTheProfile()
         {
-            Assert.AreEqual(7, ProfileManager.ResolveLevel(7, 11));    // 角色升過等 → 看自己的
-            Assert.AreEqual(11, ProfileManager.ResolveLevel(0, 11));   // 0 = 沒設過 → 吃外層 profile.json 的預設
-            Assert.AreEqual(1, ProfileManager.ResolveLevel(0, 0));     // 兩層都沒設 → LV1（獎勵公式以前寫死的值）
-            Assert.AreEqual(PlayerLevel.MaxLevel, ProfileManager.ResolveLevel(500, 0));   // 壞存檔夾回上限
+            int prevLevel = ProfileDefaults.level;
+            try
+            {
+                ProfileDefaults.level = 10;   // 外層共用預設：LV10 → 這一級要 1000
+
+                // 沒豎旗標 → 等級吃 default(10),分母就是 1000。若這裡誤讀 p.playerLevel("2"),
+                // 分母會變成 200、百分比直接爆表 —— 大廳那條經驗條與實際進度對不起來。
+                var noOverride = new UserProfile { playerLevel = "2", exp = 250 }.Sanitize();
+                Assert.AreEqual(1000, ProfileFields.ExpToNext(noOverride));
+                Assert.AreEqual(25f, ProfileFields.ExpPercent(noOverride), 0.001f);
+
+                var own = new UserProfile { playerLevel = "2", exp = 50, hasProfileOverrides = true }.Sanitize();
+                Assert.AreEqual(200, ProfileFields.ExpToNext(own));
+                Assert.AreEqual(25f, ProfileFields.ExpPercent(own), 0.001f);
+
+                Assert.AreEqual(0, ProfileFields.Exp(null));
+                Assert.AreEqual(0f, ProfileFields.ExpPercent(null), 0.001f);   // 看別人時沒有 profile 可讀
+            }
+            finally { ProfileDefaults.level = prevLevel; }
+        }
+
+        [Test]
+        public void Text_And_CleanText_NormalizeLevelStrings()
+        {
+            Assert.AreEqual("11", PlayerLevel.Text(11));
+            Assert.AreEqual("", PlayerLevel.Text(0));        // 沒設定 → 空字串（＝不顯示等級）
+            Assert.AreEqual("", PlayerLevel.Text(-3));
+            Assert.AreEqual("7", PlayerLevel.CleanText(" 007 "));   // 寫回標準寫法
+            Assert.AreEqual("", PlayerLevel.CleanText("   "));
+            Assert.AreEqual("abc", PlayerLevel.CleanText("abc"));   // 手改的怪東西原樣留著，不吃掉
+        }
+
+        [Test]
+        public void ProfileFields_PrefersOwnValues_OnlyWhenOverridden()
+        {
+            int prevLevel = ProfileDefaults.level;
+            string prevFamily = ProfileDefaults.familyName, prevEmblem = ProfileDefaults.familyEmblem;
+            try
+            {
+                ProfileDefaults.familyName = "天使之翼";
+                ProfileDefaults.familyEmblem = "SMALL43";
+                ProfileDefaults.level = 11;
+
+                var noOverride = new UserProfile { familyName = "惡魔", playerLevel = "5" }.Sanitize();
+                Assert.AreEqual("天使之翼", ProfileFields.FamilyName(noOverride), "沒豎旗標 → 整組吃外層 default");
+                Assert.AreEqual("SMALL43", ProfileFields.FamilyEmblem(noOverride));
+                Assert.AreEqual(11, ProfileFields.PlayerLevelValue(noOverride));
+                Assert.AreEqual("LV:11", ProfileFields.LevelLabel(noOverride));
+
+                var own = new UserProfile { familyName = "惡魔", familyEmblem = "SMALL7", playerLevel = "5", hasProfileOverrides = true }.Sanitize();
+                Assert.AreEqual("惡魔", ProfileFields.FamilyName(own));
+                Assert.AreEqual("SMALL7", ProfileFields.FamilyEmblem(own));
+                Assert.AreEqual(5, ProfileFields.PlayerLevelValue(own));
+
+                // 覆寫是整組的：刻意留白 → 這個角色就是不顯示家族/等級，不會被 default 蓋回去。
+                var blank = new UserProfile { hasProfileOverrides = true }.Sanitize();
+                Assert.AreEqual("", ProfileFields.FamilyName(blank));
+                Assert.AreEqual("", ProfileFields.LevelLabel(blank));
+                Assert.AreEqual(1, ProfileFields.PlayerLevelValue(blank), "顯示不顯示是一回事，送上線的數值一律 ≥1");
+            }
+            finally
+            {
+                ProfileDefaults.level = prevLevel;
+                ProfileDefaults.familyName = prevFamily;
+                ProfileDefaults.familyEmblem = prevEmblem;
+            }
         }
 
         [Test]
         public void UserProfile_LevelAndExp_SanitizeAndRoundTripThroughJson()
         {
-            var p = new UserProfile { level = -5, exp = -20, familyName = "  家族  ", familyEmblem = "  SMALL7  " }.Sanitize();
-            Assert.AreEqual(0, p.level);        // 負的 → 0（＝沒設過，吃預設）
-            Assert.AreEqual(0, p.exp);
+            var p = new UserProfile { playerLevel = "  007  ", exp = -20, familyName = "  家族  ", familyEmblem = "  SMALL7  " }.Sanitize();
+            Assert.AreEqual("7", p.playerLevel);
+            Assert.AreEqual(0, p.exp);          // 負的 → 0（經驗只會往上加）
             Assert.AreEqual("家族", p.familyName);
             Assert.AreEqual("SMALL7", p.familyEmblem);
 
-            var src = new UserProfile("00000001", "阿明", 1) { level = 12, exp = 340, familyName = "惡魔", familyEmblem = "SMALL7" }.Sanitize();
+            var src = new UserProfile("00000001", "阿明", 1)
+            {
+                playerLevel = "12", exp = 340, familyName = "惡魔", familyEmblem = "SMALL7", hasProfileOverrides = true,
+            }.Sanitize();
             var back = UnityEngine.JsonUtility.FromJson<UserProfile>(UnityEngine.JsonUtility.ToJson(src)).Sanitize();
-            Assert.AreEqual(12, back.level);
+            Assert.AreEqual("12", back.playerLevel);
             Assert.AreEqual(340, back.exp);
             Assert.AreEqual("惡魔", back.familyName);
-            Assert.AreEqual("SMALL7", back.familyEmblem);
+            Assert.IsTrue(back.hasProfileOverrides);
         }
 
         [Test]
@@ -133,16 +203,17 @@ namespace Sdo.Tests
                 ProfileDefaults.activeId = "";
                 ProfileManager.Boot();          // 種 00000000(女)/00000001(男)，active = 00000000
 
-                Assert.AreEqual(3, ProfileManager.Level);          // 角色沒設過 → 吃外層的預設
-                Assert.AreEqual(0, ProfileManager.Active.level);   // 而且還沒落地成自己的
+                Assert.AreEqual(3, ProfileManager.Level);                        // 角色沒設過 → 吃外層的預設
+                Assert.IsFalse(ProfileManager.Active.hasProfileOverrides);       // 而且還沒落地成自己的
                 Assert.AreEqual("LV:3", ProfileManager.LevelLabel);
 
                 Assert.AreEqual(0, ProfileManager.AddExperience(250));   // LV3→4 要 300 → 還不夠
-                Assert.AreEqual(3, ProfileManager.Active.level);         // 第一次加經驗就把預設等級落地成自己的
+                Assert.IsTrue(ProfileManager.Active.hasProfileOverrides, "第一次加經驗就把等級落地成這個角色自己的");
+                Assert.AreEqual("3", ProfileManager.Active.playerLevel);
                 Assert.AreEqual(250, ProfileManager.Active.exp);
 
                 Assert.AreEqual(1, ProfileManager.AddExperience(60));    // 310 ≥ 300 → 升上 LV4，餘 10
-                Assert.AreEqual(4, ProfileManager.Active.level);
+                Assert.AreEqual("4", ProfileManager.Active.playerLevel);
                 Assert.AreEqual(10, ProfileManager.Active.exp);
                 Assert.AreEqual(4, ProfileManager.Level);
                 Assert.AreEqual("LV:4", ProfileManager.LevelLabel);
@@ -150,14 +221,15 @@ namespace Sdo.Tests
                 // 真的寫進了這個角色的 profile.json（下次開遊戲讀得回來）
                 var back = UnityEngine.JsonUtility.FromJson<UserProfile>(
                     File.ReadAllText(Path.Combine(root, "00000000", ProfileManager.ProfileFileName)));
-                Assert.AreEqual(4, back.level);
+                Assert.AreEqual("4", back.playerLevel);
                 Assert.AreEqual(10, back.exp);
+                Assert.IsTrue(back.hasProfileOverrides);
 
                 // 另一個角色沒打過歌 → 仍吃共用預設，不會被這個角色的等級影響
                 var other = UnityEngine.JsonUtility.FromJson<UserProfile>(
                     File.ReadAllText(Path.Combine(root, "00000001", ProfileManager.ProfileFileName)));
-                Assert.AreEqual(0, other.level);
-                Assert.AreEqual(3, ProfileManager.ResolveLevel(other.level, ProfileDefaults.level));
+                Assert.IsFalse(other.hasProfileOverrides);
+                Assert.AreEqual(3, ProfileFields.PlayerLevelValue(other));
             }
             finally
             {

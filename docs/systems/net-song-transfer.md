@@ -35,6 +35,19 @@ manifest 每行 = <相對路徑,小寫,'/'> \x1F <位元組數> \x1F <譜面才�
 
 過濾規則是**純函式**(`Sdo.Osu/SongPackFilter.cs`),client 與 server 跑同一份。
 
+🔴 **`dance*.dps` 不傳,但重生出來的必須是同一支舞。** 收端自己跑 `Sdo.Game.ExternalDps` 生一份,
+而它的 RNG seed 是**三張難度譜的 SHA-256(當成集合)**,其他一概不看 ——
+
+- **不能是資料夾名**:下載端的資料夾叫 `歌名 - 作者 [packId 前8碼]`,上傳端叫什麼根本沒在協定裡傳
+  → 兩邊 seed 不同 → xorshift 第一抽就分岔 → 同一場的兩個人跳完全不同的舞(這是實機抓到的 bug)。
+- **也不吃檔名/音檔/圖**:譜面是清單裡唯一逐位元組驗過 SHA-256 的東西,也正好是舞蹈長度/BPM 的唯一來源
+  (`Sdo.Osu/DanceInputs.cs`)——「會改變舞蹈的東西全在 seed 裡,不會改變舞蹈的東西全不在」。
+- **不能吃槽順序**:哪張譜排進簡單/普通/困難由每台自己的 `RoomConfig.difficultyCalc`(minacalc / osu)決定,
+  兩個人手上同樣三張譜、槽的順序卻可能不同 → 指紋必須排序當集合。
+- 一張譜都讀不到才退回 `packId` + `songKey`,再退回資料夾葉名。
+
+改到編舞的生成邏輯時,`SongSidecar.DpsGenerator` 要跟著加一號,否則已經跳過的歌會沿用舊 seed 生的那份。
+
 ## server 的存放方式:內容尋址
 
 ```

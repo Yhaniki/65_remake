@@ -39,6 +39,16 @@
 .PARAMETER SkipData
   Build the exe only; do not assemble DATA.
 
+.PARAMETER Product
+  Product word used in the final folder name. Default: Dance.
+
+.PARAMETER Name
+  Override the final folder name entirely (e.g. -Name 'Dance nightly'). Default: computed from git,
+  same rules as the window title — on a tag "<Product> <tag>", after a tag "<Product> <tag>-dev-<hash5>".
+
+.PARAMETER NoRename
+  Leave the output in -BuildOut (<repo>\Build\Windows); do not rename to the versioned folder.
+
 .EXAMPLE
   ./tools/build_windows.ps1
 .EXAMPLE
@@ -51,7 +61,10 @@ param(
     [string]$LogFile,
     [string]$Source = 'H:\65_remake_clean\DATA',   # DATA 資產來源(clean 包 或 含 assets\ 的 raw repo);放到 exe 旁
     [string]$BuildOut,                             # 輸出資料夾(exe + DATA);預設 <repo>\Build\Windows
-    [switch]$SkipData                             # 只出 exe,不組 DATA
+    [switch]$SkipData,                             # 只出 exe,不組 DATA
+    [string]$Product = 'Dance',                    # 最終資料夾名的產品字,例:"Dance v1.7.0-dev-3c1e7"
+    [string]$Name,                                 # 直接指定最終資料夾名(蓋掉 git 算出來的)
+    [switch]$NoRename                              # 不改名,結果留在 <repo>\Build\Windows
 )
 
 $ErrorActionPreference = 'Stop'
@@ -74,9 +87,38 @@ if (-not $Unity -or -not (Test-Path $Unity)) {
 }
 if (-not (Test-Path $ProjectPath)) { throw "ProjectPath not found: $ProjectPath" }
 
+# 一行 git 輸出;git 不在、不是 repo、指令失敗都回 $null(不讓 build 因此爆掉)。
+function Get-GitLine([string]$gitArgs) {
+    try {
+        $out = & git -C $Repo @($gitArgs -split ' +') 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+        return ([string]($out | Select-Object -First 1)).Trim()
+    } catch { return $null }
+}
+
+# 最終資料夾名 —— 和視窗標題(BuildScript.ComputeWindowTitle / Sdo.Game.BuildTitle)同一套規則,
+# 這樣「資料夾名」和「exe 視窗標題」永遠是同一串,拿到包就知道是哪個 commit。
+function Get-BuildFolderName([string]$product) {
+    $exact   = Get-GitLine 'describe --tags --exact-match HEAD'   # HEAD 正好在 tag 上才有值
+    $nearest = Get-GitLine 'describe --tags --abbrev=0'           # 最近的祖先 tag
+    $hash5   = Get-GitLine 'rev-parse --short=5 HEAD'
+    if ($exact)               { return "$product $exact" }
+    if ($nearest -and $hash5) { return "$product $nearest-dev-$hash5" }
+    if ($hash5)               { return "$product dev-$hash5" }
+    return $product
+}
+
+$FinalDir = $null
+if (-not $NoRename) {
+    $finalName = if ($Name) { $Name } else { Get-BuildFolderName $Product }
+    $FinalDir  = Join-Path (Split-Path $BuildOut -Parent) $finalName
+    if ($FinalDir -eq $BuildOut) { $FinalDir = $null }
+}
+
 Write-Host "[build] unity   = $Unity"
 Write-Host "[build] project = $ProjectPath"
 Write-Host "[build] out     = $BuildOut"
+Write-Host "[build] final   = $(if ($FinalDir) { $FinalDir } else { '(no rename)' })"
 Write-Host "[build] data    = $(if ($SkipData) {'(skip)'} else {$Source})"
 Write-Host "[build] log     = $LogFile"
 Write-Host ""
@@ -146,6 +188,26 @@ if ($code -eq 0) {
     Get-ChildItem -LiteralPath $BuildOut -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like '*_BurstDebugInformation_DoNotShip' -or $_.Name -like '*_BackUpThisFolder_*' } |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force; Write-Host "[build] removed $($_.Name)" }
+}
+
+# ---- 最後改名:<repo>\Build\Windows -> <repo>\Build\Dance v1.7.0-dev-<hash5> ----
+# build 仍然出到固定的 Build\Windows(Unity 換 outputPath 會整包重打,固定路徑才吃得到增量),
+# 全部組完才整個資料夾搬過去。同名的舊包直接換掉,但只在它確實長得像 build 輸出(有 dance.exe)時才動手。
+if ($code -eq 0 -and $FinalDir -and (Test-Path $BuildOut)) {
+    $moved = $true
+    if (Test-Path $FinalDir) {
+        if (Test-Path (Join-Path $FinalDir 'dance.exe')) {
+            Write-Host "[build] replacing existing $FinalDir"
+            Remove-Item -LiteralPath $FinalDir -Recurse -Force
+        } else {
+            Write-Host "[build] WARNING: $FinalDir exists and is not a build output; left result in $BuildOut" -ForegroundColor Yellow
+            $moved = $false
+        }
+    }
+    if ($moved) {
+        Move-Item -LiteralPath $BuildOut -Destination $FinalDir
+        Write-Host "[build] output -> $FinalDir"
+    }
 }
 
 $color = if ($code -eq 0) { 'Green' } else { 'Red' }

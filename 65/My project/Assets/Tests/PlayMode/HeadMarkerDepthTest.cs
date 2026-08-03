@@ -66,7 +66,13 @@ namespace Sdo.Tests
                     Assert.AreEqual(Layer, renderer.gameObject.layer);
                     Assert.IsNotNull(renderer.sharedMaterial);
                     Assert.AreEqual(TextStyles.DepthTextShaderName, renderer.sharedMaterial.shader.name);
+                    // 本機名牌是先建 HUD 版再 promote 的 —— HUD 那組負畫序若沒跟著換掉,搬進場景相機後
+                    // 會排在透明批之前,被後面的噴水池水花整片蓋掉(見 HeadMarker.WorldNameOrder)。
+                    Assert.Greater(renderer.sortingOrder, 0,
+                        "promote 之後仍留著 HUD 的負 sortingOrder,透明場景物會蓋掉名牌");
                 }
+                Assert.AreEqual(HeadMarker.WorldNameOrder, MaxOrder(renderers),
+                    "字面應該拿 WorldNameOrder(黑邊是它 −1)");
             }
             finally
             {
@@ -242,6 +248,91 @@ namespace Sdo.Tests
             }
         }
 
+        /// <summary>
+        /// 場景裡的透明物(SCN0025 春天噴水池的水就是這種:官方旗標透明批 → 一般 alpha blend、
+        /// sortingOrder 0)不准蓋掉名牌 —— 就算它在名牌**後面**。
+        ///
+        /// 名牌沿用 HUD 那組負 sortingOrder 時,它會排在整個透明批之前畫,後畫的水直接整片糊上去
+        /// (名牌不寫深度,「比較近」救不了它)。使用者回報:人站在噴水池前面,名牌卻被後面的水擋住。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator World_Name_Is_Not_Painted_Over_By_Transparent_Scene_Geometry_Behind_It()
+        {
+            GameObject camGo = null, markerGo = null, nameRoot = null, water = null;
+            RenderTexture rt = null;
+            Texture2D waterTex = null;
+            Material waterMat = null;
+            try
+            {
+                camGo = new GameObject("HeadMarkerWaterCam");
+                var cam = camGo.AddComponent<Camera>();
+                cam.enabled = false;
+                cam.orthographic = false;
+                cam.fieldOfView = 45f;
+                cam.aspect = 4f / 3f;
+                cam.nearClipPlane = 5f;
+                cam.farClipPlane = 400f;
+                cam.cullingMask = 1 << Layer;
+                cam.clearFlags = CameraClearFlags.SolidColor;
+                cam.backgroundColor = Color.black;
+                cam.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+
+                rt = new RenderTexture(800, 600, 24, RenderTextureFormat.ARGB32);
+                rt.Create();
+                cam.targetTexture = rt;
+
+                markerGo = new GameObject("WaterHeadMarker");
+                var marker = markerGo.AddComponent<HeadMarker>();
+                marker.upWorld = 0f;
+                marker.nameFontPx = 60f;
+                marker.AnchorGetter = () => new Vector3(0f, 0f, 100f);
+                marker.CamGetter = () => cam;
+                marker.Init(null, "DEPTH", depthTestedWorld: true, worldLayer: Layer);
+
+                yield return null;
+                yield return null;
+
+                nameRoot = marker.NameRootForTest;
+                Assert.IsNotNull(nameRoot);
+                int before = CountCream(Render(cam, rt));
+                Assert.Greater(before, 300, "depth-tested name did not render");
+
+                // 噴水池的水:名牌 BEHIND 20 個單位、整片蓋住畫面、Queue Transparent / ZWrite Off、
+                // sortingOrder 0(場景 mapobj 就是這個預設值)。
+                waterTex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                waterTex.SetPixels32(new[]
+                {
+                    new Color32(30, 120, 200, 230), new Color32(30, 120, 200, 230),
+                    new Color32(30, 120, 200, 230), new Color32(30, 120, 200, 230)
+                });
+                waterTex.Apply();
+                waterMat = new Material(Shader.Find("Unlit/Transparent")) { mainTexture = waterTex };
+                water = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                water.layer = Layer;
+                water.transform.position = new Vector3(0f, 0f, 120f);   // 名牌(z=100)之後
+                water.transform.rotation = cam.transform.rotation;
+                var waterRenderer = water.GetComponent<MeshRenderer>();
+                waterRenderer.sharedMaterial = waterMat;
+                waterRenderer.sortingOrder = 0;
+                water.transform.localScale = Vector3.one * 200f;
+                yield return null;
+
+                int after = CountCream(Render(cam, rt));
+                Assert.Greater(after, before * 0.8f,
+                    "後面的透明場景物(噴水池的水)把名牌蓋掉了 —— 名牌的 sortingOrder 又排到透明批之前了");
+            }
+            finally
+            {
+                if (water != null) Object.DestroyImmediate(water);
+                if (waterMat != null) Object.DestroyImmediate(waterMat);
+                if (waterTex != null) Object.DestroyImmediate(waterTex);
+                if (nameRoot != null) Object.DestroyImmediate(nameRoot);
+                if (markerGo != null) Object.DestroyImmediate(markerGo);
+                if (camGo != null) Object.DestroyImmediate(camGo);
+                if (rt != null) { rt.Release(); Object.DestroyImmediate(rt); }
+            }
+        }
+
         private static Color32[] Render(Camera cam, RenderTexture rt)
         {
             cam.Render();
@@ -254,6 +345,13 @@ namespace Sdo.Tests
             var pixels = tex.GetPixels32();
             Object.DestroyImmediate(tex);
             return pixels;
+        }
+
+        private static int MaxOrder(MeshRenderer[] renderers)
+        {
+            int max = int.MinValue;
+            foreach (var r in renderers) if (r.sortingOrder > max) max = r.sortingOrder;
+            return max;
         }
 
         private static int CountCream(Color32[] pixels)

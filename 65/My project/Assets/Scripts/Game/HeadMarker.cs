@@ -26,8 +26,27 @@ namespace Sdo.Game
         public float frameMs = 200f;      // arrow animation: per-frame hold
         public float depthBiasWorld = 0f; // optional camera-ward bias; zero keeps the name at its owner's true depth
 
-        // draw order: behind the note board (−30) but above the opaque scene backdrop.
+        // 2D HUD fallback (main ortho camera): behind the note board (−30) but above the opaque scene backdrop.
         private const int NameOrder = -31, ArrowOrder = -33, Zdepth = 10;
+
+        /// <summary>
+        /// 3D 路徑(名牌活在 SceneCam 裡)的畫序。🔴 **一定要是正的。**
+        ///
+        /// 名牌是 alpha-blend(<c>Sdo/DepthText</c>,Queue Transparent、ZWrite Off),場景裡的家具/角色/
+        /// 光柱/噴水池的水全都在 sortingOrder 0 —— 而 sortingOrder 比 renderQueue 優先
+        /// ([[unity-sortingorder-outranks-renderqueue]])。沿用 HUD 那組負值的話,名牌會排在**整個透明批之前**
+        /// 畫出來,後畫的透明場景物(SCN0025 春天噴水池的水 CHUNTIANDONGHUA、SCN0028 鳥巢噴水池、SCN0022/0024
+        /// 的光柱…全是 OfficialMaterialAlpha 透明批)就整片蓋在名牌上 —— 明明人站在噴水池**前面**,
+        /// 名牌卻被後面的水擋掉(使用者回報)。名牌不寫深度,所以「它比較近」救不了它。
+        /// 同一個坑在手部光條上踩過一次,見 ScreenGameplay.SpawnHandRibbon 的 sortingOrder = 0。
+        ///
+        /// 正值 = 排在所有場景透明之後 → 誰也蓋不掉名牌。**被前面的人擋住仍然成立**:那是不透明幾何寫進
+        /// 深度緩衝、名牌 ZTest LEqual 逐像素被拒,跟畫序無關(見 HeadMarkerDepthTest)。
+        /// 音符板也不受影響 —— 板/音符在主相機(layer 0),場景是另一台相機的 RenderTexture 疊上去的。
+        ///
+        /// 黑邊拿的是 <c>order − 1</c>(見 Label3D),所以字面用 2、黑邊 1,兩層都還在 0 之上。
+        /// </summary>
+        public const int WorldNameOrder = 2, WorldArrowOrder = 1;
 
         private SpriteRenderer _arrow;
         private Label3D _name;
@@ -53,10 +72,11 @@ namespace Sdo.Game
             ag.transform.SetParent(transform, false);
             _arrow = ag.AddComponent<SpriteRenderer>();   // Sprites/Default = alpha blend
             if (arrowFrames != null && arrowFrames.Length > 0) _arrow.sprite = arrowFrames[0];
-            _arrow.sortingOrder = ArrowOrder;
+            _arrow.sortingOrder = depthTestedWorld ? WorldArrowOrder : ArrowOrder;
             if (depthTestedWorld) _arrow.sharedMaterial = TextStyles.DepthSpriteMaterial();
 
-            _name = TextStyles.NewLabel("Name", TextStyles.Style.HeadName, NameOrder, nameFontPx,
+            _name = TextStyles.NewLabel("Name", TextStyles.Style.HeadName,
+                                        depthTestedWorld ? WorldNameOrder : NameOrder, nameFontPx,
                                         TextAnchor.MiddleCenter, layer, depthTested: depthTestedWorld);
             _name.Text = playerName ?? string.Empty;
         }
@@ -75,8 +95,9 @@ namespace Sdo.Game
             {
                 _arrow.gameObject.layer = worldLayer;
                 _arrow.sharedMaterial = TextStyles.DepthSpriteMaterial();
+                _arrow.sortingOrder = WorldArrowOrder;   // HUD 的負值到了場景相機裡會被透明場景物蓋掉,見 WorldNameOrder
             }
-            if (_name != null) _name.EnableDepthTestedWorld(worldLayer);
+            if (_name != null) _name.EnableDepthTestedWorld(worldLayer, WorldNameOrder);
         }
 
         /// <summary>

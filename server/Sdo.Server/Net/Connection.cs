@@ -63,6 +63,15 @@ namespace Sdo.Server.Net
         public NetAvatarLook Look = new NetAvatarLook();
 
         /// <summary>
+        /// 這個玩家的公開名片(累計判定數 / 勝負 / 經驗值% / 知名度 / 四格自我介紹)——
+        /// 由 <c>setCard</c> 更新,別人用 <c>cardQuery</c> 查。見 <see cref="NetPlayerCard"/>。
+        ///
+        /// 🔴 生命週期 = **這條連線**。server 沒有帳號持久化,對方離線就查不到 ——
+        /// 與「玩家名單只列線上的人」一致。舊 client 不送 → 一張全 0 的名片,顯示退化成現狀。
+        /// </summary>
+        public NetPlayerCard Card = new NetPlayerCard();
+
+        /// <summary>
         /// 這條連線的名字 / playerId 是 token 綁定的嗎?
         ///
         /// 🔴 綁了就**不准** <c>setIdentity</c> 改 —— 否則那條訊息等於 <c>AuthTokens</c> 的後門:
@@ -80,6 +89,17 @@ namespace Sdo.Server.Net
 
         /// <summary>最後一次收到任何東西的時刻(Unix ms)。用來判斷 ping 逾時。</summary>
         public long LastRecvMs;
+
+        /// <summary>
+        /// **正在處理**的那則訊息的型別(<c>setPlayState</c>、<c>requestStart</c>…)。
+        ///
+        /// 只給診斷用 —— 拒絕請求時要說出「被拒的是哪一個請求」(見 <c>Hub.SendError</c>)。
+        /// 沒有它的話 log 只剩一個 error code,而同一個 code(<c>badState</c>)有十幾個來源,
+        /// 從 log 完全分不出玩家實際上按了什麼。
+        ///
+        /// 由 Hub 的 actor 執行緒在分派前寫、同一輪分派中讀完 —— 不跨執行緒,不需要同步。
+        /// </summary>
+        public string CurMsgType = "";
 
         /// <summary>rate limit 的計數狀態(由 Hub 的單執行緒維護)。</summary>
         public readonly RateCounters Rate = new RateCounters();
