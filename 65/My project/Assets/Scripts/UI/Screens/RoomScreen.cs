@@ -1374,12 +1374,16 @@ namespace Sdo.UI.Screens
             // 誰的話該彈泡、泡是誰的,規則收在 RoomChatCommand.TryResolveBubbleOwner:文字提示行不彈、
             // 大廳假人的閒聊在房間裡不彈(它跟左下訊息欄一樣被作用域擋掉),別人的話要有 userId 才認得出主人。
             if (RoomChatCommand.TryResolveBubbleOwner(m, _chatScopeRoomId, out var owner)
-                // owner 0 = 本機。遠端要先確認「他真的有一隻 3D 角色」——
-                // 旁觀者不在座位上,SyncRemoteRoomAvatars 不會生角色,泡沒有地方可掛。
+                // owner 0 = 本機。遠端要先確認「他真的有一隻 3D 角色」—— 沒有角色就沒有肩膀可以掛泡。
                 && (owner == 0 || (_scene != null && _scene.HasRemote(owner))))
             {
-                ShowRoomChatBubble(m, owner);
-                PlayRoomChatAction(m, owner);
+                // 旁觀的人只能用左下打字框(規則見 RoomBubblePolicy):頭上泡與關鍵字動作都不給,
+                // 他的話純粹以文字進左下訊息欄。
+                if (RoomBubblePolicy.CanEmoteInRoom(RoomBubblePolicy.SpeakerIsSpectator(m, LocalSpectating, RoomSnapshot)))
+                {
+                    ShowRoomChatBubble(m, owner);
+                    PlayRoomChatAction(m, owner);
+                }
             }
         }
 
@@ -2308,6 +2312,13 @@ namespace Sdo.UI.Screens
         private void BeginRoomBubbleTyping(bool preserveDraft = false)
         {
             if (_chatInput == null || _chatBubbleRoot == null) return;
+            // 旁觀的人不能用氣泡,只能用左下打字框(RoomBubblePolicy)。所有入口都會經過這裡
+            // ——點空曠處、點別人的泡、送出後續打——所以擋在這一點就夠,不必每個呼叫端各判一次。
+            if (!RoomBubblePolicy.CanTypeInBubble(LocalSpectating))
+            {
+                BeginRoomChatInputTyping(preserveDraft);
+                return;
+            }
             if (_chatBubbleTyping)
             {
                 FocusRoomChatInput();
@@ -2601,9 +2612,45 @@ namespace Sdo.UI.Screens
                 BeginRoomBubbleTyping(preserveDraft: true);
         }
 
+        /// <summary>
+        /// 「用左下打字框打字」——<see cref="BeginRoomBubbleTyping"/> 的替身,給**不能用氣泡的人**(旁觀者)。
+        /// 做的事跟玩家實體點左下輸入框(<see cref="OnRoomChatInputPointerDown"/>)一樣:收掉頭上泡、
+        /// 顯示輸入框回顯(字+閃爍光標+IME)、黏住 focus;差別只在這條是程式呼叫的,要自己聚焦。
+        /// </summary>
+        private void BeginRoomChatInputTyping(bool preserveDraft)
+        {
+            if (_chatInput == null) return;
+            HideChatModeMenu();
+            HideExpressionMenu();
+            _chatBubbleInputArmed = false;
+            _chatInputSticky = true;
+            if (_chatBubbleTyping) HideRoomChatBubble();   // armed 已清掉 → 裡面會把回顯打開
+            else SetRoomChatInputEchoVisible(true);
+            if (!preserveDraft) _chatInput.text = "";
+            _chatDraftWasEmpty = string.IsNullOrEmpty(_chatInput.text);
+            FocusRoomChatInput();
+        }
+
+        /// <summary>
+        /// 打字打到一半身分變成旁觀(自己按「旁觀」、或座位被房主關掉)→ 把泡收掉、草稿原封搬回左下打字框。
+        /// 沒有這一步的話,切換那一刻已經開著的泡會一路留到送出。
+        /// </summary>
+        private void EnsureSpectatorTypesInChatInput()
+        {
+            if (RoomBubblePolicy.CanTypeInBubble(LocalSpectating)) return;
+            if (!_chatBubbleTyping && !_chatBubbleInputArmed) return;
+            BeginRoomChatInputTyping(preserveDraft: true);
+        }
+
         private void ArmRoomBubbleInput()
         {
             if (_chatInput == null) return;
+            // 旁觀者送出後也不能續打氣泡 → 停在輸入框模式繼續打(BeginRoomBubbleTyping 那道門的另一半)。
+            if (!RoomBubblePolicy.CanTypeInBubble(LocalSpectating))
+            {
+                BeginRoomChatInputTyping(preserveDraft: true);
+                return;
+            }
             _chatBubbleInputArmed = true;
             _chatInputSticky = false;   // bubble armed 態不是輸入框黏 focus
             _chatBubbleTyping = false;
@@ -3142,6 +3189,7 @@ namespace Sdo.UI.Screens
             HandleContextMenuDismiss();   // 座位/分隊選單開著時,點到外面就關掉(要在 blank-click 之前:那條會進打字模式)
             HandleRoomBlankChatClick();
             HandleRoomChatTypingKeys();
+            EnsureSpectatorTypesInChatInput();   // 打字中被切成旁觀 → 泡收掉,草稿搬去左下打字框
             // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
             if (IsRoomChatImeComposing()) _chatImeComposing = true;
             MaintainRoomChatInputFocus();
@@ -5031,6 +5079,9 @@ namespace Sdo.UI.Screens
         /// <summary>本機現在是不是旁觀者 —— **以 server 快照為準**(查房間的旁觀名單裡有沒有自己),
         /// 不是本機猜的。按下鈕到 server 認可之間答案不變,所以畫面不會先報成功再被打臉。離線恆 false。</summary>
         private bool LocalSpectating => Ctx != null && Ctx.Net != null && Ctx.Net.IsSpectating;
+
+        /// <summary>server 的房間快照(離線 / 還沒進房 → null)。判「誰是旁觀者」一律讀它。</summary>
+        private Sdo.Net.NetRoomSnapshot RoomSnapshot => Ctx != null && Ctx.Net != null ? Ctx.Net.Room : null;
 
         /// <summary>
         /// 「旁觀」鈕:交出座位變旁觀者,再按一次搶回座位(需求 10 / D13)。
