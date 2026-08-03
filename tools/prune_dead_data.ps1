@@ -74,9 +74,13 @@ $defaultKeep = @(
     'iteminfo.dat', 'setinfo.dat',        # shop data (read once at catalog load; keep regardless)
     'dress.txt', 'proifo*',               # default-outfit + profile index tables
     'avatar\female.hrc', 'avatar\male.hrc', # base skeletons (belt-and-suspenders; probe should touch these)
-    'bgm\*'                                 # front-end lobby bgm: DATA/BGM is its ship home (UiBgmDir reads BGM first,
+    'bgm\*',                                # front-end lobby bgm: DATA/BGM is its ship home (UiBgmDir reads BGM first,
                                             # then UI/BGM). Real assets a load-only trace may not open before the first
                                             # track plays — always keep.
+    'ui\room\room9[234].*',                 # 旁觀時的綠色「進入」鈕(RoomScreen 的 _enterBtn)。UsedAssetsProbe 跑不到
+                                            # 旁觀狀態 → 三張被判死 → 玩家一旦變成旁觀者,那顆鈕就是「消失」而不是換圖,
+                                            # 於是回不了座位。狀態相關的 UI 圖 trace 抓不到,只能在這裡釘住。
+    'ui\gameplay\gameplay19.*'              # 旁觀時左上的「Press Ctrl+Q to quit look on mode」提示條(同上:只有旁觀者看得到)
 )
 $keep = @($defaultKeep + $KeepGlobs)
 function IsKept($rel) { foreach ($g in $keep) { if ($rel -like $g) { return $true } } return $false }

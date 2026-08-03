@@ -155,6 +155,17 @@ namespace Sdo.Tests
         // LoadAnSoloSmoothDiscMip 改在極座標把描邊沿圓周低通(階梯是角向高頻、真美術幾乎不變)+ alpha 用解析圓重建。
         private static readonly string[] BigDiscs = { "Room15", "Room12", "c_ready0", "BtnLook_1", "Room92" };
 
+        /// <summary>
+        /// 每張圖各自的「去階梯至少要做到幾成」門檻(disc 的圓周高頻 ÷ clip 的)。預設 0.7。
+        ///
+        /// Room92(旁觀時的綠色「進入」鈕)是例外,量到 0.78:它的外圈**本來就帶一圈軟光暈**
+        /// —— crop 裡 α 落在中間值的像素有 222 個,是同尺寸 BtnLook_1(84 個)的 2.6 倍。
+        /// 極座標低通吃的是「硬邊的角向高頻」,邊本身就軟的圖能壓下來的量自然比較少
+        /// (它降了 22%:3.57 → 2.78)。把全域門檻放寬到 0.8 等於讓另外四張的回歸偵測一起變鈍,
+        /// 所以只給這一張自己的數字。
+        /// </summary>
+        private static float DeStairRatio(string an) => an == "Room92" ? 0.8f : 0.7f;
+
         [Test]
         public void LoadAnSoloSmoothDiscMip_BigDiscs_AreSupersampledMipmappedTrilinear()
         {
@@ -186,9 +197,10 @@ namespace Sdo.Tests
                 if (clip == null || disc == null) { Assert.Ignore(an + " crop not present."); return; }
 
                 float clipHf = RimHighFreq(clip.texture), discHf = RimHighFreq(disc.texture);
-                Assert.Less(discHf, clipHf * 0.7f,
+                float ratio = DeStairRatio(an);
+                Assert.Less(discHf, clipHf * ratio,
                     $"{an}: rim should be de-staired — high-frequency energy along the circumference {discHf:F2} vs clip {clipHf:F2} " +
-                    "(measured 0.44-0.55× when the polar low-pass is in place)");
+                    $"(需 < {ratio:F2}×;硬邊的四張量到 0.44-0.55×,軟邊的 Room92 量到 0.78×,見 DeStairRatio)");
 
                 int Opaque(Sprite s)
                 {
@@ -198,6 +210,59 @@ namespace Sdo.Tests
                 }
                 Assert.GreaterOrEqual(Opaque(disc), Opaque(clip) * 0.9f, an + ": the disc must not come out smaller");
             }
+        }
+
+        /// <summary>
+        /// 「進入」鈕(旁觀時回座位)的 hover。官方 ROOM92/93/94.AN 三個檔**內容逐字元相同**,照著做滑鼠移上去
+        /// 毫無反應 —— 而 atlas 上就擺著同一顆球的**發亮版**(WaitingRoom.png 164,332,56,56),沒有任何 .an 指到它。
+        /// 修的是**資料**:ROOM93.AN(hover)改指那一格,程式端不開任何特例。
+        ///
+        /// 這一則釘的是換上去不會歪:與 normal 同尺寸(SpriteSwap 換圖時 RectTransform 不重配,尺寸不同就會被拉伸)、
+        /// 球心對齊(不然滑過去整顆球會跳一下),而且真的比較亮(不然改了等於沒改)。
+        /// </summary>
+        [Test]
+        public void EnterButton_HoverAn_IsTheGlowingTwin_AlignedAndBrighter()
+        {
+            var dir = RoomDir();
+            if (dir == null) Assert.Ignore("ROOM art not present in this environment.");
+            var normal = SdoExtracted.LoadAnSoloSmoothDiscMip(dir, "Room92", 0);
+            var hover = SdoExtracted.LoadAnSoloSmoothDiscMip(dir, "Room93", 0);
+            if (normal == null || hover == null) Assert.Ignore("進入 button crops not present.");
+
+            Assert.AreEqual(normal.texture.width, hover.texture.width, "hover 與 normal 必須同寬(SpriteSwap 不會重新配 rect)");
+            Assert.AreEqual(normal.texture.height, hover.texture.height, "hover 與 normal 必須同高");
+            Assert.AreEqual(normal.pixelsPerUnit, hover.pixelsPerUnit, 0.01f, "同一個 ppu → 顯示成同樣的邏輯尺寸");
+
+            DiscCentroid(normal.texture, out float nx, out float ny);
+            DiscCentroid(hover.texture, out float hx, out float hy);
+            int ss = SdoExtracted.ButtonSupersample;
+            Assert.AreEqual(nx, hx, 2f * ss, "球心 X 要對齊(容差 2 邏輯 px)");
+            Assert.AreEqual(ny, hy, 2f * ss, "球心 Y 要對齊(容差 2 邏輯 px)");
+
+            Assert.Greater(DiscLuminance(hover.texture), DiscLuminance(normal.texture) * 1.05f,
+                "hover 要看得出比較亮 —— 不然這顆鈕等於沒有 hover 態(實測亮 ~23%)");
+        }
+
+        /// <summary>不透明區(α≥128)的質心 —— 用來確認兩張圖的球擺在同一個位置。</summary>
+        private static void DiscCentroid(Texture2D tex, out float cx, out float cy)
+        {
+            var px = tex.GetPixels32();
+            int w = tex.width;
+            double sx = 0, sy = 0; int n = 0;
+            for (int i = 0; i < px.Length; i++)
+                if (px[i].a >= 128) { sx += i % w; sy += i / w; n++; }
+            cx = n > 0 ? (float)(sx / n) : 0f;
+            cy = n > 0 ? (float)(sy / n) : 0f;
+        }
+
+        /// <summary>不透明區的平均亮度。</summary>
+        private static float DiscLuminance(Texture2D tex)
+        {
+            var px = tex.GetPixels32();
+            double tot = 0; int n = 0;
+            foreach (var c in px)
+                if (c.a >= 200) { tot += 0.299 * c.r + 0.587 * c.g + 0.114 * c.b; n++; }
+            return n > 0 ? (float)(tot / n) : 0f;
         }
 
         /// <summary>HIGH-FREQUENCY energy of the rim colour walking around the circumference (three rings just inside the

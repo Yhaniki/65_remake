@@ -147,12 +147,16 @@ Copy-Tree (Join-Path $Ds 'UI\LOBBYDLG\KEYS')    (Join-Path $Data 'UI\LOBBYDLG\KE
 Copy-Tree (Join-Path $Ds 'LOADING')             (Join-Path $Data 'LOADING')             'online LOADING'
 
 # 3b) upscaled art overlay — EXACTLY package_build's step, so editor and shipped player see the same art.
-# art\upscaled mirrors the DATA layout with higher-resolution replacements:
+# art\upscaled mirrors the DATA layout and REPLACES shipped files (放大, 或修正檔案內容):
 #   UI\PLAYINGEXP 表情 cut-in       64px -> 192px hq3x      (tools\upscale_playingexp.py)
 #     On-screen size is unchanged: the loader divides the extra resolution back out
 #     (SdoExtracted.LoadImageAtDesignWidth; EmojiUpscaleTests guards it).
 #   3DEFT\GENERIC\MAP_G\KEKKAI     512px -> 2048px         (tools\upscale_kekkai.py)
 #     SCN0008 埃及古墓的地板結界; EFT 貼圖是 UV 全幅取樣, 換解析度不動任何座標。
+#   UI\ROOM\ROOM93.AN              hover crop 修正
+#     官方 ROOM92/93/94.AN 三個檔內容逐字元相同(都指 WaitingRoom.png 165,389,56,56)→「進入」鈕滑過去毫無變化。
+#     atlas 上就擺著同一顆球的發亮版(164,332,56,56, 亮 23%), 沒有任何 .an 指到它 → hover 改指那一格。
+#     與 normal 同尺寸且球心對齊, 所以 SpriteSwap 換上去不位移(MipButtonTextureTests 釘住)。
 $Upscaled = Join-Path $Repo 'art\upscaled'
 if (Test-Path $Upscaled) { Copy-Tree $Upscaled $Data 'upscaled art overlay' }
 else { Write-Warning "[clean] art\upscaled 不存在 — 表情 cut-in 維持 64px, KEKKAI 維持 512px (run tools\upscale_playingexp.py / upscale_kekkai.py)" }
