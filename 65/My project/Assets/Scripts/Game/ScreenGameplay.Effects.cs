@@ -185,7 +185,7 @@ namespace Sdo.Game
         {
             if (_hit3dMode || _lnEndFrames == null) return;
             if (showtimeMode && _showtime.Active) return;
-            SpawnBurstFrames(lane, _lnEndFrames, false, lnEndSize, lnEndSpeed, lnEndBright, doubleLayer: false);
+            SpawnBurstFrames(lane, _lnEndFrames, lnEndSize, lnEndSpeed, lnEndBright, doubleLayer: false);
         }
 
         // Load a directional hit-frame set jz00_<dir>.png, jz01_<dir>.png … null if none.
@@ -249,15 +249,9 @@ namespace Sdo.Game
             {
                 var fx = _fx[i];
                 var frames = fx.Frames;   // each burst animates ITS OWN (directional) frame set, captured at spawn
-                if (frames == null || frames.Length == 0) { if (fx.IsHold) _holdBurst[fx.Lane] = null; DestroyBurst(fx); _fx.RemoveAt(i); continue; }
+                if (frames == null || frames.Length == 0) { DestroyBurst(fx); _fx.RemoveAt(i); continue; }
                 int step = (int)((Time.time - fx.Start) / Mathf.Max(1e-4f, fx.SecPerFrame));
-                if (step >= frames.Length)
-                {
-                    // HOLD: finished a round, still held -> loop (wait for the full animation before the next round).
-                    // TAP (or released hold): one-shot, ends here.
-                    if (fx.IsHold && _holding[fx.Lane] != null) { fx.Start = Time.time; step = 0; }
-                    else { if (fx.IsHold) _holdBurst[fx.Lane] = null; DestroyBurst(fx); _fx.RemoveAt(i); continue; }
-                }
+                if (step >= frames.Length) { DestroyBurst(fx); _fx.RemoveAt(i); continue; }   // 每一發都是 one-shot(長條按住期間不再循環,見 Tick 裡的註解)
                 var spr = frames[step];
                 fx.Sr.sprite = spr; if (fx.Sr2) fx.Sr2.sprite = spr;
             }
@@ -266,15 +260,15 @@ namespace Sdo.Game
         private void DestroyBurst(BurstFx fx) { if (fx.Sr) Destroy(fx.Sr.gameObject); if (fx.Mat) _matPool.Push(fx.Mat); }
 
         // Tear down every in-flight gameplay burst / hold / click-flash. Needed when the result is entered MID-song
-        // (F5, or HP-out while holding): a hold burst loops forever while its lane stays "held", so without this it
-        // freezes on screen behind the result panel.
+        // (F5, or HP-out while holding): the click-flash strip is redrawn for as long as its lane stays "held", so
+        // without this it freezes on screen behind the result panel.
         private void ClearGameplayFx()
         {
             for (int i = _fx.Count - 1; i >= 0; i--) DestroyBurst(_fx[i]);
             _fx.Clear();
             for (int lane = 0; lane < Keys; lane++)
             {
-                _holdBurst[lane] = null; _holding[lane] = null;
+                _holding[lane] = null;
                 // 3D 皮的命中特效是獨立的 EftEffect 物件，不在 _fx 裡；HIT_LONG 又是**自我循環**的（負 life 的
                 // emitter 永不死，本來只靠放開鍵時 StopHit3dLong 收掉）。按著長條時血條見底 → 沒人收，那團金光會
                 // 一直燒在受擊線上。這裡直接砍掉（不走 StopHit3dLong：死掉不該再放 HIT_SUO 那聲放開的煙）。
@@ -285,7 +279,7 @@ namespace Sdo.Game
             if (_missOverlay) _missOverlay.enabled = false;
         }
 
-        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public int Lane; public float Start; public bool IsHold; public Sprite[] Frames;
+        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public float Start; public Sprite[] Frames;
                                        public float SecPerFrame = BurstSecPerFrame; }   // per-burst frame duration (the LnEnd burst runs at half speed)
 
         // ---------- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----------

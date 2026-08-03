@@ -673,7 +673,6 @@ namespace Sdo.Game
         private PlayingEmoji _emoji;
         private Sprite[] _emHH, _emSHSH, _emJRKL, _emKJ, _emHE, _emH, _emY, _emJS, _emGTH;
         private readonly EmojiTriggers _emojiState = new EmojiTriggers();   // pure trigger logic (combo / miss-run / low-HP)
-        private readonly BurstFx[] _holdBurst = new BurstFx[Keys];   // the looping hold burst per lane (gated: 1 round at a time)
         private readonly Stack<Material> _matPool = new Stack<Material>();  // reuse burst material instances (no per-hit GC)
         private SpriteRenderer _board;          // framed note-board (NOTES_BOARD1, chamfered), drawn 1:1 native
         private Texture2D _boardSrc;            // cached ORIGINAL board texture (kept so alpha can be re-scaled live)
@@ -5372,10 +5371,11 @@ namespace Sdo.Game
             TickRemotePresence(now);   // 死了 / 中途離場的遠端玩家當場停舞(分數流推不出這兩件事)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             RecordLocalScoreSample(NetClockMs);   // 右側名單要把自己的分數倒帶到遠端那一刻(見 RosterLocalScore)
-            // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
-            // hold case waits for the round to finish; taps fire freely above.
-            for (int lane = 0; lane < Keys; lane++)
-                if (_holding[lane] != null && !_hit3dMode && _burstFrames != null && _holdBurst[lane] == null) _holdBurst[lane] = SpawnBurst(lane, true);  // 3D skin fires only the one-shot head burst
+            // 🔴 長條「按住期間」不再另外放 burst。以前這裡會在**判定長條頭的同一個 Update** 裡再生一發循環用的
+            // burst，於是頭部等於連放兩發（一發是 ApplyEvent 的 tap burst），比一般 tap 多閃一下；長條若短於一輪
+            // 動畫（≈12 幀 × BurstSecPerFrame ≈ 0.36s）就剛好只多閃那一次，使用者回報的就是它。
+            // 現在:頭部＝一般 tap 的發光，結尾放開＝tap burst + 官方 LnEnd 爆發 (EndHold)。按住期間的持續回饋
+            // 由官方本來就有的軌道閃光條負責 (TriggerClickFlash/UpdateClickFlash，decompiled 00498bd0)。
             UpdateClickFlash();
             UpdateFx(); UpdateHud();
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
@@ -5503,7 +5503,8 @@ namespace Sdo.Game
             if (!RosterFromNetRows()) RebuildRoster();
             // rank 1 = highest score = winner。
             // 🔴 旁觀者不在名單裡 → LocalRank 回 rank 0(「找不到本機」)。**不能**寫 place <= 1:那個 0 會被
-            // 判成贏(旁觀者看到 YOU WIN 旗、權威列裡查不到自己時也會誤判)。與 CalculateResultOutcome 同一條:== 1。
+            // 判成贏(旁觀者跟著演勝利定格、權威列裡查不到自己時也會誤判)。與 CalculateResultOutcome 的定格判定
+            // 同一條:== 1。結算面板那面旗是另一條(並列名次排進前半就出,見 RankingBoard.IsWinningPlace)。
             if (place <= 0) place = RankingBoard.LocalRank(_roster).rank;
             _localWon = !spectatorMode && place == 1;
             // 勝負場的記錄是**另一回事**:同分兩邊都記勝場(使用者指定)。定格/旗子只能有一個第一名,
@@ -6728,7 +6729,7 @@ namespace Sdo.Game
             if (lane >= 0 && (j == Judgment.Perfect || j == Judgment.Cool))   // tap: fire immediately, may overlap
             {
                 if (_hit3dMode) SpawnHit3d(lane);                              // 3D skin: real AU_HIT.EFT burst at the receptor
-                else if (_burstFrames != null) SpawnBurst(lane, false);       // 2D skins: sprite flipbook burst (during a window _burstFrames IS the EFT_SHOWTIME set)
+                else if (_burstFrames != null) SpawnBurst(lane);              // 2D skins: sprite flipbook burst (during a window _burstFrames IS the EFT_SHOWTIME set)
             }
             // 3D skin: the official has NO lane click-strip glow on press and NO red board flash on miss — suppress both.
             if (lane >= 0 && j != Judgment.Miss && !_note3dMode) TriggerClickFlash(lane);   // light the struck lane's click strip (any contact, not a miss)
@@ -6762,23 +6763,24 @@ namespace Sdo.Game
         private const float BurstWidth = 235f;            // hit-burst draw size for the REFERENCE skin (EFT_13, 300px native)
         private const float BurstNativeRef = 300f;        // EFT_13 native px — bursts render native-proportional to this so
                                                           // a smaller skin (EFT_2=150, EFT_14=128) draws smaller, not stretched up to BurstWidth
-        // a TAP burst fires on every hit and may overlap others on the same lane (no gating). A HOLD burst loops,
-        // one full round at a time (gated). Each burst gets its OWN material clone so overlapping bursts never bleed.
-        private BurstFx SpawnBurst(int lane, bool isHold)
+        // Every burst is a ONE-SHOT that may overlap others on the same lane (no gating) — a long note's head is just a
+        // normal hit, so it gets exactly this and nothing else. Each burst gets its OWN material clone so overlapping
+        // bursts never bleed.
+        private void SpawnBurst(int lane)
         {
             // directional skins (PET/8/9/10) ship separate frames for left-right vs up-down lanes; lanes 1(down)/2(up) use
             // the _ud set, lanes 0(left)/3(right) use _rl (_burstFrames). Non-directional skins leave _burstFramesUD null.
             var frames = (_burstFramesUD != null && (lane == 1 || lane == 2)) ? _burstFramesUD : _burstFrames;
-            return SpawnBurstFrames(lane, frames, isHold);
+            SpawnBurstFrames(lane, frames);
         }
 
         // Spawn an arbitrary flipbook at the lane's receptor (hit burst, or the long-note LnEnd burst). sizeMul/speedMul/
         // brightMul scale THIS burst only; doubleLayer=false draws a SINGLE additive layer (the LnEnd burst — the hit
         // burst's 2-layer stack is a deliberate over-bright punch that makes the LnEnd art bloom all over the lane).
-        private BurstFx SpawnBurstFrames(int lane, Sprite[] frames, bool isHold,
-                                         float sizeMul = 1f, float speedMul = 1f, float brightMul = 1f, bool doubleLayer = true)
+        private void SpawnBurstFrames(int lane, Sprite[] frames,
+                                      float sizeMul = 1f, float speedMul = 1f, float brightMul = 1f, bool doubleLayer = true)
         {
-            if (frames == null || frames.Length == 0) return null;
+            if (frames == null || frames.Length == 0) return;
             var mat = _matPool.Count > 0 ? _matPool.Pop() : (_addMat != null ? new Material(_addMat) : null);  // own instance, pooled
             // brightness: the additive shader is Blend SrcAlpha One, and its _TintColor defaults to (.5,.5,.5,.5) ->
             // the .5 alpha halves the burst (too dark). Drive _TintColor by burstBright (1.0 = stock, higher = brighter).
@@ -6800,10 +6802,8 @@ namespace Sdo.Game
                 if (mat != null) sr2.sharedMaterial = mat;
                 sr2.transform.SetParent(sr.transform, false);
             }
-            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, Start = Time.time, IsHold = isHold, Frames = frames,
-                                   SecPerFrame = BurstSecPerFrame / Mathf.Max(0.01f, speedMul) };
-            _fx.Add(fx);
-            return fx;
+            _fx.Add(new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Start = Time.time, Frames = frames,
+                                  SecPerFrame = BurstSecPerFrame / Mathf.Max(0.01f, speedMul) });
         }
 
         private sealed class RuntimeNote

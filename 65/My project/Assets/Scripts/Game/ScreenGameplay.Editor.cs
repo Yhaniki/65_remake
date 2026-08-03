@@ -201,7 +201,7 @@ namespace Sdo.Game
             n.Done = true;                               // 打到就消失（跟遊玩一樣的回饋）；長條在編輯器一律當 tap
             EditorOnHit?.Invoke(now - n.Note.StartTimeMs, j.Value);   // delta：負 = 太早、正 = 太晚（同 osu）
             TriggerClickFlash(lane);                                   // 打到有回饋
-            if (_burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane, false);
+            if (_burstFrames != null && (j == Judgment.Perfect || j == Judgment.Cool)) SpawnBurst(lane);
         }
 
         /// <summary>編輯器可 seek 的尾端（毫秒）＝ 最後一顆音符 與 音樂長度 取大者。</summary>

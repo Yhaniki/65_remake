@@ -314,7 +314,7 @@ namespace Sdo.Game
                 if (GUILayout.Button("next ►")) SelectSkin(cur < 0 ? 0 : (cur + 1) % total);
                 GUILayout.EndHorizontal();
                 if (GUILayout.Button(_hit3dMode ? "Fire 3D hit (all lanes)" : "Fire hit-burst (all lanes)"))
-                    for (int l = 0; l < Keys; l++) { if (_hit3dMode) SpawnHit3d(l); else if (_burstFrames != null) SpawnBurst(l, false); }
+                    for (int l = 0; l < Keys; l++) { if (_hit3dMode) SpawnHit3d(l); else if (_burstFrames != null) SpawnBurst(l); }
                 if (_hit3dMode)   // 3D-hit tuning (only when the 3D skin is active)
                 {
                     GUILayout.Label($"★ 整體等比例大小 master: {note3dMaster:F2}× (note+打擊區+long+閃光 一起縮放)");
