@@ -754,7 +754,9 @@ namespace Sdo.Game
             return go;
         }
 
-        private void SpawnNamedEft(string name, float baseScale)
+        /// <param name="anchor">特效跟著誰跑。null = 本機那圈(<c>_ringTr</c>)。FINISHED 會傳**贏家**的舞者 ——
+        /// 贏的是別人時它得掛在那個人身上,不是本機(見 <c>FinishEftAnchor</c>)。</param>
+        private void SpawnNamedEft(string name, float baseScale, Transform anchor = null)
         {
             if (!_namedEftCache.TryGetValue(name, out var file))
             {
@@ -763,11 +765,12 @@ namespace Sdo.Game
                 file = EftFile.Load(File.ReadAllBytes(path));
                 _namedEftCache[name] = file;
             }
+            var at = anchor ?? _ringTr;
             var go = new GameObject("Eft_" + name);
-            go.transform.position = _ringTr != null ? _ringTr.position : new Vector3(_avatarChest.x, 0.6f, _avatarChest.z);
+            go.transform.position = at != null ? at.position : new Vector3(_avatarChest.x, 0.6f, _avatarChest.z);
             int layer = use3dCamera ? SceneLayer : 0;
             float effScale = baseScale * comboBurstSize;
-            go.AddComponent<EftEffect>().Init(file, effScale, _ringTr, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
+            go.AddComponent<EftEffect>().Init(file, effScale, at, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
             if (use3dCamera) SetLayerRecursive(go, SceneLayer);
         }
 

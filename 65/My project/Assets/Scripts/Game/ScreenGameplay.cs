@@ -5491,10 +5491,6 @@ namespace Sdo.Game
                     // 翻案是**硬切**(定格→定格,平滑過場只會糊成一團);第一次照舊讓它從舞蹈平順接進定格。
                     if (mot != null) { if (redo) _avatar.SnapNextClip(); _avatar.PlayOneShot(mot, true); }
                 }
-                // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
-                // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
-                // 翻案翻成輸的話收不回來(特效自己會在 5 秒內結束),但至少不會再放第二次。
-                if (_localWon && !_finishedEftSpawned) { _finishedEftSpawned = true; SpawnNamedEft("FINISHED", 5f); }
                 // 旁觀者不放輸贏短曲 —— 它沒有輸也沒有贏,而 _localWon 恆 false 會讓它每次都聽到「輸了」的音效。
                 // 翻案時**不再**放一次(兩聲短曲比一聲錯的還糟)。
                 if (enableResultSfx && !spectatorMode && !redo) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle
@@ -5503,6 +5499,38 @@ namespace Sdo.Game
             // 別人並沒有死 —— 本機一死就讓全場站著不動,那是把自己的結局套到別人身上。
             // (翻案時它自己會判斷贏家有沒有換人,沒換就不動 —— 重播會把定格倒回第 0 幀。)
             PlayRemoteFinishPoses(redo);
+            // FINISHED 掛在**贏家**的舞者身上(官方就是這樣)。🔴 這裡以前的條件是 _localWon —— 那是
+            // 「場上只畫得出本機一個人」的年代留下的,現在遠端玩家也在台上跳,贏的是別人時整場一個特效
+            // 都沒有(使用者回報「遠端的 win 沒有發出 particle」)。旁觀者一樣看得到:它自己沒有輸贏,
+            // 但場上仍然有一個贏家。
+            // 🔴 一定要在 PlayRemoteFinishPoses **之後** —— 贏家是誰是它算出來的(_remoteFinishWinner)。
+            // GAME OVER(本機血條見底)不放:那是本機的死亡流程,與上面的定格同一個判斷。
+            // 翻案翻成別人贏時收不回已經放出去的那顆(它自己 5 秒內結束),但不會再放第二次。
+            if (!_gameOver && !_finishedEftSpawned)
+            {
+                var winTr = FinishEftAnchor();
+                if (winTr != null) { _finishedEftSpawned = true; SpawnNamedEft("FINISHED", 5f, winTr); }
+            }
+        }
+
+        /// <summary>
+        /// FINISHED 特效要掛在誰身上 —— **這一局的贏家**(null = 還不知道贏家,或那格沒有角色可以掛)。
+        ///
+        /// 贏家由 <see cref="PlayRemoteFinishPoses"/> 定案(<c>_remoteFinishWinner</c>,server 的權威名次優先),
+        /// 所以兩台看到的特效在同一個人頭上。本機那格在 <c>_extraDancers</c> 裡是 null 佔位,要換成本機自己
+        /// 的那圈 <c>_ringTr</c>。單機/沒有其他舞者時 PlayRemoteFinishPoses 直接 return,贏家仍是 -1 ——
+        /// 那就退回 <see cref="_localWon"/>(單機只有自己會贏)。
+        /// </summary>
+        private Transform FinishEftAnchor()
+        {
+            int w = _remoteFinishWinner;
+            if (w >= 0)
+            {
+                if (w == LocalDancerSlotIndex) return _ringTr;
+                if (w < _extraDancers.Count && _extraDancers[w] != null) return _extraDancers[w].transform;
+                return null;                      // 贏家那格還沒生出角色 → 沒有東西可以掛
+            }
+            return _localWon ? _ringTr : null;    // 單機(沒有其他舞者)
         }
 
         // 死亡字幕的「哪一組」= 官方由**同一個變體 id S**(DAT_00674f04+0x68)同時決定 note_image 與 gameover
