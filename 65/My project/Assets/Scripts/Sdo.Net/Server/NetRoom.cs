@@ -166,6 +166,8 @@ namespace Sdo.Net.Server
             {
                 UserId = user.UserId,
                 Name = user.Name,
+                Guild = user.Guild,
+                GuildEmblem = user.GuildEmblem,
                 Level = user.Level,
                 Look = user.Look,
                 Avail = Availability.Unknown,
@@ -508,9 +510,12 @@ namespace Sdo.Net.Server
         ///
         /// <paramref name="name"/> 空 = 不動名字 —— 座位名字被抹成空白比顯示舊名字更糟
         /// (頭上名牌與聊天行會變成無主的字)。清理與長度截斷由呼叫端(Hub)負責。
-        /// 旁觀者沒有家族欄位(<see cref="NetSpectator"/>),所以只吃得到名字與等級。
+        /// 家族(名字+徽章)座位與旁觀者都吃 —— 旁觀者一樣站在房裡、頭上一樣有名字牌。
         /// </summary>
         public NetRoomOp SetIdentity(int userId, string name, string guild, int level)
+            => SetIdentity(userId, name, guild, "", level);
+
+        public NetRoomOp SetIdentity(int userId, string name, string guild, string guildEmblem, int level)
         {
             if (level < 0) level = 0;
 
@@ -519,6 +524,7 @@ namespace Sdo.Net.Server
             {
                 if (!string.IsNullOrEmpty(name)) seat.Name = name;
                 seat.Guild = guild ?? "";
+                seat.GuildEmblem = guildEmblem ?? "";
                 seat.Level = level;
                 Touch();
                 return NetRoomOp.Ok;
@@ -528,6 +534,8 @@ namespace Sdo.Net.Server
                 if (_spectators[i].UserId == userId)
                 {
                     if (!string.IsNullOrEmpty(name)) _spectators[i].Name = name;
+                    _spectators[i].Guild = guild ?? "";
+                    _spectators[i].GuildEmblem = guildEmblem ?? "";
                     _spectators[i].Level = level;
                     SyncSpectators();
                     Touch();
@@ -1027,6 +1035,7 @@ namespace Sdo.Net.Server
             s.UserId = user.UserId;
             s.Name = user.Name;
             s.Guild = user.Guild;
+            s.GuildEmblem = user.GuildEmblem;
             s.Level = user.Level;
             s.Look = user.Look;
             s.Ready = false;

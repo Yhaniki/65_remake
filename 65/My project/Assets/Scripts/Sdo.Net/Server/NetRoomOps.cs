@@ -78,14 +78,24 @@ namespace Sdo.Net.Server
         public int UserId;
         public string Name;
         public string Guild;
+
+        /// <summary>家族徽章名(DATA/EMBLEM)。與 <see cref="Guild"/> 成對 —— 頭上的家族列要兩者才畫得完整。</summary>
+        public string GuildEmblem;
+
         public int Level;
         public NetAvatarLook Look;
 
         public NetJoinUser(int userId, string name, string guild, int level, NetAvatarLook look)
+            : this(userId, name, guild, "", level, look)
+        {
+        }
+
+        public NetJoinUser(int userId, string name, string guild, string guildEmblem, int level, NetAvatarLook look)
         {
             UserId = userId;
             Name = name ?? "";
             Guild = guild ?? "";
+            GuildEmblem = guildEmblem ?? "";
             Level = level;
             Look = look ?? new NetAvatarLook();
         }
