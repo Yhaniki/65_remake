@@ -780,8 +780,24 @@ namespace Sdo.UI.Screens
             row.Btn = root.gameObject.AddComponent<Button>();
             row.Btn.transition = Selectable.Transition.None;
             int captured = index;
-            row.Btn.onClick.AddListener(() => OnRowClicked(captured));
             UiSfx.AttachClick(row.Btn);
+
+            // 🔴 進房要**點兩下**(使用者指定)。單擊只有 hover 與點擊音效,不進房 ——
+            //    房卡一頁六張、彼此貼著,單擊就進去很容易誤觸;而且「先右鍵看房間信息再決定」
+            //    那條路會被一次誤觸整個跳過。
+            // 🔴 <c>Button.onClick</c> 收不到「這是第幾下」(它連右鍵都吃不到),所以雙擊一定要走
+            //    <see cref="PointerClickProxy"/> 看 <c>clickCount</c> —— 與房間座位的雙擊鎖格同一個做法。
+            //    Button 留著是為了 hover 換圖與點擊音效。
+            // 🔴 但要知道 <c>row.Btn.interactable = false</c>(空房卡)**擋不住這個 proxy** —— 那是 Button
+            //    自己的規矩,EventSystem 照樣把 pointerClick 送給同物件上其他的 IPointerClickHandler
+            //    (右鍵那條早就知道這件事,所以它自己另外關一次 <c>RightClick.Enabled</c>)。
+            //    空位的守門因此**只剩** <see cref="OnRowClicked"/> 裡那句 null 檢查,刪它之前先讀那邊的註解。
+            var click = root.gameObject.AddComponent<PointerClickProxy>();
+            click.Clicked = ev =>
+            {
+                if (ev == null || ev.button != PointerEventData.InputButton.Left) return;
+                if (ev.clickCount >= 2) OnRowClicked(captured);
+            };
 
             // 右鍵 → 房間信息。🔴 Button.onClick 只吃左鍵,右鍵一定要另外接(見 RightClickProxy)。
             //    官方版面檔裡查不到這個觸發(房卡那六個 CheckBox 三態全是 empty.an、沒有任何 popmenu 屬性)——
@@ -1416,16 +1432,20 @@ namespace Sdo.UI.Screens
             EnterRoom();
         }
 
+        /// <summary>房卡**雙擊** → 進那間房(見 <see cref="MakeRow"/> 那條為什麼不是單擊)。</summary>
         private void OnRowClicked(int rowIndex)
         {
             var r = _rows[rowIndex].Data;
-            if (r == null) return;   // 空位:官方也是點不動的
+            // 空位:官方也是點不動的。🔴 這個檢查現在是唯一的守門 —— 雙擊走的是 PointerClickProxy,
+            // 而 Button.interactable=false **擋不住它**(EventSystem 照樣把 pointerClick 送給同物件上
+            // 其他的 IPointerClickHandler)。
+            if (r == null) return;
             JoinRoom(r);
         }
 
         /// <summary>
         /// 房卡右鍵 → 官方的房間信息對話框(房名/模式/人數/觀戰/歌曲 + 玩家列表 + 進入/取消)。
-        /// 框裡按「進入」走的是與左鍵點卡片**同一條** <see cref="JoinRoom"/>,不要另外寫一份進房邏輯。
+        /// 框裡按「進入」走的是與雙擊卡片**同一條** <see cref="JoinRoom"/>,不要另外寫一份進房邏輯。
         /// </summary>
         private void OnRowRightClicked(int rowIndex)
         {

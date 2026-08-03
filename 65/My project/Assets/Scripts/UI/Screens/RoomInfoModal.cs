@@ -219,12 +219,29 @@ namespace Sdo.UI.Screens
                                         i => PlayerMenuLabels.Of(actions[i]),
                                         i =>
                                         {
-                                            PlayerMenuActions.Run(actions[i], who, person.Profile, person.Gender,
+                                            var act = actions[i];
+                                            PlayerMenuActions.Run(act, who, person.Profile, person.Gender,
                                                                   person.UserId, isSelf);
                                             ClosePopup();
+                                            if (ClosesTheDialog(act)) Close();
                                         });
             _popupFrame = Time.frameCount;
         }
+
+        /// <summary>
+        /// 這一項按下去之後,這個框自己要不要收掉?
+        ///
+        /// **玩家信息**:要(使用者指定)。那個視窗會疊在這個框上面,兩個框互相蓋住誰也看不清楚;
+        /// 而且看完別人的資料之後要做的事是「回大廳」或「進這間房」,不是回到這張參與者列表。
+        ///
+        /// **私聊**:也要,而且是**非收不可** —— 打字框在大廳畫面上,而這個框的 CanvasGroup 鋪滿整個
+        /// 螢幕在擋點擊(<c>blocksRaycasts</c>)。不收的話前綴插進去了卻碰不到輸入框,等於按了沒反應。
+        ///
+        /// 加好友 / 黑名單則**不收**:那兩件事沒有開任何新畫面,收掉反而讓人以為按錯了什麼;
+        /// 留著還能接著對名單上其他人動作。
+        /// </summary>
+        private static bool ClosesTheDialog(PlayerAction a)
+            => a == PlayerAction.PlayerInfo || a == PlayerAction.Whisper;
 
         private void ClosePopup()
         {
