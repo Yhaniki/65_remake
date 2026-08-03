@@ -959,8 +959,10 @@ namespace Sdo.UI.Screens
         {
             var netSong = Ctx != null && Ctx.Net != null && Ctx.Net.Room != null
                 ? Ctx.Net.Room.Song : null;
+            // latch key 走 NetSongTransfer 的共用函式 —— NetSongTransfer.Tick 也在每幀補同一個 latch
+            // (見那邊的 LatchRoomSong),兩邊算出不同的字串會讓它們每幀互相覆蓋。
             RunSongAvailabilitySync(
-                netSong != null ? netSong.PackId : null,
+                NetSongTransfer.RoomPackKeyOf(netSong),
                 NetSongTransfer.OnRoomSong,
                 () => NetSongPublisher.ReportAvailability(Ctx));
         }

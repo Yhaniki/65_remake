@@ -267,6 +267,52 @@ namespace Sdo.Tests
         }
 
         /// <summary>
+        /// 🔴 回歸(實機:房裡兩個人缺歌,只有一個下載到,另一個從頭到尾掛著 NO MAP)。
+        ///
+        /// 「等 blobQuery 的回覆」以前是一個**無條件**的鎖:回覆只要沒被收下(訊息掉了,或被
+        /// <c>OnBlobInfo</c> 的 _roomPack 守衛丟掉),那台就永久停在缺歌 —— 不再重問,而房主上傳完的
+        /// blobAvailable 廣播也叫不醒它(同一道守衛)。按不了準備、房主也開不了場,log 上一行都沒有。
+        /// </summary>
+        [Test]
+        public void AQueryWhoseReplyNeverArrivesIsRetriedInsteadOfLockingForever()
+        {
+            SetStatic("_queryPending", true);
+            SetStatic("_lastQueryAt", 100f);
+
+            Assert.IsTrue(QueryStillPending(101f), "才過 1 秒 → 回覆還可能在路上,不該重問(會撞 server 的限流)");
+            Assert.IsTrue(QueryStillPending(107f));
+            Assert.IsFalse(QueryStillPending(108f), "等超過上限 → 這一問當成掉了,必須能重問");
+            Assert.IsFalse(QueryStillPending(9999f));
+
+            // 沒有在等回覆的時候永遠是 false —— 不然 MaybeStart 會被一個不存在的查詢擋住。
+            SetStatic("_queryPending", false);
+            Assert.IsFalse(QueryStillPending(100.5f));
+        }
+
+        /// <summary>
+        /// 🔴 回歸(同一次實機事故的另一半):<c>_roomPack</c> 這個 latch 有兩個呼叫端 ——
+        /// <c>RoomScreen.SyncNetSongAvailability</c>(只在房間畫面收到快照時)與 <c>NetSongTransfer.Tick</c>
+        /// (每幀無條件)。兩邊算出不同的字串就會每幀互相覆蓋 → 每幀都被當成換歌 → 進度條一直閃掉重來。
+        /// 所以 key 只能有一份算法。
+        /// </summary>
+        [Test]
+        public void TheRoomPackLatchKeyHasOneDefinitionForBothCallers()
+        {
+            Assert.IsNull(NetSongTransfer.RoomPackKeyOf(null), "房間沒歌 → null");
+
+            // 官方歌沒有 packId(大家的 DATA/MUSIC 是同一份,不走傳檔)。重點是**兩個呼叫端拿到同一個值**,
+            // 不論那個值是 "" 還是 null。
+            var official = new NetSongRef { Official = true, Gn = "M0001", PackId = "" };
+            Assert.AreEqual("", NetSongTransfer.RoomPackKeyOf(official));
+
+            var external = new NetSongRef { Official = false, PackId = Pack };
+            Assert.AreEqual(Pack, NetSongTransfer.RoomPackKeyOf(external));
+        }
+
+        private static bool QueryStillPending(float now)
+            => (bool)Invoke("QueryReplyStillPending", now);
+
+        /// <summary>
         /// 🔴 回歸:房主以前是「一選外部歌就無條件上傳」,一個人在房裡試歌也會把好幾 MB 推上去
         /// (實機 log:「開始收上傳:10/10 個檔、2104 KB」,房裡只有房主)。沒有人要的東西
         /// server 還得存、續命、跑 janitor —— 純粹是白花的流量與磁碟。

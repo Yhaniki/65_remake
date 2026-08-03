@@ -45,6 +45,16 @@ namespace Sdo.UI.Core
 
         /// <summary>「server 還沒有這首歌」之後隔多久再問一次(見 <see cref="MaybeStart"/> 的節流註解)。</summary>
         private const float QueryRetrySec = 2f;
+
+        /// <summary>
+        /// blobQuery 送出後等回覆的上限。超過就當成「這一問掉了」重問。
+        ///
+        /// 值要比 <see cref="QueryRetrySec"/> 大得多:正常的來回是幾十毫秒,設太短會在慢線路上
+        /// 送出重複的查詢(還是會撞 R19 的限流);設得再長也只是拖長那個人的等待,
+        /// 所以取一個「絕對不可能還在路上」的秒數。
+        /// </summary>
+        private const float QueryTimeoutSec = 8f;
+
         private static float _lastQueryAt = -99f;
 
         /// <summary>
@@ -102,6 +112,7 @@ namespace Sdo.UI.Core
         {
             if (ctx == null || ctx.Net == null) return;
             Wire(ctx.Net);
+            LatchRoomSong(ctx);
 
             if (_fx != null)
             {
@@ -215,6 +226,53 @@ namespace Sdo.UI.Core
         /// <summary>房間上一次快照裡的歌(判斷「換歌了嗎」用,見 <see cref="OnRoomSong"/>)。</summary>
         private static string _roomPack;
 
+        /// <summary>
+        /// 每幀從房間快照補上 <see cref="_roomPack"/>。
+        ///
+        /// 🔴 <b>這是「兩個人缺歌、只有一個拿到」的一半原因。</b>以前 <see cref="OnRoomSong"/> 只有
+        /// <c>RoomScreen.OnRoomUpdated</c> 在呼叫,而 <see cref="Tick"/> 是 <c>FrontendApp.Update</c>
+        /// **無條件**每幀跑的 —— 兩者的生命週期不一樣:房主換歌的那一刻,只要某個人的房間畫面沒在
+        /// 收房間快照(在選歌/商城/更衣間、剛從遊戲畫面回來的那幾幀、進房時 RoomScreen 還沒訂閱上),
+        /// 他的 _roomPack 就停在舊值或 null。而那個值是 <see cref="OnBlobInfo"/> 與
+        /// <see cref="OnBlobAvailable"/> 的守衛:
+        ///   • <see cref="MaybeStart"/> 用的是**房間快照的 packId**(不看 _roomPack)→ blobQuery 照送、
+        ///     <c>_queryPending</c> 照樣被設成 true;
+        ///   • server 的 blobInfo 回來時 packId != _roomPack → **被丟掉** → _queryPending 永遠 true;
+        ///   • 房主上傳完的 blobAvailable 廣播同樣被丟掉 → 那個人再也不會被叫醒。
+        /// 症狀就是「房裡兩個人缺歌,一個下載到了,另一個永遠掛著 NO MAP」——
+        /// 而那個「下載到的人」通常是剛在房間畫面操作過的(例如從旁觀站起來),他的 latch 剛好是對的。
+        ///
+        /// 條件與 RoomScreen 那邊一樣寬(房間快照在手就 latch,包含「換成官方歌」與「歌被清掉」),
+        /// 唯一的例外是**快照本身還沒到**(重連中的那幾幀):那時拿 null 當「房間沒歌」會把
+        /// 進行中的傳輸砍掉,而房間其實還是原本那首歌。
+        /// </summary>
+        private static void LatchRoomSong(AppContext ctx)
+        {
+            var net = ctx.Net;
+            if (!net.IsConnected || !net.InRoom) return;
+            // 快照還沒到(重連中)→ 什麼都別動。這裡拿 null 當「房間沒歌」會把進行中的傳輸砍掉。
+            var snap = net.Room;
+            if (snap == null) return;
+            OnRoomSong(RoomPackKeyOf(snap.Song));
+        }
+
+        /// <summary>
+        /// 房間快照的歌 → <see cref="OnRoomSong"/> 的 latch key。
+        ///
+        /// 🔴 <b>兩個呼叫端必須算出同一個字串</b>(這裡與 <c>RoomScreen.SyncNetSongAvailability</c>)。
+        /// 一邊算出 <c>""</c>、另一邊算出 <c>null</c> 的話,它們會每幀互相把對方的值蓋掉 →
+        /// <see cref="OnRoomSong"/> 每幀都當成換歌 → <c>_bars.Clear()</c> 每幀跑 →
+        /// 別人的傳檔進度條一直閃掉重來。所以做成一個共用函式,而不是兩份「要記得改成一樣」的表達式。
+        /// </summary>
+        public static string RoomPackKeyOf(NetSongRef song) => song != null ? song.PackId : null;
+
+        /// <summary>
+        /// 送出去的 blobQuery 還在合理的等待時間內嗎。false = 把那一問當成掉了,可以重問。
+        /// 抽成函式是為了能單元測試「無條件鎖 → 永久缺歌」那條回歸(見 <see cref="MaybeStart"/>)。
+        /// </summary>
+        private static bool QueryReplyStillPending(float now)
+            => _queryPending && now - _lastQueryAt < QueryTimeoutSec;
+
         /// <summary>離開房間 / 斷線。</summary>
         public static void Reset()
         {
@@ -277,8 +335,21 @@ namespace Sdo.UI.Core
                 // 完全指不到一個查詢迴圈。
                 // 房主上傳完會廣播 blobAvailable(OnBlobAvailable),所以正常情況下不必靠輪詢 ——
                 // 這個輪詢只是後備(例如我進房時上傳已經完成、又沒收到廣播)。
-                if (_queryPending) return;
                 float now = Time.realtimeSinceStartup;
+
+                // 🔴 「在等回覆」**一定要有逾時**。這個旗標以前是無條件的鎖:回覆只要沒被收下
+                // (訊息掉了、或被 OnBlobInfo 的守衛丟掉 —— 見 LatchRoomSong 那段),
+                // 這台就**永久**停在缺歌:不再重問,而 blobAvailable 廣播也叫不醒它
+                // (它同樣要先過守衛)。房裡兩個人缺歌卻只有一個拿到,另一個從頭到尾掛著 NO MAP、
+                // 按不了準備、房主也開不了場 —— 而 log 上一行都沒有,因為這條路徑完全靜音。
+                if (_queryPending)
+                {
+                    if (QueryReplyStillPending(now)) return;
+                    Debug.LogWarning("[net] blobQuery 等了 " + QueryTimeoutSec + " 秒沒有回覆,重問一次:" + song.PackId);
+                    _queryPending = false;
+                    _queriedPack = null;
+                }
+
                 if (now - _lastQueryAt < QueryRetrySec) return;
                 _lastQueryAt = now;
                 _queryPending = true;
