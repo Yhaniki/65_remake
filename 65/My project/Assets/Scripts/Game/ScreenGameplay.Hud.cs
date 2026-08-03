@@ -378,15 +378,20 @@ namespace Sdo.Game
             // 連線:用 server 推來的真分數,而且**優先於 mockOpponents** —— 真連線時混進假對手的話
             // 名次是假的,結算列還會多出不存在的人。(先取,本機那一列要照它決定畫哪一刻的分數。)
             var netOpp = NetOpponents != null ? NetOpponents() : null;
+            // 同分時排第一的是**台上站最前面**那位(領隊格),不是座位序最小的 —— 見 RankingBoard 的
+            // tie-break 說明。leader 由 server 推(frames 的 leaderUserId),所以兩台排出同一個人。
+            int leaderUid = NetLeaderUserId != null ? NetLeaderUserId() : 0;
             // 旁觀者不是參賽者 → 名單裡不能有自己。加了的話會多出一列 0 分的自己,而且它會跟著參與名次排序
             // (「第 3 名」裡有一個根本沒下場的人)。
             if (!spectatorMode)
-                _roster.Add(new PlayerEntry(localPlayerName, RosterLocalScore(netOpp), true, LocalSeatOrder));
+                _roster.Add(new PlayerEntry(localPlayerName, RosterLocalScore(netOpp), true, LocalSeatOrder,
+                                            leaderUid != 0 && leaderUid == LocalNetUserId));
             if (netOpp != null)
             {
                 int cap = Math.Min(netOpp.Length, RosterRows - _roster.Count);
                 for (int i = 0; i < cap; i++)
-                    _roster.Add(new PlayerEntry(netOpp[i].Name ?? "", netOpp[i].Score, false, SeatOrderOf(netOpp[i].UserId)));
+                    _roster.Add(new PlayerEntry(netOpp[i].Name ?? "", netOpp[i].Score, false, SeatOrderOf(netOpp[i].UserId),
+                                                leaderUid != 0 && leaderUid == netOpp[i].UserId));
                 return;
             }
             if (mockOpponents && !freeMode)   // 自由模式 = solo (no opponents)
@@ -396,6 +401,17 @@ namespace Sdo.Game
                 int n = Math.Min(OpponentNames.Length, RosterRows - 1);
                 for (int i = 0; i < n; i++)
                     _roster.Add(new PlayerEntry(OpponentNames[i], SimOpponentScore(i, progress), false));
+            }
+        }
+
+        /// <summary>本機的 server userId(離線 / 還沒有對戰名單 = 0)。名單裡要認出「本機是不是領隊」
+        /// 只能靠它 —— leaderUserId 是 server 的編號,本機那一列沒有別的地方帶著它。</summary>
+        private int LocalNetUserId
+        {
+            get
+            {
+                int i = LocalDancerSlotIndex;
+                return netDancers != null && i >= 0 && i < netDancers.Length ? netDancers[i].UserId : 0;
             }
         }
 

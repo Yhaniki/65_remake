@@ -1450,6 +1450,11 @@ namespace Sdo.Server.Net
             _latestFrames.TryGetValue(room.Code, out latestByUser);
 
             var rows = JArr.New();
+            // 同分時誰排第一,要跟**台上站最前面**的那位一致 —— 見 ResultRowOrder 的註解。
+            // tracker 不在了(場次剛結束就被收掉、或單機)就傳 0 → 退回座位序。
+            LiveLeaderTracker leaderTracker;
+            int leaderUserId = _liveLeaders.TryGetValue(room.Code, out leaderTracker) && leaderTracker != null
+                ? leaderTracker.CurrentUserId : 0;
             var players = new List<NetMatchPlayerSnapshot>(match.Participants);
             players.Sort((a, b) =>
             {
@@ -1457,7 +1462,8 @@ namespace Sdo.Server.Net
                 FrameSample bf = ResultFrame(finalByUser, latestByUser, b.UserId);
                 return ResultRowOrder.Compare(
                     af.Score, a.Seat, a.UserId,
-                    bf.Score, b.Seat, b.UserId);
+                    bf.Score, b.Seat, b.UserId,
+                    leaderUserId);
             });
             for (int i = 0; i < players.Count; i++)
             {

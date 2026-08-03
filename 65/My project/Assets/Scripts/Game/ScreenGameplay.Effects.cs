@@ -347,11 +347,16 @@ namespace Sdo.Game
             for (int c = 0; c < Keys; c++)
             {
                 if (_receptors[c] == null) continue;
-                Sprite spr = _recIdle[c];
+                // 待機本身就是**循環動畫**(官方 JUDGELINE.AN,每軌 2 幀)—— 判定區一直在閃,不是一張靜態圖。
+                // 相位取自 Time.time 而不是各軌自己的起算點:官方那四個判定區是**一起**閃的。
+                var idleFrames = _recIdleFrames[c];
+                Sprite spr = idleFrames != null && idleFrames.Length > 1
+                    ? idleFrames[(int)(Time.time * Mathf.Max(0.01f, recIdleFps)) % idleFrames.Length]
+                    : _recIdle[c];
                 if (_recDownStart[c] >= 0f && _recDownFrames[c] != null)
                 {
                     int f = (int)((Time.time - _recDownStart[c]) / Mathf.Max(1e-4f, recKeydownStepSec));
-                    if (f >= _recDownFrames[c].Length) _recDownStart[c] = -1f;   // burst done → idle frame 1
+                    if (f >= _recDownFrames[c].Length) _recDownStart[c] = -1f;   // burst done → 回到待機循環
                     else spr = _recDownFrames[c][f];
                 }
                 _receptors[c].sprite = spr;

@@ -20,12 +20,17 @@ namespace Sdo.Ruleset
         /// <summary>「沒有座位資料」。排序時排在所有有座位的人後面,彼此再照名單順序。</summary>
         public const int NoSeat = int.MaxValue;
 
-        public PlayerEntry(string name, long score, bool isLocal, int seat = NoSeat)
+        /// <summary>這位是不是**站在領隊格**的那個(台上最前面那位,server 的 <c>leaderUserId</c>)。
+        /// 同分時他排第一 —— 理由見 <see cref="RankingBoard"/> 的 tie-break 說明。</summary>
+        public readonly bool IsLeader;
+
+        public PlayerEntry(string name, long score, bool isLocal, int seat = NoSeat, bool isLeader = false)
         {
             Name = name;
             Score = score;
             IsLocal = isLocal;
             Seat = seat;
+            IsLeader = isLeader;
         }
     }
 
@@ -35,10 +40,15 @@ namespace Sdo.Ruleset
     /// higher score first; on equal score the lower <see cref="PlayerEntry.Seat"/> wins; otherwise
     /// the lower original index wins. This total order means the sort need not be stable.
     ///
-    /// 🔴 平手一定要照**座位序**,不能「本機先」。本機先是每台各自成立的規則 —— 同分時兩台都會覺得
-    /// 自己是第一名,於是兩邊都做勝利定格動作,而結算面板用的是 server 的權威名次(照 (seat, userId) 排,
-    /// 見 server 的 <c>ResultRowOrder</c>),就變成「面板寫我第 2 名,人卻在跳勝利動作」(使用者回報)。
-    /// 座位序是全場一致的,與 server / <see cref="FormationAssignment"/> / <c>LiveLeaderTracker</c> 同一條規則。
+    /// 🔴 平手一定要照**全場一致**的規則,不能「本機先」。本機先是每台各自成立的規則 —— 同分時兩台都會
+    /// 覺得自己是第一名,於是兩邊都做勝利定格動作,而結算面板用的是 server 的權威名次,就變成
+    /// 「面板寫我第 2 名,人卻在跳勝利動作」(使用者回報)。
+    ///
+    /// 🔴 平手的第一順位是 <see cref="PlayerEntry.IsLeader"/>(**台上站最前面**那位),座位序只是它之後
+    /// 的第二順位。領隊格由 <c>LiveLeaderTracker</c> 決定,而它同分時**不換位**(嚴格領先才換)——
+    /// 被追平的那一刻站最前面的是「一路領先到最後」的那位,座位序不一定最小。只照座位序判,同分收場
+    /// 就會變成「台上站前面的是 A,第一名跟勝利定格卻給了 B」(使用者回報)。server 端同一條規則,
+    /// 見 <c>ResultRowOrder</c> —— 這份是 server 權威名次到達前的暫定值,兩邊必須算得出同一個人。
     /// </summary>
     public static class RankingBoard
     {
@@ -50,8 +60,10 @@ namespace Sdo.Ruleset
         {
             long sa = players[a].Score, sb = players[b].Score;
             if (sa != sb) return sb.CompareTo(sa);          // higher score first
+            bool la = players[a].IsLeader, lb = players[b].IsLeader;
+            if (la != lb) return la ? -1 : 1;               // ties: 台上站最前面那位先(同 server 的 ResultRowOrder)
             int ta = players[a].Seat, tb = players[b].Seat;
-            if (ta != tb) return ta.CompareTo(tb);          // ties: lower seat first (same rule as the server)
+            if (ta != tb) return ta.CompareTo(tb);          // then lower seat first
             return a.CompareTo(b);                          // stable fallback: original order
         }
 
