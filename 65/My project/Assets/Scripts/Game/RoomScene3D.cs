@@ -704,6 +704,78 @@ namespace Sdo.Game
             return _remotes.TryGetValue(userId, out r) && r != null && r.Go != null;
         }
 
+        /// <summary>
+        /// 「滑鼠指著房裡的哪個人」—— 右鍵 3D 角色開選單用的挑選(<c>vp</c> 是 0..1 的 viewport 座標,
+        /// 與 <see cref="TryRemoteHeadViewport"/> 同一個座標系)。挑中回 true,<paramref name="userId"/> 是
+        /// 那個人的 server userId,**本機自己回 0**(離線也是 0 —— 那時房裡本來就只有自己)。
+        ///
+        /// 🔴 用**投影出來的方框**判定,不是 <c>Physics.Raycast</c>。這些角色身上沒有任何 Collider
+        ///    (整套 avatar 是 CPU/GPU 蒙皮的 mesh,一根 collider 都沒掛),要射線就得每幀替每個人維護一顆
+        ///    碰撞體、還要跟著蒙皮動 —— 為了一個右鍵選單不值得。方框是拿「腳(地板)到頭頂」投影出來的高度
+        ///    再依人形比例給寬度:站近站遠、鏡頭俯角變了都自動跟著縮放。
+        ///
+        /// 🔴 重疊時挑**離鏡頭近的那個**(相機空間 z 最小)。房間會走動,兩個人站成一直線很常見 ——
+        ///    挑到後面那個等於點到看不見的人。
+        /// </summary>
+        public bool TryPickAvatar(Vector2 vp, out int userId)
+        {
+            userId = 0;
+            if (_cam == null) return false;
+
+            bool hit = false;
+            float bestZ = float.MaxValue;
+
+            // 本機自己。頭骨取不到(剛重建中)就整個跳過 —— 不要用一個亂猜的框去吃右鍵。
+            if (_avatar != null && _avatarRoot != null)
+            {
+                Vector3 hm = _avatar.BoneModelPos("Bip01_Head");
+                if (hm == Vector3.zero) hm = _avatar.BoneModelPos("Bip01_Neck");
+                if (hm != Vector3.zero
+                    && HitsBody(_avatarRoot.TransformPoint(hm), vp, out float z) && z < bestZ)
+                {
+                    bestZ = z; userId = 0; hit = true;
+                }
+            }
+
+            foreach (var kv in _remotes)
+            {
+                var r = kv.Value;
+                if (r == null || r.Av == null || r.Go == null) continue;
+                Vector3 bm = r.Av.BoneModelPos("Bip01_Head");
+                if (bm == Vector3.zero) bm = r.Av.BoneModelPos("Bip01_Neck");
+                if (bm == Vector3.zero) continue;
+                if (!HitsBody(r.Go.transform.TransformPoint(bm), vp, out float z) || z >= bestZ) continue;
+                bestZ = z; userId = kv.Key; hit = true;
+            }
+            return hit;
+        }
+
+        /// <summary>人形命中框的半寬,以「腳到頭」的投影高度為單位。0.22 ≈ 站姿人形連手臂的寬高比一半,
+        /// 寬一點點讓「明明點在人身上卻沒中」不會發生,又還不至於誤吃到隔壁那個人(站位間距遠大於一個人寬)。</summary>
+        private const float PickHalfWidthRatio = 0.22f;
+
+        /// <summary>
+        /// 頭頂世界座標 → 螢幕上那個人形方框,<paramref name="vp"/> 落在裡面嗎。
+        /// 腳的位置直接取「同一條垂線上的地板」(<see cref="floorY"/>)—— 角色的 root 已經做過地板校正,
+        /// 拿骨骼算腳反而會被懸浮(翅膀)與蒙皮誤差干擾。<paramref name="camZ"/> 回頭部的相機空間深度(排序用)。
+        /// </summary>
+        private bool HitsBody(Vector3 headWorld, Vector2 vp, out float camZ)
+        {
+            camZ = float.MaxValue;
+            Vector3 head = _cam.WorldToViewportPoint(headWorld);
+            if (head.z <= 0f) return false;                    // 在鏡頭後面
+            Vector3 foot = _cam.WorldToViewportPoint(new Vector3(headWorld.x, floorY, headWorld.z));
+            camZ = head.z;
+
+            float top = Mathf.Max(head.y, foot.y);
+            float bottom = Mathf.Min(head.y, foot.y);
+            float h = top - bottom;
+            if (h <= 0.0001f) return false;                    // 正上方俯視之類的退化情形:沒有可判定的高度
+            float halfW = h * PickHalfWidthRatio;
+            float cx = (head.x + foot.x) * 0.5f;
+            return vp.x >= cx - halfW && vp.x <= cx + halfW && vp.y >= bottom && vp.y <= top;
+        }
+
         public bool TryRemoteHeadViewport(int userId, out Vector2 vp)
             => TryRemoteBoneViewport(userId, "Bip01_Head", "Bip01_Neck", headMarkerRise, out vp);
 

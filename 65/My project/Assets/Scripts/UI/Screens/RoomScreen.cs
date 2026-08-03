@@ -333,6 +333,16 @@ namespace Sdo.UI.Screens
             _backdrop.raycastTarget = false;
             if (flipBackdropV) _backdrop.uvRect = new Rect(0f, 1f, 1f, -1f);
 
+            // 房間畫面的右鍵收訊面板 —— 右鍵**房裡的那個人**(3D 角色本體)也要出選單,不是只有上排那六格頭貼。
+            // 🔴 建在這裡(backdrop 的下一個兄弟)= 整張 UI 最底層:名字牌、泡、win1/2/3 面板、選單本身
+            //    全都是後面的兄弟,UGUI 的射線一律先打到最上面那個 → 這塊只收「什麼 UI 都沒有的地方」的點擊,
+            //    不會搶走任何既有的互動。
+            // 🔴 backdrop 自己不能兼任(它 raycastTarget=false 而且**整個畫面只有它鋪滿**):把它打開會讓
+            //    3D 房間吃掉所有點擊,連帶影響 UI 之外的既有行為;分一塊透明面板出來只多一個 Graphic。
+            var pick = UIKit.AddImage(Root, "RoomPickCatcher", new Color(0f, 0f, 0f, 0f), raycast: true);
+            UIKit.Stretch(pick.rectTransform);
+            pick.gameObject.AddComponent<PointerClickProxy>().Clicked = OnRoomPickClick;
+
             // 名字牌層。建在**泡層之前** → 泡永遠畫在名字之上(見下面 _bubbleLayer 的註解),
             // 建在**所有 UI 面板之前** → 名字牌被面板擋住。層內一個人一層,每幀按站位重排(SortNamePlateLayers)。
             // 🔴 不要對它呼叫 SetAsLastSibling —— 那就是在改上面兩條規則。
@@ -4183,6 +4193,50 @@ namespace Sdo.UI.Screens
         private static SeatInfo SeatAt(RoomInfo room, int seat)
             => room != null && seat >= 0 && seat < room.Seats.Count ? room.Seats[seat] : null;
 
+        /// <summary>
+        /// 右鍵房間畫面的空白處 → 看看指到的是不是**房裡的某個 3D 角色**,是的話開那個人的座位選單。
+        ///
+        /// 官方在房間裡右鍵人物本體就會跳選單(使用者回報「不只點上面大頭貼」),而我們原本只有上排那六格
+        /// 頭貼接得到右鍵。這裡刻意**重用 <see cref="ShowSlotPopup"/>** —— 兩個入口點同一個人就該給同一份選單
+        /// (含房主的踢人/轉房主),分兩套遲早會長歪。
+        ///
+        /// 挑人只挑得到**坐在座位上的人**:選單的每一項都以座位為單位(踢人要座位號、玩家信息要座位資料),
+        /// 旁觀者沒有座位 → 點他不彈選單(而不是彈一個半殘的)。
+        /// </summary>
+        private void OnRoomPickClick(PointerEventData ev)
+        {
+            if (ev == null || ev.button != PointerEventData.InputButton.Right) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
+            if (_scene == null || Root == null) return;
+
+            // 設計座標 → 場景相機的 viewport。相機鋪滿整張 backdrop、backdrop 又鋪滿 Root,所以就是單純的正規化;
+            // y 要翻(設計座標由上往下、viewport 由下往上),而 flipBackdropV 開著時畫面本身已經上下顛倒 → 不再翻。
+            Vector2 d = PointerToDesign(ev.position);
+            var r = Root.rect;
+            float fw = r.width > 0f ? r.width : 800f;
+            float fh = r.height > 0f ? r.height : 600f;
+            var vp = new Vector2(d.x / fw, flipBackdropV ? d.y / fh : 1f - d.y / fh);
+
+            if (!_scene.TryPickAvatar(vp, out int userId)) return;   // 點到地板/家具 → 什麼都不做
+
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            int localSeat = LocalSeatIndex(room);
+            int seat = userId == 0 ? localSeat : SeatOfUser(room, userId);
+            if (seat < 0 || seat >= RoomLayout.SeatCount) return;    // 旁觀者/找不到 → 不彈
+
+            ShowSlotPopup(seat, ev.position, room, CanManageSeats(room), seat == localSeat);
+        }
+
+        /// <summary>那個 userId 坐在第幾格?(-1 = 不在座位上 —— 旁觀者、剛離開,或離線模式的 0)</summary>
+        private static int SeatOfUser(RoomInfo room, int userId)
+        {
+            if (room == null || userId == 0) return -1;
+            for (int i = 0; i < room.Seats.Count; i++)
+                if (room.Seats[i] != null && !room.Seats[i].IsEmpty && room.Seats[i].UserId == userId) return i;
+            return -1;
+        }
+
         /// <summary>座位右鍵選單。項目由 <see cref="RoomSlotMenu"/> 決定(空 → 不彈)。</summary>
         private void ShowSlotPopup(int seat, Vector2 screenPos, RoomInfo room, bool host, bool isSelf)
         {
@@ -4316,181 +4370,22 @@ namespace Sdo.UI.Screens
             if (_slotPopup != null) { Destroy(_slotPopup); _slotPopup = null; }
         }
 
-        // ==================== 座位右鍵選單的官方美術 ====================
-        // 來源:官方 UI/ROOM/POPMENU.XML 的 <Screen name="SP_PopMenu">
-        //   <PopMenu background="SPopMenu6.an">
-        //     <Button bgnormal="FamilyPop_1.an" bghover="FamilyPop_2.an" bgpushed="FamilyPop_1.an"
-        //             bold="true" color="0xff7a000e" x="0" y="0/27/54/81/108/…"/>
-        // → 列高 27、列寬 92、列的 x 一律 0(底板沒有內縮),bgpushed = bgnormal(實際只有兩態)。
-        private const float SlotMenuRowH = 27f;    // POPMENU.XML 相鄰兩列的 y 差
-        private const float SlotMenuMinW = 92f;    // FamilyPop_1.an 的原生寬(= 底板 SPopMenu6.png 的寬)
-        private const float SlotMenuFontPx = 13f;  // 官方最長是 5 個中文字塞進 92px;我們最長 4 字 → 13px 還有餘裕
-        private const float SlotMenuPadX = 7f;     // 字距左右緣的內縮(膠囊的圓角大約就這麼寬)
-        private const float SlotMenuSliceX = 12f;  // 9-slice 左右保留寬(圓角弧 ~6px,留 12 絕對蓋得住)
-        private static readonly Color32 SlotMenuTextColor = new Color32(0x7a, 0x00, 0x0e, 0xff);   // 官方 color="0xff7a000e"
-        // 找不到 DATA 時的退路(數值就是從那張列圖中央量到的):選單至少還畫得出來、深紅字還讀得到。
-        private static readonly Color32 SlotMenuRowFallback = new Color32(0x9d, 0x8a, 0xbb, 0xf0);
-        private static Sprite _slotMenuRow, _slotMenuRowHover;
-        private static bool _slotMenuArtLoaded;
-
         /// <summary>
-        /// 選單的兩張列圖(normal / hover),都轉成 **9-slice**(左右各留 <see cref="SlotMenuSliceX"/> 不拉伸)。
-        ///
-        /// 為什麼不是 Simple 直接拉:這兩張是 92px 寬的圓角膠囊,左右各只有 ~6px 的弧再加 1px 深藍外框。
-        /// 日文的「プレイヤー情報」、英文的 "Remove Friend" 在 13px 字級下要 100px 以上,Simple 會把那段弧
-        /// 連同外框一起橫向拉扁 → 圓角變橢圓、框線變糊。9-slice 只拉中段,而中段是**純垂直漸層,水平方向
-        /// 逐像素量過最多差 3/255**(等於看不出來)→ 拉到任何寬度都跟原圖一樣銳利。
-        ///
-        /// 🔴 走 <see cref="AtlasCropper"/> 而不是 <c>RoomUiArt.AtlasCrop</c>:後者是**直接在共用圖集上開 rect**,
-        ///    而 EXPRESSIONINFO.PNG 在這兩塊膠囊的圓角外留的是 <c>ffffff0a</c>(工具的白 matte)、四周又緊貼別的圖 ——
-        ///    雙線性取樣會把那圈白拖進圓角,每一列鑲一道白邊。AtlasCropper.Crop 會把 rect 複製到自己的貼圖、
-        ///    把透明像素的 RGB 換成鄰近的不透明色(BleedTransparent)再 Clamp → 沒有白 matte 也沒有鄰居可滲。
-        ///
-        /// 為什麼還要自己重造 sprite:Crop 造出來的 sprite 沒有 border,而 <c>Image.Type.Sliced</c> 遇到 border 全 0
-        /// 會靜靜地退化成 Simple(不會報錯,只是圓角被拉扁 —— 正是我們要避免的那個結果)。
-        /// </summary>
-        private static void EnsureSlotMenuArt()
-        {
-            if (_slotMenuArtLoaded) return;
-            // FamilyPop_1/2.an 沒有被單獨切出來,兩張都在 ExpressionInfo 圖集裡(座標為官方 .an 的 top-left)。
-            _slotMenuRow = Slice(AtlasCropper.Crop(RoomUiArt.Dir, "EXPRESSIONINFO.PNG", 420, 139, 92, 27), SlotMenuSliceX);
-            _slotMenuRowHover = Slice(AtlasCropper.Crop(RoomUiArt.Dir, "EXPRESSIONINFO.PNG", 420, 169, 92, 27), SlotMenuSliceX);
-            // 只有真的拿到圖才把結果封存起來。第一次右鍵有可能發生在 DATA 根還沒解析成功的時候
-            // (RoomUiArt.Dir 走 catch 分支 → 兩張全 null),先把旗標立起來等於**永久**退回純色 ——
-            // 之後就算路徑好了也再也不會重載。RoomUiArt 自己的快取也是同一個寫法(null 不算數)。
-            _slotMenuArtLoaded = _slotMenuRow != null;
-        }
-
-        /// <summary>同一張圖、同一塊 rect,只是補上 9-slice 的左右 border。來源缺圖 → 回 null(呼叫端有退路色)。</summary>
-        private static Sprite Slice(Sprite src, float sideX)
-        {
-            if (src == null || src.texture == null) return null;
-            return Sprite.Create(src.texture, src.rect, new Vector2(0.5f, 0.5f), src.pixelsPerUnit, 0,
-                                 SpriteMeshType.FullRect, new Vector4(sideX, 0f, sideX, 0f));
-        }
-
-        /// <summary>
-        /// 套 9-slice 圖。**不能用 <c>UIKit.ApplySprite</c>** —— 它會把 sizeDelta 設回 sprite 的原生尺寸,
-        /// 選單就永遠是 92×27 一格。尺寸一律由 <c>Place</c> 決定。
-        ///
-        /// 🔴 <c>pixelsPerUnitMultiplier</c> 不是可有可無的裝飾。UGUI 畫 Sliced 時是拿
-        ///    <c>sprite.border ÷ (sprite.pixelsPerUnit / canvas.referencePixelsPerUnit)</c> 當邊寬 ——
-        ///    這個專案的圖一律 ppu=1(<c>SdoExtracted</c> 的 Sprite.Create 全寫死 1),而 CanvasScaler 給的
-        ///    參考值是 UGUI 預設的 100 → 除數是 0.01,border 12 會被當成 **1200** 單位。UGUI 遇到
-        ///    「左右邊加起來比整個 rect 還寬」只好等比夾成各半 → 整條膠囊變成兩個被橫向拉爛的圓角、
-        ///    中段完全不見。乘回 refPPU/spritePPU 之後 border 才剛好等於我們量的那幾個像素。
-        ///    (為什麼不乾脆把 sprite 造成 ppu=100:那會讓任何走 <c>UIKit.ApplySprite</c> 的人拿到
-        ///     0.92×0.27 的尺寸,埋一個更難查的坑。)
-        /// </summary>
-        private static void SetSliced(Image img, Sprite s, Color32 fallback)
-        {
-            if (img == null) return;
-            img.sprite = s;
-            img.type = Image.Type.Sliced;
-            img.fillCenter = true;
-            if (s != null)
-            {
-                var canvas = img.canvas;                                      // 建立時就已 parent 進 Root → 找得到
-                float refPpu = canvas != null ? canvas.referencePixelsPerUnit : 100f;   // 拿不到就用 UGUI 預設值
-                float spritePpu = s.pixelsPerUnit > 0f ? s.pixelsPerUnit : 1f;
-                img.pixelsPerUnitMultiplier = Mathf.Max(0.01f, refPpu / spritePpu);
-            }
-            img.color = s != null ? (Color)Color.white : (Color)fallback;
-        }
-
-        /// <summary>
-        /// 一個中文字約 1em、半形約 0.55em 的粗估寬度。
-        ///
-        /// 為什麼不問 TMP 要 preferredWidth:那要先把物件建出來、跑一次排版才有值,而寬度是**建之前**
-        /// 就要決定的(整個選單每列等寬)。粗估寬一點沒有壞處 —— 底圖是 9-slice,多幾 px 不會糊。
-        /// </summary>
-        private static float MenuTextWidth(string s, float fontSize)
-        {
-            if (string.IsNullOrEmpty(s)) return 0f;
-            float w = 0f;
-            for (int i = 0; i < s.Length; i++)
-            {
-                char c = s[i];
-                bool wide = (c >= 0x1100 && c <= 0x115F)      // 韓文字母
-                            || (c >= 0x2E80 && c <= 0xA4CF)   // CJK 部首 / 假名 / 注音 / 漢字
-                            || (c >= 0xAC00 && c <= 0xD7A3)   // 韓文音節
-                            || (c >= 0xF900 && c <= 0xFAFF)   // CJK 相容漢字
-                            || (c >= 0xFE30 && c <= 0xFE4F)   // CJK 相容形式
-                            || (c >= 0xFF00 && c <= 0xFF60);  // 全形英數/標點
-                w += wide ? fontSize : fontSize * 0.55f;
-            }
-            return w;
-        }
-
-        /// <summary>
-        /// 座位右鍵選單 —— 官方 SP_PopMenu 的複刻(底板 SPopMenu6 + 每列 FamilyPop 兩態 + 深紅粗體字)。
+        /// 座位右鍵選單 —— 官方 SP_PopMenu 的複刻。繪製本體搬到 <see cref="SdoPopupMenu"/>:
+        /// 官方**同一個選單樣式**還出現在大廳玩家名單與「房間信息」的參與者列表,複製第二份就要再踩一次
+        /// 那邊註解裡的坑(白框、9-slice 的 ppu、圖集滲白)。這裡只剩「彈出的那一幀」這個畫面自己的狀態。
         ///
         /// 為什麼跟 <see cref="BuildContextMenu"/> 分家:官方那張列圖是 92px 的固定膠囊,而分隊選單的
         /// 「2對2對2」在 92px 內會被夾壞。共用一個繪製函式就一定有一邊要犧牲 —— 座位選單有官方美術可對,
         /// 分隊選單沒有(那顆鈕是我們加的),所以各走各的。
-        ///
-        /// 🔴 **底板 SPopMenu6 不畫**(panel 只是一塊透明的吃點擊面板)。那張圖是 92×21 的框:最外圈 1px 半透明黑、
-        ///    再往內 2px 是 <c>ffffff b8</c> 的**白邊**,中間才是青漸層。而列圖是圓角膠囊、四邊的邊緣像素是半透明的 ——
-        ///    底板被 9-slice 撐成 w×(27×N) 後,那圈白邊就從膠囊的圓角與半透明邊緣透出來,整個選單外面鑲一個
-        ///    **方形白框**(使用者回報)。任何顏色的矩形底板都會留下這一圈(膠囊是圓角,底板是方的),所以是拿掉、
-        ///    不是換色。官方其他 PopMenu 本來也就沒有背板(XML 寫 <c>background="empty.an"</c>,見 LobbyScreen.BuildPopMenu)。
-        ///    代價只有列與列交界那 2~3px 的圓角縫會透出 3D 房間 —— 官方一疊膠囊本來就長這樣。
         /// </summary>
         private GameObject BuildSlotMenu(string name, Vector2 screenPos, int count,
                                          System.Func<int, string> labelOf, System.Action<int> onPick)
         {
-            EnsureSlotMenuArt();
-            var labels = new string[count];
-            float w = SlotMenuMinW;
-            for (int i = 0; i < count; i++)
-            {
-                labels[i] = labelOf(i) ?? "";
-                w = Mathf.Max(w, MenuTextWidth(labels[i], SlotMenuFontPx) + SlotMenuPadX * 2f);
-            }
-            w = Mathf.Ceil(w);          // 半像素寬會讓 9-slice 的邊落在像素中間 → 邊框糊掉
-            float h = SlotMenuRowH * count;
-
-            Vector2 tl = PointerToDesign(screenPos);
-            // 夾進 800×600。最滿是 5 列 = 135px(RoomSlotMenuTests 釘住了上限),在畫面下緣右鍵時
-            // 這個 Clamp 會把整個選單往上推,而不是讓下面兩列被切到框外。
-            float x = Mathf.Clamp(tl.x, 0f, Mathf.Max(0f, 800f - w));
-            float y = Mathf.Clamp(tl.y, 0f, Mathf.Max(0f, 600f - h));
-
-            // 透明但 raycastTarget=true:選單自己要吃掉點擊(才不會穿透到後面的座位/3D 房間),
-            // 但一個像素都不畫(見上面的白框)。Image 的 raycast 與 color.a 無關 → alpha 0 照樣擋得住。
-            var panel = UIKit.AddImage(Root, name, new Color(0f, 0f, 0f, 0f), raycast: true);
-            Place(panel.rectTransform, x, y, w, h);
-            panel.transform.SetAsLastSibling();
-
-            for (int i = 0; i < count; i++)
-            {
-                int idx = i;
-                var row = UIKit.AddImage(panel.rectTransform, "Row" + i, Color.white, raycast: true);
-                SetSliced(row, _slotMenuRow, SlotMenuRowFallback);
-                Place(row.rectTransform, 0f, SlotMenuRowH * i, w, SlotMenuRowH);
-
-                var btn = row.gameObject.AddComponent<Button>();
-                btn.targetGraphic = row;
-                // 官方 bgpushed = bgnormal,所以 pressed 也給 normal ——
-                // 自己補一個「按下變暗」等於多出官方沒有的第三態。
-                btn.transition = Selectable.Transition.SpriteSwap;
-                var st = btn.spriteState;
-                st.highlightedSprite = _slotMenuRowHover;
-                st.pressedSprite = _slotMenuRow;
-                st.selectedSprite = _slotMenuRow;
-                btn.spriteState = st;
-                UiSfx.AttachClick(btn);
-                UiHoverSfx.Attach(btn);
-                btn.onClick.AddListener(() => onPick(idx));
-
-                var t = UIKit.AddText(row.rectTransform, "Label", labels[i], SlotMenuFontPx, SlotMenuTextColor,
-                                      TextAlignmentOptions.Center);
-                t.fontStyle = FontStyles.Bold;                 // 官方每一列都 bold="true"
-                // 高度少 1px:膠囊的上下框各佔 1px,字框跟著縮才會落在**內側**的視覺中心。
-                Place(t.rectTransform, SlotMenuPadX, 0f, w - SlotMenuPadX * 2f, SlotMenuRowH - 1f);
-            }
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            var go = SdoPopupMenu.Build(Root, name, screenPos, cam, count, labelOf, onPick);
             _slotPopupFrame = Time.frameCount;
-            return panel.gameObject;
+            return go;
         }
 
         /// <summary>

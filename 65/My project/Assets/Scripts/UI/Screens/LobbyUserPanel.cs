@@ -23,8 +23,8 @@ namespace Sdo.UI.Screens
     ///    好友清單存在**玩家自己那台機器**上(server 沒有帳號持久化,見 <see cref="FriendList"/>),
     ///    所以那個比對只能在這裡做,server 幫不上忙。
     ///
-    /// 黑名單這個重製版沒有 → 分頁照官方擺著(少一個分頁比空著更難認,而且擋著之後真的要做時的版位),
-    /// 但點下去就是**一頁空白**。
+    /// 黑名單分頁列的是**本機黑名單上、而且現在在線**的那些人(<see cref="BlockList"/>,與好友清單同一種東西)。
+    /// 加進去的入口是名單上**右鍵那個人**的選單(玩家信息 / 私聊 / 加為好友 / 加入黑名單)。
     ///
     /// 🔴 這個面板**一個字的空狀態說明都不寫**、**一個 Toast 都不彈**(「請先選一個人」「已經是好友了」
     ///    那些通通拿掉了)——**使用者明講的要求**:大廳按了沒做的事就是安靜地沒反應,不要跳字。
@@ -126,6 +126,10 @@ namespace Sdo.UI.Screens
         /// <summary>開始滑入(true)/ 開始滑出(false) 的**那一刻**通知(不是動畫結束)。
         /// 大廳靠它同步藏/顯示左邊那尊 3D 角色 —— 要跟面板一起動,晚一拍會看到角色從名單底下鑽出來。</summary>
         public System.Action<bool> VisibilityChanged;
+
+        /// <summary>右鍵名單上的某個人。選單本體由**大廳**畫(<c>LobbyScreen.ShowUserMenu</c>)——
+        /// 面板自己畫的話選單會跟著 root 一起滑出畫面,而且會被捲動區的遮罩裁掉。</summary>
+        public System.Action<NetUserListEntry> RowRightClicked;
 
         /// <summary>目標狀態;滑動動畫進行中也回目標值(見 <see cref="_visible"/>)。</summary>
         public bool Visible => _visible;
@@ -301,9 +305,13 @@ namespace Sdo.UI.Screens
             if (Visible) Rebuild();
         }
 
+        /// <summary>名單重畫(好友/黑名單被右鍵選單改過之後,大廳叫它讓變動立刻看得見)。收著時不做 ——
+        /// 下次 <see cref="SetVisible"/> 打開本來就會重畫。</summary>
+        public void Refresh() { if (_visible) Rebuild(); }
+
         /// <summary>
-        /// 依目前分頁重畫名單。**空的就是一片空白**(沒好友 / 沒家族 / 沒人在線 / 黑名單還沒做,四種都不寫字)——
-        /// 使用者明講「那些字都不要寫」。所以黑名單這一頁就是清空後直接 return。
+        /// 依目前分頁重畫名單。**空的就是一片空白**(沒好友 / 沒家族 / 沒人在線 / 黑名單上沒人在線,都不寫字)——
+        /// 使用者明講「那些字都不要寫」。
         /// </summary>
         private void Rebuild()
         {
@@ -311,8 +319,6 @@ namespace Sdo.UI.Screens
             UIKit.Clear(_content);
             _rows.Clear();
             _handleDirty = true;   // 高度變了,握把要重擺(延到下一幀,見 Update)
-
-            if (_tab == Tab.Blacklist) return;
 
             var owner = ProfileManager.Active;
             for (int i = 0; i < _users.Count; i++)
@@ -335,6 +341,10 @@ namespace Sdo.UI.Screens
                 // 自己沒有家族時這一頁一定是空的(不要變成「列出所有沒家族的人」)。
                 case Tab.Family:
                     return GuildIdentity.Same(_selfGuild, _selfGuildEmblem, u.Guild, u.GuildEmblem);
+                // 黑名單:名字在本機黑名單裡的那些(與好友分頁同一種比對,見 BlockList)。
+                // 🔴 這一頁只列得出**現在在線**的人 —— 四個分頁吃的是同一份 server 名單,離線的人根本不在裡面。
+                //    要列出「所有封鎖過的人」得另外拿 BlockList.Names 生一份假 entry,那與其他三頁的語意不一致。
+                case Tab.Blacklist: return BlockList.IsBlocked(owner, u.Name);
                 default: return true;
             }
         }
@@ -416,6 +426,17 @@ namespace Sdo.UI.Screens
             string uname = u.Name ?? "";
             btn.onClick.AddListener(() => Select(uid, uname));
             UiSfx.AttachClick(btn);
+
+            // 右鍵 → 那個人的社交選單。🔴 Button.onClick **只吃左鍵**(UGUI 的 Button.OnPointerClick 第一行就把
+            // 非左鍵擋掉),所以一定要另外接;掛在同一個物件上不會打架(見 RightClickProxy)。
+            // 順手把那一列選起來:官方右鍵誰,黃框就跟到誰身上 —— 不然選單講的是 A、框卻還在 B 上。
+            var captured = u;
+            var rc = row.gameObject.AddComponent<RightClickProxy>();
+            rc.Clicked = () =>
+            {
+                Select(uid, uname);
+                RowRightClicked?.Invoke(captured);
+            };
 
             // 🔴 **不接 hover**。XML 雖然有 hoverpic,但實機那圈黃框是「選中」的標記,不是滑過的回饋 ——
             //    滑過就亮的話,滑鼠掃過名單會一路閃,而且分不出真正選中的是誰(使用者指定:只有點了才亮)。

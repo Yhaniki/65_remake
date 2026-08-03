@@ -227,6 +227,9 @@ namespace Sdo.UI
             _roomInfo = new GameObject("RoomInfo").AddComponent<RoomInfoModal>();
             _roomInfo.transform.SetParent(modalLayer, false);
             _roomInfo.Build(modalLayer);
+            // 參與者右鍵選單要知道現在有沒有連線(私聊/好友/黑名單都需要 server 上真的有那個人)。
+            // 🔴 委派而不是布林:_ctx.Net 在登入成功時會**換人**(見 AppContext.CompleteLogin)。
+            _roomInfo.IsOnline = () => _ctx != null && _ctx.Net != null && _ctx.Net.IsConnected;
             Toast.Init(modalLayer);
 
             Nav.OpenSettings = () => _option.Open();
@@ -239,10 +242,8 @@ namespace Sdo.UI
             Nav.OpenSelfInfo = () => _playerInfo.OpenSelf();
             Nav.OpenRoomCreate = cb => _roomCreate.Open(cb);
             Nav.OpenRoomInfo = (room, onEnter) => _roomInfo.Open(room, onEnter);
-            Nav.OpenPlayerInfo = (who, gender, userId) => _playerInfo.Open(who, gender, userId, name =>
-            {
-                if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.BeginWhisperTo(name);
-            });
+            Nav.WhisperTo = BeginWhisperTo;
+            Nav.OpenPlayerInfo = (who, gender, userId) => _playerInfo.Open(who, gender, userId, BeginWhisperTo);
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
             // 選歌畫面改了房主設定(場景) → 底下的房間面板立刻重畫，不必等房間事件。
@@ -516,6 +517,25 @@ namespace Sdo.UI
         private void OnDestroy()
         {
             if (_ctx != null && _ctx.Net != null) _ctx.Net.Disconnect("appDestroy");
+        }
+
+        /// <summary>
+        /// 「對這個人開始密語」→ 轉給**現在這個畫面**的聊天輸入框(<see cref="Nav.WhisperTo"/> 的實作)。
+        ///
+        /// 🔴 分派看的是 <c>Flow.Current</c> 而不是「誰呼叫的」:右鍵選單、玩家資訊視窗的私聊鈕在大廳與房間
+        ///    都按得到,而聊天框是**兩個畫面各一個**。以前這裡寫死轉給 RoomScreen —— 在大廳按下去,字被填進
+        ///    一個沒顯示的輸入框,看起來就是「按了沒反應」。
+        /// </summary>
+        private void BeginWhisperTo(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            var cur = _ctx != null && _ctx.Flow != null ? _ctx.Flow.Current : ScreenId.Lobby;
+            if (cur == ScreenId.Room && _screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr)
+            {
+                rr.BeginWhisperTo(name);
+                return;
+            }
+            if (_screens.TryGetValue(ScreenId.Lobby, out var l) && l is LobbyScreen ll) ll.BeginWhisperTo(name);
         }
 
         /// <summary>Create a mock room (host = local player) if none, and show the waiting room. Used by the SDO_ROOM

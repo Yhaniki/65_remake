@@ -268,6 +268,14 @@
    "v": "刪除好友"
   },
   {
+   "k": "room.slot_block",
+   "v": "加入黑名單"
+  },
+  {
+   "k": "room.slot_unblock",
+   "v": "移出黑名單"
+  },
+  {
    "k": "room.friend_added",
    "v": "已將 {0} 加為好友"
   },

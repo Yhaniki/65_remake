@@ -35,5 +35,10 @@ namespace Sdo.UI.Core
 
         // 大廳房卡右鍵 → 官方的房間信息對話框（RoomInfoModal）。第二個參數是按「進入」時要做的事。
         public static Action<Sdo.UI.Services.RoomInfo, Action> OpenRoomInfo;
+
+        // 「對這個人開始密語」。右鍵選單的「私聊」、玩家資訊視窗的私聊鈕都走它。
+        // 🔴 收訊的是**當下那個畫面的聊天框**（大廳在大廳打、房間在房間打）——由 FrontendApp 依 Flow.Current 分派。
+        //    以前只寫死轉給 RoomScreen，在大廳按下去等於打進一個看不見的輸入框。
+        public static Action<string> WhisperTo;
     }
 }

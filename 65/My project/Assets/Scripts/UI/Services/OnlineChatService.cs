@@ -270,10 +270,31 @@ namespace Sdo.UI.Services
 
         private void Add(ChatMessage m)
         {
+            if (Muted(m)) return;
             _history.Add(m);
             if (_history.Count > 200) _history.RemoveAt(0);
             var h = MessageReceived;
             if (h != null) h(m);
+        }
+
+        /// <summary>
+        /// 這則要不要**整個丟掉**(發言者在本機黑名單上)。這就是「加入黑名單 / 設置阻止」在這套連線裡
+        /// 做得到的全部語意 —— server 沒有 per-user 的過濾,它把每則訊息原封廣播給所有人,
+        /// 能決定「不顯示」的只有收訊端(見 <see cref="Sdo.Settings.BlockList"/>)。
+        ///
+        /// 🔴 進 <see cref="_history"/> **之前**就擋掉,不是畫的時候才濾:歷史會被切頻道/換畫面時重播,
+        ///    留在裡面遲早會從某條路徑漏出來。代價是「封鎖之後才解除」看不到中間那段話 —— 本來就該看不到。
+        /// 🔴 擋的是**他說的話**,不是「關於他的一切」:<c>Local</c>(自己說的)、系統行、進出舞台廣播、
+        ///    本機提示行一律放行。進出舞台那行的 <c>Sender</c> 也是玩家名 —— 把它一起吃掉的話,
+        ///    被封鎖的人進了你的房間你會完全不知道。
+        /// </summary>
+        private static bool Muted(ChatMessage m)
+        {
+            if (m == null || m.Local || m.System) return false;
+            if (m.Stage != StageEventKind.None || m.Notice != ChatNotice.None) return false;
+            string sender = (m.Sender ?? "").Trim();
+            if (sender.Length == 0) return false;
+            return Sdo.Settings.BlockList.IsBlocked(Sdo.Settings.ProfileManager.Active, sender);
         }
 
         private static double NowMs() => UnityEngine.Time.realtimeSinceStartupAsDouble * 1000.0;

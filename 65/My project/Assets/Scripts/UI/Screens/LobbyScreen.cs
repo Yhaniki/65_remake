@@ -1078,6 +1078,7 @@ namespace Sdo.UI.Screens
             UpdateChatCaret();
 
             CloseMenusOnOutsideClick();   // 同理:點外面要**當下**就收選單,不能等到下一個 poll 節拍
+            CloseUserMenuOnOutsideClick();   // 名單的右鍵選單是動態建的,不在上面那四個之列
             HandleEscape();               // ESC 逐層退出(收選單 / 清草稿 / 退回選男女) —— 同樣要每幀收,不能等節拍
 
             if (Time.unscaledTime < _nextPoll) return;
@@ -1858,7 +1859,66 @@ namespace Sdo.UI.Screens
             _userPanel.VisibilityChanged = on =>
             {
                 if (_previewImg != null) _previewImg.enabled = !on;
+                if (!on) CloseUserMenu();   // 名單滑走了,選單不能留在畫面上
             };
+            _userPanel.RowRightClicked = ShowUserMenu;
+        }
+
+        // ---- 名單右鍵選單(官方:玩家信息 / 私聊 / 加為好友 / 加入黑名單)----
+        //
+        // 🔴 選單建在 **Root** 而不是名單面板底下:面板整塊會滑進滑出(win3 的 TransForm),選單掛在它身上
+        //    會跟著飄走;而列本身還在捲動區的遮罩裡,掛在列上會被裁掉。
+        // 🔴 官方選單裡還有「發送短信」與「使用迷魂藥 / 清醒藥」—— 這個重製版沒有簡訊也沒有道具效果,
+        //    所以不畫(見 PlayerContextMenu 的註解:按了沒反應的項目比少一項更糟)。
+        private GameObject _userMenu;
+        private int _userMenuFrame = -1;
+
+        private void ShowUserMenu(NetUserListEntry u)
+        {
+            CloseUserMenu();
+            string who = (u.Name ?? "").Trim();
+            if (who.Length == 0) return;
+
+            var me = ProfileManager.Active;
+            var net = Ctx != null ? Ctx.Net : null;
+            bool online = net != null && net.IsConnected;
+            // 「是不是自己」兩個條件都要看:userId 是這次連線的唯一編號(最可靠),
+            // 但離線時大家都是 0 → 那時只有名字比對得準(同 OnAddFriend 的判斷)。
+            bool isSelf = (online && u.UserId == net.UserId)
+                          || string.Equals(who, SelfName(), System.StringComparison.OrdinalIgnoreCase);
+            var actions = PlayerContextMenu.For(online, isSelf, FriendList.IsFriend(me, who),
+                                                BlockList.IsBlocked(me, who));
+            if (actions.Length == 0) return;
+
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            var profile = new PlayerProfile("", who, u.Level, u.Guild ?? "");
+            _userMenu = SdoPopupMenu.Build(Root, "UserMenu", Input.mousePosition, cam, actions.Length,
+                                           i => PlayerMenuLabels.Of(actions[i]),
+                                           i =>
+                                           {
+                                               bool changed = PlayerMenuActions.Run(actions[i], who, profile,
+                                                                                    u.Gender, u.UserId, isSelf);
+                                               CloseUserMenu();
+                                               // 加好友/封鎖之後名單要立刻反映(那個人出現在好友頁、或從
+                                               // 好友頁消失、或出現在黑名單頁)—— 這就是「成功了」的回饋,
+                                               // 大廳不彈 Toast(使用者要求)。
+                                               if (changed && _userPanel != null) _userPanel.Refresh();
+                                           });
+            _userMenuFrame = Time.frameCount;
+        }
+
+        private void CloseUserMenu()
+        {
+            if (_userMenu != null) { Destroy(_userMenu); _userMenu = null; }
+        }
+
+        /// <summary>點到選單外面就收掉(彈出那一幀不算 —— 觸發它的正是那一次點擊)。</summary>
+        private void CloseUserMenuOnOutsideClick()
+        {
+            if (_userMenu == null || Time.frameCount == _userMenuFrame) return;
+            if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (SdoPopupMenu.ClickedOutside(_userMenu, Input.mousePosition, cam)) CloseUserMenu();
         }
 
         /// <summary>三人頭(ListShow)開名單、單人頭(AvtShow)收回去看角色 —— 官方兩顆疊在同一格輪換。</summary>
@@ -2310,6 +2370,16 @@ namespace Sdo.UI.Screens
         /// 🔴 只有「當前 / 好友」頻道才插入,與房間同一條規則:家族/回覆頻道有自己的前綴語意,
         ///    插進去會變成「[名字] /家族 …」那種誰也送不出去的東西。
         /// </summary>
+        /// <summary>
+        /// 「對這個人開始密語」—— 玩家**主動選**私聊的那條路(名單/房間信息的右鍵選單、玩家資訊視窗的私聊鈕,
+        /// 都經由 <see cref="Nav.WhisperTo"/> 進來)。與點聊天列的人名同一條路,只是入口不同。
+        ///
+        /// 🔴 頻道守門與 <see cref="InsertWhisperTarget"/> 相同(家族/回覆頻道不插前綴)—— 這是刻意的:
+        ///    在那兩個頻道插進去會變成送不出去的 "[名字] /家族 …"。房間那邊的 BeginWhisperTo 會先切頻道,
+        ///    但大廳的頻道是玩家用下拉選單挑的、還會影響整片訊息的過濾,替他改掉太粗暴。
+        /// </summary>
+        public void BeginWhisperTo(string name) => InsertWhisperTarget(name);
+
         private void InsertWhisperTarget(string name)
         {
             if (_chatInput == null || string.IsNullOrWhiteSpace(name)) return;

@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using Sdo.Localization;
+using Sdo.Settings;
 using Sdo.UI.Services;
 using Sdo.UI.Util;
 
@@ -69,16 +70,35 @@ namespace Sdo.UI.Screens
         private const int AudienceCapacity = 10;
 
         private CanvasGroup _cg;
+        private RectTransform _root;
         private TextMeshProUGUI _name, _mode, _players, _audience, _music;
         private readonly List<TextMeshProUGUI> _rowLevel = new List<TextMeshProUGUI>();
         private readonly List<TextMeshProUGUI> _rowName = new List<TextMeshProUGUI>();
         private Action _onEnter;
 
+        /// <summary>連線中嗎 —— 右鍵選單靠它決定要不要畫「私聊 / 好友 / 黑名單」那幾項(見 <see cref="PlayerContextMenu"/>)。
+        /// 由 <c>FrontendApp</c> 綁(這個框自己拿不到 AppContext,而 <c>Ctx.Net</c> 在登入成功時會換人 → 一定要是委派)。</summary>
+        public Func<bool> IsOnline;
+
+        // 右鍵選單。彈出的那一幀不能被「點外面就關」自己關掉(觸發它的正是那一次點擊)。
+        private GameObject _popup;
+        private int _popupFrame = -1;
+
         // 捲動狀態。列表是**整數分頁**(一次捲一列),所以存的是「第一列是名單的第幾個人」,
         // 不是像素位移 —— 4 個格子是烤在底圖上的,列只能對齊格線。
         private Scrollbar _bar;
-        private readonly List<PlayerProfile> _people = new List<PlayerProfile>();
+        private readonly List<Person> _people = new List<Person>();
         private int _scroll;
+
+        /// <summary>名單上的一個人。**不只存 <see cref="PlayerProfile"/>** —— 右鍵選單的「玩家信息」要
+        /// 性別(畫他的 3D 角色)與 server userId(查名片),那兩個欄位都不在 PlayerProfile 裡:
+        /// 性別在 <c>RoomInfo.SeatGenders</c>(依人的順序,不是座位順序)、userId 在 <c>SeatInfo</c>。</summary>
+        private struct Person
+        {
+            public PlayerProfile Profile;
+            public int Gender;    // 0=女 1=男
+            public int UserId;    // server 這次連線給的編號;0 = 離線/不知道
+        }
 
         /// <summary>捲得動的列數(0 = 人數塞得進 4 列,握把停在最上面不動)。</summary>
         private int MaxScroll => Mathf.Max(0, _people.Count - RowCount);
@@ -92,6 +112,7 @@ namespace Sdo.UI.Screens
         {
             var root = UIKit.NewRect(parent, "RoomInfoModal");
             UIKit.Stretch(root);
+            _root = root;
             _cg = root.gameObject.AddComponent<CanvasGroup>();
 
             // 擋住背後大廳的點擊。**完全透明** —— 同 RoomCreateModal / PlayerInfoModal,官方不壓暗背景。
@@ -151,9 +172,73 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < RowCount; i++)
             {
                 float y = RowY0 + i * RowStep;
+                // 整列的右鍵收訊盤(全透明但吃射線)。官方在這個框裡右鍵參與者會跳「添加好友 / 玩家信息 /
+                // 玩家私聊 / …」的選單(使用者提供的實機截圖)。
+                // 🔴 一定要另外鋪一塊:上面那兩個 TMP 是 raycastTarget=false,而滾輪收訊板(catcher)是**整片**的,
+                //    掛在它身上分不出點的是第幾列。
+                // 🔴 而且必須是 catcher 的**子物件**,不是它的兄弟:UGUI 的滾輪事件是從「射線打到的東西」
+                //    往**父層**冒泡的。鋪成兄弟的話這塊會擋在 catcher 前面,而 WheelScroll 在兄弟身上收不到 ——
+                //    症狀是「名單多於 4 人時滾輪突然不能捲了」。當子物件則照樣冒泡上去。
+                var hit = UIKit.AddImage(catcher.rectTransform, "row" + i + "_hit", new Color(0f, 0f, 0f, 0f), raycast: true);
+                Place(hit.rectTransform, 0f, i * RowStep, ListW, RowStep);
+                int rowIndex = i;
+                var rc = hit.gameObject.AddComponent<RightClickProxy>();
+                rc.Clicked = () => OnRowRightClick(rowIndex);
+
                 _rowLevel.Add(AddValue(root, "row" + i + "_level", ColLevelX, y + 4f, ColLevelW, TextAlignmentOptions.Center));
                 _rowName.Add(AddValue(root, "row" + i + "_name", ColNameX, y + 4f, ColNameW, TextAlignmentOptions.Left));
             }
+        }
+
+        // ---------------------------------------------------------------- 參與者右鍵選單
+
+        /// <summary>
+        /// 右鍵第 <paramref name="rowIndex"/> 列 → 那個人的社交選單(項目由 <see cref="PlayerContextMenu"/> 決定)。
+        /// 空列不彈(那格沒有人,不是一個可以私聊/加好友的對象)。
+        ///
+        /// 🔴 位置用**滑鼠現在的螢幕座標**而不是那一列的座標:官方選單就是從游標處長出來的,而且四列在框裡很擠,
+        ///    貼列頭會讓選單蓋掉隔壁兩列的名字。
+        /// </summary>
+        private void OnRowRightClick(int rowIndex)
+        {
+            ClosePopup();
+            int idx = _scroll + rowIndex;
+            if (idx < 0 || idx >= _people.Count) return;
+            var person = _people[idx];
+            string who = person.Profile != null ? (person.Profile.DisplayName ?? "").Trim() : "";
+            if (who.Length == 0) return;
+
+            var me = ProfileManager.Active;
+            bool online = IsOnline != null && IsOnline();
+            bool isSelf = me != null && string.Equals(who, (me.name ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+            var actions = PlayerContextMenu.For(online, isSelf, FriendList.IsFriend(me, who), BlockList.IsBlocked(me, who));
+            if (actions.Length == 0) return;
+
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            _popup = SdoPopupMenu.Build(_root, "RoomInfoPopup", Input.mousePosition, cam, actions.Length,
+                                        i => PlayerMenuLabels.Of(actions[i]),
+                                        i =>
+                                        {
+                                            PlayerMenuActions.Run(actions[i], who, person.Profile, person.Gender,
+                                                                  person.UserId, isSelf);
+                                            ClosePopup();
+                                        });
+            _popupFrame = Time.frameCount;
+        }
+
+        private void ClosePopup()
+        {
+            if (_popup != null) { Destroy(_popup); _popup = null; }
+        }
+
+        /// <summary>選單開著時點到選單外面 → 關掉(彈出那一幀不算,否則會被觸發它的那次點擊自己關掉)。</summary>
+        private void Update()
+        {
+            if (_popup == null) return;
+            if (Time.frameCount == _popupFrame) return;
+            if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (SdoPopupMenu.ClickedOutside(_popup, Input.mousePosition, cam)) ClosePopup();
         }
 
         private static TextMeshProUGUI AddValue(RectTransform parent, string name, float x, float y, float w,
@@ -216,16 +301,27 @@ namespace Sdo.UI.Screens
         ///
         /// 🔴 **空位不佔位**:這是「房裡有誰」,不是座位圖。座位 0 空、座位 1 有人的房間,
         ///    那個人是名單的第一個,不是第二個(不然捲動時會捲到一片空白)。
-        /// 🔴 性別**不在 <see cref="SeatInfo"/> 裡**,在 <c>RoomInfo.SeatGenders</c>(0=女 1=男,依座位順序)——
-        ///    那個框不畫性別(使用者指定),留著這條是因為中間那欄的版位常數還在。
+        /// 🔴 性別**不在 <see cref="SeatInfo"/> 裡**,在 <c>RoomInfo.SeatGenders</c>(0=女 1=男)——
+        ///    而且它的索引是**這份壓平後的名單**,不是座位號(見上面「空位不佔位」)。那個框不畫性別
+        ///    (使用者指定),但右鍵選單的「玩家信息」要拿它去畫對方的 3D 角色,所以照樣收進來。
         /// </summary>
         private void TakePeople(RoomInfo r)
         {
             _people.Clear();
             var seats = r.Seats;
             if (seats == null) return;
+            var genders = r.SeatGenders;
             for (int i = 0; i < seats.Count; i++)
-                if (seats[i].Player != null) _people.Add(seats[i].Player);
+            {
+                if (seats[i] == null || seats[i].Player == null) continue;
+                int n = _people.Count;
+                _people.Add(new Person
+                {
+                    Profile = seats[i].Player,
+                    Gender = genders != null && n < genders.Length ? genders[n] : 0,
+                    UserId = seats[i].UserId,
+                });
+            }
         }
 
         /// <summary>
@@ -240,7 +336,7 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < _rowLevel.Count; i++)
             {
                 int idx = _scroll + i;
-                var p = idx >= 0 && idx < _people.Count ? _people[idx] : null;
+                var p = idx >= 0 && idx < _people.Count ? _people[idx].Profile : null;
                 _rowLevel[i].text = p != null && p.Level > 0 ? p.Level.ToString() : "";
                 _rowName[i].text = p != null ? (p.DisplayName ?? "") : "";
             }
@@ -310,6 +406,7 @@ namespace Sdo.UI.Screens
 
         private void Hide()
         {
+            ClosePopup();   // 選單是這個框的子物件,但 CanvasGroup 關掉只是看不見 —— 留著下次開框會直接浮在那裡
             if (_cg != null) { _cg.alpha = 0f; _cg.blocksRaycasts = false; _cg.interactable = false; }
         }
 

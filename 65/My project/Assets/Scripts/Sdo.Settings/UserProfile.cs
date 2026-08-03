@@ -169,6 +169,10 @@ namespace Sdo.Settings
         /// <summary>本機好友清單。server 沒有帳號持久化 → 好友是這台機器記得的。見 <see cref="FriendEntry"/>。</summary>
         public FriendEntry[] friends = new FriendEntry[0];
 
+        /// <summary>本機黑名單(官方「設置阻止」)。與 <see cref="friends"/> 同一種資料、同一個理由住在本機,
+        /// 語意是「我這台機器不顯示他說的話」——見 <see cref="BlockList"/>。</summary>
+        public FriendEntry[] blocked = new FriendEntry[0];
+
         public UserProfile() { }
 
         public UserProfile(string id, string name, int gender)
@@ -193,6 +197,7 @@ namespace Sdo.Settings
             if (fame < 0) fame = 0;   // 知名度只會往上加,負值必是壞檔 → 當 0(= LV 1)
             if (stats == null) stats = new PlayStats(); else stats.Sanitize();
             friends = SanitizeFriends(friends);
+            blocked = SanitizeFriends(blocked);   // 同一種清單(名字為鍵、去重、丟殘骸),見 BlockList
             // 家族/等級：只去頭尾空白（前後空白會讓「留空＝刻意不顯示」的判定失真，見 hasProfileOverrides）。
             familyName = (familyName ?? "").Trim();
             familyEmblem = (familyEmblem ?? "").Trim();
@@ -202,7 +207,7 @@ namespace Sdo.Settings
             return this;
         }
 
-        /// <summary>好友清單防呆:丟掉沒有名字的殘骸、依名字去重(同一個人被加兩次只留先加的那筆)。
+        /// <summary>好友/黑名單清單防呆:丟掉沒有名字的殘骸、依名字去重(同一個人被加兩次只留先加的那筆)。
         /// 鍵是名字而不是 id —— 理由見 <see cref="FriendList"/>。</summary>
         private static FriendEntry[] SanitizeFriends(FriendEntry[] src)
         {
