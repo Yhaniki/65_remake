@@ -608,7 +608,9 @@ namespace Sdo.UI
             // 隨機難度：房間只鎖定「難度範圍」(SongRandomRange)，實際歌曲/難度到這裡(進遊戲)才抽 → 每局重抽，
             // 同一個隨機設定每次進遊戲都是不同歌。easy/normal/hard 一起搜(見 SongListModel.RandomCandidates)。
             // 🔴 連線時**不要**重抽:這一場要玩哪一首是 server echo 的(RoomScreen.ApplyResolvedRound 已經套好),
-            //    每台自己再抽一次就會各玩一首歌。s.SongIsRandom 在套用 resolved 時已被清掉,這個判斷是第二道保險。
+            //    每台自己再抽一次就會各玩一首歌。`!online` 是唯一的守門 —— 以前這裡寫「s.SongIsRandom 在套用
+            //    resolved 時已被清掉,這個判斷是第二道保險」,那行清旗標的程式碼已經拿掉了(隨機難度是**房間設定**,
+            //    不該被某一局的結果清成具體的歌;而且它從沒真的執行過,見 RoomScreen.ApplyResolvedRound)。
             bool online = _ctx.Net != null && _ctx.Net.Match != null;
             if (s.SongIsRandom && !online)
             {
@@ -678,7 +680,15 @@ namespace Sdo.UI
             // .DPS next to it — an absolute path, which LoadAsset takes as-is, so it dances the real choreography
             // instead of the one ExternalDps would generate.
             game.dpsPath = !string.IsNullOrEmpty(s.ExternalDpsPath) ? s.ExternalDpsPath : "DANCE/" + s.SongFileId + ".DPS";
-            game.scenePath = "SCENE/" + s.StageFolder;           // selected 3D stage
+            // 這一局的場景 = 開場那一刻解析出來的那個（隨機場景抽出來的結果／線上是 server echo 的）。
+            // 🔴 讀 RoundStageFolder 而不是房間設定的 StageFolder：房間設定要維持「隨機」，縮圖才不會
+            // 在進遊戲那一瞬間變成抽到的那張（見 GameSession.RoundStageFolder）。"" = 沒經過房間的
+            // 開發／測試路徑 → 退回設定值。
+            game.scenePath = "SCENE/" + (string.IsNullOrEmpty(s.RoundStageFolder) ? s.StageFolder : s.RoundStageFolder);
+            // 個人隊形也是這一局解析出來的（房間設定的 3=隨機 在開場那刻抽成 0..2，見 RoundFormationChoice）。
+            // 🔴 連線時這一行會被 WireNetGameplay 用 server echo 的那份覆蓋（那才是全場一致的權威值）；
+            // 離線以前根本沒有人設這個欄位 → 永遠是 0，在選歌對話框選了扇形/環線也照樣站基本隊形。
+            game.formationType = s.RoundFormationType >= 0 ? s.RoundFormationType : 0;
             // DEV: SDO_AUTOPLAY=1 → 用內建的 demo auto-player 代打。
             // 驗連線的分數流需要「分數真的會漲」,而亂按 lane 鍵在節奏遊戲裡幾乎全是 MISS
             // (負分被夾到 0)→ 兩台都停在 0,證明不了任何事。autoPlay 打得準,分數才會動。

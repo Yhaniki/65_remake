@@ -5309,13 +5309,10 @@ namespace Sdo.UI.Screens
             var s = Ctx != null ? Ctx.Session : null;
             var r = new NetResolvedRound();
             if (s == null) return r;
-            r.SceneId = s.StageRandom
-                ? Random.Range(0, NetLimits.MaxSceneId + 1)   // 隨機場景 → 現在抽
-                : Mathf.Clamp(s.StageId, 0, NetLimits.MaxSceneId);
-            // 隊形:GameSession.Formation 的 3 = 隨機 → 抽 0..2(官方只有三張個人隊形表)
-            r.FormationType = s.Formation >= NetResolvedRound.FormationTypeCount
-                ? Random.Range(0, NetResolvedRound.FormationTypeCount)
-                : Mathf.Clamp(s.Formation, 0, NetResolvedRound.FormationTypeCount - 1);
+            // 隨機場景 → 現在抽(結果只進這一局,房間設定不動,見 RoundStageChoice)
+            r.SceneId = RoundStageChoice.Pick(s.StageRandom, s.StageId, NetLimits.MaxSceneId, Random.Range);
+            // 隊形:GameSession.Formation 的 3 = 隨機 → 抽 0..2(官方只有三張個人隊形表),同樣不寫回設定
+            r.FormationType = RoundFormationChoice.Pick(s.Formation, Random.Range);
             // 組隊版型:湊得出來才填(TeamsCanStart 已經在 OnStart 擋過湊不出來的情形)
             var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             if (room != null && TeamsCanStart(room, out bool teamMode) && teamMode)
@@ -5336,6 +5333,24 @@ namespace Sdo.UI.Screens
             return r;
         }
 
+        /// <summary>
+        /// 離線這一局的場景 + 隊形:房間設定是隨機 → 現在抽;指定 → 就是那個。都寫進 Round*,設定不動。
+        ///
+        /// 線上這件事是房主抽好、server echo 回來的(<see cref="BuildResolvedRound"/> / <see cref="ApplyResolvedRound"/>),
+        /// 離線沒有那一段 —— 以前離線隨機場景實際上跑的是「按 ◄ ► 選到隨機那一刻」抽的佔位值,
+        /// 也就是不重選就每一局都同一個場景;隊形更是**完全沒接**(離線 game.formationType 永遠是 0,
+        /// 在選歌對話框選了扇形/環線也沒有用)。兩邊現在都是每一局重抽,而且都不動房間設定。
+        /// </summary>
+        private void ResolveLocalRound()
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null) return;
+            var st = StageCatalog.Get(RoundStageChoice.Pick(s.StageRandom, s.StageId, NetLimits.MaxSceneId, Random.Range));
+            s.RoundStageId = st.Id;
+            s.RoundStageFolder = st.Folder;
+            s.RoundFormationType = RoundFormationChoice.Pick(s.Formation, Random.Range);
+        }
+
         /// <summary>requestStart 送出去之後沒有回應 → 放開按鈕。不放的話玩家會以為遊戲卡死。</summary>
         private void TickAwaitingMatchStart()
         {
@@ -5353,14 +5368,25 @@ namespace Sdo.UI.Screens
             var r = m.Resolved;
             if (r != null)
             {
-                // 🔴 StageFolder 才是 gameplay 真正用的(scenePath = "SCENE/" + StageFolder)——
-                // 只設 StageId 的話場景還是舊的那個,而且兩台會不一樣(症狀:「場景不同步」)。
+                // 🔴 落點是 Round* 而不是房間設定的 Stage*:寫回設定的話,房間 win2 那張場景縮圖會在進遊戲
+                // 那一瞬間從 RANDOM 變成抽到的場景,回房之後房間也不再是「隨機場景」了(房主那台還會把
+                // sceneRandom=false 推給 server → 全房一起變)。設定歸設定,這一局的結果歸這一局。
+                //
+                // 🔴 Folder 才是 gameplay 真正用的(scenePath = "SCENE/" + RoundStageFolder)——
+                // 只設 id 的話場景還是舊的那個,而且兩台會不一樣(症狀:「場景不同步」)。
                 var st = StageCatalog.Get(r.SceneId);
-                s.StageRandom = false;          // 已經抽好了 → 進場不要再抽一次
-                s.StageId = st.Id;
-                s.StageFolder = st.Folder;
-                s.Formation = Mathf.Clamp(r.FormationType, 0, NetResolvedRound.FormationTypeCount - 1);
-                if (r.IsRandomSong) s.SongIsRandom = false;   // 同理:歌也抽好了
+                s.RoundStageId = st.Id;
+                s.RoundStageFolder = st.Folder;
+                // 隊形同理:落在 Round*,房間設定的「隨機隊形」要留著(否則打完一局就定死成抽到的那一種)。
+                s.RoundFormationType = Mathf.Clamp(r.FormationType, 0, NetResolvedRound.FormationTypeCount - 1);
+                // 🔴 這裡以前還有一行 `if (r.IsRandomSong) s.SongIsRandom = false;` —— 已刪掉。
+                // 兩個理由:①「隨機難度」跟隨機場景/隊形一樣是**房間設定**,不能被某一局的結果清掉
+                //   (清掉之後房主推給 server 的 song.randomTitle 也變 false → 房間面板從「隨機難度 X」
+                //    變成抽到那首歌的歌名+等級+BPM,等於把下一局要抽的池子提前揭曉了);
+                // ② 它其實從來沒被執行過 —— resolved.randomSong 沒有任何地方會填(host 端不抽),
+                //   所以線上的隨機難度目前是「選歌那一刻抽一首,之後每局都是同一首」。那是功能缺口,
+                //   不是這裡能修的:要補的話是 BuildResolvedRound 抽一首**官方**歌填進 r.RandomSong
+                //   (server 已經支援:NetRoom.RequestStart 用 resolved.RandomSong ?? 房間的歌)。
             }
             // 歌本身:server 的那份才是這一場真正要玩的(隨機難度時是抽出來的那首)。
             // 難度**不是** —— 自由模式下每個人打自己在「難度設置」挑的那個(見 LocalPlaySlot)。
@@ -5493,6 +5519,7 @@ namespace Sdo.UI.Screens
                 Notice(room != null && string.IsNullOrEmpty(room.SongTitle) ? "room.need_song" : "room.waiting_players");
                 return;
             }
+            ResolveLocalRound();               // 離線沒有 server echo → 這一局的場景/隊形自己抽(房間設定不動)
             _starting = true;
             _returnedFromStage = true;         // 記住:待會回房的那次 OnShow 不再廣播「進入舞台遊戲」、訊息欄也不清
             UiSfx.Play(UiSfx.GameStart);       // 開始音效

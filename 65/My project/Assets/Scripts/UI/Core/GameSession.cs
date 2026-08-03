@@ -75,11 +75,28 @@ namespace Sdo.UI.Core
         public bool SongIsRandom;
         public int SongRandomRange;   // SongSelectScreen.RandRanges 索引（哪個難度區間）
 
+        // ---- 房間**設定**的場景(房主在選歌對話框選的那個)。這三個值只有玩家自己改設定時才會動。----
         public string StageFolder = "SCN0009";
         public int StageId = 9;
-        // true = 選歌時選的是「隨機場景」→ 房間第二層圖顯示 RANDOM（雖然 gameplay 仍用上面解析出的具體場景）。
-        // 預設 true：一開始還沒選歌，房間就顯示 random 場景。見 SongSelectScreen.OnConfirm / RoomScreen。
+        // true = 選的是「隨機場景」→ 房間第二層圖顯示 RANDOM，實際場景每一局開場才抽(見 RoundStageFolder)。
+        // 預設 true：一開始還沒選歌，房間就顯示 random 場景。見 SongSelectScreen.ApplySceneToSession / RoomScreen。
         public bool StageRandom = true;
+
+        // ---- 這一局**實際**跑的場景(隨機場景在按下「開始」那一刻抽出來的結果；線上是 server echo 的那個)。----
+        //
+        // 🔴 一定要跟上面的房間設定分開:以前是把抽出來的場景直接寫回 StageId/StageFolder 並把 StageRandom
+        // 關掉,於是進遊戲那一瞬間房間 win2 的場景縮圖就從 RANDOM 變成抽到的那張(使用者回報的症狀),
+        // 而且回房之後房間設定已經被改成那個具體場景 —— 下一局不再隨機,房主那台還會把 sceneRandom=false
+        // 透過 NetRoomSettingsPublisher 推給 server,全房的縮圖跟著一起變。設定是設定,這一局的結果是結果。
+        //
+        // "" = 還沒解析(例如直接進 gameplay 的開發路徑)→ 退回 StageFolder(見 FrontendApp.StartGameplay)。
+        public string RoundStageFolder = "";
+        public int RoundStageId = -1;
+
+        // 這一局實際用的個人隊形(0..2)。房間設定的 <see cref="Formation"/> 有第四個選項 3=隨機,
+        // 一樣是開場那一刻才抽 —— 抽出來的值寫回設定的話,「隨機隊形」會在打完一局之後變成抽到的那一種
+        // (房間面板的隊形下拉、線上推給 server 的房間設定都會跟著改)。-1 = 還沒解析 → gameplay 用 0。
+        public int RoundFormationType = -1;
 
         public string NoteSkin = "NOTEIMAGE_5";
 
