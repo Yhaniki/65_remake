@@ -146,6 +146,44 @@ namespace Sdo.UI.Core
             // 呼叫)；首次(wallet 未 seeded)才發起始金額。這裡不再種錢包，避免每次開機把花掉的錢補回去。
         }
 
+        /// <summary>
+        /// 這一局要玩的是**官方歌** → 寫上 gn/fileId/顯示欄位,並把外部歌那一整組欄位關掉。
+        ///
+        /// 🔴 <see cref="IsExternalSong"/> 是 <c>FrontendApp.StartGameplay</c> 唯一的分岔點:它還留著 true 的話,
+        /// 譜、音檔、生成的舞蹈**全部**走 External* 那組舊值 —— SongGn 明明已經是官方那首,放出來的卻是
+        /// 這台上一次選過的外部歌。所以「換成官方歌」不能只寫 SongGn,一定要走這裡。
+        ///
+        /// (實機症狀:房主選 sdom2530k.gn,旁觀者進場放的是他自己上次玩到一半跳出的那首 osu 歌。
+        ///  旁觀者/非房主的 session 是他**自己**選過的歌 —— 只有開場時 server echo 的那份會蓋過去,
+        ///  而那條路徑以前只蓋 gn,沒有關旗標。)
+        ///
+        /// <paramref name="title"/> / <paramref name="artist"/> 傳 null = 不動(呼叫端查不到目錄時)。
+        /// </summary>
+        public void SetOfficialSong(string gn, int fileId, string title, string artist)
+        {
+            SongGn = gn;
+            SongFileId = fileId;
+            if (title != null) SongTitle = title;
+            if (artist != null) SongArtist = artist;
+
+            // 旗標是關鍵的那一行;其餘欄位一起清掉是為了不要留下「看起來還有效」的殘值 ——
+            // 下一首外部歌只會覆寫它自己有的欄位,舊值留著遲早會被別的路徑讀到。
+            IsExternalSong = false;
+            ExternalChartPath = "";
+            ExternalChartIndex = 0;
+            ExternalChartFormat = 0;
+            ExternalChartSeed = 0;
+            ExternalDpsPath = "";
+            ExternalAudioPath = "";
+            ExternalLevel = 0;
+            ExternalFolderPath = "";
+            ExternalSongKey = "";
+            ExternalPackId = "";
+            ExternalSongBpm = 0;
+            ExternalSongChartPaths = new string[0];
+            ExternalSongChartIndices = new int[0];
+        }
+
         /// <summary>回傳 steps 裡最接近 want 的檔位（steps 空 → 直接回 want）。</summary>
         public static float NearestSpeed(float[] steps, float want)
         {

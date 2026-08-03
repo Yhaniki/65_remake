@@ -5394,8 +5394,17 @@ namespace Sdo.UI.Screens
             if (m.Song.Official)
             {
                 if (string.IsNullOrEmpty(m.Song.Gn)) return;
-                s.SongGn = m.Song.Gn;
-                s.SongFileId = m.Song.FileId;
+                // 🔴 一定要走 SetOfficialSong,不能只寫 SongGn:非房主/旁觀者的 session 裡是**他自己**
+                // 上次選的歌,那首可能是外部歌 → IsExternalSong 還留著 true,進場就會照舊放那首外部歌
+                // (FrontendApp.StartGameplay 只看這個旗標,見 GameSession.SetOfficialSong 的註解)。
+                //
+                // 顯示欄位優先用本機目錄(官方歌每台都一樣);查不到才用 server 帶來的那份。
+                // 隨機難度局的 Title 是「隨機難度 X」標籤而不是歌名 → 那種情況寧可留 gn,不要把標籤當歌名。
+                var meta = Sdo.Game.SongCatalog.Get(m.Song.Gn);
+                string title = meta != null ? (meta.title ?? m.Song.Gn)
+                             : (!m.Song.RandomTitle && !string.IsNullOrEmpty(m.Song.Title) ? m.Song.Title : m.Song.Gn);
+                string artist = meta != null ? (meta.artist ?? "") : (m.Song.RandomTitle ? "" : (m.Song.Artist ?? ""));
+                s.SetOfficialSong(m.Song.Gn, m.Song.FileId, title, artist);
                 s.Difficulty = (Difficulty)LocalPlaySlot(m.Song, Mathf.Clamp(m.Song.ChartIndex, 0, 2));
                 return;
             }
