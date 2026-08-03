@@ -392,6 +392,21 @@ namespace Sdo.Game.Net
                     CompletePending(node);
                     break;
 
+                // 🔴 這兩條以前**漏在這裡**,於是 server 回話了、client 也收到了,卻掉進 default 被丟掉,
+                //    _pending 裡的回呼永遠不觸發:
+                //      • userListResult → 大廳玩家名單永遠停在「自己 + dev 假人」那份墊檔
+                //        (LobbyScreen.RequestOnlineUsers 那句「回呼可能永遠不觸發」就是這個洞的症狀,
+                //         不是它猜的封包掉了 —— 墊檔頂著,所以看起來像有在動)。
+                //      • cardResult   → 點開別人的個人資料永遠是空的(它沒有墊檔可以頂,直接全 0)。
+                //    server 測試抓不到:那些測試直接讀 server 送出去的訊息,不經過這個 switch。
+                case NetProto.UserListResult:
+                    CompletePending(node);
+                    break;
+
+                case NetProto.PlayerCardResult:
+                    CompletePending(node);
+                    break;
+
                 case NetProto.Kicked:
                     {
                         string reason = NetJson.Str(node, "reason");
@@ -529,7 +544,13 @@ namespace Sdo.Game.Net
                     }
 
                 default:
-                    // 不認得的訊息:可能是新版 server。忽略比斷線好。
+                    // 🔴 **先**讓帶 rq 的回應有機會回到發起者,再談忽略。
+                    //    上面漏掉 userListResult / cardResult 的教訓是:「每加一條 request/response
+                    //    就要記得回來補一個 case」這種規則沒有人會記得,而漏掉的時候完全沒有錯誤 ——
+                    //    只有一個永遠不觸發的回呼,以及一個看起來像網路不穩的畫面。
+                    //    沒有人在等這個 rq 時 CompletePending 什麼都不做,與原本的忽略一模一樣。
+                    // 真的不認得的訊息(可能是新版 server)就到此為止 —— 忽略比斷線好。
+                    CompletePending(node);
                     break;
             }
         }
