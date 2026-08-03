@@ -40,14 +40,10 @@ namespace Sdo.UI.Screens
         private Camera _maskedCam; private int _savedMask;
         private int _gender;   // 0=女, 1=男
 
-        // 改名框：改「目前選的性別」對應那個 user 的名字（女 00000000 / 男 00000001）。
-        private string _nameEdit; private int _nameEditFor = -1; private string _nameStatus = "";
-        private Rect _nameWin; private bool _nameWinInit;   // 可拖動視窗（螢幕像素）；預設落在 4:3 內容區內
-        private const int NameWinId = 0x6E616D65;           // "name"
-        // IMGUI 樣式只能在 OnGUI 期間（GUI.skin 有效時）建 → lazy getter。
-        private GUIStyle _hintStyle;
-        private GUIStyle NameHintStyle => _hintStyle ?? (_hintStyle =
-            new GUIStyle(GUI.skin.label) { wordWrap = true, normal = { textColor = new Color(0.7f, 0.7f, 0.7f) } });
+        // 左側那塊面板：上面是改名（改「目前選的性別」對應那個 user 的名字，女 00000000 / 男 00000001），
+        // 展開後是 config.ini 裡「遊戲內沒有其它 UI 可以改」的設定全集（見 StartupConfigPanel / StartupConfigSchema）。
+        private StartupConfigPanel _panel;
+        private int _nameEditFor = -1;   // 面板目前帶的是哪個性別的名字（換性別要重帶）
 
         private static Sprite An(string n) => LobbySelArt.An(n);
 
@@ -192,19 +188,26 @@ namespace Sdo.UI.Screens
             if (!Visible || ScreenTransition.Busy) return;   // 轉場中(進房/進商城漸黑漸亮)先不吃 ESC
             // 商城 / 輸入房號 框疊在本畫面上時,ESC 是它們的(關框),不是本畫面的(結束遊戲)。
             if (FrontendApp.Instance != null && (FrontendApp.Instance.ShopOpen || FrontendApp.Instance.JoinRoomOpen)) return;
+            // 設定面板展開時鍵盤歸它管（欄位裡在打字）：F2 不開編輯器、ESC 只收合面板而不是結束遊戲。
+            bool panelOpen = _panel != null && _panel.Expanded;
             // F2：開發用 —— 進譜面編輯器。先把前端收掉並註冊「編輯器 ESC 退出時還原前端」（Sdo.Game 不能反向引用
             // Sdo.UI，所以用回呼把還原注進去），再開編輯器。編輯器開著時本畫面的 canvas 會被停用 → Update 不再跑。
-            if (Input.GetKeyDown(KeyCode.F2) && ChartEditorScreen.Instance == null)
+            if (!panelOpen && Input.GetKeyDown(KeyCode.F2) && ChartEditorScreen.Instance == null)
             {
                 ChartEditorScreen.OnExit = () => { var f = FrontendApp.Instance; if (f != null) f.ShowAfterTool(); };
                 FrontendApp.Instance?.HideForTool();
                 ChartEditorScreen.Launch();
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.Escape)) Sdo.Game.AppQuit.Now();
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (_panel != null && _panel.HandleEscape()) return;   // 展開中 → 只收合面板
+                Sdo.Game.AppQuit.Now();
+            }
         }
 
-        // DEBUG 框：改目前選的性別那個 user 的名字。IMGUI 小框（沿用 ChartEditorScreen 的 GUI.skin.box + TextField 樣式）。
+        // 左側面板：改名 + （展開後）config.ini 裡沒有其它 UI 的設定全集。IMGUI（沿用 ChartEditorScreen 的
+        // GUI.skin.box + TextField 樣式），版面寫在設計像素、由 StartupConfigPanel 自己縮放到 4:3 內容區。
         // 編輯器開著時本畫面 canvas 被停用 → OnGUI 本來就不會跑，這裡的 Instance 守門只是保險。
         private void OnGUI()
         {
@@ -212,42 +215,21 @@ namespace Sdo.UI.Screens
             if (FrontendApp.Instance != null && (FrontendApp.Instance.ShopOpen || FrontendApp.Instance.JoinRoomOpen)) return;
             if (ChartEditorScreen.Instance != null) return;
 
-            if (_nameEditFor != _gender) { _nameEdit = SeedName(_gender); _nameEditFor = _gender; _nameStatus = ""; }
+            if (_panel == null) _panel = new StartupConfigPanel { SaveName = SaveName };
+            if (_nameEditFor != _gender) { _panel.SetName(SeedName(_gender)); _nameEditFor = _gender; }
 
-            if (!_nameWinInit) { _nameWin = DefaultNameWin(); _nameWinInit = true; }
-            _nameWin = GUILayout.Window(NameWinId, _nameWin, DrawNameWindow, "玩家名稱",
-                                        GUILayout.Width(240f), GUILayout.Height(92f));
-            // 不讓它被拖到整個看不見（至少留一角在畫面內）
-            _nameWin.x = Mathf.Clamp(_nameWin.x, 8f - _nameWin.width, Screen.width - 8f);
-            _nameWin.y = Mathf.Clamp(_nameWin.y, 0f, Screen.height - 24f);
+            _panel.Draw(ContentRect());
         }
 
-        // 視窗內容；GUI.DragWindow 讓整個視窗（除了輸入框/按鈕本身）都能拖。
-        private void DrawNameWindow(int id)
-        {
-            GUILayout.Space(2f);
-            GUILayout.BeginHorizontal();
-            _nameEdit = GUILayout.TextField(_nameEdit ?? "", 24, GUILayout.Height(22f));
-            if (GUILayout.Button("儲存", GUILayout.Width(52f), GUILayout.Height(22f))) SaveName();
-            GUILayout.EndHorizontal();
-            if (!string.IsNullOrEmpty(_nameStatus)) GUILayout.Label(_nameStatus, NameHintStyle);
-            GUI.DragWindow();
-        }
-
-        // 預設位置：落在 4:3 內容區（背景圖）內、靠左垂直置中 —— IMGUI 用螢幕像素，直接放螢幕左邊會跑到
-        // pillarbox 黑邊上，所以先算出 800×600 內容在螢幕上的實際矩形，再把視窗放進去。
-        private static Rect DefaultNameWin()
-        {
-            const float w = 240f, h = 92f;
-            Rect c = ContentRect();
-            return new Rect(c.x + Mathf.Min(24f, c.width * 0.04f), c.y + (c.height - h) * 0.5f, w, h);
-        }
-
-        // 800×600(4:3) 內容在螢幕上的矩形：寬螢幕→兩側 pillarbox、窄螢幕→上下 letterbox（同 AspectController 的取景）。
+        // 800×600 內容在螢幕上的矩形 —— 一定要跟 AspectController 現在的取景模式一致，面板才會**貼在背景圖上的
+        // 同一個位置**（IMGUI 用螢幕像素，猜錯的話面板會整塊偏掉、甚至壓到底下的男/女核取方塊）：
+        //   * Stretch（預設，畫面拉滿）＝整個視窗就是那 800×600，橫豎縮放比例可以不一樣。
+        //   * Pillarbox ＝置中的 4:3 子矩形，寬螢幕留左右黑邊、窄螢幕留上下黑邊。
         private static Rect ContentRect()
         {
-            const float aspect = 800f / 600f;
             float sw = Screen.width, sh = Mathf.Max(1f, Screen.height);
+            if (Sdo.Game.AspectController.Mode != Sdo.Game.AspectMode.Pillarbox) return new Rect(0f, 0f, sw, sh);
+            const float aspect = 800f / 600f;
             if (sw / sh > aspect) { float cw = sh * aspect; return new Rect((sw - cw) * 0.5f, 0f, cw, sh); }
             float ch = sw / aspect; return new Rect(0f, (sh - ch) * 0.5f, sw, ch);
         }
@@ -262,16 +244,17 @@ namespace Sdo.UI.Screens
 
         // 存：把名字寫回該性別的 profile.json（＋這次執行的 session，房間/遊戲頭上名牌就吃得到）。
         // SetActive 到該性別（OnEnter 本來也會做同一件事）→ 改 name → Save。空白名字 Sanitize 會擋，這裡先攔。
-        private void SaveName()
+        // 回傳給面板顯示的狀態訊息。
+        private string SaveName(string edited)
         {
-            string name = (_nameEdit ?? "").Trim();
-            if (name.Length == 0) { _nameStatus = "名稱不可空白"; return; }
+            string name = (edited ?? "").Trim();
+            if (name.Length == 0) return "名稱不可空白";
             string id = ProfileManager.SeededIdForGender(_gender);
             ProfileManager.SetActive(id);
             ProfileManager.Active.name = name;
             ProfileManager.Save();
             if (Ctx != null && Ctx.Session != null) Ctx.Session.LocalPlayerName = name;
-            _nameStatus = "已儲存，進入房間後生效";
+            return "已儲存，進入房間後生效";
         }
 
         private void SelectGender(int g)
