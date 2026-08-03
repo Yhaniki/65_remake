@@ -244,6 +244,8 @@ namespace Sdo.UI
             });
             // 進房間轉場漸亮時，房間 UI 從四邊滑入（男女選擇→房間、遊戲→房間 共用；商城進出不觸發，房間仍在底下）。
             Nav.PlayRoomEntrance = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.PlayEntrance(); };
+            // 選歌畫面改了房主設定(場景) → 底下的房間面板立刻重畫，不必等房間事件。
+            Nav.RefreshRoomPanel = () => { if (_screens.TryGetValue(ScreenId.Room, out var r) && r is RoomScreen rr) rr.RefreshPanel(); };
 
             // Phase 6 — font atlas warmup (rasterises the CJK glyphs of the visible song titles).
             prog?.Set(0.94f, "準備字型…");

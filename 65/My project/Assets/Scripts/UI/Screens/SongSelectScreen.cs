@@ -1177,6 +1177,39 @@ namespace Sdo.UI.Screens
             int n = _stages.Count + 1;   // +1 for the random slot
             _sceneIndex = ((_sceneIndex + delta) % n + n) % n;
             UpdateScene();
+            ApplySceneToSession();   // 場景是**房主設定**,按下去就生效(同模式/隊形/旁觀那三個下拉)
+        }
+
+        /// <summary>
+        /// 把場景選擇寫進 session(+持久化 +線上推給 server),並叫房間面板重畫。
+        ///
+        /// 🔴 這件事以前只在「確認選歌」時做,而場景與模式/隊形/旁觀一樣是**房主設定**、和選哪首歌無關 ——
+        /// 房主只是進來把場景改成隨機、沒有重選歌就關掉對話框時,設定整個被丟掉:房間 win2 外面那張場景縮圖
+        /// 還是舊場景,線上其他人收到的房間設定也沒變(<see cref="NetRoomSettingsPublisher"/> 是拿 session 去比對的)。
+        /// 所以改成一按 ◄ ► 就套用,與底部那三個下拉的行為一致。
+        /// </summary>
+        private void ApplySceneToSession()
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null || _stages.Count == 0) return;
+
+            // slot 0 = 隨機:StageId 仍填一個實際場景當佔位(進遊戲時 RoomScreen 會依 StageRandom 重抽),
+            // 面板/其他人看的是 StageRandom 這個旗標。
+            bool randomScene = _sceneIndex <= 0;
+            var stage = randomScene
+                ? _stages[Random.Range(0, _stages.Count)]
+                : _stages[Mathf.Clamp(_sceneIndex - 1, 0, _stages.Count - 1)];
+            s.StageId = stage.Id;
+            s.StageFolder = stage.Folder;
+            s.StageRandom = randomScene;   // 房間第二層圖：選隨機就顯示 RANDOM，選具體場景就顯示該場景縮圖
+            RoomConfig.defaultScene = randomScene ? -1 : stage.Id;   // 持久化：玩家選的場景寫回 config.ini（隨機→-1；刪檔→回隨機）
+            RoomConfig.Save();
+
+            // 線上:房主的房間設定要送上去,別人才看得到(平常靠每份房間快照檢查一次,但改設定本身不會產生快照 →
+            // 這裡主動送一次;守門是「跟 server 手上的不一樣才送」,所以不會重複送)。
+            NetRoomSettingsPublisher.SyncIfHost(Ctx);
+            // 離線沒有任何房間事件會被觸發 → 直接叫底下的房間面板重畫,縮圖才會立刻換。
+            Nav.RefreshRoomPanel?.Invoke();
         }
 
         private void UpdateScene()
@@ -1538,16 +1571,9 @@ namespace Sdo.UI.Screens
                 s.ExternalSongChartIndices = new[] { _selected.ChartIndex(0), _selected.ChartIndex(1), _selected.ChartIndex(2) };
                 EnsureExternalDuration(_selected);               // 進遊戲時才量真正音檔長度(選歌瀏覽時保持譜長不跳);寫回目錄,下次回選歌顯示真長度
             }
-            // scene: slot 0 = random -> pick an actual scene now; else the chosen stage.
-            bool randomScene = _sceneIndex <= 0 && _stages.Count > 0;
-            var stage = randomScene
-                ? _stages[Random.Range(0, _stages.Count)]
-                : _stages[Mathf.Clamp(_sceneIndex - 1, 0, _stages.Count - 1)];
-            s.StageId = stage.Id;
-            s.StageFolder = stage.Folder;
-            s.StageRandom = randomScene;   // 房間第二層圖：選隨機就顯示 RANDOM，選具體場景就顯示該場景縮圖
-            RoomConfig.defaultScene = randomScene ? -1 : stage.Id;   // 持久化：玩家選的場景寫回 config.ini（隨機→-1；刪檔→回隨機）
-            RoomConfig.Save();
+            // scene: 按 ◄ ► 當下就已經套進 session 了(見 ApplySceneToSession)；這裡再套一次是為了
+            // 「完全沒碰過場景選擇器就按確認」的情況(初值來自 session/config，套用等於原值，不會改到東西)。
+            ApplySceneToSession();
             // mode/formation/looker are written live by the dropdown callbacks.
 
             Ctx.Rooms.SetSong(s.SongTitle);

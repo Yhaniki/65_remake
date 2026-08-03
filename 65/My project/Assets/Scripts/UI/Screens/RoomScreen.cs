@@ -668,6 +668,14 @@ namespace Sdo.UI.Screens
             if (_dropCombo != null) _dropCombo.CloseList();
         }
 
+        /// <summary>外部(選歌 overlay)改了房主設定後叫房間右側面板重畫。房間平常只在 <c>RoomUpdated</c> 時重畫，
+        /// 而「在選歌畫面改場景」離線不會產生任何房間事件 → 沒有這條路的話外面那張場景縮圖要等關掉對話框才會對。</summary>
+        public void RefreshPanel()
+        {
+            if (Ctx == null || Ctx.Session == null) return;
+            RenderWin2();
+        }
+
         /// <summary>進房間轉場的「四邊滑入」進場：把三個面板先擺到收合(畫面外)位置，再由 Update 補間滑回展開
         /// （win1 由上、win2 由右、win3 由下滑進來）。由 ScreenTransition 在漸亮開始時呼叫（Nav.PlayRoomEntrance），
         /// 這樣滑入動作正好隨黑幕散去而顯現。非轉場路徑(dev hooks)不呼叫 → OnShow 的 ResetCollapse 直接展開，不受影響。</summary>

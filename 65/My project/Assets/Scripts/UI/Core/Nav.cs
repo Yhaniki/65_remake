@@ -13,6 +13,10 @@ namespace Sdo.UI.Core
         public static Action RefreshGenderPreview; // 商城(modal)關閉後：叫男女選擇畫面用最新穿搭/性別刷新 3D 預覽 (GenderSelectScreen 綁)
         public static Action StartGame;   // host pressed Start -> hand off to gameplay (ScreenGameplay) with the session selection
         public static Action PlayRoomEntrance;   // 進房間轉場漸亮時觸發：房間 UI 從四邊滑入（見 RoomScreen.PlayEntrance）
+        // 選歌(疊在房間上的 overlay)改了房主設定 → 叫底下的房間右側面板立刻重畫 (RoomScreen 綁 RenderWin2)。
+        // 房間本來只在收到 RoomUpdated 時重畫，而「改場景」離線根本不會產生任何房間事件 →
+        // 對話框關掉之前，外面那張場景縮圖會一直停在舊場景。
+        public static Action RefreshRoomPanel;
 
         // 座位右鍵「玩家信息」→ 玩家資訊視窗（PlayerInfoModal）。
         // 走 Nav 而不是讓 RoomScreen 直接抓 FrontendApp.Instance.XxxModal：那個 modal 與畫面是分開演進的，
