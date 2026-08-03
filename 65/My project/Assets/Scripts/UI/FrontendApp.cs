@@ -979,8 +979,9 @@ namespace Sdo.UI
                     FullCombo = (r.Bad + r.Miss) == 0,
                 };
             }
-            // 畫在名次牌上的名次:**同分並列、不跳號**(1,1,2)。Rank 那一欄仍是嚴格順序 ——
-            // 輸贏定格/旗子要靠它挑出唯一的第一名(見 ScreenGameplay.TickFinishPoseDecision)。
+            // 畫在名次牌上的名次:**同分並列、不跳號**(1,1,2)。YOU WIN 旗也跟這一份
+            // (並列名次排進前半就出旗,見 RankingBoard.IsWinningPlace)。Rank 那一欄仍是嚴格順序 ——
+            // 場上的輸贏定格要靠它挑出唯一的第一名(見 ScreenGameplay.TickFinishPoseDecision)。
             var scores = new long[outRows.Length];
             for (int i = 0; i < outRows.Length; i++) scores[i] = outRows[i].Score;
             var display = Sdo.Ruleset.RankingBoard.DisplayRanks(scores);

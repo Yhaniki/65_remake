@@ -15,7 +15,7 @@ namespace Sdo.Game
         private void CalculateResultOutcome(ResultScreen.Row[] rows, out bool localWon,
                                             out int expGained, out int coinsGained)
         {
-            int place = 0;        // 嚴格名次(同分也分先後)→ 只有它能決定「誰做勝利動作 / 出 WIN 旗」
+            int place = 0;        // 嚴格名次(同分也分先後)→ 只有它能決定「誰做勝利動作」(場上只能有一個贏家)
             int shownPlace = 0;   // 畫面上寫的名次(同分並列、不跳號)→ 獎勵照它算,面板寫第幾名就領第幾名的
             for (int i = 0; rows != null && i < rows.Length; i++)
             {
@@ -26,15 +26,18 @@ namespace Sdo.Game
             }
 
             int players = Mathf.Max(1, rows != null ? rows.Length : 0);
-            localWon = !spectatorMode && place == 1;
             if (!spectatorMode && place > 0)
             {
-                _localWon = localWon;
-                // 戰績用的「贏」是**並列第一也算**(使用者指定:同分兩邊都記勝場)。輸贏定格與 WIN/LOSE 旗
-                // 仍然只有一個第一名(嚴格 place)—— 這幾件事刻意不同,見 ScreenGameplay.LocalWonForRecord。
+                // 場上的勝利定格/短曲只能有一個第一名(嚴格 place,平手照座位序)—— 兩台不能同時演勝利動作。
+                _localWon = place == 1;
+                // 戰績用的「贏」是**並列第一也算**(使用者指定:同分兩邊都記勝場)。
+                // 見 ScreenGameplay.LocalWonForRecord —— 這三件事(定格 / 戰績 / 結算旗)刻意各走各的。
                 _localWonForRecord = LocalTiedForTopRow(rows);
             }
             if (shownPlace <= 0) shownPlace = players;   // 找不到本機(旁觀)→ 按最後一名算(獎勵那邊本來就是 0)
+            // 結算面板的 YOU WIN 旗:**畫面上的名次**(同分並列)排進前半就算贏(使用者指定)——
+            // 兩個人打平就兩個都是第一名、兩台都出 YOU WIN;6 人局前三名都出。規則見 RankingBoard.IsWinningPlace。
+            localWon = !spectatorMode && Sdo.Ruleset.RankingBoard.IsWinningPlace(shownPlace, players);
 
             int bad = _score != null ? _score.BadCount : 0;
             int miss = _score != null ? _score.MissCount : 0;

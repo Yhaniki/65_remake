@@ -85,8 +85,9 @@ namespace Sdo.Ruleset
         /// <paramref name="scoresDesc"/> 要先照分數由高到低排好(<see cref="SortedIndices"/> 的順序)。
         ///
         /// 🔴 與 <see cref="Compare"/>/<see cref="LocalRank"/> 的**嚴格**順序是兩回事,而且必須並存:
-        /// 輸贏定格與 WIN/LOSE 旗只能有一個第一名(平手照座位序,兩台才會指向同一個人),
+        /// 場上的輸贏定格只能有一個第一名(平手照座位序,兩台才會指向同一個人),
         /// 但寫在結算面板與「N / M」上的名次,同分要一樣(使用者指定)。
+        /// 結算面板那面 YOU WIN 旗跟的是**這一份**(見 <see cref="IsWinningPlace"/>),不是嚴格順序。
         /// </summary>
         public static int[] DisplayRanks(IReadOnlyList<long> scoresDesc)
         {
@@ -124,9 +125,33 @@ namespace Sdo.Ruleset
         }
 
         /// <summary>
+        /// 這一局有幾個名次算「贏」——**前半,無條件捨去**(使用者指定:奇數人數時贏的比輸的少一個):
+        /// 2人→1、3人→1、4人→2、5人→2、6人→3。
+        ///
+        /// 🔴 至少留一個贏家:單人局(離線 solo)捨去會變成 0,那個人自己就是第一名卻拿到 LOSE 旗。
+        /// 人數 ≤0(沒有這一局)才是沒有贏家。
+        /// </summary>
+        public static int WinnerCount(int players) => players <= 0 ? 0 : Math.Max(1, players / 2);
+
+        /// <summary>
+        /// 結算面板要不要對這個人出 YOU WIN 旗(使用者指定)。
+        ///
+        /// 🔴 用的是 <see cref="DisplayRanks"/> 的**畫面名次**(同分並列、不跳號),不是嚴格名次 ——
+        /// 所以兩個人打成平手就是兩個第一名,兩台都出 YOU WIN;6 人局「兩個第一、兩個第二、兩個第三」
+        /// 的並列名次全都 ≤3,六個人也全都出 YOU WIN。
+        ///
+        /// 🔴 與**場上的勝利定格 / 短曲**是兩回事,不要合併:那邊只能有一個第一名(嚴格名次,平手照
+        /// 座位序,見 <see cref="Compare"/>),否則兩台會同時演勝利動作。這裡只管結算面板那面旗。
+        ///
+        /// <paramref name="displayRank"/> ≤ 0(旁觀 / 名單裡找不到自己)一律 false。
+        /// </summary>
+        public static bool IsWinningPlace(int displayRank, int players)
+            => displayRank > 0 && displayRank <= WinnerCount(players);
+
+        /// <summary>
         /// 本機是不是**並列**第一(同分也算)。名單裡沒有本機(旁觀)= false。
         ///
-        /// 🔴 這條與 <see cref="LocalRank"/> 是**兩件不同的事**,不要合併:名次面板與場上的勝利定格
+        /// 🔴 這條與 <see cref="LocalRank"/> 是**兩件不同的事**,不要合併:場上的勝利定格
         /// 只能有一個第一名(平手照座位序,見 <see cref="Compare"/>),但**勝負場的記錄**是
         /// 「同分兩邊都記勝場」(使用者指定)—— 兩個人打成平手,誰也沒輸給誰。
         /// </summary>

@@ -25,8 +25,9 @@ namespace Sdo.Game
             public int Rank;            // 1-based place — **嚴格**順序(照 (分數, 座位) 排,同分也一定分先後)
             /// <summary>畫在名次牌上的名次 —— **同分並列**(競賽排名 1,1,3;使用者指定)。0 = 用 <see cref="Rank"/>。
             ///
-            /// 🔴 與 <see cref="Rank"/> 分開是刻意的:輸贏定格與 WIN/LOSE 旗只能有一個第一名(那要嚴格順序,
-            /// 見 <c>ScreenGameplay.TickFinishPoseDecision</c>),但**寫在畫面上的名次**同分要一樣。</summary>
+            /// 🔴 與 <see cref="Rank"/> 分開是刻意的:場上的輸贏定格只能有一個第一名(那要嚴格順序,
+            /// 見 <c>ScreenGameplay.TickFinishPoseDecision</c>),但**寫在畫面上的名次**同分要一樣。
+            /// YOU WIN 旗跟的是這一份 —— 並列名次排進前半就出旗(<c>RankingBoard.IsWinningPlace</c>)。</summary>
             public int DisplayRank;
             public int UserId;
             public string Name;

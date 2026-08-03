@@ -64,6 +64,76 @@ namespace Sdo.Tests
             Assert.AreEqual((0, 2), RankingBoard.LocalDisplayRank(Roster(("x", 500, false), ("y", 300, false))));
         }
 
+        // ---- WinnerCount / IsWinningPlace(結算面板的 YOU WIN 旗:並列名次排進前半就出)----
+
+        [Test]
+        public void WinnerCount_IsTheTopHalf_RoundedDown()
+        {
+            // 使用者指定:前半、無條件捨去 —— 奇數人數時「贏的比輸的少一個」。
+            Assert.AreEqual(1, RankingBoard.WinnerCount(2));
+            Assert.AreEqual(1, RankingBoard.WinnerCount(3), "3 人:1 贏 2 輸");
+            Assert.AreEqual(2, RankingBoard.WinnerCount(4));
+            Assert.AreEqual(2, RankingBoard.WinnerCount(5), "5 人:2 贏 3 輸");
+            Assert.AreEqual(3, RankingBoard.WinnerCount(6));
+            // 單人局(離線 solo)捨去會變 0 → 自己是第一名卻拿 LOSE 旗。至少留一個贏家。
+            Assert.AreEqual(1, RankingBoard.WinnerCount(1));
+            Assert.IsTrue(RankingBoard.IsWinningPlace(1, 1), "只有自己 → 出 YOU WIN");
+            Assert.AreEqual(0, RankingBoard.WinnerCount(0), "沒有人 → 沒有贏家");
+            Assert.AreEqual(0, RankingBoard.WinnerCount(-3));
+        }
+
+        [Test]
+        public void OddPlayerCounts_LosersOutnumberWinnersByOne()
+        {
+            // 這條守的就是那句話本身:奇數人數,輸的一定比贏的多一個。
+            foreach (int players in new[] { 3, 5, 7, 9 })
+            {
+                int winners = RankingBoard.WinnerCount(players);
+                Assert.AreEqual(players - winners - 1, winners, players + " 人:贏 " + winners + " 要比輸的少一個");
+            }
+        }
+
+        [Test]
+        public void TwoPlayerTie_BothGetTheWinBanner()
+        {
+            // 🔴 使用者指定:兩個人打成平手 → 兩個都是第一名 → **兩台都出 YOU WIN**。
+            // 分出勝負時第二名照舊是 LOSE(2 人局只有第 1 名算贏)。
+            var tie = RankingBoard.DisplayRanks(new long[] { 71740, 71740 });   // 1, 1
+            Assert.IsTrue(RankingBoard.IsWinningPlace(tie[0], 2));
+            Assert.IsTrue(RankingBoard.IsWinningPlace(tie[1], 2), "同分的第二台也要出 YOU WIN");
+
+            var decided = RankingBoard.DisplayRanks(new long[] { 900, 100 });   // 1, 2
+            Assert.IsTrue(RankingBoard.IsWinningPlace(decided[0], 2));
+            Assert.IsFalse(RankingBoard.IsWinningPlace(decided[1], 2), "沒平手 → 第 2 名是 LOSE");
+        }
+
+        [Test]
+        public void SixPlayers_TopThreeWin()
+        {
+            for (int rank = 1; rank <= 3; rank++)
+                Assert.IsTrue(RankingBoard.IsWinningPlace(rank, 6), "6 人局第 " + rank + " 名要出 YOU WIN");
+            for (int rank = 4; rank <= 6; rank++)
+                Assert.IsFalse(RankingBoard.IsWinningPlace(rank, 6), "6 人局第 " + rank + " 名是 LOSE");
+        }
+
+        [Test]
+        public void SixPlayers_TwoFirst_TwoSecond_TwoThird_EveryoneWins()
+        {
+            // 使用者指定的極端例:三組各自平手 → 並列名次 1,1,2,2,3,3 全都 ≤3 → 六個人全出 YOU WIN。
+            var ranks = RankingBoard.DisplayRanks(new long[] { 900, 900, 500, 500, 100, 100 });
+            CollectionAssert.AreEqual(new[] { 1, 1, 2, 2, 3, 3 }, ranks);
+            for (int i = 0; i < ranks.Length; i++)
+                Assert.IsTrue(RankingBoard.IsWinningPlace(ranks[i], 6), "第 " + (i + 1) + " 列(並列第 " + ranks[i] + " 名)要出 YOU WIN");
+        }
+
+        [Test]
+        public void IsWinningPlace_NoLocalRow_IsNeverAWin()
+        {
+            // 旁觀 / 權威結果列裡找不到自己 → displayRank 0。**不能**判成贏(呼叫端另有 !spectatorMode 守門)。
+            Assert.IsFalse(RankingBoard.IsWinningPlace(0, 6));
+            Assert.IsFalse(RankingBoard.IsWinningPlace(-1, 6));
+        }
+
         // ---- LocalTiedForTop(戰績用的「贏」:同分也算)----
 
         [Test]
