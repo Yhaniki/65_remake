@@ -23,6 +23,16 @@ namespace Sdo.UI.Core
         public static bool ShouldRecordPlay(bool finished, bool spectator)
             => finished && !spectator;
 
+        /// <summary>
+        /// 這一局的戰績可以落地了嗎 —— <b>同一局只准一次</b>。
+        ///
+        /// 🔴 為什麼要有這條政策:呼叫端(<c>FrontendApp.ReturnFromGameplay</c>)是被 <c>Update</c> 每幀
+        /// 輪詢 <c>ResultConfirmed</c> 驅動的,而遊戲物件要等回房轉場漸黑結束才被拆掉 —— 中間十幾幀
+        /// 每一幀都會走到這裡。累加是不可逆的:少了這道門,一場會被記成十幾場(勝場 +13、plays +13,
+        /// 判定數同倍膨脹),而畫面上完全看不出來,只是個人資料頁的百分比從此是假的。
+        /// </summary>
+        public static bool ShouldRecordRun(bool alreadyRecorded) => !alreadyRecorded;
+
         /// <summary>這場的勝負要不要記?連線 + 非旁觀 + 普通/ShowTime 模式,三個都成立才記。</summary>
         public static bool ShouldRecordWinLoss(bool finished, bool spectator, bool online, int gameMode)
             => finished && !spectator && online && PlayStats.RecordsWinLoss(gameMode);

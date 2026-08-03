@@ -71,6 +71,7 @@ namespace Sdo.UI
         private Camera _uiCam;                        // camera that frames the 800×600 UI at a fixed 4:3 (AspectController)
         private ScreenGameplay _activeGame;                // the running gameplay instance (null = in the front-end)
         private bool _returningFromGame;              // 回房轉場已啟動（Update 每幀都會偵測 ResultConfirmed → 只觸發一次轉場）
+        private bool _statsRecorded;                  // 這一局的戰績已落地（同上：每幀輪詢的路，累加只能發生一次）
         private HashSet<GameObject> _preGameRoots;    // scene roots that existed before launch -> kept on exit
 
         // Suppress the play screen's self-boot before any scene script runs (BeforeSceneLoad always precedes
@@ -599,6 +600,7 @@ namespace Sdo.UI
         {
             if (_activeGame != null) return;
             _returningFromGame = false;   // 新的一局：解除上次回房轉場的守門
+            _statsRecorded = false;       // 新的一局：戰績還沒落地(見 RecordPlayStats)
             var s = _ctx.Session;
             // 沒選歌就不開場 —— 只寫 log:房間面板的歌名欄是空的,那已經說明了一切。
             if (!s.HasSong) { Debug.Log("[room] " + LocalizationManager.Get("room.need_song")); return; }
@@ -1154,6 +1156,12 @@ namespace Sdo.UI
         //    玩家按下確定時,權威名次早就到了。
         private void ReturnFromGameplay()
         {
+            // 🔴 守衛要在**最前面**。Update 每幀都看得到 ResultConfirmed，而 _activeGame 要等回房轉場
+            //    漸黑結束(TeardownGameplay)才變 null —— 中間那十幾幀會把整條路重跑十幾次。
+            //    以前守衛只擋在 TransitionToRoomFromGame 裡面，所以「一場」被記成十幾場：
+            //    勝場一次 +13、plays 一次 +13，判定數也跟著膨脹(個人資料頁的百分比因此全是假的)。
+            //    playFinished / backToRoom 同樣被重送十幾次。
+            if (_returningFromGame) return;
             RecordPlayStats();
             SendNetPlayFinished(); SendNetBackToRoom(); DetachNetGameplay(); TransitionToRoomFromGame();
         }
@@ -1171,6 +1179,10 @@ namespace Sdo.UI
         ///
         /// 分數物件是 plain managed state,gameplay 的 GameObject 被銷毀後仍讀得到 —— 但這裡是在
         /// TeardownGameplay **之前**呼叫的,所以不必依賴那件事。
+        ///
+        /// 🔴 <b>一局只能記一次。</b> <see cref="_statsRecorded"/> 是第二道門(第一道在
+        /// <see cref="ReturnFromGameplay"/>):累加是不可逆的,而這條路是被「每幀輪詢一個布林」驅動的 ——
+        /// 少一道門的代價不是畫面閃一下,是存檔裡的數字永久變成十幾倍。
         /// </summary>
         private void RecordPlayStats()
         {
@@ -1178,6 +1190,8 @@ namespace Sdo.UI
             if (game == null) return;
             var score = game.Score;
             if (score == null) return;
+            if (!PlayStatsRecorder.ShouldRecordRun(_statsRecorded)) return;
+            _statsRecorded = true;
 
             PlayStatsRecorder.Record(
                 ProfileManager.Active,

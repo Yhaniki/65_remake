@@ -118,6 +118,27 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void A_Run_Is_Recorded_Only_Once()
+        {
+            // 🔴 這條守的是一個真的發生過的 bug:回房那條路是被 Update 每幀輪詢 ResultConfirmed 驅動的,
+            //    而遊戲物件要等轉場漸黑結束才拆 —— 中間十幾幀每幀都會落地一次戰績。
+            //    症狀:打一場勝場從 14 變 27(一次 +13),plays/判定數同倍膨脹,勝率因此永遠是 100%。
+            Assert.IsTrue(PlayStatsRecorder.ShouldRecordRun(alreadyRecorded: false));
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordRun(alreadyRecorded: true));
+        }
+
+        [Test]
+        public void Repeated_Recording_Multiplies_The_Numbers()
+        {
+            // 為什麼上面那道門非有不可:累加本身沒有(也不該有)去重 —— 同一場記 13 次就真的是 13 場。
+            var s = new PlayStats();
+            for (int frame = 0; frame < 13; frame++) { s.AddPlay(100, 0, 0, 0); s.AddResult(true); }
+            Assert.AreEqual(13, s.plays);
+            Assert.AreEqual(13, s.wins);
+            Assert.AreEqual(1300, s.perfect);
+        }
+
+        [Test]
         public void Sanitize_Clamps_Corrupt_Values()
         {
             var s = new PlayStats { perfect = -1, cool = -1, bad = -1, miss = -1, plays = -1, wins = -1, losses = -1 };
