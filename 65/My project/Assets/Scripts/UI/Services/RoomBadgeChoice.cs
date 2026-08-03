@@ -53,10 +53,35 @@ namespace Sdo.UI.Services
         {
             if (!taken) return RoomSeatBadge.None;
             if (!isLocal && IsInMatch(play)) return RoomSeatBadge.Playing;
-            if (avail == Availability.Missing) return RoomSeatBadge.NoMap;
+            if (StillWithoutSong(avail)) return RoomSeatBadge.NoMap;
             if (isHost) return RoomSeatBadge.Host;
             return isReady ? RoomSeatBadge.Ready : RoomSeatBadge.None;
         }
+
+        /// <summary>
+        /// 這個人「還沒有這首歌」嗎 —— NO MAP 要一路掛到歌真的進歌庫為止。
+        ///
+        /// 🔴 <b>不能只認 <see cref="Availability.Missing"/>。</b>缺歌的人按過準備之後
+        /// (在上一首歌上按的),R17 刻意保留那份 Ready 意願 —— avail 變動不會取消它。
+        /// 於是下載一開始、avail 從 missing 翻成 downloading 的那一刻,NO MAP 這張就消失,
+        /// 徽章掉回底下的 READY:歌一個位元組都還沒進歌庫,房主卻看到那格寫著「準備」。
+        /// (實機:房裡一個人 no map + 已準備,房主按開始 → 觸發上傳 → 對方開始下載 → 變 READY。)
+        /// 房主照樣開不了場(server 的 RequestStart 與 UI 的 CanStart 都要求 avail==have),
+        /// 只是畫面上再也沒有東西說明為什麼 —— 這正是最糟的一種:狀態在騙人。
+        ///
+        /// <see cref="Availability.Importing"/> 同理:檔案下載完了,但歌庫重掃還沒跑完,
+        /// 那一刻他仍然打不了這首歌。
+        ///
+        /// <see cref="Availability.Unknown"/> **不算** —— 那是「還沒回報」(換歌會把全房打回
+        /// unknown,R9),只有短短一瞬。把它當缺歌的話,每次房主換歌全房的徽章都會閃一下 NO MAP。
+        ///
+        /// 下載進度本身是另一件事,畫在頭貼下緣那條跑條(<c>RoomScreen.RenderSlotBar</c>)——
+        /// 兩者同時出現正是預期畫面:NO MAP 徽章 + 綠色跑條在跑。
+        /// </summary>
+        private static bool StillWithoutSong(Availability avail)
+            => avail == Availability.Missing
+            || avail == Availability.Downloading
+            || avail == Availability.Importing;
 
         /// <summary>
         /// 這個遊玩狀態算「在這一場裡」嗎 —— 頭貼要不要畫 PLAYING。

@@ -59,12 +59,33 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Downloading_Is_Not_A_Badge_Of_Its_Own()
+        public void Downloading_And_Importing_Still_Count_As_No_Map()
         {
-            // 下載中畫的是頭貼下緣那條跑條(RoomScreen.RenderSlotBar),不佔徽章位 ——
-            // 所以「一邊下載、一邊還是房主」看到的是 HOST + 跑條。
+            // 🔴 回歸(實機:房裡一個人 no map + 已準備,房主一按開始就觸發上傳 → 對方開始下載 →
+            //    那格從 NO MAP 翻成 READY,歌卻一個位元組都還沒進歌庫)。
+            //    NO MAP 要一路掛到 have 為止 —— downloading / importing 期間他仍然打不了這首歌,
+            //    而 R17 保留的 sticky Ready 會在徽章讓位的瞬間冒出來冒充「準備好了」。
+            //    下載進度畫在另一條(RoomScreen.RenderSlotBar),兩者同時出現才是預期畫面。
+            foreach (var a in new[] { Availability.Downloading, Availability.Importing })
+            {
+                Assert.AreEqual(RoomSeatBadge.NoMap,
+                    For(true, isHost: false, isReady: true, PlayState.Idle, a),
+                    a + ":sticky ready 不該冒充成 READY");
+                Assert.AreEqual(RoomSeatBadge.NoMap,
+                    For(true, isHost: true, isReady: false, PlayState.Idle, a),
+                    a + ":房主自己在下載時也還沒有這首歌");
+            }
+        }
+
+        [Test]
+        public void Unknown_Is_Not_No_Map()
+        {
+            // Unknown = 還沒回報(換歌會把全房打回 unknown,R9),只有一瞬。
+            // 當成缺歌的話,每次房主換歌全房徽章都會閃一下 NO MAP。
+            Assert.AreEqual(RoomSeatBadge.Ready,
+                For(true, isHost: false, isReady: true, PlayState.Idle, Availability.Unknown));
             Assert.AreEqual(RoomSeatBadge.Host,
-                For(true, isHost: true, isReady: false, PlayState.Idle, Availability.Downloading));
+                For(true, isHost: true, isReady: false, PlayState.Idle, Availability.Unknown));
         }
 
         [Test]
