@@ -95,5 +95,20 @@ namespace Sdo.Ruleset
         /// </summary>
         public static bool NextFromSamples(bool dancing, DanceJudgeCounts prev, DanceJudgeCounts cur, int combo)
             => NextState(dancing, HadBreak(prev, cur), HadNote(prev, cur), combo, ignoreMiss: false);
+
+        /// <summary>
+        /// 遠端舞者這一刻到底跳不跳 —— <see cref="NextFromSamples"/> 的結果之上再加兩道**分數流推不出來**的停舞:
+        ///   • <paramref name="dead"/>＝他的 HP 歸零(frame 的 hp 欄位;本機的對應物是 <c>_hpDead</c>);
+        ///   • <paramref name="left"/>＝他中途 Esc 回房間 / 斷線(座位的 playState 離開了這一場)。
+        ///
+        /// 🔴 為什麼非有這一層不可:這兩件事發生後**不會再有新的判定**,所以每個結算點都是「空 block」,
+        /// 而空 block 的規則(3)是**維持現況** —— 他死掉/離場的那一刻要是正在跳,那尊角色就會一路跳到曲末。
+        /// 這正是回報的兩個現象(「人死了還在跳」「按 Esc 回房間了場上還在跳」)的同一個根。
+        ///
+        /// 停舞是**不可逆**的(這一場不會再回來):死了不會復活,離場的人不會再送 frame。
+        /// 所以呼叫端可以每幀套,不必等 8 拍結算點。
+        /// </summary>
+        public static bool RemoteEnabled(bool dancing, bool dead, bool left)
+            => dancing && !dead && !left;
     }
 }

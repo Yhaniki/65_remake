@@ -27,6 +27,12 @@ namespace Sdo.Game
         public void PlayRemoteComboMilestone(int userId, int combo)
         {
             if (userId == 0 || combo < 50 || combo % 50 != 0) return;
+            // 🔴 擋的只有**已經離場**的人(人都回房間了,那則 milestone 是他走之前送出、路上還在飛的)。
+            //
+            // **死掉的人照冒表情與火** —— 完奏模式血用完歌不切斷,他還在打、combo 還在累積,
+            // 那些 combo 是真的。死亡只讓他**停舞**(見 TickRemotePresence),不是把他從場上抹掉。
+            var opp = NetOpponents != null ? NetOpponents() : null;
+            if (LeftRemote(opp, userId)) return;
             if (!TryGetDancerRoot(userId, out var root)) return;
 
             EmojiKind kind = EmojiTriggers.ComboMilestone(combo);

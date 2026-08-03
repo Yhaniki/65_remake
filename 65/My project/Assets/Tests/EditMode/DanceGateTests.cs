@@ -140,6 +140,44 @@ namespace Sdo.Tests
             Assert.IsFalse(DanceGate.HadBreak(prev, new DanceJudgeCounts(20, 9, 1, 0)), "只多了好判定 → 沒斷");
         }
 
+        // ---- 遠端的死亡 / 離場(分數流推不出來的那兩件事)----
+
+        [Test]
+        public void A_Dead_Remote_Player_Stops_Dancing()
+        {
+            // 他死了以後不會再有判定 → 每個結算點都是空 block → NextFromSamples 會「維持現況」,
+            // 也就是死掉那一刻正在跳的人會一路跳到曲末。RemoteEnabled 就是為了擋這個。
+            Assert.IsFalse(DanceGate.RemoteEnabled(dancing: true, dead: true, left: false));
+        }
+
+        [Test]
+        public void A_Remote_Player_Who_Left_Stops_Dancing()
+        {
+            Assert.IsFalse(DanceGate.RemoteEnabled(dancing: true, dead: false, left: true));
+        }
+
+        [Test]
+        public void An_Alive_Remote_Player_Keeps_The_Gate_Result()
+        {
+            Assert.IsTrue(DanceGate.RemoteEnabled(dancing: true, dead: false, left: false));
+            Assert.IsFalse(DanceGate.RemoteEnabled(dancing: false, dead: false, left: false),
+                "gate 說站著就站著 —— 這一層只會多停,不會把人叫起來跳");
+        }
+
+        [Test]
+        public void An_Empty_Block_Cannot_Revive_A_Dead_Remote_Dancer()
+        {
+            // 迴歸:死掉之後的每一個結算點(prev == cur → 空 block)都不能讓他重新跳起來。
+            var counts = new DanceJudgeCounts(120, 30, 4, 9);
+            bool dancing = true;
+            for (int block = 0; block < 8; block++)
+            {
+                bool next = DanceGate.NextFromSamples(dancing, counts, counts, combo: 0);
+                dancing = DanceGate.RemoteEnabled(next, dead: true, left: false);
+                Assert.IsFalse(dancing, "第 " + block + " 個結算點");
+            }
+        }
+
         [Test]
         public void The_Remote_Derivation_Agrees_With_The_Local_Path()
         {

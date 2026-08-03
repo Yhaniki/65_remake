@@ -131,6 +131,7 @@ namespace Sdo.Game
 
             var slots = BuildSlotSpots(total);
             _slotSpots = slots;
+            _dancerRingTr = new Transform[total];   // 每位舞者的特效錨點(星環);本機那格在迴圈後補
             // Freeze ONE predicate for the whole remote spawn pass. A loaded SceneCam alone is insufficient:
             // without a valid CV track the dancer stays in the legacy Default-layer path, so its name must too.
             bool sceneWorldMode = use3dCamera && _camReady && _sceneCam != null;
@@ -184,7 +185,10 @@ namespace Sdo.Game
                     av.Dps = _sharedDps;
                     av.MotResolver = ResolveMot;
                     // 時鐘沿用本機那一個 delegate —— 同一首歌大家跳一樣,各算一份會慢慢漂開。
-                    av.DanceTimeSec = _avatar != null ? _avatar.DanceTimeSec : null;
+                    // 🔴 旁觀沒有本機舞者(_avatar == null)→ 直接指向同一顆歌曲時鐘。給 null 的話
+                    //    SdoAvatar.LateUpdate 走不進 DPS 那條路,場上每個人都站著不動
+                    //    (使用者回報「旁觀的人沒辦法看到玩家跳舞」)。
+                    av.DanceTimeSec = _avatar != null ? _avatar.DanceTimeSec : (System.Func<float>)SongDanceTimeSec;
                     // 但**跳/停要各自判斷**:那是每個人自己打得好不好的結果(他斷連了他就站著),
                     // 由分數流推導(TickRemoteGates → Sdo.Ruleset.DanceGate,與本機同一個函式)。
                     int me = i;
@@ -221,7 +225,8 @@ namespace Sdo.Game
                 int team = TeamOf(i);
                 if (!string.IsNullOrEmpty(label))
                     CreateRemoteNameplate(av, go.transform, label, team, sceneWorldMode);
-                CreateGroundStarRing(spot.x, spot.z, 0.6f, av, go.transform, team, local: false);
+                var ringTr = CreateGroundStarRing(spot.x, spot.z, 0.6f, av, go.transform, team, local: false);
+                if (_dancerRingTr != null && i < _dancerRingTr.Length) _dancerRingTr[i] = ringTr;   // 完奏特效要掛得到他腳下
 
                 // 🔴 一定要跟本機舞者同一層。3D 舞台是**另一台相機**在畫的(SceneCam 的 cullingMask 只有 SceneLayer,
                 // 主相機反過來把那層剔掉),留在 Default 層的話這一隻改由主正交相機畫 —— 那台的座標系是 800×600
@@ -232,6 +237,9 @@ namespace Sdo.Game
                 _extraDancers.Add(av);
                 _extraRoots.Add(go.transform);
             }
+
+            // 本機那一格的錨點就是本機的星環(TryLoadAvatar 已經建好;旁觀時 localIdx = -1,沒有這一格)。
+            if (localIdx >= 0 && localIdx < _dancerRingTr.Length) _dancerRingTr[localIdx] = _ringTr;
 
             // 名次換位用的 per-dancer 狀態。初值 = 各就各位(開場大家都 0 分 → 照座位序)。
             int n = total;
@@ -503,7 +511,9 @@ namespace Sdo.Game
         /// </summary>
         private void TickRemoteGates(double nowMs)
         {
-            if (_dancerDancing == null || _dancerDancing.Length <= 1) return;
+            // 一格就收工的只有「離線/單人」那種場(那一格是本機自己)。旁觀者不占任何一格,
+            // 場上只有一位參賽者時長度就是 1 —— 而那一位正是要推導跳/停的人,不能早退。
+            if (_dancerDancing == null || (_dancerDancing.Length <= 1 && !spectatorMode)) return;
             if (netDancers == null || netDancers.Length == 0) return;   // 離線/量測:遠端就跟著本機
             if (_map == null) return;
 
@@ -520,11 +530,57 @@ namespace Sdo.Game
                 if (i >= netDancers.Length) continue;
                 int uid = netDancers[i].UserId;
                 var cur = CountsOf(opp, uid, out int combo);
-                _dancerDancing[i] = Sdo.Ruleset.DanceGate.NextFromSamples(
+                bool next = Sdo.Ruleset.DanceGate.NextFromSamples(
                     _dancerDancing[i], _dancerPrevCounts[i], cur, combo);
+                // 死了 / 人走了就不可能再跳(分數流推不出這兩件事 —— 它們只會表現成一連串空 block,
+                // 而空 block 是「維持現況」)。
+                _dancerDancing[i] = Sdo.Ruleset.DanceGate.RemoteEnabled(next, DeadRemote(opp, uid), LeftRemote(opp, uid));
                 _dancerPrevCounts[i] = cur;
                 RecordDancerGate(i, nowMs);   // 記給結算的背景回放用(本機的對應物是 RecordGate)
             }
+        }
+
+        /// <summary>
+        /// 死亡 / 離場要**當場**停舞,不能等到下一個 8 拍結算點(那可能是好幾秒之後,而且對方已經
+        /// 不再送 frame —— 結算點看到的是空 block,規則(3)會維持現況)。
+        ///
+        /// 只做單向:把還在跳的關掉。這兩件事在同一場裡都不可逆(死了不會復活、走了不會回來),
+        /// 所以不需要、也不可以反過來把人叫起來跳。
+        /// </summary>
+        private void TickRemotePresence(double nowMs)
+        {
+            // 長度 1 的早退同 TickRemoteGates:旁觀時那一格是別人,照樣要判斷他有沒有離場。
+            if (_dancerDancing == null || (_dancerDancing.Length <= 1 && !spectatorMode)) return;
+            if (netDancers == null || netDancers.Length == 0) return;   // 離線/量測:遠端跟著本機
+            var opp = NetOpponents != null ? NetOpponents() : null;
+            if (opp == null) return;
+
+            int local = LocalDancerSlotIndex;
+            for (int i = 0; i < _dancerDancing.Length; i++)
+            {
+                if (i == local || i >= netDancers.Length) continue;
+                if (!_dancerDancing[i]) continue;
+                int uid = netDancers[i].UserId;
+                if (Sdo.Ruleset.DanceGate.RemoteEnabled(true, DeadRemote(opp, uid), LeftRemote(opp, uid))) continue;
+                _dancerDancing[i] = false;
+                RecordDancerGate(i, nowMs);   // 回放也要看到他從這一刻起站著
+            }
+        }
+
+        /// <summary>他的 HP 歸零了嗎(名單裡找不到他 = 還沒收到他的第一筆 frame → 當他活著)。</summary>
+        private static bool DeadRemote(NetPlayerScore[] opp, int userId)
+        {
+            if (opp == null) return false;
+            for (int i = 0; i < opp.Length; i++) if (opp[i].UserId == userId) return opp[i].Dead;
+            return false;
+        }
+
+        /// <summary>他人已經不在這一場了嗎(中途 Esc 回房間 / 斷線)。找不到的處理同上。</summary>
+        private static bool LeftRemote(NetPlayerScore[] opp, int userId)
+        {
+            if (opp == null) return false;
+            for (int i = 0; i < opp.Length; i++) if (opp[i].UserId == userId) return opp[i].Left;
+            return false;
         }
 
         /// <summary>把第 <paramref name="i"/> 位舞者這一刻的跳/停記進他自己那一軌 —— 只記變化,與本機
@@ -620,6 +676,28 @@ namespace Sdo.Game
 
         /// <summary>上一次遠端定格用的贏家索引(-1 = 還沒放過)。權威名次晚到時靠它判斷「要不要重演」。</summary>
         private int _remoteFinishWinner = -1;
+
+        /// <summary>每位舞者腳下星環的 transform(= 特效錨點)。索引 = 舞者序;本機那格 = <c>_ringTr</c>。</summary>
+        private Transform[] _dancerRingTr;
+
+        /// <summary>
+        /// FINISHED(完奏特效)要掛在誰腳下 —— **場上的第一名**,不論那是本機還是別人。
+        ///
+        /// 🔴 以前的條件是「本機贏才放」,而且錨點寫死本機的 _ringTr。那在只渲染本機一隻舞者的年代講得通,
+        /// 現在場上每個人都在 —— 別人贏的時候整場沒有完奏特效,而**旁觀者永遠看不到它**
+        /// (它的 _localWon 恆 false;使用者回報「結算動作的 win 的 particle 也沒看到」)。
+        ///
+        /// 贏家取自 <see cref="PlayRemoteFinishPoses"/> 剛定案的那一位(_remoteFinishWinner) ——
+        /// 與場上做勝利動作的必須是同一個人,分兩處各算一次遲早會不一致。
+        /// 場上沒有其他舞者(離線/單人)時退回「本機贏就掛本機」。
+        /// </summary>
+        private Transform FinishedEftAnchor()
+        {
+            int w = _remoteFinishWinner;
+            if (w >= 0 && _dancerRingTr != null && w < _dancerRingTr.Length && _dancerRingTr[w] != null)
+                return _dancerRingTr[w];
+            return _localWon ? _ringTr : null;
+        }
 
         /// <summary>輸贏定格用哪一支 clip。本機那兩個欄位(winMot/loseMot)是同一組值的「本機性別」版。</summary>
         private static string FinishMot(bool male, bool won)

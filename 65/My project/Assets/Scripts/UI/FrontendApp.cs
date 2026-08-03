@@ -814,6 +814,10 @@ namespace Sdo.UI
                         Perfect = kv.Value.Perfect, Cool = kv.Value.Cool,
                         Bad = kv.Value.Bad, Miss = kv.Value.Miss,
                         TimeMs = kv.Value.TMs,
+                        // hp 的傳輸值是 (Health − FloorHealth) / (Max − Floor) → 死亡(Health == −150)剛好是 0,
+                        // 活著的最小值是 1/1150 ≈ 8.7e-4(HP 的變動量是整數),所以這個閾值不會誤判。
+                        Dead = kv.Value.Hp <= 1e-4f,
+                        Left = kv.Value.Left,
                     };
                 return arr;
             };
@@ -837,6 +841,15 @@ namespace Sdo.UI
             public int Perfect, Cool, Bad, Miss;
             /// <summary>這一筆的譜面時刻(ms)。右側名單用它把本機的分數對齊到同一刻(見 ScreenGameplay.RosterLocalScore)。</summary>
             public double TMs;
+
+            /// <summary>他的血量(0..1)。**初值是 1 而不是 0** —— 還沒收到第一筆 frame 的人不能被當成死人。</summary>
+            public float Hp = 1f;
+
+            /// <summary>看過他真的在 playing 了嗎(離場判定的 latch,見 <see cref="Sdo.Net.MatchPresence.HasLeft"/>)。</summary>
+            public bool SawPlaying;
+
+            /// <summary>他人已經不在這一場了(中途 Esc 回房間 / 斷線)。</summary>
+            public bool Left;
         }
         private readonly Dictionary<int, NetOppState> _netOpponents = new Dictionary<int, NetOppState>();
         private static readonly ScreenGameplay.NetPlayerScore[] _netOpponentsEmpty = new ScreenGameplay.NetPlayerScore[0];
@@ -866,6 +879,13 @@ namespace Sdo.UI
                 st.Combo = r.Combo;
                 st.Perfect = r.Perfect; st.Cool = r.Cool; st.Bad = r.Bad; st.Miss = r.Miss;
                 st.TMs = r.TMs;
+                // server 只收「座位是 playing」的人送的 frame(Hub.HandleFrameJson),所以收到過他的一筆
+                // 就等於看過他在場上 —— 離場 latch 不必等房間快照先送到(見 SyncRemotePresence)。
+                st.SawPlaying = true;
+                // 🔴 hp 一直都在協定裡(client 每 200ms 送上去),以前收下來就丟掉 —— 於是「他死了」
+                // 這件事在別人的畫面上完全不存在:分數不再變 = 一連串空 block = DanceGate 維持現況,
+                // 死掉那一刻正在跳的人就一路跳到曲末。
+                st.Hp = r.Hp;
             }
         }
 
@@ -964,6 +984,7 @@ namespace Sdo.UI
             var net = _ctx != null ? _ctx.Net : null;
             if (net == null || net.Match == null || _activeGame == null) return;
             SyncSpectatorNames(net);               // 中途有人進來/離開旁觀 → 右側名單要跟著變(旁觀者與參賽者都看得到)
+            SyncRemotePresence(net);               // 誰中途走了 → 場上那尊要停舞(旁觀者看的也是同一件事)
             if (!net.IsMatchParticipant) return;   // 旁觀者不送成績
 
             // 🔴 曲末就送 playFinished,**不要等玩家把結算畫面關掉**。
@@ -1007,6 +1028,38 @@ namespace Sdo.UI
             var names = new string[n];
             for (int i = 0; i < n; i++) names[i] = specs[i].Name ?? "";
             _activeGame.SetSpectatorNames(names);
+        }
+
+        /// <summary>
+        /// 誰還在這一場裡 —— 每幀從房間快照(座位的 playState)更新。
+        ///
+        /// 🔴 為什麼一定要看房間快照:「他按了 Esc 回房間」這件事在分數流裡**看起來什麼都沒發生** ——
+        /// 他只是不再送 frame,而「沒有新的判定」與「這一段沒有音符」在收端長得一模一樣(空 block →
+        /// DanceGate 維持現況)→ 他人回房間了,場上那尊還在跳。座位的 playState 是唯一知道的來源。
+        ///
+        /// 離場是 latch 的:這一場不會再回來,所以只設不清。
+        /// </summary>
+        private void SyncRemotePresence(NetClient net)
+        {
+            if (_netOpponents.Count == 0) return;
+            var snap = net.Room;
+            var seats = snap != null ? snap.Seats : null;
+            if (seats == null) return;   // 還沒有房間快照 → 不要憑空判人離場
+            foreach (var kv in _netOpponents)
+            {
+                var st = kv.Value;
+                if (st.Left) continue;
+                Sdo.Net.PlayState? state = null;
+                for (int i = 0; i < seats.Length; i++)
+                {
+                    var s = seats[i];
+                    if (s == null || s.UserId != kv.Key) continue;
+                    state = s.PlayState;
+                    break;
+                }
+                if (state.HasValue && state.Value == Sdo.Net.PlayState.Playing) st.SawPlaying = true;
+                if (Sdo.Net.MatchPresence.HasLeft(state, st.SawPlaying)) st.Left = true;
+            }
         }
 
         /// <summary>這一局結束(正常打完 / 中途離開)→ 告訴 server,房間才會離開 playing。只會送一次。</summary>

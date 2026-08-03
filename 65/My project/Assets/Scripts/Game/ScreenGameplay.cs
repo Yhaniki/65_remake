@@ -479,6 +479,13 @@ namespace Sdo.Game
             /// 同一刻再畫,否則自己那一列永遠比別人快一步(見 <c>RosterLocalScore</c>)。</summary>
             public double TimeMs;
 
+            /// <summary>他的 HP 歸零了(frame 的 hp 欄位 == 0)。<b>預設 false = 活著</b> ——
+            /// 離線 / mockOpponents 那條路徑不填這個欄位,語意必須是「沒說 = 沒死」。</summary>
+            public bool Dead;
+
+            /// <summary>他人已經不在這一場了(中途 Esc 回房間 / 斷線)。預設 false 的理由同上。</summary>
+            public bool Left;
+
             public Sdo.Ruleset.DanceJudgeCounts Counts
                 => new Sdo.Ruleset.DanceJudgeCounts(Perfect, Cool, Bad, Miss);
         }
@@ -1108,6 +1115,10 @@ namespace Sdo.Game
         private SpriteRenderer _lookerTitle;
         private Label3D[] _lookerRows;
         public float lookerTitleX = 694f, lookerTitleY = 214f, lookerX = 698f, lookerFirstY = 241f, lookerRowStep = 16f, lookerFontWorld = 18f;   // names start 5px lower than before so the list clears the 旁觀玩家 header
+        /// <summary>旁觀時左上那條「Press Ctrl+Q to quit look on mode」(官方 GAMEPLAY19.PNG,361×25)。
+        /// 只有 <see cref="spectatorMode"/> 才建;參賽者的畫面上不該出現(那顆熱鍵也只吃旁觀)。</summary>
+        private SpriteRenderer _spectateHint;
+        public float spectateHintX = 8f, spectateHintY = 6f;   // 左上角(design px);圖本身左對齊貼邊
         // dancer dance/stop gate. The decision is made ONLY at the 8-beat settlement (same cadence as the score
         // commit) — a break NO LONGER stops the dancer mid-block, it just records the flag and is judged at the
         // next boundary. At each settlement we re-decide dance-vs-stop for the upcoming block (two conditions):
@@ -2982,6 +2993,21 @@ namespace Sdo.Game
             }
         }
 
+        /// <summary>
+        /// 這一場的舞蹈時鐘(秒)= 距離**第一顆音符**多久,負值代表編舞還沒開始(READY/GO 與前奏)。
+        ///
+        /// 為什麼不用音樂時鐘:DPS 的跨度是「第一顆音符 → 最後一顆」,錨在這裡才不會在長前奏的譜上
+        /// 提前跳完。_clockStart 還是 -1(音訊還在解碼)時一律回報「還沒開始」—— 拿它去減會得到
+        /// 「從開機到現在」的牆鐘時間,每次進場都從編舞的隨機一段開始(「進遊戲先亂跳一段舞才回 idle」)。
+        ///
+        /// 🔴 這支以前是長在 <see cref="TryLoadAvatar"/> 裡的 lambda,而**旁觀者沒有本機舞者** ——
+        /// 場上其他人是靠 <c>av.DanceTimeSec = _avatar.DanceTimeSec</c> 借用它的,借到 null 就整場
+        /// 走不進 DPS 那條路(SdoAvatar.LateUpdate 的條件之一),六個人一起站著:使用者回報的
+        /// 「旁觀的人沒辦法看到玩家跳舞」。抽成方法之後,沒有本機舞者也拿得到同一顆時鐘。
+        /// </summary>
+        private float SongDanceTimeSec()
+            => _clockStart < 0.0 ? -1f : (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
+
         private void TryLoadAvatar()
         {
             var parent = new GameObject("Avatar3D");
@@ -3010,8 +3036,7 @@ namespace Sdo.Game
                     // finishes decoding the song — a second or more on an external mp3. Subtracting it would make the
                     // dance time the WALL CLOCK since app start (a different, arbitrary point of the choreography every
                     // run: "進遊戲先亂跳一段舞才回 idle"), so report "before the dance" until the clock is real.
-                    avatar.DanceTimeSec = () => _clockStart < 0.0 ? -1f
-                                              : (float)(Time.timeAsDouble - _clockStart - _danceStartSec);
+                    avatar.DanceTimeSec = SongDanceTimeSec;
                     // 8-beat dance-gate decision / HP-out -> dancer holds the standby idle。HP 看的是 _hpDead 而不是
                     // _failed：完奏模式歌不切斷(_failed 不設)，但「血用完了就不能繼續跳舞」——死了就回待機站著到曲末。
                     // 例外：danceIgnoreMiss 開著時血量完全不管，死了照跳（見 DanceGate.Enabled）。
@@ -4349,8 +4374,10 @@ namespace Sdo.Game
         /// <param name="team">0=A 1=B 2=C,其他 = 沒組隊(白)。組隊時腳下的星環就是自己那一隊的顏色。</param>
         /// <param name="local">true = 本機那一位 —— 只有它的 ref 會存進 <see cref="_ringTr"/> 那組
         /// (combo 特效/完奏特效/相機都拿它當錨點,指到別人身上會讓特效跑到別人腳下)。</param>
-        private void CreateGroundStarRing(float x, float yOrZ, float floorY, SdoAvatar avatar, Transform avatarParent,
-                                          int team = TeamColors.Free, bool local = true)
+        /// <returns>這一圈星環的 transform —— 那也是**這位舞者的特效錨點**(FINISHED 掛在贏家腳下,
+        /// 見 <see cref="FinishedEftAnchor"/>);2D 退化路徑一樣有,只是不跟著骨盆走。</returns>
+        private Transform CreateGroundStarRing(float x, float yOrZ, float floorY, SdoAvatar avatar, Transform avatarParent,
+                                               int team = TeamColors.Free, bool local = true)
         {
             string zako = Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", "ZAKO");
 
@@ -4388,6 +4415,7 @@ namespace Sdo.Game
                 }
                 if (fr.Follow == null) ringGo.transform.position = new Vector3(x, floorY, yOrZ);   // FloorRing sets rotation each frame
                 SetLayerRecursive(ringGo, SceneLayer);
+                return ringGo.transform;
             }
             else   // 2D fallback: sprite ellipse over the feet (no follow)
             {
@@ -4406,6 +4434,7 @@ namespace Sdo.Game
                 ring.Stars = stars; ring.Spin = 0.6f; ring.Tint = Color.white;   // 2D 退化路徑沒有隊伍光暈(它只在 3D 舞台出現)
                 ringGo.transform.position = new Vector3(x, yOrZ + 4f, 6f);
                 ring.Billboard = true; ring.Rx = 70f; ring.Ry = 20f; ring.BaseScale = 36f / 64f;
+                return ringGo.transform;
             }
         }
 
@@ -5110,7 +5139,8 @@ namespace Sdo.Game
             }
             TickBombs(now, detonate: manualPlay);   // 炸彈:手動打時踩到(該軌按著)引爆;F8自動/ShowTime自動避雷,只安全流過
             if (!spectatorMode) UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
-            TickRemoteGates(now);   // 遠端舞者各自的跳/停(從分數流推導,與本機同一個規則函式)
+            TickRemoteGates(now);      // 遠端舞者各自的跳/停(從分數流推導,與本機同一個規則函式)
+            TickRemotePresence(now);   // 死了 / 中途離場的遠端玩家當場停舞(分數流推不出這兩件事)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             RecordLocalScoreSample(NetClockMs);   // 右側名單要把自己的分數倒帶到遠端那一刻(見 RosterLocalScore)
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
@@ -5265,10 +5295,6 @@ namespace Sdo.Game
                     // 翻案是**硬切**(定格→定格,平滑過場只會糊成一團);第一次照舊讓它從舞蹈平順接進定格。
                     if (mot != null) { if (redo) _avatar.SnapNextClip(); _avatar.PlayOneShot(mot, true); }
                 }
-                // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
-                // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
-                // 翻案翻成輸的話收不回來(特效自己會在 5 秒內結束),但至少不會再放第二次。
-                if (_localWon && !_finishedEftSpawned) { _finishedEftSpawned = true; SpawnNamedEft("FINISHED", 5f); }
                 // 旁觀者不放輸贏短曲 —— 它沒有輸也沒有贏,而 _localWon 恆 false 會讓它每次都聽到「輸了」的音效。
                 // 翻案時**不再**放一次(兩聲短曲比一聲錯的還糟)。
                 if (enableResultSfx && !spectatorMode && !redo) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle
@@ -5277,6 +5303,15 @@ namespace Sdo.Game
             // 別人並沒有死 —— 本機一死就讓全場站著不動,那是把自己的結局套到別人身上。
             // (翻案時它自己會判斷贏家有沒有換人,沒換就不動 —— 重播會把定格倒回第 0 幀。)
             PlayRemoteFinishPoses(redo);
+            // FINISHED = 官方掛在**第一名舞者**腳下的完奏特效。一定要在 PlayRemoteFinishPoses 之後 ——
+            // 贏家是那邊定案的,錨點要跟做勝利動作的是同一個人(見 FinishedEftAnchor)。
+            // GAME OVER(本機血條見底)不放:那條路整套輸贏演出都不演。
+            // 翻案翻成別人贏也收不回來(特效自己會在 5 秒內結束),但至少不會再放第二次。
+            if (!_gameOver && !_finishedEftSpawned)
+            {
+                var eftAnchor = FinishedEftAnchor();
+                if (eftAnchor != null) { _finishedEftSpawned = true; SpawnNamedEft("FINISHED", 5f, eftAnchor); }
+            }
         }
 
         // 死亡字幕的「哪一組」= 官方由**同一個變體 id S**(DAT_00674f04+0x68)同時決定 note_image 與 gameover
@@ -5349,6 +5384,8 @@ namespace Sdo.Game
             if (_timeText) _timeText.gameObject.SetActive(false);
             if (_timeTotal) _timeTotal.gameObject.SetActive(false);
             if (_info) _info.gameObject.SetActive(false);
+            // 旁觀提示條(Ctrl+Q)跟著其餘 HUD 收掉:結算面板一開,那顆熱鍵的去路換成面板自己的流程。
+            if (_spectateHint) _spectateHint.enabled = false;
             // 頭上的名牌（箭頭 + 名字）結算/回放全程保留不隱藏 — 不呼叫 _headMarker.Hide()。
         }
 
