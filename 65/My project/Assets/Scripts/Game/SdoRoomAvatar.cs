@@ -460,13 +460,15 @@ namespace Sdo.Game
             return new Color(0.6f, 0.6f, 0.65f);
         }
 
+        /// <summary>Load a motion clip by DATA-relative path. 🔴 走 <see cref="AvatarAssetCache.Mot"/> 是**正確性**需求,
+        /// 不是效能優化:同一個路徑一定要回同一個 MotLoader 物件,否則 <see cref="SdoAvatar"/> 會把它當成「換了動作」
+        /// 而多混一次 0.5 秒 crossfade(換衣服重建 avatar 時 = 使用者看到的「動作抖一下」)。詳見該方法的註解。</summary>
         public static MotLoader LoadMot(string rel)
         {
             try
             {
                 var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-                var b = AvatarAssetCache.Read(path);
-                return b != null ? MotLoader.Load(b) : null;
+                return AvatarAssetCache.Mot(path);
             }
             catch { return null; }
         }

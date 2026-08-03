@@ -73,5 +73,25 @@ namespace Sdo.Tests
             finally { AudioMix.Changed -= h; AudioMix.Set(0.5f, 0.5f, 0.5f); }
             Assert.AreEqual(1, hits);
         }
+
+        [Test]
+        public void SceneSfx_IsAlwaysHalfOfGameplaySfx()
+        {
+            try
+            {
+                AudioMix.Set(0.5f, 0.5f, 1f);
+                Assert.AreEqual(1f, AudioMix.Sfx, Eps);
+                Assert.AreEqual(0.5f, AudioMix.SceneSfx, Eps);
+                AudioMix.Set(0.5f, 0.5f, 0.5f);
+                Assert.AreEqual(0.25f, AudioMix.Sfx, Eps);
+                Assert.AreEqual(0.125f, AudioMix.SceneSfx, Eps);
+                AudioMix.Set(0.5f, 0.5f, 0f);
+                Assert.AreEqual(0f, AudioMix.SceneSfx, Eps);
+            }
+            finally
+            {
+                AudioMix.Set(0.5f, 0.5f, 0.5f);
+            }
+        }
     }
 }

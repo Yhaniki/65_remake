@@ -1,7 +1,9 @@
 {
     "name": "Sdo.Settings",
     "rootNamespace": "Sdo.Settings",
-    "references": [],
+    "references": [
+        "Sdo.Net"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

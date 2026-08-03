@@ -78,7 +78,10 @@ namespace Sdo.UI.Services
             string trimmed = text.Trim();
             bool male = _localIsMale != null && _localIsMale();
             RoomChatCommand.TryParseRoomAction(trimmed, male, out var action);
-            Emit(new ChatMessage(LocalSender(), trimmed, _clock.NowMs, local: true, channel: channel, roomActionId: action?.Id));
+            // SenderMale:離線也要填,否則顯示端(RoomScreen.PlayRoomChatAction)取到 false
+            // 就會用女生的 clip 播男角的動作。離線只有本機在說話,所以就是本機性別。
+            Emit(new ChatMessage(LocalSender(), trimmed, _clock.NowMs, local: true, channel: channel, roomActionId: action?.Id)
+                 { SenderMale = male });
         }
 
         public void SendExpression(int expressionId, ChatChannel channel = ChatChannel.Current)
@@ -93,7 +96,8 @@ namespace Sdo.UI.Services
             string lead = leadingText != null ? leadingText.Trim() : "";
             string trail = trailingText != null ? trailingText.Trim() : "";
             Emit(new ChatMessage(LocalSender(), trail, _clock.NowMs,
-                expressionId: expressionId, local: true, channel: channel, leadingText: lead));
+                expressionId: expressionId, local: true, channel: channel, leadingText: lead)
+                 { SenderMale = _localIsMale != null && _localIsMale() });
         }
 
         public void SendWhisper(string target, string body, ChatChannel channel = ChatChannel.Current)

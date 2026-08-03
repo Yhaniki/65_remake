@@ -164,6 +164,166 @@
    "v": "請先選擇歌曲"
   },
   {
+   "k": "room.join_title",
+   "v": "房號輸入"
+  },
+  {
+   "k": "room.join_code",
+   "v": "房號"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "確認"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "房號是 5 位數字"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "找不到這個房號"
+  },
+  {
+   "k": "room.join_full",
+   "v": "房間已滿"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "這間房正在遊戲中"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "加入房間失敗"
+  },
+  {
+   "k": "room.create_failed",
+   "v": "建立房間失敗"
+  },
+  {
+   "k": "room.slot_kick",
+   "v": "踢出玩家"
+  },
+  {
+   "k": "room.kicked",
+   "v": "你被請出了房間"
+  },
+  {
+   "k": "room.force_start_hint",
+   "v": "尚有玩家未準備 — 再按一次「開始」強制開始"
+  },
+  {
+   "k": "room.start_no_response",
+   "v": "伺服器沒有回應開始請求"
+  },
+  {
+   "k": "room.match_aborted",
+   "v": "這一局被取消了"
+  },
+  {
+   "k": "room.slot_transfer_host",
+   "v": "交出房主"
+  },
+  {
+   "k": "room.slot_close",
+   "v": "關閉位置"
+  },
+  {
+   "k": "room.slot_open",
+   "v": "開啟位置"
+  },
+  {
+   "k": "room.teams_2v2",
+   "v": "分隊 2對2"
+  },
+  {
+   "k": "room.teams_3v3",
+   "v": "分隊 3對3"
+  },
+  {
+   "k": "room.teams_2v2v2",
+   "v": "分隊 2對2對2"
+  },
+  {
+   "k": "room.teams_need_layout",
+   "v": "組隊人數必須是 2對2、3對3 或 2對2對2"
+  },
+  {
+   "k": "room.teams_assigned",
+   "v": "已自動分隊"
+  },
+  {
+   "k": "room.spectate_offline",
+   "v": "旁觀需要連上伺服器"
+  },
+  {
+   "k": "room.spectate_in_match",
+   "v": "你正在這一局裡 — 不能切成旁觀"
+  },
+  {
+   "k": "room.spectate_ready",
+   "v": "請先取消準備"
+  },
+  {
+   "k": "room.spectate_no_host",
+   "v": "沒有人能接手房主"
+  },
+  {
+   "k": "room.spectate_on",
+   "v": "旁觀中 — 座位已釋出"
+  },
+  {
+   "k": "neterr.not_host",
+   "v": "只有房主可以做這件事"
+  },
+  {
+   "k": "neterr.not_in_room",
+   "v": "你不在房間裡"
+  },
+  {
+   "k": "neterr.bad_seat",
+   "v": "這個位置不能這樣操作"
+  },
+  {
+   "k": "neterr.bad_state",
+   "v": "現在不能做這件事"
+  },
+  {
+   "k": "neterr.no_song",
+   "v": "房間還沒選歌"
+  },
+  {
+   "k": "neterr.full",
+   "v": "沒有空的座位"
+  },
+  {
+   "k": "neterr.looker_full",
+   "v": "旁觀席已經滿了"
+  },
+  {
+   "k": "neterr.proto",
+   "v": "伺服器版本不符,請更新"
+  },
+  {
+   "k": "room.teams_normal_mode_only",
+   "v": "只有普通模式可以組隊"
+  },
+  {
+   "k": "room.create_failed_full",
+   "v": "伺服器的房間已經滿了"
+  },
+  {
+   "k": "net.transfer_failed",
+   "v": "歌曲傳輸失敗,請稍後再試"
+  },
+  {
+   "k": "settings.applied",
+   "v": "設定已套用"
+  },
+  {
+   "k": "room.spectate_off",
+   "v": "已回到座位"
+  },
+  {
    "k": "room.drop_up",
    "v": "向上"
   },
@@ -590,6 +750,10 @@
   {
    "k": "stage.name.39",
    "v": "個人房（夜）"
+  },
+  {
+   "k": "room.difficulty_setting",
+   "v": "難度設置"
   },
   {
    "k": "difficulty.easy",

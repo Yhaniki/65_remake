@@ -44,7 +44,10 @@ namespace Sdo.Game
 
         /// <summary>Anchor for a slot: dancers (0..5) all map to <see cref="HostSpawn"/> (the EXE spawns every dancer
         /// there; the server then spreads 1..5 — the remake gives them random walkable spots, see RoomScene3D), lookers
-        /// (6..15) use their <see cref="SpectatorAnchors"/> position.</summary>
+        /// (6..15) use their <see cref="SpectatorAnchors"/> position.
+        /// ⚠️ 這支是**官方行為的紀錄**,執行期沒有人用它(只有測試釘住那張表)——
+        /// 實際的 slot→出生點是 <c>RoomScene3D.SpawnSpot</c>:座位 1..5 走隨機可走點,
+        /// 不是全部疊在 HostSpawn。改這裡不會改變遊戲行為。</summary>
         public static Vector3 SlotAnchor(int slot)
             => slot < SeatCount ? HostSpawn : SpectatorAnchors[slot - SeatCount];
 

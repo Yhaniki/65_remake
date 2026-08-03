@@ -50,7 +50,9 @@ namespace Sdo.UI.Services
         void SendExpression(int expressionId, ChatChannel channel, string trailingText);
         // leadingText / trailingText = 指令前/後的字，保留 emoji 在輸入中的位置（見 RoomChatCommand.TryParseExpression）。
         void SendExpression(int expressionId, ChatChannel channel, string leadingText, string trailingText);
-        // 密語（私聊）：查對象是否在同伺服器/頻道 → 送「你對X說」+對方回「X對你說」；不在頻道→「X不在當前頻道」；查無帳號→「X無此id」。
+        // 密語（私聊）：送「你對X說」+對方收到「X對你說」；不在頻道→「X不在當前頻道」；查無帳號→「X無此id」。
+        // 單機：對象查離線實作的假名冊（MockChatService）。連線：對象由 server 照名字在全服找（跨房），
+        // 三行都等 server 回 whisperMsg 才畫，本機不先畫（見 OnlineChatService.SendWhisper）。
         void SendWhisper(string target, string body, ChatChannel channel = ChatChannel.Current);
         // 家族頻道：有家族 → 綠字「<家族>名字: 內容」+ 同族偶爾回話；沒有家族 → 紅字「你沒有家族」。皆本機專屬、不彈頭上泡。
         void SendGuild(string text);

@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Sdo.Game;
+using Sdo.Localization;
 using Sdo.Settings;
 using Sdo.UI.Core;
 using Sdo.UI.Services;
@@ -28,6 +29,9 @@ namespace Sdo.UI.Screens
         private static readonly Vector2 AvatarSize = new Vector2(400f, 600f); // AvtShow w/h
         private const float MaleX = 20f, FemaleX = 74f, CheckY = 530f;        // male/female CheckBox x/y
         private const float EnterX = 586f, QuitX = 684f, BtnY = 527f;         // EnterRoom / Quit x/y
+        // 連線模式多一顆「加入」→ 三顆鈕。往左再讓出一格(93px 寬的鈕,間距與官方那兩顆相同的 98px)。
+        // **離線版面一字不動**:商城留在 EnterX、進房留在 QuitX。
+        private const float ShopX = 488f, JoinX = 586f, CreateX = 684f;
 
         private GenderPreview3D _preview;
         private RawImage _previewImg;
@@ -84,11 +88,31 @@ namespace Sdo.UI.Screens
             // right-bottom action buttons: 進入房間 (29/30/31) + 商城 (32/33/34 — 原「離開」鍵位，美術已重繪成商城入口).
             // Positions swapped: 進入房間 sits on the right (QuitX); the 商城 button on the left (EnterX). Each keeps its
             // own art + click handler, only the X slot is exchanged.
-            var enter = UIKit.AddSpriteButton(Root, "EnterRoom", An("LobbySel29"), An("LobbySel30"), An("LobbySel31"), QuitX, BtnY);
+            //
+            // 連線模式(config.ini 填了 serverAddress)才多出「加入」那顆,版面變成 商城 / 加入 / 開房 三顆;
+            // 單機模式維持原本的兩顆(商城 / 登入),連座標都不動 —— 只想單機玩的人看到的畫面完全沒變。
+            bool online = Ctx != null && Ctx.Net != null;
+
+            var enter = UIKit.AddSpriteButton(Root, "EnterRoom",
+                online ? An("LobbySel200") : An("LobbySel29"),
+                online ? An("LobbySel201") : An("LobbySel30"),
+                online ? An("LobbySel202") : An("LobbySel31"),
+                online ? CreateX : QuitX, BtnY);
             enter.onClick.AddListener(OnEnter);
             UiSfx.AttachClick(enter);   // 按下 → SE_0001
             UIKit.SetAlphaHit(enter.targetGraphic);   // 命中判定跟著可見圖形走,透明四角不再誤觸
-            var shop = UIKit.AddSpriteButton(Root, "Shop", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"), EnterX, BtnY);
+
+            if (online)
+            {
+                var join = UIKit.AddSpriteButton(Root, "JoinRoom",
+                    An("LobbySel203"), An("LobbySel204"), An("LobbySel205"), JoinX, BtnY);
+                join.onClick.AddListener(OnJoinRoom);
+                UiSfx.AttachClick(join);
+                UIKit.SetAlphaHit(join.targetGraphic);
+            }
+
+            var shop = UIKit.AddSpriteButton(Root, "Shop", An("LobbySel32"), An("LobbySel33"), An("LobbySel34"),
+                                             online ? ShopX : EnterX, BtnY);
             shop.onClick.AddListener(OnOpenShop);
             UiSfx.AttachClick(shop);    // 按下 → SE_0001
             UIKit.SetAlphaHit(shop.targetGraphic);
@@ -179,7 +203,8 @@ namespace Sdo.UI.Screens
         private void Update()
         {
             if (!Visible || ScreenTransition.Busy) return;   // 轉場中(進房/進商城漸黑漸亮)先不吃 ESC
-            if (FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen) return;
+            // 商城 / 輸入房號 框疊在本畫面上時,ESC 是它們的(關框),不是本畫面的(結束遊戲)。
+            if (FrontendApp.Instance != null && (FrontendApp.Instance.ShopOpen || FrontendApp.Instance.JoinRoomOpen)) return;
             // F2：開發用 —— 進譜面編輯器。先把前端收掉並註冊「編輯器 ESC 退出時還原前端」（Sdo.Game 不能反向引用
             // Sdo.UI，所以用回呼把還原注進去），再開編輯器。編輯器開著時本畫面的 canvas 會被停用 → Update 不再跑。
             if (Input.GetKeyDown(KeyCode.F2) && ChartEditorScreen.Instance == null)
@@ -197,7 +222,7 @@ namespace Sdo.UI.Screens
         private void OnGUI()
         {
             if (!Visible || ScreenTransition.Busy) return;
-            if (FrontendApp.Instance != null && FrontendApp.Instance.ShopOpen) return;
+            if (FrontendApp.Instance != null && (FrontendApp.Instance.ShopOpen || FrontendApp.Instance.JoinRoomOpen)) return;
             if (ChartEditorScreen.Instance != null) return;
 
             if (_nameEditFor != _gender) { _nameEdit = SeedName(_gender); _nameEditFor = _gender; _nameStatus = ""; }
@@ -270,8 +295,9 @@ namespace Sdo.UI.Screens
             if (_preview != null) _preview.SetGender(_gender);
         }
 
-        // 進入：切 active 使用者(女/男 → 00000000/00000001)、把身分帶回 session、建/進房間（不經大廳列表，直接進房）。
-        private void OnEnter()
+        // 選性別 == 選帳號：切 active 使用者(女/男 → 00000000/00000001)、把身分帶回 session。
+        // 「開房」與「加入」按下去的第一件事都是這個 —— 進房之後房間裡顯示的名字/衣服/性別都吃它。
+        private void CommitIdentity()
         {
             string id = ProfileManager.SeededIdForGender(_gender);
             ProfileManager.SetActive(id);            // 載入該帳號 profile(衣服)，觸發 ActiveChanged；收藏/設定是全帳號共用不重載
@@ -288,12 +314,115 @@ namespace Sdo.UI.Screens
                 Ctx.Session.Gender = _gender;
                 Ctx.Session.SeedRoomDefaults();      // 房間面板預設是 per-user（換帳號要重種）
             }
+            // 連線模式:把外觀報給 server —— 別人是靠這份資料把你的角色建出來的。
+            // 握手時報的那份是開機狀態(還沒選性別、穿搭也還沒解析),所以這裡一定要再報一次,
+            // 否則你在別人的房間畫面上會是預設的女角。
+            if (Ctx != null && Ctx.Net != null)
+            {
+                Ctx.Net.SendLook(_gender, BodyIndexForGender(_gender), PartsForGender(_gender));
+                // 名字也一樣要重報 —— 女角與男角是兩個 profile,名字不一樣。只送外觀的話
+                // 別人看到的是「新的男角」配「舊的女角名字」,而且那個名字之後永遠不會變
+                // (座位名字是進房那一刻抄過去的)。
+                Ctx.Net.PublishIdentity();
+            }
+        }
+
+        // 進入：切 active 使用者、建/進房間（不經大廳列表，直接進房）。
+        private void OnEnter()
+        {
+            CommitIdentity();
+            // 連線模式:建房要問 server 拿房號,是**非同步**的 —— 等回應到了才切畫面,
+            // 否則會進到一個沒有房間資料的房間畫面(房號/HOST/座位全是空的)。
+            if (Ctx != null && Ctx.Net != null)
+            {
+                EnterOwnRoomOnline();
+                return;
+            }
+
             // 選性別 == 進「我自己」的房間當房主：確保當前身分真的擁有房主座位。若殘留了上一個身分/別人的房
             // (例如 ESC 退出未清房)，先離開再重建，否則 IsHost=false → 房主標記消失。
             if (Ctx != null && Ctx.Rooms != null)
                 RoomEntry.EnsureOwnHostRoom(Ctx.Rooms, GameMode.Normal);
             // 進房間轉場：漸黑 → loading → 漸亮，房間 UI 從四邊滑入（Nav.PlayRoomEntrance）。切畫面(GoTo)在全黑時執行。
             ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
+        }
+
+        /// <summary>
+        /// 連線模式的「建立自己的房間」。
+        ///
+        /// 與離線的差別只有一件事:**要等 server 回應**。server 才知道房號(它從池子裡配),
+        /// 而房間畫面一進去就要顯示房號與房主徽章 —— 提早切畫面的話那些欄位還是空的。
+        ///
+        /// 殘留房間的處理與離線同理:如果目前在一間我不是房主的房裡(換身分留下的),先離開。
+        /// </summary>
+        private void EnterOwnRoomOnline()
+        {
+            var net = Ctx.Net;
+
+            if (net.InRoom && !net.IsHost) net.LeaveRoom();
+            if (net.InRoom) { ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance); return; }
+
+            net.CreateRoom("", (result, code) =>
+            {
+                if (result == Sdo.Net.NetProto.JoinOk)
+                {
+                    ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
+                    return;
+                }
+                Toast.Show(LocalizationManager.Get("room.create_failed"));
+            });
+        }
+
+        /// <summary>
+        /// 「加入」→ 彈出輸入房號的框。
+        ///
+        /// 送出後**框不關**:失敗原因直接寫在框裡(房號打錯是最常見的情況,關掉再重打一次很煩)。
+        /// 只有真的加入成功才關框並轉場進房間。
+        /// </summary>
+        private void OnJoinRoom()
+        {
+            var net = Ctx != null ? Ctx.Net : null;
+            var app = FrontendApp.Instance;
+            if (net == null || app == null || app.JoinRoom == null) return;
+
+            CommitIdentity();
+            app.JoinRoom.Open(code =>
+            {
+                // 殘留房間:換身分或上一輪 ESC 退出可能還留在某間房裡。先離開,否則 server 會回 badState。
+                if (net.InRoom) net.LeaveRoom();
+
+                // 座位滿了(或房間正在打)會自動改用旁觀身分進去 —— 政策在 NetClient。
+                // 🔴 **中途不跳訊息**(使用者要求):那一步不是玩家要處理的事,而且它緊接著就成功了,
+                // 跳一句「以旁觀身分進入」只是閃一下就被轉場蓋掉的雜訊。只有真的進不去才說話。
+                net.JoinOrSpectate(code, (result, asSpectator) =>
+                {
+                    if (result == Sdo.Net.NetProto.JoinOk) { EnterJoinedRoom(app); return; }
+                    app.JoinRoom.ShowError(LocalizationManager.Get(JoinErrorKey(result)));
+                });
+            });
+        }
+
+        /// <summary>進房成功(不管是坐下還是以旁觀身分)→ 關掉輸入框、轉場進房間。</summary>
+        private void EnterJoinedRoom(FrontendApp app)
+        {
+            app.JoinRoom.Close();
+            ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
+        }
+
+        /// <summary>把 server 回的 joinResult 翻成玩家看得懂的一句話。</summary>
+        private static string JoinErrorKey(string result)
+        {
+            switch (result)
+            {
+                // 座位滿了會先自動轉旁觀(JoinOrSpectate),所以走到這裡的 lookerFull
+                // 代表**座位 6 個 + 旁觀 10 個都滿了**。對玩家來說那就是同一件事(這間房進不去),
+                // 所以與座位滿共用同一句「房間已滿」——不必解釋是哪一種滿。
+                case Sdo.Net.NetProto.ErrLookerFull:
+                case Sdo.Net.NetProto.JoinFull: return "room.join_full";
+                case Sdo.Net.NetProto.JoinInGame: return "room.join_in_game";
+                case Sdo.Net.NetProto.JoinNotFound: return "room.join_not_found";
+                default: return "room.join_failed";
+            }
         }
 
         // 開場畫面直接進 商城 modal：先把目前選的性別帶進 session（商城依 session 性別開對應性別的 avatar），再開 商城，

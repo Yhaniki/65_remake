@@ -149,11 +149,11 @@ namespace Sdo.Tests
             }
         }
 
-        // 大顆實心圓球(開始 Room15 / 準備 Room12 / 取消 c_ready0 / 旁觀 BtnLook_1)是 55~73px 手繪圓盤:α 幾乎是二元的
+        // 大顆實心圓球(開始 Room15 / 準備 Room12 / 取消 c_ready0 / 旁觀 BtnLook_1 / 進入 Room92)是 55~73px 手繪圓盤:α 幾乎是二元的
         // (0 或 255 佔圓周 ~2/3),深色描邊也一格寬一格窄 → clip+SS 忠實重現那圈階梯,放大就是一圈黑缺口(使用者回報
         // 「開始和旁觀的大圓 邊緣還是鋸齒很破碎」)。CircleMask 治不了:遮罩只會減,補不回缺口,而且階梯同時在 RGB 描邊上。
         // LoadAnSoloSmoothDiscMip 改在極座標把描邊沿圓周低通(階梯是角向高頻、真美術幾乎不變)+ alpha 用解析圓重建。
-        private static readonly string[] BigDiscs = { "Room15", "Room12", "c_ready0", "BtnLook_1" };
+        private static readonly string[] BigDiscs = { "Room15", "Room12", "c_ready0", "BtnLook_1", "Room92" };
 
         [Test]
         public void LoadAnSoloSmoothDiscMip_BigDiscs_AreSupersampledMipmappedTrilinear()

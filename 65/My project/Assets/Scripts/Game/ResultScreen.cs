@@ -23,12 +23,14 @@ namespace Sdo.Game
         public struct Row
         {
             public int Rank;            // 1-based place
+            public int UserId;
             public string Name;
             public int Perfect, Cool, Bad, Miss, MaxCombo;
             public double Accuracy;     // 0..100
             public long Score;
             public string Grade;        // "S" / "A+" / ... (kept for callers; not drawn in the online layout)
             public bool IsLocal;
+            public Texture Head;
             public bool FullCombo;      // 100% — shows the AllCombo marker instead of the hit-rate digits
         }
 
@@ -36,6 +38,10 @@ namespace Sdo.Game
         private const int OrderBg = 120, OrderRow = 130, OrderRowText = 134, OrderBanner = 138, OrderBtn = 140, OrderText = 144;
 
         public System.Action OnConfirm;
+        /// <summary>沒人按「確定」就自動確定的秒數,從面板出現算起(≤0 = 不自動,一直等玩家按)。
+        /// 線上由 <see cref="ScreenGameplay.resultAutoConfirmSec"/> 設 —— 一個人把結算畫面放著不管,
+        /// 整間房就都開不了下一局。走的是跟按確定完全同一條路(<see cref="OnConfirm"/>)。</summary>
+        public float autoConfirmSec = 0f;
         public bool Visible { get; private set; }
 
         private Camera _cam;
@@ -48,6 +54,7 @@ namespace Sdo.Game
         private bool[] _rowSnd;
         // result sequence flags/timers: rows (SE_0020, 500ms apart) → EXP/G roll (SE_0021) → win/lose banner zoom (SE_0022)
         private bool _expSnd, _bannerShown, _bannerLocalWon, _gameOver;
+        private bool _confirmed;           // 確定已送出(按的或逾時自動的)— 一局只送一次
         private bool _showBanner = true;   // 出 YOU WIN/LOSE 旗? 自由模式=false (仍播 SE_0022);GAME OVER 也不出旗
         private bool _showRank = true;     // 畫每列最左的名次數字? 自由模式=false (沒有排名);GAME OVER 圖不受影響照畫
         private float _bannerStart;
@@ -81,7 +88,7 @@ namespace Sdo.Game
         // (Opponents' placeholder stays clamped to the slot.)
         public float headOverflowTop = 6f;
         private readonly List<(Label3D lbl, float rowY)> _nicks = new List<(Label3D, float)>();
-        private struct HeadObj { public GameObject go; public SpriteRenderer sr; public float rowY; public bool placeholder; }
+        private struct HeadObj { public GameObject go; public SpriteRenderer sr; public Material mat; public float rowY; public bool placeholder; }
         private readonly List<HeadObj> _headObjs = new List<HeadObj>();
 
         // row target Y per rank (online DDRITEMSTATISTIC Rank1..6 windows) and slide tuning
@@ -226,6 +233,7 @@ namespace Sdo.Game
             ClearRows();
             _playSe = playSe; _rowSnd = new bool[rows != null ? rows.Length : 0];
             _expSnd = false; _bannerShown = false; _bannerStatic = false; _rewardArmed = false; _localHead = localHead; _gameOver = gameOver;
+            _confirmed = false;
             _showBanner = showBanner; _showRank = showRank;
             string dir = SdoExtracted.ResultStatisDir;
 
@@ -236,9 +244,9 @@ namespace Sdo.Game
             for (int i = 0; i < rows.Length && i < RowY.Length; i++)
                 BuildRow(dir, rows[i], RowY[i]);
 
-            // STATIC avatar heads in the baked frames (don't slide with the rows): local = live 3D portrait, others placeholder
+            // STATIC avatar heads in the baked frames (don't slide with the rows): each online row carries its own live 3D portrait.
             for (int i = 0; i < rows.Length && i < RowY.Length; i++)
-                BuildHeadBox(rows[i].IsLocal, RowY[i]);
+                BuildHeadBox(rows[i], RowY[i]);
 
             // bottom reward block (local player): 經驗 EXP and G幣 coins.
             BuildRewardBlock(dir, expGained, coinsGained);
@@ -252,6 +260,35 @@ namespace Sdo.Game
             _root.SetActive(true);
             Visible = true;
             _showStart = Time.time;
+        }
+
+        /// <summary>
+        /// Replace provisional rows when the authoritative online result arrives after this panel opened.
+        /// Keeps the current reveal timeline instead of restarting the result sequence.
+        /// </summary>
+        public void ReplaceRows(Row[] rows, bool localWon, int expGained, int coinsGained, Texture localHead = null)
+        {
+            if (!Visible || rows == null) return;
+
+            float elapsed = Mathf.Max(0f, Time.time - _showStart);
+            ClearRows();
+            _localHead = localHead;
+            _rowSnd = new bool[rows.Length];
+            string dir = SdoExtracted.ResultStatisDir;
+            int count = Mathf.Min(rows.Length, RowY.Length);
+            for (int i = 0; i < count; i++)
+            {
+                BuildRow(dir, rows[i], RowY[i]);
+                _rowSnd[i] = elapsed >= i * RowStaggerSec;
+            }
+            for (int i = 0; i < count; i++) BuildHeadBox(rows[i], RowY[i]);
+
+            BuildRewardBlock(dir, expGained, coinsGained);
+            _rewardArmed = false;
+            _bannerLocalWon = localWon;
+            bool bannerVisible = _bannerShown && _showBanner && !_gameOver;
+            if (_bannerWin) _bannerWin.SetActive(bannerVisible && localWon);
+            if (_bannerLose) _bannerLose.SetActive(bannerVisible && !localWon);
         }
 
         // One ranked row at its design RowY, under its own root so the whole row slides in from the right.
@@ -322,7 +359,7 @@ namespace Sdo.Game
         private const float SmallPitch = 10f, BigPitch = 20f;   // score_numS / score_num digit advance (px)
         private void BuildRewardBlock(string dir, int expGained, int coinsGained)
         {
-            if (_rewardRoot) Object.Destroy(_rewardRoot);
+            if (_rewardRoot) { _rewardRoot.SetActive(false); DestroyOwned(_rewardRoot); }
             _rewardRoot = new GameObject("Reward"); _rewardRoot.transform.SetParent(_root.transform, false);
             _expTarget = expGained; _coinsTarget = coinsGained;
 
@@ -340,22 +377,23 @@ namespace Sdo.Game
         }
 
         // STATIC head box inside the baked frame for the row at design RowY. Local player → a quad textured with the
-        // live head-portrait RenderTexture (ScreenGameplay renders the avatar as a close-up at a 45° angle, idle moves);
-        // other rows → a tinted placeholder box (opponents have no avatar data, matching the original's placeholder).
-        private void BuildHeadBox(bool isLocal, float rowY)
+        // live head-portrait RenderTexture (ScreenGameplay renders every participant as a close-up at a 45° angle);
+        // rows without avatar data fall back to the original tinted placeholder box.
+        private void BuildHeadBox(Row row, float rowY)
         {
             float topY = rowY - headBoxYOff;
-            if (isLocal && _localHead != null)
+            Texture head = row.Head != null ? row.Head : (row.IsLocal ? _localHead : null);
+            if (head != null)
             {
                 var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                Object.Destroy(go.GetComponent<Collider>());
+                DestroyOwned(go.GetComponent<Collider>());
                 var mr = go.GetComponent<MeshRenderer>();
                 // Unlit/Transparent so the RT's transparent (alpha-0) background shows the panel/stage through — no black box.
-                var mat = new Material(Shader.Find("Unlit/Transparent")) { mainTexture = _localHead };
+                var mat = new Material(Shader.Find("Unlit/Transparent")) { mainTexture = head };
                 mr.sharedMaterial = mat; mr.sortingOrder = OrderRow;
                 go.transform.SetParent(_root.transform, true);    // static (not in the sliding rows)
                 PlaceHeadQuad(go.transform, rowY);                // larger-than-slot, bottom-anchored → hair spills out the top
-                _headObjs.Add(new HeadObj { go = go, rowY = rowY, placeholder = false });
+                _headObjs.Add(new HeadObj { go = go, mat = mat, rowY = rowY, placeholder = false });
             }
             else
             {
@@ -437,12 +475,23 @@ namespace Sdo.Game
             if (_bannerShown && wantBanner) UpdateBanner(banner);
 
             // OK (Enter / click) confirms; save-record is a P1 stub (no-op for now)
-            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Escape)) { OnConfirm?.Invoke(); return; }
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Escape)) { Confirm(); return; }
             if (Input.GetMouseButtonDown(0) && _cam != null)
             {
                 var w = _cam.ScreenToWorldPoint(Input.mousePosition);
-                if (_okBtn && _okBtn.sprite && _okBtn.bounds.Contains(new Vector3(w.x, w.y, _okBtn.transform.position.z))) OnConfirm?.Invoke();
+                if (_okBtn && _okBtn.sprite && _okBtn.bounds.Contains(new Vector3(w.x, w.y, _okBtn.transform.position.z))) { Confirm(); return; }
             }
+            // 沒人按:面板開著 autoConfirmSec 秒後自己按下去(線上 = 30 秒)。
+            if (autoConfirmSec > 0f && el >= autoConfirmSec) Confirm();
+        }
+
+        // 「確定」的唯一出口(按鈕 / Enter / Esc / 逾時自動都走這裡)。一局只送一次 —— 自動確定之後
+        // 面板還在 Tick,不擋的話會每一幀再送一次同一個確定。
+        private void Confirm()
+        {
+            if (_confirmed) return;
+            _confirmed = true;
+            OnConfirm?.Invoke();
         }
 
         // Position + scale the active WIN/LOSE banner (live F4 bannerX/Y/finalScale/animSec). Zooms from ~screen-width
@@ -547,11 +596,28 @@ namespace Sdo.Game
 
         private void ClearRows()
         {
-            foreach (var go in _rowRoots) if (go) Object.Destroy(go);
+            foreach (var go in _rowRoots)
+                if (go) { go.SetActive(false); DestroyOwned(go); }
             _rowRoots.Clear();
-            foreach (var hb in _headObjs) { if (hb.go) Object.Destroy(hb.go); if (hb.sr) Object.Destroy(hb.sr.gameObject); }
+            foreach (var hb in _headObjs)
+            {
+                if (hb.go) { hb.go.SetActive(false); DestroyOwned(hb.go); }
+                if (hb.sr)
+                {
+                    hb.sr.gameObject.SetActive(false);
+                    DestroyOwned(hb.sr.gameObject);
+                }
+                if (hb.mat) DestroyOwned(hb.mat);
+            }
             _headObjs.Clear();
             _nicks.Clear();   // the Label3D objects live under row-roots (destroyed above)
+        }
+
+        private static void DestroyOwned(UnityEngine.Object obj)
+        {
+            if (!obj) return;
+            if (Application.isPlaying) UnityEngine.Object.Destroy(obj);
+            else UnityEngine.Object.DestroyImmediate(obj);
         }
     }
 }

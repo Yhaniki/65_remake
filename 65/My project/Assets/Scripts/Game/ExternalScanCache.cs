@@ -37,15 +37,30 @@ namespace Sdo.Game
         //     `level` 都是被壓過的死值，不整份作廢重掃就永遠停在 99。
         // v9: osu 星數等級不再把炸彈當成可打音符（ManiaStarRating 現在跟 ManiaMsd 一樣跳過 IsBomb）。舊快取裡
         //     炸彈多的譜 `level` 被灌水過（灑滿雷的慢譜可以虛高好幾十級），得整份作廢重算。
-        // v10: `notes` 的語意換成**判定次數**（長條的放開也算一次，＝全接的最大 combo，也＝官方 .gn 表頭 notes 的
+        // v10: Folder 加 packId(缺歌傳檔要用)。
+        // v11: `notes` 的語意換成**判定次數**（長條的放開也算一次，＝全接的最大 combo，也＝官方 .gn 表頭 notes 的
         //     算法）。舊快取存的是「物件數」（長條算一顆），長條多的譜會少報好幾十顆，得整份作廢重算。
-        // v11: keysounded osu maps with `AudioFilename: virtual` now use an empty base track; old caches pointed at
+        //     (兩件事各自在自己的分支上都編到 v10 —— 合併之後那個號碼下有兩種不相容的快取:一種缺 packId、
+        //      一種 `notes` 是舊語意。停在 10 會把兩種都當成有效 → 跳到 11 讓它們一起作廢。)
+        // v12: keysounded osu maps with `AudioFilename: virtual` now use an empty base track; old caches pointed at
         //      the folder's first sample instead, so all external-song scan records must be rebuilt.
-        // v12: osu PreviewTime:0 now means "use the midpoint", and zero no longer hides a positive preview point from
+        // v13: osu PreviewTime:0 now means "use the midpoint", and zero no longer hides a positive preview point from
         //      another difficulty in the same set. Cached previewStartMs values must be rebuilt.
-        // v13: 難度（`level` 與 `msd`）多了炸彈＋變速加成（Sdo.Osu.ChartDifficultyBonus）——同一張譜多灑了雷、
+        //      (⚠️ 上面那兩條在 song-loader 分支上原本編成 v11/v12 —— 與這條分支的 v11 撞號,
+        //       正是 v11 括號裡寫的那件事又發生一次:兩個分支各自往下編,合併之後同一個號碼底下
+        //       會有兩種不相容的快取。所以整組往後挪,Version 直接跳到 13 把兩邊的舊快取一起作廢。)
+        // v14: SafeRelPath.MaxSegmentLength 從 100 放寬到 160(osu 的譜面檔名破百是常態)。
+        //      🔴 這條**非跳不可**,而且原因不在 sig:packId 只看「可傳的那些檔」,而放寬過濾規則
+        //      之後同一個資料夾的可傳檔案集合變了(那些 .osu 從 UnsafePath 變成 Include)→ packId 變了,
+        //      但 sig(檔名/大小/mtime)一個位元都沒動 → 快取命中 → **舊 packId 被沿用**。
+        //      後果是缺歌的人永遠補不到:房主宣稱舊 packId,而上傳時重掃資料夾會納入那些 .osu,
+        //      server 重算後與宣稱的不符 → 整批不收(Hub.Blobs「重算的 packId 與宣稱的不符」)。
+        //      上面 Folder.packId 那句「sig 沒變時它一定也沒變」的前提是**過濾規則不變**,這次它變了。
+        // v15: 難度（`level` 與 `msd`）多了炸彈＋變速加成（Sdo.Osu.ChartDifficultyBonus）——同一張譜多灑了雷、
         //      或多了 BPM 換段 / osu 綠線 SV / 停拍，難度會往上走一點點（最多 +8%）。舊快取存的是沒有這層的值。
-        public const int Version = 13;
+        //      (⚠️ 第三次撞號:這條在 main 上原本編成 v13,與這條分支的 v13/v14 撞在一起 —— 又是兩邊各自
+        //       往下編。合併時照上面立的規矩整組往後挪到 15,把兩邊的舊快取一次作廢。)
+        public const int Version = 15;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null
@@ -69,6 +84,9 @@ namespace Sdo.Game
         public sealed class Folder
         {
             public string path = "", sig = "", group = "";   // group is the same for every song in a folder
+            // 這個資料夾的跨電腦身分(SongPackId)。與 sig 同一個失效條件 —— sig 是 file-stat token,
+            // 檔案有任何增刪改都會變,而 packId 只看「可傳的那些檔」的內容,所以 sig 沒變時它一定也沒變。
+            public string packId = "";
             public List<Song> songs = new List<Song>();
         }
 
@@ -112,13 +130,12 @@ namespace Sdo.Game
 
         // The scan's own output living in the song folder: the sidecar, and the disc / dance it names (SongSidecar's
         // CdFileName/DpsFileName produce exactly these — "cd.png"/"cd_<slug>_<hash>.png", "dance.dps"/"dance_<…>.dps").
-        private static bool IsGenerated(string name)
-        {
-            if (string.Equals(name, SongSidecar.FileName, StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(name, SongSidecar.LegacyFileName, StringComparison.OrdinalIgnoreCase)) return true;   // pre-rename leftover
-            string n = name.ToLowerInvariant();
-            return n == "cd.png" || n.StartsWith("cd_") || n == "dance.dps" || n.StartsWith("dance_");
-        }
+        //
+        // 這份判定搬到了 Sdo.Osu.SongPackFilter.IsGenerated,因為多人連線的「哪些檔要傳給別人」
+        // 需要同一份答案,而那邊 server(net8.0)也編得到。兩處各留一份的話,將來多一種生成物
+        // 只改了一邊 —— 快取這邊會變成「播完一首歌就讓自己的快取失效」,傳輸那邊會變成「把收端
+        // 自己會重生的東西傳過去」,而且兩種都不會有測試抓到。
+        private static bool IsGenerated(string name) => SongPackFilter.IsGenerated(name);
 
         private static string Hash(string s)   // FNV-1a 64-bit
         {
@@ -166,9 +183,9 @@ namespace Sdo.Game
 
         /// <summary>A folder cache line from a freshly-parsed (or refreshed) song list. group is taken from the songs
         /// (they all share it); an empty folder still caches as "yields nothing" so it isn't re-parsed either.</summary>
-        public static Folder ToFolder(string path, string sig, List<ExternalSong> songs)
+        public static Folder ToFolder(string path, string sig, List<ExternalSong> songs, string packId = null)
         {
-            var f = new Folder { path = path, sig = sig };
+            var f = new Folder { path = path, sig = sig, packId = packId ?? "" };
             if (songs != null && songs.Count > 0)
             {
                 f.group = songs[0].Group ?? "";

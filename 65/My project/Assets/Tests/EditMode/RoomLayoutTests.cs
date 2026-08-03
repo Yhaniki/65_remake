@@ -84,6 +84,56 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Slot_Idle_Mot_Paths_Seated_Standby_Spectators_Waiting()
+        {
+            // 這條守的是「連線的旁觀者真的擺出官方那十種看戲姿勢」:動作表早就解出來了
+            // (SlotMotionName),但遠端/本機生角色時要**經過 SlotIdleMot 這個橋**才會用到它 ——
+            // 少了這一步,十個旁觀者會全部站著發呆(而且是靜默的:沒有任何報錯)。
+            Assert.AreEqual(SdoRoomAvatar.IdleMot, RoomScene3D.SlotIdleMot(0, male: false));
+            Assert.AreEqual(SdoRoomAvatar.MaleIdleMot, RoomScene3D.SlotIdleMot(5, male: true));
+            Assert.AreEqual("MOTION/WWAITING004.MOT", RoomScene3D.SlotIdleMot(6, male: false));
+            Assert.AreEqual("MOTION/MWAITING004.MOT", RoomScene3D.SlotIdleMot(6, male: true));
+            Assert.AreEqual("MOTION/WWAITING009.MOT", RoomScene3D.SlotIdleMot(15, male: false));
+            // 十個旁觀 slot 各一支,不重複(與 SlotMotionName 同一張表,這裡驗的是路徑組出來也還是十種)
+            var seen = new System.Collections.Generic.HashSet<string>();
+            for (int s = RoomLayout.SeatCount; s < RoomLayout.SlotCount; s++)
+                Assert.IsTrue(seen.Add(RoomScene3D.SlotIdleMot(s, male: false)), "slot " + s + " needs its own pose");
+            // 超出十個旁觀位(協定擋在 MaxSpectators=10,這是防禦)→ 退回站立待機,不是丟例外
+            Assert.AreEqual(SdoRoomAvatar.IdleMot, RoomScene3D.SlotIdleMot(RoomLayout.SlotCount + 3, male: false));
+        }
+
+        [Test]
+        public void Spectator_Slot_Beats_Flying_Wing_For_Idle_Walk_And_Hover()
+        {
+            // 使用者回報:「穿戴翅膀旁觀沒有做旁觀動作」—— 舊版一律讓道具贏(SpecialMotionItems.IdleMotFor),
+            // 於是穿飛行翅膀的人站上旁觀席還是浮空 flystay,跟座位上的人長得一模一樣,誰在看戲分不出來。
+            // 旁觀席改成看戲姿勢優先,而且是**整組**(idle / walk / 懸浮)—— 只擋 idle 會變成
+            // 「浮在半空中做地面的看戲姿勢」。
+            var wings = new[] { "AVATAR/008448_WOMAN_CHIBANG.MSH" };
+
+            // 座位上:翅膀照舊贏(這是官方行為,不能被這次的修改弄壞)
+            Assert.IsTrue(RoomScene3D.FlyingAt(0, wings));
+            Assert.AreEqual(SpecialMotionItems.FlyIdleMot(false), RoomScene3D.ResolveIdleMot(0, male: false, parts: wings));
+            Assert.AreEqual(SpecialMotionItems.FlyWalkMot(false), RoomScene3D.ResolveWalkMot(0, male: false, parts: wings));
+
+            // 旁觀席:看戲姿勢贏,而且不飛不浮、走路也是一般走路
+            for (int s = RoomLayout.SeatCount; s < RoomLayout.SlotCount; s++)
+            {
+                Assert.IsTrue(RoomScene3D.IsSpectatorSlot(s));
+                Assert.IsFalse(RoomScene3D.FlyingAt(s, wings), "slot " + s + " 旁觀時不飛");
+                Assert.AreEqual(0f, SpecialMotionItems.HoverY(RoomScene3D.FlyingAt(s, wings)), "旁觀不浮空");
+                Assert.AreEqual(RoomScene3D.SlotIdleMot(s, male: false), RoomScene3D.ResolveIdleMot(s, male: false, parts: wings),
+                                "slot " + s + " 要用自己那格的看戲姿勢,不是 flystay");
+                Assert.AreEqual(SdoRoomAvatar.WalkMot, RoomScene3D.ResolveWalkMot(s, male: false, parts: wings));
+                Assert.AreEqual(SdoRoomAvatar.MaleWalkMot, RoomScene3D.ResolveWalkMot(s, male: true, parts: wings));
+            }
+
+            // 沒穿翅膀的人不受影響:座位是大廳待機、旁觀是看戲姿勢(與 SlotIdleMot 同一個答案)
+            Assert.AreEqual(SdoRoomAvatar.IdleMot, RoomScene3D.ResolveIdleMot(0, male: false, parts: null));
+            Assert.AreEqual("MOTION/WWAITING004.MOT", RoomScene3D.ResolveIdleMot(6, male: false, parts: null));
+        }
+
+        [Test]
         public void Head_Slots_Are_Six_Left_To_Right()
         {
             Assert.AreEqual(6, RoomLayout.HeadSlotX.Length);

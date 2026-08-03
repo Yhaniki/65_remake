@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -19,6 +19,9 @@ namespace Sdo.Settings
         AutoPlay,       // Auto 自動打擊開關（原 F8）
         Showtime,       // ShowTime 模式釋放氣條（原 Space）
         Quit,           // 中離：不結算直接退出（原 Escape）
+        // 🔴 新的 Hotkey 一律**加在最後面**，不要插在中間 —— 三張表與這個 enum 是「等長同序」，
+        //    而 ini 存的是 key 名而不是索引；插中間會讓舊 keymaps.ini 的每一顆鍵都對到隔壁那個功能。
+        SpectatorQuit,  // 旁觀退出：Ctrl + 這顆鍵，直接離開房間回選角色畫面（Ctrl 固定，不可改）
     }
 
     /// <summary>
@@ -41,13 +44,13 @@ namespace Sdo.Settings
         /// <summary>[Hotkeys] 區的 key 名，索引＝(int)<see cref="Hotkey"/>。</summary>
         public static readonly string[] HotkeyIds =
         {
-            "camera", "speedUp", "speedDown", "assistTick", "autoPlay", "showtime", "quit",
+            "camera", "speedUp", "speedDown", "assistTick", "autoPlay", "showtime", "quit", "spectatorQuit",
         };
 
         /// <summary>各功能鍵的預設鍵（＝重製前寫死的那顆）。</summary>
         public static readonly KeyCode[] HotkeyDefaults =
         {
-            KeyCode.F2, KeyCode.F5, KeyCode.F6, KeyCode.F7, KeyCode.F8, KeyCode.Space, KeyCode.Escape,
+            KeyCode.F2, KeyCode.F5, KeyCode.F6, KeyCode.F7, KeyCode.F8, KeyCode.Space, KeyCode.Escape, KeyCode.Q,
         };
 
         private static readonly string[] HotkeyComments =
@@ -59,6 +62,7 @@ namespace Sdo.Settings
             "# Auto：自動打擊所有音符",
             "# ShowTime 模式：氣條集滿後釋放",
             "# 中離：遊玩中直接退出（不結算）",
+            "# 旁觀退出：按 Ctrl + 這顆鍵，從旁觀直接離開房間回選角色畫面（Ctrl 寫死，只有這顆能改）",
         };
 
         private static readonly string[] HotkeyDefaultNames = NamesOf(HotkeyDefaults);

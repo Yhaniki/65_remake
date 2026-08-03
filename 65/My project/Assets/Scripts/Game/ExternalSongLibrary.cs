@@ -284,18 +284,24 @@ namespace Sdo.Game
                         {
                             string sig = ExternalScanCache.Signature(sd.Path);
                             List<ExternalSong> f;
+                            string packId;
                             if (sig.Length > 0 && _cache.TryGetValue(sd.Path, out var hit) && hit.sig == sig)
                             {
                                 f = ExternalScanCache.FromFolder(hit);                        // reuse — no parse
                                 foreach (var s in f) ExternalSongScanner.ReapplySidecar(s);   // pick up a disc built since caching
                                 ExternalSongScanner.ApplyServerConfig(f, sd.Path);            // 包的 serverconfig 在隔壁資料夾 → 不在快取簽章裡，每次重讀
+                                packId = hit.packId ?? "";                                    // 快取命中就沿用:sig 沒變 → 可傳的檔沒變 → packId 一定沒變
                             }
                             else
                             {
                                 f = ExternalSongScanner.LoadFolder(sd.Group, sd.Path);        // cold / changed → parse
+                                // 缺歌傳檔用的跨電腦身分。只在 cold/changed 時算(要讀譜面算 SHA-256),
+                                // 之後都吃快取 —— 不然每次開機都要把整個歌庫的譜面重讀一遍。
+                                packId = SongPackScan.Compute(sd.Path) ?? "";
                             }
+                            if (f != null) foreach (var s in f) if (s != null) s.PackId = packId;
                             results[i] = f;   // one folder can hold several songs (several sets / several .sm)
-                            if (sig.Length > 0) lines[i] = ExternalScanCache.ToFolder(sd.Path, sig, f);   // don't cache unreadable folders
+                            if (sig.Length > 0) lines[i] = ExternalScanCache.ToFolder(sd.Path, sig, f, packId);   // don't cache unreadable folders
                             if (f != null && f.Count > 0)
                             {
                                 _found = Interlocked.Add(ref found, f.Count);
@@ -327,6 +333,29 @@ namespace Sdo.Game
             }
         }
 
+        /// <summary>
+        /// 依「跨電腦身分」找歌 —— 缺歌傳檔的比對入口(房主選的歌用 packId + songKey 描述,
+        /// 每台自己查「我有沒有這一份」)。
+        ///
+        /// 為什麼不能用 gn:外部歌的 gn 是絕對路徑的 hash,換台電腦完全不同。
+        /// <paramref name="songKey"/> 空字串 = 那個資料夾裡唯一的一首(見 ExternalSongGrouper)。
+        /// 找不到 → null。
+        /// </summary>
+        public static SongCatalog.Entry FindByPack(string packId, string songKey)
+        {
+            if (string.IsNullOrEmpty(packId)) return null;
+            var all = SongCatalog.All;
+            if (all == null) return null;
+            for (int i = 0; i < all.Count; i++)
+            {
+                var e = all[i];
+                if (e == null || !e.external) continue;
+                if (!string.Equals(e.packId, packId, StringComparison.Ordinal)) continue;
+                if (string.Equals(e.songKey ?? "", songKey ?? "", StringComparison.Ordinal)) return e;
+            }
+            return null;
+        }
+
         /// <summary>Convert one scanned song into a catalog Entry (pure — no IO). Public for tests.</summary>
         public static SongCatalog.Entry ToEntry(ExternalSong song, int index)
         {
@@ -345,6 +374,7 @@ namespace Sdo.Game
                 imagePath = song.ImagePath ?? "",
                 folderPath = song.FolderPath ?? "",
                 songKey = song.SongKey ?? "",
+                packId = song.PackId ?? "",   // 缺歌傳檔的跨電腦身分(gn/fileId 換台電腦就不同,不能用)
                 cdPath = song.CdImagePath ?? "",   // "" → ExternalCdImage composes (and records) the disc on first select
                 chartFormat = (int)song.Format,
                 previewPath = song.PreviewAudioPath ?? "",

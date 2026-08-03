@@ -39,6 +39,18 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void VirtualKey_Maps_The_Modifier_Keys()
+        {
+            // 旁觀退出是 Ctrl+Q,而 Ctrl 那一半問的是「現在按著嗎」→ 走這張表。
+            // 少了它就回 0(沒對應 → 當成沒按著),Ctrl+Q 在 raw 路徑上完全按不出來,
+            // 而症狀是「這個快捷鍵沒反應」,完全指不到一張對照表。
+            Assert.AreEqual(0xA2, RawKeyboard.VirtualKey(KeyCode.LeftControl));
+            Assert.AreEqual(0xA3, RawKeyboard.VirtualKey(KeyCode.RightControl));
+            Assert.AreEqual(0xA0, RawKeyboard.VirtualKey(KeyCode.LeftShift));
+            Assert.AreEqual(0xA1, RawKeyboard.VirtualKey(KeyCode.RightShift));
+        }
+
+        [Test]
         public void VirtualKey_Is_Zero_For_Unmapped_Key()
         {
             Assert.AreEqual(0, RawKeyboard.VirtualKey(KeyCode.None));

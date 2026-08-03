@@ -32,6 +32,16 @@ namespace Sdo.UI.Core
         public string SongArtist;
         public Difficulty Difficulty = Difficulty.Easy;
 
+        /// <summary>
+        /// 自由模式下**本機自己**挑的難度槽(0/1/2)。房主選歌選的是「哪一首」,難度則是每個人各挑各的
+        /// (官方 DDRROOM 的 FMGameLevel:非房主那格會從「房主設置」換成「難度設置 ◄ EASY ►」)——
+        /// 所以同一首歌可以每個人打不同難度的譜。
+        ///
+        /// 跟速度 / note 皮 / 掉落方向同一類:**個人偏好,不同步給別人**(見 NetRoomSettings 的註)。
+        /// 只在自由模式且不是房主時才生效;規則見 <see cref="Sdo.UI.Services.FreeModeDifficulty"/>。
+        /// </summary>
+        public int FreeDifficulty = 0;
+
         // ---- external song (user Songs/ folder: osu / StepMania). Set at SongSelectScreen.OnConfirm from a scanned
         //      SongCatalog.Entry, resolved to the chosen difficulty's chart; consumed by FrontendApp.StartGameplay. ----
         public bool IsExternalSong;

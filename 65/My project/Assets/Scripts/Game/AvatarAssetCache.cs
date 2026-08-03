@@ -98,6 +98,29 @@ namespace Sdo.Game
             return h;
         }
 
+        // ---- parsed motion-clip cache ----------------------------------------------------------------------------
+        // 🔴 這層快取不只是省 parse —— 它保證「同一個 .MOT 路徑永遠是同一個 MotLoader 物件」,而那是正確性需求:
+        // SdoAvatar 判斷「動作換了嗎」是比**物件參照**(MaybeStartBlend: `_mot == _lastMot`),所以同一段 clip 只要
+        // 被 parse 成兩個實例,SdoAvatar 就會誤判成換動作 → 從當下顯示的姿勢(換裝重建時是 FeetYAt 量出來的第 0 幀)
+        // crossfade 0.5 秒混回迴圈 —— 使用者看到的就是「換衣服的時候動作會抖一下」。
+        // (換裝路徑正好會踩到:SdoRoomAvatar.Build 內部載一份 idle 當 RestMot,ApplyOutfitMotion 又載一份同樣的 idle
+        //  當 _idleMot,兩份是不同物件。)
+        // MotLoader 是純資料(Bones/MaxTime,取樣全是 static 函式),Load 之後沒有人寫它 → 可安全共用。
+        // 只有 UI/房間那組固定 clip(待機/走路/飛行/聊天動作/場景 NPC 站姿)會走這裡,數量是幾十筆 → 不做淘汰。
+        private static readonly Dictionary<string, MotLoader> _mot = new Dictionary<string, MotLoader>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Parsed motion clip for an absolute .mot path (cached; the SAME instance every time — see above).
+        /// Null when missing / not a MOT. Main thread.</summary>
+        public static MotLoader Mot(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            if (_mot.TryGetValue(path, out var m)) return m;
+            var b = Read(path);
+            m = b != null ? MotLoader.Load(b) : null;
+            if (m != null) _mot[path] = m;
+            return m;
+        }
+
         // ---- prefetch --------------------------------------------------------------------------------------------
 
         /// <summary>Queue a mesh (absolute .msh path) for background loading: its bytes, then — via the material names

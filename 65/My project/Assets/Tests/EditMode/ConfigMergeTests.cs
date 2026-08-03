@@ -1,6 +1,8 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 using Sdo.Settings;
 
 namespace Sdo.Tests
@@ -30,6 +32,14 @@ namespace Sdo.Tests
             ProfileManager.Root = null;   // 還原 lazy 解析，避免污染其他測試
             RoomConfig.legacyActiveId = ""; RoomConfig.hasLegacyProfileKeys = false;
             ProfileDefaults.activeId = "";
+            RoomConfig.serverTls = false; RoomConfig.serverCertFingerprint = "";   // TLS 是連線總開關的一部分,不要留給別人
+            // 🔴 還原成 **false**,不是 true。
+            // 還原成 true 的話,後面任何一條測試呼叫 RoomConfig.Save() 都會寫進**玩家真正的**
+            // config.ini(ProfileManager.Root 已經被還原成 null → 解析到真實 DataRoot),
+            // 而測試裡的靜態欄位是被各自 SetUp 塞過的值 —— 實測後果:serverAddress 被寫成空字串,
+            // 玩家下次開遊戲就默默變回單機模式,而且完全看不出是測試幹的。
+            // false 是安全的方向:真的要寫檔的測試自己會先 Load()(那時旗標就會變 true)。
+            RoomConfig.LoadedForTests = false;
             try { Directory.Delete(_root, true); } catch { /* best effort */ }
         }
 
@@ -92,6 +102,101 @@ namespace Sdo.Tests
             // 比 "opt_keys=" 而非 "opt_keys"：檔頭那行「鍵位已搬到 keymaps.ini」的註解本來就會提到這個名字。
             StringAssert.DoesNotContain("opt_keys=", File.ReadAllText(ConfigPath), "新的 config.ini 不該再寫鍵位");
             Assert.AreEqual(1, RoomConfig.defaultTeam, "[Room] 的值不受影響");
+        }
+
+        [Test]
+        public void A_Pasted_Certificate_Fingerprint_Is_Normalized_On_Load()
+        {
+            // 玩家是**複製貼上**的:openssl 印冒號、Windows 憑證管理員印空白、大小寫也不一定。
+            // 三種都要能用 —— 為了一個冒號就說「憑證指紋不符」只會讓人以為 TLS 壞了。
+            const string Hex = "6473b40678340324aa73a7cd6144d2168cdbc24f3d3a04ef469a672cc2c92e22";
+            File.WriteAllText(ConfigPath,
+                "[Net]\nserverAddress=192.168.1.10\nserverTls=1\n" +
+                "serverCertFingerprint=64:73:B4:06:78:34:03:24:AA:73:A7:CD:61:44:D2:16" +
+                ":8C:DB:C2:4F:3D:3A:04:EF:46:9A:67:2C:C2:C9:2E:22\n");
+            RoomConfig.LoadedForTests = false;
+            RoomConfig.Load();
+
+            Assert.IsTrue(RoomConfig.serverTls, "serverTls=1 要讀進來");
+            Assert.AreEqual(Hex, RoomConfig.serverCertFingerprint, "冒號與大寫都要被正規化掉");
+
+            // 🔴 貼錯東西 → 當成沒填。那會讓連線在握手時明確失敗(自簽憑證過不了一般驗證),
+            // 而**不是**靜默放行一張不對的憑證 —— 後者才是漏洞,而且症狀是「一切正常」。
+            File.WriteAllText(ConfigPath,
+                "[Net]\nserverAddress=192.168.1.10\nserverCertFingerprint=(我不小心貼了整段說明)\n");
+            RoomConfig.LoadedForTests = false;
+            RoomConfig.Load();
+            Assert.AreEqual("", RoomConfig.serverCertFingerprint, "格式不對就當沒填");
+        }
+
+        [Test]
+        public void Save_Before_Load_Refuses_To_Overwrite_The_Players_File()
+        {
+            // 🔴 RoomConfig 的欄位是 static,而 Save() 是「把現在的欄位值整份寫出去」——
+            // 在 Load() 之前呼叫就會把玩家的 config.ini 換成一份內建預設值,設定全部消失。
+            // 實際踩過:serverAddress 被寫回空字串 → 遊戲默默退回單機模式,
+            // 而症狀(「兩台怎麼看不到彼此」)完全指不到根因。所以寧可不存也不要存錯。
+            File.WriteAllText(ConfigPath, "[Net]\nserverAddress=192.168.1.10\nserverPort=27015\n");
+            RoomConfig.LoadedForTests = false;      // 模擬「這個 process 還沒讀過檔」
+            RoomConfig.serverAddress = "";          // 欄位停在預設值
+
+            LogAssert.Expect(LogType.Warning, new Regex(@"Save\(\) 在 Load\(\) 之前"));
+            RoomConfig.Save();
+
+            StringAssert.Contains("serverAddress=192.168.1.10", File.ReadAllText(ConfigPath),
+                "沒 Load 過就不該覆寫玩家的檔");
+
+            // Load 過之後才允許寫 —— 守門不能把正常的保存也一起擋掉。
+            RoomConfig.Load();
+            Assert.AreEqual("192.168.1.10", RoomConfig.serverAddress, "Load 要真的讀到值");
+            RoomConfig.serverAddress = "10.0.0.7";
+            RoomConfig.Save();
+            StringAssert.Contains("serverAddress=10.0.0.7", File.ReadAllText(ConfigPath));
+        }
+
+        [Test]
+        public void Save_Refuses_To_Write_A_Different_File_Than_Load_Read()
+        {
+            // 🔴 這是「Save() 只准寫回 Load() 讀進來的那個檔」那條不變式。
+            //
+            // 為什麼需要它:欄位是 static,而 FilePath 跟著 ProfileManager.Root 跑。
+            // 任何「Root 指到暫存目錄讀一份 → 之後把 Root 還原」的流程(每個測試都這樣做)
+            // 都會讓後面某一次 Save() 把**暫存那份的值**寫進玩家真正的 config.ini。
+            // 實測後果:玩家的 serverAddress 被抹成空字串 → 遊戲默默退回單機模式,
+            // 而且房號一樣是 5 位數、畫面一模一樣,完全看不出來。踩過兩次,所以用不變式關掉整個 class。
+            var otherRoot = Path.Combine(Path.GetTempPath(), "sdo_other_" + Path.GetRandomFileName());
+            Directory.CreateDirectory(otherRoot);
+            try
+            {
+                // ① 在 _root 讀一份(serverAddress = A)
+                File.WriteAllText(ConfigPath, "[Net]\nserverAddress=10.0.0.1\n");
+                RoomConfig.Load();
+                Assert.AreEqual("10.0.0.1", RoomConfig.serverAddress);
+
+                // ② 「別人的」設定檔:內容不該被動到
+                var otherPath = Path.Combine(otherRoot, RoomConfig.FileName);
+                const string otherText = "[Net]\nserverAddress=192.168.9.9\n";
+                File.WriteAllText(otherPath, otherText);
+
+                // ③ 把 Root 換過去(= 測試把 Root 還原成 null 的那個瞬間)再 Save
+                ProfileManager.Root = otherRoot;
+                LogAssert.Expect(LogType.Warning, new Regex(@"讀進來的"));
+                RoomConfig.Save();
+
+                Assert.AreEqual(otherText, File.ReadAllText(otherPath),
+                    "Save() 不該寫到「不是它讀進來的那一份」設定檔");
+
+                // ④ 在新根 Load 過之後就允許寫了 —— 守門不能把正常的換根流程也擋掉
+                RoomConfig.Load();
+                RoomConfig.serverAddress = "10.9.9.9";
+                RoomConfig.Save();
+                StringAssert.Contains("serverAddress=10.9.9.9", File.ReadAllText(otherPath));
+            }
+            finally
+            {
+                ProfileManager.Root = _root;   // 交還給 TearDown 收(它會刪 _root)
+                try { Directory.Delete(otherRoot, true); } catch { /* best effort */ }
+            }
         }
 
         [Test]

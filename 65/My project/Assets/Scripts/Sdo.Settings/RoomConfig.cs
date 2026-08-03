@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -141,6 +141,63 @@ namespace Sdo.Settings
         public static string legacyFamilyEmblem = "";
         public static string legacyPlayerLevel = "";
 
+        // ---- [Net]：多人連線。★ serverAddress 是整個連線功能的總開關：留空＝純單機（走 MockRoomService，
+        //      體驗與加連線之前完全一樣）；填了才會去連。連不上會自動退回單機（原因只寫 log），不會卡在連線畫面。----
+        // 伺服器位址：IP 或主機名（例如 192.168.1.10 或 dance.example.com）。留空＝不連線（單機）。
+        public static string serverAddress = "";
+        // 伺服器 port。預設 27015（沒有官方值可循，挑一個常見的遊戲 port 區間）。
+        public static int serverPort = 27015;
+        // 進站密碼：要與 server 的 --password 一致才連得上。留空＝連到沒設密碼的 server。
+        // 預設 abab123 —— server 端的預設值也是同一個，所以「兩邊都不改」就能直接連上，
+        // 而且密碼機制是**啟用**的（不是空密碼放行）。要公開的 server 請兩邊都改掉。
+        // ⚠️ MVP 階段這只是個門檻，不是認證：playerId 完全由 client 自稱、連線沒有加密。
+        //    只在 LAN／信任的朋友之間用，不要開在公網（見 server/README.md）。
+        public static string serverPassword = DefaultServerPassword;
+
+        /// <summary>
+        /// 預設進站密碼。**指向共用的 <see cref="Sdo.Net.NetLimits.DefaultServerPassword"/>** ——
+        /// server 端的 <c>ServerOptions.DefaultPassword</c> 也是指同一個常數,
+        /// 所以「改了一邊忘了另一邊」在結構上就不可能發生。
+        /// </summary>
+        public const string DefaultServerPassword = Sdo.Net.NetLimits.DefaultServerPassword;
+        // 缺歌時要不要自動從伺服器下載。true＝座位玩家自動下載（旁觀者一律不自動下載）。
+        /// <summary>
+        /// 連線用的 token(公網 server 才需要)。空 = 不帶。
+        ///
+        /// 🔴 這與 <see cref="serverPassword"/> 不同:密碼是「大家共用的一道門」,token 是
+        /// **「server 認得的你」** —— 啟用之後 server 用它決定你是誰,而不是信 client 自稱的 playerId。
+        /// 開在公網的 server 應該要求 token(見 server/README.md)。
+        /// </summary>
+        public static string serverToken = "";
+
+        /// <summary>
+        /// 用 TLS 連線(server 要有 <c>--tls-cert</c>)。**開在公網一定要開。**
+        /// 不開的話密碼、token、聊天內容全部是明文 —— 同一個網路上的人看得到。
+        /// </summary>
+        public static bool serverTls;
+
+        /// <summary>
+        /// 釘選的 server 憑證指紋(SHA-256 hex;server 開機會印出來,冒號/空白可留)。
+        ///
+        /// 🔴 **自簽憑證一定要填這個。** 自簽沒有 CA 背書 → 一般驗證必定失敗;填了指紋之後
+        /// client 就只認「指紋一模一樣」的那張憑證,鏈結錯誤可以忽略。
+        /// 留空 = 走一般的 CA 驗證(有正式憑證、用網域名連的人適用)。
+        /// 兩者都不成立時 client **連不上**,不會默默放行(見 <c>NetConnection.TryHandshake</c>)。
+        /// </summary>
+        public static string serverCertFingerprint = "";
+
+        public static bool netAutoDownload = true;
+        // 自動下載的單首歌大小上限（MB）。超過就不下載，只顯示缺歌，避免在慢速網路上卡很久。
+        public static int netMaxDownloadMb = 200;
+
+        /// <summary>
+        /// 要走連線嗎? = <see cref="serverAddress"/> 有填東西。
+        ///
+        /// 這是**唯一**的離線/連線判斷點（<c>AppContext.Create</c> 用它決定要建 MockRoomService
+        /// 還是 OnlineRoomService）。留空時整個連線層都不會被建起來，單機體驗一字不動。
+        /// </summary>
+        public static bool OnlineEnabled => !string.IsNullOrWhiteSpace(serverAddress);
+
         public const string FileName = "config.ini";
 
         /// <summary>config.ini 的完整路徑：**全域一份**，放在存檔層 <c>DATA/PROFILE/</c>（＝<see cref="ProfileManager.Root"/>，
@@ -240,6 +297,8 @@ namespace Sdo.Settings
                 if (!hasSongBombsKey) dirty = true;
                 if (!hasScrollBaseBpmKey) dirty = true;// note 速度基準 BPM 是最晚加的，舊檔一律補寫一次
 
+                _loaded = true;        // 一定要在下面那個 Save() 之前 —— 補寫新 key 是合法的寫入
+                _loadedPath = FilePath;
                 if (dirty) Save();
                 if (movedLegacyIni) DeleteLegacyConfigs();      // 舊 per-user + 執行檔同層的 config.ini（內容已寫進新位置）
                 DisplaySettingsManager.DeleteLegacyJson();      // 舊 settings.json（內容已在 [Option]）
@@ -250,6 +309,9 @@ namespace Sdo.Settings
             {
                 Debug.LogWarning($"[RoomConfig] load failed, using defaults: {e.Message}");
                 Sanitize();
+                // 讀失敗也算「試過了」:否則後面任何一次 Save() 都會被守門擋掉,玩家連改設定都存不進去。
+                _loaded = true;
+                _loadedPath = FilePath;
             }
         }
 
@@ -349,9 +411,28 @@ namespace Sdo.Settings
         /// 建好，這裡再保險確保一次，供 OPTION 保存等較晚的呼叫）。</summary>
         public static void Save()
         {
+            // 🔴 沒 Load 過就不准寫。這些欄位是 static 的,而 Save 是「把現在的欄位值整份寫出去」——
+            // 在 Load 之前呼叫就會把**整個 config.ini 換成內建預設值**,玩家的設定全部消失。
+            // 實際踩過:開發連線功能時 serverAddress 被寫回空字串 → 遊戲默默退回單機模式,
+            // 而症狀(「兩台怎麼看不到彼此」)完全指不到根因。寧可不存,也不要存錯。
+            if (!_loaded)
+            {
+                Debug.LogWarning("[RoomConfig] Save() 在 Load() 之前被呼叫 → 不寫檔"
+                                 + "(否則 config.ini 會被整份換成預設值)");
+                return;
+            }
+            var target = FilePath;
+            // 🔴 只准寫回 Load() 讀進來的那個檔 —— 見 _loadedPath 的註解(踩過兩次的坑)。
+            if (!string.IsNullOrEmpty(_loadedPath)
+                && !string.Equals(target, _loadedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.LogWarning("[RoomConfig] Save() 想寫 " + target + ",但這份設定是從 " + _loadedPath
+                                 + " 讀進來的 → 不寫檔(避免把別的根的值蓋到玩家的 config.ini)");
+                return;
+            }
             try
             {
-                var path = FilePath;
+                var path = target;
                 var dir = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 File.WriteAllText(path, Serialize(), new UTF8Encoding(false));
@@ -361,6 +442,24 @@ namespace Sdo.Settings
                 Debug.LogError($"[RoomConfig] save failed: {e.Message}");
             }
         }
+
+        /// <summary><see cref="Load"/> 有跑過嗎?<see cref="Save"/> 用它當守門(見那邊的註解)。</summary>
+        private static bool _loaded;
+
+        /// <summary>測試用:讓「Load 之前不准 Save」的守門能在單元測試裡被驗證與重置(正式流程別碰)。</summary>
+        public static bool LoadedForTests { get { return _loaded; } set { _loaded = value; if (!value) _loadedPath = null; } }
+
+        /// <summary>
+        /// <see cref="Load"/> 實際讀的那個檔案路徑。<see cref="Save"/> **只准寫回這裡**。
+        ///
+        /// 🔴 為什麼要這條不變式:這些欄位是 static 的,而 <see cref="FilePath"/> 會跟著
+        /// <see cref="ProfileManager.Root"/> 跑。任何「先把 Root 指到暫存目錄讀一份、之後又把 Root 還原」的
+        /// 流程(測試就是這樣做的)都會讓後面某一次 Save() 把**暫存那份的值**寫進玩家真正的 config.ini。
+        /// 實際踩過兩次:serverAddress 被寫成空字串 → 遊戲默默退回單機模式,而症狀
+        /// (「兩台看不到彼此」)完全指不到根因,連房號都還是 5 位數看不出差別。
+        /// 「寫回讀進來的那個檔」把整個 bug class 關掉:要存到別的根,就得先在那個根 Load()。
+        /// </summary>
+        private static string _loadedPath;
 
         /// <summary>把一份 INI 文字解析進靜態欄位（純函式：不碰檔案）。未出現的 key 保留原值。</summary>
         public static void ParseInto(string text)
@@ -382,6 +481,15 @@ namespace Sdo.Settings
                     case "familyName": legacyFamilyName = val; hasLegacyProfileKeys = true; break;
                     case "familyEmblem": legacyFamilyEmblem = val; hasLegacyProfileKeys = true; break;
                     case "playerLevel": legacyPlayerLevel = val; hasLegacyProfileKeys = true; break;
+                    // [Net]：大小寫敏感,要與 Serialize 寫出的 key 一字不差
+                    case "serverAddress": serverAddress = val; break;
+                    case "serverPort": serverPort = ParseInt(val, serverPort); break;
+                    case "serverPassword": serverPassword = val; break;
+                    case "serverToken": serverToken = val; break;
+                    case "serverTls": serverTls = ParseBool(val, serverTls); break;
+                    case "serverCertFingerprint": serverCertFingerprint = val; break;
+                    case "netAutoDownload": netAutoDownload = ParseBool(val, netAutoDownload); break;
+                    case "netMaxDownloadMb": netMaxDownloadMb = ParseInt(val, netMaxDownloadMb); break;
                     case "speedSteps": speedSteps = ParseFloatList(val); break;
                     case "defaultSpeed": defaultSpeed = ParseFloat(val, defaultSpeed); break;
                     case "defaultNoteType": defaultNoteType = ParseInt(val, defaultNoteType); break;
@@ -454,6 +562,7 @@ namespace Sdo.Settings
             judgeLevel = Mathf.Clamp(judgeLevel, 1, 9);                      // 精1~精8、9=JUSTICE
             globalOffsetMs = Mathf.Clamp(globalOffsetMs, -300f, 300f);       // 再大就不是延遲、是打錯拍了
             judgeOffsetY = Mathf.Clamp(judgeOffsetY, -200f, 200f);           // 設計 px（畫面高 600）
+            if (serverToken == null) serverToken = "";
             if (additionalSongFolders == null) additionalSongFolders = new string[0];
             if (addonFolder == null) addonFolder = "";
             songUiAlpha = Mathf.Clamp01(songUiAlpha);                        // 外部歌分類面板不透明度 0..1
@@ -473,6 +582,15 @@ namespace Sdo.Settings
             legacyFamilyName = (legacyFamilyName ?? "").Trim();
             legacyFamilyEmblem = (legacyFamilyEmblem ?? "").Trim();
             legacyPlayerLevel = (legacyPlayerLevel ?? "").Trim();
+            // [Net]：位址一定要 Trim —— 手改設定檔很容易留下尾端空白，那會讓 OnlineEnabled
+            // 誤判成「有填」然後拿一個含空白的主機名去解析,錯誤訊息會很莫名。
+            serverAddress = (serverAddress ?? "").Trim();
+            serverPassword = (serverPassword ?? "").Trim();
+            // 指紋是複製貼上來的 —— 正規化到「64 個小寫 hex」,格式不對就當沒填(那會讓
+            // 連線在握手時明確失敗,而不是靜默地放行一張不對的憑證)。
+            serverCertFingerprint = Sdo.Net.TlsPinning.Normalize(serverCertFingerprint);
+            serverPort = Mathf.Clamp(serverPort, 1, 65535);
+            netMaxDownloadMb = Mathf.Clamp(netMaxDownloadMb, 1, 2048);
         }
 
         /// <summary>輸出帶註解的 INI 文字（純函式）。</summary>
@@ -480,12 +598,39 @@ namespace Sdo.Settings
         {
             var sb = new StringBuilder();
             sb.Append("# 本機設定總表 — 放在存檔資料夾 DATA/PROFILE/，純文字可手改，改完存檔下次開遊戲生效。\n");
-            sb.Append("# [Room]=開房間右側面板預設  [Option]=遊戲內 OPTION 對話框的設定。\n");
+            sb.Append("# [Net]=多人連線  [Room]=開房間右側面板預設  [Option]=遊戲內 OPTION 對話框的設定。\n");
             sb.Append("# 鍵位不在這個檔：4 鍵鍵位與遊玩功能鍵（換鏡頭/加減速/打拍音/Auto…）在同層的 keymaps.ini。\n");
             sb.Append("# 角色資料也不在這個檔：登入哪個角色、家族/等級的預設值在同層的 profile.json（每個角色自己的\n");
             sb.Append("# 設定與經驗值則在 DATA/PROFILE/<8位數id>/profile.json）。\n");
 
-            sb.Append("[Room]\n");
+            sb.Append("[Net]\n");
+            sb.Append("# 多人連線。★ serverAddress 是總開關：留空＝純單機（與加連線之前完全一樣）。\n");
+            sb.Append("# 填了才會去連；連不上會自動退回單機（原因寫在 log），不會卡住。\n");
+            sb.Append("# 伺服器位址：IP 或主機名（例如 192.168.1.10 或 dance.example.com）。\n");
+            sb.Append("serverAddress=").Append(serverAddress ?? "").Append('\n');
+            sb.Append("# 伺服器 port（1~65535）。\n");
+            sb.Append("serverPort=").Append(serverPort).Append('\n');
+            sb.Append("# 進站密碼：要與 server 的 --password 一致才連得上。留空＝連到沒設密碼的 server。\n");
+            sb.Append("# 預設 ").Append(DefaultServerPassword).Append(" —— server 端預設值也是同一個，兩邊都不改就能直接連上。\n");
+            sb.Append("# ⚠️ MVP 階段這只是門檻不是認證（身分由 client 自稱、連線沒加密）——\n");
+            sb.Append("#    只在 LAN／信任的朋友之間用，不要開在公網。\n");
+            sb.Append("serverPassword=").Append(serverPassword ?? "").Append('\n');
+            sb.Append("# 公網伺服器的 token(空=不帶)。與密碼不同:密碼是大家共用的一道門,\n");
+            sb.Append("# token 是「伺服器認得的你」—— 啟用後身分由伺服器依 token 決定,不再信本機自稱的角色 id。\n");
+            sb.Append("serverToken=").Append(serverToken ?? "").Append('\n');
+            sb.Append("# 用 TLS 加密連線（1=開 0=關）。伺服器要有 --tls-cert 才開得起來。\n");
+            sb.Append("# ★ 開在公網一定要開:不開的話密碼、token、聊天內容全部是明文。\n");
+            sb.Append("serverTls=").Append(B(serverTls)).Append('\n');
+            sb.Append("# 釘選的伺服器憑證指紋（SHA-256；伺服器開機會印出來，冒號/空白可留）。\n");
+            sb.Append("# ★ 自簽憑證一定要填 —— 自簽沒有 CA 背書，一般驗證必定失敗。填了之後只認這張憑證。\n");
+            sb.Append("#   留空＝走一般 CA 驗證（有正式憑證、用網域名連的人適用）。兩者都不成立時連不上。\n");
+            sb.Append("serverCertFingerprint=").Append(serverCertFingerprint ?? "").Append('\n');
+            sb.Append("# 缺歌時自動從伺服器下載（1=開 0=關）。旁觀者一律不自動下載。\n");
+            sb.Append("netAutoDownload=").Append(B(netAutoDownload)).Append('\n');
+            sb.Append("# 自動下載的單首歌上限（MB）。超過只顯示缺歌，避免在慢速網路上卡很久。\n");
+            sb.Append("netMaxDownloadMb=").Append(netMaxDownloadMb).Append('\n');
+
+            sb.Append('\n').Append("[Room]\n");
             sb.Append("# 速度可選清單（逗號分隔，要加/減檔位直接改）\n");
             sb.Append("speedSteps=").Append(FloatListToString(speedSteps)).Append('\n');
             sb.Append("# 預設速度（會對齊到上面最接近的檔位）。玩家在房間選了會寫回這裡\n");

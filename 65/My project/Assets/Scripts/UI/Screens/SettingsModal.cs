@@ -231,7 +231,7 @@ namespace Sdo.UI.Screens
             DisplaySettingsManager.ApplyDisplay();
             AudioListener.volume = _music;
             _applied = true; _entryLang = _lang;
-            Toast.Show(L("settings.title") + " ✓");
+            Toast.Show(L("settings.applied"));   // 原本是「設定 ✓」—— 那沒說發生了什麼事
             SetVisible(false);
         }
 

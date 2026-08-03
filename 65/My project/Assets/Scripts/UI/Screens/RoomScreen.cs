@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -6,6 +6,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Sdo.Game;
 using Sdo.Localization;
+using Sdo.Net;
 using Sdo.Settings;
 using Sdo.UI.Catalog;
 using Sdo.UI.Core;
@@ -41,6 +42,13 @@ namespace Sdo.UI.Screens
         // 自由模式/歌名/難度/BPM 的白色描邊(位移複製,不靠 SDF) 厚度(canvas px)。要更粗就調大。
         private const float Win2EdgePx = 1.1f;
 
+        // 自由模式「難度設置」框裡的 EASY/NORMAL/HARD：官方 FMLvlChoose color="0xfff9f891"(淡黃)。
+        private static readonly Color32 FmLevelColor = new Color32(0xf9, 0xf8, 0x91, 0xff);
+        // FMdif.an 上「难度设置」那幾個烘死的簡體字所佔的像素範圍(.an 座標,左上原點)——見 EraseFmDifTitle。
+        // 逐列量出來的字框是 x 36..88 / y 2..14;這裡各留一點餘裕,但 y 絕不碰 15(那是下面值框的上緣)。
+        private const int FmTitleClearX0 = 33, FmTitleClearX1 = 92, FmTitleClearY0 = 2, FmTitleClearY1 = 15;
+        private const int FmTitleCleanX = 20;   // 同一列拿來當「乾淨底色」的取樣 x(在框內、字的左邊)
+
         // note 種類(hit-effect)可選預覽圖，取自線上 DDRROOM.XML 的 hiteft 清單（索引 = GameSession.NoteType；-1=隨機）。
         // 每個 .an 是多幀動畫（如 hiteft2 = jz00..jz07 八幀），預覽框用 SpriteSeqAnim 循環撥放。
         // 只收「實際可選的特效皮」12 項（index 0..11），循環是 隨機 → 0..11 → 回隨機。
@@ -67,10 +75,25 @@ namespace Sdo.UI.Screens
         private const float ChatBubbleFollowTicksPerSecond = 20f;
         private const float ChatBubbleFollowStep = 0.33333335f;
         private const float ChatBubbleDragScale = 1f;
+        // 泡的畫進了房間相機(才會被前面的人擋住)之後多出來的兩個常數。
+        private const float BubbleDepthBiasPad = 2f;        // 世界單位:量出來的半厚度之外再讓一點,避免剛好貼齊
+        private const int BubbleSortingOrderBase = 100;     // 見 SortBubbleWorldCanvases:要大於衣物/場景的 0
         // 泡內字色分性別(女桃紅/男藍)。用 property 現算而非常數：性別可在遊玩中改(商城 ActivateGenderProfile)，
         // 打字泡是建一次重用的 → 每次進打字態要重刷色(見 BeginRoomBubbleTyping)；已送出的泡在 Spawn 當下取色。
         private Color ChatBubbleTextColor => RoomBubbleArt.TextColor(LocalIsMale);
         private bool LocalIsMale => Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
+
+        /// <summary>某一顆泡該用的字色 —— 取**泡的主人**的性別，不是本機的。
+        /// 房間裡別人的泡也是這裡生的(<see cref="SpawnSentRoomBubble"/> 帶 ownerUserId)，
+        /// 用本機性別的話會變成「我是女生，所以全房的泡都是桃紅」。
+        /// 查不到座位(剛離開/旁觀者)就退回女生桃紅＝官方原本唯一的那個顏色。</summary>
+        private Color BubbleTextColor(int ownerUserId)
+        {
+            if (ownerUserId == 0) return ChatBubbleTextColor;
+            var snap = Ctx != null && Ctx.Net != null ? Ctx.Net.Room : null;
+            var seat = snap != null ? snap.SeatOf(ownerUserId) : null;
+            return RoomBubbleArt.TextColor(seat != null && seat.Look != null && seat.Look.Male);
+        }
         // 左下訊息欄配色：一般行名字/內容=白；系統行=金黃；密語=#1efefe；進出舞台廣播=#72c1fe；
         // 家族=綠（你沒有家族也用綠；你說＝白，沿用一般行色）。
         private const string ChatSystemHex = "F0C24A";
@@ -94,7 +117,26 @@ namespace Sdo.UI.Screens
         private readonly RawImage[] _slotHead = new RawImage[RoomLayout.SeatCount];
         private readonly Image[] _slotClose = new Image[RoomLayout.SeatCount];
         private readonly Image[] _slotMaster = new Image[RoomLayout.SeatCount];
+        // 準備徽章(官方 charready0..5 / Room66.an)。與 HOST 徽章疊在同一條(y=102)——房主不會有 Ready
+        // (NetSeat.Ready 對房主恆 false),所以兩者天生互斥。兩張都是四幀(白/橘/綠/藍)= 隊伍顏色。
+        private readonly Image[] _slotReady = new Image[RoomLayout.SeatCount];
+        // 名字底下那條名牌(官方 AvatarName0..5 的 background = Team.an)。四幀:第 0 幀是 1×1 的空白
+        // (沒選隊 → 不畫),第 1/2/3 幀是 A/B/C 的橘/綠/青藍漸層條。選了隊,名字那一格就整條變成自己那隊的顏色。
+        private readonly Image[] _slotPlate = new Image[RoomLayout.SeatCount];
+        private Sprite[] _readyFrames, _masterFrames, _plateFrames, _noMapFrames, _playingFrames;
         private readonly TextMeshProUGUI[] _slotName = new TextMeshProUGUI[RoomLayout.SeatCount];
+        // 狀態徽章(NO MAP / PLAYING,官方 c06..c09 / d06..d09)。跟 HOST / READY **同一條**(y=102)、
+        // 四張共用那個位置一次只畫一張,優先序 PLAYING > NO MAP > HOST > READY —— 見 RenderSeatBadges。
+        // 也是四色(黑=自由 / 橘=A / 綠=B / 藍=C),跟著那個人的隊伍換色,與 HOST/READY 同一套幀序。
+        private readonly Image[] _slotMissing = new Image[RoomLayout.SeatCount];
+        private readonly Image[] _slotPlaying = new Image[RoomLayout.SeatCount];
+        // 傳檔跑條(執行期畫的兩個矩形,不烘圖)。
+        private readonly Image[] _slotBarTrack = new Image[RoomLayout.SeatCount];
+        private readonly Image[] _slotBarFill = new Image[RoomLayout.SeatCount];
+        // 六格頭貼的透明命中盒 + 目前彈出的座位選單(一次只會有一個)。
+        private readonly Image[] _slotHit = new Image[RoomLayout.SeatCount];
+        private GameObject _slotPopup;
+        private int _slotPopupFrame = -1;   // 彈出的那一幀不要被「點選單外面就關掉」自己關掉
         private OutlinedLabel _serverLabel, _channelLabel, _roomIdLabel;   // 白字 + 藍邊 (rgb 70,74,152)
         private TextMeshProUGUI _roomNameLabel;
         private OutlinedLabel _songLabel;   // 歌名(白邊)
@@ -133,8 +175,20 @@ namespace Sdo.UI.Screens
         private bool _chatBubbleDragPointerCaptured;
         // 已送出的泡：可同時多顆，各自壽命；打字泡仍用上面 _chatBubble*。
         private readonly List<SentRoomBubble> _sentBubbles = new List<SentRoomBubble>();
+
+        // ---- 頭上泡的「畫」住在 3D 世界(才吃得到深度遮擋)----------------------------------------------
+        // 每顆泡被拆成兩半:
+        //   • **代理**(Root,留在 _bubbleLayer 的 UI 裡):透明、只負責滑鼠命中與「絕對設計座標」。
+        //     鏈物理/拖曳/命中測試/壽命一行都沒改 —— 它們全部繼續讀寫代理的 anchoredPosition。
+        //   • **畫**(Visual,掛在下面這張 per-owner 的 world canvas 裡):由房間相機 render,
+        //     所以站在說話者前面的人會逐像素把它切掉。位置寫成「代理位置 − 錨點位置」= 相對偏移。
+        // 每個人一張 canvas,因為每個人在不同深度(canvas 的位置/縮放是按那個人的深度解出來的)。
+        private Transform _bubbleWorldRoot;   // 🔴 獨立 GameObject,**不可以**掛在 UI canvas 底下(會變 nested canvas)
+        private readonly Dictionary<int, RectTransform> _bubbleWorldCanvas = new Dictionary<int, RectTransform>();
+        private readonly Dictionary<int, float> _bubbleWorldDepth = new Dictionary<int, float>();   // 給每幀重排前後用
         private Coroutine _chatInputFocusRoutine;
         private Button _songSelectBtn, _startBtn, _readyBtn, _cancelReadyBtn;
+        private Button _spectateBtn, _enterBtn;   // 同一個位置的兩顆:座位上顯示「旁觀」、旁觀中顯示「進入」
 
         // ---- win2 右側面板控件（模式/場景/歌曲資訊/速度/note/組隊/掉落）----
         private OutlinedLabel _modeLabel;  // 自由模式/普通模式（白邊；線上是純文字，沒有 mode 圖）
@@ -150,6 +204,13 @@ namespace Sdo.UI.Screens
         private readonly Image[] _teamImg = new Image[4];      // 組隊 A/B/C/自由
         private readonly Sprite[] _teamNormal = new Sprite[4];
         private readonly Sprite[] _teamPushed = new Sprite[4];
+
+        // ---- 自由模式的「難度設置」(官方 FMGameLevel)：跟「房主設置」鈕擺同一格，二選一 ----
+        // 房主 → 房主設置(選歌)；自由模式的其他玩家 → 這一格，各自挑自己要打的難度。
+        private Image _fmLevelBg;                 // FMdif.an 的框(烘死的簡體標題已抹掉)
+        private OutlinedLabel _fmLevelTitle;      // 疊上去的「難度設置」(可翻譯)
+        private TextMeshProUGUI _fmLevelValue;    // EASY / NORMAL / HARD
+        private Button _fmLevelPrev, _fmLevelNext;
 
         private RoomScene3D _scene;
         private RoomHeadPortrait _localHead;
@@ -172,6 +233,38 @@ namespace Sdo.UI.Screens
             head.headFrameDist = male ? MaleHeadFrameDist : FemaleHeadFrameDist;
             head.avatarScale   = male ? MaleAvatarScale   : FemaleAvatarScale;
         }
+
+        /// <summary>
+        /// 遠端那組頭貼也套**同一組**取景參數 —— 少了這一步,同一個角色的遠端頭貼會比他自己畫面上的
+        /// 頭貼高 0.14×框高(≈14% 框高):遠端那邊原本寫死 RoomRemoteHeadSet/RoomHeadPortrait 的
+        /// **欄位預設值** aimUp 0.11,而本機這條路是被上面覆寫成 0.25 的。
+        ///
+        /// 這裡不分性別:上面那兩組常數目前完全相同(「女生沿用男生這組」)。哪天真的要分,
+        /// RoomRemoteHeadSet 就得改成 per-slot 參數(它一台相機輪拍男女混合的六個人)。
+        /// </summary>
+        private static void ApplyHeadFraming(RoomRemoteHeadSet heads)
+        {
+            if (heads == null) return;
+            heads.aimUp = MaleHeadAimUp;
+            heads.zoom = MaleHeadZoom;
+            heads.frameDist = MaleHeadFrameDist;
+            heads.fitHairTop = false;   // 與 RoomHeadPortrait.fitHairTop 的預設一致(兩邊都不理頭髮)
+        }
+
+        // ---- 徽章條與傳檔跑條的版位 ----
+        // HOST / READY / NO MAP / PLAYING 四張都畫在頭貼下緣那一條(官方 master0..5 / charready0..5 的 y=102)。
+        // 四張互斥(RenderSeatBadges 一次只開一張)→ 同一條不會疊,而且不再蓋住頭貼的臉(舊版狀態徽章在 y=62)。
+        private const float BadgeY = 102f;
+        // 四張共用**同一個顯示矩形** = 官方 HOST/READY 的 100×30。PLAYING 的圖(d06..d09)只有 100×27,
+        // 這裡是**拉伸**(非等比)填滿到 30 高,不是照原尺寸畫 —— 使用者要四張的高寬完全一樣,
+        // 寧可那張字被拉高 3px(約 11%),也不要一張比另三張矮一截。
+        private const float BadgeW = 100f, BadgeH = 30f;
+        // 跑條夾在頭貼下緣(132)與名牌(141)之間那條縫。
+        private const float BarY = 134f, BarH = 4f;
+        // 上傳/下載用顏色區分(使用者要求不要字):上傳偏藍、下載偏綠。
+        // 藍色取自官方房主徽章第四幀 b09 的外框(0,53,165)那一系 —— 同一套素材的藍。
+        private static readonly Color BarUpColor = new Color(0.42f, 0.66f, 1f, 1f);
+        private static readonly Color BarDownColor = new Color(0.45f, 0.92f, 0.55f, 1f);
 
         // ---- win 容器（收合用）：win1/win2/win3 的所有元件各掛在自己的容器下，收合就整組滑出畫面（官方 uihide/uidisplay）。
         //      每個容器都是「錨定左上、原點、800×600」的全畫布 rect → 子元件座標仍用絕對(win.x+x) 不變，收合只動容器 anchoredPosition。
@@ -210,6 +303,17 @@ namespace Sdo.UI.Screens
         private static Texture2D _dbgPx;    // 1px texture for the debug borders
 
         private static string L(string k) => LocalizationManager.Get(k);
+
+        /// <summary>
+        /// 「這個操作為什麼沒成功」——**只寫 log,不彈 toast**。
+        ///
+        /// 這些原本都是畫面上方的浮動訊息,但它們幾乎全是「按了但條件不符」的例行拒絕
+        /// (沒選歌、還有人沒準備、正在局裡不能旁觀…),而畫面本身已經表達了狀態:
+        /// 沒選歌時歌名欄是空的、沒準備的人頭上沒有準備標記。一直跳訊息只是把畫面弄髒。
+        /// 需要追原因時看 log(而且 log 印的是同一句本地化文字,不必再對照 key)。
+        /// </summary>
+        private static void Notice(string key)
+            => Debug.Log("[room] " + L(key));
 
         protected override void BuildUI()
         {
@@ -263,18 +367,76 @@ namespace Sdo.UI.Screens
             float[] closeX = { 68, 188, 309, 431, 556, 678 };
             float[] nameX = { 52, 172, 293, 418, 539, 662 };
             float[] masterX = { 54, 176, 298, 421, 544, 666 };
+            float[] readyX = { 53, 175, 298, 419, 542, 665 };   // DDRROOM charready0..5（與 master 差 1px，照官方）
+
+            // HOST / READY 兩張徽章各四幀（白=自由 / 橘=A / 綠=B / 藍=C）——選了不同隊的人，頭貼上的字就是自己那隊的顏色。
+            _masterFrames = RoomUiArt.AnFrames("master");   // b06..b09
+            _readyFrames = RoomUiArt.AnFrames("Room66");    // a06..a09
+            // NO MAP / PLAYING 是同一套素材的下兩組編號（c06..c09 / d06..d09），幀序與配色跟 a/b 完全一樣，
+            // 只有第 0 幀是黑（a/b 是白）。官方沒把這兩組包成 .an（資料夾裡只有裸 PNG）→ 逐張讀，幀序由檔名保證。
+            _noMapFrames = StateBadgeFrames("C");
+            _playingFrames = StateBadgeFrames("D");
+            // 名字底下那條名牌也是四幀，但第 0 幀是 1×1 空白 —— 官方用「畫一張看不見的圖」表示沒選隊。
+            _plateFrames = RoomUiArt.AnFrames("Team");      // 空白 / 橘 / 綠 / 青藍
             for (int i = 0; i < RoomLayout.SeatCount; i++)
             {
                 _slotHead[i] = AddRaw("Slot" + i, sx[i] + Win1.x, RoomLayout.HeadSlotY, RoomLayout.HeadSlotW, RoomLayout.HeadSlotH);
                 _slotHead[i].enabled = false;   // shown only when occupied (head RT assigned)
                 _slotClose[i] = Art("close", Win1, closeX[i], 59, "Close" + i);
-                _slotMaster[i] = Art("master", Win1, masterX[i], 102, "Master" + i);
+                _slotMaster[i] = UIKit.AddSprite(_win1Root, "Master" + i, Frame(_masterFrames, 0),
+                                                 Win1.x + masterX[i], Win1.y + BadgeY);
                 _slotMaster[i].enabled = false;
-                var plate = Art("Team", Win1, nameX[i], 141, "NamePlate" + i);
-                plate.enabled = false;
+                _slotReady[i] = UIKit.AddSprite(_win1Root, "Ready" + i, Frame(_readyFrames, 0),
+                                                Win1.x + readyX[i], Win1.y + BadgeY);
+                _slotReady[i].enabled = false;
+                // 名牌先建、名字後建 → UGUI 的 sibling 順序讓白字畫在彩色名牌**上面**。
+                _slotPlate[i] = UIKit.AddSprite(_win1Root, "NamePlate" + i, Frame(_plateFrames, 1),
+                                                Win1.x + nameX[i], Win1.y + 141);
+                _slotPlate[i].enabled = false;
                 _slotName[i] = UIKit.AddText(_win1Root, "Name" + i, "", 13, Color.white, TextAlignmentOptions.Center);
-                Place(_slotName[i].rectTransform, nameX[i] + Win1.x, 141, RoomLayout.HeadSlotW, 18);
+                // 🔴 欄寬要用官方 AvatarName 的 108(不是頭貼格的 96),y 也要加上 Win1.y ——
+                //    名字是**置中**排版,量錯寬度/少加一格就會偏:96 寬時字的中心在 x+48、名牌條中心在 x+53.5,
+                //    在名牌沒畫出來的年代看不出來,現在選了隊、彩色條一畫上去,白字就明顯偏左又高 1px。
+                Place(_slotName[i].rectTransform, nameX[i] + Win1.x, Win1.y + 141, 108, 18);
                 _slotName[i].gameObject.SetActive(false);
+
+                // 狀態徽章:與 HOST / READY **同一條**、同一個 x(readyX)—— 四張互斥,由 RenderSeatBadges
+                // 挑要畫哪一張,所以「房主在場中」不會兩張疊在一起,也不用再蓋住頭貼的臉。
+                _slotMissing[i] = UIKit.AddSprite(_win1Root, "Missing" + i, Frame(_noMapFrames, 0),
+                                                  Win1.x + readyX[i], Win1.y + BadgeY);
+                _slotMissing[i].enabled = false;
+                _slotPlaying[i] = UIKit.AddSprite(_win1Root, "Playing" + i, Frame(_playingFrames, 0),
+                                                  Win1.x + readyX[i], Win1.y + BadgeY);
+                _slotPlaying[i].enabled = false;
+                // 四張一律撐成 BadgeW×BadgeH(AddSprite 依 sprite 原生尺寸給的 sizeDelta 在這裡被蓋掉)。
+                StretchToBadgeRow(_slotMissing[i]);
+                StretchToBadgeRow(_slotPlaying[i]);
+                StretchToBadgeRow(_slotMaster[i]);
+                StretchToBadgeRow(_slotReady[i]);
+
+                // 上傳/下載的跑條:頭貼下緣與名牌之間那條縫(y=134..138)。
+                // 刻意不烘圖也不寫百分比 —— 使用者要的就是一條會跑的條。
+                _slotBarTrack[i] = UIKit.AddImage(_win1Root, "Bar" + i, new Color(0f, 0f, 0f, 0.55f));
+                Place(_slotBarTrack[i].rectTransform, sx[i] + Win1.x, BarY, RoomLayout.HeadSlotW, BarH);
+                _slotBarFill[i] = UIKit.AddImage(_slotBarTrack[i].rectTransform, "Fill", Color.white);
+                var fr = _slotBarFill[i].rectTransform;
+                fr.anchorMin = new Vector2(0f, 0f);
+                fr.anchorMax = new Vector2(0f, 1f);      // 高度跟著 track,寬度由 sizeDelta.x 控制
+                fr.pivot = new Vector2(0f, 0.5f);
+                fr.anchoredPosition = Vector2.zero;
+                fr.sizeDelta = new Vector2(0f, 0f);
+                _slotBarTrack[i].enabled = false;
+                _slotBarFill[i].enabled = false;
+
+                // 透明命中盒:座位的右鍵選單與雙擊鎖格都靠它收滑鼠。
+                // 為什麼不掛在 _slotHead 上:那張 RawImage 是 raycastTarget=false,而且**空位時 enabled=false**
+                // → 收不到任何點擊,而「關閉一個空位」正是最需要點空位的操作。
+                _slotHit[i] = UIKit.AddImage(_win1Root, "SlotHit" + i, new Color(0f, 0f, 0f, 0f), raycast: true);
+                _slotHit[i].rectTransform.anchorMin = _slotHit[i].rectTransform.anchorMax = new Vector2(0f, 1f);
+                _slotHit[i].rectTransform.pivot = new Vector2(0f, 1f);   // 同 AddRaw:左上為原點,y 往下為負
+                var hitProxy = _slotHit[i].gameObject.AddComponent<PointerClickProxy>();
+                int seatIndex = i;
+                hitProxy.Clicked = ev => OnSlotPointerClick(seatIndex, ev);
             }
 
             // head-bar buttons (win1)
@@ -373,6 +535,8 @@ namespace Sdo.UI.Screens
             // 房主設置（= 選歌入口）。線上原版 BtnRoomMaster_1/2/3。按下音效改 Buttonfloat（非預設 SE_0001）。
             _songSelectBtn = Btn("songselect", "BtnRoomMaster_1", "BtnRoomMaster_2", "BtnRoomMaster_3", Win2, 14, 296, () => GoTo(ScreenId.SongSelect), UiSfx.ButtonFloat);
 
+            BuildFreeModeLevel();
+
             // 註：官方 WinMoveUpHelp(moveuphelp0.an) 其實是一張「黃底問號」的方向鍵提示圖，靜態擺在面板左上角就變成
             // 使用者看到的那顆問號 → 依需求移除（要做方向鍵提示應改成floating動畫貼在 3D 場景，不放面板裡）。
 
@@ -416,14 +580,25 @@ namespace Sdo.UI.Screens
             Btn("BangleButton", "Bangle0", "Bangle1", "Bangle0", Win3, 514, 82, null, circle: true);                       // 手環
             Btn("NotesButton", "Emai0", "Emai1", "Emai0", Win3, 548, 82, null, circle: true);                              // 信件
             Btn("tools", "Room55", "Room56", "Room57", Win3, 584, 85, null);                                // 道具包(膠囊,非圓)
-            // 右邊改成藍色「旁觀」(look, BtnLook) —— 取代官方綠色「進入」(play, Room92/93/94)。
+            // 右邊這格是**同一個位置的兩顆球**(比照下面的準備/取消):
+            //   • 在座位上 → 藍色「旁觀」(look, BtnLook):交出座位去看戲;
+            //   • 旁觀中   → 官方綠色「進入」(play, Room92/93/94):回座位。
+            // 兩顆都掛 OnSpectateToggle(它自己看目前是不是旁觀者決定送 spectate 還是 stopSpectate)。
+            // 為什麼一定要換圖:同一顆「旁觀」鈕按下去之後還是寫著「旁觀」,玩家會以為沒生效而一直按 ——
+            // 而那顆鈕在旁觀狀態下做的其實是相反的事。初始隱藏「進入」,等 Render 依快照決定。
             // 大顆圓鈕 → alphaHit：命中判定貼齊可見圓形,透明四角不再誤觸;disc：手繪圓盤的階梯描邊沿圓周低通抹平(見 Btn 註解)。
-            Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, null, alphaHit: 0.5f, disc: true);
+            _spectateBtn = Btn("look", "BtnLook_1", "BtnLook_2", "BtnLook_3", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _enterBtn = Btn("play", "Room92", "Room93", "Room94", Win3, 651, 60, OnSpectateToggle, alphaHit: 0.5f, disc: true);
+            _enterBtn.gameObject.SetActive(false);
 
             // 開始：按下不走預設 SE_0001，改由 OnStart 播 Start 音效 + 全螢幕漸暗再切舞台。
             _startBtn = Btn("start", "Room15", "Room16", "Room17", Win3, 706, 43, OnStart, null, alphaHit: 0.5f, disc: true);
+            // 準備 / 取消是**同一個位置的兩顆球**(官方 WaitingRoom.png 裡「取消」就烘在「準備」正下方一列):
+            // 沒準備 → Room12「準備」;按了之後 server 回 roomState → 換成 c_ready0「取消」,再按一次取消準備。
+            // 兩顆都掛 OnReadyToggle(它自己看目前狀態決定送 true 還是 false)。初始隱藏「取消」,等 Render 決定。
             _readyBtn = Btn("ready", "Room12", "Room13", "Room14", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f, disc: true);
             _cancelReadyBtn = Btn("cancel_ready", "c_ready0", "c_ready1", "c_ready2", Win3, 706, 43, OnReadyToggle, alphaHit: 0.5f, disc: true);
+            _cancelReadyBtn.gameObject.SetActive(false);
 
             // 5) 左上「左拉」收合鈕（官方 uihide/uidisplay，同一位置 11,83）。按 ◄(BtnMaypopLeft) → 三個面板往四周滑出；
             //    收合後原地換成 ►(BtnMaypopRight) 展開鈕。掛在 Root（不隨面板收合），且最後建立 → 疊在最上層永遠可點。
@@ -522,9 +697,18 @@ namespace Sdo.UI.Screens
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated += OnRoomUpdated;
                 if (Ctx.Chat != null) Ctx.Chat.MessageReceived += OnRoomChatMessage;
+                if (Ctx.Net != null)
+                {
+                    Ctx.Net.Kicked += OnKickedFromRoom;          // 被房主踢/位子被關 → 要離開房間畫面
+                    Ctx.Net.MatchStarting += OnMatchStarting;    // server 說開場了 → 才進場(房主與非房主同一條路)
+                    Ctx.Net.GameplayAborted += OnGameplayAborted;
+                }
                 LocalizationManager.LanguageChanged += Render;   // 切語言時，房號/房名/位置標示即時重譯
                 _subscribed = true;
             }
+            // joinResult and the first roomState can arrive before this screen subscribes; reconcile the snapshot now.
+            SyncNetSongAvailability();
+
 
             bool localMale = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
             // 從 id-based equippedItems 經 catalog 現算 (含合成 翅膀/表情/项链)，非讀可能過時的 equippedParts 快取 → 房間
@@ -534,11 +718,30 @@ namespace Sdo.UI.Screens
                 : null;
             int localBody = ProfileManager.Active != null ? ProfileManager.Active.bodyShapeIndex : 0;   // 本機角色自己的體型 (胖瘦)
 
+            // 🔴 連線模式:進房就把自己的外觀報一次給 server —— 別人是靠這份資料把你的角色建出來的。
+            // 這裡是**唯一保證會跑到的地方**:本機 avatar 的穿搭就是在上面這三行解析出來的,
+            // 而不管你是按「開房」、按「加入」、從遊戲打完回房、還是走 dev 的直達路徑,都會經過 OnShow。
+            // (原本只掛在選男女畫面的 CommitIdentity 上 → dev 的 SDO_ROOM/SDO_JOINFIRST 兩條路徑
+            //  完全繞過它,實測 server 一次 setLook 都沒收到,遠端角色全是預設的女角。)
+            int localSeat = Ctx != null && Ctx.Rooms != null ? Mathf.Max(0, LocalSeatIndex(Ctx.Rooms.CurrentRoom)) : 0;
+            if (Ctx != null && Ctx.Net != null)
+            {
+                Ctx.Net.PublishLook();        // 去重過;進房前 NetClient 已經送過一次,這裡是補網
+                _localMoveSlot = int.MinValue;
+                _moveThrottle.Reset();
+            }
+
             if (_scene == null)
             {
                 var sceneGo = new GameObject("RoomScene3D");
                 _scene = sceneGo.AddComponent<RoomScene3D>();
-                _scene.Build(localMale, localAvatarParts, localBody);
+                _scene.Build(localMale, localAvatarParts, localBody, localSeat);
+                // 遠端玩家的頭貼:一台相機對準房間裡已經在跑的那幾隻角色(不再建 avatar)。
+                var headsGo = new GameObject("RoomRemoteHeads");
+                headsGo.transform.SetParent(_scene.transform, false);
+                _remoteHeads = headsGo.AddComponent<RoomRemoteHeadSet>();
+                ApplyHeadFraming(_remoteHeads);   // 與本機那顆同一組取景參數(否則遠端頭貼會偏高,見那邊的註解)
+                _remoteHeads.Build(_scene);
                 if (_backdrop != null && _scene.SceneTexture != null)
                 {
                     _backdrop.texture = _scene.SceneTexture;
@@ -554,6 +757,7 @@ namespace Sdo.UI.Screens
                 _localHead.layer = HeadLayer;
                 ApplyHeadFraming(_localHead, localMale);   // 男女各自的上下/遠近
                 _localHead.Init(localMale, localAvatarParts, localBody);
+                _localHead.SetSpectating(LocalSpectating);   // 旁觀進房的人:頭貼一開始就不要演飛行動作
                 _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
                 _localHead.MirrorSourceProvider = () => _scene != null ? _scene.PlayerAvatar : null;   // …and its exact pose (no drift)
@@ -564,7 +768,14 @@ namespace Sdo.UI.Screens
             if (ui != null)
             {
                 _maskedCam = ui; _savedMask = ui.cullingMask;
-                ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer));
+                // BubbleLayer 也要遮:頭上泡的畫已經由房間那組相機 render 進 RT(這樣才吃得到深度遮擋),
+                // 前端 UI 相機若也看得到那張 world canvas,泡就會被畫第二次 —— 而且第二次的位置與大小都是錯的
+                // (它活在房間相機的透視裡,不在 UI 的正交裡)。
+                // PeopleDepthLayer 同理:那層是角色的隱形深度分身(ColorMask 0),雖然畫不出顏色,
+                // 但沒必要讓 UI 相機每幀跑一次它們的 draw。
+                ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer)
+                                    | (1 << RoomScene3D.RemoteAvatarLayer) | (1 << RoomScene3D.BubbleLayer)
+                                    | (1 << RoomScene3D.PeopleDepthLayer));
             }
 
             // 儲物櫃換穿後 → 立即重建本機房間 avatar + 頭貼，讓新穿搭當場反映 (WardrobeScreen 已寫回 profile.json)。
@@ -576,6 +787,12 @@ namespace Sdo.UI.Screens
 
             ResetCollapse();             // 每次進場都從「完全展開」開始（常駐單例，避免上次收合狀態殘留）
             SeedDefaultSongIfNeeded();   // 進大廳預設選好 index 最大的歌(easy)，房間一進來就有歌
+            Debug.Log("[dev] vars: ROOM=" + (ScreenGameplay.DevVar("SDO_ROOM") ?? "-")
+                      + " JOINFIRST=" + (ScreenGameplay.DevVar("SDO_JOINFIRST") ?? "-")
+                      + " AUTOREADY=" + (ScreenGameplay.DevVar("SDO_AUTOREADY") ?? "-")
+                      + " AUTOSTART=" + (ScreenGameplay.DevVar("SDO_AUTOSTART") ?? "-")
+                      + " SAY=" + (ScreenGameplay.DevVar("SDO_SAY") ?? "-")
+                      + " PICKSONG=" + (ScreenGameplay.DevVar("SDO_PICKSONG") ?? "-"));
             // 聊天作用域切到本房間：之後的送話/廣播標記成此房，且只顯示此房 + 密語(跨場)。
             _chatScopeRoomId = Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
             Ctx.Chat?.Clear();   // 換場地就清訊息欄：進房間(大廳→房間 / 遊戲→房間都會經過 OnShow)先清空
@@ -597,6 +814,10 @@ namespace Sdo.UI.Screens
                 : null;
             int body = ProfileManager.Active != null ? ProfileManager.Active.bodyShapeIndex : 0;   // 本機角色自己的體型 (胖瘦)
             if (_scene != null) _scene.RebuildLocalAvatar(male, parts, body);
+            // 換裝後要重報一次外觀,否則別人畫面上的你還穿著舊衣服。
+            // 走 PublishLook 而不是直接 SendLook:前者會更新「上次送出的外觀」快取。
+            // 直接送的話快取會過期 → 之後某次真的變了反而被去重擋掉(而且很難查)。
+            if (Ctx != null && Ctx.Net != null) Ctx.Net.PublishLook();
             // 頭貼要「整個重建」：RoomHeadPortrait.Init 每次都新建一隻頭 avatar/相機/RT 卻不清舊的 → 直接再 Init 只會疊一隻
             // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
             // (Destroy 幀尾才生效 → 先 SetActive(false)，否則舊頭 avatar 這一幀還在同一個 parkSpot，新頭相機會同時拍到兩顆。)
@@ -606,6 +827,7 @@ namespace Sdo.UI.Screens
             _localHead.layer = HeadLayer;
             ApplyHeadFraming(_localHead, male);   // 男女各自的上下/遠近
             _localHead.Init(male, parts, body);
+            _localHead.SetSpectating(LocalSpectating);   // 重建會回到 Init 的預設(穿翅膀=飛)→ 旁觀中要再關掉一次
             _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
             _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
             _localHead.MirrorSourceProvider = () => _scene != null ? _scene.PlayerAvatar : null;
@@ -643,6 +865,9 @@ namespace Sdo.UI.Screens
             var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             if (s.HasSong && room != null && string.IsNullOrEmpty(room.SongTitle))
                 Ctx.Rooms.SetSong(s.SongTitle);               // 同步房間顯示（單機=房主）
+            // 連線:房主要把歌**發給 server**,否則 server 眼中這間房沒有歌 → 沒人按得下準備、
+            // 房主按開始只會收到「請先選擇歌曲」(見 NetSongPublisher 的註解)。
+            NetSongPublisher.Publish(Ctx);
         }
 
         public override void OnHide()
@@ -653,13 +878,22 @@ namespace Sdo.UI.Screens
             {
                 if (Ctx.Rooms != null) Ctx.Rooms.RoomUpdated -= OnRoomUpdated;
                 if (Ctx.Chat != null) Ctx.Chat.MessageReceived -= OnRoomChatMessage;
+                if (Ctx.Net != null)
+                {
+                    Ctx.Net.Kicked -= OnKickedFromRoom;
+                    Ctx.Net.MatchStarting -= OnMatchStarting;
+                    Ctx.Net.GameplayAborted -= OnGameplayAborted;
+                }
                 LocalizationManager.LanguageChanged -= Render;
                 _subscribed = false;
             }
             HideChatModeMenu();
             HideExpressionMenu();
+            CloseSlotPopup();   // 常駐單例:選單開著時離房,回來不能還掛著一個指向舊座位的選單
+            _awaitingMatchStart = false;   // 同理:離房時還在等 matchStarting → 回來不能卡住「開始」鈕
             HideRoomChatBubble();
             ClearSentRoomBubbles();
+            DestroyBubbleWorld();   // 泡的畫掛在獨立的 GameObject 樹底下(不在 UI canvas 裡)→ 要自己收
             _chatInputSticky = false;   // 離開房間 → 放掉輸入框黏 focus，回來時不自動搶 focus
             Input.imeCompositionMode = IMECompositionMode.Auto;   // 還原，別影響遊戲/其他畫面的按鍵
             if (_maskedCam != null) { _maskedCam.cullingMask = _savedMask; _maskedCam = null; }
@@ -667,9 +901,86 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < _slotHead.Length; i++) if (_slotHead[i] != null) { _slotHead[i].texture = null; _slotHead[i].enabled = false; }
             if (_localHead != null) { Destroy(_localHead.gameObject); _localHead = null; }
             if (_scene != null) { Destroy(_scene.gameObject); _scene = null; }
+            _remoteHeads = null;   // 它掛在 _scene 底下,跟著一起被拆掉(OnDestroy 會釋放 RT)
+            // 遠端玩家的角色跟著 _scene 一起被拆掉,但名字牌是掛在 UI 上的 → 要自己收,
+            // 否則回房間時會留下一排指向已消失角色的孤兒名字牌。
+            ClearRemoteNamePlates();
+            _remoteAvatarRev = -1;
+            _localMoveSlot = int.MinValue;
+            // A real leave clears the transfer's room-song latch. Without this, rejoining a room that
+            // selected the same external pack can retain _handledPack from the previous visit and never
+            // retry availability/download. Entering gameplay keeps Net.Room, so an in-flight host upload
+            // is deliberately left alone.
+            if (Ctx == null || Ctx.Net == null || !Ctx.Net.InRoom)
+                NetSongTransfer.OnRoomSong(null);
+            // 離房清掉「已廣播過誰」—— 不清的話回房時舊名單會被當成已知,
+            // 那些人再進來就不會播進場廣播了。
+            _announcedUsers.Clear();
+            _announceSeeded = false;
         }
 
-        private void OnRoomUpdated(int id) => Render();
+        /// <summary>
+        /// Reconcile transfer ownership before reporting availability for the current song.
+        /// Reporting first can see the previous external transfer as active and skip the new song forever;
+        /// official songs do not start another transfer that could repair that skipped report.
+        /// </summary>
+        private void SyncNetSongAvailability()
+        {
+            var netSong = Ctx != null && Ctx.Net != null && Ctx.Net.Room != null
+                ? Ctx.Net.Room.Song : null;
+            RunSongAvailabilitySync(
+                netSong != null ? netSong.PackId : null,
+                NetSongTransfer.OnRoomSong,
+                () => NetSongPublisher.ReportAvailability(Ctx));
+        }
+
+        /// <summary>
+        /// One ordering point shared by first display and later room snapshots. The delegates keep this race
+        /// contract testable without constructing a Unity room screen or a live network connection.
+        /// </summary>
+        private static void RunSongAvailabilitySync(
+            string packId, System.Action<string> onRoomSong, System.Action reportAvailability)
+        {
+            onRoomSong(packId);
+            reportAvailability();
+        }
+
+        private void OnRoomUpdated(int id)
+        {
+            EnsureChatScope();
+            // 🔴 房主要把歌發給 server,而且必須在**每次房間快照**時檢查一次,不能只在進房那一刻送一次:
+            //    進房時房間可能還沒建好(createRoom 要等 server 回 roomState),那時 InRoom 還是 false
+            //    → 發布被靜默跳過、而且永遠不會再試 → server 眼中這間房永遠沒有歌 →
+            //    沒人按得下準備、房主按開始也沒反應(實機兩開就是卡在這裡,而且三個 log 都看不出來)。
+            //    這裡有 SongTitle 空的守門,所以送成功之後就不會再送(不會迴圈)。
+            NetSongPublisher.PublishIfRoomHasNone(Ctx);
+            // 房間設定(模式/隊形/旁觀人數/場景)同理:在此之前根本沒有任何一條路徑把它們送上去,
+            // 所以線上這間房永遠停在 server 的預設值 —— 房主選了「普通模式」別人還是看到「自由模式」,
+            // 而「只有普通模式才能組隊」就永遠不成立。守門是「跟 server 手上的不一樣才送」。
+            NetRoomSettingsPublisher.SyncIfHost(Ctx);
+            // 先取消/切換上一首歌的傳輸，再回報「我有沒有這首歌」。
+            // 沒有可用性回報時，server 眼中每個人都是 Unknown，
+            // 沒人按得下準備(R17)、也沒有人算參與者(R12)。見那邊的註解。
+            SyncNetSongAvailability();
+            Render();
+        }
+
+        /// <summary>
+        /// 聊天的作用域房號要跟著房間資料走,不能只在 <c>OnShow</c> 設一次。
+        ///
+        /// 🔴 連線模式下「進房」與「拿到房間資料」是**兩件事**:加入成功的回應可能比第一份
+        /// 房間快照先到,那時 <c>CurrentRoom</c> 還是 null → 作用域房號會停在 0,
+        /// 而顯示過濾器要求 <c>m.RoomId == _chatScopeRoomId</c> → **整個房間的聊天一句都不會出現**
+        /// (連自己說的也不會,因為線上版的自己那句也是從 server 繞回來的)。
+        /// 實際踩過:兩台互打字都看不到對方,server 的 log 卻明明收到了 chatSay。
+        /// </summary>
+        private void EnsureChatScope()
+        {
+            int id = Ctx != null && Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null ? Ctx.Rooms.CurrentRoom.Id : 0;
+            if (id == 0 || id == _chatScopeRoomId) return;
+            _chatScopeRoomId = id;
+            Ctx.Chat?.SetScope(ChatScope.Room, id);
+        }
 
         private void BuildRoomChatLog()
         {
@@ -1027,29 +1338,43 @@ namespace Sdo.UI.Screens
             AddRoomChatLine(m);
             if (follow) ScrollRoomChatToBottom();
             // 密語/進出舞台/家族/你說/你沒有家族 都是文字提示，不彈頭上藍泡、不觸發角色動作。
-            if (m != null && m.Local && !m.System
+            if (m != null && !m.System
                 && m.Whisper == WhisperKind.None && m.Stage == StageEventKind.None
                 && m.Notice == ChatNotice.None && !m.Guild)
             {
-                ShowRoomChatBubble(m);
-                PlayRoomChatAction(m);
+                // owner 0 = 本機。遠端要先確認「他真的有一隻 3D 角色」——
+                // 旁觀者不在座位上,SyncRemoteRoomAvatars 不會生角色,泡沒有地方可掛。
+                int owner = m.Local ? 0 : m.SenderUserId;
+                if (owner == 0 || (_scene != null && _scene.HasRemote(owner)))
+                {
+                    ShowRoomChatBubble(m, owner);
+                    PlayRoomChatAction(m, owner);
+                }
             }
         }
 
-        private void PlayRoomChatAction(ChatMessage m)
+        /// <param name="owner">0 = 本機;其餘 = 遠端玩家的 userId(動作播在他的角色上)。</param>
+        private void PlayRoomChatAction(ChatMessage m, int owner = 0)
         {
             if (m == null || string.IsNullOrEmpty(m.RoomActionId)) return;
             if (!RoomChatCommand.TryGetRoomAction(m.RoomActionId, out var action) || action == null) return;
             // Gender picks BOTH the motion clip and the SE — same gender the id was parsed with (see MockChatService),
             // so female "再見"→action5→WREST0063+WOMAN_5 while male "88"→action6→MREST0076+MAN_6 stay self-consistent.
-            bool male = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
+            // 🔴 性別要用**發言者**的,不是本機玩家的:動作 id 是收端用發言者性別解出來的
+            // (見 ChatMessage.SenderMale 的註解),這裡若用本機性別就會「用女生的 id 播男生的動作」。
+            // 離線模式 SenderMale 由 MockChatService 填,值與這裡原本的本機性別相同 → 行為不變。
+            bool male = m.SenderMale;
             string motion = action.MotionFor(male);
             if (!string.IsNullOrEmpty(motion))
             {
-                if (_scene != null) _scene.PlayChatAction(motion);
-                if (_localHead != null) _localHead.PlayChatAction(motion);   // 上面的頭貼跟著做同一個動作
+                if (owner == 0)
+                {
+                    if (_scene != null) _scene.PlayChatAction(motion);
+                    if (_localHead != null) _localHead.PlayChatAction(motion);   // 上面的頭貼跟著做同一個動作
+                }
+                else if (_scene != null) _scene.PlayRemoteChatAction(owner, motion);
             }
-            UiSfx.Play(action.SoundFor(male));
+            UiSfx.Play(action.SoundFor(male));   // 語音房內所有人都聽得到(官方也是)
         }
 
         // 左下聊天：一整行帶黑邊的 rich 文字（VLG block，固定行高 16）。回傳 face TMP 供掛名字點擊。
@@ -1318,6 +1643,205 @@ namespace Sdo.UI.Screens
             return _chatScroll.verticalNormalizedPosition <= 0.02f;
         }
 
+        // ---- DEV: SDO_SAY=<文字> → 進房後定期自動說一次那句話 ------------------------------------------------
+        // 為什麼需要這個 hook:頭上泡的東西(尤其「被前面的人擋住」)只能實機截圖驗,而「點空曠處 → 打字 → Enter」
+        // 用注入按鍵驅動太脆 —— 實測進得去打字模式、游標也在閃,但一個字都沒進去(看起來像輸入框壞了)。
+        // 這裡刻意走 SendRoomChat(),與使用者真的按 Enter 完全同一條路(頻道解析、泡生成、上網),
+        // 所以截到的畫面是真的,不是為了測試另外搭的假路徑。只有設了環境變數才會動。
+        private float _devSayAt = -1f;
+        private string _devSayText;
+        private bool _devSayResolved;
+
+        private void TickDevAutoSay()
+        {
+            if (!_devSayResolved)
+            {
+                _devSayResolved = true;
+                _devSayText = ScreenGameplay.DevVar("SDO_SAY");
+            }
+            if (string.IsNullOrEmpty(_devSayText) || _chatInput == null || Ctx == null || Ctx.Chat == null) return;
+            if (Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            float now = Time.unscaledTime;
+            if (_devSayAt < 0f) { _devSayAt = now + 4f; return; }   // 進房後先等一下,等連線/座位就位
+            if (now < _devSayAt) return;
+            _devSayAt = now + DevSayEverySec;
+            _chatInput.text = _devSayText;
+            SendRoomChat();
+        }
+
+        private const float DevSayEverySec = 6f;   // 泡的壽命比這個長 → 畫面上一直有泡可看
+
+        // DEV: SDO_AUTOREADY=1 → 非房主一進房就自動按「準備」。
+        // 同 SDO_SAY 的理由:同步進場只能兩開實機驗,而「用注入的滑鼠點右下那顆圓鈕」需要精確的
+        // 設計座標→螢幕座標換算(目前那條換算有一個還沒查清的水平偏移)。走 OnReadyToggle
+        // 就是玩家真的按下去的同一條路。只有設了環境變數才會動。
+        private bool _devAutoReadyDone;
+        private float _devAutoReadyAt = -1f;
+
+        // DEV: SDO_AUTOSTART=1 → 房主自動按「開始」,每 2 秒重試一次直到這一場真的開始。
+        // 重試同時也把「第一次只提示、1.5 秒內再按才強制開始」那條路走完 —— 所以不需要另外傳 force。
+        private float _devAutoStartAt = -1f;
+
+        private void TickDevAutoStart()
+        {
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_AUTOSTART"))) return;
+            if (_starting || _awaitingMatchStart) return;
+            // 線上要是房主才按得動;**離線單人房也要能用** —— 效能量測(SDO_DANCERS)是離線跑的,
+            // 而它需要有人把遊戲開起來。原本這裡直接 `if (!Online) return;`,結果離線那幾組
+            // 一行都沒量到(client 一直停在房間)。
+            if (Online && !Ctx.Net.IsHost) return;
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room == null || string.IsNullOrEmpty(room.SongTitle)) return;
+            // 🔴 線上要等第二個人真的坐下來才開始。不等的話房主會在自己還在開機的那幾秒就 solo 開場,
+            //    等別人加入時房間已經是 playing → 他的 join 被 R18 以 inGame 拒絕(而且畫面上看不出來)。
+            //    離線沒有別人可以等,所以這條只在線上成立。
+            if (Online && SeatedPlayerCount(room) < 2)
+            {
+                if (Time.frameCount % 300 == 0) Debug.Log("[dev] SDO_AUTOSTART 還在等第二個人坐下");
+                return;
+            }
+            if (_devAutoStartAt < 0f) { _devAutoStartAt = Time.unscaledTime + 6f; return; }   // 等他按完準備
+            if (Time.unscaledTime < _devAutoStartAt) return;
+            _devAutoStartAt = Time.unscaledTime + 2f;
+            OnStart();
+        }
+
+        // DEV: SDO_CLOSESEATS=1 → 房主把**自己以外的座位全部關掉**,做出一個「座位滿了」的房間。
+        // 為什麼需要:要驗「座位滿了會自動改用旁觀身分進去」得先有一間滿的房,而湊六台 client
+        // 不現實。關閉的座位在 FirstOpenSeat 眼中與被坐走完全一樣(都不是 Open),
+        // 所以這條 hook 造出來的「滿」與六個人坐滿是同一個狀態。
+        private bool _devCloseSeatsDone;
+
+        private void TickDevCloseSeats()
+        {
+            if (_devCloseSeatsDone) return;
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_CLOSESEATS"))) { _devCloseSeatsDone = true; return; }
+            if (!Online || !Ctx.Net.IsHost) return;
+            var snap = Ctx.Net.Room;
+            if (snap == null) return;
+
+            int mySeat = snap.SeatIndexOf(Ctx.Net.UserId);
+            if (mySeat < 0) return;                       // 還沒坐下(快照還沒到)
+            _devCloseSeatsDone = true;
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                if (i == mySeat) continue;                // 自己的位子關不了(server 會回 badSeat)
+                Ctx.Net.SetSeatClosed(i, true);
+            }
+            Debug.Log("[dev] SDO_CLOSESEATS:把座位 " + mySeat + " 以外的位子都關了(做出滿房)");
+        }
+
+        // DEV: SDO_TEAM=<0..3> → 一進房就把自己分到那一隊(0=A 1=B 2=C 3=自由)。
+        // 為什麼需要:頭貼上的 READY / HOST 徽章要**依隊伍換色**,而要驗那件事得先讓兩台
+        // client 各自選到不同的隊 —— 用滑鼠自動化去點那四格得先做設計→螢幕座標換算
+        // (那條換算有已知偏移,不可靠)。這條走與玩家按下去**完全同一條路徑**(PickOwnTeam →
+        // server 的 setOwnTeam),所以驗出來的畫面就是玩家會看到的畫面。
+        private bool _devTeamDone;
+
+        private void TickDevTeam()
+        {
+            if (_devTeamDone) return;
+            var want = ScreenGameplay.DevVar("SDO_TEAM");
+            if (string.IsNullOrEmpty(want)) { _devTeamDone = true; return; }
+            int team;
+            if (!int.TryParse(want, out team) || team < 0 || team > (int)TeamTag.Free)
+            {
+                _devTeamDone = true;
+                Debug.LogWarning("[dev] SDO_TEAM 要是 0..3(0=A 1=B 2=C 3=自由),收到:" + want);
+                return;
+            }
+            // 線上要等自己真的坐上位子(server 才收得下 setOwnTeam);離線直接設就好。
+            if (Online && (Ctx.Net == null || Ctx.Net.Room == null || Ctx.Net.Room.SeatIndexOf(Ctx.Net.UserId) < 0)) return;
+            _devTeamDone = true;
+            PickOwnTeam(team);
+            Debug.Log("[dev] SDO_TEAM:自己分到隊伍 " + team);
+        }
+
+        // DEV: SDO_PICKSONG=<歌名片段> → 房主自動選「第一首名字含這段字的外部歌」。
+        // 為什麼要這個 hook:缺歌傳檔(M5)的實機驗證需要房主選一首**外部歌**,而用滑鼠自動化走
+        // 選歌畫面要精確的設計→螢幕座標換算(那條換算有已知偏移),不可靠。這條走與玩家一樣的
+        // 「填 session → SetSong → Publish」路徑,但**只填傳檔需要的欄位** —— 它不是完整的選歌
+        // (要真的進遊戲玩那首歌還是得走 SongSelectScreen.OnConfirm)。
+        private bool _devPickSongDone;
+
+        private void TickDevPickSong()
+        {
+            if (_devPickSongDone) return;
+            var want = ScreenGameplay.DevVar("SDO_PICKSONG");
+            if (string.IsNullOrEmpty(want)) { _devPickSongDone = true; return; }
+            if (!Online || !Ctx.Net.IsHost) return;
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room == null) return;                                   // 還沒進房
+            // 🔴 這裡刻意**不**檢查「房間已經有歌」。session 會記著上次選的歌,而
+            //    NetSongPublisher.PublishIfRoomHasNone 在進房那一刻就把它發出去了 →
+            //    加了那個檢查的話這個 hook 永遠不會動(實測就是這樣:房間變成上次那首官方歌,
+            //    而 log 裡一行都沒有,看起來像 hook 壞了)。SDO_PICKSONG 是明確的指令,要蓋過去。
+            if (Sdo.Game.ExternalSongLibrary.Scanning) return;          // 等歌庫掃完
+
+            var all = Sdo.Game.SongCatalog.All;
+            Sdo.Game.SongCatalog.Entry hit = null;
+            if (all != null)
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var e = all[i];
+                    if (e == null || !e.external || string.IsNullOrEmpty(e.title)) continue;
+                    if (e.title.IndexOf(want, System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    hit = e; break;
+                }
+            if (hit == null)
+            {
+                if (Time.frameCount % 300 == 0) Debug.Log("[dev] SDO_PICKSONG 找不到外部歌:" + want);
+                return;
+            }
+
+            _devPickSongDone = true;
+            var s = Ctx.Session;
+            s.SongGn = hit.gn;
+            s.SongFileId = hit.fileId;
+            s.SongTitle = hit.title;
+            s.SongArtist = hit.artist ?? "";
+            s.SongIsRandom = false;
+            s.IsExternalSong = true;
+            s.ExternalFolderPath = hit.folderPath ?? "";
+            s.ExternalSongKey = hit.songKey ?? "";
+            s.ExternalChartFormat = hit.chartFormat;
+            s.ExternalAudioPath = hit.audioPath ?? "";
+            // 譜面路徑一定要填:協定要求外部歌帶 ChartRelPath(空的話 server 直接回
+            // badState「bad song ref」,而畫面上只看到「選了歌但房間沒歌」)。取難度槽 0。
+            s.Difficulty = Difficulty.Easy;
+            s.ExternalChartPath = hit.ChartPath(0);
+            s.ExternalChartIndex = hit.ChartIndex(0);
+            s.ExternalChartSeed = hit.chartSeed;
+            s.ExternalDpsPath = hit.dpsPath ?? "";
+            s.ExternalLevel = hit.DisplayLevel(0);
+            s.ExternalSongBpm = hit.bpm;                     // 生成編舞的節拍網格：整首歌一個 BPM，換難度不會換舞
+            // 生成編舞要量「這首歌所有難度」的頭尾（不是只有選到這張）—— 三個格子照原順序帶過去，空的留 ""
+            s.ExternalSongChartPaths = new[] { hit.ChartPath(0), hit.ChartPath(1), hit.ChartPath(2) };
+            s.ExternalSongChartIndices = new[] { hit.ChartIndex(0), hit.ChartIndex(1), hit.ChartIndex(2) };
+            Debug.Log("[dev] SDO_PICKSONG 選了外部歌:" + hit.title + "(packId=" + (hit.packId ?? "(空)")
+                      + " 譜=" + s.ExternalChartPath + ")");
+            Ctx.Rooms.SetSong(s.SongTitle);
+            NetSongPublisher.Publish(Ctx);
+        }
+
+        private void TickDevAutoReady()
+        {
+            if (_devAutoReadyDone) return;
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_AUTOREADY"))) { _devAutoReadyDone = true; return; }
+            if (!Online || Ctx.Net.IsHost) return;                              // 房主沒有「準備」這個狀態
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room == null || string.IsNullOrEmpty(room.SongTitle))
+            {
+                if (Time.frameCount % 180 == 0) Debug.Log("[dev] SDO_AUTOREADY 還在等:房間沒有歌");
+                return;   // 還沒選歌 → 按了會被 R17 擋掉
+            }
+            if (_devAutoReadyAt < 0f) { _devAutoReadyAt = Time.unscaledTime + 3f; return; }   // 等座位/歌同步好
+            if (Time.unscaledTime < _devAutoReadyAt) return;
+            _devAutoReadyDone = true;
+            Debug.Log("[dev] SDO_AUTOREADY:按下準備");
+            if (!LocalReady(room)) OnReadyToggle();
+        }
+
         private void SendRoomChat()
         {
             if (_chatInput == null || Ctx == null || Ctx.Chat == null) return;
@@ -1408,13 +1932,15 @@ namespace Sdo.UI.Screens
             else { _chatInputSticky = true; FocusRoomChatInput(); }   // 輸入框模式送完保持 focus 續打，不退出
         }
 
-        private void ShowRoomChatBubble(ChatMessage m)
+        private void ShowRoomChatBubble(ChatMessage m, int ownerUserId = 0)
         {
             if (Root == null || m == null) return;
             // 舊泡保留：新泡另開一顆，串起來各自計時。
-            if (_chatBubbleTyping) HideRoomChatBubble();
+            // 🔴 只有**自己**送出時才收掉打字泡 —— 那是「我送出了 → 打字泡變成已送出泡」的語意。
+            //    不加 owner 守門的話,別人講一句話就會把我正在打的字泡吃掉。
+            if (ownerUserId == 0 && _chatBubbleTyping) HideRoomChatBubble();
 
-            var bubble = SpawnSentRoomBubble();
+            var bubble = SpawnSentRoomBubble(ownerUserId);
             bubble.PendingShow = true;
             bubble.ShownAt = Time.unscaledTime;   // 每顆泡以此為「年齡」起點，各自從肩錨往上飄
             bubble.HideAt = bubble.ShownAt + ChatBubbleLifetime;
@@ -1431,7 +1957,13 @@ namespace Sdo.UI.Screens
             ApplySentBubbleStyle(bubble, style, entering: true);
             var enterFrames = RoomBubbleArt.EnterFrames(style);
             bubble.TalkAt = bubble.ShownAt + Mathf.Clamp((enterFrames != null ? enterFrames.Length : 0) / 12f, 0.5f, 1.2f);
-            if (string.IsNullOrEmpty(m.RoomActionId)) UiSfx.Play(UiSfx.Bubble);
+            // pop 音節流:server 的聊天限制是每人 5 則/3 秒,六人房最壞 10 則/秒全部疊在同一個
+            // AudioSource 上 → 音量疊加爆音。0.12s 以內只放一次。
+            if (string.IsNullOrEmpty(m.RoomActionId) && Time.unscaledTime - _lastBubblePopAt >= 0.12f)
+            {
+                _lastBubblePopAt = Time.unscaledTime;
+                UiSfx.Play(UiSfx.Bubble);
+            }
             if (bubble.Add != null) bubble.Add.gameObject.SetActive(false);
             if (bubble.AddAnim != null) bubble.AddAnim.Frames = null;
             bubble.EmojiInlineLeadLen = -1;   // 預設不做行內 emoji 疊圖
@@ -1499,50 +2031,160 @@ namespace Sdo.UI.Screens
             }
 
             _sentBubbles.Add(bubble);
-            // 防洗版：太舊先踢（仍各自壽命為主）
-            while (_sentBubbles.Count > 8)
-                DestroySentRoomBubble(_sentBubbles[0]);
+            // 防洗版:**per-owner** 計數。全域計數的話一個人洗頻會把別人的泡全踢光。
+            // 上限從 8 降到 4:最壞 6 人 × 4 = 24 顆泡(每顆是 1 個 GameObject + 3 Image + 1 TMP),
+            // 8 的話在六人房會實際掉幀。
+            int mine = 0;
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+                if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == bubble.OwnerUserId) mine++;
+            while (mine > 4)
+            {
+                for (int i = 0; i < _sentBubbles.Count; i++)
+                    if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == bubble.OwnerUserId)
+                    { DestroySentRoomBubble(_sentBubbles[i]); break; }
+                mine--;
+            }
         }
 
-        private SentRoomBubble SpawnSentRoomBubble()
+        /// <summary>
+        /// 某個人的泡要畫在哪張 world canvas 裡(lazily 建)。回 null = 房間 3D 還沒好,
+        /// 呼叫端就把畫掛回代理底下(退回搬家前的行為:能看到泡,只是不會被擋住)。
+        /// </summary>
+        private RectTransform BubbleWorldCanvas(int owner)
         {
+            if (_scene == null || _scene.SceneCamera == null) return null;
+            RectTransform rt;
+            if (_bubbleWorldCanvas.TryGetValue(owner, out rt) && rt != null) return rt;
+
+            if (_bubbleWorldRoot == null)
+            {
+                // 🔴 不掛 parent:RoomScreen 自己就在 UI canvas 底下,掛進去會讓泡的 canvas 變成
+                //    nested canvas → renderMode 被忽略 → 遮擋功能靜默消失。OnHide 自己收。
+                var holder = new GameObject("RoomBubbleWorld") { layer = RoomScene3D.BubbleLayer };
+                _bubbleWorldRoot = holder.transform;
+            }
+            rt = UIKit.CreateBubbleWorldCanvas("RoomBubbleCanvas" + owner, _bubbleWorldRoot,
+                                               RoomScene3D.BubbleLayer, new Vector2(800f, 600f));
+            _bubbleWorldCanvas[owner] = rt;
+            return rt;
+        }
+
+        private void DestroyBubbleWorld()
+        {
+            // 🔴 名字牌/家族列/徽章是**常駐單例**(BuildUI 建一次),而它們現在掛在 world canvas 底下 ——
+            // 直接拆 canvas 會把它們一起銷毀,回房間時就永遠沒有名字了。先搬回 UI 層,並把 layer 還原
+            // (留在 BubbleLayer 的話前端 UI 相機把那層遮掉了 → 名字變成看不見)。
+            RestoreNameToUi(_floatName != null ? _floatName.Rect : null);
+            RestoreNameToUi(_floatFamily != null ? _floatFamily.Rect : null);
+            RestoreNameToUi(_floatEmblem != null ? _floatEmblem.rectTransform : null);
+            // 遠端的名字牌是動態生成的,跟著 canvas 一起被銷毀沒問題 —— ClearRemoteNamePlates 的
+            // `!= null` 守門吃得下「已經被銷毀」的那些(Unity 的 destroyed object == null)。
+            _bubbleWorldCanvas.Clear();
+            _bubbleWorldDepth.Clear();
+            if (_bubbleWorldRoot != null) { Destroy(_bubbleWorldRoot.gameObject); _bubbleWorldRoot = null; }
+        }
+
+        private void RestoreNameToUi(RectTransform rt)
+        {
+            if (rt == null || Root == null) return;
+            if (rt.parent == Root) return;
+            rt.SetParent(Root, false);
+            SetLayerRecursiveTo(rt, Root.gameObject.layer);
+        }
+
+        private static void SetLayerRecursiveTo(Transform t, int layer)
+        {
+            if (t == null) return;
+            t.gameObject.layer = layer;
+            for (int i = 0, n = t.childCount; i < n; i++) SetLayerRecursiveTo(t.GetChild(i), layer);
+        }
+
+        private SentRoomBubble SpawnSentRoomBubble(int ownerUserId = 0)
+        {
+            // 代理:留在 UI 層。鏈物理、拖曳、命中測試、壽命全部認它(這樣那些程式碼一行都不用改)。
             var root = UIKit.NewRect(_bubbleLayer, "RoomChatBubble");   // 掛在 _bubbleLayer(UI 底下)
             root.anchorMin = root.anchorMax = new Vector2(0f, 1f);
             root.pivot = new Vector2(0f, 1f);
             root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
 
-            var bubble = new SentRoomBubble { Root = root };
-            var drag = root.gameObject.AddComponent<RoomBubbleDragHandle>();
-            drag.Owner = this;
-            drag.Sent = bubble;
+            var bubble = new SentRoomBubble { Root = root, OwnerUserId = ownerUserId };
 
-            bubble.Frame = UIKit.AddImage(root, "Frame", Color.white, raycast: true);
+            // 畫:進房間相機的 world canvas(吃深度遮擋)。房間 3D 還沒好就退回掛在代理底下。
+            var world = BubbleWorldCanvas(ownerUserId);
+            var visual = UIKit.NewRect(world != null ? (Transform)world : root, "RoomChatBubbleArt");
+            visual.anchorMin = visual.anchorMax = new Vector2(0f, 1f);
+            visual.pivot = new Vector2(0f, 1f);
+            visual.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            bubble.Visual = visual;
+            bubble.InWorld = world != null;
+
+            // 🔴 只有自己的泡能拖。拖曳狀態是**全域單一**的(_chatBubbleChainDragging /
+            //    _chatBubbleDraggedSent),而拖住時的補償會延長**那條鏈上所有泡**的壽命 ——
+            //    跨人就變成「你按住不放,別人的泡也不會消失」。官方也沒有拖別人的泡這回事。
+            if (ownerUserId == 0)
+            {
+                var drag = root.gameObject.AddComponent<RoomBubbleDragHandle>();
+                drag.Owner = this;
+                drag.Sent = bubble;
+                // 代理要有一個「看不見但收得到滑鼠」的圖 —— 拖曳事件靠它冒泡到上面那個 handle。
+                // 原本是泡框自己收(Frame raycast:true),但泡框已經搬到別的 canvas、那張沒有 raycaster。
+                // 尺寸與原本的泡框完全相同(整張 171×111),所以可命中的範圍一模一樣。
+                var hit = UIKit.AddImage(root, "Hit", new Color(0f, 0f, 0f, 0f), raycast: true);
+                UIKit.Stretch(hit.rectTransform);
+            }
+
+            bubble.Frame = UIKit.AddImage(visual, "Frame", Color.white, raycast: false);
             UIKit.Stretch(bubble.Frame.rectTransform);
             UIKit.ApplySprite(bubble.Frame, RoomBubbleArt.Base(1));
             Place(bubble.Frame.rectTransform, 0, 0, RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
             bubble.FrameAnim = bubble.Frame.gameObject.AddComponent<SpriteSeqAnim>();
             bubble.FrameAnim.Fps = 12f;
 
-            bubble.Add = UIKit.AddImage(root, "AddAni", Color.white);
+            bubble.Add = UIKit.AddImage(visual, "AddAni", Color.white);
             UIKit.Stretch(bubble.Add.rectTransform);
             bubble.AddAnim = bubble.Add.gameObject.AddComponent<SpriteSeqAnim>();
             bubble.AddAnim.Fps = 14f;
 
-            bubble.Text = UIKit.AddText(root, "Text", "", 13, ChatBubbleTextColor, TextAlignmentOptions.MidlineLeft, true);
+            bubble.Text = UIKit.AddText(visual, "Text", "", 13, BubbleTextColor(ownerUserId), TextAlignmentOptions.MidlineLeft, true);
             Place(bubble.Text.rectTransform, 49, 43, 74, 28);
             bubble.Text.richText = true;
             bubble.Text.textWrappingMode = TextWrappingModes.Normal;
             bubble.Text.overflowMode = TextOverflowModes.Overflow;
 
-            bubble.Expression = UIKit.AddImage(root, "Expression", Color.white);
+            bubble.Expression = UIKit.AddImage(visual, "Expression", Color.white);
             bubble.Expression.raycastTarget = false;
             bubble.Expression.preserveAspect = true;
             Place(bubble.Expression.rectTransform, 73, 43, 24, 24);
             bubble.ExpressionAnim = bubble.Expression.gameObject.AddComponent<SpriteSeqAnim>();
             bubble.ExpressionAnim.Fps = 8f;
 
-            root.gameObject.SetActive(false);
+            if (bubble.InWorld) SetBubbleLayer(visual);
+            SetBubbleActive(bubble, false);
             return bubble;
+        }
+
+        /// <summary>代理與畫要一起開關 —— 只關畫的話代理還在吃滑鼠(看不到的泡照樣被拖);只關代理的話泡還看得見。</summary>
+        private static void SetBubbleActive(SentRoomBubble b, bool on)
+        {
+            if (b == null) return;
+            if (b.Root != null && b.Root.gameObject.activeSelf != on) b.Root.gameObject.SetActive(on);
+            if (b.Visual != null && b.Visual.gameObject.activeSelf != on) b.Visual.gameObject.SetActive(on);
+        }
+
+        /// <summary>
+        /// 把泡的畫整棵設成 <see cref="RoomScene3D.BubbleLayer"/>。
+        ///
+        /// 為什麼要遞迴、而且要在改過字之後再做一次:字型是執行期的 OS SimSun + 後備字型,
+        /// TMP 碰到 SimSun 沒有的字(實測 `𠀋`/`한`/`Ⅷ` 這類)會**當場長出 sub-mesh 子物件**。
+        /// 實測那些子物件會繼承父物件的 layer,所以正常情況本來就對 —— 但萬一哪天不對,
+        /// 症狀是「只有打到罕見字那則訊息的一部分字不見/畫在錯的地方」,幾乎不可能查到。
+        /// 這裡是幾個物件的 layer 寫入,便宜到不值得省。
+        /// </summary>
+        private static void SetBubbleLayer(Transform t)
+        {
+            if (t == null) return;
+            t.gameObject.layer = RoomScene3D.BubbleLayer;
+            for (int i = 0, n = t.childCount; i < n; i++) SetBubbleLayer(t.GetChild(i));   // 不用 foreach:那會配置 enumerator
         }
 
         private void ApplySentBubbleStyle(SentRoomBubble bubble, int style, bool entering)
@@ -1554,6 +2196,7 @@ namespace Sdo.UI.Screens
             var sprite = frames != null && frames.Length > 0 ? frames[0] : RoomBubbleArt.Base(style);
 
             bubble.Root.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
+            if (bubble.Visual != null) bubble.Visual.sizeDelta = new Vector2(RoomBubbleArt.CanvasW, RoomBubbleArt.CanvasH);
             if (bubble.FrameAnim != null) bubble.FrameAnim.SetFrames(frames, restart: true, loop: !entering);
             if (bubble.Frame != null)
             {
@@ -1612,6 +2255,9 @@ namespace Sdo.UI.Screens
             if (bubble.FrameAnim != null) bubble.FrameAnim.Frames = null;
             if (bubble.AddAnim != null) bubble.AddAnim.Frames = null;
             if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
+            // 畫掛在別的樹底下(per-owner 的 world canvas),不會跟著代理一起被拆 → 要自己收,
+            // 不然會留下一顆不動的泡浮在房間裡直到離房。
+            if (bubble.Visual != null && bubble.InWorld) Destroy(bubble.Visual.gameObject);
             if (bubble.Root != null) Destroy(bubble.Root.gameObject);
         }
 
@@ -2136,39 +2782,30 @@ namespace Sdo.UI.Screens
                 int ch = Ctx.Session != null ? Ctx.Session.Channel : 1;
                 _serverLabel.SetText(RoomLabels.ServerName(srv));      // 自由練習場1
                 _channelLabel.SetText(RoomLabels.Channel(ch));         // 頻道1
-                _roomIdLabel.SetText(room.Id.ToString());              // 1
+                // 左上這排照官方原本的樣子:練習場 + 頻道 + **房間序號**(一個小數字)。
+                // ⚠️ 這裡放的是 Seq 不是 Id —— 5 位數房號改接在中央房名後面的括弧裡(見下面),
+                //    因為那才是玩家要唸給朋友聽的東西,跟房名放在一起比擠在「頻道1」後面好認。
+                _roomIdLabel.SetText(room.Seq > 0 ? room.Seq.ToString() : "");
                 // 量實際字寬，左到右自動排版(固定 HeaderGap 間距):不論字長/語言都不會疊、間距一致。
                 float lx = ServerX;
                 _serverLabel.SetX(lx);  lx += _serverLabel.PreferredWidth + HeaderGap;
                 _channelLabel.SetX(lx); lx += _channelLabel.PreferredWidth + HeaderGap;
                 _roomIdLabel.SetX(lx);
-                _roomNameLabel.text = RoomLabels.DisplayName(room.Name, room.HostName);  // 玩家001的舞蹈室 (或自訂)
+
+                // 中央房名 + 房號:「飄漂o的舞蹈室(40444)」。
+                // ⚠️ 房號**只有連線模式才接上去**:它的用途是唸給朋友聽、讓他打進「輸入房號」框。
+                //    單機沒有別人能加入,那串 5 位數對玩家沒有任何意義(離線仍配號是內部的鍵,見 MockRoomService)。
+                _roomNameLabel.text = RoomLabels.DisplayNameWithCode(
+                    room.Name, room.HostName, Ctx != null && Ctx.Net != null ? room.Id : 0);
             }
 
-            RenderWin2();   // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落 全部依 session 重畫
+            // 歌名/模式/場景/CD/難度/BPM/速度/note/組隊/掉落。
+            // 房主與離線:依 session;**線上非房主依房間快照** —— 房主一換歌/換場景,server 立刻推一份
+            // roomState,這裡就跟著重畫(Render 是 OnRoomUpdated 直接叫的,所以是同一刻)。
+            // 速度/note 皮/掉落方向仍是個人偏好,不跟房間(官方也是各自設定)。
+            RenderWin2();
 
-            // Head portrait lives in the FIXED top-left frame slot 0 (官方: 頭貼在頭像框裡), rendering the avatar's head
-            // doing its live motion (RoomHeadPortrait mirrors the room avatar's walk/idle). Slots 1-5 are empty covers.
-            for (int i = 0; i < RoomLayout.SeatCount; i++)
-            {
-                bool occupied = i == 0;
-                if (_slotHead[i] != null)
-                {
-                    if (occupied && _localHead != null && _localHead.Texture != null)
-                    {
-                        _slotHead[i].texture = _localHead.Texture;
-                        _slotHead[i].enabled = true;
-                    }
-                    else _slotHead[i].enabled = false;
-                }
-                if (_slotClose[i] != null) _slotClose[i].enabled = showEmptySeatCovers && !occupied;
-                if (_slotMaster[i] != null) _slotMaster[i].enabled = occupied && isHost;
-                if (_slotName[i] != null)
-                {
-                    _slotName[i].gameObject.SetActive(occupied);
-                    if (occupied) _slotName[i].text = LocalName(room);
-                }
-            }
+            RenderSlots(room);
             // a NAME marker floats above the avatar in the room (官方: 人頭上的名字 + ▼), NOT the head portrait.
             // 名字後面接等級「Lv:N」(這個角色的等級，沒設過就吃 config.ini 的預設；留空則不接)；家族列(徽章+名稱)
             // 另外畫在名字上方(UpdateFamilyRow)。
@@ -2187,6 +2824,11 @@ namespace Sdo.UI.Screens
             if (_readyBtn != null) _readyBtn.gameObject.SetActive(!isHost && !localReady);
             if (_cancelReadyBtn != null) _cancelReadyBtn.gameObject.SetActive(!isHost && localReady);
             if (_songSelectBtn != null) _songSelectBtn.gameObject.SetActive(isHost);
+            // 旁觀 ↔ 進入:一律以 server 快照為準(見 LocalSpectating)—— 不做樂觀更新,
+            // 按下去到 server 認可之間,鈕還是留在原本那一顆(同 OnSpectateToggle 的原則)。
+            bool spectating = LocalSpectating;
+            if (_spectateBtn != null) _spectateBtn.gameObject.SetActive(!spectating);
+            if (_enterBtn != null) _enterBtn.gameObject.SetActive(spectating);
         }
 
         // ---- win2 右側面板：依 GameSession 重畫模式/場景/CD/難度/BPM/速度/note/組隊/掉落 ----
@@ -2195,43 +2837,88 @@ namespace Sdo.UI.Screens
             var s = Ctx != null ? Ctx.Session : null;
             if (s == null) return;
 
-            // 模式標題（自由模式/普通模式/ShowTime模式）—— 純文字 + 白邊
+            // 🔴 這整個面板顯示的是**房間的設定**,而房間的設定是房主定的。
+            // 離線時本機就是房主,所以讀 session 是對的;線上的非房主讀 session 會顯示自己上次的設定,
+            // 而房間實際上是別人選的 —— 歌名、場景縮圖、難度碟、模式全都會是錯的。
+            // 這些值 server 都在 roomState 裡帶著走(NetRoomSettings + song),所以一律以快照為準。
+            var netRoom = NetRoomForPanel();
+            var netSet = netRoom != null ? netRoom.Settings : null;
+
+            // 模式標題（自由模式/普通模式/ShowTime模式）—— 純文字 + 白邊。
+            // 線上一律讀 server 的房間設定(房主也是,見 RoomGameMode)—— 房主的選擇會 push 上去,
+            // 兩邊本來就該一致;推送還沒成功時顯示 server 手上的那個才是誠實的。
+            int gameMode = RoomGameMode();
             if (_modeLabel != null)
-                _modeLabel.SetText(L(s.GameMode == 2 ? "songselect.mode_showtime" : s.GameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
+                _modeLabel.SetText(L(gameMode == 2 ? "songselect.mode_showtime" : gameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
 
             // 場景縮圖：隨機 → RANDOM；具體 → Scene{id+1}（官方縮圖編號是 1-based）
+            bool sceneRandom = netSet != null ? netSet.SceneRandom : s.StageRandom;
+            int sceneId = netSet != null ? netSet.SceneId : s.StageId;
             if (_sceneThumb != null)
             {
-                Sprite sc = s.StageRandom
+                Sprite sc = sceneRandom
                     ? RoomUiArt.An("randomscene")
-                    : (RoomUiArt.An("scene" + (s.StageId + 1)) ?? RoomUiArt.An("scene1"));
+                    : (RoomUiArt.An("scene" + (sceneId + 1)) ?? RoomUiArt.An("scene1"));
                 UIKit.ApplySprite(_sceneThumb, sc);
+            }
+
+            // 歌名 + 難度 + BPM（從歌曲目錄查；沒選歌就空白）。
+            //
+            // 🔴 離線時 session 就是房主選的歌,所以以 session 為準是對的。但**線上的非房主不是** ——
+            // 它的 session 記著自己上次選的歌,面板會顯示那一首,而房間實際上是房主選的另一首
+            // (實機兩開就是這樣:房主選了外部歌,客人的面板還寫著自己上次玩的官方歌)。
+            // 線上非房主一律看房間快照;缺歌的人也看得到歌名/等級/BPM(那些值 server 帶著走)。
+            var netSong = netRoom != null ? netRoom.Song : null;
+            if (netSong != null && !netSong.HasSong) netSong = null;
+
+            bool hasSong = netSong != null || s.HasSong;
+            bool isRandom = netSong != null ? netSong.RandomTitle : s.SongIsRandom;
+            string title = netSong != null ? netSong.Title : s.SongTitle;
+
+            // 本機的目錄:官方歌用 gn(全球穩定),外部歌用 packId(跨電腦的內容指紋)。查不到 = 我沒這首歌。
+            // 隨機難度選擇：房間顯示「隨機難度 X」標籤、不揭曉抽到的歌 → 等級/BPM 也一併隱藏(否則會露出那首歌的等級/BPM)。
+            SongCatalog.Entry entry = isRandom ? null : LocalEntryFor(netSong);
+
+            // 🎚 自由模式:非房主那格「房主設置」換成「難度設置 ◄ EASY ►」,每個人挑自己要打的難度
+            // (netRoom != null ⟺ 線上且不是房主 —— 與上面 netSet 同一個判斷,兩者不會不同步)。
+            // 挑了之後**上面的難度數字與 CD 光碟就跟著自己選的走**,因為那才是自己等一下要打的譜。
+            bool picksOwnDiff = FreeModeDifficulty.PlayerPicksOwn(gameMode, isHost: netRoom == null);
+            SetFreeModeLevelVisible(picksOwnDiff);
+            int diffSlot = netSong != null ? netSong.Difficulty : (int)s.Difficulty;
+            if (picksOwnDiff)
+            {
+                // 房主換了歌之後,上次選的難度在新的那首可能沒有譜(外部歌常常只有一兩張)→ 貼到最近的可打難度。
+                s.FreeDifficulty = FreeModeDifficulty.Snap(s.FreeDifficulty, PlayableSlots(entry));
+                diffSlot = s.FreeDifficulty;
+                if (_fmLevelValue != null) _fmLevelValue.text = FreeModeDifficulty.Name(s.FreeDifficulty);
             }
 
             // CD 光碟依難度換色（Difficult0/1/2）。隨機難度選擇：難度也是隨機的 → 用「灰階碟」當中性顯示
             // （不鎖任何一色；實際難度進遊戲才抽）。灰階碟去色失敗(材質不可讀)時退回原本的難度碟。
             if (_diffDisc != null && _diffDiscFrames != null && _diffDiscFrames.Length > 0)
             {
-                Sprite disc = s.SongIsRandom
+                Sprite disc = isRandom
                     ? (DiffDiscGray() ?? _diffDiscFrames[_diffDiscFrames.Length - 1])
-                    : _diffDiscFrames[Mathf.Clamp((int)s.Difficulty, 0, _diffDiscFrames.Length - 1)];
+                    : _diffDiscFrames[Mathf.Clamp(diffSlot, 0, _diffDiscFrames.Length - 1)];
                 UIKit.ApplySprite(_diffDisc, disc);
             }
 
-            // 歌名 + 難度 + BPM（從歌曲目錄查；沒選歌就空白）。歌名以 session 為準（離線單機 = 房主選的歌）。
-            var entry = s.HasSong ? SongCatalog.Get(s.SongGn) : null;
-            // 隨機難度選擇：房間顯示「隨機難度 X」標籤、不揭曉抽到的歌 → 等級/BPM 也一併隱藏（否則會露出那首歌的等級/BPM）。
-            if (s.SongIsRandom) entry = null;
             if (_songLabel != null)
                 // 已選歌曲：跟選歌清單／遊戲中同一個上限（NoWrap+Overflow → 長歌名會往兩邊溢出面板美術）
-                _songLabel.SetText(s.HasSong ? SongTextLimits.ClampTitle(s.SongTitle) : L("room.no_song"));
+                _songLabel.SetText(hasSong ? SongTextLimits.ClampTitle(title) : L("room.no_song"));
             if (_levelLabel != null)
             {
-                int lvl = entry != null ? entry.DisplayLevel((int)s.Difficulty) : -1;
+                // 目錄查得到就用本機的值,查不到(缺歌)退回 server 帶來的那份。
+                int lvl = entry != null ? entry.DisplayLevel(diffSlot)
+                        : (netSong != null && !isRandom && netSong.Level > 0 ? netSong.Level : -1);
                 _levelLabel.SetText(lvl >= 0 ? lvl.ToString() : "");
             }
             if (_bpmLabel != null)
-                _bpmLabel.SetText((entry != null && entry.bpm > 0f) ? Mathf.RoundToInt(entry.bpm).ToString() : "");
+            {
+                float bpm = entry != null && entry.bpm > 0f ? entry.bpm
+                          : (netSong != null && !isRandom ? (float)netSong.Bpm : 0f);
+                _bpmLabel.SetText(bpm > 0f ? Mathf.RoundToInt(bpm).ToString() : "");
+            }
 
             // 速度（對齊到 config 檔位）
             var steps = SpeedSteps();
@@ -2257,11 +2944,87 @@ namespace Sdo.UI.Screens
                 }
             }
 
-            // 組隊單選：選到的顯示 pushed 圖，其餘顯示 normal
+            // 組隊單選：選到的顯示 pushed 圖，其餘顯示 normal。
+            // 🔴 亮哪一格要看 **server 認定的隊伍**,不是 session.Team —— 線上換隊刻意不做樂觀更新
+            // (PickOwnTeam 只送 setOwnTeam,顯示等 roomState 回來),而 session.Team 在線上根本沒人寫,
+            // 所以拿它來畫的話:頭貼上的 READY 已經是 B 隊的綠色了,格子卻還亮在「自由」。
+            int myTeam = LocalTeam();
             for (int i = 0; i < _teamImg.Length; i++)
-                if (_teamImg[i] != null) UIKit.ApplySprite(_teamImg[i], s.Team == i ? _teamPushed[i] : _teamNormal[i]);
+                if (_teamImg[i] != null) UIKit.ApplySprite(_teamImg[i], myTeam == i ? _teamPushed[i] : _teamNormal[i]);
 
             // 掉落方式的值由 SdoComboBox 自己維護（onPick → session.DropDirection）；此處不需重畫。
+        }
+
+        /// <summary>
+        /// 右側面板要讀的房間快照 —— **線上而且不是房主**才有。
+        /// 房主與離線看自己的 session(它就是房間的設定);非房主看快照(房間是別人選的)。
+        /// 「netRoom == null」因此也正好等於「這台是房主」。
+        /// </summary>
+        private NetRoomSnapshot NetRoomForPanel()
+            => Online && Ctx != null && Ctx.Net != null && !Ctx.Net.IsHost ? Ctx.Net.Room : null;
+
+        /// <summary>
+        /// 本機這一格現在在**哪一隊**(0=A 1=B 2=C 3=自由)。
+        ///
+        /// 線上以 server 的座位為準:換隊不做樂觀更新(見 <see cref="PickOwnTeam"/>),而且線上沒有人寫
+        /// <c>GameSession.Team</c> —— 讀它會讓「組隊」四格永遠亮在自己上次離線時選的那一格。
+        /// 離線(本機就是房主、沒有 server)才用 session 的值。
+        /// </summary>
+        /// <summary>
+        /// 這間房**現在**是什麼模式(0=自由 1=普通 2=ShowTime)。
+        ///
+        /// 線上一律以 server 的房間設定為準(房主自己也是 —— 它按下去的模式會 push 上去,
+        /// 兩邊本來就該一致;拿 session 當來源的話,推送失敗時房主會看到一個只有它自己相信的模式)。
+        /// 離線沒有 server,session 就是房間設定。
+        /// </summary>
+        private int RoomGameMode()
+        {
+            if (Online && Ctx != null && Ctx.Net != null && Ctx.Net.Room != null && Ctx.Net.Room.Settings != null)
+                return Ctx.Net.Room.Settings.GameMode;
+            return Ctx != null && Ctx.Session != null ? Ctx.Session.GameMode : 0;
+        }
+
+        private int LocalTeam()
+        {
+            if (Online && Ctx != null && Ctx.Net != null && Ctx.Net.Room != null)
+            {
+                var seat = Ctx.Net.Room.SeatOf(Ctx.Net.UserId);
+                if (seat != null) return seat.Team;
+            }
+            return Ctx != null && Ctx.Session != null ? Ctx.Session.Team : (int)TeamTag.Free;
+        }
+
+        /// <summary>
+        /// 面板現在顯示的那首歌在**本機**歌曲目錄裡的那一筆。
+        /// <paramref name="netSong"/> 有值(線上非房主)就用房間那份的識別去查,否則查 session 自己選的。
+        /// 查不到 = 我沒這首歌(缺歌)→ null,呼叫端退回 server 帶來的顯示值。
+        /// </summary>
+        private SongCatalog.Entry LocalEntryFor(NetSongRef netSong)
+        {
+            if (netSong != null)
+                return netSong.Official
+                    ? SongCatalog.Get(netSong.Gn)
+                    : Sdo.Game.ExternalSongLibrary.FindByPack(netSong.PackId, netSong.SongKey);
+            var s = Ctx != null ? Ctx.Session : null;
+            return s != null && s.HasSong ? SongCatalog.Get(s.SongGn) : null;
+        }
+
+        /// <summary>這首歌三個難度槽各有沒有譜。查不到目錄(缺歌/隨機難度)→ null = 三個都當可選。</summary>
+        private static bool[] PlayableSlots(SongCatalog.Entry entry)
+        {
+            if (entry == null) return null;
+            var ok = new bool[FreeModeDifficulty.SlotCount];
+            for (int i = 0; i < ok.Length; i++) ok[i] = entry.HasChart(i);
+            return ok;
+        }
+
+        /// <summary>自由模式難度選擇器現在該用哪一份「哪些難度有譜」(◄ ► 要跳過沒譜的難度)。</summary>
+        private bool[] CurrentPlayableSlots()
+        {
+            var netSong = NetRoomForPanel()?.Song;
+            if (netSong != null && !netSong.HasSong) netSong = null;
+            bool isRandom = netSong != null ? netSong.RandomTitle : (Ctx != null && Ctx.Session != null && Ctx.Session.SongIsRandom);
+            return PlayableSlots(isRandom ? null : LocalEntryFor(netSong));
         }
 
         /// <summary>隨機難度用的灰階 CD 碟：把任一難度碟去色一次並快取（碟形相同、只差色相，去色後即中性灰）。
@@ -2381,6 +3144,7 @@ namespace Sdo.UI.Screens
                 ApplyCollapse();
             }
 
+            HandleContextMenuDismiss();   // 座位/分隊選單開著時,點到外面就關掉(要在 blank-click 之前:那條會進打字模式)
             HandleRoomBlankChatClick();
             HandleRoomChatTypingKeys();
             // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
@@ -2403,38 +3167,107 @@ namespace Sdo.UI.Screens
                 || _chatBubbleInputArmed
                 || (_chatInput != null && _chatInput.isFocused);
             _scene.InputEnabled = roomTop && !chatCapturingKeys;
-            // panel every slot shows the head (to check alignment); normally only slot 0 (the local player) does.
-            Texture headTex = _localHead != null ? _localHead.Texture : null;
-            for (int i = 0; i < RoomLayout.SeatCount; i++)
-            {
-                if (_slotHead[i] == null) continue;
-                var rt = _slotHead[i].rectTransform;
-                rt.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x, -(RoomLayout.HeadSlotY + headSlotOffset.y));
-                rt.sizeDelta = headSlotSize;
-                bool occ = (i == 0) || _debugOpen;
-                if (occ && headTex != null) { _slotHead[i].texture = headTex; _slotHead[i].enabled = true; if (_slotClose[i] != null) _slotClose[i].enabled = false; }
-                else { _slotHead[i].enabled = false; if (_slotClose[i] != null) _slotClose[i].enabled = showEmptySeatCovers; }
-            }
+            // 六格頭貼每幀重畫一次(見 RenderSlots 的註解:F2 面板要能即時拉位置/尺寸,
+            // 而且連線模式的座位狀態是 server 推來的,不能只在 Render() 那一刻套一次)。
+            RenderSlots(Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null);
+            EnsureChatScope();          // 房間資料可能比進場晚到(見那邊的註解);設好之後就是純比較,不花成本
+            // 🔴 這五行的順序是定案的,不要重排:
+            //   SyncRemoteRoomAvatars 有 rev-gate(只在房間快照變時跑) → 生/拆/換裝遠端角色
+            //   ApplyRemoteMoves / SendLocalMove **不能**放進去 —— 位置每幀都要套,rev 不會每幀變
+            //   名字牌與頭上泡要在位置套完之後才擺,否則會慢一幀(走動時看得出來)
+            SyncRemoteRoomAvatars();
+            ApplyRemoteMoves();
+            SendLocalMove();
+            PlaceRemoteNamePlates();
+            PlaceRemoteChatBubbles();
+            if (_remoteHeads != null) _remoteHeads.Tick();   // 每幀輪轉拍一格遠端頭貼
 
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
 
+            // 本機的名字牌 + 家族列。它們與泡同住一張 world canvas(所以一樣會被前面的人擋住),
+            // canvas 的原點是**肩膀**錨點(泡的錨點)→ 名字要寫「相對那一點」的偏移。
+            Vector2 localOrigin = Vector2.zero;
+            bool localInCanvas = _scene.TryChatBubbleViewport(out var localShoulderVp)
+                                 && PlaceBubbleWorldCanvas(0);
+            if (localInCanvas) localOrigin = RoomBubbleWorldAnchor.AnchorDesignPoint(localShoulderVp, 800f, 600f);
             if (_scene.TryHeadViewport(out var vp))
             {
                 if (_floatName != null && _floatName.gameObject.activeSelf)
-                    PlaceFollow(_floatName.Rect, vp, -8f);                      // name sits just ABOVE the avatar's head
-                PlaceFamilyRow(vp);                                            // 家族列(徽章+名稱)再往上疊一行
+                {
+                    bool moved = localInCanvas && ParentNameIntoOwnerCanvas(_floatName.Rect, 0);
+                    PlaceFollow(_floatName.Rect, vp, -8f, moved ? localOrigin : Vector2.zero);   // 名字在頭的正上方
+                }
+                PlaceFamilyRow(vp, localInCanvas ? localOrigin : Vector2.zero, localInCanvas);   // 家族列再往上疊一行
             }
 
-            bool needBubbleAnchor = _sentBubbles.Count > 0
+            bool needBubbleAnchor = HasBubbleOf(0)
                 || (_chatBubbleRoot != null && (_chatBubbleRoot.gameObject.activeSelf || _chatBubblePendingShow));
             if (needBubbleAnchor)
             {
                 if (_scene.TryChatBubbleViewport(out var bubbleVp))
-                    PlaceRoomChatBubbles(bubbleVp);
+                    PlaceRoomChatBubbles(bubbleVp, 0, true);
                 else if (_scene.TryHeadViewport(out var fallbackVp))
-                    PlaceRoomChatBubbles(fallbackVp);
+                    PlaceRoomChatBubbles(fallbackVp, 0, true);
             }
+
+            // 所有人的泡都擺完了 → 按深度重排「泡與泡」的前後(UI 材質不寫深度,誰蓋誰只看畫的順序)。
+            SortBubbleWorldCanvases();
+
+            TickRoomPerf();              // DEV only:設了 SDO_ROOMAVATARS 才會動(量 16 隻角色的成本)
+            TickAwaitingMatchStart();   // requestStart 沒回應 → 放開「開始」鈕
+            TickDevCloseSeats();         // DEV only:設了 SDO_CLOSESEATS 才會動(做出滿房,驗自動轉旁觀)
+            TickDevPickSong();           // DEV only:設了 SDO_PICKSONG 才會動(缺歌傳檔的實機驗證用)
+            TickDevTeam();               // DEV only:設了 SDO_TEAM 才會動(驗徽章依隊伍換色)
+            TickDevAutoReady();          // DEV only:設了 SDO_AUTOREADY 才會動
+            TickDevAutoStart();          // DEV only:設了 SDO_AUTOSTART 才會動
+            TickDevAutoSay();   // DEV only:設了 SDO_SAY 才會動(見那邊的註解)
+        }
+
+        private bool HasBubbleOf(int owner)
+        {
+            for (int i = 0; i < _sentBubbles.Count; i++)
+                if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == owner) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 遠端玩家的泡:每人一條鏈,掛在**他自己**角色的肩膀上。
+        /// 角色在鏡頭後面(看不到)時把泡藏起來 —— 不藏的話泡會黏在畫面邊角。
+        /// </summary>
+        private void PlaceRemoteChatBubbles()
+        {
+            if (_scene == null || _sentBubbles.Count == 0) return;
+            _bubbleOwners.Clear();
+            for (int i = 0; i < _sentBubbles.Count; i++)
+            {
+                var b = _sentBubbles[i];
+                if (b != null && b.OwnerUserId != 0) _bubbleOwners.Add(b.OwnerUserId);
+            }
+            if (_bubbleOwners.Count == 0) return;
+
+            foreach (int owner in _bubbleOwners)
+            {
+                Vector2 vp;
+                if (_scene.TryRemoteBubbleViewport(owner, out vp)) { PlaceRoomChatBubbles(vp, owner, false); continue; }
+                for (int i = 0; i < _sentBubbles.Count; i++)
+                {
+                    var b = _sentBubbles[i];
+                    if (b != null && b.OwnerUserId == owner && b.Root != null && b.Root.gameObject.activeSelf)
+                        SetBubbleActive(b, false);
+                }
+            }
+        }
+
+        private readonly HashSet<int> _bubbleOwners = new HashSet<int>();
+        private float _lastBubblePopAt = -1f;
+
+        /// <summary>某個人離房 → 清掉他所有的泡(角色已經被拆了,泡留著會孤兒地掛到壽命結束)。</summary>
+        private void DestroySentBubblesOf(int owner)
+        {
+            for (int i = _sentBubbles.Count - 1; i >= 0; i--)
+                if (_sentBubbles[i] != null && _sentBubbles[i].OwnerUserId == owner)
+                    DestroySentRoomBubble(_sentBubbles[i]);
         }
 
         private void LateUpdate()
@@ -2485,13 +3318,15 @@ namespace Sdo.UI.Screens
             }
         }
 
-        private void PlaceRoomChatBubbles(Vector2 vp)
+        /// <param name="owner">只排這個人的泡(0 = 本機鏈)。每個人的泡各自成一條鏈,掛在自己的肩膀上。</param>
+        /// <param name="includeTyping">要不要把打字泡算進這條鏈(只有本機鏈才有打字泡)。</param>
+        private void PlaceRoomChatBubbles(Vector2 vp, int owner = 0, bool includeTyping = true)
         {
             float anchorTop = (1f - vp.y) * 600f;
             float visibleLeft = vp.x * 800f + ChatBubbleAnchorVisibleLeft;
             float visibleTop = anchorTop + ChatBubbleAnchorVisibleTop;
 
-            bool typingVisible = _chatBubbleRoot != null
+            bool typingVisible = includeTyping && _chatBubbleRoot != null
                 && (_chatBubbleTyping || _chatBubbleRoot.gameObject.activeSelf || _chatBubblePendingShow);
 
             bool hasTypingNode = false;
@@ -2512,11 +3347,14 @@ namespace Sdo.UI.Screens
                 hasTypingNode = true;
             }
 
-            var nodes = new List<RoomBubbleLayoutNode>(_sentBubbles.Count);
+            // 可重用的清單:這個方法現在會被呼叫「1 + 遠端人數」次/幀,每次 new 一個 List 就是 6 倍垃圾。
+            _bubbleNodes.Clear();
+            var nodes = _bubbleNodes;
             for (int i = _sentBubbles.Count - 1; i >= 0; i--)
             {
                 var b = _sentBubbles[i];
                 if (b == null || b.Root == null) continue;
+                if (b.OwnerUserId != owner) continue;
                 nodes.Add(new RoomBubbleLayoutNode
                 {
                     Sent = b,
@@ -2565,6 +3403,11 @@ namespace Sdo.UI.Screens
             }
 
             if (nodes.Count == 0) return;
+
+            // 這個人的泡畫在他自己那張 world canvas 上 → 每幀把 canvas 擺到他肩膀的投影點並補償縮放。
+            PlaceBubbleWorldCanvas(owner);
+            // canvas 原點投影到的設計座標 = 泡的畫的相對位移基準(見下面 WriteBubbleVisualPos 那行的註解)。
+            Vector2 canvasOriginDesign = RoomBubbleWorldAnchor.AnchorDesignPoint(vp, 800f, 600f);
 
             int draggedIndex = -1;
             for (int i = 0; i < nodes.Count; i++)
@@ -2622,6 +3465,10 @@ namespace Sdo.UI.Screens
                 var node = nodes[i];
                 if (node.Root != null)
                     node.Root.anchoredPosition = node.Position;
+                // 畫在 3D 世界的那份寫「相對 canvas 原點」的偏移。canvas 原點被擺在**錨點骨頭的投影點**上
+                // (PlaceBubbleWorldCanvas),所以要減的是那一點 —— **不是**這條鏈的 anchorRoot
+                // (它多帶了泡身位移與畫布中心,差 (5.5, 46.5) 設計 px)。見 AnchorDesignPoint 的註解。
+                if (node.Sent != null) WriteBubbleVisualPos(node.Sent, node.Position, canvasOriginDesign);
 
                 if (node.Sent != null)
                 {
@@ -2630,13 +3477,97 @@ namespace Sdo.UI.Screens
                     node.Sent.HasPhysics = node.HasPhysics;
                     if (node.Sent.PendingShow)
                     {
-                        node.Sent.Root.gameObject.SetActive(true);
+                        SetBubbleActive(node.Sent, true);
                         node.Sent.PendingShow = false;
                         LayoutSentBubbleInlineEmoji(node.Sent);   // 活化後才有 mesh，這時把行內 emoji 疊到打的位置
+                        if (node.Sent.InWorld) SetBubbleLayer(node.Sent.Visual);   // 換過字 → sub-mesh 可能剛長出來
                     }
+                    // 註:同一條鏈裡誰畫在上面**刻意不動** —— world canvas 裡的兄弟順序就是生成順序,
+                    //     與泡還在 UI 層時一樣(最新的泡最後生成 → 畫在最上面)。這裡若補 SetAsLastSibling
+                    //     反而會照 nodes 的逆序每幀重排,把順序倒過來。
                 }
             }
         }
+
+        /// <summary>泡的畫要放哪:在 3D 世界 → 相對錨點的偏移;退回 UI(房間 3D 沒好)→ 貼著代理不動。</summary>
+        private static void WriteBubbleVisualPos(SentRoomBubble b, Vector2 pos, Vector2 anchorRoot)
+        {
+            if (b == null || b.Visual == null) return;
+            b.Visual.anchoredPosition = b.InWorld ? pos - anchorRoot : Vector2.zero;
+        }
+
+        /// <summary>
+        /// 把某個人的泡 canvas 擺到「他肩膀的投影點」上,並按距離補償縮放 —— 泡因此與搬家前**同位置同大小**,
+        /// 只是現在活在房間相機裡,會被前面的人擋住。數學在 <see cref="RoomBubbleWorldAnchor"/>(有單元測試)。
+        /// 回 false = 這一幀擺不出來(角色沒了/在相機後面)→ 整張 canvas 關掉,寧可不畫也不要留一顆定格的泡。
+        /// </summary>
+        private bool PlaceBubbleWorldCanvas(int owner)
+        {
+            var canvas = BubbleWorldCanvas(owner);
+            if (canvas == null) return false;
+            var cam = _scene != null ? _scene.SceneCamera : null;
+            bool ok = false;
+            if (cam != null)
+            {
+                Vector3 anchorWorld;
+                bool haveAnchor = owner == 0
+                    ? _scene.TryChatBubbleAnchorWorld(out anchorWorld)
+                    : _scene.TryRemoteChatBubbleAnchorWorld(owner, out anchorWorld);
+                if (haveAnchor)
+                {
+                    Vector3 fwd = cam.transform.forward;
+                    // bias = 說話者自己的水平半厚度 + 一點餘裕:泡的錨點在肩膀骨,而他自己的頭髮/胸口
+                    // 比肩膀骨更靠近相機 → 不拉開的話他會切掉自己泡的尾巴(看起來像美術破圖)。
+                    float bias = _scene.OwnerDepthExtent(owner, fwd) + BubbleDepthBiasPad;
+                    var plane = RoomBubbleWorldAnchor.Solve(cam.transform.position, fwd,
+                                                            cam.projectionMatrix.m11, cam.nearClipPlane,
+                                                            anchorWorld, bias, 600f);
+                    if (plane.Valid)
+                    {
+                        canvas.position = plane.Position;
+                        canvas.rotation = cam.transform.rotation;   // 正對相機 → 設計 px 偏移在螢幕上還是設計 px
+                        canvas.localScale = new Vector3(plane.Scale, plane.Scale, plane.Scale);
+                        _bubbleWorldDepth[owner] = Vector3.Dot(plane.Position - cam.transform.position, fwd);
+                        ok = true;
+                    }
+                }
+            }
+            if (canvas.gameObject.activeSelf != ok) canvas.gameObject.SetActive(ok);
+            return ok;
+        }
+
+        /// <summary>
+        /// 泡與泡之間的前後關係。
+        ///
+        /// 🔴 UI 材質不寫深度,所以「兩顆泡誰蓋誰」是**畫的順序**決定的,不是深度 —— 站在後面的人的泡
+        /// 有可能蓋住前面那個人的泡。每幀按各人的深度重排 canvas 的 sortingOrder(近的排後面 = 蓋住遠的)。
+        ///
+        /// 起點刻意用 <see cref="BubbleSortingOrderBase"/>=100 而不是 0:透明衣物與場景的 alpha 批是
+        /// sortingOrder 0(renderQueue 3000–3400),而 sortingOrder 比 renderQueue 優先
+        /// ([[unity-sortingorder-outranks-renderqueue]])→ 100 保證泡畫在它們之後。不這麼做的話,
+        /// 遠處某人的紗裙會蓋掉近處的泡,而症狀看起來像泡破圖。
+        /// </summary>
+        private void SortBubbleWorldCanvases()
+        {
+            if (_bubbleWorldCanvas.Count <= 1) return;
+            _bubbleSortScratch.Clear();
+            foreach (var kv in _bubbleWorldCanvas)
+            {
+                if (kv.Value == null) continue;
+                float d;
+                if (!_bubbleWorldDepth.TryGetValue(kv.Key, out d)) d = float.MaxValue;
+                _bubbleSortScratch.Add(new KeyValuePair<float, RectTransform>(d, kv.Value));
+            }
+            _bubbleSortScratch.Sort((a, b) => b.Key.CompareTo(a.Key));   // 遠 → 近
+            for (int i = 0; i < _bubbleSortScratch.Count; i++)
+            {
+                var c = _bubbleSortScratch[i].Value.GetComponent<Canvas>();
+                if (c != null) c.sortingOrder = BubbleSortingOrderBase + i;
+            }
+        }
+
+        private readonly List<KeyValuePair<float, RectTransform>> _bubbleSortScratch =
+            new List<KeyValuePair<float, RectTransform>>();
 
 
         private static bool StepBubbleNode(ref RoomBubbleLayoutNode node, Vector2 target, float dt)
@@ -2890,7 +3821,23 @@ namespace Sdo.UI.Screens
 
         private sealed class SentRoomBubble
         {
+            /// <summary>
+            /// **命中代理**,留在 UI 的 _bubbleLayer 裡:透明、沒有畫面,只負責兩件事 ——
+            /// ① 滑鼠命中(拖曳/點擊) ② 承載「絕對設計座標」。鏈物理、拖曳、命中測試、壽命補償
+            /// 全部繼續讀寫它的 anchoredPosition,所以那些程式碼一行都不用改。
+            /// </summary>
             public RectTransform Root;
+
+            /// <summary>
+            /// **畫**,掛在該 owner 的 world canvas 裡(<see cref="RoomScene3D.BubbleLayer"/>)由房間相機 render,
+            /// 因此會吃 GPU 深度測試 —— 站在說話者前面的人可以逐像素把它切掉(使用者要的前後景)。
+            /// 位置寫的是「代理位置 − 錨點位置」的相對偏移,見 WriteBubbleVisualPos。
+            /// </summary>
+            public RectTransform Visual;
+
+            /// <summary>畫真的進了 3D 世界嗎?false = 房間 3D 還沒好,畫退回掛在代理底下(看得到但不會被擋)。</summary>
+            public bool InWorld;
+
             public Image Frame, Add, Expression;
             public TextMeshProUGUI Text;
             public SpriteSeqAnim FrameAnim, AddAnim, ExpressionAnim;
@@ -2900,6 +3847,12 @@ namespace Sdo.UI.Screens
             public bool HasPhysics;
             public Vector2 PhysicsPos, PhysicsVel;
             public int EmojiInlineLeadLen = -1;   // >=0：泡活化後把 Expression 疊到 Text 第 leadLen 個字之後；-1=不做
+
+            /// <summary>
+            /// 這顆泡是誰的?**0 = 本機**(它與打字泡共用同一條鏈),其餘 = 遠端玩家的 userId。
+            /// 每個人的泡各自成一條鏈,掛在各自角色的肩膀上。
+            /// </summary>
+            public int OwnerUserId;
         }
 
         private sealed class RoomBubbleDragHandle : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
@@ -3115,9 +4068,18 @@ namespace Sdo.UI.Screens
 
         // viewport (0..1, y-up) → 800×600 canvas, centred on x, rect TOP at the point + topOffset (negative = above).
         private static void PlaceFollow(RectTransform rt, Vector2 vp, float topOffset)
+            => PlaceFollow(rt, vp, topOffset, Vector2.zero);
+
+        /// <param name="originDesign">
+        /// 這個 rect 所在 canvas 的原點(設計座標)。0 = 還在 UI 層(絕對座標);
+        /// 非 0 = 已經搬進房間相機的 per-owner world canvas → 要寫「相對原點」的偏移。
+        /// 見 <see cref="RoomBubbleWorldAnchor.AnchorDesignPoint"/>。
+        /// </param>
+        private static void PlaceFollow(RectTransform rt, Vector2 vp, float topOffset, Vector2 originDesign)
         {
             float topFromTop = (1f - vp.y) * 600f + topOffset;
-            rt.anchoredPosition = new Vector2(vp.x * 800f - rt.sizeDelta.x * 0.5f, -topFromTop);
+            var abs = new Vector2(vp.x * 800f - rt.sizeDelta.x * 0.5f, -topFromTop);
+            rt.anchoredPosition = abs - originDesign;
         }
 
         // 設定頭上「家族列」(徽章＋家族名稱)的內容與顯示與否；實際位置每幀由 PlaceFamilyRow 跟著頭擺放。
@@ -3143,9 +4105,14 @@ namespace Sdo.UI.Screens
 
         // 把頭上「家族列」(徽章＋家族名稱)整組水平置中於頭部，疊在名字上方一行。徽章在左、名稱在右，兩者當「一個群組」
         // 一起置中(而非各自置中)，才不會因徽章寬度而整體偏移。家族名稱左對齊 → 文字自群組內固定起點畫出。跟著 vp(頭部視埠)走。
-        private void PlaceFamilyRow(Vector2 vp)
+        private void PlaceFamilyRow(Vector2 vp, Vector2 originDesign, bool intoOwnerCanvas)
         {
             if (_floatFamily == null || !_floatFamily.gameObject.activeSelf) return;
+            // 家族列(名稱 + 徽章)也一起搬進 world canvas —— 否則它會浮在被遮住的名字之上,
+            // 看起來像「名字被擋住但家族名沒有」。徽章是獨立的 Image,要各自搬。
+            bool moved = intoOwnerCanvas && ParentNameIntoOwnerCanvas(_floatFamily.Rect, 0);
+            if (moved && _floatEmblem != null) ParentNameIntoOwnerCanvas(_floatEmblem.rectTransform, 0);
+            Vector2 org = moved ? originDesign : Vector2.zero;
             float centerX = vp.x * 800f;
             // 名字列頂端 = (1-vp.y)*600 - 8（見 Update 內 PlaceFollow 給 _floatName 的 topOffset=-8）。家族列疊其上 → 兩行
             // 都同高且垂直置中，所以「holder 頂端相差 FamilyLinePitch」＝「兩行文字中心相差 FamilyLinePitch」，直接調它即可。
@@ -3156,11 +4123,666 @@ namespace Sdo.UI.Screens
             float emblemW = hasEmblem ? FamilyEmblemSize : 0f;
             float gap = hasEmblem ? FamilyEmblemGap : 0f;
             float left = centerX - (emblemW + gap + textW) * 0.5f;
-            _floatFamily.Rect.anchoredPosition = new Vector2(left + emblemW + gap, -rowTop);   // 左對齊：文字起點=群組左緣+徽章+間距
+            _floatFamily.Rect.anchoredPosition = new Vector2(left + emblemW + gap, -rowTop) - org;   // 左對齊：文字起點=群組左緣+徽章+間距
             if (hasEmblem)
                 _floatEmblem.rectTransform.anchoredPosition =
-                    new Vector2(left, -(rowTop + (FamilyRowH - FamilyEmblemSize) * 0.5f));      // 徽章垂直置中於家族列
+                    new Vector2(left, -(rowTop + (FamilyRowH - FamilyEmblemSize) * 0.5f)) - org;      // 徽章垂直置中於家族列
         }
+
+        /// <summary>
+        /// 六格頭貼的**唯一**繪製點:頭貼、名字、房主徽章、關閉座位的 🚫 覆蓋圖。
+        ///
+        /// 🔴 這件事以前在 <c>Render()</c> 與 <c>Update()</c> 各做了一次,而 <c>Update()</c> 那份每幀重套
+        /// 位置/尺寸/顯示 —— 所以任何「只寫在 Render() 的座位狀態」都會被下一幀蓋回去。
+        /// 合成一個之後就只有一條路徑,新的狀態(缺歌/遊戲中/下載中徽章)加在這裡就不會被覆蓋。
+        ///
+        /// 位置與尺寸為什麼要每幀套:F2 除錯面板能即時拉 <see cref="headSlotOffset"/>/<see cref="headSlotSize"/>
+        /// 對位,所以不能只在建立時套一次。
+        /// </summary>
+        // ==================== 座位操作(房主專屬)====================
+        // 每一項 server 都獨立驗過(R7 host-only / R8 不准關自己的位子 / TransferHost 要求目標在座位上)。
+        // 這邊的守門純粹是 UX:不要把按不動的東西畫出來。規則本體在 RoomSlotMenu(純函式 + 測試)。
+
+        /// <summary>我現在是這間房的房主、而且在連線模式嗎?(離線房只有自己一個人,這些操作沒有意義)</summary>
+        private bool CanManageSeats(RoomInfo room)
+            => room != null && Ctx != null && Ctx.Net != null
+               && Ctx.Net.IsConnected && Ctx.Net.InRoom && Ctx.Net.IsHost;
+
+        private void OnSlotPointerClick(int seat, PointerEventData ev)
+        {
+            if (ev == null || seat < 0 || seat >= RoomLayout.SeatCount) return;
+            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
+            if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
+
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            bool host = CanManageSeats(room);
+            bool isSelf = seat == LocalSeatIndex(room);
+
+            if (ev.button == PointerEventData.InputButton.Right)
+            {
+                ShowSlotPopup(seat, ev.position, room, host, isSelf);
+                return;
+            }
+            // 雙擊 = 鎖格/解鎖。有人坐的位子 server 會先把他踢掉再關(R8)—— 那就是「鎖住這一格」的語意。
+            if (ev.button == PointerEventData.InputButton.Left && ev.clickCount >= 2
+                && RoomSlotMenu.DoubleClickAllowed(host, true, isSelf))
+            {
+                var s = SeatAt(room, seat);
+                Ctx.Net.SetSeatClosed(seat, RoomSlotMenu.DoubleClickClosesSeat(s != null && s.IsClosed));
+                UiSfx.Play(UiSfx.Click);
+                CloseSlotPopup();
+            }
+        }
+
+        private static SeatInfo SeatAt(RoomInfo room, int seat)
+            => room != null && seat >= 0 && seat < room.Seats.Count ? room.Seats[seat] : null;
+
+        /// <summary>座位右鍵選單。項目由 <see cref="RoomSlotMenu"/> 決定(空 → 不彈)。</summary>
+        private void ShowSlotPopup(int seat, Vector2 screenPos, RoomInfo room, bool host, bool isSelf)
+        {
+            CloseSlotPopup();
+            var s = SeatAt(room, seat);
+            bool taken = s != null && !s.IsEmpty;
+            bool closed = s != null && s.IsClosed;
+            var actions = RoomSlotMenu.For(host, true, isSelf, taken, closed);
+            if (actions.Length == 0) return;
+
+            int targetUser = taken && s != null ? s.UserId : 0;
+            _slotPopup = BuildContextMenu("SlotPopup", screenPos, actions.Length,
+                (idx, label) => SlotActionLabel(actions[idx]),
+                idx =>
+                {
+                    // 🔴 callback 內再檢查一次房主身分:選單彈出到按下之間房主可能已經被轉走
+                    //    (自己交出房主、或 server 因為別人離開重新指派)。
+                    var now = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+                    if (!CanManageSeats(now)) { CloseSlotPopup(); return; }
+                    switch (actions[idx])
+                    {
+                        case RoomSlotAction.Kick: if (targetUser != 0) Ctx.Net.KickUser(targetUser); break;
+                        case RoomSlotAction.TransferHost: if (targetUser != 0) Ctx.Net.TransferHost(targetUser); break;
+                        case RoomSlotAction.CloseSeat: Ctx.Net.SetSeatClosed(seat, true); break;
+                        case RoomSlotAction.OpenSeat: Ctx.Net.SetSeatClosed(seat, false); break;
+                    }
+                    CloseSlotPopup();
+                });
+        }
+
+        private string SlotActionLabel(RoomSlotAction a)
+        {
+            switch (a)
+            {
+                case RoomSlotAction.Kick: return L("room.slot_kick");
+                case RoomSlotAction.TransferHost: return L("room.slot_transfer_host");
+                case RoomSlotAction.CloseSeat: return L("room.slot_close");
+                default: return L("room.slot_open");
+            }
+        }
+
+        /// <summary>滑鼠螢幕座標 → 800×600 設計座標(左上原點、y 往下)。同 SongSelectScreen.ScreenToDesign 的算法。</summary>
+        private Vector2 PointerToDesign(Vector2 screenPos)
+        {
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (Root != null && RectTransformUtility.ScreenPointToLocalPointInRectangle(Root, screenPos, cam, out var lp))
+            {
+                var r = Root.rect;
+                return new Vector2(lp.x - r.xMin, r.yMax - lp.y);
+            }
+            return Vector2.zero;
+        }
+
+        /// <summary>
+        /// 把「頭上的名字牌」也搬進那個人的 world canvas —— 讓它跟頭上泡一樣吃深度遮擋
+        /// (站在前面的人會擋住名字),而且**泡永遠畫在名字之上**。
+        ///
+        /// 為什麼泡要壓在名字上面:兩者都在同一個平面(同一張 canvas),而 UI 材質不寫深度 →
+        /// 它們之間的前後**只由畫的順序決定**。名字固定放在第一個子物件,泡是之後才生成的兄弟
+        /// → 泡自然畫在後面(= 上面)。這樣「自己說話的泡被自己的名字擋住」不可能發生。
+        /// (刻意不用「把泡的平面往相機拉近」來做:那會讓泡逃掉本來該有的遮擋 —— 例如有人就站在你前面
+        ///  半步,泡卻因為被拉近而蓋在他身上。)
+        ///
+        /// 名字沒有滑鼠互動,所以不需要像泡那樣留一個 UI 代理 —— 整棵搬過去就好。
+        /// </summary>
+        private bool ParentNameIntoOwnerCanvas(RectTransform rt, int owner)
+        {
+            if (rt == null) return false;
+            var canvas = BubbleWorldCanvas(owner);
+            if (canvas == null) return false;
+            if (rt.parent != canvas)
+            {
+                rt.SetParent(canvas, false);
+                rt.SetAsFirstSibling();          // 名字永遠在泡之前畫 → 泡蓋在名字上
+                SetBubbleLayer(rt);
+            }
+            return true;
+        }
+
+        private void CloseSlotPopup()
+        {
+            if (_slotPopup != null) { Destroy(_slotPopup); _slotPopup = null; }
+        }
+
+        /// <summary>
+        /// 通用的小彈出選單(座位選單與房主分隊選單共用)。
+        ///
+        /// 官方客端沒有右鍵選單這種東西,所以沒有可以對照的美術 —— 用房間的配色自己疊一個:
+        /// 深色底 + 白字,寬度依最長那一項算。位置是滑鼠的設計座標,並夾進 800×600 框內。
+        /// </summary>
+        private GameObject BuildContextMenu(string name, Vector2 screenPos, int count,
+                                            System.Func<int, string, string> labelOf, System.Action<int> onPick)
+        {
+            const float rowH = 22f, padX = 10f, fontSize = 13f;
+            var labels = new string[count];
+            float w = 60f;
+            for (int i = 0; i < count; i++)
+            {
+                labels[i] = labelOf(i, null) ?? "";
+                w = Mathf.Max(w, labels[i].Length * fontSize * 0.62f + padX * 2f);   // 粗估:CJK 一字約 0.62em
+            }
+            float h = rowH * count;
+            Vector2 tl = PointerToDesign(screenPos);
+            float x = Mathf.Clamp(tl.x, 0f, 800f - w);
+            float y = Mathf.Clamp(tl.y, 0f, 600f - h);
+
+            var panel = UIKit.AddImage(Root, name, new Color32(0x2A, 0x1B, 0x45, 0xF0), raycast: true);
+            Place(panel.rectTransform, x, y, w, h);
+            panel.transform.SetAsLastSibling();
+            for (int i = 0; i < count; i++)
+            {
+                int idx = i;
+                var row = UIKit.AddImage(panel.rectTransform, "Row" + i, new Color(1f, 1f, 1f, 0f), raycast: true);
+                Place(row.rectTransform, 0, rowH * i, w, rowH);
+                var btn = row.gameObject.AddComponent<Button>();
+                btn.targetGraphic = row;
+                btn.transition = Selectable.Transition.ColorTint;
+                btn.colors = new ColorBlock
+                {
+                    normalColor = new Color(1f, 1f, 1f, 0f),
+                    highlightedColor = new Color(1f, 1f, 1f, 0.18f),
+                    pressedColor = new Color(1f, 1f, 1f, 0.30f),
+                    selectedColor = new Color(1f, 1f, 1f, 0.18f),
+                    disabledColor = new Color(1f, 1f, 1f, 0f),
+                    colorMultiplier = 1f, fadeDuration = 0.05f,
+                };
+                UiSfx.AttachClick(btn);
+                UiHoverSfx.Attach(btn);
+                btn.onClick.AddListener(() => onPick(idx));
+                var t = UIKit.AddText(row.rectTransform, "Label", labels[i], fontSize, Color.white,
+                                      TextAlignmentOptions.Left);
+                Place(t.rectTransform, padX, 2, w - padX * 2f, rowH - 2f);
+            }
+            _slotPopupFrame = Time.frameCount;
+            return panel.gameObject;
+        }
+
+        /// <summary>選單開著時點到選單外面 → 關掉(彈出那一幀不算,否則會被觸發它的那次點擊自己關掉)。</summary>
+        private void HandleContextMenuDismiss()
+        {
+            if (_slotPopup == null) return;
+            if (Time.frameCount == _slotPopupFrame) return;
+            if (!Input.GetMouseButtonDown(0) && !Input.GetMouseButtonDown(1)) return;
+            var rt = _slotPopup.transform as RectTransform;
+            var cam = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
+            if (rt != null && RectTransformUtility.RectangleContainsScreenPoint(rt, Input.mousePosition, cam)) return;
+            CloseSlotPopup();
+        }
+
+        private void RenderSlots(RoomInfo room)
+        {
+            Texture localHeadTex = _localHead != null ? _localHead.Texture : null;
+            int localSeat = LocalSeatIndex(room);
+
+            for (int i = 0; i < RoomLayout.SeatCount; i++)
+            {
+                var seat = room != null && i < room.Seats.Count ? room.Seats[i] : null;
+                bool taken = seat != null && !seat.IsEmpty;
+                bool closed = seat != null && seat.IsClosed;
+                bool isLocal = i == localSeat;
+
+                // 命中盒跟著頭貼格走(F2 對位面板會即時改 headSlotOffset/headSlotSize)。
+                // 它一直是 active 的 —— 空位/關閉的位子也要能被右鍵(那正是「開啟/關閉位子」要點的地方)。
+                if (_slotHit[i] != null)
+                {
+                    var hr = _slotHit[i].rectTransform;
+                    // 與下面 _slotHead 的算式**逐字相同**(同一個 _win1Root 座標系)—— 兩邊會一起被 F2 面板改,
+                    // 寫成不同式子的話某天調版位就會只動一邊,命中盒與頭貼錯開。
+                    hr.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x,
+                                                      -(RoomLayout.HeadSlotY + headSlotOffset.y));
+                    hr.sizeDelta = headSlotSize;
+                }
+
+                if (_slotHead[i] != null)
+                {
+                    var rt = _slotHead[i].rectTransform;
+                    rt.anchoredPosition = new Vector2(RoomLayout.HeadSlotX[i] + headSlotOffset.x,
+                                                      -(RoomLayout.HeadSlotY + headSlotOffset.y));
+                    rt.sizeDelta = headSlotSize;
+                    // 本機那格用 RoomHeadPortrait(它自己有一隻 idle avatar,會鏡射走路/動作);
+                    // 遠端那幾格由 RoomRemoteHeadSet 拍房間裡**已經在跑**的那隻角色 —— 不另外建 avatar。
+                    // _debugOpen(F2 對位面板)時六格都畫本機的頭貼,方便對版位。
+                    Texture tex = null;
+                    if (isLocal || _debugOpen) tex = localHeadTex;
+                    else if (taken && _remoteHeads != null) tex = _remoteHeads.Texture(seat.UserId);
+                    bool showHead = tex != null;
+                    _slotHead[i].texture = tex;
+                    _slotHead[i].enabled = showHead;
+                }
+
+                // 🚫 覆蓋圖:被房主「關閉」的位子一定畫。空但開放的位子只有 showEmptySeatCovers 開著才畫
+                // (那個欄位的原意就是這樣;離線單人房預設關掉,畫面比較乾淨)。有人坐的位子絕不畫。
+                if (_slotClose[i] != null) _slotClose[i].enabled = !taken && (closed || showEmptySeatCovers);
+
+                // 🔴 房主徽章跟 HostUserId 走,不是「座位 0」—— 轉移房主時 server 只換那個值、不搬座位。
+                // 離線模式沒有 userId(恆 0),那時退回 SeatInfo.IsHost。
+                bool seatIsHost = taken && (seat.UserId != 0 && room != null ? room.IsHostUser(seat.UserId) : seat.IsHost);
+                int badgeFrame = taken ? RoomBadgeFrames.ForTeam(seat.Team) : 0;
+                RenderSeatBadges(i, seat, taken, seatIsHost, badgeFrame, isLocal);
+
+                // 名字底下那條名牌:選了隊才畫,畫的是那一隊的色條(官方 Team.an 第 1/2/3 幀)。
+                // 沒選隊(自由)= 官方的第 0 幀是 1×1 空白 → 這裡直接不畫,名字就落在頭貼面板原本的紫底上。
+                if (_slotPlate[i] != null)
+                {
+                    bool showPlate = taken && TeamColors.IsTeam(seat.Team);
+                    _slotPlate[i].enabled = showPlate;
+                    if (showPlate) UIKit.ApplySprite(_slotPlate[i], Frame(_plateFrames, badgeFrame));
+                }
+
+                if (_slotName[i] != null)
+                {
+                    _slotName[i].gameObject.SetActive(taken);
+                    // 本機那格用 LocalName():離線模式的座位名可能還沒同步到改過的名字。
+                    if (taken) _slotName[i].text = isLocal ? LocalName(room)
+                                                          : (seat.Player != null ? seat.Player.DisplayName : "");
+                }
+
+                RenderSlotBar(i, seat, taken);
+            }
+        }
+
+        /// <summary>
+        /// 頭貼下緣那一條徽章:PLAYING / NO MAP / HOST / READY **四張共用同一個位置**,一次只畫一張。
+        ///
+        /// 「哪一張」是純邏輯,住在 <see cref="RoomBadgeChoice"/>(優先序 PLAYING &gt; NO MAP &gt; HOST &gt; READY
+        /// 與理由都寫在那裡,並由 RoomBadgeChoiceTests 釘住)。這裡只負責把選中的那一張開起來、
+        /// 換成**那個人自己的隊伍色**那一幀,其餘三張關掉。
+        ///
+        /// 🔴 <see cref="_starting"/> 期間整條凍結。server 在開場那一刻就把所有參與者轉成 waitingForLoad
+        /// (頭貼會立刻翻成 PLAYING),但那時本機的黑幕才剛開始淡 —— 不擋的話自己會眼睜睜看著
+        /// 自己那格在亮著的畫面上翻牌,而要的是「畫面先全黑、進 loading,之後才換」。
+        /// 順序是穩的:server 先送 matchStarting(這裡才會 _starting=true)才廣播含新狀態的房間快照,
+        /// 同一條連線不會倒過來。留在房間的人(沒被納入這場、缺歌的旁觀者)收不到 matchStarting,
+        /// _starting 恆 false → 照樣即時看到別人翻成 PLAYING,那正是他們需要的資訊。
+        ///
+        /// 🔴 <paramref name="isLocal"/> 管的是**回來**那半段:自己那格永遠不畫 PLAYING(理由見
+        /// <see cref="RoomBadgeChoice.For"/> 的參數說明)。兩道守門缺一不可 —— _starting 擋出去、
+        /// isLocal 擋回來,少了後者的症狀是「中離回房後自己那格掛著 PLAYING 直到全場打完」。
+        /// </summary>
+        private void RenderSeatBadges(int i, SeatInfo seat, bool taken, bool seatIsHost, int badgeFrame, bool isLocal)
+        {
+            if (_starting) return;
+
+            var badge = taken
+                ? RoomBadgeChoice.For(true, seatIsHost, seat.IsReady, seat.PlayState, seat.Avail, isLocal)
+                : RoomSeatBadge.None;
+
+            Badge(_slotPlaying[i], badge == RoomSeatBadge.Playing, _playingFrames, badgeFrame);
+            Badge(_slotMissing[i], badge == RoomSeatBadge.NoMap, _noMapFrames, badgeFrame);
+            Badge(_slotMaster[i], badge == RoomSeatBadge.Host, _masterFrames, badgeFrame);
+            Badge(_slotReady[i], badge == RoomSeatBadge.Ready, _readyFrames, badgeFrame);
+        }
+
+        /// <summary>徽章條上的一張:要畫就換成那個隊伍色的幀,不畫就關掉(關掉時不換圖,省一次 mesh 重建)。</summary>
+        private static void Badge(Image img, bool show, Sprite[] frames, int frame)
+        {
+            if (img == null) return;
+            img.enabled = show;
+            if (!show) return;
+            UIKit.ApplySprite(img, Frame(frames, frame));
+            StretchToBadgeRow(img);   // ApplySprite 會把 sizeDelta 設回 sprite 原生尺寸 → 蓋回統一矩形
+        }
+
+        /// <summary>
+        /// 把徽章撐成徽章條的統一矩形 BadgeW×BadgeH。
+        ///
+        /// UGUI 的 Image 預設就是「把 sprite 拉滿 rect」(simple + 不保持長寬比),所以只要蓋掉
+        /// <see cref="UIKit.ApplySprite"/> 依原生尺寸算出來的 sizeDelta,矮 3px 的 PLAYING 就會被
+        /// 垂直拉伸填滿,而不是照原比例畫成一張比較矮的圖。
+        /// </summary>
+        private static void StretchToBadgeRow(Image img)
+        {
+            if (img == null) return;
+            img.preserveAspect = false;   // 明講:不保持長寬比(預設就是 false,但這一行是這個方法的重點)
+            img.rectTransform.sizeDelta = new Vector2(BadgeW, BadgeH);
+        }
+
+        /// <summary>
+        /// 一格頭貼的傳檔跑條(夾在頭貼下緣與名牌之間那條縫)。
+        ///
+        /// 與徽章條是分開的兩件事,可以同時出現:一邊下載、一邊還是缺歌 → NO MAP 徽章 + 綠色跑條在跑。
+        /// </summary>
+        private void RenderSlotBar(int i, SeatInfo seat, bool taken)
+        {
+            // 跑條:自己的進度看本機的傳檔器(每幀最新),別人的看 server 轉播的 blobProgress;
+            // 另外 server 的座位快照本身也帶著下載進度(availProgress)—— 兩個來源取有值的那個。
+            float frac = 0f;
+            bool uploading = false;
+            bool show = false;
+            if (taken)
+            {
+                if (NetSongTransfer.TryProgressOf(Ctx, seat.UserId, out frac, out uploading)) show = true;
+                else if (seat.Avail == Availability.Downloading) { frac = seat.AvailProgress; show = true; }
+            }
+
+            if (_slotBarTrack[i] != null) _slotBarTrack[i].enabled = show;
+            if (_slotBarFill[i] == null) return;
+            _slotBarFill[i].enabled = show;
+            if (!show) return;
+            _slotBarFill[i].color = uploading ? BarUpColor : BarDownColor;
+            _slotBarFill[i].rectTransform.sizeDelta =
+                new Vector2(RoomLayout.HeadSlotW * Mathf.Clamp01(frac), 0f);
+        }
+
+        // 房間 3D 裡「其他玩家」的角色。只在 server 的 rev 變動時重建 —— 生一隻 avatar 要讀十幾個部件檔,
+        // 每幀重來會卡死;而座位表只在有人進出/換裝時才變,rev 正好是那個變動的訊號。
+        private int _remoteAvatarRev = -1;
+        private readonly List<RoomScene3D.RemotePlayer> _remoteBuf = new List<RoomScene3D.RemotePlayer>();
+        private RoomRemoteHeadSet _remoteHeads;
+        private readonly List<int> _remoteHeadIds = new List<int>();
+
+        // 遠端玩家頭上的名字牌(userId → label)。跟著 3D 角色的頭每幀擺位。
+        private readonly Dictionary<int, OutlinedLabel> _remoteNames = new Dictionary<int, OutlinedLabel>();
+
+        private void SyncRemoteRoomAvatars()
+        {
+            if (_scene == null || Ctx == null) return;
+            // 單機沒有別人 —— 但**量測模式例外**:SDO_ROOMAVATARS 要能在離線下把房間補到 16 隻,
+            // 否則量「6 座位 + 10 旁觀」的成本就得先湊出 16 個真人,那不現實。
+            if (Ctx.Net == null)
+            {
+                if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOMAVATARS"))) return;
+                if (_remoteAvatarRev == -2) return;   // 離線只補一次(沒有 rev 可以比)
+                _remoteAvatarRev = -2;
+                _remoteBuf.Clear();
+                PadDevRoomAvatars();
+                _scene.SyncRemotePlayers(_remoteBuf);
+                return;
+            }
+            var snap = Ctx.Net.Room;
+            if (snap == null)
+            {
+                if (_remoteAvatarRev != -1) { _scene.SyncRemotePlayers(null); ClearRemoteNamePlates(); _remoteAvatarRev = -1; }
+                _localMoveSlot = int.MinValue;
+                return;
+            }
+            if (snap.Rev == _remoteAvatarRev) return;
+            _remoteAvatarRev = snap.Rev;
+
+            int me = Ctx.Net.UserId;
+            // 座位確定了 → 補正本機出生點(OnShow 那一刻常常還查不到座位,見 SetLocalSeat 的註解)。
+            // 自己在旁觀時要給**旁觀 slot**(6..15):不給的話 SeatIndexOf 回 -1,
+            // 本機角色就會留在剛才那個座位上,別人畫面上的自己卻已經站到旁觀席 —— 兩邊對不上。
+            int mySlot = snap.SeatIndexOf(me);
+            if (mySlot < 0) mySlot = LocalSpectatorSlot(snap, me);
+            if (mySlot >= 0)
+            {
+                if (_localMoveSlot != int.MinValue && _localMoveSlot != mySlot)
+                    _moveThrottle.Reset();
+                _localMoveSlot = mySlot;
+                _scene.SetLocalSeat(mySlot);
+                // 頭貼鏡射的是同一隻角色的動作 → 旁觀席那條「不飛」也要一起套,
+                // 不然穿翅膀旁觀時會變成「頭在飛、身體在看戲」(見 RoomHeadPortrait.SetSpectating)。
+                if (_localHead != null) _localHead.SetSpectating(RoomScene3D.IsSpectatorSlot(mySlot));
+            }
+            _remoteBuf.Clear();
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var s = snap.Seats[i];
+                if (!s.IsTaken || s.UserId == me) continue;   // 自己那隻是可走動的本機 avatar,不重複生
+                _remoteBuf.Add(new RoomScene3D.RemotePlayer
+                {
+                    UserId = s.UserId,
+                    Seat = i,
+                    Male = s.Look != null && s.Look.Male,
+                    Parts = s.Look != null ? s.Look.Parts : null,
+                    BodyIndex = s.Look != null ? s.Look.BodyIndex : 0,
+                    // 🔴 一定要填。忘了填的話它恆為 null,而「外觀變了嗎」是比對這個鍵 ——
+                    // null == null → 永遠判定沒變 → **別人換衣服在我畫面上永遠不會反映**
+                    // (使用者回報:「用儲物櫃換衣服 遠端沒有跟著換」)。
+                    LookKey = s.Look != null ? s.Look.Key() : "",
+                });
+            }
+
+            // 旁觀者也要站在房間裡(官方就有,而且座標表早就解出來了:RoomLayout.SpectatorAnchors,
+            // EXE slots 6..15 —— 十個圍在舞者周圍的固定站位)。
+            // 🔴 slot 給 SeatCount + 名單序號,SpawnSpot 才會走「官方 looker 位置」那條;
+            //    給 0..5 會被當成舞者去搶隨機走位點,兩個人可能疊在一起。
+            var specs = snap.Spectators;
+            if (specs != null)
+                for (int i = 0; i < specs.Length && i < NetLimits.MaxSpectators; i++)
+                {
+                    var sp = specs[i];
+                    if (sp == null || sp.UserId == 0 || sp.UserId == me) continue;   // 自己旁觀時走本機 avatar
+                    _remoteBuf.Add(new RoomScene3D.RemotePlayer
+                    {
+                        UserId = sp.UserId,
+                        Seat = RoomLayout.SeatCount + i,
+                        Male = sp.Look != null && sp.Look.Male,
+                        Parts = sp.Look != null ? sp.Look.Parts : null,
+                        BodyIndex = sp.Look != null ? sp.Look.BodyIndex : 0,
+                        LookKey = sp.Look != null ? sp.Look.Key() : "",
+                    });
+                }
+
+            PadDevRoomAvatars();   // DEV only:SDO_ROOMAVATARS 才會動(量 6 座位 + 10 旁觀 = 16 隻的成本)
+            _scene.SyncRemotePlayers(_remoteBuf);
+            SyncRemoteNamePlates(snap, me);
+            AnnounceRemoteComings(snap, me);
+            if (_remoteHeads != null)
+            {
+                _remoteHeadIds.Clear();
+                for (int i = 0; i < _remoteBuf.Count; i++) _remoteHeadIds.Add(_remoteBuf[i].UserId);
+                _remoteHeads.SetRoster(_remoteHeadIds);
+            }
+        }
+
+        /// <summary>
+        /// 自己是旁觀者時佔的 slot(<c>SeatCount + 名單序號</c>);不在旁觀名單裡 → -1。
+        ///
+        /// 🔴 序號一定要用**陣列 index**,不能用「跳過自己之後的計數」—— 生遠端角色那個迴圈用的就是
+        /// 陣列 index,兩邊算法不一致的話「我以為我站第 3 格、別人看我在第 2 格」。
+        /// </summary>
+        private static int LocalSpectatorSlot(Sdo.Net.NetRoomSnapshot snap, int me)
+        {
+            var specs = snap != null ? snap.Spectators : null;
+            if (specs == null || me == 0) return -1;
+            for (int i = 0; i < specs.Length && i < NetLimits.MaxSpectators; i++)
+                if (specs[i] != null && specs[i].UserId == me) return RoomLayout.SeatCount + i;
+            return -1;
+        }
+
+        // 「誰已經被廣播過了」。第一份快照只用來建底(不廣播),否則一進房就會看到房裡每個人
+        // 都跳一行「進入舞台遊戲」—— 官方只在**之後**有人進出時才播。
+        private readonly Dictionary<int, string> _announcedUsers = new Dictionary<int, string>();
+        private bool _announceSeeded;
+
+        /// <summary>
+        /// 遠端玩家進出的藍字廣播(「X 進入舞台遊戲」/「X 離開舞台」)。
+        ///
+        /// **不需要新訊息**:每台 client 自己比對前後兩份座位表就知道誰來誰走 ——
+        /// 房間快照本來就會在有人進出時推新版。加一條專門的廣播訊息反而要處理
+        /// 「它與快照的先後順序」(先收到廣播卻還沒有那個人的座位資料),徒增一種不一致。
+        /// </summary>
+        private void AnnounceRemoteComings(Sdo.Net.NetRoomSnapshot snap, int me)
+        {
+            _remoteScratchIds.Clear();
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var s = snap.Seats[i];
+                if (!s.IsTaken || s.UserId == me) continue;
+                _remoteScratchIds.Add(s.UserId);
+                if (_announceSeeded && !_announcedUsers.ContainsKey(s.UserId))
+                    Ctx.Chat?.AnnounceStageEnter(s.Name ?? "");
+                _announcedUsers[s.UserId] = s.Name ?? "";
+            }
+
+            _remoteGoneIds.Clear();
+            foreach (var kv in _announcedUsers) if (!_remoteScratchIds.Contains(kv.Key)) _remoteGoneIds.Add(kv.Key);
+            foreach (int id in _remoteGoneIds)
+            {
+                if (_announceSeeded) Ctx.Chat?.AnnounceStageLeave(_announcedUsers[id]);
+                _announcedUsers.Remove(id);
+            }
+            _announceSeeded = true;
+        }
+
+        // 頭上的名字牌:跟本機那顆同款(FaceCream + 黑邊 + 粗體),沒有它的話房間裡的人是誰全靠猜。
+        //
+        // 🔴 名字牌**只寫名字**。「他在打歌」是頭貼那條徽章的事(見 RenderSeatBadges) ——
+        // 名字被狀態字蓋掉的話,留在房間的人反而認不出誰是誰。
+        private void SyncRemoteNamePlates(Sdo.Net.NetRoomSnapshot snap, int me)
+        {
+            _remoteScratchIds.Clear();
+            for (int i = 0; i < snap.Seats.Length; i++)
+            {
+                var s = snap.Seats[i];
+                if (!s.IsTaken || s.UserId == me) continue;
+                _remoteScratchIds.Add(s.UserId);
+
+                OutlinedLabel lbl;
+                if (!_remoteNames.TryGetValue(s.UserId, out lbl) || lbl == null)
+                {
+                    lbl = OutlinedLabel.Create(Root, "RemoteName" + s.UserId, 0, 0, 160, 20, 14,
+                                               TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
+                                               trackEm: TextStyles.HeadNameTrackEm);
+                    _remoteNames[s.UserId] = lbl;
+                }
+                string lvl = s.Level > 0 ? "  LV:" + s.Level : "";
+                lbl.SetText((s.Name ?? "") + lvl);
+            }
+
+            // Spectators still own a live 3D avatar in a looker slot. Keep the same userId-keyed label while
+            // switching between a seat and spectator list so its head/world-canvas binding follows that avatar.
+            var specs = snap.Spectators;
+            if (specs != null)
+                for (int i = 0; i < specs.Length; i++)
+                {
+                    var sp = specs[i];
+                    if (sp == null || sp.UserId == 0 || sp.UserId == me) continue;
+                    _remoteScratchIds.Add(sp.UserId);
+
+                    OutlinedLabel lbl;
+                    if (!_remoteNames.TryGetValue(sp.UserId, out lbl) || lbl == null)
+                    {
+                        // Spectators have no team, so use the same free/default cream name colour as local players.
+                        lbl = OutlinedLabel.Create(Root, "RemoteName" + sp.UserId, 0, 0, 160, 20, 14,
+                                                   TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
+                                                   trackEm: TextStyles.HeadNameTrackEm);
+                        _remoteNames[sp.UserId] = lbl;
+                    }
+                    string lvl = sp.Level > 0 ? "  LV:" + sp.Level : "";
+                    lbl.SetText((sp.Name ?? "") + lvl);
+                }
+
+            _remoteGoneIds.Clear();
+            foreach (var kv in _remoteNames) if (!_remoteScratchIds.Contains(kv.Key)) _remoteGoneIds.Add(kv.Key);
+            foreach (var id in _remoteGoneIds)
+            {
+                if (_remoteNames[id] != null) Destroy(_remoteNames[id].gameObject);
+                _remoteNames.Remove(id);
+                DestroySentBubblesOf(id);   // 角色已被拆掉,泡不清會孤兒地掛到壽命結束
+            }
+        }
+
+        private readonly HashSet<int> _remoteScratchIds = new HashSet<int>();
+        private readonly List<int> _remoteGoneIds = new List<int>();
+
+        private void ClearRemoteNamePlates()
+        {
+            foreach (var kv in _remoteNames) if (kv.Value != null) Destroy(kv.Value.gameObject);
+            _remoteNames.Clear();
+        }
+
+        // 名字牌每幀跟著頭走(角色是 3D 的,鏡頭會動)。看不到的人(在鏡頭後面)就藏起來。
+        //
+        // 名字與那個人的頭上泡同住一張 world canvas → 一樣會被站在前面的人逐像素擋住,
+        // 而泡永遠畫在名字之上(見 ParentNameIntoOwnerCanvas)。canvas 的原點是**肩膀**錨點,
+        // 所以名字寫的是「相對那一點」的偏移;肩膀錨點拿不到就退回原本的 UI 絕對座標(不遮擋,但看得到)。
+        private void PlaceRemoteNamePlates()
+        {
+            if (_scene == null || _remoteNames.Count == 0) return;
+            foreach (var kv in _remoteNames)
+            {
+                var lbl = kv.Value;
+                if (lbl == null) continue;
+                Vector2 vp;
+                bool visible = _scene.TryRemoteHeadViewport(kv.Key, out vp);
+                if (lbl.gameObject.activeSelf != visible) lbl.gameObject.SetActive(visible);
+                if (!visible) continue;
+
+                Vector2 origin = Vector2.zero;
+                bool moved = false;
+                Vector2 shoulderVp;
+                if (_scene.TryRemoteBubbleViewport(kv.Key, out shoulderVp) && PlaceBubbleWorldCanvas(kv.Key)
+                    && ParentNameIntoOwnerCanvas(lbl.Rect, kv.Key))
+                {
+                    origin = RoomBubbleWorldAnchor.AnchorDesignPoint(shoulderVp, 800f, 600f);
+                    moved = true;
+                }
+                PlaceFollow(lbl.Rect, vp, -8f, moved ? origin : Vector2.zero);
+            }
+        }
+
+
+        // ---- 房間裡的走動同步 ----
+
+        private readonly Sdo.Net.MoveThrottle _moveThrottle = new Sdo.Net.MoveThrottle();
+        private int _localMoveSlot = int.MinValue;
+
+        // 泡鏈排版用的可重用暫存(見 PlaceRoomChatBubbles 的註解:一幀會被呼叫多次)。
+        private readonly List<RoomBubbleLayoutNode> _bubbleNodes = new List<RoomBubbleLayoutNode>();
+
+        /// <summary>
+        /// 把 server 推來的位置套到遠端角色上。**每幀都要跑** —— 位置流不受
+        /// <see cref="SyncRemoteRoomAvatars"/> 的 rev-gate 管(rev 不會每幀變,但位置會)。
+        ///
+        /// 讀的是 <c>NetClient.Moves</c> 這張「每個人的最新位置」字典而不是事件:
+        /// 站著不動的人永不回報,所以晚建起來的 3D 房間只能靠這張表把他們放到對的位置。
+        /// </summary>
+        private void ApplyRemoteMoves()
+        {
+            if (_scene == null || Ctx == null || Ctx.Net == null) return;
+            var moves = Ctx.Net.Moves;
+            if (moves.Count == 0) return;
+            foreach (var kv in moves)
+            {
+                var r = kv.Value;
+                _scene.ApplyRemoteMove(r.UserId, r.X, r.Z, r.Facing, r.Walking);
+            }
+        }
+
+        /// <summary>
+        /// 把本機的位置送上網。真正要不要送由 <see cref="Sdo.Net.MoveThrottle"/> 決定
+        /// (站著不動就完全不送;開始走/停下/轉向立刻送;走動中 10 Hz)。
+        ///
+        /// 放在 RoomScreen 而不是 RoomScene3D:後者在 <c>Sdo.Game</c>,不認識連線層。
+        /// 這裡是唯一的黏合層,而且離線(<c>Ctx.Net == null</c>)時整段跳過、零成本。
+        /// </summary>
+        private void SendLocalMove()
+        {
+            if (_scene == null || Ctx == null || Ctx.Net == null || !Ctx.Net.InRoom) return;
+            long now = (long)(Time.realtimeSinceStartupAsDouble * 1000.0);
+            float x = _scene.LocalWalkX, z = _scene.LocalWalkZ, f = _scene.AvatarFacing;
+            bool walking = _scene.IsWalking;
+            if (_moveThrottle.ShouldSend(x, z, f, walking, now)) Ctx.Net.SendMove(x, z, f, walking);
+        }
+
+        /// <summary>本機玩家坐在第幾格?找不到回 -1(旁觀或還沒進座位)。</summary>
+        private int LocalSeatIndex(RoomInfo room)
+            => RoomLocalSeat.IndexOf(room, LocalUserId, LocalProfileId);
+
+        /// <summary>server 配的 userId(離線 0)。認人一律用它 —— 見 <see cref="RoomLocalSeat"/>。</summary>
+        private int LocalUserId => Ctx != null && Ctx.Net != null ? Ctx.Net.UserId : 0;
+
+        private string LocalProfileId => Ctx != null && Ctx.Session != null ? Ctx.Session.LocalPlayerId : null;
 
         private string LocalName(RoomInfo room)
         {
@@ -3170,14 +4792,15 @@ namespace Sdo.UI.Screens
             return Ctx.Session != null ? Ctx.Session.LocalPlayerName : "";
         }
 
+        /// <summary>
+        /// 本機按過準備了嗎。**認人走 userId,不是 profile id** —— 線上座位的 Player.Id 是 server 的
+        /// userId,拿本機存檔 id 去比永遠比不中(細節見 <see cref="RoomLocalSeat"/>)。這個值同時決定
+        /// 右下角那顆球畫「準備」還是「取消」,以及按下去要送 setReady(true) 還是 (false)。
+        /// </summary>
         private bool LocalReady(RoomInfo room)
-        {
-            if (room == null) return false;
-            foreach (var s in room.Seats)
-                if (!s.IsEmpty && s.Player.Id == Ctx.Session.LocalPlayerId) return s.IsReady;
-            return false;
-        }
+            => RoomLocalSeat.IsReady(room, LocalUserId, LocalProfileId);
 
+        /// <summary>準備 ⇄ 取消(同一顆球換圖)。狀態的權威在 server,這裡只送切換、等 roomState 回來才翻圖。</summary>
         private void OnReadyToggle()
         {
             var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
@@ -3185,13 +4808,345 @@ namespace Sdo.UI.Screens
             Ctx.Rooms.SetReady(!LocalReady(room));
         }
 
+        /// <summary>
+        /// 組隊模式下這一局湊得出合法站位嗎 —— 與 server 的 R10c 走**同一條純規則**
+        /// (<see cref="TeamLayoutRules"/>),client 只是提早把失敗原因說出來,不然玩家按下開始
+        /// 只會收到一個看不懂的 badTeams。
+        ///
+        /// 參與者集合的定義照 server:「(是房主 或 已準備) 且 有這首歌」的座位。
+        /// 6 人房只有 4 人準備且 A/B 各 2 人 → 2v2 合法,可以開始。
+        /// </summary>
+        private bool TeamsCanStart(RoomInfo room, out bool teamMode)
+        {
+            teamMode = false;
+            if (room == null) return true;
+            // 非普通模式一律不是組隊局 —— 就算座位上還留著剛切模式那一瞬間的舊隊伍值(server 會清,
+            // 但快照可能還沒回來),也不能讓它把開始鈕卡住。
+            if (!TeamLayoutRules.TeamsAllowedIn(RoomGameMode())) return true;
+            int a = 0, b = 0, c = 0;
+            for (int i = 0; i < room.Seats.Count; i++)
+            {
+                var s = room.Seats[i];
+                if (s == null || s.IsEmpty) continue;
+                if (s.Team != (int)TeamTag.Free) teamMode = true;   // 有人不是「自由」→ 這房在組隊
+                bool isHost = s.UserId != 0 ? room.IsHostUser(s.UserId) : s.IsHost;
+                if (!(isHost || s.IsReady) || s.Avail != Availability.Have) continue;   // 不是參與者
+                if (s.Team == (int)TeamTag.A) a++;
+                else if (s.Team == (int)TeamTag.B) b++;
+                else if (s.Team == (int)TeamTag.C) c++;
+            }
+            if (!teamMode) return true;
+            return TeamLayoutRules.TryLayoutFor(a, b, c, out _);
+        }
+
+        // ==================== 同步進場(M4)====================
+        // 離線:按開始 → 直接漸暗進場(與加連線之前一模一樣)。
+        // 連線:按開始 → requestStart → **等 server 的 matchStarting** 才漸暗。
+        //       為什麼不本機先進場:場景/難度的隨機值由 server echo,而參與者集合是 server 在
+        //       「open → waitingForLoad」那一刻凍結的 —— 本機先跑就會用自己猜的值,兩台看到不同的東西。
+        //       非房主也是收到 matchStarting 才進場,所以兩邊走的是同一條路。
+        private bool _awaitingMatchStart;
+        private float _awaitingSince;
+        private float _lastStartPressAt = -99f;
+        private const float RequestStartTimeoutSec = 8f;    // 沒回應就放開按鈕(不要讓玩家以為卡住)
+        private const float ForceStartDoubleTapSec = 1.5f;  // 這段時間內再按一次 = 強制開始
+
+        private bool Online => Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom;
+
+        /// <summary>本機現在是不是旁觀者 —— **以 server 快照為準**(查房間的旁觀名單裡有沒有自己),
+        /// 不是本機猜的。按下鈕到 server 認可之間答案不變,所以畫面不會先報成功再被打臉。離線恆 false。</summary>
+        private bool LocalSpectating => Ctx != null && Ctx.Net != null && Ctx.Net.IsSpectating;
+
+        /// <summary>
+        /// 「旁觀」鈕:交出座位變旁觀者,再按一次搶回座位(需求 10 / D13)。
+        ///
+        /// 三道門(D13)在 server 那邊是權威(R21),這裡先擋一次**只是為了把原因講出來** ——
+        /// 靜默失敗的話玩家只會覺得「這顆鈕壞了」:
+        ///   • 已經在這一局裡的參與者 → 不能中途離場;
+        ///   • 已按準備的一般玩家 → 先取消準備;
+        ///   • 房主 → server 會自動把房主交給剩下座位索引最小的人;沒人能接手就擋下來。
+        /// </summary>
+        private void OnSpectateToggle()
+        {
+            var net = Ctx != null ? Ctx.Net : null;
+            if (net == null || !net.IsConnected || !net.InRoom)
+            {
+                Notice("room.spectate_offline");   // 離線單機沒有旁觀(沒有別人可看)
+                return;
+            }
+
+            // 送出就好,**不要先報成功**。server 可能拒絕(房間開打了、座位全滿/全關),
+            // 那時「已回到座位」是騙人的 —— 而人還在旁觀席。狀態變了會有新的 roomState 快照,
+            // 畫面自己就會更新(整個連線層的原則:不做樂觀更新)。
+            if (net.IsSpectating) { net.StopSpectate(); return; }
+
+            var snap = net.Room;
+            var me = snap != null ? snap.SeatOf(net.UserId) : null;
+            if (me == null) return;   // 不在座位上也不是旁觀者 → 狀態還沒同步,等下一份快照
+
+            bool completed = me.PlayState == PlayState.Finished || me.PlayState == PlayState.Results;
+            if (me.PlayState != PlayState.Idle && !completed) { Notice("room.spectate_in_match"); return; }
+            // 房主的 Ready 恆 false(D12)—— 所以這條天然不會擋到房主,不用另外排除它。
+            if (me.Ready && !completed) { Notice("room.spectate_ready"); return; }
+            net.Spectate();   // 同上:等 server 的快照,不先報成功
+        }
+
+        private Sdo.Game.FrameStats _roomPerf;
+
+        /// <summary>
+        /// 房間的幀時間量測。房間的最壞情況(6 座位 + 10 旁觀 = 16 隻)**比打歌畫面更重**,
+        /// 所以兩邊都要量,而且用同一份統計程式(<see cref="Sdo.Game.FrameStats"/>)。
+        /// </summary>
+        private void TickRoomPerf()
+        {
+            if (string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_ROOMAVATARS"))) return;
+            if (_roomPerf == null) _roomPerf = new Sdo.Game.FrameStats("room");
+            _roomPerf.Tick(_remoteBuf.Count + 1);   // +1 = 本機那隻可走動的
+        }
+
+        /// <summary>
+        /// DEV:<c>SDO_ROOMAVATARS=&lt;n&gt;</c> → 把房間的角色數補到 n 隻(用真的 avatar,不是假物件)。
+        ///
+        /// 為什麼需要:房間的**最壞情況比打歌畫面更重** —— 6 個座位 + 10 個旁觀 = 16 隻角色同時在場
+        /// (官方的 looker 站位表就是 10 格,RoomLayout.SpectatorAnchors)。而要湊出 16 隻真人來量測不現實,
+        /// 所以補一批假 userId 走**同一條生成路徑**(SpawnRemote → SdoRoomAvatar.Build),
+        /// 量到的成本就是真的成本。座位序號從 SeatCount 起算 → 站官方的旁觀位置。
+        /// </summary>
+        private void PadDevRoomAvatars()
+        {
+            var v = ScreenGameplay.DevVar("SDO_ROOMAVATARS");
+            int want;
+            if (string.IsNullOrEmpty(v) || !int.TryParse(v, out want)) return;
+            want = Mathf.Clamp(want, 0, RoomLayout.SlotCount);
+
+            // 已經有的(座位 + 旁觀)不重複補;本機那隻是可走動的 avatar,不算在 _remoteBuf 裡但要算進總數。
+            int have = _remoteBuf.Count + 1;
+            for (int i = have; i < want; i++)
+            {
+                int slot = Mathf.Clamp(RoomLayout.SeatCount + (i - 1), RoomLayout.SeatCount, RoomLayout.SlotCount - 1);
+                _remoteBuf.Add(new RoomScene3D.RemotePlayer
+                {
+                    UserId = 900000 + i,          // 不可能與真 userId 撞(server 從 1 開始發)
+                    Seat = slot,
+                    Male = (i & 1) == 0,          // 男女交錯 → 兩套部件都會被載到(成本才是真的)
+                    Parts = null,                 // null = 預設整套
+                    BodyIndex = 0,
+                    LookKey = "dev" + i,
+                });
+            }
+            if (want > have) Debug.Log("[perf] SDO_ROOMAVATARS:房間補到 " + want + " 隻角色(真實 " + have + " 隻)");
+        }
+
+        private void OnMatchStarting(NetMatchStart m)
+        {
+            _awaitingMatchStart = false;
+            if (m == null || _starting) return;
+            // 🔴 只信 server echo 的 resolved:隨機場景/難度都在那裡面。用自己算的 → 每台的場景不一樣。
+            ApplyResolvedRound(m);
+            _starting = true;
+            _returnedFromStage = true;
+            Ctx.Chat?.Clear();
+            UiSfx.Play(UiSfx.GameStart);
+            StartCoroutine(FadeToStage());
+        }
+
+        private void OnGameplayAborted(long matchId, string reason)
+        {
+            _awaitingMatchStart = false;
+            Debug.Log("[room] gameplay aborted: " + (reason ?? ""));
+            Notice("room.match_aborted");
+        }
+
+        /// <summary>
+        /// 房主把這一局的隨機值抽好交給 server(它會驗範圍再 echo 給所有人)。
+        ///
+        /// 🔴 隨機值一定要在**這一刻**抽好、由 server echo:讓每台自己抽的話場景就會不一樣,
+        /// 而那是「大家在同一個房間玩」最基本的東西。非房主送的 resolved server 不看(host-only)。
+        /// </summary>
+        private NetResolvedRound BuildResolvedRound()
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            var r = new NetResolvedRound();
+            if (s == null) return r;
+            r.SceneId = s.StageRandom
+                ? Random.Range(0, NetLimits.MaxSceneId + 1)   // 隨機場景 → 現在抽
+                : Mathf.Clamp(s.StageId, 0, NetLimits.MaxSceneId);
+            // 隊形:GameSession.Formation 的 3 = 隨機 → 抽 0..2(官方只有三張個人隊形表)
+            r.FormationType = s.Formation >= NetResolvedRound.FormationTypeCount
+                ? Random.Range(0, NetResolvedRound.FormationTypeCount)
+                : Mathf.Clamp(s.Formation, 0, NetResolvedRound.FormationTypeCount - 1);
+            // 組隊版型:湊得出來才填(TeamsCanStart 已經在 OnStart 擋過湊不出來的情形)
+            var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (room != null && TeamsCanStart(room, out bool teamMode) && teamMode)
+            {
+                int a = 0, b = 0, c = 0;
+                for (int i = 0; i < room.Seats.Count; i++)
+                {
+                    var seat = room.Seats[i];
+                    if (seat == null || seat.IsEmpty) continue;
+                    bool isHost = seat.UserId != 0 ? room.IsHostUser(seat.UserId) : seat.IsHost;
+                    if (!(isHost || seat.IsReady) || seat.Avail != Availability.Have) continue;
+                    if (seat.Team == (int)TeamTag.A) a++;
+                    else if (seat.Team == (int)TeamTag.B) b++;
+                    else if (seat.Team == (int)TeamTag.C) c++;
+                }
+                if (TeamLayoutRules.TryLayoutFor(a, b, c, out TeamLayout layout)) r.TeamLayout = layout;
+            }
+            return r;
+        }
+
+        /// <summary>requestStart 送出去之後沒有回應 → 放開按鈕。不放的話玩家會以為遊戲卡死。</summary>
+        private void TickAwaitingMatchStart()
+        {
+            if (!_awaitingMatchStart) return;
+            if (Time.unscaledTime - _awaitingSince < RequestStartTimeoutSec) return;
+            _awaitingMatchStart = false;
+            Notice("room.start_no_response");
+        }
+
+        /// <summary>把 server echo 的這一場設定套進 session —— 場景/難度/歌曲都要與所有人一致。</summary>
+        private void ApplyResolvedRound(NetMatchStart m)
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null) return;
+            var r = m.Resolved;
+            if (r != null)
+            {
+                // 🔴 StageFolder 才是 gameplay 真正用的(scenePath = "SCENE/" + StageFolder)——
+                // 只設 StageId 的話場景還是舊的那個,而且兩台會不一樣(症狀:「場景不同步」)。
+                var st = StageCatalog.Get(r.SceneId);
+                s.StageRandom = false;          // 已經抽好了 → 進場不要再抽一次
+                s.StageId = st.Id;
+                s.StageFolder = st.Folder;
+                s.Formation = Mathf.Clamp(r.FormationType, 0, NetResolvedRound.FormationTypeCount - 1);
+                if (r.IsRandomSong) s.SongIsRandom = false;   // 同理:歌也抽好了
+            }
+            // 歌本身:server 的那份才是這一場真正要玩的(隨機難度時是抽出來的那首)。
+            // 難度**不是** —— 自由模式下每個人打自己在「難度設置」挑的那個(見 LocalPlaySlot)。
+            if (m.Song == null) return;
+            if (m.Song.Official)
+            {
+                if (string.IsNullOrEmpty(m.Song.Gn)) return;
+                s.SongGn = m.Song.Gn;
+                s.SongFileId = m.Song.FileId;
+                s.Difficulty = (Difficulty)LocalPlaySlot(m.Song, Mathf.Clamp(m.Song.ChartIndex, 0, 2));
+                return;
+            }
+            ApplyResolvedExternalSong(s, m.Song, LocalPlaySlot(m.Song, Mathf.Clamp(m.Song.Difficulty, 0, 2)));
+        }
+
+        /// <summary>
+        /// 這一場**我**要打哪一個難度槽。
+        ///
+        /// 一般/ShowTime 模式:房主選的那個(<paramref name="hostSlot"/>,server 帶來的)——全場同一張譜。
+        /// 自由模式的非房主:自己在「難度設置」挑的那個 —— 這就是「同一首歌每個人可以打不同難度」的落點。
+        /// 挑的那個在這首歌沒有譜就貼到最近的可打難度(外部歌常只有一兩張)。
+        ///
+        /// 「隨機難度」局例外:歌與難度都是房主當場抽出來的一組,覆寫難度等於把隨機的意義拿掉 → 照房主那份。
+        /// </summary>
+        private int LocalPlaySlot(NetSongRef song, int hostSlot)
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null || song == null || song.RandomTitle) return hostSlot;
+            var netRoom = NetRoomForPanel();
+            int gameMode = netRoom != null && netRoom.Settings != null ? netRoom.Settings.GameMode : s.GameMode;
+            if (!FreeModeDifficulty.PlayerPicksOwn(gameMode, isHost: netRoom == null)) return hostSlot;
+            return FreeModeDifficulty.Snap(s.FreeDifficulty, PlayableSlots(LocalEntryFor(song)));
+        }
+
+        /// <summary>
+        /// 外部歌:把「房主選的那一份」對映到**本機自己的路徑**(M5)。
+        ///
+        /// 🔴 為什麼不能直接用 server 帶來的路徑:那是房主電腦上的絕對路徑,而且外部歌的 gn 是
+        /// 「絕對路徑的 hash」—— 換台電腦完全不同。所以身分走 packId + songKey(內容指紋),
+        /// 查到本機的那筆 catalog entry 之後,譜/音檔/資料夾全部用**自己這邊**的值。
+        /// 少了這一步,非房主進場時 ExternalChartPath 還是房主的路徑 → 載不到譜(黑畫面),
+        /// 而症狀完全指不到「身分對映」這一層。
+        ///
+        /// 找不到(還在下載 / 下載失敗)就什麼都不動:那台本來就不會被納入這一場(R12 要求 avail==have)。
+        /// </summary>
+        private static void ApplyResolvedExternalSong(GameSession s, NetSongRef song, int slot)
+        {
+            if (string.IsNullOrEmpty(song.PackId)) return;
+            var hit = Sdo.Game.ExternalSongLibrary.FindByPack(song.PackId, song.SongKey);
+            if (hit == null)
+            {
+                Debug.LogWarning("[room] 本機找不到這一場的外部歌(packId=" + song.PackId + ")—— 進場會載不到譜");
+                return;
+            }
+
+            slot = Mathf.Clamp(slot, 0, 2);    // 自由模式時這是**自己**挑的難度(見 LocalPlaySlot),不一定是房主那個
+            s.SongGn = hit.gn;                 // 本機的 gn(每台不同,只在本機有意義)
+            s.SongFileId = hit.fileId;
+            s.SongTitle = hit.title;
+            s.SongArtist = hit.artist ?? "";
+            s.SongIsRandom = false;
+            s.IsExternalSong = true;
+            s.Difficulty = (Difficulty)slot;
+            s.ExternalChartFormat = hit.chartFormat;
+            s.ExternalChartPath = hit.ChartPath(slot);
+            s.ExternalChartIndex = hit.ChartIndex(slot);
+            s.ExternalChartSeed = hit.chartSeed;
+            s.ExternalDpsPath = hit.dpsPath;
+            s.ExternalAudioPath = hit.audioPath;
+            s.ExternalLevel = hit.DisplayLevel(slot);
+            s.ExternalFolderPath = hit.folderPath;
+            s.ExternalSongKey = hit.songKey ?? "";
+            // 生成編舞的輸入一樣要走**本機**這筆 catalog:舞是一首歌一支,不能因為房主選了 hard
+            // 就跟自己單機玩 easy 時生出的舞不同(見 Sdo.Osu.DanceInputs)。少了這三行,線上開外部歌
+            // 會退回「選到那張譜自己的 span/bpm」—— 正是這次要修掉的那個 bug,只是躲在連線這條路徑上。
+            s.ExternalSongBpm = hit.bpm;
+            s.ExternalSongChartPaths = new[] { hit.ChartPath(0), hit.ChartPath(1), hit.ChartPath(2) };
+            s.ExternalSongChartIndices = new[] { hit.ChartIndex(0), hit.ChartIndex(1), hit.ChartIndex(2) };
+            Debug.Log("[room] 外部歌已對映到本機:" + hit.title + " → " + s.ExternalChartPath);
+        }
+
         private void OnStart()
         {
+            Debug.Log("[room] OnStart: starting=" + _starting + " online=" + Online
+                      + " awaiting=" + _awaitingMatchStart
+                      + " canStart=" + (Ctx != null && Ctx.Rooms != null && Ctx.Rooms.CanStart())
+                      + " songTitle='" + (Ctx != null && Ctx.Rooms != null && Ctx.Rooms.CurrentRoom != null
+                                          ? Ctx.Rooms.CurrentRoom.SongTitle : "<no room>") + "'");
             if (_starting) return;   // 已在漸暗切場中，忽略重複按
+            // 組隊模式湊不出官方的三張站位表(2v2 / 3v3 / 2v2v2)→ 擋住並說明原因。
+            // 🔴 擋住而不是退回個人隊形:退回會讓玩家以為分隊生效了卻看到單人站位,那是靜默的錯誤行為。
+            //    server 也會獨立擋一次(含 force),這裡只是提早講清楚。
+            var teamRoom = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (!TeamsCanStart(teamRoom, out _)) { Notice("room.teams_need_layout"); return; }
+
+            if (Online)
+            {
+                if (_awaitingMatchStart) return;   // 已經送出請求,在等 server 回 matchStarting
+                bool canStart = Ctx.Rooms != null && Ctx.Rooms.CanStart();
+                bool force = false;
+                if (!canStart)
+                {
+                    var r0 = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+                    // 沒歌是硬條件,強制也開不了 → 直接說。
+                    if (r0 == null || string.IsNullOrEmpty(r0.SongTitle)) { Notice("room.need_song"); return; }
+                    // 有人沒準備 → 第一次按只提示,1.5 秒內再按一次才強制開始(需求:房主連按兩下強制開始)。
+                    if (Time.unscaledTime - _lastStartPressAt > ForceStartDoubleTapSec)
+                    {
+                        _lastStartPressAt = Time.unscaledTime;
+                        Debug.Log("[room] 開始被本機擋下:有人沒準備 → 提示再按一次強制開始");
+                        Toast.Show(L("room.force_start_hint"));
+                        return;
+                    }
+                    force = true;
+                }
+                _lastStartPressAt = -99f;
+                _awaitingMatchStart = true;
+                _awaitingSince = Time.unscaledTime;
+                Debug.Log("[room] 送出 requestStart(force=" + force + ")");
+                Ctx.Net.RequestStart(force, BuildResolvedRound());
+                return;   // 🔴 這裡**不**進場 —— 等 matchStarting(見 OnMatchStarting)
+            }
+
             if (Ctx.Rooms == null || !Ctx.Rooms.CanStart())
             {
                 var room = Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-                Toast.Show(L(room != null && string.IsNullOrEmpty(room.SongTitle) ? "room.need_song" : "room.waiting_players"));
+                Notice(room != null && string.IsNullOrEmpty(room.SongTitle) ? "room.need_song" : "room.waiting_players");
                 return;
             }
             _starting = true;
@@ -3214,6 +5169,23 @@ namespace Sdo.UI.Screens
             }
             if (_startFade != null) _startFade.color = Color.black;
             Nav.StartGame?.Invoke();
+        }
+
+        /// <summary>
+        /// 被房主踢出 / 位子被關掉(server 的 R8 會先發 kicked 再標 Closed)。
+        ///
+        /// 沒有這條的話症狀很怪:server 已經把你移出房間了,但畫面還停在房間 —— 六格全空、
+        /// 房主的角色不見了,只剩你自己站在一個空房間裡,而且什麼提示都沒有(實機兩開驗到的)。
+        ///
+        /// 這裡刻意**不**廣播「離開舞台」:我們已經不在房裡了,那則訊息送不出去也不該送。
+        /// 轉場順序與 <see cref="OnLeave"/> 相同(全黑時才清房間) —— 見那邊的註解。
+        /// </summary>
+        private void OnKickedFromRoom(string reason)
+        {
+            if (Ctx == null || Ctx.Flow == null || Ctx.Flow.Current != ScreenId.Room) return;   // 不在房間畫面就不搶轉場
+            Debug.Log("[room] kicked: " + (reason ?? ""));
+            Notice("room.kicked");
+            ScreenTransition.Run(() => { Ctx.Rooms?.LeaveRoom(); GoTo(ScreenId.GenderSel); });
         }
 
         private void OnLeave()
@@ -3256,6 +5228,23 @@ namespace Sdo.UI.Screens
         private Image Art(string an, Vector2 win, float x, float y, string name)
             => UIKit.AddSprite(WinRoot(win), name, RoomUiArt.An(an), win.x + x, win.y + y);
 
+        /// <summary>多幀 .an 的第 n 幀；載不到就回 null(呼叫端的 Image 只是不顯示，不會爆)。</summary>
+        private static Sprite Frame(Sprite[] frames, int n)
+            => frames != null && frames.Length > 0 ? frames[Mathf.Clamp(n, 0, frames.Length - 1)] : null;
+
+        /// <summary>
+        /// NO MAP / PLAYING 的四色幀:官方把它們放成「一個顏色一個裸 PNG」(<c>C06..C09</c> / <c>D06..D09</c>),
+        /// 沒有 .an 包 —— 幀序由檔名的編號保證,與 Room66.an / master.an 的 a06..a09 / b06..b09 一致
+        /// (黑/白=自由、橘=A、綠=B、藍=C)。少一張就只是那一幀畫不出來,不會位移其他幀。
+        /// </summary>
+        private static Sprite[] StateBadgeFrames(string prefix)
+        {
+            var frames = new Sprite[RoomBadgeFrames.FrameCount];
+            for (int i = 0; i < frames.Length; i++)
+                frames[i] = RoomUiArt.Image(prefix + "0" + (6 + i) + ".png");
+            return frames;
+        }
+
         // 裁切容器：左上錨在 Win2 局部(x,y)、大小 w×h，掛 RectMask2D → 子物件超出即被硬裁(同 AddSprite 的左上像素座標系)。
         private RectTransform NewClip(string name, float x, float y, float w, float h)
         {
@@ -3280,6 +5269,86 @@ namespace Sdo.UI.Screens
         private void MakeCaption(string name, string text, float x, float y)
             => OutlinedLabel.Create(_win2Root, name, Win2.x + x, Win2.y + y, 21, 14, 12, SongNameColor, Color.white, Win2EdgePx, true).SetText(text);
 
+        /// <summary>
+        /// 自由模式的「難度設置 ◄ EASY ►」(官方 DDRROOM.XML 的 <c>FMGameLevel</c> 視窗)。
+        ///
+        /// 版位逐字取自官方:視窗 <c>(5,292) 140×40 背景 FMdif.an</c>,子件 <c>FMLvlSelL(1,17)</c> /
+        /// <c>FMLvlSelR(95,17)</c> / <c>FMLvlChoose(30,16) 66×19</c> —— 全部再加上 Win2 原點。
+        /// 它與房主的 <c>songselect</c>(14,296)**疊在同一格**,所以永遠只會有一個是開著的(見 Render)。
+        /// </summary>
+        private void BuildFreeModeLevel()
+        {
+            _fmLevelBg = UIKit.AddSprite(_win2Root, "FmLevelBg", EraseFmDifTitle(RoomUiArt.An("FMdif")),
+                                         Win2.x + 5, Win2.y + 292);
+            // 標題自己畫:官方那張圖把「难度设置」烘死在裡面(簡體),抹掉之後疊上翻譯過的字。
+            // 顏色/描邊沿用原圖量到的值(紫 = ModeColor、乳白描邊)，看起來和沒動過一樣。
+            _fmLevelTitle = OutlinedLabel.Create(_win2Root, "FmLevelTitle", Win2.x + 5, Win2.y + 293, 124, 16, 13,
+                                                 ModeColor, Color.white, Win2EdgePx, true);
+            _fmLevelTitle.SetText(L("room.difficulty_setting"));
+
+            _fmLevelValue = UIKit.AddText(_win2Root, "FmLevelValue", "", 13, FmLevelColor, TextAlignmentOptions.Center);
+            _fmLevelValue.fontStyle = FontStyles.Bold;
+            PlaceW2(_fmLevelValue.rectTransform, 35, 308, 66, 19);
+
+            // ◄ / ► 用官方的橘色箭頭(FMLvlDown/FMLvlUp 三態)。跟速度那對小箭頭一樣不掛滑過音。
+            _fmLevelPrev = Btn("fmlvlprev", "FMLvlDown1", "FMLvlDown2", "FMLvlDown3", Win2, 6, 309,
+                               () => StepFreeDifficulty(-1), hoverSfx: null);
+            _fmLevelNext = Btn("fmlvlnext", "FMLvlup1", "FMLvlup2", "FMLvlup3", Win2, 100, 309,
+                               () => StepFreeDifficulty(1), hoverSfx: null);
+
+            SetFreeModeLevelVisible(false);
+        }
+
+        private void SetFreeModeLevelVisible(bool on)
+        {
+            if (_fmLevelBg != null) _fmLevelBg.gameObject.SetActive(on);
+            if (_fmLevelTitle != null) _fmLevelTitle.gameObject.SetActive(on);
+            if (_fmLevelValue != null) _fmLevelValue.gameObject.SetActive(on);
+            if (_fmLevelPrev != null) _fmLevelPrev.gameObject.SetActive(on);
+            if (_fmLevelNext != null) _fmLevelNext.gameObject.SetActive(on);
+        }
+
+        /// <summary>
+        /// FMdif.an 的標題「难度设置」是**烘在圖上的簡體字** —— 把它抹掉,標題改由程式疊(可翻譯)。
+        ///
+        /// 抹法之所以是像素完全正確的:那塊底是**純垂直漸層**(同一列從左到右每個像素一模一樣,已逐列驗過),
+        /// 所以把字那塊的每個像素換成**同一列**左邊乾淨處(x=20)的顏色,得到的就是原本被字蓋住的底。
+        /// 只動 y=2..14 這幾列,下面 y≥15 的深青色值框一個像素都不碰。
+        /// 材質不可讀時原樣回傳(頂多標題疊字,不會沒圖)。
+        /// </summary>
+        private static Sprite EraseFmDifTitle(Sprite src)
+        {
+            if (src == null || src.texture == null) return src;
+            var r = src.textureRect;
+            int tx = Mathf.RoundToInt(r.x), ty = Mathf.RoundToInt(r.y);
+            int w = Mathf.RoundToInt(r.width), h = Mathf.RoundToInt(r.height);
+            if (w < FmTitleClearX1 || h < FmTitleClearY1) return src;
+            Color[] px;
+            try { px = src.texture.GetPixels(tx, ty, w, h); }
+            catch { return src; }
+            for (int yTop = FmTitleClearY0; yTop < FmTitleClearY1; yTop++)
+            {
+                int row = (h - 1 - yTop) * w;                 // GetPixels 是由下往上,.an 座標是由上往下
+                Color clean = px[row + FmTitleCleanX];        // 同一列、字左邊那塊乾淨的底色
+                for (int x = FmTitleClearX0; x < FmTitleClearX1; x++) px[row + x] = clean;
+            }
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            tex.SetPixels(px);
+            tex.Apply(false);
+            return Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), src.pixelsPerUnit, 0, SpriteMeshType.FullRect);
+        }
+
+        /// <summary>自由模式:按 ◄ / ► 換自己的難度(跳過這首歌沒有的譜),存進 session 並重畫面板。</summary>
+        private void StepFreeDifficulty(int dir)
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null) return;
+            int next = FreeModeDifficulty.Step(s.FreeDifficulty, dir, CurrentPlayableSlots());
+            if (next == s.FreeDifficulty) return;
+            s.FreeDifficulty = next;
+            RenderWin2();
+        }
+
         // 組隊單選格：normal/pushed 兩態，點了把 GameSession.Team 設成 idx 並重畫（座標 = Win2 + (x,y)）
         private void BuildTeamToggle(int idx, string normalAn, string pushedAn, float x, float y)
         {
@@ -3291,8 +5360,74 @@ namespace Sdo.UI.Screens
             btn.transition = Selectable.Transition.None;
             UiSfx.AttachPress(btn, UiSfx.Click);   // 按下 SE_0001；win2 中間設定塊滑過不出聲 → 不掛 hover
             int i = idx;
-            btn.onClick.AddListener(() => { Ctx.Session.Team = i; RenderWin2(); });
+            btn.onClick.AddListener(() => PickOwnTeam(i));
+            // 房主右鍵組隊鈕 → 自動分隊選單(2對2 / 3對3 / 2對2對2)。官方沒有這顆鈕,而 win2 也沒有空位再擺一顆,
+            // 所以掛在同一塊上;非房主右鍵不會有反應(選單規則與座位選單同一套守門)。
+            var proxy = img.gameObject.AddComponent<PointerClickProxy>();
+            proxy.Clicked = ev =>
+            {
+                if (ev != null && ev.button == PointerEventData.InputButton.Right) ShowAssignTeamsPopup(ev.position);
+            };
             _teamImg[idx] = img;
+        }
+
+        /// <summary>
+        /// 自己換隊。連線模式送 <c>setOwnTeam</c> 讓 server 決定(它會擋「已準備就不能換」= R10a),
+        /// **不做樂觀更新** —— 顯示一律等 server 的 roomState 回來(與整個連線層同一個原則)。
+        /// 離線模式維持原本的純本機行為。
+        /// </summary>
+        private void PickOwnTeam(int team)
+        {
+            // 只有普通模式能組隊(server 也擋,這裡只是提早把原因講出來 —— 官方那四格在自由模式下
+            // 圖也是照畫的,所以不能靠「看起來能不能按」讓玩家知道)。改回「自由」永遠放行。
+            if (team != (int)TeamTag.Free && !TeamLayoutRules.TeamsAllowedIn(RoomGameMode()))
+            {
+                Notice("room.teams_normal_mode_only");
+                return;
+            }
+            if (Ctx != null && Ctx.Net != null && Ctx.Net.IsConnected && Ctx.Net.InRoom)
+            {
+                Ctx.Net.SetOwnTeam(team);
+                return;
+            }
+            Ctx.Session.Team = team;
+            RenderWin2();
+        }
+
+        /// <summary>房主的「自動分隊」選單。人數湊不出那個版型時 server 會回 <c>error{badTeams}</c>(R10b),
+        /// 所以這裡先用同一條純規則把湊不出來的項目擋掉,按下去才不會只收到一個看不懂的錯誤。</summary>
+        private void ShowAssignTeamsPopup(Vector2 screenPos)
+        {
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            if (!CanManageSeats(room)) return;
+            // 自動分隊也只在普通模式(server 的 assignTeams 同樣會擋)。
+            if (!TeamLayoutRules.TeamsAllowedIn(RoomGameMode())) { Notice("room.teams_normal_mode_only"); return; }
+            int seated = SeatedPlayerCount(room);
+            var layouts = new List<TeamLayout>(3);
+            if (seated == 4) layouts.Add(TeamLayout.V2v2);
+            if (seated == 6) { layouts.Add(TeamLayout.V3v3); layouts.Add(TeamLayout.V2v2v2); }
+            if (layouts.Count == 0) { Notice("room.teams_need_layout"); return; }
+
+            CloseSlotPopup();
+            _slotPopup = BuildContextMenu("TeamsPopup", screenPos, layouts.Count,
+                (idx, _) => L(layouts[idx] == TeamLayout.V2v2 ? "room.teams_2v2"
+                            : layouts[idx] == TeamLayout.V3v3 ? "room.teams_3v3" : "room.teams_2v2v2"),
+                idx =>
+                {
+                    var now = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+                    if (CanManageSeats(now)) { Ctx.Net.AssignTeams(layouts[idx]); Notice("room.teams_assigned"); }
+                    CloseSlotPopup();
+                });
+        }
+
+        /// <summary>座位上有幾個人(不含旁觀者、不含空位/關閉的位子)。</summary>
+        private static int SeatedPlayerCount(RoomInfo room)
+        {
+            if (room == null) return 0;
+            int n = 0;
+            for (int i = 0; i < room.Seats.Count; i++)
+                if (room.Seats[i] != null && !room.Seats[i].IsEmpty) n++;
+            return n;
         }
 
         // 所有房間按鈕統一：滑過 Buttonfloat(圖1/圖2)、按下 SE_0001(圖3 預設)。少數例外用參數覆寫：

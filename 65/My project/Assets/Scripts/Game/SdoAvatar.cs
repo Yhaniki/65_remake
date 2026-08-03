@@ -95,6 +95,15 @@ namespace Sdo.Game
         public MotLoader RestMot;                            // standby idle clip, looped before the DPS dance starts and after it ends (rest cat 0x15)
         public System.Func<bool> DanceEnabled;               // returns false -> hold the standby idle even inside the DPS window (8-beat dance-gate stop)
 
+        /// <summary>目前顯示的 clip **就是 <see cref="RestMot"/> 這個物件本身嗎** —— 比參照,不比內容。
+        /// 存在的理由只有一個:守住「同一段 .MOT 不可以被 parse 成兩個實例」(換動作的偵測是比參照的,
+        /// 兩個實例 = 誤判成換了動作 = 多混一次 crossfade;見 AvatarClipIdentityTests 與 2e90e0d)。
+        ///
+        /// 🔴 **不要拿它當「現在沒在跳舞」的閘門。** 之前的飛行懸浮就是那樣用的(<c>IsRestPose ? 0 : Δ</c>),
+        /// 待機與勝負定格被判成 rest 而抬 0、跳舞才抬 → 人一沉一浮。懸浮與姿勢無關(見 c5fd72f /
+        /// ScreenGameplay.UpdateFlyHover / FlyHoverGameplayTest)。</summary>
+        public bool IsShowingRestClip => RestMot != null && _mot == RestMot;
+
         // one-shot motion (結算 win/lose 定格 pose, decompiled cat5/cat4): play a single clip once from t=0; when
         // hold, clamp on the last frame (定格). Takes priority over DPS/idle/override while active. Set via
         // PlayOneShot, cleared via ClearOneShot (e.g. when the background replay resumes the DPS dance).
@@ -132,9 +141,16 @@ namespace Sdo.Game
             if (_hrc == null || from == null) return;
             _mot = from;
             _blendStart = -1f;      // not blending yet — we're only establishing the displayed pose
-            Pose(0f);               // display 'from' → _dispLocal = from's pose, _haveDisp = true
+            // 用**迴圈當下**那一幀,不是第 0 幀:被取代掉的那隻 avatar 顯示的就是這個相位(它也是 wall-clock 迴圈),
+            // 從第 0 幀起混色 = 一開始就跳到一個畫面上根本沒出現過的姿勢。
+            Pose(AutoLoopFrame);    // display 'from' → _dispLocal = from's pose, _haveDisp = true
             _lastMot = from;        // so SetClip(target) next is seen as a switch → crossfade from this pose
         }
+
+        /// <summary>自動迴圈目前算到第幾幀 —— 與 <see cref="LateUpdate"/> 的待機/走路迴圈同一條公式(唯一來源)。
+        /// 重建 avatar 時用它把顯示姿勢對回「畫面上原本那一格」,混色才不會從第 0 幀起跳。</summary>
+        public float AutoLoopFrame =>
+            LoopFrame(Time.time, PhaseOffsetSec, Fps, _mot != null ? _mot.MaxTime : 0f);
 
         /// <summary>Switch the active LOOPING clip (no DPS): used by the waiting room to flip between the standby idle
         /// and the walk clip as the local player moves. The change is picked up next LateUpdate, which crossfades from
@@ -505,7 +521,7 @@ namespace Sdo.Game
                 }
             }
             else if (FrameOverride >= 0f) t = FrameOverride;
-            else if (Animate && _mot != null && _mot.MaxTime > 0f) t = LoopFrame(Time.time, PhaseOffsetSec, Fps, _mot.MaxTime);
+            else if (Animate) t = AutoLoopFrame;   // 同一條公式也給 PrimeBlendFrom 用(見 AutoLoopFrame)
             else t = 0f;
             MaybeStartBlend(dps, dpsRow);   // crossfade if the clip OR the DPS slice switched this frame
             CurrentPoseTime = t;

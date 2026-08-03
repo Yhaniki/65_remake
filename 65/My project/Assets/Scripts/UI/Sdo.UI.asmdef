@@ -8,6 +8,7 @@
         "Sdo.Ruleset",
         "Sdo.Localization",
         "Sdo.Settings",
+        "Sdo.Net",
         "Unity.TextMeshPro",
         "UnityEngine.UI"
     ],

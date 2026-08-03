@@ -241,8 +241,13 @@ namespace Sdo.Game
         private SdoAvatar _avatar;                             // gameplay dancer — kept so the F4 panel can re-shape it live
         private float _bodyShapeB = 1f;                        // live body weight B driven by the F4 control (1 = standard)
         private static readonly string[] BodyShapeLabels = { "Thin", "Std", "Chubby", "Fat", "XFat" };  // body index 0..4 presets
+        // 舞台待機 idle(rest cat 0x15,DPS 開始前/結束後循環的那支 — 023_gameplay:4135)。
+        // WREST0056 是 cat 0 的大廳待機,擺在這裡是錯的。同場的遠端舞者也照這一組挑(見 RemoteRestMot)——
+        // 兩邊各寫一份字面值的話,改了一邊沒改另一邊就會變成「只有別人的待機動作不一樣」。
+        internal const string FemaleGameplayRestMot = "MOTION/WREST0072.MOT";
+        internal const string MaleGameplayRestMot   = "MOTION/MREST0082.MOT";
         public string danceMot = "MOTION/WDANCE0002.MOT";      // fallback dance motion if no DPS
-        public string restMot = "MOTION/WREST0072.MOT";        // in-game standby idle (decompiled: rest-table category 0x15, played before/after the DPS — 023_gameplay:4135). male = MREST0082.MOT. (WREST0056 was cat 0, the lobby idle — wrong here.)
+        public string restMot = FemaleGameplayRestMot;         // 男版在 ConfigureAvatarGender 換成 MaleGameplayRestMot
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
         // External (osu/StepMania) songs have no official .dps: these two identify the song so ExternalDps can generate
         // one — deterministically, once — into its folder and record it in the folder's sdoinfo.dat (see EnsureExternalDance).
@@ -402,14 +407,105 @@ namespace Sdo.Game
         // this; BootRevealCo holds the loading screen until it returns true. See BootRevealCo / LocalBootReady.
         public System.Func<bool> ReadyGate;
 
+        /// <summary>
+        /// 本機這一端載完了(場景/角色/譜面/音訊都就緒),但**還沒**開跑 —— 連線層在這裡回報
+        /// <c>setPlayState(loaded)</c>,server 收齊所有人的才廣播 gameplayStarted 讓
+        /// <see cref="ReadyGate"/> 放行。只會被呼叫一次。null = 離線/單機。
+        ///
+        /// 為什麼不讓連線層自己去輪詢 <c>LocalBootReady()</c>:那是 private,而且「載完了」的定義
+        /// (場景 + 音訊 + follow 特效落位)本來就該由 gameplay 自己說,不該在外面再寫一份。
+        /// </summary>
+        public System.Action LocalReady;
+
+        // ---- 連線:分數流(M4-c)---------------------------------------------------------------------------------
+        // 只傳分數,不傳按鍵記錄:舞蹈是 DPS 編舞驅動的(同一首歌大家跳一樣),收端可以從相鄰兩筆
+        // 判定計數推導出「跳/停」的 gate,所以 replay frame 是多餘的頻寬。
+
+        /// <summary>本機這一刻的成績 —— 分數流的一筆就是送這個。</summary>
+        public struct NetScoreSnapshot
+        {
+            public double TimeMs;                                  // 歌曲時間(負 = 還沒開始)
+            public long Score;
+            public int Combo, MaxCombo, Perfect, Cool, Bad, Miss;
+            public float Hp;                                       // 0..1
+        }
+
+        /// <summary>連線層每 ~200ms 讀一次送上去。離線沒人讀。</summary>
+        public NetScoreSnapshot NetScore
+        {
+            get
+            {
+                var s = default(NetScoreSnapshot);
+                s.TimeMs = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : -1.0;
+                s.Score = TotalScore;
+                if (_score != null)
+                {
+                    s.Combo = _score.Combo; s.MaxCombo = _score.MaxCombo;
+                    s.Perfect = _score.PerfectCount; s.Cool = _score.CoolCount;
+                    s.Bad = _score.BadCount; s.Miss = _score.MissCount;
+                }
+                double hp = _health != null ? _health.Health : HealthProcessor.MaxHealth;
+                s.Hp = Mathf.Clamp01((float)((hp - HealthProcessor.FloorHealth)
+                                             / (HealthProcessor.MaxHealth - HealthProcessor.FloorHealth)));
+                return s;
+            }
+        }
+
+        /// <summary>房內其他舞者的名字 + 目前分數(server 彙整後推來的)。</summary>
+        /// <summary>
+        /// 一位遠端玩家的最新一筆成績。右側名單只用 Name/Score,但**遠端舞者的跳/停**需要
+        /// 判定計數與 combo —— 那是從相鄰兩筆的差推出「這個 8 拍有沒有斷/有沒有音符」的原料
+        /// (見 <see cref="Sdo.Ruleset.DanceGate"/>,也是分數流不必傳按鍵記錄的原因)。
+        /// </summary>
+        public struct NetPlayerScore
+        {
+            public int UserId;
+            public string Name;
+            public long Score;
+            public int Combo;
+            public int Perfect, Cool, Bad, Miss;
+
+            public Sdo.Ruleset.DanceJudgeCounts Counts
+                => new Sdo.Ruleset.DanceJudgeCounts(Perfect, Cool, Bad, Miss);
+        }
+
+        /// <summary>
+        /// 連線:右側名單/名次要用的**真**對手。null = 離線 → 走 <see cref="mockOpponents"/> 或 solo。
+        /// 每次 8 拍結算(<c>RefreshRanking</c>)讀一次。
+        /// </summary>
+        public System.Func<NetPlayerScore[]> NetOpponents;
+
+        /// <summary>Server-authoritative leader userId for the active online match; zero means unavailable.</summary>
+        public System.Func<int> NetLeaderUserId;
+
+        /// <summary>
+        /// 連線:結算面板要用的真資料(server 的 resultsReady)。null / 回 null = 用本機算的那份。
+        /// </summary>
+        public System.Func<ResultScreen.Row[]> NetResultRows;
+
+        /// <summary>
+        /// 結算面板「沒人按確定」時自動確定的秒數(0 = 不自動,一直等玩家按)。
+        /// 連線時由 FrontendApp 設 30 秒:自動確定跟按確定是同一條路(ResultScreen.OnConfirm),
+        /// 一樣拆遊戲、送 playFinished、轉場回房間 —— 差別只在沒人按也會走。
+        /// 單機留 0(想看多久就看多久,反正沒人在等)。
+        /// </summary>
+        public float resultAutoConfirmSec = 0f;
+
         // ---- result / finish sequence (歌曲結束 → 輸贏定格動作 → 結算面板; decompiled FinishSequenceTick phase4..6) ----
         private enum ResultPhase { None, FinishPose, Settle, Replay }
         private ResultPhase _resultPhase = ResultPhase.None;
         private float _resultPhaseStart;          // Time.time the current result phase began
         private bool _localWon;                   // local player is the round winner (rank 1) — drives win/lose pose + FINISHED
         private bool _gameOver;                   // HP ran out (failed) — result shows GAME OVER instead of YouWin/Lose
-        public string winMot = "WWIN0002.MOT";    // winner 定格 pose (cat5); male = MWIN0001.MOT
-        public string loseMot = "WLOST0003.MOT";  // loser 定格 pose (cat4); male = MREST0004.MOT
+        // 輸贏定格的官方 clip(cat5 = 贏、cat4 = 輸),男女各一支。本機用下面兩個欄位(ConfigureAvatarGender 依
+        // 本機性別挑);場上其他人**各挑自己性別**的那一支(見 PlayRemoteFinishPoses)—— 所以字面值要有名字,
+        // 不能只活在本機那兩個欄位裡。
+        public const string FemaleWinMot = "WWIN0002.MOT";
+        public const string MaleWinMot = "MWIN0001.MOT";
+        public const string FemaleLoseMot = "WLOST0003.MOT";
+        public const string MaleLoseMot = "MREST0004.MOT";
+        public string winMot = FemaleWinMot;      // winner 定格 pose (cat5); male = MWIN0001.MOT
+        public string loseMot = FemaleLoseMot;    // loser 定格 pose (cat4); male = MREST0004.MOT
         public float finishPoseSec = 2.5f;        // hold the win/lose 定格 pose this long before the panel settles
         public float settleSec = 0.6f;            // brief beat between the pose and the background replay starting
         public bool enableResultSfx = true;       // play SE_0014(win)/SE_0015(lose) jingle + the SE_0020/0022 tally chimes
@@ -448,6 +544,7 @@ namespace Sdo.Game
         private Camera _headCam; private RenderTexture _headRt; private SdoAvatar _headAvatar;
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);   // head bone REST pos (model space) — cam targets this so it stays FIXED (no per-frame bob chase)
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
+        private readonly Dictionary<int, RoomHeadPortrait> _resultHeadPortraits = new Dictionary<int, RoomHeadPortrait>();
 
         private readonly List<RuntimeNote> _notes = new List<RuntimeNote>();
         private readonly List<RuntimeNote> _notesByMapIndex = new List<RuntimeNote>();
@@ -924,6 +1021,15 @@ namespace Sdo.Game
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
         public bool mockOpponents = false;           // 預設關閉測試對手(離線單人=solo rank 1/1、清單只有本機);真連線時再開
         public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
+        /// <summary>
+        /// 旁觀模式(需求 10):進場**只看別人跳舞**。
+        ///
+        /// 關掉:音符(連生成都不生)、音符板、受擊線、判定字、連擊、血條、分數、名次 N/M、鍵盤輸入、自己的舞者。
+        /// 保留:3D 場景、導播運鏡、右側名單(誰領先正是旁觀者要看的)、旁觀者名單、歌曲資訊列。
+        ///
+        /// 穿線方式照 <see cref="freeMode"/> 的慣例(FrontendApp 在 AddComponent 之後、Start 之前設欄位)。
+        /// </summary>
+        public bool spectatorMode = false;
         public string localPlayerName = "玩家";       // local player's display name (hardcoded default, tunable)
         public int playerLevel = 1;                  // character level — scales the round-end coin/honor reward (Sdo.Ruleset.Reward).
                                                      // 前端每局注入 ProfileManager.Level（這個角色的等級）；自 boot 時維持 1。
@@ -944,10 +1050,20 @@ namespace Sdo.Game
         // rank "N / M": laid out on the SCORE's column pitch so M (total) sits under the score's tens digit.
         // slash x = ScorePos.x + 5*pitch + 14 = 429 → N at col4 (404), M at col6/tens (454). rankY below the score.
         public float rankCenterX = 429f, rankY = 74f, rankDigitW = 25f, rankPitch = 26f;
-        // spectators (旁觀玩家): GAMEPLAY18 title sprite + fake light-blue names below the roster. DdrGamePlay.xml
-        // had lookerTitle@(696,190) + looker rows@(696,212..) step13 colour 0xff9DCBFF — we use fake names.
-        public bool showSpectators = false;          // 預設關閉測試旁觀名單(全是假名);真連線有觀眾時再開
-        private static readonly string[] SpectatorNames = { "酷", "美麗", "悲晴吉克", "路過旅人", "小幫手" };
+        // spectators (旁觀玩家): GAMEPLAY18 title sprite + light-blue names below the roster. DdrGamePlay.xml
+        // had lookerTitle@(696,190) + looker rows@(696,212..) step13 colour 0xff9DCBFF。
+        public bool showSpectators = false;          // 離線預設關閉(沒有觀眾);連線有觀眾時由 FrontendApp 打開
+        /// <summary>
+        /// 旁觀者的名字(需求 10:要真名)。FrontendApp 從 <c>matchStarting.spectatorNames</c> 灌進來。
+        ///
+        /// 🔴 這裡本來是 <c>private static readonly string[]</c> 的假名 —— 而 <c>_lookerRows</c> 的長度是**從它**取的。
+        /// 所以要能顯示真名,這個欄位必須是實例的、可寫的,而且列數上限要自己定(<see cref="MaxLookerRows"/>)
+        /// 而不是跟著資料長度 —— 不然中途有人進來旁觀、名單變長,就得重建整排 Label3D。
+        /// 改成固定配 10 列、多的截掉,<see cref="SetSpectatorNames"/> 只改文字。
+        /// </summary>
+        public string[] spectatorNames = new string[0];
+        /// <summary>旁觀名單最多畫幾列(座標 lookerFirstY + i*16 到第 10 列就碰到畫面底了)。</summary>
+        public const int MaxLookerRows = 10;
         private SpriteRenderer _lookerTitle;
         private Label3D[] _lookerRows;
         public float lookerTitleX = 694f, lookerTitleY = 214f, lookerX = 698f, lookerFirstY = 241f, lookerRowStep = 16f, lookerFontWorld = 18f;   // names start 5px lower than before so the list clears the 旁觀玩家 header
@@ -1041,9 +1157,9 @@ namespace Sdo.Game
                 skeletonHrc = SdoRoomAvatar.MaleHrc;
                 maleBody = true;
                 danceMot = "MOTION/MDANCE0002.MOT";
-                restMot = "MOTION/MREST0082.MOT";
-                winMot = "MWIN0001.MOT";
-                loseMot = "MREST0004.MOT";
+                restMot = MaleGameplayRestMot;
+                winMot = MaleWinMot;
+                loseMot = MaleLoseMot;
             }
 
             // 飛行翅膀 → 舞台待機 idle 換成 flystay clip (rest cat 0x2c)。Only the idle/rest changes; the DPS dance is
@@ -1079,13 +1195,36 @@ namespace Sdo.Game
             if (!LoadChart()) yield break;
             BuildScroll();
             BuildBoard();
-            if (!observeBurstMode) SpawnNotes();   // observe mode: no notes (clean stage to watch the burst)
+            // observe mode: no notes (clean stage to watch the burst)。
+            // 旁觀模式也不生:一顆音符都不存在 → 沒有東西可捲、可判、可扣血,整條遊玩路徑自然全空,
+            // 不用在十幾個地方各加一個 if(spectatorMode)(那才是會漏掉一處的做法)。
+            if (!observeBurstMode && !spectatorMode) SpawnNotes();
             foreach (var n in _notes) { double t = n.Note.EndTimeMs ?? n.Note.StartTimeMs; if (t > _totalMs) _totalMs = t; }
+            // 🔴 旁觀沒有生音符 → 上面那圈跑不到,_totalMs 會留 0,而歌曲結束的判定是
+            // 「now > baseEndMs + 1000」→ 旁觀者的畫面會在**開場一秒後**就跳結算。
+            // 曲長改從譜面本身量(音符沒生,但譜是載好的)。
+            if (_totalMs <= 0.0 && _map != null) _totalMs = _map.LastNoteMs;
             BuildHud();
             ApplyRoomNoteSkin();   // AFTER BuildHud so _comboWord exists → LoadComboJudgeArt can assign the skin's COMBO.PNG
                                    // (room win2 note selection → matching gameplay skin: board + hit burst + combo/judge, incl. 3D)
             // 編輯器：不載舞者、不載 3D 場景（也就沒有 SceneCam/背景 quad）→ 主相機的 SolidColor 黑直接成為背景。
-            if (!editorMode) { TryLoadAvatar(); TryLoadScene(); }
+            // 旁觀:不載**自己**的舞者(沒下場的人不該出現在場上),但場景與導播運鏡照載 —— 那正是要看的東西。
+            //
+            // 🔴 共用資產與導播鏡頭都**不能**綁在「有沒有本機舞者」上,兩者旁觀時都要:
+            //   • LoadSharedDanceAssets —— 場上其他人的骨架/編舞從這裡來(少了它 SpawnExtraDancers 直接 return,
+            //     旁觀者看到的是一個空場)。
+            //   • LoadCvCameras —— 它同時設舞位(_danceSpot)與導播鏡頭(_dirCv/_camReady)。少了它 _camReady 恆 false,
+            //     相機停在原點的預設朝向 —— 實機回報「旁觀進去舞台,鏡頭卡在天花板」就是這個。
+            if (!editorMode)
+            {
+                LoadSharedDanceAssets();
+                if (use3dCamera) LoadCvCameras();
+                if (!spectatorMode) TryLoadAvatar();
+                TryLoadScene();
+            }
+            // 同場其他舞者(M8)。一定要在 TryLoadAvatar 之後:它們共用那邊解析好的骨架/動作/編舞
+            // (_sharedHrc / _sharedDanceMot / _sharedDps),而 SdoAvatar 對那三個只讀 → 共用安全。
+            if (!editorMode) SpawnExtraDancers();
             // 判定窗:StepMania(YHANIKI)的「精N」毫秒窗,與 BPM 無關(原版是 tick 窗 = 歌越快越嚴,見 FromSdoBpm)。
             // 以精4 為基準(Perfect 45 / Cool 90 / Bad 135 / Miss 180 ms)乘精度係數;預設精2(×1.33)。
             // SM 5 段折成 SDO 4 段:MARVELOUS+PERFECT→Perfect、GREAT→Cool、GOOD→Bad、BOO(含更外面)→Miss。
@@ -1122,6 +1261,9 @@ namespace Sdo.Game
             if (use3dCamera && _camReady && openingIntroSec > 0f && cameraAuto) { _introStartRt = Time.realtimeSinceStartup; SetTrackVisible(false); }
             if (observeBurstMode) { _dancing = false; _camMode = 0; SetTrackVisible(false); _introStartRt = -1f;   // idle dancer, fixed cam, hidden track
                 HideComboAndJudge(); HideHudForPanel(); }   // also clear the rest of the gameplay HUD (score/combo/judge/song labels/ranking) for a clean stage
+            // 旁觀:自己沒有舞者也沒有音符 → 停掉本機的舞蹈閘門,並把判定字/連擊收掉。
+            // 音符板與血條交給 SetTrackVisible 的旁觀分支(它才是唯一收口,開場揭示後還會再呼叫一次)。
+            if (spectatorMode) { _dancing = false; SetTrackVisible(_trackVisible); HideComboAndJudge(); }
             // 編輯器：沒有開場運鏡，音符板直接出來；HP/分數/名次/歌曲列全部收掉，只留板子+受擊線+音符。
             if (editorMode) { _dancing = false; _introStartRt = -1f; SetTrackVisible(true); HideHudForEditor(); }
             _sceneBootDone = true;            // the synchronous build above is complete (scene/avatar/board/HUD placed)
@@ -1181,6 +1323,9 @@ namespace Sdo.Game
         {
             float shownAt = _bootShownRt;   // count the minimum display time from when the loading screen appeared (before the build)
             while (!LocalBootReady()) yield return null;                       // (1) local objects prepared
+            // 連線:先告訴 server「我這邊載完了」,再等它說「大家都好了」。順序不能顛倒 ——
+            // 反過來就是每台都在等別人先講,誰也不會開場(server 的推進條件是「沒人還在 waitingForLoad」)。
+            if (LocalReady != null) { LocalReady(); LocalReady = null; }
             while (ReadyGate != null && !ReadyGate()) yield return null;       // (2) online: all users ready + synced
             while (Time.realtimeSinceStartup - shownAt < loadingMinSec) yield return null;   // (3) minimum display time
 
@@ -1446,7 +1591,7 @@ namespace Sdo.Game
             if (_ambientClip == null || _ambient == null) return;
             if (!_started || _ended || observeBurstMode || avatarDebug) return;
             if (_nextAmbientAt < 0f || Time.realtimeSinceStartup < _nextAmbientAt || _ambient.isPlaying) return;
-            _ambient.PlayOneShot(_ambientClip, AudioMix.Sfx);   // 場景環境音 = 遊戲音效 音量
+            _ambient.PlayOneShot(_ambientClip, AudioMix.SceneSfx);   // 場景環境音 = 遊戲音效 音量
             _nextAmbientAt = Time.realtimeSinceStartup + _ambientClip.length + UnityEngine.Random.Range(0f, 29f);
         }
 
@@ -2246,11 +2391,16 @@ namespace Sdo.Game
         // UpdateHpBar (which early-outs while _trackVisible is false), so on hide we just force them off.
         private void SetTrackVisible(bool on)
         {
-            _trackVisible = on;
-            if (_board) _board.enabled = on;
+            // 旁觀模式:音符板/受擊線/血條**永遠**不出(需求 10)。這裡是唯一的收口 ——
+            // 開場揭示(OpeningSequence)之後還會再呼叫一次 SetTrackVisible(true),
+            // 所以不能只在 Start 關一次,要在這個函式裡把旁觀夾進去。
+            // 名單(SetRankingVisible)刻意還是跟著 on 走:旁觀者要看的正是誰領先。
+            bool trackOn = on && !spectatorMode;
+            _trackVisible = trackOn;   // UpdateHpBar 讀它早退 → 旁觀時不會被重新打開
+            if (_board) _board.enabled = trackOn;
             // ShowTime mode has no HP bar (only the 集氣 energy gauge) — keep the whole HP widget hidden even when the
             // track is shown. UpdateHpBar also early-outs in ShowTime so it can't re-enable _hpGlow.
-            bool hpOn = on && !showtimeMode;
+            bool hpOn = trackOn && !showtimeMode;
             if (_hpSolidBack) _hpSolidBack.enabled = hpOn;
             if (_hpBg) _hpBg.enabled = hpOn;
             if (_hpTex) _hpTex.enabled = hpOn;
@@ -2258,13 +2408,13 @@ namespace Sdo.Game
             if (_hpGlow) _hpGlow.enabled = hpOn;         // UpdateHpBar refines this (low HP -> off) once visible again
             for (int c = 0; c < Keys; c++)
             {
-                if (_receptors[c]) _receptors[c].enabled = on;
-                if (!on && _clickFlashSr[c] != null) _clickFlashSr[c].enabled = false;
+                if (_receptors[c]) _receptors[c].enabled = trackOn;
+                if (!trackOn && _clickFlashSr[c] != null) _clickFlashSr[c].enabled = false;
             }
             // 3D-mesh 音符不是 SpriteRenderer，不吃上面那些 enabled；而且藏板子之後 ScrollNotes 通常也不會再被呼叫
             // （EnterResult → Update 直接 return），沒人幫它收 → 最後一幀的箭頭會留在畫面上。這裡直接收起整個 pool；
             // 要再顯示不必做事，ScrollNotes 每幀都會自己打開。
-            if (!on && _highway != null) _highway.visible = false;
+            if (!trackOn && _highway != null) _highway.visible = false;
             SetRankingVisible(on);   // hide the roster list + rank during the opening hold / observe mode
         }
 
@@ -2756,12 +2906,46 @@ namespace Sdo.Game
         // hand-off window, softer ends. SdoAvatar's own 1.0s default was written for the room's idle↔walk.
         private const float DanceBlendSec = 0.5f;
 
+        /// <summary>
+        /// 這一場的**共用**資產:骨架、後備舞蹈 clip、待機 clip、這首歌的編舞(DPS)與它的動作外掛樹。
+        /// 本機舞者與場上其他人吃的是同一份 —— LoadAsset 每次都重讀重解,六隻各載一次是白花時間,
+        /// 而 SdoAvatar 對 HrcLoader / MotLoader / DpsLoader **只讀**(Setup 把會被改的狀態全配成
+        /// per-instance 陣列),所以共用是安全的。See SpawnExtraDancers。
+        ///
+        /// 🔴 與「建本機那隻 avatar」分開是必要的:**旁觀者沒有自己的舞者,但場上其他人照樣要出**。
+        /// 這段以前長在 <see cref="TryLoadAvatar"/> 裡,而旁觀時整個 TryLoadAvatar 被跳過 → _sharedHrc
+        /// 是 null → SpawnExtraDancers 第一行就 return → 旁觀者進到舞台看到的是一個空場。
+        /// </summary>
+        private void LoadSharedDanceAssets()
+        {
+            // skeleton + dance motion (skinned, CPU). Missing/invalid -> falls back to the static bind pose.
+            _sharedHrc = LoadAsset(skeletonHrc, b => HrcLoader.Load(b));
+            _sharedDanceMot = LoadAsset(danceMot, b => MotLoader.Load(b));   // fallback dance clip if no DPS
+            _sharedRestMot = LoadAsset(restMot, b => MotLoader.Load(b));     // standby idle (rest cat 0x15) — looped before the DPS starts and after it ends
+            // 動作外掛（overlay）：一個歌包把它自帶的 .dps 和 .mot 用跟 base 資料根一樣的樹狀結構擺在一起
+            // （…/patch Datas/DANCE + …/patch Datas/MOTION|AUMOTION）。這首歌的 .dps 從哪棵樹讀出來，它的 .mot
+            // 就在那棵樹 → 設成 overlay，讓 ResolveMot 先查它、找不到才退回 base（含 base 沒有的 W_00xxxx.MOT）。
+            // 必須在載 dps／PrewarmDpsMotions 之前設好；純由 dpsPath 推導，不必從歌單一路穿路徑過來。
+            string dpsFull = string.IsNullOrEmpty(dpsPath) ? ""
+                : Path.Combine(SdoExtracted.Root, dpsPath.Replace('/', Path.DirectorySeparatorChar));
+            _motOverrideRoot = MotionOverlay.RootForDps(dpsFull, SdoExtracted.Root);
+            _motCache.Clear();   // 快取以動作名為鍵，不含樹；換歌換 overlay 時清掉，免得沿用上一包的解析結果
+            if (!string.IsNullOrEmpty(_motOverrideRoot))
+                Debug.Log($"[avatar] 動作外掛樹: {_motOverrideRoot}（AUMOTION/MOTION 先於 base 根）");
+            // per-song choreography (DPS): sequence motion slices to the music clock (debug now dances too)
+            _sharedDps = LoadAsset(dpsPath, b => DpsLoader.Load(b));
+            if (_sharedDps != null)
+            {
+                Debug.Log($"[avatar] DPS {dpsPath}: {_sharedDps.Rows.Length} rows, {_sharedDps.Total:F1}s");
+                PrewarmDpsMotions(_sharedDps);   // read every clip NOW (behind the loading cover), not lazily mid-song
+            }
+        }
+
         private void TryLoadAvatar()
         {
             var parent = new GameObject("Avatar3D");
-            // skeleton + dance motion (skinned, CPU). Missing/invalid -> falls back to the static bind pose.
-            HrcLoader hrc = LoadAsset(skeletonHrc, b => HrcLoader.Load(b));
-            MotLoader mot = LoadAsset(danceMot, b => MotLoader.Load(b));   // fallback dance clip if no DPS
+            HrcLoader hrc = _sharedHrc;          // 共用資產已由 LoadSharedDanceAssets 載好(旁觀也載,見那裡的理由)
+            MotLoader mot = _sharedDanceMot;
             SdoAvatar avatar = null;
             if (hrc != null)
             {
@@ -2770,19 +2954,8 @@ namespace Sdo.Game
                 _avatar = avatar;                                                             // F4 panel re-shapes this live
                 _bodyShapeB = SdoBodyShape.WeightFromIndex(bodyShapeIndex, maleBody);
                 avatar.SetBodyShape(_bodyShapeB);                                             // 體型: thin/standard/fat (default thin)
-                avatar.RestMot = LoadAsset(restMot, b => MotLoader.Load(b));   // standby idle (rest cat 0x15) — looped before the DPS starts and after it ends
-                // 動作外掛（overlay）：一個歌包把它自帶的 .dps 和 .mot 用跟 base 資料根一樣的樹狀結構擺在一起
-                // （…/patch Datas/DANCE + …/patch Datas/MOTION|AUMOTION）。這首歌的 .dps 從哪棵樹讀出來，它的 .mot
-                // 就在那棵樹 → 設成 overlay，讓 ResolveMot 先查它、找不到才退回 base（含 base 沒有的 W_00xxxx.MOT）。
-                // 必須在載 dps／PrewarmDpsMotions 之前設好；純由 dpsPath 推導，不必從歌單一路穿路徑過來。
-                string dpsFull = string.IsNullOrEmpty(dpsPath) ? ""
-                    : Path.Combine(SdoExtracted.Root, dpsPath.Replace('/', Path.DirectorySeparatorChar));
-                _motOverrideRoot = MotionOverlay.RootForDps(dpsFull, SdoExtracted.Root);
-                _motCache.Clear();   // 快取以動作名為鍵，不含樹；換歌換 overlay 時清掉，免得沿用上一包的解析結果
-                if (!string.IsNullOrEmpty(_motOverrideRoot))
-                    Debug.Log($"[avatar] 動作外掛樹: {_motOverrideRoot}（AUMOTION/MOTION 先於 base 根）");
-                // per-song choreography (DPS): sequence motion slices to the music clock (debug now dances too)
-                var dps = LoadAsset(dpsPath, b => DpsLoader.Load(b));
+                avatar.RestMot = _sharedRestMot;
+                var dps = _sharedDps;
                 if (dps != null)
                 {
                     avatar.Dps = dps;
@@ -2813,7 +2986,6 @@ namespace Sdo.Game
             if (!any) { Debug.LogWarning("[avatar] no parts loaded"); return; }
             Debug.Log($"[avatar] {(localPlayerMale ? "MAN" : "WOMAN")}: {parts} parts, skeleton={(hrc != null ? hrc.Names.Length + " bones" : "none")}, mot={(mot != null ? mot.MaxTime + 1 + " frames" : "none")}");
             var handYellow = new Color(1f, 0.86f, 0.25f);
-            if (use3dCamera) LoadCvCameras();
             if (use3dCamera && _camReady)
             {
                 // Decompiled placement: the dancer stands FEET-DOWN on the floor dance-spot (table @0x582690; solo =
@@ -2840,7 +3012,8 @@ namespace Sdo.Game
                         CreateHandTrail(parent.transform, avatar, "Bip01_R_Hand", "Bip01_R_Finger0", handYellow);
                     }
                     catch (System.Exception e) { Debug.LogError("[handtrail] creation failed (non-fatal): " + e); }
-                CreateGroundStarRing(_avatarChest.x, _avatarChest.z, 0.6f, avatar, parent.transform);   // follows the dancer's pelvis
+                // 地面星環:跟著自己的骨盆走,顏色 = 自己那一隊(沒組隊就是官方原本的白)。
+                CreateGroundStarRing(_avatarChest.x, _avatarChest.z, 0.6f, avatar, parent.transform, TeamOf(LocalDancerSlotIndex));
                 if (avatar != null)
                     try { CreateHeadEmoji(avatar); }   // head-emoji billboard at the dancer's head front-right
                     catch (System.Exception e) { Debug.LogError("[emoji] creation failed (non-fatal): " + e); }
@@ -2932,6 +3105,7 @@ namespace Sdo.Game
         public float sceneSupersample = RtSizing.DefaultSupersample;   // set to 1 to render at window-native resolution
         private Material _backdropMat; private bool _backdropFlip;   // F9 toggles the stage V-flip (safety net)
         private Transform _avatarRoot;   // the Avatar3D root (for the debug front-camera framing)
+        private FormationPreview _formation;   // 隊形假人預覽(F10,延遲建立)
         // 飛行翅膀懸浮(見 UpdateFlyHover):穿著就整場浮 HoverY,與姿勢/是否在跳舞無關。
         private bool _flying;          // 這位舞者穿了會飛的翅膀
         private bool _flyHoverArmed;   // 只有 3D 舞台路徑量過 _flyBaseRootY;沒 arm 就完全不碰 root.y(2D/編輯器)
@@ -2992,6 +3166,28 @@ namespace Sdo.Game
             onCamModeChanged?.Invoke(_camMode);   // 記住玩家的選擇（OPTION「遊戲視角」＋下一局的開場鏡頭）
         }
 
+        // F10:開/關「隊形」假人預覽 —— 在舞台地板上立最多 6 個替身，位置逐字取自反編譯的 slot 表
+        // (FormationCatalog，table @0x582690)。開著時 ←→ 切隊形 TYPE(1..3)、↑↓ 改人數 COUNT(1..6)。
+        // slot 0(金色)＝領隊/第一名/相機錨點；預覽期間把單人舞者藏起來，讓替身站它的位置。
+        // 純研究/視覺化工具（沒有計分、沒有音符、沒有連線）。
+        //
+        // 原 formation 分支綁 F2，但本分支 F2/F3 都已被佔用（F2 = RoomScreen 開始遊戲、GenderSelectScreen
+        // 譜面編輯器、以及 KeyMap 的 Hotkey.Camera 預設值；F3 = RoomScreen 家族除錯），所以改綁 F10。
+        private void ToggleFormationPreview()
+        {
+            if (_formation == null)
+            {
+                var go = new GameObject("FormationPreview");
+                go.transform.SetParent(transform, false);
+                _formation = go.AddComponent<FormationPreview>();
+                _formation.Layer = SceneLayer;
+            }
+            _formation.Cam = _sceneCam;      // (重新)綁定 —— 舞台相機可能在第一次 toggle 之後才建好
+            _formation.Anchor = _danceSpot;
+            _formation.Toggle();
+            if (_avatarRoot != null) _avatarRoot.gameObject.SetActive(!_formation.Active);   // 預覽時藏起單人舞者
+        }
+
         /// <summary>F2 可循環的固定鏡頭台數（前端把玩家選到的那台存進 OPTION 設定時要夾範圍）。</summary>
         public static int FixedCamCount => FixedEye.Length;
         // Result hand-off (read by the front-end once the song/run has ended). _score is plain managed state, so it
@@ -3019,6 +3215,9 @@ namespace Sdo.Game
         private void LoadCvCameras()
         {
             _danceSpot = SoloDanceSpot();
+            // 單人時相機錨點就是本機的位置 —— 多人時 TickDancerSlots 會把它改成 slot 0 的占用者
+            // (官方的鏡頭跟第一名)。先在這裡對齊,離線/單人的行為就與加多人之前完全一樣。
+            _camAnchorSpot = _danceSpot;
             var cdt = LoadAsset(SelectCdtPath(), b => CdtLoader.Load(b));
             if (cdt != null)
             {
@@ -4020,6 +4219,10 @@ namespace Sdo.Game
             cam.nearClipPlane = 5f; cam.farClipPlane = sceneFar;
             Debug.Log($"[scene] {SceneFolder()}: camera far={sceneFar:F0} (sky top Y={sceneTopY:F0})");
             _sceneCam = cam;
+            // The local marker is built by TryLoadAvatar before this camera exists. Promote only here, after
+            // scene setup succeeded; an early scene-load return therefore leaves its legacy HUD fallback intact.
+            if (_headMarker != null && use3dCamera)
+                _headMarker.EnableDepthTestedWorld(SceneLayer);
             if (avatarDebug)
             {
                 // clean STRAIGHT-FRONT orthographic view of the avatar (matches the reference avatar_viewer framing,
@@ -4091,8 +4294,22 @@ namespace Sdo.Game
         // engine's way (a band mesh, not sprites). Additive, flat on floor, spins, follows the dancer's pelvis.
         // ringOuterRadius = spread (ring radius); ringBrightness = additive glow level; both live-tunable in the F4 panel.
         public float ringOuterRadius = 22f, ringSpinDeg = 20f, ringBrightness = 0.9f;
-        private Transform _ringTr; private Material _ringMat; private FloorRing _floorRing;   // live refs for debug tuning
-        private void CreateGroundStarRing(float x, float yOrZ, float floorY, SdoAvatar avatar, Transform avatarParent)
+        private Transform _ringTr; private Material _ringMat; private FloorRing _floorRing;   // 本機那一個(連打特效/相機都掛在它身上)
+
+        /// <summary>場上每一個星環(含遠端舞者的)。F4 的大小/亮度/轉速滑桿一次套用到全部。</summary>
+        private struct RingRef { public Transform Tr; public Material Mat; public FloorRing Ring; }
+        private readonly List<RingRef> _rings = new List<RingRef>();
+
+        // 組隊時腳下那圈**彩色光暈**的大小,單位是「星環外半徑的幾倍(邊長)」。
+        // 2.67 = 讓光暈最亮的那一圈(CR.TGA 的環帶尖峰在半徑 0.625 處)正好落在星環的中線(0.833)上:
+        // 0.625 × 2.67/2 ≈ 0.833。改大 = 光暈往外擴。
+        public float teamGlowScale = 2.67f;
+
+        /// <param name="team">0=A 1=B 2=C,其他 = 沒組隊(白)。組隊時腳下的星環就是自己那一隊的顏色。</param>
+        /// <param name="local">true = 本機那一位 —— 只有它的 ref 會存進 <see cref="_ringTr"/> 那組
+        /// (combo 特效/完奏特效/相機都拿它當錨點,指到別人身上會讓特效跑到別人腳下)。</param>
+        private void CreateGroundStarRing(float x, float yOrZ, float floorY, SdoAvatar avatar, Transform avatarParent,
+                                          int team = TeamColors.Free, bool local = true)
         {
             string zako = Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", "ZAKO");
 
@@ -4111,7 +4328,9 @@ namespace Sdo.Game
 
                 var fr = ringGo.AddComponent<FloorRing>();
                 fr.FloorY = floorY;
-                _ringTr = ringGo.transform; _ringMat = mat; _floorRing = fr;
+                _rings.Add(new RingRef { Tr = ringGo.transform, Mat = mat, Ring = fr });
+                if (local) { _ringTr = ringGo.transform; _ringMat = mat; _floorRing = fr; }
+                AddTeamGlowDisc(ringGo.transform, team);
                 ApplyRingDebug();
                 if (avatar != null && avatarParent != null)   // follow pelvis (root GO is static; bones dance)
                 {
@@ -4143,7 +4362,7 @@ namespace Sdo.Game
                     stars[i] = sr;
                 }
                 var ring = ringGo.AddComponent<StarRing>();
-                ring.Stars = stars; ring.Spin = 0.6f; ring.Tint = Color.white;
+                ring.Stars = stars; ring.Spin = 0.6f; ring.Tint = Color.white;   // 2D 退化路徑沒有隊伍光暈(它只在 3D 舞台出現)
                 ringGo.transform.position = new Vector3(x, yOrZ + 4f, 6f);
                 ring.Billboard = true; ring.Rx = 70f; ring.Ry = 20f; ring.BaseScale = 36f / 64f;
             }
@@ -4152,16 +4371,65 @@ namespace Sdo.Game
         // Live-apply the F4 ring sliders. Mesh is unit-radius, so localScale = spread; _TintColor.rgb = brightness
         // (legacy-particle additive ×2 → ringBrightness*0.5 = native); keep _TintColor.a = 1 so the SrcAlpha-One blend
         // doesn't dim it a SECOND time (that earlier double-dim is what made it vanish).
+        /// <summary>
+        /// 組隊時腳下多疊的那圈**彩色光暈**(官方 yuanpan_r/_g/_b.eft 相對 yuanpan.eft 多出來的那一支)。
+        ///
+        /// 🔴 官方**不是**把白星環染色 —— 反編譯的 <c>FUN_004a6720</c> 用舞者結構 +0x2e1 那個 byte 去查
+        /// <c>{0, 10, 11, 12}</c>,整支換成 yuanpan / yuanpan_r / _g / _b.eft;四份檔案的差別只有
+        /// 「root 播放清單 1 支變 2 支」與「多出來那支 emitter 的貼圖是 generic\map_g\cr / cg / cb」。
+        /// 也就是說星環本身永遠是白的,隊伍色是**底下多疊的一片平躺彩色環形光暈**。這裡照做:
+        /// 一張貼著官方那張貼圖的平面 quad,掛在星環底下(跟著它的 localScale 一起縮放、一起跟著骨盆走)。
+        ///
+        /// (CR/CG/CB 原檔是 .TGA,Unity 的 <c>Texture2D.LoadImage</c> 不吃 —— 已在 Extracted 同目錄
+        /// 轉出同名 .png,與那棵樹裡 BMP→PNG 的雙胞胎慣例一致。)
+        /// </summary>
+        private void AddTeamGlowDisc(Transform ringTr, int team)
+        {
+            if (!TeamColors.IsTeam(team) || ringTr == null) return;
+            string tex = team == 0 ? "CR.png" : team == 1 ? "CG.png" : "CB.png";
+            var t = SdoExtracted.LoadTextureRawLinear(Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", "MAP_G"), tex);
+            if (t == null) { Debug.LogWarning("[ring] 隊伍光暈貼圖載不到:" + tex); return; }
+
+            var go = new GameObject("TeamGlow");
+            go.transform.SetParent(ringTr, false);              // 吃星環的縮放/位置/自轉
+            go.transform.localScale = Vector3.one * teamGlowScale;
+            go.AddComponent<MeshFilter>().mesh = FlatQuadMesh();
+            var mr = go.AddComponent<MeshRenderer>();
+            var m = _addMat != null ? new Material(_addMat) : new Material(Shader.Find("Sprites/Default"));
+            m.mainTexture = t;
+            if (m.HasProperty("_TintColor")) m.SetColor("_TintColor", new Color(0.5f, 0.5f, 0.5f, 1f));   // 顏色來自貼圖,這裡只給中性亮度
+            mr.sharedMaterial = m;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; mr.receiveShadows = false;
+        }
+
+        private static Mesh _flatQuad;
+        /// <summary>邊長 1、位於 XY 平面、中心在原點的 quad —— 與星環環帶同一個平面(父物件已轉成平躺)。</summary>
+        private static Mesh FlatQuadMesh()
+        {
+            if (_flatQuad != null) return _flatQuad;
+            _flatQuad = new Mesh
+            {
+                name = "TeamGlowQuad",
+                vertices = new[] { new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f),
+                                   new Vector3(0.5f, 0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f) },
+                uv = new[] { new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(0f, 1f) },
+                triangles = new[] { 0, 2, 1, 0, 3, 2 },
+            };
+            _flatQuad.RecalculateBounds();
+            return _flatQuad;
+        }
+
         private void ApplyRingDebug()
         {
-            if (_ringTr == null) return;
-            _ringTr.localScale = Vector3.one * ringOuterRadius;
-            if (_ringMat != null && _ringMat.HasProperty("_TintColor"))
+            float tb = Mathf.Clamp01(ringBrightness * 0.5f);
+            for (int i = 0; i < _rings.Count; i++)
             {
-                float tb = Mathf.Clamp01(ringBrightness * 0.5f);
-                _ringMat.SetColor("_TintColor", new Color(tb, tb, tb, 1f));
+                var r = _rings[i];
+                if (r.Tr != null) r.Tr.localScale = Vector3.one * ringOuterRadius;   // 子物件(隊伍光暈)跟著縮放
+                if (r.Mat != null && r.Mat.HasProperty("_TintColor"))
+                    r.Mat.SetColor("_TintColor", new Color(tb, tb, tb, 1f));   // 星環永遠是白的(隊伍色在底下那圈光暈)
+                if (r.Ring != null) r.Ring.SpinDegPerSec = ringSpinDeg;
             }
-            if (_floorRing != null) _floorRing.SpinDegPerSec = ringSpinDeg;
         }
 
         // filled white 5-point star with a faint halo, on black -> additive reads as a crisp star (matches the SDO floor ring)
@@ -4386,10 +4654,15 @@ namespace Sdo.Game
 
         // DPS row -> MotLoader, cached. The choreography clips live in AUMOTION/ (fall back to MOTION/). 每棵樹都先
         // AUMOTION 再 MOTION；樹的順序由 MotRoots() 決定 —— 歌包外掛樹（若有）先於 base 資料根。
-        private MotLoader ResolveMot(string rawName)
+        private MotLoader ResolveMot(string rawName) => ResolveMotFor(rawName, localPlayerMale);
+
+        /// <summary>同 <see cref="ResolveMot"/>,但性別映射(W→M)照 <paramref name="male"/> 而不是本機玩家。
+        /// 場上其他人的動作要走這條:本機是男的話,女生玩家的 WWIN0002 會被本機那條路換成 MWIN0002 —— 撈到
+        /// 別人性別的 clip,套在女骨架上就是一團扭曲。快取的鍵是**映射後**的名字,所以兩種性別各自命中自己那份。</summary>
+        private MotLoader ResolveMotFor(string rawName, bool male)
         {
             if (string.IsNullOrEmpty(rawName)) return null;
-            string name = ResolveGenderedMotName(rawName);
+            string name = ResolveGenderedMotName(rawName, male);
             if (_motCache.TryGetValue(name, out var cached)) return cached;
             MotLoader m = null; string triedPath = null, why = null;
 
@@ -4465,9 +4738,9 @@ namespace Sdo.Game
             yield return SdoExtracted.Root;
         }
 
-        private string ResolveGenderedMotName(string name)
+        private string ResolveGenderedMotName(string name, bool male)
         {
-            if (!localPlayerMale) return name;
+            if (!male) return name;
             string file = Path.GetFileName(name.Replace('\\', '/'));
             if (string.IsNullOrEmpty(file) || file[0] != 'W') return name;
 
@@ -4651,9 +4924,13 @@ namespace Sdo.Game
             // LV/時間值同一套光柵；真的換了尺寸就重量「: 秒」欄寬(字寬會微調)，好把總長欄重新釘回原位。
             if (_hudTextRaster.Tick()) _timeMeasure = 0;
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.1f);   // smoothed debug FPS
+            TickDancerPerf();   // SDO_DANCERS 開著時每 2 秒印一行幀時間(M8 的量測依據,見 ScreenGameplay.Dancers.cs)
+            TickDancerSlots();  // 多人:每幀把舞者往該站的格子滑一步,並讓相機錨點跟著第一名
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
+            // 隊形假人預覽(←→ 切隊形、↑↓ 改人數)。F10 是刻意選的：F2/F3 已被房間畫面與相機切換佔用。
+            if (Input.GetKeyDown(KeyCode.F10)) ToggleFormationPreview();
             // 以下功能鍵的鍵位都能在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] 改（預設＝括號裡那顆），見 Sdo.Settings.KeyMap。
             // Auto（自動）模式開關(預設 F8) — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
             if (KeyMap.Down(Hotkey.AutoPlay)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按下發出 SE_0001
@@ -4728,7 +5005,11 @@ namespace Sdo.Game
                     // Camera_GetEyePos/GetTargetPos: add the dance-spot anchor ONLY for relative (:1) shots;
                     // absolute (:0) shots (e.g. the opening crane) use raw .cv world coords. Solo spot = 0 either way.
                     // The anchor is a POSITION offset — it never touches the up vector (a direction).
-                    if (!_dirAbs[_dirShot]) { eye += _danceSpot; tgt += _danceSpot; }
+                    // 🔴 用 _camAnchorSpot 而不是 _danceSpot。這兩個在單人時是同一個值(都是原點),
+                    // 但多人時**相機要跟著第一名**(官方:slot 0 是中央前排 = 鏡頭錨點,而第一名會滑進去),
+                    // 不是跟著本機。_danceSpot 的語意仍然是「本機舞者站哪」——
+                    // 它另外還有 6 個 read site 都是那個意思,改它的語意會一起弄壞那些。
+                    if (!_dirAbs[_dirShot]) { eye += _camAnchorSpot; tgt += _camAnchorSpot; }
                 }
                 else
                 {
@@ -4769,8 +5050,10 @@ namespace Sdo.Game
             double showtimeEndBeforeTick = _showtime.UntilMs;
             TickShowtime(now);   // ShowTime: SPACE release + window expiry (before judging so this frame already auto-hits)
             TickOsuSampleEvents(now);   // re-check after a ShowTime transition so this frame's note uses the DSP queue
-            bool manualPlay = !_failed && !_showtime.Active && !autoPlay;   // 只有真人手動打時才吃鍵盤(= 下面 HandleInput 分支的條件)
-            if (!_failed)
+            // 旁觀:不吃鍵盤(需求 10)。這一條不是「反正沒有音符所以無害」—— HandleInput 會亮受擊閃光,
+            // 旁觀者按到方向鍵就會在沒有音符板的畫面上閃出四條光。
+            bool manualPlay = !_failed && !_showtime.Active && !autoPlay && !spectatorMode;
+            if (!_failed && !spectatorMode)
             {
                 if (_showtime.Active) AutoPlay(now, showtime: true);   // ShowTime window: force PERFECT, ignore manual input
                 else if (showtimeWasActive)
@@ -4785,7 +5068,8 @@ namespace Sdo.Game
                 else { HandleInput(now); AutoMiss(now); }
             }
             TickBombs(now, detonate: manualPlay);   // 炸彈:手動打時踩到(該軌按著)引爆;F8自動/ShowTime自動避雷,只安全流過
-            UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
+            if (!spectatorMode) UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
+            TickRemoteGates(now);   // 遠端舞者各自的跳/停(從分數流推導,與本機同一個規則函式)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             // long note held -> continuous burst that loops ONE full animation at a time (gated). Only this
             // hold case waits for the round to finish; taps fire freely above.
@@ -4839,7 +5123,10 @@ namespace Sdo.Game
             if (showtimeMode) { SetEnergyHudVisible(false); _scoreRoll?.SetVisible(false); _bonusRoll?.SetVisible(false); }   // hide the gauge AND the big/small ShowTime score at song end (not on the result panel)
             RebuildRoster();                                  // finalize scores so the rank/winner is current
             var (rank, _) = RankingBoard.LocalRank(_roster);
-            _localWon = rank <= 1;                            // rank 1 = highest score = winner
+            // rank 1 = highest score = winner。
+            // 🔴 旁觀者不在名單裡 → LocalRank 回 rank 0(「找不到本機」),而 0 <= 1 會判成**贏了** ——
+            // 旁觀者看到 YOU WIN 旗。旁觀一律不贏不輸。
+            _localWon = !spectatorMode && rank <= 1;
             _gameOver = _hpDead;                              // HP-out → GAME OVER (overrides win/lose banner);完奏模式打完整首也算
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
@@ -4880,8 +5167,12 @@ namespace Sdo.Game
                 // FINISHED is a combo-style burst attached to the WINNER's dancer (follows _ringTr). The remake renders
                 // only the local avatar, so it shows when the local player is the winner; otherwise no rendered dancer.
                 if (_localWon) SpawnNamedEft("FINISHED", 5f);
-                if (enableResultSfx) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
+                // 旁觀者不放輸贏短曲 —— 它沒有輸也沒有贏,而 _localWon 恆 false 會讓它每次都聽到「輸了」的音效。
+                if (enableResultSfx && !spectatorMode) PlaySe(_localWon ? "SE_0014" : "SE_0015");   // win/lose jingle (off until clips verified)
             }
+            // 場上其他人的輸贏定格。放在 if/else **外面**是刻意的:GAME OVER 是本機血條見底的死亡流程,
+            // 別人並沒有死 —— 本機一死就讓全場站著不動,那是把自己的結局套到別人身上。
+            PlayRemoteFinishPoses();
             _resultPhase = ResultPhase.FinishPose; _resultPhaseStart = Time.time;
         }
 
@@ -5015,17 +5306,23 @@ namespace Sdo.Game
         // Notes/board stay hidden (SetTrackVisible(false) already in effect); only the lit stage + dancer show.
         private void StartBackgroundReplay()
         {
-            if (_avatar == null) return;
-            _avatar.ClearOneShot();                                   // resume the DPS dance path
-            _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
-            foreach (var rib in _handTrails) if (rib) rib.Clear();    // 手在硬切處瞬移 → 清掉光條歷史，別從定格 pose 連一條光帶到回放起點；回放開始後光條自然重新累積成連續光帶（後面 mot 的手部光繼續做）
+            // 迴圈長度與起點是**全場共用**的(場上每個人都吃同一顆時鐘,回放才是同一段演出),所以先算,
+            // 而且不能因為本機沒有舞者(旁觀)就整段跳過 —— 別人的回放正是旁觀者要看的東西。
             _replayLenMs = _totalMs > 1.0 ? _totalMs : Math.Max(1.0, _replay.LengthMs);
             // Start the loop on a GOOD slice, not always the song's opening: a ≥20s stretch where the #1 dancer is
             // actually dancing (gate ON + within the choreography), biased to its busiest window, with per-visit jitter.
             _replayOffsetMs = ReplayStartPicker.Pick(_noteStarts, BuildDanceIntervals(), UnityEngine.Random.value, ReplayMinRunMs);
             _replayLoopStart = Time.timeAsDouble;
-            _avatar.DanceTimeSec = () => (float)((LoopMs() ) / 1000.0);
-            _avatar.DanceEnabled = () => GateAt(LoopMs());
+            System.Func<float> loopTimeSec = () => (float)(LoopMs() / 1000.0);
+            if (_avatar != null)
+            {
+                _avatar.ClearOneShot();                                   // resume the DPS dance path
+                _avatar.SnapNextClip();                                   // 定格 pose → 回放舞蹈 走硬切，不做平滑過場
+                foreach (var rib in _handTrails) if (rib) rib.Clear();    // 手在硬切處瞬移 → 清掉光條歷史，別從定格 pose 連一條光帶到回放起點；回放開始後光條自然重新累積成連續光帶（後面 mot 的手部光繼續做）
+                _avatar.DanceTimeSec = loopTimeSec;
+                _avatar.DanceEnabled = () => GateAt(LoopMs());
+            }
+            StartRemoteBackgroundReplay(loopTimeSec);   // 場上其他人跟著同一顆迴圈時鐘一起再跳一遍
         }
 
         // Minimum continuous dance the replay start must have ahead of it (the #1 dancer keeps dancing ≥ this long).
@@ -5037,8 +5334,10 @@ namespace Sdo.Game
         private List<(double start, double end)> BuildDanceIntervals()
         {
             double ceil = _replayLenMs;
-            if (_avatar != null && _avatar.Dps != null && _avatar.Dps.Total > 0f)
-                ceil = Math.Min(ceil, _avatar.Dps.Total * 1000.0);
+            // 編舞是全場共用的同一份(_sharedDps 就是 _avatar.Dps)—— 取它而不是只取本機的,旁觀時本機沒有
+            // 舞者但場上有人在跳,天花板照樣要吃編舞長度,否則起點會挑到編舞結束後的那段空白。
+            var dps = _avatar != null && _avatar.Dps != null ? _avatar.Dps : _sharedDps;
+            if (dps != null && dps.Total > 0f) ceil = Math.Min(ceil, dps.Total * 1000.0);
             var ivs = new List<(double, double)>();
             if (ceil <= 0.0) return ivs;
             bool on = true; double segStart = 0.0;                    // gate defaults ON from t=0 (matches GateAt)
@@ -5081,22 +5380,23 @@ namespace Sdo.Game
                         UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);   // 確定 → 重玩 (reload)
                 };
             }
+            _result.autoConfirmSec = resultAutoConfirmSec;   // 連線 = 30 秒後自己按確定(每次開面板都重設,面板本身只建一次)
             string diff = _map != null ? "Lv " + _map.Level : "";
-            var rows = BuildResultRows();   // also rebuilds _roster so the rank/total below are current
+            var rows = PrepareResultRows();   // also rebuilds _roster and attaches every participant portrait
             // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
-            var (place, players) = RankingBoard.LocalRank(_roster);
-            int bad = _score != null ? _score.BadCount : 0, miss = _score != null ? _score.MissCount : 0;
-            // 自由模式不加 G幣/EXP
-            int expGained = freeMode ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, place, players);
-            int coinsGained = freeMode ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, place, players, playerLevel);
-            // 經驗值落地：加進 active 角色的 profile.json（到門檻自動升等，曲線見 PlayerLevel）。自由模式不給經驗 →
-            // 不碰存檔。本局的 G幣/榮譽仍用進場時的等級算（上一行），升上去的等級下一局才生效。
+            CalculateResultOutcome(rows, out bool localWon, out int expGained, out int coinsGained);
+            // 經驗值落地：加進 active 角色的 profile.json（到門檻自動升等，曲線見 PlayerLevel）。自由模式/旁觀者的
+            // expGained 本來就是 0（見 CalculateResultOutcome）→ 不碰存檔。本局的 G幣/榮譽用進場時的等級算，升上去
+            // 的等級下一局才生效；伺服器最終名次晚到只會刷新面板（RefreshNetResultRows），不會重複入帳。
             if (expGained > 0) ProfileManager.AddExperience(expGained);
-            Texture head = BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
+            // 自由模式不加 G幣/EXP;旁觀者沒下場,更不該有獎勵(而且 place 會是 0 = 找不到本機)。
+            // 旁觀者沒有自己的舞者 → 沒有頭貼可拍(BuildLocalHeadPortrait 會回 null,結算列用預設圖)。
+            Texture head = spectatorMode ? null : BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
+            // 旁觀也不出:那面旗是「你贏了/輸了」,而旁觀者兩者都不是。
             // 自由模式也沒有名次 → 結算列最左的名次數字不畫(GAME OVER 圖仍照畫)。
-            _result.Show(_songTitle, diff, rows, _localWon, expGained, coinsGained, head, _gameOver, PlaySe,
-                         showBanner: !freeMode, showRank: !freeMode);
+            _result.Show(_songTitle, diff, rows, localWon, expGained, coinsGained, head, _gameOver, PlaySe,
+                         showBanner: !freeMode && !spectatorMode, showRank: !freeMode);
         }
 
         // Turn the final roster + score into ranked result rows. The local player uses real judgment counts;
@@ -5104,8 +5404,18 @@ namespace Sdo.Game
         private ResultScreen.Row[] BuildResultRows()
         {
             RebuildRoster();
+            // 連線:server 的 resultsReady 才是每個人**真正**的判定數(對手的判定計數本機根本沒有,
+            // 下面那條路是拿分數反推出來的假數字 —— 只適合離線的假對手)。
+            if (NetResultRows != null)
+            {
+                var netRows = NetResultRows();
+                if (netRows != null && netRows.Length > 0) return netRows;
+            }
             var order = RankingBoard.SortedIndices(_roster);
-            int total = Math.Max(1, _notes.Count);
+            // 音符總數:通常就是生出來的音符數,但旁觀模式**不生音符**(_notes 是空的)→ 會變成
+            // 「這首歌只有 1 顆音符」,每個人的判定數都被反推成 1。改成生不出來時退回譜面本身的數字。
+            // (連線時上面就 return 了 —— 用的是 server 的真判定數;這條只是離線/退化路徑。)
+            int total = Math.Max(1, _notes.Count > 0 ? _notes.Count : (_map != null ? _map.TotalNotes : 0));
             long top = order.Length > 0 ? Math.Max(1L, _roster[order[0]].Score) : 1L;
             var rows = new ResultScreen.Row[order.Length];
             for (int i = 0; i < order.Length; i++)
@@ -6000,6 +6310,7 @@ namespace Sdo.Game
         private void ApplyEvent(Judgment j, int lane = -1)
         {
             _score.Apply(j);
+            NotifyLocalComboMilestone(j);
             _health.Apply(j);
             if (showtimeMode) _showtime.OnJudge(j);                               // ShowTime: fill the gauge (normal) or accrue the bonus (in a window)
             UpdateEmojiOnJudge(j);                                                // combo-milestone / consecutive-miss emoji cut-ins
@@ -6025,7 +6336,9 @@ namespace Sdo.Game
         // while() so a long frame that skips a boundary still settles. _dancing is read by the avatar each frame.
         private void UpdateDanceGate(double now)
         {
-            double settleMs = 8 * (60000.0 / Math.Max(1.0, _map.Bpm));   // 8 beats = 2 bars, same as the score commit
+            // 規則本體在 Sdo.Ruleset.DanceGate —— **遠端舞者用的是同一個函式**(見那邊的註解:
+            // 各寫一份的話門檻一改,別人畫面上的舞者就會靜默對不上,而且沒有測試抓得到)。
+            double settleMs = Sdo.Ruleset.DanceGate.SettleMs(_map.Bpm);   // 8 beats = 2 bars, same as the score commit
             if (_nextDanceSettleMs <= 0) _nextDanceSettleMs = settleMs;
             while (now >= _nextDanceSettleMs)
             {

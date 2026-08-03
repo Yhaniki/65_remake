@@ -32,7 +32,8 @@ namespace Sdo.Game
                 }
             }
             // in ShowTime the score is the BIG EnergyScore font (_scoreRoll @300,10) — hide the normal top digits.
-            if (showtimeMode)
+            // 旁觀模式也走這條:旁觀者沒有自己的分數,上排的分數位數一律不出(需求 10)。
+            if (showtimeMode || spectatorMode)
             {
                 if (_scoreDigits != null) foreach (var d in _scoreDigits) if (d) d.enabled = false;
                 return;
@@ -162,21 +163,55 @@ namespace Sdo.Game
                 _rosterScore[row].Position = SdoLayout.ToWorld(rosterScoreX, y, -3f);
             }
 
-            // spectators (旁觀玩家): GAMEPLAY18 title + fake light-blue names (static; never re-sorted).
-            // 預設關閉(showSpectators=false) — 全是測試假名;不建 → _lookerTitle/_lookerRows 留 null，後續都有 null 防護。
+            // spectators (旁觀玩家): GAMEPLAY18 title + light-blue names。
+            // 離線預設關閉(showSpectators=false) → _lookerTitle/_lookerRows 留 null，後續都有 null 防護。
+            // 固定配 MaxLookerRows 列(**不是跟著資料長度**)—— 中途有人進來旁觀只要改文字，不用重建整排 label。
             if (showSpectators)
             {
                 _lookerTitle = NewSR("LookerTitle", SdoExtracted.LoadImage(gpDir, "GAMEPLAY18.PNG"), 45);
                 SdoLayout.PlaceTopLeft(_lookerTitle, lookerTitleX, lookerTitleY, -3f);
-                _lookerRows = new Label3D[SpectatorNames.Length];
-                for (int i = 0; i < SpectatorNames.Length; i++)
+                _lookerRows = new Label3D[MaxLookerRows];
+                for (int i = 0; i < MaxLookerRows; i++)
                 {
                     _lookerRows[i] = TextStyles.NewLabel("Looker" + i, TextStyles.Style.Looker, 45, lookerFontWorld, TextAnchor.MiddleLeft);
                     _lookerRows[i].Position = SdoLayout.ToWorld(lookerX, lookerFirstY + i * lookerRowStep, -3f);
-                    _lookerRows[i].Text = SpectatorNames[i];
                 }
+                ApplySpectatorNames();
             }
         }
+
+        /// <summary>
+        /// 中途有人進來/離開旁觀 → 即時改名單(需求 10:要真名)。
+        /// 列數不變,只改文字與該列要不要出現。名單還沒建(離線)就只記著。
+        /// </summary>
+        public void SetSpectatorNames(string[] names)
+        {
+            spectatorNames = names ?? new string[0];
+            ApplySpectatorNames();
+        }
+
+        private void ApplySpectatorNames()
+        {
+            if (_lookerRows == null) return;
+            int n = spectatorNames != null ? spectatorNames.Length : 0;
+
+            // 一個旁觀者都沒有 → 連「旁觀玩家」的標題也收起來(官方沒有觀眾時那一區是空的)。
+            // 這一行是 showSpectators 改成「連線就一律建」的配套:不然沒人旁觀時會留一個空標題。
+            if (_lookerTitle != null)
+                _lookerTitle.enabled = _lookersOn && n > 0 && _lookerTitle.sprite != null;
+            for (int i = 0; i < _lookerRows.Length; i++)
+            {
+                if (_lookerRows[i] == null) continue;
+                bool has = i < n && !string.IsNullOrEmpty(spectatorNames[i]);
+                _lookerRows[i].Text = has ? spectatorNames[i] : "";
+                // 沒人的那幾列直接關掉。留一個空字串的 label 雖然看不到字,但它會被 SetRankingVisible
+                // 一起打開 —— 名單中間出現一個空行看起來像「掉了一個人」。
+                _lookerRows[i].SetActive(has && _lookersOn);
+            }
+        }
+
+        /// <summary>旁觀名單現在該不該出現(跟著 <see cref="SetRankingVisible"/> 的最後一次決定)。</summary>
+        private bool _lookersOn = true;
 
         // re-apply the (live-tunable) roster font/positions + rank size, then redraw. Hooked to the F4 button.
         private void RelayoutRoster()
@@ -202,10 +237,9 @@ namespace Sdo.Game
             UpdateRankDisplay();
         }
 
-        // the local dancer's nameplate (animated arrow + name). It is a SCREEN-SPACE label (on the HUD
-        // layer, not the scene layer): HeadMarker projects the head bone through the scene cam each frame
-        // and draws a fixed pixel distance above it — so it floats over the head from any angle and never
-        // occludes it. Only the local player is rendered, so there is exactly one.
+        // The local dancer's nameplate (animated arrow + name). On the 3D path it is a constant-pixel-size
+        // billboard inside SceneCam, so a dancer standing in front can occlude it through the shared depth buffer.
+        // The legacy 2D fallback still projects into the orthographic HUD. Only the local player gets the arrow.
         private void CreateHeadMarker(SdoAvatar avatar)
         {
             int headIdx = avatar.BoneIndex("Bip01_Head");
@@ -219,9 +253,12 @@ namespace Sdo.Game
                 avatar.AddAnchor(headIdx, ag.transform);
                 anchor = ag.transform;
             }
-            var go = new GameObject("HeadMarker");   // HUD layer (default) — children draw in the main ortho cam
+            var go = new GameObject("HeadMarker");
             var hm = go.AddComponent<HeadMarker>();
+            // TryLoadAvatar runs before TryLoadScene, so SceneCam does not exist yet. Start in the safe HUD
+            // mode; TryLoadScene promotes this marker only after the scene camera is successfully constructed.
             hm.Init(_arrowFrames, localPlayerName);
+            hm.SetTeamColor(TeamOf(LocalDancerSlotIndex));   // 組隊局:自己的名字也是自己那一隊的顏色
             Transform a = anchor;
             hm.AnchorGetter = () => a != null ? a.position
                 : ((_avatarRoot != null ? _avatarRoot.position : _danceSpot) + new Vector3(0f, 59f, 0f));
@@ -314,7 +351,8 @@ namespace Sdo.Game
         // rebuild + redraw the roster (called at each 8-beat score commit and once at startup).
         private void RefreshRanking()
         {
-            if (_rosterName == null || !_trackVisible) return;   // not built / hidden during the opening hold
+            // 旁觀模式的 _trackVisible 恆 false(音符板不出)—— 但名單一定要更新,那是旁觀者唯一看得到的資訊。
+            if (_rosterName == null || (!_trackVisible && !spectatorMode)) return;   // not built / hidden during the opening hold
             if (freeMode) { SetRankingVisible(false); return; }  // 自由模式: no ranking display during play
             RebuildRoster();
             UpdateRosterList();
@@ -324,7 +362,19 @@ namespace Sdo.Game
         private void RebuildRoster()
         {
             _roster.Clear();
-            _roster.Add(new PlayerEntry(localPlayerName, TotalScore, true));
+            // 旁觀者不是參賽者 → 名單裡不能有自己。加了的話會多出一列 0 分的自己,而且它會跟著參與名次排序
+            // (「第 3 名」裡有一個根本沒下場的人)。
+            if (!spectatorMode) _roster.Add(new PlayerEntry(localPlayerName, TotalScore, true));
+            // 連線:用 server 推來的真分數,而且**優先於 mockOpponents** —— 真連線時混進假對手的話
+            // 名次是假的,結算列還會多出不存在的人。
+            var netOpp = NetOpponents != null ? NetOpponents() : null;
+            if (netOpp != null)
+            {
+                int cap = Math.Min(netOpp.Length, RosterRows - _roster.Count);
+                for (int i = 0; i < cap; i++)
+                    _roster.Add(new PlayerEntry(netOpp[i].Name ?? "", netOpp[i].Score, false));
+                return;
+            }
             if (mockOpponents && !freeMode)   // 自由模式 = solo (no opponents)
             {
                 double now = _clockStart >= 0 ? (Time.timeAsDouble - _clockStart) * 1000.0 : 0.0;
@@ -364,6 +414,12 @@ namespace Sdo.Game
 
         private void UpdateRankDisplay()
         {
+            // 🔴 旁觀者沒有「我排第幾」。這裡是每 8 拍(每次計分)都會跑的,而它直接寫
+            // _rankCurD.enabled —— 所以只在 SetRankingVisible 那邊把旁觀夾掉是不夠的:
+            // 下一次計分就把數字重新打開了。而旁觀者不在名單裡 → LocalRank 回 rank 0
+            // → 畫面上出現「0 / N」。
+            if (spectatorMode) return;
+
             var (rank, total) = RankingBoard.LocalRank(_roster);
             rank = Mathf.Clamp(rank, 0, 6);    // PKSCORE digits only go 0..6
             total = Mathf.Clamp(total, 0, 6);
@@ -386,13 +442,13 @@ namespace Sdo.Game
                     if (_rosterName[i] != null) _rosterName[i].SetActive(on);
                     if (_rosterScore[i] != null) _rosterScore[i].SetActive(on);
                 }
-            if (_rankCurD) _rankCurD.enabled = on && _rankCurD.sprite != null;
-            if (_rankTotD) _rankTotD.enabled = on && _rankTotD.sprite != null;
-            if (_rankSlash) _rankSlash.enabled = on;
-            if (_lookerTitle) _lookerTitle.enabled = on && _lookerTitle.sprite != null;
-            if (_lookerRows != null)
-                for (int i = 0; i < _lookerRows.Length; i++)
-                    if (_lookerRows[i] != null) _lookerRows[i].SetActive(on);
+            // 名次「N / M」= **我**排第幾。旁觀者沒有「我」→ 不出(但上面的名單照出,那才是旁觀要看的)。
+            bool rankOn = on && !spectatorMode;
+            if (_rankCurD) _rankCurD.enabled = rankOn && _rankCurD.sprite != null;
+            if (_rankTotD) _rankTotD.enabled = rankOn && _rankTotD.sprite != null;
+            if (_rankSlash) _rankSlash.enabled = rankOn;
+            _lookersOn = on;
+            ApplySpectatorNames();   // 標題與空的那幾列都由它決定(見 ApplySpectatorNames)
         }
 
         private void UpdateHpBar()

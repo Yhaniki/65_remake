@@ -816,18 +816,18 @@ namespace Sdo.UI.Screens
                         var owned = _session.Wardrobe.GetOwned(item.Id);
                         int qty = owned != null ? owned.Quantity : 1;
                         WardrobeStore.SaveOwnedWallet(_session);   // 落地 擁有+錢包 (穿搭沒變)
-                        Toast.Show("購買：" + item.Name + (qty > 1 ? " ×" + qty : ""));
+                        Toast.Show("已購買 " + item.Name + (qty > 1 ? " ×" + qty : ""));
                         break;
                     }
                     EquipOwned(item);                        // 購買=直接穿戴 (使用者指定)
                     WardrobeStore.SaveAll(_session);         // 落地 擁有+錢包+穿搭 (只存已擁有的)
                     Nav.RefreshRoomAvatar?.Invoke();         // 房間/大廳的人同步換上
                     RebuildAvatar();                         // 左側預覽更新
-                    Toast.Show("購買並穿上：" + item.Name);
+                    Toast.Show("已購買並穿上 " + item.Name);
                     break;
                 case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
-                case BuyResult.AlreadyOwned: Toast.Show("已經擁有：" + item.Name); break;
-                case BuyResult.NoRoom: Toast.Show(item.IsProp ? "背包已滿" : "服飾欄已滿，請到儲物櫃「服饰栏扩充」"); break;
+                case BuyResult.AlreadyOwned: Toast.Show("已經擁有 " + item.Name); break;
+                case BuyResult.NoRoom: Toast.Show(item.IsProp ? "背包已滿" : "服飾欄已滿,請到儲物櫃用「服饰栏扩充」加格子"); break;
                 default: Toast.Show("購買失敗"); break;
             }
             Refresh();
@@ -853,9 +853,9 @@ namespace Sdo.UI.Screens
             if (bought > 0) WardrobeStore.SaveOwnedWallet(_session);   // 落地 profile.json (擁有+錢包)
             // 有件數因「服飾欄已滿」買不下 → 講清楚 (預設 9 格,不夠請到儲物櫃 服饰栏扩充)。
             string msg;
-            if (noRoom > 0) msg = "全身購買 " + bought + " 件；服飾欄已滿(" + _session.Wardrobe.ClothSlotCount + "格)，還有 " + noRoom + " 件請先到儲物櫃「服饰栏扩充」";
-            else if (noMoney > 0) msg = "全身購買 " + bought + " 件；" + noMoney + " 件餘額不足";
-            else if (bought > 0) msg = "全身購買成功（" + bought + " 件）";
+            if (noRoom > 0) msg = "全身購買 " + bought + " 件,服飾欄滿了(" + _session.Wardrobe.ClothSlotCount + " 格),還有 " + noRoom + " 件請先到儲物櫃用「服饰栏扩充」加格子";
+            else if (noMoney > 0) msg = "全身購買 " + bought + " 件," + noMoney + " 件餘額不足";
+            else if (bought > 0) msg = "全身購買成功(" + bought + " 件)";
             else if (already > 0) msg = "全身穿搭已全部擁有";
             else msg = "沒有可購買的穿搭";
             Toast.Show(msg);
@@ -871,7 +871,7 @@ namespace Sdo.UI.Screens
             w.Coins = Full; w.Points = Full; w.Bonus = Full;
             WardrobeStore.SaveOwnedWallet(_session);   // 錢包落地 profile.json (充值也持久化)
             UpdateWallet();               // 只需刷新底條數字 (不動商品格/預覽)
-            Toast.Show("快速充值：M／G／H 幣已全部充滿");
+            Toast.Show("快速充值:M/G/H 幣已全部充滿");
         }
 
         // 試穿：官方 fitnormal/试穿 是「不需擁有」的即時預覽——只換左側大預覽的模型，不是真正裝備/扣款。

@@ -164,6 +164,166 @@
    "v": "先に曲を選択してください"
   },
   {
+   "k": "room.join_title",
+   "v": "ルーム番号入力"
+  },
+  {
+   "k": "room.join_code",
+   "v": "番号"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "確認"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "ルーム番号は5桁です"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "そのルームは見つかりません"
+  },
+  {
+   "k": "room.join_full",
+   "v": "ルームが満員です"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "対戦中のルームです"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "ルームに参加できませんでした"
+  },
+  {
+   "k": "room.create_failed",
+   "v": "ルームの作成に失敗しました"
+  },
+  {
+   "k": "room.slot_kick",
+   "v": "プレイヤーをキック"
+  },
+  {
+   "k": "room.kicked",
+   "v": "部屋から退出させられました"
+  },
+  {
+   "k": "room.force_start_hint",
+   "v": "未準備のプレイヤーがいます — もう一度「開始」で強制スタート"
+  },
+  {
+   "k": "room.start_no_response",
+   "v": "サーバーが開始要求に応答しませんでした"
+  },
+  {
+   "k": "room.match_aborted",
+   "v": "このラウンドは中止されました"
+  },
+  {
+   "k": "room.slot_transfer_host",
+   "v": "ホストを譲る"
+  },
+  {
+   "k": "room.slot_close",
+   "v": "席を閉じる"
+  },
+  {
+   "k": "room.slot_open",
+   "v": "席を開く"
+  },
+  {
+   "k": "room.teams_2v2",
+   "v": "チーム 2対2"
+  },
+  {
+   "k": "room.teams_3v3",
+   "v": "チーム 3対3"
+  },
+  {
+   "k": "room.teams_2v2v2",
+   "v": "チーム 2対2対2"
+  },
+  {
+   "k": "room.teams_need_layout",
+   "v": "チーム人数は 2対2 / 3対3 / 2対2対2 のいずれかにしてください"
+  },
+  {
+   "k": "room.teams_assigned",
+   "v": "チームを割り当てました"
+  },
+  {
+   "k": "room.spectate_offline",
+   "v": "観戦にはサーバー接続が必要です"
+  },
+  {
+   "k": "room.spectate_in_match",
+   "v": "このラウンドに参加中です — 観戦に切り替えられません"
+  },
+  {
+   "k": "room.spectate_ready",
+   "v": "先に準備を解除してください"
+  },
+  {
+   "k": "room.spectate_no_host",
+   "v": "ホストを引き継げる人がいません"
+  },
+  {
+   "k": "room.spectate_on",
+   "v": "観戦中 — 席を手放しました"
+  },
+  {
+   "k": "neterr.not_host",
+   "v": "ホストのみ可能です"
+  },
+  {
+   "k": "neterr.not_in_room",
+   "v": "ルームにいません"
+  },
+  {
+   "k": "neterr.bad_seat",
+   "v": "その席は変更できません"
+  },
+  {
+   "k": "neterr.bad_state",
+   "v": "今はできません"
+  },
+  {
+   "k": "neterr.no_song",
+   "v": "曲が選ばれていません"
+  },
+  {
+   "k": "neterr.full",
+   "v": "空席がありません"
+  },
+  {
+   "k": "neterr.looker_full",
+   "v": "観戦枠が満員です"
+  },
+  {
+   "k": "neterr.proto",
+   "v": "サーバーのバージョンが違います"
+  },
+  {
+   "k": "room.teams_normal_mode_only",
+   "v": "チーム戦はノーマルのみ"
+  },
+  {
+   "k": "room.create_failed_full",
+   "v": "サーバーの部屋が満杯です"
+  },
+  {
+   "k": "net.transfer_failed",
+   "v": "曲の転送に失敗しました"
+  },
+  {
+   "k": "settings.applied",
+   "v": "設定を適用しました"
+  },
+  {
+   "k": "room.spectate_off",
+   "v": "席に戻りました"
+  },
+  {
    "k": "room.drop_up",
    "v": "上"
   },
@@ -590,6 +750,10 @@
   {
    "k": "stage.name.39",
    "v": "個人ルーム（夜）"
+  },
+  {
+   "k": "room.difficulty_setting",
+   "v": "難易度設定"
   },
   {
    "k": "difficulty.easy",

@@ -75,6 +75,12 @@ namespace Sdo.UI.Util
                 case KeyCode.PageDown: return 0x22;
                 case KeyCode.Insert: return 0x2D;
                 case KeyCode.Delete: return 0x2E;
+                // 修飾鍵。旁觀退出是 Ctrl+Q，而 Ctrl 那一半問的是「現在按著嗎」→ 走 IsHeld；
+                // 這張表少了它就永遠回 0（＝沒對應 → 沒按著），Ctrl+Q 在 raw 路徑上完全按不出來。
+                case KeyCode.LeftControl: return 0xA2;    // VK_LCONTROL
+                case KeyCode.RightControl: return 0xA3;   // VK_RCONTROL
+                case KeyCode.LeftShift: return 0xA0;      // VK_LSHIFT
+                case KeyCode.RightShift: return 0xA1;     // VK_RSHIFT
                 // OEM 鍵：位置固定在 US 版面上（IME 也管不到實體鍵位）
                 case KeyCode.Semicolon: return 0xBA;      // VK_OEM_1  ;:
                 case KeyCode.Equals: return 0xBB;         // VK_OEM_PLUS  =+

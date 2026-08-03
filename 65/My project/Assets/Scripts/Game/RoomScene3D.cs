@@ -19,6 +19,45 @@ namespace Sdo.Game
     public sealed class RoomScene3D : MonoBehaviour
     {
         public const int SceneLayer = 4;   // the perspective stage layer (same as gameplay; the play screen isn't alive here)
+
+        /// <summary>
+        /// 遠端玩家角色專屬的 layer。
+        ///
+        /// 為什麼要與場景分開:六格頭貼的相機要拍「某一個人的臉」,而房間的家具(沙發/喇叭/電視)
+        /// 與角色若同層,頭貼就會拍到家具。分層之後頭貼相機只看這一層 ——
+        /// 家具留在 <see cref="SceneLayer"/>(那是對的,家具不該入頭貼)。
+        /// 房間主相機兩層都看,所以畫面完全不變。
+        /// </summary>
+        public const int RemoteAvatarLayer = 13;
+
+        /// <summary>
+        /// 頭上聊天泡的 layer(TagManager 命名 "RoomBubble")。
+        ///
+        /// 泡的**畫面**住在這一層、由房間相機一起 render,這樣它才會吃 GPU 的深度測試 ——
+        /// 站在說話者前面的人就能逐像素把泡切掉(使用者要的前後景)。泡的**排版與滑鼠命中**
+        /// 仍留在 UI 層(RoomScreen 那邊的透明代理),所以整套鏈物理/拖曳一行都沒改。
+        /// 「場景擋不到泡」則靠畫在泡之前的深度重置片,見 <see cref="PeopleDepthLayer"/>。
+        ///
+        /// 與角色分層的理由跟 <see cref="RemoteAvatarLayer"/> 一樣:六格頭貼相機只看角色那層,
+        /// 泡不該入頭貼。前端 UI 相機也要把這層遮掉(RoomScreen 進房時做),否則泡會被畫兩次。
+        /// </summary>
+        public const int BubbleLayer = 14;
+
+        /// <summary>
+        /// 「深度重置片 + 人的隱形深度分身」那一層(TagManager 命名 "RoomPeopleDepth")。
+        ///
+        /// 泡的遮擋規則是**只被人擋、不被場景擋**(使用者需求)。同一台相機裡靠三步做到,
+        /// 先後由 sortingOrder 決定(它比 renderQueue 優先,見 [[unity-sortingorder-outranks-renderqueue]]):
+        ///
+        ///   場景/家具/衣物(0) → **深度重置片**(98,<c>Sdo/DepthReset</c>,整片寫最遠 = 場景的深度消失)
+        ///   → **角色的隱形分身**(99,<c>Sdo/DepthOnlyMask</c>,把人的剪影寫回深度)
+        ///   → **泡**(100+,照常做深度測試 → 只可能輸給人)。
+        ///
+        /// 兩片都是 ColorMask 0,畫面上完全看不見;它們存在的唯一意義是「決定泡輸給誰」。
+        /// 建立處:重置片在 <c>BuildCamera</c>,分身在 <c>AttachDepthProxy</c>(每個生角色的地方都要叫)。
+        /// </summary>
+        public const int PeopleDepthLayer = 15;
+
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
         public bool loadMapobjs = true;          // load the Room_obj stage props (dianshi/laba/guang/taizi)
@@ -58,9 +97,12 @@ namespace Sdo.Game
         private SdoAvatar _avatar;
         private Transform _avatarRoot;
         private Camera _cam;
+        private GameObject _depthReset;     // 場景畫完後把深度推回無限遠的那片(→ 場景擋不住泡)
+        private Transform _peopleDepthRoot; // 所有角色的隱形深度分身住這底下(刻意不掛在角色身上)
         private RenderTexture _rt;
         private RtResizeTracker _rtTrack;     // debounced window-resize → RT re-allocation (see LateUpdate)
         private MotLoader _walkMot, _idleMot;
+        private bool _slotConfirmed;       // 收到過一份帶自己 slot 的房間快照了嗎(見 SetLocalSeat)
         private bool _flying;   // 飛行翅膀已裝備:idle=flystay、走路=fly 前傾滑動、常駐 +10 懸浮 (SpecialMotionItems)
         private float _hoverCur;         // 目前套用的懸浮高度,平滑追到 HoverY(_flying) — 換穿翅膀時不會瞬移 (TickHover)
         private const float HoverTau = 0.25f;   // 懸浮起降的收斂時間常數(秒),與 ScreenGameplay.UpdateFlyHover 同
@@ -74,6 +116,8 @@ namespace Sdo.Game
         private float _chatActionUntil = -1f;
         private bool _walking;
         private bool _ready;
+        private int _localSeat;       // 本機座位 → 出生點(見 SpawnSpot);離線恆 0
+        private bool _hasWalked;      // 本機走過一步了嗎 —— 走過之後就不許再被 SetLocalSeat 挪動
 
         public float headMarkerRise = 18f;   // world Y above the head bone for the floating head portrait (EXE +15)
 
@@ -81,11 +125,133 @@ namespace Sdo.Game
         public Texture SceneTexture => _rt;
         public bool Ready => _ready;
         public Camera SceneCamForTest => _cam;          // inspection/capture only
+        /// <summary>房間那台相機。頭上泡的畫住在它的世界裡(<see cref="BubbleLayer"/>),所以 RoomScreen
+        /// 需要它的位置/朝向/投影矩陣來擺泡的平面。Null 直到 Build 成功。</summary>
+        public Camera SceneCamera => _cam;
         public SdoAvatar AvatarForTest => _avatar;
         /// <summary>The local player's room avatar — the head portrait mirrors its pose so the two never drift apart.</summary>
         public SdoAvatar PlayerAvatar => _avatar;
         public bool IsWalking => _walking;              // so the head portrait can MIRROR the avatar's walk/idle motion
         public float AvatarFacing => _facing;           // so the head portrait can turn with the avatar's facing
+
+        // 本機在房間地板上的位置。RoomScreen 靠這兩個把位置送上網(RoomScene3D 在 Sdo.Game,
+        // 不認識連線層;RoomScreen 是唯一的黏合層,離線時整段跳過)。
+        public float LocalWalkX => _walkPos.x;
+        public float LocalWalkZ => _walkPos.z;
+
+        /// <summary>
+        /// 本機現在佔的 slot(0..5 座位 / 6..15 旁觀席)。兩種呼叫情境:
+        ///
+        /// 🔴 **晚到的第一份快照。** 連線模式下「進房」與「拿到房間快照」是兩件事:<c>OnShow</c> 那一刻
+        /// <c>CurrentRoom</c> 常常還是 null,座位查不到就會退回 0 —— 而座位 0 的出生點是房主的位置,
+        /// 於是**客戶端會生在房主身上**(實測:兩隻角色完全疊在一起,兩張名字牌重疊)。
+        /// 這種情況已經走過一步就不搬人了(那時玩家自己的位置才是真相)。
+        ///
+        /// **真的換位**(按「旁觀」交出座位、或旁觀者坐回座位):一律搬到新 slot 的錨點,
+        /// 就算他正在走路也搬 —— 是他自己按的,而且官方就是把人挪到新 slot 的位置。
+        /// 順便重挑 idle:旁觀席各有自己的 cat-0x21 觀看姿勢,而且**贏過飛行翅膀的 flystay**
+        /// (見 <see cref="ResolveIdleMot"/>);換過去是硬切,不混色。
+        /// </summary>
+        public void SetLocalSeat(int seat)
+        {
+            if (seat < 0 || !_ready) return;
+            bool first = !_slotConfirmed;
+            _slotConfirmed = true;
+            if (seat == _localSeat) return;
+            _localSeat = seat;
+            var prevIdle = _idleMot;
+            ApplyOutfitMotion();                       // slot 換了 → idle 可能換一支(座位待機 ↔ 觀看姿勢)
+            if (_avatar != null && _idleMot != null && !_walking)
+            {
+                // 🔴 換 slot 的 idle **硬切,不混色**(使用者需求):座位待機 ↔ 看戲姿勢是兩個差很多的姿勢,
+                // 混 1 秒過去看起來像慢動作扭過去,而不是「換了一個狀態」。官方也是按下去就換好。
+                // 只在 clip 真的換了才 Snap:座位↔座位是同一支 idle,那時 SnapNextClip 會**留到下一次**
+                // clip 切換(= 開始走路)才被消耗 → 變成走路那一下沒有混色。
+                if (!ReferenceEquals(prevIdle, _idleMot)) _avatar.SnapNextClip();
+                _avatar.SetClip(_idleMot);
+            }
+            // 高度跟著硬切:動作瞬間換、身體卻慢慢從 +10 飄下來的話,會有一段人跟姿勢對不上的空窗。
+            _hoverCur = SpecialMotionItems.HoverY(_flying);
+            ApplyAvatarTransform();                    // 位置不動的那條路徑也要把新高度寫進去(TickHover 已經沒事做了)
+            if (first && _hasWalked) return;           // 晚到的快照 + 已經自己走過 → 位置不動
+            Vector3 spawn = SpawnSpot(seat);
+            _walkPos = new Vector3(spawn.x, floorY, spawn.z);
+            ApplyAvatarTransform();
+        }
+
+        /// <summary>
+        /// 座位 → 出生點。**本機與遠端都用它**,所以「六個人都還沒走過」時每台算出來的站位都一樣。
+        ///
+        /// 座位 0 保留給 <c>RoomLayout.HostSpawn</c>(那是從官方 EXE 抓出來的真實出生點,
+        /// 也是離線單人房的相機校準基準與既有截圖的依據);1..5 用固定種子在遮罩上取樣的點。
+        /// </summary>
+        public Vector3 SpawnSpot(int seat)
+        {
+            // 旁觀者(slot 6..15)站**官方的 looker 位置** —— 那張表是從 EXE 逐項解出來的
+            // (RoomLayout.SpectatorAnchors @0x583af0),十個位置圍在舞者周圍。
+            // 不要給他們隨機點:隨機會讓觀眾散到房間各處,而且每台算出來不一樣。
+            if (seat >= RoomLayout.SeatCount)
+            {
+                int i = seat - RoomLayout.SeatCount;
+                return (i >= 0 && i < RoomLayout.SpectatorAnchors.Length)
+                    ? RoomLayout.SpectatorAnchors[i] : RoomLayout.HostSpawn;
+            }
+            if (seat <= 0) return RoomLayout.HostSpawn;
+            // 🔴 只需要 5 個點(座位 1..5;座位 0 是房主,上面就 return 了),而且索引要減 1 對齊。
+            // 舊寫法是「產 6 個點、用 seat % 6」:第 0 個點永遠用不到(白算一個),而且與
+            // FillTestAvatars(產 5 個用 0..4)算出來的站位**不一樣** —— 同一個房間兩套站位。
+            if (_remoteSpots == null) _remoteSpots = RandomDancerSpots(RoomLayout.SeatCount - 1);
+            if (_remoteSpots.Length == 0) return RoomLayout.HostSpawn;
+            return _remoteSpots[(seat - 1) % _remoteSpots.Length];
+        }
+
+        /// <summary>
+        /// 座位 → 待機動作檔。座位 0..5 的舞者站 cat-0 的大廳待機;**旁觀者(6..15)各有自己的
+        /// cat-0x21 觀看姿勢**(<see cref="RoomLayout.SlotMotionName"/>,那張表是從 EXE 逐項解出來的
+        /// bucket 載入順序)—— 官方的旁觀者不是十個一模一樣的立正,是十種不同的看戲姿勢。
+        ///
+        /// 回傳的是「基底」idle:座位上還會被飛行翅膀之類的特殊道具覆蓋一次(<see cref="ResolveIdleMot"/>)。
+        /// </summary>
+        public static string SlotIdleMot(int seat, bool male)
+        {
+            if (seat < RoomLayout.SeatCount)
+                return male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot;
+            return "MOTION/" + RoomLayout.SlotMotionName(seat, female: !male) + ".MOT";
+        }
+
+        /// <summary>這個 slot 是旁觀席嗎(6..15)。</summary>
+        public static bool IsSpectatorSlot(int seat) => seat >= RoomLayout.SeatCount;
+
+        /// <summary>
+        /// 旁觀席的人算不算「在飛」—— **不算**。
+        ///
+        /// 飛行翅膀那組特性(flystay 浮空 idle + fly 前傾滑行 + 常駐 +10 懸浮)是一整組:
+        /// 只擋 idle、留著懸浮的話,人會浮在半空中做地面的看戲姿勢;留著滑行走路又會腳踩不到地。
+        /// 所以站上旁觀席就整組關掉,坐回座位再整組開回來(使用者需求:旁觀動作優先於翅膀)。
+        /// </summary>
+        public static bool FlyingAt(int seat, string[] parts)
+            => !IsSpectatorSlot(seat) && SpecialMotionItems.WearsFlyingWing(parts);
+
+        /// <summary>
+        /// 這個 slot + 這身穿搭的待機動作。**本機與遠端走同一個函式**,不然會變成
+        /// 「我看自己在發呆、別人看我在看戲」。
+        ///
+        /// 座位上:飛行翅膀覆蓋成 flystay(穿翅膀的人站地面 idle 會變成翅膀浮著、人卻踩在地上)。
+        /// 旁觀席:**看戲姿勢贏** —— 旁觀席那十種 cat-0x21 姿勢就是「他正在旁觀」這件事在畫面上的樣子,
+        /// 被 flystay 蓋掉的話旁觀者跟座位上的人長得一模一樣,誰在看戲根本分不出來。
+        /// </summary>
+        public static string ResolveIdleMot(int seat, bool male, string[] parts)
+        {
+            string baseIdle = SlotIdleMot(seat, male);
+            return IsSpectatorSlot(seat) ? baseIdle : SpecialMotionItems.IdleMotFor(parts, male, baseIdle);
+        }
+
+        /// <summary>這個 slot + 這身穿搭的走路動作(旁觀席不吃翅膀的滑行,理由同 <see cref="FlyingAt"/>)。</summary>
+        public static string ResolveWalkMot(int seat, bool male, string[] parts)
+        {
+            string baseWalk = male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot;
+            return IsSpectatorSlot(seat) ? baseWalk : SpecialMotionItems.WalkMotFor(parts, male, baseWalk);
+        }
 
         public bool PlayChatAction(string motionRelPath)
         {
@@ -134,25 +300,43 @@ namespace Sdo.Game
         public bool TryChatBubbleViewport(out Vector2 vp)
         {
             vp = default;
-            if (_avatar == null || _cam == null || _avatarRoot == null) return false;
-            Vector3 bp = _avatar.BoneModelPos("Bip01_Neck");
-            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Head");
-            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine1");
-            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine");
-            if (bp == Vector3.zero) return false;
-            Vector3 bw = _avatarRoot.TransformPoint(bp);
+            Vector3 bw;
+            if (_cam == null || !TryChatBubbleAnchorWorld(out bw)) return false;
             Vector3 v = _cam.WorldToViewportPoint(bw);
             if (v.z <= 0f) return false;
             vp = new Vector2(v.x, v.y);
             return true;
         }
 
-        public void Build(bool male = false, string[] avatarParts = null, int bodyIndex = 0)
+        /// <summary>本機聊天泡錨點的**世界座標**(泡的畫進了房間相機之後要用它算平面;見
+        /// <see cref="RoomBubbleWorldAnchor"/>)。與 <see cref="TryChatBubbleViewport"/> 是同一個點 ——
+        /// 刻意共用同一段骨骼 fallback,不然螢幕位置(UI 排版用 viewport)與深度(3D 用世界點)會對不上。</summary>
+        public bool TryChatBubbleAnchorWorld(out Vector3 world)
+        {
+            world = default;
+            if (_avatar == null || _avatarRoot == null) return false;
+            Vector3 bp = _avatar.BoneModelPos("Bip01_Neck");
+            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Head");
+            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine1");
+            if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine");
+            if (bp == Vector3.zero) return false;
+            world = _avatarRoot.TransformPoint(bp);
+            return true;
+        }
+
+        /// <param name="localSeat">
+        /// 本機在房間裡的座位(0..5)。決定本機角色的出生點 —— 與遠端用的是**同一張表**
+        /// (<see cref="SpawnSpot"/>),所以「大家都還沒走過」時每台看到的站位都一致。
+        /// 離線傳 0 → 與加連線之前完全一樣(HostSpawn)。
+        /// </param>
+        public void Build(bool male = false, string[] avatarParts = null, int bodyIndex = 0, int localSeat = 0)
         {
             if (_ready) return;
             _male = male;
             _avatarParts = avatarParts;
             _bodyIndex = bodyIndex;   // 本機角色自己的體型 (胖瘦;由 RoomScreen 從 profile 帶入)
+            _localSeat = localSeat < 0 ? 0 : localSeat;
+            BuildPeopleDepthRoot();   // 角色的隱形深度分身要有地方掛 —— 在 LoadAvatar 之前先備好
             LoadScene();
             LoadMask();
             LoadAvatar();
@@ -160,6 +344,33 @@ namespace Sdo.Game
             if (fillTestAvatars) FillTestAvatars();
             BuildCamera();
             _ready = true;
+        }
+
+        private void BuildPeopleDepthRoot()
+        {
+            if (_peopleDepthRoot != null) return;
+            var go = new GameObject("RoomPeopleDepth") { layer = PeopleDepthLayer };
+            go.transform.SetParent(transform, false);
+            _peopleDepthRoot = go.transform;
+        }
+
+        /// <summary>
+        /// 這隻角色要能擋住頭上聊天泡 —— 替他建隱形的深度分身(見 <see cref="RoomPeopleDepthProxy"/>)。
+        /// **每一個生出角色的地方都要叫一次**:本機、遠端、換穿重建、測試填充。漏掉的那一個人
+        /// 會變成「站在別人泡前面卻擋不住」,而且畫面上完全看不出哪裡不對。
+        /// </summary>
+        private void AttachDepthProxy(GameObject avatarRoot)
+        {
+            if (avatarRoot == null) return;
+            BuildPeopleDepthRoot();
+            RoomPeopleDepthProxy.Attach(avatarRoot, _peopleDepthRoot, PeopleDepthLayer);
+        }
+
+        /// <summary>房間 RT 立刻重畫一次(截圖/測試用)。整個房間 —— 場景、人、深度重置、分身、泡 ——
+        /// 都在同一台相機裡,所以這就只是 Render()。</summary>
+        public void RenderNow()
+        {
+            if (_cam != null) _cam.Render();
         }
 
         // Load the room's animated stage props (Room_obj mapobjs) the official open-room loads (case 0x25): the TV,
@@ -194,6 +405,7 @@ namespace Sdo.Game
                 parent.transform.SetParent(transform, false);
                 var av = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false);
                 if (av == null) { Destroy(parent); continue; }
+                AttachDepthProxy(parent);   // 這些人也要擋得住頭上泡
 
                 // Measure the feet offset from the STANDING idle BEFORE swapping in the slot motion: a bent WAITING pose's
                 // frame-0 lowest vertex isn't the feet, which mis-grounded (sank) some lookers. The model is identical for
@@ -215,30 +427,457 @@ namespace Sdo.Game
             }
         }
 
-        // Pick <count> RANDOM WALKABLE spots for the filler dancers, clustered (uniform-in-disk) around the central
-        // dance area, kept apart by dancerSpacing and clear of the host. Rejection-samples the SCNROOM mask so none land
-        // on the sofa/furniture or off-map. Fixed seed → reproducible spread (change the seed for a different layout).
-        private Vector3[] RandomDancerSpots(int count)
+        // ---- 房間裡的其他玩家(連線模式)----
+
+        /// <summary>房間裡一位遠端玩家的外觀。位置不在裡面 —— 站哪由座位編號決定(見 <see cref="SyncRemotePlayers"/>)。</summary>
+        public struct RemotePlayer
         {
-            var rng = new System.Random(0x5D0);
-            var pts = new System.Collections.Generic.List<Vector3>();
-            var host = new Vector2(RoomLayout.HostSpawn.x, RoomLayout.HostSpawn.z);
-            float sp2 = dancerSpacing * dancerSpacing;
-            for (int guard = 0; guard < 9000 && pts.Count < count; guard++)
-            {
-                double ang = rng.NextDouble() * 6.2831853;
-                double rad = System.Math.Sqrt(rng.NextDouble()) * dancerAreaRadius;
-                float x = dancerAreaCenter.x + (float)(rad * System.Math.Cos(ang));
-                float z = dancerAreaCenter.y + (float)(rad * System.Math.Sin(ang));
-                if (!WalkableRobust(x, z)) continue;
-                var v = new Vector2(x, z);
-                if ((v - host).sqrMagnitude < sp2) continue;
-                bool clash = false;
-                foreach (var p in pts) if ((new Vector2(p.x, p.z) - v).sqrMagnitude < sp2) { clash = true; break; }
-                if (!clash) pts.Add(new Vector3(x, floorY, z));
-            }
-            return pts.ToArray();
+            public int UserId;
+            public int Seat;          // 0..5:決定他站哪(每台算出來一樣)
+            public bool Male;
+            public string[] Parts;    // 穿搭;null → 預設整套
+            public int BodyIndex;     // 體型 0..4
+
+            /// <summary>
+            /// 外觀的比較鍵(<c>NetAvatarLook.Key()</c>)。**「要不要重建這隻角色」只看它。**
+            ///
+            /// 🔴 不能用 rev 判斷:rev 會因為別人按準備、換歌、換隊…一直變,而重建一隻 avatar
+            /// 要讀十幾個部件檔(50-100ms hitch)。也不能不判斷 —— 那就是「換裝在別人畫面上
+            /// 永遠不生效」的根因(舊版看到 userId 已存在就 continue,外觀更新永遠被跳過)。
+            /// </summary>
+            public string LookKey;
         }
+
+        /// <summary>一位遠端玩家在房間裡的執行期狀態(位置插值 + 走路/待機 clip)。</summary>
+        private sealed class Remote
+        {
+            public GameObject Go;
+            public SdoAvatar Av;
+            public float FeetY;           // 站立 idle 的腳偏移(生成時量一次)
+            public MotLoader Idle, Walk;
+            public bool Flying;           // 飛行翅膀 → body Y +10 懸浮**常駐**(不分動靜,與本機同一條規則)
+            public float HoverCur;        // 目前套用的懸浮,平滑追到 HoverY(Flying) — 換穿翅膀時不瞬移(同本機 _hoverCur)
+            public Vector3 Pos;           // 現在畫出來的位置(插值後)
+            public Vector3 Target;        // server 最新一筆
+            public float Facing, TargetFacing;
+            public bool Walking;          // server 說他在走
+            public float LastMoveAt;      // 最後一次收到位置的時間(秒)
+            public bool ClipIsWalk;       // 目前掛的是走路 clip 嗎(避免每幀重設)
+            public float ActionUntil;     // 聊天動作播到什麼時候(秒);<=0 = 沒在播。**per-avatar**,見 PlayRemoteChatAction
+            public string LookKey;        // 生這隻時用的外觀鍵 —— 與新快照不同就重建
+            public int Seat;
+        }
+
+        private readonly Dictionary<int, Remote> _remotes = new Dictionary<int, Remote>();
+        private readonly HashSet<int> _remoteScratch = new HashSet<int>();
+        private readonly List<int> _remoteGone = new List<int>();
+        private Vector3[] _remoteSpots;
+
+        /// <summary>
+        /// 位置插值的收斂速率(1/秒)。官方 formation 的做法是每幀 <c>cur*0.9 + target*0.1</c>,
+        /// 但那個寫法的速度會跟著幀率變(120fps 的人看起來比 30fps 的人跟得緊)——
+        /// 這裡換成時間無關的等效式 <c>1 - exp(-rate*dt)</c>,rate 取 12 大約等於 60fps 下的 0.9/0.1。
+        /// </summary>
+        private const float RemoteLerpRate = 12f;
+
+        /// <summary>
+        /// 多久沒收到新位置就當他停了(秒)。位置流是 20 Hz,所以 0.35 秒 = 連漏好幾筆才判定停下 ——
+        /// 這條是為了「走路 clip 卡住不停」那個症狀:走到一半斷線或封包被丟掉時,
+        /// 沒有這個保險他會原地踏步到永遠。
+        /// </summary>
+        private const float RemoteWalkTimeoutSec = 0.35f;
+
+        /// <summary>
+        /// 讓房間裡站著的其他玩家與 server 的座位表一致:名單裡新出現的生出來、不在名單裡的拆掉。
+        ///
+        /// 位置怎麼決定:協定裡**還沒有走路封包**(官方是 server 發 move packet 移動每個舞者),
+        /// 所以遠端玩家先站在「由座位編號決定的固定點」—— 那組點是同一顆固定種子在同一份遮罩上取樣出來的,
+        /// 所以每台算出來都一樣,不會出現「你看他站在沙發上、他看自己站在中間」。
+        /// (官方離線的 EXE 其實也是把六個舞者都生在 HostSpawn,再靠 server 挪開。)
+        ///
+        /// 只有 idle:房間裡不跳舞(沒有 DPS),所以遠端角色一律播站立待機動作。
+        /// </summary>
+        public void SyncRemotePlayers(List<RemotePlayer> players)
+        {
+            if (!_ready) return;
+
+            // 先拆走掉的人、再生新來的 —— 反過來的話「有人剛走又有人剛進」會多佔一個位置。
+            _remoteScratch.Clear();
+            if (players != null) foreach (var p in players) _remoteScratch.Add(p.UserId);
+            _remoteGone.Clear();
+            foreach (var kv in _remotes) if (!_remoteScratch.Contains(kv.Key)) _remoteGone.Add(kv.Key);
+            foreach (var id in _remoteGone)
+            {
+                if (_remotes[id] != null && _remotes[id].Go != null) Destroy(_remotes[id].Go);
+                _remotes.Remove(id);
+            }
+
+            if (players == null) return;
+            foreach (var p in players)
+            {
+                if (p.UserId == 0) continue;
+                Remote cur;
+                if (!_remotes.TryGetValue(p.UserId, out cur) || cur == null)
+                {
+                    SpawnRemote(p);           // 新來的人
+                    continue;
+                }
+                if (string.Equals(cur.LookKey, p.LookKey, System.StringComparison.Ordinal))
+                {
+                    if (cur.Seat != p.Seat) MoveRemoteToSlot(cur, p);   // 座位↔旁觀:外觀沒變但站位/姿勢要換
+                    continue;                 // 外觀沒變(rev 是因為別的事變的)→ 什麼都不做
+                }
+                RebuildRemote(p, cur);        // 換裝/晚到的 setLook → 重建,但**留在原地**
+            }
+        }
+
+        /// <summary>
+        /// 換裝(或晚到的第一份正確外觀)→ 重建這隻角色。
+        ///
+        /// 🔴 **必須沿用當前的位置與朝向** —— 直接用 <c>RemoteSpot(seat)</c> 重生的話,
+        /// 對方在房間裡走到一半換件衣服就會被瞬移回座位起點。
+        /// 先 <c>SetActive(false)</c> 再 <c>Destroy</c>:Destroy 要到幀尾才生效,
+        /// 不關掉的話新舊兩隻會疊在同一個位置一幀(本機的 RebuildLocalAvatar 已經踩過這個坑)。
+        /// </summary>
+        private void RebuildRemote(RemotePlayer p, Remote old)
+        {
+            Vector3 pos = old.Pos, target = old.Target;
+            bool slotChanged = old.Seat != p.Seat;
+            float facing = old.Facing, targetFacing = old.TargetFacing;
+            bool walking = old.Walking;
+            float lastMoveAt = old.LastMoveAt;
+
+            if (old.Go != null) { old.Go.SetActive(false); Destroy(old.Go); }
+            _remotes.Remove(p.UserId);
+
+            SpawnRemote(p);
+
+            Remote fresh;
+            if (!_remotes.TryGetValue(p.UserId, out fresh) || fresh == null) return;
+            fresh.Pos = pos; fresh.Target = target;
+            fresh.Facing = facing; fresh.TargetFacing = targetFacing;
+            if (slotChanged)
+            {
+                MoveRemoteToSlot(fresh, p);
+                return;
+            }
+            fresh.Walking = walking; fresh.LastMoveAt = lastMoveAt;
+            ApplyRemoteTransform(fresh);
+        }
+
+        /// <summary>
+        /// 這個人換 slot 了(按了旁觀交出座位、或旁觀者坐回座位),但外觀沒變 → **不重建**,
+        /// 只搬位置 + 換 idle。重建要讀十幾個部件檔(50-100ms hitch),為了換個站位付這個代價不值得。
+        ///
+        /// 為什麼一定要處理:比對鍵是外觀(<c>LookKey</c>),換 slot 不會讓它變 → 舊版直接 continue,
+        /// 於是坐下來的人會**帶著旁觀的彎腰姿勢坐在舞台上**,而且還站在旁觀席的位置
+        /// (位置流只在他走動時才送,他不走就永遠不會被修正)。
+        /// </summary>
+        private void MoveRemoteToSlot(Remote r, RemotePlayer p)
+        {
+            r.Seat = p.Seat;
+            // 🔴 走路 clip 與飛行狀態也要跟著 slot 重挑:座位↔旁觀席會開關整組飛行特性(見 FlyingAt),
+            // 只換 idle 的話,穿翅膀的人一站上旁觀席就變成「浮在半空中做地面看戲姿勢」。
+            var idle = SdoRoomAvatar.LoadMot(ResolveIdleMot(p.Seat, p.Male, p.Parts));
+            var walk = SdoRoomAvatar.LoadMot(ResolveWalkMot(p.Seat, p.Male, p.Parts));
+            if (walk != null) r.Walk = walk;
+            r.Flying = FlyingAt(p.Seat, p.Parts);
+            r.HoverCur = SpecialMotionItems.HoverY(r.Flying);   // 高度硬切(同本機 SetLocalSeat:動作瞬間換,身體不慢慢飄)
+            if (idle != null)
+            {
+                bool idleChanged = !ReferenceEquals(r.Idle, idle);
+                r.Idle = idle;
+                if (r.Av != null)
+                {
+                    r.Av.RestMot = idle;
+                    // 正在走就別打斷,停下來自然會換過去;要換就**硬切不混色**(使用者需求,同本機那條)。
+                    // 只在 clip 真的換了才 Snap —— 理由見 SetLocalSeat 那條(否則會留到下一次切換才用掉)。
+                    if (!r.ClipIsWalk)
+                    {
+                        if (idleChanged) r.Av.SnapNextClip();
+                        r.Av.SetClip(idle);
+                    }
+                }
+            }
+            Vector3 spot = SpawnSpot(p.Seat);
+            r.Pos = r.Target = new Vector3(spot.x, floorY, spot.z);
+            r.Walking = false;
+            ApplyRemoteTransform(r);
+        }
+
+        private void SpawnRemote(RemotePlayer p)
+        {
+            var parent = new GameObject("RoomRemoteAvatar" + p.UserId);
+            parent.transform.SetParent(transform, false);
+            var av = SdoRoomAvatar.Build(parent, RemoteAvatarLayer, portraitOpaque: false,
+                                         male: p.Male, equippedParts: p.Parts, bodyIndex: p.BodyIndex);
+            if (av == null) { Destroy(parent); return; }
+            AttachDepthProxy(parent);   // 別人站在我前面時要擋得住我的泡
+
+            // 腳的偏移要在換 clip **之前**量:彎腰姿勢的第 0 幀最低點不是腳,會把人埋進地板。
+            float feet = av.FeetYAt(0f);
+            av.DanceEnabled = () => false;
+            av.DanceTimeSec = () => -1f;
+            // 飛行翅膀的浮空 idle / 滑行走路也照本機那套判斷 —— 不然穿飛行翅膀的人在別人畫面上是走路的。
+            // (旁觀席那組整個關掉 → 看戲姿勢贏;見 ResolveIdleMot / FlyingAt。)
+            var r = new Remote
+            {
+                Go = parent,
+                Av = av,
+                FeetY = feet,
+                Idle = SdoRoomAvatar.LoadMot(ResolveIdleMot(p.Seat, p.Male, p.Parts)),
+                Walk = SdoRoomAvatar.LoadMot(ResolveWalkMot(p.Seat, p.Male, p.Parts)),
+                Flying = FlyingAt(p.Seat, p.Parts),
+                LookKey = p.LookKey,
+                Seat = p.Seat,
+            };
+            // 生出來就浮在該有的高度,不從地面升上去(同本機 BuildAvatar 的 _hoverCur 初始化)。
+            // 換裝會重建這隻 Remote,所以「穿上翅膀慢慢升起」那段平滑在遠端看不到 —— 寧可如此,
+            // 也不要每次重建都從地板彈上來。
+            r.HoverCur = SpecialMotionItems.HoverY(r.Flying);
+            if (r.Idle != null)
+            {
+                av.RestMot = r.Idle;
+                av.PhaseOffsetSec = (p.Seat + 1) * 0.37f;   // 同一段 clip 不要整齊得像複製人
+                av.PoseFrame(av.AutoLoopFrame);             // 上面 FeetYAt 把人停在第 0 幀 → 擺回迴圈當下(見換裝那條)
+                av.SetClip(r.Idle);
+            }
+
+            // 還沒收到他的位置之前先站在座位對應的固定點(每台算出來一樣),收到第一筆就會滑過去。
+            Vector3 spot = SpawnSpot(p.Seat);
+            r.Pos = r.Target = new Vector3(spot.x, floorY, spot.z);
+            r.Facing = r.TargetFacing = RoomMovement.FacingDegrees(2);   // 面向鏡頭
+            _remotes[p.UserId] = r;
+            ApplyRemoteTransform(r);
+        }
+
+        /// <summary>
+        /// 套用 server 推來的位置。收到的是**目標**,不是直接搬過去 —— 位置流是 10 Hz,
+        /// 直接寫的話遠端角色會一格一格跳;每幀往目標插值才看得出是在走。
+        ///
+        /// 還沒生出來的人(座位快照比位置流晚到)直接忽略:下一輪位置就會到。
+        /// </summary>
+        public void ApplyRemoteMove(int userId, float x, float z, float facing, bool walking)
+        {
+            Remote r;
+            if (!_remotes.TryGetValue(userId, out r) || r == null) return;
+            r.Target = new Vector3(x, floorY, z);
+            r.TargetFacing = facing;
+            r.Walking = walking;
+            r.LastMoveAt = Time.time;
+        }
+
+        // 每幀:位置/朝向插值 + 走路/待機 clip 切換。放在 Update 的本機走動之後。
+        private void UpdateRemotes()
+        {
+            if (_remotes.Count == 0) return;
+            float k = 1f - Mathf.Exp(-RemoteLerpRate * Time.deltaTime);
+            float now = Time.time;
+
+            foreach (var kv in _remotes)
+            {
+                var r = kv.Value;
+                if (r == null || r.Go == null || r.Av == null) continue;
+
+                TickRemoteChatAction(r, now);
+                r.Pos = Vector3.Lerp(r.Pos, r.Target, k);
+                r.Facing = Mathf.LerpAngle(r.Facing, r.TargetFacing, k);
+
+                // 「他在走嗎」= server 說在走 **且** 最近有收到位置。少了後半條的話,
+                // 走到一半斷線的人會原地踏步到永遠(見 RemoteWalkTimeoutSec)。
+                bool walking = r.Walking && (now - r.LastMoveAt) < RemoteWalkTimeoutSec;
+                if (walking != r.ClipIsWalk)
+                {
+                    r.ClipIsWalk = walking;
+                    // 正在播聊天動作時只記狀態、不換 clip —— 換了會把動作切掉(動作結束後 TickRemoteChatAction 會補上)。
+                    if (r.ActionUntil <= 0f)
+                    {
+                        var clip = walking ? r.Walk : r.Idle;
+                        if (clip != null) r.Av.SetClip(clip);
+                    }
+                }
+                TickRemoteHover(r);
+                ApplyRemoteTransform(r);
+            }
+        }
+
+        /// <summary>
+        /// 遠端的懸浮收斂 —— 與本機 <see cref="TickHover"/> 同一個 tau,目標同樣**與動靜無關**。
+        ///
+        /// 換裝會整隻重建(HoverCur 直接設成目標),所以實務上這裡多半是 no-op;留著是因為
+        /// 「目標變了就平滑過去」才是這個欄位的定義,哪天有路徑改了 Flying 而不重建也不會瞬移。
+        /// </summary>
+        private static void TickRemoteHover(Remote r)
+        {
+            float target = SpecialMotionItems.HoverY(r.Flying);
+            if (r.HoverCur == target) return;
+            r.HoverCur = Mathf.Abs(target - r.HoverCur) < 0.01f
+                       ? target
+                       : Mathf.Lerp(r.HoverCur, target, 1f - Mathf.Exp(-Time.deltaTime / HoverTau));
+        }
+
+        private void ApplyRemoteTransform(Remote r)
+        {
+            if (r.Go == null) return;
+            // 懸浮吃 r.HoverCur(收斂到 HoverY(Flying)),**不看他有沒有在走**。
+            //
+            // 🔴 這裡曾經是 `(r.Flying && r.ClipIsWalk) ? FlyHoverY : 0f` —— 那正是
+            // SpecialMotionItems.HoverY 註解裡寫的那個 bug:官方是每幀從 Player_UpdateTransform 無條件
+            // 加上去的(028:2614),flystay clip 自己幾乎不抬身體,所以用「有沒有在移動」去 gate 的話
+            // 站著的飛行者就直接站在地板上。本機與場內遠端舞者都已經改用 HoverY,只有房間的遠端漏了 ——
+            // 症狀是同一間房裡「自己浮著比較高、別人站著比較矮」。
+            r.Go.transform.position = new Vector3(r.Pos.x, floorY - r.FeetY + r.HoverCur, r.Pos.z);
+            r.Go.transform.localRotation = Quaternion.Euler(0f, r.Facing, 0f);
+        }
+
+        /// <summary>某位遠端玩家頭頂在畫面上的位置(viewport 0..1),用來擺他的名字牌。看不到 → false。</summary>
+        /// <summary>
+        /// 拿某位遠端玩家的 avatar 與它的 root transform(頭貼相機要靠它算取景與朝向)。
+        /// 回 false = 這個人現在沒有角色(旁觀者、或剛好在重建中)。
+        /// </summary>
+        public bool TryGetRemoteAvatar(int userId, out SdoAvatar av, out Transform root)
+        {
+            av = null; root = null;
+            Remote r;
+            if (!_remotes.TryGetValue(userId, out r) || r == null || r.Av == null || r.Go == null) return false;
+            av = r.Av; root = r.Go.transform;
+            return true;
+        }
+
+        /// <summary>
+        /// 這個人的角色沿相機視線的**半厚度**(世界單位)—— 頭上泡的 depthBias 就是它。
+        ///
+        /// 為什麼需要:泡的錨點是**肩膀骨**,而頭髮/胸口比肩膀骨更靠近相機。泡的平面若剛好放在
+        /// 肩膀骨的深度,說話者**自己**的頭髮就會把泡的尾巴切掉 —— 那看起來會像美術破圖,
+        /// 完全指不到「深度差了 20 個單位」這個原因。把平面往相機拉開自己的半厚度就沒事了。
+        ///
+        /// 🔴 這個值一定要量出來,不可以寫死一個常數:寫太小 → 自己的頭髮切自己的泡;
+        /// 寫太大 → 泡被推到所有人前面,擋人功能整個失效**而且不會報錯**。
+        ///
+        /// <paramref name="userId"/> 0 = 本機角色。回 0 表示量不到(呼叫端就當沒有 bias)。
+        /// </summary>
+        public float OwnerDepthExtent(int userId, Vector3 camFwd)
+        {
+            Transform root = userId == 0 ? _avatarRoot : null;
+            if (userId != 0)
+            {
+                Remote r;
+                if (_remotes.TryGetValue(userId, out r) && r != null && r.Go != null) root = r.Go.transform;
+            }
+            if (root == null) return 0f;
+
+            var rends = root.GetComponentsInChildren<Renderer>();
+            if (rends == null || rends.Length == 0) return 0f;
+            bool any = false;
+            var bounds = new Bounds();
+            foreach (var rd in rends)
+            {
+                if (rd == null || !rd.enabled) continue;
+                if (!any) { bounds = rd.bounds; any = true; }
+                else bounds.Encapsulate(rd.bounds);
+            }
+            if (!any) return 0f;
+
+            // 只取**水平**方向的厚度(相機視線投影到地面之後),刻意不算垂直項。
+            // 理由:房間相機是俯視的,把整個身高(ey≈90)乘上 camFwd.y 會得到「一個人很厚」的假結果,
+            // 泡就會被推得太靠近相機 → 擋人功能失效。真正會切到泡的是說話者的頭/髮,
+            // 而那是水平方向的厚度(≈ 一個人的胸厚)。
+            Vector3 fh = new Vector3(camFwd.x, 0f, camFwd.z);
+            float fl = fh.magnitude;
+            if (fl < 1e-4f) return 0f;   // 正上方俯視 → 沒有「前後」可言
+            fh /= fl;
+            Vector3 e = bounds.extents;
+            return Mathf.Abs(e.x * fh.x) + Mathf.Abs(e.z * fh.z);
+        }
+
+        /// <summary>這個人現在有 3D 角色嗎?(旁觀者不在座位上 → 沒有角色可以掛泡/名字牌)</summary>
+        public bool HasRemote(int userId)
+        {
+            Remote r;
+            return _remotes.TryGetValue(userId, out r) && r != null && r.Go != null;
+        }
+
+        public bool TryRemoteHeadViewport(int userId, out Vector2 vp)
+            => TryRemoteBoneViewport(userId, "Bip01_Head", "Bip01_Neck", headMarkerRise, out vp);
+
+        /// <summary>某位遠端玩家**肩膀**在畫面上的位置 —— 頭上泡的錨點(泡身往上飄、尾巴指著肩膀)。</summary>
+        public bool TryRemoteBubbleViewport(int userId, out Vector2 vp)
+            => TryRemoteBoneViewport(userId, "Bip01_Neck", "Bip01_Head", 0f, out vp);
+
+        /// <summary>某位遠端玩家聊天泡錨點的**世界座標**(同 <see cref="TryChatBubbleAnchorWorld"/> 的用途)。</summary>
+        public bool TryRemoteChatBubbleAnchorWorld(int userId, out Vector3 world)
+            => TryRemoteBoneWorld(userId, "Bip01_Neck", "Bip01_Head", 0f, out world);
+
+        private bool TryRemoteBoneWorld(int userId, string bone, string fallbackBone, float rise, out Vector3 world)
+        {
+            world = default;
+            Remote r;
+            if (!_remotes.TryGetValue(userId, out r) || r == null || r.Av == null || r.Go == null) return false;
+            Vector3 bm = r.Av.BoneModelPos(bone);
+            if (bm == Vector3.zero) bm = r.Av.BoneModelPos(fallbackBone);
+            if (bm == Vector3.zero) return false;
+            world = r.Go.transform.TransformPoint(bm) + new Vector3(0f, rise, 0f);
+            return true;
+        }
+
+        private bool TryRemoteBoneViewport(int userId, string bone, string fallbackBone, float rise, out Vector2 vp)
+        {
+            vp = default;
+            Vector3 bw;
+            if (_cam == null || !TryRemoteBoneWorld(userId, bone, fallbackBone, rise, out bw)) return false;
+            Vector3 v = _cam.WorldToViewportPoint(bw);
+            if (v.z <= 0f) return false;
+            // 🔴 走出畫面的人要回 false:PlaceFollow 不夾邊界,vp 是負的就會把名字牌/泡畫到
+            // 800×600 設計框外面(遠端會動之後才踩得到這個坑)。留一點餘裕讓邊緣不要閃。
+            if (v.x < -0.1f || v.x > 1.1f || v.y < -0.1f || v.y > 1.1f) return false;
+            vp = new Vector2(v.x, v.y);
+            return true;
+        }
+
+        /// <summary>
+        /// 讓某位遠端玩家播一段房間動作(聊天關鍵字觸發的那種)。播完自動回他自己的 idle。
+        ///
+        /// 與本機的 <see cref="PlayChatAction"/> 是同一件事,但**計時器必須是 per-avatar 的** ——
+        /// 本機那顆用的是欄位 <c>_chatActionUntil</c>,如果遠端也共用它,兩個人同時說話就會互相打斷。
+        /// </summary>
+        public bool PlayRemoteChatAction(int userId, string motionRelPath)
+        {
+            Remote r;
+            if (string.IsNullOrEmpty(motionRelPath) || !_remotes.TryGetValue(userId, out r)
+                || r == null || r.Av == null) return false;
+
+            var mot = LoadChatActionMot(motionRelPath);   // 快取共用(存 null 也存 → 載不到的路徑不會每次說話都重試)
+            if (mot == null || mot.MaxTime <= 0f) return false;
+
+            // 與本機 PlayChatAction 同一套:先回 idle 再疊 one-shot,時間長度用 clip 幀數 / fps 算。
+            r.ClipIsWalk = false;
+            if (r.Idle != null) r.Av.SetClip(r.Idle);
+            r.Av.PlayOneShot(mot, false);
+            r.ActionUntil = Time.time + (mot.MaxTime + 1f) / Mathf.Max(1f, r.Av.Fps);
+            return true;
+        }
+
+        // 遠端動作播完 → 回他自己的 idle/walk。與位置插值同一個迴圈裡處理。
+        private void TickRemoteChatAction(Remote r, float now)
+        {
+            if (r.ActionUntil <= 0f || now < r.ActionUntil) return;
+            r.ActionUntil = -1f;
+            if (r.Av != null)
+            {
+                r.Av.ClearOneShot();
+                var clip = r.ClipIsWalk ? r.Walk : r.Idle;
+                if (clip != null) r.Av.SetClip(clip);
+            }
+        }
+
+        // Pick <count> RANDOM WALKABLE spots for the other dancers (seats 1..5), clustered (uniform-in-disk) around the
+        // central dance area, kept apart by dancerSpacing and clear of the host. Rejection-samples the SCNROOM mask so
+        // none land on the sofa/furniture or off-map. 規則本體在 DancerSpotSampler(純函式,有測試守著
+        // 「同樣的輸入一定得到同樣的點」—— 那是「每台看到的站位一樣」的前提)。
+        private Vector3[] RandomDancerSpots(int count)
+            => DancerSpotSampler.Sample(count, dancerAreaCenter, dancerAreaRadius, dancerSpacing,
+                                        new Vector2(RoomLayout.HostSpawn.x, RoomLayout.HostSpawn.z),
+                                        floorY, WalkableRobust);
 
         // walkable at (x,z) AND a small footprint around it (so a dancer isn't on a thin sliver / edge). No mask → true.
         private bool WalkableRobust(float x, float z)
@@ -284,6 +923,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            AttachDepthProxy(parent);   // 自己的身體也要擋得住自己的泡尾巴(depthBias 只拉開,不負責遮擋)
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();                                               // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
@@ -293,7 +933,9 @@ namespace Sdo.Game
             // 99644-99660 loops the 6 dancer slots and writes each player +4/+8/+0xc = (-100, 0, -26); offline only the
             // host (slot 0) exists, so it stays here (the other dancers would be moved by server move-packets). This is
             // on the walkable floor (mask-validated). NOT origin (origin is on the non-walkable dais).
-            _walkPos = new Vector3(RoomLayout.HostSpawn.x, floorY, RoomLayout.HostSpawn.z);
+            // 出生點依座位(與遠端共用 SpawnSpot);座位 0 就是官方那個 HostSpawn,離線行為不變。
+            Vector3 spawn = SpawnSpot(_localSeat);
+            _walkPos = new Vector3(spawn.x, floorY, spawn.z);
             _facing = RoomMovement.FacingDegrees(2);               // face DOWN by default (toward the camera/front)
             ApplyAvatarTransform();
         }
@@ -315,8 +957,12 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            AttachDepthProxy(parent);   // 換穿是**重建**一隻新的 → 分身也要跟著重建(舊的隨舊 root 一起銷毀)
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();   // 地板校正:一律拿地面站姿量(見 GroundFeetY)
+            // GroundFeetY 換的是「拿哪個 clip 量」,量法還是 FeetYAt → Pose(0) → 顯示姿勢仍被停在第 0 幀。
+            // 擺回迴圈當下那一格,否則接著真的換 clip 時(戴上飛行翅膀:地面 idle→flystay)混色會從第 0 幀起跳 = 抖一下。
+            if (_avatar != null) _avatar.PoseFrame(_avatar.AutoLoopFrame);
             _walking = false;         // _hoverCur 不重設 → 穿/脫翅膀時 TickHover 把懸浮平滑帶到新目標(不 pop)
             ApplyRebuildIdle(wasFlying);
             ApplyAvatarTransform();
@@ -377,12 +1023,15 @@ namespace Sdo.Game
         /// is also worn, which forces 3.0). Called after every (re)build so 換裝 picks the trait up immediately.</summary>
         private void ApplyOutfitMotion()
         {
-            _flying = SpecialMotionItems.WearsFlyingWing(_avatarParts);
-            bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
             // 飛行翅膀:idle→flystay,走路→fly(前傾滑動),速度強制 3.0(028:2774),body Y +10 懸浮常駐(028:2614,不分動靜)。
             // 「哪些翅膀會飛」離線推不出來 → SpecialMotionItems 用硬編 5 id + 線上實測名單(見該檔)。
-            string idleRel = SpecialMotionItems.IdleMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleIdleMot : SdoRoomAvatar.IdleMot);
-            string walkRel = SpecialMotionItems.WalkMotFor(_avatarParts, _male, _male ? SdoRoomAvatar.MaleWalkMot : SdoRoomAvatar.WalkMot);
+            // 🔴 但**站在旁觀席時整組關掉**(FlyingAt):旁觀動作優先,而懸浮/滑行是跟著 flystay 的配套。
+            _flying = FlyingAt(_localSeat, _avatarParts);
+            bool fast = SpecialMotionItems.WearsFastWalkShoe(_avatarParts);
+            // idle/walk 依**自己現在的 slot + 穿搭**:坐著是大廳待機(翅膀可覆蓋),旁觀是自己那格
+            // cat-0x21 觀看姿勢(見 ResolveIdleMot;本機與遠端走同一個函式,不然「我看自己在發呆、別人看我在看戲」)。
+            string idleRel = ResolveIdleMot(_localSeat, _male, _avatarParts);
+            string walkRel = ResolveWalkMot(_localSeat, _male, _avatarParts);
             _idleMot = SdoRoomAvatar.LoadMot(idleRel);
             _walkMot = SdoRoomAvatar.LoadMot(walkRel);
             walkSpeed = SpecialMotionItems.WalkSpeedMult(fast, _flying);
@@ -399,10 +1048,22 @@ namespace Sdo.Game
             _cam.orthographic = false;
             _cam.fieldOfView = 45f;                                 // EXACT decompiled projection (Camera_ctor): fovY=45,
             _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500
-            _cam.cullingMask = 1 << SceneLayer;
+            // 房間畫面要同時看到場景、遠端角色、頭上泡(泡進來這台相機才吃得到深度測試),
+            // 以及「人的隱形深度分身」那一層 —— 分身寫不出顏色,它存在的意義就是把深度寫給泡看。
+            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer) | (1 << BubbleLayer)
+                               | (1 << PeopleDepthLayer);
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = Color.black;
+
+            // 場景畫完之後、泡畫出來之前把深度推回無限遠 —— 這就是「泡不被場景擋」。
+            // 🔴 打包版若把 Sdo/DepthReset strip 掉,這裡會是 null:那時整套退回舊行為
+            //    (泡被人也被場景擋),而不是變成「泡蓋在所有人前面」。
+            if (RoomPeopleDepthProxy.Available)
+                _depthReset = RoomPeopleDepthProxy.CreateDepthReset(_cam.transform, PeopleDepthLayer);
+            if (_depthReset == null)
+                Debug.LogWarning("[room-bubble] no " + RoomPeopleDepthProxy.ResetShaderName
+                                 + " → 泡退回舊行為(會被場景擋住)");
             UpdateCamera();
         }
 
@@ -436,7 +1097,11 @@ namespace Sdo.Game
 
         private void Update()
         {
-            if (!_ready || _avatar == null) return;
+            if (!_ready) return;
+            // 🔴 遠端要在本機的守衛**之前**更新:本機 avatar 建失敗(缺檔/解析失敗)時
+            // 整個房間的其他人不該一起凍在原地 —— 那會看起來像「連線斷了」。
+            UpdateRemotes();
+            if (_avatar == null) return;
             if (_chatActionUntil > 0f && Time.time >= _chatActionUntil)
             {
                 _avatar.ClearOneShot();
@@ -465,6 +1130,7 @@ namespace Sdo.Game
                 _walkPos.y = floorY;
                 _facing = RoomMovement.FacingDegrees(dir);   // face the way we're pressing even when blocked
                 if (!_walking) { _walking = true; _avatar.SetClip(_walkMot); }
+                _hasWalked = true;   // 之後 SetLocalSeat 不再挪動我 —— 玩家自己走到的位置才是真相
                 ApplyAvatarTransform();
             }
             else if (_walking)

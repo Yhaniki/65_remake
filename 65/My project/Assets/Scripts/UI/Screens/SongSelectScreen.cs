@@ -1508,6 +1508,8 @@ namespace Sdo.UI.Screens
             // mode/formation/looker are written live by the dropdown callbacks.
 
             Ctx.Rooms.SetSong(s.SongTitle);
+            // 連線:同一首歌也要發給 server(換歌會清掉全房的準備與「有沒有這首歌」= R9)。
+            NetSongPublisher.Publish(Ctx);
             CloseTo(ScreenId.Room);
         }
 

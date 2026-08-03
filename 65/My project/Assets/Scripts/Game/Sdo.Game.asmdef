@@ -6,6 +6,7 @@
         "Sdo.Ruleset",
         "Sdo.Shop",
         "Sdo.Settings",
+        "Sdo.Net",
         "Unity.TextMeshPro"
     ],
     "includePlatforms": [],

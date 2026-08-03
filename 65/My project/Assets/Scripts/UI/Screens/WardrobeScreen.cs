@@ -485,7 +485,7 @@ namespace Sdo.UI.Screens
             if (wasWorn) Nav.RefreshRoomAvatar?.Invoke();  // 刪的是穿著中的才需重建房間人 + 頭貼 (當場)
             RebuildAvatar();
             Refresh();
-            Toast.Show("已刪除服飾：" + nm);
+            Toast.Show("已刪除 " + nm);
         }
 
         // 服饰栏扩充 (#8)：一次擴充「一頁」= PerPage(9) 格 (使用者指定)，上限 1000，落地 profile.json。
@@ -493,11 +493,11 @@ namespace Sdo.UI.Screens
         {
             if (_session == null) return;
             var w = _session.Wardrobe;
-            if (w.ClothSlotCount >= 1000) { Toast.Show("服飾欄已達上限 1000"); return; }
+            if (w.ClothSlotCount >= 1000) { Toast.Show("服飾欄已達上限 1000 格"); return; }
             w.ClothSlotCount = Mathf.Min(1000, w.ClothSlotCount + PerPage);   // +一頁 (9 格)
             WardrobeStore.SaveAll(_session);
             RefreshGrid();   // 頁數立即更新 (1/N)
-            Toast.Show("服飾欄擴充成功（目前 " + w.ClothSlotCount + " 格）");
+            Toast.Show("服飾欄 +" + PerPage + " 格(目前 " + w.ClothSlotCount + " 格)");
         }
 
         // 服饰删除 按鈕態：沒選中 → 灰 (DeleteCostume_4)；有選中 → 正常。

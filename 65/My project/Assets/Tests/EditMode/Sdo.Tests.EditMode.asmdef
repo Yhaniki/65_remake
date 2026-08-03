@@ -9,6 +9,7 @@
         "Sdo.UI",
         "Sdo.Localization",
         "Sdo.Settings",
+        "Sdo.Net",
         "Unity.TextMeshPro",
         "UnityEngine.UI",
         "UnityEngine.TestRunner",

@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    協定與房間規則的單元測試。
+
+    為什麼放在這裡而不是 Unity 的 EditMode:這些東西全部零 UnityEngine，`dotnet test` 跑完是
+    **秒級**，而開 Unity 跑一輪 EditMode 要 35 秒以上。連線的狀態機規則有二十幾條、每條都要測，
+    開發時會反覆跑很多次 —— 迭代速度差距很有感。
+
+    Unity EditMode 那邊仍然要有測試，但測的是不同層次的東西:UI 對映、loopback 假伺服器的
+    整合流程、以及「NetLimits 的常數有沒有跟 Unity 側的 StageCatalog 漂移」這類跨邊界斷言。
+
+    命名一律對齊 repo 既有慣例:namespace Sdo.Tests、類別 XxxTests、方法 Pascal_With_Underscores、
+    中文註解說明「為什麼這條規則重要」。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>8.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Sdo.Tests</RootNamespace>
+
+    <!--
+      ⚠️ 刻意設 false(Sdo.Server 本體是 true)。
+
+      server 本體開 InvariantGlobalization 是對的 —— Linux 上就不必依賴系統的 ICU。
+      但測試要能 `new CultureInfo("de-DE")` 去驗證「小數點在逗號 locale 下仍然輸出成點」,
+      在 invariant 模式下那行會直接拋 CultureNotFoundException。
+
+      而且那個測試針對的其實不是 server:**Unity 客戶端不是 invariant 模式**,它跟著使用者的
+      系統 locale 跑。JSON writer 是 client/server 共用的同一份程式碼,所以 locale bug 的真正
+      受害者是 client。測試專案必須能模擬那個環境。
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 測 server 本體 + 它編進去的那份共用原始碼(Sdo.Net / Sdo.Osu)。 -->
+    <ProjectReference Include="../Sdo.Server/Sdo.Server.csproj" />
+  </ItemGroup>
+</Project>

@@ -193,6 +193,20 @@ if (Test-Path $upscaled) {
     Write-Warning "[package] art\upscaled not found — 表情 cut-in 維持 64px, KEKKAI 維持 512px (run tools\upscale_playingexp.py / upscale_kekkai.py)"
 }
 
+# 2d) Generated art overlay: art\generated carries art the original never had, baked in the original's style from
+# official plates:
+#   UI\LOBBYSEL\LOBBYSEL200..205 = 開房/加入 三態鈕 (tools\make_lobbysel_room_buttons.py)
+#   UI\ROOM\{C06..C09,D06..D09}  = 頭貼徽章條的 NO MAP / PLAYING 四色幀 (延續官方 READY=a06.. / HOST=b06.. 的編號;
+#                                  原版 Extracted 沒有這幾張,靠這棵樹帶進出貨包 —— 見 RoomStateBadgeArtTests)
+# A separate tree from art\upscaled on purpose: 'upscaled' means "replaces a shipped file", 'generated' means
+# "brand-new filename". Same mirror-the-DATA-layout + copy-on-top rule, so nothing existing is touched.
+$generated = Join-Path $Repo 'art\generated'
+if (Test-Path $generated) {
+    Copy-Tree $generated $Data 'generated art overlay'
+} else {
+    Write-Warning "[package] art\generated not found — 連線用的新按鈕與頭貼的 NO MAP / PLAYING 徽章會缺圖"
+}
+
 # 3) Audio + song trees -> DATA (folder names normalized to UPPERCASE)
 Copy-Tree (Join-Path $Off 'SE')    (Join-Path $Data 'SE')    'SE'
 # BGM: the lobby/room random playlist lives in Extracted/UI/BGM (bgm_000..007.ogg) — ship it at DATA/BGM (UiBgmDir's

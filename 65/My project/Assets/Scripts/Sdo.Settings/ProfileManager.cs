@@ -9,8 +9,9 @@ namespace Sdo.Settings
 {
     /// <summary>
     /// 本機使用者(角色)存放區。每個 user 是資料夾 DATA/PROFILE/&lt;id&gt;（id = 零填 8 位數 == 資料夾名），裡面是這個角色
-    /// 自己的東西（profile.json：衣服/道具/錢包，以及家族/等級/經驗值 —— 家族與等級沒設過就退回 config.ini [Profile]
-    /// 的共用預設值，見 <see cref="FamilyName"/> / <see cref="Level"/>）。收藏夾(favorites.json)是全帳號共用，放在 PROFILE 那層（舊版 per-user 的
+    /// 自己的東西（profile.json：衣服/道具/錢包，以及家族/等級/經驗值 —— 家族與等級沒設過就退回**外層**
+    /// DATA/PROFILE/profile.json 的共用預設值，見 <see cref="FamilyName"/> / <see cref="Level"/>）。
+    /// 收藏夾(favorites.json)是全帳號共用，放在 PROFILE 那層（舊版 per-user 的
     /// favorites.json 開機時一次性併入）。目前登入的本機 user 記在**外層的** <c>DATA/PROFILE/profile.json</c>
     /// 的 <c>activeId</c>（見 <see cref="ProfileDefaults"/>；舊版是獨立的 active.txt、再舊一版是 config.ini 的
     /// <c>[Profile]</c> 區，都由 <see cref="ProfileDefaults.Load"/> 一次性搬過來後刪除）。
@@ -349,7 +350,7 @@ namespace Sdo.Settings
                 var path = Path.Combine(Root, ActiveFileName);
                 if (!File.Exists(path)) return;
                 File.Delete(path);
-                Debug.Log($"[Profile] merged into config.ini, removed {path}");
+                Debug.Log($"[Profile] merged into profile.json, removed {path}");
             }
             catch (Exception e) { Debug.LogWarning($"[Profile] legacy active delete failed: {e.Message}"); }
         }

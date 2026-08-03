@@ -283,10 +283,12 @@ namespace Sdo.UI.Screens
         {
             switch (Ctx.Rooms.JoinRoom(r.Id))
             {
+                // 進不去的三種原因**只寫 log,不彈 toast**:房間列表本身就顯示著人數與
+                // 「遊戲中」狀態,滿了/開打了在按下去之前就看得到,再跳一句只是把畫面弄髒。
                 case JoinResult.Ok: GoTo(ScreenId.Room); break;
-                case JoinResult.Full: Toast.Show(L("join.full")); break;
-                case JoinResult.InGame: Toast.Show(L("join.ingame")); break;
-                default: Toast.Show(L("join.notfound")); break;
+                case JoinResult.Full: Debug.Log("[lobby] " + L("join.full")); break;
+                case JoinResult.InGame: Debug.Log("[lobby] " + L("join.ingame")); break;
+                default: Debug.Log("[lobby] " + L("join.notfound")); break;
             }
         }
     }

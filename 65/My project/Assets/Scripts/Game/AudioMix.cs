@@ -26,6 +26,7 @@ namespace Sdo.Game
         /// <summary>感知曲線指數(平方律)。0.5 → 0.25 振幅 ≈ −12 dB。想更接近官方的 −15 dB 就調到 2.5f；
         /// 想回到「滑桿=振幅」的舊行為設 1f。</summary>
         public const float CurveExponent = 2f;
+        public const float SceneSfxRelativeGain = 0.5f;
 
         private static float _bgm = 0.5f, _music = 0.5f, _sfx = 0.5f;   // 滑桿原始值 (0..1)，UI/存檔用的就是這個
 
@@ -40,6 +41,7 @@ namespace Sdo.Game
         public static float Bgm => Gain(_bgm);
         public static float Music => Gain(_music);
         public static float Sfx => Gain(_sfx);
+        public static float SceneSfx => Sfx * SceneSfxRelativeGain;
 
         public static float BgmSlider => _bgm;
         public static float MusicSlider => _music;

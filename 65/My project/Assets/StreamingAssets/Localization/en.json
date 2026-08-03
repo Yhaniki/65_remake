@@ -164,6 +164,166 @@
    "v": "Please select a song first"
   },
   {
+   "k": "room.join_title",
+   "v": "Join Room"
+  },
+  {
+   "k": "room.join_code",
+   "v": "Code"
+  },
+  {
+   "k": "room.join_confirm",
+   "v": "OK"
+  },
+  {
+   "k": "room.join_bad_code",
+   "v": "Enter a 5-digit room code"
+  },
+  {
+   "k": "room.join_not_found",
+   "v": "No room with that code"
+  },
+  {
+   "k": "room.join_full",
+   "v": "That room is full"
+  },
+  {
+   "k": "room.join_in_game",
+   "v": "That room is in a match"
+  },
+  {
+   "k": "room.join_failed",
+   "v": "Could not join the room"
+  },
+  {
+   "k": "room.create_failed",
+   "v": "Failed to create room"
+  },
+  {
+   "k": "room.slot_kick",
+   "v": "Kick player"
+  },
+  {
+   "k": "room.kicked",
+   "v": "You were removed from the room"
+  },
+  {
+   "k": "room.force_start_hint",
+   "v": "Not everyone is ready — press Start again to force"
+  },
+  {
+   "k": "room.start_no_response",
+   "v": "The server did not respond to the start request"
+  },
+  {
+   "k": "room.match_aborted",
+   "v": "The round was cancelled"
+  },
+  {
+   "k": "room.slot_transfer_host",
+   "v": "Make host"
+  },
+  {
+   "k": "room.slot_close",
+   "v": "Close seat"
+  },
+  {
+   "k": "room.slot_open",
+   "v": "Open seat"
+  },
+  {
+   "k": "room.teams_2v2",
+   "v": "Teams 2v2"
+  },
+  {
+   "k": "room.teams_3v3",
+   "v": "Teams 3v3"
+  },
+  {
+   "k": "room.teams_2v2v2",
+   "v": "Teams 2v2v2"
+  },
+  {
+   "k": "room.teams_need_layout",
+   "v": "Team sizes must be 2v2, 3v3 or 2v2v2"
+  },
+  {
+   "k": "room.teams_assigned",
+   "v": "Teams assigned"
+  },
+  {
+   "k": "room.spectate_offline",
+   "v": "Spectating needs a server connection"
+  },
+  {
+   "k": "room.spectate_in_match",
+   "v": "You are in this round — you cannot switch to spectating"
+  },
+  {
+   "k": "room.spectate_ready",
+   "v": "Cancel your ready first"
+  },
+  {
+   "k": "room.spectate_no_host",
+   "v": "No one can take over as host"
+  },
+  {
+   "k": "room.spectate_on",
+   "v": "Spectating — your seat is released"
+  },
+  {
+   "k": "neterr.not_host",
+   "v": "Only the host can do that"
+  },
+  {
+   "k": "neterr.not_in_room",
+   "v": "You are not in a room"
+  },
+  {
+   "k": "neterr.bad_seat",
+   "v": "That seat cannot be changed"
+  },
+  {
+   "k": "neterr.bad_state",
+   "v": "Not possible right now"
+  },
+  {
+   "k": "neterr.no_song",
+   "v": "The room has no song selected"
+  },
+  {
+   "k": "neterr.full",
+   "v": "No free seat"
+  },
+  {
+   "k": "neterr.looker_full",
+   "v": "The spectator slots are full"
+  },
+  {
+   "k": "neterr.proto",
+   "v": "Server version mismatch — please update"
+  },
+  {
+   "k": "room.teams_normal_mode_only",
+   "v": "Teams are for Normal mode only"
+  },
+  {
+   "k": "room.create_failed_full",
+   "v": "The server has no room slots left"
+  },
+  {
+   "k": "net.transfer_failed",
+   "v": "Song transfer failed — please try again"
+  },
+  {
+   "k": "settings.applied",
+   "v": "Settings applied"
+  },
+  {
+   "k": "room.spectate_off",
+   "v": "Back in a seat"
+  },
+  {
    "k": "room.drop_up",
    "v": "Up"
   },
@@ -590,6 +750,10 @@
   {
    "k": "stage.name.39",
    "v": "Private Room (Night)"
+  },
+  {
+   "k": "room.difficulty_setting",
+   "v": "Difficulty"
   },
   {
    "k": "difficulty.easy",

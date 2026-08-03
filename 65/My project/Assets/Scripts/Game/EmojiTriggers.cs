@@ -26,6 +26,19 @@ namespace Sdo.Game
         public const float LowHpOff = 0.40f;   // bar fraction strictly above which the low-HP signal re-arms
         public const int GthTotalMiss = 100;   // GTH cut-in fires when the cumulative Bad/Miss count reaches this
 
+        public static EmojiKind ComboMilestone(int combo)
+        {
+            switch (combo)
+            {
+                case 50: return EmojiKind.HH;
+                case 150: return EmojiKind.SHSH;
+                case 350: return EmojiKind.JRKL;
+                case 550: return EmojiKind.KJ;
+                case 800: return EmojiKind.HE;
+                default: return EmojiKind.None;
+            }
+        }
+
         /// <summary>Feed one judgment plus the combo value AFTER it was applied. Returns the combo-milestone,
         /// cumulative-100-miss (GTH), or consecutive-miss emoji to show, or <see cref="EmojiKind.None"/>.</summary>
         public EmojiKind OnJudge(Judgment j, int comboAfter)
@@ -33,15 +46,7 @@ namespace Sdo.Game
             if (j == Judgment.Perfect || j == Judgment.Cool)
             {
                 ConsecMiss = 0; MissStage = 0;
-                switch (comboAfter)
-                {
-                    case 50: return EmojiKind.HH;
-                    case 150: return EmojiKind.SHSH;
-                    case 350: return EmojiKind.JRKL;
-                    case 550: return EmojiKind.KJ;
-                    case 800: return EmojiKind.HE;
-                    default: return EmojiKind.None;
-                }
+                return ComboMilestone(comboAfter);
             }
 
             // Bad / Miss: grow the cumulative total AND the consecutive run.
