@@ -59,7 +59,7 @@ namespace Sdo.Tests
         }
 
         // SELF-TEST: dump the delta_line bars' WORLD transforms over ~9s (the .mot fires periodically) so they can be
-        // diffed against the official Frida capture (eft_delta_bones.log). Output: H:/65_remake/mysim-delta.log.
+        // diffed against the official Frida capture (eft_delta_bones.log). Output: test-output/scene-eft/mysim-delta.log.
         [UnityTest]
         public IEnumerator Dump_DeltaLine()
         {

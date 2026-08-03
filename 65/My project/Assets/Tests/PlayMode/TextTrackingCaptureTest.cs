@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.IO;
 using NUnit.Framework;
 using TMPro;
@@ -24,7 +24,7 @@ namespace Sdo.Tests
         private const string Title = "SOLID STATE SQUAD";   // 使用者回報的那一首:STATE 的 TA 黏在一起
         private const float Zoom = 6f;                      // 放大渲染,字縫的有無看得出來(幾何比例不變)
         private const float Thr = 0.35f;                    // 亮度超過這個才算「有墨」(SDF 邊緣是灰的)
-        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? "H:/65_remake";
+        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? Sdo.Game.SdoTestOutput.Dir("text");
 
         [UnityTest]
         public IEnumerator SafeTightening_KeepsLettersApart()

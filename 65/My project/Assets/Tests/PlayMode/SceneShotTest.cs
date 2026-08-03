@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.IO;
 using NUnit.Framework;
 using UnityEngine;
@@ -26,7 +26,7 @@ namespace Sdo.Tests
     {
         private const int W = 800, H = 600;
         private static string Scene => System.Environment.GetEnvironmentVariable("SDO_SHOT_SCENE");
-        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? "H:/65_remake";
+        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? Sdo.Game.SdoTestOutput.Dir("scene");
         private static string Tag => System.Environment.GetEnvironmentVariable("SDO_SHOT_TAG") ?? (Scene ?? "scene");
         private static string Grep => System.Environment.GetEnvironmentVariable("SDO_SHOT_GREP");
 

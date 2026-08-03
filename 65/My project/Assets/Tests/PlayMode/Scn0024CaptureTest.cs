@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.IO;
 using NUnit.Framework;
 using UnityEngine;
@@ -20,7 +20,7 @@ namespace Sdo.Tests
     public class Scn0024CaptureTest
     {
         private const int W = 800, H = 600;
-        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? "H:/65_remake";
+        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? Sdo.Game.SdoTestOutput.Dir("scene");
 
         // 只有舞台的乾淨開機:載 SCN0024,不要音符/音樂/HUD。
         private static void SceneOnlyScn0024(Sdo.Game.ScreenGameplay g)

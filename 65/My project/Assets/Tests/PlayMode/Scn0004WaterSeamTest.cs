@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using NUnit.Framework;
@@ -25,7 +25,7 @@ namespace Sdo.Tests
     public class Scn0004WaterSeamTest
     {
         private const int W = 800, H = 600;
-        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? "H:/65_remake";
+        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? Sdo.Game.SdoTestOutput.Dir("scene");
         private static string Tag => System.Environment.GetEnvironmentVariable("SDO_SHOT_TAG") ?? "seam";
 
         private static readonly string[] Layers = { "SEA_UP", "SEA_DOWN", "SEA", "LANG" };

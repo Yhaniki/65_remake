@@ -23,7 +23,8 @@ namespace Sdo.Tests
     /// </summary>
     public class HudTextSharpnessTest
     {
-        private const string OutDir = "H:/65_remake";
+        /// <summary>截圖一律落在 &lt;repo&gt;/test-output/hud/,不散在 repo 根目錄。</summary>
+        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? Sdo.Game.SdoTestOutput.Dir("hud");
 
         [UnityTearDown]
         public IEnumerator TearDown() => GameplayBoot.Teardown();

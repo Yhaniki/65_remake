@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.IO;
 using NUnit.Framework;
 using UnityEngine;
@@ -22,7 +22,7 @@ namespace Sdo.Tests
     public class Scn0005CaptureTest
     {
         private const int W = 800, H = 600;
-        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? "H:/65_remake";
+        private static string OutDir => System.Environment.GetEnvironmentVariable("SDO_SHOT_DIR") ?? Sdo.Game.SdoTestOutput.Dir("scene");
         private static string Tag => System.Environment.GetEnvironmentVariable("SDO_SHOT_TAG") ?? "scn0005";
 
         private static void SceneOnlyScn0005(Sdo.Game.ScreenGameplay g)
