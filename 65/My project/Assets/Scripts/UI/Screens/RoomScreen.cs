@@ -5330,7 +5330,51 @@ namespace Sdo.UI.Screens
                 }
                 if (TeamLayoutRules.TryLayoutFor(a, b, c, out TeamLayout layout)) r.TeamLayout = layout;
             }
+            r.RandomSong = BuildRandomSongPick(s);
             return r;
+        }
+
+        /// <summary>
+        /// 隨機難度局:這一局要玩哪一首,**現在**抽(離線是在 FrontendApp.StartGameplay 抽)。
+        /// 不是隨機難度 → null,server 就用房間當下那首歌(<c>NetRoom.RequestStart</c>:
+        /// <c>Song = resolved.RandomSong ?? _state.Song</c>)。
+        ///
+        /// 🔴 為什麼線上一定要在這裡抽:每台自己抽會各玩一首歌。以前這個欄位**沒有任何地方會填**,
+        /// 所以線上的隨機難度其實是「選歌那一刻抽一首,之後每一局都是同一首」——「隨機」只發生過一次。
+        ///
+        /// 🔴 為什麼只抽官方歌:抽出來的歌不會再經過缺歌檢查(房裡每個人的 availability 是對**房間那首**
+        /// 回報的,而這一首是開場當下才決定的)。官方歌隨遊戲資料出貨、大家一定都有;抽到房主自己
+        /// Songs\ 裡的外部歌,別人載不到譜就卡在載入畫面等逾時。
+        ///
+        /// Title 保持「隨機難度 X」那個標籤 + RandomTitle=true:收端拿它去覆寫房間顯示的話就等於提前揭曉
+        /// (真正抽到哪一首在 Gn 裡,開場載譜用的是那個)。
+        /// </summary>
+        private NetSongRef BuildRandomSongPick(GameSession s)
+        {
+            if (s == null || !s.SongIsRandom) return null;
+            var pool = SongListModel.RandomCandidates(SongListModel.FromCatalog().All, s.SongRandomRange,
+                                                      officialOnly: true);
+            if (pool.Count == 0)
+            {
+                // 抽不出東西(這個難度區間本機一首官方歌都沒有)→ 不填,照房間那首開場,不要讓整局開不成。
+                Debug.LogWarning("[room] 隨機難度抽不到官方歌(range=" + s.SongRandomRange + ")→ 這一局用房間現在那首");
+                return null;
+            }
+            var cand = pool[Random.Range(0, pool.Count)];
+            int slot = Mathf.Clamp(cand.Difficulty, 0, 2);
+            var song = new NetSongRef
+            {
+                Official = true,
+                Gn = cand.Song.gn ?? "",
+                FileId = cand.Song.fileId,
+                ChartIndex = slot,
+                Difficulty = slot,
+                Title = s.SongTitle ?? "",   // 標籤,不是歌名
+                Artist = "",
+                RandomTitle = true,
+            };
+            Debug.Log("[room] 隨機難度抽出這一局的歌:" + cand.Song.gn + " slot=" + slot);
+            return song;
         }
 
         /// <summary>
@@ -5400,10 +5444,17 @@ namespace Sdo.UI.Screens
                 //
                 // 顯示欄位優先用本機目錄(官方歌每台都一樣);查不到才用 server 帶來的那份。
                 // 隨機難度局的 Title 是「隨機難度 X」標籤而不是歌名 → 那種情況寧可留 gn,不要把標籤當歌名。
+                //
+                // 🔴 隨機難度局(RandomTitle)則是**兩個都不動**(傳 null):session 的 SongTitle 是
+                // 「隨機難度 X」那個標籤,被抽到的歌名蓋掉的話 ①房間面板直接寫出這一局抽到什麼(隨機難度
+                // 刻意不揭曉)、②房主回房後 NetSongPublisher 比對會認為「房間換歌了」就重送,把全房的
+                // ready/avail 打回去(見 NetSongPublisher.Publish 的隨機難度守門)。
                 var meta = Sdo.Game.SongCatalog.Get(m.Song.Gn);
-                string title = meta != null ? (meta.title ?? m.Song.Gn)
-                             : (!m.Song.RandomTitle && !string.IsNullOrEmpty(m.Song.Title) ? m.Song.Title : m.Song.Gn);
-                string artist = meta != null ? (meta.artist ?? "") : (m.Song.RandomTitle ? "" : (m.Song.Artist ?? ""));
+                string title = m.Song.RandomTitle ? null
+                             : (meta != null ? (meta.title ?? m.Song.Gn)
+                             : (!string.IsNullOrEmpty(m.Song.Title) ? m.Song.Title : m.Song.Gn));
+                string artist = m.Song.RandomTitle ? null
+                              : (meta != null ? (meta.artist ?? "") : (m.Song.Artist ?? ""));
                 s.SetOfficialSong(m.Song.Gn, m.Song.FileId, title, artist);
                 s.Difficulty = (Difficulty)LocalPlaySlot(m.Song, Mathf.Clamp(m.Song.ChartIndex, 0, 2));
                 return;

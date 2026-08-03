@@ -1129,7 +1129,10 @@ namespace Sdo.UI.Screens
         // (song, difficulty) candidates for the current 隨機 range — searches easy/normal/hard together;
         // the matched difficulty is what gets played. See SongListModel.RandomCandidates.
         private List<SongListModel.RandomCandidate> RandomPool()
-            => SongListModel.RandomCandidates(_model.All, _randRange);
+            // 連線時只抽官方歌:房間會把選到的歌發給全房,抽到本機 Songs\ 的外部歌 → 別人一律缺歌
+            // (然後開場又會被房主當場抽的那首官方歌換掉,見 RoomScreen.BuildRandomSongPick)。
+            => SongListModel.RandomCandidates(_model.All, _randRange,
+                                              officialOnly: Ctx != null && Ctx.Net != null && Ctx.Net.InRoom);
 
         private void Select(SongCatalog.Entry e)
         {
@@ -1538,37 +1541,21 @@ namespace Sdo.UI.Screens
             }
             if (_selected == null) { Toast.Show(L("songselect.need_pick")); return; }
             var s = Ctx.Session;
-            s.SongGn = _selected.gn;
-            s.SongFileId = _selected.fileId;
-            // 隨機難度：房間只顯示「隨機難度 X」標籤，抽到的實際歌名(進遊戲才揭曉)藏起來；一般選擇顯示歌名。
-            s.SongTitle = randomPick ? L(RandRanges[pickedRange].Key) : (_selected.title ?? _selected.gn);
-            s.SongArtist = _selected.artist;
+            // 官方歌 / 外部歌那一整組欄位(譜、音檔、資料夾、packId、生成編舞要的三個槽)一次套好 ——
+            // 見 GameSession.SetSongFromCatalog。以前這一段是攤開寫在這裡的,而「隨機難度每局重抽」
+            // 那條路徑(FrontendApp)只抄到其中四行,抽到外部歌就載不到譜。
+            // keepTitle：隨機難度的房間顯示是標籤,不是抽到的歌名。
+            s.SetSongFromCatalog(_selected, pickedDifficulty, keepTitle: randomPick);
+            // 隨機難度：房間只顯示「隨機難度 X」標籤，抽到的實際歌名(進遊戲才揭曉)藏起來。
+            if (randomPick) s.SongTitle = L(RandRanges[pickedRange].Key);
             s.SongIsRandom = randomPick;
             s.SongRandomRange = pickedRange;
-            s.Difficulty = (Difficulty)pickedDifficulty;
-            // external song (user Songs/ folder): resolve the chosen difficulty's chart + audio for gameplay.
-            // （external 歌不進隨機池 → pickedDifficulty == _difficulty，這裡統一用 pickedDifficulty。）
-            s.IsExternalSong = _selected.external;
             if (_selected.external)
             {
                 // 進遊戲時外部歌的 mp3 要用 NLayer 整首解 ~1.4s(桌面版 Unity 不解 mp3)—— 趁玩家從這裡回房間、
                 // 房主按 Start 的空檔先背景解好,真的按下 Start 時 PCM 已在快取裡就秒進(見 GameplaySongAudioCache)。
                 // sync 用 gameplay 進場同一個 Mp3SyncFor,不然預抓的 PCM 位置跟實際播的不一樣;非 mp3(ogg/wav)自己會跳過。
                 Sdo.Game.GameplaySongAudioCache.Prefetch(_selected.audioPath, Sdo.Game.ScreenGameplay.Mp3SyncFor(_selected.chartFormat));
-                s.ExternalChartFormat = _selected.chartFormat;
-                s.ExternalChartPath = _selected.ChartPath(pickedDifficulty);
-                s.ExternalChartIndex = _selected.ChartIndex(pickedDifficulty);
-                s.ExternalChartSeed = _selected.chartSeed;       // .gn 歌曲包：每首譜自己的金鑰
-                s.ExternalDpsPath = _selected.dpsPath;           // 包裡有官方編舞就跳舞那支，不用生成的
-                s.ExternalAudioPath = _selected.audioPath;
-                s.ExternalLevel = _selected.DisplayLevel(pickedDifficulty);   // 顯示等級(osu 或 minacalc)→ 帶進遊戲顯示同一個 LV
-                s.ExternalFolderPath = _selected.folderPath;     // 生成的 .dps 舞蹈 + sdoinfo.dat 都寫在歌曲自己的資料夾
-                s.ExternalSongKey = _selected.songKey;           // 一個資料夾多首歌時，這支舞是給哪一首的
-                s.ExternalPackId = _selected.packId;             // 生成舞蹈的 seed：吃內容指紋，換台電腦（含傳檔來的）也是同一支舞
-                s.ExternalSongBpm = _selected.bpm;               // 生成編舞的節拍網格：整首歌一個 BPM，換難度不會換舞
-                // 生成編舞要量「這首歌所有難度」的頭尾（不是只有選到這張）—— 三個格子照原順序帶過去，空的留 ""
-                s.ExternalSongChartPaths = new[] { _selected.ChartPath(0), _selected.ChartPath(1), _selected.ChartPath(2) };
-                s.ExternalSongChartIndices = new[] { _selected.ChartIndex(0), _selected.ChartIndex(1), _selected.ChartIndex(2) };
                 EnsureExternalDuration(_selected);               // 進遊戲時才量真正音檔長度(選歌瀏覽時保持譜長不跳);寫回目錄,下次回選歌顯示真長度
             }
             // scene: 按 ◄ ► 當下就已經套進 session 了(見 ApplySceneToSession)；這裡再套一次是為了

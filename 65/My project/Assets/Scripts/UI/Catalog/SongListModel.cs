@@ -202,8 +202,14 @@ namespace Sdo.UI.Catalog
         /// <summary>All (song, difficulty) candidates for RandRanges[rangeIndex]: searches easy/normal/hard TOGETHER —
         /// a song qualifies at ANY difficulty whose level is inside the range AND carries a playable chart. The picked
         /// difficulty is the one that matched (not a pre-selected tab). "全部" = every playable chart. Call afresh
-        /// each time to re-roll.</summary>
-        public static List<RandomCandidate> RandomCandidates(IReadOnlyList<SongCatalog.Entry> list, int rangeIndex)
+        /// each time to re-roll.
+        ///
+        /// 🔴 <paramref name="officialOnly"/> = 連線用。抽出來的歌**不會**再經過缺歌檢查(房裡每個人的
+        /// availability 是對「房間當下那首歌」回報的),所以線上只能抽大家一定都有的官方歌 ——
+        /// 抽到本機 Songs\ 資料夾裡的外部歌,別人載不到譜,那台就卡在載入畫面等到逾時。
+        /// 離線沒有這個問題(自己的歌庫自己一定有)→ 預設 false,照樣抽得到外部歌。</summary>
+        public static List<RandomCandidate> RandomCandidates(IReadOnlyList<SongCatalog.Entry> list, int rangeIndex,
+                                                            bool officialOnly = false)
         {
             var res = new List<RandomCandidate>();
             if (list == null) return res;
@@ -212,6 +218,7 @@ namespace Sdo.UI.Catalog
             foreach (var e in list)
             {
                 if (e == null) continue;
+                if (officialOnly && e.external) continue;
                 for (int d = 0; d < 3; d++)
                 {
                     if (!e.HasChart(d)) continue;   // empty difficulty can't be a random pick

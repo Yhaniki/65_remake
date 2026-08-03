@@ -222,6 +222,30 @@ namespace Sdo.UI.Core
         }
 
         /// <summary>
+        /// server 手上那一份,與本機想送的這一份,對「**房間選了什麼**」而言是同一件事嗎?(純函式)
+        ///
+        /// 一般情形就是同一張譜(<see cref="NetSongRef.SameChartAs"/>)。
+        ///
+        /// 🔴 多出來的那一條是**隨機難度**:每一局開場房主都會抽一首新的官方歌
+        /// (<c>NetResolvedRound.RandomSong</c> → <c>RoomScreen.BuildRandomSongPick</c>),server echo 回來時
+        /// 會寫進自己的 session,所以打完一局回房時這裡的 gn 已經跟 server 手上那份不一樣了。
+        /// 但房間**設定**沒有變(還是同一個「隨機難度 X」)—— 送出去只會被 server 當成換歌:
+        /// 全房的準備與「有沒有這首歌」被清掉(R9)、缺歌的人莫名其妙再傳一次歌。
+        ///
+        /// 標籤(Title)仍然要比:把難度區間從「隨機難度 3」改成「隨機難度 5」是真的改了房間設定,必須送。
+        /// </summary>
+        public static bool SameRoomSelection(NetSongRef want, NetSongRef current)
+        {
+            if (want == null || current == null) return false;
+            // 🔴 隨機難度先判斷,而且**不能**先問 SameChartAs:重抽剛好又抽到同一首歌時 gn 會一樣,
+            // 那時「隨機難度 3 → 隨機難度 5」就會被當成沒變 → server 手上的標籤永遠停在舊區間。
+            if (want.RandomTitle != current.RandomTitle) return false;          // 隨機 ↔ 指定歌:換了
+            if (want.RandomTitle)                                               // 都是隨機:只看標籤(哪個難度區間)
+                return string.Equals(want.Title, current.Title, System.StringComparison.Ordinal);
+            return want.SameChartAs(current);                                   // 指定歌:同一張譜就是沒變
+        }
+
+        /// <summary>
         /// 房主把選好的歌發給 server。非房主/離線 → 什麼都不做(server 也會擋,R7)。
         ///
         /// 🔴 **server 手上已經是這張譜就不送**。RoomScreen.OnShow 每次都會呼叫這裡,而「回房間畫面」
@@ -236,7 +260,7 @@ namespace Sdo.UI.Core
             var song = FromSession(ctx.Session);
             if (song == null) return;
             var current = ctx.Net.Room != null ? ctx.Net.Room.Song : null;
-            if (current != null && song.SameChartAs(current)) return;   // 沒變 → 不送
+            if (SameRoomSelection(song, current)) return;   // 房間選的東西沒變 → 不送
 
             // 🔴 送出前先自己驗一次,而且**要說出是哪一條規則擋的**。
             // server 收到不合格的參照只會回一個沒有細節的 badState「bad song ref」,而畫面上

@@ -618,10 +618,11 @@ namespace Sdo.UI
                 if (pool.Count > 0)
                 {
                     var cand = pool[Random.Range(0, pool.Count)];
-                    s.SongGn = cand.Song.gn;
-                    s.SongFileId = cand.Song.fileId;
-                    s.SongArtist = cand.Song.artist;
-                    s.Difficulty = (Difficulty)cand.Difficulty;
+                    // 🔴 一定要走 SetSongFromCatalog:這裡以前只寫 gn/fileId/artist/難度,抽到**外部歌**時
+                    // IsExternalSong 與 External*(譜/音檔/資料夾)全是上一首的殘值 → 進場拿官方 gn 路徑
+                    // 去找一個叫 ext_xxxxxxxx 的檔案(不存在),或反過來放上一首外部歌的譜。
+                    // keepTitle:房間顯示的是「隨機難度 X」標籤,不能被抽到的歌名蓋掉。
+                    s.SetSongFromCatalog(cand.Song, cand.Difficulty, keepTitle: true);
                 }
             }
 
@@ -661,7 +662,7 @@ namespace Sdo.UI
                 game.songBpm = s.ExternalSongBpm;
                 game.songChartPaths = s.ExternalSongChartPaths;
                 game.songChartIndices = s.ExternalSongChartIndices;
-                game.songDisplayName = s.SongTitle;   // catalog display name (osu pack → real song name), not the .osu pack-label Title
+                game.songDisplayName = RoundSongDisplayName(s);   // catalog display name (osu pack → real song name), not the .osu pack-label Title
             }
             else
             {
@@ -725,6 +726,20 @@ namespace Sdo.UI
             }
             WireNetGameplay(game);
             _activeGame = game;
+        }
+
+        /// <summary>
+        /// 遊戲中要顯示的歌名（外部歌才用得到；官方歌 ScreenGameplay 自己拿 gn 查目錄）。
+        ///
+        /// 🔴 隨機難度的 <c>session.SongTitle</c> 是「隨機難度 X」那個**標籤** —— 房間刻意不揭曉抽到哪一首。
+        /// 但進了遊戲就該看到真正在打的那首，所以這裡拿 gn 回頭查目錄要真名（查不到才退回標籤）。
+        /// </summary>
+        private static string RoundSongDisplayName(GameSession s)
+        {
+            if (s == null) return "";
+            if (!s.SongIsRandom) return s.SongTitle;
+            var e = Sdo.Game.SongCatalog.Get(s.SongGn);
+            return e != null && !string.IsNullOrEmpty(e.title) ? e.title : s.SongTitle;
         }
 
         /// <summary>

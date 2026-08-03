@@ -184,6 +184,51 @@ namespace Sdo.UI.Core
             ExternalSongChartIndices = new int[0];
         }
 
+        /// <summary>
+        /// 把歌庫裡的一筆(entry + 難度槽)整組套進 session:官方歌走 <see cref="SetOfficialSong"/>,
+        /// 外部歌填 External* 那一整組(譜/音檔/資料夾/packId/生成編舞要的三個槽)。
+        ///
+        /// 🔴 為什麼需要這個共用點:換歌**不能只寫 SongGn**。以前「隨機難度每局重抽」那條路徑
+        /// (FrontendApp.StartGameplay)就只寫了 gn/fileId/artist/難度 —— 抽到外部歌時 IsExternalSong
+        /// 還是 false,進場照著官方 gn 路徑去 DATA/MUSIC 找一個叫 ext_xxxxxxxx 的檔案(不存在);
+        /// 反過來(上一首是外部歌、這次抽到官方歌)就會放上一首外部歌的譜與音檔。
+        ///
+        /// <paramref name="keepTitle"/> = 隨機難度:房間顯示的是「隨機難度 X」標籤,不能被抽到的歌名蓋掉
+        /// (蓋掉就等於提前揭曉,線上還會讓 <c>NetSongPublisher</c> 把它當成換歌送出去)。
+        /// </summary>
+        public void SetSongFromCatalog(Sdo.Game.SongCatalog.Entry e, int slot, bool keepTitle = false)
+        {
+            if (e == null) return;
+            slot = slot < 0 ? 0 : (slot > 2 ? 2 : slot);
+            Difficulty = (Difficulty)slot;
+
+            if (!e.external)
+            {
+                SetOfficialSong(e.gn, e.fileId, keepTitle ? null : (e.title ?? e.gn), e.artist);
+                return;
+            }
+
+            SongGn = e.gn;
+            SongFileId = e.fileId;
+            if (!keepTitle) SongTitle = e.title ?? e.gn;
+            SongArtist = e.artist;
+            IsExternalSong = true;
+            ExternalChartFormat = e.chartFormat;
+            ExternalChartPath = e.ChartPath(slot);
+            ExternalChartIndex = e.ChartIndex(slot);
+            ExternalChartSeed = e.chartSeed;          // .gn 歌曲包:每首譜自己的金鑰
+            ExternalDpsPath = e.dpsPath ?? "";        // 包裡有官方編舞就跳那支,不用生成的
+            ExternalAudioPath = e.audioPath ?? "";
+            ExternalLevel = e.DisplayLevel(slot);
+            ExternalFolderPath = e.folderPath ?? "";
+            ExternalSongKey = e.songKey ?? "";
+            ExternalPackId = e.packId ?? "";          // 生成舞蹈的 seed:內容指紋(見 [[sdo-external-dance-per-song-inputs]])
+            ExternalSongBpm = e.bpm;
+            // 生成編舞要量「這首歌所有難度」的頭尾(不是只有選到這張)—— 三個格子照原順序帶過去,空的留 ""
+            ExternalSongChartPaths = new[] { e.ChartPath(0), e.ChartPath(1), e.ChartPath(2) };
+            ExternalSongChartIndices = new[] { e.ChartIndex(0), e.ChartIndex(1), e.ChartIndex(2) };
+        }
+
         /// <summary>回傳 steps 裡最接近 want 的檔位（steps 空 → 直接回 want）。</summary>
         public static float NearestSpeed(float[] steps, float want)
         {
