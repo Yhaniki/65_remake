@@ -576,19 +576,41 @@ namespace Sdo.Game
         private Sprite _bombExplodeSprite;                        // 引爆特效圖 = StepMania 的 Fallback Tap Explosion Dim HitMine → DATA/NOTEIMAGE/BOMB_EXPLODE.png
         private const string MineSeName = "player_mine";          // StepMania theme 的 Player mine.ogg → DATA/SE/player_mine.wav
         private readonly Texture2D[] _holdTex = new Texture2D[Keys];
-        private readonly Sprite[] _holdTail = new Sprite[Keys];
+        private readonly Sprite[] _holdTail = new Sprite[Keys];    // 尾帽的「下緣封口」版 (*_long_bottom) — 尾端在下方時用
+        /// <summary>
+        /// 尾帽的「**上緣**封口」版 (<c>*_long_head</c>)。null = 這個 skin 沒有這張(NOTEIMAGE_5/8/9/10/pet)。
+        ///
+        /// 🔴 官方對長條尾端的封口給了**兩張圖**,不是一張加翻轉:<c>*_long_head</c> 上緣是黑描邊、下緣開口,
+        /// <c>*_long_bottom</c> 反過來。兩張互為上下翻轉**只在左右軌成立**(那個箭頭上下對稱);上下軌翻了
+        /// 箭頭就指反,所以美術各畫一張 —— 這正是它們必須分兩張存在的原因。見 <see cref="HoldCapOrient"/>。
+        /// </summary>
+        private readonly Sprite[] _holdCapHead = new Sprite[Keys];
+        // 官方在這一軌的兩個封口槽位有沒有放帽子圖(見 CapSlotHasArt)。NOTEIMAGE_8 兩端都是 false。
+        private readonly bool[] _holdCapAtHead = new bool[Keys];
+        private readonly bool[] _holdCapAtTail = new bool[Keys];
         private readonly bool[] _holdTailFlipX = new bool[Keys];   // combined-name skins share one cap across a lane pair → mirror it
-        private readonly bool[] _holdTailFlipY = new bool[Keys];   // per-skin baked correction (NOTEIMAGE_8 updown cap 貼圖上下顛倒)
+        // 這張尾帽存的是「上緣封口」那個朝向 → 尾端在下時要翻過來。只有在 skin 缺 _holdCapHead(資產不全)
+        // 時才會是 true;由圖的內容判定,不是 skin 名字(見 CapContentCenterY)。
+        private readonly bool[] _holdTailFlipY = new bool[Keys];
         private readonly bool[] _holdCapPerLane = new bool[Keys];   // true = 每軌預畫 cap (NOTEIMAGE_6 箭頭)：依軌向畫好，不吃 scroll 方向翻轉
         private SpriteRenderer _missOverlay;                       // track-wide red wash flashed on a miss (covers all 4 lanes reliably)
-        private readonly Sprite[] _recIdle = new Sprite[Keys];
-        // Keydown receptor feedback = a ONE-SHOT 5-frame burst (KEYDOWN_JUDGELINE.AN = *_judgeline 2→3→4→5→6),
-        // fired on the key-PRESS transition then resolving back to the idle frame 1 (JUDGELINE.AN = *_judgeline1).
-        // It is press-driven only — NOT tied to whether the key stays held (decompiled CtlNotesShow_TriggerLanePress
-        // = "play judgeline press effect for a lane once").
+        private readonly Sprite[] _recIdle = new Sprite[Keys];      // 待機動畫的第一幀(擺位/建 SpriteRenderer 用的代表圖)
+        /// <summary>
+        /// 判定區的**待機循環**(官方 JUDGELINE.AN)。🔴 官方的判定區不是一張靜態圖 —— 它一直在 2 幀之間
+        /// 循環,那就是玩家看到的「閃爍」。舊版只載了第 1 幀當靜態底圖,於是 NOTEIMAGE_6/8/9/10/11 的閃爍
+        /// 全部不見,而且 NOTEIMAGE_6 的第 2 幀(待機的另一半)被誤當成按下爆發的第一幀。
+        /// null 或只有 1 幀 → 不動(NOTEIMAGE_5 的官方 .an 就是同一張放兩次,以及 3D skin 的單張箭頭)。
+        /// </summary>
+        private readonly Sprite[][] _recIdleFrames = new Sprite[Keys][];
+        /// <summary>待機循環的播放速度。官方 .an 不帶時間資訊(引擎用固定影格率播),這個值是目測配的;
+        /// F4 除錯面板可以調。太快會變抖動,太慢就看不出在閃。</summary>
+        public float recIdleFps = 6f;
+        // Keydown receptor feedback = a ONE-SHOT burst (官方 KEYDOWN_JUDGELINE.AN),fired on the key-PRESS
+        // transition then resolving back to the idle loop. It is press-driven only — NOT tied to whether the key
+        // stays held (decompiled CtlNotesShow_TriggerLanePress = "play judgeline press effect for a lane once").
         private readonly Sprite[][] _recDownFrames = new Sprite[Keys][];
-        private readonly float[] _recDownStart = new float[Keys];   // when the press burst began; <0 = idle (frame 1)
-        public float recKeydownStepSec = 0.03f;                     // per-frame hold time for the 5-frame keydown burst
+        private readonly float[] _recDownStart = new float[Keys];   // when the press burst began; <0 = idle loop
+        public float recKeydownStepSec = 0.03f;                     // per-frame hold time for the keydown burst
         private readonly SpriteRenderer[] _receptors = new SpriteRenderer[Keys];
         public float noteAnimFps = 12f;
         public float bombAnimFps = 5f;   // 炸彈 ZD00..ZD03 循環速度(比音符慢,不然轉太快)
@@ -1673,15 +1695,32 @@ namespace Sdo.Game
                 {
                     n.Tail.sprite = _holdTail[c]; n.Tail.flipX = _holdTailFlipX[c]; n.Tail.flipY = _holdTailFlipY[c];
                 }
+                // 換了 skin,兩端**要不要**畫封口也跟著變(NOTEIMAGE_8 兩端都不畫)—— 已經生出來的 hold
+                // 要重掛,否則會一直留著上一個 skin 的帽子。反向(換到有封口的 skin)只對之後生成的
+                // hold 生效:這條路是 F4 的即時換皮測試,不值得為它把整批 visual 重建一次。
+                if (n.Vis != null)
+                {
+                    bool wantTail = _holdCapAtTail[c] && _holdTail[c] != null;
+                    bool wantHead = _holdCapAtHead[c] && _holdCapHead[c] != null;
+                    if (!wantTail && n.Vis.Tail) n.Vis.Tail.enabled = false;
+                    if (!wantHead && n.Vis.HeadCap) n.Vis.HeadCap.enabled = false;
+                    n.Tail = wantTail ? n.Vis.Tail : null;
+                    n.HeadCap = wantHead ? n.Vis.HeadCap : null;
+                }
                 if (n.Cap3d != null) n.Cap3d.SetActive(false);   // 3D cap triangle off with the 2D skin
             }
         }
 
         // Load (or RELOAD) the per-lane note-board art from NoteDir: falling-note frames, receptor idle + keydown frames,
-        // hold body/tail. Receptor naming differs per skin — NOTEIMAGE_5/6 use numbered *_judgeline1..6, while
-        // NOTEIMAGE_8/9/10/11/pet use *_judgeline + *_judgeline_f2 — so try the numbered scheme first, then _f2.
+        // hold body/caps. 判定區的分幀規則見 LoadJudgeLineArt;長條兩端的封口見 HoldCapArt。
         private void LoadBoardArt()
         {
+            // 判定區的兩支官方動畫整份讀進來(四軌合在同一個 .an 裡,順序 left/down/up/right = Dir5)。
+            // 讀不到就是空陣列 → LoadJudgeLineArt 退回檔名規則,見它的註解。
+            var idleAn = SdoExtracted.LoadAn(NoteDir, "judgeline.an", bleed: true);
+            var downAn = SdoExtracted.LoadAn(NoteDir, "keydown_judgeline.an", bleed: true);
+            // 官方的槽位表:長條兩端要不要畫封口、畫哪張,都寫在這裡面(見 SdoExtracted.AnFrameNames)。
+            var anSlots = SdoExtracted.AnFrameNames(NoteDir, "noteimage.an");
             for (int c = 0; c < Keys; c++)
             {
                 string d = Dir5[c];
@@ -1689,30 +1728,208 @@ namespace Sdo.Game
                 var fr = new Sprite[4]; bool ok = true;
                 for (int f = 0; f < 4; f++) { fr[f] = SdoExtracted.LoadImage(NoteDir, d + "holdheadactive" + f + ".png", bleed: true); if (fr[f] == null) ok = false; }
                 if (ok) _noteFrames[c] = fr;
-                _recIdle[c] = SdoExtracted.LoadImage(NoteDir, d + "_judgeline1.png", bleed: true) ?? SdoExtracted.LoadImage(NoteDir, d + "_judgeline.png", bleed: true);
-                var rdf = new List<Sprite>();                         // keydown burst: numbered *_judgeline2..6, else *_judgeline_f2
-                for (int f = 2; f <= 6; f++) { var s = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + f + ".png", bleed: true); if (s != null) rdf.Add(s); }
-                if (rdf.Count == 0) { var f2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2.png", bleed: true); if (f2 != null) rdf.Add(f2); }
-                if (rdf.Count == 0 && _recIdle[c] != null) rdf.Add(_recIdle[c]);
-                _recDownFrames[c] = rdf.ToArray();
+                LoadJudgeLineArt(c, d, idleAn, downAn);
                 string baseLong = (d == "left" || d == "right") ? "rightleft_long" : "updown_long";
                 var bodySpr = SdoExtracted.LoadImage(NoteDir, baseLong + ".png");
                 if (bodySpr != null) { _holdTex[c] = bodySpr.texture; _holdTex[c].wrapMode = TextureWrapMode.Repeat; SdoExtracted.AlphaBleed(_holdTex[c]); }
                 // end cap: prefer a PER-LANE cap ({left|right|down|up}_long_bottom — NOTEIMAGE_6, a mini-arrow drawn to match
                 // the LANE's arrow direction), else the combined cap (rightleft/updown_long_bottom — NOTEIMAGE_5/8, a shared
-                // "funnel" that must point away from the body). Per-lane caps are already oriented per lane → they must NOT
-                // take the scroll-direction flip (flipping them in 向下 points the arrow the wrong way). Combined caps DO take
-                // the scroll flip; NOTEIMAGE_8's updown cap is additionally stored upside-down → a baked correction flag.
+                // "funnel" that must point away from the body). 這一張是長條**下端**的封口;上端的封口是另一張,
+                // 在下面的 headCap 找 —— 官方兩個朝向都備了圖(NOTEIMAGE_MOVEDOWN.AN 用的就是另一張),
+                // 所以正常路徑一次翻轉都不需要,per-lane 的箭頭也就不會被翻到指錯方向。
                 var perLaneCap = SdoExtracted.LoadImage(NoteDir, d + "_long_bottom.png");
                 var capSpr = perLaneCap ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
                 _holdCapPerLane[c] = perLaneCap != null;
-                bool flipY = (d == "up" || d == "down") && NoteDir.EndsWith("NOTEIMAGE_8");
+                // 官方槽位表決定這一軌**兩端各要不要**畫封口(見 CapSlotHasArt)。資料夾裡有圖不代表官方
+                // 有在用 —— NOTEIMAGE_8 的 *_long_bottom 就沒被任何 .an 引用(它兩端都不畫封口)。
+                _holdCapAtHead[c] = CapSlotHasArt(anSlots, CapSlotHead, c);
+                _holdCapAtTail[c] = CapSlotHasArt(anSlots, CapSlotTail, c);
+                // 同一頂尾帽的「上緣封口」版 = 官方**向下捲專用**的那張(NOTEIMAGE_MOVEDOWN.AN 用的就是它)。
+                // 每個 skin 的叫法不同,所以照這個順序找:
+                //   *_long_head        NOTEIMAGE_6 每軌一張(箭頭要跟著軌向,翻不得)
+                //   {rightleft|updown}_long_head    NOTEIMAGE_11 / showtime 合併的一張
+                //   {rightleft|updown}_long_bottom_d  NOTEIMAGE_5/8/9/10/pet ——「_d」= movedown
+                var headCap = SdoExtracted.LoadImage(NoteDir, d + "_long_head.png")
+                              ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_head.png")
+                              ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom_d.png")
+                              ?? SdoExtracted.LoadImage(NoteDir, d + "_long_bottom_d.png");
+                // 拿到兩張之後,誰是「上緣封口」版由**圖自己**說了算(見 CapContentCenterY)——
+                // 不看檔名、也不看 skin 叫什麼。NOTEIMAGE_8 的 updown 那對就是對調存放的
+                // (它的 updown_long_bottom 才是上緣封口那張),這樣判就自動歸位。
+                if (headCap != null && capSpr != null)
+                {
+                    float headCy = CapContentCenterY(headCap), tailCy = CapContentCenterY(capSpr);
+                    if (!float.IsNaN(headCy) && !float.IsNaN(tailCy) && headCy < tailCy)
+                    {
+                        var swap = capSpr; capSpr = headCap; headCap = swap;
+                    }
+                }
+                // 兩張都拿到就**不必翻轉** —— 官方本來就備了兩個朝向,翻轉是只有一張時的代用品。
+                // 真的只有一張(資產不全)才需要翻,而「這張存的是哪個朝向」同樣問圖本身:內容落在
+                // 畫布上半 = 它其實是上緣封口那版,那麼尾端在下時就得翻過來。
+                // 🔴 以前這裡寫的是 `(d=="up"||d=="down") && NoteDir.EndsWith("NOTEIMAGE_8")` —— 一條寫死
+                //    skin 名字的特例,而它想判斷的正是這件事。改看內容之後,每個 skin(含將來新增的)都
+                //    自動判對,不必再有任何一條 skin 特例。
+                bool flipY = false;
+                if (headCap == null && capSpr != null && capSpr.texture != null)
+                {
+                    float tailCy = CapContentCenterY(capSpr);
+                    flipY = !float.IsNaN(tailCy) && tailCy > capSpr.texture.height * 0.5f;
+                }
                 if (capSpr != null) { _holdTail[c] = SdoExtracted.CleanCapCopy(capSpr); _holdTailFlipX[c] = false; _holdTailFlipY[c] = flipY; }
+                _holdCapHead[c] = headCap != null ? SdoExtracted.CleanCapCopy(headCap) : null;
             }
             // 炸彈 (note_type 1) 動畫：ZD00..ZD03,整組共用(非每軌);隨 note skin 一起換。
             var zd = new List<Sprite>();
             for (int f = 0; f < 4; f++) { var s = SdoExtracted.LoadImage(NoteDir, "ZD0" + f + ".png", bleed: true); if (s != null) zd.Add(s); }
             _bombFrames = zd.Count > 0 ? zd.ToArray() : null;
+        }
+
+        /// <summary>
+        /// 判定區(receptor)一軌的兩支動畫。官方把它們分成兩個 .an,而**待機那支本身就是動畫**:
+        /// <list type="bullet">
+        /// <item><c>JUDGELINE.AN</c> — 待機**循環**,每軌 2 幀。使用者說的「判定區的圖示會閃爍」就是它。</item>
+        /// <item><c>KEYDOWN_JUDGELINE.AN</c> — 按下時放一次的爆發,每軌 5 幀(重複同一張來控時長)。</item>
+        /// </list>
+        ///
+        /// 🔴 舊版是**用檔名猜**的:待機 = judgeline1 一張、按下 = judgeline2..6。那條規則只有 NOTEIMAGE_5
+        ///    對得上 —— NOTEIMAGE_6 的 judgeline2 是**待機的另一半**,被當成按下爆發的第一幀,於是閃爍整個
+        ///    消失;NOTEIMAGE_8/9/10/11 的 judgeline_f2 同樣是待機的第二幀,而真正的按下幀叫
+        ///    judgeline_f2_1 / _f2_2。
+        ///
+        /// 🔴 那兩支 .an(以及 *_f2_1/_f2_2.png)目前**不在 DATA/NOTEIMAGE 裡** —— 死檔探測沒看到有人讀
+        ///    它們,整批被搬進 DATA_quarantine(正是因為這裡以前用猜的)。所以先試著讀 .an,檔案搬回來就
+        ///    自動照官方走;讀不到才退回下面這份**照那兩支 .an 抄下來**的檔名規則:
+        ///   • 編號式 6 張 (NOTEIMAGE_5):待機 = 1;按下 = 2,3,4,5,6
+        ///   • 編號式 4 張 (NOTEIMAGE_6):待機 = 1,2;按下 = 3,4
+        ///   • _f2 式 (8/9/10/11/pet/showtime):待機 = judgeline + judgeline_f2;按下 = judgeline_f2_1/_f2_2
+        /// </summary>
+        private void LoadJudgeLineArt(int lane, string d, Sprite[] idleAn, Sprite[] downAn)
+        {
+            var idle = LaneSlice(idleAn, lane);
+            var down = LaneSlice(downAn, lane);
+
+            if (idle == null)
+            {
+                var numbered = new List<Sprite>();
+                for (int f = 1; f <= 6; f++)
+                {
+                    var s = SdoExtracted.LoadImage(NoteDir, d + "_judgeline" + f + ".png", bleed: true);
+                    if (s == null) break;
+                    numbered.Add(s);
+                }
+                if (numbered.Count > 0)
+                {
+                    // 磁碟上有幾張就分得出是哪一種:6 張 = NOTEIMAGE_5(待機只有第 1 張),否則 = NOTEIMAGE_6(待機 1,2)。
+                    int idleCount = Mathf.Min(numbered.Count >= 6 ? 1 : 2, numbered.Count);
+                    idle = numbered.GetRange(0, idleCount).ToArray();
+                    if (down == null && numbered.Count > idleCount)
+                        down = BurstFrames(numbered.GetRange(idleCount, numbered.Count - idleCount));
+                }
+                else
+                {
+                    var lst = new List<Sprite>();
+                    var b = SdoExtracted.LoadImage(NoteDir, d + "_judgeline.png", bleed: true);
+                    var f2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2.png", bleed: true);
+                    if (b != null) lst.Add(b);
+                    if (f2 != null) lst.Add(f2);
+                    if (lst.Count > 0) idle = lst.ToArray();
+                }
+            }
+            if (down == null)
+            {
+                // _f2 式的按下幀。這兩張目前還在 DATA_quarantine,所以正常會落空 → 下面退回待機末幀。
+                var lst = new List<Sprite>();
+                var d1 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2_1.png", bleed: true);
+                var d2 = SdoExtracted.LoadImage(NoteDir, d + "_judgeline_f2_2.png", bleed: true);
+                if (d1 != null) lst.Add(d1);
+                if (d2 != null) lst.Add(d2);
+                if (lst.Count > 0) down = BurstFrames(lst);
+            }
+
+            _recIdleFrames[lane] = idle;
+            _recIdle[lane] = idle != null && idle.Length > 0 ? idle[0] : null;
+            // 按下沒有自己的幀(_f2_1/_f2_2 還在 quarantine)→ 用待機的最後一幀,至少按下去有反應。
+            // 這正是舊版的外觀,所以退回這條不會比以前差。
+            if ((down == null || down.Length == 0) && idle != null && idle.Length > 0)
+                down = new[] { idle[idle.Length - 1] };
+            _recDownFrames[lane] = down;
+        }
+
+        // NOTEIMAGE.AN 的組別(16 個一組 = 4 軌 × 4 幀,軌序 left/down/up/right = Dir5):
+        //   0 = note 頭  1 = 長條身體  2 = 靠判定線那端的封口  3 = 尾端的封口
+        private const int CapSlotHead = 2;
+        private const int CapSlotTail = 3;
+
+        /// <summary>
+        /// 官方在這一軌的這個封口槽位**放了帽子圖嗎**。
+        ///
+        /// 放的是 note 頭(<c>*HoldHeadActive0</c>)就代表「這一端不畫封口」—— 那個槽位官方拿 note 頭
+        /// 當填充。NOTEIMAGE_5/9/10/pet 的靠判定線端是這樣,而 **NOTEIMAGE_8 兩端都是**:它資料夾裡的
+        /// <c>*_long_bottom</c> 沒有被任何 .an 引用,是廢棄素材(難怪它的 updown 那對還存反了都沒人發現)。
+        ///
+        /// 🔴 所以「有沒有這個檔案」不能拿來當判準,只有 .an 說了算。.an 讀不到(或短得不合理)時
+        /// 回 true = 照舊畫,寧可多畫一頂也不要讓長條忽然變成沒有收邊的斷面。
+        /// </summary>
+        private static bool CapSlotHasArt(string[] anSlots, int group, int lane)
+        {
+            int i = group * 16 + lane * 4;
+            if (anSlots == null || i >= anSlots.Length) return group == CapSlotTail;   // 資訊不足:尾端照舊畫,頭端不畫(舊行為)
+            var name = anSlots[i] ?? "";
+            return name.IndexOf("holdheadactive", System.StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        /// <summary>
+        /// 這張尾帽圖的**不透明內容**在紋理裡的垂直重心(Unity 紋理座標:0 = 最下緣,height-1 = 最上緣)。
+        /// <c>NaN</c> = 整張全透明 / 讀不到。
+        ///
+        /// 用途:分辨同一頂尾帽的「上緣封口」與「下緣封口」兩版。官方那兩張互為上下鏡像,所以
+        /// **內容比較靠上的那張就是上緣封口那版** —— 這是圖本身就帶著的資訊,不必去猜檔名。
+        ///
+        /// 🔴 刻意不看檔名、也不看 skin 叫什麼:官方的命名根本不一致(NOTEIMAGE_6 叫 <c>*_long_head</c>,
+        /// 其餘叫 <c>*_long_bottom_d</c>),而且 NOTEIMAGE_8 的 updown 那對是**對調存放**的 ——
+        /// 以前就是為了它硬寫了一條 <c>EndsWith("NOTEIMAGE_8")</c> 的特例加一個翻轉旗標。改看內容之後
+        /// 每個 skin 都自動歸位,將來多一個 skin 也不必再補特例。
+        /// </summary>
+        private static float CapContentCenterY(Sprite s)
+        {
+            var tex = s != null ? s.texture : null;
+            if (tex == null) return float.NaN;
+            var px = tex.GetPixels32();
+            int w = tex.width, h = tex.height;
+            double sum = 0.0;
+            long n = 0;
+            for (int y = 0; y < h; y++)
+            {
+                int row = y * w;
+                for (int x = 0; x < w; x++)
+                    if (px[row + x].a > 128) { sum += y; n++; }
+            }
+            return n > 0 ? (float)(sum / n) : float.NaN;
+        }
+
+        /// <summary>四軌合在同一個 .an 裡(順序 left/down/up/right,與 <see cref="Dir5"/> 相同)——
+        /// 切出第 <paramref name="lane"/> 軌的那幾幀。長度不是 4 的倍數就當這份 .an 不可信,回 null。</summary>
+        private static Sprite[] LaneSlice(Sprite[] all, int lane)
+        {
+            if (all == null || all.Length == 0 || all.Length % Keys != 0) return null;
+            int per = all.Length / Keys;
+            var slice = new Sprite[per];
+            System.Array.Copy(all, lane * per, slice, 0, per);
+            return slice;
+        }
+
+        /// <summary>把手上這幾張圖攤成官方按下爆發的節奏。官方 KEYDOWN_JUDGELINE.AN 的每一格就是一幀,
+        /// 靠**重複同一張**控時長(NOTEIMAGE_6/8/9/10/11 都是 前者×3 → 後者×2)。已經有 5 張以上
+        /// (NOTEIMAGE_5 的 2..6)就一張一幀照播。少了這一手,只有兩張的 skin 按下去只閃 0.06 秒,看不見。</summary>
+        private static Sprite[] BurstFrames(IList<Sprite> src)
+        {
+            if (src == null || src.Count == 0) return null;
+            if (src.Count >= 5) { var all = new Sprite[src.Count]; src.CopyTo(all, 0); return all; }
+            var outp = new List<Sprite>(5);
+            for (int i = 0; i < 3; i++) outp.Add(src[0]);
+            for (int i = 0; i < 2; i++) outp.Add(src.Count > 1 ? src[1] : src[0]);
+            return outp.ToArray();
         }
 
         // 3D-note skin: load the three beat-colour families (magenta / blue / green) from 3DNOTES\ as 4-frame glow sets.
@@ -1775,7 +1992,7 @@ namespace Sdo.Game
             var down = new List<Sprite>(); if (jl1) down.Add(jl1); if (jl2) down.Add(jl2);
             for (int c = 0; c < Keys; c++)
             {
-                if (jl0 != null) _recIdle[c] = jl0;
+                if (jl0 != null) { _recIdle[c] = jl0; _recIdleFrames[c] = null; }   // 3D skin 的待機是單張灰箭頭,不閃
                 if (down.Count > 0) _recDownFrames[c] = down.ToArray();
                 _recDownStart[c] = -1f;                                                  // snap receptors to idle
             }
@@ -2534,12 +2751,19 @@ namespace Sdo.Game
                     v.BodyMr.sharedMaterial.color = Color.white;
                     n.Body = v.Body;
                 }
-                if (_holdTail[c] != null)
+                if (_holdTail[c] != null && _holdCapAtTail[c])
                 {
-                    if (v.Tail == null) CreateVisualTail(v);
+                    if (v.Tail == null) v.Tail = CreateCapRenderer("HoldTail");
                     v.Tail.sprite = _holdTail[c]; v.Tail.color = Color.white;
                     v.Tail.flipX = _holdTailFlipX[c]; v.Tail.flipY = _holdTailFlipY[c];   // mirror the shared combined-skin cap per lane
                     n.Tail = v.Tail;
+                }
+                // 靠判定線那端的封口(官方組 3)。只有真的有圖的 skin 才建 —— 見 CapSlotHasArt。
+                if (_holdCapAtHead[c] && _holdCapHead[c] != null && _holdTail[c] != null)
+                {
+                    if (v.HeadCap == null) v.HeadCap = CreateCapRenderer("HoldHeadCap");
+                    v.HeadCap.color = Color.white; v.HeadCap.flipX = false; v.HeadCap.flipY = false;
+                    n.HeadCap = v.HeadCap;
                 }
             }
             n.Cap3d = v.Cap3d;   // reuse the cap triangle if this bundle built one in a previous life
@@ -2554,9 +2778,10 @@ namespace Sdo.Game
             v.Head.enabled = false;
             if (v.Body) v.Body.SetActive(false);
             if (v.Tail) v.Tail.enabled = false;
+            if (v.HeadCap) v.HeadCap.enabled = false;
             v.Cap3d = n.Cap3d;                       // ScrollNotes may have created it this life; keep it on the bundle
             if (v.Cap3d) v.Cap3d.SetActive(false);
-            n.Head = null; n.Tail = null; n.Body = null; n.Cap3d = null; n.Vis = null;
+            n.Head = null; n.Tail = null; n.HeadCap = null; n.Body = null; n.Cap3d = null; n.Vis = null;
             _visualFree.Push(v);
         }
 
@@ -2581,14 +2806,15 @@ namespace Sdo.Game
             v.Body = go; v.BodyMf = go.GetComponent<MeshFilter>(); v.BodyMr = go.GetComponent<MeshRenderer>();
         }
 
-        private void CreateVisualTail(NoteVisual v)
+        /// <summary>長條某一端的封口 SpriteRenderer(兩端各一個,見 NoteVisual.Tail / HeadCap)。</summary>
+        private SpriteRenderer CreateCapRenderer(string name)
         {
-            var tail = NewSR("HoldTail", null, 4);
-            tail.transform.SetParent(NoteVisualRoot, false);
-            tail.enabled = false;
-            tail.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
-            tail.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material -> no mask batch cross-bleed
-            v.Tail = tail;
+            var cap = NewSR(name, null, 4);
+            cap.transform.SetParent(NoteVisualRoot, false);
+            cap.enabled = false;
+            cap.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+            cap.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material -> no mask batch cross-bleed
+            return cap;
         }
 
         // Skip the alive cursor past notes retired by hits/misses outside ScrollNotes, returning each skipped
@@ -5678,7 +5904,7 @@ namespace Sdo.Game
                 Color noteCol = showtimeMode ? _noteTint : Color.white;   // showtime: gold→red flash over the window's last 3s
                 if (n.Dropped) noteCol = new Color(noteCol.r * holdDropDim, noteCol.g * holdDropDim, noteCol.b * holdDropDim, noteCol.a);
                 bool tintNote = showtimeMode || n.Dropped;                // else leave the renderers at their default white
-                if (tintNote) { n.Head.color = noteCol; if (n.Tail) n.Tail.color = noteCol; }
+                if (tintNote) { n.Head.color = noteCol; if (n.Tail) n.Tail.color = noteCol; if (n.HeadCap) n.HeadCap.color = noteCol; }
                 if (use3d)
                 {
                     // 3D-MESH head: draw the real NOTES.MSH arrow FLAT at this note's exact 2D position (same lane + scroll
@@ -5722,6 +5948,7 @@ namespace Sdo.Game
                         // OFFICIAL cap = a welded TRIANGLE at the tail end (LONG.MSH verts 0/1/2), pointing away from the
                         // judge line — real geometry, not a sprite. The 2D sprite tail stays hidden while the 3D skin is on.
                         if (n.Tail) n.Tail.enabled = false;
+                        if (n.HeadCap) n.HeadCap.enabled = false;
                         if (n.Cap3d == null && _capMeshMat != null) n.Cap3d = CreateHoldCap();
                         if (n.Cap3d != null)
                         {
@@ -5740,12 +5967,37 @@ namespace Sdo.Game
                             }
                         }
                     }
-                    else if (n.Tail)
+                    else
                     {
-                        n.Tail.enabled = true;
-                        n.Tail.flipY = HoldCapOrient.FlipY(_holdCapPerLane[c], _holdTailFlipY[c], _scrollSign < 0);
-                        // 2D cap sits at the tail END (yEnd), its own sprite/aspect.
-                        PlaceAspect(n.Tail, cx, yEnd, holdW, 0.5f);
+                        // 長條**兩端**各封一個口(官方 NOTEIMAGE.AN 的組 3 = 靠判定線端、組 4 = 尾端)。
+                        // 封口的黑描邊一定朝**外**、開口那側接長條,所以同一時間兩端用的是不同朝向的那張:
+                        //   在上面那一端 → 上緣封口的圖      在下面那一端 → 下緣封口的圖
+                        // 這條規則與捲動方向無關(向上/向下都自動成立),因為它只看「這一端在上還是在下」。
+                        //
+                        // 🔴 以前只畫尾端、而且只有一張圖靠 flipY 湊另一個朝向。NOTEIMAGE_6 的帽子是 per-lane
+                        //    箭頭、翻了就指錯方向,那條路只好不翻 —— 代價是向下捲時「下緣封口」正對著長條,
+                        //    接縫橫著一條黑邊(使用者回報);而靠判定線那端從頭到尾沒有收邊,是硬切的斷面。
+                        //    官方本來就兩個朝向都備了圖,照它畫就兩個問題一起沒了。
+                        bool tailOnTop = _scrollSign < 0;
+                        var capUpper = _holdCapHead[c] ?? _holdTail[c];   // 上緣封口(缺圖時退回同一張)
+                        var capLower = _holdTail[c];                      // 下緣封口
+                        if (n.Tail)
+                        {
+                            n.Tail.enabled = true;
+                            n.Tail.sprite = tailOnTop ? capUpper : capLower;
+                            n.Tail.flipY = _holdCapHead[c] != null
+                                ? false   // 兩個朝向都有圖 → 一律不翻(per-lane 箭頭才不會被翻到指錯)
+                                : HoldCapOrient.FlipY(_holdCapPerLane[c], _holdTailFlipY[c], tailOnTop);
+                            PlaceAspect(n.Tail, cx, yEnd, holdW, 0.5f);
+                        }
+                        // 靠判定線那端。它在另一頭,所以封口朝向與尾端相反(用另一張圖)。
+                        if (n.HeadCap)
+                        {
+                            n.HeadCap.enabled = true;
+                            n.HeadCap.sprite = tailOnTop ? capLower : capUpper;
+                            n.HeadCap.flipY = false;
+                            PlaceAspect(n.HeadCap, cx, y, holdW, 0.5f);
+                        }
                         if (n.Cap3d != null && n.Cap3d.activeSelf) n.Cap3d.SetActive(false);
                     }
                     if (n.Body)
@@ -6526,7 +6778,8 @@ namespace Sdo.Game
             // Head/Body/Tail/Cap3d mirror Vis's parts while rented (null when off-screen) so the per-frame render
             // code reads them exactly as before; the `if (n.Body)` / `if (n.Tail)` guards already handle null.
             public NoteVisual Vis;
-            public SpriteRenderer Head, Tail;
+            // Tail = 尾端封口;HeadCap = 靠判定線那端的封口(官方兩端各一個槽位,見 CapSlotHasArt)。
+            public SpriteRenderer Head, Tail, HeadCap;
             public GameObject Body, Cap3d;
             public RuntimeNote(OsuHitObject n, int colorFamily) { Note = n; ColorFamily = colorFamily; }
         }
@@ -6537,7 +6790,9 @@ namespace Sdo.Game
         // its OWN material so masked sprites never batch-bleed textures (see the SpriteMask material note).
         private sealed class NoteVisual
         {
-            public SpriteRenderer Head, Tail;
+            // Tail = 尾端(離判定線最遠)的封口;HeadCap = 靠判定線那端的封口。官方兩端各有一個槽位,
+            // 有些 skin 只用其中一個、NOTEIMAGE_8 兩個都不用(見 CapSlotHasArt),所以 HeadCap 常是 null。
+            public SpriteRenderer Head, Tail, HeadCap;
             public GameObject Body, Cap3d;
             public MeshFilter BodyMf; public MeshRenderer BodyMr;
         }

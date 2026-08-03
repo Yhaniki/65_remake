@@ -13,6 +13,11 @@ namespace Sdo.Game
     /// A per-skin <paramref name="bakedFlip"/> corrects art that ships upside-down (NOTEIMAGE_8's updown cap is stored
     /// inverted vs every other skin) and always applies. Kept pure + unit-tested because the draw path clobbers the
     /// sprite's flipY every frame and this rule has regressed twice.
+    ///
+    /// 🔴 這條規則只管**只有一張尾帽**的 skin。skin 若另外附了「上緣封口」版(<c>*_long_head</c> —
+    /// NOTEIMAGE_6/11/showtime),尾端在上時直接改用那張、不翻轉,根本不會走到這裡(見
+    /// <c>ScreenGameplay._holdCapHead</c>)。per-lane 的箭頭尾帽正是因為翻不得才需要那張:
+    /// 不翻 → 向下捲時封口的黑邊正對長條(接縫黑線),翻了 → 上下軌的箭頭指反。
     /// </summary>
     public static class HoldCapOrient
     {

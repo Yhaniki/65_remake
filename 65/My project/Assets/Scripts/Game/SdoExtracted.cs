@@ -340,6 +340,25 @@ namespace Sdo.Game
             return sprites.ToArray();
         }
 
+        /// <summary>
+        /// 一個 .an **依序引用了哪些圖檔**(只回檔名,不載入)。給「照官方槽位表決定畫什麼」用。
+        ///
+        /// 例:<c>NOTEIMAGE.AN</c> 是 16 個一組(4 軌 × 4 幀,軌序 left/down/up/right),第 3 組是長條
+        /// **靠判定線那端**的封口、第 4 組是**尾端**的封口 —— 而有些 skin 在那個槽位放的是 note 頭
+        /// (<c>*HoldHeadActive0</c>),意思就是「這一端不畫封口」。光看資料夾裡有哪些檔看不出這件事,
+        /// 因為未被 .an 引用的廢棄素材也還躺在那裡(NOTEIMAGE_8 的 <c>*_long_bottom</c> 就是)。
+        /// 檔案不存在回空陣列。
+        /// </summary>
+        public static string[] AnFrameNames(string folder, string anName)
+        {
+            var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
+            if (!File.Exists(anPath)) return new string[0];
+            var frames = ParseAnText(File.ReadAllText(anPath));
+            var names = new string[frames.Count];
+            for (int i = 0; i < frames.Count; i++) names[i] = frames[i].Image ?? "";
+            return names;
+        }
+
         /// <summary>First frame of an .an (most HUD .an files are single-frame).</summary>
         public static Sprite LoadAn1(string folder, string anName, bool bleed = false)
         {
