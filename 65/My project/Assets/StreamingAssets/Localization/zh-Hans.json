@@ -521,7 +521,7 @@
   },
   {
    "k": "room.stage_leave",
-   "v": "{0}离开舞台"
+   "v": "{0} 离开舞台游戏"
   },
   {
    "k": "room.selftalk",

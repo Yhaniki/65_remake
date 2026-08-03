@@ -4831,35 +4831,34 @@ namespace Sdo.UI.Screens
         // 「誰已經被廣播過了」。第一份快照只用來建底(不廣播),否則一進房就會看到房裡每個人
         // 都跳一行「進入舞台遊戲」—— 官方只在**之後**有人進出時才播。
         private readonly Dictionary<int, string> _announcedUsers = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> _presenceNow = new Dictionary<int, string>();
+        private readonly List<string> _presenceEntered = new List<string>();
+        private readonly List<string> _presenceLeft = new List<string>();
         private bool _announceSeeded;
 
         /// <summary>
-        /// 遠端玩家進出的藍字廣播(「X 進入舞台遊戲」/「X 離開舞台」)。
+        /// 遠端玩家進出的藍字廣播(「X 進入舞台遊戲」/「X 離開舞台遊戲」)。
         ///
-        /// **不需要新訊息**:每台 client 自己比對前後兩份座位表就知道誰來誰走 ——
+        /// **不需要新訊息**:每台 client 自己比對前後兩份名單就知道誰來誰走 ——
         /// 房間快照本來就會在有人進出時推新版。加一條專門的廣播訊息反而要處理
         /// 「它與快照的先後順序」(先收到廣播卻還沒有那個人的座位資料),徒增一種不一致。
+        ///
+        /// 名單怎麼算、差異怎麼比都在 <see cref="RoomPresence"/>(純函式、有單元測試)——
+        /// 這裡只負責「把差異播出去」。🔴 名單含**旁觀席**:切旁觀不是離開房間,見那邊的註解。
         /// </summary>
         private void AnnounceRemoteComings(Sdo.Net.NetRoomSnapshot snap, int me)
         {
-            _remoteScratchIds.Clear();
-            for (int i = 0; i < snap.Seats.Length; i++)
+            RoomPresence.Collect(snap, me, _presenceNow);
+            RoomPresence.Diff(_announcedUsers, _presenceNow, _presenceEntered, _presenceLeft);
+
+            if (_announceSeeded)
             {
-                var s = snap.Seats[i];
-                if (!s.IsTaken || s.UserId == me) continue;
-                _remoteScratchIds.Add(s.UserId);
-                if (_announceSeeded && !_announcedUsers.ContainsKey(s.UserId))
-                    Ctx.Chat?.AnnounceStageEnter(s.Name ?? "");
-                _announcedUsers[s.UserId] = s.Name ?? "";
+                for (int i = 0; i < _presenceEntered.Count; i++) Ctx.Chat?.AnnounceStageEnter(_presenceEntered[i]);
+                for (int i = 0; i < _presenceLeft.Count; i++) Ctx.Chat?.AnnounceStageLeave(_presenceLeft[i]);
             }
 
-            _remoteGoneIds.Clear();
-            foreach (var kv in _announcedUsers) if (!_remoteScratchIds.Contains(kv.Key)) _remoteGoneIds.Add(kv.Key);
-            foreach (int id in _remoteGoneIds)
-            {
-                if (_announceSeeded) Ctx.Chat?.AnnounceStageLeave(_announcedUsers[id]);
-                _announcedUsers.Remove(id);
-            }
+            _announcedUsers.Clear();
+            foreach (var kv in _presenceNow) _announcedUsers[kv.Key] = kv.Value;
             _announceSeeded = true;
         }
 
