@@ -178,6 +178,15 @@ namespace Sdo.Game
                 }
                 ApplySpectatorNames();
             }
+
+            // 旁觀模式的左上提示條(官方 GAMEPLAY19.PNG:「Press Ctrl+Q to quit look on mode」)——
+            // Ctrl+Q 本來就通了(FrontendApp 的 Hotkey.SpectatorQuit),只是畫面上沒有一個字告訴玩家,
+            // 於是旁觀者不知道怎麼離開。只有旁觀者要看到,參賽者的畫面上不該出現。
+            if (spectatorMode)
+            {
+                _spectateHint = NewSR("SpectateHint", SdoExtracted.LoadImage(gpDir, "GAMEPLAY19.PNG"), 45);
+                SdoLayout.PlaceTopLeft(_spectateHint, spectateHintX, spectateHintY, -3f);
+            }
         }
 
         /// <summary>
