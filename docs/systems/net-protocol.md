@@ -231,11 +231,11 @@ randomTitle    → title 是「隨機難度 X」的標籤,收端不要拿 gn 去
 | R15 | **載入 timeout 30 秒**:還在 `waitingForLoad` → 逐出本場;卡在 `loaded` → **強制轉 `playing`** |
 | R16 | 遊玩中斷線 → 逐出本場,最後一筆 frame 仍列入結算(`disconnected:true`);host 斷線 → **本場繼續** |
 | R17 | `setReady` 需 `avail=="have"`；之後 `avail` 改變會保留 ready 意願，但非 `have` 時不能一般開始 |
-| R18 | join 一個 `status != open` 的房間 → `inGame`;**但 `spectate` 允許** |
+| R18 | `status != open` 的房間**一樣加得進去坐一般座位**(`spectate` / `stopSpectate` 也一樣) —— 坐下的人 `playState=idle`,不會被塞進已開跑的那一場(名單開場即凍結,R12),等下一局 |
 | R19 | rate limit:control 32/s、`frame` 20/s、chat 5/3s、`setAvailability{downloading}` 1/500ms。超過丟訊息;持續超過 → `bye{rateLimit}` |
 | R20 | 上限:maxRooms 200、maxConnections 256、name ≤16、roomName ≤20、blob 總量 20 GB |
 | R21 | 旁觀切換的三道門(見 room-matchmaking.md) |
-| D15 | `setReady` 只在 `status==open` 時允許 —— 房間在 `waitingForLoad`/`playing` 期間任何人都按不了準備 |
+| D15 | `setReady` 在打歌期間只擋**這一場的參與者**;留在房間的人(缺歌/沒準備/中途坐進來的)照按 —— 那是為了下一局 |
 
 ## 測試
 

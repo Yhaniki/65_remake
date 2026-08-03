@@ -100,13 +100,19 @@ namespace Sdo.Net.Server
 
         /// <summary>
         /// 加入房間(R3):坐**第一個 Open 座位**(依索引序)。
-        /// 遊戲中的房間不能加入(R18)—— 但 <see cref="TrySpectate"/> 可以。
+        ///
+        /// **房間在遊戲中一樣坐得進來**(R18,使用者要求:「別人在遊戲我還是要可以上去一般座位,
+        /// 只是沒辦法直接進去他們的遊戲」)。以前這裡回 <see cref="NetRoomOp.InGame"/>,client 的
+        /// <c>JoinOrSpectate</c> 於是把人退成旁觀者 —— 而旁觀席出不來也回不去(那是另一顆鈕的事),
+        /// 玩家就被卡在旁觀身分直到離開房間。
+        ///
+        /// 坐下的人**不會被拉進正在進行的那一場**:參與者名單在開場那一刻就凍結(R12),
+        /// <c>matchStarting</c> 也早就發完了 —— 他的 playState 是 idle,留在房間等下一局。
         /// </summary>
         public NetRoomOp TryJoin(NetJoinUser user, out int seatIndex)
         {
             seatIndex = -1;
             if (_state.Contains(user.UserId)) return NetRoomOp.BadState;   // 已經在房裡
-            if (_state.Status != RoomStatus.Open) return NetRoomOp.InGame;
 
             int seat = _state.FirstOpenSeat();
             if (seat < 0) return NetRoomOp.Full;
@@ -178,13 +184,16 @@ namespace Sdo.Net.Server
             return NetRoomOp.Ok;
         }
 
-        /// <summary>旁觀者搶回座位(再按一次「旁觀」鈕)。</summary>
+        /// <summary>
+        /// 旁觀者搶回座位(再按一次「旁觀」鈕 = 綠色「進入」)。
+        /// **房間在遊戲中一樣回得去座位**(同 <see cref="TryJoin"/>):回去的人 playState 是 idle,
+        /// 不會被納入正在進行的那一場,只是先坐好等下一局。
+        /// </summary>
         public NetRoomOp TryUnspectate(NetJoinUser user, out int seatIndex)
         {
             seatIndex = -1;
             int si = _state.SpectatorIndexOf(user.UserId);
             if (si < 0) return NetRoomOp.NotInRoom;
-            if (_state.Status != RoomStatus.Open) return NetRoomOp.InGame;
 
             int seat = _state.FirstOpenSeat();
             if (seat < 0) return NetRoomOp.Full;
@@ -544,12 +553,23 @@ namespace Sdo.Net.Server
             return NetRoomOp.NotInRoom;
         }
 
+        /// <summary>
+        /// 按下 / 取消準備。
+        ///
+        /// **房間在遊戲中,留在房間的人一樣按得了準備**(D15 放寬,使用者要求:「我還是能準備,
+        /// 那些其他行為都要正常能用」)。擋的只有**這一場的參與者** —— 他們的 ready 已經被凍進
+        /// <c>_match</c>,中途改會讓結算的名單與座位對不上;playState 不是 idle(載入中/遊玩中/
+        /// 看結算)的座位同理。
+        /// </summary>
         public NetRoomOp SetReady(int userId, bool ready)
         {
             var s = _state.SeatOf(userId);
             if (s == null) return NetRoomOp.NotInRoom;
             if (_state.IsHost(userId)) return NetRoomOp.BadState;   // 房主沒有準備這個狀態
-            if (_state.Status != RoomStatus.Open) return NetRoomOp.BadState;
+            // 打歌期間(waitingForLoad/playing)只擋**這一場的人** —— 他們的名單已凍結,
+            // 中途改 ready 會讓結算對不上;留在房間的(缺歌/沒準備/中途坐進來的)照按不誤。
+            // 房間回到 open(含結算寬限期)就一律放行 —— 那時按的準備是為了下一局。
+            if (_state.Status != RoomStatus.Open && IsParticipant(userId)) return NetRoomOp.BadState;
 
             if (ready)
             {

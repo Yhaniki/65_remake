@@ -2055,11 +2055,11 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void R17_Nobody_Can_Ready_Up_While_The_Room_Is_In_Game()
+        public void R17_Only_Participants_Are_Blocked_From_Readying_Up_While_The_Room_Is_In_Game()
         {
-            // 使用者:「按準備只有在不是在遊戲中才行」。
-            // 房間在 waitingForLoad / playing 期間,連留在房間沒下場的人也按不了準備 ——
-            // 準備是為了「下一局」,而下一局要等這一局結束才存在。
+            // 使用者(改版需求):「別人在遊戲…我還是能準備,那些其他行為都要正常能用」。
+            // 舊規則是「房間一開打誰都不能按準備」,那讓留在房間的人整局都動不了 ——
+            // 而準備本來就是為了「下一局」。現在只擋**這一場的參與者**(名單已凍結)。
             var r = MakeRoom();
             JoinMany(r, Bob, Cid);
             SetSongAndHave(r, Host, Bob, Cid);
@@ -2069,22 +2069,25 @@ namespace Sdo.Tests
             r.RequestStart(Host, true, Resolved(), 0, out m);   // Cid 沒準備 → 留在房間
             Assert.AreEqual(RoomStatus.WaitingForLoad, r.Status);
 
-            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Cid, true), "載入階段不能按準備");
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Cid, true), "留在房間的人載入階段就能先準備");
+            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Bob, false), "載入中的參與者不能改");
 
             r.SetPlayState(Host, PlayState.Loaded, m.MatchId);
             r.SetPlayState(Bob, PlayState.Loaded, m.MatchId);
             r.Tick(100);
             Assert.AreEqual(RoomStatus.Playing, r.Status);
 
-            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Cid, true), "遊玩階段也不能");
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Cid, false), "遊玩階段也能改自己的準備");
+            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Bob, false), "正在跳的人不能改");
 
-            // 這一局結束、房間回到 open 之後才可以。
+            // 這一局結束、人回到房間之後,剛打完的那位也恢復正常。
             r.SetPlayState(Host, PlayState.Finished, m.MatchId);
             r.SetPlayState(Bob, PlayState.Finished, m.MatchId);
             r.Tick(200);
             r.ClearResults();
             Assert.AreEqual(RoomStatus.Open, r.Status);
             Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Cid, true));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true), "打完回房間就能再準備下一局");
         }
 
         [Test]
@@ -2120,8 +2123,10 @@ namespace Sdo.Tests
         // ==================== R18:遊戲中的房間 ====================
 
         [Test]
-        public void R18_Cannot_Join_A_Room_In_Game_But_Can_Spectate()
+        public void R18_Can_Take_A_Seat_In_A_Room_That_Is_In_Game()
         {
+            // 使用者要求:「別人在遊戲我還是要可以上去一般座位,只是沒辦法直接進去他們的遊戲」。
+            // 以前這裡回 InGame,client 就把人退成旁觀身分(而且退回去之後回不來)。
             var r = MakeRoom();
             SetSongAndHave(r, Host);
             NetMatchInfo m;
@@ -2129,14 +2134,17 @@ namespace Sdo.Tests
             Assert.AreEqual(RoomStatus.WaitingForLoad, r.Status);
 
             int seat;
-            Assert.AreEqual(NetRoomOp.InGame, r.TryJoin(User(Bob), out seat));
+            Assert.AreEqual(NetRoomOp.Ok, r.TryJoin(User(Bob), out seat), "遊戲中的房間一樣坐得進來");
+            Assert.AreEqual(1, seat);
+            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState, "坐進來的人是 idle,不在這一場裡");
+            CollectionAssert.DoesNotContain(r.Match.ParticipantUserIds, Bob, "不能被塞進已經開跑的那一場");
 
-            // 但可以進來旁觀(D10:已開打時仍可加入房間看頭貼,只是不會進打歌畫面)。
-            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Bob)));
+            // 旁觀當然也還是可以(D10)。
+            Assert.AreEqual(NetRoomOp.Ok, r.TrySpectate(User(Cid)));
         }
 
         [Test]
-        public void R18_Cannot_Unspectate_While_In_Game()
+        public void R18_Can_Unspectate_While_In_Game()
         {
             var r = MakeRoom();
             JoinMany(r, Bob);
@@ -2146,7 +2154,43 @@ namespace Sdo.Tests
             r.RequestStart(Host, false, Resolved(), 0, out m);
 
             int seat;
-            Assert.AreEqual(NetRoomOp.InGame, r.TryUnspectate(User(Bob), out seat));
+            Assert.AreEqual(NetRoomOp.Ok, r.TryUnspectate(User(Bob), out seat), "旁觀者一樣回得去座位");
+            Assert.AreEqual(PlayState.Idle, r.State.SeatOf(Bob).PlayState);
+            CollectionAssert.DoesNotContain(r.Match.ParticipantUserIds, Bob);
+        }
+
+        [Test]
+        public void R18_Non_Participants_Can_Ready_Up_While_A_Match_Is_Running()
+        {
+            // D15 放寬:「我還是能準備,那些其他行為都要正常能用」。
+            // 打歌期間按下的準備要留到下一局 —— 房主打完按開始時他就跟著上。
+            var r = MakeRoom();
+            SetSongAndHave(r, Host);
+            NetMatchInfo m;
+            r.RequestStart(Host, false, Resolved(), 0, out m);
+
+            int seat;
+            Assert.AreEqual(NetRoomOp.Ok, r.TryJoin(User(Bob), out seat));
+            Assert.AreEqual(NetRoomOp.Ok, r.SetAvailability(Bob, "sdom1435k.gn", Availability.Have, 0f));
+
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true), "留在房間的人打歌期間也能準備");
+            Assert.IsTrue(r.State.SeatOf(Bob).Ready);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, false), "也取消得掉");
+        }
+
+        [Test]
+        public void R18_Participants_Cannot_Ready_Up_Mid_Match()
+        {
+            // 反面:這一場的人名單已凍結,中途改 ready 會讓結算對不上(擋改過的 client)。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+
+            NetMatchInfo m;
+            r.RequestStart(Host, false, Resolved(), 0, out m);
+
+            Assert.AreEqual(NetRoomOp.BadState, r.SetReady(Bob, false), "正在載入的參與者不能改");
         }
 
         // ==================== 旁觀者進場資格 ====================
