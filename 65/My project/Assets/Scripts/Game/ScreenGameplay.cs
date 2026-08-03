@@ -1708,7 +1708,7 @@ namespace Sdo.Game
                 {
                     n.Tail.sprite = _holdTail[c]; n.Tail.flipX = _holdTailFlipX[c]; n.Tail.flipY = _holdTailFlipY[c];
                 }
-                // 換了 skin,兩端**要不要**畫封口也跟著變(NOTEIMAGE_8 兩端都不畫)—— 已經生出來的 hold
+                // 換了 skin,兩端**要不要**畫封口也跟著變(多數 skin 只畫尾端)—— 已經生出來的 hold
                 // 要重掛,否則會一直留著上一個 skin 的帽子。反向(換到有封口的 skin)只對之後生成的
                 // hold 生效:這條路是 F4 的即時換皮測試,不值得為它把整批 visual 重建一次。
                 if (n.Vis != null)
@@ -1754,7 +1754,7 @@ namespace Sdo.Game
                 var capSpr = perLaneCap ?? SdoExtracted.LoadImage(NoteDir, baseLong + "_bottom.png");
                 _holdCapPerLane[c] = perLaneCap != null;
                 // 官方槽位表決定這一軌**兩端各要不要**畫封口(見 CapSlotHasArt)。資料夾裡有圖不代表官方
-                // 有在用 —— NOTEIMAGE_8 的 *_long_bottom 就沒被任何 .an 引用(它兩端都不畫封口)。
+                // 有在用 —— 靠判定線那端多數 skin(5/8/9/10/PET)就是空的,只有 6/11/showtime 有。
                 _holdCapAtHead[c] = CapSlotHasArt(anSlots, CapSlotHead, c);
                 _holdCapAtTail[c] = CapSlotHasArt(anSlots, CapSlotTail, c);
                 // 同一頂尾帽的「上緣封口」版 = 官方**向下捲專用**的那張(NOTEIMAGE_MOVEDOWN.AN 用的就是它)。
@@ -1878,11 +1878,15 @@ namespace Sdo.Game
         /// 官方在這一軌的這個封口槽位**放了帽子圖嗎**。
         ///
         /// 放的是 note 頭(<c>*HoldHeadActive0</c>)就代表「這一端不畫封口」—— 那個槽位官方拿 note 頭
-        /// 當填充。NOTEIMAGE_5/9/10/pet 的靠判定線端是這樣,而 **NOTEIMAGE_8 兩端都是**:它資料夾裡的
-        /// <c>*_long_bottom</c> 沒有被任何 .an 引用,是廢棄素材(難怪它的 updown 那對還存反了都沒人發現)。
+        /// 當填充。NOTEIMAGE_5/8/9/10/pet 的靠判定線端是這樣(只有 6/11/showtime 兩端都封)。
         ///
         /// 🔴 所以「有沒有這個檔案」不能拿來當判準,只有 .an 說了算。.an 讀不到(或短得不合理)時
         /// 回 true = 照舊畫,寧可多畫一頂也不要讓長條忽然變成沒有收邊的斷面。
+        ///
+        /// 🔴 反過來也一樣:.an **本身寫錯**就去修 .an,不要在這裡補 skin 特例。NOTEIMAGE_8 的原檔把
+        /// **尾端**那一組也複製成 note 頭(四張 <c>*_LONG_BOTTOM(_D).PNG</c> 俱全卻沒有任何 .an 指到),
+        /// 照走等於整條長條沒有尾帽(使用者回報「向上向下都不見了」)。修正檔在
+        /// <c>art\upscaled\NOTEIMAGE\NOTEIMAGE_8\</c>,由 <c>NoteSkinAnCapSlotTests</c> 釘住。
         /// </summary>
         private static bool CapSlotHasArt(string[] anSlots, int group, int lane)
         {

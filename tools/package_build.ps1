@@ -182,6 +182,9 @@ if (Test-Path $twSets) {
 # whose shipped resolution is too low for today's screens:
 #   UI\PLAYINGEXP 表情 cut-in    64px 原圖 -> 192px hq3x  (tools\upscale_playingexp.py)
 #   3DEFT\GENERIC\MAP_G\KEKKAI  512px    -> 2048px       (tools\upscale_kekkai.py) — SCN0008 地板結界
+# …以及少數「原檔內容寫錯」的修正檔(同樣是取代既有檔,所以放這棵樹):
+#   UI\ROOM\ROOM93.AN                       「進入」鈕 hover 幀指錯格
+#   NOTEIMAGE\NOTEIMAGE_8\NOTEIMAGE(_MOVEDOWN).AN  長條尾帽槽位被填成 note 頭 → 尾帽整個不畫 (見 build_clean_data.ps1)
 # Copied ON TOP of the Extracted base, so only the named files are replaced.
 # The on-screen SIZE is unchanged — the loaders divide it back out (SdoExtracted.LoadImageAtDesignWidth, guarded by
 # EmojiUpscaleTests); the EFT texture is sampled over the full UV, so its resolution is free.

@@ -157,6 +157,14 @@ Copy-Tree (Join-Path $Ds 'LOADING')             (Join-Path $Data 'LOADING')     
 #     官方 ROOM92/93/94.AN 三個檔內容逐字元相同(都指 WaitingRoom.png 165,389,56,56)→「進入」鈕滑過去毫無變化。
 #     atlas 上就擺著同一顆球的發亮版(164,332,56,56, 亮 23%), 沒有任何 .an 指到它 → hover 改指那一格。
 #     與 normal 同尺寸且球心對齊, 所以 SpriteSwap 換上去不位移(MipButtonTextureTests 釘住)。
+#   NOTEIMAGE\NOTEIMAGE_8\NOTEIMAGE.AN + NOTEIMAGE_MOVEDOWN.AN   長條尾帽槽位 修正
+#     官方那兩個檔的第 4 組(= 長條尾端的封口, frame 48..63)被填成 *HoldHeadActive*, 也就是 note 頭 ——
+#     照 .an 走等於「這個 skin 兩端都不畫封口」, 長條尾端變成硬切的斷面(使用者回報「尾帽不見了」)。
+#     資料夾裡 {rightleft,updown}_LONG_BOTTOM(_D).PNG 四張俱全卻沒有任何 .an 指到, 且其餘每個 skin
+#     (5/6/9/10/11)的同一組都放尾帽 → 是原檔複製貼上寫錯。改成與 NOTEIMAGE_5 完全相同的排法:
+#     NOTEIMAGE.AN → *_long_bottom.png, NOTEIMAGE_MOVEDOWN.AN → *_long_bottom_d.png(軌序 左右/上下/上下/左右)。
+#     兩張圖誰是上緣封口誰是下緣封口由 ScreenGameplay 看圖判(NOTEIMAGE_8 的 updown 那對是對調存放的),
+#     所以這裡照官方檔名擺就好。NoteSkinAnCapSlotTests 釘住。
 $Upscaled = Join-Path $Repo 'art\upscaled'
 if (Test-Path $Upscaled) { Copy-Tree $Upscaled $Data 'upscaled art overlay' }
 else { Write-Warning "[clean] art\upscaled 不存在 — 表情 cut-in 維持 64px, KEKKAI 維持 512px (run tools\upscale_playingexp.py / upscale_kekkai.py)" }

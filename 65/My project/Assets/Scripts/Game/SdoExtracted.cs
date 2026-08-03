@@ -346,7 +346,7 @@ namespace Sdo.Game
         /// 例:<c>NOTEIMAGE.AN</c> 是 16 個一組(4 軌 × 4 幀,軌序 left/down/up/right),第 3 組是長條
         /// **靠判定線那端**的封口、第 4 組是**尾端**的封口 —— 而有些 skin 在那個槽位放的是 note 頭
         /// (<c>*HoldHeadActive0</c>),意思就是「這一端不畫封口」。光看資料夾裡有哪些檔看不出這件事,
-        /// 因為未被 .an 引用的廢棄素材也還躺在那裡(NOTEIMAGE_8 的 <c>*_long_bottom</c> 就是)。
+        /// 因為未被 .an 引用的素材也還躺在那裡。
         /// 檔案不存在回空陣列。
         /// </summary>
         public static string[] AnFrameNames(string folder, string anName)
