@@ -118,6 +118,40 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Only_JudgeLevel_Blocks_Typing_A_Value()
+        {
+            // 使用者要求：滑桿右邊都要能直接打字，只有判定精度例外（它的值是「精4」「JUSTICE」，打字沒有意義）。
+            foreach (var f in StartupConfigSchema.Fields)
+            {
+                if (f.Kind != ConfigFieldKind.Slider) continue;
+                bool expected = f.Key == "judgeLevel";
+                Assert.AreEqual(expected, f.NoValueEntry, f.Key + " 的「可否打字」跟預期不符");
+                if (f.NoValueEntry) Assert.IsNotNull(f.Format, f.Key + " 不能打字就要有 Format 把值畫成文字");
+                else Assert.AreEqual(ConfigField.NumberToText(f.GetNumber()), f.NumberText(),
+                                     f.Key + " 可打字的欄位要顯示純數字（單位走 Unit）");
+            }
+        }
+
+        [Test]
+        public void Units_Only_On_Sliders()
+        {
+            foreach (var f in StartupConfigSchema.Fields)
+                if (f.Kind != ConfigFieldKind.Slider)
+                    Assert.IsTrue(string.IsNullOrEmpty(f.Unit), f.Key + " 不是滑桿卻帶了單位");
+        }
+
+        [Test]
+        public void Typed_Value_Is_Clamped_To_The_Slider_Range()
+        {
+            var f = StartupConfigSchema.ByKey("scrollBaseBpm");
+            Assert.IsNotNull(f);
+            f.SetNumber(1000f);                     // 手打超出上限 → 夾到 400
+            Assert.AreEqual(400f, RoomConfig.scrollBaseBpm, 0.001f);
+            f.SetNumber(-5f);                       // 低於下限 → 夾到 30
+            Assert.AreEqual(30f, RoomConfig.scrollBaseBpm, 0.001f);
+        }
+
+        [Test]
         public void Choice_Fields_Are_Well_Formed()
         {
             foreach (var f in StartupConfigSchema.Fields)

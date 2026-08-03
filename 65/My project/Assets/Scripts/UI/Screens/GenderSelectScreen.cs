@@ -44,6 +44,9 @@ namespace Sdo.UI.Screens
         // 展開後是 config.ini 裡「遊戲內沒有其它 UI 可以改」的設定全集（見 StartupConfigPanel / StartupConfigSchema）。
         private StartupConfigPanel _panel;
         private int _nameEditFor = -1;   // 面板目前帶的是哪個性別的名字（換性別要重帶）
+        // 面板上的體型（胖瘦）滑桿：兩個性別各一份工作副本，OnShow 從各自的 profile 種進來。拖曳中只改這裡＋
+        // 即時刷新 3D 預覽（＋連線中即時報給 server），落地 profile.json 留到「儲存設定」或按登入進房那一刻。
+        private readonly int[] _bodyIndex = { -1, -1 };
 
         private static Sprite An(string n) => LobbySelArt.An(n);
 
@@ -109,17 +112,21 @@ namespace Sdo.UI.Screens
             // initial selection follows the current active profile's gender (00000000 女 on first boot).
             _gender = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0;
 
+            // 體型滑桿的工作副本：每次進本畫面都從 profile 重種（上次沒存就丟掉，不要跨場次殘留）。
+            _bodyIndex[0] = BodyIndexForGender(0);
+            _bodyIndex[1] = BodyIndexForGender(1);
+
             // 每個性別用它對應 profile 的「實際穿戴」顯示 (女 00000000 / 男 00000001)；換裝後回到本畫面也刷新。
             string[] fParts = PartsForGender(0), mParts = PartsForGender(1);
             if (_preview == null)
             {
                 var go = new GameObject("GenderPreview3D");
                 _preview = go.AddComponent<GenderPreview3D>();
-                _preview.Build(_gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
+                _preview.Build(_gender, fParts, mParts, _bodyIndex[0], _bodyIndex[1]);
             }
             else
             {
-                _preview.SetOutfits(_gender, fParts, mParts, BodyIndexForGender(0), BodyIndexForGender(1));
+                _preview.SetOutfits(_gender, fParts, mParts, _bodyIndex[0], _bodyIndex[1]);
             }
             if (_previewImg != null && _preview != null && _preview.PreviewTexture != null)
             {
@@ -145,7 +152,8 @@ namespace Sdo.UI.Screens
         {
             int g = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0;
             _gender = g;
-            if (_preview != null) _preview.SetOutfits(g, PartsForGender(0), PartsForGender(1), BodyIndexForGender(0), BodyIndexForGender(1));
+            // 體型用「面板上調到一半、還沒存」的工作副本，不是 profile 上的舊值 —— 否則調完體型去逛個商城回來就被打回去了。
+            if (_preview != null) _preview.SetOutfits(g, PartsForGender(0), PartsForGender(1), _bodyIndex[0], _bodyIndex[1]);
             UIKit.ApplySprite(_maleBox, g == 1 ? _maleOn : _maleOff);
             UIKit.ApplySprite(_femaleBox, g == 0 ? _femaleOn : _femaleOff);
         }
@@ -160,6 +168,42 @@ namespace Sdo.UI.Screens
                 if (p != null && p.id == id)
                     return WardrobeStore.ResolveEquippedParts(p, gender, cid => AvatarItemCatalog.Instance.ById(cid));
             return null;
+        }
+
+        // ---- 體型（胖瘦）滑桿 ----
+
+        /// <summary>目前選的性別那個角色的體型 index（0..4）。工作副本沒種過就現場從 profile 讀。</summary>
+        private int CurrentBodyIndex()
+        {
+            if (_bodyIndex[_gender] < 0) _bodyIndex[_gender] = BodyIndexForGender(_gender);
+            return _bodyIndex[_gender];
+        }
+
+        /// <summary>滑桿拖動：更新工作副本 → 左邊 3D 預覽立刻變胖/變瘦 →（連線中）馬上把新體型報給 server，
+        /// 別人畫面上的這個角色才會跟著變。落地 profile.json 走 <see cref="PersistBodyShapes"/>（存檔/進房時）。</summary>
+        private void SetBodyIndex(int index)
+        {
+            index = Mathf.Clamp(index, 0, 4);
+            if (_bodyIndex[_gender] == index) return;
+            _bodyIndex[_gender] = index;
+            if (_preview != null) _preview.SetBodyShape(_gender, index);   // 不重建模型，直接改骨架縮放
+            // 連線中就即時廣播（值只有 0..4 五格，拖曳不會刷爆封包）。沒連線時由 CommitIdentity 在登入那一刻補送。
+            if (Ctx != null && Ctx.Net != null) Ctx.Net.SendLook(_gender, index, PartsForGender(_gender));
+        }
+
+        /// <summary>把兩個性別的體型工作副本寫回各自的 profile.json（值沒變的不寫）。最後把 active 切回目前選的性別。</summary>
+        private void PersistBodyShapes()
+        {
+            for (int g = 0; g < 2; g++)
+            {
+                if (_bodyIndex[g] < 0) continue;                       // 這個性別沒動過 → 不碰
+                ProfileManager.SetActive(ProfileManager.SeededIdForGender(g));
+                var p = ProfileManager.Active;
+                if (p == null || p.bodyShapeIndex == _bodyIndex[g]) continue;
+                p.bodyShapeIndex = _bodyIndex[g];
+                ProfileManager.Save();
+            }
+            ProfileManager.SetActive(ProfileManager.SeededIdForGender(_gender));   // 回到目前選的性別
         }
 
         // 取某性別對應 profile 自己的體型 (胖瘦) index 0..4；找不到 → 0 (瘦)。選性別畫面是角色本人，故用角色自己的身材。
@@ -215,7 +259,14 @@ namespace Sdo.UI.Screens
             if (FrontendApp.Instance != null && (FrontendApp.Instance.ShopOpen || FrontendApp.Instance.JoinRoomOpen)) return;
             if (ChartEditorScreen.Instance != null) return;
 
-            if (_panel == null) _panel = new StartupConfigPanel { SaveName = SaveName };
+            if (_panel == null)
+                _panel = new StartupConfigPanel
+                {
+                    SaveName = SaveName,
+                    BodyShapeGet = () => CurrentBodyIndex(),
+                    BodyShapeSet = SetBodyIndex,
+                    SaveExtra = PersistBodyShapes,
+                };
             if (_nameEditFor != _gender) { _panel.SetName(SeedName(_gender)); _nameEditFor = _gender; }
 
             _panel.Draw(ContentRect());
@@ -269,6 +320,8 @@ namespace Sdo.UI.Screens
         // 「開房」與「加入」按下去的第一件事都是這個 —— 進房之後房間裡顯示的名字/衣服/性別都吃它。
         private void CommitIdentity()
         {
+            // 面板上調過的體型先落地 —— 底下 SendLook 報上去的、以及房間/遊戲建角色時讀的都是 profile.json 的值。
+            PersistBodyShapes();
             string id = ProfileManager.SeededIdForGender(_gender);
             ProfileManager.SetActive(id);            // 載入該帳號 profile(衣服)，觸發 ActiveChanged；收藏/設定是全帳號共用不重載
             var p = ProfileManager.Active;
@@ -289,7 +342,7 @@ namespace Sdo.UI.Screens
             // 否則你在別人的房間畫面上會是預設的女角。
             if (Ctx != null && Ctx.Net != null)
             {
-                Ctx.Net.SendLook(_gender, BodyIndexForGender(_gender), PartsForGender(_gender));
+                Ctx.Net.SendLook(_gender, CurrentBodyIndex(), PartsForGender(_gender));
                 // 名字也一樣要重報 —— 女角與男角是兩個 profile,名字不一樣。只送外觀的話
                 // 別人看到的是「新的男角」配「舊的女角名字」,而且那個名字之後永遠不會變
                 // (座位名字是進房那一刻抄過去的)。
@@ -324,7 +377,7 @@ namespace Sdo.UI.Screens
                     // 所以那次的 SendLook/PublishIdentity 整個沒送出去。
                     if (Ctx != null && Ctx.Net != null)
                     {
-                        Ctx.Net.SendLook(_gender, BodyIndexForGender(_gender), PartsForGender(_gender));
+                        Ctx.Net.SendLook(_gender, CurrentBodyIndex(), PartsForGender(_gender));
                         Ctx.Net.PublishIdentity();
                     }
                     ScreenTransition.Run(() => GoTo(ScreenId.Lobby));

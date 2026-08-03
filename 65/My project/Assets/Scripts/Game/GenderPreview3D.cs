@@ -123,6 +123,18 @@ namespace Sdo.Game
             SetGender(gender);
         }
 
+        /// <summary>即時改某性別預覽角色的體型（胖瘦 index 0..4），**不重建模型** —— 開場設定面板的體型滑桿拖曳中
+        /// 每幀都會叫，走 <see cref="SetOutfits"/> 的話每一幀都要 Destroy+重建兩具角色。</summary>
+        public void SetBodyShape(int gender, int index)
+        {
+            bool male = gender == 1;
+            index = Mathf.Clamp(index, 0, 4);
+            if (male) _maleBodyIndex = index; else _femaleBodyIndex = index;
+            var t = male ? _male : _female;
+            var av = t != null ? t.GetComponent<SdoAvatar>() : null;
+            if (av != null) av.SetBodyShape(SdoBodyShape.WeightFromIndex(index, male));
+        }
+
         /// <summary>Show the dancer for <paramref name="gender"/> (0=女,1=男) and re-frame the camera to it. No-op if unchanged.</summary>
         public void SetGender(int gender)
         {

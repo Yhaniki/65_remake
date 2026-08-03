@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 using Sdo.Settings;
 
@@ -27,7 +28,12 @@ namespace Sdo.UI.Screens
         public const float CollapsedH = 68f;
         /// <summary>展開高度：下緣 512，剛好停在男/女核取方塊（y=530）上面，也不碰到右邊的角色。</summary>
         public const float ExpandedH = 502f;
-        private const float RowH = 18f, LabelW = 104f, ValueW = 54f, ListH = 336f, HelpH = 52f, Pad = 5f;
+        private const float RowH = 18f, LabelW = 104f, ValueW = 54f, ListH = 314f, HelpH = 52f, Pad = 5f;
+        private const float ValueEntryW = 40f, UnitW = 17f;
+
+        /// <summary>體型（胖瘦）index 0..4 的名稱。對應 <c>SdoBodyShape.WeightFromIndex</c>：1＝標準(×1.0)。</summary>
+        private static readonly string[] BodyShapeNames = { "瘦", "標準", "微胖", "胖", "很胖" };
+        private const string BodyShapeHelp = "角色的胖瘦（瘦…很胖）。拖動時左邊 3D 預覽立刻跟著變；按「儲存設定」才寫進這個角色的存檔。";
 
         /// <summary>面板是否展開中。房間/選性別畫面用它 gate ESC 與 F2（展開時那兩顆鍵歸面板管）。</summary>
         public bool Expanded { get; private set; }
@@ -38,16 +44,23 @@ namespace Sdo.UI.Screens
         /// <summary>按「儲存」時呼叫，回傳要顯示的狀態訊息。由 GenderSelectScreen 接上改名邏輯。</summary>
         public Func<string, string> SaveName;
 
+        /// <summary>體型（胖瘦）index 0..4 的讀/寫。null＝不顯示體型那一列（面板本身不知道角色是誰）。
+        /// 寫入只改記憶體＋即時刷新 3D 預覽，落地留給 <see cref="SaveExtra"/>（拖曳中每幀存檔太傷）。</summary>
+        public Func<int> BodyShapeGet;
+        public Action<int> BodyShapeSet;
+
+        /// <summary>按「儲存設定」時，除了 config.ini 之外還要落地的東西（體型 → profile.json）。</summary>
+        public Action SaveExtra;
+
         private int _tab;
         private Vector2 _scroll;
         private string _status = "";
         private string _hoverHelp = "";
-        private string _drawHelp = "";
         private readonly HashSet<string> _reveal = new HashSet<string>();          // 密碼/token 已按「顯」的欄位
         private readonly Dictionary<string, string> _edit = new Dictionary<string, string>();  // 文字欄位的編輯暫存
         private List<ConfigField>[] _byTab;
 
-        private GUIStyle _title, _label, _value, _help, _status_, _tabStyle;
+        private GUIStyle _title, _label, _value, _unit, _help, _status_, _tabStyle;
 
         /// <summary>換性別 → 重新帶入該帳號的名字，並清掉狀態訊息。</summary>
         public void SetName(string name)
@@ -81,8 +94,10 @@ namespace Sdo.UI.Screens
             var oldMatrix = GUI.matrix;
             GUI.matrix = Matrix4x4.TRS(new Vector3(content.x, content.y, 0f), Quaternion.identity, new Vector3(sx, sy, 1f));
             EnsureStyles();
-            _drawHelp = _hoverHelp;      // 上一輪蒐集到的 hover 說明（本輪重新蒐集）
-            _hoverHelp = "";
+            // 說明列：**只在 Repaint 這一趟**清空重收 —— 每一格畫完就用 GetLastRect 比對滑鼠位置，說明列畫在
+            // 它們後面所以同一趟就拿得到。（先前寫成每趟都清、又用上一趟的值 → Layout 趟收不到、Repaint 趟
+            // 收到的又已經來不及畫，說明永遠是空的。）
+            if (Event.current.type == EventType.Repaint) _hoverHelp = "";
 
             // 底板自己畫、內容區往內縮 —— BeginArea(rect, style) 只把 style 當背景畫，不會套它的 padding，
             // 直接排版的話文字會貼到外框上。
@@ -93,6 +108,7 @@ namespace Sdo.UI.Screens
             DrawNameRow();
             if (Expanded)
             {
+                DrawBodyRow();
                 GUILayout.Space(2f);
                 DrawTabs();
                 DrawRows();
@@ -130,6 +146,22 @@ namespace Sdo.UI.Screens
             if (!Expanded && !string.IsNullOrEmpty(_status)) GUILayout.Label(_status, _status_);
         }
 
+        // 體型（胖瘦）—— 跟名稱一樣是「這個角色」的東西，所以擺在名稱下面、不進任何一個分頁
+        // （分頁裡放的是 config.ini 的本機設定，體型在 profile.json）。
+        private void DrawBodyRow()
+        {
+            if (BodyShapeGet == null) return;
+            int cur = Mathf.Clamp(BodyShapeGet(), 0, BodyShapeNames.Length - 1);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("體型", _label, GUILayout.Width(30f));
+            GUILayout.Space(2f);
+            int nv = Mathf.RoundToInt(GUILayout.HorizontalSlider(cur, 0f, BodyShapeNames.Length - 1f, GUILayout.Height(RowH)));
+            GUILayout.Label(BodyShapeNames[Mathf.Clamp(nv, 0, BodyShapeNames.Length - 1)], _value, GUILayout.Width(ValueW));
+            GUILayout.EndHorizontal();
+            if (nv != cur) BodyShapeSet?.Invoke(nv);
+            Hover(BodyShapeHelp);
+        }
+
         private void DrawTabs()
         {
             var cats = StartupConfigSchema.Categories;
@@ -157,8 +189,15 @@ namespace Sdo.UI.Screens
 
         private void DrawHelp()
         {
-            GUILayout.Label(string.IsNullOrEmpty(_drawHelp) ? "滑鼠移到設定上會顯示說明。" : _drawHelp,
+            GUILayout.Label(string.IsNullOrEmpty(_hoverHelp) ? "滑鼠移到設定上會顯示說明。" : _hoverHelp,
                             _help, GUILayout.Height(HelpH));
+        }
+
+        /// <summary>剛畫完那一列（<c>GUILayoutUtility.GetLastRect</c>）如果被滑鼠壓著，就把說明記下來給說明列用。</summary>
+        private void Hover(string help)
+        {
+            if (Event.current.type != EventType.Repaint || string.IsNullOrEmpty(help)) return;
+            if (GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition)) _hoverHelp = help;
         }
 
         private void DrawFooter()
@@ -183,13 +222,7 @@ namespace Sdo.UI.Screens
                 default: DrawText(f); break;
             }
             GUILayout.EndHorizontal();
-
-            // 說明列：滑鼠壓在這一列上就把它的 Help 記下來，下一輪畫在面板底下。
-            if (Event.current.type == EventType.Repaint)
-            {
-                var r = GUILayoutUtility.GetLastRect();
-                if (r.Contains(Event.current.mousePosition)) _hoverHelp = f.Help;
-            }
+            Hover(f.Help);
         }
 
         private void DrawToggle(ConfigField f)
@@ -199,13 +232,27 @@ namespace Sdo.UI.Screens
             if (nv != on) f.SetBool(nv);
         }
 
+        // 滑桿 + 右邊可直接輸入數字的小欄位（判定精度除外 —— 它的值是「精4」「JUSTICE」，打字沒有意義，
+        // 那一列右邊就純顯示）。拖滑桿會把輸入暫存丟掉，欄位才會跟著跑。
         private void DrawSlider(ConfigField f)
         {
             float v = f.GetNumber();
             GUILayout.Space(2f);
             float nv = GUILayout.HorizontalSlider(v, f.Min, f.Max, GUILayout.Height(RowH));
-            GUILayout.Label(f.NumberText(), _value, GUILayout.Width(ValueW));
-            if (!Mathf.Approximately(nv, v)) f.SetNumber(nv);
+            if (!Mathf.Approximately(nv, v)) { f.SetNumber(nv); _edit.Remove(f.Key); }
+
+            if (f.NoValueEntry) { GUILayout.Label(f.NumberText(), _value, GUILayout.Width(ValueW)); return; }
+
+            string cur = _edit.TryGetValue(f.Key, out var buf) ? buf : f.NumberText();
+            string typed = GUILayout.TextField(cur, 8, GUILayout.Width(ValueEntryW), GUILayout.Height(RowH));
+            if (!string.Equals(typed, cur, StringComparison.Ordinal))
+            {
+                // 打到一半的原字串留在暫存（"-" / "" / "1." 也留著），解析得出來才套用；夾範圍交給 SetNumber。
+                _edit[f.Key] = typed;
+                if (float.TryParse(typed.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var t))
+                    f.SetNumber(t);
+            }
+            GUILayout.Label(f.Unit ?? "", _unit, GUILayout.Width(UnitW));
         }
 
         private void DrawChoice(ConfigField f)
@@ -265,6 +312,11 @@ namespace Sdo.UI.Screens
             _title = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
             _label = new GUIStyle(GUI.skin.label) { wordWrap = false, clipping = TextClipping.Clip };
             _value = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleLeft };
+            _unit = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleLeft, fontSize = 10, padding = new RectOffset(1, 0, 0, 0),
+                normal = { textColor = new Color(0.72f, 0.72f, 0.72f) },
+            };
             _help = new GUIStyle(GUI.skin.box)
             {
                 wordWrap = true, alignment = TextAnchor.UpperLeft, fontSize = 10,

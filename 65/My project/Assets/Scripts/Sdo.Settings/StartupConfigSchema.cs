@@ -31,7 +31,12 @@ namespace Sdo.Settings
         public float Min, Max;
         /// <summary>Slider 專用：>0 表示吸附到這個間距（1 = 只取整數）。</summary>
         public float Step;
-        /// <summary>Slider 專用：把數值畫成人看得懂的字（null = 直接印數字）。</summary>
+        /// <summary>Slider 專用：數值後面那個單位（"ms"/"px"/"×"；空＝不加）。</summary>
+        public string Unit;
+        /// <summary>Slider 專用：值只能拖、不能打字，改用 <see cref="Format"/> 畫成文字（判定精度＝「精4」「JUSTICE」，
+        /// 打字沒有意義）。其餘滑桿右邊都是可以直接輸入數字的欄位。</summary>
+        public bool NoValueEntry;
+        /// <summary>Slider 專用：<see cref="NoValueEntry"/> 時把數值畫成人看得懂的字。</summary>
         public Func<float, string> Format;
         /// <summary>Choice 專用：可選值（存進 config.ini 的原字串）。</summary>
         public string[] Choices;
@@ -90,14 +95,15 @@ namespace Sdo.Settings
             return Choices != null && i < Choices.Length ? Choices[i] : "";
         }
 
-        /// <summary>Slider：目前值的顯示字串。</summary>
+        /// <summary>Slider：目前值的顯示字串（不能打字的那種才用 <see cref="Format"/>）。</summary>
         public string NumberText()
         {
             float v = GetNumber();
-            return Format != null ? Format(v) : NumberToText(v);
+            return NoValueEntry && Format != null ? Format(v) : NumberToText(v);
         }
 
-        internal static string NumberToText(float v)
+        /// <summary>數值 → 欄位裡顯示的純數字字串（整數不帶小數點，其餘最多兩位）。純函式。</summary>
+        public static string NumberToText(float v)
             => Mathf.Approximately(v, Mathf.Round(v))
                 ? Mathf.RoundToInt(v).ToString(CultureInfo.InvariantCulture)
                 : v.ToString("0.##", CultureInfo.InvariantCulture);
@@ -226,7 +232,7 @@ namespace Sdo.Settings
             f.Add(new ConfigField
             {
                 Key = "judgeLevel", Category = CatPlay, Label = "判定精度", Kind = ConfigFieldKind.Slider,
-                Min = 1f, Max = 9f, Step = 1f, Format = JudgeLevelText,
+                Min = 1f, Max = 9f, Step = 1f, Format = JudgeLevelText, NoValueEntry = true,
                 Help = "StepMania 的「精N」：數字越大越嚴格。精4＝Perfect ±45ms；精2 寬 1.33 倍、精8 只剩 0.33 倍。",
                 Get = () => RoomConfig.judgeLevel.ToString(CultureInfo.InvariantCulture),
                 Set = v => RoomConfig.judgeLevel = ParseInt(v, RoomConfig.judgeLevel),
@@ -234,14 +240,14 @@ namespace Sdo.Settings
             f.Add(new ConfigField
             {
                 Key = "globalOffsetMs", Category = CatPlay, Label = "判定 offset", Kind = ConfigFieldKind.Slider,
-                Min = -300f, Max = 300f, Format = v => ConfigField.NumberToText(v) + " ms",
+                Min = -300f, Max = 300f, Unit = "ms",
                 Help = "正＝判定時間往後（整體打太早就往正的調）。機器的音訊延遲已自動補掉，這裡只留個人偏好；用編輯器 F2 打拍測試量。",
                 Get = () => Num(RoomConfig.globalOffsetMs), Set = v => RoomConfig.globalOffsetMs = ParseFloat(v, RoomConfig.globalOffsetMs),
             });
             f.Add(new ConfigField
             {
                 Key = "judgeOffsetY", Category = CatPlay, Label = "判定線位移", Kind = ConfigFieldKind.Slider,
-                Min = -200f, Max = 200f, Format = v => ConfigField.NumberToText(v) + " px",
+                Min = -200f, Max = 200f, Unit = "px",
                 Help = "只影響「看起來要打在哪」，不影響判定時間（那是判定 offset 的事）。0＝正中受擊線。",
                 Get = () => Num(RoomConfig.judgeOffsetY), Set = v => RoomConfig.judgeOffsetY = ParseFloat(v, RoomConfig.judgeOffsetY),
             });
@@ -261,7 +267,7 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
-                Key = "opt_danceIgnoreMiss", Category = CatPlay, Label = "掉 miss 也照跳舞", Kind = ConfigFieldKind.Toggle,
+                Key = "opt_danceIgnoreMiss", Category = CatPlay, Label = "失誤不中斷舞蹈", Kind = ConfigFieldKind.Toggle,
                 Help = "開＝跳舞完全不受 combo/miss/血量影響。關（預設）＝官方玩法，斷 combo 會停舞。",
                 Get = () => B(Gameplay().danceIgnoreMiss), Set = v => Gameplay().danceIgnoreMiss = ParseBool(v),
             });
@@ -297,14 +303,14 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
-                Key = "SongUiAlpha", Category = CatSong, Label = "分類面板不透明度", Kind = ConfigFieldKind.Slider,
-                Min = 0f, Max = 1f, Format = Percent,
-                Help = "選歌畫面「資料夾」那個浮動分類瀏覽面板的整體不透明度（預設 60%，讓底下的唱片欄若隱若現）。",
+                Key = "SongUiAlpha", Category = CatSong, Label = "選歌面板透明度", Kind = ConfigFieldKind.Slider,
+                Min = 0f, Max = 1f,
+                Help = "選歌畫面「資料夾」那個浮動分類瀏覽面板的整體不透明度（0=全透明、1=不透明，預設 0.6）。",
                 Get = () => Num(RoomConfig.songUiAlpha), Set = v => RoomConfig.songUiAlpha = ParseFloat(v, RoomConfig.songUiAlpha),
             });
             f.Add(new ConfigField
             {
-                Key = "opt_collapseShortHolds", Category = CatSong, Label = "無理短長條收成 note", Kind = ConfigFieldKind.Toggle,
+                Key = "opt_collapseShortHolds", Category = CatSong, Label = "極短長條轉單鍵", Kind = ConfigFieldKind.Toggle,
                 Help = "短於 83ms 的 long note 直接收成單顆 note（頭尾擠在同一個判定窗＝按不出來）。只對外部轉檔譜生效。",
                 Get = () => B(Gameplay().collapseShortHolds), Set = v => Gameplay().collapseShortHolds = ParseBool(v),
             });
@@ -313,49 +319,49 @@ namespace Sdo.Settings
             f.Add(new ConfigField
             {
                 Key = "comboTextScale", Category = CatText, Label = "COMBO 字大小", Kind = ConfigFieldKind.Slider,
-                Min = 0.2f, Max = 3f, Format = Times,
+                Min = 0.2f, Max = 3f, Unit = "×",
                 Help = "COMBO 字樣＋連段數字的整體大小比例（1.0＝官方原尺寸）。純顯示，不影響判定與分數。",
                 Get = () => Num(RoomConfig.comboTextScale), Set = v => RoomConfig.comboTextScale = ParseFloat(v, RoomConfig.comboTextScale),
             });
             f.Add(new ConfigField
             {
                 Key = "comboTextAlpha", Category = CatText, Label = "COMBO 字不透明度", Kind = ConfigFieldKind.Slider,
-                Min = 0f, Max = 1f, Format = Percent,
+                Min = 0f, Max = 1f,
                 Help = "字就疊在音符板上，淡一點才不會擋住下落中的音符（預設 60%）。0＝完全看不見。",
                 Get = () => Num(RoomConfig.comboTextAlpha), Set = v => RoomConfig.comboTextAlpha = ParseFloat(v, RoomConfig.comboTextAlpha),
             });
             f.Add(new ConfigField
             {
                 Key = "comboTextPop", Category = CatText, Label = "COMBO 字彈跳", Kind = ConfigFieldKind.Slider,
-                Min = 1f, Max = 4f, Format = Times,
+                Min = 1f, Max = 4f, Unit = "×",
                 Help = "打中時彈到最大那一瞬間的倍率（官方 2.0＝彈到兩倍再收回，1.0＝完全不彈跳）。",
                 Get = () => Num(RoomConfig.comboTextPop), Set = v => RoomConfig.comboTextPop = ParseFloat(v, RoomConfig.comboTextPop),
             });
             f.Add(new ConfigField
             {
                 Key = "judgeTextScale", Category = CatText, Label = "判定字大小", Kind = ConfigFieldKind.Slider,
-                Min = 0.2f, Max = 3f, Format = Times,
+                Min = 0.2f, Max = 3f, Unit = "×",
                 Help = "PERFECT / COOL / BAD / MISS 判定字樣的整體大小比例（1.0＝官方原尺寸）。",
                 Get = () => Num(RoomConfig.judgeTextScale), Set = v => RoomConfig.judgeTextScale = ParseFloat(v, RoomConfig.judgeTextScale),
             });
             f.Add(new ConfigField
             {
                 Key = "judgeTextAlpha", Category = CatText, Label = "判定字不透明度", Kind = ConfigFieldKind.Slider,
-                Min = 0f, Max = 1f, Format = Percent,
+                Min = 0f, Max = 1f,
                 Help = "判定字不會淡出（官方是顯示完直接消失），這個值就是它顯示期間的亮度（預設 60%）。",
                 Get = () => Num(RoomConfig.judgeTextAlpha), Set = v => RoomConfig.judgeTextAlpha = ParseFloat(v, RoomConfig.judgeTextAlpha),
             });
             f.Add(new ConfigField
             {
                 Key = "judgeTextPop", Category = CatText, Label = "判定字彈跳", Kind = ConfigFieldKind.Slider,
-                Min = 1f, Max = 4f, Format = Times,
+                Min = 1f, Max = 4f, Unit = "×",
                 Help = "同 COMBO 字彈跳，只是判定字收回的速度是官方寫死的（比較慢），這裡只調幅度。",
                 Get = () => Num(RoomConfig.judgeTextPop), Set = v => RoomConfig.judgeTextPop = ParseFloat(v, RoomConfig.judgeTextPop),
             });
             f.Add(new ConfigField
             {
                 Key = "opt_uiScale", Category = CatText, Label = "UI 縮放", Kind = ConfigFieldKind.Slider,
-                Min = 0.5f, Max = 3f, Format = Times,
+                Min = 0.5f, Max = 3f, Unit = "×",
                 Help = "⚠ 目前遊戲還沒有任何地方讀這個值（畫面一律走 800×600 4:3 取景），改了不會有變化 —— 先留著對齊設定檔。",
                 Get = () => Num(Display().uiScale), Set = v => Display().uiScale = ParseFloat(v, Display().uiScale),
             });
@@ -436,8 +442,6 @@ namespace Sdo.Settings
             return n == 9 ? "JUSTICE" : "精" + n;
         }
 
-        private static string Percent(float v) => Mathf.RoundToInt(v * 100f) + "%";
-        private static string Times(float v) => v.ToString("0.##", CultureInfo.InvariantCulture) + "×";
         private static string B(bool v) => v ? "1" : "0";
         private static string Num(float v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 
