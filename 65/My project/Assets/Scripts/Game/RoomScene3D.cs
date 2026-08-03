@@ -82,6 +82,8 @@ namespace Sdo.Game
         public bool Ready => _ready;
         public Camera SceneCamForTest => _cam;          // inspection/capture only
         public SdoAvatar AvatarForTest => _avatar;
+        /// <summary>The local player's room avatar — the head portrait mirrors its pose so the two never drift apart.</summary>
+        public SdoAvatar PlayerAvatar => _avatar;
         public bool IsWalking => _walking;              // so the head portrait can MIRROR the avatar's walk/idle motion
         public float AvatarFacing => _facing;           // so the head portrait can turn with the avatar's facing
 

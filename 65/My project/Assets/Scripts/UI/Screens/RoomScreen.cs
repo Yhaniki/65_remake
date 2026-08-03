@@ -556,6 +556,7 @@ namespace Sdo.UI.Screens
                 _localHead.Init(localMale, localAvatarParts, localBody);
                 _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
                 _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
+                _localHead.MirrorSourceProvider = () => _scene != null ? _scene.PlayerAvatar : null;   // …and its exact pose (no drift)
             }
 
             // mask the room's 3D layers off the front-end UI camera (it renders ~0, so it would otherwise draw them flat)
@@ -607,6 +608,7 @@ namespace Sdo.UI.Screens
             _localHead.Init(male, parts, body);
             _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
             _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
+            _localHead.MirrorSourceProvider = () => _scene != null ? _scene.PlayerAvatar : null;
         }
 
         // 進/出房間廣播（進入房間的人送出；同房才收得到，只在「當前」分類顯示）。

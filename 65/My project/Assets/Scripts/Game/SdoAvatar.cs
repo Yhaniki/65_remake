@@ -68,6 +68,13 @@ namespace Sdo.Game
                                            // sharing one clip doesn't move in lockstep (the original staggers them)
         public float FrameOverride = -1; // >=0 -> use this frame instead of the wall clock (DPS sync hook)
 
+        /// <summary>The clip this avatar posed with on the last LateUpdate (idle / walk / one-shot / DPS clip alike).</summary>
+        public MotLoader CurrentClip => _mot;
+        /// <summary>The frame this avatar posed at on the last LateUpdate. Together with <see cref="CurrentClip"/> this
+        /// is the avatar's whole visible pose, so a second avatar fed the same pair shows the SAME pose — which is how
+        /// the room head portrait stays locked to the room avatar (官方頭貼畫的就是本體, so it cannot drift).</summary>
+        public float CurrentPoseTime { get; private set; }
+
         // ---- GPU skinning (experimental) ----
         // When true, the per-vertex blend is done by Unity's SkinnedMeshRenderer on the GPU instead of the CPU
         // loop below: each frame we still compute the bone FK (animWorld) on the CPU — cheap, O(bones) — and write
@@ -479,7 +486,7 @@ namespace Sdo.Game
             {
                 float f = (Time.time - _oneShotStart) * Fps;
                 f = _oneShotHold ? Mathf.Min(f, _oneShot.MaxTime) : f % (_oneShot.MaxTime + 1f);
-                _mot = _oneShot; MaybeStartBlend(null, -1); Pose(f); return;
+                _mot = _oneShot; MaybeStartBlend(null, -1); CurrentPoseTime = f; Pose(f); return;
             }
             if (Dps != null && Dps.Rows != null && Dps.Rows.Length > 0 && MotResolver != null && DanceTimeSec != null)
             {
@@ -498,11 +505,19 @@ namespace Sdo.Game
                 }
             }
             else if (FrameOverride >= 0f) t = FrameOverride;
-            else if (Animate && _mot != null && _mot.MaxTime > 0f) t = ((Time.time + PhaseOffsetSec) * Fps) % (_mot.MaxTime + 1f);
+            else if (Animate && _mot != null && _mot.MaxTime > 0f) t = LoopFrame(Time.time, PhaseOffsetSec, Fps, _mot.MaxTime);
             else t = 0f;
             MaybeStartBlend(dps, dpsRow);   // crossfade if the clip OR the DPS slice switched this frame
+            CurrentPoseTime = t;
             Pose(t);
         }
+
+        /// <summary>Frame of a free-running looping clip at wall-clock <paramref name="timeSec"/>. Because it is driven
+        /// by the shared clock (not by when the avatar was created), two avatars with the SAME phase offset, fps and
+        /// clip length are always on the same frame — that is why the official result portraits breathe in unison,
+        /// and why a crowd needs a per-instance <see cref="PhaseOffsetSec"/> to look independent. Pure, unit-tested.</summary>
+        public static float LoopFrame(float timeSec, float phaseOffsetSec, float fps, float maxTime)
+            => maxTime > 0f ? ((timeSec + phaseOffsetSec) * fps) % (maxTime + 1f) : 0f;
 
         /// <summary>True when the pose source changed between two frames: a different clip, a different choreography,
         /// or a different DPS row of the same clip. The original engine blends on all three (it re-arms the blend on

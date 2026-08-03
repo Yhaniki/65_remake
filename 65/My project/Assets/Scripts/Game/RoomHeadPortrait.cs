@@ -154,8 +154,34 @@ namespace Sdo.Game
             return true;
         }
 
+        /// <summary>The room avatar this portrait belongs to. When set, the portrait stops running its own walk/idle
+        /// and one-shot clocks and simply shows whatever pose the body is in this frame — 官方的房間頭貼畫的就是本體,
+        /// so head and body can never drift apart (they used to: the walk/idle mirror lagged a frame, and the chat
+        /// one-shot plus each clip switch's crossfade were timed independently on both avatars).</summary>
+        /// A provider (not a plain reference) because the room rebuilds its local avatar on every costume change —
+        /// resolving it per frame means the portrait always follows the CURRENT body.
+        public System.Func<SdoAvatar> MirrorSourceProvider;
+
         private void LateUpdate()
         {
+            var body = MirrorSourceProvider != null ? MirrorSourceProvider() : null;
+            if (_avatar != null && body != null && body.CurrentClip != null)
+            {
+                // Same clip + same frame => same pose. The body's LateUpdate may run after ours, in which case this is
+                // the body's previous frame; that is one frame of lag on a breathing loop, i.e. invisible - and unlike
+                // the old mirror it cannot accumulate drift.
+                if (_chatActionUntil > 0f) { _avatar.ClearOneShot(); _chatActionUntil = -1f; }
+                _avatar.SetClip(body.CurrentClip);
+                _avatar.FrameOverride = body.CurrentPoseTime;
+                // keep the fallback path's latch in step, so if the body ever goes away mid-session the walk/idle
+                // mirror resumes with the right clip instead of the one it happened to hold before mirroring started
+                if (WalkingProvider != null) _mirrorWalking = WalkingProvider();
+                if (_cam != null) UpdateCam();
+                return;
+            }
+            // Not mirroring (no body yet, or it went away): release the frame lock, otherwise the portrait would
+            // stay frozen on the last mirrored frame forever.
+            if (_avatar != null && _avatar.FrameOverride >= 0f) _avatar.FrameOverride = -1f;
             if (_avatar != null && WalkingProvider != null)
             {
                 bool walking = WalkingProvider();
