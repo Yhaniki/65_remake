@@ -335,6 +335,7 @@ namespace Sdo.Game.Net
                 .Str("playerId", _identity.PlayerId ?? "")
                 .Str("name", _identity.Name ?? "")
                 .Str("guild", _identity.Guild ?? "")
+                .Str("guildEmblem", _identity.GuildEmblem ?? "")
                 .Int("level", _identity.Level)
                 // 這顆 client 是哪個 commit(視窗標題那串,BuildScript 在 build 時用 git 寫進 productName)。
                 // server 會把它印在連線 log 裡,而且與自己的版本不同時警告 —— 「兩邊版本對不對」
@@ -1086,7 +1087,7 @@ namespace Sdo.Game.Net
             if (id == null) return;
             if (_sentIdentity != null && _sentIdentity.SameAs(id)) return;
             _sentIdentity = id;
-            SendIdentity(id.Name, id.PlayerId, id.Guild, id.Level);
+            SendIdentity(id.Name, id.PlayerId, id.Guild, id.GuildEmblem, id.Level);
         }
 
         /// <summary>
@@ -1094,11 +1095,15 @@ namespace Sdo.Game.Net
         /// 這個多載留給「就是要強制送一次」的呼叫端。
         /// </summary>
         public void SendIdentity(string name, string playerId, string guild, int level)
+            => SendIdentity(name, playerId, guild, "", level);
+
+        public void SendIdentity(string name, string playerId, string guild, string guildEmblem, int level)
             => Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.SetIdentity)
                 .Str("name", name ?? "")
                 .Str("playerId", playerId ?? "")
                 .Str("guild", guild ?? "")
+                .Str("guildEmblem", guildEmblem ?? "")
                 .Int("level", level));
 
         /// <summary>
@@ -1188,6 +1193,11 @@ namespace Sdo.Game.Net
         public string PlayerId;
         public string Name;
         public string Guild;
+
+        /// <summary>家族徽章名(DATA/EMBLEM)。與 <see cref="Guild"/> 成對 ——
+        /// 別人頭上的家族列要畫徽章,而且同族判定是名字+徽章兩者(見 <c>Sdo.Net.GuildIdentity</c>)。</summary>
+        public string GuildEmblem;
+
         public int Level;
         public int Gender;
         public int BodyIndex;
