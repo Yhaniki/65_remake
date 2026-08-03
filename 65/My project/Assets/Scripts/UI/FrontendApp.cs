@@ -682,8 +682,16 @@ namespace Sdo.UI
             game.scrollSpeedMul = s.Speed;                       // 房間「速度」檔位 → 下落速度（固定基準 config.ini scrollBaseBpm，osu式內部變速）
             game.roomNoteType = s.NoteType;                      // 房間 win2 選的 note 皮（-1=隨機, 0..10=指定, 10=3D）→ 開局套用同一個皮
             game.laneKeyOverride = DisplaySettingsManager.Settings?.keys?.ToLaneKeys(); // OPTION 鍵盤頁自訂鍵位（null → 預設 ASWD/numpad）
-            game.showtimeMode = s.GameMode == 2;                 // 選歌模式選單：2 = ShowTime（氣條/集氣）模式；否則一般玩法
-            game.gameMode = s.GameMode;                          // 0=自由 1=普通 2=ShowTime。曲末要靠它決定這場記不記勝負（PlayStatsRecorder）
+            // 🔴 這一場的模式一律以**房間**為準（線上＝server 的房間設定，離線＝session）。
+            // 直接讀 s.GameMode 的話，線上非房主會用自己上次在選歌對話框選的模式開場：
+            // 「自由模式的房間」在別人那台照樣出名次、照樣記勝負。規則見 GameModeRules。
+            int roomMode = Sdo.UI.Services.GameModeRules.Effective(NetRoomGameMode(), s.GameMode);
+            game.showtimeMode = Sdo.UI.Services.GameModeRules.IsShowtime(roomMode);   // 2 = ShowTime（氣條/集氣）模式；否則一般玩法
+            game.gameMode = roomMode;                            // 0=自由 1=普通 2=ShowTime。曲末要靠它決定這場記不記勝負（PlayStatsRecorder）
+            // 自由模式：整場不出名次（遊戲中的 N/M ＋ 右側名單、結算列最左的名次數字）、不出 YOU WIN/LOSE。
+            // G幣/EXP 照給（使用者指定）。這些政策 ScreenGameplay 早就寫好了，缺的一直是這一行
+            // （沒接＝永遠當普通模式跑）。
+            game.freeMode = Sdo.UI.Services.GameModeRules.IsFree(roomMode);
             game.dropDirection = s.DropDirection;                // 房間 win2「掉落方式」→ note 面板上/下 + 捲動方向（0=向上 1=向下 2=傾斜）
             var gp = DisplaySettingsManager.Settings?.gameplay;  // OPTION 遊戲頁偏好 → 開局套用
             if (gp != null)
@@ -703,6 +711,17 @@ namespace Sdo.UI
             }
             WireNetGameplay(game);
             _activeGame = game;
+        }
+
+        /// <summary>
+        /// server 手上這間房的模式(<c>null</c> = 離線 / 還沒有房間快照 → 用 session 的值)。
+        /// 與 <c>RoomScreen.RoomGameMode</c> 同一個來源 —— 房間面板上寫「自由模式」,
+        /// 開場就必須真的是自由模式。
+        /// </summary>
+        private int? NetRoomGameMode()
+        {
+            var room = _ctx != null && _ctx.Net != null ? _ctx.Net.Room : null;
+            return room != null && room.Settings != null ? (int?)room.Settings.GameMode : null;
         }
 
         // ---- 連線:同步進場 ------------------------------------------------------------------------------------

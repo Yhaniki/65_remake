@@ -38,7 +38,10 @@ namespace Sdo.Game
 
             int bad = _score != null ? _score.BadCount : 0;
             int miss = _score != null ? _score.MissCount : 0;
-            bool noReward = freeMode || spectatorMode;
+            // 🔴 自由模式**照給** G幣/EXP(使用者指定)。freeMode 只管「藏名次」——
+            // 名次仍然照算(shownPlace 是拿得到的),只是不畫出來,獎勵就照那個名次發。
+            // 沒有獎勵的只有旁觀者:它根本沒下場(而且 place 會是 0 = 名單裡找不到本機)。
+            bool noReward = spectatorMode;
             expGained = noReward ? 0 : Sdo.Ruleset.Reward.Experience(bad, miss, shownPlace, players);
             coinsGained = noReward ? 0 : Sdo.Ruleset.Reward.Coins(bad, miss, shownPlace, players, playerLevel);
         }

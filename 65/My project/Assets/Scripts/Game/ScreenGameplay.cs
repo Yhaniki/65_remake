@@ -1090,7 +1090,10 @@ namespace Sdo.Game
         // The remake renders ONE dancer; opponents are a configurable mock roster so the rank/list read
         // like the official multiplayer screen (see RankingBoard for the pure ordering logic).
         public bool mockOpponents = false;           // 預設關閉測試對手(離線單人=solo rank 1/1、清單只有本機);真連線時再開
-        public bool freeMode = false;                // 自由模式: no ranking UI during play, no G幣/EXP reward; HP-out still shows GAME OVER
+        // 自由模式:**只藏名次**(使用者指定)——遊戲中的 N/M 與右側名單、結算列最左的名次數字、
+        // YOU WIN/LOSE 旗都不出。G幣/EXP 照給(名次照算,只是不畫),HP 歸零照樣 GAME OVER。
+        // 勝負場的戰績另有規則(自由模式不記),那條在 Sdo.Settings.PlayStats.RecordsWinLoss,與這個旗標無關。
+        public bool freeMode = false;
         /// <summary>
         /// 旁觀模式(需求 10):進場**只看別人跳舞**。
         ///
@@ -5759,11 +5762,11 @@ namespace Sdo.Game
             var rows = PrepareResultRows();   // also rebuilds _roster and attaches every participant portrait
             // round-end reward for the LOCAL player (Arrowgene emulator formulas — see Sdo.Ruleset.Reward).
             CalculateResultOutcome(rows, out bool localWon, out int expGained, out int coinsGained);
-            // 經驗值落地：加進 active 角色的 profile.json（到門檻自動升等，曲線見 PlayerLevel）。自由模式/旁觀者的
+            // 經驗值落地：加進 active 角色的 profile.json（到門檻自動升等，曲線見 PlayerLevel）。旁觀者的
             // expGained 本來就是 0（見 CalculateResultOutcome）→ 不碰存檔。本局的 G幣/榮譽用進場時的等級算，升上去
             // 的等級下一局才生效；伺服器最終名次晚到只會刷新面板（RefreshNetResultRows），不會重複入帳。
             if (expGained > 0) ProfileManager.AddExperience(expGained);
-            // 自由模式不加 G幣/EXP;旁觀者沒下場,更不該有獎勵(而且 place 會是 0 = 找不到本機)。
+            // 自由模式**照給** G幣/EXP,只是名次不畫;沒獎勵的只有旁觀者(沒下場,而且 place 會是 0 = 找不到本機)。
             // 旁觀者沒有自己的舞者 → 沒有頭貼可拍(BuildLocalHeadPortrait 會回 null,結算列用預設圖)。
             Texture head = spectatorMode ? null : BuildLocalHeadPortrait();   // live 3D head for the local row (null → placeholder)
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。

@@ -477,7 +477,7 @@ namespace Sdo.Game
             }
             if (_dbgTab == 4)    // ===== RESULT: 結算面板微調 (名字 / 頭框 / 頭像 AvtShow) =====
             {
-                freeMode = GUILayout.Toggle(freeMode, freeMode ? " 自由模式: ON（無排名/無G·經驗，死亡=GAME OVER）" : " 自由模式: OFF");
+                freeMode = GUILayout.Toggle(freeMode, freeMode ? " 自由模式: ON（無排名，G·經驗照給，死亡=GAME OVER）" : " 自由模式: OFF");
                 GUILayout.Space(6);
                 GUILayout.Label("══ 結算名字 & 頭框（進結算後即時套用）══");
                 if (_result == null) GUILayout.Label("(尚未進結算畫面)");
