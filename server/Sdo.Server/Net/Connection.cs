@@ -56,6 +56,11 @@ namespace Sdo.Server.Net
         public string PlayerId = "";
         public string Name = "";
         public string Guild = "";
+
+        /// <summary>家族徽章名(DATA/EMBLEM,如 <c>SMALL43</c>)。空 = 沒設徽章。
+        /// 同族的判定是**家族名 + 徽章**兩者(見 <see cref="Sdo.Net.GuildIdentity"/>),家族頻道靠它分流。</summary>
+        public string GuildEmblem = "";
+
         public int Level;
 
         /// <summary>client 自報的 build 版本(視窗標題那串)。只用來 log 與版本比對,不影響任何規則。</summary>

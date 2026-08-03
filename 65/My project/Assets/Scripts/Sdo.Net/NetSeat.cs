@@ -23,6 +23,14 @@ namespace Sdo.Net
         /// <summary>家族名。空 = 沒有家族(頭上名牌不顯示那一行)。</summary>
         public string Guild = "";
 
+        /// <summary>
+        /// 家族徽章(DATA/EMBLEM 底下的名字,如 <c>SMALL43</c>)。空 = 只顯示家族名、不放徽章。
+        ///
+        /// 為什麼要上網:別人頭上的家族列要畫出徽章(以前只有本機看得到自己的),
+        /// 而且**同族的判定是名字+徽章兩者**(見 <see cref="GuildIdentity"/>)。
+        /// </summary>
+        public string GuildEmblem = "";
+
         /// <summary>等級(頭上名牌的 Lv)。</summary>
         public int Level;
 
@@ -35,7 +43,8 @@ namespace Sdo.Net
         {
             if (o == null) return false;
             return Level == o.Level
-                && Same(Name, o.Name) && Same(PlayerId, o.PlayerId) && Same(Guild, o.Guild);
+                && Same(Name, o.Name) && Same(PlayerId, o.PlayerId)
+                && Same(Guild, o.Guild) && Same(GuildEmblem, o.GuildEmblem);
         }
 
         private static bool Same(string a, string b)
@@ -172,6 +181,9 @@ namespace Sdo.Net
         /// <summary>家族名。空 = 沒有家族(頭上名牌不顯示那一行)。</summary>
         public string Guild = "";
 
+        /// <summary>家族徽章名(DATA/EMBLEM,如 <c>SMALL43</c>)。空 = 只顯示家族名、不放徽章。</summary>
+        public string GuildEmblem = "";
+
         /// <summary>等級(頭上名牌的 Lv)。</summary>
         public int Level;
 
@@ -213,6 +225,7 @@ namespace Sdo.Net
             UserId = 0;
             Name = "";
             Guild = "";
+            GuildEmblem = "";
             Level = 0;
             Look = new NetAvatarLook();
             Ready = false;
@@ -234,6 +247,7 @@ namespace Sdo.Net
             return o
                 .Str("name", Name)
                 .Str("guild", Guild)
+                .Str("guildEmblem", GuildEmblem)
                 .Int("level", Level)
                 .Put("look", Look != null ? Look.Encode() : null)
                 .Bool("ready", Ready)
@@ -258,6 +272,7 @@ namespace Sdo.Net
 
             s.Name = NetJson.Str(node, "name");
             s.Guild = NetJson.Str(node, "guild");
+            s.GuildEmblem = NetJson.Str(node, "guildEmblem");
             s.Level = NetJson.Int(node, "level");
             s.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
             s.Ready = NetJson.Bool(node, "ready");
@@ -286,6 +301,11 @@ namespace Sdo.Net
     {
         public int UserId;
         public string Name = "";
+
+        /// <summary>家族名 / 徽章。旁觀者一樣站在房間裡、頭上一樣有名字牌 ——
+        /// 沒有這兩個欄位的話,同一個人從座位換到旁觀席,家族列就會憑空消失。</summary>
+        public string Guild = "", GuildEmblem = "";
+
         public int Level;
         public NetAvatarLook Look = new NetAvatarLook();
 
@@ -299,6 +319,8 @@ namespace Sdo.Net
             => JObj.New()
                 .Int("userId", UserId)
                 .Str("name", Name)
+                .Str("guild", Guild)
+                .Str("guildEmblem", GuildEmblem)
                 .Int("level", Level)
                 .Put("look", Look != null ? Look.Encode() : null)
                 .Str("avail", NetState.ToWire(Avail));
@@ -309,6 +331,8 @@ namespace Sdo.Net
             if (node == null) return s;
             s.UserId = NetJson.Int(node, "userId");
             s.Name = NetJson.Str(node, "name");
+            s.Guild = NetJson.Str(node, "guild");
+            s.GuildEmblem = NetJson.Str(node, "guildEmblem");
             s.Level = NetJson.Int(node, "level");
             s.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
 

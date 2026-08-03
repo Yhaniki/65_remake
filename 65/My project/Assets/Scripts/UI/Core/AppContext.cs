@@ -78,7 +78,13 @@ namespace Sdo.UI.Core
             {
                 PlayerId = Session.LocalPlayerId,
                 Name = Session.LocalPlayerName,
-                Guild = Session.GuildName,
+                // 🔴 家族走 ProfileFields 的**真值**,不要用 Session.GuildName ——
+                //    後者在「完全沒設家族」時會退成示範家族名(GameSession.DemoGuildName,單機用),
+                //    拿它上線的話全服沒設家族的人會變成同一個家族、互相聽得到家族頻道。
+                //    這也讓 hello 與之後的 setIdentity(LocalIdentityNow)同源:兩邊報不同的家族名,
+                //    就會出現「進房前是 A 族、坐下後變沒家族」。
+                Guild = ProfileFields.FamilyName(Sdo.Settings.ProfileManager.Active),
+                GuildEmblem = ProfileFields.FamilyEmblem(Sdo.Settings.ProfileManager.Active),
                 Level = ProfileFields.PlayerLevelValue(Sdo.Settings.ProfileManager.Active),
                 Gender = Session.Gender,
                 // 握手就帶上真的體型與穿搭 —— 用 profile 的**快取**那份(EquippedAvatarParts),
@@ -122,9 +128,11 @@ namespace Sdo.UI.Core
             // 聊天:同房的公開發言走 server 廣播;密語/家族/系統/「你說」那些本機專屬的行仍由離線實作產生
             // (見 OnlineChatService 的註解)。所以是「包在外面」而不是整個換掉。
             // localGuild:家族頻道要不要上網看它(沒有家族 → 只在本機回「你沒有家族」)。
-            // 與單機那份 MockChatService 吃的是**同一個來源**(Session.GuildName),兩邊判斷才會一致。
+            // 🔴 線上這條吃 ProfileFields 的**真值**,不是 Session.GuildName —— 後者沒設家族時會退成
+            //    示範家族名(單機用),線上拿它當門檻會讓「其實沒有家族」的人把話丟進一個沒人在的頻道。
+            //    與送上線的 identity(BeginLogin / LocalIdentityNow)同源,server 的同族判定才對得上。
             Chat = new OnlineChatService(net, _offlineChat, () => Session.Gender == 1,
-                                         () => Session.GuildName);
+                                         () => ProfileFields.FamilyName(Sdo.Settings.ProfileManager.Active));
             if (OnlineChanged != null) OnlineChanged();
         }
 
@@ -184,6 +192,9 @@ namespace Sdo.UI.Core
                 // 家族名走 profile 那條(而不是 GameSession 寫死的示範字串)——
                 // 這樣「別人在房間看到的我的家族」與「我頭上名牌的家族」是同一個來源。
                 Guild = ProfileFields.FamilyName(p),
+                // 徽章與家族名成對上線:別人頭上的家族列要畫得出徽章,
+                // 而且同族的判定是「名字 + 徽章都一樣」(見 Sdo.Net.GuildIdentity)。
+                GuildEmblem = ProfileFields.FamilyEmblem(p),
                 Level = ProfileFields.PlayerLevelValue(p),
             };
         }

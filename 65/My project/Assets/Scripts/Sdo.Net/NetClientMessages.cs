@@ -442,6 +442,11 @@ namespace Sdo.Net
 
         public string Name;
         public string Guild;
+
+        /// <summary>家族徽章名(DATA/EMBLEM)。「家族」分頁的同族判定要名字+徽章都對得上
+        /// (見 <see cref="GuildIdentity"/>)—— 只比名字的話同名不同族會混在一起。</summary>
+        public string GuildEmblem;
+
         public int Level;
 
         /// <summary>0=女 1=男。名單左邊那個小人頭圖示用它分色。</summary>
@@ -466,6 +471,7 @@ namespace Sdo.Net
             e.UserId = NetJson.Int(node, "userId");
             e.Name = NetJson.Str(node, "name");
             e.Guild = NetJson.Str(node, "guild");
+            e.GuildEmblem = NetJson.Str(node, "guildEmblem");
             e.Level = NetJson.Int(node, "level");
             e.Gender = NetJson.Int(node, "gender");
             e.RoomSeq = NetJson.Int(node, "roomSeq", -1);

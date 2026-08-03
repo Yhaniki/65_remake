@@ -48,9 +48,9 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 
 | 類別 | 訊息 |
 |---|---|
-| 連線 | `hello`{proto,role,playerId,name,gender,level,guild,**build**,password?,**authToken?**,sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
+| 連線 | `hello`{proto,role,playerId,name,gender,level,guild,**guildEmblem**,**build**,password?,**authToken?**,sessionKey} → `welcome`{userId,sessionKey,capacity,fileTtlHours,maxBlobBytes} / `bye`{reason} / `ping`·`pong`{t0} —— **5 秒一次,15 秒沒收到 = 斷線 = 離房** |
 | 房間 | `roomList` / `createRoom`{mode,name} / `joinRoom`{code} → `joinResult`{ok/full/inGame/notFound} / `leaveRoom` / **`roomState`**{rev,code,name,hostUserId,mode,status,capacity,seats[…],spectators[],song,settings} / `setRoomName` |
-| 名單 | `userList` → `userListResult`{users:[{userId,name,guild,level,gender,**roomSeq**}]} —— 大廳左側玩家名單(全部/好友/家族)的資料來源。**沒有上下線推播**,與 `roomList` 同一個問答模式(大廳自己輪詢)。`roomSeq` 0 = 人在大廳、>0 = 在那個**門牌**的房(不是加入用的 code)。「誰是我的好友」server 不知道 —— 好友清單存在玩家自己機器上,比對在 client 做 |
+| 名單 | `userList` → `userListResult`{users:[{userId,name,guild,**guildEmblem**,level,gender,**roomSeq**}]} —— 大廳左側玩家名單(全部/好友/家族)的資料來源。**沒有上下線推播**,與 `roomList` 同一個問答模式(大廳自己輪詢)。`roomSeq` 0 = 人在大廳、>0 = 在那個**門牌**的房(不是加入用的 code)。「誰是我的好友」server 不知道 —— 好友清單存在玩家自己機器上,比對在 client 做 |
 | 座位 | `kickUser` / `setSeatClosed` / `transferHost` / `kicked`{reason} / `error`{rq?,code,msg} |
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
 | 開場 | `setReady` / `setSong`{NetSongRef} / `setRoomSettings` / `requestStart`{force,resolved} → `matchStarting`{matchId,startEpochMs,loadTimeoutMs,participants[],spectatorNames[],resolved,song,settings} / `setPlayState` / `gameplayStarted` / `gameplayAborted` / `resultsReady`{matchId,rows[]} |
@@ -58,9 +58,9 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 | 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{matchId,leaderUserId,f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²；`leaderUserId` = 權威領隊,見下) / `playFinished` / `comboMilestone`{matchId,combo} C→S→C |
 | 房間走動 | `move`{roomCode,roomRev,slot,x,z,f,w} C→S / `moves`{roomCode,roomRev,m:[…]} S→C(同上,但頻率高一點；`slot`=座位 0..5 或旁觀 1000+索引，遲到的舊身分移動會被丟棄) |
 | 外觀 | `setLook`{gender,bodyIndex,parts[]} —— 握手時玩家還沒選性別/還沒讀 profile,所以外觀要另外送 |
-| 身分 | `setIdentity`{name,playerId,guild,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
+| 身分 | `setIdentity`{name,playerId,guild,guildEmblem,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
 | 旁觀 | `spectate`{code} / `stopSpectate` |
-| 聊天 | `chatSay` / `chatMsg` / `announce` |
+| 聊天 | `chatSay`{text,channel,expressionId,leading} / `chatMsg` / `announce` —— `channel=="family"` **只轉發給同族**(家族名 + 徽章都一樣,見 `Sdo.Net.GuildIdentity`),房間內與大廳都濾;沒有家族的人送家族頻道只有自己收得到 |
 | 密語 | `chatWhisper`{target,text,expressionId,leading,channel} C→S / `whisperMsg`{kind:`out`/`in`/`noid`,party,senderUserId,text,expressionId,leadingText,channel} S→C(見下) |
 
 `playState`:`idle` `ready` **`waitingForLoad`** `loaded` `readyForGameplay` **`playing`** `finished`
@@ -74,7 +74,7 @@ server 沒給 `--tokens` 時 `authToken` 被忽略,身分 = client 自稱的 `pl
 查不到 → `bye{badToken}`。所以「把 hello 的 playerId 改成別人的」在啟用 token 之後不再有效。
 
 ⚠️ `setIdentity` 是握手**之後**改身分的路徑,所以它必須尊重同一條規則:token 綁了 `name`/`playerId` 的連線
-改不動那兩項(只吃得到 `guild`/`level`)—— 否則它就是 token 機制的後門,hello 擋下的冒用改成事後再送一次就成立。
+改不動那兩項(只吃得到 `guild`/`guildEmblem`/`level`)—— 否則它就是 token 機制的後門,hello 擋下的冒用改成事後再送一次就成立。
 
 同一條連線上還有另外兩道在 hello **之前**就生效的門(連線在握手之前已經成立):
 來源允許名單 → `bye{notAllowed}`、per-IP 連線數上限 → `bye{tooManyFromIp}`。

@@ -258,6 +258,7 @@ namespace Sdo.Server.Net
             }
 
             conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
+            conn.GuildEmblem = Clip(NetJson.Str(node, "guildEmblem"), NetLimits.MaxNameChars);
             conn.Level = Math.Max(0, NetJson.Int(node, "level"));
             conn.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
 
@@ -427,6 +428,7 @@ namespace Sdo.Server.Net
                     .Int("userId", c.UserId)
                     .Str("name", c.Name)
                     .Str("guild", c.Guild)
+                    .Str("guildEmblem", c.GuildEmblem)
                     .Int("level", c.Level)
                     .Int("gender", c.Look != null ? c.Look.Gender : 0)
                     // 門牌(seq)而不是 code:名單只是給人看「他在幾號房」,不是給人拿去闖房的鑰匙。
@@ -711,11 +713,12 @@ namespace Sdo.Server.Net
                 if (pid.Length > 0) conn.PlayerId = pid;
             }
             conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
+            conn.GuildEmblem = Clip(NetJson.Str(node, "guildEmblem"), NetLimits.MaxNameChars);
             conn.Level = Math.Max(0, NetJson.Int(node, "level"));
 
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) return;
-            if (room.SetIdentity(conn.UserId, conn.Name, conn.Guild, conn.Level) == NetRoomOp.Ok)
+            if (room.SetIdentity(conn.UserId, conn.Name, conn.Guild, conn.GuildEmblem, conn.Level) == NetRoomOp.Ok)
                 BroadcastRoomState(room);
         }
 
@@ -760,6 +763,7 @@ namespace Sdo.Server.Net
                 reply.Str("name", target.Name)
                      .Str("playerId", target.PlayerId)
                      .Str("guild", target.Guild)
+                     .Str("guildEmblem", target.GuildEmblem)
                      .Int("level", target.Level)
                      .Put("look", (target.Look ?? new NetAvatarLook()).Encode())
                      .Put("card", (target.Card ?? new NetPlayerCard()).Encode());
@@ -1527,16 +1531,23 @@ namespace Sdo.Server.Net
                 .Int("roomId", room != null ? room.Code : 0)
                 .Utf8();
 
+            // **家族頻道只送給同一個家族的人**(同族 = 家族名 + 徽章都一樣,見 <see cref="SameGuild"/>)。
+            // 大廳是全服共用的一塊,家族的話被整個大廳看光,那個頻道就沒有存在的意義;
+            // 🔴 **房間裡也要濾**:六個人一間房不代表他們同族 —— 以前這條路是無條件全房廣播,
+            //    於是同一間房裡的外人照樣看得到別人的家族訊息(而且是標成綠字的家族訊息)。
+            // 沒有家族的人送家族頻道 → 只有自己收得到(client 那邊會顯示「你沒有家族」)。
+            bool familyOnly = string.Equals(channel, "family", StringComparison.OrdinalIgnoreCase);
+
             if (room != null)
             {
-                ForEachInRoom(room, c => c.SendPreEncoded(bytes));
+                ForEachInRoom(room, c =>
+                {
+                    if (familyOnly && c.UserId != conn.UserId && !SameGuild(conn, c)) return;
+                    c.SendPreEncoded(bytes);
+                });
                 return;
             }
 
-            // 大廳的**家族頻道只送給同一個家族的人** —— 大廳是全服共用的一塊,不像房間本來就只有六個人;
-            // 家族的話被整個大廳看光,那個頻道就沒有存在的意義了。沒有家族的人送家族頻道 → 只有自己收得到
-            // (client 那邊會顯示「你沒有家族」,見 RoomScreen 的同一條規則)。
-            bool familyOnly = string.Equals(channel, "family", StringComparison.OrdinalIgnoreCase);
             ForEachInLobby(c =>
             {
                 if (familyOnly && c.UserId != conn.UserId && !SameGuild(conn, c)) return;
@@ -1544,10 +1555,15 @@ namespace Sdo.Server.Net
             });
         }
 
-        /// <summary>兩條連線屬於同一個家族嗎(沒有家族的人永遠不算同族,免得「都沒家族」變成一個大家族)。</summary>
+        /// <summary>
+        /// 兩條連線屬於同一個家族嗎 —— **家族名 + 徽章兩者都要一樣**(使用者要求),
+        /// 規則本體在 <see cref="GuildIdentity.Same"/>(client 的大廳「家族」分頁用同一份,
+        /// 兩邊不一致的話會變成「名單上看得到他、他卻收不到我的家族發言」)。
+        /// 沒有家族的人永遠不算同族,免得「都沒家族」變成一個大家族。
+        /// </summary>
         private static bool SameGuild(Connection a, Connection b)
-            => a != null && b != null && !string.IsNullOrEmpty(a.Guild)
-               && string.Equals(a.Guild, b.Guild, StringComparison.OrdinalIgnoreCase);
+            => a != null && b != null
+               && GuildIdentity.Same(a.Guild, a.GuildEmblem, b.Guild, b.GuildEmblem);
 
         /// <summary>
         /// 密語。收件人**照名字**在全服的連線裡找 —— 不是在房裡找:密語本來就跨房,
@@ -1612,7 +1628,7 @@ namespace Sdo.Server.Net
         // ================= 小工具 =================
 
         private static NetJoinUser JoinUserOf(Connection c)
-            => new NetJoinUser(c.UserId, c.Name, c.Guild, c.Level, c.Look);
+            => new NetJoinUser(c.UserId, c.Name, c.Guild, c.GuildEmblem, c.Level, c.Look);
 
         private static string Clip(string s, int max)
         {

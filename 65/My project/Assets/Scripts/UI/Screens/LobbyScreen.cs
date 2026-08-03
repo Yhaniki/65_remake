@@ -1895,10 +1895,10 @@ namespace Sdo.UI.Screens
             if (_userPanel == null || !_userPanel.Visible) return;
 
             var net = Ctx != null ? Ctx.Net : null;
-            if (net == null || !net.IsConnected) { _userPanel.SetUsers(SelfPlusFakes(0), 0, SelfName(), SelfGuild()); return; }
+            if (net == null || !net.IsConnected) { _userPanel.SetUsers(SelfPlusFakes(0), 0, SelfName(), SelfGuild(), SelfGuildEmblem()); return; }
 
             if (_userPanel.UserCount == 0)
-                _userPanel.SetUsers(SelfPlusFakes(net.UserId), net.UserId, SelfName(), SelfGuild());
+                _userPanel.SetUsers(SelfPlusFakes(net.UserId), net.UserId, SelfName(), SelfGuild(), SelfGuildEmblem());
 
             int gen = _listGen;
             net.RequestUserList(users =>
@@ -1913,7 +1913,7 @@ namespace Sdo.UI.Screens
                 // dev 假玩家線上也要補(同 RefreshRows 的假房間)—— 不然連著 server 時名單只有自己一列,
                 // 四個分頁的版位一樣校不了。
                 if (FakeLobbyData) AddFakeUsers();
-                _userPanel.SetUsers(_offlineUsers, net.UserId, SelfName(), SelfGuild());
+                _userPanel.SetUsers(_offlineUsers, net.UserId, SelfName(), SelfGuild(), SelfGuildEmblem());
             });
         }
 
@@ -1937,6 +1937,7 @@ namespace Sdo.UI.Screens
                 UserId = userId,
                 Name = SelfName(),
                 Guild = SelfGuild(),
+                GuildEmblem = SelfGuildEmblem(),
                 Level = ProfileFields.PlayerLevelValue(p),
                 Gender = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1 ? 1 : 0,
                 RoomSeq = -1,   // -1 = 在大廳(門牌從 000 起算,0 是一間真的房)
@@ -1961,6 +1962,7 @@ namespace Sdo.UI.Screens
             var owner = ProfileManager.Active;
             var friends = FriendList.Names(owner);
             string myGuild = SelfGuild();
+            string myEmblem = SelfGuildEmblem();
 
             for (int i = 0; i < FakeUserNames.Length; i++)
             {
@@ -1972,6 +1974,8 @@ namespace Sdo.UI.Screens
                     Name = name,
                     // 中間三個掛自己的家族(自己沒家族時就留空 —— 那時「家族」分頁本來就該是空的)。
                     Guild = (i >= 3 && i <= 5) ? myGuild : "",
+                    // 徽章也要跟著,否則同族判定(名字+徽章)會把這批假同族篩掉。
+                    GuildEmblem = (i >= 3 && i <= 5) ? myEmblem : "",
                     Level = 1 + i * 7,
                     Gender = i % 2,
                     RoomSeq = (i % 2 == 0) ? -1 : (i / 2),
@@ -1997,6 +2001,10 @@ namespace Sdo.UI.Screens
         }
 
         private static string SelfGuild() => ProfileFields.FamilyName(ProfileManager.Active);
+
+        /// <summary>本機的家族徽章。同族 = 名字+徽章都一樣(見 <see cref="Sdo.Net.GuildIdentity"/>),
+        /// 所以名單那邊要連它一起拿到,不然「家族」分頁會把同名不同族的人也列進來。</summary>
+        private static string SelfGuildEmblem() => ProfileFields.FamilyEmblem(ProfileManager.Active);
 
         private void OnLogout()
         {

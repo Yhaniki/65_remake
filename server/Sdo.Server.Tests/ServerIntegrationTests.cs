@@ -649,6 +649,141 @@ namespace Sdo.Tests
             Assert.IsNull(leaked, "別房的人不該看到這句話");
         }
 
+        // ---- 家族頻道 ----
+        //
+        // 規則:**家族名 + 徽章都一樣的人才收得到**(使用者要求:「家族一樣、符號也一樣才可以用家族頻道
+        // 溝通」)。判定本體是 Sdo.Net.GuildIdentity —— client 的大廳「家族」分頁吃同一份,
+        // 兩邊不一致就會變成「名單上看得到他、他卻收不到我的家族發言」。
+
+        /// <summary>連一個帶家族(名字+徽章)的 client 上去。</summary>
+        private TestClient ConnectWithGuild(string name, string guild, string emblem)
+        {
+            var c = new TestClient(_hub.ActualPort);
+            _clients.Add(c);
+            c.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Hello)
+                .Int(NetProto.FieldRequest, 1)
+                .Int("proto", NetProto.Version)
+                .Str("role", NetProto.RoleControl)
+                .Str("playerId", "00000000")
+                .Str("name", name)
+                .Str("guild", guild)
+                .Str("guildEmblem", emblem)
+                .Int("level", 7));
+            var welcome = c.WaitFor(NetProto.Welcome);
+            Assert.IsNotNull(welcome, name + " 沒收到 welcome");
+            c.UserId = NetJson.Int(welcome, "userId");
+            c.SessionKey = NetJson.Str(welcome, "sessionKey");
+            return c;
+        }
+
+        [Test]
+        public void Lobby_Family_Chat_Reaches_Only_The_Same_Name_And_Emblem()
+        {
+            var a = ConnectWithGuild("我", "熱舞家族", "SMALL43");
+            var mate = ConnectWithGuild("同族", "熱舞家族", "SMALL43");
+            var impostor = ConnectWithGuild("同名不同徽章", "熱舞家族", "SMALL7");
+            var loner = ConnectWithGuild("沒家族的人", "", "");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatSay)
+                .Str("text", "晚上開團嗎")
+                .Str("channel", "family"));
+
+            var got = mate.WaitFor(NetProto.ChatMsg);
+            Assert.IsNotNull(got, "同名同徽章的人一定要收到");
+            Assert.AreEqual("晚上開團嗎", NetJson.Str(got, "text"));
+            Assert.AreEqual("family", NetJson.Str(got, "channel"));
+
+            Assert.IsNull(impostor.WaitFor(NetProto.ChatMsg, 500), "家族名一樣但徽章不同 = 不同家族");
+            Assert.IsNull(loner.WaitFor(NetProto.ChatMsg, 500), "沒有家族的人收不到任何家族訊息");
+        }
+
+        [Test]
+        public void Family_Chat_Without_A_Guild_Only_Echoes_To_The_Sender()
+        {
+            // 沒有家族的人送家族頻道:自己那一行還是要回來(client 靠它顯示),但別人一個都收不到 ——
+            // 否則「都沒家族」的人會湊成一個全服共用的大家族。
+            var a = ConnectWithGuild("孤單一個人", "", "");
+            var b = ConnectWithGuild("另一個沒家族的", "", "");
+
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatSay)
+                .Str("text", "有人在嗎")
+                .Str("channel", "family"));
+
+            Assert.IsNotNull(a.WaitFor(NetProto.ChatMsg), "自己那一行要回來");
+            Assert.IsNull(b.WaitFor(NetProto.ChatMsg, 500), "「都沒家族」不是一個家族");
+        }
+
+        [Test]
+        public void Room_Family_Chat_Skips_Outsiders_In_The_Same_Room()
+        {
+            // 🔴 房間裡也要濾。六個人一間房不代表他們同族 —— 以前房間那條路是無條件全房廣播,
+            //    於是同房的外人照樣看得到別人的家族訊息(而且顯示成綠字的家族訊息)。
+            var host = ConnectWithGuild("房主", "熱舞家族", "SMALL43");
+            int code = CreateRoom(host, "房");
+            var mate = ConnectWithGuild("同族的", "熱舞家族", "SMALL43");
+            JoinRoom(mate, code);
+            var outsider = ConnectWithGuild("外人", "別的家族", "SMALL43");
+            JoinRoom(outsider, code);
+            WaitForState(host, s => s.SeatedCount == 3, "三個人都在房裡");
+
+            host.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatSay)
+                .Str("text", "家族的事")
+                .Str("channel", "family"));
+
+            var got = mate.WaitFor(NetProto.ChatMsg);
+            Assert.IsNotNull(got, "同族的室友要收到");
+            Assert.AreEqual("家族的事", NetJson.Str(got, "text"));
+            Assert.IsNull(outsider.WaitFor(NetProto.ChatMsg, 500), "同房但不同族 = 收不到");
+
+            // 一般頻道沒被弄壞:同一間房的所有人照收。
+            host.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ChatSay)
+                .Str("text", "大家好")
+                .Str("channel", "current"));
+            Assert.IsNotNull(outsider.WaitFor(NetProto.ChatMsg), "一般發言仍然是全房廣播");
+        }
+
+        [Test]
+        public void Seat_Snapshot_Carries_The_Family_Emblem()
+        {
+            // 別人頭上的家族列要畫得出徽章 —— 座位快照是 client 唯一拿得到它的地方。
+            var host = ConnectWithGuild("房主", "熱舞家族", "SMALL43");
+            int code = CreateRoom(host, "房");
+            var guest = ConnectWithGuild("客人", "另一族", "SMALL9");
+            JoinRoom(guest, code);
+
+            var state = WaitForState(host, s => s.SeatedCount == 2, "看到兩個人");
+            Assert.AreEqual("熱舞家族", state.Seats[0].Guild);
+            Assert.AreEqual("SMALL43", state.Seats[0].GuildEmblem);
+            Assert.AreEqual("另一族", state.Seats[1].Guild);
+            Assert.AreEqual("SMALL9", state.Seats[1].GuildEmblem);
+        }
+
+        [Test]
+        public void Set_Identity_Updates_The_Family_Emblem_In_The_Room()
+        {
+            // 家族/徽章是進房後還會變的(玩家在個人資料頁改、或換角色)—— 房裡的人要跟著更新。
+            var host = ConnectWithGuild("房主", "", "");
+            int code = CreateRoom(host, "房");
+            var guest = ConnectWithGuild("客人", "", "");
+            JoinRoom(guest, code);
+            WaitForState(host, s => s.SeatedCount == 2, "兩個人");
+
+            guest.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetIdentity)
+                .Str("name", "客人")
+                .Str("guild", "新家族")
+                .Str("guildEmblem", "SMALL12")
+                .Int("level", 5));
+
+            var state = WaitForState(host, s => s.Seats[1].Guild == "新家族", "房主看到客人入了家族");
+            Assert.AreEqual("SMALL12", state.Seats[1].GuildEmblem);
+        }
+
         // ---- 密語 ----
         //
         // 這幾條釘住的是實際踩到的 bug:client 端把密語轉給離線實作,而離線那份比的是寫死的假名冊,

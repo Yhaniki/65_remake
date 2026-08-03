@@ -145,8 +145,12 @@ namespace Sdo.UI.Screens
         private TextMeshProUGUI _roomNameLabel;
         private OutlinedLabel _songLabel;   // 歌名(白邊)
         private OutlinedLabel _floatName;       // name marker that floats above the avatar in the room (官方頭上名字)；字 rgb(250,252,214) 描黑邊
-        private OutlinedLabel _floatFamily;     // 家族名稱(白字描黑邊)，畫在名字上方那一行；config familyName 留空則不顯示
-        private Image _floatEmblem;             // 家族名稱前的小徽章(EMBLEM/SMALL*)；familyEmblem 留空或載入失敗則不顯示
+        private RoomFamilyRow _localFamily;     // 自己頭上的家族列(徽章+家族名)；家族名留空則整條不顯示
+        // ---- 頭上名字牌:一個人一層,層與層之間照他站的位置排(與泡同一套規則,見 SortNamePlateLayers)----
+        // 名字牌全部畫在 UI 裡 ⇒ 誰蓋誰只由畫的順序決定。不分層的話「本機那面先建、遠端的後建」
+        // → 站在最後面的遠端玩家的名字牌永遠蓋住站在最前面的自己(使用者回報的症狀)。
+        private RectTransform _nameLayer;   // 名字牌/家族列的容器;夾在房間背景與泡層之間(泡仍畫在名字之上)
+        private readonly Dictionary<int, RectTransform> _nameOwnerLayer = new Dictionary<int, RectTransform>();   // 0 = 本機
         private RectTransform _chatContent;
         private ScrollRect _chatScroll;
         private ChatLineClip _chatClip;
@@ -329,29 +333,29 @@ namespace Sdo.UI.Screens
             _backdrop.raycastTarget = false;
             if (flipBackdropV) _backdrop.uvRect = new Rect(0f, 1f, 1f, -1f);
 
+            // 名字牌層。建在**泡層之前** → 泡永遠畫在名字之上(見下面 _bubbleLayer 的註解),
+            // 建在**所有 UI 面板之前** → 名字牌被面板擋住。層內一個人一層,每幀按站位重排(SortNamePlateLayers)。
+            // 🔴 不要對它呼叫 SetAsLastSibling —— 那就是在改上面兩條規則。
+            _nameLayer = UIKit.NewRect(Root, "RoomNamePlateLayer");
+            UIKit.Stretch(_nameLayer);
+
             // name marker that floats above the avatar's head in the room (positioned each frame in Update).
             // 跟遊戲內頭頂名字同款:共用色 TextStyles.FaceCream(rgb 250,252,214)+ 黑邊 + 粗體 + 8 向描邊。
             // trackEm = 字靠緊一點（真・字距，字不變形），跟遊戲內頭頂名字同一個值；實際收多少由 OutlinedLabel
             // 每次 SetText 依字串重算（固定收緊會把 SimSun 半形西文的 "TA" 黏成一塊 → 見 TextTracking）。
-            _floatName = OutlinedLabel.Create(Root, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
+            // 本機的名字/家族列住 owner 0 那一層 —— 這樣它才跟遠端的名字牌一起參與「照站位排前後」。
+            var localNameLayer = NamePlateOwnerLayer(0);
+            _floatName = OutlinedLabel.Create(localNameLayer, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
                 trackEm: TextStyles.HeadNameTrackEm);
             _floatName.gameObject.SetActive(false);
 
             // 家族列：家族名稱(白字描黑邊) + 名稱前的小徽章(EMBLEM/SMALL*)，畫在頭上名字的「上方」一行。
             // 內容與顯不顯示由這個角色的 profile.json 決定(沒設過才吃 config.ini 的預設，見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
-            // 名稱用「左對齊」：徽章+名稱要作為一個群組一起水平置中，左對齊才能讓文字自群組內的固定起點畫出。預設留空 → 不顯示。
-            _floatFamily = OutlinedLabel.Create(Root, "FloatFamily", 0, 0, 160, FamilyRowH, 14, Color.white, Color.black,
-                FamilyNameEdgePx, true, TextAlignmentOptions.Left, trackEm: TextStyles.HeadNameTrackEm);
-            _floatFamily.gameObject.SetActive(false);
-            _floatEmblem = UIKit.AddImage(Root, "FloatEmblem", Color.white);
-            var emblemRt = _floatEmblem.rectTransform;
-            emblemRt.anchorMin = emblemRt.anchorMax = new Vector2(0f, 1f);   // 左上錨(同 AddSprite)：anchoredPosition=(x,-y)
-            emblemRt.pivot = new Vector2(0f, 1f);
-            emblemRt.sizeDelta = new Vector2(FamilyEmblemSize, FamilyEmblemSize);
-            _floatEmblem.gameObject.SetActive(false);
+            // 版面與排版數學在 RoomFamilyRow —— **遠端玩家頭上那條走同一份**(見 SyncRemoteNamePlates)。
+            _localFamily = RoomFamilyRow.Create(localNameLayer, "");
 
             // 對話泡層。位置(sibling index)**就是**泡的前後規則本身,所以這兩件事都靠它:
-            //   • 建在**頭上名字/家族列之後** → 泡永遠畫在名字之上(自己說話時泡不會被自己的名字擋住);
+            //   • 建在**頭上名字/家族列那一層(_nameLayer)之後** → 泡永遠畫在名字之上(自己說話時泡不會被自己的名字擋住);
             //   • 建在**所有 UI 面板之前** → 上排的六格頭貼框與其他面板蓋得住泡(使用者需求)。
             // 泡因此蓋過整張房間畫面(站在說話者前面的人、家具都擋不住它),但不會浮到 UI 上面。
             // 🔴 不要把它搬到別處建、也不要對它呼叫 SetAsLastSibling —— 那就是在改上面兩條規則。
@@ -3159,8 +3163,16 @@ namespace Sdo.UI.Screens
                 if (roomIsTop && Ctx != null && Ctx.Session != null)
                 {
                     var s = Ctx.Session;
-                    s.GuildName = s.HasGuild ? "" : GameSession.DemoGuildName;
-                    string state = s.HasGuild ? s.GuildName : LocalizationManager.Get("room.debug_guild_none");
+                    // 🔴 切的是 profile 的家族覆寫,不能只切 Session.GuildName —— 送上線的身分與線上家族頻道的
+                    //    門檻現在都吃 ProfileFields 的真值(見 AppContext),只動 session 的話這顆鍵在**線上**
+                    //    完全沒有效果。不呼叫 ProfileManager.Save():除錯開關不該寫進存檔,重開就恢復。
+                    var prof = ProfileManager.Active;
+                    bool had = ProfileFields.FamilyName(prof).Length > 0;
+                    ProfileFields.SetOverrides(prof, had ? "" : GameSession.DemoGuildName,
+                                               had ? "" : DebugGuildEmblem, ProfileFields.PlayerLevel(prof));
+                    s.GuildName = had ? "" : GameSession.DemoGuildName;   // 單機那份 MockChatService 吃這個
+                    Ctx.Net?.PublishIdentity();                            // 讓房裡的人立刻看到家族列變了
+                    string state = had ? LocalizationManager.Get("room.debug_guild_none") : GameSession.DemoGuildName;
                     Ctx.Chat?.SendSystem(LocalizationManager.Get("room.debug_guild", state));
                 }
             }
@@ -3229,13 +3241,16 @@ namespace Sdo.UI.Screens
             UpdateSentRoomBubbles();
 
             // 本機的名字牌 + 家族列:UI 的絕對設計座標,與泡一樣蓋過房間畫面、被面板擋住。
-            // 刻意**不**放進泡那一層 —— 名字不需要照站位排前後,而放進去會被那層每幀重排。
+            // 刻意**不**放進泡那一層(泡要畫在名字之上),但與遠端的名字牌住同一層 —— 名字牌之間
+            // 照站位排前後(SortNamePlateLayers),否則站在後面的人的名字牌會蓋住站在前面的自己。
             if (_scene.TryHeadViewport(out var vp))
             {
                 if (_floatName != null && _floatName.gameObject.activeSelf)
                     PlaceFollow(_floatName.Rect, vp, -8f);   // 名字在頭的正上方
                 PlaceFamilyRow(vp);                          // 家族列再往上疊一行
             }
+            // 名字牌都擺完了 → 按各人站的位置重排「名字牌與名字牌」的前後(本機那面也算在內)。
+            SortNamePlateLayers();
 
             bool needBubbleAnchor = HasBubbleOf(0)
                 || (_chatBubbleRoot != null && (_chatBubbleRoot.gameObject.activeSelf || _chatBubblePendingShow));
@@ -3544,9 +3559,8 @@ namespace Sdo.UI.Screens
         /// 泡整個在 UI 裡 ⇒ 誰蓋誰只由**畫的順序**決定。一個人一層,每幀按各人的深度把層重排
         /// (遠的先畫、近的後畫 = 蓋住遠的)。名次的算法在 <see cref="RoomBubbleDrawOrder.FarToNear"/>(有測試)。
         ///
-        /// 🔴 用 SetAsLastSibling **依名次由遠到近**呼叫,不要用 SetSiblingIndex(rank):
-        /// SetSiblingIndex 是「插進第 n 個位置」,前面幾次呼叫會把後面的擠開 —— 逐一指定的結果不是
-        /// 你算出來的那個排列(而且錯得很安靜:只有兩顆泡重疊時才看得出來)。
+        /// 重排本身在 <see cref="RoomBubbleDrawOrder.ApplyFarToNear"/>(與名字牌共用同一段;
+        /// 那裡有「為什麼是 SetAsLastSibling 而不是 SetSiblingIndex」的 🔴 註解)。
         /// </summary>
         private void SortBubbleOwnerLayers()
         {
@@ -3562,10 +3576,7 @@ namespace Sdo.UI.Screens
                 _bubbleSortLayers.Add(kv.Value);
                 _bubbleSortDepths.Add(d);
             }
-            RoomBubbleDrawOrder.FarToNear(_bubbleSortDepths, _bubbleSortOrders);
-            for (int rank = 0; rank < _bubbleSortLayers.Count; rank++)
-                for (int i = 0; i < _bubbleSortOrders.Count; i++)
-                    if (_bubbleSortOrders[i] == rank) { _bubbleSortLayers[i].SetAsLastSibling(); break; }
+            RoomBubbleDrawOrder.ApplyFarToNear(_bubbleSortLayers, _bubbleSortDepths, _bubbleSortOrders);
         }
 
         private readonly List<RectTransform> _bubbleSortLayers = new List<RectTransform>();
@@ -4100,42 +4111,21 @@ namespace Sdo.UI.Screens
         // 這個角色自己設過就以它自己的為準。直接讀預設的話,切到有自訂家族的角色時名牌不會跟著換。
         private void UpdateFamilyRow()
         {
+            if (_localFamily == null) return;
             var prof = ProfileManager.Active;
-            string family = ProfileFields.FamilyName(prof);
-            bool show = family.Length > 0;
-            if (_floatFamily != null)
-            {
-                if (show) _floatFamily.SetText(family);
-                _floatFamily.gameObject.SetActive(show);
-            }
-            if (_floatEmblem != null)
-            {
-                Sprite em = show ? EmblemArt.Emblem(ProfileFields.FamilyEmblem(prof)) : null;
-                if (em != null) { _floatEmblem.sprite = em; _floatEmblem.gameObject.SetActive(true); }
-                else _floatEmblem.gameObject.SetActive(false);
-            }
+            _localFamily.Set(ProfileFields.FamilyName(prof), ProfileFields.FamilyEmblem(prof));
         }
 
-        // 把頭上「家族列」(徽章＋家族名稱)整組水平置中於頭部，疊在名字上方一行。徽章在左、名稱在右，兩者當「一個群組」
-        // 一起置中(而非各自置中)，才不會因徽章寬度而整體偏移。家族名稱左對齊 → 文字自群組內固定起點畫出。跟著 vp(頭部視埠)走。
+        // 把頭上「家族列」整組水平置中於頭部，疊在名字上方一行(排版數學見 RoomFamilyRow.Place)。
         private void PlaceFamilyRow(Vector2 vp)
         {
-            if (_floatFamily == null || !_floatFamily.gameObject.activeSelf) return;
-            float centerX = vp.x * 800f;
-            // 名字列頂端 = (1-vp.y)*600 - 8（見 Update 內 PlaceFollow 給 _floatName 的 topOffset=-8）。家族列疊其上 → 兩行
-            // 都同高且垂直置中，所以「holder 頂端相差 FamilyLinePitch」＝「兩行文字中心相差 FamilyLinePitch」，直接調它即可。
-            float nameTop = (1f - vp.y) * 600f - 8f;
-            float rowTop = nameTop - FamilyLinePitch;
-            float textW = _floatFamily.PreferredWidth;
-            bool hasEmblem = _floatEmblem != null && _floatEmblem.gameObject.activeSelf;
-            float emblemW = hasEmblem ? FamilyEmblemSize : 0f;
-            float gap = hasEmblem ? FamilyEmblemGap : 0f;
-            float left = centerX - (emblemW + gap + textW) * 0.5f;
-            _floatFamily.Rect.anchoredPosition = new Vector2(left + emblemW + gap, -rowTop);   // 左對齊：文字起點=群組左緣+徽章+間距
-            if (hasEmblem)
-                _floatEmblem.rectTransform.anchoredPosition =
-                    new Vector2(left, -(rowTop + (FamilyRowH - FamilyEmblemSize) * 0.5f));    // 徽章垂直置中於家族列
+            if (_localFamily == null) return;
+            // 名字列頂端 = (1-vp.y)*600 - 8（見 Update 內 PlaceFollow 給 _floatName 的 topOffset=-8）。
+            _localFamily.Place(vp.x * 800f, NameTopOf(vp));
         }
+
+        /// <summary>名字列 holder 的頂端 y(設計座標,自上緣往下為正)。家族列疊在它上方一行。</summary>
+        private static float NameTopOf(Vector2 vp) => (1f - vp.y) * 600f - 8f;
 
         /// <summary>
         /// 六格頭貼的**唯一**繪製點:頭貼、名字、房主徽章、關閉座位的 🚫 覆蓋圖。
@@ -4727,6 +4717,9 @@ namespace Sdo.UI.Screens
         // 遠端玩家頭上的名字牌(userId → label)。跟著 3D 角色的頭每幀擺位。
         private readonly Dictionary<int, OutlinedLabel> _remoteNames = new Dictionary<int, OutlinedLabel>();
 
+        // 遠端玩家頭上的家族列(userId → 徽章+家族名)。與名字牌同生共死、住同一層(見 RemoteFamilyRow)。
+        private readonly Dictionary<int, RoomFamilyRow> _remoteFamilies = new Dictionary<int, RoomFamilyRow>();
+
         private void SyncRemoteRoomAvatars()
         {
             if (_scene == null || Ctx == null) return;
@@ -4886,13 +4879,14 @@ namespace Sdo.UI.Screens
                 OutlinedLabel lbl;
                 if (!_remoteNames.TryGetValue(s.UserId, out lbl) || lbl == null)
                 {
-                    lbl = OutlinedLabel.Create(Root, "RemoteName" + s.UserId, 0, 0, 160, 20, 14,
+                    lbl = OutlinedLabel.Create(NamePlateOwnerLayer(s.UserId) ?? Root, "RemoteName" + s.UserId, 0, 0, 160, 20, 14,
                                                TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
                                                trackEm: TextStyles.HeadNameTrackEm);
                     _remoteNames[s.UserId] = lbl;
                 }
                 string lvl = s.Level > 0 ? "  LV:" + s.Level : "";
                 lbl.SetText((s.Name ?? "") + lvl);
+                RemoteFamilyRow(s.UserId).Set(s.Guild, s.GuildEmblem);
             }
 
             // Spectators still own a live 3D avatar in a looker slot. Keep the same userId-keyed label while
@@ -4909,13 +4903,14 @@ namespace Sdo.UI.Screens
                     if (!_remoteNames.TryGetValue(sp.UserId, out lbl) || lbl == null)
                     {
                         // Spectators have no team, so use the same free/default cream name colour as local players.
-                        lbl = OutlinedLabel.Create(Root, "RemoteName" + sp.UserId, 0, 0, 160, 20, 14,
+                        lbl = OutlinedLabel.Create(NamePlateOwnerLayer(sp.UserId) ?? Root, "RemoteName" + sp.UserId, 0, 0, 160, 20, 14,
                                                    TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
                                                    trackEm: TextStyles.HeadNameTrackEm);
                         _remoteNames[sp.UserId] = lbl;
                     }
                     string lvl = sp.Level > 0 ? "  LV:" + sp.Level : "";
                     lbl.SetText((sp.Name ?? "") + lvl);
+                    RemoteFamilyRow(sp.UserId).Set(sp.Guild, sp.GuildEmblem);
                 }
 
             _remoteGoneIds.Clear();
@@ -4924,6 +4919,19 @@ namespace Sdo.UI.Screens
             {
                 if (_remoteNames[id] != null) Destroy(_remoteNames[id].gameObject);
                 _remoteNames.Remove(id);
+                RoomFamilyRow fam;
+                if (_remoteFamilies.TryGetValue(id, out fam))
+                {
+                    if (fam != null) fam.Destroy();
+                    _remoteFamilies.Remove(id);
+                }
+                RectTransform layer;
+                // 名字牌住的那一層跟著走:留著的話房間開久了會累積一堆空層(每幀都要走一遍排序)。
+                if (_nameOwnerLayer.TryGetValue(id, out layer))
+                {
+                    if (layer != null) Destroy(layer.gameObject);
+                    _nameOwnerLayer.Remove(id);
+                }
                 DestroySentBubblesOf(id);   // 角色已被拆掉,泡不清會孤兒地掛到壽命結束
             }
         }
@@ -4935,7 +4943,98 @@ namespace Sdo.UI.Screens
         {
             foreach (var kv in _remoteNames) if (kv.Value != null) Destroy(kv.Value.gameObject);
             _remoteNames.Clear();
+            foreach (var kv in _remoteFamilies) if (kv.Value != null) kv.Value.Destroy();
+            _remoteFamilies.Clear();
+            ClearRemoteNamePlateLayers();
         }
+
+        /// <summary>
+        /// 那個人頭上的家族列(沒有就建一條,住他自己的名字牌層 → 與他的名字一起參與前後排序)。
+        ///
+        /// 為什麼遠端也要有:家族(名字+徽章)以前只有**自己**看得到自己的 —— 別人頭上永遠只有名字,
+        /// 於是「同族的人在房間裡認不出彼此」(使用者回報)。資料是座位快照帶來的
+        /// (<c>NetSeat.Guild</c> / <c>GuildEmblem</c>,對方在 setIdentity 報的)。
+        /// </summary>
+        private RoomFamilyRow RemoteFamilyRow(int userId)
+        {
+            RoomFamilyRow row;
+            if (_remoteFamilies.TryGetValue(userId, out row) && row != null) return row;
+            row = RoomFamilyRow.Create(NamePlateOwnerLayer(userId) ?? Root, userId.ToString());
+            _remoteFamilies[userId] = row;
+            return row;
+        }
+
+        /// <summary>
+        /// 某個人的名字牌住的那一層(lazily 建)。整層與 <see cref="_nameLayer"/> 同框、不吃滑鼠,
+        /// 所以名字牌的座標仍是 800×600 的**絕對設計座標**(PlaceFollow/PlaceFamilyRow 一行都不用改)。
+        ///
+        /// 一個人一層的唯一理由是**排序**:層與層之間每幀按各人的深度重排(見 <see cref="SortNamePlateLayers"/>)。
+        /// owner 0 = 本機自己(名字 + 家族列 + 徽章都在裡面,它們彼此不重疊,層內順序無所謂)。
+        /// </summary>
+        private RectTransform NamePlateOwnerLayer(int owner)
+        {
+            if (_nameLayer == null) return null;
+            RectTransform rt;
+            if (_nameOwnerLayer.TryGetValue(owner, out rt) && rt != null) return rt;
+            rt = UIKit.NewRect(_nameLayer, "RoomNamePlateOwner" + owner);
+            UIKit.Stretch(rt);
+            _nameOwnerLayer[owner] = rt;
+            return rt;
+        }
+
+        /// <summary>
+        /// 離開房間 → 收掉**遠端**那些人的層。🔴 owner 0 那層留著:本機的名字/家族列/徽章是 BuildUI
+        /// 建一次的常駐物件,住在裡面(拆了就永遠沒有自己的名字牌)。
+        /// </summary>
+        private void ClearRemoteNamePlateLayers()
+        {
+            _nameScratchOwners.Clear();
+            foreach (var kv in _nameOwnerLayer) if (kv.Key != 0) _nameScratchOwners.Add(kv.Key);
+            for (int i = 0; i < _nameScratchOwners.Count; i++)
+            {
+                int owner = _nameScratchOwners[i];
+                var rt = _nameOwnerLayer[owner];
+                if (rt != null) Destroy(rt.gameObject);
+                _nameOwnerLayer.Remove(owner);
+            }
+        }
+
+        /// <summary>
+        /// 名字牌與名字牌之間的前後(使用者需求):**站在前面的人的名字牌蓋住站在後面的人的**。
+        /// 沒有它的話順序就是「誰先建誰在下面」—— 本機的名字牌是 BuildUI 建的,所以站在最後面的
+        /// 遠端玩家的名字牌會永遠蓋住站在最前面的自己。
+        ///
+        /// 深度量的是**泡的那個錨點(肩膀骨)**,與 <see cref="TrackBubbleOwnerDepth"/> 同一個點:
+        /// 同一個人的泡與名字牌用同一個深度,兩者的前後才不會互相矛盾。量不到(人剛進來/在鏡頭後面)
+        /// → 當成無限遠,排在所有人後面。
+        /// </summary>
+        private void SortNamePlateLayers()
+        {
+            if (_nameOwnerLayer.Count <= 1) return;
+            var cam = _scene != null ? _scene.SceneCamera : null;
+            if (cam == null) return;
+
+            _nameSortLayers.Clear();
+            _nameSortDepths.Clear();
+            foreach (var kv in _nameOwnerLayer)
+            {
+                if (kv.Value == null) continue;
+                Vector3 anchorWorld;
+                bool have = kv.Key == 0
+                    ? _scene.TryChatBubbleAnchorWorld(out anchorWorld)
+                    : _scene.TryRemoteChatBubbleAnchorWorld(kv.Key, out anchorWorld);
+                _nameSortLayers.Add(kv.Value);
+                _nameSortDepths.Add(have
+                    ? Vector3.Dot(anchorWorld - cam.transform.position, cam.transform.forward)
+                    : float.MaxValue);
+            }
+            RoomBubbleDrawOrder.ApplyFarToNear(_nameSortLayers, _nameSortDepths, _nameSortOrders);
+        }
+
+        private readonly List<int> _nameScratchOwners = new List<int>();
+        private readonly List<RectTransform> _nameSortLayers = new List<RectTransform>();
+        private readonly List<float> _nameSortDepths = new List<float>();
+        private readonly List<int> _nameSortOrders = new List<int>();
 
         // 名字牌每幀跟著頭走(角色是 3D 的,鏡頭會動)。看不到的人(在鏡頭後面)就藏起來。
         // 與本機那面一樣:UI 的絕對設計座標,不進泡那一層(見 Update 裡那段註解)。
@@ -4949,6 +5048,15 @@ namespace Sdo.UI.Screens
                 Vector2 vp;
                 bool visible = _scene.TryRemoteHeadViewport(kv.Key, out vp);
                 if (lbl.gameObject.activeSelf != visible) lbl.gameObject.SetActive(visible);
+
+                // 家族列跟著同一顆頭:看不到的人整條一起藏(有家族的人才畫得出來,見 RoomFamilyRow.Set)。
+                RoomFamilyRow fam;
+                if (_remoteFamilies.TryGetValue(kv.Key, out fam) && fam != null)
+                {
+                    fam.SetVisible(visible);
+                    if (visible) fam.Place(vp.x * 800f, NameTopOf(vp));
+                }
+
                 if (!visible) continue;
                 PlaceFollow(lbl.Rect, vp, -8f);
             }
@@ -5464,13 +5572,11 @@ namespace Sdo.UI.Screens
         /// <summary>頭上漂浮名字的黑邊厚度(canvas px)。字色/粗體跟遊戲內頭頂名字共用 <see cref="Sdo.Game.TextStyles.FaceCream"/>。</summary>
         private const float HeadNameEdgePx = 1.4f;
 
-        // ---- 頭上名字牌的「家族列」（徽章＋家族名稱，畫在名字上方那行）版面 ----
-        // 字級/字距/holder 高都對齊名字(_floatName：14px、h=20、trackEm=HeadNameTrackEm)，兩行看起來才同一套。
-        private const float FamilyEmblemSize = 15f;   // 徽章顯示邊長(design px)；原圖 24×24 縮到與 14px 字相稱
-        private const float FamilyEmblemGap = 5f;     // 徽章與家族名稱之間的水平間距(design px)；調大＝徽章離字遠一點
-        private const float FamilyRowH = 20f;         // 家族列 holder 高＝同名字 holder(20)：兩行都垂直置中 → 中心距=FamilyLinePitch
-        private const float FamilyLinePitch = 15f;    // 家族列與名字「兩行中心」的垂直距離(design px)；調小＝兩行靠更近
-        private const float FamilyNameEdgePx = 1.4f;  // 家族名稱白字的黑邊厚度(canvas px)，同頭上名字
+        // 頭上名字牌的「家族列」版面(徽章大小/間距/行距/描邊)搬去 <see cref="RoomFamilyRow"/> ——
+        // 本機與每個遠端玩家共用同一份,常數留在這裡的話兩邊會各調各的。
+
+        /// <summary>F3 除錯用的示範徽章(切出「有家族」狀態時配 <see cref="GameSession.DemoGuildName"/>)。</summary>
+        private const string DebugGuildEmblem = "SMALL43";
 
         /// <summary>win(Win1/Win2/Win3) → 對應的收合容器；其他一律回 Root。</summary>
         private RectTransform WinRoot(Vector2 win)

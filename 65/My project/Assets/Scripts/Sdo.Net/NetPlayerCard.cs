@@ -113,7 +113,7 @@ namespace Sdo.Net
         public bool Found;
 
         public int UserId;
-        public string Name = "", PlayerId = "", Guild = "";
+        public string Name = "", PlayerId = "", Guild = "", GuildEmblem = "";
         public int Level;
 
         public NetAvatarLook Look = new NetAvatarLook();
@@ -128,6 +128,7 @@ namespace Sdo.Net
             r.Name = NetJson.Str(node, "name") ?? "";
             r.PlayerId = NetJson.Str(node, "playerId") ?? "";
             r.Guild = NetJson.Str(node, "guild") ?? "";
+            r.GuildEmblem = NetJson.Str(node, "guildEmblem") ?? "";
             r.Level = NetJson.Int(node, "level");
             r.Look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
             r.Card = NetPlayerCard.Decode(NetJson.Sub(node, "card"));

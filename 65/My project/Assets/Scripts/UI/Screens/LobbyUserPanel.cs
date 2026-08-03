@@ -114,7 +114,7 @@ namespace Sdo.UI.Screens
         /// <summary>名單裡「自己」那一列 —— 用來擋掉「把自己加成好友」。
         /// (以前還拿它把自己那列加粗,那個標記已經拿掉了:暱稱一律細體。)</summary>
         private int _selfUserId;
-        private string _selfName = "", _selfGuild = "";
+        private string _selfName = "", _selfGuild = "", _selfGuildEmblem = "";
 
         /// <summary>**目標**狀態(不是當下畫面):滑動途中就已經是最終值,所以連按兩下只是把補間反向,不會卡住。</summary>
         private bool _visible;
@@ -286,10 +286,16 @@ namespace Sdo.UI.Screens
         /// 是本機這個人 —— 名單要把自己標出來(而且「加好友」不能加到自己)。
         /// </summary>
         public void SetUsers(IList<NetUserListEntry> users, int selfUserId, string selfName, string selfGuild)
+            => SetUsers(users, selfUserId, selfName, selfGuild, "");
+
+        /// <summary>同上,多帶本機的家族徽章 —— 同族的判定是**名字+徽章**兩者(見 <see cref="GuildIdentity"/>)。</summary>
+        public void SetUsers(IList<NetUserListEntry> users, int selfUserId, string selfName, string selfGuild,
+                             string selfGuildEmblem)
         {
             _selfUserId = selfUserId;
             _selfName = selfName ?? "";
             _selfGuild = selfGuild ?? "";
+            _selfGuildEmblem = selfGuildEmblem ?? "";
             _users.Clear();
             if (users != null) for (int i = 0; i < users.Count; i++) _users.Add(users[i]);
             if (Visible) Rebuild();
@@ -324,10 +330,11 @@ namespace Sdo.UI.Screens
             {
                 // 好友:名字在本機清單裡(名字**就是**身分,見 FriendList 的註解)。自己不算好友,也不會被列進來。
                 case Tab.Friends: return FriendList.IsFriend(owner, u.Name);
-                // 家族:與自己同一個家族名。自己沒有家族時這一頁一定是空的(不要變成「列出所有沒家族的人」)。
+                // 家族:與自己**同名同徽章**(規則本體在 GuildIdentity —— server 的家族頻道用同一份,
+                // 兩邊不一致就會變成「名單上看得到他、他卻收不到我的家族發言」)。
+                // 自己沒有家族時這一頁一定是空的(不要變成「列出所有沒家族的人」)。
                 case Tab.Family:
-                    return _selfGuild.Length > 0 && !string.IsNullOrEmpty(u.Guild)
-                           && string.Equals(u.Guild.Trim(), _selfGuild.Trim(), System.StringComparison.OrdinalIgnoreCase);
+                    return GuildIdentity.Same(_selfGuild, _selfGuildEmblem, u.Guild, u.GuildEmblem);
                 default: return true;
             }
         }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace Sdo.Game
 {
@@ -43,6 +44,25 @@ namespace Sdo.Game
                 }
                 orderOut.Add(rank);
             }
+        }
+
+        /// <summary>
+        /// 把 <paramref name="layers"/> 依各自的 <paramref name="depths"/> 重排成「遠的先畫、近的後畫」
+        /// (= 站在前面的人蓋住站在後面的人)。兩份 list 等長、同索引配對;
+        /// <paramref name="scratchOrders"/> 是呼叫端持有的暫存(每幀跑,不要在這裡配置)。
+        ///
+        /// 🔴 用 SetAsLastSibling **依名次由遠到近**呼叫,不要用 SetSiblingIndex(rank):
+        /// SetSiblingIndex 是「插進第 n 個位置」,前面幾次呼叫會把後面的擠開 —— 逐一指定的結果不是
+        /// 算出來的那個排列(而且錯得很安靜:只有兩者在螢幕上重疊時才看得出來)。
+        /// </summary>
+        public static void ApplyFarToNear(List<RectTransform> layers, List<float> depths, List<int> scratchOrders)
+        {
+            if (layers == null || depths == null || scratchOrders == null) return;
+            if (layers.Count != depths.Count || layers.Count <= 1) return;
+            FarToNear(depths, scratchOrders);
+            for (int rank = 0; rank < layers.Count; rank++)
+                for (int i = 0; i < scratchOrders.Count; i++)
+                    if (scratchOrders[i] == rank) { if (layers[i] != null) layers[i].SetAsLastSibling(); break; }
         }
     }
 }
