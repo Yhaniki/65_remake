@@ -1156,18 +1156,24 @@ namespace Sdo.Game.Net
         }
 
         /// <summary>
-        /// 問 server「<paramref name="userId"/> 這個人的公開資料」——個人資料視窗點開別人時走這條。
+        /// 問 server「這個人的公開資料」——個人資料視窗點開別人時走這條。
         ///
-        /// 對方不在線上時回來的是 <c>Found == false</c>(**不是** error):那是正常情況,
-        /// 呼叫端維持原本的空白顯示就好。
+        /// **兩個鍵都要給**(見 <see cref="NetProto.PlayerCardQuery"/>):
+        ///   • <paramref name="userId"/> 找線上的那條連線。
+        ///   • <paramref name="name"/> 是他下線之後唯一還找得到他的東西 —— server 的快照表以名字為鍵。
+        /// 所以從好友清單點開一個離線的人(那份清單只有名字、userId 是 0)也查得到最後一份資料。
+        ///
+        /// 兩個都落空時回來的是 <c>Found == false</c>(**不是** error):那是正常情況,
+        /// 呼叫端維持原本的空白顯示就好。查得到但 <c>Online == false</c> 代表拿到的是離線快照。
         /// </summary>
-        public void RequestPlayerCard(int userId, Action<NetPlayerCardResult> onCard)
+        public void RequestPlayerCard(int userId, string name, Action<NetPlayerCardResult> onCard)
         {
             if (onCard == null) return;
             Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
                 .Int(NetProto.FieldRequest, NextRq(node => onCard(NetPlayerCardResult.Decode(node))))
-                .Int("userId", userId));
+                .Int("userId", userId)
+                .Str("name", name ?? ""));
         }
 
         public void SendChat(string text, string channel = "current", int expressionId = 0, string leading = null)

@@ -59,6 +59,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 | 房間走動 | `move`{roomCode,roomRev,slot,x,z,f,w} C→S / `moves`{roomCode,roomRev,m:[…]} S→C(同上,但頻率高一點；`slot`=座位 0..5 或旁觀 1000+索引，遲到的舊身分移動會被丟棄) |
 | 外觀 | `setLook`{gender,bodyIndex,parts[]} —— 握手時玩家還沒選性別/還沒讀 profile,所以外觀要另外送 |
 | 身分 | `setIdentity`{name,playerId,guild,guildEmblem,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
+| 名片 | `setCard`{card{perfect,cool,bad,miss,plays,wins,losses,expPct,fame,city,im,constellation,age}} C→S / `cardQuery`{userId,**name**} → `cardResult`{found,**online**,**seenMs**,userId,name,playerId,guild,guildEmblem,level,look,card} —— 個人資料視窗點開別人時該顯示的那些數字。**server 會把最後一份落地**(見下),所以離線的人也查得到。內容是**自報值**,server 不驗證 |
 | 旁觀 | `spectate`{code} / `stopSpectate` |
 | 聊天 | `chatSay`{text,channel,expressionId,leading} / `chatMsg` / `announce` —— `channel=="family"` **只轉發給同族**(家族名 + 徽章都一樣,見 `Sdo.Net.GuildIdentity`),房間內與大廳都濾;沒有家族的人送家族頻道只有自己收得到 |
 | 密語 | `chatWhisper`{target,text,expressionId,leading,channel} C→S / `whisperMsg`{kind:`out`/`in`/`noid`,party,senderUserId,text,expressionId,leadingText,channel} S→C(見下) |
@@ -98,6 +99,31 @@ server 沒給 `--tokens` 時 `authToken` 被忽略,身分 = client 自稱的 `pl
 代價(不是 bug):client 當掉重開會被自己那條還沒被清掉的舊連線擋住,要等 ping 逾時(15 秒)
 把幽靈連線掃掉才進得來。client 端收到這個 code 時彈的是「登入失敗:這個名稱已被使用」
 (`net.name_taken`),並**留在選角色畫面**(那裡就有改名字的地方),不像其他連線失敗那樣退回單機。
+
+### 玩家資料快照:`<data>/players.db`
+
+點開一個人的資料頁要顯示他的命中率、勝負、經驗條、知名度、四格自我介紹與穿搭。那些數字原本
+只存在他自己那台機器的 `profile.json`,靠 `setCard` / `setLook` / `setIdentity` 報上來,而三者
+都**只掛在連線上** —— 人一離線就沒了,點開他整頁是 0,而畫面上分不出「沒資料」與「他真的都是 0」。
+
+所以 server 把每個人最後一次的樣子寫進 **SQLite**(`<data>/players.db`,一人一列,
+見 `server/Sdo.Server/Store/PlayerStore.cs`)。三條 `setXxx` 各自寫一次、離線時再補一次
+(打完最後一局到關掉遊戲之間那筆 `setCard` 常常送不到)。
+
+`cardQuery` 於是變成三段式,由近而遠:
+
+1. `userId` → 線上的那條連線(在房裡/大廳點開一個人)。
+2. `name` → 線上但不知道 userId 的(從好友清單點開:那份清單存的只有名字)。
+3. `name` → 快照表。→ `found=true, online=false, seenMs=<寫下的 Unix ms>`。
+
+**鍵是名字**(小寫化後當主鍵,與 `Hub.ControlByName` 同一套不分大小寫的規則)。理由與 client 端
+好友清單認名字是同一個:這套連線沒有帳號系統,`playerId` 是 client 自稱的,大家都用預設 profile
+時會直接撞在一起;而名字至少被擋成「同時線上唯一」(見上一節)。代價是**改名 = 換一筆紀錄**。
+
+⚠️ 落地**不會讓資料變得可信**。存下來的仍然是自報值 —— 拿來顯示可以,拿來做排行榜或發獎勵不行。
+
+⚠️ 這張表開不起來(權限、磁碟滿)**不擋開機**:server 照常收人,只是退回「離線就查不到」的舊行為。
+開機那行 `玩家快照 <路徑>(已存 N 人)` 就是它有沒有生效的唯一證據,失敗時印的是 `⚠️ 玩家快照開不起來`。
 
 ### `hello.build`:兩邊是不是同一個 commit
 

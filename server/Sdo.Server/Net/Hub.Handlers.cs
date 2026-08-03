@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using Sdo.Net;
 using Sdo.Net.Server;
+using Sdo.Server.Store;
 
 namespace Sdo.Server.Net
 {
@@ -671,6 +672,7 @@ namespace Sdo.Server.Net
             var look = NetAvatarLook.Decode(NetJson.Sub(node, "look"));
             if (look == null) return;
             conn.Look = look;
+            PersistPlayer(conn);
 
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) return;
@@ -715,6 +717,7 @@ namespace Sdo.Server.Net
             conn.Guild = Clip(NetJson.Str(node, "guild"), NetLimits.MaxNameChars);
             conn.GuildEmblem = Clip(NetJson.Str(node, "guildEmblem"), NetLimits.MaxNameChars);
             conn.Level = Math.Max(0, NetJson.Int(node, "level"));
+            PersistPlayer(conn);
 
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) return;
@@ -736,40 +739,107 @@ namespace Sdo.Server.Net
         private void OnSetPlayerCard(Connection conn, object node)
         {
             conn.Card = NetPlayerCard.Decode(NetJson.Sub(node, "card"));
+            PersistPlayer(conn);
         }
 
         /// <summary>
         /// 查一個玩家的公開資料(個人資料視窗點開別人時發的)。
         ///
+        /// 三段式,由近而遠:
+        ///   1. <c>userId</c> → 線上的那條連線(在房裡/大廳點開一個人,最常見的情況)。
+        ///   2. <c>name</c> → 線上但 userId 不知道的(從好友清單點開:那份清單存的是名字)。
+        ///   3. <c>name</c> → **落地的快照**(<see cref="PersistPlayer"/> 寫的那張表)。人已經下線了,
+        ///      但 server 記得他最後一次的樣子 → 回 <c>online=false</c> + <c>seenMs</c>。
+        ///
         /// 回應帶的 <c>look</c> 是 server 手上那份(<c>setLook</c> 來的),不是名片的一部分 ——
         /// 同一件事只該有一個來源,而且那份本來就已經在連線上了。
         ///
-        /// 對方不在線上就回 <c>found=false</c> 而不是 error:「他剛好下線了」是**正常**情況,
+        /// 三段都落空才回 <c>found=false</c>,而且那**不是** error:「沒見過這個人」是正常情況,
         /// 不是誰做錯事。呼叫端看到 false 就維持原本的空白顯示。
         /// </summary>
         private void OnPlayerCardQuery(Connection conn, object node, int rq)
         {
             int userId = NetJson.Int(node, "userId");
+            string name = NetJson.Str(node, "name") ?? "";
+
             var target = ControlOf(userId);
+            if (target == null && name.Length > 0) target = ControlByName(name);
 
             var reply = JObj.New()
                 .Str(NetProto.FieldType, NetProto.PlayerCardResult)
-                .Int(NetProto.FieldRequest, rq)
-                .Bool("found", target != null)
-                .Int("userId", userId);
+                .Int(NetProto.FieldRequest, rq);
 
             if (target != null)
             {
-                reply.Str("name", target.Name)
+                reply.Bool("found", true).Bool("online", true).Long("seenMs", 0)
+                     .Int("userId", target.UserId)
+                     .Str("name", target.Name)
                      .Str("playerId", target.PlayerId)
                      .Str("guild", target.Guild)
                      .Str("guildEmblem", target.GuildEmblem)
                      .Int("level", target.Level)
                      .Put("look", (target.Look ?? new NetAvatarLook()).Encode())
                      .Put("card", (target.Card ?? new NetPlayerCard()).Encode());
+                conn.Send(reply);
+                return;
             }
 
+            // 線上找不到 → 翻快照表。查得到的話回的是「他離線前的樣子」,userId 照抄請求的那個
+            // (那個人現在沒有 userId;回請求裡的值讓 client 端的回呼對得上,見 PlayerInfoModal 的 gate)。
+            PlayerSnapshot snap;
+            if (_players != null && name.Length > 0 && _players.TryLoad(name, out snap))
+            {
+                reply.Bool("found", true).Bool("online", false).Long("seenMs", snap.UpdatedUtcMs)
+                     .Int("userId", userId)
+                     .Str("name", snap.Name)
+                     .Str("playerId", snap.PlayerId)
+                     .Str("guild", snap.Guild)
+                     .Str("guildEmblem", snap.GuildEmblem)
+                     .Int("level", snap.Level)
+                     .Put("look", (snap.Look ?? new NetAvatarLook()).Encode())
+                     .Put("card", (snap.Card ?? new NetPlayerCard()).Encode());
+                conn.Send(reply);
+                return;
+            }
+
+            reply.Bool("found", false).Bool("online", false).Long("seenMs", 0).Int("userId", userId);
             conn.Send(reply);
+        }
+
+        /// <summary>
+        /// 把這條連線現在的公開資料寫進快照表(身分 + 外觀 + 名片一起)。
+        ///
+        /// **為什麼三個 handler 都呼叫它**:那三塊資料分別由 <c>setIdentity</c> / <c>setLook</c> /
+        /// <c>setCard</c> 更新,而快照是「一個人的完整樣子」—— 只在 setCard 時寫的話,一個換了衣服
+        /// 之後就沒再打歌的人,快照裡的穿搭會永遠停在上一套。三條路都寫,表裡的那列就一直是最新的。
+        ///
+        /// 頻率不必擔心:這三條訊息 client 端都有去重(內容沒變就不送),實際上是「進房時各一次 +
+        /// 打完一局一次」的量級 —— 一次 upsert 在 WAL 模式下是微秒級的事。
+        ///
+        /// 🔴 <b>寫失敗只記一行,絕不往上傳。</b> 這張表壞掉的代價是「離線查不到資料」(= 舊行為),
+        /// 讓它去打斷 setCard 的處理才是真的把功能弄壞。<c>store == null</c>(開檔就失敗)時整個是 no-op。
+        /// </summary>
+        private void PersistPlayer(Connection conn)
+        {
+            if (_players == null || conn == null) return;
+            if (conn.Role != NetProto.RoleControl) return;      // file 連線沒有身分
+            if (string.IsNullOrEmpty(conn.Name)) return;        // 名字是主鍵,見 PlayerStore.Save
+
+            var snap = new PlayerSnapshot
+            {
+                Name = conn.Name,
+                PlayerId = conn.PlayerId ?? "",
+                Guild = conn.Guild ?? "",
+                GuildEmblem = conn.GuildEmblem ?? "",
+                Level = conn.Level,
+                Look = conn.Look ?? new NetAvatarLook(),
+                Card = conn.Card ?? new NetPlayerCard(),
+                UpdatedUtcMs = NowMs(),
+            };
+
+            string err;
+            if (!_players.Save(snap, out err))
+                Log("⚠️  玩家快照寫入失敗(user " + conn.UserId + "「" + conn.Name + "」):" + err);
         }
 
         private void OnSetAvailability(Connection conn, object node, long now)

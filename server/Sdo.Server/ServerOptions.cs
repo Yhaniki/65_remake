@@ -109,6 +109,15 @@ namespace Sdo.Server
         public string BlobDir => Path.Combine(DataDir, "blobs");
 
         /// <summary>
+        /// 玩家公開資料快照的資料庫(見 <see cref="Sdo.Server.Store.PlayerStore"/>)。
+        ///
+        /// 與 blob / log 一樣放在 data 底下 —— 部署時只有那個目錄保證存在而且 server 有寫入權
+        /// (DEPLOY.md §3)。刻意**沒有**開一個 <c>--player-db</c> 參數:多一個可以指到別處的路徑,
+        /// 就多一種「備份備到舊的那一份」的失敗方式,而這張表沒有需要搬走的理由。
+        /// </summary>
+        public string PlayerDbPath => Path.Combine(DataDir, "players.db");
+
+        /// <summary>
         /// log 實際寫去哪。預設放在 data 底下 —— 部署時本來就只有 data 這一個目錄
         /// 保證存在而且 server 有寫入權(DEPLOY.md §3),多一個要另外授權的路徑只會多一種
         /// 「開機就寫不出 log」的失敗方式。

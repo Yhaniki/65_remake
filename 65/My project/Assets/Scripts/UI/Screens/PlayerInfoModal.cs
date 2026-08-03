@@ -354,20 +354,27 @@ namespace Sdo.UI.Screens
         private Action<string> _onWhisper;
 
         /// <summary>
-        /// 現在這扇窗顯示的是哪個 server userId(0 = 自己 / 離線 / 不知道)。
+        /// 這扇窗開過幾次(每次 <see cref="Open"/> / <see cref="OpenSelf"/> / <see cref="Close"/> 都 +1)。
         ///
         /// 🔴 名片查詢的回呼是**非同步**的,而玩家可以在等待期間關掉視窗、或直接點開另一個人。
-        ///    所以每份回來的名片都要拿 forUserId 與這個欄位比對,對不上就丟掉 ——
+        ///    所以每份回來的名片都要拿發問時的序號與這個欄位比對,對不上就丟掉 ——
         ///    沒有這道門的話,連點兩個人時後到的那份會蓋掉先開的那個,而畫面看起來完全正常。
+        ///
+        /// 🔴 為什麼是序號而不是 userId(以前的做法):離線的人**沒有 userId**(從好友清單點開時是 0),
+        ///    而 0 又正好是「不要套用」的哨兵值 —— 拿 userId 當門的話,離線快照永遠會被自己的門擋掉。
         /// </summary>
-        private int _cardUserId;
+        private int _cardQuerySeq;
 
         /// <summary>
-        /// 「去跟 server 要這個人的公開名片」。由 <c>FrontendApp</c> 注入(只有它拿得到 <c>AppContext.Net</c>,
-        /// 而那個欄位在登入成功時會**換人**,所以注入的是每次呼叫時才去讀它的 lambda)。
-        /// null 或離線 → 不查,顯示維持原本的空白(見 <see cref="FillStatsOther"/>)。
+        /// 「去跟 server 要這個人的公開名片」——參數是 <c>(userId, 名字, 回呼)</c>。
+        /// 由 <c>FrontendApp</c> 注入(只有它拿得到 <c>AppContext.Net</c>,而那個欄位在登入成功時會**換人**,
+        /// 所以注入的是每次呼叫時才去讀它的 lambda)。
+        ///
+        /// **名字要一起傳**:userId 只找得到線上的人,而 server 的快照表是以名字為鍵的
+        /// (見 <see cref="NetProto.PlayerCardQuery"/>)—— 少了它,離線的人就退回一整頁 0。
+        /// null 或本機離線 → 不查,顯示維持原本的空白(見 <see cref="FillStatsOther"/>)。
         /// </summary>
-        public Action<int, Action<NetPlayerCardResult>> CardQuery;
+        public Action<int, string, Action<NetPlayerCardResult>> CardQuery;
 
         /// <summary>
         /// 視窗開著嗎?<c>FrontendApp.AnyModalOpen</c> 拿它去擋房間的 ESC 與聊天欄搶 focus,所以這個值是有責任的。
@@ -1032,7 +1039,7 @@ namespace Sdo.UI.Screens
         {
             if (who == null || _cg == null) return;   // _cg == null ⇒ 還沒 Build(),沒有東西可以開
             _isSelf = false;
-            _cardUserId = userId;
+            int seq = ++_cardQuerySeq;                // 上一扇窗還在飛的回呼就此失效
             _targetName = (who.DisplayName ?? "").Trim();
             _targetId = (who.Id ?? "").Trim();
             _onWhisper = onWhisper;
@@ -1053,13 +1060,13 @@ namespace Sdo.UI.Screens
             ShowTab(TabBasic);
             Reveal();
 
-            // 再去跟 server 要對方的公開名片(命中率那些數字 + 真正的穿搭)。離線 / 沒接上 / 對方剛下線
-            // → 什麼都不會發生,畫面就停在上面那份預設值。
-            if (userId != 0 && CardQuery != null)
-            {
-                int forUserId = userId;
-                CardQuery(forUserId, res => ApplyRemoteCard(forUserId, res));
-            }
+            // 再去跟 server 要對方的公開名片(命中率那些數字 + 真正的穿搭)。本機沒接上 / server 沒見過
+            // 這個人 → 什麼都不會發生,畫面就停在上面那份預設值。
+            //
+            // 🔴 **只有名字也要查**:對方離線時 userId 是 0,而名字正是 server 快照表的鍵
+            //    —— 舊的 `userId != 0` 那道門會把「查離線的人」整條路擋掉。
+            if ((userId != 0 || _targetName.Length > 0) && CardQuery != null)
+                CardQuery(userId, _targetName, res => ApplyRemoteCard(seq, res));
         }
 
         /// <summary>看自己。資料全部來自 <see cref="ProfileManager.Active"/>。</summary>
@@ -1068,7 +1075,7 @@ namespace Sdo.UI.Screens
             if (_cg == null) return;
             var p = ProfileManager.Active;
             _isSelf = true;
-            _cardUserId = 0;   // 看自己不查名片 —— 順便把上一扇窗還在飛的回呼失效掉
+            _cardQuerySeq++;   // 看自己不查名片 —— 順便把上一扇窗還在飛的回呼失效掉
             _targetName = (p.name ?? "").Trim();
             _targetId = (p.id ?? "").Trim();
             _onWhisper = null;
@@ -1096,9 +1103,9 @@ namespace Sdo.UI.Screens
             if (_cg == null || _closing) return;   // _closing:動畫期間 IsOpen 還是 true(見它的 doc),
                                                    // 不擋的話按住 ESC 會每幀重跑一次 PlayOut,框就永遠關不掉
             _closing = true;
-            // 🔴 先把名片的收件人清掉:查詢是非同步的,關窗之後才回來的那份不該再往已經收起來的
-            //    視窗裡塞值(見 _cardUserId)。CommitProfileFields 只在看自己時才寫檔,所以順序不影響存檔。
-            _cardUserId = 0;
+            // 🔴 先把名片的收件人換掉:查詢是非同步的,關窗之後才回來的那份不該再往已經收起來的
+            //    視窗裡塞值(見 _cardQuerySeq)。CommitProfileFields 只在看自己時才寫檔,所以順序不影響存檔。
+            _cardQuerySeq++;
             // 打完字直接按 X 的話 onEndEdit 不一定來得及觸發 → 關窗時再存一次(沒改過就是寫回一樣的值)。
             CommitProfileFields();
             // 🔴 角色**現在**就收(不等關窗動畫跑完):那尊是 3D 直接畫在畫面上的,框縮出去的途中它不會跟著縮,
@@ -1304,17 +1311,20 @@ namespace Sdo.UI.Screens
         /// 四格自我介紹全部換成真的值,並用對方真正的穿搭重建預覽角色。
         ///
         /// 🔴 **回呼是非同步的**,期間玩家可能已經關掉視窗或改看另一個人 —— 所以第一件事是
-        ///    比對 <see cref="_cardUserId"/>。少了這道門,連點兩個人時後到的那份會蓋掉先開的那個,
+        ///    比對 <see cref="_cardQuerySeq"/>。少了這道門,連點兩個人時後到的那份會蓋掉先開的那個,
         ///    而且看起來完全正常(這正是「別人的資料掛在別人名下」那類 bug 最難查的形態)。
+        ///
+        /// 🔴 <paramref name="res"/> 可能是 server 存下來的**離線快照**(<c>Online == false</c>)——
+        ///    數字照樣填,但要在頁面上說清楚它是什麼時候的,不然那些數字看起來就像即時的。
         ///
         /// 🔴 名片是**對方自己報上來的**,server 不驗證(見 <c>NetPlayerCard</c>)。拿來顯示可以,
         ///    不要拿它做任何判斷。
         /// </summary>
-        private void ApplyRemoteCard(int forUserId, NetPlayerCardResult res)
+        private void ApplyRemoteCard(int seq, NetPlayerCardResult res)
         {
             if (this == null || _cg == null) return;
-            if (_isSelf || forUserId == 0 || forUserId != _cardUserId) return;   // 視窗已經換人/關掉了
-            if (res == null || !res.Found) return;                               // 對方剛好下線 → 維持空白
+            if (_isSelf || seq != _cardQuerySeq) return;   // 視窗已經換人/關掉了
+            if (res == null || !res.Found) return;         // server 也沒見過這個人 → 維持空白
 
             var c = res.Card ?? new NetPlayerCard();
 
@@ -1334,7 +1344,11 @@ namespace Sdo.UI.Screens
             _perfLabel.text = L("room.info_record_value", Num(s.wins), Num(s.losses));
             _perfAuLabel.text = L("room.info_record_value", "0", "0");
 
-            // 有真的資料了 → 收掉那句「伺服器不保存玩家統計」。
+            // 有真的資料了 → 收掉那句「對方的資料還沒送到」。
+            //
+            // 🔴 離線快照(res.Online == false)**不另外標註**(使用者要求):那條說明會蓋在
+            //    數字上方,而它幾乎永遠都在(點開的人多半不在線上)—— 一句常駐的提示不會被讀,
+            //    只會擋住真正要看的東西。時間仍然在 res.SeenUtcMs 裡,要用的時候拿得到。
             _statsNote.gameObject.SetActive(false);
 
             SetExpBar(c.ExpPercent);

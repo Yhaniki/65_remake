@@ -21,6 +21,7 @@ namespace Sdo.UI.Core
         // 別人的資料。參數:(對方的座位資料, 對方性別 0=女 1=男, 對方的 server userId)。
         // 🔴 userId 是**線上查名片的鍵**(命中率/穿搭那些數字要跟 server 要,見 NetProto.PlayerCardQuery)——
         //    PlayerProfile.Id 是對方 client 自報的存檔編號,不是 server 認得的東西。0 = 離線或查不到。
+        //    離線那條路靠的是**名字**(server 的快照表以名字為鍵),modal 自己會用 DisplayName 去查。
         public static Action<Sdo.UI.Services.PlayerProfile, int, int> OpenPlayerInfo;
         public static Action OpenSelfInfo;                                          // 自己的資料（modal 自己讀本機 profile）
 

@@ -34,9 +34,33 @@
     <!-- 把警告當回事:協定層的型別/精度警告通常代表真的寫錯了。 -->
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <WarningLevel>4</WarningLevel>
+
+    <!--
+      🔴 **這一行是部署能不能活的關鍵。**
+
+      `PublishSingleFile=true` 預設**不會**把 native 函式庫收進那顆單一檔 —— 它會把
+      `libe_sqlite3.so`(Microsoft.Data.Sqlite 的 native 後端)放在**執行檔旁邊**。
+      而 DEPLOY.md 的部署動作是「scp 那一個檔上去」,所以少了這行的結果是:
+      server 照常啟動、照常收人,只有玩家快照靜靜地開不起來(log 裡一行 ⚠️),
+      而症狀「離線的人查不到資料」與功能沒做完長得一模一樣。
+
+      設 true 之後 native lib 被塞進單一檔,host 在啟動時自己解出來 → 部署指令一個字都不用改。
+      驗證方法:publish 完的目錄裡除了 `sdo-server`(與 .pdb)不該再有 `.so`。
+    -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      玩家資料快照的落地層(<data>/players.db,見 Store/PlayerStore.cs)。
+
+      ⚠️ 這是 server 的**第一個也是唯一一個** NuGet 依賴,而部署是
+      `PublishSingleFile=true` 的 self-contained 單一檔 —— native 的 e_sqlite3 會被包進那顆檔,
+      執行時由 host 自己解出來。所以 DEPLOY.md 的指令**一個字都不用改**。
+      版本鎖在 8.0.x:與 TargetFramework 同一條線,不要為了一個 key-value 表把 runtime 相依拉高。
+    -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+
     <!-- server 自己的程式碼 -->
     <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
 

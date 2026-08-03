@@ -30,7 +30,7 @@
 ### server
 
 ```bash
-# Linux 單一執行檔(零外部依賴,實測 64 MB)
+# Linux 單一執行檔(零外部依賴,實測 69 MB —— 含內嵌的 SQLite native lib,見 csproj)
 dotnet publish server/Sdo.Server -c Release -r linux-x64 \
   --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false \
   -o server/Sdo.Server/bin/publish-linux
@@ -254,6 +254,12 @@ ExecStart=/opt/sdo-server/sdo-server --port 27015 --data /var/lib/sdo-server \
   --tokens /etc/sdo/tokens.txt --max-per-ip 4 --upload-mb-hour 1024
 Restart=on-failure
 RestartSec=5
+
+# 單一執行檔裡包著一個 native 函式庫(SQLite,玩家快照用),host 啟動時要把它解到某個
+# 可寫又可執行的地方。預設是 /tmp 底下(配 PrivateTmp=true 是私有的,沒問題),
+# 指到資料目錄則連「/tmp 掛了 noexec」這種機器也不會出事 —— 那時的症狀只有一行
+# ⚠️ 玩家快照開不起來,server 其他功能全部正常,很難聯想到掛載選項。
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/sdo-server/.bundle
 
 # 收線:server 會攔 SIGTERM 把連線關乾淨(不會留下半開的 socket)
 KillSignal=SIGTERM
@@ -484,8 +490,18 @@ pack 刪掉,再刪掉引用計數歸零的檔案本體;總量超過 `--max-blob-
 (Linux 常掛 `noatime`,那個時間會騙人)。
 **不需要手動清**,也不要自己去刪 `files/` 底下的東西(那會讓 pack 指到不存在的檔案)。
 
-**備份。** 沒有需要備份的東西 —— 房間是暫時的(開房→打歌→散),歌曲暫存最多留一天,
-玩家的角色/戰績/設定全都在**各自的本機**。要保的只有 `/etc/sdo/` 那三個檔(憑證、密碼、token)。
+**玩家資料快照。** `<data>/players.db`(SQLite,外加 WAL 模式的 `players.db-wal` / `-shm`)。
+一個人一列:名字、家族、等級、穿搭,加上他自報的名片(判定數、勝負、經驗%、知名度、四格自我介紹)。
+用途只有一個 —— 讓「點開一個已經下線的人」看得到他最後的資料(見 `docs/systems/net-protocol.md`
+的〈玩家資料快照〉)。一列幾百 bytes,不會長成問題,**不需要清理**。
+
+要整個忘掉所有人:停 server → 刪掉那三個檔 → 開起來。開機那行
+`玩家快照 <路徑>(已存 N 人)` 會告訴你現在記得幾個人;印的是 `⚠️ 玩家快照開不起來` 就代表
+它沒生效(server 照常跑,只是離線的人又查不到了)——最常見的原因是 `<data>` 的權限。
+
+**備份。** 幾乎沒有需要備份的東西 —— 房間是暫時的(開房→打歌→散),歌曲暫存最多留一天,
+玩家的角色/戰績/設定全都在**各自的本機**。要保的只有 `/etc/sdo/` 那三個檔(憑證、密碼、token);
+`players.db` 想留就一起複製(它是純顯示用的,弄丟只是大家的資料頁空一輪,下次上線就重新寫上)。
 
 **升級。** 換執行檔 → `systemctl restart sdo-server`。協定版本有改的話**兩邊要一起換**
 (版本不合會明確擋掉,不會半殘地跑)。

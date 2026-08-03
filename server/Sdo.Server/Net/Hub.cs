@@ -9,6 +9,7 @@ using Sdo.Net;
 using Sdo.Net.Server;
 using Sdo.Server.Files;
 using Sdo.Server.Logging;
+using Sdo.Server.Store;
 
 namespace Sdo.Server.Net
 {
@@ -64,6 +65,16 @@ namespace Sdo.Server.Net
         /// <summary>定期清掉沒人用的歌曲暫存。</summary>
         private readonly BlobJanitor _janitor;
 
+        /// <summary>
+        /// 玩家公開資料的落地層(<c>&lt;data&gt;/players.db</c>)。**null = 開不起來** ——
+        /// 那時整套行為退回舊的「離線就查不到」,server 照常運作(見 <see cref="PlayerStore.TryOpen"/>)。
+        /// 只由 actor loop 碰。
+        /// </summary>
+        private readonly PlayerStore _players;
+
+        /// <summary>players.db 開不起來的原因(banner 印一行)。</summary>
+        private readonly string _playerStoreError;
+
         // ---- 公網化(M10)。四個都預設關閉/寬鬆 → LAN 行為不變。----
         private readonly AuthTokens _tokens = new AuthTokens();
         private readonly OriginPolicy _origin = new OriginPolicy();
@@ -100,6 +111,12 @@ namespace Sdo.Server.Net
             if (dropped > 0) Log("清掉 " + dropped + " 份沒收完的上傳暫存");
             _janitor = new BlobJanitor(_blobs, opts.TtlHours,
                                        (long)opts.MaxTotalBlobGb * 1024L * 1024L * 1024L, NowMs());
+
+            // 玩家資料快照。開不起來**不擋開機** —— 它是顯示用的加分項,不是連線的前提
+            // (理由見 PlayerStore.TryOpen)。失敗的原因由 banner 印出來,不然它會靜靜地沒生效。
+            string dbErr;
+            _players = PlayerStore.TryOpen(opts.PlayerDbPath, out dbErr);
+            _playerStoreError = dbErr;
 
             // 公網化的三道防線。都是「設了才生效」—— 沒設就完全是 LAN 的行為。
             _origin.SetAllowList(opts.AllowFrom);
@@ -174,6 +191,10 @@ namespace Sdo.Server.Net
                 + "  歌曲暫存 " + _opts.MaxTotalBlobGb + "GB/" + _opts.TtlHours + "h");
             // log 檔在哪要印出來 —— 出事時第一件事就是「去哪撈 log」,而路徑是可以被 --log-dir 換掉的。
             Log("log " + ServerLog.Describe());
+            // 玩家快照:開起來了就報現在存了幾個人(那是「這台真的有在記」最直接的證據);
+            // 開不起來一定要吵 —— 它失敗的症狀只是「離線查不到資料」,與功能沒做完長得一模一樣。
+            if (_players != null) Log("玩家快照 " + _opts.PlayerDbPath + "(已存 " + _players.Count + " 人)");
+            else Log("⚠️  玩家快照開不起來(" + (_playerStoreError ?? "?") + ")→ 離線的人查不到資料");
             PrintSecurityBanner();
 
             var accept = Task.Factory.StartNew(AcceptLoop, TaskCreationOptions.LongRunning);
@@ -182,6 +203,12 @@ namespace Sdo.Server.Net
 
             try { _listener.Stop(); } catch { }
             try { accept.Wait(1000); } catch { }
+
+            // 🔴 db handle 要在**這裡**收,不是在 Stop() 裡:Stop 是別條執行緒呼叫的,
+            //    那時 actor loop 可能還在處理最後一筆訊息(而那筆可能正在寫快照)。
+            //    ActorLoop() 回來了才代表沒有人會再碰它。不收的話 Windows 上檔案會一直被鎖著
+            //    —— 整合測試一輪開好幾個 server,每個都留一顆 handle。
+            try { if (_players != null) _players.Dispose(); } catch { }
         }
 
         /// <summary>
@@ -463,6 +490,11 @@ namespace Sdo.Server.Net
 
             // 那個人的上傳配額紀錄可以丟了(不清的話這張表會跟著 server 的執行時間一直長)。
             if (conn.UserId != 0 && conn.Role == NetProto.RoleControl) _quota.Forget(conn.UserId);
+
+            // 🔴 離線**之前**再寫一次快照。三個 setXxx handler 各自寫過了,但最後一局打完到斷線之間
+            //    還可能有一次 setCard 沒送到(client 是打完才送,而人常常是打完就關掉)——
+            //    這一次補寫讓「最後看到的樣子」真的是最後的樣子。寫的是連線上那份,不是重新算的。
+            PersistPlayer(conn);
 
             // 傳輸中斷:關掉開著的檔案 handle、清掉暫存目錄。
             // 不做的話那份半成品會一直佔著空間,而且沒有任何 pack 引用它 → 連 janitor 都掃不到

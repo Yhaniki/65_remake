@@ -53,7 +53,10 @@ chmod +x /tmp/bootstrap.sh
 | **不是專用機** | 上面跑著 palworld(docker)、vsftpd、samba、ZeroTier、L4D2。**別動它們** |
 | 2 core / 7.8G RAM(已用 3.3G) | 對這個 server 綽綽有餘 |
 
-上傳實測頻寬 **2.5 MB/s**,publish 出來約 64MB → 傳一次約 26 秒。
+上傳實測頻寬 **2.5 MB/s**,publish 出來約 69MB → 傳一次約 28 秒。
+(64 → 69MB 是玩家快照那顆 SQLite 的 native lib 被**內嵌**進單一檔 ——
+csproj 的 `IncludeNativeLibrariesForSelfExtract`;少了它 publish 目錄會多一個 `libe_sqlite3.so`,
+而只 scp 執行檔上去的話那個功能會靜靜地失效。)
 
 ---
 
@@ -465,6 +468,15 @@ sudo rm -rf /var/lib/sdo-server/blobs/*
 sdoctl start
 ```
 
+玩家資料快照(離線的人被點開時顯示的那份)要整個忘掉的話 —— 三個檔一起刪,
+只刪 `.db` 會留下 WAL 裡還沒 checkpoint 的內容:
+
+```bash
+sdoctl stop
+sudo rm -f /var/lib/sdo-server/players.db /var/lib/sdo-server/players.db-wal /var/lib/sdo-server/players.db-shm
+sdoctl start        # 開機那行會印「玩家快照 …(已存 0 人)」
+```
+
 ---
 
 ## 13. client 端設定
@@ -571,6 +583,18 @@ sudo -u sdo test -r /etc/sdo/cert.pfx && echo "sdo 讀得到了"
 1. GCP 那條 8888 的規則是不是綁了 `--target-tags`?這台的 tags 是空的,綁了不會套用
 2. `PORT` 是不是真的 8888?`sdoctl status` 印的是設定檔生效後的值
 3. 機器上的 `ufw` 不用管(inactive),擋在 GCP VPC 層
+
+**點開離線的人還是整頁 0(玩家快照沒生效)**
+
+開機那行是唯一的證據 —— `sdoctl log 50` 找 `玩家快照`:
+
+| 印出來的 | 意思 |
+|---|---|
+| `玩家快照 /var/lib/sdo-server/players.db(已存 N 人)` | 正常。N 是目前記得幾個人 |
+| `⚠️ 玩家快照開不起來(…)` | 資料目錄寫不進去(owner 不是 `sdo`?),或 `/tmp` 掛了 `noexec` 讓內嵌的 SQLite native lib 解不出來 —— 後者加一行 `DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/sdo-server/.bundle`(systemd 用 `Environment=`)即可 |
+| 兩行都沒有 | 傳上去的是**舊的 binary**(§12 那條:少跑一次 `dotnet publish` 就會這樣) |
+
+server 其他功能在快照失效時完全正常,所以只看「連得上、打得了歌」是驗不出來的。
 
 **磁碟滿了**
 

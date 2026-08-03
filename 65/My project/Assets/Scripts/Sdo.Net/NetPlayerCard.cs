@@ -15,8 +15,10 @@ namespace Sdo.Net
     /// 🔴 **外觀不在這裡面。** server 已經有一份(<c>setLook</c> → <c>Connection.Look</c>),
     ///    查詢回應直接附上那份,不要讓同一件事有兩個來源。
     ///
-    /// 🔴 生命週期 = **連線**。server 沒有帳號持久化(見 <c>FriendList</c> 的同一段說明),
-    ///    所以名片跟著連線走,對方離線就查不到 —— 這與「玩家名單只列線上的人」是一致的。
+    /// 🔴 生命週期:線上那份跟著**連線**走,但 server 會把最後一份**落地**
+    ///    (<c>&lt;data&gt;/players.db</c>,以名字為鍵,見 <c>Sdo.Server.Store.PlayerStore</c>)——
+    ///    對方離線之後查到的就是那份快照,回應標成 <c>online=false</c> 並附上寫下的時刻。
+    ///    這仍然**不是**帳號系統:改名 = 另一筆紀錄,內容依舊是自報值。
     /// </summary>
     public sealed class NetPlayerCard
     {
@@ -109,8 +111,25 @@ namespace Sdo.Net
     /// </summary>
     public sealed class NetPlayerCardResult
     {
-        /// <summary>查得到嗎?false = 對方不在線上(或根本沒這個 userId)。呼叫端維持原本的空白顯示。</summary>
+        /// <summary>查得到嗎?false = 這個人 server 完全沒印象(沒這個 userId,也沒有他的快照)。
+        /// 呼叫端維持原本的空白顯示。</summary>
         public bool Found;
+
+        /// <summary>
+        /// 這份資料是**現在**的還是**存下來的**?
+        ///
+        /// true = 對方正在線上,資料直接來自他的連線。
+        /// false = 對方離線,這是 server 落地的最後一份快照(見 <c>Sdo.Server.Store.PlayerStore</c>)——
+        /// 顯示得出來,但要讓玩家知道它有多舊(見 <see cref="SeenUtcMs"/>)。
+        ///
+        /// 🔴 <c>Found &amp;&amp; !Online</c> 是**正常**情況,不是錯誤。舊 server 不送這個欄位 →
+        /// 解出來是 false,而舊 server 只會在對方線上時回 <c>found=true</c> —— 所以判斷「線上」
+        /// 不可以只看這個旗標,新 client 配舊 server 時它一律是 false。
+        /// </summary>
+        public bool Online;
+
+        /// <summary>快照寫下的時刻(Unix ms)。0 = 線上那條路(或舊 server)。</summary>
+        public long SeenUtcMs;
 
         public int UserId;
         public string Name = "", PlayerId = "", Guild = "", GuildEmblem = "";
@@ -124,6 +143,8 @@ namespace Sdo.Net
             var r = new NetPlayerCardResult();
             if (node == null) return r;
             r.Found = NetJson.Bool(node, "found");
+            r.Online = NetJson.Bool(node, "online");
+            r.SeenUtcMs = NetJson.Long(node, "seenMs");
             r.UserId = NetJson.Int(node, "userId");
             r.Name = NetJson.Str(node, "name") ?? "";
             r.PlayerId = NetJson.Str(node, "playerId") ?? "";

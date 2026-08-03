@@ -166,11 +166,25 @@
         /// </summary>
         public const string SetPlayerCard = "setCard";
 
-        /// <summary>C→S。問「userId 這個人的公開資料」。對方不在線上 → <c>found=false</c>。</summary>
+        /// <summary>
+        /// C→S。問一個人的公開資料。<c>{userId,name}</c> —— 兩個都可以給:
+        ///   • <c>userId</c> 找**線上**的那條連線(在房裡/大廳點開一個人時走這條)。
+        ///   • <c>name</c> 是離線時的鍵 —— server 的玩家快照表以名字為主鍵
+        ///     (見 <c>Sdo.Server.Store.PlayerStore</c>),所以下線的人也查得到最後一份資料。
+        ///
+        /// server 的順序:userId → 找不到就用 name 找線上 → 再找不到就查快照表。
+        /// 兩個都給不到 → <c>found=false</c>(呼叫端維持空白顯示)。
+        ///
+        /// 協定版本沒有 +1:<c>name</c> 是**新增的可省略欄位**,舊 client 不送 = 只走 userId 那條,
+        /// 行為與以前完全相同。
+        /// </summary>
         public const string PlayerCardQuery = "cardQuery";
 
-        /// <summary>S→C。<c>{found,userId,name,playerId,guild,level,look{...},card{...}}</c>。
-        /// <c>look</c> 是 server 手上那份(setLook 來的),不是名片的一部分 —— 同一件事只該有一個來源。</summary>
+        /// <summary>S→C。<c>{found,online,seenMs,userId,name,playerId,guild,level,look{...},card{...}}</c>。
+        /// <c>look</c> 是 server 手上那份(setLook 來的),不是名片的一部分 —— 同一件事只該有一個來源。
+        ///
+        /// <c>online=false</c> 代表這份是**落地的快照**(那個人現在不在線上),<c>seenMs</c> 是它被寫下的
+        /// Unix 毫秒 —— client 拿它顯示「資料截至什麼時候」。線上那條路 <c>online=true</c> 且 <c>seenMs=0</c>。</summary>
         public const string PlayerCardResult = "cardResult";
 
         // ---- 缺歌上報與傳檔 ----

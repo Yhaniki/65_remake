@@ -456,6 +456,174 @@ namespace Sdo.Tests
             Assert.IsFalse(NetJson.Bool(res, "found"));
         }
 
+        /// <summary>
+        /// 只給**名字**也查得到線上的人 —— 好友清單存的就只有名字(userId 是 0),
+        /// 而那是最常見的「點開一個不在同一間房的人」的入口。
+        /// </summary>
+        [Test]
+        public void Player_Card_Can_Be_Found_By_Name_While_Online()
+        {
+            var a = Connect("被看的人");
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetPlayerCard)
+                .Put("card", JObj.New().Long("perfect", 555).Int("plays", 9)));
+
+            var b = Connect("查的人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 93)
+                .Int("userId", 0)                      // 不知道 userId(從好友清單點開的)
+                .Str("name", "被看的人"));
+
+            var res = b.WaitFor(NetProto.PlayerCardResult);
+            Assert.IsNotNull(res);
+            Assert.IsTrue(NetJson.Bool(res, "found"));
+            Assert.IsTrue(NetJson.Bool(res, "online"), "人就在線上");
+            Assert.AreEqual(a.UserId, NetJson.Int(res, "userId"), "照名字找到的話,回應要補上他真正的 userId");
+            Assert.AreEqual(555, NetPlayerCard.Decode(NetJson.Sub(res, "card")).Perfect);
+        }
+
+        /// <summary>
+        /// 🔴 **這條就是玩家資料落地的理由**:人已經下線了,點開他的資料頁還是看得到最後一份數字。
+        ///
+        /// 以前這裡回的是 <c>found=false</c> → 整頁是 0,而畫面上完全看不出「是沒資料還是他真的都 0」。
+        /// 現在 server 把最後一份存進 <c>&lt;data&gt;/players.db</c>(見 <c>PlayerStore</c>),
+        /// 查詢就從那裡撈,並標成 <c>online=false</c> + 寫下的時刻。
+        /// </summary>
+        [Test]
+        public void Player_Card_Of_Someone_Offline_Comes_From_The_Saved_Snapshot()
+        {
+            var a = Connect("走掉的人");
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetLook)
+                .Put("look", JObj.New().Int("gender", 1).Int("bodyIndex", 3)
+                                       .Put("parts", JArr.New().Add("HAIR_Z"))));
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetPlayerCard)
+                .Put("card", JObj.New()
+                    .Long("perfect", 900).Long("miss", 5)
+                    .Int("plays", 20).Int("wins", 11).Int("losses", 9)
+                    .Int("fame", 7).Str("city", "高雄")));
+
+            var b = Connect("查的人");
+
+            // 先確認線上那條路是通的(不然下面查到的可能根本是別的東西)。
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 94)
+                .Int("userId", a.UserId).Str("name", "走掉的人"));
+            var live = b.WaitFor(NetProto.PlayerCardResult);
+            Assert.IsTrue(NetJson.Bool(live, "found") && NetJson.Bool(live, "online"));
+            Assert.AreEqual(0, NetJson.Long(live, "seenMs"), "線上那條路沒有『快照時刻』這回事");
+
+            a.Dispose();   // 人走了
+
+            // 斷線是非同步的(reader task → actor loop),所以重查到它變成離線為止。
+            object res = null;
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 3000)
+            {
+                b.Send(JObj.New()
+                    .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                    .Int(NetProto.FieldRequest, 95)
+                    .Int("userId", a.UserId).Str("name", "走掉的人"));
+                res = b.WaitFor(NetProto.PlayerCardResult);
+                if (res != null && !NetJson.Bool(res, "online")) break;
+                Thread.Sleep(20);
+            }
+
+            Assert.IsNotNull(res);
+            Assert.IsFalse(NetJson.Bool(res, "online"), "他已經下線了");
+            Assert.IsTrue(NetJson.Bool(res, "found"), "但 server 記得他 —— 這正是快照表的用途");
+            Assert.Greater(NetJson.Long(res, "seenMs"), 0, "要說得出這份資料是什麼時候的");
+            Assert.AreEqual("走掉的人", NetJson.Str(res, "name"));
+
+            var card = NetPlayerCard.Decode(NetJson.Sub(res, "card"));
+            Assert.AreEqual(900, card.Perfect);
+            Assert.AreEqual(5, card.Miss);
+            Assert.AreEqual(20, card.Plays);
+            Assert.AreEqual(11, card.Wins);
+            Assert.AreEqual(9, card.Losses);
+            Assert.AreEqual(7, card.Fame);
+            Assert.AreEqual("高雄", card.City);
+
+            // 穿搭也要一起存下來 —— 資料頁上那尊 3D 角色靠它,不然離線的人會變成預設造型。
+            var look = NetAvatarLook.Decode(NetJson.Sub(res, "look"));
+            Assert.AreEqual(1, look.Gender);
+            Assert.AreEqual(3, look.BodyIndex);
+            CollectionAssert.AreEqual(new[] { "HAIR_Z" }, look.Parts);
+        }
+
+        /// <summary>
+        /// 快照是**跟著名字**走的,所以 server 重開之後那份資料還在
+        /// (userId 每次連線都會重配,唯一還連得起來的東西就是名字)。
+        /// </summary>
+        [Test]
+        public void The_Snapshot_Survives_A_Server_Restart()
+        {
+            var a = Connect("留下紀錄的人");
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetPlayerCard)
+                .Put("card", JObj.New().Long("perfect", 4321).Int("plays", 33)));
+
+            // 🔴 斷線**之前**先跟 server 對一次話。setCard 是單向的,不等它被處理就關 socket 的話,
+            //    那筆訊息可能還沒被 actor loop 消化 —— 快照裡就只剩一個沒有名片的名字,
+            //    而測試會以「數字對不上」的形式偶爾紅一次(這正是實際踩到的)。
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 96).Int("userId", a.UserId));
+            Assert.AreEqual(4321,
+                NetPlayerCard.Decode(NetJson.Sub(a.WaitFor(NetProto.PlayerCardResult), "card")).Perfect,
+                "server 要先真的收到名片");
+
+            // 送完就斷 —— 離線那一刻 server 會再寫一次(見 Hub.RemoveConnection)。
+            a.Dispose();
+
+            RestartServerKeepingData();
+
+            var b = Connect("重開之後才來的人");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.PlayerCardQuery)
+                .Int(NetProto.FieldRequest, 97)
+                .Int("userId", 0).Str("name", "留下紀錄的人"));
+
+            var res = b.WaitFor(NetProto.PlayerCardResult);
+            Assert.IsNotNull(res);
+            Assert.IsTrue(NetJson.Bool(res, "found"), "重開之後還要記得");
+            Assert.IsFalse(NetJson.Bool(res, "online"));
+            Assert.AreEqual(4321, NetPlayerCard.Decode(NetJson.Sub(res, "card")).Perfect);
+        }
+
+        /// <summary>
+        /// 停掉現在這台 server 再用**同一個 data 目錄**開一台。
+        /// 只有「重開之後還記得嗎」那類測試需要它 —— 其餘測試用 SetUp 那台就好。
+        /// </summary>
+        private void RestartServerKeepingData()
+        {
+            for (int i = 0; i < _clients.Count; i++) _clients[i].Dispose();
+            _clients.Clear();
+
+            _hub.Stop();
+            try { _hubTask.Wait(3000); } catch { }
+
+            var opts = new ServerOptions
+            {
+                Port = 0,
+                Bind = "127.0.0.1",
+                DataDir = _dataDir,      // 🔴 同一個目錄 = 同一顆 players.db
+                CodeSeed = 4242,
+                Password = "",
+            };
+            string err;
+            Assert.IsTrue(opts.Validate(out err), err);
+
+            _hub = new Hub(opts);
+            _hubTask = Task.Factory.StartNew(_hub.Run, TaskCreationOptions.LongRunning);
+            var sw = Stopwatch.StartNew();
+            while (!_hub.IsListening && sw.ElapsedMilliseconds < 5000) Thread.Sleep(5);
+            Assert.IsTrue(_hub.IsListening, "重開的 server 沒有在 5 秒內開始監聽");
+        }
+
         // ================= 離開 / 房主轉移 =================
 
         [Test]
