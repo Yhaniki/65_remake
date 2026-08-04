@@ -208,3 +208,8 @@ tools/mmd_cloth_validate/pmx_dump.txt
 /mmd_a.log*
 /mmd_b.log*
 /server/bin-test/
+
+# MMD Bullet-port harness: build output + the exported model physics (regenerate with export_physics.py)
+tools/mmd_bullet_port/bin/
+tools/mmd_bullet_port/obj/
+tools/mmd_bullet_port/ika_physics.json
