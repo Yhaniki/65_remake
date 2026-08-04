@@ -67,12 +67,12 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void ClipBand_Tilt_Matches_Down()
+        public void ClipBand_Tilt_Matches_Up()
         {
             var tilt = NotePanelLayout.Resolve(NoteDropDirection.Tilt, panelLeft: true);
-            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
-            Assert.AreEqual(down.ClipTopY, tilt.ClipTopY, 1e-4f);
-            Assert.AreEqual(down.ClipBottomY, tilt.ClipBottomY, 1e-4f);
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            Assert.AreEqual(up.ClipTopY, tilt.ClipTopY, 1e-4f);
+            Assert.AreEqual(up.ClipBottomY, tilt.ClipBottomY, 1e-4f);
         }
 
         // ---- the four (drop × horizontal) combinations ----
@@ -117,16 +117,51 @@ namespace Sdo.Tests
             Assert.IsTrue(l.Bottom);
         }
 
-        // ---- 傾斜 (tilt): no researched visual yet → behaves like 向下 (bottom + down-scroll) ----
+        // ---- 傾斜 (tilt): no researched visual yet → behaves like 向上 (top + up-scroll); 房間下拉也不再列它 ----
 
         [Test]
-        public void Tilt_Behaves_Like_Down_For_Now()
+        public void Tilt_Behaves_Like_Up_For_Now()
         {
             var tilt = NotePanelLayout.Resolve(NoteDropDirection.Tilt, panelLeft: true);
-            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
-            Assert.AreEqual(down.JudgeLineY, tilt.JudgeLineY, 1e-4f);
-            Assert.AreEqual(down.ScrollSign, tilt.ScrollSign);
-            Assert.AreEqual(down.Bottom, tilt.Bottom);
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            Assert.AreEqual(up.JudgeLineY, tilt.JudgeLineY, 1e-4f);
+            Assert.AreEqual(up.ScrollSign, tilt.ScrollSign);
+            Assert.AreEqual(up.Bottom, tilt.Bottom);
+        }
+
+        // ---- 房間 win2「掉落方式」下拉：由上而下＝向上 / 向下，傾斜不上架 ----
+
+        [Test]
+        public void Menu_Lists_Up_Then_Down_Only()
+        {
+            Assert.AreEqual(2, NotePanelLayout.MenuRowCount);
+            Assert.AreEqual(NoteDropDirection.Up, NotePanelLayout.FromMenuRow(0));    // 第一列＝向上
+            Assert.AreEqual(NoteDropDirection.Down, NotePanelLayout.FromMenuRow(1));  // 第二列＝向下
+        }
+
+        [Test]
+        public void Menu_Row_Round_Trips_The_Stored_Value()
+        {
+            Assert.AreEqual(0, NotePanelLayout.MenuRow((int)NoteDropDirection.Up));
+            Assert.AreEqual(1, NotePanelLayout.MenuRow((int)NoteDropDirection.Down));
+            for (int row = 0; row < NotePanelLayout.MenuRowCount; row++)
+                Assert.AreEqual(row, NotePanelLayout.MenuRow((int)NotePanelLayout.FromMenuRow(row)));
+        }
+
+        [Test]
+        public void Menu_Row_Falls_Back_To_Up_For_Values_Not_In_The_Menu()
+        {
+            // 舊 config.ini 可能存著 2＝傾斜（選單已不列它）；比照 Resolve 的處置退回「向上」那一列。
+            Assert.AreEqual(0, NotePanelLayout.MenuRow((int)NoteDropDirection.Tilt));
+            Assert.AreEqual(0, NotePanelLayout.MenuRow(-1));
+            Assert.AreEqual(0, NotePanelLayout.MenuRow(99));
+        }
+
+        [Test]
+        public void Menu_Row_Index_Is_Clamped()
+        {
+            Assert.AreEqual(NoteDropDirection.Up, NotePanelLayout.FromMenuRow(-3));
+            Assert.AreEqual(NoteDropDirection.Down, NotePanelLayout.FromMenuRow(7));
         }
 
         // ---- horizontal anchor only moves X, never the vertical fields ----
@@ -203,11 +238,11 @@ namespace Sdo.Tests
         [Test]
         public void IntOverload_Clamps_OutOfRange()
         {
-            // negative → 向上, anything ≥2 → 傾斜 (== 向下 behaviour), never throws
+            // negative → 向上, anything ≥2 → 傾斜 (== 向上 behaviour, 傾斜沒實作), never throws
             Assert.IsFalse(NotePanelLayout.Resolve(-5, panelLeft: true).Bottom);   // clamped to Up
-            Assert.IsTrue(NotePanelLayout.Resolve(99, panelLeft: true).Bottom);    // clamped to Tilt
+            Assert.IsFalse(NotePanelLayout.Resolve(99, panelLeft: true).Bottom);   // clamped to Tilt → 比照向上
             Assert.AreEqual(NotePanelLayout.TopJudgeY, NotePanelLayout.Resolve(-5, true).JudgeLineY, 1e-4f);
-            Assert.AreEqual(NotePanelLayout.BottomJudgeY, NotePanelLayout.Resolve(99, true).JudgeLineY, 1e-4f);
+            Assert.AreEqual(NotePanelLayout.TopJudgeY, NotePanelLayout.Resolve(99, true).JudgeLineY, 1e-4f);
         }
     }
 }

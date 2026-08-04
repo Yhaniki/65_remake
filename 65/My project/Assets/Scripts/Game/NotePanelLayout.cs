@@ -8,7 +8,8 @@ namespace Sdo.Game
         Up = 0,
         /// <summary>向下：receptors at the BOTTOM, notes fall DOWN to them.</summary>
         Down = 1,
-        /// <summary>傾斜：斜向/旋轉 — 官方視覺尚未考據，暫時比照 向下 (bottom + down-scroll)。</summary>
+        /// <summary>傾斜：斜向/旋轉 — 官方視覺尚未考據，**暫時比照 向上** (top + up-scroll)；
+        /// 房間下拉把它排在 向上 與 向下 之間，選了等於沒換方向。</summary>
         Tilt = 2,
     }
 
@@ -16,7 +17,8 @@ namespace Sdo.Game
     /// Note-panel placement — pure geometry (no Unity types, fully unit-testable) resolved from the two orthogonal
     /// player settings that position the gameplay note board:
     /// <list type="bullet">
-    ///   <item>掉落方式 (vertical) — <see cref="NoteDropDirection"/> from Room win2「掉落方式」下拉：向上/向下/傾斜.</item>
+    ///   <item>掉落方式 (vertical) — <see cref="NoteDropDirection"/> from Room win2「掉落方式」下拉：向上/向下
+    ///         （傾斜沒實作 → 不上架，舊設定檔存的值比照向上）.</item>
     ///   <item>NOTES面板位置 (horizontal) — <c>GameSettings.gameplay.notesPanelLeft</c> from OPTION 遊戲 頁：
     ///         <c>true</c>=屏幕左邊 (default, board at design x 0..315) / <c>false</c>=屏幕中央 (band centred).</item>
     /// </list>
@@ -48,11 +50,11 @@ namespace Sdo.Game
         /// <summary>Design-px added to EVERY panel-relative X (board / receptors / notes / HP bar / score / combo).
         /// 0 = 屏幕左邊, +242.5 = 屏幕中央.</summary>
         public readonly float OffsetX;
-        /// <summary>Receptor / hit-line Y (design px): <see cref="TopJudgeY"/> for 向上, <see cref="BottomJudgeY"/> for 向下/傾斜.</summary>
+        /// <summary>Receptor / hit-line Y (design px): <see cref="TopJudgeY"/> for 向上/傾斜, <see cref="BottomJudgeY"/> for 向下.</summary>
         public readonly float JudgeLineY;
-        /// <summary>+1 = notes approach the judge line from BELOW (up-scroll, 向上); −1 = from ABOVE (down-scroll, 向下/傾斜).</summary>
+        /// <summary>+1 = notes approach the judge line from BELOW (up-scroll, 向上/傾斜); −1 = from ABOVE (down-scroll, 向下).</summary>
         public readonly int ScrollSign;
-        /// <summary><c>true</c> = receptors sit at the bottom (向下 / 傾斜); <c>false</c> = at the top (向上).</summary>
+        /// <summary><c>true</c> = receptors sit at the bottom (向下); <c>false</c> = at the top (向上 / 傾斜).</summary>
         public readonly bool Bottom;
         /// <summary>Top edge (smaller design-Y) of the note clip band — notes are masked to [<see cref="ClipTopY"/>,
         /// <see cref="ClipBottomY"/>]. 向上: <see cref="ClipMargin"/> (hidden strip behind the top frame/HP bar).
@@ -79,7 +81,7 @@ namespace Sdo.Game
         /// <param name="panelLeft">OPTION「NOTES面板位置」：<c>true</c>=屏幕左邊 / <c>false</c>=屏幕中央.</param>
         public static NotePanelLayout Resolve(NoteDropDirection drop, bool panelLeft)
         {
-            bool bottom = drop != NoteDropDirection.Up;   // 向下 & 傾斜 → bottom receptors + down-scroll
+            bool bottom = drop == NoteDropDirection.Down;   // 只有 向下 → bottom receptors + down-scroll（傾斜尚無實作 → 比照向上）
             return new NotePanelLayout(
                 offsetX: panelLeft ? LeftOffsetX : CenterOffsetX,
                 judgeLineY: bottom ? BottomJudgeY : TopJudgeY,
@@ -90,6 +92,27 @@ namespace Sdo.Game
         /// <summary>Convenience overload taking the raw <c>GameSession.DropDirection</c> int (clamped to 0..2).</summary>
         public static NotePanelLayout Resolve(int dropDirection, bool panelLeft)
             => Resolve((NoteDropDirection)Clamp(dropDirection, 0, 2), panelLeft);
+
+        // ---- 房間 win2「掉落方式」下拉的選項 ----
+        // 清單由上而下＝向上 / 向下。傾斜沒有實作（比照向上），所以**不上架**——選單不列它。
+        // 但值本身仍是官方語意 0=向上 1=向下 2=傾斜：舊的 config.ini 可能存著 2，讀進來 MenuRow 找不到就退回第 0 列
+        // （向上），正好對上 Resolve 對傾斜的處置，設定檔不必跟著改。
+        private static readonly int[] MenuValues = { (int)NoteDropDirection.Up, (int)NoteDropDirection.Down };
+
+        /// <summary>下拉清單的列數（＝掉落方式選項數）。</summary>
+        public static int MenuRowCount => MenuValues.Length;
+
+        /// <summary>清單第 <paramref name="row"/> 列 → 掉落方式值（超出範圍夾回兩端）。</summary>
+        public static NoteDropDirection FromMenuRow(int row)
+            => (NoteDropDirection)MenuValues[Clamp(row, 0, MenuValues.Length - 1)];
+
+        /// <summary>掉落方式值 → 清單第幾列（不在選單裡的值——例如舊設定檔的 2＝傾斜——退回第 0 列＝向上）。</summary>
+        public static int MenuRow(int dropDirection)
+        {
+            for (int i = 0; i < MenuValues.Length; i++)
+                if (MenuValues[i] == dropDirection) return i;
+            return 0;
+        }
 
         /// <summary>實際生效的「NOTES面板位置」：**ShowTime 模式一律靠左**，玩家選的置中在該模式直接忽略。
         /// 理由是 ShowTime 專屬 HUD（氣條 MyEnergy 框、×2/×4/×8 徽章、SPACE 提示、ENERGYSCORE/ENERGYBONUS 數字）

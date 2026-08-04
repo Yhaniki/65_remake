@@ -716,11 +716,12 @@ namespace Sdo.Game
         public Action<int> onCamModeChanged;
         public float boardX = 0f;           // board horizontal nudge (design px); 0 keeps texture lanes aligned 1:1 to the track
         // ── NOTE-PANEL POSITION (two orthogonal player settings, wired in by FrontendApp before boot; see NotePanelLayout).
-        // dropDirection = Room win2「掉落方式」(0=向上 top/up-scroll, 1=向下 bottom/down-scroll, 2=傾斜→比照向下);
+        // dropDirection = Room win2「掉落方式」(0=向上 top/up-scroll, 1=向下 bottom/down-scroll, 2=傾斜→沒實作、不在選單裡，
+        //                 舊設定檔留下的值比照向上);
         // notesPanelLeft = OPTION 遊戲頁「NOTES面板位置」(true=屏幕左邊 預設 / false=屏幕中央). ApplyPanelLayout() turns these
         // into the geometry the board/receptors/notes/HP/score/combo all read: _panelOffsetX (加在每個面板相對 X 上),
         // judgeLineY (受擊線 Y, top↔bottom), _scrollSign (+1 上捲 / −1 下捲). Standalone/F4 boot keeps the defaults (向上左邊).
-        public int dropDirection = 0;        // 掉落方式：0=向上 1=向下 2=傾斜
+        public int dropDirection = 0;        // 掉落方式：0=向上 1=向下（2=傾斜是舊值，比照向上）
         public bool notesPanelLeft = true;   // NOTES面板位置：true=左邊(預設) / false=置中
         /// <summary>實際生效的面板位置＝<see cref="NotePanelLayout.EffectivePanelLeft"/>(玩家設定, ShowTime)：
         /// **ShowTime 一律靠左**（該模式的 HUD 是絕對座標，board 置中會被壓到；理由詳見該函式）。板面幾何、周邊 HUD

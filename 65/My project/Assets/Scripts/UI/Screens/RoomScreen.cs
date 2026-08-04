@@ -546,9 +546,15 @@ namespace Sdo.UI.Screens
                 // 那圈 α≈5~30 的白 matte，放大後就是使用者看到的方形白邊。清單列(LabUnCheck/LabCheck)實測沒有白 matte，
                 // 留在既有的 AnSolo 路徑；兩者是不同的 Image，材質各自獨立，不會互相影響。
                 RoomUiArt.AnPremult("ShopDlg13"), RoomUiArt.AnSolo("LabUnCheck"), RoomUiArt.AnSolo("LabCheck"),
-                new[] { L("room.drop_up"), L("room.drop_down"), L("room.drop_tilt") }, null,
-                Mathf.Clamp(Ctx.Session.DropDirection, 0, 2), SpeedColor, DropListColor,
-                i => { Ctx.Session.DropDirection = i; RoomConfig.defaultDropDirection = i; RoomConfig.Save(); },   // 持久化：掉落方式寫回 config.ini（進遊戲決定 note 面板上/下）
+                // 清單由上而下＝向上 / 向下；傾斜沒實作所以不上架（NotePanelLayout.MenuValues 是那張列序↔值對照表，
+                // 舊 config.ini 存著 2＝傾斜的話 MenuRow 會退回「向上」那一列）。
+                new[] { L("room.drop_up"), L("room.drop_down") }, null,
+                NotePanelLayout.MenuRow(Ctx.Session.DropDirection), SpeedColor, DropListColor,
+                row =>
+                {
+                    int v = (int)NotePanelLayout.FromMenuRow(row);
+                    Ctx.Session.DropDirection = v; RoomConfig.defaultDropDirection = v; RoomConfig.Save();   // 持久化：掉落方式寫回 config.ini（進遊戲決定 note 面板上/下）
+                },
                 expandDown: true, listX: Win2.x + 70, listWidth: 38f,
                 valueOffsetY: 2f);   // 只把「向上/向下」值往上 2px，▼ 鈕位置不動
             // 掉落方式 ▼ 開關鈕按下 → SE_0001（清單列本來就有；此為開關鈕本身。中間設定塊仍不掛滑過音）。

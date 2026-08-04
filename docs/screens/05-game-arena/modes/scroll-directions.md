@@ -32,6 +32,9 @@
 
 - 4 軌道斜向或旋轉 scroll
 - Phase 1 / MVP P0 **不做**
+- 重製現況：**房間「掉落方式」下拉不上架這個選項**（清單只有 向上 / 向下）。
+  值本身仍保留（`GameSession.DropDirection` / config.ini `defaultDropDirection` 2＝傾斜），
+  舊設定檔存著 2 時 `NotePanelLayout` 讓它比照 向上；等視覺考據出來再上架
 
 ### 待填
 
