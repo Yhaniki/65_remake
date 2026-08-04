@@ -127,6 +127,7 @@ namespace Sdo.Settings
         public static float mmdGravity = 1f;        // 布料重力倍率
         public static float mmdStiffness = 0.12f;   // 布料硬度（低＝被重力拉直垂下）
         public static float mmdColliderScale = 1f;  // 身體碰撞體半徑倍率
+        public static string mmdPhysicsEngine = "magica";   // 布料求解器:magica(轉換成布料參數) / bullet(直接跑 MMD 自己的剛體物理)
         public static float mmdScale = 1f;          // 模型大小倍率（1＝自動對齊 SDO 舞者身高）
         // 多人連線:把自己身上的模型上傳給 server,讓同房的人也看得到(1=分享,預設)。
         // 關掉 → 別人看到的是你的 SDO 穿搭(你自己畫面上仍然是 MMD)。
@@ -555,6 +556,7 @@ namespace Sdo.Settings
                     case "mmdGravity": mmdGravity = ParseFloat(val, mmdGravity); break;
                     case "mmdStiffness": mmdStiffness = ParseFloat(val, mmdStiffness); break;
                     case "mmdColliderScale": mmdColliderScale = ParseFloat(val, mmdColliderScale); break;
+                    case "mmdPhysicsEngine": mmdPhysicsEngine = (val ?? "").Trim().ToLowerInvariant() == "bullet" ? "bullet" : "magica"; break;
                     case "mmdScale": mmdScale = ParseFloat(val, mmdScale); break;
                     case "mmdShareModel": mmdShareModel = ParseBool(val, mmdShareModel); break;
                     // ---- OPTION 對話框設定 ----
@@ -765,6 +767,7 @@ namespace Sdo.Settings
             sb.Append("mmdGravity=").Append(mmdGravity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("mmdStiffness=").Append(mmdStiffness.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("mmdColliderScale=").Append(mmdColliderScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("mmdPhysicsEngine=").Append(mmdPhysicsEngine).Append('\n');
             sb.Append("mmdScale=").Append(mmdScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 動作重定向（1=開，預設）：aim＝用「骨頭指向」對齊手腳（關＝改用 world-delta 對照模式，姿勢會歪，\n");
             sb.Append("# 只在比對哪邊對時才關）；rootMotion＝根骨的位移（關＝人原地跳，不前進）。\n");

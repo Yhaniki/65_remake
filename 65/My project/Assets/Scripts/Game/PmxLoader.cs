@@ -89,6 +89,20 @@ namespace Sdo.Game
         /// rotation-limit width is NOT a reliable stiffness signal (locked-looking 0/0 hair actually swings).</summary>
         public Dictionary<int, float> BoneJointSpring = new Dictionary<int, float>();
 
+        /// <summary>One authored 6-DOF spring joint, kept WHOLE. The two dictionaries above are lossy summaries that
+        /// the Magica conversion needs (one number per bone); running the model's physics the way Bullet actually
+        /// does (<see cref="MmdBulletCloth"/>) needs the real thing — per-axis limits and springs, plus the frame.</summary>
+        public sealed class Joint6Dof
+        {
+            public string Name;
+            public int BodyA = -1, BodyB = -1;
+            public Vector3 Position, Rotation;      // joint frame, model space (rotation in radians, MMD euler)
+            public Vector3 PosLower, PosUpper;      // linear limits (lower==upper==0 ⇒ locked = a point constraint)
+            public Vector3 RotLower, RotUpper;      // angular limits, radians
+            public Vector3 PosSpring, RotSpring;    // btGeneric6DofSpring stiffness, per axis
+        }
+        public List<Joint6Dof> Joints6Dof = new List<Joint6Dof>();
+
         public sealed class Bone
         {
             public string NameJp, NameEn;
@@ -360,14 +374,22 @@ namespace Sdo.Game
             int n = I32();
             for (int i = 0; i < n; i++)
             {
-                Text(); Text();            // names
+                string jn = Text(); Text();   // names
                 U8();                      // type (2.0 = spring 6DOF)
                 int rbA = RbRef(); int rbB = RbRef();
-                V3(); V3();                // position, rotation
-                V3(); V3();                // position limit lower / upper
+                Vector3 jPos = V3(), jRot = V3();
+                Vector3 pLo = V3(), pHi = V3();   // position limit lower / upper
                 Vector3 rLo = V3(), rHi = V3();   // rotation limit lower / upper (radians)
-                V3();                          // position spring (unused)
+                Vector3 pSpr = V3();              // position spring
                 Vector3 rSpr = V3();           // rotation spring = the "return to shape" stiffness (Bullet setStiffness)
+                // keep the whole joint: MmdBulletCloth runs these as the btGeneric6DofSpring constraints they are
+                Joints6Dof.Add(new Joint6Dof
+                {
+                    Name = jn, BodyA = rbA, BodyB = rbB,
+                    Position = jPos, Rotation = jRot,
+                    PosLower = pLo, PosUpper = pHi, RotLower = rLo, RotUpper = rHi,
+                    PosSpring = pSpr, RotSpring = rSpr,
+                });
                 if (rbB < 0 || rbB >= RigidBodies.Count) continue;
                 var child = RigidBodies[rbB];      // rbB = the constrained (child) body; its bone gets this firmness
                 if (child.Mode == 0 || child.Bone < 0 || child.Bone >= Bones.Count) continue;

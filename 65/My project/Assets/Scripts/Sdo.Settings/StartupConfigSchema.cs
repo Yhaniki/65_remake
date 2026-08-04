@@ -449,6 +449,17 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
+                Key = "mmdPhysicsEngine", Category = CatMmd, Label = "物理求解器", Kind = ConfigFieldKind.Choice,
+                Choices = new[] { "magica", "bullet" },
+                ChoiceLabels = new[] { "Magica(轉換)", "MMD 原生(Bullet)" },
+                Help = "magica＝把模型的剛體/關節「轉換」成布料參數(只能近似,而且有一堆沒有出處的旋鈕)。"
+                     + "bullet＝直接跑 MMD 自己的剛體物理:質量/阻尼/關節限制/彈簧照 .pmx 寫的餵進去,不轉換也不用校準。"
+                     + "★改了要重建角色才生效(換模型、或重進場景)。",
+                Get = () => RoomConfig.mmdPhysicsEngine ?? "magica",
+                Set = v => RoomConfig.mmdPhysicsEngine = (v ?? "").Trim().ToLowerInvariant() == "bullet" ? "bullet" : "magica",
+            });
+            f.Add(new ConfigField
+            {
                 Key = "mmdPhysics", Category = CatMmd, Label = "頭髮裙擺物理", Kind = ConfigFieldKind.Toggle,
                 Help = "布料模擬（頭髮/裙擺/領帶）。★嫌換場景進遊戲慢就關這個 —— 布料求解是建一隻 MMD 角色最貴的一段。",
                 Get = () => B(RoomConfig.mmdPhysics), Set = v => RoomConfig.mmdPhysics = ParseBool(v),

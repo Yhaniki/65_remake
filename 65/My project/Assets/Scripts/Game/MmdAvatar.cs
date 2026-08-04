@@ -90,6 +90,8 @@ namespace Sdo.Game
         private Vector3 _hrcRootRestPos, _rootRestLocal;
         private MmdSpringBones _spring;
         private MmdMagicaCloth _magica;   // preferred cloth solver (Magica Cloth 2); _spring is the fallback
+        private MmdBulletCloth _bullet;   // config.ini mmdPhysicsEngine=bullet — MMD's own rigid-body physics,
+                                          // authored values fed in directly (no conversion, nothing to tune)
         private MmdClothProfile _profile; // the model's physics.ini, when it has one (null = tuning converted from the .pmx)
         private bool _visible = true, _physicsOn = true;   // physics runs only when BOTH hold (independent toggles)
         private bool _ready;
@@ -222,15 +224,20 @@ namespace Sdo.Game
                 // A physics.ini beside the .pmx (if the model has one) overrides the values converted from its rigid
                 // bodies/joints; no file → pure conversion, exactly as before. See MmdClothProfile.
                 _profile = MmdClothProfile.Load(textureDir);
-                _magica = MmdMagicaCloth.Setup(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _profile);   // Magica Cloth 2 (preferred)
-                if (_magica == null)   // package missing / setup failed → hand-rolled spring bones
+                if (Sdo.Settings.RoomConfig.mmdPhysicsEngine == "bullet")
+                    _bullet = MmdBulletCloth.Setup(_mmdRoot, _bone, pmx);   // MMD's own physics, verbatim
+                if (_bullet == null)
                 {
-                    _spring = MmdSpringBones.Attach(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _mmdRoot);
-                    BuildColliders(pmx, _unitScale);
+                    _magica = MmdMagicaCloth.Setup(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _profile);   // Magica Cloth 2
+                    if (_magica == null)   // package missing / setup failed → hand-rolled spring bones
+                    {
+                        _spring = MmdSpringBones.Attach(_mmdRoot.gameObject, _bone, _parent, pmx, _unitScale, _mmdRoot);
+                        BuildColliders(pmx, _unitScale);
+                    }
                 }
             }
             _ready = true;
-            string phys = _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col{(_magica.ProfilePath != null ? ",physics.ini" : "")})" : (_spring != null ? "spring" : (cloth ? "none" : "OFF (portrait)"));
+            string phys = _bullet != null ? $"bullet({_bullet.BodyCount} bodies,{_bullet.JointCount} joints)" : _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col{(_magica.ProfilePath != null ? ",physics.ini" : "")})" : (_spring != null ? "spring" : (cloth ? "none" : "OFF (portrait)"));
             LogMilestone($"[mmd] built '{pmx.NameJp}' in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms: {pmx.VertexCount} verts, {pmx.Materials.Count} mats, {bc} bones, " +
                          $"scale={_unitScale:F3}, facing={_qroot.eulerAngles.y:F0}°, driven={CountDriven()}/{bc}, aimed={aimed}, " +
                          $"sphere={_sh.SphereMats.Count}, toon={_sh.ToonMats.Count}, edge={_sh.EdgeMats.Count}, physics={pmx.PhysicsBones.Count}({phys})");
@@ -317,6 +324,8 @@ namespace Sdo.Game
                 Vector3 d = (Vector3)Driver.BoneAnimWorld(_hrcRootIndex).GetColumn(3) - _hrcRootRestPos;
                 _bone[_rootBone].localPosition = _rootRestLocal + (_qrootInv * d) / _unitScale;
             }
+
+            TickBulletCloth();   // last: the cloth hangs off the bones this retarget has just posed
         }
 
         // The twist component of rotation q about a (normalised) axis — swing-twist decomposition. Used to copy the
@@ -577,6 +586,15 @@ namespace Sdo.Game
 
         /// <summary>Live toggle: pencil outline on/off (restores each material's authored edge size).</summary>
         public void SetOutline(bool on) { ShowOutline = on; if (_sh == null) return; foreach (var kv in _sh.EdgeMats) if (kv.Key != null) kv.Key.SetFloat("_EdgeSize", on ? kv.Value : 0f); }
+
+        // Stepped at the END of the retarget: the cloth hangs off bones this frame's animation has just posed, and the
+        // simulated bones are written after (the retarget skips them — _isPhysics — so the two never fight).
+        private void TickBulletCloth()
+        {
+            if (_bullet == null) return;
+            _bullet.Enabled = _visible && _physicsOn;
+            _bullet.Tick(Time.deltaTime);
+        }
 
         /// <summary>Live toggle / tune of the hair-skirt spring-bone sway.</summary>
         public void SetPhysics(bool on) { _physicsOn = on; UpdateSpring(); }
