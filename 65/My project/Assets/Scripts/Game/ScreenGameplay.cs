@@ -305,6 +305,9 @@ namespace Sdo.Game
         // ApplyPanelLayout). Defaults here are the 向上左邊 values used by the standalone/F4 boot before it resolves.
         private float _clipTopY = 30f;
         private float _clipBottomY = 600f;
+        // 這一局生效的面板幾何(ApplyPanelLayout 解出來的那份)。上面幾個欄位是它拆開來的熱路徑快取；
+        // 需要整組幾何的地方(軌條光/MISS 紅幕的 ClickStripBand)直接問它，不要各自再推一次鏡射。
+        private NotePanelLayout _panelLayout = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
         // DDR lane order: 0=Left 1=Down 2=Up 3=Right (matches NOTEIMAGE_5 + the original).
         private static readonly string[] Dir5 = { "left", "down", "up", "right" };
         // two manual key sets per lane (Left/Down/Up/Right): A S W D, and numpad 4 5 8 6 (right-hand cross).
@@ -654,7 +657,6 @@ namespace Sdo.Game
         private readonly Sprite[] _clickFlashSpr = new Sprite[Keys];
         private readonly SpriteRenderer[] _clickFlashSr = new SpriteRenderer[Keys];
         private readonly float[] _clickFlashStart = new float[Keys];   // when (re)triggered; <0 = inactive
-        private const float ClickStripTopY = 12f;        // board surface top (texture y0..11 is transparent)
 
         private Camera _cam;
         private const float TrackCenterX = 138f + TrackMarginX;   // centre of the 4-lane track (span 0..276) + left margin
@@ -2542,6 +2544,7 @@ namespace Sdo.Game
         private void ApplyPanelLayout()
         {
             var layout = NotePanelLayout.Resolve(dropDirection, PanelLeftEffective);
+            _panelLayout = layout;
             _panelOffsetX = layout.OffsetX;
             judgeLineY = layout.JudgeLineY;
             _scrollSign = layout.ScrollSign;
@@ -2638,11 +2641,13 @@ namespace Sdo.Game
                 fsr.color = new Color(1f, 1f, 1f, 0f); fsr.enabled = false;
                 fsr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
                 fsr.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
-                // 向上: the strip emanates DOWN from the top board surface (y12). 向下: mirror it about the board centre
-                // (y300) and flipY so the same glow emanates UP from the bottom receptors.
-                float stripH = fsr.sprite != null ? fsr.sprite.bounds.size.y : 0f;
+                // 向上: the strip emanates DOWN from the top board surface (y12). 向下: flipY so it emanates UP from the
+                // bottom receptors instead — an exact mirror. Either way it spans the whole play band, so the 558-tall
+                // art is stretched ~5.4% (see NotePanelLayout.ClickStripBand).
+                float stripW = fsr.sprite != null ? fsr.sprite.bounds.size.x : 0f;
+                _panelLayout.ClickStripBand(out float stripTop, out float stripBottom);
                 fsr.flipY = _scrollSign < 0;
-                SdoLayout.PlaceTopLeft(fsr, PX(LaneLeftX[c] + 1f), _scrollSign > 0 ? ClickStripTopY : (600f - ClickStripTopY - stripH), 9f);
+                SdoLayout.PlaceBox(fsr, PX(LaneLeftX[c] + 1f), stripTop, stripW, stripBottom - stripTop, 9f);
                 _clickFlashSr[c] = fsr;
             }
             // miss flash: the click glow sprite TILED across all 4 lanes → the SAME soft glow as the white click flash, just
@@ -2654,10 +2659,15 @@ namespace Sdo.Game
             _missOverlay.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
             _missOverlay.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
             float trackW = LaneLeftX[Keys - 1] + 69f - LaneLeftX[0];
-            if (glowSpr != null) { _missOverlay.drawMode = SpriteDrawMode.Tiled; _missOverlay.tileMode = SpriteTileMode.Continuous; _missOverlay.size = new Vector2(trackW, 558f); }
-            float missY = ClickStripTopY + 279f;   // ≈ board centre; mirror about y300 for 向下 so the wash tracks the receptors
+            float glowH = glowSpr != null ? glowSpr.bounds.size.y : 0f;
+            // 紅幕跟軌條光佔同一條帶(同一張圖、同一組鏡射規則)——問同一個 ClickStripBand，別再各自算一次。
+            _panelLayout.ClickStripBand(out float missTop, out float missBottom);
+            if (glowSpr != null) { _missOverlay.drawMode = SpriteDrawMode.Tiled; _missOverlay.tileMode = SpriteTileMode.Continuous; _missOverlay.size = new Vector2(trackW, glowH); }
             _missOverlay.flipY = _scrollSign < 0;  // 向下：漸層亮端跟軌條光一樣翻向底部受擊線
-            _missOverlay.transform.position = SdoLayout.ToWorld(PX(LaneLeftX[0] + trackW / 2f), _scrollSign > 0 ? missY : (600f - missY), 9f);
+            // ⚠ tiled 的 size.y 必須留在**原生高**：拉大它是多貼一段 tile(板頂會冒出一條重複的亮帶)，
+            //   不是把漸層拉長。要拉長整條帶只能走 localScale.y。
+            _missOverlay.transform.localScale = new Vector3(1f, glowH > 1e-4f ? (missBottom - missTop) / glowH : 1f, 1f);
+            _missOverlay.transform.position = SdoLayout.ToWorld(PX(LaneLeftX[0] + trackW / 2f), (missTop + missBottom) / 2f, 9f);
             _missOverlay.color = new Color(1f, 0f, 0f, 0f); _missOverlay.enabled = false;
             BuildNoteClip();
         }

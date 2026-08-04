@@ -75,6 +75,95 @@ namespace Sdo.Tests
             Assert.AreEqual(up.ClipBottomY, tilt.ClipBottomY, 1e-4f);
         }
 
+        // ---- lane click-flash / MISS-wash band (NOTES_BOARD_CLICK, 67×558) ----
+
+        private const float ShippedStripH = 558f;   // notes_board_click{1..4}.png native height
+
+        [Test]
+        public void ClickStrip_Up_Spans_Board_Surface_To_Board_Bottom()   // 向上: [12, 600]
+        {
+            NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true)
+                           .ClickStripBand(out float top, out float bottom);
+            Assert.AreEqual(NotePanelLayout.ClickStripTopMargin, top, 1e-4f);   // 亮端＝板面起點 12(缺角以下)
+            Assert.AreEqual(NotePanelLayout.BoardHeight, bottom, 1e-4f);        // 淡端補到板底，不留空白
+        }
+
+        [Test]
+        public void ClickStrip_Down_Is_The_Exact_Mirror_Of_Up()   // 向下: [0, 588]
+        {
+            NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true).ClickStripBand(out float ut, out float ub);
+            NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: false).ClickStripBand(out float dt, out float db);
+            Assert.AreEqual(NotePanelLayout.BoardHeight - ub, dt, 1e-4f);   // 600−600 = 0：淡端貼齊板頂
+            Assert.AreEqual(NotePanelLayout.BoardHeight - ut, db, 1e-4f);   // 600−12 = 588：亮端跟著受擊線翻到板底
+            Assert.AreEqual(ub - ut, db - dt, 1e-4f);                       // 長度相同 → 兩邊拉伸量一致
+        }
+
+        [Test]
+        public void ClickStrip_Covers_The_Whole_Play_Band_In_Both_Directions()
+        {
+            // 這是這次修的重點：貼圖只有 558，比板矮 30px。1:1 畫會在遠端留一段沒有光的板面
+            // ——向上時它在板底(螢幕最下緣、被框跟 LV/時間吃掉，看不見)，向下鏡射過來就正對音符進場處。
+            // 兩個方向都補滿，呼叫端據此把貼圖拉伸。
+            foreach (var drop in new[] { NoteDropDirection.Up, NoteDropDirection.Down })
+            {
+                NotePanelLayout.Resolve(drop, panelLeft: true).ClickStripBand(out float top, out float bottom);
+                Assert.Greater(bottom - top, ShippedStripH, drop + "：帶子要比貼圖長(才需要拉伸補滿)");
+                Assert.AreEqual(NotePanelLayout.BoardHeight - NotePanelLayout.ClickStripTopMargin, bottom - top, 1e-4f, drop.ToString());
+            }
+        }
+
+        [Test]
+        public void ClickStrip_Stretch_Is_Small_And_Equal_In_Both_Directions()
+        {
+            NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true).ClickStripBand(out float ut, out float ub);
+            NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true).ClickStripBand(out float dt, out float db);
+            float upStretch = (ub - ut) / ShippedStripH, downStretch = (db - dt) / ShippedStripH;
+            Assert.AreEqual(upStretch, downStretch, 1e-4f, "兩邊拉伸量必須一樣，否則向上/向下的漸層看起來不同");
+            Assert.Less(upStretch, 1.10f, "拉伸幅度要小(≈5%)，否則漸層會看得出被抻開");
+            Assert.Greater(upStretch, 1f);
+        }
+
+        [Test]
+        public void ClickStrip_Bright_End_Sits_Beyond_The_Judge_Line_By_The_Same_Margin()
+        {
+            // 兩個方向的亮端都超出受擊線同樣距離(58px)，被血條蓋住——這是「有沒有跟著顛倒」的判準。
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
+            up.ClickStripBand(out float ut, out _);
+            down.ClickStripBand(out _, out float db);
+            Assert.AreEqual(up.JudgeLineY - ut, db - down.JudgeLineY, 1e-4f);
+        }
+
+        [Test]
+        public void ClickStrip_Horizontal_Anchor_Does_Not_Move_It()
+        {
+            NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true).ClickStripBand(out float lt, out float lb);
+            NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: false).ClickStripBand(out float ct, out float cb);
+            Assert.AreEqual(lt, ct, 1e-4f);
+            Assert.AreEqual(lb, cb, 1e-4f);
+        }
+
+        [Test]
+        public void ClickStrip_Tilt_Matches_Up()
+        {
+            NotePanelLayout.Resolve(NoteDropDirection.Tilt, panelLeft: true).ClickStripBand(out float tt, out float tb);
+            NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true).ClickStripBand(out float ut, out float ub);
+            Assert.AreEqual(ut, tt, 1e-4f);
+            Assert.AreEqual(ub, tb, 1e-4f);
+        }
+
+        [Test]
+        public void ClickStrip_Band_Stays_Inside_The_Board()
+        {
+            foreach (var drop in new[] { NoteDropDirection.Up, NoteDropDirection.Down, NoteDropDirection.Tilt })
+            {
+                NotePanelLayout.Resolve(drop, panelLeft: true).ClickStripBand(out float top, out float bottom);
+                Assert.GreaterOrEqual(top, 0f, drop.ToString());
+                Assert.LessOrEqual(bottom, NotePanelLayout.BoardHeight, drop.ToString());
+                Assert.Greater(bottom, top, drop.ToString());
+            }
+        }
+
         // ---- the four (drop × horizontal) combinations ----
 
         [Test]

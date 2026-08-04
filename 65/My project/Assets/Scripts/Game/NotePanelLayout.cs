@@ -46,6 +46,9 @@ namespace Sdo.Game
         /// <summary>Hidden strip (design px) at the receptor/frame end of the play band: notes are masked out here so
         /// they slip behind the chamfered board frame + HP bar rather than poking past the top of the board.</summary>
         public const float ClipMargin = 30f;
+        /// <summary>Board-surface start (design px) for the lane click-flash strip: notes_board1's texture rows 0..11 are
+        /// the transparent chamfer above the play surface, so the official 向上 art starts the glow at y12.</summary>
+        public const float ClickStripTopMargin = 12f;
 
         /// <summary>Design-px added to EVERY panel-relative X (board / receptors / notes / HP bar / score / combo).
         /// 0 = 屏幕左邊, +242.5 = 屏幕中央.</summary>
@@ -74,6 +77,25 @@ namespace Sdo.Game
             // receptor/frame end, so 向上 = [30, 600] and 向下 = [0, 570] (the whole band reflected about y300).
             ClipTopY = bottom ? 0f : ClipMargin;
             ClipBottomY = bottom ? BoardHeight - ClipMargin : BoardHeight;
+        }
+
+        /// <summary>Vertical band (design-Y) covered by the per-lane click-flash glow strip (NOTES_BOARD_CLICK{1..4},
+        /// 67×558) and the track-wide MISS wash that reuses the same art. The strip's BRIGHT end is the one at the
+        /// receptors; the art fades out toward the far end. The band runs from the board SURFACE (the chamfered frame
+        /// end, <see cref="ClickStripTopMargin"/>) to the opposite board edge, so the glow always spans the full play
+        /// band and 向上/向下 are exact mirrors of each other: 向上 [12, 600] ↔ 向下 [0, 588].
+        /// <para>The shipped art is 558 tall — 30px short of that band — so the caller stretches it ~5.4% vertically.
+        /// Drawing it 1:1 instead (the official 向上 placement, [12, 570]) leaves 30px of unlit board at the far end:
+        /// harmless 向上 (it lands at the very bottom of the screen behind the frame + LV/時間 row) but glaring 向下,
+        /// where mirroring puts that gap at the TOP of the board, right where the notes come in. The stretch is applied
+        /// to BOTH directions so they stay mirrors; it falls on a smooth gradient whose far end is already at alpha
+        /// 27/255, so it is invisible.</para></summary>
+        /// <param name="topY">Top edge (smaller design-Y) of the band.</param>
+        /// <param name="bottomY">Bottom edge (larger design-Y) of the band.</param>
+        public void ClickStripBand(out float topY, out float bottomY)
+        {
+            topY = Bottom ? 0f : ClickStripTopMargin;
+            bottomY = Bottom ? BoardHeight - ClickStripTopMargin : BoardHeight;
         }
 
         /// <summary>Resolve the panel layout from the two player settings.</summary>
