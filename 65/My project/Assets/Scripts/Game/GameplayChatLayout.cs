@@ -61,14 +61,12 @@ namespace Sdo.Game
         /// <summary>訊息列外框左緣(XML TextList x=550)與外框寬(w=301)。</summary>
         public const float ListFrameX = 550f, ListFrameW = 301f;
         /// <summary>
-        /// 訊息欄左緣 = <b>535</b>。這是從官方截圖量的:GAME OVER 那張右下角的裁切剛好是 1:1 的 800×600
-        /// (「当前」落在 545、底板頂落在 562、最後一行字落在 558 —— 三個已知點全部對上),字的左緣就在 535,
-        /// 也就是**比 chatmode 鈕的左緣再往左 10px**。
+        /// 訊息欄左緣 —— **切齊 chatmode 鈕的左緣(545)**。
         ///
-        /// 🔴 不要拿 XML 的 <c>TextList x=550</c> 當字的左緣:那是**外框**,而官方畫字時是從外框再往左起頭的
-        /// (試過 550 與「把欄置中」的 588.5,前者偏左、後者整片偏右)。
+        /// 🔴 不要拿 XML 的 <c>TextList x=550</c> 當字的左緣:那是**外框**,不是字的起點。這個值是實機比對
+        /// 出來的 —— 550 偏左、把欄置中(588.5)整片偏右、照官方截圖量的 535 又太左,最後定在與按鈕列切齊。
         /// </summary>
-        public const float ListX = 535f;
+        public const float ListX = ModeBtnX;   // 545
         /// <summary>訊息行高(XML TextList height=14)。</summary>
         public const float LineH = 14f;
         /// <summary>訊息列與底板之間的空隙。</summary>

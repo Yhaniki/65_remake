@@ -66,11 +66,12 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Messages_Start_Left_Of_The_Chatmode_Button_Like_The_Official_Shot()
+        public void Messages_Start_Flush_With_The_Chatmode_Button()
         {
-            // 官方截圖(1:1 的 800×600 裁切)量出來字的左緣在 535,比 chatmode 鈕的 545 再往左 10px。
-            Assert.AreEqual(535f, GameplayChatLayout.ListX, 0.01f);
-            Assert.Less(GameplayChatLayout.ListX, GameplayChatLayout.BarX);   // 一定比按鈕列的左緣更左
+            // 字的左緣切齊 chatmode 鈕(545),而不是 XML TextList 的外框 550(那是框、不是字的起點)。
+            Assert.AreEqual(545f, GameplayChatLayout.ListX, 0.01f);
+            Assert.AreEqual(GameplayChatLayout.ModeBtnX, GameplayChatLayout.ListX, 0.01f);
+            Assert.Greater(GameplayChatLayout.ListX, GameplayChatLayout.BarX);   // 在底板範圍內
             // 官方 TextList h=196 ÷ 行高 14 = 14 行。
             Assert.AreEqual(14, GameplayChatLayout.MaxLines);
             // 選單四顆的視覺上緣補償:只有「當前」那張(索引 2)在圖裡留了透明上緣
