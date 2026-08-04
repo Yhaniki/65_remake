@@ -67,8 +67,9 @@ namespace Sdo.Game
         /// 出來的 —— 550 偏左、把欄置中(588.5)整片偏右、照官方截圖量的 535 又太左,最後定在與按鈕列切齊。
         /// </summary>
         public const float ListX = ModeBtnX;   // 545
-        /// <summary>訊息行高(XML TextList height=14)。</summary>
-        public const float LineH = 14f;
+        /// <summary>訊息行高。官方 XML 是 <c>TextList height="14"</c>,這裡收緊到 13 —— 字級調大到 18 之後
+        /// (em 盒 ≈ 12.7),14 的行距看起來太鬆、幾行字會散開;13 剛好讓整叢字讀起來是一塊。</summary>
+        public const float LineH = 13f;
         /// <summary>訊息列與底板之間的空隙。</summary>
         public const float ListGap = 4f;
         /// <summary>最多同時顯示幾行 —— 官方 TextList h=196 ÷ 行高 14 = 14 行。</summary>

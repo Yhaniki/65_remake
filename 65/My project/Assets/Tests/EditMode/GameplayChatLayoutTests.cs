@@ -47,10 +47,11 @@ namespace Sdo.Tests
             var l = GameplayChatLayout.Resolve(panelLeft: true, bottomDrop: false);
             float near = l.ListNearY;                       // 561 − 4
             Assert.AreEqual(557f, near, 0.01f);
-            // 最新一行貼著底板上緣,舊的往上疊(行高 14)
-            Assert.AreEqual(near - 14f, l.LineTopY(0, 3), 0.01f);
-            Assert.AreEqual(near - 28f, l.LineTopY(1, 3), 0.01f);
-            Assert.AreEqual(near - 42f, l.LineTopY(2, 3), 0.01f);
+            // 最新一行貼著底板上緣,舊的往上疊
+            const float lh = GameplayChatLayout.LineH;
+            Assert.AreEqual(near - lh, l.LineTopY(0, 3), 0.01f);
+            Assert.AreEqual(near - lh * 2f, l.LineTopY(1, 3), 0.01f);
+            Assert.AreEqual(near - lh * 3f, l.LineTopY(2, 3), 0.01f);
         }
 
         [Test]
@@ -60,9 +61,10 @@ namespace Sdo.Tests
             float near = l.ListNearY;                       // 0 + 38 + 4
             Assert.AreEqual(42f, near, 0.01f);
             // 由上往下填:最舊的貼底板,最新的在最下面
-            Assert.AreEqual(near, l.LineTopY(2, 3), 0.01f);        // 最舊
-            Assert.AreEqual(near + 14f, l.LineTopY(1, 3), 0.01f);
-            Assert.AreEqual(near + 28f, l.LineTopY(0, 3), 0.01f);  // 最新
+            const float lh = GameplayChatLayout.LineH;
+            Assert.AreEqual(near, l.LineTopY(2, 3), 0.01f);              // 最舊
+            Assert.AreEqual(near + lh, l.LineTopY(1, 3), 0.01f);
+            Assert.AreEqual(near + lh * 2f, l.LineTopY(0, 3), 0.01f);    // 最新
         }
 
         [Test]
@@ -72,15 +74,15 @@ namespace Sdo.Tests
             Assert.AreEqual(545f, GameplayChatLayout.ListX, 0.01f);
             Assert.AreEqual(GameplayChatLayout.ModeBtnX, GameplayChatLayout.ListX, 0.01f);
             Assert.Greater(GameplayChatLayout.ListX, GameplayChatLayout.BarX);   // 在底板範圍內
-            // 官方 TextList h=196 ÷ 行高 14 = 14 行。
+            // 14 行(官方 TextList h=196 ÷ 原行高 14)。行高後來為了讓字叢更緊收到 13,整區只會更矮。
             Assert.AreEqual(14, GameplayChatLayout.MaxLines);
-            // 選單四顆的視覺上緣補償:只有「當前」那張(索引 2)在圖裡留了透明上緣
-            // 選單槽位照官方 ROOMPOPMENU:2 / 27 / 52 / 77
+            Assert.LessOrEqual(GameplayChatLayout.MaxLines * GameplayChatLayout.LineH, 196f);
+            // 選單槽位照官方 ROOMPOPMENU:2 / 27 / 52 / 77;
+            // 四顆的視覺上緣補償只有「當前」那張(索引 2)非零 —— 它在圖裡留了透明上緣。
             CollectionAssert.AreEqual(new[] { 2f, 27f, 52f, 77f }, GameplayChatLayout.ModeMenuSlotY);
             Assert.AreEqual(4, GameplayChatLayout.ModeArtTopPad.Length);
             Assert.AreEqual(2f, GameplayChatLayout.ModeArtTopPad[2], 0.01f);
             Assert.AreEqual(0f, GameplayChatLayout.ModeArtTopPad[0], 0.01f);
-            Assert.AreEqual(196f, GameplayChatLayout.MaxLines * GameplayChatLayout.LineH, 0.01f);
         }
 
         [Test]

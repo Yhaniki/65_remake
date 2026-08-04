@@ -76,10 +76,11 @@ namespace Sdo.Game
 
         private const int OrderBar = 60, OrderBtn = 62, OrderText = 64, OrderPanel = 70, OrderPanelIcon = 72,
                           OrderPanelText = 74;
-        // 字級比房間(13)大一階:房間那欄疊在 3D 房間上、字多且擠;遊戲中只有幾行浮在舞台上,13 太小看不清。
-        // em 盒 = 0.704 × 16 ≈ 11.3 設計 px,仍塞得進官方的 14px 行高。
-        private const float TextPx = 16f;
-        private const float EdgePx = 0.8f;           // 黑邊厚度跟著字級走(房間 13px 用 0.7)
+        // 字級比房間(13)大很多:房間那欄疊在 3D 房間上、字多且擠;遊戲中只有幾行浮在舞台上,要一眼看得清。
+        // em 盒 = 0.704 × 18 ≈ 12.7 設計 px,配 13px 的行高(GameplayChatLayout.LineH)—— 字大、行距又比
+        // 官方的 14 更密,整叢字看起來是一整塊而不是散開的幾行。
+        private const float TextPx = 18f;
+        private const float EdgePx = 0.9f;           // 黑邊厚度跟著字級走(房間 13px 用 0.7)
         private const float CaretBlinkSec = 0.53f;
         private const float PressFlashSec = 0.09f;   // 按鈕按下那一下的 pushed 圖持續時間
         private const int DraftLimit = 80;           // XML EditBox limittext="80"
