@@ -403,6 +403,40 @@ namespace Sdo.Game
         public float PxSize { set { _pxSize = value; Refresh(false); } }
         public Vector3 Position { set { root.transform.position = value; } }
 
+        /// <summary>
+        /// 目前字串畫出來的寬度(世界單位 —— HUD 正交相機下 1 單位 = 1 design px)。給「一行裡要把下一段字接在
+        /// 上一段後面」的排版用(遊戲中聊天行的 名字 / 表情圖 / 尾字 三段就是這樣接的)。
+        ///
+        /// 走的是跟 <see cref="ReflowCells"/> 完全同一條算式(逐字 advance × characterSize×0.1,per-char 路徑再扣掉
+        /// tracking),所以量出來的寬度就是實際排出來的寬度;字型光柵尺寸跟著螢幕變,所以每次都重新問一次。
+        /// </summary>
+        public float MeasuredWidth
+        {
+            get
+            {
+                if (_font == null || string.IsNullOrEmpty(_text)) return 0f;
+                float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
+                int fontPx = NameplateMetrics.FontPxFor(_pxSize, sy);
+                float c = NameplateMetrics.CharacterSizeFor(_pxSize, fontPx);
+                float worldPerPx = 0.1f * c;
+                _font.RequestCharactersInTexture(_text, fontPx, _fontStyle);
+                float total = 0f;
+                for (int k = 0; k < _text.Length; k++)
+                {
+                    float a = _font.GetCharacterInfo(_text[k], out CharacterInfo info, fontPx, _fontStyle)
+                        ? info.advance : fontPx;
+                    total += a * worldPerPx;
+                }
+                if (_trackEm != 0f && _text.Length > 1)
+                {
+                    float trackEm = TextTracking.SafeTrackEm(_font, _text, fontPx, _fontStyle, _trackEm,
+                                                             TextStyles.MinInkGapEm);
+                    total -= trackEm * fontPx * worldPerPx * (_text.Length - 1);
+                }
+                return total;
+            }
+        }
+
         public void SetColors(Color face, Color edge)
         {
             _faceCol = face; _edgeCol = edge;

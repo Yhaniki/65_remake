@@ -720,6 +720,30 @@ namespace Sdo.Game
             return sprite;
         }
 
+        /// <summary>
+        /// 把一張**已經載好**的 sprite 轉成 premultiplied 版本(配 <see cref="PremultSpriteMaterial"/> 用)。
+        /// 給「素材是別的模組載的、但要畫在 SpriteRenderer 上」的情況 —— 遊戲中的表情面板就是:圖來自
+        /// <c>RoomUiArt</c>/<c>RoomExpressionArt</c>(房間那邊走 UGUI 的 premult 路徑),搬到遊戲畫面用
+        /// SpriteRenderer 直接畫就會在放大時拖一層白邊。
+        ///
+        /// 來源貼圖必須可讀(程式產生的都可以);已經是 premult、或讀不到就原樣回傳,呼叫端不必判斷。
+        /// 結果有快取(同一張 crop 只轉一次)。
+        /// </summary>
+        public static Sprite Premultiplied(Sprite src)
+        {
+            if (src == null || src.texture == null) return src;
+            if (IsPremultTexture(src.texture)) return src;
+            var r = src.textureRect;
+            int x = Mathf.RoundToInt(r.x), y = Mathf.RoundToInt(r.y);
+            int w = Mathf.RoundToInt(r.width), h = Mathf.RoundToInt(r.height);
+            try
+            {
+                return PremultiplyCrop(src.texture, x, y, w, h, 0, cleanMatte: true,
+                                       cacheKeyPath: "spr#" + src.texture.GetInstanceID()) ?? src;
+            }
+            catch { return src; }   // 不可讀的貼圖(匯入資產沒開 Read/Write)→ 維持原樣
+        }
+
         // Premult crops keyed by (source file, crop, pad, cleanMatte) — see PremultiplyCrop. Keeps a re-entered screen
         // (ResultScreen.Build runs once per song) reusing one batch of textures instead of minting a new one each time.
         private static readonly Dictionary<string, Sprite> _premultCache = new Dictionary<string, Sprite>();
@@ -1155,5 +1179,26 @@ namespace Sdo.Game
             for (int i = 0; i < 10; i++) { d[i] = LoadImage(dir, i + ".png"); if (d[i] == null) return null; }
             return d;
         }
+
+        /// <summary>遊戲中聊天框的美術 — UI/GAMEPLAY/PLAYNEWLEAN(底板 GamePlay3、送出鈕 GamePlay5~7、
+        /// 表情鈕 Room69~71 都裁自 ChatROOM.png;当前/家族/好友 的 chatmode 鈕分別裁自 ChatROOM.png 與
+        /// SmallButton.png)。</summary>
+        public static string PlayNewLeanUiDir => Path.Combine(GameplayUiDir, "PLAYNEWLEAN");
+        /// <summary>
+        /// PLAYNEWLEAN 的單格 .an,**走 solo 路徑**(裁到自己的貼圖 + DeMatteWhite + Clamp)。
+        ///
+        /// 不能只用 <c>LoadAn1(bleed:true)</c>:ChatROOM.png / SmallButton.png 是密排圖集,「当前」「送出」「表情」
+        /// 那幾顆彼此只隔一兩個 texel,取樣時會把**鄰居的不透明像素**拉進邊緣 —— 放大到全螢幕就是一圈白/雜色邊
+        /// (使用者回報「ui layout 沒有去白邊」)。AlphaBleed 只會改寫透明區的 RGB,對鄰居無能為力;
+        /// 搬到自己的貼圖上就沒有鄰居可滲(同 <c>RoomUiArt.AnSolo</c> 的理由)。pad:0 → 尺寸與 atlas crop 相同,
+        /// 位置不會位移。solo 失敗才退回舊路徑。
+        /// </summary>
+        /// 貼圖是 **premultiplied**(<see cref="LoadAnSoloPremultiplied"/>),所以畫它的 SpriteRenderer 必須配
+        /// <see cref="PremultSpriteMaterial"/> —— 這一組是 800×600 的圖被拉到全螢幕(放大 1.3~2.4 倍)在畫,
+        /// straight-alpha 的雙線性取樣會把邊緣外那圈 (255,255,255,0) 拌進來,就是使用者說的「沒有去白邊」。
+        public static Sprite ChatArt(string anName)
+            => LoadAnSoloPremultiplied(PlayNewLeanUiDir, anName, pad: 0, cleanMatte: true)
+               ?? LoadAnSolo(PlayNewLeanUiDir, anName, pad: 0)
+               ?? LoadAn1(PlayNewLeanUiDir, anName, bleed: true);
     }
 }

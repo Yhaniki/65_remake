@@ -170,6 +170,8 @@ namespace Sdo.Game
         // 不解除的話舊實例會留在委派鏈上（洩漏；裝置一變就對著已銷毀的物件呼叫）。
         private void OnDestroy()
         {
+            // 聊天框自己會關掉 IME —— 不關的話回到房間時輸入法還開著,房間的按鍵會被吃掉。
+            if (_chat != null) { _chat.Destroy(); _chat = null; }
             EditorRestoreCameraShift();   // 編輯器把相機推下去過的話要推回來（相機可能是前端共用的那一台）
             DisposeOsuKeysounds();
             AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
@@ -729,6 +731,19 @@ namespace Sdo.Game
         public bool PanelLeftEffective => NotePanelLayout.EffectivePanelLeft(notesPanelLeft, showtimeMode);
         private float _panelOffsetX = 0f;    // resolved 水平位移 (design px)：0=左, +242.5=中
         private int _scrollSign = +1;        // +1=notes rise up to the judge line (向上), −1=notes fall down (向下)
+        // ── 遊戲中的聊天框(官方 winchat)。訊息內容/顏色/該不該顯示全部由前端(FrontendApp)決定後推進來 ——
+        // Sdo.Game 不能引用 Sdo.UI(asmdef 是 UI → Game 的單向依賴),所以這裡只留中性的委派與 GameplayChatLine。
+        private GameplayChat _chat;
+        private GameplayChat.ExpressionPanelArt _pendingChatExpressions;   // 前端可能在 BuildHud 之前就設好
+        private List<GameplayChatLine> _pendingChatSeed;
+        /// <summary>玩家在遊戲中送出的一句話(原始字串;表情指令/密語的解析在前端做,跟房間同一條路)。</summary>
+        public System.Action<string> onChatSend;
+        /// <summary>玩家切了聊天頻道(值＝前端 ChatChannel 的整數)。</summary>
+        public System.Action<int> onChatChannel;
+        /// <summary>玩家從表情面板點了一個表情。</summary>
+        public System.Action<int> onChatExpression;
+        /// <summary>正在用聊天框打字 —— 這期間 lane 鍵與所有遊戲熱鍵都要停掉(不然打「w」會踩到上鍵)。</summary>
+        public bool ChatTyping => _chat != null && _chat.Typing;
         // ── 周邊 HUD 隨面板位置左右重排（大分數/名次/名單/LV·時間 不跟著 board 平移；置中時要讓開中央的 board）。官方
         // 向下置中 = 向上置中 的水平鏡射：分數/名次/名單這一坨與 LV·時間 互換左右邊。以下是設計px(800寬,置中 board≈242..557)
         // 的初版座標，可在 Inspector/F4 微調。左邊模式沿用官方原本右側級聯(board 在左,右邊空著)。
@@ -2528,6 +2543,8 @@ namespace Sdo.Game
             _hpYOffset = (layout.Bottom && !PanelLeftEffective) ? hudHpDownYOffset : 0f;
             // 向下（含傾斜）：受擊線在板底，判定字＋COMBO＋數字整組往上讓開一點（左邊/置中都一樣）。
             _judgeComboYOffset = layout.Bottom ? hudJudgeComboDownYOffset : 0f;
+            // 聊天框跟著同一組設定走：置中＋向下 → 搬到畫面右上，其餘留在官方的右下角。
+            _chat?.SetPanelLayout(PanelLeftEffective, layout.Bottom);
         }
 
         /// <summary>Arrange the surrounding HUD (大分數 / 粉紅名次 N/M / 小人名+分數名單 / 底部 LV·時間) around the note
@@ -2923,8 +2940,70 @@ namespace Sdo.Game
             BuildRankingUi();
             BuildEnergyHud();
             LayoutSideHud();   // 依面板位置把 大分數/名次/名單/LV·時間 排到 board 兩側（置中時讓開中央）
+            BuildChat();       // 右下角(置中向下 → 右上)的聊天框；訊息由前端推進來
             UpdateHpBar();
         }
+
+        // 遊戲中的聊天框(官方 winchat)。編輯器/場景測試模式不需要,也沒有前端在餵訊息 → 不建。
+        private void BuildChat()
+        {
+            if (editorMode || observeBurstMode) return;
+            _chat = new GameplayChat();
+            _chat.Build(_cam, PanelLeftEffective, _scrollSign < 0);
+            _chat.OnSend = txt => onChatSend?.Invoke(txt);
+            _chat.OnChannel = ch => onChatChannel?.Invoke(ch);
+            _chat.OnExpression = id => onChatExpression?.Invoke(id);
+            if (_pendingChatExpressions != null) _chat.SetExpressionArt(_pendingChatExpressions);
+            if (_pendingChatSeed != null) _chat.Seed(_pendingChatSeed);
+            _pendingChatSeed = null;
+            SeedChatDemo();
+        }
+
+        // DEV: SDO_CHATDEMO=1 → 一進場就塞幾行假對話,並算成「剛剛有人說話」(所以字是顯示的)。
+        // 純粹是為了**實機截圖**檢查聊天框:版位(右下/右上)、行距、顏色、黑邊在真的螢幕上長什麼樣 ——
+        // 正常玩的時候要等到有人開口才會有字,截圖很難抓。顏色 hex 與 ChatPalette 同值(那個型別在 Sdo.UI,這裡拿不到)。
+        private void SeedChatDemo()
+        {
+            string demo = DevVar("SDO_CHATDEMO");
+            if (string.IsNullOrEmpty(demo)) return;
+            _chat.DebugKeepText = true;   // 釘住不淡出,否則開場十秒後就拍不到字了
+            if (demo == "2") _chat.DebugOpenExpressionPanel();   // 綠框表情盤
+            else if (demo == "3") _chat.DebugOpenModeMenu();     // 家族/好友/當前/回復
+            string[] who = { "Eithwa", "小明", "路人甲" };
+            string[] say = { "這首好難", "衝啊!", "一起跳", "GO GO GO", "換一首吧" };
+            for (int i = 0; i < 6; i++)
+                _chat.Push(new GameplayChatLine
+                {
+                    Name = who[i % who.Length] + ":",
+                    Body = say[i % say.Length],
+                    ColorHex = "FFFFFF",
+                });
+            _chat.Push(new GameplayChatLine { Body = "系統:歡迎來到舞台", ColorHex = "F0C24A" });
+        }
+
+        /// <summary>前端推一行聊天進來(已決定好名字/顏色/表情圖)。畫面還沒建好就先收進暫存,建好一次灌。</summary>
+        public void PushChatLine(GameplayChatLine line)
+        {
+            if (_chat != null) { _chat.Push(line); return; }
+            (_pendingChatSeed ?? (_pendingChatSeed = new List<GameplayChatLine>())).Add(line);
+        }
+
+        /// <summary>進遊戲時把房間裡講過的話帶過來(不當作「有人剛說話」,所以字仍是藏著的)。</summary>
+        public void SeedChatLines(List<GameplayChatLine> lines)
+        {
+            if (_chat != null) { _chat.Seed(lines); return; }
+            _pendingChatSeed = lines != null ? new List<GameplayChatLine>(lines) : null;
+        }
+
+        /// <summary>表情面板的官方素材與內容(前端提供;與房間表情選單同一組圖)。</summary>
+        public void SetChatExpressionArt(GameplayChat.ExpressionPanelArt art)
+        {
+            _pendingChatExpressions = art;
+            _chat?.SetExpressionArt(art);
+        }
+
+        /// <summary>整個聊天框顯不顯示 —— 結算面板出來時整組收掉(那時已經不在打歌了)。</summary>
+        public void SetChatVisible(bool on) => _chat?.SetVisible(on);
 
         // ShowTime energy meter: official frame + an animated electric-plasma fill strip (ENERGY_Y/B/R), the badge
         // cluster fixed in the right-end panel (mini flash chunk + EnergyEft glow + ×2/×4/×8 badge), a blinking
@@ -5235,15 +5314,19 @@ namespace Sdo.Game
             TickDancerPerf();   // SDO_DANCERS 開著時每 2 秒印一行幀時間(M8 的量測依據,見 ScreenGameplay.Dancers.cs)
             TickDancerSlots();  // 多人:每幀把舞者往該站的格子滑一步,並讓相機錨點跟著第一名
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
+            // 遊戲中的聊天框:自己吃 Tab/滑鼠/文字輸入。**要在所有熱鍵之前** —— 這一幀它可能剛進入打字模式,
+            // 下面每一段都得看 ChatTyping 決定放不放行(打字時整片鍵盤都是文字,不是遊戲鍵)。
+            _chat?.Tick();
+            bool chatTyping = ChatTyping;
             // 測試用（已停用）：F4 開/關除錯滑桿面板
             // if (Input.GetKeyDown(KeyCode.F4)) _showDebugUI = !_showDebugUI;        // toggle the tuning sliders
             // 隊形假人預覽(←→ 切隊形、↑↓ 改人數)。F10 是刻意選的：F2/F3 已被房間畫面與相機切換佔用。
-            if (Input.GetKeyDown(KeyCode.F10)) ToggleFormationPreview();
+            if (!chatTyping && Input.GetKeyDown(KeyCode.F10)) ToggleFormationPreview();
             // 以下功能鍵的鍵位都能在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] 改（預設＝括號裡那顆），見 Sdo.Settings.KeyMap。
             // Auto（自動）模式開關(預設 F8) — 開啟後自動打擊所有音符（原測試用 DebugMeshOnly 已停用）。s_autoPlay = 跨歌延續。
-            if (KeyMap.Down(Hotkey.AutoPlay)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按下發出 SE_0001
+            if (!chatTyping && KeyMap.Down(Hotkey.AutoPlay)) { autoPlay = !autoPlay; s_autoPlay = autoPlay; PlaySe("SE_0001"); Debug.Log("[dbg] autoPlay=" + autoPlay); }   // 按下發出 SE_0001
             // 打拍音(預設 F7；StepMania assist tick)— 每個音符響一聲 click，方便對拍。s_assistTick = 跨歌延續（不存檔）。
-            if (KeyMap.Down(Hotkey.AssistTick))
+            if (!chatTyping && KeyMap.Down(Hotkey.AssistTick))
             {
                 assistTick = !assistTick; s_assistTick = assistTick;
                 if (assistTick) { _tick.Rewind(_nowMs); PlayTickOnce(); }   // 從當下的音符開始響（不補播過去的）
@@ -5261,14 +5344,14 @@ namespace Sdo.Game
             //     _ended = true; EnterResult();
             // }
             // 加速 note(預設 F5，下一速度檔)／減速 note(預設 F6，上一速度檔)— 跟房間「速度」功能一樣，依速度檔位表步進，按下播 SE_0001
-            if (KeyMap.Down(Hotkey.SpeedUp)) StepScrollSpeed(+1);
-            if (KeyMap.Down(Hotkey.SpeedDown)) StepScrollSpeed(-1);
+            if (!chatTyping && KeyMap.Down(Hotkey.SpeedUp)) StepScrollSpeed(+1);
+            if (!chatTyping && KeyMap.Down(Hotkey.SpeedDown)) StepScrollSpeed(-1);
             // 流速（= StepMania music rate）：音樂、音符、舞者、特效一起變速。[ 慢一格 / ] 快一格（0.05 步進，同 SM 的
             // 兩位小數 rate）、\ 暫停/恢復（音樂也停）、= 回 1×。
             // 正式遊玩已停用（會誤觸）；只留給譜面編輯器（它的 HUD 就寫著這幾個鍵）。
             // 編輯器模式的暫停/變速要走 Editor* 版本（會重新錨定 dsp↔譜面時間；SetPaused 的恢復路徑假設音源是 Pause 過的，
             // 但編輯器 seek 是 Stop→Play，直接用會恢復不了聲音）。
-            if (editorMode)
+            if (editorMode && !chatTyping)
             {
                 if (Input.GetKeyDown(KeyCode.LeftBracket)) EditorSetRate(GameRate.Step(_musicRate, -1));
                 if (Input.GetKeyDown(KeyCode.RightBracket)) EditorSetRate(GameRate.Step(_musicRate, +1));
@@ -5294,7 +5377,7 @@ namespace Sdo.Game
             if (_sceneCam != null && use3dCamera && !avatarDebug && _camReady)
             {
                 // 換鏡頭(預設 F2；decompiled gameplay cmd 0x3c): camMode++ over 0..5, past 5 wraps to -1 = the auto-director.
-                if (KeyMap.Down(Hotkey.Camera)) CycleCamMode();
+                if (!chatTyping && KeyMap.Down(Hotkey.Camera)) CycleCamMode();
                 Vector3 eye, tgt, up = Vector3.up;   // up = the .cv per-frame up vector (Camera_Update's LookAtLH 4th arg); non-vertical => roll/tilt
                 if (_camMode < 0 && _dirCv != null && _dirCv.Length > 0)
                 {
@@ -5783,6 +5866,9 @@ namespace Sdo.Game
             // 自由模式不出 YOU WIN/LOSE 字幕 (但結算最後的 SE_0022 音效仍要有 → ResultScreen 內處理)。GAME OVER 同理不出旗。
             // 旁觀也不出:那面旗是「你贏了/輸了」,而旁觀者兩者都不是。
             // 自由模式也沒有名次 → 結算列最左的名次數字不畫(GAME OVER 圖仍照畫)。
+            // 結算面板一出來就把聊天框整組收掉:那時已經不在打歌,而且結算的「確定」也是 Enter —— 兩個
+            // Enter 用途疊在一起會很怪(而且聊天列會壓在結算面板上)。
+            SetChatVisible(false);
             _result.Show(_songTitle, diff, rows, localWon, expGained, coinsGained, head, _gameOver, PlaySe,
                          showBanner: !freeMode && !spectatorMode, showRank: !freeMode);
         }
@@ -6131,6 +6217,9 @@ namespace Sdo.Game
 
         private void HandleInput(double now)
         {
+            // 聊天打字中:整片鍵盤都是文字,一顆 lane 鍵都不判定(「w」不能同時是上鍵)。這期間音符照掉、
+            // 長條會斷 —— 那是使用者選 Tab 開打字時就接受的代價(送出後自動退出正是為了縮短這段)。
+            if (ChatTyping) return;
             int mask = 0;
             double press = PressTimeMs(now);
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
@@ -6220,8 +6309,8 @@ namespace Sdo.Game
                     _energyMiniT0 = Time.time;                                 // official 500ms EnergyProgress band-up flash
                 }
                 _lastArmed = armed;
-                // 釋放氣條（預設 Space；鍵位可在 keymaps.ini 的 [Hotkeys] showtime 改）
-                if (KeyMap.Down(Hotkey.Showtime) && _showtime.TryActivate(now, ComputeShowtimeWindowMs())) OnShowtimeStart();
+                // 釋放氣條（預設 Space；鍵位可在 keymaps.ini 的 [Hotkeys] showtime 改）。打字中不吃 —— 空白鍵是文字。
+                if (!ChatTyping && KeyMap.Down(Hotkey.Showtime) && _showtime.TryActivate(now, ComputeShowtimeWindowMs())) OnShowtimeStart();
             }
             else
             {
@@ -6447,6 +6536,7 @@ namespace Sdo.Game
         // frame the window ends, so a note the player pressed for near the handoff is judged instead of missed.
         private void ObserveShowtimeInput(double now)
         {
+            if (ChatTyping) return;   // 打字中的按鍵是文字,不能被記成「窗內按過這條 lane」
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
                 foreach (var k in laneKeys[lane])
@@ -6589,6 +6679,7 @@ namespace Sdo.Game
         // 編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
         private void TickBombs(double now, bool detonate)
         {
+            if (ChatTyping) detonate = false;   // 打字中按到的鍵是文字 —— 跟 F8 自動避雷同樣待遇,不引爆
             double retire = _engine.Windows.MissBoundary;   // 退場邊界:過判定線這麼久才收掉(視覺續捲到此,不算 miss)
             if (!_bombPrevValid) { _bombPrevNow = now; _bombPrevValid = true; }   // 第一幀對齊:prev==now → 沒有任何跨線
             double prev = _bombPrevNow;

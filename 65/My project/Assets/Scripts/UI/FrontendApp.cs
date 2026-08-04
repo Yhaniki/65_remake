@@ -597,12 +597,17 @@ namespace Sdo.UI
             {
                 if (!_activeGame.Finished)
                 {
-                    // 中離（預設 ESC，可在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] quit 改）：不結算直接退出。
-                    if (KeyMap.Down(Hotkey.Quit)) AbortGameplay();
-                    // 旁觀退出(需求 10):Ctrl+Q → 直接離開房間,退回房間的上一層(線上=大廳、離線=選男女)。
-                    // 只在旁觀時吃 —— 參賽者按到不能把自己踢出比賽。
-                    else if (_activeGame.spectatorMode && CtrlHeld() && KeyMap.Down(Hotkey.SpectatorQuit))
-                        QuitSpectating();
+                    // 聊天打字中:鍵盤整片都是文字 —— Esc 是「取消打字」(聊天框自己吃掉),不是中離;
+                    // Ctrl+Q 的 Q 也一樣是一個字。這兩顆在打字期間都不放行。
+                    if (!_activeGame.ChatTyping)
+                    {
+                        // 中離（預設 ESC，可在 DATA/PROFILE/keymaps.ini 的 [Hotkeys] quit 改）：不結算直接退出。
+                        if (KeyMap.Down(Hotkey.Quit)) AbortGameplay();
+                        // 旁觀退出(需求 10):Ctrl+Q → 直接離開房間,退回房間的上一層(線上=大廳、離線=選男女)。
+                        // 只在旁觀時吃 —— 參賽者按到不能把自己踢出比賽。
+                        else if (_activeGame.spectatorMode && CtrlHeld() && KeyMap.Down(Hotkey.SpectatorQuit))
+                            QuitSpectating();
+                    }
                 }
                 // Finished: ScreenGameplay owns the win/lose 定格 pose + STATIS result panel itself (its own ResultScreen).
                 // That sequence plays out AFTER Finished flips at song-end, so we must NOT tear down on Finished — we
@@ -723,7 +728,8 @@ namespace Sdo.UI
             int roomMode = Sdo.UI.Services.GameModeRules.Effective(NetRoomGameMode(), s.GameMode);
             game.showtimeMode = Sdo.UI.Services.GameModeRules.IsShowtime(roomMode);   // 2 = ShowTime（氣條/集氣）模式；否則一般玩法
             game.gameMode = roomMode;                            // 0=自由 1=普通 2=ShowTime。曲末要靠它決定這場記不記勝負（PlayStatsRecorder）
-            // 自由模式：整場不出名次（遊戲中的 N/M ＋ 右側名單、結算列最左的名次數字）、不出 YOU WIN/LOSE。
+            // 自由模式：**只有結算**不列名次（結算列最左的名次數字）、不出 YOU WIN/LOSE；
+            // 遊戲中的 N/M ＋ 右側名單照出（使用者指定 —— 離線預設就是自由模式，整組關掉等於一般玩家看不到）。
             // G幣/EXP 照給（使用者指定）。這些政策 ScreenGameplay 早就寫好了，缺的一直是這一行
             // （沒接＝永遠當普通模式跑）。
             game.freeMode = Sdo.UI.Services.GameModeRules.IsFree(roomMode);
@@ -745,7 +751,158 @@ namespace Sdo.UI
                 game.songBombs = gp.songBombs;                   // 進階「歌曲炸彈」關 → 載譜時把譜面上的炸彈整顆拿掉
             }
             WireNetGameplay(game);
+            WireGameplayChat(game);
             _activeGame = game;
+        }
+
+        // ---- 遊戲中的聊天框(官方 winchat) ----
+        // ScreenGameplay 只認得「排好版的一行字」(GameplayChatLine) —— 該不該顯示、什麼顏色、送出去要走
+        // 哪個頻道,全部在這裡決定,跟房間左下角那個聊天欄共用同一組規則(GameplayChatFeed / RoomChatCommand)。
+
+        private Services.ChatChannel _gameChatChannel = Services.ChatChannel.Current;   // 遊戲畫面自己的頻道(当前/家族/好友)
+        private int _gameChatRoomId;                                        // 這一局所屬的房號(隔離別房訊息)
+        private System.Action<Services.ChatMessage> _gameChatHandler;       // 掛在 IChatService.MessageReceived 上的那一支
+
+        private void WireGameplayChat(ScreenGameplay game)
+        {
+            if (_ctx == null || _ctx.Chat == null) return;
+            _gameChatChannel = Services.ChatChannel.Current;
+            _gameChatRoomId = _ctx.Rooms != null && _ctx.Rooms.CurrentRoom != null ? _ctx.Rooms.CurrentRoom.Id : 0;
+
+            game.SetChatExpressionArt(BuildGameplayExpressionArt());
+            // 房間裡講過的話帶進遊戲(使用者指定)。**不**算「有人剛說話」→ 進場仍是「字不顯示」的預設狀態。
+            game.SeedChatLines(BuildGameplayChatLines());
+
+            game.onChatSend = SendGameplayChat;
+            game.onChatChannel = ch =>
+            {
+                _gameChatChannel = (Services.ChatChannel)ch;
+                _activeGame?.SeedChatLines(BuildGameplayChatLines());   // 換頻道 → 整批重新過濾
+            };
+            game.onChatExpression = id => _ctx.Chat.SendExpression(id, _gameChatChannel);
+
+            _gameChatHandler = m =>
+            {
+                if (_activeGame == null) return;
+                if (!Services.GameplayChatFeed.ShouldShow(m, _gameChatChannel, _gameChatRoomId)) return;
+                _activeGame.PushChatLine(Services.GameplayChatFeed.ToLine(m, RoomExpressionArt.SmallFrames));
+            };
+            _ctx.Chat.MessageReceived += _gameChatHandler;
+        }
+
+        private void UnwireGameplayChat()
+        {
+            if (_gameChatHandler != null && _ctx != null && _ctx.Chat != null)
+                _ctx.Chat.MessageReceived -= _gameChatHandler;
+            _gameChatHandler = null;
+        }
+
+        /// <summary>目前該顯示的歷史(最舊在前)。換頻道 / 進場時整批重灌。</summary>
+        private List<GameplayChatLine> BuildGameplayChatLines()
+        {
+            var list = new List<GameplayChatLine>();
+            var history = _ctx?.Chat?.History;
+            if (history == null) return list;
+            for (int i = 0; i < history.Count; i++)
+            {
+                var m = history[i];
+                if (!Services.GameplayChatFeed.ShouldShow(m, _gameChatChannel, _gameChatRoomId)) continue;
+                list.Add(Services.GameplayChatFeed.ToLine(m, RoomExpressionArt.SmallFrames));
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// 遊戲中表情面板的素材與內容 —— **與房間左下角那個表情選單完全同一組**(ROOMPOPMENU / EXPRESSIONINFO
+        /// 的綠框底、「普通表情」分頁標籤、翻頁箭頭),連格子順序都照官方 <c>MenuExpressionIds</c> 的分頁排。
+        /// 每格帶著它的指令文字(<c>/GO</c> 之類),點下去是**塞進輸入框**而不是直接送出(見 GameplayChat.InsertExpression)。
+        /// </summary>
+        private static GameplayChat.ExpressionPanelArt BuildGameplayExpressionArt()
+        {
+            // 🔴 每一張都要過 SdoExtracted.Premultiplied:這些圖是給房間的 UGUI 用的(那條路自己會配 premult 材質),
+            // 直接丟給遊戲畫面的 SpriteRenderer 畫,放大時邊緣會拖一層白霧(使用者回報「emoji 面板有殘影」)。
+            int pages = Mathf.Max(1, Services.RoomChatCommand.TotalExpressionPages);
+            var perPage = new GameplayChat.Expression[pages][];
+            var backgrounds = new Sprite[pages];
+            for (int p = 0; p < pages; p++)
+            {
+                backgrounds[p] = SdoExtracted.Premultiplied(RoomUiArt.ExpressionInfoPage(p));
+                var slots = new GameplayChat.Expression[Services.RoomChatCommand.ExpressionsPerPage];
+                for (int s = 0; s < slots.Length; s++)
+                {
+                    int id = Services.RoomChatCommand.ExpressionAtMenuSlot(p, s);
+                    if (id <= 0) continue;
+                    slots[s] = new GameplayChat.Expression
+                    {
+                        Id = id,
+                        Frames = PremultipliedFrames(RoomExpressionArt.SmallFrames(id)),
+                        Command = Services.RoomChatCommand.ExpressionDisplayText(id),
+                    };
+                }
+                perPage[p] = slots;
+            }
+            return new GameplayChat.ExpressionPanelArt
+            {
+                PageBackgrounds = backgrounds,
+                Tab = SdoExtracted.Premultiplied(RoomUiArt.ExpressionNormalTab(selected: true)),
+                ArrowLeft = PremultipliedFrames(RoomUiArt.ExpressionPageArrowFrames(left: true)),
+                ArrowRight = PremultipliedFrames(RoomUiArt.ExpressionPageArrowFrames(left: false)),
+                Pages = perPage,
+            };
+        }
+
+        private static Sprite[] PremultipliedFrames(Sprite[] frames)
+        {
+            if (frames == null) return null;
+            var outFrames = new Sprite[frames.Length];
+            for (int i = 0; i < frames.Length; i++) outFrames[i] = SdoExtracted.Premultiplied(frames[i]);
+            return outFrames;
+        }
+
+        /// <summary>遊戲中送出一句話 —— 跟房間 <c>SendRoomChat</c> 同一條解析(家族 / 密語 / 表情 / 一般)。</summary>
+        private void SendGameplayChat(string txt)
+        {
+            var chat = _ctx?.Chat;
+            if (chat == null || string.IsNullOrWhiteSpace(txt)) return;
+            var route = _gameChatChannel;
+            switch (route)
+            {
+                case Services.ChatChannel.Family:
+                {
+                    string body = Services.RoomChatCommand.StripGuildCommand(txt);
+                    if (!string.IsNullOrWhiteSpace(body)) chat.SendGuild(body);
+                    return;
+                }
+                case Services.ChatChannel.Friend:
+                {
+                    if (Services.RoomChatCommand.TryParseWhisper(txt, out var target, out var body))
+                    {
+                        if (!string.IsNullOrWhiteSpace(body)) chat.SendWhisper(target, body, Services.ChatChannel.Friend);
+                    }
+                    else chat.SendSelfTalk(txt);   // 沒帶 [名字] → 白字「你說: xxx」,只有自己看得到
+                    return;
+                }
+                default:
+                {
+                    if (Services.RoomChatCommand.TryStripGuildCommand(txt, out var guildBody))
+                    {
+                        if (!string.IsNullOrWhiteSpace(guildBody)) chat.SendGuild(guildBody);
+                        return;
+                    }
+                    if (Services.RoomChatCommand.TryParseWhisper(txt, out var target, out var body))
+                    {
+                        if (!string.IsNullOrWhiteSpace(body)) chat.SendWhisper(target, body, route);
+                        return;
+                    }
+                    if (Services.RoomChatCommand.TryParseExpression(txt, out var eid, out var lead, out var trail))
+                    {
+                        chat.SendExpression(eid, route, lead, trail);
+                        return;
+                    }
+                    chat.Send(txt, route);
+                    return;
+                }
+            }
         }
 
         /// <summary>
@@ -1303,6 +1460,7 @@ namespace Sdo.UI
         // the caller decides where to go next (room directly, or via the results modal).
         private void TeardownGameplay()
         {
+            UnwireGameplayChat();   // 不解掉的話舊的 handler 會留在 Chat.MessageReceived 上,對著已銷毀的畫面推訊息
             _activeGame = null;
             Time.timeScale = 1f;
             if (_preGameRoots != null)

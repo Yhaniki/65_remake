@@ -366,7 +366,9 @@ namespace Sdo.Game
         {
             // 旁觀模式的 _trackVisible 恆 false(音符板不出)—— 但名單一定要更新,那是旁觀者唯一看得到的資訊。
             if (_rosterName == null || (!_trackVisible && !spectatorMode)) return;   // not built / hidden during the opening hold
-            if (freeMode) { SetRankingVisible(false); return; }  // 自由模式: no ranking display during play
+            // 🔴 自由模式**照樣**出遊戲中的名次(N/M)與右側名單(使用者指定)—— freeMode 只藏「結算列最左的
+            //    名次數字」與 YOU WIN/LOSE 旗(見 ShowResult 的 showRank/showBanner)。以前這裡整組關掉,
+            //    離線預設就是自由模式(config defaultGameMode=0)→ 一般玩家永遠看不到那兩塊。
             RebuildRoster();
             UpdateRosterList();
             UpdateRankDisplay();
@@ -522,7 +524,7 @@ namespace Sdo.Game
 
         private void SetRankingVisible(bool on)
         {
-            if (freeMode) on = false;   // 自由模式: ranking (rank N/M + roster list) never shows during play
+            // 自由模式不再在這裡整組關掉 —— 遊戲中的 N/M 與右側名單照出(見 RefreshRanking 的說明)。
             if (_rosterName != null)
                 for (int i = 0; i < RosterRows; i++)
                 {
