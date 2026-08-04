@@ -8,6 +8,7 @@
         "Sdo.UI",
         "Unity.TextMeshPro",
         "UnityEngine.UI",
+        "MagicaClothV2",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

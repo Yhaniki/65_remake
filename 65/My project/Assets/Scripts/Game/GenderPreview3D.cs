@@ -218,6 +218,10 @@ namespace Sdo.Game
             _feetOffsetY = avatarYOffset - feet;   // 拖曳旋轉要繞 pivot 重算位置,得記住這個基準
             go.transform.position = new Vector3(_park.x, _park.y + _feetOffsetY, _park.z);
             go.transform.localRotation = Quaternion.Euler(0f, avatarYaw, 0f);
+            // F7 swaps this preview to the MMD model too. Register BEFORE parking it inactive, so a build that's needed
+            // right now (MMD already on) happens on a live GameObject; MmdDebug retries the other gender when it's shown.
+            // The MMD rig is height-matched to the SDO body, so the head-to-toe framing below needs no MMD-specific case.
+            MmdDebug.RegisterSwappable(av);
             go.SetActive(false);
             return go.transform;
         }

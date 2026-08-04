@@ -902,6 +902,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            if (_avatar != null) MmdDebug.RegisterSwappable(_avatar);   // F7: 把這隻舞者換成 MMD 模型
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();                                               // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
@@ -935,6 +936,7 @@ namespace Sdo.Game
             parent.transform.SetParent(transform, false);
             _avatar = SdoRoomAvatar.Build(parent, SceneLayer, portraitOpaque: false, male: _male, equippedParts: _avatarParts, bodyIndex: _bodyIndex);
             _avatarRoot = parent.transform;
+            if (_avatar != null) MmdDebug.RegisterSwappable(_avatar);   // F7: 換穿後重建 → 重新登記
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();   // 地板校正:一律拿地面站姿量(見 GroundFeetY)
             // GroundFeetY 換的是「拿哪個 clip 量」,量法還是 FeetYAt → Pose(0) → 顯示姿勢仍被停在第 0 幀。

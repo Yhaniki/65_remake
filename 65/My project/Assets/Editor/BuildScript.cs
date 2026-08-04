@@ -56,6 +56,7 @@ public static class BuildScript
         "Sdo/UnlitInstancedCutout",  // solid/volumetric alpha mapobj props (SCN0006 carousel — no see-through)
         "Sdo/SpritePremultiply",     // result YOU WIN/LOSE banner: premult-alpha so bilinear MAGNIFICATION has no 白邊
                                      // halo; stripped -> Shader.Find null -> banner falls back to straight-alpha (halo returns)
+        "Sdo/MmdModel",              // MMD-avatar base+sphere+toon+outline; stripped -> Miku falls back to Unlit (no fx)
     };
 
     public static void BuildWindows()

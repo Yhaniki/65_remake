@@ -328,6 +328,9 @@ namespace Sdo.Game
             av.PoseInitialIdle();
             SetLayerRecursive(parent, headPortraitLayer);
             _headAvatar = av;
+            // F7 swaps the 結算頭貼 to the MMD model too (framing: TryHeadBoundsRest below). No cloth sim — same reason as
+            // the room 頭貼: invisible at portrait size, and it is the most expensive part of building a rig.
+            MmdDebug.RegisterSwappable(av, cloth: false);
             // cache the head bone's REST (bind) model-space position — the cam targets this (NOT the live animated bone),
             // so the camera stays FIXED and the idle head-bob plays out inside the frame instead of being chased.
             Vector3 hp = av.BoneModelPos("Bip01_Head");
@@ -347,6 +350,23 @@ namespace Sdo.Game
                 t.localRotation = Quaternion.Euler(0f, headAvatarYaw, 0f);
             }
             if (_headCam == null || _headAvatar == null) return;
+
+            // MMD display mode: the SDO parts this normally measures are hidden, and the MMD model is one skinned mesh —
+            // frame the head the MMD rig measured for itself (head bone subtree, minus the hair hanging below the chin).
+            // Rest bounds, not live: the cam stays FIXED and the idle head-bob plays in-frame, exactly as the SDO path.
+            var mmd = MmdDebug.ActiveFor(_headAvatar);
+            if (mmd != null && mmd.TryHeadBoundsRest(out var mb))
+            {
+                // MmdAvatar's constants, not the SDO ones: its box is the bare head, the SDO box is head+hair (see there).
+                headPortraitDist = Mathf.Max(mb.size.y, 1f) * MmdAvatar.PortraitFrameDist * Mathf.Max(0.05f, headZoom);
+                Vector3 aim = mb.center + new Vector3(headAimOffset.x, -MmdAvatar.PortraitAimUp * mb.size.y, 0f);
+                Vector3 fwd = Quaternion.Euler(headPitchDeg, 0f, 0f) * Vector3.forward;
+                _headCam.fieldOfView = headPortraitFov;
+                _headCam.transform.position = aim - fwd * headPortraitDist;
+                _headCam.transform.rotation = Quaternion.LookRotation(fwd, Vector3.up);
+                return;
+            }
+
             Vector3 restHead = _headAvatar.transform.TransformPoint(_headModelPos);   // head bone world pos (rest)
             // 取景只看頭骨：距離與瞄準偏移是相對頭骨的固定值（模型單位 × avatar scale），完全不碰任何 renderer 的 bounds。
             // 骨架每套裝扮都同一副 → 髮型/帽子/翅膀/法杖都影響不到取景（穿 Ribbon Star M 翅膀把相機甩飛的那個 bug）。

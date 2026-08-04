@@ -195,3 +195,11 @@ tools/kgn_export/gn_notes.json
 # tools/verify_online.ps1 的工作目錄(憑證、token 檔、server 暫存、兩台 client 的 log)。
 # 每次重跑會整個刪掉重建 —— 報告 online_verify.md 才是要留的那份。
 /.verify_online/
+
+# cloth validation harness: regenerable artifacts (keep scripts + ref baselines + report)
+tools/mmd_cloth_validate/magica_*.json
+tools/mmd_cloth_validate/unity_*.log
+tools/mmd_cloth_validate/*.xml
+tools/mmd_cloth_validate/__pycache__/
+tools/mmd_cloth_validate/probe.request
+tools/mmd_cloth_validate/pmx_dump.txt
