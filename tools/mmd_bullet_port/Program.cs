@@ -32,6 +32,7 @@ static class Program
 
         var phys = JsonDocument.Parse(File.ReadAllText(physPath)).RootElement;
         var world = BuildWorld(phys, out var chains);
+        if (args.Length > 2 && args[2] == "nocol") world.Collisions = false;
         var reference = JsonDocument.Parse(File.ReadAllText(refPath)).RootElement;
         double upm = reference.GetProperty("unitsPerMeter").GetDouble();
 
@@ -80,7 +81,7 @@ static class Program
         for (int f = 1; f <= frames; f++)
         {
             world.StepFrame();
-            if (f <= 2) Console.WriteLine($"   [frame {f}] contacts={world.ContactCount}");
+            if (f % 60 == 0) { world.JointViolation(out double jm, out double jx); Console.WriteLine($"   [t={f / 60.0:F1}s] contacts={world.ContactCount}  joint separation mean {jm:F5} max {jx:F5}"); }
             double worst = 0, sum = 0; int cnt = 0;
             foreach (var (name, idx) in chains)
             {

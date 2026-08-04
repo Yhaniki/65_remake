@@ -87,6 +87,26 @@ namespace Sdo.MmdPhysics
         /// contribution was isolated in the first place.</summary>
         public bool Collisions = true;
 
+        /// <summary>How far the joints are from being satisfied right now: the distance between the two anchor points
+        /// each joint is supposed to hold together, in model units. Bullet does not solve constraints exactly — the
+        /// anchors separate a little under load (ERP recovers a fraction per substep) and a long chain visibly sags
+        /// because of it. If this reads ~0 while the reference chain hangs longer, the difference is NOT sag.</summary>
+        public void JointViolation(out double mean, out double max)
+        {
+            mean = 0; max = 0;
+            if (_ja.Length == 0) return;
+            for (int k = 0; k < _ja.Length; k++)
+            {
+                int a = _ja[k], b = _jb[k];
+                var ra = M3.FromQuat(_rot[a]) * _aA[k];
+                var rb = M3.FromQuat(_rot[b]) * _aB[k];
+                double d = ((_pos[b] + rb) - (_pos[a] + ra)).Length;
+                mean += d;
+                if (d > max) max = d;
+            }
+            mean /= _ja.Length;
+        }
+
         public V3 PositionOf(int body) => _pos[body];
         public M3 OrientationOf(int body) => M3.FromQuat(_rot[body]);
         public bool IsDynamic(int body) => _dynamic[body];
