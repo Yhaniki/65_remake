@@ -21,8 +21,9 @@ namespace Sdo.UI.Core
     /// 2. **上傳的起點是「我穿著它」,不是「有人喊缺」。** 進房間就推一次(靠 packId 去重,server
     ///    已經有就是零上傳)。理由:別人一看到我就需要它,而「等他喊缺再傳」會讓每個新進房的人
     ///    都先看到一次 SDO 穿搭再變身,閃一下。
-    /// 3. **本機 MMD 顯示關掉 = 這整條完全不動。** 不查詢、不下載、不上傳。使用者關掉 MMD 的意思
-    ///    就是「我不要這個功能」,那不該還在背景吃他的流量與磁碟。
+    /// 3. **兩個方向各自被自己的設定關掉。** 上傳看 <c>mmdShareModel</c>（外加「我自己有在用模型」——
+    ///    沒穿就沒東西可分享）；下載看 <c>mmdShowOthers</c>。這兩件事本來就是獨立的功能：
+    ///    可以自己維持 SDO 角色卻看得到別人的 MMD，也可以反過來。兩邊都關 = 這整條完全不動。
     ///
     /// 🔴 <b>永遠讓歌先走。</b>同時只有一條 file 連線在傳才不會互相搶頻寬,而缺歌的人按不了準備、
     /// 房主開不了場 —— 模型晚三十秒到完全沒有代價。所以只要 <see cref="NetSongTransfer.Active"/>
@@ -67,8 +68,8 @@ namespace Sdo.UI.Core
             if (ctx == null || ctx.Net == null) return;
             Wire(ctx.Net);
 
-            // MMD 顯示關著 → 這條路完全不動(見類別說明第 3 點)。
-            if (!RoomConfig.mmdEnabled) return;
+            // 兩個方向都關著 → 這條路完全不動(見類別說明第 3 點)。
+            if (!RoomConfig.mmdShareModel && !RoomConfig.mmdShowOthers) return;
 
             if (_fx != null)
             {
@@ -92,8 +93,29 @@ namespace Sdo.UI.Core
             var net = ctx.Net;
             if (!net.IsConnected || !net.InRoom) return;
 
+            // 🔴 一定要在 TryUploadMine 之前:server 收檔前會核對「你的外觀真的宣告了這個 packId」,
+            // 換了模型卻沒補送外觀的話,整趟上傳會被擋掉(而錯誤訊息指向完全無關的地方)。
+            RepublishIfModelChanged(ctx);
+
             if (TryUploadMine(ctx)) return;
-            TryFetchMissing(ctx);
+            if (RoomConfig.mmdShowOthers) TryFetchMissing(ctx);
+        }
+
+        /// <summary>上一次讓 server 知道的「我身上穿的模型」。</summary>
+        private static string _announcedPack;
+
+        /// <summary>
+        /// 在房間裡當場換模型（或切成「(不使用)」）→ 補送一次外觀,同房的人才會跟著換。
+        ///
+        /// <c>PublishLook</c> 本身有去重(內容沒變就不送),但它只在**進房/換裝**時被呼叫 —— 設定面板改
+        /// mmdModel 不經過那兩條路,所以要有人替它按一下。這裡是唯一每幀都在看「我身上穿哪個模型」的地方。
+        /// </summary>
+        private static void RepublishIfModelChanged(AppContext ctx)
+        {
+            string mine = MmdAvatarSwap.LocalPackId;
+            if (string.Equals(_announcedPack, mine, StringComparison.Ordinal)) return;
+            _announcedPack = mine;
+            ctx.Net.PublishLook();
         }
 
         // ================= 上傳自己的 =================

@@ -429,17 +429,19 @@ namespace Sdo.Settings
             // 現在整組搬進這裡 → 跟其它設定一樣寫進 config.ini，下次開遊戲還在。
             f.Add(new ConfigField
             {
-                Key = "mmdEnabled", Category = CatMmd, Label = "用 MMD 模型", Kind = ConfigFieldKind.Toggle,
-                Help = "★總開關：開＝場上每隻角色（跳舞的、房間走路的、頭貼/性別預覽）的身體都換成 MMD 模型。動作仍由 SDO 骨架驅動，跳的是同一套舞。",
-                Get = () => B(RoomConfig.mmdEnabled), Set = v => RoomConfig.mmdEnabled = ParseBool(v),
+                Key = "mmdModel", Category = CatMmd, Label = "我用的模型", Kind = ConfigFieldKind.Choice,
+                ChoicesProvider = () => MmdModelsProvider?.Invoke(),
+                UnknownChoiceText = cur => cur.Length == 0 ? "(自動：第一個)" : cur + "(找不到)",
+                Help = "★選了就是要用它 —— 沒有另外的總開關。第一個選項「" + RoomConfig.mmdModelNone + "」＝維持 SDO 原角色。"
+                     + "把整個 MMD 模型資料夾（含 .pmx 與它的貼圖）放進 DATA/MODEL/，開發樹是 assets/MODEL/；一個資料夾＝一個模型，這裡就會出現。",
+                Get = () => RoomConfig.mmdModel ?? "", Set = v => RoomConfig.mmdModel = (v ?? "").Trim(),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdModel", Category = CatMmd, Label = "模型", Kind = ConfigFieldKind.Choice,
-                ChoicesProvider = () => MmdModelsProvider?.Invoke(),
-                UnknownChoiceText = cur => cur.Length == 0 ? "(自動：第一個)" : cur + "(找不到)",
-                Help = "把整個 MMD 模型資料夾（含 .pmx 與它的貼圖）放進 DATA/MODEL/，開發樹是 assets/MODEL/。一個資料夾＝一個模型，這裡就會出現。",
-                Get = () => RoomConfig.mmdModel ?? "", Set = v => RoomConfig.mmdModel = (v ?? "").Trim(),
+                Key = "mmdShowOthers", Category = CatMmd, Label = "看別人的 MMD 模型", Kind = ConfigFieldKind.Toggle,
+                Help = "開(預設)＝同房的人穿 MMD 模型時，你也看得到（本機沒有就自動跟伺服器下載）。關＝別人一律照他的 SDO 穿搭顯示，而且完全不下載。"
+                     + "★這與上面「我用的模型」互相獨立：可以自己維持 SDO 角色卻看得到別人的 MMD，也可以反過來。",
+                Get = () => B(RoomConfig.mmdShowOthers), Set = v => RoomConfig.mmdShowOthers = ParseBool(v),
             });
             f.Add(new ConfigField
             {

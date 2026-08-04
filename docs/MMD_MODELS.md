@@ -28,15 +28,15 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 
 | 設定(config.ini `[Mmd]`) | 作用 |
 |---|---|
-| `mmdEnabled` | 總開關:SDO 原角色 ⇄ MMD 模型 |
-| `mmdModel` | 用哪個模型(= `DATA/MODEL` 底下的資料夾名;留空 = 掃到的第一個) |
+| `mmdModel` | **我用哪個模型**(= `DATA/MODEL` 底下的資料夾名)。`(不使用)` = 維持 SDO 原角色(預設);留空 = 掃到的第一個。**沒有另外的總開關 —— 選了模型就是要用它** |
+| `mmdShowOthers` | **看不看得到別人的 MMD 模型**(1=看,預設)。與上面那個互相獨立:可以自己維持 SDO 原角色卻看得到別人的 MMD,也可以反過來 |
 | `mmdPhysics` | 頭髮/裙擺布料模擬。**嫌進場慢就關這個** —— 布料是建一隻 MMD 角色最貴的一段 |
 | `mmdGravity` / `mmdStiffness` / `mmdColliderScale` | 布料手感:重力倍率 / 硬度 / 身體碰撞半徑倍率 |
 | `mmdToon` / `mmdOutline` / `mmdSphere` | 卡通著色 / 描邊 / sphere 反光 |
 | `mmdFlipV` | 貼圖 V 翻轉(某個模型貼圖上下顛倒時關掉) |
 | `mmdAim` / `mmdRootMotion` | 重定向方式 / 根骨位移(診斷用,平常都開著) |
 
-指令列:`dance.exe -mmd -mmdmodel <名稱>` 開場就進 MMD 模式並指定模型(名稱可以只給片段,例如 `-mmdmodel miku`)。
+指令列:`dance.exe -mmd -mmdmodel <名稱>` 這次啟動就用 MMD 模型並指定是哪一個(名稱可以只給片段,例如 `-mmdmodel miku`)。
 指令列只影響**這次啟動**,不會寫回 config.ini。
 
 每個模型只解析一次並快取,所以在面板上來回換模型不會重複付解析成本。
@@ -57,14 +57,14 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 所以「換場景要重新讀取」不是每次換場景真的重讀,而是那 ~550 ms 落在**第一次有 MMD 角色出現的當下**
 (rig 是跟著舞者生成的 —— 進房間、進歌、開性別選擇畫面)。三件事處理掉它:
 
-1. **開機預熱**:`mmdEnabled=1` 時開機就把解析與共用資產做掉,藏在本來就有的開機載入畫面後面。
+1. **開機預熱**:選了模型時開機就把解析與共用資產做掉,藏在本來就有的開機載入畫面後面。
    用**時間預算**分幀(150 ms/幀,見 `MmdAvatarSwap.PrewarmBudgetMs`),不是一張貼圖一幀 ——
    開機那幾幀在掃歌、本來就長達 ~500 ms,讓太多次反而更慢(量過:一張一幀 = 10.5 秒還沒做完,預覽先生成 → 預熱白做)。
 2. **共用資產釘住不卸載**:mesh / 材質 / 貼圖都掛 `HideFlags.DontUnloadUnusedAsset`。
    結算「重玩」走 `SceneManager.LoadScene`,它會跑 `Resources.UnloadUnusedAssets`,
    而這些是「只有 static 欄位參照著」的執行期資產 —— 不釘住就會被回收,下一隻舞者整包重付。
    (回歸測試:`MmdSharedAssetTests`,它真的跑一次 `UnloadUnusedAssets` 再檢查資產還在。)
-3. **關掉就是 0 成本**:`mmdEnabled=0` 時連 .pmx 都不會去解析(以前是進房間就無條件解析一次)。
+3. **關掉就是 0 成本**:`mmdModel=(不使用)` 而且沒有人穿 MMD 時連 .pmx 都不會去解析(以前是進房間就無條件解析一次)。
 
 實測前後(打包版,開機到性別選擇畫面):第一隻 MMD 角色 **518 ms → 65 ms**,第二隻之後 8~12 ms。
 
@@ -72,7 +72,10 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 
 ## 多人連線:別人看得到你的模型
 
-開著 `mmdEnabled` 進房間,你的模型會自動上傳到 server,同房的人就看得到 —— 反過來你也會自動去拉別人的。
+選了模型進房間,你的模型會自動上傳到 server,同房的人就看得到 —— 反過來(開著 `mmdShowOthers`)你也會自動去拉別人的。
+
+這是**兩個獨立的功能**,分別由兩個設定管:「我要用 MMD 模型」= `mmdModel`,「我要看到別人的」= `mmdShowOthers`。
+別人身上畫的**永遠只可能**是他自己宣告的那個模型 —— 他沒穿就是他的 SDO 穿搭,不會拿你選的模型頂上去。
 
 **沒有模型的那段時間看到什麼:他的 SDO 穿搭。** 這不是退化的替身畫面 —— MMD 模型本來就是疊在 SDO 骨架上顯示的
 (SDO 那隻永遠是動作驅動器),所以「還沒下載完」的正確畫面天生就是他的穿搭。模型到了之後**當場換身體,不重建角色**:
@@ -81,7 +84,8 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 | 設定 | 作用 |
 |---|---|
 | `mmdShareModel` | 1(預設)＝把自己的模型上傳分享。關＝別人看到你的 SDO 穿搭(你自己畫面上仍然是 MMD) |
-| `mmdEnabled` | **同時也是這整條的總開關**:關掉 = 不上傳、不下載、不查詢,零流量 |
+| `mmdShowOthers` | 0 = 不下載、不查詢別人的模型,零流量(你自己身上那具不受影響) |
+| `mmdModel=(不使用)` | 你沒穿 = 沒東西可上傳(別人看到的是你的 SDO 穿搭) |
 
 ⚠️ **使用規約**:網路上流通的 MMD 模型多半帶規約,有些明確禁止再配布。`mmdShareModel` 就是為此存在的 ——
 不確定就關掉。(模型包裡的 `readme.txt` 會跟著一起傳,規約不會被留在你這邊。)

@@ -319,8 +319,10 @@ namespace Sdo.Game
             // 🔴 頭貼一律用**地面**待機,不是 restMot —— 穿飛行翅膀時 restMot 已經被 ConfigureAvatarGender 換成
             // flystay(浮空前傾),那是**舞台**待機用的。結算列其他人的頭貼是地面 idle(RoomHeadPortrait.
             // groundClipsOnly),自己這一列跟著飛就變成「同一排頭像裡只有我歪一邊」,而且別台看到的我還是站姿。
-            av.RestMot = LoadAsset(localPlayerMale ? MaleGameplayRestMot : FemaleGameplayRestMot,
-                                   b => MotLoader.Load(b));
+            // MMD 顯示時這裡先擺自己性別那支,ResultTick 的 SyncLocalHeadPortraitIdle 會在 MMD 身體真的
+            // 建出來之後換成大家共用的那一支(見 ScreenGameplay.ResultPortraitRestMot)。
+            _headRestMot = localPlayerMale ? MaleGameplayRestMot : FemaleGameplayRestMot;
+            av.RestMot = LoadAsset(_headRestMot, b => MotLoader.Load(b));
             av.DanceEnabled = () => false;     // always hold the standby idle clip
             av.DanceTimeSec = () => -1f;
             // Load the WOMAN body parts, opaque portrait style (shared builder; "h_" prefix keeps the isolated names).

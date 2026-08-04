@@ -253,6 +253,14 @@ namespace Sdo.Game
         // 兩邊各寫一份字面值的話,改了一邊沒改另一邊就會變成「只有別人的待機動作不一樣」。
         internal const string FemaleGameplayRestMot = "MOTION/WREST0072.MOT";
         internal const string MaleGameplayRestMot   = "MOTION/MREST0082.MOT";
+        // 🔴 MMD 顯示時,結算左側**每一格頭貼一律用這一支**待機,不照各自的性別挑。
+        // 畫出來的身體是同一個 MMD 模型(模型沒有性別之分),一格放男版 MREST0082、一格放女版 WREST0072,
+        // 看起來就是「同一個人卻在做兩套動作」= 使用者回報的「結算頭貼不同步」。
+        // 注意**幀號本來就是對齊的**:兩支都是 MaxTime=63(64 幀迴圈)、相位都是 0,走的是同一條
+        // SdoAvatar.LoopFrame —— 官方那條 lockstep(hook 錄到同一支 mot 的 cursor spread=0.000)沒有被破壞,
+        // 差的只是「動作內容」。所以修的是挑哪一支,不是時鐘。
+        // 固定挑女版(而不是「本機玩家的性別」)是為了兩台看到的是同一套。
+        internal const string MmdPortraitRestMot = FemaleGameplayRestMot;
         public string danceMot = "MOTION/WDANCE0002.MOT";      // fallback dance motion if no DPS
         public string restMot = FemaleGameplayRestMot;         // 男版在 ConfigureAvatarGender 換成 MaleGameplayRestMot
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
@@ -571,6 +579,7 @@ namespace Sdo.Game
         public float headAvatarScale = 1.05f;     // idle avatar uniform scale — tuned
         public float headAvatarYaw = 30f;         // 模型 Y 旋轉 = 3/4 斜角（官方頭部近拍 mode7 = −30°；轉模型不轉相機）。可調/翻號
         private Camera _headCam; private RenderTexture _headRt; private SdoAvatar _headAvatar;
+        private string _headRestMot;              // 本機那一格頭貼現在放的待機(換 MMD/換回 SDO 才重載,見 SyncLocalHeadPortraitIdle)
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);   // head bone REST pos (model space) — cam targets this so it stays FIXED (no per-frame bob chase)
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
         private readonly Dictionary<int, RoomHeadPortrait> _resultHeadPortraits = new Dictionary<int, RoomHeadPortrait>();
@@ -5751,6 +5760,7 @@ namespace Sdo.Game
         private void ResultTick()
         {
             UpdateHeadPortraitCam();          // keep the local head-portrait cam tracking the (moving) head each frame
+            SyncLocalHeadPortraitIdle();      // 本機那一格:MMD 顯示時改用大家共用的那支待機(F8 可即時開關 → 每幀比)
             SyncResultHeadPortraitTuning();   // 遠端那幾格跟著同一組(F4 可調的)取景參數走
             float el = Time.time - _resultPhaseStart;
             switch (_resultPhase)

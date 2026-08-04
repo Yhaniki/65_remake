@@ -232,12 +232,15 @@ namespace Sdo.Tests
         [Test]
         public void Mmd_Settings_Write_Through_To_RoomConfig()
         {
-            var on = StartupConfigSchema.ByKey("mmdEnabled");
-            Assert.IsNotNull(on);
-            on.SetBool(true);
-            Assert.IsTrue(RoomConfig.mmdEnabled);
-            on.SetBool(false);
-            Assert.IsFalse(RoomConfig.mmdEnabled);
+            // 「用不用 MMD」不再是一個布林總開關 —— 它就是「我用的模型」那一列（(不使用) 是其中一個選項）。
+            Assert.IsNull(StartupConfigSchema.ByKey("mmdEnabled"), "mmdEnabled 已淘汰，設定面板不該還有這一列");
+
+            var others = StartupConfigSchema.ByKey("mmdShowOthers");
+            Assert.IsNotNull(others);
+            others.SetBool(false);
+            Assert.IsFalse(RoomConfig.mmdShowOthers);
+            others.SetBool(true);
+            Assert.IsTrue(RoomConfig.mmdShowOthers);
 
             var grav = StartupConfigSchema.ByKey("mmdGravity");
             grav.SetNumber(99f);                        // 夾到上限
@@ -250,7 +253,7 @@ namespace Sdo.Tests
         public void Mmd_Values_Survive_A_Config_Round_Trip()
         {
             // 這一整組就是這次搬家的重點：以前只活在記憶體裡的除錯面板值，現在要寫得進也讀得回 config.ini。
-            RoomConfig.mmdEnabled = true;
+            RoomConfig.mmdShowOthers = false;
             RoomConfig.mmdModel = "SomeModel";
             RoomConfig.mmdPhysics = false;
             RoomConfig.mmdFlipV = false;
@@ -259,12 +262,12 @@ namespace Sdo.Tests
             RoomConfig.mmdColliderScale = 1.75f;
             string ini = RoomConfig.Serialize();
 
-            RoomConfig.mmdEnabled = false; RoomConfig.mmdModel = ""; RoomConfig.mmdPhysics = true;
+            RoomConfig.mmdShowOthers = true; RoomConfig.mmdModel = ""; RoomConfig.mmdPhysics = true;
             RoomConfig.mmdFlipV = true; RoomConfig.mmdGravity = 1f; RoomConfig.mmdStiffness = 0.12f;
             RoomConfig.mmdColliderScale = 1f;
 
             RoomConfig.ParseInto(ini);
-            Assert.IsTrue(RoomConfig.mmdEnabled);
+            Assert.IsFalse(RoomConfig.mmdShowOthers);
             Assert.AreEqual("SomeModel", RoomConfig.mmdModel);
             Assert.IsFalse(RoomConfig.mmdPhysics);
             Assert.IsFalse(RoomConfig.mmdFlipV);

@@ -8,9 +8,15 @@ using Sdo.Settings;
 namespace Sdo.Game
 {
     /// <summary>
-    /// 「用 MMD 模型顯示角色」的執行期服務。開著的時候，每一隻登記過的角色（跳舞的、房間走路的、以及三個各自
-    /// 渲一張 RenderTexture 的頭貼/預覽：男女選擇預覽、房間頭貼、結算左邊頭像）都把 SDO 的身體藏起來、改畫
-    /// 一個 MMD 模型。SDO 的 <see cref="SdoAvatar"/> 仍然活著當**動作驅動器**，所以跳的還是同一套 MOT/DPS。
+    /// 「用 MMD 模型顯示角色」的執行期服務。要顯示 MMD 的角色（跳舞的、房間走路的、以及三個各自渲一張
+    /// RenderTexture 的頭貼/預覽：男女選擇預覽、房間頭貼、結算左邊頭像）都把 SDO 的身體藏起來、改畫一個
+    /// MMD 模型。SDO 的 <see cref="SdoAvatar"/> 仍然活著當**動作驅動器**，所以跳的還是同一套 MOT/DPS。
+    ///
+    /// <b>這是兩個互相獨立的功能</b>（見 <see cref="MmdDisplayPolicy"/>）：
+    ///   ① <b>我要用 MMD 模型</b> —— 在設定面板選一個模型就是要用（「(不使用)」＝維持 SDO 原角色）。
+    ///      沒有另外的總開關：選了就是要用。
+    ///   ② <b>我要看到別人的 MMD 模型</b> —— <c>mmdShowOthers</c>。別人身上畫的**永遠只可能**是他自己
+    ///      宣告的那個模型；他沒穿就是他的 SDO 穿搭，絕不會拿我選的模型頂上去。
     ///
     /// <b>設定全部在 config.ini 的 <c>[Mmd]</c> 區</b>（UI：開場設定面板的「MMD」分頁）。這個類別不畫任何 UI，
     /// 只在 <see cref="Update"/> 比對 <see cref="RoomConfig"/> 的值有沒有變，變了就套用 —— 所以面板拉滑桿當場
@@ -27,9 +33,13 @@ namespace Sdo.Game
     public sealed class MmdAvatarSwap : MonoBehaviour
     {
         /// <summary>
-        /// 一隻登記過的角色。<see cref="Pack"/> 是**這一隻**要顯示哪個模型:
-        ///   • 空 = 本機玩家自己 → 用設定裡選的那個(<c>RoomConfig.mmdModel</c>);
-        ///   • 有值 = 遠端玩家 → 用那個 packId 的模型(他的外觀宣告的)。
+        /// 一隻登記過的角色。要畫哪一具身體由 <see cref="MmdDisplayPolicy"/> 決定,而它只看兩件事:
+        ///   • <see cref="Remote"/> —— 這是別人還是本機玩家。**別人永遠只可能畫他自己宣告的模型**
+        ///     (<see cref="Pack"/>);他沒宣告就是他的 SDO 穿搭,絕不回退到本機選的那個。
+        ///     (踩過:遠端與本機共用「沒 packId ⇒ 用設定裡選的」那條回退路徑 → 同房沒穿 MMD 的人
+        ///      全被畫成我自己的模型。)
+        ///   • 本機這邊選了哪個模型(<c>RoomConfig.mmdModel</c>)。
+        ///
         /// 遠端的模型本機還沒有時 <see cref="Failed"/> 不會被設起來 —— 它不是失敗,是「還沒到」:
         /// 這隻角色就停在自己的 SDO 穿搭上,等 <see cref="OnPackInstalled"/> 把它接上去。
         /// </summary>
@@ -39,11 +49,12 @@ namespace Sdo.Game
             public MmdAvatar Mmd;
             public bool Failed;
             public bool Cloth = true;
-            public string Pack = "";     // 遠端玩家身上的模型 packId;空 = 用本機選的那個
+            public bool Remote;          // 這一隻是別人(不是本機玩家)
+            public string Pack = "";     // 遠端玩家身上的模型 packId(本機一律空)
             public string BuiltFrom;     // 現在畫出來的這具身體是從哪個資料夾建的(換模型時比對用)
+            public bool Shown;           // 上一次套用的結果是「畫 MMD」嗎(只有變了才寫 log)
         }
         private readonly List<Reg> _regs = new List<Reg>();
-        private bool _mmdOn;
 
         private static MmdAvatarSwap _inst;
         private static List<MmdModelCatalog.Entry> _models = new List<MmdModelCatalog.Entry>();
@@ -84,6 +95,7 @@ namespace Sdo.Game
 
             // Command line still wins for a one-off run without touching config.ini: "-mmd" forces MMD display on,
             // "-mmdmodel <name>" (or "=<name>") picks which installed model, by name or any substring of it.
+            // ("-mmd" 現在的意思是「這次啟動就用選中的那個模型」—— 沒有總開關可以開了,它改寫的是 mmdModel。)
             bool cli = false; string want = null;
             try
             {
@@ -97,14 +109,14 @@ namespace Sdo.Game
             }
             catch { }
 
+            if (cli && RoomConfig.IsMmdNone(RoomConfig.mmdModel)) RoomConfig.mmdModel = want ?? "";   // -mmd → 這次啟動就用選中的
             Rescan(want ?? RoomConfig.mmdModel);
             if (want != null && Sel != null) RoomConfig.mmdModel = Sel.Name;   // -mmdmodel 也走設定值,之後的比對才不會一直當成「變了」
-            if (cli) RoomConfig.mmdEnabled = true;
-            inst._mmdOn = RoomConfig.mmdEnabled;   // (no Apply: nothing is registered yet — each dancer swaps as it's built)
             inst._applied = Snapshot();
-            Log($"[mmd] armed — 設定在 config.ini [Mmd] / 開場設定面板的 MMD 分頁。顯示={(inst._mmdOn ? "MMD" : "SDO")}. " +
-                (cli ? "-mmd → 這次啟動強制 MMD. " : "") + ModelSummary());
-            if (inst._mmdOn) inst.StartCoroutine(inst.PrewarmCo());
+            Log($"[mmd] armed — 設定在 config.ini [Mmd] / 開場設定面板的 MMD 分頁。" +
+                $"我自己={(UseLocalMmd ? "MMD" : "SDO 原角色")}, 看別人的 MMD={(RoomConfig.mmdShowOthers ? "開" : "關")}. " +
+                (cli ? "-mmd → 這次啟動強制用模型. " : "") + ModelSummary());
+            if (UseLocalMmd) inst.StartCoroutine(inst.PrewarmCo());
         }
 
         // 開機就先把「每個模型只做一次」的那兩段做掉:.pmx 解析,以及共用的 mesh/材質/貼圖。
@@ -155,11 +167,13 @@ namespace Sdo.Game
                 _lastError = "沒有模型 — 放一個 MMD 資料夾(含 .pmx)到 " + string.Join(" 或 ", new List<string>(ModelRoots()).ToArray());
         }
 
-        /// <summary>安裝了哪些模型（資料夾名）。設定面板那一列的選項來源。</summary>
+        /// <summary>設定面板「我用的模型」那一列的選項:<b>第一個永遠是「(不使用)」</b>(＝維持 SDO 原角色),
+        /// 後面才是裝了哪些模型。沒有另外的總開關 —— 選了模型就是要用它,而「不用」也是一個選項。</summary>
         public static string[] ModelNames()
         {
-            var names = new string[_models.Count];
-            for (int i = 0; i < _models.Count; i++) names[i] = _models[i].Name;
+            var names = new string[_models.Count + 1];
+            names[0] = RoomConfig.mmdModelNone;
+            for (int i = 0; i < _models.Count; i++) names[i + 1] = _models[i].Name;
             return names;
         }
 
@@ -182,7 +196,7 @@ namespace Sdo.Game
         /// MMD display is already on, the new dancer is swapped immediately.
         /// <paramref name="cloth"/> false → build this one WITHOUT the hair/skirt sim (the head portraits: the sway is
         /// invisible at that size and the cloth solver is the most expensive part of a rig).</summary>
-        public static void Register(SdoAvatar avatar, bool cloth = true) => Register(avatar, "", cloth);
+        public static void Register(SdoAvatar avatar, bool cloth = true) => Register(avatar, false, "", cloth);
 
         /// <summary>
         /// 登記一隻**遠端**玩家的角色,連同他外觀宣告的模型 <paramref name="packId"/>。
@@ -193,9 +207,9 @@ namespace Sdo.Game
         /// 直接把身體換掉,**不重建**這隻角色(位置、朝向、正在播的動作全都留著)。
         /// </summary>
         public static void RegisterRemote(SdoAvatar avatar, string packId, bool cloth = true)
-            => Register(avatar, packId ?? "", cloth);
+            => Register(avatar, true, packId ?? "", cloth);
 
-        private static void Register(SdoAvatar avatar, string packId, bool cloth)
+        private static void Register(SdoAvatar avatar, bool remote, string packId, bool cloth)
         {
             if (avatar == null) return;
             var inst = Ensure();
@@ -203,19 +217,22 @@ namespace Sdo.Game
             var existing = inst._regs.Find(r => r.Avatar == avatar);
             if (existing != null)
             {
-                if (string.Equals(existing.Pack, packId, StringComparison.Ordinal)) return;
+                if (existing.Remote == remote && string.Equals(existing.Pack, packId, StringComparison.Ordinal)) return;
+                existing.Remote = remote;
                 existing.Pack = packId;      // 同一隻改穿別的模型 → 重建它的身體(不動 SDO 驅動器)
                 existing.Failed = false;
                 inst.DropBody(existing);
             }
-            else inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth, Pack = packId ?? "" });
+            else inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth, Remote = remote, Pack = packId ?? "" });
 
-            if (!inst._mmdOn) return;   // 沒開就別碰:不解析、不建、也不寫 log(關著的時候這整條要 0 成本)
             var reg = existing ?? inst._regs[inst._regs.Count - 1];
+            // 這一隻根本不會用到 MMD(我沒選模型 / 他沒穿 / 我不看別人的)→ 什麼都別做,連 log 都不寫。
+            // 兩個功能都關著時這整條要是 0 成本。
+            if (SourceOf(reg) == MmdSource.Sdo) return;
             Log($"[mmd] registered dancer '{avatar.name}'"
-                + (string.IsNullOrEmpty(reg.Pack) ? " (本機選的模型)" : " (遠端模型 " + Short(reg.Pack) + ")")
+                + (reg.Remote ? " (別人的模型 " + Short(reg.Pack) + ")" : " (我自己選的模型)")
                 + $" — now {inst._regs.Count} swappable");
-            inst.Apply(reg, true);
+            inst.Apply(reg);
         }
 
         /// <summary>packId 的短寫法(log 用) —— 完整的 40 字在一行 log 裡只會擋住真正要看的東西。</summary>
@@ -229,6 +246,7 @@ namespace Sdo.Game
             if (r.Mmd != null) Destroy(r.Mmd.gameObject);
             r.Mmd = null;
             r.BuiltFrom = null;
+            r.Shown = false;   // 重建之後那一行「MMD shown」還是要出現(log 只在狀態變了才寫)
             if (r.Avatar != null)
                 foreach (var mr in r.Avatar.GetComponentsInChildren<MeshRenderer>(true)) mr.enabled = true;
         }
@@ -248,25 +266,25 @@ namespace Sdo.Game
             int n = 0;
             foreach (var r in _inst._regs)
             {
-                if (r.Mmd != null || !string.Equals(r.Pack, packId, StringComparison.Ordinal)) continue;
+                if (r.Mmd != null || !r.Remote || !string.Equals(r.Pack, packId, StringComparison.Ordinal)) continue;
                 r.Failed = false;
-                if (_inst.Apply(r, _inst._mmdOn)) n++;
+                if (_inst.Apply(r)) n++;
             }
             if (n > 0) Log($"[mmd] 模型 {Short(packId)} 裝好了 → {n} 隻角色當場換上(沒有重建)");
         }
 
         /// <summary>
         /// 現在有哪些遠端模型是「有人穿著、但本機還沒有」的 —— 傳輸編排(<c>NetModelTransfer</c>)
-        /// 拿它決定要去跟 server 要什麼。MMD 顯示關掉時一律是空的(關掉就不該產生任何流量)。
+        /// 拿它決定要去跟 server 要什麼。<c>mmdShowOthers</c> 關掉時一律是空的(不看別人的就不該產生任何流量)。
         /// </summary>
         public static void CollectMissingPacks(List<string> into)
         {
             if (into == null) return;
             into.Clear();
-            if (_inst == null || !_inst._mmdOn) return;
+            if (_inst == null || !RoomConfig.mmdShowOthers) return;
             foreach (var r in _inst._regs)
             {
-                if (r.Avatar == null || r.Mmd != null || string.IsNullOrEmpty(r.Pack)) continue;
+                if (r.Avatar == null || r.Mmd != null || !r.Remote || string.IsNullOrEmpty(r.Pack)) continue;
                 if (MmdModelStore.DirForPack(r.Pack, _models) != null) continue;   // 其實有,只是還沒套上
                 if (!into.Contains(r.Pack)) into.Add(r.Pack);
             }
@@ -277,7 +295,7 @@ namespace Sdo.Game
         /// the SDO FACE/HAIR geometry they normally measure is hidden while MMD is shown.</summary>
         public static MmdAvatar ActiveFor(SdoAvatar avatar)
         {
-            if (_inst == null || !_inst._mmdOn || avatar == null) return null;
+            if (_inst == null || avatar == null) return null;
             foreach (var r in _inst._regs)
                 if (r.Avatar == avatar) return (r.Mmd != null && r.Mmd.Visible) ? r.Mmd : null;
             return null;
@@ -305,7 +323,7 @@ namespace Sdo.Game
         // 12 個欄位的比對比任何一種通知機制都便宜，而且手改 config.ini 之後重讀也同樣會生效。
         private struct Snap
         {
-            public bool On, Toon, Outline, Sphere, Physics, Aim, RootMove, FlipV;
+            public bool ShowOthers, Toon, Outline, Sphere, Physics, Aim, RootMove, FlipV;
             public string Model;
             public float Grav, Stiff, Col, Scale;
         }
@@ -313,7 +331,7 @@ namespace Sdo.Game
 
         private static Snap Snapshot() => new Snap
         {
-            On = RoomConfig.mmdEnabled, Model = RoomConfig.mmdModel ?? "",
+            Model = RoomConfig.mmdModel ?? "", ShowOthers = RoomConfig.mmdShowOthers,
             Toon = RoomConfig.mmdToon, Outline = RoomConfig.mmdOutline, Sphere = RoomConfig.mmdSphere,
             Physics = RoomConfig.mmdPhysics, Aim = RoomConfig.mmdAim, RootMove = RoomConfig.mmdRootMotion,
             FlipV = RoomConfig.mmdFlipV,
@@ -321,63 +339,106 @@ namespace Sdo.Game
             Scale = RoomConfig.mmdScale,
         };
 
+        /// <summary>「要摸磁碟才知道有沒有」的那幾件事多久做一次:遠端模型到了沒(Directory.Exists)、
+        /// 以及 SDO 那具身體有沒有又冒出新的 MeshRenderer(GetComponentsInChildren)。
+        /// 每幀做的話,每一隻永遠不會有模型的遠端角色都在白付這筆錢。
+        /// <b>本機那條不吃這個節流</b> —— 它只是讀一個已經在記憶體裡的路徑,而且被停用的預覽一旦顯示出來
+        /// 就要**下一幀**接上(性別選擇畫面切換性別的手感)。</summary>
+        private const float ProbeSec = 0.25f;
+        private float _nextProbeAt;
+
         private void Update()
         {
             var now = Snapshot();
-            if (now.On != _applied.On) { _applied = now; SetEnabled(now.On); }
-            else if (!string.Equals(now.Model, _applied.Model, System.StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(now.Model, _applied.Model, System.StringComparison.OrdinalIgnoreCase))
             {
-                // 換模型:先照名字重選(掃過的清單裡找),再把每一隻已經建好的身體丟掉重建 —— SDO 驅動器不動,舞繼續跳。
+                // 換模型(含切到「(不使用)」):先照名字重選(掃過的清單裡找),再把每一隻**本機**已經建好的身體丟掉
+                // 重建 —— SDO 驅動器不動,舞繼續跳。遠端角色穿的是他們自己的,與我選什麼無關,不能跟著動。
                 _applied = now;
                 Rescan(now.Model);
-                Log($"[mmd] model → {(Sel != null ? $"'{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})" : "(找不到 '" + now.Model + "')")}");
-                RebuildAll(localOnly: true);
+                Log($"[mmd] 我用的模型 → {(!UseLocalMmd ? "(不使用,維持 SDO 原角色)" : $"'{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})")}");
+                RebuildWhere(r => !r.Remote);
+            }
+            else if (now.ShowOthers != _applied.ShowOthers)
+            {
+                // 「看別人的 MMD」只牽動遠端角色 —— 我自己身上那具與這個開關無關。
+                _applied = now;
+                Log($"[mmd] 看別人的 MMD → {(now.ShowOthers ? "開" : "關")}");
+                RebuildWhere(r => r.Remote);
             }
             else if (!Mathf.Approximately(now.Scale, _applied.Scale))
             {
                 // 模型大小是「建的時候」決定的(骨架縮放 + 布料的重力/粒子半徑/速度上限全從它推),所以跟換模型一樣要重建。
                 _applied = now;
                 Log($"[mmd] scale → {now.Scale:F2}×");
-                RebuildAll(localOnly: true);
+                RebuildWhere(r => !r.Remote);
             }
             else if (!SameLooks(now, _applied)) { _applied = now; ApplyOpts(); }
 
-            if (!_mmdOn) return;
-            // Build the MMD body for any dancer that could NOT be built when it was last applied because its GameObject
-            // was inactive — the gender-select screen keeps BOTH previews alive and only activates the selected one, and
-            // Magica Cloth / the skinned rig need a live GameObject. Retried once the dancer is shown.
+            bool probe = Time.unscaledTime >= _nextProbeAt;   // 這一幀要不要做「摸磁碟」那幾件事(見 ProbeSec)
+            if (probe) _nextProbeAt = Time.unscaledTime + ProbeSec;
+            // 兩種「當時建不起來、之後可以」的角色都在這裡補上:
+            //  ① GameObject 那時是停用的 —— 性別選擇畫面把兩具預覽都留著、只啟用選中的那一具,而骨架/Magica Cloth
+            //     需要活著的 GameObject;顯示出來之後這裡把它換過去。
+            //  ② 遠端的模型那時還沒下載完(OnPackInstalled 是主要路徑,這裡是它的保險)。
+            // 另外順手把「MMD 已經在畫、SDO 卻又冒出 MeshRenderer」的情況壓回去(部件是分批長出來的:
+            // 翅膀/道具會在角色建好之後才掛上,那時 Apply 早就跑完了 → 兩具身體疊在一起)。
             for (int i = 0; i < _regs.Count; i++)
             {
                 var r = _regs[i];
-                if (r.Mmd != null || r.Failed || r.Avatar == null || !r.Avatar.gameObject.activeInHierarchy) continue;
-                Apply(r, true);
+                if (r.Avatar == null) continue;
+                if (r.Mmd != null) { if (probe) HideSdoBody(r); continue; }
+                if (r.Failed || !r.Avatar.gameObject.activeInHierarchy) continue;
+                if (r.Remote && !probe) continue;  // 遠端那條要 Directory.Exists → 節流(本機那條每幀都跑)
+                if (DirFor(r) == null) continue;   // 沒東西可建(沒選模型 / 別人沒穿 / 他的模型還沒到)
+                Apply(r);
             }
         }
 
-        // 「外觀/物理旋鈕」有沒有變(不含總開關與模型 —— 那兩個要走重建那條路)。
+        /// <summary>MMD 身體正在畫的時候,把 SDO 那具(後來才長出來的部件也算)關掉。</summary>
+        private static void HideSdoBody(Reg r)
+        {
+            foreach (var mr in r.Avatar.GetComponentsInChildren<MeshRenderer>(true))
+                if (mr.enabled) mr.enabled = false;
+        }
+
+        // 「外觀/物理旋鈕」有沒有變(不含模型與「看別人的」—— 那兩個要走重建那條路)。
         private static bool SameLooks(in Snap a, in Snap b)
             => a.Toon == b.Toon && a.Outline == b.Outline && a.Sphere == b.Sphere && a.Physics == b.Physics
             && a.Aim == b.Aim && a.RootMove == b.RootMove && a.FlipV == b.FlipV
             && Mathf.Approximately(a.Grav, b.Grav) && Mathf.Approximately(a.Stiff, b.Stiff)
             && Mathf.Approximately(a.Col, b.Col);
 
-        /// <summary>Show the MMD body (true) or the native SDO body (false) on every registered avatar. Normally driven
-        /// by <c>config.ini mmdEnabled</c> via <see cref="Update"/>; called directly by the tests.</summary>
+        /// <summary>
+        /// 本機玩家自己要不要用 MMD 模型:設定裡選了一個**裝得到**的模型就是要用
+        /// (「(不使用)」＝不用)。沒有第二個總開關 —— 選了就是要用它。
+        /// </summary>
+        public static bool UseLocalMmd => !RoomConfig.IsMmdNone(RoomConfig.mmdModel) && Sel != null;
+
+        /// <summary>把「我自己用不用 MMD 模型」開/關。<b>只動本機這一邊</b>(別人身上顯示什麼是
+        /// <c>mmdShowOthers</c> 的事)。實際做的就是改 <c>RoomConfig.mmdModel</c> —— 那是唯一的事實來源。
+        /// 遊戲裡走設定面板改那個值;這個函式留給測試與 <c>-mmd</c>。</summary>
         public static void SetEnabled(bool on)
         {
             var inst = Ensure();
-            inst._mmdOn = on;
-            RoomConfig.mmdEnabled = on;      // 單一事實來源:直接呼叫(測試)也要讓下一次比對看到一樣的值
-            inst._applied.On = on;
+            RoomConfig.mmdModel = on ? (Sel != null ? Sel.Name : "") : RoomConfig.mmdModelNone;
+            Rescan(on ? RoomConfig.mmdModel : null);
+            inst._applied = Snapshot();
             inst._regs.RemoveAll(r => r.Avatar == null);
             int n = 0;
-            foreach (var r in inst._regs) if (inst.Apply(r, on)) n++;
-            Log($"[mmd] display → {(on ? "MMD" : "SDO")} on {n} dancer(s)" +
+            foreach (var r in inst._regs)
+            {
+                if (r.Remote) continue;
+                inst.DropBody(r);
+                r.Failed = false;
+                if (inst.Apply(r)) n++;
+            }
+            Log($"[mmd] 我自己 → {(UseLocalMmd ? "MMD" : "SDO 原角色")} on {n} dancer(s)" +
                 (n == 0 ? " (NO swappable dancer registered — enter a room or a song first)" : ""));
         }
 
-        /// <summary>Is the MMD body the one being displayed?</summary>
-        public static bool Enabled => _inst != null && _inst._mmdOn;
+        /// <summary>本機玩家自己身上畫的是 MMD 模型嗎(＝<see cref="UseLocalMmd"/>)。</summary>
+        public static bool Enabled => UseLocalMmd;
 
         /// <summary>The selected model's .pmx, or null when none is installed (the tests skip themselves without it).</summary>
         public static string ModelPath => Sel?.PmxPath;
@@ -391,7 +452,7 @@ namespace Sdo.Game
         /// <summary>
         /// 「我身上穿的模型」的 packId —— <c>setLook</c> 要送出去的那個值。
         ///
-        /// 空字串代表「別人看到的是我的 SDO 穿搭」,發生在三種情況:MMD 顯示關著、沒裝模型、
+        /// 空字串代表「別人看到的是我的 SDO 穿搭」,發生在三種情況:我自己沒在用 MMD 模型、沒裝模型、
         /// 或設定裡把分享關掉了(<c>mmdShareModel=0</c>)。**分享關掉時連算都不算** ——
         /// 算 packId 要把整份模型讀過一遍,不打算分享就不該付那個成本。
         /// </summary>
@@ -399,7 +460,7 @@ namespace Sdo.Game
         {
             get
             {
-                if (_inst == null || !_inst._mmdOn) return "";
+                if (!UseLocalMmd) return "";
                 if (!RoomConfig.mmdShareModel) return "";
                 var e = Sel;
                 return e == null ? "" : MmdModelStore.PackIdOf(e.Dir);
@@ -417,7 +478,7 @@ namespace Sdo.Game
         {
             var e = Sel;
             var cloth = FirstCloth();
-            if (e == null || cloth == null) { _lastError = "沒有可存的布料(先在設定面板開 MMD 顯示)"; return null; }
+            if (e == null || cloth == null) { _lastError = "沒有可存的布料(先在設定面板的「我用的模型」選一個)"; return null; }
             string path = MmdClothProfile.Save(e.Dir, cloth.CurrentSimulationFrequency, cloth.CurrentColliderMul, cloth.CurrentParts);
             _lastError = path == null ? "physics.ini 寫入失敗(資料夾唯讀?)" : "";
             Log(path != null ? "[mmd] 物理已存到 " + path : "[mmd] physics.ini 寫入失敗: " + MmdClothProfile.PathFor(e.Dir));
@@ -431,7 +492,7 @@ namespace Sdo.Game
             if (e == null) return false;
             bool gone = MmdClothProfile.Delete(e.Dir);
             Log(gone ? "[mmd] 刪掉 physics.ini → 回到 .pmx 轉換值" : "[mmd] 本來就沒有 physics.ini");
-            if (gone) RebuildAll();
+            if (gone) RebuildWhere(null);
             return gone;
         }
 
@@ -444,77 +505,84 @@ namespace Sdo.Game
             return e != null && File.Exists(MmdClothProfile.PathFor(e.Dir)) ? "physics.ini (未套用)" : "轉換值";
         }
 
+        // 只看**本機自己**那幾隻 —— physics.ini 是寫進「我選的那個模型」的資料夾,拿別人模型的布料
+        // 去存我的模型,存出來的數字跟畫面上看到的是兩回事。
         private static MmdMagicaCloth FirstCloth()
         {
             if (_inst == null) return null;
             foreach (var r in _inst._regs)
-                if (r.Mmd != null && r.Mmd.Cloth != null) return r.Mmd.Cloth;
+                if (!r.Remote && r.Mmd != null && r.Mmd.Cloth != null) return r.Mmd.Cloth;
             return null;
         }
 
         /// <summary>Throw away every built MMD body and build it again — what to call after the model's physics.ini was
         /// changed on disk (hand-editing the file + this = see your edit without restarting).</summary>
-        public static void Rebuild() => RebuildAll();
+        public static void Rebuild() => RebuildWhere(null);
 
         // 丟掉建好的 MMD 身體重建(換了模型 / 改了 physics.ini 之後)。
-        // <paramref name="localOnly"/> = 只重建「用本機選的模型」的那些 —— 換自己的模型不該把遠端玩家
-        // 身上的模型也重建一遍(那是他們的外觀,與我選什麼無關,而且每隻要重付一次 rig 成本)。
-        private static void RebuildAll(bool localOnly = false)
+        // <paramref name="which"/> = 只重建符合的那些(null = 全部)。換自己的模型只重建本機那幾隻 ——
+        // 遠端角色穿的是他們自己的,與我選什麼無關,牽動它們等於每隻白付一次 rig 成本。
+        private static void RebuildWhere(System.Predicate<Reg> which)
         {
             var inst = Ensure();
             inst._regs.RemoveAll(r => r.Avatar == null);
             foreach (var r in inst._regs)
             {
-                if (localOnly && !string.IsNullOrEmpty(r.Pack)) continue;
+                if (which != null && !which(r)) continue;
                 inst.DropBody(r);
                 r.Failed = false;
             }
-            if (!inst._mmdOn) return;
             foreach (var r in inst._regs)
             {
-                if (localOnly && !string.IsNullOrEmpty(r.Pack)) continue;
-                inst.Apply(r, true);
+                if (which != null && !which(r)) continue;
+                inst.Apply(r);
             }
         }
 
+        /// <summary>這一隻該畫哪一具身體(純決策,見 <see cref="MmdDisplayPolicy"/>)。</summary>
+        private static MmdSource SourceOf(Reg r)
+            => MmdDisplayPolicy.SourceFor(r.Remote, r.Pack, UseLocalMmd, RoomConfig.mmdShowOthers);
+
         // Swap one dancer. Building the MMD model is lazy (first time it's shown). Returns true if the dancer is live.
-        private bool Apply(Reg r, bool mmdOn)
+        private bool Apply(Reg r)
         {
             if (r.Avatar == null) return false;
-            if (mmdOn && r.Mmd == null && !r.Failed)
+            string dir = r.Failed ? null : DirFor(r);
+
+            // 已經畫著的身體不是現在該畫的那一份(換了模型 / 別人換了 / 關掉了)→ 丟掉,下面重建或就此回 SDO。
+            if (r.Mmd != null && (dir == null || !string.Equals(r.BuiltFrom, dir, StringComparison.OrdinalIgnoreCase)))
+                DropBody(r);
+
+            if (dir != null && r.Mmd == null)
             {
                 // An inactive dancer (the gender preview parks the unselected gender) can't be built yet — the rig and
                 // Magica Cloth need a live GameObject. Leave it on its SDO body; Update() swaps it the moment it's shown.
                 if (!r.Avatar.gameObject.activeInHierarchy) return true;
 
-                // 這一隻要用哪個資料夾的模型:遠端 = 他宣告的 packId,本機 = 設定裡選的那個。
-                string dir = DirFor(r);
-                if (dir == null)
-                {
-                    // 遠端模型還沒下載到 —— **這不是失敗**,是「還沒到」。不要設 Failed,
-                    // 否則模型到了之後 OnPackInstalled 會被 Failed 擋住,那個人永遠停在 SDO 穿搭。
-                    if (!string.IsNullOrEmpty(r.Pack)) return true;
-                    r.Failed = true; _lastError = "model not parsed (" + _status + ")";
-                    Debug.LogWarning("[mmd] no model → staying on SDO body");
-                    return true;
-                }
                 var pmx = ParsePmx(dir);
-                if (pmx == null) { r.Failed = true; Debug.LogWarning("[mmd] 解析不了 " + dir + " → staying on SDO body"); return true; }
-                // 布料是建一隻 rig 最貴的一段 → 設定關掉布料時就整組不建(不是建了再關),換場景才會明顯變快。
-                r.Mmd = MmdAvatar.Build(r.Avatar, pmx, dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics);
-                if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); return true; }
-                r.BuiltFrom = dir;
-                ApplyOptsTo(r.Mmd);
+                if (pmx == null) { r.Failed = true; Debug.LogWarning("[mmd] 解析不了 " + dir + " → staying on SDO body"); dir = null; }
+                else
+                {
+                    // 布料是建一隻 rig 最貴的一段 → 設定關掉布料時就整組不建(不是建了再關),換場景才會明顯變快。
+                    r.Mmd = MmdAvatar.Build(r.Avatar, pmx, dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics);
+                    if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); dir = null; }
+                    else { r.BuiltFrom = dir; ApplyOptsTo(r.Mmd); }
+                }
             }
+
+            bool on = r.Mmd != null;
             // The portrait / preview cameras cull by LAYER, and a dancer's layer is assigned after its parts are built —
             // so keep the rig on whatever layer its driver ended up on (else the 頭貼 cam renders an empty RT).
-            if (r.Mmd != null) r.Mmd.SetLayer(r.Avatar.gameObject.layer);
+            if (on) r.Mmd.SetLayer(r.Avatar.gameObject.layer);
             // SDO body parts are MeshRenderers; the MMD body is a SkinnedMeshRenderer — so toggling MeshRenderers
             // never touches the MMD mesh (and vice-versa). The SdoAvatar component keeps running as the motion driver.
-            int hidden = 0;
-            foreach (var mr in r.Avatar.GetComponentsInChildren<MeshRenderer>(true)) { mr.enabled = !mmdOn; hidden++; }
-            if (r.Mmd != null) r.Mmd.SetVisible(mmdOn);
-            Log($"[mmd]   '{r.Avatar.name}': {(mmdOn ? "MMD shown" : "SDO shown")}, {hidden} SDO MeshRenderer(s) {(mmdOn ? "hidden" : "shown")}");
+            int n = 0;
+            foreach (var mr in r.Avatar.GetComponentsInChildren<MeshRenderer>(true)) { mr.enabled = !on; n++; }
+            if (on) r.Mmd.SetVisible(true);
+            // 只在真的變了才寫 log —— 這個函式是補建迴圈每 0.25 秒會回頭跑的。
+            if (on != r.Shown)
+                Log($"[mmd]   '{r.Avatar.name}': {(on ? "MMD shown" : "SDO shown")}, {n} SDO MeshRenderer(s) {(on ? "hidden" : "shown")}");
+            r.Shown = on;
             return true;
         }
 
@@ -534,13 +602,21 @@ namespace Sdo.Game
             m.SetColliderRadius(RoomConfig.mmdColliderScale);
         }
 
-        /// <summary>這一隻角色要用哪個資料夾的模型。遠端 = 他宣告的 packId(本機沒有就回 null),
-        /// 本機 = 設定裡選的那個。</summary>
+        /// <summary>
+        /// 這一隻角色要用哪個資料夾的模型,null = 畫 SDO 原本的身體。
+        ///
+        /// 🔴 遠端角色**只可能**用他自己宣告的 packId。本機還沒有那份模型時回 null —— 那不是失敗,
+        /// 是「還沒到」,他就先維持自己的 SDO 穿搭(絕不拿本機選的模型頂上去:那會讓同房沒穿 MMD 的人
+        /// 全變成我的模型)。
+        /// </summary>
         private static string DirFor(Reg r)
         {
-            if (!string.IsNullOrEmpty(r.Pack)) return MmdModelStore.DirForPack(r.Pack, _models);
-            var e = Sel;
-            return e != null ? e.Dir : null;
+            switch (SourceOf(r))
+            {
+                case MmdSource.RemoteModel: return MmdModelStore.DirForPack(r.Pack, _models);
+                case MmdSource.LocalModel:  return Sel?.Dir;
+                default:                    return null;
+            }
         }
 
         // Parse (once) the SELECTED model. Cached per .pmx path, so switching between the installed models parses each

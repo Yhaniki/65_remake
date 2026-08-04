@@ -115,8 +115,27 @@ namespace Sdo.Settings
         //      的身體換成一個 MMD .pmx 模型。SDO 的 SdoAvatar 仍然活著當「動作驅動器」，所以跳的還是同一套 MOT/DPS，
         //      只是畫出來的身體換人。整組設定由 Sdo.Game 的 MmdAvatarSwap 每幀比對這裡的值套用（改了立刻看得到），
         //      UI 在開場設定面板的「MMD」分頁。以前這些值只活在一個 IMGUI 除錯面板裡、關掉遊戲就沒了。----
-        public static bool mmdEnabled = false;      // 總開關：0=用 SDO 原角色(預設) 1=用 MMD 模型
-        public static string mmdModel = "";         // 用哪個模型（DATA/MODEL/<資料夾名>）。空＝掃到的第一個
+        /// <summary>
+        /// 「我不用 MMD 模型」在 <see cref="mmdModel"/> 裡長什麼樣。
+        ///
+        /// 以前這是另一個布林總開關（mmdEnabled）。**選了模型卻還要再開一個開關**是多餘的一步，
+        /// 而且兩個值可以互相矛盾（開著但沒選 / 選了但關著）—— 現在只有一個值：<b>選了哪個模型</b>，
+        /// 而「不使用」就是這份清單的第一個選項。舊設定檔的 mmdEnabled=0 會在 <see cref="Load"/> 被搬成它。
+        /// </summary>
+        public const string mmdModelNone = "(不使用)";
+
+        /// <summary>目前這個值等於「不用 MMD 顯示自己」嗎。</summary>
+        public static bool IsMmdNone(string model)
+            => string.Equals((model ?? "").Trim(), mmdModelNone, StringComparison.OrdinalIgnoreCase);
+
+        public static string mmdModel = mmdModelNone;   // 用哪個模型（DATA/MODEL/<資料夾名>）；(不使用)＝維持 SDO 角色，空＝掃到的第一個
+        /// <summary>舊設定檔的 mmdEnabled（已淘汰）。只在 <see cref="Load"/> 做一次性搬遷用，不再寫回檔案。</summary>
+        public static bool legacyMmdEnabled = false;
+        public static bool hasMmdEnabledKey = false;   // 讀到的 config.ini 還帶著舊的 mmdEnabled → 搬成 mmdModel 後重寫一次
+        // 別人的 MMD 模型要不要顯示（1=顯示，預設）。與「我自己用哪個模型」完全獨立 ——
+        // 這是兩件事：我想不想變成 MMD、我想不想看到別人的 MMD。關掉 → 別人一律是他的 SDO 穿搭，
+        // 而且完全不會去下載別人的模型（零流量、零磁碟）。
+        public static bool mmdShowOthers = true;
         public static bool mmdToon = true;          // 卡通著色（toon ramp）
         public static bool mmdOutline = true;       // 描邊（pencil edge）
         public static bool mmdSphere = true;        // sphere 反光貼圖
@@ -296,6 +315,8 @@ namespace Sdo.Settings
                     dirty = true;   // 第一次：在 DATA/PROFILE 留一份可編輯的範本
                 }
                 Sanitize();
+
+                if (MigrateLegacyMmdEnabled()) dirty = true;   // 重寫一次，之後檔案裡不再有 mmdEnabled
 
                 // ---- 一次性併入舊的 settings.json（同一組值以前存兩份；沒有舊檔就用內建預設）----
                 var legacyJson = DisplaySettingsManager.ReadLegacyJson();
@@ -543,8 +564,10 @@ namespace Sdo.Settings
                     case "comboTextPop": comboTextPop = ParseFloat(val, comboTextPop); hasTextPopKeys = true; break;
                     case "judgeTextPop": judgeTextPop = ParseFloat(val, judgeTextPop); hasTextPopKeys = true; break;
                     // [Mmd]
-                    case "mmdEnabled": mmdEnabled = ParseBool(val, mmdEnabled); break;
+                    // 淘汰的總開關：只讀進來給 Load 搬進 mmdModel（見 mmdModelNone），Serialize 已經不輸出它。
+                    case "mmdEnabled": legacyMmdEnabled = ParseBool(val, legacyMmdEnabled); hasMmdEnabledKey = true; break;
                     case "mmdModel": mmdModel = val; break;
+                    case "mmdShowOthers": mmdShowOthers = ParseBool(val, mmdShowOthers); break;
                     case "mmdToon": mmdToon = ParseBool(val, mmdToon); break;
                     case "mmdOutline": mmdOutline = ParseBool(val, mmdOutline); break;
                     case "mmdSphere": mmdSphere = ParseBool(val, mmdSphere); break;
@@ -589,6 +612,21 @@ namespace Sdo.Settings
                     case "opt_panelOpacity": optPanelOpacity = ParseFloat(val, optPanelOpacity); break;
                 }
             }
+        }
+
+        /// <summary>
+        /// 一次性搬遷：舊設定檔的 <c>mmdEnabled</c> 總開關 → <see cref="mmdModel"/> 的「(不使用)」選項。
+        /// 回傳 true＝檔案要重寫一次（之後就不再有 mmdEnabled 這個鍵）。純函式（只動 static 欄位）。
+        ///
+        /// 關著的舊檔<b>不能</b>因為升級就突然變成 MMD —— 那是最嚇人的一種「改版自己動了我的設定」。
+        /// 開著的舊檔則反過來：mmdModel 若剛好是「(不使用)」（例如預設值沒被寫過），要還原成「掃到的第一個」。
+        /// </summary>
+        public static bool MigrateLegacyMmdEnabled()
+        {
+            if (!hasMmdEnabledKey) return false;
+            if (!legacyMmdEnabled) mmdModel = mmdModelNone;
+            else if (IsMmdNone(mmdModel)) mmdModel = "";
+            return true;
         }
 
         /// <summary>夾正非法值（空/壞的 speedSteps 回退內建；其餘夾範圍）。純函式。</summary>
@@ -750,10 +788,13 @@ namespace Sdo.Settings
             sb.Append('\n').Append("[Mmd]\n");
             sb.Append("# 把場上角色的身體換成 MMD 模型（.pmx）。動作仍由 SDO 的骨架驅動 → 跳的是同一套舞。\n");
             sb.Append("# 模型放 DATA/MODEL/<名稱>/*.pmx（開發樹：assets/MODEL/）；一個資料夾＝一個模型。\n");
-            sb.Append("# 1=用 MMD 模型 0=用 SDO 原角色（預設）。\n");
-            sb.Append("mmdEnabled=").Append(B(mmdEnabled)).Append('\n');
-            sb.Append("# 用哪個模型（＝ DATA/MODEL 底下的資料夾名）。留空＝掃到的第一個。\n");
+            sb.Append("# 用哪個模型（＝ DATA/MODEL 底下的資料夾名）。").Append(mmdModelNone).Append("＝維持 SDO 原角色（預設）；留空＝掃到的第一個。\n");
+            sb.Append("# 沒有另外的總開關：選了模型就是要用它。（舊版的 mmdEnabled 已在讀檔時搬進這個值。）\n");
             sb.Append("mmdModel=").Append(mmdModel ?? "").Append('\n');
+            sb.Append("# 別人的 MMD 模型要不要顯示（1=顯示，預設）。與上面那個「我自己用哪個模型」互相獨立 ——\n");
+            sb.Append("# 你可以自己維持 SDO 角色卻看得到別人的 MMD，也可以反過來。關掉＝別人一律是他的 SDO 穿搭，\n");
+            sb.Append("# 而且完全不會去下載別人的模型（零流量、零磁碟）。\n");
+            sb.Append("mmdShowOthers=").Append(B(mmdShowOthers)).Append('\n');
             sb.Append("# 著色（1=開 0=關）：卡通著色 / 描邊 / sphere 反光。\n");
             sb.Append("mmdToon=").Append(B(mmdToon)).Append('\n');
             sb.Append("mmdOutline=").Append(B(mmdOutline)).Append('\n');
@@ -775,7 +816,7 @@ namespace Sdo.Settings
             sb.Append("# 多人連線：把自己身上的模型上傳給 server，讓同房的人也看得到（1=分享，預設）。\n");
             sb.Append("# 關掉 → 別人看到的是你的 SDO 穿搭（你自己畫面上仍然是 MMD）。\n");
             sb.Append("# ⚠️ 網路上流通的 MMD 模型多半帶使用規約，有些明確禁止再配布 —— 這個開關就是為此存在的。\n");
-            sb.Append("# 反過來，別人的模型一律**只在你自己也開著 MMD 顯示時**才下載（mmdEnabled=0 = 零流量）。\n");
+            sb.Append("# 反過來，別人的模型只在 mmdShowOthers=1 時才下載。\n");
             sb.Append("mmdShareModel=").Append(B(mmdShareModel)).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。

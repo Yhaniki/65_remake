@@ -159,6 +159,9 @@ namespace Sdo.Game
                     // 只有自己的動作不一樣,而且取景基準(頭骨第 0 幀的位置)也差一截。
                     portrait.idleMotOverride = dancer.Male ? MaleGameplayRestMot : FemaleGameplayRestMot;
                     portrait.fitHairTop = false;
+                    // 這是**別人**的頭貼 → MMD 走他自己宣告的模型(空＝他沒穿,就照他的 SDO 穿搭)。
+                    // 不設的話這一格會走「本機」那條,整排結算頭貼都會戴上我選的模型。
+                    portrait.remoteMmdPack = dancer.MmdPack ?? "";
                     portrait.rtWidth = 192;
                     portrait.rtHeight = 216;
                     if (!portrait.Init(dancer.Male, dancer.Parts, dancer.BodyIndex))
@@ -178,6 +181,33 @@ namespace Sdo.Game
             }
         }
 
+        /// <summary>
+        /// 結算左側某一格頭貼該用哪一支待機。
+        ///
+        /// 身體是 MMD 模型 → **大家同一支**(<see cref="MmdPortraitRestMot"/>):那個模型沒有性別之分,
+        /// 一格男版一格女版就成了「同一個人在做兩套動作」。還是 SDO 身體 → 照他自己的性別挑,
+        /// 因為畫面上本來就是一男一女,各自的待機才是對的。
+        ///
+        /// 純函式,單元測試蓋住(ResultPortraitIdleTests)。
+        /// </summary>
+        public static string ResultPortraitRestMot(bool mmdBody, bool male)
+            => mmdBody ? MmdPortraitRestMot : (male ? MaleGameplayRestMot : FemaleGameplayRestMot);
+
+        /// <summary>本機那一格頭貼的待機:MMD 顯示時換成大家共用的那一支(見 <see cref="ResultPortraitRestMot"/>)。
+        /// 每幀比一次字串 —— MMD 可以用 F8 即時開關,而且遠端模型是下載完才換上去的,不能只在建立時決定一次。</summary>
+        private void SyncLocalHeadPortraitIdle()
+        {
+            if (_headAvatar == null) return;
+            string want = ResultPortraitRestMot(MmdAvatarSwap.ActiveFor(_headAvatar) != null, localPlayerMale);
+            if (want == _headRestMot) return;
+            var mot = LoadAsset(want, b => MotLoader.Load(b));
+            if (mot == null) return;                 // 載不到就維持現在那支(寧可不同步也不要沒有待機)
+            _headRestMot = want;
+            _headAvatar.SnapNextClip();              // 硬切:兩支都是 64 幀迴圈,0.5s 混色只會把兩個姿勢糊在一起
+            _headAvatar.RestMot = mot;
+            _headAvatar.SetClip(mot);
+        }
+
         /// <summary>把結算頭貼的取景參數推回每一格(F4 滑桿是活的,而 RoomHeadPortrait 讀的是自己那份複本)。
         /// 「每一列頭貼共用同一組取景」這個不變量,要在調整當下也成立 —— 否則一拉滑桿就只有本機那一列會動。
         /// 每幀跑一次,幾格而已(見 <see cref="ResultTick"/>)。</summary>
@@ -195,6 +225,9 @@ namespace Sdo.Game
                 p.zoom = headZoom;
                 p.boneAimOffset = headAimOffset;
                 p.boneDistModel = headPortraitDist;
+                // 待機也是「每一列共用同一條規則」的一部分:身體換成 MMD 的那幾格要一起改用同一支
+                // (見 ResultPortraitRestMot)。同樣得每幀比 —— 別人的模型是下載完才換上去的。
+                p.SetIdleMot(ResultPortraitRestMot(p.ShowingMmdBody, p.Male));
             }
         }
 

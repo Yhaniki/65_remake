@@ -101,8 +101,36 @@ namespace Sdo.Game
         private Vector3 _aimFollow;     // 濾波後的「跟頭」補償(模型空間;死區內恆為上一幀的值)
         private string _headBone = "Bip01_Head";
 
+        /// <summary>
+        /// 這一格頭貼是**誰**的,決定 MMD 顯示走哪一條:
+        ///   • <c>null</c>（預設）＝本機玩家自己 → 用我選的模型;
+        ///   • 非 null ＝別人 → 用他外觀宣告的那個 packId（空字串＝他沒穿 MMD，就照他的 SDO 穿搭）。
+        /// 結算列裡其他人的那幾格一定要設它，否則整排都會戴上我的模型。
+        /// </summary>
+        public string remoteMmdPack;
+
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
+
+        /// <summary>這一格是男角還是女角(<see cref="Init"/> 傳進來的那個)。</summary>
+        public bool Male => _male;
+
+        /// <summary>畫出來的身體現在是不是 MMD 模型(SDO 的臉/髮已經被藏起來了)。遠端玩家的模型是下載完
+        /// 才換上去的,所以這個值會在頭貼活著的期間翻面 —— 讀它的地方要每幀問,不能只問一次。</summary>
+        public bool ShowingMmdBody => _avatar != null && MmdAvatarSwap.ActiveFor(_avatar) != null;
+
+        /// <summary>把待機換成 <paramref name="motRelPath"/>(已經是這一支就什麼都不做)。
+        /// 硬切不混色:結算那幾格的待機都是 64 幀迴圈,0.5s crossfade 只會把兩個姿勢糊在一起。
+        /// 用途:MMD 顯示時每一格頭貼都要用**同一支**待機(見 <c>ScreenGameplay.ResultPortraitRestMot</c>)。</summary>
+        public void SetIdleMot(string motRelPath)
+        {
+            if (_avatar == null || string.IsNullOrEmpty(motRelPath) || motRelPath == idleMotOverride) return;
+            idleMotOverride = motRelPath;
+            LoadMirrorClips();
+            if (_idleMot == null) return;
+            _avatar.SnapNextClip();
+            _avatar.SetClip(_idleMot);
+        }
 
         /// <summary>Build the isolated head avatar + camera + RT. Returns false if the avatar failed to load.
         /// <paramref name="bodyIndex"/> = 這個角色自己的體型 (胖瘦;跟房間全身 avatar 同一個值,頭貼才一致)。</summary>
@@ -117,7 +145,9 @@ namespace Sdo.Game
             _avatar.DanceTimeSec = () => -1f;
             // MMD 顯示模式下頭貼也換成 MMD 模型 (framing: MmdAvatar.TryHeadBounds). No cloth sim: at 192×152 the hair
             // sway is invisible, and the solver is the costliest part of an MMD rig — the hair just rides the head instead.
-            MmdAvatarSwap.Register(_avatar, cloth: false);
+            // 🔴 別人的那幾格(結算列)一定要走 RegisterRemote —— 走本機那條的話,他們會全部戴上**我**選的模型。
+            if (remoteMmdPack == null) MmdAvatarSwap.Register(_avatar, cloth: false);
+            else MmdAvatarSwap.RegisterRemote(_avatar, remoteMmdPack, cloth: false);
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
             // the avatar's live pose (官方頭像框跟著實際動作做動作). 穿飛行翅膀時比照房間 avatar 用 flystay 浮空 idle /
             // fly 前傾滑動,頭貼才跟著一樣做飛行動作 (使用者需求 #3;SpecialMotionItems 同一條規則)。
