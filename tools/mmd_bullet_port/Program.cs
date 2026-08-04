@@ -25,8 +25,8 @@ static class Program
 
         string physPath = Path.Combine(toolDir, "ika_physics.json");
         string refPath = Path.Combine(repoTools, "mmd_cloth_validate", $"ref_{scenario}.json");
-        if (args.Length > 2 && args[2] == "nocol")
-            refPath = Path.Combine(repoTools, "mmd_cloth_validate", $"ref_{scenario}_nocol.json");
+        if (args.Length > 2)
+            refPath = Path.Combine(repoTools, "mmd_cloth_validate", $"ref_{scenario}_{args[2]}.json");
         if (!File.Exists(physPath)) { Console.Error.WriteLine($"missing {physPath} — run export_physics.py first"); return 2; }
         if (!File.Exists(refPath)) { Console.Error.WriteLine($"missing {refPath}"); return 2; }
 
@@ -80,6 +80,7 @@ static class Program
         for (int f = 1; f <= frames; f++)
         {
             world.StepFrame();
+            if (f <= 2) Console.WriteLine($"   [frame {f}] contacts={world.ContactCount}");
             double worst = 0, sum = 0; int cnt = 0;
             foreach (var (name, idx) in chains)
             {

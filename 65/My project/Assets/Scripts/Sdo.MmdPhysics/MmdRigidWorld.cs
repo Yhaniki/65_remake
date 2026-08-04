@@ -81,6 +81,11 @@ namespace Sdo.MmdPhysics
         public int BodyCount => _pos.Length;
         public int JointCount => _ja.Length;
         public int ColorCount => _colors.Length;
+        /// <summary>Contacts resolved in the last substep (diagnostics).</summary>
+        public int ContactCount { get; private set; }
+        /// <summary>Collision on/off — the ground truth can be regenerated without it, which is how the collision
+        /// contribution was isolated in the first place.</summary>
+        public bool Collisions = true;
 
         public V3 PositionOf(int body) => _pos[body];
         public M3 OrientationOf(int body) => M3.FromQuat(_rot[body]);
@@ -413,7 +418,28 @@ namespace Sdo.MmdPhysics
                 _vel[i] = _vel[i] + new V3(0, Gravity * Dt, 0);   // gravity, then the point/limit constraints below
             }
 
-            // 4) LINEAR sweeps — the locked joints (Bullet solves those as point constraints inside its step, after
+            // 4) CONTACTS — found once per substep against the post-gravity state, then solved together with the
+            // linear rows below (Bullet solves joints and contacts in ONE sequential-impulse pass; split them and the
+            // joint bias and the contact push-out pump energy into each other).
+            var contacts = Collisions ? FindContacts(R) : null;
+            ContactCount = contacts?.Count ?? 0;
+            var cAcc = contacts != null ? new double[contacts.Count] : null;
+            var cMeff = contacts != null ? new double[contacts.Count] : null;
+            var crA = contacts != null ? new V3[contacts.Count] : null;
+            var crB = contacts != null ? new V3[contacts.Count] : null;
+            for (int c = 0; c < ContactCount; c++)
+            {
+                var ct = contacts[c];
+                crA[c] = ct.PointA - _pos[ct.A];
+                crB[c] = ct.PointB - _pos[ct.B];
+                var xA = V3.Cross(crA[c], ct.Normal);
+                var xB = V3.Cross(crB[c], ct.Normal);
+                double kA = _dynamic[ct.A] ? V3.Dot(xA, invIW[ct.A] * xA) : 0.0;
+                double kB = _dynamic[ct.B] ? V3.Dot(xB, invIW[ct.B] * xB) : 0.0;
+                cMeff[c] = 1.0 / Math.Max(_invMass[ct.A] + _invMass[ct.B] + kA + kB, 1e-12);
+            }
+
+            // 5) LINEAR sweeps — the locked joints (Bullet solves those as point constraints inside its step, after
             // gravity) and the authored linear play on the skirt's shear joints.
             for (int it = 0; it < SolverIters; it++)
             {
@@ -441,9 +467,28 @@ namespace Sdo.MmdPhysics
                         }
                     }
                 }
+
+                // contact pass: stop the approach along the normal, never pull. Under-relaxed and accumulated with a
+                // ≥0 clamp, exactly like the reference — restitution is 0 and the authored cloth friction is 0, so
+                // there are no tangential rows.
+                for (int c = 0; c < ContactCount; c++)
+                {
+                    var ct = contacts[c];
+                    var vA = (_vel[ct.A] + dv[ct.A]) + V3.Cross(_avel[ct.A] + dw[ct.A], crA[c]);
+                    var vB = (_vel[ct.B] + dv[ct.B]) + V3.Cross(_avel[ct.B] + dw[ct.B], crB[c]);
+                    double vn = V3.Dot(ct.Normal, vA - vB);      // <0 = closing
+                    double delta = -0.5 * cMeff[c] * vn;
+                    double na = Math.Max(cAcc[c] + delta, 0.0);
+                    double dj = na - cAcc[c];
+                    cAcc[c] = na;
+                    if (dj == 0) continue;
+                    var Jc = ct.Normal * dj;
+                    if (_dynamic[ct.A]) { dv[ct.A] = dv[ct.A] + Jc * _invMass[ct.A]; dw[ct.A] = dw[ct.A] + invIW[ct.A] * V3.Cross(crA[c], Jc); }
+                    if (_dynamic[ct.B]) { dv[ct.B] = dv[ct.B] - Jc * _invMass[ct.B]; dw[ct.B] = dw[ct.B] - invIW[ct.B] * V3.Cross(crB[c], Jc); }
+                }
             }
 
-            // 5) integrate
+            // 6) integrate
             for (int i = 0; i < n; i++)
             {
                 if (!_dynamic[i]) continue;
@@ -452,7 +497,66 @@ namespace Sdo.MmdPhysics
                 _pos[i] = _pos[i] + _vel[i] * Dt;
                 _rot[i] = _rot[i].IntegrateAngular(_avel[i], Dt);
             }
+
+            // 7) penetration recovery, POSITION ONLY (Bullet's split impulse): the authored bodies start overlapping
+            // — hair roots inside the head — so a velocity-based push-out would inject that error as kinetic energy
+            // and the model would visibly pop apart on frame 1. Moving the position without touching the velocity
+            // adds none.
+            for (int c = 0; c < ContactCount; c++)
+            {
+                var ct = contacts[c];
+                double extra = ct.Depth - SplitImpulseSlop;
+                if (extra <= 0) continue;
+                double push = extra * SplitImpulseRate;
+                double wA = _dynamic[ct.A] ? _invMass[ct.A] : 0.0;
+                double wB = _dynamic[ct.B] ? _invMass[ct.B] : 0.0;
+                double sum = wA + wB;
+                if (sum <= 1e-12) continue;
+                if (_dynamic[ct.A]) _pos[ct.A] = _pos[ct.A] + ct.Normal * (push * wA / sum);
+                if (_dynamic[ct.B]) _pos[ct.B] = _pos[ct.B] - ct.Normal * (push * wB / sum);
+            }
         }
+
+        // Bullet's defaults for split-impulse recovery, and they are NOT the constraint ERP: penetration is resolved
+        // with solverInfo.m_erp2 = 0.8 (m_erp 0.2 is for the velocity rows), past a slop of
+        // splitImpulsePenetrationThreshold = 0.02. Using 0.2 here left the authored initial overlaps barely resolved
+        // — the reference moved a twintail root 0.083 on frame 1 and we moved it 0.020.
+        private const double SplitImpulseSlop = 0.02;
+        private const double SplitImpulseRate = 0.8;
+
+        /// <summary>Broad phase (bounding spheres + the authored group/mask) then exact pairs. Kinematic-vs-kinematic
+        /// is skipped — neither can move, so a contact between them can only waste time.</summary>
+        private List<MmdCollision.Contact> FindContacts(M3[] R)
+        {
+            var list = new List<MmdCollision.Contact>(256);
+            int n = _pos.Length;
+            if (_boundRadius == null)
+            {
+                _boundRadius = new double[n];
+                for (int i = 0; i < n; i++) _boundRadius[i] = MmdCollision.BoundingRadius(_src[i].Shape, _src[i].Size);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                if (!_dynamic[i]) continue;                  // every contact needs at least one dynamic side
+                var bi = _src[i];
+                for (int j = 0; j < n; j++)
+                {
+                    if (j == i) continue;
+                    if (_dynamic[j] && j < i) continue;      // dynamic pairs only once
+                    var bj = _src[j];
+                    if (!MmdCollision.Filter(bi.Group, bi.Mask, bj.Group, bj.Mask)) continue;
+                    double reach = _boundRadius[i] + _boundRadius[j];
+                    var d = _pos[j] - _pos[i];
+                    if (V3.Dot(d, d) > reach * reach) continue;
+                    if (MmdCollision.Collide(bi.Shape, bi.Size, _pos[i], R[i],
+                                             bj.Shape, bj.Size, _pos[j], R[j],
+                                             out var pa, out var pb, out var nrm, out double depth))
+                        list.Add(new MmdCollision.Contact { A = i, B = j, PointA = pa, PointB = pb, Normal = nrm, Depth = depth });
+                }
+            }
+            return list;
+        }
+        private double[] _boundRadius;
 
         private void ApplyTorque(V3[] dw, M3[] invIW, int a, int b, V3 tau)
         {
