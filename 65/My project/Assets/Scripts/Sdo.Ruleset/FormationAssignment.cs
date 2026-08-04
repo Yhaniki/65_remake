@@ -71,6 +71,26 @@ namespace Sdo.Ruleset
         }
 
         /// <summary>
+        /// 依「是否啟用名次連動」指派 slot(config.ini 的 <c>rankBasedFormation</c>,見
+        /// <c>StartupConfigSchema</c>)。<paramref name="rankBased"/> 為 false 時**完全不看分數**:
+        /// 每個人整場站在自己座位序的格子(＝<see cref="SeatOrderSlots"/>),名次再怎麼變都不換位。
+        ///
+        /// 這是純視覺偏好,每台各自生效 —— 它不進網路協定,也不影響名次/分數的計算。
+        /// (兩台設定不同時,只是「誰站中間」在各自畫面上不同,分數與判定仍然一致。)
+        /// </summary>
+        public static int[] SlotForDancer(IReadOnlyList<long> scores, int leader, bool rankBased)
+            => rankBased ? SlotForDancer(scores, leader) : SeatOrderSlots(scores != null ? scores.Count : 0);
+
+        /// <summary>座位序站位:舞者 i → slot i。關掉名次連動時的目標格子。</summary>
+        public static int[] SeatOrderSlots(int count)
+        {
+            if (count < 0) count = 0;
+            var slot = new int[count];
+            for (int i = 0; i < count; i++) slot[i] = i;
+            return slot;
+        }
+
+        /// <summary>
         /// 當下第 1 名是第幾位舞者。同分取索引小的(決定性 —— 見 <see cref="SlotForDancer"/>)。
         /// 空清單回 -1。
         /// </summary>

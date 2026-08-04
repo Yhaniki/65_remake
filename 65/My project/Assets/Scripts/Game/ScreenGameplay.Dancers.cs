@@ -371,8 +371,10 @@ namespace Sdo.Game
             // 不是全場的。跨隊搬人在官方也不會發生。所以組隊時每個人待在自己隊的格子裡。
             // (「隊內也依分數換前後排」有可能是官方行為,但我沒有證據,所以不猜。)
             int[] slots;
-            if (TeamMode)
+            if (TeamMode || !rankBasedFormation)
             {
+                // 「依名次調整站位」關掉時走的也是這一條:每個人整場待在座位序的格子。
+                // (組隊模式本來就是這樣 —— 它的 base slot 已經是隊內位置,見上面那段。)
                 slots = _dancerBaseSlot;
             }
             else

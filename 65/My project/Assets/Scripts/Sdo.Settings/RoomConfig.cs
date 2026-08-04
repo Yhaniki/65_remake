@@ -59,6 +59,13 @@ namespace Sdo.Settings
         // 只影響「看起來要打在哪」，不影響判定時間（那是 globalOffsetMs 的事）。同樣用打拍測試調。
         public static float judgeOffsetY = 0f;
 
+        // 依名次調整站位（多人同場）：1=開(預設，官方行為)、0=關。
+        // 開＝比賽中即時第一名會滑進隊形的領隊格（中央前排，也是導播鏡頭的錨點），被擠掉的人退回自己原本的格子；
+        // 關＝所有人整場固定站在「房間座位順序」對應的格子，名次再怎麼變都不換位（鏡頭仍錨在領隊格上的那個人）。
+        // 純視覺偏好、每台各自生效，不影響判定/分數/名次計算；組隊模式本來就不跨隊換位，這個開關對它沒有作用。
+        // 見 FormationAssignment.SlotForDancer 與 ScreenGameplay.TickDancerSlots。
+        public static bool rankBasedFormation = true;
+
         // 外部歌曲（osu / StepMania / Malody）載入總開關：1=載入(預設)、0=完全不碰。關掉的話開機不掃任何歌資料夾、
         // 不建 <ADDON> 那幾個資料夾，開場那張進度條載入畫面也不出現（沒有慢的掃描要等），選歌畫面的「資料夾」頁籤
         // 不再開分類瀏覽面板 —— 整個遊戲只剩官方 DATA/MUSIC 的歌。下面 AdditionalSongFolders / AddonFolder /
@@ -501,6 +508,7 @@ namespace Sdo.Settings
                     case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
                     case "globalOffsetMs": globalOffsetMs = ParseFloat(val, globalOffsetMs); break;
                     case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
+                    case "rankBasedFormation": rankBasedFormation = ParseBool(val, rankBasedFormation); break;
                     case "LoadExternalSongs": loadExternalSongs = ParseBool(val, loadExternalSongs); break;
                     case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
                     case "AddonFolder": addonFolder = NormalizeFolder(val); break;
@@ -660,6 +668,10 @@ namespace Sdo.Settings
             sb.Append("globalOffsetMs=").Append(globalOffsetMs.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 判定線視覺偏移（設計 px，畫面高 600）：完美時機的音符會落在受擊線 + 這個位移處。0 = 正中受擊線。\n");
             sb.Append("judgeOffsetY=").Append(judgeOffsetY.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 依名次調整站位（多人同場）：1=開(預設，官方行為) 0=關。\n");
+            sb.Append("# 開＝比賽中即時第一名會滑到隊形的中央前排（導播鏡頭錨定的那一格），被擠掉的人退回原位。\n");
+            sb.Append("# 關＝整場固定站在房間座位順序的位置，名次再怎麼變都不換位。純視覺，不影響判定/分數/名次。\n");
+            sb.Append("rankBasedFormation=").Append(B(rankBasedFormation)).Append('\n');
             sb.Append("# 外部歌曲（osu/StepMania/Malody）載入總開關：1=載入(預設) 0=完全不碰。\n");
             sb.Append("# 關掉後：開機不掃歌資料夾、不建 ADDON 那幾個資料夾、開場的載入進度畫面不出現，\n");
             sb.Append("# 選歌畫面的「資料夾」頁籤也不再開分類瀏覽面板 —— 只剩官方歌。下面四個設定都只在開著時有意義。\n");

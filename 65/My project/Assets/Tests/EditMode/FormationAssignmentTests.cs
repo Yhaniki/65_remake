@@ -112,6 +112,40 @@ namespace Sdo.Tests
             CollectionAssert.AreEqual(new[] { 0, 1, 2, 3, 4, 5 }, slots);
         }
 
+        // ---------------------------------------------------------------- 依名次調整站位（可關）
+        [Test]
+        public void Rank_Based_Formation_Off_Keeps_Everyone_In_Seat_Order()
+        {
+            // config.ini rankBasedFormation=0：分數再怎麼變都不換位（開著的話舞者 2 會被搬到 slot 0）。
+            var scores = new long[] { 300, 200, 900 };
+            CollectionAssert.AreEqual(new[] { 0, 1, 2 },
+                FormationAssignment.SlotForDancer(scores, leader: 2, rankBased: false));
+            CollectionAssert.AreEqual(new[] { 2, 1, 0 },
+                FormationAssignment.SlotForDancer(scores, leader: 2, rankBased: true));
+        }
+
+        [Test]
+        public void Seat_Order_Slots_Are_The_Identity_Assignment()
+        {
+            CollectionAssert.AreEqual(new[] { 0, 1, 2, 3 }, FormationAssignment.SeatOrderSlots(4));
+            CollectionAssert.IsEmpty(FormationAssignment.SeatOrderSlots(0));
+            CollectionAssert.IsEmpty(FormationAssignment.SeatOrderSlots(-3));   // 防呆：負數不炸
+        }
+
+        [Test]
+        public void Rank_Based_Formation_Off_Still_Fills_Every_Slot_Exactly_Once()
+        {
+            // 關掉之後一樣是「指派」：六個人剛好占滿六格（重複＝疊在一起、漏格＝隊形缺人）。
+            var slots = FormationAssignment.SlotForDancer(new long[] { 10, 90, 20, 80, 30, 70 }, 1, false);
+            var seen = new bool[slots.Length];
+            foreach (var s in slots)
+            {
+                Assert.IsFalse(seen[s], "slot " + s + " 被指派了兩次");
+                seen[s] = true;
+            }
+            Assert.AreEqual(6, slots.Length);
+        }
+
         [Test]
         public void The_Slide_Converges_Towards_The_Target_Without_Overshooting()
         {

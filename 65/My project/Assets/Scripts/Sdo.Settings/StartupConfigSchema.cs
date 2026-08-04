@@ -267,6 +267,12 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
+                Key = "rankBasedFormation", Category = CatPlay, Label = "依名次調整站位", Kind = ConfigFieldKind.Toggle,
+                Help = "多人同場時：開（預設，官方行為）＝當下第一名會滑到中央前排（鏡頭錨定的那格）。關＝整場照房間座位順序站，不換位。",
+                Get = () => B(RoomConfig.rankBasedFormation), Set = v => RoomConfig.rankBasedFormation = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
                 Key = "opt_danceIgnoreMiss", Category = CatPlay, Label = "失誤不中斷舞蹈", Kind = ConfigFieldKind.Toggle,
                 Help = "開＝跳舞完全不受 combo/miss/血量影響。關（預設）＝官方玩法，斷 combo 會停舞。",
                 Get = () => B(Gameplay().danceIgnoreMiss), Set = v => Gameplay().danceIgnoreMiss = ParseBool(v),

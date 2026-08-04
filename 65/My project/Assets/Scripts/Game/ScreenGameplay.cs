@@ -56,6 +56,11 @@ namespace Sdo.Game
         // 純視覺（不改判定時間 —— 那是 GameplayClock.OffsetMs 的事）。預設 0 = 正中受擊線；用編輯器的打拍測試調。
         public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
 
+        // 依名次調整站位（config.ini [Room] rankBasedFormation，預設開）：開＝比賽中即時第一名滑進隊形的
+        // 領隊格（中央前排，導播鏡頭的錨點）；關＝每個人整場站在房間座位順序的格子，名次變動不換位。
+        // 純視覺、每台各自生效（不進網路協定，也不影響判定/分數/名次）。見 TickDancerSlots。
+        public bool rankBasedFormation = Sdo.Settings.RoomConfig.rankBasedFormation;
+
         /// <summary>
         /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_table.csv）：補「這首譜跟音檔沒對齊」。
         /// <b>動的是音樂，不是音符</b>（同 StepMania：你在調的是音樂相對譜面的位置）—— 它加在音樂的

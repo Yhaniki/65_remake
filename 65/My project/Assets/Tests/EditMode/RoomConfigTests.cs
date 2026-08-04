@@ -61,6 +61,32 @@ namespace Sdo.Tests
             RoomConfig.hasTextPopKeys = false;
             RoomConfig.scrollBaseBpm = 130f;
             RoomConfig.hasScrollBaseBpmKey = false;
+            RoomConfig.rankBasedFormation = true;
+        }
+
+        [Test]
+        public void RankBasedFormation_Defaults_On_Parses_And_RoundTrips()
+        {
+            Assert.IsTrue(RoomConfig.rankBasedFormation, "預設＝官方行為（第一名滑進中央前排）");
+
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=0\n");
+            Assert.IsFalse(RoomConfig.rankBasedFormation);
+
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.IsFalse(RoomConfig.rankBasedFormation, "關掉之後要存得回來");
+
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=1\n");
+            Assert.IsTrue(RoomConfig.rankBasedFormation);
+        }
+
+        [Test]
+        public void RankBasedFormation_Missing_From_An_Old_File_Flags_A_Template_TopUp()
+        {
+            // 舊檔沒這個鍵 → Load 會因為 IsMissingCurrentKey 補寫一次模板，值維持預設（開）。
+            Assert.IsTrue(RoomConfig.IsMissingCurrentKey("[Room]\njudgeLevel=4\n"));
+            Assert.IsFalse(RoomConfig.IsMissingCurrentKey(RoomConfig.Serialize()));
         }
 
         [Test]
