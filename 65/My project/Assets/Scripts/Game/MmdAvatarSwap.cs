@@ -283,6 +283,23 @@ namespace Sdo.Game
             return null;
         }
 
+        /// <summary>
+        /// 手部光條要從哪兩根骨長出來 —— 交給 <see cref="HandRibbon.Source"/>,它每幀問一次。
+        ///
+        /// MMD 顯示開著時,畫面上的手是 MMD 身體的手,而它跟驅動它的 SDO 骨架**長度不一樣**:retarget 只把 MMD 的
+        /// 骨頭指向跟 SDO 一樣的方向,骨頭多長是模型自己的事(初音的肩→手腕鏈只有 SDO 的 77%,等高縮放後差 4.33 ≈
+        /// 身高的 8%)。所以掛在 SDO 骨頭上的光條會在畫面上那隻手外面浮一截 ——「手的光沒接好,有一段隔空」。
+        ///
+        /// 沒有 MMD 身體(關掉顯示 / 遠端模型還沒到 / 那個模型缺手骨)就回 false,光條照舊用它自己的 SDO 錨點。
+        /// </summary>
+        public static HandRibbon.BoneSource HandSourceFor(SdoAvatar avatar, bool left)
+            => (out Transform h, out Transform f) =>
+            {
+                var m = ActiveFor(avatar);
+                if (m != null) return m.TryHandBones(left, out h, out f);
+                h = null; f = null; return false;
+            };
+
         // ---------------------------------------------------------------- config.ini → 場上
         // 設定的快照。面板改了值就直接寫進 RoomConfig 的 static 欄位(沒有事件可以訂閱),所以這裡每幀比一次:
         // 12 個欄位的比對比任何一種通知機制都便宜，而且手改 config.ini 之後重讀也同樣會生效。

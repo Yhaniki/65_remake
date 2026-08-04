@@ -67,6 +67,7 @@ namespace Sdo.Game
 
         private Transform _mmdRoot;
         private Transform[] _bone;
+        private Dictionary<string, int> _bip01ToBone;   // SDO 骨名 → 這具身體的骨(見 BoneForBip01)
         private int[] _parent;
         private int[] _order;
         private int[] _hrcIndex;                  // HRC bone each MMD bone is driven from, or -1
@@ -198,6 +199,7 @@ namespace Sdo.Game
                 if (pmx.Bones[i].NameJp == MmdBoneMap.RootMmdBone) _rootBone = i;
             }
             if (_rootBone >= 0) _useDelta[_rootBone] = true;           // root carries the whole-body rotation
+            _bip01ToBone = bip01ToMmd;                                 // 掛特效用(BoneForBip01)
             int aimed = BuildAim(pmx, hrc, bip01ToMmd);
             if (_rootBone >= 0) _rootRestLocal = _bone[_rootBone].localPosition;
             if (hrc.Index.TryGetValue("Bip01", out int rootH)) { _hrcRootIndex = rootH; _hrcRootRestPos = hrc.BindWorld[rootH].GetColumn(3); }
@@ -719,6 +721,35 @@ namespace Sdo.Game
         /// <summary>Re-layer the whole MMD rig (the portrait / preview cameras cull by layer, and the driver's layer can
         /// be assigned AFTER the SDO parts are built — so the rig has to be able to follow it).</summary>
         public void SetLayer(int layer) { if (_mmdRoot != null) SetLayer(_mmdRoot.gameObject, layer); }
+
+        /// <summary>
+        /// 這具 MMD 身體上、對應某根 SDO 骨(<c>Bip01_*</c>)的骨頭;這個模型沒有對應的骨就 null。
+        ///
+        /// 「掛在骨頭上的特效」(手部光條…)一定要走這裡,不能直接掛 SDO 骨架的骨:retarget 只把 MMD 的骨
+        /// **指向**跟 SDO 一樣的方向,骨頭本身多長是模型自己的。初音的肩→手腕鏈只有 SDO 的 77%(等高縮放後
+        /// 14.65 vs 18.98,差 4.33 ≈ 身高的 8%),所以手一伸直,SDO 的 Bip01_*_Hand 就落在畫面上那隻手外面
+        /// 一截 —— 光條看起來就是「跟手隔了一段空的」。
+        /// </summary>
+        public Transform BoneForBip01(string bip01)
+        {
+            if (!_ready || _bone == null || _bip01ToBone == null || string.IsNullOrEmpty(bip01)) return null;
+            if (!_bip01ToBone.TryGetValue(bip01, out int i) || i < 0 || i >= _bone.Length) return null;
+            return _bone[i];
+        }
+
+        /// <summary>手部光條要掛的那兩根骨:手腕 + 拇指根(<c>Hand</c> + <c>Finger0</c>,＝官方光條的內外兩緣)。
+        /// 拇指根是很多 MMD 模型省略的一根(親指０),沒有就退食指/中指根 —— 光條要的只是「掌心到某根指根」
+        /// 這條掌寬向量,哪一根指都成立。<paramref name="left"/> false = 右手。兩根都湊不齊回 false,呼叫端
+        /// 就留在原本的 SDO 錨點上。</summary>
+        public bool TryHandBones(bool left, out Transform hand, out Transform finger)
+        {
+            string p = left ? "Bip01_L_" : "Bip01_R_";
+            hand = BoneForBip01(p + "Hand");
+            finger = BoneForBip01(p + "Finger0");
+            if (finger == null) finger = BoneForBip01(p + "Finger1");
+            if (finger == null) finger = BoneForBip01(p + "Finger2");
+            return hand != null && finger != null;
+        }
 
         // Portrait framing for an MMD head box, calibrated against the SDO head portrait so the swapped-in model's head
         // lands where the official one does. The SDO cam uses dist = 1.9×box and aim = centre − 0.11×box, but ITS box is

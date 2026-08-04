@@ -4921,6 +4921,9 @@ namespace Sdo.Game
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; mr.receiveShadows = false;
             }
             rib.hand = handGo.transform; rib.finger = fingerGo.transform;
+            // 上面那兩個錨點是 SDO 骨架的手。MMD 顯示開著時畫面上的手是 MMD 身體的手,兩者手臂長度不一樣 → 光條會
+            // 在手掌外面浮一截。每幀問一次現在該掛誰(見 MmdAvatarSwap.HandSourceFor);沒有 MMD 身體就用上面的錨點。
+            rib.Source = MmdAvatarSwap.HandSourceFor(avatar, handBone.Contains("_L_"));
             rib.color = col; rib.life = handTrailTime; rib.widthMul = handTrailWidth;
             _handTrails.Add(rib);
         }
