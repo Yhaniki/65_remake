@@ -294,9 +294,11 @@ namespace Sdo.MmdPhysics
                 _avel[i] = _avel[i] * _angDampF[i];
             }
 
-            // 2) per-body world inverse inertia + the joint frames/axes for this substep
-            var R = new M3[n];
-            var invIW = new M3[n];
+            // 2) per-body world inverse inertia + the joint frames/axes for this substep.
+            // The buffers are REUSED: allocating them per substep (10+ arrays, ~2400 entries each, 120 times a
+            // second) was the single biggest cost in the first in-game build — the solve itself is cheap.
+            EnsureScratch(n, _ja.Length);
+            var R = _bufR; var invIW = _bufInvIW;
             for (int i = 0; i < n; i++)
             {
                 R[i] = M3.FromQuat(_rot[i]);
@@ -304,16 +306,9 @@ namespace Sdo.MmdPhysics
             }
 
             int nj = _ja.Length;
-            var axes = new V3[nj * 3];
-            var ieff = new double[nj * 3];
-            var bias = new double[nj * 3];
-            var active = new bool[nj * 3];
-            var sprImp = new double[nj * 3];
-            var rAw = new V3[nj]; var rBw = new V3[nj];
-            var linAxis = new V3[nj * 3];
-            var lbias = new double[nj * 3];
-            var lact = new bool[nj * 3];
-            var meff = new double[nj * 3];
+            var axes = _bufAxes; var ieff = _bufIeff; var bias = _bufBias; var active = _bufActive;
+            var sprImp = _bufSprImp; var rAw = _bufRaw; var rBw = _bufRbw;
+            var linAxis = _bufLinAxis; var lbias = _bufLbias; var lact = _bufLact; var meff = _bufMeff;
 
             for (int k = 0; k < nj; k++)
             {
@@ -372,7 +367,8 @@ namespace Sdo.MmdPhysics
                 }
             }
 
-            var dv = new V3[n]; var dw = new V3[n];
+            var dv = _bufDv; var dw = _bufDw;
+            for (int i = 0; i < n; i++) { dv[i] = V3.Zero; dw[i] = V3.Zero; }
 
             // springs first (single application), then Bullet's warm start
             for (int k = 0; k < nj; k++)
@@ -546,37 +542,128 @@ namespace Sdo.MmdPhysics
 
         /// <summary>Broad phase (bounding spheres + the authored group/mask) then exact pairs. Kinematic-vs-kinematic
         /// is skipped — neither can move, so a contact between them can only waste time.</summary>
+        /// <summary>
+        /// Broad phase: a uniform spatial hash, rebuilt each substep. All-pairs is not an option here — this model is
+        /// 650 dynamic bodies against 723, i.e. 470k tests per substep (56 M/s at 60 fps × 2 substeps), and even after
+        /// the author's group/mask filter 114k of them survive. That is what made the first in-game build unplayable.
+        /// Each body is inserted into every cell its bounding sphere touches, so a query only has to look at its OWN
+        /// cells; big bodies (the 2.5-radius hip capsule) simply occupy more of them.
+        /// </summary>
         private List<MmdCollision.Contact> FindContacts(M3[] R)
         {
-            var list = new List<MmdCollision.Contact>(256);
+            EnsureBroadphase();
+            var list = _contactScratch;
+            list.Clear();
             int n = _pos.Length;
-            if (_boundRadius == null)
-            {
-                _boundRadius = new double[n];
-                for (int i = 0; i < n; i++) _boundRadius[i] = MmdCollision.BoundingRadius(_src[i].Shape, _src[i].Size);
-            }
+
+            // rebuild the hash
+            for (int c = 0; c < _cellHead.Length; c++) _cellHead[c] = -1;
+            _entryCount = 0;
+            for (int i = 0; i < n; i++) InsertBody(i);
+
+            if (_stamp == null || _stamp.Length < n) _stamp = new int[n];
             for (int i = 0; i < n; i++)
             {
-                if (!_dynamic[i]) continue;                  // every contact needs at least one dynamic side
+                if (!_dynamic[i]) continue;               // every contact needs at least one dynamic side
                 var bi = _src[i];
-                for (int j = 0; j < n; j++)
-                {
-                    if (j == i) continue;
-                    if (_dynamic[j] && j < i) continue;      // dynamic pairs only once
-                    var bj = _src[j];
-                    if (!MmdCollision.Filter(bi.Group, bi.Mask, bj.Group, bj.Mask)) continue;
-                    double reach = _boundRadius[i] + _boundRadius[j];
-                    var d = _pos[j] - _pos[i];
-                    if (V3.Dot(d, d) > reach * reach) continue;
-                    if (MmdCollision.Collide(bi.Shape, bi.Size, _pos[i], R[i],
-                                             bj.Shape, bj.Size, _pos[j], R[j],
-                                             out var pa, out var pb, out var nrm, out double depth))
-                        list.Add(new MmdCollision.Contact { A = i, B = j, PointA = pa, PointB = pb, Normal = nrm, Depth = depth });
-                }
+                _stampCur++;                              // a pair can share several cells; see it once
+                double r = _boundRadius[i];
+                int x0 = Cell(_pos[i].X - r), x1 = Cell(_pos[i].X + r);
+                int y0 = Cell(_pos[i].Y - r), y1 = Cell(_pos[i].Y + r);
+                int z0 = Cell(_pos[i].Z - r), z1 = Cell(_pos[i].Z + r);
+                for (int x = x0; x <= x1; x++)
+                    for (int y = y0; y <= y1; y++)
+                        for (int z = z0; z <= z1; z++)
+                            for (int e = _cellHead[Hash(x, y, z)]; e >= 0; e = _entryNext[e])
+                            {
+                                int j = _entryBody[e];
+                                if (j == i) continue;
+                                if (_dynamic[j] && j < i) continue;         // dynamic pairs only once
+                                if (_stamp[j] == _stampCur) continue;
+                                _stamp[j] = _stampCur;
+                                var bj = _src[j];
+                                if (!MmdCollision.Filter(bi.Group, bi.Mask, bj.Group, bj.Mask)) continue;
+                                double reach = r + _boundRadius[j];
+                                var d = _pos[j] - _pos[i];
+                                if (V3.Dot(d, d) > reach * reach) continue;
+                                if (MmdCollision.Collide(bi.Shape, bi.Size, _pos[i], R[i],
+                                                         bj.Shape, bj.Size, _pos[j], R[j],
+                                                         out var pa, out var pb, out var nrm, out double depth))
+                                    list.Add(new MmdCollision.Contact { A = i, B = j, PointA = pa, PointB = pb, Normal = nrm, Depth = depth });
+                            }
             }
             return list;
         }
+
+        private void EnsureBroadphase()
+        {
+            if (_cellHead != null) return;
+            int n = _pos.Length;
+            _boundRadius = new double[n];
+            double sum = 0;
+            for (int i = 0; i < n; i++)
+            {
+                _boundRadius[i] = MmdCollision.BoundingRadius(_src[i].Shape, _src[i].Size);
+                sum += _boundRadius[i];
+            }
+            // cells about the size of a typical body: small enough that a query touches few others, big enough that
+            // the handful of large colliders do not explode into thousands of cells
+            _cellSize = Math.Max(sum / Math.Max(n, 1) * 2.0, 1e-3);
+            _cellHead = new int[4096];
+            _entryNext = new int[n * 8];
+            _entryBody = new int[n * 8];
+            _contactScratch = new List<MmdCollision.Contact>(256);
+        }
+
+        private void InsertBody(int i)
+        {
+            double r = _boundRadius[i];
+            int x0 = Cell(_pos[i].X - r), x1 = Cell(_pos[i].X + r);
+            int y0 = Cell(_pos[i].Y - r), y1 = Cell(_pos[i].Y + r);
+            int z0 = Cell(_pos[i].Z - r), z1 = Cell(_pos[i].Z + r);
+            for (int x = x0; x <= x1; x++)
+                for (int y = y0; y <= y1; y++)
+                    for (int z = z0; z <= z1; z++)
+                    {
+                        if (_entryCount >= _entryBody.Length)
+                        {
+                            System.Array.Resize(ref _entryBody, _entryBody.Length * 2);
+                            System.Array.Resize(ref _entryNext, _entryNext.Length * 2);
+                        }
+                        int h = Hash(x, y, z);
+                        _entryBody[_entryCount] = i;
+                        _entryNext[_entryCount] = _cellHead[h];
+                        _cellHead[h] = _entryCount++;
+                    }
+        }
+
+        private int Cell(double v) => (int)Math.Floor(v / _cellSize);
+        private int Hash(int x, int y, int z)
+            => (int)((uint)((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)) % (uint)_cellHead.Length);
+
         private double[] _boundRadius;
+        private double _cellSize;
+        private int[] _cellHead, _entryNext, _entryBody;
+        private int _entryCount;
+        private int[] _stamp; private int _stampCur;
+        private List<MmdCollision.Contact> _contactScratch;
+
+        private M3[] _bufR, _bufInvIW;
+        private V3[] _bufAxes, _bufRaw, _bufRbw, _bufLinAxis, _bufDv, _bufDw;
+        private double[] _bufIeff, _bufBias, _bufSprImp, _bufLbias, _bufMeff;
+        private bool[] _bufActive, _bufLact;
+
+        private void EnsureScratch(int n, int nj)
+        {
+            if (_bufR != null && _bufR.Length >= n && _bufAxes.Length >= nj * 3) return;
+            _bufR = new M3[n]; _bufInvIW = new M3[n];
+            _bufDv = new V3[n]; _bufDw = new V3[n];
+            _bufAxes = new V3[nj * 3]; _bufLinAxis = new V3[nj * 3];
+            _bufRaw = new V3[nj]; _bufRbw = new V3[nj];
+            _bufIeff = new double[nj * 3]; _bufBias = new double[nj * 3];
+            _bufSprImp = new double[nj * 3]; _bufLbias = new double[nj * 3]; _bufMeff = new double[nj * 3];
+            _bufActive = new bool[nj * 3]; _bufLact = new bool[nj * 3];
+        }
 
         private void ApplyTorque(V3[] dw, M3[] invIW, int a, int b, V3 tau)
         {
