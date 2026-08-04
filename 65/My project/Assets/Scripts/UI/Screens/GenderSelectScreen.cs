@@ -411,6 +411,10 @@ namespace Sdo.UI.Screens
         // 疊在本畫面上；商城的 shopexit 只是隱藏 modal → 關閉後回到開場畫面（不離開遊戲）。
         private void OnOpenShop()
         {
+            // 面板上調過的體型先落地 —— 商城左側那個穿衣服的人是 RebuildAvatar 直接讀 profile.json 的
+            // bodyShapeIndex 建的，不落地的話「這裡調成胖、進商城人還是瘦」(而且商城買東西存檔時
+            // 寫回去的也會是舊值)。與 CommitIdentity(進房) 同一個處理。
+            PersistBodyShapes();
             if (Ctx != null && Ctx.Session != null) Ctx.Session.Gender = _gender;
             Nav.OpenShop?.Invoke();
         }
