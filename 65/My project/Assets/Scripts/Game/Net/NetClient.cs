@@ -319,13 +319,17 @@ namespace Sdo.Game.Net
 
         private void SendHello()
         {
-            var look = JObj.New()
-                .Int("gender", _identity.Gender)
-                .Int("bodyIndex", _identity.BodyIndex);
-            var parts = JArr.New();
-            if (_identity.AvatarParts != null)
-                for (int i = 0; i < _identity.AvatarParts.Length; i++) parts.Add(_identity.AvatarParts[i]);
-            look.Put("parts", parts);
+            // 握手帶的外觀也走 Encode(理由同 PublishLook)。有 LocalLook 就用**它**那份 ——
+            // _identity 只有性別/體型/穿搭,不知道 MMD 模型,而 server 開座位時吃的就是握手這一份。
+            var helloLook = LocalLook != null ? LocalLook() : null;
+            if (helloLook == null)
+                helloLook = new NetAvatarLook
+                {
+                    Gender = _identity.Gender,
+                    BodyIndex = _identity.BodyIndex,
+                    Parts = _identity.AvatarParts,
+                };
+            var look = helloLook.Encode();
 
             var hello = JObj.New()
                 .Str(NetProto.FieldType, NetProto.Hello)
@@ -1062,7 +1066,11 @@ namespace Sdo.Game.Net
             // 「進房 / 打完歌回房 / 每次換裝面板關閉」都會呼叫這裡,而多數時候外觀根本沒變。
             if (_sentLook != null && _sentLook.SameAs(look)) return;
             _sentLook = look;
-            SendLook(look.Gender, look.BodyIndex, look.Parts);
+            // 🔴 一定要走 NetAvatarLook.Encode() —— 手捲一份 JSON 的話,外觀**每新增一個欄位**都要
+            // 記得同步改這裡,而漏掉不會有任何編譯錯誤或警告:值就是靜靜地不見了。
+            // (實際踩過:MmdPack 加進 NetAvatarLook 之後,server 收到的 look 永遠沒有它 →
+            //  模型上傳一律被「這不是你身上穿的那個模型」擋掉,而錯誤訊息指向完全無關的地方。)
+            Send(JObj.New().Str(NetProto.FieldType, NetProto.SetLook).Put("look", look.Encode()));
         }
 
         /// <summary>
@@ -1070,16 +1078,13 @@ namespace Sdo.Game.Net
         /// 這個多載留給「就是要強制送一次」的呼叫端。
         /// </summary>
         public void SendLook(int gender, int bodyIndex, string[] parts)
+            => SendLook(new NetAvatarLook { Gender = gender, BodyIndex = bodyIndex, Parts = parts });
+
+        /// <summary>強制送一份外觀(不去重)。編碼一律走 <see cref="NetAvatarLook.Encode"/> —— 見 <see cref="PublishLook"/>。</summary>
+        public void SendLook(NetAvatarLook look)
         {
-            var look = JObj.New().Int("gender", gender).Int("bodyIndex", bodyIndex);
-            var arr = JArr.New();
-            if (parts != null)
-            {
-                int n = parts.Length < NetAvatarLook.MaxParts ? parts.Length : NetAvatarLook.MaxParts;
-                for (int i = 0; i < n; i++) arr.Add(parts[i] ?? "");
-            }
-            look.Put("parts", arr);
-            Send(JObj.New().Str(NetProto.FieldType, NetProto.SetLook).Put("look", look));
+            if (look == null) return;
+            Send(JObj.New().Str(NetProto.FieldType, NetProto.SetLook).Put("look", look.Encode()));
         }
 
         /// <summary>

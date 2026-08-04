@@ -203,3 +203,8 @@ tools/mmd_cloth_validate/*.xml
 tools/mmd_cloth_validate/__pycache__/
 tools/mmd_cloth_validate/probe.request
 tools/mmd_cloth_validate/pmx_dump.txt
+
+# 兩開實機測連線(MMD 模型傳檔)的產物:兩台 client 的 log 與臨時 publish 出來的 server
+/mmd_a.log*
+/mmd_b.log*
+/server/bin-test/

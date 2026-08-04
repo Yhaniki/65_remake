@@ -272,8 +272,20 @@ namespace Sdo.UI
             // DEV: SDO_JOINFIRST=1 → 開機直接加入 server 上第一間房。
             // 同機多開兩份 client 測連線時,房號是 server 隨機配的 —— 這個 hook 讓第二份不必把房號抄過去,
             // 直接問 roomList 拿第一間。要先有另一份 client(SDO_ROOM=1)開好房。
-            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_JOINFIRST")) && _ctx.Net != null)
-                StartCoroutine(DevJoinFirstRoomCo());
+            // 🔴 開機時 _ctx.Net 是 null(Phase 3 之後開機不再自動連線,連線由「登入」發動)——
+            // 所以這裡要先登入。舊寫法是 `&& _ctx.Net != null`,那個條件在開機當下**永遠是 false**,
+            // 整個 hook 靜默地什麼都不做。
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_JOINFIRST")))
+            {
+                if (_ctx.Net != null) StartCoroutine(DevJoinFirstRoomCo());
+                else TryLogin(ok => { if (ok) StartCoroutine(DevJoinFirstRoomCo());
+                                      else Debug.LogWarning("[dev] SDO_JOINFIRST:登入失敗,沒有加入任何房間"); });
+            }
+            // DEV: SDO_HOSTROOM=1 → 登入後開一間**線上**房(SDO_JOINFIRST 的另一半)。
+            // SDO_ROOM 開的是單機的 mock 房 —— 它在登入之前就跑了,所以兩開測連線時房主那一邊
+            // 根本沒連上 server,B 的 SDO_JOINFIRST 也就永遠問不到房間列表。
+            if (!string.IsNullOrEmpty(ScreenGameplay.DevVar("SDO_HOSTROOM")))
+                TryLogin(ok => { if (ok) EnterRoom(); else Debug.LogWarning("[dev] SDO_HOSTROOM:登入失敗,沒有開成線上房"); });
             // DEV: SDO_LOBBY=1 → 開機自動登入並進大廳,用來截圖檢查大廳版位。
             //      SDO_LOBBY=2 → **不登入**直接進大廳(房間列表用單機的 MockRoomService)。
             //      後者不只是省事:大廳的單機分支(LoadOfflineRooms)在正常玩法裡走不到
