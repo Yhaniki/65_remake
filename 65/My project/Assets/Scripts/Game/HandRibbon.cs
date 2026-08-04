@@ -37,10 +37,20 @@ namespace Sdo.Game
         /// </summary>
         public BoneSource Source;
 
+        /// <summary>
+        /// 覆寫換的是「手在哪」,**不是「光條多粗」**。帶子的寬度是照那隻手的真實掌寬算的(官方作法:半寬向量
+        /// ＝手腕→拇指根),而 MMD 的手掌不見得跟 SDO 一樣大 —— 實機量到初音的掌寬 1.20 對 SDO 的 1.96(要補
+        /// ×1.63),照算光條就細 39%,同一個玩家換個模型粗細就變一次。所以覆寫生效時把半寬按「SDO 掌寬 ÷ 這具身體的掌寬」補回去,
+        /// 兩種身體、每個模型看起來都一樣粗(<see cref="widthMul"/> 調的還是同一個視覺寬度)。
+        /// 關掉就退回忠實掌寬(小手 → 細帶子)。
+        /// </summary>
+        public bool matchAnchorWidth = true;
+
         // optional external clock (song time) so it advances headless; falls back to Time.time
         public System.Func<float> Now;
 
         private Transform _srcHand;   // 上一幀真正取樣的那根手骨(換身體時要斷開,見 LateUpdate)
+        private float _widthFix = 1f; // 覆寫來源的掌寬補正(見 matchAnchorWidth);量不到就留上一次的值
         private Mesh _mesh;
         private readonly List<float> _t = new List<float>();
         private readonly List<Vector3> _inner = new List<Vector3>();
@@ -64,15 +74,24 @@ namespace Sdo.Game
 
         private void LateUpdate()   // after SdoAvatar.LateUpdate has posed the bones / moved the anchors
         {
-            Transform th = hand, tf = finger;
-            if (Source != null && Source(out var sh, out var sf) && sh != null && sf != null) { th = sh; tf = sf; }
+            Transform th = hand, tf = finger, sh = null, sf = null;   // sh/sf 要先給值:Source==null 時下面會短路,不會被指派
+            bool overridden = Source != null && Source(out sh, out sf) && sh != null && sf != null;
+            if (overridden) { th = sh; tf = sf; }
             if (th == null || tf == null) { return; }
             // 換了身體(SDO ↔ MMD)那一幀:兩隻手差著一截,舊節點跟新節點連起來會是一條穿過空氣的光帶 → 從頭累積。
-            if (th != _srcHand) { _srcHand = th; Clear(); }
+            if (th != _srcHand) { _srcHand = th; _widthFix = 1f; Clear(); }
             float now = Clock;
             Vector3 h = th.position, f = tf.position;
             if (h == Vector3.zero && f == Vector3.zero) { return; }   // avatar not posed yet -> don't streak from the origin
-            Vector3 half = (f - h) * widthMul;                 // palm half-width vector (world); rotates with the hand
+            // 掌寬補正:光條的粗細不該因為換了一具手比較小的身體就跟著變(見 matchAnchorWidth)。掌寬是固定的
+            // (指根是手腕的子骨,local offset 不隨姿勢變),每幀重算兩個 magnitude 比記快取還簡單,也不怕錨點
+            // 還沒 pose 好 —— 量不到就留上一次的值。
+            if (overridden && matchAnchorWidth && hand != null && finger != null)
+            {
+                float anchorW = (finger.position - hand.position).magnitude, nowW = (tf.position - th.position).magnitude;
+                if (anchorW > 1e-4f && nowW > 1e-4f) _widthFix = anchorW / nowW;
+            }
+            Vector3 half = (f - h) * (widthMul * (overridden ? _widthFix : 1f));   // palm half-width vector (world); rotates with the hand
             _inner.Add(f - half); _outer.Add(f + half); _t.Add(now);
             while (_t.Count > 0 && now - _t[0] > life) { _t.RemoveAt(0); _inner.RemoveAt(0); _outer.RemoveAt(0); }   // expire by time window
             Rebuild(now);
