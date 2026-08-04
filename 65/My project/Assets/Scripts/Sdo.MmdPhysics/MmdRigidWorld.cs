@@ -261,13 +261,12 @@ namespace Sdo.MmdPhysics
         private void Substep()
         {
             int n = _pos.Length;
-            // 1) btRigidBody damping, then gravity (Bullet applies gravity as a force before solving)
+            // 1) btRigidBody damping. Gravity is NOT applied yet — see the ordering note at the solve below.
             for (int i = 0; i < n; i++)
             {
                 if (!_dynamic[i]) continue;
                 _vel[i] = _vel[i] * _linDampF[i];
                 _avel[i] = _avel[i] * _angDampF[i];
-                _vel[i] = _vel[i] + new V3(0, Gravity * Dt, 0);
             }
 
             // 2) per-body world inverse inertia + the joint frames/axes for this substep
@@ -376,7 +375,11 @@ namespace Sdo.MmdPhysics
                 ApplyImpulse(dv, dw, invIW, a, b, rAw[k], rBw[k], j0);
             }
 
-            // 3) Gauss-Seidel sweeps, colour by colour
+            // 3) ANGULAR sweeps — BEFORE gravity. This ordering is not cosmetic: MMD/three.js runs the 6-DOF angular
+            // solve against the velocities as they stand, and only then does Bullet's step add gravity and satisfy the
+            // point constraints. Solving the angles against a velocity that already contains this substep's gravity
+            // makes every joint fight a downward impulse the reference never saw, and the error compounds down a long
+            // chain (measured: the 30-bone twintail drifted while the 3-bone fringe looked fine).
             for (int it = 0; it < SolverIters; it++)
             {
                 foreach (var colour in _colors)
@@ -399,7 +402,26 @@ namespace Sdo.MmdPhysics
                             for (int c = 0; c < 3; c++) tau = tau + axes[k * 3 + c] * lam[c];
                             ApplyTorque(dw, invIW, a, b, tau);
                         }
+                    }
+                }
+            }
+            for (int i = 0; i < n; i++)
+            {
+                if (!_dynamic[i]) continue;
+                _avel[i] = ClampV(_avel[i] + dw[i], MaxW);
+                dw[i] = V3.Zero;
+                _vel[i] = _vel[i] + new V3(0, Gravity * Dt, 0);   // gravity, then the point/limit constraints below
+            }
 
+            // 4) LINEAR sweeps — the locked joints (Bullet solves those as point constraints inside its step, after
+            // gravity) and the authored linear play on the skirt's shear joints.
+            for (int it = 0; it < SolverIters; it++)
+            {
+                foreach (var colour in _colors)
+                {
+                    foreach (int k in colour)
+                    {
+                        int a = _ja[k], b = _jb[k];
                         var vA = (_vel[a] + dv[a]) + V3.Cross(_avel[a] + dw[a], rAw[k]);
                         var vB = (_vel[b] + dv[b]) + V3.Cross(_avel[b] + dw[b], rBw[k]);
                         var vrelBase = vB - vA;
@@ -421,7 +443,7 @@ namespace Sdo.MmdPhysics
                 }
             }
 
-            // 4) integrate
+            // 5) integrate
             for (int i = 0; i < n; i++)
             {
                 if (!_dynamic[i]) continue;

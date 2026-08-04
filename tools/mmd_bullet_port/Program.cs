@@ -25,6 +25,8 @@ static class Program
 
         string physPath = Path.Combine(toolDir, "ika_physics.json");
         string refPath = Path.Combine(repoTools, "mmd_cloth_validate", $"ref_{scenario}.json");
+        if (args.Length > 2 && args[2] == "nocol")
+            refPath = Path.Combine(repoTools, "mmd_cloth_validate", $"ref_{scenario}_nocol.json");
         if (!File.Exists(physPath)) { Console.Error.WriteLine($"missing {physPath} — run export_physics.py first"); return 2; }
         if (!File.Exists(refPath)) { Console.Error.WriteLine($"missing {refPath}"); return 2; }
 
@@ -41,6 +43,37 @@ static class Program
 
         // rest pose only for now: the kinematic bodies never move, which is what the "rest" scenario is
         world.DriveKinematic(null, 0.0);
+
+        // FRAME 0: nothing has been simulated yet, so any error here is a CONSTRUCTION error (body rest transform,
+        // bone offset, euler convention) — worth separating from anything the solver does.
+        {
+            double w0 = 0, s0 = 0; int c0 = 0;
+            foreach (var (name, idx) in chains)
+            {
+                if (!refChains.TryGetProperty(name, out var rc)) continue;
+                var rf = rc.GetProperty("frames")[0];
+                for (int b = 0; b < idx.Length && b < rf.GetArrayLength(); b++)
+                {
+                    var got = world.BonePositionOf(idx[b]);
+                    double e = Math.Sqrt(Math.Pow(got.X - rf[b][0].GetDouble(), 2)
+                                       + Math.Pow(got.Y - rf[b][1].GetDouble(), 2)
+                                       + Math.Pow(got.Z - rf[b][2].GetDouble(), 2));
+                    if (e > w0) w0 = e;
+                    s0 += e; c0++;
+                }
+            }
+            Console.WriteLine($"frame 0 (construction only): max {w0:F6}  mean {s0 / Math.Max(c0, 1):F6}");
+            Console.WriteLine();
+        }
+
+        // FIRST STEP: how far did each chain actually move in one frame, ours vs the reference?
+        var before = new Dictionary<string, V3[]>();
+        foreach (var (name, idx) in chains)
+        {
+            var arr = new V3[idx.Length];
+            for (int b = 0; b < idx.Length; b++) arr[b] = world.BonePositionOf(idx[b]);
+            before[name] = arr;
+        }
 
         var report = new List<(int frame, double maxErr, double meanErr)>();
         var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -67,6 +100,32 @@ static class Program
                 }
             }
             if (cnt > 0) report.Add((f, worst, sum / cnt));
+            if (f == 1)
+            {
+                Console.WriteLine("first frame — distance moved (ours vs reference):");
+                foreach (var (name, idx) in chains)
+                {
+                    if (!refChains.TryGetProperty(name, out var rc)) continue;
+                    var r0 = rc.GetProperty("frames")[0];
+                    var r1 = rc.GetProperty("frames")[1];
+                    double gotMax = 0, refMax = 0;
+                    int gotAt = 0, refAt = 0;
+                    for (int b = 0; b < idx.Length && b < r1.GetArrayLength(); b++)
+                    {
+                        var now = world.BonePositionOf(idx[b]);
+                        var was = before[name][b];
+                        double gm = Math.Sqrt(Math.Pow(now.X - was.X, 2) + Math.Pow(now.Y - was.Y, 2) + Math.Pow(now.Z - was.Z, 2));
+                        double rm = Math.Sqrt(Math.Pow(r1[b][0].GetDouble() - r0[b][0].GetDouble(), 2)
+                                            + Math.Pow(r1[b][1].GetDouble() - r0[b][1].GetDouble(), 2)
+                                            + Math.Pow(r1[b][2].GetDouble() - r0[b][2].GetDouble(), 2));
+                        if (gm > gotMax) { gotMax = gm; gotAt = b; }
+                        if (rm > refMax) { refMax = rm; refAt = b; }
+                    }
+                    Console.WriteLine($"   {name,-16} ours max {gotMax,8:F5} (bone {gotAt,2})   ref max {refMax,8:F5} (bone {refAt,2})   ratio {(refMax > 1e-9 ? gotMax / refMax : 0),6:F2}x");
+                }
+                Console.WriteLine($"   (one frame of free fall would be {0.5 * 98.0 / 3600.0:F5} u)");
+                Console.WriteLine();
+            }
             if (f == frames)
             {
                 Console.WriteLine("per-chain error at the last frame (model units):");
