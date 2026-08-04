@@ -55,13 +55,43 @@ namespace Sdo.Game
         public void Sample(float t, out string mot, out float frame) => Sample(t, out mot, out frame, out _);
 
         /// <summary>
+        /// True when row <paramref name="row"/> picks the SAME clip up where row <paramref name="prev"/> left it, so the
+        /// two slices are one continuous run of the motion and the pose needs no hand-off. The official rows write that
+        /// seam two ways and MIX them inside one file (12459 does both): 84% continue at EndF+1, 12% repeat EndF. Anything
+        /// else — a rewind (10027 wdance0101 192→83), a jump, another clip, a non-adjacent row — is a real cut.
+        /// </summary>
+        public bool SliceContinues(int prev, int row)
+        {
+            if (Rows == null || row != prev + 1 || prev < 0 || row >= Rows.Length) return false;
+            var a = Rows[prev]; var b = Rows[row];
+            if (!string.Equals(a.Mot, b.Mot, StringComparison.OrdinalIgnoreCase)) return false;
+            return b.StartF == a.EndF || b.StartF == a.EndF + 1;
+        }
+
+        /// <summary>
+        /// Frames row <paramref name="row"/> travels over its duration. A slice that runs on into the next one covers
+        /// exactly the gap to that row's FIRST frame, so the two frame ramps meet: at ratio 1 this row lands on
+        /// <c>Rows[row+1].StartF</c> whichever way the seam is written (EndF+1 → span EndF-StartF+1, repeated EndF →
+        /// span EndF-StartF). Sampling StartF..EndF instead would replay or skip a frame at every boundary — invisible
+        /// in a slow phrase, a hard jolt in a fast one (wdance0238's 432-536 backflip peaks at 39°/frame, and the
+        /// official choreographies cut it right down the middle: 15085 at 432, 10731 at 474, 12459 at 519).
+        /// A slice that does NOT continue keeps StartF..EndF: its last frame is the pose the crossfade hands off FROM.
+        /// </summary>
+        public float SliceSpan(int row)
+        {
+            if (Rows == null || row < 0 || row >= Rows.Length) return 0f;
+            var r = Rows[row];
+            return SliceContinues(row, row + 1) ? Rows[row + 1].StartF - r.StartF : r.EndF - r.StartF;
+        }
+
+        /// <summary>
         /// Active motion + interpolated frame at dance time t (seconds), plus the INDEX of the row supplying them.
-        /// Callers must crossfade the pose whenever <paramref name="row"/> changes, even when the .mot name did not:
-        /// the original engine restarts its blend on EVERY slice boundary (Dancer_AdvanceMotionStep always calls
-        /// MotionDriver_PlayClip, which snapshots the live pose and resets the blend weight to 1 — it never compares
-        /// clips). Consecutive slices of the SAME clip are usually frame-continuous (StartF == prev EndF + 1), but
-        /// ~1% of the official rows step BACKWARD there (10027 wdance0101 frame 192 → 83, 10410 wdance0351 227 → 0);
-        /// without the blend the dancer visibly rewinds a beat and jumps back in ("同一個 mot 切 row 突然回朔").
+        /// Callers must crossfade the pose whenever <paramref name="row"/> changes AND the new slice does not continue
+        /// the old one (<see cref="SliceContinues"/>): ~1% of the official rows step BACKWARD at the seam
+        /// (10027 wdance0101 frame 192 → 83, 10410 wdance0351 227 → 0), and without the blend the dancer visibly
+        /// rewinds a beat and jumps back in ("同一個 mot 切 row 突然回朔"). The other 96% run straight on through the
+        /// clip, where blending is pure damage: the 0.5 s hand-off freezes the pose the boundary was crossed on and
+        /// eases toward a clip that keeps moving, so a fast phrase stalls and then overshoots catching up.
         /// </summary>
         public void Sample(float t, out string mot, out float frame, out int row)
         {
@@ -74,7 +104,7 @@ namespace Sdo.Game
             var r = Rows[row];
             float ratio = r.Dur > 1e-6f ? (t - r.TStart) / r.Dur : 0f;
             mot = r.Mot;
-            frame = r.StartF + UnityEngine.Mathf.Clamp01(ratio) * (r.EndF - r.StartF);
+            frame = r.StartF + UnityEngine.Mathf.Clamp01(ratio) * SliceSpan(row);
         }
 
         private static bool IsName(byte b) => (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_';

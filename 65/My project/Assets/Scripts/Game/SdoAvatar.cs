@@ -546,16 +546,32 @@ namespace Sdo.Game
             => maxTime > 0f ? ((timeSec + phaseOffsetSec) * fps) % (maxTime + 1f) : 0f;
 
         /// <summary>True when the pose source changed between two frames: a different clip, a different choreography,
-        /// or a different DPS row of the same clip. The original engine blends on all three (it re-arms the blend on
-        /// every slice boundary without comparing clips) — see DpsLoader.Sample. Pure, unit-tested.</summary>
+        /// or a different DPS row of the same clip. Says nothing about whether the change needs a crossfade — a new row
+        /// that runs straight on through the same clip does not (see <see cref="SliceNeedsBlend"/>). Pure, unit-tested.</summary>
         public static bool PoseSourceChanged(object prevClip, object clip, object prevDps, object dps, int prevRow, int row)
             => !ReferenceEquals(prevClip, clip) || !ReferenceEquals(prevDps, dps) || prevRow != row;
 
-        // If the pose source (clip / choreography / DPS row) changed since last frame, snapshot the current displayed
-        // pose as the blend source and begin a crossfade. Unchanged -> continuous playback (no blend).
+        /// <summary>
+        /// True when a pose-source change has to be crossfaded. Every change does EXCEPT one: the next slice of the
+        /// same choreography picking the same clip up where the last one left it (DpsLoader.SliceContinues) — there the
+        /// frame ramp is already continuous, so blending only freezes the pose and then overshoots catching up. That
+        /// shows up as a stall mid-move in fast phrases (wdance0238's 432-536 backflip, which 15085 / 10731 / 12459 all
+        /// cut through the middle of). Pure, unit-tested.
+        /// </summary>
+        public static bool SliceNeedsBlend(object prevClip, object clip, DpsLoader prevDps, DpsLoader dps, int prevRow, int row)
+        {
+            if (!PoseSourceChanged(prevClip, clip, prevDps, dps, prevRow, row)) return false;
+            if (dps == null || !ReferenceEquals(prevDps, dps)) return true;      // entering/leaving a dance, or a new script
+            if (!ReferenceEquals(prevClip, clip)) return true;                    // a genuinely different clip
+            return !dps.SliceContinues(prevRow, row);
+        }
+
+        // If the pose source (clip / choreography / DPS row) changed since last frame in a way that needs a hand-off,
+        // snapshot the current displayed pose as the blend source and begin a crossfade. A slice that runs on through
+        // the same clip (or no change at all) -> continuous playback, no blend.
         private void MaybeStartBlend(DpsLoader dps, int dpsRow)
         {
-            bool switched = PoseSourceChanged(_lastMot, _mot, _lastDps, dps, _lastDpsRow, dpsRow);
+            bool switched = SliceNeedsBlend(_lastMot, _mot, _lastDps, dps, _lastDpsRow, dpsRow);
             _lastMot = _mot; _lastDps = dps; _lastDpsRow = dpsRow;
             if (!switched) return;
             if (_snapNextBlend) { _snapNextBlend = false; _blendStart = -1f; _blendNextSec = -1f; return; }   // hard cut requested -> no crossfade
@@ -595,7 +611,12 @@ namespace Sdo.Game
             {
                 blendW = (Time.time - _blendStart) / _blendDur;
                 if (blendW >= 1f) { _blendStart = -1f; blending = false; }     // crossfade finished
-                else blendW = blendW * blendW * (3f - 2f * blendW);           // smoothstep ease
+                // LINEAR, like the original (MotionDriver holds the outgoing pose's weight at clip+0xc and decays it by
+                // a hard-coded 0.002/ms, i.e. 1 → 0 over 500 ms in a straight line). A smoothstep ease reads better on a
+                // slow hand-off but its derivative is 0 at the start, so the first frames after a cut barely move: on the
+                // wdance0238 backflip (up to 1170°/s) that turned a boundary into a visible stall — 2°/s against the
+                // clip's own 160°/s — followed by an overshoot to 1.5× while the blend caught up.
+
             }
             for (int i = 0; i < bc; i++)
             {
