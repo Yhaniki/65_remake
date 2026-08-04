@@ -127,6 +127,7 @@ namespace Sdo.Settings
         public static float mmdGravity = 1f;        // 布料重力倍率
         public static float mmdStiffness = 0.12f;   // 布料硬度（低＝被重力拉直垂下）
         public static float mmdColliderScale = 1f;  // 身體碰撞體半徑倍率
+        public static float mmdScale = 1f;          // 模型大小倍率（1＝自動對齊 SDO 舞者身高）
         // 多人連線:把自己身上的模型上傳給 server,讓同房的人也看得到(1=分享,預設)。
         // 關掉 → 別人看到的是你的 SDO 穿搭(你自己畫面上仍然是 MMD)。
         // ⚠️ 網路上流通的 MMD 模型多半帶使用規約,有些明確禁止再配布 —— 這個開關就是為此存在的。
@@ -554,6 +555,7 @@ namespace Sdo.Settings
                     case "mmdGravity": mmdGravity = ParseFloat(val, mmdGravity); break;
                     case "mmdStiffness": mmdStiffness = ParseFloat(val, mmdStiffness); break;
                     case "mmdColliderScale": mmdColliderScale = ParseFloat(val, mmdColliderScale); break;
+                    case "mmdScale": mmdScale = ParseFloat(val, mmdScale); break;
                     case "mmdShareModel": mmdShareModel = ParseBool(val, mmdShareModel); break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
@@ -625,6 +627,7 @@ namespace Sdo.Settings
             mmdGravity = Mathf.Clamp(mmdGravity, 0.05f, 8f);                 // 0＝布料不落下；>8 抖到爆
             mmdStiffness = Mathf.Clamp(mmdStiffness, 0.03f, 0.9f);           // 0＝完全軟趴；1＝硬到跟骨頭一樣不動
             mmdColliderScale = Mathf.Clamp(mmdColliderScale, 0.2f, 4f);      // 太小＝裙子穿過腿；太大＝裙子被撐飛
+            mmdScale = Mathf.Clamp(mmdScale, 0.3f, 3f);                      // 模型大小（1＝自動對齊舞者身高）
             // 舊 [Profile] 區的搬遷暫存值：只去頭尾空白（前後空白會讓「留空＝沒設過」的判定失真）。
             legacyActiveId = ProfileDefaults.SanitizeActiveId(legacyActiveId);
             legacyFamilyName = (legacyFamilyName ?? "").Trim();
@@ -762,6 +765,7 @@ namespace Sdo.Settings
             sb.Append("mmdGravity=").Append(mmdGravity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("mmdStiffness=").Append(mmdStiffness.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("mmdColliderScale=").Append(mmdColliderScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("mmdScale=").Append(mmdScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 動作重定向（1=開，預設）：aim＝用「骨頭指向」對齊手腳（關＝改用 world-delta 對照模式，姿勢會歪，\n");
             sb.Append("# 只在比對哪邊對時才關）；rootMotion＝根骨的位移（關＝人原地跳，不前進）。\n");
             sb.Append("mmdAim=").Append(B(mmdAim)).Append('\n');

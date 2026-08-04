@@ -141,7 +141,11 @@ namespace Sdo.Game
                 feetY = bMin; hrcHeight = bMax - bMin;
             }
             hrcHeight = Mathf.Max(hrcHeight, 1e-2f);
-            _unitScale = hrcHeight / mmdHeight;
+            // Models ship at wildly different sizes, so the base scale ALIGNS the model's height to this dancer's;
+            // config.ini's mmdScale (設定面板「模型大小」) then multiplies that when a particular model still reads as
+            // too big or too small. Everything downstream is derived from _unitScale (cloth gravity, particle radius,
+            // speed limits), so the physics follows the chosen size instead of being tuned for the automatic one.
+            _unitScale = hrcHeight / mmdHeight * Mathf.Clamp(Sdo.Settings.RoomConfig.mmdScale, 0.3f, 3f);
 
             // ---- bone hierarchy (rest) ----
             _bone = new Transform[bc]; _parent = new int[bc];

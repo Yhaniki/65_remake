@@ -278,7 +278,11 @@ namespace Sdo.Game
         //   ⇒ m = (1 − (1−d)^(1/150)) / 0.6.   e.g. d=0.2 → m=0.0025, d=1.0(capped) → m=0.043 ≈ Magica's stock range.
         public static float BulletToMagicaDamping(float bulletDamp, float freq = 150f)
         {
-            const float power = 0.6f;   // solver z-power = 90/150
+            // MC2 applies `velocity *= 1 - damping * simulationPower.z`, and TimeManager sets
+            // z = t (t = 90/freq) while t <= 1, t^0.3 above — derived here rather than hard-coded so raising the
+            // solver rate does not silently change how hard every model's cloth is damped.
+            float t = 90f / Mathf.Max(freq, 1f);
+            float power = t > 1f ? Mathf.Pow(t, 0.3f) : t;
             float retainPerSec = Mathf.Clamp(1f - bulletDamp, 0.02f, 1f);
             return Mathf.Clamp((1f - Mathf.Pow(retainPerSec, 1f / Mathf.Max(freq, 1f))) / power, 0f, 0.2f);
         }
@@ -289,9 +293,11 @@ namespace Sdo.Game
         /// clamps that to 1 = the angular velocity is gone within the second) — reading only the linear term made them
         /// the least damped thing on the model, which measured as "never settles" and a 3.5× over-strong spin fling
         /// against the reference sim. The rotation of a bone in a chain is not free, though (its neighbours constrain
-        /// it), so angular damping is worth roughly HALF a linear one, and it only matters where it EXCEEDS what the
-        /// linear term already removes — this leaves the skirt/tie/fringe (authored linear 0.5…0.999) untouched.</summary>
-        public static float EffectiveDamping(float linearDamp, float angularDamp, float angularWeight = 0.5f)
+        /// it), but it is taken at FULL weight: authoring 2.0 is how MMD says "settle quickly", and at half weight the
+        /// twintails kept ringing — reference settles them in 1.9 s, the probe measured "never", and on screen that is
+        /// springy bouncing. It only matters where it EXCEEDS what the linear term already removes, which leaves the
+        /// skirt/tie/fringe (authored linear 0.5…0.999) untouched.</summary>
+        public static float EffectiveDamping(float linearDamp, float angularDamp, float angularWeight = 1f)
             => Mathf.Max(Mathf.Clamp01(linearDamp), Mathf.Clamp01(angularDamp) * angularWeight);
 
         /// <summary>The authored data → the Magica knobs. Unchanged formulas from the per-part converter; what changed

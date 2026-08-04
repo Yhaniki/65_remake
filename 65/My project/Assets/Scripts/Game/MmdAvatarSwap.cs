@@ -281,7 +281,7 @@ namespace Sdo.Game
         {
             public bool On, Toon, Outline, Sphere, Physics, Aim, RootMove, FlipV;
             public string Model;
-            public float Grav, Stiff, Col;
+            public float Grav, Stiff, Col, Scale;
         }
         private Snap _applied;
 
@@ -292,6 +292,7 @@ namespace Sdo.Game
             Physics = RoomConfig.mmdPhysics, Aim = RoomConfig.mmdAim, RootMove = RoomConfig.mmdRootMotion,
             FlipV = RoomConfig.mmdFlipV,
             Grav = RoomConfig.mmdGravity, Stiff = RoomConfig.mmdStiffness, Col = RoomConfig.mmdColliderScale,
+            Scale = RoomConfig.mmdScale,
         };
 
         private void Update()
@@ -304,6 +305,13 @@ namespace Sdo.Game
                 _applied = now;
                 Rescan(now.Model);
                 Log($"[mmd] model → {(Sel != null ? $"'{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})" : "(找不到 '" + now.Model + "')")}");
+                RebuildAll(localOnly: true);
+            }
+            else if (!Mathf.Approximately(now.Scale, _applied.Scale))
+            {
+                // 模型大小是「建的時候」決定的(骨架縮放 + 布料的重力/粒子半徑/速度上限全從它推),所以跟換模型一樣要重建。
+                _applied = now;
+                Log($"[mmd] scale → {now.Scale:F2}×");
                 RebuildAll(localOnly: true);
             }
             else if (!SameLooks(now, _applied)) { _applied = now; ApplyOpts(); }

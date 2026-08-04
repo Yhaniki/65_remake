@@ -459,6 +459,13 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
+                Key = "mmdScale", Category = CatMmd, Label = "模型大小", Kind = ConfigFieldKind.Slider,
+                Min = 0.3f, Max = 3f, Unit = "×",
+                Help = "1＝自動把模型縮放到跟 SDO 舞者一樣高（每個模型的原始尺寸差很多，所以預設是自動對齊）。覺得這個模型看起來偏大/偏小就在這裡乘上去。",
+                Get = () => Num(RoomConfig.mmdScale), Set = v => RoomConfig.mmdScale = ParseFloat(v, RoomConfig.mmdScale),
+            });
+            f.Add(new ConfigField
+            {
                 Key = "mmdToon", Category = CatMmd, Label = "卡通著色", Kind = ConfigFieldKind.Toggle,
                 Help = "MMD 的 toon ramp（明暗只分兩段的卡通上色）。關＝一般平光。",
                 Get = () => B(RoomConfig.mmdToon), Set = v => RoomConfig.mmdToon = ParseBool(v),
