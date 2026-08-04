@@ -23,7 +23,7 @@
         /// client 讓它明確地連不上，遠比讓它半殘地跑然後在某個角落出怪事好。
         /// 純粹新增「可省略的」欄位不需要 +1(收端讀不到就用預設值)。
         /// </summary>
-        public const int Version = 1;
+        public const int Version = 2;
 
         // ---- 通用欄位名(常數化，避免打錯字) ----
 
@@ -189,6 +189,19 @@
 
         // ---- 缺歌上報與傳檔 ----
 
+        /// <summary>
+        /// blob 是哪一種東西。**它決定 server 收檔時套哪一張白名單**(<c>SongPackFilter</c> /
+        /// <c>ModelPackFilter</c>)—— 兩張表幾乎不重疊,聯集起來白名單制就沒有意義了
+        /// (歌曲資料夾可以挾帶 .pmx、模型資料夾可以挾帶 mp3)。
+        ///
+        /// 欄位省略 = <see cref="BlobKindSong"/>。倉庫本身是內容尋址的、兩種共用,
+        /// 但每個 pack 記著自己的 kind,拿錯 kind 來上傳同一個 packId 會被拒絕。
+        /// </summary>
+        public const string FieldBlobKind = "kind";
+        public const string BlobKindSong = "song";
+        /// <summary>MMD 模型包(一個 .pmx 加它的貼圖)。見 <c>ModelPackId</c>。</summary>
+        public const string BlobKindModel = "model";
+
         public const string SetAvailability = "setAvailability";
         public const string BlobQuery = "blobQuery";
         public const string BlobInfo = "blobInfo";
@@ -319,6 +332,8 @@
         public const string BlobErrBadPath = "badPath";
         public const string BlobErrHashMismatch = "hashMismatch";
         public const string BlobErrQuota = "quota";
+        /// <summary>這個 packId 在 server 上已經是另一種 kind 了(歌卻宣稱是模型,或反過來)。</summary>
+        public const string BlobErrKindMismatch = "kindMismatch";
 
         /// <summary>傳輸停滯太久,server 這一側先放棄了(見 <c>NetLimits.BlobStallTimeoutServerMs</c>)。</summary>
         public const string BlobErrStalled = "stalled";

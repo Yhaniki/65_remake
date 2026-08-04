@@ -25,6 +25,7 @@ namespace Sdo.Server.Net
             public int UserId;
             public int RoomCode;
             public string PackId;
+            public string Kind;                  // song / model —— 決定收檔時套哪張白名單
             public List<PackFileEntry> Files;    // 完整清單(已驗過)
             public List<int> Need;               // 還缺的檔案 index,依序收
             public int Cursor;                   // Need 裡的位置
@@ -75,7 +76,7 @@ namespace Sdo.Server.Net
         /// </summary>
         private const int DownloadHighWater = 24;
 
-        // ================= blobQuery:server 有沒有這首歌 =================
+        // ================= blobQuery:server 有沒有這個包(歌 / MMD 模型) =================
 
         private void OnBlobQuery(Connection conn, object node, int rq, long now)
         {
@@ -100,15 +101,54 @@ namespace Sdo.Server.Net
             string packId = NetJson.Str(node, "packId");
             if (!SongPackId.IsWellFormed(packId)) { SendBlobError(conn, rq, NetProto.BlobErrBadPath, "packId 格式不對"); return; }
 
-            // 只能上傳「自己房間現在選的那首歌」。
-            // 不是為了規則好看 —— 少了這條,任何連上來的人都能把 server 當免費檔案空間用。
+            string kind = NetJson.Str(node, NetProto.FieldBlobKind);
+            if (string.IsNullOrEmpty(kind)) kind = NetProto.BlobKindSong;   // 欄位省略 = 歌(舊 client)
+            bool isModel = string.Equals(kind, NetProto.BlobKindModel, StringComparison.Ordinal);
+            if (!isModel && !string.Equals(kind, NetProto.BlobKindSong, StringComparison.Ordinal))
+            {
+                SendBlobError(conn, rq, NetProto.BlobErrBadPath, "不認得的 kind:" + kind);
+                return;
+            }
+
+            // 🔴 同一個 packId 不能改換 kind 再傳一次 —— 否則可以拿「模型」的白名單把內容塞進一個
+            // 已經被當成歌的包裡(或反過來),兩張白名單分開的意義就沒了。
+            if (_blobs.HasPack(packId))
+            {
+                var existing = _blobs.LoadPack(packId);
+                if (existing != null && !SameKind(existing.Kind, kind))
+                {
+                    SendBlobError(conn, rq, NetProto.BlobErrKindMismatch, "這個 packId 在 server 上是另一種東西");
+                    return;
+                }
+            }
+
+            // **上傳資格**:少了這條,任何連上來的人都能把 server 當免費檔案空間用。
+            //   • 歌:只能上傳「自己房間現在選的那首歌」。
+            //   • 模型:只能上傳「自己現在穿在身上的那一個」(= 自己 setLook 宣告的 MmdPack)。
+            //     這是同一個原則的另一半 —— 你只能上傳「房間裡的人正需要向你要的那份東西」。
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null) { SendBlobError(conn, rq, NetProto.ErrNotInRoom, "不在房間裡"); return; }
-            var song = room.State != null ? room.State.Song : null;
-            if (song == null || song.Official || !string.Equals(song.PackId, packId, StringComparison.Ordinal))
+            if (isModel)
             {
-                SendBlobError(conn, rq, NetProto.ErrBadState, "這不是房間現在選的那首歌");
-                return;
+                // 🔴 look 在 **control** 連線上,不在這條 file 連線上(setLook 是主連線送的)。
+                // 直接讀 conn.Look 的話永遠是 null,結果是「模型永遠上傳不了」而錯誤訊息
+                // 卻說「這不是你身上穿的那個模型」—— 指向完全無關的地方。
+                var owner = ControlOf(conn.UserId);
+                string wearing = owner != null && owner.Look != null ? owner.Look.MmdPack : null;
+                if (string.IsNullOrEmpty(wearing) || !string.Equals(wearing, packId, StringComparison.Ordinal))
+                {
+                    SendBlobError(conn, rq, NetProto.ErrBadState, "這不是你身上穿的那個模型");
+                    return;
+                }
+            }
+            else
+            {
+                var song = room.State != null ? room.State.Song : null;
+                if (song == null || song.Official || !string.Equals(song.PackId, packId, StringComparison.Ordinal))
+                {
+                    SendBlobError(conn, rq, NetProto.ErrBadState, "這不是房間現在選的那首歌");
+                    return;
+                }
             }
 
             // ---- 清單驗證(逐項,壞一項就整批退) ----
@@ -131,7 +171,9 @@ namespace Sdo.Server.Net
 
                 if (!SafeRelPath.IsSafe(rel)) { SendBlobError(conn, rq, NetProto.BlobErrBadPath, "路徑不安全:" + rel); return; }
                 if (!seen.Add(rel)) { SendBlobError(conn, rq, NetProto.BlobErrBadPath, "同一個路徑出現兩次:" + rel); return; }
-                if (len < 0 || !SongPackFilter.IsTransferable(rel, len))
+                bool ok = len >= 0 && (isModel ? ModelPackFilter.IsTransferable(rel, len)
+                                               : SongPackFilter.IsTransferable(rel, len));
+                if (!ok)
                 {
                     SendBlobError(conn, rq, NetProto.BlobErrBadPath, "這個檔不該傳:" + rel);
                     return;
@@ -142,14 +184,27 @@ namespace Sdo.Server.Net
                 total += len;
             }
 
-            if (total > NetLimits.DefaultMaxBlobBytes)
+            long packCap = isModel ? ModelPackId.MaxPackBytes : NetLimits.DefaultMaxBlobBytes;
+            if (total > packCap)
             {
                 SendBlobError(conn, rq, NetProto.BlobErrTooBig, "整包太大:" + (total / (1024 * 1024)) + " MB");
                 return;
             }
 
+            // 模型還要有本體 —— 一包沒有 .pmx 的貼圖收下來對任何人都沒有用途。
+            if (isModel)
+            {
+                string why;
+                if (!ModelPackId.IsValidPack(files, out why))
+                {
+                    SendBlobError(conn, rq, NetProto.BlobErrBadPath, "不是合法的模型包:" + why);
+                    return;
+                }
+            }
+
             // 🔴 重算 packId。對不上 → 上傳者宣稱的身分與內容不符,整批不收。
-            string recomputed = SongPackId.Compute(files);
+            // 兩種 kind 的算法不同(歌只 hash 譜面、模型每個檔都 hash),要用對的那一套。
+            string recomputed = isModel ? ModelPackId.Compute(files) : SongPackId.Compute(files);
             if (!string.Equals(recomputed, packId, StringComparison.Ordinal))
             {
                 SendBlobError(conn, rq, NetProto.BlobErrHashMismatch, "重算的 packId 與宣稱的不符");
@@ -193,6 +248,7 @@ namespace Sdo.Server.Net
                 UserId = conn.UserId,
                 RoomCode = room.State.Code,
                 PackId = packId,
+                Kind = kind,
                 Files = files,
                 Need = need,
                 TotalNeedBytes = needBytes,
@@ -384,7 +440,7 @@ namespace Sdo.Server.Net
                 return;
             }
 
-            var pack = new BlobPack { PackId = sess.PackId, LastUsedUtcMs = now };
+            var pack = new BlobPack { PackId = sess.PackId, Kind = sess.Kind, LastUsedUtcMs = now };
             pack.Files.AddRange(sess.Files);
             if (!_blobs.SavePack(pack))
             {
@@ -432,6 +488,14 @@ namespace Sdo.Server.Net
             if (sess.CurStream == null) return;
             try { sess.CurStream.Dispose(); } catch { }
             sess.CurStream = null;
+        }
+
+        /// <summary>兩個 kind 字串是同一種嗎?空字串 = song(這個功能出現之前存下來的包都沒有這個欄位)。</summary>
+        private static bool SameKind(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a)) a = NetProto.BlobKindSong;
+            if (string.IsNullOrEmpty(b)) b = NetProto.BlobKindSong;
+            return string.Equals(a, b, StringComparison.Ordinal);
         }
 
         // ================= 下載 =================

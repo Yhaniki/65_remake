@@ -10,11 +10,21 @@ using Sdo.Osu;
 
 namespace Sdo.Server.Files
 {
-    /// <summary>一個歌曲包的完整紀錄(<c>packs/&lt;hex&gt;.json</c> 的內容)。</summary>
+    /// <summary>一個內容包的完整紀錄(<c>packs/&lt;hex&gt;.json</c> 的內容)。歌曲或 MMD 模型,見 <see cref="Kind"/>。</summary>
     public sealed class BlobPack
     {
         public string PackId;
         public long LastUsedUtcMs;
+
+        /// <summary>
+        /// <c>NetProto.BlobKindSong</c> 或 <c>BlobKindModel</c>。倉庫本身是內容尋址的、兩種共用,
+        /// 但**收檔時要套的白名單不同**,所以每個包記著自己是哪一種:同一個 packId 用另一種 kind
+        /// 再上傳一次會被拒(<c>BlobErrKindMismatch</c>)。
+        ///
+        /// 舊檔沒有這個欄位 → 讀回來是空字串,一律當成 song(這個功能出現之前所有的包都是歌)。
+        /// </summary>
+        public string Kind = "";
+
         public List<PackFileEntry> Files = new List<PackFileEntry>();
 
         public long TotalBytes
@@ -223,6 +233,7 @@ namespace Sdo.Server.Files
             {
                 PackId = NetJson.Str(node, "packId", packId),
                 LastUsedUtcMs = NetJson.Long(node, "lastUsedUtcMs"),
+                Kind = NetJson.Str(node, "kind", ""),   // 舊檔沒有 → 空 = song(見 BlobPack.Kind)
             };
             var arr = NetJson.Arr(node, "files");
             for (int i = 0; i < arr.Count; i++)
@@ -250,6 +261,7 @@ namespace Sdo.Server.Files
             }
             var json = JObj.New()
                 .Str("packId", pack.PackId)
+                .Str("kind", pack.Kind ?? "")
                 .Long("lastUsedUtcMs", pack.LastUsedUtcMs)
                 .Long("sizeTotal", pack.TotalBytes)
                 .Put("files", files)

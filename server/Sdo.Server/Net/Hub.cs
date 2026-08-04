@@ -448,6 +448,14 @@ namespace Sdo.Server.Net
                 var song = room.State != null ? room.State.Song : null;
                 if (song != null && !song.Official && !string.IsNullOrEmpty(song.PackId)) set.Add(song.PackId);
             }
+            // 有人現在正穿在身上的 MMD 模型也要 pin 住 —— 理由與歌完全一樣:同房的人可能還在下載它,
+            // 而 TTL 到期就把來源刪掉的話,那個人會永遠停在「看到 SDO 穿搭」而且每次重試都失敗。
+            // (穿的人下線之後就不再 pin,照 TTL 自然過期;他下次進房會重新上傳,那是零上傳的去重路徑。)
+            foreach (var kv in _conns)
+            {
+                var look = kv.Value != null ? kv.Value.Look : null;
+                if (look != null && !string.IsNullOrEmpty(look.MmdPack)) set.Add(look.MmdPack);
+            }
             return set;
         }
 
