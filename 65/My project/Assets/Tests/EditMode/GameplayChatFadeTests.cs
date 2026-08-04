@@ -3,7 +3,7 @@ using Sdo.Game;
 
 namespace Sdo.Tests
 {
-    /// <summary>遊戲中聊天文字的自動隱藏:預設不顯示 → 有人講話就全出來 → 10 秒沒人說話淡掉。</summary>
+    /// <summary>遊戲中聊天文字的自動隱藏:預設不顯示 → 有人講話就全出來 → 10 秒沒人說話直接消失(不淡出)。</summary>
     public class GameplayChatFadeTests
     {
         [Test]
@@ -23,12 +23,12 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void Fades_Out_After_Ten_Idle_Seconds()
+        public void Disappears_Instantly_After_Ten_Idle_Seconds()
         {
             const double t0 = 100.0;
-            float half = GameplayChatFade.TextAlpha(false, t0, t0 + GameplayChatFade.IdleHideSec + GameplayChatFade.FadeSec * 0.5f);
-            Assert.That(half, Is.GreaterThan(0f).And.LessThan(1f));
-            Assert.AreEqual(0f, GameplayChatFade.TextAlpha(false, t0, t0 + GameplayChatFade.IdleHideSec + GameplayChatFade.FadeSec));
+            // 不淡出:過了第 10 秒的下一刻就是 0,中間不存在半透明。
+            Assert.AreEqual(0f, GameplayChatFade.TextAlpha(false, t0, t0 + GameplayChatFade.IdleHideSec + 0.001));
+            Assert.AreEqual(0f, GameplayChatFade.TextAlpha(false, t0, t0 + GameplayChatFade.IdleHideSec + 0.2));
             Assert.AreEqual(0f, GameplayChatFade.TextAlpha(false, t0, t0 + 60.0));
         }
 
