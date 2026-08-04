@@ -111,6 +111,23 @@ namespace Sdo.Settings
         public static float comboTextPop = 2f;
         public static float judgeTextPop = 2f;
 
+        // ---- MMD 模型顯示（[Mmd] 區）：把場上每一隻角色（跳舞的、房間走路的、以及三個各自渲一張 RT 的頭貼/預覽）
+        //      的身體換成一個 MMD .pmx 模型。SDO 的 SdoAvatar 仍然活著當「動作驅動器」，所以跳的還是同一套 MOT/DPS，
+        //      只是畫出來的身體換人。整組設定由 Sdo.Game 的 MmdAvatarSwap 每幀比對這裡的值套用（改了立刻看得到），
+        //      UI 在開場設定面板的「MMD」分頁。以前這些值只活在一個 IMGUI 除錯面板裡、關掉遊戲就沒了。----
+        public static bool mmdEnabled = false;      // 總開關：0=用 SDO 原角色(預設) 1=用 MMD 模型
+        public static string mmdModel = "";         // 用哪個模型（DATA/MODEL/<資料夾名>）。空＝掃到的第一個
+        public static bool mmdToon = true;          // 卡通著色（toon ramp）
+        public static bool mmdOutline = true;       // 描邊（pencil edge）
+        public static bool mmdSphere = true;        // sphere 反光貼圖
+        public static bool mmdPhysics = true;       // 頭髮/裙擺布料模擬
+        public static bool mmdAim = true;           // aim 重定向（手腳姿勢；關＝改用 world-delta 對照模式）
+        public static bool mmdRootMotion = true;    // 根骨位移（走路時整個人前進）
+        public static bool mmdFlipV = true;         // 貼圖 V 翻轉（PMX 的 UV 是 V 向下；某些模型的貼圖要關掉才對）
+        public static float mmdGravity = 1f;        // 布料重力倍率
+        public static float mmdStiffness = 0.12f;   // 布料硬度（低＝被重力拉直垂下）
+        public static float mmdColliderScale = 1f;  // 身體碰撞體半徑倍率
+
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
         //      OPTION 按保存時再抓回來寫檔（CaptureOptionFrom + Save）。見 OptionDlgModal.Apply / SettingsBootstrap。----
@@ -520,6 +537,19 @@ namespace Sdo.Settings
                     case "judgeTextAlpha": judgeTextAlpha = ParseFloat(val, judgeTextAlpha); hasTextAlphaKeys = true; break;
                     case "comboTextPop": comboTextPop = ParseFloat(val, comboTextPop); hasTextPopKeys = true; break;
                     case "judgeTextPop": judgeTextPop = ParseFloat(val, judgeTextPop); hasTextPopKeys = true; break;
+                    // [Mmd]
+                    case "mmdEnabled": mmdEnabled = ParseBool(val, mmdEnabled); break;
+                    case "mmdModel": mmdModel = val; break;
+                    case "mmdToon": mmdToon = ParseBool(val, mmdToon); break;
+                    case "mmdOutline": mmdOutline = ParseBool(val, mmdOutline); break;
+                    case "mmdSphere": mmdSphere = ParseBool(val, mmdSphere); break;
+                    case "mmdPhysics": mmdPhysics = ParseBool(val, mmdPhysics); break;
+                    case "mmdAim": mmdAim = ParseBool(val, mmdAim); break;
+                    case "mmdRootMotion": mmdRootMotion = ParseBool(val, mmdRootMotion); break;
+                    case "mmdFlipV": mmdFlipV = ParseBool(val, mmdFlipV); break;
+                    case "mmdGravity": mmdGravity = ParseFloat(val, mmdGravity); break;
+                    case "mmdStiffness": mmdStiffness = ParseFloat(val, mmdStiffness); break;
+                    case "mmdColliderScale": mmdColliderScale = ParseFloat(val, mmdColliderScale); break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -585,6 +615,11 @@ namespace Sdo.Settings
             judgeTextPop = Mathf.Clamp(judgeTextPop, 1f, 4f);
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
+            // [Mmd]：範圍與開場設定面板的滑桿一致（面板一開就把值夾進滑桿範圍，兩邊不同會被夾掉玩家的設定）。
+            mmdModel = (mmdModel ?? "").Trim();                              // 空＝掃到的第一個模型
+            mmdGravity = Mathf.Clamp(mmdGravity, 0.05f, 8f);                 // 0＝布料不落下；>8 抖到爆
+            mmdStiffness = Mathf.Clamp(mmdStiffness, 0.03f, 0.9f);           // 0＝完全軟趴；1＝硬到跟骨頭一樣不動
+            mmdColliderScale = Mathf.Clamp(mmdColliderScale, 0.2f, 4f);      // 太小＝裙子穿過腿；太大＝裙子被撐飛
             // 舊 [Profile] 區的搬遷暫存值：只去頭尾空白（前後空白會讓「留空＝沒設過」的判定失真）。
             legacyActiveId = ProfileDefaults.SanitizeActiveId(legacyActiveId);
             legacyFamilyName = (legacyFamilyName ?? "").Trim();
@@ -702,6 +737,32 @@ namespace Sdo.Settings
             sb.Append("# 1.0＝完全不彈跳，範圍 1.0~4.0）。收回速度是官方寫死的，這裡只調幅度。\n");
             sb.Append("comboTextPop=").Append(comboTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("judgeTextPop=").Append(judgeTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+
+            // MMD 模型顯示。設定入口在開場設定面板的「MMD」分頁；改了不用重開，MmdAvatarSwap 每幀比對這些值。
+            sb.Append('\n').Append("[Mmd]\n");
+            sb.Append("# 把場上角色的身體換成 MMD 模型（.pmx）。動作仍由 SDO 的骨架驅動 → 跳的是同一套舞。\n");
+            sb.Append("# 模型放 DATA/MODEL/<名稱>/*.pmx（開發樹：assets/MODEL/）；一個資料夾＝一個模型。\n");
+            sb.Append("# 1=用 MMD 模型 0=用 SDO 原角色（預設）。\n");
+            sb.Append("mmdEnabled=").Append(B(mmdEnabled)).Append('\n');
+            sb.Append("# 用哪個模型（＝ DATA/MODEL 底下的資料夾名）。留空＝掃到的第一個。\n");
+            sb.Append("mmdModel=").Append(mmdModel ?? "").Append('\n');
+            sb.Append("# 著色（1=開 0=關）：卡通著色 / 描邊 / sphere 反光。\n");
+            sb.Append("mmdToon=").Append(B(mmdToon)).Append('\n');
+            sb.Append("mmdOutline=").Append(B(mmdOutline)).Append('\n');
+            sb.Append("mmdSphere=").Append(B(mmdSphere)).Append('\n');
+            sb.Append("# 頭髮/裙擺的布料模擬總開關（1=開）。關掉最省效能：布料求解是建一隻 MMD 角色最貴的一段。\n");
+            sb.Append("mmdPhysics=").Append(B(mmdPhysics)).Append('\n');
+            sb.Append("# 布料手感：重力倍率 0.05~8、硬度 0.03~0.9（低＝被重力拉直垂下）、身體碰撞體半徑倍率 0.2~4\n");
+            sb.Append("#（半徑太小裙子會穿過腿，太大會被撐飛）。模型資料夾裡若有 physics.ini，那份先套，這三個再乘上去。\n");
+            sb.Append("mmdGravity=").Append(mmdGravity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("mmdStiffness=").Append(mmdStiffness.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("mmdColliderScale=").Append(mmdColliderScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 動作重定向（1=開，預設）：aim＝用「骨頭指向」對齊手腳（關＝改用 world-delta 對照模式，姿勢會歪，\n");
+            sb.Append("# 只在比對哪邊對時才關）；rootMotion＝根骨的位移（關＝人原地跳，不前進）。\n");
+            sb.Append("mmdAim=").Append(B(mmdAim)).Append('\n');
+            sb.Append("mmdRootMotion=").Append(B(mmdRootMotion)).Append('\n');
+            sb.Append("# 貼圖 V 翻轉（1=開，預設）：PMX 的 UV 是 V 向下，Unity 要翻。某些模型的貼圖（領帶之類）要關掉才對。\n");
+            sb.Append("mmdFlipV=").Append(B(mmdFlipV)).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");

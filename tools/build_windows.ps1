@@ -179,6 +179,17 @@ if ($code -eq 0 -and -not $SkipData) {
         if (Test-Path $profileXd) {
             & robocopy $profileXd (Join-Path $dataOut 'PROFILE') /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
         }
+        # MMD 模型:clean 包裡沒有(它是「官方資產整理過的那一份」),但打包版要能跑 MMD 顯示就一定要有
+        # DATA\MODEL。package_build.ps1 有做這件事,可是這條路徑刻意跳過它(SDO_SKIP_PACKAGE=1),所以這裡自己補。
+        # 原始 assets 只有主 worktree 有 —— 沒有就安靜跳過(其它 worktree 出的 exe 本來就沒模型可放)。
+        $mmdSrc = Join-Path $Repo 'assets\MODEL'
+        if (Test-Path $mmdSrc) {
+            $mmdOut = Join-Path $dataOut 'MODEL'
+            & robocopy $mmdSrc $mmdOut /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+            if ($LASTEXITCODE -ge 8) { Write-Host "[build] WARNING: MODEL robocopy exit=$LASTEXITCODE" -ForegroundColor Yellow }
+            $n = (Get-ChildItem -LiteralPath $mmdOut -Directory -ErrorAction SilentlyContinue | Measure-Object).Count
+            Write-Host "[build] MMD models: $mmdSrc -> $mmdOut ($n 個)"
+        }
         Write-Host "[build] DATA ready: $dataOut"
     }
 }

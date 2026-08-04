@@ -21,13 +21,23 @@ namespace Sdo.Tests
     ///   walk = 1.5 s + whole model +Z at 1.2 m/s for 2 s + 2 s hold | spin = 1.5 s + 360° about +Y over 1 s + 2 s hold.
     /// Records world positions of 4 representative chains (twintail / bang / tie / skirt panel, identified by dynamic
     /// rigid-body name prefix) + the head anchor pose per frame, into
-    /// H:/65_remake-mmd/tools/mmd_cloth_validate/magica_&lt;scenario&gt;.json.
+    /// &lt;repo&gt;/tools/mmd_cloth_validate/magica_&lt;scenario&gt;.json.
     /// Run: -runTests -testPlatform PlayMode -testFilter Sdo.Tests.MmdClothProbe
     /// </summary>
     public class MmdClothProbe
     {
-        private const string PmxDir = "H:/65_remake/assets/IkaHatunemiku2025";
-        private const string OutDir = "H:/65_remake-mmd/tools/mmd_cloth_validate";
+        // Paths are DERIVED, never hardcoded to a worktree: this harness was written in the feat/mmd-avatar worktree and
+        // its absolute "H:/65_remake-mmd/..." constants stopped resolving the moment the branch merged. The model comes
+        // from the same catalogue the game uses (MmdAvatarSwap.ModelRoots), and the output lands in THIS checkout's
+        // tools/mmd_cloth_validate/ — which is where compare.py reads it from.
+        private static string OutDir
+        {
+            get
+            {
+                string repo = Directory.GetParent(Application.dataPath)?.Parent?.Parent?.FullName;   // Assets → project → 65 → repo
+                return Path.Combine(repo ?? ".", "tools", "mmd_cloth_validate");
+            }
+        }
         private const float UnitScale = 3.0f;    // same uniform root scale MmdAvatar applies in-game (approx.)
         private const int Fps = 60;
 
@@ -58,8 +68,13 @@ namespace Sdo.Tests
             LogAssert.ignoreFailingMessages = true;   // front-end auto-boot noise must not fail the probe
 
             // ---- parse the PMX (prefer the -JP file, matching the game's ResolveMikuPmx) ----
-            string pmxPath = FindPmx();
-            Assert.IsNotNull(pmxPath, "no .pmx under " + PmxDir);
+            string pmxPath = MmdAvatarSwap.ModelPath;
+            if (string.IsNullOrEmpty(pmxPath))
+            {
+                // Not a failure: this harness needs an actual model installed, exactly like the other MMD PlayMode
+                // tests. Ignore keeps a checkout without one green instead of permanently red.
+                Assert.Ignore("MMD model not installed (DATA/MODEL/… or assets/MODEL/…)");
+            }
             var pmx = PmxLoader.Load(File.ReadAllBytes(pmxPath));
             Assert.IsNotNull(pmx, "PmxLoader.Load failed for " + pmxPath);
 
@@ -230,19 +245,6 @@ namespace Sdo.Tests
             Add("Tie", tie);
             Add("Dress_5", skirt);
             return outl;
-        }
-
-        private static string FindPmx()
-        {
-            if (!Directory.Exists(PmxDir)) return null;
-            string best = null;
-            foreach (var f in Directory.GetFiles(PmxDir))
-            {
-                if (Path.GetExtension(f).ToLowerInvariant() != ".pmx") continue;
-                if (f.ToUpperInvariant().Contains("-JP")) return f;
-                if (best == null) best = f;
-            }
-            return best;
         }
 
         private static int FindBone(PmxLoader pmx, string nameJp)

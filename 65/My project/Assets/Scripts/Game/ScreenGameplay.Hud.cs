@@ -328,9 +328,9 @@ namespace Sdo.Game
             av.PoseInitialIdle();
             SetLayerRecursive(parent, headPortraitLayer);
             _headAvatar = av;
-            // F7 swaps the 結算頭貼 to the MMD model too (framing: TryHeadBoundsRest below). No cloth sim — same reason as
+            // MMD 顯示模式下結算頭貼也換成 MMD 模型 (framing: TryHeadBoundsRest below). No cloth sim — same reason as
             // the room 頭貼: invisible at portrait size, and it is the most expensive part of building a rig.
-            MmdDebug.RegisterSwappable(av, cloth: false);
+            MmdAvatarSwap.Register(av, cloth: false);
             // cache the head bone's REST (bind) model-space position — the cam targets this (NOT the live animated bone),
             // so the camera stays FIXED and the idle head-bob plays out inside the frame instead of being chased.
             Vector3 hp = av.BoneModelPos("Bip01_Head");
@@ -354,7 +354,7 @@ namespace Sdo.Game
             // MMD display mode: the SDO parts this normally measures are hidden, and the MMD model is one skinned mesh —
             // frame the head the MMD rig measured for itself (head bone subtree, minus the hair hanging below the chin).
             // Rest bounds, not live: the cam stays FIXED and the idle head-bob plays in-frame, exactly as the SDO path.
-            var mmd = MmdDebug.ActiveFor(_headAvatar);
+            var mmd = MmdAvatarSwap.ActiveFor(_headAvatar);
             if (mmd != null && mmd.TryHeadBoundsRest(out var mb))
             {
                 // MmdAvatar's constants, not the SDO ones: its box is the bare head, the SDO box is head+hair (see there).

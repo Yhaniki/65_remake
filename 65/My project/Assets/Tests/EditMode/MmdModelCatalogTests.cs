@@ -135,13 +135,13 @@ namespace Sdo.Tests
             Assert.IsNull(MmdModelCatalog.PickPmx(new[] { "/m/readme.txt", "/m/model.pmd", "/m/tex.png" }));
         }
 
-        /// <summary>The wiring the fake filesystem can't check: that <see cref="MmdDebug.ModelRoots"/> points at folders
+        /// <summary>The wiring the fake filesystem can't check: that <see cref="MmdAvatarSwap.ModelRoots"/> points at folders
         /// that actually exist on this machine and that the scan finds a real model there. Ignored on a checkout with no
         /// model installed (same contract as PmxLoaderTests' real-model smoke test).</summary>
         [Test]
         public void Discover_OnRealDisk_FindsAnInstalledModel_WhenPresent()
         {
-            var roots = new List<string>(MmdDebug.ModelRoots());
+            var roots = new List<string>(MmdAvatarSwap.ModelRoots());
             CollectionAssert.IsNotEmpty(roots, "ModelRoots resolved to nothing — SdoExtracted.Root is broken");
 
             var models = MmdModelCatalog.Discover(roots);

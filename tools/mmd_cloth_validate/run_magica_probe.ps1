@@ -1,8 +1,11 @@
-# Runs the Unity-side Magica Cloth probe headless (PlayMode tests Sdo.Tests.MmdClothProbe),
+﻿# Runs the Unity-side Magica Cloth probe headless (PlayMode tests Sdo.Tests.MmdClothProbe),
 # producing magica_<scenario>.json here, then computes magica_metrics.json.
 # The Unity editor must be CLOSED on the worktree project or the run aborts (lock).
-$proj = "H:/65_remake-mmd/65/My project"
+# 路徑一律由這支腳本的位置推出——以前寫死成 H:/65_remake-mmd，
+# feat/mmd-avatar 併進 main 之後那個 worktree 就不是要跑的那一個了。
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repo = (Resolve-Path (Join-Path $here "..\..")).Path
+$proj = Join-Path $repo "65\My project"
 $unity = "C:\Program Files\Unity\Hub\Editor\6000.4.11f1\Editor\Unity.exe"
 
 $lock = Join-Path $proj "Temp/UnityLockfile"

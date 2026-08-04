@@ -25,9 +25,9 @@ namespace Sdo.Tests
         [SetUp]
         public void RequireModelAndData()
         {
-            if (string.IsNullOrEmpty(MmdDebug.ModelPath)) Assert.Ignore("MMD model not installed (DATA/MODEL/…)");
+            if (string.IsNullOrEmpty(MmdAvatarSwap.ModelPath)) Assert.Ignore("MMD model not installed (DATA/MODEL/…)");
             if (!File.Exists(Path.Combine(SdoExtracted.Root, "AVATAR", "FEMALE.HRC"))) Assert.Ignore("SDO game data not available");
-            _dir = Path.GetDirectoryName(MmdDebug.ModelPath);
+            _dir = Path.GetDirectoryName(MmdAvatarSwap.ModelPath);
             string path = MmdClothProfile.PathFor(_dir);
             _backup = File.Exists(path) ? File.ReadAllText(path) : null;
             if (_backup != null) File.Delete(path);   // start from "no file" = pure conversion
@@ -36,7 +36,7 @@ namespace Sdo.Tests
         [TearDown]
         public void Restore()
         {
-            MmdDebug.SetEnabled(false);
+            MmdAvatarSwap.SetEnabled(false);
             string path = MmdClothProfile.PathFor(_dir);
             if (_backup != null) File.WriteAllText(path, _backup);
             else if (File.Exists(path)) File.Delete(path);
@@ -50,11 +50,11 @@ namespace Sdo.Tests
             var host = new GameObject("ClothProfileHost");
             var preview = host.AddComponent<GenderPreview3D>();
             preview.Build(gender: 0);
-            MmdDebug.SetEnabled(true);
+            MmdAvatarSwap.SetEnabled(true);
             for (int i = 0; i < 5; i++) yield return null;
 
             var driver = System.Array.Find(host.GetComponentsInChildren<SdoAvatar>(true), a => a.gameObject.activeInHierarchy);
-            var mmd = MmdDebug.ActiveFor(driver);
+            var mmd = MmdAvatarSwap.ActiveFor(driver);
             Assert.IsNotNull(mmd, "the preview dancer did not swap to the MMD body");
             var cloth = mmd.Cloth;
             if (cloth == null) Assert.Ignore("Magica Cloth 2 not installed — the cloth path can't be exercised");
@@ -68,10 +68,10 @@ namespace Sdo.Tests
             // ---- 2) drop a physics.ini in the model folder and rebuild → the FILE wins, key by key ----
             File.WriteAllText(MmdClothProfile.PathFor(_dir),
                 "[global]\ncolliderRadiusMul = 1.5\n\n[hair]\nangleStiffness = 0.123\ngravityMul = 0.25\n");
-            MmdDebug.Rebuild();
+            MmdAvatarSwap.Rebuild();
             for (int i = 0; i < 5; i++) yield return null;
 
-            var mmd2 = MmdDebug.ActiveFor(driver);
+            var mmd2 = MmdAvatarSwap.ActiveFor(driver);
             Assert.IsNotNull(mmd2, "the dancer lost its MMD body across the rebuild");
             var cloth2 = mmd2.Cloth;
             Assert.IsNotNull(cloth2);
@@ -85,10 +85,10 @@ namespace Sdo.Tests
             Assert.AreEqual(converted.DepthInertia, tuned.DepthInertia, 1e-4f, "an un-mentioned key was clobbered instead of kept");
 
             // ---- 3) delete it → straight back to the converted values ----
-            Assert.IsTrue(MmdDebug.DeleteProfile());
+            Assert.IsTrue(MmdAvatarSwap.DeleteProfile());
             for (int i = 0; i < 5; i++) yield return null;
 
-            var cloth3 = MmdDebug.ActiveFor(driver).Cloth;
+            var cloth3 = MmdAvatarSwap.ActiveFor(driver).Cloth;
             Assert.IsNull(cloth3.ProfilePath, "still running a physics.ini after it was deleted");
             var back = FindPart(cloth3, MmdClothPartId.Hair);
             Assert.AreEqual(converted.AngleStiffness, back.AngleStiffness, 1e-4f);
@@ -106,23 +106,23 @@ namespace Sdo.Tests
             var host = new GameObject("ClothSaveHost");
             var preview = host.AddComponent<GenderPreview3D>();
             preview.Build(gender: 0);
-            MmdDebug.SetEnabled(true);
+            MmdAvatarSwap.SetEnabled(true);
             for (int i = 0; i < 5; i++) yield return null;
 
             var driver = System.Array.Find(host.GetComponentsInChildren<SdoAvatar>(true), a => a.gameObject.activeInHierarchy);
-            var cloth = MmdDebug.ActiveFor(driver)?.Cloth;
+            var cloth = MmdAvatarSwap.ActiveFor(driver)?.Cloth;
             if (cloth == null) Assert.Ignore("Magica Cloth 2 not installed — the cloth path can't be exercised");
 
             var before = FindPart(cloth, MmdClothPartId.Hair);
-            string path = MmdDebug.SaveProfile();
+            string path = MmdAvatarSwap.SaveProfile();
             Assert.IsNotNull(path, "physics.ini could not be written into the model folder");
             Assert.IsTrue(File.Exists(path));
 
             // rebuilding off the file we just wrote must reproduce the same rig (a save that changes the look is a bug)
-            MmdDebug.Rebuild();
+            MmdAvatarSwap.Rebuild();
             for (int i = 0; i < 5; i++) yield return null;
 
-            var after = MmdDebug.ActiveFor(driver).Cloth;
+            var after = MmdAvatarSwap.ActiveFor(driver).Cloth;
             Assert.IsNotNull(after.ProfilePath);
             var p = FindPart(after, MmdClothPartId.Hair);
             Assert.AreEqual(before.AngleStiffness, p.AngleStiffness, 1e-3f);

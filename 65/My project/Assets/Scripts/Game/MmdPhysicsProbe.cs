@@ -16,16 +16,18 @@ namespace Sdo.Game
     /// demonstrably runs in the game — so we measure where it runs.
     ///
     /// Trigger: launch with <c>-mmdprobe</c> (built player; quits when done) or create the flag file
-    /// <c>H:/65_remake-mmd/tools/mmd_cloth_validate/probe.request</c> before pressing Play (editor; file is consumed).
+    /// <c>&lt;repo&gt;/tools/mmd_cloth_validate/probe.request</c> before pressing Play (editor; file is consumed).
     /// Scenarios (shared contract with the reference sim): rest 4 s | turn: 1.5 s settle + head +90° yaw over 0.4 s +
     /// 2 s hold | walk: 1.5 s + whole model +Z at 1.2 m/s for 2 s + 2 s hold | spin: 1.5 s + 360° about +Y over 1 s +
     /// 2 s hold. Runs at at a forced 60 fps sim pacing (Time.captureDeltaTime), records 4 representative chains.
     /// </summary>
     public sealed class MmdPhysicsProbe : MonoBehaviour
     {
-        private const string PmxDir = "H:/65_remake/assets/IkaHatunemiku2025";
-        private const string OutDir = "H:/65_remake-mmd/tools/mmd_cloth_validate";
-        private const string RequestFile = OutDir + "/probe.request";
+        // Derived, not hardcoded to a worktree — this was written in feat/mmd-avatar and its "H:/65_remake-mmd/..."
+        // constants stopped resolving the moment that branch merged. The model comes from the game's own catalogue
+        // (MmdAvatarSwap), the output goes to THIS checkout's tools/mmd_cloth_validate/ (editor) or beside the exe (build).
+        private static string OutDir => MmdProbePaths.HarnessDir;
+        private static string RequestFile => System.IO.Path.Combine(OutDir, "probe.request");
         private const float UnitScale = 3.0f;   // same uniform root scale MmdAvatar applies in-game (approx.)
         private const int Fps = 60;
 
@@ -103,8 +105,8 @@ namespace Sdo.Game
 
         private IEnumerator RunScenario(string scenario, float durationSec)
         {
-            string pmxPath = FindPmx();
-            if (pmxPath == null) { SdoLog.Note("mmdprobe", "FAIL: no pmx under " + PmxDir); yield break; }
+            string pmxPath = MmdAvatarSwap.ModelPath;   // 跟遊戲同一份模型清單(含 -mmdmodel / config.ini 的選擇)
+            if (pmxPath == null) { SdoLog.Note("mmdprobe", "FAIL: 沒有安裝任何 MMD 模型(DATA/MODEL/…)"); yield break; }
             var pmx = PmxLoader.Load(File.ReadAllBytes(pmxPath));
             if (pmx == null) { SdoLog.Note("mmdprobe", "FAIL: pmx parse"); yield break; }
 
@@ -251,19 +253,6 @@ namespace Sdo.Game
             Add("Tie", tie);
             Add("Dress_5", skirt);
             return outl;
-        }
-
-        private static string FindPmx()
-        {
-            if (!Directory.Exists(PmxDir)) return null;
-            string best = null;
-            foreach (var f in Directory.GetFiles(PmxDir))
-            {
-                if (Path.GetExtension(f).ToLowerInvariant() != ".pmx") continue;
-                if (f.ToUpperInvariant().Contains("-JP")) return f;
-                if (best == null) best = f;
-            }
-            return best;
         }
 
         private static int FindBone(PmxLoader pmx, string nameJp)

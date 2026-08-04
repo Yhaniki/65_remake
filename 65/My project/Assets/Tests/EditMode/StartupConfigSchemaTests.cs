@@ -157,11 +157,127 @@ namespace Sdo.Tests
             foreach (var f in StartupConfigSchema.Fields)
             {
                 if (f.Kind != ConfigFieldKind.Choice) continue;
+                if (f.ChoicesProvider != null)
+                {
+                    // 動態選項（MMD 模型＝掃資料夾掃出來的）：清單可以是空的（一個模型都沒裝），
+                    // 但值不在清單裡時一定要有話可說，否則面板會顯示一片空白。
+                    Assert.IsNotNull(f.UnknownChoiceText, f.Key + " 是動態選項，卻沒有 UnknownChoiceText");
+                    continue;
+                }
                 Assert.IsNotNull(f.Choices, f.Key + " 沒有 Choices");
                 Assert.Greater(f.Choices.Length, 1, f.Key + " 的 Choices 少於兩個");
                 Assert.AreEqual(f.Choices.Length, f.ChoiceLabels?.Length ?? f.Choices.Length,
                                 f.Key + " 的 ChoiceLabels 數量對不上");
             }
+        }
+
+        // ---------------------------------------------------------------- 動態選項（MMD 模型）
+        [Test]
+        public void Dynamic_Choice_Cycles_Through_Whatever_Is_Installed()
+        {
+            var f = StartupConfigSchema.ByKey("mmdModel");
+            Assert.IsNotNull(f);
+            var saved = StartupConfigSchema.MmdModelsProvider;
+            try
+            {
+                StartupConfigSchema.MmdModelsProvider = () => new[] { "Miku", "Rin" };
+                f.Set("Miku");
+                Assert.AreEqual("Miku", f.ChoiceText());
+                f.StepChoice(1);
+                Assert.AreEqual("Rin", RoomConfig.mmdModel);
+                f.StepChoice(1);                       // 循環回第一個
+                Assert.AreEqual("Miku", RoomConfig.mmdModel);
+                f.StepChoice(-1);
+                Assert.AreEqual("Rin", RoomConfig.mmdModel);
+            }
+            finally { StartupConfigSchema.MmdModelsProvider = saved; }
+        }
+
+        [Test]
+        public void Dynamic_Choice_Shows_A_Value_That_Is_Not_Installed_Verbatim()
+        {
+            // 設定檔指名的模型被刪掉/還沒掃到時，面板要照實說「找不到」而不是默默跳成別的模型
+            // —— 默默跳掉的話，按一次「儲存設定」玩家指定的名字就永久沒了。
+            var f = StartupConfigSchema.ByKey("mmdModel");
+            var saved = StartupConfigSchema.MmdModelsProvider;
+            try
+            {
+                StartupConfigSchema.MmdModelsProvider = () => new[] { "Miku" };
+                f.Set("NotInstalled");
+                StringAssert.Contains("NotInstalled", f.ChoiceText());
+                Assert.AreEqual("NotInstalled", RoomConfig.mmdModel, "只是顯示，值不該被改掉");
+                f.StepChoice(1);                       // 不在清單裡 → 往右進第一個
+                Assert.AreEqual("Miku", RoomConfig.mmdModel);
+
+                // 一個模型都沒裝：按 ◀▶ 不能爆、也不能亂寫值
+                StartupConfigSchema.MmdModelsProvider = () => new string[0];
+                f.Set("Miku");
+                f.StepChoice(1);
+                Assert.AreEqual("Miku", RoomConfig.mmdModel);
+                Assert.IsNotEmpty(f.ChoiceText());
+            }
+            finally { StartupConfigSchema.MmdModelsProvider = saved; }
+        }
+
+        [Test]
+        public void Mmd_Settings_Write_Through_To_RoomConfig()
+        {
+            var on = StartupConfigSchema.ByKey("mmdEnabled");
+            Assert.IsNotNull(on);
+            on.SetBool(true);
+            Assert.IsTrue(RoomConfig.mmdEnabled);
+            on.SetBool(false);
+            Assert.IsFalse(RoomConfig.mmdEnabled);
+
+            var grav = StartupConfigSchema.ByKey("mmdGravity");
+            grav.SetNumber(99f);                        // 夾到上限
+            Assert.AreEqual(8f, RoomConfig.mmdGravity, 0.001f);
+            grav.SetNumber(0f);                         // 夾到下限（0 = 布料不落下）
+            Assert.AreEqual(0.05f, RoomConfig.mmdGravity, 0.001f);
+        }
+
+        [Test]
+        public void Mmd_Values_Survive_A_Config_Round_Trip()
+        {
+            // 這一整組就是這次搬家的重點：以前只活在記憶體裡的除錯面板值，現在要寫得進也讀得回 config.ini。
+            RoomConfig.mmdEnabled = true;
+            RoomConfig.mmdModel = "SomeModel";
+            RoomConfig.mmdPhysics = false;
+            RoomConfig.mmdFlipV = false;
+            RoomConfig.mmdGravity = 2.5f;
+            RoomConfig.mmdStiffness = 0.4f;
+            RoomConfig.mmdColliderScale = 1.75f;
+            string ini = RoomConfig.Serialize();
+
+            RoomConfig.mmdEnabled = false; RoomConfig.mmdModel = ""; RoomConfig.mmdPhysics = true;
+            RoomConfig.mmdFlipV = true; RoomConfig.mmdGravity = 1f; RoomConfig.mmdStiffness = 0.12f;
+            RoomConfig.mmdColliderScale = 1f;
+
+            RoomConfig.ParseInto(ini);
+            Assert.IsTrue(RoomConfig.mmdEnabled);
+            Assert.AreEqual("SomeModel", RoomConfig.mmdModel);
+            Assert.IsFalse(RoomConfig.mmdPhysics);
+            Assert.IsFalse(RoomConfig.mmdFlipV);
+            Assert.AreEqual(2.5f, RoomConfig.mmdGravity, 0.001f);
+            Assert.AreEqual(0.4f, RoomConfig.mmdStiffness, 0.001f);
+            Assert.AreEqual(1.75f, RoomConfig.mmdColliderScale, 0.001f);
+        }
+
+        [Test]
+        public void Mmd_Sanitize_Clamps_To_The_Same_Range_As_The_Sliders()
+        {
+            // 兩邊範圍不一致的話，面板一開就會把手改的設定夾掉（或滑桿拉不到設定檔允許的值）。
+            RoomConfig.mmdGravity = 999f; RoomConfig.mmdStiffness = 999f; RoomConfig.mmdColliderScale = 999f;
+            RoomConfig.Sanitize();
+            Assert.AreEqual(StartupConfigSchema.ByKey("mmdGravity").Max, RoomConfig.mmdGravity, 0.001f);
+            Assert.AreEqual(StartupConfigSchema.ByKey("mmdStiffness").Max, RoomConfig.mmdStiffness, 0.001f);
+            Assert.AreEqual(StartupConfigSchema.ByKey("mmdColliderScale").Max, RoomConfig.mmdColliderScale, 0.001f);
+
+            RoomConfig.mmdGravity = -1f; RoomConfig.mmdStiffness = -1f; RoomConfig.mmdColliderScale = -1f;
+            RoomConfig.Sanitize();
+            Assert.AreEqual(StartupConfigSchema.ByKey("mmdGravity").Min, RoomConfig.mmdGravity, 0.001f);
+            Assert.AreEqual(StartupConfigSchema.ByKey("mmdStiffness").Min, RoomConfig.mmdStiffness, 0.001f);
+            Assert.AreEqual(StartupConfigSchema.ByKey("mmdColliderScale").Min, RoomConfig.mmdColliderScale, 0.001f);
         }
 
         [Test]

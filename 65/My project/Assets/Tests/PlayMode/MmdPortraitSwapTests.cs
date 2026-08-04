@@ -7,7 +7,7 @@ using Sdo.Game;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// End-to-end check that the MMD display swap (F7 / <c>-mmd</c>) reaches the avatars that are NOT the stage dancer:
+    /// End-to-end check that the MMD display swap (config.ini <c>mmdEnabled</c> / <c>-mmd</c>) reaches the avatars that are NOT the stage dancer:
     /// the room 頭貼 and the 男/女 select preview (the 結算 left headshot is the same RoomHeadPortrait-style rig, driven by
     /// <see cref="MmdAvatar.TryHeadBoundsRest"/>, which is asserted here too). These three render a PRIVATE avatar into a
     /// RenderTexture through a layer-culled camera, so the two ways this can silently break are (a) the MMD rig lands on
@@ -22,19 +22,19 @@ namespace Sdo.Tests
         [SetUp]
         public void RequireModelAndData()
         {
-            if (string.IsNullOrEmpty(MmdDebug.ModelPath)) Assert.Ignore("MMD model not installed (assets/IkaHatunemiku2025)");
+            if (string.IsNullOrEmpty(MmdAvatarSwap.ModelPath)) Assert.Ignore("MMD model not installed (assets/IkaHatunemiku2025)");
             if (!System.IO.File.Exists(System.IO.Path.Combine(SdoExtracted.Root, "AVATAR", "FEMALE.HRC")))
                 Assert.Ignore("SDO game data not available");
         }
 
         [TearDown]
-        public void Restore() => MmdDebug.SetEnabled(false);
+        public void Restore() => MmdAvatarSwap.SetEnabled(false);
 
         [UnityTest]
         public IEnumerator RoomHeadPortrait_SwapsToMmd_AndTheCamFramesTheHeadNotTheWholeBody()
         {
             LogAssert.ignoreFailingMessages = true;
-            MmdDebug.SetEnabled(true);
+            MmdAvatarSwap.SetEnabled(true);
 
             var host = new GameObject("HeadPortraitHost");
             var portrait = host.AddComponent<RoomHeadPortrait>();
@@ -42,7 +42,7 @@ namespace Sdo.Tests
             for (int i = 0; i < 5; i++) yield return null;   // let the rig build + the first CPU skin land
 
             var driver = host.GetComponentInChildren<SdoAvatar>(true);
-            var mmd = MmdDebug.ActiveFor(driver);
+            var mmd = MmdAvatarSwap.ActiveFor(driver);
             Assert.IsNotNull(mmd, "the 頭貼 avatar did not swap to the MMD body");
 
             // (a) layer: the portrait cam culls to `portrait.layer` — a rig left on the default layer renders nothing.
@@ -102,7 +102,7 @@ namespace Sdo.Tests
         public IEnumerator GenderPreview_SwapsBothGenders_IncludingTheOneThatWasParkedInactive()
         {
             LogAssert.ignoreFailingMessages = true;
-            MmdDebug.SetEnabled(false);   // start on the SDO bodies …
+            MmdAvatarSwap.SetEnabled(false);   // start on the SDO bodies …
 
             var host = new GameObject("GenderPreviewHost");
             var preview = host.AddComponent<GenderPreview3D>();
@@ -115,25 +115,25 @@ namespace Sdo.Tests
             var parked = System.Array.Find(avatars, a => !a.gameObject.activeInHierarchy);
             Assert.IsNotNull(shown); Assert.IsNotNull(parked);
 
-            MmdDebug.SetEnabled(true);
+            MmdAvatarSwap.SetEnabled(true);
             for (int i = 0; i < 5; i++) yield return null;
-            Assert.IsNotNull(MmdDebug.ActiveFor(shown), "the displayed preview did not swap to MMD");
-            Assert.IsNull(MmdDebug.ActiveFor(parked), "the parked preview cannot build a rig while inactive");
+            Assert.IsNotNull(MmdAvatarSwap.ActiveFor(shown), "the displayed preview did not swap to MMD");
+            Assert.IsNull(MmdAvatarSwap.ActiveFor(parked), "the parked preview cannot build a rig while inactive");
 
-            // switching gender shows the parked dancer → MmdDebug must build its rig on the next frame (deferred build)
+            // switching gender shows the parked dancer → MmdAvatarSwap must build its rig on the next frame (deferred build)
             preview.SetGender(1);
             for (int i = 0; i < 5; i++) yield return null;
-            Assert.IsNotNull(MmdDebug.ActiveFor(parked), "the other gender never swapped to MMD after being shown");
-            var parkedSmr = MmdDebug.ActiveFor(parked).GetComponentInChildren<SkinnedMeshRenderer>(true);
+            Assert.IsNotNull(MmdAvatarSwap.ActiveFor(parked), "the other gender never swapped to MMD after being shown");
+            var parkedSmr = MmdAvatarSwap.ActiveFor(parked).GetComponentInChildren<SkinnedMeshRenderer>(true);
             Assert.AreEqual(GenderPreview3D.PreviewLayer, parkedSmr.gameObject.layer);
 
             // Every rig of the same model shares ONE mesh + ONE material set (they only own their bones). Rebuilding the
             // 172k-vert mesh per rig is the thing this guards against — with 6 rigs alive that is 6× the mesh and 6× the
             // per-texture alpha scan. Shareable because MMD bindposes are rig-independent (see MmdAvatar.Shared).
             // the full-body preview DOES keep its hair/skirt physics (only the head portraits drop it)
-            Assert.IsTrue(MmdDebug.ActiveFor(shown).HasCloth, "the full-body gender preview lost its cloth sim");
+            Assert.IsTrue(MmdAvatarSwap.ActiveFor(shown).HasCloth, "the full-body gender preview lost its cloth sim");
 
-            var shownSmr = MmdDebug.ActiveFor(shown).GetComponentInChildren<SkinnedMeshRenderer>(true);
+            var shownSmr = MmdAvatarSwap.ActiveFor(shown).GetComponentInChildren<SkinnedMeshRenderer>(true);
             Assert.AreSame(shownSmr.sharedMesh, parkedSmr.sharedMesh, "each rig rebuilt the mesh instead of sharing it");
             Assert.AreSame(shownSmr.sharedMaterials[0], parkedSmr.sharedMaterials[0], "each rig rebuilt the materials");
             Assert.Greater(shownSmr.sharedMesh.vertexCount, 1000);

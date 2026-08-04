@@ -42,6 +42,19 @@ namespace Sdo.Settings
         public string[] Choices;
         /// <summary>Choice 專用：對應 <see cref="Choices"/> 的顯示名稱（null = 直接顯示原字串）。</summary>
         public string[] ChoiceLabels;
+        /// <summary>Choice 專用：選項要到執行期才知道（例：裝了哪些 MMD 模型 —— 那是掃資料夾掃出來的）。
+        /// 有設就蓋掉 <see cref="Choices"/>；<see cref="ChoiceLabels"/> 這時不適用（顯示原字串）。</summary>
+        public Func<string[]> ChoicesProvider;
+        /// <summary>Choice 專用：目前值不在選項清單裡時要顯示什麼（null＝直接顯示原字串）。
+        /// 動態選項才有意義：模型被刪掉/還沒掃到時，設定檔裡的名字要照實顯示，不能默默跳成別的。</summary>
+        public Func<string, string> UnknownChoiceText;
+
+        /// <summary>Choice 目前實際可選的值（<see cref="ChoicesProvider"/> 優先，沒有就用 <see cref="Choices"/>）。</summary>
+        public string[] Options()
+        {
+            var dyn = ChoicesProvider?.Invoke();
+            return dyn ?? Choices ?? Array.Empty<string>();
+        }
         /// <summary>密碼/token：預設遮起來顯示。</summary>
         public bool Secret;
 
@@ -68,31 +81,43 @@ namespace Sdo.Settings
 
         public void SetBool(bool on) => Set?.Invoke(on ? "1" : "0");
 
-        /// <summary>Choice：目前值在 <see cref="Choices"/> 裡的索引（找不到 → 0）。</summary>
-        public int GetChoiceIndex()
+        /// <summary>Choice：目前值在選項裡的索引（找不到 → 0）。</summary>
+        public int GetChoiceIndex() => Math.Max(0, RawChoiceIndex());
+
+        /// <summary>Choice：目前值在選項裡的索引，**找不到回 -1**（動態選項要分得出「不在清單裡」）。</summary>
+        private int RawChoiceIndex()
         {
-            if (Choices == null || Choices.Length == 0) return 0;
+            var opts = Options();
             var cur = (Get?.Invoke() ?? "").Trim();
-            for (int i = 0; i < Choices.Length; i++)
-                if (string.Equals(Choices[i], cur, StringComparison.OrdinalIgnoreCase)) return i;
-            return 0;
+            for (int i = 0; i < opts.Length; i++)
+                if (string.Equals(opts[i], cur, StringComparison.OrdinalIgnoreCase)) return i;
+            return -1;
         }
 
-        /// <summary>Choice：往後推 <paramref name="delta"/> 格（循環）。</summary>
+        /// <summary>Choice：往後推 <paramref name="delta"/> 格（循環）。目前值不在清單裡（模型被刪了之類）→
+        /// 往右進第一個、往左進最後一個。</summary>
         public void StepChoice(int delta)
         {
-            if (Choices == null || Choices.Length == 0) return;
-            int n = Choices.Length;
-            int i = ((GetChoiceIndex() + delta) % n + n) % n;
-            Set?.Invoke(Choices[i]);
+            var opts = Options();
+            if (opts.Length == 0) return;
+            int cur = RawChoiceIndex();
+            int i = cur < 0 ? (delta >= 0 ? 0 : opts.Length - 1)
+                            : ((cur + delta) % opts.Length + opts.Length) % opts.Length;
+            Set?.Invoke(opts[i]);
         }
 
         /// <summary>Choice：目前值的顯示名稱。</summary>
         public string ChoiceText()
         {
-            int i = GetChoiceIndex();
+            var opts = Options();
+            int i = RawChoiceIndex();
+            if (i < 0)
+            {
+                var cur = (Get?.Invoke() ?? "").Trim();
+                return UnknownChoiceText != null ? UnknownChoiceText(cur) : cur;
+            }
             if (ChoiceLabels != null && i < ChoiceLabels.Length) return ChoiceLabels[i];
-            return Choices != null && i < Choices.Length ? Choices[i] : "";
+            return opts[i];
         }
 
         /// <summary>Slider：目前值的顯示字串（不能打字的那種才用 <see cref="Format"/>）。</summary>
@@ -118,6 +143,8 @@ namespace Sdo.Settings
     ///   * 房間右側面板：<c>defaultSpeed / defaultNoteType / defaultTeam / defaultDropDirection / defaultGameMode</c>；
     ///     選歌畫面：<c>defaultScene</c>。
     ///   * <c>opt_cameraFixed</c> 不是給人調的（遊戲中 F2 切鏡頭時自己寫回）。
+    /// 反過來，MMD 那一頁是**從別的 UI 搬進來的**：以前是遊戲裡一塊自己畫的 IMGUI 除錯面板（F7/F9/F10），
+    /// 值只活在記憶體、關掉遊戲就沒了；現在整組進 <c>[Mmd]</c> 區，跟其它設定同一個入口、同一份落地檔。
     /// StartupConfigSchemaTests 會拿 <see cref="RoomConfig.Serialize"/> 的 key 全集對這份表做覆蓋率檢查，
     /// 之後 config.ini 新增 key 卻忘了接 UI 就會紅。
     ///
@@ -129,9 +156,17 @@ namespace Sdo.Settings
         public const string CatPlay = "遊玩";
         public const string CatSong = "歌曲";
         public const string CatText = "顯示";
+        public const string CatMmd = "MMD";
 
         /// <summary>分頁順序（＝面板上那排 tab 由左到右）。</summary>
-        public static readonly string[] Categories = { CatNet, CatPlay, CatSong, CatText };
+        public static readonly string[] Categories = { CatNet, CatPlay, CatSong, CatText, CatMmd };
+
+        /// <summary>
+        /// 安裝了哪些 MMD 模型（資料夾名，掃 DATA/MODEL 等處得到）。開機時由 Sdo.Game 的 <c>MmdAvatarSwap</c> 接上
+        /// —— Sdo.Settings 不能反向參照 Sdo.Game，所以模型清單只能用注入的。沒接上（單元測試、或這版沒編到 MMD）
+        /// 時是 null，<c>mmdModel</c> 那一列就只剩「照設定檔的字串顯示」，改不動也不會壞。
+        /// </summary>
+        public static Func<string[]> MmdModelsProvider;
 
         private static List<ConfigField> _fields;
 
@@ -370,6 +405,87 @@ namespace Sdo.Settings
                 Min = 0.5f, Max = 3f, Unit = "×",
                 Help = "⚠ 目前遊戲還沒有任何地方讀這個值（畫面一律走 800×600 4:3 取景），改了不會有變化 —— 先留著對齊設定檔。",
                 Get = () => Num(Display().uiScale), Set = v => Display().uiScale = ParseFloat(v, Display().uiScale),
+            });
+
+            // ---------------------------------------------------------------- MMD [Mmd]
+            // 以前這一整頁是遊戲裡一塊自己畫的 IMGUI 除錯面板（F7/F9/F10），值只活在記憶體、關掉就沒了。
+            // 現在整組搬進這裡 → 跟其它設定一樣寫進 config.ini，下次開遊戲還在。
+            f.Add(new ConfigField
+            {
+                Key = "mmdEnabled", Category = CatMmd, Label = "用 MMD 模型", Kind = ConfigFieldKind.Toggle,
+                Help = "★總開關：開＝場上每隻角色（跳舞的、房間走路的、頭貼/性別預覽）的身體都換成 MMD 模型。動作仍由 SDO 骨架驅動，跳的是同一套舞。",
+                Get = () => B(RoomConfig.mmdEnabled), Set = v => RoomConfig.mmdEnabled = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdModel", Category = CatMmd, Label = "模型", Kind = ConfigFieldKind.Choice,
+                ChoicesProvider = () => MmdModelsProvider?.Invoke(),
+                UnknownChoiceText = cur => cur.Length == 0 ? "(自動：第一個)" : cur + "(找不到)",
+                Help = "把整個 MMD 模型資料夾（含 .pmx 與它的貼圖）放進 DATA/MODEL/，開發樹是 assets/MODEL/。一個資料夾＝一個模型，這裡就會出現。",
+                Get = () => RoomConfig.mmdModel ?? "", Set = v => RoomConfig.mmdModel = (v ?? "").Trim(),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdPhysics", Category = CatMmd, Label = "頭髮裙擺物理", Kind = ConfigFieldKind.Toggle,
+                Help = "布料模擬（頭髮/裙擺/領帶）。★嫌換場景進遊戲慢就關這個 —— 布料求解是建一隻 MMD 角色最貴的一段。",
+                Get = () => B(RoomConfig.mmdPhysics), Set = v => RoomConfig.mmdPhysics = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdGravity", Category = CatMmd, Label = "布料重力", Kind = ConfigFieldKind.Slider,
+                Min = 0.05f, Max = 8f, Unit = "×",
+                Help = "布料受到的重力倍率。大＝頭髮裙擺被拉得更垂、甩動更沉；小＝飄。模型資料夾裡的 physics.ini 先套，這個值再乘上去。",
+                Get = () => Num(RoomConfig.mmdGravity), Set = v => RoomConfig.mmdGravity = ParseFloat(v, RoomConfig.mmdGravity),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdStiffness", Category = CatMmd, Label = "布料硬度", Kind = ConfigFieldKind.Slider,
+                Min = 0.03f, Max = 0.9f, Unit = "×",
+                Help = "回彈到原本造型的力道。低＝軟趴趴被重力拉直；高＝硬挺、甩不太動（雙馬尾那種被作者鎖死的部位本來就接近硬的）。",
+                Get = () => Num(RoomConfig.mmdStiffness), Set = v => RoomConfig.mmdStiffness = ParseFloat(v, RoomConfig.mmdStiffness),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdColliderScale", Category = CatMmd, Label = "身體碰撞半徑", Kind = ConfigFieldKind.Slider,
+                Min = 0.2f, Max = 4f, Unit = "×",
+                Help = "布料撞身體用的碰撞體半徑倍率。太小＝裙子穿過腿；太大＝裙子被撐飛。",
+                Get = () => Num(RoomConfig.mmdColliderScale), Set = v => RoomConfig.mmdColliderScale = ParseFloat(v, RoomConfig.mmdColliderScale),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdToon", Category = CatMmd, Label = "卡通著色", Kind = ConfigFieldKind.Toggle,
+                Help = "MMD 的 toon ramp（明暗只分兩段的卡通上色）。關＝一般平光。",
+                Get = () => B(RoomConfig.mmdToon), Set = v => RoomConfig.mmdToon = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdOutline", Category = CatMmd, Label = "描邊", Kind = ConfigFieldKind.Toggle,
+                Help = "模型自帶的鉛筆描邊（edge）。關＝沒有黑邊。",
+                Get = () => B(RoomConfig.mmdOutline), Set = v => RoomConfig.mmdOutline = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdSphere", Category = CatMmd, Label = "sphere 反光", Kind = ConfigFieldKind.Toggle,
+                Help = "模型自帶的 sphere map（眼睛/金屬的環境反光）。關＝反光整個不畫。",
+                Get = () => B(RoomConfig.mmdSphere), Set = v => RoomConfig.mmdSphere = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdFlipV", Category = CatMmd, Label = "貼圖 V 翻轉", Kind = ConfigFieldKind.Toggle,
+                Help = "PMX 的 UV 是 V 向下、Unity 是 V 向上，所以預設開。★某個模型的貼圖上下顛倒（領帶最容易看出來）就關這個。",
+                Get = () => B(RoomConfig.mmdFlipV), Set = v => RoomConfig.mmdFlipV = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdAim", Category = CatMmd, Label = "aim 重定向", Kind = ConfigFieldKind.Toggle,
+                Help = "用「骨頭指向」對齊手腳（開，預設）＝不怕 SDO 與 MMD 的待機姿勢不同。關＝改用整個世界旋轉差的對照模式，姿勢會歪，只在比對哪邊對時才關。",
+                Get = () => B(RoomConfig.mmdAim), Set = v => RoomConfig.mmdAim = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdRootMotion", Category = CatMmd, Label = "根骨位移", Kind = ConfigFieldKind.Toggle,
+                Help = "把 SDO 根骨的平移也帶給模型（開，預設）。關＝人原地跳、不會前進/浮沉。",
+                Get = () => B(RoomConfig.mmdRootMotion), Set = v => RoomConfig.mmdRootMotion = ParseBool(v),
             });
 
             return f;

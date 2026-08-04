@@ -373,7 +373,9 @@ namespace Sdo.Game
             var t0 = Time.realtimeSinceStartup;
             s = new Shared();
             s.Materials = BuildMaterials(pmx, textureDir, s);   // sets s.Hide (+ the sphere/toon/edge lists)
+            var tMat = Time.realtimeSinceStartup;
             s.Mesh = BuildMesh(pmx, s);                         // skips the hidden submeshes
+            var tMesh = Time.realtimeSinceStartup;
 
             // Bindposes: the MMD rest bones have identity rotation and unit scale, and the rig root's transform cancels
             // out of bone.worldToLocal × mesh.localToWorld — so the bindpose is just translate(−bonePos), identical for
@@ -387,11 +389,42 @@ namespace Sdo.Game
                 s.HasHead = true; s.HeadBone = hb; s.HeadLocal = hl; s.HeadRestPos = pmx.Bones[hb].Position;
             }
 
+            // Same reason as the texture cache (see LoadTexture): these are script-created assets held only by the static
+            // dictionary above, so Resources.UnloadUnusedAssets — which SceneManager.LoadScene runs — is free to reclaim
+            // them between screens. That is the 「換場景要重新讀取」 hitch: it would re-skin 172k verts and rebuild every
+            // material from scratch on the next rig. Pin them; one set per model, alive for the process, by design.
+            s.Mesh.hideFlags = HideFlags.DontUnloadUnusedAsset;
+            foreach (var m in s.Materials) if (m != null) m.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
             _sharedByModel[pmx] = s;
             LogMilestone($"[mmd] shared mesh+materials built in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms " +
-                         $"({pmx.VertexCount} verts, {s.Materials.Length} mats) — every rig reuses these");
+                         $"(貼圖+材質 {(tMat - t0) * 1000f:F0} ms, mesh {(tMesh - tMat) * 1000f:F0} ms; " +
+                         $"{pmx.VertexCount} verts, {s.Materials.Length} mats) — every rig reuses these");
             return s;
         }
+
+        /// <summary>Build this model's shared mesh/materials/textures WITHOUT building a rig — so the cost is paid once,
+        /// on the boot loading screen, instead of on the first room/song entry. No-op when they are already cached.
+        /// See <c>MmdAvatarSwap.PrewarmCo</c>.</summary>
+        public static void Prewarm(PmxLoader pmx, string textureDir)
+        {
+            if (pmx != null && !string.IsNullOrEmpty(textureDir)) GetShared(pmx, textureDir);
+        }
+
+        /// <summary>Decode ONE of the model's textures into the shared cache. The measured cost of building a model's
+        /// shared assets is ~95% texture decode (Miku: 1401 of 1438 ms — ten 2048² PNGs, each ~140 ms of decode +
+        /// mipmap generation), and <see cref="Prewarm"/> does them all back-to-back in one frame. Calling this per
+        /// texture with a <c>yield</c> between spreads that over frames, so a boot progress bar keeps moving instead of
+        /// freezing. Returns false when the index is out of range (the caller's loop bound).</summary>
+        public static bool PrewarmTexture(PmxLoader pmx, string textureDir, int index)
+        {
+            if (pmx?.TexturePaths == null || index < 0 || index >= pmx.TexturePaths.Length) return false;
+            LoadTexture(textureDir, (pmx.TexturePaths[index] ?? "").Replace('\\', '/'));   // caches; null/missing is fine
+            return true;
+        }
+
+        /// <summary>How many textures <see cref="PrewarmTexture"/> can be called for (＝ the model's texture table).</summary>
+        public static int TextureCount(PmxLoader pmx) => pmx?.TexturePaths?.Length ?? 0;
 
         // ---- mesh ----
         private static Mesh BuildMesh(PmxLoader pmx, Shared sh)
@@ -421,18 +454,20 @@ namespace Sdo.Game
             mesh.subMeshCount = pmx.Materials.Count;
             for (int s = 0; s < pmx.Materials.Count; s++)
             {
-                if (sh.Hide != null && sh.Hide[s]) { mesh.SetTriangles(Array.Empty<int>(), s); continue; }
+                // calculateBounds:false — every SetTriangles otherwise re-scans all 172k vertices to recompute the
+                // bounds, once per submesh (53× here). RecalculateBounds below does it once.
+                if (sh.Hide != null && sh.Hide[s]) { mesh.SetTriangles(Array.Empty<int>(), s, false); continue; }
                 var m = pmx.Materials[s];
                 var tris = new int[m.IndexCount];
                 Array.Copy(pmx.Indices, m.IndexStart, tris, 0, m.IndexCount);
-                mesh.SetTriangles(tris, s);
+                mesh.SetTriangles(tris, s, false);
             }
             mesh.RecalculateBounds();
             return mesh;
         }
 
         // ---- materials (MMD shader: base + sphere; alpha class → opaque/cutout; morph-overlay & a=0 hidden) ----
-        // Built with every effect ON; MmdDebug re-applies the panel's live toggles to each rig right after it is built,
+        // Built with every effect ON; MmdAvatarSwap re-applies config.ini's [Mmd] toggles to each rig right after it is built,
         // and since the materials are shared those writes land on the same materials for all of them.
         private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh)
         {
@@ -531,7 +566,9 @@ namespace Sdo.Game
             var t = new Texture2D(1, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             var px = new Color32[h];
             for (int y = 0; y < h; y++) { byte b = (byte)(Mathf.SmoothStep(0.55f, 1f, y / (float)(h - 1)) * 255f); px[y] = new Color32(b, b, b, 255); }
-            t.SetPixels32(px); t.Apply(false); _defToon = t; return t;
+            t.SetPixels32(px); t.Apply(false);
+            t.hideFlags = HideFlags.DontUnloadUnusedAsset;   // same pin as the model textures — see LoadTexture
+            _defToon = t; return t;
         }
 
         /// <summary>Live toggle: pencil outline on/off (restores each material's authored edge size).</summary>
@@ -572,7 +609,22 @@ namespace Sdo.Game
         }
         private static int FindBoneIndex(PmxLoader pmx, string nameJp) { for (int i = 0; i < pmx.Bones.Count; i++) if (pmx.Bones[i].NameJp == nameJp) return i; return -1; }
 
+        // Per-TEXTURE cache. AlphaStats only looks at ~20k sampled texels, but GetPixels32 copies the ENTIRE texture to
+        // managed memory first (a 2048² sheet = 4M Color32 = 16 MB, allocated and thrown away). It is called once per
+        // MATERIAL and this model has 53 materials over far fewer textures — so the same sheets were being copied over
+        // and over. The answer only depends on the texture, so compute it once.
+        private static readonly Dictionary<Texture2D, Vector2> _alphaStats = new Dictionary<Texture2D, Vector2>();
+
         private static void AlphaStats(Texture2D tex, out float midFrac, out float holeFrac)
+        {
+            midFrac = 0f; holeFrac = 0f;
+            if (tex == null) return;
+            if (_alphaStats.TryGetValue(tex, out var hit)) { midFrac = hit.x; holeFrac = hit.y; return; }
+            Measure(tex, out midFrac, out holeFrac);
+            _alphaStats[tex] = new Vector2(midFrac, holeFrac);
+        }
+
+        private static void Measure(Texture2D tex, out float midFrac, out float holeFrac)
         {
             midFrac = 0f; holeFrac = 0f;
             Color32[] px; try { px = tex.GetPixels32(); } catch { return; }
@@ -609,7 +661,16 @@ namespace Sdo.Game
                 }
             }
             catch { return null; }
-            if (tex != null) _texCache[path] = tex;
+            if (tex != null)
+            {
+                // Pin it: SceneManager.LoadScene (結算「重玩」走那條) runs Resources.UnloadUnusedAssets, and a
+                // script-created Texture2D that no live GameObject references at that instant is exactly what it
+                // reclaims. Losing it = the whole texture set is re-read + re-decoded on the next rig — the
+                // 「換場景又要重讀一次」that this cache exists to prevent. There is one set per installed model and
+                // it is meant to live for the process, so never unloading it is the intent, not a leak.
+                tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
+                _texCache[path] = tex;
+            }
             return tex;
         }
 

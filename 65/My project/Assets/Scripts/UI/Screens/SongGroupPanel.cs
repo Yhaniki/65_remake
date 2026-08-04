@@ -15,7 +15,7 @@ namespace Sdo.UI.Screens
     /// each showing how many songs it holds; clicking a bucket hands its songs to the host screen, which loads them
     /// into the main 12-row song list.
     ///
-    /// Drawn with IMGUI (<c>GUI.Window</c>), like the project's other tool panels (see MmdDebug): the window drags by
+    /// Drawn with IMGUI (<c>GUI.Window</c>), like the project's other tool panels: the window drags by
     /// its title bar and the scroll view brings its own draggable slider — no canvas art, no layout groups, nothing to
     /// mis-lay-out. This browser never existed in the original game, so it deliberately wears the plain dev-tool look
     /// instead of imitating MUSICSELDLG. It starts sized to the CD column beneath it but is FREELY RESIZABLE — drag its

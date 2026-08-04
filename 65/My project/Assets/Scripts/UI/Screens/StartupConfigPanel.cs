@@ -10,7 +10,7 @@ namespace Sdo.UI.Screens
     /// 開場（選性別）畫面左側那塊面板 —— 原本只有「玩家名稱」一個小框，現在整塊撐大成
     /// 「角色左邊、性別核取方塊上面」那一整片空白區（設計座標 800×600 下的 x 20..316 / y 10..512），
     /// 底下掛上 <see cref="StartupConfigSchema"/> 那張表：**config.ini 裡遊戲內沒有其它 UI 可以改的設定全集**，
-    /// 依 連線 / 遊玩 / 歌曲 / 顯示 分四頁，上面一排 tab 切換。右上角一顆鈕展開/收合（預設收合＝只剩標題列＋名稱列，
+    /// 依 連線 / 遊玩 / 歌曲 / 顯示 / MMD 分頁，上面一排 tab 切換。右上角一顆鈕展開/收合（預設收合＝只剩標題列＋名稱列，
     /// 跟改版前看起來一樣大）。
     ///
     /// 走 IMGUI（同原本的名稱小框與譜面編輯器）：這裡要的是可捲動清單、可打字的欄位與滑桿，IMGUI 直接就有。
@@ -60,7 +60,7 @@ namespace Sdo.UI.Screens
         private readonly Dictionary<string, string> _edit = new Dictionary<string, string>();  // 文字欄位的編輯暫存
         private List<ConfigField>[] _byTab;
 
-        private GUIStyle _title, _label, _value, _unit, _help, _status_, _tabStyle;
+        private GUIStyle _title, _label, _value, _choice, _unit, _help, _status_, _tabStyle;
 
         /// <summary>換性別 → 重新帶入該帳號的名字，並清掉狀態訊息。</summary>
         public void SetName(string name)
@@ -255,10 +255,12 @@ namespace Sdo.UI.Screens
             GUILayout.Label(f.Unit ?? "", _unit, GUILayout.Width(UnitW));
         }
 
+        // ◀ 值 ▶。值那格**一定要 Clip + ExpandWidth**：選項是執行期才知道的（MMD 模型＝資料夾名，可以很長），
+        // 讓 Label 用自己的偏好寬度的話，長名字會把 ▶ 擠出面板外面按不到。
         private void DrawChoice(ConfigField f)
         {
             if (GUILayout.Button("◀", GUILayout.Width(20f), GUILayout.Height(RowH))) f.StepChoice(-1);
-            GUILayout.Label(f.ChoiceText(), _value);
+            GUILayout.Label(f.ChoiceText(), _choice, GUILayout.ExpandWidth(true), GUILayout.Height(RowH));
             if (GUILayout.Button("▶", GUILayout.Width(20f), GUILayout.Height(RowH))) f.StepChoice(1);
         }
 
@@ -312,6 +314,7 @@ namespace Sdo.UI.Screens
             _title = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
             _label = new GUIStyle(GUI.skin.label) { wordWrap = false, clipping = TextClipping.Clip };
             _value = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleLeft };
+            _choice = new GUIStyle(_value) { clipping = TextClipping.Clip, wordWrap = false };
             _unit = new GUIStyle(GUI.skin.label)
             {
                 alignment = TextAnchor.MiddleLeft, fontSize = 10, padding = new RectOffset(1, 0, 0, 0),

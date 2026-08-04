@@ -115,9 +115,9 @@ namespace Sdo.Game
             if (_avatar == null) { Destroy(parent); return false; }
             _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;
-            // F7 swaps the 頭貼 to the MMD model too (framing: MmdAvatar.TryHeadBounds). No cloth sim: at 192×152 the hair
+            // MMD 顯示模式下頭貼也換成 MMD 模型 (framing: MmdAvatar.TryHeadBounds). No cloth sim: at 192×152 the hair
             // sway is invisible, and the solver is the costliest part of an MMD rig — the hair just rides the head instead.
-            MmdDebug.RegisterSwappable(_avatar, cloth: false);
+            MmdAvatarSwap.Register(_avatar, cloth: false);
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
             // the avatar's live pose (官方頭像框跟著實際動作做動作). 穿飛行翅膀時比照房間 avatar 用 flystay 浮空 idle /
             // fly 前傾滑動,頭貼才跟著一樣做飛行動作 (使用者需求 #3;SpecialMotionItems 同一條規則)。
@@ -277,7 +277,7 @@ namespace Sdo.Game
             Vector3 target; float dist;
             // MMD 顯示模式:SDO 的臉/髮 part 被藏起來了,模型是一块 skinned mesh(沒有 FACE/HAIR 之分) → 改用 MMD rig
             // 自己量的頭框。它的框是「純頭」(下巴→顱頂),SDO 那個是頭+髮 → 高約 40%,所以常數也要用 MmdAvatar 自帶的。
-            var mmdRig = MmdDebug.ActiveFor(_avatar);
+            var mmdRig = MmdAvatarSwap.ActiveFor(_avatar);
             if (mmdRig != null && mmdRig.TryHeadBounds(out var mb))
             {
                 target = mb.center;

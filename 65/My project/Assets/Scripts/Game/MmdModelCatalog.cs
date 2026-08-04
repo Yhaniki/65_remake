@@ -5,9 +5,9 @@ using System.IO;
 namespace Sdo.Game
 {
     /// <summary>
-    /// The list of MMD models available to <see cref="MmdDebug"/> — one entry per folder that directly holds a ".pmx".
+    /// The list of MMD models available to <see cref="MmdAvatarSwap"/> — one entry per folder that directly holds a ".pmx".
     /// Drop a model (the whole extracted folder: the .pmx plus its textures/Toon/Sph sub-folders) under
-    /// <c>DATA/MODEL/&lt;name&gt;/</c> and it shows up in the F10 panel; nothing is hardcoded to any one model.
+    /// <c>DATA/MODEL/&lt;name&gt;/</c> and it shows up in the 設定面板的 MMD 分頁; nothing is hardcoded to any one model.
     ///
     /// The scan is deliberately forgiving about how a downloaded model unzips: the root itself may hold the .pmx, or a
     /// sub-folder, or a sub-sub-folder (<c>MODEL/pack/miku/miku.pmx</c>). A folder that has a .pmx is a LEAF — we never

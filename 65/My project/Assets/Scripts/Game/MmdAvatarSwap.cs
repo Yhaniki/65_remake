@@ -1,39 +1,34 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings;
 
 namespace Sdo.Game
 {
     /// <summary>
-    /// Debug switch for the "display an MMD model instead of the SDO avatar" experiment. Press <b>F7</b> (or click the
-    /// on-screen button) to swap EVERY registered avatar between its native SDO body and the MMD model — the gameplay
-    /// dancer, the room walker, and the three portrait/preview surfaces that render their own private avatar into a
-    /// RenderTexture (the 男/女 select preview, the room 頭貼, and the 結算 left headshot). The SDO <see cref="SdoAvatar"/>
-    /// stays alive as the hidden motion driver either way, so the MMD model plays the exact same MOT/DPS.
+    /// 「用 MMD 模型顯示角色」的執行期服務。開著的時候，每一隻登記過的角色（跳舞的、房間走路的、以及三個各自
+    /// 渲一張 RenderTexture 的頭貼/預覽：男女選擇預覽、房間頭貼、結算左邊頭像）都把 SDO 的身體藏起來、改畫
+    /// 一個 MMD 模型。SDO 的 <see cref="SdoAvatar"/> 仍然活著當**動作驅動器**，所以跳的還是同一套 MOT/DPS。
     ///
-    /// WHICH model is not hardcoded: every folder holding a .pmx under <c>DATA/MODEL/</c> (dev: <c>assets/MODEL/</c>) is
-    /// an entry in <see cref="MmdModelCatalog"/>, listed in the panel and switchable live (◀ ▶ buttons, or F9 for the
-    /// next one, or <c>-mmdmodel &lt;name&gt;</c> on the command line). Each model is parsed once and cached, so flipping
-    /// back and forth between two models only pays the parse cost once each.
+    /// <b>設定全部在 config.ini 的 <c>[Mmd]</c> 區</b>（UI：開場設定面板的「MMD」分頁）。這個類別不畫任何 UI，
+    /// 只在 <see cref="Update"/> 比對 <see cref="RoomConfig"/> 的值有沒有變，變了就套用 —— 所以面板拉滑桿當場
+    /// 看得到、手改 config.ini 重開也一樣。（改版前這裡掛著一塊自己畫的 IMGUI 除錯面板加 F7/F9/F10，值只活在
+    /// 記憶體裡，關掉遊戲就沒了。）
     ///
-    /// Self-bootstraps (<see cref="Boot"/>) and announces itself at scene load; the two build sites just call
-    /// <see cref="RegisterSwappable"/>, which also eagerly parses the model so you get "[mmd] parsed …" confirmation
-    /// WITHOUT needing to toggle. Milestone lines are written through <see cref="SdoLog.Note"/> so they land in the
-    /// project's log.txt (which drops plain Debug.Log/info) AND mirrored to the editor console. A small overlay shows
-    /// the current state, the parse result, and any error — an on-screen liveness check independent of any log filter.
+    /// 用哪個模型不是寫死的：<c>DATA/MODEL/</c>（開發樹 <c>assets/MODEL/</c>）底下每個含 .pmx 的資料夾都是
+    /// <see cref="MmdModelCatalog"/> 的一筆，設定面板那一列就是這份清單（<see cref="StartupConfigSchema.MmdModelsProvider"/>
+    /// 在 <see cref="Boot"/> 接上去）。每個模型只解析一次並快取，換來換去不會重複付解析成本。
+    ///
+    /// 自己開機（<see cref="Boot"/>）；各個生成點只要呼叫 <see cref="Register"/>。里程碑訊息走
+    /// <see cref="SdoLog.Note"/>，才會落進專案的 log.txt（它會丟掉一般的 Debug.Log）。
     /// </summary>
-    public sealed class MmdDebug : MonoBehaviour
+    public sealed class MmdAvatarSwap : MonoBehaviour
     {
-        public KeyCode ToggleKey = KeyCode.F7;    // swap SDO⇄MMD avatar (was F8; F8 now free for gameplay auto-play)
-        public KeyCode ModelKey  = KeyCode.F9;    // next installed model (DATA/MODEL/*)
-        public KeyCode PanelKey  = KeyCode.F10;   // show/hide this whole debug panel
-
         private sealed class Reg { public SdoAvatar Avatar; public MmdAvatar Mmd; public bool Failed; public bool Cloth = true; }
         private readonly List<Reg> _regs = new List<Reg>();
         private bool _mmdOn;
-        private bool _panelOn = true;   // the on-screen debug panel starts visible; PanelKey (F10) or its 隱藏 button hides it
 
-        private static MmdDebug _inst;
+        private static MmdAvatarSwap _inst;
         private static List<MmdModelCatalog.Entry> _models = new List<MmdModelCatalog.Entry>();
         private static int _sel = -1;                    // index into _models; -1 = nothing installed
         // Parsed models, keyed by .pmx path — switching back to a model you already looked at is free (and MmdAvatar's
@@ -49,14 +44,20 @@ namespace Sdo.Game
         // info-level Debug.Log, so a plain Debug.Log milestone would never appear in the file the user inspects.
         private static void Log(string m) { Debug.Log(m); SdoLog.Note("mmd", m); }
 
+        // AfterSceneLoad, and it has to stay that way: this reads RoomConfig, and SettingsBootstrap loads config.ini at
+        // BeforeSceneLoad. Move this earlier and every [Mmd] value read here is the compiled-in default instead of the
+        // player's — the swap would come up off, and the prewarm below (which only starts when it is on) never runs.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
             var inst = Ensure();
 
-            // -mmd starts the whole session in MMD mode (every avatar, from the 男/女 select screen on) — otherwise the
-            // run starts on the SDO bodies and F7 swaps. "-mmdmodel <name>" (or "-mmdmodel=<name>") picks which of the
-            // installed models to start on, by name or any substring of it.
+            // The 設定面板 lists the installed models — it lives in Sdo.Settings, which cannot reference Sdo.Game,
+            // so hand it the scan result instead (see StartupConfigSchema.MmdModelsProvider).
+            StartupConfigSchema.MmdModelsProvider = () => ModelNames();
+
+            // Command line still wins for a one-off run without touching config.ini: "-mmd" forces MMD display on,
+            // "-mmdmodel <name>" (or "=<name>") picks which installed model, by name or any substring of it.
             bool cli = false; string want = null;
             try
             {
@@ -70,18 +71,57 @@ namespace Sdo.Game
             }
             catch { }
 
-            Rescan(want);
-            if (cli) inst._mmdOn = true;   // (no Apply: nothing is registered yet — each dancer swaps as it's built)
-            Log("[mmd] armed — F7 swaps SDO⇄MMD, F9 next model, F10 shows/hides the panel. " +
-                (cli ? "-mmd → starting in MMD mode. " : "") + ModelSummary());
+            Rescan(want ?? RoomConfig.mmdModel);
+            if (want != null && Sel != null) RoomConfig.mmdModel = Sel.Name;   // -mmdmodel 也走設定值,之後的比對才不會一直當成「變了」
+            if (cli) RoomConfig.mmdEnabled = true;
+            inst._mmdOn = RoomConfig.mmdEnabled;   // (no Apply: nothing is registered yet — each dancer swaps as it's built)
+            inst._applied = Snapshot();
+            Log($"[mmd] armed — 設定在 config.ini [Mmd] / 開場設定面板的 MMD 分頁。顯示={(inst._mmdOn ? "MMD" : "SDO")}. " +
+                (cli ? "-mmd → 這次啟動強制 MMD. " : "") + ModelSummary());
+            if (inst._mmdOn) inst.StartCoroutine(inst.PrewarmCo());
+        }
+
+        // 開機就先把「每個模型只做一次」的那兩段做掉:.pmx 解析,以及共用的 mesh/材質/貼圖。
+        //
+        // 這是 MMD 顯示唯一真正慢的地方,而且量過:初音 = 解析 89 ms + 共用資產 1438 ms(其中貼圖解碼就佔 1401 ms
+        // —— 十張 2048² PNG),之後**每一隻舞者只要 17~26 ms**。不先做的話這 1.5 秒會落在第一次進房間/進歌的當下
+        // (rig 是跟著舞者生成的),看起來就是「換場景要重新讀取」。開機這裡本來就有載入畫面,藏得住。
+        //
+        // 貼圖分幀解碼,但用**時間預算**而不是「一張一幀」,而且預算要開得大。實測(打包版,開機掃歌中):
+        //   一張一幀   → 24 張分 24 幀 = 10.5 秒,預覽 6.4 秒就生成了 → 預熱整個白做(第一隻付 518 ms)
+        //   預算 25 ms → 14 幀 = 7.0 秒,還是差一點點輸(第一隻付 255 ms)
+        // 關鍵是**開機那幾幀本來就長達 ~500 ms**(掃歌),所以「讓一幀」的代價不是 16 ms 而是半秒 —— 讓越多次越慢。
+        // 解碼工作總共才 ~450 ms,預算開到 150 ms 就是分 3~4 幀做完(≈2 秒內),而在一個已經 500 ms 的幀裡多花
+        // 150 ms 是看不出來的;yield 存在的意義只是讓開機進度條還會動,不是讓每幀都很短。
+        private const float PrewarmBudgetMs = 150f;
+
+        private System.Collections.IEnumerator PrewarmCo()
+        {
+            yield return null;
+            float t0 = Time.realtimeSinceStartup;
+            var pmx = SharedPmx();
+            if (pmx == null || Sel == null) yield break;
+
+            int n = MmdAvatar.TextureCount(pmx), frames = 1;
+            float frameStart = Time.realtimeSinceStartup;
+            for (int i = 0; i < n; i++)
+            {
+                if (!MmdAvatar.PrewarmTexture(pmx, Sel.Dir, i)) break;
+                if ((Time.realtimeSinceStartup - frameStart) * 1000f < PrewarmBudgetMs) continue;
+                yield return null;
+                frameStart = Time.realtimeSinceStartup;
+                frames++;
+            }
+            MmdAvatar.Prewarm(pmx, Sel.Dir);   // 材質 + mesh(貼圖此時全在快取裡)
+            Log($"[mmd] prewarm 完成 ({(Time.realtimeSinceStartup - t0) * 1000f:F0} ms, {n} 張貼圖分 {frames} 幀解碼) — " +
+                "之後每隻舞者只付自己的骨架/布料(實測 ~11 ms)");
         }
 
         /// <summary>Re-read the installed models from disk (DATA/MODEL/*, dev assets/MODEL/*, …) and select
-        /// <paramref name="want"/> (name or substring) — or keep the current selection if it survived the rescan.
-        /// Called at boot and from the panel's 重新掃描 button, so you can drop a model in and pick it up without a restart.</summary>
+        /// <paramref name="want"/> (name or substring) — or keep the current selection if it survived the rescan.</summary>
         public static void Rescan(string want = null)
         {
-            string keep = want ?? Sel?.Name;
+            string keep = string.IsNullOrEmpty(want) ? Sel?.Name : want;
             _models = MmdModelCatalog.Discover(ModelRoots());
             _sel = MmdModelCatalog.IndexOf(_models, keep);
             _status = _models.Count == 0 ? "NO MODEL" : "found";
@@ -89,35 +129,44 @@ namespace Sdo.Game
                 _lastError = "沒有模型 — 放一個 MMD 資料夾(含 .pmx)到 " + string.Join(" 或 ", new List<string>(ModelRoots()).ToArray());
         }
 
+        /// <summary>安裝了哪些模型（資料夾名）。設定面板那一列的選項來源。</summary>
+        public static string[] ModelNames()
+        {
+            var names = new string[_models.Count];
+            for (int i = 0; i < _models.Count; i++) names[i] = _models[i].Name;
+            return names;
+        }
+
         private static string ModelSummary()
             => _models.Count == 0
                 ? "NO MODEL — 放 .pmx 資料夾到 DATA/MODEL/ (開發樹: assets/MODEL/)"
                 : $"models={_models.Count}, using '{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})";
 
-        private static MmdDebug Ensure()
+        private static MmdAvatarSwap Ensure()
         {
             if (_inst != null) return _inst;
-            var go = new GameObject("MmdDebug");
+            var go = new GameObject("MmdAvatarSwap");
             DontDestroyOnLoad(go);
-            _inst = go.AddComponent<MmdDebug>();
+            _inst = go.AddComponent<MmdAvatarSwap>();
             return _inst;
         }
 
         /// <summary>Register an in-scene dancer as swappable. Called right after each SDO dancer is built. Eagerly parses
         /// the model so its "[mmd] parsed …" (or "not found") confirmation appears on room entry, before any toggle. If
-        /// MMD mode is already on, the new dancer is swapped immediately.
+        /// MMD display is already on, the new dancer is swapped immediately.
         /// <paramref name="cloth"/> false → build this one WITHOUT the hair/skirt sim (the head portraits: the sway is
         /// invisible at that size and the cloth solver is the most expensive part of a rig).</summary>
-        public static void RegisterSwappable(SdoAvatar avatar, bool cloth = true)
+        public static void Register(SdoAvatar avatar, bool cloth = true)
         {
             if (avatar == null) return;
             var inst = Ensure();
             inst._regs.RemoveAll(r => r.Avatar == null);   // drop destroyed dancers (scene changes / rebuilds)
             if (inst._regs.Exists(r => r.Avatar == avatar)) return;
             inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth });
+            if (!inst._mmdOn) return;   // 沒開就別碰:不解析、不建、也不寫 log(關著的時候這整條要 0 成本)
             Log($"[mmd] registered dancer '{avatar.name}' (now {inst._regs.Count} swappable) — parsing model…");
             SharedPmx();   // eager parse → logs "[mmd] parsed …" or the not-found/parse-fail reason right now
-            if (inst._mmdOn) inst.Apply(inst._regs[inst._regs.Count - 1], true);
+            inst.Apply(inst._regs[inst._regs.Count - 1], true);
         }
 
         /// <summary>The MMD body currently DISPLAYED for <paramref name="avatar"/>, or null when the native SDO body is
@@ -131,16 +180,44 @@ namespace Sdo.Game
             return null;
         }
 
+        // ---------------------------------------------------------------- config.ini → 場上
+        // 設定的快照。面板改了值就直接寫進 RoomConfig 的 static 欄位(沒有事件可以訂閱),所以這裡每幀比一次:
+        // 12 個欄位的比對比任何一種通知機制都便宜，而且手改 config.ini 之後重讀也同樣會生效。
+        private struct Snap
+        {
+            public bool On, Toon, Outline, Sphere, Physics, Aim, RootMove, FlipV;
+            public string Model;
+            public float Grav, Stiff, Col;
+        }
+        private Snap _applied;
+
+        private static Snap Snapshot() => new Snap
+        {
+            On = RoomConfig.mmdEnabled, Model = RoomConfig.mmdModel ?? "",
+            Toon = RoomConfig.mmdToon, Outline = RoomConfig.mmdOutline, Sphere = RoomConfig.mmdSphere,
+            Physics = RoomConfig.mmdPhysics, Aim = RoomConfig.mmdAim, RootMove = RoomConfig.mmdRootMotion,
+            FlipV = RoomConfig.mmdFlipV,
+            Grav = RoomConfig.mmdGravity, Stiff = RoomConfig.mmdStiffness, Col = RoomConfig.mmdColliderScale,
+        };
+
         private void Update()
         {
-            if (Input.GetKeyDown(ToggleKey)) Toggle();
-            if (Input.GetKeyDown(ModelKey)) NextModel();
-            if (Input.GetKeyDown(PanelKey)) _panelOn = !_panelOn;
+            var now = Snapshot();
+            if (now.On != _applied.On) { _applied = now; SetEnabled(now.On); }
+            else if (!string.Equals(now.Model, _applied.Model, System.StringComparison.OrdinalIgnoreCase))
+            {
+                // 換模型:先照名字重選(掃過的清單裡找),再把每一隻已經建好的身體丟掉重建 —— SDO 驅動器不動,舞繼續跳。
+                _applied = now;
+                Rescan(now.Model);
+                Log($"[mmd] model → {(Sel != null ? $"'{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})" : "(找不到 '" + now.Model + "')")}");
+                RebuildAll();
+            }
+            else if (!SameLooks(now, _applied)) { _applied = now; ApplyOpts(); }
 
+            if (!_mmdOn) return;
             // Build the MMD body for any dancer that could NOT be built when it was last applied because its GameObject
             // was inactive — the gender-select screen keeps BOTH previews alive and only activates the selected one, and
             // Magica Cloth / the skinned rig need a live GameObject. Retried once the dancer is shown.
-            if (!_mmdOn) return;
             for (int i = 0; i < _regs.Count; i++)
             {
                 var r = _regs[i];
@@ -149,14 +226,21 @@ namespace Sdo.Game
             }
         }
 
-        private void Toggle() => SetEnabled(!_mmdOn);
+        // 「外觀/物理旋鈕」有沒有變(不含總開關與模型 —— 那兩個要走重建那條路)。
+        private static bool SameLooks(in Snap a, in Snap b)
+            => a.Toon == b.Toon && a.Outline == b.Outline && a.Sphere == b.Sphere && a.Physics == b.Physics
+            && a.Aim == b.Aim && a.RootMove == b.RootMove && a.FlipV == b.FlipV
+            && Mathf.Approximately(a.Grav, b.Grav) && Mathf.Approximately(a.Stiff, b.Stiff)
+            && Mathf.Approximately(a.Col, b.Col);
 
-        /// <summary>Show the MMD body (true) or the native SDO body (false) on every registered avatar. What F7 and the
-        /// on-screen button call; also the entry point for the <c>-mmd</c> launch flag and the tests.</summary>
+        /// <summary>Show the MMD body (true) or the native SDO body (false) on every registered avatar. Normally driven
+        /// by <c>config.ini mmdEnabled</c> via <see cref="Update"/>; called directly by the tests.</summary>
         public static void SetEnabled(bool on)
         {
             var inst = Ensure();
             inst._mmdOn = on;
+            RoomConfig.mmdEnabled = on;      // 單一事實來源:直接呼叫(測試)也要讓下一次比對看到一樣的值
+            inst._applied.On = on;
             inst._regs.RemoveAll(r => r.Avatar == null);
             int n = 0;
             foreach (var r in inst._regs) if (inst.Apply(r, on)) n++;
@@ -173,33 +257,15 @@ namespace Sdo.Game
         /// <summary>The installed models, in panel order.</summary>
         public static IReadOnlyList<MmdModelCatalog.Entry> Models => _models;
 
-        /// <summary>Switch to another installed model: every MMD body already built is thrown away and rebuilt from the
-        /// new .pmx (the SDO driver underneath is untouched, so the dance keeps playing). No-op if the index is the
-        /// current one or out of range.</summary>
-        public static void SelectModel(int index)
-        {
-            if (index < 0 || index >= _models.Count || index == _sel) return;
-            _sel = index;
-            Log($"[mmd] model → '{Sel.Name}' ({Path.GetFileName(Sel.PmxPath)})");
-            RebuildAll();   // a model that failed to build is no reason to distrust the next one — Failed is cleared
-        }
-
-        /// <summary>Cycle to the next installed model (F9 / the panel's ▶).</summary>
-        public static void NextModel(int step = 1)
-        {
-            if (_models.Count < 2) return;
-            SelectModel(((_sel + step) % _models.Count + _models.Count) % _models.Count);
-        }
-
         /// <summary>Write the cloth tuning the dancer is running right now (the values converted from the .pmx, plus the
-        /// live gravity/stiffness/collider knobs above) into the model's own folder as physics.ini. From then on THAT
-        /// file is what the model loads — on this machine and in a packaged build, since DATA/MODEL ships whole.
+        /// live gravity/stiffness/collider knobs from config.ini) into the model's own folder as physics.ini. From then
+        /// on THAT file is what the model loads — on this machine and in a packaged build, since DATA/MODEL ships whole.
         /// Returns the file written, or null (no MMD body on screen / nothing writable).</summary>
         public static string SaveProfile()
         {
             var e = Sel;
             var cloth = FirstCloth();
-            if (e == null || cloth == null) { _lastError = "沒有可存的布料(先按 F7 顯示 MMD 模型)"; return null; }
+            if (e == null || cloth == null) { _lastError = "沒有可存的布料(先在設定面板開 MMD 顯示)"; return null; }
             string path = MmdClothProfile.Save(e.Dir, cloth.CurrentSimulationFrequency, cloth.CurrentColliderMul, cloth.CurrentParts);
             _lastError = path == null ? "physics.ini 寫入失敗(資料夾唯讀?)" : "";
             Log(path != null ? "[mmd] 物理已存到 " + path : "[mmd] physics.ini 寫入失敗: " + MmdClothProfile.PathFor(e.Dir));
@@ -235,7 +301,7 @@ namespace Sdo.Game
         }
 
         /// <summary>Throw away every built MMD body and build it again — what to call after the model's physics.ini was
-        /// changed on disk (the panel's 刪除 does; hand-editing the file + this = see your edit without restarting).</summary>
+        /// changed on disk (hand-editing the file + this = see your edit without restarting).</summary>
         public static void Rebuild() => RebuildAll();
 
         // Throw away every built MMD body and build it again (after the model or its physics.ini changed).
@@ -263,10 +329,10 @@ namespace Sdo.Game
                 if (!r.Avatar.gameObject.activeInHierarchy) return true;
                 var pmx = SharedPmx();
                 if (pmx == null) { r.Failed = true; _lastError = "model not parsed (" + _status + ")"; Debug.LogWarning("[mmd] no model → staying on SDO body"); return true; }
-                r.Mmd = MmdAvatar.Build(r.Avatar, pmx, Sel.Dir, r.Avatar.gameObject.layer, r.Cloth);
+                // 布料是建一隻 rig 最貴的一段 → 設定關掉布料時就整組不建(不是建了再關),換場景才會明顯變快。
+                r.Mmd = MmdAvatar.Build(r.Avatar, pmx, Sel.Dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics);
                 if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); return true; }
-                r.Mmd.UseAim = _aim; r.Mmd.DriveRootTranslation = _rootMove; r.Mmd.SetSphere(_sphere); r.Mmd.SetFlipV(_flipV);   // honour the live debug toggles
-                r.Mmd.SetToon(_toon); r.Mmd.SetOutline(_outline); r.Mmd.SetPhysics(_physics); r.Mmd.TunePhysics(_stiff, 0.6f, _gravMul); r.Mmd.SetColliderRadius(_colMul);
+                ApplyOptsTo(r.Mmd);
             }
             // The portrait / preview cameras cull by LAYER, and a dancer's layer is assigned after its parts are built —
             // so keep the rig on whatever layer its driver ended up on (else the 頭貼 cam renders an empty RT).
@@ -280,8 +346,24 @@ namespace Sdo.Game
             return true;
         }
 
-        // Parse (once) the SELECTED model. Cached per .pmx path, so F9-ing through the installed models parses each one
-        // the first time it is shown and is instant afterwards.
+        private void ApplyOpts() { foreach (var r in _regs) if (r.Mmd != null) ApplyOptsTo(r.Mmd); }
+
+        // 把 config.ini [Mmd] 的外觀/物理旋鈕套到一隻已經建好的身體上。
+        private static void ApplyOptsTo(MmdAvatar m)
+        {
+            m.UseAim = RoomConfig.mmdAim;
+            m.DriveRootTranslation = RoomConfig.mmdRootMotion;
+            m.SetSphere(RoomConfig.mmdSphere);
+            m.SetFlipV(RoomConfig.mmdFlipV);
+            m.SetToon(RoomConfig.mmdToon);
+            m.SetOutline(RoomConfig.mmdOutline);
+            m.SetPhysics(RoomConfig.mmdPhysics);
+            m.TunePhysics(RoomConfig.mmdStiffness, 0.6f, RoomConfig.mmdGravity);
+            m.SetColliderRadius(RoomConfig.mmdColliderScale);
+        }
+
+        // Parse (once) the SELECTED model. Cached per .pmx path, so switching between the installed models parses each
+        // one the first time it is shown and is instant afterwards.
         private static PmxLoader SharedPmx()
         {
             var e = Sel;
@@ -313,16 +395,27 @@ namespace Sdo.Game
         /// resolves in the editor AND in a built player: <c>&lt;DATA&gt;/MODEL</c> (packaged — package_build.ps1 fills it
         /// from the dev tree), <c>&lt;repo&gt;/assets/MODEL</c> (the dev drop-box), StreamingAssets/MODEL, plus the
         /// original single-model folder (<c>assets/IkaHatunemiku2025</c>) so an existing checkout keeps working unmoved.
-        /// One folder holding a .pmx = one model (see <see cref="MmdModelCatalog"/>).</summary>
+        /// One folder holding a .pmx = one model (see <see cref="MmdModelCatalog"/>).
+        ///
+        /// <b>The dev drop-box is derived from the PROJECT, not from the data root.</b> Deriving it from
+        /// <see cref="SdoExtracted.Root"/> only works when the data root is the in-repo one — with a <c>data_root.txt</c>
+        /// override (which points at an out-of-tree clean\DATA) it walks up into a folder that has no <c>assets</c> at
+        /// all, and the editor then reports「沒有模型」 while the model sits right there in the repo.</summary>
         public static IEnumerable<string> ModelRoots()
         {
             string root = null; try { root = SdoExtracted.Root; } catch { }
-            string assets = null;
             if (!string.IsNullOrEmpty(root))
             {
-                try { assets = Directory.GetParent(root)?.Parent?.FullName; } catch { }   // <repo>/assets
-                yield return Path.Combine(root, "MODEL");                                  // built: DATA/MODEL
+                yield return Path.Combine(root, "MODEL");                                  // built / overridden: <DATA>/MODEL
+                string beside = null;
+                try { beside = Directory.GetParent(root)?.Parent?.FullName; } catch { }     // <repo>/assets, when DATA is in-repo
+                if (!string.IsNullOrEmpty(beside))
+                {
+                    yield return Path.Combine(beside, "MODEL");
+                    yield return Path.Combine(beside, "IkaHatunemiku2025");                 // legacy single-model layout
+                }
             }
+            string assets = RepoAssetsDir();
             if (!string.IsNullOrEmpty(assets))
             {
                 yield return Path.Combine(assets, "MODEL");                                // dev: <repo>/assets/MODEL
@@ -332,71 +425,20 @@ namespace Sdo.Game
             if (!string.IsNullOrEmpty(sa)) yield return Path.Combine(sa, "MODEL");
         }
 
-        // live retarget/render toggles (diagnose / tune without a recompile)
-        private static bool _aim = true;        // matches MmdAvatar.UseAim default
-        private static bool _sphere = true;     // matches MmdAvatar.ShowSphere default
-        private static bool _rootMove = true;   // matches MmdAvatar.DriveRootTranslation default
-        private static bool _flipV = true;      // matches MmdAvatar.FlipV default
-        private static bool _toon = true;       // cel shading
-        private static bool _outline = true;    // pencil edge
-        private static bool _physics = true;    // hair/skirt sway
-        private static float _gravMul = 1f;     // spring-bone gravity multiplier
-        private static float _stiff = 0.12f;    // spring stiffness (matches MmdSpringBones default; low = gravity hangs it)
-        private static float _colMul = 1f;      // body-collider radius multiplier
-
-        private void ApplyOpts()
+        /// <summary>The repo's <c>assets/</c> folder as seen from the Unity PROJECT (editor only; in a player
+        /// <c>Application.dataPath</c> is <c>&lt;exe&gt;_Data</c> and there is no repo, so this returns null and the
+        /// <c>&lt;DATA&gt;/MODEL</c> root above is the one that resolves). <c>&lt;repo&gt;/65/My project/Assets</c> → up 3.</summary>
+        public static string RepoAssetsDir()
         {
-            foreach (var r in _regs) if (r.Mmd != null)
+            if (!Application.isEditor) return null;
+            try
             {
-                r.Mmd.UseAim = _aim; r.Mmd.DriveRootTranslation = _rootMove; r.Mmd.SetSphere(_sphere); r.Mmd.SetFlipV(_flipV);
-                r.Mmd.SetToon(_toon); r.Mmd.SetOutline(_outline); r.Mmd.SetPhysics(_physics); r.Mmd.TunePhysics(_stiff, 0.6f, _gravMul); r.Mmd.SetColliderRadius(_colMul);
+                var repo = Directory.GetParent(Application.dataPath)?.Parent?.Parent;      // Assets → project → 65 → repo
+                if (repo == null) return null;
+                string assets = Path.Combine(repo.FullName, "assets");
+                return Directory.Exists(assets) ? assets : null;
             }
-        }
-
-        // Unmissable on-screen state + click-to-toggle buttons (so a key conflict / editor focus can't hide the feature).
-        private void OnGUI()
-        {
-            const int w = 344, h = 400;
-            if (!_panelOn)
-            {
-                // panel hidden — leave only a small re-opener so a key conflict / editor focus can't strand the feature
-                if (GUI.Button(new Rect(8, 8, 150, 22), "MMD 面板 (F10)")) _panelOn = true;
-                return;
-            }
-            GUI.Box(new Rect(8, 8, w, h), "MMD 顯示實驗");
-            if (GUI.Button(new Rect(8 + w - 60, 12, 52, 18), "隱藏")) { _panelOn = false; return; }
-            GUI.Label(new Rect(16, 30, w - 16, 20), $"狀態: {(_mmdOn ? "MMD 模型" : "SDO 原角色")}   解析: {_status}");
-            GUI.Label(new Rect(16, 48, w - 16, 20), $"可切換舞者: {_regs.Count}" + (string.IsNullOrEmpty(_lastError) ? "" : "   err: " + _lastError));
-            if (GUI.Button(new Rect(16, 68, 200, 22), _mmdOn ? "切回 SDO 角色 (F7)" : "切成 MMD 模型 (F7)")) Toggle();
-
-            // ---- model picker: every folder holding a .pmx under DATA/MODEL (dev: assets/MODEL) ----
-            string label = Sel == null ? "(沒有模型 — 放進 DATA/MODEL/)" : $"{Sel.Name}  [{_sel + 1}/{_models.Count}]";
-            if (GUI.Button(new Rect(16, 94, 24, 20), "◀")) NextModel(-1);
-            GUI.Label(new Rect(44, 94, 232, 20), "模型: " + label);
-            if (GUI.Button(new Rect(280, 94, 24, 20), "▶")) NextModel(1);
-            if (GUI.Button(new Rect(308, 94, 28, 20), "⟳")) Rescan();   // re-read the folder without restarting
-
-            if (GUI.Button(new Rect(16, 118, 320, 20), $"貼圖V翻轉 flipV: {(_flipV ? "ON" : "OFF")}  ←領帶錯就切這個")) { _flipV = !_flipV; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 140, 320, 20), $"aim 重定向: {(_aim ? "ON" : "OFF")}  (手腳姿勢)")) { _aim = !_aim; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 162, 320, 20), $"sphere 反光: {(_sphere ? "ON" : "OFF")}")) { _sphere = !_sphere; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 184, 320, 20), $"toon 卡通著色: {(_toon ? "ON" : "OFF")}")) { _toon = !_toon; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 206, 320, 20), $"outline 描邊: {(_outline ? "ON" : "OFF")}")) { _outline = !_outline; ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 228, 320, 20), $"physics 頭髮裙擺物理: {(_physics ? "ON" : "OFF")}")) { _physics = !_physics; ApplyOpts(); }
-            GUI.Label(new Rect(16, 251, 130, 20), $"重力 ×{_gravMul:F2}  硬度 ×{_stiff:F2}");
-            if (GUI.Button(new Rect(150, 249, 40, 20), "重-")) { _gravMul = Mathf.Max(0.05f, _gravMul * 0.7f); ApplyOpts(); }
-            if (GUI.Button(new Rect(192, 249, 40, 20), "重+")) { _gravMul = Mathf.Min(8f, _gravMul * 1.4f); ApplyOpts(); }
-            if (GUI.Button(new Rect(250, 249, 40, 20), "硬-")) { _stiff = Mathf.Max(0.03f, _stiff * 0.75f); ApplyOpts(); }
-            if (GUI.Button(new Rect(292, 249, 40, 20), "硬+")) { _stiff = Mathf.Min(0.9f, _stiff * 1.3f); ApplyOpts(); }
-            GUI.Label(new Rect(16, 275, 140, 20), $"身體碰撞半徑 ×{_colMul:F2}");
-            if (GUI.Button(new Rect(150, 273, 40, 20), "碰-")) { _colMul = Mathf.Max(0.2f, _colMul * 0.85f); ApplyOpts(); }
-            if (GUI.Button(new Rect(192, 273, 40, 20), "碰+")) { _colMul = Mathf.Min(4f, _colMul * 1.18f); ApplyOpts(); }
-            if (GUI.Button(new Rect(16, 299, 320, 20), $"根位移 rootMove: {(_rootMove ? "ON" : "OFF")}")) { _rootMove = !_rootMove; ApplyOpts(); }
-
-            // ---- physics.ini: 調到滿意就存進模型資料夾;有這個檔就用它,刪掉就回去用 .pmx 轉換 ----
-            GUI.Label(new Rect(16, 322, w - 32, 20), "物理來源: " + ProfileStatus());
-            if (GUI.Button(new Rect(16, 344, 156, 22), "存成 physics.ini")) SaveProfile();
-            if (GUI.Button(new Rect(180, 344, 156, 22), "刪除(回轉換值)")) DeleteProfile();
-            GUI.Label(new Rect(16, 370, w - 32, 20), "F9 換下一個模型 · 模型放 DATA/MODEL/<名稱>/*.pmx");
+            catch { return null; }
         }
     }
 }

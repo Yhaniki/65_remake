@@ -535,7 +535,7 @@ def main():
                       "The per-metric mappings below are kept for the NEXT run with a live sim.")
             md.append("")
         md.append("For each failing metric: the conversion parameter in `MmdMagicaCloth.cs` "
-                  "(H:/65_remake-mmd/65/My project/Assets/Scripts/Game/MmdMagicaCloth.cs) that most "
+                  "(<repo>/65/My project/Assets/Scripts/Game/MmdMagicaCloth.cs) that most "
                   "directly controls it, and the direction to move it.")
         md.append("")
         for c, metric, direction, vr, vm in fails:
@@ -546,10 +546,10 @@ def main():
     md.append("## Rerun")
     md.append("")
     md.append("```")
-    md.append("python H:/65_remake-mmd/tools/mmd_cloth_validate/compare.py")
+    md.append("python <repo>/tools/mmd_cloth_validate/compare.py")
     md.append("```")
     md.append("(Regenerate the Unity side first if needed: "
-              "`powershell -File H:/65_remake-mmd/tools/mmd_cloth_validate/run_magica_probe.ps1` "
+              "`powershell -File <repo>/tools/mmd_cloth_validate/run_magica_probe.ps1` "
               "with the editor closed, or Test Runner > PlayMode > Sdo.Tests.MmdClothProbe with it open.)")
     md.append("")
 

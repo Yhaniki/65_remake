@@ -9,7 +9,7 @@ Parses ONLY what the reference simulation needs:
   - rigid bodies (full record)
   - joints (full record, PMX 2.0 spring-6DOF layout)
 
-Format reference: PmxLoader.cs in the 65_remake-mmd Unity worktree (validated
+Format reference: PmxLoader.cs in the Unity project (validated
 against this exact model) — the byte layout here mirrors it 1:1.
 """
 import struct
