@@ -72,6 +72,15 @@ namespace Sdo.Game
             // The 設定面板 lists the installed models — it lives in Sdo.Settings, which cannot reference Sdo.Game,
             // so hand it the scan result instead (see StartupConfigSchema.MmdModelsProvider).
             StartupConfigSchema.MmdModelsProvider = () => ModelNames();
+            // 同樣是注入(Sdo.Settings 不能反向參照 Sdo.Game):設定面板 MMD 分頁那一列「存檔 / 還原」按鈕。
+            StartupConfigSchema.MmdProfileSave = () =>
+            {
+                string p = SaveProfile();
+                return p != null ? "物理已存成 " + Path.GetFileName(p) + "（這個模型專屬）" : (_lastError.Length > 0 ? _lastError : "存檔失敗");
+            };
+            StartupConfigSchema.MmdProfileDelete = () =>
+                DeleteProfile() ? "已刪掉 physics.ini → 回到 .pmx 轉換值" : "本來就沒有存檔（現在跑的就是轉換值）";
+            StartupConfigSchema.MmdProfileState = () => ProfileStatus();
 
             // Command line still wins for a one-off run without touching config.ini: "-mmd" forces MMD display on,
             // "-mmdmodel <name>" (or "=<name>") picks which installed model, by name or any substring of it.

@@ -12,6 +12,7 @@ namespace Sdo.Settings
         Slider,   // 數值（Min..Max，Step>0 時吸附到整數格）
         Text,     // 自由文字（位址/路徑/清單）
         Choice,   // 固定幾個選項循環切換
+        Action,   // 按鈕（不是設定值，所以沒有 config.ini key，也沒有 Get/Set）
     }
 
     /// <summary>
@@ -57,6 +58,13 @@ namespace Sdo.Settings
         }
         /// <summary>密碼/token：預設遮起來顯示。</summary>
         public bool Secret;
+
+        /// <summary>Action 專用：按鈕文字（一列可以有幾顆）。</summary>
+        public string[] Actions;
+        /// <summary>Action 專用：按了第 i 顆要做的事，回傳給面板顯示的一句話（null＝不顯示）。</summary>
+        public Func<int, string> Invoke;
+        /// <summary>Action 專用：按鈕旁邊那格「現在的狀態」（null＝不畫）。</summary>
+        public Func<string> StateText;
 
         public Func<string> Get;
         public Action<string> Set;
@@ -167,6 +175,15 @@ namespace Sdo.Settings
         /// 時是 null，<c>mmdModel</c> 那一列就只剩「照設定檔的字串顯示」，改不動也不會壞。
         /// </summary>
         public static Func<string[]> MmdModelsProvider;
+
+        /// <summary>
+        /// 「把現在這組物理存成這個模型的設定 / 丟掉存檔回到轉換值 / 現在跑的是哪一種」——同樣由 Sdo.Game 的
+        /// <c>MmdAvatarSwap</c> 注入（<c>SaveProfile</c> / <c>DeleteProfile</c> / <c>ProfileState</c>）。
+        /// 存的是模型資料夾裡的 <c>physics.ini</c>：**有那個檔就照它跑,沒有就從 .pmx 現算**,所以它跟著模型走,
+        /// 換模型不會互相影響（設定面板的重力/硬度/碰撞半徑滑桿是全部模型共用的倍率,兩者是不同層）。
+        /// 沒接上時（單元測試）那一列的按鈕按了不做事。
+        /// </summary>
+        public static Func<string> MmdProfileSave, MmdProfileDelete, MmdProfileState;
 
         private static List<ConfigField> _fields;
 
@@ -456,6 +473,14 @@ namespace Sdo.Settings
                 Min = 0.2f, Max = 4f, Unit = "×",
                 Help = "布料撞身體用的碰撞體半徑倍率。太小＝裙子穿過腿；太大＝裙子被撐飛。",
                 Get = () => Num(RoomConfig.mmdColliderScale), Set = v => RoomConfig.mmdColliderScale = ParseFloat(v, RoomConfig.mmdColliderScale),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "mmdProfile", Category = CatMmd, Label = "這個模型的物理", Kind = ConfigFieldKind.Action,
+                Actions = new[] { "存檔", "還原" },
+                Help = "「存檔」＝把現在跑的物理數值(轉換值 × 上面那幾根滑桿)寫成模型資料夾裡的 physics.ini,之後這個模型就照它跑,換別的模型不受影響。「還原」＝刪掉那個檔,回到直接從 .pmx 轉換的值。右邊顯示現在用的是哪一種。",
+                Invoke = i => i == 0 ? MmdProfileSave?.Invoke() : MmdProfileDelete?.Invoke(),
+                StateText = () => MmdProfileState?.Invoke(),
             });
             f.Add(new ConfigField
             {

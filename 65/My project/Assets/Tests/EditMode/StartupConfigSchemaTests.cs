@@ -68,7 +68,11 @@ namespace Sdo.Tests
         {
             var all = new HashSet<string>(KeysIn(RoomConfig.Serialize()));
             foreach (var f in StartupConfigSchema.Fields)
+            {
+                // Action 列是按鈕不是設定值（例：把 MMD 物理存成模型自己的 physics.ini），本來就沒有 config.ini key。
+                if (f.Kind == ConfigFieldKind.Action) continue;
                 Assert.IsTrue(all.Contains(f.Key), $"面板上的 {f.Key} 在 config.ini 裡沒有對應的 key（打錯字？）");
+            }
         }
 
         [Test]
@@ -91,6 +95,12 @@ namespace Sdo.Tests
                 Assert.IsTrue(cats.Contains(f.Category), $"{f.Key} 的分頁 '{f.Category}' 不在 Categories 裡");
                 Assert.IsNotEmpty(f.Label, f.Key + " 沒有標籤");
                 Assert.IsNotEmpty(f.Help, f.Key + " 沒有說明");
+                if (f.Kind == ConfigFieldKind.Action)
+                {
+                    Assert.IsNotNull(f.Invoke, f.Key + " 是按鈕列卻沒有 Invoke");
+                    Assert.IsNotEmpty(f.Actions, f.Key + " 是按鈕列卻沒有按鈕文字");
+                    continue;
+                }
                 Assert.IsNotNull(f.Get, f.Key + " 沒有 Get");
                 Assert.IsNotNull(f.Set, f.Key + " 沒有 Set");
             }
@@ -285,6 +295,7 @@ namespace Sdo.Tests
         {
             foreach (var f in StartupConfigSchema.Fields)
             {
+                if (f.Kind == ConfigFieldKind.Action) continue;   // 按鈕列沒有值
                 string before = f.Get();
                 f.Set(before);
                 Assert.AreEqual(before, f.Get(), f.Key + " 寫回自己的值之後變了");

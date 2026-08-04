@@ -219,10 +219,26 @@ namespace Sdo.UI.Screens
                 case ConfigFieldKind.Toggle: DrawToggle(f); break;
                 case ConfigFieldKind.Slider: DrawSlider(f); break;
                 case ConfigFieldKind.Choice: DrawChoice(f); break;
+                case ConfigFieldKind.Action: DrawAction(f); break;
                 default: DrawText(f); break;
             }
             GUILayout.EndHorizontal();
             Hover(f.Help);
+        }
+
+        // 按鈕列（不是設定值 —— 例：把目前的 MMD 物理存成模型自己的 physics.ini）。按下去回傳的那句話直接進
+        // 底下的狀態列,因為這種動作會失敗（資料夾唯讀、還沒有模型…),使用者要看得到結果。
+        private void DrawAction(ConfigField f)
+        {
+            var names = f.Actions ?? Array.Empty<string>();
+            for (int i = 0; i < names.Length; i++)
+                if (GUILayout.Button(names[i], GUILayout.Width(56f), GUILayout.Height(RowH)))
+                {
+                    string msg = f.Invoke?.Invoke(i);
+                    if (!string.IsNullOrEmpty(msg)) _status = msg;
+                }
+            GUILayout.Space(4f);
+            GUILayout.Label(f.StateText?.Invoke() ?? "", _value, GUILayout.ExpandWidth(true));
         }
 
         private void DrawToggle(ConfigField f)
