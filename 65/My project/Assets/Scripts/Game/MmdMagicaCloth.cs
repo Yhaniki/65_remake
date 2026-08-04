@@ -17,6 +17,9 @@ namespace Sdo.Game
     /// <item>DYNAMIC rigid bodies (mode 1/2) + their joints give each part its firmness: joint rotation-LIMIT tightness
     /// → angle-restoration stiffness (twintails' locked ≈0 limits ⇒ near-rigid), angular damping → air-damping, body
     /// radius → particle thickness.</item>
+    /// <item>That firmness is derived PER CHAIN and only merged across chains that would get the same numbers anyway
+    /// (<see cref="MmdClothChains"/>) — averaging a whole part together let 26 sprung tufts dictate the tuning of 420
+    /// twintail bones.</item>
     /// </list>
     /// Collision uses EDGE mode (segments between particles, not just points) so a fast leg can't slip between skirt
     /// particles during big dance moves; the global simulation frequency is raised for the same reason. The tie is the
@@ -36,9 +39,12 @@ namespace Sdo.Game
         private readonly List<ColliderComponent> _colliders = new List<ColliderComponent>();
         private readonly List<Vector3> _colBaseSize = new List<Vector3>();   // (radius, radius|0, length|0); sphere = (r,0,0)
 
-        // The resolved tuning per built part (converted, then overridden by physics.ini) — what Save writes back out.
+        // The resolved tuning per built CLOTH (converted, then overridden by physics.ini) — what Save writes back out.
+        // A part can now own several cloths (chains that behave differently), so the bone count rides along: the
+        // biggest cloth is the one that represents its part in the file, which has one section per part.
         private readonly List<KeyValuePair<MmdClothPartId, MmdClothPart>> _resolved =
             new List<KeyValuePair<MmdClothPartId, MmdClothPart>>();
+        private readonly List<int> _resolvedBones = new List<int>();
         private float _simFreq = 150f;      // global solver rate (profile: [global] simulationFrequency)
         private float _profileColMul = 1f;  // profile's collider-radius multiplier; the panel's knob multiplies on top
         private float _liveGrav = 1f, _liveStiff = 1f, _liveCol = 1f;   // the debug panel's live knobs
@@ -57,12 +63,17 @@ namespace Sdo.Game
         {
             get
             {
-                foreach (var kv in _resolved)
+                // one entry per PART (physics.ini has one section per part) — represented by that part's biggest cloth
+                for (int part = 0; part < 4; part++)
                 {
-                    var p = kv.Value;
+                    int best = -1;
+                    for (int i = 0; i < _resolved.Count; i++)
+                        if ((int)_resolved[i].Key == part && (best < 0 || _resolvedBones[i] > _resolvedBones[best])) best = i;
+                    if (best < 0) continue;
+                    var p = _resolved[best].Value;
                     p.GravityMul *= _liveGrav;
                     if (p.AngleStiffness > 0.001f) p.AngleStiffness = Mathf.Clamp01(p.AngleStiffness * _liveStiff);
-                    yield return new KeyValuePair<MmdClothPartId, MmdClothPart>(kv.Key, p);
+                    yield return new KeyValuePair<MmdClothPartId, MmdClothPart>((MmdClothPartId)part, p);
                 }
             }
         }
@@ -70,16 +81,13 @@ namespace Sdo.Game
         public float CurrentSimulationFrequency => _simFreq;
         public float CurrentColliderMul => _profileColMul * _liveCol;
 
-        // A collider + the authored collision group/mask of the body it came from (for per-part filtering).
-        private struct ColRec { public ColliderComponent Col; public byte Group; public ushort Mask; }
-
         /// <param name="profile">The model's physics.ini, or null → convert everything from the .pmx.</param>
         public static MmdMagicaCloth Setup(GameObject host, Transform[] bone, int[] parent, PmxLoader pmx, float unitScale,
                                            MmdClothProfile profile = null)
         {
             if (pmx?.PhysicsBones == null || pmx.PhysicsBones.Count == 0) return null;
             var m = new MmdMagicaCloth();
-            try { m.Build(host, bone, parent, pmx, unitScale, profile); }
+            try { m.Build(host, bone, pmx, unitScale, profile); }   // `parent` is re-derived from the PMX bones themselves
             catch (System.Exception e) { Debug.LogWarning("[mmd] Magica Cloth setup failed: " + e.Message + "\n" + e.StackTrace); return null; }
             return m.Any ? m : null;
         }
@@ -97,90 +105,27 @@ namespace Sdo.Game
             return MmdClothPartId.Hair;   // twintails / hairlines / breast / misc
         }
 
-        // Two rigid bodies collide iff each has the OTHER's group bit set in its collision-enable mask.
-        private static bool Collide(byte gA, ushort mA, byte gB, ushort mB)
-            => ((mA >> gB) & 1) == 1 && ((mB >> gA) & 1) == 1;
-
-        // Bullet/MMD damping is PER-SECOND (velocity retains (1−d) after 1 s); Magica damping is applied PER SUBSTEP
-        // (at our 150 Hz: v ×= 1 − m×0.6 each step). Match one second of decay: (1 − m×0.6)^150 = (1 − d)
-        //   ⇒ m = (1 − (1−d)^(1/150)) / 0.6.   e.g. d=0.2 → m=0.0025, d=1.0(capped) → m=0.043 ≈ Magica's stock range.
-        private static float BulletToMagicaDamping(float bulletDamp)
-        {
-            const float freq = 150f, power = 0.6f;   // our SetSimulationFrequency(150); solver z-power = 90/150
-            float retainPerSec = Mathf.Clamp(1f - bulletDamp, 0.02f, 1f);
-            return Mathf.Clamp((1f - Mathf.Pow(retainPerSec, 1f / freq)) / power, 0f, 0.2f);
-        }
-
-        // Per-group accumulator of the authored firmness data (means computed at build) + the distinct collision
-        // filters (group|mask) of the part's dynamic bodies, used to select which colliders this part touches.
-        private sealed class GroupAccum
-        {
-            public readonly List<Transform> Roots = new List<Transform>();
-            public readonly HashSet<int> Filters = new HashSet<int>();   // (group << 16) | mask
-            public int AnchorBone = -1;   // the body bone the chain hangs from (its motion is the cloth's inertia reference)
-            public float LimSum, AngSum, LinSum, RadSum, SpringSum;
-            public int LimN, BodyN, SpringN, BoxN;   // BoxN = box-shaped dynamic bodies (skirt panels) → mesh connection
-            // chain root vs tip mass + linear-damping → derive depthInertia (from the mass gradient) + a damping curve
-            public float RootMassSum, TipMassSum, RootLinSum, TipLinSum;
-            public int RootN, TipN;
-            public float MinY = float.PositiveInfinity, MaxY = float.NegativeInfinity;   // bone Y extent ≈ chain length
-        }
-
-        private void Build(GameObject host, Transform[] bone, int[] parent, PmxLoader pmx, float unitScale, MmdClothProfile profile)
+        private void Build(GameObject host, Transform[] bone, PmxLoader pmx, float unitScale, MmdClothProfile profile)
         {
             int bc = pmx.Bones.Count;
-            float u = Mathf.Max(unitScale, 1f);
             ProfilePath = profile?.Path;
             _simFreq = profile != null ? profile.SimulationFrequency(_simFreq) : _simFreq;
             _profileColMul = profile != null ? profile.ColliderRadiusMul(1f) : 1f;
 
             // ---- body colliders from the model's KINEMATIC rigid bodies (exact authored shapes + their groups) ----
-            var colRecs = new List<ColRec>();
-            BuildRigidBodyColliders(pmx, bone, colRecs);
+            var colBodies = new List<PmxLoader.RigidBody>();   // colBodies[i] is what _colliders[i] came from
+            BuildRigidBodyColliders(pmx, bone, colBodies);
             List<ColliderComponent> allCols = null;
-            if (colRecs.Count == 0)   // model has no rigid-body data → hand-placed fallback, no group filtering
+            if (colBodies.Count == 0)   // model has no rigid-body data → hand-placed fallback, no group filtering
             {
                 allCols = new List<ColliderComponent>();
                 BuildFallbackColliders(pmx, bone, allCols, unitScale);
             }
 
-            // ---- group the dynamic bones + accumulate authored firmness (joint limits, damping, radius) + filters ----
-            var body = new Dictionary<int, PmxLoader.RigidBody>();
-            foreach (var rb in pmx.RigidBodies)
-                if (rb.Mode != 0 && rb.Bone >= 0 && !body.ContainsKey(rb.Bone)) body[rb.Bone] = rb;
+            // ---- chains, each with ITS OWN authored firmness; identical-behaviour chains share a cloth ----
+            var groups = MmdClothChains.Build(pmx.Bones, pmx.RigidBodies, pmx.BoneJointLimit, pmx.BoneJointSpring, colBodies);
+            if (groups.Count == 0) return;
 
-            // a physics bone that is another physics bone's parent has a physics child → it is NOT a chain tip
-            var hasPhysChild = new HashSet<int>();
-            foreach (int i in pmx.PhysicsBones) { int pp = parent[i]; if (pp >= 0 && pmx.PhysicsBones.Contains(pp)) hasPhysChild.Add(pp); }
-
-            var g = new GroupAccum[4];
-            for (int i = 0; i < 4; i++) g[i] = new GroupAccum();
-            foreach (int i in pmx.PhysicsBones)
-            {
-                if (i < 0 || i >= bc || bone[i] == null) continue;
-                body.TryGetValue(i, out var rb);
-                var acc = g[(int)GroupOf(rb != null ? rb.Name : (pmx.Bones[i].NameEn + pmx.Bones[i].NameJp))];
-                int p = parent[i];
-                bool isRoot = !(p >= 0 && pmx.PhysicsBones.Contains(p));
-                bool isTip = !hasPhysChild.Contains(i);
-                if (rb != null)
-                {
-                    acc.AngSum += rb.AngularDamp; acc.LinSum += rb.LinearDamp; acc.RadSum += Mathf.Max(rb.Size.x, 1e-3f); acc.BodyN++;
-                    if (rb.Shape == 1) acc.BoxN++;   // box panel ⇒ a sheet (ring) not a strand
-                    acc.Filters.Add((rb.Group << 16) | rb.Mask);
-                    // MMD authors the chain ROOT heavy (anchored) and the TIP light (swings) + the tip more damped —
-                    // exactly Magica's depthInertia + a root→tip damping curve. Capture root/tip mass + linear damping.
-                    if (isRoot) { acc.RootMassSum += rb.Mass; acc.RootLinSum += rb.LinearDamp; acc.RootN++; }
-                    if (isTip) { acc.TipMassSum += rb.Mass; acc.TipLinSum += rb.LinearDamp; acc.TipN++; }
-                }
-                if (pmx.BoneJointLimit.TryGetValue(i, out float lim)) { acc.LimSum += lim; acc.LimN++; }
-                if (pmx.BoneJointSpring.TryGetValue(i, out float spr)) { acc.SpringSum += spr; acc.SpringN++; }
-                float by = pmx.Bones[i].Position.y;
-                if (by < acc.MinY) acc.MinY = by; if (by > acc.MaxY) acc.MaxY = by;
-                if (isRoot) { acc.Roots.Add(bone[i]); if (acc.AnchorBone < 0) acc.AnchorBone = p; }   // p = the non-physics bone the chain hangs from
-            }
-
-            string[] names = { "MmdBangCloth", "MmdHairCloth", "MmdSkirtCloth", "MmdTieCloth" };
             // ---- world scale, derived from the avatar itself (data-driven, no hand constant) ----
             // Magica assumes METER-scale characters (its clamps are SI: gravity≤20, particle speed≤10 m/s). This avatar
             // renders ~51 world units tall ≈ a 1.6 m girl ⇒ ~32 units per meter, so physically-correct values are that
@@ -192,97 +137,54 @@ namespace Sdo.Game
             float worldHeight = Mathf.Max((maxY - minY) * unitScale, 1e-3f);
             float unitsPerMeter = Mathf.Max(worldHeight / 1.6f, 0.1f);   // assume a ~1.6 m humanoid
             float gravity = 9.8f * unitsPerMeter;
-            for (int part = 0; part < 4; part++)
+            foreach (var grp in groups)
             {
-                var acc = g[part];
-                if (acc.Roots.Count == 0) continue;
+                var roots = new List<Transform>(grp.RootBones.Count);
+                foreach (int r in grp.RootBones) if (r >= 0 && r < bc && bone[r] != null) roots.Add(bone[r]);
+                if (roots.Count == 0) continue;
 
-                // ===== every Magica value below is DERIVED from the PMX physics (no per-part hand constants) =====
-                float springMean = acc.SpringN > 0 ? acc.SpringSum / acc.SpringN : 0f;
-                float springNorm = Mathf.Clamp01(springMean / 5f);                 // rotation-spring strength 0..1
-                float limMean = acc.LimN > 0 ? acc.LimSum / acc.LimN : 0f;         // joint rotation-limit range (rad)
-                float massRoot = acc.RootN > 0 ? acc.RootMassSum / acc.RootN : 1f;
-                float massTip = acc.TipN > 0 ? acc.TipMassSum / acc.TipN : 1f;
-                float massGrad = Mathf.Log(Mathf.Max(massRoot / Mathf.Max(massTip, 1e-3f), 1f));   // ln(root/tip mass)
-                float angMean = acc.BodyN > 0 ? acc.AngSum / acc.BodyN : 1f;
-                float linRoot = acc.RootN > 0 ? acc.RootLinSum / acc.RootN : 0.5f;
-                float linTip = acc.TipN > 0 ? acc.TipLinSum / acc.TipN : 0.5f;
-                float radMean = acc.BodyN > 0 ? acc.RadSum / acc.BodyN : 0.2f;
-
-                // SHAPE RETENTION, calibrated against the pybullet ground truth (compare.py):
-                //  - spring>0 (fringe): angle RESTORATION ∝ the authored rotation spring — measured 9/10 PASS at 0.9×norm.
-                //  - spring==0 (twintails/tie/skirt): MMD's rotation LIMITS are per-joint structural constraints (length-
-                //    independent) — a restoration force is the wrong analog (it attenuates down long chains: 0.4 fixed the
-                //    18-bone tie but did nothing for the 30-bone twintail, droop 7° vs ref 31.8°). Use Magica's per-joint
-                //    ANGLE LIMIT instead: authored half-range + ~1.5° Bullet ERP softness per joint.
-                // SHAPE = force-based RESTORATION (primary) + a loose hard LIMIT (guard). Findings that shaped this:
-                //  - Magica's angleLimit stiffness ≠ Bullet ERP: at 1.0 it hard-glues the chain to the animated pose
-                //    (rigid + violent whipping in a real dance, though gentle probe scenarios read fine); at 0.2 it
-                //    never wins against gravity (rest shape collapses). One knob can't do rest-tight + dance-soft.
-                //  - Restoration is a FORCE — it yields under dance load naturally and holds at rest; its old failure
-                //    on long chains (30-bone twintail) is fixed by a root-weighted curve (torque concentrates at the
-                //    root: full strength there, 40% at the tip where the whip should live).
-                //  - spring>0 parts (bang) keep the authored-spring restoration (validated 9/10 PASS).
+                // SHAPE RETENTION, calibrated against the pybullet ground truth (compare.py) — see MmdClothChains.Derive:
+                //  - spring>0 (fringe/tufts): angle RESTORATION ∝ the authored rotation spring (9/10 PASS at 0.9×norm).
+                //  - spring==0 (twintails/tie/skirt): MMD says "hold this shape" by LOCKING the joint limits, so those
+                //    chains take the full restoration + a loose angle-LIMIT guard. Magica's angleLimit stiffness is NOT
+                //    Bullet's ERP: at 1.0 it hard-glues the chain to the animated pose (rigid + violent whipping in a
+                //    real dance); at 0.2 it never wins against gravity. Restoration is a FORCE — it yields under dance
+                //    load and holds at rest — with a root-weighted curve so a 30-bone twintail does not sag.
                 // CONNECTION: skirt = AutomaticMesh. MMD's panels are independent strands (Line matches Bullet's
                 // dynamics better — flare/oscillation), but Magica's Edge collision on independent strands has only
-                // VERTICAL edges, so a dance-speed leg slips BETWEEN panels (user-verified clipping). Anti-clip wins:
-                // mesh cross-edges catch the leg; the flare/oscillation gap vs the ref is the accepted cost.
-                bool sheetByModel = acc.BoxN * 2 >= acc.BodyN && acc.BodyN > 0;
-
-                // ---- the converted tuning: every knob below is derived, none is per-model hand-picked ----
-                var cp = new MmdClothPart
-                {
-                    GravityMul = 1f,
-                    // gravityFalloff ← springNorm: a pinned part holds its shape against gravity (falloff→1 = gravity≈0
-                    // at rest pose); a pendulum keeps full gravity (falloff 0) so it hangs down.
-                    GravityFalloff = springNorm,
-                    UseAngleRestoration = true,
-                    AngleStiffness = springMean > 0f ? Mathf.Clamp01(springNorm * 0.9f) : 0.9f,   // user-tuned feel: 0.5→0.65→0.8→0.9 (雙馬尾要硬)
-                    AngleStiffTipScale = 0.8f,                    // firmer tip = the "韌性" spring-back feel
-                    RootWeighted = springMean <= 0f,              // pendulum chains: strong root, free tip
-                    AngleLimitDeg = 6f + Mathf.Rad2Deg * limMean, // loose guard: only catches extreme excursions
-                    // Bullet solves locked limits with ERP≈0.2 per substep — a SOFT constraint that YIELDS under
-                    // dance-speed load and converges at rest. 1 (hard clamp) glues the hair to the head.
-                    AngleLimitStiffness = 0.2f,
-                    // DAMPING ← Bullet LINEAR damping, per-second → per-substep (see BulletToMagicaDamping).
-                    DampingRoot = BulletToMagicaDamping(linRoot),
-                    DampingTip = BulletToMagicaDamping(linTip),
-                    RadiusMul = 1f,
-                    RadiusRootScale = 0.35f,   // thin near the body so it can't puff over the adjacent hip/shoulder collider
-                    // worldInertia = how much of the body's motion is imparted to the cloth. MMD/Bullet imparts the FULL
-                    // motion — at 0.67 the twintail under-swung 65%, zero spin fling. Shape retention comes from angle
-                    // restoration, not from removing motion.
-                    WorldInertia = 1f,
-                    // depthInertia ← MASS gradient (root heavy = carried with the body, tip light = lags = the whip).
-                    DepthInertia = 0.5f * Mathf.Clamp01(massGrad / 5.70f),
-                    InertiaSmoothing = 0.15f,   // shaves Magica's impulsive shift spike; 0.3 was too slow for a spin
-                    Connection = MmdClothConnection.Auto,
-                    MaxDistanceMul = 1f,        // hem may travel its own chain length from the animated drape
-                    MaxDistanceRootScale = 0.5f,
-                    Friction = 0.15f,           // low: a rising leg drags the panel a little, then it slides back down
-                    ParticleSpeedLimitMps = 8f, // anti-explosion only (scaled by unitsPerMeter at build)
-                };
+                // VERTICAL edges, so a dance-speed leg slips BETWEEN panels (user-verified clipping). Anti-clip wins.
+                var cp = MmdClothChains.Derive(grp.Stats);
 
                 // ---- physics.ini (if the model has one) overrides whatever keys it names ----
-                var id = (MmdClothPartId)part;
+                var id = grp.Part;
                 if (profile != null) cp = profile.Apply(id, cp);
-                bool sheet = cp.Connection == MmdClothConnection.Auto ? sheetByModel : cp.Connection == MmdClothConnection.Mesh;
+                bool sheet = cp.Connection == MmdClothConnection.Auto ? grp.Sheet : cp.Connection == MmdClothConnection.Mesh;
                 var conn = sheet ? RenderSetupData.BoneConnectionMode.AutomaticMesh : RenderSetupData.BoneConnectionMode.Line;
 
-                float radWorld = radMean * unitScale * cp.RadiusMul;   // particle radius is WORLD-space (× scaleRatio=1, not lossyScale)
-                float chainLenWorld = Mathf.Max((acc.MaxY - acc.MinY) * unitScale, radWorld);   // ≈ how far the hem can physically travel
+                float radWorld = grp.Stats.RadMean * unitScale * cp.RadiusMul;   // particle radius is WORLD-space (× scaleRatio=1, not lossyScale)
+                float chainLenWorld = Mathf.Max((grp.Stats.MaxY - grp.Stats.MinY) * unitScale, radWorld);   // ≈ how far the hem can travel
 
-                var partCols = allCols != null ? allCols : SelectColliders(acc, colRecs);
-                // Inertia reference = the bone the chain hangs from (the kinematic anchor: head/hip/…). The SDO dance is
-                // in the bones, so a cloth under the static _mmdRoot sees no body motion; parenting to the anchor makes a
-                // spin rotate the reference → inertia carries the chain.
-                Transform refT = (acc.AnchorBone >= 0 && acc.AnchorBone < bc && bone[acc.AnchorBone] != null) ? bone[acc.AnchorBone] : host.transform;
-                SdoLog.Note("mmd", $"  cloth[{names[part]}] roots={acc.Roots.Count} cols={partCols.Count} {(sheet ? "MESH" : "line")} anchor={(acc.AnchorBone >= 0 ? pmx.Bones[acc.AnchorBone].NameJp : "root")} " +
-                                   $"massR/T={massRoot:F1}/{massTip:F2} spring={springMean:F1} -> angle={(cp.UseAngleRestoration ? cp.AngleStiffness.ToString("F2") : "off")} limit={cp.AngleLimitDeg:F1}° gFall={cp.GravityFalloff:F2} " +
-                                   $"damp={cp.DampingRoot:F2}→{cp.DampingTip:F2} depthI={cp.DepthInertia:F2} radW={radWorld:F2} g={gravity * cp.GravityMul:F0}(upm={unitsPerMeter:F1})" +
+                List<ColliderComponent> partCols;
+                if (allCols != null) partCols = allCols;
+                else
+                {
+                    partCols = new List<ColliderComponent>(grp.ColliderIndices.Count);
+                    foreach (int ci in grp.ColliderIndices) if (ci >= 0 && ci < _colliders.Count) partCols.Add(_colliders[ci]);
+                }
+                // Inertia reference = the body bone the chains ride on (head/hip/…). The SDO dance is in the bones, so a
+                // cloth under the static _mmdRoot sees no body motion; parenting to that bone makes a spin rotate the
+                // reference → inertia carries the chain.
+                Transform refT = (grp.AnchorBone >= 0 && grp.AnchorBone < bc && bone[grp.AnchorBone] != null) ? bone[grp.AnchorBone] : host.transform;
+                SdoLog.Note("mmd", $"  cloth[{id}:{grp.Label}] chains={grp.ChainCount} bones={grp.BoneCount} cols={partCols.Count} {(sheet ? "MESH" : "line")} " +
+                                   $"anchor={(grp.AnchorBone >= 0 && grp.AnchorBone < bc ? pmx.Bones[grp.AnchorBone].NameJp : "root")} " +
+                                   $"massR/T={grp.Stats.MassRoot:F1}/{grp.Stats.MassTip:F2} spring={grp.Stats.SpringMean:F1} locked={grp.Stats.LockedFrac:F2} " +
+                                   $"-> angle={(cp.UseAngleRestoration ? cp.AngleStiffness.ToString("F2") : "off")} limit={cp.AngleLimitDeg:F1}° gFall={cp.GravityFalloff:F2} " +
+                                   $"damp={cp.DampingRoot:F3}→{cp.DampingTip:F3} depthI={cp.DepthInertia:F2} radW={radWorld:F2} g={gravity * cp.GravityMul:F0}(upm={unitsPerMeter:F1})" +
                                    (profile != null && profile.Has(id) ? "  [physics.ini]" : ""));
                 _resolved.Add(new KeyValuePair<MmdClothPartId, MmdClothPart>(id, cp));
-                BuildCloth(refT, names[part], acc.Roots, partCols, cp, gravity, radWorld, conn, sheet, unitsPerMeter, chainLenWorld);
+                _resolvedBones.Add(grp.BoneCount);
+                BuildCloth(refT, "Mmd" + id + "Cloth_" + grp.Label, roots, partCols, cp, gravity, radWorld, conn, sheet,
+                           unitsPerMeter, chainLenWorld);
             }
 
             // Fast dance = fast bones; raise the global solver rate (default 90) to its hard cap (150) so a limb moves
@@ -292,24 +194,11 @@ namespace Sdo.Game
             if (Mathf.Abs(_profileColMul - 1f) > 1e-4f) SetColliderRadius(1f);   // apply the profile's collider scale now
         }
 
-        // Colliders in colRecs that the part's dynamic bodies are authored to collide with (group/mask filter).
-        private static List<ColliderComponent> SelectColliders(GroupAccum acc, List<ColRec> colRecs)
-        {
-            var outl = new List<ColliderComponent>();
-            foreach (var cr in colRecs)
-            {
-                bool hit = false;
-                foreach (int fp in acc.Filters)
-                    if (Collide((byte)(fp >> 16), (ushort)(fp & 0xFFFF), cr.Group, cr.Mask)) { hit = true; break; }
-                if (hit) outl.Add(cr.Col);
-            }
-            return outl;
-        }
-
         // Convert every KINEMATIC (mode 0) rigid body on a NON-physics body bone into a Magica collider that follows
-        // that bone, carrying its authored collision group/mask. Fingers (指) are skipped (small + many). Offsets/sizes
-        // are raw PMX units — the collider inherits _mmdRoot's unitScale (Magica uses lossyScale).
-        private void BuildRigidBodyColliders(PmxLoader pmx, Transform[] bone, List<ColRec> colRecs)
+        // that bone. The body it came from is recorded in the same order (colBodies[i] ↔ _colliders[i]) so
+        // MmdClothChains can work out, per chain, which colliders the author lets it touch. Fingers (指) are skipped
+        // (small + many). Offsets/sizes are raw PMX units — the collider inherits _mmdRoot's unitScale (lossyScale).
+        private void BuildRigidBodyColliders(PmxLoader pmx, Transform[] bone, List<PmxLoader.RigidBody> colBodies)
         {
             if (pmx.RigidBodies == null) return;
             foreach (var rb in pmx.RigidBodies)
@@ -348,7 +237,7 @@ namespace Sdo.Game
                     c = sp; _colBaseSize.Add(new Vector3(r, 0f, 0f));
                 }
                 _colliders.Add(c);
-                colRecs.Add(new ColRec { Col = c, Group = rb.Group, Mask = rb.Mask });
+                colBodies.Add(rb);
             }
         }
 

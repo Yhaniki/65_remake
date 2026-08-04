@@ -58,8 +58,8 @@ namespace Sdo.Game
             // the environment is frozen and the scenario data would be garbage — abort loudly.
             yield return VanillaCanary();
 
-            string[] scenarios = { "rest", "turn", "walk", "spin" };
-            float[] durations = { 4.0f, 3.9f, 5.5f, 4.5f };
+            string[] scenarios = { "rest", "turn", "walk", "spin", "dance" };
+            float[] durations = { 4.0f, 3.9f, 5.5f, 4.5f, 6.0f };
             for (int s = 0; s < scenarios.Length; s++)
                 yield return RunScenario(scenarios[s], durations[s]);
             SdoLog.Note("mmdprobe", "ALL DONE");
@@ -141,6 +141,8 @@ namespace Sdo.Game
             int head = FindBone(pmx, "頭");
             var magica = MmdMagicaCloth.Setup(rootGo, bone, parent, pmx, UnitScale);
             if (magica == null || head < 0) { SdoLog.Note("mmdprobe", "FAIL: setup"); Destroy(rootGo); yield break; }
+            var limbs = Limbs.Find(pmx, bone);
+            var clip = ClipMeter.Build(pmx, bone, restPos);
 
             var cloths = rootGo.GetComponentsInChildren<MagicaCloth2.MagicaCloth>(true);
             int buildFrames = 0;
@@ -170,9 +172,11 @@ namespace Sdo.Game
             while (t < durationSec)
             {
                 Drive(scenario, t + estDt, bone[head], root, basePosition, walkSpeedWorld);   // pose for the frame about to sim
+                if (scenario == "dance") limbs.Pose(t + estDt, root, basePosition, upm);
                 yield return eof;
                 float dt = Mathf.Clamp(Time.deltaTime, 1e-4f, 0.1f);
                 estDt = dt; t += dt; dts.Add(dt);
+                clip.Sample(bone);
                 Vector3 hp = bone[head].position; Quaternion hq = bone[head].rotation;
                 anchor.Add(new[] { hp.x, hp.y, hp.z, hq.x, hq.y, hq.z, hq.w });
                 foreach (var ch in chains)
@@ -185,8 +189,9 @@ namespace Sdo.Game
 
             Directory.CreateDirectory(OutDir);
             string outPath = Path.Combine(OutDir, "magica_" + scenario + ".json");
-            WriteJson(outPath, scenario, upm, buildFrames, anchor, chains, dts);
-            SdoLog.Note("mmdprobe", $"{scenario}: {anchor.Count}f ({t:F2}s) build={buildFrames} upm={upm:F2} cloths={cloths.Length} -> {outPath}");
+            WriteJson(outPath, scenario, upm, buildFrames, anchor, chains, dts, clip, upm);
+            SdoLog.Note("mmdprobe", $"{scenario}: {anchor.Count}f ({t:F2}s) build={buildFrames} upm={upm:F2} cloths={cloths.Length} " +
+                                    $"clip max={clip.MaxDepth / upm * 100f:F1}cm in {clip.HitFrames}/{clip.Frames}f -> {outPath}");
 
             Destroy(rootGo);
             yield return null;
@@ -205,6 +210,123 @@ namespace Sdo.Game
                 case "spin":
                     root.rotation = Quaternion.Euler(0f, 360f * Mathf.Clamp01(t - 1.5f), 0f);
                     break;
+            }
+        }
+
+        /// <summary>
+        /// The "dance" scenario: legs, spine and head swinging at the rate a real chart does, plus a bounce on the
+        /// root. The other four scenarios move the whole model gently (a 0.4 s head turn, a 1.2 m/s walk) and NEVER
+        /// move a limb — so they cannot produce the one failure the cloth is actually judged on in game, a leg
+        /// sweeping through the skirt. Not compared against the reference sim (that would need per-bone FK on the
+        /// pybullet side); its recording exists for the CLIPPING numbers and for eyeballing the swing under load.
+        /// </summary>
+        private sealed class Limbs
+        {
+            private Transform _upper, _upper2, _head;
+            private Transform[] _leg = new Transform[2], _knee = new Transform[2];
+
+            public static Limbs Find(PmxLoader pmx, Transform[] bone)
+            {
+                Transform B(string n) { int i = FindBone(pmx, n); return i >= 0 ? bone[i] : null; }
+                var l = new Limbs { _upper = B("上半身"), _upper2 = B("上半身2"), _head = B("頭") };
+                l._leg[0] = B("左足"); l._leg[1] = B("右足");
+                l._knee[0] = B("左ひざ"); l._knee[1] = B("右ひざ");
+                return l;
+            }
+
+            public void Pose(float t, Transform root, Vector3 basePos, float upm)
+            {
+                float step = t * 2f * Mathf.PI * 1.8f;                       // 1.8 steps/s ≈ a 110 BPM chart
+                for (int s = 0; s < 2; s++)
+                {
+                    float ph = step + (s == 0 ? 0f : Mathf.PI);
+                    if (_leg[s] != null) _leg[s].localRotation = Quaternion.Euler(55f * Mathf.Sin(ph), 12f * Mathf.Sin(ph * 0.5f), 0f);
+                    if (_knee[s] != null) _knee[s].localRotation = Quaternion.Euler(-45f * (1f - Mathf.Cos(ph)) * 0.5f - 5f, 0f, 0f);
+                }
+                float sway = t * 2f * Mathf.PI * 1.2f;
+                if (_upper != null) _upper.localRotation = Quaternion.Euler(8f * Mathf.Sin(sway * 0.5f), 30f * Mathf.Sin(sway), 10f * Mathf.Sin(sway * 0.5f));
+                if (_upper2 != null) _upper2.localRotation = Quaternion.Euler(0f, 15f * Mathf.Sin(sway + 0.6f), 0f);
+                if (_head != null) _head.localRotation = Quaternion.Euler(0f, 45f * Mathf.Sin(t * 2f * Mathf.PI * 1.5f), 0f);
+                // bounce + a small travel: the cloth must survive world movement on top of the limb motion
+                root.position = basePos + new Vector3(0.35f * upm * Mathf.Sin(t * 1.4f), 0.07f * upm * Mathf.Abs(Mathf.Sin(step)), 0f);
+            }
+        }
+
+        /// <summary>
+        /// How deep the cloth bones end up INSIDE the body, measured against the model's own kinematic rigid bodies
+        /// (rebuilt here from the .pmx exactly like <see cref="MmdMagicaCloth"/> builds its colliders, so the meter
+        /// does not depend on Magica's internals). There is no reference value to compare against — Bullet simply does
+        /// not let a body penetrate — so this is an ABSOLUTE quality number: at rest it should be ~0, and a dance that
+        /// pushes a leg through the skirt shows up as centimetres of depth in a large fraction of frames.
+        /// </summary>
+        private sealed class ClipMeter
+        {
+            private struct Shape { public Transform Bone; public Vector3 Local0, Local1; public float R; public byte Group; public ushort Mask; }
+            private struct Particle { public int Bone; public byte Group; public ushort Mask; }
+            private readonly List<Shape> _shapes = new List<Shape>();
+            private readonly List<Particle> _cloth = new List<Particle>();
+
+            public float MaxDepth, DepthSum;
+            public int Frames, HitFrames;
+            public float MeanDepth => Frames > 0 ? DepthSum / Frames : 0f;
+
+            public static ClipMeter Build(PmxLoader pmx, Transform[] bone, Vector3[] restPos)
+            {
+                var m = new ClipMeter();
+                if (pmx.RigidBodies == null) return m;
+                foreach (var rb in pmx.RigidBodies)
+                {
+                    if (rb.Mode != 0 || rb.Bone < 0 || rb.Bone >= bone.Length || bone[rb.Bone] == null) continue;
+                    if (pmx.PhysicsBones.Contains(rb.Bone)) continue;
+                    string bn = pmx.Bones[rb.Bone].NameJp ?? "";
+                    if (bn.Contains("指")) continue;
+                    Vector3 off = rb.Position - pmx.Bones[rb.Bone].Position;
+                    var rot = Quaternion.Euler(rb.Rotation * Mathf.Rad2Deg);
+                    float r = Mathf.Max(rb.Size.x, 1e-3f);
+                    Vector3 half = rb.Shape == 2 ? rot * new Vector3(0f, rb.Size.y * 0.5f, 0f) : Vector3.zero;
+                    if (rb.Shape == 1) r = Mathf.Max(rb.Size.x, Mathf.Max(rb.Size.y, rb.Size.z));
+                    m._shapes.Add(new Shape { Bone = bone[rb.Bone], Local0 = off - half, Local1 = off + half, R = r,
+                                              Group = rb.Group, Mask = rb.Mask });
+                }
+                // Only pairs the AUTHOR let collide count as clipping. Without this filter a skirt panel reads as 9 cm
+                // "inside the body" while standing still, because its root legitimately sits inside the big hip capsule
+                // — which is exactly why the author cleared that group bit.
+                foreach (var rb in pmx.RigidBodies)
+                {
+                    if (rb.Mode == 0 || rb.Bone < 0 || rb.Bone >= bone.Length || bone[rb.Bone] == null) continue;
+                    m._cloth.Add(new Particle { Bone = rb.Bone, Group = rb.Group, Mask = rb.Mask });
+                }
+                return m;
+            }
+
+            /// <summary>One frame: the deepest any cloth bone sits inside any body shape (world units).</summary>
+            public void Sample(Transform[] bone)
+            {
+                if (_shapes.Count == 0 || _cloth.Count == 0) return;
+                float worst = 0f;
+                for (int s = 0; s < _shapes.Count; s++)
+                {
+                    var sh = _shapes[s];
+                    if (sh.Bone == null) continue;
+                    Vector3 a = sh.Bone.TransformPoint(sh.Local0), b = sh.Bone.TransformPoint(sh.Local1);
+                    float scale = sh.Bone.lossyScale.x, r = sh.R * scale;
+                    Vector3 ab = b - a;
+                    float abLen2 = Mathf.Max(Vector3.Dot(ab, ab), 1e-9f);
+                    for (int c = 0; c < _cloth.Count; c++)
+                    {
+                        var part = _cloth[c];
+                        if (((part.Mask >> sh.Group) & 1) == 0 || ((sh.Mask >> part.Group) & 1) == 0) continue;
+                        var t = bone[part.Bone];
+                        if (t == null) continue;
+                        Vector3 p = t.position;
+                        float u = Mathf.Clamp01(Vector3.Dot(p - a, ab) / abLen2);
+                        float d = Vector3.Distance(p, a + ab * u);
+                        if (r - d > worst) worst = r - d;
+                    }
+                }
+                Frames++;
+                if (worst > 1e-4f) { HitFrames++; DepthSum += worst; }
+                if (worst > MaxDepth) MaxDepth = worst;
             }
         }
 
@@ -264,11 +386,16 @@ namespace Sdo.Game
         private static string F(float v) => v.ToString("G9", CultureInfo.InvariantCulture);
 
         private static void WriteJson(string path, string scenario, float upm, int buildFrames,
-                                      List<float[]> anchor, List<Chain> chains, List<float> dts)
+                                      List<float[]> anchor, List<Chain> chains, List<float> dts, ClipMeter clip, float upmForClip)
         {
             var sb = new StringBuilder(4 << 20);
             sb.Append("{\"scenario\":\"").Append(scenario).Append("\",\"fps\":60,\"unitsPerMeter\":").Append(F(upm));
             sb.Append(",\"unitScale\":").Append(F(UnitScale)).Append(",\"buildFrames\":").Append(buildFrames);
+            // Cloth-inside-body depth, in METRES (like every other length in the contract). magica-only: Bullet does
+            // not let bodies interpenetrate, so there is nothing to compare it to — it is judged against 0.
+            sb.Append(",\"clip\":{\"maxDepthM\":").Append(F(clip.MaxDepth / upmForClip))
+              .Append(",\"meanDepthM\":").Append(F(clip.MeanDepth / upmForClip))
+              .Append(",\"hitFrames\":").Append(clip.HitFrames).Append(",\"frames\":").Append(clip.Frames).Append('}');
             sb.Append(",\"dt\":[");
             for (int f = 0; f < dts.Count; f++) { if (f > 0) sb.Append(','); sb.Append(F(dts[f])); }
             sb.Append("],\"anchor\":[");

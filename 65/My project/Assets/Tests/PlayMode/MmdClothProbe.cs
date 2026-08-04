@@ -13,6 +13,14 @@ using Sdo.Game;
 namespace Sdo.Tests
 {
     /// <summary>
+    /// <b>DO NOT RECORD WITH THIS.</b> Magica Cloth 2 does not step under the Unity Test Framework — a vanilla
+    /// BoneCloth freezes here too — so every chain it writes is perfectly rigid (deformation 0.000000), which reads
+    /// like "the conversion is completely wrong" when in fact no physics ran at all. That cost eight rounds of
+    /// misdiagnosis once already, and `compare.py`'s DATA VALIDITY gate exists to catch its output. Record with the
+    /// in-game probe instead: <c>tools/mmd_cloth_validate/run_magica_probe.ps1</c> (builds a player and runs
+    /// <c>dance.exe -mmdprobe</c> → <see cref="Sdo.Game.MmdPhysicsProbe"/>, which also has a vanilla-cloth canary and
+    /// the dance/clipping scenario this class does not). Kept only as the record of how the harness was written.
+    ///
     /// Magica-Cloth-side probe of the MMD physics conversion (<see cref="MmdMagicaCloth"/>), producing the
     /// magica_&lt;scenario&gt;.json half of the cloth-validation contract (the reference sim writes ref_*.json from the
     /// same PMX rigid-body data). Four canonical scenarios, each rebuilt from the authored rest pose and driven on the

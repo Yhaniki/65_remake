@@ -61,12 +61,19 @@ maxDistance.DataValidate(0.0f, 100.0f);
 遊戲內探針,4 情境 × 10 指標自動比對):
 
 ```powershell
-# 1) 建 player(含探針)
-Unity -batchmode -quit -projectPath "65/My project" -executeMethod BuildScript.BuildWindows -buildOut Build/Probe
-# 2) 跑探針(自動跑 rest/turn/walk/spin,寫 magica_*.json,自動關閉)
-Build/Probe/dance.exe -mmdprobe
-# 3) 比對
-cd tools/mmd_cloth_validate && python compute_metrics_magica.py magica && python compare.py
+# build player + 跑探針(rest/turn/walk/spin) + 收檔 + 算指標,一支搞定
+./tools/mmd_cloth_validate/run_magica_probe.ps1        # 已經有 exe 的話加 -SkipBuild
+python tools/mmd_cloth_validate/compare.py
 ```
 
-套 patch 後跑一輪,`compare.py` 應顯示 ≥22 PASS(2026-07-12 基準)。
+**⚠️ 不要用 PlayMode 測試(`-runTests -testFilter Sdo.Tests.MmdClothProbe`)錄資料。**
+MC2 在 Unity Test Framework 底下不會 step —— 連原廠 BoneCloth 都不動 —— 錄出來的每條鏈都是
+完美剛性(形變 0.000000),看起來像「轉換參數全錯」,其實一格物理都沒跑。`compare.py` 開頭的
+DATA VALIDITY 檢查就是為了擋這個;探針自己也有 vanilla canary(log 的 `[mmdprobe] CANARY … FROZEN`)。
+`MmdClothProbe.cs` 只留著當歷史紀錄,量測請一律走 player。
+
+基準(2026-08-04,player 探針,Ika 初音):**20 PASS / 18 FAIL**,分鏈看更清楚 ——
+瀏海 9/10、雙馬尾 6/10(改成 per-chain 轉換前是 3/10)、領帶 4/9、裙子 2/10。
+裙子那 8 個 FAIL 是**刻意的**:AutomaticMesh + maxDistance 拴繩換來的防穿模,代價就是它比
+Bullet 安靜很多(擺幅 −99%)。穿模欄(clipping,magica 專屬)靜態情境應該是 0.00cm/0 幀,
+舞蹈情境目前 0.16cm/28 幀 —— 那一欄變大就是防穿模退步了。

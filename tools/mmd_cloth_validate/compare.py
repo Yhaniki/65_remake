@@ -47,6 +47,10 @@ METRIC_ORDER = [
     ("walkRecoverySec", "time",   "walk"),
     ("spinFlingAmp",    "amp",    "spin"),
 ]
+# Shape-at-rest vs behaviour-under-motion. One total hides the trade-off between them: a conversion can hold the
+# authored shape perfectly and still whip 3x too hard in a spin (or hang correctly limp and never swing at all), and
+# those two failure modes want opposite moves on the same knobs. Reported separately for that reason.
+STATIC_METRICS = {"chainLenM", "restDroopDeg", "settleTime"}
 FLOOR = {"ang": 5.0, "time": 0.15, "timems": 150.0, "amp": 0.02, "count": 2.0}
 # "norm" floor is per-chain: 0.02 m expressed in chain lengths (0.02 / ref chainLenM)
 
@@ -320,6 +324,28 @@ def drive_checks(ref, mag):
 
 
 # ----------------------------------------------------------------------------------
+def clip_rows(d):
+    """The magica-side clipping meter (cloth bone depth INSIDE a body collider), including the `dance`
+    scenario, which has no reference counterpart -- Bullet never lets bodies interpenetrate, so this is
+    judged against 0, not against ref_*.json. Missing/older recordings are simply skipped."""
+    rows = []
+    for s in SCENARIOS + ("dance",):
+        path = os.path.join(d, "magica_%s.json" % s)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                j = json.load(f)
+        except Exception:
+            continue
+        c = j.get("clip")
+        if not c:
+            continue
+        rows.append((s, c.get("maxDepthM", 0.0), c.get("meanDepthM", 0.0),
+                     c.get("hitFrames", 0), c.get("frames", 0)))
+    return rows
+
+
 def main():
     d = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
     ref = load_side(d, "ref")
@@ -390,6 +416,7 @@ def main():
     # ---- per-chain metric table ----
     fails = []   # (chain, metric, direction, ref, mag)
     n_pass = n_fail = n_skip = n_notrun = 0
+    split = {"static": [0, 0], "dynamic": [0, 0]}   # group -> [pass, fail]
     table_rows_md = []
 
     for c in common_chains:
@@ -407,10 +434,13 @@ def main():
             noise = noise_gate and metric in ("turnLagMs", "oscillations")
             vr, vm = mr.get(metric), mm.get(metric)
             verdict, rel, tol = judge(vr, vm, kind, ref_len, scen_ok, noise)
+            grp = "static" if metric in STATIC_METRICS else "dynamic"
             if verdict == "PASS":
                 n_pass += 1
+                split[grp][0] += 1
             elif verdict == "FAIL":
                 n_fail += 1
+                split[grp][1] += 1
                 direction = "high" if (vr is None or (vm is not None and vm > vr)) else "low"
                 fails.append((c, metric, direction, vr, vm))
             elif verdict == "SKIP":
@@ -422,8 +452,20 @@ def main():
             table_rows_md.append((c, metric, fmt(vr, kind), fmt(vm, kind), rel, tol, verdict))
         emit()
 
+    clips = clip_rows(d)
+    if clips:
+        emit("-- clipping (magica only; 0 = the cloth never entered the body) --")
+        emit("%-8s %12s %12s %14s" % ("scen", "max (cm)", "mean (cm)", "frames hit"))
+        for s_, mx, mn, hf, fr in clips:
+            emit("%-8s %12.2f %12.2f %14s" % (s_, mx * 100.0, mn * 100.0,
+                                              "%d/%d" % (hf, fr) if fr else "-"))
+        emit()
+
     emit("SUMMARY: %d PASS, %d FAIL, %d SKIP(noise), %d NOT-RUN  (%d metrics x %d chains)" %
          (n_pass, n_fail, n_skip, n_notrun, len(METRIC_ORDER), len(common_chains)))
+    emit("         shape at rest: %d/%d PASS   |   behaviour in motion: %d/%d PASS" %
+         (split["static"][0], split["static"][0] + split["static"][1],
+          split["dynamic"][0], split["dynamic"][0] + split["dynamic"][1]))
     emit()
     if fails:
         emit("-- suspect knobs (per failing metric; parameter references are MmdMagicaCloth.cs) --")
@@ -515,6 +557,13 @@ def main():
     md.append("**Summary: %d PASS / %d FAIL / %d SKIP(noise) / %d NOT-RUN**" %
               (n_pass, n_fail, n_skip, n_notrun))
     md.append("")
+    md.append("| group | metrics | PASS |")
+    md.append("|---|---|---|")
+    md.append("| shape at rest | %s | %d / %d |" %
+              (", ".join(sorted(STATIC_METRICS)), split["static"][0], split["static"][0] + split["static"][1]))
+    md.append("| behaviour in motion | the turn / walk / spin metrics | %d / %d |" %
+              (split["dynamic"][0], split["dynamic"][0] + split["dynamic"][1]))
+    md.append("")
     md.append("## Suspect knobs")
     md.append("")
     if not fails:
@@ -543,14 +592,30 @@ def main():
                       (c, metric, str(vm), str(vr), direction,
                        KNOBS.get((metric, direction), "no knob mapping")))
     md.append("")
+    if clips:
+        md.append("## Clipping (magica only)")
+        md.append("")
+        md.append("How deep a cloth bone ends up INSIDE one of the body's own kinematic rigid bodies. There is no "
+                  "reference column: Bullet does not let bodies interpenetrate, so the target is 0. The `dance` "
+                  "scenario (swinging legs/spine/head + a bounce) exists for this metric -- the other four never move "
+                  "a limb, so they cannot reproduce the failure the cloth is judged on in game.")
+        md.append("")
+        md.append("| scenario | max depth (cm) | mean depth (cm) | frames with contact |")
+        md.append("|---|---|---|---|")
+        for s_, mx, mn, hf, fr in clips:
+            md.append("| %s | %.2f | %.2f | %s |" % (s_, mx * 100.0, mn * 100.0,
+                                                     ("%d/%d" % (hf, fr)) if fr else "-"))
+        md.append("")
     md.append("## Rerun")
     md.append("")
     md.append("```")
     md.append("python <repo>/tools/mmd_cloth_validate/compare.py")
     md.append("```")
-    md.append("(Regenerate the Unity side first if needed: "
-              "`powershell -File <repo>/tools/mmd_cloth_validate/run_magica_probe.ps1` "
-              "with the editor closed, or Test Runner > PlayMode > Sdo.Tests.MmdClothProbe with it open.)")
+    md.append("(Regenerate the Unity side first: `powershell -File "
+              "<repo>/tools/mmd_cloth_validate/run_magica_probe.ps1` with the editor closed -- it builds a player and "
+              "runs `dance.exe -mmdprobe`. Do NOT record via the PlayMode test: MC2 does not step under the test "
+              "framework and every chain comes out perfectly rigid, which the Data Validity check above exists to "
+              "catch.)")
     md.append("")
 
     rp = os.path.join(d, "report.md")
