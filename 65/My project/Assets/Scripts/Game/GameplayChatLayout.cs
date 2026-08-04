@@ -19,7 +19,13 @@ namespace Sdo.Game
         public const float BarH = 38f;
 
         // ---- 條上四個元件的 XML 絕對座標(GAMEPLAYNEWLEAN.XML winchat) ----
-        public const float ModeBtnX = 545f, ModeBtnY = 565f;    // chatmode 51×30
+        public const float ModeBtnX = 545f, ModeBtnY = 565f;    // chatmode 51×30(＝「當前」Room4 那張的擺放位置)
+        /// <summary>條上那顆 chatmode 鈕的**視覺**上緣 = 官方 <c>friendchatmode</c> / <c>Familychatmode</c> 的
+        /// y=568(49×25 那三張是滿版,擺哪視覺就在哪)。<c>chatmode</c> 的 565 是「當前」那張 51×30 的 sprite
+        /// 左上角 —— 它自己上面多留了 3px 透明,兩行差的就是這 3(見 <see cref="ModeArtTopPad"/>)。
+        /// 版面一律以**視覺**上緣為準,再由 <see cref="ModeArtTopLeft"/> 換回各張圖的 sprite 左上角,
+        /// 這樣切頻道時按鈕才不會在條上跳 3px。</summary>
+        public const float ModeBtnVisualY = 568f;
         public const float EditX = 606f, EditY = 572f;          // ChatEdit w=100 h=14
         public const float SendBtnX = 726f, BtnRowY = 564f;     // ChatSendButton 33×32
         public const float ExprBtnX = 760f;                     // expression1 33×32
@@ -48,7 +54,7 @@ namespace Sdo.Game
         public const float SendBtnDx = SendBtnX - BarX;         // 184.5
         public const float ExprBtnDx = ExprBtnX - BarX;         // 218.5
         public const float EditW = 115f;                        // 文字可用寬:到送出鈕左緣前留一點空
-        public const float ModeBtnDy = ModeBtnY - BottomBarY;   // 4
+        public const float ModeBtnDy = ModeBtnVisualY - BottomBarY;   // 7(視覺上緣;「當前」那張擺出去是 565)
         public const float EditDy = EditY - BottomBarY;         // 11
         public const float SendBtnDy = BtnRowY - BottomBarY;    // 3
         public const float ExprBtnDy = SendBtnDy;
@@ -89,13 +95,42 @@ namespace Sdo.Game
         public const float ModeMenuSlotX = 2f;
 
         /// <summary>
-        /// 每張 chatmode 圖在自己 sprite 裡的**視覺上緣**(量測值,索引同 ChatChannel 0..3)。
+        /// 每張 chatmode 圖在自己 sprite 裡的**視覺左上角**(索引同 ChatChannel 0..3)。
         ///
-        /// 🔴 「當前」那張(Room4,51×30)上下各留了約 2px 全透明,其餘三張(SmallButton 的 49×25)是滿版。
-        /// 選單若照 sprite 矩形每 25px 排,「好友↔當前」就會多出 2px 空隙、「當前↔回復」又互相疊 2px ——
-        /// 使用者回報的「那些按鈕沒有並排、中間有很大空隙」就是這個。擺放時把這個偏移扣掉,四顆才真的貼齊。
+        /// 🔴 「當前」那張(ChatROOM 的 Room4,51×30)四周比其餘三張(SmallButton 的 49×25)多留了邊:上 3、左 1
+        /// (右 1、下 2)。選單若照 sprite 矩形每 25px 排,「好友↔當前」就多出一道空隙、「當前↔回復」又互相疊 ——
+        /// 使用者回報的「那些按鈕沒有並排、中間有很大空隙」就是這個。擺放時把這個偏移扣掉,四顆才真的等距。
+        ///
+        /// 上緣的 3 是**官方自己的數字**,不是量出來的:<c>GAMEPLAYNEWLEAN.XML</c> 為同一顆條上鈕寫了三行,
+        /// 每個頻道各一,y 就差這 3 ——
+        /// <code>
+        /// &lt;Button name="chatmode"        x="545" y="565" bgnormal="Room4.an"  /&gt;   ← 當前 51×30
+        /// &lt;Button name="friendchatmode"  x="545" y="568" bgnormal="Room200.an"/&gt;   ← 好友 49×25
+        /// &lt;Button name="Familychatmode"  x="545" y="568" bgnormal="Room203.an"/&gt;   ← 家族 49×25
+        /// </code>
+        /// (先前寫 2 是照 sprite 的全透明列數猜的 —— Room4 頂端只有 2 列**全**透明,第 3 列是很淡的柔邊,
+        /// 對齊要看的是柔邊的起點。兩張圖的 alpha 逐列互相關也是 3。)
+        ///
+        /// 左緣的 1 官方兩份 XML 都沒補(都寫 x=545 / x=2)—— 官方是 800×600 1:1,1px 看不出來;我們把
+        /// design 放大到視窗(1.3~2.4×)就會看到「當前」比另外三顆往左突一截,所以這裡補上。
         /// </summary>
-        public static readonly float[] ModeArtTopPad = { 0f, 0f, 2f, 0f };   // 家族 / 好友 / 當前 / 回復
+        public static readonly float[] ModeArtTopPad = { 0f, 0f, 3f, 0f };   // 家族 / 好友 / 當前 / 回復
+        /// <summary>同 <see cref="ModeArtTopPad"/> 的水平版(只有「當前」那張左邊多 1px)。</summary>
+        public static readonly float[] ModeArtLeftPad = { 0f, 0f, 1f, 0f };
+
+        /// <summary>四張 chatmode 圖**扣掉透明邊之後**的視覺尺寸 —— 四張一模一樣的 49×25
+        /// (49×25 那三張是滿版;「當前」的 51×30 減掉左 1 右 1、上 3 下 2)。選單槽距 25 正好等於這個高度,
+        /// 所以扣了 pad 之後四顆是零縫零疊地接在一起。</summary>
+        public const float ModeArtVisualW = 49f, ModeArtVisualH = 25f;
+
+        /// <summary>把某個頻道的 chatmode 圖擺到「視覺左上角落在 (x,y)」該用的 sprite 左上角(＝扣掉它自己的透明邊)。
+        /// 條上那顆與選單裡那四顆都要走這裡,否則切頻道時按鈕會在條上跳、選單裡會參差不齊。</summary>
+        public static void ModeArtTopLeft(int channel, float visualX, float visualY, out float x, out float y)
+        {
+            bool ok = channel >= 0 && channel < ModeArtTopPad.Length;
+            x = visualX - (ok ? ModeArtLeftPad[channel] : 0f);
+            y = visualY - (ok ? ModeArtTopPad[channel] : 0f);
+        }
         /// <summary>表情面板(ROOMPOPMENU 的 EXPRESSIONINFO)整塊的尺寸 —— 與房間同一組素材、同一份版面。</summary>
         public const float ExprPanelW = 165f, ExprPanelH = 152f;
 
@@ -135,6 +170,18 @@ namespace Sdo.Game
         /// 浮在半空、跟按鈕對不上。</summary>
         public float PopupTopY(float height)
             => TopAnchored ? BarY + BarH : BarY - height;
+
+        /// <summary>
+        /// chatmode 選單框左上角的 design y —— **不是**用 <see cref="PopupTopY"/> 貼齊底板,而是接在條上那顆
+        /// chatmode 鈕的正上方(右上版位則是正下方),讓選單的四顆與條上那顆連成**等距的一柱五顆**。
+        ///
+        /// 🔴 官方截圖裡「家族/好友/當前/回復 + 條上的當前」五顆是同一個間距,中間沒有斷點。貼齊底板上緣
+        /// (561)會讓「回復↔條上那顆」多出 9px 的縫 —— 使用者回報的「跟最下面的回覆中間還是有一個大縫隙」。
+        /// 選單因此會壓過底板上緣幾 px,這是對的:選單的 sortingOrder 高於底板,官方也是這樣疊。
+        /// </summary>
+        public float ModeMenuTopY => TopAnchored
+            ? BarItemY(ModeBtnDy) + ModeArtVisualH - ModeMenuSlotY[0]                    // 條上那顆在最上面,選單往下接
+            : BarItemY(ModeBtnDy) - ModeMenuSlotY[ModeMenuSlotY.Length - 1] - ModeArtVisualH;
 
         /// <summary>表情面板左緣:**右緣對齊表情鈕的右緣**(expression1 x=760 + 33),這樣面板與聊天列右端切齊。</summary>
         public float ExprPanelX => BarItemX(ExprBtnDx) + BtnW - ExprPanelW;

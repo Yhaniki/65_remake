@@ -59,12 +59,15 @@ namespace Sdo.UI.Services
                 line.Body = LocalizationManager.Get("room.selftalk", m.Text ?? "");
                 return line;
             }
-            // 家族綠字:「<家族>名字: 內容」
+            // 家族綠字:「<家族>名字: 內容」。帶表情就畫 emoji(與一般聊天同一條 ApplyExpression),
+            // 不要落成 "/翻" 那串字。
             if (m.Guild)
             {
                 line.ColorHex = ChatPalette.GuildHex;
                 line.Name = RoomChatCommand.GuildTag + (m.Sender ?? "") + ":";
-                line.Body = BodyText(m);
+                line.WhisperTarget = WhisperTargetOf(m);
+                if (m.ExpressionId > 0) ApplyExpression(ref line, m, frames);
+                else line.Body = m.Text ?? "";
                 return line;
             }
             // 密語青字:整句已由 ChatDisplay 排好(帶表情時前綴＋inline emoji)
@@ -89,10 +92,15 @@ namespace Sdo.UI.Services
             }
 
             line.Name = (m.Sender ?? "") + ":";
+            line.WhisperTarget = WhisperTargetOf(m);
             if (m.ExpressionId > 0) ApplyExpression(ref line, m, frames);
             else line.Body = m.Text ?? "";
             return line;
         }
+
+        /// <summary>點這一行的名字要密語誰 —— 自己說的話與沒有名字的行不可點(同房間的 <c>WhisperNameLink</c>)。</summary>
+        private static string WhisperTargetOf(ChatMessage m)
+            => m == null || m.Local || string.IsNullOrEmpty(m.Sender) ? null : m.Sender;
 
         // 表情行:前字〔emoji〕後字。拿不到圖(或沒傳 frames)就退回文字指令,不會整句消失。
         private static void ApplyExpression(ref GameplayChatLine line, ChatMessage m, Func<int, Sprite[]> frames)
@@ -120,7 +128,5 @@ namespace Sdo.UI.Services
                                  StringComparison.OrdinalIgnoreCase);
         }
 
-        private static string BodyText(ChatMessage m)
-            => m.ExpressionId > 0 ? RoomChatCommand.ExpressionDisplayText(m.ExpressionId) : (m.Text ?? "");
     }
 }

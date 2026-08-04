@@ -20,6 +20,9 @@ namespace Sdo.Game
         public string Body;
         /// <summary>整行顏色的 RGB hex(不含 #),空 = 白。與房間 <c>ChatPalette</c> 同一組值。</summary>
         public string ColorHex;
+        /// <summary>點這一行的**名字欄**要密語誰(＝把 <c>[名字] </c> 塞進輸入框)。null = 這行的名字不可點
+        /// (自己說的話、系統行、密語行)。與房間左下角聊天列的 <c>&lt;link&gt;</c> 是同一個規則。</summary>
+        public string WhisperTarget;
 
         /// <summary>沒有表情圖時,把三段字接成一整串(給單一 Label3D 畫)。</summary>
         public string PlainText()

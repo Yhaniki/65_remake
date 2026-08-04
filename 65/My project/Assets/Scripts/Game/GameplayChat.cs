@@ -8,7 +8,7 @@ namespace Sdo.Game
     /// 「当前 ▸ 輸入框 ▸ 送出 ▸ 表情」,旁邊浮著最近幾行訊息。
     ///
     /// 跟房間左下角那個聊天欄的差別:
-    ///   • **文字會自己藏起來** —— 進場預設不顯示,有人講話才整批冒出來,之後 10 秒沒人說話就淡掉
+    ///   • **文字會自己藏起來** —— 進場預設不顯示,有人講話才整批冒出來,之後 10 秒沒人說話就直接消失
     ///     (見 <see cref="GameplayChatFade"/>)。底板那一條是常駐的。
     ///   • **不彈頭上泡、不做關鍵字動作** —— 舞者正在跳編舞,插一個聊天動作會把舞打斷(使用者指定)。
     ///   • **沒有「X 進入舞台遊戲」那種系統廣播** —— 那是房間的事;過濾在前端(<c>FrontendApp</c>)做,
@@ -47,7 +47,7 @@ namespace Sdo.Game
         private bool _typing;
         private int _typingReleasedFrame = -1;
 
-        /// <summary>DEV(SDO_CHATDEMO):訊息文字不自動淡掉 —— 正常玩的時候字只在有人說話後的 10 秒內看得到,
+        /// <summary>DEV(SDO_CHATDEMO):訊息文字不自動消失 —— 正常玩的時候字只在有人說話後的 10 秒內看得到,
         /// 而實機截圖大多是開場好一陣子才按下去的,不釘住就永遠拍不到字。</summary>
         public bool DebugKeepText;
 
@@ -84,7 +84,10 @@ namespace Sdo.Game
         private const float CaretBlinkSec = 0.53f;
         private const float PressFlashSec = 0.09f;   // 按鈕按下那一下的 pushed 圖持續時間
         private const int DraftLimit = 80;           // XML EditBox limittext="80"
-        private const float EmojiPx = 13f;           // 訊息行裡的表情小圖邊長(行高 14)
+        // 訊息行裡的表情小圖邊長。素材是 24×24 但**內容只佔中間 ~18**(四周留了 2~3px 透明),所以框要開得比
+        // 行高(13)大,畫出來才跟旁邊的字一樣醒目 —— 13 的框只剩約 10px 的圖,使用者回報「聊天區內 emoji 太小個」。
+        // 20 的框 → 視覺約 15px,略大於字的 em 盒(≈12.7);上下各溢出行高 3.5px,表情行本來就只有這一個圖,不會壓到字。
+        private const float EmojiPx = 20f;
         // 表情面板的版面 = 房間 RebuildExpressionMenu 的同一組數字(ROOMPOPMENU):底圖在 (0,20)、
         // 分頁標籤 (5,3)、格子 24×24 起於 (4,24) 每 26px、翻頁箭頭 (103,131)/(146,131)、頁碼 (118..136,133)。
         private const float ExprBgY = 20f, ExprTabX = 5f, ExprTabY = 3f;
@@ -133,7 +136,7 @@ namespace Sdo.Game
 
         private string _draft = "";
         private int _channel = 2;             // 目前頻道 = ChatChannel 的整數(2 = 當前)
-        private double _lastActivitySec = -1; // 最後一則訊息 / 最後一次送出 → 文字何時淡掉
+        private double _lastActivitySec = -1; // 最後一則訊息 / 最後一次送出 → 文字何時消失
         private float _alpha = -1f;           // 目前套用中的文字不透明度(−1 = 還沒套過)
         private bool _visible = true;         // 整個聊天框(含底板)在不在場上 —— 結算/GAME OVER 時關掉
         private int _hover = -1;              // 0=chatmode 1=send 2=expr,−1=沒有
@@ -150,6 +153,9 @@ namespace Sdo.Game
             public Color face;                // 這一行的字色(淡入淡出時只換 alpha)
             public bool has;                  // 這一格有沒有對應到訊息
             public bool hasTail;
+            public string whisperTarget;      // 點名字要密語誰(null = 這行的名字不可點)
+            public float nameX0, nameX1;      // 名字欄在 design 座標的水平範圍(命中用)
+            public float nameY0, nameY1;      // 同上,垂直
         }
 
         // ---- build ----
@@ -363,6 +369,8 @@ namespace Sdo.Game
             // 展開中的面板優先吃點擊(它們蓋在訊息區上)
             if (_modeMenuOpen && TryClickModeMenu(p)) return;
             if (_exprOpen && TryClickExpressionPanel(p)) return;
+            // 點訊息列的名字 → 密語那個人(同房間左下角聊天列)
+            if (TryClickWhisperName(p)) return;
             // 點在輸入框那一段 → 進打字模式(跟房間點左下輸入框一樣)
             if (!_typing && HitEditBox(p)) BeginTyping();
         }
@@ -420,18 +428,20 @@ namespace Sdo.Game
         private void PlaceModeMenu()
         {
             if (_modeMenu == null) return;
-            // 選單框底邊貼齊底板;框內四顆用官方 ROOMPOPMENU 的槽位(2 / 27 / 52 / 77),
-            // 左緣(框內 x=2)剛好切齊條上那顆 chatmode 鈕。
-            // 每顆再扣掉它自己圖裡被 cleanMatte 削掉的透明上緣(ModeArtTopPad),四顆才會**貼齊**。
-            float top = _layout.PopupTopY(GameplayChatLayout.ModeMenuH);
+            // 選單直接接在條上那顆 chatmode 鈕的上方(ModeMenuTopY),與它連成等距的一柱五顆;
+            // 框內四顆用官方 ROOMPOPMENU 的槽位(2 / 27 / 52 / 77 —— 節距一律 25),
+            // 左緣(框內 x=2)剛好切齊條上那顆。
+            // 槽位是照 49×25 那三張定的,所以每顆要再扣掉自己圖裡多留的透明邊(ModeArtTopPad/LeftPad)
+            // —— 只有「當前」非零 —— 四顆才會等距、切齊。
+            float top = _layout.ModeMenuTopY;
             float x = _layout.BarItemX(GameplayChatLayout.ModeBtnDx) - GameplayChatLayout.ModeMenuSlotX;
             for (int i = 0; i < _modeMenuBtns.Count; i++)
             {
-                int ch = ChannelMenu[i];
-                float pad = ch < GameplayChatLayout.ModeArtTopPad.Length
-                    ? GameplayChatLayout.ModeArtTopPad[ch] : 0f;
-                SdoLayout.PlaceTopLeft(_modeMenuBtns[i], x + GameplayChatLayout.ModeMenuSlotX,
-                                       top + GameplayChatLayout.ModeMenuSlotY[i] - pad, -6f);
+                GameplayChatLayout.ModeArtTopLeft(ChannelMenu[i],
+                                                  x + GameplayChatLayout.ModeMenuSlotX,
+                                                  top + GameplayChatLayout.ModeMenuSlotY[i],
+                                                  out float bx, out float by);
+                SdoLayout.PlaceTopLeft(_modeMenuBtns[i], bx, by, -6f);
             }
         }
 
@@ -563,10 +573,7 @@ namespace Sdo.Game
             string cmd = string.IsNullOrEmpty(e.Command) ? "" : e.Command;
             if (cmd.Length == 0) { OnExpression?.Invoke(e.Id); return; }   // 沒有指令文字才退回直接送
             if (!_typing) BeginTyping();
-            string draft = _draft ?? "";
-            if (draft.Length > 0 && !draft.EndsWith(" ")) draft += " ";
-            _draft = (draft + cmd + " ");
-            if (_draft.Length > DraftLimit) _draft = _draft.Substring(0, DraftLimit);
+            _draft = ChatDraft.WithExpression(_draft, cmd, DraftLimit);
             RefreshDraftLabel();
         }
 
@@ -602,6 +609,7 @@ namespace Sdo.Game
                 row.head.Position = SdoLayout.ToWorld(x, midY, -4f);
                 row.hasTail = false;
                 row.emoji.enabled = false;
+                SetNameHitBox(row, line, x, top);
                 return;
             }
 
@@ -611,6 +619,7 @@ namespace Sdo.Game
             if (lead.Length > 0) head = head.Length > 0 ? head + " " + lead : lead;
             row.head.Text = head;
             row.head.Position = SdoLayout.ToWorld(x, midY, -4f);
+            SetNameHitBox(row, line, x, top);
 
             float cursor = x + (head.Length > 0 ? row.head.MeasuredWidth + 3f : 0f);
             row.emoji.enabled = true;
@@ -625,6 +634,53 @@ namespace Sdo.Game
                 row.tail.Text = tail;
                 row.tail.Position = SdoLayout.ToWorld(cursor, midY, -4f);
             }
+        }
+
+        /// <summary>
+        /// 記住這一行**名字欄**的方框,點下去就密語那個人(＝房間左下角聊天列點名字的同一件事;那邊靠 TMP 的
+        /// <c>&lt;link&gt;</c> + raycast,遊戲畫面沒有 UGUI 可用,只能自己記範圍再比對滑鼠 —— 見類別註解)。
+        ///
+        /// 名字是 head 那顆 Label3D 的**前綴**(後面接的是表情前的字),所以用 <see cref="Label3D.PrefixWidth"/>
+        /// 量到冒號為止;整串一起排的 tracking 也算進去了,量出來就是畫面上那一段。
+        /// </summary>
+        private static void SetNameHitBox(Row row, GameplayChatLine line, float x, float top)
+        {
+            row.whisperTarget = null;
+            if (string.IsNullOrEmpty(line.WhisperTarget) || string.IsNullOrEmpty(line.Name)) return;
+            float w = row.head.PrefixWidth(line.Name.Length);
+            if (w <= 0f) return;
+            row.whisperTarget = line.WhisperTarget;
+            row.nameX0 = x;
+            row.nameX1 = x + w;
+            row.nameY0 = top;
+            row.nameY1 = top + GameplayChatLayout.LineH;
+        }
+
+        /// <summary>點到某一行的名字 → 把 <c>[名字] </c> 塞進輸入框(沿用已打的內容,舊的 [名字] 前綴換掉),
+        /// 跟房間的 <c>InsertWhisperTarget</c> 一樣。字沒顯示的時候(淡出後)不可點 —— 看不見的東西不該吃點擊。</summary>
+        private bool TryClickWhisperName(Vector2 p)
+        {
+            for (int i = 0; i < _rows.Count; i++)
+            {
+                var row = _rows[i];
+                // activeSelf = ApplyAlpha 判定「這一行現在畫得出來」(訊息淡掉之後整列是關的)
+                if (!row.has || row.whisperTarget == null || !row.go.activeSelf) continue;
+                if (p.x < SdoLayout.WorldX(row.nameX0) || p.x > SdoLayout.WorldX(row.nameX1)) continue;
+                if (p.y > SdoLayout.WorldY(row.nameY0) || p.y < SdoLayout.WorldY(row.nameY1)) continue;
+                InsertWhisperTarget(row.whisperTarget);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>把 <c>[名字] </c> 放到輸入框最前面。已經有 <c>[舊名字]</c> 就換掉,只留使用者打的內容。</summary>
+        public void InsertWhisperTarget(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+            if (!_typing) BeginTyping();
+            _draft = ChatDraft.WithWhisperTarget(_draft, name);
+            if (_draft.Length > DraftLimit) _draft = _draft.Substring(0, DraftLimit);
+            RefreshDraftLabel();
         }
 
         private void TickEmojiFrames()
@@ -673,12 +729,14 @@ namespace Sdo.Game
             if (_modeBtn != null)
             {
                 SetSprite(_modeBtn, Art(art[State(0)]));
-                // 扣掉這張圖自己的透明上緣 —— 「當前」(30 高)與其餘三張(25 高)的視覺上緣位置不同,
-                // 不補這一下,切頻道的瞬間按鈕會在條上跳 2px。
-                float pad = ch < GameplayChatLayout.ModeArtTopPad.Length
-                    ? GameplayChatLayout.ModeArtTopPad[ch] : 0f;
-                SdoLayout.PlaceTopLeft(_modeBtn, _layout.BarItemX(GameplayChatLayout.ModeBtnDx),
-                                       _layout.BarItemY(GameplayChatLayout.ModeBtnDy) - pad, -1f);
+                // 版面給的是**視覺**左上角(568,＝官方 friendchatmode/Familychatmode 的 y);再依這張圖自己多留的
+                // 透明邊換回 sprite 左上角 —— 「當前」那張因此落在官方 chatmode 的 565。不補這一下,切頻道的
+                // 瞬間按鈕會在條上跳 3px。
+                GameplayChatLayout.ModeArtTopLeft(ch,
+                                                  _layout.BarItemX(GameplayChatLayout.ModeBtnDx),
+                                                  _layout.BarItemY(GameplayChatLayout.ModeBtnDy),
+                                                  out float mx, out float my);
+                SdoLayout.PlaceTopLeft(_modeBtn, mx, my, -1f);
             }
             if (_sendBtn != null)
             {

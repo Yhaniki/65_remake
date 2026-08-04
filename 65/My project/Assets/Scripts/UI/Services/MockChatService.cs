@@ -172,6 +172,21 @@ namespace Sdo.UI.Services
                     _guildLines[(_guildLine * 5 + 1) % _guildLines.Length], _clock.NowMs, channel: ChatChannel.Family) { Guild = true });
         }
 
+        // 家族頻道的表情：與 SendGuild 同一套守門（沒家族 → 「你沒有家族」），差別只在帶 expressionId 走，
+        // 顯示端才畫得出 emoji 小動畫。不觸發同族罐頭回話（回一句文字去接一個表情很怪）。
+        public void SendGuildExpression(int expressionId, string leadingText, string trailingText)
+        {
+            if (!RoomChatCommand.IsValidExpression(expressionId)) return;
+            if (!LocalHasGuild())
+            {
+                Add(new ChatMessage { TimeMs = _clock.NowMs, Local = true, Notice = ChatNotice.NoGuild });
+                return;
+            }
+            Add(new ChatMessage(LocalSender(), (trailingText ?? "").Trim(), _clock.NowMs, local: true,
+                                expressionId: expressionId, channel: ChatChannel.Family,
+                                leadingText: (leadingText ?? "").Trim()) { Guild = true });
+        }
+
         // 好友頻道沒帶 [名字] 就送出 → 白字「你說: 內容」，只有自己看得到、不送任何人、不彈泡、跨場。
         public void SendSelfTalk(string text)
         {

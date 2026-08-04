@@ -2205,8 +2205,28 @@ namespace Sdo.UI.Screens
             // 一般行:名字白、可點 → 密語;系統訊息整行金字。
             string line = m.System
                 ? Wrap(ChatPalette.SystemHex, Esc(m.Text))
-                : WhisperNameLink(m) + ": " + Esc(m.Text);
+                : WhisperNameLink(m) + ": " + Esc(BodyText(m));
             EnableWhisperNameClicks(ChatLine("line", line), m);
+        }
+
+        /// <summary>
+        /// 一行的內容文字。**大廳這一區是純文字行**(房間/遊戲畫面才畫 emoji 小動畫),所以表情訊息要退回它的
+        /// 指令文字(<c>/翻</c>)—— 表情訊息的 <c>Text</c> 只裝「指令後面的字」,直接印會變成一行只有名字。
+        /// </summary>
+        private static string BodyText(ChatMessage m)
+        {
+            if (m == null) return "";
+            if (m.ExpressionId <= 0) return m.Text ?? "";
+            string lead = (m.LeadingText ?? "").Trim();
+            string trail = (m.Text ?? "").Trim();
+            // 舊訊息把指令本身當 Text(如 "/無聊")→ 那不是尾隨字,別再印一次。
+            if (RoomChatCommand.TryParseExpression(trail, out var id, out var rest)
+                && id == m.ExpressionId && string.IsNullOrEmpty(rest)) trail = "";
+            var parts = new System.Collections.Generic.List<string>(3);
+            if (lead.Length > 0) parts.Add(lead);
+            parts.Add(RoomChatCommand.ExpressionDisplayText(m.ExpressionId));
+            if (trail.Length > 0) parts.Add(trail);
+            return string.Join(" ", parts);
         }
 
         /// <summary>本機提示行:「你說: …」(白)/「你沒有家族」(綠 —— 與家族訊息同色,同房間)。</summary>
@@ -2236,7 +2256,7 @@ namespace Sdo.UI.Screens
         {
             string tag = "<noparse>" + RoomChatCommand.GuildTag + "</noparse>";
             string line = "<color=#" + ChatPalette.GuildHex + ">" + tag + WhisperNameLink(m)
-                        + ": " + Esc(m.Text) + "</color>";
+                        + ": " + Esc(BodyText(m)) + "</color>";
             EnableWhisperNameClicks(ChatLine("guildLine", line), m);
         }
 
@@ -2291,6 +2311,15 @@ namespace Sdo.UI.Screens
         ///   • 好友:帶 [名字] → 密語(前綴留著,繼續密語同一人);沒帶名字 → SendSelfTalk(白字「你說: …」)。
         ///   • 當前 / 回覆:明打「/家族 …」照樣送家族;否則 密語 &gt; 表情 &gt; 一般說話。
         /// </summary>
+        /// <summary>家族頻道的內容 —— 是表情指令(<c>/翻</c>)就帶著 expressionId 送,否則當純文字。
+        /// 房間(<c>RoomScreen.SendGuildText</c>)與遊戲畫面(<c>FrontendApp.SendGuildText</c>)同一套規則。</summary>
+        private void SendGuildText(string body)
+        {
+            if (RoomChatCommand.TryParseExpression(body, out var eid, out var lead, out var trail))
+                Ctx.Chat.SendGuildExpression(eid, lead, trail);
+            else Ctx.Chat.SendGuild(body);
+        }
+
         private void SendChat()
         {
             if (_chatInput == null || Ctx == null || Ctx.Chat == null) return;
@@ -2305,7 +2334,7 @@ namespace Sdo.UI.Screens
                 {
                     string body = RoomChatCommand.StripGuildCommand(txt);
                     if (string.IsNullOrWhiteSpace(body)) return;   // 只有「/家族 」還沒打內容 → 續打
-                    send = () => Ctx.Chat.SendGuild(body);
+                    send = () => SendGuildText(body);
                     postDraft = RoomChatCommand.GuildCommandPrefix;
                     break;
                 }
@@ -2325,7 +2354,7 @@ namespace Sdo.UI.Screens
                     if (RoomChatCommand.TryStripGuildCommand(txt, out var guildBody))
                     {
                         if (string.IsNullOrWhiteSpace(guildBody)) return;
-                        send = () => Ctx.Chat.SendGuild(guildBody);
+                        send = () => SendGuildText(guildBody);
                         postDraft = RoomChatCommand.GuildCommandPrefix;
                         break;
                     }

@@ -31,6 +31,9 @@ namespace Sdo.UI.Screens
         private static readonly Vector2 Win1 = new Vector2(0f, 1f);     // top head panel
         private static readonly Vector2 Win2 = new Vector2(649f, 177f); // right song/scene/mode panel
         private static readonly Vector2 Win3 = new Vector2(0f, 481f);   // bottom chat + ready/start bar
+        /// <summary>聊天訊息區的上緣（官方 win4 是 445）。見 <c>BuildRoomChatLog</c>：刻意比官方低 10px，
+        /// 讓最後一行貼近下面那條輸入框。</summary>
+        private const float ChatLogY = 455f;
         private const int HeadLayer = 11;
 
         // win2 文字色（取自線上 DDRROOM.XML）：歌名/難度·BPM字幕 0xff835ce1、難度·BPM數字 0xffc969e3、
@@ -1047,7 +1050,12 @@ namespace Sdo.UI.Screens
         {
             // 訊息欄底改成全透明（原本是灰色半透明 a=0.18）；文字直接疊在 3D 房間上。
             _chatScroll = UIKit.AddVerticalScroll(_win3Root, "AllChatList", out _chatContent, 0f, 3, new Color(0f, 0f, 0f, 0f));
-            Place(_chatScroll.GetComponent<RectTransform>(), 14, 445, 360, 104);
+            // 官方 DDRROOM 的 win4 是 x=14 y=445 w=360 h=104（底緣 549）。這裡**刻意往下 10px**：
+            // 官方那個 TextList 的字是直接貼著視窗底緣排的，我們的 content 還有 3px 內距，最後一行的字底
+            // 因此停在 546，離下面那條紫色輸入條（chatmode 鈕在 569）差了將近 20px —— 使用者回報「房間裡
+            // 聊天的字跟下面的打字框間隔太遠」。往下挪之後最後一行貼在 556，剩下約半行的呼吸空間。
+            // 高度不動（104 仍是 ChatLineClip 算整行裁切的依據），只是整塊下移。
+            Place(_chatScroll.GetComponent<RectTransform>(), 14, ChatLogY, 360, 104);
             _chatScroll.scrollSensitivity = 18f;
             _chatLogGroup = _chatScroll.gameObject.AddComponent<CanvasGroup>();   // 收合時淡出(win3 下滑不足以完全移出訊息欄,見 ApplyCollapse)
             // 整行裁切：視窗 104px 不是行高的整數倍，捲到底時最上面那行只露下半截字且一直不走(見 ChatLineClip)。
@@ -1308,7 +1316,11 @@ namespace Sdo.UI.Screens
             int id = expressionId;
             btn.onClick.AddListener(() =>
             {
-                Ctx?.Chat?.SendExpression(id, _chatChannel);
+                // 已經在左下輸入框打字 → 表情**塞進輸入框**（可以在它前後接著打字、也能配 [名字] 密語），
+                // 不是直接送出去。使用者回報「明明 focus 在左下訊息欄，按 emoji 卻直接送出 bubble」。
+                // 沒在輸入框打字（含頭上泡模式）才維持原本的「點一下就送」。
+                if (TypingInChatInput()) InsertExpressionIntoChatInput(id);
+                else Ctx?.Chat?.SendExpression(id, _chatChannel);
                 HideExpressionMenu();
                 if (_chatInput != null) _chatInput.ActivateInputField();
             });
@@ -1316,6 +1328,23 @@ namespace Sdo.UI.Screens
             tip.Owner = this;
             tip.Command = RoomChatCommand.ExpressionDisplayText(expressionId);
             tip.LocalPos = new Vector2(x, y);
+        }
+
+        /// <summary>現在是不是在**左下輸入框**打字（而不是頭上泡模式、也不是完全沒在打字）。
+        /// <c>_chatInputSticky</c> = 送出後仍黏著 focus 的續打狀態，跟 isFocused 一樣算「正在這裡打」。</summary>
+        private bool TypingInChatInput()
+            => _chatInput != null && !_chatBubbleTyping && !_chatBubbleInputArmed
+               && (_chatInput.isFocused || _chatInputSticky);
+
+        /// <summary>把表情指令（<c>/GO</c>）接到輸入框後面 —— 與遊戲畫面的 <c>GameplayChat.InsertExpression</c>
+        /// 同一套規則：前面有字就補一個空白，結尾也留一個空白讓人接著打。</summary>
+        private void InsertExpressionIntoChatInput(int expressionId)
+        {
+            string cmd = RoomChatCommand.ExpressionDisplayText(expressionId);
+            if (string.IsNullOrEmpty(cmd) || _chatInput == null) return;
+            _chatInput.text = Sdo.Game.ChatDraft.WithExpression(_chatInput.text, cmd, _chatInput.characterLimit);
+            _chatDraftWasEmpty = false;
+            FocusRoomChatInput();   // 內含 MoveTextEnd → 游標移到結尾接著打
         }
 
         private void StepExpressionPage(int delta)
@@ -1512,6 +1541,12 @@ namespace Sdo.UI.Screens
         // 所以固定前綴 <家族> 改用 <noparse> 包住原字（不被當標籤、也不被解碼）；名字/內容仍走 EscapeTmp。名字可點密語（別人才可點）。
         private void AddRoomChatGuildLine(ChatMessage m)
         {
+            // 家族頻道打的表情：畫 emoji 小動畫（綠字 + <家族> 前綴照舊），不要落成 "/翻" 那串字。
+            if (m.ExpressionId > 0)
+            {
+                AddRoomChatExpressionLine(m, "<noparse>" + RoomChatCommand.GuildTag + "</noparse>", GuildHex);
+                return;
+            }
             string open = "<color=#" + GuildHex + ">";
             string tag = "<noparse>" + RoomChatCommand.GuildTag + "</noparse>";
             string line = open + tag + WhisperNameLink(m) + ": " + EscapeTmp(ChatLineText(m)) + "</color>";
@@ -1597,8 +1632,11 @@ namespace Sdo.UI.Screens
         }
 
         // 表情訊息：左下聊天列顯示「暱稱:」+ S_Expression 小動畫，不要落成 /無聊 文字。
-        private void AddRoomChatExpressionLine(ChatMessage m)
+        /// <param name="tagPrefix">名字前的固定標記（家族行的 <c>&lt;家族&gt;</c>，已自行包好 noparse）；null = 沒有。</param>
+        /// <param name="hex">整行的顏色（家族行是綠字）；null = 沿用預設白字。</param>
+        private void AddRoomChatExpressionLine(ChatMessage m, string tagPrefix = null, string hex = null)
         {
+            string Tint(string s) => string.IsNullOrEmpty(hex) ? s : "<color=#" + hex + ">" + s + "</color>";
             var row = UIKit.NewRect(_chatContent, "exprLine");
             UIKit.Layout(row.gameObject, 18);
             var hlg = row.gameObject.AddComponent<HorizontalLayoutGroup>();
@@ -1613,13 +1651,13 @@ namespace Sdo.UI.Screens
             hlg.padding = new RectOffset(0, 0, 0, 0);
 
             // 名字白色（原本 #7FB6FF 藍）+ 可點密語（別人才可點）。<link> 是零寬標記，量寬不受影響。
-            string label = WhisperNameLink(m) + ":";
+            string label = Tint((tagPrefix ?? "") + WhisperNameLink(m) + ":");
             EnableWhisperNameClicks(ChatCell(row, "name", label, 0f), m);
 
             // 指令前的字：排在名字後、emoji 前（保留輸入時 emoji 的位置：前字〔emoji〕後字）。
             string lead = ExpressionLeadingText(m);
             if (lead.Length > 0)
-                ChatCell(row, "lead", EscapeTmp(lead), 0f);
+                ChatCell(row, "lead", Tint(EscapeTmp(lead)), 0f);
 
             var frames = RoomExpressionArt.SmallFrames(m.ExpressionId);
             bool hasFrames = frames != null && frames.Length > 0;
@@ -1638,11 +1676,11 @@ namespace Sdo.UI.Screens
                 anim.SetFrames(frames, restart: true);
             }
             else
-                ChatCell(row, "cmd", EscapeTmp(RoomChatCommand.ExpressionDisplayText(m.ExpressionId)), 0f);
+                ChatCell(row, "cmd", Tint(EscapeTmp(RoomChatCommand.ExpressionDisplayText(m.ExpressionId))), 0f);
 
             // 尾隨任意字（中文／英文／數字／標點），舊訊息 Text=/指令 不算尾隨。
             if (HasExpressionTrailingText(m))
-                ChatCell(row, "trail", " " + EscapeTmp(m.Text.Trim()), 1f);
+                ChatCell(row, "trail", Tint(" " + EscapeTmp(m.Text.Trim())), 1f);
         }
 
         // 表情指令「前面」的字（顯示在 emoji 前）。空白／非表情訊息回 ""。
@@ -1905,6 +1943,16 @@ namespace Sdo.UI.Screens
             if (!LocalReady(room)) OnReadyToggle();
         }
 
+        /// <summary>家族頻道的內容 —— 是表情指令（<c>/翻</c>）就帶著 expressionId 送，否則當純文字。
+        /// 不這樣分，家族頻道打的 emoji 會以字面 "/翻" 送出去，收端也就只印得出那串字。
+        /// 遊戲畫面的聊天框走 <c>FrontendApp.SendGuildText</c>，同一套規則。</summary>
+        private void SendGuildText(string body)
+        {
+            if (RoomChatCommand.TryParseExpression(body, out var eid, out var lead, out var trail))
+                Ctx.Chat.SendGuildExpression(eid, lead, trail);
+            else Ctx.Chat.SendGuild(body);
+        }
+
         private void SendRoomChat()
         {
             if (_chatInput == null || Ctx == null || Ctx.Chat == null) return;
@@ -1935,7 +1983,7 @@ namespace Sdo.UI.Screens
                 {
                     string body = RoomChatCommand.StripGuildCommand(txt);
                     if (string.IsNullOrWhiteSpace(body)) return;   // 只有「/家族 」還沒打內容 → 續打
-                    sendAction = () => Ctx.Chat.SendGuild(body);
+                    sendAction = () => SendGuildText(body);
                     postDraft = RoomChatCommand.GuildCommandPrefix;
                     break;
                 }
@@ -1960,7 +2008,7 @@ namespace Sdo.UI.Screens
                     if (RoomChatCommand.TryStripGuildCommand(txt, out var guildBody))
                     {
                         if (string.IsNullOrWhiteSpace(guildBody)) return;   // 只有「/家族 」還沒打內容 → 續打
-                        sendAction = () => Ctx.Chat.SendGuild(guildBody);
+                        sendAction = () => SendGuildText(guildBody);
                         postDraft = RoomChatCommand.GuildCommandPrefix;
                         break;
                     }

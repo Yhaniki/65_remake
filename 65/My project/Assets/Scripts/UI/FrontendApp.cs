@@ -873,6 +873,15 @@ namespace Sdo.UI
         }
 
         /// <summary>遊戲中送出一句話 —— 跟房間 <c>SendRoomChat</c> 同一條解析(家族 / 密語 / 表情 / 一般)。</summary>
+        /// <summary>家族頻道的內容 —— 是表情指令(<c>/翻</c>)就帶著 expressionId 送,否則當純文字。
+        /// 不這樣分,家族頻道打的 emoji 會以字面 "/翻" 送出去,收端也就只印得出那串字。</summary>
+        private static void SendGuildText(Services.IChatService chat, string body)
+        {
+            if (Services.RoomChatCommand.TryParseExpression(body, out var eid, out var lead, out var trail))
+                chat.SendGuildExpression(eid, lead, trail);
+            else chat.SendGuild(body);
+        }
+
         private void SendGameplayChat(string txt)
         {
             var chat = _ctx?.Chat;
@@ -883,7 +892,7 @@ namespace Sdo.UI
                 case Services.ChatChannel.Family:
                 {
                     string body = Services.RoomChatCommand.StripGuildCommand(txt);
-                    if (!string.IsNullOrWhiteSpace(body)) chat.SendGuild(body);
+                    if (!string.IsNullOrWhiteSpace(body)) SendGuildText(chat, body);
                     return;
                 }
                 case Services.ChatChannel.Friend:
@@ -899,7 +908,7 @@ namespace Sdo.UI
                 {
                     if (Services.RoomChatCommand.TryStripGuildCommand(txt, out var guildBody))
                     {
-                        if (!string.IsNullOrWhiteSpace(guildBody)) chat.SendGuild(guildBody);
+                        if (!string.IsNullOrWhiteSpace(guildBody)) SendGuildText(chat, guildBody);
                         return;
                     }
                     if (Services.RoomChatCommand.TryParseWhisper(txt, out var target, out var body))

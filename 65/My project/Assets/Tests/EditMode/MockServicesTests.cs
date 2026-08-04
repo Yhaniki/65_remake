@@ -429,6 +429,44 @@ namespace Sdo.Tests
             Assert.IsTrue(c.History[0].Local);
         }
 
+        // 家族頻道打表情（/GO）→ 家族訊息**帶 ExpressionId**，顯示端才畫得出 emoji 而不是印 "/GO"。
+        [Test]
+        public void SendGuildExpression_Carries_The_Expression_Id()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, () => "玩家001", localGuild: () => "熱舞家族");
+            int id = RoomChatCommand.MenuExpressionIds[0];
+            c.SendGuildExpression(id, "看這個", "很讚");
+            Assert.AreEqual(1, c.History.Count);
+            var m = c.History[0];
+            Assert.IsTrue(m.Guild);
+            Assert.AreEqual(ChatChannel.Family, m.Channel);
+            Assert.AreEqual(id, m.ExpressionId);
+            Assert.AreEqual("看這個", m.LeadingText);
+            Assert.AreEqual("很讚", m.Text);
+            Assert.IsTrue(m.Local);
+        }
+
+        // 沒有家族 → 跟 SendGuild 同一套守門：只出「你沒有家族」，不送表情。
+        [Test]
+        public void SendGuildExpression_Without_Guild_Says_No_Guild()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, () => "玩家001", localGuild: () => "");
+            c.SendGuildExpression(RoomChatCommand.MenuExpressionIds[0], null, null);
+            Assert.AreEqual(1, c.History.Count);
+            Assert.AreEqual(ChatNotice.NoGuild, c.History[0].Notice);
+            Assert.AreEqual(0, c.History[0].ExpressionId);
+        }
+
+        // 不存在的表情 id → 什麼都不送（連「你沒有家族」都不出，因為根本不是一個有效的表情）。
+        [Test]
+        public void SendGuildExpression_Invalid_Id_Sends_Nothing()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, null, () => "玩家001", localGuild: () => "熱舞家族");
+            c.SendGuildExpression(0, null, null);
+            c.SendGuildExpression(-7, null, null);
+            Assert.AreEqual(0, c.History.Count);
+        }
+
         // 沒給 localGuild func → 視為沒有家族。
         [Test]
         public void SendGuild_Null_Guild_Func_Says_No_Guild()

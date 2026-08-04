@@ -209,6 +209,7 @@ namespace Sdo.Tests
             private readonly List<ChatMessage> _history = new List<ChatMessage>();
 
             public int WhisperCalls;
+            public int GuildExpressionCalls;   // 沒家族時 OnlineChatService 會退回本機這一支
 
             public IReadOnlyList<ChatMessage> History => _history;
             public event Action<ChatMessage> MessageReceived;
@@ -221,6 +222,8 @@ namespace Sdo.Tests
             public void SendExpression(int expressionId, ChatChannel channel, string trailingText) { }
             public void SendExpression(int expressionId, ChatChannel channel, string leadingText, string trailingText) { }
             public void SendGuild(string text) { }
+            public void SendGuildExpression(int expressionId, string leadingText, string trailingText)
+                => GuildExpressionCalls++;
             public void SendSelfTalk(string text) { }
             public void SendSystem(string text) { }
             public void AnnounceStageEnter(string name) { }

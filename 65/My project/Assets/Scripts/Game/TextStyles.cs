@@ -410,31 +410,38 @@ namespace Sdo.Game
         /// 走的是跟 <see cref="ReflowCells"/> 完全同一條算式(逐字 advance × characterSize×0.1,per-char 路徑再扣掉
         /// tracking),所以量出來的寬度就是實際排出來的寬度;字型光柵尺寸跟著螢幕變,所以每次都重新問一次。
         /// </summary>
-        public float MeasuredWidth
+        public float MeasuredWidth => PrefixWidth(_text != null ? _text.Length : 0);
+
+        /// <summary>
+        /// 目前字串**前 <paramref name="charCount"/> 個字元**畫出來的寬度。一行裡只有前面那一段可以點的時候
+        /// (遊戲中聊天行的名字欄 —— 點它就密語那個人)要靠這個知道那一段到哪裡為止。
+        ///
+        /// tracking 用的是**整串**算出來的值,因為排版時本來就是整串一起排的;只量前綴卻重算 tracking,
+        /// 得到的邊界會跟畫面上看到的差幾 px。
+        /// </summary>
+        public float PrefixWidth(int charCount)
         {
-            get
+            if (_font == null || string.IsNullOrEmpty(_text) || charCount <= 0) return 0f;
+            int n = Mathf.Min(charCount, _text.Length);
+            float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
+            int fontPx = NameplateMetrics.FontPxFor(_pxSize, sy);
+            float c = NameplateMetrics.CharacterSizeFor(_pxSize, fontPx);
+            float worldPerPx = 0.1f * c;
+            _font.RequestCharactersInTexture(_text, fontPx, _fontStyle);
+            float total = 0f;
+            for (int k = 0; k < n; k++)
             {
-                if (_font == null || string.IsNullOrEmpty(_text)) return 0f;
-                float sy = NameplateMetrics.ScaleY(Screen.height, AspectController.ContentRect);
-                int fontPx = NameplateMetrics.FontPxFor(_pxSize, sy);
-                float c = NameplateMetrics.CharacterSizeFor(_pxSize, fontPx);
-                float worldPerPx = 0.1f * c;
-                _font.RequestCharactersInTexture(_text, fontPx, _fontStyle);
-                float total = 0f;
-                for (int k = 0; k < _text.Length; k++)
-                {
-                    float a = _font.GetCharacterInfo(_text[k], out CharacterInfo info, fontPx, _fontStyle)
-                        ? info.advance : fontPx;
-                    total += a * worldPerPx;
-                }
-                if (_trackEm != 0f && _text.Length > 1)
-                {
-                    float trackEm = TextTracking.SafeTrackEm(_font, _text, fontPx, _fontStyle, _trackEm,
-                                                             TextStyles.MinInkGapEm);
-                    total -= trackEm * fontPx * worldPerPx * (_text.Length - 1);
-                }
-                return total;
+                float a = _font.GetCharacterInfo(_text[k], out CharacterInfo info, fontPx, _fontStyle)
+                    ? info.advance : fontPx;
+                total += a * worldPerPx;
             }
+            if (_trackEm != 0f && n > 1)
+            {
+                float trackEm = TextTracking.SafeTrackEm(_font, _text, fontPx, _fontStyle, _trackEm,
+                                                         TextStyles.MinInkGapEm);
+                total -= trackEm * fontPx * worldPerPx * (n - 1);
+            }
+            return total;
         }
 
         public void SetColors(Color face, Color edge)

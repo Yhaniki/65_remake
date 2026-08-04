@@ -56,6 +56,9 @@ namespace Sdo.UI.Services
         void SendWhisper(string target, string body, ChatChannel channel = ChatChannel.Current);
         // 家族頻道：有家族 → 綠字「<家族>名字: 內容」+ 同族偶爾回話；沒有家族 → 紅字「你沒有家族」。皆本機專屬、不彈頭上泡。
         void SendGuild(string text);
+        // 家族頻道的表情（在家族頻道打 /翻）：守門與 SendGuild 相同（沒家族 → 「你沒有家族」），但帶 expressionId 走。
+        // 少了這一支，家族頻道的表情只能當純文字送，收端就只印得出 "/翻" 而不是 emoji 小動畫。
+        void SendGuildExpression(int expressionId, string leadingText, string trailingText);
         // 好友頻道沒帶 [名字] 對象就送出 → 白字「你說: 內容」，只有自己看得到、不送給任何人、不彈泡。
         void SendSelfTalk(string text);
         // 系統提示行（除錯/狀態回饋用）：金黃字，本機專屬。

@@ -139,6 +139,18 @@ namespace Sdo.UI.Services
             _net.SendChat(msg, ChannelWire(ChatChannel.Family));
         }
 
+        // 家族頻道的表情:與 SendGuild 同一條路(family 頻道 + 沒家族就退回本機的「你沒有家族」),
+        // 只是多帶 expressionId/leadingText —— server 的 chat 封包本來就有這兩個欄位,收端照 family
+        // 標成 Guild=true 且 ExpressionId>0,顯示端就畫得出 emoji。
+        public void SendGuildExpression(int expressionId, string leadingText, string trailingText)
+        {
+            if (!RoomChatCommand.IsValidExpression(expressionId)) return;
+            string guild = _localGuild != null ? _localGuild() : null;
+            if (string.IsNullOrWhiteSpace(guild)) { _local?.SendGuildExpression(expressionId, leadingText, trailingText); return; }
+            _net.SendChat((trailingText ?? "").Trim(), ChannelWire(ChatChannel.Family), expressionId,
+                          (leadingText ?? "").Trim());
+        }
+
         public void SendSelfTalk(string text) => _local?.SendSelfTalk(text);
         public void SendSystem(string text) => _local?.SendSystem(text);
         public void AnnounceStageEnter(string name) => _local?.AnnounceStageEnter(name);

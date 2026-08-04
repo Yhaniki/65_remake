@@ -88,5 +88,72 @@ namespace Sdo.Tests
             Assert.IsNull(line.ExpressionFrames);
             Assert.AreEqual(RoomChatCommand.ExpressionDisplayText(id), line.Body);
         }
+
+        [Test]
+        public void Guild_Line_Draws_The_Expression_Not_The_Raw_Command()
+        {
+            // 使用者回報「在家族頻道打 emoji 沒出來」—— 家族行以前直接把 ExpressionId 印成 "/翻",
+            // 現在要跟一般聊天走同一條:有圖畫圖、拿不到圖才退回指令文字,而 <家族> 前綴與綠字照舊。
+            int id = RoomChatCommand.MenuExpressionIds[1];
+            var m = new ChatMessage("A", "", 0, expressionId: id) { Guild = true, LeadingText = "看這個" };
+            var frames = new UnityEngine.Sprite[1];
+
+            var withArt = GameplayChatFeed.ToLine(m, _ => frames);
+            Assert.AreEqual(ChatPalette.GuildHex, withArt.ColorHex);
+            StringAssert.StartsWith(RoomChatCommand.GuildTag, withArt.Name);
+            Assert.AreSame(frames, withArt.ExpressionFrames);
+            Assert.AreEqual("看這個", withArt.Lead);
+            StringAssert.DoesNotContain("/", withArt.Body ?? "");
+
+            var noArt = GameplayChatFeed.ToLine(m, null);   // 沒有素材的環境:整句不能消失
+            Assert.IsNull(noArt.ExpressionFrames);
+            Assert.AreEqual(RoomChatCommand.ExpressionDisplayText(id), noArt.Body);
+        }
+
+        [Test]
+        public void Only_Other_Peoples_Names_Are_Clickable_For_Whisper()
+        {
+            // 點名字 → 密語(同房間左下角聊天列):自己說的話、系統行、密語行的名字都不可點。
+            Assert.AreEqual("Eithwa", GameplayChatFeed.ToLine(Room("Eithwa", "哈囉"), null).WhisperTarget);
+
+            var mine = Room("我", "哈囉"); mine.Local = true;
+            Assert.IsNull(GameplayChatFeed.ToLine(mine, null).WhisperTarget);
+
+            var sys = Room("", "系統提示"); sys.System = true;
+            Assert.IsNull(GameplayChatFeed.ToLine(sys, null).WhisperTarget);
+
+            var w = Room("A", "悄悄話"); w.Whisper = WhisperKind.Incoming; w.WhisperParty = "A";
+            Assert.IsNull(GameplayChatFeed.ToLine(w, null).WhisperTarget);
+
+            // 家族行的名字也可以點(那是別人說的話)
+            var g = new ChatMessage("A", "家族話", 0) { Guild = true };
+            Assert.AreEqual("A", GameplayChatFeed.ToLine(g, null).WhisperTarget);
+        }
+
+        [Test]
+        public void Clicking_A_Name_Puts_The_Target_In_Front_Of_What_Was_Typed()
+        {
+            // 房間的 InsertWhisperTarget 規則:保留已打的內容,舊的 [名字] 前綴換掉而不是疊上去。
+            Assert.AreEqual("[A] ", Sdo.Game.ChatDraft.WithWhisperTarget("", "A"));
+            Assert.AreEqual("[A] 哈囉", Sdo.Game.ChatDraft.WithWhisperTarget("哈囉", "A"));
+            Assert.AreEqual("[B] 哈囉", Sdo.Game.ChatDraft.WithWhisperTarget("[A] 哈囉", "B"));
+            Assert.AreEqual("[B] ", Sdo.Game.ChatDraft.WithWhisperTarget("[A] ", "B"));
+            // 名字兩邊的空白吃掉;空名字不動輸入框
+            Assert.AreEqual("[A] x", Sdo.Game.ChatDraft.WithWhisperTarget("x", "  A  "));
+            Assert.AreEqual("x", Sdo.Game.ChatDraft.WithWhisperTarget("x", "   "));
+        }
+
+        [Test]
+        public void Picking_An_Expression_Appends_The_Command_To_What_Was_Typed()
+        {
+            // 房間與遊戲畫面共用同一套:前面有字補一個空白隔開,結尾留一個空白讓人接著打。
+            Assert.AreEqual("/GO ", Sdo.Game.ChatDraft.WithExpression("", "/GO"));
+            Assert.AreEqual("哈囉 /GO ", Sdo.Game.ChatDraft.WithExpression("哈囉", "/GO"));
+            Assert.AreEqual("哈囉 /GO ", Sdo.Game.ChatDraft.WithExpression("哈囉 ", "/GO"));   // 已有空白不再補
+            Assert.AreEqual("[A] /GO ", Sdo.Game.ChatDraft.WithExpression("[A] ", "/GO"));    // 密語前綴照樣接得上
+            Assert.AreEqual("哈囉", Sdo.Game.ChatDraft.WithExpression("哈囉", ""));             // 沒有指令 → 不動
+            // characterLimit 會截斷（房間的輸入框有上限）
+            Assert.AreEqual("哈囉 /G", Sdo.Game.ChatDraft.WithExpression("哈囉", "/GO", 5));
+        }
     }
 }
