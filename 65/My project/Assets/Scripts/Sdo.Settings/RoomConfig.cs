@@ -127,6 +127,10 @@ namespace Sdo.Settings
         public static float mmdGravity = 1f;        // 布料重力倍率
         public static float mmdStiffness = 0.12f;   // 布料硬度（低＝被重力拉直垂下）
         public static float mmdColliderScale = 1f;  // 身體碰撞體半徑倍率
+        // 多人連線:把自己身上的模型上傳給 server,讓同房的人也看得到(1=分享,預設)。
+        // 關掉 → 別人看到的是你的 SDO 穿搭(你自己畫面上仍然是 MMD)。
+        // ⚠️ 網路上流通的 MMD 模型多半帶使用規約,有些明確禁止再配布 —— 這個開關就是為此存在的。
+        public static bool mmdShareModel = true;
 
         // ---- OPTION 對話框設定的鏡像（存進同一份全域 config.ini 的 [Option] 區）。settings.json 仍是執行期讀取的
         //      工作副本；這裡是「可手改的落地檔」：開機 Load() 後把有帶 [Option] 的值套回 GameSettings（ApplyOptionTo），
@@ -550,6 +554,7 @@ namespace Sdo.Settings
                     case "mmdGravity": mmdGravity = ParseFloat(val, mmdGravity); break;
                     case "mmdStiffness": mmdStiffness = ParseFloat(val, mmdStiffness); break;
                     case "mmdColliderScale": mmdColliderScale = ParseFloat(val, mmdColliderScale); break;
+                    case "mmdShareModel": mmdShareModel = ParseBool(val, mmdShareModel); break;
                     // ---- OPTION 對話框設定 ----
                     case "opt_bgm": optBgm = ParseFloat(val, optBgm); break;
                     case "opt_music": optMusic = ParseFloat(val, optMusic); break;
@@ -763,6 +768,11 @@ namespace Sdo.Settings
             sb.Append("mmdRootMotion=").Append(B(mmdRootMotion)).Append('\n');
             sb.Append("# 貼圖 V 翻轉（1=開，預設）：PMX 的 UV 是 V 向下，Unity 要翻。某些模型的貼圖（領帶之類）要關掉才對。\n");
             sb.Append("mmdFlipV=").Append(B(mmdFlipV)).Append('\n');
+            sb.Append("# 多人連線：把自己身上的模型上傳給 server，讓同房的人也看得到（1=分享，預設）。\n");
+            sb.Append("# 關掉 → 別人看到的是你的 SDO 穿搭（你自己畫面上仍然是 MMD）。\n");
+            sb.Append("# ⚠️ 網路上流通的 MMD 模型多半帶使用規約，有些明確禁止再配布 —— 這個開關就是為此存在的。\n");
+            sb.Append("# 反過來，別人的模型一律**只在你自己也開著 MMD 顯示時**才下載（mmdEnabled=0 = 零流量）。\n");
+            sb.Append("mmdShareModel=").Append(B(mmdShareModel)).Append('\n');
 
             // OPTION 對話框（畫面/音效/鍵盤/遊戲）的全域設定。改完在遊戲內 OPTION 按「保存」也會寫回這裡。
             sb.Append('\n').Append("[Option]\n");

@@ -40,6 +40,9 @@ namespace Sdo.Game
             public bool Male;
             public string[] Parts;     // null → 預設整套
             public int BodyIndex;
+            /// <summary>他外觀宣告的 MMD 模型(packId);空 = 就是上面那套 SDO 穿搭。
+            /// 本機沒有那份模型就維持穿搭,下載完當場換上(<c>MmdAvatarSwap.OnPackInstalled</c>)。</summary>
+            public string MmdPack;
             /// <summary>0=A 1=B 2=C 3=自由。組隊模式的站位是照這個分的。</summary>
             public int Team;
         }
@@ -233,6 +236,9 @@ namespace Sdo.Game
                 // design px,模型單位直接當像素 → 60 單位高的人變成貼在畫面上的 60px 小人,而且不受場景遮擋。
                 // (回報:「進遊戲後其他玩家變超小」。條件與本機那條 3D 擺位路徑一致 —— 退回 2D 時兩邊都留在 Default。)
                 if (sceneWorldMode) SetLayerRecursive(go, SceneLayer);
+
+                // 他穿 MMD 的話就換上(本機沒有那份模型 → 維持這套 SDO 穿搭,等下載完自己換上)。
+                MmdAvatarSwap.RegisterRemote(av, haveNames && i < netDancers.Length ? netDancers[i].MmdPack : "");
 
                 _extraDancers.Add(av);
                 _extraRoots.Add(go.transform);

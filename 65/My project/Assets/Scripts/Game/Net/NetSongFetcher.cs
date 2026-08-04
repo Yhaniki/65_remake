@@ -78,6 +78,18 @@ namespace Sdo.Game.Net
 
         // ---- 下載 ----
         private string _destFolder = "";
+
+        /// <summary>
+        /// 這一趟在傳什麼:<c>NetProto.BlobKindSong</c>(預設)或 <c>BlobKindModel</c>。
+        ///
+        /// 管線本身完全通用(內容尋址、chunk、逐檔驗 hash),只有**三個點**要看它:
+        /// 掃資料夾算清單用哪張白名單、算 packId 用哪套規則、以及收檔時重驗路徑用哪張白名單。
+        /// 這三個點兩邊不一致的話,症狀是「上傳永遠被 server 拒絕」而錯誤訊息指向路徑或 hash。
+        /// </summary>
+        private string _kind = NetProto.BlobKindSong;
+
+        public string Kind => _kind;
+        private bool IsModel => string.Equals(_kind, NetProto.BlobKindModel, StringComparison.Ordinal);
         private List<PackFileEntry> _incoming;
         private int _inCursor;
         private long _inReceived;            // 目前這個檔已收到幾 bytes
@@ -145,9 +157,11 @@ namespace Sdo.Game.Net
         // ================= 啟動 =================
 
         /// <summary>房主:把 <paramref name="folder"/> 這個歌曲資料夾傳上去。</summary>
-        public void BeginUpload(string host, int port, string sessionKey, string packId, string folder)
+        public void BeginUpload(string host, int port, string sessionKey, string packId, string folder,
+                                string kind = NetProto.BlobKindSong)
         {
             Reset();
+            _kind = kind ?? NetProto.BlobKindSong;
             _uploading = true;
             _sessionKey = sessionKey ?? "";
             _packId = packId ?? "";
@@ -158,7 +172,8 @@ namespace Sdo.Game.Net
             // 清單的 hash 先在背景算(一首歌的音檔幾十 MB,主執行緒算會明顯卡一下)。
             // SongPackScan 是純 System.IO,沒有任何 Unity API → 可以安全地在 worker thread 上跑。
             var src = _srcFolder;
-            _hashTask = Task.Run(() => SongPackScan.Enumerate(src, hashEverything: true));
+            bool model = IsModel;
+            _hashTask = Task.Run(() => model ? ScanModelFolder(src) : SongPackScan.Enumerate(src, hashEverything: true));
 
             // 檔案連線與 control 連線是**同一台 server 的同一個 port** → 加密設定當然要一樣。
             // (漏掉這裡的話 server 開了 TLS,傳檔那條會用明文去撞 TLS 握手,錯誤訊息只有「Eof」。)
@@ -168,9 +183,11 @@ namespace Sdo.Game.Net
         }
 
         /// <summary>缺歌的人:把 <paramref name="packId"/> 下載到 <paramref name="destFolder"/>。</summary>
-        public void BeginDownload(string host, int port, string sessionKey, string packId, string destFolder)
+        public void BeginDownload(string host, int port, string sessionKey, string packId, string destFolder,
+                                  string kind = NetProto.BlobKindSong)
         {
             Reset();
+            _kind = kind ?? NetProto.BlobKindSong;
             _uploading = false;
             _sessionKey = sessionKey ?? "";
             _packId = packId ?? "";
@@ -182,6 +199,15 @@ namespace Sdo.Game.Net
             _link.BeginConnect(host, port, 5000,
                                Sdo.Settings.RoomConfig.serverTls,
                                Sdo.Settings.RoomConfig.serverCertFingerprint);
+        }
+
+        /// <summary>模型資料夾 → 上傳清單(每個檔都算 SHA-256)。在 worker thread 上跑,所以只能用純
+        /// <c>System.IO</c> —— <see cref="ModelPackId.ScanFolder"/> 正是那樣寫的,零 UnityEngine。</summary>
+        private static List<PackFileEntry> ScanModelFolder(string dir)
+        {
+            List<PackFileEntry> files;
+            PackScanStats stats;
+            return ModelPackId.ScanFolder(dir, out files, out stats) ? files : new List<PackFileEntry>();
         }
 
         public void Cancel(string why)
@@ -351,10 +377,10 @@ namespace Sdo.Game.Net
             // 自己先驗一次:重算的 packId 與房間宣稱的一致嗎?
             // 不一致代表資料夾在選歌之後被動過(或掃描快取過時)—— server 也會擋(那是它的職責),
             // 但在這裡擋掉可以省下整趟上傳,而且錯誤訊息指得到真正的原因。
-            string recomputed = SongPackId.Compute(_manifest);
+            string recomputed = IsModel ? ModelPackId.Compute(_manifest) : SongPackId.Compute(_manifest);
             if (!string.Equals(recomputed, _packId, StringComparison.Ordinal))
             {
-                Fail("歌曲資料夾的內容與選歌時不一致");
+                Fail(IsModel ? "模型資料夾的內容與宣告的不一致" : "歌曲資料夾的內容與選歌時不一致");
                 return;
             }
 
@@ -369,6 +395,7 @@ namespace Sdo.Game.Net
                 .Str(NetProto.FieldType, NetProto.BlobUploadBegin)
                 .Int(NetProto.FieldRequest, ++_rq)
                 .Str("packId", _packId)
+                .Str(NetProto.FieldBlobKind, _kind)
                 .Put("files", arr));
             State = NetTransferState.Negotiating;
         }
@@ -552,7 +579,12 @@ namespace Sdo.Game.Net
 
                 // 🔴 server 給的路徑也要驗 —— 這條路徑會直接變成本機的檔案名稱。
                 // 我們信任自己人開的 server,但「信任」不是「把寫檔位置交給對面決定」。
-                if (!SafeRelPath.IsSafe(rel) || !SongPackFilter.IsTransferable(rel, len))
+                // 🔴 收端自己再驗一次,而且要用**這一趟的** kind 那張白名單。server 已經驗過了,
+                // 但那是 server 的職責 —— 我們要往自己的磁碟上寫檔,不能把「對方一定是照規矩來的」
+                // 當成前提(而且一個被入侵的 server 正是這條防線存在的理由)。
+                bool allowed = IsModel ? ModelPackFilter.IsTransferable(rel, len)
+                                       : SongPackFilter.IsTransferable(rel, len);
+                if (!SafeRelPath.IsSafe(rel) || !allowed)
                 {
                     Fail("server 給的檔案清單不安全:" + rel);
                     return;

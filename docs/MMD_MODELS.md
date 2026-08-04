@@ -70,6 +70,40 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 
 嫌還是慢就關 `mmdPhysics`:布料求解是每隻 rig 裡最貴的一段,關掉時整組不建(不是建了再關)。
 
+## 多人連線:別人看得到你的模型
+
+開著 `mmdEnabled` 進房間,你的模型會自動上傳到 server,同房的人就看得到 —— 反過來你也會自動去拉別人的。
+
+**沒有模型的那段時間看到什麼:他的 SDO 穿搭。** 這不是退化的替身畫面 —— MMD 模型本來就是疊在 SDO 骨架上顯示的
+(SDO 那隻永遠是動作驅動器),所以「還沒下載完」的正確畫面天生就是他的穿搭。模型到了之後**當場換身體,不重建角色**:
+位置、朝向、正在播的動作全都留著,不會瞬移也不會有一幀空白。
+
+| 設定 | 作用 |
+|---|---|
+| `mmdShareModel` | 1(預設)＝把自己的模型上傳分享。關＝別人看到你的 SDO 穿搭(你自己畫面上仍然是 MMD) |
+| `mmdEnabled` | **同時也是這整條的總開關**:關掉 = 不上傳、不下載、不查詢,零流量 |
+
+⚠️ **使用規約**:網路上流通的 MMD 模型多半帶規約,有些明確禁止再配布。`mmdShareModel` 就是為此存在的 ——
+不確定就關掉。(模型包裡的 `readme.txt` 會跟著一起傳,規約不會被留在你這邊。)
+
+### 怎麼運作的
+
+* 模型的身分是**內容指紋** `packId`(`ModelPackId`,全檔 SHA-256),與外部歌用的是同一套機制與同一條傳檔管線
+  (`kind=model`)。同一份模型在兩台機器上算出同一個 id → server 已經有就是**零上傳**,每次進房不會重傳。
+* 你的 `packId` 放在外觀裡(`setLook` 的 `mmd` 欄位)跟著房間快照廣播 —— 它就是外觀的一部分。
+* 別人傳來的模型放 `DATA/MODEL/.net/<hex>/`。開頭的點讓它**不會出現在設定面板的模型清單裡**
+  (那是別人的模型,不是你裝的)。
+* 下載回來會自己重算一次 packId,對不上就整包丟掉 —— 不把「server 一定是好的」當前提。
+* **歌永遠優先**:缺歌會擋住整場比賽,模型只是外觀。所以只要有歌在傳,模型這條就一步都不動。
+
+### 安全性(server 端重驗,一項都不信 client)
+
+* 模型有自己的白名單(`.pmx`/貼圖/`.ini`/`.txt`),與歌曲那張**分開** —— 聯集起來就等於
+  「歌曲資料夾可以挾帶 .pmx、模型資料夾可以挾帶 mp3」。執行檔/壓縮檔/影片一律擋。
+* 一包沒有 `.pmx` 的貼圖不是模型,拒收。
+* **只能上傳你身上穿的那一個**(＝你自己宣告的 `mmd`)。少了這條,任何連上來的人都能把 server 當免費檔案空間用。
+* 同一個 `packId` 不能改換 kind 再傳一次。
+
 ## 換模型時什麼是自動的、什麼會出事
 
 **自動(不用改任何程式碼)**
@@ -121,7 +155,12 @@ python tools/mmd_cloth_validate/compare.py        # 對真值 → report.md
 | 檔案 | 作用 |
 |---|---|
 | `Assets/Scripts/Game/MmdModelCatalog.cs` | 掃 DATA/MODEL,一個資料夾一個模型(純邏輯 + 單元測試) |
-| `Assets/Scripts/Game/MmdAvatarSwap.cs` | 讀 `config.ini [Mmd]`、模型選擇、解析快取、每隻角色的 SDO⇄MMD 切換 |
+| `Assets/Scripts/Game/MmdAvatarSwap.cs` | 讀 `config.ini [Mmd]`、模型選擇、解析快取、每隻角色的 SDO⇄MMD 切換(遠端角色各用各的模型) |
+| `Assets/Scripts/Game/MmdModelStore.cs` | packId ⇄ 本機資料夾;下載區 `DATA/MODEL/.net/` |
+| `Assets/Scripts/Sdo.Osu/ModelPackId.cs` | 模型的內容指紋(全檔 SHA-256)+ 整包驗證 |
+| `Assets/Scripts/Sdo.Osu/ModelPackFilter.cs` | 哪些檔可以傳(client 與 server 編同一份) |
+| `Assets/Scripts/UI/Core/NetModelTransfer.cs` | 上傳/下載的編排(歌優先、失敗不重試到底) |
+| `server/Sdo.Server/Net/Hub.Blobs.cs` | server 收檔:依 kind 套白名單、驗上傳資格 |
 | `Assets/Scripts/Sdo.Settings/StartupConfigSchema.cs` | 設定面板「MMD」分頁那幾列 |
 | `Assets/Scripts/Game/PmxLoader.cs` | 執行期 .pmx 解析(頂點/材質/骨骼/剛體/關節) |
 | `Assets/Scripts/Game/MmdAvatar.cs` | 建 rig、身高對齊、每幀從 SDO 骨架重定向 |

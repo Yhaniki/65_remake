@@ -72,8 +72,23 @@ namespace Sdo.Game
                 return;   // a model folder is a leaf — its textures/ Toon/ … are not models
             }
             if (depth >= MaxDepth) return;
-            foreach (var sub in subDirs(dir)) Walk(sub, depth + 1, found, seen, subDirs, files);
+            foreach (var sub in subDirs(dir))
+            {
+                if (IsHidden(LeafName(sub))) continue;   // .net/ = 別人傳來的,不是使用者裝的(見 IsHidden)
+                Walk(sub, depth + 1, found, seen, subDirs, files);
+            }
         }
+
+        /// <summary>
+        /// 點開頭的資料夾不算使用者裝的模型。
+        ///
+        /// 目前只有一個:<c>&lt;DATA&gt;/MODEL/.net/</c> —— 連線時從別人那邊下載回來的模型
+        /// (見 <see cref="MmdModelStore"/>)。它們的資料夾名是一串 hash,而且不是使用者自己選的東西,
+        /// 不該出現在設定面板的模型清單裡。需要它們的地方(依 packId 找模型)是直接拼路徑,
+        /// 不靠這個掃描。
+        /// </summary>
+        public static bool IsHidden(string folderName)
+            => !string.IsNullOrEmpty(folderName) && folderName[0] == '.';
 
         /// <summary>The .pmx a folder should load: the Japanese-named one (its bone names are what <see cref="MmdBoneMap"/>
         /// drives), else the alphabetically first — deterministic regardless of directory-enumeration order. Null when the

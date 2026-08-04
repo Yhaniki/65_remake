@@ -4686,6 +4686,7 @@ namespace Sdo.UI.Screens
                     // null == null → 永遠判定沒變 → **別人換衣服在我畫面上永遠不會反映**
                     // (使用者回報:「用儲物櫃換衣服 遠端沒有跟著換」)。
                     LookKey = s.Look != null ? s.Look.Key() : "",
+                    MmdPack = s.Look != null ? s.Look.MmdPack : "",
                 });
             }
 
@@ -4707,6 +4708,7 @@ namespace Sdo.UI.Screens
                         Parts = sp.Look != null ? sp.Look.Parts : null,
                         BodyIndex = sp.Look != null ? sp.Look.BodyIndex : 0,
                         LookKey = sp.Look != null ? sp.Look.Key() : "",
+                        MmdPack = sp.Look != null ? sp.Look.MmdPack : "",
                     });
                 }
 

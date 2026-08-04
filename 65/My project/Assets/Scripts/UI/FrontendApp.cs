@@ -573,6 +573,7 @@ namespace Sdo.UI
             TickNetGameplay();   // 遊玩中每 200ms 把本機成績送上去(見那邊的註解)
             // 缺歌傳檔:同樣要在遊戲中也繼續跑 —— 下載可能跨過「別人在打歌、我留在房間」那段。
             NetSongTransfer.Tick(_ctx, this);
+            NetModelTransfer.Tick(_ctx);   // MMD 模型:推自己的、拉別人的(歌沒在傳時才動,見那裡的說明)
 
             // 名字被佔用 / 中途斷線 → 已退回單機,告知玩家一次(「連不上」不在此列,見 LoginCo 尾端)。
             // 🔴 要等 Toast 建好才說(Toast.Ready):Update 從第一幀就在跑,而 Toast 到開機 Phase 5
@@ -1142,6 +1143,7 @@ namespace Sdo.UI
                     Male = p.Look != null && p.Look.Male,
                     Parts = p.Look != null ? p.Look.Parts : null,
                     BodyIndex = p.Look != null ? p.Look.BodyIndex : 0,
+                    MmdPack = p.Look != null ? p.Look.MmdPack : "",
                     Team = p.Team,
                 };
                 if (p.UserId == myUserId) localIdx = i;

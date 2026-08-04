@@ -173,6 +173,14 @@ namespace Sdo.UI.Core
             var look = new NetAvatarLook { Gender = gender, BodyIndex = p != null ? p.bodyShapeIndex : 0 };
             if (p != null)
                 look.Parts = WardrobeStore.ResolveEquippedParts(p, gender, id => AvatarItemCatalog.Instance.ById(id));
+
+            // MMD 模型:宣告我身上穿的是哪一個(packId),讓同房的人知道要顯示什麼、要去下載什麼。
+            // 空字串的情況(MMD 顯示關著 / 沒裝模型 / 設定裡把分享關掉了)= 別人看到的就是上面那套穿搭。
+            //
+            // 🔴 **穿搭一定要照送**,不能因為改用 MMD 就省掉。別人在模型下載完之前顯示的正是它,
+            // 而且 MMD 模型本來就疊在 SDO 骨架上 —— 那具身體不是替身,它就是驅動器本人。
+            look.MmdPack = MmdAvatarSwap.LocalPackId;
+            if (look.MmdPack.Length > 0) look.MmdName = MmdAvatarSwap.ModelName;
             return look;
         }
 

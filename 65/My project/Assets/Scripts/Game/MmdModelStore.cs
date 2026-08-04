@@ -1,0 +1,108 @@
+using System.Collections.Generic;
+using System.IO;
+using Sdo.Osu;
+using UnityEngine;
+
+namespace Sdo.Game
+{
+    /// <summary>
+    /// 「這個 <c>packId</c> 的模型在本機的哪個資料夾?」以及反過來「我選的這個模型的 packId 是什麼?」
+    ///
+    /// 連線功能需要這兩個方向:
+    ///   • **往外**:我要在 <c>setLook</c> 裡宣告我身上穿的是哪個模型 → 要自己選的模型的 packId。
+    ///   • **往內**:別人的外觀帶著一個 packId → 我要知道本機有沒有、在哪(有就直接顯示,沒有才去下載)。
+    ///
+    /// packId 是**全檔內容雜湊**(見 <see cref="ModelPackId"/>),一份 10 MB 的模型算一次約 30 ms。
+    /// 所以算過就記著:本機安裝的模型不會在遊戲執行中被換掉,同一個資料夾重算永遠是同一個答案。
+    /// (真的手動換了檔案 → 重開遊戲。這比每次進房間都重掃一次整個模型資料夾划算得多。)
+    ///
+    /// 下載回來的模型放**專屬的一層** <c>&lt;DATA&gt;/MODEL/.net/&lt;hex&gt;/</c>:
+    ///   • 資料夾名就是 packId 的 hex,所以「有沒有這一份」是一次 <c>Directory.Exists</c>,不用掃描比對;
+    ///   • 開頭的 <c>.</c> 讓 <see cref="MmdModelCatalog"/> 跳過它 —— 這些東西不該出現在設定面板的
+    ///     模型清單裡(它們的名字是一串 hash,而且是別人的模型,不是使用者自己裝的)。
+    /// </summary>
+    public static class MmdModelStore
+    {
+        /// <summary>下載回來的模型放這一層(相對於模型根目錄)。開頭的點讓模型掃描器跳過它。</summary>
+        public const string NetSubDir = ".net";
+
+        // 資料夾 → packId。算一次就記著(見類別說明)。
+        private static readonly Dictionary<string, string> _packIdByDir = new Dictionary<string, string>();
+
+        /// <summary>這個模型資料夾的 packId(算過就用記著的)。算不出來(讀不到 / 不是合法模型包)回空字串。</summary>
+        public static string PackIdOf(string modelDir)
+        {
+            if (string.IsNullOrEmpty(modelDir)) return "";
+            string hit;
+            if (_packIdByDir.TryGetValue(modelDir, out hit)) return hit;
+
+            float t0 = Time.realtimeSinceStartup;
+            string id = ModelPackId.ForFolder(modelDir);
+            _packIdByDir[modelDir] = id;
+            if (string.IsNullOrEmpty(id))
+                SdoLog.Note("mmd", "[mmd] 算不出 packId(不是合法的模型包,不能分享給別人):" + modelDir);
+            else
+                SdoLog.Note("mmd", $"[mmd] packId {id} ← {Path.GetFileName(modelDir)} ({(Time.realtimeSinceStartup - t0) * 1000f:F0} ms)");
+            return id;
+        }
+
+        /// <summary>算過的答案作廢(下載完成、或手動改了模型資料夾之後)。</summary>
+        public static void Forget(string modelDir)
+        {
+            if (!string.IsNullOrEmpty(modelDir)) _packIdByDir.Remove(modelDir);
+        }
+
+        /// <summary>
+        /// 這個 packId 的模型在本機的哪個資料夾?找不到回 null。
+        ///
+        /// 先看下載區(一次 Exists,不用掃描),再看使用者自己裝的模型 —— 後者要逐個算 packId,
+        /// 但那個答案會被記住,而且**通常第一個就中**(自己穿的那個一定是自己裝的)。
+        /// </summary>
+        public static string DirForPack(string packId, IEnumerable<MmdModelCatalog.Entry> installed)
+        {
+            if (!SongPackId.IsWellFormed(packId)) return null;
+
+            string net = NetDirFor(packId);
+            if (net != null && Directory.Exists(net) && HasPmx(net)) return net;
+
+            if (installed != null)
+                foreach (var e in installed)
+                {
+                    if (e == null || string.IsNullOrEmpty(e.Dir)) continue;
+                    if (string.Equals(PackIdOf(e.Dir), packId, System.StringComparison.Ordinal)) return e.Dir;
+                }
+            return null;
+        }
+
+        /// <summary>下載回來的這個 packId 該放哪(不保證存在)。算不出位置回 null。</summary>
+        public static string NetDirFor(string packId)
+        {
+            if (!SongPackId.IsWellFormed(packId)) return null;
+            string root = NetRoot();
+            if (string.IsNullOrEmpty(root)) return null;
+            return Path.Combine(root, packId.Substring(SongPackId.Prefix.Length));
+        }
+
+        /// <summary>下載區的根目錄 <c>&lt;DATA&gt;/MODEL/.net</c>。拿不到資料根就回 null。</summary>
+        public static string NetRoot()
+        {
+            string root = null;
+            try { root = SdoExtracted.Root; } catch { }
+            if (string.IsNullOrEmpty(root)) return null;
+            return Path.Combine(Path.Combine(root, "MODEL"), NetSubDir);
+        }
+
+        /// <summary>這個資料夾裡直接放著 .pmx 嗎?(下載到一半 / 被刪掉一半的資料夾不算數)</summary>
+        public static bool HasPmx(string dir)
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) return false;
+                foreach (var f in Directory.GetFiles(dir))
+                    if (ModelPackFilter.IsModelFile(Path.GetFileName(f))) return true;
+            }
+            catch { }
+            return false;
+        }
+    }
+}

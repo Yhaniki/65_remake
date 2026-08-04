@@ -426,6 +426,12 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
+                Key = "mmdShareModel", Category = CatMmd, Label = "分享模型給同房", Kind = ConfigFieldKind.Toggle,
+                Help = "開(預設)＝把你的模型上傳給伺服器,同房的人也看得到你的 MMD。關＝別人看到的是你的 SDO 穿搭(你自己畫面上仍然是 MMD)。★很多 MMD 模型的使用規約禁止再配布,這個開關就是為此存在的。",
+                Get = () => B(RoomConfig.mmdShareModel), Set = v => RoomConfig.mmdShareModel = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
                 Key = "mmdPhysics", Category = CatMmd, Label = "頭髮裙擺物理", Kind = ConfigFieldKind.Toggle,
                 Help = "布料模擬（頭髮/裙擺/領帶）。★嫌換場景進遊戲慢就關這個 —— 布料求解是建一隻 MMD 角色最貴的一段。",
                 Get = () => B(RoomConfig.mmdPhysics), Set = v => RoomConfig.mmdPhysics = ParseBool(v),
