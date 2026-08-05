@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using Sdo.Settings;
+using Sdo.Game;
 using Sdo.Settings.Vfs;
 
 namespace Sdo.Tests
@@ -16,7 +17,25 @@ namespace Sdo.Tests
     /// 別台機器 / CI 上跑不該因此變紅。有檔案時才是真的在驗。</summary>
     public class PakRealDataTests
     {
-        private const string PakDir = @"H:\65_remake\Build\pak_e2e";
+        /// <summary>打包產物的位置。寫死版本號會在下次 build 換版號時**靜默跳過**（Assert.Ignore），
+        /// 看起來一直是綠的其實根本沒驗 —— 所以自動找最新的一份。</summary>
+        private static string PakDir
+        {
+            get
+            {
+                const string buildRoot = @"H:\65_remake\Build";
+                if (!Directory.Exists(buildRoot)) return buildRoot;
+
+                // <Build>\<任何資料夾>\DATA 以及 <Build>\pak_e2e，取最新的一份有 base_se.pak 的。
+                var candidates = Directory.GetDirectories(buildRoot)
+                    .Select(d => Path.Combine(d, "DATA"))
+                    .Concat(new[] { Path.Combine(buildRoot, "pak_e2e") })
+                    .Where(d => File.Exists(Path.Combine(d, "base_se.pak")))
+                    .OrderByDescending(Directory.GetLastWriteTimeUtc)
+                    .ToList();
+                return candidates.Count > 0 ? candidates[0] : buildRoot;
+            }
+        }
         private const string LooseDir = @"H:\65_remake_clean\DATA";
 
         private string _savedRoot;
@@ -125,6 +144,76 @@ namespace Sdo.Tests
             finally
             {
                 SdoVfs.Reset();
+                try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
+            }
+        }
+
+        [Test]
+        public void ShippedPaks_ResolveSeDirAndDecodeItsWav()
+        {
+            // 症狀：打包版「遊戲內有聲音，但試聽與 SE 沒有」。遊玩主音訊的路徑是外面傳進來的，
+            // 試聽與 SE 卻要先靠 SdoExtracted 解析目錄（MusicDir / SeDir）—— 差別就在那裡。
+            var root = Path.Combine(Path.GetTempPath(), "sdo_ship_se_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                foreach (var name in new[] { "base_se.pak", "base_core.pak" })
+                {
+                    var src = Path.Combine(PakDir, name);
+                    if (File.Exists(src)) File.Copy(src, Path.Combine(root, name));
+                }
+                SdoDataRoot.Root = root;
+                SdoExtracted.Root = root;
+                SdoVfs.Initialise(root);
+
+                Assert.IsTrue(VfsFile.Exists(Path.Combine(root, "SE", "Bubble.wav")), "SE/Bubble.wav 應該在 pak 裡讀得到");
+                Assert.IsTrue(VfsFile.DirectoryExists(Path.Combine(root, "SE")), "VfsFile 要認得 pak 內的 SE 目錄");
+
+                var seDir = SdoExtracted.SeDir;
+                Assert.AreEqual(Path.Combine(root, "SE"), seDir, "SeDir 解析錯了 → 所有 SE 都會讀不到");
+
+                var clip = MemoryAudio.Load(Path.Combine(seDir, "Bubble.wav"), "bubble");
+                Assert.IsNotNull(clip, "SE 應該從 pak 直接解得出 AudioClip");
+                Assert.Greater(clip.length, 0f);
+            }
+            finally
+            {
+                SdoVfs.Reset();
+                SdoExtracted.Root = null;
+                try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
+            }
+        }
+
+        [Test]
+        public void ShippedPaks_ResolveMusicDirAndDecodeAPreview()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "sdo_ship_music_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                foreach (var f in Directory.GetFiles(PakDir, "music_*.pak")) File.Copy(f, Path.Combine(root, Path.GetFileName(f)));
+                SdoDataRoot.Root = root;
+                SdoExtracted.Root = root;
+                SdoVfs.Initialise(root);
+
+                var musicDir = SdoExtracted.MusicDir;
+                Assert.AreEqual(Path.Combine(root, "MUSIC"), musicDir, "MusicDir 解析錯了 → 試聽全部讀不到");
+
+                // 隨便挑一個 pak 內真的存在的 exper 試聽檔。
+                // ⚠️ SdoVfs.EnumerateFiles 回的是**相對**路徑，VfsFile / MemoryAudio 吃的是 AbsFor 形式 ——
+                //    直接餵相對路徑會被當成「DATA 之外」而走原生 IO，然後靜默回 null。
+                string any = null;
+                foreach (var p in SdoVfs.EnumerateFiles("MUSIC/exper", "*.ogg", false)) { any = VfsFile.AbsFor(p); break; }
+                if (any == null) Assert.Ignore("pak 裡沒有 MUSIC/exper/*.ogg");
+
+                var clip = MemoryAudio.Load(any, "preview");
+                Assert.IsNotNull(clip, "試聽應該從 pak 直接解得出 AudioClip: " + any);
+                Assert.Greater(clip.length, 0f);
+            }
+            finally
+            {
+                SdoVfs.Reset();
+                SdoExtracted.Root = null;
                 try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { }
             }
         }

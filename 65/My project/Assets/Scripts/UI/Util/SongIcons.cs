@@ -1,6 +1,7 @@
 using System.IO;
 using UnityEngine;
 using Sdo.Game;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Util
 {
@@ -20,11 +21,18 @@ namespace Sdo.UI.Util
             try
             {
                 // Icons under the resolved data root ONLY — no assets/ scan (data_root.txt points this at the clean pack).
+                //
+                // 🔴 VfsFile 而不是 Directory.Exists —— UI/ 打包之後這個目錄在磁碟上**不存在**，
+                //    原生檢查會回 false、整個 ICONS 來源被丟掉，症狀是「CD 圖全變預設圖」而且不報錯。
                 var inData = Path.Combine(SdoExtracted.Root, "UI", "MUSIC", "ICONS");
-                if (Directory.Exists(inData)) list.Add(inData);
+                if (VfsFile.DirectoryExists(inData)) list.Add(inData);
             }
             catch { /* best effort */ }
             _dirs = list.ToArray();
+            // 讀不到資產是 WARN，不是靜默 —— 沒有這行的話「CD 圖全變預設圖」在 log 裡完全看不出來。
+            if (_dirs.Length == 0)
+                Debug.LogWarning("[songicon] 找不到 ICONS 來源(" + Path.Combine(SdoExtracted.Root, "UI", "MUSIC", "ICONS")
+                                 + ")→ 所有 CD 圖會退成預設圖");
             return _dirs;
         }
 

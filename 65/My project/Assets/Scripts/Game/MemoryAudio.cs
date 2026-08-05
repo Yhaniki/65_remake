@@ -33,9 +33,21 @@ namespace Sdo.Game
         /// 打包後從 pak 讀 —— 呼叫端不必知道差別。</summary>
         public static AudioClip Load(string path, string clipName = null, bool stream = false)
         {
+            // 🔴 讀不到 / 解不開一律 **WARN**，不是 Debug.Log。
+            //    打包版預設只寫 WARN 以上（SdoLog.Verbose 要 SDO_VERBOSE 才開），資產失敗如果記在 INFO，
+            //    使用者回報「沒聲音」時 log 裡什麼都看不到 —— 踩過一次，查了很久才知道是目錄解析錯。
             var bytes = VfsFile.ReadAllBytes(path);
-            if (bytes == null || bytes.Length == 0) return null;
-            return FromBytes(bytes, clipName ?? System.IO.Path.GetFileNameWithoutExtension(path) ?? "clip", stream);
+            if (bytes == null || bytes.Length == 0)
+            {
+                Debug.LogWarning("[audio] 讀不到:" + path);
+                return null;
+            }
+
+            var clip = FromBytes(bytes, clipName ?? System.IO.Path.GetFileNameWithoutExtension(path) ?? "clip", stream);
+            if (clip == null)
+                Debug.LogWarning($"[audio] 解不開:{path}({bytes.Length} bytes, 格式={AudioFileType.Sniff(bytes)}"
+                                 + $", vorbis={(VorbisDecoder.Available ? "有" : "無 sdovorbis.dll")})");
+            return clip;
         }
 
         /// <summary>位元組 → AudioClip;解不出來 → null。</summary>

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using Sdo.Game;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Catalog
 {
@@ -42,7 +43,9 @@ namespace Sdo.UI.Catalog
                 foreach (var c in Candidates)
                 {
                     // Include if the folder exists; if the asset root is unavailable, fall back to listing all.
-                    if (!Directory.Exists(baseDir) || Directory.Exists(Path.Combine(baseDir, c.Id)))
+                    // VfsFile：NOTEIMAGE 打包之後磁碟上沒有這個目錄，原生 Directory.Exists 會全回 false
+                    // → 走進「列出全部」的 fallback（症狀不明顯，但列出來的皮其實沒驗證過存在）。
+                    if (!VfsFile.DirectoryExists(baseDir) || VfsFile.DirectoryExists(Path.Combine(baseDir, c.Id)))
                         _available.Add(c);
                 }
                 if (_available.Count == 0) _available.Add(Candidates[0]);

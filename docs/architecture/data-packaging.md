@@ -429,7 +429,31 @@ Unity Mono 的 AES 是 managed 實作(沒有 AES-NI),約 100–200 MB/s。單一
 
 ## 8. 已知的坑
 
-### 8.0 遷移到 VFS 時最容易漏的兩個樣式
+### 8.0 🔴 讀不到資產一律記 **WARN**,不要記 INFO
+
+打包版的 `log.txt` **預設只寫 WARN 以上**(`SdoLog.Verbose` 要環境變數 `SDO_VERBOSE=1` 才開)。
+資產載入失敗如果記在 `Debug.Log`(INFO),使用者回報「沒聲音 / 圖不見了」時,
+他手上那份 log 裡**什麼都看不到** —— 只剩幾行無關的警告。
+
+這是實際踩過的:打包版回報「試聽與 SE 讀不到」,拿到的 log 只有一行既有的 GBK 警告,
+完全無法判斷是哪一層失敗,只能重 build 一份加了警告的版本才查得下去。
+
+所以:
+
+```csharp
+var bytes = VfsFile.ReadAllBytes(path);
+if (bytes == null) { Debug.LogWarning("[audio] 讀不到:" + path); return null; }
+```
+
+而且訊息要帶**足以判斷根因的資訊** —— 光說「失敗」還是要再 build 一次才知道為什麼:
+
+```csharp
+Debug.LogWarning($"[audio] 解不開:{path}({bytes.Length} bytes, 格式={AudioFileType.Sniff(bytes)}"
+                 + $", vorbis={(VorbisDecoder.Available ? "有" : "無 sdovorbis.dll")})");
+```
+
+
+### 8.1 遷移到 VFS 時最容易漏的兩個樣式
 
 批次替換 `File.Exists` / `File.ReadAllBytes` / `Directory.GetFiles` 這些常見寫法很直覺,
 但下面兩個**長得不一樣、後果卻最嚴重**,已經踩過:

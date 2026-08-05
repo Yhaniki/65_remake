@@ -1460,14 +1460,12 @@ namespace Sdo.Game
         {
             if (!_seCache.TryGetValue(name, out var clip))
             {
-                var path = Path.Combine(SdoExtracted.SeDir, name + ".wav");
-                if (VfsFile.Exists(path))
-                    using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.WAV))
-                    {
-                        yield return req.SendWebRequest();
-                        if (req.result == UnityWebRequest.Result.Success) clip = DownloadHandlerAudioClip.GetContent(req);
-                    }
+                // 🔴 從 VFS 的位元組解，不走 file:// —— SE 打包之後 UnityWebRequestMultimedia 會 404，
+                //    而且是**靜默**的（clip 拿到 null，快取還把 null 記起來）→ 整場遊戲一點音效都沒有。
+                //    見 docs/architecture/data-packaging.md §2.1。
+                clip = MemoryAudio.Load(Path.Combine(SdoExtracted.SeDir, name + ".wav"), name);
                 _seCache[name] = clip;
+                yield return null;   // 解碼是同步的；讓出一幀，維持這個 coroutine 原本的節奏
             }
             if (clip != null && _sfx != null) _sfx.PlayOneShot(clip, AudioMix.Sfx);   // 遊戲音效 音量
         }
@@ -1516,16 +1514,12 @@ namespace Sdo.Game
             {
                 var path = Path.Combine(SdoExtracted.SeDir, TickSeName + ext);
                 if (!VfsFile.Exists(path)) continue;
-                var type = ext == ".ogg" ? AudioType.OGGVORBIS : AudioType.WAV;
-                using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
-                {
-                    yield return req.SendWebRequest();
-                    if (req.result != UnityWebRequest.Result.Success) { Debug.LogWarning("[tick] " + path + ": " + req.error); continue; }
-                    var clip = DownloadHandlerAudioClip.GetContent(req);
-                    if (clip == null) continue;
-                    SetTickClip(clip);   // 順便量前導靜音（官方那顆 clap 前面有 ~30ms 空白 → 排程要提早）
-                    yield break;
-                }
+                // 同 PlaySeCo：從位元組解，不走 file://（pak 內的檔會 404）。
+                var clip = MemoryAudio.Load(path, TickSeName);
+                yield return null;
+                if (clip == null) continue;
+                SetTickClip(clip);   // 順便量前導靜音（官方那顆 clap 前面有 ~30ms 空白 → 排程要提早）
+                yield break;
             }
             // 找不到通常不是「檔案沒有」，而是**資料根解錯了**（例：worktree 沒有 gitignore 掉的 data_root.txt
             // → Root 退回 sdox_offline/Extracted，那裡根本沒有 SE）。把實際找過的資料夾印出來，不用再猜。
