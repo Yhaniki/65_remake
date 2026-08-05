@@ -136,10 +136,12 @@ namespace Sdo.Settings
         // 這是兩件事：我想不想變成 MMD、我想不想看到別人的 MMD。關掉 → 別人一律是他的 SDO 穿搭，
         // 而且完全不會去下載別人的模型（零流量、零磁碟）。
         public static bool mmdShowOthers = true;
-        // 著色後端：開(預設)＝lilToon（Assets/lilToon，MIT），有光照、邊緣光、描邊會跟著明暗變色；
-        // 關＝Sdo/MmdModel，MMD 固定管線的忠實移植（unlit、ramp 直接貼、純黑鉛筆描邊）。
+        // 著色後端：開＝lilToon（Assets/lilToon，MIT），有光照、邊緣光、描邊會跟著明暗變色；
+        // 關(預設)＝Sdo/MmdModel，MMD 固定管線的忠實移植（unlit、ramp 直接貼、純黑鉛筆描邊）——
+        // 舞台燈光是為 SDO 角色調的，lilToon 吃了那組光之後 MMD 身上的明暗跟模型作者調好的樣子差很多，
+        // 平光的忠實移植比較接近「模型該長的樣子」，所以預設走它；要光照感的人自己在面板/config.ini 開。
         // 換值要重建身體（材質是整個模型共用的），由 MmdAvatarSwap 處理。
-        public static bool mmdLilToon = true;
+        public static bool mmdLilToon = false;
         // 陰影分界。預設關：lilToon 的兩段式 cel 分界在舞台的動態燈光下會在臉上切出很硬的一條線，
         // 平光比較耐看；要卡通分界感的人自己在 config.ini 打開。
         public static bool mmdToon = false;         // 卡通著色（toon ramp / lilToon 的 cel 陰影）
@@ -804,7 +806,8 @@ namespace Sdo.Settings
             sb.Append("# 你可以自己維持 SDO 角色卻看得到別人的 MMD，也可以反過來。關掉＝別人一律是他的 SDO 穿搭，\n");
             sb.Append("# 而且完全不會去下載別人的模型（零流量、零磁碟）。\n");
             sb.Append("mmdShowOthers=").Append(B(mmdShowOthers)).Append('\n');
-            sb.Append("# 著色（1=開 0=關）：卡通著色 / 描邊 / sphere 反光。\n");
+            sb.Append("# 著色（1=開 0=關）：lilToon 後端 / 卡通陰影 / 描邊 / sphere 反光。\n");
+            sb.Append("# lilToon 與卡通陰影預設都是關的（＝unlit 的忠實移植、臉上不切硬邊界）。\n");
             sb.Append("mmdLilToon=").Append(B(mmdLilToon)).Append('\n');
             sb.Append("mmdToon=").Append(B(mmdToon)).Append('\n');
             sb.Append("mmdOutline=").Append(B(mmdOutline)).Append('\n');
