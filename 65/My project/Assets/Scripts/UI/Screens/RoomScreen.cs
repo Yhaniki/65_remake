@@ -3270,8 +3270,8 @@ namespace Sdo.UI.Screens
                 ApplyCollapse();
             }
 
-            HandleContextMenuDismiss();   // 座位/分隊選單開著時,點到外面就關掉(要在 blank-click 之前:那條會進打字模式)
-            HandleRoomBlankChatClick();
+            HandleContextMenuDismiss();   // 座位/分隊選單開著時,點到外面就關掉
+            // 「點空曠處 → 頭上打字泡」不在這裡輪詢:它是 RoomPickCatcher 的**左鍵事件**(見 OnRoomPickClick)。
             HandleRoomChatTypingKeys();
             EnsureSpectatorTypesInChatInput();   // 打字中被切成旁觀 → 泡收掉,草稿搬去左下打字框
             // 組字中持續舉旗；選字那幀 EventSystem 可能先觸發 onSubmit，旗標要撐到 LateUpdate 才清。
@@ -4000,11 +4000,18 @@ namespace Sdo.UI.Screens
                 || Input.GetKeyDown(KeyCode.RightArrow);
         }
 
+        /// <summary>
+        /// 左鍵點房間的空曠處 → 開頭上打字泡(官方在房間裡就是這樣開始說話的)。
+        ///
+        /// 🔴 只能由 <c>RoomPickCatcher</c> 的點擊事件進來(<see cref="OnRoomPickClick"/>),**不可以**改回
+        ///    在 Update 裡用 <c>Input.GetMouseButtonDown</c> + <c>IsPointerOverGameObject()</c> 判「有沒有點到 UI」——
+        ///    pick catcher 本身就是一張鋪滿整個畫面、raycastTarget=true 的透明 Graphic(右鍵 3D 角色開選單要靠它),
+        ///    那個查詢從此在房間任何一點都回 true,整條路就永遠 return 掉了(這正是 922ea5c 打壞這功能的原因)。
+        ///    走事件語意也才對:UGUI 的射線一律先給最上層的 Graphic,能一路走到 pick catcher 才是真的沒點到任何 UI。
+        /// </summary>
         private void HandleRoomBlankChatClick()
         {
-            if (_scene == null || _chatInput == null || !Input.GetMouseButtonDown(0)) return;
-            if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
-            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+            if (_scene == null || _chatInput == null) return;
             BeginRoomBubbleTyping();
         }
 
@@ -4248,7 +4255,12 @@ namespace Sdo.UI.Screens
             => room != null && seat >= 0 && seat < room.Seats.Count ? room.Seats[seat] : null;
 
         /// <summary>
-        /// 右鍵房間畫面的空白處 → 看看指到的是不是**房裡的某個 3D 角色**,是的話開那個人的座位選單。
+        /// 房間畫面「什麼 UI 都沒有的地方」的點擊總入口(<c>RoomPickCatcher</c>,建在整張 UI 最底層):
+        ///   • **左鍵** → 開頭上打字泡(<see cref="HandleRoomBlankChatClick"/>)。
+        ///   • **右鍵** → 看看指到的是不是**房裡的某個 3D 角色**,是的話開那個人的座位選單。
+        ///
+        /// 🔴 左鍵這條**一定要掛在這裡**。它以前是 Update 裡自己輪詢滑鼠 + <c>IsPointerOverGameObject()</c>,
+        ///    而 pick catcher 一鋪滿畫面就讓那個查詢永遠是 true → 點空曠處再也開不出泡。理由見那邊的 doc。
         ///
         /// 官方在房間裡右鍵人物本體就會跳選單(使用者回報「不只點上面大頭貼」),而我們原本只有上排那六格
         /// 頭貼接得到右鍵。這裡刻意**重用 <see cref="ShowSlotPopup"/>** —— 兩個入口點同一個人就該給同一份選單
@@ -4259,9 +4271,16 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void OnRoomPickClick(PointerEventData ev)
         {
-            if (ev == null || ev.button != PointerEventData.InputButton.Right) return;
+            if (ev == null) return;
             if (Ctx != null && Ctx.Flow != null && Ctx.Flow.Current != ScreenId.Room) return;
             if (FrontendApp.Instance != null && FrontendApp.Instance.AnyModalOpen) return;
+
+            if (ev.button == PointerEventData.InputButton.Left)
+            {
+                HandleRoomBlankChatClick();
+                return;
+            }
+            if (ev.button != PointerEventData.InputButton.Right) return;
             if (_scene == null || Root == null) return;
 
             // 設計座標 → 場景相機的 viewport。相機鋪滿整張 backdrop、backdrop 又鋪滿 Root,所以就是單純的正規化;
