@@ -7,6 +7,7 @@
   P  動作池：MOTION/ 底下的通用舞步 wdanceNNNN.mot（排除 _CHANGJING 場景循環、EUR_ 等變體）。沒有
              群組可用時（舊索引）才會用到，是最後的保險絲。
   I  開場  ：一支官方 DANCE/*.dps 的第一組 —— 從第一個 row 一路收到「出現第四個不同的 mot」為止的所有 row。
+             一組裡只要出現 EXCLUDE_MOTS 裡那幾支「站著不動」的 clip（待機／輸贏定格）就整組不要。
   G  群組  ：同一支 .dps 第一組以後的每一組（一樣是三支不同 mot 為一組）。生成時開頭挑一個 I、
              後面每次隨機挑一個 G，逐 row 照抄。
              官方一個 row 是某支 clip 的一個「切片」(startFrame..endFrame)，一組裡常常是同一支 clip 連著切
@@ -35,6 +36,16 @@ GROUP_MAX_ROWS = 40            # 一組的 row 上限（A/B 交替的譜可以�
 DPS_MAGIC = b"PAS00003"
 ROW_STRIDES = (305, 317)       # 引擎 DpsLoader 認得的兩種 row 間距
 POOL_RE = re.compile(r"^wdance\d+\.mot$", re.IGNORECASE)
+# 這幾支不是「跳舞」：站姿待機（wrest）、輸／贏定格（wlost / wwin）、發招（fazhang_nan）。官方 .dps 會把它們
+# 夾在編舞裡（開場前的等待、段落間的喘息），但生成的舞是整首歌連著跳，抄到就變成舞者站著不動好幾拍。
+# 只要一組（開場或群組）裡出現任何一支就整組丟掉 —— 半組會把兩段不相干的編舞接在一起。
+EXCLUDE_MOTS = {
+    "fazhang_nan.mot",
+    "wlost0003.mot",
+    "wrest0001.mot",
+    "wrest0014.mot",
+    "wwin0001.mot",
+}
 MOT_RE = re.compile(rb"\.[mM][oO][tT]")
 NAME_BYTES = set(b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_")
 
@@ -116,8 +127,8 @@ def groups_of(path: Path, frames_of):
         if not ok:
             continue                      # 這組已經判定不能用，只要繼續數 mot 找組界
         n = frames_of(name)
-        if n is None or end < start or end >= n or len(cur) >= GROUP_MAX_ROWS:
-            ok = False                    # clip 沒附上（譜專屬的 w_*）／壞掉的幀範圍會讓舞者卡在最後一幀
+        if name in EXCLUDE_MOTS or n is None or end < start or end >= n or len(cur) >= GROUP_MAX_ROWS:
+            ok = False                    # 站著不動的 clip／clip 沒附上（譜專屬的 w_*）／壞掉的幀範圍會讓舞者卡在最後一幀
             continue
         cur.append((name, start, end))
     close()

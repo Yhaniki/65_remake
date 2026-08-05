@@ -263,6 +263,12 @@ def build_patch(source: Path, out_dir: Path, manifest_dir: Path, encrypt: bool, 
     files = scan(source)
     import zlib
 
+    # 🔴 loose 的卷（BGM）跟完整打包時一樣要跳過。它們從來不在任何 manifest 裡，所以每一個檔都會被
+    #    判成「新增」—— 不擋的話每產一次 patch 就白白多背一份 BGM（遊戲還是讀散裝的那份，散裝層的
+    #    優先權在所有 pak 之上，所以那份 patch 裡的複本連讀都不會被讀到）。
+    vol_of = {rel: vol for vol, rels in assign(files).items() for rel in rels}
+    files = {rel: p for rel, p in files.items() if not volume_spec(vol_of[rel]).get("loose")}
+
     changed: list[str] = []
     for rel, p in sorted(files.items()):
         prev = old.get(rel)
@@ -285,7 +291,6 @@ def build_patch(source: Path, out_dir: Path, manifest_dir: Path, encrypt: bool, 
     b = sdopak.PakBuilder(PATCH_PAK_ID_BASE + patch_id, encrypt=encrypt)
 
     # 每個檔仍然沿用它原本那一卷的策略（音訊還是 store + 只加密表頭）。
-    vol_of = {rel: vol for vol, rels in assign(files).items() for rel in rels}
     for rel in changed:
         spec = volume_spec(vol_of.get(rel, UNASSIGNED_VOLUME))
         b.add_file(rel, files[rel], compress=spec["compress"], crypt_range=spec["crypt"])
