@@ -28,8 +28,26 @@ namespace Sdo.UI.Screens
         public const float CollapsedH = 68f;
         /// <summary>展開高度：下緣 512，剛好停在男/女核取方塊（y=530）上面，也不碰到右邊的角色。</summary>
         public const float ExpandedH = 502f;
-        private const float RowH = 18f, LabelW = 104f, ValueW = 54f, ListH = 314f, HelpH = 52f, Pad = 5f;
+        public const float RowH = 18f, HelpH = 52f, Pad = 5f;
+        private const float LabelW = 104f, ValueW = 54f;
         private const float ValueEntryW = 40f, UnitW = 17f;
+
+        // ---- 直向預算 ----
+        // 「儲存設定」那一列**不進 GUILayout**，改用釘在面板底的固定矩形（見 Draw）：它是這塊面板唯一的落地
+        // 入口，被裁掉就等於改了設定存不了。上面那疊（標題/名稱/體型/分頁/清單/說明）只要有一列比預估高一點點
+        // （字型、skin margin 都會影響），BeginArea 就從最後一個元素開始裁 —— 剛好就是這顆鈕。
+        /// <summary>底下那一列（狀態字 + 儲存設定鈕）的高度。</summary>
+        public const float FooterH = RowH + 2f;
+        /// <summary>GUILayout 兩個元素之間的預設留白（內建 skin 的 margin＝4）。</summary>
+        public const float Gap = 4f;
+        /// <summary>清單上面那幾列在 layout 裡吃掉的高度：標題、名稱、體型、Space(2)、分頁。</summary>
+        public const float TopH = RowH + Gap + (RowH + 2f) + Gap + RowH + Gap + 2f + Gap + (RowH + 2f);
+        /// <summary>預估以外的餘裕。字型/skin 換了之後每列高個 1~2 px 也還塞得下（不然又是「最後一列被裁掉」）。</summary>
+        public const float Safety = 12f;
+        /// <summary>設定清單（可捲動）的高度＝面板扣掉上面那疊、說明列、底下那一列之後剩下的。
+        /// 寫成算式而不是硬編，改 <see cref="ExpandedH"/> / <see cref="HelpH"/> 時不用再自己算一次。
+        /// （StartupConfigPanelLayoutTests 會盯著它 —— 版面常數再被調動時，這邊剩幾 px 要看得見。）</summary>
+        public const float ListH = ExpandedH - 2f * Pad - (FooterH + Pad) - HelpH - Gap - TopH - Gap - Safety;
         /// <summary>◀ 值 ▶ 那一格的**固定**寬度。
         ///
         /// 🔴 一定要是固定寬,不能只靠 <c>clipping = Clip</c> + <c>ExpandWidth</c>:GUILayout 排版時看的是
@@ -110,7 +128,11 @@ namespace Sdo.UI.Screens
             // 直接排版的話文字會貼到外框上。
             var full = new Rect(PanelX, PanelY, PanelW, Expanded ? ExpandedH : CollapsedH);
             GUI.Box(full, GUIContent.none);
-            GUILayout.BeginArea(new Rect(full.x + Pad, full.y + Pad, full.width - Pad * 2f, full.height - Pad * 2f));
+            var inner = new Rect(full.x + Pad, full.y + Pad, full.width - Pad * 2f, full.height - Pad * 2f);
+            // 「儲存設定」那一列先從 layout 區裡切出去、自己畫在面板底 —— 它絕不能被 BeginArea 裁掉（見 FooterH）。
+            var footer = new Rect(inner.x, inner.yMax - FooterH, inner.width, FooterH);
+            if (Expanded) inner.height -= FooterH + Pad;
+            GUILayout.BeginArea(inner);
             DrawHeader();
             DrawNameRow();
             if (Expanded)
@@ -120,9 +142,9 @@ namespace Sdo.UI.Screens
                 DrawTabs();
                 DrawRows();
                 DrawHelp();
-                DrawFooter();
             }
             GUILayout.EndArea();
+            if (Expanded) DrawFooter(footer);
 
             GUI.matrix = oldMatrix;
         }
@@ -211,13 +233,13 @@ namespace Sdo.UI.Screens
             if (GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition)) _hoverHelp = help;
         }
 
-        private void DrawFooter()
+        /// <summary>底下那一列：左邊狀態字、右邊「儲存設定」。<b>固定矩形、不走 GUILayout</b> —— 它釘在面板底緣，
+        /// 上面那疊怎麼長都不會把它推出畫面外（先前就是被 BeginArea 裁掉半顆鈕）。</summary>
+        private void DrawFooter(Rect r)
         {
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(_status, _status_);
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("儲存設定", GUILayout.Width(64f), GUILayout.Height(RowH + 2f))) SaveConfig();
-            GUILayout.EndHorizontal();
+            const float BtnW = 64f;
+            GUI.Label(new Rect(r.x, r.y, Mathf.Max(0f, r.width - BtnW - Gap), r.height), _status, _status_);
+            if (GUI.Button(new Rect(r.xMax - BtnW, r.y, BtnW, r.height), "儲存設定")) SaveConfig();
         }
 
         // ---------------------------------------------------------------- 單列
@@ -355,7 +377,9 @@ namespace Sdo.UI.Screens
             };
             _status_ = new GUIStyle(GUI.skin.label)
             {
-                wordWrap = false, fontSize = 10, normal = { textColor = new Color(0.7f, 0.9f, 0.7f) },
+                // MiddleLeft：底下那一列是固定高度的矩形（見 DrawFooter），靠左上會跟旁邊的鈕對不齊。
+                wordWrap = false, fontSize = 10, alignment = TextAnchor.MiddleLeft,
+                normal = { textColor = new Color(0.7f, 0.9f, 0.7f) },
             };
             _tabStyle = new GUIStyle(GUI.skin.button) { fontSize = 11, padding = new RectOffset(2, 2, 2, 2) };
         }
